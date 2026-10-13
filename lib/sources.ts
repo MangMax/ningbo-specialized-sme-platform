@@ -1,5 +1,5 @@
 import { glob } from 'tinyglobby'
-import { relative, resolve } from 'node:path'
+import { resolve } from 'node:path'
 
 /**
  * 递归找出某来源目录下的公布文件(.doc/.docx),跳过通知目录与临时文件。
@@ -20,7 +20,3 @@ export const JXJ_SOURCES = [
   { titleCode: 'specialized_sme', subdir: '经信局名单/省专' },
   { titleCode: 'innovative_sme', subdir: '经信局名单/创新型' },
 ] as const
-
-export function relPath(root: string, file: string): string {
-  return relative(root, file)
-}

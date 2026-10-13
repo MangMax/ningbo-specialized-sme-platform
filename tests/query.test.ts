@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { readDocxBlocks } from '../lib/docx'
 import { parseAnnouncement } from '../lib/announcement'
 import { importEntries, newImportContext } from '../lib/import'
-import { allRecords, listRecords } from '../lib/query'
+import { allRecords, getQuality, getStats, listRecords, type EventType } from '../lib/query'
 import { buildAnnouncementDocx } from './fixtures/docx'
 
 let dir: string
@@ -113,5 +113,67 @@ describe('listRecords event / year filters', () => {
     expect(allRecords(d, { eventType: 'award' })).toHaveLength(2)
     expect(allRecords(d, { year: 2021 })).toHaveLength(2)
     expect(allRecords(d, { eventType: 'nurture', year: 2021 })).toHaveLength(1)
+  })
+})
+
+describe('getStats counts records, consistent with listRecords', () => {
+  it('every bucket equals the matching listRecords total', () => {
+    const d = db()
+    const stats = getStats(d)
+    for (const b of stats.byEvent) {
+      expect(listRecords(d, { eventType: b.key as EventType }).total, `eventType=${b.key}`).toBe(b.n)
+    }
+    for (const b of stats.byYear) {
+      if (!/^\d{4}$/.test(b.key)) continue
+      expect(listRecords(d, { year: Number(b.key) }).total, `year=${b.key}`).toBe(b.n)
+    }
+    for (const b of stats.byTitle) {
+      expect(listRecords(d, { title: b.key }).total, `title=${b.key}`).toBe(b.n)
+    }
+    for (const b of stats.bySource) {
+      expect(listRecords(d, { source: b.key }).total, `source=${b.key}`).toBe(b.n)
+    }
+    for (const b of stats.byDistrict) {
+      expect(listRecords(d, { district: b.key }).total, `district=${b.key}`).toBe(b.n)
+    }
+  })
+
+  it('respects title / source / district filters in every bucket', () => {
+    const d = db()
+    const filter = { title: 'specialized_sme', source: 'jxj' as const }
+    const stats = getStats(d, filter)
+    expect(stats.totalRecords).toBe(listRecords(d, filter).total)
+    for (const b of stats.byEvent) {
+      expect(listRecords(d, { ...filter, eventType: b.key as EventType }).total, `eventType=${b.key}`).toBe(b.n)
+    }
+    for (const b of stats.byYear) {
+      if (!/^\d{4}$/.test(b.key)) continue
+      expect(listRecords(d, { ...filter, year: Number(b.key) }).total, `year=${b.key}`).toBe(b.n)
+    }
+  })
+})
+
+describe('getQuality', () => {
+  it('reports name_ambiguous with samples when a name maps to multiple subjects', () => {
+    const d = db()
+    // 同名(归一化后)、不同统代的两个主体 → 重名。
+    d.insert(schema.enterprise)
+      .values({ usccNorm: '91330200DUP0000001', name: '宁波重名测试有限公司', nameNorm: '宁波重名测试有限公司' })
+      .run()
+    d.insert(schema.enterprise)
+      .values({ usccNorm: '91330200DUP0000002', name: '宁波重名测试有限公司', nameNorm: '宁波重名测试有限公司' })
+      .run()
+
+    const g = getQuality(d).find((x) => x.kind === 'name_ambiguous')!
+    expect(g.n).toBe(2)
+    expect(g.samples.length).toBeGreaterThan(0)
+  })
+})
+
+describe('listRecords flags filter', () => {
+  it('filters to records whose enterprise has no USCC', () => {
+    const d = db()
+    // fixture 的三家企业均由公布文件导入,均无统代。
+    expect(listRecords(d, { flags: 'uscc_missing' }).total).toBe(3)
   })
 })

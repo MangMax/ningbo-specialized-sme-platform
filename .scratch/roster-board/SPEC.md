@@ -67,11 +67,11 @@
 - **UI**:看板页(统计概览 + 筛选 + 记录表 + 导出)、企业详情。
 
 **接口契约(概要)**
-- `GET /api/records?title=&source=&district=&eventType=&year=&q=&flags=&page=&pageSize=` → 分页记录列表(含企业名、称号、来源、事件摘要、flags)。
+- `GET /api/records?title=&source=&district=&eventType=&year=&q=&flags=&page=&pageSize=` → 分页记录列表(含企业名、称号、来源、事件摘要、flags)。`flags` 支持 `uscc_missing`(无统代)。
 - `GET /api/enterprises/:id` → 企业的全部记录与事件及出处。
-- `GET /api/stats?title=&district=&source=` → 计数聚合。
-- `GET /api/quality?kind=uscc_missing|name_ambiguous|non_ningbo|deregistered` → 质量清单。
-- `GET /api/export?<同 records 筛选>` → xlsx/csv。
+- `GET /api/stats?title=&district=&source=` → 计数聚合。**全部计数以记录为单位**;`byEvent` / `byYear` 数「有该事件 / 年份的记录数」,与 `listRecords` 的 `eventType` / `year` 筛选口径一致;给定 `title` / `district` / `source` 时各桶与总数一并按该条件过滤。
+- `GET /api/quality?kind=uscc_missing|name_ambiguous` → 质量清单(按 `kind` 过滤;`non_ningbo` / `deregistered` 需外部富化数据,本期不产生,查询返回空)。`name_ambiguous` 由 `name_norm` 推导:同名对应多个企业或同名下多个统代。
+- `GET /api/export?<同 records 筛选>` → xlsx/csv,列为 企业名称 / 统一社会信用代码 / 区县 / 称号 / 来源 / 事件 / **出处**(该记录各事件的「文件 / 附件 / 序号」汇总)。
 
 **未决口径**
 - 工信部名单批次取「维护批次」;创新型导出有 1000+ 行该字段为空(需在导入时标记而非丢弃)。

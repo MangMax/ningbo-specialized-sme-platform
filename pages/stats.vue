@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed } from 'vue'
+import { TITLES, TITLE_ORDER, SOURCES, SOURCE_ORDER, EVENTS, EVENT_ORDER } from '~~/lib/labels'
 
 interface Bucket {
   key: string
@@ -15,25 +16,6 @@ interface Stats {
   byDistrict: Bucket[]
   byYear: Bucket[]
 }
-
-const TITLES: Record<string, string> = {
-  little_giant: '专精特新“小巨人”',
-  specialized_sme: '专精特新中小企业',
-  innovative_sme: '创新型中小企业',
-}
-const SOURCES: Record<string, string> = {
-  jxj: '经信局',
-  miit: '工信部',
-}
-const EVENTS: Record<string, string> = {
-  award: '认定',
-  review: '复核',
-  maintain: '维护',
-  nurture: '入库培育',
-}
-const TITLE_ORDER = ['little_giant', 'specialized_sme', 'innovative_sme']
-const SOURCE_ORDER = ['jxj', 'miit']
-const EVENT_ORDER = ['award', 'review', 'maintain', 'nurture']
 
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading } = useQuery({

@@ -47,8 +47,13 @@ function seed() {
       .returning({ id: schema.record.id })
       .get().id
     for (const ev of events) {
-      d.insert(schema.recordEvent)
+      const eventId = d
+        .insert(schema.recordEvent)
         .values({ recordId: id, eventType: ev.type as never, year: ev.year, batchSeq: ev.seq, sortKey: ev.year ?? 0 })
+        .returning({ id: schema.recordEvent.id })
+        .get().id
+      d.insert(schema.recordEvidence)
+        .values({ recordEventId: eventId, sourceFile: `${source}.docx`, attachment: '第一部分', listNo: ev.seq })
         .run()
     }
     return id
@@ -161,5 +166,14 @@ describe('export ↔ list filter consistency', () => {
     expect(rows).toHaveLength(1)
     // 甲(jxj 专精特新)有 award 2024-2 与 review 2021-2 两条事件,压成一行文本。
     expect(rows[0]!.events.split('; ').sort()).toEqual(['认定 2024-2', '复核 2021-2'].sort())
+  })
+
+  it('includes a non-empty 出处 (evidence) cell per record', () => {
+    const rows = allRecords(db(), { title: 'specialized_sme', source: 'jxj', q: '宁波甲' })
+    expect(rows).toHaveLength(1)
+    // 两条事件各带一条出处,渲染为「文件 / 附件 / 序号N」并以 "; " 连接。
+    expect(rows[0]!.evidence).toContain('jxj.docx')
+    expect(rows[0]!.evidence).toContain('序号2')
+    expect(rows[0]!.evidence.split('; ')).toHaveLength(2)
   })
 })

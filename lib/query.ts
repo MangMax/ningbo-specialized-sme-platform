@@ -1,8 +1,10 @@
-import { and, count, desc, eq, exists, isNull, like, or, sql, type SQL } from 'drizzle-orm'
+import { and, count, desc, eq, exists, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import { groupBy, orderBy } from 'es-toolkit'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
+import { normalizeName } from './normalize'
+import { EVENTS } from './labels'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -18,6 +20,11 @@ export interface RecordQuery {
   /** 命中「该记录下存在此年份的事件」。 */
   year?: number
   q?: string
+  /**
+   * 质量标记筛选(逗号分隔,命中任一即匹配)。
+   * 目前支持 `uscc_missing`(无统代);其余标记按 `enterprise.quality_flags` 包含判定。
+   */
+  flags?: string
   /** 导入快照筛选(import_batch.id)。见票 11。 */
   batchId?: number
   page?: number
@@ -32,6 +39,7 @@ export interface RecordRow {
   district: string | null
   titleCode: string
   source: string
+  flags: string[]
   events: { type: string; year: number | null; seq: number | null }[]
 }
 
@@ -44,13 +52,39 @@ function buildWhere(db: Db, params: RecordQuery): SQL | undefined {
   if (params.district) conds.push(eq(schema.record.district, params.district))
   if (params.batchId) conds.push(eq(schema.record.importBatchId, params.batchId))
   if (params.q) {
-    const like$ = `%${params.q.trim()}%`
-    conds.push(or(like(schema.enterprise.name, like$), like(schema.enterprise.usccNorm, like$)))
+    // 名称按**归一化键**匹配(与归并口径一致),统代按归一化大写匹配。
+    const name$ = normalizeName(params.q)
+    const uscc$ = `%${params.q.trim().toUpperCase()}%`
+    const hits: SQL[] = [like(schema.enterprise.usccNorm, uscc$)]
+    if (name$) hits.push(like(schema.enterprise.nameNorm, `%${name$}%`))
+    conds.push(or(...hits))
   }
+  const flagConds = buildFlagConds(params.flags)
+  if (flagConds) conds.push(flagConds)
   const eventCond = buildEventExists(db, params)
   if (eventCond) conds.push(eventCond)
   const filtered = conds.filter(Boolean) as SQL[]
   return filtered.length ? and(...filtered) : undefined
+}
+
+/**
+ * 质量标记筛选:逗号分隔的多个标记命中**任一**即匹配。
+ * `uscc_missing` 直接看 `uscc_norm` 是否为空(与导入写入的 quality_flags 一致);
+ * 其余标记按 `enterprise.quality_flags`(JSON 文本)包含判定。
+ */
+function buildFlagConds(flags: string | undefined): SQL | undefined {
+  if (!flags) return undefined
+  const list = flags
+    .split(',')
+    .map((f) => f.trim())
+    .filter(Boolean)
+  if (!list.length) return undefined
+  const conds = list.map((f): SQL =>
+    f === 'uscc_missing'
+      ? isNull(schema.enterprise.usccNorm)
+      : like(schema.enterprise.qualityFlags, `%${f}%`),
+  )
+  return conds.length === 1 ? conds[0] : or(...conds)
 }
 
 /**
@@ -93,6 +127,7 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
       district: schema.record.district,
       titleCode: schema.record.titleCode,
       source: schema.record.source,
+      flags: schema.enterprise.qualityFlags,
     })
     .from(schema.record)
     .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
@@ -121,6 +156,7 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
 
   const rows: RecordRow[] = base.map((r) => ({
     ...r,
+    flags: r.flags ?? [],
     events: (byRecord[r.recordId] ?? []).map((e) => ({ type: e.type, year: e.year, seq: e.seq })),
   }))
   return { rows, total }
@@ -286,40 +322,71 @@ export interface Stats {
   byYear: { key: string; n: number }[]
 }
 
-export function getStats(db: Db): Stats {
-  const scalars = (column: AnySQLiteColumn) => {
+/** 统计过滤条件(与 `/api/stats` 的 query 参数一致)。 */
+export interface StatsFilter {
+  title?: string
+  district?: string
+  source?: string
+}
+
+/**
+ * 计数聚合。
+ *
+ * **全部计数以「记录」为单位**,与 `listRecords` 的筛选语义一致:
+ * - `byTitle` / `bySource` / `byDistrict`:record 表本身即「企业 × 称号 × 来源」,
+ *   按列分组计数即「记录数」。
+ * - `byEvent` / `byYear`:按**有该事件类型 / 年份的记录数**(distinct record_id),
+ *   等于 `listRecords({ eventType })` / `listRecords({ year })` 的 total —— 不再是事件条数。
+ */
+export function getStats(db: Db, filter: StatsFilter = {}): Stats {
+  const conds: SQL[] = []
+  if (filter.title) conds.push(eq(schema.record.titleCode, filter.title))
+  if (filter.source) conds.push(eq(schema.record.source, filter.source as 'jxj' | 'miit'))
+  if (filter.district) conds.push(eq(schema.record.district, filter.district))
+  const where = conds.length ? and(...conds) : undefined
+
+  const totalRecords = db.select({ n: count() }).from(schema.record).where(where).get()?.n ?? 0
+
+  const totalEnterprises =
+    db
+      .select({ n: sql<number>`count(distinct ${schema.record.enterpriseId})` })
+      .from(schema.record)
+      .where(where)
+      .get()?.n ?? 0
+
+  /** 记录维度:按 record 的某列分组计数(称号 / 来源 / 区县)。 */
+  const byRecordColumn = (column: AnySQLiteColumn) => {
     const rows = db
       .select({ key: column, n: count() })
       .from(schema.record)
       .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+      .where(where)
       .groupBy(column)
       .all() as { key: unknown; n: number }[]
     return rows.map((r) => ({ key: String(r.key ?? '—'), n: r.n }))
   }
 
-  const totalRecords = db.select({ n: count() }).from(schema.record).get()?.n ?? 0
-  const totalEnterprises = db.select({ n: count() }).from(schema.enterprise).get()?.n ?? 0
+  /** 记录维度:按某个事件列分组,数**有该事件的记录数**(distinct record_id)。 */
+  const byEventColumn = (column: AnySQLiteColumn) => {
+    const rows = db
+      .select({ key: column, n: sql<number>`count(distinct ${schema.recordEvent.recordId})` })
+      .from(schema.recordEvent)
+      .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
+      .where(where)
+      .groupBy(column)
+      .all() as { key: unknown; n: number }[]
+    return rows.map((r) => ({ key: String(r.key ?? '—'), n: r.n }))
+  }
 
-  const byYear = db
-    .select({ key: schema.recordEvent.year, n: count() })
-    .from(schema.recordEvent)
-    .groupBy(schema.recordEvent.year)
-    .all()
-    .map((r) => ({ key: String(r.key ?? '—'), n: r.n }))
-    .sort((a, b) => a.key.localeCompare(b.key))
+  const byYear = byEventColumn(schema.recordEvent.year).sort((a, b) => a.key.localeCompare(b.key))
 
   return {
     totalRecords,
     totalEnterprises,
-    byTitle: scalars(schema.record.titleCode),
-    bySource: scalars(schema.record.source),
-    byEvent: db
-      .select({ key: schema.recordEvent.eventType, n: count() })
-      .from(schema.recordEvent)
-      .groupBy(schema.recordEvent.eventType)
-      .all()
-      .map((r) => ({ key: r.key, n: r.n })),
-    byDistrict: orderBy(scalars(schema.record.district), [(r) => r.n], ['desc']).slice(0, 20),
+    byTitle: byRecordColumn(schema.record.titleCode),
+    bySource: byRecordColumn(schema.record.source),
+    byEvent: byEventColumn(schema.recordEvent.eventType),
+    byDistrict: orderBy(byRecordColumn(schema.record.district), [(r) => r.n], ['desc']).slice(0, 20),
     byYear,
   }
 }
@@ -335,7 +402,13 @@ export interface QualityGroup {
   samples: { enterpriseId: number; name: string; uscc: string | null; district: string | null }[]
 }
 
-/** 可由公布文件/工信部名单直接推出的质量项。非宁波、注销等需外部富化数据,不在本期。 */
+/**
+ * 可由公布文件/工信部名单直接推出的质量项。
+ * - `uscc_missing`:无统代(按名称归并)。
+ * - `name_ambiguous`:重名 —— 同名(归一化后)对应多个企业,或同名下出现多个不同统代。
+ *
+ * 非宁波、注销等需外部富化数据,不在本期(见 SPEC 用户故事 11 与 ADR)。
+ */
 export function getQuality(db: Db): QualityGroup[] {
   const usccMissing = db
     .select({ enterpriseId: schema.enterprise.id, name: schema.enterprise.name, uscc: schema.enterprise.usccNorm, district: schema.enterprise.district })
@@ -343,11 +416,18 @@ export function getQuality(db: Db): QualityGroup[] {
     .where(isNull(schema.enterprise.usccNorm))
     .all()
 
-  const dupList = db
-    .select({ recordId: schema.recordEvent.recordId, n: count() })
-    .from(schema.recordEvent)
-    .groupBy(schema.recordEvent.recordId, schema.recordEvent.eventType, schema.recordEvent.year, schema.recordEvent.batchSeq)
-    .having(sql`count(*) > 1`)
+  // 重名:同名(归一化后)对应多个企业,或同名下出现多个不同统代。
+  const dupNames = db
+    .select({ nameNorm: schema.enterprise.nameNorm })
+    .from(schema.enterprise)
+    .groupBy(schema.enterprise.nameNorm)
+    .having(sql`count(*) > 1 or count(distinct ${schema.enterprise.usccNorm}) > 1`)
+
+  const ambiguous = db
+    .select({ enterpriseId: schema.enterprise.id, name: schema.enterprise.name, uscc: schema.enterprise.usccNorm, district: schema.enterprise.district })
+    .from(schema.enterprise)
+    .where(inArray(schema.enterprise.nameNorm, dupNames))
+    .orderBy(schema.enterprise.nameNorm)
     .all()
 
   return [
@@ -358,10 +438,10 @@ export function getQuality(db: Db): QualityGroup[] {
       samples: usccMissing.slice(0, 50),
     },
     {
-      kind: 'duplicate_event',
-      label: '同一记录下重复事件',
-      n: dupList.length,
-      samples: [],
+      kind: 'name_ambiguous',
+      label: '重名(同名对应多个主体)',
+      n: ambiguous.length,
+      samples: ambiguous.slice(0, 50),
     },
   ]
 }
@@ -377,9 +457,23 @@ export interface ExportRow {
   titleCode: string
   source: string
   events: string
+  /** 出处:该记录各事件的「文件 / 附件 / 序号」汇总为一行文本。 */
+  evidence: string
 }
 
-/** 取全部匹配记录(用于导出),事件压成一行文本。 */
+/** 单条证据渲染为 `文件 / 附件 / 序号N`。 */
+function formatEvidence(v: {
+  sourceFile: string
+  attachment: string | null
+  listNo: number | null
+}): string {
+  const parts = [v.sourceFile]
+  if (v.attachment) parts.push(v.attachment)
+  if (v.listNo != null) parts.push(`序号${v.listNo}`)
+  return parts.join(' / ')
+}
+
+/** 取全部匹配记录(用于导出),事件与出处各压成一行文本。 */
 export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
   const where = buildWhere(db, params)
   const base = db
@@ -401,6 +495,7 @@ export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
   const events = ids.length
     ? db
         .select({
+          id: schema.recordEvent.id,
           recordId: schema.recordEvent.recordId,
           type: schema.recordEvent.eventType,
           year: schema.recordEvent.year,
@@ -413,15 +508,29 @@ export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
     : []
   const byRecord = groupBy(events, (e) => e.recordId)
 
-  const LABEL: Record<string, string> = { award: '认定', review: '复核', maintain: '维护', nurture: '入库培育' }
-  return base.map((r) => ({
-    name: r.name,
-    uscc: r.uscc,
-    district: r.district,
-    titleCode: r.titleCode,
-    source: r.source,
-    events: (byRecord[r.recordId] ?? [])
-      .map((e) => `${LABEL[e.type] ?? e.type} ${e.year ?? ''}${e.seq ? '-' + e.seq : ''}`.trim())
-      .join('; '),
-  }))
+  const eventIds = events.map((e) => e.id)
+  const evidence = eventIds.length
+    ? db
+        .select()
+        .from(schema.recordEvidence)
+        .where(sql`${schema.recordEvidence.recordEventId} in ${eventIds}`)
+        .all()
+    : []
+  const evByEvent = groupBy(evidence, (v) => v.recordEventId)
+
+  return base.map((r) => {
+    const recEvents = byRecord[r.recordId] ?? []
+    const recEvidence = recEvents.flatMap((e) => evByEvent[e.id] ?? []).map(formatEvidence)
+    return {
+      name: r.name,
+      uscc: r.uscc,
+      district: r.district,
+      titleCode: r.titleCode,
+      source: r.source,
+      events: recEvents
+        .map((e) => `${EVENTS[e.type] ?? e.type} ${e.year ?? ''}${e.seq ? '-' + e.seq : ''}`.trim())
+        .join('; '),
+      evidence: recEvidence.join('; '),
+    }
+  })
 }

@@ -5,13 +5,13 @@
  * `--root` 可给**绝对路径**(跨 worktree / 任意位置);未给时回退 `SOURCE_ROOT`
  * 环境变量,再回退 `../`(仓库根之上一年一份数据目录的约定)。
  */
-import { resolve, join } from 'node:path'
+import { resolve, join, relative } from 'node:path'
 import { useDb, dbPath } from '../db'
 import { readAnnouncementBlocks } from '../lib/docx'
 import { parseAnnouncement } from '../lib/announcement'
 import { parseMiitFile, MIIT_FILES } from '../lib/miit'
 import { importEntries, newImportContext, openImportBatch } from '../lib/import'
-import { JXJ_SOURCES, discoverAnnouncements, relPath } from '../lib/sources'
+import { JXJ_SOURCES, discoverAnnouncements } from '../lib/sources'
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`)
@@ -38,7 +38,7 @@ for (const src of JXJ_SOURCES) {
   let n = 0
   for (const file of files) {
     const blocks = await readAnnouncementBlocks(file)
-    const entries = parseAnnouncement(blocks, { title: src.titleCode, sourceFile: relPath(root, file) })
+    const entries = parseAnnouncement(blocks, { title: src.titleCode, sourceFile: relative(root, file) })
     const stats = importEntries(db, ctx, src.titleCode, entries)
     n += stats.entries
   }

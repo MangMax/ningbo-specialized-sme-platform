@@ -1,12 +1,8 @@
 import ExcelJS from 'exceljs'
 import { useDb } from '@db'
 import { allRecords, type EventType } from '~~/lib/query'
+import { TITLES, SOURCES } from '~~/lib/labels'
 
-const TITLES: Record<string, string> = {
-  little_giant: '专精特新“小巨人”',
-  specialized_sme: '专精特新中小企业',
-  innovative_sme: '创新型中小企业',
-}
 const EVENT_TYPES: EventType[] = ['award', 'review', 'maintain', 'nurture']
 
 export default defineEventHandler(async (event) => {
@@ -24,6 +20,7 @@ export default defineEventHandler(async (event) => {
     eventType: eventType && EVENT_TYPES.includes(eventType as EventType) ? (eventType as EventType) : undefined,
     year: posInt(q.year),
     q: str(q.q),
+    flags: str(q.flags),
     // 导入快照:与记录列表(/api/records)一致,保证“导出当前结果”不跨快照。
     batchId: posInt(q.batch),
   })
@@ -37,6 +34,7 @@ export default defineEventHandler(async (event) => {
     { header: '称号', key: 'title', width: 18 },
     { header: '来源', key: 'source', width: 10 },
     { header: '事件', key: 'events', width: 28 },
+    { header: '出处', key: 'evidence', width: 44 },
   ]
   for (const r of rows) {
     ws.addRow({
@@ -44,8 +42,9 @@ export default defineEventHandler(async (event) => {
       uscc: r.uscc ?? '',
       district: r.district ?? '',
       title: TITLES[r.titleCode] ?? r.titleCode,
-      source: r.source === 'jxj' ? '经信局' : '工信部',
+      source: SOURCES[r.source] ?? r.source,
       events: r.events,
+      evidence: r.evidence,
     })
   }
 

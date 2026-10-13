@@ -2,6 +2,7 @@
 import { useQuery } from '@pinia/colada'
 import { computed, ref } from 'vue'
 import { watchDebounced } from '@vueuse/core'
+import { TITLES, TITLE_ORDER, SOURCES, SOURCE_ORDER, EVENTS, EVENT_ORDER } from '~~/lib/labels'
 
 interface Rec {
   recordId: number
@@ -14,18 +15,6 @@ interface Rec {
   events: { type: string; year: number | null; seq: number | null }[]
 }
 
-const TITLES: Record<string, string> = {
-  little_giant: '小巨人',
-  specialized_sme: '专精特新中小企业',
-  innovative_sme: '创新型中小企业',
-}
-const EVENTS: Record<string, string> = {
-  award: '认定',
-  review: '复核',
-  maintain: '维护',
-  nurture: '入库培育',
-}
-
 const apiGet = $fetch as unknown as <T>(url: string, opts?: { query?: Record<string, unknown> }) => Promise<T>
 
 interface Bucket {
@@ -36,9 +25,6 @@ interface Stats {
   byEvent: Bucket[]
   byYear: Bucket[]
 }
-
-/** 事件类型选项顺序,与 stats/index 展示一致。 */
-const EVENT_ORDER = ['award', 'review', 'maintain', 'nurture']
 
 const route = useRoute()
 const queryStr = (v: unknown) => (typeof v === 'string' ? v : '')
@@ -167,9 +153,7 @@ function fmt(e: Rec['events'][number]) {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">全部称号</SelectItem>
-          <SelectItem value="little_giant">小巨人</SelectItem>
-          <SelectItem value="specialized_sme">专精特新中小企业</SelectItem>
-          <SelectItem value="innovative_sme">创新型中小企业</SelectItem>
+          <SelectItem v-for="k in TITLE_ORDER" :key="k" :value="k">{{ TITLES[k] }}</SelectItem>
         </SelectContent>
       </Select>
 
@@ -179,8 +163,7 @@ function fmt(e: Rec['events'][number]) {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">全部来源</SelectItem>
-          <SelectItem value="jxj">经信局</SelectItem>
-          <SelectItem value="miit">工信部</SelectItem>
+          <SelectItem v-for="k in SOURCE_ORDER" :key="k" :value="k">{{ SOURCES[k] }}</SelectItem>
         </SelectContent>
       </Select>
 
@@ -249,7 +232,7 @@ function fmt(e: Rec['events'][number]) {
               <TableCell>{{ TITLES[r.titleCode] ?? r.titleCode }}</TableCell>
               <TableCell>
                 <Badge :variant="r.source === 'jxj' ? 'secondary' : 'outline'">
-                  {{ r.source === 'jxj' ? '经信局' : '工信部' }}
+                  {{ SOURCES[r.source] ?? r.source }}
                 </Badge>
               </TableCell>
               <TableCell class="space-x-1">

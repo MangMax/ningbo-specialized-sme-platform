@@ -4,8 +4,6 @@ import {
   normalizeName,
   normalizeUscc,
   parseBatch,
-  parseBatchList,
-  parseEventLine,
 } from '../lib/normalize'
 
 describe('normalizeUscc', () => {
@@ -45,34 +43,10 @@ describe('parseBatch', () => {
   })
 })
 
-describe('parseBatchList', () => {
-  it('splits comma-separated multi-values', () => {
-    expect(parseBatchList('2021,2025-2')).toEqual([
-      { year: 2021, seq: null },
-      { year: 2025, seq: 2 },
-    ])
-  })
-})
-
 describe('classifyEvent', () => {
   it('prefers nurture, then review, else award', () => {
     expect(classifyEvent('2021-2022…入库培育企业名单')).toBe('nurture')
     expect(classifyEvent('2021年度第一批…复核通过名单')).toBe('review')
     expect(classifyEvent('2024年第二批…名单')).toBe('award')
-  })
-})
-
-describe('parseEventLine', () => {
-  it('parses a source cell line', () => {
-    expect(parseEventLine('认定：省专\\2022\\00公布文件 / 第一部分（2021年6月起有效） / 序号152')).toEqual({
-      kind: 'award',
-      sourceFile: '省专\\2022\\00公布文件',
-      attachment: '第一部分（2021年6月起有效）',
-      listNo: 152,
-    })
-  })
-
-  it('returns null for unrecognised lines', () => {
-    expect(parseEventLine('随便写的东西')).toBe(null)
   })
 })

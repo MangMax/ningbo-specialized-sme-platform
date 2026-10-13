@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed } from 'vue'
+import {
+  TITLES,
+  TITLE_ORDER,
+  SOURCES,
+  SOURCE_ORDER,
+  EVENTS,
+  QUALITY_FLAGS,
+} from '~~/lib/labels'
 
 interface Evidence {
   sourceFile: string
@@ -28,27 +36,6 @@ interface EnterpriseDetail {
   records: DetailRecord[]
 }
 
-const TITLES: Record<string, string> = {
-  little_giant: '专精特新“小巨人”',
-  specialized_sme: '专精特新中小企业',
-  innovative_sme: '创新型中小企业',
-}
-const TITLE_ORDER = ['little_giant', 'specialized_sme', 'innovative_sme']
-const SOURCES: Record<string, string> = { jxj: '经信局', miit: '工信部' }
-const SOURCE_ORDER = ['jxj', 'miit']
-const EVENTS: Record<string, string> = {
-  award: '认定',
-  review: '复核',
-  maintain: '维护',
-  nurture: '入库培育',
-}
-const FLAGS: Record<string, string> = {
-  uscc_missing: '无统一社会信用代码',
-  name_ambiguous: '重名待核',
-  non_ningbo: '非宁波',
-  deregistered: '已注销 / 吊销',
-  attachment_unparsed: '附件未解析',
-}
 const EVENT_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
   award: 'secondary',
   review: 'outline',
@@ -119,7 +106,7 @@ function fmtTime(ev: DetailEvent) {
   return ev.seq ? `${ev.year}-${ev.seq}` : String(ev.year)
 }
 function flagLabel(f: string) {
-  return FLAGS[f] ?? f
+  return QUALITY_FLAGS[f] ?? f
 }
 function goBack() {
   if (typeof window !== 'undefined' && window.history.length > 1) router.back()
