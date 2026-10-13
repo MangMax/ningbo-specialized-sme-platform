@@ -31,8 +31,17 @@ export default defineNuxtConfig({
     '@db': fileURLToPath(new URL('./db', import.meta.url)),
   },
 
+  // 忽略代理 worktree 与本地库目录:它们各自的 node_modules 若被 dev 文件监听扫进来
+  // 会耗尽文件描述符(EMFILE: too many open files)。
+  ignore: ['**/.claude/**', '**/data/**'],
+
   vite: {
     plugins: [tailwindcss()],
+    server: {
+      watch: {
+        ignored: ['**/.claude/**', '**/data/**'],
+      },
+    },
   },
 
   // DB 路径由 db/client.ts 解析(默认 <cwd>/data/roster.db,可用 NUXT_DB_PATH 覆盖)。
