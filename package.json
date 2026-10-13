@@ -22,6 +22,7 @@
     "check:jxj": "tsx scripts/check-jxj.ts"
   },
   "dependencies": {
+    "@lucide/vue": "^1.55.0",
     "@pinia/colada": "^1.4.8",
     "@pinia/colada-nuxt": "^1.2.0",
     "@pinia/nuxt": "^1.0.2",

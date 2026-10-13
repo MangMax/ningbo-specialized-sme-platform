@@ -6,10 +6,10 @@ import {
   type EventKind,
 } from './normalize'
 
-/** 公布文件解析出的单条记录(未落库)。 */
+/** 解析出的单条记录(未落库)。 */
 export interface ParsedEntry {
   title: string
-  source: 'jxj'
+  source: 'jxj' | 'miit'
   eventType: EventKind
   year: number | null
   seq: number | null
@@ -18,7 +18,7 @@ export interface ParsedEntry {
   uscc: string | null
   sourceFile: string
   attachment: string | null
-  listNo: number
+  listNo: number | null
 }
 
 const ATTACHMENT_RE = /^附\s*件/

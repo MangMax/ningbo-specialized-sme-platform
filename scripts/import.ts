@@ -2,10 +2,11 @@
  * 导入 CLI:解析经信局公布文件并写入 SQLite。
  * 用法:`pnpm tsx scripts/import.ts [--root ../] [--label 20261013] [--title specialized_sme]`
  */
-import { resolve } from 'node:path'
+import { resolve, join } from 'node:path'
 import { useDb, schema, dbPath } from '../db'
 import { readAnnouncementBlocks } from '../lib/docx'
 import { parseAnnouncement } from '../lib/announcement'
+import { parseMiitFile, MIIT_FILES } from '../lib/miit'
 import { importEntries, newImportContext } from '../lib/import'
 import { JXJ_SOURCES, discoverAnnouncements, relPath } from '../lib/sources'
 
@@ -40,6 +41,13 @@ for (const src of JXJ_SOURCES) {
     n += stats.entries
   }
   grand += n
-  console.log(`  ${src.titleCode.padEnd(16)} ${String(n).padStart(6)} 条`)
+  console.log(`  ${src.titleCode.padEnd(16)} ${String(n).padStart(6)} 条  (经信局)`)
+}
+
+for (const src of MIIT_FILES) {
+  const entries = await parseMiitFile(join(root, src.file), src)
+  const stats = importEntries(db, ctx, src.titleCode, entries)
+  grand += stats.entries
+  console.log(`  ${src.titleCode.padEnd(16)} ${String(stats.entries).padStart(6)} 条  (工信部)`)
 }
 console.log(`完成:导入 ${grand} 条记录`)

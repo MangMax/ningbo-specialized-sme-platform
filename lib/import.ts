@@ -15,49 +15,80 @@ export interface ImportStats {
 
 export interface ImportContext {
   batchId: number
-  /** in-memory cache: merge key -> enterprise id */
-  enterpriseCache: Map<string, number>
+  /** 身份索引:归一化统代 → 企业 id */
+  usccIndex: Map<string, number>
+  /** 身份索引:归一化名称 → 企业 id */
+  nameIndex: Map<string, number>
 }
 
 export function newImportContext(batchId: number): ImportContext {
-  return { batchId, enterpriseCache: new Map() }
+  return { batchId, usccIndex: new Map(), nameIndex: new Map() }
 }
 
-function mergeKey(uscc: string | null, name: string): string {
-  return uscc ? `uscc:${uscc}` : `name:${normalizeName(name)}`
-}
-
-/** 按身份键归并企业:优先统代,缺失时按归一化名称。命中缓存则复用。 */
+/**
+ * 归并企业:优先统代,缺失时按归一化名称。
+ *
+ * 关键:经信局公布文件多无统代(先按名称建企业),而工信部名单全带统代。
+ * 当后续记录带来统代时,须与先前的“按名称”企业**合并**为同一主体,否则同一企业会重复。
+ * 见 ADR-2026-10-13-uscc-as-identity。
+ */
 function resolveEnterprise(db: Db, ctx: ImportContext, uscc: string | null, name: string): number {
-  const key = mergeKey(uscc, name)
-  const cached = ctx.enterpriseCache.get(key)
-  if (cached !== undefined) return cached
+  const nnorm = normalizeName(name)
 
-  const existing = db
-    .select({ id: schema.enterprise.id })
-    .from(schema.enterprise)
-    .where(uscc ? eq(schema.enterprise.usccNorm, uscc) : eq(schema.enterprise.nameNorm, normalizeName(name)))
-    .get()
-
-  const id =
-    existing?.id ??
-    db
+  if (uscc) {
+    const knownUscc = ctx.usccIndex.get(uscc) ?? db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.usccNorm, uscc)).get()?.id
+    if (knownUscc !== undefined) {
+      ctx.nameIndex.set(nnorm, knownUscc)
+      return knownUscc
+    }
+    // 尚无此统代:若已有同名且无统代的企业,提升它(合并),而非新建。
+    const byName = db
+      .select({ id: schema.enterprise.id, usccNorm: schema.enterprise.usccNorm })
+      .from(schema.enterprise)
+      .where(and(eq(schema.enterprise.nameNorm, nnorm), isNull(schema.enterprise.usccNorm)))
+      .get()
+    if (byName) {
+      db.update(schema.enterprise)
+        .set({ usccNorm: uscc, qualityFlags: [] })
+        .where(eq(schema.enterprise.id, byName.id))
+        .run()
+      ctx.usccIndex.set(uscc, byName.id)
+      ctx.nameIndex.set(nnorm, byName.id)
+      return byName.id
+    }
+    const created = db
       .insert(schema.enterprise)
-      .values({
-        usccNorm: uscc,
-        name,
-        nameNorm: normalizeName(name),
-        qualityFlags: uscc ? [] : ['uscc_missing'],
-      })
+      .values({ usccNorm: uscc, name, nameNorm: nnorm })
       .returning({ id: schema.enterprise.id })
       .get().id
+    ctx.usccIndex.set(uscc, created)
+    ctx.nameIndex.set(nnorm, created)
+    return created
+  }
 
-  ctx.enterpriseCache.set(key, id)
-  return id
+  const byNameId = db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.nameNorm, nnorm)).get()?.id
+  if (byNameId !== undefined) {
+    ctx.nameIndex.set(nnorm, byNameId)
+    return byNameId
+  }
+  const created = db
+    .insert(schema.enterprise)
+    .values({ usccNorm: null, name, nameNorm: nnorm, qualityFlags: ['uscc_missing'] })
+    .returning({ id: schema.enterprise.id })
+    .get().id
+  ctx.nameIndex.set(nnorm, created)
+  return created
 }
 
 /** 记录 = (企业, 称号, 来源);已存在则复用其 id。 */
-function resolveRecord(db: Db, ctx: ImportContext, enterpriseId: number, titleCode: string, district: string | null): number {
+function resolveRecord(
+  db: Db,
+  ctx: ImportContext,
+  enterpriseId: number,
+  titleCode: string,
+  source: 'jxj' | 'miit',
+  district: string | null,
+): number {
   const existing = db
     .select({ id: schema.record.id })
     .from(schema.record)
@@ -65,19 +96,19 @@ function resolveRecord(db: Db, ctx: ImportContext, enterpriseId: number, titleCo
       and(
         eq(schema.record.enterpriseId, enterpriseId),
         eq(schema.record.titleCode, titleCode),
-        eq(schema.record.source, 'jxj'),
+        eq(schema.record.source, source),
       ),
     )
     .get()
   if (existing) return existing.id
   return db
     .insert(schema.record)
-    .values({ importBatchId: ctx.batchId, enterpriseId, titleCode, source: 'jxj', district })
+    .values({ importBatchId: ctx.batchId, enterpriseId, titleCode, source, district })
     .returning({ id: schema.record.id })
     .get().id
 }
 
-/** 幂等写入一批已解析的公布文件记录。 */
+/** 幂等写入一批已解析的记录。 */
 export function importEntries(db: Db, ctx: ImportContext, titleCode: string, entries: ParsedEntry[]): ImportStats {
   const stats: ImportStats = { entries: entries.length, enterprises: 0, records: 0, events: 0 }
   const seenEnterprise = new Set<number>()
@@ -90,7 +121,7 @@ export function importEntries(db: Db, ctx: ImportContext, titleCode: string, ent
       stats.enterprises++
     }
 
-    const recordId = resolveRecord(db, ctx, enterpriseId, titleCode, e.district || null)
+    const recordId = resolveRecord(db, ctx, enterpriseId, titleCode, e.source, e.district || null)
     if (!seenRecord.has(recordId)) {
       seenRecord.add(recordId)
       stats.records++
