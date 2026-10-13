@@ -396,6 +396,15 @@ export interface StatsFilter {
  * - `byEvent` / `byYear`:按**有该事件类型 / 年份的记录数**(distinct record_id),
  *   等于 `listRecords({ eventType })` / `listRecords({ year })` 的 total —— 不再是事件条数。
  */
+/**
+ * 计数聚合。
+ *
+ * **全部计数以「企业 × 称号」组合为单位**,与 `listRecords`(及台账表格、导出)同粒度,
+ * 从而保证「统计桶的数字 = 点进去的行数」。
+ * - `byTitle` / `bySource` / `byDistrict`:按列分组,数**含该取值的组合数**;一个组合含
+ *   两个来源时,在两个来源桶里各计一次(与 `listRecords({ source })` 一致)。
+ * - `byEvent` / `byYear`:数**有该事件类型 / 年份的组合数**。
+ */
 export function getStats(db: Db, filter: StatsFilter = {}): Stats {
   const conds: SQL[] = []
   if (filter.title) conds.push(eq(schema.record.titleCode, filter.title))
@@ -403,7 +412,42 @@ export function getStats(db: Db, filter: StatsFilter = {}): Stats {
   if (filter.district) conds.push(eq(schema.record.district, filter.district))
   const where = conds.length ? and(...conds) : undefined
 
-  const totalRecords = db.select({ n: count() }).from(schema.record).where(where).get()?.n ?? 0
+  /** 组合键:企业 × 称号。 */
+  const groupKey = sql`${schema.record.enterpriseId} || '/' || ${schema.record.titleCode}`
+
+  /** 组合数(去重企业×称号)。 */
+  const countGroups = (): number =>
+    db
+      .select({ n: sql<number>`count(distinct ${groupKey})` })
+      .from(schema.record)
+      .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+      .where(where)
+      .get()?.n ?? 0
+
+  /** 按 record 的某列分组,数组合数(称号 / 来源 / 区县)。 */
+  const groupsByRecordColumn = (column: AnySQLiteColumn) =>
+    (
+      db
+        .select({ key: column, n: sql<number>`count(distinct ${groupKey})` })
+        .from(schema.record)
+        .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+        .where(where)
+        .groupBy(column)
+        .all() as { key: unknown; n: number }[]
+    ).map((r) => ({ key: String(r.key ?? '—'), n: r.n }))
+
+  /** 按某个事件列分组,数**含该事件 / 年份的组合数**。 */
+  const groupsByEventColumn = (column: AnySQLiteColumn) =>
+    (
+      db
+        .select({ key: column, n: sql<number>`count(distinct ${groupKey})` })
+        .from(schema.recordEvent)
+        .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
+        .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+        .where(where)
+        .groupBy(column)
+        .all() as { key: unknown; n: number }[]
+    ).map((r) => ({ key: String(r.key ?? '—'), n: r.n }))
 
   const totalEnterprises =
     db
@@ -412,40 +456,14 @@ export function getStats(db: Db, filter: StatsFilter = {}): Stats {
       .where(where)
       .get()?.n ?? 0
 
-  /** 记录维度:按 record 的某列分组计数(称号 / 来源 / 区县)。 */
-  const byRecordColumn = (column: AnySQLiteColumn) => {
-    const rows = db
-      .select({ key: column, n: count() })
-      .from(schema.record)
-      .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
-      .where(where)
-      .groupBy(column)
-      .all() as { key: unknown; n: number }[]
-    return rows.map((r) => ({ key: String(r.key ?? '—'), n: r.n }))
-  }
-
-  /** 记录维度:按某个事件列分组,数**有该事件的记录数**(distinct record_id)。 */
-  const byEventColumn = (column: AnySQLiteColumn) => {
-    const rows = db
-      .select({ key: column, n: sql<number>`count(distinct ${schema.recordEvent.recordId})` })
-      .from(schema.recordEvent)
-      .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
-      .where(where)
-      .groupBy(column)
-      .all() as { key: unknown; n: number }[]
-    return rows.map((r) => ({ key: String(r.key ?? '—'), n: r.n }))
-  }
-
-  const byYear = byEventColumn(schema.recordEvent.year).sort((a, b) => a.key.localeCompare(b.key))
-
   return {
-    totalRecords,
+    totalRecords: countGroups(),
     totalEnterprises,
-    byTitle: byRecordColumn(schema.record.titleCode),
-    bySource: byRecordColumn(schema.record.source),
-    byEvent: byEventColumn(schema.recordEvent.eventType),
-    byDistrict: orderBy(byRecordColumn(schema.record.district), [(r) => r.n], ['desc']).slice(0, 20),
-    byYear,
+    byTitle: groupsByRecordColumn(schema.record.titleCode),
+    bySource: groupsByRecordColumn(schema.record.source),
+    byEvent: groupsByEventColumn(schema.recordEvent.eventType),
+    byDistrict: orderBy(groupsByRecordColumn(schema.record.district), [(r) => r.n], ['desc']).slice(0, 20),
+    byYear: groupsByEventColumn(schema.recordEvent.year).sort((a, b) => a.key.localeCompare(b.key)),
   }
 }
 

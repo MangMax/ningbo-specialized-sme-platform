@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { and, count, eq, sql, type SQL } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { allRecords, getQuality, getStats, listRecords } from '../lib/query'
+import { allRecords, getQuality, getStats, listRecords, type EventType } from '../lib/query'
 
 let dir: string
 let db: (typeof import('../db'))['useDb']
@@ -74,25 +74,33 @@ beforeAll(async () => {
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-/** 记录级计数(用于校验 getStats —— 统计仍以「记录」为单位)。 */
-function recCount(where?: SQL): number {
-  return db()
-    .select({ n: count() })
-    .from(schema.record)
-    .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
-    .where(where)
-    .get()?.n ?? 0
+/** 「企业 × 称号」组合计数(用于校验 getStats —— 统计以组合为单位,与列表/导出一致)。 */
+function groupCount(where?: SQL): number {
+  return (
+    db()
+      .select({ n: sql<number>`count(distinct ${schema.record.enterpriseId} || '/' || ${schema.record.titleCode})` })
+      .from(schema.record)
+      .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+      .where(where)
+      .get()?.n ?? 0
+  )
 }
-const distinctRecordsWithEventType = (type: string) =>
+/** 含某事件的组合数。 */
+const groupsWithEventType = (type: string) =>
   db()
-    .select({ n: sql<number>`count(distinct ${schema.recordEvent.recordId})` })
+    .select({ n: sql<number>`count(distinct ${schema.record.enterpriseId} || '/' || ${schema.record.titleCode})` })
     .from(schema.recordEvent)
+    .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
+    .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
     .where(eq(schema.recordEvent.eventType, type as 'award' | 'review' | 'maintain' | 'nurture'))
     .get()?.n ?? 0
-const distinctRecordsWithYear = (year: number) =>
+/** 含某年份事件的组合数。 */
+const groupsWithYear = (year: number) =>
   db()
-    .select({ n: sql<number>`count(distinct ${schema.recordEvent.recordId})` })
+    .select({ n: sql<number>`count(distinct ${schema.record.enterpriseId} || '/' || ${schema.record.titleCode})` })
     .from(schema.recordEvent)
+    .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
+    .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
     .where(eq(schema.recordEvent.year, year))
     .get()?.n ?? 0
 
@@ -197,31 +205,35 @@ describe('listRecords multi-value filters (命中任一即匹配)', () => {
   })
 })
 
-describe('getStats counts records (record grain, unchanged)', () => {
-  it('totalRecords / buckets equal raw record counts', () => {
+describe('getStats counts groups (企业 × 称号 grain)', () => {
+  it('totalRecords / buckets equal group counts, and every bucket equals the drill-down total', () => {
     const d = db()
     const stats = getStats(d)
-    expect(stats.totalRecords).toBe(recCount())
-    expect(stats.totalRecords).toBe(4)
+    expect(stats.totalRecords).toBe(groupCount())
+    expect(stats.totalRecords).toBe(3)
     expect(stats.totalEnterprises).toBe(3)
     for (const b of stats.byTitle) {
-      expect(recCount(eq(schema.record.titleCode, b.key)), `title=${b.key}`).toBe(b.n)
+      expect(groupCount(eq(schema.record.titleCode, b.key)), `title=${b.key}`).toBe(b.n)
+      expect(listRecords(d, { title: [b.key] }).total, `drill title=${b.key}`).toBe(b.n)
     }
     for (const b of stats.bySource) {
-      expect(recCount(eq(schema.record.source, b.key as 'jxj' | 'miit')), `source=${b.key}`).toBe(b.n)
+      expect(groupCount(eq(schema.record.source, b.key as 'jxj' | 'miit')), `source=${b.key}`).toBe(b.n)
+      expect(listRecords(d, { source: [b.key] }).total, `drill source=${b.key}`).toBe(b.n)
     }
     for (const b of stats.byEvent) {
-      expect(distinctRecordsWithEventType(b.key), `event=${b.key}`).toBe(b.n)
+      expect(groupsWithEventType(b.key), `event=${b.key}`).toBe(b.n)
+      expect(listRecords(d, { eventType: [b.key as EventType] }).total, `drill event=${b.key}`).toBe(b.n)
     }
     for (const b of stats.byYear) {
       if (!/^\d{4}$/.test(b.key)) continue
-      expect(distinctRecordsWithYear(Number(b.key)), `year=${b.key}`).toBe(b.n)
+      expect(groupsWithYear(Number(b.key)), `year=${b.key}`).toBe(b.n)
+      expect(listRecords(d, { year: [Number(b.key)] }).total, `drill year=${b.key}`).toBe(b.n)
     }
   })
 
   it('respects title / source filters in every bucket', () => {
     const stats = getStats(db(), { title: 'specialized_sme', source: 'jxj' })
-    const expected = recCount(
+    const expected = groupCount(
       and(eq(schema.record.titleCode, 'specialized_sme'), eq(schema.record.source, 'jxj')),
     )
     expect(stats.totalRecords).toBe(expected)
