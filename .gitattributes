@@ -1,0 +1,6 @@
+# 来源文件库(app/files)内的文件均为二进制,禁用文本转换与 diff,避免噪音。
+files/**/*.pdf -text -diff
+files/**/*.doc -text -diff
+files/**/*.docx -text -diff
+files/**/*.xlsx -text -diff
+files/**/*.xls -text -diff
