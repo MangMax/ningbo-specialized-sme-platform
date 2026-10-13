@@ -1,0 +1,113 @@
+/**
+ * 预览要处理的文件类型。
+ *
+ * 与台账「出处」里出现的文件一致:经信局公布文件是 docx/doc/pdf,
+ * 工信部名单是三份导出 Excel,项目自带的汇报材料有 pptx。
+ */
+export type PreviewKind = 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'image'
+
+export interface PreviewKindInfo {
+  kind: PreviewKind
+  /** 面向使用者的类型名,用于工具栏与错误提示。 */
+  label: string
+}
+
+/** 扩展名 → 类型。键一律小写,不含点。 */
+const BY_EXTENSION: Record<string, PreviewKindInfo> = {
+  docx: { kind: 'docx', label: 'Word 文档' },
+  xlsx: { kind: 'xlsx', label: 'Excel 工作簿' },
+  xlsm: { kind: 'xlsx', label: 'Excel 工作簿' },
+  pptx: { kind: 'pptx', label: 'PowerPoint 演示文稿' },
+  pdf: { kind: 'pdf', label: 'PDF 文档' },
+  png: { kind: 'image', label: '图片' },
+  jpg: { kind: 'image', label: '图片' },
+  jpeg: { kind: 'image', label: '图片' },
+  webp: { kind: 'image', label: '图片' },
+  gif: { kind: 'image', label: '图片' },
+  avif: { kind: 'image', label: '图片' },
+  bmp: { kind: 'image', label: '图片' },
+  svg: { kind: 'image', label: '图片' },
+}
+
+/**
+ * 已知但**不能**预览的格式。
+ *
+ * 旧版二进制 Office 文件(`.doc` / `.xls` / `.ppt`)在经信局名单里确实存在
+ * (如「关于公布2023年宁波市“专精特新”中小企业名单的通知.doc」),但 OOXML
+ * 查看器只认 zip 容器格式,读不了这些老格式。单独列出来,是为了给一句
+ * 说得清楚的提示,而不是让它掉进「未知格式」里。
+ */
+const LEGACY: Record<string, PreviewKindInfo> = {
+  doc: { kind: 'docx', label: 'Word 文档(旧版 .doc)' },
+  xls: { kind: 'xlsx', label: 'Excel 工作簿(旧版 .xls)' },
+  ppt: { kind: 'pptx', label: 'PowerPoint 演示文稿(旧版 .ppt)' },
+}
+
+/** 取路径的扩展名(小写,不含点);没有扩展名时返回空串。 */
+export function extensionOf(path: string): string {
+  // 先剥掉 ?query 和 #hash,再取最后一段,避免把参数当扩展名。
+  const clean = path.split(/[?#]/, 1)[0] ?? ''
+  const base = clean.split('/').pop() ?? ''
+  const dot = base.lastIndexOf('.')
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
+}
+
+/** 路径的文件名(去掉目录),用于标题与下载名。 */
+export function fileNameOf(path: string): string {
+  const clean = path.split(/[?#]/, 1)[0] ?? ''
+  return decodeURIComponent(clean.split('/').pop() ?? '') || '未命名文件'
+}
+
+/** 能否预览这个路径。 */
+export function isPreviewable(path: string): boolean {
+  const ext = extensionOf(path)
+  return ext in BY_EXTENSION
+}
+
+/** 是不是已知但不受支持的旧版二进制格式。 */
+export function isLegacyOffice(path: string): boolean {
+  return extensionOf(path) in LEGACY
+}
+
+/**
+ * 解析路径 → 类型信息。无法预览时返回 null。
+ *
+ * 只按扩展名判断,不做内容嗅探:台账里的出处路径都带扩展名,而按内容嗅探
+ * 需要先把文件读进来,反而会在「明明打不开」的文件上多花一次网络往返。
+ */
+export function resolvePreviewKind(path: string): PreviewKindInfo | null {
+  const ext = extensionOf(path)
+  return BY_EXTENSION[ext] ?? null
+}
+
+/**
+ * 给一个打不开的文件挑一句说得清楚的说明。
+ * 旧版格式说明是「格式不支持」,其余按「无法识别」处理。
+ */
+export function describeUnsupported(path: string): string {
+  const ext = extensionOf(path)
+  if (ext in LEGACY) {
+    return `旧版 ${ext.toUpperCase()} 是二进制格式,浏览器端只能预览新版 .${ext}x。请用桌面版 Office 打开。`
+  }
+  return ext ? `暂不支持预览 .${ext} 文件。` : '这个文件没有扩展名,无法判断格式。'
+}
+
+/**
+ * 把底层抛出的错误翻成人话。
+ *
+ * 各预览库的报错原样透传会露出 `Failed to fetch: 404 Not Found` 这种
+ * 英文技术信息 —— 对查台账的人没有意义。这里按状态码给一句能指导下一步的说明;
+ * 认不出来时保留原文,方便排查。
+ */
+export function describeLoadError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (/\b404\b/.test(raw)) return '文件不存在。出处路径可能已变更,或文件已被移走。'
+  if (/\b403\b/.test(raw)) return '没有读取这个文件的权限。'
+  if (/\b415\b/.test(raw)) return '这个格式不在预览范围内。'
+  if (/\b500\b/.test(raw)) return '文件服务出错了,稍后再试。'
+  if (/password|encrypt|加密/i.test(raw)) return '文件已加密,需要密码才能打开。'
+  if (/failed to fetch|networkerror|load failed|econnrefused/i.test(raw)) {
+    return '取不到文件。检查网络连接,或确认文件服务在运行。'
+  }
+  return raw
+}

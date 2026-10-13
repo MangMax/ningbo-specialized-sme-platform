@@ -20,11 +20,15 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@embedpdf/vue-pdf-viewer": "^2.15.1",
     "@lucide/vue": "^1.55.0",
     "@pinia/colada": "^1.4.8",
     "@pinia/colada-nuxt": "^1.2.0",
     "@pinia/nuxt": "^1.0.2",
+    "@silurus/ooxml": "^0.88.0",
     "@tanstack/vue-virtual": "^3.13.41",
+    "@tus/file-store": "^2.1.1",
+    "@tus/server": "^2.4.5",
     "@vueuse/core": "^15.0.0",
     "@vueuse/nuxt": "^15.0.0",
     "better-sqlite3": "^13.0.3",

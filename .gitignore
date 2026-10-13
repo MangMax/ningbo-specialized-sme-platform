@@ -26,3 +26,9 @@ data/
 
 # agent worktrees
 .claude/worktrees/
+
+# design-review evidence (screenshots / fixtures / shots) — 过程产物,不入库
+.scratch/**/shots/
+.scratch/**/evidence/
+.scratch/**/fixtures/
+.scratch/**/preview-harness/
