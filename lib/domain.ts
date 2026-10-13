@@ -24,12 +24,12 @@ export const NINGBO_DISTRICTS = [
 
 /**
  * 独立管理区——公布文件里**独立**作为“属地”使用,不隶属于前述行政区,也**不应并入**它们:
- * - `杭州湾`:宁波杭州湾新区(现名**宁波前湾新区**,2021 揭牌);
  * - `大榭`:大榭开发区;
  * - `保税区`:宁波保税区(海关特殊监管区域)。
- * 它们各有独立管理机构,是合法属地取值;这里只是把它们与前湾新区并列承认。
+ * 注:`杭州湾`(=杭州湾新区)是 `前湾新区` 的旧名,已在 pipeline 归一化为 `前湾新区`,
+ * 因此不在此列(见 GLOSSARY「区县」)。
  */
-export const NINGBO_INDEPENDENT_ZONES = ['杭州湾', '保税区', '大榭'] as const
+export const NINGBO_INDEPENDENT_ZONES = ['保税区', '大榭'] as const
 
 /** 该区县/管理区是否在宁波范围内。用于识别漂移/写法异常。 */
 export function isNingboDistrict(district: string): boolean {
