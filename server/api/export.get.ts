@@ -12,15 +12,20 @@ const EVENT_TYPES: EventType[] = ['award', 'review', 'maintain', 'nurture']
 export default defineEventHandler(async (event) => {
   const q = getQuery(event)
   const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
+  const posInt = (v: unknown) => {
+    const n = Number(v)
+    return Number.isInteger(n) && n > 0 ? n : undefined
+  }
   const eventType = str(q.eventType)
-  const yearNum = Number(q.year)
   const rows = allRecords(useDb(), {
     title: str(q.title),
     source: str(q.source),
     district: str(q.district),
     eventType: eventType && EVENT_TYPES.includes(eventType as EventType) ? (eventType as EventType) : undefined,
-    year: Number.isInteger(yearNum) && yearNum > 0 ? yearNum : undefined,
+    year: posInt(q.year),
     q: str(q.q),
+    // 导入快照:与记录列表(/api/records)一致,保证“导出当前结果”不跨快照。
+    batchId: posInt(q.batch),
   })
 
   const wb = new ExcelJS.Workbook()
