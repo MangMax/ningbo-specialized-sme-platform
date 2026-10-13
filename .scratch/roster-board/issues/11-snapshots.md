@@ -4,10 +4,12 @@
 
 **Blocked by:** 02 — 省专公布文件入库 + 最小记录列表
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-13)
 
-- [ ] `import_batch` 表(label / source_root / imported_at);记录与事件挂到快照
-- [ ] 导入按快照隔离;重跑同目录不重复写入(幂等)
-- [ ] 看板可切换当前快照
-- [ ] 导入入口可指向任意数据目录(不写死 `20261013`)
-- [ ] 交叉校验脚本:导入结果 vs `公布文件名单全部整理版.xlsx` 作为回归基线
+- [x] `import_batch` 表(label / source_root / imported_at);同 label 复用同一快照
+- [x] 导入按快照隔离;重跑同 label 逐表行数不变(实测)
+- [x] 台账页可用 `Select` 切换快照(默认最新 / 全部),经 `/api/records?batch=` 筛选
+- [x] 导入入口支持绝对路径 `--root`,回退 `SOURCE_ROOT` → `../`
+- [x] `pnpm check:jxj --root <abs>` 交叉校验可用
+
+> 归属规则:record 的 `import_batch_id` 跟随**最近一次包含它的导入**;异 label 导入按身份键全局复用企业/记录,只新增本次事件与证据。理由见 `lib/import.ts` 注释。
