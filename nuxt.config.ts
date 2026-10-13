@@ -8,7 +8,12 @@ export default defineNuxtConfig({
   ssr: false,
   devtools: { enabled: true },
 
-  modules: ['@pinia/nuxt', '@pinia/colada-nuxt', '@vueuse/nuxt'],
+  modules: ['@pinia/nuxt', '@pinia/colada-nuxt', '@vueuse/nuxt', 'nuxt-charts'],
+
+  // 统计页图表(nuxt-charts v3)。只注册用到的图表组件,缩小客户端包体。
+  nuxtCharts: {
+    include: ['BarChart', 'LineChart', 'DonutChart'],
+  },
 
   // shadcn-vue components live under components/ui/*; use bare names (<Card>, <Button>)
   // and skip the index.ts barrels so they don't collide with the .vue files.

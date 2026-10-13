@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed } from 'vue'
+import { Orientation } from 'nuxt-charts/enums'
 import { TITLES, TITLE_ORDER, SOURCES, SOURCE_ORDER, EVENTS, EVENT_ORDER } from '~~/lib/labels'
 
 interface Bucket {
@@ -17,11 +18,31 @@ interface Stats {
   byYear: Bucket[]
 }
 
+/** 图表行:label 为展示文案,n 为计数,color 为语义色 token(仅多系列图使用)。 */
+interface ChartRow {
+  key: string
+  label: string
+  n: number
+  color: string
+}
+
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading } = useQuery({
   key: () => ['stats'],
   query: () => apiGet<Stats>('/api/stats'),
 })
+
+/**
+ * 图表系列色 —— 一律取项目语义 token(明暗自适应),不写裸色值。
+ * 页面为中性单色设计,故用主色到浅灰的梯度区分系列。
+ */
+const SERIES_COLORS = [
+  'var(--primary)',
+  'var(--muted-foreground)',
+  'var(--ring)',
+  'var(--secondary-foreground)',
+  'var(--accent-foreground)',
+] as const
 
 /** 按给定顺序排列,未知键置后并按计数降序。 */
 function ordered(buckets: Bucket[] | undefined, order: string[]): Bucket[] {
@@ -39,41 +60,48 @@ const events = computed(() => ordered(data.value?.byEvent, EVENT_ORDER))
 const districts = computed(() => data.value?.byDistrict ?? [])
 const years = computed(() => data.value?.byYear ?? [])
 
-interface Section {
-  title: string
-  desc: string
-  labels: Record<string, string>
-  rows: Bucket[]
-  /** 下钻到台账页时使用的 query 参数名;留空则该区块不下钻。 */
-  param?: string
-}
-const sections = computed<Section[]>(() => [
-  { title: '称号分布', desc: '按记录所属称号计数', labels: TITLES, rows: titles.value, param: 'title' },
-  { title: '来源对比', desc: '经信局与工信部并列来源', labels: SOURCES, rows: sources.value, param: 'source' },
-  { title: '事件类型分布', desc: '认定 / 复核 / 维护 / 入库培育', labels: EVENTS, rows: events.value, param: 'eventType' },
-  { title: '区县 Top 20', desc: '按记录属地计数', labels: {}, rows: districts.value, param: 'district' },
-])
+/** bucket → 图表行。 */
+const toRows = (buckets: Bucket[], label: (key: string) => string): ChartRow[] =>
+  buckets.map((b, i) => ({
+    key: b.key,
+    label: label(b.key),
+    n: b.n,
+    color: SERIES_COLORS[i % SERIES_COLORS.length]!,
+  }))
 
-const maxOf = (rows: Bucket[]) => Math.max(1, ...rows.map((r) => r.n))
-const barWidth = (n: number, max: number) => `${Math.round((n / max) * 100)}%`
+const titleRows = computed(() => toRows(titles.value, (k) => TITLES[k] ?? k))
+const sourceRows = computed(() => toRows(sources.value, (k) => SOURCES[k] ?? k))
+const eventRows = computed(() => toRows(events.value, (k) => EVENTS[k] ?? k))
+const districtRows = computed(() => toRows(districts.value, (k) => k))
+const yearRows = computed(() => toRows(years.value, (k) => k))
 
-const maxYear = computed(() => maxOf(years.value))
-const yearHeight = (n: number) => `${Math.max(3, Math.round((n / maxYear.value) * 120))}px`
+/** 单系列计数图的图例项(值轴字段 n)。 */
+const countCats = { n: { name: '记录数', color: 'var(--primary)' } }
+
+/** 多系列图(称号环图)的图例:键与数据行一一对应,颜色按序取语义 token。 */
+const titleCats = computed(() =>
+  Object.fromEntries(titleRows.value.map((r) => [r.key, { name: r.label, color: r.color }])),
+)
+
+/** 柱上数值标签:取该柱的数值(entry.y)。 */
+const countValueLabel = { label: (d: unknown) => Number((d as { y?: number }).y ?? 0) }
+
+/** 横向柱图高度随条目数增长,避免标签挤压。 */
+const districtHeight = computed(() => Math.min(640, Math.max(180, districtRows.value.length * 30 + 24)))
+
+/** 台账页的筛选链接,如 /?title=little_giant。 */
+const drillTo = (param: string, value: string) => `/?${param}=${encodeURIComponent(value)}`
 
 /** 年份键为四位数字才可下钻;`—`(年份缺失)只展示不可点。 */
 const isYear = (key: string) => /^\d{4}$/.test(key)
-
-/** 台账页的筛选链接,如 /?title=little_giant;无 param 时回落到台账首页。 */
-const drillTo = (param: string | undefined, value: string) =>
-  param ? `/?${param}=${encodeURIComponent(value)}` : '/'
-const labelOf = (labels: Record<string, string>, key: string) => labels[key] ?? key
+const clickableYears = computed(() => yearRows.value.filter((r) => isYear(r.key)))
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="flex flex-col gap-6">
     <div>
       <h1 class="text-xl font-semibold">统计概览</h1>
-      <p class="text-muted-foreground text-sm">点击数字或行可下钻到台账页查看对应记录</p>
+      <p class="text-muted-foreground text-sm">点击图表下方的标签可下钻到台账页查看对应记录</p>
     </div>
 
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -95,97 +123,197 @@ const labelOf = (labels: Record<string, string>, key: string) => labels[key] ?? 
       </Card>
     </div>
 
-    <div class="grid gap-6 lg:grid-cols-2">
-      <Card v-for="s in sections" :key="s.title">
+    <div class="grid gap-6 lg:grid-cols-3">
+      <Card>
         <CardHeader class="gap-1">
-          <CardTitle>{{ s.title }}</CardTitle>
-          <CardDescription>{{ s.desc }}</CardDescription>
+          <CardTitle>称号分布</CardTitle>
+          <CardDescription>按记录所属称号计数</CardDescription>
         </CardHeader>
-        <CardContent class="px-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead class="pl-6">项目</TableHead>
-                <TableHead class="pr-6">数量</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow v-if="isLoading">
-                <TableCell :colspan="2" class="pl-6"><Skeleton class="h-4 w-full" /></TableCell>
-              </TableRow>
-              <TableRow
-                v-for="row in s.rows"
-                v-else
-                :key="row.key"
-                :class="s.param ? 'cursor-pointer' : ''"
-                @click="s.param && navigateTo(drillTo(s.param, row.key))"
+        <CardContent class="flex flex-col gap-4">
+          <DonutChart
+            :data="titleRows"
+            name-key="label"
+            value-key="n"
+            :categories="titleCats"
+            :height="220"
+            :loading="isLoading"
+            hide-legend
+            empty-label="暂无数据"
+            aria-label="称号分布"
+          />
+          <div class="flex flex-wrap gap-2 border-t pt-4">
+            <NuxtLink
+              v-for="r in titleRows"
+              :key="r.key"
+              :to="drillTo('title', r.key)"
+              class="focus-visible:outline-none"
+            >
+              <Badge
+                variant="secondary"
+                class="hover:bg-primary hover:text-primary-foreground cursor-pointer gap-1.5 transition-colors"
               >
-                <TableCell class="pl-6 font-medium">
-                  <NuxtLink
-                    v-if="s.param"
-                    :to="drillTo(s.param, row.key)"
-                    class="hover:underline"
-                    @click.stop
-                  >
-                    {{ labelOf(s.labels, row.key) }}
-                  </NuxtLink>
-                  <span v-else>{{ labelOf(s.labels, row.key) }}</span>
-                </TableCell>
-                <TableCell class="pr-6">
-                  <div class="flex items-center gap-3">
-                    <div class="bg-muted h-2 w-full max-w-56 overflow-hidden rounded-full">
-                      <div
-                        class="bg-primary h-full rounded-full"
-                        :style="{ width: barWidth(row.n, maxOf(s.rows)) }"
-                      />
-                    </div>
-                    <span class="text-muted-foreground w-14 text-right text-xs tabular-nums">
-                      {{ row.n }}
-                    </span>
-                  </div>
-                </TableCell>
-              </TableRow>
-              <TableRow v-if="!isLoading && s.rows.length === 0">
-                <TableCell :colspan="2" class="text-muted-foreground h-16 pl-6">暂无数据</TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
+                <span class="size-2 rounded-full" :style="{ backgroundColor: r.color }" />
+                {{ r.label }} · {{ r.n }}
+              </Badge>
+            </NuxtLink>
+            <span v-if="!isLoading && titleRows.length === 0" class="text-muted-foreground text-sm">
+              暂无数据
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader class="gap-1">
+          <CardTitle>来源对比</CardTitle>
+          <CardDescription>经信局与工信部并列来源</CardDescription>
+        </CardHeader>
+        <CardContent class="flex flex-col gap-4">
+          <BarChart
+            :data="sourceRows"
+            x-axis="label"
+            :y-axis="['n']"
+            :categories="countCats"
+            :height="220"
+            :loading="isLoading"
+            hide-legend
+            empty-label="暂无数据"
+            aria-label="来源对比"
+          />
+          <div class="flex flex-wrap gap-2 border-t pt-4">
+            <NuxtLink
+              v-for="r in sourceRows"
+              :key="r.key"
+              :to="drillTo('source', r.key)"
+              class="focus-visible:outline-none"
+            >
+              <Badge
+                variant="secondary"
+                class="hover:bg-primary hover:text-primary-foreground cursor-pointer transition-colors"
+              >
+                {{ r.label }} · {{ r.n }}
+              </Badge>
+            </NuxtLink>
+            <span v-if="!isLoading && sourceRows.length === 0" class="text-muted-foreground text-sm">
+              暂无数据
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader class="gap-1">
+          <CardTitle>事件类型分布</CardTitle>
+          <CardDescription>认定 / 复核 / 维护 / 入库培育</CardDescription>
+        </CardHeader>
+        <CardContent class="flex flex-col gap-4">
+          <BarChart
+            :data="eventRows"
+            x-axis="label"
+            :y-axis="['n']"
+            :categories="countCats"
+            :height="220"
+            :loading="isLoading"
+            hide-legend
+            empty-label="暂无数据"
+            aria-label="事件类型分布"
+          />
+          <div class="flex flex-wrap gap-2 border-t pt-4">
+            <NuxtLink
+              v-for="r in eventRows"
+              :key="r.key"
+              :to="drillTo('eventType', r.key)"
+              class="focus-visible:outline-none"
+            >
+              <Badge
+                variant="secondary"
+                class="hover:bg-primary hover:text-primary-foreground cursor-pointer transition-colors"
+              >
+                {{ r.label }} · {{ r.n }}
+              </Badge>
+            </NuxtLink>
+            <span v-if="!isLoading && eventRows.length === 0" class="text-muted-foreground text-sm">
+              暂无数据
+            </span>
+          </div>
         </CardContent>
       </Card>
     </div>
 
     <Card>
       <CardHeader class="gap-1">
+        <CardTitle>区县 Top 20</CardTitle>
+        <CardDescription>按记录属地计数</CardDescription>
+      </CardHeader>
+      <CardContent class="flex flex-col gap-4">
+        <BarChart
+          :data="districtRows"
+          x-axis="label"
+          :y-axis="['n']"
+          :categories="countCats"
+          :orientation="Orientation.Horizontal"
+          :height="districtHeight"
+          :loading="isLoading"
+          :value-label="countValueLabel"
+          hide-legend
+          empty-label="暂无数据"
+          aria-label="区县 Top 20"
+        />
+        <div class="flex flex-wrap gap-2 border-t pt-4">
+          <NuxtLink
+            v-for="r in districtRows"
+            :key="r.key"
+            :to="drillTo('district', r.key)"
+            class="focus-visible:outline-none"
+          >
+            <Badge
+              variant="secondary"
+              class="hover:bg-primary hover:text-primary-foreground cursor-pointer transition-colors"
+            >
+              {{ r.label }} · {{ r.n }}
+            </Badge>
+          </NuxtLink>
+          <span v-if="!isLoading && districtRows.length === 0" class="text-muted-foreground text-sm">
+            暂无数据
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader class="gap-1">
         <CardTitle>年份趋势</CardTitle>
         <CardDescription>按记录事件年份计数(认定 / 复核 / 维护 / 入库培育)</CardDescription>
       </CardHeader>
-      <CardContent>
-        <Skeleton v-if="isLoading" class="h-40 w-full" />
-        <div v-else-if="years.length === 0" class="text-muted-foreground h-40 text-sm">
-          暂无数据
-        </div>
-        <div v-else class="flex h-40 items-end gap-1">
-          <template v-for="y in years" :key="y.key">
-            <NuxtLink
-              v-if="isYear(y.key)"
-              :to="drillTo('year', y.key)"
-              class="hover:bg-muted/60 flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-sm transition-colors"
-              :title="`${y.key}: ${y.n} · 点击查看记录`"
+      <CardContent class="flex flex-col gap-4">
+        <LineChart
+          :data="yearRows"
+          x-axis="label"
+          :categories="countCats"
+          :height="260"
+          :loading="isLoading"
+          dot-variant="default"
+          hide-legend
+          empty-label="暂无数据"
+          aria-label="年份趋势"
+        />
+        <div class="flex flex-wrap gap-2 border-t pt-4">
+          <NuxtLink
+            v-for="r in clickableYears"
+            :key="r.key"
+            :to="drillTo('year', r.key)"
+            class="focus-visible:outline-none"
+          >
+            <Badge
+              variant="secondary"
+              class="hover:bg-primary hover:text-primary-foreground cursor-pointer transition-colors"
             >
-              <span class="text-muted-foreground text-[10px] tabular-nums">{{ y.n }}</span>
-              <div class="bg-primary w-full max-w-10 rounded-t-sm" :style="{ height: yearHeight(y.n) }" />
-              <span class="text-muted-foreground w-full truncate text-center text-[10px]">{{ y.key }}</span>
-            </NuxtLink>
-            <div
-              v-else
-              class="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-sm"
-              :title="`${y.key}: ${y.n}`"
-            >
-              <span class="text-muted-foreground text-[10px] tabular-nums">{{ y.n }}</span>
-              <div class="bg-primary w-full max-w-10 rounded-t-sm" :style="{ height: yearHeight(y.n) }" />
-              <span class="text-muted-foreground w-full truncate text-center text-[10px]">{{ y.key }}</span>
-            </div>
-          </template>
+              {{ r.label }} · {{ r.n }}
+            </Badge>
+          </NuxtLink>
+          <span v-if="!isLoading && clickableYears.length === 0" class="text-muted-foreground text-sm">
+            暂无数据
+          </span>
         </div>
       </CardContent>
     </Card>
