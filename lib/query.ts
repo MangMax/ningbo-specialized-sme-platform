@@ -4,21 +4,28 @@ import { groupBy, orderBy } from 'es-toolkit'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import { isNingboDistrict, normalizeName } from './domain'
-import { EVENTS } from './labels'
+import { EVENTS, SOURCE_ORDER } from './labels'
 
 type Db = BetterSQLite3Database<typeof schema>
 
 /** 事件类型,与 record_event.event_type 的取值一致。 */
 export type EventType = 'award' | 'review' | 'maintain' | 'nurture'
 
+/** 来源代号。 */
+export type Source = 'jxj' | 'miit'
+
+/**
+ * 台账查询条件。四个筛选(称号 / 来源 / 事件类型 / 年份)均为**多值**:
+ * 同一筛选内命中任一即匹配(SQL `IN`);不同筛选之间取交集。
+ */
 export interface RecordQuery {
-  title?: string
-  source?: string
+  title?: string[]
+  source?: string[]
   district?: string
-  /** 命中「该记录下存在此类型的事件」。 */
-  eventType?: EventType
-  /** 命中「该记录下存在此年份的事件」。 */
-  year?: number
+  /** 命中「该组合下存在此类型的事件」。 */
+  eventType?: EventType[]
+  /** 命中「该组合下存在此年份的事件」。 */
+  year?: number[]
   q?: string
   /**
    * 质量标记筛选(逗号分隔,命中任一即匹配)。
@@ -29,24 +36,51 @@ export interface RecordQuery {
   pageSize?: number
 }
 
+/** 组合下的一条事件,保留其来源以便详情 / 导出区分。 */
+export interface RecordEvent {
+  type: string
+  year: number | null
+  seq: number | null
+  source: string
+}
+
+/** 一行 = 企业 × 称号,合并该组合下**全部来源**的记录。 */
 export interface RecordRow {
-  recordId: number
   enterpriseId: number
   name: string
   uscc: string | null
   district: string | null
   titleCode: string
-  source: string
+  sources: Source[]
+  events: RecordEvent[]
   flags: string[]
-  events: { type: string; year: number | null; seq: number | null }[]
 }
 
 const MAX_PAGE_SIZE = 200
 
+/**
+ * 把一组来源代号按展示顺序(经信局 → 工信部)去重排序,
+ * 未知来源置后,保证列表与导出排序一致。
+ */
+function orderSources(sources: Iterable<string>): Source[] {
+  const rest = new Set(sources)
+  const ordered: string[] = []
+  for (const s of SOURCE_ORDER) {
+    if (rest.delete(s)) ordered.push(s)
+  }
+  for (const s of rest) ordered.push(s)
+  return ordered as Source[]
+}
+
+/** 「企业 × 称号」组合键,列表与导出共用(用于分组页 / 定位组合)。 */
+function groupKey(enterpriseId: number, titleCode: string): string {
+  return `${enterpriseId}/${titleCode}`
+}
+
 function buildWhere(db: Db, params: RecordQuery): SQL | undefined {
   const conds: (SQL | undefined)[] = []
-  if (params.title) conds.push(eq(schema.record.titleCode, params.title))
-  if (params.source) conds.push(eq(schema.record.source, params.source as 'jxj' | 'miit'))
+  if (params.title?.length) conds.push(inArray(schema.record.titleCode, params.title))
+  if (params.source?.length) conds.push(inArray(schema.record.source, params.source as Source[]))
   if (params.district) conds.push(eq(schema.record.district, params.district))
   if (params.q) {
     // 名称按**归一化键**匹配(与归并口径一致),统代按归一化大写匹配。
@@ -85,14 +119,17 @@ function buildFlagConds(flags: string | undefined): SQL | undefined {
 }
 
 /**
- * 「记录下存在某类型 / 某年份事件」的相关 EXISTS 子查询。
- * 命中 record_event 中 record_id = record.id 且满足筛选的任一事件。
+ * 「组合下存在某类型 / 某年份事件」的相关 EXISTS 子查询。
+ * 命中 record_event 中 record_id = record.id、且类型 ∈ 所选类型、年份 ∈ 所选年份的**同一条**事件。
+ * 多值筛选在各自 `IN` 内命中任一即可。
  */
 function buildEventExists(db: Db, params: RecordQuery): SQL | undefined {
-  if (!params.eventType && params.year === undefined) return undefined
+  const types = params.eventType?.length ? params.eventType : undefined
+  const years = params.year?.length ? params.year : undefined
+  if (!types && !years) return undefined
   const sub: SQL[] = [eq(schema.recordEvent.recordId, schema.record.id)]
-  if (params.eventType) sub.push(eq(schema.recordEvent.eventType, params.eventType))
-  if (params.year !== undefined) sub.push(eq(schema.recordEvent.year, params.year))
+  if (types) sub.push(inArray(schema.recordEvent.eventType, types))
+  if (years) sub.push(inArray(schema.recordEvent.year, years))
   return exists(
     db
       .select({ hit: sql<number>`1` })
@@ -101,21 +138,50 @@ function buildEventExists(db: Db, params: RecordQuery): SQL | undefined {
   )
 }
 
-/** 分页列出记录,附其事件摘要。 */
+/**
+ * 分页列出「企业 × 称号」组合,合并该组合下**全部匹配来源**的记录。
+ *
+ * 返回粒度为组合:一行含多个来源(`sources`)与该组合下全部事件(`events`,各带其来源)。
+ * 分页与 total 均以**组合数**为准;先取本页组合,再取这些组合下匹配的记录。
+ */
 export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; total: number } {
   const where = buildWhere(db, params)
   const page = Math.max(1, params.page ?? 1)
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, params.pageSize ?? 25))
 
+  // 总数 = 匹配的「企业 × 称号」组合数(而非 record 行数)。
   const total =
     db
-      .select({ n: count() })
+      .select({
+        n: sql<number>`count(distinct ${schema.record.enterpriseId} || '/' || ${schema.record.titleCode})`,
+      })
       .from(schema.record)
       .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
       .where(where)
       .get()?.n ?? 0
 
-  const base = db
+  // 本页的组合(按组内最大 record.id 倒序,近似「最新在前」)。
+  const pageGroups = db
+    .select({
+      enterpriseId: schema.record.enterpriseId,
+      titleCode: schema.record.titleCode,
+    })
+    .from(schema.record)
+    .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+    .where(where)
+    .groupBy(schema.record.enterpriseId, schema.record.titleCode)
+    .orderBy(desc(sql`max(${schema.record.id})`))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize)
+    .all()
+
+  if (!pageGroups.length) return { rows: [], total }
+
+  const groupKeys = pageGroups.map((g) => groupKey(g.enterpriseId, g.titleCode))
+  const keyExpr = sql`${schema.record.enterpriseId} || '/' || ${schema.record.titleCode}`
+
+  // 仅取本页组合下**匹配筛选**的记录(组合内未命中的来源不计入)。
+  const matched = db
     .select({
       recordId: schema.record.id,
       enterpriseId: schema.enterprise.id,
@@ -128,34 +194,61 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
     })
     .from(schema.record)
     .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
-    .where(where)
+    .where(and(where, inArray(keyExpr, groupKeys)))
     .orderBy(desc(schema.record.id))
-    .limit(pageSize)
-    .offset((page - 1) * pageSize)
     .all()
 
-  const ids = base.map((r) => r.recordId)
+  const ids = matched.map((r) => r.recordId)
   const events = ids.length
     ? db
         .select({
+          id: schema.recordEvent.id,
           recordId: schema.recordEvent.recordId,
           type: schema.recordEvent.eventType,
           year: schema.recordEvent.year,
           seq: schema.recordEvent.batchSeq,
+          sortKey: schema.recordEvent.sortKey,
         })
         .from(schema.recordEvent)
-        .where(sql`${schema.recordEvent.recordId} in ${ids}`)
-        .orderBy(schema.recordEvent.sortKey)
+        .where(inArray(schema.recordEvent.recordId, ids))
         .all()
     : []
 
-  const byRecord = groupBy(events, (e) => e.recordId)
+  const eventsByRecord = groupBy(events, (e) => e.recordId)
+  const recordsByKey = groupBy(matched, (r) => groupKey(r.enterpriseId, r.titleCode))
 
-  const rows: RecordRow[] = base.map((r) => ({
-    ...r,
-    flags: r.flags ?? [],
-    events: (byRecord[r.recordId] ?? []).map((e) => ({ type: e.type, year: e.year, seq: e.seq })),
-  }))
+  const rows: RecordRow[] = pageGroups.map((g) => {
+    const key = groupKey(g.enterpriseId, g.titleCode)
+    const recs = recordsByKey[key] ?? []
+    const merged = recs
+      .flatMap((r) =>
+        (eventsByRecord[r.recordId] ?? []).map((e) => ({
+          type: e.type,
+          year: e.year,
+          seq: e.seq,
+          source: r.source as string,
+          sortKey: e.sortKey,
+          id: e.id,
+        })),
+      )
+      .sort((a, b) => a.sortKey - b.sortKey || a.id - b.id)
+      .map(({ type, year, seq, source }) => ({ type, year, seq, source }))
+    // 区县取组内 record.id 最小且有值者(与导出同一规则,保证两侧一致)。
+    const district = [...recs]
+      .sort((a, b) => a.recordId - b.recordId)
+      .find((r) => r.district)?.district ?? null
+    return {
+      enterpriseId: g.enterpriseId,
+      name: recs[0]?.name ?? '',
+      uscc: recs[0]?.uscc ?? null,
+      district,
+      titleCode: g.titleCode,
+      sources: orderSources(recs.map((r) => r.source)),
+      events: merged,
+      flags: recs[0]?.flags ?? [],
+    }
+  })
+
   return { rows, total }
 }
 
@@ -429,14 +522,16 @@ export function getQuality(db: Db): QualityGroup[] {
 // 导出(不分页)
 // ---------------------------------------------------------------------------
 
+/** 导出行:粒度与列表一致,一行 = 企业 × 称号。 */
 export interface ExportRow {
   name: string
   uscc: string | null
   district: string | null
   titleCode: string
-  source: string
+  /** 该组合下的全部来源(按经信局 → 工信部排序)。 */
+  sources: string[]
   events: string
-  /** 出处:该记录各事件的「文件 / 附件 / 序号」汇总为一行文本。 */
+  /** 出处:该组合各事件的「文件 / 附件 / 序号」汇总为一行文本。 */
   evidence: string
 }
 
@@ -452,12 +547,16 @@ function formatEvidence(v: {
   return parts.join(' / ')
 }
 
-/** 取全部匹配记录(用于导出),事件与出处各压成一行文本。 */
+/**
+ * 取全部匹配记录(用于导出),按「企业 × 称号」归并:
+ * 事件与出处合并该组合下全部事件,来源列出全部来源。
+ */
 export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
   const where = buildWhere(db, params)
-  const base = db
+  const matched = db
     .select({
       recordId: schema.record.id,
+      enterpriseId: schema.record.enterpriseId,
       name: schema.enterprise.name,
       uscc: schema.enterprise.usccNorm,
       district: schema.record.district,
@@ -467,10 +566,10 @@ export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
     .from(schema.record)
     .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
     .where(where)
-    .orderBy(schema.record.titleCode, schema.enterprise.name)
+    .orderBy(schema.record.titleCode, schema.enterprise.name, schema.record.id)
     .all()
 
-  const ids = base.map((r) => r.recordId)
+  const ids = matched.map((r) => r.recordId)
   const events = ids.length
     ? db
         .select({
@@ -479,37 +578,62 @@ export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
           type: schema.recordEvent.eventType,
           year: schema.recordEvent.year,
           seq: schema.recordEvent.batchSeq,
+          sortKey: schema.recordEvent.sortKey,
         })
         .from(schema.recordEvent)
-        .where(sql`${schema.recordEvent.recordId} in ${ids}`)
-        .orderBy(schema.recordEvent.sortKey)
+        .where(inArray(schema.recordEvent.recordId, ids))
         .all()
     : []
-  const byRecord = groupBy(events, (e) => e.recordId)
-
   const eventIds = events.map((e) => e.id)
   const evidence = eventIds.length
     ? db
         .select()
         .from(schema.recordEvidence)
-        .where(sql`${schema.recordEvidence.recordEventId} in ${eventIds}`)
+        .where(inArray(schema.recordEvidence.recordEventId, eventIds))
         .all()
     : []
+  const evByRecord = groupBy(events, (e) => e.recordId)
   const evByEvent = groupBy(evidence, (v) => v.recordEventId)
 
-  return base.map((r) => {
-    const recEvents = byRecord[r.recordId] ?? []
-    const recEvidence = recEvents.flatMap((e) => evByEvent[e.id] ?? []).map(formatEvidence)
+  // 按「企业 × 称号」归并,保持 matched 的出现顺序(称号 → 企业名 → record.id)。
+  const byKey = new Map<string, typeof matched>()
+  for (const r of matched) {
+    const key = groupKey(r.enterpriseId, r.titleCode)
+    const arr = byKey.get(key)
+    if (arr) arr.push(r)
+    else byKey.set(key, [r])
+  }
+
+  return [...byKey.values()].map((recs) => {
+    const sorted = [...recs].sort((a, b) => a.recordId - b.recordId)
+    const head = sorted[0]!
+    const district = sorted.find((r) => r.district)?.district ?? null
+    // 该组合下全部事件(保留每条事件所属来源),按 sortKey 排序。
+    const evRows = recs
+      .flatMap((r) =>
+        (evByRecord[r.recordId] ?? []).map((e) => ({
+          type: e.type,
+          year: e.year,
+          seq: e.seq,
+          sortKey: e.sortKey,
+          id: e.id,
+          recordId: r.recordId,
+        })),
+      )
+      .sort((a, b) => a.sortKey - b.sortKey || a.id - b.id)
+    const evidenceText = evRows
+      .flatMap((e) => (evByEvent[e.id] ?? []).map(formatEvidence))
+      .join('; ')
     return {
-      name: r.name,
-      uscc: r.uscc,
-      district: r.district,
-      titleCode: r.titleCode,
-      source: r.source,
-      events: recEvents
+      name: head.name,
+      uscc: head.uscc,
+      district,
+      titleCode: head.titleCode,
+      sources: orderSources(recs.map((r) => r.source)),
+      events: evRows
         .map((e) => `${EVENTS[e.type] ?? e.type} ${e.year ?? ''}${e.seq ? '-' + e.seq : ''}`.trim())
         .join('; '),
-      evidence: recEvidence.join('; '),
+      evidence: evidenceText,
     }
   })
 }
