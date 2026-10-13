@@ -39,14 +39,7 @@ describe('database bootstrap', () => {
       .values({ name: '测试企业', nameNorm: '测试企业' })
       .returning()
       .get()
-    const batch = db
-      .insert(schema.importBatch)
-      .values({ label: 'test', sourceRoot: '/tmp' })
-      .returning()
-      .get()
-
     const row = {
-      importBatchId: batch.id,
       enterpriseId: ent.id,
       titleCode: 'specialized_sme',
       source: 'jxj' as const,

@@ -1,17 +1,16 @@
-# 11 — 导入快照与幂等重跑
+# 11 — 导入幂等(快照概念已作废)
 
-> ⚠️ 本票的**解析/入库**部分属于**项目外的前期工作**(`../pipeline/`),不在 app 仓库内。app 侧只保留查询与展示。见 [ADR-数据入库是项目外的前期工作](../../../docs/adr/2026-10-13-ingestion-is-outside-the-app.md)。
+**What to build:** 导入**幂等** —— 同一份数据目录重复导入不产生重复行。
 
-**What to build:** 把每次导入做成一个不可变的**导入快照**(`import_batch`);看板可切换快照;同一目录重跑幂等。让工具可逐年复用:换一个新数据目录就得到一个新快照。
+> ⚠️ **本票已收窄。** 原设计里的「导入快照 / `import_batch`」被用户否掉:**没有任何地方需要它,不应存在于数据模型中**。故 `import_batch` 表、`record.import_batch_id`、`/api/batches`、台账页的快照选择器、`?batch=` 筛选**全部移除**(迁移 `0001_married_mister_fear`)。
+> 幂等本身不再靠快照实现,而是靠**身份键去重**:企业按 `(uscc_norm)` 或 `(name_norm)`、记录按 `(enterprise_id, title_code, source)`、事件按 `(record_id, event_type, year, batch_seq)`。
 
-**Blocked by:** 02 — 省专公布文件入库 + 最小记录列表
+**Blocked by:** 02
 
-**Status:** ✅ done(2026-10-13)
+**Status:** ✅ done(2026-10-13;快照部分已作废)
 
-- [x] `import_batch` 表(label / source_root / imported_at);同 label 复用同一快照
-- [x] 导入按快照隔离;重跑同 label 逐表行数不变(实测)
-- [x] 台账页可用 `Select` 切换快照(默认最新 / 全部),经 `/api/records?batch=` 筛选
+- [x] ~~`import_batch` 表~~ — 已删除
+- [x] 重跑同一目录:所有表行数不变(靠身份键去重)
+- [x] ~~台账页切换快照~~ — 已删除
 - [x] 导入入口支持绝对路径 `--root`,回退 `SOURCE_ROOT` → `../`
 - [x] `pnpm check:jxj --root <abs>` 交叉校验可用
-
-> 归属规则:record 的 `import_batch_id` 跟随**最近一次包含它的导入**;异 label 导入按身份键全局复用企业/记录,只新增本次事件与证据。理由见 `lib/import.ts` 注释。

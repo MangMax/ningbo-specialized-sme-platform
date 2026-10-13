@@ -12,14 +12,10 @@ let schema: typeof import('../db/schema')
  * 直接铺一份跨「来源 × 称号 × 区县 × 事件类型 × 年份 × 快照」的固定数据集,
  * 用于断言导出(`allRecords`)与列表(`listRecords`)在同一筛选下结果集一致。
  *
- * 快照 1:8 条记录(经信局 5 + 工信部 3),覆盖 award/review/maintain/nurture 与 2021/2023/2024/2025。
- * 快照 2:1 条记录(工信部),用于验证快照筛选隔离。
+ * 9 条记录(经信局 5 + 工信部 4),覆盖 award/review/maintain/nurture 与 2021/2023/2024/2025。
  */
 function seed() {
   const d = db()
-  const batch1 = d.insert(schema.importBatch).values({ label: 'snap-1', sourceRoot: '/tmp/1' }).returning({ id: schema.importBatch.id }).get().id
-  const batch2 = d.insert(schema.importBatch).values({ label: 'snap-2', sourceRoot: '/tmp/2' }).returning({ id: schema.importBatch.id }).get().id
-
   const ent = (uscc: string | null, name: string, district: string) =>
     d.insert(schema.enterprise)
       .values({ usccNorm: uscc, name, nameNorm: name, district })
@@ -34,7 +30,6 @@ function seed() {
   const e6 = ent('91330200AAAA000006', '宁波己智能有限公司', '海曙区')
 
   const rec = (
-    importBatchId: number,
     enterpriseId: number,
     titleCode: string,
     source: 'jxj' | 'miit',
@@ -43,7 +38,7 @@ function seed() {
   ) => {
     const id = d
       .insert(schema.record)
-      .values({ importBatchId, enterpriseId, titleCode, source, district })
+      .values({ enterpriseId, titleCode, source, district })
       .returning({ id: schema.record.id })
       .get().id
     for (const ev of events) {
@@ -60,20 +55,20 @@ function seed() {
   }
 
   // 快照 1
-  rec(batch1, e1, 'specialized_sme', 'jxj', '海曙区', [
+  rec(e1, 'specialized_sme', 'jxj', '海曙区', [
     { type: 'award', year: 2024, seq: 2 },
     { type: 'review', year: 2021, seq: 2 },
   ])
-  rec(batch1, e2, 'specialized_sme', 'jxj', '鄞州区', [{ type: 'award', year: 2024, seq: 2 }])
-  rec(batch1, e3, 'specialized_sme', 'jxj', '北仑区', [{ type: 'nurture', year: 2021, seq: null }])
-  rec(batch1, e1, 'specialized_sme', 'miit', '海曙区', [{ type: 'maintain', year: 2025, seq: 1 }])
-  rec(batch1, e4, 'little_giant', 'miit', '慈溪市', [{ type: 'maintain', year: 2025, seq: 1 }])
-  rec(batch1, e5, 'innovative_sme', 'jxj', '海曙区', [{ type: 'award', year: 2023, seq: 1 }])
-  rec(batch1, e5, 'innovative_sme', 'miit', '海曙区', [{ type: 'maintain', year: 2025, seq: 1 }])
-  rec(batch1, e1, 'little_giant', 'miit', '海曙区', [{ type: 'maintain', year: 2024, seq: 1 }])
+  rec(e2, 'specialized_sme', 'jxj', '鄞州区', [{ type: 'award', year: 2024, seq: 2 }])
+  rec(e3, 'specialized_sme', 'jxj', '北仑区', [{ type: 'nurture', year: 2021, seq: null }])
+  rec(e1, 'specialized_sme', 'miit', '海曙区', [{ type: 'maintain', year: 2025, seq: 1 }])
+  rec(e4, 'little_giant', 'miit', '慈溪市', [{ type: 'maintain', year: 2025, seq: 1 }])
+  rec(e5, 'innovative_sme', 'jxj', '海曙区', [{ type: 'award', year: 2023, seq: 1 }])
+  rec(e5, 'innovative_sme', 'miit', '海曙区', [{ type: 'maintain', year: 2025, seq: 1 }])
+  rec(e1, 'little_giant', 'miit', '海曙区', [{ type: 'maintain', year: 2024, seq: 1 }])
 
   // 快照 2(仅一条,用于验证 batch 隔离)
-  rec(batch2, e6, 'innovative_sme', 'miit', '海曙区', [{ type: 'maintain', year: 2025, seq: 1 }])
+  rec(e6, 'innovative_sme', 'miit', '海曙区', [{ type: 'maintain', year: 2025, seq: 1 }])
 }
 
 beforeAll(async () => {
@@ -151,15 +146,6 @@ describe('export ↔ list filter consistency', () => {
     expect(assertConsistent({ title: 'little_giant', source: 'jxj' }, 'little_giant+jxj(空)')).toBe(0)
   })
 
-  it('scopes the result set to a single import snapshot', () => {
-    expect(assertConsistent({ batchId: 1 }, 'batch=1')).toBe(8)
-    expect(assertConsistent({ batchId: 2 }, 'batch=2')).toBe(1)
-    // 快照 1 不含快照 2 的企业。
-    expect(allRecords(db(), { batchId: 1 }).some((r) => r.name === '宁波己智能有限公司')).toBe(false)
-    expect(allRecords(db(), { batchId: 2 }).map((r) => r.name)).toEqual(['宁波己智能有限公司'])
-    // 快照筛选与其它条件叠加。
-    expect(assertConsistent({ batchId: 1, source: 'miit' }, 'batch=1+miit')).toBe(4)
-  })
 
   it('exports the full event timeline of each matching record', () => {
     const rows = allRecords(db(), { title: 'specialized_sme', source: 'jxj', q: '宁波甲' })

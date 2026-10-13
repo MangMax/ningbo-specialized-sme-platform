@@ -1,4 +1,3 @@
-import { sql } from 'drizzle-orm'
 import {
   index,
   integer,
@@ -18,20 +17,9 @@ export const title = sqliteTable('title', {
   rank: integer('rank').notNull(),
 })
 
-/** 导入快照。每次把一份数据目录导入即产生一个不可变快照。 */
-export const importBatch = sqliteTable('import_batch', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  label: text('label').notNull(),
-  sourceRoot: text('source_root').notNull(),
-  importedAt: text('imported_at')
-    .notNull()
-    .default(sql`(datetime('now'))`),
-  note: text('note'),
-})
-
 /**
  * 企业。由记录按身份键归并派生:优先 uscc_norm,缺失时按 name_norm。
- * 见 ADR-0002。
+ * 见 ADR-2026-10-13-uscc-as-identity。
  */
 export const enterprise = sqliteTable(
   'enterprise',
@@ -59,20 +47,16 @@ export const sourceDocument = sqliteTable('source_document', {
   docNumber: text('doc_number'),
   issueDate: text('issue_date'),
   path: text('path').notNull(),
-  importBatchId: integer('import_batch_id').references(() => importBatch.id),
 })
 
 /**
- * 记录。最小粒度 = 企业 × 称号 × 来源。见 ADR-0003。
+ * 记录。最小粒度 = 企业 × 称号 × 来源。见 ADR-2026-10-13-record-as-grain。
  * 唯一性:(enterprise_id, title_code, source)。
  */
 export const record = sqliteTable(
   'record',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    importBatchId: integer('import_batch_id')
-      .notNull()
-      .references(() => importBatch.id),
     enterpriseId: integer('enterprise_id')
       .notNull()
       .references(() => enterprise.id),
@@ -133,9 +117,6 @@ export const reconciliationResult = sqliteTable(
   'reconciliation_result',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    importBatchId: integer('import_batch_id')
-      .notNull()
-      .references(() => importBatch.id),
     titleCode: text('title_code')
       .notNull()
       .references(() => title.code),

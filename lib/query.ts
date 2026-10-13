@@ -25,8 +25,6 @@ export interface RecordQuery {
    * 目前支持 `uscc_missing`(无统代);其余标记按 `enterprise.quality_flags` 包含判定。
    */
   flags?: string
-  /** 导入快照筛选(import_batch.id)。见票 11。 */
-  batchId?: number
   page?: number
   pageSize?: number
 }
@@ -50,7 +48,6 @@ function buildWhere(db: Db, params: RecordQuery): SQL | undefined {
   if (params.title) conds.push(eq(schema.record.titleCode, params.title))
   if (params.source) conds.push(eq(schema.record.source, params.source as 'jxj' | 'miit'))
   if (params.district) conds.push(eq(schema.record.district, params.district))
-  if (params.batchId) conds.push(eq(schema.record.importBatchId, params.batchId))
   if (params.q) {
     // 名称按**归一化键**匹配(与归并口径一致),统代按归一化大写匹配。
     const name$ = normalizeName(params.q)
@@ -166,38 +163,6 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
 // 导入快照
 // ---------------------------------------------------------------------------
 
-export interface BatchInfo {
-  id: number
-  label: string
-  sourceRoot: string
-  importedAt: string
-  note: string | null
-  /** 归属该快照的记录数(record.import_batch_id)。 */
-  recordCount: number
-}
-
-/** 全部导入快照,最新在前(默认用于台账页「当前快照」)。 */
-export function listBatches(db: Db): BatchInfo[] {
-  const counts = db
-    .select({ batchId: schema.record.importBatchId, n: count() })
-    .from(schema.record)
-    .groupBy(schema.record.importBatchId)
-    .all()
-  const byBatch = new Map(counts.map((c) => [c.batchId, c.n]))
-  return db
-    .select()
-    .from(schema.importBatch)
-    .orderBy(desc(schema.importBatch.id))
-    .all()
-    .map((b) => ({
-      id: b.id,
-      label: b.label,
-      sourceRoot: b.sourceRoot,
-      importedAt: b.importedAt,
-      note: b.note,
-      recordCount: byBatch.get(b.id) ?? 0,
-    }))
-}
 
 // ---------------------------------------------------------------------------
 // 企业详情

@@ -20,7 +20,6 @@ export default defineEventHandler((event) => {
     year: Number.isInteger(yearNum) && yearNum > 0 ? yearNum : undefined,
     q: str(q.q),
     flags: str(q.flags),
-    batchId: num(q.batch, 0) || undefined,
     page: num(q.page, 1),
     pageSize: num(q.pageSize, 25),
   })

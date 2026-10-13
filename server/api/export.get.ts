@@ -21,8 +21,6 @@ export default defineEventHandler(async (event) => {
     year: posInt(q.year),
     q: str(q.q),
     flags: str(q.flags),
-    // 导入快照:与记录列表(/api/records)一致,保证“导出当前结果”不跨快照。
-    batchId: posInt(q.batch),
   })
 
   const wb = new ExcelJS.Workbook()

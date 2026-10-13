@@ -17,11 +17,6 @@ let schema: typeof import('../db/schema')
  */
 function seed() {
   const d = db()
-  const batch = d
-    .insert(schema.importBatch)
-    .values({ label: 'fixture', sourceRoot: '/tmp' })
-    .returning({ id: schema.importBatch.id })
-    .get().id
 
   const ent = (name: string, district: string) =>
     d
@@ -37,7 +32,7 @@ function seed() {
   ) => {
     const id = d
       .insert(schema.record)
-      .values({ importBatchId: batch, enterpriseId, titleCode: 'specialized_sme', source: 'jxj', district })
+      .values({ enterpriseId, titleCode: 'specialized_sme', source: 'jxj', district })
       .returning({ id: schema.record.id })
       .get().id
     for (const ev of events) {
