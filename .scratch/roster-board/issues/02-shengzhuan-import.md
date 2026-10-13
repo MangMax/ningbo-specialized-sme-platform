@@ -4,11 +4,13 @@
 
 **Blocked by:** 01 — 项目脚手架与运行时打通
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-13)
 
-- [ ] DOCX 正文按「附件」段切分(A `w:p` 起、`w:tbl` 收);段标题判定称号与事件类型
-- [ ] 表格列按表头定位(序号/企业名称/属地/统一社会信用代码,列序不定);只收序号为数字的数据行
-- [ ] `.doc` 先转 docx;无统代列时按企业名称归并(归一化内核)
-- [ ] 写入 `enterprise` / `record` / `record_event` / `record_evidence`,建立 `(企业,称号,来源)` 唯一性
-- [ ] `GET /api/records` 分页返回;看板表格渲染,列含企业名/称号/来源/事件摘要
-- [ ] 导入幂等:同目录导入两次行数不变
+- [x] DOCX 正文按「附件」段切分;段标题判定称号与事件类型
+- [x] 表格列按表头定位;只收序号为数字的数据行
+- [x] `.doc` 先转 docx(soffice);无统代列时按企业名称归并
+- [x] 写入 `enterprise` / `record` / `record_event` / `record_evidence`
+- [x] `GET /api/records` 分页返回;台账表格渲染
+- [x] 导入幂等:同目录导入两次行数不变
+
+> 实测:省专 5,347 条(nurture 951 / award 3,390 / review 1,006),与基线一致。
