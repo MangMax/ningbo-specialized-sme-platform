@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-14)
 
 - [ ] `server/utils/tus.ts`:`Server` 单例,`FileStore` 工作目录 `.incoming/`(与 `files/` 同卷),`maxSize`、`allowedOrigins`
 - [ ] `server/middleware/tus.ts`:`startsWith('/api/uploads')` → `sendWebResponse(event, await getTus().handleWeb(toWebRequest(event)))`

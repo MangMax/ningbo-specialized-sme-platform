@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** ⏳ in progress(子代理运行中)
 
 - [ ] 上传组件:选择/拖拽文件 → 填或推导 `source/kind/year/batch` → 上传 → 显示进度/结果路径
 - [ ] 断点续传:`storeFingerprintForResuming`,页面刷新后可 `resumeFromPreviousUpload()`

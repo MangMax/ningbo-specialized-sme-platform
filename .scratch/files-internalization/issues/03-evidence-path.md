@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-14)
 
 - [ ] pipeline:解析公布文件时,`sourceFile` 用新规则路径(与文件库一致)
 - [ ] app:`lib/query.ts` 的 evidence 输出保持相对文件库根

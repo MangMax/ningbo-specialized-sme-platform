@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-14)
 
 - [ ] 主流方案对比(`tus/server` + `@tus/file-store`、`uppy`、`tus-js-client`;Nitro 兼容性)
 - [ ] 最小 PoC:在本地起 tus 端点,用 curl/tus-js-client 完成一次分片续传

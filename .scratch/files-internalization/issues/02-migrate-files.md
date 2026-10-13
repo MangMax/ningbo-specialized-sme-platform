@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-14)
 
 - [ ] 经信局:扫 `经信局名单/**` 的 **PDF 与 .doc**(排除 `*.docx`),按 `jxj/announcement/<year>/<batch>/<原文件名>` 落库
 - [ ] 工信部:三份 Excel 按 `miit/export/<原文件名>` 落库

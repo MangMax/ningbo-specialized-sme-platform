@@ -4,7 +4,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-14,由并行的设计会话实现:components/preview/ + server/api/files/[...path].get.ts)
 
 - [ ] app 暴露文件库访问方式(Nitro 静态/受控路由读 `files/`,或配置化路径)
 - [ ] 详情页出处渲染为链接,PDF 内联、其余下载

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-14)
 
 - [ ] 脚本/测试:遍历 `app/files/**`,按 metadata(`source/kind/year/batch/filename` 从路径反推)走 tus 上传
 - [ ] 断言每个文件落到 `files/<source>/<kind>/<year>/<batch>/<filename>`,内容逐字节一致

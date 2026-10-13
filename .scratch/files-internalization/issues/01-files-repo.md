@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-14)
 
 - [ ] `app/files/` 目录 + `files/README.md` 说明规则
 - [ ] 规则文档:`jxj|miit` / `announcement|export` / `year` / `batch` 的取值与来源
