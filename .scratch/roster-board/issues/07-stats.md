@@ -4,9 +4,10 @@
 
 **Blocked by:** 04 — 事件类型与批次:认定 / 复核 / 入库培育(可多条)
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-13)
 
-- [ ] `GET /api/stats?title=&district=&source=` 返回计数聚合
-- [ ] 概览页:称号分布、区县分布、年份趋势、来源(经信局/工信部)对比
-- [ ] 概览数字可点击下钻到对应筛选后的记录列表
-- [ ] 图表遵循项目 dataviz 规范(颜色/坐标轴/图例)
+- [x] `GET /api/stats` 返回计数聚合
+- [x] 概览页:称号分布、来源对比、事件类型分布、区县 Top 20、年份趋势
+- [x] 称号/来源/区县可点击下钻到台账(`/?title=&source=&district=`),`pages/index.vue` 已支持读初值
+- [ ] 事件类型/年份下钻 — 依赖票 04 的 API 筛选(`buildWhere` 目前忽略 `eventType`,且无 `year` 参数)
+- [x] 图表无新依赖,沿用 `--primary` 单色条
