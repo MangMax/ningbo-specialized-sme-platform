@@ -29,27 +29,6 @@ interface Stats {
 const route = useRoute()
 const queryStr = (v: unknown) => (typeof v === 'string' ? v : '')
 
-// 导入快照(票 11):默认最新,选择后作为筛选参数传入 /api/records。
-interface Batch {
-  id: number
-  label: string
-  sourceRoot: string
-  importedAt: string
-  note: string | null
-  recordCount: number
-}
-const { data: batches } = useQuery({
-  key: ['batches'],
-  query: () => apiGet<Batch[]>('/api/batches'),
-})
-const batch = ref(queryStr(route.query.batch) || 'latest') // 'latest' | 'all' | '<id>'
-const effectiveBatch = computed<number | undefined>(() => {
-  if (batch.value === 'all') return undefined
-  if (batch.value === 'latest') return batches.value?.[0]?.id
-  const n = Number(batch.value)
-  return Number.isFinite(n) && n > 0 ? n : undefined
-})
-
 // 支持从外链带入初始筛选(统计页下钻、分享链接)。
 const title = ref(queryStr(route.query.title) || 'all')
 const source = ref(queryStr(route.query.source) || 'all')
@@ -99,7 +78,6 @@ const params = computed(() => ({
   eventType: eventType.value === 'all' ? undefined : eventType.value,
   year: year.value === 'all' ? undefined : year.value,
   q: q.value || undefined,
-  batch: effectiveBatch.value,
   page: page.value,
   pageSize,
 }))
@@ -118,35 +96,28 @@ const exportUrl = computed(() => {
   if (eventType.value !== 'all') p.set('eventType', eventType.value)
   if (year.value !== 'all') p.set('year', year.value)
   if (q.value) p.set('q', q.value)
-  if (effectiveBatch.value) p.set('batch', String(effectiveBatch.value))
   return `/api/export?${p.toString()}`
 })
-function fmt(e: Rec['events'][number]) {
-  return `${EVENTS[e.type] ?? e.type} ${e.year ? `${e.year}${e.seq ? '-' + e.seq : ''}` : '—'}`
+/** 事件类型 → Badge 变体(与详情页口径一致)。 */
+const EVENT_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
+  award: 'secondary',
+  review: 'outline',
+  maintain: 'outline',
+  nurture: 'outline',
 }
+
+/** 台账格子内联展示的事件上限,超出折叠为 +N,悬浮展开完整卡片。 */
+const MAX_VISIBLE_EVENTS = 2
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div class="flex flex-col gap-4">
     <div>
       <h1 class="text-xl font-semibold">记录台账</h1>
       <p class="text-muted-foreground text-sm">记录 = 企业 × 称号 × 来源 · 共 {{ data?.total ?? 0 }} 条</p>
     </div>
 
     <div class="flex flex-wrap items-center gap-3">
-      <Select v-model="batch" @update:model-value="resetPage">
-        <SelectTrigger class="w-56">
-          <SelectValue placeholder="当前快照" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="latest">最新快照</SelectItem>
-          <SelectItem value="all">全部快照</SelectItem>
-          <SelectItem v-for="b in batches" :key="b.id" :value="String(b.id)">
-            {{ b.label }} · {{ b.importedAt.slice(0, 10) }}({{ b.recordCount }} 条)
-          </SelectItem>
-        </SelectContent>
-      </Select>
-
       <Select v-model="title" @update:model-value="resetPage">
         <SelectTrigger class="w-44">
           <SelectValue placeholder="全部称号" />
@@ -235,8 +206,45 @@ function fmt(e: Rec['events'][number]) {
                   {{ SOURCES[r.source] ?? r.source }}
                 </Badge>
               </TableCell>
-              <TableCell class="space-x-1">
-                <Badge v-for="(e, i) in r.events" :key="i" variant="outline">{{ fmt(e) }}</Badge>
+              <TableCell>
+                <HoverCard :open-delay="100" :close-delay="120">
+                  <HoverCardTrigger class="flex flex-wrap items-center gap-1">
+                    <template v-for="(e, i) in r.events.slice(0, MAX_VISIBLE_EVENTS)" :key="i">
+                      <Badge :variant="EVENT_VARIANT[e.type] ?? 'outline'">
+                        {{ EVENTS[e.type] ?? e.type }}
+                      </Badge>
+                      <Badge variant="outline">{{ e.year ?? '—' }}</Badge>
+                      <Badge v-if="e.seq != null" variant="outline">第{{ e.seq }}批</Badge>
+                    </template>
+                    <Badge v-if="r.events.length > MAX_VISIBLE_EVENTS" variant="secondary">
+                      +{{ r.events.length - MAX_VISIBLE_EVENTS }}
+                    </Badge>
+                    <span v-if="r.events.length === 0" class="text-muted-foreground text-xs">
+                      —
+                    </span>
+                  </HoverCardTrigger>
+                  <HoverCardContent v-if="r.events.length" align="start" class="w-auto min-w-60 p-0">
+                    <Card class="gap-0 border-0 py-0 shadow-none">
+                      <CardHeader class="gap-1 p-4">
+                        <CardTitle class="text-sm">全部事件 · {{ r.events.length }} 个</CardTitle>
+                        <CardDescription class="truncate">{{ r.name }}</CardDescription>
+                      </CardHeader>
+                      <CardContent class="flex flex-col gap-2 p-4 pt-0">
+                        <div
+                          v-for="(e, i) in r.events"
+                          :key="i"
+                          class="flex flex-wrap items-center gap-2"
+                        >
+                          <Badge :variant="EVENT_VARIANT[e.type] ?? 'outline'">
+                            {{ EVENTS[e.type] ?? e.type }}
+                          </Badge>
+                          <Badge variant="outline">年份 {{ e.year ?? '—' }}</Badge>
+                          <Badge variant="outline">批次 {{ e.seq ?? '—' }}</Badge>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </HoverCardContent>
+                </HoverCard>
               </TableCell>
             </TableRow>
             <TableRow v-if="!isLoading && data && data.rows.length === 0">
