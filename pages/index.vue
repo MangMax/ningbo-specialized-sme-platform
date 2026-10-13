@@ -102,6 +102,8 @@ const params = computed(() => ({
 const { data, isLoading } = useQuery({
   key: () => ['records', params.value],
   query: () => apiGet<{ rows: Rec[]; total: number }>('/api/records', { query: params.value }),
+  // 换筛选/翻页时保留上一批数据,避免表体清空 → 文档高度骤变 → 页面闪一下并跳回顶部。
+  placeholderData: (previous) => previous,
 })
 
 const rows = computed<Rec[]>(() => data.value?.rows ?? [])
@@ -237,7 +239,7 @@ function setPage(n: number) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              <TableRow v-if="isLoading">
+              <TableRow v-if="isLoading && rows.length === 0">
                 <TableCell :colspan="6"><Skeleton class="h-5 w-full" /></TableCell>
               </TableRow>
 
