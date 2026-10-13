@@ -87,3 +87,62 @@ export function classifyEvent(text: unknown): EventKind {
   if (s.includes('复核')) return 'review'
   return 'award'
 }
+
+// ---------------------------------------------------------------------------
+// 区县
+// ---------------------------------------------------------------------------
+
+/** 宁波市辖 12 个区县(市)。 */
+export const NINGBO_DISTRICTS = [
+  '海曙区',
+  '江北区',
+  '北仑区',
+  '镇海区',
+  '鄞州区',
+  '奉化区',
+  '余姚市',
+  '慈溪市',
+  '宁海县',
+  '象山县',
+  '高新区',
+  '前湾新区',
+] as const
+
+/** 功能区/园区——公布文件里作为“属地”使用,并非行政区划,原样保留。 */
+export const NINGBO_FUNCTIONAL_ZONES = ['杭州湾', '保税区', '大榭'] as const
+
+/**
+ * 区县归一化:统一已知的错别字与省略写法到规范名。
+ * 来源数据里出现过 `酆州区`(应为鄞州区)与 `象山`(应为象山县)。
+ * 无法识别时返回去除空白后的原值,由 quality flag 兜底,不臆造。
+ */
+const DISTRICT_ALIASES: Record<string, string> = {
+  酆州区: '鄞州区',
+  鄞州: '鄞州区',
+  象山: '象山县',
+  慈溪: '慈溪市',
+  余姚: '余姚市',
+  宁海: '宁海县',
+  奉化: '奉化区',
+  镇海: '镇海区',
+  北仑: '北仑区',
+  海曙: '海曙区',
+  江北: '江北区',
+}
+
+export function normalizeDistrict(raw: unknown): string {
+  const s = String(raw ?? '')
+    .replace(INVISIBLE, '')
+    .replace(/\s+/g, '')
+    .trim()
+  if (!s) return ''
+  return DISTRICT_ALIASES[s] ?? s
+}
+
+/** 该区县是否在宁波(含功能区)范围内——用于识别漂移到外市的记录。 */
+export function isNingboDistrict(district: string): boolean {
+  return (
+    (NINGBO_DISTRICTS as readonly string[]).includes(district) ||
+    (NINGBO_FUNCTIONAL_ZONES as readonly string[]).includes(district)
+  )
+}

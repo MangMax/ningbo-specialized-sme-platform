@@ -59,8 +59,9 @@ export function openImportBatch(
  * 当后续记录带来统代时,须与先前的“按名称”企业**合并**为同一主体,否则同一企业会重复。
  * 见 ADR-2026-10-13-uscc-as-identity。
  */
-function resolveEnterprise(db: Db, ctx: ImportContext, uscc: string | null, name: string): number {
+function resolveEnterprise(db: Db, ctx: ImportContext, uscc: string | null, name: string, district: string | null): number {
   const nnorm = normalizeName(name)
+  const dist = district || null
 
   if (uscc) {
     const knownUscc = ctx.usccIndex.get(uscc) ?? db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.usccNorm, uscc)).get()?.id
@@ -85,7 +86,7 @@ function resolveEnterprise(db: Db, ctx: ImportContext, uscc: string | null, name
     }
     const created = db
       .insert(schema.enterprise)
-      .values({ usccNorm: uscc, name, nameNorm: nnorm })
+      .values({ usccNorm: uscc, name, nameNorm: nnorm, district: dist })
       .returning({ id: schema.enterprise.id })
       .get().id
     ctx.usccIndex.set(uscc, created)
@@ -100,7 +101,7 @@ function resolveEnterprise(db: Db, ctx: ImportContext, uscc: string | null, name
   }
   const created = db
     .insert(schema.enterprise)
-    .values({ usccNorm: null, name, nameNorm: nnorm, qualityFlags: ['uscc_missing'] })
+    .values({ usccNorm: null, name, nameNorm: nnorm, district: dist, qualityFlags: ['uscc_missing'] })
     .returning({ id: schema.enterprise.id })
     .get().id
   ctx.nameIndex.set(nnorm, created)
@@ -158,7 +159,7 @@ export function importEntries(db: Db, ctx: ImportContext, titleCode: string, ent
   const seenRecord = new Set<number>()
 
   for (const e of entries) {
-    const enterpriseId = resolveEnterprise(db, ctx, e.uscc, e.name)
+    const enterpriseId = resolveEnterprise(db, ctx, e.uscc, e.name, e.district)
     if (!seenEnterprise.has(enterpriseId)) {
       seenEnterprise.add(enterpriseId)
       stats.enterprises++

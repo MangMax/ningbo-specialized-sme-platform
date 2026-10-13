@@ -3,7 +3,7 @@ import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import { groupBy, orderBy } from 'es-toolkit'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
-import { normalizeName } from './normalize'
+import { isNingboDistrict, normalizeName } from './normalize'
 import { EVENTS } from './labels'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -430,6 +430,14 @@ export function getQuality(db: Db): QualityGroup[] {
     .orderBy(schema.enterprise.nameNorm)
     .all()
 
+  // 漂移:属地不在宁波区县/功能区之列(可能是外市注册,或来源里的写法异常)。
+  const offCity = db
+    .select({ enterpriseId: schema.enterprise.id, name: schema.enterprise.name, uscc: schema.enterprise.usccNorm, district: schema.enterprise.district })
+    .from(schema.enterprise)
+    .where(and(sql`${schema.enterprise.district} is not null`, sql`${schema.enterprise.district} <> ''`))
+    .all()
+    .filter((e) => !isNingboDistrict(e.district ?? ''))
+
   return [
     {
       kind: 'uscc_missing',
@@ -442,6 +450,12 @@ export function getQuality(db: Db): QualityGroup[] {
       label: '重名(同名对应多个主体)',
       n: ambiguous.length,
       samples: ambiguous.slice(0, 50),
+    },
+    {
+      kind: 'district_off_city',
+      label: '属地不在宁波(可能是外市注册或写法异常)',
+      n: offCity.length,
+      samples: offCity.slice(0, 50),
     },
   ]
 }

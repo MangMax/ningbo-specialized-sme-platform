@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   classifyEvent,
+  isNingboDistrict,
+  normalizeDistrict,
   normalizeName,
   normalizeUscc,
   parseBatch,
@@ -48,5 +50,29 @@ describe('classifyEvent', () => {
     expect(classifyEvent('2021-2022…入库培育企业名单')).toBe('nurture')
     expect(classifyEvent('2021年度第一批…复核通过名单')).toBe('review')
     expect(classifyEvent('2024年第二批…名单')).toBe('award')
+  })
+})
+
+describe('normalizeDistrict', () => {
+  it('fixes the 酆州区 typo to 鄞州区', () => {
+    expect(normalizeDistrict('酆州区')).toBe('鄞州区')
+  })
+
+  it('completes short forms of Ningbo districts', () => {
+    expect(normalizeDistrict('象山')).toBe('象山县')
+    expect(normalizeDistrict('鄞州')).toBe('鄞州区')
+    expect(normalizeDistrict(' 慈溪 ')).toBe('慈溪市')
+  })
+
+  it('leaves canonical names and out-of-city names untouched', () => {
+    expect(normalizeDistrict('鄞州区')).toBe('鄞州区')
+    expect(normalizeDistrict('拱墅区')).toBe('拱墅区')
+  })
+
+  it('recognises Ningbo districts and functional zones only', () => {
+    expect(isNingboDistrict('鄞州区')).toBe(true)
+    expect(isNingboDistrict('前湾新区')).toBe(true)
+    expect(isNingboDistrict('杭州湾')).toBe(true)
+    expect(isNingboDistrict('拱墅区')).toBe(false)
   })
 })

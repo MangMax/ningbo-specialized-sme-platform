@@ -105,12 +105,26 @@ enterprise ──1:N── record ──1:N── record_event
 | `direction` | `missing_in_miit`(应纳未纳) / `extra_in_miit`(应出未出) |
 | `curated` / `evidence` | 人工确认 / 命中方式 |
 
+## 归一化内核(纯函数)
+
+导入前统一清洗,**区县**同样归一化(早期遗漏):
+
+- 统代:`normalizeUscc` — 去空白/全角→半角/去零宽/大写;占位值(`#N/A`、`0`)与形状不符者视为无统代。
+- 名称:`normalizeName` — 去空白与括号、去尾随符号;无统代时作归并键。
+- **区县:`normalizeDistrict` — 修正错别字与省略写法**(如 `酆州区`→`鄞州区`、`象山`→`象山县`);`NINGBO_DISTRICTS`(12 区县)+ `NINGBO_FUNCTIONAL_ZONES`(`杭州湾`/`保税区`/`大榭`,公布文件里作为属地使用)定义合法取值,`isNingboDistrict` 用于识别漂移。
+- 批次:`parseBatch` — `2024-1` / `2025年度第二批`;年份区间(`2021-2022`)识别为区间、无批次。
+
 ## 数据质量标记 `quality_flags`
-- `uscc_missing` — 记录无统代(公布文件早期几批),按名称归并
-- `name_ambiguous` — 同名对应多企业
-- `non_ningbo` — 区县 / 当前城市非宁波(漂移)
-- `deregistered` — 已注销 / 吊销
-- `attachment_unparsed` — 附件标题无法判定称号或事件类型
+
+| kind | 含义 | 是否可从源数据直接推出 |
+|---|---|---|
+| `uscc_missing` | 企业无统代,按名称归并 | ✅ |
+| `name_ambiguous` | 重名(同名对应多个主体/多个统代) | ✅ |
+| `district_off_city` | 属地不在宁波区县/功能区(漂移或写法异常) | ✅ |
+| `deregistered` | 已注销 / 吊销 | ❌ 需登记状态外部富化 |
+| 当前城市非宁波 | | ❌ 需外部富化 |
+
+> 前 3 类由本台账直接推导并呈现在 `/quality`;后 2 类需接入登记状态/当前城市等外部数据,本期不做(见 [ADR-公布文件为输入](./adr/2026-10-13-announcements-as-input.md))。
 
 ## 事件类型对照
 | 来源 | 可能的事件类型 |

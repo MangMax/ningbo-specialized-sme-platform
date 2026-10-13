@@ -1,6 +1,7 @@
 import type { Block } from './docx'
 import {
   classifyEvent,
+  normalizeDistrict,
   normalizeUscc,
   parseBatch,
   type EventKind,
@@ -107,7 +108,7 @@ export function parseAnnouncement(
           eventType,
           year,
           seq,
-          district: cols.district >= 0 ? (row[cols.district] ?? '').trim() : '',
+          district: cols.district >= 0 ? normalizeDistrict(row[cols.district]) : '',
           name,
           uscc: normalizeUscc(cols.uscc >= 0 ? row[cols.uscc] : null),
           sourceFile: opts.sourceFile,

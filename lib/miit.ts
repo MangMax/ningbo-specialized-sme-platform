@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs'
-import { normalizeUscc, parseBatch } from './normalize'
+import { normalizeDistrict, normalizeUscc, parseBatch } from './normalize'
 import type { ParsedEntry } from './announcement'
 
 /** 工信部导出 → 称号的列位(0-based;表头在第 1 行,子表头在第 2 行,数据从第 3 行起)。 */
@@ -37,7 +37,7 @@ export async function parseMiitFile(path: string, src: MiitSource): Promise<Pars
     const name = cellText(row, 0).trim()
     if (!name) return
     const regAddr = cellText(row, 1)
-    const district = regAddr.split(/\s+/).filter(Boolean).at(-1) ?? ''
+    const district = normalizeDistrict(regAddr.split(/\s+/).filter(Boolean).at(-1) ?? '')
     const { year, seq } = parseBatch(cellText(row, src.batch))
     out.push({
       title: src.titleCode,
