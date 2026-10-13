@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+
+# nuxt
+.nuxt/
+.output/
+.nitro/
+.cache/
+dist/
+
+# data (local SQLite snapshots)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# misc
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+
+# scratch
+.scratch/roster-board/issues/.cache/
