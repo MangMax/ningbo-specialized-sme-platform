@@ -101,7 +101,6 @@ const clickableYears = computed(() => yearRows.value.filter((r) => isYear(r.key)
   <div class="flex flex-col gap-6">
     <div>
       <h1 class="text-xl font-semibold">统计概览</h1>
-      <p class="text-muted-foreground text-sm">点击图表下方的标签可下钻到台账页查看对应记录</p>
     </div>
 
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

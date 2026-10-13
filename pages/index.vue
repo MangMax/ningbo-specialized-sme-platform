@@ -135,13 +135,14 @@ const exportUrl = computed(() => {
   return `/api/export?${p.toString()}`
 })
 
-/** 每页条数:预设 + 手动输入。 */
+/** 每页条数:选预设,或选「自定义」后在输入框手动填。 */
 const sizeModel = computed({
-  get: () => (PAGE_SIZE_PRESETS.includes(pageSize.value) ? String(pageSize.value) : ''),
+  get: () => (PAGE_SIZE_PRESETS.includes(pageSize.value) ? String(pageSize.value) : 'custom'),
   set: (v: string) => {
-    if (v) setPageSize(Number(v))
+    if (v && v !== 'custom') setPageSize(Number(v))
   },
 })
+const isCustomSize = computed(() => sizeModel.value === 'custom')
 function setPageSize(n: number) {
   pageSize.value = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(n) || 25))
   page.value = 1
@@ -203,9 +204,6 @@ function setPage(n: number) {
   <div class="flex flex-col gap-4">
     <div>
       <h1 class="text-xl font-semibold">记录台账</h1>
-      <p class="text-muted-foreground text-sm">
-        一行 = 企业 × 称号 · 合并经信局 / 工信部来源 · 共 {{ total }} 个组合
-      </p>
     </div>
 
     <div class="flex flex-wrap items-center gap-3">
@@ -343,14 +341,16 @@ function setPage(n: number) {
       <div class="flex items-center gap-2">
         <span class="text-muted-foreground text-sm">每页</span>
         <Select v-model="sizeModel">
-          <SelectTrigger class="h-9 w-24">
-            <SelectValue placeholder="自定义" />
+          <SelectTrigger class="h-9 w-28">
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem v-for="n in PAGE_SIZE_PRESETS" :key="n" :value="String(n)">{{ n }}</SelectItem>
+            <SelectItem value="custom">自定义…</SelectItem>
           </SelectContent>
         </Select>
         <Input
+          v-if="isCustomSize"
           :model-value="pageSize"
           type="number"
           min="1"

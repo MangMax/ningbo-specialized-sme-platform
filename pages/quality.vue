@@ -41,11 +41,6 @@ const groups = computed<QualityGroup[]>(() => data.value ?? [])
       <Skeleton v-if="isLoading && groups.length === 0" class="h-5 w-24" />
     </div>
 
-    <p class="text-muted-foreground text-xs">
-      说明:非宁波(漂移)、已注销 / 吊销等标记需接入登记状态等外部富化数据,本期不实现——本页仅呈现可由公布文件与工信部名单直接推出的质量项(见
-      <span class="font-mono">docs/adr/2026-10-13-announcements-as-input.md</span>)。
-    </p>
-
     <Card v-for="g in groups" :key="g.kind">
       <CardHeader>
         <div class="flex items-center justify-between gap-3">

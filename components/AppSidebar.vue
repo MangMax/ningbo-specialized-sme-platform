@@ -5,7 +5,6 @@ import NavMain from '@/components/NavMain.vue'
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -38,7 +37,6 @@ const nav = [
               </div>
               <div class="grid flex-1 text-left text-sm leading-tight">
                 <span class="truncate font-medium">专精特新企业称号台账</span>
-                <span class="truncate text-xs">宁波市培育名录 · 查阅看板</span>
               </div>
             </NuxtLink>
           </SidebarMenuButton>
@@ -49,14 +47,6 @@ const nav = [
     <SidebarContent>
       <NavMain :items="nav" />
     </SidebarContent>
-
-    <SidebarFooter>
-      <p
-        class="text-sidebar-foreground/70 px-2 text-xs leading-relaxed group-data-[collapsible=icon]:hidden"
-      >
-        只读看板 · 数据来自经信局与工信部公布名单
-      </p>
-    </SidebarFooter>
 
     <SidebarRail />
   </Sidebar>
