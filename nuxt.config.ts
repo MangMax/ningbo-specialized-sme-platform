@@ -30,7 +30,5 @@ export default defineNuxtConfig({
     plugins: [tailwindcss()],
   },
 
-  runtimeConfig: {
-    dbPath: process.env.NUXT_DB_PATH || './data/roster.db',
-  },
+  // DB 路径由 db/client.ts 解析(默认 <cwd>/data/roster.db,可用 NUXT_DB_PATH 覆盖)。
 })

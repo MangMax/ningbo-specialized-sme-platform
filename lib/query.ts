@@ -3,7 +3,7 @@ import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import { groupBy, orderBy } from 'es-toolkit'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
-import { isNingboDistrict, normalizeName } from './normalize'
+import { isNingboDistrict, normalizeName } from './domain'
 import { EVENTS } from './labels'
 
 type Db = BetterSQLite3Database<typeof schema>

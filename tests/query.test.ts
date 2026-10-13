@@ -2,52 +2,62 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { readDocxBlocks } from '../lib/docx'
-import { parseAnnouncement } from '../lib/announcement'
-import { importEntries, newImportContext } from '../lib/import'
 import { allRecords, getQuality, getStats, listRecords, type EventType } from '../lib/query'
-import { buildAnnouncementDocx } from './fixtures/docx'
 
 let dir: string
 let db: (typeof import('../db'))['useDb']
 let schema: typeof import('../db/schema')
 
 /**
- * Fixture 覆盖三种事件类型与两个年份:
- * - 附件1(award,2024-2):甲、乙
- * - 附件2(review,2021-2):甲  → 甲同一记录下 award + review 两条事件
- * - 附件3(nurture,2021):丙
+ * 直接铺一份固定数据集(app 只读台账 —— 测试用 drizzle 插桩,不经过项目外的导入管道)。
+ * - 甲:专精特新(经信局) award 2024-2 + review 2021-2 → 同一记录两条事件
+ * - 乙:专精特新(经信局) award 2024-2
+ * - 丙:专精特新(经信局) nurture 2021
+ * 三家企业均无统代 → `uscc_missing`。
  */
-async function fixtureEntries() {
-  const buf = await buildAnnouncementDocx([
-    {
-      attachment: '附 件 1',
-      title: '2024年第二批宁波市“专精特新”中小企业名单',
-      rows: [
-        ['序号', '企业名称', '属地'],
-        ['1', '宁波甲科技有限公司', '海曙区'],
-        ['2', '宁波乙机械有限公司', '鄞州区'],
-      ],
-    },
-    {
-      attachment: '附件2',
-      title: '2021年第二批宁波市“专精特新”中小企业复核通过名单',
-      rows: [
-        ['序号', '企业名称', '属地'],
-        ['1', '宁波甲科技有限公司', '海曙区'],
-      ],
-    },
-    {
-      attachment: '附件3',
-      title: '2021年入库培育名单',
-      rows: [
-        ['序号', '企业名称', '属地'],
-        ['1', '宁波丙材料有限公司', '北仑区'],
-      ],
-    },
+function seed() {
+  const d = db()
+  const batch = d
+    .insert(schema.importBatch)
+    .values({ label: 'fixture', sourceRoot: '/tmp' })
+    .returning({ id: schema.importBatch.id })
+    .get().id
+
+  const ent = (name: string, district: string) =>
+    d
+      .insert(schema.enterprise)
+      .values({ usccNorm: null, name, nameNorm: name, district, qualityFlags: ['uscc_missing'] })
+      .returning({ id: schema.enterprise.id })
+      .get().id
+
+  const rec = (
+    enterpriseId: number,
+    district: string,
+    events: { type: string; year: number | null; seq: number | null }[],
+  ) => {
+    const id = d
+      .insert(schema.record)
+      .values({ importBatchId: batch, enterpriseId, titleCode: 'specialized_sme', source: 'jxj', district })
+      .returning({ id: schema.record.id })
+      .get().id
+    for (const ev of events) {
+      const eventId = d
+        .insert(schema.recordEvent)
+        .values({ recordId: id, eventType: ev.type as never, year: ev.year, batchSeq: ev.seq, sortKey: ev.year ?? 0 })
+        .returning({ id: schema.recordEvent.id })
+        .get().id
+      d.insert(schema.recordEvidence)
+        .values({ recordEventId: eventId, sourceFile: 'fixture.docx', attachment: '附件', listNo: ev.seq })
+        .run()
+    }
+  }
+
+  rec(ent('宁波甲科技有限公司', '海曙区'), '海曙区', [
+    { type: 'award', year: 2024, seq: 2 },
+    { type: 'review', year: 2021, seq: 2 },
   ])
-  const blocks = await readDocxBlocks(buf)
-  return parseAnnouncement(blocks, { title: 'specialized_sme', sourceFile: 'fixture.docx' })
+  rec(ent('宁波乙机械有限公司', '鄞州区'), '鄞州区', [{ type: 'award', year: 2024, seq: 2 }])
+  rec(ent('宁波丙材料有限公司', '北仑区'), '北仑区', [{ type: 'nurture', year: 2021, seq: null }])
 }
 
 beforeAll(async () => {
@@ -55,15 +65,7 @@ beforeAll(async () => {
   process.env.NUXT_DB_PATH = join(dir, 'test.db')
   ;({ useDb: db } = await import('../db'))
   schema = (await import('../db')).schema
-
-  const d = db()
-  const batch = d
-    .insert(schema.importBatch)
-    .values({ label: 'fixture', sourceRoot: '/tmp' })
-    .returning({ id: schema.importBatch.id })
-    .get()
-  const ctx = newImportContext(batch.id)
-  importEntries(d, ctx, 'specialized_sme', await fixtureEntries())
+  seed()
 })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -173,7 +175,6 @@ describe('getQuality', () => {
 describe('listRecords flags filter', () => {
   it('filters to records whose enterprise has no USCC', () => {
     const d = db()
-    // fixture 的三家企业均由公布文件导入,均无统代。
     expect(listRecords(d, { flags: 'uscc_missing' }).total).toBe(3)
   })
 })
