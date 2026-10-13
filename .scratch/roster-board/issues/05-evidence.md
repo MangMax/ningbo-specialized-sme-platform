@@ -4,11 +4,9 @@
 
 **Blocked by:** 03 — 创新型公布文件并入 + 称号筛选 + 搜索
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-13)
 
-- [ ] 解析公布文件时记录 `source_file` / `attachment` / `list_no`,写入 `record_evidence`
-- [ ] `GET /api/enterprises/:id` 与企业详情视图返回出处
-- [ ] 看板记录行可展开显示出处
-- [ ] 出处路径相对数据根目录,可直接定位到文件
-
-> 注:02 已建 `record_evidence` 表并写入最小字段;本票补齐多段名单下的附件/段位标识与界面呈现。
+- [x] 解析公布文件时记录 `source_file` / `attachment` / `list_no`,写入 `record_evidence`
+- [x] `GET /api/enterprises/:id` 与企业详情视图返回出处
+- [x] 详情页出处可展开(Collapsible)显示文件/附件/序号
+- [x] 出处路径相对数据根目录,可定位到文件

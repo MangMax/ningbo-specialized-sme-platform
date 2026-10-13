@@ -8,7 +8,12 @@ export default defineNuxtConfig({
   ssr: false,
   devtools: { enabled: true },
 
-  modules: ['@pinia/nuxt', '@pinia/colada-nuxt', '@vueuse/nuxt'],
+  modules: ['@pinia/nuxt', '@pinia/colada-nuxt', '@vueuse/nuxt', 'nuxt-charts'],
+
+  // 统计页图表(nuxt-charts v3)。只注册用到的图表组件,缩小客户端包体。
+  nuxtCharts: {
+    include: ['BarChart', 'LineChart', 'DonutChart'],
+  },
 
   // shadcn-vue components live under components/ui/*; use bare names (<Card>, <Button>)
   // and skip the index.ts barrels so they don't collide with the .vue files.
@@ -26,11 +31,18 @@ export default defineNuxtConfig({
     '@db': fileURLToPath(new URL('./db', import.meta.url)),
   },
 
+  // 忽略代理 worktree 与本地库目录:它们各自的 node_modules 若被 dev 文件监听扫进来
+  // 会耗尽文件描述符(EMFILE: too many open files)。
+  ignore: ['**/.claude/**', '**/data/**'],
+
   vite: {
     plugins: [tailwindcss()],
+    server: {
+      watch: {
+        ignored: ['**/.claude/**', '**/data/**'],
+      },
+    },
   },
 
-  runtimeConfig: {
-    dbPath: process.env.NUXT_DB_PATH || './data/roster.db',
-  },
+  // DB 路径由 db/client.ts 解析(默认 <cwd>/data/roster.db,可用 NUXT_DB_PATH 覆盖)。
 })

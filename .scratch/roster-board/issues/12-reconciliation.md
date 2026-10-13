@@ -7,7 +7,7 @@
 **Status:** 挂起 — 口径未定,暂不排入前沿
 
 - [ ] 确认比对口径:是否排除 `nurture`、是否限认定年份窗口、是否限定当前城市为宁波(参见目录内 `市专比对.xlsx` 与实测 354 条的差额来源)
-- [ ] `reconciliation_result` 按快照物化生成
+- [ ] `reconciliation_result` 物化生成
 - [ ] 看板展示两个方向的差异清单,可标注 `curated`
 - [ ] 命中方式(`evidence`:uscc / name)可见
 

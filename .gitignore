@@ -23,3 +23,6 @@ data/
 
 # scratch
 .scratch/roster-board/issues/.cache/
+
+# agent worktrees
+.claude/worktrees/

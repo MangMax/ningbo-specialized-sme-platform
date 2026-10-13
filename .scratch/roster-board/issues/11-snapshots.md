@@ -1,13 +1,16 @@
-# 11 — 导入快照与幂等重跑
+# 11 — 导入幂等(快照概念已作废)
 
-**What to build:** 把每次导入做成一个不可变的**导入快照**(`import_batch`);看板可切换快照;同一目录重跑幂等。让工具可逐年复用:换一个新数据目录就得到一个新快照。
+**What to build:** 导入**幂等** —— 同一份数据目录重复导入不产生重复行。
 
-**Blocked by:** 02 — 省专公布文件入库 + 最小记录列表
+> ⚠️ **本票已收窄。** 原设计里的「导入快照 / `import_batch`」被用户否掉:**没有任何地方需要它,不应存在于数据模型中**。故 `import_batch` 表、`record.import_batch_id`、`/api/batches`、台账页的快照选择器、`?batch=` 筛选**全部移除**(迁移 `0001_married_mister_fear`)。
+> 幂等本身不再靠快照实现,而是靠**身份键去重**:企业按 `(uscc_norm)` 或 `(name_norm)`、记录按 `(enterprise_id, title_code, source)`、事件按 `(record_id, event_type, year, batch_seq)`。
 
-**Status:** ready-for-agent
+**Blocked by:** 02
 
-- [ ] `import_batch` 表(label / source_root / imported_at);记录与事件挂到快照
-- [ ] 导入按快照隔离;重跑同目录不重复写入(幂等)
-- [ ] 看板可切换当前快照
-- [ ] 导入入口可指向任意数据目录(不写死 `20261013`)
-- [ ] 交叉校验脚本:导入结果 vs `公布文件名单全部整理版.xlsx` 作为回归基线
+**Status:** ✅ done(2026-10-13;快照部分已作废)
+
+- [x] ~~`import_batch` 表~~ — 已删除
+- [x] 重跑同一目录:所有表行数不变(靠身份键去重)
+- [x] ~~台账页切换快照~~ — 已删除
+- [x] 导入入口支持绝对路径 `--root`,回退 `SOURCE_ROOT` → `../`
+- [x] `pnpm check:jxj --root <abs>` 交叉校验可用
