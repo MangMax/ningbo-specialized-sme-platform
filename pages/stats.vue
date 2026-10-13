@@ -68,7 +68,7 @@ interface Section {
 const sections = computed<Section[]>(() => [
   { title: '称号分布', desc: '按记录所属称号计数', labels: TITLES, rows: titles.value, param: 'title' },
   { title: '来源对比', desc: '经信局与工信部并列来源', labels: SOURCES, rows: sources.value, param: 'source' },
-  { title: '事件类型分布', desc: '认定 / 复核 / 维护 / 入库培育', labels: EVENTS, rows: events.value },
+  { title: '事件类型分布', desc: '认定 / 复核 / 维护 / 入库培育', labels: EVENTS, rows: events.value, param: 'eventType' },
   { title: '区县 Top 20', desc: '按记录属地计数', labels: {}, rows: districts.value, param: 'district' },
 ])
 
@@ -77,6 +77,9 @@ const barWidth = (n: number, max: number) => `${Math.round((n / max) * 100)}%`
 
 const maxYear = computed(() => maxOf(years.value))
 const yearHeight = (n: number) => `${Math.max(3, Math.round((n / maxYear.value) * 120))}px`
+
+/** 年份键为四位数字才可下钻;`—`(年份缺失)只展示不可点。 */
+const isYear = (key: string) => /^\d{4}$/.test(key)
 
 /** 台账页的筛选链接,如 /?title=little_giant;无 param 时回落到台账首页。 */
 const drillTo = (param: string | undefined, value: string) =>
@@ -180,16 +183,27 @@ const labelOf = (labels: Record<string, string>, key: string) => labels[key] ?? 
           暂无数据
         </div>
         <div v-else class="flex h-40 items-end gap-1">
-          <div
-            v-for="y in years"
-            :key="y.key"
-            class="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1"
-            :title="`${y.key}: ${y.n}`"
-          >
-            <span class="text-muted-foreground text-[10px] tabular-nums">{{ y.n }}</span>
-            <div class="bg-primary w-full max-w-10 rounded-t-sm" :style="{ height: yearHeight(y.n) }" />
-            <span class="text-muted-foreground w-full truncate text-center text-[10px]">{{ y.key }}</span>
-          </div>
+          <template v-for="y in years" :key="y.key">
+            <NuxtLink
+              v-if="isYear(y.key)"
+              :to="drillTo('year', y.key)"
+              class="hover:bg-muted/60 flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-sm transition-colors"
+              :title="`${y.key}: ${y.n} · 点击查看记录`"
+            >
+              <span class="text-muted-foreground text-[10px] tabular-nums">{{ y.n }}</span>
+              <div class="bg-primary w-full max-w-10 rounded-t-sm" :style="{ height: yearHeight(y.n) }" />
+              <span class="text-muted-foreground w-full truncate text-center text-[10px]">{{ y.key }}</span>
+            </NuxtLink>
+            <div
+              v-else
+              class="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1 rounded-sm"
+              :title="`${y.key}: ${y.n}`"
+            >
+              <span class="text-muted-foreground text-[10px] tabular-nums">{{ y.n }}</span>
+              <div class="bg-primary w-full max-w-10 rounded-t-sm" :style="{ height: yearHeight(y.n) }" />
+              <span class="text-muted-foreground w-full truncate text-center text-[10px]">{{ y.key }}</span>
+            </div>
+          </template>
         </div>
       </CardContent>
     </Card>

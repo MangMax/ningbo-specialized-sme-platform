@@ -1,20 +1,26 @@
 import ExcelJS from 'exceljs'
 import { useDb } from '@db'
-import { allRecords } from '~~/lib/query'
+import { allRecords, type EventType } from '~~/lib/query'
 
 const TITLES: Record<string, string> = {
   little_giant: '专精特新“小巨人”',
   specialized_sme: '专精特新中小企业',
   innovative_sme: '创新型中小企业',
 }
+const EVENT_TYPES: EventType[] = ['award', 'review', 'maintain', 'nurture']
 
 export default defineEventHandler(async (event) => {
   const q = getQuery(event)
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
+  const eventType = str(q.eventType)
+  const yearNum = Number(q.year)
   const rows = allRecords(useDb(), {
-    title: typeof q.title === 'string' && q.title ? q.title : undefined,
-    source: typeof q.source === 'string' && q.source ? q.source : undefined,
-    district: typeof q.district === 'string' && q.district ? q.district : undefined,
-    q: typeof q.q === 'string' && q.q ? q.q : undefined,
+    title: str(q.title),
+    source: str(q.source),
+    district: str(q.district),
+    eventType: eventType && EVENT_TYPES.includes(eventType as EventType) ? (eventType as EventType) : undefined,
+    year: Number.isInteger(yearNum) && yearNum > 0 ? yearNum : undefined,
+    q: str(q.q),
   })
 
   const wb = new ExcelJS.Workbook()
