@@ -27,6 +27,18 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/tailwind.css'],
 
+  // tus 上传端点(server/utils/tus.ts)用到的路径与来源白名单。
+  // 根目录在这里解析成绝对路径并冻进产物 —— server 端不能用 import.meta.url
+  // 推路径(打包后它指向 .nuxt 入口)。生产/测试用 NUXT_FILES_DIR /
+  // NUXT_INCOMING_DIR / NUXT_TUS_ALLOWED_ORIGINS 覆盖。
+  runtimeConfig: {
+    filesDir: fileURLToPath(new URL('./files', import.meta.url)),
+    incomingDir: fileURLToPath(new URL('./.incoming', import.meta.url)),
+    // 跨源白名单(逗号分隔);默认只放行本机开发来源,避免 tus 默认的 `*`。
+    tusAllowedOrigins:
+      'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3470,http://127.0.0.1:3470',
+  },
+
   alias: {
     '@db': fileURLToPath(new URL('./db', import.meta.url)),
   },
