@@ -1,6 +1,6 @@
 import { and, count, desc, eq, exists, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
-import { groupBy, orderBy } from 'es-toolkit'
+import { compact, groupBy, minBy, orderBy } from 'es-toolkit'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import { isNingboDistrict, normalizeName } from './domain'
@@ -63,13 +63,11 @@ const MAX_PAGE_SIZE = 200
  * 未知来源置后,保证列表与导出排序一致。
  */
 function orderSources(sources: Iterable<string>): Source[] {
-  const rest = new Set(sources)
-  const ordered: string[] = []
-  for (const s of SOURCE_ORDER) {
-    if (rest.delete(s)) ordered.push(s)
-  }
-  for (const s of rest) ordered.push(s)
-  return ordered as Source[]
+  const seen = new Set(sources)
+  return [
+    ...SOURCE_ORDER.filter((s) => seen.has(s)),
+    ...[...seen].filter((s) => !SOURCE_ORDER.includes(s)),
+  ] as Source[]
 }
 
 /** 「企业 × 称号」组合键,列表与导出共用(用于分组页 / 定位组合)。 */
@@ -94,7 +92,7 @@ function buildWhere(db: Db, params: RecordQuery): SQL | undefined {
   if (flagConds) conds.push(flagConds)
   const eventCond = buildEventExists(db, params)
   if (eventCond) conds.push(eventCond)
-  const filtered = conds.filter(Boolean) as SQL[]
+  const filtered = compact(conds)
   return filtered.length ? and(...filtered) : undefined
 }
 
@@ -231,8 +229,8 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
   const rows: RecordRow[] = pageGroups.map((g) => {
     const key = groupKey(g.enterpriseId, g.titleCode)
     const recs = recordsByKey[key] ?? []
-    const merged = recs
-      .flatMap((r) =>
+    const merged = orderBy(
+      recs.flatMap((r) =>
         (eventsByRecord[r.recordId] ?? []).map((e) => ({
           type: e.type,
           year: e.year,
@@ -241,13 +239,12 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
           sortKey: e.sortKey,
           id: e.id,
         })),
-      )
-      .sort((a, b) => a.sortKey - b.sortKey || a.id - b.id)
-      .map(({ type, year, seq, source }) => ({ type, year, seq, source }))
+      ),
+      [(e) => e.sortKey, (e) => e.id],
+      ['asc', 'asc'],
+    ).map(({ type, year, seq, source }) => ({ type, year, seq, source }))
     // 区县取组内 record.id 最小且有值者(与导出同一规则,保证两侧一致)。
-    const district = [...recs]
-      .sort((a, b) => a.recordId - b.recordId)
-      .find((r) => r.district)?.district ?? null
+    const district = minBy(recs.filter((r) => r.district), (r) => r.recordId)?.district ?? null
     return {
       enterpriseId: g.enterpriseId,
       name: recs[0]?.name ?? '',
@@ -570,10 +567,7 @@ function formatEvidence(v: {
   attachment: string | null
   listNo: number | null
 }): string {
-  const parts = [v.sourceFile]
-  if (v.attachment) parts.push(v.attachment)
-  if (v.listNo != null) parts.push(`序号${v.listNo}`)
-  return parts.join(' / ')
+  return compact([v.sourceFile, v.attachment, v.listNo != null ? `序号${v.listNo}` : null]).join(' / ')
 }
 
 /**
@@ -640,21 +634,15 @@ export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
   const evByEvent = groupBy(evidence, (v) => v.recordEventId)
 
   // 按「企业 × 称号」归并,保持 matched 的出现顺序(称号 → 企业名 → record.id)。
-  const byKey = new Map<string, typeof matched>()
-  for (const r of matched) {
-    const key = groupKey(r.enterpriseId, r.titleCode)
-    const arr = byKey.get(key)
-    if (arr) arr.push(r)
-    else byKey.set(key, [r])
-  }
+  const byKey = groupBy(matched, (r) => groupKey(r.enterpriseId, r.titleCode))
 
-  return [...byKey.values()].map((recs) => {
-    const sorted = [...recs].sort((a, b) => a.recordId - b.recordId)
-    const head = sorted[0]!
-    const district = sorted.find((r) => r.district)?.district ?? null
+  return Object.values(byKey).map((recs) => {
+    const head = minBy(recs, (r) => r.recordId)!
+    // 区县取组内 record.id 最小且有值者(与列表同一规则)。
+    const district = minBy(recs.filter((r) => r.district), (r) => r.recordId)?.district ?? null
     // 该组合下全部事件(保留每条事件所属来源),按 sortKey 排序。
-    const evRows = recs
-      .flatMap((r) =>
+    const evRows = orderBy(
+      recs.flatMap((r) =>
         (evByRecord[r.recordId] ?? []).map((e) => ({
           type: e.type,
           year: e.year,
@@ -663,8 +651,10 @@ export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
           id: e.id,
           recordId: r.recordId,
         })),
-      )
-      .sort((a, b) => a.sortKey - b.sortKey || a.id - b.id)
+      ),
+      [(e) => e.sortKey, (e) => e.id],
+      ['asc', 'asc'],
+    )
     const evidenceText = evRows
       .flatMap((e) => (evByEvent[e.id] ?? []).map(formatEvidence))
       .join('; ')

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed } from 'vue'
+import { orderBy, sumBy } from 'es-toolkit'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Empty,
@@ -44,10 +45,8 @@ const { data, isLoading } = useQuery({
 })
 
 /** 条数多的排前面:先看影响面最大的那一类。 */
-const groups = computed<QualityGroup[]>(() =>
-  [...(data.value ?? [])].sort((a, b) => b.n - a.n),
-)
-const totalFlagged = computed(() => groups.value.reduce((s, g) => s + g.n, 0))
+const groups = computed<QualityGroup[]>(() => orderBy(data.value ?? [], [(g) => g.n], ['desc']))
+const totalFlagged = computed(() => sumBy(groups.value, (g) => g.n))
 
 const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs font-medium'
 </script>

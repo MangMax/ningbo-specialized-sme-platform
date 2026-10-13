@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed } from 'vue'
+import { groupBy, orderBy, uniq } from 'es-toolkit'
 import { ChevronRight } from '@lucide/vue'
 import { TITLES, TITLE_ORDER, SOURCE_ORDER, QUALITY_FLAGS } from '~~/lib/labels'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -61,24 +62,18 @@ interface TitleGroup {
 /** 按称号分组,组内按来源固定顺序:同一条记录的两种来源并排可比。 */
 const groups = computed<TitleGroup[]>(() => {
   const records = detail.value?.records ?? []
-  const byTitle = new Map<string, DetailRecord[]>()
-  for (const r of records) {
-    const arr = byTitle.get(r.titleCode)
-    if (arr) arr.push(r)
-    else byTitle.set(r.titleCode, [r])
-  }
-  return [...byTitle.entries()]
-    .sort(([a], [b]) => rankOf(a) - rankOf(b))
-    .map(([titleCode, recs]) => {
-      const sorted = [...recs].sort((a, b) => sourceRank(a.source) - sourceRank(b.source))
-      const sources = new Set(sorted.map((r) => r.source))
+  const byTitle = groupBy(records, (r) => r.titleCode)
+  return orderBy(Object.entries(byTitle), [([code]) => rankOf(code)], ['asc']).map(
+    ([titleCode, recs]) => {
+      const sorted = orderBy(recs, [(r) => sourceRank(r.source)], ['asc'])
       return {
         titleCode,
         titleName: TITLES[titleCode] ?? titleCode,
         records: sorted,
-        dual: sources.size > 1,
+        dual: uniq(sorted.map((r) => r.source)).length > 1,
       }
-    })
+    },
+  )
 })
 
 function rankOf(code: string) {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch, type Ref } from 'vue'
 import { watchDebounced } from '@vueuse/core'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search } from '@lucide/vue'
@@ -186,52 +186,49 @@ const rows = computed<Rec[]>(() => data.value?.rows ?? [])
 const total = computed(() => data.value?.total ?? 0)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
+interface ActiveFilter {
+  key: string
+  label: string
+  clear: () => void
+}
+
+/** 一组多选筛选 → 生效条件 chip:每项可单独从对应 ref 里撤掉。 */
+function multiChips(
+  values: string[],
+  keyPrefix: string,
+  labelPrefix: string,
+  target: Ref<string[]>,
+  format: (v: string) => string = (v) => v,
+): ActiveFilter[] {
+  return values.map((v) => ({
+    key: `${keyPrefix}:${v}`,
+    label: `${labelPrefix} · ${format(v)}`,
+    clear: () => (target.value = target.value.filter((x) => x !== v)),
+  }))
+}
+
 /** 生效中的筛选条件摊平成一行,每项可单独撤掉。 */
-const activeFilters = computed(() => {
-  const out: { key: string; label: string; clear: () => void }[] = []
-  for (const v of titles.value) {
-    out.push({
-      key: `title:${v}`,
-      label: `称号 · ${TITLES[v] ?? v}`,
-      clear: () => (titles.value = titles.value.filter((x) => x !== v)),
-    })
-  }
-  for (const v of sources.value) {
-    out.push({
-      key: `source:${v}`,
-      label: `来源 · ${SOURCES[v] ?? v}`,
-      clear: () => (sources.value = sources.value.filter((x) => x !== v)),
-    })
-  }
-  for (const v of eventTypes.value) {
-    out.push({
-      key: `event:${v}`,
-      label: `事件 · ${EVENTS[v] ?? v}`,
-      clear: () => (eventTypes.value = eventTypes.value.filter((x) => x !== v)),
-    })
-  }
-  for (const v of years.value) {
-    out.push({
-      key: `year:${v}`,
-      label: `年份 · ${v}`,
-      clear: () => (years.value = years.value.filter((x) => x !== v)),
-    })
-  }
-  if (district.value) {
-    out.push({ key: 'district', label: `区县 · ${district.value}`, clear: () => (district.value = '') })
-  }
-  if (q.value) {
-    out.push({
-      key: 'q',
-      label: `搜索 · ${q.value}`,
-      clear: () => {
-        search.value = ''
-        q.value = ''
-      },
-    })
-  }
-  return out
-})
+const activeFilters = computed<ActiveFilter[]>(() => [
+  ...multiChips(titles.value, 'title', '称号', titles, (v) => TITLES[v] ?? v),
+  ...multiChips(sources.value, 'source', '来源', sources, (v) => SOURCES[v] ?? v),
+  ...multiChips(eventTypes.value, 'event', '事件', eventTypes, (v) => EVENTS[v] ?? v),
+  ...multiChips(years.value, 'year', '年份', years),
+  ...(district.value
+    ? [{ key: 'district', label: `区县 · ${district.value}`, clear: () => (district.value = '') }]
+    : []),
+  ...(q.value
+    ? [
+        {
+          key: 'q',
+          label: `搜索 · ${q.value}`,
+          clear: () => {
+            search.value = ''
+            q.value = ''
+          },
+        },
+      ]
+    : []),
+])
 
 function clearFilters() {
   titles.value = []

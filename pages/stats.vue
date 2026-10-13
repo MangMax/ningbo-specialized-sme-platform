@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed } from 'vue'
+import { orderBy } from 'es-toolkit'
 import { TITLES, TITLE_ORDER, TITLE_SHORT, SOURCES, SOURCE_ORDER, EVENTS, EVENT_ORDER } from '~~/lib/labels'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -44,18 +45,18 @@ const SOURCE_COLORS: Record<string, string> = {
 /** 按给定顺序排列,未知键置后并按计数降序。 */
 function ordered(buckets: Bucket[] | undefined, order: string[]): Bucket[] {
   if (!buckets) return []
-  const idx = (k: string) => {
-    const i = order.indexOf(k)
+  const rank = (b: Bucket) => {
+    const i = order.indexOf(b.key)
     return i === -1 ? order.length : i
   }
-  return [...buckets].sort((a, b) => idx(a.key) - idx(b.key) || b.n - a.n)
+  return orderBy(buckets, [rank, (b) => b.n], ['asc', 'desc'])
 }
 
 const titles = computed(() => ordered(data.value?.byTitle, TITLE_ORDER))
 const sources = computed(() => ordered(data.value?.bySource, SOURCE_ORDER))
 const events = computed(() => ordered(data.value?.byEvent, EVENT_ORDER))
 /** 区县按计数降序,全部列出(不截断成 Top 20 —— 清单本来就该看得全)。 */
-const districts = computed(() => [...(data.value?.byDistrict ?? [])].sort((a, b) => b.n - a.n))
+const districts = computed(() => orderBy(data.value?.byDistrict ?? [], [(b) => b.n], ['desc']))
 const years = computed(() => data.value?.byYear ?? [])
 
 const maxOf = (b: Bucket[]) => Math.max(1, ...b.map((x) => x.n))
@@ -79,10 +80,11 @@ const titleCats = computed(() =>
 
 /** 年份趋势:单系列折线,只取可下钻的四位年份。 */
 const yearRows = computed(() =>
-  years.value
-    .filter((b) => /^\d{4}$/.test(b.key))
-    .sort((a, b) => a.key.localeCompare(b.key))
-    .map((b) => ({ key: b.key, label: b.key, n: b.n, color: 'var(--chart-1)' })),
+  orderBy(
+    years.value.filter((b) => /^\d{4}$/.test(b.key)),
+    [(b) => b.key],
+    ['asc'],
+  ).map((b) => ({ key: b.key, label: b.key, n: b.n, color: 'var(--chart-1)' })),
 )
 const countCats = { n: { name: '记录数', color: 'var(--chart-1)' } }
 
