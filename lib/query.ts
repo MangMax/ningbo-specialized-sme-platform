@@ -1,4 +1,4 @@
-import { and, count, desc, eq, isNull, like, or, sql, type SQL } from 'drizzle-orm'
+import { and, count, desc, eq, exists, isNull, like, or, sql, type SQL } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import { groupBy, orderBy } from 'es-toolkit'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -6,11 +6,17 @@ import * as schema from '../db/schema'
 
 type Db = BetterSQLite3Database<typeof schema>
 
+/** 事件类型,与 record_event.event_type 的取值一致。 */
+export type EventType = 'award' | 'review' | 'maintain' | 'nurture'
+
 export interface RecordQuery {
   title?: string
   source?: string
   district?: string
-  eventType?: string
+  /** 命中「该记录下存在此类型的事件」。 */
+  eventType?: EventType
+  /** 命中「该记录下存在此年份的事件」。 */
+  year?: number
   q?: string
   /** 导入快照筛选(import_batch.id)。见票 11。 */
   batchId?: number
@@ -31,7 +37,7 @@ export interface RecordRow {
 
 const MAX_PAGE_SIZE = 200
 
-function buildWhere(params: RecordQuery): SQL | undefined {
+function buildWhere(db: Db, params: RecordQuery): SQL | undefined {
   const conds: (SQL | undefined)[] = []
   if (params.title) conds.push(eq(schema.record.titleCode, params.title))
   if (params.source) conds.push(eq(schema.record.source, params.source as 'jxj' | 'miit'))
@@ -41,13 +47,32 @@ function buildWhere(params: RecordQuery): SQL | undefined {
     const like$ = `%${params.q.trim()}%`
     conds.push(or(like(schema.enterprise.name, like$), like(schema.enterprise.usccNorm, like$)))
   }
+  const eventCond = buildEventExists(db, params)
+  if (eventCond) conds.push(eventCond)
   const filtered = conds.filter(Boolean) as SQL[]
   return filtered.length ? and(...filtered) : undefined
 }
 
+/**
+ * 「记录下存在某类型 / 某年份事件」的相关 EXISTS 子查询。
+ * 命中 record_event 中 record_id = record.id 且满足筛选的任一事件。
+ */
+function buildEventExists(db: Db, params: RecordQuery): SQL | undefined {
+  if (!params.eventType && params.year === undefined) return undefined
+  const sub: SQL[] = [eq(schema.recordEvent.recordId, schema.record.id)]
+  if (params.eventType) sub.push(eq(schema.recordEvent.eventType, params.eventType))
+  if (params.year !== undefined) sub.push(eq(schema.recordEvent.year, params.year))
+  return exists(
+    db
+      .select({ hit: sql<number>`1` })
+      .from(schema.recordEvent)
+      .where(and(...sub)),
+  )
+}
+
 /** 分页列出记录,附其事件摘要。 */
 export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; total: number } {
-  const where = buildWhere(params)
+  const where = buildWhere(db, params)
   const page = Math.max(1, params.page ?? 1)
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, params.pageSize ?? 25))
 
@@ -356,7 +381,7 @@ export interface ExportRow {
 
 /** 取全部匹配记录(用于导出),事件压成一行文本。 */
 export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
-  const where = buildWhere(params)
+  const where = buildWhere(db, params)
   const base = db
     .select({
       recordId: schema.record.id,

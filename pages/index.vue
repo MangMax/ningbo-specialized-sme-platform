@@ -28,6 +28,18 @@ const EVENTS: Record<string, string> = {
 
 const apiGet = $fetch as unknown as <T>(url: string, opts?: { query?: Record<string, unknown> }) => Promise<T>
 
+interface Bucket {
+  key: string
+  n: number
+}
+interface Stats {
+  byEvent: Bucket[]
+  byYear: Bucket[]
+}
+
+/** 事件类型选项顺序,与 stats/index 展示一致。 */
+const EVENT_ORDER = ['award', 'review', 'maintain', 'nurture']
+
 const route = useRoute()
 const queryStr = (v: unknown) => (typeof v === 'string' ? v : '')
 
@@ -56,12 +68,31 @@ const effectiveBatch = computed<number | undefined>(() => {
 const title = ref(queryStr(route.query.title) || 'all')
 const source = ref(queryStr(route.query.source) || 'all')
 const district = ref(queryStr(route.query.district))
+const eventType = ref(queryStr(route.query.eventType) || 'all')
+const year = ref(queryStr(route.query.year) || 'all')
 const search = ref('')
 const q = ref('')
 watchDebounced(search, (v) => {
   q.value = v.trim()
   page.value = 1
 }, { debounce: 300 })
+
+// 事件类型 / 年份的可选项来自数据(统计端点),口径与统计页一致。
+const { data: stats } = useQuery({
+  key: () => ['stats'],
+  query: () => apiGet<Stats>('/api/stats'),
+})
+const eventOptions = computed(() => {
+  const present = new Set((stats.value?.byEvent ?? []).map((b) => b.key))
+  const known = EVENT_ORDER.filter((k) => present.has(k))
+  return known.length ? known : EVENT_ORDER
+})
+const yearOptions = computed(() =>
+  (stats.value?.byYear ?? [])
+    .map((b) => b.key)
+    .filter((k) => /^\d{4}$/.test(k))
+    .sort((a, b) => b.localeCompare(a)),
+)
 
 const page = ref(1)
 const pageSize = 25
@@ -70,6 +101,8 @@ const resetPage = () => (page.value = 1)
 const clearExtraFilters = () => {
   source.value = 'all'
   district.value = ''
+  eventType.value = 'all'
+  year.value = 'all'
   page.value = 1
 }
 
@@ -77,6 +110,8 @@ const params = computed(() => ({
   title: title.value === 'all' ? undefined : title.value,
   source: source.value === 'all' ? undefined : source.value,
   district: district.value || undefined,
+  eventType: eventType.value === 'all' ? undefined : eventType.value,
+  year: year.value === 'all' ? undefined : year.value,
   q: q.value || undefined,
   batch: effectiveBatch.value,
   page: page.value,
@@ -94,6 +129,8 @@ const exportUrl = computed(() => {
   if (title.value !== 'all') p.set('title', title.value)
   if (source.value !== 'all') p.set('source', source.value)
   if (district.value) p.set('district', district.value)
+  if (eventType.value !== 'all') p.set('eventType', eventType.value)
+  if (year.value !== 'all') p.set('year', year.value)
   if (q.value) p.set('q', q.value)
   if (effectiveBatch.value) p.set('batch', String(effectiveBatch.value))
   return `/api/export?${p.toString()}`
@@ -147,8 +184,35 @@ function fmt(e: Rec['events'][number]) {
         </SelectContent>
       </Select>
 
+      <Select v-model="eventType" @update:model-value="resetPage">
+        <SelectTrigger class="w-36">
+          <SelectValue placeholder="全部事件" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">全部事件</SelectItem>
+          <SelectItem v-for="k in eventOptions" :key="k" :value="k">
+            {{ EVENTS[k] ?? k }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+
+      <Select v-model="year" @update:model-value="resetPage">
+        <SelectTrigger class="w-32">
+          <SelectValue placeholder="全部年份" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">全部年份</SelectItem>
+          <SelectItem v-for="y in yearOptions" :key="y" :value="y">{{ y }}</SelectItem>
+        </SelectContent>
+      </Select>
+
       <Badge v-if="district" variant="secondary">区县:{{ district }}</Badge>
-      <Button v-if="source !== 'all' || district" variant="ghost" size="sm" @click="clearExtraFilters">
+      <Button
+        v-if="source !== 'all' || district || eventType !== 'all' || year !== 'all'"
+        variant="ghost"
+        size="sm"
+        @click="clearExtraFilters"
+      >
         清除筛选
       </Button>
 
