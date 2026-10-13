@@ -138,13 +138,19 @@ const exportUrl = computed(() => {
 })
 
 /** 每页条数:选预设,或选「自定义」后在输入框手动填。 */
+const customSize = ref(false)
 const sizeModel = computed({
-  get: () => (PAGE_SIZE_PRESETS.includes(pageSize.value) ? String(pageSize.value) : 'custom'),
+  get: () => (customSize.value ? 'custom' : String(pageSize.value)),
   set: (v: string) => {
-    if (v && v !== 'custom') setPageSize(Number(v))
+    if (v === 'custom') {
+      customSize.value = true
+      return
+    }
+    customSize.value = false
+    setPageSize(Number(v))
   },
 })
-const isCustomSize = computed(() => sizeModel.value === 'custom')
+const isCustomSize = computed(() => customSize.value)
 function setPageSize(n: number) {
   pageSize.value = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(n) || 25))
   page.value = 1
