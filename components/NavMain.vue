@@ -2,7 +2,6 @@
 import type { LucideIcon } from '@lucide/vue'
 import {
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -24,7 +23,6 @@ const isActive = (url: string) =>
 
 <template>
   <SidebarGroup>
-    <SidebarGroupLabel>导航</SidebarGroupLabel>
     <SidebarMenu>
       <SidebarMenuItem v-for="item in items" :key="item.title">
         <SidebarMenuButton as-child :is-active="isActive(item.url)" :tooltip="item.title">

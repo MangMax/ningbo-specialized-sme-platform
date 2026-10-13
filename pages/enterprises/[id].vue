@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed } from 'vue'
-import {
-  TITLES,
-  TITLE_ORDER,
-  SOURCES,
-  SOURCE_ORDER,
-  EVENTS,
-  QUALITY_FLAGS,
-} from '~~/lib/labels'
+import { ChevronRight } from '@lucide/vue'
+import { TITLES, TITLE_ORDER, SOURCE_ORDER, QUALITY_FLAGS } from '~~/lib/labels'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Skeleton } from '@/components/ui/skeleton'
 
 interface Evidence {
   sourceFile: string
@@ -36,15 +36,7 @@ interface EnterpriseDetail {
   records: DetailRecord[]
 }
 
-const EVENT_VARIANT: Record<string, 'default' | 'secondary' | 'outline'> = {
-  award: 'secondary',
-  review: 'outline',
-  maintain: 'outline',
-  nurture: 'outline',
-}
-
 const route = useRoute()
-const router = useRouter()
 const id = computed(() => String(route.params.id ?? ''))
 
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
@@ -62,10 +54,11 @@ interface TitleGroup {
   titleCode: string
   titleName: string
   records: DetailRecord[]
-  summary: string
+  /** 两个来源都有这个称号 —— 页面据此标「并列来源」并排成两列。 */
   dual: boolean
 }
 
+/** 按称号分组,组内按来源固定顺序:同一条记录的两种来源并排可比。 */
 const groups = computed<TitleGroup[]>(() => {
   const records = detail.value?.records ?? []
   const byTitle = new Map<string, DetailRecord[]>()
@@ -78,17 +71,12 @@ const groups = computed<TitleGroup[]>(() => {
     .sort(([a], [b]) => rankOf(a) - rankOf(b))
     .map(([titleCode, recs]) => {
       const sorted = [...recs].sort((a, b) => sourceRank(a.source) - sourceRank(b.source))
-      const counts = new Map<string, number>()
-      for (const r of sorted) counts.set(r.source, (counts.get(r.source) ?? 0) + 1)
-      const summary = [...counts.entries()]
-        .map(([s, n]) => (n > 1 ? `${SOURCES[s] ?? s} ${n} 条` : (SOURCES[s] ?? s)))
-        .join(' / ')
+      const sources = new Set(sorted.map((r) => r.source))
       return {
         titleCode,
         titleName: TITLES[titleCode] ?? titleCode,
         records: sorted,
-        summary,
-        dual: counts.size > 1,
+        dual: sources.size > 1,
       }
     })
 })
@@ -101,37 +89,27 @@ function sourceRank(code: string) {
   const i = SOURCE_ORDER.indexOf(code)
   return i === -1 ? 99 : i
 }
-function fmtTime(ev: DetailEvent) {
-  if (ev.year == null) return '—'
-  return ev.seq ? `${ev.year}-${ev.seq}` : String(ev.year)
-}
 function flagLabel(f: string) {
   return QUALITY_FLAGS[f] ?? f
-}
-function goBack() {
-  if (typeof window !== 'undefined' && window.history.length > 1) router.back()
-  else router.push('/')
 }
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div>
-      <Button variant="ghost" size="sm" class="-ml-2" @click="goBack">← 返回台账</Button>
-    </div>
-
+  <div class="flex flex-col gap-5">
     <!-- 加载中 -->
-    <Card v-if="isLoading">
-      <CardHeader>
-        <CardTitle><Skeleton class="h-6 w-64" /></CardTitle>
-        <CardDescription><Skeleton class="h-4 w-40" /></CardDescription>
-      </CardHeader>
-      <CardContent class="space-y-3">
-        <Skeleton class="h-4 w-full" />
-        <Skeleton class="h-4 w-3/4" />
-        <Skeleton class="h-24 w-full" />
-      </CardContent>
-    </Card>
+    <template v-if="isLoading">
+      <div class="flex flex-col gap-2">
+        <Skeleton class="h-3 w-24" />
+        <Skeleton class="h-7 w-72" />
+        <Skeleton class="h-4 w-96" />
+      </div>
+      <Card v-for="i in 2" :key="i" class="gap-0 py-0">
+        <CardContent class="flex flex-col gap-3 p-5">
+          <Skeleton class="h-5 w-48" />
+          <Skeleton class="h-24 w-full" />
+        </CardContent>
+      </Card>
+    </template>
 
     <!-- 加载失败 -->
     <Alert v-else-if="error" variant="destructive">
@@ -140,108 +118,120 @@ function goBack() {
     </Alert>
 
     <template v-else-if="detail">
-      <!-- 企业身份 -->
-      <Card>
-        <CardHeader>
-          <CardTitle class="text-xl">{{ detail.name }}</CardTitle>
-          <CardDescription>企业全部记录与事件 · 共 {{ recordCount }} 条记录</CardDescription>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <div class="flex flex-wrap items-center gap-2">
-            <Badge variant="outline" class="font-normal">
-              统一社会信用代码:<span class="font-mono">{{ detail.uscc ?? '—' }}</span>
-            </Badge>
-            <Badge variant="outline" class="font-normal">区县:{{ detail.district ?? '—' }}</Badge>
-            <Badge v-for="f in otherFlags" :key="f" variant="destructive">{{ flagLabel(f) }}</Badge>
-          </div>
+      <PageHeader class="rise-in" style="--rise-index: 0" :title="detail.name">
+        <template #breadcrumb>
+          <NuxtLink to="/" class="hover:text-foreground hover:underline">台账</NuxtLink>
+          <span class="mx-1.5">/</span>
+          <span>企业详情</span>
+        </template>
+        <template #description>
+          <span class="font-mono">{{ detail.uscc ?? '无统一社会信用代码' }}</span>
+          <span class="mx-1.5">·</span>{{ detail.district ?? '属地未知' }}
+          <span class="mx-1.5">·</span>共 {{ recordCount }} 条记录
+        </template>
+        <template #actions>
+          <Badge v-for="f in otherFlags" :key="f" variant="destructive">{{ flagLabel(f) }}</Badge>
+        </template>
+      </PageHeader>
 
-          <Alert v-if="usccMissing" variant="destructive">
-            <AlertTitle>缺失统一社会信用代码(uscc_missing)</AlertTitle>
-            <AlertDescription>
-              该企业无统一社会信用代码,记录按<strong>企业名称</strong>归并。若与其他同名企业混同,请人工核对原始公布文件。
-            </AlertDescription>
-          </Alert>
+      <Alert v-if="usccMissing" class="rise-in" style="--rise-index: 1" variant="destructive">
+        <AlertTitle>缺统一社会信用代码,记录按企业名称归并</AlertTitle>
+        <AlertDescription>
+          该企业没有统一社会信用代码,台账按<strong>企业名称</strong>把记录归到一起。
+          若与同名企业混同,需回到公布文件人工核对。
+        </AlertDescription>
+      </Alert>
+
+      <Card v-if="recordCount === 0" class="gap-0 py-0">
+        <CardContent class="text-muted-foreground py-12 text-center text-sm">
+          该企业暂无记录。
         </CardContent>
       </Card>
 
-      <!-- 无记录 -->
-      <Card v-if="recordCount === 0">
-        <CardContent class="text-muted-foreground py-10 text-center">该企业暂无记录。</CardContent>
-      </Card>
-
-      <!-- 称号 × 来源 分组 -->
-      <Card v-for="g in groups" :key="g.titleCode">
-        <CardHeader>
-          <div class="flex items-center gap-2">
-            <CardTitle>{{ g.titleName }}</CardTitle>
-            <Badge v-if="g.dual" variant="secondary">并列来源</Badge>
+      <!-- 称号 × 来源 -->
+      <Card
+        v-for="(g, gi) in groups"
+        :key="g.titleCode"
+        class="rise-in gap-0 overflow-hidden py-0"
+        :style="{ '--rise-index': gi + 2 }"
+      >
+        <CardHeader class="gap-1.5 border-b px-5 py-4">
+          <!-- 来源不再写成一行文字:下面每个来源自己带方标,写两遍是重复。 -->
+          <div class="flex flex-wrap items-center gap-2">
+            <TitleBadge :code="g.titleCode" class="text-sm" />
+            <Badge v-if="g.dual" variant="quiet">并列来源</Badge>
           </div>
-          <CardDescription>
-            来源:{{ g.summary }}<span v-if="g.dual"> · 同一称号的两侧来源各成一条记录</span>
-          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <div :class="g.records.length > 1 ? 'grid gap-4 md:grid-cols-2' : 'grid gap-4'">
-            <div v-for="rec in g.records" :key="rec.source" class="min-w-0 space-y-3 rounded-lg border p-4">
-              <div class="flex flex-wrap items-center gap-2">
-                <Badge :variant="rec.source === 'jxj' ? 'secondary' : 'outline'">
-                  {{ SOURCES[rec.source] ?? rec.source }}
-                </Badge>
-                <span class="text-muted-foreground text-xs">属地:{{ rec.district ?? '—' }}</span>
-                <Badge variant="outline" class="ml-auto font-normal">{{ rec.events.length }} 个事件</Badge>
-              </div>
+        <CardContent class="p-0">
+          <!--
+            并列来源要并排看:同一称号的经信局记录和工信部记录放在同一行两列,
+            一眼比得出两边的事件和年份对不对得上。只有一条时占满整宽。
+            两列之间只画一条竖线 —— 每个来源下面再套一层带边框的面板,
+            就变成用户抱怨的「卡片套卡片」了。
+          -->
+          <div :class="g.records.length > 1 ? 'grid lg:grid-cols-2' : 'grid'">
+            <section
+              v-for="(rec, ri) in g.records"
+              :key="rec.source"
+              class="flex flex-col px-5 py-4"
+              :class="[
+                ri > 0 && 'border-t',
+                ri > 0 && g.records.length > 1 && 'lg:border-t-0 lg:border-l',
+              ]"
+            >
+            <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <SourceChip :code="rec.source" />
+              <span class="text-muted-foreground text-xs">属地 {{ rec.district ?? '—' }}</span>
+              <span class="text-muted-foreground ml-auto text-xs tabular-nums">
+                {{ rec.events.length }} 个事件
+              </span>
+            </header>
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead class="w-24">事件</TableHead>
-                    <TableHead class="w-24">年份-批次</TableHead>
-                    <TableHead>出处</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow v-if="rec.events.length === 0">
-                    <TableCell :colspan="3" class="text-muted-foreground text-center">无事件</TableCell>
-                  </TableRow>
-                  <TableRow v-for="(ev, i) in rec.events" v-else :key="i">
-                    <TableCell>
-                      <Badge :variant="EVENT_VARIANT[ev.type] ?? 'outline'">
-                        {{ EVENTS[ev.type] ?? ev.type }}
-                      </Badge>
-                    </TableCell>
-                    <TableCell class="text-sm tabular-nums">{{ fmtTime(ev) }}</TableCell>
-                    <TableCell class="whitespace-normal">
-                      <Collapsible v-if="ev.evidence.length" v-slot="{ open }">
-                        <CollapsibleTrigger as-child>
-                          <Button variant="ghost" size="sm" class="-ml-2 h-7">
-                            {{ open ? '收起出处' : `查看出处 · ${ev.evidence.length}` }}
-                          </Button>
-                        </CollapsibleTrigger>
-                        <CollapsibleContent class="mt-2 space-y-1">
-                          <div
-                            v-for="(e, j) in ev.evidence"
-                            :key="j"
-                            class="bg-muted/40 space-y-0.5 rounded border p-2 text-xs"
-                          >
-                            <div>
-                              <span class="text-muted-foreground">文件:</span>
-                              <span class="font-mono break-all">{{ e.sourceFile }}</span>
-                            </div>
-                            <div v-if="e.attachment">
-                              <span class="text-muted-foreground">附件:</span>{{ e.attachment }}
-                            </div>
-                            <div v-if="e.listNo != null">
-                              <span class="text-muted-foreground">序号:</span>{{ e.listNo }}
-                            </div>
-                          </div>
-                        </CollapsibleContent>
-                      </Collapsible>
-                      <span v-else class="text-muted-foreground text-xs">—</span>
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </div>
+            <ul v-if="rec.events.length" class="mt-3 flex flex-col gap-2">
+              <li v-for="(ev, i) in rec.events" :key="i">
+                <Collapsible v-slot="{ open }">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <EventChip :type="ev.type" :year="ev.year" :seq="ev.seq" />
+                    <CollapsibleTrigger v-if="ev.evidence.length" as-child>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        class="text-muted-foreground h-6 gap-1 px-1.5 text-xs"
+                      >
+                        <ChevronRight
+                          class="size-3.5 transition-transform duration-150"
+                          :class="open && 'rotate-90'"
+                        />
+                        {{ open ? '收起出处' : `出处 ${ev.evidence.length}` }}
+                      </Button>
+                    </CollapsibleTrigger>
+                    <span v-else class="text-muted-foreground text-xs">暂无出处</span>
+                  </div>
+                  <CollapsibleContent class="mt-2 flex flex-col gap-1.5">
+                    <div
+                      v-for="(e, j) in ev.evidence"
+                      :key="j"
+                      class="bg-muted/60 flex flex-col gap-0.5 rounded-sm p-2 text-xs"
+                    >
+                      <div class="flex gap-2">
+                        <span class="text-muted-foreground w-14 shrink-0">公布文件</span>
+                        <span class="font-mono break-all">{{ e.sourceFile }}</span>
+                      </div>
+                      <div v-if="e.attachment" class="flex gap-2">
+                        <span class="text-muted-foreground w-14 shrink-0">附件</span>
+                        <span>{{ e.attachment }}</span>
+                      </div>
+                      <div v-if="e.listNo != null" class="flex gap-2">
+                        <span class="text-muted-foreground w-14 shrink-0">序号</span>
+                        <span class="tabular-nums">{{ e.listNo }}</span>
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              </li>
+            </ul>
+            <p v-else class="text-muted-foreground mt-3 text-xs">这条记录下没有事件。</p>
+          </section>
           </div>
         </CardContent>
       </Card>

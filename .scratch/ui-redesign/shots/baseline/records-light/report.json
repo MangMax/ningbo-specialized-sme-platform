@@ -1,0 +1,22 @@
+[
+  {
+    "file": "page-light.png",
+    "state": null,
+    "size": "1440x900",
+    "zoom": 1,
+    "group": "light",
+    "animationWaitMs": 421,
+    "issues": [],
+    "lint": [
+      {
+        "rule": "englishLabel",
+        "label": "中文界面里的英文大写标签",
+        "count": 2,
+        "examples": [
+          "td.p-2.align-middle「91330201MA7BGBYW5R」",
+          "td.p-2.align-middle「91330206MA2AFTLJXC」"
+        ]
+      }
+    ]
+  }
+]

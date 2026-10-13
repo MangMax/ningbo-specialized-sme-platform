@@ -1,0 +1,14 @@
+[
+  {
+    "file": "page-light.png",
+    "state": null,
+    "size": "1440x900",
+    "zoom": 1,
+    "group": "light",
+    "animationWaitMs": 25,
+    "issues": [
+      "第 3 步「click button[data-active=true]」：中心点被 html.theme-transition.light 挡住，动作仍照常执行"
+    ],
+    "lint": []
+  }
+]

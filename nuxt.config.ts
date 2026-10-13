@@ -12,7 +12,7 @@ export default defineNuxtConfig({
 
   // 统计页图表(nuxt-charts v3)。只注册用到的图表组件,缩小客户端包体。
   nuxtCharts: {
-    include: ['BarChart', 'LineChart', 'DonutChart'],
+    include: ['LineChart', 'DonutChart'],
   },
 
   // shadcn-vue components live under components/ui/*; use bare names (<Card>, <Button>)

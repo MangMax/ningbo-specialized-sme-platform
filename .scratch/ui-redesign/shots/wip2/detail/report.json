@@ -1,0 +1,14 @@
+[
+  {
+    "file": "page-light.png",
+    "state": null,
+    "size": "1440x900",
+    "zoom": 1,
+    "group": "light",
+    "animationWaitMs": 433,
+    "issues": [
+      "控制台错误：[vite] Internal Server Error\nv-else/v-else-if has no adjacent v-if or v-else-if.\n    at createCompilerError (/Users/mang/Workfile/宁波/专精特新/20261013/app/node_modules/.pnpm/@vue+compiler-core@3.5.43/node"
+    ],
+    "lint": []
+  }
+]

@@ -179,21 +179,21 @@ describe('listRecords multi-value filters (命中任一即匹配)', () => {
     expect(listRecords(d, { title: ['little_giant'] }).total).toBe(0)
   })
 
-  it('restricts a group to the sources that match the filter', () => {
+  it('filters which rows appear, but keeps each row whole (both sources)', () => {
     const d = db()
-    // 只看工信部时,甲的组合只剩工信部来源与维护事件。
+    // 只看工信部时,甲的组合因命中工信部而出现,但行内仍应显示**两个来源与全部事件**。
     const jia = listRecords(d, { source: ['miit'], q: '宁波甲' }).rows[0]!
-    expect(jia.sources).toEqual(['miit'])
-    expect(jia.events.map((e) => e.type)).toEqual(['maintain'])
+    expect(jia.sources).toEqual(['jxj', 'miit'])
+    expect(jia.events.map((e) => e.type).sort()).toEqual(['award', 'maintain', 'review'])
   })
 
-  it('keeps a group when any source matches, but only shows matched sources', () => {
+  it('keeps a group whole when any event matches', () => {
     const d = db()
-    // 按事件筛选时,组合内未命中的来源不计入(与导出同口径)。
+    // 按事件筛选时,行因命中 review 而出现,但事件列仍是该组合的全部事件。
     const rows = listRecords(d, { eventType: ['review'] }).rows
     expect(rows).toHaveLength(1)
-    expect(rows[0]!.sources).toEqual(['jxj'])
-    expect(rows[0]!.events.map((e) => e.type).sort()).toEqual(['award', 'review'])
+    expect(rows[0]!.sources).toEqual(['jxj', 'miit'])
+    expect(rows[0]!.events.map((e) => e.type).sort()).toEqual(['award', 'maintain', 'review'])
   })
 
   it('keeps allRecords (export) consistent with listRecords', () => {

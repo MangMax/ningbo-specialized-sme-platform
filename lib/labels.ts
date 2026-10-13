@@ -15,6 +15,26 @@ export const TITLES: Record<string, string> = Object.fromEntries(
 /** 称号展示顺序(等级由高到低,与 TITLE_SEED.rank 一致)。 */
 export const TITLE_ORDER: string[] = TITLE_SEED.map((t) => t.code)
 
+/**
+ * 称号的短名。只在**按钮和圆点图例**这类放不下全称的地方用(如筛选按钮、图表下钻 chip),
+ * 正式名称始终走 TITLES —— 表格、详情、导出里一概写全称。
+ */
+export const TITLE_SHORT: Record<string, string> = {
+  little_giant: '小巨人',
+  specialized_sme: '专精特新',
+  innovative_sme: '创新型',
+}
+
+/** 称号代号 → 等级(1 最高)。徽章梯度与统计排序都按它走。 */
+export const TITLE_RANK: Record<string, number> = Object.fromEntries(
+  TITLE_SEED.map((t) => [t.code, t.rank]),
+)
+
+/** 称号代号 → 认定层级(national 国家级 / municipal 市级)。 */
+export const TITLE_LEVEL: Record<string, string> = Object.fromEntries(
+  TITLE_SEED.map((t) => [t.code, t.level]),
+)
+
 /** 来源代号 → 中文名。 */
 export const SOURCES: Record<string, string> = { jxj: '经信局', miit: '工信部' }
 

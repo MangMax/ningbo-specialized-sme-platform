@@ -66,6 +66,8 @@ app **不解析**下列文件;它们由项目外的 `../pipeline/` 解析后写�
 
 > **不在 app 内**:解析公布文件、清洗归一化、写库 —— 属于项目外的前期工作,见 `../pipeline/`(含解析器、归一化内核与导入管道)与 [ADR-数据入库是项目外的前期工作](../../docs/adr/2026-10-13-ingestion-is-outside-the-app.md)。app 依赖里不得出现解析类库(mammoth/tinyglobby/docx 等)。
 
+**筛选语义(重要)**:筛选条件决定**哪些行出现**,不裁剪行内内容。按 `source` / `eventType` / `year` 筛选时,命中的「企业 × 称号」行仍显示其**全部来源与全部事件**——否则双来源行会被截成单来源、事件时间线会缺项,不忠于事实。列表与导出同此口径。
+
 **接口契约(概要)**
 - `GET /api/records?title=&source=&district=&eventType=&year=&q=&flags=&page=&pageSize=` → 分页记录列表(含企业名、称号、来源、事件摘要、flags)。`flags` 支持 `uscc_missing`(无统代)。
 - `GET /api/enterprises/:id` → 企业的全部记录与事件及出处。

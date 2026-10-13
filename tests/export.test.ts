@@ -180,12 +180,14 @@ describe('aggregation: 企业 × 称号 合并来源', () => {
 })
 
 describe('导出事件与出处', () => {
-  it('exports the full event timeline of each matching group', () => {
+  it('exports each matching group whole (all sources and events)', () => {
     const rows = allRecords(db(), { title: ['specialized_sme'], source: ['jxj'], q: '宁波甲' })
     expect(rows).toHaveLength(1)
-    // 只看经信局时,组合内只剩经信局事件:甲(jxj 专精特新)有 award 2024-2 与 review 2021-2。
-    expect(rows[0]!.sources).toEqual(['jxj'])
-    expect(rows[0]!.events.split('; ').sort()).toEqual(['认定 2024-2', '复核 2021-2'].sort())
+    // 只看经信局时,行因命中经信局而出现,但导出仍含该组合的**两个来源与全部事件**。
+    expect(rows[0]!.sources).toEqual(['jxj', 'miit'])
+    expect(rows[0]!.events.split('; ').sort()).toEqual(
+      ['认定 2024-2', '复核 2021-2', '维护 2025-1'].sort(),
+    )
   })
 
   it('includes a non-empty 出处 (evidence) cell per group, merged over all events', () => {

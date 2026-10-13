@@ -1,0 +1,23 @@
+[
+  {
+    "file": "page-light.png",
+    "state": null,
+    "size": "1440x900",
+    "zoom": 1,
+    "group": "light",
+    "animationWaitMs": 0,
+    "issues": [],
+    "lint": [
+      {
+        "rule": "englishLabel",
+        "label": "中文界面里的英文大写标签",
+        "count": 7,
+        "examples": [
+          "td.px-3.py-2「91440300MA5HNONN1D」",
+          "td.px-3.py-2「91330201MA2J5YQTOD」",
+          "td.px-3.py-2「91330205MA2GTG2ROH」"
+        ]
+      }
+    ]
+  }
+]
