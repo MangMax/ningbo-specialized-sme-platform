@@ -18,3 +18,14 @@
 | 12 | 两侧名录比对(应纳未纳 / 应出未出) | 04, 09 | **挂起(口径待定)** |
 
 **全部完成**,除 12(挂起:需先确认比对口径)。
+
+## 代码评审修复(2026-10-13)
+
+`/code-review` 两轴评审后,一轮统一修复(提交 `e107bd3`):
+- 统计桶计数改为**按记录**,与下钻 `?eventType=`/`?year=` 的条数逐一相等(原先按事件数,导致点击后数字对不上)。
+- 补 `name_ambiguous` 质量项;删除恒为 0 的死项 `duplicate_event`。
+- 导出补「出处」列。
+- SPEC 契约与实现对齐:`quality?kind=`、`records?flags=`、`stats?title&district&source=` 均已实现。
+- 标签映射收敛到 `lib/labels.ts`(统一小巨人文案);搜索改用 `name_norm` 归一化;删除死代码。
+
+**已知限制**:`non_ningbo`/`deregistered` 需外部富化数据(登记状态/当前城市),本期不做(见 ADR-2026-10-13-announcements-as-input)。
