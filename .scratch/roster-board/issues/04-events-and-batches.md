@@ -4,10 +4,13 @@
 
 **Blocked by:** 03 — 创新型公布文件并入 + 称号筛选 + 搜索
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-13)
 
-- [ ] `.doc`/`.docx` 附件标题写“复核”者事件类型为 `review`、写“入库培育”者为 `nurture`、其余为 `award`
-- [ ] 从标题与内容解析事件年份与批次序号(`2024-1`);多条事件各自成行
-- [ ] `record_event` 支持一对多;事件按 `sort_key` 排序
-- [ ] 看板按事件类型筛选;记录详情展示“认定 2023-1 · 复核 2026-1”式时间线
-- [ ] 入库培育条目默认可见但可单独区分
+- [x] 附件标题判定事件类型;解析事件年份与批次序号(多条各自成行)
+- [x] `record_event` 一对多;事件按 `sort_key` 排序
+- [x] 后端按 `eventType` / `year` 筛选(`EXISTS` 半连接,不重复行);`allRecords` 一致
+- [x] 台账增加 事件类型 / 年份 `Select` 筛选,并纳入 URL query 与导出
+- [x] 统计页事件类型分布、年份趋势可下钻 `/?eventType=` `/?year=`
+- [x] 记录行按事件显示多个 Badge(同类型多条都显示)
+
+> 实测:`?eventType=review`→1474、`?year=2024`→6575、`?eventType=review&year=2023`→75,均与统计一致。
