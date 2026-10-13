@@ -1,13 +1,16 @@
 /**
- * 导入 CLI:解析经信局公布文件并写入 SQLite。
- * 用法:`pnpm tsx scripts/import.ts [--root ../] [--label 20261013] [--title specialized_sme]`
+ * 导入 CLI:解析经信局公布文件与工信部导出,写入 SQLite。
+ * 用法:`pnpm tsx scripts/import.ts [--root <数据目录>] [--label 20261013] [--title specialized_sme]`
+ *
+ * `--root` 可给**绝对路径**(跨 worktree / 任意位置);未给时回退 `SOURCE_ROOT`
+ * 环境变量,再回退 `../`(仓库根之上一年一份数据目录的约定)。
  */
 import { resolve, join } from 'node:path'
-import { useDb, schema, dbPath } from '../db'
+import { useDb, dbPath } from '../db'
 import { readAnnouncementBlocks } from '../lib/docx'
 import { parseAnnouncement } from '../lib/announcement'
 import { parseMiitFile, MIIT_FILES } from '../lib/miit'
-import { importEntries, newImportContext } from '../lib/import'
+import { importEntries, newImportContext, openImportBatch } from '../lib/import'
 import { JXJ_SOURCES, discoverAnnouncements, relPath } from '../lib/sources'
 
 function arg(name: string, fallback?: string): string | undefined {
@@ -15,19 +18,18 @@ function arg(name: string, fallback?: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : fallback
 }
 
-const root = resolve(arg('root', '../')!)
+// resolve() 同时兼容相对路径与绝对路径;绝对路径不受 cwd 影响。
+const root = resolve(arg('root') ?? process.env.SOURCE_ROOT ?? '../')
 const label = arg('label', new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date()))!
 const onlyTitle = arg('title')
 
 const db = useDb()
 console.log('db:', dbPath)
+console.log('root:', root)
 
-const batch = db
-  .insert(schema.importBatch)
-  .values({ label, sourceRoot: root, note: 'jxj announcements' })
-  .returning({ id: schema.importBatch.id })
-  .get()
-const ctx = newImportContext(batch.id)
+// 同 label 复用同一快照 → 重跑幂等(见 lib/import.ts openImportBatch)。
+const batchId = openImportBatch(db, label, root, 'jxj announcements + miit exports')
+const ctx = newImportContext(batchId)
 
 let grand = 0
 for (const src of JXJ_SOURCES) {

@@ -12,6 +12,8 @@ export interface RecordQuery {
   district?: string
   eventType?: string
   q?: string
+  /** 导入快照筛选(import_batch.id)。见票 11。 */
+  batchId?: number
   page?: number
   pageSize?: number
 }
@@ -34,6 +36,7 @@ function buildWhere(params: RecordQuery): SQL | undefined {
   if (params.title) conds.push(eq(schema.record.titleCode, params.title))
   if (params.source) conds.push(eq(schema.record.source, params.source as 'jxj' | 'miit'))
   if (params.district) conds.push(eq(schema.record.district, params.district))
+  if (params.batchId) conds.push(eq(schema.record.importBatchId, params.batchId))
   if (params.q) {
     const like$ = `%${params.q.trim()}%`
     conds.push(or(like(schema.enterprise.name, like$), like(schema.enterprise.usccNorm, like$)))
@@ -96,6 +99,43 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
     events: (byRecord[r.recordId] ?? []).map((e) => ({ type: e.type, year: e.year, seq: e.seq })),
   }))
   return { rows, total }
+}
+
+// ---------------------------------------------------------------------------
+// 导入快照
+// ---------------------------------------------------------------------------
+
+export interface BatchInfo {
+  id: number
+  label: string
+  sourceRoot: string
+  importedAt: string
+  note: string | null
+  /** 归属该快照的记录数(record.import_batch_id)。 */
+  recordCount: number
+}
+
+/** 全部导入快照,最新在前(默认用于台账页「当前快照」)。 */
+export function listBatches(db: Db): BatchInfo[] {
+  const counts = db
+    .select({ batchId: schema.record.importBatchId, n: count() })
+    .from(schema.record)
+    .groupBy(schema.record.importBatchId)
+    .all()
+  const byBatch = new Map(counts.map((c) => [c.batchId, c.n]))
+  return db
+    .select()
+    .from(schema.importBatch)
+    .orderBy(desc(schema.importBatch.id))
+    .all()
+    .map((b) => ({
+      id: b.id,
+      label: b.label,
+      sourceRoot: b.sourceRoot,
+      importedAt: b.importedAt,
+      note: b.note,
+      recordCount: byBatch.get(b.id) ?? 0,
+    }))
 }
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,33 @@ export function newImportContext(batchId: number): ImportContext {
 }
 
 /**
+ * 幂等地取得/创建导入快照 `import_batch`。
+ *
+ * **快照身份 = label**。同一个 label(默认是导入当天日期)重复导入时**复用同一条
+ * `import_batch`,不新建、不改 `imported_at`**,从而保证「同一目录 + 同一 label
+ * 重跑两次,所有表行数不变」。换一份数据目录/换一个 label 时才会产生新快照。
+ * 见 SPEC「每次导入产生一个不可变快照」「导入是幂等的」。
+ */
+export function openImportBatch(
+  db: Db,
+  label: string,
+  sourceRoot: string,
+  note?: string,
+): number {
+  const existing = db
+    .select({ id: schema.importBatch.id })
+    .from(schema.importBatch)
+    .where(eq(schema.importBatch.label, label))
+    .get()
+  if (existing) return existing.id
+  return db
+    .insert(schema.importBatch)
+    .values({ label, sourceRoot, note })
+    .returning({ id: schema.importBatch.id })
+    .get().id
+}
+
+/**
  * 归并企业:优先统代,缺失时按归一化名称。
  *
  * 关键:经信局公布文件多无统代(先按名称建企业),而工信部名单全带统代。
@@ -80,7 +107,15 @@ function resolveEnterprise(db: Db, ctx: ImportContext, uscc: string | null, name
   return created
 }
 
-/** 记录 = (企业, 称号, 来源);已存在则复用其 id。 */
+/**
+ * 记录 = (企业, 称号, 来源);按身份键全局复用其 id。
+ *
+ * **快照归属:采用「跟随最近一次包含该记录的导入」**(更新为本次 `ctx.batchId`),
+ * 而非「保留首次归属」。理由:看板需要「切换到某个快照 = 看那次导入当时的记录集」;
+ * 若保留首次归属,则新快照筛选几乎为空、无法表达「本次导入带来了哪些记录」。
+ * 依赖「快照身份 = label」:同 label 重跑时 batchId 不变,故这里不会产生任何写操作,
+ * 幂等性不受影响。
+ */
 function resolveRecord(
   db: Db,
   ctx: ImportContext,
@@ -90,7 +125,7 @@ function resolveRecord(
   district: string | null,
 ): number {
   const existing = db
-    .select({ id: schema.record.id })
+    .select({ id: schema.record.id, importBatchId: schema.record.importBatchId })
     .from(schema.record)
     .where(
       and(
@@ -100,7 +135,15 @@ function resolveRecord(
       ),
     )
     .get()
-  if (existing) return existing.id
+  if (existing) {
+    if (existing.importBatchId !== ctx.batchId) {
+      db.update(schema.record)
+        .set({ importBatchId: ctx.batchId })
+        .where(eq(schema.record.id, existing.id))
+        .run()
+    }
+    return existing.id
+  }
   return db
     .insert(schema.record)
     .values({ importBatchId: ctx.batchId, enterpriseId, titleCode, source, district })
