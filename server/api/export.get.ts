@@ -8,17 +8,31 @@ const EVENT_TYPES: EventType[] = ['award', 'review', 'maintain', 'nurture']
 export default defineEventHandler(async (event) => {
   const q = getQuery(event)
   const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
-  const posInt = (v: unknown) => {
-    const n = Number(v)
-    return Number.isInteger(n) && n > 0 ? n : undefined
+
+  /** 与 `/api/records` 一致的多值解析:逗号分隔或重复参数。 */
+  const csv = (v: unknown): string[] | undefined => {
+    if (v == null) return undefined
+    const raw = Array.isArray(v) ? v.flatMap((x) => String(x).split(',')) : String(v).split(',')
+    const list = raw.map((s) => s.trim()).filter(Boolean)
+    return list.length ? list : undefined
   }
-  const eventType = str(q.eventType)
+  const csvEventTypes = (v: unknown): EventType[] | undefined => {
+    const list = csv(v)?.filter((x): x is EventType => EVENT_TYPES.includes(x as EventType))
+    return list?.length ? list : undefined
+  }
+  const csvYears = (v: unknown): number[] | undefined => {
+    const list = csv(v)
+      ?.map((s) => Number(s))
+      .filter((n) => Number.isInteger(n) && n > 0)
+    return list?.length ? list : undefined
+  }
+
   const rows = allRecords(useDb(), {
-    title: str(q.title),
-    source: str(q.source),
+    title: csv(q.title),
+    source: csv(q.source),
     district: str(q.district),
-    eventType: eventType && EVENT_TYPES.includes(eventType as EventType) ? (eventType as EventType) : undefined,
-    year: posInt(q.year),
+    eventType: csvEventTypes(q.eventType),
+    year: csvYears(q.year),
     q: str(q.q),
     flags: str(q.flags),
   })
@@ -30,8 +44,8 @@ export default defineEventHandler(async (event) => {
     { header: '统一社会信用代码', key: 'uscc', width: 20 },
     { header: '区县', key: 'district', width: 12 },
     { header: '称号', key: 'title', width: 18 },
-    { header: '来源', key: 'source', width: 10 },
-    { header: '事件', key: 'events', width: 28 },
+    { header: '来源', key: 'source', width: 14 },
+    { header: '事件', key: 'events', width: 32 },
     { header: '出处', key: 'evidence', width: 44 },
   ]
   for (const r of rows) {
@@ -40,7 +54,7 @@ export default defineEventHandler(async (event) => {
       uscc: r.uscc ?? '',
       district: r.district ?? '',
       title: TITLES[r.titleCode] ?? r.titleCode,
-      source: SOURCES[r.source] ?? r.source,
+      source: r.sources.map((s) => SOURCES[s] ?? s).join('、'),
       events: r.events,
       evidence: r.evidence,
     })

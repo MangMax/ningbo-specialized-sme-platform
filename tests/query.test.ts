@@ -1,19 +1,25 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { and, count, eq, sql, type SQL } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { allRecords, getQuality, getStats, listRecords, type EventType } from '../lib/query'
+import { allRecords, getQuality, getStats, listRecords } from '../lib/query'
 
 let dir: string
 let db: (typeof import('../db'))['useDb']
-let schema: typeof import('../db/schema')
+let schema: typeof import('../db')['schema']
 
 /**
  * 直接铺一份固定数据集(app 只读台账 —— 测试用 drizzle 插桩,不经过项目外的导入管道)。
- * - 甲:专精特新(经信局) award 2024-2 + review 2021-2 → 同一记录两条事件
- * - 乙:专精特新(经信局) award 2024-2
- * - 丙:专精特新(经信局) nurture 2021
+ *
+ * 粒度 = 企业 × 称号;同一组合可含**多个来源**:
+ * - 甲(海曙区):专精特新 · 经信局(award 2024-2 + review 2021-2)+ 专精特新 · 工信部(maintain 2025-1)
+ *   —— 同一「企业 × 称号」两个来源,列表应合并为**一行**。
+ * - 乙(鄞州区):专精特新 · 经信局 award 2024-2
+ * - 丙(北仑区):专精特新 · 经信局 nurture 2021
  * 三家企业均无统代 → `uscc_missing`。
+ *
+ * 记录 4 条(甲 2 + 乙 1 + 丙 1)、事件 5 条、企业×称号组合 3 个。
  */
 function seed() {
   const d = db()
@@ -27,12 +33,13 @@ function seed() {
 
   const rec = (
     enterpriseId: number,
+    source: 'jxj' | 'miit',
     district: string,
     events: { type: string; year: number | null; seq: number | null }[],
   ) => {
     const id = d
       .insert(schema.record)
-      .values({ enterpriseId, titleCode: 'specialized_sme', source: 'jxj', district })
+      .values({ enterpriseId, titleCode: 'specialized_sme', source, district })
       .returning({ id: schema.record.id })
       .get().id
     for (const ev of events) {
@@ -42,17 +49,19 @@ function seed() {
         .returning({ id: schema.recordEvent.id })
         .get().id
       d.insert(schema.recordEvidence)
-        .values({ recordEventId: eventId, sourceFile: 'fixture.docx', attachment: '附件', listNo: ev.seq })
+        .values({ recordEventId: eventId, sourceFile: `${source}.docx`, attachment: '附件', listNo: ev.seq })
         .run()
     }
   }
 
-  rec(ent('宁波甲科技有限公司', '海曙区'), '海曙区', [
+  const jia = ent('宁波甲科技有限公司', '海曙区')
+  rec(jia, 'jxj', '海曙区', [
     { type: 'award', year: 2024, seq: 2 },
     { type: 'review', year: 2021, seq: 2 },
   ])
-  rec(ent('宁波乙机械有限公司', '鄞州区'), '鄞州区', [{ type: 'award', year: 2024, seq: 2 }])
-  rec(ent('宁波丙材料有限公司', '北仑区'), '北仑区', [{ type: 'nurture', year: 2021, seq: null }])
+  rec(jia, 'miit', '海曙区', [{ type: 'maintain', year: 2025, seq: 1 }])
+  rec(ent('宁波乙机械有限公司', '鄞州区'), 'jxj', '鄞州区', [{ type: 'award', year: 2024, seq: 2 }])
+  rec(ent('宁波丙材料有限公司', '北仑区'), 'jxj', '北仑区', [{ type: 'nurture', year: 2021, seq: null }])
 }
 
 beforeAll(async () => {
@@ -65,88 +74,158 @@ beforeAll(async () => {
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-describe('listRecords event / year filters', () => {
-  it('seeds the expected records and events', () => {
+/** 记录级计数(用于校验 getStats —— 统计仍以「记录」为单位)。 */
+function recCount(where?: SQL): number {
+  return db()
+    .select({ n: count() })
+    .from(schema.record)
+    .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+    .where(where)
+    .get()?.n ?? 0
+}
+const distinctRecordsWithEventType = (type: string) =>
+  db()
+    .select({ n: sql<number>`count(distinct ${schema.recordEvent.recordId})` })
+    .from(schema.recordEvent)
+    .where(eq(schema.recordEvent.eventType, type as 'award' | 'review' | 'maintain' | 'nurture'))
+    .get()?.n ?? 0
+const distinctRecordsWithYear = (year: number) =>
+  db()
+    .select({ n: sql<number>`count(distinct ${schema.recordEvent.recordId})` })
+    .from(schema.recordEvent)
+    .where(eq(schema.recordEvent.year, year))
+    .get()?.n ?? 0
+
+describe('listRecords aggregation grain (企业 × 称号)', () => {
+  it('seeds the expected records, events and groups', () => {
     const d = db()
-    expect(d.select().from(schema.record).all()).toHaveLength(3)
-    expect(d.select().from(schema.recordEvent).all()).toHaveLength(4)
+    expect(d.select().from(schema.record).all()).toHaveLength(4)
+    expect(d.select().from(schema.recordEvent).all()).toHaveLength(5)
+    // 3 个「企业 × 称号」组合(甲的两个来源合并为一行)。
+    expect(listRecords(d, {}).total).toBe(3)
   })
 
-  it('filters by eventType', () => {
+  it('merges all sources of one enterprise × title into a single row', () => {
     const d = db()
-    expect(listRecords(d, { eventType: 'award' }).total).toBe(2)
-    expect(listRecords(d, { eventType: 'review' }).total).toBe(1)
-    expect(listRecords(d, { eventType: 'nurture' }).total).toBe(1)
-    expect(listRecords(d, { eventType: 'maintain' }).total).toBe(0)
+    const rows = listRecords(d, { pageSize: 200 }).rows
+    expect(rows).toHaveLength(3)
+    const jia = rows.find((r) => r.name === '宁波甲科技有限公司')!
+    expect(jia.sources).toEqual(['jxj', 'miit'])
+    // 组合下全部事件,各带来源。
+    expect(jia.events.map((e) => e.type).sort()).toEqual(['award', 'maintain', 'review'])
+    expect(jia.events.map((e) => e.source).sort()).toEqual(['jxj', 'jxj', 'miit'])
   })
 
-  it('filters by year, counting records (not events) that have a matching event', () => {
+  it('orders sources 经信局 → 工信部 and exposes flags', () => {
     const d = db()
-    expect(listRecords(d, { year: 2024 }).total).toBe(2)
-    // 甲 (review 2021) + 丙 (nurture 2021);甲 also has a 2024 event but counts once.
-    expect(listRecords(d, { year: 2021 }).total).toBe(2)
-    expect(listRecords(d, { year: 1999 }).total).toBe(0)
+    const jia = listRecords(d, { q: '宁波甲' }).rows[0]!
+    expect(jia.sources).toEqual(['jxj', 'miit'])
+    expect(jia.flags).toEqual(['uscc_missing'])
+    expect(jia.titleCode).toBe('specialized_sme')
+  })
+})
+
+describe('listRecords multi-value filters (命中任一即匹配)', () => {
+  it('filters by eventType (single and multiple)', () => {
+    const d = db()
+    expect(listRecords(d, { eventType: ['award'] }).total).toBe(2)
+    expect(listRecords(d, { eventType: ['review'] }).total).toBe(1)
+    expect(listRecords(d, { eventType: ['maintain'] }).total).toBe(1)
+    expect(listRecords(d, { eventType: ['nurture'] }).total).toBe(1)
+    expect(listRecords(d, { eventType: ['award', 'nurture'] }).total).toBe(3)
+    expect(listRecords(d, { eventType: ['award', 'maintain'] }).total).toBe(2)
   })
 
-  it('combines eventType and year conjunctively', () => {
+  it('filters by year (single and multiple), counting groups once', () => {
     const d = db()
-    expect(listRecords(d, { eventType: 'review', year: 2021 }).total).toBe(1)
-    expect(listRecords(d, { eventType: 'review', year: 2024 }).total).toBe(0)
-    expect(listRecords(d, { eventType: 'award', year: 2021 }).total).toBe(0)
-    expect(listRecords(d, { eventType: 'award', year: 2024 }).total).toBe(2)
+    expect(listRecords(d, { year: [2024] }).total).toBe(2)
+    expect(listRecords(d, { year: [2021] }).total).toBe(2)
+    expect(listRecords(d, { year: [2025] }).total).toBe(1)
+    // 甲(2021 review + 2024 award + 2025 maintain)只计一次。
+    expect(listRecords(d, { year: [2021, 2024] }).total).toBe(3)
+    expect(listRecords(d, { year: [2021, 2024, 2025] }).total).toBe(3)
+    expect(listRecords(d, { year: [1999] }).total).toBe(0)
   })
 
-  it('returns the full matching record with all its events', () => {
+  it('combines eventType and year conjunctively on the same event', () => {
     const d = db()
-    const rows = listRecords(d, { eventType: 'review' }).rows
+    expect(listRecords(d, { eventType: ['review'], year: [2021] }).total).toBe(1)
+    expect(listRecords(d, { eventType: ['review'], year: [2024] }).total).toBe(0)
+    expect(listRecords(d, { eventType: ['award'], year: [2021] }).total).toBe(0)
+    expect(listRecords(d, { eventType: ['award'], year: [2024] }).total).toBe(2)
+    // maintain 仅在 2025(工信部来源)。
+    expect(listRecords(d, { eventType: ['maintain'], year: [2024] }).total).toBe(0)
+  })
+
+  it('filters by source (single and multiple)', () => {
+    const d = db()
+    expect(listRecords(d, { source: ['jxj'] }).total).toBe(3)
+    expect(listRecords(d, { source: ['miit'] }).total).toBe(1)
+    expect(listRecords(d, { source: ['jxj', 'miit'] }).total).toBe(3)
+  })
+
+  it('filters by title (single and multiple)', () => {
+    const d = db()
+    expect(listRecords(d, { title: ['specialized_sme'] }).total).toBe(3)
+    expect(listRecords(d, { title: ['specialized_sme', 'little_giant'] }).total).toBe(3)
+    expect(listRecords(d, { title: ['little_giant'] }).total).toBe(0)
+  })
+
+  it('restricts a group to the sources that match the filter', () => {
+    const d = db()
+    // 只看工信部时,甲的组合只剩工信部来源与维护事件。
+    const jia = listRecords(d, { source: ['miit'], q: '宁波甲' }).rows[0]!
+    expect(jia.sources).toEqual(['miit'])
+    expect(jia.events.map((e) => e.type)).toEqual(['maintain'])
+  })
+
+  it('keeps a group when any source matches, but only shows matched sources', () => {
+    const d = db()
+    // 按事件筛选时,组合内未命中的来源不计入(与导出同口径)。
+    const rows = listRecords(d, { eventType: ['review'] }).rows
     expect(rows).toHaveLength(1)
-    const row = rows[0]!
-    expect(row.events).toHaveLength(2)
-    expect(row.events.map((e) => e.type).sort()).toEqual(['award', 'review'])
+    expect(rows[0]!.sources).toEqual(['jxj'])
+    expect(rows[0]!.events.map((e) => e.type).sort()).toEqual(['award', 'review'])
   })
 
   it('keeps allRecords (export) consistent with listRecords', () => {
     const d = db()
-    expect(allRecords(d, { eventType: 'award' })).toHaveLength(2)
-    expect(allRecords(d, { year: 2021 })).toHaveLength(2)
-    expect(allRecords(d, { eventType: 'nurture', year: 2021 })).toHaveLength(1)
+    expect(allRecords(d, {})).toHaveLength(3)
+    expect(allRecords(d, { eventType: ['award'] })).toHaveLength(2)
+    expect(allRecords(d, { year: [2021] })).toHaveLength(2)
+    expect(allRecords(d, { eventType: ['nurture'], year: [2021] })).toHaveLength(1)
   })
 })
 
-describe('getStats counts records, consistent with listRecords', () => {
-  it('every bucket equals the matching listRecords total', () => {
+describe('getStats counts records (record grain, unchanged)', () => {
+  it('totalRecords / buckets equal raw record counts', () => {
     const d = db()
     const stats = getStats(d)
+    expect(stats.totalRecords).toBe(recCount())
+    expect(stats.totalRecords).toBe(4)
+    expect(stats.totalEnterprises).toBe(3)
+    for (const b of stats.byTitle) {
+      expect(recCount(eq(schema.record.titleCode, b.key)), `title=${b.key}`).toBe(b.n)
+    }
+    for (const b of stats.bySource) {
+      expect(recCount(eq(schema.record.source, b.key as 'jxj' | 'miit')), `source=${b.key}`).toBe(b.n)
+    }
     for (const b of stats.byEvent) {
-      expect(listRecords(d, { eventType: b.key as EventType }).total, `eventType=${b.key}`).toBe(b.n)
+      expect(distinctRecordsWithEventType(b.key), `event=${b.key}`).toBe(b.n)
     }
     for (const b of stats.byYear) {
       if (!/^\d{4}$/.test(b.key)) continue
-      expect(listRecords(d, { year: Number(b.key) }).total, `year=${b.key}`).toBe(b.n)
-    }
-    for (const b of stats.byTitle) {
-      expect(listRecords(d, { title: b.key }).total, `title=${b.key}`).toBe(b.n)
-    }
-    for (const b of stats.bySource) {
-      expect(listRecords(d, { source: b.key }).total, `source=${b.key}`).toBe(b.n)
-    }
-    for (const b of stats.byDistrict) {
-      expect(listRecords(d, { district: b.key }).total, `district=${b.key}`).toBe(b.n)
+      expect(distinctRecordsWithYear(Number(b.key)), `year=${b.key}`).toBe(b.n)
     }
   })
 
-  it('respects title / source / district filters in every bucket', () => {
-    const d = db()
-    const filter = { title: 'specialized_sme', source: 'jxj' as const }
-    const stats = getStats(d, filter)
-    expect(stats.totalRecords).toBe(listRecords(d, filter).total)
-    for (const b of stats.byEvent) {
-      expect(listRecords(d, { ...filter, eventType: b.key as EventType }).total, `eventType=${b.key}`).toBe(b.n)
-    }
-    for (const b of stats.byYear) {
-      if (!/^\d{4}$/.test(b.key)) continue
-      expect(listRecords(d, { ...filter, year: Number(b.key) }).total, `year=${b.key}`).toBe(b.n)
-    }
+  it('respects title / source filters in every bucket', () => {
+    const stats = getStats(db(), { title: 'specialized_sme', source: 'jxj' })
+    const expected = recCount(
+      and(eq(schema.record.titleCode, 'specialized_sme'), eq(schema.record.source, 'jxj')),
+    )
+    expect(stats.totalRecords).toBe(expected)
+    expect(stats.totalRecords).toBe(3)
   })
 })
 
@@ -168,7 +247,7 @@ describe('getQuality', () => {
 })
 
 describe('listRecords flags filter', () => {
-  it('filters to records whose enterprise has no USCC', () => {
+  it('filters to groups whose enterprise has no USCC', () => {
     const d = db()
     expect(listRecords(d, { flags: 'uscc_missing' }).total).toBe(3)
   })
