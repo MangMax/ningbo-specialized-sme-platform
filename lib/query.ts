@@ -279,7 +279,7 @@ export function getQuality(db: Db): QualityGroup[] {
     .all()
 
   const dupList = db
-    .select({ recordId: schema.record.id, n: count() })
+    .select({ recordId: schema.recordEvent.recordId, n: count() })
     .from(schema.recordEvent)
     .groupBy(schema.recordEvent.recordId, schema.recordEvent.eventType, schema.recordEvent.year, schema.recordEvent.batchSeq)
     .having(sql`count(*) > 1`)
