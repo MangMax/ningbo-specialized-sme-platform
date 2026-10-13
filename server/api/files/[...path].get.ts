@@ -10,15 +10,23 @@ import { extname, join, normalize, resolve, sep } from 'node:path'
  * 这里把它交给浏览器里的预览器。
  *
  * 安全边界(这个接口能读到磁盘上的任意文件,必须自己把关):
- *  1. **锁根**:所有路径先相对 `FILES_ROOT` 解析,解析结果必须仍在根内。
+ *  1. **锁根**:所有路径先相对文件库根(`runtimeConfig.filesDir`)解析,解析结果必须仍在根内。
  *     用 resolve 之后再比对前缀,而不是字符串过滤 `..` —— 符号链接和
  *     编码变体都绕不过 resolve。
  *  2. **白名单扩展名**:只放预览支持的那几种,不给一个通用文件服务器。
  *  3. **只读**:只实现 GET,没有写入面。
  */
 
-/** 文件库根目录。运行目录是 app 根(与 db/client.ts 用 process.cwd() 同一口径)。 */
-const FILES_ROOT = resolve(process.env.FILES_ROOT ?? join(process.cwd(), 'files'))
+/**
+ * 文件库根目录。
+ *
+ * 走 `runtimeConfig.filesDir`,与 tus 上传写入的目标目录**同一个来源**
+ * (见 `server/utils/tus.ts` 的 `filesDir()`)。两边各读各的常量会出现
+ * 「tus 按 NUXT_FILES_DIR 写到别处、预览仍读 <cwd>/files」这种只在部署时才暴露的错位。
+ */
+function filesRoot(): string {
+  return resolve(useRuntimeConfig().filesDir)
+}
 
 /** 预览支持的扩展名,与 lib/preview.ts 的 BY_EXTENSION 保持一致。 */
 const ALLOWED = new Set([
@@ -63,11 +71,12 @@ export default defineEventHandler((event) => {
   const requested = Array.isArray(raw) ? raw.join('/') : raw
   const decoded = decodeURIComponent(requested)
 
-  const abs = resolve(join(FILES_ROOT, normalize(decoded)))
+  const root = filesRoot()
+  const abs = resolve(join(root, normalize(decoded)))
 
   // 锁根:解析之后必须仍在根目录之内。
   // 加 sep 是为了避免 `/root-evil` 被 `/root` 前缀匹配上。
-  if (abs !== FILES_ROOT && !abs.startsWith(FILES_ROOT + sep)) {
+  if (abs !== root && !abs.startsWith(root + sep)) {
     throw createError({ statusCode: 403, statusMessage: '路径越界' })
   }
 
