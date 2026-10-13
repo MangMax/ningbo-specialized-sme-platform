@@ -288,4 +288,24 @@ describe('tus 上传端点 + 落位规则', () => {
     })
     expect(res.status).toBe(413)
   })
+
+  // 落位路径要能回报给上传组件(它据此告诉用户「东西放哪了」)。
+  // 头值是百分号编码的:HTTP 头是 ByteString(≤255),中文文件名不能直接放进去。
+  it('落位后回报 X-Upload-Path(百分号编码),同名的第二次带上 (1) 后缀', async () => {
+    const meta = { source: 'miit', kind: 'export', filename: '落位回报.xlsx' }
+    const data = randomBytes(600)
+
+    const first = await createUpload(tus, meta, data.length)
+    const firstPatch = await patch(tus, first.id, 0, data)
+    expect(decodeURIComponent(firstPatch.headers.get('x-upload-path') ?? '')).toBe(
+      'miit/export/落位回报.xlsx',
+    )
+
+    const second = await createUpload(tus, meta, data.length)
+    const secondPatch = await patch(tus, second.id, 0, data)
+    // 预览算不出这个后缀,只能由服务端回报。
+    expect(decodeURIComponent(secondPatch.headers.get('x-upload-path') ?? '')).toBe(
+      'miit/export/落位回报 (1).xlsx',
+    )
+  })
 })

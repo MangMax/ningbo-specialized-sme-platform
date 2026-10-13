@@ -1,5 +1,5 @@
 import { link, mkdir, rm } from 'node:fs/promises'
-import { extname, join, resolve } from 'node:path'
+import { basename, extname, join, resolve } from 'node:path'
 import { Server } from '@tus/server'
 import { FileStore } from '@tus/file-store'
 
@@ -164,6 +164,9 @@ export function createTus(config: TusConfig): Server {
     datastore: new FileStore({ directory: incoming }),
     maxSize: MAX_SIZE,
     allowedOrigins: config.allowedOrigins,
+    // 把落位路径回报给客户端(`onUploadFinish` 里设;见下)。跨源时也要能读到,
+    // 端点自带的 `EXPOSED_HEADERS` 不包含自定义头。
+    exposedHeaders: ['X-Upload-Path'],
     // 代理后 Location 仍正确(见 .research/tus-research.md §5.4)。
     respectForwardedHeaders: true,
     // 创建时校验客户端声明的 metadata;非法 → 400。返回空对象表示不改写 metadata。
@@ -179,10 +182,15 @@ export function createTus(config: TusConfig): Server {
       await mkdir(dir, { recursive: true })
       // PATCH 的 getUpload 会带 storage.path(工作目录里的临时文件);兜底用 id 拼。
       const src = upload.storage?.path ?? join(incoming, upload.id)
-      await linkUnique(src, dir, filename)
+      const landed = await linkUnique(src, dir, filename)
       // 落位后清掉工作目录里的 sidecar 元数据,别让 `.incoming/` 攒垃圾。
       await rm(join(incoming, `${upload.id}.json`), { force: true })
-      return {}
+      // 回报**实际**落位路径(同名防覆盖会加 ` (n)` 后缀,客户端算不出来)。
+      // 口径与 `record_evidence.source_file` 一致:相对文件库根,正斜杠分隔。
+      // HTTP 头是 ByteString(≤255),中文文件名不能直接放进去 —— 百分号编码后
+      // 客户端 decodeURIComponent 还原,路径里的空格、括号一并不用手拼。
+      const relativePath = segments.slice(0, -1).concat(basename(landed)).join('/')
+      return { headers: { 'X-Upload-Path': encodeURIComponent(relativePath) } }
     },
   })
 }
