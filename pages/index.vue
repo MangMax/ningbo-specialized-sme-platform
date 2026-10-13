@@ -28,7 +28,13 @@ const EVENTS: Record<string, string> = {
 
 const apiGet = $fetch as unknown as <T>(url: string, opts?: { query?: Record<string, unknown> }) => Promise<T>
 
-const title = ref('all')
+const route = useRoute()
+const queryStr = (v: unknown) => (typeof v === 'string' ? v : '')
+
+// 支持从外链带入初始筛选(统计页下钻、分享链接)。
+const title = ref(queryStr(route.query.title) || 'all')
+const source = ref(queryStr(route.query.source) || 'all')
+const district = ref(queryStr(route.query.district))
 const search = ref('')
 const q = ref('')
 watchDebounced(search, (v) => {
@@ -39,8 +45,17 @@ watchDebounced(search, (v) => {
 const page = ref(1)
 const pageSize = 25
 
+const resetPage = () => (page.value = 1)
+const clearExtraFilters = () => {
+  source.value = 'all'
+  district.value = ''
+  page.value = 1
+}
+
 const params = computed(() => ({
   title: title.value === 'all' ? undefined : title.value,
+  source: source.value === 'all' ? undefined : source.value,
+  district: district.value || undefined,
   q: q.value || undefined,
   page: page.value,
   pageSize,
@@ -52,10 +67,11 @@ const { data, isLoading } = useQuery({
 })
 
 const totalPages = computed(() => Math.max(1, Math.ceil((data.value?.total ?? 0) / pageSize)))
-const onTitleChange = () => (page.value = 1)
 const exportUrl = computed(() => {
   const p = new URLSearchParams()
   if (title.value !== 'all') p.set('title', title.value)
+  if (source.value !== 'all') p.set('source', source.value)
+  if (district.value) p.set('district', district.value)
   if (q.value) p.set('q', q.value)
   return `/api/export?${p.toString()}`
 })
@@ -72,7 +88,7 @@ function fmt(e: Rec['events'][number]) {
     </div>
 
     <div class="flex flex-wrap items-center gap-3">
-      <Select v-model="title" @update:model-value="onTitleChange">
+      <Select v-model="title" @update:model-value="resetPage">
         <SelectTrigger class="w-44">
           <SelectValue placeholder="全部称号" />
         </SelectTrigger>
@@ -83,6 +99,22 @@ function fmt(e: Rec['events'][number]) {
           <SelectItem value="innovative_sme">创新型中小企业</SelectItem>
         </SelectContent>
       </Select>
+
+      <Select v-model="source" @update:model-value="resetPage">
+        <SelectTrigger class="w-36">
+          <SelectValue placeholder="全部来源" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">全部来源</SelectItem>
+          <SelectItem value="jxj">经信局</SelectItem>
+          <SelectItem value="miit">工信部</SelectItem>
+        </SelectContent>
+      </Select>
+
+      <Badge v-if="district" variant="secondary">区县:{{ district }}</Badge>
+      <Button v-if="source !== 'all' || district" variant="ghost" size="sm" @click="clearExtraFilters">
+        清除筛选
+      </Button>
 
       <Input v-model="search" placeholder="搜索企业名称或统一社会信用代码" class="w-72" />
 
