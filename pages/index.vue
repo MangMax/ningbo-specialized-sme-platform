@@ -335,67 +335,65 @@ function setPage(n: number) {
     </Card>
 
     <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
+      <div class="flex items-center gap-2">
+        <span class="text-muted-foreground text-sm">每页</span>
+        <Select v-model="sizeModel">
+          <SelectTrigger class="h-8 w-24">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="n in PAGE_SIZE_PRESETS" :key="n" :value="String(n)">{{ n }}</SelectItem>
+            <SelectItem value="custom">自定义…</SelectItem>
+          </SelectContent>
+        </Select>
+        <Input
+          v-if="isCustomSize"
+          :model-value="pageSize"
+          type="number"
+          min="1"
+          :max="MAX_PAGE_SIZE"
+          class="h-8 w-24"
+          @change="onSizeInput"
+        />
+        <span class="text-muted-foreground text-sm">条</span>
+      </div>
+
       <span class="text-muted-foreground text-sm">
         共 {{ total }} 条 · 第 {{ page }} / {{ totalPages }} 页
       </span>
 
-      <div class="ml-auto flex flex-wrap items-center gap-x-4 gap-y-3">
-        <div class="flex items-center gap-2">
-          <span class="text-muted-foreground text-sm">每页</span>
-          <Select v-model="sizeModel">
-            <SelectTrigger class="h-8 w-24">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="n in PAGE_SIZE_PRESETS" :key="n" :value="String(n)">{{ n }}</SelectItem>
-              <SelectItem value="custom">自定义…</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input
-            v-if="isCustomSize"
-            :model-value="pageSize"
-            type="number"
-            min="1"
-            :max="MAX_PAGE_SIZE"
-            class="h-8 w-24"
-            @change="onSizeInput"
-          />
-          <span class="text-muted-foreground text-sm">条</span>
-        </div>
-
-        <Pagination
-          v-if="total > 0"
-          class="mx-0 w-auto justify-end"
-          v-slot="{ page: current }"
-          :page="page"
-          :items-per-page="pageSize"
-          :total="total"
-          :sibling-count="1"
-          :show-edges="totalPages > 5"
-          @update:page="setPage"
-        >
-          <PaginationContent v-slot="{ items }">
-            <PaginationPrevious>
-              <ChevronLeft class="size-4" />
-              <span class="hidden sm:block">上一页</span>
-            </PaginationPrevious>
-            <template v-for="(item, index) in items" :key="index">
-              <PaginationItem
-                v-if="item.type === 'page'"
-                :value="item.value"
-                :is-active="item.value === current"
-              >
-                {{ item.value }}
-              </PaginationItem>
-              <PaginationEllipsis v-else :index="index" />
-            </template>
+      <Pagination
+        v-if="total > 0"
+        class="mx-0 ml-auto w-auto justify-end"
+        v-slot="{ page: current }"
+        :page="page"
+        :items-per-page="pageSize"
+        :total="total"
+        :sibling-count="1"
+        :show-edges="totalPages > 5"
+        @update:page="setPage"
+      >
+        <PaginationContent v-slot="{ items }">
+          <PaginationPrevious>
+            <ChevronLeft class="size-4" />
+            <span class="hidden sm:block">上一页</span>
+          </PaginationPrevious>
+          <template v-for="(item, index) in items" :key="index">
+            <PaginationItem
+              v-if="item.type === 'page'"
+              :value="item.value"
+              :is-active="item.value === current"
+            >
+              {{ item.value }}
+            </PaginationItem>
+            <PaginationEllipsis v-else :index="index" />
+          </template>
         <PaginationNext>
           <span class="hidden sm:block">下一页</span>
           <ChevronRight class="size-4" />
         </PaginationNext>
-          </PaginationContent>
-        </Pagination>
-      </div>
+        </PaginationContent>
+      </Pagination>
     </div>
   </div>
 </template>
