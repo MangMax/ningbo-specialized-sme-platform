@@ -31,6 +31,27 @@ const apiGet = $fetch as unknown as <T>(url: string, opts?: { query?: Record<str
 const route = useRoute()
 const queryStr = (v: unknown) => (typeof v === 'string' ? v : '')
 
+// 导入快照(票 11):默认最新,选择后作为筛选参数传入 /api/records。
+interface Batch {
+  id: number
+  label: string
+  sourceRoot: string
+  importedAt: string
+  note: string | null
+  recordCount: number
+}
+const { data: batches } = useQuery({
+  key: ['batches'],
+  query: () => apiGet<Batch[]>('/api/batches'),
+})
+const batch = ref(queryStr(route.query.batch) || 'latest') // 'latest' | 'all' | '<id>'
+const effectiveBatch = computed<number | undefined>(() => {
+  if (batch.value === 'all') return undefined
+  if (batch.value === 'latest') return batches.value?.[0]?.id
+  const n = Number(batch.value)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+})
+
 // 支持从外链带入初始筛选(统计页下钻、分享链接)。
 const title = ref(queryStr(route.query.title) || 'all')
 const source = ref(queryStr(route.query.source) || 'all')
@@ -57,6 +78,7 @@ const params = computed(() => ({
   source: source.value === 'all' ? undefined : source.value,
   district: district.value || undefined,
   q: q.value || undefined,
+  batch: effectiveBatch.value,
   page: page.value,
   pageSize,
 }))
@@ -73,6 +95,7 @@ const exportUrl = computed(() => {
   if (source.value !== 'all') p.set('source', source.value)
   if (district.value) p.set('district', district.value)
   if (q.value) p.set('q', q.value)
+  if (effectiveBatch.value) p.set('batch', String(effectiveBatch.value))
   return `/api/export?${p.toString()}`
 })
 function fmt(e: Rec['events'][number]) {
@@ -88,6 +111,19 @@ function fmt(e: Rec['events'][number]) {
     </div>
 
     <div class="flex flex-wrap items-center gap-3">
+      <Select v-model="batch" @update:model-value="resetPage">
+        <SelectTrigger class="w-56">
+          <SelectValue placeholder="当前快照" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="latest">最新快照</SelectItem>
+          <SelectItem value="all">全部快照</SelectItem>
+          <SelectItem v-for="b in batches" :key="b.id" :value="String(b.id)">
+            {{ b.label }} · {{ b.importedAt.slice(0, 10) }}({{ b.recordCount }} 条)
+          </SelectItem>
+        </SelectContent>
+      </Select>
+
       <Select v-model="title" @update:model-value="resetPage">
         <SelectTrigger class="w-44">
           <SelectValue placeholder="全部称号" />

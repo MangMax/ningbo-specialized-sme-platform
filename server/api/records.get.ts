@@ -13,6 +13,7 @@ export default defineEventHandler((event) => {
     district: typeof q.district === 'string' && q.district ? q.district : undefined,
     eventType: typeof q.eventType === 'string' && q.eventType ? q.eventType : undefined,
     q: typeof q.q === 'string' && q.q ? q.q : undefined,
+    batchId: num(q.batch, 0) || undefined,
     page: num(q.page, 1),
     pageSize: num(q.pageSize, 25),
   })
