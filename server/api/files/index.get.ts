@@ -21,6 +21,51 @@ import { SOURCE_ORDER } from '~~/lib/labels'
  */
 let backfilled = false
 
+/**
+ * 文件库列表。
+ *
+ * **首次请求会懒回填**(要算 23 个文件的 SHA-256),所以第一次可能比之后慢 ——
+ * 这一点写进 spec,免得代理以为接口不稳定。`rescan=1` 强制重跑(幂等)。
+ */
+defineRouteMeta({
+  openAPI: {
+    tags: ['文件库'],
+    summary: '列出文件库',
+    description:
+      '首次请求会做一次惰性回填(扫盘 + 算哈希),可能偏慢;`rescan=1` 强制重跑(幂等)。多值参数用逗号分隔。',
+    parameters: [
+      {
+        name: 'source',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '来源,多值:`jxj` / `miit`。',
+      },
+      {
+        name: 'categoryState',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '分类状态,多值:`set`(已定)/ `inferred`(程序推的)/ `unset`(未定)。',
+      },
+      {
+        name: 'parseState',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '解析状态,多值:`unparsed` / `parsed` / `failed`。',
+      },
+      { name: 'q', in: 'query', schema: { type: 'string' }, description: '文件名关键词(子串)。' },
+      { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
+      { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 50, maximum: 200 } },
+      {
+        name: 'rescan',
+        in: 'query',
+        schema: { type: 'string', enum: ['1', 'true'] },
+        description: '强制重跑回填(幂等;验收与排查用)。',
+      },
+    ],
+    responses: { 200: { description: '分页的文件列表(含段与引用数);跑过回填时带 `backfill`。' } },
+  },
+})
+
 export default defineEventHandler(async (event) => {
   const db = useDb()
   const q = getQuery(event)

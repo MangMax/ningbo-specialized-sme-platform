@@ -16,8 +16,53 @@ import { listPdfPages, pageImagePath, resolveWithinRoot } from '../utils/pdf-pag
  * 源文件);页图是**派生数据**,查询、按页取、触发渲染这三件事都与它无关。但页图的**字节**
  * 仍由那条回吐路由给出(见 `lib/pdf-page.ts` 里生成的 `url`),不重复造一路文件服务器。
  *
- * 本路由**只读**:渲染要写盘,走 `POST /api/pdf-pages`。
+ * 本路由**只读**:渲染要写盘,走 `POST /api/pdf-pages`(单份)
+ * 或 `POST /api/jobs {kind:"render-pages"}`(批量、异步)。
  */
+defineRouteMeta({
+  openAPI: {
+    tags: ['页图'],
+    summary: '查页图现状 / 取一页 PNG',
+    description: '不带 `page` 返回 JSON 现状;带 `page` 直接回该页 PNG 字节。只读,不触发渲染。',
+    parameters: [
+      {
+        name: 'file',
+        in: 'query',
+        required: true,
+        schema: { type: 'string' },
+        description: '相对文件库根的 PDF 路径(必给)。',
+      },
+      { name: 'dpi', in: 'query', schema: { type: 'integer', minimum: 72, maximum: 600, default: 200 } },
+      { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 }, description: '给页号则回该页 PNG。' },
+    ],
+    responses: {
+      200: {
+        description: '带 `page` 时是 `image/png` 字节;不带时是现状 JSON。',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                file: { type: 'string' },
+                pageCount: { type: 'integer', nullable: true },
+                dpi: { type: 'integer' },
+                rendered: { type: 'integer' },
+                upToDate: { type: 'boolean' },
+                pages: { type: 'array', items: { type: 'object' } },
+                defaultDpi: { type: 'integer' },
+              },
+            },
+          },
+        },
+      },
+      400: { description: '缺 `file` / 页号非法 / 分辨率越界。' },
+      403: { description: '路径越界(必须落在文件库根内)。' },
+      404: { description: '第 N 页尚未渲染。' },
+      415: { description: '不是 PDF。' },
+    },
+  },
+})
+
 export default defineEventHandler(async (event) => {
   const root = useRuntimeConfig().filesDir
   const q = getQuery(event)

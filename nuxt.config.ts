@@ -62,6 +62,48 @@ export default defineNuxtConfig({
      * `.env.example` 占位(见 `.scratch/ingest-pipeline/SPEC.md`)。
      */
     mcpToken: '',
+    /**
+     * **HTTP 能力面**的鉴权 token(票 19):`POST /api/jobs` 与 `DELETE /api/jobs/:id`。
+     *
+     * 与 `mcpToken` 同一套反向默认(空 = 写/任务类整体关闭),但**是另一个变量**:
+     * 两个面各一把钥匙就可以各自吊销(见 `server/utils/api-auth.ts` 顶部)。
+     * 想让两边共用一个值,把两个变量设成一样即可 —— 那是配置时的选择。
+     */
+    apiToken: '',
+  },
+
+  /**
+   * **Nitro 内建的 OpenAPI**(票 19)—— 不装任何第三方生成器。
+   *
+   * `experimental.openAPI` 打开后,Nitro 自己注册三条开发期路由:`/_openapi.json`
+   * (给**代理**读,顺着它发现整个 HTTP 能力面)、`/_scalar`(给人看的 UI)、
+   * `/_swagger`。spec 是**构建期**从各路由文件里的 `defineRouteMeta({ openAPI })` 宏
+   * 抽出来的(nitro 的 `handlers-meta` 插件按 AST 静态求值),运行时零开销。
+   *
+   * ⚠️ **生产默认关闭,本票也不开**:nitro 的判据是
+   * `if (!dev && !openAPI.production) return` —— 所以**不设** `production` 就是关着。
+   * 这是本票的硬约束之一:spec 会把整张接口面(含哪些接口要 token)摊开给人看,
+   * 生产环境不该默认摊开。要开必须自己显式设 `production: 'runtime' | 'prerender'`
+   * 并**自己加保护**(网关鉴权 / 内网),`tests/agent-http.test.ts` 里有一条断言把这个
+   * 默认钉死,`_openapi.json` 在生产构建下的 404 有实测证据(见票 19)。
+   *
+   * `ui.scalar` 默认开(票要求 `/_scalar` 能开);`ui.swagger` **显式关掉** ——
+   * 两个 UI 是同一份 spec 的两种渲染,留一个就够,少一条开发期路由。
+   * (两者的 UI 都从公共 CDN 拉前端脚本,只在开发期、由人主动打开时才发生。)
+   */
+  nitro: {
+    experimental: { openAPI: true },
+    openAPI: {
+      meta: {
+        title: '专精特新台账看板 — 代理 HTTP 能力面',
+        description:
+          '文件库与台账的 HTTP 接口。写/任务类接口需要 token(`NUXT_API_TOKEN`)。' +
+          '长活走异步:`POST /api/jobs` 拿 jobId,再 `GET /api/jobs/{id}` 轮询。',
+        version: '1.0.0',
+      },
+      // 不设 `production` —— 见上:生产默认关闭。
+      ui: { swagger: false },
+    },
   },
 
   alias: {

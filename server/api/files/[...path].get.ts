@@ -61,6 +61,30 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml',
 }
 
+/**
+ * 按台账「出处」的相对路径回吐源文件字节(预览用)。
+ *
+ * 进 spec 是为了**代理**:MCP 的 `list_page_images` / `list_files` 返回的
+ * `url` 字段指向这里(以及页图),代理要能把那些 URL 取回来 —— 不写进 spec
+ * 它就只能靠猜路径。
+ */
+defineRouteMeta({
+  openAPI: {
+    tags: ['文件库'],
+    summary: '取源文件字节(预览)',
+    description:
+      '路径是**相对文件库根**的 `record_evidence.source_file` 口径(如 `jxj/announcement/2024/1/….pdf`)。' +
+      '只放行预览支持的扩展名;路径解析后必须仍在文件库根内(否则 403)。只读。',
+    responses: {
+      200: { description: '文件字节(按扩展名给 content-type)。' },
+      400: { description: '缺路径。' },
+      403: { description: '路径越界。' },
+      404: { description: '文件不存在 / 不是文件。' },
+      415: { description: '扩展名不在预览白名单内。' },
+    },
+  },
+})
+
 export default defineEventHandler((event) => {
   const raw = getRouterParam(event, 'path')
   if (!raw) {

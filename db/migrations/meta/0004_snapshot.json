@@ -1,0 +1,911 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "71e1d51f-27c1-4c27-b5b1-b1b1f5b98d34",
+  "prevId": "93e47318-44e9-4553-bc5e-a4006ff3d5f3",
+  "tables": {
+    "enterprise": {
+      "name": "enterprise",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "uscc_norm": {
+          "name": "uscc_norm",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name_norm": {
+          "name": "name_norm",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "district": {
+          "name": "district",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "city": {
+          "name": "city",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reg_status": {
+          "name": "reg_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "quality_flags": {
+          "name": "quality_flags",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'[]'"
+        }
+      },
+      "indexes": {
+        "enterprise_uscc_norm_uq": {
+          "name": "enterprise_uscc_norm_uq",
+          "columns": [
+            "uscc_norm"
+          ],
+          "isUnique": true
+        },
+        "enterprise_name_norm_idx": {
+          "name": "enterprise_name_norm_idx",
+          "columns": [
+            "name_norm"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "job": {
+      "name": "job",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "params": {
+          "name": "params",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'queued'"
+        },
+        "progress": {
+          "name": "progress",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{\"done\":0,\"total\":1}'"
+        },
+        "result": {
+          "name": "result",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "job_kind_idx": {
+          "name": "job_kind_idx",
+          "columns": [
+            "kind"
+          ],
+          "isUnique": false
+        },
+        "job_state_idx": {
+          "name": "job_state_idx",
+          "columns": [
+            "state"
+          ],
+          "isUnique": false
+        },
+        "job_created_at_idx": {
+          "name": "job_created_at_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "reconciliation_result": {
+      "name": "reconciliation_result",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "title_code": {
+          "name": "title_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enterprise_id": {
+          "name": "enterprise_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "direction": {
+          "name": "direction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "curated": {
+          "name": "curated",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "reconciliation_dir_idx": {
+          "name": "reconciliation_dir_idx",
+          "columns": [
+            "direction"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "reconciliation_result_title_code_title_code_fk": {
+          "name": "reconciliation_result_title_code_title_code_fk",
+          "tableFrom": "reconciliation_result",
+          "tableTo": "title",
+          "columnsFrom": [
+            "title_code"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "reconciliation_result_enterprise_id_enterprise_id_fk": {
+          "name": "reconciliation_result_enterprise_id_enterprise_id_fk",
+          "tableFrom": "reconciliation_result",
+          "tableTo": "enterprise",
+          "columnsFrom": [
+            "enterprise_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "record": {
+      "name": "record",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "enterprise_id": {
+          "name": "enterprise_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "title_code": {
+          "name": "title_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "district": {
+          "name": "district",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "uscc_raw": {
+          "name": "uscc_raw",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "name_raw": {
+          "name": "name_raw",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "quality_flags": {
+          "name": "quality_flags",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'[]'"
+        }
+      },
+      "indexes": {
+        "record_identity_uq": {
+          "name": "record_identity_uq",
+          "columns": [
+            "enterprise_id",
+            "title_code",
+            "source"
+          ],
+          "isUnique": true
+        },
+        "record_title_idx": {
+          "name": "record_title_idx",
+          "columns": [
+            "title_code"
+          ],
+          "isUnique": false
+        },
+        "record_source_idx": {
+          "name": "record_source_idx",
+          "columns": [
+            "source"
+          ],
+          "isUnique": false
+        },
+        "record_district_idx": {
+          "name": "record_district_idx",
+          "columns": [
+            "district"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "record_enterprise_id_enterprise_id_fk": {
+          "name": "record_enterprise_id_enterprise_id_fk",
+          "tableFrom": "record",
+          "tableTo": "enterprise",
+          "columnsFrom": [
+            "enterprise_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "record_title_code_title_code_fk": {
+          "name": "record_title_code_title_code_fk",
+          "tableFrom": "record",
+          "tableTo": "title",
+          "columnsFrom": [
+            "title_code"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "record_event": {
+      "name": "record_event",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "record_id": {
+          "name": "record_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "batch_seq": {
+          "name": "batch_seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sort_key": {
+          "name": "sort_key",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "record_event_record_idx": {
+          "name": "record_event_record_idx",
+          "columns": [
+            "record_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "record_event_record_id_record_id_fk": {
+          "name": "record_event_record_id_record_id_fk",
+          "tableFrom": "record_event",
+          "tableTo": "record",
+          "columnsFrom": [
+            "record_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "record_evidence": {
+      "name": "record_evidence",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "record_event_id": {
+          "name": "record_event_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_file": {
+          "name": "source_file",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "attachment": {
+          "name": "attachment",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "list_no": {
+          "name": "list_no",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "record_evidence_event_idx": {
+          "name": "record_evidence_event_idx",
+          "columns": [
+            "record_event_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "record_evidence_record_event_id_record_event_id_fk": {
+          "name": "record_evidence_record_event_id_record_event_id_fk",
+          "tableFrom": "record_evidence",
+          "tableTo": "record_event",
+          "columnsFrom": [
+            "record_event_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "source_document": {
+      "name": "source_document",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "doc_number": {
+          "name": "doc_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "issue_date": {
+          "name": "issue_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "path": {
+          "name": "path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "stored_file": {
+      "name": "stored_file",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "rel_path": {
+          "name": "rel_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "filename": {
+          "name": "filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "ext": {
+          "name": "ext",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "bytes": {
+          "name": "bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "batch": {
+          "name": "batch",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "title_code": {
+          "name": "title_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "category_state": {
+          "name": "category_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'unset'"
+        },
+        "parse_state": {
+          "name": "parse_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'unparsed'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "removed_at": {
+          "name": "removed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "stored_file_rel_path_uq": {
+          "name": "stored_file_rel_path_uq",
+          "columns": [
+            "rel_path"
+          ],
+          "isUnique": true
+        },
+        "stored_file_source_idx": {
+          "name": "stored_file_source_idx",
+          "columns": [
+            "source"
+          ],
+          "isUnique": false
+        },
+        "stored_file_category_state_idx": {
+          "name": "stored_file_category_state_idx",
+          "columns": [
+            "category_state"
+          ],
+          "isUnique": false
+        },
+        "stored_file_parse_state_idx": {
+          "name": "stored_file_parse_state_idx",
+          "columns": [
+            "parse_state"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "stored_file_title_code_title_code_fk": {
+          "name": "stored_file_title_code_title_code_fk",
+          "tableFrom": "stored_file",
+          "tableTo": "title",
+          "columnsFrom": [
+            "title_code"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "stored_file_part": {
+      "name": "stored_file_part",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "file_id": {
+          "name": "file_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "title_code": {
+          "name": "title_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_kind": {
+          "name": "event_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "year": {
+          "name": "year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "batch": {
+          "name": "batch",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "attachment": {
+          "name": "attachment",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "row_count": {
+          "name": "row_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "stored_file_part_file_idx": {
+          "name": "stored_file_part_file_idx",
+          "columns": [
+            "file_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "stored_file_part_file_id_stored_file_id_fk": {
+          "name": "stored_file_part_file_id_stored_file_id_fk",
+          "tableFrom": "stored_file_part",
+          "tableTo": "stored_file",
+          "columnsFrom": [
+            "file_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "stored_file_part_title_code_title_code_fk": {
+          "name": "stored_file_part_title_code_title_code_fk",
+          "tableFrom": "stored_file_part",
+          "tableTo": "title",
+          "columnsFrom": [
+            "title_code"
+          ],
+          "columnsTo": [
+            "code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "title": {
+      "name": "title",
+      "columns": {
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name_zh": {
+          "name": "name_zh",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "level": {
+          "name": "level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rank": {
+          "name": "rank",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

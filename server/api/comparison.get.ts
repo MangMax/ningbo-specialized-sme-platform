@@ -5,6 +5,46 @@ import { TITLE_ORDER } from '~~/lib/labels'
 import { MAX_PAGE_SIZE } from '~~/lib/query'
 import { attachReconcile, readReconcile } from '~~/lib/reconcile'
 
+/**
+ * 两侧比对结果(已公布 vs 平台导出),带人工标注与平台解释。
+ *
+ * `reconcile` 段是**增强**:平台解释缓存(`data/platform-reconcile.json`,票 16 的
+ * pipeline CLI 产出)不存在时 `explanation` 全为 null,比对本身不受影响。
+ */
+defineRouteMeta({
+  openAPI: {
+    tags: ['比对'],
+    summary: '查比对结果',
+    description: '按称号 / 方向过滤,分页返回;含人工标注(`curated`)与平台解释。',
+    parameters: [
+      {
+        name: 'title',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '称号代号,多值:`little_giant` / `specialized_sme` / `innovative_sme`。',
+      },
+      {
+        name: 'direction',
+        in: 'query',
+        schema: { type: 'string', enum: ['missing_in_miit', 'extra_in_miit'] },
+        description: '比对方向:公布文件有而平台导出无 / 反方向。',
+      },
+      {
+        name: 'showCurated',
+        in: 'query',
+        schema: { type: 'string', enum: ['true', 'false'] },
+        description: '`true` 时**也**返回已被人工标注排除的行(默认不返回)。',
+      },
+      { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
+      { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 25 } },
+    ],
+    responses: {
+      200: { description: '比对结果(`rows` / `total` / `counts` / `curatedCounts` / `reconcile`)。' },
+      400: { description: 'title / direction / showCurated 取值非法。' },
+    },
+  },
+})
+
 export default defineEventHandler((event) => {
   const q = getQuery(event)
   const num = (v: unknown, d: number) => {

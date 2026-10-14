@@ -16,6 +16,54 @@ import {
 
 const EVENT_TYPES: EventType[] = ['award', 'review', 'maintain', 'nurture']
 
+/**
+ * 导出 Excel(xlsx 二进制)。
+ *
+ * 两种模式:**默认**导出记录(与 `/api/records` 同一套筛选),`mode=comparison`
+ * 导出比对结果(那时 `title` 与 `direction` 必给)。
+ *
+ * 成功时 `content-type` 是 xlsx、响应体是字节,**不是 JSON** —— spec 里如实写出来,
+ * 免得代理按 JSON 去解析。
+ */
+defineRouteMeta({
+  openAPI: {
+    tags: ['台账'],
+    summary: '导出 Excel',
+    responses: {
+      200: {
+        description: 'xlsx 文件字节(不是 JSON)。',
+        content: {
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
+            schema: { type: 'string', format: 'binary' },
+          },
+        },
+      },
+      400: { description: '`mode=comparison` 时缺 title / direction 或它们的取值非法。' },
+    },
+    parameters: [
+      {
+        name: 'mode',
+        in: 'query',
+        schema: { type: 'string', enum: ['comparison'] },
+        description: '不传 = 导出记录;`comparison` = 导出比对结果。',
+      },
+      { name: 'title', in: 'query', schema: { type: 'string' }, description: '称号代号(comparison 模式必给)。' },
+      {
+        name: 'direction',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '比对方向(comparison 模式必给)。',
+      },
+      { name: 'source', in: 'query', schema: { type: 'string' }, description: '来源,多值。' },
+      { name: 'district', in: 'query', schema: { type: 'string' } },
+      { name: 'eventType', in: 'query', schema: { type: 'string' }, description: '事件类型,多值。' },
+      { name: 'year', in: 'query', schema: { type: 'string' }, description: '事件年份,多值。' },
+      { name: 'q', in: 'query', schema: { type: 'string' } },
+      { name: 'flags', in: 'query', schema: { type: 'string' } },
+    ],
+  },
+})
+
 export default defineEventHandler(async (event) => {
   const q = getQuery(event)
   const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)

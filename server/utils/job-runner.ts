@@ -1,0 +1,371 @@
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import * as schema from '../../db/schema'
+import { isTerminalJobState, newJobId, type JobState } from '../../lib/job'
+import {
+  createJob,
+  finishJob,
+  getJob,
+  markJobRunning,
+  reconcileInterruptedJobs,
+  setJobProgress,
+  type JobRow,
+} from './job-store'
+
+type Db = BetterSQLite3Database<typeof schema>
+
+/**
+ * 异步任务的**执行面**:kind → handler 的注册表,加一条**进程内串行**的队列。
+ *
+ * 见 `.scratch/ingest-pipeline/issues/19-openapi.md`。
+ *
+ * ── 为什么是「队列 + 轮询」而不是同步 ──────────────────────────────────────
+ * 97 页 OCR、700+ 家平台核查这类活是**分钟到小时**级的。同步接口下一个请求要挂到
+ * 天荒地老,代理也只能一次干等一件 —— 而代理要在技能里 `curl`,没有后台线程可用。
+ * `POST` 立刻回 `202 + jobId`、之后 `GET /api/jobs/:id` 轮询,批量才跑得动。
+ *
+ * ── 并发语义(写清楚,因为它是本票的验收项之一)────────────────────────────
+ * **一次只跑一个任务,先进先出。** 具体:
+ *  1. `submitJob` 只**入队**并立刻返回,HTTP 请求不等它;
+ *  2. 队列由单个后台循环消费,所以**任何时刻最多一个 kind handler 在跑**;
+ *  3. 于是并发的两个提交必然一个 `running`、一个 `queued` —— 它们不会同时碰磁盘。
+ *     这对 `render-pages` 尤其要紧:两份任务渲染**同一份** PDF 时,页图目录里的
+ *     `pNNN.png.tmp` 与 `.pages.json` 是同一批文件,并行就是互相覆盖(票 13 已按
+ *     「同一份 PDF 的渲染串行」挡住一层,这里是第二层,覆盖跨任务的场景)。
+ *  4. 串行**不牺牲批量**:一个任务可以带 N 份文件(`render-pages` 的 `files` 数组),
+ *     批量是「一次提交多份」,不是「同时跑多个任务」。
+ *  5. 单进程语义。多实例部署(两个 node 进程指向同一个 db 文件)不在本票范围内 ——
+ *     那需要一把跨进程的锁,**不是**现在这个内存队列能保证的事,写在这里免得误以为能。
+ *
+ * ── 任务不跨重启续跑 ────────────────────────────────────────────────────
+ * 队列在内存里,进程一没就没了。启动时 `ensureJobRunnerReady` 把上一个进程留下的
+ * `queued` / `running` 一律标 `failed`(原因见 `job-store.ts` 的
+ * `reconcileInterruptedJobs`)——**任务史保留,任务本身重开**。
+ */
+
+// ---------------------------------------------------------------------------
+// kind → handler 的注册表
+// ---------------------------------------------------------------------------
+
+/**
+ * handler 拿到的上下文。**`filesDir` 由这里传,handler 不自己去读 nitro 全局** ——
+ * 这样 handler 是纯异步函数,能在测试里直接跑,不依赖请求上下文。
+ */
+export interface JobContext {
+  readonly jobId: string
+  /** 文件库根(绝对路径)。 */
+  readonly filesDir: string
+  /** 写进度(`done` / `total` 都是份数,不是百分比)。 */
+  progress(done: number, total: number): void
+  /**
+   * 是否已被请求取消。批量任务在**每一份之前**问一次就够了 —— 这就是「尽力而为」的
+   * 检查点。看到了就 `return { result, cancelled: true }` 收尾(见 `JobCompletion`)。
+   *
+   * 只有这一个取消出口(没有「抛出去」那种写法):抛出会让已经做完的那部分明细
+   * 跟着异常一起丢,而调用方最想知道的恰恰是「停在哪、做完了哪些」。
+   */
+  cancelled(): boolean
+}
+
+/** 参数校验结果。失败带一句中文原因,路由直接当 400 的文案。 */
+export type JobParseResult =
+  | { ok: true; params: Record<string, unknown> }
+  | { ok: false; message: string }
+
+/**
+ * handler 的收尾:**产出**,外加可选的**部分失败**说明。
+ *
+ * 为什么要「有 result 的失败」:批量任务里「3 份里第 2 份挂了、第 1/3 份是好的」是个
+ * 真实且有用的结果。只抛异常的话,那两份的产出就丢了(失败路径只记 `error`);
+ * 只返回 result 又会让任务显示 `done`,调用方以为全成了。所以两样都给:
+ * **状态诚实(`failed`),明细完整(`result.files[]`)**。
+ */
+export interface JobCompletion {
+  /** 产出。哪怕是空对象也要给 —— 它表示「跑完了,没有产出」。 */
+  result: unknown
+  /** 给了就是部分失败:状态记 `failed`,但 `result` 照样保留。 */
+  error?: string
+  /**
+   * 给了就是**被取消时主动停下**:状态记 `cancelled`,`result` 里带上**已经做完的部分**。
+   *
+   * 与「让 `throwIfCancelled` 抛出去」的区别就在这半边产出:抛出会让 runner 只记一条
+   * 取消说明,已经渲染好的那几份的明细就没了。想要明细的 handler 走这条路
+   * (见 `server/utils/jobs/render-pages.ts`),不在乎的照旧抛。
+   */
+  cancelled?: boolean
+}
+
+/** 一个任务种类的**全部元信息**,注册表里一项。
+ *
+ * `parse` 与 `run` **分开**是有意的:参数校验发生在**提交那一刻**(路由里),
+ * 所以参数写错得到的是同步的 `400`,不会先建一个注定失败的任务再让它 `failed`。
+ * 这对代理很要紧 —— 它拿到 400 就知道是自己参数写错了,拿到一个 `failed` 的任务
+ * 则要先 GET 出来看原因才知道。
+ */
+export interface JobSpec {
+  kind: string
+  /** `ready` = 有 `run` 可跑;`todo` = 已登记、尚未接入(提交时明确报 501)。 */
+  status: 'ready' | 'todo'
+  summary: string
+  /** `todo` 的原因与去处(为什么还没接、接在哪张票上)。 */
+  note?: string
+  /** 参数形状的**一句话**说明。给 `GET /api/jobs/kinds` 用 —— 代理据此知道怎么拼 `params`。 */
+  paramsHint?: string
+  parse: (raw: Record<string, unknown>) => JobParseResult
+  /** 提交时就能算出的**分母**(进度条的 total)。默认 1。 */
+  total?: (params: Record<string, unknown>) => number
+  run?: (ctx: JobContext, params: Record<string, unknown>) => Promise<JobCompletion>
+}
+
+const specs = new Map<string, JobSpec>()
+
+/** 登记一个 kind。同名重复登记**抛错** —— 静默覆盖会让「注册了但跑的是另一个」很难查。 */
+export function registerJob(spec: JobSpec): void {
+  if (specs.has(spec.kind)) throw new Error(`任务种类重复登记:${spec.kind}`)
+  specs.set(spec.kind, spec)
+}
+
+export function getJobSpec(kind: string): JobSpec | undefined {
+  return specs.get(kind)
+}
+
+/** 已登记的全部 kind(按名字排序,便于文档与断言比对)。 */
+export function jobSpecs(): JobSpec[] {
+  return [...specs.values()].sort((a, b) => a.kind.localeCompare(b.kind))
+}
+
+/** 清空注册表(测试用 —— 每个用例都要从干净状态起)。 */
+export function clearJobSpecs(): void {
+  specs.clear()
+}
+
+// ---------------------------------------------------------------------------
+// 队列
+// ---------------------------------------------------------------------------
+
+interface QueueEntry {
+  jobId: string
+  db: Db
+  filesDir: string
+}
+
+const queue: QueueEntry[] = []
+
+/**
+ * 已收到取消请求、但**正在跑**的任务 id。
+ *
+ * 取消不写库(`state` 仍留 `running`):写库的话,handler 正常跑完再写 `done` 就变成
+ * 「先 cancelled 后 done」的回退,读的人会看到状态跳来跳去。这里用内存标记,
+ * 由 runner 在检查点读 —— 也正是「尽力而为」的落点:marker 只有在 handler **去看**的时候
+ * 才有效,已经陷在原生调用里的那一步不会被它打断。
+ */
+const cancelRequested = new Set<string>()
+
+let pumping = false
+let idleWaiters: Array<() => void> = []
+
+/** 队列清空且没有在跑的任务时 resolve(测试与验收用,业务代码不需要)。 */
+export function whenIdle(): Promise<void> {
+  if (!pumping && queue.length === 0) return Promise.resolve()
+  return new Promise((resolve) => idleWaiters.push(resolve))
+}
+
+function notifyIdle(): void {
+  const waiters = idleWaiters
+  idleWaiters = []
+  for (const resolve of waiters) resolve()
+}
+
+/** 重置进程内状态(测试用)。库里的历史**不动**。 */
+export function __resetJobRunner(): void {
+  queue.length = 0
+  cancelRequested.clear()
+  pumping = false
+  notifyIdle()
+}
+
+// ---------------------------------------------------------------------------
+// 提交
+// ---------------------------------------------------------------------------
+
+export interface SubmitInput {
+  kind: string
+  params: Record<string, unknown>
+  /** 文件库根。由路由从 `runtimeConfig.filesDir` 传进来。 */
+  filesDir: string
+  /** 显式指定 id(测试用)。默认现生成一个 ULID。 */
+  id?: string
+}
+
+/**
+ * 建一条任务行并入队,**立刻返回**。
+ *
+ * 调用方(路由)必须**先**用 `getJobSpec` 判过 kind 与参数 —— 这里只做落库与排队,
+ * 不做校验:校验的结果要变成 HTTP 状态码,那是路由的事。
+ */
+export function submitJob(db: Db, input: SubmitInput): JobRow {
+  const spec = getJobSpec(input.kind)
+  if (!spec) throw new Error(`任务种类未登记:${input.kind}`)
+  if (spec.status !== 'ready' || !spec.run) throw new Error(`任务种类尚未接入:${input.kind}`)
+
+  const total = spec.total?.(input.params) ?? 1
+  const row = createJob(db, {
+    id: input.id ?? newJobId(),
+    kind: input.kind,
+    params: input.params,
+    progress: { done: 0, total },
+  })
+
+  queue.push({ jobId: row.id, db, filesDir: input.filesDir })
+  void drainQueue()
+  return row
+}
+
+// ---------------------------------------------------------------------------
+// 执行
+// ---------------------------------------------------------------------------
+
+/**
+ * 消费队列的**唯一**循环 —— 名字里那个「唯一」是要紧的:`pumping` 保证同一时刻只有
+ * 一个循环在跑,否则并发提交会各起一个,「串行」就没了。
+ */
+async function drainQueue(): Promise<void> {
+  if (pumping) return
+  pumping = true
+  try {
+    while (queue.length) {
+      const entry = queue.shift()!
+      await runOne(entry)
+    }
+  } finally {
+    pumping = false
+    notifyIdle()
+  }
+}
+
+async function runOne(entry: QueueEntry): Promise<void> {
+  const { db, jobId, filesDir } = entry
+  try {
+    // 入队后被取消:队列里已经没它了(取消时就地摘掉了),这里是兜底。
+    if (cancelRequested.has(jobId)) {
+      finishJob(db, jobId, { state: 'cancelled', error: '任务在开始前被取消' })
+      return
+    }
+
+    // 只有仍是 queued 才认领。对账标失败 / 被取消的行在这里被挡住,不会白跑。
+    const running = markJobRunning(db, jobId)
+    if (!running) return
+
+    const spec = getJobSpec(running.kind)
+    if (!spec?.run) {
+      finishJob(db, jobId, { state: 'failed', error: `任务种类尚未接入:${running.kind}` })
+      return
+    }
+
+    const ctx: JobContext = {
+      jobId,
+      filesDir,
+      progress: (done, total) => setJobProgress(db, jobId, { done, total }),
+      cancelled: () => cancelRequested.has(jobId),
+    }
+
+    const completion = await spec.run(ctx, running.params)
+    // 收尾时把进度顶到分母 —— handler 可能把自己的循环跑完了却没报最后一格。
+    // 被取消时不顶:停在 1/4 才是**它真实的进度**,顶成 4/4 就是在说谎。
+    if (!completion.cancelled) {
+      setJobProgress(db, jobId, { done: running.progress.total, total: running.progress.total })
+    }
+    finishJob(db, jobId, {
+      state: completion.cancelled ? 'cancelled' : completion.error ? 'failed' : 'done',
+      result: completion.result,
+      error: completion.cancelled
+        ? '已按取消请求停止(尽力而为:取消在任务的下一个检查点生效),已完成的部分见 result'
+        : (completion.error ?? null),
+    })
+  } catch (error) {
+    finishJob(db, jobId, { state: 'failed', error: messageOf(error) })
+  } finally {
+    cancelRequested.delete(jobId)
+  }
+}
+
+function messageOf(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message
+  return String(error)
+}
+
+// ---------------------------------------------------------------------------
+// 取消(尽力而为)
+// ---------------------------------------------------------------------------
+
+export type CancelOutcome =
+  /** 还在排队:直接从队列摘掉并落库为 `cancelled`。 */
+  | { ok: true; state: 'cancelled'; cancelled: true; note: string }
+  /** 正在跑:打了取消标记,handler 在下一个检查点停。 */
+  | { ok: true; state: 'running'; cancelled: false; cancelRequested: true; note: string }
+  /** 已经结束了。 */
+  | { ok: true; state: JobState; cancelled: false; alreadyFinished: true; note: string }
+  | { ok: false; message: string }
+
+/**
+ * 请求取消。**尽力而为** —— 这个措辞是接口契约的一部分,会原样出现在响应的 `note` 里:
+ *
+ *  - **排队中**:真能立刻取消(从队列摘掉 + 落库 `cancelled`);
+ *  - **运行中**:只能打标记。handler 在检查点(通常是「处理下一份文件之前」)看到标记
+ *    才停得下来。已经进到 PDFium 渲染、sharp 编码或一次 HTTP 调用里的那一步**不会被
+ *    打断** —— 它跑完,然后 handler 在下一个检查点停。所以一个「已取消」的任务,
+ *    它的 `result` 里可能仍带着几份已经做完的产出,这是**正确**的行为,不是漏做。
+ *  - **已结束**:取消不生效,如实回报当前状态。
+ */
+export function requestJobCancel(db: Db, id: string): CancelOutcome {
+  const row = getJob(db, id)
+  if (!row) return { ok: false, message: `任务不存在:${id}` }
+
+  if (isTerminalJobState(row.state)) {
+    return {
+      ok: true,
+      state: row.state,
+      cancelled: false,
+      alreadyFinished: true,
+      note: `任务已结束(state=${row.state}),无法取消。`,
+    }
+  }
+
+  if (row.state === 'queued') {
+    // 就地摘掉,免得后台循环还把它捡起来。
+    const at = queue.findIndex((e) => e.jobId === id)
+    if (at >= 0) queue.splice(at, 1)
+    finishJob(db, id, { state: 'cancelled', error: '任务在开始前被取消,未执行' })
+    return { ok: true, state: 'cancelled', cancelled: true, note: '任务尚在排队,已取消,未执行。' }
+  }
+
+  cancelRequested.add(id)
+  return {
+    ok: true,
+    state: 'running',
+    cancelled: false,
+    cancelRequested: true,
+    note:
+      '任务正在运行,已请求取消 —— **尽力而为**:handler 会在下一个检查点停止,' +
+      '正在进行的单步(一次渲染 / 一次外部调用)会先跑完。稍后 GET 本任务看是否已变为 cancelled。',
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 启动对账
+// ---------------------------------------------------------------------------
+
+/**
+ * db 实例 → 是否已对过账。用 `WeakSet` 按**实例**记,而不是一个模块级布尔:
+ * 测试里每个用例开一个新库,布尔会让第二个库永远跳过对账;WeakSet 天然随实例走。
+ */
+const reconciledDbs = new WeakSet<object>()
+
+/**
+ * 进程内**第一次**碰到任务库时,把上一个进程留下的半截任务标失败。
+ * 返回本次标掉的条数(0 = 不需要或已经对过)。
+ */
+export function ensureJobRunnerReady(db: Db): number {
+  if (reconciledDbs.has(db)) return 0
+  reconciledDbs.add(db)
+  return reconcileInterruptedJobs(db)
+}

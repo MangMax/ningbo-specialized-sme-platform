@@ -235,3 +235,58 @@ export const reconciliationResult = sqliteTable(
   },
   (t) => [index('reconciliation_dir_idx').on(t.direction)],
 )
+
+/**
+ * **异步任务**(票 19):代理提交 → 拿 `jobId` → 轮询。
+ *
+ * ── 为什么是表,不是 JSON 文件 ────────────────────────────────────────────
+ * 三件事 JSON 文件都做不到,而这三件恰好是任务要的:
+ *  1. **按 `kind` / `state` 查** —— 列表接口要能筛「还在跑的 render-pages」,
+ *     JSON 得整份读进内存再过滤;
+ *  2. **跨重启保留** —— 97 页 OCR、700+ 家平台核查是几十分钟级的活,
+ *     进程一重启文件里的半截状态就是脏的;
+ *  3. **并发写不互相覆盖** —— runner 写进度、HTTP 写取消,JSON 是「改一个字段
+ *     重写整份」,两个写者必然丢更新,还得自己实现锁。SQLite 的事务现成。
+ *
+ * `progress` 与 `result` 存 JSON:前者是 `{done,total}` 一对数字、后者是各 kind
+ * **自己**的形状(render-pages 是每份文件的渲染结果),都是**不参与查询**的载荷 ——
+ * 它们进 JSON 列不违反上面第 1 条(要查的是 `kind` / `state`,那是独立的列)。
+ *
+ * `params` / `result` **只放任务自己的载荷**:id、相对路径、分辨率。凭证不进这里
+ * (见 `.scratch/ingest-pipeline/SPEC.md`「凭证不入库」)。
+ */
+export const job = sqliteTable(
+  'job',
+  {
+    /** ULID(26 位 Crockford base32,时间前缀)—— 见 `lib/job.ts` 的 `newJobId`。 */
+    id: text('id').primaryKey(),
+    /** 任务种类,如 `render-pages`。指向 `server/utils/job-specs.ts` 的注册表。 */
+    kind: text('kind').notNull(),
+    /** 提交时给的参数(已过 kind 自己的校验)。 */
+    params: text('params', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    state: text('state', {
+      enum: ['queued', 'running', 'done', 'failed', 'cancelled'],
+    })
+      .notNull()
+      .default('queued'),
+    /** `{done,total}`;百分比由 `progressPercent` 现算,不落库(见 `lib/job.ts`)。 */
+    progress: text('progress', { mode: 'json' })
+      .$type<{ done: number; total: number }>()
+      .notNull()
+      .default({ done: 0, total: 1 }),
+    /** 成功时的产出,形状由 kind 决定。 */
+    result: text('result', { mode: 'json' }).$type<unknown>(),
+    /** 失败原因 / 取消说明。终态为 `done` 时为 null。 */
+    error: text('error'),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    startedAt: text('started_at'),
+    finishedAt: text('finished_at'),
+  },
+  (t) => [
+    index('job_kind_idx').on(t.kind),
+    index('job_state_idx').on(t.state),
+    index('job_created_at_idx').on(t.createdAt),
+  ],
+)
