@@ -15,6 +15,7 @@ import {
 import { formatBytes } from '~~/lib/upload'
 import { describeFetchError } from '~~/lib/upload-register'
 import { fileUrl } from '~~/lib/preview'
+import { isPdfPath } from '~~/lib/pdf-page'
 import { joinSeries, partBatches, partYears } from '~~/lib/file-parts'
 import type { BackfillReport, StoredFileRow } from '~~/server/utils/stored-files'
 import { Badge } from '@/components/ui/badge'
@@ -56,6 +57,7 @@ import {
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
 import UploadDialog from '@/components/files/UploadDialog.vue'
+import PdfViewDialog from '@/components/files/PdfViewDialog.vue'
 
 /**
  * 文件管理页(票 09;段的展示是票 17):统一管理文件库(`files/`)里的**全部**文件。
@@ -873,8 +875,22 @@ function publishedYearBatch(row: StoredFileRow): string {
       @confirm="confirmDelete"
     />
 
-    <!-- 预览复用台账的出处预览弹窗(与平行会话做的是同一个组件)。 -->
-    <FilePreviewDialog v-model:open="previewOpen" :src="previewSrc" :name="previewFile?.filename ?? ''" />
+    <!-- PDF 走「原文 / 页图」两视图弹窗(票 13 的页图在这里看);其余格式仍是单一预览弹窗。
+         为什么页图不做成第四颗行操作按钮:操作列 138px 正好装下三颗,再加一颗这张表
+         就会回到横向滚动 —— 详细理由见 `components/files/PdfViewDialog.vue`。 -->
+    <PdfViewDialog
+      v-if="previewFile && isPdfPath(previewFile.relPath)"
+      v-model:open="previewOpen"
+      :src="previewSrc"
+      :name="previewFile.filename"
+      :file="previewFile.relPath"
+    />
+    <FilePreviewDialog
+      v-else
+      v-model:open="previewOpen"
+      :src="previewSrc"
+      :name="previewFile?.filename ?? ''"
+    />
   </div>
 </template>
 
