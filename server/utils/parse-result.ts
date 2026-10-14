@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeAttachment } from '../../lib/attachment'
@@ -24,13 +24,11 @@ type Db = BetterSQLite3Database<typeof schema>
  * tests/mcp-surface.test.ts 里有一条断言把这一点钉死:调用前后
  * `record` / `enterprise` / `record_evidence` 的行数必须**一个都不变**。
  *
- * ── 与票 17 的关系 ──────────────────────────────────────────────────────
+ * ── 与票 17 / 20 的关系 ─────────────────────────────────────────────────
  * `stored_file_part` 本来是**由 `record_evidence` 聚合派生**的(票 17:
- * `server/utils/file-parts.ts` 的 `backfillFileParts`,先删后插、整体重建)。
- * 本文件是它的**第二条写入路径**:代理在没有台账记录、光看文件的情况下,
- * 先把「文件里有哪些段」写进来。两条路径的语义不同(派生 vs 声明),
- * 所以 `ensureFileStoreReady` 只在**段表为空**时才让派生那条跑,避免静默覆盖
- * 代理写入的段。已知缺口见票 18。
+ * `server/utils/file-parts.ts` 的 `backfillFileParts`)。代理写入是另一条路径:
+ * 解析结果全量替换代理段,派生段只在同坐标时让位;行数不同时代理段标记 `hasConflict`。
+ * 回填可重复运行,只重建派生段。见票 20。
  */
 
 /** 一个段的写入输入。`year` / `batch` / `attachment` 可空(导出表无附件)。 */
@@ -97,7 +95,7 @@ function validatePart(raw: ParsePartInput, index: number): string | null {
 /**
  * 把输入规整成待写入的段:校验 → 附件名归一 → 去重 → 排序。
  *
- * **同一坐标给两遍是错误**(不是自动合并):`stored_file_part` 没有唯一索引,
+ * **同一坐标给两遍是错误**(不是自动合并):`stored_file_part` 坐标有唯一索引,
  * 默默求和会让「代理写重了一段」变成一份看不出问题的行数,不如直接报错。
  * 归一见 `lib/attachment.ts`(「附 件 1」与「附件1」必须并成同一段)。
  */
@@ -132,10 +130,11 @@ export function normalizeParseParts(
 }
 
 /**
- * 写回一份文件的解析结果。**全量替换**该文件的段,并按需改 `parse_state`。
+ * 写回一份文件的解析结果。**全量替换**该文件的代理段,派生段只在同坐标时让位,
+ * 并按需改 `parse_state`。
  *
- * 事务内先删后插 —— 与 `backfillFileParts` 同一手法:重放同样的输入结果完全一致,
- * 中途失败也不会留下「一半新一半旧」的段。
+ * 事务内先删后插代理段;同坐标派生段由代理段取代,行数不同时标记冲突。重放同样的输入
+ * 结果完全一致,中途失败也不会留下「一半新一半旧」的代理段。
  */
 export function applyParseResult(
   db: Db,
@@ -162,10 +161,45 @@ export function applyParseResult(
 
   db.transaction((tx) => {
     if (hasParts) {
-      tx.delete(schema.storedFilePart).where(eq(schema.storedFilePart.fileId, fileId)).run()
-      if (parts.length) {
+      const existing = tx
+        .select()
+        .from(schema.storedFilePart)
+        .where(eq(schema.storedFilePart.fileId, fileId))
+        .all()
+      const derivedByKey = new Map(
+        existing.filter((row) => row.origin === 'derived').map((row) => [partKey(row), row]),
+      )
+      const agentsByKey = new Map(
+        existing.filter((row) => row.origin === 'agent').map((row) => [partKey(row), row]),
+      )
+
+      tx.delete(schema.storedFilePart)
+        .where(
+          and(
+            eq(schema.storedFilePart.fileId, fileId),
+            eq(schema.storedFilePart.origin, 'agent'),
+          ),
+        )
+        .run()
+
+      for (const part of parts) {
+        const key = partKey(part)
+        const derived = derivedByKey.get(key)
+        const previousAgent = agentsByKey.get(key)
+        if (derived) {
+          tx.delete(schema.storedFilePart)
+            .where(eq(schema.storedFilePart.id, derived.id))
+            .run()
+        }
         tx.insert(schema.storedFilePart)
-          .values(parts.map((p) => ({ fileId, ...p })))
+          .values({
+            fileId,
+            ...part,
+            origin: 'agent',
+            hasConflict: derived
+              ? derived.rowCount !== part.rowCount
+              : (previousAgent?.hasConflict ?? false),
+          })
           .run()
       }
     }

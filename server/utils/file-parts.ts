@@ -1,8 +1,15 @@
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeAttachment } from '../../lib/attachment'
-import { aggregateParts, compareParts, type FilePart, type PartEvidence } from '../../lib/file-parts'
+import {
+  aggregateParts,
+  compareParts,
+  partKey,
+  type FilePart,
+  type PartEvidence,
+  type StoredFilePart,
+} from '../../lib/file-parts'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -10,7 +17,7 @@ type Db = BetterSQLite3Database<typeof schema>
 export interface PartsBackfillStats {
   /** 落到了段的文件数。 */
   files: number
-  /** 写入的段总数。 */
+  /** evidence 聚合出的坐标数(含同坐标由 agent 行承接的部分)。 */
   parts: number
   /** 有 `record_evidence` 引用、但库里没有对应 `stored_file` 行的路径(跳过,不猜)。 */
   orphanPaths: string[]
@@ -44,17 +51,17 @@ export function readEvidencePartRows(db: Db): EvidencePartRow[] {
 }
 
 /**
- * 从 `record_evidence` 回填 `stored_file_part`。**幂等**:每个文件先删段、再按聚合结果插入,
- * 重跑结果完全一致。
+ * 从 `record_evidence` 回填 `stored_file_part`。**幂等**:只删除每个文件的派生段,再按聚合结果
+ * 插入;代理段保留,并与同坐标派生结果比较行数以刷新 `hasConflict`。
  *
  * 口径(票 17):
  *  - **只回填有引用的文件** —— 没有 `record_evidence` 的文件(实测 2 份 `.doc`)这时还不知道
  *    里面有什么,留空交给票 11 解析时按段写入,而不是猜一个。
- *  - **遍历全部 `stored_file` 行**(不只是有引用的那些),因为段整体派生于 evidence:
- *    某个文件原先有引用、后来引用被清掉时,这样才会把**残留的段一起清掉**,
- *    而不是留下一份与 evidence 对不上的旧段。
+ *  - **遍历全部 `stored_file` 行**(不只是有引用的那些),因为派生段整体来自 evidence:
+ *    某个文件原先有引用、后来引用被清掉时,要把**派生段一起清掉**;代理段仍保留。
  *  - 有引用但库里没有对应 `stored_file` 行的路径(漏扫 / 已移出库)一并报出、跳过。
  *  - 附件名按 `lib/attachment.ts` 归一后再聚合 —— 「附 件 1」与「附件1」必须并成同一段。
+ *  - 同坐标已有代理段时保留代理行;行数不一致则标记冲突,相等表示两来源一致。
  */
 export function backfillFileParts(db: Db): PartsBackfillStats {
   const byPath = new Map<string, PartEvidence[]>()
@@ -83,17 +90,62 @@ export function backfillFileParts(db: Db): PartsBackfillStats {
   }
 
   db.transaction((tx) => {
+    const agentRows = tx
+      .select()
+      .from(schema.storedFilePart)
+      .where(eq(schema.storedFilePart.origin, 'agent'))
+      .all()
+    const agentsByFile = new Map<number, Map<string, (typeof agentRows)[number]>>()
+    for (const row of agentRows) {
+      const list = agentsByFile.get(row.fileId) ?? new Map()
+      list.set(partKey(row), row)
+      agentsByFile.set(row.fileId, list)
+    }
+
     for (const file of files) {
       const parts = aggregateParts(byPath.get(file.relPath) ?? [])
-      // 先删后插:本表全部派生于 evidence,重建无损;这一条既保证重跑幂等,
-      // 也保证「evidence 没了 → 段跟着没」。
-      tx.delete(schema.storedFilePart).where(eq(schema.storedFilePart.fileId, file.id)).run()
-      if (!parts.length) continue
-      tx.insert(schema.storedFilePart)
-        .values(parts.map((p) => ({ fileId: file.id, ...p })))
+      const agents = agentsByFile.get(file.id) ?? new Map()
+
+      // 每趟重新比较 evidence,所以冲突会随来源数据变化而清除或重现。
+      tx.update(schema.storedFilePart)
+        .set({ hasConflict: false })
+        .where(
+          and(
+            eq(schema.storedFilePart.fileId, file.id),
+            eq(schema.storedFilePart.origin, 'agent'),
+          ),
+        )
         .run()
-      stats.files += 1
-      stats.parts += parts.length
+      tx.delete(schema.storedFilePart)
+        .where(
+          and(
+            eq(schema.storedFilePart.fileId, file.id),
+            eq(schema.storedFilePart.origin, 'derived'),
+          ),
+        )
+        .run()
+
+      for (const part of parts) {
+        const agent = agents.get(partKey(part))
+        if (agent) {
+          if (agent.rowCount !== part.rowCount) {
+            tx.update(schema.storedFilePart)
+              .set({ hasConflict: true })
+              .where(eq(schema.storedFilePart.id, agent.id))
+              .run()
+          }
+          continue
+        }
+
+        tx.insert(schema.storedFilePart)
+          .values({ fileId: file.id, ...part, origin: 'derived', hasConflict: false })
+          .run()
+      }
+
+      if (parts.length) {
+        stats.files += 1
+        stats.parts += parts.length
+      }
     }
   })
 
@@ -101,8 +153,8 @@ export function backfillFileParts(db: Db): PartsBackfillStats {
 }
 
 /** 按文件取段,排好展示顺序。返回 `fileId → 段[]`(没有段的文件不出现在 Map 里)。 */
-export function listFileParts(db: Db, fileIds: readonly number[]): Map<number, FilePart[]> {
-  const map = new Map<number, FilePart[]>()
+export function listFileParts(db: Db, fileIds: readonly number[]): Map<number, StoredFilePart[]> {
+  const map = new Map<number, StoredFilePart[]>()
   if (!fileIds.length) return map
 
   const rows = db
@@ -114,19 +166,23 @@ export function listFileParts(db: Db, fileIds: readonly number[]): Map<number, F
       batch: schema.storedFilePart.batch,
       attachment: schema.storedFilePart.attachment,
       rowCount: schema.storedFilePart.rowCount,
+      origin: schema.storedFilePart.origin,
+      hasConflict: schema.storedFilePart.hasConflict,
     })
     .from(schema.storedFilePart)
     .where(inArray(schema.storedFilePart.fileId, [...fileIds]))
     .all()
 
   for (const row of rows) {
-    const part: FilePart = {
+    const part: StoredFilePart = {
       titleCode: row.titleCode,
       eventKind: row.eventKind,
       year: row.year,
       batch: row.batch,
       attachment: row.attachment,
       rowCount: row.rowCount,
+      origin: row.origin,
+      hasConflict: row.hasConflict,
     }
     const list = map.get(row.fileId)
     if (list) list.push(part)

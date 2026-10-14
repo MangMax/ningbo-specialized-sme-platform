@@ -23,7 +23,7 @@ import {
   type FileSource,
   type ParseState,
 } from '../../lib/stored-file'
-import type { FilePart } from '../../lib/file-parts'
+import type { StoredFilePart } from '../../lib/file-parts'
 import { listFileParts, type PartsBackfillStats } from './file-parts'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -65,7 +65,7 @@ export interface StoredFileRow {
    * 文件里的**段**(票 17)。按 `compareParts` 排好序;没有段时是空数组
    * (尚无引用、留待票 11 解析时写入 —— **不是**「文件没有内容」)。
    */
-  parts: FilePart[]
+  parts: StoredFilePart[]
 }
 
 /** 列表查询条件(与 `/api/files` 的 query 参数一一对应)。 */

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import {
   index,
   integer,
@@ -192,8 +193,9 @@ export const storedFile = sqliteTable(
  * 与 `stored_file.year` / `batch`(**公布**年份/批次,单值)分工明确:那里答「这份文件是
  * 哪一批公布的」,这里答「文件里都有什么」。**别把两者混用**。
  *
- * 本表**派生自 `record_evidence`**(按 `source_file` 分组聚合),可整体重建 ——
- * 回填按 `file_id` 先删后插,所以幂等。见 `server/utils/file-parts.ts`。
+ * 段有两种来源:`derived` 是从 `record_evidence` 聚合的派生结果,`agent` 是代理解析声明。
+ * 回填只重建派生行;代理行保留。同一坐标重合时代理行保留,若 `row_count` 不同则
+ * `has_conflict` 可查询地标记差异。见 `.scratch/ingest-pipeline/issues/20-parts-origin.md`。
  */
 export const storedFilePart = sqliteTable(
   'stored_file_part',
@@ -220,8 +222,27 @@ export const storedFilePart = sqliteTable(
     attachment: text('attachment'),
     /** 该段的行数(这一段名单有多少条被台账引用)。 */
     rowCount: integer('row_count').notNull().default(0),
+    /** 写入路径:`derived` 来自 evidence 回填,`agent` 来自解析结果。 */
+    origin: text('origin', { enum: ['derived', 'agent'] }).notNull().default('derived'),
+    /** 同坐标的 evidence 与 agent 行数不一致时为 true;回填重算此标记。 */
+    hasConflict: integer('has_conflict', { mode: 'boolean' }).notNull().default(false),
   },
-  (t) => [index('stored_file_part_file_idx').on(t.fileId)],
+  (t) => [
+    index('stored_file_part_file_idx').on(t.fileId),
+    // SQLite's regular UNIQUE treats NULL values as distinct. Include NULL-presence and
+    // normalized values for every nullable coordinate so the requested key remains unique.
+    uniqueIndex('stored_file_part_coordinate_uq').on(
+      t.fileId,
+      t.titleCode,
+      t.eventKind,
+      sql`(${t.year} IS NULL)`,
+      sql`coalesce(${t.year}, 0)`,
+      sql`(${t.batch} IS NULL)`,
+      sql`coalesce(${t.batch}, 0)`,
+      sql`(${t.attachment} IS NULL)`,
+      sql`coalesce(${t.attachment}, '')`,
+    ),
+  ],
 )
 
 /**

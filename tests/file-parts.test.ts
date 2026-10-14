@@ -15,6 +15,7 @@ import {
   type FilePart,
 } from '../lib/file-parts'
 import { backfillFileParts, listFileParts } from '../server/utils/file-parts'
+import { applyParseResult } from '../server/utils/parse-result'
 import { listStoredFiles } from '../server/utils/stored-files'
 
 /**
@@ -338,7 +339,7 @@ function partSnapshot(): string[] {
     .all()
     .map(
       (p) =>
-        `${p.fileId}|${p.titleCode}|${p.eventKind}|${p.year}|${p.batch}|${p.attachment}|${p.rowCount}`,
+        `${p.fileId}|${p.titleCode}|${p.eventKind}|${p.year}|${p.batch}|${p.attachment}|${p.rowCount}|${p.origin}|${p.hasConflict}`,
     )
     .sort()
 }
@@ -357,6 +358,8 @@ describe('从 record_evidence 回填段', () => {
         batch: 2,
         attachment: '附件1', // ← 「附 件 1」归一
         rowCount: 389,
+        origin: 'derived',
+        hasConflict: false,
       },
       {
         titleCode: 'specialized_sme',
@@ -365,6 +368,8 @@ describe('从 record_evidence 回填段', () => {
         batch: 2,
         attachment: '附件2',
         rowCount: 67,
+        origin: 'derived',
+        hasConflict: false,
       },
     ])
   })
@@ -379,6 +384,8 @@ describe('从 record_evidence 回填段', () => {
         batch: null,
         attachment: '附件',
         rowCount: 301,
+        origin: 'derived',
+        hasConflict: false,
       },
       {
         titleCode: 'specialized_sme',
@@ -387,6 +394,8 @@ describe('从 record_evidence 回填段', () => {
         batch: null,
         attachment: '附件',
         rowCount: 413,
+        origin: 'derived',
+        hasConflict: false,
       },
     ])
   })
@@ -490,5 +499,77 @@ describe('回填的边界', () => {
     expect(listFileParts(db, [fileId]).has(fileId)).toBe(true)
     db.delete(schema.storedFile).where(eq(schema.storedFile.id, fileId)).run()
     expect(listFileParts(db, [fileId]).has(fileId)).toBe(false)
+  })
+
+  it('保留无 evidence 文件的代理段,同坐标冲突时代理段胜出且冲突可查', () => {
+    const emptyFileId = fileIdOf(FILE_NO_EVIDENCE)
+    const agentOnly = applyParseResult(db, emptyFileId, {
+      parts: [
+        {
+          titleCode: 'specialized_sme',
+          eventKind: 'award',
+          year: 2023,
+          batch: 1,
+          attachment: null,
+          rowCount: 12,
+        },
+      ],
+    })
+    expect(agentOnly.ok).toBe(true)
+
+    const file192Id = fileIdOf(FILE_192)
+    const agentWins = applyParseResult(db, file192Id, {
+      parts: [
+        {
+          titleCode: 'specialized_sme',
+          eventKind: 'award',
+          year: 2024,
+          batch: 2,
+          attachment: '附件1',
+          rowCount: 10,
+        },
+      ],
+    })
+    expect(agentWins.ok).toBe(true)
+
+    backfillFileParts(db)
+
+    expect(listFileParts(db, [emptyFileId]).get(emptyFileId)).toEqual([
+      {
+        titleCode: 'specialized_sme',
+        eventKind: 'award',
+        year: 2023,
+        batch: 1,
+        attachment: null,
+        rowCount: 12,
+        origin: 'agent',
+        hasConflict: false,
+      },
+    ])
+    expect(listFileParts(db, [file192Id]).get(file192Id)).toEqual([
+      {
+        titleCode: 'specialized_sme',
+        eventKind: 'award',
+        year: 2024,
+        batch: 2,
+        attachment: '附件1',
+        rowCount: 10,
+        origin: 'agent',
+        hasConflict: true,
+      },
+      {
+        titleCode: 'specialized_sme',
+        eventKind: 'review',
+        year: 2021,
+        batch: 2,
+        attachment: '附件2',
+        rowCount: 67,
+        origin: 'derived',
+        hasConflict: false,
+      },
+    ])
+    const conflictedSnapshot = partSnapshot()
+    backfillFileParts(db)
+    expect(partSnapshot()).toEqual(conflictedSnapshot)
   })
 })

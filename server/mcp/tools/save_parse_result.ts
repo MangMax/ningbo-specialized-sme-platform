@@ -21,7 +21,8 @@ import { applyParseResult } from '../../utils/parse-result'
  * tests/mcp-surface.test.ts 有一条断言把这一点钉死。
  *
  * ── 全量替换 ────────────────────────────────────────────────────────────
- * `parts` 是**整份文件的全部段**:没列出的会被删掉,空数组 = 这份文件没有段。
+ * `parts` 是这次解析的**全部代理段**:没列出的代理段会被删掉,空数组 = 清空代理段。
+ * 派生段会保留;同坐标时代理段优先,行数不一致可从 `list_file_parts` 的 `hasConflict` 查到。
  * 这跟 `PATCH /api/files/:id` 的「只改给了的字段」不同 —— 段的集合是一个整体,
  * 「补一段」和「删一段」必须能用同一个调用表达,否则代理没法纠正自己上一次写错的结果。
  */
@@ -37,7 +38,7 @@ export default defineMcpTool({
   enabled: writeGuard,
   description: [
     '按 `fileId` 或 `relPath`(恰给其一)写回该文件解析出的**段**与/或解析状态。',
-    '`parts` 是**全量替换**:整份文件的段就是这次给的那些(空数组 = 没有段)。',
+    '`parts` 是代理段的**全量替换**:派生段保留,同坐标时代理段优先;行数不同时标记 `hasConflict`。空数组只清掉代理段。',
     `每段:` + '`titleCode`(' + TITLE_ORDER.join(' / ') + ')、' +
       `\`eventKind\`(${EVENT_ORDER.join(' / ')} 认定/复核/维护/入库培育)、\`year\`(正整数或 null;` +
       '复核段记**被复核的原始认定年份**)、`batch`(正整数或 null)、`attachment`(会按归一规则收成「附件」/「附件N」)、`rowCount`(行数,省略为 0)。',

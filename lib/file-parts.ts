@@ -28,6 +28,15 @@ export interface FilePart {
   rowCount: number
 }
 
+/** 段的持久化来源。 */
+export type FilePartOrigin = 'derived' | 'agent'
+
+/** 从 app 读模型读出的段,包含来源与可查询的来源冲突标记。 */
+export interface StoredFilePart extends FilePart {
+  origin: FilePartOrigin
+  hasConflict: boolean
+}
+
 /** 聚合的输入行:一条 `record_evidence` 折算出来的段坐标(不含计数)。 */
 export interface PartEvidence {
   titleCode: string

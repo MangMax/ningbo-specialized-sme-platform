@@ -149,14 +149,18 @@ function countOf(db: Db, table: typeof schema.storedFilePart | typeof schema.rec
 }
 
 /**
- * **段**要不要回填。判据是「库里一段都没有,而 `record_evidence` 有引用」——
- * 与文件行回填不同,段的回填是**先删后插**(`backfillFileParts` 把每个文件的段整体重建),
- * 所以绝不能在段非空时跑:那会把代理经 `save_parse_result` 写进来的段直接抹掉。
- * 空表时跑则什么也抹不着,正好补上「库从没被 `/api/files` 访问过」这一种冷启动。
+ * MCP 冷启动时只要 evidence 存在就回填一次,即使库里已有代理段;后续若尚无派生段也补跑。
+ * 回填只重建派生行,因此能安全地保留代理段并检测同坐标冲突。
  */
-function needParts(db: Db): boolean {
-  if (countOf(db, schema.storedFilePart) > 0) return false
-  return countOf(db, schema.recordEvidence) > 0
+function needParts(db: Db, firstRun: boolean): boolean {
+  if (countOf(db, schema.recordEvidence) === 0) return false
+  if (firstRun) return true
+  const derivedCount = db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.storedFilePart)
+    .where(eq(schema.storedFilePart.origin, 'derived'))
+    .get()?.n ?? 0
+  return derivedCount === 0
 }
 
 const NO_FILE_STATS = { inserted: 0, updated: 0, unchanged: 0, skipped: [] as string[] }
@@ -178,7 +182,7 @@ export async function ensureFileStoreReady(
   force = false,
 ): Promise<BackfillReport | null> {
   const runFiles = !filesReady || force
-  const runParts = needParts(db)
+  const runParts = needParts(db, !filesReady)
   if (!runFiles && !runParts) return null
 
   const fileStats = runFiles ? await backfillFromDisk(db, root) : NO_FILE_STATS

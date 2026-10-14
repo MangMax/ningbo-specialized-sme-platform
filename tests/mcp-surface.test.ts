@@ -534,8 +534,7 @@ describe('ensureFileStoreReady 懒回填', () => {
       ['review', 2021, 2, '附件2', 67],
     ])
 
-    // 段表非空时**不会**再跑段回填 —— 否则会把代理经 save_parse_result 写进来的段抹掉。
-    // (段回填是先删后插的整体重建,所以「表里已有段」时绝不能跑。)
+    // 冷启动回填只重建 derived 段;agent 覆盖同坐标并标冲突,未覆盖的 derived 段仍回来。
     const overwritten = applyParseResult(fresh, id, {
       parts: [
         { titleCode: 'specialized_sme', eventKind: 'award', year: 2024, batch: 2, attachment: '附件1', rowCount: 1 },
@@ -544,7 +543,28 @@ describe('ensureFileStoreReady 懒回填', () => {
     expect(overwritten.ok).toBe(true)
     __resetFileStoreReady()
     await ensureFileStoreReady(fresh, root)
-    expect(getStoredFile(fresh, id)!.parts).toHaveLength(1)
+    expect(getStoredFile(fresh, id)!.parts).toEqual([
+      {
+        titleCode: 'specialized_sme',
+        eventKind: 'award',
+        year: 2024,
+        batch: 2,
+        attachment: '附件1',
+        rowCount: 1,
+        origin: 'agent',
+        hasConflict: true,
+      },
+      {
+        titleCode: 'specialized_sme',
+        eventKind: 'review',
+        year: 2021,
+        batch: 2,
+        attachment: '附件2',
+        rowCount: 67,
+        origin: 'derived',
+        hasConflict: false,
+      },
+    ])
 
     rmSync(root, { recursive: true, force: true })
     rmSync(other, { recursive: true, force: true })
