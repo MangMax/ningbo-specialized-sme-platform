@@ -36,7 +36,10 @@ export const TITLE_LEVEL: Record<string, string> = Object.fromEntries(
 )
 
 /** 来源代号 → 中文名。 */
-export const SOURCES: Record<string, string> = { jxj: '经信局', miit: '工信部' }
+export const SOURCES: Record<string, string> = {
+  jxj: '经信局',
+  miit: '工信部',
+}
 
 /** 来源展示顺序。 */
 export const SOURCE_ORDER: string[] = ['jxj', 'miit']
@@ -60,3 +63,18 @@ export const QUALITY_FLAGS: Record<string, string> = {
   deregistered: '已注销 / 吊销',
   attachment_unparsed: '附件未解析',
 }
+
+/** 两侧名录比对方向,页面与导出共用。 */
+export const COMPARISON_LABELS = {
+  missing_in_miit: '应纳未纳',
+  extra_in_miit: '应出未出',
+} as const
+export const COMPARISON_HINTS = {
+  missing_in_miit: `在${SOURCES.jxj}、不在${SOURCES.miit}`,
+  extra_in_miit: `在${SOURCES.miit}、不在${SOURCES.jxj}`,
+} as const
+export const COMPARISON_OTHER_SIDE = {
+  missing_in_miit: `${SOURCES.miit}无匹配统代`,
+  extra_in_miit: `${SOURCES.jxj}无匹配统代`,
+} as const
+export const COMPARISON_NO_USCC = '无统代,另一侧无可匹配身份'

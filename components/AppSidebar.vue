@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import { BookOpenCheck, ChartColumn, Gauge, LayoutList } from '@lucide/vue'
+import { BookOpenCheck, ChartColumn, Gauge, GitCompareArrows, LayoutList } from '@lucide/vue'
 import NavMain from '@/components/NavMain.vue'
 import {
   Sidebar,
@@ -20,6 +20,7 @@ const nav = [
   { title: '台账', url: '/', icon: LayoutList },
   { title: '统计', url: '/stats', icon: ChartColumn },
   { title: '数据质量', url: '/quality', icon: Gauge },
+  { title: '比对', url: '/comparison', icon: GitCompareArrows },
 ]
 </script>
 

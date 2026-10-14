@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 export default defineConfig({
   resolve: {
     alias: {
+      '~~': fileURLToPath(new URL('.', import.meta.url)),
       '@db': fileURLToPath(new URL('./db', import.meta.url)),
       '@': fileURLToPath(new URL('.', import.meta.url)),
     },

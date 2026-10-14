@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Nitro 接口 `GET /api/comparison`
 
-**Status:** ready
+**Status:** ✅ done(页面/侧栏/导出已完成;真实库漂移徽标验收受字段缺失阻塞,见下)
 
 ## 组件硬约束
 
@@ -39,11 +39,45 @@
 
 ## 验收(人工)
 
-- [ ] 市专 tab:应纳未纳显示 **337** 条、应出未出 **13** 条;总数与 `/api/comparison` 的 counts 一致。
-- [ ] 创新型 tab:**543 / 28**。
-- [ ] 筛选/切 tab 时表格**不闪回原位**(与台账页同样的体验标准)。
+- [x] 市专 tab:应纳未纳显示 **337** 条、应出未出 **13** 条;总数与 `/api/comparison` 的 counts 一致。
+- [x] 创新型 tab:**543 / 28**。
+- [x] 筛选/切 tab 时表格**不闪回原位**(与台账页同样的体验标准)。
 - [ ] 漂移企业在表内**可见且被标注**(如 `宁波德业日用电器科技有限公司` 标「嘉兴市」)。
-- [ ] 导出文件能打开,列与口径说明一致。
-- [ ] `pnpm typecheck`、`pnpm test` 通过。
+- [x] 导出文件能打开,列与口径说明一致。
+- [x] `pnpm typecheck`、`pnpm test` 通过。
 
-**分支**:`feat/tus-uploads`。**只提交本票涉及的文件。**
+**分支**:`feat/comparison-page`。**只提交本票涉及的文件。**
+
+
+## 2026-10-14 实施与验证
+
+- 新增 `pages/comparison.vue`:称号 Tabs + 方向 Tabs,徽标/概览数字来自全量 `counts`;Pinia Colada `useQuery` 保留 `placeholderData`,复用同一面板及固定高度滚动容器。每页 25 条,企业名可下钻,吸顶表头、等宽统代。小巨人仅在口径说明出现。
+- 沿用 `PageHeader` / `StatTile` / `TitleBadge` 与台账 `Button as-child` 导出用法。实际仓库没有 `ExportButton.vue`,没有另造导出组件;DrillChip / BarRow / FilterChip 的 props 已读,本页没有对应的统计下钻、构成条或可移除筛选需求,不强塞这些控件。
+- 官方 CLI `pnpm dlx shadcn-vue@latest add @shadcn/tabs` 新增 Tabs 组件,沿用品牌 token,触发器加 150ms 咔嗒反馈与减少动效支持。布局 `SidebarInset` 加 `min-w-0`,使宽表仅在表格容器滚动,1280px 窗口实测整页横向溢出为 0。
+- 侧栏「比对」放在数据质量之后,图标 `GitCompareArrows`。
+- 导出只扩展现有 `GET /api/export?mode=comparison&title=...&direction=...`,没有第二套端点;导出当前称号/方向的全部结果,文件名通过 UTF-8 `filename*` 含称号与方向。备注保留无统代说明,城市与登记状态单独成列。
+- 未改 `lib/comparison.ts`、`server/api/comparison.get.ts`、schema;未实现票 04,没有人工标注读写。
+
+### 命令与真实库
+
+- `pnpm typecheck`:exit 0。
+- `pnpm test`:9 个文件、112 项测试全部通过。新增 `tests/comparison-export.test.ts` 四项路由行为测试:完整选择集/八列/中文文件名、反方向、旧台账兼容、非法筛选 400。真实计算层用 fixture SQLite,Excel 文件写出后以 ExcelJS 读回断言;分页参数不截断导出(27 行用例)。
+- 保留已有 3000 服务,通过 `NUXT_IGNORE_LOCK=1 pnpm dev --port 3470` 启动独立服务,读取原始 `data/roster.db`。
+- `curl 'http://localhost:3470/api/comparison?title=specialized_sme'`:total=350,counts.specialized_sme=`{ missing_in_miit: 337, extra_in_miit: 13 }`。
+- `curl 'http://localhost:3470/api/comparison?title=innovative_sme'`:total=571,counts.innovative_sme=`{ missing_in_miit: 543, extra_in_miit: 28 }`。
+- 四个 `mode=comparison` 真实 HTTP 导出以 ExcelJS 成功打开,断言八列,行数依次 337 / 13 / 543 / 28。
+- 浏览器人工验收:两称号的两方向徽标均与 counts 一致。延迟请求 1000ms 时切换称号:同一滚动容器、scrollTop=120、容器 top=368、window.scrollY=0、旧表体 25 行仍保留;响应后市专应出未出为 13 行,无清空/跳位。
+
+### 截图与真实数据限制
+
+截图保存在本机(遵循现有 `.gitignore`,不提交图片):
+
+- 真实市专 337 / 13:`/Users/mang/Workfile/宁波/专精特新/20261013/app/.scratch/comparison/evidence/03-specialized-real.png`
+- 真实创新型 543 / 28:`/Users/mang/Workfile/宁波/专精特新/20261013/app/.scratch/comparison/evidence/03-innovative-real.png`
+- **独立 fixture** 城市/注销徽标:`/Users/mang/Workfile/宁波/专精特新/20261013/app/.scratch/comparison/evidence/03-badges-fixture.png`
+
+**真实漂移徽标验收尚未通过,不能把 fixture 当真实数据证明。**只读 SQL `select count(*),count(city),count(reg_status) from enterprise` 返回 `(7425,0,0)`;德业日用企业 id=31 的 city/reg_status 均 NULL,API evidence 同样为空。页面按契约展示非宁波城市与含注销/吊销的登记状态,但现有真实库没有任何可展示值。未写入或修补真实库,也未改票 01/02 来伪造此字段。
+
+为独立验证渲染,把真实库备份到 `/tmp/comparison-page-badges-fixture.db`,**仅在副本**把德业日用 city 设为「嘉兴市」、reg_status 设为「注销」,以 `NUXT_DB_PATH=/tmp/comparison-page-badges-fixture.db` 在 3471 启动。第 6 页可见该企业两个 Badge,fixture 截图已人工查看。真实库补齐这两个字段后,仍需重新做真实漂移/注销验收;这属于数据补齐,未扩入本票。
+
+- 最终串行复跑 `pnpm test`:9 个文件、112 项通过(exit 0,3.60s);`pnpm typecheck` exit 0。期间一次并行复跑的旧 tus 重传测试超过默认 5 秒并连带清单断言失败;关闭临时 3471 服务、等待 typecheck 完成后串行复跑通过,未调整测试或超时。最终 `git diff --check` 通过。

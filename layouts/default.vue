@@ -22,7 +22,7 @@ const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString('zh-CN'))
 <template>
   <SidebarProvider>
     <AppSidebar />
-    <SidebarInset>
+    <SidebarInset class="min-w-0">
       <!--
         顶栏只放两件事:收起/展开侧栏,以及台账的规模(共多少条记录、多少家企业)。
         页面标题交给每页自己的 PageHeader,不在顶栏重复一遍。
