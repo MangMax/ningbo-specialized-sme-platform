@@ -285,6 +285,13 @@ describe('缩放下限:普通预览 25% / 页图库 10%(作用域隔离)', () =>
       expect(preview.props('zoomMin')).toBe(PAGE_IMAGE_ZOOM_MIN)
       // 对照:同一组件不传时是 25%,说明这是**按调用方**分档,不是常数搬了家。
       expect(mount(ImagePreview, { props: { src: SRC } }).props('zoomMin')).toBe(0.25)
+
+      // **接线**:图片预览的窄屏恢复路径靠它 opt-in(`resetToFitOnNarrow`)。
+      // 组件默认是 `false` —— 所以这两条断言正好把「谁开了这条路径」钉住:
+      // 图片预览 **开**,其余(含直接挂工具栏的 OfficePreview)**不开**。
+      const inner = preview.findComponent(PreviewToolbar)
+      expect(inner.props('resetToFitOnNarrow')).toBe(true)
+      expect(mount(PreviewToolbar, { props: { title: 't' } }).props('resetToFitOnNarrow')).toBe(false)
     } finally {
       vi.unstubAllGlobals()
     }
@@ -671,37 +678,73 @@ describe('页图库窄屏缩小判据用有效下限(#1)', () => {
  * 复核在 390×844 上量到:点百分比从 14% 跳到 100%(图宽 ~2400 CSS px,只剩局部),
  * 而窄屏没有 ± / 适宽,点图与滚轮也不生效 —— 只能全屏或关掉重开。
  */
-describe('窄屏百分比按钮回「适应」(#2)', () => {
-  it('窄屏(<640px)点百分比发 fit-width;宽屏仍发 update:zoom=1', async () => {
+describe('窄屏百分比按钮:opt-in 决定回「适应」还是回 100%', () => {
+  /** 在指定断点下挂一份工具栏。`matchMedia` 是只读属性,这里用一次断言赋值做测试桩。 */
+  function mountAt(narrow: boolean, props: Record<string, unknown> = {}) {
     const original = window.matchMedia
+    ;(window as { matchMedia: typeof window.matchMedia }).matchMedia = ((q: string) =>
+      ({
+        matches: narrow && q === '(max-width: 639.98px)',
+        media: q,
+        addEventListener() {},
+        removeEventListener() {},
+      })) as unknown as typeof window.matchMedia
+    const wrapper = mount(PreviewToolbar, { props: { title: 't', zoom: 0.14, zoomMin: 0.1, ...props } })
+    return { wrapper, restore: () => ((window as { matchMedia: typeof window.matchMedia }).matchMedia = original) }
+  }
+
+  const pctBtn = (w: ReturnType<typeof mount>) => w.findAll('button').find((b) => b.text().includes('%'))!
+
+  it('**未 opt-in**(如 OfficePreview)窄屏:仍发 update:zoom=1,label 是「恢复到 100%」', async () => {
+    const { wrapper, restore } = mountAt(true)
     try {
-      // 窄屏
-      /** @ts-expect-error 测试桩 */
-      window.matchMedia = (q: string) => ({ matches: q === '(max-width: 639.98px)', media: q, addEventListener() {}, removeEventListener() {} })
-      const narrow = mount(PreviewToolbar, {
-        props: { title: 't', zoom: 0.14, zoomMin: 0.1 },
-      })
-      const pct = narrow.findAll('button').find((b) => b.text().includes('%'))!
-      // 可访问名要说清**动作**(不是当前百分比),且窄屏指向「适应页面」。
+      const pct = pctBtn(wrapper)
+      // 关键:窄屏 + 未 opt-in ⇒ **不得**发 fit-width(Office 的 fit-width 是「适宽」,不是 100%)。
+      expect(pct.attributes('aria-label')).toBe('恢复到 100%')
+      expect(pct.attributes('title')).toBe('恢复到 100%')
+      await pct.trigger('click')
+      expect(wrapper.emitted('fit-width')).toBeFalsy()
+      expect(wrapper.emitted('update:zoom')?.[0]).toEqual([1])
+    } finally {
+      restore()
+    }
+  })
+
+  it('**opt-in**(图片预览)窄屏:发 fit-width,label 是「适应页面(整页可见)」', async () => {
+    const { wrapper, restore } = mountAt(true, { resetToFitOnNarrow: true })
+    try {
+      const pct = pctBtn(wrapper)
       expect(pct.attributes('aria-label')).toBe('适应页面(整页可见)')
       expect(pct.attributes('title')).toBe('适应页面(整页可见)')
       await pct.trigger('click')
-      expect(narrow.emitted('fit-width')).toBeTruthy()
-      expect(narrow.emitted('update:zoom')).toBeFalsy()
-
-      // 宽屏:仍回 100%(桌面交互不变)。
-      /** @ts-expect-error 测试桩 */
-      window.matchMedia = (q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} })
-      const wide = mount(PreviewToolbar, { props: { title: 't', zoom: 0.14, zoomMin: 0.1 } })
-      const pctWide = wide.findAll('button').find((b) => b.text().includes('%'))!
-      expect(pctWide.attributes('aria-label')).toBe('恢复到 100%')
-      expect(pctWide.attributes('title')).toBe('恢复到 100%')
-      await pctWide.trigger('click')
-      expect(wide.emitted('fit-width')).toBeFalsy()
-      expect(wide.emitted('update:zoom')?.[0]).toEqual([1])
+      expect(wrapper.emitted('fit-width')).toBeTruthy()
+      expect(wrapper.emitted('update:zoom')).toBeFalsy()
     } finally {
-      // 还原:类型上 `matchMedia` 只读,这里用一次断言赋值(不改运行期类型)。
-      ;(window as { matchMedia: typeof window.matchMedia }).matchMedia = original
+      restore()
+    }
+  })
+
+  it('**opt-in 但宽屏**:仍回 100%(桌面交互不变)', async () => {
+    const { wrapper, restore } = mountAt(false, { resetToFitOnNarrow: true })
+    try {
+      const pct = pctBtn(wrapper)
+      expect(pct.attributes('aria-label')).toBe('恢复到 100%')
+      await pct.trigger('click')
+      expect(wrapper.emitted('fit-width')).toBeFalsy()
+      expect(wrapper.emitted('update:zoom')?.[0]).toEqual([1])
+    } finally {
+      restore()
+    }
+  })
+
+  it('**未 opt-in 且宽屏**:回 100%(两条默认路径都不受影响)', async () => {
+    const { wrapper, restore } = mountAt(false)
+    try {
+      await pctBtn(wrapper).trigger('click')
+      expect(wrapper.emitted('fit-width')).toBeFalsy()
+      expect(wrapper.emitted('update:zoom')?.[0]).toEqual([1])
+    } finally {
+      restore()
     }
   })
 })

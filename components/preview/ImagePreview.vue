@@ -299,6 +299,7 @@ const imgStyle = computed(() => ({
       :unit="null"
       :zoom="status === 'ready' ? zoom : null"
       :zoom-min="effectiveZoomMin"
+      :reset-to-fit-on-narrow="true"
       rotatable
       :rotation="rotation"
       :href="src"

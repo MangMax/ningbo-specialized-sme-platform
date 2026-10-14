@@ -63,6 +63,16 @@ const props = withDefaults(
     fullscreen?: boolean
     /** 出错时禁用下载与外部打开 —— 点了只会存下/打开一个错误页。 */
     actionsDisabled?: boolean
+    /**
+     * 窄屏下,百分比按钮点一下是**回「适应」**(发 `fit-width`)而不是回 100%。
+     *
+     * **必须显式 opt-in**,默认 `false`。这颗按钮的语义由**调用方的 `fit-width` 决定**:
+     * 图片预览把「适应」实现为「整页可见」,而 Office 预览把它实现为**适宽**(Office 自己的
+     * `viewer.fitWidth()`,与 100% 不是一回事)。若工具栏自作主张在窄屏都发 `fit-width`,
+     * Office 的窄屏行为就被悄悄改了 —— 那是**同票外的行为回归**。
+     * 所以只由**需要这条恢复路径**的调用方(图片预览)打开;其余(含 Office)保持「回 100%」。
+     */
+    resetToFitOnNarrow?: boolean
   }>(),
   {
     kindLabel: '',
@@ -79,6 +89,7 @@ const props = withDefaults(
     href: null,
     fullscreen: false,
     actionsDisabled: false,
+    resetToFitOnNarrow: false,
   },
 )
 
@@ -98,10 +109,8 @@ const zoomPercent = computed(() => Math.round((props.zoom ?? 1) * 100))
 /**
  * 是不是窄屏(< 640px,与 Tailwind 的 `sm` 同一断点)。
  *
- * 窄屏下 ± 与「适宽/实际大小」都被 `sm:` / `lg:` 收起,百分比按钮是**唯一**留在视野里的
- * 缩放控件 —— 所以它在窄屏承担「回到整页可见」这一条恢复路径(见模板里的说明)。
- * 用 `matchMedia` 而不是量容器:与那几颗按钮的 CSS 断点必须**同一个依据**,否则两者会在
- * 断点附近打架。
+ * 用 `matchMedia` 而不是量容器:与那几颗被 `sm:` / `lg:` 收起的按钮必须**同一个依据**,
+ * 否则两者会在断点附近打架。
  */
 const NARROW_QUERY = '(max-width: 639.98px)'
 const isNarrow = ref(false)
@@ -112,6 +121,17 @@ if (typeof window !== 'undefined') {
   mq.addEventListener('change', onChange)
   onBeforeUnmount(() => mq.removeEventListener('change', onChange))
 }
+
+/**
+ * 窄屏下这颗按钮是不是**回「适应」**。两件事同时成立才算:
+ * 调用方**显式 opt-in**(`resetToFitOnNarrow`)、且当前**确实是窄屏**。
+ *
+ * 窄屏时 ± 与「适宽/实际大小」都被 `sm:` / `lg:` 收起,百分比按钮是唯一留在视野里的缩放
+ * 控件 —— 对**图片预览**它得承担「回到整页可见」这条恢复路径(100% 对超大图 = 放大到原尺寸,
+ * 在 390px 里只剩局部)。但 Office 预览的 `fit-width` 是**适宽**、不是 100%,
+ * 所以那一路**不 opt-in**,窄屏仍回 100%。
+ */
+const resetToFit = computed(() => props.resetToFitOnNarrow && isNarrow.value)
 const canPrev = computed(() => props.index > 1)
 const canNext = computed(() => props.index < props.count)
 const hasNav = computed(() => props.unit !== null && props.count > 0)
@@ -128,7 +148,7 @@ const clampZoom = (v: number) => Math.min(ZOOM_MAX, Math.max(props.zoomMin, v))
  * 更不知道窄屏与宽屏点下去的去向**不同**(窄屏 = 适应页面,宽屏 = 回到 100%)。
  * 所以给一句随断点变化的名字 —— 与 `:title` 用同一个值,视觉提示与读屏口径不分叉。
  */
-const zoomResetLabel = computed(() => (isNarrow.value ? '适应页面(整页可见)' : '恢复到 100%'))
+const zoomResetLabel = computed(() => (resetToFit.value ? '适应页面(整页可见)' : '恢复到 100%'))
 
 const ACTION_BTN = 'text-muted-foreground hover:text-foreground'
 </script>
@@ -214,19 +234,20 @@ const ACTION_BTN = 'text-muted-foreground hover:text-foreground'
         <ZoomOut />
       </Button>
       <!--
-        百分比按钮:宽屏点一下回 100%(原行为);**窄屏(`sm` 以下)点一下回「适应」**。
-        为什么分叉:100% 对超大图意味着**放大到原尺寸** —— 2400 px 宽的图在 390 px 弹窗里
-        只剩局部,而窄屏把「适宽/实际大小」两颗按钮与 ± 都收进了 `sm:` / `lg:`,**没有任何
-        回到全图的手段**(点图 / 滚轮也不生效);只有去全屏或关掉重开才能恢复。
-        窄屏给「回适应」正是补上这条恢复路径。宽度是**内容自适应 + `px-1`**(宽屏才钉 `sm:w-11`),
-        让「100%」这类三位数也排得下 —— 不为这条路径另加固定宽。
+        百分比按钮:平时点一下回 100%(原行为)。**只有 `resetToFitOnNarrow` 的调用方**
+        (图片预览)在窄屏点一下回「适应」——100% 对超大图意味着**放大到原尺寸**,2400 px 宽的图
+        在 390 px 弹窗里只剩局部,而窄屏把「适宽/实际大小」与 ± 都收进了 `sm:` / `lg:`,
+        **没有任何回到全图的手段**(点图 / 滚轮也不生效),只能去全屏或关掉重开。
+        为什么是 opt-in 而不是工具栏自己按断点分叉:`fit-width` 的语义由**调用方**定 ——
+        Office 预览把它实现为**适宽**(不是 100%),替它发 `fit-width` 等于改了它的窄屏行为。
+        宽度是**内容自适应 + `px-1`**(宽屏才钉 `sm:w-11`),让「100%」这类三位数也排得下。
       -->
       <button
         type="button"
         class="text-muted-foreground hover:text-foreground focus-visible:ring-ring shrink-0 rounded-sm px-1 text-center text-xs tabular-nums transition-colors focus-visible:ring-3 focus-visible:outline-none sm:w-11"
         :aria-label="zoomResetLabel"
         :title="zoomResetLabel"
-        @click="isNarrow ? emit('fit-width') : emit('update:zoom', 1)"
+        @click="resetToFit ? emit('fit-width') : emit('update:zoom', 1)"
       >
         {{ zoomPercent }}%
       </button>
