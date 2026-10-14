@@ -1,4 +1,9 @@
+# pnpm 12 的构建白名单:原生 / 需 postinstall 的包默认不跑脚本,要在这里显式放行。
 allowBuilds:
   '@tailwindcss/oxide': true
   better-sqlite3: true
   esbuild: true
+  # sharp(票 13 的 PNG 编码)。本机靠 @img/sharp-{platform} 预编译包装上,**没有**
+  # install/postinstall 脚本,所以这里放不放行都能装 —— 留着是为了在**没有对应预编译
+  # 包**的环境(异平台 / musl / 源码装)里,sharp 退化成本地编译时不被 pnpm 静默跳过。
+  sharp: true

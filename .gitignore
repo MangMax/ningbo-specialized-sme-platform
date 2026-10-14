@@ -17,6 +17,11 @@ data/
 *.db-wal
 *.db-shm
 
+# PDF 页图(票 13):由 POST /api/pdf-pages 从源 PDF 渲染出来的**派生数据**,
+# 随源文件可随时重建(一份 97 页的 PDF 出 42 MB PNG),不入库。
+# 目录名见 files/README.md「页图(PDF → PNG)」。
+files/**/.*.pages/
+
 # misc
 .DS_Store
 *.log
