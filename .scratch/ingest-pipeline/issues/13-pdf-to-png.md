@@ -30,7 +30,7 @@
 ## 验收
 
 - [x] 页面上能看到某份 PDF 的页图缩略(`/files` → 预览 → 页图);12 张 / 97 张实测见文末第 8 节。
-- [x] app 测试全绿:`pnpm exec nuxt typecheck` 通过;`pnpm exec vitest run` → **23 files / 433 passed**
+- [x] app 测试全绿:`pnpm exec nuxt typecheck` 通过;`pnpm exec vitest run` → **23 files / 434 passed**
       (含页数未知时的单页标题回归用例,见 8.11;缩放下限作用域隔离,见 8.12;
       自动适应/窄屏缩小钮与组件级用例,见 8.13;工具栏取整判据,见 8.14)。
 
@@ -613,11 +613,12 @@ hover/focus 的强调边框与 ring 仍在(见 8.8)。97 页那格同样复核�
 
 ## 8.13 后续整改:自动「适应」不受手动下限约束 + 窄屏缩小钮(F1/F3)与组件级用例(2026-10-15)
 
-固定头 `a1dfe5c` 的独立 **UI** 复核报 F1(P3,必须修)与 F3(P4)。两次提交:
+固定头 `a1dfe5c` 的独立 **UI** 复核报 F1(P3,必须修)与 F3(P4)。本节两次提交(`98ed112` / `6dfa4b4`):
 
 ### `98ed112` —— 修 F1 / F3(功能)
 
-**F1(本 PR 从基线 `ImagePreview.ZOOM_MIN = 0.1` 引出的窄屏可见性回退)**:`fit()` 也按**手动**下限
+**F1(本 PR 从基线 `ImagePreview.ZOOM_MIN = 0.1` 引出的窄屏可见性回退;本节修的是「fit 落点」,
+相邻区间的失配在 §8.15 收口)**:`fit()` 也按**手动**下限
 `props.zoomMin` 夹。2400×3200 的图放进 390×844 弹窗(viewport 356×713)时 `fitScale() ≈ 13.5%`,
 被普通预览的默认 25% 夹到 25% ⇒ 显示 600×800、**横纵溢出**;而窄屏下工具栏的缩放控件按
 `sm:` / `lg:` 隐藏,**用户没法缩回来**。
@@ -652,7 +653,7 @@ F3 用例名统一成计划里的 `窄屏缩放组到达 10% 后禁用缩小按�
 ⇒ 上面**三条全红**;把 `clampZoom` 改回无脑 `max(下限, 请求)` ⇒ 第 3 条红;去掉窄屏 `:disabled` ⇒ F3 红。
 
 验证:`pnpm exec vitest run tests/image-preview.test.ts tests/page-gallery.test.ts` → **2 files / 67 passed**(该命令现在报 **69** —— 本轮又补了 2 条,见 §8.14);
-`pnpm test`(`NUXT_DB_PATH` 指向 /tmp)→ **23 files / 431 passed**(该值是当时的结果;此后又补了用例,现在为 **433**,见 §8.14);`pnpm typecheck` → exit 0;`git diff --check` 干净。
+`pnpm test`(`NUXT_DB_PATH` 指向 /tmp)→ **23 files / 431 passed**(该值是当时的结果;此后又补了用例,现在为 **434**,见 §8.15);`pnpm typecheck` → exit 0;`git diff --check` 干净。
 
 > **本轮(含本节的文字修订)与 §8.12 的归属不同**:§8.12 说的是**原始功能候选链**
 > (`7bd6d9a → 31b517b → 6a14736 → 92c7b2d`)内那三次;`a1dfe5c` 是针对该记录的纯文案修订;
@@ -674,15 +675,17 @@ F3 用例名统一成计划里的 `窄屏缩放组到达 10% 后禁用缩小按�
 +        :disabled="(zoom ?? 1) <= props.zoomMin"
 ```
 
-`zoomPercent` 保持取整、**只用于百分比文本**。
+`zoomPercent` 保持取整,**供百分比文本用**;但**上限判据**(`zoomPercent >= ZOOM_MAX * 100`)
+仍然用它 —— 那一处沿用基线、本轮**没有**调整(上限是常数 4.0,取整不会像 13.5 那样卡在边界),
+所以别把它也当成「本轮只改下限」的例外。本轮动的只有**下限**这一处比较。
 
-**本轮只修下限这一处判据。** 上限那侧不动,也不对「`zoom` 与上限的关系」下任何结论:
+也不对「`zoom` 与上限的关系」下任何结论:
 两个组件的上限**本来就不一致** —— `ImagePreview` 的 `ZOOM_MAX = ZOOM_ABS_MAX = 8`(滚轮 / 实际大小
 都走父组件),而 `PreviewToolbar` 自己的常量是 **4**(只钳它自己那颗按钮发出的值),所以
 **`zoom` prop 完全可以大于 4**。这处不一致是**基线既有**,标准复核已标过、**明确不纳入本轮**,
 不在这次 scope 里解决。`zoom` 与 `zoomMin` 量纲一致(1 = 100%),这是改这处比较的唯一依据。
 
-**回归**(`tests/image-preview.test.ts` 新增一组,共 **31** 例):
+**回归**(`tests/image-preview.test.ts` 新增一组;那一次的计数是 **31** 例,现在为 **32**,见 §8.15):
 - `13.5% 显示为 14%,但「缩小」**已禁用**(不取整比较)` —— 直接覆盖复核那句
   (断言 `zoom ≈ 0.135`、`Math.round(zoom*100) === 14`、按钮 **disabled**);
 - `高于下限时「缩小」可用,点到下限后变禁用 —— 边界不早不禁` —— 0.5 时可用,一路缩到 0.25 后禁用。
@@ -692,3 +695,37 @@ F3 用例名统一成计划里的 `窄屏缩放组到达 10% 后禁用缩小按�
 
 验证:`pnpm exec vitest run tests/image-preview.test.ts tests/page-gallery.test.ts` → **2 files / 69 passed**;
 `pnpm test`(`NUXT_DB_PATH` 指向 /tmp)→ **23 files / 433 passed**;`pnpm typecheck` → exit 0;`git diff --check` 干净。
+
+## 8.15 有效下限统一:判据与执行共用一个下限(2026-10-15)
+
+**复现**(代码/规格审查 + 浏览器):`ImagePreview` 把 `min(props.zoomMin, fitScale())` 只交给了
+工具栏的**判据**,`nextZoom` 的**执行**仍拿 `props.zoomMin`。于是:
+
+| 场景 | fit | 现象 |
+| --- | --- | --- |
+| 2400×3200 / 356×713 | 13.5% | 13.5% 时「缩小」正确禁用;**点一次放大到 23.5% 后按钮变可用,再点却回到 25% 而非 13.5%**(执行被 25% 挡住) |
+| 合成图 / 1280×800(浏览器实测) | 20.66% | 21% 禁用 → 放大到 31% → 缩小到 **25% 就停住且按钮仍 enabled**,再点仍 25% |
+
+两者是**同一个有效下限失配**。
+
+**修法**:把有效下限提成**一处**——`effectiveZoomMin = min(props.zoomMin, fitScale())` ——
+**判据与执行都用它**(`clampZoom` 与模板的 `:zoom-min` 同源)。语义精确如下:
+**「适应」之上仍守住配置下限**(普通预览 25%、页图库 10% 一分不少);**「适应」之下**允许一路
+回到 fit —— 那正是「自动适宽可低于手动下限」的直接推论。`fit()` 本身不变(仍按 contain 取)。
+
+> §8.13 / §8.14 修的是**两处不同的区间**:8.13 让 fit **落点**不被手动下限夹住;
+> 8.14 修工具栏**取整**判据;本节修的是 **fit 与手动下限之间的相邻区间**——
+> 能到的实际最小是 fit,而两侧必须承认同一个值。
+
+**回归**(`tests/image-preview.test.ts`,新增/改写 3 条,共 **32** 例;全程走**真实按钮**):
+- `below-fit 往返:点「放大」到 fit 之上,再点「缩小」**回到 fit** 并重新禁用`
+  —— fit 上禁用 → 放大越过 25% → 一路点「缩小」**回到 fit**(< 0.25)→ 再点不变且**重新禁用**;
+- `fit 与手动下限之间:「缩小」**可用**且点击**确实变小**(判据与执行同源)`
+  —— 覆盖最易错的区间(可到的最小是 fit,但当前位置还在 25% 之下):判据用 25% 会**误禁**、执行用 25% 会**点了没反应**;
+- 既有 `fitScale ≥ 手动下限时…夹到 25% 后禁用` 保留(普通视图 fit 高于 25% 仍守 25% 地板)。
+
+**变异验证**(两侧各一个):`clampZoom` 改回 `props.zoomMin` ⇒ 往返 + 相邻区间两条红;
+`:zoom-min` 改回 `zoomMin`(判据按 25%)⇒ **同样两条红**。恢复后 32 passed。
+
+验证:`pnpm exec vitest run tests/image-preview.test.ts tests/page-gallery.test.ts` → **2 files / 70 passed**;
+`pnpm test`(`NUXT_DB_PATH` 指向 /tmp)→ **23 files / 434 passed**;`pnpm typecheck` → exit 0;`git diff --check` 干净。

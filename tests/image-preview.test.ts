@@ -444,17 +444,59 @@ describe('适应与手动下限:组件级(req 1–3)', () => {
     expect(NATURAL.w * Math.max(0.25, expected)).toBeGreaterThan(VIEWPORT.w)
   })
 
-  it('manual zoom from a below-floor fit reaches the ordinary 25% floor', async () => {
-    const { vm } = await fittedPreview()
-    expect(vm.zoom).toBeLessThan(0.25) // 先落在下限之下
+  it('below-fit 往返:点「放大」到 fit 之上,再点「缩小」**回到 fit** 并重新禁用', async () => {
+    // 全程走**真实按钮**(predicate + handler 两侧契约),与浏览器实测同一条路径。
+    const { wrapper, vm } = await fittedPreview()
+    const fit = vm.zoom // ≈13.5%,落在手动下限 25% 之下
+    expect(fit).toBeLessThan(0.25)
 
-    // 手动放大 → 越过 25%(0.135 × 1.12^8 ≈ 0.334 > 0.25;6 次才刚过线,留点余量)。
-    for (let i = 0; i < 8; i += 1) vm.zoomBy(1.12)
+    const btn = (label: string) => wrapper.findAll('button').find((b) => b.attributes('aria-label') === label)
+    await wrapper.vm.$nextTick()
+    expect(btn('缩小')!.attributes('disabled')).toBeDefined() // fit 上:已禁用
+
+    // 点「放大」若干次 → 越过 fit、且越过手动下限 25%。
+    for (let i = 0; i < 8; i += 1) {
+      await btn('放大')!.trigger('click')
+    }
+    await wrapper.vm.$nextTick()
     expect(vm.zoom).toBeGreaterThan(0.25)
+    expect(btn('缩小')!.attributes('disabled')).toBeUndefined() // 放大后:可用
 
-    // 再一直缩小 → 停在**手动下限 25%**,不会穿回 fit 的 0.135,也不会低于 25%。
-    for (let i = 0; i < 12; i += 1) vm.zoomBy(1 / 1.12)
-    expect(vm.zoom).toBeCloseTo(0.25, 6)
+    // 点「缩小」一路下去 → 回到 **fit 本身**(有效下限 = min(手动下限, fit)),
+    // 而不是停在 25%(旧实现执行时用 25% ⇒ 这里会卡在 0.25)。
+    for (let i = 0; i < 16; i += 1) {
+      await btn('缩小')!.trigger('click')
+    }
+    await wrapper.vm.$nextTick()
+    expect(vm.zoom).toBeCloseTo(fit, 6)
+    expect(vm.zoom).toBeLessThan(0.25) // 确实回到了手动下限之下
+
+    // 回到 fit 后:再点一次不变,且按钮**重新禁用**(判据与执行同一个有效下限)。
+    await btn('缩小')!.trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(vm.zoom).toBeCloseTo(fit, 6)
+    expect(btn('缩小')!.attributes('disabled')).toBeDefined()
+  })
+
+  it('fit 与手动下限之间:「缩小」**可用**且点击**确实变小**(判据与执行同源)', async () => {
+    // 这一段是最容易出错的区间:能到的最小是 fit(≈13.5%),但当前位置(如 23.5%)还在手动下限 25% 之下。
+    // 若判据用 25% ⇒ 这里会被**误禁**(灰着却其实还能缩);若执行用 25% ⇒ 点了**没反应**。
+    const { wrapper, vm } = await fittedPreview()
+    const fit = vm.zoom
+    expect(fit).toBeLessThan(0.25)
+
+    vm.zoomBy(1.12) // 一步放大 → ≈15.1%,仍在 25% 之下
+    await wrapper.vm.$nextTick()
+    const mid = vm.zoom
+    expect(mid).toBeGreaterThan(fit)
+    expect(mid).toBeLessThan(0.25)
+
+    const zoomOut = wrapper.findAll('button').find((b) => b.attributes('aria-label') === '缩小')
+    expect(zoomOut!.attributes('disabled')).toBeUndefined() // 可用
+
+    await zoomOut!.trigger('click') // 真的点那颗按钮
+    await wrapper.vm.$nextTick()
+    expect(vm.zoom).toBeLessThan(mid) // 确实变小了
   })
 
   it('zooming out from a below-floor fit does not increase the scale', async () => {
@@ -509,7 +551,7 @@ describe('工具栏:百分比取整只用于文本(判据用未取整 scale)', (
     expect(zoomOut()!.attributes('disabled')).toBeDefined()
   })
 
-  it('高于下限时「缩小」可用,点到下限后变禁用 —— 边界不早不禁', async () => {
+  it('fitScale ≥ 手动下限时:高于下限「缩小」可用,夹到 25% 后禁用 —— 边界不早不禁', async () => {
     const { wrapper, vm, zoomOut } = await previewAt(0.5)
     expect(vm.zoom).toBeCloseTo(0.5, 3)
     // 0.5 > 下限(0.25)→ 可用。

@@ -60,14 +60,15 @@ const pan = ref({ x: 0, y: 0 })
 const dragging = ref(false)
 const fullscreen = ref(false)
 
-// 上限沿用既有常数;下限分两条(见 `lib/preview.ts`)——
-//  · **手动**缩放(滚轮 / 按钮 / 滑块)的下限:`props.zoomMin`(默认 25%,页图库传 10%);
-//  · **自动「适应」**的下限:只受绝对下限约束,**不按手动下限夹** —— 否则超大图放进窄容器
+// 上限沿用既有常数;下限分**三层**(见 `lib/preview.ts`)——
+//  · **手动**缩放的配置下限:`props.zoomMin`(默认 25%,页图库传 10%);
+//  · **自动「适应」**:只受绝对下限约束,**不按手动下限夹** —— 否则超大图放进窄容器
 //    (2400×3200 → 390px 弹窗,fit ≈ 13.5%)会被夹到 25%,「适应」反而溢出,而窄屏又把缩放
-//    控件隐藏了,用户没法缩回来。
+//    控件隐藏了,用户没法缩回来;
+//  · **有效下限**(`effectiveZoomMin`,见下):`min(手动下限, 当前适应比例)`。
+//    **判据与执行必须共用它**:fit 落在手动下限之下时,能到的实际最小就是 fit 本身 ——
+//    两边不一致会出现「按钮可用却点不动」(能缩的区间被高估)或「能缩却被禁用」(被低估)。
 const ZOOM_MAX = ZOOM_ABS_MAX
-/** 手动缩放:受手动下限约束。 */
-const clampZoom = (v: number) => nextZoom(v, zoom.value, props.zoomMin, ZOOM_MAX)
 
 /** 旋转 90/270 度时,图片占位的宽高互换。 */
 const quarterTurned = computed(() => rotation.value % 180 !== 0)
@@ -85,15 +86,23 @@ function fitScale(): number {
 }
 
 /**
- * 交给工具栏的**有效下限**:手动下限与**当前「适应」比例**取小。
+ * **有效下限**:`min(手动下限, 当前「适应」比例)` —— 这一处是**判据与执行共用的**唯一来源。
  *
- * 为什么要带上 fit:超大图放进窄容器时,「适应」会落在手动下限**之下**(2400×3200 → 390px
- * 弹窗,fit ≈ 13.5% « 25%),而 `fit()` 现在**允许**这样(见上面的常量说明)。此时工具栏的
- * 「缩小」若还按 25% 判禁用,就会 `disabled=false` 却点不动(往下缩被 `nextZoom` 停在原地)
- * —— 判据与实际能力对不上。取 `min(手动下限, fit)`,两处就一致了:到达**当前能到的最小**
- * 就禁用,而能缩的区间里(`fit` 之下不成立、之上正常)仍然可用。
+ * 为什么不能只给工具栏用:超大图放进窄容器时「适应」落在手动下限**之下**(fit ≈ 13.5% « 25%),
+ * 此时能到的实际最小就是 **fit 本身**(再往下没有意义 —— 图已经整页可见)。若判据用有效下限、
+ * 执行却仍用 25%:
+ *  - 13.5% 时按钮**正确禁用**;
+ *  - 但点一次放大到 23.5% 后按钮变可用,再点缩小却**回到 25% 不是 13.5%**(执行被 25% 挡住)——
+ *    「可用按钮点了没反应/回不到原位」。
+ * 反过来(判据用 25%、执行用有效下限)则会出现「按钮灰着其实能缩」。所以两边都取这一个值。
+ *
+ * 语义上:**「适应」之上仍守住手动下限**(普通预览 25%、页图库 10% 一分不少);**「适应」之下**
+ * 允许一路回到 fit —— 那正是「自动适宽可低于手动下限」的直接推论。
  */
-const toolbarZoomMin = computed(() => Math.min(props.zoomMin, fitScale()))
+const effectiveZoomMin = computed(() => Math.min(props.zoomMin, fitScale()))
+
+/** 手动缩放(滚轮 / 按钮 / 滑块):下限取**有效下限**,与工具栏判据同源。 */
+const clampZoom = (v: number) => nextZoom(v, zoom.value, effectiveZoomMin.value, ZOOM_MAX)
 
 /** 1:1 也要能看:不超过适应比例的 4 倍,免得小图被拉到糊。 */
 function fit() {
@@ -282,7 +291,7 @@ const imgStyle = computed(() => ({
       :icon="FileImage"
       :unit="null"
       :zoom="status === 'ready' ? zoom : null"
-      :zoom-min="toolbarZoomMin"
+      :zoom-min="effectiveZoomMin"
       rotatable
       :rotation="rotation"
       :href="src"

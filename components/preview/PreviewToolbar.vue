@@ -24,8 +24,9 @@ import { cn } from '@/lib/utils'
  * 只做一件事:把「这是谁、在第几页、多大、能带走吗」四件事摆在一行里。
  * 每个预览器只传自己支持的那几项,不支持的传 null 就不渲染。
  *
- * **禁用判据必须用未取整的 `zoom`**(文本才取整):`zoomMin` 现在可能是「当前适应比例」
- * (如 13.5%),取整成 14% 再比就会 `14 <= 13.5` 为假 —— 按钮亮着却缩不动(图片已在下限)。
+ * **下限判据必须用未取整的 `zoom`**:`zoomMin` 现在可能是「当前适应比例」(如 13.5%),
+ * 取整成 14% 再比就会 `14 <= 13.5` 为假 —— 按钮亮着却缩不动(图片已在下限)。
+ * 上限那侧(`zoomPercent >= ZOOM_MAX * 100`)沿用**基线**写法,本轮没动它。
  */
 const props = withDefaults(
   defineProps<{
@@ -91,7 +92,7 @@ const emit = defineEmits<{
   'toggle-fullscreen': []
 }>()
 
-/** 显示用:取整成整数百分比。**只用于文本** —— 判据不要用它(见下面的说明)。 */
+/** 显示用:取整成整数百分比。文本用它;**下限判据不能用它**(见下面的说明)。 */
 const zoomPercent = computed(() => Math.round((props.zoom ?? 1) * 100))
 const canPrev = computed(() => props.index > 1)
 const canNext = computed(() => props.index < props.count)
