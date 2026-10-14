@@ -121,6 +121,15 @@ const ZOOM_STEP = 0.1
 const ZOOM_MAX = 4
 const clampZoom = (v: number) => Math.min(ZOOM_MAX, Math.max(props.zoomMin, v))
 
+/**
+ * 百分比按钮的**可访问名与提示**:说清「点它会发生什么」,而不是当前百分比。
+ *
+ * 按钮上的可见文字是百分比(14%),但读屏若只念出它,用户不知道这是一颗**动作**按钮,
+ * 更不知道窄屏与宽屏点下去的去向**不同**(窄屏 = 适应页面,宽屏 = 回到 100%)。
+ * 所以给一句随断点变化的名字 —— 与 `:title` 用同一个值,视觉提示与读屏口径不分叉。
+ */
+const zoomResetLabel = computed(() => (isNarrow.value ? '适应页面(整页可见)' : '恢复到 100%'))
+
 const ACTION_BTN = 'text-muted-foreground hover:text-foreground'
 </script>
 
@@ -209,12 +218,14 @@ const ACTION_BTN = 'text-muted-foreground hover:text-foreground'
         为什么分叉:100% 对超大图意味着**放大到原尺寸** —— 2400 px 宽的图在 390 px 弹窗里
         只剩局部,而窄屏把「适宽/实际大小」两颗按钮与 ± 都收进了 `sm:` / `lg:`,**没有任何
         回到全图的手段**(点图 / 滚轮也不生效);只有去全屏或关掉重开才能恢复。
-        窄屏给「回适应」正是补上这条恢复路径,同时宽度翻倍(`w-11` → `w-20`)让百分比更清楚。
+        窄屏给「回适应」正是补上这条恢复路径。宽度是**内容自适应 + `px-1`**(宽屏才钉 `sm:w-11`),
+        让「100%」这类三位数也排得下 —— 不为这条路径另加固定宽。
       -->
       <button
         type="button"
         class="text-muted-foreground hover:text-foreground focus-visible:ring-ring shrink-0 rounded-sm px-1 text-center text-xs tabular-nums transition-colors focus-visible:ring-3 focus-visible:outline-none sm:w-11"
-        :title="isNarrow ? '适宽(回到整页可见)' : '恢复 100%'"
+        :aria-label="zoomResetLabel"
+        :title="zoomResetLabel"
         @click="isNarrow ? emit('fit-width') : emit('update:zoom', 1)"
       >
         {{ zoomPercent }}%

@@ -682,6 +682,9 @@ describe('窄屏百分比按钮回「适应」(#2)', () => {
         props: { title: 't', zoom: 0.14, zoomMin: 0.1 },
       })
       const pct = narrow.findAll('button').find((b) => b.text().includes('%'))!
+      // 可访问名要说清**动作**(不是当前百分比),且窄屏指向「适应页面」。
+      expect(pct.attributes('aria-label')).toBe('适应页面(整页可见)')
+      expect(pct.attributes('title')).toBe('适应页面(整页可见)')
       await pct.trigger('click')
       expect(narrow.emitted('fit-width')).toBeTruthy()
       expect(narrow.emitted('update:zoom')).toBeFalsy()
@@ -690,7 +693,10 @@ describe('窄屏百分比按钮回「适应」(#2)', () => {
       /** @ts-expect-error 测试桩 */
       window.matchMedia = (q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} })
       const wide = mount(PreviewToolbar, { props: { title: 't', zoom: 0.14, zoomMin: 0.1 } })
-      await wide.findAll('button').find((b) => b.text().includes('%'))!.trigger('click')
+      const pctWide = wide.findAll('button').find((b) => b.text().includes('%'))!
+      expect(pctWide.attributes('aria-label')).toBe('恢复到 100%')
+      expect(pctWide.attributes('title')).toBe('恢复到 100%')
+      await pctWide.trigger('click')
       expect(wide.emitted('fit-width')).toBeFalsy()
       expect(wide.emitted('update:zoom')?.[0]).toEqual([1])
     } finally {
