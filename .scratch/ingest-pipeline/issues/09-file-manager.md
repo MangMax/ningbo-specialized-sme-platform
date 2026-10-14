@@ -170,3 +170,11 @@ app 不能 import `../pipeline`(本仓之外),故照抄。**两处 `parseBatch` 
 `parseState=unparsed`→23、`q=58号`→1;`PATCH {relPath}` 与 `PATCH {categoryState}` 均 **400**;
 重启后回填 `{inserted:0, unchanged:23}`(幂等)。
 
+
+## 六、主代理复核(2026-10-14,不采信自述)
+
+- **分支可 ff**:`feat/file-manager` @ `5732466`,基于 `main` tip `1905aef`;已 ff 合入 `main`。
+- **测试我自己跑**:`12 files / 169 passed`;`nuxi typecheck` 干净。
+- **页面我自己看**(3472):9 列 + 4 筛选渲染正常;抽查「被引用数」与库内逐条一致 —— 2024/1 58号 **1756**、192号 **456**(=389 award + 67 review)、2026 73号 **130**、2024 143号复核 **190**,与我独立从 `record_evidence` 数出的一致。
+- **我先前口述错了一处,以会话为准**:`files/2022/公布.pdf`(rel_path `jxj/announcement/2022/公布.pdf`)**年份段就是 2022**,故 `year=2022`、`batch=null`;我此前说它会落到 `year=null` 是错的。
+- **裁定五个待定项**(会话三·5)：① `category_state` 全 `set` —— **同意**(目录结构是 pipeline 依规则放出来的既成事实,不是推断;`inferred` 留给票 12);② 年份/批次回退文件名 —— **保留**(既有规则,已加测试钉住);③ `?rescan=1` —— **保留**;④ `parse_state` 全 `unparsed` —— **同意**(记的是新管线);⑤ 改分类不移动文件 —— **按票面**。
