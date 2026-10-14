@@ -134,6 +134,13 @@ export const storedFile = sqliteTable(
     /** 分类(可空,见上)。 */
     source: text('source', { enum: ['jxj', 'miit'] }),
     kind: text('kind', { enum: ['announcement', 'export'] }),
+    /**
+     * **公布**年份 / 批次:目录给出的、**这份文件是哪一批公布的**(单值、可排序)。
+     *
+     * ⚠️ 与 `storedFilePart.year` **不是一回事** —— 那是文件**内容**里各段的年份/批次,
+     * 一份文件可以有多个(票 17)。这里只有一个,因为它由路径 `…/<year>/<batch>/…` 决定。
+     * 见 `.scratch/ingest-pipeline/issues/17-file-parts.md`。
+     */
     year: integer('year'),
     batch: integer('batch'),
     /** 该文件对应的称号;可空(票 12 回写)。 */
@@ -161,6 +168,50 @@ export const storedFile = sqliteTable(
     index('stored_file_category_state_idx').on(t.categoryState),
     index('stored_file_parse_state_idx').on(t.parseState),
   ],
+)
+
+/**
+ * 文件的**段**(票 17):一份文件里含的每一段名单。
+ *
+ * 一份公布文件常含**多年份、多事件** —— 《〔2024〕192号》一份文件里既有
+ * 「2024 年第二批认定(附件1)」又有「2021 年第二批到期复核(附件2)」;《〔2022〕145号》
+ * 在同一个附件里并置 2021 与 2022 两段名单。所以文件级的单个 `year`/`batch` 表达不了它,
+ * 真实粒度在这里:`(称号, 事件类型, 年份, 批次, 附件)`。
+ * 见 `.scratch/ingest-pipeline/issues/17-file-parts.md`。
+ *
+ * 与 `stored_file.year` / `batch`(**公布**年份/批次,单值)分工明确:那里答「这份文件是
+ * 哪一批公布的」,这里答「文件里都有什么」。**别把两者混用**。
+ *
+ * 本表**派生自 `record_evidence`**(按 `source_file` 分组聚合),可整体重建 ——
+ * 回填按 `file_id` 先删后插,所以幂等。见 `server/utils/file-parts.ts`。
+ */
+export const storedFilePart = sqliteTable(
+  'stored_file_part',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    fileId: integer('file_id')
+      .notNull()
+      .references(() => storedFile.id, { onDelete: 'cascade' }),
+    /** 该段的称号。与 `stored_file.title_code` 同源表(称号字典)。 */
+    titleCode: text('title_code')
+      .notNull()
+      .references(() => title.code),
+    /** 事件类型:认定 / 复核 / 维护 / 入库培育。与 `record_event.event_type` 同一套取值。 */
+    eventKind: text('event_kind', {
+      enum: ['award', 'review', 'maintain', 'nurture'],
+    }).notNull(),
+    /**
+     * 段的**内容**年份。复核段记的是**被复核的原始认定年份**(如「2021 年度第二批…复核」
+     * 在 2024 年公布,这里就是 2021),不是公布年份。可空。
+     */
+    year: integer('year'),
+    batch: integer('batch'),
+    /** 归一后的附件名(`附件` / `附件N`),见 `lib/attachment.ts`。可空(导出表无附件)。 */
+    attachment: text('attachment'),
+    /** 该段的行数(这一段名单有多少条被台账引用)。 */
+    rowCount: integer('row_count').notNull().default(0),
+  },
+  (t) => [index('stored_file_part_file_idx').on(t.fileId)],
 )
 
 /**

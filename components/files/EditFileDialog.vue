@@ -148,7 +148,7 @@ const canSave = computed(
           </div>
 
           <div class="flex flex-col gap-1.5">
-            <Label for="file-year" class="text-xs">年份</Label>
+            <Label for="file-year" class="text-xs">公布年份</Label>
             <Input
               id="file-year"
               v-model="form.year"
@@ -158,11 +158,13 @@ const canSave = computed(
               placeholder="2024"
               :aria-invalid="yearInvalid || needsYear || undefined"
             />
-            <p class="text-muted-foreground text-xs">留空表示未定,不是「未知的某年」。</p>
+            <p class="text-muted-foreground text-xs">
+              这份文件是哪一年公布的(目录给的)。留空表示未定,不是「未知的某年」。
+            </p>
           </div>
 
           <div class="flex flex-col gap-1.5">
-            <Label for="file-batch" class="text-xs">批次</Label>
+            <Label for="file-batch" class="text-xs">公布批次</Label>
             <Input
               id="file-batch"
               v-model="form.batch"

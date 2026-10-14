@@ -6,17 +6,23 @@ import {
   PARSE_STATES,
   type BackfillStats,
 } from '../../utils/stored-files'
+import { backfillFileParts, type PartsBackfillStats } from '../../utils/file-parts'
 import type { CategoryState, FileSource, ParseState } from '~~/lib/stored-file'
 import { SOURCE_ORDER } from '~~/lib/labels'
+
+/** 两趟回填的合并回报(文件行 + 段),便于验收时一次核对。 */
+interface BackfillReport extends BackfillStats {
+  parts: PartsBackfillStats
+}
 
 /**
  * 文件库列表。`GET /api/files?source=&categoryState=&parseState=&q=&page=&pageSize=`
  *
- * **首次请求懒回填**:文件库是磁盘上的既有事实,而 `stored_file` 是新立的表 ——
- * 不扫一次,页面上就是空的。这里在第一次取列表时扫一遍 `files/` 并写表;
- * 之后每请求只查表(扫描要算 23 个文件的 SHA-256,不能每次请求都做)。
- *
- * `?rescan=1` 强制重新扫描(验收与排查用)。
+ * **首次请求懒回填**,两趟:
+ *  1. 扫 `files/` 反推分类写 `stored_file`(票 09)—— 要算 23 个文件的 SHA-256;
+ *  2. 从 `record_evidence` 聚合出**段**写 `stored_file_part`(票 17,必须先有第 1 趟,
+ *     段要挂到 `stored_file.id` 上)。
+ * 之后每请求只查表。`?rescan=1` 强制两趟都重跑(验收与排查用;**幂等**)。
  */
 let backfilled = false
 
@@ -25,9 +31,10 @@ export default defineEventHandler(async (event) => {
   const q = getQuery(event)
 
   const force = q.rescan === '1' || q.rescan === 'true'
-  let backfill: BackfillStats | undefined
+  let backfill: BackfillReport | undefined
   if (!backfilled || force) {
-    backfill = await backfillFromDisk(db, useRuntimeConfig().filesDir)
+    const files = await backfillFromDisk(db, useRuntimeConfig().filesDir)
+    backfill = { ...files, parts: backfillFileParts(db) }
     backfilled = true
   }
 

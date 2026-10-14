@@ -14,6 +14,7 @@ import {
 } from '~~/lib/labels'
 import { formatBytes } from '~~/lib/upload'
 import { fileUrl } from '~~/lib/preview'
+import { joinSeries, partBatches, partYears, seriesLabel } from '~~/lib/file-parts'
 import type { StoredFileRow } from '~~/server/utils/stored-files'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -56,10 +57,15 @@ import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDi
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
 
 /**
- * 文件管理页(票 09):统一管理文件库(`files/`)里的**全部**文件。
+ * 文件管理页(票 09;段的展示是票 17):统一管理文件库(`files/`)里的**全部**文件。
  *
  * 这一页管的是**文件**,不是记录 —— 台账页管记录。所以每行是「一个文件在磁盘上是什么、
- * 被归成哪一类、被哪些记录引用」,行操作是编元数据 / 预览 / 移出库。
+ * 被归成哪一类、里面含哪些段、被哪些记录引用」,行操作是编元数据 / 预览 / 移出库。
+ *
+ * **年份 / 批次两列显示的是文件内容里的段**(票 17:一份文件常含多年份、多事件,
+ * 如 192号 同时含「认定 2024/2」与「复核 2021/2」)。文件级另有**公布年份/批次**
+ * (目录给的、单值),单独一列并退到次级色 —— 两者不是一个东西,别混。
+ * 行可展开看段明细(称号 / 事件 / 年份 / 批次 / 附件 / 行数)。
  *
  * 筛选全部走**多选**(与台账页同一套 `MultiSelectFilter`),因为「同时看经信局的
  * 已分类和待分类」是常见的;单选下拉会把这种组合挡掉。
@@ -73,7 +79,13 @@ const apiGet = $fetch as unknown as <T>(
 interface FilesResponse {
   rows: StoredFileRow[]
   total: number
-  backfill?: { inserted: number; updated: number; unchanged: number; skipped: string[] }
+  backfill?: {
+    inserted: number
+    updated: number
+    unchanged: number
+    skipped: string[]
+    parts: { files: number; parts: number; orphanPaths: string[] }
+  }
 }
 
 const queryCache = useQueryCache()
@@ -255,6 +267,31 @@ function setPageSize(n: number) {
 
 /** 元数据是否三项都齐 —— 决定「待分类」要不要显眼。 */
 const isComplete = (row: StoredFileRow) => row.source !== null && row.kind !== null
+
+// —— 段(票 17)——
+/**
+ * 展开的行。**可多行同时展开** —— 验收时要并排比两份文件的段(如 192号 与 145号),
+ * 单开(手风琴)会把前一份收起来。
+ */
+const expandedIds = ref<number[]>([])
+const isExpanded = (id: number) => expandedIds.value.includes(id)
+function toggleParts(id: number) {
+  expandedIds.value = isExpanded(id)
+    ? expandedIds.value.filter((x) => x !== id)
+    : [...expandedIds.value, id]
+}
+
+/** 「年份」列:**文件内容**里各段的年份去重(如 `2021、2024`);没有段时为 null,页面走「—」。 */
+const contentYears = (row: StoredFileRow) => seriesLabel(partYears(row.parts))
+const contentBatches = (row: StoredFileRow) => seriesLabel(partBatches(row.parts))
+/** 完整清单进 `title` —— 列表列有上限(见 `seriesLabel`),悬停能看到全部。 */
+const contentYearsTitle = (row: StoredFileRow) => joinSeries(partYears(row.parts)) ?? undefined
+const contentBatchesTitle = (row: StoredFileRow) => joinSeries(partBatches(row.parts)) ?? undefined
+/** 「公布年份/批次」列:文件级**单值**(目录给的),形如 `2024 / 2`、`2024`、`—`。 */
+function publishedYearBatch(row: StoredFileRow): string {
+  if (row.year == null) return '—'
+  return row.batch == null ? String(row.year) : `${row.year} / ${row.batch}`
+}
 </script>
 
 <template>
@@ -263,7 +300,7 @@ const isComplete = (row: StoredFileRow) => row.source !== null && row.kind !== n
       class="rise-in"
       style="--rise-index: 0"
       title="文件管理"
-      description="文件库里的全部来源文件。分类与解析状态分开记,被记录引用数按出处路径统计。"
+      description="文件库里的全部来源文件。年份/批次列是文件内容里的段,一份文件可含多段。"
     >
       <template #actions>
         <!-- 上传接 tus 是票 10 的事;这里先把入口占住并说明去向,不做假的可用按钮。 -->
@@ -330,25 +367,42 @@ const isComplete = (row: StoredFileRow) => row.source !== null && row.kind !== n
         <div
           class="max-h-[max(320px,calc(100dvh-17rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
         >
-          <!-- 9 列在窄屏放不下:给表格一个下限宽度让它横向滚动,而不是把文件名挤没。 -->
-          <Table class="min-w-[1180px]">
+          <!-- 12 列在窄屏放不下:给表格一个下限宽度让它横向滚动,而不是把文件名挤没。
+               `table-fixed`:列宽按表头的 w-* 逐列算,宽屏下也不会某一列吃满剩余空间。 -->
+          <Table class="min-w-[1240px] table-fixed">
             <TableHeader>
               <TableRow class="hover:bg-transparent">
-                <TableHead :class="TH_CLASS">文件名</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-24']">来源</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-24']">类别</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-16']">年份</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-14']">批次</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-24']">分类状态</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-24']">解析状态</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-20 text-right']">被引用</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-20 text-right']">大小</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-40']">操作</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-10']">
+                  <span class="sr-only">展开段</span>
+                </TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[272px]']">文件名</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[76px]']">来源</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[86px]']">类别</TableHead>
+                <TableHead
+                  :class="[TH_CLASS, 'w-[112px]']"
+                  title="目录给出的公布年份/批次 —— 这份文件是哪一批公布的(单值)"
+                >
+                  公布年份/批次
+                </TableHead>
+                <TableHead
+                  :class="[TH_CLASS, 'w-[118px]']"
+                  title="文件内容里各段的年份(可多个);复核段记的是被复核的原认定年份"
+                >
+                  年份
+                </TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[78px]']" title="文件内容里各段的批次(可多个)">
+                  批次
+                </TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[84px]']">分类状态</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[84px]']">解析状态</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[64px] text-right']">被引用</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[76px] text-right']">大小</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[148px]']">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               <TableRow v-if="isLoading && rows.length === 0" class="hover:bg-transparent">
-                <TableCell :colspan="10" class="p-0">
+                <TableCell :colspan="12" class="p-0">
                   <div class="flex flex-col">
                     <div
                       v-for="i in 8"
@@ -365,83 +419,184 @@ const isComplete = (row: StoredFileRow) => row.source !== null && row.kind !== n
               </TableRow>
 
               <template v-else-if="rows.length">
-                <TableRow
-                  v-for="row in rows"
-                  :key="row.id"
-                  class="hover:bg-accent/70 h-11"
-                >
-                  <TableCell class="max-w-0">
-                    <div class="flex min-w-0 flex-col">
-                      <span class="truncate font-medium" :title="row.filename">{{ row.filename }}</span>
-                      <span class="text-muted-foreground truncate text-xs" :title="row.relPath">
-                        {{ row.relPath }}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge v-if="row.source" variant="quiet">{{ SOURCES[row.source] }}</Badge>
-                    <span v-else class="text-muted-foreground text-xs">—</span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge v-if="row.kind" variant="quiet">{{ KINDS[row.kind] }}</Badge>
-                    <span v-else class="text-muted-foreground text-xs">—</span>
-                  </TableCell>
-                  <TableCell class="text-muted-foreground text-xs tabular-nums">
-                    {{ row.year ?? '—' }}
-                  </TableCell>
-                  <TableCell class="text-muted-foreground text-xs tabular-nums">
-                    {{ row.batch ?? '—' }}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      :variant="row.categoryState === 'set' ? 'quiet' : 'dashed'"
-                      :title="
-                        row.categoryState === 'unset' && !isComplete(row)
-                          ? '来源或类别未填全'
-                          : undefined
-                      "
-                    >
-                      {{ CATEGORY_STATES[row.categoryState] }}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      :variant="row.parseState === 'failed' ? 'destructive' : 'quiet'"
-                    >
-                      {{ PARSE_STATES[row.parseState] }}
-                    </Badge>
-                  </TableCell>
-                  <TableCell class="text-right text-xs tabular-nums">
-                    <span :class="row.referenceCount > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'">
-                      {{ row.referenceCount }}
-                    </span>
-                  </TableCell>
-                  <TableCell class="text-muted-foreground text-right text-xs tabular-nums">
-                    {{ sizeOf(row) }}
-                  </TableCell>
-                  <TableCell>
-                    <div class="flex items-center gap-1">
-                      <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="openEdit(row)">
-                        编辑
-                      </Button>
-                      <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="openPreview(row)">
-                        预览
-                      </Button>
+                <template v-for="row in rows" :key="row.id">
+                  <TableRow class="hover:bg-accent/70 h-11">
+                    <TableCell class="pr-0">
                       <Button
+                        v-if="row.parts.length"
                         variant="ghost"
-                        size="sm"
-                        class="text-muted-foreground hover:text-destructive h-7 px-2 text-xs"
-                        @click="openDelete(row)"
+                        size="icon"
+                        class="size-7"
+                        :aria-expanded="isExpanded(row.id)"
+                        :title="`展开 ${row.parts.length} 段明细`"
+                        @click="toggleParts(row.id)"
                       >
-                        移出
+                        <ChevronRight
+                          class="size-4 transition-transform duration-150"
+                          :class="isExpanded(row.id) && 'rotate-90'"
+                        />
+                        <span class="sr-only">展开段明细</span>
                       </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
+                      <span
+                        v-else
+                        class="text-muted-foreground/60 inline-block w-7 text-center text-xs"
+                        title="还没有段(尚未解析)"
+                        >—</span
+                      >
+                    </TableCell>
+                    <TableCell class="w-[272px]">
+                      <div class="flex min-w-0 flex-col">
+                        <span class="truncate font-medium" :title="row.filename">{{ row.filename }}</span>
+                        <span class="text-muted-foreground truncate text-xs" :title="row.relPath">
+                          {{ row.relPath }}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge v-if="row.source" variant="quiet">{{ SOURCES[row.source] }}</Badge>
+                      <span v-else class="text-muted-foreground text-xs">—</span>
+                    </TableCell>
+                    <TableCell>
+                      <Badge v-if="row.kind" variant="quiet">{{ KINDS[row.kind] }}</Badge>
+                      <span v-else class="text-muted-foreground text-xs">—</span>
+                    </TableCell>
+                    <!-- 公布年份/批次:文件级单值,退到次级色 —— 内容年份才是要读的信息。 -->
+                    <TableCell class="text-muted-foreground text-xs tabular-nums">
+                      {{ publishedYearBatch(row) }}
+                    </TableCell>
+                    <!-- 年份:文件**内容**含哪几年。多个时并排(如 2021、2024);过长有上限,悬停看全。 -->
+                    <TableCell
+                      class="truncate text-xs font-medium tabular-nums"
+                      :title="contentYearsTitle(row)"
+                    >
+                      <span v-if="contentYears(row)">{{ contentYears(row) }}</span>
+                      <span v-else class="text-muted-foreground font-normal">—</span>
+                    </TableCell>
+                    <TableCell
+                      class="truncate text-xs tabular-nums"
+                      :title="contentBatchesTitle(row)"
+                    >
+                      <span v-if="contentBatches(row)">{{ contentBatches(row) }}</span>
+                      <span v-else class="text-muted-foreground">—</span>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        :variant="row.categoryState === 'set' ? 'quiet' : 'dashed'"
+                        :title="
+                          row.categoryState === 'unset' && !isComplete(row)
+                            ? '来源或类别未填全'
+                            : undefined
+                        "
+                      >
+                        {{ CATEGORY_STATES[row.categoryState] }}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge :variant="row.parseState === 'failed' ? 'destructive' : 'quiet'">
+                        {{ PARSE_STATES[row.parseState] }}
+                      </Badge>
+                    </TableCell>
+                    <TableCell class="text-right text-xs tabular-nums">
+                      <span
+                        :class="
+                          row.referenceCount > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'
+                        "
+                      >
+                        {{ row.referenceCount }}
+                      </span>
+                    </TableCell>
+                    <TableCell class="text-muted-foreground text-right text-xs tabular-nums">
+                      {{ sizeOf(row) }}
+                    </TableCell>
+                    <TableCell>
+                      <div class="flex items-center gap-1">
+                        <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="openEdit(row)">
+                          编辑
+                        </Button>
+                        <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="openPreview(row)">
+                          预览
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          class="text-muted-foreground hover:text-destructive h-7 px-2 text-xs"
+                          @click="openDelete(row)"
+                        >
+                          移出
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+
+                  <!-- 段明细(票 17):称号 / 事件 / 年份 / 批次 / 附件 / 行数。 -->
+                  <TableRow
+                    v-if="isExpanded(row.id) && row.parts.length"
+                    class="hover:bg-transparent"
+                    data-testid="file-parts-row"
+                  >
+                    <TableCell :colspan="12" class="bg-muted/40 p-0">
+                      <div class="flex flex-col gap-2 px-4 py-3">
+                        <!-- 明细表按内容收窄(w-auto),不跟着外层撑满 —— 免得「行数」的数字飘到老远。 -->
+                        <Table class="w-auto text-xs">
+                          <TableHeader>
+                            <TableRow class="hover:bg-transparent">
+                              <TableHead class="h-7 text-muted-foreground w-48 text-xs font-medium">
+                                称号
+                              </TableHead>
+                              <TableHead class="h-7 text-muted-foreground w-24 text-xs font-medium">
+                                事件
+                              </TableHead>
+                              <TableHead class="h-7 text-muted-foreground w-20 text-xs font-medium">
+                                年份
+                              </TableHead>
+                              <TableHead class="h-7 text-muted-foreground w-16 text-xs font-medium">
+                                批次
+                              </TableHead>
+                              <TableHead class="h-7 text-muted-foreground w-24 text-xs font-medium">
+                                附件
+                              </TableHead>
+                              <TableHead class="h-7 text-muted-foreground text-right text-xs font-medium">
+                                行数
+                              </TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            <TableRow
+                              v-for="(part, i) in row.parts"
+                              :key="i"
+                              class="hover:bg-transparent"
+                            >
+                              <TableCell class="py-1.5">
+                                <TitleBadge :code="part.titleCode" />
+                              </TableCell>
+                              <TableCell class="py-1.5">
+                                <EventChip
+                                  :type="part.eventKind"
+                                  :year="part.year"
+                                  :seq="part.batch"
+                                />
+                              </TableCell>
+                              <TableCell class="py-1.5 tabular-nums">{{ part.year ?? '—' }}</TableCell>
+                              <TableCell class="py-1.5 tabular-nums">{{ part.batch ?? '—' }}</TableCell>
+                              <TableCell class="py-1.5">{{ part.attachment ?? '—' }}</TableCell>
+                              <TableCell class="py-1.5 text-right tabular-nums">
+                                {{ part.rowCount.toLocaleString('zh-CN') }}
+                              </TableCell>
+                            </TableRow>
+                          </TableBody>
+                        </Table>
+                        <p class="text-muted-foreground text-xs">
+                          共 {{ row.parts.length }} 段。年份是段的内容年份(复核段为被复核的原认定年份);
+                          「公布年份/批次」与段无关,是这份文件在目录上的公布批次。
+                        </p>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                </template>
               </template>
 
               <TableRow v-else class="hover:bg-transparent">
-                <TableCell :colspan="10" class="p-0">
+                <TableCell :colspan="12" class="p-0">
                   <Empty class="border-0">
                     <EmptyHeader>
                       <EmptyMedia variant="icon"><Search /></EmptyMedia>
