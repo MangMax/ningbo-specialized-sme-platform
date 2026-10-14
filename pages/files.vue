@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery, useQueryCache } from '@pinia/colada'
-import { computed, ref, type Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue'
 import { watchDebounced } from '@vueuse/core'
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FolderUp, Search } from '@lucide/vue'
 import {
@@ -124,6 +124,32 @@ const { data, isLoading } = useQuery({
 const rows = computed<StoredFileRow[]>(() => data.value?.rows ?? [])
 const total = computed(() => data.value?.total ?? 0)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+
+/**
+ * 表格是否真的横向溢出了(12 列合计 1118px,1440 侧栏展开时装得下,更窄就装不下)。
+ *
+ * 只用来决定「钉住的操作列要不要画左边那条分界线」:没溢出时不会有列从它底下滑过,
+ * 画线就是凭空多一根;溢出了才需要划出「这列是钉住的」。
+ * 用 `border-spacing` 没有、也不该用的情况:直接量滚动容器的 `scrollWidth`。
+ */
+const tableScroller = ref<HTMLElement | null>(null)
+const isPinned = ref(false)
+function measureOverflow() {
+  const el = tableScroller.value
+  isPinned.value = el ? el.scrollWidth > el.clientWidth + 1 : false
+}
+onMounted(() => {
+  measureOverflow()
+  window.addEventListener('resize', measureOverflow)
+  // 字体或缩放变化也会改变文字宽度,进而改变总宽。
+  window.addEventListener('pageshow', measureOverflow)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', measureOverflow)
+  window.removeEventListener('pageshow', measureOverflow)
+})
+// 行数变化会改变滚动条的有无(竖向滚动条占宽)。
+watch([rows, pageSize], () => nextTick(measureOverflow))
 
 const sourceOptions = computed(() =>
   SOURCE_ORDER.map((k) => ({ value: k, label: SOURCES[k] ?? k })),
@@ -294,6 +320,26 @@ const previewSrc = computed(() =>
 
 const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs font-medium'
 
+/**
+ * 操作列的表头 / 单元格:横向滚动时**钉在表格右边**。
+ *
+ * 这一页 12 列合计 1118px,1280 / 1366 视口(侧栏展开)装不下,会横向滚动;而编辑 /
+ * 预览 / 移出恰恰是这一页最常做的事。不钉住的话,默认视野里够不到它们 —— 用户得先
+ * 横向滚到底才知道能操作。钉住后无论滚到哪一段,操作始终在。
+ *
+ * 底色见 `<style scoped>` 里的 `.pin-action`:必须**实心**(钉住的列会盖在中间列上),
+ * 且 hover 时与行的 `bg-accent/70` 同色,否则一行里后面几列一变深、这列还是白的,
+ * 像是浮在外面。左边那条分界线只在真的溢出时才画(见 `isPinned`)。
+ * 单元格 `z-10` 低于表头的 `z-30`:上下滚时行内单元格不会盖住表头。
+ */
+const ACTION_TH = computed(
+  () => `${TH_CLASS} sticky right-0 z-30 w-[138px] ${isPinned.value ? 'pin-edge' : ''}`,
+)
+const ACTION_TD = computed(
+  () =>
+    `bg-card group-hover:bg-accent/70 sticky right-0 z-10 w-[138px] transition-colors ${isPinned.value ? 'pin-edge' : ''}`,
+)
+
 function setPage(n: number) {
   page.value = Math.min(Math.max(1, n), totalPages.value)
 }
@@ -435,12 +481,15 @@ function publishedYearBatch(row: StoredFileRow): string {
     <Card class="rise-in gap-0 overflow-hidden py-0" style="--rise-index: 2">
       <CardContent class="p-0">
         <div
+          ref="tableScroller"
           class="max-h-[max(320px,calc(100dvh-17rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
         >
-          <!-- 12 列。列宽是按**实测文字宽度**定的:下限宽度取「1440 宽屏下(侧栏展开)刚好
-               不横滚」的值 —— 超了就会把最右边的行操作推出视野,而编辑/预览/移出正是这一页
-               最常做的事。窄屏照旧横向滚动,不把文件名挤没。
-               文件名留 219px:刚好放下「甬经信中小〔2026〕101号关于…」,截断点落在文号之后,
+          <!-- 12 列。列宽按**实测文字宽度**逐列定,合计 1118px。
+               1440(侧栏展开)容器 1124px → 不横滚;1280 / 1366 装不下(实测 1280 差 144px,
+               1366 差 58px),这时**操作列钉在右边**(见下面的 `sticky right-0`)——
+               编辑/预览/移出是这一页最常做的事,不能因为横向滚动就够不到。
+               剩下的中间列照旧横向滚动去读,与同门台账页一致。
+               文件名留 209px:放下「甬经信中小〔2026〕101号关于…」,截断点落在文号之后,
                邻近的两份文件才不会截成同一个样子。
                `table-fixed`:列宽按表头的 w-* 逐列算,宽屏下也不会某一列吃满剩余空间。 -->
           <Table class="min-w-[1118px] table-fixed">
@@ -469,9 +518,11 @@ function publishedYearBatch(row: StoredFileRow): string {
                 </TableHead>
                 <TableHead :class="[TH_CLASS, 'w-[76px]']">分类状态</TableHead>
                 <TableHead :class="[TH_CLASS, 'w-[76px]']">解析状态</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[56px] text-right']">被引用</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[70px] text-right']">大小</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[138px]']">操作</TableHead>
+                <!-- 右对齐的两列:表头要比正文多 4px 内边距(`table-head` 默认 px-2、
+                     `table-cell` 默认 px-3),否则数字右缘和表头差 4px,一眼看得出没对齐。 -->
+                <TableHead :class="[TH_CLASS, 'w-[56px] pr-3 text-right']">被引用</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[70px] pr-3 text-right']">大小</TableHead>
+                <TableHead :class="[ACTION_TH]">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -494,7 +545,7 @@ function publishedYearBatch(row: StoredFileRow): string {
 
               <template v-else-if="rows.length">
                 <template v-for="row in rows" :key="row.id">
-                  <TableRow class="hover:bg-accent/70 h-11">
+                  <TableRow class="group hover:bg-accent/70 h-11">
                     <TableCell class="pr-0">
                       <Button
                         v-if="row.parts.length"
@@ -575,6 +626,8 @@ function publishedYearBatch(row: StoredFileRow): string {
                       <span v-else class="text-muted-foreground">—</span>
                     </TableCell>
                     <TableCell>
+                      <!-- 分类状态:已定 / 程序推的 / 未定。三档靠**线型**分开(与事件同一套
+                           语言 —— `dashed` = 还没坐实),不靠颜色 —— 颜色已被称号梯度占用。 -->
                       <Badge
                         :variant="row.categoryState === 'set' ? 'quiet' : 'dashed'"
                         :title="
@@ -587,7 +640,20 @@ function publishedYearBatch(row: StoredFileRow): string {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge :variant="row.parseState === 'failed' ? 'destructive' : 'quiet'">
+                      <!-- 解析状态:未解析 / 已解析 / 解析失败。
+                           与左边那列刻意用**不同**的线型:两列挨着、列宽也差不多,若默认态
+                           都画成同一条实线灰边(改前就是这样),扫视时这两列读成一个东西,
+                           「这份文件还没解析」这个信号就没了。`unparsed` 是**待办**,走虚线
+                           (与入库培育同一档语义);`parsed` 已坐实走实线;`failed` 才是红。 -->
+                      <Badge
+                        :variant="
+                          row.parseState === 'failed'
+                            ? 'destructive'
+                            : row.parseState === 'parsed'
+                              ? 'solid'
+                              : 'dashed'
+                        "
+                      >
                         {{ PARSE_STATES[row.parseState] }}
                       </Badge>
                     </TableCell>
@@ -603,7 +669,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                     <TableCell class="text-muted-foreground text-right text-xs tabular-nums">
                       {{ sizeOf(row) }}
                     </TableCell>
-                    <TableCell>
+                    <TableCell :class="ACTION_TD">
                       <div class="flex items-center gap-1">
                         <Button
                           variant="ghost"
@@ -642,11 +708,9 @@ function publishedYearBatch(row: StoredFileRow): string {
                     <TableCell :colspan="12" class="bg-muted/40 p-0">
                       <!-- 缩进 + 一条竖线,让这段明细读起来属于上面那一行(与详情页用竖线
                            分隔两侧来源是同一种手法),而不是又一张浮在里面的表。
-                           明细表按内容收窄(w-auto),不跟着外层撑满 —— 六列都是短值,撑满
-                           只会让「行数」的数字飘到老远。右侧空出来的地方放段数,免得留一大块白。 -->
-                      <div
-                        class="border-border/70 ml-5 flex items-start gap-4 border-l-2 py-3 pr-4 pl-4"
-                      >
+                           段数放在表**下面**当注脚 —— 先前放在右端与列头同一行,读成了第七个
+                           列头(「共 2 段」和「称号/事件/…」并排),要读两遍才分得清。 -->
+                      <div class="border-border/70 ml-5 flex flex-col gap-1.5 border-l-2 py-3 pr-4 pl-4">
                         <Table class="w-auto text-xs">
                           <TableHeader>
                             <TableRow class="hover:bg-transparent">
@@ -666,7 +730,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                                 附件
                               </TableHead>
                               <TableHead
-                                class="text-muted-foreground h-7 text-right text-xs font-medium"
+                                class="text-muted-foreground h-7 pr-3 text-right text-xs font-medium"
                               >
                                 行数
                               </TableHead>
@@ -696,9 +760,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                         </Table>
                         <!-- 只留段数。原先还有一句解释「年份是段的内容年份、公布年份/批次与段无关」
                              的话 —— 列头已经分别写着「公布年份/批次」和「内容年份」,不必再讲一遍模型。 -->
-                        <p
-                          class="text-muted-foreground ml-auto shrink-0 text-xs whitespace-nowrap tabular-nums"
-                        >
+                        <p class="text-muted-foreground text-xs tabular-nums">
                           共 {{ row.parts.length }} 段
                         </p>
                       </div>
@@ -811,3 +873,25 @@ function publishedYearBatch(row: StoredFileRow): string {
     <FilePreviewDialog v-model:open="previewOpen" :src="previewSrc" :name="previewFile?.filename ?? ''" />
   </div>
 </template>
+
+<style scoped>
+/*
+ * 钉在右边的「操作」列:横向滚动时它盖在中间列上,所以底色必须是**实心**的
+ * (`bg-card` / hover 的 `bg-accent`),半透明会透出底下的文字。
+ *
+ * 这两个底色的写法有两个要点:
+ *   1. 用 Tailwind 工具类写在模板里,不写进这个 style 块 —— 这里的规则不在 `@layer`
+ *      里,会**压过** Tailwind 的 `group-hover:*`(未分层的样式总是赢分层样式,与选择器
+ *      权重无关),那样 hover 时这一列不会跟着行底一起变深。
+ *   2. 单元格先铺一层不透明的 `bg-card`,hover 再叠 `bg-accent/70` —— 与行的
+ *      `hover:bg-accent/70` 走同一套合成(accent 70% 压在卡片白底上),两边得出的
+ *      像素完全相同。直接写不透明的 `bg-accent` 会**偏深一档**,行里会多出一条竖带。
+ * 这里只留一个不跟任何工具类打架的:分隔线。
+ *
+ * 分隔线只在真的横向溢出时才加(`isPinned`)。用 inset 的 box-shadow 而不是
+ * border-left:border 会占 1px 宽、把量好的 138px 列挤成 137px;阴影不占位。
+ */
+.pin-edge {
+  box-shadow: inset 1px 0 0 var(--border);
+}
+</style>

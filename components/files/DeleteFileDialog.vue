@@ -78,8 +78,11 @@ watch(open, (value) => {
           </AlertDescription>
         </Alert>
 
-        <!-- 危险动作单独勾选:默认不删盘,删盘是不可逆的。 -->
-        <div class="border-destructive/40 flex items-start gap-2.5 rounded-md border p-2.5">
+        <!-- 危险动作单独勾选:默认不删盘,删盘是不可逆的。
+             边框用实色 `border-destructive/50` 而不是更淡的 `/40` —— 实测 /40 在白底上
+             只有约 1.9:1,几乎看不见;这一块是**不可逆动作**的框,不能比上面那条可逆提示
+             (实色红字 6.85:1)还轻。可逆的在喊、不可逆的在耳语,注意力就被引到错的一侧。 -->
+        <div class="border-destructive/50 flex items-start gap-2.5 rounded-md border p-2.5">
           <Checkbox
             id="delete-disk"
             :model-value="deleteDisk"
