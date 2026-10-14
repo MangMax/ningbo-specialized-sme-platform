@@ -30,8 +30,9 @@
 ## 验收
 
 - [x] 页面上能看到某份 PDF 的页图缩略(`/files` → 预览 → 页图);12 张 / 97 张实测见文末第 8 节。
-- [x] app 测试全绿:`pnpm typecheck` 通过;最新 `pnpm test` → **22 files / 385 passed**
-      (后端那次基线 169 + 26;页面半边原有 19,2026-10-15 补 2 个分辨率回归用例)。
+- [x] app 测试全绿:`pnpm typecheck` 通过;最新 `pnpm test` → **22 files / 387 passed**
+      (后端那次基线 169 + 26;页面半边原有 19;2026-10-15 补 2 个分辨率回归用例,
+      再加 2 个「不必要二次请求」的反向用例 —— 见 8.5 / 8.6)。
 
 **分支**:`feat/pdf-to-png`。
 
@@ -137,8 +138,12 @@ files/<…>/.<文件名>.pages/.pages.json
 - ~~**页面部分**~~ → **已完成**(见第 8 节,分支 `feat/pdf-page-gallery-closeout`)。
   界面对用户可见,按仓库规则**须过 `oil-ui` 验收**(本轮由实现会话做真实 UI 走查,
   但**不由实现会话自己判过**)。
-- **「或批量」(原票 做什么 第 1 条)**:接口只收**单个** `file`,没有数组/批量形态。
-  批量的自然落点是页面上的循环(UI 不在本票范围);若以后要在服务端批,再加一个入口。
+- **「或批量」(原票 做什么 第 1 条)—— 只差「面向用户的批量 UI」,服务端批量入口已存在**:
+  `/api/pdf-pages` 只收**单个** `file`(同步);但**服务端批量入口不在本票** ——
+  票 19 已交付 `POST /api/jobs {kind:"render-pages"}`(异步任务,一次交 N 份、拿 jobId 轮询),
+  它**复用同一个 `renderPdfPages`**,产物与本票的同步入口一致(幂等判据同一个)。
+  所以「批量」缺的**不是服务端能力,而是页面上的批量操作**(勾几份文件一次渲染)——
+  那属于文件管理页的 UI,本票不做。见 [19](19-openapi.md)。
 - **`stored_page_image` 表与迁移**:按要求**本票不建表、不建迁移**。页图现在**只落盘**,
   由**确定性路径**索引;`page_no` 的权威来源是 `pNNN.png` 的文件名与 `.pages.json`。
   OCR(票 14)要按 `page_no` 回填时,需要一张表(或直接用清单)——
@@ -263,3 +268,26 @@ files/<…>/.<文件名>.pages/.pages.json
 `pnpm typecheck && pnpm test` 通过(**22 files / 385 tests**)。
 
 此项修复尚待**独立** `oil-ui` 与固定提交代码复审后再关闭本票验收。
+
+## 8.6 固定提交复审的处置(2026-10-15,`ae6c223` 之后)
+
+两份复审(standards PASS / spec 报 P1)的逐条处置。**不为了迎合误报加补丁** —— 下面每条都
+回到实现里核过路径,不适用的写明**为什么**不适用。
+
+### 采纳(本 commit)
+
+| # | 复审意见 | 处置 |
+| --- | --- | --- |
+| 1 | standards:「批量未完成」的措辞会让读者以为服务端没有批量入口 | **改措辞**(见上文「未完成」那条):限定为「只差**面向用户的批量 UI**」,并指向票 19 的 `POST /api/jobs {kind:"render-pages"}`。 |
+| 2 | spec:stale 那条用例「按清单 DPI 重查后仍不新鲜」**没有断言发生了二次请求** | **已补**:断言 `requests == [{file}, {file, dpi:300}]`。**已实测它在删掉二次请求时会失败**(把 `loadPageGalleryState` 改成只发一次 → 该用例 + 上面那条一起红)。顺带补了两个反向用例:清单就是默认 DPI 时**不**发二次请求、没有清单时也**不**发。 |
+
+### 不采纳(不适用,理由如下)
+
+| # | 复审意见 | 为什么不适用 |
+| --- | --- | --- |
+| 3 | **P1**:`loadPageGalleryState` 第二次响应的 `dpi` 可能与查询 DPI 不同 | **前提不成立**。核 `server/utils/pdf-pages.ts` 的 `listPdfPages`:有清单时返回的 `dpi` **恒等于 `manifest.dpi`**,而 `upToDate` 由 `sameDpi = manifest.dpi === 请求 dpi` 参与计算 —— 服务端**不回显请求 DPI**。所以「按清单 DPI 重查」得到的响应里 `dpi` 仍等于刚查到的那档,与查询值一致,不存在「响应 DPI ≠ 查询 DPI」。**并且**后续路径也不受影响:组件用 `state.dpi` 判 `galleryStatus`(第 105 行),重渲染 `POST` 也发 `dpi: dpi.value`(= `state.dpi`),两者用的是**同一个字段**,即便真有差异也是自洽的。 |
+| 4 | spec:stale 分支 `actionLabel` 的主按钮 `force=false`,可能跳过本该发生的重渲染 | **不适用**。`renderUncached` 的幂等短路条件是 `!force && state.upToDate && manifest.sourceSha256 === sourceSha256`(`server/utils/pdf-pages.ts`)。四个 stale 分支里:`pageCount===null` / `rendered!==total` / `dpi!==selectedDpi` 三种,服务端 `upToDate` 必然是 `false`(分别对应「读不出页数」「`noExtras` 为假」「`sameDpi` 为假」);第四种 `!upToDate` 本身就是 `false`。**四种都命不中短路 ⇒ 一律会真渲染** —— `force` 在这一层是多余的。它只在 `ready`(全对齐)那一档有意义,那一档给的正是 `force: true`。 |
+| 5 | spec:单张缩略图 `<img>` 没有 `@error` 失败反馈 | **记为本票范围外的建议,不做**。本票「失败反馈」的验收对象是**渲染**这个动作(空态有明确操作、渲染中给状态条、渲染失败用 Alert 照实报,均有实测);单张页图**加载失败**是**读**侧的问题,与既有预览器(`ImagePreview` 等)的处理方式一致 —— 它们同样不在缩略图级别逐张报错。补它要往网格里塞每张图的独立状态,超出「最窄收尾」,且会与 `loading="lazy"` 的加载时机纠缠。若确需,应作为一次「预览器统一失败呈现」的改动,不在本票。 |
+
+> 复审同时确认了 standards 无硬违规;`shadcn-vue` 组件用法、token、`pages/**` 改动面(仅 `files.vue`
+> 一句分支 + 三个新文件)均在本票范围内。

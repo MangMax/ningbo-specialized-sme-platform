@@ -163,16 +163,48 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
     expect(galleryStatus(loaded, loaded.dpi).tone).toBe('ready')
   })
 
-  it('按清单 DPI 重查后仍不新鲜时,保留真实异常状态', async () => {
+  it('按清单 DPI 重查后仍不新鲜时,保留真实异常状态(且确实发了第二次请求)', async () => {
     const file = state().file
     const stale = state({
       dpi: 300,
       upToDate: false,
       manifest: { dpi: 300, renderedAt: '2026-10-14T08:00:00.000Z' },
     })
-    const loaded = await loadPageGalleryState(file, async () => stale)
+    const requests: Array<{ file: string; dpi?: number }> = []
 
+    const loaded = await loadPageGalleryState(file, async (query) => {
+      requests.push(query)
+      return stale
+    })
+
+    // 关键断言:即便两次结果一样「不新鲜」,第二次**仍必须按清单 DPI 发出**。
+    // 只断言 tone 是拦不住的 —— 删掉二次请求后首个响应就是 stale,断言照样通过。
+    expect(requests).toEqual([{ file }, { file, dpi: 300 }])
     expect(galleryStatus(loaded, loaded.dpi).tone).toBe('stale')
+  })
+
+  it('清单就是默认 DPI 时**不**发第二次请求(省一次往返)', async () => {
+    const file = state().file
+    const requests: Array<{ file: string; dpi?: number }> = []
+    const loaded = await loadPageGalleryState(file, async (query) => {
+      requests.push(query)
+      return state()
+    })
+
+    expect(requests).toEqual([{ file }])
+    expect(loaded.upToDate).toBe(true)
+  })
+
+  it('没有清单(未渲染)时不发第二次请求 —— 没有清单 DPI 可依', async () => {
+    const file = state().file
+    const requests: Array<{ file: string; dpi?: number }> = []
+    const loaded = await loadPageGalleryState(file, async (query) => {
+      requests.push(query)
+      return state({ rendered: 0, pages: [], manifest: null, upToDate: false })
+    })
+
+    expect(requests).toEqual([{ file }])
+    expect(loaded.manifest).toBeNull()
   })
 })
 
