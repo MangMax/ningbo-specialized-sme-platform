@@ -30,8 +30,8 @@
 ## 验收
 
 - [x] 页面上能看到某份 PDF 的页图缩略(`/files` → 预览 → 页图);12 张 / 97 张实测见文末第 8 节。
-- [x] app 测试全绿:`pnpm exec nuxt typecheck` 通过;`pnpm exec vitest run` → **23 files / 420 passed**
-      (含页数未知时的单页标题回归用例,见 8.11)。
+- [x] app 测试全绿:`pnpm exec nuxt typecheck` 通过;`pnpm exec vitest run` → **23 files / 423 passed**
+      (含页数未知时的单页标题回归用例,见 8.11;以及缩放下限作用域隔离的 3 条用例,见 8.12)。
 
 **分支**:`feat/pdf-to-png`。
 
@@ -204,7 +204,12 @@ files/<…>/.<文件名>.pages/.pages.json
 | `lib/page-gallery.ts`(新) | **判断与措辞**全在这里(什么状态说什么、主按钮叫什么、要不要 `force`、`<img src>` 带不带版本号),纯函数,38 个用例钉住 |
 | `pages/files.vue` | 只多一句:`relPath` 是 PDF 就走 `PdfViewDialog`,否则仍是原来的 `FilePreviewDialog` |
 
-**非 PDF 行、台账页的预览**行为一字未改(`FilePreviewDialog` 没动,`components/preview/*` 也没动)。
+**非 PDF 行、台账页的预览**行为至今未变:`FilePreviewDialog` 没动。
+
+> 这句原写「`components/preview/*` 也没动」—— 那在**本票这一轮**成立(当时只**新增**了
+> `PageImageGallery.vue`),但**后续几轮确实改了** `ImagePreview.vue` / `PreviewToolbar.vue`
+> (重试恢复、缩放下限改为可配置等)。判据不是「文件没被碰过」,而是**每次改动都保持默认行为
+> 不变**:缩放下限尤其如此 —— 默认仍是 25%,只有页图库显式传 10%(8.8 的 R1 与 8.12)。
 停在「页图」时 PDF 查看器**根本不挂载**(`Tabs` 默认不 `forceMount`)—— 只看缩略图的人不必付
 一个 EmbedPDF 实例的开销。
 
@@ -284,7 +289,7 @@ files/<…>/.<文件名>.pages/.pages.json
 
 | # | 复审意见 | 为什么不适用 |
 | --- | --- | --- |
-| 3 | **P1**:`loadPageGalleryState` 第二次响应的 `dpi` 可能与查询 DPI 不同 | **前提不成立**。核 `server/utils/pdf-pages.ts` 的 `listPdfPages`:有清单时返回的 `dpi` **恒等于 `manifest.dpi`**,而 `upToDate` 由 `sameDpi = manifest.dpi === 请求 dpi` 参与计算 —— 服务端**不回显请求 DPI**。所以「按清单 DPI 重查」得到的响应里 `dpi` 仍等于刚查到的那档,与查询值一致,不存在「响应 DPI ≠ 查询 DPI」。**并且**后续路径也不受影响:组件用 `state.dpi` 判 `galleryStatus`(第 105 行),重渲染 `POST` 也发 `dpi: dpi.value`(= `state.dpi`),两者用的是**同一个字段**,即便真有差异也是自洽的。 |
+| 3 | **P1**:`loadPageGalleryState` 第二次响应的 `dpi` 可能与查询 DPI 不同 | **前提不成立**。核 `server/utils/pdf-pages.ts` 的 `listPdfPages`:有清单时返回的 `dpi` **恒等于 `manifest.dpi`**,而 `upToDate` 由 `sameDpi = manifest.dpi === 请求 dpi` 参与计算 —— 服务端**不回显请求 DPI**。所以「按清单 DPI 重查」得到的响应里 `dpi` 仍等于刚查到的那档,与查询值一致,不存在「响应 DPI ≠ 查询 DPI」。**并且**后续路径也不受影响:组件判状态(`galleryStatus(state.value, dpi.value, …)`)与重渲染 `POST`(`body.dpi = dpi.value`)**用的是同一个 `dpi.value`** —— 它是组件自己的**当前选择** ref(初值 `DEFAULT_DPI`,取到现状后若用户没手动改过就同步成 `loaded.state.dpi`),**不是 `state.dpi`**。两个用途同源,所以即便响应里的 `dpi` 真有差异也自洽。 |
 | 4 | spec:stale 分支 `actionLabel` 的主按钮 `force=false`,可能跳过本该发生的重渲染 | **不适用**。`renderUncached` 的幂等短路条件是 `!force && state.upToDate && manifest.sourceSha256 === sourceSha256`(`server/utils/pdf-pages.ts`)。四个 stale 分支里:`pageCount===null` / `rendered!==total` / `dpi!==selectedDpi` 三种,服务端 `upToDate` 必然是 `false`(分别对应「读不出页数」「`noExtras` 为假」「`sameDpi` 为假」);第四种 `!upToDate` 本身就是 `false`。**四种都命不中短路 ⇒ 一律会真渲染** —— `force` 在这一层是多余的。它只在 `ready`(全对齐)那一档有意义,那一档给的正是 `force: true`。 |
 | 5 | spec:单张缩略图 `<img>` 没有 `@error` 失败反馈 | **记为本票范围外的建议,不做**。本票「失败反馈」的验收对象是**渲染**这个动作(空态有明确操作、渲染中给状态条、渲染失败用 Alert 照实报,均有实测);单张页图**加载失败**是**读**侧的问题,与既有预览器(`ImagePreview` 等)的处理方式一致 —— 它们同样不在缩略图级别逐张报错。补它要往网格里塞每张图的独立状态,超出「最窄收尾」,且会与 `loading="lazy"` 的加载时机纠缠。若确需,应作为一次「预览器统一失败呈现」的改动,不在本票。 |
 
@@ -357,7 +362,7 @@ files/<…>/.<文件名>.pages/.pages.json
 
 | # | 意见 | 处置与实测 |
 | --- | --- | --- |
-| R1 | 390px 单页不可读、**窄屏没有缩放入口**,且标注 25% 与实际宽度不符 | 两处都修:①`ImagePreview` 的 `ZOOM_MIN` 0.25 → **0.1** —— 390px 里整页「适应」需要约 19%,卡在 25% 会号称适应却横向裁掉一截,百分比与实际尺寸对不上;②页图库**单页头部**补一组 `缩小 / 适宽 / 放大`(`sm:hidden`,与 `PreviewToolbar` 的宽屏控件错开,不会出现两套)。实测 390px:标签 **19%** ↔ 实渲 322px / 自然宽 1653 = **19.5%**,一致;连点放大到 **38%**(636px/1653 = 38.4%)后正文可读 —— 全程不需要下载或全屏 |
+| R1 | 390px 单页不可读、**窄屏没有缩放入口**,且标注 25% 与实际宽度不符 | 两处都修:①**页图单页视图的缩放下限允许到 10%** —— 390px 里整页「适应」需要约 19%,卡在 25% 会号称适应却横向裁掉一截,百分比与实际尺寸对不上(**注**:这里最初是把 `ImagePreview` 的 `ZOOM_MIN` **常数**由 0.25 直接改成 0.1,那会**连带改掉普通图片与台账「出处」预览**的下限 —— 已按复核改成**可配置**,即最终实现:`zoomMin` 默认 25%、页图库单独传 `PAGE_IMAGE_ZOOM_MIN = 0.1`,工具栏的 clamp 与「缩小」禁用判据同步;见 8.12);②页图库**单页头部**补一组 `缩小 / 适宽 / 放大`(`sm:hidden`,与 `PreviewToolbar` 的宽屏控件错开,不会出现两套)。实测 390px:标签 **19%** ↔ 实渲 322px / 自然宽 1653 = **19.5%**,一致;连点放大到 **38%**(636px/1653 = 38.4%)后正文可读 —— 全程不需要下载或全屏 |
 | R2 | 失败态同时出现「渲染失败」+「还没有页图」,语义冲突;失败按钮命名/层级不合适 | 失败时**整块不画空态**(红条已占位);失败后的主按钮统一为「**渲染失败** → **重新渲染**」且**改为描边**(`outline`)—— 原因指向无效/损坏 PDF 时,实心主按钮是在诱导一次注定无效的重试。`GalleryStatus` 新增 `action` / `variant` 两字段承载这个判断(纯函数,有用例) |
 
 ### UI 复核 S 系列(本轮一并修,未扩范围)
@@ -517,4 +522,64 @@ hover/focus 的强调边框与 ring 仍在(见 8.8)。97 页那格同样复核�
 同时断言 `pageCount: null, rendered: 4` 不再输出总页数,以及总数已知时仍按真实总数显示。修复分支验证:
 `pnpm exec vitest run tests/page-gallery.test.ts` (**1 file / 38 passed**),
 `pnpm exec vitest run` (**23 files / 420 passed**),`pnpm exec nuxt typecheck` (**exit 0**)。
+> 这里的 **420 是当时**(该修复合入的 `02e12ad`)的结果,**保留为历史记录、不追改**;
+> 当前(31b)`pnpm exec vitest run` = **23 files / 423 passed**(后续轮次又补了用例,见 8.12)。
+
 上述 UI 复核仍以最终合入候选 SHA 为准。
+
+## 8.12 第六轮:缩放下限的作用域隔离 + 计数/口径校正(2026-10-15,`31b517b`)
+
+`31b517baec267e60b3284331406e43dabc4e9bea`(分支 `fix/t13-final-review-notes`,父 `7bd6d9a`)。
+
+### 改了什么
+
+独立复核 P3:`ImagePreview` 把**模块级** `ZOOM_MIN` 由 0.25 改成 0.1(8.8 的 R1),而它
+**同时服务 `/files` 以外的普通图片预览与台账「出处」预览** —— 等于一处改动让全站下限都降,
+与 §8.1/§8.4「非 PDF 与台账预览行为未变」冲突。这是**可避免的跨页面行为改变**,不能靠文档掩盖。
+
+**最终实现:下限按调用方传,不再写死。**
+
+| 位置 | 改动 | 默认行为 |
+| --- | --- | --- |
+| `components/preview/ImagePreview.vue` | 新增 `zoomMin` prop;自己的 clamp 用它;经 `:zoom-min` 交给工具栏 | **0.25**(与改动前的常数一致) |
+| `components/preview/PreviewToolbar.vue` | 新增同名 `zoomMin` prop;**clamp 与「缩小」禁用判据**都改用它(原写死 0.25) | **0.25**(同上) |
+| `lib/page-gallery.ts` | 新增 `PAGE_IMAGE_ZOOM_MIN = 0.1`,标注为**页图库专用例外** | — |
+| `components/preview/PageImageGallery.vue` | 单页视图显式传 `:zoom-min="PAGE_IMAGE_ZOOM_MIN"` | **0.1**(仅此一路) |
+
+两处默认值 = **改动前的常数**,所以既有调用方(含同样用工具栏缩放的 `OfficePreview`)行为
+**逐字不变**。工具栏**必须**跟着走:只改图片的钳制会让两者打架 —— 图片缩到 19%,「缩小」却是灰的。
+
+### 测试(3 条新增,`tests/image-preview.test.ts` 共 **21** 例)
+
+1. `普通预览(不传 zoomMin)维持 **25% 下限** —— 台账出处预览等页面行为不变`(并断言 25% 时「缩小」灰掉);
+2. `页图库路径(zoomMin=0.1)可**低于 25%**,且工具栏边界跟着降到 10%`(19% 时「缩小」仍可按 —— 即工具栏同步);
+3. `页图库确实把 PAGE_IMAGE_ZOOM_MIN 传给了预览器(接线,不只是常数)`:桩掉 `$fetch` 挂真组件链,
+   从 `PageImageGallery` 走到单页视图读 `zoomMin` prop,并对照「不传时为 0.25」。
+
+**变异验证**(三次都恰好挂 1 条针对性用例):钳制还原成模块级 0.1 / 不把 `zoomMin` 传给工具栏 /
+页图库不传下限 ⇒ 分别命中上述 1、2、3。恢复后该文件 **21 passed**。
+
+> 数清楚:那个文件是 **21 个用例**;全量 `pnpm exec vitest run` 是 **23 个文件 / 423 passed** ——
+> 「23」是**文件数**,别当成这个文件的用例数(这里先前就写错成 23,已更正)。
+
+> 8.8 里那条 **19% ↔ 实渲 322px / 自然宽 1653 = 19.5%** 的浏览器实测**未改动**:
+> 它量的是页图路径,而页图路径现在仍到得了 19%(`PAGE_IMAGE_ZOOM_MIN = 0.1`),测量结论照旧成立。
+
+### 同一提交里的文档校正(仅文档)
+
+- 顶部验收行与本节:测试计数 **420 → 423**(31b 实际;420 作为 `02e12ad` 的历史结果**原样保留**在 8.11);
+- §8.1:删掉「`components/preview/*` 也没动」(后续轮次确实改过),改判据为「每次改动都保持**默认行为**不变」;
+- §8.8 R1 的 ①:更正为最终的可配置实现(默认 25%、页图库 10%),不把旧实现写成最终实现;
+- §8.12 测试段:把 `tests/image-preview.test.ts` 的用例数由笔误的 23 改为 **21**,并写清「23」是全量**文件数**;
+  同时把含糊的「恢复后 23 passed」改成该文件的 **21 passed**(并注明命令范围);
+- `issues/README.md`:页图分辨率摘要由「可调 200/300 DPI」校正为 **150/200/300 DPI**(与 `lib/page-gallery.ts` 的 `DPI_PRESETS` 一致;仅表述);
+- §8.6 反驳表第 3 项:原文写「组件用 `state.dpi` 判 `galleryStatus`(第 105 行),`POST` 发 `dpi.value`(= `state.dpi`)」
+  —— 两处都不准。实际是 `galleryStatus(state.value, dpi.value, …)` 与 `body.dpi = dpi.value`,用的是**组件自己的当前选择
+  `dpi.value`**(同步自 `loaded.state.dpi`,但字段不是 `state.dpi`)。已改为准确表述,并**删掉「第 N 行」这类会漂移的行号**;
+- §8.1 的表:`lib/page-gallery.ts` 用例数 **19 → 38**(实测);
+- 票 15 与 `issues/README.md`:把混在一个标签下的数字拆开 —— **种子总量 136 条**(前轮 7 + 本轮 129)、
+  **当前库缺统代 133 家**分档(补 38 / 占用 21 / 待人工 70 / 查不到 4 = 133)、**133 + 上轮已补 3 = 136**
+  (初始基准)。该票已 done,**本轮只动表述,不改结论**。
+
+验证:`pnpm exec vitest run` → **23 files / 423 passed**(exit 0);`pnpm exec nuxt typecheck` → **exit 0**;
+`git diff --check` 干净。跑测试时 `NUXT_DB_PATH` 指向 /tmp,未触碰正式 `files/`、`data/`、DB。
