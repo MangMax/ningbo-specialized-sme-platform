@@ -8,8 +8,11 @@
 | 02 | Nitro 接口 `GET /api/comparison` | 01 | ✅ done |
 | 03 | 比对页面 `/comparison` + 侧栏入口 + 导出 | 02 | ✅ done(真实漂移徽标验收受数据字段缺失阻塞,见票 03) |
 | 04 | 人工标注 `curated`(JSON 落盘 + PATCH + 页面开关) | 02 | ✅ done |
+| — | UI/UX 验收(oil-ui,验收到合格) | 03, 04 | ✅ 合格,见 [UI-ACCEPTANCE](../UI-ACCEPTANCE.md) |
 
-**前沿**:无 —— 01–04 实施已完成;人工标注验证记录见票 04。票 03 的真实城市/登记状态字段验收缺口见该票验证记录。
+**全部完成并已合入 `main`**(2026-10-14):01–04 实施 + oil-ui UI/UX 验收合格。真实库四个数字复现(市专 **337 / 13**、创新型 **543 / 28**、小巨人 **0 / 0**),126 测试 + typecheck 全绿。
+
+**唯一保留的边界**:真实库中 `enterprise.city` 与 `reg_status` **全为空**(外部工商富化数据不入库),故「漂移 / 注销」标记与「已核实数」在真实数据上恒为空态 —— 其呈现以浏览器只读 fixture 验证,不宣称真实库已有这些字段。见 [UI-ACCEPTANCE](../UI-ACCEPTANCE.md)。
 
 ## 依赖图
 
@@ -33,3 +36,5 @@
 - 数据处理优先 **es-toolkit / 原生 ES6**(`groupBy` / `keyBy` / `partition` / `uniqBy`),不要手写大量判断循环。
 - 页面取数用 **Pinia Colada `useQuery`** + `placeholderData: (previous) => previous`(切 tab 不闪回)。
 - 票 01/02 提交分支:`feat/comparison-core`(按用户本次指令从干净 `main` 创建,覆盖旧分支约定);`git add` 只加本票文件,不提交无关未跟踪文件。
+
+> 完成后:四张票的分支(`feat/comparison-{core,page,curation,ui-polish}`)均已快进合入 `main`。
