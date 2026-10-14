@@ -288,7 +288,23 @@ const imgStyle = computed(() => ({
         retryable
         @retry="retry"
       />
-      <div class="absolute inset-0 flex items-center justify-center">
+      <!--
+        图片层:**没显示出可用图片时一律不接指针事件**。
+
+        它是状态层(`PreviewStates`,里面有「重试」按钮)的**后置兄弟**,两者都是
+        `absolute inset-0`。后置的兄弟在绘制与命中上都压在上面 —— 于是这一层会盖住
+        重试按钮、把鼠标点击吞掉(`elementFromPoint` 命中它而不是按钮);而键盘 Tab/Enter
+        不经过命中测试,所以**只坏鼠标**,表现成「按钮看得见、点不动」。
+
+        用 `pointer-events` 而不是 z-index:它不依赖绘制顺序(以后再有人给图片层或夹层加
+        z-index 也不会把这个洞捅回来),而且语义正好是我们要的那句 —— 「一张还没显示出来
+        的图,不该接任何指针事件」。`status === 'ready'` 时**不加**这个类,图片层的指针
+        事件与拖拽/缩放/手势完全保持原样。
+      -->
+      <div
+        class="absolute inset-0 flex items-center justify-center"
+        :class="status === 'ready' ? '' : 'pointer-events-none'"
+      >
         <img
           ref="img"
           :key="retryAttempt"
