@@ -15,7 +15,7 @@ import {
 import { formatBytes } from '~~/lib/upload'
 import { fileUrl } from '~~/lib/preview'
 import { joinSeries, partBatches, partYears, seriesLabel } from '~~/lib/file-parts'
-import type { StoredFileRow } from '~~/server/utils/stored-files'
+import type { BackfillReport, StoredFileRow } from '~~/server/utils/stored-files'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -79,13 +79,8 @@ const apiGet = $fetch as unknown as <T>(
 interface FilesResponse {
   rows: StoredFileRow[]
   total: number
-  backfill?: {
-    inserted: number
-    updated: number
-    unchanged: number
-    skipped: string[]
-    parts: { files: number; parts: number; orphanPaths: string[] }
-  }
+  /** 只在真的跑过回填的那一次请求里出现(形状与接口共用一处)。 */
+  backfill?: BackfillReport
 }
 
 const queryCache = useQueryCache()
@@ -570,11 +565,8 @@ function publishedYearBatch(row: StoredFileRow): string {
                                 <TitleBadge :code="part.titleCode" />
                               </TableCell>
                               <TableCell class="py-1.5">
-                                <EventChip
-                                  :type="part.eventKind"
-                                  :year="part.year"
-                                  :seq="part.batch"
-                                />
+                                <!-- 年份/批次在右边各有一列,这里只出事件类型,不重复写一遍。 -->
+                                <EventChip :type="part.eventKind" hide-batch />
                               </TableCell>
                               <TableCell class="py-1.5 tabular-nums">{{ part.year ?? '—' }}</TableCell>
                               <TableCell class="py-1.5 tabular-nums">{{ part.batch ?? '—' }}</TableCell>

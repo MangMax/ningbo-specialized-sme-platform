@@ -465,6 +465,26 @@ describe('回填的边界', () => {
     expect(stats.files).toBe(3)
   })
 
+  it('evidence 被清掉后,残留的段跟着清掉(段整体派生于 evidence,不是只增不减)', () => {
+    const relPath = 'jxj/announcement/2099/2/将失效.pdf'
+    const fileId = seedFile(relPath, { year: 2099, batch: 2 })
+    seedEvidence({
+      relPath,
+      titleCode: 'innovative_sme',
+      eventKind: 'award',
+      year: 2099,
+      batch: 2,
+      attachment: '附件',
+      rows: 2,
+    })
+    backfillFileParts(db)
+    expect(listFileParts(db, [fileId]).get(fileId)).toHaveLength(1)
+
+    db.delete(schema.recordEvidence).where(eq(schema.recordEvidence.sourceFile, relPath)).run()
+    backfillFileParts(db)
+    expect(listFileParts(db, [fileId]).has(fileId)).toBe(false)
+  })
+
   it('文件被删时它的段级联删掉,不留孤儿', () => {
     const fileId = fileIdOf(FILE_MIIT)
     expect(listFileParts(db, [fileId]).has(fileId)).toBe(true)

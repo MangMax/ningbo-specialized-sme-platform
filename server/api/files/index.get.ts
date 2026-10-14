@@ -4,16 +4,11 @@ import {
   CATEGORY_STATES,
   listStoredFiles,
   PARSE_STATES,
-  type BackfillStats,
+  type BackfillReport,
 } from '../../utils/stored-files'
-import { backfillFileParts, type PartsBackfillStats } from '../../utils/file-parts'
+import { backfillFileParts } from '../../utils/file-parts'
 import type { CategoryState, FileSource, ParseState } from '~~/lib/stored-file'
 import { SOURCE_ORDER } from '~~/lib/labels'
-
-/** 两趟回填的合并回报(文件行 + 段),便于验收时一次核对。 */
-interface BackfillReport extends BackfillStats {
-  parts: PartsBackfillStats
-}
 
 /**
  * 文件库列表。`GET /api/files?source=&categoryState=&parseState=&q=&page=&pageSize=`

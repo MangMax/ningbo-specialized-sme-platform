@@ -6,11 +6,11 @@
  * 在同一个「附件」里并置了 2021 与 2022 两段名单。所以**文件级的单个 year/batch 是错的**,
  * 真实粒度是 `(称号, 事件类型, 年份, 批次, 附件)`。
  *
- * 文件级另有 `published_year` / `published_batch`(`stored_file` 上),那是**目录给出的
- * 「这份文件是哪一批公布的」**(单值、可排序),与这里的**内容年份/批次**是两回事 ——
- * 别混。见 `.scratch/ingest-pipeline/issues/17-file-parts.md`。
+ * 文件级另有 `stored_file.year` / `batch`,那是**目录给出的「这份文件是哪一批公布的」**
+ * (单值、可排序,页面标签写作「公布年份/批次」),与这里的**内容年份/批次**是两回事 —— 别混。
+ * 见 `.scratch/ingest-pipeline/issues/17-file-parts.md`。
  */
-import { EVENT_ORDER, TITLE_ORDER } from './labels'
+import { EVENT_ORDER, TITLE_ORDER, TITLE_RANK } from './labels'
 
 /** 事件类型。与 `record_event.event_type`、`stored_file_part.event_kind` 同一套取值。 */
 export type EventKind = 'award' | 'review' | 'maintain' | 'nurture'
@@ -45,10 +45,14 @@ export function partKey(p: PartEvidence): string {
   return [p.titleCode, p.eventKind, p.year ?? NIL, p.batch ?? NIL, p.attachment ?? NIL].join('|')
 }
 
-/** 称号等级(小巨人 < 专精特新 < 创新型);认不出排最后。 */
+/**
+ * 称号等级(小巨人 1 < 专精特新 2 < 创新型 3);认不出排最后。
+ *
+ * 直接用 `lib/labels.ts` 的 `TITLE_RANK`(称号 → 等级的唯一来源),不另算一份 ——
+ * 两处各算一次,迟早有一处忘了改。
+ */
 function titleRank(code: string): number {
-  const i = TITLE_ORDER.indexOf(code)
-  return i < 0 ? TITLE_ORDER.length : i
+  return TITLE_RANK[code] ?? TITLE_ORDER.length + 1
 }
 
 /** 事件次序(认定 → 复核 → 维护 → 入库培育);认不出排最后。 */
@@ -141,5 +145,5 @@ export function joinSeries(values: readonly number[]): string | null {
 export function seriesLabel(values: readonly number[], max = 2): string | null {
   if (!values.length) return null
   if (values.length <= max) return joinSeries(values)
-  return `${values.slice(0, max).join('、')} +${values.length - max}`
+  return `${joinSeries(values.slice(0, max))} +${values.length - max}`
 }

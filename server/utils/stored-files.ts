@@ -24,7 +24,7 @@ import {
   type ParseState,
 } from '../../lib/stored-file'
 import type { FilePart } from '../../lib/file-parts'
-import { listFileParts } from './file-parts'
+import { listFileParts, type PartsBackfillStats } from './file-parts'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -173,6 +173,14 @@ export interface BackfillStats {
    * 这些文件仍**不入表** —— 不猜。
    */
   skipped: string[]
+}
+
+/**
+ * 两趟懒回填的**合并回报**(文件行 + 段)。接口与页面共用这一处 ——
+ * 各写一份的话,加一个字段就会漂移。
+ */
+export interface BackfillReport extends BackfillStats {
+  parts: PartsBackfillStats
 }
 
 /**

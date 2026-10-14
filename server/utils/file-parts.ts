@@ -45,11 +45,14 @@ export function readEvidencePartRows(db: Db): EvidencePartRow[] {
 
 /**
  * 从 `record_evidence` 回填 `stored_file_part`。**幂等**:每个文件先删段、再按聚合结果插入,
- * 重跑结果完全一致(本表整体派生于 evidence,重建无损)。
+ * 重跑结果完全一致。
  *
  * 口径(票 17):
  *  - **只回填有引用的文件** —— 没有 `record_evidence` 的文件(实测 2 份 `.doc`)这时还不知道
  *    里面有什么,留空交给票 11 解析时按段写入,而不是猜一个。
+ *  - **遍历全部 `stored_file` 行**(不只是有引用的那些),因为段整体派生于 evidence:
+ *    某个文件原先有引用、后来引用被清掉时,这样才会把**残留的段一起清掉**,
+ *    而不是留下一份与 evidence 对不上的旧段。
  *  - 有引用但库里没有对应 `stored_file` 行的路径(漏扫 / 已移出库)一并报出、跳过。
  *  - 附件名按 `lib/attachment.ts` 归一后再聚合 —— 「附 件 1」与「附件1」必须并成同一段。
  */
@@ -68,29 +71,26 @@ export function backfillFileParts(db: Db): PartsBackfillStats {
     else byPath.set(row.relPath, [evidence])
   }
 
-  const idByPath = new Map(
-    db
-      .select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath })
-      .from(schema.storedFile)
-      .all()
-      .map((r) => [r.relPath, r.id]),
-  )
+  const files = db
+    .select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath })
+    .from(schema.storedFile)
+    .all()
+  const knownPaths = new Set(files.map((f) => f.relPath))
 
   const stats: PartsBackfillStats = { files: 0, parts: 0, orphanPaths: [] }
+  for (const relPath of byPath.keys()) {
+    if (!knownPaths.has(relPath)) stats.orphanPaths.push(relPath)
+  }
 
   db.transaction((tx) => {
-    for (const [relPath, evidence] of byPath) {
-      const fileId = idByPath.get(relPath)
-      if (fileId === undefined) {
-        stats.orphanPaths.push(relPath)
-        continue
-      }
-      const parts = aggregateParts(evidence)
-      // 先删后插:本表全部派生于 evidence,重建无损;这一条保证了重跑幂等。
-      tx.delete(schema.storedFilePart).where(eq(schema.storedFilePart.fileId, fileId)).run()
+    for (const file of files) {
+      const parts = aggregateParts(byPath.get(file.relPath) ?? [])
+      // 先删后插:本表全部派生于 evidence,重建无损;这一条既保证重跑幂等,
+      // 也保证「evidence 没了 → 段跟着没」。
+      tx.delete(schema.storedFilePart).where(eq(schema.storedFilePart.fileId, file.id)).run()
       if (!parts.length) continue
       tx.insert(schema.storedFilePart)
-        .values(parts.map((p) => ({ fileId, ...p })))
+        .values(parts.map((p) => ({ fileId: file.id, ...p })))
         .run()
       stats.files += 1
       stats.parts += parts.length
