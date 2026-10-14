@@ -4,7 +4,21 @@
 
 **Blocked by:** 03(出处路径);依赖事实见下。
 
-**Status:** ready-for-agent
+**Status:** ✅ done(2026-10-14,平行会话落地,本会话核验并合入)
+
+## 完成记录
+
+采用**做法 1(转 `.docx`)**。产物落 `files/jxj/announcement/2023/1/*.docx`,原 `.doc` 保留归档。
+
+- ✅ 2 份 `.doc` 转出 `.docx`(38,748 B / 23,904 B),magic `PK`,文字完整(10,906 / 4,741 汉字;文号 78/77 号正确)。
+- ✅ 962 行 `record_evidence.source_file` 改指 `.docx`,库内 `.doc` **归零**(重导后 `.pdf 11410 / .docx 962 / .xlsx 9768`)。
+- ✅ 预览路由对这 2 份返回 200(不再 415),**未写任何 415 特判**。
+- ✅ 原 `.doc` 保留(与转出件同目录并存)。
+- ✅ `resolveStoreFile` 按 **PDF → `.docx` → `.doc`** 取可预览者(原先「原路径存在就直接返回」会让 `.doc` 归档一直盖住转出件)。
+- ✅ pipeline `vp check` + 31 测试通过;app `pnpm typecheck` 通过、`pnpm test` 99 项通过。
+- ⚠️ `db:import` 的「幂等」不含刷新 `source_file`(已存在事件被 `continue` 跳过):文件库变化后需**清库重建**才生效,已记入 `files/README.md`。
+
+**做法 2(转 PDF)已实测否决**:本机 headless LibreOffice 缺中文字体,转 PDF 会把正文整篇丢成空白(退出码仍为 0)。故验收口径取「**可预览、内容可读、残留串号另行清理**」,不写「渲染正确」。
 
 ## 事实(已核实)
 
