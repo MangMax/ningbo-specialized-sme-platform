@@ -2,7 +2,6 @@
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { Upload } from 'tus-js-client'
 import type { HttpResponse } from 'tus-js-client'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -16,6 +15,7 @@ import UploadDropzone from './UploadDropzone.vue'
 import UploadItem from './UploadItem.vue'
 import MetadataFields from './MetadataFields.vue'
 import type { BatchMeta, UploadFailure, UploadMetadata, UploadPhase } from '@/lib/upload'
+import type { UploadedFile } from '@/lib/upload-register'
 import {
   TUS_ENDPOINT,
   baseName,
@@ -29,7 +29,6 @@ import {
   matchPreviousUpload,
   metadataPayload,
   resumeKey,
-  suggestBatch,
   toUploadFailure,
   validateBatch,
 } from '@/lib/upload'
@@ -43,6 +42,10 @@ import {
  *
  * 队列**顺序上传一次一个**:文件库是单机磁盘,并发抢同一块盘没有收益,反而更难看清进度。
  * 传完一个自动开下一个。
+ *
+ * **只管传字节**:传完之后怎么登记进库由外面的容器决定(见 `lib/upload-register.ts`),
+ * 面板通过 `uploaded` 事件把结果交出去 —— 所以这里既不写库,也不假设自己摆在哪种容器里,
+ * 不带卡片外壳(容器负责排版;卡片套进弹窗会变成「卡片里套卡片」,DESIGN.md 明确不要)。
  */
 const props = withDefaults(
   defineProps<{
@@ -55,7 +58,11 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'uploaded', payload: { name: string; path: string; size: number }): void
+  /**
+   * 一份文件**已传完并落位**。交给外面的容器去登记(见 `lib/upload-register.ts`)——
+   * 面板只管传字节,不管「登记进库」这件事怎么做。
+   */
+  (e: 'uploaded', file: UploadedFile): void
   (e: 'error', payload: { name: string; failure: UploadFailure }): void
 }>()
 
@@ -74,6 +81,8 @@ interface UploadTask {
   destination: string | null
   /** 仅本地兜底:本次请求声明的落位路径。 */
   declaredPath: string
+  /** 本次请求**实际声明**的元数据(发出瞬间的快照)—— 完成登记时要用它,不是当下的 `meta`。 */
+  declaredMeta: UploadMetadata | null
   failure: UploadFailure | null
   /** 平滑后的速度,字节/秒。 */
   speed: number
@@ -122,9 +131,7 @@ const dropHint = computed(() => {
   return '或点击选择文件'
 })
 
-const emptyMeta = computed(() => !meta.value.source && !meta.value.kind)
-
-/** 预览用:队列里第一条还没传的文件名。 */
+/** 预览用:队列里第一条还没传的文件名(表单的建议值与落位预览都按它算)。 */
 const previewFilename = computed(() => queue.value.find((t) => t.phase !== 'done')?.name ?? '')
 
 // ─────────────────────────────────────────────────────────────
@@ -135,10 +142,9 @@ function openAddDialog(files: File[]) {
   if (props.disabled || files.length === 0) return
   pendingFiles.value = files
   pendingName.value = files[0] ? baseName(files[0].name) : ''
-  // 落位信息还空着时才从文件名预填;用户已经选过,就不动他的选择。
-  if (emptyMeta.value) {
-    meta.value = { ...meta.value, ...suggestBatch(pendingName.value) }
-  }
+  // 不再从文件名**自动回填**落位信息:建议值由 `MetadataFields` 摆出来、由用户点「采纳」
+  // 才写入(票 10「最终以用户填写为准」)。自动填死会替用户拍板,而文件名里的年份常常
+  // 是复核的原始认定年份(见 lib/stored-file.ts 的同名告诫)—— 猜错就是错的落位。
   dialogOpen.value = true
 }
 
@@ -167,6 +173,7 @@ function addToQueue(files: File[]) {
       progress: 0,
       destination: null,
       declaredPath: '',
+      declaredMeta: null,
       failure: null,
       speed: 0,
       eta: undefined,
@@ -217,6 +224,7 @@ function startTask(task: UploadTask) {
   // 这一次请求声明的落位:在发出的瞬间快照下来,之后的预览改动不影响它。
   const declared: UploadMetadata = buildMetadata(meta.value, task.name)
   task.declaredPath = landingPath(declared)
+  task.declaredMeta = declared
   task.failure = null
   task.resumable = false
   task.phase = 'uploading'
@@ -298,8 +306,12 @@ function onSuccess(task: UploadTask, response: HttpResponse) {
   task.phase = 'done'
   // 落位路径以**服务端回报**为准(同名会加 ` (n)`,预览算不出那个后缀)。
   task.destination = readUploadPath(response) ?? task.declaredPath
-  const path = task.destination ?? task.declaredPath
-  emit('uploaded', { name: task.name, path, size: task.size })
+  const relPath = task.destination ?? task.declaredPath
+  // 声明用**发出那次请求的快照**:`startTask` 在 `upload.start()` 之前就赋了值,
+  // 而 `onSuccess` 只可能在它之后触发 —— 所以这里必非空(断言而非兜底,兜底会
+  // 退回读当下表单,反而把后加入文件的落位信息按到这一条的登记上)。
+  const declared = task.declaredMeta!
+  emit('uploaded', { name: task.name, relPath, size: task.size, meta: declared })
   release(task)
 }
 
@@ -425,15 +437,8 @@ defineExpose({ addFiles: addToQueue })
 </script>
 
 <template>
-  <Card class="gap-0 overflow-hidden py-0">
-    <CardHeader class="gap-1 border-b px-5 py-4">
-      <CardTitle class="text-base font-medium">上传文件</CardTitle>
-      <CardDescription>
-        把公布文件拖进来,填好来源与类别,传完会告诉落在文件库的哪个路径。
-      </CardDescription>
-    </CardHeader>
-
-    <CardContent class="flex flex-col gap-5 p-5">
+  <div class="flex flex-col">
+    <div class="flex flex-col gap-5">
       <UploadDropzone :disabled="disabled" :hint="dropHint" @files="openAddDialog" />
 
       <MetadataFields
@@ -446,11 +451,11 @@ defineExpose({ addFiles: addToQueue })
       <p v-if="waitingForMeta" class="text-muted-foreground text-xs">
         上面四项填好后,队列会自动开始上传。
       </p>
-    </CardContent>
+    </div>
 
     <!-- 队列:有东西才出现。 -->
     <template v-if="queue.length">
-      <div class="bg-muted/40 flex items-center justify-between gap-3 border-y px-5 py-2.5">
+      <div class="bg-muted/40 mt-5 flex items-center justify-between gap-3 border-y px-2 py-2.5">
         <div class="flex items-baseline gap-2">
           <span class="text-sm font-medium">队列</span>
           <span class="text-muted-foreground text-xs tabular-nums">
@@ -492,42 +497,42 @@ defineExpose({ addFiles: addToQueue })
         </li>
       </ul>
     </template>
+  </div>
 
-    <!-- 入队前先把落位信息确认掉:确认框里就能看见东西会落到哪。 -->
-    <Dialog v-model:open="dialogOpen">
-      <DialogContent class="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>这份文件放到哪里</DialogTitle>
-          <DialogDescription>
-            落位由服务端按文件库规则裁决;下面填的是声明,填错了会被服务端挡回来。
-          </DialogDescription>
-        </DialogHeader>
+  <!-- 入队前先把落位信息确认掉:确认框里就能看见东西会落到哪。 -->
+  <Dialog v-model:open="dialogOpen">
+    <DialogContent class="sm:max-w-xl">
+      <DialogHeader>
+        <DialogTitle>这份文件放到哪里</DialogTitle>
+        <DialogDescription>
+          落位由服务端按文件库规则裁决;下面填的是声明,填错了会被服务端挡回来。
+        </DialogDescription>
+      </DialogHeader>
 
-        <div class="flex flex-col gap-4">
-          <div class="bg-muted/60 rounded-md border px-3 py-2">
-            <p class="truncate text-sm font-medium" :title="pendingName">{{ pendingName }}</p>
-            <p class="text-muted-foreground mt-0.5 text-xs">
-              {{
-                pendingFiles.length > 1
-                  ? `共 ${pendingFiles.length} 份文件,以下声明对它们一起生效`
-                  : '文件名取自所选文件,原样保留'
-              }}
-            </p>
-          </div>
-
-          <MetadataFields v-model:meta="meta" :filename="pendingName" :problems="problems" />
+      <div class="flex flex-col gap-4">
+        <div class="bg-muted/60 rounded-md border px-3 py-2">
+          <p class="truncate text-sm font-medium" :title="pendingName">{{ pendingName }}</p>
+          <p class="text-muted-foreground mt-0.5 text-xs">
+            {{
+              pendingFiles.length > 1
+                ? `共 ${pendingFiles.length} 份文件,以下声明对它们一起生效`
+                : '文件名取自所选文件,原样保留'
+            }}
+          </p>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" @click="dialogOpen = false">取消</Button>
-          <Button
-            :disabled="!canStart || pendingFiles.some((f) => !isFilenameSafe(f.name))"
-            @click="confirmAdd"
-          >
-            加入队列
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  </Card>
+        <MetadataFields v-model:meta="meta" :filename="pendingName" :problems="problems" />
+      </div>
+
+      <DialogFooter>
+        <Button variant="outline" @click="dialogOpen = false">取消</Button>
+        <Button
+          :disabled="!canStart || pendingFiles.some((f) => !isFilenameSafe(f.name))"
+          @click="confirmAdd"
+        >
+          加入队列
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>

@@ -1,5 +1,6 @@
 import { createReadStream, statSync } from 'node:fs'
 import { extname, join, normalize, resolve, sep } from 'node:path'
+import { resolveInsideRoot } from '../../utils/stored-files'
 
 /**
  * 按台账「出处」路径读取来源文件,供预览组件使用。
@@ -96,11 +97,11 @@ export default defineEventHandler((event) => {
   const decoded = decodeURIComponent(requested)
 
   const root = filesRoot()
-  const abs = resolve(join(root, normalize(decoded)))
+  const abs = resolveInsideRoot(root, normalize(decoded))
 
-  // 锁根:解析之后必须仍在根目录之内。
-  // 加 sep 是为了避免 `/root-evil` 被 `/root` 前缀匹配上。
-  if (abs !== root && !abs.startsWith(root + sep)) {
+  // 锁根:解析之后必须仍在根目录之内(判据集中在 `resolveInsideRoot`,
+  // 与删除、上传登记共用一处 —— 各写一份的话修一处漏两处)。
+  if (!abs) {
     throw createError({ statusCode: 403, statusMessage: '路径越界' })
   }
 

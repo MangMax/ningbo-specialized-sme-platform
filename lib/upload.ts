@@ -9,6 +9,8 @@
  * 客户端在此**声明**元数据,服务端**裁决**落位;声明错了会被 400 挡回来。
  */
 
+import { KIND_ORDER, KINDS, SOURCE_ORDER, SOURCES } from './labels'
+
 /**
  * tus 端点。与 `server/utils/tus.ts` 的 `TUS_PATH` 是同一个值 ——
  * 服务端常量进不了客户端包,这里补一份;两处必须同时改。
@@ -51,16 +53,17 @@ export function emptyBatchMeta(): BatchMeta {
   return { source: '', kind: '', year: '', batch: '' }
 }
 
-/** 选择框用的取值,顺序即展示顺序。 */
-export const SOURCE_OPTIONS: ReadonlyArray<{ value: SourceCode; label: string }> = [
-  { value: 'jxj', label: '经信局' },
-  { value: 'miit', label: '工信部' },
-]
+/**
+ * 选择框用的取值,顺序即展示顺序 —— **中文一律取 `lib/labels.ts` 的单一来源**,
+ * 不在这里另写一份(那正是「经信局」在多处漂移的来路)。`lib/labels.ts` 是纯数据、
+ * 客户端可安全引用(它只依赖 `db/titles.ts` 的静态种子,不碰 better-sqlite3)。
+ */
+export const SOURCE_OPTIONS: ReadonlyArray<{ value: SourceCode; label: string }> =
+  SOURCE_ORDER.map((value) => ({ value: value as SourceCode, label: SOURCES[value] ?? value }))
 
-export const KIND_OPTIONS: ReadonlyArray<{ value: KindCode; label: string }> = [
-  { value: 'announcement', label: '公布文件' },
-  { value: 'export', label: '导出表' },
-]
+export const KIND_OPTIONS: ReadonlyArray<{ value: KindCode; label: string }> = KIND_ORDER.map(
+  (value) => ({ value: value as KindCode, label: KINDS[value] ?? value }),
+)
 
 const SOURCE_VALUES = new Set<string>(SOURCE_OPTIONS.map((o) => o.value))
 const KIND_VALUES = new Set<string>(KIND_OPTIONS.map((o) => o.value))
