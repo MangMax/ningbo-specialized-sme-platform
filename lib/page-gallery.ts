@@ -235,6 +235,9 @@ export const RENDER_FAILED_WORD = '渲染失败'
 /**
  * 认得出的失败原因 → 一句**可执行**的中文。
  *
+ * 措辞与**主按钮的动词对齐**:失败后按钮是「重新渲染」(= 重试),所以这里**先**说重试、
+ * **再**说换文件 —— 原来的顺序反着(先劝换文件),读起来像在否定旁边那颗按钮。
+ *
  * 服务端把原因写成 `渲染失败:<引擎原句>`,而引擎原句是英文的
  * (`File not in PDF format or corrupted`)—— 原样摆给用户等于没说:他既不知道
  * 发生了什么,也不知道下一步做什么。
@@ -242,7 +245,8 @@ export const RENDER_FAILED_WORD = '渲染失败'
 const RENDER_FAILURE_HINTS: ReadonlyArray<{ test: RegExp; message: string }> = [
   {
     test: /not in PDF format|corrupted|损坏/i,
-    message: '这个文件不是有效的 PDF,或者内容已损坏。换一份文件,或先用能打开它的程序另存一次。',
+    message:
+      '这个文件不是有效的 PDF,或者内容已损坏。先重试一次;仍失败就换一份文件,或用能打开它的程序另存一次。',
   },
   {
     test: /password|encrypted|加密/i,

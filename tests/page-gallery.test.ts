@@ -378,6 +378,9 @@ describe('describeRenderFailure(失败原因 → 可执行的中文)', () => {
     expect(message).toContain('不是有效的 PDF')
     // 可执行:说清下一步做什么,而不是只说「失败了」。
     expect(message).toContain('另存')
+    // 与主按钮的动词对齐:失败后按钮是「重新渲染」(= 重试),所以先劝重试、再劝换文件。
+    // 顺序反了会读成「别点那颗按钮,去换文件」。
+    expect(message.indexOf('重试')).toBeLessThan(message.indexOf('换一份文件'))
   })
 
   it('加密件给「先去密码」,而不是笼统的重试', () => {
