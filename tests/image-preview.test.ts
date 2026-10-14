@@ -377,7 +377,7 @@ describe('窄屏自定义缩放的边界(F3)', () => {
     return btn
   }
 
-  it('10% 下限时窄屏「缩小」**禁用**;放大一档后恢复可用', async () => {
+  it('窄屏缩放组到达 10% 后禁用缩小按钮', async () => {
     try {
       const gallery = await openSinglePage()
       const preview = gallery.findComponent(ImagePreview)
@@ -397,5 +397,80 @@ describe('窄屏自定义缩放的边界(F3)', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+/**
+ * **组件级**:自动「适应」的 contain 与手动下限的分工(plan 的 req 1–3)。
+ *
+ * 与上面那组**纯规则**用例互补:这里真的挂组件、给合成的图尺寸与容器尺寸、走**真实路径**
+ * (`onLoad` → `fit()`、`wheel` 事件),并断言**渲染出来的尺寸**装得下容器 —— 规则对不代表
+ * 接线对。合成尺寸与 UI 复核同量级(2400×3200 图 / 356×713 容器),**不读正式 files/data**。
+ */
+describe('适应与手动下限:组件级(req 1–3)', () => {
+  const NATURAL = { w: 2400, h: 3200 }
+  const VIEWPORT = { w: 356, h: 713 } // reviewer 在 390×844 弹窗里观察到的图片视口
+  const PAD = 32 // fitScale() 里留的边距
+
+  /** 挂一份预览器并塞进合成尺寸,走 onLoad → fit()。返回组件与两个元素。 */
+  async function fittedPreview(props: Record<string, unknown> = {}) {
+    const wrapper = mount(ImagePreview, { props: { src: SRC, name: '第 3 页', ...props } })
+    const img = wrapper.find('img').element as HTMLImageElement
+    const viewport = img.parentElement!.parentElement as HTMLElement
+    Object.defineProperty(img, 'naturalWidth', { value: NATURAL.w, configurable: true })
+    Object.defineProperty(img, 'naturalHeight', { value: NATURAL.h, configurable: true })
+    Object.defineProperty(viewport, 'clientWidth', { value: VIEWPORT.w, configurable: true })
+    Object.defineProperty(viewport, 'clientHeight', { value: VIEWPORT.h, configurable: true })
+    await wrapper.find('img').trigger('load') // onLoad → fit()
+    const vm = wrapper.vm as unknown as {
+      zoom: number
+      zoomBy: (f: number) => void
+    }
+    return { wrapper, img, viewport, vm }
+  }
+
+  it('fit below the manual zoom floor still contains the image', async () => {
+    const { vm } = await fittedPreview()
+
+    // 走的是**真实的 fit 路径**:落点 = contain 比例(≈13.5%),**低于**手动下限 25%。
+    const expected = Math.min((VIEWPORT.w - PAD) / NATURAL.w, (VIEWPORT.h - PAD) / NATURAL.h)
+    expect(vm.zoom).toBeCloseTo(expected, 6)
+    expect(vm.zoom).toBeLessThan(0.25)
+
+    // 关键断言:**渲染尺寸装得下容器**(contain)。旧的 clampZoom(0.25) 会得到 600×800 而溢出。
+    expect(NATURAL.w * vm.zoom).toBeLessThanOrEqual(VIEWPORT.w)
+    expect(NATURAL.h * vm.zoom).toBeLessThanOrEqual(VIEWPORT.h)
+    // 对照:按 25% 夹的旧行为**确实会溢出**,证明这条用例有区分力。
+    expect(NATURAL.w * Math.max(0.25, expected)).toBeGreaterThan(VIEWPORT.w)
+  })
+
+  it('manual zoom from a below-floor fit reaches the ordinary 25% floor', async () => {
+    const { vm } = await fittedPreview()
+    expect(vm.zoom).toBeLessThan(0.25) // 先落在下限之下
+
+    // 手动放大 → 越过 25%(0.135 × 1.12^8 ≈ 0.334 > 0.25;6 次才刚过线,留点余量)。
+    for (let i = 0; i < 8; i += 1) vm.zoomBy(1.12)
+    expect(vm.zoom).toBeGreaterThan(0.25)
+
+    // 再一直缩小 → 停在**手动下限 25%**,不会穿回 fit 的 0.135,也不会低于 25%。
+    for (let i = 0; i < 12; i += 1) vm.zoomBy(1 / 1.12)
+    expect(vm.zoom).toBeCloseTo(0.25, 6)
+  })
+
+  it('zooming out from a below-floor fit does not increase the scale', async () => {
+    const { wrapper, viewport, vm } = await fittedPreview()
+    const before = vm.zoom
+    expect(before).toBeLessThan(0.25)
+
+    // **真实滚轮事件**:deltaY > 0 = 向外缩(旧实现在这里会被 max(0.25, 请求) **放大到 25%**)。
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(vm.zoom).toBeLessThanOrEqual(before) // 绝不反向变大
+    expect(vm.zoom).not.toBeCloseTo(0.25, 6) // 也没跳到下限
+    // 往里(放大)照常生效,证明滚轮整体没坏。
+    viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true }))
+    await wrapper.vm.$nextTick()
+    expect(vm.zoom).toBeGreaterThan(before)
   })
 })
