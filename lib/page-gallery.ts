@@ -17,6 +17,18 @@ import { DEFAULT_DPI } from './pdf-page'
 export const DPI_PRESETS = [150, 200, 300] as const
 
 /**
+ * 页图单页视图的缩放**下限**(1 = 100%)。
+ *
+ * 页图是 A4,390px 的弹窗里整页「适应」需要约 **19%** —— 用普通预览的 25% 下限会
+ * 「号称适应却横向裁掉一截」,而百分比还写着 25%,与页面实际尺寸对不上。
+ *
+ * 这是**页图库专用的例外**:普通图片与台账出处预览仍用 `ImagePreview` 的默认 25%
+ * (见 `components/preview/ImagePreview.vue` 的 `zoomMin` prop)。两者都不写死,
+ * 由调用方显式传,免得又一次「一处改动、全站生效」。
+ */
+export const PAGE_IMAGE_ZOOM_MIN = 0.1
+
+/**
  * 读页图现状,并在清单用的是非默认分辨率时,再用该分辨率核对一次 `upToDate`。
  *
  * `GET /api/pdf-pages` 的 `upToDate` 是**相对请求 DPI** 算的;省略参数会按默认 200 DPI

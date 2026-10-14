@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import ImagePreview from '../components/preview/ImagePreview.vue'
+import PageImageGallery from '../components/preview/PageImageGallery.vue'
+import { PAGE_IMAGE_ZOOM_MIN } from '../lib/page-gallery'
 import { retrySrc } from '../lib/preview'
 
 /**
@@ -195,5 +197,95 @@ describe('ImagePreview 的失败 → 重试恢复', () => {
 
     await wrapper.setProps({ src: '/api/files/other.png' })
     expect(currentImg(wrapper).src).toBe('/api/files/other.png')
+  })
+})
+
+/**
+ * 缩放下限的**作用域隔离**(独立审查 P3)。
+ *
+ * `ZOOM_MIN` 原来是模块级常数,被改成 10% 后**全站**都跟着降 —— 而它同时服务
+ * 「普通图片预览」与台账的「出处预览」,那两处从来不需要低于 25%,等于用一处改动
+ * 悄悄改了别的页面。现在下限按调用方传(`zoomMin`,默认 25%),页图库显式传 10%。
+ *
+ * 这组用例锁两条路径,并且**同时看工具栏** —— 只改图片的钳制、让工具栏的按钮边界停在
+ * 25%,会出现「图片已经缩到 19%,缩小键却是灰的」这种自相矛盾。
+ */
+describe('缩放下限:普通预览 25% / 页图库 10%(作用域隔离)', () => {
+  /** 挂一份已加载完成的预览器(工具栏的缩放控件只在 ready 时渲染)。 */
+  async function readyPreview(props: Record<string, unknown> = {}) {
+    const wrapper = mount(ImagePreview, { props: { src: SRC, name: '第 3 页', ...props } })
+    await wrapper.find('img').trigger('load')
+    return wrapper
+  }
+
+  /** 工具栏上的「缩小」按钮(禁用态就是下限到了)。 */
+  const zoomOut = (wrapper: Awaited<ReturnType<typeof readyPreview>>) =>
+    wrapper.findAll('button').find((b) => b.attributes('aria-label') === '缩小')
+
+  it('普通预览(不传 zoomMin)维持 **25% 下限** —— 台账出处预览等页面行为不变', async () => {
+    const wrapper = await readyPreview()
+    // 直接往下钳:0.01 会被夹到下限,而不是真的缩到 1%。
+    ;(wrapper.vm as unknown as { zoomBy: (f: number) => void }).zoomBy(0.01)
+    await wrapper.vm.$nextTick()
+
+    expect((wrapper.vm as unknown as { zoom: number }).zoom).toBeCloseTo(0.25, 5)
+    // 工具栏同步:已到下限,「缩小」灰掉。
+    expect(zoomOut(wrapper)!.attributes('disabled')).toBeDefined()
+  })
+
+  it('页图库路径(zoomMin=0.1)可**低于 25%**,且工具栏边界跟着降到 10%', async () => {
+    const wrapper = await readyPreview({ zoomMin: PAGE_IMAGE_ZOOM_MIN })
+    ;(wrapper.vm as unknown as { zoomBy: (f: number) => void }).zoomBy(0.01)
+    await wrapper.vm.$nextTick()
+    expect((wrapper.vm as unknown as { zoom: number }).zoom).toBeCloseTo(PAGE_IMAGE_ZOOM_MIN, 5)
+
+    // 19% 是 390px 弹窗里 A4「适应」要到的档:默认下限够不到,页图库够得到。
+    ;(wrapper.vm as unknown as { zoomBy: (f: number) => void }).zoomBy(1.9)
+    await wrapper.vm.$nextTick()
+    const at19 = (wrapper.vm as unknown as { zoom: number }).zoom
+    expect(at19).toBeCloseTo(0.19, 5)
+    // 关键:此时「缩小」**还能按**(19% > 10%)——若工具栏没跟着传下限,这里会是灰的。
+    expect(zoomOut(wrapper)!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('页图库确实把 PAGE_IMAGE_ZOOM_MIN 传给了预览器(接线,不只是常数) ', async () => {
+    // 组件的取图走全局 `$fetch`,测试环境没有 —— 给它一个最小桩,让单页视图能渲染出来。
+    const state = {
+      file: 'jxj/announcement/2022/公布.pdf',
+      pageCount: 1,
+      dpi: 200,
+      rendered: 1,
+      upToDate: true,
+      manifest: { dpi: 200, renderedAt: '2026-10-15T00:00:00.000Z' },
+      pages: [
+        {
+          page: 1,
+          relPath: 'jxj/announcement/2022/.公布.pdf.pages/p001.png',
+          url: '/api/files/jxj/announcement/2022/.%E5%85%AC%E5%B8%83.pdf.pages/p001.png',
+          width: 1653,
+          height: 2339,
+          bytes: 100,
+        },
+      ],
+    }
+    vi.stubGlobal('$fetch', vi.fn(async () => state))
+    try {
+      const gallery = mount(PageImageGallery, {
+        props: { file: 'jxj/announcement/2022/公布.pdf' },
+      })
+      await new Promise((r) => setTimeout(r, 0)) // 等 load() 落地
+      await gallery.vm.$nextTick()
+
+      await gallery.find('button[title^="第 1 页"]').trigger('click')
+      await gallery.vm.$nextTick()
+
+      const preview = gallery.findComponent(ImagePreview)
+      expect(preview.exists()).toBe(true)
+      expect(preview.props('zoomMin')).toBe(PAGE_IMAGE_ZOOM_MIN)
+      // 对照:同一组件不传时是 25%,说明这是**按调用方**分档,不是常数搬了家。
+      expect(mount(ImagePreview, { props: { src: SRC } }).props('zoomMin')).toBe(0.25)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

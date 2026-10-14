@@ -17,6 +17,7 @@ import ImagePreview from '@/components/preview/ImagePreview.vue'
 import { DEFAULT_DPI } from '~~/lib/pdf-page'
 import {
   DPI_PRESETS,
+  PAGE_IMAGE_ZOOM_MIN,
   RENDER_FAILED_WORD,
   describeRenderFailure,
   pageImageSrc,
@@ -370,6 +371,7 @@ watch(
       :src="srcOf(viewingPage)"
       :name="pageLabel(viewingPage.page)"
       hide-kind-label
+      :zoom-min="PAGE_IMAGE_ZOOM_MIN"
     />
 
     <!-- 取现状中:骨架网格。 -->

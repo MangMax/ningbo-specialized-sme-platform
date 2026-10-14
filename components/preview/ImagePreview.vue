@@ -27,8 +27,20 @@ const props = withDefaults(
      * 判断依据)—— 独立审查把它读成了孤零零的一个词。默认 `false`,其它调用方不受影响。
      */
     hideKindLabel?: boolean
+    /**
+     * 缩放**下限**(1 = 100%),默认 25%。
+     *
+     * **按调用方给**,不是全站一个常数:普通图片与台账「出处」预览 25% 足够,而页图库
+     * 在 390px 弹窗里 A4 整页「适应」需要约 19% —— 卡 25% 会「号称适应却横向裁掉一截」,
+     * 百分比还写着 25%,与页面实际尺寸对不上。所以 10% 这档**只由页图库显式传进来**
+     * (见 `components/preview/PageImageGallery.vue`),其它页面维持原来的 25% 不变。
+     *
+     * 这个值同时交给工具栏(见模板的 `:zoom-min`):图片的钳制与工具栏按钮的禁用判据
+     * 必须是同一个下限,否则「图片缩到 19%、缩小键却是灰的」。
+     */
+    zoomMin?: number
   }>(),
-  { name: '', alt: '', hideKindLabel: false },
+  { name: '', alt: '', hideKindLabel: false, zoomMin: 0.25 },
 )
 
 const info = computed(() => resolvePreviewKind(props.src))
@@ -48,11 +60,9 @@ const pan = ref({ x: 0, y: 0 })
 const dragging = ref(false)
 const fullscreen = ref(false)
 
-// 下限放到 10%:390px 的弹窗里 A4 整页「适应」需要约 19% —— 卡在 25% 的话
-// 号称适应、实际横向裁掉一截,而百分比还显示 25%,对不上页面实际尺寸(独立审查 R1)。
-const ZOOM_MIN = 0.1
+// 下限取 `props.zoomMin`(默认 25%;页图库传 10% —— 390px 里 A4 整页「适应」约需 19%)。
 const ZOOM_MAX = 8
-const clampZoom = (v: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v))
+const clampZoom = (v: number) => Math.min(ZOOM_MAX, Math.max(props.zoomMin, v))
 
 /** 旋转 90/270 度时,图片占位的宽高互换。 */
 const quarterTurned = computed(() => rotation.value % 180 !== 0)
@@ -255,6 +265,7 @@ const imgStyle = computed(() => ({
       :icon="FileImage"
       :unit="null"
       :zoom="status === 'ready' ? zoom : null"
+      :zoom-min="zoomMin"
       rotatable
       :rotation="rotation"
       :href="src"

@@ -38,6 +38,15 @@ const props = withDefaults(
     count?: number
     /** 当前缩放,1 = 100%。传 null 表示这个格式不支持缩放。 */
     zoom?: number | null
+    /**
+     * 缩放**下限**(1 = 100%)。默认 25%。
+     *
+     * 它由**调用方**决定而不是写死:同一个工具栏既服务普通图片/出处预览(25% 够用),
+     * 也服务页图库 —— 后者在 390px 弹窗里 A4 整页「适应」需要约 19%,卡 25% 会
+     * 「号称适应却横向裁掉一截」。**缩放按钮与禁用判据必须与图片实例用同一个下限**,
+     * 否则会出现「图片已经缩到 19%,缩小键却是灰的」这种自相矛盾(见 ImagePreview 的同名 prop)。
+     */
+    zoomMin?: number
     /** 有没有旋转控制(图片用)。 */
     rotatable?: boolean
     /** 当前旋转角度(度)。 */
@@ -58,6 +67,7 @@ const props = withDefaults(
     index: 1,
     count: 0,
     zoom: null,
+    zoomMin: 0.25,
     rotatable: false,
     rotation: 0,
     fitWidthLabel: '适宽',
@@ -85,9 +95,8 @@ const hasNav = computed(() => props.unit !== null && props.count > 0)
 
 /** 缩放步进:细到能微调,又不至于点很多下。 */
 const ZOOM_STEP = 0.1
-const ZOOM_MIN = 0.25
 const ZOOM_MAX = 4
-const clampZoom = (v: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v))
+const clampZoom = (v: number) => Math.min(ZOOM_MAX, Math.max(props.zoomMin, v))
 
 const ACTION_BTN = 'text-muted-foreground hover:text-foreground'
 </script>
@@ -166,7 +175,7 @@ const ACTION_BTN = 'text-muted-foreground hover:text-foreground'
         variant="ghost"
         size="icon-sm"
         :class="cn(ACTION_BTN, 'hidden sm:inline-flex')"
-        :disabled="zoomPercent <= ZOOM_MIN * 100"
+        :disabled="zoomPercent <= props.zoomMin * 100"
         aria-label="缩小"
         @click="emit('update:zoom', clampZoom((zoom ?? 1) - ZOOM_STEP))"
       >

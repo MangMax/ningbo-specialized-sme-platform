@@ -201,7 +201,7 @@ files/<…>/.<文件名>.pages/.pages.json
 | --- | --- |
 | `components/files/PdfViewDialog.vue`(新) | PDF 的查看弹窗:顶部一条视图切换(原文 / 页图)+ 面板。PDF 行的「预览」开它 |
 | `components/preview/PageImageGallery.vue`(新) | 页图那一格:取现状 → 空态/网格/单页 → 渲染。自己带卡片外壳(与 `ImagePreview` 同形) |
-| `lib/page-gallery.ts`(新) | **判断与措辞**全在这里(什么状态说什么、主按钮叫什么、要不要 `force`、`<img src>` 带不带版本号),纯函数,19 个用例钉住 |
+| `lib/page-gallery.ts`(新) | **判断与措辞**全在这里(什么状态说什么、主按钮叫什么、要不要 `force`、`<img src>` 带不带版本号),纯函数,38 个用例钉住 |
 | `pages/files.vue` | 只多一句:`relPath` 是 PDF 就走 `PdfViewDialog`,否则仍是原来的 `FilePreviewDialog` |
 
 **非 PDF 行、台账页的预览**行为一字未改(`FilePreviewDialog` 没动,`components/preview/*` 也没动)。
