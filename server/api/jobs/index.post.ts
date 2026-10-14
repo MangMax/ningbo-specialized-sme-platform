@@ -45,12 +45,15 @@ defineRouteMeta({
                 type: 'string',
                 enum: ['render-pages', 'ocr', 'reconcile'],
                 description:
-                  '任务种类。`render-pages` 已接入;`ocr` / `reconcile` 已登记但尚未接入,提交会得到 501。',
+                  '任务种类。`render-pages`(渲染页图)与 `ocr`(PaddleOCR 在线识别,按页码入库)已接入;' +
+                  '`reconcile` 已登记但尚未接入,提交会得到 501。' +
+                  '`GET /api/jobs/kinds` 报的是实时状态。',
               },
               params: {
                 type: 'object',
                 description:
-                  'kind 自己的参数。`render-pages`:`{ files: string[](相对文件库根的 PDF 路径), dpi?: 72–600(默认 200), force?: boolean }`。',
+                  'kind 自己的参数。`render-pages`:`{ files: string[](相对文件库根的 PDF 路径), dpi?: 72–600(默认 200), force?: boolean }`。' +
+                  '`ocr`:`{ files: string[](同上), model?: string, pageRanges?: string }` —— 需要服务端配好 `NUXT_OCR_TOKEN`。',
               },
             },
           },

@@ -1,4 +1,5 @@
 import { getJobSpec, registerJob, type JobSpec } from './job-runner'
+import { ocrSpec } from './jobs/ocr'
 import { renderPagesSpec } from './jobs/render-pages'
 
 /**
@@ -8,31 +9,12 @@ import { renderPagesSpec } from './jobs/render-pages'
  * 路由、鉴权、队列、进度、取消、持久化**都不用改** —— 那些是执行面的事
  * (见 `server/utils/job-runner.ts`),与具体做什么无关。
  *
- * ── 为什么 `ocr` / `reconcile` 也登记进来,哪怕还没接 ─────────────────────
- * 它们是**已知要去的地方**,不是不存在的 kind。登记成 `todo` 有两个好处:
- *  1. 代理提交它们会拿到一句明确的 **501 + 「还没接、接在哪张票上」**,
- *     而不是含混的 400「未知 kind」—— 后者会让代理以为是自己拼错了名字;
- *  2. `GET /api/jobs/kinds`(见 `server/api/jobs/kinds.get.ts`)能把整张表报出来,
- *     代理据此知道「现在能派什么活」,不用猜。
- * 不登记(直接当未知)也不是错,但那样「还没接」与「没这个东西」就分不出来了。
+ * ── `ocr` 已从 `todo` 变成 `ready`(票 14)──────────────────────────────
+ * 票 19 登记它时给的理由是「**结果无处可放**」:票 14 的 OCR 结果表还没建。
+ * 表落地之后,`ocr` 的实现搬进了 `server/utils/jobs/ocr.ts`(与 `render-pages` 同级),
+ * 这里只是把它登记进来 —— 注册表、路由、练习器一行都没动,
+ * 这正是当初「登记成 todo 而不是删掉」想要的效果:能力接上时**只换实现**。
  */
-
-/**
- * OCR 批量识别。
- *
- * 没接的原因很具体:**结果无处可放**。票 14 的 OCR 结果要按 `page_no` 落到
- * OCR 结果表上(`server/utils/ocr-result.ts` 现在是「尚未启用」的占位,见票 18),
- * 表还没建,任务跑完没有落点是比不跑更坏的结果。等票 14 的表落地后,这里补一个
- * `run` 即可 —— `parse` / `total` 的形状可以先按「批量:文件路径数组」设想。
- */
-const ocrSpec: JobSpec = {
-  kind: 'ocr',
-  status: 'todo',
-  summary: '批量 OCR(走 PaddleOCR API,结果按页码入库)',
-  note: '尚未接入:等票 14 的 OCR 结果表(server/utils/ocr-result.ts 现为占位)。',
-  // 未接入的 kind 不会被调用到 parse(路由先按 status 返回 501),给个透传占位。
-  parse: (raw) => ({ ok: true, params: raw }),
-}
 
 /**
  * 平台核查(工信部 businessList / applyList 两个接口)。

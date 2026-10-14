@@ -54,6 +54,15 @@ export interface JobContext {
   readonly jobId: string
   /** 文件库根(绝对路径)。 */
   readonly filesDir: string
+  /**
+   * 已打开的库。
+   *
+   * 票 19 定 `filesDir` 由这里传、handler 不自己去读 nitro 全局 —— 同一个道理,库也传:
+   * `ocr`(票 14)要把结果写进 `ocr_result`、还要按 `rel_path` 查到 `stored_file.id`,
+   * 而 handler 里现写 `useDb()` 会让它**只能在请求上下文里跑**(单测起不来库)。
+   * 传进来的库是同一个实例(`submitJob` 手上就有一份),没有第二套连接。
+   */
+  readonly db: Db
   /** 写进度(`done` / `total` 都是份数,不是百分比)。 */
   progress(done: number, total: number): void
   /**
@@ -264,6 +273,7 @@ async function runOne(entry: QueueEntry): Promise<void> {
     const ctx: JobContext = {
       jobId,
       filesDir,
+      db,
       progress: (done, total) => setJobProgress(db, jobId, { done, total }),
       cancelled: () => cancelRequested.has(jobId),
     }

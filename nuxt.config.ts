@@ -70,6 +70,27 @@ export default defineNuxtConfig({
      * 想让两边共用一个值,把两个变量设成一样即可 —— 那是配置时的选择。
      */
     apiToken: '',
+    /**
+     * **通路 a(在线 PaddleOCR API)的凭证**(票 14)。
+     *
+     * 只被 `server/utils/jobs/ocr.ts` 与 `server/api/...` 的 OCR 路径读;上传通路(b)
+     * 与页图渲染**完全不需要它**。空 = 没配 —— 提交 `kind:"ocr"` 的任务会被明确挡下
+     * 并告诉你配哪个变量(而不是发一个注定失败的请求出去)。
+     *
+     * 生产/测试用 `NUXT_OCR_TOKEN` 覆盖;**同一颗 token 也可以直接放在
+     * `PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN` 里**(与用户 MCP 配置同名),
+     * `resolveOcrConfig` 会自动回退到它 —— 见 `server/utils/ocr-api.ts`。
+     *
+     * **凭证不入库、不入仓库**:`ocr_result` 的 `params` / `result` / 各列都不放它,
+     * 仓库里只有 `.env.example` 的占位名(见 SPEC 的硬约束)。
+     */
+    ocrToken: '',
+    /** 覆盖 PaddleOCR 服务地址(默认为 AIStudio 官方地址)。自建网关/本地假服务用得上。 */
+    ocrBaseUrl: '',
+    /** 覆盖识别模型(默认 `PaddleOCR-VL-1.6`,文档解析、直接出 markdown)。 */
+    ocrModel: '',
+    /** 轮询上限(毫秒)。97 页实测数分钟;默认 10 分钟。 */
+    ocrPollTimeoutMs: 10 * 60 * 1000,
   },
 
   /**
