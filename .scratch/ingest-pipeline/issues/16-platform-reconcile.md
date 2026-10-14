@@ -4,7 +4,8 @@
 
 **Blocked by:** 09
 
-**Status:** UI 收口完成(2026-10-15)—— 已按 oil-ui 评审 B1–B6 整改并出具可复跑证据,仍**待主代理复核**;正文说明见文末两节
+**Status:** 待**独立 oil-ui 复审**(2026-10-15)—— 已按上一轮 FIX REQUIRED 整改(触屏可开合 + 渐隐返工…),
+并**重放到当前 app main `1592b47`**;正文说明见文末三节。**我不自判通过。**
 
 ## 两接口(已实测)
 
@@ -370,3 +371,40 @@ tap 后那两张(浅/深)是**真触摸事件**(`Input.dispatchTouchEvent` 的 t
   不代表线上覆盖面);页面**不能**自行识别「样本模式」(契约无此字段且本轮不许加),样本只在 fixture / 票 /
   证据文件名里标注;真机读屏器未验;tap 在 352px 宽的面板下**横向必然压住表格**(390 视口放不下更窄的正文),
   靠「点别处关闭」收回 —— 这是量过的取舍,不是漏做。
+
+
+### 重放到当前 main(2026-10-15)
+
+评审基线更正:本分支的共同祖先停在 `c801e17`,而 app main 已到 `1592b47`(比它多 29 个提交,
+含 10/11/13/14/15/18/19/20 各票)。所以把 app 侧四个提交**重放**到当前 main 上,不碰 main 本身。
+
+| 旧 SHA(旧分支 `feat/platform-reconcile`) | 新 SHA(新分支 `feat/platform-reconcile-main`,基于 `1592b47`) |
+|---|---|
+| `c801e17` feat:平台解释列 | `1ad4c3d` |
+| `c096425` fix:UI 收口 B1–B6 | `dfb8d51` |
+| `018c158` docs:tap 补记 | `24597de` |
+| `b61c78d` fix:触屏可开合 + 渐隐返工(本轮) | `b3686bb` |
+| **最终 HEAD** | **`b3686bb`** |
+
+**重放时只碰到 1 处冲突**(其余自动合并,`nuxt.config.ts` 的 `reconcilePath` 与 main 新加的
+MCP/OpenAPI/OCR token 并存):
+
+- `server/api/comparison.get.ts` —— main 在文件顶部加了票 19 的 `defineRouteMeta({ openAPI })`,
+  我的提交改的是同一区域的 import 行。**解决:完整保留 main 的 `defineRouteMeta` 块**,只去掉冲突标记;
+  我的 `readReconcile` / `attachReconcile` 逻辑本就已在 main 里(合并过),不必重加。
+- 无需其它调整 —— 本票的改动面与 main 上其它票的文件不重叠(见下「改动面」)。
+
+**重放后的检查**(在最终 HEAD `b3686bb` 上):
+
+- `pnpm typecheck` 退出码 0
+- `pnpm test` **381 通过 / 22 文件**(main 上测试比旧分支多很多)
+- `pnpm build` 成功
+- UI 证据(生产构建 + 隔离库副本 `/tmp/q16/roster.db`,正式库只读):
+  real 亮/暗各 **57/57**、sample **57/57**、none **29/29**,合计 **200 断言 0 失败**;
+  `check-pixels.py` A/B 像素复核 PASS
+
+**改动面(vs `1592b47`,10 个文件 +906/−54)**:`components/ComparisonReconcile.vue`、
+`pages/comparison.vue`、`lib/labels.ts`、`lib/reconcile-time.ts`(新)、`lib/scroll-edges.ts`(新)、
+`tests/reconcile.test.ts`、`tests/scroll-edges.test.ts`(新)、`tests/fixtures/reconcile-explain.json`、
+`.scratch/ingest-pipeline/issues/16-platform-reconcile.md`、`…/issues/README.md`。
+**未触碰** `db/schema.ts`、`db/migrations/**`、`pages/files.vue`、`lib/stored-file.ts`。
