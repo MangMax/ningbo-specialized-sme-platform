@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   DPI_PRESETS,
+  RENDER_FAILED_WORD,
+  describeRenderFailure,
   formatDuration,
   galleryStatus,
   loadPageGalleryState,
@@ -287,5 +289,45 @@ describe('DPI_PRESETS', () => {
       expect(dpi).toBeGreaterThanOrEqual(72)
       expect(dpi).toBeLessThanOrEqual(600)
     }
+  })
+})
+
+describe('describeRenderFailure(失败原因 → 可执行的中文)', () => {
+  it('**不把引擎的英文原句直接摆给用户**(这是独立 UI 验收点名的:红条吐 PDFium 原句)', () => {
+    const message = describeRenderFailure('渲染失败:File not in PDF format or corrupted')
+    expect(message).not.toContain('File not in PDF format')
+    expect(message).toContain('不是有效的 PDF')
+    // 可执行:说清下一步做什么,而不是只说「失败了」。
+    expect(message).toContain('另存')
+  })
+
+  it('加密件给「先去密码」,而不是笼统的重试', () => {
+    const message = describeRenderFailure('渲染失败:Document is password protected')
+    expect(message).toContain('密码')
+    expect(message).not.toContain('password')
+  })
+
+  it('认不出的原因**不吞**:保留原句(排查要靠它),但补一句下一步', () => {
+    const message = describeRenderFailure('渲染失败:some unexpected engine error 0x2A')
+    expect(message).toContain('some unexpected engine error 0x2A')
+    expect(message).toContain('重试')
+  })
+
+  it('空 / 只有前缀时不产出「渲染失败:」这种半句话', () => {
+    for (const raw of ['', '渲染失败:', '渲染失败:   ']) {
+      const message = describeRenderFailure(raw)
+      expect(message).not.toMatch(/渲染失败[:：]/)
+      expect(message.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('前缀全角 / 半角冒号都剥得掉(不产出「渲染没有成功:渲染失败:…」)', () => {
+    for (const raw of ['渲染失败:xxx', '渲染失败:xxx', '渲染失败 : xxx']) {
+      expect(describeRenderFailure(raw)).not.toContain('渲染失败')
+    }
+  })
+
+  it('状态词是「渲染失败」,不是「未渲染」—— 试过没成,与还没动手是两件事', () => {
+    expect(RENDER_FAILED_WORD).toBe('渲染失败')
   })
 })

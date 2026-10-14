@@ -23,9 +23,18 @@ import { fileNameOf } from '~~/lib/preview'
  *    等于每次都要多一次点击。关掉弹窗下次打开仍是上次那个视图。
  *  - **未激活的视图不挂载**(`Tabs` 默认行为,没开 `forceMount`):停在「页图」时 EmbedPDF
  *    根本不会初始化 —— 一个 PDF 查看器的开销不该为一个只看缩略图的人付。
+ *  - **文件名常驻在切换条上**:弹窗是 92vh × 96vw 的近乎全屏,而两个视图各自带工具栏
+ *    (页图那格的工具栏还没有文件名) —— 不摆一个,用户看到满屏的页图却没法确认这是哪一份。
+ *    放在**次级位置**(`text-xs`、`text-muted-foreground`)是刻意的:它要能读到,不能跟
+ *    主操作抢注意力。切换条因此从 `w-fit` 变成整行,文件名贴着 tab 之后、开关之前。
  *  - 弹窗**透明、不画框**(与 `FilePreviewDialog` 同一套做法):两个视图各自带卡片外壳,
  *    弹窗再画一层就成了卡片套卡片。视图切换条自己是一条卡片,是为了让右上角的关闭按钮
  *    压在**实心面**上 —— 直接浮在半透明遮罩上的深色图标等于看不见。
+ *
+ * 关闭按钮的**可点区**放宽到 32×32(见模板里的 `[&_[data-slot=dialog-close]]`):shadcn
+ * 默认只有图标那么大(16px),在近乎全屏的弹窗里点起来太费劲。图标外观保持不变 ——
+ * 只加 `size-8` 与居中,`X` 仍是 16px。这条是**本弹窗局部**的类,不动共享的
+ * `components/ui/dialog/*`(它会同时改到别的弹窗)。
  */
 const open = defineModel<boolean>('open', { default: false })
 
@@ -48,7 +57,7 @@ const view = ref<'pdf' | 'pages'>('pdf')
 <template>
   <Dialog v-model:open="open">
     <DialogContent
-      class="flex h-[92vh] w-[96vw] flex-col border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1600px,96vw)] [&_[data-slot=dialog-close]]:top-3 [&_[data-slot=dialog-close]]:right-3 [&_[data-slot=dialog-close]]:z-10"
+      class="flex h-[92vh] w-[96vw] flex-col border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1600px,96vw)] [&_[data-slot=dialog-close]]:top-3 [&_[data-slot=dialog-close]]:right-3 [&_[data-slot=dialog-close]]:z-10 [&_[data-slot=dialog-close]]:flex [&_[data-slot=dialog-close]]:size-8 [&_[data-slot=dialog-close]]:items-center [&_[data-slot=dialog-close]]:justify-center [&_[data-slot=dialog-close]]:rounded-md"
     >
       <DialogTitle class="sr-only">{{ title }}</DialogTitle>
       <DialogDescription class="sr-only">
@@ -56,11 +65,22 @@ const view = ref<'pdf' | 'pages'>('pdf')
       </DialogDescription>
 
       <Tabs v-model="view" class="flex min-h-0 flex-1 flex-col">
-        <div class="bg-card flex shrink-0 items-center rounded-lg border px-1.5 py-1">
+        <!-- 文件名与视图切换同一条:近乎全屏的弹窗里,得有个地方能确认「这是哪一份」。
+             它吃剩余宽度并 `truncate`,长文件名不会把两个 tab 挤走;`pr-9` 给右上角的
+             关闭按钮留出位置,免得长名字压到它底下。 -->
+        <div
+          class="bg-card flex shrink-0 items-center gap-2 rounded-lg border py-1 pr-9 pl-1.5"
+        >
           <TabsList aria-label="PDF 视图">
             <TabsTrigger value="pdf">原文</TabsTrigger>
             <TabsTrigger value="pages">页图</TabsTrigger>
           </TabsList>
+          <span
+            class="text-muted-foreground min-w-0 flex-1 truncate text-xs"
+            :title="title"
+          >
+            {{ title }}
+          </span>
         </div>
 
         <TabsContent value="pdf" class="flex min-h-0 flex-1 flex-col">

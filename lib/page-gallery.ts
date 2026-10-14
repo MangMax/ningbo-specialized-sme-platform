@@ -153,6 +153,43 @@ export function pageLabel(pageNo: number): string {
   return `第 ${pageNo} 页`
 }
 
+/** 渲染失败时状态徽章上的词。 */
+export const RENDER_FAILED_WORD = '渲染失败'
+
+/**
+ * 认得出的失败原因 → 一句**可执行**的中文。
+ *
+ * 服务端把原因写成 `渲染失败:<引擎原句>`,而引擎原句是英文的
+ * (`File not in PDF format or corrupted`)—— 原样摆给用户等于没说:他既不知道
+ * 发生了什么,也不知道下一步做什么。
+ */
+const RENDER_FAILURE_HINTS: ReadonlyArray<{ test: RegExp; message: string }> = [
+  {
+    test: /not in PDF format|corrupted|损坏/i,
+    message: '这个文件不是有效的 PDF,或者内容已损坏。换一份文件,或先用能打开它的程序另存一次。',
+  },
+  {
+    test: /password|encrypted|加密/i,
+    message: '这份 PDF 有密码保护。请先去掉密码,再渲染页图。',
+  },
+]
+
+/**
+ * 把服务端给的失败说明翻成**可执行的中文**。
+ *
+ * 认不出的原因**不吞**:保留原句(排查要靠它),但补一句下一步做什么 ——
+ * 「渲染没有成功」+ 原句 + 「可以重试 / 换一份文件」。只说「渲染失败」是没法行动的。
+ */
+export function describeRenderFailure(raw: string): string {
+  // 前缀允许中间夹空格(`渲染失败 :`),全角 / 半角冒号都收。
+  const reason = raw.replace(/^渲染失败\s*[:：]\s*/, '').trim()
+  const hit = RENDER_FAILURE_HINTS.find((h) => h.test.test(reason))
+  if (hit) return hit.message
+  return reason
+    ? `渲染没有成功:${reason}。可以重试;反复失败就换一份文件,或检查文件是否损坏。`
+    : '渲染没有成功。可以重试;反复失败就换一份文件,或检查文件是否损坏。'
+}
+
 /** 耗时:小于 1 秒按毫秒(渲染几页就是几十毫秒,写成「0.0 s」等于没写)。 */
 export function formatDuration(ms: number): string {
   return ms < 1000 ? `${Math.max(1, Math.round(ms))} ms` : `${(ms / 1000).toFixed(1)} s`

@@ -17,6 +17,8 @@ import ImagePreview from '@/components/preview/ImagePreview.vue'
 import { DEFAULT_DPI } from '~~/lib/pdf-page'
 import {
   DPI_PRESETS,
+  RENDER_FAILED_WORD,
+  describeRenderFailure,
   pageImageSrc,
   pageLabel,
   galleryStatus,
@@ -76,6 +78,20 @@ const viewing = ref<number | null>(null)
 
 const status = computed(() => (state.value ? galleryStatus(state.value, dpi.value) : null))
 
+/** 上一次渲染失败了(没拿到新状态)。 */
+const renderFailed = computed(() => renderError.value !== '')
+
+/**
+ * 徽章上的词。**失败时覆盖状态词** —— 原来失败后仍挂着「未渲染」,而红条就在它下面,
+ * 两个说法打架(「未渲染」听着像还没动手,实际是试过没成)。
+ */
+const badgeWord = computed(() =>
+  renderFailed.value ? RENDER_FAILED_WORD : (status.value?.word ?? ''),
+)
+
+/** 失败说明:翻成可执行的中文,不把引擎的英文原句直接摆给用户。 */
+const failureMessage = computed(() => describeRenderFailure(renderError.value))
+
 /**
  * 状态词 → 徽章样式,照仓库既有的语义:虚线 = 还没坐实(待办),次级实线 = 要留意但不是错,
  * 实线加粗 = 已成立。颜色在这一套里已被称号梯度占用,状态一律靠线型分。
@@ -85,9 +101,7 @@ const TONE_BADGE: Record<GalleryTone, BadgeVariants['variant']> = {
   partial: 'dashed',
   stale: 'quiet',
   ready: 'solid',
-}
-
-/** 正在看的那一页的条目。渲染后页数变少时它会找不到 —— 那就退回网格(见下面 watch)。 */
+}/** 正在看的那一页的条目。渲染后页数变少时它会找不到 —— 那就退回网格(见下面 watch)。 */
 const viewingPage = computed<PageImageRef | null>(
   () => state.value?.pages.find((p) => p.page === viewing.value) ?? null,
 )
@@ -176,8 +190,9 @@ watch(
 
 <template>
   <div class="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border">
-    <!-- 单页视图的头部:回网格 + 这是第几页。图片来源与缩放交给下面的 ImagePreview 工具栏,
-         这里不重复放下载 / 适应(会变成两条工具栏干同一件事)。 -->
+    <!-- 单页视图的头部:只有「回网格」与总页数。**当前页码不在这里重复** ——
+         下面 `ImagePreview` 的工具栏标题已经写着「第 N 页」,两行都写就成了同一句话说两遍
+         (旧版就是这样)。这里只补它没有的那一半:一共多少页。 -->
     <div
       v-if="viewingPage"
       class="flex min-h-10 shrink-0 items-center gap-2 border-b px-2 py-1"
@@ -187,7 +202,7 @@ watch(
         返回全部页
       </Button>
       <span class="text-muted-foreground text-xs tabular-nums">
-        {{ pageLabel(viewingPage.page) }} / 共 {{ state?.pageCount ?? state?.rendered }} 页
+        共 {{ state?.pageCount ?? state?.rendered }} 页
       </span>
     </div>
 
@@ -196,9 +211,15 @@ watch(
       v-else-if="state && status"
       class="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b px-3 py-1.5"
     >
-      <Badge :variant="TONE_BADGE[status.tone]">{{ status.word }}</Badge>
-      <!-- 未渲染时不在这里重复一遍:那件事空态里说更完整(有图标、有解释)。 -->
-      <span v-if="status.tone !== 'empty'" class="min-w-0 text-[13px] leading-relaxed">
+      <Badge :variant="renderFailed ? 'destructive' : TONE_BADGE[status.tone]">
+        {{ badgeWord }}
+      </Badge>
+      <!-- 渲染失败时不在这里解释:下面的红条已经说清了原因与下一步,同一件事不摆两遍。
+           未渲染时不在这里重复一遍:那件事空态里说更完整(有图标、有解释)。 -->
+      <span
+        v-if="!renderFailed && status.tone !== 'empty'"
+        class="min-w-0 text-[13px] leading-relaxed"
+      >
         {{ status.headline }}<span v-if="status.detail" class="text-muted-foreground">
           · {{ status.detail }}</span
         >
@@ -242,7 +263,9 @@ watch(
         <!-- `!` 是必须的:`alertVariants` 的 destructive 给说明文字加了 90% 透明,
              深色下只剩 4.25:1(低于 4.5:1);那条规则同权重、位置更靠后,
              只有 important 压得过(与删除 / 上传弹窗同一处处理)。 -->
-        <AlertDescription class="text-destructive! font-medium">{{ renderError }}</AlertDescription>
+        <AlertDescription class="text-destructive! font-medium">
+          {{ failureMessage }}
+        </AlertDescription>
       </Alert>
       <p v-else class="text-muted-foreground text-[13px] leading-relaxed tabular-nums">
         {{ summary }}
@@ -287,12 +310,14 @@ watch(
       </span>
     </div>
 
-    <!-- 一张都没有:说清这是什么、做什么用。动作在工具栏右端,这里只解释。 -->
+    <!-- 一张都没有:说清这是什么、做什么用。动作在工具栏右端,这里只解释。
+         渲染刚失败时不解释 —— 上面的红条已经说清原因与下一步,同一件事不摆两遍
+         (旧版这里会再讲一句「文件可能已损坏」,与红条重复)。 -->
     <Empty v-else-if="!state?.rendered" class="flex-1 border-0">
       <EmptyHeader>
         <EmptyMedia variant="icon"><Images /></EmptyMedia>
         <EmptyTitle>{{ status?.headline ?? '还没有页图' }}</EmptyTitle>
-        <EmptyDescription>{{ status?.detail }}</EmptyDescription>
+        <EmptyDescription v-if="!renderFailed">{{ status?.detail }}</EmptyDescription>
       </EmptyHeader>
     </Empty>
 
@@ -308,9 +333,12 @@ watch(
         <!-- 缩略图按整页显示(contain):要认得出是「哪一页」,靠的是整页的版式,
              裁掉一半反而认不出。底色用 muted,白页在白底上也有个框。 -->
         <span class="bg-muted block aspect-[210/297] overflow-hidden rounded-sm border">
+          <!-- `alt=""`:**有意留空**。页码就在这个按钮的可见标签里,再给图片一句
+               `alt="第 N 页"`,读屏会把同一句念两遍(按钮名 = 图片 alt + 可见文字)。
+               空 alt 让读屏跳过这张装饰性缩略图,按钮名就是那行可见页码。 -->
           <img
             :src="srcOf(page)"
-            :alt="pageLabel(page.page)"
+            alt=""
             loading="lazy"
             decoding="async"
             class="size-full object-contain"
