@@ -8,7 +8,16 @@ export default defineNuxtConfig({
   ssr: false,
   devtools: { enabled: true },
 
-  modules: ['@pinia/nuxt', '@pinia/colada-nuxt', '@vueuse/nuxt', 'nuxt-charts'],
+  modules: [
+    '@pinia/nuxt',
+    '@pinia/colada-nuxt',
+    '@vueuse/nuxt',
+    'nuxt-charts',
+    // MCP server(票 18):声明式 —— `server/mcp/tools/*.ts` 里每个能力一个文件,
+    // 模块扫出来注册到 `POST /mcp`。默认 handler(身份/说明书/写入鉴权)在
+    // `server/mcp/index.ts`。
+    '@nuxtjs/mcp-toolkit',
+  ],
 
   // 统计页图表(nuxt-charts v3)。只注册用到的图表组件,缩小客户端包体。
   nuxtCharts: {
@@ -43,6 +52,16 @@ export default defineNuxtConfig({
     // 跨源白名单(逗号分隔);默认只放行本机开发来源,避免 tus 默认的 `*`。
     tusAllowedOrigins:
       'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3470,http://127.0.0.1:3470',
+    /**
+     * MCP **写入** tool 的鉴权 token(票 18)。
+     *
+     * 空字符串 = **写入整体关闭**(只读 tool 不受影响)。这是有意的默认:反向默认
+     * (空 = 放行)会让「忘了配」变成「静默的公开写入口」。
+     *
+     * 生产/测试用 `NUXT_MCP_TOKEN` 覆盖 —— **凭证不入库、不入仓库**,仓库里只有
+     * `.env.example` 占位(见 `.scratch/ingest-pipeline/SPEC.md`)。
+     */
+    mcpToken: '',
   },
 
   alias: {
