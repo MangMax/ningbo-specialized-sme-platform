@@ -7,10 +7,11 @@ import { retrySrc } from '../lib/preview'
 /**
  * 图片预览的**失败 → 重试**恢复路径(票 13 回归)。
  *
- * 缺陷(独立审查发现,真实可达):加载失败后 `PreviewStates` 的重试只把状态拨回
- * `loading`,`<img :src>` 一个字不变 —— 浏览器**不会**为同一个地址再发一次请求,
- * 视图就永久停在「正在读取文件…」。页图文件被删 / 404 是可达来源(服务端仍会把
- * 它列进清单),所以这是预览恢复路径上的真缺陷。
+ * 缺陷(独立审查发现,真实可达):加载失败后 `PreviewStates` 的重试**只把状态拨回
+ * `loading`** —— `src` 与元素都没动,Vue 因此**没有触发任何新的加载**(不是「浏览器
+ * 拒绝为同一地址重发」:独立实验里真的重新赋值同一个 `src` 或重建元素,Chrome 都会照发)。
+ * 结果就是 `<img>` 停在失败态、界面永久卡在「正在读取文件…」。页图文件被删 / 404 是
+ * 可达来源(服务端仍会把它列进清单),所以这是预览恢复路径上的真缺陷。
  *
  * 这些用例**不看「状态是不是 loading」**(旧实现也能装成那样),而是盯**可观察的加载尝试**:
  * 重试后 `<img>` 换成了新节点、地址也换了一个 —— 那才是浏览器会重新请求的证据。
@@ -56,12 +57,43 @@ describe('retrySrc(纯规则:重试必须换一个地址)', () => {
     expect(once).toContain('&retry=1')
   })
 
+  it('带 fragment 时查询串插在 `#` **之前**(否则整段不进请求行,等于没带)', () => {
+    expect(retrySrc('/a.png#page=2', 1)).toBe('/a.png?retry=1#page=2')
+  })
+
+  it('已有查询串 + fragment:先接 `&`,再原样带住 fragment', () => {
+    expect(retrySrc('/a.png?v=9#page=2', 1)).toBe('/a.png?v=9&retry=1#page=2')
+    expect(retrySrc('https://example.test/a.png?v=9#page=2', 2)).toBe(
+      'https://example.test/a.png?v=9&retry=2#page=2',
+    )
+  })
+
+  it('fragment 原样保留(不改写、不吞掉)', () => {
+    expect(retrySrc('/a.png#page=2&zoom=1.5', 1)).toBe('/a.png?retry=1#page=2&zoom=1.5')
+    // 只重试一次时,`#` 也只出现一次 —— 没把 fragment 复制成两段。
+    expect(retrySrc('/a.png#page=2', 1).match(/#/g)).toHaveLength(1)
+  })
+
   it('不带的地址用 `?`', () => {
     expect(retrySrc('/a.png', 1)).toBe('/a.png?retry=1')
   })
 
   it('每次重试的地址都不同 —— 连续重试次次都是一次新请求', () => {
     expect(retrySrc('/a.png', 1)).not.toBe(retrySrc('/a.png', 2))
+  })
+
+  it('**普通 URL(无 fragment)的结果与修复前逐字一致** —— 本次只动 fragment 情形', () => {
+    // 字面量写死「父提交 63711c6 会得到什么」,让「没有改变普通 URL 行为」这句话可复核,
+    // 而不是靠读实现自证。带 `#` 的输入不在这一条里(它正是本次要修的那类)。
+    expect(retrySrc('/a.png', 1)).toBe('/a.png?retry=1')
+    expect(retrySrc('/a.png', 2)).toBe('/a.png?retry=2')
+    expect(retrySrc('https://example.test/a.png?x=1&y=2', 1)).toBe(
+      'https://example.test/a.png?x=1&y=2&retry=1',
+    )
+    expect(retrySrc(SRC, 1)).toBe(`${SRC}&retry=1`)
+    expect(retrySrc('/a.png', 0)).toBe('/a.png')
+    expect(retrySrc('blob:http://localhost:3000/x', 1)).toBe('blob:http://localhost:3000/x')
+    expect(retrySrc('relative/path.png', 1)).toBe('relative/path.png')
   })
 
   it('`blob:` / `data:` **不加参数**(加了就取不到东西),交给重建元素兜底', () => {

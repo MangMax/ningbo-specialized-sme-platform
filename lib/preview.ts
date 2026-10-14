@@ -96,21 +96,38 @@ export function isQueriableUrl(src: string): boolean {
 }
 
 /**
- * 重试时用的图片地址:**换一个 URL,逼浏览器真的重新请求**。
+ * 重试时用的图片地址:**换一个 URL,让这次重试拿到的是新地址**。
  *
- * 为什么必须换地址:图片加载失败后,只把状态拨回「加载中」、`<img>` 的 src 一个字不动,
- * 浏览器**不会**再发一次请求(它记得这次的失败),视图就永久停在「正在读取文件…」。
- * 换一个地址才会真的再要一次。页图文件被删 / 404 是这种情况的真实来源
- * (见 `components/preview/ImagePreview.vue` 的重试)。
+ * 先说清楚**原来那个 bug 到底是什么**(独立浏览器实验核实过,别把它写成「浏览器
+ * 拒绝重发」):
+ *
+ *  - 旧实现的重试只把 UI 状态拨回「加载中」,**既没改 `src` 也没换元素** —— Vue 根本
+ *    没有触发任何新的加载,`<img>` 还停在失败态,界面就永久卡在「正在读取文件…」。
+ *  - 也就是说,缺的是**「发起一次新加载」这个动作**,不是浏览器不肯配合:真的重新赋值
+ *    同一个 `src`、或重建 `<img>` 元素,Chrome 都会**照发**新请求。
+ *
+ * 所以本函数的职责是「把重试做成一次**新的**加载」,换地址是最直接的一种做法
+ * (另一种是重建元素,见 `components/preview/ImagePreview.vue` 的 `:key`)。
+ *
+ * 换地址还有第二个**独立**的好处:文件回吐路由给来源文件发了
+ * `cache-control: private, max-age=3600`(见 `server/api/files/[...path].get.ts`),
+ * 同一个地址在一小时内会命中浏览器缓存;带上 `retry=N` 才能保证这次重试真的走到服务端
+ * —— 上一轮 404 是这样,服务端**后来把文件补回来了**也是这样(否则会一直读缓存里的失败)。
  *
  * `attempt <= 0`(还没重试过)时**原样返回**:首次加载的地址与请求一个字节都不变。
  * 不能加查询串的地址(`blob:` / `data:`)也原样返回 —— 那种情况由调用方重建元素兜底。
+ *
+ * 查询串插在 **fragment 之前**:`/a.png#page=2` → `/a.png?retry=1#page=2`。
+ * 拼在 `#` 之后的话,`#…` 整段不会进请求行,这个参数等于没带。
  */
 export function retrySrc(src: string, attempt: number): string {
   if (!Number.isInteger(attempt) || attempt <= 0) return src
   if (!isQueriableUrl(src)) return src
+  const hashAt = src.indexOf('#')
+  const base = hashAt === -1 ? src : src.slice(0, hashAt)
+  const hash = hashAt === -1 ? '' : src.slice(hashAt)
   // 页图地址本来就带 `?v=<渲染版本>`,所以要接着用 `&`。
-  return `${src}${src.includes('?') ? '&' : '?'}retry=${attempt}`
+  return `${base}${base.includes('?') ? '&' : '?'}retry=${attempt}${hash}`
 }
 
 /**
