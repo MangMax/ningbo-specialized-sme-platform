@@ -4,6 +4,7 @@ import {
   describeUnsupported,
   extensionOf,
   fileNameOf,
+  fileUrl,
   isLegacyOffice,
   isPreviewable,
   resolvePreviewKind,
@@ -82,5 +83,56 @@ describe('describeLoadError 把技术报错翻成人话', () => {
     )
     // 非 Error 也要能处理。
     expect(describeLoadError('boom')).toBe('boom')
+  })
+})
+
+describe('fileUrl 拼请求地址', () => {
+  it('逐段编码,保留路径分隔的斜杠', () => {
+    // 整串 encodeURIComponent 会把 / 也编掉,变成单个路径段 —— 这是要防住的。
+    const url = fileUrl('jxj/announcement/2024/1/名单.pdf')
+    expect(url).toBe('/api/files/jxj/announcement/2024/1/%E5%90%8D%E5%8D%95.pdf')
+    expect(url.split('/').filter(Boolean)).toHaveLength(7)
+  })
+
+  it('文件名里的中文书名号与引号都能编进去', () => {
+    // 台账里的真实形态:甬经信中小〔2021〕160号…宁波市“专精特新”…
+    const url = fileUrl('jxj/announcement/2021/甬经信中小〔2021〕160号关于公布“专精特新”名单的通知.pdf')
+    expect(url.startsWith('/api/files/jxj/announcement/2021/')).toBe(true)
+    // 编码后不该残留任何裸中文或裸括号
+    expect(/[\u4e00-\u9fff〔〕“”]/.test(url)).toBe(false)
+    // 也不该残留会截断 URL 的字符
+    expect(url).not.toMatch(/[\s?#]/)
+  })
+
+  it('空格与 & 这类会破坏查询串的字符被编码', () => {
+    const url = fileUrl('jxj/announcement/2024/1/甬经信中小〔2024〕72号 关于公布 & 名单.pdf')
+    expect(url).not.toMatch(/[\s&]/)
+  })
+
+  it('与文件读取接口的前缀一致', () => {
+    expect(fileUrl('miit/export/a.xlsx')).toBe('/api/files/miit/export/a.xlsx')
+  })
+})
+
+describe('describeLoadError 识别预览器资源上限', () => {
+  it('把单元格超限翻成「文件太大」而不是「文件坏了」', () => {
+    const msg = describeLoadError(
+      new Error('OOXML resource limit exceeded: cells 250001 > 250000'),
+    )
+    expect(msg).toContain('250,000')
+    expect(msg).toContain('下载')
+    expect(msg).not.toMatch(/cells|resource limit/i)
+  })
+
+  it('行数超限、其它资源超限都有对应说法', () => {
+    expect(describeLoadError(new Error('OOXML resource limit exceeded: rows 100001 > 100000')))
+      .toContain('行数')
+    expect(describeLoadError(new Error('OOXML resource limit exceeded: bytes 9e9 > 1e9')))
+      .toContain('处理上限')
+  })
+
+  it('不误伤普通报错', () => {
+    expect(describeLoadError(new Error('OOXML resource limit exceeded'))).toContain('处理上限')
+    expect(describeLoadError(new Error('Failed to fetch: 404 Not Found'))).toContain('文件不存在')
   })
 })

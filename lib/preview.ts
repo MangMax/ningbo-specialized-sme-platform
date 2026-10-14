@@ -64,6 +64,21 @@ export function isPreviewable(path: string): boolean {
   return ext in BY_EXTENSION
 }
 
+/** 文件读取接口的前缀(见 `server/api/files/[...path].get.ts`)。 */
+export const FILES_API_PREFIX = '/api/files'
+
+/**
+ * 把记录里的 `source_file`(相对文件库 `files/`)拼成可请求的地址。
+ *
+ * **逐段编码,不能整串 `encodeURIComponent`** —— 那样会把 `/` 也编掉,
+ * 变成单个路径段。文件名里常带 `〔〕`、中文引号、空格,不编码又会被
+ * URL 解析截断,所以按段编、再把 `/` 接回去。
+ */
+export function fileUrl(sourceFile: string): string {
+  const segments = sourceFile.split('/').map(encodeURIComponent)
+  return `${FILES_API_PREFIX}/${segments.join('/')}`
+}
+
 /** 是不是已知但不受支持的旧版二进制格式。 */
 export function isLegacyOffice(path: string): boolean {
   return extensionOf(path) in LEGACY
@@ -95,12 +110,19 @@ export function describeUnsupported(path: string): string {
 /**
  * 把底层抛出的错误翻成人话。
  *
- * 各预览库的报错原样透传会露出 `Failed to fetch: 404 Not Found` 这种
- * 英文技术信息 —— 对查台账的人没有意义。这里按状态码给一句能指导下一步的说明;
+ * 各预览库的报错原样透传会露出 `Failed to fetch: 404 Not Found`、
+ * `OOXML resource limit exceeded: cells 250001 > 250000` 这种英文技术信息 ——
+ * 对查台账的人没有意义。这里按状态码 / 已知错误类型给一句能指导下一步的说明;
  * 认不出来时保留原文,方便排查。
  */
 export function describeLoadError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
+
+  // Excel 工作簿超过查看器的单元格上限(见 describeCellLimit)。这条要单独认,
+  // 因为它不是「坏文件」,而是「文件太大」,处置方式完全不同。
+  const limit = cellLimitOf(raw)
+  if (limit) return limit
+
   if (/\b404\b/.test(raw)) return '文件不存在。出处路径可能已变更,或文件已被移走。'
   if (/\b403\b/.test(raw)) return '没有读取这个文件的权限。'
   if (/\b415\b/.test(raw)) return '这个格式不在预览范围内。'
@@ -110,4 +132,29 @@ export function describeLoadError(err: unknown): string {
     return '取不到文件。检查网络连接,或确认文件服务在运行。'
   }
   return raw
+}
+
+/**
+ * 识别「超出预览器资源上限」这类报错,给一句说清**为什么**和**怎么办**的话。
+ *
+ * 背景:OOXML 查看器对每个工作表有 **250,000 个单元格**的硬上限,且这个值
+ * **不可配置**(库里标了 `configurable: false`)。工信部的三份导出里有两份超了:
+ *   专精特新中小企业 100.0 万格(4.0 倍)、创新型 59.6 万格(2.4 倍)
+ *   —— 这两份是超宽表(60~90 列),行数不多但列多。
+ * 小巨人那份 13.2 万格,在上限内,能正常打开。
+ *
+ * 注意措辞:这不是「文件坏了」,是「这份表比预览器能吃下的大」。
+ * 用户看到后该做的是下载下来用 Excel 打开,或按需导出子集 —— 所以要明说。
+ */
+function cellLimitOf(raw: string): string | null {
+  if (!/resource limit exceeded/i.test(raw)) return null
+  const cells = /cells\s+(\d+)\s*>\s*(\d+)/i.exec(raw)
+  if (cells?.[2]) {
+    const limit = Number(cells[2]).toLocaleString('zh-CN')
+    return `这份工作簿超过了预览器的上限(每张表 ${limit} 个单元格,且无法调高)。请下载后用 Excel 打开。`
+  }
+  if (/rows\s+(\d+)\s*>\s*(\d+)/i.test(raw)) {
+    return '这份工作表行数超过了预览器的上限。请下载后用 Excel 打开。'
+  }
+  return '这份文件超过了预览器的处理上限。请下载后用 Excel 或 Word 打开。'
 }

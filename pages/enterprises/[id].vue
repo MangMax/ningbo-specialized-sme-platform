@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { groupBy, orderBy, uniq } from 'es-toolkit'
-import { ChevronRight } from '@lucide/vue'
+import { ChevronRight, Eye } from '@lucide/vue'
 import { TITLES, TITLE_ORDER, SOURCE_ORDER, QUALITY_FLAGS } from '~~/lib/labels'
+import { fileUrl, fileNameOf, isPreviewable } from '~~/lib/preview'
+import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -86,6 +88,22 @@ function sourceRank(code: string) {
 }
 function flagLabel(f: string) {
   return QUALITY_FLAGS[f] ?? f
+}
+
+/**
+ * 出处预览弹窗的状态。
+ *
+ * `previewSrc` **关闭时不清空**:留着上一次的值,弹窗关闭的动画才还有内容可放,
+ * 不会在动画途中闪成空白。下次打开展示的就是新值。
+ */
+const previewSrc = ref('')
+const previewName = ref('')
+const previewOpen = ref(false)
+
+function openPreview(e: Evidence) {
+  previewSrc.value = fileUrl(e.sourceFile)
+  previewName.value = fileNameOf(e.sourceFile)
+  previewOpen.value = true
 }
 </script>
 
@@ -208,9 +226,25 @@ function flagLabel(f: string) {
                       :key="j"
                       class="bg-muted/60 flex flex-col gap-0.5 rounded-sm p-2 text-xs"
                     >
-                      <div class="flex gap-2">
-                        <span class="text-muted-foreground w-14 shrink-0">公布文件</span>
-                        <span class="font-mono break-all">{{ e.sourceFile }}</span>
+                      <div class="flex items-start justify-between gap-3">
+                        <div class="flex min-w-0 gap-2">
+                          <span class="text-muted-foreground w-14 shrink-0">公布文件</span>
+                          <span class="font-mono break-all">{{ e.sourceFile }}</span>
+                        </div>
+                        <!--
+                          能预览的才给按钮。旧版 .doc 之类读不到,硬放一个按钮
+                          点开只会看到「格式打不开」,不如不给。
+                        -->
+                        <Button
+                          v-if="isPreviewable(e.sourceFile)"
+                          variant="outline"
+                          size="sm"
+                          class="h-6 shrink-0 gap-1 px-1.5 text-xs"
+                          @click="openPreview(e)"
+                        >
+                          <Eye class="size-3.5" />
+                          预览
+                        </Button>
                       </div>
                       <div v-if="e.attachment" class="flex gap-2">
                         <span class="text-muted-foreground w-14 shrink-0">附件</span>
@@ -231,5 +265,11 @@ function flagLabel(f: string) {
         </CardContent>
       </Card>
     </template>
+
+    <!--
+      预览弹窗挂在最外层,不放卡片里:弹窗是 Teleport 到 body 的,
+      放在卡片内只是让它跟着卡片重建,没必要。
+    -->
+    <FilePreviewDialog v-model:open="previewOpen" :src="previewSrc" :name="previewName" />
   </div>
 </template>
