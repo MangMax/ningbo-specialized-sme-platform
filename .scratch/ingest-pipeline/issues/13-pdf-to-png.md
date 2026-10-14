@@ -30,9 +30,8 @@
 ## 验收
 
 - [x] 页面上能看到某份 PDF 的页图缩略(`/files` → 预览 → 页图);12 张 / 97 张实测见文末第 8 节。
-- [x] app 测试全绿:`pnpm typecheck` 通过;`pnpm test` → **23 files / 419 passed**(含 `tests/image-preview.test.ts`)
-      (后端那次基线 169 + 26;页面半边原有 19;随后三轮各补:2 个分辨率回归、2 个「不必要
-      二次请求」反向用例、6 个失败文案用例、8 个 UI 复审用例 —— 见 8.5 / 8.6 / 8.7 / 8.8)。
+- [x] app 测试全绿:`pnpm exec nuxt typecheck` 通过;`pnpm exec vitest run` → **23 files / 420 passed**
+      (含页数未知时的单页标题回归用例,见 8.11)。
 
 **分支**:`feat/pdf-to-png`。
 
@@ -496,7 +495,7 @@ hover/focus 的强调边框与 ring 仍在(见 8.8)。97 页那格同样复核�
 | --- | --- |
 | P3: 最终指针修复的 happy-dom 用例只检查 CSS class | 测试名已限定为 **class contract**;实际鼠标行为由上面的独立浏览器证据验收。 |
 | P3: 票面没有记最终修复、测试数过期、README 状态仍写未验收 | 已补本节并更新验收计数为 **23 files / 419 passed**;同步 issues README 的验收状态。 |
-| P4: 未确认状态把已渲染张数当总页数 | 已改为「已有 N 张,共需 M 张」;源页数未知时只显示已生成张数,不伪称总页数。 |
+| P4: 未确认状态把已渲染张数当总页数 | 网格状态已改为「已有 N 张,共需 M 张」;源页数未知时只报告已生成张数。8.11 补齐单页头部口径:总数未知时显示「已有 N 张页图」,不伪称总页数。 |
 | P4: 更换文件时旧 GET 可能短暂覆盖新文件状态 | 作为低概率短暂竞态留在复审 notes;本票未加请求管理层。 |
 | P4: 非预设 DPI 的清单会使下拉框无匹配项 | 标为低优先级建议;标准页面入口仍只产生 150/200/300 DPI,不扩展选择器。 |
 | P4: 图片重试函数的状态守卫没有直接用例 | 记录为未覆盖点;UI 只在 error 态呈现重试按钮,守卫对用户路径不可绕过。 |
@@ -506,3 +505,16 @@ hover/focus 的强调边框与 ring 仍在(见 8.8)。97 页那格同样复核�
 工作树由该提交检出,离线安装依赖,没有使用正式 `files/` 或 `data/`。当前候选上的定向回归
 `pnpm vitest run tests/page-gallery.test.ts tests/image-preview.test.ts` 为 **2 files / 55 passed**,
 `pnpm typecheck` 退出码 0。
+
+## 8.11 第五轮:源页数未知时的单页标题口径(2026-10-15)
+
+固定头 `73a5fcd5e140dc2629e99ce70f38e8f3be25c47e` 的独立代码复审新报 P4:源 PDF 页数未知但已有页图时,
+网格状态已如实报告现有张数,单页头部却把 `rendered` 写成「共 N 页」。在单独修复分支
+`fix/t13-unknown-pagecount-label` 的提交 `8d17902b43b7151c6fad19263b5bbf8208606b76` 中,
+单页文案改为从源页数派生:已知时显示「共 N 页」,未知时只显示「已有 N 张页图」。
+
+回归用例 `galleryStatus(现状 → 该说什么、该做什么) > 单页视图总数未知时只报已有张数,已知时才报总页数`
+同时断言 `pageCount: null, rendered: 4` 不再输出总页数,以及总数已知时仍按真实总数显示。修复分支验证:
+`pnpm exec vitest run tests/page-gallery.test.ts` (**1 file / 38 passed**),
+`pnpm exec vitest run` (**23 files / 420 passed**),`pnpm exec nuxt typecheck` (**exit 0**)。
+上述 UI 复核仍以最终合入候选 SHA 为准。
