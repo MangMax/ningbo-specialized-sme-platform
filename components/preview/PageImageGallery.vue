@@ -20,6 +20,7 @@ import {
   pageImageSrc,
   pageLabel,
   galleryStatus,
+  loadPageGalleryState,
   renderSummary,
   type GalleryTone,
 } from '~~/lib/page-gallery'
@@ -100,7 +101,9 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const next = await $fetch<PdfPagesState>('/api/pdf-pages', { query: { file: props.file } })
+    const next = await loadPageGalleryState(props.file, (query) =>
+      $fetch<PdfPagesState>('/api/pdf-pages', { query }),
+    )
     state.value = next
     if (!dpiTouched.value) dpi.value = next.dpi
   } catch (error) {

@@ -30,8 +30,8 @@
 ## 验收
 
 - [x] 页面上能看到某份 PDF 的页图缩略(`/files` → 预览 → 页图);12 张 / 97 张实测见文末第 8 节。
-- [x] app 测试全绿:`pnpm typecheck` 通过;`pnpm test` → **22 files / 383 passed**
-      (后端那次基线 169 + 26;本轮前端再加 19,见第 8 节)。
+- [x] app 测试全绿:`pnpm typecheck` 通过;最新 `pnpm test` → **22 files / 385 passed**
+      (后端那次基线 169 + 26;页面半边原有 19,2026-10-15 补 2 个分辨率回归用例)。
 
 **分支**:`feat/pdf-to-png`。
 
@@ -248,3 +248,18 @@ files/<…>/.<文件名>.pages/.pages.json
   (没有 Nitro 的 JSON 错误体,说明请求没进到应用层)。同一条查询用 `--data-urlencode` 或手工编码
   就是 200。已知正常路径的基线:`curl -i "…/api/files?rescan=1&q=%E5%9D%8F%E4%BB%B6"` → `200 OK`
   + `content-type: application/json`。
+
+## 8.5 重开页图库时按清单 DPI 核对(2026-10-15)
+
+独立规格复核发现:在 300 DPI 页图已渲染后,重新挂载 `PageImageGallery` 会先请求默认 200 DPI。
+`GET /api/pdf-pages` 的 `upToDate` 是相对请求 DPI 算的,所以首个响应会带正确的
+`manifest.dpi = 300`,但 `upToDate = false`;界面随后选择 300 DPI,却保留了默认档的旧状态,
+把未变化的页图误报为「页图与当前源文件对不上」。
+
+现由 `loadPageGalleryState` 在发现非默认清单 DPI 时,再以清单 DPI 读取一次状态。隔离目录中
+用真实 12 页扫描 PDF 以 300 DPI 渲染后,实际打开 PDF → 页图 → 原文 → 页图,截图仍显示
+「最新 · 12 页已渲染」,12 张缩略图完整加载;截图在 `/tmp/ticket13-ui-review-20261015-r1/remount/page-remount.png`。
+新增两个纯逻辑回归用例分别锁住「默认 DPI 误报」与「按清单 DPI 重查后仍旧不新鲜」;完整
+`pnpm typecheck && pnpm test` 通过(**22 files / 385 tests**)。
+
+此项修复尚待**独立** `oil-ui` 与固定提交代码复审后再关闭本票验收。

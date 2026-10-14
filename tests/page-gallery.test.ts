@@ -3,6 +3,7 @@ import {
   DPI_PRESETS,
   formatDuration,
   galleryStatus,
+  loadPageGalleryState,
   pageImageSrc,
   pageLabel,
   renderSummary,
@@ -134,6 +135,44 @@ describe('galleryStatus(现状 → 该说什么、该做什么)', () => {
       expect(s.actionLabel.length).toBeGreaterThan(0)
       expect(s.word.length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
+  it('磁盘是 300 DPI 时按清单 DPI 重查,不会把默认 200 DPI 的差异误报成源文件变化', async () => {
+    const file = state().file
+    const defaultDpiResponse = state({
+      dpi: 300,
+      upToDate: false,
+      manifest: { dpi: 300, renderedAt: '2026-10-14T08:00:00.000Z' },
+    })
+    const manifestDpiResponse = state({
+      dpi: 300,
+      upToDate: true,
+      manifest: { dpi: 300, renderedAt: '2026-10-14T08:00:00.000Z' },
+    })
+    const requests: Array<{ file: string; dpi?: number }> = []
+
+    const loaded = await loadPageGalleryState(file, async (query) => {
+      requests.push(query)
+      return query.dpi === 300 ? manifestDpiResponse : defaultDpiResponse
+    })
+
+    expect(requests).toEqual([{ file }, { file, dpi: 300 }])
+    expect(loaded.upToDate).toBe(true)
+    expect(galleryStatus(loaded, loaded.dpi).tone).toBe('ready')
+  })
+
+  it('按清单 DPI 重查后仍不新鲜时,保留真实异常状态', async () => {
+    const file = state().file
+    const stale = state({
+      dpi: 300,
+      upToDate: false,
+      manifest: { dpi: 300, renderedAt: '2026-10-14T08:00:00.000Z' },
+    })
+    const loaded = await loadPageGalleryState(file, async () => stale)
+
+    expect(galleryStatus(loaded, loaded.dpi).tone).toBe('stale')
   })
 })
 

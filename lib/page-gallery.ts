@@ -1,4 +1,5 @@
 import type { PageImageRef, PdfPagesState, RenderOutcome } from '~~/server/utils/pdf-pages'
+import { DEFAULT_DPI } from './pdf-page'
 
 /**
  * 页图库的**展示规则**:把 `GET /api/pdf-pages` 返回的「现状」翻成界面要说的话、要做的事。
@@ -14,6 +15,22 @@ import type { PageImageRef, PdfPagesState, RenderOutcome } from '~~/server/utils
 
 /** 页面能选的分辨率。给 OCR 用的区间是 200–300;150 是「先看个大概」的那一档。 */
 export const DPI_PRESETS = [150, 200, 300] as const
+
+/**
+ * 读页图现状后,若磁盘清单使用非默认分辨率,再用该分辨率确认 `upToDate`。
+ *
+ * `GET /api/pdf-pages` 的 `upToDate` 是相对请求 DPI 计算的;省略参数会按默认 200 DPI
+ * 比较。首次响应会同时告诉我们清单实际 DPI,所以非默认档需按清单 DPI 再读一次,避免
+ * 把「请求 200、磁盘 300」造成的 false 标成源文件或页图损坏。
+ */
+export async function loadPageGalleryState(
+  file: string,
+  fetchState: (query: { file: string; dpi?: number }) => Promise<PdfPagesState>,
+): Promise<PdfPagesState> {
+  const initial = await fetchState({ file })
+  if (!initial.manifest || initial.dpi === DEFAULT_DPI) return initial
+  return fetchState({ file, dpi: initial.dpi })
+}
 
 /** 页图现状的四种「语气」。组件的徽章样式按它选,文案由下面给出。 */
 export type GalleryTone = 'empty' | 'partial' | 'stale' | 'ready'
