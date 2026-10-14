@@ -2,9 +2,9 @@
 
 **What to build:** 把 app 的能力做成**代理可直接调用的 HTTP 接口**,重点是**异步任务**(提交 → 拿 `jobId` → 轮询);并用 **Nitro 自带的 OpenAPI** 让它**可被发现**。
 
-**Blocked by:** —(读接口已存在;任务端点可与 13/14/16 并行长出来)
+**Blocked by:** **18**(两者都改 `nuxt.config.ts` / `package.json`,会撞)+ **迁移编号必须串行**
 
-**Status:** ready —— **正位,不是"可选"**
+**Status:** ready,**但排在并行票之后再做**(用户 2026-10-14 定)
 
 ## 更正:我先前把 OpenAPI 归错了类(用户 2026-10-14 指出)
 
@@ -37,7 +37,14 @@
 - `ocr` —— 批量 OCR(票 14)。
 - `reconcile` —— 批量平台核查(票 16 现是 CLI)。
 
-> **存储**:任务状态落**本地 JSON 或新表**(择一,说明理由);**若建表 → 单独一票、带迁移**(避免与并行票撞编号)。
+### 存储:**新建任务表**(用户 2026-10-14 定,不是 JSON)
+
+**表 `job`**(建议名):`id`(ULID/uuid)/ `kind` / `params`(JSON)/ `state`(queued|running|done|failed|cancelled)/ `progress`(0–100 或 `{done,total}`)/ `result`(JSON,可空)/ `error`(可空)/ `created_at` / `started_at` / `finished_at`。
+
+**为什么不用 JSON**:任务要**按 kind/state 查**、要**跨重启保留**、要**并发写不互相覆盖**;JSON 文件三者都做不到(改一个任务要重写整份,还得自己管锁)。宁可一次迁移。
+
+> ⚠️ **迁移编号是串行资源**:当前最新是 `0003`(票 17)。**19 的迁移必须排在所有要建迁移的票之后**,否则两条分支各生成 `0004_xxx.sql` 会撞。
+> **⇒ 等 18 与在跑的票都合入后,再派本票。**
 
 ### 2. 同步读接口
 已有的 `GET` 路由保持;**补 `defineRouteMeta`** 让它们进 spec。
@@ -62,6 +69,7 @@
 - [ ] `/_openapi.json` 含上述端点;`/_scalar` 能打开;
 - [ ] **未带 token** 的任务提交被拒(实测状态码);
 - [ ] 生产构建下 OpenAPI 端点**不暴露**(实测 404);
-- [ ] `pnpm typecheck && pnpm test` 全绿。
+- [ ] **任务表 + 迁移**:`job` 表落库,重启后任务史仍在;按 `kind`/`state` 能查;
+- [ ] `pnpm typecheck && pnpm test` 全绿(现在 app **234 项**)。
 
 **分支**:`feat/agent-http`。
