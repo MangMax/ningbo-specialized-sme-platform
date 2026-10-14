@@ -145,6 +145,18 @@ const config = computed(() => ({
   tabBar: 'never' as const,
   // 字体回退默认走 CDN;关掉,避免内网环境挂在不必要的跨域请求上。
   fontFallback: null,
+  /**
+   * 界面字体同样默认走公网:不指定时初始化就会去
+   * `fonts.googleapis.com` 拉 Open Sans。内网工具不该有这种请求,
+   * 设 `null` 让它回落到系统字体栈(中文界面本来就用系统字体更合适)。
+   */
+  fonts: { ui: null },
+  /**
+   * 印章库同理会去 `cdn.jsdelivr.net` 拉 `default-stamps/…/stamps.pdf`。
+   * 上面 `disabledCategories` 里的 `stamp` 只是**藏掉界面**,插件仍会去取素材;
+   * 这里显式关掉默认库,请求才不会发出去。只读台账也不需要印章。
+   */
+  stamp: { defaultLibrary: false as const },
 }))
 
 function onReady() {
