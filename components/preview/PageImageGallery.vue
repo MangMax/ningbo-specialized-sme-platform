@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ArrowLeft, Images, Loader2 } from '@lucide/vue'
+import { ArrowLeft, Images, Loader2, ZoomIn, ZoomOut } from '@lucide/vue'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge, type BadgeVariants } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -23,12 +23,12 @@ import {
   pageLabel,
   galleryStatus,
   loadPageGalleryState,
+  pageCountLabel,
   renderSummary,
   type GalleryTone,
 } from '~~/lib/page-gallery'
 import { describeFetchError } from '~~/lib/upload-register'
 import type { PageImageRef, PdfPagesState, RenderOutcome } from '~~/server/utils/pdf-pages'
-
 /**
  * 页图库(票 13 的后端 + 本轮的页面)。一份 PDF 的逐页 PNG:看现状、点一下渲染、逐页看。
  *
@@ -61,12 +61,19 @@ const GRID_COLS = 'grid-cols-[repeat(auto-fill,minmax(120px,1fr))]'
 const state = ref<PdfPagesState | null>(null)
 /** 取现状中。 */
 const loading = ref(true)
-/** 取现状失败。 */
+/** 取现状失败(第一次请求都没成,没有任何可显示的东西)。 */
 const loadError = ref('')
+/**
+ * 按清单 DPI 的**二次核对**没成(F3):第一次响应里的清单仍然有效,只是 `upToDate`
+ * 不可信。这种情况**不清空界面** —— 磁盘上明明有页图,不该因为一次核对失败就白屏。
+ */
+const loadUnconfirmed = ref(false)
 /** 渲染中(POST 在飞)。 */
 const rendering = ref(false)
-/** 渲染失败。 */
-const renderError = ref('')
+/** 服务端给的渲染失败说明(没有就是空串 —— 见 describeRenderFailure 的注释)。 */
+const renderFailure = ref('')
+/** 渲染失败过。与 `renderFailure` 分开:网络失败时说明是空串,但状态仍然是「失败」。 */
+const renderFailed = ref(false)
 /** 上一次渲染的一句话交代(写了几页、跳了几页、多久)。 */
 const summary = ref('')
 /** 当前选的分辨率。取到现状后跟磁盘上的一致 —— 打开就该显示「现在是什么」,不是「默认是什么」。 */
@@ -75,11 +82,16 @@ const dpi = ref<number>(DEFAULT_DPI)
 const dpiTouched = ref(false)
 /** 正在看的那一页;null = 网格。 */
 const viewing = ref<number | null>(null)
+/**
+ * 单页视图里那个 `ImagePreview` 的实例 —— 窄屏工具栏上那组缩放按钮靠它驱动
+ * (`ImagePreview` 用 `defineExpose` 露出 `zoomBy` / `fit`)。用结构类型而不是
+ * `InstanceType<typeof ImagePreview>`:模板 ref 只在这两处用到,写清需要什么就够。
+ */
+const viewer = ref<{ zoomBy: (factor: number) => void; fit: () => void } | null>(null)
 
-const status = computed(() => (state.value ? galleryStatus(state.value, dpi.value) : null))
-
-/** 上一次渲染失败了(没拿到新状态)。 */
-const renderFailed = computed(() => renderError.value !== '')
+const status = computed(() =>
+  state.value ? galleryStatus(state.value, dpi.value, { dpiUnconfirmed: loadUnconfirmed.value }) : null,
+)
 
 /**
  * 徽章上的词。**失败时覆盖状态词** —— 原来失败后仍挂着「未渲染」,而红条就在它下面,
@@ -89,12 +101,48 @@ const badgeWord = computed(() =>
   renderFailed.value ? RENDER_FAILED_WORD : (status.value?.word ?? ''),
 )
 
+/**
+ * 徽章样式。**失败是这一套里唯一靠颜色的**(红 = 出错了):其余状态一律靠**线型**分
+ * (虚线 = 还没坐实、次级实线 = 要留意但不是错、实线 = 已成立)—— 颜色已被称号梯度占用。
+ * 「已是最新」**不挂徽章**:它旁边就是分辨率下拉与按钮,一个孤零零的词读起来像控件标签,
+ * 并进结论句里就只有一个意思了(独立审查 S2)。
+ */
+const badge = computed<{ word: string; variant: BadgeVariants['variant'] } | null>(() => {
+  if (renderFailed.value) return { word: badgeWord.value, variant: 'destructive' }
+  if (!status.value || status.value.tone === 'ready') return null
+  return { word: badgeWord.value, variant: TONE_BADGE[status.value.tone] }
+})
+
 /** 失败说明:翻成可执行的中文,不把引擎的英文原句直接摆给用户。 */
-const failureMessage = computed(() => describeRenderFailure(renderError.value))
+const failureMessage = computed(() => describeRenderFailure(renderFailure.value))
+
+/**
+ * 主按钮:文案、权重、点了做什么。
+ *
+ * **渲染失败后一律是「重新渲染」+ 描边**(独立审查 R2):与「已是最新」那档同一个词
+ * (都是「再跑一次」的意思),并且**不用实心** —— 原因指向无效 / 损坏 PDF 时,一颗
+ * 高优先级实心按钮是在诱导一次注定无效的重试。
+ */
+const action = computed(() => {
+  if (renderFailed.value) {
+    return { label: '重新渲染', variant: 'outline' as const, run: renderPages }
+  }
+  const s = status.value
+  if (!s) return null
+  return {
+    label: s.actionLabel,
+    variant: s.variant,
+    run: s.action === 'reload' ? load : renderPages,
+  }
+})
+
+const pageCountText = computed(() => state.value?.pageCount ?? state.value?.rendered ?? 0)
 
 /**
  * 状态词 → 徽章样式,照仓库既有的语义:虚线 = 还没坐实(待办),次级实线 = 要留意但不是错,
- * 实线加粗 = 已成立。颜色在这一套里已被称号梯度占用,状态一律靠线型分。
+ * 实线加粗 = 已成立。颜色在这一套里已被称号梯度占用,所以**常态一律靠线型分**;
+ * **唯一的例外是渲染失败**——那是「出错了」,只能靠红(`destructive`)才读得出来,
+ * 见上面的 `badge` 计算属性。
  */
 const TONE_BADGE: Record<GalleryTone, BadgeVariants['variant']> = {
   empty: 'dashed',
@@ -114,12 +162,15 @@ function srcOf(page: PageImageRef): string {
 async function load() {
   loading.value = true
   loadError.value = ''
+  loadUnconfirmed.value = false
   try {
-    const next = await loadPageGalleryState(props.file, (query) =>
+    const loaded = await loadPageGalleryState(props.file, (query) =>
       $fetch<PdfPagesState>('/api/pdf-pages', { query }),
     )
-    state.value = next
-    if (!dpiTouched.value) dpi.value = next.dpi
+    // 二次核对失败也算拿到了结果(第一次的清单仍有效)—— 照常铺出来,只标记未核对。
+    state.value = loaded.state
+    loadUnconfirmed.value = !loaded.dpiConfirmed
+    if (!dpiTouched.value) dpi.value = loaded.state.dpi
   } catch (error) {
     loadError.value = describeFetchError(error, '读不到页图状态。')
   } finally {
@@ -134,7 +185,8 @@ async function load() {
 async function renderPages() {
   if (!state.value || !status.value) return
   rendering.value = true
-  renderError.value = ''
+  renderFailure.value = ''
+  renderFailed.value = false
   summary.value = ''
   try {
     const out = await $fetch<RenderOutcome>('/api/pdf-pages', {
@@ -144,9 +196,13 @@ async function renderPages() {
     state.value = out
     dpi.value = out.dpi
     dpiTouched.value = false
+    loadUnconfirmed.value = false
     summary.value = renderSummary(out)
   } catch (error) {
-    renderError.value = describeFetchError(error, '渲染失败,请重试。')
+    // 空串兜底,**不垫一句中文** —— describeRenderFailure 是唯一产出最终句子的一层,
+    // 垫一句会被再包装一遍(独立审查 F1 报的重复标点就是这个)。
+    renderFailure.value = describeFetchError(error, '')
+    renderFailed.value = true
   } finally {
     rendering.value = false
   }
@@ -169,8 +225,10 @@ watch(
   () => {
     viewing.value = null
     summary.value = ''
-    renderError.value = ''
+    renderFailure.value = ''
+    renderFailed.value = false
     loadError.value = ''
+    loadUnconfirmed.value = false
     dpiTouched.value = false
     dpi.value = DEFAULT_DPI
     state.value = null
@@ -195,14 +253,40 @@ watch(
          (旧版就是这样)。这里只补它没有的那一半:一共多少页。 -->
     <div
       v-if="viewingPage"
-      class="flex min-h-10 shrink-0 items-center gap-2 border-b px-2 py-1"
+      class="flex min-h-10 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-2 py-1"
     >
       <Button variant="ghost" size="sm" class="h-7 px-1.5 text-xs" @click="viewing = null">
         <ArrowLeft />
         返回全部页
       </Button>
       <span class="text-muted-foreground text-xs tabular-nums">
-        共 {{ state?.pageCount ?? state?.rendered }} 页
+        {{ pageCountText ? pageCountLabel(pageCountText) : '' }}
+      </span>
+
+      <!-- **窄屏的缩放入口**(独立审查 R1)。`PreviewToolbar` 把 − / + / 适宽 三颗按钮
+           收在 `sm:` / `lg:` 断点里(宽屏才显示),而 390px 的弹窗里那正是**唯一**能读清
+           正文的手段 —— 那时「适应」把整页缩到 ~25%,不放大的话字是糊的。所以本行自己补
+           一组,`sm:hidden` 与它错开,不会重复出现两套缩放。 -->
+      <span class="ml-auto flex shrink-0 items-center gap-1 sm:hidden">
+        <Button
+          variant="outline"
+          size="icon-sm"
+          aria-label="缩小"
+          @click="viewer?.zoomBy(1 / 1.12)"
+        >
+          <ZoomOut />
+        </Button>
+        <Button variant="outline" size="sm" class="h-8 px-2 text-xs" @click="viewer?.fit()">
+          适宽
+        </Button>
+        <Button
+          variant="outline"
+          size="icon-sm"
+          aria-label="放大"
+          @click="viewer?.zoomBy(1.12)"
+        >
+          <ZoomIn />
+        </Button>
       </span>
     </div>
 
@@ -211,9 +295,7 @@ watch(
       v-else-if="state && status"
       class="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b px-3 py-1.5"
     >
-      <Badge :variant="renderFailed ? 'destructive' : TONE_BADGE[status.tone]">
-        {{ badgeWord }}
-      </Badge>
+      <Badge v-if="badge" :variant="badge.variant">{{ badge.word }}</Badge>
       <!-- 渲染失败时不在这里解释:下面的红条已经说清了原因与下一步,同一件事不摆两遍。
            未渲染时不在这里重复一遍:那件事空态里说更完整(有图标、有解释)。 -->
       <span
@@ -225,7 +307,11 @@ watch(
         >
       </span>
 
-      <span class="ml-auto flex shrink-0 items-center gap-2">
+      <!-- 窄屏时这一组**独占一行**(`w-full` → `sm:w-auto`):成功态有结论句、失败态没有,
+           不强制换行的话两种状态的工具栏一个两行一个一行,来回切时候会跳(独立审查 S6)。 -->
+      <span
+        class="flex w-full shrink-0 items-center justify-end gap-2 sm:ml-auto sm:w-auto sm:justify-start"
+      >
         <span class="text-muted-foreground text-xs">分辨率</span>
         <Select :model-value="String(dpi)" @update:model-value="pickDpi">
           <SelectTrigger class="bg-card h-8 w-28" aria-label="页图分辨率">
@@ -237,9 +323,9 @@ watch(
             </SelectItem>
           </SelectContent>
         </Select>
-        <Button :disabled="rendering" @click="renderPages">
+        <Button v-if="action" :variant="action.variant" :disabled="rendering" @click="action.run()">
           <Loader2 v-if="rendering" class="animate-spin" />
-          {{ rendering ? '渲染中…' : status.actionLabel }}
+          {{ rendering ? '渲染中…' : action.label }}
         </Button>
       </span>
     </div>
@@ -258,8 +344,8 @@ watch(
     </div>
 
     <!-- 失败 / 上一次的小结。放在工具栏下面、内容上面:两种视图下都看得见。 -->
-    <div v-if="renderError || summary" class="flex shrink-0 flex-col gap-2 border-b px-3 py-2">
-      <Alert v-if="renderError" variant="destructive">
+    <div v-if="renderFailed || summary" class="flex shrink-0 flex-col gap-2 border-b px-3 py-2">
+      <Alert v-if="renderFailed" variant="destructive">
         <!-- `!` 是必须的:`alertVariants` 的 destructive 给说明文字加了 90% 透明,
              深色下只剩 4.25:1(低于 4.5:1);那条规则同权重、位置更靠后,
              只有 important 压得过(与删除 / 上传弹窗同一处处理)。 -->
@@ -275,8 +361,10 @@ watch(
     <!-- 单页:复用图片预览器(滚轮缩放、适应、旋转、下载都是打磨过的)。 -->
     <ImagePreview
       v-if="viewingPage"
+      ref="viewer"
       :src="srcOf(viewingPage)"
       :name="pageLabel(viewingPage.page)"
+      hide-kind-label
     />
 
     <!-- 取现状中:骨架网格。 -->
@@ -311,28 +399,35 @@ watch(
     </div>
 
     <!-- 一张都没有:说清这是什么、做什么用。动作在工具栏右端,这里只解释。
-         渲染刚失败时不解释 —— 上面的红条已经说清原因与下一步,同一件事不摆两遍
-         (旧版这里会再讲一句「文件可能已损坏」,与红条重复)。 -->
-    <Empty v-else-if="!state?.rendered" class="flex-1 border-0">
+         **渲染刚失败时整块不画**(独立审查 R2):徽章已写「渲染失败」、红条已写原因,
+         这里再挂一句「还没有页图」是同一屏里两个结论打架(一个说失败了,一个说还没做)。
+         内容的空缺由那条红条占位,不另画图标 + 标题。 -->
+    <Empty v-else-if="!state?.rendered && !renderFailed" class="flex-1 border-0">
       <EmptyHeader>
         <EmptyMedia variant="icon"><Images /></EmptyMedia>
         <EmptyTitle>{{ status?.headline ?? '还没有页图' }}</EmptyTitle>
-        <EmptyDescription v-if="!renderFailed">{{ status?.detail }}</EmptyDescription>
+        <EmptyDescription>{{ status?.detail }}</EmptyDescription>
       </EmptyHeader>
     </Empty>
 
-    <div v-else class="grid min-h-0 flex-1 auto-rows-min gap-3 overflow-auto p-3" :class="GRID_COLS">
+    <div
+      v-else
+      class="grid min-h-0 flex-1 auto-rows-min gap-3 overflow-auto px-3 pt-3 pb-8"
+      :class="GRID_COLS"
+    >
       <button
-        v-for="page in state.pages"
+        v-for="page in state?.pages ?? []"
         :key="page.page"
         type="button"
-        class="group hover:border-primary/40 hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3 active:scale-[0.97] motion-reduce:active:scale-100 flex flex-col gap-1.5 rounded-md border bg-card p-1.5 text-left transition-[color,background-color,border-color,transform] duration-150 ease-snap focus-visible:outline-none motion-reduce:transition-none"
+        class="group hover:border-primary/40 hover:bg-accent/40 focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-3 active:scale-[0.97] motion-reduce:active:scale-100 flex flex-col gap-1.5 rounded-md border border-transparent bg-card p-1.5 text-left transition-[color,background-color,border-color,transform] duration-150 ease-snap focus-visible:outline-none motion-reduce:transition-none"
         :title="`${pageLabel(page.page)} · ${page.width}×${page.height}`"
         @click="viewing = page.page"
       >
         <!-- 缩略图按整页显示(contain):要认得出是「哪一页」,靠的是整页的版式,
-             裁掉一半反而认不出。底色用 muted,白页在白底上也有个框。 -->
-        <span class="bg-muted block aspect-[210/297] overflow-hidden rounded-sm border">
+             裁掉一半反而认不出。底色用 muted —— **静态下就这一层边**(白页压在 muted 上);
+             外层按钮的 1px 边线平时是**透明的**(`border-transparent`,留着占位不跳),
+             只有 hover / 键盘聚焦时才亮出来。两层静态描边叠在一起会显得糊(独立审查 S5)。 -->
+        <span class="bg-muted block aspect-[210/297] overflow-hidden rounded-sm">
           <!-- `alt=""`:**有意留空**。页码就在这个按钮的可见标签里,再给图片一句
                `alt="第 N 页"`,读屏会把同一句念两遍(按钮名 = 图片 alt + 可见文字)。
                空 alt 让读屏跳过这张装饰性缩略图,按钮名就是那行可见页码。 -->

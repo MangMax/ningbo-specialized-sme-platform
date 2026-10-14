@@ -6,6 +6,7 @@ import {
   formatDuration,
   galleryStatus,
   loadPageGalleryState,
+  pageCountLabel,
   pageImageSrc,
   pageLabel,
   renderSummary,
@@ -83,8 +84,10 @@ describe('galleryStatus(现状 → 该说什么、该做什么)', () => {
     const s = galleryStatus(state({ rendered: 3, upToDate: false, pageCount: 12 }), 200)
     expect(s.tone).toBe('partial')
     expect(s.word).toBe('不完整')
-    expect(s.headline).toBe('页图不完整(已渲染 3 / 12 页)')
+    expect(s.headline).toBe('页图不完整(已有 3 张,共需 12 张)')
     expect(s.actionLabel).toBe('补齐页图')
+    expect(s.action).toBe('render')
+    expect(s.variant).toBe('default')
   })
 
   it('张数对、DPI 不对 → 说清是按**现在选的**这一档对不上,而不是含糊的「不一致」', () => {
@@ -105,14 +108,42 @@ describe('galleryStatus(现状 → 该说什么、该做什么)', () => {
     expect(s.detail).toContain('或者')
   })
 
-  it('一切对齐 → 「最新」,主按钮变成「重新渲染」且带 force(用户明确要求重做)', () => {
+  it('一切对齐 → 一句「已是最新」的结论,主按钮「重新渲染」+ 描边且带 force', () => {
     const s = galleryStatus(state(), 200)
     expect(s.tone).toBe('ready')
-    expect(s.word).toBe('最新')
-    expect(s.headline).toBe('12 页已渲染')
+    // 「最新」不再是一个孤立的徽章词(独立审查 S2):并进这句自足的结论里。
+    expect(s.headline).toBe('页图已是最新(共 12 页)')
     expect(s.detail).toBe('')
     expect(s.actionLabel).toBe('重新渲染')
+    // 「已是最新」是**可选的重做**,不该是全屏最重的实心按钮(独立审查 S4)。
+    expect(s.variant).toBe('outline')
+    expect(s.action).toBe('render')
     expect(s.force).toBe(true)
+  })
+
+  it('**实心按钮只留给「确实有活要干」的档**(S4):ready 是描边,其余是实心', () => {
+    const before = galleryStatus(state({ rendered: 0, pages: [], manifest: null }), 200)
+    const partial = galleryStatus(state({ rendered: 3, upToDate: false }), 200)
+    const stale = galleryStatus(state({ upToDate: false }), 200)
+    const ready = galleryStatus(state(), 200)
+    expect([before, partial, stale].map((s) => s.variant)).toEqual([
+      'default',
+      'default',
+      'default',
+    ])
+    expect(ready.variant).toBe('outline')
+  })
+
+  it('页数口径全站一致:每一档都说「共 N 页」或「N 张」(S9)', () => {
+    const seen = [
+      galleryStatus(state({ rendered: 0, pages: [], manifest: null }), 200).detail,
+      galleryStatus(state({ rendered: 3, upToDate: false }), 200).headline,
+      galleryStatus(state(), 200).headline,
+      galleryStatus(state(), 200, { dpiUnconfirmed: true }).headline,
+    ]
+    // 没有哪一档写「N 页已渲染」这种另一套说法。
+    for (const text of seen) expect(text).not.toContain('页已渲染')
+    expect(pageCountLabel(12)).toBe('共 12 页')
   })
 
   it('四个语气各有自己的状态词,没有两个语气共用一句话', () => {
@@ -161,8 +192,9 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
     })
 
     expect(requests).toEqual([{ file }, { file, dpi: 300 }])
-    expect(loaded.upToDate).toBe(true)
-    expect(galleryStatus(loaded, loaded.dpi).tone).toBe('ready')
+    expect(loaded.dpiConfirmed).toBe(true)
+    expect(loaded.state.upToDate).toBe(true)
+    expect(galleryStatus(loaded.state, loaded.state.dpi).tone).toBe('ready')
   })
 
   it('按清单 DPI 重查后仍不新鲜时,保留真实异常状态(且确实发了第二次请求)', async () => {
@@ -182,7 +214,7 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
     // 关键断言:即便两次结果一样「不新鲜」,第二次**仍必须按清单 DPI 发出**。
     // 只断言 tone 是拦不住的 —— 删掉二次请求后首个响应就是 stale,断言照样通过。
     expect(requests).toEqual([{ file }, { file, dpi: 300 }])
-    expect(galleryStatus(loaded, loaded.dpi).tone).toBe('stale')
+    expect(galleryStatus(loaded.state, loaded.state.dpi).tone).toBe('stale')
   })
 
   it('清单就是默认 DPI 时**不**发第二次请求(省一次往返)', async () => {
@@ -194,7 +226,8 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
     })
 
     expect(requests).toEqual([{ file }])
-    expect(loaded.upToDate).toBe(true)
+    expect(loaded.dpiConfirmed).toBe(true)
+    expect(loaded.state.upToDate).toBe(true)
   })
 
   it('没有清单(未渲染)时不发第二次请求 —— 没有清单 DPI 可依', async () => {
@@ -206,7 +239,53 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
     })
 
     expect(requests).toEqual([{ file }])
-    expect(loaded.manifest).toBeNull()
+    expect(loaded.dpiConfirmed).toBe(true)
+    expect(loaded.state.manifest).toBeNull()
+  })
+
+  it('**二次核对失败时保留首次响应**(F3):有清单就不该白屏,只标记未确认', async () => {
+    const file = state().file
+    const withManifest = state({
+      dpi: 300,
+      upToDate: false,
+      manifest: { dpi: 300, renderedAt: '2026-10-14T08:00:00.000Z' },
+      pages: [page(1), page(2)],
+      rendered: 2,
+      pageCount: 2,
+    })
+    const requests: Array<{ file: string; dpi?: number }> = []
+
+    const loaded = await loadPageGalleryState(file, async (query) => {
+      requests.push(query)
+      if (query.dpi === 300) throw new Error('boom')
+      return withManifest
+    })
+
+    // 第二次确实发了(且失败了),但**结果不能丢**:清单还在,网格照铺。
+    expect(requests).toEqual([{ file }, { file, dpi: 300 }])
+    expect(loaded.dpiConfirmed).toBe(false)
+    expect(loaded.state).toEqual(withManifest)
+    expect(loaded.state.pages).toHaveLength(2)
+  })
+
+  it('未确认时**不说「最新」**,而是照实说「待确认」并给「重新核对」', () => {
+    const s = galleryStatus(state(), 200, { dpiUnconfirmed: true })
+    expect(s.word).toBe('待确认')
+    expect(s.tone).toBe('stale')
+    expect(s.headline).toContain('未核对')
+    // 磁盘上什么都没坏,缺的只是一次成功的核对 —— 所以是重新核对,不是重渲染。
+    expect(s.action).toBe('reload')
+    expect(s.actionLabel).toBe('重新核对')
+  })
+
+  it('一张都没有时「未确认」不改变结论:那还是「未渲染」', () => {
+    const s = galleryStatus(
+      state({ rendered: 0, pages: [], manifest: null, upToDate: false }),
+      200,
+      { dpiUnconfirmed: true },
+    )
+    expect(s.tone).toBe('empty')
+    expect(s.actionLabel).toBe('渲染页图')
   })
 })
 
@@ -321,10 +400,35 @@ describe('describeRenderFailure(失败原因 → 可执行的中文)', () => {
     }
   })
 
-  it('前缀全角 / 半角冒号都剥得掉(不产出「渲染没有成功:渲染失败:…」)', () => {
-    for (const raw of ['渲染失败:xxx', '渲染失败:xxx', '渲染失败 : xxx']) {
-      expect(describeRenderFailure(raw)).not.toContain('渲染失败')
-    }
+  it('前缀:全角(U+FF1A)/ 半角冒号、夹空格,都归一化成同一句(精确断言)', () => {
+    // 上一版这条用的是两个**看起来一样**的 ASCII 冒号,等于没测全角(独立审查 F2)。
+    // 这里用显式转义写 U+FF1A,并对归一化后的整句做精确断言,不只是「不含某某」。
+    const expected = '渲染没有成功:xxx。可以重试;反复失败就换一份文件,或检查文件是否损坏。'
+    expect(describeRenderFailure('渲染失败:xxx')).toBe(expected)
+    expect(describeRenderFailure('渲染失败\uFF1Axxx')).toBe(expected)
+    expect(describeRenderFailure('渲染失败 : xxx')).toBe(expected)
+    expect(describeRenderFailure('渲染失败\uFF1A xxx')).toBe(expected)
+  })
+
+  it('句末已有标点时不拼出「。。」', () => {
+    expect(describeRenderFailure('渲染失败:boom。')).toBe(
+      '渲染没有成功:boom。可以重试;反复失败就换一份文件,或检查文件是否损坏。',
+    )
+    expect(describeRenderFailure('渲染失败:boom.')).not.toContain('boom..')
+  })
+
+  it('文件已不在库里给的是「刷新列表」,不是笼统的重试(F1 相关:原因要能行动)', () => {
+    const message = describeRenderFailure('渲染失败:文件不存在:jxj/a.pdf')
+    expect(message).toContain('已经不在文件库里')
+    expect(message).not.toContain('文件不存在:')
+  })
+
+  it('**空说明只出一层话**(F1):不再被双重包装成重复标点 + 重复劝重试', () => {
+    const message = describeRenderFailure('')
+    expect(message).toBe('渲染没有成功,也没拿到具体原因(可能是网络或服务中断)。可以重试。')
+    // 旧实现会把「渲染失败,请重试。」再包一层 → 「…重试。。可以重试;…」
+    expect(message).not.toContain('。。')
+    expect(message.match(/重试/g) ?? []).toHaveLength(1)
   })
 
   it('状态词是「渲染失败」,不是「未渲染」—— 试过没成,与还没动手是两件事', () => {

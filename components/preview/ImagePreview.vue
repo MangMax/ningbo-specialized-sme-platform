@@ -21,8 +21,14 @@ const props = withDefaults(
     name?: string
     /** 替代文本,默认用文件名。 */
     alt?: string
+    /**
+     * 隐藏工具栏上的类型名。给的对象是**已经知道这是什么**的调用方:页图库把 PDF 的
+     * 某一页喂进来时,工具栏再挂一个「图片」是句废话(既不是另一份文件,也没提供任何
+     * 判断依据)—— 独立审查把它读成了孤零零的一个词。默认 `false`,其它调用方不受影响。
+     */
+    hideKindLabel?: boolean
   }>(),
-  { name: '', alt: '' },
+  { name: '', alt: '', hideKindLabel: false },
 )
 
 const info = computed(() => resolvePreviewKind(props.src))
@@ -42,7 +48,9 @@ const pan = ref({ x: 0, y: 0 })
 const dragging = ref(false)
 const fullscreen = ref(false)
 
-const ZOOM_MIN = 0.25
+// 下限放到 10%:390px 的弹窗里 A4 整页「适应」需要约 19% —— 卡在 25% 的话
+// 号称适应、实际横向裁掉一截,而百分比还显示 25%,对不上页面实际尺寸(独立审查 R1)。
+const ZOOM_MIN = 0.1
 const ZOOM_MAX = 8
 const clampZoom = (v: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v))
 
@@ -192,6 +200,16 @@ watch(
   },
 )
 
+/**
+ * 对外露出缩放。**只加不减**:`defineExpose` 不改任何既有渲染,现有调用方(台账 /
+ * 详情页的出处预览)完全不受影响;页图库的窄屏工具栏靠它驱动(见 R1)。
+ */
+defineExpose({
+  zoomBy,
+  fit,
+  zoom,
+})
+
 const imgStyle = computed(() => ({
   width: natural.value.w ? `${natural.value.w * zoom.value}px` : undefined,
   height: natural.value.h ? `${natural.value.h * zoom.value}px` : undefined,
@@ -207,7 +225,7 @@ const imgStyle = computed(() => ({
   >
     <PreviewToolbar
       :title="title"
-      :kind-label="info?.label ?? '图片'"
+      :kind-label="hideKindLabel ? '' : (info?.label ?? '图片')"
       :icon="FileImage"
       :unit="null"
       :zoom="status === 'ready' ? zoom : null"
