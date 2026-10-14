@@ -34,8 +34,9 @@
 | 第三来源回填(只补缺失,不覆盖、不归并、占用打标) | `src/enrich.ts#backfillUsccFromLookups` |
 | CLI:导清单 / 校种子 / 单独回填(**本身不联网**) | `scripts/lookup-uscc.ts`(`vp run lookup:uscc`) |
 | 接进导入 | `scripts/import.ts`(第三来源 + 逐条审计 + `--report` 的 `lookups` 段) |
-| 测试 | `tests/uscc-lookup.test.ts`(11 例) |
-| 真实库核查报告 | `pipeline/reports/uscc-lookup-20261014.md` |
+| 测试(种子判据) | `tests/uscc-lookup.test.ts`(17 例) |
+| 测试(CLI 守卫,spawn 真进程) | `tests/uscc-lookup-cli.test.ts`(5 例) |
+| 真实库核查报告 | `pipeline/reports/uscc-lookup-20261014.md`(首轮)· `pipeline/reports/uscc-lookup-20261015.md`(收尾,三档全表 + 逐条来源 URL + 未命中名单) |
 
 **CLI 不联网**:联网由代理/人在会话里做;CLI 只负责「导清单 / 校种子 / 落库」,**不假装查过**。
 (本轮 7 条样本是我在会话里用搜狗/巨潮资讯网实查后手工落种子的。)
@@ -51,7 +52,15 @@
 
 ## 测试(全绿)
 
-`vp check` ✅ · `vp test` ✅ **7 文件 / 109 例** · app `pnpm typecheck && pnpm test` ✅ **17 文件 / 308 例**
+**当前口径**(pipeline `a07958c455fd72672863b9094dd274fbafc711ca`,父 `43335f10…`):
+`vp check` ✅ `49 files formatted / 0 lint+type` · `vp test` ✅ **9 文件 / 134 例**。
+
+> 首轮曾记 `7 文件 / 109 例`;其后并入 OCR 用例(`tests/ocr-markdown.test.ts`)、新增
+> `tests/uscc-lookup-cli.test.ts`,收尾轮又补了种子闸门与重放用例 ⇒ **9 / 134**。
+> 逐条证据片段见 `pipeline/reports/uscc-lookup-evidence-20261015.json`,三档全表见
+> `pipeline/reports/uscc-lookup-20261015.md`。
+
+**种子判据用例**(`tests/uscc-lookup.test.ts`,17 例):
 
 - [x] fixture:种子里有 → **补上**(`SeedCoversMissingUscc_FillsIt`)
 - [x] fixture:种子那条**已属他人** → **不覆盖、不迁移、打 `uscc_conflict`**(`UsccAlreadyOwned_NoOverwriteNoMigration_FlagsConflict`)
@@ -59,9 +68,44 @@
 - [x] 同名多主体 → 列待人工、一个都不动(`SameNameMultipleSubjects_ListedForHuman`)
 - [x] 跨市同名(文本口径,`district` 给出)→ 不写(`CrossCitySameName_NotWritten`)
 - [x] **跨市同名(机器口径)**:`district` 留空,靠**统代区划码**拦下外地统代(`OutOfTownDivisionCode_NotWritten_EvenWithoutDistrict`)
+- [x] `ambiguous` 条目永不落库(`AmbiguousSeedEntry_NeverWritten`)
 - [x] 「查过、查不到」与「没查过」分开,不进 `inferred`(`NotFoundEntry_StaysUsccMissing_ListedAsSearched`)
-- [x] 种子自检:缺出处/日期/校验位不过 → 拒(`ConfirmedWithBadChecksum_FailsSeedValidation`、`SeedPassesOwnValidation_AndEveryCodeIsLegal`)
+- [x] **`--check` 干跑与 `--apply` 实写逐条一致**(含只在写入侧判的「同名多主体」分支出)(`DryRun_MatchesApply_OnSameNameMultipleSubjects`)
+- [x] **坏种子 fail closed**(`assertLookupsValid` 在**任何写库前**终止):`BadConfirmedSeed_RefusedByAssert_MutationKiller` / `BadConfirmedSeed_ImportOrderWritesNothing` / `BadConfirmedSeed_BackfillDryRunAndWetBothRefuse`
+- [x] 种子自检:缺出处/日期/校验位不过 → 拒(`ConfirmedWithBadChecksum_FailsSeedValidation`)
+- [x] 出处形态闸门:`confirmed` 的 `source` 必须是**内容页**,搜索/跳转页被拒(`ConfirmedSourceRules_ContentPagesRejectedAndAccepted`)
+- [x] `note` 必须含**企业名 + 完整 18 位统代**(`ConfirmedNoteMustCarryNameAndFullUscc_RejectedBySeedValidation`)
 - [x] **重建可重放**:全新空库再跑一次,同样的统代回来(`RealSeed_ReplaysAfterRebuild`)
+- [x] 种子自检通过 + 每条 `confirmed` 校验位合法(`SeedPassesOwnValidation_AndEveryCodeIsLegal`)
+
+**CLI 守卫用例**(`tests/uscc-lookup-cli.test.ts`,5 例;spawn 真进程、只碰 `mkdtemp` 虚构路径):
+
+| # | 用例 | 断言的可观察点 |
+| --- | --- | --- |
+| 1 | `ExplicitDbRequired_AllThreeSubcommands_NeverFallsBackToEnv` | 三条子命令缺 `--db` 一律 **exit 2**,且**不**用 `NUXT_DB_PATH` 兜底 |
+| 2 | `RejectsEveryAliasOfFakeAppData_CaseVariantsIncluded_Exit2AndNoSideEffects` | 7 种别名(真实形状 / `APP`·`DATA`·`App`·`Data` 大小写变形 / **字面 `..`** / 目录·文件 symlink)全 **exit 2**;DB 哈希·mtime·大小不变、目录条目不变、无 sidecar,且那条**可补企业仍为 `NULL`** |
+| 3 | `FillableFixture_WouldReallyBeWritten_SoTheGuardAssertionsAreNotVacuous` | **对照**:同一份可补夹具放**合法隔离路径**上跑 `--apply` ⇒ `stderr` 空、**exit 0**、stdout 含 `补上 1`、该行落种子统代、字节**确实变化** |
+| 4 | `LegalIsolatedCopy_CheckSucceeds_AndLeavesDbBytesUnchanged` | 守卫不误伤合法副本:`--check` exit 0、字节不变、无 sidecar |
+| 5 | `WalModeCopy_CheckLeavesDbBytesUnchanged` | WAL 副本上 `--check` 只断**主库字节**不变(口径收窄:不说「文件级零写」) |
+
+**大小写别名守卫的变异验证**(照 `code-testing` 的 mutation 思路):
+
+把 `scripts/lookup-uscc.ts#looksLikeAppData` 的逐段比较**去掉 `toLowerCase()`**(还原成旧的
+大小写敏感写法)后,重跑聚焦命令:
+
+```bash
+vp test run tests/uscc-lookup-cli.test.ts
+```
+
+得到 **FAIL** —— `RejectsEveryAliasOfFakeAppData_…` 报
+`AssertionError: --apply 未拒绝 大小写变形(盘上/ realpath 形态): …/fake/APP/DATA/roster.db: expected +0 to be 2`
+(`Tests 1 failed | 4 passed`)。即该用例**确实能抓住旧守卫**:变异下 `--apply` 不再被拒、真的开库并写入。
+独立探针(与用例同构造)在同一次变异下量到 `exitCode 0 / bytesChanged true / 该行 uscc_norm = 9133021276454960X8`,
+恢复现守卫后为 `exitCode 2 / bytesChanged false / 该行仍 null`。变异只用于本地验证,**未提交**。
+
+**app 侧数字**:**不写 app 的测试条数**。首轮曾记 `pnpm typecheck && pnpm test ✅ 17 文件 / 308 例`,
+那是**首轮旧 app 检出**上的数字、且 app 测试会读取仓库内 `files/` 文件库,与本票(pipeline 侧)验收无关 ⇒
+只作**历史**记录,**不作为本票验收口径**(见文末「已知缺口」)。
 
 ## 独立评审(`code-review` 技能)后的加固
 
@@ -178,6 +222,34 @@ vp run lookup:uscc --db /tmp/uscc2-audit/vac2.db --apply    # 只写该副本
 **三档全表 / 逐条来源 URL / 证据片段**:`pipeline/reports/uscc-lookup-20261015.md` +
 `pipeline/reports/uscc-lookup-evidence-20261015.json`。
 
+### 独立固定头审查 —— **PASS WITH NOTES**
+
+对固定头 pipeline `a07958c455fd72672863b9094dd274fbafc711ca`(父 `43335f105c91d2719311d28e4db191e81815aab1`)
+的独立复核判 **PASS WITH NOTES**:结论成立、安全阀与门槛实现与文档一致,仅余**不改变结论的注记**。
+
+**复核口径(做了什么)**:
+- 只对**隔离副本**跑命令(`sqlite3 <正式库> "VACUUM INTO …"`,不用 `cp` —— WAL 未并入),
+  再 `vp run lookup:uscc --db <副本> --check` / `--apply`;
+- 复算种子构成:136 条 = 前轮 7(4 confirmed + 3 ambiguous)+ 本轮 129(**58 confirmed + 67 ambiguous + 4 not_found**);
+- 复算真实库分档:133 = 可补 38 + 占用 21 + 待人工 70 + 查不到 4;
+- 不变量:`enterprise/record/record_event/record_evidence` 逐表计数不变(7352/19729/21189/21189);
+- 变异验证大小写守卫(见上「测试」一节的 mutation 记录)。
+
+**本轮未覆盖的边界(不得据此声称全覆盖)**:
+- **不碰正式库 / 源数据,不跑 `db:import`**:本轮只做**只读复核 + 隔离副本演练**;
+  `db:import` 的重建口径(含第三来源)未在本轮重跑 —— 全量重建仍待输入面补齐(票 14 的 OCR)。
+- **P3-1 裸 `enterprise` 夹具**:`tests/uscc-lookup-cli.test.ts` 的「可补企业」是**直接 `INSERT`** 的裸行
+  (只有 `uscc_norm/name/name_norm/district/quality_flags`),没有配套的 `record/record_event/record_evidence`。
+  这对**守卫**是充分的(`--apply` 只按 `enterprise.uscc_norm IS NULL` 找目标),但**不代表**完整身份图;
+  真库上的写入路径由 `reports/uscc-lookup-20261015.md` 的隔离演练另行覆盖。
+- **P3-2 断言执行顺序**:守卫用例里三条断言(exit 2 → 字节/mtime/大小 → 该行仍 `NULL`)按顺序跑,
+  **首个失败即停**。所以变异下先炸的是 `exit status` 那条;字节与 `NULL` 断言在同一变异下**也已独立量到敏感**
+  (见上探针:`bytesChanged true` / 行落值),但**不是**由同一次断言链跑到才发现的。
+- **P3-3 硬链接 / 挂载别名**:守卫是**路径形状**判据(`resolve` + `realpath` 逐段比 `app/data`,大小写无关)。
+  **硬链接**、**同一卷以另一个名字挂载**、或经 `bind mount` 的同一 inode,**不在覆盖内** ——
+  本票不扩该边界(会在 `pipeline/reports/uscc-lookup-20261015.md` 的「残留边界」处同样声明)。
+- **检索单引擎**:只用了 360 ⇒ `not_found` 是**单引擎**口径。
+
 ## 重放证据(真实库)
 
 ```
@@ -203,10 +275,13 @@ $ sqlite3 subset.db "select name,uscc_norm from enterprise where name in (三家
 
 **已完成**
 - 种子模块 + 索引/自检、**唯一判定函数**、第三来源回填、CLI(导清单/校种子/单独回填)、
-  接进 `db:import`(含种子自检告警)、README、「联网补齐」一节、11 例测试、真实库核查报告。
+  接进 `db:import`(含种子自检告警)、README、「联网补齐」一节、**种子判据 17 例 + CLI 守卫 5 例**、
+  真实库核查报告(首轮 + 收尾)。
 - 真实库跑通:补 3 / 占用 1 / 待人工 3,逐条带出处;独立评审 5 条已逐条加固;**等输入重放**验证通过。
 - **余 129 家逐条查完(2026-10-15)**:种子补到 **136** 条,覆盖全部缺统代主体;
   真实库 `--check` / 隔离 `--apply` 双跑,三档精确闭合(见上「收尾」一节)。
+- **测试收口**:pipeline `a07958c4…` 上 `vp check` + `vp test` **9 文件 / 134 例** 全绿;
+  大小写别名守卫经**变异验证**确认可抓旧守卫(见上「测试」一节)。
 
 **未完成**
 - 无(本票范围内)。余下 67 家 `ambiguous` + 4 家 `not_found` **不是「未查」,是「查过、未确认」** ——
@@ -226,5 +301,11 @@ $ sqlite3 subset.db "select name,uscc_norm from enterprise where name in (三家
 - **检索只用 360 单引擎**:搜狗/必应本轮未用(反爬限流)⇒「未找到」是**单引擎**口径,不等于全网无。
   67 家 `ambiguous` 里多数是**平台登录墙/JS 空壳**挡住的,换通路可能再核出一部分。
 - **巨潮资讯网(cninfo)公司资料接口对上市公司稳定可查**,是上市主体的首选出处。
+- **app 侧测试数字按「历史」处理**:首轮记的 `pnpm typecheck && pnpm test ✅ 17 文件 / 308 例` 出自
+  **首轮旧 app 检出**,而其测试套件要读仓库内 `files/` 文件库 —— 与本票(pipeline 侧)验收无关,
+  且本收尾轮**不访问正式库/源数据** ⇒ **不重跑、不作本票验收口径**,仅保留为历史记录。
+  本票验收以 **pipeline `a07958c455fd72672863b9094dd274fbafc711ca` 的 `vp check` + `vp test`(9 文件 / 134 例)** 为准。
 
 **分支**:`feat/uscc-lookup-batch`(base `feat/uscc-lookup` 之后的本地提交 8e8fee2)。
+本收尾轮固定头:pipeline `a07958c455fd72672863b9094dd274fbafc711ca`(父 `43335f105c91d2719311d28e4db191e81815aab1`)、
+app `d249f045465750107d648ff1793a7806a54930f6`。**均未合并、未建 PR。**
