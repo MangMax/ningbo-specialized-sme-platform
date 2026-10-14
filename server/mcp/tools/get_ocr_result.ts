@@ -1,33 +1,63 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape } from '../../utils/mcp-files'
-import { ocrNotEnabledError } from '../../utils/ocr-result'
+import { fileRefShape, openFileStore, requireFileRef } from '../../utils/mcp-files'
+import { listOcrResults, ocrMarkdown } from '../../utils/ocr-result'
 
 /**
  * `get_ocr_result` —— 取某文件/某页的 OCR 结果(markdown,带页码)。
  *
- * **尚未启用**:依赖票 14 的 OCR 结果表,那张票还没做。按票 18 的要求把这个 tool
- * **留着并明确报错**(而不是删掉或现造一张表)。调用一律得到 501 + 一句说明。
+ * 票 18 把它留成 501 空壳,理由是「表还不存在,现造一张会把票 14 的选型提前锁死」;
+ * 票 14 把 `ocr_result` 建起来之后,这里就是它的**真实现**(只读)。
  *
- * 现在把 `inputSchema` 照着**打算支持**的形状声明出来,有两个用处:
- *  1. `tools/list` 里能看出这块能力要什么参数(而不是一个没有入参的黑盒);
- *  2. 票 14 接上时接口已经定型,不必再改一次代理侧的调用。
- * 但也因此,这些参数**现在不产生任何行为** —— 见 `server/utils/ocr-result.ts`。
+ * 返回两样东西,分别对应两种用法:
+ *  - `markdown` —— 导出的正文(**带页标记** `<!-- page: N -->`,整份或那一页);
+ *  - `results`  —— 逐页的**元数据**(页号 / 引擎 / 模型 / 通路 / 时间 / 字符数 / 页图路径)。
+ *
+ * 为什么两样都给:代理通常先要元数据判断「这文件识别到哪一步了」,再决定要不要正文;
+ * 一次调用给全,省一轮往返。正文与元数据同源(同一次查询),不会出现两者对不上的缝隙。
+ *
+ * **不读图、不识别** —— 这是只读 tool。要拿图自己识别,用 `list_page_images`(票 13 的产物)。
  */
 export default defineMcpTool({
   name: 'get_ocr_result',
-  title: '取 OCR 结果(尚未启用)',
+  title: '取 OCR 结果(markdown,带页码)',
   annotations: { readOnlyHint: true, openWorldHint: false },
   description: [
-    '取某文件(或某页)的 OCR 结果 markdown(带页码)。',
-    '**尚未启用**:依赖票 14 的 OCR 结果表,当前调用一律返回 501 并说明原因。',
-    '在那之前:页图可用 `list_page_images` 取(票 13 已可用)。',
+    '按 `fileId` 或 `relPath`(恰给其一)取某文件(或某页)的 OCR 结果 markdown。',
+    '返回 `markdown`(带 `<!-- page: N -->` 页标记)与 `results`(逐页元数据:page / engine / model / channel / createdAt / pageRelPath / url)。',
+    '给 `page` 只取那一页。**文件还没识别过**时返回 404 并说明可以走哪条通路。',
+    '这是**只读** tool;写入用 `save_ocr_result`(需鉴权)。',
   ].join('\n'),
   inputSchema: {
     ...fileRefShape,
     page: z.number().int().min(1).optional().describe('页号;省略则要整份文件的 OCR 结果'),
   },
-  handler: async () => {
-    throw ocrNotEnabledError()
+  handler: async (input) => {
+    const { db } = await openFileStore()
+    const row = requireFileRef(db, input, { allowRemoved: true })
+
+    const out = ocrMarkdown(db, row.id, input.page ?? null)
+    if (!out.ok) throw createError({ statusCode: 404, message: out.message })
+
+    const results = listOcrResults(db, row.id, input.page ?? null).map((r) => ({
+      page: r.page,
+      engine: r.engine,
+      model: r.model,
+      channel: r.channel,
+      createdAt: r.createdAt,
+      chars: r.markdown.length,
+      pageRelPath: r.pageRelPath,
+      url: r.pageRelPath
+        ? `/api/files/${r.pageRelPath.split('/').map(encodeURIComponent).join('/')}`
+        : null,
+    }))
+
+    return {
+      file: { id: row.id, relPath: row.relPath, filename: row.filename },
+      page: input.page ?? null,
+      pages: out.pages,
+      markdown: out.markdown,
+      results,
+    }
   },
 })

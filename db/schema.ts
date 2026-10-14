@@ -95,7 +95,7 @@ export const recordEvent = sqliteTable(
   (t) => [index('record_event_record_idx').on(t.recordId)],
 )
 
-/** 事件出处:回溯到文件 / 附件 / 序号。 */
+/** 事件出处:回溯到文件 / 附件 / 序号 / **页**。 */
 export const recordEvidence = sqliteTable(
   'record_evidence',
   {
@@ -106,6 +106,16 @@ export const recordEvidence = sqliteTable(
     sourceFile: text('source_file').notNull(),
     attachment: text('attachment'),
     listNo: integer('list_no'),
+    /**
+     * 该条记录在**源文件**里的页码(1 起)。
+     *
+     * 票 14 新加:扫描 PDF 没有文字层,出处只能落到页图上 —— 而 OCR 结果**自带页码**
+     * (见 `ocr_result.page_no` 与 `lib/ocr-markdown.ts` 的页标记)。`.docx` 那条通路
+     * (票 11)产不出页码,一律为 `null` —— **空值优于错误值**:宁可没有,不要猜。
+     *
+     * `null` 与「第 1 页」是两回事:前者是「这份来源给不出页码」,后者是一个**已知**的页。
+     */
+    page: integer('page'),
   },
   (t) => [index('record_evidence_event_idx').on(t.recordEventId)],
 )
@@ -212,6 +222,69 @@ export const storedFilePart = sqliteTable(
     rowCount: integer('row_count').notNull().default(0),
   },
   (t) => [index('stored_file_part_file_idx').on(t.fileId)],
+)
+
+/**
+ * **OCR 结果**(票 14):页图 → 文本。**按页**挂在一个文件上。
+ *
+ * 见 `.scratch/ingest-pipeline/issues/14-ocr.md` 与 SPEC 需求 4。三条通路都往这张表落:
+ *  - **api** —— `POST /api/jobs {kind:"ocr"}` 调 PaddleOCR API(异步、可批量);
+ *  - **upload** —— `POST /api/ocr-results`,人把已在官网跑好的带页码 markdown 传进来;
+ *  - **mcp** —— 代理经 MCP 的 `save_ocr_result` 写回。
+ * `channel` 记的就是**这一行是哪条通路来的** —— 结果质量对不上时,这是第一个要问的问题。
+ *
+ * ── 为什么是「按页一行」,不是「一个文件一行 markdown 大文本」────────────
+ * 1. **页码是这票的全部意义**:票 14 要按 `page_no` 给 `record_evidence` 补页码,
+ *    所以页码必须是**列**(可查、可 join),不能埋在文本里;
+ * 2. 单页可重跑:某页识别坏了,重跑那一页,不牵动整份;
+ * 3. 幂等判据天然:**(file_id, page_no) 唯一**(见下面的唯一索引)——「同页不重复写」
+ *    由库保证,而不用在应用层先查后写(那是竞态)。
+ *
+ * ── `page_rel_path` 是**第几页**的哪个**页图**,不是外键 ────────────────
+ * 票 13 的页图**不入库**(ADR-2026-10-14:页图是派生缓存,`files/**​/.*.pages/` 不进 git、
+ * 也不建表),所以这里没有 `stored_page_image` 可引用。页图的身份由**规则**给出:
+ * `lib/pdf-page.ts` 的 `pageImageRelPath(pdfRelPath, pageNo)` —— 本列存的就是它算出来的
+ * 那个相对路径。它是**派生值**(可由 `stored_file.rel_path` + `page_no` 现算),
+ * 存下来是为了让「这条结果对的是哪张图」在库层面直接可读,而不是每次 join 回来推。
+ *
+ * ── `raw` 与 `markdown` 的分工 ─────────────────────────────────────────
+ * `markdown` 是**产物**(人读、pipeline 解析、导出都用它);`raw` 是**原始响应**
+ * (API 那一页的 JSON / 上传时给的原文),留它是为了「识别错了」时能回看引擎到底说了什么,
+ * 以及日后换解析口径不必重跑付费的 API。两者都不参与查询,所以 `raw` 进 JSON 列。
+ *
+ * 表**只被本票的读写路径碰**;`record` / `enterprise` / 身份归并一概不碰(见 data-integrity 安全阀)。
+ */
+export const ocrResult = sqliteTable(
+  'ocr_result',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    fileId: integer('file_id')
+      .notNull()
+      .references(() => storedFile.id, { onDelete: 'cascade' }),
+    /** 页码,从 1 起。与票 13 的页图页号、`.pages.json` 的 `page` **同一个号**。 */
+    pageNo: integer('page_no').notNull(),
+    /** 该页页图在文件库内的相对路径(`lib/pdf-page.ts` 的 `pageImageRelPath`)。可空。 */
+    pageRelPath: text('page_rel_path'),
+    /** 该页的 markdown(带标题、表格的标准 markdown)。**空页也占一行**(`''`)——
+     * 页号必须与源 PDF 的页一一对应,少一行就断号,「按 page_no 回填页码」立刻失准。 */
+    markdown: text('markdown').notNull(),
+    /** 原始响应(API 那一页的 JSON / 上传的原文)。不参与查询,只供回溯。 */
+    raw: text('raw', { mode: 'json' }).$type<unknown>(),
+    /** 识别引擎。目前只有 `paddleocr`(上传通路也沿用,除非调用方另说)。 */
+    engine: text('engine').notNull().default('paddleocr'),
+    /** 模型名(`PaddleOCR-VL-1.6` 之类;上传通路可空)。 */
+    model: text('model'),
+    /** 三通路之一:`api` / `upload` / `mcp`。 */
+    channel: text('channel', { enum: ['api', 'upload', 'mcp'] }).notNull(),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    /** **幂等的落点**:同文件的同一页只有一行(重跑/重传覆盖,不堆重复)。 */
+    uniqueIndex('ocr_result_file_page_uq').on(t.fileId, t.pageNo),
+    index('ocr_result_file_idx').on(t.fileId),
+  ],
 )
 
 /**

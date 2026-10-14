@@ -198,18 +198,18 @@ describe('任务种类注册表', () => {
     expect(() => registerJob(spec)).toThrow(/重复登记/)
   })
 
-  it('生产登记表:render-pages 已接入,ocr / reconcile 已登记但明确报「尚未接入」', () => {
+  it('生产登记表:render-pages 与 ocr 已接入,reconcile 已登记但明确报「尚未接入」', () => {
     registerJobSpecs()
     const kinds = jobSpecs()
     expect(kinds.map((s) => s.kind)).toEqual(['ocr', 'reconcile', 'render-pages'])
-    expect(getJobSpec('render-pages')!.status).toBe('ready')
-    expect(getJobSpec('render-pages')!.run).toBeTypeOf('function')
-    // 未接入的两个要**说清为什么、接在哪张票上** —— 只说「没接」等于没说。
-    for (const k of ['ocr', 'reconcile']) {
-      expect(getJobSpec(k)!.status).toBe('todo')
-      expect(getJobSpec(k)!.note).toMatch(/尚未接入/)
+    // 票 14 把 ocr 从 todo 接上了(结果表落地)—— 两个已接入的 kind 都要有 run。
+    for (const k of ['render-pages', 'ocr']) {
+      expect(getJobSpec(k)!.status).toBe('ready')
+      expect(getJobSpec(k)!.run).toBeTypeOf('function')
     }
-    expect(getJobSpec('ocr')!.note).toContain('票 14')
+    // 未接入的那个要**说清为什么、接在哪张票上** —— 只说「没接」等于没说。
+    expect(getJobSpec('reconcile')!.status).toBe('todo')
+    expect(getJobSpec('reconcile')!.note).toMatch(/尚未接入/)
     expect(getJobSpec('reconcile')!.note).toContain('票 16')
     // 幂等:重复调用不会撞「重复登记」。
     expect(() => registerJobSpecs()).not.toThrow()
@@ -872,6 +872,7 @@ describe('render-pages 的 run(真 pdfium + sharp)', () => {
       {
         jobId: 'test',
         filesDir: root,
+        db,
         progress: (done, total) => seen.push([done, total]),
         cancelled: () => false,
       },
@@ -928,6 +929,7 @@ describe('render-pages 的 run(真 pdfium + sharp)', () => {
       {
         jobId: 'test',
         filesDir: root,
+        db,
         progress: () => {
           renders += 1
         },
@@ -959,6 +961,7 @@ describe('render-pages 的 run(真 pdfium + sharp)', () => {
     const ctx = {
       jobId: 'test',
       filesDir: root,
+      db,
       progress: () => undefined,
       cancelled: () => false,
     }

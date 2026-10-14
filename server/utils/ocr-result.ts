@@ -1,39 +1,291 @@
-import { createError } from 'h3'
+import { and, asc, eq } from 'drizzle-orm'
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import * as schema from '../../db/schema'
+import {
+  assembleMarkdown,
+  MAX_PAGE_NO,
+  normalizeMarkdownBody,
+  pageNoOfMarker,
+  splitMarkdown,
+  type OcrPage,
+} from '../../lib/ocr-markdown'
+import { pageImageRelPath, isPdfPath } from '../../lib/pdf-page'
 
-/**
- * OCR 结果的读写(**尚未启用**)—— 票 18 的 `get_ocr_result` / `save_ocr_result` 的落点。
- *
- * ── 为什么是空的 ────────────────────────────────────────────────────────
- * OCR 结果表属于**票 14**(`.scratch/ingest-pipeline/issues/14-ocr.md`),那张票还没做:
- * `db/schema.ts` 里没有 `ocr_result`,迁移里也没有。按票 18 的要求,这两个 tool 现在就
- * **留成明确报「尚未启用」**,而不是现造一张表 —— 现造的话,表结构(页码怎么挂?一段多页?
- * 一次识别多条通路怎么写?)会先于票 14 的设计定死,把那张票的选型提前锁进仓库。
- *
- * ── 为什么单独成文件而不是在 tool 里各写一段 ────────────────────────────
- * 票 14 落地时,要改的是**这里**(把真实读写写进这个模块),两个 tool 文件只是调用方,
- * 一行都不用动。顺带也保证两个 tool 报的是**同一句话**,不会文案漂移。
- *
- * ── 已经确定的口径(票 14 可参考,不是本票的承诺)──────────────────────
- * OCR 结果按 `(文件, 页码)` 挂,`page_no` 是权威(见票 13 的 `stored_page_image`/页图清单,
- * 页号从 1 连续);导出 markdown 时带页码。这三条写进 SPEC 了,票 14 直接按它做即可。
- */
+type Db = BetterSQLite3Database<typeof schema>
 
-/** 尚未存在的表名。票 14 建表后把这里和下面的函数一起换掉。 */
+/** 一张 OCR 结果表(票 14)。导出给文档与断言用。 */
 export const OCR_RESULT_TABLE = 'ocr_result'
 
-/** 一句话说明为什么不可用 —— 两个 tool 用同一份,免得文案漂移。 */
-export const OCR_DISABLED_MESSAGE =
-  `OCR 结果尚未启用:票 14(OCR 三通路 + 结果入库)未实现,表 \`${OCR_RESULT_TABLE}\` 还不存在。` +
-  '这不是本 tool 的临时缺陷,而是本票有意留的空位 —— 等票 14 建表后原样接上。' +
-  '在那之前,页图可以用 list_page_images 取(票 13 已可用)。'
+/** 三条通路。与 `ocr_result.channel` 的枚举同源。 */
+export const OCR_CHANNELS = ['api', 'upload', 'mcp'] as const
+export type OcrChannel = (typeof OCR_CHANNELS)[number]
+
+/** 上传/代理通路没明说引擎时的默认值(与 schema 的列默认一致)。 */
+export const DEFAULT_OCR_ENGINE = 'paddleocr'
+
+/** 一页的写入输入。 */
+export interface OcrPageWrite {
+  /** 页码,从 1 起。 */
+  page: number
+  /** 该页 markdown(允许空串 —— 空白页也要占一行,页号不能断)。 */
+  markdown: string
+  /** 原始响应(API 那一页的 JSON / 上传的原文)。 */
+  raw?: unknown
+  /** 该页页图的相对路径;省略时按票 13 的规则从源 PDF 路径推(仅 PDF 推得出)。 */
+  pageRelPath?: string | null
+}
+
+/** 一次写入。 */
+export interface OcrWriteInput {
+  fileId: number
+  /** 要写的页。**不会被合并**:没列出的页不动,列出的页**覆盖**。 */
+  pages: readonly OcrPageWrite[]
+  channel: OcrChannel
+  engine?: string
+  model?: string | null
+  /**
+   * 源文件在文件库内的相对路径 —— 给了才推得出 `page_rel_path`(票 13 的页图规则
+   * 按「相对 PDF 路径 + 页号」算)。`.md` 这类没有页图的来源不给即可。
+   */
+  sourceRelPath?: string | null
+}
 
 /**
- * 统一的「尚未启用」错误。
+ * 写入结果。失败给**给人看的中文原因**(路由转 400、tool 转 MCP 错误)。
  *
- * 用 **501 Not Implemented** 而不是 404/400:这个能力**存在**(tool 出现在 `tools/list` 里,
- * 这是票 18 要求的「明确报」),只是还没做 —— 501 正是这个语义,客户端也不必把它当成
- * 「你参数给错了」去反复改参数重试。
+ * `written` 是**本次落库的页数**,`pages` 是它们按升序的页号 —— 让调用方(与验收)
+ * 不必再查一次库就知道写进去了什么、页码对不对。
  */
-export function ocrNotEnabledError(): ReturnType<typeof createError> {
-  return createError({ statusCode: 501, message: OCR_DISABLED_MESSAGE })
+export type OcrWriteResult =
+  | { ok: true; written: number; pages: number[] }
+  | { ok: false; message: string }
+
+/** 一页页图路径:只有 PDF 推得出(票 13 的规则按「相对 PDF 路径」派生)。 */
+function pageRelPathOf(sourceRelPath: string | null | undefined, pageNo: number): string | null {
+  if (!sourceRelPath || !isPdfPath(sourceRelPath)) return null
+  return pageImageRelPath(sourceRelPath, pageNo)
+}
+
+/**
+ * 校验待写入的页(**纯函数**)。
+ *
+ * 校验的是「这一批页本身站不站得住」,不是「文件在不在」——
+ * 后者要查库,不属于纯函数。分两层是为了让这一层能被单测穷举,
+ * 而路由只需要把两层串起来。
+ */
+export function validateOcrPages(pages: readonly OcrPageWrite[]): OcrWriteResult {
+  if (!pages.length) return { ok: false, message: '至少要有一页(空数组不写任何东西)' }
+  const seen = new Set<number>()
+  for (const p of pages) {
+    if (!Number.isInteger(p.page) || p.page < 1 || p.page > MAX_PAGE_NO) {
+      return { ok: false, message: `页号必须是 1–${MAX_PAGE_NO} 之间的整数:${p.page}` }
+    }
+    if (typeof p.markdown !== 'string') {
+      return { ok: false, message: `第 ${p.page} 页的 markdown 必须是字符串` }
+    }
+    if (seen.has(p.page)) {
+      // 重复页会让唯一索引抛底层错误(一句话看不懂),不如在这里说人话。
+      return { ok: false, message: `页号重复:第 ${p.page} 页给了两次` }
+    }
+    seen.add(p.page)
+  }
+  return { ok: true, written: pages.length, pages: [...seen].sort((a, b) => a - b) }
+}
+
+/**
+ * 把「一份 markdown + 可选的页号」翻成**要写哪些页**。上传通路(b)与 MCP 的
+ * `save_ocr_result` 共用这一条 —— 两个入口对「页号怎么定」必须**完全一样**,
+ * 否则同一个人从页面传和从 MCP 传,结果会不一样。
+ *
+ * 两种输入:
+ *  - **给了 `page`** ⇒ 整段 markdown 就是**那一页**的内容(代理常见的形态:
+ *    它一次只处理一页,手里没有页码标记)。正文原样归一后落库。
+ *  - **没给 `page`** ⇒ markdown **必须自带页标记**,按标记切页(通路 b:人从官网
+ *    导出的整份结果)。切不开就报错,不猜页号。
+ */
+export function pagesFromInput(
+  markdown: string,
+  page?: number | null,
+): { ok: true; pages: OcrPage[] } | { ok: false; message: string } {
+  if (page !== undefined && page !== null) {
+    if (!Number.isInteger(page) || page < 1 || page > MAX_PAGE_NO) {
+      return { ok: false, message: `页号必须是 1–${MAX_PAGE_NO} 之间的整数:${String(page)}` }
+    }
+    /**
+     * 给了 `page` 就是「这段 markdown 是**一页**的内容」—— 所以它自己**不该再带页标记**。
+     *
+     * 带了就是两种意思打架:标记说「这里有好几页」,`page` 说「只有这一页」。
+     * 照单全收的后果很具体:标记会被当成**正文**存进那一页,于是导出的文件里
+     * 嵌着别的页的标记,再拿去 `POST /api/ocr-results` 会得到「页码重复」——
+     * **一份从我们这儿导出的文件传不回我们自己的上传口**。
+     * 与其留下这种自相矛盾的数据,不如让调用方明确二选一。
+     *
+     * 逐行问 `pageNoOfMarker`(而不是拿两个正则各判一次)—— 判据只有一处定义,
+     * 「行内提到第 3 页」这类正文不会被误判(它必须**整行**才是标记)。
+     */
+    if (markdown.split('\n').some((line) => pageNoOfMarker(line) !== null)) {
+      return {
+        ok: false,
+        message:
+          '给了 `page` 就表示这段 markdown 是**这一页**的内容,它不该再带页标记。' +
+          '要么去掉 `page`(让 markdown 自己带页标记、按标记切页),要么把那一页的标记从正文里去掉。',
+      }
+    }
+    return { ok: true, pages: [{ page, markdown: normalizeMarkdownBody(markdown) }] }
+  }
+  const split = splitMarkdown(markdown)
+  if (!split.ok) {
+    return {
+      ok: false,
+      message: `${split.message}(若这次的 markdown 只是**一页**、没有页码标记,请显式给 \`page\`。)`,
+    }
+  }
+  return { ok: true, pages: split.pages }
+}
+
+/**
+ * 写入(或覆盖)一个文件若干页的 OCR 结果。
+ *
+ * **幂等点在库上,不在应用层**:`(file_id, page_no)` 有唯一索引,这里用
+ * `onConflictDoUpdate` 覆盖 —— 「同页不重复写」由 SQLite 保证。先查后写的写法
+ * 在并发下会两个写者都查不到、都插(唯一索引照样炸),或者覆盖顺序反了,
+ * 所以不做那一套。
+ *
+ * 没列出的页**不动**:某页识别坏了就只重跑那一页(通路 a 的逐页重试正是靠这个)。
+ *
+ * ── `raw` 的保留语义(与其他列不同)────────────────────────────────────
+ * 其他列都是「最后写者胜」,`raw` 不是:这次**没给** `raw` 时保留上一次那份。
+ * 写这条路的三方里,只有通路 a(在线 API)手里有原始响应;通路 b(人上传)与
+ * c(代理写回)天然没有。而 `raw` 的用途之一恰恰是「日后换解析口径不必重跑付费的 API」——
+ * 如果常规重传就把它抹成 null,这条用途在一次重传之后就不成立了。
+ * 给了 `raw` 时仍然覆盖(那才是「最后写者胜」的本意)。
+ */
+export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
+  const checked = validateOcrPages(input.pages)
+  if (!checked.ok) return checked
+
+  const engine = input.engine?.trim() || DEFAULT_OCR_ENGINE
+  const model = input.model ?? null
+  const createdAt = new Date().toISOString()
+
+  db.transaction((tx) => {
+    for (const p of input.pages) {
+      const hasRaw = p.raw !== undefined && p.raw !== null
+      const values = {
+        fileId: input.fileId,
+        pageNo: p.page,
+        pageRelPath: p.pageRelPath ?? pageRelPathOf(input.sourceRelPath, p.page),
+        markdown: p.markdown,
+        raw: (p.raw ?? null) as unknown,
+        engine,
+        model,
+        channel: input.channel,
+        createdAt,
+      }
+      tx.insert(schema.ocrResult)
+        .values(values)
+        .onConflictDoUpdate({
+          target: [schema.ocrResult.fileId, schema.ocrResult.pageNo],
+          // 覆盖的是**内容与来源**:同一页重跑(或换个通路重来)后,那一行必须
+          // 反映最后一次的结果,而不是两条并存让人猜哪条算数。
+          //
+          // `raw` 是**例外**:这次没给原始响应(通路 b/c 的调用方本来就没有它),
+          // 就**保留**上一次那份。理由写在这个函数的说明里 —— 常规重传会把
+          // 通路 a 花过钱的原始响应抹掉,而它的用途之一正是「不必再花一次」。
+          set: {
+            pageRelPath: values.pageRelPath,
+            markdown: values.markdown,
+            ...(hasRaw ? { raw: values.raw } : {}),
+            engine: values.engine,
+            model: values.model,
+            channel: values.channel,
+            createdAt: values.createdAt,
+          },
+        })
+        .run()
+    }
+  })
+
+  return { ok: true, written: input.pages.length, pages: checked.pages }
+}
+
+/** 一行结果(投影成给人看/给 tool 用的形状)。 */
+export interface OcrResultRow {
+  page: number
+  markdown: string
+  pageRelPath: string | null
+  engine: string
+  model: string | null
+  channel: string
+  createdAt: string
+}
+
+/** 取某文件的 OCR 结果;**给了 `pageNo` 就只取那一页**。按页号升序。 */
+export function listOcrResults(db: Db, fileId: number, pageNo?: number | null): OcrResultRow[] {
+  const where =
+    pageNo === undefined || pageNo === null
+      ? eq(schema.ocrResult.fileId, fileId)
+      : and(eq(schema.ocrResult.fileId, fileId), eq(schema.ocrResult.pageNo, pageNo))
+  return db
+    .select({
+      page: schema.ocrResult.pageNo,
+      markdown: schema.ocrResult.markdown,
+      pageRelPath: schema.ocrResult.pageRelPath,
+      engine: schema.ocrResult.engine,
+      model: schema.ocrResult.model,
+      channel: schema.ocrResult.channel,
+      createdAt: schema.ocrResult.createdAt,
+    })
+    .from(schema.ocrResult)
+    .where(where)
+    .orderBy(asc(schema.ocrResult.pageNo))
+    .all()
+}
+
+/** 某文件 OCR 结果覆盖了哪些页(升序)。页数一致性的核对点。 */
+export function ocrPageNumbers(db: Db, fileId: number): number[] {
+  return db
+    .select({ page: schema.ocrResult.pageNo })
+    .from(schema.ocrResult)
+    .where(eq(schema.ocrResult.fileId, fileId))
+    .orderBy(asc(schema.ocrResult.pageNo))
+    .all()
+    .map((r) => r.page)
+}
+
+/**
+ * 删掉某文件的全部 OCR 结果。
+ *
+ * 用途很具体:任务里「识别出的页数 ≠ 源 PDF 页数」时**回滚**刚写进去的那批 ——
+ * 那时行里的 `page_no` 是错的,留着比没有更坏(它看起来像真的)。
+ * 不对外开接口:「删结果」不是调用方要的能力,是编排面在**发现自己写错**时的自清。
+ */
+export function removeOcrResults(db: Db, fileId: number): number {
+  return db.delete(schema.ocrResult).where(eq(schema.ocrResult.fileId, fileId)).run().changes
+}
+
+/**
+ * 导出 markdown。整份(不带 `pageNo`)或单页(带)。
+ *
+ * 整份的形式由 `lib/ocr-markdown.ts` 的 `assembleMarkdown` 定死(页标记 + 按页升序)——
+ * **导出的文件再传回来,`splitMarkdown` 必须切出同样的页**,通路 b 才闭环。
+ * 不是自己在这里拼,就是为了让这两件事共用一份规则。
+ */
+export function ocrMarkdown(
+  db: Db,
+  fileId: number,
+  pageNo?: number | null,
+): { ok: true; markdown: string; pages: number[] } | { ok: false; message: string } {
+  const rows = listOcrResults(db, fileId, pageNo)
+  if (!rows.length) {
+    return {
+      ok: false,
+      message:
+        pageNo === undefined || pageNo === null
+          ? `这个文件还没有 OCR 结果(file_id=${fileId})。先走一条通路:POST /api/jobs {kind:"ocr"} / POST /api/ocr-results / MCP save_ocr_result。`
+          : `第 ${pageNo} 页还没有 OCR 结果(file_id=${fileId})。`,
+    }
+  }
+  const pages: OcrPage[] = rows.map((r) => ({ page: r.page, markdown: r.markdown }))
+  return { ok: true, markdown: assembleMarkdown(pages), pages: pages.map((p) => p.page) }
 }

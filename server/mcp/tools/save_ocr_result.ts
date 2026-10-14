@@ -1,23 +1,30 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape } from '../../utils/mcp-files'
+import { fileRefShape, openFileStore, requireFileRef } from '../../utils/mcp-files'
 import { writeGuard } from '../../utils/mcp-guard'
-import { ocrNotEnabledError } from '../../utils/ocr-result'
+import { pagesFromInput, writeOcrResult } from '../../utils/ocr-result'
 
 /**
- * `save_ocr_result` —— 写回 OCR 结果(票 18 的**写入**之一,需鉴权)。
+ * `save_ocr_result` —— **通路 c**:代理经 MCP 把识别结果写回。
  *
- * **尚未启用**:依赖票 14 的 OCR 结果表,那张票还没做。按票 18 的要求把这个 tool
- * **留着并明确报错**(而不是删掉或现造一张表)。调用一律得到 501 + 一句说明。
+ * 票 18 的 501 空壳到此结束(表由票 14 建好)。代理的典型流程是:
+ * `list_page_images` 拿到某页的 PNG → 自己(或经别的服务)识别 → 本 tool 按**页号**写回。
+ * 所以这里**页号是必需的**:省略 `page` 时,markdown 必须自带 `<!-- page: N -->` 页标记
+ * (整份结果的情形),否则报错 —— **不猜页号**,猜出来的页码会让整条「按页回填出处」失真。
  *
- * 保留了 `enabled: writeGuard` —— 它**是**写入 tool,所以即便当前只会 501,
- * 也不该出现在未鉴权客户端的 `tools/list` 里(否则等于告诉对方「这里有个写入口」)。
+ * ── 边界(与票 18 一致,没变)────────────────────────────────────────────
+ * 只写 `ocr_result`。**不碰** `record` / `record_event` / `record_evidence` / `enterprise`
+ * —— 「谁被认定了」只由 pipeline 写(见 data-integrity 的安全阀)。
+ * 本 tool 是**写入** tool,需要鉴权(`Authorization: Bearer <NUXT_MCP_TOKEN>`),
+ * 未鉴权时不出现在 `tools/list` 里,强行调用得到 HTTP 401(见 `server/mcp/index.ts`)。
  *
- * `inputSchema` 照打算支持的形状声明,理由同 `get_ocr_result`。
+ * ── 幂等 ────────────────────────────────────────────────────────────────
+ * `(file_id, page_no)` 唯一,写的是**覆盖** —— 同一页重写不会堆重复行,
+ * 所以代理重试是安全的(`idempotentHint: true`)。
  */
 export default defineMcpTool({
   name: 'save_ocr_result',
-  title: '写回 OCR 结果(尚未启用)',
+  title: '写回 OCR 结果',
   annotations: {
     readOnlyHint: false,
     destructiveHint: false,
@@ -26,16 +33,46 @@ export default defineMcpTool({
   },
   enabled: writeGuard,
   description: [
-    '按 `fileId` 或 `relPath`(恰给其一)写回某页(或整份文件)的 OCR 结果 markdown。',
-    '**尚未启用**:依赖票 14 的 OCR 结果表,当前调用一律返回 501 并说明原因。',
+    '按 `fileId` 或 `relPath`(恰给其一)写回 OCR 结果。',
+    '给 `page` ⇒ 这段 markdown 就是**那一页**的内容;不给 ⇒ markdown 必须自带 `<!-- page: N -->` 页标记(整份结果)。',
+    '**幂等**:同一页重写是覆盖,不会堆重复行。',
     '**是写入 tool**,需要鉴权(Authorization: Bearer <NUXT_MCP_TOKEN>)。',
+    '只写 OCR 结果;**不改**台账记录与企业身份(pipeline 的事)。',
   ].join('\n'),
   inputSchema: {
     ...fileRefShape,
-    page: z.number().int().min(1).optional().describe('页号(OCR 结果按页挂)'),
-    markdown: z.string().min(1).describe('OCR 结果,markdown 文本(带页码更能对上出处的页码)'),
+    page: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe('页号;给了就表示 markdown 是这一页的内容,不给则要求 markdown 自带页标记'),
+    markdown: z.string().describe('OCR 结果 markdown(带页码更能对上出处的页码)'),
+    engine: z.string().optional().describe('识别引擎;默认 paddleocr'),
+    model: z.string().optional().describe('模型名(可空)'),
   },
-  handler: async () => {
-    throw ocrNotEnabledError()
+  handler: async (input) => {
+    const { db } = await openFileStore()
+    const row = requireFileRef(db, input)
+
+    const parsed = pagesFromInput(input.markdown, input.page ?? null)
+    if (!parsed.ok) throw createError({ statusCode: 400, message: parsed.message })
+
+    const written = writeOcrResult(db, {
+      fileId: row.id,
+      pages: parsed.pages.map((p) => ({ page: p.page, markdown: p.markdown })),
+      channel: 'mcp',
+      ...(input.engine?.trim() ? { engine: input.engine.trim() } : {}),
+      model: input.model?.trim() ? input.model.trim() : null,
+      sourceRelPath: row.relPath,
+    })
+    if (!written.ok) throw createError({ statusCode: 400, message: written.message })
+
+    return {
+      file: { id: row.id, relPath: row.relPath, filename: row.filename },
+      channel: 'mcp',
+      written: written.written,
+      pages: written.pages,
+    }
   },
 })
