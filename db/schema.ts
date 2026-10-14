@@ -111,6 +111,59 @@ export const recordEvidence = sqliteTable(
 )
 
 /**
+ * 文件库(`app/files/`)中每个文件的元数据与处理状态。见 `.scratch/ingest-pipeline/issues/09-file-manager.md`。
+ *
+ * `rel_path` 是文件库内**相对路径**(`jxj/announcement/2024/1/….pdf`),与
+ * `record_evidence.source_file` 同一口径 —— 「被记录引用数」即按此列精确匹配计数。
+ *
+ * `source` / `kind` / `year` / `batch` **可空**:允许「上传时未定、后续回写」(票 12)。
+ * 分类状态与解析状态分开记:`category_state` 说的是**分类**是否确定,
+ * `parse_state` 说的是**解析**(从文件产出记录)是否完成;两者互不蕴含。
+ */
+export const storedFile = sqliteTable(
+  'stored_file',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** 文件库内相对路径,`/` 分隔。unique。 */
+    relPath: text('rel_path').notNull(),
+    /** 磁盘事实:文件名(含扩展名)、小写扩展名(不含点)、字节数、内容 SHA-256。 */
+    filename: text('filename').notNull(),
+    ext: text('ext').notNull(),
+    bytes: integer('bytes').notNull(),
+    sha256: text('sha256').notNull(),
+    /** 分类(可空,见上)。 */
+    source: text('source', { enum: ['jxj', 'miit'] }),
+    kind: text('kind', { enum: ['announcement', 'export'] }),
+    year: integer('year'),
+    batch: integer('batch'),
+    /** 该文件对应的称号;可空(票 12 回写)。 */
+    titleCode: text('title_code').references(() => title.code),
+    /** 分类是否已定:`set` 已定 / `inferred` 程序推的 / `unset` 未定。 */
+    categoryState: text('category_state', { enum: ['set', 'inferred', 'unset'] })
+      .notNull()
+      .default('unset'),
+    /** 解析是否完成:`unparsed` / `parsed` / `failed`。 */
+    parseState: text('parse_state', { enum: ['unparsed', 'parsed', 'failed'] })
+      .notNull()
+      .default('unparsed'),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    /**
+     * 移出文件库的时间。**软删除标志**:DELETE 默认只打这个标、不删磁盘。
+     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `server/utils/stored-files.ts`)。
+     */
+    removedAt: text('removed_at'),
+  },
+  (t) => [
+    uniqueIndex('stored_file_rel_path_uq').on(t.relPath),
+    index('stored_file_source_idx').on(t.source),
+    index('stored_file_category_state_idx').on(t.categoryState),
+    index('stored_file_parse_state_idx').on(t.parseState),
+  ],
+)
+
+/**
  * 比对结果。派生、后处理,本期不生成。见 SPEC 票 12。
  */
 export const reconciliationResult = sqliteTable(

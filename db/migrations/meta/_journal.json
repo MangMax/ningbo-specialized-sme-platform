@@ -15,6 +15,13 @@
       "when": 1791882955630,
       "tag": "0001_married_mister_fear",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791961161951,
+      "tag": "0002_smart_runaways",
+      "breakpoints": true
     }
   ]
 }

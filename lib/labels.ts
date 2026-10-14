@@ -64,6 +64,43 @@ export const QUALITY_FLAGS: Record<string, string> = {
   attachment_unparsed: '附件未解析',
 }
 
+// ---------------------------------------------------------------------------
+// 文件库(票 09)
+// ---------------------------------------------------------------------------
+
+/** 类别代号 → 中文名。与 SOURCES 同源同风格。 */
+export const KINDS: Record<string, string> = {
+  announcement: '公布文件',
+  export: '导出表',
+}
+
+/** 类别展示顺序。 */
+export const KIND_ORDER: string[] = ['announcement', 'export']
+
+/**
+ * 分类状态 → 中文名。说的是「分类是否已定」,不是「文件好坏」。
+ * `set` 已定 / `inferred` 程序推的(待确认)/ `unset` 未定。
+ */
+export const CATEGORY_STATES: Record<string, string> = {
+  set: '已分类',
+  inferred: '推断分类',
+  unset: '待分类',
+}
+
+/** 分类状态展示顺序。 */
+export const CATEGORY_STATE_ORDER: string[] = ['set', 'inferred', 'unset']
+
+/** 解析状态 → 中文名。说的是「有没有从文件产出过记录」。 */
+export const PARSE_STATES: Record<string, string> = {
+  unparsed: '未解析',
+  parsed: '已解析',
+  failed: '解析失败',
+}
+
+/** 解析状态展示顺序。 */
+export const PARSE_STATE_ORDER: string[] = ['unparsed', 'parsed', 'failed']
+
+
 /** 两侧名录比对方向,页面与导出共用。 */
 export const COMPARISON_LABELS = {
   missing_in_miit: '应纳未纳',
