@@ -107,7 +107,7 @@ const TH_CLASS =
       title="两侧名录比对"
     >
       <template #description>
-        <span class="inline-block">按统代比对，不限年份，含入库培育。</span>
+        <span class="inline-block">按统代比对,不限年份。</span>
         <span class="inline-block">小巨人无经信局名录。</span>
       </template>
       <template #actions>
