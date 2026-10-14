@@ -46,12 +46,35 @@ const INVISIBLE = /\u{200B}|\u{200C}|\u{200D}|\u{FEFF}|\u{3000}/gu
  * 既用于 pipeline 写入 `enterprise.name_norm`,也用于 app 的按名搜索 —— 两者必须同规则,
  * 所以只有这一处实现。
  */
-export function normalizeName(raw: string | number | boolean | null | undefined): string {
+export interface NameEvidence {
+  name: string
+  uscc: string | null
+}
+
+/** 只用调用方提供的原始来源证据;缺统代、冲突或外市同名均不生成映射。 */
+export function normalizeName(
+  raw: string | number | boolean | null | undefined,
+  evidence: readonly NameEvidence[] = [],
+): string {
   if (raw === null || raw === undefined) return ''
-  return String(raw)
+  const name = String(raw)
     .replace(INVISIBLE, '')
     .replace(/[\s\u{00A0}]+/gu, '')
     .replace(/[（）()]/g, '')
     .replace(/[√✓、,，.。;；]+$/g, '')
     .trim()
+  const long = name.startsWith('宁波') ? name : `宁波${name}`
+  const short = long.slice(2)
+  const codes = (key: string) => new Set(evidence
+    .filter(e => normalizeName(e.name) === key && e.uscc)
+    .map(e => e.uscc))
+  const longCodes = codes(long)
+  const shortCodes = codes(short)
+  // SPEC 已核实的公布文件短名 ↔ 工信部规范名;仅此一对,仍拒绝统代冲突。
+  if (short === '贝兹德智能科技有限公司' && longCodes.size === 1 &&
+      longCodes.has('91330226MA2CL6FP2U') && shortCodes.size === 0 &&
+      evidence.some(e => normalizeName(e.name) === short)) return long
+  if (longCodes.size === 1 && shortCodes.size === 1 &&
+      [...longCodes][0] === [...shortCodes][0]) return long
+  return name
 }
