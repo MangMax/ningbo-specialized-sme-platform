@@ -163,6 +163,14 @@ const config = computed(() => ({
    *      再加 manifests:[]        → 站外 0 条
    *  - 另外:上面 `disabledCategories` 里的 `stamp` 只是**藏掉界面**,
    *    插件照样取素材 —— 三个键各管一件事,不能互相替代。
+   *
+   * **验收这类「关掉请求」的改动,两个坑都要防**(各栽过一次):
+   *  1. 打开预览前先 `performance.clearResourceTimings()` —— 不清会把上一次的
+   *     残留读成「已修好」;
+   *  2. 确认服的是**新模块** —— `PDFViewer.init()` 只在 `onMounted` 跑一次,
+   *     HMR 不重新挂载的话新 config 根本没进去。改完等 Vite 拾取,或干脆
+   *     整页重载(URL 加个 query)再量。
+   *  否则「量到 0」可能只是量到了旧代码或旧记录。
    */
   stamp: { defaultLibrary: false as const, manifests: [] },
 }))
