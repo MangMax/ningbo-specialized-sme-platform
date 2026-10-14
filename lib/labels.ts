@@ -146,10 +146,26 @@ export const RECONCILE_VARIANTS: Record<
   unknown: 'quiet',
 }
 
-/** 平台解释的取数说明(页面脚注用)。 */
+/** 平台解释的取数来源(页面脚注、行内 tooltip 共用;**同一处定义**,避免两处写法漂移)。 */
 export const RECONCILE_SOURCE = '工信部优质中小企业梯度培育平台'
 
-/** 「平台解释」列的说明文案(表头 tooltip / 脚注共用)。 */
-export const RECONCILE_HINT =
-  '以公布文件为准,对照导出文件:不在公布文件的多为外地注册,不在导出文件的多为注销 / 外迁。'
+/**
+ * 比对的总口径 —— **以公布文件为准**。这句在两方向都成立,单独成一个常量,
+ * 页面只显示**一次**并且加粗,不塞进各方向的半句里。
+ */
+export const RECONCILE_BASIS = '以公布文件为准,对照导出文件。'
 
+/**
+ * 按方向只给**相关的那半句**原因(用户口径:不在公布文件的可能是外地企业,
+ * 不在导出文件的可能注销 / 外迁)。**两个方向不共处一行** —— 同时摊开两套原因
+ * 会让人分不清当前方向该看哪句。
+ */
+export const RECONCILE_REASONS = {
+  missing_in_miit: '不在导出文件的多为注销 / 外迁。',
+  extra_in_miit: '不在公布文件的多为外地注册。',
+} as const
+
+/** 「平台解释」列的说明(表头 title / 脚注共用):总口径 + 当前方向那半句。 */
+export function reconcileHint(direction: keyof typeof RECONCILE_REASONS): string {
+  return `${RECONCILE_BASIS}${RECONCILE_REASONS[direction]}`
+}

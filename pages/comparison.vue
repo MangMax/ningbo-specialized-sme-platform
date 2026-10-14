@@ -1,24 +1,27 @@
 <script setup lang="ts">
 import { useQuery, useQueryCache } from '@pinia/colada'
-import { computed, shallowRef, watch } from 'vue'
-import { ChevronLeft, ChevronRight, GitCompareArrows } from '@lucide/vue'
+import { computed, nextTick, shallowRef, watch } from 'vue'
+import { ArrowLeftRight, ChevronLeft, ChevronRight, GitCompareArrows } from '@lucide/vue'
 import type {
   ComparisonCounts,
   ComparisonDirection,
 } from '~~/lib/comparison'
 import type { CuratedRow } from '~~/lib/curation'
 import type { ReconcileEntry } from '~~/lib/reconcile'
+import { latestFetchLabel } from '~~/lib/reconcile-time'
+import { useScrollEdges } from '~~/lib/scroll-edges'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import {
   TITLES,
   TITLE_ORDER,
   COMPARISON_LABELS,
-  COMPARISON_HINTS,
   COMPARISON_OTHER_SIDE,
   COMPARISON_NO_USCC,
-  RECONCILE_HINT,
+  RECONCILE_BASIS,
+  RECONCILE_REASONS,
   RECONCILE_SOURCE,
+  reconcileHint,
 } from '~~/lib/labels'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -80,12 +83,27 @@ const { data, isLoading, error, refetch } = useQuery({
 })
 const rows = computed(() => data.value?.rows ?? [])
 const reconcileInfo = computed(() => data.value?.reconcile ?? null)
-const reconcileGenerated = computed(() => {
-  const at = reconcileInfo.value?.generatedAt
-  if (!at) return null
-  const date = new Date(at)
-  return Number.isNaN(date.getTime()) ? at : date.toLocaleDateString('zh-CN')
+/** 当前筛选下**有解释**的行数;为 0 时页面任何位置都不出现取数日期。 */
+const matched = computed(() => reconcileInfo.value?.matched ?? 0)
+/**
+ * 平台取数时间:**只取本页行自己的 `fetchedAt`**(与行内 tooltip 同一字段、同一格式化函数)。
+ * 文件级的 `generatedAt` 是「缓存何时写出」,拿它当取数时间会与行内说法打架,故不用。
+ */
+const fetchLabel = computed(() =>
+  latestFetchLabel(rows.value.map((row) => row.explanation)),
+)
+/** 口径说明按方向只给相关半句(两个方向不共处一行)。 */
+const hint = computed(() => reconcileHint(direction.value))
+
+// 宽表在窄屏下的**边缘提示**:右侧渐隐 + 一行提示,滑到最右即消失。
+const scroller = shallowRef<HTMLElement | null>(null)
+const { edges, measure } = useScrollEdges(scroller)
+const showScrollHint = computed(() => edges.value.right)
+// 表体从骨架/空态换成真实表格时内容宽度会变,重算一次。
+watch([rows, isLoading], () => {
+  void nextTick(measure)
 })
+
 const counts = computed(
   () => data.value?.counts[title.value as keyof ComparisonCounts],
 )
@@ -142,17 +160,6 @@ const TH_CLASS =
       </TabsList>
       <!-- 复用同一个面板和滚动容器,切换只更新查询,不重建表体。 -->
       <TabsContent :value="title" class="flex min-w-0 flex-col gap-4">
-        <div class="grid grid-cols-2 gap-3">
-          <StatTile
-            v-for="(d, i) in COMPARISON_DIRECTIONS"
-            :key="d"
-            :label="COMPARISON_LABELS[d]"
-            :value="count(d)"
-            :hint="COMPARISON_HINTS[d]"
-            :index="i + 1"
-            class="[&>div]:p-3 sm:[&>div]:p-5"
-          />
-        </div>
         <Tabs v-model="direction" class="min-w-0 gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <TabsList aria-label="比对方向" class="w-full sm:w-fit">
@@ -173,12 +180,25 @@ const TH_CLASS =
             <p class="text-muted-foreground min-h-5 text-[13px] tabular-nums" aria-live="polite">
               {{ countLabel(direction) }}
             </p>
-            <p class="text-muted-foreground text-xs leading-relaxed">
-              {{ RECONCILE_HINT }} 平台解释取数自{{ RECONCILE_SOURCE }}<template
-                v-if="reconcileGenerated"
-                >({{ reconcileGenerated }})</template
-              >,本次筛选 {{ reconcileInfo?.matched ?? 0 }} 行有解释。
-            </p>
+            <!-- 口径与取数说明:**以公布文件为准**加粗单列一次;原因按方向只给半句;
+                 取数日期只在真有一行取过数时出现(matched=0 时任何位置都不显示日期)。 -->
+            <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <p class="text-muted-foreground text-xs leading-relaxed" data-testid="reconcile-basis">
+                <strong class="text-foreground font-medium">{{ RECONCILE_BASIS }}</strong
+                >{{ RECONCILE_REASONS[direction] }}
+              </p>
+              <p
+                v-if="matched > 0"
+                class="text-muted-foreground text-xs leading-relaxed"
+                data-testid="reconcile-provenance"
+              >
+                平台解释<template v-if="fetchLabel"
+                  >取数自{{ RECONCILE_SOURCE }},最近取数 {{ fetchLabel }}</template
+                ><template v-else>来自{{ RECONCILE_SOURCE }}</template
+                >;本方向 {{ matched }} 行有解释。
+              </p>
+              <p v-else class="text-muted-foreground text-xs leading-relaxed">本方向还没有平台解释。</p>
+            </div>
             <Alert v-if="error" variant="destructive">
               <AlertTitle>比对数据加载失败</AlertTitle>
               <AlertDescription
@@ -189,10 +209,24 @@ const TH_CLASS =
             </Alert>
             <Card class="min-w-0 gap-0 overflow-hidden py-0">
               <CardContent class="p-0">
-                <div
-                  class="h-[max(320px,calc(100dvh-29rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
-                  :aria-busy="isLoading"
+                <!-- 宽表 + 容器内横向滚动(与台账一致,不做移动卡片列表)。
+                     窄屏首屏给可见提示:右侧渐隐 + 一行字;滑到最右两者都消失。 -->
+                <p
+                  v-if="showScrollHint"
+                  data-testid="scroll-hint"
+                  class="text-muted-foreground flex items-center gap-1 px-3 py-1.5 text-xs"
                 >
+                  <ArrowLeftRight class="size-3.5 shrink-0" />表格较宽,可左右滑动查看全部列
+                </p>
+                <div class="relative min-w-0">
+                  <div
+                    ref="scroller"
+                    tabindex="0"
+                    role="region"
+                    aria-label="比对结果表格(可横向滚动)"
+                    class="h-[max(320px,calc(100dvh-29rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
+                    :aria-busy="isLoading"
+                  >
                   <Empty v-if="!isLoading && !error && !rows.length" class="h-full">
                     <EmptyHeader>
                       <EmptyMedia variant="icon"><GitCompareArrows /></EmptyMedia>
@@ -214,7 +248,7 @@ const TH_CLASS =
                           >另一侧状态</TableHead
                         >
                         <TableHead :class="[TH_CLASS, 'w-28']">
-                          <span :title="RECONCILE_HINT">平台解释</span>
+                          <span :title="hint">平台解释</span>
                         </TableHead>
                         <TableHead :class="[TH_CLASS, 'w-48']">核实与备注</TableHead>
                       </TableRow>
@@ -267,6 +301,21 @@ const TH_CLASS =
                       </TableRow>
                     </TableBody>
                   </Table>
+                  </div>
+                  <!-- 边缘渐隐:该侧还有内容时才出现;`pointer-events-none` 不吃事件、
+                       `z-10` 低于吸顶表头的 z-20,不遮表头文字。 -->
+                  <div
+                    v-show="edges.right"
+                    data-testid="scroll-fade-right"
+                    aria-hidden="true"
+                    class="from-card pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l to-transparent"
+                  />
+                  <div
+                    v-show="edges.left"
+                    data-testid="scroll-fade-left"
+                    aria-hidden="true"
+                    class="from-card pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r to-transparent"
+                  />
                 </div>
               </CardContent>
             </Card>

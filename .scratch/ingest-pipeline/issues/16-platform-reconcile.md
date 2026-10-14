@@ -4,7 +4,7 @@
 
 **Blocked by:** 09
 
-**Status:** review —— 已实现,**待主代理复核 + oil-ui 验收**(交付说明见文末)
+**Status:** UI 收口完成(2026-10-15)—— 已按 oil-ui 评审 B1–B6 整改并出具可复跑证据,仍**待主代理复核**;正文说明见文末两节
 
 ## 两接口(已实测)
 
@@ -219,3 +219,91 @@ curl -sS --url 'https://zjtx.miit.gov.cn/zxqy/YzzxqyApplayBLH/queryList' \
 | **`direction: string` 而非 `ComparisonDirection`** | **已改**(app 侧);pipeline 侧仍是 `string` —— 那是跨仓库的传输格式,不引 app 的类型 |
 | **`ReconcileEntry` 同时存 key 与构成它的字段** | **保留**:`key` 是留证与排障用的,app 侧在 `key` 缺失时会按字段重算,冗余是有用的 |
 | 超出票面的东西(reason 码、`reconcile` 响应字段、fmt ignore、`.cache/` gitignore、报告文件) | **保留**:票里「实现方式自选」授权了;`.gitignore` / `fmt ignore` 是新产物的必要配套 |
+
+---
+
+## UI 收口(2026-10-15)
+
+独立 oil-ui 评审(存量润色、不打分)提出 **B1 阻断 + B2–B5 必修 + B6 待决**;
+本轮在 **`/private/tmp/pr-wt/app`**(分支 `feat/platform-reconcile`,起点 `c801e17`)处理。
+只动 app UI 与该票文档,**未改** pipeline / API / schema / 数据逻辑;新 commit,未改写历史。
+
+### 逐条处理
+
+| # | 评审意见 | 处理 | 证据 |
+|---|---|---|---|
+| **B1** | 样本/替身数据必须与线上缓存明确区分;`matched=0` 时页面任何位置不显示取数日期;样本构建必须可见标注「样本/离线,不是线上缓存」;真实缓存时页脚日期 / 行内徽标 / tooltip 时间来源一致 | **已改**。① 时间**只有一个来源**:行自己的 `entry.fetchedAt`,页脚与 tooltip 走同一个 `latestFetchLabel` / `formatFetchTime`(新模块 `lib/reconcile-time.ts`),**不再用**文件级 `generatedAt`;② `matched=0` ⇒ 页脚不写来源与日期,改写「本方向还没有平台解释。」;③ 样本态在**现有 fixture 路径**表达:`tests/fixtures/reconcile-explain.json` 的 `source.note` 明写「【样本 / 离线,不是线上缓存】…不是线上实时缓存」,并有测试钉住;页面文案一律不出现「线上 / 实时」 | `verify-real-light.json`(`matchedZeroDirection.dates=[]`)、`verify-none-light.json`(`dates=[]`)、`verify-sample-light.json`、`tests/reconcile.test.ts` 新增用例 |
+| **B2** | 390×844 保留宽表 + 容器内横滚,首屏给可见提示,滑到最右提示消失 | **已改**。新增 `lib/scroll-edges.ts`(纯函数 + composable):溢出时首屏显示「表格较宽,可左右滑动查看全部列」+ 右侧边缘渐隐;滚到最右两者消失、左侧渐隐出现。仍是宽表,未做移动卡片列表 | `verify-real-light.json`:首屏 `hint=visible / fadeRight=visible / fadeLeft=hidden`;末尾 `scrollLeft=674=maxScroll`、`hint=absent / fadeRight=hidden / fadeLeft=visible`;`v-real-mobile-390-{first,end}-light.png` |
+| **B3** | tooltip 三行正文对比度 ≥4.5:1;平台来源+时间同一行不折行 | **已改**。正文前景由 `text-background/*`(亮色下是白底透出,最淡一行 4.20)换成组件自身的 `text-page/90`、`text-page/85`;来源行加 `whitespace-nowrap` 并把 tooltip 放宽到 `max-w-[24rem]` | 实测**亮 12.40 / 11.15 / 11.15**(标签行 15.04),**暗 12.26 / 10.55 / 10.55**;来源行 `lineCount=1`。`verify-real-{light,dark}.json` → `tooltip.lines` |
+| **B4** | 悬停/聚焦平台徽标不能遮住口径说明或表头,也不能遮住当前行控件 | **已改**。tooltip 固定 `side="bottom" align="end" :side-offset="16"` —— 落在该行**下方**,横向上**避开整个控件列** | 实测与 `thead`、口径行、取数行、**任何一行**的 `td:last-child` 均**不相交**(`overlaps.all=false`、`anyRowControls=[]`),且在视口内。`verify-real-light.json` → `tooltip.overlaps` |
+| **B5** | 突出「以公布文件为准」;按方向只显示相关半句 | **已改**。`RECONCILE_BASIS`(加粗单列一次)+ `RECONCILE_REASONS[direction]`(只给当前方向那半句),取代原先两半句同行的 `RECONCILE_HINT`;表头 `title` 与脚注同源 | 应出未出 ⇒ 「不在公布文件的多为外地注册。」;应纳未纳 ⇒ 「不在导出文件的多为注销 / 外迁。」,两者互不出现对方关键词(单测 + `verify-real-light.json` 的 `basisLine` / `matchedZeroDirection.basisLine`) |
+| **B6** | 统计卡与方向 Tabs 重复标签/数量;基线要求计数说明集中一处 | **已执行主验收决策**:删除两个 `StatTile` 方向卡片,保留 Tabs 的方向切换与计数徽标 + 表格上方那一行计数说明(基线原有),不再有第二套主控件 | `statTileCards=0`(`verify-real-light.json`);`v-real-desktop-1440-light.png` |
+
+### 底部浮层:确认是 Nuxt DevTools,不是应用内容
+
+评审指出的「山形 + 29/30ms + 靶心」浮层,查 DOM 与网络取证为 **Nuxt DevTools**:
+`nuxt-devtools-frame` / `nuxt-devtools-inspect-panel` 影子宿主 + `#vue-tracer-overlay`(Vite Vue Tracer),
+由 `@nuxt+devtools@3.4.2` 的运行时脚本注入(`devtools: { enabled: true }`,仅 dev)。
+
+**处理**:最终证据一律改用**生产构建**(`pnpm build` + `node .output/server/index.mjs`)——
+生产里根本没有这些节点(验证器每次断言 `devtoolsNodes === 0`)。
+
+### 具名验证动作与结果
+
+验证器 `evidence/ui-closeout/verify-ui.mjs`(CDP 驱动真实 Chrome:真鼠标悬停、真 Tab 键、真滚轮;
+不依赖 Playwright、不用合成事件):
+
+| 动作 | 结果 |
+|---|---|
+| `--mode real --theme light` / `--theme dark` | **42 / 42 断言通过**,`failures: []` |
+| `--mode sample --theme light`(样本夹具) | **42 / 42 通过** |
+| `--mode none --theme light`(缓存指向不存在的文件) | **28 / 28 通过** |
+| 真鼠标悬停徽章 | tooltip 打开,`side=bottom align=end`,无遮挡(见 B4) |
+| 真 `Tab` 键(把焦点从企业名移到徽章) | 焦点落到徽章,`tipOpenOnFocus=true`;鼠标移开 `tipClosedAfterLeave=true` |
+| 真滚轮横滚到最右 | `atEnd=true`,提示与右渐隐消失、左渐隐出现 |
+| 点方向 tab 切换 | 口径半句随之切换;`matched=0` 的方向不出现任何日期 |
+| `prefers-reduced-motion: reduce` 模拟 | 提示/渐隐 `transition-duration: 0s`;按钮/Tabs/Switch/滑块 `transition-property: none`;入场 `animation-name: none` |
+| 主题 | 桌面明确 `light` / `dark` 两套都截(不随 headless 默认漂移) |
+
+**未跑 / 未验证的边界(不声称)**
+
+- **没有重新调用线上接口**:证据用的是 **2026-10-14 一次真实取数的本地缓存**;`sample` 模式是
+  从该缓存摘录 3 条的**样本**,不是线上实时缓存,**不代表线上覆盖面**(线上 59 条,样本 2 行)。
+- **页面无法自行识别「样本模式」**:现有接口契约没有这个字段,而本轮**不允许**加 API/schema 字段。
+  因此样本只在 **fixture(`source.note`)+ 本文件 + 证据文件名**里标注;页面文案一律不宣称「线上 / 实时」。
+  这是 B1 交代的兜底路径,不是遗漏。
+- **tap(触摸)未单独验证**:验证器用的是鼠标事件(桌面语义);390×844 只改了视口宽度,未启用触摸模拟。
+- **真机同读屏器 / 键盘全链路未验**:只验到「Tab 能聚焦徽章并展开 tooltip」。
+- **`matched=0` 只覆盖了「缓存有别的方向、当前方向没有」与「完全无缓存」两种**;「全部行已核实被隐藏」那种
+  空态未单独截图(与本次改动无关)。
+- 首屏两张手机截图里首行徽章带**键盘焦点环** —— 那是验证器先跑聚焦检查留下的焦点,不是样式缺陷。
+
+### 证据
+
+- `app/.scratch/ingest-pipeline/evidence/ui-closeout/`(**gitignored,不入提交**)
+  - `verify-ui.mjs` + `README.md`(复跑方法)
+  - `verify-{real-light,real-dark,sample-light,none-light}.json` —— 逐项断言与量测原始值
+  - `v-{real,sample,none}-*.png` —— 1440×1000 与 390×844 **1x 像素**截图:
+    桌面(亮/暗)、tooltip 悬停 / 聚焦、matched=0 方向的桌面、390 首屏 / 最右、480 断点、reduce
+
+### 代码改动(全部在 app 侧)
+
+| 文件 | 改动 |
+|---|---|
+| `lib/reconcile-time.ts`(新) | 取数时间的纯函数(页脚与 tooltip 共用;因 `lib/reconcile.ts` 带 `node:fs` 不能进客户端) |
+| `lib/scroll-edges.ts`(新) | 横向溢出的边缘判定(纯函数)+ `useScrollEdges` composable |
+| `components/ComparisonReconcile.vue` | 对比度、来源+时间同行、`side/align/offset` 避开表头与控件列 |
+| `pages/comparison.vue` | 删统计卡(B6);口径/取数说明重构(B1 B5);滚动提示与边缘渐隐(B2) |
+| `lib/labels.ts` | `RECONCILE_BASIS` / `RECONCILE_REASONS` / `reconcileHint()`,取代 `RECONCILE_HINT` |
+| `tests/reconcile.test.ts` | 取数时间、样本标注、方向半句的新用例 |
+| `tests/scroll-edges.test.ts`(新) | 边缘判定用例(含 1px 抖动、NaN 尺寸) |
+| `tests/fixtures/reconcile-explain.json` | `source.note` 明写「样本 / 离线,不是线上缓存」 |
+
+> `lib/reconcile-time.ts` 拆出来的原因值得记一笔:起初从 `lib/reconcile.ts` 里取运行时的值,
+> 那个文件顶部 `import 'node:fs'`,Vite 把 node 内建打进客户端 ⇒ 页面直接 500
+> (`__vite-browser-external:node:fs` 没有 `existsSync`)。纯逻辑必须与读文件的服务端模块分开。
+
+### 测试
+
+- `pnpm typecheck` 退出码 0。
+- `pnpm test` **195 通过**(改前 180)。
