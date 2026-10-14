@@ -2,7 +2,7 @@
 
 **What to build:** pipeline 的**输入源**从「数据根目录扫描」改为「app 的文件库 + `stored_file` 表」。
 
-**Blocked by:** 09
+**Blocked by:** **17**(按段建模)
 
 **Status:** ready
 
@@ -14,7 +14,8 @@
 
 ## 关键设计点
 
-- **分类从表里读,不从路径猜**:`source/kind/year/batch/title_code` 取 `stored_file`;**未分类的(`unset`)跳过并报出**,不猜(交票 12)。
+- **按「段」取元数据,不按文件取**:一个文件可含**多年份、多事件**(见票 17)。从 `stored_file_part` 读每一段的 `(title_code, event_kind, year, batch)`,写进对应的 `record_event`;**文件级的 `year`/`batch` 是「公布批次」,不能拿来当记录的年份**(192号 就是「公布于 2024 第2批,另含 2021 第2批复核」)。
+- **分类从表里读,不从路径猜**:`source/kind` 取 `stored_file`;**未分类的(`unset`)跳过并报出**,不猜(交票 12)。
 - pipeline **要读 app 的库** —— 这加深了耦合。已在 `src/db.ts` 复用 app 的库结构;此处再读 `stored_file` 表即可,**不新增第二个连接**。
 - `.doc` 仍依赖本机 LibreOffice(既有约束),找不到时**逐文件报错、不整批失败**。
 
