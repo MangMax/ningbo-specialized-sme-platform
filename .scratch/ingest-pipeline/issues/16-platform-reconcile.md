@@ -312,3 +312,61 @@ curl -sS --url 'https://zjtx.miit.gov.cn/zxqy/YzzxqyApplayBLH/queryList' \
 
 - `pnpm typecheck` 退出码 0。
 - `pnpm test` **195 通过**(改前 180)。
+
+---
+
+## UI 收口 · 第三轮(2026-10-15,按 FIX REQUIRED 复审)
+
+复审结论是 **FIX REQUIRED**,一条阻断 + 五条非阻断视觉项。本轮逐条处理后,把 app 侧提交
+**重放到当前 app main `1592b47`**(不改写 main),最终证据取自重放后的 HEAD。
+
+### 阻断项:390px 触屏看不到、也操作不到平台说明
+
+**原来**:徽章是 `<div tabindex=0>` + reka Tooltip。触屏 tap 只让徽章拿到焦点,reka 不因
+「非键盘焦点」展开 tooltip ⇒ 手机上 note(登记位置 / 关联条数 / 取数时间)**永远看不到**;
+上一轮我交的 tap 截图因为交互没发生,与「滚到最右」那张**逐字节相同** —— 复审的判断是对的。
+
+**现在**:徽章是一个真的开关。一个受控 `open`,三种触发写同一状态:
+
+| 交互 | 行为 | 证据 |
+|---|---|---|
+| 触摸 tap | **展开**;再 tap **关闭** | `report.tap.afterTap1.open=true / afterTap2.open=false` |
+| tap 别处 | 关闭 | `失焦/点别处` 探针 |
+| 悬停 / 移开 | 展开 / 关闭 | `hover(开)` / `mouseleave(关)` |
+| `Tab` 聚焦 | 展开 | `tipOpenOnFocus=true` |
+| `Enter` / `Space` | 等价点击 | `report.keyboard.enterOpen.open=true` |
+| `Escape` / 失焦 | 关闭 | `report.keyboard.escClosed.open=false` |
+
+实现要点:**不用 reka 的内部切换** —— Radix 系的 Tooltip 在 `pointerdown` 会先请求关闭,
+再 toggle 会变成「关不掉」。所以记下**按下瞬间**的状态,抬起时取反(`openOnPointerDown`),
+开着的再点一下必然关。徽章加 `role="button"` + `aria-expanded`。
+
+**截图差异**(复审要求):tap 前 / tap 后 / 滚到最右三张,sha256 两两不同
+(如 light:`855e2bf8… → d9f5dca9…`,end 为 `92c9cef5…`),写在 `verify-*.json` 的 `tap.hashes`。
+tap 后那两张(浅/深)是**真触摸事件**(`Input.dispatchTouchEvent` 的 touchStart/touchEnd)之后拍的。
+
+### 非阻断视觉项
+
+| 复审意见 | 处理 | 实测 |
+|---|---|---|
+| 右缘「fade」其实是**硬遮罩**、有约 **1px 接缝**;暗色下压出更深的色带、可能压过表头 | 改成**半透明软阴影**(`from-foreground/14`,暗色 `dark:from-black/40`,永远不到不透明)、宽 32px、只覆盖**表头以下**的数据区(`top-9`),并**按量出的滚动条宽度内缩**,不再压在 thumb 上 | A/B 像素复核:表头被改动像素 **0**;渐隐为单调斜坡(相邻列跳变 ≤6/≤2);卡边**新增跳变 0** |
+| 相邻徽章 tooltip 重叠 | tooltip 整块让开徽章列:`align="end"` + `align-offset`(⚠️ reka 的符号与直觉相反,正数才是往左让) | 桌面实测 `coveredBadges=[]`,tooltip 右缘 1094 = 徽章左缘 1094 |
+| 两种 badge 没图例 | 表头下加**图例**:只列**当前结果里真出现过**的徽章(最多 5 个)+ 一句「徽章是平台侧的结论;悬停、键盘聚焦或点按可展开…」 | `desktop.legendText` / `legendBadges` |
+| focus ring 偏亮蓝 | 原来有**两层**环:浏览器默认 `outline: auto`(亮蓝 `rgb(0,95,204)`)**加上**组件的 box-shadow 环。去掉默认 outline,只留中性环 `ring-foreground/50` | `outlineStyle=none`;环对比度 **3.3:1**(亮)/ **4.42:1**(暗),均 ≥3:1 |
+| README 对 480px 换行的表述与截图不符 | 改成量测事实:480 下**口径半句 1 行**,而**取数来源那行折成 2 行**(允许;只有 tooltip 的「来源+时间」被要求不折行) | `w480.basisLines=1`、`w480.provenanceLines=2` |
+
+### 旁证:滚动条 thumb 那件事
+
+复审说的「暗色覆盖产生明显更暗色带」,根因是渐隐**压在滚动条上**给 thumb 又叠了一层。
+把渐隐内缩到内容边缘后,thumb 颜色不再被改;滚动条本身也收细到 6px、`muted-foreground/30`。
+
+### 证据与边界
+
+- 证据目录(已 gitignore):`app/.scratch/ingest-pipeline/evidence/ui-closeout/`
+  - `verify-ui.mjs`(CDP,真鼠标 / 真 Tab / 真滚轮 / 真触摸)、`check-pixels.py`(A/B 像素)、`probe-*.mjs`
+  - `verify-{real-light,real-dark,sample-light,none-light}.json` —— 逐项断言与量测原始值(合计 **200 条断言,0 失败**)
+  - `v-{real,sample,none}-*.png` —— 1440×1000 / 390×844 **1x** 截图,含 tap 前 / tap 后 / 最右三态与 `-nofade` A/B 图
+- **仍然不声称**的事:没有重新调用线上接口(用的是 2026-10-14 的本地缓存;`sample` 是从它摘录 3 条的样本,
+  不代表线上覆盖面);页面**不能**自行识别「样本模式」(契约无此字段且本轮不许加),样本只在 fixture / 票 /
+  证据文件名里标注;真机读屏器未验;tap 在 352px 宽的面板下**横向必然压住表格**(390 视口放不下更窄的正文),
+  靠「点别处关闭」收回 —— 这是量过的取舍,不是漏做。

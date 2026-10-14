@@ -169,3 +169,27 @@ export const RECONCILE_REASONS = {
 export function reconcileHint(direction: keyof typeof RECONCILE_REASONS): string {
   return `${RECONCILE_BASIS}${RECONCILE_REASONS[direction]}`
 }
+
+/**
+ * 图例里徽章的排列顺序:先「会被排除/要紧」的,再中性,最后「没查到」。
+ * 与 `RECONCILE_LABELS` 的键同集合(改一处要改两处,有测试钉住)。
+ */
+export const RECONCILE_ORDER = [
+  'deregistered',
+  'moved_out',
+  'non_local',
+  'withdrawn',
+  'on_platform',
+  'no_platform_record',
+  'unknown',
+] as const satisfies readonly ReconcileReason[]
+
+/**
+ * 图例的固定说明句:一行讲清「这些徽章是什么」+「怎么展开」。
+ * 徽章本身只列**当前结果里真出现过的**取值,所以图例不会长成一张词表。
+ */
+export const RECONCILE_LEGEND_TITLE = '图例'
+export const RECONCILE_LEGEND_NOTE =
+  '徽章是平台侧的结论;悬停、键盘聚焦或点按可展开该企业的登记位置、关联记录与取数时间。'
+/** 图例最多显示几个徽章(超出的用「…」收尾,避免图例比表格还高)。 */
+export const RECONCILE_LEGEND_MAX = 5

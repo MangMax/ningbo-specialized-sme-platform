@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SCROLL_EPSILON, scrollEdges } from '../lib/scroll-edges'
+import { SCROLL_EPSILON, scrollBars, scrollEdges } from '../lib/scroll-edges'
 
 /**
  * 窄屏宽表的边缘提示判定(票 16 UI 收口 B2)。
@@ -47,5 +47,22 @@ describe('scrollEdges', () => {
     expect(
       scrollEdges({ scrollLeft: 0, clientWidth: Number.NaN, scrollWidth: Number.NaN }),
     ).toEqual({ left: false, right: false })
+  })
+})
+
+describe('scrollBars(渐隐要停在内容边缘,不能压在滚动条上)', () => {
+  it('量出滚动条占位', () => {
+    expect(
+      scrollBars({ offsetWidth: 356, clientWidth: 348, offsetHeight: 380, clientHeight: 372 }),
+    ).toEqual({ vertical: 8, horizontal: 8 })
+  })
+
+  it('覆盖式滚动条(占位 0)或拿不到尺寸时给 0,不产生负值', () => {
+    expect(
+      scrollBars({ offsetWidth: 346, clientWidth: 346, offsetHeight: 380, clientHeight: 380 }),
+    ).toEqual({ vertical: 0, horizontal: 0 })
+    expect(
+      scrollBars({ offsetWidth: 300, clientWidth: 320, offsetHeight: 300, clientHeight: 320 }),
+    ).toEqual({ vertical: 0, horizontal: 0 })
   })
 })

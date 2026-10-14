@@ -23,6 +23,30 @@ export interface ScrollMetrics {
   scrollWidth: number
 }
 
+/**
+ * 滚动条占位(像素)。
+ *
+ * 渐隐必须**停在内容边缘**而不是压在滚动条上 —— 压在滚动条上会在 thumb 上叠出一条
+ * 比内容更深的色带(暗色下尤其明显),评审就是这个意见。滚动条宽度随平台/主题
+ * (覆盖式 or 经典)不同,所以**量**出来,不写死。
+ */
+export interface ScrollBars {
+  vertical: number
+  horizontal: number
+}
+
+export function scrollBars(element: {
+  offsetWidth: number
+  clientWidth: number
+  offsetHeight: number
+  clientHeight: number
+}): ScrollBars {
+  return {
+    vertical: Math.max(0, element.offsetWidth - element.clientWidth),
+    horizontal: Math.max(0, element.offsetHeight - element.clientHeight),
+  }
+}
+
 /** 亚像素抖动(safari/触控板)不能当成「还能滚」,所以留 1px 容差。 */
 export const SCROLL_EPSILON = 1
 
@@ -46,11 +70,13 @@ export function scrollEdges(metrics: ScrollMetrics, epsilon = SCROLL_EPSILON): S
  */
 export function useScrollEdges(el: Ref<HTMLElement | null | undefined>) {
   const edges = ref<ScrollEdges>({ left: false, right: false })
+  const bars = ref<ScrollBars>({ vertical: 0, horizontal: 0 })
 
   function measure() {
     const node = el.value
     if (!node) {
       edges.value = { left: false, right: false }
+      bars.value = { vertical: 0, horizontal: 0 }
       return
     }
     edges.value = scrollEdges({
@@ -58,6 +84,7 @@ export function useScrollEdges(el: Ref<HTMLElement | null | undefined>) {
       clientWidth: node.clientWidth,
       scrollWidth: node.scrollWidth,
     })
+    bars.value = scrollBars(node)
   }
 
   let observer: ResizeObserver | null = null
@@ -90,5 +117,5 @@ export function useScrollEdges(el: Ref<HTMLElement | null | undefined>) {
   })
   onBeforeUnmount(detach)
 
-  return { edges, measure }
+  return { edges, bars, measure }
 }

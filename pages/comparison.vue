@@ -19,8 +19,14 @@ import {
   COMPARISON_OTHER_SIDE,
   COMPARISON_NO_USCC,
   RECONCILE_BASIS,
+  RECONCILE_LABELS,
+  RECONCILE_LEGEND_MAX,
+  RECONCILE_LEGEND_NOTE,
+  RECONCILE_LEGEND_TITLE,
+  RECONCILE_ORDER,
   RECONCILE_REASONS,
   RECONCILE_SOURCE,
+  RECONCILE_VARIANTS,
   reconcileHint,
 } from '~~/lib/labels'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -94,10 +100,19 @@ const fetchLabel = computed(() =>
 )
 /** 口径说明按方向只给相关半句(两个方向不共处一行)。 */
 const hint = computed(() => reconcileHint(direction.value))
+/**
+ * 图例只列**当前结果里真出现过**的徽章取值(按固定顺序),最多 5 个。
+ * 全量列 7 种会把图例撑成一张词表,而屏幕上可能一个都没有。
+ */
+const legendCodes = computed(() => {
+  const seen = new Set(rows.value.map((row) => row.explanation?.explanation.code).filter(Boolean))
+  return RECONCILE_ORDER.filter((code) => seen.has(code))
+})
+const legendOverflow = computed(() => Math.max(0, legendCodes.value.length - RECONCILE_LEGEND_MAX))
 
 // 宽表在窄屏下的**边缘提示**:右侧渐隐 + 一行提示,滑到最右即消失。
 const scroller = shallowRef<HTMLElement | null>(null)
-const { edges, measure } = useScrollEdges(scroller)
+const { edges, bars, measure } = useScrollEdges(scroller)
 const showScrollHint = computed(() => edges.value.right)
 // 表体从骨架/空态换成真实表格时内容宽度会变,重算一次。
 watch([rows, isLoading], () => {
@@ -199,6 +214,23 @@ const TH_CLASS =
               </p>
               <p v-else class="text-muted-foreground text-xs leading-relaxed">本方向还没有平台解释。</p>
             </div>
+            <!-- 图例:徽章是平台侧结论,不是经信局的口径;只列当前结果里出现过的取值。 -->
+            <div
+              v-if="legendCodes.length"
+              data-testid="reconcile-legend"
+              class="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+            >
+              <span>{{ RECONCILE_LEGEND_TITLE }}:</span>
+              <Badge
+                v-for="code in legendCodes.slice(0, RECONCILE_LEGEND_MAX)"
+                :key="code"
+                :variant="RECONCILE_VARIANTS[code]"
+                class="font-normal"
+                >{{ RECONCILE_LABELS[code] }}</Badge
+              >
+              <span v-if="legendOverflow">…另 {{ legendOverflow }} 种</span>
+              <span class="basis-full sm:basis-auto">{{ RECONCILE_LEGEND_NOTE }}</span>
+            </div>
             <Alert v-if="error" variant="destructive">
               <AlertTitle>比对数据加载失败</AlertTitle>
               <AlertDescription
@@ -224,7 +256,7 @@ const TH_CLASS =
                     tabindex="0"
                     role="region"
                     aria-label="比对结果表格(可横向滚动)"
-                    class="h-[max(320px,calc(100dvh-29rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
+                    class="h-[max(320px,calc(100dvh-29rem))] overflow-auto [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-1.5 [&_[data-slot=table-container]]:overflow-visible"
                     :aria-busy="isLoading"
                   >
                   <Empty v-if="!isLoading && !error && !rows.length" class="h-full">
@@ -302,19 +334,24 @@ const TH_CLASS =
                     </TableBody>
                   </Table>
                   </div>
-                  <!-- 边缘渐隐:该侧还有内容时才出现;`pointer-events-none` 不吃事件、
-                       `z-10` 低于吸顶表头的 z-20,不遮表头文字。 -->
+                  <!-- 边缘阴影(不是不透明遮罩):该侧还有内容时才出现。
+                       两轮评审的教训 —— 用 `from-card` 铺到不透明会(a)看起来像硬遮罩、
+                       (b)在滚动条/卡边处留 1px 接缝、(c)暗色下压出一条更深的色带。
+                       改成**半透明阴影**(永远不到不透明),并只覆盖**表头以下**的数据区
+                       (`top-9`),绝不会给表头文字上色。`pointer-events-none` 不吃事件。 -->
                   <div
                     v-show="edges.right"
                     data-testid="scroll-fade-right"
                     aria-hidden="true"
-                    class="from-card pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l to-transparent"
+                    class="from-foreground/14 pointer-events-none absolute top-9 z-10 w-8 bg-gradient-to-l to-transparent dark:from-black/40"
+                    :style="{ right: `${bars.vertical}px`, bottom: `${bars.horizontal}px` }"
                   />
                   <div
                     v-show="edges.left"
                     data-testid="scroll-fade-left"
                     aria-hidden="true"
-                    class="from-card pointer-events-none absolute inset-y-0 left-0 z-10 w-10 bg-gradient-to-r to-transparent"
+                    class="from-foreground/14 pointer-events-none absolute top-9 left-0 z-10 w-8 bg-gradient-to-r to-transparent dark:from-black/40"
+                    :style="{ bottom: `${bars.horizontal}px` }"
                   />
                 </div>
               </CardContent>
