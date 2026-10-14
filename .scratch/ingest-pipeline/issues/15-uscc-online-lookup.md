@@ -82,6 +82,9 @@
 
 `NUXT_DB_PATH=<正式库> vp run lookup:uscc --check` → **缺统代 136 家;种子命中 7;可补 3;待人工 3;占用 1**。
 
+> ⚠️ **更正(评审整改后)**:CLI 已**不接受** `NUXT_DB_PATH`,也不允许打开正式库 —— 现在必须
+> `vp run lookup:uscc --db <隔离副本> --check`(且 `--check` 只读、不设 WAL、不迁移)。上面这条是首轮当时的记录。
+
 **可补(3)—— 写回的统代全部带出处:**
 
 | 企业 | 统代 | 出处 |
@@ -120,8 +123,10 @@
 `confirmed` 必须**实际打开内容页**,正文里企业名与**完整 18 位统代同片配对**;退而「单企业页:
 标题含企业名 + 全页恰一个合法统代」。**片段里必须同时含名与完整码**。`source` 必须是**内容页 URL** ——
 拒绝搜索结果/跳转页(`/s` `/web` `/search` `/link`)、登录/验证码路径、渠道占位。
-闸门在 `src/uscc-lookups.ts#validateLookups`(note 须含名 + 完整码 + 出处形态),**`db:import` 与
-`lookup:uscc --check` 走同一道门**;`--check` 用写入方的**干跑**(`dryRun`),报的与写的**逐条一致**。
+闸门在 `src/uscc-lookups.ts#validateLookups`(note 须含名 + 完整码 + 出处形态),并由
+`#assertLookupsValid` **fail closed**:**两条写路径**(`db:import`、`lookup:uscc --apply`)都在
+**任何写库前**执行它,不合格就**整次终止(非零退出)** —— 不再「打印 warning 后照写」。
+`--check` 用写入方的**干跑**(`dryRun`),报的与写的**逐条一致**。
 逐条证据片段另存 `pipeline/reports/uscc-lookup-evidence-20261015.json`。
 
 ### 评审整改(独立复核判 BLOCKED 的 7 条)
@@ -162,8 +167,8 @@
 ```bash
 sqlite3 正式库 "VACUUM INTO '/tmp/uscc2-audit/vac.db'"   # 或 .backup —— 不要 cp(WAL 未并入)
 cp /tmp/uscc2-audit/vac.db /tmp/uscc2-audit/vac2.db
-NUXT_DB_PATH=/tmp/uscc2-audit/vac.db  vp run lookup:uscc --check   # 干跑,不写业务数据
-NUXT_DB_PATH=/tmp/uscc2-audit/vac2.db vp run lookup:uscc --apply   # 只写副本
+vp run lookup:uscc --db /tmp/uscc2-audit/vac.db  --check   # **只读**打开:不迁移/不写种子/不设 WAL
+vp run lookup:uscc --db /tmp/uscc2-audit/vac2.db --apply    # 只写该副本
 ```
 
 - 不变量:`enterprise/record/record_event/record_evidence` 计数**逐表不变**(7352/19729/21189/21189);
@@ -179,7 +184,7 @@ NUXT_DB_PATH=/tmp/uscc2-audit/vac2.db vp run lookup:uscc --apply   # 只写副�
 $ cp 正式库 /tmp/.../subset.db
 $ sqlite3 subset.db "UPDATE enterprise SET uscc_norm=NULL,… WHERE uscc_norm IN (三个种子里已补上的码);"
    → missing=136                      # 回到「查之前」
-$ NUXT_DB_PATH=subset.db vp run lookup:uscc --apply
+$ NUXT_DB_PATH=subset.db vp run lookup:uscc --apply      # (首轮写法;现须 `--db subset.db`)
    扫描无统代 136 家;补上 3;被占用 1;待人工 3;种子无记录 129
    无统代 136 → 133(减少 3)
 $ sqlite3 subset.db "select name,uscc_norm from enterprise where name in (三家);"
