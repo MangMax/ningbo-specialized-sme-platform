@@ -152,11 +152,19 @@ const config = computed(() => ({
    */
   fonts: { ui: null },
   /**
-   * 印章库同理会去 `cdn.jsdelivr.net` 拉 `default-stamps/…/stamps.pdf`。
-   * 上面 `disabledCategories` 里的 `stamp` 只是**藏掉界面**,插件仍会去取素材;
-   * 这里显式关掉默认库,请求才不会发出去。只读台账也不需要印章。
+   * 印章库会去 `cdn.jsdelivr.net` 拉 `default-stamps/{locale}/manifest.json`
+   * 与 `stamps.pdf`。只读台账不需要印章,关掉。
+   *
+   * **两个键的分工,实测出来的(别只留一个)**:
+   *  - 请求来自插件的 `defaultConfig.manifests`(**不是** `defaultLibrary`);
+   *    `defaultLibrary: false` 只关「默认库的创建」,**拦不住那次 fetch**。
+   *  - 真正拦住的是 `manifests: []`。A/B 各在全新页面上量过一次:
+   *      只给 defaultLibrary:false → 站外 2 条
+   *      再加 manifests:[]        → 站外 0 条
+   *  - 另外:上面 `disabledCategories` 里的 `stamp` 只是**藏掉界面**,
+   *    插件照样取素材 —— 三个键各管一件事,不能互相替代。
    */
-  stamp: { defaultLibrary: false as const },
+  stamp: { defaultLibrary: false as const, manifests: [] },
 }))
 
 function onReady() {
