@@ -23,6 +23,8 @@ import {
   type FileSource,
   type ParseState,
 } from '../../lib/stored-file'
+import type { FilePart } from '../../lib/file-parts'
+import { listFileParts, type PartsBackfillStats } from './file-parts'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -34,7 +36,11 @@ export const KINDS: readonly FileKind[] = KIND_ORDER as FileKind[]
 export const CATEGORY_STATES: readonly CategoryState[] = CATEGORY_STATE_ORDER as CategoryState[]
 export const PARSE_STATES: readonly ParseState[] = PARSE_STATE_ORDER as ParseState[]
 
-/** 列表一行的形状(含「被记录引用数」)。 */
+/** 列表一行的形状(含「被记录引用数」与**段**)。
+ *
+ * `year` / `batch` 是**公布**年份/批次(目录给出的、单值);文件**内容**含哪些年份/批次
+ * 一律看 `parts`(票 17)。
+ */
 export interface StoredFileRow {
   id: number
   relPath: string
@@ -44,7 +50,9 @@ export interface StoredFileRow {
   sha256: string
   source: FileSource | null
   kind: FileKind | null
+  /** **公布**年份(目录给的、单值)。内容年份见 `parts`。 */
   year: number | null
+  /** **公布**批次(目录给的、单值)。内容批次见 `parts`。 */
   batch: number | null
   titleCode: string | null
   categoryState: CategoryState
@@ -53,6 +61,11 @@ export interface StoredFileRow {
   removedAt: string | null
   /** 有多少条 `record_evidence` 引用了这个文件(按 `source_file` 精确匹配 `rel_path`)。 */
   referenceCount: number
+  /**
+   * 文件里的**段**(票 17)。按 `compareParts` 排好序;没有段时是空数组
+   * (尚无引用、留待票 11 解析时写入 —— **不是**「文件没有内容」)。
+   */
+  parts: FilePart[]
 }
 
 /** 列表查询条件(与 `/api/files` 的 query 参数一一对应)。 */
@@ -160,6 +173,14 @@ export interface BackfillStats {
    * 这些文件仍**不入表** —— 不猜。
    */
   skipped: string[]
+}
+
+/**
+ * 两趟懒回填的**合并回报**(文件行 + 段)。接口与页面共用这一处 ——
+ * 各写一份的话,加一个字段就会漂移。
+ */
+export interface BackfillReport extends BackfillStats {
+  parts: PartsBackfillStats
 }
 
 /**
@@ -285,12 +306,25 @@ export function buildFileWhere(params: StoredFileQuery): SQL | undefined {
   return filtered.length ? and(...filtered) : undefined
 }
 
+/** 给已取出的行补上**段**(票 17)。一次查询取回本页所有文件的段,按 `file_id` 分到各行。 */
+function withParts(db: Db, rows: StoredFileRow[]): StoredFileRow[] {
+  if (!rows.length) return rows
+  const byFile = listFileParts(
+    db,
+    rows.map((r) => r.id),
+  )
+  return rows.map((row) => ({ ...row, parts: byFile.get(row.id) ?? [] }))
+}
+
 /**
  * 分页列出文件库。
  *
- * 排序:**来源**(经信局 → 工信部)→ **年份倒序**(无年份的排在后)→ **批次倒序**
+ * 排序:**来源**(经信局 → 工信部)→ **公布年份**倒序(无年份的排在后)→ **公布批次**倒序
  * → **文件名**。同一年里新的批次在上;`null` 一律排在最后(SQLite 的 `IS NULL` 前置排序),
  * 免得「未分类」的文件插在年份中间。
+ *
+ * > 排序用**公布**年份/批次(`stored_file.year` / `batch`),不是文件内容的年份 ——
+ * > 列表是「文件按批次的陈列」,内容的多年份在「年份」列上并排显示(票 17)。
  */
 export function listStoredFiles(
   db: Db,
@@ -324,7 +358,7 @@ export function listStoredFiles(
     .offset((page - 1) * pageSize)
     .all()
 
-  return { rows: rows as StoredFileRow[], total }
+  return { rows: withParts(db, rows as StoredFileRow[]), total }
 }
 
 // ---------------------------------------------------------------------------
@@ -473,14 +507,15 @@ export function updateStoredFile(
   return getStoredFile(db, id)
 }
 
-/** 取一行(含引用数);不存在返回 null。 */
+/** 取一行(含引用数与段);不存在返回 null。 */
 export function getStoredFile(db: Db, id: number): StoredFileRow | null {
   const row = db
     .select(fileColumns)
     .from(schema.storedFile)
     .where(eq(schema.storedFile.id, id))
     .get()
-  return (row as StoredFileRow | undefined) ?? null
+  if (!row) return null
+  return withParts(db, [row as StoredFileRow])[0]!
 }
 
 // ---------------------------------------------------------------------------

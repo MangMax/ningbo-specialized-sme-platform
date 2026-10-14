@@ -11,11 +11,20 @@ import { EVENTS } from '~~/lib/labels'
  *   入库培育 → 虚线(尚未构成称号)
  * 变的是线,不是颜色 —— 颜色留给称号梯度。
  */
-const props = defineProps<{
-  type: string
-  year?: number | null
-  seq?: number | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    type: string
+    year?: number | null
+    seq?: number | null
+    /**
+     * 只显示事件类型、不带年份-批次。
+     * 用在**年份/批次已经单列**的地方(如文件的段明细表)—— 不然同一个年份-批次
+     * 会在一行里写两遍,是噪音(见 DESIGN.md「删掉重复的显示」)。
+     */
+    hideBatch?: boolean
+  }>(),
+  { hideBatch: false },
+)
 
 const VARIANT: Record<string, BadgeVariants['variant']> = {
   award: 'solid',
@@ -33,9 +42,12 @@ const batch = computed(() => {
 </script>
 
 <template>
-  <!-- 类型名始终退到次级色,年份-批次是本 chip 要读的信息,始终最重。 -->
+  <!-- 类型名始终退到次级色,年份-批次是本 chip 要读的信息,始终最重。
+       但 `hideBatch` 时年份-批次由旁边的列负责,类型名就顶上成为主信息。 -->
   <Badge :variant="VARIANT[type] ?? 'quiet'" class="gap-1.5 pl-1.5 font-normal">
-    <span class="text-muted-foreground font-normal">{{ typeName }}</span>
-    <span class="text-foreground font-medium tabular-nums">{{ batch }}</span>
+    <span :class="hideBatch ? 'text-foreground font-medium' : 'text-muted-foreground font-normal'">
+      {{ typeName }}
+    </span>
+    <span v-if="!hideBatch" class="text-foreground font-medium tabular-nums">{{ batch }}</span>
   </Badge>
 </template>
