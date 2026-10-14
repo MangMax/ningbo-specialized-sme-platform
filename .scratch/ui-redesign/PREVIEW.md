@@ -141,3 +141,50 @@ EmbedPDF 自带完整工具条(缩略图/搜索/批注/文字选择),而它**没
 - 记录里的 `source_file` 目前还是旧路径形态;它负责重导成相对 `files/` 的新形态(票 03)。
   重导前,旧记录点开会 404 —— 预览器对这种情形有明确错误态,属预期。
 - **未提交。** 预览与 tus 的改动都还在工作树里,等用户决定由谁提交。
+
+## 后续:`.doc` 转出件(2026-10-14)
+
+票 06 已落地。两份 2023 年的 `.doc`(962 行 evidence)原来只能下载、不能预览,现在可以了。
+
+**做法**:`pipeline` 的 `build:files` 用 LibreOffice 把 `.doc` 转出**同名 `.docx`** 放在原 `.doc` 旁边,
+`resolveStoreFile` 按 **PDF → `.docx` → `.doc`** 取「实际存在且可预览者」,重导后 evidence 自动指到转出件。
+
+**两个坑,都写进代码注释了:**
+
+1. **不要转 PDF。** 本机 headless LibreOffice 找不到中文字体,会把正文替换成 Linux Libertine /
+   Noto Sans Lisu 这类纯拉丁字体 —— **整篇中文全丢**,只剩页码数字,而退出码是 0。
+   实测转出的 PDF 里 `/BaseFont` 一个 CJK 都没有。转 `.docx` 则文字完整(13,075 字),
+   由 app 端 `@silurus/ooxml` 自己排版。
+2. **`resolveStoreFile` 原来的「原路径存在就直接返回」会掩盖修复。** 保留 `.doc` 归档的话,
+   解析永远返回 `.doc`,转出的 `.docx` 永远轮不到。已改成按可预览顺序试。
+
+**另外发现:`db:import` 的「幂等」不含刷新 `source_file`。** 已存在的事件会被 `continue` 跳过,
+所以文件库变了之后**重跑导入不会更新路径**(实测:加完 PDF 再导入,962 行仍是旧的 `.doc`)。
+要让路径变更生效,得**清库重建**。已在流程里按重建处理。
+
+## PDF 的 wasm:发现并修掉一个公网依赖
+
+**问题**:EmbedPDF 的默认 wasm 地址是公网 CDN
+(`https://cdn.jsdelivr.net/npm/@embedpdf/pdfium@2.15.1/dist/pdfium.wasm`)。
+我没覆盖它,所以**每次打开 PDF 都会从公网拉一个 4.6 MB 的 wasm** —— 内网工具不该这样。
+
+**修法**:把 wasm 复制到 `public/pdfium.wasm`,用 `wasmUrl` 指过去。
+**且必须是绝对地址**:相对路径会让查看器永久卡在「Initializing plugins…」
+(引擎在 blob URL 的 worker 里取 wasm,worker origin 不透明,相对路径解析不到)。
+
+验证:把 `public/pdfium.wasm` 改名 → 预览立刻失败;改回 → 正常。说明用的是本地那份,没有回落 CDN。
+
+## PDF 单条工具栏:已探明成本,待定
+
+用户要求合并成一条。**headless 方案已探明可行**(`@embedpdf/core` 等 7 个包都有 `/vue` 子路径,
+`usePdfiumEngine` + 插件注册的方式可用),但代价是:
+
+- 换掉 EmbedPDF 自带的整套界面 —— 缩略图、搜索、文字选择、批注展示都得自己重做;
+- 多 7~10 个直接依赖;
+- 自维护一个 PDF 查看器。
+
+另一条路(给它一份自定义 `ui.schema`)需要**完整** schema:`UISchema` 要求 toolbars/menus/sidebars/
+modals/selectionMenus 全给,且每个按钮要写对 command id —— 而 `viewerUISchema` 没有导出,只能从零写。
+
+**当前状态:保持两行头部**(同色底、无中间分隔线,读起来是一块头部而不是两条工具栏),
+未做替换。等用户确认是否接受上述代价。

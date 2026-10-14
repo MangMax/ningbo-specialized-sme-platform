@@ -12,7 +12,8 @@ import { startTusServer, type MiniTusServer } from './helpers/tus-mini-server'
 /**
  * 「脚本内化」与「tus 上传」两条写入路径的**落位规则一致性**验证(票 02)。
  *
- * 遍历仓库文件库(`files/**`)里现有的 22 个内化文件,按**路径反推** metadata
+ * 遍历仓库文件库(`files/**`)里现有的内化文件(当前 24 个:22 个来源文件,
+ * 加上 2 个由 `.doc` 转出的 `.docx` —— 见 files/README.md),按**路径反推** metadata
  * (`source/kind/year/batch/filename`),再经 **tus 协议**(`tus-js-client` 走真实
  * HTTP)上传到**临时文件库**(不碰真实 `files/`),断言:
  *   1. 每个文件落到规则路径 `files/<source>/<kind>/<year>/<batch>/<filename>`,
@@ -25,7 +26,7 @@ import { startTusServer, type MiniTusServer } from './helpers/tus-mini-server'
  */
 
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
-/** 仓库里现有的文件库(~88MiB,22 个文件 + README)。 */
+/** 仓库里现有的文件库(22 个来源文件 + 2 个 `.doc` 转出的 `.docx` + README)。 */
 const LIBRARY_DIR = join(APP_ROOT, 'files')
 
 /** 文件库根下与落位规则无关的说明文件。 */
@@ -124,7 +125,7 @@ function tusUpload(
   })
 }
 
-describe('票 02:现有 22 个文件按 tus 规则重传,落位一致', () => {
+describe('票 02:现有 24 个文件按 tus 规则重传,落位一致', () => {
   let work: string
   let server: MiniTusServer
   let reUploadDir: string
@@ -154,8 +155,8 @@ describe('票 02:现有 22 个文件按 tus 规则重传,落位一致', () => {
     await rm(work, { recursive: true, force: true })
   })
 
-  it('扫描到的文件数与内化的 22 个一致', () => {
-    expect(library).toHaveLength(22)
+  it('扫描到的文件数与内化的 24 个一致', () => {
+    expect(library).toHaveLength(24)
     // README 被排除;规则里 source/kind 都在白名单内。
     expect(library.every((f) => ['jxj', 'miit'].includes(f.metadata.source!))).toBe(true)
   })
@@ -173,7 +174,7 @@ describe('票 02:现有 22 个文件按 tus 规则重传,落位一致', () => {
       report.push({ rel: file.rel, bytes: file.bytes, landed: file.rel, ok: true })
     }
 
-    // 落位库里的文件**恰好**是这 22 个(不多不少、无多余空目录产物)。
+    // 落位库里的文件**恰好**是这 24 个(不多不少、无多余空目录产物)。
     const landedRels = (await walk(reUploadDir)).map((p) =>
       relative(reUploadDir, p).split(sep).join('/'),
     )
@@ -206,8 +207,8 @@ describe('票 02:现有 22 个文件按 tus 规则重传,落位一致', () => {
     expect(await readFile(suffixed)).toEqual(altBytes)
   })
 
-  it('打印 22 个文件的上传结果清单', () => {
-    expect(report).toHaveLength(22)
+  it('打印 24 个文件的上传结果清单', () => {
+    expect(report).toHaveLength(24)
     const lines = report.map((r) => `${r.rel}  (${r.bytes} bytes)  → ${r.landed}  [ok]`)
     console.log(`\n[tus 重传] ${report.length} 个文件:\n${lines.join('\n')}\n`)
     expect(report.every((r) => r.ok)).toBe(true)
