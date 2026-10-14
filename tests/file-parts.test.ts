@@ -610,4 +610,47 @@ describe('回填的边界', () => {
     backfillFileParts(db)
     expect(partSnapshot()).toEqual(conflictedSnapshot)
   })
+
+  it('旧来源行与 evidence 一致时归为 derived,行数冲突时保留 legacy 并标记', () => {
+    const exactFileId = fileIdOf(FILE_192)
+    const exactRow = db
+      .select()
+      .from(schema.storedFilePart)
+      .all()
+      .find((row) => row.fileId === exactFileId && row.eventKind === 'award')!
+    db.update(schema.storedFilePart)
+      .set({ origin: 'legacy' })
+      .where(eq(schema.storedFilePart.id, exactRow.id))
+      .run()
+
+    const conflictFileId = fileIdOf(FILE_145)
+    const conflictRow = db
+      .select()
+      .from(schema.storedFilePart)
+      .all()
+      .find((row) => row.fileId === conflictFileId && row.year === 2021)!
+    db.update(schema.storedFilePart)
+      .set({ origin: 'legacy', rowCount: 300 })
+      .where(eq(schema.storedFilePart.id, conflictRow.id))
+      .run()
+
+    backfillFileParts(db)
+
+    const exact = listFileParts(db, [exactFileId]).get(exactFileId)!
+    expect(exact.find((part) => part.eventKind === 'award')).toMatchObject({
+      rowCount: 389,
+      origin: 'derived',
+      hasConflict: false,
+    })
+    const conflict = listFileParts(db, [conflictFileId]).get(conflictFileId)!
+    expect(conflict.find((part) => part.year === 2021)).toMatchObject({
+      rowCount: 300,
+      origin: 'legacy',
+      hasConflict: true,
+    })
+
+    const afterFirstBackfill = partSnapshot()
+    backfillFileParts(db)
+    expect(partSnapshot()).toEqual(afterFirstBackfill)
+  })
 })
