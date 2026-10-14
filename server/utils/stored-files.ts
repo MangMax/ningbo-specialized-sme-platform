@@ -103,7 +103,7 @@ function isSystemFile(name: string): boolean {
 }
 
 /** 计算文件的 SHA-256(流式,避免把大文件整个读进内存)。 */
-function sha256Of(absPath: string): Promise<string> {
+export function sha256Of(absPath: string): Promise<string> {
   return new Promise((resolveHash, reject) => {
     const hash = createHash('sha256')
     const stream = createReadStream(absPath)
@@ -111,6 +111,22 @@ function sha256Of(absPath: string): Promise<string> {
     stream.on('error', reject)
     stream.on('end', () => resolveHash(hash.digest('hex')))
   })
+}
+
+/**
+ * 把一个库内相对路径**锁在文件库根内**,返回绝对路径;越界返回 `null`。
+ *
+ * 用 `resolve` 之后再比对前缀,而不是字符串过滤 `..` —— 符号链接与编码变体都绕不过
+ * resolve。加 `sep` 是为了避免 `/root-evil` 被 `/root` 前缀匹配上。
+ *
+ * 三个地方需要同一条判据(回填/删除、预览路由、上传登记),各写一份的话
+ * 修一处漏两处 —— 故收在这一处。
+ */
+export function resolveInsideRoot(root: string, relPath: string): string | null {
+  const base = resolve(root)
+  const abs = resolve(join(base, relPath))
+  if (abs !== base && !abs.startsWith(base + sep)) return null
+  return abs
 }
 
 /**
@@ -549,12 +565,9 @@ export async function removeStoredFile(
 
   let diskDeleted = false
   if (options.deleteDisk) {
-    const abs = resolve(join(resolve(filesRoot), current.relPath))
-    const root = resolve(filesRoot)
     // 锁根:路径解析后必须仍在文件库内,不能删到库外。
-    if (abs !== root && !abs.startsWith(root + sep)) {
-      throw new Error('路径越界')
-    }
+    const abs = resolveInsideRoot(filesRoot, current.relPath)
+    if (!abs) throw new Error('路径越界')
     try {
       const info = await lstat(abs)
       if (info.isFile()) {

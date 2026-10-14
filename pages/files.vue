@@ -13,6 +13,7 @@ import {
   SOURCE_ORDER,
 } from '~~/lib/labels'
 import { formatBytes } from '~~/lib/upload'
+import { describeFetchError } from '~~/lib/upload-register'
 import { fileUrl } from '~~/lib/preview'
 import { joinSeries, partBatches, partYears } from '~~/lib/file-parts'
 import type { BackfillReport, StoredFileRow } from '~~/server/utils/stored-files'
@@ -54,6 +55,7 @@ import {
 } from '@/components/ui/table'
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
+import UploadDialog from '@/components/files/UploadDialog.vue'
 
 /**
  * 文件管理页(票 09;段的展示是票 17):统一管理文件库(`files/`)里的**全部**文件。
@@ -164,6 +166,12 @@ const parseOptions = computed(() =>
 function refresh() {
   return queryCache.invalidateQueries({ key: ['files'] })
 }
+
+/**
+ * 上传通道(票 10):点「上传」开弹窗;传完由 `UploadDialog` 登记进库并 emit `registered`,
+ * 这里失效 `['files']` 那一批查询(所有筛选组合),让新行**立即出现**,不必手动刷新。
+ */
+const uploadOpen = ref(false)
 
 /** 任一筛选变化 → 回第一页。 */
 function onFilterChange() {
@@ -307,12 +315,6 @@ async function confirmDelete(deleteDisk: boolean) {
   }
 }
 
-/** 取 $fetch 抛出的错误里那句服务端说明;认不出来给一句能指导下一步的话。 */
-function describeFetchError(error: unknown): string {
-  const err = error as { statusMessage?: string; data?: { message?: string; statusMessage?: string }; message?: string }
-  return err?.data?.message ?? err?.data?.statusMessage ?? err?.statusMessage ?? '操作失败,请重试。'
-}
-
 const sizeOf = (row: StoredFileRow) => formatBytes(row.bytes)
 const previewSrc = computed(() =>
   previewFile.value ? fileUrl(previewFile.value.relPath) : '',
@@ -404,9 +406,9 @@ function publishedYearBatch(row: StoredFileRow): string {
       description="文件库里的全部来源文件;展开任意一行看它含哪些段。"
     >
       <template #actions>
-        <!-- 上传接 tus 是票 10 的事,这里先把入口占住。禁用态不用 tooltip 说明原因 ——
-             「通道未接入」这类话属于制作说明,不该写进界面;理由放 title,悬停才有。 -->
-        <Button variant="outline" size="sm" disabled title="上传通道尚未接入">
+        <!-- 上传接 tus(票 10):点开是上传弹窗,传完登记进库并失效列表查询,
+             列表会立即出现新行 —— 不必手动刷新。 -->
+        <Button variant="outline" size="sm" title="上传文件到文件库" @click="uploadOpen = true">
           <FolderUp />
           上传
         </Button>
@@ -850,6 +852,8 @@ function publishedYearBatch(row: StoredFileRow): string {
         </PaginationContent>
       </Pagination>
     </div>
+
+    <UploadDialog v-model:open="uploadOpen" @registered="refresh()" />
 
     <EditFileDialog
       v-model:open="editOpen"
