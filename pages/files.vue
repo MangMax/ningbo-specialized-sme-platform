@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery, useQueryCache } from '@pinia/colada'
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue'
 import { watchDebounced } from '@vueuse/core'
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FolderUp, Search } from '@lucide/vue'
 import {
@@ -14,7 +14,7 @@ import {
 } from '~~/lib/labels'
 import { formatBytes } from '~~/lib/upload'
 import { fileUrl } from '~~/lib/preview'
-import { joinSeries, partBatches, partYears, seriesLabel } from '~~/lib/file-parts'
+import { joinSeries, partBatches, partYears } from '~~/lib/file-parts'
 import type { BackfillReport, StoredFileRow } from '~~/server/utils/stored-files'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -52,7 +52,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
 
@@ -63,12 +62,12 @@ import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
  * 被归成哪一类、里面含哪些段、被哪些记录引用」,行操作是编元数据 / 预览 / 移出库。
  *
  * **年份 / 批次两列显示的是文件内容里的段**(票 17:一份文件常含多年份、多事件,
- * 如 192号 同时含「认定 2024/2」与「复核 2021/2」)。文件级另有**公布年份/批次**
- * (目录给的、单值),单独一列并退到次级色 —— 两者不是一个东西,别混。
- * 行可展开看段明细(称号 / 事件 / 年份 / 批次 / 附件 / 行数)。
+ * 如 192号 同时含「认定 2024/2」与「复核 2021/2」),所以列头写「内容年份」「内容批次」,
+ * 与旁边文件级的**「公布年份/批次」**(目录给的、单值)一眼分得开。值多时列里只平铺前两个、
+ * 其余折成 `+N 年`,完整清单在展开的段明细里。行可展开看段(称号 / 事件 / 年份 / 批次 / 附件 / 行数)。
  *
  * 筛选全部走**多选**(与台账页同一套 `MultiSelectFilter`),因为「同时看经信局的
- * 已分类和待分类」是常见的;单选下拉会把这种组合挡掉。
+ * 已分类和待分类」是常见的;单选下拉会把这种组合挡掉。生效条件同台账一样摊成一行 chip。
  */
 
 const apiGet = $fetch as unknown as <T>(
@@ -126,6 +125,32 @@ const rows = computed<StoredFileRow[]>(() => data.value?.rows ?? [])
 const total = computed(() => data.value?.total ?? 0)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
+/**
+ * 表格是否真的横向溢出了(12 列合计 1118px,1440 侧栏展开时装得下,更窄就装不下)。
+ *
+ * 只用来决定「钉住的操作列要不要画左边那条分界线」:没溢出时不会有列从它底下滑过,
+ * 画线就是凭空多一根;溢出了才需要划出「这列是钉住的」。
+ * 用 `border-spacing` 没有、也不该用的情况:直接量滚动容器的 `scrollWidth`。
+ */
+const tableScroller = ref<HTMLElement | null>(null)
+const isPinned = ref(false)
+function measureOverflow() {
+  const el = tableScroller.value
+  isPinned.value = el ? el.scrollWidth > el.clientWidth + 1 : false
+}
+onMounted(() => {
+  measureOverflow()
+  window.addEventListener('resize', measureOverflow)
+  // 字体或缩放变化也会改变文字宽度,进而改变总宽。
+  window.addEventListener('pageshow', measureOverflow)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', measureOverflow)
+  window.removeEventListener('pageshow', measureOverflow)
+})
+// 行数变化会改变滚动条的有无(竖向滚动条占宽)。
+watch([rows, pageSize], () => nextTick(measureOverflow))
+
 const sourceOptions = computed(() =>
   SOURCE_ORDER.map((k) => ({ value: k, label: SOURCES[k] ?? k })),
 )
@@ -161,6 +186,49 @@ const hasFilters = computed(
     parseStates.value.length > 0 ||
     Boolean(q.value),
 )
+
+interface ActiveFilter {
+  key: string
+  label: string
+  clear: () => void
+}
+
+/** 一组多选筛选 → 生效条件 chip:每项可单独从对应 ref 里撤掉。与台账页同一套。 */
+function multiChips(
+  values: string[],
+  keyPrefix: string,
+  labelPrefix: string,
+  target: Ref<string[]>,
+  format: (v: string) => string = (v) => v,
+): ActiveFilter[] {
+  return values.map((v) => ({
+    key: `${keyPrefix}:${v}`,
+    label: `${labelPrefix} · ${format(v)}`,
+    clear: () => (target.value = target.value.filter((x) => x !== v)),
+  }))
+}
+
+/**
+ * 生效中的条件摊平成一行。按钮上只写得出「分类 ·2」,看不出勾的到底是哪两项 ——
+ * 与台账页同一条规矩:筛选生效了就把它摊开写出来,每项单独可撤。
+ */
+const activeFilters = computed<ActiveFilter[]>(() => [
+  ...multiChips(sources.value, 'source', '来源', sources, (v) => SOURCES[v] ?? v),
+  ...multiChips(categoryStates.value, 'category', '分类', categoryStates, (v) => CATEGORY_STATES[v] ?? v),
+  ...multiChips(parseStates.value, 'parse', '解析', parseStates, (v) => PARSE_STATES[v] ?? v),
+  ...(q.value
+    ? [
+        {
+          key: 'q',
+          label: `搜索 · ${q.value}`,
+          clear: () => {
+            search.value = ''
+            q.value = ''
+          },
+        },
+      ]
+    : []),
+])
 
 // —— 行操作 ——
 const editing = ref<StoredFileRow | null>(null)
@@ -252,6 +320,26 @@ const previewSrc = computed(() =>
 
 const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs font-medium'
 
+/**
+ * 操作列的表头 / 单元格:横向滚动时**钉在表格右边**。
+ *
+ * 这一页 12 列合计 1118px,1280 / 1366 视口(侧栏展开)装不下,会横向滚动;而编辑 /
+ * 预览 / 移出恰恰是这一页最常做的事。不钉住的话,默认视野里够不到它们 —— 用户得先
+ * 横向滚到底才知道能操作。钉住后无论滚到哪一段,操作始终在。
+ *
+ * 底色见 `<style scoped>` 里的 `.pin-action`:必须**实心**(钉住的列会盖在中间列上),
+ * 且 hover 时与行的 `bg-accent/70` 同色,否则一行里后面几列一变深、这列还是白的,
+ * 像是浮在外面。左边那条分界线只在真的溢出时才画(见 `isPinned`)。
+ * 单元格 `z-10` 低于表头的 `z-30`:上下滚时行内单元格不会盖住表头。
+ */
+const ACTION_TH = computed(
+  () => `${TH_CLASS} sticky right-0 z-30 w-[138px] ${isPinned.value ? 'pin-edge' : ''}`,
+)
+const ACTION_TD = computed(
+  () =>
+    `bg-card group-hover:bg-accent/70 sticky right-0 z-10 w-[138px] transition-colors ${isPinned.value ? 'pin-edge' : ''}`,
+)
+
 function setPage(n: number) {
   page.value = Math.min(Math.max(1, n), totalPages.value)
 }
@@ -276,10 +364,28 @@ function toggleParts(id: number) {
     : [...expandedIds.value, id]
 }
 
-/** 「年份」列:**文件内容**里各段的年份去重(如 `2021、2024`);没有段时为 null,页面走「—」。 */
-const contentYears = (row: StoredFileRow) => seriesLabel(partYears(row.parts))
-const contentBatches = (row: StoredFileRow) => seriesLabel(partBatches(row.parts))
-/** 完整清单进 `title` —— 列表列有上限(见 `seriesLabel`),悬停能看到全部。 */
+/**
+ * 「内容年份 / 内容批次」列的展示值:**文件内容**里各段去重后的年份(如 `2021、2024`)。
+ *
+ * 列窄,值可以很多(工信部导出表跨 2021–2026 六个年份、四个批次)。所以只平铺前 2 个,
+ * 其余折成 `+4年` / `+4批` —— 带上单位才读得懂「还剩几个」;只写 `+4` 看不出那是什么,
+ * 直接截断又让人以为年份就这么多。完整清单在展开的段明细里,悬停 `title` 也能看全。
+ *
+ * `+4年` 里不留空格:这一列的量过的上限就是 `2021、2022 +4年`(98.6px),加空格会把
+ * 「+4年」挤出列宽、只剩省略号 —— 那就等于没写。
+ */
+const SERIES_HEAD = 2
+function seriesCell(values: readonly number[], unit: string) {
+  if (!values.length) return null
+  const rest = values.length - SERIES_HEAD
+  return {
+    head: joinSeries(values.slice(0, SERIES_HEAD))!,
+    more: rest > 0 ? `+${rest}${unit}` : '',
+  }
+}
+const contentYears = (row: StoredFileRow) => seriesCell(partYears(row.parts), '年')
+const contentBatches = (row: StoredFileRow) => seriesCell(partBatches(row.parts), '批')
+/** 完整清单进 `title` —— 列里只平铺前两个,悬停能看到全部。 */
 const contentYearsTitle = (row: StoredFileRow) => joinSeries(partYears(row.parts)) ?? undefined
 const contentBatchesTitle = (row: StoredFileRow) => joinSeries(partBatches(row.parts)) ?? undefined
 /** 「公布年份/批次」列:文件级**单值**(目录给的),形如 `2024 / 2`、`2024`、`—`。 */
@@ -295,23 +401,15 @@ function publishedYearBatch(row: StoredFileRow): string {
       class="rise-in"
       style="--rise-index: 0"
       title="文件管理"
-      description="文件库里的全部来源文件。年份/批次列是文件内容里的段,一份文件可含多段。"
+      description="文件库里的全部来源文件;展开任意一行看它含哪些段。"
     >
       <template #actions>
-        <!-- 上传接 tus 是票 10 的事;这里先把入口占住并说明去向,不做假的可用按钮。 -->
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger as-child>
-              <span tabindex="0">
-                <Button variant="outline" size="sm" disabled>
-                  <FolderUp />
-                  上传
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>上传通道尚未接入,此处暂不可用。</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <!-- 上传接 tus 是票 10 的事,这里先把入口占住。禁用态不用 tooltip 说明原因 ——
+             「通道未接入」这类话属于制作说明,不该写进界面;理由放 title,悬停才有。 -->
+        <Button variant="outline" size="sm" disabled title="上传通道尚未接入">
+          <FolderUp />
+          上传
+        </Button>
       </template>
     </PageHeader>
 
@@ -357,42 +455,74 @@ function publishedYearBatch(row: StoredFileRow): string {
       </span>
     </div>
 
+    <!-- 生效中的条件摊开写出来:光看下拉按钮看不出到底勾了哪几项。与台账页同一行样式。 -->
+    <TransitionGroup
+      v-if="activeFilters.length"
+      tag="div"
+      class="flex flex-wrap items-center gap-1.5"
+      enter-active-class="transition duration-150 ease-snap"
+      enter-from-class="scale-90 opacity-0"
+      leave-active-class="transition duration-100 ease-snap"
+      leave-to-class="scale-90 opacity-0"
+      move-class="transition duration-150 ease-snap"
+    >
+      <FilterChip v-for="f in activeFilters" :key="f.key" :label="f.label" @remove="f.clear()" />
+      <Button
+        v-if="activeFilters.length > 1"
+        variant="ghost"
+        size="sm"
+        class="text-muted-foreground h-6 px-1.5 text-xs"
+        @click="clearFilters"
+      >
+        清除全部
+      </Button>
+    </TransitionGroup>
+
     <Card class="rise-in gap-0 overflow-hidden py-0" style="--rise-index: 2">
       <CardContent class="p-0">
         <div
+          ref="tableScroller"
           class="max-h-[max(320px,calc(100dvh-17rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
         >
-          <!-- 12 列在窄屏放不下:给表格一个下限宽度让它横向滚动,而不是把文件名挤没。
+          <!-- 12 列。列宽按**实测文字宽度**逐列定,合计 1118px。
+               1440(侧栏展开)容器 1124px → 不横滚;1280 / 1366 装不下(实测 1280 差 144px,
+               1366 差 58px),这时**操作列钉在右边**(见下面的 `sticky right-0`)——
+               编辑/预览/移出是这一页最常做的事,不能因为横向滚动就够不到。
+               剩下的中间列照旧横向滚动去读,与同门台账页一致。
+               文件名留 209px:放下「甬经信中小〔2026〕101号关于…」,截断点落在文号之后,
+               邻近的两份文件才不会截成同一个样子。
                `table-fixed`:列宽按表头的 w-* 逐列算,宽屏下也不会某一列吃满剩余空间。 -->
-          <Table class="min-w-[1240px] table-fixed">
+          <Table class="min-w-[1118px] table-fixed">
             <TableHeader>
               <TableRow class="hover:bg-transparent">
-                <TableHead :class="[TH_CLASS, 'w-10']">
+                <TableHead :class="[TH_CLASS, 'w-8']">
                   <span class="sr-only">展开段</span>
                 </TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[272px]']">文件名</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[76px]']">来源</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[86px]']">类别</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[209px]']">文件名</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[81px]']">来源</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[72px]']">类别</TableHead>
                 <TableHead
-                  :class="[TH_CLASS, 'w-[112px]']"
+                  :class="[TH_CLASS, 'w-[92px]']"
                   title="目录给出的公布年份/批次 —— 这份文件是哪一批公布的(单值)"
                 >
                   公布年份/批次
                 </TableHead>
                 <TableHead
-                  :class="[TH_CLASS, 'w-[118px]']"
+                  :class="[TH_CLASS, 'w-[132px]']"
                   title="文件内容里各段的年份(可多个);复核段记的是被复核的原认定年份"
                 >
-                  年份
+                  内容年份
                 </TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[78px]']" title="文件内容里各段的批次(可多个)">
-                  批次
+                <TableHead :class="[TH_CLASS, 'w-[84px]']" title="文件内容里各段的批次(可多个)">
+                  内容批次
                 </TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[84px]']">分类状态</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[84px]']">解析状态</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[64px] text-right']">被引用</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[76px] text-right']">大小</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[148px]']">操作</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[76px]']">分类状态</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[76px]']">解析状态</TableHead>
+                <!-- 右对齐的两列:表头要比正文多 4px 内边距(`table-head` 默认 px-2、
+                     `table-cell` 默认 px-3),否则数字右缘和表头差 4px,一眼看得出没对齐。 -->
+                <TableHead :class="[TH_CLASS, 'w-[56px] pr-3 text-right']">被引用</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[70px] pr-3 text-right']">大小</TableHead>
+                <TableHead :class="[ACTION_TH]">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -415,7 +545,7 @@ function publishedYearBatch(row: StoredFileRow): string {
 
               <template v-else-if="rows.length">
                 <template v-for="row in rows" :key="row.id">
-                  <TableRow class="hover:bg-accent/70 h-11">
+                  <TableRow class="group hover:bg-accent/70 h-11">
                     <TableCell class="pr-0">
                       <Button
                         v-if="row.parts.length"
@@ -434,47 +564,70 @@ function publishedYearBatch(row: StoredFileRow): string {
                       </Button>
                       <span
                         v-else
-                        class="text-muted-foreground/60 inline-block w-7 text-center text-xs"
+                        class="text-muted-foreground/60 inline-block w-6 text-center text-xs"
                         title="还没有段(尚未解析)"
                         >—</span
                       >
                     </TableCell>
-                    <TableCell class="w-[272px]">
-                      <div class="flex min-w-0 flex-col">
-                        <span class="truncate font-medium" :title="row.filename">{{ row.filename }}</span>
-                        <span class="text-muted-foreground truncate text-xs" :title="row.relPath">
-                          {{ row.relPath }}
-                        </span>
-                      </div>
+                    <TableCell class="w-[209px]">
+                      <!-- 只写文件名。先前下面还压了一行 `rel_path`,但它对每行都截在同一个
+                           位置(`jxj/announcement/2026/1/甬经信中小〔20…`),既分不出文件、
+                           又占掉一行高。路径没丢:悬停这里能看到完整的文件名 + 库内路径,
+                           编辑弹窗里也有单独一块只读路径。
+                           `block` 不能省:行内元素的 overflow 不生效,不加就会顶出去压住右边列。 -->
+                      <span
+                        class="block truncate font-medium"
+                        :title="`${row.filename}\n${row.relPath}`"
+                      >
+                        {{ row.filename }}
+                      </span>
                     </TableCell>
                     <TableCell>
-                      <Badge v-if="row.source" variant="quiet">{{ SOURCES[row.source] }}</Badge>
+                      <!-- 方标 = 来源语言:经信局藏青、工信部金色(与台账页同一个 SourceChip)。
+                           写成一个灰底 Badge 就看不出哪份是国家级名单了。 -->
+                      <SourceChip v-if="row.source" :code="row.source" />
                       <span v-else class="text-muted-foreground text-xs">—</span>
                     </TableCell>
-                    <TableCell>
-                      <Badge v-if="row.kind" variant="quiet">{{ KINDS[row.kind] }}</Badge>
-                      <span v-else class="text-muted-foreground text-xs">—</span>
+                    <TableCell class="text-muted-foreground text-xs">
+                      <!-- 类别是低信息量的属性(公布文件/导出表),写成正文色小字即可。
+                           一行里已经有来源方标 + 两个状态徽章,再挂一个同形的徽章只是噪音。 -->
+                      <span class="block truncate">{{ row.kind ? KINDS[row.kind] : '—' }}</span>
                     </TableCell>
-                    <!-- 公布年份/批次:文件级单值,退到次级色 —— 内容年份才是要读的信息。 -->
+                    <!-- 公布年份/批次:文件级单值(目录给的),退到次级色 —— 内容年份才是要读的信息。 -->
                     <TableCell class="text-muted-foreground text-xs tabular-nums">
                       {{ publishedYearBatch(row) }}
                     </TableCell>
-                    <!-- 年份:文件**内容**含哪几年。多个时并排(如 2021、2024);过长有上限,悬停看全。 -->
+                    <!-- 内容年份:文件**内容**含哪几年(如 2021、2024)。超过两个折成 `+N 年`。 -->
                     <TableCell
                       class="truncate text-xs font-medium tabular-nums"
                       :title="contentYearsTitle(row)"
                     >
-                      <span v-if="contentYears(row)">{{ contentYears(row) }}</span>
+                      <template v-if="contentYears(row)">
+                        {{ contentYears(row)!.head
+                        }}<span
+                          v-if="contentYears(row)!.more"
+                          class="text-muted-foreground ml-1 font-normal"
+                        >
+                          {{ contentYears(row)!.more }}</span
+                        >
+                      </template>
                       <span v-else class="text-muted-foreground font-normal">—</span>
                     </TableCell>
-                    <TableCell
-                      class="truncate text-xs tabular-nums"
-                      :title="contentBatchesTitle(row)"
-                    >
-                      <span v-if="contentBatches(row)">{{ contentBatches(row) }}</span>
+                    <TableCell class="truncate text-xs tabular-nums" :title="contentBatchesTitle(row)">
+                      <template v-if="contentBatches(row)">
+                        {{ contentBatches(row)!.head
+                        }}<span
+                          v-if="contentBatches(row)!.more"
+                          class="text-muted-foreground ml-1"
+                        >
+                          {{ contentBatches(row)!.more }}</span
+                        >
+                      </template>
                       <span v-else class="text-muted-foreground">—</span>
                     </TableCell>
                     <TableCell>
+                      <!-- 分类状态:已定 / 程序推的 / 未定。三档靠**线型**分开(与事件同一套
+                           语言 —— `dashed` = 还没坐实),不靠颜色 —— 颜色已被称号梯度占用。 -->
                       <Badge
                         :variant="row.categoryState === 'set' ? 'quiet' : 'dashed'"
                         :title="
@@ -487,7 +640,20 @@ function publishedYearBatch(row: StoredFileRow): string {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge :variant="row.parseState === 'failed' ? 'destructive' : 'quiet'">
+                      <!-- 解析状态:未解析 / 已解析 / 解析失败。
+                           与左边那列刻意用**不同**的线型:两列挨着、列宽也差不多,若默认态
+                           都画成同一条实线灰边(改前就是这样),扫视时这两列读成一个东西,
+                           「这份文件还没解析」这个信号就没了。`unparsed` 是**待办**,走虚线
+                           (与入库培育同一档语义);`parsed` 已坐实走实线;`failed` 才是红。 -->
+                      <Badge
+                        :variant="
+                          row.parseState === 'failed'
+                            ? 'destructive'
+                            : row.parseState === 'parsed'
+                              ? 'solid'
+                              : 'dashed'
+                        "
+                      >
                         {{ PARSE_STATES[row.parseState] }}
                       </Badge>
                     </TableCell>
@@ -503,18 +669,28 @@ function publishedYearBatch(row: StoredFileRow): string {
                     <TableCell class="text-muted-foreground text-right text-xs tabular-nums">
                       {{ sizeOf(row) }}
                     </TableCell>
-                    <TableCell>
+                    <TableCell :class="ACTION_TD">
                       <div class="flex items-center gap-1">
-                        <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="openEdit(row)">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          class="h-7 px-1.5 text-xs"
+                          @click="openEdit(row)"
+                        >
                           编辑
                         </Button>
-                        <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="openPreview(row)">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          class="h-7 px-1.5 text-xs"
+                          @click="openPreview(row)"
+                        >
                           预览
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
-                          class="text-muted-foreground hover:text-destructive h-7 px-2 text-xs"
+                          class="text-muted-foreground hover:text-destructive h-7 px-1.5 text-xs"
                           @click="openDelete(row)"
                         >
                           移出
@@ -530,27 +706,32 @@ function publishedYearBatch(row: StoredFileRow): string {
                     data-testid="file-parts-row"
                   >
                     <TableCell :colspan="12" class="bg-muted/40 p-0">
-                      <div class="flex flex-col gap-2 px-4 py-3">
-                        <!-- 明细表按内容收窄(w-auto),不跟着外层撑满 —— 免得「行数」的数字飘到老远。 -->
+                      <!-- 缩进 + 一条竖线,让这段明细读起来属于上面那一行(与详情页用竖线
+                           分隔两侧来源是同一种手法),而不是又一张浮在里面的表。
+                           段数放在表**下面**当注脚 —— 先前放在右端与列头同一行,读成了第七个
+                           列头(「共 2 段」和「称号/事件/…」并排),要读两遍才分得清。 -->
+                      <div class="border-border/70 ml-5 flex flex-col gap-1.5 border-l-2 py-3 pr-4 pl-4">
                         <Table class="w-auto text-xs">
                           <TableHeader>
                             <TableRow class="hover:bg-transparent">
-                              <TableHead class="h-7 text-muted-foreground w-48 text-xs font-medium">
+                              <TableHead class="text-muted-foreground h-7 w-48 text-xs font-medium">
                                 称号
                               </TableHead>
-                              <TableHead class="h-7 text-muted-foreground w-24 text-xs font-medium">
+                              <TableHead class="text-muted-foreground h-7 w-24 text-xs font-medium">
                                 事件
                               </TableHead>
-                              <TableHead class="h-7 text-muted-foreground w-20 text-xs font-medium">
+                              <TableHead class="text-muted-foreground h-7 w-20 text-xs font-medium">
                                 年份
                               </TableHead>
-                              <TableHead class="h-7 text-muted-foreground w-16 text-xs font-medium">
+                              <TableHead class="text-muted-foreground h-7 w-16 text-xs font-medium">
                                 批次
                               </TableHead>
-                              <TableHead class="h-7 text-muted-foreground w-24 text-xs font-medium">
+                              <TableHead class="text-muted-foreground h-7 w-24 text-xs font-medium">
                                 附件
                               </TableHead>
-                              <TableHead class="h-7 text-muted-foreground text-right text-xs font-medium">
+                              <TableHead
+                                class="text-muted-foreground h-7 pr-3 text-right text-xs font-medium"
+                              >
                                 行数
                               </TableHead>
                             </TableRow>
@@ -577,9 +758,10 @@ function publishedYearBatch(row: StoredFileRow): string {
                             </TableRow>
                           </TableBody>
                         </Table>
-                        <p class="text-muted-foreground text-xs">
-                          共 {{ row.parts.length }} 段。年份是段的内容年份(复核段为被复核的原认定年份);
-                          「公布年份/批次」与段无关,是这份文件在目录上的公布批次。
+                        <!-- 只留段数。原先还有一句解释「年份是段的内容年份、公布年份/批次与段无关」
+                             的话 —— 列头已经分别写着「公布年份/批次」和「内容年份」,不必再讲一遍模型。 -->
+                        <p class="text-muted-foreground text-xs tabular-nums">
+                          共 {{ row.parts.length }} 段
                         </p>
                       </div>
                     </TableCell>
@@ -691,3 +873,25 @@ function publishedYearBatch(row: StoredFileRow): string {
     <FilePreviewDialog v-model:open="previewOpen" :src="previewSrc" :name="previewFile?.filename ?? ''" />
   </div>
 </template>
+
+<style scoped>
+/*
+ * 钉在右边的「操作」列:横向滚动时它盖在中间列上,所以底色必须是**实心**的
+ * (`bg-card` / hover 的 `bg-accent`),半透明会透出底下的文字。
+ *
+ * 这两个底色的写法有两个要点:
+ *   1. 用 Tailwind 工具类写在模板里,不写进这个 style 块 —— 这里的规则不在 `@layer`
+ *      里,会**压过** Tailwind 的 `group-hover:*`(未分层的样式总是赢分层样式,与选择器
+ *      权重无关),那样 hover 时这一列不会跟着行底一起变深。
+ *   2. 单元格先铺一层不透明的 `bg-card`,hover 再叠 `bg-accent/70` —— 与行的
+ *      `hover:bg-accent/70` 走同一套合成(accent 70% 压在卡片白底上),两边得出的
+ *      像素完全相同。直接写不透明的 `bg-accent` 会**偏深一档**,行里会多出一条竖带。
+ * 这里只留一个不跟任何工具类打架的:分隔线。
+ *
+ * 分隔线只在真的横向溢出时才加(`isPinned`)。用 inset 的 box-shadow 而不是
+ * border-left:border 会占 1px 宽、把量好的 138px 列挤成 137px;阴影不占位。
+ */
+.pin-edge {
+  box-shadow: inset 1px 0 0 var(--border);
+}
+</style>
