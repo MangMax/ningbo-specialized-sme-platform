@@ -96,8 +96,9 @@ function fitScale(): number {
  *    「可用按钮点了没反应/回不到原位」。
  * 反过来(判据用 25%、执行用有效下限)则会出现「按钮灰着其实能缩」。所以两边都取这一个值。
  *
- * 语义上:**「适应」之上仍守住手动下限**(普通预览 25%、页图库 10% 一分不少);**「适应」之下**
- * 允许一路回到 fit —— 那正是「自动适宽可低于手动下限」的直接推论。
+ * 语义(精确):**`fitScale() ≥ 配置下限`时守配置下限**(普通预览 25%、页图库 10%);
+ * **`fitScale() < 配置下限`时有效下限就是 `fitScale()`** —— 能到的最小是「整页可见」。
+ * 工具栏收到的 `:zoom-min` 是**派生出来的有效下限**,不是 `props.zoomMin` 原值。
  */
 const effectiveZoomMin = computed(() => Math.min(props.zoomMin, fitScale()))
 
@@ -270,6 +271,12 @@ defineExpose({
   zoomBy,
   fit,
   zoom,
+  /**
+   * **有效下限** = `min(手动下限, 当前适应比例)` —— 见上面的同名 computed。
+   * 外部(页图库的窄屏控件)要判「还能不能再缩小」时必须用它,而不是各自的配置下限:
+   * 否则会出现「按钮灰着其实还能缩」(fit 落在配置下限之下时,能到的最小是 fit)。
+   */
+  effectiveZoomMin,
 })
 
 const imgStyle = computed(() => ({

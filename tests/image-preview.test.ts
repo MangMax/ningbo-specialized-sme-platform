@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import ImagePreview from '../components/preview/ImagePreview.vue'
 import PageImageGallery from '../components/preview/PageImageGallery.vue'
+import PreviewToolbar from '../components/preview/PreviewToolbar.vue'
 import { PAGE_IMAGE_ZOOM_MIN } from '../lib/page-gallery'
 import { fitZoom, nextZoom, retrySrc, ZOOM_ABS_MAX } from '../lib/preview'
 
@@ -563,5 +564,138 @@ describe('工具栏:百分比取整只用于文本(判据用未取整 scale)', (
     await wrapper.vm.$nextTick() // 读 DOM 属性前先让 Vue 把 :disabled 刷上去
     expect(vm.zoom).toBeCloseTo(0.25, 6)
     expect(zoomOut()!.attributes('disabled')).toBeDefined()
+  })
+})
+
+/**
+ * #1 页图库窄屏缩小的判据必须用**子预览的有效下限**(复核:fit=0.04789、配置下限 10% 时,
+ * zoom=0.06728 的按钮仍 disabled,而 handler 实际能缩到 0.06007 —— 同一类失配)。
+ */
+describe('页图库窄屏缩小判据用有效下限(#1)', () => {
+  const file = 'jxj/announcement/2022/公布.pdf'
+  const state = {
+    file,
+    pageCount: 1,
+    dpi: 200,
+    rendered: 1,
+    upToDate: true,
+    manifest: { dpi: 200, renderedAt: '2026-10-15T00:00:00.000Z' },
+    pages: [
+      {
+        page: 1,
+        relPath: 'jxj/announcement/2022/.公布.pdf.pages/p001.png',
+        url: '/api/files/jxj/announcement/2022/.%E5%85%AC%E5%B8%83.pdf.pages/p001.png',
+        width: 1653,
+        height: 2339,
+        bytes: 100,
+      },
+    ],
+  }
+
+  /** 挂出单页视图,并把子预览的尺寸摆成 fit 落在配置下限(10%)之下。 */
+  async function openWithFit(fitBelowConfigFloor: boolean) {
+    vi.stubGlobal('$fetch', vi.fn(async () => state))
+    const gallery = mount(PageImageGallery, { props: { file } })
+    await new Promise((r) => setTimeout(r, 0))
+    await gallery.vm.$nextTick()
+    await gallery.find('button[title^="第 1 页"]').trigger('click')
+    await gallery.vm.$nextTick()
+
+    const preview = gallery.findComponent(ImagePreview)
+    const img = preview.find('img').element as HTMLImageElement
+    const vp = img.parentElement!.parentElement as HTMLElement
+    // fit = (vp - 32) / natural。取 fit<10%(超大图)或 fit>10%(小图)。
+    const naturalW = fitBelowConfigFloor ? 5580 : 1116 // 5580*0.1≈558;要 fit≈0.0479 取更大
+    const naturalH = Math.round(naturalW * (3200 / 2400))
+    Object.defineProperty(img, 'naturalWidth', { value: fitBelowConfigFloor ? 5580 : 1200, configurable: true })
+    Object.defineProperty(img, 'naturalHeight', { value: fitBelowConfigFloor ? 7440 : 1600, configurable: true })
+    Object.defineProperty(vp, 'clientWidth', { value: 300, configurable: true })
+    Object.defineProperty(vp, 'clientHeight', { value: 600, configurable: true })
+    void naturalW
+    void naturalH
+    await preview.find('img').trigger('load') // onLoad → fit()
+    await gallery.vm.$nextTick()
+    return { gallery, preview, vm: preview.vm as unknown as { zoom: number; zoomBy: (f: number) => void; effectiveZoomMin: number } }
+  }
+
+  const narrowZoomOut = (g: Awaited<ReturnType<typeof openWithFit>>) =>
+    g.gallery
+      .findAll('button')
+      .find((b) => b.attributes('aria-label') === '缩小' && !b.classes().includes('hidden'))
+
+  it('fit < 配置下限(10%)时:缩小可用且点击**确实变小**,到 fit 才禁用', async () => {
+    try {
+      const g = await openWithFit(true)
+      const fit = g.vm.zoom
+      expect(fit).toBeLessThan(PAGE_IMAGE_ZOOM_MIN) // 落在配置下限之下
+      expect(g.vm.effectiveZoomMin).toBeCloseTo(fit, 6)
+
+      // fit 上:禁用。
+      await g.gallery.vm.$nextTick()
+      expect(narrowZoomOut(g)!.attributes('disabled')).toBeDefined()
+
+      // 放大一档 → 仍在 10% 之下,但**高于 fit**:按钮应**可用**(旧判据按 10% 会误禁)。
+      g.vm.zoomBy(1.12)
+      await g.gallery.vm.$nextTick()
+      const mid = g.vm.zoom
+      expect(mid).toBeGreaterThan(fit)
+      expect(mid).toBeLessThan(PAGE_IMAGE_ZOOM_MIN)
+      expect(narrowZoomOut(g)!.attributes('disabled')).toBeUndefined()
+
+      // 真点一下 → 确实变小(可达)。
+      await narrowZoomOut(g)!.trigger('click')
+      await g.gallery.vm.$nextTick()
+      expect(g.vm.zoom).toBeLessThan(mid)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('fit ≥ 配置下限(10%)时:照旧守 10% 地板', async () => {
+    try {
+      const g = await openWithFit(false)
+      expect(g.vm.zoom).toBeGreaterThanOrEqual(PAGE_IMAGE_ZOOM_MIN)
+      // 缩小到 10% → 禁用。
+      for (let i = 0; i < 25; i += 1) g.vm.zoomBy(1 / 1.12)
+      await g.gallery.vm.$nextTick()
+      expect(g.vm.zoom).toBeCloseTo(PAGE_IMAGE_ZOOM_MIN, 6)
+      expect(narrowZoomOut(g)!.attributes('disabled')).toBeDefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+/**
+ * #2 窄屏恢复路径:百分比按钮在窄屏点一下回「适应」(而不是回 100%)。
+ * 复核在 390×844 上量到:点百分比从 14% 跳到 100%(图宽 ~2400 CSS px,只剩局部),
+ * 而窄屏没有 ± / 适宽,点图与滚轮也不生效 —— 只能全屏或关掉重开。
+ */
+describe('窄屏百分比按钮回「适应」(#2)', () => {
+  it('窄屏(<640px)点百分比发 fit-width;宽屏仍发 update:zoom=1', async () => {
+    const original = window.matchMedia
+    try {
+      // 窄屏
+      /** @ts-expect-error 测试桩 */
+      window.matchMedia = (q: string) => ({ matches: q === '(max-width: 639.98px)', media: q, addEventListener() {}, removeEventListener() {} })
+      const narrow = mount(PreviewToolbar, {
+        props: { title: 't', zoom: 0.14, zoomMin: 0.1 },
+      })
+      const pct = narrow.findAll('button').find((b) => b.text().includes('%'))!
+      await pct.trigger('click')
+      expect(narrow.emitted('fit-width')).toBeTruthy()
+      expect(narrow.emitted('update:zoom')).toBeFalsy()
+
+      // 宽屏:仍回 100%(桌面交互不变)。
+      /** @ts-expect-error 测试桩 */
+      window.matchMedia = (q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {} })
+      const wide = mount(PreviewToolbar, { props: { title: 't', zoom: 0.14, zoomMin: 0.1 } })
+      await wide.findAll('button').find((b) => b.text().includes('%'))!.trigger('click')
+      expect(wide.emitted('fit-width')).toBeFalsy()
+      expect(wide.emitted('update:zoom')?.[0]).toEqual([1])
+    } finally {
+      // 还原:类型上 `matchMedia` 只读,这里用一次断言赋值(不改运行期类型)。
+      ;(window as { matchMedia: typeof window.matchMedia }).matchMedia = original
+    }
   })
 })

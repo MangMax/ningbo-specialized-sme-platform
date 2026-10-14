@@ -88,7 +88,13 @@ const viewing = ref<number | null>(null)
  * (`ImagePreview` 用 `defineExpose` 露出 `zoomBy` / `fit`)。用结构类型而不是
  * `InstanceType<typeof ImagePreview>`:模板 ref 只在这两处用到,写清需要什么就够。
  */
-const viewer = ref<{ zoomBy: (factor: number) => void; fit: () => void; zoom: number } | null>(null)
+const viewer = ref<{
+  zoomBy: (factor: number) => void
+  fit: () => void
+  zoom: number
+  /** 子预览的**有效下限** —— 判「还能不能再缩小」用它,不要用本组件的配置下限。 */
+  effectiveZoomMin: number
+} | null>(null)
 
 const status = computed(() =>
   state.value ? galleryStatus(state.value, dpi.value, { dpiUnconfirmed: loadUnconfirmed.value }) : null,
@@ -278,13 +284,14 @@ watch(
            见票 13 §8.8 R1),不放大的话字是糊的。所以本行自己补
            一组,`sm:hidden` 与它错开,不会重复出现两套缩放。 -->
       <span class="ml-auto flex shrink-0 items-center gap-1 sm:hidden">
-        <!-- 到下限就禁用 —— 与工具栏的「缩小」同一判据(`zoom <= PAGE_IMAGE_ZOOM_MIN`);
-             否则 10% 时按钮还亮着,点了没反应(`nextZoom` 会停在原地)。 -->
+        <!-- 到下限就禁用。判据取**子预览暴露的有效下限**(`min(手动下限, fit)`),
+             而不是本组件的配置下限 `PAGE_IMAGE_ZOOM_MIN`:fit 落在 10% 之下时
+             (超小页 + 窄容器),能到的实际最小是 **fit**,用配置下限会把还能缩的区间**误禁**。 -->
         <Button
           variant="outline"
           size="icon-sm"
           aria-label="缩小"
-          :disabled="!viewer || viewer.zoom <= PAGE_IMAGE_ZOOM_MIN"
+          :disabled="!viewer || viewer.zoom <= viewer.effectiveZoomMin"
           @click="viewer?.zoomBy(1 / 1.12)"
         >
           <ZoomOut />

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import type { LucideIcon } from '@lucide/vue'
 import {
   ChevronLeft,
@@ -94,6 +94,24 @@ const emit = defineEmits<{
 
 /** 显示用:取整成整数百分比。文本用它;**下限判据不能用它**(见下面的说明)。 */
 const zoomPercent = computed(() => Math.round((props.zoom ?? 1) * 100))
+
+/**
+ * 是不是窄屏(< 640px,与 Tailwind 的 `sm` 同一断点)。
+ *
+ * 窄屏下 ± 与「适宽/实际大小」都被 `sm:` / `lg:` 收起,百分比按钮是**唯一**留在视野里的
+ * 缩放控件 —— 所以它在窄屏承担「回到整页可见」这一条恢复路径(见模板里的说明)。
+ * 用 `matchMedia` 而不是量容器:与那几颗按钮的 CSS 断点必须**同一个依据**,否则两者会在
+ * 断点附近打架。
+ */
+const NARROW_QUERY = '(max-width: 639.98px)'
+const isNarrow = ref(false)
+if (typeof window !== 'undefined') {
+  const mq = window.matchMedia(NARROW_QUERY)
+  isNarrow.value = mq.matches
+  const onChange = (e: MediaQueryListEvent) => (isNarrow.value = e.matches)
+  mq.addEventListener('change', onChange)
+  onBeforeUnmount(() => mq.removeEventListener('change', onChange))
+}
 const canPrev = computed(() => props.index > 1)
 const canNext = computed(() => props.index < props.count)
 const hasNav = computed(() => props.unit !== null && props.count > 0)
@@ -186,11 +204,18 @@ const ACTION_BTN = 'text-muted-foreground hover:text-foreground'
       >
         <ZoomOut />
       </Button>
+      <!--
+        百分比按钮:宽屏点一下回 100%(原行为);**窄屏(`sm` 以下)点一下回「适应」**。
+        为什么分叉:100% 对超大图意味着**放大到原尺寸** —— 2400 px 宽的图在 390 px 弹窗里
+        只剩局部,而窄屏把「适宽/实际大小」两颗按钮与 ± 都收进了 `sm:` / `lg:`,**没有任何
+        回到全图的手段**(点图 / 滚轮也不生效);只有去全屏或关掉重开才能恢复。
+        窄屏给「回适应」正是补上这条恢复路径,同时宽度翻倍(`w-11` → `w-20`)让百分比更清楚。
+      -->
       <button
         type="button"
-        class="text-muted-foreground hover:text-foreground focus-visible:ring-ring w-11 shrink-0 rounded-sm text-center text-xs tabular-nums transition-colors focus-visible:ring-3 focus-visible:outline-none"
-        title="恢复 100%"
-        @click="emit('update:zoom', 1)"
+        class="text-muted-foreground hover:text-foreground focus-visible:ring-ring shrink-0 rounded-sm px-1 text-center text-xs tabular-nums transition-colors focus-visible:ring-3 focus-visible:outline-none sm:w-11"
+        :title="isNarrow ? '适宽(回到整页可见)' : '恢复 100%'"
+        @click="isNarrow ? emit('fit-width') : emit('update:zoom', 1)"
       >
         {{ zoomPercent }}%
       </button>
