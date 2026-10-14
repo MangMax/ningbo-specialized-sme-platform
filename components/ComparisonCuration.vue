@@ -3,7 +3,7 @@ import { shallowRef, watch } from 'vue'
 import type { CuratedRow } from '~~/lib/curation'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -38,13 +38,13 @@ async function save(curated: boolean, editedNote?: string) {
 </script>
 
 <template>
-  <div class="flex flex-col gap-1">
+  <div class="flex min-w-0 flex-col gap-1">
     <div class="flex items-center gap-2">
       <Switch :model-value="row.curated" :disabled="pending" :aria-label="`核实 ${row.name}`" @update:model-value="save($event)" />
-      <span v-if="row.curated" class="text-muted-foreground text-xs">已核实</span>
+      <span class="text-xs" :class="row.curated ? 'text-primary' : 'text-muted-foreground'">{{ row.curated ? '已核实' : '待核实' }}</span>
       <Dialog v-model:open="open">
         <DialogTrigger as-child>
-          <Button variant="ghost" size="sm" :disabled="pending" :aria-label="`编辑 ${row.name} 备注`">{{ row.note ? '编辑备注' : '添加备注' }}</Button>
+          <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" :disabled="pending" :aria-label="`编辑 ${row.name} 备注`">{{ row.note ? '编辑备注' : '备注' }}</Button>
         </DialogTrigger>
         <DialogContent>
           <DialogHeader>
@@ -52,7 +52,7 @@ async function save(curated: boolean, editedNote?: string) {
             <DialogDescription>{{ row.name }} · 保存备注同时标为已核实。</DialogDescription>
           </DialogHeader>
           <Label for="curation-note">备注</Label>
-          <Input id="curation-note" v-model="note" :disabled="pending" @keydown.enter.prevent="save(true, note)" />
+          <Textarea id="curation-note" v-model="note" :rows="3" class="resize-y" :disabled="pending" @keydown.ctrl.enter.prevent="save(true, note)" @keydown.meta.enter.prevent="save(true, note)" />
           <Alert v-if="failure" variant="destructive"><AlertDescription>{{ failure }}</AlertDescription></Alert>
           <DialogFooter>
             <Button variant="outline" :disabled="pending" @click="open = false">取消</Button>
@@ -61,7 +61,7 @@ async function save(curated: boolean, editedNote?: string) {
         </DialogContent>
       </Dialog>
     </div>
-    <span v-if="row.note" class="text-xs break-words">{{ row.note }}</span>
+    <span v-if="row.note" class="truncate text-xs" :title="row.note">{{ row.note }}</span>
     <span v-if="failure && !open" role="alert" class="text-destructive text-xs">{{ failure }}</span>
   </div>
 </template>

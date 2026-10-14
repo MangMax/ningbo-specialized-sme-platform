@@ -12,12 +12,10 @@ import { Label } from '@/components/ui/label'
 import {
   TITLES,
   TITLE_ORDER,
-  TITLE_SHORT,
   COMPARISON_LABELS,
   COMPARISON_HINTS,
   COMPARISON_OTHER_SIDE,
   COMPARISON_NO_USCC,
-  EVENTS,
 } from '~~/lib/labels'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -80,7 +78,13 @@ const counts = computed(
 )
 const curatedCount = (d: ComparisonDirection) => data.value?.curatedCounts[title.value as keyof ComparisonCounts]?.[d] ?? 0
 const count = (d: ComparisonDirection) => counts.value ? counts.value[d] - (showCurated.value ? 0 : curatedCount(d)) : '—'
-const countLabel = (d: ComparisonDirection) => showCurated.value ? `${count(d)} 条` : `${count(d)} 条(另 ${curatedCount(d)} 条已核实)`
+const countLabel = (d: ComparisonDirection) => {
+  if (!counts.value) return '加载中…'
+  const verified = curatedCount(d)
+  return showCurated.value
+    ? `${count(d)} 条（含 ${verified} 条已核实）`
+    : `${count(d)} 条${verified ? `（另 ${verified} 条已核实）` : ''}`
+}
 async function refreshCuration() {
   await queryCache.invalidateQueries({ key: ['comparison'] })
   if (page.value > totalPages.value) page.value = totalPages.value
@@ -97,12 +101,15 @@ const TH_CLASS =
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
+  <div class="comparison-page flex min-w-0 flex-col gap-4">
     <PageHeader
       class="rise-in"
       title="两侧名录比对"
-      :description="`按统代比对,不限年份,含 2021 ${EVENTS.nurture};${TITLE_SHORT.little_giant}无经信局来源。`"
     >
+      <template #description>
+        <span class="inline-block">按统代比对，不限年份，含入库培育。</span>
+        <span class="inline-block">小巨人无经信局名录。</span>
+      </template>
       <template #actions>
         <div class="flex items-center gap-2">
           <Switch id="show-curated" v-model="showCurated" />
@@ -115,7 +122,7 @@ const TH_CLASS =
     </PageHeader>
 
     <Tabs v-model="title" class="min-w-0 gap-4">
-      <TabsList aria-label="比对称号">
+      <TabsList aria-label="比对称号" class="max-w-full">
         <TabsTrigger v-for="code in titles" :key="code" :value="code">{{
           TITLES[code]
         }}</TabsTrigger>
@@ -128,27 +135,31 @@ const TH_CLASS =
             :key="d"
             :label="COMPARISON_LABELS[d]"
             :value="count(d)"
-            :hint="`${COMPARISON_HINTS[d]}${showCurated ? '' : ` · 另 ${curatedCount(d)} 条已核实`}`"
+            :hint="COMPARISON_HINTS[d]"
             :index="i + 1"
+            class="[&>div]:p-3 sm:[&>div]:p-5"
           />
         </div>
         <Tabs v-model="direction" class="min-w-0 gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <TabsList aria-label="比对方向">
+            <TabsList aria-label="比对方向" class="w-full sm:w-fit">
               <TabsTrigger
                 v-for="d in COMPARISON_DIRECTIONS"
                 :key="d"
                 :value="d"
+                class="sm:min-w-36"
               >
                 {{ COMPARISON_LABELS[d]
-                }}<Badge variant="secondary" class="tabular-nums">{{
-                  countLabel(d)
+                }}<Badge variant="secondary" class="min-w-[3ch] tabular-nums">{{
+                  count(d)
                 }}</Badge>
               </TabsTrigger>
             </TabsList>
-            <TitleBadge :code="title" />
           </div>
           <TabsContent :value="direction" class="flex min-w-0 flex-col gap-3">
+            <p class="text-muted-foreground min-h-5 text-[13px] tabular-nums" aria-live="polite">
+              {{ countLabel(direction) }}
+            </p>
             <Alert v-if="error" variant="destructive">
               <AlertTitle>比对数据加载失败</AlertTitle>
               <AlertDescription
@@ -160,23 +171,30 @@ const TH_CLASS =
             <Card class="min-w-0 gap-0 overflow-hidden py-0">
               <CardContent class="p-0">
                 <div
-                  class="h-[max(320px,calc(100dvh-27rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
+                  class="h-[max(320px,calc(100dvh-29rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
                   :aria-busy="isLoading"
                 >
-                  <Table class="min-w-[1000px] table-fixed">
+                  <Empty v-if="!isLoading && !error && !rows.length" class="h-full">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon"><GitCompareArrows /></EmptyMedia>
+                      <EmptyTitle>{{ showCurated ? '暂无差异' : '暂无待核对企业' }}</EmptyTitle>
+                      <EmptyDescription>{{ curatedCount(direction) && !showCurated ? '当前方向均已核实，可开启「显示已核实」查看。' : '当前称号与方向没有差异企业。' }}</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                  <Table v-else class="min-w-[880px] table-fixed">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
-                        <TableHead :class="[TH_CLASS, 'w-[26%]']"
+                        <TableHead :class="[TH_CLASS, 'w-[36%]']"
                           >企业名称</TableHead
                         >
                         <TableHead :class="[TH_CLASS, 'w-48']"
                           >统一社会信用代码</TableHead
                         >
                         <TableHead :class="[TH_CLASS, 'w-20']">区县</TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-44']"
+                        <TableHead :class="[TH_CLASS, 'w-40']"
                           >另一侧状态</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-72']">核实与备注</TableHead>
+                        <TableHead :class="[TH_CLASS, 'w-48']">核实与备注</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -191,15 +209,22 @@ const TH_CLASS =
                         v-for="row in rows"
                         v-else
                         :key="`${row.enterpriseId}-${row.titleCode}-${row.direction}`"
-                        class="h-11"
+                        class="h-11 [&>td]:py-1.5"
                       >
-                        <TableCell class="truncate font-medium">
+                        <TableCell class="font-medium">
+                          <div class="truncate">
                           <NuxtLink
                             :to="`/enterprises/${row.enterpriseId}`"
                             :title="row.name"
                             class="hover:text-primary hover:underline"
                             >{{ row.name }}</NuxtLink
                           >
+                          </div>
+                          <div v-if="(row.evidence.currentCity && row.evidence.currentCity !== '宁波市') || /注销|吊销/.test(row.evidence.regStatus ?? '') || !row.uscc" class="mt-1 flex flex-wrap gap-1">
+                            <Badge v-if="row.evidence.currentCity && row.evidence.currentCity !== '宁波市'" variant="outline">{{ row.evidence.currentCity }}</Badge>
+                            <Badge v-if="/注销|吊销/.test(row.evidence.regStatus ?? '')" variant="destructive">{{ row.evidence.regStatus }}</Badge>
+                            <Badge v-if="!row.uscc" variant="outline">{{ COMPARISON_NO_USCC }}</Badge>
+                          </div>
                         </TableCell>
                         <TableCell
                           class="text-muted-foreground font-mono text-xs"
@@ -213,42 +238,6 @@ const TH_CLASS =
                         }}</TableCell>
                         <TableCell>
                           <ComparisonCuration :row="row" @saved="refreshCuration" />
-                          <div class="flex flex-wrap items-center gap-1">
-                            <Badge
-                              v-if="
-                                row.evidence.currentCity &&
-                                row.evidence.currentCity !== '宁波市'
-                              "
-                              variant="outline"
-                              >{{ row.evidence.currentCity }}</Badge
-                            >
-                            <Badge
-                              v-if="
-                                /注销|吊销/.test(row.evidence.regStatus ?? '')
-                              "
-                              variant="destructive"
-                              >{{ row.evidence.regStatus }}</Badge
-                            >
-                            <span
-                              v-if="!row.uscc"
-                              class="text-muted-foreground text-xs"
-                              >{{ COMPARISON_NO_USCC }}</span
-                            >
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                      <TableRow v-if="!isLoading && !error && !rows.length">
-                        <TableCell :colspan="5">
-                          <Empty
-                            ><EmptyHeader
-                              ><EmptyMedia variant="icon"
-                                ><GitCompareArrows /></EmptyMedia
-                              ><EmptyTitle>暂无差异</EmptyTitle
-                              ><EmptyDescription
-                                >当前称号与方向没有待核对企业。</EmptyDescription
-                              ></EmptyHeader
-                            ></Empty
-                          >
                         </TableCell>
                       </TableRow>
                     </TableBody>
@@ -286,3 +275,9 @@ const TH_CLASS =
     </Tabs>
   </div>
 </template>
+
+<style scoped>
+.comparison-page :deep(.rise-in) {
+  animation-duration: 200ms;
+}
+</style>
