@@ -224,8 +224,11 @@ async function renderPages() {
  * 换分辨率。**只认预设里的值**(`Select` 的 model 可能是 null / 数字,清空时也会回调)。
  *
  * 这是**客户端自己的约束**,不是接口的限制:接口收 **72–600** 的任意整数(`lib/pdf-page.ts` 的
- * `MIN_DPI` / `MAX_DPI`)。挡在这一层,是因为下拉框只列得出这三个预设 —— 放一个非预设值进来,
- * 界面上没有任何一处能显示它、也改不回去,用户会卡在一个「说不清是多少」的状态里。
+ * `MIN_DPI` / `MAX_DPI`)。挡在这一层,是因为下拉只列得出这三个预设 —— 放一个非预设值进来,
+ * 用户改不回去。
+ *
+ * 这条只管**用户的选择**;磁盘上的清单 DPI 若本身不在预设里(如 120),由 `dpiOptions` 多列一条
+ * **只读的当前值**兜住显示,见那里。
  */
 function pickDpi(value: unknown) {
   const next = Number(value)
@@ -233,6 +236,28 @@ function pickDpi(value: unknown) {
   dpi.value = next
   dpiTouched.value = true
 }
+
+/**
+ * 下拉里除了三个预设,是否还要多列一条**当前值**。
+ *
+ * 磁盘上的清单 DPI 可以是 72–600 的**任意整数**(接口只做这个区间校验;老清单或手工写的
+ * 清单都可能不是预设档)。这时 `dpi.value` 是那个值,而选项只有 150/200/300 ——
+ * `SelectValue` 在选项里找不到匹配项,触发器就**空着**,用户看不到「现在是多少」。
+ * 补一条同值的选项给它兜住,但不许选它:`pickDpi` 只认预设,这条只是显示。
+ *
+ * **不把 `dpi.value` 悄悄改成默认值** —— 那会把「磁盘上真是 120」这个事实抹掉;
+ * 界面该说的是「当前 120(不是预设),你可以改成这三档之一」。
+ */
+/** 这个值是不是可选的预设档(非预设的那条只用来显示当前值,不可选)。 */
+function isDpiPreset(value: number): boolean {
+  return (DPI_PRESETS as readonly number[]).includes(value)
+}
+
+const hasOffPresetDpi = computed(() => !isDpiPreset(dpi.value))
+
+const dpiOptions = computed<number[]>(() =>
+  hasOffPresetDpi.value ? [dpi.value, ...DPI_PRESETS] : [...DPI_PRESETS],
+)
 
 /** 换文件 = 换一切:丢掉上一份的视图、错误与小结,重新取现状。 */
 watch(
@@ -338,8 +363,13 @@ watch(
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem v-for="preset in DPI_PRESETS" :key="preset" :value="String(preset)">
-              {{ preset }} DPI
+            <SelectItem
+              v-for="option in dpiOptions"
+              :key="option"
+              :value="String(option)"
+              :disabled="!isDpiPreset(option)"
+            >
+              {{ option }} DPI{{ isDpiPreset(option) ? '' : '(当前)' }}
             </SelectItem>
           </SelectContent>
         </Select>
