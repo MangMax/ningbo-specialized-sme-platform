@@ -27,8 +27,18 @@
 
 ## 给实现者的硬约束
 
+- **用 `implement-spec` 技能推进**(用户点名):按它定义的流程走 —— 读规格 → 实现 → 自查 → 提交;实现完**不要自称「已完成」**,把「已完成 / 未完成 / 已知缺口」分开列。它的价值是**触发审核验收**。
 - **UI 一律 shadcn-vue 官方组件**;不得手写或原生 `<table>/<input>/<select>`;沿用 `DESIGN.md` 的 token。
 - **凭证(token / cookie)不入库**:走页面配置或 `NUXT_*` 环境变量;仓库只留 `.env.example` 占位。
 - **身份判定守 [data-integrity 安全阀](../../data-integrity/SPEC.md)**:单一来源不得触发归并;拿不准 → 空值 + 标记。
 - app `pnpm typecheck && pnpm test`、pipeline `vp check && vp test` 必须全绿。
 - **同仓一次只跑一个会话**;分支从干净 `main` 起;只提交本票文件。
+- **UI 票(09/10/13/14/16)实现后另派 `oil-ui` 会话验收**,直到合格 —— 实现会话别自己判自己过。
+
+## 交付节奏(主代理执行)
+
+```
+一张票 → 派一个实现会话(带 implement-spec)→ 主代理独立复核(不采信自述)→ 合入 main → 下一张
+                                                                    └─ UI 票再派 oil-ui 验收
+```
+派出去的会话**用与主代理同一个模型**(`magpie` / `group/auto-deepseek-v4-1-flash[1m]`)。
