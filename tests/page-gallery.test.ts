@@ -268,14 +268,26 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
     expect(loaded.state.pages).toHaveLength(2)
   })
 
-  it('未确认时**不说「最新」**,而是照实说「待确认」并给「重新核对」', () => {
-    const s = galleryStatus(state(), 200, { dpiUnconfirmed: true })
-    expect(s.word).toBe('待确认')
-    expect(s.tone).toBe('stale')
-    expect(s.headline).toContain('未核对')
+  it('未确认时不把已渲染张数说成总页数,并保留待确认动作', () => {
+    const partial = galleryStatus(
+      state({ rendered: 2, pages: [page(1), page(2)] }),
+      200,
+      { dpiUnconfirmed: true },
+    )
+    expect(partial.word).toBe('待确认')
+    expect(partial.tone).toBe('stale')
+    expect(partial.headline).toBe('页图状态未核对(已有 2 张,共需 12 张)')
+    expect(partial.headline).not.toContain('共 2 页')
     // 磁盘上什么都没坏,缺的只是一次成功的核对 —— 所以是重新核对,不是重渲染。
-    expect(s.action).toBe('reload')
-    expect(s.actionLabel).toBe('重新核对')
+    expect(partial.action).toBe('reload')
+    expect(partial.actionLabel).toBe('重新核对')
+
+    const unknownTotal = galleryStatus(
+      state({ pageCount: null, rendered: 2, pages: [page(1), page(2)] }),
+      200,
+      { dpiUnconfirmed: true },
+    )
+    expect(unknownTotal.headline).toBe('页图状态未核对(已有 2 张)')
   })
 
   it('一张都没有时「未确认」不改变结论:那还是「未渲染」', () => {

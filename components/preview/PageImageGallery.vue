@@ -149,7 +149,9 @@ const TONE_BADGE: Record<GalleryTone, BadgeVariants['variant']> = {
   partial: 'dashed',
   stale: 'quiet',
   ready: 'solid',
-}/** 正在看的那一页的条目。渲染后页数变少时它会找不到 —— 那就退回网格(见下面 watch)。 */
+}
+
+/** 正在看的那一页的条目。渲染后页数变少时它会找不到 —— 那就退回网格(见下面 watch)。 */
 const viewingPage = computed<PageImageRef | null>(
   () => state.value?.pages.find((p) => p.page === viewing.value) ?? null,
 )

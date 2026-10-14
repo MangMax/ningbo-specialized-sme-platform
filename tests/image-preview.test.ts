@@ -159,7 +159,7 @@ describe('ImagePreview 的失败 → 重试恢复', () => {
     expect(third.src).toContain('retry=2')
   })
 
-  it('错误态下**图片层不接指针事件** —— 否则它盖住重试按钮、吞掉鼠标点击', async () => {
+  it('错误态为图片层挂 pointer-events-none class contract', async () => {
     // 图片层是状态层的**后置兄弟**,两者都 `absolute inset-0`:后置的在命中上压在上面,
     // 于是「重试」看得见却点不动(elementFromPoint 命中图片层)。键盘不经过命中测试,
     // 所以这个洞**只坏鼠标** —— 真实鼠标复验见票 13 的实现记录。
@@ -174,7 +174,7 @@ describe('ImagePreview 的失败 → 重试恢复', () => {
     expect(retryButton(wrapper)).toBeTruthy()
   })
 
-  it('加载成功后**图片层恢复指针事件** —— 拖拽/缩放/手势不受影响', async () => {
+  it('ready 态移除图片层的 pointer-events-none class contract', async () => {
     const wrapper = mountPreview()
     const layer = () => wrapper.find('img').element.parentElement as HTMLElement
 

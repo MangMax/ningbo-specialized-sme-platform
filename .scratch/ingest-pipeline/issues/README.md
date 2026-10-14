@@ -10,7 +10,7 @@
 | 一 | 11 | 代理只从「已上传文件」解析(按段取年份/批次/事件) | pipeline | 17 | ✅ done |
 | 一 | 12 | 分类回写:文件未设分类时由程序/代理补 | app+pipeline | 10,11 | ready |
 | 一 | **20** | 「段」两条写入路径会互相覆盖(**加 origin,回填只重建派生段**) | app | 11,17,18 | ✅ done |
-| 二 | 13 | PDF → PNG(PDFium 渲染 + sharp)并关联页图 | app | 09 | ✅ done(后端 + 页面;页面**未过 oil-ui**) |
+| 二 | 13 | PDF → PNG(PDFium 渲染 + sharp)并关联页图 | app | 09 | ✅ done(后端 + 页面;oil-ui **ACCEPTED WITH NOTES**,无阻断项) |
 | 二 | 14 | OCR 三通路(API 优先/上传结果/MCP)+ 结果入库 + markdown | app+pipeline | 13 | ✅ done |
 | 三 | 15 | 缺统代联网补齐(带出处) | pipeline | 11 | ✅ done(机制;129 家待查) |
 | 三 | 16 | 平台两接口:解释差异(外地/注销/外迁) | pipeline+app | 09 | ✅ done(页面待 oil-ui) |
@@ -25,7 +25,7 @@
 > 本轮补上**页面半边** —— `/files` 的「预览」对 PDF 开成 **原文 / 页图** 两视图,页图那一格能
 > 取现状、点一下渲染、按页看缩略图(带页码,可调 200/300 DPI),渲染失败有明确反馈。
 > 没做成第四颗行操作按钮,是因为这张表 1440 下只剩 6px 余量(理由与实测见 [13](13-pdf-to-png.md) 第 8 节)。
-> **未过 `oil-ui` 验收。** `stored_page_image` 表**不做**:页图只落盘,页号由文件名承载。
+> **oil-ui 已验收**(2026-10-15,**ACCEPTED WITH NOTES**,无阻断项;桌面/窄屏真实鼠标重试及拖拽证据见 [13](13-pdf-to-png.md) §8.10)。`stored_page_image` 表**不做**:页图只落盘,页号由文件名承载。
 
 > **14 已交付(2026-10-14)**:三条 OCR 通路都通了(migration `0005`:`ocr_result` +
 > `record_evidence.page`)。**一份真扫描 PDF(72号,12 页)经真 API 识别后按页码入库**,

@@ -129,10 +129,12 @@ export function galleryStatus(
   // 有页图,但最新状态没核对上。**不能报「最新」**,也不能让用户去重渲染
   // —— 磁盘上什么都没坏,缺的只是一次成功的核对。
   if (options.dpiUnconfirmed) {
+    const renderedCount = `已有 ${state.rendered} 张`
+    const totalCount = total === null ? '' : `,共需 ${total} 张`
     return {
       tone: 'stale',
       word: '待确认',
-      headline: `页图状态未核对(${pageCountLabel(state.rendered)})`,
+      headline: `页图状态未核对(${renderedCount}${totalCount})`,
       detail: '按清单分辨率复核最新状态时出错;看到的可能不是最新的。',
       actionLabel: '重新核对',
       action: 'reload',
