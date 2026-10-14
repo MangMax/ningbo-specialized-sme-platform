@@ -32,6 +32,8 @@ export default defineNuxtConfig({
   // 推路径(打包后它指向 .nuxt 入口)。生产/测试用 NUXT_FILES_DIR /
   // NUXT_INCOMING_DIR / NUXT_TUS_ALLOWED_ORIGINS 覆盖。
   runtimeConfig: {
+    // 本地人工标注;生产/测试可用 NUXT_CURATED_PATH 覆盖。
+    curatedPath: fileURLToPath(new URL('./data/reconciliation-curated.json', import.meta.url)),
     filesDir: fileURLToPath(new URL('./files', import.meta.url)),
     incomingDir: fileURLToPath(new URL('./.incoming', import.meta.url)),
     // 跨源白名单(逗号分隔);默认只放行本机开发来源,避免 tus 默认的 `*`。

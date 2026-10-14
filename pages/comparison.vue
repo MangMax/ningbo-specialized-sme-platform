@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { useQuery } from '@pinia/colada'
+import { useQuery, useQueryCache } from '@pinia/colada'
 import { computed, shallowRef, watch } from 'vue'
 import { ChevronLeft, ChevronRight, GitCompareArrows } from '@lucide/vue'
 import type {
   ComparisonCounts,
-  ComparisonRow,
   ComparisonDirection,
 } from '~~/lib/comparison'
+import type { CuratedRow } from '~~/lib/curation'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 import {
   TITLES,
   TITLE_ORDER,
@@ -46,9 +48,11 @@ const titles = TITLE_ORDER.filter((code) => code !== 'little_giant')
 const title = shallowRef('specialized_sme')
 const direction = shallowRef<ComparisonDirection>('missing_in_miit')
 const page = shallowRef(1)
+const showCurated = shallowRef(false)
+const queryCache = useQueryCache()
 const pageSize = 25
 watch(
-  [title, direction],
+  [title, direction, showCurated],
   () => {
     page.value = 1
   },
@@ -59,11 +63,12 @@ const params = computed(() => ({
   direction: direction.value,
   page: page.value,
   pageSize,
+  showCurated: showCurated.value,
 }))
 const { data, isLoading, error, refetch } = useQuery({
   key: () => ['comparison', params.value],
   query: () =>
-    $fetch<{ rows: ComparisonRow[]; total: number; counts: ComparisonCounts }>(
+    $fetch<{ rows: CuratedRow[]; total: number; counts: ComparisonCounts; curatedCounts: ComparisonCounts }>(
       '/api/comparison',
       { query: params.value },
     ),
@@ -73,7 +78,13 @@ const rows = computed(() => data.value?.rows ?? [])
 const counts = computed(
   () => data.value?.counts[title.value as keyof ComparisonCounts],
 )
-const count = (d: ComparisonDirection) => counts.value?.[d] ?? '—'
+const curatedCount = (d: ComparisonDirection) => data.value?.curatedCounts[title.value as keyof ComparisonCounts]?.[d] ?? 0
+const count = (d: ComparisonDirection) => counts.value ? counts.value[d] - (showCurated.value ? 0 : curatedCount(d)) : '—'
+const countLabel = (d: ComparisonDirection) => showCurated.value ? `${count(d)} 条` : `${count(d)} 条(另 ${curatedCount(d)} 条已核实)`
+async function refreshCuration() {
+  await queryCache.invalidateQueries({ key: ['comparison'] })
+  if (page.value > totalPages.value) page.value = totalPages.value
+}
 const totalPages = computed(() =>
   Math.max(1, Math.ceil((data.value?.total ?? 0) / pageSize)),
 )
@@ -93,6 +104,10 @@ const TH_CLASS =
       :description="`按统代比对,不限年份,含 2021 ${EVENTS.nurture};${TITLE_SHORT.little_giant}无经信局来源。`"
     >
       <template #actions>
+        <div class="flex items-center gap-2">
+          <Switch id="show-curated" v-model="showCurated" />
+          <Label for="show-curated">显示已核实</Label>
+        </div>
         <Button as-child variant="outline" size="sm"
           ><a :href="exportUrl">导出当前方向</a></Button
         >
@@ -113,7 +128,7 @@ const TH_CLASS =
             :key="d"
             :label="COMPARISON_LABELS[d]"
             :value="count(d)"
-            :hint="COMPARISON_HINTS[d]"
+            :hint="`${COMPARISON_HINTS[d]}${showCurated ? '' : ` · 另 ${curatedCount(d)} 条已核实`}`"
             :index="i + 1"
           />
         </div>
@@ -127,7 +142,7 @@ const TH_CLASS =
               >
                 {{ COMPARISON_LABELS[d]
                 }}<Badge variant="secondary" class="tabular-nums">{{
-                  count(d)
+                  countLabel(d)
                 }}</Badge>
               </TabsTrigger>
             </TabsList>
@@ -151,7 +166,7 @@ const TH_CLASS =
                   <Table class="min-w-[1000px] table-fixed">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
-                        <TableHead :class="[TH_CLASS, 'w-[30%]']"
+                        <TableHead :class="[TH_CLASS, 'w-[26%]']"
                           >企业名称</TableHead
                         >
                         <TableHead :class="[TH_CLASS, 'w-48']"
@@ -161,7 +176,7 @@ const TH_CLASS =
                         <TableHead :class="[TH_CLASS, 'w-44']"
                           >另一侧状态</TableHead
                         >
-                        <TableHead :class="TH_CLASS">备注</TableHead>
+                        <TableHead :class="[TH_CLASS, 'w-72']">核实与备注</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -197,6 +212,7 @@ const TH_CLASS =
                           COMPARISON_OTHER_SIDE[row.direction]
                         }}</TableCell>
                         <TableCell>
+                          <ComparisonCuration :row="row" @saved="refreshCuration" />
                           <div class="flex flex-wrap items-center gap-1">
                             <Badge
                               v-if="

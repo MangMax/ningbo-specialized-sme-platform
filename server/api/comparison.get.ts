@@ -1,5 +1,6 @@
 import { useDb } from '@db'
-import { COMPARISON_DIRECTIONS, getComparison, type ComparisonDirection } from '~~/lib/comparison'
+import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparison'
+import { getCuratedComparison } from '~~/lib/curation'
 import { TITLE_ORDER } from '~~/lib/labels'
 import { MAX_PAGE_SIZE } from '~~/lib/query'
 
@@ -25,8 +26,17 @@ export default defineEventHandler((event) => {
     throw createError({ statusCode: 400, statusMessage: `Unknown direction; expected ${COMPARISON_DIRECTIONS.join(', ')}` })
   }
 
-  const { rows, counts } = getComparison(useDb(), { title, direction: direction as ComparisonDirection | undefined })
+  if (q.showCurated != null && !['true', 'false', ''].includes(String(q.showCurated))) {
+    throw createError({ statusCode: 400, statusMessage: 'showCurated must be true or false' })
+  }
+  const result = getCuratedComparison(useDb(), useRuntimeConfig(event).curatedPath)
+  const { counts, curatedCounts } = result
+  const rows = result.rows.filter(row =>
+    (!title?.length || title.includes(row.titleCode)) &&
+    (!direction || row.direction === direction) &&
+    (q.showCurated === 'true' || !row.curated),
+  )
   const page = Math.max(1, Math.floor(num(q.page, 1)))
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25))))
-  return { rows: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, counts }
+  return { rows: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, counts, curatedCounts }
 })
