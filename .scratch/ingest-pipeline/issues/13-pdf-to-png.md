@@ -502,5 +502,7 @@ hover/focus 的强调边框与 ring 仍在(见 8.8)。97 页那格同样复核�
 | P4: 图片重试函数的状态守卫没有直接用例 | 记录为未覆盖点;UI 只在 error 态呈现重试按钮,守卫对用户路径不可绕过。 |
 
 独立代码复审核对了 `ae87…` 的 HEAD、父提交、分支、干净工作树、变更范围与合并基线;复现了 P1 修复,
-并确认没有 P1/P2。该复审在独立隔离副本完成 app 全量套件 **23 files / 419 passed**;
-本轮收尾对页图库文案的定向回归由 `tests/page-gallery.test.ts` 覆盖。
+并确认没有 P1/P2。收口提交 `d05f691` 又在独立 detached worktree 完成 `pnpm test` (**23 files / 419 passed**);
+工作树由该提交检出,离线安装依赖,没有使用正式 `files/` 或 `data/`。当前候选上的定向回归
+`pnpm vitest run tests/page-gallery.test.ts tests/image-preview.test.ts` 为 **2 files / 55 passed**,
+`pnpm typecheck` 退出码 0。
