@@ -474,3 +474,52 @@ describe('适应与手动下限:组件级(req 1–3)', () => {
     expect(vm.zoom).toBeGreaterThan(before)
   })
 })
+
+/**
+ * 取整只用于**文本**,不能用于**判据**(标准复核的 findings)。
+ *
+ * 症状(1280×800 对话框、2400×3200 原图):实际 fit scale 0.135 ⇒ 工具栏**显示 14%**,
+ * 而「缩小」`disabled=false` —— 点下去仍是 14%。根因:禁用判据当时用**取整后**的 `zoomPercent`
+ * (14)去比 `zoomMin × 100`(13.5),`14 <= 13.5` 为假。改用未取整的 `zoom` 比较。
+ */
+describe('工具栏:百分比取整只用于文本(判据用未取整 scale)', () => {
+  /** 挂一份预览器,把 zoom 直接摆到 `scale`,并让 fit 与之一致。 */
+  async function previewAt(scale: number) {
+    const wrapper = mount(ImagePreview, { props: { src: SRC, name: '第 3 页' } })
+    const img = wrapper.find('img').element as HTMLImageElement
+    const viewport = img.parentElement!.parentElement as HTMLElement
+    // 让 fitScale() 正好落在 `scale`:viewport = 图尺寸 × scale + pad。
+    Object.defineProperty(img, 'naturalWidth', { value: 2400, configurable: true })
+    Object.defineProperty(img, 'naturalHeight', { value: 3200, configurable: true })
+    Object.defineProperty(viewport, 'clientWidth', { value: Math.round(2400 * scale) + 32, configurable: true })
+    Object.defineProperty(viewport, 'clientHeight', { value: Math.round(3200 * scale) + 32, configurable: true })
+    await wrapper.find('img').trigger('load') // onLoad → fit() → 落在 scale(且低于手动下限)
+    const vm = wrapper.vm as unknown as { zoom: number }
+    return { wrapper, vm, zoomOut: () => wrapper.findAll('button').find((b) => b.attributes('aria-label') === '缩小') }
+  }
+
+  it('13.5% 显示为 14%,但「缩小」**已禁用**(不取整比较)', async () => {
+    const { vm, zoomOut } = await previewAt(0.135)
+
+    // 实际缩放是 13.5%(低于手动下限 25% —— fit 允许),测试文本显示为整数 14%。
+    expect(vm.zoom).toBeCloseTo(0.135, 3)
+    expect(Math.round(vm.zoom * 100)).toBe(14)
+    // 关键断言:已经在下限(此处下限 = 当前 fit 13.5%),按钮必须**禁用**。
+    // 旧判据 `14 <= 13.5` 为假 ⇒ 会亮着却点不动,这条会红。
+    expect(zoomOut()!.attributes('disabled')).toBeDefined()
+  })
+
+  it('高于下限时「缩小」可用,点到下限后变禁用 —— 边界不早不禁', async () => {
+    const { wrapper, vm, zoomOut } = await previewAt(0.5)
+    expect(vm.zoom).toBeCloseTo(0.5, 3)
+    // 0.5 > 下限(0.25)→ 可用。
+    expect(zoomOut()!.attributes('disabled')).toBeUndefined()
+
+    // 一路缩小到 0.25(手动下限)后禁用。
+    const vmAny = wrapper.vm as unknown as { zoomBy: (f: number) => void }
+    for (let i = 0; i < 12; i += 1) vmAny.zoomBy(1 / 1.12)
+    await wrapper.vm.$nextTick() // 读 DOM 属性前先让 Vue 把 :disabled 刷上去
+    expect(vm.zoom).toBeCloseTo(0.25, 6)
+    expect(zoomOut()!.attributes('disabled')).toBeDefined()
+  })
+})

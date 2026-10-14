@@ -23,6 +23,9 @@ import { cn } from '@/lib/utils'
  *
  * 只做一件事:把「这是谁、在第几页、多大、能带走吗」四件事摆在一行里。
  * 每个预览器只传自己支持的那几项,不支持的传 null 就不渲染。
+ *
+ * **禁用判据必须用未取整的 `zoom`**(文本才取整):`zoomMin` 现在可能是「当前适应比例」
+ * (如 13.5%),取整成 14% 再比就会 `14 <= 13.5` 为假 —— 按钮亮着却缩不动(图片已在下限)。
  */
 const props = withDefaults(
   defineProps<{
@@ -88,6 +91,7 @@ const emit = defineEmits<{
   'toggle-fullscreen': []
 }>()
 
+/** 显示用:取整成整数百分比。**只用于文本** —— 判据不要用它(见下面的说明)。 */
 const zoomPercent = computed(() => Math.round((props.zoom ?? 1) * 100))
 const canPrev = computed(() => props.index > 1)
 const canNext = computed(() => props.index < props.count)
@@ -175,7 +179,7 @@ const ACTION_BTN = 'text-muted-foreground hover:text-foreground'
         variant="ghost"
         size="icon-sm"
         :class="cn(ACTION_BTN, 'hidden sm:inline-flex')"
-        :disabled="zoomPercent <= props.zoomMin * 100"
+        :disabled="(zoom ?? 1) <= props.zoomMin"
         aria-label="缩小"
         @click="emit('update:zoom', clampZoom((zoom ?? 1) - ZOOM_STEP))"
       >

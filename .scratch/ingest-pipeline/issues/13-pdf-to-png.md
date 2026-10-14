@@ -30,8 +30,9 @@
 ## 验收
 
 - [x] 页面上能看到某份 PDF 的页图缩略(`/files` → 预览 → 页图);12 张 / 97 张实测见文末第 8 节。
-- [x] app 测试全绿:`pnpm exec nuxt typecheck` 通过;`pnpm exec vitest run` → **23 files / 423 passed**
-      (含页数未知时的单页标题回归用例,见 8.11;以及缩放下限作用域隔离的 3 条用例,见 8.12)。
+- [x] app 测试全绿:`pnpm exec nuxt typecheck` 通过;`pnpm exec vitest run` → **23 files / 433 passed**
+      (含页数未知时的单页标题回归用例,见 8.11;缩放下限作用域隔离,见 8.12;
+      自动适应/窄屏缩小钮与组件级用例,见 8.13;工具栏取整判据,见 8.14)。
 
 **分支**:`feat/pdf-to-png`。
 
@@ -208,8 +209,10 @@ files/<…>/.<文件名>.pages/.pages.json
 **走哪个弹窗**与以前一样。**行为**上要分开说,别一句「都没变」带过:
 
 - **入口 / 分派**:未变(非 PDF 仍走 `FilePreviewDialog`)。
-- **`ImagePreview` 的缩放下限**:**本轮有变** —— 其**普通图片 / 台账出处预览**的下限从
-  基线 `7bd6d9a` 的 **0.10 回退到 0.25**(有意回退,见 §8.12)。
+- **`ImagePreview` 的缩放下限**:**本轮有变** —— 其**普通图片 / 台账出处预览**的**手动缩放下限**
+  从基线 `7bd6d9a` 的 **0.10 回退到 0.25**(有意回退,见 §8.12)。注意 0.25 是**手动**缩放的边界:
+  **自动「适宽」仍可低于 0.25**(超大图放进窄容器时按 contain 比例走,见 §8.13),
+  两者是不同用途的下限。
 - **`OfficePreview`**(直接用 `PreviewToolbar`、**不传** `zoomMin`):基线与本轮**都是 0.25**,
   始终未变。
 
@@ -648,9 +651,44 @@ hover/focus 的强调边框与 ring 仍在(见 8.8)。97 页那格同样复核�
 F3 用例名统一成计划里的 `窄屏缩放组到达 10% 后禁用缩小按钮`。变异验证:把 `fit()` 改回按手动下限夹
 ⇒ 上面**三条全红**;把 `clampZoom` 改回无脑 `max(下限, 请求)` ⇒ 第 3 条红;去掉窄屏 `:disabled` ⇒ F3 红。
 
-验证:`pnpm exec vitest run tests/image-preview.test.ts tests/page-gallery.test.ts` → **2 files / 67 passed**;
-`pnpm test`(`NUXT_DB_PATH` 指向 /tmp)→ **23 files / 431 passed**;`pnpm typecheck` → exit 0;`git diff --check` 干净。
+验证:`pnpm exec vitest run tests/image-preview.test.ts tests/page-gallery.test.ts` → **2 files / 67 passed**(该命令现在报 **69** —— 本轮又补了 2 条,见 §8.14);
+`pnpm test`(`NUXT_DB_PATH` 指向 /tmp)→ **23 files / 431 passed**(该值是当时的结果;此后又补了用例,现在为 **433**,见 §8.14);`pnpm typecheck` → exit 0;`git diff --check` 干净。
 
 > **本轮(含本节的文字修订)与 §8.12 的归属不同**:§8.12 说的是**原始功能候选链**
 > (`7bd6d9a → 31b517b → 6a14736 → 92c7b2d`)内那三次;`a1dfe5c` 是针对该记录的纯文案修订;
 > 本节的 `98ed112` / `6dfa4b4` 才是**后续整改**。
+
+## 8.14 工具栏取整判据:禁用比较改用未取整 scale(2026-10-15)
+
+标准复核在 **1280×800** 普通图片对话框上量到:原图 2400×3200、实际 fit scale **0.135**、
+工具栏**显示 14%**,而「缩小」**`disabled=false`**;点下去仍显示 14%、图片边界仍是 324×432。
+
+**机制**(与复核一致):禁用判据用的是**取整后**的 `zoomPercent`(14),去比
+`zoomMin × 100`(= 当前适应比例 13.5%)—— `14 <= 13.5` 为**假**,于是按钮亮着却缩不动
+(图片本来就已经在下限)。取整是给**文本**看的,不该进判据。
+
+**修法(一处)**:`PreviewToolbar` 的「缩小」改为拿**未取整**的当前值与下限比
+
+```diff
+-        :disabled="zoomPercent <= props.zoomMin * 100"
++        :disabled="(zoom ?? 1) <= props.zoomMin"
+```
+
+`zoomPercent` 保持取整、**只用于百分比文本**。
+
+**本轮只修下限这一处判据。** 上限那侧不动,也不对「`zoom` 与上限的关系」下任何结论:
+两个组件的上限**本来就不一致** —— `ImagePreview` 的 `ZOOM_MAX = ZOOM_ABS_MAX = 8`(滚轮 / 实际大小
+都走父组件),而 `PreviewToolbar` 自己的常量是 **4**(只钳它自己那颗按钮发出的值),所以
+**`zoom` prop 完全可以大于 4**。这处不一致是**基线既有**,标准复核已标过、**明确不纳入本轮**,
+不在这次 scope 里解决。`zoom` 与 `zoomMin` 量纲一致(1 = 100%),这是改这处比较的唯一依据。
+
+**回归**(`tests/image-preview.test.ts` 新增一组,共 **31** 例):
+- `13.5% 显示为 14%,但「缩小」**已禁用**(不取整比较)` —— 直接覆盖复核那句
+  (断言 `zoom ≈ 0.135`、`Math.round(zoom*100) === 14`、按钮 **disabled**);
+- `高于下限时「缩小」可用,点到下限后变禁用 —— 边界不早不禁` —— 0.5 时可用,一路缩到 0.25 后禁用。
+
+**变异验证**:把判据改回 `zoomPercent <= props.zoomMin * 100` ⇒ 第一条**立刻红**(30 passed / 1 failed);
+恢复后 31 passed。
+
+验证:`pnpm exec vitest run tests/image-preview.test.ts tests/page-gallery.test.ts` → **2 files / 69 passed**;
+`pnpm test`(`NUXT_DB_PATH` 指向 /tmp)→ **23 files / 433 passed**;`pnpm typecheck` → exit 0;`git diff --check` 干净。
