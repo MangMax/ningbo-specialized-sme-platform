@@ -85,6 +85,35 @@ export function isLegacyOffice(path: string): boolean {
 }
 
 /**
+ * 地址能不能安全地加查询参数。
+ *
+ * 同源路径(`/api/...`)与绝对 `http(s)` 可以;**`blob:` / `data:` 不行** ——
+ * blob 地址是精确字符串,`data:` 的正文内联在地址里,加一个 `?retry=` 就取不到东西了。
+ * 这两种情况只能靠调用方**重建 `<img>` 元素**再试一次。
+ */
+export function isQueriableUrl(src: string): boolean {
+  return src.startsWith('/') || /^https?:\/\//i.test(src)
+}
+
+/**
+ * 重试时用的图片地址:**换一个 URL,逼浏览器真的重新请求**。
+ *
+ * 为什么必须换地址:图片加载失败后,只把状态拨回「加载中」、`<img>` 的 src 一个字不动,
+ * 浏览器**不会**再发一次请求(它记得这次的失败),视图就永久停在「正在读取文件…」。
+ * 换一个地址才会真的再要一次。页图文件被删 / 404 是这种情况的真实来源
+ * (见 `components/preview/ImagePreview.vue` 的重试)。
+ *
+ * `attempt <= 0`(还没重试过)时**原样返回**:首次加载的地址与请求一个字节都不变。
+ * 不能加查询串的地址(`blob:` / `data:`)也原样返回 —— 那种情况由调用方重建元素兜底。
+ */
+export function retrySrc(src: string, attempt: number): string {
+  if (!Number.isInteger(attempt) || attempt <= 0) return src
+  if (!isQueriableUrl(src)) return src
+  // 页图地址本来就带 `?v=<渲染版本>`,所以要接着用 `&`。
+  return `${src}${src.includes('?') ? '&' : '?'}retry=${attempt}`
+}
+
+/**
  * 解析路径 → 类型信息。无法预览时返回 null。
  *
  * 只按扩展名判断,不做内容嗅探:台账里的出处路径都带扩展名,而按内容嗅探

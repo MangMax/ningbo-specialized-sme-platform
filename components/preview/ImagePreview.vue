@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FileImage } from '@lucide/vue'
 import PreviewStates from '@/components/preview/PreviewStates.vue'
 import PreviewToolbar from '@/components/preview/PreviewToolbar.vue'
-import { resolvePreviewKind } from '~~/lib/preview'
+import { resolvePreviewKind, retrySrc } from '~~/lib/preview'
 
 /**
  * 图片预览。自研,不引第三方查看器 —— 要的东西很少:滚轮缩放、拖拽平移、
@@ -88,6 +88,25 @@ function onLoad(e: Event) {
 function onError() {
   status.value = 'error'
   errorMessage.value = '图片没能加载,文件可能已损坏或路径失效。'
+}
+
+/**
+ * 重试次数。**光把 status 拨回 loading 是不够的**:`<img>` 的 src 没变,浏览器
+ * 不会再请求一次(它记得这次的失败),视图就永久停在「正在读取文件…」。
+ * 所以每次重试 +1,既拼进地址(`imgSrc`,换 URL 才会真的重发请求),也挂到
+ * `<img>` 的 `:key` 上(地址不能加参数的 `blob:` / `data:` 靠重建元素再试一次)。
+ */
+const retryAttempt = ref(0)
+
+/** 图片地址:没重试过时就是 `props.src` **原样**,既有行为一个字节不变。 */
+const imgSrc = computed(() => retrySrc(props.src, retryAttempt.value))
+
+/** 重试:清掉错误、回到加载中,并真的产生一次新的加载尝试。 */
+function retry() {
+  if (status.value !== 'error') return
+  errorMessage.value = ''
+  status.value = 'loading'
+  retryAttempt.value += 1
 }
 
 /** 滚轮缩放,围绕指针。 */
@@ -194,6 +213,9 @@ watch(
   () => {
     status.value = 'loading'
     errorMessage.value = ''
+    // 换图就重新计次:新图要从**原地址**开始,不该继承上一张的重试标记
+    // (页图库换页时用的是同一个组件实例,不重置就会把 `retry=N` 带到下一张上)。
+    retryAttempt.value = 0
     rotation.value = 0
     pan.value = { x: 0, y: 0 }
     userAdjusted.value = false
@@ -260,12 +282,13 @@ const imgStyle = computed(() => ({
         :status="status"
         :message="errorMessage"
         retryable
-        @retry="status = 'loading'"
+        @retry="retry"
       />
       <div class="absolute inset-0 flex items-center justify-center">
         <img
           ref="img"
-          :src="src"
+          :key="retryAttempt"
+          :src="imgSrc"
           :alt="alt || title"
           :style="imgStyle"
           draggable="false"
