@@ -255,12 +255,14 @@ curl -sS --url 'https://zjtx.miit.gov.cn/zxqy/YzzxqyApplayBLH/queryList' \
 
 | 动作 | 结果 |
 |---|---|
-| `--mode real --theme light` / `--theme dark` | **42 / 42 断言通过**,`failures: []` |
-| `--mode sample --theme light`(样本夹具) | **42 / 42 通过** |
+| `--mode real --theme light` / `--theme dark` | **43 / 43 断言通过**,`failures: []` |
+| `--mode sample --theme light`(样本夹具) | **43 / 43 通过** |
 | `--mode none --theme light`(缓存指向不存在的文件) | **28 / 28 通过** |
+| 合计 | **157 条断言,0 失败** |
 | 真鼠标悬停徽章 | tooltip 打开,`side=bottom align=end`,无遮挡(见 B4) |
 | 真 `Tab` 键(把焦点从企业名移到徽章) | 焦点落到徽章,`tipOpenOnFocus=true`;鼠标移开 `tipClosedAfterLeave=true` |
 | 真滚轮横滚到最右 | `atEnd=true`,提示与右渐隐消失、左渐隐出现 |
+| `Input.dispatchTouchEvent` 触摸 tap(390×844) | **实测:徽章获得焦点但 tooltip 不展开**(`tipOpenOnTap=false`)|
 | 点方向 tab 切换 | 口径半句随之切换;`matched=0` 的方向不出现任何日期 |
 | `prefers-reduced-motion: reduce` 模拟 | 提示/渐隐 `transition-duration: 0s`;按钮/Tabs/Switch/滑块 `transition-property: none`;入场 `animation-name: none` |
 | 主题 | 桌面明确 `light` / `dark` 两套都截(不随 headless 默认漂移) |
@@ -272,7 +274,10 @@ curl -sS --url 'https://zjtx.miit.gov.cn/zxqy/YzzxqyApplayBLH/queryList' \
 - **页面无法自行识别「样本模式」**:现有接口契约没有这个字段,而本轮**不允许**加 API/schema 字段。
   因此样本只在 **fixture(`source.note`)+ 本文件 + 证据文件名**里标注;页面文案一律不宣称「线上 / 实时」。
   这是 B1 交代的兜底路径,不是遗漏。
-- **tap(触摸)未单独验证**:验证器用的是鼠标事件(桌面语义);390×844 只改了视口宽度,未启用触摸模拟。
+- **触摸 tap 实测不展开 tooltip**:`Input.dispatchTouchEvent` 后徽章拿到焦点,但 reka 不因触摸焦点开
+  tooltip(触屏无 hover 语义)。徽章文字(**结论**本身,如「外地注册」)仍可读,`note` 正文只在
+  鼠标悬停 / 键盘聚焦时可见。这是**实测缺口**,不是没测;要不要为触屏改成「点一下展开」属于交互设计
+  决定,本轮未做(也没把它算作通过)。
 - **真机同读屏器 / 键盘全链路未验**:只验到「Tab 能聚焦徽章并展开 tooltip」。
 - **`matched=0` 只覆盖了「缓存有别的方向、当前方向没有」与「完全无缓存」两种**;「全部行已核实被隐藏」那种
   空态未单独截图(与本次改动无关)。
