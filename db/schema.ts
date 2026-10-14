@@ -193,9 +193,10 @@ export const storedFile = sqliteTable(
  * 与 `stored_file.year` / `batch`(**公布**年份/批次,单值)分工明确:那里答「这份文件是
  * 哪一批公布的」,这里答「文件里都有什么」。**别把两者混用**。
  *
- * 段有两种来源:`derived` 是从 `record_evidence` 聚合的派生结果,`agent` 是代理解析声明。
- * 回填只重建派生行;代理行保留。同一坐标重合时代理行保留,若 `row_count` 不同则
- * `has_conflict` 可查询地标记差异。见 `.scratch/ingest-pipeline/issues/20-parts-origin.md`。
+ * `derived` 是从 `record_evidence` 聚合的派生结果,`agent` 是代理解析声明;升级前已存在的
+ * 行标为 `legacy`,因为旧表无法证明它们来自哪条写入路径。回填重建派生行、保留代理行;
+ * legacy 行与 evidence 完全一致时可归为 derived,不一致时保留并标记冲突。
+ * 见 `.scratch/ingest-pipeline/issues/20-parts-origin.md`。
  */
 export const storedFilePart = sqliteTable(
   'stored_file_part',
@@ -222,9 +223,11 @@ export const storedFilePart = sqliteTable(
     attachment: text('attachment'),
     /** 该段的行数(这一段名单有多少条被台账引用)。 */
     rowCount: integer('row_count').notNull().default(0),
-    /** 写入路径:`derived` 来自 evidence 回填,`agent` 来自解析结果。 */
-    origin: text('origin', { enum: ['derived', 'agent'] }).notNull().default('derived'),
-    /** 同坐标的 evidence 与 agent 行数不一致时为 true;回填重算此标记。 */
+    /** 写入路径:`derived` 来自回填,`agent` 来自解析结果,`legacy` 是升级前来源未知的行。 */
+    origin: text('origin', { enum: ['derived', 'agent', 'legacy'] })
+      .notNull()
+      .default('derived'),
+    /** 同坐标的 evidence 与 agent/legacy 行数不一致时为 true;回填重算此标记。 */
     hasConflict: integer('has_conflict', { mode: 'boolean' }).notNull().default(false),
   },
   (t) => [

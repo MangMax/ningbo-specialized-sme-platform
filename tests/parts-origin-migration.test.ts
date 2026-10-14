@@ -7,11 +7,12 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { expect, it } from 'vitest'
 import * as schema from '../db/schema'
+import { backfillFileParts } from '../server/utils/file-parts'
 
 const appRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const migrationsFolder = join(appRoot, 'db/migrations')
 
-it('0006 将旧解析行标为 agent,保留内容并对含 NULL 坐标施加唯一约束', () => {
+it('0006 保留来源未知的旧行,并对含 NULL 坐标施加唯一约束', () => {
   const root = mkdtempSync(join(tmpdir(), 'spztx-parts-origin-migration-'))
   const legacyMigrations = join(root, 'migrations-0000-0005')
   const sqlite = new Database(join(root, 'migration.db'))
@@ -76,7 +77,7 @@ it('0006 将旧解析行标为 agent,保留内容并对含 NULL 坐标施加唯�
         batch: null,
         attachment: null,
         rowCount: 7,
-        origin: 'agent',
+        origin: 'legacy',
         hasConflict: 0,
       },
       {
@@ -85,10 +86,17 @@ it('0006 将旧解析行标为 agent,保留内容并对含 NULL 坐标施加唯�
         batch: null,
         attachment: null,
         rowCount: 9,
-        origin: 'derived',
+        origin: 'legacy',
         hasConflict: 0,
       },
     ])
+
+    backfillFileParts(db)
+    expect(
+      sqlite
+        .prepare('SELECT origin FROM stored_file_part ORDER BY file_id')
+        .all(),
+    ).toEqual([{ origin: 'legacy' }, { origin: 'legacy' }])
 
     const duplicateNullCoordinate = sqlite.prepare(
       `INSERT INTO stored_file_part

@@ -568,6 +568,44 @@ describe('回填的边界', () => {
         hasConflict: false,
       },
     ])
+
+    // 新代理结果不再包含旧覆盖坐标时,evidence 派生段会随这次全量替换恢复。
+    const replacement = applyParseResult(db, file192Id, {
+      parts: [
+        {
+          titleCode: 'specialized_sme',
+          eventKind: 'review',
+          year: 2021,
+          batch: 2,
+          attachment: '附件2',
+          rowCount: 67,
+        },
+      ],
+    })
+    expect(replacement.ok).toBe(true)
+    expect(listFileParts(db, [file192Id]).get(file192Id)).toEqual([
+      {
+        titleCode: 'specialized_sme',
+        eventKind: 'award',
+        year: 2024,
+        batch: 2,
+        attachment: '附件1',
+        rowCount: 389,
+        origin: 'derived',
+        hasConflict: false,
+      },
+      {
+        titleCode: 'specialized_sme',
+        eventKind: 'review',
+        year: 2021,
+        batch: 2,
+        attachment: '附件2',
+        rowCount: 67,
+        origin: 'agent',
+        hasConflict: false,
+      },
+    ])
+
     const conflictedSnapshot = partSnapshot()
     backfillFileParts(db)
     expect(partSnapshot()).toEqual(conflictedSnapshot)

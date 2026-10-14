@@ -1,12 +1,9 @@
 ALTER TABLE `stored_file_part` ADD `origin` text DEFAULT 'derived' NOT NULL;--> statement-breakpoint
 ALTER TABLE `stored_file_part` ADD `has_conflict` integer DEFAULT false NOT NULL;--> statement-breakpoint
--- Before this migration, save_parse_result replaced the file's part set and set parse_state.
--- Conservatively keep those existing rows agent-owned so a later evidence backfill cannot erase them.
+-- Before this migration the table did not record its writer; parse_state could also be updated alone.
+-- Keep those rows explicitly unclassified until an evidence backfill can verify exact matches.
 UPDATE `stored_file_part`
-SET `origin` = 'agent'
-WHERE `file_id` IN (
-  SELECT `id` FROM `stored_file` WHERE `parse_state` IN ('parsed', 'failed')
-);--> statement-breakpoint
+SET `origin` = 'legacy';--> statement-breakpoint
 CREATE UNIQUE INDEX `stored_file_part_coordinate_uq`
 ON `stored_file_part` (
   `file_id`, `title_code`, `event_kind`,

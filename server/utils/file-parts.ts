@@ -34,8 +34,8 @@ interface EvidencePartRow extends PartEvidence {
  * 一次 join 出全部坐标(约两万行,SQLite 上毫秒级),聚合与排序交给纯函数
  * `lib/file-parts.ts` 的 `aggregateParts` —— 口径可单测,不埋在 SQL 里。
  */
-export function readEvidencePartRows(db: Db): EvidencePartRow[] {
-  return db
+export function readEvidencePartRows(db: Db, relPath?: string): EvidencePartRow[] {
+  const query = db
     .select({
       relPath: schema.recordEvidence.sourceFile,
       titleCode: schema.record.titleCode,
@@ -47,7 +47,29 @@ export function readEvidencePartRows(db: Db): EvidencePartRow[] {
     .from(schema.recordEvidence)
     .innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId))
     .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
-    .all() as EvidencePartRow[]
+  return (relPath === undefined
+    ? query.all()
+    : query.where(eq(schema.recordEvidence.sourceFile, relPath)).all()) as EvidencePartRow[]
+}
+
+/** 按文件读取并聚合 evidence,供代理全量替换时恢复被旧代理结果覆盖的派生坐标。 */
+export function derivedPartsForFile(db: Db, fileId: number): FilePart[] {
+  const file = db
+    .select({ relPath: schema.storedFile.relPath })
+    .from(schema.storedFile)
+    .where(eq(schema.storedFile.id, fileId))
+    .get()
+  if (!file) return []
+
+  return aggregateParts(
+    readEvidencePartRows(db, file.relPath).map((row) => ({
+      titleCode: row.titleCode,
+      eventKind: row.eventKind,
+      year: row.year,
+      batch: row.batch,
+      attachment: normalizeAttachment(row.attachment),
+    })),
+  )
 }
 
 /**
@@ -90,21 +112,21 @@ export function backfillFileParts(db: Db): PartsBackfillStats {
   }
 
   db.transaction((tx) => {
-    const agentRows = tx
+    const preservedRows = tx
       .select()
       .from(schema.storedFilePart)
-      .where(eq(schema.storedFilePart.origin, 'agent'))
+      .where(inArray(schema.storedFilePart.origin, ['agent', 'legacy']))
       .all()
-    const agentsByFile = new Map<number, Map<string, (typeof agentRows)[number]>>()
-    for (const row of agentRows) {
-      const list = agentsByFile.get(row.fileId) ?? new Map()
+    const preservedByFile = new Map<number, Map<string, (typeof preservedRows)[number]>>()
+    for (const row of preservedRows) {
+      const list = preservedByFile.get(row.fileId) ?? new Map()
       list.set(partKey(row), row)
-      agentsByFile.set(row.fileId, list)
+      preservedByFile.set(row.fileId, list)
     }
 
     for (const file of files) {
       const parts = aggregateParts(byPath.get(file.relPath) ?? [])
-      const agents = agentsByFile.get(file.id) ?? new Map()
+      const preserved = preservedByFile.get(file.id) ?? new Map()
 
       // 每趟重新比较 evidence,所以冲突会随来源数据变化而清除或重现。
       tx.update(schema.storedFilePart)
@@ -112,7 +134,7 @@ export function backfillFileParts(db: Db): PartsBackfillStats {
         .where(
           and(
             eq(schema.storedFilePart.fileId, file.id),
-            eq(schema.storedFilePart.origin, 'agent'),
+            inArray(schema.storedFilePart.origin, ['agent', 'legacy']),
           ),
         )
         .run()
@@ -126,12 +148,18 @@ export function backfillFileParts(db: Db): PartsBackfillStats {
         .run()
 
       for (const part of parts) {
-        const agent = agents.get(partKey(part))
-        if (agent) {
-          if (agent.rowCount !== part.rowCount) {
+        const existing = preserved.get(partKey(part))
+        if (existing) {
+          if (existing.rowCount !== part.rowCount) {
             tx.update(schema.storedFilePart)
               .set({ hasConflict: true })
-              .where(eq(schema.storedFilePart.id, agent.id))
+              .where(eq(schema.storedFilePart.id, existing.id))
+              .run()
+          } else if (existing.origin === 'legacy') {
+            // 这条旧行与当前派生结果完全相同,可安全归回 derived,后续回填就能正常重建。
+            tx.update(schema.storedFilePart)
+              .set({ origin: 'derived', hasConflict: false })
+              .where(eq(schema.storedFilePart.id, existing.id))
               .run()
           }
           continue

@@ -29,7 +29,7 @@ export interface FilePart {
 }
 
 /** 段的持久化来源。 */
-export type FilePartOrigin = 'derived' | 'agent'
+export type FilePartOrigin = 'derived' | 'agent' | 'legacy'
 
 /** 从 app 读模型读出的段,包含来源与可查询的来源冲突标记。 */
 export interface StoredFilePart extends FilePart {

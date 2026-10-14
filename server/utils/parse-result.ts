@@ -1,10 +1,11 @@
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeAttachment } from '../../lib/attachment'
 import { compareParts, partKey, type EventKind, type FilePart } from '../../lib/file-parts'
 import { EVENT_ORDER, TITLE_ORDER } from '../../lib/labels'
 import type { ParseState } from '../../lib/stored-file'
+import { derivedPartsForFile } from './file-parts'
 import { PARSE_STATES } from './stored-files'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -27,8 +28,8 @@ type Db = BetterSQLite3Database<typeof schema>
  * ── 与票 17 / 20 的关系 ─────────────────────────────────────────────────
  * `stored_file_part` 本来是**由 `record_evidence` 聚合派生**的(票 17:
  * `server/utils/file-parts.ts` 的 `backfillFileParts`)。代理写入是另一条路径:
- * 解析结果全量替换代理段,派生段只在同坐标时让位;行数不同时代理段标记 `hasConflict`。
- * 回填可重复运行,只重建派生段。见票 20。
+ * 解析结果全量替换代理段,同时按当前 evidence 重建派生集合;同坐标由代理段承接,行数不同时
+ * 标记 `hasConflict`。回填可重复运行,只重建派生段。见票 20。
  */
 
 /** 一个段的写入输入。`year` / `batch` / `attachment` 可空(导出表无附件)。 */
@@ -130,11 +131,11 @@ export function normalizeParseParts(
 }
 
 /**
- * 写回一份文件的解析结果。**全量替换**该文件的代理段,派生段只在同坐标时让位,
- * 并按需改 `parse_state`。
+ * 写回一份文件的解析结果。**全量替换**该文件的代理段,并从当前 evidence 重建派生集合;
+ * 同坐标由代理段承接,并按需改 `parse_state`。
  *
- * 事务内先删后插代理段;同坐标派生段由代理段取代,行数不同时标记冲突。重放同样的输入
- * 结果完全一致,中途失败也不会留下「一半新一半旧」的代理段。
+ * 事务内重建派生集合与代理段;同坐标由代理段取代,行数不同时标记冲突。重放同样的输入
+ * 结果完全一致,省略旧代理段后对应的 evidence 派生段会恢复,中途失败也不会留下半成品。
  */
 export function applyParseResult(
   db: Db,
@@ -158,47 +159,44 @@ export function applyParseResult(
     if (!normalized.ok) return { ok: false, message: normalized.message }
     parts = normalized.parts
   }
+  const derivedParts = hasParts ? derivedPartsForFile(db, fileId) : []
 
   db.transaction((tx) => {
     if (hasParts) {
-      const existing = tx
-        .select()
-        .from(schema.storedFilePart)
-        .where(eq(schema.storedFilePart.fileId, fileId))
-        .all()
-      const derivedByKey = new Map(
-        existing.filter((row) => row.origin === 'derived').map((row) => [partKey(row), row]),
-      )
-      const agentsByKey = new Map(
-        existing.filter((row) => row.origin === 'agent').map((row) => [partKey(row), row]),
-      )
-
       tx.delete(schema.storedFilePart)
-        .where(
-          and(
-            eq(schema.storedFilePart.fileId, fileId),
-            eq(schema.storedFilePart.origin, 'agent'),
-          ),
-        )
+        .where(eq(schema.storedFilePart.fileId, fileId))
         .run()
 
-      for (const part of parts) {
+      const agentByKey = new Map(parts.map((part) => [partKey(part), part]))
+      const derivedKeys = new Set<string>()
+      for (const part of derivedParts) {
         const key = partKey(part)
-        const derived = derivedByKey.get(key)
-        const previousAgent = agentsByKey.get(key)
-        if (derived) {
-          tx.delete(schema.storedFilePart)
-            .where(eq(schema.storedFilePart.id, derived.id))
+        const agent = agentByKey.get(key)
+        if (agent) {
+          derivedKeys.add(key)
+          tx.insert(schema.storedFilePart)
+            .values({
+              fileId,
+              ...agent,
+              origin: 'agent',
+              hasConflict: agent.rowCount !== part.rowCount,
+            })
+            .run()
+        } else {
+          tx.insert(schema.storedFilePart)
+            .values({ fileId, ...part, origin: 'derived', hasConflict: false })
             .run()
         }
+      }
+
+      for (const part of parts) {
+        if (derivedKeys.has(partKey(part))) continue
         tx.insert(schema.storedFilePart)
           .values({
             fileId,
             ...part,
             origin: 'agent',
-            hasConflict: derived
-              ? derived.rowCount !== part.rowCount
-              : (previousAgent?.hasConflict ?? false),
+            hasConflict: false,
           })
           .run()
       }
