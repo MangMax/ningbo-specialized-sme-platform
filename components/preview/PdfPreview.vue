@@ -94,8 +94,31 @@ const themeOverrides = computed(() => {
   }
 })
 
+/**
+ * pdfium 引擎的 wasm 地址。
+ *
+ * **两点都不能省,都是实测踩出来的**
+ *
+ * 1. **必须自托管**。库的默认值是
+ *    `https://cdn.jsdelivr.net/npm/@embedpdf/pdfium@2.15.1/dist/pdfium.wasm` ——
+ *    不指定它,每台打开的机器都要去公网 CDN 拉一个 4.6 MB 的 wasm。
+ *    这是个政务内网工具,不该在运行时依赖公网。文件在 `public/pdfium.wasm`。
+ *
+ * 2. **必须是绝对地址**。写相对路径 `/pdfium.wasm` 会让查看器**永久卡在
+ *    「Initializing plugins…」**:引擎在 blob URL 的 worker 里取 wasm,
+ *    worker 的 origin 是不透明的,相对路径解析不到。实测改成绝对地址才通过。
+ *
+ * 验证方式(想确认真的没走 CDN):把 `public/pdfium.wasm` 改名,预览会立刻失败;
+ * 改回来就正常 —— 说明用的是本地这份,没有回落到 CDN。
+ */
+function wasmUrl(): string {
+  const path = '/pdfium.wasm'
+  return typeof window === 'undefined' ? path : new URL(path, window.location.origin).href
+}
+
 const config = computed(() => ({
   src: props.src,
+  wasmUrl: wasmUrl(),
   // 跟随项目主题,而不是跟随系统 —— 用户在页面里切了主题,这里也要跟着。
   theme: {
     preference: (colorMode.value === 'dark' ? 'dark' : 'light') as 'light' | 'dark',
