@@ -20,7 +20,13 @@
 :root {
   --radius: 0.375rem;
 
-  --background: oklch(0.9628 0.0091 258.34); /* #EFF3F9 页面底(比卡片深一档,分出表面层级) */
+  /* 页面底(下沉面)与抬起面分成两个 token。
+   * shadcn 的组件把 `bg-background` 当作**抬起的表面**用(Tabs 选中态、Dialog/Sheet、
+   * outline 按钮、Switch 滑块),而 `bg-page` 才是页面底。若把 --background 直接设成
+   * 页面底,这些地方就会和页面同色、糊在一起(亮色下尤其明显)。
+   * 故 --background = 卡片白,页面底另立 --page。 */
+  --page: oklch(0.9628 0.0091 258.34); /* #EFF3F9 页面底:body 与内容区 */
+  --background: oklch(1 0 0); /* 抬起的表面:与卡片同档,纯白 */
   --foreground: oklch(0.2336 0.0458 257.01); /* #0F1E33 藏青近黑 */
 
   --card: oklch(1 0 0);
@@ -81,7 +87,8 @@
 }
 
 .dark {
-  --background: oklch(0.1765 0.0346 267.28); /* #0A1020 藏青底,不是纯灰黑 */
+  --page: oklch(0.1765 0.0346 267.28); /* #0A1020 藏青底,不是纯灰黑:body 与内容区 */
+  --background: oklch(0.219 0.038 263.34); /* #111A2C 抬起的表面:与卡片同档 */
   --foreground: oklch(0.9254 0.0174 258.3); /* #E8EEF7 */
 
   --card: oklch(0.219 0.038 263.34); /* #111A2C */
@@ -140,6 +147,7 @@
 
 @theme inline {
   --color-background: var(--background);
+  --color-page: var(--page);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
@@ -200,7 +208,7 @@
     border-color: var(--border);
   }
   body {
-    background-color: var(--background);
+    background-color: var(--page);
     color: var(--foreground);
     font-family:
       ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC',
