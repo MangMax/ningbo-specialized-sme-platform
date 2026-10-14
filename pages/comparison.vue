@@ -7,6 +7,7 @@ import type {
   ComparisonDirection,
 } from '~~/lib/comparison'
 import type { CuratedRow } from '~~/lib/curation'
+import type { ReconcileEntry } from '~~/lib/reconcile'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import {
@@ -16,6 +17,8 @@ import {
   COMPARISON_HINTS,
   COMPARISON_OTHER_SIDE,
   COMPARISON_NO_USCC,
+  RECONCILE_HINT,
+  RECONCILE_SOURCE,
 } from '~~/lib/labels'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -66,13 +69,23 @@ const params = computed(() => ({
 const { data, isLoading, error, refetch } = useQuery({
   key: () => ['comparison', params.value],
   query: () =>
-    $fetch<{ rows: CuratedRow[]; total: number; counts: ComparisonCounts; curatedCounts: ComparisonCounts }>(
-      '/api/comparison',
-      { query: params.value },
-    ),
+    $fetch<{
+      rows: (CuratedRow & { explanation: ReconcileEntry | null })[]
+      total: number
+      counts: ComparisonCounts
+      curatedCounts: ComparisonCounts
+      reconcile: { generatedAt: string | null; matched: number }
+    }>('/api/comparison', { query: params.value }),
   placeholderData: (previous) => previous,
 })
 const rows = computed(() => data.value?.rows ?? [])
+const reconcileInfo = computed(() => data.value?.reconcile ?? null)
+const reconcileGenerated = computed(() => {
+  const at = reconcileInfo.value?.generatedAt
+  if (!at) return null
+  const date = new Date(at)
+  return Number.isNaN(date.getTime()) ? at : date.toLocaleDateString('zh-CN')
+})
 const counts = computed(
   () => data.value?.counts[title.value as keyof ComparisonCounts],
 )
@@ -160,6 +173,12 @@ const TH_CLASS =
             <p class="text-muted-foreground min-h-5 text-[13px] tabular-nums" aria-live="polite">
               {{ countLabel(direction) }}
             </p>
+            <p class="text-muted-foreground text-xs leading-relaxed">
+              {{ RECONCILE_HINT }} 平台解释取数自{{ RECONCILE_SOURCE }}<template
+                v-if="reconcileGenerated"
+                >({{ reconcileGenerated }})</template
+              >,本次筛选 {{ reconcileInfo?.matched ?? 0 }} 行有解释。
+            </p>
             <Alert v-if="error" variant="destructive">
               <AlertTitle>比对数据加载失败</AlertTitle>
               <AlertDescription
@@ -181,26 +200,29 @@ const TH_CLASS =
                       <EmptyDescription>{{ curatedCount(direction) && !showCurated ? '当前方向均已核实，可开启「显示已核实」查看。' : '当前称号与方向没有差异企业。' }}</EmptyDescription>
                     </EmptyHeader>
                   </Empty>
-                  <Table v-else class="min-w-[880px] table-fixed">
+                  <Table v-else class="min-w-[1020px] table-fixed">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
-                        <TableHead :class="[TH_CLASS, 'w-[36%]']"
+                        <TableHead :class="[TH_CLASS, 'w-[32%]']"
                           >企业名称</TableHead
                         >
                         <TableHead :class="[TH_CLASS, 'w-48']"
                           >统一社会信用代码</TableHead
                         >
                         <TableHead :class="[TH_CLASS, 'w-20']">区县</TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-40']"
+                        <TableHead :class="[TH_CLASS, 'w-36']"
                           >另一侧状态</TableHead
                         >
+                        <TableHead :class="[TH_CLASS, 'w-28']">
+                          <span :title="RECONCILE_HINT">平台解释</span>
+                        </TableHead>
                         <TableHead :class="[TH_CLASS, 'w-48']">核实与备注</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       <template v-if="isLoading && !rows.length">
                         <TableRow v-for="i in 8" :key="i" class="h-11">
-                          <TableCell v-for="j in 5" :key="j"
+                          <TableCell v-for="j in 6" :key="j"
                             ><Skeleton class="h-4 w-full"
                           /></TableCell>
                         </TableRow>
@@ -236,6 +258,9 @@ const TH_CLASS =
                         <TableCell class="text-muted-foreground text-xs">{{
                           COMPARISON_OTHER_SIDE[row.direction]
                         }}</TableCell>
+                        <TableCell>
+                          <ComparisonReconcile :explanation="row.explanation" />
+                        </TableCell>
                         <TableCell>
                           <ComparisonCuration :row="row" @saved="refreshCuration" />
                         </TableCell>

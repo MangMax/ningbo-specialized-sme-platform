@@ -3,6 +3,7 @@ import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparis
 import { getCuratedComparison } from '~~/lib/curation'
 import { TITLE_ORDER } from '~~/lib/labels'
 import { MAX_PAGE_SIZE } from '~~/lib/query'
+import { attachReconcile, readReconcile } from '~~/lib/reconcile'
 
 export default defineEventHandler((event) => {
   const q = getQuery(event)
@@ -29,14 +30,27 @@ export default defineEventHandler((event) => {
   if (q.showCurated != null && !['true', 'false', ''].includes(String(q.showCurated))) {
     throw createError({ statusCode: 400, statusMessage: 'showCurated must be true or false' })
   }
-  const result = getCuratedComparison(useDb(), useRuntimeConfig(event).curatedPath)
+  const config = useRuntimeConfig(event)
+  const result = getCuratedComparison(useDb(), config.curatedPath)
   const { counts, curatedCounts } = result
-  const rows = result.rows.filter(row =>
+  const filtered = result.rows.filter(row =>
     (!title?.length || title.includes(row.titleCode)) &&
     (!direction || row.direction === direction) &&
     (q.showCurated === 'true' || !row.curated),
   )
+  // 平台解释是**增强项**:缓存不存在时 explanation 全为 null,比对本身不受影响。
+  const reconcile = readReconcile(config.reconcilePath)
+  const rows = attachReconcile(filtered, reconcile)
   const page = Math.max(1, Math.floor(num(q.page, 1)))
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25))))
-  return { rows: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, counts, curatedCounts }
+  return {
+    rows: rows.slice((page - 1) * pageSize, page * pageSize),
+    total: rows.length,
+    counts,
+    curatedCounts,
+    reconcile: {
+      generatedAt: reconcile.generatedAt,
+      matched: rows.filter((row) => row.explanation).length,
+    },
+  }
 })

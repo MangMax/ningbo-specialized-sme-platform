@@ -115,3 +115,41 @@ export const COMPARISON_OTHER_SIDE = {
   extra_in_miit: `${SOURCES.jxj}无匹配统代`,
 } as const
 export const COMPARISON_NO_USCC = '无统代,另一侧无可匹配身份'
+
+/**
+ * 平台解释(入库管线重整 票 16):拿工信部平台两个接口的记录解释「为什么这一行是差异」。
+ * 文案与 `pipeline/src/reconcile.ts` 的 `REASON_LABELS` **同值** —— 取值一侧变了另一侧要跟着改。
+ */
+export const RECONCILE_LABELS = {
+  deregistered: '已注销',
+  moved_out: '已外迁',
+  non_local: '外地注册',
+  withdrawn: '已撤回',
+  on_platform: '平台有记录',
+  no_platform_record: '平台亦无记录',
+  unknown: '未查询',
+} as const
+
+export type ReconcileReason = keyof typeof RECONCILE_LABELS
+
+/** 徽章色:注销 / 外迁最要紧用 destructive;外地 / 撤回用 outline(与城市徽章一致);其余轻描。 */
+export const RECONCILE_VARIANTS: Record<
+  ReconcileReason,
+  'destructive' | 'outline' | 'secondary' | 'quiet'
+> = {
+  deregistered: 'destructive',
+  moved_out: 'destructive',
+  non_local: 'outline',
+  withdrawn: 'outline',
+  on_platform: 'secondary',
+  no_platform_record: 'quiet',
+  unknown: 'quiet',
+}
+
+/** 平台解释的取数说明(页面脚注用)。 */
+export const RECONCILE_SOURCE = '工信部优质中小企业梯度培育平台'
+
+/** 「平台解释」列的说明文案(表头 tooltip / 脚注共用)。 */
+export const RECONCILE_HINT =
+  '以公布文件为准,对照导出文件:不在公布文件的多为外地注册,不在导出文件的多为注销 / 外迁。'
+
