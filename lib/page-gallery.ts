@@ -84,6 +84,11 @@ export function pageCountLabel(count: number): string {
   return `共 ${count} 页`
 }
 
+/** 单页视图的页数口径:源页数未知时只报告已有页图数量,不把它说成总页数。 */
+export function singlePageCountLabel(pageCount: number | null, rendered: number): string {
+  return pageCount === null ? `已有 ${rendered} 张页图` : pageCountLabel(pageCount)
+}
+
 /**
  * 现状 → 该说什么、该做什么。
  *

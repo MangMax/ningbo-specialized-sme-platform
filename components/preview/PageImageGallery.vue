@@ -23,7 +23,7 @@ import {
   pageLabel,
   galleryStatus,
   loadPageGalleryState,
-  pageCountLabel,
+  singlePageCountLabel,
   renderSummary,
   type GalleryTone,
 } from '~~/lib/page-gallery'
@@ -136,7 +136,10 @@ const action = computed(() => {
   }
 })
 
-const pageCountText = computed(() => state.value?.pageCount ?? state.value?.rendered ?? 0)
+const viewingCountLabel = computed(() => {
+  const current = state.value
+  return current ? singlePageCountLabel(current.pageCount, current.rendered) : ''
+})
 
 /**
  * 状态词 → 徽章样式,照仓库既有的语义:虚线 = 还没坐实(待办),次级实线 = 要留意但不是错,
@@ -250,7 +253,7 @@ watch(
 
 <template>
   <div class="bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border">
-    <!-- 单页视图的头部:只有「回网格」与总页数。**当前页码不在这里重复** ——
+    <!-- 单页视图的头部:「回网格」与页数口径。总页数未知时只报已有页图数。**当前页码不在这里重复** ——
          下面 `ImagePreview` 的工具栏标题已经写着「第 N 页」,两行都写就成了同一句话说两遍
          (旧版就是这样)。这里只补它没有的那一半:一共多少页。 -->
     <div
@@ -262,7 +265,7 @@ watch(
         返回全部页
       </Button>
       <span class="text-muted-foreground text-xs tabular-nums">
-        {{ pageCountText ? pageCountLabel(pageCountText) : '' }}
+        {{ viewingCountLabel }}
       </span>
 
       <!-- **窄屏的缩放入口**(独立审查 R1)。`PreviewToolbar` 把 − / + / 适宽 三颗按钮

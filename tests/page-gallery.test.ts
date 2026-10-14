@@ -10,6 +10,7 @@ import {
   pageImageSrc,
   pageLabel,
   renderSummary,
+  singlePageCountLabel,
 } from '../lib/page-gallery'
 import type { PdfPagesState, RenderOutcome } from '../server/utils/pdf-pages'
 
@@ -144,6 +145,11 @@ describe('galleryStatus(现状 → 该说什么、该做什么)', () => {
     // 没有哪一档写「N 页已渲染」这种另一套说法。
     for (const text of seen) expect(text).not.toContain('页已渲染')
     expect(pageCountLabel(12)).toBe('共 12 页')
+  })
+
+  it('单页视图总数未知时只报已有张数,已知时才报总页数', () => {
+    expect(singlePageCountLabel(null, 4)).toBe('已有 4 张页图')
+    expect(singlePageCountLabel(9, 4)).toBe('共 9 页')
   })
 
   it('四个语气各有自己的状态词,没有两个语气共用一句话', () => {
