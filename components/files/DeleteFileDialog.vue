@@ -61,16 +61,25 @@ watch(open, (value) => {
           <span class="text-foreground font-medium">磁盘上的文件默认保留。</span>
         </p>
 
-        <p class="text-muted-foreground font-mono text-xs break-all">{{ relPath }}</p>
+        <!-- 要决定「连磁盘一起删」就得看得见它落在哪 —— 与编辑弹窗的只读路径块同一形状。 -->
+        <div class="bg-muted/60 flex flex-col gap-0.5 rounded-md border px-2.5 py-1.5">
+          <span class="text-muted-foreground text-xs">库内路径</span>
+          <code class="font-mono text-[13px] leading-relaxed break-all">{{ relPath }}</code>
+        </div>
 
         <Alert v-if="referenceCount > 0" variant="destructive">
-          <AlertDescription>
+          <!-- `!` 是必须的:`alertVariants` 的 destructive 用
+               `*:data-[slot=alert-description]:text-destructive/90` 给说明文字加了 90% 透明,
+               深色下只剩 4.25:1(设计说明里 5.3:1 那笔账算的是**全不透明**的 --destructive)。
+               那条规则和 `.text-destructive` 同权重、位置更靠后,所以只有 important 能压过它。
+               没从这个共享变体里直接删 /90:它同时被比对页与企业详情页用着,不属于本票的改动面。 -->
+          <AlertDescription class="text-destructive! font-medium">
             有 {{ referenceCount }} 条记录把它作为出处。移出后这些记录的出处会指不到文件。
           </AlertDescription>
         </Alert>
 
         <!-- 危险动作单独勾选:默认不删盘,删盘是不可逆的。 -->
-        <div class="flex items-start gap-2.5 rounded-md border border-destructive/40 p-2.5">
+        <div class="border-destructive/40 flex items-start gap-2.5 rounded-md border p-2.5">
           <Checkbox
             id="delete-disk"
             :model-value="deleteDisk"
@@ -79,12 +88,14 @@ watch(open, (value) => {
           />
           <Label for="delete-disk" class="flex-col items-start gap-0.5 font-normal">
             <span class="text-sm">连磁盘文件一起删掉</span>
-            <span class="text-muted-foreground text-xs">不可恢复,且无法再从台账预览它。</span>
+            <span class="text-muted-foreground text-[13px] leading-relaxed">
+              不可恢复,且无法再从台账预览它。
+            </span>
           </Label>
         </div>
 
         <Alert v-if="failure" variant="destructive">
-          <AlertDescription>{{ failure }}</AlertDescription>
+          <AlertDescription class="text-destructive! font-medium">{{ failure }}</AlertDescription>
         </Alert>
       </div>
 

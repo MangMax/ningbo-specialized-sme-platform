@@ -158,8 +158,8 @@ const canSave = computed(
               placeholder="2024"
               :aria-invalid="yearInvalid || needsYear || undefined"
             />
-            <p class="text-muted-foreground text-xs">
-              这份文件是哪一年公布的(目录给的)。留空表示未定,不是「未知的某年」。
+            <p class="text-muted-foreground text-[13px] leading-relaxed">
+              目录给出的公布年份;留空表示未定。
             </p>
           </div>
 
@@ -173,8 +173,11 @@ const canSave = computed(
               placeholder="1"
               :aria-invalid="batchInvalid || needsYear || undefined"
             />
-            <p class="text-muted-foreground text-xs" :class="needsYear && 'text-destructive'">
-              {{ needsYear ? '填了批次就要同时填年份' : '导出表、年份区间不落这一段。' }}
+            <p
+              class="text-[13px] leading-relaxed"
+              :class="needsYear ? 'text-destructive' : 'text-muted-foreground'"
+            >
+              {{ needsYear ? '填了批次就要同时填年份。' : '目录给出的公布批次;没有就留空。' }}
             </p>
           </div>
 
@@ -194,12 +197,9 @@ const canSave = computed(
           </div>
         </div>
 
-        <p class="text-muted-foreground text-xs">
-          只改分类元数据;库内路径与磁盘上的文件都不动。
-        </p>
-
+        <!-- `!` 压过 alertVariants 给说明文字加的那层 /90(深色下只剩 4.25:1)。 -->
         <Alert v-if="failure" variant="destructive">
-          <AlertDescription>{{ failure }}</AlertDescription>
+          <AlertDescription class="text-destructive! font-medium">{{ failure }}</AlertDescription>
         </Alert>
       </div>
 
