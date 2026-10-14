@@ -4,12 +4,12 @@
 
 | # | 标题 | Blocked by | 状态 |
 |---|---|---|---|
-| 01 | 比对口径与计算纯函数(`lib/comparison.ts` + 测试) | — | ready |
-| 02 | Nitro 接口 `GET /api/comparison` | 01 | ready |
+| 01 | 比对口径与计算纯函数(`lib/comparison.ts` + 测试) | — | ✅ done |
+| 02 | Nitro 接口 `GET /api/comparison` | 01 | ✅ done |
 | 03 | 比对页面 `/comparison` + 侧栏入口 + 导出 | 02 | ready |
 | 04 | 人工标注 `curated`(JSON 落盘 + PATCH + 页面开关) | 02 | ready(范围可裁) |
 
-**前沿**:01 与 04 —— 01 是可独立开工的纯计算;04 与 01 并行(不同文件)。
+**前沿**:03 与 04 —— 01、02 已完成;页面/导出与人工标注尚未实施。
 
 ## 依赖图
 
@@ -32,4 +32,4 @@
 - **标签文案只从 `lib/labels.ts` 取**(`TITLES` / `SOURCES` / `EVENTS` / `QUALITY_FLAGS`),不要各写一份。
 - 数据处理优先 **es-toolkit / 原生 ES6**(`groupBy` / `keyBy` / `partition` / `uniqBy`),不要手写大量判断循环。
 - 页面取数用 **Pinia Colada `useQuery`** + `placeholderData: (previous) => previous`(切 tab 不闪回)。
-- 提交分支:`feat/tus-uploads`(**不要切新分支**)。工作树里有平行会话未提交的票 06 改动,`git add` 只加自己的文件。
+- 票 01/02 提交分支:`feat/comparison-core`(按用户本次指令从干净 `main` 创建,覆盖旧分支约定);`git add` 只加本票文件,不提交无关未跟踪文件。

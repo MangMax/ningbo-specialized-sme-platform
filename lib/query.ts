@@ -56,7 +56,7 @@ export interface RecordRow {
   flags: string[]
 }
 
-const MAX_PAGE_SIZE = 200
+export const MAX_PAGE_SIZE = 200
 
 /**
  * 把一组来源代号按展示顺序(经信局 → 工信部)去重排序,
