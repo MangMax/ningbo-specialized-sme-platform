@@ -204,3 +204,44 @@ function cellLimitOf(raw: string): string | null {
   }
   return '这份文件超过了预览器的处理上限。请下载后用 Excel 或 Word 打开。'
 }
+
+/** 图片缩放的**绝对**上限与下限 —— 只是防止算出 0 / 无穷这类没意义的值,不是给人看的档位。 */
+export const ZOOM_ABS_MAX = 8
+export const ZOOM_ABS_MIN = 0.01
+
+/**
+ * **自动「适应」**的目标缩放:受**绝对**上下限约束,**不受手动下限**。
+ *
+ * 手动下限(默认 25%)是给**人**选的档,而「适应」是把整页装进容器 —— 超大图 + 窄容器
+ * (如 2400×3200 的图放进 390px 弹窗)需要的比例会低到 ~13.5%。若把 fit 也按手动下限夹住,
+ * 「适应」就装不下,反而**横纵溢出**,而窄屏下缩放的按钮/滑块是隐藏的(见 `PreviewToolbar`
+ * 的 `sm:` / `lg:` 断点),用户**没有手段缩回来** —— 那是真正的可见性回归。
+ */
+export function fitZoom(
+  scale: number,
+  max: number = ZOOM_ABS_MAX,
+  min: number = ZOOM_ABS_MIN,
+): number {
+  return Math.min(max, Math.max(min, scale))
+}
+
+/**
+ * **手动**缩放的下一步(滚轮 / 按钮 / 工具栏滑块):
+ *
+ * 下限取 `minZoom`,但**不把已经比它更小的当前值往回拉**。自动「适应」可能已经落在手动下限
+ * 之下(超大图 + 窄容器);这时如果无脑 `max(minZoom, next)`:
+ *
+ *  - 往外缩(滚轮向外 / 点「缩小」)会被**夹回下限 → 反而放大**,是明显的错觉;
+ *  - 往里缩则会**跳**过一截。
+ *
+ * 所以下限取 `min(minZoom, current)`:比下限更小时**停在原地**(往外不再缩小),
+ * 往里则从当前值平滑长回去,越过下限后按正常的手动下限走。
+ */
+export function nextZoom(
+  requested: number,
+  current: number,
+  minZoom: number,
+  max: number = ZOOM_ABS_MAX,
+): number {
+  return Math.min(max, Math.max(Math.min(minZoom, current), requested))
+}

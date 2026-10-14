@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import ImagePreview from '../components/preview/ImagePreview.vue'
 import PageImageGallery from '../components/preview/PageImageGallery.vue'
 import { PAGE_IMAGE_ZOOM_MIN } from '../lib/page-gallery'
-import { retrySrc } from '../lib/preview'
+import { fitZoom, nextZoom, retrySrc, ZOOM_ABS_MAX } from '../lib/preview'
 
 /**
  * 图片预览的**失败 → 重试**恢复路径(票 13 回归)。
@@ -284,6 +284,116 @@ describe('缩放下限:普通预览 25% / 页图库 10%(作用域隔离)', () =>
       expect(preview.props('zoomMin')).toBe(PAGE_IMAGE_ZOOM_MIN)
       // 对照:同一组件不传时是 25%,说明这是**按调用方**分档,不是常数搬了家。
       expect(mount(ImagePreview, { props: { src: SRC } }).props('zoomMin')).toBe(0.25)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+/**
+ * 自动「适应」与手动缩放下限的**分工**,以及窄屏自定义控件的边界(复核 F1 / F3)。
+ *
+ * F1(reviewer 在 2400×3200 + 390×844 上看到可见性回退):`fit()` 原来也按**手动**下限夹,
+ * fit ≈ 13.5% 被夹到 25%,图反而**横纵溢出**;而窄屏下工具栏的缩放控件是隐藏的,用户没法缩回来。
+ * 修法:自动 fit 只受绝对下限约束(`fitZoom`),手动缩放仍受 `props.zoomMin`(`nextZoom`)。
+ * 另:从「低于手动下限的 fit 状态」往外缩时,**不能反而放大**(那是同一个 `max` 造成的错觉)。
+ */
+describe('fit 不受手动下限约束 / 手动缩放边界(nextZoom)', () => {
+  it('`fitZoom`:超大图的适应比例可以**低于**手动下限 25%(2400×3200 → 390px 约 13.5%)', () => {
+    // 与 reviewer 的合成输入同量级:viewport 356×713、图 2400×3200、pad 32。
+    const scale = Math.min((356 - 32) / 2400, (713 - 32) / 3200)
+    expect(scale).toBeCloseTo(0.135, 2) // ≈ 13.5%
+    expect(scale).toBeLessThan(0.25) // 手动下限之下
+    // 关键:fit 取的就是它 —— 不被 25% 拉高(拉高才会溢出)。
+    expect(fitZoom(scale, ZOOM_ABS_MAX)).toBeCloseTo(scale, 6)
+  })
+
+  it('`fitZoom` 仍受**绝对**下限/上限约束(不产出 0 / 无穷)', () => {
+    expect(fitZoom(0, ZOOM_ABS_MAX)).toBeGreaterThan(0)
+    expect(fitZoom(99, ZOOM_ABS_MAX)).toBe(ZOOM_ABS_MAX)
+  })
+
+  it('**从低于手动下限的 fit 状态往外缩,不会反而放大**(F1 的错觉)', () => {
+    const current = 0.135 // fit 落点(手动下限 0.25 之下)
+    const minZoom = 0.25
+    // 滚轮向外一次:0.135 / 1.12 ≈ 0.12。旧写法 max(0.25, 0.12) = 0.25 ⇒ **变大**了。
+    const outward = nextZoom(current / 1.12, current, minZoom)
+    expect(outward).toBeLessThanOrEqual(current)
+    expect(outward).toBeCloseTo(current, 6) // 停在原地 = 不再缩小
+    // 对照:旧的「无脑 max(下限, 请求)」确实会把它拉到 0.25(放大),证明该用例有区分力。
+    expect(Math.max(minZoom, current / 1.12)).toBeCloseTo(0.25, 6)
+  })
+
+  it('手动缩放**在下限之上**照常夹到 25% —— 没有回归', () => {
+    // 当前 0.3,往内(放大)不受影响。
+    expect(nextZoom(0.3 * 1.12, 0.3, 0.25)).toBeCloseTo(0.336, 6)
+    // 当前已在下限时,再往外只会停在 0.25,不会穿过去。
+    expect(nextZoom(0.25 / 1.12, 0.25, 0.25)).toBeCloseTo(0.25, 6)
+  })
+})
+
+/**
+ * F3:窄屏那组**自定义**缩放控件(页图库单页头部,`sm:hidden`)要与工具栏同一判据。
+ * 「缩小」原来没有 disabled,10% 时还亮着 —— 点了没反应(`nextZoom` 停在原地)。
+ * 这里复用上面「接线」用例的合成 state 与 `$fetch` 桩(不读正式 files/data)。
+ */
+describe('窄屏自定义缩放的边界(F3)', () => {
+  const file = 'jxj/announcement/2022/公布.pdf'
+  const state = {
+    file,
+    pageCount: 1,
+    dpi: 200,
+    rendered: 1,
+    upToDate: true,
+    manifest: { dpi: 200, renderedAt: '2026-10-15T00:00:00.000Z' },
+    pages: [
+      {
+        page: 1,
+        relPath: 'jxj/announcement/2022/.公布.pdf.pages/p001.png',
+        url: '/api/files/jxj/announcement/2022/.%E5%85%AC%E5%B8%83.pdf.pages/p001.png',
+        width: 1653,
+        height: 2339,
+        bytes: 100,
+      },
+    ],
+  }
+
+  /** 挂出单页视图(窄屏那组控件的父视图)。 */
+  async function openSinglePage() {
+    vi.stubGlobal('$fetch', vi.fn(async () => state))
+    const gallery = mount(PageImageGallery, { props: { file } })
+    await new Promise((r) => setTimeout(r, 0))
+    await gallery.vm.$nextTick()
+    await gallery.find('button[title^="第 1 页"]').trigger('click')
+    await gallery.vm.$nextTick()
+    return gallery
+  }
+
+  /** 窄屏那组里的「缩小」(按 aria-label),它与宽屏工具栏那颗同名 —— 取**可见**的那颗。 */
+  function narrowZoomOut(gallery: Awaited<ReturnType<typeof openSinglePage>>) {
+    const btn = gallery
+      .findAll('button')
+      .find((b) => b.attributes('aria-label') === '缩小' && !b.classes().includes('hidden'))
+    return btn
+  }
+
+  it('10% 下限时窄屏「缩小」**禁用**;放大一档后恢复可用', async () => {
+    try {
+      const gallery = await openSinglePage()
+      const preview = gallery.findComponent(ImagePreview)
+      const vm = preview.vm as unknown as { zoom: number; fit: () => void; zoomBy: (f: number) => void }
+
+      // 先模拟「适应」落在下限(把 zoom 压到 10%)。
+      vm.zoomBy(0.001)
+      await gallery.vm.$nextTick()
+      expect(vm.zoom).toBeCloseTo(PAGE_IMAGE_ZOOM_MIN, 5)
+      expect(narrowZoomOut(gallery)!.attributes('disabled')).toBeDefined()
+
+      // 放大一档 → 回到下限之上,「缩小」恢复可用。
+      vm.zoomBy(1.5)
+      await gallery.vm.$nextTick()
+      expect(vm.zoom).toBeGreaterThan(PAGE_IMAGE_ZOOM_MIN)
+      expect(narrowZoomOut(gallery)!.attributes('disabled')).toBeUndefined()
     } finally {
       vi.unstubAllGlobals()
     }
