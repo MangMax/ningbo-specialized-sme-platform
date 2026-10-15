@@ -30,10 +30,10 @@
 ## 验收
 
 - [x] 页面上能看到某份 PDF 的页图缩略(`/files` → 预览 → 页图);12 张 / 97 张实测见文末第 8 节。
-- [x] app 测试全绿:`pnpm exec nuxt typecheck` 通过;`pnpm exec vitest run` → **23 files / 437 passed**
+- [x] app 测试全绿:`pnpm exec nuxt typecheck` 通过;`pnpm exec vitest run` → **24 files / 444 passed**
       (含页数未知时的单页标题回归用例,见 8.11;缩放下限作用域隔离,见 8.12;
       自动适应/窄屏缩小钮与组件级用例,见 8.13;工具栏取整判据,见 8.14;
-      有效下限统一,见 8.15;图库同源判据 / 窄屏恢复 / 原文澄清,见 8.16)。
+      有效下限统一,见 8.15;图库同源判据 / 窄屏恢复 / 原文澄清,见 8.16;最终 UI 收口见 8.17)。
 
 **分支**:`feat/pdf-to-png`。
 
@@ -824,3 +824,18 @@ F3 用例名统一成计划里的 `窄屏缩放组到达 10% 后禁用缩小按�
 `pnpm exec vitest run tests/image-preview.test.ts tests/page-gallery.test.ts` → **2 files / 73 passed**;
 `pnpm test`(`NUXT_DB_PATH` 指向 /tmp)→ **23 files / 437 passed**;`pnpm typecheck` → exit 0;`git diff --check` 干净。
 截图:`/tmp/t13-final-ui/`(合成 store)· 390×844 原文视图 / 图库恢复路径的实测见浏览器 artifacts。
+
+## 8.17 最终 UI 收口与候选验收(2026-10-15)
+
+**当前实现以 `d0b8179` 为准;本节覆盖并取代 §8.16 中百分比按钮“按断点分叉”的现状描述。**
+`17960f2` 已将窄屏“回适应”设为显式 opt-in:图片预览启用,Office 预览保持原来的回 100% 行为,
+因为 Office 的 `fit-width` 表示适宽。`d0b8179` 再完成最终收口:
+
+- 百分比按钮可访问名/提示现在包含可见比例与动作(例如 `26% · 适应页面(整页可见)`),语音定位能使用屏幕上的百分比;
+- 文件名区域改留 **44px** 关闭热区空间,窄屏长文件名的省略号不再与关闭按钮热区交叠;
+- 将非预设 DPI 说明注释放在实际派生状态旁,避免误读为预设校验函数的说明。
+
+**最终验证**:`pnpm test` → **24 files / 444 passed**;`pnpm typecheck` → exit 0;
+`git diff --check` 干净。浏览器在 **390×844** 的真实 12 页 PDF 预览中确认:
+文件名/关闭热区交叠为 **0px**,页图仍可滚动查看,页面按钮显示 `26%`,其可访问名为
+`26% · 适应页面(整页可见)`。
