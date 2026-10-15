@@ -244,6 +244,17 @@ describe('buildPlatformWritePayload:代理确认的曾用名(§5.1)', () => {
     expect(alias.conflict?.usccs.sort()).toEqual(['91330211000000001A', '91330211000000002B'])
   })
 
+  it('归属企业解析不到时也降级为待核(不凭一个名字就写成 confirmed)', () => {
+    const request = buildPlatformWritePayload({
+      sourceIdentity: 'x', queries, enterprises,
+      aliases: [{ enterpriseId: 999999, name: '宁波上航测绘有限公司', sourceKind: 'platform_business', sourceRefId: 0 }],
+      differences: [], merges: [],
+    })
+    const alias = request.payload.aliases![0]!
+    expect(alias.verificationStatus).toBe('pending')
+    expect(alias.conflict?.note).toContain('归属企业无法确定')
+  })
+
   it('来源统代与目标企业统代不一致时,同样降级为待核', () => {
     const request = buildPlatformWritePayload({
       sourceIdentity: 'x',

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed } from 'vue'
-import { ChevronLeft } from '@lucide/vue'
+import { ChevronLeft, GitCompareArrows } from '@lucide/vue'
 import {
   PLATFORM_INTERFACES,
   PLATFORM_QUERY_STATUSES,
@@ -99,7 +99,7 @@ const rdjbLabel = (rdjb: string) => (rdjb ? (PLATFORM_RDJBS[rdjb] ?? rdjb) : '�
 
     <Empty v-else-if="!error && !rows.length">
       <EmptyHeader>
-        <EmptyMedia variant="icon"><ChevronLeft /></EmptyMedia>
+        <EmptyMedia variant="icon"><GitCompareArrows /></EmptyMedia>
         <EmptyTitle>暂无平台查询证据</EmptyTitle>
         <EmptyDescription>这个查询键或企业还没有落库的平台查询记录。</EmptyDescription>
       </EmptyHeader>

@@ -306,9 +306,11 @@ function toAliasItem(
   const evidence = all.filter(({ relation }) => relation.nameRaw === decision.name)
   const usccs = [...new Set(evidence.map(({ relation }) => relation.usccRaw).filter(Boolean))] as string[]
 
+  // 三种「不能确认」都降级为待核:目标企业解析不到 / 同名多主体 / 来源统代与目标不一致。
+  const unresolved = enterprise == null
   const mismatch = enterprise?.uscc != null && usccs.some((uscc) => uscc !== enterprise.uscc)
   const ambiguous = usccs.length > 1
-  const conflict = ambiguous || mismatch
+  const conflict = unresolved || ambiguous || mismatch
 
   const item: AliasWriteItem = {
     enterpriseName: enterprise?.name ?? decision.enterpriseName ?? '',
@@ -325,9 +327,11 @@ function toAliasItem(
     item.conflict = {
       code: 'ambiguous_subject',
       usccs,
-      note: ambiguous
-        ? `同一名称出现在 ${usccs.length} 个统一社会信用代码下,不自动归并`
-        : '来源统代与目标企业统代不一致,不自动回填',
+      note: unresolved
+        ? '归属企业无法确定(未给出可解析的企业 id / 名称),不自动回填'
+        : ambiguous
+          ? `同一名称出现在 ${usccs.length} 个统一社会信用代码下,不自动归并`
+          : '来源统代与目标企业统代不一致,不自动回填',
     }
   }
   return item
