@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready
+**Status:** done（2026-10-15；以本页收口说明修订历史技术设想）
 
 ## 为什么
 
@@ -40,9 +40,22 @@ pipeline 解析的是**人工 OCR 产出的 `.docx`**,不是 PDF。本次已证�
 
 ## 验收
 
-- [ ] 4 处序号错误已修;`list_no` 与 PDF 原图一致。
-- [ ] 序号连续性校验对**票 06 的缺号**能报警(拿重建前的数据当反例跑一次证明会红)。
-- [ ] 总数对账对该文件族生效。
-- [ ] 去留结论落文。
+- [x] 4 处序号错误已修;`list_no` 与 PDF 原图一致。
+- [x] 序号连续性校验对**票 06 的缺号**能报警(拿重建前的数据当反例跑一次证明会红)。
+- [x] 总数对账对该文件族生效。
+- [x] 去留结论落文。
 
 **分支**:从干净 `main` 起,如 `fix/source-integrity`。**只提交本票文件。**
+
+## 收口说明（2026-10-15）
+
+历史正文里的“从正文程序提取家数”“信人工OCR docx”按用户后续要求修订：扫描PDF先增强PNG再真实PaddleOCR，Office直接读取；年份/批次/事件和独立家数由代理阅读源件判断并通过API/MCP回填，不写业务推断引擎。正式PDF的解析输入为有页码OCR结果，不修改旧人工OCR DOCX来替代源件。
+
+- 四处历史9→6已在当前正式出处中读回为9，父代理再次亲自看图：file7/p3/seq9晨东、file10/p3/seq9开沃、file12/p3/seq9威斯巴特、file16/p14/seq9万盛。裁剪与原件映射见`root-visual-audit/crops/s062_f7_p3_n9.png`、`s098_f10_p3_n9.png`、`s110_f12_p3_n9.png`、`s136_f16_p14_n9.png`。
+- 候选pipeline d43824f经R3两轴独立复核均无阻断，合入本地主线e1f61db；主代理在集成树上10文件167测试、vp check通过。
+- 父代理在集成树真实CLI反例：160号旧件缺144..178(35)与850..883(34)，exit1，阻断报告ledgerWritten=false，四台账表仍全0。证据`source-integrity-fix/parent-integrated-red/parent-proof.json`，不把培育文件导入正式范围。
+- 新主线完整21文件隔离缓存重放23个agent名单段、11422名单行对账，0findings，21443出处两CLI全表相同；全新双入口样本4名单段/1350行对账、11371出处同样幂等。证据`fresh-flow/acceptance-report.md`§10。
+- 取舍与成本/运行边界：`docs/adr/2026-10-15-parse-source-stays-ocr-with-gate.md`。序号闸只报不修、写台账前整批阻断。Excel不做连续序号校验。
+- 保留限制：裸数字单格行无法区分页码与缺名名单行，保守阻断后看图；序号和名称同时读空的行按版面跳过，独立家数对账兜底，无声明则提示无法核对。不宣称任意版面噪声或所有丢行都可自动识别。
+
+以上路径相对验收根`20261013/acceptance/20261015/`；复核报告`source-integrity-fix/review-r3-{standards,spec}.md`保留非阻断观察。
