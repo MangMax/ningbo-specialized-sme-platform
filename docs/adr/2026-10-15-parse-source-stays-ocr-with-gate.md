@@ -5,7 +5,7 @@
 | 源 | 读法 |
 |---|---|
 | Office(`.docx` / `.doc` / `.xlsx`) | **直接解析**文件文本(票 11 的 `.docx` 直读、工信部导出按列位表读)—— 不经 OCR |
-| 扫描 PDF(无文字层) | **先渲成页图(PNG,400 DPI),再逐页 OCR(PaddleOCR)**,结果落 `ocr_result`;已有结果**优先复用**,不重复识别 |
+| 扫描 PDF(无文字层) | **先渲成页图(PNG),再逐页 OCR(PaddleOCR)**,结果落 `ocr_result`;已有结果**优先复用**,不重复识别。渲染**默认 300 DPI**(`lib/pdf-page.ts` 的 `DEFAULT_DPI`,本次验收用的就是这个),**可选 400**;若已有完整的 400 DPI 页图,直接复用即可(清单按源哈希 + DPI 判定是否仍需渲染) |
 | 页面图像 | 作为**派生缓存**(见 `2026-10-14-page-images-as-derived-cache.md`),供人眼回看 |
 
 **纠偏与声明仍由代理读正文完成**(经 `set_file_category` / `save_parse_result`,与页面同一条
