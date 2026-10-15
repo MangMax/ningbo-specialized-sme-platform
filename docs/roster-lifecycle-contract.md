@@ -491,8 +491,15 @@
 
 ### 7.7 `GET /api/platform/snapshots` — 导出快照与版本(RL-05)
 
-查询参数:`title`、`year`。响应行:
+查询参数:`title`(可重复)、`year`(可重复)。响应信封 `{ rows, count }`,行:
 `{ batch: {…§1.6}, replacedBatchId, rowCount, importStatus }`。
+
+**增量(RL-05 交付,父代理 2026-10-16 裁决接受)**:`GET /api/platform/snapshots/diff` ——
+比较两个快照批次。查询参数 `from`(旧批号)、`to`(新批号),**两批必须同称号**,否则 400;
+批号不存在 404。响应 `{ from, to, diff }`:`from` / `to` 是批次摘要
+(`{ id, titleCode, year, collectedOn, originalFilename, sha256, importStatus, replacedBatchId }`),
+`diff` 含 `added` / `removed` / `changed` / `unchanged`,每处差异带两侧**源行号**
+`sourceRowNo`(可回溯到导出的物理行)。只读、不鉴权。
 
 ---
 
@@ -574,6 +581,83 @@
 }
 ```
 
+> **`year` / `collectedOn` 由调用方给出**(RL-05 的解析器**不从文件内容或文件名推断**年度：
+> 导出表里那列「维护批次」是平台口径的维护批次，不是快照年度)。`exportSnapshot.rows[].rawFields`
+> 的键是 **1-based 列号字符串**、只留**非空**值(契约 §1.7)；单张导出表实测 6273 行、数十列，
+> payload 是 MB 级(实测 7.6 MB 一次 POST 可完整接收并落库，无需调 `bodyLimit`)。
+
+### 8.4 `payload.merges` —— 归并与回填的写入形状(RL-11 增量补齐)
+
+> **父代理澄清 C2**:§5.2 只定义了归并的**语义**,§8.3 的 `payload` **缺**它的写入形状。
+> 本节是 RL-11 的**增量扩展** —— 只新增小节,**不改**任何已冻结的表 / 列 / 枚举。
+> 语义严格照 §5.2(不是 `UPDATE uscc_norm`,而是 MERGE)。
+
+```jsonc
+"merges": [{
+  "fromEnterpriseId": 375,          // 被并企业 id;与 fromEnterpriseName 恰给其一
+  "fromEnterpriseName": "宁波上航测绘有限公司",   // 也可按归一化名找被并企业
+  "intoUscc": "91330211255994457P", // 规范行(保留的那家)的统一社会信用代码
+  "aliasName": "宁波上航测绘有限公司",  // 写进曾用名的名称;不给则用被并企业的现名
+  "sourceKind": "platform_business", // 曾用名来源类别(§2.2);默认 manual
+  "sourceRefId": 7,                 // 曾用名的来源证据行 id(如 platform_relation.id);默认 0
+  "evidenceQueryId": 4,             // 支撑本次归并的查询证据(记入血缘,不落列);可空
+  "note": "businessList rdjb=3 的 qymc 差异行"   // 可空
+}]
+```
+
+执行步骤(逐字照 §5.2):**①** 定位规范行(`intoUscc`)与被并企业 → **②** 把被并企业的名称
+写成规范行的 `enterprise_alias`(`verification_status='confirmed'`,带 `sourceKind` /
+`sourceRefId` 来源证据)→ **③** 迁移子行(`record` / `enterprise_alias` /
+`difference_reason` / `platform_relation` 改指规范行)→ **④** 解决 `record_identity_uq`
+冲突:规范行已有同 `(称号, 来源)` 的记录时,把被并记录的 `record_event` **改指**规范行那条记录
+(出处挂在事件上随之归入),然后删除被并的空 `record`;**事件与出处一条都不合并、不折叠、不删除**
+→ **⑤** 删除被并的 `enterprise` 行。
+
+**执行时解析身份(重要)**:`merges` 与同一 `payload` 里**本批新建**的企业/记录可以互相引用 ——
+`fromEnterpriseId` / `fromEnterpriseName` / `intoUscc` 在**写入阶段**(而不是预检阶段)解析,
+所以「一个批次先写企业、再归并它」是合法的。
+
+**逐项报错**:任一归并项不合法(被并企业不存在 / 规范行不存在 / 两行相同 / 来源类别不在字典内)
+⇒ 整批 `failed`,错误形如 `{ ok:false, kind:"merge", ref, error:{ code, field?, message } }`。
+
+**归并血缘(父代理裁决 #4 的硬要求)**:每条成功的 `merge` 项在 `import_batch.item_results`
+里带 `detail.lineage`,可直接查回:
+
+```jsonc
+{ "ok": true, "kind": "merge", "ref": "merge:375->7289",
+  "detail": { "lineage": {
+    "fromEnterpriseId": 375, "fromEnterpriseName": "宁波上航测绘有限公司",
+    "intoEnterpriseId": 7289, "intoUscc": "91330211255994457P",
+    "aliasId": 91,
+    "childRowsMoved": { "aliases": 1, "differences": 0, "relations": 6, "records": 1 },
+    "recordsMoved": [640],                 // 直接改指规范行的记录 id
+    "recordsFolded": [{ "fromRecordId": 641, "intoRecordId": 512 }],  // 折进规范行同坐标记录
+    "eventsMoved": [91, 92],               // 被并企业名下的(原)事件 id —— 一条都没删
+    "evidenceMoved": [301, 302]            // 随之归入规范行的出处 id(含页码)
+  } } }
+```
+
+### 8.5 预检计数口径(精确语义,供各写入方对齐)
+
+`preflight` 的 `{ add, update, remove, review, conflicts }` 含义固定如下(契约 §8.1 的示例只给了形状):
+
+| 字段 | 含义 |
+|---|---|
+| `add` | 本次将**新增**的行数(任一新行:企业 / 记录 / 事件 / 出处 / 别名 / 查询 / 关系 / 快照批 / 快照行 / 差异 / 归并)。 |
+| `update` | 本次将**复用或更新**的既有行数(按唯一键命中:如同一 `(称号, 年度, sha256)` 的快照批)。 |
+| `remove` | 归并会**删除**的被并企业行数(= 成功的 `merges` 项数)。 |
+| `review` | 落在**待核**状态的行数(`pending` / `needs_review`,以及未知枚举原样入库的行)。 |
+| `conflicts` | 逐项冲突(`{ ok:false, kind, ref, error }`),**不静默丢行**。 |
+
+`conflicts` 非空 ⇒ 提交整批 `failed`,业务数据一行不落。
+
+### 8.6 `replaced_batch_id` 的方向(父代理 2026-10-16 裁决)
+
+按 §1.6 的列语义「**本批替换了哪一批**」:**新批**记下它替换掉的批次 = 同
+`(title_code, year)` 下**现有的最新批**的 id(不同 `sha256`);首版为 `null`。
+同 `sha256` 重放命中唯一键 `(title_code, year, sha256)` ⇒ **不新建批**;换内容 ⇒ 新版本,
+用 `replaced_batch_id` 指向被替换的旧版,**两版并存**(旧快照不因替换而消失)。
+
 ---
 
 ## 9. MCP tool 形状(RL-11 实现)
@@ -590,6 +674,21 @@
 | `list_differences` | 读 | `{ title?, direction?, status?, page?, pageSize? }` | 等价 `GET /api/roster/differences` |
 
 「只读不鉴权,写入必带 token」沿用既有分法;token 只从 `NUXT_MCP_TOKEN` 读。
+
+> **实现说明(RL-11)**:
+> - **写入清单是单点维护的**:新增写入 tool 必须同时改 `server/utils/mcp-auth.ts` 的
+>   `MCP_WRITE_TOOLS`(测试把它钉死)。RL-11 追加 `save_roster_batch`;**全部四个 tool 均已注册**
+>   (实测真机 `/mcp`:`tools/list` 无 token 时 8 个只读 tool,带 token 时 12 个,
+>   `save_roster_batch` 未鉴权调用→HTTP 401)。
+> - **`preflight_roster_batch` 按本表归为「读」**(不需 token)。注意它**不是纯读**:
+>   与 HTTP 的 `/preflight` 一样,它会在 `import_batch` 落一条 `status='preflight'` 的记账行
+>   (**不改任何业务数据**)。这是本表「只读预检」的字面落地;若日后要求它也必须带 token,
+>   改 `MCP_WRITE_TOOLS` 即可(一处)。
+> - **`list_enterprises` / `list_differences` 是 §7.1 / §7.3 读模型的**最小只读面**,
+>   由 RL-11 为「写入后自查」提供(RL-04 负责完整读模型与 `GET /api/roster/*` 端点)。
+>   两者**字段同名**,RL-04 落地后可把这两个 tool 重新指向同一实现;`firstRecognition` /
+>   `nextReviewYear` 等生命周期字段属 RL-08 / RL-09,未在此代做。
+
 
 ---
 
