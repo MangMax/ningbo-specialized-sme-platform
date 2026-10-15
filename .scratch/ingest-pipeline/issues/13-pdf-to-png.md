@@ -846,3 +846,8 @@ F3 用例名统一成计划里的 `窄屏缩放组到达 10% 后禁用缩小按�
 
 - 本票**未勾项为「明确不做」而非未实现**：`stored_page_image` 表不建，页图按**派生缓存 + 清单**（`.pages.json`）承载，由 [`docs/adr/2026-10-14-page-images-as-derived-cache.md`](../../../docs/adr/2026-10-14-page-images-as-derived-cache.md) 定案；本票**不扩建表、不做批量页图管理 UI**。
 - 票内 8.x 的 UI 收口（DPI 选择、百分比按钮、窄屏文件名/关闭热区）已在上方记录；渲染与预览测试见 `tests/pdf-pages.test.ts` / `page-gallery*.test.ts`。
+
+
+## 8.18 当前正式版本的独立 UI 复核补记（2026-10-15）
+
+§8.17为当时候选历史快照。当前DPI预设实际为150/200/300/400，400是正式可选档，只有120等未知值显示为只读禁用项。真实3470以12页72号、17页65号和一份canonical DOCX验收：中文原文/Office正常、图库页数与序号一致、单页缩放/适应/返回/关闭通过；390窄屏文件名与关闭热区0重叠，图片百分比按钮放大后点按回适应，Office仍回100%。见 `acceptance/20261015/evidence/ui-files-final/independent-ui-final.md`。后续comparison浮层局部修复26ac85a不涉及页图/预览。加密PDF与本轮只读禁止的重渲染/写路径未在此轮复验，manifest取代表与不扩批量生成UI的边界不变。

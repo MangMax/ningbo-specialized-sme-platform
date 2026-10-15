@@ -87,4 +87,4 @@
 
 - 页面 / 侧栏 / 导出按票已交付，`pnpm typecheck` / `pnpm test` 通过；设计期 337/13、543/28 属**当时库**，重建后当时为 170/30、318/37（`acceptance/20261015/evidence/comparison-regression/snapshot-counts.json`），**单条数据纠偏后现行为 553 行差异**（`root-formal-one-row-review/cache-publication-proof.json`）；票面旧数字不追改为终库值。
 - **仍未勾项「漂移企业可见且被标注」保持未勾**：真实库 `city` / `reg_status` 全空，只有 fixture 副本证明渲染；不把 fixture 当真实数据证明，也不新增外部信息富化任务。
-- 页面的**独立 UI 复核**（含 `/files`）由父代理另起，进行中；报告将落在 `acceptance/20261015/evidence/ui-files-final/`。**本轮不宣称已通过**，以父代理补出的最终报告为准。
+- 真实3470的**独立 UI 复核**已完成（含 `/files`），桌面1440/窄屏390的双tab双方向、553条解释与tooltip展开/点外关闭见 `acceptance/20261015/evidence/ui-files-final/independent-ui-final.md`。父复看发现窄屏tooltip右端裁切后，以固定 `26ac85a` 局部修复并另起独立定点代码/UI复验，见 `acceptance/20261015/tooltip-width-fix/independent-review.md`。当前样式以该报告为准；旧报告未识别此裁切，不以页面scrollWidth=0替代portal边界测量。

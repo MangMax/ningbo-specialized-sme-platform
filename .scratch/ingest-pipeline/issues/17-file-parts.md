@@ -42,7 +42,7 @@
 - [x] app `pnpm typecheck && pnpm test` 全绿。—— 已接受主线 28 文件 525 测试 / typecheck 通过。
 - [x] **UI 要过 oil-ui 验收**(涉及页面)。—— `.scratch/ingest-pipeline/UI-ACCEPTANCE-files.md`（oil-ui，范围含票 09 + 票 17 呈现层，16 项逐条通过）。
 
-> **收口（2026-10-15，docs-only）**：8 项按代码、测试、只读库核与 `UI-ACCEPTANCE-files.md` 已满足。页面的**独立** `/files` UI 复核由父代理另起、进行中（`acceptance/20261015/evidence/ui-files-final/`），**本轮不宣称独立 UI 已通过**。
+> **收口（2026-10-15，docs-only）**：8项按代码、测试、只读库核已满足；真实3470 `/files` 桌面与390窄屏独立复核已通过，PDF/DOCX真实预览及单页/图库链路见 `acceptance/20261015/evidence/ui-files-final/independent-ui-final.md`。该轮只读，不冒称新增段或写入操作在该轮复验。
 
 **分支**:`feat/file-parts`。
 

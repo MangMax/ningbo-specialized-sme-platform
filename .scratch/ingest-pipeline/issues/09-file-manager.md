@@ -57,4 +57,4 @@
 
 本地 app 代码主线 `5be3e60e3fd94cfd37929f79f07d692decf555ee`（后续8be仅文档），pipeline `4eb396f74f4ac75738dbe47ab9f09b4e1da2a95a` 已集成；app 28文件/517测试、类型检查及生产构建通过，pipeline 9文件/144测试和check通过。正式21个有效文件、55段、21443源行已重建并用两个独立CLI进程验证五张账表hash不变。证据在项目 `acceptance/20261015/{main-integration-ancestry.json,final-ledger-run3-audit.json,final-source-fact-integrity.json,runtime-production-smoke.json}`。3470生产服务已实际验证8个MCP工具列举、文件19读取17页OCR及457行。此段补充当前证据，不将下方旧快照中每个未勾选交互项一律冒充本轮重测。全新清洗验收仍由票12单独跟踪。
 
-> **收口（2026-10-15，docs-only）**：上表按代码、测试、只读库核与 `UI-ACCEPTANCE-files.md` 已满足的项已勾。页面的**独立** `/files` UI 复核由父代理另起、进行中，将以 `acceptance/20261015/evidence/ui-files-final/` 的最终报告为准；**本轮不宣称独立 UI 已通过**。
+> **收口（2026-10-15，docs-only）**：上表按代码、测试与只读库核已满足。真实3470的独立 `/files` UI 复核已完成：桌面1440、窄屏390、PDF原文/12及17页图库/单页缩放返回关闭、DOCX只读预览通过。报告 `acceptance/20261015/evidence/ui-files-final/independent-ui-final.md`；后续平台解释窄屏浮层局部修复与独立复验见 `acceptance/20261015/tooltip-width-fix/independent-review.md`，不冒称加密PDF与该轮禁用写路径已测。
