@@ -4,7 +4,7 @@
 
 **Blocked by:** 09
 
-**Status:** **implemented**(待主代理复核)
+**Status:** done — 实现 af5d1c8 已经 ffad2e2 合入本地主线；下文实现者交接中的待 rebase / main 尚无路由为历史状态，现已失效。2026-10-15 全新流程上传复验另见票12。
 
 ## 交接(实现者 → 主代理)
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** **17**(按段建模)
 
-**Status:** ready
+**Status:** done — pipeline 88bc536 与 app 00423f8 已合入本地主线。当前正式导入从文件库21条有效来源读取，按代理已回填段元数据落库；不引入业务推断引擎。全新双入口验收由票12跟踪。
 
 ## 现状与要改什么
 
@@ -31,3 +31,7 @@
 - [ ] pipeline `vp check && vp test` 全绿。
 
 **分支**:`feat/agent-reads-uploads`。
+
+## 2026-10-15 当前验收记录
+
+本地 app 代码主线 `5be3e60e3fd94cfd37929f79f07d692decf555ee`（后续8be仅文档），pipeline `4eb396f74f4ac75738dbe47ab9f09b4e1da2a95a` 已集成；app 28文件/517测试、类型检查及生产构建通过，pipeline 9文件/144测试和check通过。正式21个有效文件、55段、21443源行已重建并用两个独立CLI进程验证五张账表hash不变。证据在项目 `acceptance/20261015/{main-integration-ancestry.json,final-ledger-run3-audit.json,final-source-fact-integrity.json,runtime-production-smoke.json}`。3470生产服务已实际验证8个MCP工具列举、文件19读取17页OCR及457行。此段补充当前证据，不将下方旧快照中每个未勾选交互项一律冒充本轮重测。全新清洗验收仍由票12单独跟踪。
