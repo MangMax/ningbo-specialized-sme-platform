@@ -4,8 +4,7 @@
 
 **Blocked by:** 09
 
-**Status:** 待**独立 oil-ui 复审**(2026-10-15)—— 已按上一轮 FIX REQUIRED 整改(触屏可开合 + 渐隐返工…),
-并**重放到当前 app main `1592b47`**;正文说明见文末三节。**我不自判通过。**
+**Status:** 独立 oil-ui 已验收（2026-10-15，`32eee081468fe53ece7ed01ae158e1fee566745a`，ACCEPTED WITH NOTES，无阻断）。已纳入最终整合分支，主分支归档见总表。
 
 ## 两接口(已实测)
 
@@ -408,3 +407,12 @@ MCP/OpenAPI/OCR token 并存):
 `tests/reconcile.test.ts`、`tests/scroll-edges.test.ts`(新)、`tests/fixtures/reconcile-explain.json`、
 `.scratch/ingest-pipeline/issues/16-platform-reconcile.md`、`…/issues/README.md`。
 **未触碰** `db/schema.ts`、`db/migrations/**`、`pages/files.vue`、`lib/stored-file.ts`。
+
+
+## 独立 UI 验收收口（2026-10-15）
+
+固定候选 `32eee081468fe53ece7ed01ae158e1fee566745a`，基线 `1592b4774e24e903152acfd06cdfae8b38028305`。独立评审逐项重算 46 份产物哈希，核对 200 项断言，查看真实触屏、深色及键盘截图，判定 **ACCEPTED WITH NOTES，无阻断**。原触屏 tooltip 阻断已关闭；没有把实现代理自评当作独立验收。
+
+剩余说明：点外关闭的独立持久证据不足，480–639px tooltip 未单独实测，部分文档旧哈希需按最终候选理解。这些为非阻断记录。平台数据沿用 2026-10-14 的真实接口缓存；本轮 UI 验收没有重新证明当前线上 cookie/接口可用性。
+
+评审任务：`ticket16-independent-ui-review-32eee08-20261015-r1`；主代理已归档完整结果。前文“未做”“待复审”是历轮记录，以本节为当前状态。

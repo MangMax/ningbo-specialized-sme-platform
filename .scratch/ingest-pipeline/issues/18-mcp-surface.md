@@ -4,7 +4,7 @@
 
 **Blocked by:** 09、17(表在)、13(渲染在)
 
-**Status:** ready
+**Status:** done（8 个文件域工具已合入；2026-10-15 在 3470 上以鉴权请求重新确认 tools/list）。
 
 ## 为什么(用户 2026-10-14 指出)
 
@@ -14,7 +14,7 @@
 |---|---|
 | **`@nuxtjs/mcp-toolkit` v0.24.2** | ✅ 官方;`server/mcp/tools/*.ts` + `defineMcpTool`(Zod `inputSchema`、`annotations.readOnlyHint`、`cache`)、resources/prompts、**鉴权中间件**、DevTools 检查器。**声明式 —— 不会自动把 Nitro 路由变成 tool**,每个能力写一个文件。 |
 | `nuxt-mcp`(antfu) | ❌ 定位是「帮模型理解你的 app」,非业务能力。 |
-| **OpenAPI 生成** | ❌ **无成熟模块**(`nuxt-openapi` 是占位空包;`@scalar/nuxt` 只渲染已有 spec)。**本期不做 OpenAPI** —— 页面直调自己的 Nitro 路由即可,代理走 MCP。 |
+| **OpenAPI 生成** | ❌ **无成熟模块**(`nuxt-openapi` 是占位空包;`@scalar/nuxt` 只渲染已有 spec)。本票只提供 MCP 补充入口；后续票 19 已交付 Nitro 内建 OpenAPI 与 HTTP 主入口。 |
 
 ## 要暴露的能力(只列代理真用得上的)
 
