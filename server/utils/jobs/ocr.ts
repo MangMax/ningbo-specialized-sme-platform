@@ -4,9 +4,18 @@ import { findFileIdByRelPath } from '../mcp-files'
 import {
   MAX_CONCURRENT_PADDLE_JOBS,
   ocrImageFile,
+  ocrRequestVariant,
   resolveOcrConfig,
   type OcrPageOut,
 } from '../ocr-api'
+import {
+  OCR_PAGE_CACHE_VERSION,
+  ocrPageCacheDirAbs,
+  ocrPageCacheKey,
+  readOcrPageCache,
+  sha256OfFile,
+  writeOcrPageCache,
+} from '../ocr-page-cache'
 import { writeOcrResult } from '../ocr-result'
 import { listPdfPages, resolveWithinRoot, type PageImageRef } from '../pdf-pages'
 
@@ -24,6 +33,17 @@ import { listPdfPages, resolveWithinRoot, type PageImageRef } from '../pdf-pages
  * ── 取消检查 ───────────────────────────────────────────────────────────
  * 每张 PNG 轮询时都检查取消标记;取消后页池不再启动新请求,已完成的整份 PDF 才会保留。
  * 结果只在一份 PDF 的所有页成功后替换,因此取消或单页失败不会留下半份新结果。
+ *
+ * ── 成功页中转(断点续跑)──────────────────────────────────────────────
+ * 每一页**一识别成功**就把结果写进该 PDF 自己的页结果缓存
+ * (`ocr-page-cache.ts`,落在页图目录下的 `.ocr-cache/`),不等全份跑完。这样:
+ *  - 一份里部分页失败(典型是 Paddle 的 HTTP 429,而 4xx **不自动重试**)时,跑成功
+ *    的那些页不再随内存一起丢 —— 它们已经在缓存里,**重跑只补缺失/失败的那几页**;
+ *  - `ocr_result` 的写法**一点没变**:仍是一份全成功才在单个事务里整份替换
+ *    (`replaceExistingPages`),所以「部分成功」**不会**在正式结果里留下半份新数据
+ *    —— 缓存只是中转,不是结果。
+ * 命中判据是页图内容 sha256 + 模型 + 有效选项指纹(见 `ocr-page-cache.ts`),所以换了
+ * 页图、换了模型、换了影响识别结果的选项,旧条目自然不再命中;坏条目当未命中重识别。
  */
 
 /** 一份文件的识别结果。`ok` 是判据。 */
@@ -37,6 +57,12 @@ export type OcrFileOutcome =
       pages: number
       /** 票 13 已渲染的页图数;没渲染过是 0。 */
       renderedPageImages: number
+      /**
+       * 本次**由成功页中转命中**(没再发给 Paddle)的页数。
+       * `renderedPageImages - cachedPages` 就是这次真正提交出去的页数 ——
+       * 「重跑只补失败页」的直接证据。
+       */
+      cachedPages: number
       engine: string
       model: string
       /** 每张页图一个 Paddle job,按源页码顺序排列。 */
@@ -177,8 +203,10 @@ async function currentPageImages(filesDir: string, relPath: string): Promise<Pag
  * 因为第 2 份坏了就撂下第 3–7 份,等于把「哪几份坏了」换成「任务失败」。
  * 有任意一份失败 ⇒ 状态记 `failed`,明细仍在 `result.files[]` 里。
  *
- * **取消**走 `{ cancelled: true }` 并带已完成文件的产出。当前 PDF 的页结果先缓存在内存,
- * 全页成功后才在单个事务里替换旧结果;中途失败或取消不会留下半份新 OCR。
+ * **取消**走 `{ cancelled: true }` 并带已完成文件的产出。一份 PDF 的页结果在内存里攒齐,
+ * 每页成功时**同时**中转进 `ocr-page-cache`;只有全页齐了才在单个事务里整份替换旧结果,
+ * 所以中途失败或取消**不会**在正式结果里留下半份新 OCR,而**重跑只补缺失页**
+ * (成功页从中转里拿,不再发给 Paddle)。
  */
 export async function runOcr(
   ctx: JobContext,
@@ -218,10 +246,15 @@ export async function runOcr(
         )
       }
       const images = await currentPageImages(ctx.filesDir, file)
+      const effectiveModel = model ?? config.model
+      // 命中判据里除页图内容之外的那一半:模型 + 影响识别结果的有效选项。
+      const variant = ocrRequestVariant(effectiveModel)
+      const cacheDir = ocrPageCacheDirAbs(ctx.filesDir, file)
       const startedAt = Date.now()
       const pageResults: Array<OcrPageOut | undefined> = Array.from({ length: images.length })
       const apiJobIds: Array<string | undefined> = Array.from({ length: images.length })
       const pageErrors: Array<string | undefined> = Array.from({ length: images.length })
+      let cachedPages = 0
       let nextIndex = 0
 
       const recognizeNextPages = async (): Promise<void> => {
@@ -231,18 +264,41 @@ export async function runOcr(
           if (index >= images.length) return
           const image = images[index]!
           try {
+            const imagePath = resolveWithinRoot(ctx.filesDir, image.relPath)
+            const imageSha256 = await sha256OfFile(imagePath)
+            const cacheKey = ocrPageCacheKey(imageSha256, variant)
+            // 先问中转:这一页的页图 + 模型 + 选项都跟上次一样时,直接用上次那页的结果,
+            // 不再花钱、也不再打一次容易被限流的提交。
+            const cached = await readOcrPageCache(cacheDir, cacheKey, { imageSha256, variant })
+            if (cached) {
+              pageResults[index] = { page: image.page, markdown: cached.markdown, raw: cached.raw }
+              apiJobIds[index] = cached.jobId
+              cachedPages += 1
+              continue
+            }
             const out = await ocrImageFile({
               token: config.token,
               baseUrl: config.baseUrl,
-              model: model ?? config.model,
+              model: effectiveModel,
               pollTimeoutMs: config.pollTimeoutMs,
-              filePath: resolveWithinRoot(ctx.filesDir, image.relPath),
+              filePath: imagePath,
               fileName: image.relPath.split('/').pop(),
               isCancelled: () => ctx.cancelled(),
             })
             // Paddle 没有源文档页码;这里由清单中的本地页号绑定,不从 OCR 文本猜页码。
             pageResults[index] = { ...out.page, page: image.page }
             apiJobIds[index] = out.jobId
+            // 成功即中转,不等全份:整份失败/取消时这一页也不会白识别。
+            await writeOcrPageCache(cacheDir, cacheKey, {
+              version: OCR_PAGE_CACHE_VERSION,
+              imageSha256,
+              variant,
+              jobId: out.jobId,
+              model: out.model,
+              markdown: out.page.markdown,
+              raw: out.page.raw,
+              createdAt: new Date().toISOString(),
+            })
           } catch (error) {
             if (ctx.cancelled()) return
             pageErrors[index] = `第 ${image.page} 页 OCR 失败:${(error as Error).message}`
@@ -267,15 +323,16 @@ export async function runOcr(
       }
       if (ctx.cancelled()) return null
 
-      persistPages(ctx, fileId, file, completePages, model ?? config.model)
+      persistPages(ctx, fileId, file, completePages, effectiveModel)
       return {
         file,
         ok: true,
         fileId,
         pages: completePages.length,
         renderedPageImages: images.length,
+        cachedPages,
         engine: 'paddleocr',
-        model: model ?? config.model,
+        model: effectiveModel,
         apiJobIds: completeJobIds,
         elapsedMs: Date.now() - startedAt,
       }
@@ -310,7 +367,9 @@ export async function runOcr(
 export const ocrSpec: JobSpec = {
   kind: 'ocr',
   status: 'ready',
-  summary: '先渲染并增强 PDF 页图,并发提交单页 PNG 给 PaddleOCR,按源页码完整入库到 ocr_result',
+  summary:
+    '先渲染并增强 PDF 页图,并发提交单页 PNG 给 PaddleOCR,按源页码完整入库到 ocr_result;' +
+    '成功页中转缓存,部分失败后重跑只补缺失页',
   paramsHint:
     '{ files: string[](相对文件库根的 PDF 路径,非空;须先生成完整且至少 300 DPI 页图), model?: string }',
   parse: parseOcrParams,

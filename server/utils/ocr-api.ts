@@ -23,6 +23,8 @@
  * 同名的那颗 `PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN`。仓库里只有 `.env.example` 的占位名。
  */
 
+import { createHash } from 'node:crypto'
+
 /** AIStudio 的 PaddleOCR 服务地址(SDK 里的 `DEFAULT_BASE_URL`,不是猜的)。 */
 export const OCR_BASE_URL = 'https://paddleocr.aistudio-app.com'
 
@@ -64,6 +66,28 @@ export const DEFAULT_OCR_OPTIONAL_PAYLOAD = {
   layoutNms: true,
   restructurePages: true,
 } as const
+
+/**
+ * **影响识别结果的有效选项指纹** —— 模型 + 实际提交的 `optionalPayload`。
+ *
+ * 这是「输入相同 ⇒ 结果相同」的判据里,除了页图内容之外的那一半(页图内容由调用方
+ * 自己按 sha256 判,见 `ocr-page-cache.ts`)。它必须与 `ocrImageFileAttempt` 真正发出去的
+ * 那两个字段**同源**:`model` 直接进来,payload 就是下面这个常量本身 —— 所以改了
+ * `DEFAULT_OCR_OPTIONAL_PAYLOAD`(如换 temperature、开 chartRecognition),指纹自动变,
+ * 旧的页结果缓存立刻不再命中,**不需要谁记得去清缓存**。
+ *
+ * `payload` 参数只为测试留一个口子(生产路径从不传):用来断言「选项变了 ⇒ 指纹变了」。
+ * 默认值就是真发出去的那份,所以给不给都一样。
+ */
+export function ocrRequestVariant(
+  model: string,
+  payload: unknown = DEFAULT_OCR_OPTIONAL_PAYLOAD,
+): string {
+  return createHash('sha256')
+    .update(`${model}\u0000${JSON.stringify(payload)}`)
+    .digest('hex')
+    .slice(0, 32)
+}
 
 /** 轮询间隔(毫秒)。API 是分钟级的活,2 秒一次足够且不至于把服务问烦。 */
 export const DEFAULT_POLL_INTERVAL_MS = 2000

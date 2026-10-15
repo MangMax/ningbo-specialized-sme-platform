@@ -1,11 +1,17 @@
 import { mkdtempSync, rmSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { parseOcrParams, runOcr } from '../server/utils/jobs/ocr'
 import { listOcrResults, writeOcrResult } from '../server/utils/ocr-result'
-import { pagesFromJsonl, resolveOcrConfig } from '../server/utils/ocr-api'
+import {
+  DEFAULT_OCR_OPTIONAL_PAYLOAD,
+  ocrRequestVariant,
+  pagesFromJsonl,
+  resolveOcrConfig,
+} from '../server/utils/ocr-api'
+import { ocrPageCacheDirAbs, ocrPageCacheKey } from '../server/utils/ocr-page-cache'
 import { DEFAULT_DPI } from '../lib/pdf-page'
 import { renderPdfPages } from '../server/utils/pdf-pages'
 import { minimalPdf } from './helpers/minimal-pdf'
@@ -50,6 +56,10 @@ afterAll(() => {
 beforeEach(async () => {
   db.delete(schema.ocrResult).run()
   db.delete(schema.storedFile).run()
+  // 页图与「成功页中转」都是派生缓存,会留在盘上跨用例。不清的话,后面某个用例
+  // 会用前面同一张页图 + 同一模型命中缓存 —— 于是它一次都不提交,断言全是假的。
+  await rm(filesDir, { recursive: true, force: true })
+  await mkdir(filesDir, { recursive: true })
   // token 与地址都从环境变量读(见 `resolveOcrConfig`)—— 测试不碰真服务。
   process.env.PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN = 'test-token'
   delete process.env.NUXT_OCR_TOKEN
@@ -432,5 +442,263 @@ describe('ocr-api 的纯解析件', () => {
       for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k]
       Object.assign(process.env, saved)
     }
+  })
+})
+
+/**
+ * 票 14 断点续跑 —— **成功页中转**(`server/utils/ocr-page-cache.ts`)。
+ *
+ * 实证的故障:并发提交时 Paddle 会回 HTTP 429,而 4xx **不自动重试**;`runOcr` 原本把
+ * 成功页只留在内存、`persistPages` 只在全页成功时跑一次,于是「12 页成功 7 页、5 页 429」
+ * 的下一步是**整份重跑、把那 7 页再发一遍** —— 而重跑正是最容易再次限流的动作。
+ *
+ * 下面用本地假服务在**真实的 PNG 边界**上验四件事:
+ *  1. 部分失败时正式库(`ocr_result`)**不半份替换**,成功页进中转;
+ *  2. **重跑只请求失败页**,补齐后整份**原子写入**(页码 / 内容 / 模型 / raw 都对);
+ *  3. 页图内容、模型、影响识别结果的有效选项任一变了 ⇒ 中转失效,整份重识别;
+ *  4. 取消不留半份结果;缓存条目损坏当未命中重识别。
+ */
+describe('成功页中转:部分失败后重跑只补失败页', () => {
+  const pages = ['第一页正文', '第二页正文', '第三页正文']
+
+  /** 一份 PDF 的中转里现有多少条有效条目(没有目录就是 0)。 */
+  async function cacheFileCount(relPath: string): Promise<number> {
+    try {
+      const names = await readdir(ocrPageCacheDirAbs(filesDir, relPath))
+      return names.filter((n) => n.endsWith('.json')).length
+    } catch {
+      return 0
+    }
+  }
+
+  it('★ 部分成功一页失败:正式库不半份替换,成功页进中转,重跑只请求失败页', async () => {
+    const rel = 'jxj/announcement/2024/1/续跑.pdf'
+    const fileId = await seedPdf(rel, 3)
+    await renderPdfPages(filesDir, rel, { dpi: DEFAULT_DPI })
+    // 上一版整份结果:部分失败时必须**原样保留**,不能被半份新结果替掉。
+    writeOcrResult(db, {
+      fileId,
+      pages: [
+        { page: 1, markdown: '上一版第一页' },
+        { page: 5, markdown: '上一版残留页' },
+      ],
+      channel: 'upload',
+    })
+
+    // 第 1 轮:第 2 页失败(模拟 Paddle 429),第 1、3 页成功。
+    api = await startMiniOcrApi({
+      pages,
+      failOnPage: { page: 2, message: '请求频率过高，请稍后重试' },
+    })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const parsed = parseOcrParams({ files: [rel] })
+    if (!parsed.ok) throw new Error('参数本应通过')
+    const first = await runOcr(ctxOf().ctx, parsed.params)
+
+    expect(first.error).toContain('1 份里 1 份识别失败')
+    const firstFiles = (first.result as { files: Array<{ ok: boolean; error?: string }> }).files
+    expect(firstFiles[0]!.ok).toBe(false)
+    expect(firstFiles[0]!.error).toContain('第 2 页 OCR 失败')
+    // ① 正式库**没有被半份替换**:上一版两页一个字节都没动。
+    expect(listOcrResults(db, fileId).map((r) => [r.page, r.markdown])).toEqual([
+      [1, '上一版第一页'],
+      [5, '上一版残留页'],
+    ])
+    // ② 成功的那两页已经进了中转 —— 不等全份成功。
+    expect(await cacheFileCount(rel)).toBe(2)
+
+    // 第 2 轮:换一个「服务正常」的假服务,它只该收到**失败的那一页**。
+    await api.close()
+    api = await startMiniOcrApi({ pages })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const second = await runOcr(ctxOf().ctx, parsed.params)
+
+    expect(second.error).toBeUndefined()
+    expect(api.stats.submits).toBe(1)
+    expect(api.stats.pngUploads).toBe(1)
+    expect((second.result as { files: Array<Record<string, unknown>> }).files[0]).toMatchObject({
+      ok: true,
+      pages: 3,
+      renderedPageImages: 3,
+      cachedPages: 2,
+    })
+
+    // ③ 补齐之后是**整份原子写入**:页码 1..3、内容、模型、raw 都对,旧的第 5 页被清掉。
+    const rows = db
+      .select()
+      .from(schema.ocrResult)
+      .all()
+      .sort((a, b) => a.pageNo - b.pageNo)
+    expect(rows.map((r) => r.pageNo)).toEqual([1, 2, 3])
+    expect(rows.map((r) => r.markdown)).toEqual(pages)
+    expect(rows.every((r) => r.model === 'PaddleOCR-VL-1.6')).toBe(true)
+    expect(rows.every((r) => r.channel === 'api')).toBe(true)
+    expect(rows.every((r) => r.raw !== null && r.raw !== undefined)).toBe(true)
+  }, 60_000)
+
+  it('★ 同一份再跑一次:全命中,零提交,结果照旧整份写入', async () => {
+    const rel = 'jxj/announcement/2024/1/全命中.pdf'
+    const fileId = await seedPdf(rel, 2)
+    await renderPdfPages(filesDir, rel, { dpi: DEFAULT_DPI })
+    api = await startMiniOcrApi({ pages })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const parsed = parseOcrParams({ files: [rel] })
+    if (!parsed.ok) throw new Error('参数本应通过')
+    expect((await runOcr(ctxOf().ctx, parsed.params)).error).toBeUndefined()
+    expect(api.stats.submits).toBe(2)
+    await api.close()
+
+    api = await startMiniOcrApi({ pages })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const again = await runOcr(ctxOf().ctx, parsed.params)
+    expect(again.error).toBeUndefined()
+    expect(api.stats.submits).toBe(0)
+    expect((again.result as { files: Array<Record<string, unknown>> }).files[0]).toMatchObject({
+      ok: true,
+      pages: 2,
+      cachedPages: 2,
+    })
+    expect(listOcrResults(db, fileId).map((r) => [r.page, r.markdown])).toEqual([
+      [1, pages[0]],
+      [2, pages[1]],
+    ])
+  }, 60_000)
+
+  it('★ 页图内容变了(重渲染到另一分辨率)⇒ 中转不命中,整份重识别', async () => {
+    const rel = 'jxj/announcement/2024/1/换图.pdf'
+    const fileId = await seedPdf(rel, 2)
+    await renderPdfPages(filesDir, rel, { dpi: DEFAULT_DPI })
+    api = await startMiniOcrApi({ pages })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const parsed = parseOcrParams({ files: [rel] })
+    if (!parsed.ok) throw new Error('参数本应通过')
+    expect((await runOcr(ctxOf().ctx, parsed.params)).error).toBeUndefined()
+    expect(api.stats.submits).toBe(2)
+    await api.close()
+
+    // 换分辨率重渲染 ⇒ 页图字节变了 ⇒ sha256 变了 ⇒ 旧条目不再是同一页。
+    await renderPdfPages(filesDir, rel, { dpi: 400 })
+    api = await startMiniOcrApi({ pages })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const again = await runOcr(ctxOf().ctx, parsed.params)
+    expect(again.error).toBeUndefined()
+    expect(api.stats.submits).toBe(2)
+    expect((again.result as { files: Array<{ cachedPages: number }> }).files[0]!.cachedPages).toBe(0)
+    expect(listOcrResults(db, fileId).map((r) => r.page)).toEqual([1, 2])
+  }, 60_000)
+
+  it('★ 换模型 ⇒ 中转不命中,整份重识别;换回原模型仍命中', async () => {
+    const rel = 'jxj/announcement/2024/1/换模型.pdf'
+    const fileId = await seedPdf(rel, 2)
+    await renderPdfPages(filesDir, rel, { dpi: DEFAULT_DPI })
+    const parsed = parseOcrParams({ files: [rel] })
+    if (!parsed.ok) throw new Error('参数本应通过')
+
+    api = await startMiniOcrApi({ pages, expectModel: 'PaddleOCR-VL-1.6' })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    expect((await runOcr(ctxOf().ctx, parsed.params)).error).toBeUndefined()
+    expect(api.stats.submits).toBe(2)
+    await api.close()
+
+    // 换模型:同一张页图,另一个模型可能给出不同结果 ⇒ 必须重识别。
+    const alt = parseOcrParams({ files: [rel], model: 'Other-VL-9' })
+    if (!alt.ok) throw new Error('参数本应通过')
+    api = await startMiniOcrApi({ pages, expectModel: 'Other-VL-9' })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const swapped = await runOcr(ctxOf().ctx, alt.params)
+    expect(swapped.error).toBeUndefined()
+    expect(api.stats.submits).toBe(2)
+    expect(db.select().from(schema.ocrResult).all().every((r) => r.model === 'Other-VL-9')).toBe(true)
+    await api.close()
+
+    // 换回原模型:原模型那批中转还在 ⇒ 一次都不提交。
+    api = await startMiniOcrApi({ pages, expectModel: 'PaddleOCR-VL-1.6' })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const back = await runOcr(ctxOf().ctx, parsed.params)
+    expect(back.error).toBeUndefined()
+    expect(api.stats.submits).toBe(0)
+    expect((back.result as { files: Array<{ cachedPages: number }> }).files[0]!.cachedPages).toBe(2)
+    expect(listOcrResults(db, fileId)).toHaveLength(2)
+    expect(db.select().from(schema.ocrResult).all().every((r) => r.model === 'PaddleOCR-VL-1.6')).toBe(true)
+  }, 60_000)
+
+  it('★ 取消:不写半份结果、不动上一版,且之后仍能续跑补齐', async () => {
+    const rel = 'jxj/announcement/2024/1/取消.pdf'
+    const fileId = await seedPdf(rel, 3)
+    await renderPdfPages(filesDir, rel, { dpi: DEFAULT_DPI })
+    writeOcrResult(db, { fileId, pages: [{ page: 1, markdown: '上一版' }], channel: 'upload' })
+
+    let cancel = false
+    api = await startMiniOcrApi({
+      pages,
+      // 第一张 PNG 一提交就请求取消 —— 之后页池不再启动新请求。
+      onSubmit: () => {
+        cancel = true
+      },
+    })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const parsed = parseOcrParams({ files: [rel] })
+    if (!parsed.ok) throw new Error('参数本应通过')
+    const completion = await runOcr(ctxOf({ cancelled: () => cancel }).ctx, parsed.params)
+
+    expect(completion.cancelled).toBe(true)
+    expect((completion.result as { done?: number }).done).toBe(0)
+    // 正式库:上一版原样保留,没有半份新结果。
+    expect(listOcrResults(db, fileId).map((r) => [r.page, r.markdown])).toEqual([[1, '上一版']])
+
+    // 取消不留死结:再跑一次(不取消)照样整份补齐。
+    await api.close()
+    api = await startMiniOcrApi({ pages })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const resumed = await runOcr(ctxOf().ctx, parsed.params)
+    expect(resumed.error).toBeUndefined()
+    expect(listOcrResults(db, fileId).map((r) => r.page)).toEqual([1, 2, 3])
+  }, 60_000)
+
+  it('★ 缓存条目损坏 ⇒ 当未命中重识别,不把坏数据当结果', async () => {
+    const rel = 'jxj/announcement/2024/1/坏缓存.pdf'
+    const fileId = await seedPdf(rel, 3)
+    await renderPdfPages(filesDir, rel, { dpi: DEFAULT_DPI })
+    api = await startMiniOcrApi({ pages })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const parsed = parseOcrParams({ files: [rel] })
+    if (!parsed.ok) throw new Error('参数本应通过')
+    expect((await runOcr(ctxOf().ctx, parsed.params)).error).toBeUndefined()
+    expect(api.stats.submits).toBe(3)
+    await api.close()
+
+    // 弄坏**其中一条**:坏的那页必须重识别,好的两页照旧命中。
+    const cacheDir = ocrPageCacheDirAbs(filesDir, rel)
+    const entries = (await readdir(cacheDir)).filter((n) => n.endsWith('.json'))
+    expect(entries).toHaveLength(3)
+    await writeFile(join(cacheDir, entries[0]!), '{ 这不是 JSON')
+
+    api = await startMiniOcrApi({ pages })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const again = await runOcr(ctxOf().ctx, parsed.params)
+    expect(again.error).toBeUndefined()
+    expect(api.stats.submits).toBe(1)
+    expect((again.result as { files: Array<{ cachedPages: number }> }).files[0]!.cachedPages).toBe(2)
+    expect(listOcrResults(db, fileId).map((r) => [r.page, r.markdown])).toEqual(
+      pages.map((markdown, i) => [i + 1, markdown]),
+    )
+  }, 60_000)
+})
+
+describe('中转命中判据(纯函数)', () => {
+  it('ocrRequestVariant:同模型同选项稳定;模型或有效选项变则指纹变', () => {
+    expect(ocrRequestVariant('m')).toBe(ocrRequestVariant('m'))
+    expect(ocrRequestVariant('m')).not.toBe(ocrRequestVariant('m2'))
+    // 「影响 OCR 的选项」就是实际发出的 optionalPayload —— 它一变,指纹必须变。
+    const tweaked = { ...DEFAULT_OCR_OPTIONAL_PAYLOAD, temperature: 0.2 }
+    expect(ocrRequestVariant('m')).not.toBe(ocrRequestVariant('m', tweaked))
+  })
+
+  it('ocrPageCacheKey:页图哈希或指纹任一不同 ⇒ key 不同', () => {
+    const a = 'a'.repeat(64)
+    const b = 'b'.repeat(64)
+    expect(ocrPageCacheKey(a, 'v')).toBe(ocrPageCacheKey(a, 'v'))
+    expect(ocrPageCacheKey(a, 'v')).not.toBe(ocrPageCacheKey(b, 'v'))
+    expect(ocrPageCacheKey(a, 'v')).not.toBe(ocrPageCacheKey(a, 'v2'))
   })
 })
