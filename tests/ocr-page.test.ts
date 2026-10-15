@@ -34,9 +34,22 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-/** 一份「页图现状」:页数 1、没渲染过 —— 行的页码由 `pageCount` 铺出来。 */
-function pagesState(file: string) {
-  return { file, pageCount: 1, dpi: 200, rendered: 0, upToDate: false, pages: [], manifest: null }
+/** 一份「页图现状」:没渲染过 —— 行的页码由 `pageCount` 铺出来(行数因此能当「显示的是谁」的判据)。 */
+function pagesState(file: string, pageCount = 1) {
+  return { file, pageCount, dpi: 200, rendered: 0, upToDate: false, pages: [], manifest: null }
+}
+
+/** 一次渲染的产出(`RenderOutcome` = 页图现状 + 本次写入统计)。 */
+function renderOutcome(file: string, pageCount: number) {
+  return {
+    ...pagesState(file, pageCount),
+    rendered: pageCount,
+    upToDate: true,
+    written: pageCount,
+    skipped: 0,
+    removed: 0,
+    elapsedMs: 12,
+  }
 }
 
 /** 一份「OCR 结果清单」。`markdown` 省略即模拟「正文那一半没读回来」。 */
@@ -67,6 +80,8 @@ interface Harness {
   pdf: Map<string, ReturnType<typeof deferred<unknown>>>
   /** 按 `file` 查询取得该文件的「结果清单」回包控制器。 */
   ocr: Map<string, ReturnType<typeof deferred<unknown>>>
+  /** 按 `file` 取得该文件**渲染**回包(`POST /api/pdf-pages`)的控制器。 */
+  render: Map<string, ReturnType<typeof deferred<unknown>>>
   wrapper: ReturnType<typeof mount>
 }
 
@@ -74,8 +89,15 @@ interface Harness {
 async function mountPage(): Promise<Harness> {
   const pdf = new Map<string, ReturnType<typeof deferred<unknown>>>()
   const ocr = new Map<string, ReturnType<typeof deferred<unknown>>>()
-  const fetchMock = vi.fn((url: string, opts?: { query?: Record<string, unknown> }) => {
+  const render = new Map<string, ReturnType<typeof deferred<unknown>>>()
+  const fetchMock = vi.fn((url: string, opts?: { query?: Record<string, unknown>; method?: string; body?: { file?: string } }) => {
     if (url === '/api/files') return Promise.resolve({ rows: [FILE_A, FILE_B], total: 2 })
+    // 渲染走 POST,页图现状走 GET —— 分开挂起,才能构造「渲染在飞时切文件」。
+    if (url === '/api/pdf-pages' && opts?.method === 'POST') {
+      const gate = deferred<unknown>()
+      render.set(String(opts.body?.file ?? ''), gate)
+      return gate.promise
+    }
     const file = String(opts?.query?.file ?? '')
     if (url === '/api/pdf-pages') {
       const gate = deferred<unknown>()
@@ -98,7 +120,7 @@ async function mountPage(): Promise<Harness> {
     },
   })
   await flushPromises()
-  return { fetchMock, pdf, ocr, wrapper }
+  return { fetchMock, pdf, ocr, render, wrapper }
 }
 
 /** 左栏里点某一份文件。 */
@@ -176,6 +198,49 @@ describe('B1 竞态:晚到的回包不许灌进新选的页面', () => {
     const fileButtons = wrapper.findAll('li button').filter((b) => b.text().includes('.pdf'))
     expect(fileButtons.length).toBeGreaterThan(0)
     for (const button of fileButtons) expect(button.attributes('disabled')).toBeDefined()
+  })
+})
+
+/**
+ * R1(B1 同类,只影响**显示**):`renderPageImages` 也是「发起时取一次路径、await 后无条件赋值」。
+ *
+ * 渲染一份 50 页的扫描件要好几秒,期间切到另一份文件完全正常;A 的回包晚到时,
+ * `pagesState` 被换成 A 的 ⇒ 右栏在 **B 的文件名下列出 A 的页数与 A 的页图**,
+ * 「图对着文本看」这个前提当场作废。这里让两份文件的**页数不同**,行数就是
+ * 「显示的是谁」的判据:晚到后仍必须是 B 的 3 行,而不是 A 的 1 行。
+ */
+describe('R1 渲染回包:晚到也不许换掉页图', () => {
+  it('★ 渲染 A 期间切到 B,A 的渲染结果晚到后页面仍是 B', async () => {
+    harness = await mountPage()
+    const { wrapper, pdf, ocr, render } = harness
+
+    await selectFile(wrapper, 'A-慢')
+    pdf.get(FILE_A.relPath)!.resolve(pagesState(FILE_A.relPath, 1))
+    ocr.get(FILE_A.relPath)!.resolve(ocrList(FILE_A.relPath, 'A 的第一页正文'))
+    await flushPromises()
+    expect(rows(wrapper)).toHaveLength(1)
+
+    // 点「渲染页图」:POST 挂着不回(模拟几秒的渲染)
+    const renderButton = wrapper.findAll('button').find((b) => b.text().includes('渲染页图'))
+    expect(renderButton, '未渲染时应给出「渲染页图」').toBeTruthy()
+    await renderButton!.trigger('click')
+    await flushPromises()
+
+    // 渲染在飞时切到 B —— 不冻结切换(一次渲染几秒,锁住切换比丢回包更糟)
+    await selectFile(wrapper, 'B-快')
+    pdf.get(FILE_B.relPath)!.resolve(pagesState(FILE_B.relPath, 3))
+    ocr.get(FILE_B.relPath)!.resolve(ocrList(FILE_B.relPath, 'B 的第一页正文'))
+    await flushPromises()
+    expect(rows(wrapper)).toHaveLength(3)
+
+    // A 的渲染回包晚到
+    render.get(FILE_A.relPath)!.resolve(renderOutcome(FILE_A.relPath, 1))
+    await flushPromises()
+
+    // 旧实现:pagesState 被换成 A 的(pageCount 1)⇒ 只剩 1 行
+    expect(rows(wrapper)).toHaveLength(3)
+    expect(wrapper.text()).toContain('B 的第一页正文')
+    expect(wrapper.text()).not.toContain('A 的第一页正文')
   })
 })
 
