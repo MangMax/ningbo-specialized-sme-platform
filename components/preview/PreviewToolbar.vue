@@ -241,10 +241,13 @@ const ACTION_BTN = 'text-muted-foreground hover:text-foreground'
         为什么是 opt-in 而不是工具栏自己按断点分叉:`fit-width` 的语义由**调用方**定 ——
         Office 预览把它实现为**适宽**(不是 100%),替它发 `fit-width` 等于改了它的窄屏行为。
         宽度是**内容自适应 + `px-1`**(宽屏才钉 `sm:w-11`),让「100%」这类三位数也排得下。
+        高度取 `min-h-8`(32px):这颗按钮在窄屏是**唯一**的缩放控件,得能被手指点到 ——
+        只按 `text-xs` 的行高算,可点框只有 **16px 高**(实测 34×16),比旁边的 ± / 关闭
+        (`icon-sm` = 32×32)矮一半。`flex items-center justify-center` 只为把这行字在 32px 里居中。
       -->
       <button
         type="button"
-        class="text-muted-foreground hover:text-foreground focus-visible:ring-ring shrink-0 rounded-sm px-1 text-center text-xs tabular-nums transition-colors focus-visible:ring-3 focus-visible:outline-none sm:w-11"
+        class="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex min-h-8 shrink-0 items-center justify-center rounded-sm px-1 text-center text-xs tabular-nums transition-colors focus-visible:ring-3 focus-visible:outline-none sm:w-11"
         :aria-label="zoomResetLabel"
         :title="zoomResetLabel"
         @click="resetToFit ? emit('fit-width') : emit('update:zoom', 1)"
