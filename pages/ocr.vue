@@ -218,6 +218,19 @@ const visibleRows = computed(() =>
   onlyPending.value ? rows.value.filter((r) => pageReviewState(r.result) === 'none') : rows.value,
 )
 
+/**
+ * 现在能不能导入。
+ *
+ * 判据与三个写口同一条(`writeTarget()`):右栏内容必须**已经装载完成且属于当前选中**。
+ * 装载在飞(刚点选文件、正文还在路上)与「读不到这份文件的结果」这两种状态下
+ * `loadedPath` 是空的 —— 此时导入**本来就发不出去**,必须让按钮**看得出不能点**,
+ * 而不是点完什么也不发生(独立代码审核 R4:那两种状态恰恰是用户最想去点它的时候)。
+ */
+const canImport = computed(() => writeTarget() !== null)
+
+/** 导入入口不可用时的说明(`disabled` 的按钮不会自己解释原因)。 */
+const IMPORT_NOT_READY = '这份文件还没读好(或读不到结果),读到了才能导入。'
+
 /** 上一次跳到过哪一页。`null` = 还没跳过,第一跳按**位置**挑。 */
 const pendingCursor = ref<number | null>(null)
 
@@ -414,6 +427,11 @@ watch(selectedPath, (next) => {
   // 在 A 上导入成功后切到 B,弹窗里还写着 A 的「已写入 12 页…」)。
   importFailure.value = ''
   importResult.value = ''
+  // 行级的两个残留也属于上一份文件:`OcrPageRow` 只按**页码**认领它们
+  // (`rowFailure?.page === row.page`),不清就会让 A 第 3 页的报错/高亮
+  // 出现在 B 的第 3 页上(独立代码审核 R3)。
+  rowFailure.value = null
+  justSaved.value = null
   if (next) void loadDetail(next)
 })
 
@@ -517,6 +535,14 @@ async function renderPageImages() {
   status.value = null
   try {
     const out = await api<RenderOutcome>('/api/pdf-pages', { method: 'POST', body: { file: relPath } })
+    // **同一个目标守卫**(B1 在 `loadDetail` 上用的是同一条):渲染 50 页要好几秒,
+    // 期间用户完全可能切到另一份文件。晚到的回包把 `pagesState` 换成 A 的,
+    // 右栏就会在 **B 的文件名下列出 A 的页数与 A 的页图** —— 校对的前提(图对着文本)
+    // 当场被破坏(独立代码审核 R1)。
+    //
+    // **不**用「渲染在飞就冻结切换」来堵:`rendering` 算进 `writeBusy` 会让一次几秒的
+    // 渲染把文件切换锁死,而丢掉一个晚到的回包本来就够了。
+    if (relPath !== selectedPath.value) return
     pagesState.value = out
     status.value = {
       tone: 'ok',
@@ -526,8 +552,12 @@ async function renderPageImages() {
           : `已渲染 ${out.written} 页页图。`,
     }
   } catch (error) {
+    // 失败回包同样守:否则「A 渲染失败」会挂在 B 的状态条上。
+    if (relPath !== selectedPath.value) return
     status.value = { tone: 'error', message: describeFetchError(error, '渲染失败。') }
   } finally {
+    // `rendering` 不按目标收:它答的是「有没有渲染在飞」(全局只有一次),
+    // 这次渲染确实结束了;不收会让按钮永远转着。
     rendering.value = false
   }
 }
@@ -548,8 +578,14 @@ const importResult = ref('')
 const writeBusy = computed(() => pendingPage.value !== null || importPending.value)
 
 async function runImport(payload: { jsonl: string } | { markdown: string; page: number | null }) {
+  // 正在导入时重复提交静默忽略(按钮也是 disabled 的);**读不到目标则必须说出来** ——
+  // 这条路以前是「点了没反应」,而它恰恰出现在「读不到结果」那个空状态里。
+  if (importPending.value) return
   const relPath = writeTarget()
-  if (!relPath || importPending.value) return
+  if (!relPath) {
+    importFailure.value = IMPORT_NOT_READY
+    return
+  }
   importPending.value = true
   importFailure.value = ''
   importResult.value = ''
@@ -754,7 +790,12 @@ async function refreshAll() {
                   <Loader2 v-if="rendering" class="animate-spin" />
                   {{ rendering ? '渲染中…' : '渲染页图' }}
                 </Button>
-                <Button size="sm" @click="importOpen = true">
+                <Button
+                  size="sm"
+                  :disabled="!canImport"
+                  :title="canImport ? undefined : IMPORT_NOT_READY"
+                  @click="importOpen = true"
+                >
                   <Upload />
                   导入结果
                 </Button>
