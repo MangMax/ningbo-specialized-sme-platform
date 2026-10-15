@@ -9,6 +9,8 @@ Use this skill whenever the user provides roster files or asks an agent to clean
 
 Read [`references/workflow.md`](references/workflow.md) for the file-to-record sequence and [`references/decisions.md`](references/decisions.md) when classifying sources or resolving roster/business questions. Read the current app API/OpenAPI or MCP tool schemas before each new write workflow; the actual contract is authoritative.
 
+For roster/lifecycle entities — enterprises, aliases (曾用名), title events, platform relations, difference reasons and export snapshots — the **frozen data contract** is [`docs/roster-lifecycle-contract.md`](../../../docs/roster-lifecycle-contract.md) (decision record: [`docs/adr/2026-10-16-roster-lifecycle-model.md`](../../../docs/adr/2026-10-16-roster-lifecycle-model.md)). Read it before writing any roster row: it fixes table/column names, enum values, unique/idempotency keys, read and write API shapes, and the platform-query status machine (未查询 / 查询失败 / 无记录 / 已确认无差异 / 待核实 are distinct).
+
 ## Required sequence
 
 1. **Inventory** the input files by name, type, content hash, source and document purpose. Classify each as official roster evidence, platform comparison snapshot, OCR artifact, or out of scope. Detect duplicate `.doc`/`.docx` copies and duplicate paragraphs before creating records. Keep the previewable canonical copy when two files have identical contents.
