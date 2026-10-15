@@ -29,6 +29,11 @@ import { listPdfPages } from '../../utils/pdf-pages'
  * 同一份内容传两次 == 传一次:`(file_id, page_no)` 有唯一索引,写的是覆盖
  * (见 `writeOcrResult`)。所以「传失败了重传」是安全的,不必先删后写。
  *
+ * ── `raw`(原始响应)────────────────────────────────────────────────────
+ * JSONL 那条**会**把每页的原始项一起落进 `raw`(那就是官网结果文件里的原文);
+ * markdown 那两条没有原始响应,不传 —— `writeOcrResult` 在「本次没给」时保留上一次的值,
+ * 所以通路 a(在线 API 花过钱的那份)的 `raw` 不会被一次重传抹掉。
+ *
  * ── 为什么这一条是**写口却没有 token** ──────────────────────────────────
  * 与 `PATCH /api/files/:id`(分类回写)**同一档**:它们是**页面背后**的文件域写口
  * (票 10/12 的页面按钮就是调它们),不是给代理的接口。代理的写口在 MCP 那一侧
@@ -183,7 +188,15 @@ export default defineEventHandler(async (event) => {
 
   const written = writeOcrResult(target.db, {
     fileId: target.row.id,
-    pages: pages.map((p) => ({ page: p.page, markdown: p.markdown })),
+    // `raw` **有就带上**:JSONL 导入那条会带 —— 那份 `layoutParsingResults` 项就是
+    // 原始响应,与通路 a 落的 `raw` 是同一个东西(用户要求保留 API 原始响应)。
+    // 没有就不传,`writeOcrResult` 在「本次没给」时**保留上一次的值** ——
+    // 所以普通的 markdown 重传不会抹掉通路 a 花过钱的那份原文。
+    pages: pages.map((p) => ({
+      page: p.page,
+      markdown: p.markdown,
+      ...(p.raw === undefined ? {} : { raw: p.raw }),
+    })),
     channel: 'upload',
     ...(typeof body.engine === 'string' && body.engine.trim() ? { engine: body.engine.trim() } : {}),
     model: typeof body.model === 'string' && body.model.trim() ? body.model.trim() : null,

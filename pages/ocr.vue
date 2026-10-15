@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { watchDebounced } from '@vueuse/core'
-import { FileText, Images, Loader2, RefreshCw, Search, Upload } from '@lucide/vue'
+import { FileText, FileWarning, Images, Loader2, RefreshCw, Search, Upload } from '@lucide/vue'
 import OcrImportDialog from '@/components/ocr/OcrImportDialog.vue'
 import OcrPageRow from '@/components/ocr/OcrPageRow.vue'
 import ImagePreview from '@/components/preview/ImagePreview.vue'
@@ -21,13 +21,14 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import { splitMarkdown } from '~~/lib/ocr-markdown'
 import {
   buildWorkbenchRows,
   confirmWrittenPage,
   pageReviewState,
   pendingLabel,
   reviewBreakdown,
+  STATE_BADGE,
+  STATE_WORD,
   workbenchCounts,
   type WorkbenchRow,
 } from '~~/lib/ocr-workbench'
@@ -99,7 +100,8 @@ interface OcrListResponse {
     model: string | null
     channel: string
     createdAt: string
-    chars: number
+    /** 逐页正文。只有带 `markdown=1` 问的时候服务端才给 —— 见 `fetchResults`。 */
+    markdown?: string
     pageRelPath: string | null
     url: string | null
   }>
@@ -183,6 +185,15 @@ const rendering = ref(false)
 const status = ref<StatusLine | null>(null)
 
 /**
+ * 右栏**现在显示的是哪一份文件**的数据。装载成功才写它,切文件时立刻清空。
+ *
+ * 它是两件事的判据:
+ *  1. 异步回包该不该落地(对不上就是上一份的,丢掉);
+ *  2. 一次写该写到哪儿 —— 见 `writeTarget()`。
+ */
+const loadedPath = ref('')
+
+/**
  * 行 = 页码为骨、页图与结果挂在上面。
  *
  * `pageCount` 优先取**源页数**(`pagesState.pageCount`):一份还没渲染的 PDF 也应当
@@ -255,6 +266,9 @@ const previewSrc = computed(() => {
   return imageVersion.value ? `${url}?v=${encodeURIComponent(imageVersion.value)}` : url
 })
 
+/** 对照弹窗那一页属于哪一档 —— 与行内共用 `pageReviewState`。 */
+const previewState = computed(() => pageReviewState(previewRow.value?.result ?? null))
+
 const previewMeta = computed(() => {
   const r = previewRow.value?.result
   if (!r) return ''
@@ -274,75 +288,132 @@ function flashSaved(page: number) {
 }
 
 /**
- * 取这一份文件的 OCR 结果。
+ * 读回的结果:要么是一整份逐页结果,要么是一句**说不出来就得说**的失败原因。
  *
- * **两次请求**,因为接口是刻意分成两半的(票 14 的设计):`GET /api/ocr-results` 给
- * 逐页**元数据**(通路 / 引擎 / 时间 / 字符数),`GET /api/ocr-results/markdown` 给**正文**。
- * 元数据是「每次打开都要看一眼」的轻量问题,正文是几百 KB —— 合成一个接口会让轻的那个
- * 也得拖几百 KB。这里两个都要,所以两个都取,但**各取一份**,不是逐页 N 次。
- *
- * 正文那一份用 `splitMarkdown` 切回按页 —— 与导出用的是同一套规则
- * (`assembleMarkdown` 的逆),所以「导出的文件再传回来」与「页面看到的」永远一致。
+ * 做成判别式而不是抛异常,是因为「读不到正文」与「网络断了」在界面上的说法不同:
+ * 前者要把原因原样给人看(它决定用户去刷新还是去查数据),后者走 `describeFetchError`。
  */
-async function fetchResults(relPath: string): Promise<OcrResultRow[]> {
-  const meta = await api<OcrListResponse>('/api/ocr-results', { query: { file: relPath } })
-  if (meta.count === 0) return []
+type ResultsRead = { ok: true; rows: OcrResultRow[] } | { ok: false; message: string }
 
-  let markdownByPage = new Map<number, string>()
-  try {
-    const text = await api<string>('/api/ocr-results/markdown', { query: { file: relPath } })
-    const split = splitMarkdown(text)
-    // 切不开也不该把已有结果藏起来:照常列元数据,正文显示为空。
-    // (服务端组装出来的正文切不开是 bug,但那属于「正文那一半坏了」,
-    //  不该连带把「哪几页识别过」这件事也一起弄丢 —— 那会让页面看起来像空的。)
-    if (split.ok) markdownByPage = new Map(split.pages.map((p) => [p.page, p.markdown]))
-  } catch {
-    // 整份还没结果时接口回 404 —— 那与「一页都没有」是同一件事,照常往下走。
+/**
+ * 取这一份文件的 OCR 结果:**元数据 + 逐页正文,一次请求**。
+ *
+ * ── 为什么不再走「整份导出 → 按页标记反切」 ─────────────────────────────
+ * 老写法拿 `GET /api/ocr-results/markdown` 的整份文本,再用 `splitMarkdown` 切回按页
+ * (`assembleMarkdown` 的逆)。那条路在**页体自带整行页标记**时会坏,而且是**静默**地坏:
+ * 页体里有一行 `## 第 1 页` → 整份反切报「页码重复」→ 三页全变空;
+ * 页体里有一行 `<!-- page: 4 -->` → 第 3 页的正文被挂到第 4 页、第 3 页读成空。
+ * 而「页体自带这种行」**真会发生**:通路 a 直写模型返回的 markdown,模型完全可能把
+ * 「第 N 页」当标题输出。空正文在看板上是「空结果」,点编辑就是个空框 ——
+ * 保存一下就把真实文本抹了(独立代码审核 B2,附确定性复现)。
+ *
+ * 现在直接问服务端要**库里的逐页那一行**(`?markdown=1`),不再拼起来又切开。
+ *
+ * ── 拿不到正文就不许装成「空结果」──────────────────────────────────────
+ * 任何一页的正文不是字符串,整份读回算失败:`loadDetail` 会**不给行** —— 没有行就没有
+ * 编辑框,也就不会出现「对着空框保存、把真实文本抹掉」那条路。
+ */
+async function fetchResults(relPath: string): Promise<ResultsRead> {
+  const meta = await api<OcrListResponse>('/api/ocr-results', {
+    query: { file: relPath, markdown: '1' },
+  })
+  if (meta.count === 0) return { ok: true, rows: [] }
+
+  const missing = meta.pages.find((p) => typeof p.markdown !== 'string')
+  if (missing) {
+    return {
+      ok: false,
+      message: `这份文件的逐页正文没读回来(第 ${missing.page} 页)。为避免把正文当成空白,暂不给编辑 —— 请刷新重试。`,
+    }
   }
 
-  return meta.pages.map((p) => ({
-    page: p.page,
-    markdown: markdownByPage.get(p.page) ?? '',
-    pageRelPath: p.pageRelPath,
-    engine: p.engine,
-    model: p.model,
-    channel: p.channel,
-    createdAt: p.createdAt,
-  }))
+  return {
+    ok: true,
+    rows: meta.pages.map((p) => ({
+      page: p.page,
+      markdown: p.markdown as string,
+      pageRelPath: p.pageRelPath,
+      engine: p.engine,
+      model: p.model,
+      channel: p.channel,
+      createdAt: p.createdAt,
+    })),
+  }
 }
 
+/**
+ * 装载一份文件的右栏内容。
+ *
+ * **目标守卫**:两个请求都在飞的时候用户可能已经换了文件,而这份回包属于**上一份**。
+ * 不检查就会把它灌进新页面 —— 文件名写着 B、页图与正文却是 A,点保存就是把 A 的正文
+ * 写进 B(独立代码审核 B1:跨文件静默错写,且 A、B 多为同批扫描件,肉眼难辨)。
+ * 成功与失败两条路都要守:失败回包同样会把新页面清空。
+ */
 async function loadDetail(relPath: string) {
   detailLoading.value = true
   detailError.value = ''
   status.value = null
   try {
-    const [state, ocr] = await Promise.all([
+    const [state, read] = await Promise.all([
       api<PdfPagesState>('/api/pdf-pages', { query: { file: relPath } }),
       fetchResults(relPath),
     ])
+    if (relPath !== selectedPath.value) return
     pagesState.value = state
-    results.value = ocr
+    if (!read.ok) {
+      // 页图还在(清单有用),但正文一半不可信 ⇒ **不给行**,只报错。
+      results.value = []
+      loadedPath.value = ''
+      detailError.value = read.message
+      return
+    }
+    results.value = read.rows
+    loadedPath.value = relPath
   } catch (error) {
+    if (relPath !== selectedPath.value) return
     pagesState.value = null
     results.value = []
+    loadedPath.value = ''
     detailError.value = describeFetchError(error, '读不到这份文件的页图与识别结果。')
   } finally {
-    detailLoading.value = false
+    // 只有仍是当前目标时才收 loading —— 否则会把「新目标那一次读」的 loading 提前关掉。
+    if (relPath === selectedPath.value) detailLoading.value = false
   }
 }
 
-/** 只重取结果那一半(保存 / 删除 / 导入之后)—— 页图清单没变,不必重算。 */
-async function reloadResults(relPath: string) {
-  results.value = await fetchResults(relPath)
+/**
+ * 只重取结果那一半(保存 / 删除 / 导入之后)—— 页图清单没变,不必重算。
+ *
+ * 返回这一趟读回的逐页结果;目标已经不是这一份文件时返回 `null`(回包丢弃)。
+ */
+async function reloadResults(relPath: string): Promise<OcrResultRow[] | null> {
+  const read = await fetchResults(relPath)
+  if (relPath !== selectedPath.value) return null
+  if (!read.ok) {
+    results.value = []
+    loadedPath.value = ''
+    detailError.value = read.message
+    return null
+  }
+  detailError.value = ''
+  results.value = read.rows
+  loadedPath.value = relPath
+  return read.rows
 }
 
 watch(selectedPath, (next) => {
   pagesState.value = null
   results.value = []
+  // 右栏现在什么都不属于了 —— 写目标随之为空,在数据回来之前点不动任何写。
+  loadedPath.value = ''
   status.value = null
   previewPage.value = null
   onlyPending.value = false
   pendingCursor.value = null
+  // 导入弹窗的结论属于**上一份**文件,不跟着切过去(独立代码审核 N5:
+  // 在 A 上导入成功后切到 B,弹窗里还写着 A 的「已写入 12 页…」)。
+  importFailure.value = ''
+  importResult.value = ''
   if (next) void loadDetail(next)
 })
 
@@ -354,21 +425,38 @@ watch(selectedPath, (next) => {
 const pendingPage = ref<number | null>(null)
 const rowFailure = ref<{ page: number; message: string } | null>(null)
 
+/**
+ * 一次写该写到**哪一份文件**上。
+ *
+ * 取的是**右栏内容所属的那一份**(`loadedPath`),不是「当前选中的那一份」。
+ * 两者不一致时(切换在飞)返回 `null` ⇒ 拒绝写 —— 行里的 `page` 说的是「这一行」,
+ * 而这一行属于哪份文件只有 `loadedPath` 说得准(独立代码审核 B1)。
+ */
+function writeTarget(): string | null {
+  const relPath = loadedPath.value
+  if (!relPath || relPath !== selectedPath.value) return null
+  return relPath
+}
+
 async function savePage(page: number, markdown: string) {
-  const relPath = selectedPath.value
+  const relPath = writeTarget()
   if (!relPath || pendingPage.value !== null) return
   pendingPage.value = page
   rowFailure.value = null
+  /** 写这一段是否已经提交 —— 决定下面那句失败文案说的是「没写成」还是「写成了、读回失败」。 */
+  let committed = false
   try {
     await api<WriteResponse>('/api/ocr-results', {
       method: 'POST',
       // 单页写入:显式给 `page`,所以正文里**不要**带页标记(服务端会拒两种语义打架)。
       body: { file: relPath, markdown, page },
     })
-    await reloadResults(relPath)
+    committed = true
+    const next = await reloadResults(relPath)
+    if (next === null) return
     // **读回核对**:落库会做归一(去掉行尾空白与首尾空行),所以提交与读回的比较
     // 走同一份归一规则 —— 归一不算失败,真丢了内容才算。
-    const got = results.value.find((r) => r.page === page) ?? null
+    const got = next.find((r) => r.page === page) ?? null
     const check = confirmWrittenPage(markdown, got?.markdown ?? null)
     status.value = {
       tone: check.ok ? 'ok' : 'warn',
@@ -377,14 +465,22 @@ async function savePage(page: number, markdown: string) {
     if (check.ok) flashSaved(page)
     else rowFailure.value = { page, message: check.message }
   } catch (error) {
-    rowFailure.value = { page, message: describeFetchError(error, '保存失败,请重试。') }
+    // 写失败与**读回**失败分开说:读回失败时写入其实已经提交(再点一次是幂等覆盖),
+    // 报成「保存失败」会让人以为白写了一遍。
+    rowFailure.value = {
+      page,
+      message: describeFetchError(
+        error,
+        committed ? '写入已提交,但读回失败 —— 刷新后核对这一页。' : '保存失败,请重试。',
+      ),
+    }
   } finally {
     pendingPage.value = null
   }
 }
 
 async function removePage(page: number) {
-  const relPath = selectedPath.value
+  const relPath = writeTarget()
   if (!relPath || pendingPage.value !== null) return
   pendingPage.value = page
   rowFailure.value = null
@@ -393,7 +489,7 @@ async function removePage(page: number) {
       method: 'DELETE',
       query: { file: relPath, page },
     })
-    await reloadResults(relPath)
+    if ((await reloadResults(relPath)) === null) return
     status.value = {
       tone: 'ok',
       message:
@@ -445,8 +541,14 @@ const importPending = ref(false)
 const importFailure = ref('')
 const importResult = ref('')
 
+/**
+ * 有写在飞时**冻结文件切换**:写目标与显示内容必须始终是同一份文件。
+ * (这是 B1 的第二道锁 —— 第一道是 `writeTarget()` 的不一致就拒写。)
+ */
+const writeBusy = computed(() => pendingPage.value !== null || importPending.value)
+
 async function runImport(payload: { jsonl: string } | { markdown: string; page: number | null }) {
-  const relPath = selectedPath.value
+  const relPath = writeTarget()
   if (!relPath || importPending.value) return
   importPending.value = true
   importFailure.value = ''
@@ -456,12 +558,16 @@ async function runImport(payload: { jsonl: string } | { markdown: string; page: 
       method: 'POST',
       body: { file: relPath, ...payload },
     })
-    await reloadResults(relPath)
+    const next = await reloadResults(relPath)
+    if (next === null) {
+      importFailure.value = '读回时这份文件已经不是页面上的那一份了 —— 请刷新后核对结果。'
+      return
+    }
 
     // **读回确认**:报回来的每一页都必须真的读得到。整份(JSONL / 带标记的 markdown)
     // 的正文在服务端解,本地没有逐页原文可比,所以核对到「页数一致且每页都在」;
     // 单页 markdown 有原文,连**内容**一起核。
-    const missing = out.pages.filter((p) => !results.value.some((r) => r.page === p))
+    const missing = out.pages.filter((p) => !next.some((r) => r.page === p))
     const singlePage =
       'markdown' in payload && payload.page !== null
         ? { text: payload.markdown, page: payload.page }
@@ -469,7 +575,7 @@ async function runImport(payload: { jsonl: string } | { markdown: string; page: 
     const contentCheck = singlePage
       ? confirmWrittenPage(
           singlePage.text,
-          results.value.find((r) => r.page === singlePage.page)?.markdown ?? null,
+          next.find((r) => r.page === singlePage.page)?.markdown ?? null,
         )
       : null
 
@@ -503,6 +609,7 @@ async function refreshAll() {
     selectedPath.value = ''
     pagesState.value = null
     results.value = []
+    loadedPath.value = ''
     status.value = null
     return
   }
@@ -577,6 +684,7 @@ async function refreshAll() {
                 "
                 :aria-current="file.relPath === selectedPath ? 'true' : undefined"
                 :title="file.filename"
+                :disabled="writeBusy"
                 @click="selectedPath = file.relPath"
               >
                 {{ file.filename }}
@@ -664,18 +772,31 @@ async function refreshAll() {
             </AlertDescription>
           </Alert>
 
-          <Alert v-if="detailError" variant="destructive">
-            <AlertDescription class="text-destructive! font-medium">{{ detailError }}</AlertDescription>
-          </Alert>
-
           <div v-if="detailLoading" class="flex flex-col gap-2">
             <Skeleton v-for="i in 3" :key="i" class="h-24 w-full" />
           </div>
 
-          <Empty
-            v-else-if="!rows.length && !detailError"
-            class="bg-card rounded-lg border py-12"
-          >
+          <!-- 读回失败(页图或**逐页正文**拿不到):**一页都不给**。
+               没有行就没有编辑框,也就不会出现「对着空框保存、把真实文本抹掉」那条路
+               —— 这是 B2 那条「读不到正文不许冒充空结果」的界面落点。 -->
+          <Empty v-else-if="detailError" class="bg-card rounded-lg border py-12">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><FileWarning /></EmptyMedia>
+              <EmptyTitle>读不到这份文件的结果</EmptyTitle>
+              <EmptyDescription>{{ detailError }}</EmptyDescription>
+            </EmptyHeader>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="detailLoading"
+              @click="selectedPath && loadDetail(selectedPath)"
+            >
+              <RefreshCw />
+              重试
+            </Button>
+          </Empty>
+
+          <Empty v-else-if="!rows.length" class="bg-card rounded-lg border py-12">
             <EmptyHeader>
               <EmptyMedia variant="icon"><FileText /></EmptyMedia>
               <EmptyTitle>这一页还没有可校对的内容</EmptyTitle>
@@ -757,15 +878,18 @@ async function refreshAll() {
           />
           <div class="bg-card flex min-h-0 flex-col gap-2 overflow-hidden rounded-lg border p-3">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <Badge :variant="previewRow?.result ? 'solid' : 'dashed'">
-                {{ previewRow?.result ? '有文本' : (previewRow?.image ? '未识别' : '未渲染') }}
-              </Badge>
+              <!-- 与行内**同一份判据**:弹窗曾经自己拿 `result` 真值判档,于是空结果页
+                   这里标「有文本」、正下方正文却写着「还没有识别文本」—— 徽章与正文互相拆台
+                   (独立代码审核 N1)。`previewState` 走 `pageReviewState`。 -->
+              <Badge :variant="STATE_BADGE[previewState]">{{ STATE_WORD[previewState] }}</Badge>
               <span v-if="previewMeta" class="text-muted-foreground text-xs">{{ previewMeta }}</span>
             </div>
+            <!-- 与行内同一条规则:空结果就写「(空)」,不再说「还没有识别文本」——
+                 那句话属于「未识别」那一档。 -->
             <pre
-              v-if="previewRow?.result?.markdown"
+              v-if="previewRow?.result"
               class="min-h-0 flex-1 overflow-auto font-mono text-xs leading-relaxed whitespace-pre-wrap"
-            >{{ previewRow.result.markdown }}</pre>
+            >{{ previewRow.result.markdown || '(空)' }}</pre>
             <p v-else class="text-muted-foreground text-xs leading-relaxed">
               这一页还没有识别文本。关掉之后在列表里点「手工录入」可以贴进来。
             </p>

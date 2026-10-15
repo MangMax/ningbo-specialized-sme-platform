@@ -49,7 +49,6 @@ export function decodeOcrImport(body: {
   page?: unknown
 }): OcrImportDecode {
   const hasJsonl = typeof body.jsonl === 'string' && body.jsonl.trim().length > 0
-  const hasMarkdown = typeof body.markdown === 'string'
   const jsonlGiven = body.jsonl !== undefined && body.jsonl !== null && body.jsonl !== ''
   const markdownGiven = body.markdown !== undefined && body.markdown !== null
 
@@ -64,7 +63,11 @@ export function decodeOcrImport(body: {
 
   if (jsonlGiven) {
     if (!hasJsonl) {
-      return { ok: false, message: '`jsonl` 不能是空字符串(它应当是结果文件的全文)。' }
+      // 空串与「给了一个非字符串」(如 `jsonl: 123`)是两件事,分开说 ——
+      // 都回「不能是空字符串」会让人对着一个数字找空格。
+      return typeof body.jsonl === 'string'
+        ? { ok: false, message: '`jsonl` 不能是空字符串(它应当是结果文件的全文)。' }
+        : { ok: false, message: '`jsonl` 必须是字符串(结果文件的全文)。' }
     }
     return decodeJsonl(body.jsonl as string)
   }
@@ -107,7 +110,15 @@ function decodeJsonl(text: string): OcrImportDecode {
     source: 'jsonl',
     // 页号用 `pagesFromJsonl` 定好的那个(行序),**不在这里重新编号** ——
     // 重新编一遍等于把「第 i 段 == 第 i 页」这条对齐规则复制成第二处实现。
-    pages: pages.map((p) => ({ page: p.page, markdown: normalizeMarkdownBody(p.markdown) })),
+    //
+    // `raw` **一并带上**:JSONL 里那一段 `layoutParsingResults` 项就是**原始响应**,
+    // 与通路 a 落进 `raw` 的是同一个东西(`jobs/ocr.ts` 就是这么写的)。用户要的是
+    // 「API 原始响应保留」—— 在导入这条入口上同样成立,别在这一层把它丢掉。
+    pages: pages.map((p) => ({
+      page: p.page,
+      markdown: normalizeMarkdownBody(p.markdown),
+      raw: p.raw,
+    })),
   }
 }
 

@@ -1,7 +1,9 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { assembleMarkdown, splitMarkdown } from '../lib/ocr-markdown'
 import {
   buildWorkbenchRows,
   confirmWrittenPage,
@@ -274,6 +276,34 @@ describe('decodeOcrImport —— 页号一律不从正文里猜', () => {
     if (!both.ok) expect(both.message).toContain('不该再带页标记')
   })
 
+  it('★ JSONL 的**原始响应**一并带上 —— raw 不在这条入口上丢', () => {
+    // JSONL 里那一段 `layoutParsingResults` 项就是原始响应,与通路 a 落的 `raw` 是同一个东西;
+    // 用户要的「API 原始响应保留」在导入这条入口上同样成立。
+    const item = { markdown: { text: '甲' }, layoutBox: { x: 1, y: 2 } }
+    const out = decodeOcrImport({ jsonl: JSON.stringify({ result: { layoutParsingResults: [item] } }) })
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    expect(out.pages[0]!.raw).toEqual(item)
+  })
+
+  it('markdown 那两条**不带** raw(本次没给 ⇒ `writeOcrResult` 会保留库里上一次的)', () => {
+    const single = decodeOcrImport({ markdown: '只有正文', page: 3 })
+    expect(single.ok).toBe(true)
+    if (!single.ok) return
+    expect(single.pages[0]!.raw).toBeUndefined()
+
+    const whole = decodeOcrImport({ markdown: '<!-- page: 1 -->\n\n甲' })
+    expect(whole.ok).toBe(true)
+    if (!whole.ok) return
+    expect(whole.pages[0]!.raw).toBeUndefined()
+  })
+
+  it('`jsonl` 给了非字符串要说「必须是字符串」,不是「不能是空字符串」', () => {
+    const out = decodeOcrImport({ jsonl: 123 })
+    expect(out.ok).toBe(false)
+    if (!out.ok) expect(out.message).toContain('必须是字符串')
+  })
+
   it('两种输入一起给 ⇒ 拒绝(页号语义打架)', () => {
     const out = decodeOcrImport({ jsonl: jsonl(['甲']), markdown: '<!-- page: 1 -->\n\n甲' })
     expect(out.ok).toBe(false)
@@ -285,6 +315,59 @@ describe('decodeOcrImport —— 页号一律不从正文里猜', () => {
     expect(decodeOcrImport({ markdown: '' }).ok).toBe(false)
     const empty = decodeOcrImport({ jsonl: '   ' })
     expect(empty.ok).toBe(false)
+  })
+})
+
+/**
+ * **为什么页面的正文不能走「整份导出 → 按页标记反切」**(独立代码审核 B2 的证据)。
+ *
+ * 页面原先就是这么读正文的:拿 `GET /api/ocr-results/markdown` 的整份文本,再用
+ * `splitMarkdown` 切回按页。这三条钉住那条路的失败形状 —— 它们既是 B2 的确定性证据,
+ * 也防着有人把「一次请求拿全份文本再切」重新接回读路径。
+ *
+ * 关键在于**页体自带整行页标记是真会发生的**:通路 a(`jobs/ocr.ts`)直写模型返回的
+ * markdown,不检查里面有没有 `## 第 N 页` 这样的行,而模型完全可能把页码当标题输出。
+ * 所以这不是「脏数据才有的边角」。
+ */
+describe('assembleMarkdown → splitMarkdown 不是可靠的「按页读回」(B2 的证据)', () => {
+  it('★ 页体自带整行 `## 第 1 页` ⇒ **整份**反切失败(于是每一页都会读成空)', () => {
+    const pages = [
+      { page: 1, markdown: '甲' },
+      { page: 2, markdown: '乙' },
+      { page: 3, markdown: '## 第 1 页\n\n丙' },
+    ]
+    const back = splitMarkdown(assembleMarkdown(pages))
+    expect(back.ok).toBe(false)
+    if (!back.ok) expect(back.message).toContain('页码重复')
+  })
+
+  it('★ 页体自带整行 `<!-- page: 4 -->` ⇒ 反切**成功但串页**(第 3 页读成空,正文挂到不存在的第 4 页)', () => {
+    const pages = [
+      { page: 1, markdown: '甲' },
+      { page: 2, markdown: '乙' },
+      { page: 3, markdown: '<!-- page: 4 -->\n\n丙' },
+    ]
+    const back = splitMarkdown(assembleMarkdown(pages))
+    expect(back.ok).toBe(true)
+    if (!back.ok) return
+    // 丙 本来属于第 3 页 —— 这里它跑到第 4 页去了,而第 3 页成了空结果。
+    expect(back.pages).toEqual([
+      { page: 1, markdown: '甲' },
+      { page: 2, markdown: '乙' },
+      { page: 3, markdown: '' },
+      { page: 4, markdown: '丙' },
+    ])
+  })
+
+  it('**行内**提到页码不受影响:判据是整行,不是子串', () => {
+    const pages = [
+      { page: 1, markdown: '甲' },
+      { page: 3, markdown: '详见第 3 页的说明' },
+    ]
+    const back = splitMarkdown(assembleMarkdown(pages))
+    expect(back.ok).toBe(true)
+    if (!back.ok) return
+    expect(back.pages).toEqual(pages)
   })
 })
 
@@ -310,6 +393,21 @@ beforeEach(() => {
   db.delete(schema.ocrResult).run()
   db.delete(schema.storedFile).run()
 })
+
+/** 直接读某一页的 `raw`(它不在 `listOcrResults` 的投影里)。 */
+function rawOf(
+  db: ReturnType<(typeof import('../db'))['useDb']>,
+  fileId: number,
+  pageNo: number,
+): unknown {
+  return (
+    db
+      .select({ raw: schema.ocrResult.raw })
+      .from(schema.ocrResult)
+      .where(and(eq(schema.ocrResult.fileId, fileId), eq(schema.ocrResult.pageNo, pageNo)))
+      .get()?.raw ?? null
+  )
+}
 
 /** 登记一个文件(等价于 app 回填写出的那一行)。 */
 function seedFile(relPath: string): number {
@@ -402,6 +500,30 @@ describe('逐页增删改查', () => {
     expect(files).toHaveLength(1)
     expect(files[0]!.relPath).toBe(relPath)
     expect(files[0]!.removedAt).toBeNull()
+  })
+
+  it('★ JSONL 导入把原始响应落进 raw;之后再走 markdown 通路不会把它抹掉', () => {
+    const fileId = seedFile(relPath)
+    const item = { markdown: { text: '第 1 页' }, layoutBox: { page: 1 } }
+    const decoded = decodeOcrImport({
+      jsonl: JSON.stringify({ result: { layoutParsingResults: [item] } }),
+    })
+    expect(decoded.ok).toBe(true)
+    if (!decoded.ok) return
+
+    writeOcrResult(db, { fileId, pages: decoded.pages, channel: 'upload', sourceRelPath: relPath })
+    expect(rawOf(db, fileId, 1)).toEqual(item)
+
+    // 通路 b(markdown,没有原始响应)重传同一页:文本换掉,`raw` **保留** ——
+    // 这正是 `writeOcrResult` 那条「本次没给就留着上一次」的语义,补上 raw 之后依然成立。
+    writeOcrResult(db, {
+      fileId,
+      pages: [{ page: 1, markdown: '第 1 页(人工改过)' }],
+      channel: 'upload',
+      sourceRelPath: relPath,
+    })
+    expect(listOcrResults(db, fileId)[0]!.markdown).toBe('第 1 页(人工改过)')
+    expect(rawOf(db, fileId, 1)).toEqual(item)
   })
 
   it('删一页不会误伤同文件之外的其它页(边界:只按 (file_id, page_no) 删)', () => {

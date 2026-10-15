@@ -32,7 +32,8 @@ defineRouteMeta({
       {
         name: 'file',
         in: 'query',
-        required: true,
+        // 不是 required:`file` 与 `fileId` **恰给其一**(与 GET 那两条同一写法,
+        // 判据在 `fileRefFromQuery`)。标成必填会让按 spec 生成的客户端以为必须带路径。
         schema: { type: 'string' },
         description: '相对文件库根的路径(与 `fileId` 恰给其一)。',
       },

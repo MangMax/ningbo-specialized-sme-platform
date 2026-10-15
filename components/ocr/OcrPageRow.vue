@@ -2,11 +2,16 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { Check, Expand, Loader2, Pencil, Trash2, X } from '@lucide/vue'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge, type BadgeVariants } from '@/components/ui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { WorkbenchRow } from '~~/lib/ocr-workbench'
-import { pageReviewState, type PageReviewState } from '~~/lib/ocr-workbench'
+import {
+  pageReviewState,
+  STATE_BADGE,
+  STATE_WORD,
+  type PageReviewState,
+} from '~~/lib/ocr-workbench'
 import { OCR_CHANNELS } from '~~/lib/labels'
 import { pageLabel } from '~~/lib/page-gallery'
 
@@ -59,8 +64,6 @@ const props = defineProps<{
   failure?: string
   /** 刚刚写入成功 —— 给一次短促的描边,让「变的是这一行」落在这行上。 */
   highlight?: boolean
-  /** 在宽屏上被选为「对照」的那一行。 */
-  active?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -85,19 +88,6 @@ const confirmButton = ref<{ $el?: HTMLButtonElement } | null>(null)
 const result = computed(() => props.row.result)
 const image = computed(() => props.row.image)
 const state = computed<PageReviewState>(() => pageReviewState(result.value))
-
-/** 三档状态 → 徽章变体。实线加粗 / 次级实线 / 虚线,颜色一律不动。 */
-const STATE_BADGE: Record<PageReviewState, BadgeVariants['variant']> = {
-  text: 'solid',
-  empty: 'quiet',
-  none: 'dashed',
-}
-
-const STATE_WORD: Record<PageReviewState, string> = {
-  text: '有文本',
-  empty: '空结果',
-  none: '未识别',
-}
 
 /** 页图的最终地址:带版本号,免得换了 DPI 还显示缓存里的旧图。 */
 const imageSrc = computed(() => {
@@ -215,10 +205,7 @@ watch(
 <template>
   <li
     class="bg-card rounded-lg border p-2.5 transition-[box-shadow,border-color] duration-500 ease-snap motion-reduce:transition-none sm:p-3"
-    :class="[
-      highlight ? 'border-primary/40 ring-primary/20 ring-2' : '',
-      active && !highlight ? 'border-primary/30' : '',
-    ]"
+    :class="highlight ? 'border-primary/40 ring-primary/20 ring-2' : ''"
     @keydown.esc="onEscape"
   >
     <div class="flex flex-col gap-3 sm:flex-row">

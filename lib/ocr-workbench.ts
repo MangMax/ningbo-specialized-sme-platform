@@ -85,6 +85,29 @@ export function pageReviewState(result: { markdown: string } | null): PageReview
   return result.markdown.trim() === '' ? 'empty' : 'text'
 }
 
+/**
+ * 三档状态 → 徽章上的词。
+ *
+ * 放在 `lib/` 是为了**只有一份**:它曾经在 `OcrPageRow` 里有一份、在对照弹窗里又是另一套
+ * 判据（弹窗直接拿 `result ? '有文本' : …` 判），于是空结果页在弹窗里被标成「有文本」，
+ * 而正下方正文写着「这一页还没有识别文本」—— 徽章与正文互相拆台（独立代码审核 N1）。
+ */
+export const STATE_WORD: Record<PageReviewState, string> = {
+  text: '有文本',
+  empty: '空结果',
+  none: '未识别',
+}
+
+/**
+ * 三档状态 → 徽章变体（**靠线型与线重分档，不靠颜色**）。
+ * 实线加粗 = 已成立；次级实线 = 要留意但不是错；虚线 = 还没坐实。
+ */
+export const STATE_BADGE: Record<PageReviewState, 'solid' | 'quiet' | 'dashed'> = {
+  text: 'solid',
+  empty: 'quiet',
+  none: 'dashed',
+}
+
 /** 一份文件的逐页校对计数。三项之和 == `rows.length`。 */
 export interface WorkbenchCounts {
   /** 有文本的页数。 */
