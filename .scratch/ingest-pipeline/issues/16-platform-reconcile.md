@@ -4,7 +4,7 @@
 
 **Blocked by:** 09
 
-**Status:** 独立 oil-ui 已验收（2026-10-15，`32eee081468fe53ece7ed01ae158e1fee566745a`，ACCEPTED WITH NOTES，无阻断）。已纳入最终整合分支，主分支归档见总表。
+**Status:** done — 独立 oil-ui 已验收（`32eee081468fe53ece7ed01ae158e1fee566745a`，ACCEPTED WITH NOTES，无阻断），代码已合入本地main；2026-10-15以用户新会话重建当前555条双向解释缓存，已发布正式3470并核对真实页面。
 
 ## 两接口(已实测)
 
@@ -416,3 +416,7 @@ MCP/OpenAPI/OCR token 并存):
 剩余说明：点外关闭的独立持久证据不足，480–639px tooltip 未单独实测，部分文档旧哈希需按最终候选理解。这些为非阻断记录。平台数据沿用 2026-10-14 的真实接口缓存；本轮 UI 验收没有重新证明当前线上 cookie/接口可用性。
 
 评审任务：`ticket16-independent-ui-review-32eee08-20261015-r1`；主代理已归档完整结果。前文“未做”“待复审”是历轮记录，以本节为当前状态。
+
+## 2026-10-15 运行态缓存收尾
+
+当前三称号、双方向555条差异全部有解释条目：414平台有记录、28外地注册、4平台亦无记录、109缺统代明确未查询；有统代查询失败0。872份真实响应缓存（business446、query426），最大返回总数6，无分页截断。无cookie第二次CLI逐条entries全同；正式账表十二表hash前后不变。用户会话私有文件已删除。父代理发布后读取API三页555/555附加解释，差异集合和计数不变，实际页面核对并逐个展开5家应出未出企业（均外地注册）：一临云、上海鲲华、宁波尚闻、宁波摩西、宁波米文。证据：项目 `acceptance/20261015/evidence/platform-refresh/{acceptance-report.md,root-publication.md,root-published-api-acceptance.json,root-browser-cache-acceptance.json}`。本轮T3截图工具两次超时后使用Chrome CUA，实际工具截图在本线程，无独立磁盘截图；不伪造截图路径。原有独立UI结论保留，未将本次核对冒充全量交互重测。
