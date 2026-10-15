@@ -270,6 +270,23 @@ export function removeOcrResults(db: Db, fileId: number): number {
 }
 
 /**
+ * 删掉**某一页**的 OCR 结果,返回删掉的行数(0 或 1)。
+ *
+ * 与上面那个「整份清空」是**两件事**,分开是为了让调用方**只能删一页**:
+ * 整份清空是编排面在发现自己写错页码时的自清(内部用,不对外),而人是逐页校对的
+ * —— 他只该能删掉自己正在看的那一页。给这条路径一个 fileId 就清空的能力,
+ * 一次误点就是一份 12 页的识别结果没了(而重做要花 API 额度)。
+ *
+ * **幂等**:那一页本来就没有结果时删 0 行,不报错 —— 「删一个已经不在的东西」不该失败。
+ */
+export function removeOcrPage(db: Db, fileId: number, pageNo: number): number {
+  return db
+    .delete(schema.ocrResult)
+    .where(and(eq(schema.ocrResult.fileId, fileId), eq(schema.ocrResult.pageNo, pageNo)))
+    .run().changes
+}
+
+/**
  * 导出 markdown。整份(不带 `pageNo`)或单页(带)。
  *
  * 整份的形式由 `lib/ocr-markdown.ts` 的 `assembleMarkdown` 定死(页标记 + 按页升序)——
