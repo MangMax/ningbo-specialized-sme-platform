@@ -53,7 +53,7 @@ defineRouteMeta({
                 type: 'object',
                 description:
                   'kind 自己的参数。`render-pages`:`{ files: string[](相对文件库根的 PDF 路径), dpi?: 72–600(默认 300), force?: boolean }`。' +
-                  '`ocr`:`{ files: string[](同上), model?: string, pageRanges?: string }` —— 需要服务端配好 `NUXT_OCR_TOKEN`。',
+                  '`ocr`:`{ files: string[](同上), model?: string }` —— 须先生成完整页图，不支持 pageRanges；需要服务端配好 `NUXT_OCR_TOKEN`。',
               },
             },
           },
@@ -62,7 +62,7 @@ defineRouteMeta({
     },
     responses: {
       202: {
-        description: '已受理。任务在队列中,后台串行执行。',
+        description: '已受理。任务在队列中，OCR 任务有界并行，其他任务独占执行。',
         content: {
           'application/json': {
             schema: {
