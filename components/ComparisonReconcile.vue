@@ -22,6 +22,12 @@ import { formatFetchTime } from '~~/lib/reconcile-time'
  *
  * 触屏没有 hover,这也是**唯一**能在手机上看到 note 正文的路径。
  *
+ * ## 宽度(窄屏:24rem 会超出视口)
+ *
+ * 桌面卡在 `24rem`。390px 视口下可用宽度只有 390 − 两侧 `collisionPadding` 12 = 366,
+ * reka 只做位移、不缩定宽框,右端文字因此被视口切掉。改成
+ * `min(24rem, var(--reka-tooltip-content-available-width))`:宽屏仍 384px,窄屏收到可用宽度。
+ *
  * ## 位置(两轮评审都要过的约束)
  *
  * tooltip 固定挂在徽章**下方**并**整块让开徽章列**:`align="end"` + `align-offset`
@@ -98,7 +104,7 @@ function onKeydown(event: KeyboardEvent) {
         :side-offset="16"
         :align-offset="wideEnough ? BADGE_COLUMN_CLEARANCE : 0"
         :collision-padding="12"
-        class="max-w-[24rem]"
+        class="max-w-[min(24rem,var(--reka-tooltip-content-available-width,24rem))]"
       >
         <div class="flex flex-col gap-1">
           <p class="font-medium">{{ label }}</p>
