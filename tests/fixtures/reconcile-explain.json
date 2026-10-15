@@ -4,7 +4,7 @@
     "command": "tsx scripts/reconcile.ts --title specialized_sme,innovative_sme --direction extra_in_miit --refresh --report reports/platform-reconcile-20261014.md",
     "db": "(默认 app/data/roster.db)",
     "criterion": "app/lib/comparison.ts getComparison(口径唯一来源,本脚本不改判据)",
-    "note": "本文件是从 pipeline `pnpm reconcile` 生成的 app/data/platform-reconcile.json 里**原样摘录** 3 条,用于 app 侧读取/附加的离线测试(生成命令见 source.command)。"
+    "note": "【样本 / 离线,不是线上缓存】本文件是从 pipeline `pnpm reconcile` 于 2026-10-14 真实取数得到的 app/data/platform-reconcile.json 里**原样摘录** 3 条,仅供 app 侧的读取/附加测试使用;它**不是**线上实时缓存,条数与覆盖范围都不代表线上(线上缓存为 59 条)。条目里的 fetchedAt 是那次真实取数的时间,照原样保留;若把本文件当作 NUXT_RECONCILE_PATH,页面据此显示的取数时间指的是**那天那次取数**,不是本次会话。"
   },
   "counts": {
     "non_local": 2,

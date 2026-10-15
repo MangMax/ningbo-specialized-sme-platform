@@ -45,6 +45,10 @@
 
 > **20 已合入(2026-10-14,迁移 `0006`)**:`stored_file_part` 以 `derived` / `agent` 区分新写入来源;旧行来源无法从 `parse_state` 推断,标为 `legacy`。回填仅重建派生行、保留代理行;legacy 与 evidence 完全匹配时转为 derived,计数不一致时保留并标记 `hasConflict`。代理全量替换时同步恢复未被新结果覆盖的 evidence 段。见 [20](20-parts-origin.md)。
 
+> **16 待独立 oil-ui 复审(2026-10-15)** —— 两个接口、解释缓存、比对页「平台解释」列(徽章可悬停/聚焦/**点按**展开);
+> 已按上一轮 FIX REQUIRED 整改并**重放到 main `1592b47`**(`feat/platform-reconcile-main` → `b3686bb`)。
+> `missing_in_miit` 方向仍未生成解释。详见 [16-platform-reconcile.md](16-platform-reconcile.md) 文末三节。
+
 > **17 是用户 2026-10-14 指出的更正**:一份公布文件常含**多年份、多事件**(实测 7/19 份经信局文件、3/3 份工信部导出都是多段),票 09 的单个 `year`/`batch` 站不住。
 
 ## 依赖
