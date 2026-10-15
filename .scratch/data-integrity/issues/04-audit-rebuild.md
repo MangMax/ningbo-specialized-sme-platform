@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02, 03
 
-**Status:** ready
+**Status:** done — 加固归并审计、空账表重建和当前完整比对重算已落地；原始对照报告与本轮只读快照回归证据见下。
 
 ## 要做的
 
@@ -42,3 +42,9 @@
 - [ ] `vp run db:import` 可重复执行,结果稳定(幂等)。
 
 **分支**:从干净 `main` 起,如 `fix/rebuild`。**完成后交给主代理做票 05 的视觉抽查。**
+
+## 2026-10-15 当前交付
+
+历史125对逐项处理、83对原始同码来源及未佐证候选清单在pipeline `reports/identity-resolution-20261014.md`。当前正式从空账表重建21份有效来源：7358主体、19982记录、21442事件、21443出处；无猜测整理版写入，不能确认者保留空值及标记。完整导入报告、五表幂等证据见项目 `acceptance/20261015/final-{import-run3.json,ledger-run3-audit.json}`。另一个独立空库读取相同缓存事实重放，两独立CLI四张业务账表逐项等于正式库，见 `fresh-flow/evidence/root-cached-replay-acceptance.json`。
+
+回归原始出处和当前555差异全量读取见 `evidence/comparison-regression/{named-regressions.json,README.md,snapshot-counts.json}`：东方日升无专精特新、贝兹德2023/2序号745及2024/1序号205正确，两者均无假差异。快照旧checkout792、重建前stage696、当前555；快照输入不同，明确不能当同输入因果实验或最早错误基线。主代理本人原图抽查见pipeline `reports/visual-verification.md`。
