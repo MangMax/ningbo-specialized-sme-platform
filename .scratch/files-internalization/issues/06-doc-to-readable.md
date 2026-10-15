@@ -48,10 +48,12 @@ record_evidence 里 .doc 引用:962 行 / 2 个文件
 
 ## 验收
 
-- [ ] 2 份 `.doc` 转出可预览格式,落在文件库同目录
-- [ ] `record_evidence` 中这 962 行的 `source_file` 指向新产物,且**能在文件库解析到**
-- [ ] 预览路由对这 2 份返回 200(而非 415)
-- [ ] 原 `.doc` 保留(不删),作为归档
-- [ ] 转换在 pipeline 里可重跑、幂等
+- [x] 2 份 `.doc` 转出可预览格式,落在文件库同目录（`.docx` 38,748 B / 23,904 B，magic `PK`）
+- [x] `record_evidence` 中这 962 行的 `source_file` 指向新产物,且**能在文件库解析到**（终库活跃为 id 4 / 6 两份 `.docx`；`resolveStoreFile` 按 PDF → `.docx` → `.doc` 取件）
+- [x] 预览路由对这 2 份返回 200(而非 415)
+- [x] 原 `.doc` 保留(不删),作为归档（终库 id 3 / 5 两份 `.doc` `removed_at` 非空软删，磁盘文件与转出件并存）
+- [x] 转换在 pipeline 里可重跑、幂等（`pipeline/scripts/build-files.ts` 用 LibreOffice 转出并打印「转文件」计数；`tests/build-files.test.ts` 断言二次运行 `written=0`）
+
+> **收口（2026-10-15，docs-only）**：5 项按票内完成记录、终库实物与脚本/测试已满足。口径仍是「可预览、内容可读、残留串号另行清理」，不写「渲染正确」。
 
 > 注:凡是「浏览器能内联预览的格式」都优先;`.doc/.xls/.ppt` 一律需要转换或下载。

@@ -16,9 +16,13 @@
 
 已拆为 4 张票(见 [comparison/issues/README.md](../../comparison/issues/README.md)):
 
-- [ ] 01 — 比对口径与计算纯函数
-- [ ] 02 — Nitro 接口 `GET /api/comparison`
-- [ ] 03 — 比对页面 `/comparison` + 侧栏入口 + 导出
-- [ ] 04 — 人工标注 `curated`(范围可裁)
+> 以下 4 项**已迁移**到 `comparison/`，不在此票本地勾选（保留原状作历史去向）；括号内为各分票当前状态。
+
+- [ ] 01 — 比对口径与计算纯函数（`comparison/01` → done）
+- [ ] 02 — Nitro 接口 `GET /api/comparison`（`comparison/02` → done）
+- [ ] 03 — 比对页面 `/comparison` + 侧栏入口 + 导出（`comparison/03` → 已完成页面/侧栏/导出；真实漂移徽标属数据边界）
+- [ ] 04 — 人工标注 `curated`(范围可裁)（`comparison/04` → done）
 
 > 本票不再本地跟踪,统一到 `comparison/`。
+>
+> **收口（2026-10-15，docs-only）**：本票是**口径票 + 去向票**，实际交付落在 `comparison/`，故这 4 项保持未勾、指向上表。设计期复现计数 337/13、543/28 属**当时库**；现行终库为 170/30、318/37（`evidence/comparison-regression/snapshot-counts.json`），**未在终库重算该口径的旧数字**，也不追改。

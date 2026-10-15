@@ -30,17 +30,19 @@
 
 ## 测试
 
-- [ ] 192号 的 parts = 2 行:`award 2024/2 附件1`、`review 2021/2 附件2`。
-- [ ] 145号 的 parts = 2 行:`award 2021`、`award 2022`。
-- [ ] 回填**幂等**。
-- [ ] 附件名归一:四种写法归成同一形状。
+- [x] 192号 的 parts = 2 行:`award 2024/2 附件1`、`review 2021/2 附件2`。—— 只读核终库 `stored_file_part`：`award/2024/2/附件1/389` + `review/2021/2/附件2/67`。
+- [x] 145号 的 parts = 2 行:`award 2021`、`award 2022`。—— 同上：`award/2021/附件/302` + `award/2022/附件/413`。
+- [x] 回填**幂等**。—— `tests/stored-file.test.ts`「回填幂等:再跑两次,行数不变」；`tests/mcp-surface.test.ts`「…重跑不再回填(幂等)」。
+- [x] 附件名归一:四种写法归成同一形状。—— `tests/mcp-surface.test.ts`「normalizeParseParts:附件名归一 + 排序」；终库落为 `附件` / `附件1` / `附件2`。
 
 ## 验收
 
-- [ ] `/files` 上 192号 的**年份列显示两个年**,展开能看到两段。
-- [ ] 单段文件仍显示一个值,不显得空。
-- [ ] app `pnpm typecheck && pnpm test` 全绿。
-- [ ] **UI 要过 oil-ui 验收**(涉及页面)。
+- [x] `/files` 上 192号 的**年份列显示两个年**,展开能看到两段。—— `UI-ACCEPTANCE-files.md` 第 5 条：192号 只有两年**平铺不折叠**（`2021、2024`），多段文件才收成 `+N年`；展开可见段明细。
+- [x] 单段文件仍显示一个值,不显得空。—— 同页列宽与「内容年份/批次」列实现（`seriesLabel` 上限 + `+N年` 单位），单段即单值。
+- [x] app `pnpm typecheck && pnpm test` 全绿。—— 已接受主线 28 文件 525 测试 / typecheck 通过。
+- [x] **UI 要过 oil-ui 验收**(涉及页面)。—— `.scratch/ingest-pipeline/UI-ACCEPTANCE-files.md`（oil-ui，范围含票 09 + 票 17 呈现层，16 项逐条通过）。
+
+> **收口（2026-10-15，docs-only）**：8 项按代码、测试、只读库核与 `UI-ACCEPTANCE-files.md` 已满足。页面的**独立** `/files` UI 复核由父代理另起、进行中（`acceptance/20261015/evidence/ui-files-final/`），**本轮不宣称独立 UI 已通过**。
 
 **分支**:`feat/file-parts`。
 

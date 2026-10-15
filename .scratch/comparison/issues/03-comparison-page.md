@@ -43,6 +43,7 @@
 - [x] 创新型 tab:**543 / 28**。
 - [x] 筛选/切 tab 时表格**不闪回原位**(与台账页同样的体验标准)。
 - [ ] 漂移企业在表内**可见且被标注**(如 `宁波德业日用电器科技有限公司` 标「嘉兴市」)。
+      **保持未勾**：真实库 `city` / `reg_status` 全空，无真实值可验；fixture 只能证渲染，不能证真实数据（见下「真实数据限制」）。属**已记录范围边界**，不另开外部采集。见文末收口说明。
 - [x] 导出文件能打开,列与口径说明一致。
 - [x] `pnpm typecheck`、`pnpm test` 通过。
 
@@ -81,3 +82,9 @@
 为独立验证渲染,把真实库备份到 `/tmp/comparison-page-badges-fixture.db`,**仅在副本**把德业日用 city 设为「嘉兴市」、reg_status 设为「注销」,以 `NUXT_DB_PATH=/tmp/comparison-page-badges-fixture.db` 在 3471 启动。第 6 页可见该企业两个 Badge,fixture 截图已人工查看。真实库补齐这两个字段后,仍需重新做真实漂移/注销验收;这属于数据补齐,未扩入本票。
 
 - 最终串行复跑 `pnpm test`:9 个文件、112 项通过(exit 0,3.60s);`pnpm typecheck` exit 0。期间一次并行复跑的旧 tus 重传测试超过默认 5 秒并连带清单断言失败;关闭临时 3471 服务、等待 typecheck 完成后串行复跑通过,未调整测试或超时。最终 `git diff --check` 通过。
+
+## 收口说明（2026-10-15，docs-only）
+
+- 页面 / 侧栏 / 导出按票已交付，`pnpm typecheck` / `pnpm test` 通过；设计期 337/13、543/28 属**当时库**，重建后当时为 170/30、318/37（`acceptance/20261015/evidence/comparison-regression/snapshot-counts.json`），**单条数据纠偏后现行为 553 行差异**（`root-formal-one-row-review/cache-publication-proof.json`）；票面旧数字不追改为终库值。
+- **仍未勾项「漂移企业可见且被标注」保持未勾**：真实库 `city` / `reg_status` 全空，只有 fixture 副本证明渲染；不把 fixture 当真实数据证明，也不新增外部信息富化任务。
+- 页面的**独立 UI 复核**（含 `/files`）由父代理另起，进行中；报告将落在 `acceptance/20261015/evidence/ui-files-final/`。**本轮不宣称已通过**，以父代理补出的最终报告为准。

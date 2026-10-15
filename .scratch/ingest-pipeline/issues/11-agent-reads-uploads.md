@@ -21,14 +21,14 @@
 
 ## 测试
 
-- [ ] fixture:文件库里放两份文件(一份已分类、一份 `unset`)→ 只解析已分类的,`unset` 出现在「跳过」清单。
-- [ ] 元数据里的年份/批次进 `record_event`,不靠文件名推理。
+- [x] fixture:文件库里放两份文件(一份已分类、一份 `unset`)→ 只解析已分类的,`unset` 出现在「跳过」清单。—— `pipeline/tests/inputs.test.ts`「未分类(unset)的文件跳过并进『跳过』清单,不猜分类」。
+- [x] 元数据里的年份/批次进 `record_event`,不靠文件名推理。—— `inputs.test.ts`「192号 那种:认定 2024/2 与 复核 2021/2 两条事件都在,年份分别正确」「年份/批次只在段里…取文件声明的段」「代理声明的段(origin=agent)…落到 entries 与台账」。
 
 ## 验收
 
-- [ ] 把一份新 PDF 放进 `files/` 并在 `stored_file` 标好分类 → 跑导入 → **库里有新记录**。
-- [ ] 数据根目录**不参与**导入(可故意改名数据根验证仍能导入)。
-- [ ] pipeline `vp check && vp test` 全绿。
+- [x] 把一份新 PDF 放进 `files/` 并在 `stored_file` 标好分类 → 跑导入 → **库里有新记录**。—— `inputs.test.ts`「称号取自 `stored_file.title_code` 时无声明段也能入库」「代理声明的段…落到 entries 与台账」；另有 `fresh-flow` 端到端（同一流程产出 11371 出处）。
+- [x] 数据根目录**不参与**导入(可故意改名数据根验证仍能导入)。—— `inputs.test.ts`「数据根不参与导入:文件库在临时目录、没有任何数据根也能入库」。
+- [x] pipeline `vp check && vp test` 全绿。—— 现行 pipeline main 10 文件 167 测试通过、`vp check` pass（票 07 合入后；此前为 9 文件 144 测试）。
 
 **分支**:`feat/agent-reads-uploads`。
 

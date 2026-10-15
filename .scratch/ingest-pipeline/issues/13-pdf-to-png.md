@@ -841,3 +841,8 @@ F3 用例名统一成计划里的 `窄屏缩放组到达 10% 后禁用缩小按�
 `git diff --check` 干净。浏览器在 **390×844** 的真实 12 页 PDF 预览中确认:
 文件名/关闭热区交叠为 **0px**,页图仍可滚动查看,页面按钮显示 `26%`,其可访问名为
 `26% · 适应页面(整页可见)`。
+
+## 收口（2026-10-15，docs-only）
+
+- 本票**未勾项为「明确不做」而非未实现**：`stored_page_image` 表不建，页图按**派生缓存 + 清单**（`.pages.json`）承载，由 [`docs/adr/2026-10-14-page-images-as-derived-cache.md`](../../../docs/adr/2026-10-14-page-images-as-derived-cache.md) 定案；本票**不扩建表、不做批量页图管理 UI**。
+- 票内 8.x 的 UI 收口（DPI 选择、百分比按钮、窄屏文件名/关闭热区）已在上方记录；渲染与预览测试见 `tests/pdf-pages.test.ts` / `page-gallery*.test.ts`。

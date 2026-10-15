@@ -34,15 +34,15 @@
 
 ## 测试
 
-- [ ] 解析器的 fixture:一段真实 HTML 表格 → 结构化行。
-- [ ] cookie 失效 → **显式报错**,不返回空。
-- [ ] 缓存命中不重复请求。
+- [x] 解析器的 fixture:一段真实 HTML 表格 → 结构化行。—— `pipeline/tests/platform-reconcile.test.ts`「从 HTML 里解析出结构化行(嵌在页尾脚本的 zrarData 中)」等。
+- [x] cookie 失效 → **显式报错**,不返回空。—— 同上「过期时平台回 statusCode 301 ⇒ 显式抛错,不返回空结果」；实现见 `pipeline/src/platform.ts`（`PlatformSessionExpiredError`）。
+- [x] 缓存命中不重复请求。—— 同上「命中缓存不再请求,返回同样的行」「会话过期时不写缓存」。
 
 ## 验收
 
-- [ ] 抽 5 家「应出未出」,平台能解释出「外地 / 注销 / 外迁」中的哪一类。
-- [ ] 比对页那 5 行**显示解释**。
-- [ ] 测试全绿。
+- [x] 抽 5 家「应出未出」,平台能解释出「外地 / 注销 / 外迁」中的哪一类。—— `acceptance/20261015/evidence/platform-refresh/root-publication.md`：专精特新「应出未出」30 行有解释，父代理逐个展开 5 家**外地注册**，均与真实平台缓存一致。
+- [x] 比对页那 5 行**显示解释**。—— `evidence/platform-refresh/root-browser-cache-acceptance.json` 的 `extraDirectionFiveActuallyExpanded`（含可见 reason 与 tooltip/API 对照）。
+- [x] 测试全绿。—— `pipeline` 测试通过（`platform-reconcile.test.ts` 覆盖解析 / 过期 / 缓存 / 分类判定）。
 
 **分支**:`feat/platform-reconcile`。
 

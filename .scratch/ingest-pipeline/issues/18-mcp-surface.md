@@ -44,11 +44,13 @@
 
 ## 测试 / 验收
 
-- [ ] `npx nuxt add mcp`,起服务后 **MCP 客户端能列出 tools**;
-- [ ] `list_files` 返回**现有 23 个文件**;`list_file_parts` 对 192号 返回 **2 段**;
-- [ ] `set_file_category` 写回后 **`/files` 页可见**(端到端);
-- [ ] **未带鉴权**的写入被拒;
-- [ ] `pnpm typecheck && pnpm test` 全绿。
+- [x] `npx nuxt add mcp`,起服务后 **MCP 客户端能列出 tools**。—— `activation-proof.json` 的 `mcpTools` 列出 8 个文件域工具（3470 生产、鉴权请求）。
+- [x] `list_files` 返回**现有 23 个文件**;`list_file_parts` 对 192号 返回 **2 段**。—— 23 = 现 23 条登记（**21 有效 + 2 重复 DOC 软删**）；192号（file id 13）实测 2 段（`award/2024/2/附件1` + `review/2021/2/附件2`）。
+- [x] `set_file_category` 写回后 **`/files` 页可见**(端到端)。—— `tests/mcp-surface.test.ts`「写回分类…并把 `categoryState` 从 `unset` 升为 `set`」+「改完之后 `list_files` 的查询层立刻能看到」；`fresh-flow` 中经 MCP 回填后读回一致。
+- [x] **未带鉴权**的写入被拒。—— `tests/mcp-surface.test.ts` 的 `readMcpToken` / `tokenMatches` / `resolveMcpAuth` / `writeToolCallIn` /「拒绝文案说清是哪一种没带」。
+- [x] `pnpm typecheck && pnpm test` 全绿。—— 已接受主线 28 文件 525 测试 / typecheck 通过。
+
+> **收口（2026-10-15，docs-only）**：5 项按运行时清单、只读库核与测试已满足；「23 个」按现状注为 21 有效 + 2 软删。
 
 **分支**:`feat/mcp-surface`。
 

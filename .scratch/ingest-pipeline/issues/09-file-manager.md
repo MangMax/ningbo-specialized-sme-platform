@@ -41,18 +41,20 @@
 
 ## 测试
 
-- [ ] 回填幂等:重跑两次,行数不变。
-- [ ] `PATCH` 只改元数据、不改 `rel_path`、不动磁盘。
-- [ ] 列宽/排序稳定;分类状态筛选正确。
+- [x] 回填幂等:重跑两次,行数不变。—— `tests/stored-file.test.ts`「回填幂等:再跑两次,行数不变」；`tests/mcp-surface.test.ts` 亦断言「扫文件库补文件行…重跑不再回填(幂等)」。
+- [x] `PATCH` 只改元数据、不改 `rel_path`、不动磁盘。—— `server/api/files/[id].patch.ts`；`tests/mcp-surface.test.ts`「磁盘事实字段被拒」。
+- [x] 列宽/排序稳定;分类状态筛选正确。—— 列宽见 `UI-ACCEPTANCE-files.md`（逐列实测改宽，1440 下不再横滚）；排序见 `server/utils/stored-files.ts`（按 `relPath` `localeCompare`）；分类状态筛选见同文件 `categoryState` `inArray` 条件与 `GET /api/files` 同名参数。
 
 ## 验收
 
-- [ ] 页面上能看到**现有 23 个**文件,元数据与目录规则一致。
-- [ ] 改一个文件的年份 → 列表即时更新,磁盘文件不变。
-- [ ] app `pnpm typecheck && pnpm test` 全绿。
+- [x] 页面上能看到**现有 23 个**文件,元数据与目录规则一致。—— 旧快照的 23 = 现 23 条登记（**21 条有效 + 2 条重复 DOC 软删除**）；终库实物 21 份活跃文件，元数据与目录规则一致。
+- [x] 改一个文件的年份 → 列表即时更新,磁盘文件不变。—— `tests/mcp-surface.test.ts`「改完之后 `list_files` 的查询层立刻能看到(端到端的库内半边)」；磁盘不动由 PATCH 用例覆盖。
+- [x] app `pnpm typecheck && pnpm test` 全绿。—— 已接受主线 28 文件 525 测试 / typecheck 通过。
 
 **分支**:`feat/file-manager`。**只提交本票文件。**
 
 ## 2026-10-15 当前验收记录
 
 本地 app 代码主线 `5be3e60e3fd94cfd37929f79f07d692decf555ee`（后续8be仅文档），pipeline `4eb396f74f4ac75738dbe47ab9f09b4e1da2a95a` 已集成；app 28文件/517测试、类型检查及生产构建通过，pipeline 9文件/144测试和check通过。正式21个有效文件、55段、21443源行已重建并用两个独立CLI进程验证五张账表hash不变。证据在项目 `acceptance/20261015/{main-integration-ancestry.json,final-ledger-run3-audit.json,final-source-fact-integrity.json,runtime-production-smoke.json}`。3470生产服务已实际验证8个MCP工具列举、文件19读取17页OCR及457行。此段补充当前证据，不将下方旧快照中每个未勾选交互项一律冒充本轮重测。全新清洗验收仍由票12单独跟踪。
+
+> **收口（2026-10-15，docs-only）**：上表按代码、测试、只读库核与 `UI-ACCEPTANCE-files.md` 已满足的项已勾。页面的**独立** `/files` UI 复核由父代理另起、进行中，将以 `acceptance/20261015/evidence/ui-files-final/` 的最终报告为准；**本轮不宣称独立 UI 已通过**。
