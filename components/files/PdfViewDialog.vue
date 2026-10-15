@@ -66,10 +66,10 @@ const view = ref<'pdf' | 'pages'>('pdf')
 
       <Tabs v-model="view" class="flex min-h-0 flex-1 flex-col">
         <!-- 文件名与视图切换同一条:近乎全屏的弹窗里,得有个地方能确认「这是哪一份」。
-             它吃剩余宽度并 `truncate`,长文件名不会把两个 tab 挤走;`pr-9` 给右上角的
-             关闭按钮留出位置,免得长名字压到它底下。 -->
+             它吃剩余宽度并 `truncate`,长文件名不会把两个 tab 挤走;`pr-11` 为右上角
+             44px 的关闭按钮热区留出完整空间,省略号不会落在关闭热区下。 -->
         <div
-          class="bg-card flex shrink-0 items-center gap-2 rounded-lg border py-1 pr-9 pl-1.5"
+          class="bg-card flex shrink-0 items-center gap-2 rounded-lg border py-1 pr-11 pl-1.5"
         >
           <TabsList aria-label="PDF 视图">
             <TabsTrigger value="pdf">原文</TabsTrigger>

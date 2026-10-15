@@ -142,13 +142,14 @@ const ZOOM_MAX = 4
 const clampZoom = (v: number) => Math.min(ZOOM_MAX, Math.max(props.zoomMin, v))
 
 /**
- * 百分比按钮的**可访问名与提示**:说清「点它会发生什么」,而不是当前百分比。
+ * 百分比按钮的可访问名保留可见百分比,并说明点下去的动作。
  *
- * 按钮上的可见文字是百分比(14%),但读屏若只念出它,用户不知道这是一颗**动作**按钮,
- * 更不知道窄屏与宽屏点下去的去向**不同**(窄屏 = 适应页面,宽屏 = 回到 100%)。
- * 所以给一句随断点变化的名字 —— 与 `:title` 用同一个值,视觉提示与读屏口径不分叉。
+ * 这样既符合 Label in Name,语音控制可以按屏幕上的百分比定位,读屏也能听出窄屏
+ * 「适应页面」与宽屏「恢复到 100%」的区别。`:title` 与可访问名共用同一文本。
  */
-const zoomResetLabel = computed(() => (resetToFit.value ? '适应页面(整页可见)' : '恢复到 100%'))
+const zoomResetLabel = computed(
+  () => `${zoomPercent.value}% · ${resetToFit.value ? '适应页面(整页可见)' : '恢复到 100%'}`,
+)
 
 const ACTION_BTN = 'text-muted-foreground hover:text-foreground'
 </script>

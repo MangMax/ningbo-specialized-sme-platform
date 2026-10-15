@@ -695,13 +695,14 @@ describe('窄屏百分比按钮:opt-in 决定回「适应」还是回 100%', () 
 
   const pctBtn = (w: ReturnType<typeof mount>) => w.findAll('button').find((b) => b.text().includes('%'))!
 
-  it('**未 opt-in**(如 OfficePreview)窄屏:仍发 update:zoom=1,label 是「恢复到 100%」', async () => {
+  it('**未 opt-in**(如 OfficePreview)窄屏:仍发 update:zoom=1,可访问名包含可见百分比和动作', async () => {
     const { wrapper, restore } = mountAt(true)
     try {
       const pct = pctBtn(wrapper)
       // 关键:窄屏 + 未 opt-in ⇒ **不得**发 fit-width(Office 的 fit-width 是「适宽」,不是 100%)。
-      expect(pct.attributes('aria-label')).toBe('恢复到 100%')
-      expect(pct.attributes('title')).toBe('恢复到 100%')
+      expect(pct.text()).toBe('14%')
+      expect(pct.attributes('aria-label')).toBe('14% · 恢复到 100%')
+      expect(pct.attributes('title')).toBe('14% · 恢复到 100%')
       await pct.trigger('click')
       expect(wrapper.emitted('fit-width')).toBeFalsy()
       expect(wrapper.emitted('update:zoom')?.[0]).toEqual([1])
@@ -710,12 +711,13 @@ describe('窄屏百分比按钮:opt-in 决定回「适应」还是回 100%', () 
     }
   })
 
-  it('**opt-in**(图片预览)窄屏:发 fit-width,label 是「适应页面(整页可见)」', async () => {
+  it('**opt-in**(图片预览)窄屏:发 fit-width,可访问名包含可见百分比和动作', async () => {
     const { wrapper, restore } = mountAt(true, { resetToFitOnNarrow: true })
     try {
       const pct = pctBtn(wrapper)
-      expect(pct.attributes('aria-label')).toBe('适应页面(整页可见)')
-      expect(pct.attributes('title')).toBe('适应页面(整页可见)')
+      expect(pct.text()).toBe('14%')
+      expect(pct.attributes('aria-label')).toBe('14% · 适应页面(整页可见)')
+      expect(pct.attributes('title')).toBe('14% · 适应页面(整页可见)')
       await pct.trigger('click')
       expect(wrapper.emitted('fit-width')).toBeTruthy()
       expect(wrapper.emitted('update:zoom')).toBeFalsy()
@@ -728,7 +730,7 @@ describe('窄屏百分比按钮:opt-in 决定回「适应」还是回 100%', () 
     const { wrapper, restore } = mountAt(false, { resetToFitOnNarrow: true })
     try {
       const pct = pctBtn(wrapper)
-      expect(pct.attributes('aria-label')).toBe('恢复到 100%')
+      expect(pct.attributes('aria-label')).toBe('14% · 恢复到 100%')
       await pct.trigger('click')
       expect(wrapper.emitted('fit-width')).toBeFalsy()
       expect(wrapper.emitted('update:zoom')?.[0]).toEqual([1])

@@ -237,6 +237,11 @@ function pickDpi(value: unknown) {
   dpiTouched.value = true
 }
 
+/** 这个值是不是可选的预设档(非预设的那条只用来显示当前值,不可选)。 */
+function isDpiPreset(value: number): boolean {
+  return (DPI_PRESETS as readonly number[]).includes(value)
+}
+
 /**
  * 下拉里除了三个预设,是否还要多列一条**当前值**。
  *
@@ -248,11 +253,6 @@ function pickDpi(value: unknown) {
  * **不把 `dpi.value` 悄悄改成默认值** —— 那会把「磁盘上真是 120」这个事实抹掉;
  * 界面该说的是「当前 120(不是预设),你可以改成这三档之一」。
  */
-/** 这个值是不是可选的预设档(非预设的那条只用来显示当前值,不可选)。 */
-function isDpiPreset(value: number): boolean {
-  return (DPI_PRESETS as readonly number[]).includes(value)
-}
-
 const hasOffPresetDpi = computed(() => !isDpiPreset(dpi.value))
 
 const dpiOptions = computed<number[]>(() =>
