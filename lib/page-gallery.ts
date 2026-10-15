@@ -13,8 +13,8 @@ import { DEFAULT_DPI } from './pdf-page'
  * (`server/utils/pdf-pages.ts` 里 `upToDate` 是四个条件的合取,本来就分不出是哪一条)。
  */
 
-/** 页面能选的分辨率。给 OCR 用的区间是 200–300;150 是「先看个大概」的那一档。 */
-export const DPI_PRESETS = [150, 200, 300] as const
+/** 页面能选的分辨率。300 是 OCR 默认档;150 是「先看个大概」的那一档。 */
+export const DPI_PRESETS = [150, 200, 300, 400] as const
 
 /**
  * 页图单页视图的缩放**下限**(1 = 100%)。
@@ -31,9 +31,9 @@ export const PAGE_IMAGE_ZOOM_MIN = 0.1
 /**
  * 读页图现状,并在清单用的是非默认分辨率时,再用该分辨率核对一次 `upToDate`。
  *
- * `GET /api/pdf-pages` 的 `upToDate` 是**相对请求 DPI** 算的;省略参数会按默认 200 DPI
+ * `GET /api/pdf-pages` 的 `upToDate` 是**相对请求 DPI** 算的;省略参数会按默认 300 DPI
  * 比较。首次响应会同时告诉我们清单实际 DPI,所以非默认档需按清单 DPI 再读一次,避免把
- * 「请求 200、磁盘 300」造成的 false 标成源文件或页图损坏。
+ * 「请求 300、磁盘 400」造成的 false 标成源文件或页图损坏。
  *
  * **第二次失败不丢掉第一次的结果**(`dpiConfirmed: false`):第一次响应里已经有完整的
  * 清单(页数、每页尺寸、预览地址),据此就能把网格铺出来 —— 为了第二次核对失败而把整个

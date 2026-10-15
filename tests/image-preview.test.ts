@@ -257,7 +257,11 @@ describe('缩放下限:普通预览 25% / 页图库 10%(作用域隔离)', () =>
       dpi: 200,
       rendered: 1,
       upToDate: true,
-      manifest: { dpi: 200, renderedAt: '2026-10-15T00:00:00.000Z' },
+      manifest: {
+        dpi: 200,
+        renderedAt: '2026-10-15T00:00:00.000Z',
+        enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+      },
       pages: [
         {
           page: 1,
@@ -353,7 +357,11 @@ describe('窄屏自定义缩放的边界(F3)', () => {
     dpi: 200,
     rendered: 1,
     upToDate: true,
-    manifest: { dpi: 200, renderedAt: '2026-10-15T00:00:00.000Z' },
+    manifest: {
+      dpi: 200,
+      renderedAt: '2026-10-15T00:00:00.000Z',
+      enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+    },
     pages: [
       {
         page: 1,
@@ -586,7 +594,11 @@ describe('页图库窄屏缩小判据用有效下限(#1)', () => {
     dpi: 200,
     rendered: 1,
     upToDate: true,
-    manifest: { dpi: 200, renderedAt: '2026-10-15T00:00:00.000Z' },
+    manifest: {
+      dpi: 200,
+      renderedAt: '2026-10-15T00:00:00.000Z',
+      enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+    },
     pages: [
       {
         page: 1,

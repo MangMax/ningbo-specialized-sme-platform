@@ -34,7 +34,11 @@ function state(over: Partial<PdfPagesState> = {}): PdfPagesState {
     rendered: 12,
     upToDate: true,
     pages: [],
-    manifest: { dpi: 200, renderedAt: '2026-10-14T08:00:00.000Z' },
+    manifest: {
+      dpi: 200,
+      renderedAt: '2026-10-14T08:00:00.000Z',
+      enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+    },
   }
   return { ...base, ...over }
 }
@@ -178,26 +182,34 @@ describe('galleryStatus(现状 → 该说什么、该做什么)', () => {
 })
 
 describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
-  it('磁盘是 300 DPI 时按清单 DPI 重查,不会把默认 200 DPI 的差异误报成源文件变化', async () => {
+  it('磁盘是 400 DPI 时按清单 DPI 重查,不会把默认 300 DPI 的差异误报成源文件变化', async () => {
     const file = state().file
     const defaultDpiResponse = state({
-      dpi: 300,
+      dpi: 400,
       upToDate: false,
-      manifest: { dpi: 300, renderedAt: '2026-10-14T08:00:00.000Z' },
+      manifest: {
+        dpi: 400,
+        renderedAt: '2026-10-14T08:00:00.000Z',
+        enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+      },
     })
     const manifestDpiResponse = state({
-      dpi: 300,
+      dpi: 400,
       upToDate: true,
-      manifest: { dpi: 300, renderedAt: '2026-10-14T08:00:00.000Z' },
+      manifest: {
+        dpi: 400,
+        renderedAt: '2026-10-14T08:00:00.000Z',
+        enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+      },
     })
     const requests: Array<{ file: string; dpi?: number }> = []
 
     const loaded = await loadPageGalleryState(file, async (query) => {
       requests.push(query)
-      return query.dpi === 300 ? manifestDpiResponse : defaultDpiResponse
+      return query.dpi === 400 ? manifestDpiResponse : defaultDpiResponse
     })
 
-    expect(requests).toEqual([{ file }, { file, dpi: 300 }])
+    expect(requests).toEqual([{ file }, { file, dpi: 400 }])
     expect(loaded.dpiConfirmed).toBe(true)
     expect(loaded.state.upToDate).toBe(true)
     expect(galleryStatus(loaded.state, loaded.state.dpi).tone).toBe('ready')
@@ -206,9 +218,13 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
   it('按清单 DPI 重查后仍不新鲜时,保留真实异常状态(且确实发了第二次请求)', async () => {
     const file = state().file
     const stale = state({
-      dpi: 300,
+      dpi: 400,
       upToDate: false,
-      manifest: { dpi: 300, renderedAt: '2026-10-14T08:00:00.000Z' },
+      manifest: {
+        dpi: 400,
+        renderedAt: '2026-10-14T08:00:00.000Z',
+        enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+      },
     })
     const requests: Array<{ file: string; dpi?: number }> = []
 
@@ -219,7 +235,7 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
 
     // 关键断言:即便两次结果一样「不新鲜」,第二次**仍必须按清单 DPI 发出**。
     // 只断言 tone 是拦不住的 —— 删掉二次请求后首个响应就是 stale,断言照样通过。
-    expect(requests).toEqual([{ file }, { file, dpi: 300 }])
+    expect(requests).toEqual([{ file }, { file, dpi: 400 }])
     expect(galleryStatus(loaded.state, loaded.state.dpi).tone).toBe('stale')
   })
 
@@ -228,7 +244,14 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
     const requests: Array<{ file: string; dpi?: number }> = []
     const loaded = await loadPageGalleryState(file, async (query) => {
       requests.push(query)
-      return state()
+      return state({
+        dpi: 300,
+        manifest: {
+          dpi: 300,
+          renderedAt: '2026-10-15T00:00:00.000Z',
+          enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+        },
+      })
     })
 
     expect(requests).toEqual([{ file }])
@@ -252,9 +275,13 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
   it('**二次核对失败时保留首次响应**(F3):有清单就不该白屏,只标记未确认', async () => {
     const file = state().file
     const withManifest = state({
-      dpi: 300,
+      dpi: 400,
       upToDate: false,
-      manifest: { dpi: 300, renderedAt: '2026-10-14T08:00:00.000Z' },
+      manifest: {
+        dpi: 400,
+        renderedAt: '2026-10-14T08:00:00.000Z',
+        enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+      },
       pages: [page(1), page(2)],
       rendered: 2,
       pageCount: 2,
@@ -263,12 +290,12 @@ describe('loadPageGalleryState(按清单分辨率核对现状)', () => {
 
     const loaded = await loadPageGalleryState(file, async (query) => {
       requests.push(query)
-      if (query.dpi === 300) throw new Error('boom')
+      if (query.dpi === 400) throw new Error('boom')
       return withManifest
     })
 
     // 第二次确实发了(且失败了),但**结果不能丢**:清单还在,网格照铺。
-    expect(requests).toEqual([{ file }, { file, dpi: 300 }])
+    expect(requests).toEqual([{ file }, { file, dpi: 400 }])
     expect(loaded.dpiConfirmed).toBe(false)
     expect(loaded.state).toEqual(withManifest)
     expect(loaded.state.pages).toHaveLength(2)
@@ -322,7 +349,16 @@ describe('pageImageSrc(页图地址带渲染版本号)', () => {
 
   it('不同次渲染给出不同的版本号 —— 重渲染必然换新', () => {
     const a = pageImageSrc(state(), page(1))
-    const b = pageImageSrc(state({ manifest: { dpi: 200, renderedAt: '2026-10-14T09:30:00.000Z' } }), page(1))
+    const b = pageImageSrc(
+      state({
+        manifest: {
+          dpi: 200,
+          renderedAt: '2026-10-14T09:30:00.000Z',
+          enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+        },
+      }),
+      page(1),
+    )
     expect(a).not.toBe(b)
   })
 })
@@ -379,9 +415,10 @@ describe('formatDuration / pageLabel', () => {
 })
 
 describe('DPI_PRESETS', () => {
-  it('含够 OCR 的 200 / 300,且都在接口允许的 72–600 内', () => {
+  it('含 OCR 预设的 200 / 300 / 400,且都在接口允许的 72–600 内', () => {
     expect(DPI_PRESETS).toContain(200)
     expect(DPI_PRESETS).toContain(300)
+    expect(DPI_PRESETS).toContain(400)
     for (const dpi of DPI_PRESETS) {
       expect(dpi).toBeGreaterThanOrEqual(72)
       expect(dpi).toBeLessThanOrEqual(600)

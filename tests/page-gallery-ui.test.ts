@@ -27,7 +27,11 @@ function stateAt(dpi: number) {
     dpi,
     rendered: 1,
     upToDate: true,
-    manifest: { dpi, renderedAt: '2026-10-15T00:00:00.000Z' },
+    manifest: {
+      dpi,
+      renderedAt: '2026-10-15T00:00:00.000Z',
+      enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
+    },
     pages: [
       {
         page: 1,
@@ -75,13 +79,21 @@ function triggerText(gallery: Awaited<ReturnType<typeof openGallery>>): string {
 }
 
 describe('页图库分辨率下拉:非预设的当前 DPI', () => {
-  it('当前是预设(200)时:触发器显示 200 DPI,选项只有三个预设', async () => {
+  it('当前是预设(200)时:触发器显示 200 DPI,选项列出全部预设', async () => {
     const gallery = await openGallery(200)
     expect(triggerText(gallery)).toContain('200 DPI')
 
     const items = await openSelect(gallery)
     expect(items).toHaveLength(DPI_PRESETS.length)
     expect(items.map((i) => i.textContent?.trim())).toEqual(DPI_PRESETS.map((d) => `${d} DPI`))
+  })
+
+  it('300 DPI 是默认 OCR 档,400 DPI 仍可在页图库手动选择', async () => {
+    const gallery = await openGallery(300)
+    expect(triggerText(gallery)).toContain('300 DPI')
+
+    const items = await openSelect(gallery)
+    expect(items.map((i) => i.textContent?.trim())).toContain('400 DPI')
   })
 
   it('当前是**非预设**(120)时:触发器**不空**,明确显示 120 DPI', async () => {
@@ -91,12 +103,12 @@ describe('页图库分辨率下拉:非预设的当前 DPI', () => {
     expect(triggerText(gallery)).not.toBe('')
   })
 
-  it('非预设时选项表多一条**只读**的「120 DPI(当前)」,三个预设都还在', async () => {
+  it('非预设时选项表多一条**只读**的「120 DPI(当前)」,预设档都还在', async () => {
     const gallery = await openGallery(120)
     const items = await openSelect(gallery)
     const labels = items.map((i) => i.textContent?.trim())
     expect(labels).toHaveLength(DPI_PRESETS.length + 1)
-    // 三个预设原样都在。
+    // 所有预设档原样都在。
     for (const d of DPI_PRESETS) expect(labels).toContain(`${d} DPI`)
     // 当前值那条带 `(当前)` 后缀,且**被禁用**(只显示、不给选)。
     const current = items.find((i) => i.textContent?.includes('(当前)'))!

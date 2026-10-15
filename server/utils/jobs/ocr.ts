@@ -1,9 +1,14 @@
 import { DEFAULT_DPI, isPdfPath } from '../../../lib/pdf-page'
 import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
 import { findFileIdByRelPath } from '../mcp-files'
-import { ocrPdfFile, resolveOcrConfig, type OcrPageOut } from '../ocr-api'
-import { writeOcrResult, removeOcrResults } from '../ocr-result'
-import { listPdfPages, resolveWithinRoot } from '../pdf-pages'
+import {
+  MAX_CONCURRENT_PADDLE_JOBS,
+  ocrImageFile,
+  resolveOcrConfig,
+  type OcrPageOut,
+} from '../ocr-api'
+import { writeOcrResult } from '../ocr-result'
+import { listPdfPages, resolveWithinRoot, type PageImageRef } from '../pdf-pages'
 
 /**
  * `ocr` —— **批量**把扫描 PDF 识别成文本(通路 a:在线 API)。
@@ -12,16 +17,13 @@ import { listPdfPages, resolveWithinRoot } from '../pdf-pages'
  * `ocr_result` 表建起来之后,这里就是那句话的答案 —— **`todo` → `ready`**,
  * 注册表(`job-specs.ts`)与提交路由一行都不用改。
  *
- * ── 为什么提交**整份 PDF**,不是逐页页图 ─────────────────────────────────
- * 理由写在全处:`server/utils/ocr-api.ts` 顶部(页码天然对齐 / 一次调用一份文件 /
- * 版式上下文更全)。这里只说**页图仍然被核对**:每份文件跑完都去问一次票 13 的
- * `listPdfPages` —— 已渲染的页图数与识别出的页数对不上就在产出里**报出来**
- * (不是失败:页图没渲染过是常态,渲染了才对得上是有用的信号)。
+ * OCR 前必须先完成票 13 的页图渲染(默认 300 DPI,旧的 400 DPI 页图也可用)。
+ * 一份 PDF 的页图并发调用 Paddle,
+ * 并把每次返回绑定到页图清单中的源页码;没有完整、最新的页图就拒绝提交。
  *
- * ── 逐份之间的取消检查 ──────────────────────────────────────────────────
- * 与 `render-pages` 同一粒度:**一份文件**之前问一次。一份 97 页的 PDF 识别是分钟级,
- * 页级取消要往 `ocrPdfFile` 的轮询里插回调 —— 那条路已经有了(`isCancelled`),
- * 这里只用「份」这一层,因为「停下来时哪几份做完了」才是调用方要的。
+ * ── 取消检查 ───────────────────────────────────────────────────────────
+ * 每张 PNG 轮询时都检查取消标记;取消后页池不再启动新请求,已完成的整份 PDF 才会保留。
+ * 结果只在一份 PDF 的所有页成功后替换,因此取消或单页失败不会留下半份新结果。
  */
 
 /** 一份文件的识别结果。`ok` 是判据。 */
@@ -35,14 +37,10 @@ export type OcrFileOutcome =
       pages: number
       /** 票 13 已渲染的页图数;没渲染过是 0。 */
       renderedPageImages: number
-      /** 页数与页图数对不上时的提醒(不是失败)。 */
-      warning?: string
       engine: string
       model: string
-      /** 服务端报的总页数(拿不到时为 null)。 */
-      apiTotalPages: number | null
-      /** API 那侧的任务号,便于对账。 */
-      apiJobId: string
+      /** 每张页图一个 Paddle job,按源页码顺序排列。 */
+      apiJobIds: string[]
       elapsedMs: number
     }
   | { file: string; ok: false; error: string }
@@ -134,6 +132,7 @@ function persistPages(
   const result = writeOcrResult(ctx.db, {
     fileId,
     pages: pages.map((p) => ({ page: p.page, markdown: p.markdown, raw: p.raw })),
+    replaceExistingPages: true,
     channel: 'api',
     engine: 'paddleocr',
     model,
@@ -144,46 +143,42 @@ function persistPages(
   return { written: result.written }
 }
 
-/**
- * 票 13 已渲染的页图数;**探测本身失败时给 `null`**(不是 0)。
- *
- * 「没渲染过」与「探测不了」是两件事:前者是 `0`(正常的、不报警),
- * 后者是「我不知道」——把后者当 0 会让一份真出了问题的文件看起来完全正常。
- * 所以这里吞掉异常并回 `null`,调用方据此决定要不要报警。
- */
-async function renderedPageCount(filesDir: string, relPath: string): Promise<number | null> {
-  try {
-    return (await listPdfPages(filesDir, relPath, DEFAULT_DPI)).rendered
-  } catch {
-    return null
+/** 返回当前源 PDF 的完整最新页图;OCR 最低 300 DPI,已存在的 400 DPI 页图也可用。 */
+async function currentPageImages(filesDir: string, relPath: string): Promise<PageImageRef[]> {
+  const initial = await listPdfPages(filesDir, relPath, DEFAULT_DPI)
+  // 页面默认分辨率下调后,已渲染的 400 DPI 清单按其自身 DPI 复核,不用为了兼容而重渲染。
+  const state =
+    initial.manifest && initial.dpi !== DEFAULT_DPI
+      ? await listPdfPages(filesDir, relPath, initial.dpi)
+      : initial
+  if (!state.pageCount || state.pageCount < 1) {
+    throw new Error(`读不到源 PDF 页数:${relPath}`)
   }
+  const continuous =
+    state.pages.length === state.pageCount && state.pages.every((page, index) => page.page === index + 1)
+  if (
+    !state.upToDate ||
+    state.dpi < DEFAULT_DPI ||
+    state.rendered !== state.pageCount ||
+    !continuous
+  ) {
+    throw new Error(
+      `没有完整、最新且至少 ${DEFAULT_DPI} DPI 的页图(${state.rendered}/${state.pageCount} 页,当前 ${state.dpi} DPI);` +
+        `请先提交 render-pages 并确认全部成功:${relPath}`,
+    )
+  }
+  return state.pages
 }
 
 /**
- * **源 PDF 的实际页数**(不看页图,任何时候都问得到)。读不出来时给 `null`。
- *
- * 与 `renderedPageCount` 分工:那个答「渲染过没、渲染了几页」(可选缓存),
- * 这个答「这份文件到底有多少页」(事实)。页码对不对只取决于后者。
- */
-async function sourcePageCount(filesDir: string, relPath: string): Promise<number | null> {
-  try {
-    return (await listPdfPages(filesDir, relPath, DEFAULT_DPI)).pageCount
-  } catch {
-    return null
-  }
-}
-
-/**
- * 逐份识别。
+ * 多份并行识别,每份 PDF 的页图也并行;全进程 Paddle 并发由 `ocrImageFile` 的共享信号量限制。
  *
  * **一份失败不停下整批**(与 `render-pages` 同一理由):批量任务的用处正是「一次交一堆」,
  * 因为第 2 份坏了就撂下第 3–7 份,等于把「哪几份坏了」换成「任务失败」。
  * 有任意一份失败 ⇒ 状态记 `failed`,明细仍在 `result.files[]` 里。
  *
- * **取消**走 `{ cancelled: true }` 并**带着部分产出收尾** —— 调用方最想知道的是
- * 「停在哪、做完了哪些」。正在跑的那一份**会先跑完**(尽力而为:取消在下一次的检查点生效),
- * 它已写入的结果**保留**(写库发生在 `ocrPdfFile` 返回之后;被取消时会有半份文件缺页,
- * 重跑那一份即可 —— `(file_id, page_no)` 唯一索引让它幂等)。
+ * **取消**走 `{ cancelled: true }` 并带已完成文件的产出。当前 PDF 的页结果先缓存在内存,
+ * 全页成功后才在单个事务里替换旧结果;中途失败或取消不会留下半份新 OCR。
  */
 export async function runOcr(
   ctx: JobContext,
@@ -199,26 +194,22 @@ export async function runOcr(
     )
   }
 
-  const outcomes: OcrFileOutcome[] = []
+  const outcomes: Array<OcrFileOutcome | undefined> = Array.from({ length: files.length })
+  let doneFiles = 0
   let totalPages = 0
   let failed = 0
 
   const snapshot = (): OcrJobResult => ({
-    files: outcomes,
+    files: outcomes.filter((outcome): outcome is OcrFileOutcome => outcome !== undefined),
     total: files.length,
-    ok: outcomes.filter((o) => o.ok).length,
+    ok: outcomes.filter((outcome) => outcome?.ok).length,
     failed,
     pages: totalPages,
     channel: 'api',
   })
 
-  for (let i = 0; i < files.length; i += 1) {
-    // 每份之前看一眼取消标记 —— 「尽力而为」唯一的检查点。
-    if (ctx.cancelled()) {
-      return { result: { ...snapshot(), cancelled: true, done: i }, cancelled: true }
-    }
-    const file = files[i]!
-
+  const processFile = async (file: string): Promise<OcrFileOutcome | null> => {
+    if (ctx.cancelled()) return null
     try {
       const fileId = findFileIdByRelPath(ctx.db, file)
       if (fileId === null) {
@@ -226,72 +217,88 @@ export async function runOcr(
           `文件库里没有这个文件(先让 app 回填 stored_file:打开 /files 页,或调 list_files):${file}`,
         )
       }
-      const abs = resolveWithinRoot(ctx.filesDir, file)
+      const images = await currentPageImages(ctx.filesDir, file)
+      const startedAt = Date.now()
+      const pageResults: Array<OcrPageOut | undefined> = Array.from({ length: images.length })
+      const apiJobIds: Array<string | undefined> = Array.from({ length: images.length })
+      const pageErrors: Array<string | undefined> = Array.from({ length: images.length })
+      let nextIndex = 0
 
-      const out = await ocrPdfFile({
-        token: config.token,
-        baseUrl: config.baseUrl,
-        model: model ?? config.model,
-        pollTimeoutMs: config.pollTimeoutMs,
-        filePath: abs,
-        fileName: file.split('/').pop(),
-        isCancelled: () => ctx.cancelled(),
-      })
-
-      persistPages(ctx, fileId, file, out.pages, out.model)
-      totalPages += out.pages.length
-
-      // 与**源 PDF 的实际页数**核对 —— 这是「页码没被写错」的护栏。
-      //
-      // 为什么不用票 13 的页图数:页图是**可有可无的派生缓存**(没渲染过就是 0),
-      // 而源页数是这份文件的**事实**,任何时候都问得到。页图数与 OCR 页数的一致性
-      // 走另一个判据(见下),两件事分开说。
-      const sourcePages = await sourcePageCount(ctx.filesDir, file)
-      if (sourcePages !== null && sourcePages > 0 && out.pages.length !== sourcePages) {
-        // **落到这里说明页码已经不可信了** —— 我们按 1..N 落的库,而源文件有 M 页。
-        // 刚写进去的那些行按页号是错的,**删掉**(留着比没有更坏:它看起来像真的)。
-        // 这不是「提醒一下」的情形,所以这一项记 `failed`。
-        removeOcrResults(ctx.db, fileId)
-        totalPages -= out.pages.length
-        failed += 1
-        outcomes.push({
-          file,
-          ok: false,
-          error:
-            `识别出的页数(${out.pages.length})与源 PDF 的页数(${sourcePages})不一致 —— ` +
-            '按页回填的页码会因此错位,本项不采信、已回滚写入。请确认文件是否被截断/加密,或重跑一次。',
-        })
-        ctx.progress(i + 1, files.length)
-        continue
+      const recognizeNextPages = async (): Promise<void> => {
+        while (!ctx.cancelled()) {
+          const index = nextIndex
+          nextIndex += 1
+          if (index >= images.length) return
+          const image = images[index]!
+          try {
+            const out = await ocrImageFile({
+              token: config.token,
+              baseUrl: config.baseUrl,
+              model: model ?? config.model,
+              pollTimeoutMs: config.pollTimeoutMs,
+              filePath: resolveWithinRoot(ctx.filesDir, image.relPath),
+              fileName: image.relPath.split('/').pop(),
+              isCancelled: () => ctx.cancelled(),
+            })
+            // Paddle 没有源文档页码;这里由清单中的本地页号绑定,不从 OCR 文本猜页码。
+            pageResults[index] = { ...out.page, page: image.page }
+            apiJobIds[index] = out.jobId
+          } catch (error) {
+            if (ctx.cancelled()) return
+            pageErrors[index] = `第 ${image.page} 页 OCR 失败:${(error as Error).message}`
+          }
+        }
       }
 
-      // 页图数是**另一个**信号:它说明「OCR 与渲染说的是不是同一份文件」。
-      // 拿不到(没渲染过)或探测失败都不算问题,只记一行。
-      const rendered = await renderedPageCount(ctx.filesDir, file)
-      const warning =
-        rendered !== null && rendered > 0 && rendered !== out.pages.length
-          ? `页图数与 OCR 页数不一致:OCR 出 ${out.pages.length} 页,票 13 的页图有 ${rendered} 页 —— 请确认源 PDF 是否是同一份`
-          : undefined
+      await Promise.all(
+        Array.from(
+          { length: Math.min(MAX_CONCURRENT_PADDLE_JOBS, images.length) },
+          () => recognizeNextPages(),
+        ),
+      )
+      if (ctx.cancelled()) return null
 
-      outcomes.push({
+      const errors = pageErrors.filter((error): error is string => error !== undefined)
+      if (errors.length) throw new Error(errors.join('；'))
+      const completePages = pageResults.filter((page): page is OcrPageOut => page !== undefined)
+      const completeJobIds = apiJobIds.filter((jobId): jobId is string => jobId !== undefined)
+      if (completePages.length !== images.length || completeJobIds.length !== images.length) {
+        throw new Error(`并发 OCR 未返回全部页(${completePages.length}/${images.length}):${file}`)
+      }
+      if (ctx.cancelled()) return null
+
+      persistPages(ctx, fileId, file, completePages, model ?? config.model)
+      return {
         file,
         ok: true,
         fileId,
-        pages: out.pages.length,
-        renderedPageImages: rendered ?? 0,
-        ...(warning ? { warning } : {}),
+        pages: completePages.length,
+        renderedPageImages: images.length,
         engine: 'paddleocr',
-        model: out.model,
-        apiTotalPages: out.totalPages,
-        apiJobId: out.jobId,
-        elapsedMs: out.elapsedMs,
-      })
+        model: model ?? config.model,
+        apiJobIds: completeJobIds,
+        elapsedMs: Date.now() - startedAt,
+      }
     } catch (error) {
-      failed += 1
-      outcomes.push({ file, ok: false, error: (error as Error).message ?? String(error) })
+      if (ctx.cancelled()) return null
+      return { file, ok: false, error: (error as Error).message ?? String(error) }
     }
+  }
 
-    ctx.progress(i + 1, files.length)
+  await Promise.all(
+    files.map(async (file, index) => {
+      const outcome = await processFile(file)
+      if (!outcome) return
+      outcomes[index] = outcome
+      if (outcome.ok) totalPages += outcome.pages
+      else failed += 1
+      doneFiles += 1
+      ctx.progress(doneFiles, files.length)
+    }),
+  )
+
+  if (ctx.cancelled()) {
+    return { result: { ...snapshot(), cancelled: true, done: doneFiles }, cancelled: true }
   }
 
   const result = snapshot()
@@ -303,9 +310,9 @@ export async function runOcr(
 export const ocrSpec: JobSpec = {
   kind: 'ocr',
   status: 'ready',
-  summary: '批量 OCR(走 PaddleOCR API,结果按页码入库到 ocr_result)',
+  summary: '先渲染并增强 PDF 页图,并发提交单页 PNG 给 PaddleOCR,按源页码完整入库到 ocr_result',
   paramsHint:
-    '{ files: string[](相对文件库根的 PDF 路径,非空), model?: string, pageRanges?: string }',
+    '{ files: string[](相对文件库根的 PDF 路径,非空;须先生成完整且至少 300 DPI 页图), model?: string }',
   parse: parseOcrParams,
   // 分母提交时就知道 —— 轮询方一上来就能看到「一共 3 份」。
   total: (params) => (params.files as string[]).length,

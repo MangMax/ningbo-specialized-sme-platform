@@ -3,7 +3,7 @@ import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '~~/lib/pdf-page'
 import { listPdfPages, pageImagePath, resolveWithinRoot } from '../utils/pdf-pages'
 
 /**
- * PDF 页图:查现状 / 取单页像素。`GET /api/pdf-pages?file=<相对路径>[&dpi=200][&page=3]`
+ * PDF 页图:查现状 / 取单页像素。`GET /api/pdf-pages?file=<相对路径>[&dpi=400][&page=3]`
  *
  * - 不带 `page` → 返回 JSON:源页数、已渲染页数、是否与当前源一致、每页的尺寸与预览 URL。
  * - 带 `page` → 直接回该页的 PNG 字节。
@@ -32,7 +32,7 @@ defineRouteMeta({
         schema: { type: 'string' },
         description: '相对文件库根的 PDF 路径(必给)。',
       },
-      { name: 'dpi', in: 'query', schema: { type: 'integer', minimum: 72, maximum: 600, default: 200 } },
+      { name: 'dpi', in: 'query', schema: { type: 'integer', minimum: 72, maximum: 600, default: 300 } },
       { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 }, description: '给页号则回该页 PNG。' },
     ],
     responses: {

@@ -40,10 +40,11 @@ export const PAGES_DIR_SUFFIX = '.pages'
 export const PAGES_MANIFEST_NAME = '.pages.json'
 
 /**
- * OCR 够用的默认分辨率(票 13 给的区间 200–300)。200 DPI 下 A4 出 1653×2339 px,
- * 正文小四号字高约 30 px —— 足够 OCR,又不至于把 97 页的 PDF 撑成几个 G。
+ * OCR 默认分辨率。300 DPI 可保留小字细节,也能显著缩小 400 DPI 页图的上传体积;
+ * 页图逐页生成、灰度压缩后落盘,
+ * 不会把整份 PDF 的位图同时留在内存里。
  */
-export const DEFAULT_DPI = 200
+export const DEFAULT_DPI = 300
 /** 分辨率下限(低于 72 DPI 比屏幕还粗,没有意义)。 */
 export const MIN_DPI = 72
 /** 分辨率上限(600 DPI 下 97 页 A4 约 8 GB 位图,挡住误传)。 */
@@ -118,8 +119,8 @@ export function pixelSizeFor(
 }
 
 /**
- * 校验分辨率参数。缺省用 `DEFAULT_DPI`;非整数或越界**抛错**(宁可 400,不静默纠正 ——
- * 静默取整会让人以为「传了 300」而实际按 200 渲染)。
+ * 校验分辨率参数。缺省用 `DEFAULT_DPI`;非整数或越界**抛错**(不静默纠正 ——
+ * 静默取整会让人以为「传了 200」而实际按 300 渲染)。
  */
 export function normalizeDpi(raw: unknown): number {
   if (raw === undefined || raw === null || raw === '') return DEFAULT_DPI

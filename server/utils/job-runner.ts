@@ -14,7 +14,7 @@ import {
 type Db = BetterSQLite3Database<typeof schema>
 
 /**
- * 异步任务的**执行面**:kind → handler 的注册表,加一条**进程内串行**的队列。
+ * 异步任务的**执行面**:kind → handler 的注册表,加一条进程内队列。
  *
  * 见 `.scratch/ingest-pipeline/issues/19-openapi.md`。
  *
@@ -23,17 +23,15 @@ type Db = BetterSQLite3Database<typeof schema>
  * 天荒地老,代理也只能一次干等一件 —— 而代理要在技能里 `curl`,没有后台线程可用。
  * `POST` 立刻回 `202 + jobId`、之后 `GET /api/jobs/:id` 轮询,批量才跑得动。
  *
- * ── 并发语义(写清楚,因为它是本票的验收项之一)────────────────────────────
- * **一次只跑一个任务,先进先出。** 具体:
+ * ── 并发语义───────────────────────────────────────────────────────────
+ * OCR job 最多 4 个同时运行,让独立 PDF 任务能并行推进;OCR 页图请求另由共享信号量限制。
+ * 非 OCR 任务仍保持先进先出、一次只跑一个,且不会和 OCR 任务交错运行:
  *  1. `submitJob` 只**入队**并立刻返回,HTTP 请求不等它;
- *  2. 队列由单个后台循环消费,所以**任何时刻最多一个 kind handler 在跑**;
- *  3. 于是并发的两个提交必然一个 `running`、一个 `queued` —— 它们不会同时碰磁盘。
- *     这对 `render-pages` 尤其要紧:两份任务渲染**同一份** PDF 时,页图目录里的
- *     `pNNN.png.tmp` 与 `.pages.json` 是同一批文件,并行就是互相覆盖(票 13 已按
- *     「同一份 PDF 的渲染串行」挡住一层,这里是第二层,覆盖跨任务的场景)。
- *  4. 串行**不牺牲批量**:一个任务可以带 N 份文件(`render-pages` 的 `files` 数组),
- *     批量是「一次提交多份」,不是「同时跑多个任务」。
- *  5. 单进程语义。多实例部署(两个 node 进程指向同一个 db 文件)不在本票范围内 ——
+ *  2. 非 OCR handler 不与任何其他 handler 并行,保护 `render-pages` 同文件页图清单与
+ *     暂存文件的原子性;这些任务仍按 FIFO 串行;
+ *  3. OCR handler 彼此最多同时 4 个,由 `ocrImageFile` 再统一限制最多 8 个未完成的
+ *     Paddle 单页 job;多文件和多页展开后也不会无上限地打到远端。
+ *  4. 单进程语义。多实例部署(两个 node 进程指向同一个 db 文件)不在本票范围内 ——
  *     那需要一把跨进程的锁,**不是**现在这个内存队列能保证的事,写在这里免得误以为能。
  *
  * ── 任务不跨重启续跑 ────────────────────────────────────────────────────
@@ -153,11 +151,14 @@ export function clearJobSpecs(): void {
 
 interface QueueEntry {
   jobId: string
+  kind: string
   db: Db
   filesDir: string
 }
 
 const queue: QueueEntry[] = []
+const activeJobs = new Map<string, string>()
+const MAX_CONCURRENT_OCR_JOBS = 4
 
 /**
  * 已收到取消请求、但**正在跑**的任务 id。
@@ -169,12 +170,12 @@ const queue: QueueEntry[] = []
  */
 const cancelRequested = new Set<string>()
 
-let pumping = false
+let dispatching = false
 let idleWaiters: Array<() => void> = []
 
 /** 队列清空且没有在跑的任务时 resolve(测试与验收用,业务代码不需要)。 */
 export function whenIdle(): Promise<void> {
-  if (!pumping && queue.length === 0) return Promise.resolve()
+  if (activeJobs.size === 0 && queue.length === 0) return Promise.resolve()
   return new Promise((resolve) => idleWaiters.push(resolve))
 }
 
@@ -188,8 +189,8 @@ function notifyIdle(): void {
 export function __resetJobRunner(): void {
   queue.length = 0
   cancelRequested.clear()
-  pumping = false
-  notifyIdle()
+  dispatching = false
+  notifyIdleIfReady()
 }
 
 // ---------------------------------------------------------------------------
@@ -224,8 +225,8 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
     progress: { done: 0, total },
   })
 
-  queue.push({ jobId: row.id, db, filesDir: input.filesDir })
-  void drainQueue()
+  queue.push({ jobId: row.id, kind: input.kind, db, filesDir: input.filesDir })
+  drainQueue()
   return row
 }
 
@@ -233,22 +234,37 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
 // 执行
 // ---------------------------------------------------------------------------
 
-/**
- * 消费队列的**唯一**循环 —— 名字里那个「唯一」是要紧的:`pumping` 保证同一时刻只有
- * 一个循环在跑,否则并发提交会各起一个,「串行」就没了。
- */
-async function drainQueue(): Promise<void> {
-  if (pumping) return
-  pumping = true
+/** 启动队首可运行的任务;OCR 并发槽和非 OCR 独占槽共用同一 FIFO 队列。 */
+function drainQueue(): void {
+  if (dispatching) return
+  dispatching = true
   try {
     while (queue.length) {
+      const next = queue[0]!
+      const activeKinds = [...activeJobs.values()]
+      const canRunAlongsideActiveOcr =
+        next.kind === 'ocr' &&
+        activeKinds.length > 0 &&
+        activeKinds.every((kind) => kind === 'ocr') &&
+        activeKinds.length < MAX_CONCURRENT_OCR_JOBS
+      if (activeKinds.length > 0 && !canRunAlongsideActiveOcr) break
+
       const entry = queue.shift()!
-      await runOne(entry)
+      activeJobs.set(entry.jobId, entry.kind)
+      void runOne(entry).finally(() => {
+        activeJobs.delete(entry.jobId)
+        notifyIdleIfReady()
+        drainQueue()
+      })
     }
   } finally {
-    pumping = false
-    notifyIdle()
+    dispatching = false
+    notifyIdleIfReady()
   }
+}
+
+function notifyIdleIfReady(): void {
+  if (queue.length === 0 && activeJobs.size === 0) notifyIdle()
 }
 
 async function runOne(entry: QueueEntry): Promise<void> {

@@ -42,10 +42,21 @@ import { countDarkRuns, markBand, minimalPdf } from './helpers/minimal-pdf'
 
 /** 夹具每页的 pt 尺寸。 */
 const PAGE_PT = { width: 400, height: 200 }
-/** 测试用的分辨率(比默认 200 低,快;规则与 DPI 无关)。 */
+/** 测试用的分辨率(比默认 300 低,快;规则与 DPI 无关)。 */
 const DPI = 100
 /** 夹具在文件库里的相对路径(形状照 `files/README.md`:source/kind/year/batch/名)。 */
 const REL = 'jxj/announcement/2024/1/fixture.pdf'
+
+/** sharp writes PNG pixels as RGB when DPI metadata is present; grayscale means R=G=B. */
+function isGrayscaleRgb(pixels: Buffer, channels: number): boolean {
+  if (channels !== 3) return false
+  for (let index = 0; index < pixels.length; index += channels) {
+    if (pixels[index] !== pixels[index + 1] || pixels[index + 1] !== pixels[index + 2]) {
+      return false
+    }
+  }
+  return true
+}
 
 /**
  * 临时文件库根。**建在模块作用域**:下面各 describe 的 `dirAbs` 是模块级常量,
@@ -131,18 +142,19 @@ describe('页图路径与命名(纯规则)', () => {
   })
 
   it('像素尺寸 = 页 pt 尺寸按 DPI 折算(整数,四舍五入)', () => {
-    // A4 595×842 pt:200 DPI → 1653×2339;300 DPI → 2479×3508。
+    // A4 595×842 pt:200 DPI → 1653×2339;300 DPI → 2479×3508;400 DPI → 3306×4678。
     expect(pixelSizeFor(595, 842, 200)).toEqual({ width: 1653, height: 2339 })
     expect(pixelSizeFor(595, 842, 300)).toEqual({ width: 2479, height: 3508 })
+    expect(pixelSizeFor(595, 842, 400)).toEqual({ width: 3306, height: 4678 })
     expect(pixelSizeFor(400, 200, 100)).toEqual({ width: 556, height: 278 })
     // 极小页也不会算出 0 像素。
     expect(pixelSizeFor(1, 1, 72)).toEqual({ width: 1, height: 1 })
   })
 
-  it('分辨率:缺省 200,越界或非整数抛错,不静默纠正', () => {
-    expect(DEFAULT_DPI).toBe(200)
-    expect(normalizeDpi(undefined)).toBe(200)
-    expect(normalizeDpi('')).toBe(200)
+  it('分辨率:缺省 300,越界或非整数抛错,不静默纠正', () => {
+    expect(DEFAULT_DPI).toBe(300)
+    expect(normalizeDpi(undefined)).toBe(300)
+    expect(normalizeDpi('')).toBe(300)
     expect(normalizeDpi('300')).toBe(300)
     expect(normalizeDpi(300)).toBe(300)
     expect(() => normalizeDpi(MIN_DPI - 1)).toThrow()
@@ -194,6 +206,23 @@ describe('渲染 4 页夹具(pdfium + sharp 端到端)', () => {
     )
   })
 
+  it('未指定 DPI 时按 300 DPI 输出灰度增强 PNG', async () => {
+    await removePdfPages(root, REL)
+    await writeFixture(REL, 1)
+
+    const out = await renderPdfPages(root, REL)
+    const meta = await sharp(join(root, pageImageRelPath(REL, 1))).metadata()
+
+    expect(out.dpi).toBe(300)
+    expect(out.written).toBe(1)
+    expect(meta.density).toBe(300)
+    expect(meta.channels).toBe(3)
+    expect(meta.hasAlpha).toBe(false)
+    expect({ width: meta.width, height: meta.height }).toEqual(
+      pixelSizeFor(PAGE_PT.width, PAGE_PT.height, 300),
+    )
+  })
+
   it('尺寸与 DPI 相符、页图带 DPI 标注,且这张图确实是这一页', async () => {
     await ensure(REL, 4)
     const expectSize = pixelSizeFor(PAGE_PT.width, PAGE_PT.height, DPI)
@@ -212,7 +241,8 @@ describe('渲染 4 页夹具(pdfium + sharp 端到端)', () => {
 
       // **内容检查**:第 n 页画了 n 个方块 —— 数出来必须是 n,不是「有文件就算过」。
       const { data, info } = await image.raw().toBuffer({ resolveWithObject: true })
-      expect(info.channels).toBe(4)
+      expect(info.channels).toBe(3)
+      expect(isGrayscaleRgb(data, info.channels)).toBe(true)
       expect(countDarkRuns(data, info.width, info.channels, band.fromRow, band.toRow)).toBe(page)
     }
   })
@@ -293,10 +323,11 @@ describe('渲染 4 页夹具(pdfium + sharp 端到端)', () => {
     await ensure(REL, 2)
 
     const manifest = JSON.parse(await readFile(join(dirAbs, '.pages.json'), 'utf8'))
-    expect(manifest.version).toBe(1)
+    expect(manifest.version).toBe(2)
     expect(manifest.file).toBe(REL)
     expect(manifest.dpi).toBe(DPI)
-    expect(manifest.colorSpace).toBe('RGBA')
+    expect(manifest.colorSpace).toBe('grayscale')
+    expect(manifest.enhancement).toBe('white-flatten-grayscale-normalize-sharpen-v1')
     expect(manifest.pageCount).toBe(2)
     expect(manifest.sourceSha256).toMatch(/^[0-9a-f]{64}$/)
     expect(manifest.sourceBytes).toBe((await stat(join(root, REL))).size)
@@ -308,6 +339,21 @@ describe('渲染 4 页夹具(pdfium + sharp 端到端)', () => {
       'relPath',
       'width',
     ])
+  })
+
+  it('同一 DPI 的旧版清单会失效,并重渲染为当前增强配置', async () => {
+    await ensure(REL, 2)
+    const manifestPath = join(dirAbs, '.pages.json')
+    const current = JSON.parse(await readFile(manifestPath, 'utf8')) as Record<string, unknown>
+    await writeFile(manifestPath, JSON.stringify({ ...current, version: 1 }))
+
+    const stale = await listPdfPages(root, REL, DPI)
+    expect(stale.upToDate).toBe(false)
+    expect(stale.rendered).toBe(0)
+
+    const rerendered = await renderPdfPages(root, REL, { dpi: DPI })
+    expect(rerendered.written).toBe(2)
+    expect(JSON.parse(await readFile(manifestPath, 'utf8')).version).toBe(2)
   })
 
   it('同一进程内并发**完全相同**的请求 → 搭车,只做一次', async () => {

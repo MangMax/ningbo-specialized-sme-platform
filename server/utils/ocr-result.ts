@@ -40,6 +40,8 @@ export interface OcrWriteInput {
   fileId: number
   /** 要写的页。**不会被合并**:没列出的页不动,列出的页**覆盖**。 */
   pages: readonly OcrPageWrite[]
+  /** 为完整 PDF OCR 使用:在同一事务内删旧页并完整替换,清掉旧结果的多余页。 */
+  replaceExistingPages?: boolean
   channel: OcrChannel
   engine?: string
   model?: string | null
@@ -169,6 +171,9 @@ export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
   const createdAt = new Date().toISOString()
 
   db.transaction((tx) => {
+    if (input.replaceExistingPages) {
+      tx.delete(schema.ocrResult).where(eq(schema.ocrResult.fileId, input.fileId)).run()
+    }
     for (const p of input.pages) {
       const hasRaw = p.raw !== undefined && p.raw !== null
       const values = {

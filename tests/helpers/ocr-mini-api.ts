@@ -1,135 +1,194 @@
 import { createServer, type Server as HttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
-/**
- * 一个**假的 PaddleOCR 服务**:照 `server/utils/ocr-api.ts` 用的那三个端点的形状回话。
- *
- * 为什么要有它:通路 a 的全部逻辑(提交 multipart → 轮询状态 → 取 JSONL → 按页切)
- * 只有**真的走一遍 HTTP** 才算验过。用一个假服务把它跑通,换来三件事:
- *
- *  1. **不碰外网、不花那份 token 的额度** —— 测试可以每次 CI 都跑;
- *  2. **能演我们演不出来的分支** —— `pending → running → done` 的中间态、
- *     `state:"failed"`、结果里少一页,这些在真服务上没法按需触发;
- *  3. **形状是照官方 SDK 抄的** —— 从 `paddleocr` 的 `_api_client/_poller.py`
- *     (`parse_doc_parsing_result` 读 `line.result.layoutParsingResults[].markdown.text`)
- *     与 `_http.py`(端点 `/api/v2/ocr/jobs`、`{code,data}` 信封、`resultUrl.jsonUrl`)
- *     逐字对齐。形状抄错的话,这个测试会「绿」而真调用照样崩 —— 所以对齐这一点写在票里。
- *
- * 端口用 `0`(系统分配),不与 dev 端口冲突。
- */
+/** 一个本地 Paddle API 替身:每个成功的 PNG 提交独立生成一个单页 job。 */
 export interface ModelApiFixture {
-  /** 每一页的 markdown(顺序即页号,第 i 项 = 第 i 页)。 */
+  /** 每次成功提交一张 PNG 时返回的 markdown,按成功提交顺序循环。 */
   pages: string[]
-  /** 轮询第几次才 `done`(默认 1:第一次查就是 done;给 2 会先回一次 running)。 */
+  /** 轮询第几次才 `done`(默认 1)。 */
   doneAfterPolls?: number
-  /** 直接让任务失败(演 `state:"failed"` + `errorMsg`)。 */
+  /** 按 PNG 页号延迟状态响应,用来验证完成顺序不会改变源页顺序。 */
+  pollDelayMsByPage?: Record<number, number>
+  /** 让所有 job 进入服务端 failed 状态。 */
   failWith?: string
-  /** 服务端报的总页数(默认 = `pages.length`)。 */
+  /** 仅让指定成功提交序号对应的页失败(页号从 1 起)。 */
+  failOnPage?: { page: number; message: string }
+  /** 仅让指定提交创建的 job 失败(提交序号从 1 起)。 */
+  failOnSubmit?: { submit: number; message: string }
+  /** 提交尝试序号对应的 HTTP 状态;用于模拟 Paddle 返回 5xx/4xx。 */
+  submitStatuses?: number[]
+  /** 服务端报的总页数(单张 PNG 默认 1)。 */
   totalPages?: number
-  /** 提交时用的模型名回显(默认不校验)。 */
   expectModel?: string
-  /** 每次提交收到的 multipart 字段名(供断言「确实传了 file」)。 */
   onSubmit?: (fields: string[]) => void
 }
 
 export interface MiniOcrApi {
-  /** 形如 `http://127.0.0.1:<port>`;把这个设进 `NUXT_OCR_BASE_URL`。 */
   origin: string
-  /** 收到的提交次数、查询次数(断言轮询真的发生过)。 */
-  stats: { submits: number; polls: number; jsonlFetches: number }
-  /** 见过的 Authorization 头(校验 token 真的带上了)。 */
+  stats: {
+    submits: number
+    polls: number
+    jsonlFetches: number
+    pngUploads: number
+    pdfUploads: number
+    activeJobs: number
+    maxActiveJobs: number
+  }
   authSeen: string[]
+  optionalPayloads: string[]
   close(): Promise<void>
 }
 
-/** 读掉请求体(不读会让 keep-alive 连接卡住)。 */
+interface JobState {
+  pageNo: number
+  markdown: string
+  polls: number
+  failure?: string
+  settled?: boolean
+}
+
 function drain(stream: NodeJS.ReadableStream): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
-    stream.on('data', (c: Buffer) => chunks.push(c))
+    stream.on('data', (chunk: Buffer) => chunks.push(chunk))
     stream.on('end', () => resolve(Buffer.concat(chunks)))
     stream.on('error', reject)
   })
 }
 
-/** 从 multipart 体里抠出 `name="…"` 的字段名(够断言用,不做完整 multipart 解析)。 */
 function fieldNames(body: Buffer): string[] {
-  const names: string[] = []
-  for (const m of body.toString('latin1').matchAll(/name="([^"]+)"/g)) names.push(m[1]!)
-  return names
+  return [...body.toString('latin1').matchAll(/name="([^"]+)"/g)].map((match) => match[1]!)
+}
+
+function filePart(body: Buffer): { filename: string; contentType: string } | null {
+  const match = /name="file"; filename="([^"]+)"\r?\nContent-Type: ([^\r\n]+)/i.exec(
+    body.toString('latin1'),
+  )
+  return match ? { filename: match[1]!, contentType: match[2]!.trim().toLowerCase() } : null
 }
 
 export async function startMiniOcrApi(fixture: ModelApiFixture): Promise<MiniOcrApi> {
-  const stats = { submits: 0, polls: 0, jsonlFetches: 0 }
+  const stats = {
+    submits: 0,
+    polls: 0,
+    jsonlFetches: 0,
+    pngUploads: 0,
+    pdfUploads: 0,
+    activeJobs: 0,
+    maxActiveJobs: 0,
+  }
   const authSeen: string[] = []
+  const optionalPayloads: string[] = []
+  const jobs = new Map<string, JobState>()
+  let successfulSubmits = 0
   let port = 0
 
-  const jsonl = () =>
-    fixture.pages
-      .map((markdown) => JSON.stringify({ result: { layoutParsingResults: [{ markdown: { text: markdown } }] } }))
-      .join('\n')
+  const send = (res: import('node:http').ServerResponse, status: number, payload: unknown, contentType = 'application/json') => {
+    res.statusCode = status
+    res.setHeader('content-type', contentType)
+    res.end(typeof payload === 'string' ? payload : JSON.stringify(payload))
+  }
 
   const server: HttpServer = createServer(async (req, res) => {
     authSeen.push(String(req.headers.authorization ?? ''))
     const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
     const body = req.method === 'POST' ? await drain(req) : Buffer.alloc(0)
 
-    const send = (status: number, payload: unknown, contentType = 'application/json') => {
-      res.statusCode = status
-      res.setHeader('content-type', contentType)
-      res.end(typeof payload === 'string' ? payload : JSON.stringify(payload))
-      return
-    }
-
-    // 提交
     if (req.method === 'POST' && url.pathname === '/api/v2/ocr/jobs') {
       stats.submits += 1
       const fields = fieldNames(body)
+      const file = filePart(body)
+      const optionalPayload = /name="optionalPayload"\r\n\r\n([\s\S]*?)\r\n--/i.exec(
+        body.toString('utf8'),
+      )?.[1]
+      if (optionalPayload !== undefined) optionalPayloads.push(optionalPayload)
       fixture.onSubmit?.(fields)
-      if (fixture.expectModel && !body.toString('latin1').includes(fixture.expectModel)) {
-        return send(400, { code: 1, msg: `model 不是 ${fixture.expectModel}` })
+      if (file?.filename.toLowerCase().endsWith('.png') && file.contentType === 'image/png') {
+        stats.pngUploads += 1
       }
-      if (!fields.includes('file')) return send(400, { code: 1, msg: '缺少 file' })
-      return send(200, { code: 0, data: { jobId: 'JOB-1' } })
+      if (file?.filename.toLowerCase().endsWith('.pdf') || file?.contentType === 'application/pdf') {
+        stats.pdfUploads += 1
+      }
+      if (fixture.expectModel && !body.toString('latin1').includes(fixture.expectModel)) {
+        return send(res, 400, { code: 1, msg: `model 不是 ${fixture.expectModel}` })
+      }
+      if (!fields.includes('file') || !file) return send(res, 400, { code: 1, msg: '缺少 file' })
+      if (!file.filename.toLowerCase().endsWith('.png') || file.contentType !== 'image/png') {
+        return send(res, 400, { code: 1, msg: '只接受单张 PNG' })
+      }
+
+      const injectedStatus = fixture.submitStatuses?.[stats.submits - 1]
+      if (injectedStatus) {
+        return send(res, injectedStatus, { code: 1, msg: `模拟提交状态 ${injectedStatus}` })
+      }
+
+      successfulSubmits += 1
+      const jobId = `JOB-${stats.submits}`
+      const pageNo = Number(/p(\d+)\.png$/i.exec(file.filename)?.[1] ?? successfulSubmits)
+      const markdown = fixture.pages.length ? fixture.pages[(pageNo - 1) % fixture.pages.length]! : ''
+      const failure = fixture.failOnSubmit?.submit === successfulSubmits ? fixture.failOnSubmit.message : undefined
+      jobs.set(jobId, { pageNo, markdown, polls: 0, failure })
+      stats.activeJobs += 1
+      stats.maxActiveJobs = Math.max(stats.maxActiveJobs, stats.activeJobs)
+      return send(res, 200, { code: 0, data: { jobId } })
     }
 
-    // 轮询
-    if (req.method === 'GET' && url.pathname === '/api/v2/ocr/jobs/JOB-1') {
+    const jobMatch = /^\/api\/v2\/ocr\/jobs\/(JOB-\d+)$/.exec(url.pathname)
+    if (req.method === 'GET' && jobMatch) {
+      const job = jobs.get(jobMatch[1]!)
+      if (!job) return send(res, 404, { code: 1, msg: 'unknown job' })
+      const delayMs = fixture.pollDelayMsByPage?.[job.pageNo] ?? 0
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
       stats.polls += 1
-      if (fixture.failWith) {
-        return send(200, { code: 0, data: { state: 'failed', errorMsg: fixture.failWith } })
+      job.polls += 1
+      const injectedFailure = fixture.failOnPage?.page === job.pageNo ? fixture.failOnPage.message : null
+      const failure = fixture.failWith ?? job.failure ?? injectedFailure
+      if (failure) {
+        if (!job.settled) {
+          stats.activeJobs -= 1
+          job.settled = true
+        }
+        return send(res, 200, { code: 0, data: { state: 'failed', errorMsg: failure } })
       }
       const need = fixture.doneAfterPolls ?? 1
-      if (stats.polls < need) {
-        return send(200, {
+      if (job.polls < need) {
+        return send(res, 200, {
           code: 0,
           data: {
             state: 'running',
-            extractProgress: { totalPages: fixture.totalPages ?? fixture.pages.length, extractedPages: stats.polls },
+            extractProgress: { totalPages: fixture.totalPages ?? 1, extractedPages: 0 },
           },
         })
       }
-      return send(200, {
+      if (!job.settled) {
+        stats.activeJobs -= 1
+        job.settled = true
+      }
+      return send(res, 200, {
         code: 0,
         data: {
           state: 'done',
-          resultUrl: { jsonUrl: `http://127.0.0.1:${port}/result.jsonl` },
-          extractProgress: { totalPages: fixture.totalPages ?? fixture.pages.length, extractedPages: fixture.pages.length },
+          resultUrl: { jsonUrl: `http://127.0.0.1:${port}/result/${jobMatch[1]}.jsonl` },
+          extractProgress: { totalPages: fixture.totalPages ?? 1, extractedPages: 1 },
         },
       })
     }
 
-    // 取结果
-    if (req.method === 'GET' && url.pathname === '/result.jsonl') {
+    const resultMatch = /^\/result\/(JOB-\d+)\.jsonl$/.exec(url.pathname)
+    if (req.method === 'GET' && resultMatch) {
+      const job = jobs.get(resultMatch[1]!)
+      if (!job) return send(res, 404, { code: 1, msg: 'unknown result' })
       stats.jsonlFetches += 1
-      return send(200, jsonl(), 'application/jsonl')
+      const line = JSON.stringify({
+        result: { layoutParsingResults: [{ markdown: { text: job.markdown } }] },
+      })
+      return send(res, 200, line, 'application/jsonl')
     }
 
-    // 鉴权失败的样子(供「没带 token」的用例)
     if (url.pathname.startsWith('/api/v2/ocr/jobs')) {
-      return send(401, { code: 1, msg: 'token 无效' })
+      return send(res, 401, { code: 1, msg: 'token 无效' })
     }
-    return send(404, { code: 1, msg: `没有这个路径:${url.pathname}` })
+    return send(res, 404, { code: 1, msg: `没有这个路径:${url.pathname}` })
   })
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -139,6 +198,7 @@ export async function startMiniOcrApi(fixture: ModelApiFixture): Promise<MiniOcr
     origin: `http://127.0.0.1:${port}`,
     stats,
     authSeen,
+    optionalPayloads,
     close: () =>
       new Promise<void>((resolve) => {
         server.closeAllConnections?.()

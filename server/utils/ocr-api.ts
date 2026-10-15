@@ -1,5 +1,5 @@
 /**
- * **通路 a:在线 PaddleOCR API**(票 14)。异步提交 → 轮询 → 取 JSONL 结果。
+ * **通路 a:在线 PaddleOCR API**(票 14)。每次异步提交一张已渲染页图 → 轮询 → 取 JSONL 结果。
  *
  * 不本地部署(SPEC 明写),走百度的 AIStudio 托管接口 —— 与用户给的那份 MCP 配置
  * (`uvx --from paddleocr-mcp paddleocr_mcp`)是**同一个服务、同一个 token**:
@@ -14,15 +14,9 @@
  * (标题层级与表格都是 markdown),正是本票要的产物;而 `PP-OCRv5` 出的是逐行文本 +
  * 坐标,我们要再自己拼版面 —— 那段代码没有信息可依,拼出来的只会是「一行行文字的堆叠」。
  *
- * ── 为什么提交 **整份 PDF**,而不是逐页 PNG ──────────────────────────────
- * 票 13 的产物是页图,API 也确实收图片。但整份 PDF 提交有三个决胜点:
- *  1. **页码天然对齐**:结果里第 i 段就是第 i 页,不必自己按提交顺序数;
- *  2. **一次调用一份文件**,而不是 97 页 97 次提交 + 97 次轮询(实测 97 页 PDF
- *     逐页提交会把一次几分钟的活拖成十几分钟,还更容易撞限流);
- *  3. 界面/版式上下文更全(VL 模型看得见前后页),跨页表格与页眉识别更稳。
- * 代价是「页图那一环没进一来一回」——但页图仍然是**可以核对的**:任务的产出里带了
- * 「OCR 出的页数 vs 票 13 已渲染的页图数」,对不上会被报出来(见 `jobs/ocr.ts`)。
- * 代理若要逐页自己跑,走 MCP 的 `list_page_images` 取图 + `save_ocr_result` 写回(通路 c)。
+ * OCR 任务只接收由 PDF 渲染流程生成的 PNG。调用方将单图结果绑定到自己的页码;
+ * Paddle 响应不携带源 PDF 页号,因此不依赖服务端推断页码。单张 PNG 识别流程遇到
+ * HTTP 5xx(提交、查询或任务终态返回)时最多尝试三次(250ms、500ms 间隔);4xx、超时与网络错误不重试。
  *
  * ── 凭证 ───────────────────────────────────────────────────────────────
  * **不入库、不入仓库**(SPEC 硬约束)。从环境变量读:`NUXT_OCR_TOKEN`,或与 MCP 配置
@@ -38,14 +32,96 @@ export const OCR_JOBS_PATH = '/api/v2/ocr/jobs'
 /** 默认模型:文档解析、**直接出 markdown**(与用户 MCP 配置里的 `PADDLEOCR_MCP_MODEL` 一致)。 */
 export const DEFAULT_OCR_MODEL = 'PaddleOCR-VL-1.6'
 
+/**
+ * 与用户官网 PaddleOCR-VL-1.6 配置一致。400 DPI A4 页图约 15.5 MP;
+ * 300 DPI 默认页图约 8.7 MP,再由 maxPixels 限制模型实际输入尺寸。
+ */
+export const DEFAULT_OCR_OPTIONAL_PAYLOAD = {
+  markdownIgnoreLabels: [
+    'header',
+    'header_image',
+    'footer',
+    'footer_image',
+    'number',
+    'footnote',
+    'aside_text',
+  ],
+  useDocOrientationClassify: false,
+  useDocUnwarping: false,
+  useLayoutDetection: true,
+  useChartRecognition: false,
+  useSealRecognition: true,
+  useOcrForImageBlock: false,
+  mergeTables: true,
+  relevelTitles: true,
+  layoutShapeMode: 'auto',
+  promptLabel: 'ocr',
+  repetitionPenalty: 1,
+  temperature: 0,
+  topP: 1,
+  minPixels: 147384,
+  maxPixels: 2822400,
+  layoutNms: true,
+  restructurePages: true,
+} as const
+
 /** 轮询间隔(毫秒)。API 是分钟级的活,2 秒一次足够且不至于把服务问烦。 */
 export const DEFAULT_POLL_INTERVAL_MS = 2000
 
 /** 单份文件的总等待上限(毫秒)。97 页实测数分钟;10 分钟兜住异常。 */
 export const DEFAULT_POLL_TIMEOUT_MS = 10 * 60 * 1000
 
-/** 一次外部调用的网络超时(毫秒)。提交要上传整份 PDF,给宽一点。 */
+/** 一次外部调用的网络超时(毫秒)。 */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 120 * 1000
+
+/** 单张图片提交遇到 5xx 时最多尝试三次(含首次)。 */
+export const MAX_IMAGE_ATTEMPTS = 3
+
+/** 同一进程最多同时有 8 个 Paddle 单页 job 在提交/轮询;服务端 503 表示当前请求过多。 */
+export const MAX_CONCURRENT_PADDLE_JOBS = 8
+
+/** 5xx 重试间隔:250ms、500ms。 */
+export const IMAGE_RETRY_BASE_DELAY_MS = 250
+
+let paddleJobsInFlight = 0
+interface PaddleJobWaiter {
+  isCancelled?: () => boolean
+  resolve(): void
+  reject(error: Error): void
+}
+const paddleJobWaiters: PaddleJobWaiter[] = []
+
+/** 在不同 OCR/PDF job 间共享的公平信号量,限制未完成的远端单页任务数。 */
+async function withPaddleJobPermit<T>(
+  isCancelled: (() => boolean) | undefined,
+  action: () => Promise<T>,
+): Promise<T> {
+  if (isCancelled?.()) throw new OcrApiError('识别已按取消请求停止(尚未提交页图)。', 499)
+  if (paddleJobsInFlight < MAX_CONCURRENT_PADDLE_JOBS) {
+    paddleJobsInFlight += 1
+  } else {
+    await new Promise<void>((resolve, reject) => {
+      paddleJobWaiters.push({ isCancelled, resolve, reject })
+    })
+  }
+
+  try {
+    return await action()
+  } finally {
+    let permitTransferred = false
+    while (paddleJobWaiters.length) {
+      const next = paddleJobWaiters.shift()!
+      if (next.isCancelled?.()) {
+        next.reject(new OcrApiError('识别已按取消请求停止(尚未提交页图)。', 499))
+        continue
+      }
+      next.resolve()
+      permitTransferred = true
+      break
+    }
+    if (!permitTransferred) paddleJobsInFlight -= 1
+  }
+}
 
 /** 认得的 `fetch`(测试注入用;形状与全局 `fetch` 一致)。 */
 export type FetchLike = (
@@ -61,10 +137,12 @@ export type FetchLike = (
 /** 引擎/服务端给出的错。`statusCode` 是**我们这边**对外的建议码(路由/tool 用)。 */
 export class OcrApiError extends Error {
   readonly statusCode: number
-  constructor(message: string, statusCode = 502) {
+  readonly remoteStatus: number | null
+  constructor(message: string, statusCode = 502, remoteStatus: number | null = null) {
     super(message)
     this.name = 'OcrApiError'
     this.statusCode = statusCode
+    this.remoteStatus = remoteStatus
   }
 }
 
@@ -78,12 +156,13 @@ export interface OcrPageOut {
   raw: unknown
 }
 
-/** 一份文件的识别产物。 */
-export interface OcrFileOut {
+/** 一张图片的识别产物。 */
+export interface OcrImageOut {
   jobId: string
   model: string
-  pages: OcrPageOut[]
-  /** 服务端报的总页数(有时没有 —— 那时按结果里的页数)。 */
+  /** 单张 PNG 必须恰好返回一页;页码 1 只是该图片内部序号。 */
+  page: OcrPageOut
+  /** 服务端报的总页数(有时没有)。 */
   totalPages: number | null
   elapsedMs: number
 }
@@ -91,13 +170,12 @@ export interface OcrFileOut {
 /** 跑一次识别需要的输入。 */
 export interface OcrApiOptions {
   token: string
-  /** 要识别的 PDF 的**绝对路径**。 */
+  /** 要识别的 PNG 页图的**绝对路径**。 */
   filePath: string
-  /** 提交时的文件名(带扩展名;API 靠它判类型)。 */
+  /** 提交时的 PNG 文件名;API 靠它判类型。 */
   fileName?: string
   baseUrl?: string
   model?: string
-  pageRanges?: string
   fetchImpl?: FetchLike
   pollIntervalMs?: number
   pollTimeoutMs?: number
@@ -243,14 +321,14 @@ async function readErrorText(res: Response): Promise<string> {
 }
 
 /**
- * 跑一次识别:提交 → 轮询 → 取 JSONL → 按页切好。
+ * 跑一张 PNG 的识别:提交 → 轮询 → 取 JSONL。
  *
- * **不落库、不碰 page 号推导之外的任何业务**:它只回答「这份 PDF 每页的 markdown 是什么」。
- * 落库(`ocr_result`)是 `server/utils/ocr-result.ts` 的事,编排是 `jobs/ocr.ts` 的事 ——
- * 三件事分开,才能让这一层用一个假 `fetch` 单测(真网络不进测试)。
+ * **不落库、不决定源 PDF 页码**:它只回答「这一张图的 markdown 是什么」。调用方按
+ * 渲染清单里的页号绑定结果。每次 POST 只包含一个 PNG;只对该 POST 的 HTTP 5xx 重试。
  */
-export async function ocrPdfFile(options: OcrApiOptions): Promise<OcrFileOut> {
+async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut> {
   const startedAt = Date.now()
+  const sleep = options.sleep ?? defaultSleep
   const token = options.token?.trim()
   if (!token) {
     throw new OcrApiError(
@@ -263,18 +341,15 @@ export async function ocrPdfFile(options: OcrApiOptions): Promise<OcrFileOut> {
   const jobsUrl = `${base}${OCR_JOBS_PATH}`
   const model = options.model?.trim() || DEFAULT_OCR_MODEL
   const impl = options.fetchImpl ?? realFetch
-  const sleep = options.sleep ?? defaultSleep
   const pollInterval = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
   const pollTimeout = options.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS
   const requestTimeout = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
   const auth = { Authorization: `Bearer ${token}` }
 
-  // ---- 1. 提交(multipart;整份 PDF 一个 job)----------------------------------
+  // ---- 1. 提交(multipart;一张 PNG 一个 job)----------------------------------
   //
-  // **流式上传**,不把整份 PDF 读进内存:97 页的扫描件可能上百 MB,而 `readFile` 一份
-  // + `Blob` 再一份 = 峰值两份;app 的任务是**单进程串行**跑的,峰值过高会连带拖垮
-  // 页图渲染与 HTTP(--max-old-space-size 之下直接 OOM)。`openAsBlob`(Node 20+)
-  // 让 undici 直接从磁盘流式读,内存里始终只有一块缓冲区。
+  // **流式上传**,不把页图 `readFile` 成 Buffer 后再复制一份;`openAsBlob`(Node 20+)
+  // 让 undici 直接从磁盘流式读。多 PDF/多页并发由共享信号量限制为最多 8 个远端 job。
   let blob: Blob
   try {
     // `stat` 走 promises 版(`node:fs` 上那个是回调式,promise 化会在运行时才炸);
@@ -284,31 +359,41 @@ export async function ocrPdfFile(options: OcrApiOptions): Promise<OcrFileOut> {
     // 先 stat 一次:不存在/不是文件时给一句人话,而不是让 undici 抛 ENOENT。
     const info = await stat(options.filePath)
     if (!info.isFile()) throw new Error('不是文件')
-    blob = await openAsBlob(options.filePath, { type: 'application/pdf' })
+    blob = await openAsBlob(options.filePath, { type: 'image/png' })
   } catch (error) {
     throw new OcrApiError(`读不到要识别的文件:${(error as Error).message}`, 404)
   }
-  const fileName = options.fileName ?? options.filePath.split('/').pop() ?? 'input.pdf'
+  const fileName = options.fileName ?? options.filePath.split('/').pop() ?? 'input.png'
+  if (!fileName.toLowerCase().endsWith('.png')) {
+    throw new OcrApiError(`OCR 只接受 PNG 页图:${fileName}`, 400)
+  }
 
-  const form = new FormData()
-  form.append('file', blob, fileName)
-  form.append('model', model)
-  // 与 SDK 一致:`optionalPayload` 是**字符串**化的 JSON。
-  form.append('optionalPayload', JSON.stringify({}))
-  if (options.pageRanges) form.append('pageRanges', options.pageRanges)
+  const makeForm = () => {
+    const form = new FormData()
+    form.append('file', blob, fileName)
+    form.append('model', model)
+    // 与官方 SDK 一致:`optionalPayload` 是**字符串**化的 JSON。
+    form.append('optionalPayload', JSON.stringify(DEFAULT_OCR_OPTIONAL_PAYLOAD))
+    return form
+  }
+
+  if (options.isCancelled?.()) {
+    throw new OcrApiError('识别已按取消请求停止(尚未提交页图)。', 499)
+  }
 
   const submitRes = await fetchWithTimeout(
     impl,
     jobsUrl,
-    { method: 'POST', headers: auth, body: form },
+    { method: 'POST', headers: auth, body: makeForm() },
     requestTimeout,
-    '提交 OCR 任务',
+    '提交单张 PNG OCR 任务',
   )
   if (!submitRes.ok) {
     const detail = await readErrorText(submitRes)
     throw new OcrApiError(
       `提交 OCR 任务被拒(HTTP ${submitRes.status}):${detail}`,
       submitRes.status === 401 || submitRes.status === 403 ? 401 : 502,
+      submitRes.status,
     )
   }
   const submitted = unwrap(await safeJson(submitRes, '提交响应'), '提交 OCR 任务')
@@ -331,7 +416,11 @@ export async function ocrPdfFile(options: OcrApiOptions): Promise<OcrFileOut> {
       '查询 OCR 任务',
     )
     if (!statusRes.ok) {
-      throw new OcrApiError(`查询 OCR 任务失败(HTTP ${statusRes.status}):${await readErrorText(statusRes)}`)
+      throw new OcrApiError(
+        `查询 OCR 任务失败(HTTP ${statusRes.status}):${await readErrorText(statusRes)}`,
+        statusRes.status === 401 || statusRes.status === 403 ? 401 : 502,
+        statusRes.status,
+      )
     }
     const data = unwrap(await safeJson(statusRes, '查询响应'), '查询 OCR 任务')
     const state = data.state
@@ -360,7 +449,9 @@ export async function ocrPdfFile(options: OcrApiOptions): Promise<OcrFileOut> {
     }
     if (state === 'failed') {
       const why = typeof data.errorMsg === 'string' && data.errorMsg ? data.errorMsg : '(无 errorMsg)'
-      throw new OcrApiError(`OCR 任务失败:${why}`)
+      const statusMatch = /(?:HTTP\s*|状态码\s*)(\d{3})/i.exec(why)
+      const remoteStatus = statusMatch ? Number(statusMatch[1]) : null
+      throw new OcrApiError(`OCR 任务失败:${why}`, 502, remoteStatus)
     }
     if (Date.now() > deadline) {
       throw new OcrApiError(
@@ -380,13 +471,55 @@ export async function ocrPdfFile(options: OcrApiOptions): Promise<OcrFileOut> {
     '下载 OCR 结果',
   )
   if (!jsonRes.ok) {
-    throw new OcrApiError(`下载 OCR 结果失败(HTTP ${jsonRes.status}):${await readErrorText(jsonRes)}`)
+    throw new OcrApiError(
+      `下载 OCR 结果失败(HTTP ${jsonRes.status}):${await readErrorText(jsonRes)}`,
+      jsonRes.status === 401 || jsonRes.status === 403 ? 401 : 502,
+      jsonRes.status,
+    )
   }
   const pages = pagesFromJsonl(await jsonRes.text())
-  if (!pages.length) throw new OcrApiError('OCR 结果里一页都没有(服务端返回了空的 JSONL)')
+  if (pages.length !== 1) {
+    throw new OcrApiError(`单张 PNG 应返回 1 页,实际返回 ${pages.length} 页`)
+  }
 
-  options.onProgress?.(pages.length, totalPages ?? pages.length)
-  return { jobId, model, pages, totalPages, elapsedMs: Date.now() - startedAt }
+  options.onProgress?.(1, totalPages ?? 1)
+  return { jobId, model, page: { ...pages[0]!, page: 1 }, totalPages, elapsedMs: Date.now() - startedAt }
+}
+
+/**
+ * 重试边界是一张 PNG 的完整 Paddle 请求,而不是只重试 HTTP 提交。
+ * 异步 OCR job 可能在提交成功后以 5xx 失败,因此新建 job 再识别同一张图;
+ * 4xx、超时、网络错误和不含 5xx 状态码的失败均原样返回。
+ */
+async function ocrImageFileWithRetries(options: OcrApiOptions): Promise<OcrImageOut> {
+  const sleep = options.sleep ?? defaultSleep
+  for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt += 1) {
+    try {
+      return await ocrImageFileAttempt(options)
+    } catch (error) {
+      const remoteStatus = error instanceof OcrApiError ? error.remoteStatus : null
+      const retryable = remoteStatus !== null && remoteStatus >= 500 && remoteStatus <= 599
+      if (!retryable) throw error
+      if (attempt === MAX_IMAGE_ATTEMPTS) {
+        const original = error as OcrApiError
+        throw new OcrApiError(
+          `${original.message};已用尽 ${attempt}/${MAX_IMAGE_ATTEMPTS} 次尝试`,
+          original.statusCode,
+          remoteStatus,
+        )
+      }
+      await sleep(IMAGE_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1))
+    }
+  }
+  throw new OcrApiError('单张 PNG OCR 任务失败')
+}
+
+/**
+ * 同一进程内共享 8 个远端 job 槽位;一个槽会一直占到 OCR 结果取回或重试耗尽。
+ * 这样不同 PDF 的页图可以交错推进,又不会在多份 PDF 同时展开时无上限地冲击 Paddle。
+ */
+export function ocrImageFile(options: OcrApiOptions): Promise<OcrImageOut> {
+  return withPaddleJobPermit(options.isCancelled, () => ocrImageFileWithRetries(options))
 }
 
 async function safeJson(res: Response, what: string): Promise<unknown> {
@@ -410,7 +543,7 @@ async function safeJson(res: Response, what: string): Promise<unknown> {
  *    「提交 → 轮询 → 取 JSONL」,不必碰外网;也可以指到自建网关。
  *
  * ── 空 token 不是「无鉴权」──────────────────────────────────────────────
- * 它是**没配**。提交时 `ocrPdfFile` 会挡下来并给出怎么配的一句话 —— 而**上传通路
+ * 它是**没配**。提交时 `ocrImageFile` 会挡下来并给出怎么配的一句话 —— 而**上传通路
  * (b)完全不需要 token**,这条路上没配 token 不影响任何事。
  *
  * `useRuntimeConfig` 在 nitro 之外(裸 node 跑测试)不存在,所以用 `typeof` 探一下 ——

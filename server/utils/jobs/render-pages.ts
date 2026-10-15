@@ -172,7 +172,7 @@ export const renderPagesSpec: JobSpec = {
   status: 'ready',
   summary: '批量把 PDF 逐页渲染成 PNG(票 13 的渲染,批量入口)',
   paramsHint:
-    '{ files: string[](相对文件库根的 PDF 路径,非空), dpi?: 72–600(默认 200), force?: boolean }',
+    '{ files: string[](相对文件库根的 PDF 路径,非空), dpi?: 72–600(默认 300), force?: boolean }',
   parse: parseRenderPagesParams,
   // 分母提交时就知道 —— 轮询方一上来就能看到「一共 3 份」。
   total: (params) => (params.files as string[]).length,

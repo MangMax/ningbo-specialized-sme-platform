@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { parseOcrParams, runOcr } from '../server/utils/jobs/ocr'
-import { listOcrResults } from '../server/utils/ocr-result'
+import { listOcrResults, writeOcrResult } from '../server/utils/ocr-result'
 import { pagesFromJsonl, resolveOcrConfig } from '../server/utils/ocr-api'
+import { DEFAULT_DPI } from '../lib/pdf-page'
 import { renderPdfPages } from '../server/utils/pdf-pages'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { startMiniOcrApi, type MiniOcrApi } from './helpers/ocr-mini-api'
@@ -14,9 +15,9 @@ import { startMiniOcrApi, type MiniOcrApi } from './helpers/ocr-mini-api'
  * 票 14 通路 a —— **在线 PaddleOCR API**(异步、可批量)。
  *
  * 这里用 `tests/helpers/ocr-mini-api.ts` 起一个**形状照官方 SDK 抄**的本地假服务,
- * 把「提交 multipart → 轮询状态 → 取 JSONL → 按页入库」整条路真走一遍 HTTP。
+ * 把「PDF 先渲染增强 → 每张 PNG 独立提交 multipart → 轮询状态 → 按源页号入库」整条路真走一遍 HTTP。
  * 所以这个文件验的是**协议与编排**,不是「函数被调用了」:
- *  - 提交的是 multipart、带 `file` 与 `model`、带 `Authorization: Bearer`;
+ *  - 每个 Paddle job 只提交一张 `image/png`,并带 `file`、`model` 与 `Authorization: Bearer`;
  *  - `pending/running` 时会继续轮询(`doneAfterPolls: 2` 演中间态);
  *  - `failed` 时把服务端的 `errorMsg` 原样报出来;
  *  - 结果按 `layoutParsingResults[].markdown.text` 逐页切(与官方 `_poller.py` 同一形状)。
@@ -138,10 +139,28 @@ describe('通路 a:批量 OCR(本地假服务,真走 HTTP)', () => {
     '### 附件2\n\n| 序号 | 属地 | 企业名称 |\n| --- | --- | --- |\n| 1 | 北仑区 | 宁波丙新材料有限公司 |',
   ]
 
-  it('★ 批量:一次提交两份 → 逐份识别并按页码入库,进度按份报', async () => {
+  it('★ 批量:一次提交两份 → 并发识别并按页码入库,进度按份报', async () => {
     const idA = await seedPdf(relA)
     const idB = await seedPdf(relB)
-    api = await startMiniOcrApi({ pages, expectModel: 'PaddleOCR-VL-1.6' })
+    await renderPdfPages(filesDir, relA, { dpi: DEFAULT_DPI })
+    await renderPdfPages(filesDir, relB, { dpi: DEFAULT_DPI })
+    expect(
+      writeOcrResult(db, {
+        fileId: idA,
+        pages: [
+          { page: 1, markdown: '旧的整份 PDF OCR 结果' },
+          { page: 4, markdown: '旧结果残页' },
+        ],
+        channel: 'api',
+        model: 'legacy-pdf-upload',
+      }).ok,
+    ).toBe(true)
+    api = await startMiniOcrApi({
+      pages,
+      expectModel: 'PaddleOCR-VL-1.6',
+      doneAfterPolls: 2,
+      pollDelayMsByPage: { 1: 30 },
+    })
     process.env.NUXT_OCR_BASE_URL = api.origin
 
     const parsed = parseOcrParams({ files: [relA, relB] })
@@ -166,9 +185,8 @@ describe('通路 a:批量 OCR(本地假服务,真走 HTTP)', () => {
         renderedPageImages: number
         engine: string
         model: string
-        apiJobId: string
+        apiJobIds: string[]
         elapsedMs: number
-        warning?: string
       }>
     }
     expect(result.channel).toBe('api')
@@ -178,9 +196,8 @@ describe('通路 a:批量 OCR(本地假服务,真走 HTTP)', () => {
     // 引擎与模型如实落进产出(便于回看「这批是什么引擎跑的」)。
     expect(result.files[0]!.engine).toBe('paddleocr')
     expect(result.files[0]!.model).toBe('PaddleOCR-VL-1.6')
-    // 还没渲染过页图 → renderedPageImages 是 0,不报警。
-    expect(result.files[0]!.renderedPageImages).toBe(0)
-    expect(result.files[0]!.warning).toBeUndefined()
+    expect(result.files[0]!.renderedPageImages).toBe(3)
+    expect(result.files[0]!.apiJobIds).toHaveLength(3)
 
     // 两份文件各自入库,页号 1..3,内容就是假服务给的那三段。
     for (const [fileId, file] of [
@@ -202,17 +219,23 @@ describe('通路 a:批量 OCR(本地假服务,真走 HTTP)', () => {
       [2, 2],
     ])
     // 真的走了提交 / 轮询 / 取结果三趟,且带了 token。
-    expect(api.stats.submits).toBe(2)
-    expect(api.stats.polls).toBe(2)
-    expect(api.stats.jsonlFetches).toBe(2)
+    expect(api.stats.submits).toBe(6)
+    expect(api.stats.pngUploads).toBe(6)
+    expect(api.stats.pdfUploads).toBe(0)
+    expect(api.stats.polls).toBe(12)
+    expect(api.stats.jsonlFetches).toBe(6)
+    // The two PDF file groups overlap instead of serially waiting page-by-page.
+    expect(api.stats.maxActiveJobs).toBeGreaterThan(1)
+    expect(api.stats.activeJobs).toBe(0)
     // 提交与轮询都带上了 token;取结果那一步**不带**(官方给的是预签名对象存储链接,
     // 带 Authorization 反而可能被拒)—— 所以只看非空的那几次。
     expect(new Set(api.authSeen.filter(Boolean))).toEqual(new Set(['Bearer test-token']))
-    expect(api.authSeen.filter(Boolean)).toHaveLength(4) // 2 次提交 + 2 次轮询
+    expect(api.authSeen.filter(Boolean)).toHaveLength(18) // 6 张 PNG 各 1 次提交与 2 次轮询
   }, 60_000)
 
   it('服务端 `running` 时继续轮询,直到 `done`(异步语义)', async () => {
     await seedPdf(relA)
+    await renderPdfPages(filesDir, relA, { dpi: DEFAULT_DPI })
     api = await startMiniOcrApi({ pages, doneAfterPolls: 2 })
     process.env.NUXT_OCR_BASE_URL = api.origin
 
@@ -222,11 +245,12 @@ describe('通路 a:批量 OCR(本地假服务,真走 HTTP)', () => {
     const completion = await runOcr(ctx, parsed.params)
     expect(completion.error).toBeUndefined()
     // 第一次是 running(有 extractProgress),第二次才 done。
-    expect(api.stats.polls).toBe(2)
+    expect(api.stats.polls).toBe(6)
   }, 60_000)
 
   it('服务端报 failed → 逐项 ok:false 带服务端原话,任务记 failed', async () => {
-    await seedPdf(relA)
+    await seedPdf(relA, 1)
+    await renderPdfPages(filesDir, relA, { dpi: DEFAULT_DPI })
     api = await startMiniOcrApi({ pages, failWith: '页数超出套餐额度' })
     process.env.NUXT_OCR_BASE_URL = api.origin
 
@@ -256,52 +280,84 @@ describe('通路 a:批量 OCR(本地假服务,真走 HTTP)', () => {
     expect(api.stats.submits).toBe(0)
   }, 60_000)
 
-  it('★ 与票 13 的页图核对:页数对不上时报出来(不是失败)', async () => {
-    // 磁盘上是一份 **2 页** 的 PDF,渲染出 2 张页图;假服务「识别」出 3 页 —— 而这份
-    // 假服务只可能给出「这份文件真的有几页」答不出的结果。等等:源 PDF **确实是 2 页**,
-    // 所以这其实是「服务端多回了一页」—— 见下一条用例对「页数不一致」的处置。
-    const relShort = 'jxj/announcement/2024/1/短.pdf'
+  it('未渲染页图时拒绝提交,不把源 PDF 直接发给 Paddle', async () => {
+    const relShort = 'jxj/announcement/2024/1/未渲染.pdf'
     await seedPdf(relShort, 2)
-    await renderPdfPages(filesDir, relShort, { dpi: 100 })
-
     api = await startMiniOcrApi({ pages })
     process.env.NUXT_OCR_BASE_URL = api.origin
+
     const parsed = parseOcrParams({ files: [relShort] })
     if (!parsed.ok) throw new Error('参数本应通过')
-    const { ctx } = ctxOf()
-    const completion = await runOcr(ctx, parsed.params)
+    const completion = await runOcr(ctxOf().ctx, parsed.params)
+    const result = completion.result as { files: Array<{ ok: false; error: string }> }
 
-    // ★ 源 PDF 2 页、OCR 3 页 ⇒ **不采信**:按 1..N 落的页码会错位。
-    //    刚写进去的那 3 行要**回滚**(留着比没有更坏:它看起来像真的)。
-    expect(completion.error).toContain('1 份里 1 份识别失败')
-    const result = completion.result as {
-      pages: number
-      files: Array<{ ok: false; error: string }>
-    }
-    expect(result.files[0]!.ok).toBe(false)
-    expect(result.files[0]!.error).toContain('与源 PDF 的页数(2)不一致')
-    expect(result.pages).toBe(0)
-    expect(db.select().from(schema.ocrResult).all()).toHaveLength(0)
+    expect(result.files[0]!.error).toContain('请先提交 render-pages')
+    expect(api.stats.submits).toBe(0)
+    expect(api.stats.pdfUploads).toBe(0)
   }, 60_000)
 
-  it('页数一致时通过,并报出「页图数」这个独立信号', async () => {
-    const relShort = 'jxj/announcement/2024/1/齐.pdf'
-    await seedPdf(relShort, 3)
-    await renderPdfPages(filesDir, relShort, { dpi: 100 })
-
+  it('只有低于 300 DPI 的页图时拒绝 OCR,要求先重渲染到默认分辨率', async () => {
+    const relShort = 'jxj/announcement/2024/1/旧分辨率.pdf'
+    await seedPdf(relShort, 2)
+    await renderPdfPages(filesDir, relShort, { dpi: 200 })
     api = await startMiniOcrApi({ pages })
     process.env.NUXT_OCR_BASE_URL = api.origin
+
     const parsed = parseOcrParams({ files: [relShort] })
     if (!parsed.ok) throw new Error('参数本应通过')
-    const { ctx } = ctxOf()
-    const completion = await runOcr(ctx, parsed.params)
+    const completion = await runOcr(ctxOf().ctx, parsed.params)
+    const result = completion.result as { files: Array<{ ok: false; error: string }> }
+
+    expect(result.files[0]!.error).toContain('300 DPI')
+    expect(api.stats.submits).toBe(0)
+  }, 60_000)
+
+  it('默认改为 300 DPI 后仍接受完整的旧 400 DPI 页图', async () => {
+    const relHigh = 'jxj/announcement/2024/1/现有400dpi.pdf'
+    const fileId = await seedPdf(relHigh, 2)
+    await renderPdfPages(filesDir, relHigh, { dpi: 400 })
+    api = await startMiniOcrApi({ pages })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+
+    const parsed = parseOcrParams({ files: [relHigh] })
+    if (!parsed.ok) throw new Error('参数本应通过')
+    const completion = await runOcr(ctxOf().ctx, parsed.params)
+    const result = completion.result as { files: Array<{ ok: boolean; renderedPageImages: number }> }
+
     expect(completion.error).toBeUndefined()
-    const result = completion.result as {
-      files: Array<{ ok: true; pages: number; renderedPageImages: number; warning?: string }>
-    }
-    expect(result.files[0]!.pages).toBe(3)
-    expect(result.files[0]!.renderedPageImages).toBe(3)
-    expect(result.files[0]!.warning).toBeUndefined()
+    expect(result.files[0]).toMatchObject({ ok: true, renderedPageImages: 2 })
+    expect(listOcrResults(db, fileId).map((row) => row.page)).toEqual([1, 2])
+    expect(api.stats.submits).toBe(2)
+  }, 60_000)
+
+  it('第 2 张 PNG 失败时不写半份新结果,保留上一版 OCR', async () => {
+    const relShort = 'jxj/announcement/2024/1/逐页失败.pdf'
+    const fileId = await seedPdf(relShort, 3)
+    await renderPdfPages(filesDir, relShort, { dpi: DEFAULT_DPI })
+    writeOcrResult(db, {
+      fileId,
+      pages: [
+        { page: 1, markdown: '上一版第一页' },
+        { page: 5, markdown: '上一版残留页' },
+      ],
+      channel: 'upload',
+    })
+    api = await startMiniOcrApi({ pages, failOnPage: { page: 2, message: '第二页服务失败' } })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+
+    const parsed = parseOcrParams({ files: [relShort] })
+    if (!parsed.ok) throw new Error('参数本应通过')
+    const completion = await runOcr(ctxOf().ctx, parsed.params)
+    const result = completion.result as { files: Array<{ ok: false; error: string }> }
+
+    expect(result.files[0]!.error).toContain('第 2 页 OCR 失败:OCR 任务失败:第二页服务失败')
+    expect(listOcrResults(db, fileId).map((row) => [row.page, row.markdown])).toEqual([
+      [1, '上一版第一页'],
+      [5, '上一版残留页'],
+    ])
+    // Page 3 must still finish even though page 2 failed; all started page jobs settle before reporting.
+    expect(api.stats.submits).toBe(3)
+    expect(api.stats.pdfUploads).toBe(0)
   }, 60_000)
 
   it('★ 没配 token:动手之前就报一句人话,一份都不提交', async () => {

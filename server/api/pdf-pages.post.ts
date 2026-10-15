@@ -5,7 +5,7 @@ import { renderPdfPages, resolveWithinRoot } from '../utils/pdf-pages'
 /**
  * 把一份 PDF 逐页渲染成 PNG。`POST /api/pdf-pages`
  *
- * body:`{ "file": "jxj/announcement/2024/1/….pdf", "dpi": 200, "force": false }`
+ * body:`{ "file": "jxj/announcement/2024/1/….pdf", "dpi": 300, "force": false }`
  *
  * 返回与 `GET /api/pdf-pages` 同形的 JSON(外加本次 `written / skipped / removed / elapsedMs`)。
  * **幂等**:源内容与 `dpi` 都没变时 `written: 0`,不写任何文件(判据见
@@ -30,7 +30,7 @@ defineRouteMeta({
             required: ['file'],
             properties: {
               file: { type: 'string', description: '相对文件库根的 PDF 路径。' },
-              dpi: { type: 'integer', minimum: 72, maximum: 600, default: 200 },
+              dpi: { type: 'integer', minimum: 72, maximum: 600, default: 300 },
               force: { type: 'boolean', default: false, description: '忽略清单与已有页图,无条件重渲染。' },
             },
           },

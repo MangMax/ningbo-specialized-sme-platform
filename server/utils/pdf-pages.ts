@@ -35,12 +35,12 @@ import {
  * `allowBuilds` 放行(本机 pnpm 的构建白名单,见票 13 注)。
  *
  * ── 内存 ────────────────────────────────────────────────────────────────
- * **一页一页来**:渲染 → 编码 → 落盘 → `page.close()`,任何时候手上只有一页的位图
- * (200 DPI A4 = 1652×2338×4 ≈ 15 MB)。97 页那份实测峰值 RSS 见票 13 —— 不随页数增长,
+ * **一页一页来**:渲染 → 白底合成 → 灰度归一/轻度锐化 → 编码 → 落盘 → `page.close()`,任何时候手上只有一页的位图
+ * (400 DPI A4 的 RGBA 中间缓冲约 62 MB)。97 页的峰值内存不随页数增长,
  * 所以「大页数 OOM」不会发生;真按 600 DPI 且一次性攒住全部页图才会。
  *
  * ── 幂等 ────────────────────────────────────────────────────────────────
- * 判据是**源内容 sha256 + 分辨率 + 每页文件的尺寸**,全记在 `<页图目录>/.pages.json` 清单里。
+ * 判据是**源内容 sha256 + 分辨率 + 图像增强版本 + 每页文件的尺寸**,全记在 `<页图目录>/.pages.json` 清单里。
  * 三者都与上次一致(且目录里没有多余页图)时**一个字节都不写**。内容变了或换了 DPI
  * 才重渲染,且**原地覆盖**同一批路径 —— 目录不会随重跑膨胀。
  */
@@ -61,14 +61,16 @@ type ManifestPage = Omit<PageImageRef, 'url'>
 
 /** `<页图目录>/.pages.json` 的内容。 */
 export interface PagesManifest {
-  version: 1
+  version: 2
   /** 源 PDF,相对文件库根。 */
   file: string
   sourceBytes: number
   /** 源内容哈希。**幂等的权威判据**(同内容 → 不重写)。 */
   sourceSha256: string
   dpi: number
-  colorSpace: 'RGBA'
+  colorSpace: 'grayscale'
+  /** 改变增强参数时递增,使旧页图不能误命中 OCR 缓存。 */
+  enhancement: 'white-flatten-grayscale-normalize-sharpen-v1'
   pageCount: number
   renderedAt: string
   pages: ManifestPage[]
@@ -88,7 +90,7 @@ export interface PdfPagesState {
   /** 按页号升序。 */
   pages: PageImageRef[]
   /** 清单摘要(调试/展示用);从未渲染时为 null。 */
-  manifest: { dpi: number; renderedAt: string } | null
+  manifest: { dpi: number; renderedAt: string; enhancement: PagesManifest['enhancement'] } | null
 }
 
 /** 一次渲染的结果。 */
@@ -182,7 +184,7 @@ async function readManifest(dirAbs: string): Promise<PagesManifest | null> {
   try {
     const raw = await readFile(join(dirAbs, PAGES_MANIFEST_NAME), 'utf8')
     const parsed = JSON.parse(raw) as PagesManifest
-    return parsed?.version === 1 && Array.isArray(parsed.pages) ? parsed : null
+    return parsed?.version === 2 && Array.isArray(parsed.pages) ? parsed : null
   } catch {
     return null
   }
@@ -290,7 +292,11 @@ export async function listPdfPages(
     rendered: pages.length,
     upToDate: sizesOk && noExtras && sameDpi && sameSource,
     pages,
-    manifest: { dpi: manifest.dpi, renderedAt: manifest.renderedAt },
+    manifest: {
+      dpi: manifest.dpi,
+      renderedAt: manifest.renderedAt,
+      enhancement: manifest.enhancement,
+    },
   }
 }
 
@@ -404,7 +410,9 @@ async function renderUncached(
         const relPath = pageImageRelPath(pdfRelPath, pageNo)
         const abs = join(dirAbs, pageFileName(pageNo))
 
-        // PDFium 出像素(RGBA),sharp 出 PNG。回调里就地转 —— 位图不落到我们的作用域里。
+        // PDFium 出像素(RGBA);透明区域先合到白底,再归一灰度并轻度锐化。
+        // 不做二值化以保留浅色文字;withMetadata 会输出 RGB PNG,但三通道灰度值相同。
+        // 回调里就地转 —— 位图不落到我们的作用域里。
         const image = await page.render({
           width,
           height,
@@ -413,6 +421,10 @@ async function renderUncached(
             sharp(Buffer.from(data.buffer, data.byteOffset, data.byteLength), {
               raw: { width: w, height: h, channels: CHANNELS },
             })
+              .flatten({ background: '#fff' })
+              .greyscale()
+              .normalize({ lower: 1, upper: 99 })
+              .sharpen({ sigma: 0.6 })
               .withMetadata({ density: dpi })
               .png()
               .toBuffer(),
@@ -445,12 +457,13 @@ async function renderUncached(
 
     // 清单**最后**写:崩在中途时不存在「清单说有、磁盘没有」的假一致。
     const next: PagesManifest = {
-      version: 1,
+      version: 2,
       file: pdfRelPath,
       sourceBytes,
       sourceSha256,
       dpi,
-      colorSpace: 'RGBA',
+      colorSpace: 'grayscale',
+      enhancement: 'white-flatten-grayscale-normalize-sharpen-v1',
       pageCount,
       renderedAt: new Date().toISOString(),
       pages,

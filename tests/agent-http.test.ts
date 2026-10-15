@@ -164,8 +164,8 @@ describe('render-pages 参数校验', () => {
   })
 
   it('dpi 走票 13 的同一套校验(越界抛错,不静默纠正)', () => {
-    expect(ok({ files: ['a.pdf'] }).dpi).toBe(200)
-    expect(ok({ files: ['a.pdf'], dpi: 300 }).dpi).toBe(300)
+    expect(ok({ files: ['a.pdf'] }).dpi).toBe(300)
+    expect(ok({ files: ['a.pdf'], dpi: 400 }).dpi).toBe(400)
     expect(fail({ files: ['a.pdf'], dpi: 10 })).toContain('分辨率')
     expect(fail({ files: ['a.pdf'], dpi: 'abc' })).toContain('分辨率')
   })
@@ -484,6 +484,36 @@ function controllableKind(name: string) {
   }
 }
 
+/** A kind can start several runs before a shared gate opens. */
+function controllableConcurrentKind(name: string, startBarrierCount = 2) {
+  let open = false
+  let started = 0
+  const waiters: Array<() => void> = []
+  let resolveStartBarrier: (() => void) | null = null
+  const startBarrier = new Promise<void>((resolve) => (resolveStartBarrier = resolve))
+  const spec: JobSpec = {
+    kind: name,
+    status: 'ready',
+    summary: '测试用',
+    parse: (raw) => ({ ok: true, params: raw }),
+    run: async () => {
+      started += 1
+      if (started >= startBarrierCount) resolveStartBarrier?.()
+      if (!open) await new Promise<void>((resolve) => waiters.push(resolve))
+      return { result: { ok: true } }
+    },
+  }
+  return {
+    spec,
+    open: () => {
+      open = true
+      for (const release of waiters.splice(0)) release()
+    },
+    startBarrier,
+    startedCount: () => started,
+  }
+}
+
 describe('串行队列与并发语义', () => {
   let filesDir: string
   beforeEach(() => {
@@ -516,6 +546,52 @@ describe('串行队列与并发语义', () => {
     gate.open()
     await whenIdle()
     expect(getJob(db, b.id)!.state).toBe('done')
+  })
+
+  it('最多 4 个 OCR job 并行,非 OCR job 等 OCR 清空后再运行', async () => {
+    const gate = controllableConcurrentKind('ocr', 4)
+    let nonOcrStarted = 0
+    registerJob(gate.spec)
+    registerJob({
+      kind: 'render-pages',
+      status: 'ready',
+      summary: '测试用',
+      parse: (raw) => ({ ok: true, params: raw }),
+      run: async () => {
+        nonOcrStarted += 1
+        return { result: {} }
+      },
+    })
+
+    const ocrJobs = Array.from({ length: 5 }, (_, index) =>
+      submitJob(db, {
+        kind: 'ocr',
+        params: {},
+        filesDir,
+        id: newJobId(1_800_010_100_000 + index * 1000),
+      }),
+    )
+    const render = submitJob(db, { kind: 'render-pages', params: {}, filesDir, id: newJobId(1_800_010_200_000) })
+
+    try {
+      const bothStarted = await Promise.race([
+        gate.startBarrier.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+      ])
+      expect(bothStarted).toBe(true)
+      expect(gate.startedCount()).toBe(4)
+      expect(ocrJobs.slice(0, 4).every((job) => getJob(db, job.id)!.state === 'running')).toBe(true)
+      expect(getJob(db, ocrJobs[4]!.id)!.state).toBe('queued')
+      expect(getJob(db, render.id)!.state).toBe('queued')
+      expect(nonOcrStarted).toBe(0)
+    } finally {
+      gate.open()
+      await whenIdle()
+    }
+
+    expect(getJob(db, render.id)!.state).toBe('done')
+    expect(ocrJobs.every((job) => getJob(db, job.id)!.state === 'done')).toBe(true)
+    expect(nonOcrStarted).toBe(1)
   })
 
   it('run 抛错 → 任务 failed 并记下原因;后续任务照常跑', async () => {
