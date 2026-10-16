@@ -1512,6 +1512,72 @@ POST /api/roster/import/replay
   抛 `ExecStageFailure` 让整批回滚,**绝不**写出自相矛盾的状态。
 - **只读的计划入口**见 §7.9;可运行入口见 `scripts/roster-uscc-research.mjs`。
 
+### 8.11 `POST /api/roster/evidence/pages` —— 出处页码补录(RL-10 增量补齐)
+
+> **只增量**:不改 §1 的任何表 / 列 / 枚举(用的就是既有的 `record_evidence.page`),
+> 不改任何既有写入语义,也不改 §8.3 的 `evidence[]`(它本来就能带 `page`)。
+
+**它补的是「既有行」的那一格。** §8.3 的 `evidence[].page` 只对**今后**的导入有效;
+库里已有的两万余条出处是在这个字段还没人填的时候落下的 —— 那是一批 `page` 全为 `null` 的行。
+补页码是**对既有行的 UPDATE**,不是一次新的导入:不改企业 / 记录 / 事件,也不该再造一条批次账。
+
+```jsonc
+POST /api/roster/evidence/pages
+{
+  "dryRun": false,                     // 可选;true = 只报结论、一行不写
+  "entries": [
+    { "sourceFile": "jxj/announcement/2022/甬经信中小〔2022〕145号….pdf",
+      "listNo": 6,                     // 名单里的**序号** —— 不是页码
+      "page": 8,                       // **PDF 实际页序**(1 起)
+      "enterpriseId": 204,             // 定位:与 enterpriseName 至少给一个
+      "enterpriseName": "宁波开诚生态技术有限公司",   // 可选,逐字归一后比对
+      "district": "海曙区",             // 可选,进一步收窄
+      "basis": "人工核对页图:附件二第 6 行" }        // 留档用,不参与判定
+  ]
+}
+```
+
+响应:
+
+```jsonc
+{
+  "status": "applied",                 // 或 "dry_run"
+  "summary": { "requested": 17, "assigned": 15, "written": 15, "unchanged": 0, "pending": 2 },
+  "assignments": [ { "index": 0, "evidenceId": 204, "sourceFile": "…", "listNo": 6,
+                     "page": 8, "previous": null, "basis": "人工核对页图:附件二第 6 行" } ],
+  "pending": [ { "index": 1, "sourceFile": "…", "listNo": 6, "page": 9,
+                 "reason": "no_match", "detail": "…序号 6 有 3 条(分节不同…),但没有一条与本条给定的企业 / 属地一致 —— 不猜。",
+                 "candidateIds": [1, 2, 3], "sameListNo": 3 } ]
+}
+```
+
+**语义(逐条都是硬约束)**:
+
+| 判据 | 不过时 |
+|---|---|
+| `sourceFile` 非空;`listNo` 是正整数;**且必须带 `enterpriseId` 或 `enterpriseName`** | `entry_incomplete` |
+| `page` 是 ≥1 的整数(**不取整、不夹到边界、不当成「没有页码」**) | `page_invalid` |
+| 来源是 **PDF**(Word / Excel 没有可复核的页) | `not_page_capable` |
+| 按 `(sourceFile, listNo)` + 定位能命中**恰好一条**出处行 | `no_match` / `ambiguous` |
+
+- **裸序号一律拒收。** 判据不是洁癖:`record_evidence` 只有 `(source_file, attachment, list_no)`,
+  **没有分节列**,而一份公布文件里可以并置**多张序号各自从 1 起算**的名单 ——
+  `甬经信中小〔2022〕145号` 的「附件」里就是三张(一、198 行;二、104 行;三、413 行,共 715 家)。
+  库里「145号 + 序号 6」命中 **3 条**完全不同的企业。拿裸序号定位就会把页码写到**错的公司**上。
+- **定位信息只用来收窄候选,不用来「像不像」判定**:`enterpriseName` 走 `normalizeName` 的
+  **逐字归一**(括号、空白、不可见字符),不是相似度、不是编辑距离。
+- **`no_match` 与 `ambiguous` 都要把「同序号有几条」报出来**(`sameListNo` / `candidateIds`):
+  那是「分节陷阱」的可观察探针 —— 报告要能区分「库里没有」与「同序号分属别的分节」。
+- **定不下来的条目一行不改**,逐条带 `reason` 回报;写入是**逐条尽力**而不是整批事务 ——
+  一批里混着「已核对好」与「还没核对」,后者的正确处置是**留空待核**,不是把前者一起回滚。
+- **同一条出处行被两条入参指向、且页码不同** ⇒ 两条都不写(`ambiguous`)。
+  同页码是同一个事实的重复表达(批处理重跑常见),照写并计入 `unchanged`。
+- **幂等**:重跑同一批 `written: 0` / `unchanged` 全中。
+- **非 PDF 永远没有页码**,在**链接层**也成立:`evidencePreviewHref()` 对非 PDF 不写 `page` 参数 ——
+  票面要求「Word、Excel 等没有可靠分页的文件不跳转到猜测页」,这条口径在写入、读模型、链接三处一致。
+- 鉴权与 §8 其它写入口同分法(`NUXT_API_TOKEN`,未配 ⇒ 关闭);可运行入口见
+  `scripts/roster-evidence-pages.mjs`(读人工核对的页图结论,`--dry-run` 先看结论)。
+
 ---
 
 ## 9. MCP tool 形状(RL-11 实现)

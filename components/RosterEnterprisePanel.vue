@@ -21,6 +21,7 @@ import {
   VERIFICATION_STATUSES,
 } from '~~/lib/labels'
 import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
+import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import EventChip from '@/components/EventChip.vue'
 import SourceChip from '@/components/SourceChip.vue'
@@ -244,6 +245,22 @@ function openPreview(e: Evidence) {
   previewName.value = fileNameOf(e.sourceFile)
   previewOpen.value = true
 }
+
+// —— RL-10:出处页码的跳转 ——
+
+/**
+ * 展开面板里的页码是**链接**(跳转是一次真导航,不是弹窗),所以它得带上「回哪去」。
+ * `backQuery` 本来就是这个面板已经握着的台账筛选串(含 `view` / 页码 / `expand`),
+ * 拼成台账地址即可 —— 回来时筛选与展开位置原样落回。
+ */
+const previewBack = computed(() => (props.backQuery ? `/?${props.backQuery}` : '/'))
+
+function pageHref(v: Evidence): string {
+  return evidencePreviewHref({ sourceFile: v.sourceFile, page: v.page, back: previewBack.value })
+}
+
+/** 三态里有页码的那种才可点;另两种只写字,不给链接(没有页码就没有可跳的页)。 */
+const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
 </script>
 
 <template>
@@ -346,8 +363,19 @@ function openPreview(e: Evidence) {
                   <span v-if="v.listNo != null" class="text-muted-foreground tabular-nums">
                     序号 {{ v.listNo }}
                   </span>
-                  <span v-if="v.page != null" class="text-muted-foreground tabular-nums">
+                  <!--
+                    页码(RL-10):可点时**跳到该 PDF 的实际页**;没有页码时留空 ——
+                    PDF 写「页码待核」,Word / Excel 不写(这类来源没有可复核的「第 N 页」)。
+                  -->
+                  <NuxtLink
+                    v-if="pageStateOf(v) === 'assigned'"
+                    :to="pageHref(v)"
+                    class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
+                  >
                     第 {{ v.page }} 页
+                  </NuxtLink>
+                  <span v-else-if="pageStateOf(v) === 'pending'" class="text-muted-foreground/70">
+                    {{ EVIDENCE_PAGE_WORDS.pending }}
                   </span>
                   <Button
                     v-if="isPreviewable(v.sourceFile)"

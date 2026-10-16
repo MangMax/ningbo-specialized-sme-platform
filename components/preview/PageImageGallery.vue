@@ -49,7 +49,23 @@ import type { PageImageRef, PdfPagesState, RenderOutcome } from '~~/server/utils
 const props = defineProps<{
   /** 源 PDF,相对文件库根的路径(与 `record_evidence.source_file` 同一口径)。 */
   file: string
+  /**
+   * **一进来就落在哪一页**(RL-10 的深链:出处页码 → 该 PDF 实际页)。1 起;
+   * 不给 / 非正整数 ⇒ 停在网格,与从前一样。
+   *
+   * 落点是**单页视图**(`viewing`),不是自动滚到网格里的某一张 —— 深链的用途是
+   * 「看这一页」,让人从一堆缩略图里自己找第 8 张不叫定位。该页还没渲染时,
+   * 网格视图会照常铺出来并给出渲染入口(`viewing` 会被底下那条 watch 收回),
+   * 不会停在一个空白的单页上。
+   */
+  page?: number | null
 }>()
+
+/** 入参 `page` 折成「该看第几页」;不是 ≥1 的整数就没有落点(**不取整、不回落成第 1 页**)。 */
+function requestedPage(): number | null {
+  const p = props.page
+  return typeof p === 'number' && Number.isInteger(p) && p >= 1 ? p : null
+}
 
 /**
  * 网格列数:按容器宽度自动铺。`minmax(120px, 1fr)` —— 120px 是「一页 A4 缩到
@@ -263,7 +279,8 @@ const dpiOptions = computed<number[]>(() =>
 watch(
   () => props.file,
   () => {
-    viewing.value = null
+    // 换文件 = 换一切,但**落点照旧按入参给**(深链打开时 `page` 就是它要的那一页)。
+    viewing.value = requestedPage()
     summary.value = ''
     renderFailure.value = ''
     renderFailed.value = false
@@ -282,6 +299,18 @@ watch(
   () => state.value?.pages.length,
   () => {
     if (viewing.value !== null && !viewingPage.value) viewing.value = null
+  },
+)
+
+/**
+ * 深链的页码**变了**(同一个组件实例换 `?page=`):换到新落点。
+ * `file` 那条 watch 只在换文件时跑,地址栏里只改 `page` 时它不动 —— 少了这一条,
+ * 「第 8 页 → 第 14 页」的第二次跳转会停在原地。
+ */
+watch(
+  () => props.page,
+  () => {
+    viewing.value = requestedPage()
   },
 )
 </script>

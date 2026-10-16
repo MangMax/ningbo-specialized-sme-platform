@@ -6,13 +6,17 @@
  * 抽到 [`http-fixture.ts`](./http-fixture.ts);这里只剩本夹具的路由表 ——
  * 把**同一份** `handleRosterImportRequest`(Nitro 路由也调它)挂上去,测的不是替身实现。
  *
- * 只认三条路径:`/api/roster/import/preflight`、`/commit` 与 `/replay`(RL-19 的收敛重放);
- * 其余一律 404。
+ * 只认四条路径:`/api/roster/import/preflight`、`/commit`、`/replay`(RL-19 的收敛重放)
+ * 与 `/api/roster/evidence/pages`(RL-10 的出处页码补录);其余一律 404。
+ *
+ * RL-10 那条**没有**新起一份夹具:它和导入面共用同一个 `db` / `apiToken`,起两个端口
+ * 等于让一批测试同时握两个服务(端口更多、关不干净的风险更大),而它们的路由互不重叠。
  */
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { handleRosterImportRequest, type RosterImportAction } from '../../server/utils/roster-import-http'
+import { handleEvidencePagesRequest } from '../../server/utils/roster-evidence-pages'
 import { startHttpFixture, type FixtureHandler } from './http-fixture'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -38,11 +42,22 @@ export async function startRosterApi(options: { db: Db; apiToken: string | null 
     return { status: out.status, headers: out.headers, body: out.body }
   }
 
+  // RL-10 的出处页码补录:Nitro 路由(`server/api/roster/evidence/pages.post.ts`)调的
+  // 是同一个 `handleEvidencePagesRequest`,所以这里回放的不是替身实现。
+  const evidencePagesRoute: FixtureHandler = (request) => {
+    const out = handleEvidencePagesRequest(
+      { method: request.method, headers: request.headers, body: request.body },
+      { db: options.db, apiToken: options.apiToken },
+    )
+    return { status: out.status, headers: out.headers, body: out.body }
+  }
+
   return startHttpFixture({
     routes: {
       '/api/roster/import/preflight': importRoute,
       '/api/roster/import/commit': importRoute,
       '/api/roster/import/replay': importRoute,
+      '/api/roster/evidence/pages': evidencePagesRoute,
     },
   })
 }

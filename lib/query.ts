@@ -294,7 +294,20 @@ export interface DetailEvent {
   type: string
   year: number | null
   seq: number | null
-  evidence: { sourceFile: string; attachment: string | null; listNo: number | null }[]
+  /**
+   * 出处(文件 / 附件 / 序号 / **页码**)。
+   *
+   * `page` 是 **PDF 实际页序**(`record_evidence.page`,1 起),给不出就是 `null`
+   * (RL-10)。它与 `listNo`(名单里的**序号**)是两回事 —— 把序号当页码会跳到错的页上。
+   * 界面据 `evidencePageState()` 把它分成三种说法:有页码 / **页码待核**(PDF 但还没定)/
+   * 本来就没有页(Word、Excel)。
+   */
+  evidence: {
+    sourceFile: string
+    attachment: string | null
+    listNo: number | null
+    page: number | null
+  }[]
 }
 export interface DetailRecord {
   titleCode: string
@@ -389,6 +402,7 @@ export function getEnterpriseDetail(db: Db, id: number): EnterpriseDetail | null
           sourceFile: v.sourceFile,
           attachment: v.attachment,
           listNo: v.listNo,
+          page: v.page,
         })),
       })),
     })),
@@ -585,17 +599,29 @@ export interface ExportRow {
   /** 该组合下的全部来源(按经信局 → 工信部排序)。 */
   sources: string[]
   events: string
-  /** 出处:该组合各事件的「文件 / 附件 / 序号」汇总为一行文本。 */
+  /** 出处:该组合各事件的「文件 / 附件 / 序号 / 页码」汇总为一行文本。 */
   evidence: string
 }
 
-/** 单条证据渲染为 `文件 / 附件 / 序号N`。 */
+/**
+ * 单条证据渲染为 `文件 / 附件 / 序号N / 第N页`。
+ *
+ * 页码只在**真的定下来**时才写(`page != null`)。没有页码**不写任何占位** ——
+ * 导出文本里的一句「页码待核」既没有可复核的值、又会让「这一列到底有没有数据」
+ * 变得读不出来;那是界面上的说法(见 `evidencePageState`),不是导出文本的。
+ */
 function formatEvidence(v: {
   sourceFile: string
   attachment: string | null
   listNo: number | null
+  page: number | null
 }): string {
-  return compact([v.sourceFile, v.attachment, v.listNo != null ? `序号${v.listNo}` : null]).join(' / ')
+  return compact([
+    v.sourceFile,
+    v.attachment,
+    v.listNo != null ? `序号${v.listNo}` : null,
+    v.page != null ? `第${v.page}页` : null,
+  ]).join(' / ')
 }
 
 /**
