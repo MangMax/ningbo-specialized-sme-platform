@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import {
   Table,
   TableBody,
@@ -88,16 +89,28 @@ const COLUMNS = 6
 const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs font-medium'
 const rowKey = (r: TitleRow) => `${r.enterpriseId}-${r.titleCode}`
 
+function enterpriseDetailHref(id: number): string {
+  return `/enterprises/${id}${props.backQuery ? `?back=${encodeURIComponent(props.backQuery)}` : ''}`
+}
+
+function rememberEnterpriseReturn(event: MouseEvent): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  const back = props.backQuery ? `/?${props.backQuery}` : '/'
+  rememberEvidencePreviewReturn(back, event.currentTarget)
+}
+
 /** 整行可点,但拖选文字时不该跳走。 */
-function openRow(id: number) {
+function openRow(id: number, event: MouseEvent) {
   if (typeof window !== 'undefined' && window.getSelection()?.toString()) return
-  emit('open', `/enterprises/${id}${props.backQuery ? `?back=${encodeURIComponent(props.backQuery)}` : ''}`)
+  rememberEnterpriseReturn(event)
+  emit('open', enterpriseDetailHref(id))
 }
 </script>
 
 <template>
   <div
     ref="scrollRef"
+    data-evidence-return-scroll-container
     class="max-h-[max(360px,calc(100dvh-22rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
   >
     <Table class="min-w-[1040px]">
@@ -138,14 +151,14 @@ function openRow(id: number) {
             v-for="item in visibleRows"
             :key="rowKey(item.row)"
             class="hover:bg-accent/70 h-11 cursor-pointer"
-            @click="openRow(item.row.enterpriseId)"
+            @click="openRow(item.row.enterpriseId, $event)"
           >
             <TableCell class="max-w-0 truncate font-medium">
               <NuxtLink
-                :to="`/enterprises/${item.row.enterpriseId}`"
+                :to="enterpriseDetailHref(item.row.enterpriseId)"
                 :title="item.row.name"
                 class="hover:text-primary hover:underline"
-                @click.stop
+                @click.stop="rememberEnterpriseReturn($event)"
               >
                 {{ item.row.name }}
               </NuxtLink>

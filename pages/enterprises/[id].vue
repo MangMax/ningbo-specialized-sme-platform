@@ -23,6 +23,10 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 
+// This page restores a saved detail offset after its data renders. Nuxt's default scrollBehavior
+// otherwise applies its top:0 position after page:loading:end and overwrites that restoration.
+definePageMeta({ scrollToTop: false })
+
 interface Evidence {
   sourceFile: string
   attachment: string | null

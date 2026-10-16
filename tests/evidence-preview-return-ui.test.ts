@@ -3,8 +3,20 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, ref, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RosterEnterpriseTable, { type EnterpriseRow } from '../components/RosterEnterpriseTable.vue'
+import RosterTitleTable, { type TitleRow } from '../components/RosterTitleTable.vue'
 import { useEvidencePreviewScrollRestore } from '../lib/roster/evidence-preview-return'
 import EnterprisePage from '../pages/enterprises/[id].vue'
+
+vi.mock('@tanstack/vue-virtual', async () => {
+  const { computed } = await import('vue')
+  return {
+    useVirtualizer: (options: { value: { count: number } }) =>
+      computed(() => ({
+        getVirtualItems: () => [],
+        getTotalSize: () => options.value.count * 44,
+      })),
+  }
+})
 
 const mocks = vi.hoisted(() => ({
   detail: null as unknown,
@@ -86,7 +98,19 @@ const fullDetail = {
   ],
 }
 
+const titleRow: TitleRow = {
+  enterpriseId: 35,
+  name: '宁波称号视图回归企业有限公司',
+  uscc: null,
+  district: '海曙区',
+  titleCode: 'specialized_sme',
+  sources: ['jxj'],
+  events: [{ type: 'award', year: 2022, seq: 1, source: 'jxj' }],
+}
+
 let currentRoute: Record<string, unknown>
+let capturedPageMeta: Record<string, unknown>
+let openedTitleRowPath = ''
 
 const NuxtLinkStub = {
   props: ['to'],
@@ -112,6 +136,32 @@ const globalStubs = {
   Skeleton: true,
 }
 
+const passThrough = (tag: string) =>
+  defineComponent({
+    inheritAttrs: false,
+    setup(_props, { attrs, slots }) {
+      return () => h(tag, attrs, slots.default?.())
+    },
+  })
+
+const titleTableStubs = {
+  ...globalStubs,
+  Table: passThrough('table'),
+  TableHeader: passThrough('thead'),
+  TableBody: passThrough('tbody'),
+  TableRow: passThrough('tr'),
+  TableHead: passThrough('th'),
+  TableCell: passThrough('td'),
+  HoverCard: passThrough('div'),
+  HoverCardTrigger: passThrough('div'),
+  HoverCardContent: passThrough('div'),
+  Empty: passThrough('div'),
+  EmptyHeader: passThrough('div'),
+  EmptyMedia: passThrough('div'),
+  EmptyTitle: passThrough('div'),
+  EmptyDescription: passThrough('div'),
+}
+
 function ledgerHarness(ready: Ref<boolean>) {
   return defineComponent({
     setup() {
@@ -129,6 +179,22 @@ function ledgerHarness(ready: Ref<boolean>) {
   })
 }
 
+function titleLedgerHarness(ready: Ref<boolean>) {
+  return defineComponent({
+    setup() {
+      useEvidencePreviewScrollRestore(ready)
+      return () =>
+        h(RosterTitleTable, {
+          rows: ready.value ? [titleRow] : [],
+          loading: !ready.value,
+          hasError: false,
+          backQuery: 'view=title&page=2',
+          onOpen: (path: string) => (openedTitleRowPath = path),
+        })
+    },
+  })
+}
+
 describe('出处预览返回滚动恢复', () => {
   beforeEach(() => {
     mocks.detail = detail
@@ -140,7 +206,12 @@ describe('出处预览返回滚动恢复', () => {
     vi.stubGlobal('useHead', vi.fn())
     vi.stubGlobal('$fetch', vi.fn(async () => ({})))
     currentRoute = { query: {} }
+    capturedPageMeta = {}
+    openedTitleRowPath = ''
     vi.stubGlobal('useRoute', () => currentRoute)
+    vi.stubGlobal('definePageMeta', (meta: Record<string, unknown>) => {
+      capturedPageMeta = meta
+    })
   })
 
   it.each([
@@ -211,6 +282,17 @@ describe('出处预览返回滚动恢复', () => {
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
 
     returned.unmount()
+  })
+
+  it('详情页关闭 Nuxt 自动归顶，避免路由滚动覆盖页面自己的就绪后恢复', () => {
+    mocks.detail = fullDetail
+    mocks.loading = false
+    const detailPage = mount(EnterprisePage, {
+      attachTo: document.body,
+      global: { stubs: globalStubs },
+    })
+    expect(capturedPageMeta.scrollToTop).toBe(false)
+    detailPage.unmount()
   })
 
   it('从名录行进详情再经预览返回，保留名录筛选、页码、展开行和表格滚动', async () => {
@@ -346,6 +428,136 @@ describe('出处预览返回滚动恢复', () => {
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: listWindowTop, behavior: 'instant' })
     expect(returnedScroller?.scrollTop).toBe(listTableTop)
+    expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
+    ledgerReturn.unmount()
+  })
+
+  it('称号视图名称入口保留 view/page 和表格滚动，并完成详情预览返回链', async () => {
+    const ledgerPath = '/?view=title&page=2'
+    const backQuery = 'view=title&page=2'
+    const detailPath = '/enterprises/35?back=view%3Dtitle%26page%3D2'
+    const ledgerWindowTop = 70
+    const ledgerTableTop = 247
+    const detailWindowTop = 118
+
+    history.replaceState(null, '', ledgerPath)
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: ledgerWindowTop })
+    const titleLedger = mount(titleLedgerHarness(ref(true)), {
+      attachTo: document.body,
+      global: { stubs: titleTableStubs },
+    })
+    await flushPromises()
+    const titleScroller = titleLedger.element as HTMLElement
+    expect(titleScroller.matches('[data-evidence-return-scroll-container]')).toBe(true)
+    titleScroller.scrollTop = ledgerTableTop
+
+    const enterpriseNameLink = titleLedger
+      .findAll('a')
+      .find((link) => link.text().includes(titleRow.name))
+    expect(enterpriseNameLink).toBeDefined()
+    const titleDetailUrl = new URL(enterpriseNameLink!.attributes('href')!, window.location.origin)
+    expect(titleDetailUrl.pathname).toBe('/enterprises/35')
+    expect(titleDetailUrl.searchParams.get('back')).toBe(backQuery)
+    await enterpriseNameLink!.trigger('click', { button: 0 })
+    expect(openedTitleRowPath).toBe('')
+    const ledgerState = JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!) as {
+      back: string
+      scrollY: number
+      scrollTop: number | null
+    }[]
+    expect(ledgerState).toEqual([
+      { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop },
+    ])
+    titleLedger.unmount()
+
+    history.pushState(null, '', detailPath)
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: detailWindowTop })
+    currentRoute = {
+      params: { id: '35' },
+      query: { back: backQuery },
+      fullPath: detailPath,
+    }
+    mocks.detail = fullDetail
+    mocks.loading = false
+    const detailPage = mount(EnterprisePage, {
+      attachTo: document.body,
+      global: { stubs: globalStubs },
+    })
+    await flushPromises()
+    const evidenceLink = detailPage.findAll('a').find((link) => link.text().includes('第 8 页'))
+    expect(evidenceLink).toBeDefined()
+    await evidenceLink!.trigger('click', { button: 0 })
+    const previewUrl = new URL(evidenceLink!.attributes('href')!, window.location.origin)
+    expect(previewUrl.pathname).toBe('/preview')
+    expect(previewUrl.searchParams.get('back')).toBe(detailPath)
+    expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
+      { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop },
+      { back: detailPath, scrollY: detailWindowTop, scrollTop: null },
+    ])
+    detailPage.unmount()
+
+    history.pushState(null, '', detailPath)
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
+    mocks.detail = null
+    mocks.loading = true
+    const detailFrames: FrameRequestCallback[] = []
+    const detailScrollTo = vi.fn((position: ScrollToOptions) => {
+      Object.defineProperty(window, 'scrollY', {
+        configurable: true,
+        value: position.top ?? window.scrollY,
+      })
+    })
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      detailFrames.push(callback)
+      return detailFrames.length
+    })
+    vi.stubGlobal('scrollTo', detailScrollTo)
+    const detailReturn = mount(EnterprisePage, {
+      attachTo: document.body,
+      global: { stubs: globalStubs },
+    })
+    await flushPromises()
+    expect(detailScrollTo).not.toHaveBeenCalled()
+    mocks.setDetail?.(fullDetail)
+    mocks.setLoading?.(false)
+    await flushPromises()
+    expect(detailFrames).toHaveLength(1)
+    detailFrames[0]!(0)
+    expect(window.scrollY).toBe(detailWindowTop)
+    expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
+      { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop },
+    ])
+    const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('名录台账'))
+    expect(ledgerLink?.attributes('data-target')).toBe(
+      JSON.stringify({ path: '/', query: { view: 'title', page: '2' } }),
+    )
+    detailReturn.unmount()
+
+    history.pushState(null, '', ledgerPath)
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
+    const titleReady = ref(false)
+    const titleFrames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      titleFrames.push(callback)
+      return titleFrames.length
+    })
+    detailScrollTo.mockClear()
+    const ledgerReturn = mount(titleLedgerHarness(titleReady), {
+      attachTo: document.body,
+      global: { stubs: titleTableStubs },
+    })
+    await flushPromises()
+    expect(titleReady.value).toBe(false)
+    expect(detailScrollTo).not.toHaveBeenCalled()
+    titleReady.value = true
+    await flushPromises()
+    expect(titleFrames).toHaveLength(1)
+    titleFrames[0]!(0)
+    const restoredTitleScroller = ledgerReturn.element as HTMLElement
+    expect(restoredTitleScroller.matches('[data-evidence-return-scroll-container]')).toBe(true)
+    expect(restoredTitleScroller.scrollTop).toBe(ledgerTableTop)
+    expect(window.scrollY).toBe(ledgerWindowTop)
+    expect(window.location.pathname + window.location.search).toBe(ledgerPath)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
     ledgerReturn.unmount()
   })
