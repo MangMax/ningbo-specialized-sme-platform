@@ -162,6 +162,7 @@ let recordsRouteMeta: {
     }>
   }
 }
+let rosterEnterprisesRouteMeta: typeof recordsRouteMeta
 let queryRecordsTool: { handler: (input: Record<string, unknown>) => unknown }
 let rosterEnterprisesHandler: (event: unknown) => unknown
 let listEnterprisesTool: {
@@ -174,6 +175,9 @@ beforeAll(async () => {
   vi.stubGlobal('defineRouteMeta', (meta: typeof recordsRouteMeta) => {
     if (meta.openAPI?.summary === '查台账记录') {
       recordsRouteMeta = meta
+    }
+    if (meta.openAPI?.summary === '跨称号去重企业总表') {
+      rosterEnterprisesRouteMeta = meta
     }
     return meta
   })
@@ -197,6 +201,19 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 describe('通用记录查询的生命周期投影', () => {
   it('REST OpenAPI 将 firstStatus 声明为逗号分隔的枚举数组', () => {
     const parameter = recordsRouteMeta?.openAPI?.parameters?.find((item) => item.name === 'firstStatus')
+
+    expect(parameter).toMatchObject({
+      in: 'query',
+      style: 'form',
+      explode: false,
+      schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
+    })
+  })
+
+  it('企业总表 OpenAPI 将 firstStatus 声明为逗号分隔的枚举数组', () => {
+    const parameter = rosterEnterprisesRouteMeta?.openAPI?.parameters?.find(
+      (item) => item.name === 'firstStatus',
+    )
 
     expect(parameter).toMatchObject({
       in: 'query',
