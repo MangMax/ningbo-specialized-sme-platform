@@ -1196,8 +1196,8 @@ describe('读面：list_enterprises / list_differences', () => {
       expect(target.titles).toEqual(['specialized_sme'])
       expect(target.aliasNames).toEqual(['宁波读面旧名'])
 
-      // 只由平台引入、无 jxj 事件 ⇒ removed_platform_only。
-      expect(all.rows.find((r) => r.name === '宁波仅平台企业')!.rosterState).toBe('removed_platform_only')
+      // 只有平台侧记录且没有导出快照 ⇒ 无法证明已移除，按完整读模型保留为 current。
+      expect(all.rows.find((r) => r.name === '宁波仅平台企业')!.rosterState).toBe('current')
 
       expect(listEnterprises(db, { q: '宁波读面旧名' }).rows.map((r) => r.name)).toEqual(['宁波读面企业有限公司'])
       expect(listEnterprises(db, { q: '宁波读面未核别名' }).rows).toEqual([])

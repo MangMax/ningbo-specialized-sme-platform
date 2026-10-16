@@ -160,9 +160,12 @@ let recordsRouteMeta: {
       explode?: boolean
       schema?: { type?: string; items?: { type?: string; enum?: string[] } }
     }>
+    responses?: Record<number, { description?: string }>
   }
 }
 let rosterEnterprisesRouteMeta: typeof recordsRouteMeta
+let rosterRecognitionsRouteMeta: typeof recordsRouteMeta
+let rosterExportRouteMeta: typeof recordsRouteMeta
 let queryRecordsTool: { handler: (input: Record<string, unknown>) => unknown }
 let rosterEnterprisesHandler: (event: unknown) => unknown
 let listEnterprisesTool: {
@@ -179,6 +182,12 @@ beforeAll(async () => {
     if (meta.openAPI?.summary === '跨称号去重企业总表') {
       rosterEnterprisesRouteMeta = meta
     }
+    if (meta.openAPI?.summary === '首次认定清单') {
+      rosterRecognitionsRouteMeta = meta
+    }
+    if (meta.openAPI?.summary === '导出企业总表(Excel)') {
+      rosterExportRouteMeta = meta
+    }
     return meta
   })
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -192,6 +201,8 @@ beforeAll(async () => {
   queryRecordsTool = (await import('../server/mcp/tools/query_records')).default as unknown as typeof queryRecordsTool
   rosterEnterprisesHandler =
     (await import('../server/api/roster/enterprises.get')).default as unknown as typeof rosterEnterprisesHandler
+  await import('../server/api/roster/recognitions.get')
+  await import('../server/api/roster/export.get')
   listEnterprisesTool = (await import('../server/mcp/tools/list_enterprises')).default as unknown as typeof listEnterprisesTool
   enterpriseDetailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as unknown as typeof enterpriseDetailTool
 })
@@ -221,6 +232,29 @@ describe('通用记录查询的生命周期投影', () => {
       explode: false,
       schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
     })
+  })
+
+  it('首次认定清单 OpenAPI 将 status 声明为逗号分隔的枚举数组', () => {
+    const parameter = rosterRecognitionsRouteMeta?.openAPI?.parameters?.find((item) => item.name === 'status')
+
+    expect(parameter).toMatchObject({
+      in: 'query',
+      style: 'form',
+      explode: false,
+      schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
+    })
+  })
+
+  it('总表导出 OpenAPI 将 firstStatus 声明为数组，并列出对应的 400 错误', () => {
+    const parameter = rosterExportRouteMeta?.openAPI?.parameters?.find((item) => item.name === 'firstStatus')
+
+    expect(parameter).toMatchObject({
+      in: 'query',
+      style: 'form',
+      explode: false,
+      schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
+    })
+    expect(rosterExportRouteMeta?.openAPI?.responses?.[400]?.description).toContain('firstStatus')
   })
 
   it('failed review 后重新 award 保留首次认定，并把新认定作为到期锚点', () => {
@@ -398,6 +432,26 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
     expect(listEnterprisesTool.inputSchema.firstYear!.safeParse([2022]).success).toBe(true)
     expect(listEnterprisesTool.inputSchema.firstStatus!.safeParse(['pending']).success).toBe(true)
     expect(listEnterprisesTool.inputSchema.firstStatus!.safeParse(['sure']).success).toBe(false)
+  })
+
+  it('list_enterprises MCP 与 REST 返回同一完整首次认定读模型', async () => {
+    routeQuery = {
+      q: '宁波重授旧名有限公司',
+      title: 'specialized_sme',
+      firstYear: '2021',
+      firstStatus: 'confirmed',
+      pageSize: '1',
+    }
+    const rest = rosterEnterprisesHandler({})
+    const mcp = await listEnterprisesTool.handler({
+      q: '宁波重授旧名有限公司',
+      title: 'specialized_sme',
+      firstYear: [2021],
+      firstStatus: ['confirmed'],
+      pageSize: 1,
+    })
+
+    expect(mcp).toEqual(rest)
   })
 
   it('共享解析保留 year 与 dueYear 的独立语义，并拒绝多值 dueYear', () => {

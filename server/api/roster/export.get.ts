@@ -46,8 +46,10 @@ defineRouteMeta({
       {
         name: 'firstStatus',
         in: 'query',
-        schema: { type: 'string' },
-        description: '首次认定状态,多值:`confirmed` / `pending`。',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
+        description: '首次认定状态,逗号分隔多值:`confirmed` / `pending`;也接受重复参数。',
       },
     ],
     responses: {
@@ -59,7 +61,7 @@ defineRouteMeta({
           },
         },
       },
-      400: { description: '`title` / `rosterState` / `source` / `eventType` 取值非法。' },
+      400: { description: '`title` / `rosterState` / `source` / `eventType` / `firstStatus` 取值非法。' },
     },
   },
 })
