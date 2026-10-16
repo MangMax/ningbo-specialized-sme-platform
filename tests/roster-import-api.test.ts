@@ -751,13 +751,16 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     })
     original.payload.announcement!.records[0]!.events![0]!.evidence = [
       { sourceFile: 'synthetic/legacy/notice.docx', attachment: '正文', listNo: 1, page: 12 },
+      { sourceFile: 'synthetic/legacy/first-write.docx', attachment: '名单', listNo: 3, page: 12 },
       { sourceFile: 'synthetic/legacy/notice.pdf', attachment: '附件', listNo: 2, page: 7 },
     ]
 
     try {
       await client.commit(original)
       const seeded = db.select().from(schema.recordEvidence).all()
-      const docx = seeded.find((row) => row.sourceFile.endsWith('.docx'))!
+      const docx = seeded.find((row) => row.sourceFile.endsWith('notice.docx'))!
+      const firstWriteDocx = seeded.find((row) => row.sourceFile.endsWith('first-write.docx'))!
+      expect(firstWriteDocx.page).toBeNull()
       // 合成一条历史坏数据：新导入已会清空 DOCX 页码，但旧行可能带着不可靠值。
       db.update(schema.recordEvidence).set({ page: 12 }).where(eq(schema.recordEvidence.id, docx.id)).run()
 
@@ -768,16 +771,18 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       })
       relinked.payload.announcement!.records[0]!.events![0]!.evidence = [
         { sourceFile: 'synthetic/library/notice.docx', attachment: '正文', listNo: 1, page: 12 },
+        { sourceFile: 'synthetic/library/first-write.docx', attachment: '名单', listNo: 3, page: 12 },
         { sourceFile: 'synthetic/library/notice.pdf', attachment: '附件', listNo: 2, page: 7 },
       ]
 
       const result = await client.replay(relinked)
       expect(result.status).toBe('replayed')
-      expect(result.evidenceRepointed).toBe(2)
+      expect(result.evidenceRepointed).toBe(3)
       const evidence = db.select().from(schema.recordEvidence).all()
-      expect(evidence).toHaveLength(2)
+      expect(evidence).toHaveLength(3)
       expect(Object.fromEntries(evidence.map((row) => [row.sourceFile, row.page]))).toEqual({
         'synthetic/library/notice.docx': null,
+        'synthetic/library/first-write.docx': null,
         'synthetic/library/notice.pdf': 7,
       })
     } finally {
@@ -796,12 +801,16 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     })
     original.payload.announcement!.records[0]!.events![0]!.evidence = [
       { sourceFile: 'synthetic/legacy/duplicate.docx', attachment: '正文', listNo: 1, page: 12 },
+      { sourceFile: 'synthetic/legacy/duplicate-first-write.docx', attachment: '名单', listNo: 3, page: 12 },
       { sourceFile: 'synthetic/legacy/duplicate.pdf', attachment: '附件', listNo: 2, page: 7 },
     ]
 
     try {
       await client.commit(original)
-      const docx = db.select().from(schema.recordEvidence).all().find((row) => row.sourceFile.endsWith('.docx'))!
+      const seeded = db.select().from(schema.recordEvidence).all()
+      const docx = seeded.find((row) => row.sourceFile.endsWith('/duplicate.docx'))!
+      const firstWriteDocx = seeded.find((row) => row.sourceFile.endsWith('duplicate-first-write.docx'))!
+      expect(firstWriteDocx.page).toBeNull()
       db.update(schema.recordEvidence).set({ page: 12 }).where(eq(schema.recordEvidence.id, docx.id)).run()
 
       const duplicate = announcementRequest({
@@ -811,18 +820,66 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       })
       duplicate.payload.announcement!.records[0]!.events![0]!.evidence = [
         { sourceFile: 'synthetic/library/duplicate.docx', attachment: '正文', listNo: 1, page: 12 },
+        { sourceFile: 'synthetic/library/duplicate-first-write.docx', attachment: '名单', listNo: 3, page: 12 },
         { sourceFile: 'synthetic/library/duplicate.pdf', attachment: '附件', listNo: 2, page: 7 },
       ]
 
       const result = await client.commit(duplicate)
       expect(result.status).toBe('committed')
-      expect(result.summary.evidenceRepointed).toBe(2)
+      expect(result.summary.evidenceRepointed).toBe(3)
       const evidence = db.select().from(schema.recordEvidence).all()
-      expect(evidence).toHaveLength(2)
+      expect(evidence).toHaveLength(3)
       expect(Object.fromEntries(evidence.map((row) => [row.sourceFile, row.page]))).toEqual({
         'synthetic/library/duplicate.docx': null,
+        'synthetic/library/duplicate-first-write.docx': null,
         'synthetic/library/duplicate.pdf': 7,
       })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('非 PDF 页码归一后出处坐标不唯一时不误收敛', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/legacy/ambiguous#sha256:stable-content',
+      sourceIdentity: 'synthetic/legacy/ambiguous',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/legacy/ambiguous-a.docx', attachment: '正文', listNo: 1, page: 12 },
+      { sourceFile: 'synthetic/legacy/ambiguous-b.docx', attachment: '正文', listNo: 1, page: 13 },
+    ]
+
+    try {
+      await client.commit(original)
+      const seeded = db.select().from(schema.recordEvidence).all()
+      expect(seeded.map((row) => row.page)).toEqual([null, null])
+      for (const row of seeded) {
+        db.update(schema.recordEvidence)
+          .set({ page: row.sourceFile.endsWith('ambiguous-a.docx') ? 12 : 13 })
+          .where(eq(schema.recordEvidence.id, row.id))
+          .run()
+      }
+
+      const relinked = announcementRequest({
+        idempotencyKey: 'synthetic/library/ambiguous#sha256:stable-content',
+        sourceIdentity: 'synthetic/library/ambiguous',
+        sourceSha256: 'stable-content',
+      })
+      relinked.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile: 'synthetic/library/ambiguous.docx', attachment: '正文', listNo: 1, page: 12 },
+      ]
+
+      const result = await client.replay(relinked)
+      expect(result.status).toBe('replayed')
+      expect(result.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/legacy/ambiguous-a.docx', page: 12 },
+        { sourceFile: 'synthetic/legacy/ambiguous-b.docx', page: 13 },
+      ])
     } finally {
       await server.close()
     }

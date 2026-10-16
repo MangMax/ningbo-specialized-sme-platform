@@ -1072,8 +1072,8 @@ function writeAnnouncementRecord(
     if (duplicate) {
       skipped += 1
       // 重放：事件坐标已存在 ⇒ **历史一行不改、一行不加**。但出处**指针**可能因为来源文件
-      // 入库而改变（RL-16）—— 按 (附件, 序号, 页) 逐字匹配后收敛出处指针；目标不是 PDF 时，
-      // 同时清掉可能遗留的伪页码（§8.11）。
+      // 入库而改变（RL-16）—— 按格式稳定的出处坐标收敛指针；非 PDF 的 page 先归一为 null，
+      // 不参与匹配，并且只有唯一的 (附件, 序号) 候选才会收敛（§8.11）。
       // 这一份执行体与收敛重放（§8.9.3）共用，两处不会各算一套。
       evidenceRepointed += convergeEventEvidence(tx, duplicate.id, event)
       continue
@@ -1285,12 +1285,13 @@ function findExistingEvent(tx: Executor, values: EventCoordinates): { id: number
 // 三条边界(为什么这样做是安全的):
 //  1. **事件事实不变**。事件坐标(类型/年份/批次/结论/结论年份)逐字相同才进入这条路径,
 //     事件与出处行一行不加、一行不删；只收敛来源指针,并按目标文件类型清理不可靠页码。
-//  2. 要 (附件, 序号, 页) **逐字匹配**上已存在的出处行才改 —— 不会把 A 行的指针挪到 B 行的出处上。
-//     目标路径是非 PDF 时还会清理历史伪页码；PDF 的既有实际页码原样保留。路径只是「同一份文档在库里的位置」,不是身份。
+//  2. 附件、序号逐字匹配；页码只对目标 PDF 参与匹配。目标格式没有稳定分页时,两侧 page 都归一为
+//     null,且只有事件内唯一的 (附件, 序号) 行才允许收敛；多个候选视为歧义并跳过,不把一行错配给另一行。
+//     非 PDF 目标还会清理历史伪页码；PDF 的既有实际页码原样保留。路径只是「同一份文档在库里的位置」,不是身份。
 //  3. **收敛的触发权在幂等键上**。键含来源标识(见 `lib/roster/little-giant-import.ts`):
 //     只有携带**同一份来源内容**、且来源标识变了的批次才会走到这里。
 
-/** 一行出处行里参与**坐标匹配**的三项(路径不参与 —— 它正是要被收敛的那一项)。 */
+/** 出处行的坐标字段(路径不参与 —— 它正是要被收敛的那一项)。 */
 interface EvidenceCoordinateRow {
   id: number
   sourceFile: string
@@ -1299,12 +1300,17 @@ interface EvidenceCoordinateRow {
   page: number | null
 }
 
-/** 已存在出处行的坐标是否与载荷里的那条出处逐字相同。 */
+/** 页码只在目标来源是 PDF 时作为坐标；其它格式把请求值和存储值都归一成 null。 */
+function evidencePageCoordinate(sourceFile: string, page: unknown): number | null {
+  return isPageCapable(sourceFile) ? (optionalInt(page) ?? null) : null
+}
+
+/** 已存在出处行的格式化坐标是否与载荷里的那条出处相同。 */
 function matchesEvidenceCoordinates(row: EvidenceCoordinateRow, wanted: RosterImportEvidence): boolean {
   return (
     (row.attachment ?? null) === (optionalString(wanted.attachment) ?? null) &&
     (row.listNo ?? null) === (optionalInt(wanted.listNo) ?? null) &&
-    (row.page ?? null) === (optionalInt(wanted.page) ?? null)
+    evidencePageCoordinate(wanted.sourceFile, row.page) === evidencePageCoordinate(wanted.sourceFile, wanted.page)
   )
 }
 
@@ -1321,12 +1327,25 @@ function repointTargets(
   for (const candidate of wanted) {
     const sourceFile = optionalString(candidate.sourceFile)
     if (!sourceFile) continue
-    const hit = existing.find(
-      (row) => !taken.has(row.id) && matchesEvidenceCoordinates(row, candidate) && row.sourceFile !== sourceFile,
-    )
-    if (!hit) continue
+    if (isPageCapable(sourceFile)) {
+      // PDF 页仍是坐标的一部分；保留原来的精确页码与首个不同路径匹配语义。
+      const hit = existing.find(
+        (row) => !taken.has(row.id) && matchesEvidenceCoordinates(row, candidate) && row.sourceFile !== sourceFile,
+      )
+      if (!hit) continue
+      taken.add(hit.id)
+      out.push({ id: hit.id, sourceFile })
+      continue
+    }
+
+    // 非 PDF page 不是稳定坐标。若附件与序号对应多条历史行(例如旧 page 12/13)，不猜哪条，
+    // 只在唯一候选时收敛；把已有同路径行也计入歧义检查，避免误认领另一条旧出处。
+    const matches = existing.filter((row) => matchesEvidenceCoordinates(row, candidate))
+    if (matches.length !== 1) continue
+    const [hit] = matches
+    if (!hit || taken.has(hit.id)) continue
     taken.add(hit.id)
-    out.push({ id: hit.id, sourceFile })
+    if (hit.sourceFile !== sourceFile) out.push({ id: hit.id, sourceFile })
   }
   return out
 }
