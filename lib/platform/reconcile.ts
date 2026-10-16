@@ -348,9 +348,11 @@ function decideVoidRelations(
  *  5. 更名证据(同一 USCC 下多个 `qymc`,或平台名 ≠ 公布名)⇒ `renamed`;
  *  6. 省份证据 ⇒ `moved_out` / `moved_in`;
  *  7. 平台记录状态全部撤回/退回/终审不通过 ⇒ `other`(有证据但不在已知五因内);
- *  8. 按方向:平台有记录时 `missing_in_miit` ⇒ `confirmed_no_diff`、
- *     `extra_in_miit` ⇒ `platform_stale`;
+ *  8. 平台确实有记录、却指不出任何**具体身份事实** ⇒ `platform_stale`(兜底);
  *  9. 其余 ⇒ `needs_review`,并在 `reasonNote` 写清缺什么证据。
+ *
+ * ⚠️ **第 5–7 步是「具体」,第 8 步才是「泛化兜底」**——顺序不能倒(父代理 2026-10-16 纠正)。
+ * 把 `platform_stale` 放在具体原因前面,会把大量更名/迁移吞进兜底类。
  */
 export function decideDifference(
   target: ReconcileTarget,
@@ -449,7 +451,7 @@ export function decideDifference(
     }
   }
 
-  // 5. 证据**明说**主体已注销/吊销 —— 平台两接口本身不提供注销状态,所以这一条
+  // 4. 证据**明说**主体已注销/吊销 —— 平台两接口本身不提供注销状态,所以这一条
   //    只可能由关系行原文里的字样触发;没有明说就绝不判。
   const deregistered = relations.find((relation) => DEREGISTERED_RE.test(readableFields(relation)))
   if (deregistered) {
@@ -468,7 +470,7 @@ export function decideDifference(
     }
   }
 
-  // 6. 更名 ⇒ 曾用名证据(契约 §5.1)。两条判据都属于「显式证据」:
+  // 5. 更名 ⇒ 曾用名证据(契约 §5.1)。两条判据都属于「显式证据」:
   //    (a) 同一 `tyshxydm` 下 `qymc` 出现**多个不同写法** ⇒ 历史行本身就是曾用名证据;
   //    (b) 平台关系写出的名字与**本企业(公布侧)的名**不同 ⇒ 两侧名字不一致,同样是更名证据。
   //    (b) 覆盖平台上只写出一个名字、而那个名字与公布名不同的情形 —— 只按 (a) 找会整条漏掉。
@@ -491,6 +493,13 @@ export function decideDifference(
       aliases: [],
     }
   }
+
+  // 6. **具体身份事实优先于泛化的兜底**(父代理 2026-10-16 纠正):
+  //    更名 / 外迁 / 迁入 / 注销只要**有证据**就取那个具体值;`platform_stale`(平台未更新)
+  //    只在「平台确实知道这家企业、却指不出任何具体身份事实」时才用。
+  //    反例教训:把 `platform_stale` 放在前面会把大量具体原因吞进兜底类
+  //    (实测 `91330206793007818K` 宁波一力实业:明显是**更名**,不是未更新)。
+  if (rename.verdict) return rename.verdict
 
   // 7. 省份证据:`szsfmc` ≠ 宁波市 ⇒ 不在本地。
   const provinces = [...new Set(relations.map((relation) => relation.province).filter((p): p is string => !!p))]
@@ -587,58 +596,34 @@ export function decideDifference(
   const voidVerdict = decideVoidRelations(target.uscc, relations, successes)
   if (voidVerdict) return voidVerdict
 
-  // 9. 平台有记录、关系无异常 —— 按方向给出结论。
+  // 9. 兜底:平台**确实知道**这家企业,却指不出任何具体身份事实 ⇒ `platform_stale`(平台未更新)。
+  //    两个方向的差别只在措辞:导出表缺它叫「审核信息滞后」,导出表多它叫「平台领先于公布文件」。
   const anchor = latestRelation(relations) ?? relations[0]!
   const query = queryOfRelation(successes, anchor)
-
-  // ── `missing_in_miit`(公布名单有、导出表没有):**平台未更新** ──────────────
-  // 用户 2026-10-16 给的口径(已写进契约 §2.8/§3.2):接口**任一**返回 ≥1 条关系 ⇒
-  // 说明平台知道这家企业,只是导出表滞后(往往在最新一年的名单里;关系状态常见
-  // `待审核`/`区县已审`)。这是 `platform_stale`(平台未更新),**不是**「无差异」。
-  // ⚠️ 绝不能记成 `no_record`(那是「两个接口都查不到」)或 `confirmed_no_diff`
-  // (那会把「平台滞后」误报成「无差异」)。
-  if (target.direction === 'missing_in_miit') {
-    return {
-      status: 'confirmed_reason',
-      reasonCode: 'platform_stale',
-      reasonNote:
-        `公布名单有该企业、导出表没有,但平台接口对该 USCC 返回 ${relations.length} 条关联记录` +
-        `(${describeEvidenceScope(relations)})⇒ 平台知道这家企业,只是**审核信息滞后**于公布文件。` +
-        (rename.aliases.length
-          ? `同一 tyshxydm 下另写出历史名称「${rename.aliases.map((alias) => alias.name).join('、')}」。`
-          : ''),
-      measureCode: 'mark_platform_snapshot',
-      measureNote: '标明平台时点,不覆盖、不改写正式公布历史。',
-      verificationStatus: 'confirmed',
-      evidenceQuery: query ? queryRefOf(query, target.uscc) : null,
-      evidenceRelation: query ? relationRefOf(query, target.uscc, anchor) : null,
-      movedIn: null,
-      // 曾用名与「这条差异为什么存在」正交:即使原因是平台滞后,旧名照样写出去。
-      aliases: rename.aliases,
-    }
-  }
-
-  // ── `extra_in_miit`(导出表有、公布侧无)──────────────────────────────────
-  // 有更名证据 ⇒ `renamed`(同一 USCC 两个名字,正好解释两侧为何看起来不是同一家);
-  // 否则按证据判 `platform_stale`(平台现状领先于公布文件)。
-  if (rename.verdict) return rename.verdict
-
+  // 平台记录里是否已含**同称号且在册** —— 是一句能指回原文的补充,不是推断。
   const sameTitle = relations.some(
     (relation) => RDJB_TITLE[relation.rdjb] === target.titleCode && GRANTED_STATUSES.includes(relation.status ?? ''),
   )
+  const stagnant =
+    (target.direction === 'missing_in_miit'
+      ? `公布名单有该企业、导出表没有,但平台接口对该 USCC 返回 ${relations.length} 条关联记录`
+      : `平台对 ${target.uscc} 返回 ${relations.length} 条关联记录,而经信局公布侧无该条`) +
+    `(${describeEvidenceScope(relations)})` +
+    (sameTitle ? `,其中**已含同称号「${target.titleCode}」且状态为在册**` : '') +
+    (target.direction === 'missing_in_miit'
+      ? '⇒ 平台知道这家企业,只是**审核信息滞后**于公布文件。'
+      : '⇒ 平台现状领先于公布文件,属采集时点差异。')
   return {
     status: 'confirmed_reason',
     reasonCode: 'platform_stale',
-    reasonNote:
-      `平台对 ${target.uscc} 返回 ${relations.length} 条关联记录,而经信局公布侧无该条` +
-      `(平台记录${sameTitle ? `已含同称号「${target.titleCode}」且状态为在册` : '未显示同称号在册状态'})` +
-      '⇒ 平台现状领先于公布文件,属采集时点差异。',
+    reasonNote: stagnant,
     measureCode: 'mark_platform_snapshot',
-    measureNote: '标明平台时点,不覆盖、不新增正式公布历史。',
+    measureNote: '标明平台时点,不覆盖、不改写正式公布历史。',
     verificationStatus: 'confirmed',
     evidenceQuery: query ? queryRefOf(query, target.uscc) : null,
     evidenceRelation: query ? relationRefOf(query, target.uscc, anchor) : null,
     movedIn: null,
+    // 曾用名随 `renamed` 那条早返回一起写出去(见上面第 5 步),到这里已无更名证据。
     aliases: [],
   }
 }
