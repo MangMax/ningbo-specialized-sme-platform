@@ -281,7 +281,68 @@ async function main() {
       }
     }
 
-    // ④ 深链重定向带走查询串(顺手守一条已知回归)
+    // ④ 另外两个页面也要有标题(盲测第二轮:这两处仍是空字符串)
+    const TITLE_ONLY = [
+      {
+        name: '/comparison',
+        url: `${BASE}/comparison`,
+        hint: '两侧名录比对',
+        // 等它把表格渲染出来(同样要排除骨架屏),否则量到的是加载中的标题。
+        ready: `(() => !document.querySelector('[data-slot=skeleton]') && !!document.querySelector('table'))()`,
+      },
+      {
+        name: '/enterprises/1295',
+        url: `${BASE}/enterprises/1295`,
+        hint: '企业详情',
+        // 企业名是异步取的,等 `h1` 有字。
+        ready: `(() => (document.querySelector('h1')?.textContent ?? '').trim().length > 0)()`,
+      },
+    ]
+    for (const page of TITLE_ONLY) {
+      const t = await openAndMeasure(
+        cdp,
+        page.url,
+        `(() => ({ title: document.title }))()`,
+        page.ready,
+      )
+      if (!t.title || !t.title.trim()) {
+        bad(`${page.name}:document.title 是空字符串`)
+      } else if (!t.title.includes(page.hint)) {
+        bad(`${page.name}:document.title = ${JSON.stringify(t.title)},看不出是${page.hint}`)
+      } else {
+        ok(`${page.name}:document.title = ${JSON.stringify(t.title)}`)
+      }
+    }
+
+    // ⑤ 图例里引用的列名必须真是**这一页的列头**(盲测第二轮:文案写「平台原因」,
+    //    而列头叫「平台解释」,用户按字面找不到那一列)
+    const legend = await openAndMeasure(
+      cdp,
+      `${BASE}/comparison`,
+      `(() => {
+        const note = [...document.querySelectorAll('span')]
+          .map((el) => el.textContent ?? '')
+          .find((t) => t.includes('徽章只表示取值本身')) ?? '';
+        return {
+          note,
+          quoted: [...note.matchAll(/「([^」]+)」/g)].map((m) => m[1]),
+          headers: [...document.querySelectorAll('thead th')].map((th) => (th.textContent ?? '').trim()),
+        };
+      })()`,
+      `(() => !document.querySelector('[data-slot=skeleton]') && document.querySelectorAll('thead th').length > 0)()`,
+    )
+    const missing = legend.quoted.filter((q) => !legend.headers.includes(q))
+    if (!legend.note) {
+      bad('/comparison:没找到图例说明句(选择器可能已改)')
+    } else if (missing.length) {
+      bad(
+        `/comparison:图例引用了不存在的列名 ${JSON.stringify(missing)}(现有列头 ${JSON.stringify(legend.headers)})`,
+      )
+    } else {
+      ok(`/comparison:图例引用的列名都在列头里 ${JSON.stringify(legend.quoted)}`)
+    }
+
+    // ⑥ 深链重定向带走查询串(顺手守一条已知回归)
     const redirect = await openAndMeasure(
       cdp,
       `${BASE}/roster?q=%E5%AE%81%E6%B3%A2&page=2`,
@@ -318,7 +379,7 @@ async function main() {
     console.log(`\n✗ ${problems.length} 条不符合预期`)
     process.exit(1)
   }
-  console.log('\n✓ 窄屏无横向溢出、分页条在视口内、三个视图都有标题、旧入口重定向带查询串')
+  console.log('\n✓ 窄屏无横向溢出、分页条在视口内、五个页面都有标题、图例列名对得上、旧入口重定向带查询串')
 }
 
 main().catch((err) => {

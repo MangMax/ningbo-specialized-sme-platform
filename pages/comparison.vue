@@ -74,6 +74,20 @@ const params = computed(() => ({
   pageSize,
   showCurated: showCurated.value,
 }))
+
+/**
+ * 页面标题(RL-17 收尾)。全仓原先没有一处设过 `document.title`,所以标签页/历史记录/书签
+ * 一律是空白。这里按「具体 → 页面名」的同一形状写:当前称号 + 当前方向的短标签,
+ * 多开几个标签时能一眼认出是哪一个。
+ */
+useHead({
+  title: computed(
+    () =>
+      `两侧名录比对 · ${TITLES[title.value] ?? title.value} · ${
+        COMPARISON_LABELS[direction.value] ?? direction.value
+      }`,
+  ),
+})
 const { data, isLoading, error, refetch } = useQuery({
   key: () => ['comparison', params.value],
   query: () =>

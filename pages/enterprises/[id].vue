@@ -67,6 +67,14 @@ const { data, isLoading, error } = useQuery({
 })
 
 const detail = computed(() => data.value ?? null)
+
+/**
+ * 页面标题(RL-17 收尾):企业名 + 页面名。详情是异步取的,所以先给一个不含名字的兜底,
+ * 拿到之后自动换成企业名 —— 空白标题在历史记录里完全认不出是哪个企业。
+ */
+useHead({
+  title: computed(() => (detail.value ? `${detail.value.name} · 企业详情` : '企业详情')),
+})
 const usccMissing = computed(() => detail.value?.qualityFlags?.includes('uscc_missing') ?? false)
 const otherFlags = computed(() => (detail.value?.qualityFlags ?? []).filter((f) => f !== 'uscc_missing'))
 const recordCount = computed(() => detail.value?.records.length ?? 0)
