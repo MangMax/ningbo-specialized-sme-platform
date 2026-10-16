@@ -5,6 +5,12 @@ import { groupBy, orderBy, uniq } from 'es-toolkit'
 import { ChevronRight, Eye } from '@lucide/vue'
 import { TITLES, TITLE_ORDER, SOURCE_ORDER, QUALITY_FLAGS } from '~~/lib/labels'
 import { fileUrl, fileNameOf, isPreviewable } from '~~/lib/preview'
+import {
+  EVIDENCE_PAGE_WORDS,
+  evidencePageState,
+  evidencePreviewHref,
+  type EvidencePageState,
+} from '~~/lib/roster/evidence-page'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -17,6 +23,8 @@ interface Evidence {
   sourceFile: string
   attachment: string | null
   listNo: number | null
+  /** **PDF 实际页序**(RL-10);给不出就是 `null`。与 `listNo`(序号)是两回事。 */
+  page: number | null
 }
 interface DetailEvent {
   type: string
@@ -130,6 +138,32 @@ function openPreview(e: Evidence) {
   previewSrc.value = fileUrl(e.sourceFile)
   previewName.value = fileNameOf(e.sourceFile)
   previewOpen.value = true
+}
+
+// —— RL-10:出处页码 ——
+
+/**
+ * 这一条出处的页码该怎么说。
+ *
+ *  - `assigned` —— 有页码(可点,跳到该页);
+ *  - `pending` —— 这份来源本该有页码(PDF)但**还没定** ⇒ 写「页码待核」,不编一个数字;
+ *  - `unavailable` —— Word / Excel 这类**没有可靠分页**的来源 ⇒ 留空(`—`),也不给跳转。
+ */
+const pageStateOf = (e: Evidence): EvidencePageState => evidencePageState(e.sourceFile, e.page)
+
+/** 没有页码时该写哪个字(「页码待核」/ 「—」);有页码时走链接,不走这里。 */
+function pageWordOf(e: Evidence): string {
+  const state = pageStateOf(e)
+  return state === 'assigned' ? '' : EVIDENCE_PAGE_WORDS[state]
+}
+
+/**
+ * 跳到来源预览的**地址**(不是按钮):票面要求「返回后保留原筛选与查看位置」——
+ * 有返回就得有去过,所以跳转是一次真导航。`back` 带上**本页完整地址**
+ * (含它自己的 `back`,于是返回链是 预览 → 企业详情 → 台账,一层不丢)。
+ */
+function pageHref(e: Evidence): string {
+  return evidencePreviewHref({ sourceFile: e.sourceFile, page: e.page, back: route.fullPath })
 }
 </script>
 
@@ -279,6 +313,18 @@ function openPreview(e: Evidence) {
                       <div v-if="e.listNo != null" class="flex gap-2">
                         <span class="text-muted-foreground w-14 shrink-0">序号</span>
                         <span class="tabular-nums">{{ e.listNo }}</span>
+                      </div>
+                      <!-- 页码(RL-10):有页码才可点;没有就留空 —— 不拿序号凑数字。 -->
+                      <div class="flex gap-2">
+                        <span class="text-muted-foreground w-14 shrink-0">页码</span>
+                        <NuxtLink
+                          v-if="pageStateOf(e) === 'assigned'"
+                          :to="pageHref(e)"
+                          class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
+                        >
+                          第 {{ e.page }} 页
+                        </NuxtLink>
+                        <span v-else class="text-muted-foreground/70">{{ pageWordOf(e) }}</span>
                       </div>
                     </div>
                   </CollapsibleContent>

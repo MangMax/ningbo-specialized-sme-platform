@@ -1,10 +1,9 @@
 import { useDb } from '@db'
-import { listRecords, type EventType } from '~~/lib/query'
-
-const EVENT_TYPES: EventType[] = ['award', 'review', 'maintain', 'nurture']
+import { listRecords } from '~~/lib/query'
+import { parseRecordQuery } from '../utils/roster-read-query'
 
 /**
- * 台账记录(最小粒度 = 企业 × 称号 × 来源)。
+ * 通用台账查询(一行 = 企业 × 称号；行内保留全部来源、事件与出处)。
  *
  * query 参数**手写** —— Nitro 的 spec 生成只自动推断**路径参数**,query / header
  * 没有运行时 schema 可推(见票 19)。这里写的形状与下面 `listRecords` 的入参一一对应。
@@ -13,7 +12,8 @@ defineRouteMeta({
   openAPI: {
     tags: ['台账'],
     summary: '查台账记录',
-    description: '多值参数用逗号分隔也可重复传(`title=a,b` 或 `title=a&title=b`)。分页返回。',
+    description:
+      '一行 = 企业 × 称号，包含该组合全部来源、历史事件、事件出处与生命周期。多值参数可用逗号或重复参数。`year` 过滤事件年份；`dueYear` 精确过滤生命周期到期年份，两者含义不同。',
     parameters: [
       {
         name: 'title',
@@ -29,54 +29,33 @@ defineRouteMeta({
         schema: { type: 'string' },
         description: '事件类型:`award`(认定)/ `review`(复核)/ `maintain`(维护)/ `nurture`(入库培育)。',
       },
-      { name: 'year', in: 'query', schema: { type: 'string' }, description: '事件年份,多值。' },
-      { name: 'q', in: 'query', schema: { type: 'string' }, description: '企业名称关键词。' },
+      { name: 'year', in: 'query', schema: { type: 'string' }, description: '事件所涉年份,多值；不是到期年份。' },
+      {
+        name: 'dueYear',
+        in: 'query',
+        schema: { type: 'integer', minimum: 1900, maximum: 2999 },
+        description: '生命周期到期年份，单值精确匹配；使用共享称号生命周期规则计算。',
+      },
+      {
+        name: 'q',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '企业现名、已确认曾用名或统一社会信用代码关键词。',
+      },
       { name: 'flags', in: 'query', schema: { type: 'string' }, description: '质量标记(如 `uscc_missing`)。' },
       { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 25 } },
     ],
-    responses: { 200: { description: '分页的记录列表。' } },
+    responses: {
+      200: {
+        description:
+          '分页的企业×称号记录。每个事件含事件年份、结论年份、复核结论、来源、批次序号与来源文件/附件/名单序号/页码；lifecycle 含首次认定、锚点、到期年、状态与待核原因。',
+      },
+      400: { description: '不支持的称号/来源/事件类型，或 dueYear 不是单个四位年份。' },
+    },
   },
 })
 
 export default defineEventHandler((event) => {
-  const q = getQuery(event)
-  const num = (v: unknown, d: number) => {
-    const n = Number(v)
-    return Number.isFinite(n) && n > 0 ? n : d
-  }
-  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
-
-  /**
-   * 多值参数:以逗号分隔承载(如 `title=a,b`),也兼容重复参数(`title=a&title=b`),
-   * 空白项剔除;无值返回 undefined。
-   */
-  const csv = (v: unknown): string[] | undefined => {
-    if (v == null) return undefined
-    const raw = Array.isArray(v) ? v.flatMap((x) => String(x).split(',')) : String(v).split(',')
-    const list = raw.map((s) => s.trim()).filter(Boolean)
-    return list.length ? list : undefined
-  }
-  const csvEventTypes = (v: unknown): EventType[] | undefined => {
-    const list = csv(v)?.filter((x): x is EventType => EVENT_TYPES.includes(x as EventType))
-    return list?.length ? list : undefined
-  }
-  const csvYears = (v: unknown): number[] | undefined => {
-    const list = csv(v)
-      ?.map((s) => Number(s))
-      .filter((n) => Number.isInteger(n) && n > 0)
-    return list?.length ? list : undefined
-  }
-
-  return listRecords(useDb(), {
-    title: csv(q.title),
-    source: csv(q.source),
-    district: str(q.district),
-    eventType: csvEventTypes(q.eventType),
-    year: csvYears(q.year),
-    q: str(q.q),
-    flags: str(q.flags),
-    page: num(q.page, 1),
-    pageSize: num(q.pageSize, 25),
-  })
+  return listRecords(useDb(), parseRecordQuery(getQuery(event)))
 })
