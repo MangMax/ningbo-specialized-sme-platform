@@ -18,10 +18,14 @@ function enterprise(name: string, uscc: string | null): number {
     .get().id
 }
 
-function record(enterpriseId: number, source: 'jxj' | 'miit' = 'jxj'): number {
+function record(
+  enterpriseId: number,
+  source: 'jxj' | 'miit' = 'jxj',
+  titleCode = 'specialized_sme',
+): number {
   return db
     .insert(schema.record)
-    .values({ enterpriseId, titleCode: 'specialized_sme', source, district: '海曙区' })
+    .values({ enterpriseId, titleCode, source, district: '海曙区' })
     .returning({ id: schema.record.id })
     .get().id
 }
@@ -83,6 +87,13 @@ const reaward = event(reassessedRecord, {
   decidedYear: 2024,
   sortKey: 2024,
 })
+const reassessedInnovativeRecord = record(reassessed, 'jxj', 'innovative_sme')
+const reassessedInnovativeAward = event(reassessedInnovativeRecord, {
+  type: 'award',
+  year: 2022,
+  decidedYear: 2022,
+})
+evidence(reassessedInnovativeAward, 'jxj/announcement/2022/innovative-award.pdf')
 const otherSource = record(reassessed, 'miit')
 event(otherSource, { type: 'maintain', year: 2025, seq: 3, sortKey: 2025 })
 db.insert(schema.enterpriseAlias)
@@ -140,6 +151,11 @@ event(nurtureRecord, { type: 'nurture', year: 2024, seq: 1 })
 let routeQuery: Record<string, unknown> = {}
 let recordsHandler: (event: unknown) => unknown
 let queryRecordsTool: { handler: (input: Record<string, unknown>) => unknown }
+let rosterEnterprisesHandler: (event: unknown) => unknown
+let listEnterprisesTool: {
+  handler: (input: Record<string, unknown>) => unknown
+  inputSchema: Record<string, { safeParse(value: unknown): { success: boolean } }>
+}
 let enterpriseDetailTool: { handler: (input: { enterpriseId: number }) => unknown }
 
 beforeAll(async () => {
@@ -153,6 +169,9 @@ beforeAll(async () => {
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
   recordsHandler = (await import('../server/api/records.get')).default as unknown as typeof recordsHandler
   queryRecordsTool = (await import('../server/mcp/tools/query_records')).default as unknown as typeof queryRecordsTool
+  rosterEnterprisesHandler =
+    (await import('../server/api/roster/enterprises.get')).default as unknown as typeof rosterEnterprisesHandler
+  listEnterprisesTool = (await import('../server/mcp/tools/list_enterprises')).default as unknown as typeof listEnterprisesTool
   enterpriseDetailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as unknown as typeof enterpriseDetailTool
 })
 
@@ -229,19 +248,113 @@ describe('通用记录查询的生命周期投影', () => {
   })
 
   it('q 搜现名、已确认曾用名和 USCC，不搜索待核曾用名', () => {
-    expect(listRecords(db, { q: '重授旧名' }).rows.map((r) => r.enterpriseId)).toEqual([reassessed])
+    expect(listRecords(db, { q: '重授旧名', title: ['specialized_sme'] }).rows.map((r) => r.enterpriseId)).toEqual([reassessed])
     expect(listRecords(db, { q: '91330200555001235' }).rows.map((r) => r.enterpriseId)).toEqual([passed])
     expect(listRecords(db, { q: '待核旧名' }).rows).toEqual([])
   })
 
   it('按事件过滤只选行，不裁掉该企业×称号的其他事件或来源', () => {
-    const row = listRecords(db, { eventType: ['award'], q: '重授旧名' }).rows[0]!
+    const row = listRecords(db, { eventType: ['award'], q: '重授旧名', title: ['specialized_sme'] }).rows[0]!
     expect(row.sources).toEqual(['jxj', 'miit'])
     expect(row.events.map((e) => e.type)).toEqual(['award', 'review', 'award', 'maintain'])
   })
 })
 
 describe('REST / MCP 共用记录查询与企业详情读模型', () => {
+  it('firstYear 按首次 award 年筛选且先于分页；事件 year 仍是独立口径', async () => {
+    routeQuery = { firstYear: '2021', pageSize: '1' }
+    const paged = recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
+    expect(paged.total).toBe(4)
+    expect(paged.rows).toHaveLength(1)
+
+    // 重授企业有 2024 年重新获批事件，但首次认定仍是 2021；过滤不裁掉它的完整历史。
+    routeQuery = { year: '2024', firstYear: '2021', q: '重授旧名', pageSize: '5' }
+    const rest = recordsHandler({}) as {
+      rows: {
+        enterpriseId: number
+        lifecycle: { firstRecognitionYear: number | null }
+        events: { type: string; evidence: { sourceFile: string }[] }[]
+      }[]
+      total: number
+    }
+    const mcp = await queryRecordsTool.handler({
+      year: [2024],
+      firstYear: [2021],
+      q: '重授旧名',
+      pageSize: 5,
+    })
+    expect(rest.total).toBe(1)
+    expect(rest.rows[0]).toMatchObject({
+      enterpriseId: reassessed,
+      lifecycle: { firstRecognitionYear: 2021 },
+      events: [
+        { type: 'award', evidence: [{ sourceFile: 'jxj/announcement/2021/award.pdf' }] },
+        { type: 'review', evidence: [{ sourceFile: 'jxj/announcement/2022/review.pdf' }] },
+        { type: 'award' },
+        { type: 'maintain' },
+      ],
+    })
+    expect(mcp).toEqual(rest)
+
+    // 2024 是事件年份，但不是这组的首次认定年份。
+    routeQuery = { year: '2024', firstYear: '2024', q: '重授旧名' }
+    expect((recordsHandler({}) as { total: number }).total).toBe(0)
+  })
+
+  it('firstStatus 使用首次认定共享判定，并在 REST 与 MCP 中先筛后分页', async () => {
+    routeQuery = { firstYear: '2021', firstStatus: 'confirmed', pageSize: '1' }
+    const confirmed = recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
+    expect(confirmed.total).toBe(1)
+    expect(confirmed.rows.map((row) => row.enterpriseId)).toEqual([reassessed])
+
+    routeQuery = { firstYear: '2021', firstStatus: 'pending', pageSize: '1' }
+    const pending = recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
+    const pendingMcp = await queryRecordsTool.handler({
+      firstYear: [2021],
+      firstStatus: ['pending'],
+      pageSize: 1,
+    })
+    expect(pending.total).toBe(3)
+    expect(pending.rows).toHaveLength(1)
+    expect(pendingMcp).toEqual(pending)
+
+    routeQuery = { firstStatus: 'sure' }
+    expect(() => recordsHandler({})).toThrowError(/firstStatus/)
+
+    const inputSchema = (queryRecordsTool as unknown as {
+      inputSchema: Record<string, { safeParse(value: unknown): { success: boolean } }>
+    }).inputSchema
+    expect(inputSchema.firstStatus!.safeParse(['pending']).success).toBe(true)
+    expect(inputSchema.firstStatus!.safeParse(['sure']).success).toBe(false)
+    expect(inputSchema.firstYear!.safeParse([2021]).success).toBe(true)
+  })
+
+  it('list_enterprises MCP 按同一个企业×称号应用首次认定筛选', async () => {
+    routeQuery = { title: 'innovative_sme', firstYear: '2021', firstStatus: 'confirmed' }
+    const restMiss = rosterEnterprisesHandler({}) as { rows: { enterpriseId: number }[] }
+    const mcpMiss = await listEnterprisesTool.handler({
+      title: 'innovative_sme',
+      firstYear: [2021],
+      firstStatus: ['confirmed'],
+    }) as { rows: { enterpriseId: number }[] }
+    expect(restMiss.rows).toEqual([])
+    expect(mcpMiss.rows).toEqual([])
+
+    routeQuery = { title: 'innovative_sme', firstYear: '2022', firstStatus: 'confirmed' }
+    const restHit = rosterEnterprisesHandler({}) as { rows: { enterpriseId: number }[]; counts: { total: number } }
+    const mcpHit = await listEnterprisesTool.handler({
+      title: 'innovative_sme',
+      firstYear: [2022],
+      firstStatus: ['confirmed'],
+    }) as { rows: { enterpriseId: number }[]; counts: { total: number } }
+    expect(restHit.rows.map((row) => row.enterpriseId)).toEqual([reassessed])
+    expect(mcpHit.rows.map((row) => row.enterpriseId)).toEqual([reassessed])
+    expect(mcpHit.counts.total).toBe(restHit.counts.total)
+    expect(listEnterprisesTool.inputSchema.firstYear!.safeParse([2022]).success).toBe(true)
+    expect(listEnterprisesTool.inputSchema.firstStatus!.safeParse(['pending']).success).toBe(true)
+    expect(listEnterprisesTool.inputSchema.firstStatus!.safeParse(['sure']).success).toBe(false)
+  })
+
   it('共享解析保留 year 与 dueYear 的独立语义，并拒绝多值 dueYear', () => {
     expect(parseRecordQuery({ year: '2021,2024', dueYear: '2028' })).toMatchObject({
       year: [2021, 2024],

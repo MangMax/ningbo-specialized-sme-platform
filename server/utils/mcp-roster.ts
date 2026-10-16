@@ -14,6 +14,8 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName } from '../../lib/domain'
+import { allRosterEnterprises } from '../../lib/roster/enterprise-roster'
+import type { FirstRecognitionStatus } from '../../lib/roster/first-recognition'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -24,6 +26,10 @@ export interface ListEnterprisesInput {
   title?: string
   district?: string
   rosterState?: 'current' | 'removed_platform_only'
+  /** 首次正式认定年份(多值,不同于事件年份)。 */
+  firstYear?: number[]
+  /** 首次认定状态(多值,使用共享首次认定判定)。 */
+  firstStatus?: FirstRecognitionStatus[]
   page?: number
   pageSize?: number
 }
@@ -62,6 +68,17 @@ function pageOf(input: { page?: number; pageSize?: number }): { page: number; pa
  * 否则 `removed_platform_only`（完整口径由 RL-04 实现）。
  */
 export function listEnterprises(db: Db, input: ListEnterprisesInput = {}): ListEnterprisesResult {
+  const recognitionIds =
+    input.firstYear?.length || input.firstStatus?.length
+      ? new Set(
+          allRosterEnterprises(db, {
+            // `title` 与首次年份/状态必须命中同一个企业 × 称号。
+            title: input.title ? [input.title] : undefined,
+            firstYear: input.firstYear,
+            firstStatus: input.firstStatus,
+          }).rows.map((row) => row.enterpriseId),
+        )
+      : null
   const enterprises = db.select().from(schema.enterprise).all()
   const records = db.select().from(schema.record).all()
   const events = db.select().from(schema.recordEvent).all()
@@ -105,6 +122,7 @@ export function listEnterprises(db: Db, input: ListEnterprisesInput = {}): ListE
       if (input.title && !row.titles.includes(input.title)) return false
       if (input.district && row.district !== input.district) return false
       if (input.rosterState && row.rosterState !== input.rosterState) return false
+      if (recognitionIds && !recognitionIds.has(row.enterpriseId)) return false
       if (term) {
         const hit =
           normalizeName(row.name).includes(term) ||
