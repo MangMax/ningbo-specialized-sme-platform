@@ -20,8 +20,8 @@ import { parseCsvQuery } from '../csv'
 import {
   DEFAULT_ROSTER_ENTERPRISE_SORT,
   ROSTER_ENTERPRISE_SORTS,
-  type RosterEnterpriseSort,
-} from './enterprise-roster'
+} from './ledger-contract'
+import type { RosterEnterpriseSort } from './ledger-contract'
 
 /** 排序的地址栏参数名(`sort`),以及默认值 —— 默认值不写进地址栏。 */
 export const SORT_PARAM = 'sort'

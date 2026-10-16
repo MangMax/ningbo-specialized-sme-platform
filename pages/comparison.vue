@@ -22,7 +22,6 @@ import {
   COMPARISON_OTHER_SIDE,
   COMPARISON_NO_USCC,
 } from '~~/lib/labels'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableBody,
@@ -228,18 +227,26 @@ const exportUrl = computed(
       >清除全部</Button>
     </TransitionGroup>
 
-    <Tabs v-model="direction" class="min-w-0 gap-2">
-      <TabsList aria-label="比对方向" class="w-full sm:w-fit">
-        <TabsTrigger
+    <div class="flex min-w-0 flex-col gap-2">
+      <div class="flex w-fit max-w-full flex-wrap items-center gap-1" role="group" aria-label="比对方向" data-testid="comparison-direction-filter">
+        <span class="text-muted-foreground pr-1 text-xs">方向</span>
+        <Button
           v-for="d in COMPARISON_DIRECTIONS"
           :key="d"
-          :value="d"
-          class="sm:min-w-36 data-[state=active]:shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap"
+          type="button"
+          size="sm"
+          :variant="direction === d ? 'outline' : 'ghost'"
+          :aria-pressed="direction === d"
+          :data-selected="direction === d"
+          class="h-7 gap-1.5 px-2 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap"
+          :class="direction === d ? 'border-primary/45 bg-accent/50 text-accent-foreground' : 'text-muted-foreground'"
+          @click="direction = d"
         >
-          {{ COMPARISON_LABELS[d] }}<Badge variant="secondary" class="min-w-[3ch] tabular-nums">{{ count(d) }}</Badge>
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent :value="direction" class="flex min-w-0 flex-col gap-2">
+          {{ COMPARISON_LABELS[d] }}
+          <Badge variant="quiet" class="min-w-[3ch] tabular-nums">{{ count(d) }}</Badge>
+        </Button>
+      </div>
+      <div class="flex min-w-0 flex-col gap-2" data-testid="comparison-results">
             <div class="relative h-5 shrink-0" aria-live="polite" data-testid="comparison-loading-status">
               <span v-if="isLoading" class="text-muted-foreground absolute top-0.5 left-0 text-[13px]">正在搜索与加载比对结果…</span>
               <span v-else class="text-muted-foreground absolute top-0.5 left-0 text-[13px] tabular-nums">共 {{ data?.total ?? 0 }} 条</span>
@@ -277,7 +284,7 @@ const exportUrl = computed(
                   <Table v-else class="min-w-[1090px] table-fixed">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
-                        <TableHead :class="[TH_CLASS, 'w-[205px] md:w-[28%]']"
+                        <TableHead :class="[TH_CLASS, 'w-[320px] md:w-[28%]']"
                           >企业名称</TableHead
                         >
                         <TableHead :class="[TH_CLASS, 'w-[165px]']"
@@ -290,7 +297,7 @@ const exportUrl = computed(
                         <TableHead :class="[TH_CLASS, 'w-[140px]']">
                           平台解释
                         </TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-[210px]']">
+                        <TableHead :class="[TH_CLASS, 'w-[250px]']">
                           平台证据
                         </TableHead>
                         <TableHead :class="[TH_CLASS, 'w-[190px]']">核实与备注</TableHead>
@@ -312,17 +319,16 @@ const exportUrl = computed(
                         v-for="row in rows"
                         v-else
                         :key="`${row.enterpriseId}-${row.titleCode}-${row.direction}`"
-                        class="h-9 [&>td]:py-1"
+                          class="min-h-9 [&>td]:py-1 [&>td]:align-top"
                       >
                         <TableCell class="font-medium">
-                          <div class="truncate">
                           <NuxtLink
                             :to="`/enterprises/${row.enterpriseId}`"
                             :title="row.name"
-                            class="hover:text-primary hover:underline"
+                            data-testid="comparison-enterprise-name"
+                            class="block whitespace-normal break-words text-[13px] leading-4 hover:text-primary hover:underline"
                             >{{ row.name }}</NuxtLink
                           >
-                          </div>
                           <!-- 已确认曾用名压成单行,避免别名把比对行撑高。 -->
                           <div v-if="confirmedAliasNames(row).length" class="mt-1 flex min-w-0 flex-nowrap gap-1 overflow-hidden" data-testid="comparison-aliases">
                             <Badge variant="quiet" class="max-w-full truncate font-normal" :title="confirmedAliasNames(row)[0]">
@@ -403,8 +409,8 @@ const exportUrl = computed(
                 /></Button>
               </div>
             </div>
-      </TabsContent>
-    </Tabs>
+      </div>
+    </div>
   </div>
 </template>
 

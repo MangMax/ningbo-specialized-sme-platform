@@ -14,6 +14,7 @@ import {
   TITLE_ORDER,
   TITLES,
 } from '~~/lib/labels'
+import { reviewEventSuffix, timelineEventIdentity } from '~~/lib/roster/enterprise-timeline'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -159,7 +160,10 @@ interface TimelineItem {
   eventType: string
   /** 「这条是什么时候发生的」:结论年份优先(`decidedYear ?? year`),与生命周期锚点同一口径。 */
   year: number | null
+  /** 复核所指向的原认定年;`year` 在复核事件中可能是结论年份。 */
+  originalYear: number | null
   batchSeq: number | null
+  reviewOutcome: string | null
   /** 结论年份缺失的复核事件 ⇒ 锚点待核(不猜填)。 */
   yearUnknown: boolean
   /** 该企业**等级最高**的称号的首次认定 —— 时间轴上被点亮的那一枚。 */
@@ -170,9 +174,8 @@ interface TimelineItem {
 
 /**
  * 时间轴。三步:
- *  1. 事件按 `recordId` 认回称号;同一 (称号, 事件, 年份) 只留一条
- *     —— 该企业可能在两个来源里各有一条同样的「认定」,而这里讲的是**称号历史**,
- *     来源级的两条属于展开面板与出处,不是这条轴要讲的事;
+ *  1. 事件按 `recordId` 认回称号;只有同一称号下**批次、原年份、结论年份和结论**
+ *     都相同的事件才合并,避免跨来源重复,同时保住不同批次与不同复核事实;
  *  2. 按 (年份, 称号先来后到, 事件类型) 排 —— `EVENT_ORDER` 正好是「认定 → 复核 → 维持」;
  *  3. 年份只在每组的第一条上写出来。
  */
@@ -184,7 +187,7 @@ const timeline = computed<TimelineItem[]>(() => {
     const titleCode = titleOfRecord.value.get(event.recordId)
     if (!titleCode) continue
     const year = event.decidedYear ?? event.year
-    const key = `${titleCode}|${event.eventType}|${year ?? 'x'}`
+    const key = timelineEventIdentity(titleCode, event)
     if (seen.has(key)) continue
     seen.add(key)
     items.push({
@@ -192,7 +195,9 @@ const timeline = computed<TimelineItem[]>(() => {
       titleCode,
       eventType: event.eventType,
       year,
+      originalYear: event.eventType === 'review' ? event.year : null,
       batchSeq: event.batchSeq,
+      reviewOutcome: event.reviewOutcome,
       yearUnknown: event.eventType === 'review' && event.decidedYear == null,
     })
   }
@@ -254,7 +259,7 @@ function measureLabel(code: string) {
  */
 function eventSuffix(item: TimelineItem): string {
   if (item.eventType !== 'review') return ''
-  return item.yearUnknown ? '(结论年份未知,待核)' : ''
+  return reviewEventSuffix(item.reviewOutcome, item.originalYear, item.yearUnknown)
 }
 </script>
 
@@ -388,22 +393,22 @@ function eventSuffix(item: TimelineItem): string {
                     },
                   ]"
                   :key="step.k"
-                  class="grid grid-cols-[42px_18px_1fr] items-start"
+                  class="grid min-h-8 grid-cols-[50px_26px_1fr] items-start"
                 >
                   <span class="text-muted-foreground pr-2 text-right text-xs leading-5">{{ step.k }}</span>
                   <span class="relative self-stretch">
                     <span
                       v-if="i < 2"
-                      class="bg-border absolute top-3 bottom-0 left-[8px] w-px"
+                      class="bg-border absolute top-3 bottom-0 left-[12px] w-px"
                     />
                     <span
-                      class="absolute top-[6px] left-[5px] size-2 rounded-full"
+                      class="absolute top-[6px] left-[8px] size-2 rounded-full"
                       :class="i === 0 ? 'bg-muted-foreground' : 'bg-primary'"
                     />
                     <ArrowDown
                       v-if="i < 2"
                       aria-hidden="true"
-                      class="absolute bottom-[-2px] left-[2px] size-3"
+                      class="absolute bottom-[-2px] left-[6px] size-3"
                       :class="i === 1 ? 'text-primary' : 'text-muted-foreground'"
                     />
                   </span>

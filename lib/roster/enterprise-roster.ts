@@ -24,7 +24,18 @@ import { normalizeName, normalizeUscc } from '../domain'
 import { getComparison, type ComparisonDirection } from '../comparison'
 import { DIFFERENCE_STATUS_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
+import {
+  DEFAULT_ROSTER_ENTERPRISE_SORT,
+  ROSTER_ENTERPRISE_SORTS,
+} from './ledger-contract'
+import type { RosterEnterpriseSort } from './ledger-contract'
 import { computeTitleLifecycle, type LifecycleEvent, type TitleLifecycle } from './lifecycle'
+
+export {
+  DEFAULT_ROSTER_ENTERPRISE_SORT,
+  ROSTER_ENTERPRISE_SORTS,
+} from './ledger-contract'
+export type { RosterEnterpriseSort } from './ledger-contract'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -212,10 +223,6 @@ export interface RosterEnterpriseFilter {
  * 三种排序**都不省略** tie-break(名称 → id),否则同一份数据在两次请求里可能给出
  * 不同的页内顺序,分页时会出现「某一行两侧都出现 / 一侧都没有」。
  */
-export const ROSTER_ENTERPRISE_SORTS = ['recognition', 'name', 'title'] as const
-export type RosterEnterpriseSort = (typeof ROSTER_ENTERPRISE_SORTS)[number]
-export const DEFAULT_ROSTER_ENTERPRISE_SORT: RosterEnterpriseSort = 'recognition'
-
 /** 「无差异」这一档在 `diffStatus` 里的伪状态取值。 */
 export const DIFF_STATUS_NONE = 'none'
 

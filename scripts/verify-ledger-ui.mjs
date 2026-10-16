@@ -274,6 +274,7 @@ function motionCurveViolation(m, label) {
 async function installMotionAndFetchGate(cdp, sessionId) {
   await evaluate(cdp, sessionId, `(() => {
     window.__rl20Motion = { control: false, table: false, drawer: false };
+    window.__rl20DrawerOpenMotion = null;
     window.__rl20DrawerCloseClicks = 0;
     window.__rl20DrawerCloseRequested = false;
     window.__rl20DrawerCloseFinished = false;
@@ -282,14 +283,53 @@ async function installMotionAndFetchGate(cdp, sessionId) {
     }, true);
     document.addEventListener('transitionrun', (event) => {
       if (!['transform', 'translate', 'scale', 'rotate'].includes(event.propertyName)) return;
-      if (event.target.matches('button,[role="tab"],[data-slot="select-trigger"]')) window.__rl20Motion.control = true;
+      if (event.target.matches('button,[data-slot="select-trigger"]')) window.__rl20Motion.control = true;
       if (event.target.tagName === 'TBODY') window.__rl20Motion.table = true;
     }, true);
     document.addEventListener('animationstart', (event) => {
-      if (event.target.matches('[data-testid="enterprise-drawer"]')) window.__rl20Motion.drawer = true;
+      const drawer = event.target;
+      if (!drawer.matches('[data-testid="enterprise-drawer"]') || drawer.getAttribute('data-state') !== 'open') return;
+      const left = drawer.getBoundingClientRect().left;
+      const motion = {
+        started: true,
+        ended: false,
+        state: 'open',
+        animationName: event.animationName,
+        startLeft: left,
+        endLeft: null,
+        minLeft: left,
+        maxLeft: left,
+        samples: 0,
+      };
+      window.__rl20DrawerOpenMotion = motion;
+      window.__rl20Motion.drawer = true;
+      const sample = () => {
+        const current = window.__rl20DrawerOpenMotion;
+        const liveDrawer = document.querySelector('[data-testid="enterprise-drawer"]');
+        if (!current?.started || current.ended || liveDrawer?.getAttribute('data-state') !== 'open') return;
+        const sampleLeft = liveDrawer.getBoundingClientRect().left;
+        current.samples++;
+        current.minLeft = Math.min(current.minLeft, sampleLeft);
+        current.maxLeft = Math.max(current.maxLeft, sampleLeft);
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
     }, true);
     document.addEventListener('animationend', (event) => {
-      if (event.target.matches('[data-testid="enterprise-drawer"]') && window.__rl20DrawerCloseRequested) {
+      const drawer = event.target;
+      if (!drawer.matches('[data-testid="enterprise-drawer"]')) return;
+      if (drawer.getAttribute('data-state') === 'open') {
+        const motion = window.__rl20DrawerOpenMotion;
+        if (motion?.started && motion.animationName === event.animationName) {
+          motion.endLeft = drawer.getBoundingClientRect().left;
+          motion.minLeft = Math.min(motion.minLeft, motion.endLeft);
+          motion.maxLeft = Math.max(motion.maxLeft, motion.endLeft);
+          motion.samples++;
+          motion.ended = true;
+          motion.state = 'open';
+        }
+      }
+      if (drawer.getAttribute('data-state') === 'closed' && window.__rl20DrawerCloseRequested) {
         window.__rl20DrawerCloseFinished = true;
         window.__rl20DrawerCloseRequested = false;
       }
@@ -493,27 +533,86 @@ async function verifyKaichengExample(cdp) {
       const history = headings.find((el) => el.textContent?.trim() === '称号历史')?.nextElementSibling;
       const chain = drawer.querySelector('[data-testid="difference-reason-chain"]');
       const years = history ? [...history.querySelectorAll(':scope > li > span:first-child')].map((el) => el.textContent?.trim()).filter(Boolean) : [];
+      const historyRows = history ? [...history.querySelectorAll(':scope > li')].map((li) =>
+        [...li.children].at(-1)?.textContent?.replace(/\\s+/g, ' ').trim() ?? '') : [];
+      const chainLayout = chain ? [...chain.querySelectorAll(':scope > li')].map((li) => {
+        const [label, connector, value] = [...li.children];
+        const dot = connector?.querySelector('span.rounded-full');
+        const dotRect = dot?.getBoundingClientRect();
+        return {
+          labelLeft: label?.getBoundingClientRect().left ?? null,
+          valueLeft: value?.getBoundingClientRect().left ?? null,
+          connectorCenter: dotRect ? dotRect.left + dotRect.width / 2 : null,
+        };
+      }) : [];
       return {
         rowCount: [...document.querySelectorAll('tbody tr button')].length,
         selected: row?.getAttribute('aria-current'),
         uscc: drawer.querySelector('header p')?.textContent?.trim(),
         alias: drawer.textContent?.includes('宁波开诚生态技术有限公司') ?? false,
         years,
+        historyRows,
         historyText: history?.textContent?.replace(/\\s+/g, ' ').trim() ?? '',
         chainText: chain?.textContent?.replace(/\\s+/g, ' ').trim() ?? '',
         chainSteps: chain?.querySelectorAll(':scope > li').length ?? 0,
+        chainLayout,
       };
     })()`)
+    const expectedEvents = [
+      '专精特新中小企业认定',
+      '创新型中小企业认定',
+      '专精特新中小企业维持',
+      '创新型中小企业维持',
+      '专精特新“小巨人”认定',
+      '专精特新“小巨人”维持',
+    ]
+    const valueStarts = example.chainLayout.map((item) => item.valueLeft)
+    const connectorGaps = example.chainLayout.map((item) => item.valueLeft - item.connectorCenter)
+    const chainAligned = valueStarts.length === 3 &&
+      Math.max(...valueStarts) - Math.min(...valueStarts) <= 1 &&
+      Math.min(...connectorGaps) >= 12
     const okExample = example.rowCount === 1 && example.selected === 'true' &&
       example.uscc === '9133021274738281XA' && example.alias &&
       ['2021', '2022', '2024'].every((year) => example.years.includes(year)) &&
       example.years.filter((year) => year === '2024').length === 1 &&
-      example.historyText.includes('认定') && example.historyText.includes('维持') &&
+      example.historyRows.length === 6 && expectedEvents.every((event) => example.historyRows.some((line) => line.includes(event))) &&
       example.chainSteps === 3 && ['方向', '原因', '措施', '平台多出', '平台未更新', '标记平台快照'].every((value) => example.chainText.includes(value))
+      && chainAligned
     if (!okExample) {
-      bad(`企业列表 · 开诚示例:开诚行的真实事件链与原因措施链未完整呈现 ${JSON.stringify(example)}`)
+      bad(`企业列表 · 开诚示例:真实事件链、原因措施链或连接对齐未完整呈现 ${JSON.stringify(example)}`)
     } else {
-      ok('企业列表 · 开诚示例:筛选后行、称号历史、曾用名与方向→原因→措施链均对应真实样例')
+      ok(`企业列表 · 开诚示例:六条真实事件、原因措施链与连接对齐通过(${JSON.stringify({ historyRows: example.historyRows.length, yearLabels: example.years, connectorGaps })})`)
+    }
+  } finally {
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
+async function verifyUnknownReviewOutcomeExample(cdp) {
+  const name = '东毓(宁波)油压工业有限公司'
+  const page = await openSession(
+    cdp,
+    `${BASE}/?q=${encodeURIComponent(name)}&expand=358`,
+    VIEWPORTS[0],
+    `(() => {
+      const status = document.querySelector('[data-testid="ledger-loading-status"]');
+      const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+      return !(status?.textContent ?? '').includes('正在') &&
+        drawer?.getAttribute('data-state') === 'open' && drawer.querySelector('h2')?.textContent?.trim() === ${JSON.stringify(name)};
+    })()`,
+  )
+  const { targetId, sessionId } = page
+  try {
+    const reviewLine = await evaluate(cdp, sessionId, `(() => {
+      const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+      const history = [...drawer.querySelectorAll('h3')].find((el) => el.textContent?.trim() === '称号历史')?.nextElementSibling;
+      return history ? [...history.querySelectorAll(':scope > li')].map((li) => li.textContent?.replace(/\\s+/g, ' ').trim() ?? '')
+        .find((line) => line.includes('复核')) ?? null : null;
+    })()`)
+    if (!reviewLine?.includes('结论待核') || !reviewLine.includes('原认定 2025') || !reviewLine.includes('结论年份待核')) {
+      bad(`企业列表 · 复核事件:真实未知结论或原认定年份未显示 ${JSON.stringify(reviewLine)}`)
+    } else {
+      ok(`企业列表 · 复核事件:真实未知结论、原认定年份与待核年份均可见(${JSON.stringify(reviewLine)})`)
     }
   } finally {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
@@ -585,7 +684,7 @@ async function verifyLedgerLoadingAndDrawer(cdp) {
       bad(`企业列表 · 翻页:释放请求后加载状态没有收敛 ${JSON.stringify(state)}`)
     }
 
-    // 抽屉:关上后从行内重新打开,以 animationstart 而不是固定等待时长确认滑入动画。
+    // 抽屉:只记录 data-state=open 的入场动画,并比较首尾位置,关闭动画不能冒充滑入。
     const drawerReadyForMotion = await waitUntil(cdp, sessionId, `(() => {
       const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
       return drawer?.getAttribute('data-state') === 'open' && !!drawer.querySelector('button[aria-label="关闭"]');
@@ -596,10 +695,20 @@ async function verifyLedgerLoadingAndDrawer(cdp) {
       bad(`企业列表 · 抽屉:退出动画未完成 ${JSON.stringify(drawerCloseAfterPaging)}`)
     }
     else {
-      await evaluate(cdp, sessionId, `document.querySelector('tbody tr button')?.click()`)
-      const drawerMotion = await waitUntil(cdp, sessionId, 'window.__rl20Motion.drawer')
-      if (!drawerMotion) bad('企业列表 · 抽屉:没有观察到侧滑 animationstart 事件')
-      else ok('企业列表 · 抽屉:侧滑 animationstart 事件已观察')
+      await evaluate(cdp, sessionId, `(() => {
+        window.__rl20Motion.drawer = false;
+        window.__rl20DrawerOpenMotion = null;
+        document.querySelector('tbody tr button')?.click();
+      })()`)
+      const drawerMotionEnded = await waitUntil(cdp, sessionId, 'window.__rl20DrawerOpenMotion?.ended === true')
+      const drawerMotion = await evaluate(cdp, sessionId, 'window.__rl20DrawerOpenMotion')
+      if (!drawerMotionEnded || drawerMotion?.state !== 'open' || !drawerMotion.animationName ||
+        !Number.isFinite(drawerMotion.startLeft) || !Number.isFinite(drawerMotion.endLeft) ||
+        drawerMotion.startLeft - drawerMotion.endLeft < 4 || drawerMotion.samples < 2) {
+        bad(`企业列表 · 抽屉:未观察到打开态从右侧滑入的实际位移 ${JSON.stringify(drawerMotion)}`)
+      } else {
+        ok(`企业列表 · 抽屉:打开态动画 ${drawerMotion.animationName} 首尾位移 ${Math.round(drawerMotion.startLeft - drawerMotion.endLeft)}px,采样 ${drawerMotion.samples} 帧`)
+      }
       const drawerData = await waitUntil(cdp, sessionId, `(() => {
         const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
         return drawer?.getAttribute('data-state') === 'open' && drawer.textContent?.includes('称号历史');
@@ -673,11 +782,15 @@ async function verifyComparisonSearchAndMotion(cdp) {
     if (!pageIdle) bad('两侧名录比对 · 翻页:释放请求后加载状态没有收敛')
 
     await startFetchGate(cdp, sessionId, '/api/comparison')
-    const hasInactiveTab = await evaluate(cdp, sessionId, `!!document.querySelector('[role="tab"][data-state="inactive"]')`)
-    if (!hasInactiveTab) {
-      bad('两侧名录比对 · 方向筛选:没有可切换的方向控件')
+    const directionFilter = await evaluate(cdp, sessionId, `(() => {
+      const group = document.querySelector('[data-testid="comparison-direction-filter"]');
+      const buttons = [...(group?.querySelectorAll('button[aria-pressed]') ?? [])];
+      return { role: group?.getAttribute('role'), buttons: buttons.length, selected: buttons.filter((button) => button.getAttribute('aria-pressed') === 'true').length };
+    })()`)
+    if (directionFilter.role !== 'group' || directionFilter.buttons !== 2 || directionFilter.selected !== 1) {
+      bad(`两侧名录比对 · 方向筛选:控件不是双选项过滤组 ${JSON.stringify(directionFilter)}`)
     } else {
-      await clickSelector(cdp, sessionId, '[role="tab"][data-state="inactive"]')
+      await clickSelector(cdp, sessionId, '[data-testid="comparison-direction-filter"] button[aria-pressed="false"]')
       const loading = await waitForLoadingEvidence(cdp, sessionId, 'comparison')
       if (!loading) bad('两侧名录比对 · 方向筛选:请求期间没有可见加载状态')
       else ok('两侧名录比对 · 方向筛选:请求期间显示加载状态')
@@ -787,7 +900,7 @@ const MEASURE = `(() => {
   const de = document.documentElement;
   const root = document.querySelector('.ledger-page, .comparison-page');
   const shadowTargets = [
-    ...(root?.querySelectorAll('[data-slot="card"], [data-slot="button"], [data-slot="input"], [data-slot="textarea"], [data-slot="switch"], [data-slot="tabs-trigger"], [data-slot="select-trigger"], [aria-label="自定义每页条数"]') ?? []),
+    ...(root?.querySelectorAll('[data-slot="card"], [data-slot="button"], [data-slot="input"], [data-slot="textarea"], [data-slot="switch"], [data-slot="select-trigger"], [aria-label="自定义每页条数"]') ?? []),
     ...document.querySelectorAll('[data-testid="enterprise-drawer"], [data-slot="dialog-content"], [data-slot="select-content"], [data-slot="dropdown-menu-content"]'),
   ];
   const hasVisibleShadow = (el) => {
@@ -807,9 +920,28 @@ const MEASURE = `(() => {
   const pagination = document.querySelector('[data-slot=pagination]') || nextButton?.parentElement?.parentElement;
   const rect = pagination ? pagination.getBoundingClientRect() : null;
   const rail = document.querySelector('.ledger-page tbody tr:not([data-loading="true"]) td:first-child > span');
+  const ledgerExport = document.querySelector('.ledger-page a[href^="/api/roster/export"]');
+  const ledgerTable = document.querySelector('.ledger-page table');
   const control = root?.querySelector('[data-slot="select-trigger"]');
   const body = root?.querySelector('tbody');
   const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+  const comparisonDirection = document.querySelector('[data-testid="comparison-direction-filter"]');
+  const comparisonNames = [...(root?.querySelectorAll('[data-testid="comparison-enterprise-name"]') ?? [])].map((el) => ({
+    text: (el.textContent ?? '').trim(),
+    textOverflow: getComputedStyle(el).textOverflow,
+    whiteSpace: getComputedStyle(el).whiteSpace,
+    clientWidth: el.clientWidth,
+    scrollWidth: el.scrollWidth,
+  }));
+  const evidenceSummaries = [...(root?.querySelectorAll('[data-testid="platform-evidence-summary"]') ?? [])].map((el) => ({
+    text: (el.textContent ?? '').trim(),
+    textOverflow: getComputedStyle(el).textOverflow,
+    whiteSpace: getComputedStyle(el).whiteSpace,
+    clientWidth: el.clientWidth,
+    scrollWidth: el.scrollWidth,
+    clientHeight: el.clientHeight,
+    scrollHeight: el.scrollHeight,
+  }));
   return {
     title: document.title,
     scrollWidth: de.scrollWidth,
@@ -821,7 +953,17 @@ const MEASURE = `(() => {
     searchInput: !!document.querySelector('input[aria-label*="企业名称"]'),
     loadingStatus: !!document.querySelector('[data-testid="ledger-loading-status"],[data-testid="comparison-loading-status"]'),
     drawerOpen: document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state') === 'open',
+    comparisonDirection: comparisonDirection ? {
+      role: comparisonDirection.getAttribute('role'),
+      options: comparisonDirection.querySelectorAll('button[aria-pressed]').length,
+      selected: comparisonDirection.querySelectorAll('button[aria-pressed="true"]').length,
+    } : null,
+    comparisonNames,
+    evidenceSummaries,
     statusRailWidth: rail ? Math.round(rail.getBoundingClientRect().width) : null,
+    ledgerExportTableGap: ledgerExport && ledgerTable
+      ? Math.round(ledgerTable.getBoundingClientRect().top - ledgerExport.getBoundingClientRect().bottom)
+      : null,
     motionCurves: {
       control: control ? getComputedStyle(control).transitionTimingFunction : null,
       table: body ? getComputedStyle(body).transitionTimingFunction : null,
@@ -898,13 +1040,34 @@ async function main() {
         else ok(`${label}:唯一表格已渲染`)
         const shadow = shadowViolation(m, label)
         if (shadow) bad(shadow)
-        else ok(`${label}:内容区卡片、按钮、输入框、开关、分段、Select触发器与下拉层、抽屉均无阴影`)
+        else ok(`${label}:卡片、按钮、输入框、开关、Select触发器与下拉层、抽屉均无阴影`)
         if (!m.searchInput) bad(`${label}:没有搜索入口`)
         else ok(`${label}:搜索入口已渲染`)
         if (!m.loadingStatus) bad(`${label}:没有常驻加载状态容器`)
         else ok(`${label}:加载状态容器已渲染`)
         if (page.query === '/' && m.nativeSelectCount !== 0) bad(`${label}:仍有 ${m.nativeSelectCount} 个原生 select`)
         if (page.query === '/' && !m.drawerOpen) bad(`${label}:企业侧边抽屉未打开`)
+        if (page.query === '/' && viewport.width === 390) {
+          if (m.ledgerExportTableGap == null || m.ledgerExportTableGap > 60) {
+            bad(`${label}:导出控件到表格之间留白仍偏大 ${JSON.stringify(m.ledgerExportTableGap)}px`)
+          } else ok(`${label}:导出控件到表格间距已收紧(${m.ledgerExportTableGap}px)`)
+        }
+        if (page.query === '/comparison') {
+          if (m.comparisonDirection?.role !== 'group' || m.comparisonDirection.options !== 2 || m.comparisonDirection.selected !== 1) {
+            bad(`${label}:比对方向应为双选项过滤组 ${JSON.stringify(m.comparisonDirection)}`)
+          } else ok(`${label}:比对方向是紧凑过滤组,当前选项明确`)
+          if (!m.comparisonNames.length || m.comparisonNames.some((name) => !name.text || name.textOverflow === 'ellipsis' || name.whiteSpace === 'nowrap' || name.scrollWidth > name.clientWidth)) {
+            bad(`${label}:企业名称在表格列内仍被截断 ${JSON.stringify(m.comparisonNames.slice(0, 2))}`)
+          } else {
+            const narrowNameWidth = Math.min(...m.comparisonNames.map((name) => name.clientWidth))
+            ok(`${label}:企业名称可换行完整识别(${m.comparisonNames.length} 行,最窄 ${narrowNameWidth}px)`)
+          }
+          if (m.evidenceSummaries.some((summary) => !summary.text || summary.textOverflow === 'ellipsis' || summary.whiteSpace === 'nowrap' || summary.scrollWidth > summary.clientWidth || summary.scrollHeight > summary.clientHeight + 1)) {
+            bad(`${label}:平台证据摘要仍有截断 ${JSON.stringify(m.evidenceSummaries.slice(0, 2))}`)
+          } else {
+            ok(`${label}:平台证据摘要完整显示(${m.evidenceSummaries.length} 条)`)
+          }
+        }
         if (page.query === '/') {
           const rail = statusRailViolation(m, label)
           if (rail) bad(rail)
@@ -1010,6 +1173,7 @@ async function main() {
     await verifyLedgerSearchLoading(cdp)
     await verifyMissingRecognitionYearAndEvidence(cdp)
     await verifyKaichengExample(cdp)
+    await verifyUnknownReviewOutcomeExample(cdp)
     await verifyLedgerLoadingAndDrawer(cdp)
     await verifyComparisonSearchAndMotion(cdp)
     await verifyCustomPageSizeInputShadow(cdp)

@@ -393,7 +393,7 @@ useHead({
 </script>
 
 <template>
-  <div class="ledger-page flex min-w-0 flex-col gap-3">
+  <div class="ledger-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <!-- 页头:页面名 + 总数(左)· 搜索(右)。设计稿的第 1 行。 -->
     <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
       <h1 class="flex items-baseline gap-2 text-[15px] leading-6 font-semibold">
@@ -494,7 +494,7 @@ useHead({
       实现上**不压暗表体**:本项目踩过 `tbody{opacity:.7}` 的坑,它把 `--muted-foreground`
       从 5.05:1 压到 2.7:1 —— 加载的那几百毫秒里正文正好读不了。进度线 + 一行状态字。
     -->
-    <div class="relative h-6 shrink-0" aria-live="polite" data-testid="ledger-loading-status">
+    <div class="relative h-5 shrink-0 sm:h-6" aria-live="polite" data-testid="ledger-loading-status">
       <template v-if="isLoading">
         <span class="text-muted-foreground absolute top-0.5 left-0 text-xs">正在搜索…</span>
         <span class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
