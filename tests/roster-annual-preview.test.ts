@@ -453,6 +453,38 @@ describe('RL-07 · 总表增减', () => {
   })
 })
 
+describe('RL-07 · 多张平台表(真实年度形状)', () => {
+  it('一次年度更新可以带多张导出表：各按**自己的称号**认最新，该移出的都移出', () => {
+    const db = seededDb()
+    const bundle = annualBundle()
+    // 真实形状:三张表 = 三个 entry(§8.3 的 exportSnapshot 一次只装一张)。
+    bundle.entries.push({
+      idempotencyKey: 'annual/2026/export/innovative_sme',
+      sourceKind: 'platform_export',
+      sourceIdentity: 'miit/export/2026/innovative_sme.xlsx',
+      payload: {
+        exportSnapshot: {
+          titleCode: 'innovative_sme',
+          year: 2026,
+          collectedOn: '2026-10-01',
+          originalFilename: 'innovative_sme-2026.xlsx',
+          sha256: 'sha-innovative_sme-2026',
+          // 今年这张创新型表里**没有**去年那家 ⇒ 它同样失去锚点。
+          rows: [],
+        },
+      },
+    })
+    const preview = previewAnnualIncrement(db, bundle)
+    expect(preview.entries).toHaveLength(4)
+    expect(preview.roster.removed.map((row) => row.name)).toEqual([NAME.platformOnly, NAME.crossTitle].sort((a, b) => a.localeCompare(b, 'zh')))
+    expect(preview.roster.keptByAnnouncement.map((row) => row.name)).toEqual([NAME.announced])
+
+    commitBundle(db, bundle)
+    const counted = rosterRowCounts(db)
+    expect(at(counted, 'platform_export_batch')).toBe(4) // 种库 2 张 + 今年 2 张(新旧并存)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // 3. 接口失败：不得据此应用删除或原因
 // ---------------------------------------------------------------------------
@@ -554,6 +586,62 @@ describe('RL-07 · 接口失败不得据此删除或原因', () => {
     expect(difference).toHaveLength(1)
     expect(difference[0]!.status).toBe('query_failed')
     expect(difference[0]!.verificationStatus).toBe('pending')
+  })
+})
+
+describe('RL-07 · 刷新接口原因 / 措施及其证据', () => {
+  it('重查**成功且有记录** ⇒ platform_stale + mark_platform_snapshot，且证据指到那次查询', () => {
+    const db = seededDb()
+    const bundle = annualBundle()
+    // 平台未更新(契约 §2.8):公布名单里有、导出表里没有,但**接口查得到**关系 ⇒ 不是「无记录」。
+    bundle.entries[0]!.payload.platformQueries = [
+      {
+        interface: 'business_list',
+        queryKey: U.announced,
+        rdjb: '2',
+        queriedAt: '2026-10-01T02:00:00.000Z',
+        status: 'success',
+        relations: [
+          {
+            sequenceNo: 1,
+            relationKey: 'SQ-2026-1',
+            usccRaw: U.announced,
+            nameRaw: NAME.announced,
+            matchBasis: 'uscc',
+            verificationStatus: 'confirmed',
+          },
+        ],
+      },
+    ]
+    bundle.entries[0]!.payload.differences = [
+      {
+        uscc: U.announced,
+        titleCode: 'specialized_sme',
+        direction: 'missing_in_miit',
+        status: 'confirmed_reason',
+        reasonCode: 'platform_stale',
+        measureCode: 'mark_platform_snapshot',
+        verificationStatus: 'confirmed',
+        recordedAt: '2026-10-01T03:00:00.000Z',
+        evidenceQueryRef: { interface: 'business_list', queryKey: U.announced, rdjb: '2' },
+      },
+    ]
+    const preview = previewAnnualIncrement(db, bundle)
+    expect(preview.totals.conflicts).toBe(0)
+    const differenceItem = preview.entries[0]!.items.find((item) => item.kind === 'difference')
+    expect(differenceItem).toMatchObject({ class: 'add', ok: true, enterpriseName: NAME.announced })
+
+    expect(commitRosterImport(db, bundle.entries[0]!).status).toBe('committed')
+    const query = db.select().from(schema.platformQuery).all()[0]!
+    const difference = db.select().from(schema.differenceReason).all()[0]!
+    expect(difference).toMatchObject({
+      status: 'confirmed_reason',
+      reasonCode: 'platform_stale',
+      measureCode: 'mark_platform_snapshot',
+      verificationStatus: 'confirmed',
+      // **证据指针**落在那次查询上(刷新证据 = 这一列指到新的查询行)。
+      evidenceQueryId: query.id,
+    })
   })
 })
 

@@ -328,7 +328,7 @@ const countCells = computed(() => [
             选择 .json 文件
           </Button>
           <span v-if="fileName" class="text-muted-foreground text-xs">已载入 {{ fileName }}</span>
-          <span class="text-muted-foreground ml-auto text-xs">运行预览**不写库** —— 库里的数字一个都不会变。</span>
+          <span class="text-muted-foreground ml-auto text-xs">运行预览<strong class="text-foreground font-medium">不写库</strong> —— 库里的数字一个都不会变。</span>
         </div>
         <Alert v-if="parseError" variant="destructive">
           <TriangleAlert />
