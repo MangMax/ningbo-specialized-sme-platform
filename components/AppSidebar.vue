@@ -1,15 +1,6 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import {
-  BookOpenCheck,
-  CalendarSync,
-  ChartColumn,
-  FolderOpen,
-  Gauge,
-  GitCompareArrows,
-  LayoutList,
-  ScanText,
-} from '@lucide/vue'
+import { BookOpenCheck, ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText } from '@lucide/vue'
 import NavMain from '@/components/NavMain.vue'
 import {
   Sidebar,
@@ -36,8 +27,6 @@ const nav = [
   { title: '统计', url: '/stats', icon: ChartColumn },
   { title: '数据质量', url: '/quality', icon: Gauge },
   { title: '比对', url: '/comparison', icon: GitCompareArrows },
-  // 年度增量(RL-07):今年这一批来源文件先预览再应用 —— 逐项分类 + 总表增减三栏。
-  { title: '年度增量', url: '/annual-update', icon: CalendarSync },
 ]
 </script>
 

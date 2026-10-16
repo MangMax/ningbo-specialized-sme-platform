@@ -17,7 +17,7 @@
  * 既用于预检（只报数），也用于提交（照计划执行）—— 预检报的影响就是提交真会发生的事。
  */
 
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
@@ -470,8 +470,6 @@ interface PendingPlatformRef {
   sequenceNos: number[]
   /** 本批将写入的那些关系的 `relationKey`（权威锚点，见 `NormalizedRef.relationKey`）。 */
   relationKeys: string[]
-  /** 载荷为这次查询声明的状态（RL-07：用它挡「拿失败结果当原因」）。 */
-  status: string
 }
 
 type PendingPlatformRefs = PendingPlatformRef[]
@@ -499,9 +497,6 @@ function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatfo
       relationKeys: (Array.isArray(relations) ? relations : [])
         .map((relation) => optionalString((relation as { relationKey?: unknown })?.relationKey))
         .filter((k): k is string => !!k),
-      // RL-07：状态要收进来 —— 差异项若拿一次**失败**的查询当证据，整批不该落任何原因
-      // （见 `referencedQueryFailed`）。`status` 缺省按 `not_queried`（与表列默认值一致）。
-      status: optionalString((query as { status?: unknown }).status) ?? 'not_queried',
     })
   }
   return out
@@ -573,22 +568,13 @@ function platformQueryWhere(ref: NormalizedRef) {
   return and(...conditions)
 }
 
-/**
- * 自然键是否命中一次「本批将写入」的查询 —— 库内一侧（`platformQueryWhere`）的 JS 孪生，
- * 两处必须同谓词。提出来是因为它现在有**两个**调用方：候选解析（{@link refCandidates}）与
- * 「引用到的查询是不是失败的」（{@link referencedQueryFailed}）。
- */
-function pendingRefMatches(candidate: { interface: string; queryKey: string; rdjb: string; queriedAt: string }, ref: NormalizedRef): boolean {
-  return (
+/** 按自然键在「库内 + 本批将写入」两处找候选查询。 */
+function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef) {
+  const matches = (candidate: { interface: string; queryKey: string; rdjb: string; queriedAt: string }) =>
     candidate.interface === ref.interface &&
     candidate.queryKey === ref.queryKey &&
     candidate.rdjb === ref.rdjb &&
     (ref.queriedAt ? candidate.queriedAt === ref.queriedAt : true)
-  )
-}
-
-/** 按自然键在「库内 + 本批将写入」两处找候选查询。 */
-function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef) {
   return {
     // 库内一侧**按键定位**且只取 `id`；本批一侧是内存数组，谓词留在 JS 里。
     dbHits: source
@@ -596,90 +582,8 @@ function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: Norm
       .from(schema.platformQuery)
       .where(platformQueryWhere(ref))
       .all(),
-    pendingHits: pending.filter((candidate) => pendingRefMatches(candidate, ref)),
+    pendingHits: pending.filter(matches),
   }
-}
-
-/**
- * 这一条差异项是不是在**下结论**（而不是仅仅记录「这次查询没成功」）。
- *
- * 判据只有三条，都是「替平台说了话」的形状：
- *  - 状态是**已确认态**（`confirmed_reason` / `confirmed_no_diff`）或 `no_record`
- *    —— 三者都在断言「平台侧是什么情况」；
- *  - 给了 **`reasonCode`**（原因）；
- *  - 给了**处置措施**且不是 `manual_review` / `none`（那两种是「转人工 / 无需处置」，
- *    本身不构成对平台事实的断言）。
- */
-function assertsConclusion(difference: RosterImportDifference): boolean {
-  const status = optionalString(difference.status)
-  if (status === 'confirmed_reason' || status === 'confirmed_no_diff' || status === 'no_record') return true
-  if (optionalString(difference.reasonCode)) return true
-  const measure = optionalString(difference.measureCode)
-  return measure != null && measure !== 'manual_review' && measure !== 'none'
-}
-
-/**
- * **引用到底的那次查询,是不是一次失败**(RL-07 票面:「接口失败时禁止据此应用删除或原因」)。
- *
- * ── 它挡的是什么 ──────────────────────────────────────────────────────
- * 一次查询**没跑成功**(网络 / 会话过期 / 结构异常 ⇒ `status='failed'`)与「跑成功了、平台
- * 说没有」(`no_record`)是**两件事**(契约 §3.1 的四态)。拿前者去写一条
- * `confirmed_reason`(或据此把企业判成已迁出/已注销)就是把「没查到」说成「查到了没有」——
- * 这条判据在这里一次性挡掉:整批 `failed`、业务数据一行不落,由调用方修好证据再来。
- *
- * ── 判定顺序(为什么库内优先)────────────────────────────────────────────
- * 库内已有同自然键的行 ⇒ 写入侧本来就是**复用**它(`platform_query_identity_uq`),
- * 载荷声明的状态不会覆盖库里的那一列,故以**库里那行**的状态为准;库里没有才读载荷声明。
- *
- * 只取 `status` 一列,不读 `raw_response`(RL-18 的按键定位纪律不变)。
- */
-function referencedQueryFailed(
-  source: Executor,
-  pending: PendingPlatformRefs,
-  pointers: { queryIdLiteral?: number | null; queryRef?: NormalizedRef | null; relationIdLiteral?: number | null; relationRef?: NormalizedRef | null },
-): boolean {
-  const queryRef = pointers.queryRef ?? null
-  if (queryRef) {
-    const stored = source
-      .select({ status: schema.platformQuery.status })
-      .from(schema.platformQuery)
-      .where(platformQueryWhere(queryRef))
-      .get()
-    if (stored) return stored.status === 'failed'
-    const declared = pending.find((candidate) => pendingRefMatches(candidate, queryRef))
-    return declared?.status === 'failed'
-  }
-  const relationRef = pointers.relationRef ?? null
-  if (relationRef) {
-    // 关系引用指向的查询用**同一个**自然键(关系的 natural key 就是所属查询的键,见 §8.7.1)。
-    return referencedQueryFailed(source, pending, { queryRef: relationRef })
-  }
-  const queryId = optionalInt(pointers.queryIdLiteral)
-  if (queryId != null) {
-    const row = source
-      .select({ status: schema.platformQuery.status })
-      .from(schema.platformQuery)
-      .where(eq(schema.platformQuery.id, queryId))
-      .get()
-    return row?.status === 'failed'
-  }
-  const relationId = optionalInt(pointers.relationIdLiteral)
-  if (relationId != null) {
-    // 裸关系 id → 它所属的那次查询(`platform_relation.query_id`)。
-    const relation = source
-      .select({ queryId: schema.platformRelation.queryId })
-      .from(schema.platformRelation)
-      .where(eq(schema.platformRelation.id, relationId))
-      .get()
-    if (!relation) return false
-    const row = source
-      .select({ status: schema.platformQuery.status })
-      .from(schema.platformQuery)
-      .where(eq(schema.platformQuery.id, relation.queryId))
-      .get()
-    return row?.status === 'failed'
-  }
-  return false
 }
 
 /** 预检阶段的「查询能不能解析」。 */
@@ -2132,32 +2036,6 @@ function planDifference(
   // 证据指针：每列**裸 id 与自然键恰给其一**。
   const refs = collectEvidenceRefs(db, pendingRefs, difference, ref, push)
   if (!refs) return
-  // RL-07 票面第 3 条：**接口失败时禁止据此应用删除或原因**。
-  //
-  // 挡的是「**拿失败当结论**」这一种：`failed`（查询没跑成功）与 `no_record`（跑成功了、
-  // 平台说没有）是两件事（契约 §3.1），把前者写成「平台无记录」「已注销/已迁出」就是把
-  // 「没查到」说成「查到了没有」。一条差异项**在下结论**（已确认态 / 给了原因 / 给了处置
-  // 措施）而证据查询是 `failed` ⇒ 整批不落一行，逐项错误说清是哪一次查询失败了。
-  //
-  // **不动**的是「如实记录失败本身」：`query_failed` + `manual_review`（RL-03 的判定链就产出
-  // 这一种，见 `lib/platform/reconcile.ts` 的 `decideDifference`）证据本来就指向那次失败的查询
-  // —— 那不是在从失败里推结论，恰恰是在**防止**别人这么推。
-  //
-  // **绝不**降级成一条「待核」了事：那等于替调用方把一份不合法的证据改写成合法的证据。
-  if (assertsConclusion(difference) && referencedQueryFailed(db, pendingRefs, refs)) {
-    push({
-      item: failure(
-        'difference',
-        ref,
-        'evidence_query_failed',
-        '证据查询的状态是 failed（查询没跑成功）—— 失败 ≠ 无记录，不得据此写原因、判无记录或移出',
-        'differences[].evidenceQueryRef',
-      ),
-      action: 'skip',
-      review: false,
-    })
-    return
-  }
   const spec = { name: difference.enterpriseName, uscc: difference.uscc }
   if (!enterpriseKnown(db, pending, spec)) {
     push({ item: failure('difference', ref, 'enterprise_not_found', `差异找不到归属企业：${optionalString(difference.enterpriseName) ?? usccOrNull(difference.uscc) ?? '(空)'}`, 'enterpriseName'), action: 'skip', review: false })
@@ -2806,12 +2684,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
 // 批次行（记账，独立于业务事务）
 // ---------------------------------------------------------------------------
 
-/**
- * 按幂等键取批次行。导出给调用方(RL-07 的年度增量预览要拿它的 `status` 判「这一键是不是
- * 已经提交过」—— 已提交的键同键提交一行不写,预检不得对它报一份做不到的计划,契约 §8.9.2)。
- * 谓词只此一份:其它读回路径(`readImportBatchOutcome` / `readDuplicateCandidates`)也都走它。
- */
-export function findBatchByKey(db: Db, idempotencyKey: string) {
+function findBatchByKey(db: Db, idempotencyKey: string) {
   return db.select().from(schema.importBatch).all().find((b) => b.idempotencyKey === idempotencyKey)
 }
 
@@ -3191,37 +3064,6 @@ export function readDuplicateCandidates(db: Db, idempotencyKey: string): Duplica
       .filter((candidate): candidate is DuplicateNameCandidate => !!candidate && typeof candidate.nameNorm === 'string')
   }
   return (batch.preflightResult as RosterImportPreflight | null)?.duplicateCandidates ?? []
-}
-
-/**
- * 最近的导入批次（RL-07 的「应用结果与失败项可追溯」）：按 id 倒序取 `limit` 条。
- *
- * **不重算任何东西** —— 批次行本来就记着幂等键 / 来源 / 状态 / 摘要 / 逐项结果 / 错误。
- * 预检批（`status='preflight'`）也照实带出：它还没有 `summary`（`null` 就是「没提交过」，
- * 不是「写了 0 行」）。
- */
-export function listImportBatches(db: Db, limit = 20) {
-  const size = Number.isFinite(limit) && limit > 0 ? Math.trunc(limit) : 20
-  return db
-    .select()
-    .from(schema.importBatch)
-    .orderBy(desc(schema.importBatch.id))
-    .limit(size)
-    .all()
-    .map((batch) => ({
-      batchId: batch.id,
-      idempotencyKey: batch.idempotencyKey,
-      status: batch.status,
-      sourceKind: batch.sourceKind,
-      sourceIdentity: batch.sourceIdentity,
-      sourceSha256: batch.sourceSha256,
-      // 与提交读回同一份补法：本票之前提交的批次没有 `evidenceRepointed`。
-      summary: readSummaryOf(batch.summary),
-      preflight: (batch.preflightResult as RosterImportPreflight | null) ?? null,
-      items: (batch.itemResults as RosterImportItemResult[] | null) ?? null,
-      error: batch.error,
-      committedAt: batch.committedAt,
-    }))
 }
 
 /** 取回某条 item 的归并血缘（`merges` 项）。 */

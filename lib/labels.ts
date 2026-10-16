@@ -429,46 +429,6 @@ export const IMPORT_SOURCE_KIND_ORDER: string[] = [
   'alias_evidence',
 ]
 
-/**
- * 年度增量预览的**逐项分类**(RL-07)→ 中文名。
- *
- * 取值与 `lib/roster/annual-increment.ts` 的 `ANNUAL_ITEM_CLASSES` 一一对应;
- * 这里只负责文案(与其它枚举同一分法:码在实现里,文案只此一份)。
- * 「无变化」与「冲突」必须分开说 —— 前者是「重导一遍、什么都不用改」,
- * 后者是「这一项不合法、整批不会落一行」,读起来不能是一句话。
- */
-export const ANNUAL_ITEM_CLASS_LABELS: Record<string, string> = {
-  add: '新增',
-  update: '更新',
-  merge: '归并',
-  unchanged: '无变化',
-  conflict: '冲突',
-  candidate: '重名候选',
-}
-
-/**
- * 年度增量总表增减的三栏 → 中文名与一句解释(票面验收的三句话)。
- *
- * ⚠️ 这里的文案**逐字会渲染到页面上**,所以不写 markdown 星号;也**不许含糊**:
- * 前两栏说的是「这张快照落库之后会怎样」,第三栏说的是「谁会被移出、但**原因**这一层
- * 必须留待重查」—— 成员资格是**派生**的(契约 §5,只看公布记录与最新快照),
- * 接口重查的结果不在那个派生里,所以「重查失败」挡不住移出本身,它挡的是**原因**。
- */
-export const ANNUAL_ROSTER_BUCKETS = {
-  removed: {
-    label: '将移出当前总表',
-    hint: '只由平台导出引入、没有任何公布历史,且最新快照里也不在 ⇒ 这张快照落库后从当前总表移除(企业行与公布历史保留)。',
-  },
-  blocked: {
-    label: '不得据此写原因',
-    hint: '这次对它的重查失败了(失败 ≠ 无记录)。它照样会被这张最新快照移出——成员资格只看公布记录与最新快照;不得据此写原因、措施或「无记录」,留待重查。',
-  },
-  keptByAnnouncement: {
-    label: '不因平台缺失而删除',
-    hint: '曾出现在正式公布文件 ⇒ 保留在当前总表,只是平台状态更新。',
-  },
-} as const
-
 /** 两侧名录比对方向,页面与导出共用。 */
 export const COMPARISON_LABELS = {
   missing_in_miit: '应纳未纳',
