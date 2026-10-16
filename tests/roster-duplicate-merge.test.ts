@@ -27,7 +27,13 @@ import type { DuplicateMergeReport } from '../lib/roster/duplicate-merge'
 import { createRosterImportClient, type RosterImportRequest } from '../lib/roster-import-client'
 import { classifyRawQuery } from '../lib/platform'
 import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../lib/platform/payload'
-import { enterpriseExists, readImportBatchOutcome, readMergeLineage, rosterRowCounts } from '../server/utils/roster-import'
+import {
+  enterpriseExists,
+  planRosterImport,
+  readImportBatchOutcome,
+  readMergeLineage,
+  rosterRowCounts,
+} from '../server/utils/roster-import'
 import { startEvidenceServer, type EvidenceServer } from './helpers/platform-evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-duplicate-merge-'))
@@ -309,6 +315,10 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
     expect(report.request).not.toBeNull()
     mergeRequest = report.request
     expect(report.request!.sourceKind).toBe('alias_evidence')
+    // ① 的**缺导出名**一侧：这次没写过任何导出快照 ⇒ `exportName` 为 null、`canonicalName` 不给
+    // ⇒ 规范行**不改名**（不猜）。有导出名的一侧见下面的 describe ①。
+    expect(ready.exportName).toBeNull()
+    expect(report.request!.payload.merges![0]!.canonicalName).toBeUndefined()
     expect(report.request!.payload.merges).toEqual([
       {
         fromEnterpriseId: existing,
@@ -357,7 +367,15 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
 
     // 血缘在 import_batch.item_results 里可查回。
     const lineage = readMergeLineage(db, mergeRequest!.idempotencyKey, existing)!
-    expect(lineage).toMatchObject({ fromEnterpriseId: existing, intoEnterpriseId: canonical.id, intoUscc: USCC, aliasId: null })
+    expect(lineage).toMatchObject({
+      fromEnterpriseId: existing,
+      intoEnterpriseId: canonical.id,
+      intoUscc: USCC,
+      aliasId: null,
+      // ① 缺导出名 ⇒ 没改名。
+      canonicalName: OLD_NAME,
+      rename: null,
+    })
     expect(lineage.recordsFolded).toEqual([{ fromRecordId: existingRecord, intoRecordId: records[0]!.id }])
     expect(lineage.eventsMoved).toEqual([existingEvent])
     expect(lineage.evidenceMoved).toEqual([existingEvidence])
@@ -606,6 +624,9 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
     })
     const lineage = readMergeLineage(db, request.idempotencyKey, duplicated)!
     expect(lineage.aliasId).toBe(alias.id)
+    // 没给 `canonicalName` ⇒ 不改名（缺省行为，向后兼容）。
+    expect(lineage.canonicalName).toBe(CANON_NAME)
+    expect(lineage.rename).toBeNull()
     expect(lineage.eventsMoved).toContain(duplicatedEvent)
     expect(lineage.evidenceMoved).toContain(duplicatedEvidence)
     // 按现名或历史名搜索都命中同一企业。
@@ -613,8 +634,8 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
   })
 
   it('两侧名称逐字相同 ⇒ 不造别名（只并身份）', async () => {
-    const sameName = '宁波一力实业有限公司'
-    const uscc = '91330206793007818K'
+    const sameName = '宁波同名样例有限公司'
+    const uscc = '913302110000000009'
     const canonical = seedEnterprise(sameName, uscc)
     const duplicated = seedEnterprise(sameName, null)
 
@@ -633,5 +654,210 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
     expect(lineage.aliasId).toBeNull()
     // 净新增 0 行。
     expect(result.items.find((i) => i.kind === 'merge')!.detail!.rowsWritten).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ⑤：预检与写入侧用**同一套**企业定位规则
+// ---------------------------------------------------------------------------
+
+describe('⑤ · 预检按写入侧的身份规则判 add/skip（不再用带按名回退的那套猜）', () => {
+  const NAME = '宁波重名判定样例有限公司'
+  const USCC5 = '913302110000000031'
+  /** 既有那一行：**无统代**，且已经有同坐标（jxj × 专精特新）的记录 —— 事故里正是这样。 */
+  const seeded = seedEnterprise(NAME, null)
+  const seededRecord = seedRecord(seeded, 'jxj', 'specialized_sme')
+  seedEvent(seededRecord, 'award', 2022, 1)
+
+  const request: RosterImportRequest = {
+    idempotencyKey: 'rl14/preflight-identity#sha256:p1',
+    sourceKind: 'announcement',
+    sourceIdentity: 'jxj/workbook/preflight-identity.xlsx',
+    payload: {
+      announcement: {
+        sourceDocument: { source: 'jxj', title: '预检口径样例', docNumber: null },
+        records: [
+          {
+            enterprise: { name: NAME, uscc: USCC5 },
+            titleCode: 'specialized_sme',
+            events: [{ eventType: 'award', year: 2023, batchSeq: 1, decidedYear: 2023, evidence: [{ sourceFile: 'x.xlsx' }] }],
+          },
+        ],
+      },
+    },
+  }
+
+  it('这条记录会被**新建** ⇒ 计 add；计划期还没有那一行，`enterpriseId` 如实为 null', () => {
+    const plan = planRosterImport(db, request)
+    const kinds = plan.items.map((i) => `${i.item.kind}:${i.action}`)
+    // 旧行为：`locateEnterprise` 按名回退到既有行、又看到它有同坐标记录 ⇒ 误判 `record:skip`，
+    // 而写入侧（只按统代）实际**新建**一行 —— 预检与提交自相矛盾。
+    expect(kinds).toEqual(['record:add', 'duplicate_candidate:note'])
+    const record = plan.items.find((i) => i.item.kind === 'record')!
+    expect(record.item.detail!.enterpriseId).toBeNull()
+    expect(record.item.ref).toBe('record:0')
+  })
+
+  it('提交后：written 与 skipped 不再自相矛盾，记录项指向**新建**那行', async () => {
+    const pre = await client().preflight(request)
+    expect(pre.preflight.add).toBe(1)
+    expect(pre.preflight.conflicts).toEqual([])
+
+    const result = await client().commit(request)
+    expect(result.status).toBe('committed')
+    // 真的建了：来源文件 + 企业 + 记录 + 事件 + 出处 = 5 行 ⇒ 就不该同时报「跳过 1 项」。
+    expect(result.summary.written).toBe(5)
+    expect(result.summary.skipped).toBe(0)
+    const recordItem = result.items.find((i) => i.kind === 'record_event')!
+    expect(recordItem.detail!.enterpriseId).not.toBe(seeded)
+    // 确实新生成了第二行（身份规则没被放宽）；候选把这件事说明白了。
+    expect(db.select().from(schema.enterprise).all().filter((e) => e.nameNorm === NAME)).toHaveLength(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ①：主名称以导出表为准（`merges[].canonicalName`）
+// ---------------------------------------------------------------------------
+
+describe('① · 主名称以导出表为准：归并把规范行改成导出名，被顶掉的原名落别名', () => {
+  // 真实领域例子：公布名（历史名）与平台/导出表现名不同。
+  const ANNOUNCED = '宁波一力减震器有限公司'
+  const EXPORT_NAME = '宁波一力实业有限公司'
+  const USCC1 = '91330206793007818K'
+
+  const announcedRow = seedEnterprise(ANNOUNCED, null)
+  const announcedRecord = seedRecord(announcedRow, 'jxj', 'specialized_sme')
+  const announcedEvent = seedEvent(announcedRecord, 'award', 2022, 1)
+  const announcedEvidence = seedEvidence(announcedEvent, 33)
+
+  const importKey = 'rl14/canonical-name#sha256:n1'
+  let canonicalId = 0
+  let evidenceRelationId = 0
+
+  it('规范行由导入建出（公告名）', async () => {
+    const result = await client().commit({
+      idempotencyKey: importKey,
+      sourceKind: 'announcement',
+      sourceIdentity: 'jxj/workbook/canonical-name.xlsx',
+      payload: {
+        announcement: {
+          sourceDocument: { source: 'jxj', title: '主名称口径样例', docNumber: null },
+          records: [
+            {
+              enterprise: { name: ANNOUNCED, uscc: USCC1 },
+              titleCode: 'specialized_sme',
+              events: [{ eventType: 'award', year: 2023, batchSeq: 1, decidedYear: 2023, evidence: [{ sourceFile: 'x.xlsx' }] }],
+            },
+          ],
+        },
+      },
+    })
+    expect(result.status).toBe('committed')
+    const rows = db.select().from(schema.enterprise).all().filter((e) => e.usccNorm === USCC1)
+    expect(rows).toHaveLength(1)
+    canonicalId = rows[0]!.id
+    // 规范行现在挂的是**公告名**（历史名）—— 正是需要被导出名顶掉的那个。
+    expect(rows[0]!.name).toBe(ANNOUNCED)
+  })
+
+  it('写导出快照（导出名 ≠ 公告名）与平台证据（qymc 逐字等于公布名）', async () => {
+    const snapshot = await client().commit({
+      idempotencyKey: 'rl14/canonical-export#sha256:n2',
+      sourceKind: 'platform_export',
+      sourceIdentity: 'miit/export/specialized-sme-2026.xlsx',
+      payload: {
+        exportSnapshot: {
+          titleCode: 'specialized_sme',
+          year: 2026,
+          collectedOn: '2026-10-16',
+          originalFilename: '专精特新中小企业导出Excel.xlsx',
+          sha256: 'c'.repeat(64),
+          rows: [{ sourceRowNo: 1, usccRaw: USCC1, nameRaw: EXPORT_NAME, district: '鄞州区' }],
+        },
+      },
+    })
+    expect(snapshot.status).toBe('committed')
+
+    const evidence = await client().commit({
+      idempotencyKey: 'rl14/canonical-evidence#sha256:n3',
+      sourceKind: 'alias_evidence',
+      sourceIdentity: `platform/${USCC1}.json`,
+      payload: {
+        platformQueries: [
+          {
+            interface: 'business_list',
+            queryKey: USCC1,
+            rdjb: '3',
+            queriedAt: QUERIED_AT,
+            status: 'success',
+            relations: [
+              { sequenceNo: 1, relationKey: 'SQ-yili-1', usccRaw: USCC1, nameRaw: ANNOUNCED, matchBasis: 'uscc', verificationStatus: 'confirmed' },
+            ],
+          },
+        ],
+      },
+    })
+    expect(evidence.status).toBe('committed')
+    evidenceRelationId = db.select().from(schema.platformRelation).all().find((r) => r.relationKey === 'SQ-yili-1')!.id
+  })
+
+  it('★ 报告：把导出名作为 `canonicalName` 交给归并（不是猜的，是导出表记的）', async () => {
+    const report = await candidatesReport(importKey)
+    expect(report.counts).toEqual({ candidates: 1, ready: 1, pending: 0 })
+    expect(report.ready[0]!.exportName).toBe(EXPORT_NAME)
+    expect(report.request!.payload.merges![0]).toMatchObject({
+      fromEnterpriseId: announcedRow,
+      intoUscc: USCC1,
+      canonicalName: EXPORT_NAME,
+      sourceRefId: evidenceRelationId,
+    })
+  })
+
+  it('★ 执行：规范行 name = **导出名**，被顶掉的原名是 confirmed 别名（来源 = 落库关系）', async () => {
+    const report = await candidatesReport(importKey)
+    const result = await client().commit(report.request!)
+    expect(result.status).toBe('committed')
+
+    const canonical = db.select().from(schema.enterprise).all().find((e) => e.id === canonicalId)!
+    expect(canonical.name).toBe(EXPORT_NAME)
+    expect(canonical.nameNorm).toBe(EXPORT_NAME)
+    expect(enterpriseExists(db, announcedRow)).toBe(false)
+
+    // 被顶掉的原名（公告名）落 confirmed 别名，来源就是那条落库的平台关系。
+    const aliases = db.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === canonicalId)
+    // 「被并方的名字」与「被顶掉的规范行原名」在这里是同一个名字 ⇒ 同一唯一键 ⇒ **只有一条**别名。
+    expect(aliases).toHaveLength(1)
+    expect(aliases[0]).toMatchObject({
+      name: ANNOUNCED,
+      nameNorm: ANNOUNCED,
+      sourceKind: 'platform_business',
+      sourceRefId: evidenceRelationId,
+      verificationStatus: 'confirmed',
+    })
+
+    // 血缘：改名 `from → to` + 那条别名；一条不丢。
+    const lineage = readMergeLineage(db, report.request!.idempotencyKey, announcedRow)!
+    expect(lineage.canonicalName).toBe(EXPORT_NAME)
+    expect(lineage.rename).toEqual({ from: ANNOUNCED, to: EXPORT_NAME, aliasId: aliases[0]!.id })
+    expect(lineage.aliasId).toBe(aliases[0]!.id)
+    expect(lineage.eventsMoved).toContain(announcedEvent)
+    expect(lineage.evidenceMoved).toContain(announcedEvidence)
+    // 净新增只有那一条别名。
+    expect(result.items.find((i) => i.kind === 'merge')!.detail!.rowsWritten).toBe(1)
+    // 按导出名或历史名搜索都命中同一企业。
+    expect(db.select().from(schema.enterprise).all().find((e) => e.nameNorm === ANNOUNCED)).toBeUndefined()
+  })
+
+  it('坏 `canonicalName` 逐项报错、整批不落库（不静默忽略）', async () => {
+    const before = rosterRowCounts(db)
+    const result = await client().commit({
+      idempotencyKey: 'rl14/canonical-name-bad#sha256:n4',
+      sourceKind: 'alias_evidence',
+      sourceIdentity: `miit/relations/${USCC1}`,
+      payload: { merges: [{ fromEnterpriseId: 1, intoUscc: USCC1, canonicalName: 123 as unknown as string }] },
+    })
+    expect(result.status).toBe('failed')
+    expect(result.items[0]!.error!.code).toBe('canonical_name_invalid')
+    expect(rosterRowCounts(db)).toEqual(before)
   })
 })
