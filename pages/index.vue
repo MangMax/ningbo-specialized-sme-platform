@@ -177,12 +177,19 @@ const listQuery = computed(() => ({
   pageSize: pageSize.value,
 }))
 
+const resultKey = computed(() => JSON.stringify({ q: listQuery.value, size: pageSize.value }))
+
 const { data, isLoading, error, refetch } = useQuery({
   key: () => ['ledger-enterprises', listQuery.value],
-  query: () =>
-    apiGet<{ rows: EnterpriseListRow[]; counts: Counts }>('/api/roster/enterprises', {
-      query: listQuery.value,
-    }),
+  query: async () => {
+    const query = { ...listQuery.value }
+    const requestKey = resultKey.value
+    const response = await apiGet<{ rows: EnterpriseListRow[]; counts: Counts }>(
+      '/api/roster/enterprises',
+      { query },
+    )
+    return { ...response, resultKey: requestKey }
+  },
   // 换条件时**留住上一批行**:表体只轻微浮起,不清空 —— 空表会让用户以为「筛没了」。
   placeholderData: (previous) => previous,
 })
@@ -204,16 +211,19 @@ watch(totalPages, (max) => {
  * 只在**结果集真的换了**的时候应用一次(按请求键记账):后台重取同一批数据不该把
  * 用户已经关掉的抽屉又弹开。当前选中的企业如果还在新结果里,就留着不动。
  */
-const resultKey = computed(() => JSON.stringify({ q: listQuery.value, size: pageSize.value }))
 let appliedResultKey: string | null = null
-watch([rows, resultKey], () => {
-  if (appliedResultKey === resultKey.value) return
-  if (!rows.value.length) return
-  appliedResultKey = resultKey.value
-  const list = rows.value
+watch([data, resultKey], ([result, key]) => {
+  // `placeholderData` 会暂时保留上一批行。只有当前查询自己的结果落定后才能改抽屉选择。
+  if (!result || result.resultKey !== key || appliedResultKey === key) return
+  appliedResultKey = key
+  const list = result.rows
+  if (!list.length) {
+    selected.value = null
+    return
+  }
   if (selected.value != null && list.some((r) => r.enterpriseId === selected.value)) return
   selected.value = list[0]!.enterpriseId
-})
+}, { flush: 'post' })
 
 function retry() {
   refetch()
@@ -398,7 +408,7 @@ useHead({
         />
         <Input
           v-model="search"
-          class="bg-card h-8 pl-8"
+          class="bg-card h-8 pl-8 shadow-none"
           placeholder="搜索企业名称或统一社会信用代码"
           aria-label="按企业名称、已确认曾用名或统一社会信用代码搜索"
         />
@@ -423,7 +433,7 @@ useHead({
         >
           <SelectValue />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent class="shadow-none">
           <SelectItem :value="ALL_DISTRICTS">全部属地</SelectItem>
           <SelectItem v-for="d in districtOptions" :key="d" :value="d">{{ d }}</SelectItem>
         </SelectContent>
@@ -444,7 +454,7 @@ useHead({
         >
           <SelectValue />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent class="shadow-none">
           <SelectItem v-for="opt in sortOptions" :key="opt.value" :value="opt.value" :title="opt.hint">
             {{ opt.label }}
           </SelectItem>
@@ -521,7 +531,7 @@ useHead({
           <SelectTrigger size="sm" class="bg-card w-20 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap" aria-label="每页条数">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent class="shadow-none">
             <SelectItem v-for="n in PAGE_SIZE_PRESETS" :key="n" :value="String(n)">{{ n }}</SelectItem>
             <SelectItem value="custom">自定义…</SelectItem>
           </SelectContent>

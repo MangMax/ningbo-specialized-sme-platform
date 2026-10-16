@@ -100,14 +100,14 @@ function relationFields(relation: ComparisonPlatformEvidence['queries'][number][
 </script>
 
 <template>
-  <div v-if="hasEvidence" class="flex flex-col gap-1" data-testid="comparison-platform-evidence">
-    <p class="truncate text-[13px] leading-5" data-testid="platform-evidence-summary" :title="compactSummary">
+  <div v-if="hasEvidence" class="flex min-w-0 items-center gap-2" data-testid="comparison-platform-evidence">
+    <p class="min-w-0 flex-1 truncate text-[13px] leading-5" data-testid="platform-evidence-summary" :title="compactSummary">
       {{ compactSummary }}
     </p>
     <button
       type="button"
       data-testid="platform-evidence-details-toggle"
-      class="text-primary w-fit text-[13px] leading-5 hover:underline"
+      class="text-primary shrink-0 text-[13px] leading-5 hover:underline"
       :aria-expanded="showDetails"
       @click="showDetails = !showDetails"
     >

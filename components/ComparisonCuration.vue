@@ -40,23 +40,23 @@ async function save(curated: boolean, editedNote?: string) {
 <template>
   <div class="flex min-w-0 flex-col gap-1">
     <div class="flex items-center gap-2">
-      <Switch :model-value="row.curated" :disabled="pending" :aria-label="`核实 ${row.name}`" @update:model-value="save($event)" />
+      <Switch :model-value="row.curated" :disabled="pending" :aria-label="`核实 ${row.name}`" class="shadow-none" @update:model-value="save($event)" />
       <span class="text-xs" :class="row.curated ? 'text-primary' : 'text-muted-foreground'">{{ row.curated ? '已核实' : '待核实' }}</span>
       <Dialog v-model:open="open">
         <DialogTrigger as-child>
           <Button variant="ghost" size="sm" class="h-7 px-2 text-xs" :disabled="pending" :aria-label="`编辑 ${row.name} 备注`">{{ row.note ? '编辑备注' : '备注' }}</Button>
         </DialogTrigger>
-        <DialogContent>
+        <DialogContent class="shadow-none">
           <DialogHeader>
             <DialogTitle>核实备注</DialogTitle>
             <DialogDescription>{{ row.name }} · 保存备注同时标为已核实。</DialogDescription>
           </DialogHeader>
           <Label for="curation-note">备注</Label>
-          <Textarea id="curation-note" v-model="note" :rows="3" class="resize-y" :disabled="pending" @keydown.ctrl.enter.prevent="save(true, note)" @keydown.meta.enter.prevent="save(true, note)" />
+          <Textarea id="curation-note" v-model="note" :rows="3" class="resize-y shadow-none" :disabled="pending" @keydown.ctrl.enter.prevent="save(true, note)" @keydown.meta.enter.prevent="save(true, note)" />
           <Alert v-if="failure" variant="destructive"><AlertDescription>{{ failure }}</AlertDescription></Alert>
           <DialogFooter>
-            <Button variant="outline" :disabled="pending" @click="open = false">取消</Button>
-            <Button :disabled="pending" @click="save(true, note)">{{ pending ? '保存中…' : '保存并核实' }}</Button>
+            <Button variant="outline" class="shadow-none" :disabled="pending" @click="open = false">取消</Button>
+            <Button class="shadow-none" :disabled="pending" @click="save(true, note)">{{ pending ? '保存中…' : '保存并核实' }}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

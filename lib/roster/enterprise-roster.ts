@@ -425,11 +425,11 @@ function compareDifferencePriority(a: RosterDifferenceRow, b: RosterDifferenceRo
 /**
  * 每家企业一条**差异摘要**(RL-20)。口径见 `RosterEnterpriseDifference` 的注释。
  */
-function enterpriseDifferenceSummaries(db: Db, snap: Snapshot): Map<number, RosterEnterpriseDifference> {
+function enterpriseDifferenceSummaries(rows: RosterDifferenceRow[]): Map<number, RosterEnterpriseDifference> {
   const out = new Map<number, RosterEnterpriseDifference>()
   /** 每家在选「最要紧」时用到的那条,只在本次调用里有意义 —— 不进入返回行。 */
   const best = new Map<number, RosterDifferenceRow>()
-  for (const row of differenceUniverse(db, snap)) {
+  for (const row of rows) {
     const kept = out.get(row.enterpriseId)
     if (!kept) {
       out.set(row.enterpriseId, {
@@ -574,7 +574,14 @@ function selectRosterEnterprises(
   const snap = readSnapshot(db)
   const profiles = snap.enterprises.map((enterprise) => buildProfile(enterprise, snap))
   const index = indexSnapshots(snap)
-  const differenceSummaries = enterpriseDifferenceSummaries(db, snap)
+  const differenceRows = differenceUniverse(db, snap)
+  const differenceStatusesByEnterprise = new Map<number, Set<string>>()
+  for (const row of differenceRows) {
+    const statuses = differenceStatusesByEnterprise.get(row.enterpriseId) ?? new Set<string>()
+    statuses.add(row.status)
+    differenceStatusesByEnterprise.set(row.enterpriseId, statuses)
+  }
+  const differenceSummaries = enterpriseDifferenceSummaries(differenceRows)
 
   // 别名:只带 `confirmed`(契约 §1.2 —— `pending` 不参与搜索)。
   const confirmedAliases = new Map<number, string[]>()
@@ -599,19 +606,21 @@ function selectRosterEnterprises(
     aliasNames: [...(confirmedAliases.get(profile.enterprise.id) ?? [])].sort(),
     state: deriveRosterState(profile, index),
     difference: differenceSummaries.get(profile.enterprise.id) ?? NO_DIFFERENCE,
+    differenceStatuses: differenceStatusesByEnterprise.get(profile.enterprise.id) ?? new Set<string>(),
   }))
   const rows = candidates
-    .filter(({ profile, aliasNames, state, difference }) => {
+    .filter(({ profile, aliasNames, state, differenceStatuses }) => {
       if (filter.rosterState && state !== filter.rosterState) return false
       if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return false
       if (filter.district && effectiveDistrict(profile) !== filter.district) return false
       if (diffStatuses) {
-        // `none` 是伪状态(**没有差异**),不是 `difference_reason.status` 的取值 ——
-        // 与真状态并列参与「命中任一」。分开判:拿 `status === 'none'` 去比会静默筛空。
+        // `none` 是伪状态(**没有差异**),不是 `difference_reason.status` 的取值。
+        // 状态筛选按企业的全部差异行判断;表格摘要优先级只负责决定显示哪一条。
         const hit =
-          (diffStatuses.includes(DIFF_STATUS_NONE) && difference.count === 0) ||
-          (difference.status != null && diffStatuses.includes(difference.status))
-        if (!hit) return false      }
+          (diffStatuses.includes(DIFF_STATUS_NONE) && differenceStatuses.size === 0) ||
+          diffStatuses.some((status) => status !== DIFF_STATUS_NONE && differenceStatuses.has(status))
+        if (!hit) return false
+      }
       if (!matchesRecordFilters(profile, filter)) return false
       if (needle || usccNeedle) {
         const hit =
@@ -929,7 +938,7 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
 
   // 详情页的 `enterprise.difference` 与总表**同一处算**(`enterpriseDifferenceSummaries`),
   // 于是「表里那一行写的状态」与「点进去看到的状态」不会各说各话。
-  const difference = enterpriseDifferenceSummaries(db, snap).get(id) ?? NO_DIFFERENCE
+  const difference = enterpriseDifferenceSummaries(differenceUniverse(db, snap)).get(id) ?? NO_DIFFERENCE
   const row = toRow(profile, aliasNames, deriveRosterState(profile, indexSnapshots(snap)), difference)
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
   const eventIds = new Set(events.map((e) => e.id))

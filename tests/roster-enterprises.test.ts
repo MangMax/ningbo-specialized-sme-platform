@@ -349,6 +349,20 @@ beforeAll(async () => {
     recordedAt: '2026-10-15T00:00:00.000Z',
   })
 
+  // 总表差异筛选必须命中任一差异坐标,不能只看摘要优先挑出的状态。
+  const multiDiffStatus = enterprise('multiDiffStatus', '宁波多状态差异企业', '91330211AAAAAAA013X')
+  record(multiDiffStatus, 'specialized_sme', 'miit', [{ eventType: 'maintain', year: 2025 }])
+  record(multiDiffStatus, 'little_giant', 'miit', [{ eventType: 'maintain', year: 2025 }])
+  difference(multiDiffStatus, 'specialized_sme', 'extra_in_miit', {
+    status: 'not_queried',
+    recordedAt: '2026-10-15T00:00:00.000Z',
+  })
+  difference(multiDiffStatus, 'little_giant', 'extra_in_miit', {
+    status: 'confirmed_reason',
+    verificationStatus: 'confirmed',
+    recordedAt: '2026-10-16T00:00:00.000Z',
+  })
+
   // —— 生命周期:复核通过 ⇒ 锚点取结论年份;缺结论年份 ⇒ 标待核 ——
   const reviewed = enterprise('reviewed', '宁波复核通过企业', '91330211AAAAAAA020X')
   record(reviewed, 'specialized_sme', 'jxj', [
@@ -532,6 +546,22 @@ describe('§7.1 rosterState 派生(契约 §5,不落列)', () => {
     const current = listRosterEnterprises(db, { rosterState: 'current', pageSize: 200 }).rows
     expect(current.some((r) => r.name === '宁波仅平台企业')).toBe(false)
     expect(current.length).toBeGreaterThan(removed.length)
+  })
+})
+
+describe('§7.1 差异状态筛选', () => {
+  it('按企业任一差异记录命中,摘要优先级只决定展示状态', () => {
+    const summary = rowOf('multiDiffStatus')
+    expect(summary.difference).toMatchObject({ count: 2, status: 'confirmed_reason' })
+
+    const notQueried = listRosterEnterprises(db, { diffStatus: ['not_queried'] }).rows
+    expect(notQueried.map((row) => row.enterpriseId)).toContain(ids.multiDiffStatus)
+
+    const confirmed = listRosterEnterprises(db, { diffStatus: ['confirmed_reason'] }).rows
+    expect(confirmed.map((row) => row.enterpriseId)).toContain(ids.multiDiffStatus)
+
+    const noDifference = listRosterEnterprises(db, { diffStatus: ['none'] }).rows
+    expect(noDifference.map((row) => row.enterpriseId)).not.toContain(ids.multiDiffStatus)
   })
 })
 

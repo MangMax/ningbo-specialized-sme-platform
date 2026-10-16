@@ -209,6 +209,27 @@ async function clickElementContaining(cdp, sessionId, selector, text) {
   await clickPoint(cdp, sessionId, rect, `${selector} 包含「${text}」`)
 }
 
+async function closeEnterpriseDrawer(cdp, sessionId) {
+  const ready = await waitUntil(cdp, sessionId, `(() => {
+    const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+    return drawer?.getAttribute('data-state') === 'open' && !!drawer.querySelector('button[aria-label="关闭"]');
+  })()`)
+  if (!ready) return { ready: false, closed: false, animationEnd: false }
+
+  await evaluate(cdp, sessionId, `(() => {
+    window.__rl20DrawerCloseFinished = false;
+    window.__rl20DrawerCloseRequested = true;
+    document.querySelector('[data-testid="enterprise-drawer"] button[aria-label="关闭"]')?.click();
+  })()`)
+  const closed = await waitUntil(cdp, sessionId, `(() => {
+    const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+    return !drawer || drawer.getAttribute('data-state') === 'closed';
+  })()`)
+  if (!closed) return { ready, closed: false, animationEnd: false }
+  const animationEnd = await waitUntil(cdp, sessionId, `window.__rl20DrawerCloseFinished || !document.querySelector('[data-testid="enterprise-drawer"]')`)
+  return { ready, closed, animationEnd }
+}
+
 async function setInputValue(cdp, sessionId, selector, value) {
   await evaluate(cdp, sessionId, `(() => {
     const input = document.querySelector(${JSON.stringify(selector)});
@@ -225,9 +246,21 @@ function overflowViolation(m, label) {
     : null
 }
 
+function shadowViolation(m, label) {
+  return m.shadowedTargets.length
+    ? `${label}:内容区仍有阴影 ${JSON.stringify(m.shadowedTargets)}`
+    : null
+}
+
 async function installMotionAndFetchGate(cdp, sessionId) {
   await evaluate(cdp, sessionId, `(() => {
     window.__rl20Motion = { control: false, table: false, drawer: false };
+    window.__rl20DrawerCloseClicks = 0;
+    window.__rl20DrawerCloseRequested = false;
+    window.__rl20DrawerCloseFinished = false;
+    document.addEventListener('click', (event) => {
+      if (event.target instanceof Element && event.target.closest('[data-testid="enterprise-drawer"] button[aria-label="关闭"]')) window.__rl20DrawerCloseClicks++;
+    }, true);
     document.addEventListener('transitionrun', (event) => {
       if (!['transform', 'translate', 'scale', 'rotate'].includes(event.propertyName)) return;
       if (event.target.matches('button,[role="tab"],[data-slot="select-trigger"]')) window.__rl20Motion.control = true;
@@ -235,6 +268,12 @@ async function installMotionAndFetchGate(cdp, sessionId) {
     }, true);
     document.addEventListener('animationstart', (event) => {
       if (event.target.matches('[data-testid="enterprise-drawer"]')) window.__rl20Motion.drawer = true;
+    }, true);
+    document.addEventListener('animationend', (event) => {
+      if (event.target.matches('[data-testid="enterprise-drawer"]') && window.__rl20DrawerCloseRequested) {
+        window.__rl20DrawerCloseFinished = true;
+        window.__rl20DrawerCloseRequested = false;
+      }
     }, true);
     if (!window.__rl20NativeFetch) {
       window.__rl20NativeFetch = window.fetch.bind(window);
@@ -287,9 +326,18 @@ async function verifyLedgerSearchLoading(cdp) {
   const { targetId, sessionId } = page
   try {
     await installMotionAndFetchGate(cdp, sessionId)
-    const name = await evaluate(cdp, sessionId, `document.querySelector('tbody tr button')?.textContent?.trim() ?? ''`)
+    const name = await evaluate(cdp, sessionId, `(() => {
+      const names = [...document.querySelectorAll('tbody tr button')].map((el) => (el.textContent ?? '').trim()).filter(Boolean);
+      return names.at(-1) ?? '';
+    })()`)
     if (!name) {
       bad('企业列表 · 搜索:初始结果没有可搜索的企业名称')
+      return
+    }
+
+    const drawerClose = await closeEnterpriseDrawer(cdp, sessionId)
+    if (!drawerClose.ready || !drawerClose.closed || !drawerClose.animationEnd) {
+      bad(`企业列表 · 搜索:筛选前没有完成抽屉关闭动画 ${JSON.stringify(drawerClose)}`)
       return
     }
 
@@ -299,9 +347,48 @@ async function verifyLedgerSearchLoading(cdp) {
     if (!searchLoading) bad('企业列表 · 搜索:请求期间没有可见加载状态')
     else ok('企业列表 · 搜索:请求期间显示加载状态')
     await finishFetchGate(cdp, sessionId)
-    const searchIdle = await waitUntil(cdp, sessionId, `(() => !document.querySelector('[data-testid="ledger-loading-status"]')?.textContent?.includes('正在') && [...document.querySelectorAll('tbody tr button')].some((el) => (el.textContent ?? '').trim() === ${JSON.stringify(name)}))()`)
-    if (!searchIdle) bad('企业列表 · 搜索:匹配结果未在释放请求后渲染')
-    else ok(`企业列表 · 搜索:名称筛选返回 ${JSON.stringify(name)}`)
+    const searchIdle = await waitUntil(cdp, sessionId, `(() => {
+      const status = document.querySelector('[data-testid="ledger-loading-status"]');
+      const rows = [...document.querySelectorAll('tbody tr')];
+      const match = rows.find((tr) => tr.querySelector('button')?.textContent?.trim() === ${JSON.stringify(name)});
+      const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+      const title = drawer?.querySelector('h2')?.textContent?.trim();
+      return !(status?.textContent ?? '').includes('正在') && rows.length === 1 && !!match &&
+        match.getAttribute('aria-current') === 'true' && drawer?.getAttribute('data-state') === 'open' && title === ${JSON.stringify(name)};
+    })()`)
+    if (!searchIdle) {
+      const state = await evaluate(cdp, sessionId, `(() => ({
+        input: document.querySelector('input[aria-label*="企业名称"]')?.value,
+        status: document.querySelector('[data-testid="ledger-loading-status"]')?.textContent,
+        rows: [...document.querySelectorAll('tbody tr')].map((tr) => ({ name: tr.querySelector('button')?.textContent?.trim(), selected: tr.getAttribute('aria-current') })),
+        drawer: (() => { const el = document.querySelector('[data-testid="enterprise-drawer"]'); return el && { state: el.getAttribute('data-state'), title: el.querySelector('h2')?.textContent?.trim() }; })(),
+        url: location.href,
+      }))()`)
+      bad(`企业列表 · 搜索:当前结果落定后,选中行与抽屉没有同步到唯一匹配企业 ${JSON.stringify(state)}`)
+    }
+    else ok(`企业列表 · 搜索:结果落定后抽屉同步到 ${JSON.stringify(name)}`)
+
+    const emptyQuery = 'RL20无匹配企业校验'
+    await setInputValue(cdp, sessionId, 'input[aria-label*="企业名称"]', emptyQuery)
+    const emptyIdle = await waitUntil(cdp, sessionId, `(() => {
+      const status = document.querySelector('[data-testid="ledger-loading-status"]');
+      const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+      return !(status?.textContent ?? '').includes('正在') &&
+        ![...document.querySelectorAll('tbody tr button[title]')].length &&
+        ![...document.querySelectorAll('tbody tr[aria-current="true"]')].length &&
+        (!drawer || drawer.getAttribute('data-state') === 'closed');
+    })()`)
+    if (!emptyIdle) {
+      const state = await evaluate(cdp, sessionId, `(() => ({
+        input: document.querySelector('input[aria-label*="企业名称"]')?.value,
+        status: document.querySelector('[data-testid="ledger-loading-status"]')?.textContent,
+        rows: [...document.querySelectorAll('tbody tr')].map((tr) => ({ name: tr.querySelector('button')?.textContent?.trim(), selected: tr.getAttribute('aria-current') })),
+        drawer: (() => { const el = document.querySelector('[data-testid="enterprise-drawer"]'); return el && { state: el.getAttribute('data-state'), title: el.querySelector('h2')?.textContent?.trim() }; })(),
+        url: location.href,
+      }))()`)
+      bad(`企业列表 · 搜索:空结果落定后没有清除抽屉选择 ${JSON.stringify(state)}`)
+    }
+    else ok('企业列表 · 搜索:空结果落定后清除选中行与抽屉')
   } finally {
     await finishFetchGate(cdp, sessionId).catch(() => {})
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
@@ -380,12 +467,17 @@ async function verifyLedgerLoadingAndDrawer(cdp) {
 
     // 翻页:同一张表应显示与筛选、排序相同的加载提示。
     // 右侧抽屉按方向卡覆盖表格,先收起它,否则分页按钮被面板覆盖会点到后面的详情链接。
-    await evaluate(cdp, sessionId, `document.querySelector('[data-testid="enterprise-drawer"] button[aria-label="关闭"]')?.click()`)
-    const drawerClosed = await waitUntil(cdp, sessionId, `(() => {
+    const drawerReadyForPaging = await waitUntil(cdp, sessionId, `(() => {
       const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
-      return !drawer || drawer.getAttribute('data-state') === 'closed';
+      return drawer?.getAttribute('data-state') === 'open' && !!drawer.querySelector('button[aria-label="关闭"]');
     })()`)
-    if (!drawerClosed) bad('企业列表 · 翻页:翻页前无法收起覆盖分页条的侧边抽屉')
+    if (!drawerReadyForPaging) bad('企业列表 · 翻页:排序结果落定后没有可收起的侧边抽屉')
+    const drawerClose = await closeEnterpriseDrawer(cdp, sessionId)
+    if (!drawerClose.ready || !drawerClose.closed || !drawerClose.animationEnd) {
+      bad(`企业列表 · 翻页:翻页前无法收起侧边抽屉并等到退出动画结束 ${JSON.stringify(drawerClose)}`)
+      return
+    }
+    ok('企业列表 · 翻页:抽屉退出动画 animationend 后再触发分页')
     await startFetchGate(cdp, sessionId, '/api/roster/enterprises?')
     await clickSelector(cdp, sessionId, '[data-slot="pagination-next"]')
     const pageLoading = await waitForLoadingEvidence(cdp, sessionId, 'ledger')
@@ -413,12 +505,15 @@ async function verifyLedgerLoadingAndDrawer(cdp) {
     }
 
     // 抽屉:关上后从行内重新打开,以 animationstart 而不是固定等待时长确认滑入动画。
-    await evaluate(cdp, sessionId, `document.querySelector('[data-testid="enterprise-drawer"] button[aria-label="关闭"]')?.click()`)
-    const closed = await waitUntil(cdp, sessionId, `(() => {
+    const drawerReadyForMotion = await waitUntil(cdp, sessionId, `(() => {
       const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
-      return !drawer || drawer.getAttribute('data-state') === 'closed';
+      return drawer?.getAttribute('data-state') === 'open' && !!drawer.querySelector('button[aria-label="关闭"]');
     })()`)
-    if (!closed) bad('企业列表 · 抽屉:关闭动作没有完成')
+    if (!drawerReadyForMotion) bad('企业列表 · 抽屉:翻页结果落定后没有抽屉可供关闭与重开')
+    const drawerCloseAfterPaging = await closeEnterpriseDrawer(cdp, sessionId)
+    if (!drawerCloseAfterPaging.ready || !drawerCloseAfterPaging.closed || !drawerCloseAfterPaging.animationEnd) {
+      bad(`企业列表 · 抽屉:退出动画未完成 ${JSON.stringify(drawerCloseAfterPaging)}`)
+    }
     else {
       await evaluate(cdp, sessionId, `document.querySelector('tbody tr button')?.click()`)
       const drawerMotion = await waitUntil(cdp, sessionId, 'window.__rl20Motion.drawer')
@@ -553,8 +648,8 @@ const MEASURE = `(() => {
   const de = document.documentElement;
   const root = document.querySelector('.ledger-page, .comparison-page');
   const shadowTargets = [
-    ...(root?.querySelectorAll('[data-slot="card"], [data-slot="button"], [data-slot="select-trigger"]') ?? []),
-    ...document.querySelectorAll('[data-testid="enterprise-drawer"]'),
+    ...(root?.querySelectorAll('[data-slot="card"], [data-slot="button"], [data-slot="input"], [data-slot="textarea"], [data-slot="switch"], [data-slot="tabs-trigger"], [data-slot="select-trigger"]') ?? []),
+    ...document.querySelectorAll('[data-testid="enterprise-drawer"], [data-slot="dialog-content"], [data-slot="select-content"], [data-slot="dropdown-menu-content"]'),
   ];
   const hasVisibleShadow = (el) => {
     const value = getComputedStyle(el).boxShadow;
@@ -652,8 +747,9 @@ async function main() {
         }
         if (m.tableCount !== 1) bad(`${label}:应有且只有一个表格,实测 ${m.tableCount}`)
         else ok(`${label}:唯一表格已渲染`)
-        if (m.shadowedTargets.length) bad(`${label}:内容区仍有阴影 ${JSON.stringify(m.shadowedTargets)}`)
-        else ok(`${label}:内容区卡片、控件与抽屉均无阴影`)
+        const shadow = shadowViolation(m, label)
+        if (shadow) bad(shadow)
+        else ok(`${label}:内容区卡片、按钮、输入框、开关、分段、Select触发器与下拉层、抽屉均无阴影`)
         if (!m.searchInput) bad(`${label}:没有搜索入口`)
         else ok(`${label}:搜索入口已渲染`)
         if (!m.loadingStatus) bad(`${label}:没有常驻加载状态容器`)
@@ -690,6 +786,24 @@ async function main() {
     if (!selfCheck) bad('缺陷自检:临时恢复横向溢出后,横溢出断言仍未命中')
     else console.log(`✗ 缺陷自检按预期变红:${selfCheck}`)
     if (selfCheck) ok('缺陷自检:关闭临时 target 后缺陷已复原')
+
+    const shadowBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/comparison`,
+      `(() => {
+        const input = document.querySelector('.comparison-page input[aria-label*="企业名称"]');
+        if (input) input.style.setProperty('transition', 'none', 'important');
+        if (input) input.style.setProperty('box-shadow', 'rgba(0, 0, 0, 0.2) 0px 1px 2px 0px', 'important');
+        if (input) void input.offsetWidth;
+        return { measurement: (${MEASURE}), foundInput: !!input, classes: input?.className, inlineShadow: input?.style.boxShadow, priority: input?.style.getPropertyPriority('box-shadow'), customShadow: input && getComputedStyle(input).getPropertyValue('--tw-shadow'), computedShadow: input && getComputedStyle(input).boxShadow, root: document.querySelector('.comparison-page')?.className };
+      })()`,
+      READY,
+      VIEWPORTS[0],
+    )
+    const shadowSelfCheck = shadowViolation(shadowBroken.measurement, '阴影缺陷自检')
+    if (!shadowSelfCheck) bad(`阴影缺陷自检:临时恢复搜索框阴影后,阴影断言仍未命中 ${JSON.stringify(shadowBroken)}`)
+    else console.log(`✗ 阴影缺陷自检按预期变红:${shadowSelfCheck};注入=${JSON.stringify({ foundInput: shadowBroken.foundInput, computedShadow: shadowBroken.computedShadow })}`)
+    if (shadowSelfCheck) ok('阴影缺陷自检:关闭临时 target 后缺陷已复原')
 
     // ④ 另外两个页面也要有标题(盲测第二轮:这两处仍是空字符串)
     const TITLE_ONLY = [

@@ -153,14 +153,14 @@ const exportUrl = computed(
 </script>
 
 <template>
-  <div class="comparison-page flex min-w-0 flex-col gap-4">
+  <div class="comparison-page flex min-w-0 flex-col gap-2">
     <PageHeader
       class="rise-in"
       title="两侧名录比对"
     >
       <template #actions>
         <div class="flex items-center gap-2">
-          <Switch id="show-curated" v-model="showCurated" />
+          <Switch id="show-curated" v-model="showCurated" class="shadow-none" />
           <Label for="show-curated">显示已核实</Label>
         </div>
         <Button as-child variant="outline" size="sm"
@@ -176,14 +176,14 @@ const exportUrl = computed(
           v-model="q"
           aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"
           placeholder="搜索企业名称、曾用名或统一社会信用代码"
-          class="bg-card h-8 pl-8"
+          class="bg-card h-8 pl-8 shadow-none"
         />
       </div>
       <Select v-model="title">
         <SelectTrigger size="sm" class="bg-card w-full shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap" aria-label="按称号筛选">
           <SelectValue />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent class="shadow-none">
           <SelectItem v-for="code in titles" :key="code" :value="code">{{ TITLES[code] }}</SelectItem>
         </SelectContent>
       </Select>
@@ -191,7 +191,7 @@ const exportUrl = computed(
         <SelectTrigger size="sm" class="bg-card w-full shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap" aria-label="按区县筛选">
           <SelectValue />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent class="shadow-none">
           <SelectItem :value="ALL_DISTRICTS">全部区县</SelectItem>
           <SelectItem v-for="item in districtOptions" :key="item" :value="item">{{ item }}</SelectItem>
         </SelectContent>
@@ -228,19 +228,19 @@ const exportUrl = computed(
       >清除全部</Button>
     </TransitionGroup>
 
-    <Tabs v-model="direction" class="min-w-0 gap-3">
+    <Tabs v-model="direction" class="min-w-0 gap-2">
       <TabsList aria-label="比对方向" class="w-full sm:w-fit">
         <TabsTrigger
           v-for="d in COMPARISON_DIRECTIONS"
           :key="d"
           :value="d"
-          class="sm:min-w-36 active:scale-[0.98] transition-transform duration-150 ease-snap"
+          class="sm:min-w-36 data-[state=active]:shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap"
         >
           {{ COMPARISON_LABELS[d] }}<Badge variant="secondary" class="min-w-[3ch] tabular-nums">{{ count(d) }}</Badge>
         </TabsTrigger>
       </TabsList>
-      <TabsContent :value="direction" class="flex min-w-0 flex-col gap-3">
-            <div class="relative h-6 shrink-0" aria-live="polite" data-testid="comparison-loading-status">
+      <TabsContent :value="direction" class="flex min-w-0 flex-col gap-2">
+            <div class="relative h-5 shrink-0" aria-live="polite" data-testid="comparison-loading-status">
               <span v-if="isLoading" class="text-muted-foreground absolute top-0.5 left-0 text-[13px]">正在搜索与加载比对结果…</span>
               <span v-else class="text-muted-foreground absolute top-0.5 left-0 text-[13px] tabular-nums">共 {{ data?.total ?? 0 }} 条</span>
               <span v-if="isLoading" class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
@@ -264,7 +264,7 @@ const exportUrl = computed(
                     tabindex="0"
                     role="region"
                     aria-label="比对结果表格(可横向滚动)"
-                    class="h-[max(320px,calc(100dvh-29rem))] overflow-auto [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-1.5 [&_[data-slot=table-container]]:overflow-visible"
+                    class="h-[max(320px,calc(100dvh-24rem))] overflow-auto [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-1.5 [&_[data-slot=table-container]]:overflow-visible"
                     :aria-busy="isLoading"
                   >
                   <Empty v-if="!isLoading && !error && !rows.length" class="h-full">
@@ -312,7 +312,7 @@ const exportUrl = computed(
                         v-for="row in rows"
                         v-else
                         :key="`${row.enterpriseId}-${row.titleCode}-${row.direction}`"
-                        class="h-11 [&>td]:py-1.5"
+                        class="h-9 [&>td]:py-1"
                       >
                         <TableCell class="font-medium">
                           <div class="truncate">
@@ -361,23 +361,19 @@ const exportUrl = computed(
                     </TableBody>
                   </Table>
                   </div>
-                  <!-- 边缘阴影(不是不透明遮罩):该侧还有内容时才出现。
-                       两轮评审的教训 —— 用 `from-card` 铺到不透明会(a)看起来像硬遮罩、
-                       (b)在滚动条/卡边处留 1px 接缝、(c)暗色下压出一条更深的色带。
-                       改成**半透明阴影**(永远不到不透明),并只覆盖**表头以下**的数据区
-                       (`top-9`),绝不会给表头文字上色。`pointer-events-none` 不吃事件。 -->
+                  <!-- 用窄边线提示表格容器内仍可横向滚动，不覆盖或淡化数据文字。 -->
                   <div
                     v-show="edges.right"
                     data-testid="scroll-fade-right"
                     aria-hidden="true"
-                    class="from-foreground/14 pointer-events-none absolute top-9 z-10 w-8 bg-gradient-to-l to-transparent dark:from-black/40"
+                    class="pointer-events-none absolute top-9 z-10 w-px bg-border"
                     :style="{ right: `${bars.vertical}px`, bottom: `${bars.horizontal}px` }"
                   />
                   <div
                     v-show="edges.left"
                     data-testid="scroll-fade-left"
                     aria-hidden="true"
-                    class="from-foreground/14 pointer-events-none absolute top-9 left-0 z-10 w-8 bg-gradient-to-r to-transparent dark:from-black/40"
+                    class="pointer-events-none absolute top-9 left-0 z-10 w-px bg-border"
                     :style="{ bottom: `${bars.horizontal}px` }"
                   />
                 </div>
@@ -413,6 +409,11 @@ const exportUrl = computed(
 </template>
 
 <style scoped>
+.comparison-page :deep(h1) {
+  font-size: 1rem;
+  line-height: 1.5rem;
+}
+
 .comparison-page :deep([data-slot='button']) {
   box-shadow: none;
 }

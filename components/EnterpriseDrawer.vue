@@ -395,10 +395,13 @@ function eventSuffix(item: TimelineItem): string {
                   <span class="text-[13px] leading-5">{{ step.v }}</span>
                 </li>
               </ol>
-              <div v-if="d.reasonNote || d.measureNote" class="text-muted-foreground mt-2 space-y-1 border-l pl-2 text-[13px] leading-5">
-                <p v-if="d.reasonNote"><span class="font-medium">依据原文</span> {{ d.reasonNote }}</p>
-                <p v-if="d.measureNote"><span class="font-medium">措施原文</span> {{ d.measureNote }}</p>
-              </div>
+              <details v-if="d.reasonNote || d.measureNote" class="text-muted-foreground mt-2 border-l pl-2 text-[13px] leading-5">
+                <summary class="cursor-pointer font-medium">原始说明</summary>
+                <div class="mt-1 space-y-1">
+                  <p v-if="d.reasonNote"><span class="font-medium">原因</span> {{ d.reasonNote }}</p>
+                  <p v-if="d.measureNote"><span class="font-medium">措施</span> {{ d.measureNote }}</p>
+                </div>
+              </details>
             </div>
           </template>
         </div>
