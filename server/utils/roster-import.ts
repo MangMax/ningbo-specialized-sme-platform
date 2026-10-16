@@ -172,21 +172,72 @@ interface ResolvedEnterprise {
 /** 按身份规则定位企业的入参（`name` / `uscc` 至少给一个；`uscc` 空串等同没给）。 */
 type EnterpriseSpec = { name?: string | null; uscc?: string | null }
 
-/** 按统代定位企业（**唯一**的身份键之一；重名候选与归并读侧共用这一份）。 */
+/**
+ * 定位企业时要取的列 —— **只有**这四列（{@link ResolvedEnterprise} 的形状）。
+ *
+ * 只取这四列是有意的（RL-18）：`enterprise` 表还有 `district` / `quality_flags` 等列，
+ * 而按身份键定位一行用不到它们。
+ */
+const enterpriseColumns = {
+  id: schema.enterprise.id,
+  name: schema.enterprise.name,
+  nameNorm: schema.enterprise.nameNorm,
+  usccNorm: schema.enterprise.usccNorm,
+}
+
+/**
+ * 按统代定位企业（**唯一**的身份键之一；重名候选与归并读侧共用这一份）。
+ *
+ * RL-18：**按键定位** —— 谓词进 `WHERE`、命中 `enterprise_uscc_norm_uq`（唯一索引）。
+ * 以前是 `select().all().find(...)`，即每次调用都整表读进内存再线性找；而这条路径是
+ * **写入阶段每条平台关系**都要走一次的（`enterpriseByExactUscc`），企业表达万行时
+ * 单批就是分钟级 —— 实测对比见契约 §3.1c。
+ */
 export function findEnterpriseByUscc(db: Executor, usccNorm: string): ResolvedEnterprise | null {
-  const row = db.select().from(schema.enterprise).all().find((e) => e.usccNorm === usccNorm)
-  return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+  return db
+    .select(enterpriseColumns)
+    .from(schema.enterprise)
+    .where(eq(schema.enterprise.usccNorm, usccNorm))
+    .get() ?? null
 }
 
-/** 按行 id 定位企业（归并/候选在写入阶段解析真 id 时用）。 */
+/** 按行 id 定位企业（归并/候选在写入阶段解析真 id 时用）—— RL-18：命中主键。 */
 export function findEnterpriseById(db: Executor, id: number): ResolvedEnterprise | null {
-  const row = db.select().from(schema.enterprise).all().find((e) => e.id === id)
-  return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+  return db
+    .select(enterpriseColumns)
+    .from(schema.enterprise)
+    .where(eq(schema.enterprise.id, id))
+    .get() ?? null
 }
 
+/**
+ * 按归一化名定位企业 —— RL-18：命中 `enterprise_name_norm_idx`。
+ *
+ * 这条索引**不唯一**（同名多主体正是本模型要如实保留的），所以命中可能不止一行。
+ * 取「第一行」的口径与改前一致：`.get()` 与原来的 `.all().find()` 都是**按 rowid 升序的第一行**
+ * （全表扫描本就是 rowid 序；走索引时索引项是 `(name_norm, rowid)` 序，同一 `name_norm` 内
+ * 仍是 rowid 序）。
+ */
 function findEnterpriseByNorm(db: Executor, nameNorm: string): ResolvedEnterprise | null {
-  const row = db.select().from(schema.enterprise).all().find((e) => e.nameNorm === nameNorm)
-  return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+  return db
+    .select(enterpriseColumns)
+    .from(schema.enterprise)
+    .where(eq(schema.enterprise.nameNorm, nameNorm))
+    .get() ?? null
+}
+
+/**
+ * **全部**同名行（`name_norm` 相同）—— 不论它有没有统代。重名候选的判据基础。
+ *
+ * RL-18：谓词进 `WHERE`（命中 `enterprise_name_norm_idx`）。返回的是**同一个集合**，
+ * 且仍是 rowid 升序（重名候选的先后顺序因此不变）。
+ */
+function findEnterprisesByNorm(db: Executor, nameNorm: string): ResolvedEnterprise[] {
+  return db
+    .select(enterpriseColumns)
+    .from(schema.enterprise)
+    .where(eq(schema.enterprise.nameNorm, nameNorm))
+    .all()
 }
 
 /**
@@ -201,16 +252,6 @@ function findEnterpriseByIdentity(db: Executor, spec: EnterpriseSpec): ResolvedE
   if (uscc) return findEnterpriseByUscc(db, uscc)
   const name = optionalString(spec.name)
   return name ? findEnterpriseByNorm(db, normalizeName(name)) : null
-}
-
-/** **全部**同名行（`name_norm` 相同）—— 不论它有没有统代。重名候选的判据基础。 */
-function findEnterprisesByNorm(db: Executor, nameNorm: string): ResolvedEnterprise[] {
-  return db
-    .select()
-    .from(schema.enterprise)
-    .all()
-    .filter((e) => e.nameNorm === nameNorm)
-    .map((e) => ({ id: e.id, name: e.name, nameNorm: e.nameNorm, usccNorm: e.usccNorm }))
 }
 
 /**
@@ -1984,7 +2025,7 @@ function planMerge(
   const fromSpec = { name: fromName, uscc: null }
   const fromKnown =
     fromRaw != null
-      ? db.select().from(schema.enterprise).all().some((e) => e.id === fromRaw)
+      ? findEnterpriseById(db, fromRaw) != null
       : enterpriseKnown(db, pending, fromSpec)
   if (!fromKnown) {
     push({ item: failure('merge', ref, 'merge_source_not_found', `被并企业不存在：${fromRaw ?? fromName}`, 'fromEnterpriseId'), action: 'skip', review: false })
@@ -2067,10 +2108,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   const into = findEnterpriseByUscc(tx, intoUscc)
   const fromRaw = optionalInt(merge.fromEnterpriseId)
   const from = fromRaw != null
-    ? (() => {
-        const row = tx.select().from(schema.enterprise).all().find((e) => e.id === fromRaw)
-        return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
-      })()
+    ? findEnterpriseById(tx, fromRaw)
     : findEnterpriseByNorm(tx, normalizeName(optionalString(merge.fromEnterpriseName)!))
   if (!from) return failure('merge', ref0, 'merge_source_not_found', '被并企业在写入阶段不存在', 'fromEnterpriseId')
   if (!into) return failure('merge', ref0, 'merge_target_not_found', '规范行在写入阶段不存在', 'intoUscc')
@@ -2508,7 +2546,7 @@ export function readMergeLineage(db: Db, idempotencyKey: string, fromEnterpriseI
 
 /** 供测试/调用方按 id 直接取企业（验证归并后只剩规范行）。 */
 export function enterpriseExists(db: Db, id: number): boolean {
-  return db.select().from(schema.enterprise).all().some((e) => e.id === id)
+  return findEnterpriseById(db, id) != null
 }
 
 /** 归并后按现名或曾用名搜索命中同一企业（契约 §5.1 的搜索口径：现名 + **已确认**曾用名）。 */
