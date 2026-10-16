@@ -25,7 +25,7 @@ export interface ListEnterprisesInput {
   /** 名称/曾用名关键词（走契约 §5 搜索口径：现名 + **已确认**曾用名）。 */
   q?: string
   /** 称号过滤（等值）。 */
-  title?: string
+  title?: string | string[]
   district?: string
   rosterState?: 'current' | 'removed_platform_only'
   /** 首次正式认定年份(多值,不同于事件年份)。 */
@@ -55,7 +55,7 @@ function pageOf(input: { page?: number; pageSize?: number }): { page: number; pa
 export function listEnterprises(db: Db, input: ListEnterprisesInput = {}): ListEnterprisesResult {
   return listRosterEnterprises(db, {
     q: input.q,
-    title: input.title ? [input.title] : undefined,
+    title: input.title == null ? undefined : Array.isArray(input.title) ? input.title : [input.title],
     district: input.district,
     rosterState: input.rosterState,
     firstYear: input.firstYear,

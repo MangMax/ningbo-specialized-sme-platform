@@ -33,8 +33,11 @@ defineRouteMeta({
       {
         name: 'firstYear',
         in: 'query',
-        schema: { type: 'string' },
-        description: '该企业 × 称号的最早正式认定年份,多值；按 `decidedYear ?? year` 计算，与事件年份 `year` 不同。',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'integer' } },
+        description:
+          '该企业 × 称号的最早正式认定年份,逗号分隔多值；也接受重复参数。按 `decidedYear ?? year` 计算，与事件年份 `year` 不同。',
       },
       {
         name: 'firstStatus',

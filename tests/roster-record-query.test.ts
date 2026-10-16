@@ -159,6 +159,7 @@ let recordsRouteMeta: {
       style?: string
       explode?: boolean
       schema?: { type?: string; items?: { type?: string; enum?: string[] } }
+      description?: string
     }>
     responses?: Record<number, { description?: string }>
   }
@@ -219,6 +220,20 @@ describe('通用记录查询的生命周期投影', () => {
       explode: false,
       schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
     })
+  })
+
+  it('首次认定年份在记录、企业总表和导出 OpenAPI 中声明为整数数组', () => {
+    for (const routeMeta of [recordsRouteMeta, rosterEnterprisesRouteMeta, rosterExportRouteMeta]) {
+      const parameter = routeMeta?.openAPI?.parameters?.find((item) => item.name === 'firstYear')
+
+      expect(parameter).toMatchObject({
+        in: 'query',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'integer' } },
+      })
+      expect(parameter?.description).toMatch(/逗号分隔多值/)
+    }
   })
 
   it('企业总表 OpenAPI 将 firstStatus 声明为逗号分隔的枚举数组', () => {
@@ -437,7 +452,7 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
   it('list_enterprises MCP 与 REST 返回同一完整首次认定读模型', async () => {
     routeQuery = {
       q: '宁波重授旧名有限公司',
-      title: 'specialized_sme',
+      title: 'specialized_sme,innovative_sme',
       firstYear: '2021',
       firstStatus: 'confirmed',
       pageSize: '1',
@@ -445,13 +460,16 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
     const rest = rosterEnterprisesHandler({})
     const mcp = await listEnterprisesTool.handler({
       q: '宁波重授旧名有限公司',
-      title: 'specialized_sme',
+      title: ['specialized_sme', 'innovative_sme'],
       firstYear: [2021],
       firstStatus: ['confirmed'],
       pageSize: 1,
     })
 
     expect(mcp).toEqual(rest)
+    expect(listEnterprisesTool.inputSchema.title!.safeParse('specialized_sme').success).toBe(true)
+    expect(listEnterprisesTool.inputSchema.title!.safeParse(['specialized_sme', 'innovative_sme']).success).toBe(true)
+    expect(listEnterprisesTool.inputSchema.title!.safeParse(['unknown_title']).success).toBe(false)
   })
 
   it('共享解析保留 year 与 dueYear 的独立语义，并拒绝多值 dueYear', () => {

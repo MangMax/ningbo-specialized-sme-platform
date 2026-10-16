@@ -5,6 +5,8 @@ import { TITLE_ORDER } from '~~/lib/labels'
 import { FIRST_RECOGNITION_STATUS_VALUES } from '~~/lib/roster/first-recognition'
 import { listEnterprises } from '../../utils/mcp-roster'
 
+const titleCodeSchema = z.enum(TITLE_ORDER as [string, ...string[]])
+
 /**
  * `list_enterprises` —— 跨称号去重的企业总表（RL-11，契约 §9；读，不鉴权）。
  *
@@ -32,7 +34,10 @@ export default defineMcpTool({
   ].join('\n'),
   inputSchema: {
     q: z.string().optional().describe('名称 / 曾用名关键词'),
-    title: z.enum(TITLE_ORDER as [string, ...string[]]).optional().describe('称号过滤'),
+    title: z
+      .union([titleCodeSchema, z.array(titleCodeSchema)])
+      .optional()
+      .describe('称号过滤；接受单个称号或称号数组'),
     district: z.string().optional().describe('属地过滤'),
     rosterState: z.enum(['current', 'removed_platform_only']).optional(),
     firstYear: z.array(z.number().int().positive()).optional().describe('首次正式认定年份，可多值'),

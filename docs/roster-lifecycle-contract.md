@@ -1730,7 +1730,7 @@ POST /api/roster/evidence/pages
 |---|---|---|---|
 | `save_roster_batch` | **写**(需 `NUXT_MCP_TOKEN`) | `{ idempotencyKey, sourceKind, sourceIdentity, sourceSha256?, payload }` | 等价 `POST /api/roster/import/commit`;返回 `{ batchId, status, summary, items }` |
 | `preflight_roster_batch` | 读(只读预检) | 同上 | 等价 `POST …/preflight` |
-| `list_enterprises` | 读 | `{ q?, title?, firstYear?, firstStatus?, page?, pageSize? }` | 等价 `GET /api/roster/enterprises`；首次认定筛选按同一个企业×称号匹配 |
+| `list_enterprises` | 读 | `{ q?, title?: string \| string[], firstYear?, firstStatus?, page?, pageSize? }` | 等价 `GET /api/roster/enterprises`；`title` 接受单个称号或称号数组；首次认定筛选按同一个企业×称号匹配 |
 | `list_differences` | 读 | `{ title?, direction?, status?, page?, pageSize? }` | 等价 `GET /api/roster/differences` |
 | `query_records` | 读 | `{ title?, source?, district?, eventType?, year?, firstYear?, firstStatus?, dueYear?, q?, flags?, page?, pageSize? }` | 与 `GET /api/records` 共用参数解析和企业×称号读模型；`year` 是事件年份，`firstYear` 是首次认定年份，`firstStatus` 与 §7.5 判据一致，`dueYear` 是到期年份 |
 | `get_enterprise_detail` | 读 | `{ enterpriseId }` | 与 `GET /api/roster/enterprises/:id` 共用详情读模型 |
