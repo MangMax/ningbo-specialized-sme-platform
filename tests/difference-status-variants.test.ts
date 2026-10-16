@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { badgeVariants } from '../components/ui/badge'
+import { cn } from '../lib/utils'
 import {
   DIFFERENCE_STATUSES,
   DIFFERENCE_STATUS_VARIANTS,
@@ -52,10 +54,15 @@ describe('差异六态的单一出处', () => {
 })
 
 describe('六态两两可区分', () => {
-  /** 六态各自**真实渲染出来**的 class 串。 */
-  const rendered = Object.fromEntries(
-    STATES.map((code) => [code, badgeVariants({ variant: DIFFERENCE_STATUS_VARIANTS[code] as never })]),
-  )
+  /**
+   * 六态各自**真实渲染出来**的 class 串。
+   * 走 `cn(badgeVariants(...))` —— 与 `Badge.vue` 里那行一模一样 —— 而不是只比变体名:
+   * `cn` 是 `twMerge`,会把同族工具类去重("后写的赢")。只比变体名会漏掉
+   * 「调用点又挂了 `class="font-normal"`,把 `solid` 唯一的字重通道吃掉」这种改法。
+   */
+  const render = (code: string) =>
+    cn(badgeVariants({ variant: DIFFERENCE_STATUS_VARIANTS[code] as never }))
+  const rendered = Object.fromEntries(STATES.map((code) => [code, render(code)]))
 
   it('没有两个状态解析出同一串 class', () => {
     const seen = new Map<string, string>()
@@ -70,6 +77,65 @@ describe('六态两两可区分', () => {
   it('六个变体名本身也两两不同(不靠变体以外的 class 凑区别)', () => {
     const variants = Object.values(DIFFERENCE_STATUS_VARIANTS)
     expect(new Set(variants).size).toBe(variants.length)
+  })
+
+  /**
+   * 调用点不许给状态徽章挂 `font-*` / `text-*` 的 class。
+   *
+   * 这条来自一次真实回归:`quiet`(待核实)与 `outline`(无记录)之间**只有字色**这一处
+   * 差别(灰字 vs 深字)。调用点随手挂一个 `class="text-…"` 就会被 `twMerge` 判为同族、
+   * 后写的赢,把唯一的差别抹平 —— 而上面那条「比 class 串」的用例**照样通过**
+   * (它比的是没挂 class 的版本)。所以这里直接看源码,把「调用点别压字重/字色」钉住。
+   */
+  it('调用点不给状态徽章压字重或字色(否则六态会静默糊回去)', () => {
+    for (const file of [
+      'components/RosterDifferenceTable.vue',
+      'components/RosterEnterprisePanel.vue',
+    ]) {
+      const src = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
+      const line = src.split('\n').find((l) => l.includes(':variant="statusVariant('))
+      expect(line, `${file} 里找不到状态徽章那行`).toBeTruthy()
+      expect(line, `${file}:状态徽章不该再挂 font-* / text-* 的 class`).not.toMatch(
+        /class="[^"]*(?:font-|text-)/,
+      )
+    }
+  })
+
+  it('配对通道真的落到了 class 上(不是只在注释里说说)', () => {
+    const has = (code: string, needle: string) => rendered[code]!.includes(needle)
+
+    // 线型通道:未查询是虚线,无记录是实线。
+    expect(has('not_queried', 'border-dashed')).toBe(true)
+    expect(has('no_record', 'border-dashed')).toBe(false)
+
+    // 字色通道:无记录深字,待核实灰字 —— 这一对**只差**这一处。
+    expect(has('no_record', 'text-foreground')).toBe(true)
+    expect(has('needs_review', 'text-muted-foreground')).toBe(true)
+
+    // 底色通道:红 / 浅灰 / 主色三个实底各不相同;另三个没有底色。
+    expect(has('query_failed', 'bg-destructive')).toBe(true)
+    expect(has('confirmed_no_diff', 'bg-secondary')).toBe(true)
+    expect(has('confirmed_reason', 'bg-primary')).toBe(true)
+    for (const code of ['not_queried', 'no_record', 'needs_review']) {
+      expect(rendered[code], `${code} 不该有底色`).toMatch(/bg-transparent|\btext-foreground\b/)
+      expect(rendered[code], `${code} 不该有实底色`).not.toMatch(/bg-(primary|secondary|destructive)\b/)
+    }
+
+    // 逐对复核:六态两两至少差在一处可见通道上。三个通道取**实际 token**,
+    // 而不是笼统的「有底色/没底色」—— 否则 `confirmed_no_diff`(浅灰底)与
+    // `confirmed_reason`(主色底)会被判成同一档,而它们明明是两个颜色。
+    const fill = (cls: string) => cls.match(/bg-(primary|secondary|destructive|tier-\d)\b/)?.[1] ?? 'none'
+    const textTone = (cls: string) => (/text-muted-foreground/.test(cls) ? 'muted' : 'strong')
+    const border = (cls: string) => (/border-dashed/.test(cls) ? 'dashed' : 'solid')
+    const signature = (cls: string) => `${fill(cls)} · ${textTone(cls)} · ${border(cls)}`
+    const signatures = Object.fromEntries(STATES.map((code) => [code, signature(rendered[code]!)]))
+    expect(new Set(Object.values(signatures)).size).toBe(STATES.length)
+    for (const a of STATES) {
+      for (const b of STATES) {
+        if (a >= b) continue
+        expect(signatures[a], `${a} 与 ${b} 的可见通道完全一样`).not.toBe(signatures[b])
+      }
+    }
   })
 
   it('把用户踩过的那两对单独钉住', () => {

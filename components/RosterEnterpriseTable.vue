@@ -56,7 +56,7 @@ const props = defineProps<{
   backQuery: string
 }>()
 
-const emit = defineEmits<{ toggle: [id: number]; retry: [] }>()
+const emit = defineEmits<{ toggle: [id: number] }>()
 
 /** 首次认定 + 下次复核压成一行;`(待核)` 跟着它自己的那个值,不合并成一个笼统标记。 */
 function lifecycleText(row: EnterpriseRow): string {

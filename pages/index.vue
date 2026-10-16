@@ -11,7 +11,8 @@ import {
   Search,
 } from '@lucide/vue'
 import {
-  COMPARISON_LABELS,
+  comparisonDirectionLabel,
+  comparisonDirectionNote,
   DIFFERENCE_REASONS,
   DIFFERENCE_REASON_ORDER,
   DIFFERENCE_STATUSES,
@@ -30,6 +31,7 @@ import {
   ledgerExportLabel,
   ledgerExportUrl,
   ledgerListQuery,
+  filtersForView,
   ledgerStateFromQuery,
   parseLedgerView,
   VIEW_PARAM,
@@ -129,8 +131,9 @@ const DEFAULT_PAGE_SIZE = 25
 
 /** 页面状态 → 地址栏。只写**有值**的东西,免得分享出一串空参数。 */
 function toRouteQuery(): Record<string, string> {
+  // `view` 由 `ledgerListQuery` 自己写(非默认视图才写),这里不再补一次 ——
+  // 补的那行是 no-op,却让人以为「view 由这里负责」。
   const q = ledgerListQuery(view.value, state.value)
-  if (view.value !== 'enterprise') q[VIEW_PARAM] = view.value
   if (page.value > 1) q.page = String(page.value)
   if (pageSize.value !== DEFAULT_PAGE_SIZE) q.pageSize = String(pageSize.value)
   if (view.value === 'enterprise' && expanded.value != null) q.expand = String(expanded.value)
@@ -180,24 +183,9 @@ watch(filterSignature, (next, prev) => {
 /** 视图切换:把该视图用不到的筛选**清掉** —— 留在 URL 里会变成看不见、切回来又突然生效的条件。 */
 function setView(next: LedgerView) {
   if (next === view.value) return
-  const s = { ...state.value }
-  if (next === 'difference') {
-    s.district = ''
-    s.rosterState = ''
-    s.source = []
-    s.eventType = []
-    s.year = []
-  } else if (next === 'title') {
-    s.rosterState = ''
-    s.direction = ''
-    s.status = []
-    s.reason = []
-  } else {
-    s.direction = ''
-    s.status = []
-    s.reason = []
-  }
-  state.value = s
+  // 清哪些、留哪些由 `LEDGER_VIEW_FILTERS` 一处说了算:留一个该视图不发的条件,
+  // 地址栏不体现、用户清不掉,切回来却会生效。
+  state.value = filtersForView(next, state.value)
   view.value = next
   page.value = 1
   expanded.value = null
@@ -297,9 +285,6 @@ const reasonOptions = computed(() =>
 )
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 
-/** `COMPARISON_LABELS` 是 `as const`,按动态字符串取不到 —— 这里放宽成普通字典查一次。 */
-const DIRECTION_LABELS: Record<string, string> = COMPARISON_LABELS
-
 /** 事件 / 年份的可选项来自数据(统计端点),口径与统计页一致。 */
 const { data: stats } = useQuery({
   key: () => ['stats'],
@@ -381,7 +366,7 @@ const activeFilters = computed<ActiveFilter[]>(() => {
       ? [
           {
             key: 'direction',
-            label: `方向 · ${DIRECTION_LABELS[s.direction] ?? s.direction}`,
+            label: `方向 · ${comparisonDirectionLabel(s.direction)}`,
             clear: () => patch('direction', ''),
           },
         ]
@@ -563,8 +548,8 @@ const UNIT = computed(() =>
             aria-label="按差异方向筛选"
           >
             <option value="">两个方向</option>
-            <option value="missing_in_miit">{{ DIRECTION_LABELS.missing_in_miit }}(公布有而平台无)</option>
-            <option value="extra_in_miit">{{ DIRECTION_LABELS.extra_in_miit }}(平台有而公布无)</option>
+            <option value="missing_in_miit">{{ comparisonDirectionLabel('missing_in_miit') }}({{ comparisonDirectionNote('missing_in_miit') }})</option>
+            <option value="extra_in_miit">{{ comparisonDirectionLabel('extra_in_miit') }}({{ comparisonDirectionNote('extra_in_miit') }})</option>
           </select>
           <MultiSelectFilter
             v-model="state.status"

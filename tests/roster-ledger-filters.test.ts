@@ -97,6 +97,28 @@ beforeAll(() => {
   const bing = enterprise('bing', '丙企业有限公司', '91330211AAAAAA0003X', '象山县')
   record(bing, 'innovative_sme', 'miit', [])
 
+  // 甲企业:一条**已确认**曾用名(参与三个视图的搜索)、一条 pending(都不参与)。
+  db.insert(schema.enterpriseAlias)
+    .values({
+      enterpriseId: ids.jia!,
+      name: '甲记工厂',
+      nameNorm: '甲记工厂',
+      sourceKind: 'platform_business',
+      sourceRefId: 1,
+      verificationStatus: 'confirmed',
+    })
+    .run()
+  db.insert(schema.enterpriseAlias)
+    .values({
+      enterpriseId: ids.jia!,
+      name: '甲记老厂',
+      nameNorm: '甲记老厂',
+      sourceKind: 'platform_business',
+      sourceRefId: 2,
+      verificationStatus: 'pending',
+    })
+    .run()
+
   // 丁:连记录都没有 —— 任何记录侧判据都不该命中它。
   enterprise('ding', '丁企业有限公司', '91330211AAAAAA0004X', '海曙区')
 })
@@ -321,23 +343,44 @@ describe('差异查询:仍不认记录侧判据,但认搜索(合并台账的搜�
     expect(onlyJia.total).toBeGreaterThan(0)
     expect(new Set(onlyJia.rows.map((r) => r.name))).toEqual(new Set(['甲企业有限公司']))
 
-    // 未确认的别名不参与(契约 §1.2),确认过的才把这家企业带出来。
-    expect(listRosterDifferences(db, { q: '甲记工厂' }).total).toBe(0)
-    db.insert(schema.enterpriseAlias)
-      .values({
-        enterpriseId: ids.jia!,
-        name: '甲记工厂',
-        nameNorm: '甲记工厂',
-        sourceKind: 'platform_business',
-        sourceRefId: 1,
-        verificationStatus: 'confirmed',
-      })
-      .run()
+    // 已确认的别名把这家企业带出来;`pending` 的不参与(契约 §1.2)。
     expect(new Set(listRosterDifferences(db, { q: '甲记工厂' }).rows.map((r) => r.name))).toEqual(
       new Set(['甲企业有限公司']),
     )
+    expect(listRosterDifferences(db, { q: '甲记老厂' }).total).toBe(0)
 
     // 筛不中任何企业时返回空集,不是退化成不筛。
     expect(listRosterDifferences(db, { q: '不存在的企业' }).total).toBe(0)
+  })
+
+  it('差异也认统代(与总表同一口径)', () => {
+    const byUscc = listRosterDifferences(db, { q: '91330211AAAAAA0001X' })
+    expect(byUscc.total).toBeGreaterThan(0)
+    expect(new Set(byUscc.rows.map((r) => r.name))).toEqual(new Set(['甲企业有限公司']))
+    // 统代子串也认(与 `/api/records` 的 `like %…%` 同口径)。
+    expect(listRosterDifferences(db, { q: 'aaaaaa0002x' }).total).toBeGreaterThan(0)
+  })
+})
+
+describe('搜索口径在两种分组下一致(合并页共用一个搜索框)', () => {
+  it('名称、**已确认**曾用名、统代三者都命中,且两种分组给出同一批企业', () => {
+    const needles = ['甲企业', '甲记工厂', '91330211AAAAAA0001X', 'aaaaaa0001x']
+    for (const needle of needles) {
+      const records = listRecords(db, { q: needle, pageSize: 200 }).rows
+      const fromRecords = [...new Set(records.map((r) => r.name))].sort()
+      const fromRoster = names(listRosterEnterprises(db, { q: needle }).rows)
+      expect(fromRoster, `q=${needle} 两种分组不一致`).toEqual(fromRecords)
+      expect(fromRoster, `q=${needle} 没命中甲企业`).toContain('甲企业有限公司')
+    }
+  })
+
+  it('`pending` 别名在两种分组下都不参与搜索', () => {
+    expect(listRosterEnterprises(db, { q: '甲记老厂' }).rows).toEqual([])
+    expect(listRecords(db, { q: '甲记老厂', pageSize: 200 }).rows).toEqual([])
+  })
+
+  it('统代搜索不是「有统代就都返回」:粘错了照样是 0', () => {
+    expect(listRosterEnterprises(db, { q: '91330211AAAAAAAAAAAA' }).rows).toEqual([])
+    expect(listRecords(db, { q: '91330211AAAAAAAAAAAA', pageSize: 200 }).rows).toEqual([])
   })
 })

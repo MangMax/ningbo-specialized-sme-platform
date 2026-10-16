@@ -86,6 +86,27 @@ function buildWhere(db: Db, params: RecordQuery): SQL | undefined {
     const uscc$ = `%${params.q.trim().toUpperCase()}%`
     const hits: SQL[] = [like(schema.enterprise.usccNorm, uscc$)]
     if (name$) hits.push(like(schema.enterprise.nameNorm, `%${name$}%`))
+    // 曾用名(RL-17 增量):只认 `confirmed` 的别名(契约 §1.2,`pending` 不参与搜索)。
+    // 为什么加在这里:合并后的名录台账三个视图共用**同一个搜索框**,框上写着
+    // 「企业名 / 曾用名 / 统一社会信用代码」。企业粒度那边一直认已确认曾用名,
+    // 这一侧不认的话,同一个关键词在「按企业×称号」下会**静默返回 0 行** ——
+    // 和「失败 ≠ 无记录」是同一类错误:筛选悄悄失效,用户只看到空结果。
+    if (name$) {
+      hits.push(
+        exists(
+          db
+            .select({ hit: sql<number>`1` })
+            .from(schema.enterpriseAlias)
+            .where(
+              and(
+                eq(schema.enterpriseAlias.enterpriseId, schema.enterprise.id),
+                eq(schema.enterpriseAlias.verificationStatus, 'confirmed'),
+                like(schema.enterpriseAlias.nameNorm, `%${name$}%`),
+              ),
+            ),
+        ),
+      )
+    }
     conds.push(or(...hits))
   }
   const flagConds = buildFlagConds(params.flags)
@@ -548,8 +569,15 @@ export function getQuality(db: Db): QualityGroup[] {
 // 导出(不分页)
 // ---------------------------------------------------------------------------
 
-/** 导出行:粒度与列表一致,一行 = 企业 × 称号。 */
+/**
+ * 导出行:粒度与列表一致,一行 = 企业 × 称号。
+ *
+ * `enterpriseId` 是 RL-17 补的:导出的口径行要写「这些行属于多少家**企业**」,
+ * 而「行数」与「企业数」在合并台账里是两个口径。用 id 去重,不用名字 ——
+ * 重名企业(实测存在)按名去重会把两家算成一家。
+ */
 export interface ExportRow {
+  enterpriseId: number
   name: string
   uscc: string | null
   district: string | null
@@ -638,6 +666,8 @@ export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
 
   return Object.values(byKey).map((recs) => {
     const head = minBy(recs, (r) => r.recordId)!
+    // 组内 enterpriseId 恒定(分组键就是它),取 head 的即可。
+    const enterpriseId = head.enterpriseId
     // 区县取组内 record.id 最小且有值者(与列表同一规则)。
     const district = minBy(recs.filter((r) => r.district), (r) => r.recordId)?.district ?? null
     // 该组合下全部事件(保留每条事件所属来源),按 sortKey 排序。
@@ -659,6 +689,7 @@ export function allRecords(db: Db, params: RecordQuery): ExportRow[] {
       .flatMap((e) => (evByEvent[e.id] ?? []).map(formatEvidence))
       .join('; ')
     return {
+      enterpriseId,
       name: head.name,
       uscc: head.uscc,
       district,

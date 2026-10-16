@@ -268,29 +268,40 @@ export const DIFFERENCE_STATUS_ORDER: string[] = [
  * 各写一遍,就会出现两份把 `not_queried` 与 `no_record` 画成同一枚 outline、
  * 把 `needs_review` 与 `query_failed` 一律画红的实现 —— 四态当场糊成两态。
  *
- * ── 六态各自靠哪个通道分开 ──────────────────────────────────────────────
- * 只用 `Badge` 既有的变体(不为这一处新增视觉语言),六态走**四个不同通道**:
+ * ── 怎么挑的这六个 ──────────────────────────────────────────────────────
+ * `Badge` 的基础类**本来就带 `font-medium`**(见 `components/ui/badge/index.ts`),
+ * 所以「字重」不是可用的区分通道:`solid` 与 `outline` 的差别其实只剩**边框浓淡**一处,
+ * 六态会退化成五态半。挑变体时按**实际渲染出来**的差别算,因此取:
  *
- * | 状态 | 变体 | 视觉 | 读作 |
+ * | 状态 | 变体 | 实际差别 | 读作 |
  * |---|---|---|---|
- * | `not_queried` 未查询 | `dashed` | 灰字 + **虚线**框、无底 | 还什么都没做 |
+ * | `not_queried` 未查询 | `dashed` | 灰字 + **虚线**框 | 还什么都没做 |
  * | `query_failed` 查询失败 | `destructive` | **红实底** + 白字 | 出错,要重查 |
- * | `no_record` 无记录 | `outline` | **深字** + 实线框、无底 | 查过了,平台确实没有 |
- * | `needs_review` 待核实 | `solid` | 深字 + **加粗**深色框 | 证据不足,等人裁决 |
+ * | `no_record` 无记录 | `outline` | **深字** + 实线框 | 查过了,平台确实没有 |
+ * | `needs_review` 待核实 | `quiet` | **灰字** + 实线框 | 证据不足,等人裁决 |
  * | `confirmed_no_diff` 已确认无差异 | `secondary` | **浅灰实底** | 已确认,且无事 |
  * | `confirmed_reason` 已确认原因 | `default` | **主色实底** | 已确认,有结论 |
  *
- * 两两之间至少差在:有无底色 / 红与蓝与灰 / 虚线或实线 / 字重与边框深浅 —— 没有一对是
- * 同款。`tests/difference-status-variants.test.ts` 把「六态变体两两不同」钉死。
+ * 四个通道:有无底色(3 有 / 3 无)· 底色色相(红 / 灰 / 主色)· 字色(深 / 灰)·
+ * 线型(虚线 / 实线)。逐对至少差一个,且没有一对只差边框浓淡。
+ *
+ * 为什么留 `dashed` 给「未查询」:它是唯一还没被占用的第六种观感(线型通道),
+ * 语义上也贴 —— 「尚未发生」。代价是 `dashed` 在事件徽章那边表示「入库培育」;
+ * 两处都在**同一列的上下文里**用,不会并排出现,但这条跨语义复用要在评审时知道。
+ * 另一条路是给 `Badge` 新增一个警告色变体,那属于改共享组件的视觉语言,不在这张票里。
+ *
+ * `tests/difference-status-variants.test.ts` 把「六态**解析出来的 class** 两两不同」
+ * 与「调用点不许压字重/字色」两条一起钉住。
  */
 export const DIFFERENCE_STATUS_VARIANTS: Record<string, string> = {
   not_queried: 'dashed',
   query_failed: 'destructive',
   no_record: 'outline',
-  needs_review: 'solid',
+  needs_review: 'quiet',
   confirmed_no_diff: 'secondary',
   confirmed_reason: 'default',
 }
+
 
 /**
  * 差异原因(`difference_reason.reason_code`)→ 中文名。
@@ -417,6 +428,29 @@ export const RECONCILE_VARIANTS: Record<
   on_platform: 'secondary',
   no_platform_record: 'quiet',
   unknown: 'quiet',
+}
+
+/**
+ * 差异方向 → 一句话说明,用在需要写全的地方(徽章、展开面板、下拉选项)。
+ *
+ * 与 `COMPARISON_LABELS` 的分工:`COMPARISON_LABELS` 是**短标签**(应纳未纳 / 应出未出),
+ * 适合列头与 chip;这里是**能独立读懂的自述**(公布有而平台无 / 平台有而公布无),
+ * 适合用户第一次遇到这个词的地方。两处都写死在各自的模板里过,合并时才发现
+ * 「同一个方向的三种说法」散在三个文件 —— 收在这里一份。
+ */
+export const COMPARISON_DIRECTION_NOTES: Record<string, string> = {
+  missing_in_miit: '公布有而平台无',
+  extra_in_miit: '平台有而公布无',
+}
+
+/** 方向代号 → 标签(`COMPARISON_LABELS` 是 `as const`,动态字符串取不到,这里放宽一次)。 */
+export function comparisonDirectionLabel(code: string): string {
+  return (COMPARISON_LABELS as Record<string, string>)[code] ?? code
+}
+
+/** 方向代号 → 一句话说明;不认识的取值原样返回,不吞。 */
+export function comparisonDirectionNote(code: string): string {
+  return COMPARISON_DIRECTION_NOTES[code] ?? code
 }
 
 /** 平台解释的取数来源(页面脚注、行内 tooltip 共用;**同一处定义**,避免两处写法漂移)。 */

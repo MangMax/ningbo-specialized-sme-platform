@@ -3,6 +3,8 @@ import {
   DEFAULT_LEDGER_VIEW,
   EMPTY_LEDGER_STATE,
   LEDGER_VIEWS,
+  filtersForView,
+  LEDGER_VIEW_FILTERS,
   ledgerExportLabel,
   ledgerExportUrl,
   ledgerListQuery,
@@ -121,6 +123,68 @@ describe('ledgerQueryFromState —— 回写地址栏', () => {
       const back = ledgerStateFromQuery(query)
       expect(ledgerQueryFromState(view, back)).toEqual(query)
     }
+  })
+})
+
+describe('LEDGER_VIEW_FILTERS —— 一张表说清「每个视图认哪些筛选」', () => {
+  it('emitted 的每个参数都是该视图声明认的(取数与声明不许漂移)', () => {
+    for (const view of LEDGER_VIEWS) {
+      const emitted = Object.keys(ledgerQueryFromState(view, ALL_ON)).filter((k) => k !== VIEW_PARAM)
+      for (const key of emitted) {
+        expect(LEDGER_VIEW_FILTERS[view], `${view} 发出了没声明的 ${key}`).toContain(key)
+      }
+    }
+  })
+
+  it('两个分组的记录侧判据声明一致(切换分组不换人)', () => {
+    for (const key of ['q', 'title', 'source', 'eventType', 'year']) {
+      expect(LEDGER_VIEW_FILTERS.enterprise).toContain(key)
+      expect(LEDGER_VIEW_FILTERS.title).toContain(key)
+    }
+  })
+
+  it('切换视图清掉该视图用不到的条件(留一个看不见的条件 = 静默筛选)', () => {
+    // 切到「按企业×称号」:属地与总表状态是**企业属性**,这里用不到;
+    // 差异侧的三个判据更不用说。
+    const toTitle = filtersForView('title', ALL_ON)
+    expect(toTitle.district).toBe('')
+    expect(toTitle.rosterState).toBe('')
+    expect(toTitle.direction).toBe('')
+    expect(toTitle.status).toEqual([])
+    expect(toTitle.reason).toEqual([])
+    // 记录侧判据留下(两种分组共用同一批人)。
+    expect(toTitle.q).toBe(ALL_ON.q)
+    expect(toTitle.source).toEqual(ALL_ON.source)
+    expect(toTitle.eventType).toEqual(ALL_ON.eventType)
+    expect(toTitle.year).toEqual(ALL_ON.year)
+
+    // 切到差异:属地 / 总表状态 / 记录侧判据都清掉。
+    const toDiff = filtersForView('difference', ALL_ON)
+    for (const key of ['district', 'rosterState'] as const) expect(toDiff[key]).toBe('')
+    for (const key of ['source', 'eventType', 'year'] as const) expect(toDiff[key]).toEqual([])
+    expect(toDiff.title).toEqual(ALL_ON.title)
+    expect(toDiff.direction).toBe(ALL_ON.direction)
+    expect(toDiff.status).toEqual(ALL_ON.status)
+
+    // 切回企业:差异侧清掉,企业侧与记录侧都在。
+    const toEnt = filtersForView('enterprise', ALL_ON)
+    expect(toEnt.direction).toBe('')
+    expect(toEnt.status).toEqual([])
+    expect(toEnt.reason).toEqual([])
+    expect(toEnt.district).toBe(ALL_ON.district)
+    expect(toEnt.rosterState).toBe(ALL_ON.rosterState)
+  })
+
+  it('**属地只在「按企业」下存在**(刻意的收窄,不是漏了)', () => {
+    /**
+     * 两个读模型对「属地」的口径本来就不同:企业总表按**企业属地**(为空时退回最早记录的
+     * 属地),记录读模型按**每条记录的属地**。实测 13 个区县里有 11 个给出不同的企业集合
+     * —— 同一个 `district` 值在两个分组下不是同一批人。放进共用筛选条就会变成
+     * 「同一个 URL,两种结果」,所以它只归企业分组;切走时由 `filtersForView` 清掉。
+     */
+    expect(LEDGER_VIEW_FILTERS.title).not.toContain('district')
+    expect(LEDGER_VIEW_FILTERS.difference).not.toContain('district')
+    expect(ledgerQueryFromState('title', ALL_ON).district).toBeUndefined()
   })
 })
 

@@ -101,7 +101,7 @@ export interface RosterEnterpriseRow {
 }
 
 export interface RosterEnterpriseFilter {
-  /** 名称 / **已确认**曾用名关键词(契约 §5 搜索口径)。 */
+  /** 名称 / **已确认**曾用名 / 统代关键词(契约 §5 搜索口径;统代为 RL-17 增量)。 */
   q?: string
   /** 称号(多值,命中任一)。 */
   title?: string[]
@@ -417,6 +417,13 @@ function selectRosterEnterprises(
   }
 
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
+  /**
+   * 统代匹配(RL-17 增量)。合并后的台账三个视图共用一个搜索框,框上写着
+   * 「企业名 / 曾用名 / 统一社会信用代码」;`/api/records` 那一侧一直认统代,
+   * 企业粒度不认的话,粘贴一个统代进来会**静默返回 0 家**。
+   * 口径与 `lib/query.ts` 的 `q` 逐字一致:归一化大写后的子串匹配。
+   */
+  const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
   const candidates = profiles.map((profile) => ({
     profile,
     aliasNames: [...(confirmedAliases.get(profile.enterprise.id) ?? [])].sort(),
@@ -428,10 +435,12 @@ function selectRosterEnterprises(
       if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return false
       if (filter.district && effectiveDistrict(profile) !== filter.district) return false
       if (!matchesRecordFilters(profile, filter)) return false
-      if (needle) {
+      if (needle || usccNeedle) {
         const hit =
-          normalizeName(profile.enterprise.name).includes(needle) ||
-          aliasNames.some((alias) => normalizeName(alias).includes(needle))
+          (needle != null && normalizeName(profile.enterprise.name).includes(needle)) ||
+          (needle != null && aliasNames.some((alias) => normalizeName(alias).includes(needle))) ||
+          (usccNeedle != null &&
+            (profile.enterprise.usccNorm ?? '').toUpperCase().includes(usccNeedle))
         if (!hit) return false
       }
       return true
@@ -824,11 +833,12 @@ export interface RosterDifferenceFilter {
   status?: string[]
   reason?: string[]
   /**
-   * 企业名称 / **已确认**曾用名关键词(RL-17 增量)。
+   * 企业名称 / **已确认**曾用名 / 统代关键词(RL-17 增量)。
    *
    * 合并后台账只有一个搜索框,三个视图共用。原来总表的搜索在两个页签间共享,
    * 但差异查询根本不读 `q` —— 切到「差异与原因」再搜,结果是**静默不筛**,
-   * 看到的是没过滤的列表。这里补上,口径与总表逐字一致(`normalizeName` + 仅 `confirmed` 别名)。
+   * 看到的是没过滤的列表。这里补上,口径与总表逐字一致
+   * (`normalizeName` + 仅 `confirmed` 别名 + 统代子串)。
    */
   q?: string
   page?: number
@@ -862,6 +872,7 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
     confirmedAliases.set(alias.enterpriseId, list)
   }
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
+  const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
 
   const rows = differenceRows
     .filter((row) => {
@@ -869,12 +880,14 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
       if (filter.direction?.length && !filter.direction.includes(row.direction)) return false
       if (filter.status?.length && !filter.status.includes(row.status)) return false
       if (filter.reason?.length && !(row.reasonCode != null && filter.reason.includes(row.reasonCode))) return false
-      if (needle) {
+      if (needle || usccNeedle) {
         const hit =
-          normalizeName(row.name).includes(needle) ||
-          (confirmedAliases.get(row.enterpriseId) ?? []).some((alias) =>
-            normalizeName(alias).includes(needle),
-          )
+          (needle != null && normalizeName(row.name).includes(needle)) ||
+          (needle != null &&
+            (confirmedAliases.get(row.enterpriseId) ?? []).some((alias) =>
+              normalizeName(alias).includes(needle),
+            )) ||
+          (usccNeedle != null && (row.uscc ?? '').toUpperCase().includes(usccNeedle))
         if (!hit) return false
       }
       return true

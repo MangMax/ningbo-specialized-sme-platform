@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  COMPARISON_LABELS,
+  comparisonDirectionLabel,
   DIFFERENCE_MEASURES,
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
@@ -55,9 +55,6 @@ export interface DifferenceRow {
 }
 
 defineProps<{ rows: DifferenceRow[]; loading: boolean; hasError: boolean }>()
-
-/** `COMPARISON_LABELS` 是 `as const`,按动态字符串取不到 —— 这里放宽成普通字典查一次。 */
-const DIRECTION_LABELS: Record<string, string> = COMPARISON_LABELS
 
 /**
  * 差异状态徽章:六态的颜色**只从 `DIFFERENCE_STATUS_VARIANTS` 取**(单一出处)。
@@ -125,9 +122,9 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
             </div>
           </TableCell>
           <TableCell><TitleBadge :code="row.titleCode" /></TableCell>
-          <TableCell class="text-xs">{{ DIRECTION_LABELS[row.direction] ?? row.direction }}</TableCell>
+          <TableCell class="text-xs">{{ comparisonDirectionLabel(row.direction) }}</TableCell>
           <TableCell>
-            <Badge :variant="statusVariant(row.status)" class="font-normal">
+            <Badge :variant="statusVariant(row.status)">
               {{ DIFFERENCE_STATUSES[row.status] ?? row.status }}
             </Badge>
           </TableCell>

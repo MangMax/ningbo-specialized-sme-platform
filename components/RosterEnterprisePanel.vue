@@ -4,6 +4,7 @@ import { useQuery } from '@pinia/colada'
 import { ExternalLink, Eye, FileText } from '@lucide/vue'
 import {
   ALIAS_SOURCE_KINDS,
+  comparisonDirectionNote,
   DIFFERENCE_MEASURES,
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
@@ -375,9 +376,9 @@ function openPreview(e: Evidence) {
           <div class="flex flex-wrap items-center gap-2">
             <TitleBadge :code="d.titleCode" />
             <Badge variant="quiet" class="font-normal">
-              {{ d.direction === 'missing_in_miit' ? '公布有而平台无' : '平台有而公布无' }}
+              {{ comparisonDirectionNote(d.direction) }}
             </Badge>
-            <Badge :variant="statusVariant(d.status)" class="font-normal">
+            <Badge :variant="statusVariant(d.status)">
               {{ DIFFERENCE_STATUSES[d.status] ?? d.status }}
             </Badge>
             <Badge v-if="!d.inCurrentDifference" variant="outline" class="font-normal">

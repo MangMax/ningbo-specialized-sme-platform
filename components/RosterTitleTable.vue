@@ -48,7 +48,7 @@ const props = defineProps<{
   backQuery: string
 }>()
 
-const emit = defineEmits<{ open: [path: string]; retry: [] }>()
+const emit = defineEmits<{ open: [path: string] }>()
 
 const scrollRef = ref<HTMLElement | null>(null)
 

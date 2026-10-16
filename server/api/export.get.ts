@@ -163,6 +163,25 @@ export default defineEventHandler(async (event) => {
         evidence: r.evidence,
       })
     }
+
+    /**
+     * 口径写在**数据上面**,离开页面也还看得见 —— 导出的文件常被单独转发。
+     *
+     * 这条是 RL-17 补的:名录台账把「按企业」与「按企业×称号」做成同一份数据的两种分组,
+     * 两个导出(本路由与 `/api/roster/export`)**都**得自己说清自己是哪个单位,
+     * 否则拿到 xlsx 的人只会看到「一行一个称号」而不知道这些行其实属于多少家企业。
+     * 企业数是按**行里出现过的企业**去重算的,不是另查一遍库。
+     */
+    const enterprises = new Set(rows.map((r) => r.enterpriseId)).size
+    ws.spliceRows(
+      1,
+      0,
+      [
+        `口径:一行 = 一个「企业 × 称号」(同一组合下的多个来源合并成一行)。` +
+          `本次筛选共 ${rows.length} 行,属于 ${enterprises} 家企业(多称号企业在行数里按称号各计一次)。` +
+          `导出为当前筛选下的全部行,不受页面分页限制;同一筛选条件的「按企业」导出见企业总表导出。`,
+      ],
+    )
   }
 
   const buffer = await wb.xlsx.writeBuffer()

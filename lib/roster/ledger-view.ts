@@ -80,37 +80,55 @@ export function ledgerStateFromQuery(query: Record<string, unknown>): LedgerStat
   }
 }
 
-/** 「没筛」的项不写进地址;多值用逗号分隔(与全部读接口的 `parseCsvQuery` 一致)。 */
+/**
+ * **每个视图认哪些筛选项** —— 取数、回写地址、切换视图时清理,都只认这一张表。
+ *
+ * 为什么必须是一张表:这三件事以前各写一遍 `if (view === 'enterprise')` 分支,
+ * 结果「切走时该清哪些」与「这一视图实际用哪些」必然漂移 —— 实测就漏了一项:
+ * 切到「按企业×称号」时清了 `rosterState`,却把**该视图根本不发**的 `district` 留在
+ * state 里,于是它是**看不见的**:地址栏里没有它、重置也清不掉,但切回「按企业」时
+ * 会突然生效。
+ *
+ * 记录侧判据(`source` / `eventType` / `year`)在两种分组下**逐字一致** ——
+ * 这是「切换分组不换人」的那一半,所以两个视图都列上,谁也不许只改一边。
+ */
+export const LEDGER_VIEW_FILTERS: Record<LedgerView, readonly (keyof LedgerState)[]> = {
+  enterprise: ['q', 'title', 'source', 'eventType', 'year', 'district', 'rosterState'],
+  title: ['q', 'title', 'source', 'eventType', 'year'],
+  difference: ['q', 'title', 'direction', 'status', 'reason'],
+}
+
+/**
+ * 「没筛」的项不写进地址;多值用逗号分隔(与全部读接口的 `parseCsvQuery` 一致)。
+ */
 export function ledgerQueryFromState(view: LedgerView, state: LedgerState): Record<string, string> {
   const p: Record<string, string> = {}
-  const csv = (key: string, list: string[]) => {
-    if (list.length) p[key] = list.join(',')
-  }
-  const str = (key: string, value: string) => {
-    if (value) p[key] = value
-  }
-
   if (view !== DEFAULT_LEDGER_VIEW) p[VIEW_PARAM] = view
-  // 搜索对三个视图都有意义(差异视图按企业名筛……由差异读模型自行决定是否用)。
-  str('q', state.q)
-  csv('title', state.title)
-
-  if (view === 'enterprise') {
-    str('district', state.district)
-    str('rosterState', state.rosterState)
-  }
-  if (view === 'enterprise' || view === 'title') {
-    // 记录侧判据:两个分组逐字一致,这是「切换分组不换人」的一半。
-    csv('source', state.source)
-    csv('eventType', state.eventType)
-    csv('year', state.year)
-  }
-  if (view === 'difference') {
-    str('direction', state.direction)
-    csv('status', state.status)
-    csv('reason', state.reason)
+  for (const key of LEDGER_VIEW_FILTERS[view]) {
+    const value = state[key]
+    if (Array.isArray(value)) {
+      if (value.length) p[key] = value.join(',')
+    } else if (value) {
+      p[key] = value
+    }
   }
   return p
+}
+
+/**
+ * 切到某视图时,把**该视图用不到的**筛选清掉,其余原样留下。
+ *
+ * 清而不是留:留在 state 里的条件地址栏不体现,用户看不见、也清不掉,
+ * 切回来却会生效 —— 那是静默筛选,和「失败 ≠ 无记录」是同一类错误。
+ */
+export function filtersForView(view: LedgerView, state: LedgerState): LedgerState {
+  const keep = new Set<keyof LedgerState>(LEDGER_VIEW_FILTERS[view])
+  const out = { ...EMPTY_LEDGER_STATE }
+  for (const key of keep) {
+    // 逐字段搬,`keep` 已按视图裁过,类型上仍是同一张表。
+    ;(out as Record<string, unknown>)[key] = state[key]
+  }
+  return out
 }
 
 /**
@@ -125,12 +143,6 @@ export function ledgerListQuery(
   return ledgerQueryFromState(view, state)
 }
 
-/**
- * 导出地址 —— 与列表**同源**。
- *
- * `difference` 视图返回 `null`:RL-04 与既有台账都没有「导出差异」,
- * 这一票不新增导出面,所以宁可不给按钮,也不给一个口径说不清的导出。
- */
 /**
  * 导出地址 —— 与列表**同源**。
  *

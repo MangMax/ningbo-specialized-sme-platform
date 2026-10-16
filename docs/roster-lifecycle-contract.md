@@ -447,8 +447,17 @@
 
 ### 7.1 `GET /api/roster/enterprises` — 跨称号去重企业总表(RL-04)
 
-查询参数:`q`(名称/曾用名关键词,走 §5 搜索口径)、`title`(可重复)、`district`、
-`rosterState`(`current` \| `removed_platform_only`)、`page`(默认 1)、`pageSize`(默认 50)。
+查询参数:`q`(名称 / **已确认**曾用名 / **统代**关键词,走 §5 搜索口径)、`title`(可重复)、
+`district`、`rosterState`(`current` \| `removed_platform_only`)、
+`source`(可重复,`jxj` \| `miit`)、`eventType`(可重复)、`year`(可重复)、
+`page`(默认 1)、`pageSize`(默认 50)。
+
+> `source` / `eventType` / `year` 是 **RL-17 增量**(合并台账后「按企业」要能承接
+> `/stats` 的下钻)。口径与 `GET /api/records` 的 `buildWhere` **同构**:
+> 存在一条该企业的记录,它满足 `source`,且它上面有一条事件**同时**满足 `eventType` 与 `year`。
+> 「来源与事件落在同一条记录上、类型与年份落在同一条事件上」这两条不能松 ——
+> 松了,同一个 URL 在「按企业」与「按企业×称号」下会给出两批不同的企业。
+> `q` 的统代匹配同样是 RL-17 增量(`/api/records` 一直认统代,两个分组共用一个搜索框)。
 
 响应(字段级):
 
@@ -467,7 +476,11 @@
     "firstRecognition": [{ "titleCode": "specialized_sme", "year": 2021 }],
     "nextReviewYear": 2028          // 可空;锚点+3
   }],
-  "counts": { "total": 1, "titles": { "specialized_sme": 1, "innovative_sme": 1 } },
+  "counts": {
+    "total": 1,                     // **企业数**(与筛选同口径、先于分页)
+    "titlePairs": 2,                // **企业 × 称号**数 = titles 各桶之和
+    "titles": { "specialized_sme": 1, "innovative_sme": 1 }
+  },
   "page": 1, "pageSize": 50
 }
 ```
@@ -493,7 +506,12 @@
 
 ### 7.3 `GET /api/roster/differences` — 差异与解释(RL-04)
 
-查询参数:`title`、`direction`、`status`(§3.2 取值)、`reason`、`page`、`pageSize`。
+查询参数:`q`(名称 / **已确认**曾用名 / **统代**关键词;RL-17 增量 —— 合并台账的搜索框对
+三个视图都生效)、`title`、`direction`、`status`(§3.2 取值)、`reason`、`page`、`pageSize`。
+
+展示态**只取自 `difference_reason.status`、零推导**(§3.2):没有解释记录的坐标给状态机的
+默认值 `not_queried`,并用 `explanationId === null` 说明「确实没有存下来的解释」。
+六态在页面上的徽章变体见 `lib/labels.ts` 的 `DIFFERENCE_STATUS_VARIANTS`(单一出处,六态两两可区分)。
 
 ```jsonc
 {
