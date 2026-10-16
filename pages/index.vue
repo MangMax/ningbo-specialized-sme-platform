@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { watchDebounced } from '@vueuse/core'
 import {
@@ -114,6 +114,7 @@ const page = ref(positiveInt(route.query.page) ?? 1)
 const pageSize = ref(clampSize(positiveInt(route.query.pageSize) ?? 25))
 /** 抽屉里那家;**`null` = 抽屉关着**。地址栏参数沿用旧的 `expand`(同一件事的旧写法)。 */
 const selected = ref<number | null>(positiveInt(route.query.expand))
+const drawerReturnFocusTarget = shallowRef<HTMLButtonElement | null>(null)
 
 /** 搜索框本地值(防抖后写进 `state.q`)。 */
 const search = ref(state.value.q)
@@ -219,9 +220,11 @@ watch([data, resultKey], ([result, key]) => {
   const list = result.rows
   if (!list.length) {
     selected.value = null
+    drawerReturnFocusTarget.value = null
     return
   }
   if (selected.value != null && list.some((r) => r.enterpriseId === selected.value)) return
+  drawerReturnFocusTarget.value = null
   selected.value = list[0]!.enterpriseId
 }, { flush: 'post' })
 
@@ -231,8 +234,9 @@ function retry() {
 function setPage(n: number) {
   page.value = Math.min(Math.max(1, n), totalPages.value)
 }
-function selectRow(id: number) {
+function selectRow(id: number, trigger: HTMLButtonElement | null) {
   selected.value = id
+  drawerReturnFocusTarget.value = trigger
 }
 
 // —— 筛选项 ——
@@ -609,6 +613,7 @@ useHead({
     <EnterpriseDrawer
       :enterprise-id="selected"
       :back-query="backQuery"
+      :return-focus-target="drawerReturnFocusTarget"
       @close="selected = null"
     />
   </div>

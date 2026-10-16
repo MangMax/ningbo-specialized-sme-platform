@@ -69,7 +69,16 @@ const props = defineProps<{
   filtered: boolean
 }>()
 
-const emit = defineEmits<{ select: [id: number]; clearFilters: [] }>()
+const emit = defineEmits<{ select: [id: number, trigger: HTMLButtonElement | null]; clearFilters: [] }>()
+
+function selectRow(id: number, currentTarget: EventTarget | null) {
+  const trigger = currentTarget instanceof HTMLButtonElement
+    ? currentTarget
+    : currentTarget instanceof HTMLTableRowElement
+      ? currentTarget.querySelector('button')
+      : null
+  emit('select', id, trigger)
+}
 
 const COLUMNS = 6
 const visibleAliasesByEnterpriseId = computed(() => new Map(
@@ -188,7 +197,7 @@ function railClass(row: EnterpriseListRow): string {
           class="cursor-pointer [&>td]:py-1.5"
           :class="selectedId === row.enterpriseId ? 'bg-accent hover:bg-accent' : ''"
           :aria-current="selectedId === row.enterpriseId ? 'true' : undefined"
-          @click="emit('select', row.enterpriseId)"
+          @click="selectRow(row.enterpriseId, $event.currentTarget)"
         >
           <TableCell class="p-0 align-middle">
           <span class="block h-5 w-[6px] rounded-r-sm" :class="railClass(row)" />
@@ -199,7 +208,7 @@ function railClass(row: EnterpriseListRow): string {
               type="button"
               class="block max-w-full whitespace-normal break-words text-left text-[13px] leading-4 font-medium hover:underline sm:truncate"
               :title="row.name"
-              @click.stop="emit('select', row.enterpriseId)"
+              @click.stop="selectRow(row.enterpriseId, $event.currentTarget)"
             >
               {{ row.name }}
             </button>

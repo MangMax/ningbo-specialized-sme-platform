@@ -259,27 +259,48 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
   it('曾用名分「已确认 / 待核」两组;待核的不并入现名', async () => {
     const wrapper = mountIn(ComparisonPlatformEvidence, {
       props: {
-        enterpriseId: 1,
+        enterpriseId: 7289,
+        currentName: '宁波上航测绘股份有限公司',
         evidence: evidence({
           aliases: [
             { id: 1, name: '宁波上航测绘有限公司', nameNorm: '宁波上航测绘有限公司', sourceKind: 'platform_business', sourceRefId: 0, verificationStatus: 'confirmed', validFrom: null, note: null },
-            { id: 2, name: '宁波疑似旧名有限公司', nameNorm: '宁波疑似旧名有限公司', sourceKind: 'platform_apply', sourceRefId: 0, verificationStatus: 'pending', validFrom: null, note: null },
+            { id: 2, name: '宁波上航测绘股份有限公司', nameNorm: '宁波上航测绘股份有限公司', sourceKind: 'platform_business', sourceRefId: 0, verificationStatus: 'confirmed', validFrom: null, note: null },
+          ],
+        }),
+      },
+    })
+    expect(wrapper.text()).toContain('已确认曾用名 1')
+    await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
+    expect(wrapper.text()).toContain('曾用名')
+    expect(wrapper.text()).toContain('宁波上航测绘有限公司')
+    expect(wrapper.text()).not.toContain('宁波上航测绘股份有限公司')
+    expect(wrapper.text()).not.toContain('待核别名')
+  })
+
+  it('待核历史别名保留待核状态且不把现名显示成别名', async () => {
+    const wrapper = mountIn(ComparisonPlatformEvidence, {
+      props: {
+        enterpriseId: 6923,
+        currentName: '宁波创涵自动化设备有限公司',
+        evidence: evidence({
+          aliases: [
+            { id: 1, name: '宁波创涵自动化设备有限公司', nameNorm: '宁波创涵自动化设备有限公司', sourceKind: 'platform_business', sourceRefId: 0, verificationStatus: 'pending', validFrom: null, note: null },
+            { id: 2, name: '宁波市鑫磊工具有限公司', nameNorm: '宁波市鑫磊工具有限公司', sourceKind: 'platform_apply', sourceRefId: 0, verificationStatus: 'pending', validFrom: null, note: null },
           ],
         }),
       },
     })
     expect(wrapper.text()).toContain('待核别名 1')
     await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
-    expect(wrapper.text()).toContain('曾用名')
-    expect(wrapper.text()).toContain('宁波上航测绘有限公司')
-    expect(wrapper.text()).toContain('待核别名')
-    expect(wrapper.text()).toContain('宁波疑似旧名有限公司')
+    expect(wrapper.text()).toContain('宁波市鑫磊工具有限公司')
+    expect(wrapper.text()).not.toContain('宁波创涵自动化设备有限公司')
   })
 
   it('查询证据带出接口、时点与关系条数,展开后是**原始关系**字段', async () => {
     const wrapper = mountIn(ComparisonPlatformEvidence, {
       props: {
-        enterpriseId: 7,
+        enterpriseId: 7289,
+        currentName: '宁波上航测绘股份有限公司',
         evidence: evidence({
           relationCount: 1,
           queries: [
@@ -335,7 +356,7 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
   })
 
   it('没有曾用名也没有查询时给「—」,不编造', () => {
-    const wrapper = mountIn(ComparisonPlatformEvidence, { props: { enterpriseId: 9, evidence: evidence() } })
+    const wrapper = mountIn(ComparisonPlatformEvidence, { props: { enterpriseId: 987, currentName: '宁波芯速联光电科技有限公司', evidence: evidence() } })
     expect(wrapper.text().trim()).toBe('—')
   })
 })

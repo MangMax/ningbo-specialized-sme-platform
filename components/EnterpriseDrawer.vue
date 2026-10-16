@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { DialogContent, DialogRoot, DialogTitle } from 'reka-ui'
 import { ArrowDown, ExternalLink, X } from '@lucide/vue'
@@ -80,6 +80,7 @@ interface Detail {
     aliasNames: string[]
     firstRecognition: { titleCode: string; year: number }[]
     nextReviewYear: number | null
+    anchorNeedsReview: boolean
   }
   aliases: { id: number; name: string; verificationStatus: string }[]
   records: RecordRow[]
@@ -93,11 +94,55 @@ const props = defineProps<{
   enterpriseId: number | null
   /** 当前台账的筛选串(不含分页),用于「完整企业页」返回时落回同一批筛选。 */
   backQuery: string
+  /** 打开此抽屉的企业按钮;仅主动关闭时恢复焦点。 */
+  returnFocusTarget: HTMLButtonElement | null
 }>()
 
 const emit = defineEmits<{ close: [] }>()
 
 const open = computed(() => props.enterpriseId != null)
+let interactedOutside = false
+let openingTrigger: HTMLElement | null = null
+
+watch(open, (isOpen, wasOpen) => {
+  if (isOpen) {
+    interactedOutside = false
+    return
+  }
+  if (!wasOpen) return
+
+  const shouldRestoreFocus = !interactedOutside
+  const target = props.returnFocusTarget?.isConnected ? props.returnFocusTarget : openingTrigger
+  interactedOutside = false
+  openingTrigger = null
+  if (shouldRestoreFocus && target?.isConnected && document.activeElement !== target) {
+    target.focus()
+  }
+}, { flush: 'post' })
+
+function onInteractOutside(event: Event) {
+  if (!event.defaultPrevented) interactedOutside = true
+}
+
+function onOpenAutoFocus() {
+  const activeElement = document.activeElement
+  openingTrigger = activeElement instanceof HTMLButtonElement && activeElement.closest('tbody')
+    ? activeElement
+    : null
+}
+
+function onCloseAutoFocus(event: Event) {
+  const shouldRestoreFocus = !interactedOutside
+  const target = props.returnFocusTarget?.isConnected ? props.returnFocusTarget : openingTrigger
+  interactedOutside = false
+  openingTrigger = null
+  if (shouldRestoreFocus && target?.isConnected) {
+    event.preventDefault()
+    target.focus()
+  } else if (!shouldRestoreFocus) {
+    event.preventDefault()
+  }
+}
 
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading, error } = useQuery({
@@ -281,6 +326,9 @@ function eventSuffix(item: TimelineItem): string {
       data-testid="enterprise-drawer"
       :aria-describedby="undefined"
       class="enterprise-drawer bg-card shadow-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right ease-snap fixed inset-y-0 right-0 z-40 flex w-[440px] max-w-full flex-col border-l duration-200 outline-none motion-reduce:animate-none"
+      @interact-outside="onInteractOutside"
+      @open-auto-focus="onOpenAutoFocus"
+      @close-auto-focus="onCloseAutoFocus"
     >
       <div v-if="detail" class="flex min-h-0 flex-1 flex-col">
         <!-- 抬头:企业名 + 统代。`DialogTitle` 就是企业名本身,不另造一个标题层。 -->
@@ -309,9 +357,11 @@ function eventSuffix(item: TimelineItem): string {
               <span v-else class="text-muted-foreground">—</span>
             </dd>
             <dt class="text-muted-foreground text-xs">下次复核</dt>
-            <dd class="text-[13px] tabular-nums">
+            <dd data-testid="next-review-value" class="text-[13px] tabular-nums">
               <span v-if="detail.enterprise.nextReviewYear == null" class="text-muted-foreground">—</span>
-              <template v-else>{{ detail.enterprise.nextReviewYear }}</template>
+              <template v-else>
+                {{ detail.enterprise.nextReviewYear }}<span v-if="detail.enterprise.anchorNeedsReview" class="text-muted-foreground ml-1 text-xs">待核</span>
+              </template>
             </dd>
           </dl>
 

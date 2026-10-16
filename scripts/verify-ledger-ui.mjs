@@ -13,8 +13,9 @@
  * 与 `scripts/verify-prod-openapi.mjs` 同一分工:单元测试守「决定」,这个脚本守「事实」。
  * 零依赖:Chrome 走 CDP,连接用 Node 24 的内置 `WebSocket`,不引 playwright/puppeteer。
  *
- * 用法:`node scripts/verify-ledger-ui.mjs [--port 3491] [--skip-build]`
+ * 用法:`node scripts/verify-ledger-ui.mjs [--port 3491] [--skip-build] [--focus-only]`
  * 退出码 0 = 全部通过;非 0 = 有一条不符合预期(并打印实测数字)。
+ * `--focus-only` 只跑抽屉 Esc / 关闭按钮 / 外部点击后的焦点回归,适合快速诊断。
  */
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
@@ -30,6 +31,7 @@ const flag = (name, fallback) => {
 const PORT = Number(flag('port', '3491'))
 const DEBUG_PORT = PORT + 1
 const SKIP_BUILD = args.includes('--skip-build')
+const FOCUS_ONLY = args.includes('--focus-only')
 const BASE = `http://127.0.0.1:${PORT}`
 
 /** 桌面与窄屏逻辑视口;页面根节点的实测宽度都在下面报告。 */
@@ -708,6 +710,118 @@ async function verifyLedgerDrawerAsyncClose(cdp) {
   }
 }
 
+async function verifyLedgerDrawerFocus(cdp) {
+  const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0])
+  const { targetId, sessionId } = page
+  try {
+    await installMotionAndFetchGate(cdp, sessionId)
+    const initialClose = await closeEnterpriseDrawer(cdp, sessionId)
+    if (!initialClose.ready || !initialClose.closed || !initialClose.animationEnd) {
+      bad(`企业列表 · 抽屉焦点:测试前无法收起默认抽屉 ${JSON.stringify(initialClose)}`)
+      return
+    }
+
+    const openedFromButton = await evaluate(cdp, sessionId, `(() => {
+      const button = document.querySelector('tbody tr button');
+      if (!button) return false;
+      window.__rl20FocusReturnTarget = button;
+      button.focus();
+      button.click();
+      return true;
+    })()`)
+    const opened = openedFromButton && await waitUntil(cdp, sessionId, `(() => {
+      const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+      return drawer?.getAttribute('data-state') === 'open' &&
+        !!window.__rl20FocusReturnTarget?.isConnected;
+    })()`)
+    if (!opened) {
+      bad('企业列表 · 抽屉焦点:无法从企业按钮打开抽屉')
+      return
+    }
+
+    await cdp.send('Input.dispatchKeyEvent', {
+      type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27,
+    }, sessionId)
+    await cdp.send('Input.dispatchKeyEvent', {
+      type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27,
+    }, sessionId)
+    const escapeRestoredFocus = await waitUntil(cdp, sessionId, `(() =>
+      document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state') === 'closed' &&
+      document.activeElement === window.__rl20FocusReturnTarget
+    )()`)
+    if (!escapeRestoredFocus) {
+      const state = await evaluate(cdp, sessionId, `(() => ({
+        drawer: document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state'),
+        activeTag: document.activeElement?.tagName,
+        triggerConnected: window.__rl20FocusReturnTarget?.isConnected,
+      }))()`)
+      bad(`企业列表 · 抽屉焦点:Esc 后没有返回触发按钮 ${JSON.stringify(state)}`)
+      return
+    }
+    ok('企业列表 · 抽屉焦点:Esc 关闭后焦点返回触发企业按钮')
+
+    await evaluate(cdp, sessionId, `(() => {
+      window.__rl20FocusReturnTarget.focus();
+      window.__rl20FocusReturnTarget.click();
+    })()`)
+    const reopenedForButton = await waitUntil(cdp, sessionId, `document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state') === 'open'`)
+    if (!reopenedForButton) {
+      bad('企业列表 · 抽屉焦点:无法重开抽屉检查关闭按钮')
+      return
+    }
+    const buttonClose = await closeEnterpriseDrawer(cdp, sessionId)
+    const buttonRestoredFocus = buttonClose.closed && await waitUntil(cdp, sessionId, `(() =>
+      document.activeElement === window.__rl20FocusReturnTarget
+    )()`)
+    if (!buttonRestoredFocus) {
+      bad(`企业列表 · 抽屉焦点:关闭按钮后没有返回触发企业按钮 ${JSON.stringify(buttonClose)}`)
+    } else {
+      ok('企业列表 · 抽屉焦点:关闭按钮后焦点返回触发企业按钮')
+    }
+
+    await evaluate(cdp, sessionId, `(() => {
+      window.__rl20FocusReturnTarget.focus();
+      window.__rl20FocusReturnTarget.click();
+    })()`)
+    const reopenedForOutside = await waitUntil(cdp, sessionId, `document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state') === 'open'`)
+    if (!reopenedForOutside) {
+      bad('企业列表 · 抽屉焦点:无法重开抽屉检查外部点击')
+      return
+    }
+    const outsideLink = await evaluate(cdp, sessionId, `(() => {
+      const link = [...document.querySelectorAll('a[href="/"]')]
+        .find((item) => (item.textContent ?? '').includes('企业列表'));
+      if (!link) return null;
+      window.__rl20OutsideFocusTarget = link;
+      link.addEventListener('click', (event) => event.preventDefault(), { once: true });
+      const rect = link.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`)
+    if (!outsideLink) {
+      bad('企业列表 · 抽屉焦点:找不到可作为外部目标的侧边栏「企业列表」入口')
+      return
+    }
+    await clickPoint(cdp, sessionId, outsideLink, '侧边栏企业列表入口')
+    const outsideFocusPreserved = await waitUntil(cdp, sessionId, `(() =>
+      document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state') === 'closed' &&
+      document.activeElement === window.__rl20OutsideFocusTarget
+    )()`)
+    if (!outsideFocusPreserved) {
+      const state = await evaluate(cdp, sessionId, `(() => ({
+        drawer: document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state'),
+        activeTag: document.activeElement?.tagName,
+        outsideTargetConnected: window.__rl20OutsideFocusTarget?.isConnected,
+        outsideTargetFocused: document.activeElement === window.__rl20OutsideFocusTarget,
+      }))()`)
+      bad(`企业列表 · 抽屉焦点:外部点击关闭后没有保留外部焦点 ${JSON.stringify(state)}`)
+    } else {
+      ok('企业列表 · 抽屉焦点:外部点击关闭后保留侧边栏链接焦点')
+    }
+  } finally {
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
 async function verifyMissingRecognitionYearAndEvidence(cdp) {
   const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0])
   const { targetId, sessionId } = page
@@ -823,6 +937,61 @@ async function verifyCurrentNameAliasDisplay(cdp) {
         bad(`企业列表 · 曾用名:抽屉把企业 ${sample.enterpriseId} 的现名显示成曾用名 ${JSON.stringify(drawerAliasNames)}`)
       } else {
         ok(`企业列表 · 曾用名:企业 ${sample.enterpriseId} 的抽屉不把现名显示成曾用名`)
+      }
+    } finally {
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+    }
+  }
+}
+
+async function verifyComparisonCurrentNameAliasDisplay(cdp) {
+  const samples = [
+    { enterpriseId: 987, name: '宁波芯速联光电科技有限公司' },
+    { enterpriseId: 1207, name: '宁波九纵智能科技有限公司' },
+  ]
+
+  for (const sample of samples) {
+    const targetHref = JSON.stringify(`/enterprises/${sample.enterpriseId}`)
+    const page = await openSession(
+      cdp,
+      `${BASE}/comparison`,
+      VIEWPORTS[0],
+    )
+    const { targetId, sessionId } = page
+    try {
+      await setInputValue(cdp, sessionId, 'input[aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"]', sample.name)
+      const rowReady = await waitUntil(cdp, sessionId, `(() => [...document.querySelectorAll('tbody a[href^="/enterprises/"]')]
+        .some((link) => link.getAttribute('href') === ${targetHref}))()`)
+      if (!rowReady) {
+        bad(`两侧名录比对 · 曾用名:按真实名称搜索后没有找到企业 ${sample.enterpriseId}`)
+        continue
+      }
+
+      const currentNameDisplay = await evaluate(cdp, sessionId, `(() => {
+        const link = [...document.querySelectorAll('tbody a[href^="/enterprises/"]')]
+          .find((item) => item.getAttribute('href') === ${targetHref});
+        const row = link?.closest('tr');
+        const rowAliasText = row?.querySelector('[data-testid="comparison-aliases"]')?.textContent ?? '';
+        const evidence = row?.querySelector('[data-testid="comparison-platform-evidence"]');
+        const toggle = evidence?.querySelector('[data-testid="platform-evidence-details-toggle"]');
+        toggle?.click();
+        return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve({
+          rowAliasText,
+          evidenceAliasText: [...(evidence?.querySelectorAll('[data-testid="platform-confirmed-aliases"], [data-testid="platform-pending-aliases"]') ?? [])]
+            .map((item) => item.textContent ?? '').join(' '),
+          expanded: toggle?.getAttribute('aria-expanded') ?? null,
+          hasEvidence: !!evidence,
+        }))));
+      })()`)
+
+      if (currentNameDisplay.rowAliasText.includes(sample.name)) {
+        bad(`两侧名录比对 · 曾用名:企业 ${sample.enterpriseId} 把现名显示成行内曾用名 ${JSON.stringify(currentNameDisplay)}`)
+      } else if (currentNameDisplay.evidenceAliasText.includes(sample.name)) {
+        bad(`两侧名录比对 · 曾用名:企业 ${sample.enterpriseId} 把现名显示成展开证据中的曾用名 ${JSON.stringify(currentNameDisplay)}`)
+      } else if (currentNameDisplay.hasEvidence && currentNameDisplay.expanded !== 'true') {
+        bad(`两侧名录比对 · 曾用名:企业 ${sample.enterpriseId} 的平台证据不能展开 ${JSON.stringify(currentNameDisplay)}`)
+      } else {
+        ok(`两侧名录比对 · 曾用名:企业 ${sample.enterpriseId} 的行与证据展开均隐藏现名`)
       }
     } finally {
       await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
@@ -1448,6 +1617,8 @@ async function main() {
     const version = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).json()
     cdp = await connect(version.webSocketDebuggerUrl)
 
+    if (FOCUS_ONLY) await verifyLedgerDrawerFocus(cdp)
+    if (!FOCUS_ONLY) {
     for (const viewport of VIEWPORTS) {
       for (const page of PAGES) {
         const url = `${BASE}${page.query}`
@@ -1701,8 +1872,10 @@ async function main() {
     await verifyLedgerSearchLoading(cdp)
     await verifyLedgerMobileLoadingOverflow(cdp)
     await verifyLedgerDrawerAsyncClose(cdp)
+    await verifyLedgerDrawerFocus(cdp)
     await verifyMissingRecognitionYearAndEvidence(cdp)
     await verifyCurrentNameAliasDisplay(cdp)
+    await verifyComparisonCurrentNameAliasDisplay(cdp)
     await verifyKaichengExample(cdp)
     await verifyUnknownReviewOutcomeExample(cdp)
     await verifyLedgerLoadingAndDrawer(cdp)
@@ -1745,6 +1918,7 @@ async function main() {
     } else {
       ok(`/roster → ${redirect.path}${redirect.search}`)
     }
+    }
   } finally {
     try {
       await cdp?.send('Browser.close')
@@ -1771,7 +1945,8 @@ async function main() {
     process.exit(1)
   }
   console.log(`\n结果:${passed} 项通过,0 项失败`)
-  console.log('✓ 企业列表与比对页已覆盖桌面/390px/720px、表格唯一性、搜索与加载、分页、排序、抽屉动效及 /roster 查询串重定向')
+  if (FOCUS_ONLY) console.log('✓ 抽屉焦点回归已覆盖 Esc、关闭按钮与外部点击')
+  else console.log('✓ 企业列表与比对页已覆盖桌面/390px/720px、表格唯一性、搜索与加载、分页、排序、抽屉动效及 /roster 查询串重定向')
 }
 
 main().catch((err) => {

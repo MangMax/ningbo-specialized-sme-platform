@@ -10,6 +10,7 @@ import type { CuratedRow } from '~~/lib/curation'
 import type { ComparisonPlatformEvidence } from '~~/lib/comparison-platform'
 import type { ReconcileEntry } from '~~/lib/reconcile'
 import { useScrollEdges } from '~~/lib/scroll-edges'
+import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -106,10 +107,13 @@ const { data, isLoading, error, refetch } = useQuery({
 })
 const rows = computed(() => data.value?.rows ?? [])
 /** 行上**已确认**的曾用名(待核实的不算 —— 契约 §1.2:`pending` 不参与搜索/归并)。 */
-function confirmedAliasNames(row: { platform: ComparisonPlatformEvidence }): string[] {
-  return row.platform.aliases
-    .filter((alias) => alias.verificationStatus === 'confirmed')
-    .map((alias) => alias.name)
+function confirmedAliasNames(row: { name: string; platform: ComparisonPlatformEvidence }): string[] {
+  const aliases = row.platform.aliases.filter((alias) => alias.verificationStatus === 'confirmed')
+  const historicalNames = new Set(historicalAliasNamesForDisplay(
+    aliases.map((alias) => alias.name),
+    row.name,
+  ))
+  return aliases.filter((alias) => historicalNames.has(alias.name)).map((alias) => alias.name)
 }
 // 宽表在窄屏下保留容器内横向滚动;边缘渐隐提示还有列可读。
 const scroller = shallowRef<HTMLElement | null>(null)
@@ -355,7 +359,7 @@ const exportUrl = computed(
                           <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
                         </TableCell>
                         <TableCell class="hidden sm:table-cell">
-                          <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" />
+                          <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />
                         </TableCell>
                         <TableCell class="hidden sm:table-cell">
                           <ComparisonCuration :row="row" @saved="refreshCuration" />
@@ -367,7 +371,7 @@ const exportUrl = computed(
                               <span class="text-muted-foreground px-1">·</span>
                               <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
                             </div>
-                            <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" />
+                            <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />
                             <ComparisonCuration :row="row" :compact="true" @saved="refreshCuration" />
                           </div>
                         </TableCell>

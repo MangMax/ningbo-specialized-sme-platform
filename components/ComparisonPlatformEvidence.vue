@@ -11,6 +11,7 @@ import {
   VERIFICATION_STATUSES,
 } from '~~/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
+import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import { Badge } from '@/components/ui/badge'
 
 /**
@@ -31,14 +32,22 @@ import { Badge } from '@/components/ui/badge'
 const props = defineProps<{
   evidence: ComparisonPlatformEvidence
   enterpriseId: number
+  currentName: string
 }>()
 
 const aliases = computed(() => props.evidence.aliases)
-const confirmedAliases = computed(() => aliases.value.filter((a) => a.verificationStatus === 'confirmed'))
-const pendingAliases = computed(() => aliases.value.filter((a) => a.verificationStatus !== 'confirmed'))
+const historicalAliases = computed(() => {
+  const names = new Set(historicalAliasNamesForDisplay(
+    aliases.value.map((alias) => alias.name),
+    props.currentName,
+  ))
+  return aliases.value.filter((alias) => names.has(alias.name))
+})
+const confirmedAliases = computed(() => historicalAliases.value.filter((a) => a.verificationStatus === 'confirmed'))
+const pendingAliases = computed(() => historicalAliases.value.filter((a) => a.verificationStatus !== 'confirmed'))
 const queries = computed(() => props.evidence.queries)
 const relationCount = computed(() => props.evidence.relationCount)
-const hasEvidence = computed(() => aliases.value.length > 0 || queries.value.length > 0)
+const hasEvidence = computed(() => historicalAliases.value.length > 0 || queries.value.length > 0)
 const relationTotal = computed(() => queries.value.reduce((sum, query) => sum + query.relations.length, 0))
 
 const showDetails = shallowRef(false)
@@ -114,7 +123,7 @@ function relationFields(relation: ComparisonPlatformEvidence['queries'][number][
       {{ showDetails ? '收起证据' : '查看证据' }}
     </button>
     <div v-if="showDetails" class="flex flex-col gap-1 border-l pl-2">
-      <div v-if="confirmedAliases.length" class="flex flex-wrap items-center gap-1 text-[13px]">
+      <div v-if="confirmedAliases.length" class="flex flex-wrap items-center gap-1 text-[13px]" data-testid="platform-confirmed-aliases">
         <span class="text-muted-foreground">曾用名</span>
         <Badge
           v-for="alias in confirmedAliases"
@@ -125,7 +134,7 @@ function relationFields(relation: ComparisonPlatformEvidence['queries'][number][
           >{{ alias.name }}</Badge
         >
       </div>
-      <div v-if="pendingAliases.length" class="flex flex-wrap items-center gap-1 text-[13px]">
+      <div v-if="pendingAliases.length" class="flex flex-wrap items-center gap-1 text-[13px]" data-testid="platform-pending-aliases">
         <span class="text-muted-foreground">待核别名</span>
         <Badge
           v-for="alias in pendingAliases"
