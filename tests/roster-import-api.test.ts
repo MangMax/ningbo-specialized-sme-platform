@@ -839,6 +839,166 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     }
   })
 
+  it.each([
+    ['B 后 A', ['synthetic/source-b.pdf', 'synthetic/source-a.pdf']],
+    ['A 后 B', ['synthetic/source-a.pdf', 'synthetic/source-b.pdf']],
+  ] as const)('重复坐标的既有出处按计划只改一次，commit 与 replay 不反向切换（%s）', async (_order, sources) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/source-a-existing#sha256:stable-content',
+      sourceIdentity: 'synthetic/source-a-existing',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/source-a.pdf', attachment: '附件', listNo: 7, page: 7 },
+    ]
+
+    try {
+      await client.commit(original)
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/source-b-existing#sha256:stable-content',
+        sourceIdentity: 'synthetic/source-b-existing',
+        sourceSha256: 'stable-content',
+      })
+      const event = target.payload.announcement!.records[0]!.events![0]!
+      target.payload.announcement!.records[0]!.events = sources.map((sourceFile) => ({
+        ...event,
+        evidence: [{ sourceFile, attachment: '附件', listNo: 7, page: 7 }],
+      }))
+
+      const preflight = await client.preflight(target)
+      expect(preflight.preflight.evidenceRepoints).toBe(1)
+
+      const committed = await client.commit(target)
+      expect(committed.summary.evidenceRepointed).toBe(1)
+      let evidence = db.select().from(schema.recordEvidence).all()
+      expect(evidence).toHaveLength(1)
+      expect(evidence[0]).toMatchObject({ sourceFile: 'synthetic/source-b.pdf', page: 7 })
+
+      // 用确定的初态独立核对显式 replay，同时保留提交批次的计划快照。
+      db.update(schema.recordEvidence)
+        .set({ sourceFile: 'synthetic/source-a.pdf' })
+        .where(eq(schema.recordEvidence.id, evidence[0]!.id))
+        .run()
+      const replayed = await client.replay(target)
+      expect(replayed.evidenceRepointed).toBe(1)
+      evidence = db.select().from(schema.recordEvidence).all()
+      expect(evidence).toHaveLength(1)
+      expect(evidence[0]).toMatchObject({ sourceFile: 'synthetic/source-b.pdf', page: 7 })
+
+      // 同一语义输入换序重放也复用计划快照，不会把旧来源 A 重新写回。
+      target.payload.announcement!.records[0]!.events!.reverse()
+      const retried = await client.replay(target)
+      expect(retried.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-b.pdf', page: 7 },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['A 后 B', ['synthetic/new-event-a.pdf', 'synthetic/new-event-a.pdf', 'synthetic/new-event-b.pdf']],
+    ['B 后 A', ['synthetic/new-event-b.pdf', 'synthetic/new-event-a.pdf', 'synthetic/new-event-a.pdf']],
+  ] as const)('同载荷中新事件的重复坐标合并不同来源且去重，顺序无关（%s）', async (_order, sources) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const enterpriseId = seedEnterprise(db, {
+      name: '新事件重复坐标企业',
+      uscc: '913302110000000099',
+    })
+    const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    const request = announcementRequest({
+      idempotencyKey: `synthetic/new-event-${_order}#sha256:stable-content`,
+      sourceIdentity: 'synthetic/new-event-duplicates',
+      sourceSha256: 'stable-content',
+    })
+    const record = request.payload.announcement!.records[0]!
+    record.enterprise = { name: '新事件重复坐标企业', uscc: '913302110000000099' }
+    const event = record.events![0]!
+    record.events = sources.map((sourceFile) => ({
+      ...event,
+      evidence: [{ sourceFile, attachment: '附件', listNo: 9, page: 7 }],
+    }))
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.evidenceRepoints).toBe(0)
+
+      const committed = await client.commit(request)
+      expect(committed.status).toBe('committed')
+      expect(db.select().from(schema.record).all().filter((row) => row.enterpriseId === enterpriseId)).toHaveLength(1)
+      const events = db.select().from(schema.recordEvent).all().filter((row) => row.recordId === recordId)
+      expect(events).toHaveLength(1)
+      const evidence = db.select().from(schema.recordEvidence).all().filter((row) => row.recordEventId === events[0]!.id)
+      expect(evidence).toHaveLength(2)
+      expect(evidence.map(({ sourceFile, page }) => ({ sourceFile, page })).sort((a, b) =>
+        a.sourceFile < b.sourceFile ? -1 : a.sourceFile > b.sourceFile ? 1 : 0,
+      )).toEqual([
+        { sourceFile: 'synthetic/new-event-a.pdf', page: 7 },
+        { sourceFile: 'synthetic/new-event-b.pdf', page: 7 },
+      ])
+
+      // 同键 commit 与显式 replay 都保持新事件里的完整来源集合。
+      const retried = await client.commit(request)
+      expect(retried.status).toBe('committed')
+      const replayed = await client.replay(request)
+      expect(replayed.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvent).all().filter((row) => row.recordId === recordId)).toHaveLength(1)
+      expect(db.select().from(schema.recordEvidence).all().filter((row) => row.recordEventId === events[0]!.id)).toHaveLength(2)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['A 后 B', ['synthetic/repeated-record-a.pdf', 'synthetic/repeated-record-b.pdf']],
+    ['B 后 A', ['synthetic/repeated-record-b.pdf', 'synthetic/repeated-record-a.pdf']],
+  ] as const)('跨重复 records 项的新事件出处也按整份载荷合并（%s）', async (_order, sources) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const enterpriseId = seedEnterprise(db, { name: '跨记录新事件企业', uscc: '913302110000000098' })
+    const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    const request = announcementRequest({
+      idempotencyKey: `synthetic/repeated-record-${_order}#sha256:stable-content`,
+      sourceIdentity: 'synthetic/repeated-record-events',
+      sourceSha256: 'stable-content',
+    })
+    const record = request.payload.announcement!.records[0]!
+    record.enterprise = { name: '跨记录新事件企业', uscc: '913302110000000098' }
+    const event = record.events![0]!
+    request.payload.announcement!.records = sources.map((sourceFile) => ({
+      ...record,
+      events: [{ ...event, evidence: [{ sourceFile, attachment: '附件', listNo: 10, page: 7 }] }],
+    }))
+
+    try {
+      expect((await client.preflight(request)).preflight.evidenceRepoints).toBe(0)
+      expect((await client.commit(request)).status).toBe('committed')
+      expect(db.select().from(schema.record).all().filter((row) => row.enterpriseId === enterpriseId)).toHaveLength(1)
+      const events = db.select().from(schema.recordEvent).all().filter((row) => row.recordId === recordId)
+      expect(events).toHaveLength(1)
+      const evidence = db.select().from(schema.recordEvidence).all().filter((row) => row.recordEventId === events[0]!.id)
+      expect(evidence.map(({ sourceFile, page }) => ({ sourceFile, page })).sort((a, b) =>
+        a.sourceFile < b.sourceFile ? -1 : a.sourceFile > b.sourceFile ? 1 : 0,
+      )).toEqual([
+        { sourceFile: 'synthetic/repeated-record-a.pdf', page: 7 },
+        { sourceFile: 'synthetic/repeated-record-b.pdf', page: 7 },
+      ])
+      expect((await client.commit(request)).status).toBe('committed')
+      expect(db.select().from(schema.recordEvidence).all().filter((row) => row.recordEventId === events[0]!.id)).toHaveLength(2)
+      expect((await client.replay(request)).evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all().filter((row) => row.recordEventId === events[0]!.id)).toHaveLength(2)
+    } finally {
+      await server.close()
+    }
+  })
+
   it('同路径 no-op 不占用后续目标：预检、commit、replay 同计一行', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
