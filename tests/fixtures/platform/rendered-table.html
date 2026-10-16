@@ -1,0 +1,32 @@
+<!--
+  合成夹具(非真实响应):用于覆盖解析的**第三级回退** —— 已渲染的 <table>。
+  真实响应里数据只在页尾 zrarData 脚本中(见 business-list-rdjb3.html);
+  此文件模拟「平台把行直接渲染进 tbody」的形态,夹具里的企业名是虚构的。
+-->
+<table name="businessListGrid" class="table" width="100%" layoutH="195">
+  <thead>
+    <tr>
+      <th id="xh">序号</th>
+      <th id="id">主键</th>
+      <th id="cszt">状态</th>
+      <th id="qymc">企业名称</th>
+      <th id="tyshxydm">统一社会信用代码</th>
+      <th id="whpc">维护批次</th>
+      <th id="sblx">申请类型</th>
+      <th id="sqsj">申请时间</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>SQ332022000000001</td>
+      <td>终审通过</td>
+      <td>宁波合成示例科技有限公司</td>
+      <td>91330211000000001A</td>
+      <td>2022-1</td>
+      <td>申请</td>
+      <td>2022-06-22 17:17:52</td>
+    </tr>
+  </tbody>
+</table>
+<div class="pagination" totalCount="1" numPerPage="50" pageNumShown="5" currentPage="1"></div>

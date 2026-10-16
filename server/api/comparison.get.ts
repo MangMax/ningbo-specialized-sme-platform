@@ -1,15 +1,20 @@
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparison'
+import { attachPlatformEvidence } from '~~/lib/comparison-platform'
 import { getCuratedComparison } from '~~/lib/curation'
 import { TITLE_ORDER } from '~~/lib/labels'
 import { MAX_PAGE_SIZE } from '~~/lib/query'
 import { attachReconcile, readReconcile } from '~~/lib/reconcile'
 
 /**
- * 两侧比对结果(已公布 vs 平台导出),带人工标注与平台解释。
+ * 两侧比对结果(已公布 vs 平台导出),带人工标注、平台解释与**库内平台证据**。
  *
  * `reconcile` 段是**增强**:平台解释缓存(`data/platform-reconcile.json`,票 16 的
  * pipeline CLI 产出)不存在时 `explanation` 全为 null,比对本身不受影响。
+ *
+ * `platform` 段(RL-03)是**另一条增强**:每个企业的已确认曾用名(`enterprise_alias`)、
+ * 「当前」差异处置(`difference_reason`,原因 + 配对措施)与平台查询/关系条数
+ * (`platform_query` / `platform_relation`)。没有证据的行 `platform` 为 `null`。
  */
 defineRouteMeta({
   openAPI: {
@@ -71,7 +76,8 @@ export default defineEventHandler((event) => {
     throw createError({ statusCode: 400, statusMessage: 'showCurated must be true or false' })
   }
   const config = useRuntimeConfig(event)
-  const result = getCuratedComparison(useDb(), config.curatedPath)
+  const db = useDb()
+  const result = getCuratedComparison(db, config.curatedPath)
   const { counts, curatedCounts } = result
   const filtered = result.rows.filter(row =>
     (!title?.length || title.includes(row.titleCode)) &&
@@ -80,7 +86,8 @@ export default defineEventHandler((event) => {
   )
   // 平台解释是**增强项**:缓存不存在时 explanation 全为 null,比对本身不受影响。
   const reconcile = readReconcile(config.reconcilePath)
-  const rows = attachReconcile(filtered, reconcile)
+  // 库内平台证据(RL-03)同样只是增强:没有证据的行 platform 为 null。
+  const rows = attachPlatformEvidence(attachReconcile(filtered, reconcile), db)
   const page = Math.max(1, Math.floor(num(q.page, 1)))
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25))))
   return {
@@ -91,6 +98,9 @@ export default defineEventHandler((event) => {
     reconcile: {
       generatedAt: reconcile.generatedAt,
       matched: rows.filter((row) => row.explanation).length,
+    },
+    platform: {
+      withEvidence: rows.filter((row) => row.platform).length,
     },
   }
 })

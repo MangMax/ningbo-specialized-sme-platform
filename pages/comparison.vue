@@ -7,6 +7,7 @@ import type {
   ComparisonDirection,
 } from '~~/lib/comparison'
 import type { CuratedRow } from '~~/lib/curation'
+import type { ComparisonPlatformEvidence } from '~~/lib/comparison-platform'
 import type { ReconcileEntry } from '~~/lib/reconcile'
 import { latestFetchLabel } from '~~/lib/reconcile-time'
 import { useScrollEdges } from '~~/lib/scroll-edges'
@@ -54,7 +55,7 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 const COMPARISON_DIRECTIONS = Object.keys(
   COMPARISON_LABELS,
 ) as ComparisonDirection[]
-const titles = TITLE_ORDER.filter((code) => code !== 'little_giant')
+const titles = TITLE_ORDER
 const title = shallowRef('specialized_sme')
 const direction = shallowRef<ComparisonDirection>('missing_in_miit')
 const page = shallowRef(1)
@@ -79,15 +80,22 @@ const { data, isLoading, error, refetch } = useQuery({
   key: () => ['comparison', params.value],
   query: () =>
     $fetch<{
-      rows: (CuratedRow & { explanation: ReconcileEntry | null })[]
+      rows: (CuratedRow & { explanation: ReconcileEntry | null; platform: ComparisonPlatformEvidence | null })[]
       total: number
       counts: ComparisonCounts
       curatedCounts: ComparisonCounts
       reconcile: { generatedAt: string | null; matched: number }
+      platform: { withEvidence: number }
     }>('/api/comparison', { query: params.value }),
   placeholderData: (previous) => previous,
 })
 const rows = computed(() => data.value?.rows ?? [])
+/** 行上**已确认**的曾用名(待核实的不算 —— 契约 §1.2:`pending` 不参与搜索/归并)。 */
+function confirmedAliasNames(row: { platform: ComparisonPlatformEvidence | null }): string[] {
+  return (row.platform?.aliases ?? [])
+    .filter((alias) => alias.verificationStatus === 'confirmed')
+    .map((alias) => alias.name)
+}
 const reconcileInfo = computed(() => data.value?.reconcile ?? null)
 /** 当前筛选下**有解释**的行数;为 0 时页面任何位置都不出现取数日期。 */
 const matched = computed(() => reconcileInfo.value?.matched ?? 0)
@@ -154,7 +162,15 @@ const TH_CLASS =
     >
       <template #description>
         <span class="inline-block">按统代比对,不限年份。</span>
-        <span class="inline-block">小巨人无经信局名录。</span>
+        <!--
+          小巨人两侧(用户 2026-10-16 裁决启用,RL-04 落地):经信局**历年名单**(历史批次权威来源)
+          vs 工信部**导出表**(采集时点现状)。旧文案写「小巨人无经信局名录」——该说法已被
+          RL-02 的历年名单证伪,不能再留在页面上。
+        -->
+        <span class="inline-block">
+          小巨人两侧 = 经信局历年名单(权威历史批次)/ 工信部导出表(采集时点现状)。
+        </span>
+        <span class="inline-block">计数单位 = 企业 × 称号(同一企业多个称号会分别成行)。</span>
       </template>
       <template #actions>
         <div class="flex items-center gap-2">
@@ -266,21 +282,24 @@ const TH_CLASS =
                       <EmptyDescription>{{ curatedCount(direction) && !showCurated ? '当前方向均已核实，可开启「显示已核实」查看。' : '当前称号与方向没有差异企业。' }}</EmptyDescription>
                     </EmptyHeader>
                   </Empty>
-                  <Table v-else class="min-w-[1020px] table-fixed">
+                  <Table v-else class="min-w-[1180px] table-fixed">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
-                        <TableHead :class="[TH_CLASS, 'w-[32%]']"
+                        <TableHead :class="[TH_CLASS, 'w-[28%]']"
                           >企业名称</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-48']"
+                        <TableHead :class="[TH_CLASS, 'w-44']"
                           >统一社会信用代码</TableHead
                         >
                         <TableHead :class="[TH_CLASS, 'w-20']">区县</TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-36']"
+                        <TableHead :class="[TH_CLASS, 'w-32']"
                           >另一侧状态</TableHead
                         >
                         <TableHead :class="[TH_CLASS, 'w-28']">
                           <span :title="hint">平台解释</span>
+                        </TableHead>
+                        <TableHead :class="[TH_CLASS, 'w-56']">
+                          <span title="库内平台证据:曾用名、已核验处置与原始关系">平台证据</span>
                         </TableHead>
                         <TableHead :class="[TH_CLASS, 'w-48']">核实与备注</TableHead>
                       </TableRow>
@@ -288,7 +307,7 @@ const TH_CLASS =
                     <TableBody>
                       <template v-if="isLoading && !rows.length">
                         <TableRow v-for="i in 8" :key="i" class="h-11">
-                          <TableCell v-for="j in 6" :key="j"
+                          <TableCell v-for="j in 7" :key="j"
                             ><Skeleton class="h-4 w-full"
                           /></TableCell>
                         </TableRow>
@@ -308,6 +327,16 @@ const TH_CLASS =
                             >{{ row.name }}</NuxtLink
                           >
                           </div>
+                          <!-- 曾用名(已确认)在行内直接可见 —— 现名与曾用名都能核对到同一行。 -->
+                          <div v-if="confirmedAliasNames(row).length" class="mt-1 flex flex-wrap gap-1" data-testid="comparison-aliases">
+                            <Badge
+                              v-for="alias in confirmedAliasNames(row)"
+                              :key="alias"
+                              variant="quiet"
+                              class="font-normal"
+                              >曾用名 {{ alias }}</Badge
+                            >
+                          </div>
                           <div v-if="(row.evidence.currentCity && row.evidence.currentCity !== '宁波市') || /注销|吊销/.test(row.evidence.regStatus ?? '') || !row.uscc" class="mt-1 flex flex-wrap gap-1">
                             <Badge v-if="row.evidence.currentCity && row.evidence.currentCity !== '宁波市'" variant="outline">{{ row.evidence.currentCity }}</Badge>
                             <Badge v-if="/注销|吊销/.test(row.evidence.regStatus ?? '')" variant="destructive">{{ row.evidence.regStatus }}</Badge>
@@ -326,6 +355,9 @@ const TH_CLASS =
                         }}</TableCell>
                         <TableCell>
                           <ComparisonReconcile :explanation="row.explanation" />
+                        </TableCell>
+                        <TableCell>
+                          <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" />
                         </TableCell>
                         <TableCell>
                           <ComparisonCuration :row="row" @saved="refreshCuration" />

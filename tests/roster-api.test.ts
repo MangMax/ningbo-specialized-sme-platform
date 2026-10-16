@@ -1,0 +1,353 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import ExcelJS from 'exceljs'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { schema, useDb } from '../db'
+
+/**
+ * RL-04 的三个读接口(契约 §7.1 / §7.2 / §7.3)。
+ *
+ * 这里测的是**接口契约本身**:参数怎么解析(多值 / 缺省 / 非法值给 400)、
+ * 错误码(404 / 400)、以及响应信封。业务口径(去重、别名搜索、rosterState、
+ * 差异四态)已经在 `tests/roster-enterprises.test.ts` 里对着读模型测过 ——
+ * 这一层不重复测那些,只保证「HTTP 面没有把参数弄丢或把口径改掉」。
+ *
+ * 读接口**不鉴权**(与既有分法一致:读不鉴权,写/任务鉴权),所以用例里也不带 token。
+ */
+
+const dir = mkdtempSync(join(tmpdir(), 'spztx-roster-api-'))
+const db = useDb({ dbPath: join(dir, 'api.db') })
+
+const USCC = '91330211AAAAAAA001X'
+let enterpriseId = 0
+let emptyId = 0
+
+function seed(name: string, uscc: string | null, district: string | null, titleCode: string, source: 'jxj' | 'miit', eventType: 'award' | 'review' | 'maintain' | 'nurture') {
+  const id = db
+    .insert(schema.enterprise)
+    .values({ name, nameNorm: name, usccNorm: uscc, district })
+    .returning({ id: schema.enterprise.id })
+    .get().id
+  const recordId = db
+    .insert(schema.record)
+    .values({ enterpriseId: id, titleCode, source })
+    .returning({ id: schema.record.id })
+    .get().id
+  db.insert(schema.recordEvent)
+    .values({ recordId, eventType, year: 2021, decidedYear: 2021 })
+    .run()
+  return id
+}
+
+let handlerEnterprises: (event: unknown) => {
+  rows: { enterpriseId: number; name: string; titles: string[]; aliasNames: string[] }[]
+  counts: { total: number; titlePairs: number; titles: Record<string, number> }
+  page: number
+  pageSize: number
+}
+let handlerDetail: (event: unknown) => unknown
+let handlerDifferences: (event: unknown) => {
+  rows: {
+    enterpriseId: number
+    titleCode: string
+    direction: string
+    status: string
+    reasonCode: string | null
+    inCurrentDifference: boolean
+    explanationId: number | null
+  }[]
+  counts: Record<string, Record<string, number>>
+  total: number
+  page: number
+  pageSize: number
+}
+let query: Record<string, unknown> = {}
+let routerParam: string | undefined
+let headers: Record<string, string> = {}
+let handlerExport: (event: unknown) => Promise<Uint8Array>
+
+/** 只有工信部一侧的企业 ⇒ 专精特新上「平台有而公布无」。 */
+let sideOnlyId = 0
+
+beforeAll(async () => {
+  vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
+  vi.stubGlobal('defineRouteMeta', () => undefined)
+  vi.stubGlobal('getQuery', () => query)
+  vi.stubGlobal('getRouterParam', () => routerParam)
+  vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => {
+    headers[name] = value
+  })
+  vi.stubGlobal('createError', (opts: { statusMessage?: string; statusCode?: number }) =>
+    Object.assign(new Error(opts.statusMessage ?? 'Bad request'), opts),
+  )
+  vi.doMock('@db', () => ({ useDb: () => db }))
+
+  enterpriseId = seed('宁波接口测试股份有限公司', USCC, '鄞州区', 'specialized_sme', 'jxj', 'award')
+  // 两侧都有的记录 ⇒ 不是差异;用来验证筛选不会把非差异混进来。
+  const recordId = db
+    .insert(schema.record)
+    .values({ enterpriseId, titleCode: 'specialized_sme', source: 'miit' })
+    .returning({ id: schema.record.id })
+    .get().id
+  db.insert(schema.recordEvent).values({ recordId, eventType: 'maintain', year: 2025 }).run()
+  db.insert(schema.enterpriseAlias)
+    .values({
+      enterpriseId,
+      name: '宁波接口测试厂',
+      nameNorm: '宁波接口测试厂',
+      sourceKind: 'manual',
+      verificationStatus: 'confirmed',
+    })
+    .run()
+  db.insert(schema.differenceReason)
+    .values({
+      enterpriseId,
+      titleCode: 'specialized_sme',
+      direction: 'extra_in_miit',
+      status: 'confirmed_reason',
+      reasonCode: 'moved_out',
+      measureCode: 'mark_moved_out',
+      verificationStatus: 'confirmed',
+      recordedAt: '2026-10-14T00:00:00.000Z',
+    })
+    .run()
+  emptyId = seed('宁波无事件接口企业', '91330211AAAAAAA002X', null, 'innovative_sme', 'miit', 'award')
+
+  // 只有工信部一侧 ⇒ 专精特新上确实是一条差异;带一条**当前**解释。
+  sideOnlyId = seed('宁波仅平台接口企业', '91330211AAAAAAA003X', null, 'specialized_sme', 'miit', 'maintain')
+  db.insert(schema.differenceReason)
+    .values({
+      enterpriseId: sideOnlyId,
+      titleCode: 'specialized_sme',
+      direction: 'extra_in_miit',
+      status: 'confirmed_reason',
+      reasonCode: 'moved_out',
+      measureCode: 'mark_moved_out',
+      verificationStatus: 'confirmed',
+      recordedAt: '2026-10-14T00:00:00.000Z',
+    })
+    .run()
+
+  handlerEnterprises = (await import('../server/api/roster/enterprises.get')).default as unknown as typeof handlerEnterprises
+  handlerDetail = (await import('../server/api/roster/enterprises/[id].get')).default as unknown as typeof handlerDetail
+  handlerDifferences = (await import('../server/api/roster/differences.get')).default as unknown as typeof handlerDifferences
+  handlerExport = (await import('../server/api/roster/export.get')).default as unknown as typeof handlerExport
+})
+
+afterAll(() => rmSync(dir, { recursive: true, force: true }))
+
+describe('GET /api/roster/enterprises(契约 §7.1)', () => {
+  it('不筛 = 全部;响应信封是 rows / counts / page / pageSize', () => {
+    query = {}
+    const out = handlerEnterprises({})
+    expect(out.rows.length).toBe(3)
+    expect(Object.keys(out).sort()).toEqual(['counts', 'page', 'pageSize', 'rows'])
+    expect(out.page).toBe(1)
+    expect(out.pageSize).toBe(50)
+    // 计数口径说清:企业数 + 每称号企业数 + 企业×称号数。
+    expect(out.counts.total).toBe(3)
+    expect(out.counts.titlePairs).toBe(3)
+    expect(out.counts.titles).toMatchObject({ specialized_sme: 2, innovative_sme: 1 })
+  })
+
+  it('q 命中现名或**已确认**曾用名', () => {
+    query = { q: '宁波接口测试厂' }
+    expect(handlerEnterprises({}).rows.map((r) => r.enterpriseId)).toEqual([enterpriseId])
+    query = { q: '接口测试股份有限公司' }
+    expect(handlerEnterprises({}).rows.map((r) => r.enterpriseId)).toEqual([enterpriseId])
+    query = {}
+  })
+
+  it('title / district / rosterState 均可筛,title 认逗号分隔与重复参数', () => {
+    query = { title: 'specialized_sme' }
+    expect(handlerEnterprises({}).rows.map((r) => r.enterpriseId).sort()).toEqual([enterpriseId, sideOnlyId].sort())
+    query = { title: 'specialized_sme,innovative_sme' }
+    expect(handlerEnterprises({}).rows).toHaveLength(3)
+    query = { title: ['specialized_sme', 'innovative_sme'] }
+    expect(handlerEnterprises({}).rows).toHaveLength(3)
+    query = { district: '鄞州区' }
+    expect(handlerEnterprises({}).rows.map((r) => r.enterpriseId)).toEqual([enterpriseId])
+    query = { rosterState: 'removed_platform_only' }
+    expect(handlerEnterprises({}).rows).toEqual([])
+    query = {}
+  })
+
+  it('分页参数生效,非法值退回默认而不是报错', () => {
+    query = { pageSize: '1' }
+    expect(handlerEnterprises({}).rows).toHaveLength(1)
+    query = { pageSize: '1', page: '3' }
+    expect(handlerEnterprises({}).rows).toHaveLength(1)
+    query = { pageSize: 'abc', page: '0' }
+    const fallback = handlerEnterprises({})
+    expect(fallback.page).toBe(1)
+    expect(fallback.pageSize).toBe(50)
+    query = {}
+  })
+
+  it('unknown title / rosterState ⇒ 400(取值说不清就不猜)', () => {
+    query = { title: 'nope' }
+    expect(() => handlerEnterprises({})).toThrowError(/title/)
+    query = { rosterState: 'gone' }
+    expect(() => handlerEnterprises({})).toThrowError(/rosterState/)
+    query = {}
+  })
+})
+
+describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
+  it('返回 detail 的六段(enterprise / aliases / records / events / evidence / differences / platform)', () => {
+    routerParam = String(enterpriseId)
+    const out = handlerDetail({}) as Record<string, unknown>
+    expect(Object.keys(out).sort()).toEqual([
+      'aliases',
+      'differences',
+      'enterprise',
+      'events',
+      'evidence',
+      'platform',
+      'records',
+    ])
+    expect((out.enterprise as { enterpriseId: number }).enterpriseId).toBe(enterpriseId)
+    expect((out.aliases as unknown[]).length).toBe(1)
+    expect((out.records as unknown[]).length).toBe(2)
+  })
+
+  it('没有这个企业 ⇒ 404;id 不是数字 ⇒ 400', () => {
+    routerParam = '999999'
+    expect(() => handlerDetail({})).toThrowError(/not found/)
+    routerParam = 'abc'
+    expect(() => handlerDetail({})).toThrowError(/invalid id/)
+    routerParam = undefined
+  })
+})
+
+describe('GET /api/roster/differences(契约 §7.3)', () => {
+  it('不筛 = 当前差异 ∪ 已存下来的解释,带 counts / total / 分页', () => {
+    query = {}
+    const out = handlerDifferences({})
+    expect(Object.keys(out).sort()).toEqual(['counts', 'page', 'pageSize', 'rows', 'total'])
+    expect(out.total).toBe(out.rows.length)
+    expect(out.page).toBe(1)
+    expect(out.pageSize).toBe(50)
+    // 三条坐标:
+    //  ① 只有工信部一侧的企业 × 专精特新 × 平台多出(确有差异 + 已确认解释);
+    //  ② 只有工信部一侧的企业 × 创新型 × 平台多出(确有差异,**没有**解释 ⇒ 未查询);
+    //  ③ 两侧都有的企业 × 专精特新 × 平台多出(**已不是差异**,但解释不丢,仍可查)。
+    expect(out.rows.map((r) => `${r.enterpriseId}|${r.titleCode}|${r.direction}`).sort()).toEqual(
+      [
+        `${sideOnlyId}|specialized_sme|extra_in_miit`,
+        `${emptyId}|innovative_sme|extra_in_miit`,
+        `${enterpriseId}|specialized_sme|extra_in_miit`,
+      ].sort(),
+    )
+    const stale = out.rows.find((r) => r.enterpriseId === enterpriseId)!
+    expect(stale.inCurrentDifference).toBe(false)
+    expect(stale.explanationId).not.toBeNull()
+    expect(out.rows.find((r) => r.enterpriseId === emptyId)!.inCurrentDifference).toBe(true)
+    expect(out.counts.specialized_sme).toEqual({ missing_in_miit: 0, extra_in_miit: 2 })
+    expect(out.counts.innovative_sme).toEqual({ missing_in_miit: 0, extra_in_miit: 1 })
+  })
+
+  it('title / direction / status / reason 都能筛', () => {
+    query = { title: 'specialized_sme', direction: 'extra_in_miit' }
+    expect(handlerDifferences({}).rows).toHaveLength(2)
+    query = { direction: 'missing_in_miit' }
+    expect(handlerDifferences({}).rows).toEqual([])
+    query = { status: 'confirmed_reason' }
+    expect(handlerDifferences({}).rows.map((r) => r.enterpriseId).sort()).toEqual([enterpriseId, sideOnlyId].sort())
+    query = { status: 'not_queried' }
+    expect(handlerDifferences({}).rows.map((r) => r.enterpriseId)).toEqual([emptyId])
+    query = { status: 'confirmed_reason', reason: 'moved_out' }
+    expect(handlerDifferences({}).rows).toHaveLength(2)
+    query = { reason: 'deregistered' }
+    expect(handlerDifferences({}).rows).toEqual([])
+    query = {}
+  })
+
+  it('筛选后的 counts 同步收窄(不报全库口径)', () => {
+    query = { status: 'not_queried' }
+    const out = handlerDifferences({})
+    expect(out.counts.specialized_sme).toEqual({ missing_in_miit: 0, extra_in_miit: 0 })
+    expect(out.counts.innovative_sme).toEqual({ missing_in_miit: 0, extra_in_miit: 1 })
+    query = {}
+  })
+
+  it('分页只截返回行,不动 total', () => {
+    query = { pageSize: '1', page: '2' }
+    const out = handlerDifferences({})
+    expect(out.rows).toHaveLength(1)
+    expect(out.total).toBe(3)
+    query = {}
+  })
+
+  it('非法筛值 ⇒ 400', () => {
+    query = { direction: 'sideways' }
+    expect(() => handlerDifferences({})).toThrowError(/direction/)
+    query = { status: 'whatever' }
+    expect(() => handlerDifferences({})).toThrowError(/status/)
+    query = { reason: 'whatever' }
+    expect(() => handlerDifferences({})).toThrowError(/reason/)
+    query = { title: 'whatever' }
+    expect(() => handlerDifferences({})).toThrowError(/title/)
+    query = {}
+  })
+})
+
+describe('GET /api/roster/export(总表导出)', () => {
+  async function exported(params: Record<string, unknown>) {
+    query = params
+    headers = {}
+    const bytes = await handlerExport({})
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(Buffer.from(bytes) as never)
+    return wb.worksheets[0]!
+  }
+
+  it('一行 = 一家企业:称号在单元格内用、分隔,不拆成多行', async () => {
+    const ws = await exported({})
+    // 第 1 行是口径说明,第 2 行是表头,第 3 行起是数据。
+    expect(String(ws.getRow(1).getCell(1).value)).toContain('一行 = 一家企业')
+    expect(String(ws.getRow(1).getCell(1).value)).toContain('3 家企业')
+    expect(String(ws.getRow(1).getCell(1).value)).toContain('3 个「企业 × 称号」')
+    expect(ws.getRow(2).getCell(1).value).toBe('企业名称')
+    expect(ws.rowCount).toBe(5) // 说明 + 表头 + 3 家企业
+    const names = [3, 4, 5].map((r) => ws.getRow(r).getCell(1).value)
+    expect(names).toContain('宁波接口测试股份有限公司')
+  })
+
+  it('导出**不受分页截断**(页面只给一页,导出给当前筛选的全部)', async () => {
+    const ws = await exported({ pageSize: '1', page: '1' })
+    expect(ws.rowCount).toBe(5)
+  })
+
+  it('与总表同筛选:title / rosterState 生效,非法值 400', async () => {
+    const only = await exported({ title: 'innovative_sme' })
+    expect(only.rowCount).toBe(3) // 说明 + 表头 + 1 家
+    expect(String(only.getRow(1).getCell(1).value)).toContain('1 家企业')
+    const none = await exported({ rosterState: 'removed_platform_only' })
+    expect(none.rowCount).toBe(2) // 说明 + 表头,零数据行
+    query = { title: 'nope' }
+    await expect(handlerExport({})).rejects.toMatchObject({ statusCode: 400 })
+    query = {}
+  })
+
+  it('文件名带企业数,并写明单位', async () => {
+    await exported({})
+    expect(decodeURIComponent(headers['content-disposition']!)).toContain('企业总表-3家.xlsx')
+  })
+})
+
+describe('路由的 spec 可发现性', () => {
+  it('四个路由文件都带顶层 defineRouteMeta(OpenAPI 的唯一输入)', () => {
+    for (const rel of [
+      'server/api/roster/enterprises.get.ts',
+      'server/api/roster/enterprises/[id].get.ts',
+      'server/api/roster/differences.get.ts',
+      'server/api/roster/export.get.ts',
+    ]) {
+      const source = readFileSync(join(process.cwd(), rel), 'utf8')
+      expect(source, rel).toContain('defineRouteMeta({')
+      expect(/^defineRouteMeta\(/m.test(source), rel).toBe(true)
+    }
+  })
+})

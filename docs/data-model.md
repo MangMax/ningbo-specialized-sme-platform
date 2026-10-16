@@ -144,3 +144,25 @@ enterprise ──1:N── record ──1:N── record_event
 1. **多次事件**:同一企业同一称号可在不同年份多次认定/复核(公布文件里本就是多条列表),模型以 `record_event` 一对多承载,**不压缩成逗号分隔**。
 2. **入库培育**:仅见于 2021 年入库培育公布文件,记 `nurture`,不计入称号有效期。
 3. **经信局与工信部并列**:同一企业同一称号有两来源时是两条记录,看板需标明“双来源”而非重复。
+
+## 名录生命周期模型(RL-01,冻结)
+
+上表描述的是**公布历史**侧(`record` / `record_event` / `record_evidence`)。RL-01 追加了三类
+**新表**,把「公布权威历史 / 平台采集时点现状 / 接口解释证据」彻底分开:
+
+| 领域对象 | 表 |
+|---|---|
+| 企业曾用名 / 别名(身份历史) | `enterprise_alias` |
+| 平台双接口查询与逐条关系 | `platform_query` / `platform_relation` |
+| 差异原因与后续措施(成对、时态化) | `difference_reason` |
+| 三张导出表的年度对照快照 | `platform_export_batch` / `platform_export_row` |
+| 统一导入批次(幂等键 / 预检 / 逐项结果) | `import_batch` |
+| 复核结论与结论年份(补 `record_event` 能力缺口) | `record_event.review_outcome` / `.decided_year` |
+
+列名、枚举、唯一键、读/写接口与状态机的**机器级契约**见
+[`docs/roster-lifecycle-contract.md`](./roster-lifecycle-contract.md);决策与生命周期语义见
+[`docs/adr/2026-10-16-roster-lifecycle-model.md`](./adr/2026-10-16-roster-lifecycle-model.md);
+迁移 `db/migrations/0007_*.sql`;验收样例 `tests/lifecycle-contract.test.ts`。
+
+**关键边界**:平台快照只作对照,**永不改写**公布历史;同一信用代码返回的多条平台关联
+**逐条保留**;证据不足一律 `pending`(待核实),**不自动合并、不猜填**。

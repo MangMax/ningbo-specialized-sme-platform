@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import { BookOpenCheck, ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText } from '@lucide/vue'
+import { BookOpenCheck, Building2, ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText } from '@lucide/vue'
 import NavMain from '@/components/NavMain.vue'
 import {
   Sidebar,
@@ -18,6 +18,8 @@ const props = withDefaults(defineProps<SidebarProps>(), {
 
 const nav = [
   { title: '台账', url: '/', icon: LayoutList },
+  // 企业总表(RL-04):跨三个称号**去重**后的一企一行,称号/事件/证据在展开里。
+  { title: '企业总表', url: '/roster', icon: Building2 },
   { title: '文件管理', url: '/files', icon: FolderOpen },
   // 识别校对:扫描件的逐页 OCR 结果在这里对着页图核对、改、删、导入(票 14 的页面半边)。
   { title: '识别校对', url: '/ocr', icon: ScanText },

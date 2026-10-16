@@ -120,6 +120,227 @@ export const OCR_CHANNELS: Record<string, string> = {
 export const OCR_CHANNEL_ORDER: string[] = ['api', 'upload', 'mcp']
 
 
+// ---------------------------------------------------------------------------
+// 名录生命周期契约(RL-01)—— 新枚举的 code → 中文 映射
+//
+// 与 `db/schema.ts` 里各列的 `enum` 取值**逐字对应**,契约原文见
+// `docs/roster-lifecycle-contract.md`。页面/查询/导出一律从此处取文案。
+// ---------------------------------------------------------------------------
+
+/** 复核结论(`record_event.review_outcome`)→ 中文名。`null` 不在此列(不适用/未知)。 */
+export const REVIEW_OUTCOMES: Record<string, string> = {
+  passed: '复核通过',
+  failed: '复核未通过',
+}
+
+/** 复核结论展示顺序。 */
+export const REVIEW_OUTCOME_ORDER: string[] = ['passed', 'failed']
+
+/** 别名来源类别(`enterprise_alias.source_kind`)→ 中文名。 */
+export const ALIAS_SOURCE_KINDS: Record<string, string> = {
+  platform_business: '平台业务接口',
+  platform_apply: '平台申报接口',
+  announcement: '公布文件',
+  manual: '人工登记',
+}
+
+/** 别名来源类别展示顺序。 */
+export const ALIAS_SOURCE_KIND_ORDER: string[] = [
+  'platform_business',
+  'platform_apply',
+  'announcement',
+  'manual',
+]
+
+/**
+ * 核验状态(`enterprise_alias` / `platform_relation` / `difference_reason` 共用)→ 中文名。
+ * `pending` 待核实是**不参与自动归并/搜索**的一侧 —— 证据不足宁可待核。
+ */
+export const VERIFICATION_STATUSES: Record<string, string> = {
+  confirmed: '已确认',
+  pending: '待核实',
+}
+
+/** 核验状态展示顺序。 */
+export const VERIFICATION_STATUS_ORDER: string[] = ['confirmed', 'pending']
+
+/**
+ * 两个平台接口**取值**与联合类型(契约 §2.4)。**唯一出处** —— 适配层、写入侧、
+ * 读接口、查询路由一律引用它,不要各自内联拼写 `'business_list' | 'apply_list'`
+ * 或重列一遍数组:每多一处就多一个和 `db/schema.ts` 的 `platformQuery.interface`
+ * 漂移的机会(该列枚举与本数组由 `tests/labels-enums.test.ts` 对齐钉死)。
+ */
+export const PLATFORM_INTERFACE_VALUES = ['business_list', 'apply_list'] as const
+export type PlatformInterface = (typeof PLATFORM_INTERFACE_VALUES)[number]
+
+/** 平台接口(`platform_query.interface`)→ 中文名。 */
+export const PLATFORM_INTERFACES: Record<string, string> = {
+  business_list: '业务接口(businessList)',
+  apply_list: '申报接口(applyList)',
+}
+
+/** 平台接口展示顺序(即取值顺序)。 */
+export const PLATFORM_INTERFACE_ORDER: string[] = [...PLATFORM_INTERFACE_VALUES]
+
+/**
+ * 平台查询状态(`platform_query.status`)→ 中文名。
+ * **失败 ≠ 无记录** —— 四态必须彼此可区分,这正是这组文案存在的理由。
+ */
+export const PLATFORM_QUERY_STATUSES: Record<string, string> = {
+  success: '查询成功',
+  failed: '查询失败',
+  no_record: '无记录',
+  not_queried: '未查询',
+}
+
+/** 平台查询状态展示顺序(顺序即状态机顺序:未查 → 失败 → 无记录 → 成功)。 */
+export const PLATFORM_QUERY_STATUS_ORDER: string[] = [
+  'not_queried',
+  'failed',
+  'no_record',
+  'success',
+]
+
+/** 关系匹配依据(`platform_relation.match_basis`)→ 中文名。 */
+export const RELATION_MATCH_BASES: Record<string, string> = {
+  uscc: '按统一社会信用代码',
+  alias: '按曾用名',
+  manual: '人工确认',
+  none: '未匹配',
+}
+
+/** 关系匹配依据展示顺序。 */
+export const RELATION_MATCH_BASE_ORDER: string[] = ['uscc', 'alias', 'manual', 'none']
+
+/** 平台申报类型(`platform_relation.declare_kind`,接口字段 `sblx`)→ 中文名。 */
+export const RELATION_DECLARE_KINDS: Record<string, string> = {
+  apply: '申请',
+  update: '更新',
+  review: '复核',
+}
+
+/** 平台申报类型展示顺序。 */
+export const RELATION_DECLARE_KIND_ORDER: string[] = ['apply', 'update', 'review']
+
+/**
+ * `businessList` 的 `rdjb`(认定级别)= 称号。腔调与 `TITLES` 同源(取 `TITLE_SEED` 的中文名)。
+ * 实测:同一 USCC 下 `rdjb=3` 返回 6 条、`rdjb=1`/`rdjb=2` 各返回 0 条。
+ */
+export const PLATFORM_RDJBS: Record<string, string> = {
+  '1': '创新型中小企业',
+  '2': '专精特新中小企业',
+  '3': '专精特新“小巨人”',
+}
+
+/** `rdjb` 展示顺序(等级由低到高,与接口取值一致)。 */
+export const PLATFORM_RDJB_ORDER: string[] = ['1', '2', '3']
+
+/**
+ * 差异状态(`difference_reason.status`)→ 中文名。
+ * 前五个里 `not_queried` / `query_failed` / `no_record` / `confirmed_no_diff` 必须彼此可区分;
+ * `confirmed_reason` 承载已确认原因;`needs_review` 是证据不足的落点。
+ */
+export const DIFFERENCE_STATUSES: Record<string, string> = {
+  not_queried: '未查询',
+  query_failed: '查询失败',
+  no_record: '无记录',
+  confirmed_no_diff: '已确认无差异',
+  confirmed_reason: '已确认原因',
+  needs_review: '待核实',
+}
+
+/** 差异状态展示顺序(先未查/失败,再中间态,最后已确认)。 */
+export const DIFFERENCE_STATUS_ORDER: string[] = [
+  'not_queried',
+  'query_failed',
+  'no_record',
+  'needs_review',
+  'confirmed_no_diff',
+  'confirmed_reason',
+]
+
+/**
+ * 差异原因(`difference_reason.reason_code`)→ 中文名。
+ * 已知五类必须覆盖:`moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 /
+ * `platform_stale` 平台未更新 / `moved_in` 迁入;`other` 供**凭证据扩展**的新原因。
+ */
+export const DIFFERENCE_REASONS: Record<string, string> = {
+  moved_out: '外迁',
+  deregistered: '注销',
+  renamed: '更名',
+  platform_stale: '平台未更新',
+  moved_in: '迁入',
+  other: '其他',
+}
+
+/** 差异原因展示顺序。 */
+export const DIFFERENCE_REASON_ORDER: string[] = [
+  'moved_out',
+  'deregistered',
+  'renamed',
+  'platform_stale',
+  'moved_in',
+  'other',
+]
+
+/** 后续措施(`difference_reason.measure_code`)→ 中文名。与原因**成对**出现。 */
+export const DIFFERENCE_MEASURES: Record<string, string> = {
+  keep_history: '保留正式公布历史',
+  mark_platform_snapshot: '标明平台时点,不覆盖历史',
+  mark_moved_out: '记录迁出状态',
+  mark_deregistered: '记录注销主体状态',
+  update_current_name: '更新当前名并保留旧名为曾用名',
+  record_moved_in: '记录迁入来源(城市/称号/年份/批次)',
+  manual_review: '转人工核实',
+  none: '无需措施',
+}
+
+/** 后续措施展示顺序。 */
+export const DIFFERENCE_MEASURE_ORDER: string[] = [
+  'keep_history',
+  'mark_platform_snapshot',
+  'mark_moved_out',
+  'mark_deregistered',
+  'update_current_name',
+  'record_moved_in',
+  'manual_review',
+  'none',
+]
+
+/** 导出批次导入状态(`platform_export_batch.import_status`)→ 中文名。 */
+export const EXPORT_IMPORT_STATUSES: Record<string, string> = {
+  pending: '待导入',
+  imported: '已导入',
+  failed: '导入失败',
+}
+
+/** 导出批次导入状态展示顺序。 */
+export const EXPORT_IMPORT_STATUS_ORDER: string[] = ['pending', 'imported', 'failed']
+
+/** 统一导入批次状态(`import_batch.status`)→ 中文名。预检与提交是两个不同状态。 */
+export const IMPORT_BATCH_STATUSES: Record<string, string> = {
+  preflight: '预检',
+  committed: '已提交',
+  failed: '提交失败',
+}
+
+/** 统一导入批次状态展示顺序。 */
+export const IMPORT_BATCH_STATUS_ORDER: string[] = ['preflight', 'committed', 'failed']
+
+/** 导入来源类别(`import_batch.source_kind`)→ 中文名。 */
+export const IMPORT_SOURCE_KINDS: Record<string, string> = {
+  announcement: '公布文件',
+  platform_export: '平台导出',
+  alias_evidence: '别名证据',
+}
+
+/** 导入来源类别展示顺序。 */
+export const IMPORT_SOURCE_KIND_ORDER: string[] = [
+  'announcement',
+  'platform_export',
+  'alias_evidence',
+]
+
 /** 两侧名录比对方向,页面与导出共用。 */
 export const COMPARISON_LABELS = {
   missing_in_miit: '应纳未纳',

@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm'
+import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
   index,
   integer,
@@ -92,6 +93,24 @@ export const recordEvent = sqliteTable(
     year: integer('year'),
     batchSeq: integer('batch_seq'),
     sortKey: integer('sort_key').notNull().default(0),
+    /**
+     * **复核结论**(RL-01 补的能力缺口)。`passed` 通过 / `failed` 未通过 / `null` 不适用或未知。
+     *
+     * 只有 `event_type = 'review'` 才有意义;现有模型只能记「有一次复核」,**表达不了
+     * 「复核未通过」** —— 而三年复核语义完全依赖它(未通过后不再进入当前有效资格的复核队列)。
+     * 可空:认定/维护/培育事件与「复核但结论未知」都是 `null` —— **未知不猜成通过**。
+     */
+    reviewOutcome: text('review_outcome', { enum: ['passed', 'failed'] }),
+    /**
+     * **结论年份**(该事件公布/结论的年份)。与 `year` 分工明确:
+     *  - `year` 是事件**所涉**年份 —— 认定事件的认定年份;复核事件记的是
+     *    **被复核的原认定年份**(见 GLOSSARY「复核」);
+     *  - `decided_year` 是**结论发生**的年份(如 2024 年公布的复核)。
+     *
+     * 复核锚点(下一次三年到期)按结论年份计算:2021 认定 → 2024 复核通过 ⇒ 下一次到期
+     * 2027(= 2024 + 3)。可空;缺失时锚点退回 `year` 并把该企业标为待核 —— **不猜**。
+     */
+    decidedYear: integer('decided_year'),
   },
   (t) => [index('record_event_record_idx').on(t.recordId)],
 )
@@ -385,5 +404,456 @@ export const job = sqliteTable(
     index('job_kind_idx').on(t.kind),
     index('job_state_idx').on(t.state),
     index('job_created_at_idx').on(t.createdAt),
+  ],
+)
+
+// ===========================================================================
+// 名录生命周期契约(RL-01)—— 冻结的领域对象。
+//
+// 契约原文见 `docs/roster-lifecycle-contract.md`,决策见
+// `docs/adr/2026-10-16-roster-lifecycle-model.md`。本段是**全仓共享基线**:
+// 只由 RL-01 落一次,后续票(RL-02..RL-11)**增量消费,不再改这里的列语义**。
+//
+// 三条边界,贯穿全部新表:
+//  1. **公布 = 权威历史** —— `record` / `record_event` / `record_evidence` 记的是
+//     公布文件给出的事实,平台快照**永不改写**它。
+//  2. **平台导出 = 采集时点现状** —— `platform_export_batch` / `_row` 是「某一天看到什么」
+//     的快照,与公布事件**分开存储、分开查询**。
+//  3. **接口记录 = 证据** —— `platform_query` / `platform_relation` 存原始关系与查询时点;
+//     软件只提供**证据查看、确认、回填、查询**,不建设模糊推断 / 原因自动猜测引擎。
+// ===========================================================================
+
+/**
+ * **统一导入批次**(契约 6)。一次写入的**来源身份 + 幂等键 + 预检/提交结果**。
+ *
+ * 为什么必须有:CLI 直写模式下一批导入失败到一半就再也说不清「哪些进去了」。
+ * 批次把一次写入变成一个**可审计、可重放**的单位:
+ *  - `idempotencyKey` **库层面唯一** —— 同一来源重放不会重复写企业/事件(幂等);
+ *  - `preflightResult` 是**预检**(只读、不落库的业务影响)快照;`status` 区分
+ *    `preflight`(仅预检)/`committed`(已提交)/`failed`,提交与否一目了然;
+ *  - `itemResults` / `summary` / `error` 让**逐项失败可修复**,而不是笼统一句「导入失败」。
+ *
+ * 凭证**不进这里**(见 `.env.example` 与 SPEC「凭证不入库」):来源身份是文件相对路径
+ * 或 SHA-256,不是 token。
+ */
+export const importBatch = sqliteTable(
+  'import_batch',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** 幂等键。同一来源文件/请求**重复调用必须给同一个值**。unique。 */
+    idempotencyKey: text('idempotency_key').notNull(),
+    /** 来源类别:公布文件 / 平台导出 / 别名证据。 */
+    sourceKind: text('source_kind', {
+      enum: ['announcement', 'platform_export', 'alias_evidence'],
+    }).notNull(),
+    /** 来源身份:文件库内相对路径或逻辑标识(不含凭证)。 */
+    sourceIdentity: text('source_identity').notNull(),
+    /** 源文件内容 SHA-256;来源给不出时留空。 */
+    sourceSha256: text('source_sha256'),
+    /** 批次状态:`preflight` 仅预检 / `committed` 已提交 / `failed` 提交失败。 */
+    status: text('status', { enum: ['preflight', 'committed', 'failed'] })
+      .notNull()
+      .default('preflight'),
+    /** 预检结果(新增/更新/移除/待核等计数);不参与查询,进 JSON 列。 */
+    preflightResult: text('preflight_result', { mode: 'json' }).$type<unknown>(),
+    /** 逐项结果/失败(可逐条修复)。 */
+    itemResults: text('item_results', { mode: 'json' }).$type<unknown>(),
+    /** 提交摘要。 */
+    summary: text('summary', { mode: 'json' }).$type<unknown>(),
+    /** 失败原因 / 说明。 */
+    error: text('error'),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    /** 提交时间;未提交为 null。 */
+    committedAt: text('committed_at'),
+  },
+  (t) => [
+    uniqueIndex('import_batch_idempotency_uq').on(t.idempotencyKey),
+    index('import_batch_status_idx').on(t.status),
+  ],
+)
+
+/**
+ * **企业曾用名 / 别名**(契约 1)。企业身份的**历史记录**,不是另一家企业。
+ *
+ * 关键取舍(见 ADR「企业曾用名是证据,不是身份」):
+ *  - `name` 保留**原值**、`nameNorm` 保留归一化值 —— 两者都要,前者是证据,后者供搜索;
+ *  - `validFrom` / `validTo` 是**来源实际给出的**时间;来源没给就**留空不推测** ——
+ *    空值优于错误值(与 `record_evidence.page` 同一口径);
+ *  - `verificationStatus` 区分「已确认」与「待核实」:**未确认的别名不参与搜索/归并**,
+ *    证据不足宁可待核,不自动合并有歧义的主体;
+ *  - `sourceKind` + `sourceRefId` 指向**来源关系证据**(如某条 `platform_relation`)。
+ *
+ * 唯一键 `(enterprise_id, name_norm, source_kind, source_ref_id 归一)`:
+ * 同一企业、同一别名、同一来源只有一条;不同来源/不同关系**各自成条**(逐条留证)。
+ */
+export const enterpriseAlias = sqliteTable(
+  'enterprise_alias',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    enterpriseId: integer('enterprise_id')
+      .notNull()
+      .references(() => enterprise.id, { onDelete: 'cascade' }),
+    /** 别名**原值**(来源里的写法,留档)。 */
+    name: text('name').notNull(),
+    /** 归一化别名(与 `lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
+    nameNorm: text('name_norm').notNull(),
+    /** 来源类别:平台业务接口 / 平台申报接口 / 公布文件 / 人工登记。 */
+    sourceKind: text('source_kind', {
+      enum: ['platform_business', 'platform_apply', 'announcement', 'manual'],
+    }).notNull(),
+    /** 来源证据行 id(如 `platform_relation.id`);**0 = 无具体来源行引用**(不是 NULL)。 */
+    sourceRefId: integer('source_ref_id').notNull().default(0),
+    /** 来源给出的生效时间。**未给出留空,不推测**。 */
+    validFrom: text('valid_from'),
+    /** 来源给出的失效时间。未给出留空。 */
+    validTo: text('valid_to'),
+    /** 核验状态:`confirmed` 已确认(参与搜索/归并)/ `pending` 待核实(不参与)。 */
+    verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] })
+      .notNull()
+      .default('pending'),
+    /** 备注(如「平台记录明确写出的经信局侧曾用名」原文摘录)。 */
+    note: text('note'),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    // 同一企业、同一别名、同一来源只有一条;不同来源行(如两条平台关系)**各自成条**。
+    // `source_ref_id` 用 0 表示「无具体来源行引用」而不是 NULL —— 避免 SQLite 把 NULL
+    // 视为互不相等而放过重复(也免得索引里出现带逗号的 coalesce 表达式)。
+    uniqueIndex('enterprise_alias_identity_uq').on(
+      t.enterpriseId,
+      t.nameNorm,
+      t.sourceKind,
+      t.sourceRefId,
+    ),
+    index('enterprise_alias_name_norm_idx').on(t.nameNorm),
+    index('enterprise_alias_enterprise_idx').on(t.enterpriseId),
+  ],
+)
+
+/**
+ * **平台查询记录**(契约 3)。一次「查了工信部哪个接口、用什么键、什么时候查、结果如何」。
+ *
+ * **失败 ≠ 无记录** —— 这是这票的硬要求,所以 `status` 把四态分开:
+ *  - `not_queried` **未查询**(还没查过,不是「没有」);
+ *  - `failed` **查询失败**(网络/会话/结构异常 —— 查询**没成功执行**);
+ *  - `no_record` **无记录**(查询成功执行,平台**返回空**);
+ *  - `success` 查询成功且返回至少一条记录(记录逐条落 `platform_relation`)。
+ *
+ * `rawResponse` 存**原始响应/HTML**:平台接口现在返回 HTML 表格,留原文才能在解析口径
+ * 变了以后回看引擎到底收到了什么(不参与查询,只供回溯,所以进 text 而非结构化列)。
+ * 重复查询**各占一行**(`queriedAt` 进唯一键)——「不丢历史证据」,缓存/刷新由读侧决定。
+ */
+export const platformQuery = sqliteTable(
+  'platform_query',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    /** 两个接口之一:`business_list`(businessList)/ `apply_list`(applyList)。 */
+    interface: text('interface', { enum: ['business_list', 'apply_list'] }).notNull(),
+    /** 查询键:统一社会信用代码,或 `name:<nameNorm>`(与 `lib/reconcile.ts` 同构)。 */
+    queryKey: text('query_key').notNull(),
+    /**
+     * `businessList` 的 `rdjb` 参数(认定级别):`1` 创新型 / `2` 专精特新中小企业 /
+     * `3` 专精特新“小巨人”。空串 = 该接口不用这个参数(如 `applyList`)。
+     *
+     * 实测:同一 USCC 下 `rdjb=3` 返回 6 条、`rdjb=1`/`rdjb=2` 各返回 0 条 ——
+     * 即**同一次查询键、不同 rdjb 是不同查询**,所以它进唯一键。
+     */
+    rdjb: text('rdjb').notNull().default(''),
+    /** 本次查询针对的称号;接口不按称号查时留空。 */
+    titleCode: text('title_code').references(() => title.code),
+    /** 查询时点(ISO 时间)。 */
+    queriedAt: text('queried_at').notNull(),
+    /** 四态见上;默认 `not_queried`(「还没查」而不是「没有」)。 */
+    status: text('status', {
+      enum: ['success', 'failed', 'no_record', 'not_queried'],
+    })
+      .notNull()
+      .default('not_queried'),
+    /** 失败原因(仅 `failed` 有意义)。 */
+    failureReason: text('failure_reason'),
+    /** 原始响应 / HTML 原文,供回溯。 */
+    rawResponse: text('raw_response'),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    // 同接口 + 同查询键 + 同 rdjb + 同一时点 = 同一次查询(重放幂等);不同时点各自留档。
+    uniqueIndex('platform_query_identity_uq').on(t.interface, t.queryKey, t.rdjb, t.queriedAt),
+    index('platform_query_key_idx').on(t.queryKey),
+  ],
+)
+
+/**
+ * **平台接口关系记录**(契约 2)。一次查询返回的**每一条关联关系**各占一行。
+ *
+ * **同一信用代码返回的多条关联必须逐条保留**(这正是 `91330211255994457P` 案例:
+ * 平台记录里明确写了经信局侧曾用名,要能匹配并展示**全部**关联)—— 所以用
+ * `(query_id, sequence_no)` 做唯一键,而**不是**按企业或信用代码去重。
+ *
+ * `matchBasis`(匹配依据)记「这条为什么归到该企业」:`uscc`(统代)/ `alias`(曾用名)/
+ * `manual`(人工确认)/ `none`(未匹配 —— `enterprise_id` 留空、`verification_status`
+ * 为 `pending`,即「待核实」)。**没有模糊打分**:归属必须能指回一条可读的依据。
+ *
+ * ── 平台字段的落点(实测 `businessList` `rdjb=3` 的 6 条关联)──────────────────
+ * 接口字段名 → 本表列:
+ *  `id` → `relationKey`;`qymc` → `nameRaw`;`tyshxydm` → `usccRaw`;`szsfmc` → `province`;
+ *  `cszt` → `status`;`whpc`(维护批次)→ `batch`;`sblx` → `declareKind`;
+ *  `sqsj` → `appliedAt`;`personuuid`(列头为**认定批次**,值如 `第四批`)→ `awardBatchLabel`;
+ *  `queryList` 的 `year` → `year`。
+ *
+ * ── 曾用名的原始证据就在这里 ──────────────────────────────────────────────
+ * 平台**没有**独立「曾用名」列。同一 `tyshxydm` 下 `qymc` 不同的历史关联行**本身**
+ * 就是曾用名证据(实测:`SQ332022062212391` 的 `qymc=宁波上航测绘有限公司`,
+ * `SQ332024052128274` 的 `qymc=宁波上航测绘股份有限公司`,逐字段比对后**唯一**与名称
+ * 有关的差异字段就是 `qymc`)。代理据此判断并确认,回填为 `enterprise_alias`。
+ */
+export const platformRelation = sqliteTable(
+  'platform_relation',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    queryId: integer('query_id')
+      .notNull()
+      .references(() => platformQuery.id, { onDelete: 'cascade' }),
+    /** 关系序号:同一次查询内第几条(从 1 起)。**逐条保留**的载体。 */
+    sequenceNo: integer('sequence_no').notNull(),
+    /** 平台关联主键(`id`,如 `SQ332022062212391`)。可空(导出/异常响应可能没有)。 */
+    relationKey: text('relation_key'),
+    /** 匹配到的企业;无法判定时**留空**(不自动归并)。 */
+    enterpriseId: integer('enterprise_id').references(() => enterprise.id),
+    /** 原始字段(平台那一行/那一块的字段原样)。 */
+    rawFields: text('raw_fields', { mode: 'json' }).$type<Record<string, unknown>>(),
+    /** 源文本:关系里明确写出的经信局侧曾用名等原文。 */
+    sourceText: text('source_text'),
+    /** 统一社会信用代码(`tyshxydm`)。 */
+    usccRaw: text('uscc_raw'),
+    /** 企业名称(`qymc`)。同一 USCC 下 `qymc` 不同 ⇒ **曾用名证据**。 */
+    nameRaw: text('name_raw'),
+    /** 源文本中明确给出的曾用名(若有)。 */
+    aliasNameRaw: text('alias_name_raw'),
+    /** 所属省市名称(`szsfmc`)。 */
+    province: text('province'),
+    /** 存续状态(`cszt`,如「终审通过」「省已审」「待审核」)。 */
+    status: text('status'),
+    /** 维护批次(`whpc`,如 `2022-1` / `2025-1`)。 */
+    batch: text('batch'),
+    /**
+     * 申报类型(`sblx`):`apply` 申请 / `update` 更新 / `review` 复核。
+     * 非枚举字典外的取值原样入库(drizzle 的 enum 只是编译期约束)。
+     */
+    declareKind: text('declare_kind', { enum: ['apply', 'update', 'review'] }),
+    /** 申报时间(`sqsj`)。 */
+    appliedAt: text('applied_at'),
+    /** 认定批次(`personuuid`,值如 `第四批`);按「2018 + 批次序号」对应年份。 */
+    awardBatchLabel: text('award_batch_label'),
+    /** 申报记录年份(`queryList` 的 `year`)。 */
+    year: integer('year'),
+    /** 匹配依据:`uscc` / `alias` / `manual` / `none`。 */
+    matchBasis: text('match_basis', { enum: ['uscc', 'alias', 'manual', 'none'] })
+      .notNull()
+      .default('none'),
+    /** 核验状态:`confirmed` 已确认 / `pending` 待核实。 */
+    verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] })
+      .notNull()
+      .default('pending'),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex('platform_relation_query_seq_uq').on(t.queryId, t.sequenceNo),
+    index('platform_relation_enterprise_idx').on(t.enterpriseId),
+    index('platform_relation_relation_key_idx').on(t.relationKey),
+  ],
+)
+
+/**
+ * **差异原因与后续措施**(契约 4)——**成对**记录的一行。
+ *
+ * 一行 = 「这家企业 × 这个称号 × 这个方向的差异」在**某个时点**的解释:
+ * 原因(`reasonCode`)+ 证据(`evidenceQueryId` / `evidenceRelationId`)+ 核验状态
+ * (`verificationStatus`)+ **对应的后续措施**(`measureCode` / `measureNote`)+ 时间
+ * (`recordedAt`)。**原因与措施成对出现**,不留「有原因没措施」的半截记录。
+ *
+ * ── 状态机(`status`)的取值必须彼此可区分 ────────────────────────────────
+ *   `not_queried` 未查询 / `query_failed` 查询失败 / `no_record` 无记录 /
+ *   `confirmed_no_diff` 已确认无差异 / `confirmed_reason` 已确认原因 /
+ *   `needs_review` 待核实。
+ * 契约硬要求前五个里 `未查询/失败/无记录/已确认无差异` 四个**互不等价**;
+ * `confirmed_reason` 是承载「外迁/注销/更名/平台未更新/迁入」这五类已确认原因的第 6 个取值
+ * (见 ADR 的待裁决点)。
+ *
+ * ── 已知原因 ──────────────────────────────────────────────────────────────
+ * `moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 / `platform_stale` 平台未更新 /
+ * `moved_in` 迁入 / `other` 其他(可凭证据扩展 —— `reasonNote` 记新原因的说明)。
+ * 迁入另承载 `movedInCity` / `movedInTitleCode` / `movedInYear` / `movedInBatch`
+ * (缺项**留空待核,不猜填**)。
+ *
+ * ── 时态化 ────────────────────────────────────────────────────────────────
+ * 唯一键含 `recordedAt`:**旧解释不丢**,新解释形成新行;「当前解释」= `recordedAt` 最新那条。
+ */
+export const differenceReason = sqliteTable(
+  'difference_reason',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    enterpriseId: integer('enterprise_id')
+      .notNull()
+      .references(() => enterprise.id, { onDelete: 'cascade' }),
+    titleCode: text('title_code')
+      .notNull()
+      .references(() => title.code),
+    /** 差异方向,与 `lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
+    direction: text('direction', {
+      enum: ['missing_in_miit', 'extra_in_miit'],
+    }).notNull(),
+    /** 状态机取值,见上。默认 `not_queried`(「还没查」而不是「没有」)。 */
+    status: text('status', {
+      enum: [
+        'not_queried',
+        'query_failed',
+        'no_record',
+        'confirmed_no_diff',
+        'confirmed_reason',
+        'needs_review',
+      ],
+    })
+      .notNull()
+      .default('not_queried'),
+    /** 已知原因;`needs_review` / `confirmed_no_diff` 时可为空。 */
+    reasonCode: text('reason_code', {
+      enum: ['moved_out', 'deregistered', 'renamed', 'platform_stale', 'moved_in', 'other'],
+    }),
+    /** 原因的说明(新原因在这里写清,并配 `other`)。 */
+    reasonNote: text('reason_note'),
+    /** 与原因**成对**的后续措施。 */
+    measureCode: text('measure_code', {
+      enum: [
+        'keep_history',
+        'mark_platform_snapshot',
+        'mark_moved_out',
+        'mark_deregistered',
+        'update_current_name',
+        'record_moved_in',
+        'manual_review',
+        'none',
+      ],
+    }),
+    measureNote: text('measure_note'),
+    /** 证据:平台查询记录 / 平台关系记录。 */
+    evidenceQueryId: integer('evidence_query_id').references(() => platformQuery.id),
+    evidenceRelationId: integer('evidence_relation_id').references(() => platformRelation.id),
+    /** 迁入承载:原城市 / 原称号 / 年份 / 批次。缺项留空待核。 */
+    movedInCity: text('moved_in_city'),
+    movedInTitleCode: text('moved_in_title_code').references(() => title.code),
+    movedInYear: integer('moved_in_year'),
+    movedInBatch: integer('moved_in_batch'),
+    /** 核验状态:`confirmed` 已确认 / `pending` 待核实。 */
+    verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] })
+      .notNull()
+      .default('pending'),
+    /** 该解释的登记时点(时态化的排序键)。 */
+    recordedAt: text('recorded_at').notNull(),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    // 同企业 × 称号 × 方向 × 时点唯一:时点不同 → 并存(旧解释不丢)。
+    uniqueIndex('difference_reason_version_uq').on(
+      t.enterpriseId,
+      t.titleCode,
+      t.direction,
+      t.recordedAt,
+    ),
+    index('difference_reason_lookup_idx').on(t.enterpriseId, t.titleCode, t.direction),
+  ],
+)
+
+/**
+ * **平台导出快照批次**(契约 5·批次身份)。三张工信部导出表**每次采集**的元数据。
+ *
+ * **不是**公布历史:它记的是「某年某天,某张导出表长这样」。与公布称号事件
+ * (`record` / `record_event`)**分开存储、分开查询** —— 平台绝不能改写公布历史。
+ *
+ *  - **同文件重放幂等**:唯一键 `(title_code, year, sha256)` —— 同一份内容重放不会
+ *    多出一批;
+ *  - **替换文件形成可区分的新版本**:换了内容 ⇒ `sha256` 变 ⇒ 新的一批;`replacedBatchId`
+ *    记下「它替换了哪一批」,两版**并存**(旧快照不因替换而消失,否则失去对照基线);
+ *  - `collectedOn` 是**采集日期**、`year` 是**年度**,`rowCount` 是行数,
+ *    `importStatus` 记导入状态,`sourceDocumentId` / `importBatchId` 指向来源与批次。
+ */
+export const platformExportBatch = sqliteTable(
+  'platform_export_batch',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    titleCode: text('title_code')
+      .notNull()
+      .references(() => title.code),
+    /** 快照所属年度。 */
+    year: integer('year').notNull(),
+    /** 采集日期(YYYY-MM-DD)。 */
+    collectedOn: text('collected_on').notNull(),
+    /** 原文件名。 */
+    originalFilename: text('original_filename').notNull(),
+    /** 文件内容 SHA-256(版本身份)。 */
+    sha256: text('sha256').notNull(),
+    /** 快照行数。 */
+    rowCount: integer('row_count').notNull().default(0),
+    /** 导入状态:`pending` 待导入 / `imported` 已导入 / `failed` 导入失败。 */
+    importStatus: text('import_status', { enum: ['pending', 'imported', 'failed'] })
+      .notNull()
+      .default('pending'),
+    /** 来源文件(`source_document`)。可空。 */
+    sourceDocumentId: integer('source_document_id').references(() => sourceDocument.id),
+    /** 导入它的统一批次(`import_batch`)。可空。 */
+    importBatchId: integer('import_batch_id').references(() => importBatch.id),
+    /** 本批**替换**了哪一批(自引用);首版为 null。 */
+    replacedBatchId: integer('replaced_batch_id').references(
+      (): AnySQLiteColumn => platformExportBatch.id,
+    ),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex('platform_export_batch_identity_uq').on(t.titleCode, t.year, t.sha256),
+    index('platform_export_batch_title_year_idx').on(t.titleCode, t.year),
+  ],
+)
+
+/**
+ * **平台导出快照行**(契约 5·快照行)。一张导出表里的一行。
+ *
+ * 保留**源行身份**(`sourceRowNo`,来自文件的物理行号)与平台字段;同批内同行号唯一
+ * ⇒ 同文件重放不会重复落行。`rawFields` 留整行原始字段(导出表几百列,不必逐列建表)。
+ */
+export const platformExportRow = sqliteTable(
+  'platform_export_row',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    batchId: integer('batch_id')
+      .notNull()
+      .references(() => platformExportBatch.id, { onDelete: 'cascade' }),
+    /** 源行号(该行在源文件里的行序,从 1 起)。 */
+    sourceRowNo: integer('source_row_no').notNull(),
+    usccRaw: text('uscc_raw'),
+    nameRaw: text('name_raw'),
+    district: text('district'),
+    province: text('province'),
+    city: text('city'),
+    regStatus: text('reg_status'),
+    /** 整行原始字段。 */
+    rawFields: text('raw_fields', { mode: 'json' }).$type<Record<string, unknown>>(),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    uniqueIndex('platform_export_row_identity_uq').on(t.batchId, t.sourceRowNo),
+    index('platform_export_row_batch_idx').on(t.batchId),
   ],
 )

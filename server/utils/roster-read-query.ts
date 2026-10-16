@@ -1,0 +1,81 @@
+/**
+ * 名录读接口的**查询参数解析**(RL-04)——总表 / 差异 / 导出三条路由共用一处。
+ *
+ * 为什么抽出来:同一个筛选集(`title` / `district` / `rosterState` / `q` / 分页)要在
+ * 总表与导出上**逐字一致** —— 验收里「筛选和导出使用同一口径」如果靠两处各解析一遍,
+ * 迟早会漂移(一边把 `title` 当单值、另一边当多值)。这里只有一份。
+ *
+ * 取值的合法性**不静默放过**:`title` / `rosterState` / `direction` / `status` / `reason`
+ * 只认字典里有的值,别的给 400。静默忽略会让筛选悄悄失效,使用者只会看到空结果
+ * 而不知道为什么。
+ */
+import { parseCsvQuery } from '../../lib/csv'
+import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../lib/comparison'
+import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES, TITLE_ORDER } from '../../lib/labels'
+import {
+  ROSTER_STATES,
+  type RosterDifferenceFilter,
+  type RosterEnterpriseFilter,
+  type RosterState,
+} from '../../lib/roster/enterprise-roster'
+
+/** 取单值字符串参数(数组取第一个),空串当「没给」。 */
+export function strParam(value: unknown): string | undefined {
+  const s = typeof value === 'string' ? value.trim() : Array.isArray(value) ? String(value[0] ?? '').trim() : ''
+  return s || undefined
+}
+
+/** 取正整数参数;非法/缺省退回 `fallback`(分页参数不该把请求打成 400)。 */
+export function intParam(value: unknown, fallback: number): number {
+  const n = Number(value)
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback
+}
+
+/** 合法取值必须是**字典里有的**。 */
+function knownOrThrow(
+  values: string[] | undefined,
+  allowed: readonly string[],
+  field: string,
+): string[] | undefined {
+  if (!values) return undefined
+  if (values.some((v) => !allowed.includes(v))) {
+    throw createError({ statusCode: 400, statusMessage: `Unknown ${field}; expected ${allowed.join(', ')}` })
+  }
+  return values
+}
+
+/** §7.1 总表的筛选参数。 */
+export function parseRosterEnterpriseQuery(query: Record<string, unknown>): RosterEnterpriseFilter {
+  const title = knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title')
+  const rosterState = strParam(query.rosterState)
+  if (rosterState != null && !(ROSTER_STATES as readonly string[]).includes(rosterState)) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: `Unknown rosterState; expected ${ROSTER_STATES.join(', ')}`,
+    })
+  }
+  return {
+    q: strParam(query.q),
+    title,
+    district: strParam(query.district),
+    rosterState: rosterState as RosterState | undefined,
+    page: intParam(query.page, 1),
+    pageSize: intParam(query.pageSize, 50),
+  }
+}
+
+/** §7.3 差异的筛选参数。 */
+export function parseRosterDifferenceQuery(query: Record<string, unknown>): RosterDifferenceFilter {
+  return {
+    title: knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title'),
+    direction: knownOrThrow(
+      parseCsvQuery(query.direction),
+      COMPARISON_DIRECTIONS,
+      'direction',
+    ) as ComparisonDirection[] | undefined,
+    status: knownOrThrow(parseCsvQuery(query.status), Object.keys(DIFFERENCE_STATUSES), 'status'),
+    reason: knownOrThrow(parseCsvQuery(query.reason), Object.keys(DIFFERENCE_REASONS), 'reason'),
+    page: intParam(query.page, 1),
+    pageSize: intParam(query.pageSize, 50),
+  }
+}

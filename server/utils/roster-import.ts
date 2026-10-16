@@ -1,0 +1,1996 @@
+/**
+ * 名录统一导入的**核心实现**（RL-11）—— 预检与单批事务提交（契约 §8）。
+ *
+ * 本文件是纯逻辑（只吃 `db` 与请求对象），不碰 h3/runtimeConfig：
+ *  - HTTP 那一层（鉴权判据、状态码、JSON 形状）在 `server/utils/roster-import-http.ts`；
+ *  - 两个路由文件只是把 event 翻成本模块的入参。
+ *
+ * ── 两条硬约束 ──────────────────────────────────────────────────────────
+ * 1. **单批事务**：要么整批 `committed`，要么 `failed` 且 `error` 说明原因 ——
+ *    绝不部分提交。业务写入全在一个 SQLite 事务里；批次行本身是**记账**（不在事务内读回），
+ *    这样事务回滚后仍能记下「失败原因 + 逐项错误」。
+ * 2. **逐项错误不静默丢行**：每个载荷项都产出 `{ ok, kind, ref }`；任何一项不合法 ⇒
+ *    整批 `failed`、业务数据一行不落，`items` 里带着每项的错误码与字段名。
+ *
+ * ── 为什么先「计划」再「执行」───────────────────────────────────────────
+ * 预检若自己算一套、提交再算一套，两边迟早会漂。这里**同一份 `planRosterImport`**
+ * 既用于预检（只报数），也用于提交（照计划执行）—— 预检报的影响就是提交真会发生的事。
+ */
+
+import { eq } from 'drizzle-orm'
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import * as schema from '../../db/schema'
+import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER, type PlatformInterface } from '../../lib/labels'
+import type {
+  RosterImportAlias,
+  RosterImportAnnouncement,
+  RosterImportDifference,
+  RosterImportExportSnapshot,
+  RosterImportItemResult,
+  RosterImportMerge,
+  RosterImportPayload,
+  RosterImportPlatformQuery,
+  RosterImportPreflight,
+  RosterImportRequest,
+  RosterImportSummary,
+} from '../../lib/roster-import-client'
+
+type Db = BetterSQLite3Database<typeof schema>
+/** 事务内外都能用的执行器（`tx` 与本连接在 select/insert/update/delete 上同形）。 */
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
+export type Executor = Db | Tx
+
+// ---------------------------------------------------------------------------
+// 校验用的取值集
+// ---------------------------------------------------------------------------
+//
+// 这些集合**不重述取值** —— 一律从既有的冻结出处派生：
+//  - 表列的枚举取自 `db/schema.ts` 的 `*.enumValues`（drizzle 把 `text('c',{enum:[…]})`
+//    的取值挂在列对象上），于是「表的枚举」与「写入侧的校验」不可能各自漂移；
+//  - 没有表列的（称号、平台接口）取自 `lib/labels.ts` / `db/titles.ts` 的既有常量。
+// 旧写法是把 `not_queried` / `failed` / … 逐个再抄一遍，抄漏一个就成了静默放行。
+
+/** 把一列已冻结的枚举取值变成校验集合。 */
+function enumSet(values: readonly string[]): Set<string> {
+  return new Set(values)
+}
+
+/** 称号字典（`db/titles.ts` 的种子；不引 runtime）。 */
+const TITLE_CODES = new Set<string>(TITLE_ORDER)
+const EVENT_TYPES = enumSet(schema.recordEvent.eventType.enumValues)
+const REVIEW_OUTCOMES = enumSet(schema.recordEvent.reviewOutcome.enumValues)
+const SOURCES = enumSet(schema.record.source.enumValues)
+const ALIAS_SOURCE_KINDS = enumSet(schema.enterpriseAlias.sourceKind.enumValues)
+const VERIFICATION_STATUSES = enumSet(schema.enterpriseAlias.verificationStatus.enumValues)
+/** 平台接口取值集 = `lib/labels.ts` 的唯一出处（契约 §2.4）。 */
+const PLATFORM_INTERFACE_SET = new Set<string>(PLATFORM_INTERFACE_VALUES)
+const QUERY_STATUSES = enumSet(schema.platformQuery.status.enumValues)
+const MATCH_BASES = enumSet(schema.platformRelation.matchBasis.enumValues)
+const DIRECTIONS = enumSet(schema.differenceReason.direction.enumValues)
+const DIFFERENCE_STATUSES = enumSet(schema.differenceReason.status.enumValues)
+const DIFFERENCE_REASONS = enumSet(schema.differenceReason.reasonCode.enumValues)
+const DIFFERENCE_MEASURES = enumSet(schema.differenceReason.measureCode.enumValues)
+const IMPORT_SOURCE_KINDS = enumSet(schema.importBatch.sourceKind.enumValues)
+/** `sblx` 的字典取值；之外的**原样入库 + 标待核**（不因未知取值崩溃）。 */
+const DECLARE_KINDS = enumSet(schema.platformRelation.declareKind.enumValues)
+
+// ---------------------------------------------------------------------------
+// 小工具
+// ---------------------------------------------------------------------------
+
+/**
+ * 归一化统一社会信用代码;**空值 → `null`**(写入侧按「未给统代」处理)。
+ * 归一化规则本身只有一处实现:{@link normalizeUscc}(`lib/domain.ts`,紧邻 `normalizeName`)。
+ */
+function usccOrNull(raw: unknown): string | null {
+  return normalizeUscc(raw) || null
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function optionalString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed || null
+}
+
+function optionalInt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return Math.trunc(value)
+}
+
+/** 一条 item 级错误。 */
+function failure(kind: string, ref: string, code: string, message: string, field?: string): RosterImportItemResult {
+  return { ok: false, kind, ref, error: { code, ...(field ? { field } : {}), message } }
+}
+
+function success(kind: string, ref: string, detail?: Record<string, unknown>): RosterImportItemResult {
+  return { ok: true, kind, ref, ...(detail ? { detail } : {}) }
+}
+
+// ---------------------------------------------------------------------------
+// 请求校验
+// ---------------------------------------------------------------------------
+
+export type ValidateResult =
+  | { ok: true; value: RosterImportRequest }
+  | { ok: false; status: number; message: string }
+
+export function validateImportRequest(raw: unknown): ValidateResult {
+  if (!isObject(raw)) return { ok: false, status: 400, message: '请求体必须是 JSON 对象' }
+
+  const idempotencyKey = optionalString(raw.idempotencyKey)
+  if (!idempotencyKey) {
+    return { ok: false, status: 400, message: '缺少 idempotencyKey（幂等键）' }
+  }
+  const sourceKind = optionalString(raw.sourceKind)
+  if (!sourceKind || !IMPORT_SOURCE_KINDS.has(sourceKind)) {
+    return {
+      ok: false,
+      status: 400,
+      message: `sourceKind 必须是 announcement / platform_export / alias_evidence 之一，收到：${sourceKind ?? '(空)'}`,
+    }
+  }
+  const sourceIdentity = optionalString(raw.sourceIdentity)
+  if (!sourceIdentity) {
+    return { ok: false, status: 400, message: '缺少 sourceIdentity（来源身份：文件相对路径或逻辑标识）' }
+  }
+  if (!isObject(raw.payload)) {
+    return { ok: false, status: 400, message: '缺少 payload（写入载荷）或它不是对象' }
+  }
+
+  return {
+    ok: true,
+    value: {
+      idempotencyKey,
+      sourceKind: sourceKind as RosterImportRequest['sourceKind'],
+      sourceIdentity,
+      sourceSha256: optionalString(raw.sourceSha256),
+      payload: raw.payload as RosterImportPayload,
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 企业身份解析（读）
+// ---------------------------------------------------------------------------
+
+interface ResolvedEnterprise {
+  id: number
+  name: string
+  nameNorm: string
+  usccNorm: string | null
+}
+
+function findEnterpriseByUscc(db: Executor, usccNorm: string): ResolvedEnterprise | null {
+  const row = db.select().from(schema.enterprise).all().find((e) => e.usccNorm === usccNorm)
+  return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+}
+
+function findEnterpriseByNorm(db: Executor, nameNorm: string): ResolvedEnterprise | null {
+  const row = db.select().from(schema.enterprise).all().find((e) => e.nameNorm === nameNorm)
+  return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+}
+
+/**
+ * 按身份键定位企业：**统代优先，缺失时按归一化名**（既有决策，不改）。
+ * 定位不到时返回 `null`（由调用方决定是新建还是报错）。
+ */
+function locateEnterprise(
+  db: Executor,
+  spec: { name?: string | null; uscc?: string | null },
+): ResolvedEnterprise | null {
+  const uscc = usccOrNull(spec.uscc)
+  if (uscc) {
+    const byUscc = findEnterpriseByUscc(db, uscc)
+    if (byUscc) return byUscc
+  }
+  const name = optionalString(spec.name)
+  if (name) return findEnterpriseByNorm(db, normalizeName(name))
+  return null
+}
+
+/** 与某查询键完全相等的企业（只按**统代**，是 `match_basis='uscc'` 的判据，不是模糊匹配）。 */
+function enterpriseByExactUscc(db: Executor, usccRaw: unknown): number | null {
+  const uscc = usccOrNull(usccRaw)
+  if (!uscc) return null
+  return findEnterpriseByUscc(db, uscc)?.id ?? null
+}
+
+/**
+ * **本批将新建**的企业键（`uscc:<norm>` / `name:<norm>`）。
+ *
+ * 为什么要它:一个批次的载荷常常「先写企业，再写它的别名/差异/归并」（契约 §8.3 的
+ * 形状就是按这个顺序给的）。这些后续项按名字/统代找企业时,库里**还没有**那一行 ——
+ * 若不认「本批将建」的身份,合法的批次会被自己的预检判成 `enterprise_not_found`。
+ *
+ * 真正的 id 在**执行时**解析（那时前面的项已经插入了）;预检只用它判「能不能解析到」。
+ */
+type PendingEnterprises = Set<string>
+
+function pendingKeys(spec: { name?: string | null; uscc?: string | null }): string[] {
+  const keys: string[] = []
+  const uscc = usccOrNull(spec.uscc)
+  if (uscc) keys.push(`uscc:${uscc}`)
+  const name = optionalString(spec.name)
+  if (name) keys.push(`name:${normalizeName(name)}`)
+  return keys
+}
+
+/** 该企业是否**已存在或本批将新建**（预检判据）。 */
+function enterpriseKnown(db: Executor, pending: PendingEnterprises, spec: { name?: string | null; uscc?: string | null }): boolean {
+  if (locateEnterprise(db, spec)) return true
+  return pendingKeys(spec).some((key) => pending.has(key))
+}
+
+// ---------------------------------------------------------------------------
+// 平台查询 / 关系的**批内自然键**引用（与上面的「本批新建企业」同一套机制）
+//
+// `enterprise_alias.source_ref_id` / `difference_reason.evidence_*_id` 是整数行 id，
+// 由本批事务内生成 —— 客户端事前不可能知道。自然键 `(interface, query_key, rdjb[, queried_at])`
+// `(+ sequence_no)` 让证据指针在**同一批内**指到本批新建的查询/关系行：
+//   - 预检阶段：查库 + 查「本批将写入」的索引，判「能不能解析」；解析不到 ⇒ 逐项报错；
+//   - 执行阶段：关系已插入，**真实**解析出行 id 落列。
+// **绝不静默落 0 哨兵、绝不猜**（`source_ref_id = 0` 只表示「本就没给来源行」）。
+// ---------------------------------------------------------------------------
+
+/** 本批将写入的平台查询（自然键 + 它声明的关系序号）。 */
+interface PendingPlatformRef {
+  interface: string
+  queryKey: string
+  rdjb: string
+  queriedAt: string
+  sequenceNos: number[]
+}
+
+type PendingPlatformRefs = PendingPlatformRef[]
+
+/** 从载荷里收集「本批将写入」的平台查询自然键。 */
+function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatformRefs {
+  const out: PendingPlatformRefs = []
+  for (const query of Array.isArray(payload.platformQueries) ? payload.platformQueries : []) {
+    if (!isObject(query)) continue
+    const iface = optionalString((query as { interface?: unknown }).interface)
+    const queryKey = optionalString((query as { queryKey?: unknown }).queryKey)
+    const queriedAt = optionalString((query as { queriedAt?: unknown }).queriedAt)
+    if (!iface || !queryKey || !queriedAt) continue
+    const relations = (query as { relations?: unknown }).relations
+    out.push({
+      interface: iface,
+      queryKey,
+      rdjb: optionalString((query as { rdjb?: unknown }).rdjb) ?? '',
+      queriedAt,
+      sequenceNos: (Array.isArray(relations) ? relations : [])
+        .map((relation) => optionalInt((relation as { sequenceNo?: unknown })?.sequenceNo))
+        .filter((n): n is number => n != null),
+    })
+  }
+  return out
+}
+
+/** 归一后的自然键（`queriedAt` 可空 = 要求 `(interface, queryKey, rdjb)` 唯一）。 */
+interface NormalizedRef {
+  interface: string
+  queryKey: string
+  rdjb: string
+  queriedAt: string | null
+  sequenceNo: number | null
+}
+
+type RefError = { code: string; field: string; message: string }
+
+/** 校验自然键的形状（不查库）。 */
+function normalizeRef(ref: unknown, field: string): { ok: true; value: NormalizedRef } | { ok: false; error: RefError } {
+  if (!isObject(ref)) {
+    return { ok: false, error: { code: 'ref_shape_invalid', field, message: `引用必须是对象 { interface, queryKey, rdjb?, queriedAt?, sequenceNo? }` } }
+  }
+  const iface = optionalString(ref.interface)
+  if (!iface || !PLATFORM_INTERFACE_SET.has(iface)) {
+    return { ok: false, error: { code: 'ref_interface_unknown', field: `${field}.interface`, message: `引用缺少 interface 或取值不在字典内：${String(ref.interface)}` } }
+  }
+  const queryKey = optionalString(ref.queryKey)
+  if (!queryKey) {
+    return { ok: false, error: { code: 'ref_query_key_required', field: `${field}.queryKey`, message: '引用缺少 queryKey' } }
+  }
+  return {
+    ok: true,
+    value: {
+      interface: iface,
+      queryKey,
+      rdjb: optionalString(ref.rdjb) ?? '',
+      queriedAt: optionalString(ref.queriedAt),
+      sequenceNo: optionalInt(ref.sequenceNo),
+    },
+  }
+}
+
+/** 按自然键在「库内 + 本批将写入」两处找候选查询。 */
+function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef) {
+  const matches = (candidate: { interface: string; queryKey: string; rdjb: string; queriedAt: string }) =>
+    candidate.interface === ref.interface &&
+    candidate.queryKey === ref.queryKey &&
+    candidate.rdjb === ref.rdjb &&
+    (ref.queriedAt ? candidate.queriedAt === ref.queriedAt : true)
+  return {
+    dbHits: source.select().from(schema.platformQuery).all().filter(matches),
+    pendingHits: pending.filter(matches),
+  }
+}
+
+/** 预检阶段的「查询能不能解析」。 */
+function resolveQueryRefPlan(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef, field: string): { ok: true } | { ok: false; error: RefError } {
+  const { dbHits, pendingHits } = refCandidates(source, pending, ref)
+  const total = dbHits.length + pendingHits.length
+  if (total === 0) {
+    return { ok: false, error: { code: 'query_ref_not_found', field, message: `引用不到平台查询：${describeRef(ref)}` } }
+  }
+  // 没给 queriedAt ⇒ 必须唯一命中（给了一次查询的时点就不必）。
+  if (!ref.queriedAt && total > 1) {
+    return { ok: false, error: { code: 'query_ref_ambiguous', field, message: `引用不唯一：${describeRef(ref)} 命中 ${total} 次查询；请补 queriedAt` } }
+  }
+  return { ok: true }
+}
+
+/** 预检阶段的「关系能不能解析」。 */
+function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef, field: string): { ok: true } | { ok: false; error: RefError } {
+  if (ref.sequenceNo == null || ref.sequenceNo < 1) {
+    return { ok: false, error: { code: 'ref_sequence_no_required', field: `${field}.sequenceNo`, message: '关系引用缺少 sequenceNo（同一次查询内第几条，从 1 起）' } }
+  }
+  const { dbHits, pendingHits } = refCandidates(source, pending, ref)
+  if (dbHits.length + pendingHits.length === 0) {
+    return { ok: false, error: { code: 'query_ref_not_found', field, message: `引用不到平台查询：${describeRef(ref)}` } }
+  }
+  const dbWithSeq = dbHits.filter((query) =>
+    source
+      .select()
+      .from(schema.platformRelation)
+      .all()
+      .some((relation) => relation.queryId === query.id && relation.sequenceNo === ref.sequenceNo),
+  )
+  const pendingWithSeq = pendingHits.filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
+  if (dbWithSeq.length + pendingWithSeq.length === 0) {
+    return { ok: false, error: { code: 'relation_ref_not_found', field, message: `引用不到平台关系：${describeRef(ref)}（该查询里没有序号 ${ref.sequenceNo} 的关系）` } }
+  }
+  if (!ref.queriedAt && dbWithSeq.length + pendingWithSeq.length > 1) {
+    return { ok: false, error: { code: 'relation_ref_ambiguous', field, message: `引用不唯一：${describeRef(ref)} 命中 ${dbWithSeq.length + pendingWithSeq.length} 条同序号关系；请补 queriedAt` } }
+  }
+  return { ok: true }
+}
+
+function describeRef(ref: NormalizedRef): string {
+  const parts = [`interface=${ref.interface}`, `queryKey=${ref.queryKey}`, `rdjb=${ref.rdjb || "''"}`]
+  if (ref.queriedAt) parts.push(`queriedAt=${ref.queriedAt}`)
+  if (ref.sequenceNo != null) parts.push(`sequenceNo=${ref.sequenceNo}`)
+  return parts.join(' ')
+}
+
+/** 执行阶段：解析出**真实**的 `platform_query.id`。 */
+function resolveQueryIdAt(source: Executor, ref: NormalizedRef): number | null {
+  const hits = source
+    .select()
+    .from(schema.platformQuery)
+    .all()
+    .filter(
+      (query) =>
+        query.interface === ref.interface &&
+        query.queryKey === ref.queryKey &&
+        query.rdjb === ref.rdjb &&
+        (ref.queriedAt ? query.queriedAt === ref.queriedAt : true),
+    )
+  if (hits.length === 0) return null
+  if (ref.queriedAt) return hits[0]!.id
+  return hits.length === 1 ? hits[0]!.id : null
+}
+
+/** 执行阶段：解析出**真实**的 `platform_relation.id`。 */
+function resolveRelationIdAt(source: Executor, ref: NormalizedRef): number | null {
+  if (ref.sequenceNo == null) return null
+  const queryId = resolveQueryIdAt(source, ref)
+  if (queryId == null) return null
+  return (
+    source
+      .select()
+      .from(schema.platformRelation)
+      .all()
+      .find((relation) => relation.queryId === queryId && relation.sequenceNo === ref.sequenceNo)?.id ?? null
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 计划（预检与提交共用）
+// ---------------------------------------------------------------------------
+
+/** 计划中的一项动作。 */
+interface PlannedItem {
+  item: RosterImportItemResult
+  /** 预检的影响归类。 */
+  action: 'add' | 'update' | 'skip'
+  /** 是否落在待核状态（`pending` / `needs_review` / 未知枚举）。 */
+  review: boolean
+  /** 确实要执行时才有的写入闭包（提交阶段调用）。 */
+  run?: (tx: Executor) => RosterImportItemResult
+}
+
+interface Plan {
+  items: PlannedItem[]
+  conflicts: RosterImportItemResult[]
+}
+
+/** 汇总计划的影响计数。 */
+function summarizePlan(plan: Plan): RosterImportPreflight {
+  let add = 0
+  let update = 0
+  let remove = 0
+  let review = 0
+  for (const planned of plan.items) {
+    if (planned.action === 'add') add += 1
+    else if (planned.action === 'update') update += 1
+    if (planned.review) review += 1
+    if (planned.item.kind === 'merge' && planned.item.ok) remove += 1
+  }
+  return { add, update, remove, review, conflicts: plan.conflicts }
+}
+
+/**
+ * 把载荷翻成一份**只读**计划。所有身份解析（企业、记录、查询）都在这里发生，
+ * 因此预检报的 add/update/remove/review 就是提交真会发生的事。
+ */
+export function planRosterImport(
+  db: Executor,
+  request: RosterImportRequest,
+  context: { batchId?: number } = {},
+): Plan {
+  const items: PlannedItem[] = []
+  const conflicts: RosterImportItemResult[] = []
+  const payload = request.payload ?? {}
+  /** 本批将新建的企业键（供别名 / 差异 / 归并在预检时解析到同批企业）。 */
+  const pending: PendingEnterprises = new Set()
+  /** 本批将写入的平台查询自然键（供别名 / 差异 / 归并在预检时解析到同批关系行）。 */
+  const pendingRefs: PendingPlatformRefs = collectPendingPlatformRefs(payload)
+
+  const push = (planned: PlannedItem) => {
+    items.push(planned)
+    if (!planned.item.ok) conflicts.push(planned.item)
+  }
+
+  // ---- 公布文件：企业 / 记录 / 事件 / 出处 ---------------------------------
+  if (payload.announcement) {
+    const announcement = payload.announcement as RosterImportAnnouncement
+    const source = announcement?.sourceDocument?.source
+    const records = Array.isArray(announcement?.records) ? announcement.records : []
+    if (!isObject(announcement?.sourceDocument) || !SOURCES.has(String(source))) {
+      push({
+        item: failure('announcement', 'announcement', 'source_document_invalid', 'announcement.sourceDocument.source 必须是 jxj / miit', 'sourceDocument.source'),
+        action: 'skip',
+        review: false,
+      })
+    } else {
+      // 先登记本批会新建的企业（记录级身份），再规划各项 —— 顺序不影响解析。
+      for (const record of records) {
+        const spec = { name: record?.enterprise?.name, uscc: record?.enterprise?.uscc }
+        if (!locateEnterprise(db, spec)) for (const key of pendingKeys(spec)) pending.add(key)
+      }
+      records.forEach((record, index) => {
+        planAnnouncementRecord(db, request, announcement, record, index, push)
+      })
+    }
+  }
+
+  // ---- 平台查询与关系 ------------------------------------------------------
+  // **必须排在 aliases / differences / merges 之前**:那三项的自然键引用可能指向本批
+  // 新建的查询/关系行,执行阶段要按「关系已插入」的顺序落真实 id（见本节顶部说明）。
+  const queries = Array.isArray(payload.platformQueries) ? payload.platformQueries : []
+  queries.forEach((query, index) => planPlatformQuery(db, query, index, push))
+
+  // ---- 曾用名 / 别名 -------------------------------------------------------
+  const aliases = Array.isArray(payload.aliases) ? payload.aliases : []
+  aliases.forEach((alias, index) => planAlias(db, pending, pendingRefs, alias, index, push))
+
+  // ---- 差异原因与措施 ------------------------------------------------------
+  const differences = Array.isArray(payload.differences) ? payload.differences : []
+  differences.forEach((difference, index) => planDifference(db, pending, pendingRefs, difference, index, push))
+
+  // ---- 导出快照 ------------------------------------------------------------
+  if (payload.exportSnapshot) planExportSnapshot(db, payload.exportSnapshot, context, push)
+
+  // ---- 归并与回填（最后做，才能把本批新建的记录一并折进规范行）--------------
+  const merges = Array.isArray(payload.merges) ? payload.merges : []
+  merges.forEach((merge, index) => planMerge(db, pending, pendingRefs, merge, index, push))
+
+  return { items, conflicts }
+}
+
+// --- 公布文件 --------------------------------------------------------------
+
+function planAnnouncementRecord(
+  db: Executor,
+  request: RosterImportRequest,
+  announcement: RosterImportAnnouncement,
+  record: RosterImportAnnouncement['records'][number],
+  index: number,
+  push: (item: PlannedItem) => void,
+): void {
+  const ref = `record:${index}`
+  const name = optionalString(record?.enterprise?.name)
+  if (!name) {
+    push({ item: failure('record', ref, 'enterprise_name_required', '记录缺少企业名称', 'records[].enterprise.name'), action: 'skip', review: false })
+    return
+  }
+  const titleCode = optionalString(record.titleCode)
+  if (!titleCode || !TITLE_CODES.has(titleCode)) {
+    push({ item: failure('record', ref, 'title_unknown', `称号不在字典内：${titleCode ?? '(空)'}`, 'titleCode'), action: 'skip', review: false })
+    return
+  }
+  const source = record.source ?? announcement.sourceDocument.source
+  if (!SOURCES.has(String(source))) {
+    push({ item: failure('record', ref, 'source_unknown', `来源必须是 jxj / miit，收到：${String(source)}`, 'source'), action: 'skip', review: false })
+    return
+  }
+  const events = Array.isArray(record.events) ? record.events : []
+  for (let i = 0; i < events.length; i += 1) {
+    const event = events[i]!
+    const eventRef = `record:${index}#${i}`
+    if (!EVENT_TYPES.has(String(event?.eventType))) {
+      push({ item: failure('record_event', eventRef, 'event_type_unknown', `事件类型不在字典内：${String(event?.eventType)}`, 'eventType'), action: 'skip', review: false })
+      return
+    }
+    if (event.reviewOutcome != null && !REVIEW_OUTCOMES.has(String(event.reviewOutcome))) {
+      push({ item: failure('record_event', eventRef, 'review_outcome_unknown', `复核结论必须是 passed / failed，收到：${String(event.reviewOutcome)}`, 'reviewOutcome'), action: 'skip', review: false })
+      return
+    }
+    const evidence = Array.isArray(event.evidence) ? event.evidence : []
+    for (let k = 0; k < evidence.length; k += 1) {
+      if (!optionalString(evidence[k]?.sourceFile)) {
+        push({ item: failure('record_evidence', `${eventRef}/e${k}`, 'source_file_required', '出处缺少 sourceFile', 'evidence.sourceFile'), action: 'skip', review: false })
+        return
+      }
+    }
+  }
+
+  const uscc = usccOrNull(record.enterprise.uscc)
+  const existing = locateEnterprise(db, { name, uscc })
+  const district = optionalString(record.enterprise.district)
+  let existingRecord: { id: number } | undefined
+  if (existing) {
+    existingRecord = db
+      .select()
+      .from(schema.record)
+      .all()
+      .find((r) => r.enterpriseId === existing.id && r.titleCode === titleCode && r.source === source)
+  }
+
+  push({
+    item: success(
+      'record',
+      existing ? `record:${existingRecord?.id ?? ref}` : ref,
+      { enterpriseId: existing?.id ?? null, titleCode, source },
+    ),
+    action: existingRecord ? 'skip' : 'add',
+    review: !uscc,
+    run: (tx) => writeAnnouncementRecord(tx, request, announcement, record, { name, uscc, district, titleCode, source, reason: { existingRecord } }),
+  })
+}
+
+interface AnnouncementWriteReason {
+  existingRecord?: { id: number }
+}
+
+function writeAnnouncementRecord(
+  tx: Executor,
+  request: RosterImportRequest,
+  announcement: RosterImportAnnouncement,
+  record: RosterImportAnnouncement['records'][number],
+  resolved: {
+    name: string
+    uscc: string | null
+    district: string | null
+    titleCode: string
+    source: 'jxj' | 'miit'
+    reason: AnnouncementWriteReason
+  },
+): RosterImportItemResult {
+  const { name, uscc, district, titleCode, source } = resolved
+
+  // 来源文件（公布文件）。按 (来源, 标题, 文号) 复用，避免重放堆行。
+  const sourceDocument = upsertSourceDocument(tx, {
+    source,
+    title: optionalString(announcement.sourceDocument.title) ?? request.sourceIdentity,
+    docNumber: optionalString(announcement.sourceDocument.docNumber),
+    issueDate: optionalString(announcement.sourceDocument.issueDate),
+    path: request.sourceIdentity,
+  })
+
+  // 企业：统代优先、缺失按归一化名。
+  const enterprise = upsertEnterprise(tx, { name, uscc, district })
+
+  // 记录：(企业, 称号, 来源) 唯一。
+  const recordRow = upsertRecord(tx, {
+    enterpriseId: enterprise.id,
+    titleCode,
+    source,
+    usccRaw: uscc,
+    nameRaw: name,
+    district,
+  })
+  const recordId = recordRow.id
+
+  // 事件 + 出处：同坐标的完全相同事件**跳过**（重放安全），否则新增。
+  const writtenEvents: number[] = []
+  const writtenEvidence: number[] = []
+  let skipped = 0
+  for (const event of record.events ?? []) {
+    const values = {
+      recordId,
+      eventType: event.eventType,
+      year: optionalInt(event.year),
+      batchSeq: optionalInt(event.batchSeq),
+      sortKey: optionalInt(event.year) ?? 0,
+      reviewOutcome: (event.reviewOutcome ?? null) as 'passed' | 'failed' | null,
+      decidedYear: optionalInt(event.decidedYear),
+    }
+    const duplicate = findExistingEvent(tx, values)
+    if (duplicate) {
+      skipped += 1
+      continue
+    }
+    const eventId = tx.insert(schema.recordEvent).values(values).returning({ id: schema.recordEvent.id }).get().id
+    writtenEvents.push(eventId)
+    for (const evidence of event.evidence ?? []) {
+      const evidenceId = tx
+        .insert(schema.recordEvidence)
+        .values({
+          recordEventId: eventId,
+          sourceFile: evidence.sourceFile,
+          attachment: optionalString(evidence.attachment),
+          listNo: optionalInt(evidence.listNo),
+          page: optionalInt(evidence.page),
+        })
+        .returning({ id: schema.recordEvidence.id })
+        .get().id
+      writtenEvidence.push(evidenceId)
+    }
+  }
+
+  return success('record_event', `record:${recordId}`, {
+    enterpriseId: enterprise.id,
+    recordId,
+    sourceDocumentId: sourceDocument.id,
+    events: writtenEvents,
+    evidence: writtenEvidence,
+    skipped,
+    /**
+     * 本项**真正插入的行数**：新企业 / 新来源文件 / 新记录 / 新事件 / 新出处。
+     * 重放同一内容时全是 0（企业与记录按自然键复用、同坐标事件跳过）——
+     * `summary.written` 由它求和，所以「零新增」不会再被报成「写了 N 条记录」。
+     */
+    rowsWritten:
+      (sourceDocument.created ? 1 : 0) +
+      (enterprise.created ? 1 : 0) +
+      (recordRow.created ? 1 : 0) +
+      writtenEvents.length +
+      writtenEvidence.length,
+  })
+}
+
+/**
+ * 定位或新建来源文件。返回 `created` —— 本项**真的插了一行**才为真。
+ * 「重放时一行没写」这个事实必须能报出来(`summary.written`,见 `summarizeCommit`)。
+ */
+function upsertSourceDocument(
+  tx: Executor,
+  input: { source: string; title: string; docNumber: string | null; issueDate: string | null; path: string },
+): { id: number; created: boolean } {
+  const existing = tx
+    .select()
+    .from(schema.sourceDocument)
+    .all()
+    .find(
+      (d) =>
+        d.source === input.source &&
+        d.title === input.title &&
+        (d.docNumber ?? null) === input.docNumber,
+    )
+  if (existing) return { id: existing.id, created: false }
+  const id = tx
+    .insert(schema.sourceDocument)
+    .values({
+      source: input.source as 'jxj' | 'miit',
+      title: input.title,
+      docNumber: input.docNumber,
+      issueDate: input.issueDate,
+      path: input.path,
+    })
+    .returning({ id: schema.sourceDocument.id })
+    .get().id
+  return { id, created: true }
+}
+
+/** 定位或新建企业。返回 `created`(同 {@link upsertSourceDocument})。 */
+function upsertEnterprise(
+  tx: Executor,
+  input: { name: string; uscc: string | null; district: string | null },
+): { id: number; created: boolean } {
+  const nameNorm = normalizeName(input.name)
+  const existing = input.uscc
+    ? findEnterpriseByUscc(tx, input.uscc)
+    : findEnterpriseByNorm(tx, nameNorm)
+  if (existing) return { id: existing.id, created: false }
+  const id = tx
+    .insert(schema.enterprise)
+    .values({
+      usccNorm: input.uscc,
+      name: input.name,
+      nameNorm,
+      district: input.district,
+      qualityFlags: input.uscc ? [] : ['uscc_missing'],
+    })
+    .returning({ id: schema.enterprise.id })
+    .get().id
+  return { id, created: true }
+}
+
+/** 定位或新建记录(企业 × 称号 × 来源)。返回 `created`(同 {@link upsertSourceDocument})。 */
+function upsertRecord(
+  tx: Executor,
+  input: {
+    enterpriseId: number
+    titleCode: string
+    source: 'jxj' | 'miit'
+    usccRaw: string | null
+    nameRaw: string
+    district: string | null
+  },
+): { id: number; created: boolean } {
+  const existing = tx
+    .select()
+    .from(schema.record)
+    .all()
+    .find(
+      (r) =>
+        r.enterpriseId === input.enterpriseId &&
+        r.titleCode === input.titleCode &&
+        r.source === input.source,
+    )
+  if (existing) return { id: existing.id, created: false }
+  const id = tx
+    .insert(schema.record)
+    .values({
+      enterpriseId: input.enterpriseId,
+      titleCode: input.titleCode,
+      source: input.source,
+      district: input.district,
+      usccRaw: input.usccRaw,
+      nameRaw: input.nameRaw,
+    })
+    .returning({ id: schema.record.id })
+    .get().id
+  return { id, created: true }
+}
+
+/** 同坐标的**完全相同**事件（含复核结论与结论年份）—— 命中即跳过，保证重放不堆行。 */
+function findExistingEvent(
+  tx: Executor,
+  values: {
+    recordId: number
+    eventType: string
+    year: number | null
+    batchSeq: number | null
+    reviewOutcome: string | null
+    decidedYear: number | null
+  },
+): { id: number } | undefined {
+  return tx
+    .select()
+    .from(schema.recordEvent)
+    .all()
+    .find(
+      (e) =>
+        e.recordId === values.recordId &&
+        e.eventType === values.eventType &&
+        (e.year ?? null) === values.year &&
+        (e.batchSeq ?? null) === values.batchSeq &&
+        (e.reviewOutcome ?? null) === values.reviewOutcome &&
+        (e.decidedYear ?? null) === values.decidedYear,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// 既有行查找（预检与执行阶段**共用同一份**谓词）
+// ---------------------------------------------------------------------------
+//
+// 每种实体的身份就是它在前面的唯一键（契约 §1.2 / §1.3 / §1.4 / §1.5）：
+// 预检阶段按「载荷给的值」查一次、执行阶段按「解析出的真 id」再查一次 ——
+// 以前这两次各自把 `.select().from(t).all().find(...)` 与列比较抄了一遍，
+// 抄漏一列就成了「重放时多插一行」。现在两次都走下面这同一个函数。
+
+/** 别名身份：`(enterprise_id, name_norm, source_kind, source_ref_id)`（契约 §1.2）。 */
+function findAliasRow(
+  db: Executor,
+  spec: { enterpriseId: number; nameNorm: string; sourceKind: string; sourceRefId: number },
+): typeof schema.enterpriseAlias.$inferSelect | undefined {
+  return db
+    .select()
+    .from(schema.enterpriseAlias)
+    .all()
+    .find(
+      (a) =>
+        a.enterpriseId === spec.enterpriseId &&
+        a.nameNorm === spec.nameNorm &&
+        a.sourceKind === spec.sourceKind &&
+        a.sourceRefId === spec.sourceRefId,
+    )
+}
+
+/** 查询身份：`(interface, query_key, rdjb, queried_at)`（契约 §1.3）。 */
+function findQueryRow(
+  db: Executor,
+  spec: { interface: PlatformInterface; queryKey: string; rdjb: string; queriedAt: string },
+): typeof schema.platformQuery.$inferSelect | undefined {
+  return db
+    .select()
+    .from(schema.platformQuery)
+    .all()
+    .find(
+      (q) =>
+        q.interface === spec.interface &&
+        q.queryKey === spec.queryKey &&
+        q.rdjb === spec.rdjb &&
+        q.queriedAt === spec.queriedAt,
+    )
+}
+
+/** 关系身份：`(query_id, sequence_no)`（契约 §1.4）。 */
+function findRelationRow(
+  db: Executor,
+  spec: { queryId: number; sequenceNo: number },
+): typeof schema.platformRelation.$inferSelect | undefined {
+  return db
+    .select()
+    .from(schema.platformRelation)
+    .all()
+    .find((r) => r.queryId === spec.queryId && r.sequenceNo === spec.sequenceNo)
+}
+
+/** 差异身份：`(enterprise_id, title_code, direction, recorded_at)`（契约 §1.5）—— `find` 的谓词。 */
+function sameDifference(
+  row: typeof schema.differenceReason.$inferSelect,
+  spec: { enterpriseId: number; titleCode: string; direction: string; recordedAt: string },
+): boolean {
+  return (
+    row.enterpriseId === spec.enterpriseId &&
+    row.titleCode === spec.titleCode &&
+    row.direction === spec.direction &&
+    row.recordedAt === spec.recordedAt
+  )
+}
+
+/** 差异身份：`(enterprise_id, title_code, direction, recorded_at)`（契约 §1.5）。 */
+function findDifferenceRow(
+  db: Executor,
+  spec: { enterpriseId: number; titleCode: string; direction: string; recordedAt: string },
+): typeof schema.differenceReason.$inferSelect | undefined {
+  return db
+    .select()
+    .from(schema.differenceReason)
+    .all()
+    .find((row) => sameDifference(row, spec))
+}
+
+// --- 别名 ------------------------------------------------------------------
+
+function planAlias(
+  db: Executor,
+  pending: PendingEnterprises,
+  pendingRefs: PendingPlatformRefs,
+  alias: RosterImportAlias,
+  index: number,
+  push: (item: PlannedItem) => void,
+): void {
+  const ref = `alias:${index}`
+  const name = optionalString(alias?.name)
+  if (!name) {
+    push({ item: failure('alias', ref, 'alias_name_required', '别名缺少 name', 'aliases[].name'), action: 'skip', review: false })
+    return
+  }
+  if (!ALIAS_SOURCE_KINDS.has(String(alias.sourceKind))) {
+    push({ item: failure('alias', ref, 'alias_source_kind_unknown', `sourceKind 不在字典内：${String(alias.sourceKind)}`, 'sourceKind'), action: 'skip', review: false })
+    return
+  }
+  if (alias.verificationStatus != null && !VERIFICATION_STATUSES.has(String(alias.verificationStatus))) {
+    push({ item: failure('alias', ref, 'verification_status_unknown', `verificationStatus 必须是 confirmed / pending`, 'verificationStatus'), action: 'skip', review: false })
+    return
+  }
+  // 来源证据：**裸 id 与自然键恰给其一**（两个都给 ⇒ 报错，不静默取一个）。
+  const hasId = optionalInt(alias.sourceRefId) != null
+  const hasRef = alias.sourceRelationRef != null
+  if (hasId && hasRef) {
+    push({ item: failure('alias', ref, 'source_ref_conflict', '同时给了 sourceRefId 与 sourceRelationRef；请只给其一', 'sourceRelationRef'), action: 'skip', review: false })
+    return
+  }
+  let relationRef: NormalizedRef | null = null
+  if (hasRef) {
+    const normalized = normalizeRef(alias.sourceRelationRef, 'aliases[].sourceRelationRef')
+    if (!normalized.ok) {
+      push({ item: failure('alias', ref, normalized.error.code, normalized.error.message, normalized.error.field), action: 'skip', review: false })
+      return
+    }
+    const resolved = resolveRelationRefPlan(db, pendingRefs, normalized.value, 'aliases[].sourceRelationRef')
+    if (!resolved.ok) {
+      push({ item: failure('alias', ref, resolved.error.code, resolved.error.message, resolved.error.field), action: 'skip', review: false })
+      return
+    }
+    relationRef = normalized.value
+  }
+  const spec = { name: alias.enterpriseName, uscc: alias.uscc }
+  if (!enterpriseKnown(db, pending, spec)) {
+    push({ item: failure('alias', ref, 'enterprise_not_found', `别名找不到归属企业：${optionalString(alias.enterpriseName) ?? usccOrNull(alias.uscc) ?? '(空)'}`, 'enterpriseName'), action: 'skip', review: false })
+    return
+  }
+  const nameNorm = normalizeName(name)
+  // 裸 id 就用给的；自然键要到执行阶段才解析出真 id（0 只表示「本就没给来源行」）。
+  const literalSourceRefId = optionalInt(alias.sourceRefId)
+  const plannedEnterpriseId = locateEnterprise(db, spec)?.id
+  const existing =
+    literalSourceRefId == null || plannedEnterpriseId == null
+      ? undefined
+      : findAliasRow(db, {
+          enterpriseId: plannedEnterpriseId,
+          nameNorm,
+          sourceKind: alias.sourceKind,
+          sourceRefId: literalSourceRefId,
+        })
+  push({
+    item: success('alias', existing ? `alias:${existing.id}` : ref, { enterpriseId: plannedEnterpriseId ?? null }),
+    action: existing ? 'skip' : 'add',
+    review: (alias.verificationStatus ?? 'pending') !== 'confirmed',
+    run: (tx) => {
+      // 执行时解析真 id：同批先插入的企业此刻已在库里。
+      const enterprise = locateEnterprise(tx, spec)
+      if (!enterprise) return failure('alias', ref, 'enterprise_not_found', '别名归属企业在写入阶段不存在', 'enterpriseName')
+      let sourceRefId = literalSourceRefId ?? 0
+      if (relationRef) {
+        const resolved = resolveRelationIdAt(tx, relationRef)
+        if (resolved == null) {
+          // 预检已判过可行；到这里仍解析不到说明批次内自相矛盾 —— 报错而不是落 0 哨兵。
+          return failure('alias', ref, 'relation_ref_not_found', `执行阶段解析不到平台关系：${describeRef(relationRef)}`, 'sourceRelationRef')
+        }
+        sourceRefId = resolved
+      }
+      const already = findAliasRow(tx, {
+        enterpriseId: enterprise.id,
+        nameNorm,
+        sourceKind: alias.sourceKind,
+        sourceRefId,
+      })
+      if (already) return success('alias', `alias:${already.id}`, { enterpriseId: enterprise.id, rowsWritten: 0 })
+      const id = tx
+        .insert(schema.enterpriseAlias)
+        .values({
+          enterpriseId: enterprise.id,
+          name,
+          nameNorm,
+          sourceKind: alias.sourceKind,
+          sourceRefId,
+          validFrom: optionalString(alias.validFrom),
+          validTo: optionalString(alias.validTo),
+          verificationStatus: alias.verificationStatus ?? 'pending',
+          note: optionalString(alias.note),
+        })
+        .returning({ id: schema.enterpriseAlias.id })
+        .get().id
+      return success('alias', `alias:${id}`, { enterpriseId: enterprise.id, sourceRefId, rowsWritten: 1 })
+    },
+  })
+}
+
+// --- 平台查询与关系 --------------------------------------------------------
+
+function planPlatformQuery(
+  db: Executor,
+  query: RosterImportPlatformQuery,
+  index: number,
+  push: (item: PlannedItem) => void,
+): void {
+  const ref = `query:${index}`
+  if (!PLATFORM_INTERFACE_SET.has(String(query?.interface))) {
+    push({ item: failure('platform_query', ref, 'interface_unknown', `interface 必须是 business_list / apply_list`, 'interface'), action: 'skip', review: false })
+    return
+  }
+  const queryKey = optionalString(query.queryKey)
+  if (!queryKey) {
+    push({ item: failure('platform_query', ref, 'query_key_required', '平台查询缺少 queryKey', 'queryKey'), action: 'skip', review: false })
+    return
+  }
+  const queriedAt = optionalString(query.queriedAt)
+  if (!queriedAt) {
+    push({ item: failure('platform_query', ref, 'queried_at_required', '平台查询缺少 queriedAt（查询时点）', 'queriedAt'), action: 'skip', review: false })
+    return
+  }
+  if (query.status != null && !QUERY_STATUSES.has(String(query.status))) {
+    push({ item: failure('platform_query', ref, 'query_status_unknown', `status 不在四态内：${String(query.status)}`, 'status'), action: 'skip', review: false })
+    return
+  }
+  if (query.titleCode != null && !TITLE_CODES.has(String(query.titleCode))) {
+    push({ item: failure('platform_query', ref, 'title_unknown', `称号不在字典内：${String(query.titleCode)}`, 'titleCode'), action: 'skip', review: false })
+    return
+  }
+  const rdjb = optionalString(query.rdjb) ?? ''
+  for (let i = 0; i < (query.relations ?? []).length; i += 1) {
+    const relation = query.relations![i]!
+    if (optionalInt(relation?.sequenceNo) == null) {
+      push({ item: failure('platform_relation', `${ref}/r${i}`, 'sequence_no_required', '关系缺少 sequenceNo', 'relations[].sequenceNo'), action: 'skip', review: false })
+      return
+    }
+    if (relation.matchBasis != null && !MATCH_BASES.has(String(relation.matchBasis))) {
+      push({ item: failure('platform_relation', `${ref}/r${i}`, 'match_basis_unknown', `matchBasis 不在字典内：${String(relation.matchBasis)}`, 'relations[].matchBasis'), action: 'skip', review: false })
+      return
+    }
+  }
+
+  const existing = findQueryRow(db, { interface: query.interface, queryKey, rdjb, queriedAt })
+  const newRelationCount = existing
+    ? (query.relations ?? []).filter(
+        (r) => findRelationRow(db, { queryId: existing.id, sequenceNo: optionalInt(r.sequenceNo)! }) == null,
+      ).length
+    : (query.relations ?? []).length
+
+  push({
+    item: success('platform_query', existing ? `query:${existing.id}` : ref, { relationCount: newRelationCount }),
+    action: existing ? 'update' : 'add',
+    review: query.status === 'failed',
+    run: (tx) => writePlatformQuery(tx, query),
+  })
+}
+
+function writePlatformQuery(
+  tx: Executor,
+  query: RosterImportPlatformQuery,
+): RosterImportItemResult {
+  const rdjb = optionalString(query.rdjb) ?? ''
+  const existing = findQueryRow(tx, {
+    interface: query.interface,
+    queryKey: query.queryKey,
+    rdjb,
+    queriedAt: query.queriedAt,
+  })
+  const queryRow = existing
+    ? { id: existing.id, created: false }
+    : {
+        id: tx
+          .insert(schema.platformQuery)
+          .values({
+            interface: query.interface,
+            queryKey: query.queryKey,
+            rdjb,
+            titleCode: optionalString(query.titleCode),
+            queriedAt: query.queriedAt,
+            status: query.status ?? 'not_queried',
+            failureReason: optionalString(query.failureReason),
+            rawResponse: optionalString(query.rawResponse),
+          })
+          .returning({ id: schema.platformQuery.id })
+          .get().id,
+        created: true,
+      }
+  const queryId = queryRow.id
+  const relations: number[] = []
+  let skipped = 0
+  for (const relation of query.relations ?? []) {
+    const sequenceNo = optionalInt(relation.sequenceNo)!
+    if (findRelationRow(tx, { queryId, sequenceNo })) {
+      skipped += 1
+      continue
+    }
+    // 归属：显式 > 精确统代匹配；匹配不到**留空待核**（不模糊推断）。
+    const declareKindRaw = optionalString(relation.declareKind)
+    const unknownDeclare = !!declareKindRaw && !DECLARE_KINDS.has(declareKindRaw)
+    const enterpriseId =
+      optionalInt(relation.enterpriseId) ?? enterpriseByExactUscc(tx, relation.usccRaw) ?? null
+    const matchBasis =
+      relation.matchBasis ??
+      (optionalInt(relation.enterpriseId) != null
+        ? 'manual'
+        : enterpriseId != null
+          ? 'uscc'
+          : 'none')
+    const verificationStatus =
+      relation.verificationStatus ?? (enterpriseId != null && !unknownDeclare ? 'confirmed' : 'pending')
+    const id = tx
+      .insert(schema.platformRelation)
+      .values({
+        queryId,
+        sequenceNo,
+        relationKey: optionalString(relation.relationKey),
+        enterpriseId,
+        rawFields: relation.rawFields ?? null,
+        sourceText: optionalString(relation.sourceText),
+        usccRaw: optionalString(relation.usccRaw),
+        nameRaw: optionalString(relation.nameRaw),
+        aliasNameRaw: optionalString(relation.aliasNameRaw),
+        province: optionalString(relation.province),
+        status: optionalString(relation.status),
+        batch: optionalString(relation.batch),
+        // 非字典取值原样入库（drizzle 的 enum 只是编译期约束）。
+        declareKind: (declareKindRaw ?? null) as 'apply' | 'update' | 'review' | null,
+        appliedAt: optionalString(relation.appliedAt),
+        awardBatchLabel: optionalString(relation.awardBatchLabel),
+        year: optionalInt(relation.year),
+        matchBasis,
+        verificationStatus,
+      })
+      .returning({ id: schema.platformRelation.id })
+      .get().id
+    relations.push(id)
+  }
+  return success('platform_query', `query:${queryId}`, {
+    relations,
+    skipped,
+    /** 真正插入的行数：新查询行 + 新关系行（重放时全为 0）。 */
+    rowsWritten: (queryRow.created ? 1 : 0) + relations.length,
+  })
+}
+
+// --- 导出快照 --------------------------------------------------------------
+
+function planExportSnapshot(
+  db: Executor,
+  snapshot: RosterImportExportSnapshot,
+  context: { batchId?: number },
+  push: (item: PlannedItem) => void,
+): void {
+  const ref = 'export:snapshot'
+  if (!TITLE_CODES.has(String(snapshot?.titleCode))) {
+    push({ item: failure('export_batch', ref, 'title_unknown', `称号不在字典内：${String(snapshot?.titleCode)}`, 'titleCode'), action: 'skip', review: false })
+    return
+  }
+  if (!optionalInt(snapshot.year) || !optionalString(snapshot.collectedOn) || !optionalString(snapshot.originalFilename) || !optionalString(snapshot.sha256)) {
+    push({ item: failure('export_batch', ref, 'export_identity_incomplete', '快照缺少 year / collectedOn / originalFilename / sha256', 'exportSnapshot'), action: 'skip', review: false })
+    return
+  }
+  const rows = Array.isArray(snapshot.rows) ? snapshot.rows : []
+  const seen = new Set<number>()
+  for (let i = 0; i < rows.length; i += 1) {
+    const rowNo = optionalInt(rows[i]?.sourceRowNo)
+    if (rowNo == null) {
+      push({ item: failure('export_row', `export:row:${i}`, 'source_row_no_required', '快照行缺少 sourceRowNo', 'rows[].sourceRowNo'), action: 'skip', review: false })
+      return
+    }
+    if (seen.has(rowNo)) {
+      push({ item: failure('export_row', `export:row:${rowNo}`, 'source_row_no_duplicate', `快照行号重复：${rowNo}`, 'rows[].sourceRowNo'), action: 'skip', review: false })
+      return
+    }
+    seen.add(rowNo)
+  }
+
+  const existing = db
+    .select()
+    .from(schema.platformExportBatch)
+    .all()
+    .find((b) => b.titleCode === snapshot.titleCode && b.year === snapshot.year && b.sha256 === snapshot.sha256)
+  // `replaced_batch_id` 的方向（父代理 2026-10-16 裁决 / 契约 §1.6「本批**替换**了哪一批」）：
+  // **新批**记下它替换掉的那一批 = 同 (称号, 年度) 现有的**最新**批（不同 sha256）；
+  // 首版为 null。同 sha256 重放会命中唯一键**不新建批**，两版并存。
+  const previousLatest = db
+    .select()
+    .from(schema.platformExportBatch)
+    .all()
+    .filter((b) => b.titleCode === snapshot.titleCode && b.year === snapshot.year && b.sha256 !== snapshot.sha256)
+    .reduce<(typeof schema.platformExportBatch)['$inferSelect'] | null>(
+      (latest, b) => (latest === null || b.id > latest.id ? b : latest),
+      null,
+    )
+  const existingRows = existing ? db.select().from(schema.platformExportRow).all().filter((r) => r.batchId === existing.id) : []
+  const newRows = rows.filter((r) => !existingRows.some((e) => e.sourceRowNo === optionalInt(r.sourceRowNo))).length
+
+  push({
+    item: success('export_batch', existing ? `export:${existing.id}` : ref, {
+      rowCount: newRows,
+      replaced: previousLatest?.id ?? null,
+    }),
+    action: existing ? 'update' : 'add',
+    review: false,
+    run: (tx) => writeExportSnapshot(tx, snapshot, context),
+  })
+}
+
+function writeExportSnapshot(
+  tx: Executor,
+  snapshot: RosterImportExportSnapshot,
+  context: { batchId?: number },
+): RosterImportItemResult {
+  const rows = snapshot.rows ?? []
+  let batch = tx
+    .select()
+    .from(schema.platformExportBatch)
+    .all()
+    .find((b) => b.titleCode === snapshot.titleCode && b.year === snapshot.year && b.sha256 === snapshot.sha256)
+  const batchCreated = !batch
+  if (!batch) {
+    // 换内容 ⇒ 新版本：本批记下它替换掉的**最新**旧版（两版并存，旧版不消失）。
+    const previousLatest = tx
+      .select()
+      .from(schema.platformExportBatch)
+      .all()
+      .filter((b) => b.titleCode === snapshot.titleCode && b.year === snapshot.year)
+      .reduce<(typeof schema.platformExportBatch)['$inferSelect'] | null>(
+        (latest, b) => (latest === null || b.id > latest.id ? b : latest),
+        null,
+      )
+    batch = tx
+      .insert(schema.platformExportBatch)
+      .values({
+        titleCode: snapshot.titleCode,
+        year: snapshot.year,
+        collectedOn: snapshot.collectedOn,
+        originalFilename: snapshot.originalFilename,
+        sha256: snapshot.sha256,
+        rowCount: rows.length,
+        importStatus: 'imported',
+        importBatchId: context.batchId ?? null,
+        replacedBatchId: previousLatest?.id ?? null,
+      })
+      .returning()
+      .get()
+  }
+  // 已存在的源行号**一次性**取回（快照可能 6000+ 行，逐行全表扫描是 O(n²)）。
+  const existingRowNos = new Set(
+    tx
+      .select({ sourceRowNo: schema.platformExportRow.sourceRowNo })
+      .from(schema.platformExportRow)
+      .where(eq(schema.platformExportRow.batchId, batch.id))
+      .all()
+      .map((r) => r.sourceRowNo),
+  )
+  const pending = rows.filter((row) => !existingRowNos.has(optionalInt(row.sourceRowNo)!))
+  const pendingRowNos = new Set(pending.map((row) => optionalInt(row.sourceRowNo)!))
+  // 整批一次插入会撞 SQLite 的**参数上限**（6273 行 × 9 列 ≫ `SQLITE_MAX_VARIABLE_NUMBER`），
+  // 所以按行数分片；片与片之间仍在同一个事务里，语义不变。
+  const INSERT_CHUNK = 200
+  for (let start = 0; start < pending.length; start += INSERT_CHUNK) {
+    tx.insert(schema.platformExportRow)
+      .values(
+        pending.slice(start, start + INSERT_CHUNK).map((row) => ({
+          batchId: batch!.id,
+          sourceRowNo: optionalInt(row.sourceRowNo)!,
+          usccRaw: optionalString(row.usccRaw),
+          nameRaw: optionalString(row.nameRaw),
+          district: optionalString(row.district),
+          province: optionalString(row.province),
+          city: optionalString(row.city),
+          regStatus: optionalString(row.regStatus),
+          rawFields: row.rawFields ?? null,
+        })),
+      )
+      .run()
+  }
+  // 只报**本次真正插入**的源行（重放同一份快照时为空）—— 「本批写了哪些行」必须可查回，
+  // 而不是把批次里已有的行也算成本次新增。
+  const written = tx
+    .select({ id: schema.platformExportRow.id, sourceRowNo: schema.platformExportRow.sourceRowNo })
+    .from(schema.platformExportRow)
+    .where(eq(schema.platformExportRow.batchId, batch.id))
+    .all()
+    .filter((r) => pendingRowNos.has(r.sourceRowNo))
+    .map((r) => r.id)
+  return success('export_batch', `export:${batch.id}`, {
+    rows: written,
+    skipped: rows.length - pending.length,
+    rowsWritten: (batchCreated ? 1 : 0) + pending.length,
+  })
+}
+
+// --- 差异原因与措施 --------------------------------------------------------
+
+/** 差异项的证据指针（每列：裸 id 或自然键）。 */
+interface EvidenceRefs {
+  queryIdLiteral: number | null
+  queryRef: NormalizedRef | null
+  relationIdLiteral: number | null
+  relationRef: NormalizedRef | null
+}
+
+/**
+ * 校验并解析差异项的两列证据指针。返回 `null` 表示已把逐项错误 push 出去。
+ * 规则：同一列**裸 id 与自然键恰给其一**（两个都给 ⇒ 逐项报错，不静默取一个）；
+ * 自然键在预检阶段判可行性（查库 + 查本批将写入的索引）。
+ */
+function collectEvidenceRefs(
+  db: Executor,
+  pendingRefs: PendingPlatformRefs,
+  difference: RosterImportDifference,
+  ref: string,
+  push: (item: PlannedItem) => void,
+): EvidenceRefs | null {
+  const reject = (code: string, message: string, field: string): null => {
+    push({ item: failure('difference', ref, code, message, field), action: 'skip', review: false })
+    return null
+  }
+  const queryIdLiteral = optionalInt(difference.evidenceQueryId)
+  const relationIdLiteral = optionalInt(difference.evidenceRelationId)
+  if (queryIdLiteral != null && difference.evidenceQueryRef != null) {
+    return reject('evidence_ref_conflict', '同时给了 evidenceQueryId 与 evidenceQueryRef；请只给其一', 'differences[].evidenceQueryRef')
+  }
+  if (relationIdLiteral != null && difference.evidenceRelationRef != null) {
+    return reject('evidence_ref_conflict', '同时给了 evidenceRelationId 与 evidenceRelationRef；请只给其一', 'differences[].evidenceRelationRef')
+  }
+  let queryRef: NormalizedRef | null = null
+  if (difference.evidenceQueryRef != null) {
+    const normalized = normalizeRef(difference.evidenceQueryRef, 'differences[].evidenceQueryRef')
+    if (!normalized.ok) return reject(normalized.error.code, normalized.error.message, normalized.error.field)
+    const resolved = resolveQueryRefPlan(db, pendingRefs, normalized.value, 'differences[].evidenceQueryRef')
+    if (!resolved.ok) return reject(resolved.error.code, resolved.error.message, resolved.error.field)
+    queryRef = normalized.value
+  }
+  let relationRef: NormalizedRef | null = null
+  if (difference.evidenceRelationRef != null) {
+    const normalized = normalizeRef(difference.evidenceRelationRef, 'differences[].evidenceRelationRef')
+    if (!normalized.ok) return reject(normalized.error.code, normalized.error.message, normalized.error.field)
+    const resolved = resolveRelationRefPlan(db, pendingRefs, normalized.value, 'differences[].evidenceRelationRef')
+    if (!resolved.ok) return reject(resolved.error.code, resolved.error.message, resolved.error.field)
+    relationRef = normalized.value
+  }
+  return { queryIdLiteral, queryRef, relationIdLiteral, relationRef }
+}
+
+function planDifference(
+  db: Executor,
+  pending: PendingEnterprises,
+  pendingRefs: PendingPlatformRefs,
+  difference: RosterImportDifference,
+  index: number,
+  push: (item: PlannedItem) => void,
+): void {
+  const ref = `difference:${index}`
+  if (!TITLE_CODES.has(String(difference?.titleCode))) {
+    push({ item: failure('difference', ref, 'title_unknown', `称号不在字典内：${String(difference?.titleCode)}`, 'titleCode'), action: 'skip', review: false })
+    return
+  }
+  if (!DIRECTIONS.has(String(difference.direction))) {
+    push({ item: failure('difference', ref, 'direction_unknown', `direction 必须是 missing_in_miit / extra_in_miit`, 'direction'), action: 'skip', review: false })
+    return
+  }
+  if (difference.status != null && !DIFFERENCE_STATUSES.has(String(difference.status))) {
+    push({ item: failure('difference', ref, 'difference_status_unknown', `status 不在状态机内：${String(difference.status)}`, 'status'), action: 'skip', review: false })
+    return
+  }
+  if (difference.reasonCode != null && !DIFFERENCE_REASONS.has(String(difference.reasonCode))) {
+    push({ item: failure('difference', ref, 'reason_unknown', `reasonCode 不在字典内：${String(difference.reasonCode)}`, 'reasonCode'), action: 'skip', review: false })
+    return
+  }
+  if (difference.measureCode != null && !DIFFERENCE_MEASURES.has(String(difference.measureCode))) {
+    push({ item: failure('difference', ref, 'measure_unknown', `measureCode 不在字典内：${String(difference.measureCode)}`, 'measureCode'), action: 'skip', review: false })
+    return
+  }
+  // 契约 §1.5：`recorded_at` 不默认（时态化的排序键），必须由来源给出。
+  const recordedAt = optionalString(difference.recordedAt)
+  if (!recordedAt) {
+    push({ item: failure('difference', ref, 'recorded_at_required', '差异解释缺少 recordedAt（登记时点）', 'recordedAt'), action: 'skip', review: false })
+    return
+  }
+  // 证据指针：每列**裸 id 与自然键恰给其一**。
+  const refs = collectEvidenceRefs(db, pendingRefs, difference, ref, push)
+  if (!refs) return
+  const spec = { name: difference.enterpriseName, uscc: difference.uscc }
+  if (!enterpriseKnown(db, pending, spec)) {
+    push({ item: failure('difference', ref, 'enterprise_not_found', `差异找不到归属企业：${optionalString(difference.enterpriseName) ?? usccOrNull(difference.uscc) ?? '(空)'}`, 'enterpriseName'), action: 'skip', review: false })
+    return
+  }
+  const current = locateEnterprise(db, spec)
+  const existing = current
+    ? findDifferenceRow(db, { enterpriseId: current.id, titleCode: difference.titleCode, direction: difference.direction, recordedAt })
+    : undefined
+  const status = difference.status ?? 'not_queried'
+  push({
+    item: success('difference', existing ? `difference:${existing.id}` : ref, { enterpriseId: current?.id ?? null }),
+    action: existing ? 'skip' : 'add',
+    review: status === 'needs_review' || (difference.verificationStatus ?? 'pending') !== 'confirmed',
+    run: (tx) => {
+      const enterprise = locateEnterprise(tx, spec)
+      if (!enterprise) return failure('difference', ref, 'enterprise_not_found', '差异归属企业在写入阶段不存在', 'enterpriseName')
+      // 执行阶段解析真 id（本批新建的查询/关系此刻已插入）。
+      let evidenceQueryId = refs.queryIdLiteral
+      if (refs.queryRef) {
+        evidenceQueryId = resolveQueryIdAt(tx, refs.queryRef)
+        if (evidenceQueryId == null) {
+          return failure('difference', ref, 'query_ref_not_found', `执行阶段解析不到平台查询：${describeRef(refs.queryRef)}`, 'differences[].evidenceQueryRef')
+        }
+      }
+      let evidenceRelationId = refs.relationIdLiteral
+      if (refs.relationRef) {
+        evidenceRelationId = resolveRelationIdAt(tx, refs.relationRef)
+        if (evidenceRelationId == null) {
+          return failure('difference', ref, 'relation_ref_not_found', `执行阶段解析不到平台关系：${describeRef(refs.relationRef)}`, 'differences[].evidenceRelationRef')
+        }
+      }
+      const already = findDifferenceRow(tx, {
+        enterpriseId: enterprise.id,
+        titleCode: difference.titleCode,
+        direction: difference.direction,
+        recordedAt,
+      })
+      if (already) return success('difference', `difference:${already.id}`, { enterpriseId: enterprise.id, rowsWritten: 0 })
+      const id = tx
+        .insert(schema.differenceReason)
+        .values({
+          enterpriseId: enterprise.id,
+          titleCode: difference.titleCode,
+          direction: difference.direction,
+          status,
+          reasonCode: (difference.reasonCode ?? null) as typeof schema.differenceReason.$inferInsert.reasonCode,
+          reasonNote: optionalString(difference.reasonNote),
+          measureCode: (difference.measureCode ?? null) as typeof schema.differenceReason.$inferInsert.measureCode,
+          measureNote: optionalString(difference.measureNote),
+          evidenceQueryId,
+          evidenceRelationId,
+          movedInCity: optionalString(difference.movedIn?.city),
+          movedInTitleCode: optionalString(difference.movedIn?.titleCode),
+          movedInYear: optionalInt(difference.movedIn?.year),
+          movedInBatch: optionalInt(difference.movedIn?.batch),
+          verificationStatus: difference.verificationStatus ?? 'pending',
+          recordedAt,
+        })
+        .returning({ id: schema.differenceReason.id })
+        .get().id
+      return success('difference', `difference:${id}`, { enterpriseId: enterprise.id, evidenceQueryId, evidenceRelationId, rowsWritten: 1 })
+    },
+  })
+}
+
+// --- 归并与回填（契约 §5.2）------------------------------------------------
+
+/** 归并血缘：from → to，以及迁了哪些 record / event / evidence。 */
+export interface MergeLineage {
+  fromEnterpriseId: number
+  fromEnterpriseName: string
+  intoEnterpriseId: number
+  intoUscc: string
+  aliasId: number | null
+  /** 支撑本次归并的查询证据（裸 id 或自然键解析所得）；未给为 null。 */
+  evidenceQueryId: number | null
+  childRowsMoved: { aliases: number; differences: number; relations: number; records: number }
+  /** 直接改指规范行的记录 id（无同坐标冲突）。 */
+  recordsMoved: number[]
+  /** 折进规范行同坐标记录的记录 id → 规范行记录 id。 */
+  recordsFolded: Array<{ fromRecordId: number; intoRecordId: number }>
+  /** 被并企业名下（原）事件 id —— 事件一条都没删，只是记录变了。 */
+  eventsMoved: number[]
+  /** 随之归入规范行的出处 id（含页码，供回溯「第几页」）。 */
+  evidenceMoved: number[]
+}
+
+interface MergePlan {
+  merge: RosterImportMerge
+  /** 曾用名来源关系的自然键（执行阶段解析成真 id）。 */
+  sourceRelationRef: NormalizedRef | null
+  /** 支撑归并的查询证据的自然键（执行阶段解析成真 id，只进血缘）。 */
+  evidenceQueryRef: NormalizedRef | null
+}
+
+function planMerge(
+  db: Executor,
+  pending: PendingEnterprises,
+  pendingRefs: PendingPlatformRefs,
+  merge: RosterImportMerge,
+  index: number,
+  push: (item: PlannedItem) => void,
+): void {
+  const ref = `merge:${index}`
+  const intoUscc = usccOrNull(merge?.intoUscc)
+  if (!intoUscc) {
+    push({ item: failure('merge', ref, 'into_uscc_required', '归并缺少 intoUscc（规范行统代）', 'intoUscc'), action: 'skip', review: false })
+    return
+  }
+  if (merge.sourceKind != null && !ALIAS_SOURCE_KINDS.has(String(merge.sourceKind))) {
+    push({ item: failure('merge', ref, 'alias_source_kind_unknown', `sourceKind 不在字典内：${String(merge.sourceKind)}`, 'sourceKind'), action: 'skip', review: false })
+    return
+  }
+  // 证据指针：同别名/差异的规则 —— 每列**裸 id 与自然键恰给其一**。
+  if (optionalInt(merge.sourceRefId) != null && merge.sourceRelationRef != null) {
+    push({ item: failure('merge', ref, 'source_ref_conflict', '同时给了 sourceRefId 与 sourceRelationRef；请只给其一', 'merges[].sourceRelationRef'), action: 'skip', review: false })
+    return
+  }
+  if (optionalInt(merge.evidenceQueryId) != null && merge.evidenceQueryRef != null) {
+    push({ item: failure('merge', ref, 'evidence_ref_conflict', '同时给了 evidenceQueryId 与 evidenceQueryRef；请只给其一', 'merges[].evidenceQueryRef'), action: 'skip', review: false })
+    return
+  }
+  let sourceRelationRef: NormalizedRef | null = null
+  if (merge.sourceRelationRef != null) {
+    const normalized = normalizeRef(merge.sourceRelationRef, 'merges[].sourceRelationRef')
+    if (!normalized.ok) {
+      push({ item: failure('merge', ref, normalized.error.code, normalized.error.message, normalized.error.field), action: 'skip', review: false })
+      return
+    }
+    const resolved = resolveRelationRefPlan(db, pendingRefs, normalized.value, 'merges[].sourceRelationRef')
+    if (!resolved.ok) {
+      push({ item: failure('merge', ref, resolved.error.code, resolved.error.message, resolved.error.field), action: 'skip', review: false })
+      return
+    }
+    sourceRelationRef = normalized.value
+  }
+  let evidenceQueryRef: NormalizedRef | null = null
+  if (merge.evidenceQueryRef != null) {
+    const normalized = normalizeRef(merge.evidenceQueryRef, 'merges[].evidenceQueryRef')
+    if (!normalized.ok) {
+      push({ item: failure('merge', ref, normalized.error.code, normalized.error.message, normalized.error.field), action: 'skip', review: false })
+      return
+    }
+    const resolved = resolveQueryRefPlan(db, pendingRefs, normalized.value, 'merges[].evidenceQueryRef')
+    if (!resolved.ok) {
+      push({ item: failure('merge', ref, resolved.error.code, resolved.error.message, resolved.error.field), action: 'skip', review: false })
+      return
+    }
+    evidenceQueryRef = normalized.value
+  }
+  const fromRaw = optionalInt(merge.fromEnterpriseId)
+  const fromName = optionalString(merge.fromEnterpriseName)
+  if (fromRaw == null && !fromName) {
+    push({ item: failure('merge', ref, 'merge_source_required', '归并缺少 fromEnterpriseId 或 fromEnterpriseName', 'fromEnterpriseId'), action: 'skip', review: false })
+    return
+  }
+  const fromSpec = { name: fromName, uscc: null }
+  const fromKnown =
+    fromRaw != null
+      ? db.select().from(schema.enterprise).all().some((e) => e.id === fromRaw)
+      : enterpriseKnown(db, pending, fromSpec)
+  if (!fromKnown) {
+    push({ item: failure('merge', ref, 'merge_source_not_found', `被并企业不存在：${fromRaw ?? fromName}`, 'fromEnterpriseId'), action: 'skip', review: false })
+    return
+  }
+  // 规范行可以已存在，也可以是**本批刚写进去**的企业（执行时解析）。
+  if (!findEnterpriseByUscc(db, intoUscc) && !pending.has(`uscc:${intoUscc}`)) {
+    push({ item: failure('merge', ref, 'merge_target_not_found', `规范行（统代 ${intoUscc}）不存在`, 'intoUscc'), action: 'skip', review: false })
+    return
+  }
+
+  const plan: MergePlan = { merge, sourceRelationRef, evidenceQueryRef }
+  push({
+    item: success('merge', `merge:${fromRaw ?? fromName}->${intoUscc}`, { intoUscc }),
+    action: 'update',
+    review: false,
+    run: (tx) => executeMerge(tx, plan),
+  })
+}
+
+/**
+ * 执行归并（契约 §5.2 五步）。**事件与出处一条都不合并、不折叠、不删除**：
+ * 同坐标记录冲突时，把被并记录的事件**改指**规范行那条记录（`record_event.record_id`），
+ * 出处挂在事件上随之归入规范行；最后删除被并的空企业行。
+ */
+function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
+  const { merge, sourceRelationRef, evidenceQueryRef } = plan
+  const ref0 = `merge:${optionalInt(merge.fromEnterpriseId) ?? optionalString(merge.fromEnterpriseName)}`
+
+  const intoUscc = usccOrNull(merge.intoUscc)!
+  const into = findEnterpriseByUscc(tx, intoUscc)
+  const fromRaw = optionalInt(merge.fromEnterpriseId)
+  const from = fromRaw != null
+    ? (() => {
+        const row = tx.select().from(schema.enterprise).all().find((e) => e.id === fromRaw)
+        return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+      })()
+    : findEnterpriseByNorm(tx, normalizeName(optionalString(merge.fromEnterpriseName)!))
+  if (!from) return failure('merge', ref0, 'merge_source_not_found', '被并企业在写入阶段不存在', 'fromEnterpriseId')
+  if (!into) return failure('merge', ref0, 'merge_target_not_found', '规范行在写入阶段不存在', 'intoUscc')
+  if (from.id === into.id) return failure('merge', ref0, 'merge_same_enterprise', '被并企业与规范行是同一行', 'fromEnterpriseId')
+  const ref = `merge:${from.id}->${into.id}`
+
+  // 2. 写曾用名（旧名不丢）。证据指针：给了自然键就**必须**解析到真 id（解析不到 ⇒ 报错）。
+  const aliasName = optionalString(merge.aliasName) ?? from.name
+  const aliasNameNorm = normalizeName(aliasName)
+  const sourceKind = merge.sourceKind ?? 'manual'
+  let sourceRefId = optionalInt(merge.sourceRefId) ?? 0
+  if (sourceRelationRef) {
+    const resolved = resolveRelationIdAt(tx, sourceRelationRef)
+    if (resolved == null) {
+      return failure('merge', ref, 'relation_ref_not_found', `执行阶段解析不到平台关系：${describeRef(sourceRelationRef)}`, 'merges[].sourceRelationRef')
+    }
+    sourceRefId = resolved
+  }
+  let mergeEvidenceQueryId = optionalInt(merge.evidenceQueryId)
+  if (evidenceQueryRef) {
+    const resolved = resolveQueryIdAt(tx, evidenceQueryRef)
+    if (resolved == null) {
+      return failure('merge', ref, 'query_ref_not_found', `执行阶段解析不到平台查询：${describeRef(evidenceQueryRef)}`, 'merges[].evidenceQueryRef')
+    }
+    mergeEvidenceQueryId = resolved
+  }
+  const existingAlias = tx
+    .select()
+    .from(schema.enterpriseAlias)
+    .all()
+    .find(
+      (a) =>
+        a.enterpriseId === into.id &&
+        a.nameNorm === aliasNameNorm &&
+        a.sourceKind === sourceKind &&
+        a.sourceRefId === sourceRefId,
+    )
+  const aliasId = existingAlias
+    ? existingAlias.id
+    : tx
+        .insert(schema.enterpriseAlias)
+        .values({
+          enterpriseId: into.id,
+          name: aliasName,
+          nameNorm: aliasNameNorm,
+          sourceKind,
+          sourceRefId,
+          verificationStatus: 'confirmed',
+          note: optionalString(merge.note) ?? `归并自 enterprise:${from.id}（${from.name}）`,
+        })
+        .returning({ id: schema.enterpriseAlias.id })
+        .get().id
+
+  // 3. 迁移子行（别名 / 差异 / 平台关系）。撞唯一键的**先删被并那条**（它在规范行已有等价行）。
+  let aliasesMoved = 0
+  for (const alias of tx.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === from.id)) {
+    const clash = tx
+      .select()
+      .from(schema.enterpriseAlias)
+      .all()
+      .find(
+        (a) =>
+          a.enterpriseId === into.id &&
+          a.nameNorm === alias.nameNorm &&
+          a.sourceKind === alias.sourceKind &&
+          a.sourceRefId === alias.sourceRefId,
+      )
+    if (clash) {
+      tx.delete(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.id, alias.id)).run()
+    } else {
+      tx.update(schema.enterpriseAlias).set({ enterpriseId: into.id }).where(eq(schema.enterpriseAlias.id, alias.id)).run()
+      aliasesMoved += 1
+    }
+  }
+
+  let differencesMoved = 0
+  for (const difference of tx.select().from(schema.differenceReason).all().filter((d) => d.enterpriseId === from.id)) {
+    const clash = tx
+      .select()
+      .from(schema.differenceReason)
+      .all()
+      .find(
+        (d) =>
+          d.enterpriseId === into.id &&
+          d.titleCode === difference.titleCode &&
+          d.direction === difference.direction &&
+          d.recordedAt === difference.recordedAt,
+      )
+    if (clash) {
+      tx.delete(schema.differenceReason).where(eq(schema.differenceReason.id, difference.id)).run()
+    } else {
+      tx.update(schema.differenceReason).set({ enterpriseId: into.id }).where(eq(schema.differenceReason.id, difference.id)).run()
+      differencesMoved += 1
+    }
+  }
+
+  const fromRelations = tx.select().from(schema.platformRelation).all().filter((r) => r.enterpriseId === from.id)
+  for (const relation of fromRelations) {
+    tx.update(schema.platformRelation).set({ enterpriseId: into.id }).where(eq(schema.platformRelation.id, relation.id)).run()
+  }
+
+  // 4. 记录：同 (称号, 来源) 冲突时把事件折到规范行那条记录上。
+  const recordsMoved: number[] = []
+  const recordsFolded: Array<{ fromRecordId: number; intoRecordId: number }> = []
+  const eventsMoved: number[] = []
+  const evidenceMoved: number[] = []
+  for (const record of tx.select().from(schema.record).all().filter((r) => r.enterpriseId === from.id)) {
+    const events = tx.select().from(schema.recordEvent).all().filter((e) => e.recordId === record.id)
+    for (const event of events) {
+      eventsMoved.push(event.id)
+      for (const evidence of tx.select().from(schema.recordEvidence).all().filter((v) => v.recordEventId === event.id)) {
+        evidenceMoved.push(evidence.id)
+      }
+    }
+    const existing = tx
+      .select()
+      .from(schema.record)
+      .all()
+      .find((r) => r.enterpriseId === into.id && r.titleCode === record.titleCode && r.source === record.source)
+    if (existing) {
+      // 事件**改指**规范行记录（一条不丢、不折叠）；出处挂在事件上随之归入。
+      for (const event of events) {
+        tx.update(schema.recordEvent).set({ recordId: existing.id }).where(eq(schema.recordEvent.id, event.id)).run()
+      }
+      tx.delete(schema.record).where(eq(schema.record.id, record.id)).run()
+      recordsFolded.push({ fromRecordId: record.id, intoRecordId: existing.id })
+    } else {
+      tx.update(schema.record).set({ enterpriseId: into.id }).where(eq(schema.record.id, record.id)).run()
+      recordsMoved.push(record.id)
+    }
+  }
+
+  // 5. 删除被并企业行（子行已全部迁走）。
+  tx.delete(schema.enterprise).where(eq(schema.enterprise.id, from.id)).run()
+
+  const lineage: MergeLineage = {
+    fromEnterpriseId: from.id,
+    fromEnterpriseName: from.name,
+    intoEnterpriseId: into.id,
+    intoUscc: into.usccNorm ?? '',
+    aliasId,
+    evidenceQueryId: mergeEvidenceQueryId,
+    childRowsMoved: {
+      aliases: aliasesMoved,
+      differences: differencesMoved,
+      relations: fromRelations.length,
+      records: recordsMoved.length + recordsFolded.length,
+    },
+    recordsMoved,
+    recordsFolded,
+    eventsMoved,
+    evidenceMoved,
+  }
+  // 归并**净新增的行**只有那条曾用名（子行是改指、事件是改指、被并企业行是删除）。
+  return success('merge', ref, { lineage, rowsWritten: existingAlias ? 0 : 1 })
+}
+
+// ---------------------------------------------------------------------------
+// 批次行（记账，独立于业务事务）
+// ---------------------------------------------------------------------------
+
+function findBatchByKey(db: Db, idempotencyKey: string) {
+  return db.select().from(schema.importBatch).all().find((b) => b.idempotencyKey === idempotencyKey)
+}
+
+/** 取或建批次行（幂等键唯一；竞态下重查）。 */
+function ensureBatchRow(db: Db, request: RosterImportRequest) {
+  const existing = findBatchByKey(db, request.idempotencyKey)
+  if (existing) return existing
+  try {
+    return db
+      .insert(schema.importBatch)
+      .values({
+        idempotencyKey: request.idempotencyKey,
+        sourceKind: request.sourceKind,
+        sourceIdentity: request.sourceIdentity,
+        sourceSha256: request.sourceSha256 ?? null,
+        status: 'preflight',
+      })
+      .returning()
+      .get()
+  } catch {
+    // 唯一键竞态：另一个请求先插入了 —— 重查即可。
+    const raced = findBatchByKey(db, request.idempotencyKey)
+    if (raced) return raced
+    throw new Error('import_batch 幂等键写入失败')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 预检
+// ---------------------------------------------------------------------------
+
+/** 执行阶段有项返回 `ok:false` 时抛出 —— 用来回滚整批（绝不部分提交）。 */
+class ExecStageFailure extends Error {
+  constructor(readonly executed: RosterImportItemResult[]) {
+    super('批次执行阶段有项失败')
+    this.name = 'ExecStageFailure'
+  }
+}
+
+/**
+ * 只读预检（契约 §8.1）：**不写业务数据**，只算影响并落一条 `status='preflight'` 的批次。
+ * 同一幂等键重复调用：复用既有批次行、刷新它的预检结果。
+ */
+export function preflightRosterImport(
+  db: Db,
+  request: RosterImportRequest,
+): { batchId: number; status: 'preflight'; preflight: RosterImportPreflight } {
+  const batch = ensureBatchRow(db, request)
+  const plan = planRosterImport(db, request, { batchId: batch.id })
+  const preflight = summarizePlan(plan)
+  db.update(schema.importBatch)
+    .set({ preflightResult: preflight })
+    .where(eq(schema.importBatch.id, batch.id))
+    .run()
+  return { batchId: batch.id, status: 'preflight', preflight }
+}
+
+// ---------------------------------------------------------------------------
+// 提交
+// ---------------------------------------------------------------------------
+
+/**
+ * 事务提交（契约 §8.2）。
+ *
+ * - **幂等**：同一键若已是 `committed`，直接返回既有摘要（不再写企业/事件）；
+ * - **失败可重试**：`failed` 的批次不会留下半截数据（业务写入在事务里回滚），
+ *   修好载荷后再以同一键调用即可重试；
+ * - **单批事务**：任何一项不合法 ⇒ 整批 `failed`，业务数据一行不落，逐项错误照实回报。
+ */
+export function commitRosterImport(
+  db: Db,
+  request: RosterImportRequest,
+): { batchId: number; status: 'committed' | 'failed'; summary: RosterImportSummary; items: RosterImportItemResult[]; error: string | null } {
+  const batch = ensureBatchRow(db, request)
+
+  if (batch.status === 'committed') {
+    const summary = (batch.summary as RosterImportSummary | null) ?? { written: 0, skipped: 0, failed: 0 }
+    const items = (batch.itemResults as RosterImportItemResult[] | null) ?? []
+    return { batchId: batch.id, status: 'committed', summary, items, error: null }
+  }
+
+  const plan = planRosterImport(db, request, { batchId: batch.id })
+  const conflicts = plan.conflicts
+
+  if (conflicts.length > 0) {
+    const items = plan.items.map((p) => p.item)
+    const summary: RosterImportSummary = {
+      written: 0,
+      // 整批失败 ⇒ 一行没写、也没有「复用」发生；如实为 0。
+      skipped: 0,
+      failed: conflicts.length,
+    }
+    const error = `批次校验未通过：${conflicts.length} 项有误，未写入任何数据`
+    db.update(schema.importBatch)
+      .set({
+        status: 'failed',
+        itemResults: items,
+        summary,
+        error,
+        preflightResult: summarizePlan(plan),
+      })
+      .where(eq(schema.importBatch.id, batch.id))
+      .run()
+    return { batchId: batch.id, status: 'failed', summary, items, error }
+  }
+
+  let items: RosterImportItemResult[]
+  try {
+    items = db.transaction((tx) => {
+      const out: RosterImportItemResult[] = []
+      for (const planned of plan.items) {
+        const result = planned.run ? planned.run(tx) : planned.item
+        out.push(result)
+        // 执行阶段（关系插入之后）解析自然键等**只能在这一刻**判定的失败：
+        // 抛出去回滚整批 —— 绝不部分提交。
+        if (!result.ok) throw new ExecStageFailure(out)
+      }
+      return out
+    })
+  } catch (cause) {
+    if (cause instanceof ExecStageFailure) {
+      // 已完成项 + 未执行项都如实标失败（整批已回滚，一行没写）。
+      const executed = cause.executed.map((item) =>
+        item.ok ? { ...item, ok: false, error: { code: 'commit_rolled_back', message: '整批回滚，本项未写入' } } : item,
+      )
+      const rest = plan.items.slice(executed.length).map((planned) => ({
+        ...planned.item,
+        ok: false,
+        error: { code: 'not_executed', message: '整批回滚，本项未执行' },
+      }))
+      const items = [...executed, ...rest]
+      const failed = items.filter((item) => !item.ok).length
+      const error = '批次执行阶段有项失败（已整批回滚，未写入任何数据）'
+      const summary: RosterImportSummary = { written: 0, skipped: 0, failed }
+      db.update(schema.importBatch)
+        .set({ status: 'failed', itemResults: items, summary, error, preflightResult: summarizePlan(plan) })
+        .where(eq(schema.importBatch.id, batch.id))
+        .run()
+      return { batchId: batch.id, status: 'failed', summary, items, error }
+    }
+    const message = cause instanceof Error ? cause.message : String(cause)
+    const error = `批次提交失败（已整批回滚，未写入任何数据）：${message}`
+    const items = plan.items.map((p) =>
+      p.item.ok ? { ...p.item, ok: false, error: { code: 'commit_rolled_back', message: '整批回滚，本项未写入' } } : p.item,
+    )
+    db.update(schema.importBatch)
+      .set({ status: 'failed', itemResults: items, summary: { written: 0, skipped: 0, failed: plan.items.length }, error })
+      .where(eq(schema.importBatch.id, batch.id))
+      .run()
+    return { batchId: batch.id, status: 'failed', summary: { written: 0, skipped: 0, failed: plan.items.length }, items, error }
+  }
+
+  const summary = summarizeCommit(plan, items)
+  db.update(schema.importBatch)
+    .set({
+      status: 'committed',
+      itemResults: items,
+      summary,
+      error: null,
+      committedAt: new Date().toISOString(),
+      preflightResult: summarizePlan(plan),
+    })
+    .where(eq(schema.importBatch.id, batch.id))
+    .run()
+  return { batchId: batch.id, status: 'committed', summary, items, error: null }
+}
+
+/**
+ * `written` = 本次**真正插进库里的行数**；`skipped` = 命中的既有行/重复事件。
+ *
+ * 口径由**执行器自报**：每个成功的执行结果在 `detail.rowsWritten` 里给出它这次到底插了几行
+ * （新企业 / 新记录 / 新事件 / 新关系 / 新源行…，重放时全为 0）。这里只做求和 ——
+ * **不再按「执行过的项」逐项 +1**：那会把「完全重复、一行没写」的项也计进去，
+ * 于是「同内容换幂等键重放」会报出 `written = 计划项数` 而库里零新增，违反 RL-11 验收
+ * 「应用后可查询**已写入数量**」。没自报的项一律算 0（宁可少报，不可虚报）。
+ */
+function summarizeCommit(plan: Plan, items: RosterImportItemResult[]): RosterImportSummary {
+  let written = 0
+  let skipped = 0
+  for (const item of items) {
+    if (!item.ok) continue
+    written += rowsWritten(item)
+    const itemSkipped = item.detail?.skipped
+    if (typeof itemSkipped === 'number') skipped += itemSkipped
+  }
+  // 命中的既有行（计划里判为 skip 的项）计入 skipped。
+  for (const planned of plan.items) {
+    if (planned.action === 'skip' && planned.item.ok) skipped += 1
+  }
+  return { written, skipped, failed: 0 }
+}
+
+/** 执行器自报的**真正插入行数**（见 `summarizeCommit`）；未自报算 0。 */
+function rowsWritten(item: RosterImportItemResult): number {
+  const value = item.detail?.rowsWritten
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
+}
+
+// ---------------------------------------------------------------------------
+// 往返一致性（写入后可用它查回「写了什么」）-------------------------------
+// ---------------------------------------------------------------------------
+
+/** 从批次行读出可查询的结果摘要（契约：`item_results` / `summary` 可查）。 */
+export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
+  const batch = findBatchByKey(db, idempotencyKey)
+  if (!batch) return null
+  return {
+    batchId: batch.id,
+    status: batch.status,
+    sourceKind: batch.sourceKind,
+    sourceIdentity: batch.sourceIdentity,
+    preflight: (batch.preflightResult as RosterImportPreflight | null) ?? null,
+    summary: (batch.summary as RosterImportSummary | null) ?? null,
+    items: (batch.itemResults as RosterImportItemResult[] | null) ?? null,
+    error: batch.error,
+    committedAt: batch.committedAt,
+  }
+}
+
+/** 取回某条 item 的归并血缘（`merges` 项）。 */
+export function readMergeLineage(db: Db, idempotencyKey: string, fromEnterpriseId: number): MergeLineage | null {
+  const items = (findBatchByKey(db, idempotencyKey)?.itemResults as RosterImportItemResult[] | null) ?? []
+  for (const item of items) {
+    const lineage = item.detail?.lineage as MergeLineage | undefined
+    if (item.kind === 'merge' && lineage && lineage.fromEnterpriseId === fromEnterpriseId) return lineage
+  }
+  return null
+}
+
+/** 供测试/调用方按 id 直接取企业（验证归并后只剩规范行）。 */
+export function enterpriseExists(db: Db, id: number): boolean {
+  return db.select().from(schema.enterprise).all().some((e) => e.id === id)
+}
+
+/** 归并后按现名或曾用名搜索命中同一企业（契约 §5.1 的搜索口径：现名 + **已确认**曾用名）。 */
+export function searchEnterpriseIdsByName(db: Db, raw: string): number[] {
+  const norm = normalizeName(raw)
+  const ids = new Set<number>()
+  for (const e of db.select().from(schema.enterprise).all()) if (e.nameNorm === norm) ids.add(e.id)
+  for (const a of db.select().from(schema.enterpriseAlias).all()) {
+    if (a.nameNorm === norm && a.verificationStatus === 'confirmed') ids.add(a.enterpriseId)
+  }
+  return [...ids].sort((a, b) => a - b)
+}
+
+/** 表名 → 行数（测试与预检自检用；不含批次表）。 */
+export function rosterRowCounts(db: Db): Record<string, number> {
+  return {
+    enterprise: db.select().from(schema.enterprise).all().length,
+    record: db.select().from(schema.record).all().length,
+    record_event: db.select().from(schema.recordEvent).all().length,
+    record_evidence: db.select().from(schema.recordEvidence).all().length,
+    enterprise_alias: db.select().from(schema.enterpriseAlias).all().length,
+    platform_query: db.select().from(schema.platformQuery).all().length,
+    platform_relation: db.select().from(schema.platformRelation).all().length,
+    platform_export_batch: db.select().from(schema.platformExportBatch).all().length,
+    platform_export_row: db.select().from(schema.platformExportRow).all().length,
+    difference_reason: db.select().from(schema.differenceReason).all().length,
+    source_document: db.select().from(schema.sourceDocument).all().length,
+  }
+}
