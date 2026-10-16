@@ -34,6 +34,21 @@
  * 一条收敛都没发生，故三个新字段**处处为 0**，`add/update/remove/review/failed/written/skipped`
  * 与全部行计数**一个字节都没变**。RL-19 自己那条链路的语义断言在
  * `tests/roster-evidence-repoint.test.ts`（真件上 510 项 / 511 行）。
+ *
+ * ── 第三次**有据的**重新生成（2026-10-16，合入 RL-18 收尾时，父代理）─────────────
+ * 合入 RL-18 收尾（`4e64617`）后本文件出现**两代混拼**：HEAD 侧是**第二次重生成**的版本
+ * （`b8d02a5`，已含 RL-19 的三个只读字段），RL-18 侧则是**基于 `ccab1f3`（早于 RL-19）
+ * 自己重生成**的版本（`4e64617`）。两份文件被 git 自动合并，结果**某个场景的 `summary`
+ * 少了 RL-19 的 `evidenceRepointed`** —— 实测即为那条失败（差异只在 `evidenceRepointed`
+ * 与随之变化的 `preflightResultSha` / `summarySha`）。**实际输出才是新的，黄金是旧的那一侧。**
+ * 故在**合并后的代码**上第三次重生成，并逐行归因：
+ *  1. 与**合并态**相比：只多 1 行 `"evidenceRepointed": 0`、1 行 `failed` 的尾逗号，
+ *     以及 6 个 `preflightResultSha` + 6 个 `summarySha`（哈希随摘要多一字段而变）
+ *     —— **共 14 行，再无其它**；
+ *  2. 与**合并前 HEAD（第二次那版）**相比：375 行差异**全部**来自 RL-18 授权新增的那一步
+ *     「commit: 同名多主体（按名定位取「第一行」的口径探针）」，**前 1163 行逐字相同**。
+ * ⇒ 两侧带来的都只有**只读字段的新增**与**已授权的新步骤**，
+ * **「找到之后做什么」一个字节未变**。今后再要重新生成，同样必须先逐行归因。
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
