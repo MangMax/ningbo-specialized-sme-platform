@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { useDb } from '../db'
+import type { RosterImportRequest } from '../lib/roster-import-client'
 import { commitRosterImport, rosterRowCounts } from '../server/utils/roster-import'
 import { startRosterApi } from './helpers/roster-http-server'
 
@@ -32,7 +33,7 @@ afterAll(() => {
 const U = { platformOnly: '91330200000000001A', announced: '91330200000000002B' } as const
 
 /** 一批最小的年度更新:一份公布文件 + 一张平台导出表。 */
-function bundle() {
+function bundle(): { year: number; entries: RosterImportRequest[] } {
   return {
     year: 2026,
     entries: [
@@ -148,7 +149,7 @@ describe('RL-07 · 年度增量预览的 HTTP 面', () => {
       })
       // token 不匹配也不行(服务端配的是空 token ⇒ 写面整体关闭)。
       expect(commitWithToken.status).toBe(401)
-      expect(rosterRowCounts(db).enterprise).toBe(0)
+      expect(rosterRowCounts(db).enterprise ?? 0).toBe(0)
     } finally {
       await server.close()
     }

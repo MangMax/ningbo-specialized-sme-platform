@@ -258,7 +258,8 @@ function annualBundle(overrides: Partial<{ snapshotRows: Array<{ uscc: string; n
   }
 }
 
-const requestOf = (bundle: AnnualIncrementBundle, index: number): RosterImportRequest => bundle.entries[index]!
+/** `rosterRowCounts` 是 `Record<string, number>`；按 `noUncheckedIndexedAccess` 取值要兜一下。 */
+const at = (counts: Record<string, number>, key: string): number => counts[key] ?? 0
 
 /** 把一批（除指定项外）都提交掉 —— 用于验证「预览 = 提交」。 */
 function commitBundle(db: ReturnType<typeof makeDb>, bundle: AnnualIncrementBundle, skip: number[] = []) {
@@ -313,13 +314,13 @@ describe('RL-07 · 预览 = 提交', () => {
     const after = rosterRowCounts(db)
 
     // 预览说 add=2（两条「新增」计划项 = 一条企业记录 + 一张快照批），提交后确实各多一行。
-    expect(after.record - before.record).toBe(1)
-    expect(after.platform_export_batch - before.platform_export_batch).toBe(1)
+    expect(at(after, 'record') - at(before, 'record')).toBe(1)
+    expect(at(after, 'platform_export_batch') - at(before, 'platform_export_batch')).toBe(1)
     // 企业表净增 0：本批新建 1 家（今年新认定）、归并删掉 1 家（被并方）——
     // 两个方向各自可复核，所以下面还按名字点了名。
-    expect(after.enterprise - before.enterprise).toBe(0)
+    expect(at(after, 'enterprise') - at(before, 'enterprise')).toBe(0)
     // 事件一条都没丢：新增 2026 认定 + 追加 2026 复核。
-    expect(after.record_event - before.record_event).toBe(2)
+    expect(at(after, 'record_event') - at(before, 'record_event')).toBe(2)
 
     // 提交后的读侧：新企业进当前总表；被并企业只剩一行（规范行）。
     const rows = db.select().from(schema.enterprise).all()
