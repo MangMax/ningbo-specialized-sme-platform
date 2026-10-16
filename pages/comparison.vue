@@ -278,7 +278,8 @@ const exportUrl = computed(() => {
                     tabindex="0"
                     role="region"
                     aria-label="比对结果表格(可横向滚动)"
-                    class="h-[max(320px,calc(100dvh-24rem))] overflow-auto [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-1.5 [&_[data-slot=table-container]]:overflow-visible"
+                    data-testid="comparison-table-scroll"
+                    class="overflow-x-auto overflow-y-visible [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&_[data-slot=table-container]]:overflow-visible"
                     :aria-busy="isLoading"
                   >
                   <Empty v-if="!isLoading && !error && !rows.length" class="h-full">
@@ -404,7 +405,7 @@ const exportUrl = computed(() => {
                 </div>
               </CardContent>
             </Card>
-            <div class="flex items-center justify-between gap-2">
+            <div data-testid="comparison-pagination" class="flex items-center justify-between gap-2">
               <span class="text-muted-foreground text-[13px] tabular-nums"
                 >第 {{ page }} / {{ totalPages }} 页 · 每页
                 {{ pageSize }} 条</span

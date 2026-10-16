@@ -162,17 +162,17 @@ function railClass(row: EnterpriseListRow): string {
           <TableHead class="bg-muted h-9 w-[6px] p-0">
             <span class="sr-only">差异状态</span>
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[32%] text-xs font-semibold tracking-wide sm:w-auto">
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[32%] text-xs font-semibold tracking-wide sm:w-[20rem]">
             企业名称
+          </TableHead>
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[33%] text-xs font-semibold tracking-wide sm:w-[20rem]">
+            称号 · 认定年
           </TableHead>
           <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[11.5rem] text-xs font-semibold tracking-wide sm:table-cell">
             统一社会信用代码
           </TableHead>
           <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[4.5rem] text-xs font-semibold tracking-wide sm:table-cell">
             属地
-          </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[33%] text-xs font-semibold tracking-wide sm:w-[17rem]">
-            称号 · 认定年
           </TableHead>
           <TableHead class="bg-muted text-muted-foreground h-9 w-[35%] text-xs font-semibold tracking-wide sm:w-[12rem]">
             差异状态
@@ -223,12 +223,6 @@ function railClass(row: EnterpriseListRow): string {
             </span>
           </TableCell>
 
-          <TableCell class="text-muted-foreground hidden font-mono text-xs tabular-nums sm:table-cell">
-            {{ row.uscc ?? '无统一社会信用代码' }}
-          </TableCell>
-
-          <TableCell class="hidden text-[13px] sm:table-cell">{{ row.district ?? '属地未知' }}</TableCell>
-
           <TableCell class="text-[13px] whitespace-normal break-words leading-4 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="title-recognition-cell">
             <span v-if="!row.titles.length" class="text-muted-foreground">—</span>
             <template v-for="(item, i) in titleItems(row)" v-else :key="item.code">
@@ -237,6 +231,12 @@ function railClass(row: EnterpriseListRow): string {
               <span class="text-muted-foreground tabular-nums"> {{ item.year ?? '年待核' }}</span>
             </template>
           </TableCell>
+
+          <TableCell class="text-muted-foreground hidden font-mono text-xs tabular-nums sm:table-cell">
+            {{ row.uscc ?? '无统一社会信用代码' }}
+          </TableCell>
+
+          <TableCell class="hidden text-[13px] sm:table-cell">{{ row.district ?? '属地未知' }}</TableCell>
 
           <TableCell class="text-[13px] whitespace-normal break-words leading-4 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="enterprise-difference-cell">
             <span :class="row.difference.count ? '' : 'text-muted-foreground'">
@@ -256,12 +256,12 @@ function railClass(row: EnterpriseListRow): string {
         <TableRow v-if="loading" class="hover:bg-transparent">
           <TableCell class="p-0"><span class="block h-5 w-[6px]" /></TableCell>
           <TableCell><Skeleton class="h-3 w-full max-w-40" /></TableCell>
-          <TableCell class="hidden sm:table-cell"><Skeleton class="h-3 w-32" /></TableCell>
-          <TableCell class="hidden sm:table-cell"><Skeleton class="h-3 w-12" /></TableCell>
           <TableCell>
             <Skeleton class="h-3 w-full max-w-28" />
             <Skeleton class="ml-2 hidden h-3 w-16 sm:inline-block" />
           </TableCell>
+          <TableCell class="hidden sm:table-cell"><Skeleton class="h-3 w-32" /></TableCell>
+          <TableCell class="hidden sm:table-cell"><Skeleton class="h-3 w-12" /></TableCell>
           <TableCell><Skeleton class="h-3 w-full max-w-24" /></TableCell>
         </TableRow>
 

@@ -400,6 +400,34 @@ function comparisonDirectionValueViolation(m, label) {
   return null
 }
 
+function enterpriseDrawerReadingViolation(m, label) {
+  const reading = m.enterpriseDrawerReading
+  if (!reading?.open) return `${label}:桌面企业抽屉未打开,无法核对表格连续阅读`
+  const hidden = ['search', 'name', 'title'].filter((key) => !reading[key]?.fitsBeforeDrawer)
+  if (hidden.length) {
+    return `${label}:抽屉打开时搜索或企业核心字段被遮住 ${JSON.stringify({ hidden, reading })}`
+  }
+  if (reading.title.scrollWidth > reading.title.clientWidth + 2) {
+    return `${label}:抽屉打开时称号与认定年在单元格内溢出 ${JSON.stringify(reading.title)}`
+  }
+  return null
+}
+
+function comparisonTableFlowViolation(m, label) {
+  const flow = m.comparisonTableFlow
+  if (!flow || flow.rows < 1) return `${label}:没有可检查的对比结果表格行`
+  if (flow.scrollHeight > flow.clientHeight + 1 || flow.tableBottom > flow.scrollerBottom + 1) {
+    return `${label}:对比结果被截在内部滚动区,分页先于完整表格 ${JSON.stringify(flow)}`
+  }
+  if (flow.paginationTop < flow.tableBottom - 1) {
+    return `${label}:对比页分页条出现在当前结果行读完之前 ${JSON.stringify(flow)}`
+  }
+  if (flow.rows >= 20 && flow.documentScrollHeight <= m.innerHeight) {
+    return `${label}:对比页长表没有可见的页面级继续滚动路径 ${JSON.stringify(flow)}`
+  }
+  return null
+}
+
 function enterpriseDesktopDensityViolation(m, label) {
   if (m.innerWidth < 1024 || m.innerHeight < 800) return null
   const density = m.enterpriseDesktopDensity
@@ -669,7 +697,9 @@ async function verifyLedgerMobileLoadingOverflow(cdp) {
     } else {
       ok(`企业列表 · 窄屏加载:表格与骨架不横向溢出(${measurement.scrollWidth}px ≤ ${measurement.clientWidth}px)`)
     }
-    if (measurement.skeletonCells[2]?.display !== 'none' || measurement.skeletonCells[3]?.display !== 'none') {
+    // EnterpriseListTable order is status, company, title/year, USCC, district, difference.
+    // Keep this assertion semantic after moving the title/year column beside the company name.
+    if (measurement.skeletonCells[3]?.display !== 'none' || measurement.skeletonCells[4]?.display !== 'none') {
       bad(`企业列表 · 窄屏加载:统一代码与属地骨架列应隐藏 ${JSON.stringify(measurement.skeletonCells)}`)
     } else {
       ok('企业列表 · 窄屏加载:统一代码与属地骨架列随正文列一同隐藏')
@@ -1640,12 +1670,39 @@ const MEASURE = `(() => {
   const enterpriseName = enterpriseRow?.querySelector('td:nth-child(2) button');
   const enterpriseTitle = enterpriseRow?.querySelector('[data-testid="title-recognition-cell"]');
   const enterpriseDifference = enterpriseRow?.querySelector('[data-testid="enterprise-difference-cell"]');
+  const enterpriseSearch = root?.classList.contains('ledger-page')
+    ? root.querySelector('input[aria-label*="企业名称"]')
+    : null;
+  const enterpriseDrawer = root?.classList.contains('ledger-page')
+    ? document.querySelector('[data-testid="enterprise-drawer"]')
+    : null;
+  const enterpriseDrawerRect = enterpriseDrawer?.getBoundingClientRect();
+  const elementVisibility = (el) => {
+    const elementRect = el?.getBoundingClientRect();
+    return elementRect && enterpriseDrawerRect ? {
+      left: Math.round(elementRect.left),
+      right: Math.round(elementRect.right),
+      width: Math.round(elementRect.width),
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+      fitsBeforeDrawer: elementRect.left >= -1 && elementRect.right <= enterpriseDrawerRect.left + 1,
+    } : null;
+  };
   const comparisonRow = root?.classList.contains('comparison-page')
     ? document.querySelector('.comparison-page tbody tr:not([data-loading="true"])')
     : null;
   const comparisonScroller = root?.classList.contains('comparison-page')
     ? document.querySelector('.comparison-page [aria-label="比对结果表格(可横向滚动)"]')
     : null;
+  const comparisonTable = comparisonScroller?.querySelector('table');
+  const comparisonLastRow = comparisonScroller?.querySelector('tbody tr:not([data-loading="true"]):last-child');
+  const comparisonPagination = root?.classList.contains('comparison-page')
+    ? document.querySelector('[data-testid="comparison-pagination"]')
+    : null;
+  const comparisonTableRect = comparisonTable?.getBoundingClientRect();
+  const comparisonScrollerRect = comparisonScroller?.getBoundingClientRect();
+  const comparisonPaginationRect = comparisonPagination?.getBoundingClientRect();
+  const comparisonLastRowRect = comparisonLastRow?.getBoundingClientRect();
   const comparisonName = comparisonRow?.querySelector('[data-testid="comparison-enterprise-name"]');
   const comparisonDetails = comparisonRow?.querySelector('[data-testid="comparison-mobile-details"]');
   const firstRect = comparisonDetails?.getBoundingClientRect();
@@ -1697,6 +1754,23 @@ const MEASURE = `(() => {
       name: cellMetrics(enterpriseName),
       title: cellMetrics(enterpriseTitle),
       difference: cellMetrics(enterpriseDifference),
+    } : null,
+    enterpriseDrawerReading: enterpriseRow && enterpriseDrawer ? {
+      open: enterpriseDrawer.getAttribute('data-state') === 'open',
+      drawerLeft: Math.round(enterpriseDrawerRect?.left ?? 0),
+      search: elementVisibility(enterpriseSearch),
+      name: elementVisibility(enterpriseName),
+      title: elementVisibility(enterpriseTitle),
+    } : null,
+    comparisonTableFlow: comparisonScroller && comparisonTableRect && comparisonScrollerRect && comparisonPaginationRect ? {
+      rows: comparisonScroller.querySelectorAll('tbody tr:not([data-loading="true"])').length,
+      clientHeight: comparisonScroller.clientHeight,
+      scrollHeight: comparisonScroller.scrollHeight,
+      scrollerBottom: Math.round(comparisonScrollerRect.bottom),
+      tableBottom: Math.round(comparisonLastRowRect?.bottom ?? comparisonTableRect.bottom),
+      paginationTop: Math.round(comparisonPaginationRect.top),
+      documentScrollHeight: document.documentElement.scrollHeight,
+      overflowY: getComputedStyle(comparisonScroller).overflowY,
     } : null,
     comparisonMobileContent: comparisonRow ? {
       tableWidth: Math.round(comparisonRow.closest('table')?.getBoundingClientRect().width ?? 0),
@@ -1837,6 +1911,16 @@ async function main() {
           const rail = statusRailViolation(m, label)
           if (rail) bad(rail)
           else ok(`${label}:最左状态条实测 6px`)
+          if (viewport.width >= 1024) {
+            const reading = enterpriseDrawerReadingViolation(m, label)
+            if (reading) bad(reading)
+            else ok(`${label}:抽屉打开时搜索、企业名与称号认定年均可见`)
+          }
+        }
+        if (page.query === '/comparison') {
+          const flow = comparisonTableFlowViolation(m, label)
+          if (flow) bad(flow)
+          else ok(`${label}:本页全部 ${m.comparisonTableFlow.rows} 行在分页前完整展开，可继续滚动页面阅读`)
         }
         if (viewport.width === 390) {
           const mobileContent = mobileCoreContentViolation(m, label)
@@ -1955,6 +2039,30 @@ async function main() {
     if (!desktopDensitySelfCheck) bad('桌面分页布局缺陷自检:移除表格滚动区高度限制后,首屏密度断言仍未命中')
     else console.log(`✗ 桌面分页布局缺陷自检按预期变红:${desktopDensitySelfCheck}`)
     if (desktopDensitySelfCheck) ok('桌面分页布局缺陷自检:关闭临时 target 后缺陷已复原')
+
+    const drawerReadingBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/`,
+      `(() => { document.querySelector('[data-testid="title-recognition-cell"]')?.style.setProperty('transform', 'translateX(600px)', 'important'); return (${MEASURE}); })()`,
+      READY,
+      VIEWPORTS[0],
+    )
+    const drawerReadingSelfCheck = enterpriseDrawerReadingViolation(drawerReadingBroken, '桌面抽屉遮挡缺陷自检')
+    if (!drawerReadingSelfCheck) bad('桌面抽屉遮挡缺陷自检:临时移出称号列后,连续阅读断言仍未命中')
+    else console.log(`✗ 桌面抽屉遮挡缺陷自检按预期变红:${drawerReadingSelfCheck}`)
+    if (drawerReadingSelfCheck) ok('桌面抽屉遮挡缺陷自检:关闭临时 target 后缺陷已复原')
+
+    const comparisonFlowBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/comparison`,
+      `(() => { const scroller = document.querySelector('[data-testid="comparison-table-scroll"]'); scroller?.style.setProperty('height', '320px', 'important'); scroller?.style.setProperty('max-height', '320px', 'important'); scroller?.style.setProperty('overflow-y', 'auto', 'important'); return (${MEASURE}); })()`,
+      READY,
+      VIEWPORTS[1],
+    )
+    const comparisonFlowSelfCheck = comparisonTableFlowViolation(comparisonFlowBroken, '对比表分页前截断缺陷自检')
+    if (!comparisonFlowSelfCheck) bad('对比表分页前截断缺陷自检:临时恢复内部滚动截断后,表格连续阅读断言仍未命中')
+    else console.log(`✗ 对比表分页前截断缺陷自检按预期变红:${comparisonFlowSelfCheck}`)
+    if (comparisonFlowSelfCheck) ok('对比表分页前截断缺陷自检:关闭临时 target 后缺陷已复原')
 
     const mobileBroken = await openAndMeasure(
       cdp,

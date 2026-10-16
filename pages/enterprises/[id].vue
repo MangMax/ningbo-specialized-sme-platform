@@ -159,7 +159,7 @@ function openPreview(e: Evidence) {
     <template v-else-if="detail">
       <PageHeader class="rise-in" style="--rise-index: 0" :title="detail.name">
         <template #breadcrumb>
-          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">名录台账</NuxtLink>
+          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">企业列表</NuxtLink>
           <span class="mx-1.5">/</span>
           <span>企业详情</span>
         </template>
