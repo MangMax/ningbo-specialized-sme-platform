@@ -360,6 +360,27 @@ function overflowViolation(m, label) {
     : null
 }
 
+function ledgerExportLabelViolation(m, label) {
+  const text = m.ledgerExportLabel?.trim() ?? ''
+  return !text || !text.includes('企业')
+    ? `${label}:导出控件没有可见的企业列表文字 ${JSON.stringify(text)}`
+    : null
+}
+
+function enterpriseDifferenceColorViolation(statuses, label) {
+  const byLabel = Object.fromEntries((statuses ?? []).map((item) => [item.text, item]))
+  const required = ['未查询', '无记录', '已确认原因']
+  const missing = required.filter((text) => !byLabel[text]?.color)
+  if (missing.length) return `${label}:真实抽屉状态缺少可计算文字色 ${JSON.stringify(missing)}`
+  if (byLabel['未查询'].color !== byLabel['无记录'].color) {
+    return `${label}:同属未确认类的状态计算文字色不一致 ${JSON.stringify({ notQueried: byLabel['未查询'].color, noRecord: byLabel['无记录'].color })}`
+  }
+  if (byLabel['已确认原因'].color === byLabel['未查询'].color) {
+    return `${label}:已确认原因与未确认状态没有可见文字色差异 ${JSON.stringify({ confirmed: byLabel['已确认原因'].color, unconfirmed: byLabel['未查询'].color })}`
+  }
+  return null
+}
+
 function shadowViolation(m, label) {
   return m.shadowedTargets.length
     ? `${label}:内容区仍有阴影 ${JSON.stringify(m.shadowedTargets)}`
@@ -1660,6 +1681,96 @@ const READY = `(() => (
     .some((el) => (el.textContent ?? '').includes('正在'))
 ))()`
 
+function reducedMotionViolation(result, label) {
+  if (!result.reducedMotion) return `${label}:Chrome 未应用 prefers-reduced-motion: reduce`
+  if (result.triggers.length !== 3) return `${label}:预期 3 个 Select 触发器,实测 ${result.triggers.length}`
+  const violations = result.triggers.filter((trigger) => {
+    const durations = String(trigger.pressed.transitionDuration ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .map((value) => value.endsWith('ms') ? Number.parseFloat(value) : Number.parseFloat(value) * 1000)
+    const transitionDisabled = trigger.pressed.transitionProperty === 'none' ||
+      (durations.length > 0 && durations.every((duration) => Number.isFinite(duration) && duration <= 0))
+    const changedSize = Math.abs(trigger.pressed.width - trigger.before.width) > 0.5 ||
+      Math.abs(trigger.pressed.height - trigger.before.height) > 0.5
+    return !transitionDisabled || changedSize
+  })
+  return violations.length
+    ? `${label}:Select 实际按压仍有过渡或缩放 ${JSON.stringify(violations.map(({ label: control, before, pressed }) => ({ control, before, pressed })))}`
+    : null
+}
+
+async function measureReducedMotionSelects(cdp, page, injectScale = false) {
+  const { targetId, sessionId } = await openSession(
+    cdp,
+    `${BASE}${page.query}`,
+    VIEWPORTS[0],
+    READY,
+    { mediaFeatures: [{ name: 'prefers-reduced-motion', value: 'reduce' }] },
+  )
+  try {
+    if (injectScale) {
+      await evaluate(cdp, sessionId, `(() => {
+        const style = document.createElement('style');
+        style.textContent = '[data-slot="select-trigger"]:active { scale: .98 !important; }';
+        document.head.append(style);
+      })()`)
+    }
+
+    const labels = await evaluate(cdp, sessionId, `(() => [...document.querySelectorAll('[data-slot="select-trigger"]')]
+      .map((el) => el.getAttribute('aria-label') || el.textContent.trim()))()`)
+    const triggers = []
+    for (let index = 0; index < labels.length; index++) {
+      const elementState = async (phase) => evaluate(cdp, sessionId, `new Promise((resolve) => requestAnimationFrame(() => {
+        const el = [...document.querySelectorAll('[data-slot="select-trigger"]')][${index}];
+        if (!el) { resolve(null); return; }
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        resolve({
+          phase: ${JSON.stringify(phase)},
+          width: rect.width,
+          height: rect.height,
+          scale: style.scale,
+          transform: style.transform,
+          transitionProperty: style.transitionProperty,
+          transitionDuration: style.transitionDuration,
+        });
+      }))`)
+      const before = await evaluate(cdp, sessionId, `(() => {
+        const el = [...document.querySelectorAll('[data-slot="select-trigger"]')][${index}];
+        el?.scrollIntoView({ block: 'center', inline: 'nearest' });
+        const rect = el?.getBoundingClientRect();
+        return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+      })()`)
+      if (!before) {
+        triggers.push({ label: labels[index], before: null, pressed: null })
+        continue
+      }
+
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: before.x, y: before.y, button: 'none', buttons: 0 }, sessionId)
+      const idle = await elementState('hover')
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: before.x, y: before.y, button: 'left', buttons: 1, clickCount: 1 }, sessionId)
+      let pressed
+      try {
+        pressed = await elementState('pressed')
+      } finally {
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: before.x, y: before.y, button: 'left', buttons: 0, clickCount: 1 }, sessionId)
+      }
+      triggers.push({ label: labels[index], before: idle, pressed })
+
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId)
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId)
+      await waitUntil(cdp, sessionId, `(() => !document.querySelector('[data-slot="select-content"]'))()`)
+    }
+    return {
+      reducedMotion: await evaluate(cdp, sessionId, `matchMedia('(prefers-reduced-motion: reduce)').matches`),
+      triggers,
+    }
+  } finally {
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 要验的三个视图
 // ---------------------------------------------------------------------------
@@ -1752,6 +1863,10 @@ const MEASURE = `(() => {
   const enterpriseDrawer = root?.classList.contains('ledger-page')
     ? document.querySelector('[data-testid="enterprise-drawer"]')
     : null;
+  const enterpriseDifferenceStatuses = [...(enterpriseDrawer?.querySelectorAll('[data-testid="enterprise-difference-status"]') ?? [])].map((el) => ({
+    text: (el.textContent ?? '').trim(),
+    color: getComputedStyle(el).color,
+  }));
   const enterpriseDrawerRect = enterpriseDrawer?.getBoundingClientRect();
   const enterpriseTimelineYears = [...(enterpriseDrawer?.querySelectorAll('[data-testid="timeline-event-year"]') ?? [])].map((el) => ({
     text: (el.textContent ?? '').trim(),
@@ -1844,6 +1959,7 @@ const MEASURE = `(() => {
       difference: cellMetrics(enterpriseDifference),
     } : null,
     enterpriseTimelineYears,
+    enterpriseDifferenceStatuses,
     statusRailHierarchy: enterpriseRows.map((row) => {
       const rail = row.querySelector('td:first-child > span');
       const className = rail?.className ?? '';
@@ -1889,6 +2005,7 @@ const MEASURE = `(() => {
     ledgerExportTableGap: ledgerExport && ledgerTable
       ? Math.round(ledgerTable.getBoundingClientRect().top - ledgerExport.getBoundingClientRect().bottom)
       : null,
+    ledgerExportLabel: ledgerExport ? (ledgerExport.innerText ?? ledgerExport.textContent ?? '').trim() : '',
     motionCurves: {
       control: control ? getComputedStyle(control).transitionTimingFunction : null,
       table: body ? getComputedStyle(body).transitionTimingFunction : null,
@@ -1904,6 +2021,62 @@ const MEASURE = `(() => {
       : 0,
   };
 })()`
+
+async function readEnterpriseDifferenceStatus(cdp, enterpriseId, enterpriseName, injectMutedColor = false) {
+  const ready = `(() => (${READY}) && !!document.querySelector('[data-testid="enterprise-difference-status"]'))()`
+  const expression = injectMutedColor
+    ? `(() => {
+        const style = document.createElement('style');
+        style.textContent = '[data-testid="enterprise-difference-status"] { color: var(--muted-foreground) !important; }';
+        document.head.append(style);
+        return (${MEASURE});
+      })()`
+    : `(${MEASURE})`
+  const url = `${BASE}/?q=${encodeURIComponent(enterpriseName)}&expand=${enterpriseId}`
+  const result = await openAndMeasure(cdp, url, expression, ready, VIEWPORTS[0])
+  return result.enterpriseDifferenceStatuses
+}
+
+async function verifyEnterpriseDifferenceColors(cdp) {
+  const samples = [
+    { enterpriseId: 148, name: '宁波锦辉指针有限公司', label: '未查询' },
+    { enterpriseId: 284, name: '锦浪科技股份有限公司', label: '无记录' },
+    { enterpriseId: 27, name: '宁波博汇化工科技股份有限公司', label: '已确认原因' },
+  ]
+  const current = []
+  for (const sample of samples) {
+    const statuses = await readEnterpriseDifferenceStatus(cdp, sample.enterpriseId, sample.name)
+    const status = statuses.find((item) => item.text === sample.label)
+    if (!status) {
+      bad(`企业列表 · 状态文字色:真实企业 ${sample.enterpriseId} 未渲染「${sample.label}」 ${JSON.stringify(statuses)}`)
+    } else {
+      current.push(status)
+    }
+  }
+
+  const label = '企业列表 · 状态文字色'
+  const colorIssue = enterpriseDifferenceColorViolation(current, label)
+  if (colorIssue) bad(colorIssue)
+  else ok(`真实抽屉计算文字色可区分确认状态(${current.map((item) => `${item.text}=${item.color}`).join('；')})`)
+
+  const injected = await readEnterpriseDifferenceStatus(cdp, 27, '宁波博汇化工科技股份有限公司', true)
+  const injectedConfirmed = injected.find((item) => item.text === '已确认原因')
+  const broken = enterpriseDifferenceColorViolation(
+    [...current.filter((item) => item.text !== '已确认原因'), ...(injectedConfirmed ? [injectedConfirmed] : [])],
+    '状态文字色缺陷自检',
+  )
+  if (!broken) bad('状态文字色缺陷自检:临时抹平确认状态文字色后,计算样式断言仍未命中')
+  else console.log(`✗ 状态文字色缺陷自检按预期变红:${broken}`)
+
+  const restored = await readEnterpriseDifferenceStatus(cdp, 27, '宁波博汇化工科技股份有限公司')
+  const restoredConfirmed = restored.find((item) => item.text === '已确认原因')
+  const restoredIssue = enterpriseDifferenceColorViolation(
+    [...current.filter((item) => item.text !== '已确认原因'), ...(restoredConfirmed ? [restoredConfirmed] : [])],
+    '状态文字色恢复验证',
+  )
+  if (restoredIssue) bad(restoredIssue)
+  else ok('状态文字色缺陷自检:关闭注入 target 后真实计算样式恢复')
+}
 
 async function main() {
   if (!SKIP_BUILD) {
@@ -1977,6 +2150,11 @@ async function main() {
         else ok(`${label}:加载状态容器已渲染`)
         if (page.query === '/' && m.nativeSelectCount !== 0) bad(`${label}:仍有 ${m.nativeSelectCount} 个原生 select`)
         if (page.query === '/' && !m.drawerOpen) bad(`${label}:企业侧边抽屉未打开`)
+        if (page.query === '/') {
+          const exportLabel = ledgerExportLabelViolation(m, label)
+          if (exportLabel) bad(exportLabel)
+          else ok(`${label}:导出控件可见文字为 ${JSON.stringify(m.ledgerExportLabel)}`)
+        }
         if (page.query === '/' && viewport.width === 390) {
           if (m.ledgerExportTableGap == null || m.ledgerExportTableGap > 60) {
             bad(`${label}:导出控件到表格之间留白仍偏大 ${JSON.stringify(m.ledgerExportTableGap)}px`)
@@ -2068,38 +2246,40 @@ async function main() {
       }
     }
 
-    // Respect the project-wide reduced-motion control feedback policy on every list/comparison Select.
+    await verifyEnterpriseDifferenceColors(cdp)
+
+    // 用 CDP 鼠标真实按下每个 Select,测量边界框是否缩放以及计算样式是否停用过渡。
     for (const page of PAGES) {
-      const result = await openAndMeasure(
-        cdp,
-        `${BASE}${page.query}`,
-        `(() => {
-          const triggers = [...document.querySelectorAll('[data-slot="select-trigger"]')];
-          return {
-            reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
-            triggers: triggers.map((el) => ({
-              label: el.getAttribute('aria-label') ?? '',
-              classes: el.className,
-              transitionProperty: getComputedStyle(el).transitionProperty,
-            })),
-          };
-        })()`,
-        READY,
-        VIEWPORTS[0],
-        [{ name: 'prefers-reduced-motion', value: 'reduce' }],
-      )
+      const result = await measureReducedMotionSelects(cdp, page)
       const label = `${page.name} · 减少动态效果`
-      if (!result.reducedMotion) bad(`${label}:Chrome 未应用 prefers-reduced-motion: reduce`)
-      else ok(`${label}:Chrome 已应用 prefers-reduced-motion: reduce`)
-      if (result.triggers.length !== 3) bad(`${label}:预期 3 个 Select 触发器,实测 ${result.triggers.length}`)
-      const missing = result.triggers.filter((trigger) =>
-        !trigger.classes.includes('motion-reduce:transition-none') ||
-        !trigger.classes.includes('motion-reduce:active:scale-100') ||
-        trigger.transitionProperty !== 'none',
-      )
-      if (missing.length) bad(`${label}:Select 按压反馈未遵循减少动态效果策略 ${JSON.stringify(missing)}`)
-      else ok(`${label}:3 个 Select 均禁用过渡并取消按压缩放`)
+      const violation = reducedMotionViolation(result, label)
+      if (violation) bad(violation)
+      else ok(`${label}:CDP 实际按压 ${result.triggers.length} 个 Select,边界框未缩放且过渡已停用`)
     }
+
+    const reducedMotionBroken = await measureReducedMotionSelects(cdp, PAGES[0], true)
+    const reducedMotionSelfCheck = reducedMotionViolation(reducedMotionBroken, '减少动态效果缺陷自检')
+    if (!reducedMotionSelfCheck) bad('减少动态效果缺陷自检:临时恢复按压缩放后行为断言仍未命中')
+    else console.log(`✗ 减少动态效果缺陷自检按预期变红:${reducedMotionSelfCheck}`)
+    const reducedMotionRestored = await measureReducedMotionSelects(cdp, PAGES[0])
+    const restoredMotionIssue = reducedMotionViolation(reducedMotionRestored, '减少动态效果恢复验证')
+    if (restoredMotionIssue) bad(restoredMotionIssue)
+    else ok('减少动态效果缺陷自检:关闭注入 target 后实际按压行为恢复')
+
+    const exportLabelBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/`,
+      `(() => { const link = document.querySelector('.ledger-page a[href^="/api/roster/export"]'); if (link) link.textContent = '导出当前筛选'; return (${MEASURE}); })()`,
+      READY,
+      VIEWPORTS[0],
+    )
+    const exportLabelSelfCheck = ledgerExportLabelViolation(exportLabelBroken, '导出控件文字缺陷自检')
+    if (!exportLabelSelfCheck) bad('导出控件文字缺陷自检:移除「企业」后页面断言仍未命中')
+    else console.log(`✗ 导出控件文字缺陷自检按预期变红:${exportLabelSelfCheck}`)
+    const exportLabelRestored = await openAndMeasure(cdp, `${BASE}/`, MEASURE, READY, VIEWPORTS[0])
+    const restoredExportLabel = ledgerExportLabelViolation(exportLabelRestored, '导出控件文字恢复验证')
+    if (restoredExportLabel) bad(restoredExportLabel)
+    else ok('导出控件文字缺陷自检:关闭注入 target 后实际标签恢复')
 
     // 先把页面根部横向撑开 80px,确认上面的同一条断言会命中;target 随后关闭,缺陷随 DOM 一并复原。
     const broken = await openAndMeasure(

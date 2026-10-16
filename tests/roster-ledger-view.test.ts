@@ -3,7 +3,6 @@ import {
   DEFAULT_SORT,
   EMPTY_LEDGER_STATE,
   LEDGER_FILTER_KEYS,
-  LEDGER_EXPORT_LABEL,
   ledgerExportUrl,
   ledgerListQuery,
   ledgerQueryFromState,
@@ -60,6 +59,5 @@ describe('企业列表状态与 URL 映射', () => {
     expect(params.get('sort')).toBe(FILTERED.sort)
     expect(params.has('page')).toBe(false)
     expect(ledgerExportUrl(EMPTY_LEDGER_STATE)).toBe('/api/roster/export')
-    expect(LEDGER_EXPORT_LABEL).toContain('企业')
   })
 })
