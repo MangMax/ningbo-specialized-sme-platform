@@ -14,9 +14,10 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { MAX_PAGE_SIZE } from '../query'
+import type { PlatformInterface } from './types'
 
 export interface PlatformQueryFilter {
-  interface?: 'business_list' | 'apply_list'
+  interface?: PlatformInterface
   queryKey?: string
   /** 只看「有关系归到该企业」的查询。 */
   enterpriseId?: number

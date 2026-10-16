@@ -20,6 +20,7 @@
  * 要么一条不落并把逐项错误交回。幂等键是 body 的 `idempotencyKey`，
  * 同一来源重复调用不会重复写企业/事件。
  */
+import type { PlatformInterface } from './labels'
 
 // ---------------------------------------------------------------------------
 // payload 形状（契约 §8.3）
@@ -94,7 +95,7 @@ export interface RosterImportAnnouncement {
  * （命中多次 ⇒ 逐项报错，绝不猜）；给了就精确匹配那一次查询。
  */
 export interface RosterPlatformRef {
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   /** 查询键：统一社会信用代码，或 `name:<nameNorm>`。 */
   queryKey: string
   /** `business_list` 的认定级别（`1`/`2`/`3`）；默认 `''`。 */
@@ -150,7 +151,7 @@ export interface RosterImportRelation {
 
 /** 一次平台查询及其返回的全部关系。 */
 export interface RosterImportPlatformQuery {
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   /** 统一社会信用代码，或 `name:<nameNorm>`。 */
   queryKey: string
   /** `businessList` 的认定级别；进唯一键（同键不同 rdjb 是不同查询）。 */

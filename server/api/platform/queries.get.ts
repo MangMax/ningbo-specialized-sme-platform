@@ -1,5 +1,6 @@
 import { useDb } from '@db'
 import { MAX_PAGE_SIZE } from '~~/lib/query'
+import { PLATFORM_INTERFACE_VALUES } from '~~/lib/labels'
 import { listPlatformQueries } from '~~/lib/platform/read'
 
 /**
@@ -40,7 +41,8 @@ defineRouteMeta({
   },
 })
 
-const INTERFACES = ['business_list', 'apply_list'] as const
+/** 平台接口取值 —— 直接用唯一出处(`lib/labels.ts`),不在这里重列一遍。 */
+const INTERFACES = PLATFORM_INTERFACE_VALUES
 const STATUSES = ['success', 'failed', 'no_record', 'not_queried'] as const
 
 export default defineEventHandler((event) => {

@@ -317,6 +317,29 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
     expect(rosterRowCounts(db)).toEqual(afterFirst)
     expect(db.select().from(schema.importBatch).all()).toHaveLength(1)
   })
+
+  it('★ 同内容换幂等键重放：`written` 反映**真实新增行数**(0)，不是「计划项数」', () => {
+    const db = makeDb()
+    const first = commitRosterImport(db, request)
+    // 首跑确实写了东西（否则这条用例证明不了什么）。
+    expect(first.summary.written).toBeGreaterThan(0)
+    const afterFirst = rosterRowCounts(db)
+
+    // 换一个幂等键 ⇒ 走的是**真正执行**的那条路（不是命中 `committed` 批次直接返回既有摘要），
+    // 内容一模一样 ⇒ 每个计划项都只命中既有行，**一行都没写**。
+    // RL-11 验收：「应用后可查询**已写入数量**」——此刻真实新增就是 0。
+    const replay = commitRosterImport(db, { ...request, idempotencyKey: 'replay/same-content#sha256:abc' })
+    expect(replay.batchId).not.toBe(first.batchId)
+    expect(replay.status).toBe('committed')
+    expect(replay.error).toBeNull()
+    expect(replay.summary.written).toBe(0)
+    // 业务数据与行数一行都没动。
+    expect(rosterRowCounts(db)).toEqual(afterFirst)
+    // 逐项明细同样如实：快照项不再把「批次里已有的行」算成本次新增。
+    const snapshotItem = replay.items.find((i) => i.kind === 'export_batch')!
+    expect(snapshotItem.detail!.rows).toEqual([])
+    expect(snapshotItem.detail!.rowsWritten).toBe(0)
+  })
 })
 
 // ---------------------------------------------------------------------------

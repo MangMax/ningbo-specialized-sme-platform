@@ -16,13 +16,14 @@ import {
   BUSINESS_GRID,
   BUSINESS_LIST_PATH,
   PLATFORM_BASE,
-  PLATFORM_RDJBS,
+  RDJB_VALUES,
   PlatformCredentialMissingError,
   type PlatformRdjb,
   type PlatformResponseOutcome,
   type PlatformRow,
   classifyPlatformResponse,
 } from './adapter'
+import type { PlatformInterface } from './types'
 
 export type PlatformFetch = (
   input: string,
@@ -42,7 +43,7 @@ const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36'
 
 export interface PlatformQueryOutcome extends PlatformResponseOutcome {
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   /** `business_list` 的 rdjb;`apply_list` 记空串(该接口不用此参数)。 */
   rdjb: string
   queryKey: string
@@ -73,7 +74,7 @@ function resolveCookie(option: PlatformQueryOptions['cookie']): string {
 /** 干跑一次取数(不发请求),把结果归成三态 —— 供测试与「用已取回的原文入库」。 */
 export function classifyRawQuery(
   raw: string,
-  input: { interface: 'business_list' | 'apply_list'; rdjb?: string; queryKey: string },
+  input: { interface: PlatformInterface; rdjb?: string; queryKey: string },
 ): PlatformQueryOutcome {
   const grid = input.interface === 'business_list' ? BUSINESS_GRID : APPLY_GRID
   const rdjb = input.rdjb ?? ''
@@ -132,8 +133,8 @@ function queryBody(queryKey: string, extra: Record<string, string> = {}): Record
  */
 export async function queryAllRdjb(options: PlatformQueryOptions): Promise<PlatformQueryOutcome[]> {
   const { uscc } = options
-  const tasks: { interface: 'business_list' | 'apply_list'; rdjb?: PlatformRdjb; path: string; body: Record<string, string> }[] = [
-    ...PLATFORM_RDJBS.map((rdjb) => ({
+  const tasks: { interface: PlatformInterface; rdjb?: PlatformRdjb; path: string; body: Record<string, string> }[] = [
+    ...RDJB_VALUES.map((rdjb) => ({
       interface: 'business_list' as const,
       rdjb,
       path: BUSINESS_LIST_PATH,

@@ -282,7 +282,7 @@ describe('第二批 · 曾用名、已核验处置与归并', () => {
 
   const refs = {
     relationIdOf: (ref: RelationRef) => relationIds.get(relationKeyOf(ref)) ?? null,
-    queryIdOf: (ref: { interface: 'business_list' | 'apply_list'; queryKey: string; rdjb: string }) =>
+    queryIdOf: (ref: Omit<RelationRef, 'sequenceNo'>) =>
       queryIds.get(`${ref.interface}|${ref.queryKey}|${ref.rdjb}`) ?? null,
   }
 

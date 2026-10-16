@@ -164,14 +164,23 @@ export const VERIFICATION_STATUSES: Record<string, string> = {
 /** 核验状态展示顺序。 */
 export const VERIFICATION_STATUS_ORDER: string[] = ['confirmed', 'pending']
 
+/**
+ * 两个平台接口**取值**与联合类型(契约 §2.4)。**唯一出处** —— 适配层、写入侧、
+ * 读接口、查询路由一律引用它,不要各自内联拼写 `'business_list' | 'apply_list'`
+ * 或重列一遍数组:每多一处就多一个和 `db/schema.ts` 的 `platformQuery.interface`
+ * 漂移的机会(该列枚举与本数组由 `tests/labels-enums.test.ts` 对齐钉死)。
+ */
+export const PLATFORM_INTERFACE_VALUES = ['business_list', 'apply_list'] as const
+export type PlatformInterface = (typeof PLATFORM_INTERFACE_VALUES)[number]
+
 /** 平台接口(`platform_query.interface`)→ 中文名。 */
 export const PLATFORM_INTERFACES: Record<string, string> = {
   business_list: '业务接口(businessList)',
   apply_list: '申报接口(applyList)',
 }
 
-/** 平台接口展示顺序。 */
-export const PLATFORM_INTERFACE_ORDER: string[] = ['business_list', 'apply_list']
+/** 平台接口展示顺序(即取值顺序)。 */
+export const PLATFORM_INTERFACE_ORDER: string[] = [...PLATFORM_INTERFACE_VALUES]
 
 /**
  * 平台查询状态(`platform_query.status`)→ 中文名。
