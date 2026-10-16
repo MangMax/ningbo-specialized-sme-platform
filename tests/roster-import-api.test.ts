@@ -1118,6 +1118,123 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     }
   })
 
+  it.each([
+    ['USCC 在前', false],
+    ['name-only 在前', true],
+  ] as const)('空库同名混合 USCC/name-only 记录顺序无关地写成一个企业事件和两条出处（%s）', async (_order, nameOnlyFirst) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成空库批次归组企业'
+    const uscc = '91330211000000001X'
+    const explicit = {
+      enterprise: { name, uscc },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 9, evidence: [{ sourceFile: 'synthetic/batch-identity/explicit.pdf', attachment: '附件1', listNo: 1, page: 12 }] }],
+    }
+    const nameOnly = {
+      enterprise: { name },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 9, evidence: [{ sourceFile: 'synthetic/batch-identity/name-only.pdf', attachment: '附件1', listNo: 2, page: 13 }] }],
+    }
+    const request = announcementRequest({ idempotencyKey: `synthetic/batch-identity/${nameOnlyFirst ? 'name-first' : 'uscc-first'}` })
+    request.payload.announcement!.records = nameOnlyFirst ? [nameOnly, explicit] : [explicit, nameOnly]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight).toMatchObject({ add: 1, conflicts: [] })
+      expect(rosterRowCounts(db)).toMatchObject({ enterprise: 0, record: 0, record_event: 0, record_evidence: 0 })
+
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(result.summary.failed).toBe(0)
+      expect(rosterRowCounts(db)).toMatchObject({ enterprise: 1, record: 1, record_event: 1, record_evidence: 2 })
+
+      const [enterprise] = db.select().from(schema.enterprise).all()
+      expect(enterprise).toMatchObject({ name, usccNorm: uscc })
+      const [record] = db.select().from(schema.record).all()
+      expect(record).toMatchObject({ enterpriseId: enterprise!.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: uscc })
+      const [event] = db.select().from(schema.recordEvent).all()
+      expect(event).toMatchObject({ recordId: record!.id, eventType: 'award', year: 2026, batchSeq: 9 })
+      expect(db.select().from(schema.recordEvidence).all().map(({ sourceFile, attachment, listNo, page }) => ({ sourceFile, attachment, listNo, page })).sort((a, b) => a.sourceFile.localeCompare(b.sourceFile))).toEqual([
+        { sourceFile: 'synthetic/batch-identity/explicit.pdf', attachment: '附件1', listNo: 1, page: 12 },
+        { sourceFile: 'synthetic/batch-identity/name-only.pdf', attachment: '附件1', listNo: 2, page: 13 },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['name-only 在前', true],
+    ['name-only 在后', false],
+  ] as const)('批内同名多 USCC 时 name-only 返回 enterprise_ambiguous 且整批不写（%s）', async (_order, nameOnlyFirst) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成批内多统代歧义企业'
+    const explicitA = {
+      enterprise: { name, uscc: '91330211255994457P' },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 10, evidence: [{ sourceFile: 'synthetic/batch-identity/a.pdf', attachment: '附件1', listNo: 1, page: 14 }] }],
+    }
+    const explicitB = {
+      enterprise: { name, uscc: '91330211000000001X' },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 10, evidence: [{ sourceFile: 'synthetic/batch-identity/b.pdf', attachment: '附件1', listNo: 1, page: 14 }] }],
+    }
+    const nameOnly = {
+      enterprise: { name },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 10, evidence: [{ sourceFile: 'synthetic/batch-identity/name-only-ambiguous.pdf', attachment: '附件2', listNo: 2, page: 15 }] }],
+    }
+    const request = announcementRequest({ idempotencyKey: `synthetic/batch-identity/ambiguous/${nameOnlyFirst ? 'name-first' : 'name-last'}` })
+    request.payload.announcement!.records = nameOnlyFirst ? [nameOnly, explicitA, explicitB] : [explicitA, explicitB, nameOnly]
+    const before = rosterRowCounts(db)
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(rosterRowCounts(db)).toEqual(before)
+
+      const result = await client.commit(request)
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('空库中仅一个 name-only 记录仍可按名称新建企业', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成空库单名称企业'
+    const request = announcementRequest({ idempotencyKey: 'synthetic/batch-identity/single-name-only' })
+    request.payload.announcement!.records = [
+      { enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 11, evidence: [{ sourceFile: 'synthetic/batch-identity/single-name-only.pdf', attachment: '附件1', listNo: 1, page: 16 }] }] },
+    ]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight).toMatchObject({ add: 1, conflicts: [] })
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(rosterRowCounts(db)).toMatchObject({ enterprise: 1, record: 1, record_event: 1, record_evidence: 1 })
+      expect(db.select().from(schema.enterprise).all()[0]).toMatchObject({ name, usccNorm: null })
+      expect(db.select().from(schema.record).all()[0]?.usccRaw).toBeNull()
+      expect(db.select().from(schema.recordEvidence).all().map((row) => row.sourceFile)).toEqual(['synthetic/batch-identity/single-name-only.pdf'])
+    } finally {
+      await server.close()
+    }
+  })
+
   it('客户端走完整个回放序列，结果与直接调核心逻辑一致', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })

@@ -1175,49 +1175,35 @@
     }
   },
   {
-    "label": "commit: 同名多主体（按名定位取「第一行」的口径探针）",
+    "label": "commit: 同名多 USCC 候选含 name-only（失败关闭）",
     "outcome": {
       "batchId": 6,
-      "status": "committed",
+      "status": "failed",
       "summary": {
-        "written": 9,
+        "written": 0,
         "skipped": 0,
-        "failed": 0,
+        "failed": 1,
         "evidenceRepointed": 0
       },
       "items": [
         {
           "ok": true,
-          "kind": "record_event",
-          "ref": "record:3",
+          "kind": "record",
+          "ref": "record:0",
           "detail": {
-            "enterpriseId": 3,
-            "recordId": 3,
-            "sourceDocumentId": 2,
-            "events": [
-              4
-            ],
-            "evidence": [],
-            "skipped": 0,
-            "evidenceRepointed": 0,
-            "rowsWritten": 4
+            "enterpriseId": null,
+            "titleCode": "specialized_sme",
+            "source": "jxj"
           }
         },
         {
           "ok": true,
-          "kind": "record_event",
-          "ref": "record:4",
+          "kind": "record",
+          "ref": "record:1",
           "detail": {
-            "enterpriseId": 4,
-            "recordId": 4,
-            "sourceDocumentId": 2,
-            "events": [
-              5
-            ],
-            "evidence": [],
-            "skipped": 0,
-            "evidenceRepointed": 0,
-            "rowsWritten": 3
+            "enterpriseId": null,
+            "titleCode": "specialized_sme",
+            "source": "jxj"
           }
         },
         {
@@ -1229,77 +1215,34 @@
               "basis": "same_name_norm",
               "nameNorm": "宁波甲乙丙丁有限公司",
               "name": "宁波甲乙丙丁有限公司",
-              "newEnterpriseId": 4,
+              "newEnterpriseId": null,
               "newUscc": "91330200000000002X",
               "sourceRef": "record:1",
-              "existingEnterpriseId": 3,
+              "existingEnterpriseId": null,
               "existingEnterpriseName": "宁波甲乙丙丁有限公司",
               "existingUscc": "91330200000000001X"
             }
           }
         },
         {
-          "ok": true,
-          "kind": "record_event",
-          "ref": "record:5",
-          "detail": {
-            "enterpriseId": 3,
-            "recordId": 5,
-            "sourceDocumentId": 2,
-            "events": [
-              6
-            ],
-            "evidence": [],
-            "skipped": 0,
-            "evidenceRepointed": 0,
-            "rowsWritten": 2
-          }
-        },
-        {
-          "ok": true,
-          "kind": "duplicate_candidate",
-          "ref": "duplicate_candidate:宁波甲乙丙丁有限公司~uscc:91330200000000001X",
-          "detail": {
-            "candidate": {
-              "basis": "same_name_norm",
-              "nameNorm": "宁波甲乙丙丁有限公司",
-              "name": "宁波甲乙丙丁有限公司",
-              "newEnterpriseId": 3,
-              "newUscc": null,
-              "sourceRef": "record:2",
-              "existingEnterpriseId": 3,
-              "existingEnterpriseName": "宁波甲乙丙丁有限公司",
-              "existingUscc": "91330200000000001X"
-            }
-          }
-        },
-        {
-          "ok": true,
-          "kind": "duplicate_candidate",
-          "ref": "duplicate_candidate:宁波甲乙丙丁有限公司~uscc:91330200000000002X",
-          "detail": {
-            "candidate": {
-              "basis": "same_name_norm",
-              "nameNorm": "宁波甲乙丙丁有限公司",
-              "name": "宁波甲乙丙丁有限公司",
-              "newEnterpriseId": 3,
-              "newUscc": null,
-              "sourceRef": "record:2",
-              "existingEnterpriseId": 4,
-              "existingEnterpriseName": "宁波甲乙丙丁有限公司",
-              "existingUscc": "91330200000000002X"
-            }
+          "ok": false,
+          "kind": "record",
+          "ref": "record:2",
+          "error": {
+            "code": "enterprise_ambiguous",
+            "field": "enterprise.uscc",
+            "message": "归一化名称命中多家既有企业，缺少统一社会信用代码无法唯一定位；请补充统代后重试"
           }
         }
       ],
-      "error": null
+      "error": "批次校验未通过：1 项有误，未写入任何数据"
     },
     "rowCounts": {
       "importBatch": 6,
-      "enterprise": 3,
-      "sourceDocument": 2,
-      "record": 5,
-      "recordEvent": 6,
+      "enterprise": 1,
+      "sourceDocument": 1,
+      "record": 2,
+      "recordEvent": 3,
       "recordEvidence": 1,
       "enterpriseAlias": 1,
       "platformQuery": 2,
@@ -1371,180 +1314,16 @@
           "summarySha": "dfb75575f8f1bc70"
         },
         {
-          "error": null,
+          "error": "批次校验未通过：1 项有误，未写入任何数据",
           "id": 6,
           "idempotencyKey": "sem/duplicate-name#sha256:d1",
-          "itemResultsSha": "112dee04b9077647",
-          "preflightResultSha": "265cb4d7b5552784",
+          "itemResultsSha": "0165ff66b94d5797",
+          "preflightResultSha": "614243780dbca1a8",
           "sourceIdentity": "jxj/announcement/2026/2/同名多主体.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
-          "status": "committed",
-          "summarySha": "af008b14dd11d55a"
-        }
-      ],
-      "enterprise": [
-        {
-          "city": null,
-          "district": null,
-          "id": 1,
-          "name": "宁波上航测绘股份有限公司",
-          "nameNorm": "宁波上航测绘股份有限公司",
-          "qualityFlags": [],
-          "regStatus": null,
-          "usccNorm": "91330211255994457P"
-        },
-        {
-          "city": null,
-          "district": null,
-          "id": 3,
-          "name": "宁波甲乙丙丁有限公司",
-          "nameNorm": "宁波甲乙丙丁有限公司",
-          "qualityFlags": [],
-          "regStatus": null,
-          "usccNorm": "91330200000000001X"
-        },
-        {
-          "city": null,
-          "district": null,
-          "id": 4,
-          "name": "宁波甲乙丙丁有限公司",
-          "nameNorm": "宁波甲乙丙丁有限公司",
-          "qualityFlags": [],
-          "regStatus": null,
-          "usccNorm": "91330200000000002X"
-        }
-      ],
-      "sourceDocument": [
-        {
-          "docNumber": "甬经信中小〔2026〕1号",
-          "id": 1,
-          "issueDate": null,
-          "path": "jxj/announcement/2026/1/一批到底.pdf",
-          "source": "jxj",
-          "title": "一批到底"
-        },
-        {
-          "docNumber": "甬经信中小〔2026〕99号",
-          "id": 2,
-          "issueDate": null,
-          "path": "jxj/announcement/2026/2/同名多主体.pdf",
-          "source": "jxj",
-          "title": "同名多主体"
-        }
-      ],
-      "record": [
-        {
-          "district": null,
-          "enterpriseId": 1,
-          "id": 1,
-          "nameRaw": "宁波上航测绘股份有限公司",
-          "qualityFlags": [],
-          "source": "jxj",
-          "titleCode": "specialized_sme",
-          "usccRaw": "91330211255994457P"
-        },
-        {
-          "district": null,
-          "enterpriseId": 1,
-          "id": 2,
-          "nameRaw": "宁波上航测绘有限公司",
-          "qualityFlags": [],
-          "source": "jxj",
-          "titleCode": "innovative_sme",
-          "usccRaw": null
-        },
-        {
-          "district": null,
-          "enterpriseId": 3,
-          "id": 3,
-          "nameRaw": "宁波甲乙丙丁有限公司",
-          "qualityFlags": [],
-          "source": "jxj",
-          "titleCode": "specialized_sme",
-          "usccRaw": "91330200000000001X"
-        },
-        {
-          "district": null,
-          "enterpriseId": 4,
-          "id": 4,
-          "nameRaw": "宁波甲乙丙丁有限公司",
-          "qualityFlags": [],
-          "source": "jxj",
-          "titleCode": "specialized_sme",
-          "usccRaw": "91330200000000002X"
-        },
-        {
-          "district": null,
-          "enterpriseId": 3,
-          "id": 5,
-          "nameRaw": "宁波甲乙丙丁有限公司",
-          "qualityFlags": [],
-          "source": "jxj",
-          "titleCode": "innovative_sme",
-          "usccRaw": null
-        }
-      ],
-      "recordEvent": [
-        {
-          "batchSeq": 2,
-          "decidedYear": null,
-          "eventType": "award",
-          "id": 1,
-          "recordId": 1,
-          "reviewOutcome": null,
-          "sortKey": 2022,
-          "year": 2022
-        },
-        {
-          "batchSeq": null,
-          "decidedYear": 2025,
-          "eventType": "review",
-          "id": 2,
-          "recordId": 1,
-          "reviewOutcome": "passed",
-          "sortKey": 2022,
-          "year": 2022
-        },
-        {
-          "batchSeq": 1,
-          "decidedYear": null,
-          "eventType": "award",
-          "id": 3,
-          "recordId": 2,
-          "reviewOutcome": null,
-          "sortKey": 2021,
-          "year": 2021
-        },
-        {
-          "batchSeq": 1,
-          "decidedYear": null,
-          "eventType": "award",
-          "id": 4,
-          "recordId": 3,
-          "reviewOutcome": null,
-          "sortKey": 2026,
-          "year": 2026
-        },
-        {
-          "batchSeq": 1,
-          "decidedYear": null,
-          "eventType": "award",
-          "id": 5,
-          "recordId": 4,
-          "reviewOutcome": null,
-          "sortKey": 2026,
-          "year": 2026
-        },
-        {
-          "batchSeq": 1,
-          "decidedYear": null,
-          "eventType": "award",
-          "id": 6,
-          "recordId": 5,
-          "reviewOutcome": null,
-          "sortKey": 2026,
-          "year": 2026
+          "status": "failed",
+          "summarySha": "3fcaf7c9bfd487b5"
         }
       ]
     }

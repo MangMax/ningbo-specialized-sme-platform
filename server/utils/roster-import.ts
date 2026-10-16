@@ -322,6 +322,60 @@ function identityKeyOf(spec: { name: string; uscc: string | null }): string {
   return spec.uscc ? usccKey(spec.uscc) : nameKey(normalizeName(spec.name))
 }
 
+interface AnnouncementBatchIdentityPlan {
+  /** 身份解析使用的 USCC；名称项只会映射到本批唯一的显式 USCC 候选。 */
+  identityUsccByRecord: Map<number, string | null>
+  ambiguousNameOnlyRecords: Set<number>
+}
+
+/**
+ * 从整份公告为 name-only 项解析稳定的批次身份。空库里的 name-only 只有在该规范名对应
+ * 恰好一个显式 USCC 候选时才映射到该 USCC；多个候选或库内多家同名均失败关闭。
+ */
+function planAnnouncementBatchIdentity(
+  db: Executor,
+  records: RosterImportAnnouncement['records'],
+): AnnouncementBatchIdentityPlan {
+  const usccCandidatesByName = new Map<string, Set<string>>()
+  for (const record of records) {
+    const name = optionalString(record?.enterprise?.name)
+    const uscc = usccOrNull(record?.enterprise?.uscc)
+    if (!name || !uscc) continue
+    const nameNorm = normalizeName(name)
+    const candidates = usccCandidatesByName.get(nameNorm) ?? new Set<string>()
+    candidates.add(uscc)
+    usccCandidatesByName.set(nameNorm, candidates)
+  }
+
+  const existingByName = new Map<string, ResolvedEnterprise[]>()
+  const identityUsccByRecord = new Map<number, string | null>()
+  const ambiguousNameOnlyRecords = new Set<number>()
+  records.forEach((record, index) => {
+    const name = optionalString(record?.enterprise?.name)
+    const requestedUscc = usccOrNull(record?.enterprise?.uscc)
+    let identityUscc = requestedUscc
+
+    if (!requestedUscc && name) {
+      const nameNorm = normalizeName(name)
+      let existing = existingByName.get(nameNorm)
+      if (!existing) {
+        existing = findEnterprisesByNorm(db, nameNorm)
+        existingByName.set(nameNorm, existing)
+      }
+      const candidates = usccCandidatesByName.get(nameNorm) ?? new Set<string>()
+      if (existing.length > 1 || candidates.size > 1) {
+        ambiguousNameOnlyRecords.add(index)
+      } else if (existing.length === 0 && candidates.size === 1) {
+        identityUscc = [...candidates][0] ?? null
+      }
+    }
+
+    identityUsccByRecord.set(index, identityUscc)
+  })
+
+  return { identityUsccByRecord, ambiguousNameOnlyRecords }
+}
+
 /**
  * 本批**会新建**的企业（按 `records` 下标对齐；不会新建的是 `null`）。
  *
@@ -332,6 +386,7 @@ function identityKeyOf(spec: { name: string; uscc: string | null }): string {
 function planEnterpriseCreates(
   db: Executor,
   records: RosterImportAnnouncement['records'],
+  identityPlan: AnnouncementBatchIdentityPlan,
 ): Array<PendingEnterpriseCreate | null> {
   const out: Array<PendingEnterpriseCreate | null> = []
   const seen = new Set<string>()
@@ -341,7 +396,11 @@ function planEnterpriseCreates(
       out.push(null)
       return
     }
-    const uscc = usccOrNull(record?.enterprise?.uscc)
+    if (identityPlan.ambiguousNameOnlyRecords.has(index)) {
+      out.push(null)
+      return
+    }
+    const uscc = identityPlan.identityUsccByRecord.get(index) ?? usccOrNull(record?.enterprise?.uscc)
     if (findEnterpriseByIdentity(db, { name, uscc })) {
       out.push(null)
       return
@@ -773,6 +832,7 @@ function planNewEventEvidence(
   db: Executor,
   announcement: RosterImportAnnouncement,
   records: readonly RosterImportAnnouncement['records'][number][],
+  identityPlan: AnnouncementBatchIdentityPlan,
 ): { eventsByRecord: Map<number, RosterImportEvent[]> } {
   interface Occurrence {
     recordIndex: number
@@ -803,10 +863,13 @@ function planNewEventEvidence(
     const titleCode = optionalString(record?.titleCode)
     const source = record?.source ?? announcement.sourceDocument?.source
     if (!name || !titleCode || !TITLE_CODES.has(titleCode) || !SOURCES.has(String(source))) continue
-    const uscc = usccOrNull(record.enterprise?.uscc)
+    const requestedUscc = usccOrNull(record.enterprise?.uscc)
+    const uscc = identityPlan.identityUsccByRecord.get(recordIndex) ?? requestedUscc
     const nameMatches = findEnterprisesByNorm(db, normalizeName(name))
     const resolvedByWriteIdentity = findEnterpriseByIdentity(db, { name, uscc })
-    const ambiguousNameOnly = !uscc && nameMatches.length > 1
+    const ambiguousNameOnly = !requestedUscc && (
+      identityPlan.ambiguousNameOnlyRecords.has(recordIndex) || nameMatches.length > 1
+    )
     const groupIdentity = uscc
       ? resolvedByWriteIdentity
         ? `enterprise:${resolvedByWriteIdentity.id}`
@@ -843,7 +906,8 @@ function planNewEventEvidence(
     const titleCode = optionalString(representative?.titleCode)
     const source = representative?.source ?? announcement.sourceDocument?.source
     if (!name || !titleCode || !SOURCES.has(String(source))) continue
-    const uscc = usccOrNull(representative.enterprise?.uscc)
+    const requestedUscc = usccOrNull(representative.enterprise?.uscc)
+    const uscc = identityPlan.identityUsccByRecord.get(first.recordIndex) ?? requestedUscc
     const enterprise = findEnterpriseByIdentity(db, { name, uscc })
     const storedRecord = enterprise
       ? db
@@ -970,12 +1034,18 @@ export function planRosterImport(
   const pendingRefs: PendingPlatformRefs = collectPendingPlatformRefs(payload)
   /** 先看整份载荷，标出同一出处行被指向多个不同目标路径的冲突。 */
   const announcementRecords = Array.isArray(payload.announcement?.records) ? payload.announcement.records : []
+  const announcementIdentityPlan = payload.announcement && mode === 'write'
+    ? planAnnouncementBatchIdentity(db, announcementRecords)
+    : {
+        identityUsccByRecord: new Map<number, string | null>(),
+        ambiguousNameOnlyRecords: new Set<number>(),
+      }
   const ambiguousEvidence = payload.announcement
     ? ambiguousEvidenceRepointIds(db, payload.announcement, announcementRecords, evidenceContentHashes)
     : new Set<number>()
   /** 新事件在首次写入前合并同坐标出处，避免重复项按遍历顺序覆盖来源。 */
   const newEventEvidencePlan = payload.announcement && mode === 'write'
-    ? planNewEventEvidence(db, payload.announcement, announcementRecords)
+    ? planNewEventEvidence(db, payload.announcement, announcementRecords, announcementIdentityPlan)
     : { eventsByRecord: new Map<number, RosterImportEvent[]>() }
   const plannedWriteEvents = newEventEvidencePlan.eventsByRecord
   /**
@@ -1018,7 +1088,7 @@ export function planRosterImport(
       // 会**新建**的企业 —— 判据就是写入侧的身份规则（有统代只按统代、无统代才按名），
       // 不再用带「按名回退」的 {@link locateEnterprise}：那会让预检说「复用既有行」而
       // 写入侧**另起一行**（事故根因），本批的引用解析也跟着算错。**同一套规则只此一份**。
-      const creates = planEnterpriseCreates(db, records)
+      const creates = planEnterpriseCreates(db, records, announcementIdentityPlan)
       for (const create of creates) {
         if (create) for (const key of pendingKeys(create)) pending.add(key)
       }
@@ -1031,7 +1101,8 @@ export function planRosterImport(
       records.forEach((record, index) => {
         const create = creates[index] ?? null
         const name = optionalString(record?.enterprise?.name)
-        const uscc = usccOrNull(record?.enterprise?.uscc)
+        const requestedUscc = usccOrNull(record?.enterprise?.uscc)
+        const uscc = announcementIdentityPlan.identityUsccByRecord.get(index) ?? requestedUscc
         const coordinate = `${optionalString(record?.titleCode) ?? ''}/${optionalString(record?.source) ?? optionalString(announcement.sourceDocument?.source) ?? ''}`
         const identityKey = name ? identityKeyOf({ name, uscc }) : null
         const reusedInBatch = identityKey != null && (plannedCoordinates.get(identityKey)?.has(coordinate) ?? false)
@@ -1039,6 +1110,8 @@ export function planRosterImport(
           create,
           earlierSameName: create ? (earlierByName.get(create.nameNorm) ?? []) : [],
           reusedInBatch,
+          identityUscc: uscc,
+          ambiguousNameOnly: announcementIdentityPlan.ambiguousNameOnlyRecords.has(index),
         }, mode, claimedEvidence, ambiguousEvidence, plannedWriteEvents.get(index), context.evidenceRepointTargets, evidencePlanFingerprint, evidenceContentHashes)
         if (create && identityKey != null) {
           const coordinates = plannedCoordinates.get(identityKey) ?? new Set<string>()
@@ -1098,6 +1171,8 @@ function planAnnouncementRecord(
     create: PendingEnterpriseCreate | null
     earlierSameName: PendingEnterpriseCreate[]
     reusedInBatch: boolean
+    identityUscc?: string | null
+    ambiguousNameOnly?: boolean
   } = { create: null, earlierSameName: [], reusedInBatch: false },
   mode: AnnouncementPlanMode = 'write',
   claimedEvidence: Set<number> = new Set(),
@@ -1144,8 +1219,11 @@ function planAnnouncementRecord(
     }
   }
 
-  const uscc = usccOrNull(record.enterprise.uscc)
-  if (!uscc && findEnterprisesByNorm(db, normalizeName(name)).length > 1) {
+  const requestedUscc = usccOrNull(record.enterprise.uscc)
+  const identityUscc = candidates.identityUscc !== undefined ? candidates.identityUscc : requestedUscc
+  if (!requestedUscc && (
+    candidates.ambiguousNameOnly || findEnterprisesByNorm(db, normalizeName(name)).length > 1
+  )) {
     push({
       item: failure(
         'record',
@@ -1162,7 +1240,7 @@ function planAnnouncementRecord(
   // 定位用**写入侧的身份规则**（预检与提交必须同一套）：
   // `locateEnterprise` 在「统代查不到」时会退回按名找，于是预检会说「企业已存在、这条是 skip」，
   // 而 `upsertEnterprise`（只按统代）却会新建一行 —— 那是本票事故的根因，不能用它来决定 add/skip。
-  const existing = findEnterpriseByIdentity(db, { name, uscc })
+  const existing = findEnterpriseByIdentity(db, { name, uscc: identityUscc })
   const district = optionalString(record.enterprise.district)
   let existingRecord: { id: number } | undefined
   if (existing) {
@@ -1255,7 +1333,7 @@ function planAnnouncementRecord(
     // 两条判据**都要**：不复用 ⇒ add；复用且有出处指针收敛 ⇒ update（预检如实计入 §8.5）；
     // 复用且无收敛 ⇒ skip。
     action: !reused ? 'add' : repoints > 0 ? 'update' : 'skip',
-    review: !uscc,
+    review: !requestedUscc,
     repoints,
     run: (tx) => {
       const result = writeAnnouncementRecord(
@@ -1263,7 +1341,7 @@ function planAnnouncementRecord(
         request,
         announcement,
         { ...record, events: [...writeEvents] },
-        { name, uscc, district, titleCode, source, reason: { existingRecord } },
+        { name, uscc: identityUscc, district, titleCode, source, reason: { existingRecord } },
         repointTargets,
       )
       return {
