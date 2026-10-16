@@ -498,8 +498,8 @@ describe('C · 反面：证据不足 ⇒ 不归并，逐条待核', () => {
         announcement: {
           sourceDocument: { source: 'jxj', title: '同名多主体', docNumber: null },
           records: [
-            { enterprise: { name: claimedName, uscc: '913302110000000001' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2023, batchSeq: 1, decidedYear: 2023, evidence: [{ sourceFile: 'x.xlsx' }] }] },
-            { enterprise: { name: claimedName, uscc: '913302110000000002' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2023, batchSeq: 1, decidedYear: 2023, evidence: [{ sourceFile: 'x.xlsx' }] }] },
+            { enterprise: { name: claimedName, uscc: '91330211000000001F' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2023, batchSeq: 1, decidedYear: 2023, evidence: [{ sourceFile: 'x.xlsx' }] }] },
+            { enterprise: { name: claimedName, uscc: '91330211000000002J' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2023, batchSeq: 1, decidedYear: 2023, evidence: [{ sourceFile: 'x.xlsx' }] }] },
           ],
         },
       },
@@ -512,7 +512,7 @@ describe('C · 反面：证据不足 ⇒ 不归并，逐条待核', () => {
       sourceKind: 'alias_evidence',
       sourceIdentity: 'platform/claimed.json',
       payload: {
-        platformQueries: ['913302110000000001', '913302110000000002'].map((uscc, index) => ({
+        platformQueries: ['91330211000000001F', '91330211000000002J'].map((uscc, index) => ({
           interface: 'business_list' as const,
           queryKey: uscc,
           rdjb: '3',
@@ -539,9 +539,9 @@ describe('C · 反面：证据不足 ⇒ 不归并，逐条待核', () => {
     const byName = report.pending.map((p) => `${p.candidate.existingEnterpriseName}#${p.candidate.newUscc}:${p.reason}`).sort()
     expect(byName).toEqual([
       // 同一条既有（无统代）行被两条候选认领 ⇒ 只并第一认领者，另一条待核。
-      `宁波昌隆机电有限公司#913302110000000002:source_claimed`,
+      `宁波昌隆机电有限公司#91330211000000002J:source_claimed`,
       // 两条带统代的新行彼此同名 ⇒ 是**两个已识别的不同主体**，不并。
-      `宁波昌隆机电有限公司#913302110000000002:source_has_uscc`,
+      `宁波昌隆机电有限公司#91330211000000002J:source_has_uscc`,
     ])
     expect(report.ready[0]!.merge.fromEnterpriseId).toBe(claimed)
   })
@@ -635,7 +635,7 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
 
   it('两侧名称逐字相同 ⇒ 不造别名（只并身份）', async () => {
     const sameName = '宁波同名样例有限公司'
-    const uscc = '913302110000000009'
+    const uscc = '91330211000000000C'
     const canonical = seedEnterprise(sameName, uscc)
     const duplicated = seedEnterprise(sameName, null)
 
@@ -663,7 +663,7 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
 
 describe('⑤ · 预检按写入侧的身份规则判 add/skip（不再用带按名回退的那套猜）', () => {
   const NAME = '宁波重名判定样例有限公司'
-  const USCC5 = '913302110000000031'
+  const USCC5 = '91330211000000003M'
   /** 既有那一行：**无统代**，且已经有同坐标（jxj × 专精特新）的记录 —— 事故里正是这样。 */
   const seeded = seedEnterprise(NAME, null)
   const seededRecord = seedRecord(seeded, 'jxj', 'specialized_sme')

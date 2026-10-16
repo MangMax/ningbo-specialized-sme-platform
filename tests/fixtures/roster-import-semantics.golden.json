@@ -1209,18 +1209,18 @@
         {
           "ok": true,
           "kind": "duplicate_candidate",
-          "ref": "duplicate_candidate:91330200000000002X~uscc:91330200000000001X",
+          "ref": "duplicate_candidate:91330200000000002L~uscc:91330200000000001H",
           "detail": {
             "candidate": {
               "basis": "same_name_norm",
               "nameNorm": "宁波甲乙丙丁有限公司",
               "name": "宁波甲乙丙丁有限公司",
               "newEnterpriseId": null,
-              "newUscc": "91330200000000002X",
+              "newUscc": "91330200000000002L",
               "sourceRef": "record:1",
               "existingEnterpriseId": null,
               "existingEnterpriseName": "宁波甲乙丙丁有限公司",
-              "existingUscc": "91330200000000001X"
+              "existingUscc": "91330200000000001H"
             }
           }
         },
@@ -1317,8 +1317,8 @@
           "error": "批次校验未通过：1 项有误，未写入任何数据",
           "id": 6,
           "idempotencyKey": "sem/duplicate-name#sha256:d1",
-          "itemResultsSha": "0165ff66b94d5797",
-          "preflightResultSha": "614243780dbca1a8",
+          "itemResultsSha": "feb9f4980eeae48d",
+          "preflightResultSha": "2775a371678f4137",
           "sourceIdentity": "jxj/announcement/2026/2/同名多主体.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,

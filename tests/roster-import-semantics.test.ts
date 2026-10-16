@@ -230,8 +230,8 @@ function duplicateNameBatch(idempotencyKey: string): RosterImportRequest {
       announcement: {
         sourceDocument: { source: 'jxj', title: '同名多主体', docNumber: '甬经信中小〔2026〕99号' },
         records: [
-          { enterprise: { name: sameName, uscc: '91330200000000001X' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
-          { enterprise: { name: sameName, uscc: '91330200000000002X' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
+          { enterprise: { name: sameName, uscc: '91330200000000001H' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
+          { enterprise: { name: sameName, uscc: '91330200000000002L' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
           // ★ 不带统代，面对两个不同 USCC 候选时不得按名称猜配。
           { enterprise: { name: sameName }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
         ],
