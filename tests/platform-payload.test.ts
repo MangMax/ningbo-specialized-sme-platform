@@ -36,6 +36,7 @@ function outcomeWithRows(
     interface: meta.interface,
     rdjb: meta.rdjb ?? '',
     queryKey: meta.queryKey,
+    queriedAt: QUERIED_AT,
     raw: JSON.stringify(rows),
   }
 }
@@ -183,7 +184,7 @@ describe('buildPlatformWritePayload:平台查询与关系逐条落库(§8.3)', (
 })
 
 describe('buildPlatformWritePayload:代理确认的曾用名(§5.1)', () => {
-  it('确认后的旧名写成 confirmed 别名,来源关系自然键可换成已落库的关系 id', () => {
+  it('确认后的旧名写成 confirmed 别名;来源关系发**自然键引用**,可换成已落库的关系 id', () => {
     const ref = { queryKey: USCC, interface: 'business_list' as const, rdjb: '3', sequenceNo: 1 }
     const decision = {
       enterpriseId: 7289,
@@ -194,7 +195,9 @@ describe('buildPlatformWritePayload:代理确认的曾用名(§5.1)', () => {
       note: '平台关系 SQ332022062212391 明确写出',
     }
 
-    // 未提供 refs(关系还没落库)⇒ 用契约 §1.2 的 0 哨兵,不填假 id。
+    // 给了自然键、没给 refs ⇒ 发**自然键引用**(契约 §8.7):写入侧在**同一批**内把它
+    // 解析成本批新建的关系行 id。**不发 0 哨兵** —— 哨兵只表示「本就没给来源行」,
+    // 而这里明明给了来源(只是还不知道 id)。
     const beforeWrite = buildPlatformWritePayload({
       sourceIdentity: 'x', queries, enterprises, aliases: [decision], differences: [], merges: [],
     })
@@ -205,14 +208,23 @@ describe('buildPlatformWritePayload:代理确认的曾用名(§5.1)', () => {
     expect(draft.sourceKind).toBe('platform_business')
     expect(draft.verificationStatus).toBe('confirmed')
     expect(draft.validFrom).toBe('2022-06-22 17:17:52')
-    expect(draft.sourceRefId).toBe(0)
+    expect(draft.sourceRefId).toBeUndefined()
+    expect(draft.sourceRelationRef).toEqual({
+      interface: 'business_list',
+      queryKey: USCC,
+      rdjb: '3',
+      sequenceNo: 1,
+    })
 
-    // 读回真 id 后 ⇒ 自然键解析成 `platform_relation.id`,写进来源证据。
+    // 读回真 id 后(§8.7.4 的兼容写法)⇒ 裸 id 优先,不再发自然键(两个都给会被判
+    // `source_ref_conflict`,绝不静默取一个)。
     const afterWrite = buildPlatformWritePayload({
       sourceIdentity: 'x', queries, enterprises, aliases: [decision], differences: [], merges: [],
       refs: { relationIdOf: (r) => (r.sequenceNo === 1 && r.rdjb === '3' ? 501 : null) },
     })
-    expect(afterWrite.payload.aliases![0]!.sourceRefId).toBe(501)
+    const resolved = afterWrite.payload.aliases![0]!
+    expect(resolved.sourceRefId).toBe(501)
+    expect(resolved.sourceRelationRef).toBeUndefined()
   })
 
   it('同名多主体(同一名字挂在不同 USCC 下)被降级为 pending,不自动回填', () => {

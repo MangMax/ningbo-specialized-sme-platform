@@ -18,6 +18,9 @@ import {
   PLATFORM_BASE,
   PLATFORM_RDJBS,
   PlatformCredentialMissingError,
+  PlatformResponseError,
+  PlatformSessionExpiredError,
+  assertSessionAlive,
   type PlatformRdjb,
   type PlatformResponseOutcome,
   type PlatformRow,
@@ -46,6 +49,8 @@ export interface PlatformQueryOutcome extends PlatformResponseOutcome {
   /** `business_list` 的 rdjb;`apply_list` 记空串(该接口不用此参数)。 */
   rdjb: string
   queryKey: string
+  /** **真实查询时点**(ISO)。落 `platform_query.queried_at`;同一次实查重放要能幂等。 */
+  queriedAt: string
   /** 原始响应原文,供 `platform_query.raw_response` 留证。 */
   raw: string
   rows: PlatformRow[]
@@ -58,6 +63,23 @@ export interface PlatformQueryOptions {
   cookie?: string | (() => string) | null
   baseUrl?: string
   timeoutMs?: number
+  /** **网络错误与 5xx** 的退避重试次数(默认 2)。4xx 与会话过期**一律不重试**。 */
+  retries?: number
+  /** 退避等待;测试注入以减少空等。默认 `1000 * 3^(n-1)` 毫秒。 */
+  sleep?: (ms: number) => Promise<void>
+  /** 查询时点取值;默认当前时间。测试注入以固定 `queried_at`。 */
+  now?: () => string
+}
+
+/**
+ * 当前环境能不能拿到平台会话凭据。**不返回凭据值**,只回布尔 —— 调用方据此判断
+ * 「这次实查能不能开始」;拿不到就不该产出「一片未查询」的假结果。
+ *
+ * 给了 `option` 就以它为准(测试注入、或服务端从运行时配置取),否则按
+ * {@link COOKIE_ENV} → {@link COOKIE_FILE_ENV} 的顺序读环境。
+ */
+export function hasPlatformCredential(option: PlatformQueryOptions['cookie'] = null): boolean {
+  return resolveCookie(option).length > 0
 }
 
 function resolveCookie(option: PlatformQueryOptions['cookie']): string {
@@ -73,7 +95,13 @@ function resolveCookie(option: PlatformQueryOptions['cookie']): string {
 /** 干跑一次取数(不发请求),把结果归成三态 —— 供测试与「用已取回的原文入库」。 */
 export function classifyRawQuery(
   raw: string,
-  input: { interface: 'business_list' | 'apply_list'; rdjb?: string; queryKey: string },
+  input: {
+    interface: 'business_list' | 'apply_list'
+    rdjb?: string
+    queryKey: string
+    /** 真实查询时点;离线归类(回放已取回的原文)时可省,省略记空串。 */
+    queriedAt?: string
+  },
 ): PlatformQueryOutcome {
   const grid = input.interface === 'business_list' ? BUSINESS_GRID : APPLY_GRID
   const rdjb = input.rdjb ?? ''
@@ -82,9 +110,19 @@ export function classifyRawQuery(
     queryKey: input.queryKey,
     rdjb,
   })
-  return { ...outcome, interface: input.interface, rdjb, queryKey: input.queryKey, raw }
+  return {
+    ...outcome,
+    interface: input.interface,
+    rdjb,
+    queryKey: input.queryKey,
+    queriedAt: input.queriedAt ?? '',
+    raw,
+  }
 }
 
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/** 一次 POST 的原始取回。**网络错误与 5xx 退避重试**;4xx / 会话过期不重试。 */
 async function post(
   options: PlatformQueryOptions,
   path: string,
@@ -98,25 +136,52 @@ async function post(
   }
   const fetchImpl = options.fetchImpl ?? (globalThis.fetch as unknown as PlatformFetch)
   const base = options.baseUrl ?? PLATFORM_BASE
-  const response = await fetchImpl(new URL(path, base).toString(), {
-    method: 'POST',
-    headers: {
-      Accept: 'text/html, */*; q=0.01',
-      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      Origin: 'https://zjtx.miit.gov.cn',
-      Referer: 'https://zjtx.miit.gov.cn/zxqy/',
-      'X-Requested-With': 'XMLHttpRequest',
-      'User-Agent': USER_AGENT,
-      Cookie: cookie,
-    },
-    body: new URLSearchParams(body).toString(),
-    signal: AbortSignal.timeout(options.timeoutMs ?? 60_000),
-  })
-  const text = await response.text()
-  if (!response.ok) {
-    throw new Error(`平台返回 HTTP ${response.status}:${text.slice(0, 200)}`)
+  const retries = Math.max(0, options.retries ?? 2)
+  const sleep = options.sleep ?? defaultSleep
+
+  let lastError: unknown = null
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) await sleep(1000 * 3 ** (attempt - 1))
+    try {
+      const response = await fetchImpl(new URL(path, base).toString(), {
+        method: 'POST',
+        headers: {
+          Accept: 'text/html, */*; q=0.01',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          Origin: 'https://zjtx.miit.gov.cn',
+          Referer: 'https://zjtx.miit.gov.cn/zxqy/',
+          'X-Requested-With': 'XMLHttpRequest',
+          'User-Agent': USER_AGENT,
+          Cookie: cookie,
+        },
+        body: new URLSearchParams(body).toString(),
+        signal: AbortSignal.timeout(options.timeoutMs ?? 60_000),
+      })
+      const text = await response.text()
+      // 会话过期是 **HTTP 200**:不重试(重试也不会变好),但要立刻分清
+      // 「失败」与「无记录」—— 判据在 adapter,这里只把它提前抛成不可重试的错误。
+      if (response.ok) {
+        assertSessionAlive(text)
+        return text
+      }
+      // 4xx 是请求本身的问题(参数/权限),重试没有意义;5xx 才退避重试。
+      if (response.status < 500) {
+        throw new PlatformResponseError(`平台返回 HTTP ${response.status}:${text.slice(0, 200)}`)
+      }
+      lastError = new PlatformResponseError(`平台返回 HTTP ${response.status}:${text.slice(0, 200)}`)
+    } catch (error) {
+      // 已定性的错误直接抛出,不参与重试。
+      if (
+        error instanceof PlatformSessionExpiredError ||
+        error instanceof PlatformCredentialMissingError ||
+        error instanceof PlatformResponseError
+      ) {
+        throw error
+      }
+      lastError = error
+    }
   }
-  return text
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
 function queryBody(queryKey: string, extra: Record<string, string> = {}): Record<string, string> {
@@ -130,28 +195,39 @@ function queryBody(queryKey: string, extra: Record<string, string> = {}): Record
  * `rdjb=3` 有 6 行 —— 曾用名证据就在那 6 行里。只查本地称号映射出的那一个 `rdjb`
  * (旧 `pipeline/scripts/reconcile.ts:262` 的做法)会**整条漏掉证据**。
  */
-export async function queryAllRdjb(options: PlatformQueryOptions): Promise<PlatformQueryOutcome[]> {
-  const { uscc } = options
-  const tasks: { interface: 'business_list' | 'apply_list'; rdjb?: PlatformRdjb; path: string; body: Record<string, string> }[] = [
-    ...PLATFORM_RDJBS.map((rdjb) => ({
-      interface: 'business_list' as const,
-      rdjb,
-      path: BUSINESS_LIST_PATH,
-      body: queryBody(uscc, { rdjb }),
-    })),
-    { interface: 'apply_list', path: APPLY_LIST_PATH, body: queryBody(uscc) },
-  ]
+/** 一个查询槽位:接口 + (business_list 的)`rdjb`。 */
+export interface PlatformSlot {
+  interface: 'business_list' | 'apply_list'
+  rdjb?: PlatformRdjb
+}
 
+/**
+ * 按**指定槽位**取数。每个槽位一次 POST,逐次归类(不合并、不互相覆盖)。
+ *
+ * 为什么要能只取一部分:全量核查里同一个 USCC 的四个槽位**各有各的新鲜度** ——
+ * 24 小时内已经成功查过的槽位直接复用库里的证据,只补缺的那些。整组一起重查会把
+ * 已经拿到的新鲜证据再打一遍,既慢又多出一批时点不同的行。
+ */
+export async function queryPlatformSlots(
+  options: PlatformQueryOptions,
+  slots: PlatformSlot[],
+): Promise<PlatformQueryOutcome[]> {
+  const { uscc } = options
   const outcomes: PlatformQueryOutcome[] = []
-  for (const task of tasks) {
-    const base = { interface: task.interface, rdjb: task.rdjb ?? '', queryKey: uscc }
+  for (const slot of slots) {
+    const base = { interface: slot.interface, rdjb: slot.rdjb ?? '', queryKey: uscc }
+    // 时点在**请求发出前**取:它就是这次查询的时刻(`platform_query.queried_at`)。
+    const queriedAt = options.now?.() ?? new Date().toISOString()
     try {
-      const raw = await post(options, task.path, task.body)
-      outcomes.push(classifyRawQuery(raw, base))
+      const path = slot.interface === 'business_list' ? BUSINESS_LIST_PATH : APPLY_LIST_PATH
+      const body = slot.interface === 'business_list' ? queryBody(uscc, { rdjb: slot.rdjb! }) : queryBody(uscc)
+      const raw = await post(options, path, body)
+      outcomes.push(classifyRawQuery(raw, { ...base, queriedAt }))
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       outcomes.push({
         ...base,
+        queriedAt,
         status: 'failed',
         rows: [],
         maxCount: 0,
@@ -162,4 +238,18 @@ export async function queryAllRdjb(options: PlatformQueryOptions): Promise<Platf
     }
   }
   return outcomes
+}
+
+/**
+ * 按 USCC 把 `businessList` 的 **rdjb=1/2/3 全查**(外加申报接口)。
+ *
+ * 为什么必须三个全查:实测 `91330211255994457P` 的 `rdjb=1` 与 `rdjb=2` 各 0 行、
+ * `rdjb=3` 有 6 行 —— 曾用名证据就在那 6 行里。只查本地称号映射出的那一个 `rdjb`
+ * (旧 `pipeline/scripts/reconcile.ts:262` 的做法)会**整条漏掉证据**。
+ */
+export async function queryAllRdjb(options: PlatformQueryOptions): Promise<PlatformQueryOutcome[]> {
+  return queryPlatformSlots(options, [
+    ...PLATFORM_RDJBS.map((rdjb) => ({ interface: 'business_list' as const, rdjb })),
+    { interface: 'apply_list' as const },
+  ])
 }

@@ -19,7 +19,8 @@ import { registerJobSpecs } from '../../utils/job-specs'
  *
  * 校验发生在**提交这一刻**(不是等任务跑起来才失败):
  *  - 未知 kind → **400**(名字拼错了);
- *  - 已登记但尚未接入(`ocr` / `reconcile`)→ **501**(名字对,活还没接);
+ *  - 已登记但尚未接入 → **501**(名字对,活还没接;当前三个 kind 都已接入,
+ *    这条分支留着给下一个先登记后实现的 kind);
  *  - 参数不合法 → **400**(带一句中文原因,由 kind 自己的 `parse` 给出)。
  */
 
@@ -45,15 +46,20 @@ defineRouteMeta({
                 type: 'string',
                 enum: ['render-pages', 'ocr', 'reconcile'],
                 description:
-                  '任务种类。`render-pages`(默认 300 DPI 渲染页图)与 `ocr`(并发逐张 PNG 调 PaddleOCR,按页码入库)已接入;' +
-                  '`reconcile` 已登记但尚未接入,提交会得到 501。' +
-                  '`GET /api/jobs/kinds` 报的是实时状态。',
+                  '任务种类。`render-pages`(默认 300 DPI 渲染页图)、`ocr`(并发逐张 PNG 调 PaddleOCR,按页码入库)与 ' +
+                  '`reconcile`(批量平台核查:实查工信部 businessList / applyList → 落关系证据 → 判差异原因与后置动作 → ' +
+                  '经统一导入 API 一个批次写回)均已接入。' +
+                  '`GET /api/jobs/kinds` 报的是实时状态与各 kind 的 `paramsHint`。',
               },
               params: {
                 type: 'object',
                 description:
                   'kind 自己的参数。`render-pages`:`{ files: string[](相对文件库根的 PDF 路径), dpi?: 72–600(默认 300), force?: boolean }`。' +
-                  '`ocr`:`{ files: string[](同上), model?: string }` —— 须先生成完整页图，不支持 pageRanges；需要服务端配好 `NUXT_OCR_TOKEN`。',
+                  '`ocr`:`{ files: string[](同上), model?: string }` —— 须先生成完整页图，不支持 pageRanges；需要服务端配好 `NUXT_OCR_TOKEN`。' +
+                  '`reconcile`:`{ titles?: string[](称号代号), directions?: ("missing_in_miit"|"extra_in_miit")[], ' +
+                  'usccs?: string[](只查这几个统一社会信用代码), limit?: number(最多处理多少个差异目标), ' +
+                  'concurrency?: 1–12(默认 4), freshnessHours?: number(复用新鲜查询与判定的窗口,默认 24), write?: boolean(默认 true;false = 只判定不回写) }` ' +
+                  '—— 需要服务端配好 `MIIT_COOKIE` / `MIIT_COOKIE_FILE`,未配时任务**明确失败且一行不写**(不产出一片「未查询」的假证据)。',
               },
             },
           },
