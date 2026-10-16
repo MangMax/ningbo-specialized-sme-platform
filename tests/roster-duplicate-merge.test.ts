@@ -1,0 +1,592 @@
+/**
+ * RL-14 端到端：**重名候选显式化 + 有证据的归并**。
+ *
+ * ── 覆盖什么 ────────────────────────────────────────────────────────────
+ *  - **A**：导入**新建企业**时，库里已有同名（`name_norm` 相同）的行 ⇒ 报告里**显式**出现
+ *    该重名候选（预检 + 提交 + 批次结果三处都能查回）；**匹配规则不变**（不按名自动合并 ——
+ *    新建那行照样建出来，候选只是把它说清楚）。
+ *  - **B**：归并后规范行保留**导出表侧**的名字；被并的公布名落 `enterprise_alias`
+ *    （**逐字相同则不造别名**，只并身份）。
+ *  - **C**：一条**端到端** —— 真实 HTTP 写入平台查询/关系（夹具是 `tests/fixtures/platform/`
+ *    里裁剪的**真实响应摘录**），再执行 `payload.merges`：两行合一、各称号/事件/出处一条不丢、
+ *    血缘可在 `import_batch.item_results` 取回、同键重放不增行。
+ *  - **反面**：证据不足（`qymc` 与公布名不符 / 该统代一次都没查过 / 同一既有行被多条候选认领）
+ *    ⇒ **不归并**，逐条列待核。
+ *
+ * ── 走的是哪条链路 ──────────────────────────────────────────────────────
+ * `tests/helpers/platform-evidence-server.ts` 在**真端口**上起 node:http，挂的是 Nitro 路由
+ * 也在调的**同一份** `handleRosterImportRequest`（写）与**真的**路由模块（读）；
+ * 客户端用 `lib/roster-import-client.ts`。测的不是替身实现，契约只有一份。
+ */
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { schema, useDb } from '../db'
+import type { DuplicateMergeReport } from '../lib/roster/duplicate-merge'
+import { createRosterImportClient, type RosterImportRequest } from '../lib/roster-import-client'
+import { classifyRawQuery } from '../lib/platform'
+import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../lib/platform/payload'
+import { enterpriseExists, readImportBatchOutcome, readMergeLineage, rosterRowCounts } from '../server/utils/roster-import'
+import { startEvidenceServer, type EvidenceServer } from './helpers/platform-evidence-server'
+
+const dir = mkdtempSync(join(tmpdir(), 'spztx-duplicate-merge-'))
+const db = useDb({ dbPath: join(dir, 'dup-merge.db') })
+
+const TOKEN = 'rl14-token-value'
+const QUERIED_AT = '2026-10-15T17:11:21.514Z'
+
+/** 真实夹具对应的回归案例：统代 `91330211255994457P`，公布名（历史名）与平台现名不同。 */
+const USCC = '91330211255994457P'
+const OLD_NAME = '宁波上航测绘有限公司'
+const fixture = (name: string) => readFileSync(join(import.meta.dirname, 'fixtures/platform', name), 'utf8')
+
+// ---------------------------------------------------------------------------
+// 夹具：既有企业（公布侧，无统代）与它的记录 / 事件 / 出处
+// ---------------------------------------------------------------------------
+
+function seedEnterprise(name: string, uscc: string | null) {
+  return db
+    .insert(schema.enterprise)
+    .values({ name, nameNorm: name, usccNorm: uscc, district: '镇海区' })
+    .returning({ id: schema.enterprise.id })
+    .get().id
+}
+function seedRecord(enterpriseId: number, source: 'jxj' | 'miit', titleCode: 'specialized_sme' | 'little_giant') {
+  return db
+    .insert(schema.record)
+    .values({ enterpriseId, source, titleCode, district: '镇海区' })
+    .returning({ id: schema.record.id })
+    .get().id
+}
+function seedEvent(recordId: number, eventType: 'award' | 'review', year: number, batchSeq: number) {
+  return db
+    .insert(schema.recordEvent)
+    .values({ recordId, eventType, year, sortKey: year, batchSeq, decidedYear: year })
+    .returning({ id: schema.recordEvent.id })
+    .get().id
+}
+function seedEvidence(recordEventId: number, page: number | null) {
+  return db
+    .insert(schema.recordEvidence)
+    .values({
+      recordEventId,
+      sourceFile: 'jxj/announcement/2022/甬经信中小〔2022〕145号.pdf',
+      attachment: '附件',
+      listNo: 74,
+      page,
+    })
+    .returning({ id: schema.recordEvidence.id })
+    .get().id
+}
+
+/** 公布侧那一行（事故里的 375：**无统代**，只有 jxj 公布记录）。 */
+const existing = seedEnterprise(OLD_NAME, null)
+const existingRecord = seedRecord(existing, 'jxj', 'specialized_sme')
+const existingEvent = seedEvent(existingRecord, 'award', 2022, 1)
+const existingEvidence = seedEvidence(existingEvent, 74)
+
+/**
+ * 一次「带统代再进来一遍」的导入（事故的触发动作）：名字与既有行**逐字相同**，
+ * 只是这次带了统一社会信用代码 —— 于是写入侧按统代另起一行，既有行原封不动。
+ */
+const importRequest: RosterImportRequest = {
+  idempotencyKey: 'rl14/import#sha256:a1',
+  sourceKind: 'announcement',
+  sourceIdentity: 'jxj/workbook/little-giant.xlsx',
+  payload: {
+    announcement: {
+      sourceDocument: { source: 'jxj', title: '历年小巨人工作簿', docNumber: null },
+      records: [
+        {
+          enterprise: { name: OLD_NAME, uscc: USCC, district: '镇海区' },
+          titleCode: 'specialized_sme',
+          events: [
+            {
+              eventType: 'award',
+              year: 2023,
+              batchSeq: 2,
+              decidedYear: 2023,
+              evidence: [{ sourceFile: 'jxj/workbook/little-giant.xlsx', attachment: 'Sheet1', listNo: 5, page: null }],
+            },
+          ],
+        },
+      ],
+    },
+  },
+}
+
+// ---------------------------------------------------------------------------
+// 真实 HTTP 服务：写 = RL-11 的 http 面；读 = 本票新增的候选报告路由（真模块）
+// ---------------------------------------------------------------------------
+
+let server: EvidenceServer
+let currentQuery: Record<string, unknown> = {}
+const client = () => createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+const json = async <T>(path: string): Promise<T> => {
+  const response = await fetch(`${server.baseUrl}${path}`)
+  expect(response.status, `${path} 应返回 200`).toBe(200)
+  return (await response.json()) as T
+}
+const candidatesReport = (batchKey: string) =>
+  json<DuplicateMergeReport>(`/api/roster/import/duplicate-candidates?batchKey=${encodeURIComponent(batchKey)}`)
+
+beforeAll(async () => {
+  vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
+  vi.stubGlobal('getQuery', () => currentQuery)
+  vi.stubGlobal('createError', (opts: { statusCode?: number; statusMessage?: string }) =>
+    Object.assign(new Error(opts.statusMessage ?? 'Bad request'), opts),
+  )
+  vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'none.json'), reconcilePath: join(dir, 'none.json') }))
+  vi.doMock('@db', () => ({ useDb: () => db }))
+
+  const route = (await import('../server/api/roster/import/duplicate-candidates.get')).default as unknown as (
+    event: unknown,
+  ) => unknown
+
+  server = await startEvidenceServer({
+    db,
+    apiToken: TOKEN,
+    getRoutes: {
+      '/api/roster/import/duplicate-candidates': (url) => {
+        currentQuery = Object.fromEntries(url.searchParams.entries())
+        return route({})
+      },
+    },
+  })
+})
+
+afterAll(async () => {
+  await server?.close()
+  vi.unstubAllGlobals()
+  vi.doUnmock('@db')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+// ---------------------------------------------------------------------------
+// A：重名候选是**显式**的
+// ---------------------------------------------------------------------------
+
+describe('A · 新建企业时同名 ⇒ 报告里显式列出重名候选', () => {
+  let committed: { status: string; items: Array<{ kind: string; ok: boolean; detail?: Record<string, unknown> }> }
+  let newEnterpriseId = 0
+
+  it('预检就报出候选（那时新建行还没有 id）', async () => {
+    const pre = await client().preflight(importRequest)
+    expect(pre.status).toBe('preflight')
+    const candidates = (pre.preflight as { duplicateCandidates?: Array<Record<string, unknown>> }).duplicateCandidates ?? []
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]).toMatchObject({
+      basis: 'same_name_norm',
+      name: OLD_NAME,
+      existingEnterpriseId: existing,
+      existingEnterpriseName: OLD_NAME,
+      existingUscc: null,
+      newEnterpriseId: null,
+      newUscc: USCC,
+      sourceRef: 'record:0',
+    })
+    // 预检不写业务数据。
+    expect(db.select().from(schema.enterprise).all().filter((e) => e.usccNorm === USCC)).toHaveLength(0)
+  })
+
+  it('★ 提交：候选进 item_results（补齐新建行 id），且**匹配规则不变**——新行照样建出来', async () => {
+    committed = (await client().commit(importRequest)) as unknown as typeof committed
+    expect(committed.status).toBe('committed')
+
+    const item = committed.items.find((i) => i.kind === 'duplicate_candidate')!
+    expect(item.ok).toBe(true)
+    const candidate = item.detail!.candidate as Record<string, unknown>
+    newEnterpriseId = candidate.newEnterpriseId as number
+    expect(candidate).toMatchObject({
+      basis: 'same_name_norm',
+      nameNorm: OLD_NAME,
+      existingEnterpriseId: existing,
+      existingEnterpriseName: OLD_NAME,
+      existingUscc: null,
+      newUscc: USCC,
+      sourceRef: 'record:0',
+    })
+    expect(newEnterpriseId).not.toBe(existing)
+
+    // 规则没被放宽：同名两行**都在**（候选只报事实，不合并）。
+    const sameName = db.select().from(schema.enterprise).all().filter((e) => e.nameNorm === OLD_NAME)
+    expect(sameName.map((e) => e.id).sort((a, b) => a - b)).toEqual([existing, newEnterpriseId].sort((a, b) => a - b))
+    expect(sameName.find((e) => e.id === newEnterpriseId)!.usccNorm).toBe(USCC)
+  })
+
+  it('批次结果里能查回候选（计数 + 明细）', () => {
+    const outcome = readImportBatchOutcome(db, importRequest.idempotencyKey)!
+    expect(outcome.duplicateCandidates).toHaveLength(1)
+    expect(outcome.duplicateCandidates[0]).toMatchObject({
+      existingEnterpriseId: existing,
+      newEnterpriseId,
+      newUscc: USCC,
+      basis: 'same_name_norm',
+    })
+    // 读接口给的就是同一份（报告不是另存的一份）。
+    expect(outcome.duplicateCandidates).toEqual(readImportBatchOutcome(db, importRequest.idempotencyKey)!.duplicateCandidates)
+  })
+
+  it('证据还没写 ⇒ 报告里是「待核」，没有任何可并项', async () => {
+    const report = await candidatesReport(importRequest.idempotencyKey)
+    expect(report.counts).toEqual({ candidates: 1, ready: 0, pending: 1 })
+    expect(report.pending[0]!.reason).toBe('no_platform_query')
+    expect(report.request).toBeNull()
+    expect(enterpriseExists(db, existing)).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// C：证据到位后，端到端归并（真实 HTTP + 真实平台响应摘录）
+// ---------------------------------------------------------------------------
+
+describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', () => {
+  let relationId = 0
+  let queryId = 0
+  /** 报告给出的那份可提交请求体（执行过之后报告就不再给可并项了，所以必须当场留住）。 */
+  let mergeRequest: RosterImportRequest | null = null
+
+  it('第一批：平台查询与关系经统一 API 落库（夹具是裁剪的真实响应）', async () => {
+    const queries: PlatformQueryInput[] = [
+      { interface: 'business_list', queryKey: USCC, rdjb: '1', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb1-empty.html'), { interface: 'business_list', rdjb: '1', queryKey: USCC }) },
+      { interface: 'business_list', queryKey: USCC, rdjb: '2', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb2-empty.html'), { interface: 'business_list', rdjb: '2', queryKey: USCC }) },
+      { interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('business-list-rdjb3.html'), { interface: 'business_list', rdjb: '3', queryKey: USCC }) },
+      { interface: 'apply_list', queryKey: USCC, rdjb: '', queriedAt: QUERIED_AT, outcome: classifyRawQuery(fixture('apply-list.json'), { interface: 'apply_list', queryKey: USCC }) },
+    ]
+    const enterprises: KnownEnterprise[] = [
+      { id: existing, name: OLD_NAME, nameNorm: OLD_NAME, uscc: null },
+      { id: db.select().from(schema.enterprise).all().find((e) => e.usccNorm === USCC)!.id, name: OLD_NAME, nameNorm: OLD_NAME, uscc: USCC },
+    ]
+    const request = buildPlatformWritePayload({ sourceIdentity: `platform/${USCC}.json`, queries, enterprises })
+    const result = await client().commit(request)
+    expect(result.status).toBe('committed')
+
+    // 平台自己记录了「这个统代就叫这个名字」：`qymc` 逐字等于公布名（rdjb=3 与 applyList 各有一条）。
+    const matching = db
+      .select()
+      .from(schema.platformRelation)
+      .all()
+      .filter(
+        (r) =>
+          r.nameRaw === OLD_NAME &&
+          db.select().from(schema.platformQuery).all().some((q) => q.id === r.queryId && q.queryKey === USCC),
+      )
+    expect(matching.length, '夹具里应有 qymc 等于公布名的关系').toBeGreaterThan(0)
+  })
+
+  it('★ 报告：证据成立 ⇒ 可并，并给出可直接提交的 merges', async () => {
+    const report = await candidatesReport(importRequest.idempotencyKey)
+    expect(report.counts).toEqual({ candidates: 1, ready: 1, pending: 0 })
+    expect(report.previous).toBeNull()
+
+    const ready = report.ready[0]!
+    const evidence = ready.evidence
+    expect(evidence.nameRaw).toBe(OLD_NAME)
+    expect(evidence.queryKey).toBe(USCC)
+    // 取证据的规则是**确定性的**：最新一次查询优先（时点并列时按行 id 大 → 小），
+    // 查询内按序号小 → 大取第一条 qymc 逐字相等的 —— 同一个库 ⇒ 同一条证据 ⇒ 可重放。
+    const queriesOfUscc = db.select().from(schema.platformQuery).all().filter((q) => q.queryKey === USCC)
+    const newest = [...queriesOfUscc].sort((a, b) => (a.queriedAt === b.queriedAt ? b.id - a.id : a.queriedAt < b.queriedAt ? 1 : -1))[0]!
+    expect(evidence.queryId).toBe(newest.id)
+    expect(evidence.interface).toBe(newest.interface)
+    expect(evidence.sourceKind).toBe(newest.interface === 'business_list' ? 'platform_business' : 'platform_apply')
+    const relation = db.select().from(schema.platformRelation).all().find((r) => r.id === evidence.relationId)!
+    expect(relation.queryId).toBe(newest.id)
+    expect(relation.nameRaw).toBe(OLD_NAME)
+    expect(relation.sequenceNo).toBe(evidence.sequenceNo)
+    relationId = evidence.relationId
+    queryId = evidence.queryId
+
+    expect(report.request).not.toBeNull()
+    mergeRequest = report.request
+    expect(report.request!.sourceKind).toBe('alias_evidence')
+    expect(report.request!.payload.merges).toEqual([
+      {
+        fromEnterpriseId: existing,
+        intoUscc: USCC,
+        // 两侧**逐字同名** ⇒ 不造别名（§5.3）。
+        sourceKind: evidence.sourceKind,
+        sourceRefId: relationId,
+        evidenceQueryId: queryId,
+        note: expect.stringContaining(`qymc 逐字等于「${OLD_NAME}」`),
+      },
+    ])
+  })
+
+  it('★ 执行 merges：两行合一，称号/事件/出处一条不丢', async () => {
+    expect(mergeRequest).not.toBeNull()
+    const result = await client().commit(mergeRequest!)
+    expect(result.status).toBe('committed')
+    expect(result.summary.failed).toBe(0)
+
+    // 被并行已删；规范行就是「带统代」那行。
+    expect(enterpriseExists(db, existing)).toBe(false)
+    const canonical = db.select().from(schema.enterprise).all().find((e) => e.usccNorm === USCC)!
+    // B：规范行保留**导出表侧**的名字（归并不改名）。
+    expect(canonical.name).toBe(OLD_NAME)
+    // B：两侧逐字同名 ⇒ 不造别名（只并身份）。
+    expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
+
+    // 同 (称号, 来源) 冲突 ⇒ 事件**改指**规范行那条记录：两条认定事件都在。
+    const records = db.select().from(schema.record).all().filter((r) => r.enterpriseId === canonical.id)
+    expect(records.map((r) => `${r.titleCode}/${r.source}`)).toEqual(['specialized_sme/jxj'])
+    const events = db.select().from(schema.recordEvent).all().filter((e) => e.recordId === records[0]!.id)
+    expect(events.map((e) => e.year).sort()).toEqual([2022, 2023])
+    // 出处随事件归入（含页码）。
+    const evidence = db
+      .select()
+      .from(schema.recordEvidence)
+      .all()
+      .filter((v) => events.some((e) => e.id === v.recordEventId))
+    expect(evidence).toHaveLength(2)
+    expect(evidence.some((v) => v.page === 74)).toBe(true)
+    // 被并行树下无孤儿。
+    expect(db.select().from(schema.record).all().some((r) => r.enterpriseId === existing)).toBe(false)
+
+    // 血缘在 import_batch.item_results 里可查回。
+    const lineage = readMergeLineage(db, mergeRequest!.idempotencyKey, existing)!
+    expect(lineage).toMatchObject({ fromEnterpriseId: existing, intoEnterpriseId: canonical.id, intoUscc: USCC, aliasId: null })
+    expect(lineage.recordsFolded).toEqual([{ fromRecordId: existingRecord, intoRecordId: records[0]!.id }])
+    expect(lineage.eventsMoved).toEqual([existingEvent])
+    expect(lineage.evidenceMoved).toEqual([existingEvidence])
+  })
+
+  it('★ 同键重放：不再写一行，返回既有摘要', async () => {
+    const before = rosterRowCounts(db)
+    const replay = await client().commit(mergeRequest!)
+    expect(replay.status).toBe('committed')
+    expect(rosterRowCounts(db)).toEqual(before)
+    expect(replay.summary).toEqual((await client().commit(mergeRequest!)).summary)
+  })
+
+  it('已执行过的候选再读报告：`previous` 指出那一次归并，候选不再重复可并', async () => {
+    const report = await candidatesReport(importRequest.idempotencyKey)
+    expect(report.previous).not.toBeNull()
+    expect(report.previous!.idempotencyKey).toBe(mergeRequest!.idempotencyKey)
+    // 被并行已不在库里 ⇒ 这条候选现在读作 `source_gone`（不是「证据不够」）；
+    // 已经做过的那次由 `previous` 说明，所以不会有人再并一遍，也不会重复增行。
+    expect(report.ready).toHaveLength(0)
+    expect(report.pending[0]!.reason).toBe('source_gone')
+    expect(report.request).toBeNull()
+  })
+
+  it('缺 batchKey / 批次不存在：400 / 404', async () => {
+    const missing = await fetch(`${server.baseUrl}/api/roster/import/duplicate-candidates`)
+    expect(missing.status).toBe(400)
+    const unknown = await fetch(`${server.baseUrl}/api/roster/import/duplicate-candidates?batchKey=nope%23sha256:zz`)
+    expect(unknown.status).toBe(404)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// C · 反面：证据不足一律不并
+// ---------------------------------------------------------------------------
+
+describe('C · 反面：证据不足 ⇒ 不归并，逐条待核', () => {
+  const NOT_EVIDENCED_USCC = '91330205084796244Y'
+  const NEVER_QUERIED_USCC = '913302126102116572'
+  const NO_QUERY_NAME = '宁波哲能精密塑料有限公司'
+  const NEVER_QUERIED_NAME = '宁波巨神制泵实业有限公司'
+  const batchKey = 'rl14/import-negatives#sha256:n1'
+
+  const existingNotEvidenced = seedEnterprise(NO_QUERY_NAME, null)
+  const existingNeverQueried = seedEnterprise(NEVER_QUERIED_NAME, null)
+
+  it('导入两行同名企业 ⇒ 两条候选', async () => {
+    const request: RosterImportRequest = {
+      idempotencyKey: batchKey,
+      sourceKind: 'announcement',
+      sourceIdentity: 'jxj/workbook/little-giant-negatives.xlsx',
+      payload: {
+        announcement: {
+          sourceDocument: { source: 'jxj', title: '历年小巨人工作簿（反面）', docNumber: null },
+          records: [
+            { enterprise: { name: NO_QUERY_NAME, uscc: NOT_EVIDENCED_USCC }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2023, batchSeq: 2, decidedYear: 2023, evidence: [{ sourceFile: 'x.xlsx' }] }] },
+            { enterprise: { name: NEVER_QUERIED_NAME, uscc: NEVER_QUERIED_USCC }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2023, batchSeq: 2, decidedYear: 2023, evidence: [{ sourceFile: 'x.xlsx' }] }] },
+          ],
+        },
+      },
+    }
+    const result = await client().commit(request)
+    expect(result.status).toBe('committed')
+    expect(result.items.filter((i) => i.kind === 'duplicate_candidate')).toHaveLength(2)
+  })
+
+  it('查过但 qymc 与公布名不符 / 一次都没查过 ⇒ 逐条待核，一条都不并', async () => {
+    // 只给第一个统代写一次查询，且关系里的 `qymc` 与公布名**不符**
+    //（这里是**合成**载荷：反面用例要的正是「查过了，但平台没说过这个名字」）。
+    const write = await client().commit({
+      idempotencyKey: 'rl14/evidence-not-matching#sha256:n2',
+      sourceKind: 'alias_evidence',
+      sourceIdentity: 'platform/negative.json',
+      payload: {
+        platformQueries: [
+          {
+            interface: 'business_list',
+            queryKey: NOT_EVIDENCED_USCC,
+            rdjb: '3',
+            queriedAt: QUERIED_AT,
+            status: 'success',
+            relations: [
+              {
+                sequenceNo: 1,
+                relationKey: 'SQ-negative-1',
+                usccRaw: NOT_EVIDENCED_USCC,
+                nameRaw: '宁波某家别的公司',
+                matchBasis: 'uscc',
+                verificationStatus: 'confirmed',
+              },
+            ],
+          },
+        ],
+      },
+    })
+    expect(write.status).toBe('committed')
+
+    const report = await candidatesReport(batchKey)
+    expect(report.counts).toEqual({ candidates: 2, ready: 0, pending: 2 })
+    expect(report.request).toBeNull()
+    const byName = Object.fromEntries(report.pending.map((p) => [p.candidate.existingEnterpriseName, p.reason]))
+    expect(byName[NO_QUERY_NAME]).toBe('name_not_evidenced')
+    expect(byName[NEVER_QUERIED_NAME]).toBe('no_platform_query')
+
+    // 一条都没并：四行（两条既有 + 两条新建）都在。
+    expect(enterpriseExists(db, existingNotEvidenced)).toBe(true)
+    expect(enterpriseExists(db, existingNeverQueried)).toBe(true)
+    expect(db.select().from(schema.enterprise).all().filter((e) => e.usccNorm === NOT_EVIDENCED_USCC)).toHaveLength(1)
+    expect(db.select().from(schema.enterprise).all().filter((e) => e.usccNorm === NEVER_QUERIED_USCC)).toHaveLength(1)
+  })
+
+  it('同一既有行被两条候选认领（同名多主体）⇒ 只并第一条，其余待核', async () => {
+    const claimedName = '宁波昌隆机电有限公司'
+    const claimed = seedEnterprise(claimedName, null)
+    const result = await client().commit({
+      idempotencyKey: 'rl14/import-claimed#sha256:c1',
+      sourceKind: 'announcement',
+      sourceIdentity: 'jxj/workbook/claimed.xlsx',
+      payload: {
+        announcement: {
+          sourceDocument: { source: 'jxj', title: '同名多主体', docNumber: null },
+          records: [
+            { enterprise: { name: claimedName, uscc: '913302110000000001' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2023, batchSeq: 1, decidedYear: 2023, evidence: [{ sourceFile: 'x.xlsx' }] }] },
+            { enterprise: { name: claimedName, uscc: '913302110000000002' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2023, batchSeq: 1, decidedYear: 2023, evidence: [{ sourceFile: 'x.xlsx' }] }] },
+          ],
+        },
+      },
+    })
+    expect(result.status).toBe('committed')
+
+    // 两个统代**都有**逐字同名的关系证据 —— 但同一条既有行不能被并两次。
+    const write = await client().commit({
+      idempotencyKey: 'rl14/evidence-claimed#sha256:c2',
+      sourceKind: 'alias_evidence',
+      sourceIdentity: 'platform/claimed.json',
+      payload: {
+        platformQueries: ['913302110000000001', '913302110000000002'].map((uscc, index) => ({
+          interface: 'business_list' as const,
+          queryKey: uscc,
+          rdjb: '3',
+          queriedAt: QUERIED_AT,
+          status: 'success' as const,
+          relations: [
+            {
+              sequenceNo: 1,
+              relationKey: `SQ-claimed-${index + 1}`,
+              usccRaw: uscc,
+              nameRaw: claimedName,
+              matchBasis: 'uscc' as const,
+              verificationStatus: 'confirmed' as const,
+            },
+          ],
+        })),
+      },
+    })
+    expect(write.status).toBe('committed')
+
+    const report = await candidatesReport('rl14/import-claimed#sha256:c1')
+    // 三条候选：既有行 ↔ 两个新统代各一条，外加「两个新行彼此同名」那条。
+    expect(report.counts).toEqual({ candidates: 3, ready: 1, pending: 2 })
+    const byName = report.pending.map((p) => `${p.candidate.existingEnterpriseName}#${p.candidate.newUscc}:${p.reason}`).sort()
+    expect(byName).toEqual([
+      // 同一条既有（无统代）行被两条候选认领 ⇒ 只并第一认领者，另一条待核。
+      `宁波昌隆机电有限公司#913302110000000002:source_claimed`,
+      // 两条带统代的新行彼此同名 ⇒ 是**两个已识别的不同主体**，不并。
+      `宁波昌隆机电有限公司#913302110000000002:source_has_uscc`,
+    ])
+    expect(report.ready[0]!.merge.fromEnterpriseId).toBe(claimed)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// B：规范行的 name 与别名
+// ---------------------------------------------------------------------------
+
+describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐字不同）', () => {
+  const CANON_USCC = '91330211316904639T'
+  const CANON_NAME = '宁波奔野重工股份有限公司'
+  const OLD_ANNOUNCED = '宁波奔野重工有限公司'
+
+  it('两侧名称逐字不同 ⇒ 被并名写成 enterprise_alias（confirmed），规范行 name 不变', async () => {
+    const canonical = seedEnterprise(CANON_NAME, CANON_USCC)
+    const duplicated = seedEnterprise(OLD_ANNOUNCED, null)
+    const duplicatedRecord = seedRecord(duplicated, 'jxj', 'specialized_sme')
+    const duplicatedEvent = seedEvent(duplicatedRecord, 'award', 2021, 3)
+    const duplicatedEvidence = seedEvidence(duplicatedEvent, 12)
+
+    const request: RosterImportRequest = {
+      idempotencyKey: 'rl14/alias#sha256:b1',
+      sourceKind: 'alias_evidence',
+      sourceIdentity: `miit/relations/${CANON_USCC}`,
+      payload: {
+        merges: [
+          {
+            fromEnterpriseId: duplicated,
+            intoUscc: CANON_USCC,
+            aliasName: OLD_ANNOUNCED,
+            sourceKind: 'platform_business',
+            sourceRefId: 0,
+            note: '公布名（历史名）→ 平台现名',
+          },
+        ],
+      },
+    }
+    const result = await client().commit(request)
+    expect(result.status).toBe('committed')
+
+    const kept = db.select().from(schema.enterprise).all().find((e) => e.id === canonical)!
+    // 规范行保留**导出表侧**（最新）的名字：归并不改名。
+    expect(kept.name).toBe(CANON_NAME)
+    const alias = db.select().from(schema.enterpriseAlias).all().find((a) => a.enterpriseId === canonical)!
+    expect(alias).toMatchObject({ name: OLD_ANNOUNCED, sourceKind: 'platform_business', verificationStatus: 'confirmed' })
+    const lineage = readMergeLineage(db, request.idempotencyKey, duplicated)!
+    expect(lineage.aliasId).toBe(alias.id)
+    expect(lineage.eventsMoved).toContain(duplicatedEvent)
+    expect(lineage.evidenceMoved).toContain(duplicatedEvidence)
+    // 按现名或历史名搜索都命中同一企业。
+    expect(db.select().from(schema.enterprise).all().map((e) => e.id)).toContain(canonical)
+  })
+
+  it('两侧名称逐字相同 ⇒ 不造别名（只并身份）', async () => {
+    const sameName = '宁波一力实业有限公司'
+    const uscc = '91330206793007818K'
+    const canonical = seedEnterprise(sameName, uscc)
+    const duplicated = seedEnterprise(sameName, null)
+
+    const request: RosterImportRequest = {
+      idempotencyKey: 'rl14/same-name#sha256:b2',
+      sourceKind: 'alias_evidence',
+      sourceIdentity: `miit/relations/${uscc}`,
+      payload: { merges: [{ fromEnterpriseId: duplicated, intoUscc: uscc, sourceKind: 'platform_business', sourceRefId: 0 }] },
+    }
+    const result = await client().commit(request)
+    expect(result.status).toBe('committed')
+
+    expect(enterpriseExists(db, duplicated)).toBe(false)
+    expect(db.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === canonical)).toHaveLength(0)
+    const lineage = readMergeLineage(db, request.idempotencyKey, duplicated)!
+    expect(lineage.aliasId).toBeNull()
+    // 净新增 0 行。
+    expect(result.items.find((i) => i.kind === 'merge')!.detail!.rowsWritten).toBe(0)
+  })
+})

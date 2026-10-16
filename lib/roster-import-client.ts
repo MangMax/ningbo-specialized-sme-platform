@@ -287,6 +287,39 @@ export interface RosterImportItemResult {
   detail?: Record<string, unknown>
 }
 
+/**
+ * **重名候选**（RL-14）—— 导入**新建企业**时，库里已存在 `name_norm` 相同的企业行。
+ *
+ * ── 为什么要有它（真实事故）──────────────────────────────────────────────
+ * `upsertEnterprise` 的身份规则是「**有统代只按统代、无统代才按名**」（这个行为本身正确：
+ * 按名自动合并会踩「同名多主体」，规格明令禁止）。后果是：同一家公司带着统代再进来一次，
+ * 就会与既有那条「同名但无统代」的行**另起一行**，而**导入报告里一个字都没有** ——
+ * 实测导入经信局历年小巨人工作簿后静默多出 4 家重复企业身份。
+ *
+ * 本结构把这件事**显式化**：不改匹配规则、不自动合并，只如实报出「新建这一行时，
+ * 库里已经有同名的另一行」。是否归并由**证据**决定（见 `docs/roster-lifecycle-contract.md`
+ * §8.8 与 §5.3），候选本身不是结论。
+ */
+export interface DuplicateNameCandidate {
+  /** 判定依据。目前只有一种：归一化名相同（`same_name_norm`）。 */
+  basis: 'same_name_norm'
+  /** 归一化名（两侧相同，就是判据本身）。 */
+  nameNorm: string
+  /** 展示用的企业名（本批新建侧的原值）。 */
+  name: string
+  /** 被比对的**既有**一侧：库里已有、或**本批更早**写入的同名行。 */
+  existingEnterpriseId: number | null
+  existingEnterpriseName: string
+  /** 既有行的统代；无统代的既有行是 `null`（事故里正是这种）。 */
+  existingUscc: string | null
+  /** 本批**新建**的那一行。 */
+  newEnterpriseId: number | null
+  /** 新建行的统代（新建必然带统代，否则会按名命中既有行）。 */
+  newUscc: string | null
+  /** 触发新建的**载荷项引用**（如 `record:3`），供逐项追溯。 */
+  sourceRef: string
+}
+
 /** 预检的影响计数；`conflicts` 是**逐项冲突**（不静默丢行）。 */
 export interface RosterImportPreflight {
   /** 将新增的行数（任一新行，含企业/记录/事件/出处/别名/关系/快照行/差异/归并）。 */
@@ -298,6 +331,8 @@ export interface RosterImportPreflight {
   /** 落在待核状态的行数（`pending` / `needs_review` / 未知枚举原样入库）。 */
   review: number
   conflicts: RosterImportItemResult[]
+  /** 本次导入会**新建**的重名候选（RL-14；明细可与提交后的 `item_results` 对照）。 */
+  duplicateCandidates?: DuplicateNameCandidate[]
 }
 
 export interface RosterImportPreflightResponse {
