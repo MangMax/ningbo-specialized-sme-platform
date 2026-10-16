@@ -380,7 +380,11 @@ function eventSuffix(item: TimelineItem): string {
                     { k: '方向', v: directionLabel(d.direction) },
                     {
                       k: '原因',
-                      v: d.reasonCode ? (DIFFERENCE_REASONS[d.reasonCode] ?? d.reasonCode) : '待核实',
+                      v: d.reasonCode
+                        ? (DIFFERENCE_REASONS[d.reasonCode] ?? d.reasonCode)
+                        : d.status === 'confirmed_no_diff'
+                          ? '无需原因'
+                          : '待核实',
                     },
                     {
                       k: '措施',
@@ -428,16 +432,22 @@ function eventSuffix(item: TimelineItem): string {
         </footer>
       </div>
 
-      <!-- 取数中:骨架与抽屉同尺寸,避免打开的一瞬间抽屉「先瘦后胖」。 -->
-      <div v-else class="flex flex-1 flex-col gap-3 px-5 py-4">
-        <!-- 取数期间也得有个标题:对话框没有可访问名时 reka 会往控制台报警告。 -->
-        <DialogTitle class="sr-only">企业详情</DialogTitle>
-        <p v-if="error" class="text-destructive text-xs">未能加载该企业详情。</p>
-        <template v-else>
-          <Skeleton class="h-4 w-56" />
-          <Skeleton class="h-3 w-36" />
-          <Skeleton class="h-24 w-full" />
-        </template>
+      <!-- 取数中与失败时仍保留可见的关闭操作,窄屏上不能让用户等请求结束才能退出。 -->
+      <div v-else class="flex min-h-0 flex-1 flex-col">
+        <header class="flex items-center justify-between border-b px-5 py-4">
+          <DialogTitle class="text-[13px] leading-5 font-medium">企业详情</DialogTitle>
+          <Button variant="ghost" size="icon" class="size-7 shrink-0" aria-label="关闭" @click="emit('close')">
+            <X class="size-4" />
+          </Button>
+        </header>
+        <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
+          <p v-if="error" class="text-destructive text-[13px] leading-5">未能加载该企业详情。</p>
+          <template v-else>
+            <Skeleton class="h-4 w-56" />
+            <Skeleton class="h-3 w-36" />
+            <Skeleton class="h-24 w-full" />
+          </template>
+        </div>
       </div>
     </DialogContent>
   </DialogRoot>

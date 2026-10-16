@@ -596,6 +596,108 @@ async function verifyLedgerMobileLoadingOverflow(cdp) {
   }
 }
 
+async function verifyLedgerDrawerAsyncClose(cdp) {
+  const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[1])
+  const { targetId, sessionId } = page
+  try {
+    await installMotionAndFetchGate(cdp, sessionId)
+    const names = await evaluate(cdp, sessionId, `[
+      ...new Set([...document.querySelectorAll('tbody tr:not([aria-current="true"]) button')]
+        .map((button) => (button.textContent ?? '').trim()).filter(Boolean))
+    ].slice(0, 2)`)
+    if (names.length < 2) {
+      bad(`企业列表 · 窄屏抽屉:至少需要两家企业来检查加载与失败状态 ${JSON.stringify(names)}`)
+      return
+    }
+
+    const initialClose = await closeEnterpriseDrawer(cdp, sessionId)
+    if (!initialClose.ready || !initialClose.closed || !initialClose.animationEnd) {
+      bad(`企业列表 · 窄屏抽屉:打开异步状态前无法收起默认详情抽屉 ${JSON.stringify(initialClose)}`)
+      return
+    }
+
+    await startFetchGate(cdp, sessionId, '/api/roster/enterprises/')
+    await clickElementContaining(cdp, sessionId, 'tbody tr button', names[0])
+    const loadingReady = await waitUntil(cdp, sessionId, `(() => {
+      const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+      return window.__rl20FetchGate?.requested && drawer?.getAttribute('data-state') === 'open' &&
+        window.__rl20DrawerOpenMotion?.ended === true &&
+        !!drawer.querySelector('[data-slot="skeleton"]') && !!drawer.querySelector('button[aria-label="关闭"]');
+    })()`)
+    if (!loadingReady) {
+      const state = await evaluate(cdp, sessionId, `(() => ({
+        gate: { requested: window.__rl20FetchGate?.requested, releases: window.__rl20FetchGate?.releases.length },
+        rows: [...document.querySelectorAll('tbody tr')].map((row) => ({ name: row.querySelector('button')?.textContent?.trim(), selected: row.getAttribute('aria-current') })),
+        drawer: (() => { const el = document.querySelector('[data-testid="enterprise-drawer"]'); return el && { state: el.getAttribute('data-state'), text: el.textContent?.slice(0, 120), skeleton: !!el.querySelector('[data-slot="skeleton"]'), close: !!el.querySelector('button[aria-label="关闭"]') }; })(),
+      }))()`)
+      bad(`企业列表 · 窄屏抽屉:详情请求挂起时没有可观察到带关闭按钮的加载态 ${JSON.stringify(state)}`)
+      return
+    }
+    const loadingClose = await evaluate(cdp, sessionId, `(() => {
+      const button = document.querySelector('[data-testid="enterprise-drawer"] button[aria-label="关闭"]');
+      const rect = button?.getBoundingClientRect();
+      const style = button ? getComputedStyle(button) : null;
+      return !!button && !!rect && style.display !== 'none' && style.visibility !== 'hidden' &&
+        rect.width >= 24 && rect.height >= 24 && rect.left >= 0 && rect.right <= innerWidth &&
+        rect.top >= 0 && rect.bottom <= innerHeight;
+    })()`)
+    if (!loadingClose) bad('企业列表 · 窄屏抽屉:加载态关闭按钮不在 390px 视口内或不可见')
+    else ok('企业列表 · 窄屏抽屉:390px 加载态关闭按钮完整可见')
+
+    const loadingCloseResult = await closeEnterpriseDrawer(cdp, sessionId)
+    const loadingCloseClicks = await evaluate(cdp, sessionId, 'window.__rl20DrawerCloseClicks')
+    if (!loadingCloseResult.ready || !loadingCloseResult.closed || !loadingCloseResult.animationEnd || loadingCloseClicks < 1) {
+      bad(`企业列表 · 窄屏抽屉:加载态关闭按钮未能完成关闭(${JSON.stringify(loadingCloseResult)},${loadingCloseClicks} 次点击)`)
+    }
+    else ok('企业列表 · 窄屏抽屉:详情加载未完成时可直接关闭')
+    await finishFetchGate(cdp, sessionId)
+
+    await evaluate(cdp, sessionId, 'window.__rl20DrawerOpenMotion = null')
+    await cdp.send('Network.enable', {}, sessionId)
+    await cdp.send('Network.setBlockedURLs', { urls: [`${BASE}/api/roster/enterprises/*`] }, sessionId)
+    await clickElementContaining(cdp, sessionId, 'tbody tr button', names[1])
+    const errorReady = await waitUntil(cdp, sessionId, `(() => {
+      const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+      return drawer?.getAttribute('data-state') === 'open' &&
+        window.__rl20DrawerOpenMotion?.ended === true &&
+        (drawer.querySelector('p.text-destructive')?.textContent ?? '').includes('未能加载') &&
+        !!drawer.querySelector('button[aria-label="关闭"]');
+    })()`)
+    if (!errorReady) {
+      const state = await evaluate(cdp, sessionId, `(() => {
+        const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+        return {
+          drawer: drawer && { state: drawer.getAttribute('data-state'), text: drawer.textContent?.slice(0, 160), close: !!drawer.querySelector('button[aria-label="关闭"]') },
+          selected: [...document.querySelectorAll('tbody tr[aria-current="true"] button')].map((button) => button.textContent?.trim()),
+        };
+      })()`)
+      bad(`企业列表 · 窄屏抽屉:详情失败后没有带关闭按钮的错误态 ${JSON.stringify(state)}`)
+      return
+    }
+    await cdp.send('Network.setBlockedURLs', { urls: [] }, sessionId)
+    const errorClose = await evaluate(cdp, sessionId, `(() => {
+      const button = document.querySelector('[data-testid="enterprise-drawer"] button[aria-label="关闭"]');
+      const rect = button?.getBoundingClientRect();
+      const style = button ? getComputedStyle(button) : null;
+      return !!button && !!rect && style.display !== 'none' && style.visibility !== 'hidden' &&
+        rect.width >= 24 && rect.height >= 24 && rect.left >= 0 && rect.right <= innerWidth &&
+        rect.top >= 0 && rect.bottom <= innerHeight;
+    })()`)
+    if (!errorClose) bad('企业列表 · 窄屏抽屉:错误态关闭按钮不在 390px 视口内或不可见')
+    else ok('企业列表 · 窄屏抽屉:390px 错误态关闭按钮完整可见')
+
+    const errorCloseResult = await closeEnterpriseDrawer(cdp, sessionId)
+    const totalCloseClicks = await evaluate(cdp, sessionId, 'window.__rl20DrawerCloseClicks')
+    if (!errorCloseResult.ready || !errorCloseResult.closed || !errorCloseResult.animationEnd || totalCloseClicks < 2) {
+      bad(`企业列表 · 窄屏抽屉:错误态关闭按钮未能完成关闭(${JSON.stringify(errorCloseResult)},${totalCloseClicks} 次点击)`)
+    }
+    else ok('企业列表 · 窄屏抽屉:详情加载失败时可直接关闭')
+  } finally {
+    await finishFetchGate(cdp, sessionId).catch(() => {})
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
 async function verifyMissingRecognitionYearAndEvidence(cdp) {
   const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0])
   const { targetId, sessionId } = page
@@ -1486,6 +1588,7 @@ async function main() {
 
     await verifyLedgerSearchLoading(cdp)
     await verifyLedgerMobileLoadingOverflow(cdp)
+    await verifyLedgerDrawerAsyncClose(cdp)
     await verifyMissingRecognitionYearAndEvidence(cdp)
     await verifyKaichengExample(cdp)
     await verifyUnknownReviewOutcomeExample(cdp)
