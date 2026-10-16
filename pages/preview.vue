@@ -32,7 +32,8 @@ import type { PdfPagesState } from '~~/server/utils/pdf-pages'
  * 在「序号各自从 1 起算」的分节名单里会指向完全不同的企业。
  *
  * 页图**要先渲染**才取得到。没渲染时页图库会照常铺出网格并给出渲染入口(那是它本来的
- * 空态),本页在上面补一句说明,让「为什么没定位到第 N 页」当场有答案,而不是静默降级。
+ * 空态),本页在上面补一句说明,让「为什么没定位到第 N 页」当场有答案,而不是静默降级；
+ * 如果目标页超过 PDF 实际页数,则明确提示页码不存在。
  */
 const route = useRoute()
 
@@ -62,15 +63,30 @@ const { data: pagesState } = useQuery({
 })
 
 /** 页图库刚完成的本地状态;父页查询缓存尚未重取时也能同步隐藏待渲染提示。 */
-const locallyRenderedPages = ref<{ file: string; pages: number[] } | null>(null)
+const locallyRenderedPages = ref<{ file: string; pages: number[]; pageCount: number | null } | null>(null)
 watch(file, () => {
   locallyRenderedPages.value = null
 })
 
 function onPagesRendered(state: PdfPagesState) {
   if (state.file !== file.value) return
-  locallyRenderedPages.value = { file: state.file, pages: state.pages.map((page) => page.page) }
+  locallyRenderedPages.value = {
+    file: state.file,
+    pages: state.pages.map((page) => page.page),
+    pageCount: state.pageCount,
+  }
 }
+
+const currentPdfPageCount = computed(() => {
+  const local = locallyRenderedPages.value
+  if (local?.file === file.value) return local.pageCount
+  return pagesState.value?.pageCount ?? null
+})
+
+const requestedPageOutOfRange = computed(
+  () =>
+    page.value !== null && currentPdfPageCount.value !== null && page.value > currentPdfPageCount.value,
+)
 
 const requestedPageRendered = computed(() => {
   if (page.value === null) return false
@@ -134,8 +150,12 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
     <template v-else>
       <!-- 要定位的那一页还没渲染:**说清为什么**,再让页图库给出渲染入口。不静默降级成「打开就是第一页」。 -->
       <Alert v-if="page !== null && !requestedPageRendered && pagesState">
-        <AlertTitle>第 {{ page }} 页的页图还没有渲染</AlertTitle>
-        <AlertDescription>先渲染页图,成功后会自动定位到这一页。</AlertDescription>
+        <AlertTitle v-if="requestedPageOutOfRange">第 {{ page }} 页不存在</AlertTitle>
+        <AlertTitle v-else>第 {{ page }} 页的页图还没有渲染</AlertTitle>
+        <AlertDescription v-if="requestedPageOutOfRange">
+          该 PDF 共 {{ currentPdfPageCount }} 页，请检查来源页码。
+        </AlertDescription>
+        <AlertDescription v-else>先渲染页图；如果 PDF 中存在这一页，渲染后会自动定位。</AlertDescription>
       </Alert>
 
       <PageImageGallery

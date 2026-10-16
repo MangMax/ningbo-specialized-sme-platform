@@ -118,4 +118,28 @@ describe('来源预览页图深链', () => {
     expect(wrapper.find('[data-test="single-page-preview"]').exists()).toBe(false)
     wrapper.unmount()
   })
+
+  it('深链页码超过 PDF 实际页数时明确提示页码不存在', async () => {
+    vi.stubGlobal('useRoute', () => ({ query: { file, page: '4', back: '/' } }))
+
+    const wrapper = mount(PreviewPage, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          PageHeader: { template: '<div><slot name="breadcrumb"/><slot name="actions"/></div>' },
+          NuxtLink: { props: ['to'], template: '<a :href="to"><slot/></a>' },
+          ImagePreview: {
+            props: ['name'],
+            template: '<div data-test="single-page-preview">{{ name }}</div>',
+          },
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('第 4 页不存在')
+    expect(wrapper.text()).toContain('该 PDF 共 3 页，请检查来源页码。')
+    wrapper.unmount()
+  })
 })
