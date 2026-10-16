@@ -764,22 +764,26 @@ function summarizePlan(plan: Plan): RosterImportPreflight {
 }
 
 /**
- * 同一批次里尚不存在的相同事件坐标先汇总出处，再只由首次出现项插入。
- * 不同来源文件是不同证据关系，全部保留；完全相同的关系只插入一次。
+ * 同一批次里尚不存在的相同事件坐标先按安全的企业身份汇总出处，再只由首次出现项插入。
+ * 不同来源文件是不同证据关系，全部保留；完全相同的关系只插入一次。身份有歧义且会撞到
+ * 同一个写入目标时记逐项冲突，不把证据猜并到某个同名主体。
  */
 function planNewEventEvidence(
   db: Executor,
   announcement: RosterImportAnnouncement,
   records: readonly RosterImportAnnouncement['records'][number][],
-): Map<number, RosterImportEvent[]> {
+): { eventsByRecord: Map<number, RosterImportEvent[]>; ambiguousTargetRecords: Map<number, number> } {
   interface Occurrence {
     recordIndex: number
     eventIndex: number
     event: RosterImportEvent
+    destinationKey: string
+    ambiguousIdentity: boolean
   }
 
   const planned = new Map<number, RosterImportEvent[]>()
   const groups = new Map<string, Occurrence[]>()
+  const destinationCoordinates = new Map<string, Occurrence[]>()
   for (const [recordIndex, record] of records.entries()) {
     const events = Array.isArray(record?.events) ? record.events : []
     planned.set(
@@ -801,15 +805,53 @@ function planNewEventEvidence(
     const titleCode = optionalString(record?.titleCode)
     const source = record?.source ?? announcement.sourceDocument?.source
     if (!name || !titleCode || !TITLE_CODES.has(titleCode) || !SOURCES.has(String(source))) continue
-    const identityKey = identityKeyOf({ name, uscc: usccOrNull(record.enterprise?.uscc) })
+    const uscc = usccOrNull(record.enterprise?.uscc)
+    const nameMatches = findEnterprisesByNorm(db, normalizeName(name))
+    const resolvedByWriteIdentity = findEnterpriseByIdentity(db, { name, uscc })
+    const ambiguousNameOnly = !uscc && nameMatches.length > 1
+    const groupIdentity = uscc
+      ? resolvedByWriteIdentity
+        ? `enterprise:${resolvedByWriteIdentity.id}`
+        : identityKeyOf({ name, uscc })
+      : nameMatches.length === 1
+        ? `enterprise:${nameMatches[0]!.id}`
+        : identityKeyOf({ name, uscc: null })
+    const destinationIdentity = resolvedByWriteIdentity
+      ? `enterprise:${resolvedByWriteIdentity.id}`
+      : identityKeyOf({ name, uscc })
 
     events.forEach((event, eventIndex) => {
       if (!EVENT_TYPES.has(String(event?.eventType))) return
-      const key = JSON.stringify([identityKey, titleCode, source, eventCoordinates(0, event)])
+      const coordinates = eventCoordinates(0, event)
+      const occurrence: Occurrence = {
+        recordIndex,
+        eventIndex,
+        event,
+        destinationKey: JSON.stringify([destinationIdentity, titleCode, source, coordinates]),
+        ambiguousIdentity: ambiguousNameOnly,
+      }
+      const destinationGroup = destinationCoordinates.get(occurrence.destinationKey) ?? []
+      destinationGroup.push(occurrence)
+      destinationCoordinates.set(occurrence.destinationKey, destinationGroup)
+
+      // 一条不唯一的名称无法确认企业身份；单独保留，后面若它与另一项会落到同一
+      // 写入坐标，则报冲突，不能把出处合并到按名称偶然命中的第一家。
+      const identityKey = ambiguousNameOnly ? `ambiguous:${recordIndex}:${eventIndex}` : groupIdentity
+      const key = JSON.stringify([identityKey, titleCode, source, coordinates])
       const occurrences = groups.get(key) ?? []
-      occurrences.push({ recordIndex, eventIndex, event })
+      occurrences.push(occurrence)
       groups.set(key, occurrences)
     })
+  }
+
+  const ambiguousTargetRecords = new Map<number, number>()
+  for (const occurrences of destinationCoordinates.values()) {
+    if (occurrences.length < 2 || !occurrences.some((occurrence) => occurrence.ambiguousIdentity)) continue
+    for (const occurrence of occurrences) {
+      if (!ambiguousTargetRecords.has(occurrence.recordIndex)) {
+        ambiguousTargetRecords.set(occurrence.recordIndex, occurrence.eventIndex)
+      }
+    }
   }
 
   for (const occurrences of groups.values()) {
@@ -848,15 +890,26 @@ function planNewEventEvidence(
     if (existingEvent) continue
 
     const uniqueEvidence = new Map<string, RosterImportEvidence>()
+    const invalidEvidence: unknown[] = []
     for (const occurrence of occurrences) {
-      for (const evidence of occurrence.event.evidence ?? []) {
-        const sourceFile = optionalString(evidence.sourceFile)
-        if (!sourceFile) continue
+      const evidenceValues: unknown[] = Array.isArray(occurrence.event.evidence) ? occurrence.event.evidence : []
+      for (const rawEvidence of evidenceValues) {
+        // Keep malformed entries in the planned event. The original payload is validated below,
+        // and these entries must become structured record_evidence errors rather than disappear.
+        if (!isObject(rawEvidence)) {
+          invalidEvidence.push(rawEvidence)
+          continue
+        }
+        const sourceFile = optionalString(rawEvidence.sourceFile)
+        if (!sourceFile) {
+          invalidEvidence.push(rawEvidence)
+          continue
+        }
         const normalized: RosterImportEvidence = {
           sourceFile,
-          attachment: optionalString(evidence.attachment),
-          listNo: optionalInt(evidence.listNo),
-          page: isPageCapable(sourceFile) ? optionalInt(evidence.page) : null,
+          attachment: optionalString(rawEvidence.attachment),
+          listNo: optionalInt(rawEvidence.listNo),
+          page: isPageCapable(sourceFile) ? optionalInt(rawEvidence.page) : null,
         }
         const key = JSON.stringify([
           normalized.sourceFile,
@@ -870,6 +923,7 @@ function planNewEventEvidence(
     const mergedEvidence = [...uniqueEvidence.entries()]
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([, evidence]) => evidence)
+    mergedEvidence.push(...(invalidEvidence as RosterImportEvidence[]))
     const [firstOccurrence, ...duplicates] = occurrences
     if (firstOccurrence) {
       const event = planned.get(firstOccurrence.recordIndex)?.[firstOccurrence.eventIndex]
@@ -881,7 +935,7 @@ function planNewEventEvidence(
     }
   }
 
-  return planned
+  return { eventsByRecord: planned, ambiguousTargetRecords }
 }
 
 /** 对象键及集合数组顺序不影响公告载荷的快照指纹;重复项仍按重数保留。 */
@@ -941,9 +995,10 @@ export function planRosterImport(
     ? ambiguousEvidenceRepointIds(db, payload.announcement, announcementRecords, evidenceContentHashes)
     : new Set<number>()
   /** 新事件在首次写入前合并同坐标出处，避免重复项按遍历顺序覆盖来源。 */
-  const plannedWriteEvents = payload.announcement && mode === 'write'
+  const newEventEvidencePlan = payload.announcement && mode === 'write'
     ? planNewEventEvidence(db, payload.announcement, announcementRecords)
-    : new Map<number, RosterImportEvent[]>()
+    : { eventsByRecord: new Map<number, RosterImportEvent[]>(), ambiguousTargetRecords: new Map<number, number>() }
+  const plannedWriteEvents = newEventEvidencePlan.eventsByRecord
   /**
    * **整份计划**已认领的出处行 id。
    *
@@ -1012,6 +1067,19 @@ export function planRosterImport(
           plannedCoordinates.set(identityKey, coordinates)
           earlierByName.set(create.nameNorm, [...(earlierByName.get(create.nameNorm) ?? []), create])
         }
+      })
+    }
+    for (const [recordIndex, eventIndex] of newEventEvidencePlan.ambiguousTargetRecords) {
+      push({
+        item: failure(
+          'record_event',
+          `record:${recordIndex}#${eventIndex}`,
+          'enterprise_ambiguous',
+          '同一事件坐标涉及无法唯一定位的同名企业，未合并出处；请明确统一社会信用代码或拆分核实',
+          'enterprise.uscc',
+        ),
+        action: 'skip',
+        review: false,
       })
     }
   }
@@ -1622,7 +1690,9 @@ function candidateTargetPathsByRow(
 ): CandidateEvidencePaths {
   const targetPathsByRow = new Map<number, Set<string>>()
   const hashConflicts = new Set<EvidenceContentHashConflict>()
-  for (const candidate of wanted) {
+  for (const rawCandidate of wanted as readonly unknown[]) {
+    if (!isObject(rawCandidate)) continue
+    const candidate = rawCandidate as unknown as RosterImportEvidence
     const sourceFile = optionalString(candidate.sourceFile)
     if (!sourceFile) continue
     // 按目标格式归一坐标后必须只命中一行。非 PDF 的 page 不参与坐标；PDF 页号仍精确参与。
