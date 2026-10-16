@@ -323,14 +323,14 @@ function identityKeyOf(spec: { name: string; uscc: string | null }): string {
 }
 
 interface AnnouncementBatchIdentityPlan {
-  /** 身份解析使用的 USCC；名称项只会映射到本批唯一的显式 USCC 候选。 */
+  /** 身份解析使用的 USCC；名称项只会映射到唯一的既有 / 本批身份候选。 */
   identityUsccByRecord: Map<number, string | null>
   ambiguousNameOnlyRecords: Set<number>
 }
 
 /**
- * 从整份公告为 name-only 项解析稳定的批次身份。空库里的 name-only 只有在该规范名对应
- * 恰好一个显式 USCC 候选时才映射到该 USCC；多个候选或库内多家同名均失败关闭。
+ * 从整份公告为 name-only 项解析稳定的身份。候选集合同时包含既有同名企业和本批显式 USCC；
+ * 只有合并后恰好一个身份时才归组，多个候选失败关闭。
  */
 function planAnnouncementBatchIdentity(
   db: Executor,
@@ -362,11 +362,20 @@ function planAnnouncementBatchIdentity(
         existing = findEnterprisesByNorm(db, nameNorm)
         existingByName.set(nameNorm, existing)
       }
-      const candidates = usccCandidatesByName.get(nameNorm) ?? new Set<string>()
-      if (existing.length > 1 || candidates.size > 1) {
+      const identities = new Map<string, string | null>()
+      for (const enterprise of existing) {
+        const identity = enterprise.usccNorm
+          ? usccKey(enterprise.usccNorm)
+          : `enterprise:${enterprise.id}`
+        identities.set(identity, enterprise.usccNorm)
+      }
+      for (const uscc of usccCandidatesByName.get(nameNorm) ?? []) {
+        identities.set(usccKey(uscc), uscc)
+      }
+      if (identities.size > 1) {
         ambiguousNameOnlyRecords.add(index)
-      } else if (existing.length === 0 && candidates.size === 1) {
-        identityUscc = [...candidates][0] ?? null
+      } else if (identities.size === 1) {
+        identityUscc = [...identities.values()][0] ?? null
       }
     }
 

@@ -1211,6 +1211,53 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     }
   })
 
+  it.each([
+    ['name-only 在前', true],
+    ['显式 USCC B 在前', false],
+  ] as const)('既有 USCC A 与批内 USCC B 是不同候选时 name-only 顺序无关地整批失败（%s）', async (_order, nameOnlyFirst) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成既有与批内统代混合候选企业'
+    const enterpriseA = seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    const existingRecord = seedRecord(db, enterpriseA, 'specialized_sme', 'jxj')
+    const existingEvent = seedEvent(db, existingRecord, 'award', 2022, 1)
+    db.insert(schema.recordEvidence)
+      .values({ recordEventId: existingEvent, sourceFile: 'synthetic/identity-existing/a.pdf', attachment: '附件1', listNo: 1, page: 1 })
+      .run()
+    const before = rosterRowCounts(db)
+    const explicitUsccB = {
+      enterprise: { name, uscc: '91330211000000001X' },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 12, evidence: [{ sourceFile: 'synthetic/mixed-candidates/explicit-b.pdf', attachment: '附件1', listNo: 1, page: 17 }] }],
+    }
+    const nameOnly = {
+      enterprise: { name },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 12, evidence: [{ sourceFile: 'synthetic/mixed-candidates/name-only.pdf', attachment: '附件1', listNo: 2, page: 18 }] }],
+    }
+    const request = announcementRequest({ idempotencyKey: `synthetic/mixed-candidates/${nameOnlyFirst ? 'name-first' : 'uscc-first'}` })
+    request.payload.announcement!.records = nameOnlyFirst ? [nameOnly, explicitUsccB] : [explicitUsccB, nameOnly]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(rosterRowCounts(db)).toEqual(before)
+
+      const result = await client.commit(request)
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+    } finally {
+      await server.close()
+    }
+  })
+
   it('空库中仅一个 name-only 记录仍可按名称新建企业', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
