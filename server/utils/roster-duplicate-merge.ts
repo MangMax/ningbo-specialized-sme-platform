@@ -21,16 +21,41 @@ import { createHash } from 'node:crypto'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import type { DuplicateMergeEvidence, DuplicateMergePendingReason, DuplicateMergeReport } from '../../lib/roster/duplicate-merge'
+import {
+  duplicateTwinKey,
+  type DuplicateMergeEvidence,
+  type DuplicateMergePendingReason,
+  type DuplicateMergeReport,
+} from '../../lib/roster/duplicate-merge'
 import type { DuplicateNameCandidate, RosterImportMerge, RosterImportRequest } from '../../lib/roster-import-client'
-import { readImportBatchOutcome } from './roster-import'
+import { findEnterpriseById, findEnterpriseByUscc, readImportBatchOutcome } from './roster-import'
 
 type Db = BetterSQLite3Database<typeof schema>
 
-/** 接口 → 曾用名来源类别（契约 §1.2 的 `source_kind` 取值）。 */
-const ALIAS_SOURCE_KIND: Record<string, 'platform_business' | 'platform_apply'> = {
+/**
+ * 接口 → 曾用名来源类别（契约 §1.2 的 `source_kind` 取值）。
+ *
+ * 字典外的接口（手工改库才可能出现）**不静默降级**：拿不到可记录的来源类别就不拿它当证据
+ * （见 {@link findDuplicateMergeEvidence}），它会落到「证据不成立」而不是被标成某个接口。
+ */
+const ALIAS_SOURCE_KIND: Record<string, 'platform_business' | 'platform_apply' | undefined> = {
   business_list: 'platform_business',
   apply_list: 'platform_apply',
+}
+
+/**
+ * 以该统代为查询键的**全部**查询（只读）。
+ *
+ * 为什么不用 `lib/platform/read.ts` 的 `listPlatformQueries`：那个是**分页**的呈现读接口
+ * （默认 25 条），拿它当证据查找会在查询很多时**静默截断**掉真正的证据 —— 归并的判据不能
+ * 受分页影响。这里只做一次全量取数 + 归一化比较（查询键可能是小写/带空格的写法）。
+ */
+function platformQueriesForUscc(db: Db, uscc: string) {
+  return db
+    .select()
+    .from(schema.platformQuery)
+    .all()
+    .filter((query) => normalizeUscc(query.queryKey) === uscc)
 }
 
 type EvidenceResult =
@@ -41,9 +66,15 @@ type EvidenceResult =
  * 找「这个统代就叫这个名字」的**平台关系证据**（只读）。
  *
  * 只在**以该统代查询**的查询下找（按名查询的键是 `name:<nameNorm>`，不构成证据）。
- * 多个查询/多条关系都成立时取**确定性**的一条：查询按 `queriedAt` 新→旧（并列按 id 大→小），
- * 查询内按 `sequenceNo` 小→大取第一条命中 —— 同样的库 ⇒ 同样的证据 ⇒ 同样的归并（可重放）。
+ * 多个查询/多条关系都成立时取**确定性**的一条：
+ *  1. **用户实测过的那一类形状优先**（`business_list` + `rdjb=3`，实测的 4 例就在这里）；
+ *  2. 其余按 `queriedAt` 新→旧（并列按行 id 大→小）；
+ *  3. 查询内按 `sequenceNo` 小→大取第一条命中。
+ * 同一个库 ⇒ 同一条证据 ⇒ 同样的归并（可重放）。
  *
+ * 判据只有一条：关系的 `qymc`（`name_raw`）与被并方名称**逐字相等**。别的接口（如 `apply_list`）
+ * 同样带 `tyshxydm` + `qymc`，「平台说这个统代叫什么」这句话并不因接口而不同，所以也认；
+ * 用了哪一条**如实记进报告**（`interface` / `rdjb` / `sequenceNo` / `relationKey` / `queriedAt`）。
  * 关系的 `tyshxydm` 若存在且**不是**该统代 ⇒ 这条讲的是别的企业，跳过（不拿它当证据）。
  */
 export function findDuplicateMergeEvidence(db: Db, candidate: DuplicateNameCandidate): EvidenceResult {
@@ -51,16 +82,19 @@ export function findDuplicateMergeEvidence(db: Db, candidate: DuplicateNameCandi
   if (!uscc) {
     return { ok: false, reason: 'no_target_uscc', message: '候选的新建行没有统一社会信用代码，没有可回填的规范行' }
   }
-  const queries = db
-    .select()
-    .from(schema.platformQuery)
-    .all()
-    .filter((query) => normalizeUscc(query.queryKey) === uscc)
+  const queries = platformQueriesForUscc(db, uscc)
   if (queries.length === 0) {
     return { ok: false, reason: 'no_platform_query', message: `统代 ${uscc} 一次都没查过（未查询 ≠ 查了没有）` }
   }
-  const ordered = [...queries].sort((a, b) => (a.queriedAt === b.queriedAt ? b.id - a.id : a.queriedAt < b.queriedAt ? 1 : -1))
+  const authorized = (query: (typeof queries)[number]) => query.interface === 'business_list' && query.rdjb === '3'
+  const ordered = [...queries].sort((a, b) => {
+    if (authorized(a) !== authorized(b)) return authorized(a) ? -1 : 1
+    if (a.queriedAt !== b.queriedAt) return a.queriedAt < b.queriedAt ? 1 : -1
+    return b.id - a.id
+  })
   for (const query of ordered) {
+    const sourceKind = ALIAS_SOURCE_KIND[query.interface]
+    if (!sourceKind) continue
     const relations = db
       .select()
       .from(schema.platformRelation)
@@ -85,7 +119,7 @@ export function findDuplicateMergeEvidence(db: Db, candidate: DuplicateNameCandi
           relationKey: relation.relationKey,
           nameRaw: relation.nameRaw ?? '',
           usccRaw: relation.usccRaw,
-          sourceKind: ALIAS_SOURCE_KIND[query.interface] ?? 'platform_business',
+          sourceKind,
         },
       }
     }
@@ -99,8 +133,7 @@ export function findDuplicateMergeEvidence(db: Db, candidate: DuplicateNameCandi
 
 /** 候选的**去重键**：同一（既有行 → 新统代）只处理一次。 */
 function candidateKey(candidate: DuplicateNameCandidate): string {
-  const from = candidate.existingEnterpriseId != null ? `enterprise:${candidate.existingEnterpriseId}` : `uscc:${candidate.existingUscc ?? candidate.nameNorm}`
-  return `${from}->${normalizeUscc(candidate.newUscc) ?? candidate.nameNorm}`
+  return `${duplicateTwinKey(candidate)}->${normalizeUscc(candidate.newUscc) ?? candidate.nameNorm}`
 }
 
 /** 幂等键：源批次 + **归并内容**（同证据同键 ⇒ 重放不增行；新证据新键 ⇒ 可再跑一批）。 */
@@ -142,7 +175,7 @@ export function planDuplicateMerge(db: Db, batchKey: string): DuplicateMergeRepo
       pending.push({ candidate, reason: 'source_gone', message: '候选里没有记录被并企业的行 id（无法安全归并）' })
       continue
     }
-    const from = db.select().from(schema.enterprise).all().find((e) => e.id === fromId)
+    const from = findEnterpriseById(db, fromId)
     if (!from) {
       pending.push({ candidate, reason: 'source_gone', message: `被并企业行 ${fromId} 已不在库里` })
       continue
@@ -158,7 +191,7 @@ export function planDuplicateMerge(db: Db, batchKey: string): DuplicateMergeRepo
       continue
     }
     const uscc = normalizeUscc(candidate.newUscc)
-    const into = uscc ? db.select().from(schema.enterprise).all().find((e) => e.usccNorm === uscc) : undefined
+    const into = uscc ? findEnterpriseByUscc(db, uscc) : null
     if (!into) {
       pending.push({ candidate, reason: 'target_gone', message: `规范行（统代 ${uscc ?? '(空)'}）不在库里` })
       continue
@@ -215,9 +248,10 @@ export function planDuplicateMerge(db: Db, batchKey: string): DuplicateMergeRepo
 /**
  * 编一条 `merges` 项。
  *
- * **两侧同名不给 `aliasName`**（契约 §5.3）：规范行的 `name` 是**导出表侧**（最新）的那个名字，
- * 被并的公布名与之逐字相同时没有第二个名字可留，别名只会污染搜索 —— `executeMerge` 也会跳过。
- * 两侧不同名时才写别名（`verification_status='confirmed'`，来源 = 这条平台关系）。
+ * **两侧逐字同名不给 `aliasName`**（契约 §5.3）：规范行的 `name` 是**导出表侧**（最新）的那个名字，
+ * 被并的公布名与之逐字相同时没有第二个名字可留，别名只会污染搜索 ——
+ * `executeMerge` 也用同一判据兜底（`aliasName === into.name` ⇒ 不造别名）。
+ * 两侧逐字不同名时才写别名（`verification_status='confirmed'`，来源 = 这条平台关系）。
  */
 function buildMerge(
   candidate: DuplicateNameCandidate,
@@ -225,6 +259,9 @@ function buildMerge(
   uscc: string,
 ): RosterImportMerge {
   const sameName = candidate.existingEnterpriseName === candidate.name
+  const where = `${evidence.interface}${evidence.rdjb ? ` rdjb=${evidence.rdjb}` : ''} 序号 ${evidence.sequenceNo}${
+    evidence.relationKey ? `（${evidence.relationKey}）` : ''
+  }`
   return {
     fromEnterpriseId: candidate.existingEnterpriseId!,
     intoUscc: uscc,
@@ -232,6 +269,6 @@ function buildMerge(
     sourceKind: evidence.sourceKind,
     sourceRefId: evidence.relationId,
     evidenceQueryId: evidence.queryId,
-    note: `重名候选（同名 ${candidate.nameNorm}）；证据：${evidence.interface}${evidence.rdjb ? ` rdjb=${evidence.rdjb}` : ''} 序号 ${evidence.sequenceNo} 的 qymc 逐字等于「${evidence.nameRaw}」`,
+    note: `重名候选（同名 ${candidate.nameNorm}）；证据：${where} 于 ${evidence.queriedAt} 返回的 qymc 逐字等于「${evidence.nameRaw}」`,
   }
 }

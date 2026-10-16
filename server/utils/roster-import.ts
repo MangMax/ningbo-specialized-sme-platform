@@ -21,6 +21,7 @@ import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER, type PlatformInterface } from '../../lib/labels'
 import type {
   DuplicateNameCandidate,
@@ -166,14 +167,38 @@ interface ResolvedEnterprise {
   usccNorm: string | null
 }
 
-function findEnterpriseByUscc(db: Executor, usccNorm: string): ResolvedEnterprise | null {
+/** 按身份规则定位企业的入参（`name` / `uscc` 至少给一个；`uscc` 空串等同没给）。 */
+type EnterpriseSpec = { name?: string | null; uscc?: string | null }
+
+/** 按统代定位企业（**唯一**的身份键之一；重名候选与归并读侧共用这一份）。 */
+export function findEnterpriseByUscc(db: Executor, usccNorm: string): ResolvedEnterprise | null {
   const row = db.select().from(schema.enterprise).all().find((e) => e.usccNorm === usccNorm)
+  return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+}
+
+/** 按行 id 定位企业（归并/候选在写入阶段解析真 id 时用）。 */
+export function findEnterpriseById(db: Executor, id: number): ResolvedEnterprise | null {
+  const row = db.select().from(schema.enterprise).all().find((e) => e.id === id)
   return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
 }
 
 function findEnterpriseByNorm(db: Executor, nameNorm: string): ResolvedEnterprise | null {
   const row = db.select().from(schema.enterprise).all().find((e) => e.nameNorm === nameNorm)
   return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+}
+
+/**
+ * 按 {@link upsertEnterprise} 的**身份规则**定位企业：有统代只按统代、无统代才按名。
+ *
+ * 与 {@link locateEnterprise} 的差别正是本票的事故根因：后者在「统代查不到」时会**退回按名找**，
+ * 所以预检会说「企业已存在」，而写入侧（只按统代）却会**新建一行** —— 重复于是静默产生。
+ * 这里把写入侧的规则单独摘出来，让「这次到底会不会新建」在预检阶段就能问对。
+ */
+function findEnterpriseByIdentity(db: Executor, spec: EnterpriseSpec): ResolvedEnterprise | null {
+  const uscc = usccOrNull(spec.uscc)
+  if (uscc) return findEnterpriseByUscc(db, uscc)
+  const name = optionalString(spec.name)
+  return name ? findEnterpriseByNorm(db, normalizeName(name)) : null
 }
 
 /** **全部**同名行（`name_norm` 相同）—— 不论它有没有统代。重名候选的判据基础。 */
@@ -187,30 +212,10 @@ function findEnterprisesByNorm(db: Executor, nameNorm: string): ResolvedEnterpri
 }
 
 /**
- * 按 {@link upsertEnterprise} 的**身份规则**定位企业：有统代只按统代、无统代才按名。
- *
- * 与 {@link locateEnterprise} 的差别正是本票的事故根因：后者在「统代查不到」时会**退回按名找**，
- * 所以预检会说「企业已存在」，而写入侧（只按统代）却会**新建一行** —— 重复于是静默产生。
- * 这里把写入侧的规则单独摘出来，让「这次到底会不会新建」在预检阶段就能问对。
- */
-function findEnterpriseByIdentity(
-  db: Executor,
-  spec: { name?: string | null; uscc?: string | null },
-): ResolvedEnterprise | null {
-  const uscc = usccOrNull(spec.uscc)
-  if (uscc) return findEnterpriseByUscc(db, uscc)
-  const name = optionalString(spec.name)
-  return name ? findEnterpriseByNorm(db, normalizeName(name)) : null
-}
-
-/**
  * 按身份键定位企业：**统代优先，缺失时按归一化名**（既有决策，不改）。
  * 定位不到时返回 `null`（由调用方决定是新建还是报错）。
  */
-function locateEnterprise(
-  db: Executor,
-  spec: { name?: string | null; uscc?: string | null },
-): ResolvedEnterprise | null {
+function locateEnterprise(db: Executor, spec: EnterpriseSpec): ResolvedEnterprise | null {
   const uscc = usccOrNull(spec.uscc)
   if (uscc) {
     const byUscc = findEnterpriseByUscc(db, uscc)
@@ -257,14 +262,9 @@ interface PlannedDuplicateCandidate {
   existing: { kind: 'enterprise'; id: number } | { kind: 'batch'; name: string; uscc: string | null }
 }
 
-/** 身份键（与 {@link pendingKeys} 同构）：有统代按统代、无统代按归一化名。 */
+/** 身份键（与 {@link pendingKeys} 同一套写法）：有统代按统代、无统代按归一化名。 */
 function identityKeyOf(spec: { name: string; uscc: string | null }): string {
-  return spec.uscc ? `uscc:${spec.uscc}` : `name:${normalizeName(spec.name)}`
-}
-
-/** 执行阶段解析企业的真 id（有统代按统代、无统代按名 —— 与写入侧同规则）。 */
-function resolveEnterpriseIdByIdentity(db: Executor, spec: { name: string; uscc: string | null }): number | null {
-  return findEnterpriseByIdentity(db, spec)?.id ?? null
+  return spec.uscc ? usccKey(spec.uscc) : nameKey(normalizeName(spec.name))
 }
 
 /**
@@ -348,17 +348,8 @@ function duplicateNameCandidates(
 }
 
 /** 候选的稳定引用（同一批次里唯一，供逐项追溯与去重）。 */
-function duplicateCandidateRef(candidate: {
-  nameNorm: string
-  newUscc: string | null
-  existingEnterpriseId: number | null
-  existingUscc: string | null
-}): string {
-  const twin =
-    candidate.existingEnterpriseId != null
-      ? `enterprise:${candidate.existingEnterpriseId}`
-      : `uscc:${candidate.existingUscc ?? candidate.nameNorm}`
-  return `duplicate_candidate:${candidate.newUscc ?? candidate.nameNorm}~${twin}`
+function duplicateCandidateRef(candidate: DuplicateNameCandidate): string {
+  return `duplicate_candidate:${candidate.newUscc ?? candidate.nameNorm}~${duplicateTwinKey(candidate)}`
 }
 
 /**
@@ -370,8 +361,8 @@ function resolveDuplicateCandidate(tx: Executor, planned: PlannedDuplicateCandid
   const existingEnterpriseId =
     existing.kind === 'enterprise'
       ? existing.id
-      : resolveEnterpriseIdByIdentity(tx, { name: existing.name, uscc: existing.uscc })
-  const newEnterpriseId = resolveEnterpriseIdByIdentity(tx, { name: candidate.name, uscc: candidate.newUscc })
+      : (findEnterpriseByIdentity(tx, existing)?.id ?? null)
+  const newEnterpriseId = findEnterpriseByIdentity(tx, { name: candidate.name, uscc: candidate.newUscc })?.id ?? null
   const resolved: DuplicateNameCandidate = { ...candidate, existingEnterpriseId, newEnterpriseId }
   return success('duplicate_candidate', duplicateCandidateRef(candidate), { candidate: resolved })
 }
@@ -387,17 +378,21 @@ function resolveDuplicateCandidate(tx: Executor, planned: PlannedDuplicateCandid
  */
 type PendingEnterprises = Set<string>
 
-function pendingKeys(spec: { name?: string | null; uscc?: string | null }): string[] {
+/** 身份键的两种写法。**只在这里拼**：{@link pendingKeys} 全给、{@link identityKeyOf} 按偏好给一个。 */
+const usccKey = (uscc: string) => `uscc:${uscc}`
+const nameKey = (nameNorm: string) => `name:${nameNorm}`
+
+function pendingKeys(spec: EnterpriseSpec): string[] {
   const keys: string[] = []
   const uscc = usccOrNull(spec.uscc)
-  if (uscc) keys.push(`uscc:${uscc}`)
+  if (uscc) keys.push(usccKey(uscc))
   const name = optionalString(spec.name)
-  if (name) keys.push(`name:${normalizeName(name)}`)
+  if (name) keys.push(nameKey(normalizeName(name)))
   return keys
 }
 
 /** 该企业是否**已存在或本批将新建**（预检判据）。 */
-function enterpriseKnown(db: Executor, pending: PendingEnterprises, spec: { name?: string | null; uscc?: string | null }): boolean {
+function enterpriseKnown(db: Executor, pending: PendingEnterprises, spec: EnterpriseSpec): boolean {
   if (locateEnterprise(db, spec)) return true
   return pendingKeys(spec).some((key) => pending.has(key))
 }

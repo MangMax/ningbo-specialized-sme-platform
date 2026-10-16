@@ -72,6 +72,20 @@ export interface DuplicateMergeReady {
   merge: RosterImportMerge
 }
 
+/**
+ * 候选**既有侧**的稳定键（`enterprise:<id>`，没有 id 时退回 `uscc:<统代>`）。
+ *
+ * 「既有行的身份」在两个地方要被拼出来 —— 候选的逐项引用（`duplicate_candidate:…`）
+ * 与归并计划的去重键（`…-><新统代>`）。两处**只写这一份**，免得哪天改了写法只改一处。
+ */
+export function duplicateTwinKey(
+  candidate: Pick<DuplicateNameCandidate, 'existingEnterpriseId' | 'existingUscc' | 'nameNorm'>,
+): string {
+  return candidate.existingEnterpriseId != null
+    ? `enterprise:${candidate.existingEnterpriseId}`
+    : `uscc:${candidate.existingUscc ?? candidate.nameNorm}`
+}
+
 /** 证据不足 ⇒ **不并**，留待核。 */
 export interface DuplicateMergePending {
   candidate: DuplicateNameCandidate

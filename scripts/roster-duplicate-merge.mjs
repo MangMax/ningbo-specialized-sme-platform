@@ -85,7 +85,8 @@ for (const item of report.pending) {
 for (const item of report.ready) {
   console.log(
     `  ✓ 可并 企业 ${item.candidate.existingEnterpriseId}「${item.candidate.existingEnterpriseName}」→ 企业 ${item.candidate.newEnterpriseId}（统代 ${item.candidate.newUscc}）；` +
-      `证据 ${item.evidence.interface}${item.evidence.rdjb ? ` rdjb=${item.evidence.rdjb}` : ''} 序号 ${item.evidence.sequenceNo} qymc=「${item.evidence.nameRaw}」`,
+      `证据 ${item.evidence.interface}${item.evidence.rdjb ? ` rdjb=${item.evidence.rdjb}` : ''} 序号 ${item.evidence.sequenceNo}` +
+      `${item.evidence.relationKey ? `（${item.evidence.relationKey}）` : ''} @${item.evidence.queriedAt} qymc=「${item.evidence.nameRaw}」`,
   )
 }
 

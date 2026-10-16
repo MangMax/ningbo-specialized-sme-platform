@@ -284,17 +284,25 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
     const evidence = ready.evidence
     expect(evidence.nameRaw).toBe(OLD_NAME)
     expect(evidence.queryKey).toBe(USCC)
-    // 取证据的规则是**确定性的**：最新一次查询优先（时点并列时按行 id 大 → 小），
-    // 查询内按序号小 → 大取第一条 qymc 逐字相等的 —— 同一个库 ⇒ 同一条证据 ⇒ 可重放。
-    const queriesOfUscc = db.select().from(schema.platformQuery).all().filter((q) => q.queryKey === USCC)
-    const newest = [...queriesOfUscc].sort((a, b) => (a.queriedAt === b.queriedAt ? b.id - a.id : a.queriedAt < b.queriedAt ? 1 : -1))[0]!
-    expect(evidence.queryId).toBe(newest.id)
-    expect(evidence.interface).toBe(newest.interface)
-    expect(evidence.sourceKind).toBe(newest.interface === 'business_list' ? 'platform_business' : 'platform_apply')
+    // 取证据的规则是**确定性的**：用户实测过的那一类形状（business_list + rdjb=3）优先，
+    // 其余接口按查询时点新→旧（并列按行 id 大→小）；查询内按序号小→大取第一条 `qymc` 逐字相等的。
+    // 同一个库 ⇒ 同一条证据 ⇒ 可重放。
+    const authorized = db
+      .select()
+      .from(schema.platformQuery)
+      .all()
+      .find((q) => q.queryKey === USCC && q.interface === 'business_list' && q.rdjb === '3')!
+    expect(evidence.queryId).toBe(authorized.id)
+    expect(evidence.interface).toBe('business_list')
+    expect(evidence.rdjb).toBe('3')
+    // 夹具 rdjb=3 的前两条关系 `qymc` 就是公布名（历史名）⇒ 取序号最小的那条。
+    expect(evidence.sequenceNo).toBe(1)
+    expect(evidence.relationKey).toBe('SQ332022062212391')
+    expect(evidence.sourceKind).toBe('platform_business')
     const relation = db.select().from(schema.platformRelation).all().find((r) => r.id === evidence.relationId)!
-    expect(relation.queryId).toBe(newest.id)
+    expect(relation.queryId).toBe(authorized.id)
     expect(relation.nameRaw).toBe(OLD_NAME)
-    expect(relation.sequenceNo).toBe(evidence.sequenceNo)
+    expect(relation.usccRaw).toBe(USCC)
     relationId = evidence.relationId
     queryId = evidence.queryId
 
@@ -323,7 +331,10 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
     // 被并行已删；规范行就是「带统代」那行。
     expect(enterpriseExists(db, existing)).toBe(false)
     const canonical = db.select().from(schema.enterprise).all().find((e) => e.usccNorm === USCC)!
-    // B：规范行保留**导出表侧**的名字（归并不改名）。
+    // B：规范行 = 带统代那行 = **导出/平台侧**，归并**不改**它的名字。
+    // 重名候选的判据是 `name_norm` 相同，所以这一路两侧的名字按定义同名（本 4 例即如此）：
+    // 「规范行的 name 取导出表侧的名字」在这里退化为「保留规范行原样」，没有名字被写坏。
+    // 两侧**逐字不同名**时（公布名是短名、导出表是全名）的形态由下面 describe B 覆盖。
     expect(canonical.name).toBe(OLD_NAME)
     // B：两侧逐字同名 ⇒ 不造别名（只并身份）。
     expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
@@ -534,6 +545,34 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
     const duplicatedEvent = seedEvent(duplicatedRecord, 'award', 2021, 3)
     const duplicatedEvidence = seedEvidence(duplicatedEvent, 12)
 
+    // 证据也走统一 API：平台自己记录了「这个统代就叫公布名」。
+    const evidenceWrite = await client().commit({
+      idempotencyKey: 'rl14/alias-rule#sha256:b0',
+      sourceKind: 'alias_evidence',
+      sourceIdentity: `platform/${CANON_USCC}.json`,
+      payload: {
+        platformQueries: [
+          {
+            interface: 'business_list',
+            queryKey: CANON_USCC,
+            rdjb: '3',
+            queriedAt: QUERIED_AT,
+            status: 'success',
+            relations: [
+              { sequenceNo: 1, relationKey: 'SQ-alias-1', usccRaw: CANON_USCC, nameRaw: CANON_NAME, matchBasis: 'uscc', verificationStatus: 'confirmed' },
+              { sequenceNo: 2, relationKey: 'SQ-alias-2', usccRaw: CANON_USCC, nameRaw: OLD_ANNOUNCED, matchBasis: 'uscc', verificationStatus: 'confirmed' },
+            ],
+          },
+        ],
+      },
+    })
+    expect(evidenceWrite.status).toBe('committed')
+    const evidenceRelation = db
+      .select()
+      .from(schema.platformRelation)
+      .all()
+      .find((r) => r.nameRaw === OLD_ANNOUNCED && r.usccRaw === CANON_USCC)!
+
     const request: RosterImportRequest = {
       idempotencyKey: 'rl14/alias#sha256:b1',
       sourceKind: 'alias_evidence',
@@ -545,7 +584,7 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
             intoUscc: CANON_USCC,
             aliasName: OLD_ANNOUNCED,
             sourceKind: 'platform_business',
-            sourceRefId: 0,
+            sourceRefId: evidenceRelation.id,
             note: '公布名（历史名）→ 平台现名',
           },
         ],
@@ -555,10 +594,16 @@ describe('B · 归并后规范行保名、被并名落别名（仅当两侧逐�
     expect(result.status).toBe('committed')
 
     const kept = db.select().from(schema.enterprise).all().find((e) => e.id === canonical)!
-    // 规范行保留**导出表侧**（最新）的名字：归并不改名。
+    // B 的正面：规范行取**导出/平台侧**（最新）的名字 —— 归并**不**让历史名顶掉它。
     expect(kept.name).toBe(CANON_NAME)
+    // B：被并的公布名落成 `confirmed` 别名，来源就是那条平台关系。
     const alias = db.select().from(schema.enterpriseAlias).all().find((a) => a.enterpriseId === canonical)!
-    expect(alias).toMatchObject({ name: OLD_ANNOUNCED, sourceKind: 'platform_business', verificationStatus: 'confirmed' })
+    expect(alias).toMatchObject({
+      name: OLD_ANNOUNCED,
+      sourceKind: 'platform_business',
+      sourceRefId: evidenceRelation.id,
+      verificationStatus: 'confirmed',
+    })
     const lineage = readMergeLineage(db, request.idempotencyKey, duplicated)!
     expect(lineage.aliasId).toBe(alias.id)
     expect(lineage.eventsMoved).toContain(duplicatedEvent)
