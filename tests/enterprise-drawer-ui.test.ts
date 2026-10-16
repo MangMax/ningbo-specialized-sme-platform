@@ -184,8 +184,11 @@ describe('企业详情抽屉的焦点返回', () => {
 
 describe('企业详情抽屉的差异原因', () => {
   it.each([
-    ['confirmed_no_diff', '已确认无差异', 'text-primary'],
+    ['not_queried', '未查询', 'text-muted-foreground'],
     ['query_failed', '查询失败', 'text-destructive'],
+    ['no_record', '无记录', 'text-muted-foreground'],
+    ['confirmed_no_diff', '已确认无差异', 'text-primary'],
+    ['confirmed_reason', '已确认原因', 'text-primary'],
     ['needs_review', '待核实', 'text-muted-foreground'],
   ])('%s 状态在抽屉里显示中文状态与对应文字色', (status, label, tone) => {
     queryData.value = detailWithDifference({ status })

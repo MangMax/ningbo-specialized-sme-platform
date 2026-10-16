@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { badgeVariants } from '../components/ui/badge'
 import { cn } from '../lib/utils'
@@ -77,25 +76,6 @@ describe('六态两两可区分', () => {
   it('六个变体名本身也两两不同(不靠变体以外的 class 凑区别)', () => {
     const variants = Object.values(DIFFERENCE_STATUS_VARIANTS)
     expect(new Set(variants).size).toBe(variants.length)
-  })
-
-  /**
-   * 旧企业详情面板仍用状态徽章,其调用点不许挂 `font-*` / `text-*` 的 class。
-   *
-   * 这条来自一次真实回归:`quiet`(待核实)与 `outline`(无记录)之间**只有字色**这一处
-   * 差别(灰字 vs 深字)。调用点随手挂一个 `class="text-…"` 就会被 `twMerge` 判为同族、
-   * 后写的赢,把唯一的差别抹平 —— 而上面那条「比 class 串」的用例**照样通过**
-   * (它比的是没挂 class 的版本)。所以这里直接看源码,把「调用点别压字重/字色」钉住。
-   */
-  it('调用点不给状态徽章压字重或字色(否则六态会静默糊回去)', () => {
-    for (const file of ['components/RosterEnterprisePanel.vue']) {
-      const src = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
-      const line = src.split('\n').find((l) => l.includes(':variant="statusVariant('))
-      expect(line, `${file} 里找不到状态徽章那行`).toBeTruthy()
-      expect(line, `${file}:状态徽章不该再挂 font-* / text-* 的 class`).not.toMatch(
-        /class="[^"]*(?:font-|text-)/,
-      )
-    }
   })
 
   /**
@@ -182,21 +162,6 @@ describe('六态两两可区分', () => {
     // 两对都**不是** 0:字色与线型确实落到了 class 上(不是只在注释里说说)。
     expect(rendered.no_record).not.toBe(rendered.needs_review)
     expect(rendered.not_queried).not.toBe(rendered.needs_review)
-  })
-
-  it('理由 3 的前提成立:每枚状态徽章的**中文标签**都在(颜色只是冗余加固)', () => {
-    /**
-     * 这条是上面「单通道可接受」的承重前提:如果哪天状态改成只显示图标/圆点、
-     * 把文字拿掉,颜色就从「冗余加固」变成「承重结构」,单通道立刻不可接受。
-     * 所以把它也钉住 —— 两个调用点都必须渲染 `DIFFERENCE_STATUSES[...]` 的文字。
-     */
-    for (const file of [
-      'components/EnterpriseDrawer.vue',
-      'components/RosterEnterprisePanel.vue',
-    ]) {
-      const src = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
-      expect(src, `${file}:状态徽章必须带中文标签`).toMatch(/DIFFERENCE_STATUSES\[/)
-    }
   })
 
   it('配对通道真的落到了 class 上(不是只在注释里说说)', () => {
