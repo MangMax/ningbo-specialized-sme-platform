@@ -299,6 +299,19 @@ function comparisonFiltersViolation(m, label) {
   return null
 }
 
+function enterpriseDesktopDensityViolation(m, label) {
+  if (m.innerWidth < 1024 || m.innerHeight < 800) return null
+  const density = m.enterpriseDesktopDensity
+  if (!density) return `${label}:找不到企业列表桌面表格滚动区或分页位置`
+  if (density.visibleRows < 18) {
+    return `${label}:企业列表桌面首屏不足 18 行(${density.visibleRows} 行可完整阅读)`
+  }
+  if (density.paginationBottom > m.innerHeight) {
+    return `${label}:企业列表桌面分页不在首屏(${density.paginationBottom}px > ${m.innerHeight}px)`
+  }
+  return null
+}
+
 const EXPECTED_EASING = 'cubic-bezier(0.32,0.72,0,1)'
 const normalizeEasing = (value) => String(value ?? '').replaceAll(/\s/g, '')
 
@@ -962,6 +975,25 @@ const MEASURE = `(() => {
   const nextButton = [...document.querySelectorAll('button')].find((el) => (el.textContent ?? '').includes('下一页'));
   const pagination = document.querySelector('[data-slot=pagination]') || nextButton?.parentElement?.parentElement;
   const rect = pagination ? pagination.getBoundingClientRect() : null;
+  const enterpriseScroller = document.querySelector('.ledger-page [data-testid="enterprise-table-scroll"]');
+  const enterpriseScrollerRect = enterpriseScroller?.getBoundingClientRect();
+  const enterpriseRows = [...(enterpriseScroller?.querySelectorAll('tbody tr:not([data-loading="true"])') ?? [])];
+  const enterpriseDesktopDensity = root?.classList.contains('ledger-page') && enterpriseScrollerRect && rect
+    ? {
+        scrollerTop: Math.round(enterpriseScrollerRect.top),
+        scrollerBottom: Math.round(enterpriseScrollerRect.bottom),
+        scrollerHeight: Math.round(enterpriseScrollerRect.height),
+        scrollerScrollHeight: enterpriseScroller.scrollHeight,
+        totalRows: enterpriseRows.length,
+        visibleRows: enterpriseRows.filter((row) => {
+          const rowRect = row.getBoundingClientRect();
+          return rowRect.top >= enterpriseScrollerRect.top - 1 && rowRect.bottom <= enterpriseScrollerRect.bottom + 1;
+        }).length,
+        headerPosition: getComputedStyle(enterpriseScroller.querySelector('thead')).position,
+        paginationTop: Math.round(rect.top),
+        paginationBottom: Math.round(rect.bottom),
+      }
+    : null;
   const rail = document.querySelector('.ledger-page tbody tr:not([data-loading="true"]) td:first-child > span');
   const ledgerExport = document.querySelector('.ledger-page a[href^="/api/roster/export"]');
   const ledgerTable = document.querySelector('.ledger-page table');
@@ -1065,7 +1097,9 @@ const MEASURE = `(() => {
       table: body ? getComputedStyle(body).transitionTimingFunction : null,
       drawer: drawer ? getComputedStyle(drawer).animationTimingFunction : null,
     },
-    pagination: rect ? { left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width) } : null,
+    pagination: rect ? { left: Math.round(rect.left), right: Math.round(rect.right), top: Math.round(rect.top), bottom: Math.round(rect.bottom), width: Math.round(rect.width) } : null,
+    innerHeight: window.innerHeight,
+    enterpriseDesktopDensity,
     // 分页条是不是真的换行了(条目用了不止一行高度)
     paginationRows: pagination
       ? new Set([...pagination.querySelectorAll('[data-slot=pagination-item],[data-slot=pagination-previous],[data-slot=pagination-next]')]
@@ -1190,6 +1224,11 @@ async function main() {
         } else {
           bad(`${label}:没量到分页控制 —— 这一页有结果就必须可翻页,量不到说明断言被跳过了`)
         }
+        if (page.query === '/' && viewport.width >= 1024 && viewport.height >= 800) {
+          const density = enterpriseDesktopDensityViolation(m, label)
+          if (density) bad(density)
+          else ok(`${label}:首屏可读 ${m.enterpriseDesktopDensity.visibleRows} 行，分页底部 ${m.enterpriseDesktopDensity.paginationBottom}px ≤ ${m.innerHeight}px，表头 ${m.enterpriseDesktopDensity.headerPosition}`)
+        }
         if (!m.title || !m.title.includes(page.hint)) {
           bad(`${label}:document.title = ${JSON.stringify(m.title)},看不出是${page.hint}`)
         } else {
@@ -1222,6 +1261,18 @@ async function main() {
     if (!tabletFiltersSelfCheck) bad('720px筛选栏缺陷自检:临时撑宽筛选栏后,控件越界断言仍未命中')
     else console.log(`✗ 720px筛选栏缺陷自检按预期变红:${tabletFiltersSelfCheck}`)
     if (tabletFiltersSelfCheck) ok('720px筛选栏缺陷自检:关闭临时 target 后缺陷已复原')
+
+    const desktopDensityBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/`,
+      `(() => { document.querySelector('[data-testid="enterprise-table-scroll"]')?.style.setProperty('max-height', 'none', 'important'); return (${MEASURE}); })()`,
+      READY,
+      VIEWPORTS[0],
+    )
+    const desktopDensitySelfCheck = enterpriseDesktopDensityViolation(desktopDensityBroken, '桌面分页布局缺陷自检')
+    if (!desktopDensitySelfCheck) bad('桌面分页布局缺陷自检:移除表格滚动区高度限制后,首屏密度断言仍未命中')
+    else console.log(`✗ 桌面分页布局缺陷自检按预期变红:${desktopDensitySelfCheck}`)
+    if (desktopDensitySelfCheck) ok('桌面分页布局缺陷自检:关闭临时 target 后缺陷已复原')
 
     const mobileBroken = await openAndMeasure(
       cdp,

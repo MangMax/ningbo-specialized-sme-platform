@@ -135,9 +135,12 @@ function railClass(row: EnterpriseListRow): string {
     窄屏的横向滚动也由这同一层管(`table-container` 的默认 `overflow-auto` 会另起一个
     滚动上下文,这里放开)。
   -->
-  <div class="overflow-auto [&_[data-slot=table-container]]:overflow-visible">
+  <div
+    data-testid="enterprise-table-scroll"
+    class="overflow-auto lg:max-h-[min(640px,calc(100dvh-260px))] [&_[data-slot=table-container]]:overflow-visible"
+  >
     <Table class="w-full min-w-0 table-fixed sm:min-w-[980px]">
-      <TableHeader>
+      <TableHeader class="sticky top-0 z-10">
         <TableRow class="hover:bg-transparent">
           <TableHead class="bg-muted h-9 w-[6px] p-0">
             <span class="sr-only">差异状态</span>
