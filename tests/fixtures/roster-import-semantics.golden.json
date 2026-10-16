@@ -10,7 +10,9 @@
         "remove": 1,
         "review": 1,
         "conflicts": [],
-        "duplicateCandidates": []
+        "evidenceRepoints": 0,
+        "duplicateCandidates": [],
+        "batchStatus": "preflight"
       }
     },
     "rowCounts": {
@@ -34,7 +36,7 @@
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
           "itemResultsSha": null,
-          "preflightResultSha": "debcb54bf19125de",
+          "preflightResultSha": "fd7c63d6c43dc0bd",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
@@ -63,7 +65,8 @@
       "summary": {
         "written": 15,
         "skipped": 0,
-        "failed": 0
+        "failed": 0,
+        "evidenceRepointed": 0
       },
       "items": [
         {
@@ -203,12 +206,12 @@
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
           "itemResultsSha": "f50b65ce05b53665",
-          "preflightResultSha": "debcb54bf19125de",
+          "preflightResultSha": "3fba3bba3d936e9d",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "da92995cbd889376"
+          "summarySha": "4a8f918bc3fa71de"
         }
       ],
       "enterprise": [
@@ -410,7 +413,8 @@
       "summary": {
         "written": 0,
         "skipped": 0,
-        "failed": 2
+        "failed": 2,
+        "evidenceRepointed": 0
       },
       "items": [
         {
@@ -501,24 +505,24 @@
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
           "itemResultsSha": "f50b65ce05b53665",
-          "preflightResultSha": "debcb54bf19125de",
+          "preflightResultSha": "3fba3bba3d936e9d",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "da92995cbd889376"
+          "summarySha": "4a8f918bc3fa71de"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
           "id": 2,
           "idempotencyKey": "sem/announce-replay#sha256:a1",
           "itemResultsSha": "81b91f2e820adb35",
-          "preflightResultSha": "ce310002c70c9f89",
+          "preflightResultSha": "9e53e3ac40f484f6",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "failed",
-          "summarySha": "2e863b6a92051e2c"
+          "summarySha": "af79c72ddd189670"
         }
       ]
     }
@@ -531,7 +535,8 @@
       "summary": {
         "written": 3,
         "skipped": 0,
-        "failed": 0
+        "failed": 0,
+        "evidenceRepointed": 0
       },
       "items": [
         {
@@ -571,36 +576,36 @@
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
           "itemResultsSha": "f50b65ce05b53665",
-          "preflightResultSha": "debcb54bf19125de",
+          "preflightResultSha": "3fba3bba3d936e9d",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "da92995cbd889376"
+          "summarySha": "4a8f918bc3fa71de"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
           "id": 2,
           "idempotencyKey": "sem/announce-replay#sha256:a1",
           "itemResultsSha": "81b91f2e820adb35",
-          "preflightResultSha": "ce310002c70c9f89",
+          "preflightResultSha": "9e53e3ac40f484f6",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "failed",
-          "summarySha": "2e863b6a92051e2c"
+          "summarySha": "af79c72ddd189670"
         },
         {
           "error": null,
           "id": 3,
           "idempotencyKey": "sem/exp-v1#sha256:b1",
           "itemResultsSha": "9a16a5093013a10b",
-          "preflightResultSha": "542d5bcc31172b99",
+          "preflightResultSha": "62983ba27f580d51",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "04786c867990dc42"
+          "summarySha": "dfb75575f8f1bc70"
         }
       ],
       "platformExportBatch": [
@@ -658,7 +663,8 @@
       "summary": {
         "written": 3,
         "skipped": 0,
-        "failed": 0
+        "failed": 0,
+        "evidenceRepointed": 0
       },
       "items": [
         {
@@ -698,48 +704,48 @@
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
           "itemResultsSha": "f50b65ce05b53665",
-          "preflightResultSha": "debcb54bf19125de",
+          "preflightResultSha": "3fba3bba3d936e9d",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "da92995cbd889376"
+          "summarySha": "4a8f918bc3fa71de"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
           "id": 2,
           "idempotencyKey": "sem/announce-replay#sha256:a1",
           "itemResultsSha": "81b91f2e820adb35",
-          "preflightResultSha": "ce310002c70c9f89",
+          "preflightResultSha": "9e53e3ac40f484f6",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "failed",
-          "summarySha": "2e863b6a92051e2c"
+          "summarySha": "af79c72ddd189670"
         },
         {
           "error": null,
           "id": 3,
           "idempotencyKey": "sem/exp-v1#sha256:b1",
           "itemResultsSha": "9a16a5093013a10b",
-          "preflightResultSha": "542d5bcc31172b99",
+          "preflightResultSha": "62983ba27f580d51",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "04786c867990dc42"
+          "summarySha": "dfb75575f8f1bc70"
         },
         {
           "error": null,
           "id": 4,
           "idempotencyKey": "sem/exp-v2#sha256:b2",
           "itemResultsSha": "a07d498253c972ef",
-          "preflightResultSha": "542d5bcc31172b99",
+          "preflightResultSha": "62983ba27f580d51",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "04786c867990dc42"
+          "summarySha": "dfb75575f8f1bc70"
         }
       ],
       "platformExportBatch": [
@@ -838,7 +844,8 @@
       "summary": {
         "written": 0,
         "skipped": 0,
-        "failed": 1
+        "failed": 1,
+        "evidenceRepointed": 0
       },
       "items": [
         {
@@ -875,60 +882,60 @@
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
           "itemResultsSha": "f50b65ce05b53665",
-          "preflightResultSha": "debcb54bf19125de",
+          "preflightResultSha": "3fba3bba3d936e9d",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "da92995cbd889376"
+          "summarySha": "4a8f918bc3fa71de"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
           "id": 2,
           "idempotencyKey": "sem/announce-replay#sha256:a1",
           "itemResultsSha": "81b91f2e820adb35",
-          "preflightResultSha": "ce310002c70c9f89",
+          "preflightResultSha": "9e53e3ac40f484f6",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "failed",
-          "summarySha": "2e863b6a92051e2c"
+          "summarySha": "af79c72ddd189670"
         },
         {
           "error": null,
           "id": 3,
           "idempotencyKey": "sem/exp-v1#sha256:b1",
           "itemResultsSha": "9a16a5093013a10b",
-          "preflightResultSha": "542d5bcc31172b99",
+          "preflightResultSha": "62983ba27f580d51",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "04786c867990dc42"
+          "summarySha": "dfb75575f8f1bc70"
         },
         {
           "error": null,
           "id": 4,
           "idempotencyKey": "sem/exp-v2#sha256:b2",
           "itemResultsSha": "a07d498253c972ef",
-          "preflightResultSha": "542d5bcc31172b99",
+          "preflightResultSha": "62983ba27f580d51",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "04786c867990dc42"
+          "summarySha": "dfb75575f8f1bc70"
         },
         {
           "error": "批次校验未通过：1 项有误，未写入任何数据",
           "id": 5,
           "idempotencyKey": "sem/broken#sha256:c1",
           "itemResultsSha": "6a5b23325a6bee85",
-          "preflightResultSha": "6ded97097d9eff37",
+          "preflightResultSha": "d455cf140f97a00a",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "failed",
-          "summarySha": "97fb41d4cb2cdb1f"
+          "summarySha": "3fcaf7c9bfd487b5"
         }
       ]
     }
@@ -941,7 +948,8 @@
       "summary": {
         "written": 3,
         "skipped": 0,
-        "failed": 0
+        "failed": 0,
+        "evidenceRepointed": 0
       },
       "items": [
         {
@@ -981,60 +989,60 @@
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
           "itemResultsSha": "f50b65ce05b53665",
-          "preflightResultSha": "debcb54bf19125de",
+          "preflightResultSha": "3fba3bba3d936e9d",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "da92995cbd889376"
+          "summarySha": "4a8f918bc3fa71de"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
           "id": 2,
           "idempotencyKey": "sem/announce-replay#sha256:a1",
           "itemResultsSha": "81b91f2e820adb35",
-          "preflightResultSha": "ce310002c70c9f89",
+          "preflightResultSha": "9e53e3ac40f484f6",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "failed",
-          "summarySha": "2e863b6a92051e2c"
+          "summarySha": "af79c72ddd189670"
         },
         {
           "error": null,
           "id": 3,
           "idempotencyKey": "sem/exp-v1#sha256:b1",
           "itemResultsSha": "9a16a5093013a10b",
-          "preflightResultSha": "542d5bcc31172b99",
+          "preflightResultSha": "62983ba27f580d51",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "04786c867990dc42"
+          "summarySha": "dfb75575f8f1bc70"
         },
         {
           "error": null,
           "id": 4,
           "idempotencyKey": "sem/exp-v2#sha256:b2",
           "itemResultsSha": "a07d498253c972ef",
-          "preflightResultSha": "542d5bcc31172b99",
+          "preflightResultSha": "62983ba27f580d51",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "04786c867990dc42"
+          "summarySha": "dfb75575f8f1bc70"
         },
         {
           "error": null,
           "id": 5,
           "idempotencyKey": "sem/broken#sha256:c1",
           "itemResultsSha": "96c800a8fea6367a",
-          "preflightResultSha": "542d5bcc31172b99",
+          "preflightResultSha": "62983ba27f580d51",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summarySha": "04786c867990dc42"
+          "summarySha": "dfb75575f8f1bc70"
         }
       ],
       "platformExportBatch": [

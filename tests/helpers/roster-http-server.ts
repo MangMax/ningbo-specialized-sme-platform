@@ -6,12 +6,13 @@
  * 抽到 [`http-fixture.ts`](./http-fixture.ts);这里只剩本夹具的路由表 ——
  * 把**同一份** `handleRosterImportRequest`(Nitro 路由也调它)挂上去,测的不是替身实现。
  *
- * 只认两条路径:`/api/roster/import/preflight` 与 `/commit`;其余一律 404。
+ * 只认三条路径:`/api/roster/import/preflight`、`/commit` 与 `/replay`(RL-19 的收敛重放);
+ * 其余一律 404。
  */
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { handleRosterImportRequest } from '../../server/utils/roster-import-http'
+import { handleRosterImportRequest, type RosterImportAction } from '../../server/utils/roster-import-http'
 import { startHttpFixture, type FixtureHandler } from './http-fixture'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -22,10 +23,15 @@ export interface RosterApiServer {
 }
 
 export async function startRosterApi(options: { db: Db; apiToken: string | null | undefined }): Promise<RosterApiServer> {
-  // 写面只有这一条核心:`/commit` 与 `/preflight` 只差一个动作参数。
+  // 写面只有这一条核心:`/preflight`、`/commit`、`/replay` 只差一个动作参数。
   const importRoute: FixtureHandler = (request) => {
+    const action: RosterImportAction = request.path.endsWith('/commit')
+      ? 'commit'
+      : request.path.endsWith('/replay')
+        ? 'replay'
+        : 'preflight'
     const out = handleRosterImportRequest(
-      request.path.endsWith('/commit') ? 'commit' : 'preflight',
+      action,
       { method: request.method, headers: request.headers, body: request.body },
       { db: options.db, apiToken: options.apiToken },
     )
@@ -36,6 +42,7 @@ export async function startRosterApi(options: { db: Db; apiToken: string | null 
     routes: {
       '/api/roster/import/preflight': importRoute,
       '/api/roster/import/commit': importRoute,
+      '/api/roster/import/replay': importRoute,
     },
   })
 }

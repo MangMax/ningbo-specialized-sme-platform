@@ -23,6 +23,17 @@
  * `canonicalName` 与血缘 `rename`（以及随之变化的 `itemResultsSha`）——
  * 这是**新增可观察字段**，不是"找到之后做什么"被改动。RL-18 自身的改动（按键定位）**未改任何字节**。
  * 因此在该合并提交里重新生成，并在此留痕；**今后再要重新生成，同样必须先逐行归因**。
+ *
+ * ── 第二次**有据的**重新生成（2026-10-16，RL-19 合入时）──────────────────────
+ * RL-19（收敛可重放）只做了两件事，且都**不涉及「找到之后做什么」**：
+ *  1. 预检结果多两个**只读字段**：`evidenceRepoints`（行口径的收敛预算）与
+ *     `batchStatus`（预检时该幂等键在库里的批次状态）；
+ *  2. 提交摘要多一个**只读字段**：`evidenceRepointed`（真改掉的出处行数）。
+ * 逐行核对本文件的差异，确认**只有这三类新增**（以及随之变化的 `preflightResultSha` /
+ * `summarySha` —— 它们是对含新字段的规范化 JSON 求的哈希）：本文件覆盖的七个场景里
+ * 一条收敛都没发生，故三个新字段**处处为 0**，`add/update/remove/review/failed/written/skipped`
+ * 与全部行计数**一个字节都没变**。RL-19 自己那条链路的语义断言在
+ * `tests/roster-evidence-repoint.test.ts`（真件上 510 项 / 511 行）。
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
