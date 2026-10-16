@@ -2,7 +2,7 @@ import { useDb } from '@db'
 import { handleAnnualPreviewRequest } from '../../../../utils/roster-annual-http'
 
 /**
- * **年度名录增量的只读预览**：`POST /api/roster/import/annual/preview`（RL-07，契约 §8.11）。
+ * **年度名录增量的只读预览**：`POST /api/roster/import/annual/preview`（RL-07，契约 §8.12）。
  *
  * 请求体是**一次年度更新的载荷包**：`{ year?, entries: [ …§8.1 请求… ] }`
  * （单条 §8.1 请求也可直接给，作为「只更新一份文件」的简写）。每一项还是一条统一写入 API

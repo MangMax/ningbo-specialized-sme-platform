@@ -1,5 +1,5 @@
 /**
- * **年度名录增量的预览投影**(RL-07,契约 §8.11)。
+ * **年度名录增量的预览投影**(RL-07,契约 §8.12)。
  *
  * ── 位置:在 RL-11 的统一写入 API **之上**,不重写它 ──────────────────────
  * 「会发生什么」本来就有唯一一份实现:`planRosterImport`(RL-11/RL-18/RL-19)。
@@ -169,7 +169,7 @@ function prepareEntry(db: Db, request: RosterImportRequest, index: number): Prep
   // —— `add`/`update`/`merge`/`unchanged` 四桶互斥,再加 `review`/`conflicts`/`candidates`。
   // 这一条必须守住:计划里的**冲突项**带的是 `action:'skip'`,不加 `ok` 判据就会
   // 同时计进 `unchanged` —— 于是页面上「无变化 1 / 冲突 1」讲的是**同一行**,
-  // 而这一页的全部职责正是把「会发生什么」说准(§8.11.1 承诺逐项分类与计划项一一对应)。
+  // 而这一页的全部职责正是把「会发生什么」说准(§8.12.1 承诺逐项分类与计划项一一对应)。
   const counts: AnnualPreviewCounts = {
     add: plan.items.filter((p) => p.item.ok && p.action === 'add').length,
     update: plan.items.filter((p) => p.item.ok && p.action === 'update').length,

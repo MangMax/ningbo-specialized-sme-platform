@@ -1,5 +1,5 @@
 /**
- * 年度名录增量预览的 **HTTP 面**(RL-07,契约 §8.11)。
+ * 年度名录增量预览的 **HTTP 面**(RL-07,契约 §8.12)。
  *
  * 与 `server/utils/roster-import-http.ts` 同一个分法:**不 import h3**,只吃一个最小的
  * 请求描述(method / headers / body / query),于是同一份实现既能被 Nitro 路由调用,也能被
