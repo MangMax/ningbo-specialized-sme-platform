@@ -259,28 +259,33 @@
 | 2.7 | 差异状态 | 见 §3 | `DIFFERENCE_STATUSES` |
 | 2.8 | 差异原因 | `moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 / `platform_stale` 平台未更新 / `moved_in` 迁入 / `other` 其他 | `DIFFERENCE_REASONS` |
 
-> **`platform_stale`(平台未更新)的确切口径**(用户 2026-10-16 定义,附真实案例):
+> **`platform_stale`(平台未更新)的确切口径**(用户 2026-10-16 定义,附真实案例,父代理同日纠正优先级):
 > **公布名单里有、导出表里没有**(`missing_in_miit`),但**查接口其实有记录** ——
 > 申报记录里可能只是 `待审核` / `区县已审` 之类,**往往出现在最新一年的名单里**。
 > 即:官方已经公布了,但**平台审核信息滞后**。
 >
-> 判据(对 `direction = missing_in_miit` 的差异):`businessList`(`rdjb=1/2/3`)**或**
-> `applyList` **任一返回 ≥ 1 条关系** ⇒ `confirmed_reason` + `reason_code='platform_stale'` +
-> `measure_code='mark_platform_snapshot'`,`verification_status='confirmed'`,证据指向那些关系
-> (用 §8.7 的自然键),`reason_note` 抄下关键 `cszt` 原文与出现的年份。
-> **只有两个接口都查不到任何关系时**才落 `no_record`(配 `manual_review`)。
+> **优先级(关键)**:具体身份事实**优先于**这个泛化兜底。
+>  1. 只要有具体的身份事实证据就取那个具体值 ——
+>     更名(同统代下 `qymc` 与公布名不同)⇒ `renamed` + `update_current_name`;
+>     省份非宁波 ⇒ `moved_out` + `mark_moved_out`;迁入方向 ⇒ `moved_in` + `record_moved_in`;
+>     主体作废 ⇒ `deregistered` / `other`(记录状态撤回/退回/终审不通过)。
+>  2. **都不成立、且接口有记录** ⇒ 才落 `platform_stale` + `mark_platform_snapshot`。
+>  3. 只有**两个接口都查不到任何关系**时才落 `no_record`(配 `manual_review`)。
 >
 > ⚠️ **绝不能**把「接口有记录」记成 `no_record` 或 `confirmed_no_diff` ——
-> 那会把「平台滞后」误报成「无差异」。
+> 那会把「平台滞后」误报成「无差异」。反过来,**也不能**把有具体身份事实的差异
+> 塞进 `platform_stale` —— 那会把「更名/外迁」淹没在兜底类里
+> (实测教训:`91330206793007818K` 宁波一力实业明显是**更名**,不是「未更新」——
+> 它被误判成平台滞后的根因是**优先级**,不是缺数据)。
 >
 > 实测案例(真实凭据查明):`91330206793007818K`(rdjb=3 → 4 条、rdjb=2 → 1 条、申报 2 条,
-> 其中含曾用名 `宁波一力减震器有限公司`)、`913302126102116572`(rdjb=3 → 3 条、申报 2 条,
-> 状态 `2022 待审核` / `2021 终审通过`)、`91330624062002925P`(rdjb=3 → 4 条、rdjb=2 → 3 条,
-> 申报 4 条;统代属地 3306=绍兴 ⇒ 可能是**迁入**候选)。
+> 其中含曾用名 `宁波一力减震器有限公司` ⇒ `renamed`)、`913302126102116572`(rdjb=3 → 3 条、申报 2 条,
+> 状态 `2022 待审核` / `2021 终审通过`,无具体身份事实 ⇒ `platform_stale`)、
+> `91330624062002925P`(rdjb=3 → 4 条、rdjb=2 → 3 条,申报 4 条;统代属地 3306=绍兴 ⇒ **迁入**候选)。
 >
-> **原因与身份事实正交**:同一 `tyshxydm` 下写出了历史名称(更名证据)时,即使这条差异的
-> 原因是 `platform_stale`,**曾用名照样写进 `enterprise_alias`**(它记录的是身份沿革,
-> 不是「这条差异为什么存在」)。
+> **曾用名与原因正交**:更名证据一旦成立,原因取 `renamed` 并同时写 `enterprise_alias`;
+> 其余分支不产出曾用名(判据在第 5 步,先于兜底返回 ⇒ 不会丢)。
+
 | 2.9 | 后续措施 | `keep_history` 保留正式公布历史 / `mark_platform_snapshot` 标明平台时点,不覆盖历史 / `mark_moved_out` 记录迁出状态 / `mark_deregistered` 记录注销主体状态 / `update_current_name` 更新当前名并保留旧名为曾用名 / `record_moved_in` 记录迁入来源(城市/称号/年份/批次) / `manual_review` 转人工核实 / `none` 无需措施 | `DIFFERENCE_MEASURES` |
 | 2.10 | 导出批次导入状态 | `pending` 待导入 / `imported` 已导入 / `failed` 导入失败 | `EXPORT_IMPORT_STATUSES` |
 | 2.11 | 统一批次状态 | `preflight` 预检 / `committed` 已提交 / `failed` 提交失败 | `IMPORT_BATCH_STATUSES` |
@@ -318,6 +323,44 @@
 > —— 这是 **`failed`**;而 `businessList` `rdjb=1`/`rdjb=2` 对该 USCC 返回 **0 行**、请求成功且会话有效,
 > 这是 **`no_record`**。两者绝不能合并成一句话。
 > (原始响应体与凭证**不进仓库**,依据见 `04-EVIDENCE-91330211255994457P.md`。)
+
+### 3.1b 关于第三个接口 `YzzxqyApplayBLH/showView`(2026-10-16 结论:**不接**)
+
+用户发现的第三个接口(`POST .../YzzxqyApplayBLH/showView`,`data: id=<申报记录 id>&rdjb=<1|2|3>`)
+返回**该条申报当时的填报详情**,其中 `qymc` / `companyname` = 填报时的名称。
+
+**结论:当前不接。它的角色只能是「补充证据」,不参与差异集合计算。** 理由(可复核):
+
+1. **证据已在手上**:`applyList`(`queryList`)的 `pageData[].pageSet[]` **每条申报本来就带 `qymc`**
+   —— 实测 426 个真实 `queryList` 响应 / 715 条申报行,**全部**带非空 `qymc`(缺失 0 条);
+   `businessList` 同样 1103/1103。所以「同一 `tyshxydm` 下 `qymc` 不同」这条更名判据
+   **不需要 showView** 就已经成立。
+2. **成本**:showView 是**每条申报一次**请求。按本轮全量的目标数与每个目标的申报条数**估算**
+   (不是实测),要多打上千次请求(平台实测 0.3–1.1 秒/次)⇒ 全量时长显著变长,而**拿不到新证据**。
+3. **它不改变判定**:填报详情里的名称与申报行里的 `qymc` 是同一个事实;真正让一力被误判的
+   是**优先级**(`platform_stale` 排在了 `renamed` 前面),不是缺数据。
+4. **触发条件(将来需要时再按需接)**:若实测出现「申报行 `qymc` 缺失或被覆盖」而该条又是
+   判定关键证据,才考虑**按需**抓 showView(仅对那条申报),并把它的证据落成独立的补充证据行。
+   今天的实测值是**缺失 0 条**,所以现在接属于凭空增加一倍请求量。
+
+---
+
+### 3.1c 全量核查为什么必须**分批**(`limit` / `offset`)
+
+一次全量核查是 ~1100 个统一社会信用代码 × 4 次请求(实测 0.3–1.1 秒/次)⇒ 查询阶段约十几分钟;
+但**回写**不能塞进一个批次:写入侧的计划阶段对**每条**平台查询都要在已存在的查询里找同键的行
+(`import_batch` 的 `preflight`/`commit` 各一遍),复杂度是**批内查询数的平方**,而且每次都把
+`platform_query` 整行(含 `raw_response` 那几十 KB 的 HTML)读出来比 —— 实测 1096 个 USCC
+(≈ 4400 条查询)的单批在 plan 阶段跑 90 秒只推进约 160 KB WAL,**实质上跑不完**。
+
+所以长跑的用法是**分片**:`--limit N --offset M` 一片一片地跑(`reconcile` 任务的
+`params.limit` / `params.offset` 同义)。片与片不重叠也不漏 —— 本流程**不新建**
+`record` / `enterprise`,所以 `getComparison` 的目标集合在片与片之间是稳定的;
+已经写过判定且仍在新鲜窗口内的目标会被整片跳过(0 请求 0 写入)。
+
+**建议单批 ≤ 300 个差异目标**(≈ 300 条查询,plan 阶段是万级行读,秒级完成)。
+
+---
 
 ### 3.2 差异状态 `difference_reason.status`
 

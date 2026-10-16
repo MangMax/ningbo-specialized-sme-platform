@@ -93,6 +93,14 @@ function parseReconcileParams(raw: Record<string, unknown>): JobParseResult {
     if (!limit.ok) return { ok: false, message: limit.message }
     params.limit = limit.value
   }
+  if (raw.offset != null) {
+    // 与 `limit` 配成分页;`offset` 可以为 0(等于不跳),所以单独判。
+    const offset = Number(raw.offset)
+    if (!Number.isInteger(offset) || offset < 0 || offset > 100_000) {
+      return { ok: false, message: `offset 必须是 0–100000 的整数,收到:${String(raw.offset)}` }
+    }
+    params.offset = offset
+  }
   if (raw.concurrency != null) {
     const concurrency = positiveInt(raw.concurrency, 'concurrency', 12)
     if (!concurrency.ok) return { ok: false, message: concurrency.message }
@@ -122,7 +130,7 @@ export const reconcileSpec: JobSpec = {
   paramsHint:
     '可选:{ titles?: string[](称号代号,如 specialized_sme/innovative_sme/little_giant);' +
     ' directions?: ("missing_in_miit"|"extra_in_miit")[]; usccs?: string[](只查这几个统一社会信用代码,小样本实查用);' +
-    ' limit?: number(最多处理多少个差异目标,分批长跑用);' +
+    ' limit?: number(最多处理多少个差异目标,分批长跑用);offset?: number(跳过前 N 个,与 limit 配成分页);' +
     ' concurrency?: 1–12(默认 4);freshnessHours?: number(复用新鲜查询/判定的窗口,默认 24);' +
     ' write?: boolean(默认 true;false = 只判定不回写) }',
   note: '需要 MIIT_COOKIE / MIIT_COOKIE_FILE(只从环境读,不入库);无统代的差异查不了,会单独计入报告。',
@@ -135,6 +143,7 @@ export const reconcileSpec: JobSpec = {
       directions: params.directions as ComparisonDirection[] | undefined,
       usccs: params.usccs as string[] | undefined,
       limit: numberParam(params, 'limit'),
+      offset: numberParam(params, 'offset'),
       concurrency: numberParam(params, 'concurrency'),
       freshnessMs: freshnessHours != null ? freshnessHours * 60 * 60 * 1000 : undefined,
       write: params.write !== false,

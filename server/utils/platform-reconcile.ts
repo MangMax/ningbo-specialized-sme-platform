@@ -137,6 +137,15 @@ export interface ReconcileRunOptions {
   usccs?: string[]
   /** **最多处理多少个差异目标**(分批长跑用);缺省不限。 */
   limit?: number
+  /**
+   * **跳过前 N 个差异目标**(与 {@link ReconcileRunOptions.limit} 配成一对分页)。
+   *
+   * 为什么必须有它:全量核查不能塞进一个批次 —— 写入侧的计划阶段是 O(批内查询数²)
+   * (每条查询都要在已存在的查询里找同键的行),四千多条查询的那个批次会慢到跑不完。
+   * 所以长跑的用法是 `--limit N` 一片一片地跑;只有 `limit` 没有 `offset` 时,
+   * 第二片会**又从头处理同一批目标**(它们已新鲜 ⇒ 0 请求 0 写入,原地打转)。
+   */
+  offset?: number
   /** 同时打开的平台连接上限(每次查询 = 1 个连接)。实测 0.3–1.1 秒/次,默认 4。 */
   concurrency?: number
   /** 复用**新鲜**查询与判定的时间窗(毫秒);默认 24h。 */
@@ -174,7 +183,14 @@ export interface ReconcileReport {
   startedAt: string
   finishedAt: string
   sourceIdentity: string
-  filters: { titles: string[] | null; directions: string[] | null; usccs: string[] | null; limit: number | null; freshnessMs: number }
+  filters: {
+    titles: string[] | null
+    directions: string[] | null
+    usccs: string[] | null
+    limit: number | null
+    offset: number | null
+    freshnessMs: number
+  }
   /** 本次纳入判定的差异目标数(去重后,受 `limit` 影响)。 */
   targetCount: number
   /** 实际打开过平台连接的统一社会信用代码数。 */
@@ -375,7 +391,7 @@ function getComparisonAllDirections(
 
 export function collectReconcileTargets(
   db: Db,
-  filter: { titles?: string[]; directions?: ComparisonDirection[]; usccs?: string[]; limit?: number } = {},
+  filter: { titles?: string[]; directions?: ComparisonDirection[]; usccs?: string[]; limit?: number; offset?: number } = {},
 ): CollectedTargets {
   const comparison = getComparisonAllDirections(db, filter)
   const enterprises = db
@@ -410,7 +426,10 @@ export function collectReconcileTargets(
     })
   }
 
-  const limited = filter.limit && filter.limit > 0 ? all.slice(0, filter.limit) : all
+  // 分页:先跳过 `offset`,再截 `limit`(顺序与 `getComparison` 的排序一致 ⇒ 片与片不重叠、
+  // 也不漏 —— 本流程不新建 record / enterprise,所以比对集合在片与片之间是稳定的)。
+  const from = filter.offset && filter.offset > 0 ? filter.offset : 0
+  const limited = filter.limit && filter.limit > 0 ? all.slice(from, from + filter.limit) : all.slice(from)
   const targets: ReconcileTarget[] = []
   const unqueryable: ReconcileTarget[] = []
   for (const target of limited) {
@@ -550,6 +569,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
     directions: options.directions,
     usccs: options.usccs,
     limit: options.limit,
+    offset: options.offset,
   })
   const usccs = [...collected.byUscc.keys()]
   const total = usccs.length
@@ -702,6 +722,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
       directions: options.directions ?? null,
       usccs: options.usccs ?? null,
       limit: options.limit ?? null,
+      offset: options.offset ?? null,
       freshnessMs,
     },
     targetCount: collected.targets.length + collected.unqueryable.length,

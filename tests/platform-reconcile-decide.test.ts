@@ -557,8 +557,8 @@ describe('实测案例三 `913302126102116572`:三条关系、名字只有一个
   })
 })
 
-describe('平台未更新与更名是两个正交事实:原因取平台滞后,曾用名照写', () => {
-  it('missing_in_miit + 接口有记录 + 关系里带旧名 ⇒ platform_stale,同时仍产出曾用名', () => {
+describe('具体身份事实**优先于**泛化兜底(父代理 2026-10-16 纠正)', () => {
+  it('missing_in_miit + 接口有记录 + 关系里带旧名 ⇒ 原因取具体值 `renamed`,不是 platform_stale', () => {
     const USCC2 = '91330211000000021M'
     const NOW = '宁波某实业有限公司'
     const OLD = '宁波某实业厂'
@@ -571,14 +571,47 @@ describe('平台未更新与更名是两个正交事实:原因取平台滞后,�
         ]),
       ],
     )
-    // 父代理口径:missing_in_miit + 任一接口有记录 ⇒ platform_stale(不能记成「无差异」)。
-    expect(verdict.reasonCode).toBe('platform_stale')
-    expect(verdict.measureCode).toBe('mark_platform_snapshot')
-    // 但曾用名是身份事实,照样要写出去 —— 否则这一轮就丢了更名证据。
+    // 反例教训:一力(91330206793007818K)明显是**更名**导致,不是「未更新」。
+    // 具体身份事实(更名/外迁/迁入/注销)只要**有证据**就取那个具体值;
+    // `platform_stale` 只在「平台知道这家企业、却指不出任何具体身份事实」时才用。
+    expect(verdict.reasonCode).toBe('renamed')
+    expect(verdict.measureCode).toBe('update_current_name')
     expect(verdict.aliases).toHaveLength(1)
     expect(verdict.aliases[0]!.name).toBe(OLD)
     expect(verdict.aliases[0]!.verificationStatus).toBe('confirmed')
     expect(verdict.reasonNote).toContain(OLD)
+  })
+
+  it('missing_in_miit + 接口有记录 + 省份全在外地 ⇒ 原因取 `moved_out`,不是 platform_stale', () => {
+    const USCC3 = '91330211000000031W'
+    const NAME = '宁波某机械有限公司'
+    const verdict = decideDifference(
+      target({ enterpriseId: 11, enterpriseName: NAME, enterpriseNameNorm: NAME, uscc: USCC3, direction: 'missing_in_miit' }),
+      [
+        evidence({ interface: 'business_list', rdjb: '3' }, [
+          { id: 'SQ-M1', qymc: NAME, tyshxydm: USCC3, szsfmc: '深圳市', cszt: '终审通过', sqsj: '2024-01-01 10:00:00' },
+          { id: 'SQ-M2', qymc: NAME, tyshxydm: USCC3, szsfmc: '深圳市', cszt: '待审核', sqsj: '2025-01-01 10:00:00' },
+        ]),
+      ],
+    )
+    expect(verdict.reasonCode).toBe('moved_out')
+    expect(verdict.measureCode).toBe('mark_moved_out')
+  })
+
+  it('missing_in_miit + 接口有记录 + **没有任何具体身份事实** ⇒ 才落 platform_stale 兜底', () => {
+    const USCC4 = '91330211000000041V'
+    const NAME = '宁波某无事实有限公司'
+    const verdict = decideDifference(
+      target({ enterpriseId: 12, enterpriseName: NAME, enterpriseNameNorm: NAME, uscc: USCC4, direction: 'missing_in_miit' }),
+      [
+        evidence({ interface: 'business_list', rdjb: '3' }, [
+          { id: 'SQ-P1', qymc: NAME, tyshxydm: USCC4, szsfmc: '宁波市', cszt: '区县已审', sqsj: '2025-06-21 09:50:48' },
+        ]),
+      ],
+    )
+    expect(verdict.reasonCode).toBe('platform_stale')
+    expect(verdict.measureCode).toBe('mark_platform_snapshot')
+    expect(verdict.aliases).toEqual([])
   })
 })
 

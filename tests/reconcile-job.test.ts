@@ -113,6 +113,13 @@ describe('参数校验:错参数在**提交那一刻**就被挡住', () => {
     expect(spec.parse({ write: 'yes' }).ok).toBe(false)
     expect(spec.parse({ write: false })).toEqual({ ok: true, params: { write: false } })
   })
+
+  it('offset 允许 0(等于不跳)但拒绝负数与非整数;与 limit 配成分页', () => {
+    expect(spec.parse({ offset: 0 })).toEqual({ ok: true, params: { offset: 0 } })
+    expect(spec.parse({ limit: 150, offset: 150 })).toEqual({ ok: true, params: { limit: 150, offset: 150 } })
+    expect(spec.parse({ offset: -1 }).ok).toBe(false)
+    expect(spec.parse({ offset: 1.5 }).ok).toBe(false)
+  })
 })
 
 describe('任务执行:进度、报告与取消', () => {
