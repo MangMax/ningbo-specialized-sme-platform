@@ -251,6 +251,9 @@ function sourceFiles(rows: ReturnType<typeof evidenceRows>) {
   return [...new Set(rows.map((row) => row.sourceFile))].sort()
 }
 
+// 下面三条走**真件**(511 行 / 510 记录 / 511 条出处),每条要跑 2–3 次完整计划,
+// 而计划阶段对每条记录都要按身份与坐标找既有行 —— 单条在本机约 3–7 秒,机器有负载时
+// 会到十几秒。给足 120 秒,免得用例在忙时被误报成红(它验的是语义,不是性能)。
 describe('RL-19:预检报的行数 = 提交真改的行数(计划项口径与行口径都对得上)', () => {
   it('库中出处指向旧路径 → 以新来源标识重导 → 全部收敛,企业/记录/事件/出处计数一行不变', async () => {
     const db = makeDb()
@@ -309,7 +312,7 @@ describe('RL-19:预检报的行数 = 提交真改的行数(计划项口径与行
     } finally {
       await server.close()
     }
-  }, 30_000)
+  }, 120_000)
 })
 
 describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)', () => {
@@ -395,7 +398,7 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
     } finally {
       await server.close()
     }
-  }, 30_000)
+  }, 120_000)
 
   it('重放**只**改指针:在空库上重放,业务表一行都不新增', async () => {
     const db = makeDb()
@@ -419,5 +422,5 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
     } finally {
       await server.close()
     }
-  }, 30_000)
+  }, 120_000)
 })

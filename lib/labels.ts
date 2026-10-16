@@ -260,6 +260,49 @@ export const DIFFERENCE_STATUS_ORDER: string[] = [
 ]
 
 /**
+ * 差异状态徽章色(RL-15,页面用)。与 `DIFFERENCE_STATUSES` **同键集合**(测试钉住)。
+ *
+ * 分级理由:
+ *  - `query_failed` 用 destructive —— 查询没执行成功**必须**看得见(它最容易被误读成「没有」);
+ *  - `needs_review` 用 dashed —— 虚线 = 尚未构成结论(与「入库培育」同一套线型语言);
+ *  - `confirmed_reason` 用 secondary(实底)—— 结论已成立;
+ *  - `not_queried` 最轻(quiet),「还没查过」不该抢注意力;
+ *  - `no_record` 用 outline 与 `not_queried` **分开** —— 契约 §3.2 要求这四态彼此可区分,
+ *    同一枚徽章色会让「还没查过」和「查过了、平台确无记录」看起来是一件事。
+ *
+ * ⚠️ 仓里另有两处**本地**的差异状态→徽章色 if 级联(`pages/roster.vue`、
+ * `components/RosterEnterprisePanel.vue`),取值与本表**不一致**(它们把 `needs_review` 与
+ * `query_failed` 一律画红、`not_queried` 与 `no_record` 都是 outline,因此分不开那两态)。
+ * 收敛到本表要同时改那两个文件 —— 不属 RL-15 的纵切片,已上报父代理裁决。
+ */
+export const DIFFERENCE_STATUS_VARIANTS: Record<
+  string,
+  'destructive' | 'outline' | 'secondary' | 'quiet' | 'dashed'
+> = {
+  not_queried: 'quiet',
+  query_failed: 'destructive',
+  no_record: 'outline',
+  needs_review: 'dashed',
+  confirmed_no_diff: 'quiet',
+  confirmed_reason: 'secondary',
+}
+
+/**
+ * 比对页「平台解释」列的表头说明(RL-15):状态取自**库内**解释记录,不是离线缓存。
+ * 六态互不等价的口径写在文案里,避免把「查询失败」「无记录」看成同一件事。
+ */
+export const DIFFERENCE_COLUMN_HINT =
+  '库内平台原因:状态取自解释记录(difference_reason)——未查询 / 查询失败 / 无记录 / 待核实 / 已确认无差异 / 已确认原因,并配对的后续措施。' +
+  '「查询失败」与「无记录」不是一回事:前者是查询没执行成功,后者是查询成功但平台返回 0 条。'
+
+/**
+ * 比对页差异状态图例的固定说明句(RL-15)。徽章只列**当前结果里真出现过**的取值。
+ */
+export const DIFFERENCE_LEGEND_TITLE = '状态图例'
+export const DIFFERENCE_LEGEND_NOTE =
+  '徽章是库内解释记录里的差异状态;悬停、键盘聚焦或点按可展开原因、配对措施与接口证据。'
+
+/**
  * 差异原因(`difference_reason.reason_code`)→ 中文名。
  * 已知五类必须覆盖:`moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 /
  * `platform_stale` 平台未更新 / `moved_in` 迁入;`other` 供**凭证据扩展**的新原因。
@@ -359,6 +402,14 @@ export const COMPARISON_NO_USCC = '无统代,另一侧无可匹配身份'
 /**
  * 平台解释(入库管线重整 票 16):拿工信部平台两个接口的记录解释「为什么这一行是差异」。
  * 文案与 `pipeline/src/reconcile.ts` 的 `REASON_LABELS` **同值** —— 取值一侧变了另一侧要跟着改。
+ *
+ * ⚠️ **这是旧 JSON 解释缓存(`data/platform-reconcile.json`)的词表,不是库内差异状态的词表。**
+ * RL-15 起,比对页的主源是 `difference_reason`(见下面 `DIFFERENCE_STATUSES` /
+ * `DIFFERENCE_REASONS` / `DIFFERENCE_MEASURES`);这套 `RECONCILE_*` 只剩两个用途:
+ *  - `ComparisonReconcile.vue` 的「旧解释缓存」**对照**行(`RECONCILE_LABELS` / `RECONCILE_SOURCE`);
+ *  - `lib/reconcile.ts` 那条**保持兼容**的旧路径,以及 `tests/reconcile.test.ts` 的钉桩。
+ * 下面 `RECONCILE_VARIANTS` / `RECONCILE_ORDER` / `RECONCILE_LEGEND_*` 目前**只有测试引用** ——
+ * 它们是旧图例的取值集,删除要连 `tests/reconcile.test.ts` 一起改,留待与旧缓存一并退役。
  */
 export const RECONCILE_LABELS = {
   deregistered: '已注销',
