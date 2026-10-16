@@ -1,5 +1,4 @@
-import { useDb } from '@db'
-import { handleRosterImportRequest } from '../../../utils/roster-import-http'
+import { createRosterImportHandler } from '../../../utils/roster-import-route'
 
 /**
  * **事务提交**：`POST /api/roster/import/commit`（契约 §8.2）。
@@ -56,9 +55,15 @@ defineRouteMeta({
                 summary: {
                   type: 'object',
                   properties: {
-                    written: { type: 'integer' },
+                    written: { type: 'integer', description: '本次**新增**的行数（收敛不算）。' },
                     skipped: { type: 'integer' },
                     failed: { type: 'integer' },
+                    evidenceRepointed: {
+                      type: 'integer',
+                      description:
+                        '本次真的改掉了几行 `record_evidence.source_file`（出处指针收敛，§8.9）。' +
+                        '与预检的 `preflight.evidenceRepoints` 同口径、可直接相等比对。',
+                    },
                   },
                 },
                 items: {
@@ -78,26 +83,4 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler(async (event) => {
-  const response = handleRosterImportRequest(
-    'commit',
-    {
-      method: getMethod(event),
-      headers: {
-        authorization: headerString(event, 'authorization'),
-        'x-api-token': headerString(event, 'x-api-token'),
-      },
-      body: await readBody(event).catch(() => null),
-    },
-    { db: useDb(), apiToken: useRuntimeConfig().apiToken },
-  )
-  setResponseStatus(event, response.status)
-  for (const [name, value] of Object.entries(response.headers)) setHeader(event, name, value)
-  return response.body
-})
-
-/** h3 的 `getHeader` 会返回 `string | undefined`；重复头（数组）当没带。 */
-function headerString(event: Parameters<typeof getHeader>[0], name: string): string | undefined {
-  const value = getHeader(event, name)
-  return typeof value === 'string' ? value : undefined
-}
+export default createRosterImportHandler('commit')

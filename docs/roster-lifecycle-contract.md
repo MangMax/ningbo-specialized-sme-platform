@@ -737,7 +737,9 @@
 }
 ```
 
-响应:`{ "batchId": 12, "status": "preflight", "preflight": { "add": 12, "update": 3, "remove": 1, "review": 2, "conflicts": [] } }`
+响应:`{ "batchId": 12, "status": "preflight", "preflight": { "add": 12, "update": 3, "remove": 1, "review": 2, "conflicts": [], "evidenceRepoints": 0, "batchStatus": "preflight" } }`
+
+> 最后两项是 RL-19 的增量(§8.9.1 / §8.9.2);计数口径见 §8.5 的表格。
 
 ### 8.2 `POST /api/roster/import/commit` — 事务提交
 
@@ -894,10 +896,12 @@
 | 字段 | 含义 |
 |---|---|
 | `add` | 本次将**新增**的**计划项**数。⚠️ 计数单位是**计划项**(一个 `payload.records[]` 条目 = 1 项),**不是**「企业+记录+事件+出处」各算一行。实测:小巨人工作簿 511 行源数据 → `add: 510`(= 企业/记录数),而非 2000+。 |
-| `update` | 本次将**复用或更新**的既有计划项数(按唯一键命中:如同一 `(称号, 年度, sha256)` 的快照批)。**重放时若只有出处的 `source_file` 需要收敛(§8.8),该 `payload.records[]` 项也计入 `update`** —— 那一项确实改了既有行,不该报成 `skip`。 |
+| `update` | 本次将**复用或更新**的既有计划项数(按唯一键命中:如同一 `(称号, 年度, sha256)` 的快照批)。**重放时若只有出处的 `source_file` 需要收敛(§8.9),该 `payload.records[]` 项也计入 `update`** —— 那一项确实改了既有行,不该报成 `skip`。 |
 | `remove` | 归并会**删除**的被并企业行数(= 成功的 `merges` 项数)。 |
 | `review` | 落在**待核**状态的行数(`pending` / `needs_review`,以及未知枚举原样入库的行)。 |
 | `conflicts` | 逐项冲突(`{ ok:false, kind, ref, error }`),**不静默丢行**。 |
+| `evidenceRepoints` | **行**口径(RL-19 增量,§8.9.1):本次将改掉几行 `record_evidence.source_file`。它与 `update` **不是一个数** —— `update` 的单位是计划项,而一条记录可以带多条事件、每条各有出处(真数据实测 `update: 510` / `evidenceRepoints: 511`)。它跨项共享一个「已认领出处行」集合,故同坐标的重复载荷记录不会被数两遍。 |
+| `batchStatus` | 预检时该幂等键在库里的批次状态(RL-19 增量,§8.9.2)。为 `'committed'` 时上面所有计数一律为 0 —— 同键 `commit` 不会再写任何东西,别把它读成「无事可做」;要补收敛走 `POST …/replay`(§8.9.3)。 |
 
 **`add` / `update` / `skip` 的判据 = 写入侧的**身份规则**(RL-14 修正)**:一条 `records[]` 是
 `add` 还是 `skip`,看它**会不会真的新建企业** —— 判据就是 `upsertEnterprise` 用的那套
@@ -1075,6 +1079,11 @@
 「同一份来源内容(同 `sha256`)且坐标逐字相同」时发生,故不会把一条出处挪到另一条上;
 「公布历史不可改写」指的是事件坐标与结论,那些一个字节都没动。
 
+> **RL-19 对上面这行措辞的更正**:本节原先写「预检的 `update` 如实计入本次将收敛的出处行数」——
+> 那句话**不成立**,`update` 的单位是**计划项**(§8.5),而行数是另一回事(实测 510 项 / 511 行)。
+> 行口径改用独立字段 `preflight.evidenceRepoints` / `summary.evidenceRepointed` 承载(§8.9.1)。
+> 这不是把口径改松,是把一个本来就报不准的数换成两个各自报得准的数。
+
 #### 8.9.1 计划项口径与**行口径**都要报(RL-19)
 
 §8.5 的 `update` 计数单位是**计划项**(一个 `payload.records[]` 条目算一),而收敛改的是**行**;
@@ -1109,6 +1118,14 @@
   「预检说改 510 行、摘要说改了 0 行」的自相矛盾记录 —— 读起来像「谓词一条都不命中」,
   实际是**两个构建的产物被拼在了一起**。谓词(`repointTargets`)本身没有问题。
 - 已消费的键要补收敛,走 §8.9.3 的显式重放入口。
+
+> **历史行不清洗**:本修正只保证**今后**不再产生这种自相矛盾的记账。库里**已经**存在的那类
+> 行(例如 `acceptance/20261016-final/roster.db` 的 `import_batch#6`:摘要
+> `{"written":0,"skipped":1021}` 挨着 `preflight_result={"update":510}`)保持原样 ——
+> 清洗它等于直写 SQL 改记账,而本票的约束是**修代码路径**,不是修数据。
+> **读这些旧行时的口径**:一个已 `committed` 批次上的 `preflight_result` 是**当时最后一次
+> 预检**说的话,不保证与该批次的 `summary` 同源;判断「这一批到底改了什么」,只认 `summary`
+> 与 `item_results`。
 
 #### 8.9.3 `POST /api/roster/import/replay` —— 收敛的**显式重放入口**(RL-19 增量补齐)
 

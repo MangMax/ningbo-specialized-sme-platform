@@ -754,18 +754,28 @@ describe('MCP 面：tool 注册与写入名单', () => {
 // ---------------------------------------------------------------------------
 
 describe('HTTP 路由面', () => {
-  it('两个写路由都带顶层 defineRouteMeta（OpenAPI 可发现）并绑定 NUXT_API_TOKEN', () => {
+  it('三个写路由（preflight / commit / replay）都带顶层 defineRouteMeta（OpenAPI 可发现）并绑定 NUXT_API_TOKEN', () => {
     const base = join(process.cwd(), 'server/api/roster/import')
-    for (const file of ['preflight.post.ts', 'commit.post.ts']) {
+    for (const file of ['preflight.post.ts', 'commit.post.ts', 'replay.post.ts']) {
       const source = readFileSync(join(base, file), 'utf8')
       expect(source, file).toContain('defineRouteMeta({')
       // 宏必须在**顶层**（nitro 的 handlers-meta 插件只认顶层 ExpressionStatement）。
       expect(/^defineRouteMeta\(/m.test(source), file).toBe(true)
       // 鉴权判据从运行时读（token 值不进源码），且声明了 bearerAuth 安全方案。
-      expect(source, file).toContain('useRuntimeConfig().apiToken')
       expect(source, file).toContain('security: [{ bearerAuth: [] }]')
-      // 路由只是胶水：逻辑在 transport 无关的 handler 里（真实 HTTP 测试打的是它）。
-      expect(source, file).toContain('handleRosterImportRequest')
+      // 路由只是胶水：逻辑在 transport 无关的 handler 里（真实 HTTP 测试打的是它），
+      // 而且三条路由共用**同一份**胶水工厂（RL-19 收拢，免得各抄一份、抄漏一处）。
+      expect(source, file).toContain('createRosterImportHandler(')
+      expect(source, file).toMatch(/^export default createRosterImportHandler\('(\w+)'\)$/m)
+    }
+    // 工厂里才读运行时 token（`useRuntimeConfig().apiToken`）—— 每条路由各自再读一遍
+    // 就是三份会各自漂的实现。
+    const factory = readFileSync(join(process.cwd(), 'server/utils/roster-import-route.ts'), 'utf8')
+    expect(factory).toContain('useRuntimeConfig().apiToken')
+    for (const action of ['preflight', 'commit', 'replay'] as const) {
+      expect(readFileSync(join(base, `${action}.post.ts`), 'utf8'), action).toContain(
+        `createRosterImportHandler('${action}')`,
+      )
     }
   })
 })

@@ -2463,7 +2463,10 @@ export function commitRosterImport(
   const batch = ensureBatchRow(db, request)
 
   if (batch.status === 'committed') {
-    const summary = (batch.summary as RosterImportSummary | null) ?? { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
+    // 存的是**当次**写下的 JSON：在本票引入 `evidenceRepointed` 之前提交的批次没有这一项。
+    // 摘要类型里它是必填，所以读回时补 0（「那一批没有收敛」是事实，不是缺失）——
+    // 否则调用方拿到的是 `undefined`，把它当数字用就会静默算错。
+    const summary = readSummaryOf(batch.summary) ?? { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
     const items = (batch.itemResults as RosterImportItemResult[] | null) ?? []
     return { batchId: batch.id, status: 'committed', summary, items, error: null }
   }
@@ -2682,6 +2685,25 @@ function rowsRepointed(item: RosterImportItemResult): number {
 // 往返一致性（写入后可用它查回「写了什么」）-------------------------------
 // ---------------------------------------------------------------------------
 
+/**
+ * 读回 `import_batch.summary`，把**本票之前**提交的批次缺的 `evidenceRepointed` 补成 0。
+ *
+ * 摘要 JSON 是**当次**写下的：RL-19 引入 `evidenceRepointed` 之前提交的行里没有这一项，
+ * 而类型里它是必填 —— 不补，调用方就会拿到 `undefined` 并静默算错。缺这一项恰好等价于
+ * 「那一批没收敛过任何出处行」，所以补 0 是**事实**，不是猜测。没有摘要则返回 `null`
+ * （预检批还没提交过，与既有口径一致）。
+ */
+function readSummaryOf(raw: unknown): RosterImportSummary | null {
+  if (!isObject(raw)) return null
+  const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+  return {
+    written: num(raw.written),
+    skipped: num(raw.skipped),
+    failed: num(raw.failed),
+    evidenceRepointed: num(raw.evidenceRepointed),
+  }
+}
+
 /** 从批次行读出可查询的结果摘要（契约：`item_results` / `summary` 可查）。 */
 export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
   const batch = findBatchByKey(db, idempotencyKey)
@@ -2692,7 +2714,8 @@ export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
     sourceKind: batch.sourceKind,
     sourceIdentity: batch.sourceIdentity,
     preflight: (batch.preflightResult as RosterImportPreflight | null) ?? null,
-    summary: (batch.summary as RosterImportSummary | null) ?? null,
+    // 与 `commitRosterImport` 的读回同一份补法：本票之前提交的批次没有 `evidenceRepointed`。
+    summary: readSummaryOf(batch.summary),
     items: (batch.itemResults as RosterImportItemResult[] | null) ?? null,
     /** 本次导入报出的重名候选（RL-14；计数 + 明细都在这里，见 {@link readDuplicateCandidates}）。 */
     duplicateCandidates: readDuplicateCandidates(db, idempotencyKey),
