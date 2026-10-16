@@ -164,6 +164,24 @@ export const VERIFICATION_STATUSES: Record<string, string> = {
 /** 核验状态展示顺序。 */
 export const VERIFICATION_STATUS_ORDER: string[] = ['confirmed', 'pending']
 
+/** 生命周期读模型中的待核原因。 */
+export const LIFECYCLE_FLAGS: Record<string, string> = {
+  decided_year_missing: '至少一条认定/复核事件缺少结论年份，生命周期计算按规则回退到事件所涉年份',
+  review_outcome_unknown: '有复核事件但没记结论',
+  no_batch: '认定/复核事件缺批次序号',
+  no_evidence: '认定/复核事件没有出处记录',
+  no_anchor_year: '没有任何可算的年份',
+}
+
+/** 生命周期标记顺序。 */
+export const LIFECYCLE_FLAG_ORDER: string[] = [
+  'no_anchor_year',
+  'decided_year_missing',
+  'review_outcome_unknown',
+  'no_batch',
+  'no_evidence',
+]
+
 /**
  * 两个平台接口**取值**与联合类型(契约 §2.4)。**唯一出处** —— 适配层、写入侧、
  * 读接口、查询路由一律引用它,不要各自内联拼写 `'business_list' | 'apply_list'`

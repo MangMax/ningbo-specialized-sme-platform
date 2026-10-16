@@ -11,9 +11,15 @@
  */
 import { parseCsvQuery } from '../../lib/csv'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../lib/comparison'
-import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES, EVENT_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../../lib/labels'
 import {
-  ROSTER_STATES,
+  DIFFERENCE_REASONS,
+  DIFFERENCE_STATUSES,
+  EVENT_ORDER,
+  SOURCE_ORDER,
+  TITLE_ORDER,
+} from '../../lib/labels'
+import type { EventType, RecordQuery } from '../../lib/query'
+import {
   type RosterDifferenceFilter,
   type RosterEnterpriseFilter,
   type RosterState,
@@ -58,14 +64,45 @@ function yearsParam(value: unknown): number[] | undefined {
   return list?.length ? list : undefined
 }
 
+const ROSTER_STATE_VALUES: readonly RosterState[] = ['current', 'removed_platform_only']
+
+/** §7.0 通用记录查询。`year` 是事件年份；`dueYear` 是生命周期到期年份。 */
+export function parseRecordQuery(query: Record<string, unknown>): RecordQuery {
+  const dueYearValues = parseCsvQuery(query.dueYear)
+  let dueYear: number | undefined
+  if (dueYearValues) {
+    const [raw] = dueYearValues
+    const parsed = raw && /^\d{4}$/.test(raw) ? Number(raw) : Number.NaN
+    if (dueYearValues.length !== 1 || !Number.isInteger(parsed) || parsed < 1900 || parsed > 2999) {
+      throw createError({ statusCode: 400, statusMessage: 'dueYear must be one 4-digit year' })
+    }
+    dueYear = parsed
+  }
+
+  return {
+    title: knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title'),
+    source: knownOrThrow(parseCsvQuery(query.source), SOURCE_ORDER, 'source'),
+    district: strParam(query.district),
+    eventType: knownOrThrow(parseCsvQuery(query.eventType), EVENT_ORDER, 'eventType') as
+      | EventType[]
+      | undefined,
+    year: yearsParam(query.year),
+    dueYear,
+    q: strParam(query.q),
+    flags: strParam(query.flags),
+    page: intParam(query.page, 1),
+    pageSize: intParam(query.pageSize, 25),
+  }
+}
+
 /** §7.1 总表的筛选参数。 */
 export function parseRosterEnterpriseQuery(query: Record<string, unknown>): RosterEnterpriseFilter {
   const title = knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title')
   const rosterState = strParam(query.rosterState)
-  if (rosterState != null && !(ROSTER_STATES as readonly string[]).includes(rosterState)) {
+  if (rosterState != null && !(ROSTER_STATE_VALUES as readonly string[]).includes(rosterState)) {
     throw createError({
       statusCode: 400,
-      statusMessage: `Unknown rosterState; expected ${ROSTER_STATES.join(', ')}`,
+      statusMessage: `Unknown rosterState; expected ${ROSTER_STATE_VALUES.join(', ')}`,
     })
   }
   return {

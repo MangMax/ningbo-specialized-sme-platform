@@ -1,16 +1,14 @@
 /**
- * MCP **只读** tool 的落点（RL-11，契约 §9）。
+ * RL-11 的企业总表/差异只读投影（契约 §9）。
  *
- * 注册的是 `list_enterprises` / `list_differences` —— 名录写入之后「查回写了什么」的
- * 最小只读面。它们**不鉴权**（沿用「只读不鉴权、写入必带 token」的既有分法）。
+ * 名录只读工具包括 `list_enterprises` / `list_differences` / `query_records` /
+ * `get_enterprise_detail`。它们**不鉴权**（沿用「只读不鉴权、写入必带 token」的既有分法）。
  *
  * ── 范围声明（重要）────────────────────────────────────────────────────
- * 契约 §7.1 / §7.3 的**完整读模型**由 RL-04 实现（跨称号去重总表、派生 `rosterState`、
- * 首次认定、复核到期、页面）。本文件只做 RL-11 **写侧**需要的那一小块核对口径：
+ * 契约 §7.1 / §7.3 的完整 REST 读模型由 RL-04 实现。本文件保留 RL-11 写入后的核对口径：
  * 身份 + 称号 + 已确认曾用名 + 差异的当前解释 + 证据指向。
- * 响应形状刻意与 §7.1 / §7.3 的字段**同名**（少数字段如 `firstRecognition` /
- * `nextReviewYear` 属于 RL-08 / RL-09 的生命周期读模型，这里不代做），
- * 以便 #4 落地读端点后把两个 tool 重新指向同一实现。
+ * 记录查询和企业详情分别由 `query_records` 与 `get_enterprise_detail` 提供，并直接复用 REST
+ * 的参数解析和读模型。
  */
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'

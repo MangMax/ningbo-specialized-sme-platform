@@ -9,7 +9,8 @@ import { listEnterprises } from '../../utils/mcp-roster'
  *
  * 等价 `GET /api/roster/enterprises` 的**最小只读面**：身份（名 / 统代 / 属地 / 存续）
  * + 拿过的称号 + **已确认**曾用名 + 派生的 `rosterState`。
- * 完整读模型（首次认定、复核到期、页面）由 RL-04 / RL-08 / RL-09 实现，二者形状同名。
+ * 企业详情由 `get_enterprise_detail` 复用 RL-04 详情读模型；通用记录和生命周期查询由
+ * `query_records` 对接 `GET /api/records`。
  */
 export default defineMcpTool({
   name: 'list_enterprises',

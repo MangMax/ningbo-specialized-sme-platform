@@ -1,0 +1,28 @@
+import { z } from 'zod'
+import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
+import { useDb } from '@db'
+import { getRosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
+
+/** 与 `GET /api/roster/enterprises/:id` 共用企业详情读模型。 */
+export default defineMcpTool({
+  name: 'get_enterprise_detail',
+  title: '查询企业详情',
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  description: [
+    '按企业 id 查询企业身份、已确认/待核曾用名、各称号记录、生命周期、事件、出处、差异和平台证据。',
+    '返回与 `GET /api/roster/enterprises/:id` 相同的详情读模型。只读，不需要 token。',
+  ].join('\n'),
+  inputSchema: {
+    enterpriseId: z.number().int().positive().describe('企业 id'),
+  },
+  handler: async ({ enterpriseId }) => {
+    const detail = getRosterEnterpriseDetail(useDb(), enterpriseId)
+    if (!detail) throw createError({ statusCode: 404, statusMessage: 'not found' })
+    return { ...detail }
+  },
+})
