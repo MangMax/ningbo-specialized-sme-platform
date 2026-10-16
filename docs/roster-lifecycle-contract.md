@@ -471,10 +471,15 @@
 **① `enterprise.name` 以工信部导出表(最新情况)为准,公布名单里的名字是当年名(历史名)。**
 
 `enterprise.name` 取**平台导出表侧**的名称 —— 它代表**最新情况**;公布名单里的名字是
-**历年当年**的写法,属**历史名**。归并时因此:
+**历年当年**的写法,属**历史名**。
 
-- 规范行(canonical)是**带统一社会信用代码**的那一行(该统代由平台接口/导出表引入),
-  归并**不改**它的 `name` ⇒ 「导出表侧的名字赢」;
+> **口径出处**:用户 2026-10-16 明确(ADR §11.1 决策 4)。与 §0 第 1 条的边界**不冲突**:
+> `platform_export_*` 仍是「采集时点的平台**现状**」,只在**企业名称**这一项上代表最新情况;
+> 称号 / 年份 / 批次 / 认定与复核事件**仍以公布文件为唯一权威**,导出一行也不能改写公布历史。
+
+归并时因此:
+
+- 规范行(canonical)是**带统一社会信用代码**的那一行(该统代由平台接口/导出表引入);
 - **逐字不同名**时,被并的公布名写进 `enterprise_alias`
   (`verification_status='confirmed'`,来源 = 平台关系);
 - **两侧名称逐字相同时不造别名**(没有任何第二个名字可留)⇒ 只并身份。
@@ -482,12 +487,20 @@
 - 判据用**逐字相等**而不是归一化相等:归一化会抹掉括号、空白与「宁波」前缀,
   而「公布名写短名、导出表写全名」正是要靠别名留住的差异。
 
-> **归并「不改名」到什么程度**:它**不会**去写 `enterprise.name`(§8.4 的 `merges` 载荷里
-> 也没有承载「把规范行改名」的字段)。规则在这里的**操作性含义**是「选谁当规范行」:
-> 带统代的那行就是平台/导出侧,它的名字本来就是导出表的名字;历史名永远不会赢 ——
-> 它落在别名里。重名候选一路(N> 见 ②)两侧按定义同名(判据是 `name_norm` 相同),
-> 这一路因此没有名字被改写。**若日后要求「以 `platform_export_row` 的名字覆盖
-> `enterprise.name`(哪怕规范行已有别的名字)」,那是新的写行为,需另开切片** —— 见 ADR §12.1。
+**导出表侧给了另一个现名时,归并会**把规范行改名**(父代理 2026-10-16 裁决)。**
+机制是**显式字段**,不是隐式副作用:调用方在 `merges[]` 上给 `canonicalName`(见 **§8.4**),
+执行时把规范行的 `name` / `name_norm` 改成它,并把**被顶掉的原名**落成
+`enterprise_alias`(`confirmed`,来源 = 本次归并的来源行)—— 旧名同样不丢。
+形如「公告名 `宁波一力减震器有限公司` → 导出名 `宁波一力实业有限公司`」的企业,
+归并后规范行叫**导出名**,公告名在别名里,按两个名字搜索都命中同一企业。
+
+- **缺省不改名**:不给 `canonicalName`(或它与原值相同)⇒ 规范行保持不动,与既有写法向后兼容。
+- **导出表侧没有这家企业的名字 ⇒ 留空、不改名**(空值优于错误值,不猜)。
+- 谁是「导出表侧的名字」由调用方按证据给出:重名候选那条路径取**最新导出快照**
+  (`platform_export_row`,§1.7)里该统代的名字(见 §8.8.3)。
+  「最新」的判据与读侧**同一套**(**年份大者新,同年按批 id**;见
+  `lib/roster/enterprise-roster.ts` 的 `latestBatchByTitle`)—— 不另立第二套
+  「当前快照」的定义,免得归并选的现名与页面显示的当前快照不是同一份。
 
 **② 重名候选:同一家公司被拆成两行时,软件必须**显式报出来**。**
 
@@ -649,6 +662,9 @@
 
 - `request` **可直接 POST 给 `/api/roster/import/commit`**(§8.2);没有可并项时为 `null`
   (**不发空批**)。于是「判定」与「落库」是同一条路,不存在第二种写入口。
+- `ready[].exportName` 是**导出表侧**给这家企业记的名字(最新快照,§1.7;没有就是 `null`)。
+  它与规范行现名不同时,`merge.canonicalName` 会带上它(§8.4)⇒ 归并**改名**并把被顶掉的原名
+  落成别名;为 `null` 或与现名相同时不带 ⇒ **不改名**(§5.3 ①)。
 - `evidence` 记这条候选凭什么可并:`{ relationId, queryId, interface, queryKey, rdjb, queriedAt,
   sequenceNo, relationKey, nameRaw, usccRaw, sourceKind }` —— `nameRaw` 就是那条 `qymc`。
   取证据的规则是**确定性**的:只认**以该统代为查询键**的查询(按名查的键是 `name:<nameNorm>`,
@@ -768,6 +784,7 @@
   "fromEnterpriseId": 375,          // 被并企业 id;与 fromEnterpriseName 恰给其一
   "fromEnterpriseName": "宁波上航测绘有限公司",   // 也可按归一化名找被并企业
   "intoUscc": "91330211255994457P", // 规范行(保留的那家)的统一社会信用代码
+  "canonicalName": "宁波上航测绘股份有限公司", // **主名称**(§5.3 ①):给了就把规范行改成它、原名落别名;不给=不改名
   "aliasName": "宁波上航测绘有限公司",  // 写进曾用名的名称;不给则用被并企业的现名
   "sourceKind": "platform_business", // 曾用名来源类别(§2.2);默认 manual
   "sourceRefId": 7,                 // 曾用名的来源证据行 id(如 platform_relation.id,**已存在**的行);默认 0
@@ -778,6 +795,23 @@
   "note": "businessList rdjb=3 的 qymc 差异行"   // 可空
 }]
 ```
+
+**`canonicalName`(RL-14 增量,父代理 2026-10-16 裁决)**:规范行的**主名称**,以工信部导出表
+(最新平台态)为准(§5.3 ①)。语义:
+
+| 给的值 | 行为 |
+|---|---|
+| 非空且与规范行现名**不同** | 规范行 `name` / `name_norm` 改成它;**被顶掉的原名**落 `enterprise_alias`(`confirmed`,来源 = 本次归并的来源行);血缘 `rename: { from, to, aliasId }` |
+| 与现名相同 | 不改名(无副作用;血缘 `rename: null`) |
+| 不给 / `null` | **不改名** —— 缺省行为,与既有写法向后兼容(血缘 `rename: null`) |
+| 空串 / 非字符串 | 逐项报错 `canonical_name_invalid`,整批 `failed`(**不静默忽略**) |
+
+导出表侧**没有**这家企业的名字时留空(不猜)。谁是导出表侧的名字由调用方按证据给出。
+
+预检的 `merge` 计划项在 `detail.requestedCanonicalName` 里**如实回显请求**里给的值
+(`null` = 没要求改名)。⚠️ 这是**请求**不是结论:真会不会改名取决于**执行时**规范行的现名
+(规范行可能本批才建、也可能与给定的名字逐字相同),权威答案是血缘的 `rename`
+(`null` = 确实没改名)—— 预检不承诺执行阶段才成立的事。
 
 执行步骤(逐字照 §5.2):**①** 定位规范行(`intoUscc`)与被并企业 → **②** 把被并企业的名称
 写成规范行的 `enterprise_alias`(`verification_status='confirmed'`,带 `sourceKind` /
@@ -802,6 +836,8 @@
   "detail": { "lineage": {
     "fromEnterpriseId": 375, "fromEnterpriseName": "宁波上航测绘有限公司",
     "intoEnterpriseId": 7289, "intoUscc": "91330211255994457P",
+    "canonicalName": "宁波上航测绘股份有限公司",   // 规范行**最终**的名字(§5.3 ①)
+    "rename": { "from": "宁波上航测绘有限公司", "to": "宁波上航测绘股份有限公司", "aliasId": 91 }, // 没改名是 null
     "aliasId": 91,
     "childRowsMoved": { "aliases": 1, "differences": 0, "relations": 6, "records": 1 },
     "recordsMoved": [640],                 // 直接改指规范行的记录 id
@@ -810,6 +846,10 @@
     "evidenceMoved": [301, 302]            // 随之归入规范行的出处 id(含页码)
   } } }
 ```
+
+> `canonicalName` / `rename` 是 RL-14 的增量(见上文 `canonicalName` 一节)。
+> `rename.aliasId` 是**被顶掉的原名**那条别名;`aliasId` 是**被并方名字**那条。
+> 两者可能是同一条(两个名字相同时按唯一键复用,只写一条别名 —— 见 §5.3 ①)。
 
 ### 8.5 预检计数口径(精确语义,供各写入方对齐)
 
@@ -822,6 +862,16 @@
 | `remove` | 归并会**删除**的被并企业行数(= 成功的 `merges` 项数)。 |
 | `review` | 落在**待核**状态的行数(`pending` / `needs_review`,以及未知枚举原样入库的行)。 |
 | `conflicts` | 逐项冲突(`{ ok:false, kind, ref, error }`),**不静默丢行**。 |
+
+**`add` / `update` / `skip` 的判据 = 写入侧的**身份规则**(RL-14 修正)**:一条 `records[]` 是
+`add` 还是 `skip`,看它**会不会真的新建企业** —— 判据就是 `upsertEnterprise` 用的那套
+(有统代只按统代、无统代才按名),**不是**「按名回退」那套。后者在「统代查不到、名字却对得上」
+时会说「复用既有行」,而写入侧另起一行 —— 那正是本票事故的根因,预检与提交会自相矛盾。
+
+两条判据缺一不可(**库状态** + **本批更早的计划**):库里已有同坐标 `record` ⇒ `skip`;
+此外,**同一批里更早的记录已为同一身份的同一 `(称号, 来源)` 建过**时,写入侧的
+`upsertEnterprise` / `upsertRecord` 会**复用**那一条(`rowsWritten` 为 0)⇒ 后一条也计 `skip`。
+只看库状态会把这种输入(重复的工作簿行)误报成 `add`。
 
 `conflicts` 非空 ⇒ 提交整批 `failed`,业务数据一行不落。
 
@@ -964,8 +1014,10 @@
   此时证据还没写 ⇒ `ready 0 / pending 4`(`no_platform_query`),**一行都没并**。
 - 写入证据后:`ready 4 / pending 0`;执行归并 `written 0`(两侧逐字同名 ⇒ 不造别名),
   每条 `merge:<旧>-><新>` 把记录/事件/出处各 1 条并入规范行。
+  ⚠️ 那次跑**没有**写导出快照 ⇒ `exportName` 为 `null` ⇒ 不改名(§5.3 ① 的缺省支)。
 - 血缘示例(`merge:52->7391`):
-  `{"fromEnterpriseId":52,"intoEnterpriseId":7391,"intoUscc":"913302067562827060","aliasId":null,
+  `{"fromEnterpriseId":52,"intoEnterpriseId":7391,"intoUscc":"913302067562827060",
+    "canonicalName":"宁波昌隆机电有限公司","rename":null,"aliasId":null,
     "evidenceQueryId":4,"childRowsMoved":{"records":1,"relations":0,"aliases":0,"differences":0},
     "recordsMoved":[52],"recordsFolded":[],"eventsMoved":[52],"evidenceMoved":[52]}`
 

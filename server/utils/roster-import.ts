@@ -646,24 +646,36 @@ export function planRosterImport(
         review: false,
       })
     } else {
-      // 先登记本批会新建的企业（记录级身份），再规划各项 —— 顺序不影响解析。
-      for (const record of records) {
-        const spec = { name: record?.enterprise?.name, uscc: record?.enterprise?.uscc }
-        if (!locateEnterprise(db, spec)) for (const key of pendingKeys(spec)) pending.add(key)
-      }
-      // 会**新建**的企业（按写入侧的身份规则判），以及重名候选需要的「本批更早的同名行」。
+      // 会**新建**的企业 —— 判据就是写入侧的身份规则（有统代只按统代、无统代才按名），
+      // 不再用带「按名回退」的 {@link locateEnterprise}：那会让预检说「复用既有行」而
+      // 写入侧**另起一行**（事故根因），本批的引用解析也跟着算错。**同一套规则只此一份**。
       const creates = planEnterpriseCreates(db, records)
+      for (const create of creates) {
+        if (create) for (const key of pendingKeys(create)) pending.add(key)
+      }
+      // 本批**已计划**的两张索引（都只装「本批会新建」的那些记录）：
+      //  - 「身份键 → 已计划过的 (称号, 来源) 坐标」：同一批里两条记录同身份又同坐标时，
+      //    写入侧会**复用**前一条新建的企业与记录 ⇒ 后一条要计 `skip`，不能计 `add`；
+      //  - 「name_norm → 已计划新建的同名企业」：重名候选用。
+      const plannedCoordinates = new Map<string, Set<string>>()
       const earlierByName = new Map<string, PendingEnterpriseCreate[]>()
       records.forEach((record, index) => {
         const create = creates[index] ?? null
+        const name = optionalString(record?.enterprise?.name)
+        const uscc = usccOrNull(record?.enterprise?.uscc)
+        const coordinate = `${optionalString(record?.titleCode) ?? ''}/${optionalString(record?.source) ?? optionalString(announcement.sourceDocument?.source) ?? ''}`
+        const identityKey = name ? identityKeyOf({ name, uscc }) : null
+        const reusedInBatch = identityKey != null && (plannedCoordinates.get(identityKey)?.has(coordinate) ?? false)
         planAnnouncementRecord(db, request, announcement, record, index, push, {
           create,
           earlierSameName: create ? (earlierByName.get(create.nameNorm) ?? []) : [],
+          reusedInBatch,
         })
-        if (create) {
-          const list = earlierByName.get(create.nameNorm) ?? []
-          list.push(create)
-          earlierByName.set(create.nameNorm, list)
+        if (create && identityKey != null) {
+          const coordinates = plannedCoordinates.get(identityKey) ?? new Set<string>()
+          coordinates.add(coordinate)
+          plannedCoordinates.set(identityKey, coordinates)
+          earlierByName.set(create.nameNorm, [...(earlierByName.get(create.nameNorm) ?? []), create])
         }
       })
     }
@@ -702,10 +714,11 @@ function planAnnouncementRecord(
   record: RosterImportAnnouncement['records'][number],
   index: number,
   push: (item: PlannedItem) => void,
-  candidates: { create: PendingEnterpriseCreate | null; earlierSameName: PendingEnterpriseCreate[] } = {
-    create: null,
-    earlierSameName: [],
-  },
+  candidates: {
+    create: PendingEnterpriseCreate | null
+    earlierSameName: PendingEnterpriseCreate[]
+    reusedInBatch: boolean
+  } = { create: null, earlierSameName: [], reusedInBatch: false },
 ): void {
   const ref = `record:${index}`
   const name = optionalString(record?.enterprise?.name)
@@ -745,7 +758,10 @@ function planAnnouncementRecord(
   }
 
   const uscc = usccOrNull(record.enterprise.uscc)
-  const existing = locateEnterprise(db, { name, uscc })
+  // 定位用**写入侧的身份规则**（预检与提交必须同一套）：
+  // `locateEnterprise` 在「统代查不到」时会退回按名找，于是预检会说「企业已存在、这条是 skip」，
+  // 而 `upsertEnterprise`（只按统代）却会新建一行 —— 那是本票事故的根因，不能用它来决定 add/skip。
+  const existing = findEnterpriseByIdentity(db, { name, uscc })
   const district = optionalString(record.enterprise.district)
   let existingRecord: { id: number } | undefined
   if (existing) {
@@ -760,6 +776,12 @@ function planAnnouncementRecord(
   // 来源文件入库后同一份内容的标识从库外路径变成库内路径。事件坐标不变 ⇒ 历史一行不改,
   // 只有出处的 `source_file` 被指向新路径。这件事**要报进预检**,故按提交会改的行数定 action。
   const repoints = existingRecord ? countEvidenceRepoints(db, existingRecord.id, events) : 0
+  // 这一条记录会**复用**既有行（`existingRecord`）吗？
+  // 两条判据都必须在，否则预检又会与提交不一致：
+  //  - 库里已有同坐标记录（库状态）；
+  //  - 或**本批更早**的记录已经为**同一身份的同一坐标**建过（写入侧会复用那条，
+  //    `rowsWritten` 为 0）—— 库里此刻看不到它，只看库会把这种情况误报成 `add`。
+  const reused = !!existingRecord || candidates.reusedInBatch
 
   push({
     item: success(
@@ -767,7 +789,9 @@ function planAnnouncementRecord(
       existing ? `record:${existingRecord?.id ?? ref}` : ref,
       { enterpriseId: existing?.id ?? null, titleCode, source },
     ),
-    action: existingRecord ? (repoints > 0 ? 'update' : 'skip') : 'add',
+    // 两条判据**都要**：不复用 ⇒ add；复用且有出处指针收敛 ⇒ update（预检如实计入 §8.5）；
+    // 复用且无收敛 ⇒ skip。
+    action: !reused ? 'add' : repoints > 0 ? 'update' : 'skip',
     review: !uscc,
     run: (tx) => writeAnnouncementRecord(tx, request, announcement, record, { name, uscc, district, titleCode, source, reason: { existingRecord } }),
   })
@@ -1825,6 +1849,13 @@ export interface MergeLineage {
   fromEnterpriseName: string
   intoEnterpriseId: number
   intoUscc: string
+  /** 规范行**最终**的名字（给了 `merges[].canonicalName` 就是导出表侧的名字）。 */
+  canonicalName: string
+  /**
+   * **主名称改名**（§5.3 ①）：给 `canonicalName` 且与原名不同时记下 `from → to`，
+   * 以及被顶掉原名落成的那条别名 id；没改名是 `null`。
+   */
+  rename: { from: string; to: string; aliasId: number | null } | null
   aliasId: number | null
   /** 支撑本次归并的查询证据（裸 id 或自然键解析所得）；未给为 null。 */
   evidenceQueryId: number | null
@@ -1863,6 +1894,11 @@ function planMerge(
   }
   if (merge.sourceKind != null && !ALIAS_SOURCE_KINDS.has(String(merge.sourceKind))) {
     push({ item: failure('merge', ref, 'alias_source_kind_unknown', `sourceKind 不在字典内：${String(merge.sourceKind)}`, 'sourceKind'), action: 'skip', review: false })
+    return
+  }
+  // 主名称：**不给就不改名**（缺省行为）；给了就必须是非空字符串，不静默忽略一个坏值。
+  if (merge.canonicalName != null && !optionalString(merge.canonicalName)) {
+    push({ item: failure('merge', ref, 'canonical_name_invalid', 'canonicalName 必须是非空字符串（不给则不改名）', 'merges[].canonicalName'), action: 'skip', review: false })
     return
   }
   // 证据指针：同别名/差异的规则 —— 每列**裸 id 与自然键恰给其一**。
@@ -1925,11 +1961,64 @@ function planMerge(
 
   const plan: MergePlan = { merge, sourceRelationRef, evidenceQueryRef }
   push({
-    item: success('merge', `merge:${fromRaw ?? fromName}->${intoUscc}`, { intoUscc }),
+    item: success('merge', `merge:${fromRaw ?? fromName}->${intoUscc}`, {
+      intoUscc,
+      /**
+       * 请求里给的 `canonicalName`（`null` = 没要求改名）。
+       *
+       * ⚠️ 这是**请求**不是结论：真会不会改名取决于**执行时**规范行的现名（而规范行可能本批才建），
+       * 且与现名逐字相同时不改。权威答案在血缘的 `rename`（`null` = 确实没改名）。
+       */
+      requestedCanonicalName: optionalString(merge.canonicalName),
+    }),
     action: 'update',
     review: false,
     run: (tx) => executeMerge(tx, plan),
   })
+}
+
+/**
+ * 取或建一条曾用名 —— 唯一键 `(enterprise_id, name_norm, source_kind, source_ref_id)`（§1.2）。
+ * 归并要写**两条**别名（被并方的名字、被顶掉的规范行原名），规则只此一份。
+ */
+function ensureEnterpriseAlias(
+  tx: Executor,
+  input: {
+    enterpriseId: number
+    name: string
+    /** 来源类别取值**从冻结的表列派生**，不在这里再抄一遍枚举。 */
+    sourceKind: (typeof schema.enterpriseAlias.sourceKind.enumValues)[number]
+    sourceRefId: number
+    note: string
+  },
+): { id: number; created: boolean } {
+  const nameNorm = normalizeName(input.name)
+  const existing = tx
+    .select()
+    .from(schema.enterpriseAlias)
+    .all()
+    .find(
+      (a) =>
+        a.enterpriseId === input.enterpriseId &&
+        a.nameNorm === nameNorm &&
+        a.sourceKind === input.sourceKind &&
+        a.sourceRefId === input.sourceRefId,
+    )
+  if (existing) return { id: existing.id, created: false }
+  const id = tx
+    .insert(schema.enterpriseAlias)
+    .values({
+      enterpriseId: input.enterpriseId,
+      name: input.name,
+      nameNorm,
+      sourceKind: input.sourceKind,
+      sourceRefId: input.sourceRefId,
+      verificationStatus: 'confirmed',
+      note: input.note,
+    })
+    .returning({ id: schema.enterpriseAlias.id })
+    .get().id
+  return { id, created: true }
 }
 
 /**
@@ -1955,16 +2044,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   if (from.id === into.id) return failure('merge', ref0, 'merge_same_enterprise', '被并企业与规范行是同一行', 'fromEnterpriseId')
   const ref = `merge:${from.id}->${into.id}`
 
-  // 2. 写曾用名（旧名不丢）。证据指针：给了自然键就**必须**解析到真 id（解析不到 ⇒ 报错）。
-  //
-  //    **两侧名称逐字相同不造别名**（§5.3）：别名的用途是「旧名不丢」，
-  //    名称一模一样时根本没有第二个名字可留 —— 造一条与规范行同名的别名只会污染搜索与展示。
-  //    判据用**逐字相等**（不是归一化相等）：归一化会抹掉括号、空白与「宁波」前缀，
-  //    而「公布名写的是短名、导出表写的是全名」正是要靠别名留住的差异。
-  //    实测的 4 例重名归并（公布名 == 导出表名，逐字相同）都走这一支。
-  const aliasName = optionalString(merge.aliasName) ?? from.name
-  const aliasNameNorm = normalizeName(aliasName)
-  const sameName = aliasName === into.name
+  // 2. 主名称与曾用名（§5.3）。证据指针：给了自然键就**必须**解析到真 id（解析不到 ⇒ 报错）。
   const sourceKind = merge.sourceKind ?? 'manual'
   let sourceRefId = optionalInt(merge.sourceRefId) ?? 0
   if (sourceRelationRef) {
@@ -1982,36 +2062,48 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     }
     mergeEvidenceQueryId = resolved
   }
-  const existingAlias = tx
-    .select()
-    .from(schema.enterpriseAlias)
-    .all()
-    .find(
-      (a) =>
-        a.enterpriseId === into.id &&
-        a.nameNorm === aliasNameNorm &&
-        a.sourceKind === sourceKind &&
-        a.sourceRefId === sourceRefId,
-    )
-  const aliasId = sameName
-    ? null
-    : existingAlias
-      ? existingAlias.id
-      : tx
-          .insert(schema.enterpriseAlias)
-          .values({
-            enterpriseId: into.id,
-            name: aliasName,
-            nameNorm: aliasNameNorm,
-            sourceKind,
-            sourceRefId,
-            verificationStatus: 'confirmed',
-            note: optionalString(merge.note) ?? `归并自 enterprise:${from.id}（${from.name}）`,
-          })
-          .returning({ id: schema.enterpriseAlias.id })
-          .get().id
-  /** 这次归并**真的插进去**的那条曾用名（同名不造、已有行则复用 ⇒ 都不算新增）。 */
-  const aliasInserted = aliasId != null && !existingAlias
+
+  // 2a. **主名称改名**（§5.3 ①：以导出表/最新平台态为准）。给了 `canonicalName` 且与原名不同
+  //     ⇒ 规范行改名为它，**被顶掉的原名落成别名**（旧名同样不丢）；不给 ⇒ 保持不动（缺省行为）。
+  const requestedName = optionalString(merge.canonicalName)
+  const renamedFrom = requestedName && requestedName !== into.name ? into.name : null
+  const canonicalName = requestedName ?? into.name
+  if (renamedFrom && requestedName) {
+    tx.update(schema.enterprise)
+      .set({ name: requestedName, nameNorm: normalizeName(requestedName) })
+      .where(eq(schema.enterprise.id, into.id))
+      .run()
+  }
+  // 被顶掉的原名：来源与本次归并同一份证据（调用方给的关系行）。
+  // 说明文字**不能**被调用方的 `note` 顶掉 —— 那条别名为什么存在，只在这里说得清。
+  const renameNote = `主名称改为「${canonicalName}」（导出表侧）后被顶掉的原名`
+  const renameAlias = renamedFrom
+    ? ensureEnterpriseAlias(tx, {
+        enterpriseId: into.id,
+        name: renamedFrom,
+        sourceKind,
+        sourceRefId,
+        note: optionalString(merge.note) ? `${renameNote}；${optionalString(merge.note)}` : renameNote,
+      })
+    : { id: null, created: false }
+
+  // 2b. 被并方的名字（§5.3）：**与规范行最终名称逐字相同则不造别名** —— 别名的用途是「旧名不丢」，
+  //     名称一模一样时根本没有第二个名字可留（造一条同名别名只会污染搜索与展示）。
+  //     判据用**逐字相等**（不是归一化相等）：归一化会抹掉括号、空白与「宁波」前缀，
+  //     而「公布名写的是短名、导出表写的是全名」正是要靠别名留住的差异。
+  //     实测的 4 例重名归并（公布名 == 导出表名，逐字相同）都走这一支。
+  const aliasName = optionalString(merge.aliasName) ?? from.name
+  const mergeAlias =
+    aliasName === canonicalName
+      ? { id: null, created: false }
+      : ensureEnterpriseAlias(tx, {
+          enterpriseId: into.id,
+          name: aliasName,
+          sourceKind,
+          sourceRefId,
+          note: optionalString(merge.note) ?? `归并自 enterprise:${from.id}（${from.name}）`,
+        })
+  const aliasId = mergeAlias.id
 
   // 3. 迁移子行（别名 / 差异 / 平台关系）。撞唯一键的**先删被并那条**（它在规范行已有等价行）。
   let aliasesMoved = 0
@@ -2100,6 +2192,8 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     fromEnterpriseName: from.name,
     intoEnterpriseId: into.id,
     intoUscc: into.usccNorm ?? '',
+    canonicalName,
+    rename: renamedFrom ? { from: renamedFrom, to: canonicalName, aliasId: renameAlias.id } : null,
     aliasId,
     evidenceQueryId: mergeEvidenceQueryId,
     childRowsMoved: {
@@ -2113,9 +2207,12 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     eventsMoved,
     evidenceMoved,
   }
-  // 归并**净新增的行**只有那条曾用名（子行是改指、事件是改指、被并企业行是删除）；
-  // 两侧同名时连别名都不造（§5.3），净新增为 0。
-  return success('merge', ref, { lineage, rowsWritten: aliasInserted ? 1 : 0 })
+  // 归并**净新增的行**只有别名（子行是改指、事件是改指、被并企业行是删除）：
+  // 被并方名与规范行最终名逐字相同时不造那条别名；改名时另加一条「被顶掉的原名」。
+  return success('merge', ref, {
+    lineage,
+    rowsWritten: (mergeAlias.created ? 1 : 0) + (renameAlias.created ? 1 : 0),
+  })
 }
 
 // ---------------------------------------------------------------------------

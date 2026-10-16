@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
+import { getPlatformExportRows, listPlatformSnapshots } from '../../lib/platform-snapshots'
 import {
   duplicateTwinKey,
   type DuplicateMergeEvidence,
@@ -136,6 +137,34 @@ function candidateKey(candidate: DuplicateNameCandidate): string {
   return `${duplicateTwinKey(candidate)}->${normalizeUscc(candidate.newUscc) ?? candidate.nameNorm}`
 }
 
+/**
+ * **导出表侧的主名称**（§5.3 ①，只读）：该统代在工信部导出快照里的企业名。
+ *
+ * 取**最新情况** —— 判据与读侧**同一套**（`lib/roster/enterprise-roster.ts` 的
+ * `latestBatchByTitle`：**年份大者新,同年按批 id**),不另立一套「最新」的定义。
+ * 批内取该统代**源行号最小**的那一行的名字；名字为空的批次不算（空值优于错误值）。
+ * **取不到就返回 `null`,绝不猜** —— 调用方据此不改规范行名。
+ *
+ * 表的读走 `lib/platform-snapshots.ts` 的两个读函数（导出快照的读侧在那边），
+ * 本函数不自己扫表 —— 「导出快照长什么样」只有一处知识。
+ */
+export function findExportSideName(db: Db, usccRaw: string | null): string | null {
+  const uscc = normalizeUscc(usccRaw)
+  if (!uscc) return null
+  // 读侧返回的是 (称号 → 年份 → 批 id) 升序,这里要的是「最新」:按同一组字段重排一次(纯算术比较,
+  // 不在比较器里查库),命中即返回 ⇒ 通常只读一个批次的快照行。
+  const batches = [...listPlatformSnapshots(db)].sort((a, b) =>
+    a.batch.year !== b.batch.year ? b.batch.year - a.batch.year : b.batch.id - a.batch.id,
+  )
+  for (const item of batches) {
+    const row = getPlatformExportRows(db, item.batch.id).find(
+      (candidate) => normalizeUscc(candidate.usccRaw) === uscc && !!candidate.nameRaw?.trim(),
+    )
+    if (row?.nameRaw) return row.nameRaw.trim()
+  }
+  return null
+}
+
 /** 幂等键：源批次 + **归并内容**（同证据同键 ⇒ 重放不增行；新证据新键 ⇒ 可再跑一批）。 */
 export function duplicateMergeIdempotencyKey(batchKey: string, merges: RosterImportMerge[]): string {
   const digest = createHash('sha256').update(JSON.stringify(merges)).digest('hex').slice(0, 16)
@@ -214,7 +243,11 @@ export function planDuplicateMerge(db: Db, batchKey: string): DuplicateMergeRepo
       continue
     }
     claimed.add(from.id)
-    ready.push({ candidate, evidence: evidence.evidence, merge: buildMerge(candidate, evidence.evidence, uscc!) })
+    // 主名称（§5.3 ①）：导出表侧记了另一个现名 ⇒ 显式带 `canonicalName`，让归并**改名**并把
+    // 被顶掉的原名落成别名。导出表侧没有这个名字（或与现名相同）⇒ 不带，规范行保持不动。
+    const exportName = findExportSideName(db, uscc)
+    const canonicalName = exportName && exportName !== into.name ? exportName : null
+    ready.push({ candidate, evidence: evidence.evidence, exportName, merge: buildMerge(candidate, evidence.evidence, uscc!, canonicalName) })
   }
 
   const merges = ready.map((item) => item.merge)
@@ -250,13 +283,17 @@ export function planDuplicateMerge(db: Db, batchKey: string): DuplicateMergeRepo
  *
  * **两侧逐字同名不给 `aliasName`**（契约 §5.3）：规范行的 `name` 是**导出表侧**（最新）的那个名字，
  * 被并的公布名与之逐字相同时没有第二个名字可留，别名只会污染搜索 ——
- * `executeMerge` 也用同一判据兜底（`aliasName === into.name` ⇒ 不造别名）。
+ * `executeMerge` 也用同一判据兜底（`aliasName === canonicalName` ⇒ 不造别名）。
  * 两侧逐字不同名时才写别名（`verification_status='confirmed'`，来源 = 这条平台关系）。
+ *
+ * `canonicalName`（§5.3 ①）只在**导出表侧记了另一个现名**时才给（见 {@link findExportSideName}）
+ * —— 给了就把规范行改成导出表的名字、被顶掉的原名落成别名；不给则不改名。
  */
 function buildMerge(
   candidate: DuplicateNameCandidate,
   evidence: DuplicateMergeEvidence,
   uscc: string,
+  canonicalName: string | null,
 ): RosterImportMerge {
   const sameName = candidate.existingEnterpriseName === candidate.name
   const where = `${evidence.interface}${evidence.rdjb ? ` rdjb=${evidence.rdjb}` : ''} 序号 ${evidence.sequenceNo}${
@@ -265,6 +302,7 @@ function buildMerge(
   return {
     fromEnterpriseId: candidate.existingEnterpriseId!,
     intoUscc: uscc,
+    ...(canonicalName ? { canonicalName } : {}),
     ...(sameName ? {} : { aliasName: candidate.existingEnterpriseName }),
     sourceKind: evidence.sourceKind,
     sourceRefId: evidence.relationId,

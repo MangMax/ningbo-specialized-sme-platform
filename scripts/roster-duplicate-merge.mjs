@@ -88,6 +88,13 @@ for (const item of report.ready) {
       `证据 ${item.evidence.interface}${item.evidence.rdjb ? ` rdjb=${item.evidence.rdjb}` : ''} 序号 ${item.evidence.sequenceNo}` +
       `${item.evidence.relationKey ? `（${item.evidence.relationKey}）` : ''} @${item.evidence.queriedAt} qymc=「${item.evidence.nameRaw}」`,
   )
+  if (item.merge.canonicalName) {
+    console.log(`      主名称以导出表为准 ⇒ 规范行改名为「${item.merge.canonicalName}」（原名落别名）`)
+  } else if (item.exportName) {
+    console.log(`      导出表侧的名字与现名一致，不改名`)
+  } else {
+    console.log(`      导出表侧没有这家企业的名字 ⇒ 不改名（不猜）`)
+  }
 }
 
 if (report.request == null) {

@@ -236,6 +236,16 @@ export interface RosterImportMerge {
   fromEnterpriseName?: string
   /** 规范行（保留的那家）的统一社会信用代码。 */
   intoUscc: string
+  /**
+   * **规范行的主名称**（§5.3 ①：以工信部导出表/最新平台态为准）。
+   *
+   * 给了就把规范行的 `name` 改成它，**被顶掉的原名**落成 `enterprise_alias`
+   * （`verification_status='confirmed'`，来源 = 本次归并的来源行）。不给（或与原名相同）
+   * ⇒ **不改名**（缺省行为，向后兼容）。
+   *
+   * **导出表侧没有该企业的名字时留空，不猜**；调用方只在真的拿到导出表侧的名字时才填。
+   */
+  canonicalName?: string | null
   /** 写进曾用名的名称；不给则用被并企业的现名。 */
   aliasName?: string
   /** 曾用名的来源类别；默认 `manual`。 */

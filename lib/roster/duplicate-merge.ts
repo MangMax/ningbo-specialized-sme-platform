@@ -68,6 +68,13 @@ export type DuplicateMergePendingReason =
 export interface DuplicateMergeReady {
   candidate: DuplicateNameCandidate
   evidence: DuplicateMergeEvidence
+  /**
+   * **导出表侧**给这家企业记的名字（§5.3 ①，取最新快照；没有就是 `null`）。
+   *
+   * 与规范行现名不同时，`merge.canonicalName` 会带上它 ⇒ 归并把规范行改成这个名字、
+   * 被顶掉的原名落成别名；为 `null` 或与现名相同时 `canonicalName` 不给 ⇒ **不改名**。
+   */
+  exportName: string | null
   /** 编好的 `payload.merges` 项（两侧同名的候选**不带** `aliasName`，见契约 §5.3）。 */
   merge: RosterImportMerge
 }
