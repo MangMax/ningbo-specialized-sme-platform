@@ -19,16 +19,14 @@ import {
   COMPARISON_LABELS,
   COMPARISON_OTHER_SIDE,
   COMPARISON_NO_USCC,
+  DIFFERENCE_LEGEND_NOTE,
+  DIFFERENCE_LEGEND_TITLE,
+  DIFFERENCE_STATUSES,
+  DIFFERENCE_STATUS_ORDER,
+  DIFFERENCE_STATUS_VARIANTS,
+  DIFFERENCE_COLUMN_HINT,
   RECONCILE_BASIS,
-  RECONCILE_LABELS,
-  RECONCILE_LEGEND_MAX,
-  RECONCILE_LEGEND_NOTE,
-  RECONCILE_LEGEND_TITLE,
-  RECONCILE_ORDER,
   RECONCILE_REASONS,
-  RECONCILE_SOURCE,
-  RECONCILE_VARIANTS,
-  reconcileHint,
 } from '~~/lib/labels'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -80,43 +78,41 @@ const { data, isLoading, error, refetch } = useQuery({
   key: () => ['comparison', params.value],
   query: () =>
     $fetch<{
-      rows: (CuratedRow & { explanation: ReconcileEntry | null; platform: ComparisonPlatformEvidence | null })[]
+      rows: (CuratedRow & { explanation: ReconcileEntry | null; platform: ComparisonPlatformEvidence })[]
       total: number
       counts: ComparisonCounts
       curatedCounts: ComparisonCounts
       reconcile: { generatedAt: string | null; matched: number }
-      platform: { withEvidence: number }
+      platform: { withEvidence: number; withExplanation: number; withoutExplanation: number }
     }>('/api/comparison', { query: params.value }),
   placeholderData: (previous) => previous,
 })
 const rows = computed(() => data.value?.rows ?? [])
 /** 行上**已确认**的曾用名(待核实的不算 —— 契约 §1.2:`pending` 不参与搜索/归并)。 */
-function confirmedAliasNames(row: { platform: ComparisonPlatformEvidence | null }): string[] {
-  return (row.platform?.aliases ?? [])
+function confirmedAliasNames(row: { platform: ComparisonPlatformEvidence }): string[] {
+  return row.platform.aliases
     .filter((alias) => alias.verificationStatus === 'confirmed')
     .map((alias) => alias.name)
 }
 const reconcileInfo = computed(() => data.value?.reconcile ?? null)
-/** 当前筛选下**有解释**的行数;为 0 时页面任何位置都不出现取数日期。 */
-const matched = computed(() => reconcileInfo.value?.matched ?? 0)
+const platformInfo = computed(() => data.value?.platform ?? null)
+/** 旧解释缓存(存在时)的取数时间 —— 只作对照,不用它当平台取数时间。 */
+const cacheFetchLabel = computed(() => latestFetchLabel(rows.value.map((row) => row.explanation)))
 /**
- * 平台取数时间:**只取本页行自己的 `fetchedAt`**(与行内 tooltip 同一字段、同一格式化函数)。
- * 文件级的 `generatedAt` 是「缓存何时写出」,拿它当取数时间会与行内说法打架,故不用。
+ * 「平台解释」列的口径说明。**数据源是库内**(`difference_reason`),不是离线缓存 ——
+ * 旧文案「本方向还没有平台解释」正是用户看到「数据都没了」的那句话,已删掉。
  */
-const fetchLabel = computed(() =>
-  latestFetchLabel(rows.value.map((row) => row.explanation)),
-)
-/** 口径说明按方向只给相关半句(两个方向不共处一行)。 */
-const hint = computed(() => reconcileHint(direction.value))
+const hint = computed(() => DIFFERENCE_COLUMN_HINT)
+/** 表头 tooltip 仍按方向给半句口径(两个方向不共处一行)。 */
+const basisHint = computed(() => `${RECONCILE_BASIS}${RECONCILE_REASONS[direction.value]}`)
 /**
- * 图例只列**当前结果里真出现过**的徽章取值(按固定顺序),最多 5 个。
- * 全量列 7 种会把图例撑成一张词表,而屏幕上可能一个都没有。
+ * 图例只列**当前结果里真出现过**的状态(按状态机顺序)。
+ * 全量列六种会把图例撑成一张词表,而屏幕上可能一个都没有。
  */
 const legendCodes = computed(() => {
-  const seen = new Set(rows.value.map((row) => row.explanation?.explanation.code).filter(Boolean))
-  return RECONCILE_ORDER.filter((code) => seen.has(code))
+  const seen = new Set(rows.value.map((row) => row.platform.disposition.status))
+  return DIFFERENCE_STATUS_ORDER.filter((code) => seen.has(code))
 })
-const legendOverflow = computed(() => Math.max(0, legendCodes.value.length - RECONCILE_LEGEND_MAX))
 
 // 宽表在窄屏下的**边缘提示**:右侧渐隐 + 一行提示,滑到最右即消失。
 const scroller = shallowRef<HTMLElement | null>(null)
@@ -211,41 +207,48 @@ const TH_CLASS =
             <p class="text-muted-foreground min-h-5 text-[13px] tabular-nums" aria-live="polite">
               {{ countLabel(direction) }}
             </p>
-            <!-- 口径与取数说明:**以公布文件为准**加粗单列一次;原因按方向只给半句;
-                 取数日期只在真有一行取过数时出现(matched=0 时任何位置都不显示日期)。 -->
+            <!-- 口径与取数说明:**以公布文件为准**加粗单列一次;原因按方向只给半句。
+                 旧文案「本方向还没有平台解释」已删 —— 原因与证据现在读**库内**,
+                 缓存缺失不该再让页面说「没有」。 -->
             <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-              <p class="text-muted-foreground text-xs leading-relaxed" data-testid="reconcile-basis">
+              <p
+                class="text-muted-foreground text-xs leading-relaxed"
+                data-testid="reconcile-basis"
+                :title="basisHint"
+              >
                 <strong class="text-foreground font-medium">{{ RECONCILE_BASIS }}</strong
                 >{{ RECONCILE_REASONS[direction] }}
               </p>
               <p
-                v-if="matched > 0"
                 class="text-muted-foreground text-xs leading-relaxed"
-                data-testid="reconcile-provenance"
+                data-testid="platform-provenance"
               >
-                平台解释<template v-if="fetchLabel"
-                  >取数自{{ RECONCILE_SOURCE }},最近取数 {{ fetchLabel }}</template
-                ><template v-else>来自{{ RECONCILE_SOURCE }}</template
-                >;本方向 {{ matched }} 行有解释。
+                平台原因与证据取自<strong class="text-foreground font-medium">库内</strong>记录(差异解释 / 平台查询与关系);
+                本方向 {{ platformInfo?.withExplanation ?? 0 }} 行有解释记录,
+                {{ platformInfo?.withoutExplanation ?? 0 }} 行还没有解释记录(显示为「未查询」)。
+                <template v-if="reconcileInfo?.generatedAt">
+                  另:旧解释缓存(生成于 {{ reconcileInfo.generatedAt.slice(0, 10) }})覆盖
+                  {{ reconcileInfo.matched }} 行,仅作对照<template v-if="cacheFetchLabel"
+                    >(最近取数 {{ cacheFetchLabel }})</template
+                  >。
+                </template>
               </p>
-              <p v-else class="text-muted-foreground text-xs leading-relaxed">本方向还没有平台解释。</p>
             </div>
-            <!-- 图例:徽章是平台侧结论,不是经信局的口径;只列当前结果里出现过的取值。 -->
+            <!-- 图例:徽章是库内解释记录里的差异状态;只列当前结果里出现过的取值。 -->
             <div
               v-if="legendCodes.length"
-              data-testid="reconcile-legend"
+              data-testid="platform-legend"
               class="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
             >
-              <span>{{ RECONCILE_LEGEND_TITLE }}:</span>
+              <span>{{ DIFFERENCE_LEGEND_TITLE }}:</span>
               <Badge
-                v-for="code in legendCodes.slice(0, RECONCILE_LEGEND_MAX)"
+                v-for="code in legendCodes"
                 :key="code"
-                :variant="RECONCILE_VARIANTS[code]"
+                :variant="DIFFERENCE_STATUS_VARIANTS[code] ?? 'quiet'"
                 class="font-normal"
-                >{{ RECONCILE_LABELS[code] }}</Badge
+                >{{ DIFFERENCE_STATUSES[code] ?? code }}</Badge
               >
-              <span v-if="legendOverflow">…另 {{ legendOverflow }} 种</span>
-              <span class="basis-full sm:basis-auto">{{ RECONCILE_LEGEND_NOTE }}</span>
+              <span class="basis-full sm:basis-auto">{{ DIFFERENCE_LEGEND_NOTE }}</span>
             </div>
             <Alert v-if="error" variant="destructive">
               <AlertTitle>比对数据加载失败</AlertTitle>
@@ -282,7 +285,10 @@ const TH_CLASS =
                       <EmptyDescription>{{ curatedCount(direction) && !showCurated ? '当前方向均已核实，可开启「显示已核实」查看。' : '当前称号与方向没有差异企业。' }}</EmptyDescription>
                     </EmptyHeader>
                   </Empty>
-                  <Table v-else class="min-w-[1180px] table-fixed">
+                  <!-- `min-w` 要 ≥ Σ 固定列宽 ÷ (1 − 企业名称列的 28%)，否则 table-fixed
+                       会把亏空全压到名称列上(实测 1180 时名称列只剩 236px,
+                       核实/备注也一起被挤)。平台证据列加宽到 w-64 后该阈值是 ≈1312px。 -->
+                  <Table v-else class="min-w-[1320px] table-fixed">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
                         <TableHead :class="[TH_CLASS, 'w-[28%]']"
@@ -298,8 +304,8 @@ const TH_CLASS =
                         <TableHead :class="[TH_CLASS, 'w-28']">
                           <span :title="hint">平台解释</span>
                         </TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-56']">
-                          <span title="库内平台证据:曾用名、已核验处置与原始关系">平台证据</span>
+                        <TableHead :class="[TH_CLASS, 'w-64']">
+                          <span title="库内平台证据:曾用名、平台查询与逐条原始关系">平台证据</span>
                         </TableHead>
                         <TableHead :class="[TH_CLASS, 'w-48']">核实与备注</TableHead>
                       </TableRow>
@@ -354,7 +360,7 @@ const TH_CLASS =
                           COMPARISON_OTHER_SIDE[row.direction]
                         }}</TableCell>
                         <TableCell>
-                          <ComparisonReconcile :explanation="row.explanation" />
+                          <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
                         </TableCell>
                         <TableCell>
                           <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" />

@@ -7,20 +7,24 @@ import { MAX_PAGE_SIZE } from '~~/lib/query'
 import { attachReconcile, readReconcile } from '~~/lib/reconcile'
 
 /**
- * 两侧比对结果(已公布 vs 平台导出),带人工标注、平台解释与**库内平台证据**。
+ * 两侧比对结果(已公布 vs 平台导出),带人工标注、**库内平台原因与证据**、旧解释缓存对照。
  *
- * `reconcile` 段是**增强**:平台解释缓存(`data/platform-reconcile.json`,票 16 的
- * pipeline CLI 产出)不存在时 `explanation` 全为 null,比对本身不受影响。
+ * `platform` 段(RL-03,RL-15 收口)是**主源**:每个企业的已确认曾用名(`enterprise_alias`)、
+ * 「当前」差异处置(`difference_reason`:状态 + 原因 + 配对措施)与平台查询
+ * (`platform_query` / `platform_relation`,含逐条原始关系)。
+ * **每一行都有 `platform`** —— 没有解释记录时状态即状态机的默认态 `not_queried`
+ * (「还没查过」,不是「没有」),由 `disposition.explanationId === null` 说清。
  *
- * `platform` 段(RL-03)是**另一条增强**:每个企业的已确认曾用名(`enterprise_alias`)、
- * 「当前」差异处置(`difference_reason`,原因 + 配对措施)与平台查询/关系条数
- * (`platform_query` / `platform_relation`)。没有证据的行 `platform` 为 `null`。
+ * `reconcile` 段是**对照**(票 16 的旧路径):解释缓存(`data/platform-reconcile.json`)
+ * 不存在时 `explanation` 全为 null —— 旧缓存缺失**不再**让页面变成「无数据」,
+ * 因为原因与证据已由 `platform` 段从库里带出。
  */
 defineRouteMeta({
   openAPI: {
     tags: ['比对'],
     summary: '查比对结果',
-    description: '按称号 / 方向过滤,分页返回;含人工标注(`curated`)与平台解释。',
+    description:
+      '按称号 / 方向过滤,分页返回;含人工标注(`curated`)、库内平台原因与证据(`platform`)与旧解释缓存对照(`reconcile`)。',
     parameters: [
       {
         name: 'title',
@@ -44,7 +48,10 @@ defineRouteMeta({
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 25 } },
     ],
     responses: {
-      200: { description: '比对结果(`rows` / `total` / `counts` / `curatedCounts` / `reconcile`)。' },
+      200: {
+        description:
+          '比对结果(`rows` / `total` / `counts` / `curatedCounts` / `platform` / `reconcile`)。',
+      },
       400: { description: 'title / direction / showCurated 取值非法。' },
     },
   },
@@ -84,23 +91,39 @@ export default defineEventHandler((event) => {
     (!direction || row.direction === direction) &&
     (q.showCurated === 'true' || !row.curated),
   )
-  // 平台解释是**增强项**:缓存不存在时 explanation 全为 null,比对本身不受影响。
+  // 旧解释缓存(`data/platform-reconcile.json`)是**对照**,缺失时 explanation 全为 null;
+  // 原因与证据以库内为准(见下方 `platform` 段)。
   const reconcile = readReconcile(config.reconcilePath)
-  // 库内平台证据(RL-03)同样只是增强:没有证据的行 platform 为 null。
+  // 库内平台原因与证据(RL-15 起的**主源**):每一行都带 platform。
   const rows = attachPlatformEvidence(attachReconcile(filtered, reconcile), db)
   const page = Math.max(1, Math.floor(num(q.page, 1)))
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25))))
+  const withExplanation = rows.filter((row) => row.platform.disposition.explanationId != null).length
   return {
     rows: rows.slice((page - 1) * pageSize, page * pageSize),
     total: rows.length,
     counts,
     curatedCounts,
+    platform: {
+      /** 有库内平台证据(曾用名 / 解释记录 / 查询)的行数。 */
+      withEvidence: rows.filter(
+        (row) =>
+          row.platform.disposition.explanationId != null ||
+          row.platform.aliases.length > 0 ||
+          row.platform.queries.length > 0,
+      ).length,
+      /** 有解释记录(= 已落状态/原因/措施)的行数。 */
+      withExplanation,
+      /**
+       * 还没有解释记录的行数 —— 它们的展示态是状态机默认态「未查询」。
+       * ⚠️ 不要与「`status = not_queried` 的行数」混同:后者**是有**解释记录的
+       * (写回时明确判成「无法直查」),两者是不同的东西。
+       */
+      withoutExplanation: rows.length - withExplanation,
+    },
     reconcile: {
       generatedAt: reconcile.generatedAt,
       matched: rows.filter((row) => row.explanation).length,
-    },
-    platform: {
-      withEvidence: rows.filter((row) => row.platform).length,
     },
   }
 })

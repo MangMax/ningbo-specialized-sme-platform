@@ -3,24 +3,47 @@ import { computed, ref } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { RECONCILE_LABELS, RECONCILE_SOURCE, RECONCILE_VARIANTS } from '~~/lib/labels'
+import {
+  DIFFERENCE_MEASURES,
+  DIFFERENCE_REASONS,
+  DIFFERENCE_STATUSES,
+  DIFFERENCE_STATUS_VARIANTS,
+  PLATFORM_RDJBS,
+  RECONCILE_LABELS,
+  RECONCILE_SOURCE,
+  VERIFICATION_STATUSES,
+} from '~~/lib/labels'
+import type { ComparisonDisposition } from '~~/lib/comparison-platform'
 import type { ReconcileEntry } from '~~/lib/reconcile'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 
 /**
- * 比对行的**平台解释**(票 16)。徽章给出**结论**(外地注册 / 平台有记录 …),
- * 展开后给出登记位置、关联条数与**这一行自己的取数时间**。
+ * 比对行的**平台解释**(票 16 起;RL-15 收口为**以库内为准**)。
+ *
+ * ── 数据来源为什么换了 ────────────────────────────────────────────────────
+ * 原来这一列只读 `data/platform-reconcile.json` 的离线解释缓存。用户 2026-10-16 反馈
+ * 「三个称号从平台获取的数据都没了」—— 根因正是**缓存缺失时整列退化成 `—`**,
+ * 而库里其实有 `difference_reason` / `platform_query` / `platform_relation`。
+ * 现在**主徽章取自库内解释记录**(`disposition`),离线缓存只在 tooltip 里作**对照**。
+ *
+ * ── 显示纪律(与契约 §3 / §2.8 一致)────────────────────────────────────
+ *  - 状态**只**从 `difference_reason.status` 取;没有解释记录时是状态机的默认态
+ *    `not_queried`(「还没查过」,**不是**「没有」),由 `explanationId === null` 说清。
+ *  - **读侧不二次推导**:不从查询/关系反推「无记录」或「已确认」,也不改写原因 ——
+ *    接口有记录时库里的 `confirmed_reason` + `platform_stale`(平台未更新)原样显示,
+ *    **绝不**显示成「无记录」/「已确认无差异」。
+ *  - 原因与后续措施**成对**出现;缺项(`movedIn` 不全)标「待补证」,不猜填。
  *
  * ## 打开方式(三轮:触屏必须能开)
  *
  * 一个受控的 `open`,三种触发都写进同一个状态:
  * - **悬停 / 键盘聚焦**:鼠标进→开、出→关(桌面习惯保留);
  * - **点击 / 触摸 tap**:自己 toggle —— 不用 reka 的内部切换,因为 Radix 系的 Tooltip
- *   在 `pointerdown` 会先请求关闭,再 toggle 会变成「关不掉」。所以记下 **按下瞬间**的
+ *   在 `pointerdown` 会先请求关闭,再 toggle 会变成「关不掉」。所以记下 **按下瞬间** 的
  *   状态,抬起时取反:开着的再点一下必然关。
  * - **键盘**:`Enter` / `Space` 等价于点击;`Escape`、失焦、点到别处都关。
  *
- * 触屏没有 hover,这也是**唯一**能在手机上看到 note 正文的路径。
+ * 触屏没有 hover,这也是**唯一**能在手机上看到说明正文的路径。
  *
  * ## 宽度(窄屏:24rem 会超出视口)
  *
@@ -34,18 +57,69 @@ import { formatFetchTime } from '~~/lib/reconcile-time'
  * ⇒ 它的右缘落在徽章左缘之外。于是既不遮吸顶表头 / 口径说明 / 任何一行的核实控件,
  * 也**不遮相邻行的同列徽章**。
  */
-const props = defineProps<{ explanation: ReconcileEntry | null }>()
+const props = defineProps<{
+  /** 库内**当前**处置(始终存在;没有解释记录时状态即 `not_queried`)。 */
+  disposition: ComparisonDisposition
+  /** 旧解释缓存条目,只作**对照**;缺失时为 `null`。 */
+  explanation?: ReconcileEntry | null
+}>()
 
-const label = computed(() =>
+const statusLabel = computed(
+  () => DIFFERENCE_STATUSES[props.disposition.status] ?? props.disposition.status,
+)
+const variant = computed(
+  () => DIFFERENCE_STATUS_VARIANTS[props.disposition.status] ?? 'quiet',
+)
+const reasonLabel = computed(() =>
+  props.disposition.reasonCode
+    ? (DIFFERENCE_REASONS[props.disposition.reasonCode] ?? props.disposition.reasonCode)
+    : null,
+)
+const measureLabel = computed(() =>
+  props.disposition.measureCode
+    ? (DIFFERENCE_MEASURES[props.disposition.measureCode] ?? props.disposition.measureCode)
+    : null,
+)
+/** 迁入的原城市/称号/年份/批次;**四项齐全才算完整**,缺项页面显示「待补证」。 */
+const movedInText = computed(() => {
+  const value = props.disposition.movedIn
+  if (!value) return null
+  const parts = [
+    value.city,
+    value.titleCode ? (PLATFORM_RDJBS[value.titleCode] ?? value.titleCode) : null,
+    value.year != null ? `${value.year} 年` : null,
+    value.batch != null ? `第 ${value.batch} 批` : null,
+  ].filter((part): part is string => !!part)
+  return parts.length ? parts.join(' · ') : null
+})
+const movedInComplete = computed(() => {
+  const value = props.disposition.movedIn
+  if (!value) return true
+  return value.city != null && value.titleCode != null && value.year != null && value.batch != null
+})
+/** 还没有解释记录 —— 状态是状态机的默认态,不是「无数据」。 */
+const hasRecord = computed(() => props.disposition.explanationId != null)
+
+/**
+ * 说明里的**补充部分**:写入侧的 `measure_note` / `reason_note` 有时就是标签本身
+ * (如措施 `mark_platform_snapshot` 的说明写成「标明平台时点,不覆盖历史。」),
+ * 那样 `标签 — 标签` 会读成复读。note 与标签同义(只差句末标点)时**不再重复**。
+ */
+function noteSuffix(label: string | null, note: string | null): string | null {
+  if (!note) return null
+  if (!label) return note
+  return note.replace(/[。.]+$/, '') === label.replace(/[。.]+$/, '') ? null : note
+}
+const reasonSuffix = computed(() => noteSuffix(reasonLabel.value, props.disposition.reasonNote))
+const measureSuffix = computed(() => noteSuffix(measureLabel.value, props.disposition.measureNote))
+
+/** 旧缓存的对照行;取数时间与缓存自身的 `fetchedAt` 同源(与旧版行为一致)。 */
+const cachedLabel = computed(() =>
   props.explanation ? RECONCILE_LABELS[props.explanation.explanation.code] : null,
 )
-const variant = computed(() =>
-  props.explanation ? RECONCILE_VARIANTS[props.explanation.explanation.code] : 'quiet',
-)
-const note = computed(() => props.explanation?.explanation.note ?? '')
-const evidence = computed(() => props.explanation?.evidence ?? null)
-/** 本行的取数时间;页脚用同一函数、同一字段,两处字面一致。 */
-const fetched = computed(() => formatFetchTime(props.explanation?.fetchedAt))
+const cachedNote = computed(() => props.explanation?.explanation.note ?? '')
+const cachedFetched = computed(() => formatFetchTime(props.explanation?.fetchedAt))
+const recordedAt = computed(() => formatFetchTime(props.disposition.recordedAt))
 
 /** 唯一真源:reka 的请求(hover / focus / Escape / blur)与本地点击都写它。 */
 const open = ref(false)
@@ -53,7 +127,7 @@ const open = ref(false)
 let openOnPointerDown = false
 
 /**
- * 让开多少:最长的标签「平台亦无记录」约 86px,留 100px 保证 tooltip 的右缘
+ * 让开多少:最长的标签「已确认无差异」约 86px,留 100px 保证 tooltip 的右缘
  * 落在徽章左缘之外(实测各标签 ≤ 88px)。
  *
  * ⚠️ 实测 `align="end"` 下 **正** offset 才是往左让(reka 的 alignOffset 与直觉相反:
@@ -80,7 +154,7 @@ function onKeydown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <TooltipProvider v-if="explanation && label">
+  <TooltipProvider>
     <Tooltip :open="open" @update:open="open = $event">
       <TooltipTrigger as-child>
         <Badge
@@ -88,14 +162,14 @@ function onKeydown(event: KeyboardEvent) {
           role="button"
           tabindex="0"
           :aria-expanded="open"
-          :aria-label="`${label}:展开平台解释`"
+          :aria-label="`${statusLabel}:展开平台原因与证据`"
           data-testid="reconcile-badge"
           class="cursor-pointer focus-visible:border-foreground/50 focus-visible:ring-2 focus-visible:ring-foreground/50 focus-visible:outline-none"
           @pointerdown="onPointerDown"
           @click="onClick"
           @keydown="onKeydown"
         >
-          {{ label }}
+          {{ statusLabel }}
         </Badge>
       </TooltipTrigger>
       <TooltipContent
@@ -107,20 +181,45 @@ function onKeydown(event: KeyboardEvent) {
         class="max-w-[min(24rem,var(--reka-tooltip-content-available-width,24rem))]"
       >
         <div class="flex flex-col gap-1">
-          <p class="font-medium">{{ label }}</p>
-          <p class="text-page/90 text-xs leading-relaxed">{{ note }}</p>
-          <p v-if="evidence" class="text-page/85 text-xs tabular-nums">
-            平台关联 {{ evidence.businessCount }} 条 · 申报 {{ evidence.applyCount }} 条 ｜ 认定类型:{{
-              evidence.rdjbLabel ?? '—'
-            }}
+          <p class="font-medium">{{ statusLabel }}</p>
+          <!-- 没有解释记录:如实说明「还没存下解释」,不说「无数据」。 -->
+          <p v-if="!hasRecord" class="text-page/90 text-xs leading-relaxed" data-testid="reconcile-no-record">
+            还没有解释记录 —— 状态为状态机的默认态「未查询」(还不曾查过,不是平台没有)。
           </p>
-          <!-- 来源 + 时间同一行;不折行(过窄时整行省略而不是断成两行) -->
-          <p class="text-page/85 overflow-hidden text-xs whitespace-nowrap text-ellipsis">
-            {{ RECONCILE_SOURCE }}<template v-if="fetched"> · 取数 {{ fetched }}</template>
+          <template v-else>
+            <p v-if="reasonLabel || disposition.reasonNote" class="text-page/90 text-xs leading-relaxed">
+              <span class="font-medium">原因:</span>{{ reasonLabel ?? '—'
+              }}<template v-if="reasonSuffix"> — {{ reasonSuffix }}</template>
+            </p>
+            <p v-else class="text-page/90 text-xs leading-relaxed">原因:—(该状态无需原因编码)</p>
+            <p v-if="measureLabel || disposition.measureNote" class="text-page/90 text-xs leading-relaxed">
+              <span class="font-medium">后续措施:</span>{{ measureLabel ?? '—'
+              }}<template v-if="measureSuffix"> — {{ measureSuffix }}</template>
+            </p>
+            <p v-else class="text-page/90 text-xs leading-relaxed">后续措施:—</p>
+            <p class="text-page/90 text-xs leading-relaxed">
+              <span class="font-medium">迁入来源:</span>
+              <template v-if="movedInText">
+                {{ movedInText }}<span v-if="!movedInComplete" class="text-destructive"> · 待补证</span>
+              </template>
+              <template v-else>—</template>
+            </p>
+            <p class="text-page/85 text-xs leading-relaxed">
+              核验:{{ VERIFICATION_STATUSES[disposition.verificationStatus] ?? disposition.verificationStatus
+              }}<template v-if="recordedAt"> · 登记 {{ recordedAt }}</template>
+            </p>
+          </template>
+          <!-- 旧解释缓存:只作对照,不是主源;它缺失时这一行不出现。 -->
+          <p
+            v-if="explanation && cachedLabel"
+            class="text-page/85 text-xs leading-relaxed"
+            data-testid="reconcile-cached"
+          >
+            旧解释缓存:{{ cachedLabel }}<template v-if="cachedNote"> — {{ cachedNote }}</template>
+            <template v-if="cachedFetched">({{ RECONCILE_SOURCE }} · 取数 {{ cachedFetched }})</template>
           </p>
         </div>
       </TooltipContent>
     </Tooltip>
   </TooltipProvider>
-  <span v-else class="text-muted-foreground text-xs" title="未抽到该企业的平台解释">—</span>
 </template>

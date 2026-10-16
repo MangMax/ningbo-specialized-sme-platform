@@ -260,6 +260,42 @@ export const DIFFERENCE_STATUS_ORDER: string[] = [
 ]
 
 /**
+ * 差异状态徽章色(RL-15,页面用)。与 `DIFFERENCE_STATUSES` **同键集合**(测试钉住)。
+ *
+ * 分级理由:
+ *  - `query_failed` 用 destructive —— 查询没执行成功**必须**看得见(它最容易被误读成「没有」);
+ *  - `needs_review` 用 dashed —— 虚线 = 尚未构成结论(与「入库培育」同一套线型语言);
+ *  - `confirmed_reason` 用 secondary(实底)—— 结论已成立;
+ *  - `not_queried` 最轻(quiet),「还没查过」不该抢注意力。
+ */
+export const DIFFERENCE_STATUS_VARIANTS: Record<
+  string,
+  'destructive' | 'outline' | 'secondary' | 'quiet' | 'dashed'
+> = {
+  not_queried: 'quiet',
+  query_failed: 'destructive',
+  no_record: 'outline',
+  needs_review: 'dashed',
+  confirmed_no_diff: 'quiet',
+  confirmed_reason: 'secondary',
+}
+
+/**
+ * 比对页「平台解释」列的表头说明(RL-15):状态取自**库内**解释记录,不是离线缓存。
+ * 六态互不等价的口径写在文案里,避免把「查询失败」「无记录」看成同一件事。
+ */
+export const DIFFERENCE_COLUMN_HINT =
+  '库内平台原因:状态取自解释记录(difference_reason)——未查询 / 查询失败 / 无记录 / 待核实 / 已确认无差异 / 已确认原因,并配对的后续措施。' +
+  '「查询失败」与「无记录」不是一回事:前者是查询没执行成功,后者是查询成功但平台返回 0 条。'
+
+/**
+ * 比对页差异状态图例的固定说明句(RL-15)。徽章只列**当前结果里真出现过**的取值。
+ */
+export const DIFFERENCE_LEGEND_TITLE = '状态图例'
+export const DIFFERENCE_LEGEND_NOTE =
+  '徽章是库内解释记录里的差异状态;悬停、键盘聚焦或点按可展开原因、配对措施与接口证据。'
+
+/**
  * 差异原因(`difference_reason.reason_code`)→ 中文名。
  * 已知五类必须覆盖:`moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 /
  * `platform_stale` 平台未更新 / `moved_in` 迁入;`other` 供**凭证据扩展**的新原因。
