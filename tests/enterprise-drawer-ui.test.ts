@@ -183,6 +183,20 @@ describe('企业详情抽屉的焦点返回', () => {
 })
 
 describe('企业详情抽屉的差异原因', () => {
+  it.each([
+    ['confirmed_no_diff', '已确认无差异', 'text-primary'],
+    ['query_failed', '查询失败', 'text-destructive'],
+    ['needs_review', '待核实', 'text-muted-foreground'],
+  ])('%s 状态在抽屉里显示中文状态与对应文字色', (status, label, tone) => {
+    queryData.value = detailWithDifference({ status })
+    queryLoading.value = false
+    const wrapper = mountDrawer()
+    const statusLabel = wrapper.get('[data-testid="enterprise-difference-status"]')
+
+    expect(statusLabel.text()).toBe(label)
+    expect(statusLabel.classes()).toContain(tone)
+  })
+
   it('confirmed_no_diff 没有 reason_code 时显示「无需原因」', () => {
     queryData.value = detailWithDifference()
     queryLoading.value = false

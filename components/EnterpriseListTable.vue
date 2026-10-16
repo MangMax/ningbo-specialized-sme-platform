@@ -128,20 +128,32 @@ function differenceReason(row: EnterpriseListRow): string {
  * 状态条取向 → 类名。**映射只有这一处**(取值表在 `lib/labels.ts` 的
  * `DIFFERENCE_STATUS_RAILS`)。三档的含义与「为什么不是六档」写在那张表的注释里。
  *
- * `open` 用 `bg-input`(`--input`,浅一档的描边灰):6px 的条要在白底上看得见,
- * 又要比「无差异」那一档的**空白**更明确 —— 空白 / 藏青 / 浅灰 / 红四种观感各有含义,
- * 滚动时那条带才读得出来。
+ * 未选中的 `confirmed` 用半透明主色,避免整屏同一强度的蓝色抢过当前行;选中项保持主色。
+ * `open` 用 `bg-input`(`--input`,浅一档的描边灰),`failed` 保留红色;无差异保持空白。
  */
-function railClass(row: EnterpriseListRow): string {
+function railKind(row: EnterpriseListRow): 'none' | 'confirmed' | 'failed' | 'open' {
   const status = row.difference.status
-  if (!row.difference.count || status == null) return 'bg-transparent'
+  if (!row.difference.count || status == null) return 'none'
   switch (DIFFERENCE_STATUS_RAILS[status]) {
     case 'confirmed':
-      return 'bg-primary'
+      return 'confirmed'
+    case 'failed':
+      return 'failed'
+    default:
+      return 'open'
+  }
+}
+
+function railClass(row: EnterpriseListRow): string {
+  switch (railKind(row)) {
+    case 'confirmed':
+      return props.selectedId === row.enterpriseId ? 'bg-primary' : 'bg-primary/40'
     case 'failed':
       return 'bg-destructive'
-    default:
+    case 'open':
       return 'bg-input'
+    default:
+      return 'bg-transparent'
   }
 }
 </script>
@@ -162,10 +174,10 @@ function railClass(row: EnterpriseListRow): string {
           <TableHead class="bg-muted h-9 w-[6px] p-0">
             <span class="sr-only">差异状态</span>
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[32%] text-xs font-semibold tracking-wide sm:w-[20rem]">
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[28%] text-xs font-semibold tracking-wide sm:w-[20rem]">
             企业名称
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[33%] text-xs font-semibold tracking-wide sm:w-[20rem]">
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[39%] text-xs font-semibold tracking-wide sm:w-[20rem]">
             称号 · 认定年
           </TableHead>
           <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[11.5rem] text-xs font-semibold tracking-wide sm:table-cell">
@@ -174,7 +186,7 @@ function railClass(row: EnterpriseListRow): string {
           <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[4.5rem] text-xs font-semibold tracking-wide sm:table-cell">
             属地
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[35%] text-xs font-semibold tracking-wide sm:w-[12rem]">
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[33%] text-xs font-semibold tracking-wide sm:w-[12rem]">
             差异状态
           </TableHead>
         </TableRow>
@@ -200,7 +212,12 @@ function railClass(row: EnterpriseListRow): string {
           @click="selectRow(row.enterpriseId, $event.currentTarget)"
         >
           <TableCell class="p-0 align-middle">
-          <span class="block h-5 w-[6px] rounded-r-sm" :class="railClass(row)" />
+            <span
+              class="block h-5 w-[6px] rounded-r-sm"
+              :class="railClass(row)"
+              :data-rail-kind="railKind(row)"
+              :data-selected="selectedId === row.enterpriseId"
+            />
           </TableCell>
 
           <TableCell class="max-w-0 break-words [overflow-wrap:anywhere]">
@@ -223,13 +240,21 @@ function railClass(row: EnterpriseListRow): string {
             </span>
           </TableCell>
 
-          <TableCell class="text-[13px] whitespace-normal break-words leading-4 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="title-recognition-cell">
+          <TableCell class="text-[13px] whitespace-normal break-words leading-5 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="title-recognition-cell">
             <span v-if="!row.titles.length" class="text-muted-foreground">—</span>
-            <template v-for="(item, i) in titleItems(row)" v-else :key="item.code">
-              <span v-if="i" class="text-muted-foreground px-1">·</span>
-              <span>{{ item.label }}</span>
-              <span class="text-muted-foreground tabular-nums"> {{ item.year ?? '年待核' }}</span>
-            </template>
+            <div v-else class="flex flex-wrap items-baseline gap-x-1 gap-y-0.5" data-testid="title-recognition-list">
+              <span
+                v-for="(item, i) in titleItems(row)"
+                :key="item.code"
+                data-testid="title-recognition-pair"
+                :data-title-code="item.code"
+                class="inline-flex max-w-full items-baseline whitespace-nowrap"
+              >
+                <span v-if="i" aria-hidden="true" class="text-muted-foreground mr-1">·</span>
+                <span>{{ item.label }}</span>
+                <span class="text-muted-foreground ml-1 tabular-nums">{{ item.year ?? '年待核' }}</span>
+              </span>
+            </div>
           </TableCell>
 
           <TableCell class="text-muted-foreground hidden font-mono text-xs tabular-nums sm:table-cell">

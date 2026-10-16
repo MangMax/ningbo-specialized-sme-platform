@@ -208,16 +208,37 @@ async function verifyLightThemeDefault(cdp) {
       dark: document.documentElement.classList.contains('dark'),
       savedMode: localStorage.getItem('vueuse-color-scheme'),
     })`)
-    if (initial.dark || initial.savedMode !== 'light') {
-      bad(`主题默认值:深色系统偏好与旧 auto 值应迁移为浅色,实测 ${JSON.stringify(initial)}`)
+    if (!initial.dark || initial.savedMode !== 'auto') {
+      bad(`主题偏好:显式保存的 auto 应继续跟随深色系统偏好,实测 ${JSON.stringify(initial)}`)
     } else {
-      ok('主题默认值:深色系统偏好下,旧 auto 默认已迁移为浅色')
+      ok('主题偏好:显式保存的 auto 仍跟随深色系统偏好')
     }
-    const lightToggle = await evaluate(cdp, sessionId, `document.querySelector('button[aria-label="切换到深色模式"]') != null`)
-    if (!lightToggle) bad('主题默认值:浅色模式下没有深色切换入口')
-    else ok('主题默认值:保留深色主题切换入口')
+    const lightToggle = await evaluate(cdp, sessionId, `document.querySelector('button[aria-label="切换到浅色模式"]') != null`)
+    if (!lightToggle) bad('主题偏好:深色模式下没有浅色切换入口')
+    else ok('主题偏好:深色模式下有浅色切换入口')
   } finally {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+
+  const freshPage = await openSession(
+    cdp,
+    `${BASE}/`,
+    VIEWPORTS[0],
+    READY,
+    {
+      mediaFeatures: [{ name: 'prefers-color-scheme', value: 'dark' }],
+      beforeLoadScript: `localStorage.removeItem('vueuse-color-scheme')`,
+    },
+  )
+  try {
+    const freshLight = await evaluate(cdp, freshPage.sessionId, `({
+      dark: document.documentElement.classList.contains('dark'),
+      savedMode: localStorage.getItem('vueuse-color-scheme'),
+    })`)
+    if (freshLight.dark) bad(`主题默认值:新会话在深色系统偏好下应从浅色开始,实测 ${JSON.stringify(freshLight)}`)
+    else ok(`主题默认值:新会话初始为浅色(${JSON.stringify(freshLight)})`)
+  } finally {
+    await cdp.send('Target.closeTarget', { targetId: freshPage.targetId }).catch(() => {})
   }
 
   const darkPage = await openSession(
@@ -351,6 +372,40 @@ function statusRailViolation(m, label) {
     : `${label}:最左状态条应为 6px,实测 ${m.statusRailWidth}px`
 }
 
+function statusRailHierarchyViolation(m, label) {
+  const inconsistent = (m.statusRailHierarchy ?? []).filter((rail) =>
+    rail.kind === 'confirmed' && (rail.selected
+      ? !rail.className.includes('bg-primary') || rail.className.includes('bg-primary/40')
+      : !rail.className.includes('bg-primary/40')),
+  )
+  return inconsistent.length
+    ? `${label}:当前选中行与其他已确认行的状态条层级不清 ${JSON.stringify(inconsistent.slice(0, 3))}`
+    : null
+}
+
+function titleRecognitionPairsViolation(m, label) {
+  const content = m.enterpriseMobileContent
+  if (!content) return null
+  if (content.title?.text === '—') return null
+  const pairs = content.titlePairs ?? []
+  if (!pairs.length) return `${label}:称号单元格没有按称号与认定年成组`
+  const broken = pairs.filter((pair) =>
+    !['inline-flex', 'flex'].includes(pair.display) || pair.whiteSpace !== 'nowrap' ||
+    pair.width > content.title.width + 1 || pair.scrollWidth > pair.clientWidth + 1,
+  )
+  return broken.length
+    ? `${label}:称号与认定年未保持在同一可读组内 ${JSON.stringify(broken.slice(0, 3))}`
+    : null
+}
+
+function timelineYearViolation(m, label) {
+  const years = m.enterpriseTimelineYears ?? []
+  const missing = years.filter((item) => !item.text)
+  return missing.length
+    ? `${label}:称号历史事件缺少明确的年份或待核标记 ${JSON.stringify(missing.slice(0, 3))}`
+    : null
+}
+
 function mobileCoreContentViolation(m, label) {
   if (m.innerWidth > 420) return null
   if (m.enterpriseMobileContent) {
@@ -384,8 +439,21 @@ function comparisonFiltersViolation(m, label) {
   if (!filters) return `${label}:找不到对比页筛选栏`
   const outside = filters.controls.filter((control) => control.left < -1 || control.right > m.innerWidth + 1)
   const searchTooNarrow = m.innerWidth < 1024 && filters.searchWidth < filters.clientWidth * 0.9
-  if (filters.scrollWidth > filters.clientWidth + 1 || outside.length || searchTooNarrow) {
-    return `${label}:对比页筛选栏控件越界或窄屏搜索框未铺满 ${JSON.stringify({ filters, outside, searchTooNarrow })}`
+  const clippedValues = (filters.values ?? []).filter(({ value }) =>
+    !value || value.display === 'none' || value.clientWidth < 1 ||
+    value.scrollWidth > value.clientWidth + 1 || value.textOverflow === 'ellipsis',
+  )
+  if (filters.scrollWidth > filters.clientWidth + 1 || outside.length || searchTooNarrow || clippedValues.length) {
+    return `${label}:对比页筛选控件越界、当前值被截断或窄屏搜索框未铺满 ${JSON.stringify({ filters, outside, searchTooNarrow, clippedValues })}`
+  }
+  return null
+}
+
+function comparisonRecordHierarchyViolation(m, label) {
+  const separators = m.comparisonMobileContent?.recordSeparators
+  if (!separators) return `${label}:找不到手机对比记录分隔线`
+  if (separators.recordBorderWidth < 2 || separators.innerBorderWidth >= separators.recordBorderWidth) {
+    return `${label}:手机对比记录边界没有强于内部细线 ${JSON.stringify(separators)}`
   }
   return null
 }
@@ -1252,8 +1320,7 @@ async function verifyKaichengExample(cdp) {
       Math.min(...connectorGaps) >= 12
     const okExample = example.rowCount === 1 && example.selected === 'true' &&
       example.uscc === '9133021274738281XA' && example.alias &&
-      ['2021', '2022', '2024'].every((year) => example.years.includes(year)) &&
-      example.years.filter((year) => year === '2024').length === 1 &&
+      JSON.stringify(example.years) === JSON.stringify(['2021', '2022', '2024', '2024', '2024', '2024']) &&
       example.historyRows.length === 6 && expectedEvents.every((event) => example.historyRows.some((line) => line.includes(event))) &&
       example.chainSteps === 3 && ['方向', '原因', '措施', '平台多出', '平台未更新', '标记平台快照'].every((value) => example.chainText.includes(value))
       && chainAligned
@@ -1664,11 +1731,20 @@ const MEASURE = `(() => {
     clientWidth: el.clientWidth,
     scrollWidth: el.scrollWidth,
   } : null;
+  const comparisonFilterValues = ['按称号筛选', '按区县筛选'].map((label) => {
+    const trigger = [...(comparisonFilters?.querySelectorAll('[role="combobox"]') ?? [])]
+      .find((el) => el.getAttribute('aria-label') === label);
+    return { label, value: cellMetrics(trigger?.querySelector('[data-slot="select-value"]')) };
+  });
   const enterpriseRow = root?.classList.contains('ledger-page')
     ? document.querySelector('.ledger-page tbody tr:not([data-loading="true"])')
     : null;
   const enterpriseName = enterpriseRow?.querySelector('td:nth-child(2) button');
   const enterpriseTitle = enterpriseRow?.querySelector('[data-testid="title-recognition-cell"]');
+  const enterpriseTitlePairs = [...(enterpriseTitle?.querySelectorAll('[data-testid="title-recognition-pair"]') ?? [])].map((el) => ({
+    ...cellMetrics(el),
+    width: Math.round(el.getBoundingClientRect().width),
+  }));
   const enterpriseDifference = enterpriseRow?.querySelector('[data-testid="enterprise-difference-cell"]');
   const enterpriseSearch = root?.classList.contains('ledger-page')
     ? root.querySelector('input[aria-label*="企业名称"]')
@@ -1677,6 +1753,10 @@ const MEASURE = `(() => {
     ? document.querySelector('[data-testid="enterprise-drawer"]')
     : null;
   const enterpriseDrawerRect = enterpriseDrawer?.getBoundingClientRect();
+  const enterpriseTimelineYears = [...(enterpriseDrawer?.querySelectorAll('[data-testid="timeline-event-year"]') ?? [])].map((el) => ({
+    text: (el.textContent ?? '').trim(),
+    label: el.getAttribute('aria-label') ?? '',
+  }));
   const elementVisibility = (el) => {
     const elementRect = el?.getBoundingClientRect();
     return elementRect && enterpriseDrawerRect ? {
@@ -1706,6 +1786,12 @@ const MEASURE = `(() => {
   const comparisonName = comparisonRow?.querySelector('[data-testid="comparison-enterprise-name"]');
   const comparisonDetails = comparisonRow?.querySelector('[data-testid="comparison-mobile-details"]');
   const firstRect = comparisonDetails?.getBoundingClientRect();
+  const comparisonRecord = comparisonRow?.querySelector('[data-testid="comparison-record-row"]') ?? comparisonRow;
+  const comparisonInnerDivider = comparisonDetails?.querySelector('[data-testid="comparison-mobile-status-divider"]');
+  const comparisonRecordSeparators = comparisonRecord && comparisonInnerDivider ? {
+    recordBorderWidth: Number.parseFloat(getComputedStyle(comparisonRecord).borderBottomWidth),
+    innerBorderWidth: Number.parseFloat(getComputedStyle(comparisonInnerDivider).borderBottomWidth),
+  } : null;
   const comparisonNames = [...(root?.querySelectorAll('[data-testid="comparison-enterprise-name"]') ?? [])].map((el) => ({
     text: (el.textContent ?? '').trim(),
     textOverflow: getComputedStyle(el).textOverflow,
@@ -1743,6 +1829,7 @@ const MEASURE = `(() => {
       scrollWidth: comparisonFilters.scrollWidth,
       searchWidth: Math.round(comparisonSearch?.getBoundingClientRect().width ?? 0),
       gridTemplateColumns: getComputedStyle(comparisonFilters).gridTemplateColumns,
+      values: comparisonFilterValues,
       controls: [...comparisonFilters.querySelectorAll('input,[role="combobox"]')].map((el) => {
         const rect = el.getBoundingClientRect();
         return { label: el.getAttribute('aria-label') ?? '', left: Math.round(rect.left), right: Math.round(rect.right) };
@@ -1753,8 +1840,19 @@ const MEASURE = `(() => {
       containerWidth: Math.round(enterpriseRow.closest('.overflow-auto')?.clientWidth ?? 0),
       name: cellMetrics(enterpriseName),
       title: cellMetrics(enterpriseTitle),
+      titlePairs: enterpriseTitlePairs,
       difference: cellMetrics(enterpriseDifference),
     } : null,
+    enterpriseTimelineYears,
+    statusRailHierarchy: enterpriseRows.map((row) => {
+      const rail = row.querySelector('td:first-child > span');
+      const className = rail?.className ?? '';
+      return {
+        selected: rail?.getAttribute('data-selected') === 'true',
+        kind: rail?.getAttribute('data-rail-kind') ?? 'none',
+        className,
+      };
+    }),
     enterpriseDrawerReading: enterpriseRow && enterpriseDrawer ? {
       open: enterpriseDrawer.getAttribute('data-state') === 'open',
       drawerLeft: Math.round(enterpriseDrawerRect?.left ?? 0),
@@ -1783,6 +1881,7 @@ const MEASURE = `(() => {
         height: Math.round(firstRect?.height ?? 0),
         hasStatus: !!comparisonDetails.querySelector('[data-testid="reconcile-status-trigger"]'),
       } : null,
+      recordSeparators: comparisonRecordSeparators,
     } : null,
     comparisonNames,
     evidenceSummaries,
@@ -1894,7 +1993,7 @@ async function main() {
           }
           const filters = comparisonFiltersViolation(m, label)
           if (filters) bad(filters)
-          else ok(`${label}:比对搜索与筛选控件均在视口内`)
+          else ok(`${label}:搜索框与筛选当前值完整可读并在视口内`)
           if (!m.comparisonNames.length || m.comparisonNames.some((name) => !name.text || name.textOverflow === 'ellipsis' || name.whiteSpace === 'nowrap' || name.scrollWidth > name.clientWidth)) {
             bad(`${label}:企业名称在表格列内仍被截断 ${JSON.stringify(m.comparisonNames.slice(0, 2))}`)
           } else {
@@ -1911,6 +2010,12 @@ async function main() {
           const rail = statusRailViolation(m, label)
           if (rail) bad(rail)
           else ok(`${label}:最左状态条实测 6px`)
+          const hierarchy = statusRailHierarchyViolation(m, label)
+          if (hierarchy) bad(hierarchy)
+          else ok(`${label}:选中行状态条更醒目,其他已确认状态条降低饱和度`)
+          const timelineYears = timelineYearViolation(m, label)
+          if (timelineYears) bad(timelineYears)
+          else if (m.enterpriseTimelineYears.length) ok(`${label}:抽屉每条称号历史事件均标有年份或待核`)
           if (viewport.width >= 1024) {
             const reading = enterpriseDrawerReadingViolation(m, label)
             if (reading) bad(reading)
@@ -1926,6 +2031,16 @@ async function main() {
           const mobileContent = mobileCoreContentViolation(m, label)
           if (mobileContent) bad(mobileContent)
           else ok(`${label}:窄屏首行可见企业名称、业务字段及状态,表格不需横向滚动`)
+          if (page.query === '/') {
+            const titlePairs = titleRecognitionPairsViolation(m, label)
+            if (titlePairs) bad(titlePairs)
+            else ok(`${label}:每个称号与认定年保持在同一组内`)
+          }
+          if (page.query === '/comparison') {
+            const hierarchy = comparisonRecordHierarchyViolation(m, label)
+            if (hierarchy) bad(hierarchy)
+            else ok(`${label}:对比记录边界强于内部细线`)
+          }
         }
         const motionCurve = motionCurveViolation(m, label)
         if (motionCurve) bad(motionCurve)
@@ -2028,6 +2143,25 @@ async function main() {
     else console.log(`✗ 窄屏方向显示缺陷自检按预期变红:${mobileDirectionSelfCheck}`)
     if (mobileDirectionSelfCheck) ok('窄屏方向显示缺陷自检:关闭临时 target 后缺陷已复原')
 
+    const mobileFilterValueBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/comparison`,
+      `(() => {
+        const value = document.querySelector('[aria-label="按称号筛选"] [data-slot="select-value"]');
+        value?.style.setProperty('width', '24px', 'important');
+        value?.style.setProperty('max-width', '24px', 'important');
+        value?.style.setProperty('overflow', 'hidden', 'important');
+        value?.style.setProperty('text-overflow', 'ellipsis', 'important');
+        return (${MEASURE});
+      })()`,
+      READY,
+      VIEWPORTS[1],
+    )
+    const mobileFilterValueSelfCheck = comparisonFiltersViolation(mobileFilterValueBroken, '窄屏筛选当前值缺陷自检')
+    if (!mobileFilterValueSelfCheck) bad('窄屏筛选当前值缺陷自检:临时裁切称号筛选值后,裁切断言仍未命中')
+    else console.log(`✗ 窄屏筛选当前值缺陷自检按预期变红:${mobileFilterValueSelfCheck}`)
+    if (mobileFilterValueSelfCheck) ok('窄屏筛选当前值缺陷自检:关闭临时 target 后缺陷已复原')
+
     const desktopDensityBroken = await openAndMeasure(
       cdp,
       `${BASE}/`,
@@ -2076,6 +2210,36 @@ async function main() {
     else console.log(`✗ 窄屏内容缺陷自检按预期变红:${mobileSelfCheck}`)
     if (mobileSelfCheck) ok('窄屏内容缺陷自检:关闭临时 target 后缺陷已复原')
 
+    const titlePairBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/`,
+      `(() => {
+        const pair = document.querySelector('.ledger-page [data-testid="title-recognition-pair"]');
+        pair?.style.setProperty('width', '24px', 'important');
+        pair?.style.setProperty('max-width', '24px', 'important');
+        pair?.style.setProperty('overflow', 'hidden', 'important');
+        return (${MEASURE});
+      })()`,
+      READY,
+      VIEWPORTS[1],
+    )
+    const titlePairSelfCheck = titleRecognitionPairsViolation(titlePairBroken, '称号与认定年分组缺陷自检')
+    if (!titlePairSelfCheck) bad('称号与认定年分组缺陷自检:临时裁切称号年份组后,分组断言仍未命中')
+    else console.log(`✗ 称号与认定年分组缺陷自检按预期变红:${titlePairSelfCheck}`)
+    if (titlePairSelfCheck) ok('称号与认定年分组缺陷自检:关闭临时 target 后缺陷已复原')
+
+    const timelineYearBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/`,
+      `(() => { const year = document.querySelector('[data-testid="enterprise-drawer"] [data-testid="timeline-event-year"]'); if (year) year.textContent = ''; return (${MEASURE}); })()`,
+      READY,
+      VIEWPORTS[0],
+    )
+    const timelineYearSelfCheck = timelineYearViolation(timelineYearBroken, '抽屉事件年份缺陷自检')
+    if (!timelineYearSelfCheck) bad('抽屉事件年份缺陷自检:临时清空一个事件年份后,年份断言仍未命中')
+    else console.log(`✗ 抽屉事件年份缺陷自检按预期变红:${timelineYearSelfCheck}`)
+    if (timelineYearSelfCheck) ok('抽屉事件年份缺陷自检:关闭临时 target 后缺陷已复原')
+
     const railBroken = await openAndMeasure(
       cdp,
       `${BASE}/`,
@@ -2087,6 +2251,36 @@ async function main() {
     if (!railSelfCheck) bad('状态条宽度缺陷自检:临时恢复 3px 状态条后断言仍未命中')
     else console.log(`✗ 状态条宽度缺陷自检按预期变红:${railSelfCheck}`)
     if (railSelfCheck) ok('状态条宽度缺陷自检:关闭临时 target 后缺陷已复原')
+
+    const railHierarchyBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/`,
+      `(() => {
+        const rail = document.querySelector('.ledger-page tbody tr [data-rail-kind="confirmed"][data-selected="false"]');
+        if (rail) { rail.classList.remove('bg-primary/40'); rail.classList.add('bg-primary'); }
+        return (${MEASURE});
+      })()`,
+      READY,
+      VIEWPORTS[0],
+    )
+    const railHierarchySelfCheck = statusRailHierarchyViolation(railHierarchyBroken, '状态条层级缺陷自检')
+    if (!railHierarchyBroken.statusRailHierarchy?.some((rail) => rail.kind === 'confirmed' && !rail.selected)) {
+      bad('状态条层级缺陷自检:当前首屏没有可供注入的非选中已确认状态条')
+    } else if (!railHierarchySelfCheck) bad('状态条层级缺陷自检:临时加深非选中行状态条后,层级断言仍未命中')
+    else console.log(`✗ 状态条层级缺陷自检按预期变红:${railHierarchySelfCheck}`)
+    if (railHierarchySelfCheck) ok('状态条层级缺陷自检:关闭临时 target 后缺陷已复原')
+
+    const comparisonRecordBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/comparison`,
+      `(() => { document.querySelector('[data-testid="comparison-record-row"]')?.style.setProperty('border-bottom-width', '1px', 'important'); return (${MEASURE}); })()`,
+      READY,
+      VIEWPORTS[1],
+    )
+    const comparisonRecordSelfCheck = comparisonRecordHierarchyViolation(comparisonRecordBroken, '手机对比记录边界缺陷自检')
+    if (!comparisonRecordSelfCheck) bad('手机对比记录边界缺陷自检:临时减弱记录边界后,层级断言仍未命中')
+    else console.log(`✗ 手机对比记录边界缺陷自检按预期变红:${comparisonRecordSelfCheck}`)
+    if (comparisonRecordSelfCheck) ok('手机对比记录边界缺陷自检:关闭临时 target 后缺陷已复原')
 
     const shadowBroken = await openAndMeasure(
       cdp,

@@ -98,14 +98,6 @@ describe('六态两两可区分', () => {
     }
   })
 
-  it('RL-20 抽屉状态使用文字与单色提示,不再套状态徽章', () => {
-    const src = readFileSync(new URL('../components/EnterpriseDrawer.vue', import.meta.url), 'utf8')
-    expect(src).toContain('DIFFERENCE_STATUS_RAILS')
-    expect(src).toContain('statusTextClass(d.status)')
-    expect(src).not.toContain('components/ui/badge')
-    expect(src).toContain('历史差异')
-  })
-
   /**
    * ── 通道距离,以及「允许只有一条通道」这件事的理由 ────────────────────────
    *

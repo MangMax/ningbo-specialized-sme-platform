@@ -176,9 +176,9 @@ const exportUrl = computed(() => {
 
     <div
       data-testid="comparison-filters"
-      class="grid min-w-0 grid-cols-12 gap-2 lg:grid-cols-[minmax(16rem,1fr)_14rem_12rem_14rem]"
+      class="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-8 lg:grid-cols-[minmax(16rem,1fr)_14rem_12rem_14rem]"
     >
-      <div class="relative col-span-12 min-w-0 lg:col-span-1">
+      <div class="relative col-span-2 min-w-0 sm:col-span-8 lg:col-span-1">
         <Search class="text-muted-foreground absolute top-2 left-2.5 size-3.5" />
         <Input
           v-model="q"
@@ -188,23 +188,23 @@ const exportUrl = computed(() => {
         />
       </div>
       <Select v-model="title">
-        <SelectTrigger size="sm" class="bg-card col-span-5 w-full min-w-0 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 lg:col-span-1" aria-label="按称号筛选">
-          <SelectValue />
+        <SelectTrigger size="sm" class="bg-card col-span-1 w-full min-w-0 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 sm:col-span-2 lg:col-span-1" aria-label="按称号筛选">
+          <SelectValue class="min-w-0 flex-1" />
         </SelectTrigger>
         <SelectContent class="shadow-none">
           <SelectItem v-for="code in titles" :key="code" :value="code">{{ TITLES[code] }}</SelectItem>
         </SelectContent>
       </Select>
       <Select v-model="districtModel">
-        <SelectTrigger size="sm" class="bg-card col-span-3 w-full px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 lg:col-span-1" aria-label="按区县筛选">
-          <SelectValue />
+        <SelectTrigger size="sm" class="bg-card col-span-1 w-full min-w-0 px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 sm:col-span-2 lg:col-span-1" aria-label="按区县筛选">
+          <SelectValue class="min-w-0 flex-1" />
         </SelectTrigger>
         <SelectContent class="shadow-none">
           <SelectItem :value="ALL_DISTRICTS">全部区县</SelectItem>
           <SelectItem v-for="item in districtOptions" :key="item" :value="item">{{ item }}</SelectItem>
         </SelectContent>
       </Select>
-      <div class="col-span-4 min-w-0 lg:col-span-1" data-testid="comparison-direction-filter">
+      <div class="col-span-2 min-w-0 sm:col-span-4 lg:col-span-1" data-testid="comparison-direction-filter">
         <Select v-model="direction">
           <SelectTrigger
             size="sm"
@@ -328,7 +328,8 @@ const exportUrl = computed(() => {
                         v-for="row in rows"
                         v-else
                         :key="`${row.enterpriseId}-${row.titleCode}-${row.direction}`"
-                        class="min-h-9 [&>td]:py-1 [&>td]:align-top"
+                        data-testid="comparison-record-row"
+                        class="min-h-9 border-b-2 border-border sm:border-b [&>td]:py-1 [&>td]:align-top"
                       >
                         <TableCell class="font-medium">
                           <NuxtLink
@@ -373,8 +374,8 @@ const exportUrl = computed(() => {
                           <ComparisonCuration :row="row" @saved="refreshCuration" />
                         </TableCell>
                         <TableCell colspan="6" class="whitespace-normal sm:hidden">
-                          <div class="flex min-w-0 flex-col gap-1.5" data-testid="comparison-mobile-details">
-                            <div class="border-b pb-1 text-[13px] leading-5">
+                          <div class="flex min-w-0 flex-col gap-1" data-testid="comparison-mobile-details">
+                            <div class="border-b border-border/50 pb-1 text-[13px] leading-5" data-testid="comparison-mobile-status-divider">
                               <span class="text-muted-foreground">{{ COMPARISON_OTHER_SIDE[row.direction] }}</span>
                               <span class="text-muted-foreground px-1">·</span>
                               <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />

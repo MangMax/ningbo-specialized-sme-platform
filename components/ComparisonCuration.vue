@@ -38,7 +38,7 @@ async function save(curated: boolean, editedNote?: string) {
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-1" :class="compact ? 'border-t pt-1.5' : ''">
+  <div class="flex min-w-0 flex-col gap-1" :class="compact ? 'border-t border-border/50 pt-1' : ''">
     <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
       <Switch :model-value="row.curated" :disabled="pending" :aria-label="`核实 ${row.name}`" class="shadow-none" @update:model-value="save($event)" />
       <span class="text-[13px] leading-5" :class="row.curated ? 'text-primary' : 'text-muted-foreground'">{{ row.curated ? '已核实' : '待核实' }}</span>

@@ -31,8 +31,8 @@ import { Skeleton } from '@/components/ui/skeleton'
  * ── 三块内容,都是实打实从 `/api/roster/enterprises/:id` 取的 ─────────────
  * 1. **事实三行**:属地 / 曾用名 / 差异状态;
  * 2. **竖向时间轴**:该企业**每个称号**的历次事件(认定 / 复核 / 维持),
- *    按「结论年份 → 称号先来后到 → 认定在复核维持前」排;同一年**只写一次年份**
- *    (设计稿点名的那个坑:小巨人的认定与维持同年,别画成两个年份);
+ *    按「结论年份 → 称号先来后到 → 认定在复核维持前」排;每条事件都标出结论年份,
+ *    同年事件共享年份值,但各自可直接核对;
  * 3. **差异块**:方向 · 原因 → 措施 的**可视化链**,外加依据原文与措施原文。
  *    这一块就是用户要求的「原因也要可视化」在行级之外的那一半(行级是那条 6px 状态条)。
  */
@@ -214,8 +214,6 @@ interface TimelineItem {
   yearUnknown: boolean
   /** 该企业**等级最高**的称号的首次认定 —— 时间轴上被点亮的那一枚。 */
   highlight: boolean
-  /** 同一年里第一条才写年份(设计稿点名的坑)。 */
-  firstOfYear: boolean
 }
 
 /**
@@ -223,12 +221,12 @@ interface TimelineItem {
  *  1. 事件按 `recordId` 认回称号;只有同一称号下**批次、原年份、结论年份和结论**
  *     都相同的事件才合并,避免跨来源重复,同时保住不同批次与不同复核事实;
  *  2. 按 (年份, 称号先来后到, 事件类型) 排 —— `EVENT_ORDER` 正好是「认定 → 复核 → 维持」;
- *  3. 年份只在每组的第一条上写出来。
+ *  3. 每条事件都保留自己的结论年份;待核年份显示「待核」,不从原认定年份推测。
  */
 const timeline = computed<TimelineItem[]>(() => {
   const events = detail.value?.events ?? []
   const seen = new Set<string>()
-  const items: Omit<TimelineItem, 'firstOfYear' | 'highlight'>[] = []
+  const items: Omit<TimelineItem, 'highlight'>[] = []
   for (const event of events) {
     const titleCode = titleOfRecord.value.get(event.recordId)
     if (!titleCode) continue
@@ -265,12 +263,7 @@ const timeline = computed<TimelineItem[]>(() => {
       a.key.localeCompare(b.key),
   )
 
-  let lastYear: number | null | undefined
-  return items.map((item) => {
-    const firstOfYear = item.year !== lastYear
-    lastYear = item.year
-    return { ...item, firstOfYear, highlight: item.key === highlightKey }
-  })
+  return items.map((item) => ({ ...item, highlight: item.key === highlightKey }))
 })
 
 /** 差异块:状态机顺序已经在读模型里排过(`§7.2` 的排序),这里原样用。 */
@@ -371,8 +364,12 @@ function eventSuffix(item: TimelineItem): string {
               class="grid grid-cols-[38px_16px_1fr] items-start"
               :class="item.year == null ? 'min-h-0' : 'min-h-10'"
             >
-              <span class="text-muted-foreground pr-2.5 text-right text-xs leading-5 tabular-nums">
-                {{ item.firstOfYear && item.year != null ? item.year : '' }}
+              <span
+                data-testid="timeline-event-year"
+                class="text-muted-foreground pr-2.5 text-right text-xs leading-5 tabular-nums"
+                :aria-label="item.yearUnknown || item.year == null ? '结论年份待核' : `${item.year}年`"
+              >
+                {{ item.yearUnknown || item.year == null ? '待核' : item.year }}
               </span>
               <!-- 轴线:除最后一条外都往下接;点亮的圆点 = 该企业等级最高称号的首次认定。 -->
               <span class="relative self-stretch">
@@ -421,7 +418,7 @@ function eventSuffix(item: TimelineItem): string {
             <div v-for="d in differences" :key="`${d.titleCode}-${d.direction}`" class="mt-3">
               <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] leading-5">
                 <span class="font-medium">{{ TITLES[d.titleCode] ?? d.titleCode }}</span>
-                <span :class="statusTextClass(d.status)">{{ DIFFERENCE_STATUSES[d.status] ?? d.status }}</span>
+                <span data-testid="enterprise-difference-status" :class="statusTextClass(d.status)">{{ DIFFERENCE_STATUSES[d.status] ?? d.status }}</span>
                 <span v-if="!d.inCurrentDifference" class="text-muted-foreground">历史差异</span>
               </div>
               <!--
