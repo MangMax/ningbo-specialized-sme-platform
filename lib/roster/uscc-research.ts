@@ -289,6 +289,68 @@ export function isByteEqualName(a: unknown, b: unknown): boolean {
   return typeof a === 'string' && typeof b === 'string' && a === b
 }
 
+/**
+ * 名称比对的**档次**（父代理 2026-10-16 裁定：「归一化后相等即成立，A 类仍不抹平」）。
+ *
+ * 三档**逐级放宽**，每一档都必须能说出「差的是哪一类字形/写法」：
+ *
+ *  - `byte` —— **逐字相等**。用户原始口径（契约 §5.1）与默认判据；
+ *  - `typographic` —— 只差**全/半角括号**与空白/零宽字符。括号是同一个符号的两种字形，
+ *    不可能改变「这是哪家公司」（实测 `爱芯元智半导体(宁波)有限公司` vs
+ *    `爱芯元智半导体（宁波）有限公司`：平台只写了全角括号）；
+ *  - `district_suffix` —— 只差**区县名后面那个「县」/「区」的有无**（实测
+ *    `象山县时利模塑有限公司` vs `象山时利模塑有限公司`）。
+ *
+ * ⚠️ **不抹平「有限公司 ↔ 股份有限公司」**（父代理明令）：那一类正是**更名**证据
+ * （契约 §5.1 靠它认曾用名），抹平了就再也认不出来。所以本函数**不做**归一化替换，
+ * 只做上面这三种**可命名的字形/写法差异**，其余一律返回 `null`（判据不成立）。
+ *
+ * ⚠️ 与 `normalizeName` 的分工：`normalizeName` 会**去掉**括号、补「宁波」前缀，
+ * 用作**检索**口径；本函数是**判据**，比它窄得多 —— 它不能改变名字里除上述三类以外的任何字符。
+ */
+export type NameMatchLevel = 'byte' | 'typographic' | 'district_suffix'
+
+/** 宁波的区县短名（去「区/县/市」后缀），用于识别「区县后缀有无」这一类写法差异。 */
+const DISTRICT_STEMS = ['海曙', '江北', '北仑', '镇海', '鄞州', '奉化', '余姚', '慈溪', '宁海', '象山', '前湾'] as const
+
+/**
+ * 名称比对：返回成立的最强档次，不成立返回 `null`。**纯函数、无 IO、无打分**。
+ *
+ * 「逐字」之外的两档都不是相似度：它们要求**除该字形/写法差异外逐字相同**，
+ * 所以是「同一条记录的两个写法」，不是「两个名字像不像」。
+ */
+export function nameMatchLevel(a: unknown, b: unknown): NameMatchLevel | null {
+  if (typeof a !== 'string' || typeof b !== 'string') return null
+  if (a === b) return 'byte'
+  const fold = (value: string) => value.replace(INVISIBLE, '').replace(/（/g, '(').replace(/）/g, ')')
+  const fa = fold(a)
+  const fb = fold(b)
+  if (fa === fb) return 'typographic'
+  // 区县后缀：从**一侧**删掉紧跟在区县短名后面的那个「县」或「区」，看是否与另一侧逐字相同。
+  // 只允许删**一处**、且它必须紧跟在区县短名之后（父代理实测的反例：把「北仑顺兴」的
+  // 「顺」前补一个「区」是把名字改坏了 —— 但作为**比对**，只有当平台/公布件一侧真的写了
+  // 「北仑区顺兴」、另一侧写「北仑顺兴」时才会命中，那种情况本来就是同一个区县名）。
+  for (const [x, y] of [
+    [fa, fb],
+    [fb, fa],
+  ] as const) {
+    for (const stem of DISTRICT_STEMS) {
+      for (const suffix of ['县', '区'] as const) {
+        const at = x.indexOf(stem + suffix)
+        if (at < 0) continue
+        const stripped = x.slice(0, at + stem.length) + x.slice(at + stem.length + suffix.length)
+        if (stripped === y) return 'district_suffix'
+      }
+    }
+  }
+  return null
+}
+
+/** 三档里至少到 `typographic` 才算「归一化后相等」；`byte` 之外都算放宽。 */
+export function isEquivalentName(a: unknown, b: unknown): boolean {
+  return nameMatchLevel(a, b) != null
+}
+
 /** 平台接口地址（**平台原始证据**那一路的「来源」——它不是公开内容页，见 §8.10 的说明）。 */
 export const PLATFORM_INTERFACE_URLS = {
   business_list: 'https://zjtx.miit.gov.cn/zxqy/ZjtxxjrBusInfoManageBLH/businessList',

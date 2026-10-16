@@ -814,11 +814,11 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
           ],
           reason: '库内命中 + 平台 qymc 逐字相等',
         },
-        { enterpriseId: 1, name: '甲', candidateUscc: null, verdict: 'not_found', reason: '库内与平台都查不到' },
-        { enterpriseId: 2, name: '乙', candidateUscc: '91330211MA2CL6FP24', verdict: 'conflict', reason: '两个候选都自称' },
-        { enterpriseId: 3, name: '丙', candidateUscc: '91330211MA2CL6FP24', verdict: 'needs_human', reason: '会话失败' },
+        { enterpriseId: 9001, name: '甲', candidateUscc: null, verdict: 'not_found', reason: '库内与平台都查不到' },
+        { enterpriseId: 9002, name: '乙', candidateUscc: '91330211MA2CL6FP24', verdict: 'conflict', reason: '两个候选都自称' },
+        { enterpriseId: 9003, name: '丙', candidateUscc: '91330211MA2CL6FP24', verdict: 'needs_human', reason: '会话失败' },
         {
-          enterpriseId: 4,
+          enterpriseId: 9004,
           name: '丁',
           candidateUscc: '91330211MA2CL6FP24',
           qymcEqualsAnnouncedName: false,
@@ -854,8 +854,8 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
 
     const bad = normalizeUsccVerdicts([
       batchFile([
-        { enterpriseId: 1, name: '甲', verdict: 'resolved', candidateUscc: '', qymcEqualsAnnouncedName: true },
-        { enterpriseId: 2, name: '乙', verdict: 'maybe', candidateUscc: '91330211MA2CL6FP24' },
+        { enterpriseId: 9101, name: '甲', verdict: 'resolved', candidateUscc: '', qymcEqualsAnnouncedName: true },
+        { enterpriseId: 9102, name: '乙', verdict: 'maybe', candidateUscc: '91330211MA2CL6FP24' },
         { name: '丙', verdict: 'resolved', candidateUscc: '91330211MA2CL6FP24' },
       ]),
     ])
@@ -864,7 +864,7 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     expect(bad.problems.join('|')).toContain('verdict 取值未知')
     expect(bad.problems.join('|')).toContain('缺 enterpriseId / name')
     expect(bad.untouched).toEqual([
-      { enterpriseId: 1, name: '甲', verdict: 'needs_human', reason: 'resolved 但没给候选统代', blocked: null },
+      { enterpriseId: 9101, name: '甲', verdict: 'needs_human', reason: 'resolved 但没给候选统代', blocked: null },
     ])
   })
 
@@ -1003,8 +1003,10 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     ])
     expect(ingest.platformClaims).toHaveLength(1)
     expect(ingest.platformClaims[0]!.batchRef).toBe('uscc-verdict-batch-1')
-    expect(ingest.untouched.map((row) => row.reason)).toEqual([expect.stringContaining('不重复采纳')])
-    expect(ingest.problems).toEqual([])
+    // 「取更强结论」的收尾：这家企业已经可采纳 ⇒ 同一企业的另一条（哪怕标 conflict）
+    // **不再**进「不动库」清单，只在 problems 里说明 —— 否则同一条既算补齐又算冲突。
+    expect(ingest.untouched).toEqual([])
+    expect(ingest.problems.join('|')).toContain('取更强结论')
 
     // 同企业两个**不同**候选统代 ⇒ 保留先出现的，后一条转冲突待核（不猜哪个对）。
     const clash = normalizeUsccVerdicts([
@@ -1018,9 +1020,10 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
         } as UsccVerdictFile,
       },
     ])
-    expect(clash.platformClaims).toHaveLength(1)
+    // 两边都自称有证据、候选统代却不同 ⇒ **该企业整体不写**（先出现的那条也撤回）。
+    expect(clash.platformClaims).toHaveLength(0)
     expect(clash.untouched[0]!.verdict).toBe('conflict')
-    expect(clash.problems[0]).toContain('两个**不同**的候选统代')
+    expect(clash.problems.join('|')).toContain('撤回先前采纳')
   })
 
   it('★ 只交判定文件时**只判这些目标** —— 不顺手把库内路径能解决的也一起归并', () => {

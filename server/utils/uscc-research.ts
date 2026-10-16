@@ -31,9 +31,11 @@ import {
   coreWordOf,
   isByteEqualName,
   judgeUsccClaim,
+  nameMatchLevel,
   missingUsccSourceFields,
   PLATFORM_INTERFACE_URLS,
   usccFormatVerdict,
+  type NameMatchLevel,
   type UsccChecklistFilter,
   type UsccChecklistResult,
   type UsccChecklistRow,
@@ -690,7 +692,10 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
     }
 
     // 证据解析：先看库里已有的关系，再看判定文件带来的摘要。
-    const stored = findUsccKeyedRelationEvidence(db, { uscc, name: target.name }, evidenceIndex)
+    // 判据：父代理 2026-10-16 裁定「归一化后相等即成立，A 类仍不抹平」——
+    // 即逐字之外还认「全/半角括号与空白」与「区县后缀有无」两类**可命名的字形/写法差异**。
+    // 实际命中到哪一档会记进 `evidence.nameMatch`，报告里能一眼看出哪些回填依赖放宽判据。
+    const stored = findUsccKeyedRelationEvidence(db, { uscc, name: target.name }, evidenceIndex, nameMatchLevel)
     const supplied = pickSuppliedEvidence(claim, target.name, uscc)
     if (!stored.ok && !supplied) {
       const why = stored.reason === 'no_platform_query' ? '库里没有以该统代为查询键的平台查询' : stored.message
@@ -845,7 +850,12 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       // 拿候选统代**去平台按统代查**（已落库的查询/关系就是那次实查的证据）。
       const evidenced = new Map<string, { candidate: UsccLibraryCandidate; evidence: DuplicateMergeEvidence }>()
       for (const candidate of candidates) {
-        const found = findUsccKeyedRelationEvidence(db, { uscc: candidate.uscc, name: target.name }, evidenceIndex)
+        const found = findUsccKeyedRelationEvidence(
+          db,
+          { uscc: candidate.uscc, name: target.name },
+          evidenceIndex,
+          nameMatchLevel,
+        )
         if (found.ok && !evidenced.has(candidate.uscc)) {
           evidenced.set(candidate.uscc, { candidate, evidence: found.evidence })
         }
@@ -1128,6 +1138,8 @@ interface SuppliedEvidence {
   nameRaw: string
   status: string | null
   sourceKind: 'platform_business' | 'platform_apply'
+  /** 名称比对到了哪一档（`byte` / `typographic` / `district_suffix`）。 */
+  nameMatch: NameMatchLevel
   /** 代理实际发出的那次查询（如 `qymc=…`）；判定文件没给就留空。 */
   query: string | null
   queriedAt: string
@@ -1155,7 +1167,8 @@ function pickSuppliedEvidence(
   for (const item of claim.evidence ?? []) {
     if (!item || typeof item !== 'object') continue
     if (item.interface !== 'business_list' && item.interface !== 'apply_list') continue
-    if (!isByteEqualName(item.nameRaw, targetName)) continue
+    const level = nameMatchLevel(item.nameRaw, targetName)
+    if (!level) continue
     const sequenceNo = Number(item.sequenceNo)
     if (!Number.isInteger(sequenceNo) || sequenceNo < 1) continue
     const rawUscc = normalizeUscc(item.usccRaw)
@@ -1168,6 +1181,7 @@ function pickSuppliedEvidence(
       nameRaw: item.nameRaw,
       status: item.status ?? null,
       sourceKind: item.interface === 'business_list' ? 'platform_business' : 'platform_apply',
+      nameMatch: level,
       query: typeof item.query === 'string' && item.query.trim() ? item.query.trim() : null,
       queriedAt: observedAt,
       checkedOn: observedAt.slice(0, 10),
@@ -1185,13 +1199,20 @@ function describeEvidenceLine(
     const e = stored.evidence
     return (
       `${e.interface}${e.rdjb ? ` rdjb=${e.rdjb}` : ''} 序号 ${e.sequenceNo}` +
-      `${e.relationKey ? `（${e.relationKey}）` : ''} 于 ${e.queriedAt} 返回的 qymc 逐字等于「${e.nameRaw}」（库内关系 ${e.relationId}）`
+      `${e.relationKey ? `（${e.relationKey}）` : ''} 于 ${e.queriedAt} 返回的 qymc ${matchWords(e.nameMatch)}「${e.nameRaw}」（库内关系 ${e.relationId}）`
     )
   }
   const e = supplied!
   return (
     `${e.interface}${e.rdjb ? ` rdjb=${e.rdjb}` : ''} 序号 ${e.sequenceNo}` +
-    `${e.relationKey ? `（${e.relationKey}）` : ''} 返回的 qymc 逐字等于「${e.nameRaw}」` +
+    `${e.relationKey ? `（${e.relationKey}）` : ''} 返回的 qymc ${matchWords(e.nameMatch)}「${e.nameRaw}」` +
     `（随本批写入，见本批 platformQueries）`
   )
+}
+
+/** 把比对档次写成一句可读的判据说明（逐字 / 字形等价 / 区县后缀写法）。 */
+function matchWords(level: NameMatchLevel | undefined): string {
+  if (level === 'typographic') return '仅字形等价（全/半角括号、空白差异）于'
+  if (level === 'district_suffix') return '仅区县后缀写法差异于'
+  return '逐字等于'
 }

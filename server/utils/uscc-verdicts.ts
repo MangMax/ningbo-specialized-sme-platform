@@ -140,6 +140,14 @@ export function readUsccVerdicts(dir: string, files: readonly string[] = USCC_VE
 /** 归一化(纯函数,可单测):判定文件 → 平台证据认领 + 未采纳清单。 */
 export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVerdictFile }>): UsccVerdictIngest {
   const platformClaims: UsccPlatformClaim[] = []
+  /** 已采纳的认领：enterpriseId → 那条（用来判「同一企业两批结论不同时取更强」）。 */
+  const seenByEnterprise = new Map<number, UsccPlatformClaim>()
+  /**
+   * 两家文件给出**不同**候选统代的企业 —— 两边都自称有证据，软件不替它们挑。
+   * 这类企业**整体不写**（连先出现的那条也撤回），所以它既不进「已采纳」，也不被
+   * 下面的「取更强结论」收敛掉。
+   */
+  const conflictingEnterprises = new Set<number>()
   const untouched: UsccVerdictUntouched[] = []
   const batches: UsccVerdictIngest['batches'] = []
   const problems: string[] = []
@@ -226,34 +234,41 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
         }))
         // 逐字相等：与计划侧**同一个具名判据**（`isByteEqualName`），不在这里另写一次比较。
         .filter((entry) => Number.isInteger(entry.sequenceNo) && entry.sequenceNo >= 1 && isByteEqualName(entry.nameRaw, name))
-      // **按企业去重**：同一家企业可能有两个称号 ⇒ 在两个批次各出现一次。
-      // 同企业重复提同一件事不是两条证据（第二次会自己在同一轮里撞自己），只在报告里说明。
-      const duplicate = platformClaims.find((claim) => claim.enterpriseId === enterpriseId)
-      if (duplicate) {
-        if (normalizeUscc(duplicate.uscc) !== normalizeUscc(uscc)) {
-          problems.push(
-            `${where}: 同一企业 ${enterpriseId} 在判定文件里出现了两个**不同**的候选统代` +
-              `（${duplicate.uscc} / ${uscc}）⇒ 保留先出现的那个，本条转冲突待核`,
-          )
+      // **按企业去重，取最强结论**（父代理 2026-10-16 裁定）：
+      // 同一家企业可能有两个称号 ⇒ 在两个批次各出现一次（实测 10 家）。两批结论不同时取
+      // **更强**的那个（`resolved` > `conflict`/`needs_human` > `not_found`）——「resolved」
+      // 是**有证据的**（能指名具体关系与 qymc），另一批只是**搜得浅**；
+      // **不按「哪批后跑完」定案**（那是运气，不是证据）。
+      // 两边都 resolved 但候选统代**不同** ⇒ 落冲突（都自称有证据，软件不替它们挑）。
+      const existing = seenByEnterprise.get(enterpriseId)
+      if (existing) {
+        if (normalizeUscc(existing.uscc) === normalizeUscc(uscc)) {
           untouched.push({
             enterpriseId,
             name,
-            verdict: 'conflict',
-            reason: `同一企业在判定文件里有两个不同候选统代（${duplicate.uscc} / ${uscc}）`,
+            verdict: 'resolved',
+            reason: `同一企业已在更早的批次文件里采纳（${existing.batchRef}，候选统代 ${existing.uscc}）⇒ 本文件不重复采纳`,
             blocked: null,
           })
           return
         }
+        problems.push(
+          `${where}: 同一企业 ${enterpriseId} 在 ${existing.batchRef} 与本文件各有一个**不同**的候选统代` +
+            `（${existing.uscc} / ${uscc}）⇒ 两批都自称有证据，不猜，本条转冲突待核`,
+        )
+        conflictingEnterprises.add(enterpriseId)
         untouched.push({
           enterpriseId,
           name,
-          verdict: 'resolved',
-          reason: `同一企业已在更早的批次文件里出现过（同候选统代 ${uscc}）⇒ 本文件不重复采纳`,
+          verdict: 'conflict',
+          reason:
+            `同一企业在两份判定文件里有两个不同候选统代（${existing.uscc} / ${uscc}）` +
+            '⇒ 两边都自称有证据，**不猜**，该企业整体不写',
           blocked: null,
         })
         return
       }
-      platformClaims.push({
+      const claim: UsccPlatformClaim = {
         enterpriseId,
         enterpriseName: name,
         uscc,
@@ -261,9 +276,34 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
         reason: reason || null,
         batchRef: `uscc-verdict-batch-${value.batch ?? '?'}`,
         observedAt: generatedAt,
-      })
+      }
+      platformClaims.push(claim)
+      seenByEnterprise.set(enterpriseId, claim)
     })
   }
 
-  return { platformClaims, untouched, batches, problems }
+  // **取最强结论**的收尾：一家企业只要有一份文件给出可采纳的 `resolved`，它就**不再**
+  // 出现在「不动库」清单里 —— 否则同一条会既算补齐又算冲突（实测 10 家企业在两批里各出现一次，
+  // 其中 9 家被「更强结论」收敛掉）。缺席的那几条留在 `problems` 里说明，不静默。
+  // 候选统代打架的企业先整体撤回（不许「先出现的那条」偷偷写进去）。
+  const finalClaims = platformClaims.filter((claim) => {
+    if (claim.enterpriseId == null || !conflictingEnterprises.has(claim.enterpriseId)) return true
+    problems.push(
+      `企业 ${claim.enterpriseId}「${claim.enterpriseName}」的候选统代在两份文件里不一致 ⇒ ` +
+        `撤回先前采纳的 ${claim.uscc}，该企业整体不写`,
+    )
+    return false
+  })
+  const accepted = new Set(finalClaims.map((claim) => claim.enterpriseId))
+  const converged = untouched.filter((row) => {
+    if (row.enterpriseId == null) return true
+    if (conflictingEnterprises.has(row.enterpriseId)) return true
+    if (!accepted.has(row.enterpriseId)) return true
+    problems.push(
+      `企业 ${row.enterpriseId}「${row.name}」在某份判定文件里的结论是 ${row.verdict}，` +
+        `但另一份给出了可采纳的 resolved ⇒ 按「取更强结论」收敛为已补齐，本条不再计入冲突/未找到/待人工`,
+    )
+    return false
+  })
+  return { platformClaims: finalClaims, untouched: converged, batches, problems }
 }

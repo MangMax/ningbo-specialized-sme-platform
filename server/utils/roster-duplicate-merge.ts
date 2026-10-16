@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
+import type { NameMatchLevel } from '../../lib/roster/uscc-research'
 import { getPlatformExportRows, listPlatformSnapshots } from '../../lib/platform-snapshots'
 import {
   duplicateTwinKey,
@@ -129,6 +130,12 @@ export function findUsccKeyedRelationEvidence(
   db: Db,
   input: UsccNameEvidenceInput,
   index?: PlatformEvidenceIndex,
+  /**
+   * 名称比对档次。**缺省 = 逐字相等**（RL-14 的归并判据一个字没变）。
+   * RL-06 会传入放宽到「字形/区县写法」的比对（父代理 2026-10-16 裁定），
+   * 并把实际命中到哪一档**记进证据**（`nameMatch`），使「哪些回填依赖放宽判据」可审。
+   */
+  match: (a: unknown, b: unknown) => NameMatchLevel | null = (a, b) => ((a as string) === (b as string) ? 'byte' : null),
 ): EvidenceResult {
   const uscc = input.uscc
   const queries = index ? (index.queriesByUscc.get(uscc) ?? []) : platformQueriesForUscc(db, uscc)
@@ -154,8 +161,9 @@ export function findUsccKeyedRelationEvidence(
           .filter((relation) => relation.queryId === query.id)
           .sort((a, b) => a.sequenceNo - b.sequenceNo)
     for (const relation of relations) {
-      // **逐字相等**才是证据 —— 不做归一化、不做相似度。
-      if (relation.nameRaw !== input.name) continue
+      // 判据：`match`（缺省逐字相等）—— 不做归一化、不做相似度、不算分数。
+      const level = match(relation.nameRaw, input.name)
+      if (!level) continue
       const relationUscc = normalizeUscc(relation.usccRaw)
       if (relationUscc && relationUscc !== uscc) continue
       return {
@@ -172,6 +180,7 @@ export function findUsccKeyedRelationEvidence(
           nameRaw: relation.nameRaw ?? '',
           usccRaw: relation.usccRaw,
           sourceKind,
+          nameMatch: level,
         },
       }
     }

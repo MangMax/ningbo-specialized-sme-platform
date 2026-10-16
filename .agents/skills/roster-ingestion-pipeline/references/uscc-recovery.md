@@ -81,6 +81,22 @@ candidates whenever they exist.
    (GB 32100-2015 length/charset/check digit), or missing evidence ⇒ **leave it empty and flag it**,
    do not write a guess.
 
+## Two traps that were measured the hard way
+
+- **`queryList?qymc=` does not index old names that only appear in `businessList` "更新" rows.**
+  Measured on `507 宁波沈鑫电子有限公司`: the company's current name has no record under
+  `queryList?qymc=`, yet the code's `businessList rdjb=2` carries an "更新" row whose `qymc` is the
+  published name. So the fallback in step 6 — "library search found nothing ⇒ ask `queryList` by
+  name" — **systematically fails for renamed companies** and would mis-classify them as
+  `not_found` in bulk. The reliable order is: get the candidate **code** first (from the library, or
+  from the name query), then query **`businessList` rdjb=1/2/3** by that code. Corollary: a
+  `queryList` zero-row answer is **not** evidence that the platform has no record.
+- **District-suffix normalisation must only fire at the position immediately following the
+  district name at the start of the name.** Applying it anywhere rewrites unrelated short names —
+  measured side effect: `宁波市北仑顺兴联合压铸有限公司` becomes `…北仑**区**顺兴…`. Keep the rule
+  narrow (delete at most one `县`/`区` that directly follows a known district stem) or it starts
+  inventing companies.
+
 ## Things that look like criteria and are not
 
 - **Locality is not a criterion.** Four `resolved` rows in batch 4 had a candidate code whose

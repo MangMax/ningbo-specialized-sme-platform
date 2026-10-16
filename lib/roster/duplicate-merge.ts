@@ -22,6 +22,7 @@ import type {
   RosterImportMerge,
   RosterImportRequest,
 } from '../roster-import-client'
+import type { NameMatchLevel } from './uscc-research'
 
 /** 支撑一次重名归并的**平台关系证据**。 */
 export interface DuplicateMergeEvidence {
@@ -43,6 +44,12 @@ export interface DuplicateMergeEvidence {
   usccRaw: string | null
   /** 曾用名的来源类别（接口 → 字典取值）。 */
   sourceKind: 'platform_business' | 'platform_apply'
+  /**
+   * 命中这条证据时名称比对到了哪一档（RL-06 增量）：`byte` 逐字相等 /
+   * `typographic` 只差全半角括号与空白 / `district_suffix` 只差区县后缀的有无。
+   * 用来在报告里如实区分「哪些回填依赖放宽判据」——缺省（RL-14 那条路）恒为逐字。
+   */
+  nameMatch?: NameMatchLevel
 }
 
 /** 证据不足的**可判别**原因（每一个都对应一句可读的理由，绝不合并成一个「失败」）。 */
