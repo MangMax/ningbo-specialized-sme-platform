@@ -65,10 +65,14 @@ export function getComparison(
   ) as ComparisonCounts
 
   const differences = TITLE_ORDER.flatMap((code): ComparisonRow[] => {
-    // 小巨人的经信局侧来源(历年名单,RL-02)目前仍不参与比对 —— 现有行为保持不变;
-    // 是否解除排除由 RL-04 按用户裁决处理(2026-10-16:用户选择启用双向对比)。
-    // 注意:不再写成「经信局不发布小巨人」—— 该说法已被 RL-02 的历年名单证伪。
-    if (code === 'little_giant') return []
+    // **小巨人双向对比已启用**(用户 2026-10-16 裁决,RL-04 落地)。
+    //
+    // 两侧 = 经信局**历年小巨人名单**(RL-02 导入,历史批次 2019–2025 的**权威来源**)
+    // vs 工信部**导出表**(**采集时点现状**)。旧代码在这里硬排除小巨人,
+    // 依据是「经信局不发布小巨人」—— 该说法已被 RL-02 的历年名单**证伪**,
+    // 故排除一并去掉(`tests/comparison.test.ts` 的旧期望随之更新,是有意变更)。
+    //
+    // 硬边界不变:平台导出**永不改写**公布历史;未匹配平台的公布条目**仍须保留**。
     const titleCode = code as TitleCode
     const [jxj, miit] = partition(byTitle[code] ?? [], (r) => r.source === 'jxj')
     const sides = [jxj, miit].map((rows) => uniqBy(rows, (r) => r.enterpriseId))
