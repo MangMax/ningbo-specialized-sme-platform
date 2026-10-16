@@ -260,6 +260,39 @@ export const DIFFERENCE_STATUS_ORDER: string[] = [
 ]
 
 /**
+ * 差异状态 → 徽章变体。**这是六态颜色的唯一出处** —— 页面与展开面板都从这里取,
+ * 不许再各写一份本地级联。
+ *
+ * 为什么必须是唯一出处:契约 §3.2 要求「未查询 / 查询失败 / 无记录」等四态**彼此可区分**
+ * (用户反馈过的「失败 ≠ 无记录、未查询 ≠ 无记录」就靠这条守住)。而颜色一旦在三个文件里
+ * 各写一遍,就会出现两份把 `not_queried` 与 `no_record` 画成同一枚 outline、
+ * 把 `needs_review` 与 `query_failed` 一律画红的实现 —— 四态当场糊成两态。
+ *
+ * ── 六态各自靠哪个通道分开 ──────────────────────────────────────────────
+ * 只用 `Badge` 既有的变体(不为这一处新增视觉语言),六态走**四个不同通道**:
+ *
+ * | 状态 | 变体 | 视觉 | 读作 |
+ * |---|---|---|---|
+ * | `not_queried` 未查询 | `dashed` | 灰字 + **虚线**框、无底 | 还什么都没做 |
+ * | `query_failed` 查询失败 | `destructive` | **红实底** + 白字 | 出错,要重查 |
+ * | `no_record` 无记录 | `outline` | **深字** + 实线框、无底 | 查过了,平台确实没有 |
+ * | `needs_review` 待核实 | `solid` | 深字 + **加粗**深色框 | 证据不足,等人裁决 |
+ * | `confirmed_no_diff` 已确认无差异 | `secondary` | **浅灰实底** | 已确认,且无事 |
+ * | `confirmed_reason` 已确认原因 | `default` | **主色实底** | 已确认,有结论 |
+ *
+ * 两两之间至少差在:有无底色 / 红与蓝与灰 / 虚线或实线 / 字重与边框深浅 —— 没有一对是
+ * 同款。`tests/difference-status-variants.test.ts` 把「六态变体两两不同」钉死。
+ */
+export const DIFFERENCE_STATUS_VARIANTS: Record<string, string> = {
+  not_queried: 'dashed',
+  query_failed: 'destructive',
+  no_record: 'outline',
+  needs_review: 'solid',
+  confirmed_no_diff: 'secondary',
+  confirmed_reason: 'default',
+}
+
+/**
  * 差异原因(`difference_reason.reason_code`)→ 中文名。
  * 已知五类必须覆盖:`moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 /
  * `platform_stale` 平台未更新 / `moved_in` 迁入;`other` 供**凭证据扩展**的新原因。

@@ -28,6 +28,14 @@ defineRouteMeta({
       { name: 'title', in: 'query', schema: { type: 'string' }, description: '称号代号,多值。' },
       { name: 'district', in: 'query', schema: { type: 'string' } },
       { name: 'rosterState', in: 'query', schema: { type: 'string', enum: ['current', 'removed_platform_only'] } },
+      { name: 'source', in: 'query', schema: { type: 'string' }, description: '来源,多值(与列表同口径)。' },
+      {
+        name: 'eventType',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '事件类型,多值;与 `year` 一起给时须落在同一条事件上。',
+      },
+      { name: 'year', in: 'query', schema: { type: 'string' }, description: '事件年份,多值。' },
     ],
     responses: {
       200: {
@@ -38,7 +46,7 @@ defineRouteMeta({
           },
         },
       },
-      400: { description: '`title` / `rosterState` 取值非法。' },
+      400: { description: '`title` / `rosterState` / `source` / `eventType` 取值非法。' },
     },
   },
 })

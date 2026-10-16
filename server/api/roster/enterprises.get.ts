@@ -40,12 +40,32 @@ defineRouteMeta({
         schema: { type: 'string', enum: [...ROSTER_STATES] },
         description: '当前总表成员状态:派生、不落列(契约 §5)。',
       },
+      {
+        name: 'source',
+        in: 'query',
+        schema: { type: 'string' },
+        description:
+          '来源,多值:`jxj` / `miit`。命中「该企业存在一条该来源的记录」(RL-17)。',
+      },
+      {
+        name: 'eventType',
+        in: 'query',
+        schema: { type: 'string' },
+        description:
+          '事件类型,多值:`award` / `review` / `maintain` / `nurture`。与 `year` 一起给时,必须落在**同一条事件**上(与 `/api/records` 同口径)。',
+      },
+      {
+        name: 'year',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '事件年份,多值。非数字项剔除。',
+      },
       { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 50, maximum: 200 } },
     ],
     responses: {
       200: { description: '企业总表(`rows` / `counts` / `page` / `pageSize`)。' },
-      400: { description: '`title` 或 `rosterState` 取值非法。' },
+      400: { description: '`title` / `rosterState` / `source` / `eventType` 取值非法。' },
     },
   },
 })

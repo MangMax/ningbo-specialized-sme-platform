@@ -8,6 +8,7 @@ import {
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
   DIFFERENCE_STATUS_ORDER,
+  DIFFERENCE_STATUS_VARIANTS,
   PLATFORM_INTERFACES,
   PLATFORM_QUERY_STATUSES,
   PLATFORM_RDJBS,
@@ -23,7 +24,7 @@ import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import EventChip from '@/components/EventChip.vue'
 import SourceChip from '@/components/SourceChip.vue'
 import TitleBadge from '@/components/TitleBadge.vue'
-import { Badge } from '@/components/ui/badge'
+import { Badge, type BadgeVariants } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Collapsible,
@@ -136,7 +137,19 @@ interface Detail {
   platform: { queries: QueryRow[]; relations: Relation[] }
 }
 
-const props = defineProps<{ enterpriseId: number }>()
+const props = defineProps<{
+  enterpriseId: number
+  /**
+   * 当前台账的筛选串(不含 `view`)—— 带上它跳到完整企业页,那边的「返回台账」
+   * 才能落回同一批筛选,而不是把用户丢回一个没筛过的第一页。
+   */
+  backQuery?: string
+}>()
+
+const fullPageTo = computed(
+  () =>
+    `/enterprises/${props.enterpriseId}${props.backQuery ? `?back=${encodeURIComponent(props.backQuery)}` : ''}`,
+)
 
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading, error } = useQuery({
@@ -203,12 +216,14 @@ const relationsByQuery = computed(() => {
 })
 const relationCount = computed(() => detail.value?.platform.relations.length ?? 0)
 
-/** 差异状态徽章:已确认的用实色,未查/失败/待核用描边 —— 「确定」与「还没确定」一眼分得开。 */
-function statusVariant(code: string) {
-  if (code === 'confirmed_reason' || code === 'confirmed_no_diff') return 'secondary' as const
-  if (code === 'needs_review' || code === 'query_failed') return 'destructive' as const
-  return 'outline' as const
-}
+/**
+ * 差异状态徽章:六态颜色**只从 `DIFFERENCE_STATUS_VARIANTS` 取**(单一出处,与台账表同款)。
+ * 这里不再写本地级联 —— 原来的那份把「未查询」与「无记录」画成同一枚 outline、
+ * 把「待核实」与「查询失败」一律画红,恰好违反契约 §3.2 的「四态必须彼此可区分」。
+ * 状态值本身只来自读模型的 `difference_reason.status`,不回推到别处。
+ */
+const statusVariant = (code: string): BadgeVariants['variant'] =>
+  (DIFFERENCE_STATUS_VARIANTS[code] ?? 'outline') as BadgeVariants['variant']
 const movedInText = (movedIn: MovedIn) =>
   [
     movedIn.city,
@@ -238,6 +253,13 @@ function openPreview(e: Evidence) {
     </p>
 
     <div v-else-if="detail" class="flex flex-col gap-4">
+      <!-- 展开已经装下称号历史与证据;要更深的（文件出处、拆分记录）去完整企业页。 -->
+      <div class="flex justify-end">
+        <Button as-child variant="ghost" size="sm" class="h-6 gap-1 px-1.5 text-[11px]">
+          <NuxtLink :to="fullPageTo">完整企业页 <ExternalLink class="size-3" /></NuxtLink>
+        </Button>
+      </div>
+
       <!-- 曾用名:已确认的参与搜索,pending 的也在(只是不参与) -->
       <section v-if="detail.aliases.length" class="flex flex-col gap-1.5">
         <h4 class="text-muted-foreground text-xs font-medium">曾用名 / 别名</h4>

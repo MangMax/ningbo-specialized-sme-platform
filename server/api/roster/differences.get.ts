@@ -28,6 +28,12 @@ defineRouteMeta({
       '每 (企业 × 称号 × 方向) 一条当前解释;`status` 是契约 §3.2 的六态,`reasonCode` 与 `measureCode` **成对**;`movedIn` 承载迁入的原城市/称号/年份/批次(缺项留空待核)。',
     parameters: [
       {
+        name: 'q',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '企业名称 / **已确认**曾用名关键词(与 `GET /api/roster/enterprises` 同一搜索口径)。',
+      },
+      {
         name: 'title',
         in: 'query',
         schema: { type: 'string' },
