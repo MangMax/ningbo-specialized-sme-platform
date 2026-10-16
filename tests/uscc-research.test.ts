@@ -790,6 +790,10 @@ describe('E · 补录经统一写入 API 落库（真实 HTTP）', () => {
 // ---------------------------------------------------------------------------
 
 describe('G · 判定文件归一化 + 平台证据认领', () => {
+  /** 别名去重用例在执行前后要比对的别名行数，以及那份要提交的请求体。 */
+  let aliasRowCount = 0
+  let aliasMergeRequest: RosterImportRequest | null = null
+
   const batchFile = (items: unknown[], generatedAt = '2026-10-16T16:00:00.000Z') => ({
     file: 'uscc-verdict-batch-9.json',
     value: { batch: 9, generatedAt, items } as UsccVerdictFile,
@@ -1080,6 +1084,58 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     // 归并照做（身份要并），但**不带 `aliasName`** ⇒ 不产生第二条同名别名行。
     expect(report.ready[0]!.merge).toMatchObject({ fromEnterpriseId: duplicate, intoUscc: '91330216MA2CL6FP2C' })
     expect(report.ready[0]!.merge!.aliasName).toBeUndefined()
+    // 光看载荷不够：**执行侧**也得按 `(enterprise_id, name_norm)` 去重 ——
+    // 归并执行时 `aliasName` 缺省会退回**被并方的现名**，若执行侧只按含 `source_ref_id`
+    // 的唯一键判，这里照样会多出一行（这正是本轮实测到的那条真缺陷）。
+    aliasRowCount = db.select().from(schema.enterpriseAlias).all().length
+    aliasMergeRequest = report.request
+  })
+
+  it('★ 执行该归并：同名曾用名被**复用**，别名表不增行', async () => {
+    const result = await client().commit(aliasMergeRequest!)
+    expect(result.status).toBe('committed')
+    const lineage = result.items.find((item) => item.kind === 'merge')!.detail!.lineage as { aliasId: number | null }
+    expect(lineage.aliasId).toBeGreaterThan(0)
+    expect(db.select().from(schema.enterpriseAlias).all().length).toBe(aliasRowCount)
+    expect(db.select().from(schema.enterpriseAlias).all().filter((a) => a.nameNorm === '宁波别名去重旧名有限公司')).toHaveLength(1)
+  })
+
+  it('★ 认领只给企业名也给得到结论：四桶之和恒等于 counts.targets', () => {
+    const named = seedEnterprise({ name: '宁波按名认领企业有限公司' })
+    const report = planUsccResearch(db, {
+      claims: [
+        {
+          enterpriseName: '宁波按名认领企业有限公司',
+          uscc: '91330217MA2CL6FP2T',
+          source: { url: 'https://example.test/n', checkedOn: '2026-10-16', basis: '按名指企业', name: '宁波按名认领企业有限公司' },
+        },
+      ],
+    })
+    // 按名解析到的企业必须在 `targets` 里 ⇒ 进 `outcomes`；否则报告会自相矛盾。
+    expect(report.counts.targets).toBe(1)
+    expect(report.counts.ready).toBe(report.counts.filled)
+    expect(report.outcomes).toHaveLength(1)
+    expect(report.outcomes[0]!.enterpriseId).toBe(named)
+    const sum = report.counts.filled + report.counts.conflict + report.counts.notFound + report.counts.manual
+    expect(sum).toBe(report.counts.targets)
+  })
+
+  it('★ 显式 enterpriseIds 之外的认领 ⇒ 报 `out_of_scope`，不进载荷', () => {
+    const outside = seedEnterprise({ name: '宁波范围外企业有限公司' })
+    const inside = seedEnterprise({ name: '宁波范围内企业有限公司' })
+    const report = planUsccResearch(db, {
+      enterpriseIds: [inside],
+      claims: [
+        {
+          enterpriseId: outside,
+          uscc: '91330218MA2CL6FP29',
+          source: { url: 'https://example.test/o', checkedOn: '2026-10-16', basis: '范围外', name: '宁波范围外企业有限公司' },
+        },
+      ],
+    })
+    expect(report.counts.filled).toBe(0)
+    expect(report.request).toBeNull()
+    expect(report.pending.some((row) => row.code === 'out_of_scope')).toBe(true)
   })
 
   it('★ 端到端：判定文件 → 服务端采纳 → 统一 API 落库 → 清单里少一家', async () => {

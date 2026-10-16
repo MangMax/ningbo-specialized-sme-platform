@@ -29,7 +29,10 @@ import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import {
   coreWordOf,
+  isByteEqualName,
   judgeUsccClaim,
+  missingUsccSourceFields,
+  PLATFORM_INTERFACE_URLS,
   usccFormatVerdict,
   type UsccChecklistFilter,
   type UsccChecklistResult,
@@ -487,14 +490,23 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
   // 若还顺手跑全库库内计划，就会**顺带**把库内路径能解决的几十家也一起归并了 ——
   // 那不是这次要写的东西（真实数据上库内路径能并 31 家，全跑会让一次「判定文件写回」
   // 变成一次全量归并）。要全库跑就**不给认领**，或显式给 `enterpriseIds`。
+  //
+  // ⚠️ 范围必须按**认领最终落到的企业**来算，不能只看认领里那个数值 `enterpriseId`：
+  // 认领也可以用 `enterpriseName` 指企业（§7.9 明写「或 `enterpriseName`」），
+  // 而 `locateTarget` 会把它解析到某一家。若范围集只装数值 id，这种认领就会
+  // **进了 `ready`/载荷、却不在 `targets` 里** ⇒ 不进 `outcomes`、四桶之和不等于
+  // `counts.targets`、`counts.filled` 小于载荷条数。而且它还能绕过显式 `enterpriseIds`：
+  // 认领里写另一个企业的名字，就把不在范围内的目标带进载荷了。
+  // 所以先把认领**解析**成企业 id（与后面处理时同一个 `locateTarget`），再据此限定范围。
+  const claimedTargetIds = new Set<number>()
+  for (const claim of [...(options.claims ?? []), ...(options.platformClaims ?? [])]) {
+    const resolvedTarget = locateTarget(allTargets, claim)
+    if (resolvedTarget) claimedTargetIds.add(resolvedTarget.enterpriseId)
+  }
   const restrict = options.enterpriseIds
     ? new Set(options.enterpriseIds)
     : options.claims?.length || options.platformClaims?.length
-      ? new Set(
-          [...(options.claims ?? []), ...(options.platformClaims ?? [])]
-            .map((claim) => claim.enterpriseId)
-            .filter((id): id is number => typeof id === 'number'),
-        )
+      ? claimedTargetIds
       : null
   const targets = allTargets.filter((row) => (restrict ? restrict.has(row.enterpriseId) : true))
   const dictionary = buildDictionary(db)
@@ -519,6 +531,17 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
   // ---- 公开来源 claim（路径二）：先判，避免同一目标两条路都出结论 -------------
   for (const claim of options.claims ?? []) {
     const target = locateTarget(allTargets, claim)
+    if (target && restrict && !restrict.has(target.enterpriseId)) {
+      pending.set(target.enterpriseId, {
+        targetId: target.enterpriseId,
+        targetName: target.name,
+        outcome: 'manual',
+        code: 'out_of_scope',
+        message: `本条目不在本次范围内（显式 enterpriseIds 未包含企业 ${target.enterpriseId}）⇒ 未处理`,
+        candidates: [],
+      })
+      continue
+    }
     if (!target) {
       // 找不到目标企业：如实报一条「待人工」，而不是静默丢掉这条查证结果。
       pending.set(claim.enterpriseId ?? -1, {
@@ -605,6 +628,19 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
   // 归属由本批自己写下的行证明。两边都没有 ⇒ **不写**（`no_platform_evidence`）。
   for (const claim of options.platformClaims ?? []) {
     const target = locateTarget(allTargets, claim)
+    // 解析到企业、却**不在本次范围**内（调用方显式给了 `enterpriseIds`）⇒ 如实报一条，
+    // 不静默丢掉这份判定结果。
+    if (target && restrict && !restrict.has(target.enterpriseId)) {
+      pending.set(target.enterpriseId, {
+        targetId: target.enterpriseId,
+        targetName: target.name,
+        outcome: 'manual',
+        code: 'out_of_scope',
+        message: `本条目不在本次范围内（显式 enterpriseIds 未包含企业 ${target.enterpriseId}）⇒ 未处理`,
+        candidates: [],
+      })
+      continue
+    }
     if (!target) {
       pending.set(claim.enterpriseId ?? -2, {
         targetId: claim.enterpriseId ?? -2,
@@ -776,7 +812,9 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
         // `usccBackfills.source` 的三要素是**公开来源**的形状；这一条的证据是**平台原始关系**，
         // 所以把 URL 位放平台接口地址、依据位放「哪条关系逐字相等」，如实说明来源是平台。
         source: {
-          url: 'https://zjtx.miit.gov.cn/zxqy/',
+          // 这一路的证据是**平台原始关系**，不是公开内容页：`url` 记平台接口地址，
+          // `basis` 写清是哪条关系（§8.10 对两种证据的说明）。如实标出，不假装是内容页。
+          url: PLATFORM_INTERFACE_URLS[supplied!.interface],
           checkedOn: supplied!.checkedOn,
           basis:
             `平台原始关系逐字证实：${describeEvidenceLine(stored, supplied)}` +
@@ -927,8 +965,16 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
   // ---- 汇总 ---------------------------------------------------------------
   const ready = [...resolved.values()].sort((a, b) => a.targetId - b.targetId)
   const pendingRows = [...pending.values()].sort((a, b) => a.targetId - b.targetId)
+  // 逐条给出结论：以 `targets` 为分母。**保险丝**：若还有解析到企业的结论不在 `targets` 里
+  // （范围算错、或将来加了新的认领种类），按 id 补进来 —— 四桶之和不等于 `counts.targets`
+  // 是这份报告最不能出的错（「预检报的就是提交真会改的」从这句开始）。
+  const covered = new Set(targets.map((row) => row.enterpriseId))
+  const extra = [...new Set([...resolved.keys(), ...pending.keys()])]
+    .filter((id) => id > 0 && !covered.has(id))
+    .map((id) => allTargets.find((row) => row.enterpriseId === id) ?? null)
+    .filter((row): row is UsccChecklistRow => row != null)
   const outcomes: UsccTargetOutcome[] = []
-  for (const row of targets) {
+  for (const row of [...targets, ...extra]) {
     const filled = resolved.get(row.enterpriseId)
     if (filled) {
       outcomes.push({
@@ -986,7 +1032,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
     counts: {
       // 「本次计划覆盖的目标数」——给了 `enterpriseIds` 就是那几个（`outcomes` 与四桶计数
       // 都以此为分母，四者相加恒等于它；不受分页影响）。
-      targets: targets.length,
+      targets: outcomes.length,
       withCandidates: candidateCount.size,
       filled: countOf('filled'),
       conflict: countOf('conflict'),
@@ -1109,7 +1155,7 @@ function pickSuppliedEvidence(
   for (const item of claim.evidence ?? []) {
     if (!item || typeof item !== 'object') continue
     if (item.interface !== 'business_list' && item.interface !== 'apply_list') continue
-    if (item.nameRaw !== targetName) continue
+    if (!isByteEqualName(item.nameRaw, targetName)) continue
     const sequenceNo = Number(item.sequenceNo)
     if (!Number.isInteger(sequenceNo) || sequenceNo < 1) continue
     const rawUscc = normalizeUscc(item.usccRaw)

@@ -457,6 +457,13 @@
 5. **删除被并的 `enterprise` 行**(其子行已全部迁走,`record.enterprise_id` 无级联,
    必须在迁移后删除才不违反引用)。归并的审计轨迹落在写入它的 `import_batch.item_results`。
 
+**写曾用名时按 `(enterprise_id, name_norm)` 去重**(RL-06 增量,父代理 2026-10-16 实测要求):
+归并的两处别名写入(被并方的名字、被顶掉的规范行原名)**先查同名 `confirmed` 别名,有就复用**,
+不再插第二条。理由是 `enterprise_alias` 的唯一键含 `source_ref_id` —— 「同一家企业、同一个名字、
+换一条来源关系」**不撞唯一键**,而归并是按候选统代逐条触发的,一轮里同一个名字会被写两遍
+(实测:一次 96 条的写回里 26 条命中)。那不算「逐条留证」,只是同一个名字留了两遍,详情页上同名并列。
+`aliases[]` 那条**显式**写别名的路保持原行为(调用方主动写一条来自某来源的别名,本就该各自成条)。
+
 实测基准:企业 375 `宁波上航测绘有限公司`(无统代,jxj 专精特新 2022 认定,
 出处 `甬经信中小〔2022〕145号….pdf` 附件 序号 74 第 74 页)与企业 7289
 `宁波上航测绘股份有限公司`(统代 `91330211255994457P`,miit 专精特新 + 小巨人 各一条 `maintain` 2025-1)
@@ -709,7 +716,8 @@
   "plan": {
     "counts": { "targets": 133, "withCandidates": 38, "filled": 31, "conflict": 0,
                 "notFound": 95, "manual": 7, "closed": 31,
-                "byRoute": { "library": 31, "public_source": 0 }, "ready": 31 },
+                "byRoute": { "library": 31, "platform_claim": 0, "public_source": 0 },
+                "ready": 31, "aliasAlreadyPresent": 0 },
     "outcomes": [{ "enterpriseId": 375, "name": "宁波上航测绘有限公司", "outcome": "filled",
                    "code": "library", "message": "…", "candidates": [ … ], "uscc": "91330211255994457P" }],
     "ready": [{ "outcome": "filled", "targetId": 375, "targetName": "宁波上航测绘有限公司",
@@ -741,12 +749,32 @@
 | 公开来源 claim 给出一个库里没人占用的合法统代 | `filled` | `public_source` |
 | claim 的代码违法 / 被别家占用 / 地区不符 | `conflict` | `uscc_format_invalid` / `uscc_taken` / `region_mismatch` |
 | claim 证据三要素不齐 | `manual` | `source_evidence_incomplete` |
+| **平台证据认领**给出的统代已被规范行持有(归并)或库里没人持有(补录) | `filled` | `platform_claim` |
+| 认领的企业名/地区对不上,或认领的代码违法/被别家占用/本轮被别家认领 | `conflict` | `uscc_format_invalid` / `uscc_taken` |
+| **认领说 resolved,但平台原始证据对不上**(库里没有那条关系,认领也没带来逐字相等的摘要) | `manual` | `no_platform_evidence` |
+| 认领的企业已持有该统代 | `manual` | `already_resolved` |
+| 认领/判定文件写的是清单外的企业 | `manual` | `claim_target_not_found` / `out_of_scope` |
 | 库内核心词搜不到候选 | `not_found` | `no_candidate` |
 | 有候选,但**没有一个**被平台原始关系逐字证实 | `manual` | `candidate_without_platform_evidence` |
 | **恰好一个**候选被逐字证实 | `filled` | `library` |
 | **两个及以上**不同统代都被逐字证实 | `conflict` | `multiple_subjects` |
 
-`closed` = `filled`(那些目标写完就不再缺统代)。`byRoute` 说明补齐走的是哪条路。
+`closed` = `filled`(那些目标写完就不再缺统代)。`byRoute` 说明补齐走的是哪条路
+(`library` 库内核心词 / `platform_claim` 平台证据认领 / `public_source` 公开来源);
+`aliasAlreadyPresent` 数出「规范行已有同名 `confirmed` 曾用名 ⇒ 本轮只并身份、不重复写别名」
+的条数(见 §5.2)。
+
+**范围规则**(两份输入都适用):给了**认领**(`claims` / `platformClaims`,含判定文件解析出来的)
+就**只判这些认领落到的企业** —— 认领按 `enterpriseId` **或** `enterpriseName` 解析到企业后再定范围
+(只看数值 id 会让按名指认的那条进了载荷却不在 `targets` 里,四桶之和就与 `counts.targets` 对不上了);
+显式给 `enterpriseIds` 时以它为准,范围外的认领逐条落 `out_of_scope` 而不是静默丢掉。
+**不给认领**才跑全库库内计划。不这样定的话,一次「判定文件写回」会顺带把库内路径能解决的几十家
+也一起归并 —— 那不是这次要写的东西。
+
+**清单口径与票面第 6 条**:清单 = 「缺统代 **且** 仍在当前总表」。一家已经由接口关系确认过、
+甚至已经写过曾用名的企业(如 `91330211255994457P` 案例里的 375),只要**自己那行还没有统代**,
+就**仍然在清单里** —— 因为它的公布侧记录还需要并进规范行;一旦补齐/归并(它拿到统代或被并掉),
+它就自然离开清单,不需要额外的排除规则。
 
 **名称只用于生成候选**:库内检索的判据只有「字符串包含」(现名 ∪ **已确认**曾用名 ⊇ 核心词),
 没有相似度、没有编辑距离;候选能不能补录**只由平台原始关系的逐字 `qymc` 决定**
@@ -770,6 +798,47 @@
 `claims` 只做**形状**检查(400),语义判定(格式/校验位、三要素、地区、是否被占用)一律在
 计划里做**一处**。可运行入口:`node scripts/roster-uscc-research.mjs [--claims claims.json]`
 (只读报告 + 把 `request` 转投 `/commit`;`--dry-run` 只读,`--strict` 有未补齐项退出码 3)。
+
+**`POST` 还能收另外两种输入**(与 `claims` 一样,**本端点一行都不写**):
+
+```jsonc
+{
+  "enterpriseIds": [375],            // 可选:显式限定范围(见上文「范围规则」)
+  "platformClaims": [{               // **平台证据认领**:某统代的平台关系 qymc 逐字等于本企业名
+    "enterpriseId": 10,              //   与 enterpriseName 恰给其一
+    "uscc": "913302121444188959",
+    "evidence": [{ "interface": "apply_list", "rdjb": "", "sequenceNo": 1,
+                   "relationKey": "SQ332022050658900", "nameRaw": "宁波星箭航天机械有限公司",
+                   "status": "终审通过", "usccRaw": "913302121444188959",
+                   "query": "qymc=宁波星箭航天机械有限公司" }],
+    "reason": "apply_list qymc 逐字等于公布名…",   // 判定依据(落 note / source_text 供复核)
+    "batchRef": "uscc-verdict-batch-4",             // 证据来自哪份交接文件
+    "observedAt": "2026-10-16T15:40:53+08:00"       // 该文件的产出时刻(见下「关于 queried_at」)
+  }],
+  "verdictFiles": [{                 // **判定文件原文**(并行判断代理的交接物),整份交给服务端
+    "file": "uscc-verdict-batch-1.json",
+    "value": { /* 文件内容,形状见下 */ }
+  }]
+}
+```
+
+判定文件(经 `verdictFiles` 传入)的形状——每项至少含 `enterpriseId` / `name` / `candidateUscc` /
+`platformEvidence[]` / `qymcEqualsAnnouncedName` / `verdict` / `reason`:
+
+- **只采纳** `verdict === "resolved"` **且** `qymcEqualsAnnouncedName === true`;
+  `conflict` / `not_found` / `needs_human` 一律不动库,逐条带文件给的理由与 `blocked`
+  (要人工核对的原件位置,如 `甬经信中小〔2024〕192号 附件1 序号290`)回给调用方。
+- 该字段**缺席不等于 `true`**:不替它补 true,而是如实报出「其 `platformEvidence` 里有 N 条
+  逐字相等的关系」,供调用方裁定(字段笔误时不必自己再去数)。
+- **跨批次按企业去重**(同一家企业两个称号会在两批各出现一次):同企业同候选统代只采纳先出现的
+  那份,同企业**两个不同**候选统代 ⇒ 后一条落 `conflict`(不猜哪个对)。
+- **判定文件是线索,不是证据**:采纳后仍要走上表的平台证据判据 —— 库里已有那条关系就直接用,
+  库里没有而文件带来了 `evidence` 摘要就用 §8.7 的**批内自然键**把查询/关系与证据指针写进同一批,
+  两边都没有 ⇒ `no_platform_evidence`,一行不写。「代理说 resolved」本身不构成任何写权限。
+
+**关于 `queried_at` 与 `raw_response`**:判定文件的交接物只有字段摘要(原始平台响应没随文件走),
+所以由它转写出来的 `platform_query` 行,其 `queried_at` 用的是该文件的 `generatedAt`(**代理产出时刻**,
+不是平台响应时刻)、`raw_response` 留空;两件事都写进那条关系的 `source_text`,不留「看着像原始响应」的假象。
 
 ---
 
@@ -1166,6 +1235,18 @@
   "note": null
 }]
 ```
+
+**`source` 的两种证据形态**(都由 RL-06 使用,都要求三要素齐备):
+
+| 证据形态 | 谁带来 | `source.url` 写什么 |
+|---|---|---|
+| **公开主体来源**(路径二) | 人/代理逐家查证的公开内容页 | 那个**内容页**的 URL(搜索引擎摘要不算);`basis` 写「为什么这个主体就是本企业」 |
+| **平台原始关系**(路径一) | 平台接口返回的关系行 | 平台**接口地址**(`businessList` / `queryList` 的 URL —— 它不是公开内容页);`basis` 写清**哪一条**关系(接口 / rdjb / 序号 / `relationKey`)的 `qymc` 逐字等于公布名 |
+
+第二种的**身份证据是那条 `platform_relation` 行本身**(`enterprise_alias.source_ref_id` /
+`import_batch` 血缘都指得回它),不是那个 URL —— `url` 在这一格里只回答「证据从哪个接口来」。
+两种形态在载荷里同形(不新增字段),用 `basis` 的写法区分;要在报告里分开,看 `plan.byRoute`
+(`public_source` / `platform_claim`)。
 
 **执行语义(逐条硬边界)**:
 

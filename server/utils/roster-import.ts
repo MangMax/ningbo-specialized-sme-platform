@@ -22,7 +22,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
-import { usccFormatVerdict } from '../../lib/roster/uscc-research'
+import { missingUsccSourceFields, usccFormatVerdict } from '../../lib/roster/uscc-research'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER, type PlatformInterface } from '../../lib/labels'
 import type {
   DuplicateNameCandidate,
@@ -2043,13 +2043,10 @@ function planUsccBackfill(
     })
     return
   }
+  // 三要素的判据与计划侧**同一处实现**（`missingUsccSourceFields`）——两处各写一遍会漂，
+  // 漂了以后「计划说能写、写入拒了」或反过来放行一条不可复核的来源都很难发现。
   const source = backfill?.source
-  const missing = [
-    optionalString(source?.url) ? null : '公开来源 URL',
-    optionalString(source?.checkedOn) && /^\d{4}-\d{2}-\d{2}$/.test(optionalString(source?.checkedOn)!) ? null : '查证日期(YYYY-MM-DD)',
-    optionalString(source?.basis) ? null : '主体对应依据',
-    optionalString(source?.name) ? null : '来源里的主体名称',
-  ].filter((item): item is string => item != null)
+  const missing = missingUsccSourceFields(source)
   if (missing.length) {
     push({
       item: failure('uscc_backfill', ref, 'source_evidence_incomplete', `补录缺少可复核的公开来源证据：${missing.join('、')}`, 'source'),
@@ -2179,20 +2176,40 @@ function ensureEnterpriseAlias(
     sourceKind: (typeof schema.enterpriseAlias.sourceKind.enumValues)[number]
     sourceRefId: number
     note: string
+    /**
+     * **按 `(enterprise_id, name_norm)` 去重**（RL-06 增量）——先查同名 `confirmed` 别名，
+     * 有就**复用**它、不再插第二条。
+     *
+     * 为什么归并要它：唯一键含 `source_ref_id`，所以「同一家企业、同一个名字、换一条来源关系」
+     * 不撞唯一键，会实打实写出第二行。而归并是**按候选统代**触发的，一轮里同一个名字可能
+     * 因为不同的关系行被写两遍（实测:一次 96 条的写回里 26 条命中）。那不算「逐条留证」，
+     * 只是把同一个名字留了两遍 —— 搜索与展示上是纯噪音（详情页同名并列）。
+     *
+     * 只认 `confirmed`：`pending` 的同名别名换成 `confirmed` 是一次**升级**，该写还是要写。
+     * 缺省 `false` ⇒ `aliases[]` 那条**显式**写别名的路保持契约 §1.2 的原行为
+     * （调用方主动写一条来自某个来源的别名，本来就该在该来源下各成一条）。
+     */
+    dedupeByName?: boolean
   },
 ): { id: number; created: boolean } {
   const nameNorm = normalizeName(input.name)
-  const existing = tx
-    .select()
-    .from(schema.enterpriseAlias)
-    .all()
-    .find(
+  const all = tx.select().from(schema.enterpriseAlias).all()
+  if (input.dedupeByName) {
+    const sameName = all.find(
       (a) =>
         a.enterpriseId === input.enterpriseId &&
         a.nameNorm === nameNorm &&
-        a.sourceKind === input.sourceKind &&
-        a.sourceRefId === input.sourceRefId,
+        a.verificationStatus === 'confirmed',
     )
+    if (sameName) return { id: sameName.id, created: false }
+  }
+  const existing = all.find(
+    (a) =>
+      a.enterpriseId === input.enterpriseId &&
+      a.nameNorm === nameNorm &&
+      a.sourceKind === input.sourceKind &&
+      a.sourceRefId === input.sourceRefId,
+  )
   if (existing) return { id: existing.id, created: false }
   const id = tx
     .insert(schema.enterpriseAlias)
@@ -2273,6 +2290,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
         sourceKind,
         sourceRefId,
         note: optionalString(merge.note) ? `${renameNote}；${optionalString(merge.note)}` : renameNote,
+        dedupeByName: true,
       })
     : { id: null, created: false }
 
@@ -2291,6 +2309,8 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
           sourceKind,
           sourceRefId,
           note: optionalString(merge.note) ?? `归并自 enterprise:${from.id}（${from.name}）`,
+          // 归并这一侧按 `(enterprise_id, name_norm)` 去重（见 `ensureEnterpriseAlias` 的注释）。
+          dedupeByName: true,
         })
   const aliasId = mergeAlias.id
 

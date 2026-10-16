@@ -257,6 +257,44 @@ export interface UsccResearchClaim {
   note?: string | null
 }
 
+/**
+ * 公开来源证据的**三要素**检查（URL / 查证日期 / 主体对应依据）+ 来源里的主体名称。
+ *
+ * 为什么单独抽出来：计划侧（`judgeUsccClaim`）与**写入侧**（`planUsccBackfill`，
+ * 载荷校验）都要判这一条 —— 「可复核的来源」是票面第 3 条的硬要求，两处各写一遍迟早会漂，
+ * 而漂了以后「计划说能写、写入拒了」或者反过来「写入放行了一条不可复核的来源」都很难发现。
+ * 返回**缺哪几项**（空数组 = 齐备），调用方用自己那句错误文案。
+ */
+export function missingUsccSourceFields(
+  source: { url?: unknown; checkedOn?: unknown; basis?: unknown; name?: unknown } | null | undefined,
+): string[] {
+  const text = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
+  return [
+    text(source?.url) ? null : '公开来源 URL',
+    /^\d{4}-\d{2}-\d{2}$/.test(text(source?.checkedOn)) ? null : '查证日期(YYYY-MM-DD)',
+    text(source?.basis) ? null : '主体对应依据',
+    text(source?.name) ? null : '来源里的主体名称',
+  ].filter((item): item is string => item != null)
+}
+
+/**
+ * **逐字相等** —— 本票的**唯一**身份判据，就这一条，所以只有这一处实现。
+ *
+ * 「同一 `tyshxydm` 下 `qymc` 逐字等于公布名」是唯一能触发回填/归并的事实（契约 §5.1 与
+ * 用户 2026-10-16 的口径）。**不做归一化、不做大小写折叠、不算相似度** —— 归一化会把
+ * 「有限公司 / 股份有限公司」这种**正是要留住的差异**抹掉。
+ * 放成具名函数是为了让这条红线**可被 grep、可被审**：调用它的地方就是判据生效的地方。
+ */
+export function isByteEqualName(a: unknown, b: unknown): boolean {
+  return typeof a === 'string' && typeof b === 'string' && a === b
+}
+
+/** 平台接口地址（**平台原始证据**那一路的「来源」——它不是公开内容页，见 §8.10 的说明）。 */
+export const PLATFORM_INTERFACE_URLS = {
+  business_list: 'https://zjtx.miit.gov.cn/zxqy/ZjtxxjrBusInfoManageBLH/businessList',
+  apply_list: 'https://zjtx.miit.gov.cn/zxqy/YzzxqyApplayBLH/queryList',
+} as const
+
 /** 公开来源**地区与本企业属地不符**时的判据用的城名（全库都在这座城市）。 */
 export const LOCAL_CITY = '宁波'
 
@@ -343,12 +381,7 @@ export function judgeUsccClaim(claim: UsccResearchClaim): UsccClaimVerdict {
     }
   }
   const source = claim?.source
-  const missing = [
-    typeof source?.url === 'string' && source.url.trim() ? null : '公开来源 URL',
-    typeof source?.checkedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(source.checkedOn.trim()) ? null : '查证日期(YYYY-MM-DD)',
-    typeof source?.basis === 'string' && source.basis.trim() ? null : '主体对应依据',
-    typeof source?.name === 'string' && source.name.trim() ? null : '来源里的主体名称',
-  ].filter((item): item is string => item != null)
+  const missing = missingUsccSourceFields(source)
   if (missing.length) {
     return { ok: false, code: 'source_evidence_incomplete', message: `公开来源证据不齐，缺：${missing.join('、')}` }
   }

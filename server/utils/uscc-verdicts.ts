@@ -24,7 +24,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeUscc } from '../../lib/domain'
-import type { UsccPlatformClaim } from '../../lib/roster/uscc-research'
+import { isByteEqualName, type UsccPlatformClaim } from '../../lib/roster/uscc-research'
 
 /** 判定文件里的一条(形状见 `orchestration-notes/07-USCC-BATCH-BRIEF.md`)。 */
 export interface UsccVerdictItem {
@@ -190,8 +190,8 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
         // 代理没有说「qymc 逐字相等」（显式 false，或**该字段整个缺席**）⇒ 不采纳。
         // 缺席不是 true，**不替它补一个 true** —— 但如实报出「它其实带了几条逐字相等的关系」，
         // 免得是一整批的字段名笔误时，父代理要自己再去数一遍才能裁决。
-        const verbatim = (Array.isArray(item.platformEvidence) ? item.platformEvidence : []).filter(
-          (entry) => entry?.qymc === name,
+        const verbatim = (Array.isArray(item.platformEvidence) ? item.platformEvidence : []).filter((entry) =>
+          isByteEqualName(entry?.qymc, name),
         ).length
         const absent = item.qymcEqualsAnnouncedName === undefined || item.qymcEqualsAnnouncedName === null
         untouched.push({
@@ -224,7 +224,8 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
           usccRaw: typeof entry.tyshxydm === 'string' ? entry.tyshxydm : null,
           query: typeof entry.query === 'string' ? entry.query : null,
         }))
-        .filter((entry) => Number.isInteger(entry.sequenceNo) && entry.sequenceNo >= 1 && entry.nameRaw === name)
+        // 逐字相等：与计划侧**同一个具名判据**（`isByteEqualName`），不在这里另写一次比较。
+        .filter((entry) => Number.isInteger(entry.sequenceNo) && entry.sequenceNo >= 1 && isByteEqualName(entry.nameRaw, name))
       // **按企业去重**：同一家企业可能有两个称号 ⇒ 在两个批次各出现一次。
       // 同企业重复提同一件事不是两条证据（第二次会自己在同一轮里撞自己），只在报告里说明。
       const duplicate = platformClaims.find((claim) => claim.enterpriseId === enterpriseId)
