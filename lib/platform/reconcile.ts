@@ -56,7 +56,17 @@ export interface ReconcileTarget {
   enterpriseId: number
   enterpriseName: string
   enterpriseNameNorm: string
-  /** 统一社会信用代码;`null` = 无统代(平台两接口只认 `tyshxydm`,无法直查)。 */
+  /**
+   * 统一社会信用代码;`null` = 无统代。
+   *
+   * ⚠️ **事实更正(RL-06,2026-10-16)**:早年这里写「平台两接口只认 `tyshxydm`」——**不对**。
+   * 两个接口的**过滤能力不同**:`businessList`(关联记录)才只认 `rdjb` + `tyshxydm`;
+   * `queryList`(申报记录)认 `tyshxydm` **或 `qymc`**(子串),还认 `rdjb`/`sblx`/`cszt`/`whpc` 等。
+   * 所以「无统代 ⇒ 查不了」只是**这条判定链**的前提(它没有统代、也没带名称),不是接口的硬限制 ——
+   * 无统代企业**可以**用 `queryList?qymc=<名称>` 反查出统代(见
+   * `/Users/mang/Workfile/宁波/专精特新/20261013/orchestration-notes/00-CONTEXT.md`
+   * 的「两个接口的过滤能力不同」一节,以及 `.agents/skills/roster-ingestion-pipeline/references/uscc-recovery.md`)。
+   */
   uscc: string | null
   titleCode: string
   direction: ComparisonDirection
@@ -341,7 +351,8 @@ function decideVoidRelations(
  * 判定一个差异目标的**原因与后置动作**。
  *
  * 判据按优先级排列,**先命中先返回** —— 顺序本身就是「哪条证据更硬」的表态:
- *  1. 无统代 ⇒ `not_queried`(平台按 `tyshxydm` 查,查不了,不编造查询键);
+ *  1. 无统代 ⇒ `not_queried`(**本判定链**按 `tyshxydm` 查,这里没有统代也没带名称,故不编造查询键;
+ *     注意这不是接口的硬限制 —— `queryList` 认 `qymc`,可用名称反查,见 `ReconcileTarget.uscc` 的更正说明);
  *  2. 没有任何一次成功查询 ⇒ `query_failed`;
  *  3. 成功但 0 条关联 ⇒ `no_record`;
  *  4. 有证据明说的注销/吊销 ⇒ `deregistered`;
@@ -358,7 +369,11 @@ export function decideDifference(
   target: ReconcileTarget,
   queries: ReconcileQueryEvidence[],
 ): DifferenceVerdict {
-  // 1. 无统代 —— 两接口只认 `tyshxydm`,不支持按名称查。
+  // 1. 无统代 —— **本判定链**没有可用的查询键(它按 `tyshxydm` 取数,这里连统代都没有)。
+  //    注意:这不等于「平台查不了」。`queryList` 认 `qymc`,按公布名可以反查出统代 —— 那是
+  //    RL-06 的补录流程在做的事(见 `ReconcileTarget.uscc` 的更正说明与 `uscc-recovery.md`)。
+  //    ⚠️ 下面 `reasonNote` 里的那句文案因此**已过时**;它是**程序输出**(历史行也照此写入),
+  //    不是注释,所以本票**只改注释、没动它** —— 要不要连同既有行一起改,由父代理裁定。
   if (!target.uscc) {
     return {
       status: 'not_queried',
