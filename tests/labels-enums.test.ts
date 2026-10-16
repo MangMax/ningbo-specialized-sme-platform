@@ -5,6 +5,8 @@ import {
   DIFFERENCE_MEASURES,
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
+  DIFFERENCE_STATUS_ORDER,
+  DIFFERENCE_STATUS_VARIANTS,
   EVENTS,
   EXPORT_IMPORT_STATUSES,
   IMPORT_BATCH_STATUSES,
@@ -60,6 +62,21 @@ describe('冻结取值集:db/schema.ts 的列枚举 ↔ lib/labels.ts 的标签�
       expect(IDENTITY(Object.keys(table))).toEqual(IDENTITY(values))
     })
   }
+})
+
+describe('差异状态的标签 / 徽章色 / 展示顺序同键集合(RL-15)', () => {
+  it('三张表与 difference_reason.status 的列枚举逐字一致', () => {
+    const values = schema.differenceReason.status.enumValues
+    expect(IDENTITY(Object.keys(DIFFERENCE_STATUSES))).toEqual(IDENTITY(values))
+    expect(IDENTITY(Object.keys(DIFFERENCE_STATUS_VARIANTS))).toEqual(IDENTITY(values))
+    expect(IDENTITY(DIFFERENCE_STATUS_ORDER)).toEqual(IDENTITY(values))
+  })
+
+  it('每个状态都有徽章色 —— 没有取值会掉到兜底的 quiet', () => {
+    for (const code of schema.differenceReason.status.enumValues) {
+      expect(DIFFERENCE_STATUS_VARIANTS[code]).toBeTruthy()
+    }
+  })
 })
 
 describe('平台接口取值只有一处出处(契约 §2.4)', () => {

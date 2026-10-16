@@ -28,6 +28,7 @@ import { inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import type { ComparisonDirection } from './comparison'
+import { normalizeUscc } from './domain'
 
 export interface ComparisonAlias {
   id: number
@@ -117,6 +118,15 @@ interface RowKey {
  * **每一行都返回 `platform`**(永不为 `null`):没有解释记录时,处置就是状态机的
  * 默认态 `not_queried` + `explanationId: null`。页面因此不会再有「整列 —」的观感。
  */
+/**
+ * 归一化统代后比对:`''` → `null` 表示「这个值给不出统代」。
+ * 规则本身在 `lib/domain.ts` 的 `normalizeUscc`(**单一来源**)—— 与写入侧落
+ * `uscc_norm`、与 `enterprise-roster.ts` 的 `normUscc` 是同一条,不另写一份。
+ */
+function normUscc(uscc: string | null | undefined): string | null {
+  return normalizeUscc(uscc) || null
+}
+
 export function attachPlatformEvidence<T extends RowKey>(
   rows: T[],
   db: BetterSQLite3Database<typeof schema>,
@@ -137,6 +147,33 @@ export function attachPlatformEvidence<T extends RowKey>(
     .where(inArray(schema.differenceReason.enterpriseId, enterpriseIds))
     .all()
 
+  // 企业自身的查询键 —— 与 `lib/roster/enterprise-roster.ts` 同一口径。
+  const enterprises = db
+    .select({
+      id: schema.enterprise.id,
+      nameNorm: schema.enterprise.nameNorm,
+      usccNorm: schema.enterprise.usccNorm,
+    })
+    .from(schema.enterprise)
+    .where(inArray(schema.enterprise.id, enterpriseIds))
+    .all()
+  /** 企业 → 自己的查询键(统一社会信用代码 / `name:<nameNorm>`)。 */
+  const ownKeysByEnterprise = new Map<number, Set<string>>()
+  for (const enterprise of enterprises) {
+    const keys = new Set<string>([`name:${enterprise.nameNorm}`])
+    const uscc = normUscc(enterprise.usccNorm)
+    if (uscc) keys.add(uscc)
+    ownKeysByEnterprise.set(enterprise.id, keys)
+  }
+  const queriedEnterpriseByKey = new Map<string, number[]>()
+  for (const [enterpriseId, keys] of ownKeysByEnterprise) {
+    for (const key of keys) {
+      const bucket = queriedEnterpriseByKey.get(key)
+      if (bucket) bucket.push(enterpriseId)
+      else queriedEnterpriseByKey.set(key, [enterpriseId])
+    }
+  }
+
   // 关系:**归到该企业的** ∪ **属于该企业查询的**。后者是必须的 —— 一条关系可能
   // 没归到任何企业(`enterprise_id` 为空),但它仍然是「这个统代查出来的原文」。
   const relationRows = db
@@ -148,13 +185,18 @@ export function attachPlatformEvidence<T extends RowKey>(
     .orderBy(schema.platformRelation.queryId, schema.platformRelation.sequenceNo)
     .all()
 
+  // 查询 = **按关系归属的** ∪ **查询键就是它的**。后者是必须的:`no_record` / `failed`
+  // 这类查询**一条关系都不返回**,只看关系就把它们整条丢掉了 —— 而「查过、接口确无记录」
+  // 与「查询没成功执行」正是要看得见的四态里的两态(契约 §3.1)。
+  // 判定键与 `enterprise-roster.ts` 的 `ownKeys` 逐字一致(先用过 `normUscc`)。
+  const allKeys = [...queriedEnterpriseByKey.keys()]
   const queries = db
     .select()
     .from(schema.platformQuery)
     .where(
-      enterpriseIds.length
-        ? sql`${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds})`
-        : sql`0`,
+      allKeys.length
+        ? sql`${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds}) or ${schema.platformQuery.queryKey} in ${allKeys}`
+        : sql`${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds})`,
     )
     .all()
 
@@ -225,7 +267,12 @@ export function attachPlatformEvidence<T extends RowKey>(
       relations,
     }
     // 一个查询可能同时有关系归到多个企业;按关系归属逐个企业挂。
-    for (const enterpriseId of enterprisesByQuery.get(query.id) ?? []) {
+    const owners = new Set<number>(enterprisesByQuery.get(query.id) ?? [])
+    // 再加上「查询键就是它」的企业 —— 没有关系的那种查询靠这一条才挂得上。
+    for (const enterpriseId of queriedEnterpriseByKey.get(normUscc(query.queryKey) ?? query.queryKey) ?? []) {
+      owners.add(enterpriseId)
+    }
+    for (const enterpriseId of owners) {
       const bucket = queriesByEnterprise.get(enterpriseId)
       if (bucket) bucket.push(summary)
       else queriesByEnterprise.set(enterpriseId, [summary])

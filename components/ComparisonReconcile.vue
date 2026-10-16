@@ -8,9 +8,9 @@ import {
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
   DIFFERENCE_STATUS_VARIANTS,
-  PLATFORM_RDJBS,
   RECONCILE_LABELS,
   RECONCILE_SOURCE,
+  TITLES,
   VERIFICATION_STATUSES,
 } from '~~/lib/labels'
 import type { ComparisonDisposition } from '~~/lib/comparison-platform'
@@ -80,13 +80,18 @@ const measureLabel = computed(() =>
     ? (DIFFERENCE_MEASURES[props.disposition.measureCode] ?? props.disposition.measureCode)
     : null,
 )
-/** 迁入的原城市/称号/年份/批次;**四项齐全才算完整**,缺项页面显示「待补证」。 */
+/**
+ * 迁入的原城市/称号/年份/批次;**四项齐全才算完整**,缺项页面显示「待补证」。
+ *
+ * `movedIn.titleCode` 是 **`title.code`**(契约 §1.5:`moved_in_title_code` FK→`title.code`),
+ * 所以查 `TITLES` —— 不是 `PLATFORM_RDJBS`(那张表按 `rdjb` 的 `'1'|'2'|'3'` 索引,查不到)。
+ */
 const movedInText = computed(() => {
   const value = props.disposition.movedIn
   if (!value) return null
   const parts = [
     value.city,
-    value.titleCode ? (PLATFORM_RDJBS[value.titleCode] ?? value.titleCode) : null,
+    value.titleCode ? (TITLES[value.titleCode] ?? value.titleCode) : null,
     value.year != null ? `${value.year} 年` : null,
     value.batch != null ? `第 ${value.batch} 批` : null,
   ].filter((part): part is string => !!part)

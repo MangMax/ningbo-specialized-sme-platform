@@ -67,6 +67,8 @@ function relationFields(relation: ComparisonPlatformEvidence['queries'][number][
       ? `申报类型 ${RELATION_DECLARE_KINDS[relation.declareKind] ?? relation.declareKind}`
       : null,
     relation.appliedAt ? `申报时间 ${relation.appliedAt}` : null,
+    relation.year != null ? `申报记录年份 ${relation.year}` : null,
+    relation.awardBatchLabel ? `认定批次 ${relation.awardBatchLabel}` : null,
     relation.aliasNameRaw ? `关系写出曾用名 ${relation.aliasNameRaw}` : null,
     relation.relationKey ? `关联主键 ${relation.relationKey}` : null,
   ].filter((part): part is string => !!part)

@@ -8,6 +8,7 @@ import type {
   ComparisonPlatformEvidence as PlatformEvidence,
 } from '../lib/comparison-platform'
 import type { ReconcileEntry } from '../lib/reconcile'
+import { TITLES } from '../lib/labels'
 
 /**
  * 比对页「平台解释 / 平台证据」两列的**库内口径**(RL-15)。
@@ -148,13 +149,17 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
           status: 'confirmed_reason',
           reasonCode: 'moved_in',
           measureCode: 'record_moved_in',
-          movedIn: { city: '绍兴市', titleCode: null, year: 2022, batch: null },
+          movedIn: { city: '绍兴市', titleCode: 'specialized_sme', year: 2022, batch: null },
         }),
       },
       attachTo: document.body,
     })
     const text = await openAndReadText(wrapper)
     expect(text).toContain('绍兴市')
+    // `moved_in_title_code` 是 `title.code`(契约 §1.5 FK→title.code),**不是** rdjb ——
+    // 要显示称号中文名,而不是原样吐出 `specialized_sme`。
+    expect(text).toContain(TITLES.specialized_sme)
+    expect(text).not.toContain('specialized_sme')
     expect(text).toContain('待补证')
   })
 

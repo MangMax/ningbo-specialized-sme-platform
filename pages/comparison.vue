@@ -220,6 +220,7 @@ const TH_CLASS =
                 >{{ RECONCILE_REASONS[direction] }}
               </p>
               <p
+                v-if="platformInfo"
                 class="text-muted-foreground text-xs leading-relaxed"
                 data-testid="platform-provenance"
               >

@@ -240,6 +240,27 @@ describe('attachPlatformEvidence:状态、原因、措施照库原样带出', ()
   // 丙:还没有解释记录(还没轮询到的行)⇒ 状态机默认态「未查询」,不是「无数据」。
   const notYet = make('宁波尚未解释企业', '91330211000000003Z', 'little_giant', 'miit')
 
+  // 丁:`no_record` / `failed` 这类查询**一条关系都不返回**。只看关系会把它们整条丢掉,
+  //     而「查过、接口确无记录」正是要看得见的四态之一 —— 所以查询要按**查询键**归属。
+  const noRecorded = make('宁波接口无记录企业', '91330211000000004A', 'specialized_sme', 'jxj')
+  db2.insert(schema.platformQuery)
+    .values({ interface: 'apply_list', queryKey: '91330211000000004A', rdjb: '', queriedAt: '2026-10-16T03:20:00.000Z', status: 'no_record' })
+    .run()
+  db2.insert(schema.platformQuery)
+    .values({ interface: 'business_list', queryKey: '91330211000000004A', rdjb: '2', queriedAt: '2026-10-16T03:20:01.000Z', status: 'failed', failureReason: '登录超时,请重新登录' })
+    .run()
+  db2.insert(schema.differenceReason)
+    .values({
+      enterpriseId: noRecorded,
+      titleCode: 'specialized_sme',
+      direction: 'missing_in_miit',
+      status: 'no_record',
+      measureCode: 'manual_review',
+      verificationStatus: 'pending',
+      recordedAt: '2026-10-16T03:33:27.157Z',
+    })
+    .run()
+
   const titleRows = attachPlatformEvidence(
     ['little_giant', 'specialized_sme', 'innovative_sme'].flatMap((title) =>
       getComparison(db2, { title: [title] as never }).rows,
@@ -271,10 +292,22 @@ describe('attachPlatformEvidence:状态、原因、措施照库原样带出', ()
   })
 
   it('三称号的行都带得出 platform(不再有「无数据」的行)', () => {
-    expect(titleRows.length).toBe(3)
+    expect(titleRows.length).toBe(4)
     expect(titleRows.every((row) => row.platform !== null)).toBe(true)
     expect(new Set(titleRows.map((r) => r.titleCode)).size).toBe(3)
     const pending = titleRows.find((r) => r.enterpriseId === notYet)!
     expect(pending.platform!.disposition).toMatchObject({ explanationId: null, status: 'not_queried' })
+  })
+
+  it('`no_record` / `failed` 的查询**一条关系都不返回**,仍要按查询键归属带出(否则这类行没有接口证据)', () => {
+    const row = titleRows.find((r) => r.enterpriseId === noRecorded)!
+    expect(row.platform!.queries.map((q) => `${q.interface}:${q.status}`)).toEqual([
+      'apply_list:no_record',
+      'business_list:failed',
+    ])
+    // 关系为空是**事实**,不是缺数据;失败原因要带得出来。
+    expect(row.platform!.queries.every((q) => q.relations.length === 0)).toBe(true)
+    expect(row.platform!.queries[1]!.failureReason).toBe('登录超时,请重新登录')
+    expect(row.platform!.relationCount).toBe(0)
   })
 })
