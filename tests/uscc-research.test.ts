@@ -1457,6 +1457,134 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     expect(ready.merge).toBeNull()
   })
 
+  it('★ 两段来源拼成的归并：note 必须写实「平台现名与公布名不同」与「平台不索引旧名」两句', () => {
+    const published = seedEnterprise({ name: '宁波开诚生态技术有限公司' })
+    const holder = seedEnterprise({ name: '宁波开诚生态技术股份有限公司', uscc: '9133021274738281XA' })
+    const report = planUsccResearch(db, {
+      enterpriseIds: [published],
+      platformClaims: [
+        {
+          enterpriseId: published,
+          enterpriseName: '宁波开诚生态技术有限公司',
+          uscc: '9133021274738281XA',
+          crossSource: {
+            publicSource: {
+              url: 'https://zhidao.baidu.com/question/1309317620586833819.html',
+              fetchedAt: '2026-10-16T17:12:00+08:00',
+              basis: '页面正文同片出现「…的统一社会信用代码/注册号是9133021274738281XA」，并给出注册地 海曙区古林镇戴家村',
+              site: '百度知道',
+            },
+            platformByCode: { interface: 'business_list', rdjb: '3', rowCount: 4, qymc: '宁波开诚生态技术股份有限公司' },
+            nameQueryRowCount: 0,
+            renameNote: null,
+            controlNote: null,
+          },
+          batchRef: 'platform-verify-aclass',
+          observedAt: '2026-10-16T17:47:18+08:00',
+        },
+      ],
+    })
+    expect(report.counts).toMatchObject({ filled: 1, closed: 1 })
+    expect(report.counts.byBasisKind).toEqual({ public_source: 1 })
+    const ready = report.ready[0]!
+    expect(ready.basisKind).toBe('public_source')
+    expect(ready.merge).toMatchObject({
+      fromEnterpriseId: published,
+      intoUscc: '9133021274738281XA',
+      aliasName: '宁波开诚生态技术有限公司',
+      // 曾用名的来源是**公开来源页** ⇒ manual + 0（不是某条平台关系）。
+      sourceKind: 'manual',
+      sourceRefId: 0,
+    })
+    // 第二段（平台按码）落成真的平台查询行，并作为归并的查询证据进血缘。
+    expect(ready.platformQueries).toHaveLength(1)
+    expect(ready.platformQueries[0]).toMatchObject({ interface: 'business_list', queryKey: '9133021274738281XA', rdjb: '3' })
+    const rows = ready.platformQueries[0]!.relations ?? []
+    expect(rows).toHaveLength(4)
+    expect(rows[0]).toMatchObject({
+      nameRaw: '宁波开诚生态技术股份有限公司',
+      usccRaw: '9133021274738281XA',
+      // 名称与公布名不同 ⇒ 这一行不是曾用名证据，标 pending 不冒充 confirmed。
+      verificationStatus: 'pending',
+    })
+    const note = ready.merge!.note
+    // 两句必须写实：
+    expect(note).toContain('**平台在该码下持有的现名为「宁波开诚生态技术股份有限公司」，与公布名不同**')
+    expect(note).toContain('**按公布名查平台 qymc 返回 0 行 —— 平台不索引旧名**')
+    expect(note).toContain('宁波劦群')
+    expect(note).toContain('不是**由平台名称匹配触发')
+    // 绝不出现「名称相等 / 归一化后相等 / 名称相似」这类措辞。
+    for (const banned of ['名称相等', '归一化后相等', '名称相似', '名称相近', '逐字等于', '仅字形等价']) {
+      expect(note, `note 不得出现「${banned}」`).not.toContain(banned)
+    }
+    // 第一段的公开来源原样保留（url + 站点 + basis）。
+    expect(note).toContain('https://zhidao.baidu.com/question/1309317620586833819.html')
+    expect(note).toContain('百度知道')
+    expect(note).toContain('海曙区古林镇戴家村')
+    expect(holder).toBeGreaterThan(0)
+  })
+
+  it('★ 两段缺一即不写；且「平台那个码在库里没行」不算可并（如实落冲突/待人工）', () => {
+    const published = seedEnterprise({ name: '宁波缺段企业有限公司' })
+    const base = {
+      enterpriseId: published,
+      enterpriseName: '宁波缺段企业有限公司',
+      uscc: '91330221MA2CL6FP2K',
+      batchRef: 'b',
+      observedAt: '2026-10-16T17:47:18+08:00',
+    }
+    // (1) 缺第一段（没有公开来源页）
+    const noPublic = planUsccResearch(db, {
+      enterpriseIds: [published],
+      platformClaims: [
+        {
+          ...base,
+          crossSource: {
+            publicSource: { url: '', fetchedAt: '', basis: '', site: null },
+            platformByCode: { interface: 'business_list', rdjb: '3', rowCount: 2, qymc: '宁波缺段科技股份有限公司' },
+            nameQueryRowCount: 0,
+          },
+        },
+      ],
+    })
+    expect(noPublic.counts.filled).toBe(0)
+    expect(noPublic.pending[0]?.code).toBe('cross_source_incomplete')
+
+    // (2) 按公布名查平台回了行 ⇒ 前提不成立（那是平台名称匹配那一路的事）
+    const nameMatched = planUsccResearch(db, {
+      enterpriseIds: [published],
+      platformClaims: [
+        {
+          ...base,
+          crossSource: {
+            publicSource: { url: 'https://example.test/x', fetchedAt: '2026-10-16', basis: '配对', site: null },
+            platformByCode: { interface: 'business_list', rdjb: '3', rowCount: 2, qymc: '宁波缺段科技股份有限公司' },
+            nameQueryRowCount: 3,
+          },
+        },
+      ],
+    })
+    expect(nameMatched.pending[0]?.code).toBe('cross_source_incomplete')
+    expect(nameMatched.pending[0]?.message).toContain('平台不索引旧名')
+
+    // (3) 该码在库里没人持有 ⇒ 没有可并入的规范行
+    const noHolder = planUsccResearch(db, {
+      enterpriseIds: [published],
+      platformClaims: [
+        {
+          ...base,
+          crossSource: {
+            publicSource: { url: 'https://example.test/y', fetchedAt: '2026-10-16', basis: '配对', site: null },
+            platformByCode: { interface: 'business_list', rdjb: '3', rowCount: 2, qymc: '宁波缺段科技股份有限公司' },
+            nameQueryRowCount: 0,
+          },
+        },
+      ],
+    })
+    expect(noHolder.pending[0]?.code).toBe('uscc_taken')
+    expect(noHolder.request).toBeNull()
+  })
+
   it('★ 端到端：判定文件 → 服务端采纳 → 统一 API 落库 → 清单里少一家', async () => {
     const before = listUsccChecklist(db, { pageSize: 500 }).rows.length
     const response = await fetch(`${server.baseUrl}/api/roster/uscc-research`, {
