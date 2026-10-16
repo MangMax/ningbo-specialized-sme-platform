@@ -39,7 +39,11 @@ const VIEWPORTS = [
 ]
 
 const problems = []
-const ok = (msg) => console.log(`✓ ${msg}`)
+let passed = 0
+const ok = (msg) => {
+  passed += 1
+  console.log(`✓ ${msg}`)
+}
 const bad = (msg) => {
   console.log(`✗ ${msg}`)
   problems.push(msg)
@@ -163,17 +167,24 @@ async function openAndMeasure(cdp, url, expression, readyExpression, viewport = 
   }
 }
 
-async function openSession(cdp, url, viewport) {
+async function openSession(cdp, url, viewport, readyExpression = READY) {
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' })
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
   await cdp.send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false }, sessionId)
   await cdp.send('Page.enable', {}, sessionId)
   await cdp.send('Page.navigate', { url }, sessionId)
-  if (!(await waitUntil(cdp, sessionId, READY))) {
+  if (!(await waitUntil(cdp, sessionId, readyExpression))) {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
     throw new Error(`${url} 在 30s 内没有渲染出表格数据`)
   }
   return { targetId, sessionId }
+}
+
+async function clickPoint(cdp, sessionId, rect, label) {
+  if (!rect) throw new Error(`找不到可点击元素:${label}`)
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y }, sessionId)
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x, y: rect.y, button: 'left', clickCount: 1 }, sessionId)
+  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x, y: rect.y, button: 'left', clickCount: 1 }, sessionId)
 }
 
 async function clickSelector(cdp, sessionId, selector) {
@@ -184,24 +195,7 @@ async function clickSelector(cdp, sessionId, selector) {
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   })()`)
-  if (!rect) throw new Error(`找不到可点击元素:${selector}`)
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y }, sessionId)
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x, y: rect.y, button: 'left', clickCount: 1 }, sessionId)
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x, y: rect.y, button: 'left', clickCount: 1 }, sessionId)
-}
-
-async function clickButtonContaining(cdp, sessionId, text) {
-  const rect = await evaluate(cdp, sessionId, `(() => {
-    const el = [...document.querySelectorAll('button')].find((button) => (button.textContent ?? '').includes(${JSON.stringify(text)}));
-    if (!el) return null;
-    el.scrollIntoView({ block: 'center', inline: 'nearest' });
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  })()`)
-  if (!rect) throw new Error(`找不到按钮:${text}`)
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y }, sessionId)
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x, y: rect.y, button: 'left', clickCount: 1 }, sessionId)
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x, y: rect.y, button: 'left', clickCount: 1 }, sessionId)
+  await clickPoint(cdp, sessionId, rect, selector)
 }
 
 async function clickElementContaining(cdp, sessionId, selector, text) {
@@ -212,10 +206,7 @@ async function clickElementContaining(cdp, sessionId, selector, text) {
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   })()`)
-  if (!rect) throw new Error(`找不到包含「${text}」的元素:${selector}`)
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y }, sessionId)
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x, y: rect.y, button: 'left', clickCount: 1 }, sessionId)
-  await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x, y: rect.y, button: 'left', clickCount: 1 }, sessionId)
+  await clickPoint(cdp, sessionId, rect, `${selector} 包含「${text}」`)
 }
 
 async function setInputValue(cdp, sessionId, selector, value) {
@@ -277,12 +268,16 @@ async function finishFetchGate(cdp, sessionId) {
 }
 
 async function waitForLoadingEvidence(cdp, sessionId, pageKind) {
-  const statusSelector = pageKind === 'ledger' ? '[data-testid="ledger-loading-status"]' : '[data-testid="comparison-loading-status"]'
+  const statusSelector = {
+    ledger: '[data-testid="ledger-loading-status"]',
+    comparison: '[data-testid="comparison-loading-status"]',
+    files: '[data-testid="files-loading-status"]',
+  }[pageKind]
+  const bodySelector = pageKind === 'files' ? 'tbody[data-loading="true"]' : 'tbody[data-loading="true"]'
   const expression = `(() => {
     const status = document.querySelector(${JSON.stringify(statusSelector)});
-    const body = document.querySelector('tbody');
     const gate = window.__rl20FetchGate;
-    return !!gate?.requested && (status?.textContent ?? '').includes('正在') && body?.dataset.loading === 'true';
+    return !!gate?.requested && (status?.textContent ?? '').includes('正在') && !!document.querySelector(${JSON.stringify(bodySelector)});
   })()`
   return waitUntil(cdp, sessionId, expression)
 }
@@ -309,6 +304,51 @@ async function verifyLedgerSearchLoading(cdp) {
     else ok(`企业列表 · 搜索:名称筛选返回 ${JSON.stringify(name)}`)
   } finally {
     await finishFetchGate(cdp, sessionId).catch(() => {})
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
+async function verifyMissingRecognitionYearAndEvidence(cdp) {
+  const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0])
+  const { targetId, sessionId } = page
+  try {
+    const target = await evaluate(cdp, sessionId, `fetch('/api/roster/enterprises/157').then((r) => r.json()).then((detail) => {
+      const missing = detail.enterprise.titles.filter((code) => !detail.enterprise.firstRecognition.some((item) => item.titleCode === code));
+      return { name: detail.enterprise.name, missing };
+    })`)
+    if (!target.name || !target.missing.length) {
+      bad(`企业列表 · 称号与出处:企业 157 不再包含无认定年称号,无法核验年待核显示 ${JSON.stringify(target)}`)
+      return
+    }
+
+    await setInputValue(cdp, sessionId, 'input[aria-label*="企业名称"]', target.name)
+    const visible = await waitUntil(cdp, sessionId, `(() => {
+      const row = [...document.querySelectorAll('tbody tr')].find((tr) => tr.querySelector('button')?.textContent?.trim() === ${JSON.stringify(target.name)});
+      return row?.querySelector('[data-testid="title-recognition-cell"]')?.textContent?.includes('年待核') ?? false;
+    })()`)
+    if (!visible) {
+      bad(`企业列表 · 称号与出处:企业 ${JSON.stringify(target.name)} 的无认定年称号没有显示「年待核」`)
+      return
+    }
+    ok(`企业列表 · 称号:企业 ${JSON.stringify(target.name)} 的无认定年称号保留并显示「年待核」`)
+
+    await evaluate(cdp, sessionId, `(() => {
+      const row = [...document.querySelectorAll('tbody tr')].find((tr) => tr.querySelector('button')?.textContent?.trim() === ${JSON.stringify(target.name)});
+      row?.querySelector('button')?.click();
+    })()`)
+    const drawerReady = await waitUntil(cdp, sessionId, `(() => {
+      const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+      return drawer?.getAttribute('data-state') === 'open' && !!drawer.querySelector('[data-testid="enterprise-evidence"]');
+    })()`)
+    if (!drawerReady) {
+      bad('企业列表 · 出处:企业 157 抽屉未渲染出处区')
+      return
+    }
+    await evaluate(cdp, sessionId, `document.querySelector('[data-testid="enterprise-evidence"] summary')?.click()`)
+    const pageSlot = await evaluate(cdp, sessionId, `document.querySelector('[data-testid="enterprise-evidence"]')?.textContent?.includes('页码') ?? false`)
+    if (!pageSlot) bad('企业列表 · 出处:出处条目没有保留页码字段')
+    else ok('企业列表 · 出处:出处条目保留页码字段,RL-10 可接入页码跳转')
+  } finally {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
   }
 }
@@ -457,6 +497,32 @@ async function verifyComparisonSearchAndMotion(cdp) {
   }
 }
 
+async function verifyFilesSearchLoading(cdp) {
+  const ready = `(() => !document.querySelector('[data-slot="skeleton"]') && !!document.querySelector('table tbody tr td:nth-of-type(2)'))()`
+  const page = await openSession(cdp, `${BASE}/files`, VIEWPORTS[0], ready)
+  const { targetId, sessionId } = page
+  try {
+    await installMotionAndFetchGate(cdp, sessionId)
+    const name = await evaluate(cdp, sessionId, `document.querySelector('table tbody tr td:nth-of-type(2)')?.textContent?.trim() ?? ''`)
+    if (!name) {
+      bad('文件管理 · 搜索:初始结果没有可搜索的文件名')
+      return
+    }
+    await startFetchGate(cdp, sessionId, '/api/files?')
+    await setInputValue(cdp, sessionId, 'input[placeholder="搜索文件名"]', name)
+    const loading = await waitForLoadingEvidence(cdp, sessionId, 'files')
+    if (!loading) bad('文件管理 · 搜索:请求期间没有可见加载状态')
+    else ok('文件管理 · 搜索:请求期间显示加载状态,旧行保留')
+    await finishFetchGate(cdp, sessionId)
+    const idle = await waitUntil(cdp, sessionId, `(() => !(document.querySelector('[data-testid="files-loading-status"]')?.textContent ?? '').includes('正在') && [...document.querySelectorAll('table tbody tr')].some((tr) => (tr.textContent ?? '').includes(${JSON.stringify(name)})))()`)
+    if (!idle) bad('文件管理 · 搜索:释放请求后匹配文件没有渲染')
+    else ok(`文件管理 · 搜索:名称筛选返回 ${JSON.stringify(name)}`)
+  } finally {
+    await finishFetchGate(cdp, sessionId).catch(() => {})
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
 /**
  * 就绪判据:**没有骨架屏**、且**有数据行**、且**分页条在**。
  *
@@ -485,6 +551,24 @@ const PAGES = [
 /** 在页面里量:页面级横向溢出、分页条是否越界、表数、筛选入口与加载提示。 */
 const MEASURE = `(() => {
   const de = document.documentElement;
+  const root = document.querySelector('.ledger-page, .comparison-page');
+  const shadowTargets = [
+    ...(root?.querySelectorAll('[data-slot="card"], [data-slot="button"], [data-slot="select-trigger"]') ?? []),
+    ...document.querySelectorAll('[data-testid="enterprise-drawer"]'),
+  ];
+  const hasVisibleShadow = (el) => {
+    const value = getComputedStyle(el).boxShadow;
+    if (value === 'none') return false;
+    const colors = [...value.matchAll(/(?:rgba?|hsla?)\(([^)]+)\)/gi)];
+    if (!colors.length) return true;
+    return colors.some(([, channels]) => {
+      const parts = channels.split(/\s*[,/]\s*/);
+      return parts.length < 4 || Number.parseFloat(parts.at(-1)) > 0;
+    });
+  };
+  const shadowedTargets = shadowTargets
+    .filter(hasVisibleShadow)
+    .map((el) => ({ tag: el.tagName.toLowerCase(), slot: el.getAttribute('data-slot'), testId: el.getAttribute('data-testid'), shadow: getComputedStyle(el).boxShadow }));
   const nextButton = [...document.querySelectorAll('button')].find((el) => (el.textContent ?? '').includes('下一页'));
   const pagination = document.querySelector('[data-slot=pagination]') || nextButton?.parentElement?.parentElement;
   const rect = pagination ? pagination.getBoundingClientRect() : null;
@@ -495,6 +579,7 @@ const MEASURE = `(() => {
     innerWidth: window.innerWidth,
     tableCount: document.querySelectorAll('table').length,
     nativeSelectCount: document.querySelectorAll('select').length,
+    shadowedTargets,
     searchInput: !!document.querySelector('input[aria-label*="企业名称"]'),
     loadingStatus: !!document.querySelector('[data-testid="ledger-loading-status"],[data-testid="comparison-loading-status"]'),
     drawerOpen: document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state') === 'open',
@@ -567,6 +652,8 @@ async function main() {
         }
         if (m.tableCount !== 1) bad(`${label}:应有且只有一个表格,实测 ${m.tableCount}`)
         else ok(`${label}:唯一表格已渲染`)
+        if (m.shadowedTargets.length) bad(`${label}:内容区仍有阴影 ${JSON.stringify(m.shadowedTargets)}`)
+        else ok(`${label}:内容区卡片、控件与抽屉均无阴影`)
         if (!m.searchInput) bad(`${label}:没有搜索入口`)
         else ok(`${label}:搜索入口已渲染`)
         if (!m.loadingStatus) bad(`${label}:没有常驻加载状态容器`)
@@ -638,35 +725,32 @@ async function main() {
     }
 
     await verifyLedgerSearchLoading(cdp)
+    await verifyMissingRecognitionYearAndEvidence(cdp)
     await verifyLedgerLoadingAndDrawer(cdp)
     await verifyComparisonSearchAndMotion(cdp)
+    await verifyFilesSearchLoading(cdp)
 
-    // ⑤ 图例里引用的列名必须真是**这一页的列头**(盲测第二轮:文案写「平台原因」,
-    //    而列头叫「平台解释」,用户按字面找不到那一列)
-    const legend = await openAndMeasure(
+    // 页面减法:行内徽章自身就是状态,图例和横向滚动操作说明不再常驻占高。
+    const comparisonCopy = await openAndMeasure(
       cdp,
       `${BASE}/comparison`,
-      `(() => {
-        const note = [...document.querySelectorAll('span')]
-          .map((el) => el.textContent ?? '')
-          .find((t) => t.includes('徽章只表示取值本身')) ?? '';
-        return {
-          note,
-          quoted: [...note.matchAll(/「([^」]+)」/g)].map((m) => m[1]),
-          headers: [...document.querySelectorAll('thead th')].map((th) => (th.textContent ?? '').trim()),
-        };
-      })()`,
+      `(() => ({
+        headers: [...document.querySelectorAll('thead th')].map((th) => (th.textContent ?? '').trim()),
+        legend: !!document.querySelector('[data-testid="platform-legend"]'),
+        scrollHint: !!document.querySelector('[data-testid="scroll-hint"]'),
+        note: document.body.innerText.includes('徽章只表示取值本身') || document.body.innerText.includes('表格较宽,可左右滑动'),
+      }))()`,
       `(() => !document.querySelector('[data-slot=skeleton]') && document.querySelectorAll('thead th').length > 0)()`,
     )
-    const missing = legend.quoted.filter((q) => !legend.headers.includes(q))
-    if (!legend.note) {
-      bad('/comparison:没找到图例说明句(选择器可能已改)')
-    } else if (missing.length) {
-      bad(
-        `/comparison:图例引用了不存在的列名 ${JSON.stringify(missing)}(现有列头 ${JSON.stringify(legend.headers)})`,
-      )
+    if (!comparisonCopy.headers.includes('平台解释') || !comparisonCopy.headers.includes('平台证据')) {
+      bad(`/comparison:平台解释 / 平台证据列头缺失 ${JSON.stringify(comparisonCopy.headers)}`)
     } else {
-      ok(`/comparison:图例引用的列名都在列头里 ${JSON.stringify(legend.quoted)}`)
+      ok('/comparison:平台解释与平台证据列头保留')
+    }
+    if (comparisonCopy.legend || comparisonCopy.scrollHint || comparisonCopy.note) {
+      bad(`/comparison:仍渲染常驻图例或横向滚动说明 ${JSON.stringify(comparisonCopy)}`)
+    } else {
+      ok('/comparison:已移除重复图例与滚动说明')
     }
 
     // ⑥ 深链重定向带走查询串(顺手守一条已知回归)
@@ -703,10 +787,11 @@ async function main() {
   }
 
   if (problems.length) {
-    console.log(`\n✗ ${problems.length} 条不符合预期`)
+    console.log(`\n结果:${passed} 项通过,${problems.length} 项失败`)
     process.exit(1)
   }
-  console.log('\n✓ 企业列表与比对页已覆盖桌面/390px、表格唯一性、搜索与加载、分页、排序、抽屉动效及 /roster 查询串重定向')
+  console.log(`\n结果:${passed} 项通过,0 项失败`)
+  console.log('✓ 企业列表与比对页已覆盖桌面/390px、表格唯一性、搜索与加载、分页、排序、抽屉动效及 /roster 查询串重定向')
 }
 
 main().catch((err) => {

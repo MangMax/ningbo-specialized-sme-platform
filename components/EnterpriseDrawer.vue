@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { DialogContent, DialogRoot, DialogTitle } from 'reka-ui'
-import { ExternalLink, X } from '@lucide/vue'
+import { ArrowDown, ExternalLink, X } from '@lucide/vue'
 import {
   comparisonDirectionNote,
   DIFFERENCE_MEASURES,
@@ -83,6 +83,7 @@ interface Detail {
   aliases: { id: number; name: string; verificationStatus: string }[]
   records: RecordRow[]
   events: EventRow[]
+  evidence: { eventId: number; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
   differences: Difference[]
 }
 
@@ -111,6 +112,20 @@ const titleOfRecord = computed(() => {
   const map = new Map<number, string>()
   for (const record of detail.value?.records ?? []) map.set(record.id, record.titleCode)
   return map
+})
+
+/** 出处按事件回连称号与事件名;页码直接保留后端值,RL-10 可在此接入跳转。 */
+const evidenceItems = computed(() => {
+  const events = new Map((detail.value?.events ?? []).map((event) => [event.id, event]))
+  return (detail.value?.evidence ?? []).map((item) => {
+    const event = events.get(item.eventId)
+    return {
+      ...item,
+      titleCode: event ? titleOfRecord.value.get(event.recordId) ?? null : null,
+      eventType: event?.eventType ?? null,
+      year: event ? event.decidedYear ?? event.year : null,
+    }
+  })
 })
 
 /**
@@ -233,7 +248,7 @@ function eventSuffix(item: TimelineItem): string {
     <DialogContent
       data-testid="enterprise-drawer"
       :aria-describedby="undefined"
-      class="enterprise-drawer bg-card data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right ease-snap fixed inset-y-0 right-0 z-40 flex w-[440px] max-w-full flex-col border-l duration-200 outline-none motion-reduce:animate-none"
+      class="enterprise-drawer bg-card shadow-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right ease-snap fixed inset-y-0 right-0 z-40 flex w-[440px] max-w-full flex-col border-l duration-200 outline-none motion-reduce:animate-none"
     >
       <div v-if="detail" class="flex min-h-0 flex-1 flex-col">
         <!-- 抬头:企业名 + 统代。`DialogTitle` 就是企业名本身,不另造一个标题层。 -->
@@ -302,6 +317,25 @@ function eventSuffix(item: TimelineItem): string {
             </li>
           </ol>
 
+          <details v-if="evidenceItems.length" class="mt-5 border-t pt-4" data-testid="enterprise-evidence">
+            <summary class="cursor-pointer text-[13px] font-medium">出处 · {{ evidenceItems.length }}</summary>
+            <ul class="mt-2 flex flex-col gap-2">
+              <li v-for="(item, index) in evidenceItems" :key="`${item.eventId}-${item.sourceFile}-${index}`" class="border-l pl-2">
+                <p class="text-muted-foreground text-[13px] leading-5">
+                  <template v-if="item.year != null">{{ item.year }} · </template>
+                  <template v-if="item.titleCode">{{ TITLES[item.titleCode] ?? item.titleCode }} · </template>
+                  <template v-if="item.eventType">{{ eventLabel(item.eventType) }}</template>
+                </p>
+                <p class="break-words text-[13px] leading-5" :title="item.sourceFile">
+                  {{ item.sourceFile }}<template v-if="item.attachment"> · {{ item.attachment }}</template>
+                </p>
+                <p class="text-muted-foreground text-[13px] leading-5 tabular-nums">
+                  <template v-if="item.listNo != null">序号 {{ item.listNo }} · </template>页码 {{ item.page ?? '—' }}
+                </p>
+              </li>
+            </ul>
+          </details>
+
           <!-- 差异块:方向 · 原因 → 措施 的可视化链 + 依据原文 -->
           <template v-if="differences.length">
             <h3 class="text-muted-foreground mt-5 border-t pt-4 text-xs font-medium">差异</h3>
@@ -318,14 +352,14 @@ function eventSuffix(item: TimelineItem): string {
                   {{ DIFFERENCE_STATUSES[d.status] ?? d.status }}
                 </Badge>
                 <Badge v-if="!d.inCurrentDifference" variant="outline" class="font-normal">
-                  当前已不是差异(解释留档)
+                  历史差异
                 </Badge>
               </div>
               <!--
                 原因链:方向 → 原因 → 措施。三段之间用**连线**接起来(不是三个并排的 chip),
                 于是「为什么会这样、接下来做什么」是一眼看出来的一条链,而不是三句要自己拼的话。
               -->
-              <ol class="mt-2 flex flex-col">
+              <ol class="mt-2 flex flex-col" data-testid="difference-reason-chain">
                 <li
                   v-for="(step, i) in [
                     { k: '方向', v: comparisonDirectionNote(d.direction) },
@@ -345,22 +379,26 @@ function eventSuffix(item: TimelineItem): string {
                   <span class="relative self-stretch">
                     <span
                       v-if="i < 2"
-                      class="bg-border absolute top-3 left-[5px] h-full w-px"
+                      class="bg-border absolute top-3 bottom-0 left-[5px] w-px"
                     />
                     <span
                       class="absolute top-[7px] left-[4px] size-1.5 rounded-full"
                       :class="i === 0 ? 'bg-muted-foreground' : 'bg-primary'"
                     />
+                    <ArrowDown
+                      v-if="i < 2"
+                      aria-hidden="true"
+                      class="absolute bottom-[-2px] left-0 size-[11px]"
+                      :class="i === 1 ? 'text-primary' : 'text-muted-foreground'"
+                    />
                   </span>
                   <span class="text-[13px] leading-5">{{ step.v }}</span>
                 </li>
               </ol>
-              <p v-if="d.reasonNote" class="text-muted-foreground mt-2 text-xs leading-5">
-                <span class="font-medium">依据</span> {{ d.reasonNote }}
-              </p>
-              <p v-if="d.measureNote" class="text-muted-foreground mt-1 text-xs leading-5">
-                <span class="font-medium">措施原文</span> {{ d.measureNote }}
-              </p>
+              <div v-if="d.reasonNote || d.measureNote" class="text-muted-foreground mt-2 space-y-1 border-l pl-2 text-[13px] leading-5">
+                <p v-if="d.reasonNote"><span class="font-medium">依据原文</span> {{ d.reasonNote }}</p>
+                <p v-if="d.measureNote"><span class="font-medium">措施原文</span> {{ d.measureNote }}</p>
+              </div>
             </div>
           </template>
         </div>
@@ -388,6 +426,10 @@ function eventSuffix(item: TimelineItem): string {
 </template>
 
 <style scoped>
+.enterprise-drawer :deep([data-slot='button']) {
+  box-shadow: none;
+}
+
 .enterprise-drawer :deep(.text-xs) {
   font-size: 13px;
   line-height: 1.5;

@@ -11,6 +11,8 @@ export interface DbOptions {
   dbPath?: string
   /** 迁移目录。默认 `<cwd>/db/migrations`(存在才应用)。 */
   migrationsFolder?: string
+  /** 只读打开已迁移的库;跳过迁移与称号字典写入。 */
+  readOnly?: boolean
 }
 
 export function resolveDbPath(opts: DbOptions = {}): string {
@@ -32,27 +34,31 @@ const cache = new Map<string, ReturnType<typeof drizzle<typeof schema>>>()
  */
 export function useDb(opts: DbOptions = {}) {
   const path = resolveDbPath(opts)
-  const cached = cache.get(path)
+  const readOnly = opts.readOnly ?? process.env.NUXT_DB_READONLY === '1'
+  const cacheKey = `${path}\u0000${readOnly ? 'readonly' : 'readwrite'}`
+  const cached = cache.get(cacheKey)
   if (cached) return cached
 
   mkdirSync(dirname(path), { recursive: true })
-  const sqlite = new Database(path)
-  sqlite.pragma('journal_mode = WAL')
+  const sqlite = new Database(path, readOnly ? { readonly: true, fileMustExist: true } : undefined)
+  if (!readOnly) sqlite.pragma('journal_mode = WAL')
   sqlite.pragma('foreign_keys = ON')
 
   const db = drizzle(sqlite, { schema })
 
   const migrationsFolder = resolveMigrations(opts)
-  if (existsSync(migrationsFolder)) {
+  if (!readOnly && existsSync(migrationsFolder)) {
     migrate(db, { migrationsFolder })
   }
 
-  // 称号字典是静态参照数据(app 自己的词表),幂等写入。
-  for (const t of TITLE_SEED) {
-    db.insert(schema.title).values(t).onConflictDoNothing().run()
+  if (!readOnly) {
+    // 称号字典是静态参照数据(app 自己的词表),幂等写入。
+    for (const t of TITLE_SEED) {
+      db.insert(schema.title).values(t).onConflictDoNothing().run()
+    }
   }
 
-  cache.set(path, db)
+  cache.set(cacheKey, db)
   return db
 }
 

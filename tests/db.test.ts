@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -30,6 +30,25 @@ describe('database bootstrap', () => {
   it('seeding is idempotent', () => {
     const db = useDb()
     expect(db.select().from(schema.title).all()).toHaveLength(3)
+  })
+
+  it('只读打开时不运行迁移或写入称号字典', () => {
+    const readOnlyPath = join(dir, 'readonly.db')
+    const writable = useDb({ dbPath: readOnlyPath })
+    expect(writable.select().from(schema.title).all()).toHaveLength(3)
+    writable.$client.close()
+
+    const before = readFileSync(readOnlyPath)
+    const readOnly = useDb({ dbPath: readOnlyPath, readOnly: true })
+    expect(readOnly.select().from(schema.title).all()).toHaveLength(3)
+    expect(() =>
+      readOnly
+        .insert(schema.title)
+        .values({ code: 'no_write', nameZh: '不可写', level: 'municipal', rank: 99 })
+        .run(),
+    ).toThrow()
+    readOnly.$client.close()
+    expect(readFileSync(readOnlyPath)).toEqual(before)
   })
 
   it('enforces (enterprise, title, source) uniqueness on records', () => {

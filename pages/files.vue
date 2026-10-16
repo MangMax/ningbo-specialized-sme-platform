@@ -482,11 +482,21 @@ function publishedYearBatch(row: StoredFileRow): string {
       </Button>
     </TransitionGroup>
 
+    <div class="relative h-6 shrink-0" aria-live="polite" data-testid="files-loading-status">
+      <template v-if="isLoading">
+        <span class="text-muted-foreground absolute top-0.5 left-0 text-[13px]">正在筛选与加载文件…</span>
+        <span class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
+          <span class="bg-primary block h-0.5 w-1/3 rounded-full" />
+        </span>
+      </template>
+    </div>
+
     <Card class="rise-in gap-0 overflow-hidden py-0" style="--rise-index: 2">
       <CardContent class="p-0">
         <div
           ref="tableScroller"
           class="max-h-[max(320px,calc(100dvh-17rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
+          :aria-busy="isLoading"
         >
           <!-- 12 列。列宽按**实测文字宽度**逐列定,合计 1118px。
                1440(侧栏展开)容器 1124px → 不横滚;1280 / 1366 装不下(实测 1280 差 144px,
@@ -529,7 +539,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                 <TableHead :class="[ACTION_TH]">操作</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
+            <TableBody :data-loading="isLoading ? 'true' : 'false'">
               <TableRow v-if="isLoading && rows.length === 0" class="hover:bg-transparent">
                 <TableCell :colspan="12" class="p-0">
                   <div class="flex flex-col">

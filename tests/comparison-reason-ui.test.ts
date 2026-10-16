@@ -234,7 +234,7 @@ function evidence(patch: Partial<PlatformEvidence> = {}): PlatformEvidence {
 }
 
 describe('比对行「平台证据」列:库内查询与原始关系原文', () => {
-  it('曾用名分「已确认 / 待核」两组;待核的不并入现名', () => {
+  it('曾用名分「已确认 / 待核」两组;待核的不并入现名', async () => {
     const wrapper = mountIn(ComparisonPlatformEvidence, {
       props: {
         enterpriseId: 1,
@@ -246,6 +246,8 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
         }),
       },
     })
+    expect(wrapper.text()).toContain('待核别名 1')
+    await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
     expect(wrapper.text()).toContain('曾用名')
     expect(wrapper.text()).toContain('宁波上航测绘有限公司')
     expect(wrapper.text()).toContain('待核别名')
@@ -294,11 +296,14 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
       },
       attachTo: document.body,
     })
-    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('业务接口')
-    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('2026-10-16')
-    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('关系 1 条')
+    expect(wrapper.get('[data-testid="platform-evidence-summary"]').text()).toContain('查询成功 ×1')
+    expect(wrapper.get('[data-testid="platform-evidence-summary"]').text()).toContain('关系 1')
+    // 详情默认收起以保持行高;点开后才出现接口、时点与原始关系入口。
     // 关系原文默认收起(表窄),点开后逐条可见。
     expect(wrapper.find('[data-testid="platform-relation"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
+    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('业务接口')
+    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('2026-10-16')
     await wrapper.get('[data-testid="platform-evidence-toggle"]').trigger('click')
     const relation = wrapper.get('[data-testid="platform-relation"]')
     expect(relation.text()).toContain('宁波平台滞后企业')

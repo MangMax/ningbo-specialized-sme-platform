@@ -399,7 +399,7 @@ useHead({
         <Input
           v-model="search"
           class="bg-card h-8 pl-8"
-          placeholder="搜索企业名称或信用代码"
+          placeholder="搜索企业名称或统一社会信用代码"
           aria-label="按企业名称、已确认曾用名或统一社会信用代码搜索"
         />
       </div>
@@ -412,7 +412,7 @@ useHead({
         :options="titleOptions"
         placeholder="全部称号"
         summary-prefix="称号"
-        class="w-28"
+        class="w-28 shadow-none"
       />
       <Select v-model="districtModel">
         <SelectTrigger
@@ -433,7 +433,7 @@ useHead({
         :options="statusOptions"
         placeholder="全部差异状态"
         summary-prefix="差异"
-        class="w-32"
+        class="w-32 shadow-none"
       />
       <Select v-model="sortModel">
         <SelectTrigger
@@ -500,7 +500,7 @@ useHead({
       >
     </Alert>
 
-    <Card class="gap-0 overflow-hidden py-0">
+    <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="p-0">
         <EnterpriseListTable
           :rows="rows"
@@ -605,6 +605,10 @@ useHead({
 </template>
 
 <style scoped>
+.ledger-page :deep([data-slot='button']) {
+  box-shadow: none;
+}
+
 .ledger-page :deep(.text-xs) {
   font-size: 13px;
   line-height: 1.5;

@@ -52,7 +52,7 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs f
 </script>
 
 <template>
-  <div class="flex flex-col gap-5">
+  <div class="flex flex-col gap-5" :aria-busy="isLoading">
     <PageHeader class="rise-in" style="--rise-index: 0" title="数据质量">
       <template #description>
         导入时自动判定的待核对项,共
@@ -60,6 +60,15 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs f
         供人工复核。
       </template>
     </PageHeader>
+
+    <div class="relative h-6 shrink-0" aria-live="polite" data-testid="quality-loading-status">
+      <template v-if="isLoading">
+        <span class="text-muted-foreground absolute top-0.5 left-0 text-[13px]">正在加载质量清单…</span>
+        <span class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
+          <span class="bg-primary block h-0.5 w-1/3 rounded-full" />
+        </span>
+      </template>
+    </div>
 
     <!-- 索引:点一条跳到下面的清单。清单本身重复一遍数字,这里只做导航。 -->
     <div

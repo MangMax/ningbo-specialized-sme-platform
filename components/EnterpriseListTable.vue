@@ -51,6 +51,8 @@ export interface EnterpriseListRow {
   uscc: string | null
   district: string | null
   aliasNames: string[]
+  /** 所有企业 × 称号记录,包括没有认定事件的称号。 */
+  titles: string[]
   firstRecognition: { titleCode: string; year: number; needsReview: boolean }[]
   difference: EnterpriseDifference
 }
@@ -84,10 +86,11 @@ const COLUMNS = 6
  * 当场破掉。抽屉里那几行时间轴写的是**全称**(那里不挤)。
  */
 function titleItems(row: EnterpriseListRow) {
-  return row.firstRecognition.map((f) => ({
-    code: f.titleCode,
-    label: TITLE_SHORT[f.titleCode] ?? f.titleCode,
-    year: f.year,
+  const firstYear = new Map(row.firstRecognition.map((item) => [item.titleCode, item.year]))
+  return row.titles.map((code) => ({
+    code,
+    label: TITLE_SHORT[code] ?? code,
+    year: firstYear.get(code) ?? null,
   }))
 }
 
@@ -206,12 +209,12 @@ function railClass(row: EnterpriseListRow): string {
 
           <TableCell class="text-[13px]">{{ row.district ?? '属地未知' }}</TableCell>
 
-          <TableCell class="text-[13px]">
-            <span v-if="!row.firstRecognition.length" class="text-muted-foreground">—</span>
+          <TableCell class="text-[13px]" data-testid="title-recognition-cell">
+            <span v-if="!row.titles.length" class="text-muted-foreground">—</span>
             <template v-for="(item, i) in titleItems(row)" v-else :key="item.code">
               <span v-if="i" class="text-muted-foreground px-1">·</span>
               <span>{{ item.label }}</span>
-              <span class="text-muted-foreground tabular-nums"> {{ item.year }}</span>
+              <span class="text-muted-foreground tabular-nums"> {{ item.year ?? '年待核' }}</span>
             </template>
           </TableCell>
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { computed, nextTick, shallowRef, watch } from 'vue'
-import { ArrowLeftRight, ChevronLeft, ChevronRight, GitCompareArrows, Search } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, GitCompareArrows, Search } from '@lucide/vue'
 import type {
   ComparisonCounts,
   ComparisonDirection,
@@ -21,12 +21,6 @@ import {
   COMPARISON_LABELS,
   COMPARISON_OTHER_SIDE,
   COMPARISON_NO_USCC,
-  DIFFERENCE_LEGEND_NOTE,
-  DIFFERENCE_LEGEND_TITLE,
-  DIFFERENCE_STATUSES,
-  DIFFERENCE_STATUS_ORDER,
-  DIFFERENCE_STATUS_VARIANTS,
-  DIFFERENCE_COLUMN_HINT,
 } from '~~/lib/labels'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -118,20 +112,9 @@ function confirmedAliasNames(row: { platform: ComparisonPlatformEvidence }): str
     .filter((alias) => alias.verificationStatus === 'confirmed')
     .map((alias) => alias.name)
 }
-const platformInfo = computed(() => data.value?.platform ?? null)
-/**
- * 图例只列**当前结果里真出现过**的状态(按状态机顺序)。
- * 全量列六种会把图例撑成一张词表,而屏幕上可能一个都没有。
- */
-const legendCodes = computed(() => {
-  const seen = new Set(rows.value.map((row) => row.platform.disposition.status))
-  return DIFFERENCE_STATUS_ORDER.filter((code) => seen.has(code))
-})
-
-// 宽表在窄屏下的**边缘提示**:右侧渐隐 + 一行提示,滑到最右即消失。
+// 宽表在窄屏下保留容器内横向滚动;边缘渐隐提示还有列可读。
 const scroller = shallowRef<HTMLElement | null>(null)
 const { edges, bars, measure } = useScrollEdges(scroller)
-const showScrollHint = computed(() => edges.value.right)
 // 表体从骨架/空态换成真实表格时内容宽度会变,重算一次。
 watch([rows, isLoading], () => {
   void nextTick(measure)
@@ -264,26 +247,6 @@ const exportUrl = computed(
                 <span class="comparison-progress bg-primary block h-0.5 w-1/3 rounded-full" />
               </span>
             </div>
-            <div v-if="platformInfo" class="text-muted-foreground flex flex-wrap gap-x-3 text-[13px] tabular-nums" data-testid="comparison-evidence-counts">
-              <span>有原因 {{ platformInfo.withExplanation }}</span>
-              <span>未查询 {{ platformInfo.withoutExplanation }}</span>
-            </div>
-            <!-- 图例:徽章是库内解释记录里的差异状态;只列当前结果里出现过的取值。 -->
-            <div
-              v-if="legendCodes.length"
-              data-testid="platform-legend"
-              class="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
-            >
-              <span>{{ DIFFERENCE_LEGEND_TITLE }}:</span>
-              <Badge
-                v-for="code in legendCodes"
-                :key="code"
-                :variant="DIFFERENCE_STATUS_VARIANTS[code] ?? 'quiet'"
-                class="font-normal"
-                >{{ DIFFERENCE_STATUSES[code] ?? code }}</Badge
-              >
-              <span class="basis-full sm:basis-auto">{{ DIFFERENCE_LEGEND_NOTE }}</span>
-            </div>
             <Alert v-if="error" variant="destructive">
               <AlertTitle>比对数据加载失败</AlertTitle>
               <AlertDescription
@@ -292,17 +255,9 @@ const exportUrl = computed(
                 ></AlertDescription
               >
             </Alert>
-            <Card class="min-w-0 gap-0 overflow-hidden py-0">
+            <Card class="min-w-0 gap-0 overflow-hidden py-0 shadow-none">
               <CardContent class="p-0">
-                <!-- 宽表 + 容器内横向滚动(与台账一致,不做移动卡片列表)。
-                     窄屏首屏给可见提示:右侧渐隐 + 一行字;滑到最右两者都消失。 -->
-                <p
-                  v-if="showScrollHint"
-                  data-testid="scroll-hint"
-                  class="text-muted-foreground flex items-center gap-1 px-3 py-1.5 text-[13px]"
-                >
-                  <ArrowLeftRight class="size-3.5 shrink-0" />表格较宽,可左右滑动查看全部列
-                </p>
+                <!-- 宽表在容器内横向滚动,窄屏收在当前视口中。 -->
                 <div class="relative min-w-0">
                   <div
                     ref="scroller"
@@ -319,29 +274,26 @@ const exportUrl = computed(
                       <EmptyDescription>{{ curatedCount(direction) && !showCurated ? '当前方向均已核实，可开启「显示已核实」查看。' : '当前称号与方向没有差异企业。' }}</EmptyDescription>
                     </EmptyHeader>
                   </Empty>
-                  <!-- `min-w` 要 ≥ Σ 固定列宽 ÷ (1 − 企业名称列的 28%)，否则 table-fixed
-                       会把亏空全压到名称列上(实测 1180 时名称列只剩 236px,
-                       核实/备注也一起被挤)。平台证据列加宽到 w-64 后该阈值是 ≈1312px。 -->
-                  <Table v-else class="min-w-[1320px] table-fixed">
+                  <Table v-else class="min-w-[1090px] table-fixed">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
-                        <TableHead :class="[TH_CLASS, 'w-[28%]']"
+                        <TableHead :class="[TH_CLASS, 'w-[205px] md:w-[28%]']"
                           >企业名称</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-44']"
+                        <TableHead :class="[TH_CLASS, 'w-[165px]']"
                           >统一社会信用代码</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-20']">区县</TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-32']"
+                        <TableHead :class="[TH_CLASS, 'w-[72px]']">区县</TableHead>
+                        <TableHead :class="[TH_CLASS, 'w-[108px]']"
                           >另一侧状态</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-28']">
-                          <span :title="DIFFERENCE_COLUMN_HINT">平台解释</span>
+                        <TableHead :class="[TH_CLASS, 'w-[140px]']">
+                          平台解释
                         </TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-64']">
-                          <span title="库内平台证据:曾用名、平台查询与逐条原始关系">平台证据</span>
+                        <TableHead :class="[TH_CLASS, 'w-[210px]']">
+                          平台证据
                         </TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-48']">核实与备注</TableHead>
+                        <TableHead :class="[TH_CLASS, 'w-[190px]']">核实与备注</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody
@@ -371,15 +323,14 @@ const exportUrl = computed(
                             >{{ row.name }}</NuxtLink
                           >
                           </div>
-                          <!-- 曾用名(已确认)在行内直接可见 —— 现名与曾用名都能核对到同一行。 -->
-                          <div v-if="confirmedAliasNames(row).length" class="mt-1 flex flex-wrap gap-1" data-testid="comparison-aliases">
-                            <Badge
-                              v-for="alias in confirmedAliasNames(row)"
-                              :key="alias"
-                              variant="quiet"
-                              class="font-normal"
-                              >曾用名 {{ alias }}</Badge
-                            >
+                          <!-- 已确认曾用名压成单行,避免别名把比对行撑高。 -->
+                          <div v-if="confirmedAliasNames(row).length" class="mt-1 flex min-w-0 flex-nowrap gap-1 overflow-hidden" data-testid="comparison-aliases">
+                            <Badge variant="quiet" class="max-w-full truncate font-normal" :title="confirmedAliasNames(row)[0]">
+                              曾用名 {{ confirmedAliasNames(row)[0] }}
+                            </Badge>
+                            <Badge v-if="confirmedAliasNames(row).length > 1" variant="quiet" class="shrink-0 font-normal">
+                              +{{ confirmedAliasNames(row).length - 1 }}
+                            </Badge>
                           </div>
                           <div v-if="(row.evidence.currentCity && row.evidence.currentCity !== '宁波市') || /注销|吊销/.test(row.evidence.regStatus ?? '') || !row.uscc" class="mt-1 flex flex-wrap gap-1">
                             <Badge v-if="row.evidence.currentCity && row.evidence.currentCity !== '宁波市'" variant="outline">{{ row.evidence.currentCity }}</Badge>
@@ -462,6 +413,10 @@ const exportUrl = computed(
 </template>
 
 <style scoped>
+.comparison-page :deep([data-slot='button']) {
+  box-shadow: none;
+}
+
 .comparison-page :deep(.rise-in) {
   animation-duration: 200ms;
 }
