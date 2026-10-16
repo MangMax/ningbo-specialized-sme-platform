@@ -24,6 +24,7 @@ import {
 } from '~~/lib/labels'
 import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
 import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
+import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import { evidencePointerText } from '~~/lib/roster/first-recognition'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import EventChip from '@/components/EventChip.vue'
@@ -309,6 +310,13 @@ function pageHref(v: Evidence): string {
   return evidencePreviewHref({ sourceFile: v.sourceFile, page: v.page, back: previewBack.value })
 }
 
+function rememberPreviewReturn(event: MouseEvent) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return
+  }
+  rememberEvidencePreviewReturn(previewBack.value)
+}
+
 /** 三态里有页码的那种才可点;另两种只写字,不给链接(没有页码就没有可跳的页)。 */
 const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
 </script>
@@ -452,6 +460,7 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
                   <NuxtLink
                     v-if="pageStateOf(v) === 'assigned'"
                     :to="pageHref(v)"
+                    @click="rememberPreviewReturn"
                     class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
                   >
                     第 {{ v.page }} 页

@@ -364,10 +364,13 @@ function planAnnouncementBatchIdentity(
       }
       const identities = new Map<string, string | null>()
       for (const enterprise of existing) {
-        const identity = enterprise.usccNorm
-          ? usccKey(enterprise.usccNorm)
+        const existingUscc = enterprise.usccNorm && usccFormatVerdict(enterprise.usccNorm) === 'ok'
+          ? usccOrNull(enterprise.usccNorm)
+          : null
+        const identity = existingUscc
+          ? usccKey(existingUscc)
           : `enterprise:${enterprise.id}`
-        identities.set(identity, enterprise.usccNorm)
+        identities.set(identity, existingUscc)
       }
       for (const uscc of usccCandidatesByName.get(nameNorm) ?? []) {
         identities.set(usccKey(uscc), uscc)
@@ -1033,6 +1036,18 @@ export function planRosterImport(
   const conflicts: RosterImportItemResult[] = []
   const payload = request.payload ?? {}
   const mode: AnnouncementPlanMode = context.convergeOnly ? 'converge' : 'write'
+
+  // Announcement identity and event-evidence values must be rejected before the batch-wide
+  // identity plan sees them. Otherwise a malformed USCC can become candidate identity evidence,
+  // and an invalid page may be truncated later by the generic optionalInt used for years/sequence.
+  const announcementInputErrors = validateAnnouncementIdentityAndEvidence(payload.announcement)
+  if (announcementInputErrors.length > 0) {
+    return {
+      items: announcementInputErrors.map((item) => ({ item, action: 'skip', review: false })),
+      conflicts: announcementInputErrors,
+    }
+  }
+
   const evidencePlanFingerprint = evidenceRepointPlanFingerprint(request)
   const evidenceContentHashes = payload.announcement
     ? evidenceContentHashIndex(db, request)
@@ -1165,6 +1180,79 @@ export function planRosterImport(
   merges.forEach((merge, index) => planMerge(db, pending, pendingRefs, merge, index, push))
 
   return { items, conflicts }
+}
+
+/**
+ * Validate the two announcement-only values whose malformed forms can change identity or evidence
+ * meaning. Generic `optionalInt` remains shared by years and batch fields and is not changed here.
+ */
+function validateAnnouncementIdentityAndEvidence(
+  announcement: RosterImportAnnouncement | null | undefined,
+): RosterImportItemResult[] {
+  if (!announcement || !Array.isArray(announcement.records)) return []
+
+  const errors: RosterImportItemResult[] = []
+  announcement.records.forEach((record, recordIndex) => {
+    const enterprise = isObject(record?.enterprise) ? record.enterprise : null
+    const rawUscc = enterprise?.uscc
+    const hasNonblankUscc =
+      rawUscc !== null &&
+      rawUscc !== undefined &&
+      (typeof rawUscc !== 'string' || normalizeUscc(rawUscc) !== '')
+    if (hasNonblankUscc) {
+      const verdict = usccFormatVerdict(rawUscc)
+      if (verdict !== 'ok') {
+        const why =
+          verdict === 'length' ? '长度不是 18 位' : verdict === 'charset' ? '含字符集外的字符' : '校验位不符'
+        errors.push(
+          failure(
+            'record',
+            `record:${recordIndex}`,
+            'uscc_format_invalid',
+            `统一社会信用代码不合法（${why}）：${String(rawUscc)}`,
+            'enterprise.uscc',
+          ),
+        )
+      }
+    }
+
+    const events = Array.isArray(record?.events) ? record.events : []
+    events.forEach((event, eventIndex) => {
+      const evidence = Array.isArray(event?.evidence) ? event.evidence : []
+      evidence.forEach((item, evidenceIndex) => {
+        if (!isObject(item)) return
+        const sourceFile = optionalString(item.sourceFile)
+        if (!sourceFile || item.page === null || item.page === undefined) return
+        const ref = `record:${recordIndex}#${eventIndex}/e${evidenceIndex}`
+        if (!isPageCapable(sourceFile)) {
+          errors.push(
+            failure(
+              'record_evidence',
+              ref,
+              'not_page_capable',
+              `${sourceFile} 不是 PDF，不能提供可复核的实际页码；请移除 page 或设为 null`,
+              'evidence.page',
+            ),
+          )
+          return
+        }
+        const page = item.page
+        if (typeof page !== 'number' || !Number.isFinite(page) || !Number.isInteger(page) || page < 1) {
+          errors.push(
+            failure(
+              'record_evidence',
+              ref,
+              'page_invalid',
+              `PDF 出处 page 必须是正整数，收到：${String(page)}`,
+              'evidence.page',
+            ),
+          )
+        }
+      })
+    })
+  })
+
+  return errors
 }
 
 // --- 公布文件 --------------------------------------------------------------

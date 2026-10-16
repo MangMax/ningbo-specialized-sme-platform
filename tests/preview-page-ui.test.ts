@@ -174,4 +174,25 @@ describe('来源预览页图深链', () => {
     expect(wrapper.text()).toContain('该 PDF 共 3 页，请检查来源页码。')
     wrapper.unmount()
   })
+
+  it('预览返回链接保留站内筛选、当前页和展开行地址', async () => {
+    const back = '/?view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91'
+    vi.stubGlobal('useRoute', () => ({ query: { file, page: '8', back } }))
+
+    const wrapper = mount(PreviewPage, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          PageHeader: { template: '<div><slot name="breadcrumb"/><slot name="actions"/></div>' },
+          NuxtLink: { props: ['to'], template: '<a :href="to"><slot/></a>' },
+          ImagePreview: { props: ['name'], template: '<div>{{ name }}</div>' },
+        },
+      },
+    })
+
+    const backLinks = wrapper.findAll('a').filter((link) => link.attributes('href') === back)
+    expect(backLinks.length).toBeGreaterThanOrEqual(2)
+    expect(backLinks.map((link) => link.text()).join(' ')).toContain('返回')
+    wrapper.unmount()
+  })
 })

@@ -233,7 +233,7 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
         sourceDocument: { source: 'jxj', title: '全量表', docNumber: '甬经信中小〔2026〕1号' },
         records: [
           {
-            enterprise: { name: '甲企业有限公司', uscc: '913302110000000001' },
+            enterprise: { name: '甲企业有限公司', uscc: '913302017133602847' },
             titleCode: 'specialized_sme',
             events: [
               {
@@ -256,18 +256,18 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
       platformQueries: [
         {
           interface: 'business_list',
-          queryKey: '913302110000000001',
+          queryKey: '913302017133602847',
           rdjb: '3',
           queriedAt: '2026-10-16T03:00:00.000Z',
           status: 'success',
           relations: [
-            { sequenceNo: 1, relationKey: 'SQ1', usccRaw: '913302110000000001', nameRaw: '甲企业有限公司', matchBasis: 'uscc', verificationStatus: 'confirmed' },
-            { sequenceNo: 2, relationKey: 'SQ2', usccRaw: '913302110000000001', nameRaw: '甲企业旧名有限公司', aliasNameRaw: '甲企业旧名有限公司', matchBasis: 'alias', verificationStatus: 'confirmed' },
+            { sequenceNo: 1, relationKey: 'SQ1', usccRaw: '913302017133602847', nameRaw: '甲企业有限公司', matchBasis: 'uscc', verificationStatus: 'confirmed' },
+            { sequenceNo: 2, relationKey: 'SQ2', usccRaw: '913302017133602847', nameRaw: '甲企业旧名有限公司', aliasNameRaw: '甲企业旧名有限公司', matchBasis: 'alias', verificationStatus: 'confirmed' },
             // 未知 sblx 取值：原样入库 + 标待核（不因未知取值崩溃）。
-            { sequenceNo: 3, relationKey: 'SQ3', usccRaw: '913302110000000001', nameRaw: '甲企业有限公司', declareKind: '复核确认' },
+            { sequenceNo: 3, relationKey: 'SQ3', usccRaw: '913302017133602847', nameRaw: '甲企业有限公司', declareKind: '复核确认' },
           ],
         },
-        { interface: 'business_list', queryKey: '913302110000000001', rdjb: '1', queriedAt: '2026-10-16T03:01:00.000Z', status: 'no_record' },
+        { interface: 'business_list', queryKey: '913302017133602847', rdjb: '1', queriedAt: '2026-10-16T03:01:00.000Z', status: 'no_record' },
       ],
       exportSnapshot: {
         titleCode: 'specialized_sme',
@@ -276,7 +276,7 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
         originalFilename: '专精特新中小企业导出Excel.xlsx',
         sha256: 'f'.repeat(64),
         rows: [
-          { sourceRowNo: 1, usccRaw: '913302110000000001', nameRaw: '甲企业有限公司' },
+          { sourceRowNo: 1, usccRaw: '913302017133602847', nameRaw: '甲企业有限公司' },
           { sourceRowNo: 2, usccRaw: '91330211000000000X', nameRaw: '平台有的企业' },
         ],
       },
@@ -617,7 +617,7 @@ describe('逐项错误与单批事务', () => {
       announcement: {
         sourceDocument: { source: 'jxj', title: '坏行表' },
         records: [
-          { enterprise: { name: '好企业', uscc: '913302110000000002' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] },
+          { enterprise: { name: '好企业', uscc: '91330211000000012K' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] },
           // ★ 称号不在字典内 —— 逐项报错，不静默丢行；整批不落库。
           { enterprise: { name: '坏企业' }, titleCode: 'not_a_title', events: [{ eventType: 'award', year: 2026 }] },
         ],
@@ -662,7 +662,7 @@ describe('逐项错误与单批事务', () => {
         announcement: {
           sourceDocument: { source: 'jxj', title: '坏行表' },
           records: [
-            { enterprise: { name: '好企业', uscc: '913302110000000002' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] },
+            { enterprise: { name: '好企业', uscc: '91330211000000012K' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] },
           ],
         },
         differences: [
@@ -783,14 +783,14 @@ describe('归并与回填：血缘在 item_results 中可查询', () => {
 
   it('★ 同 (企业,称号,来源) 冲突时：事件折到规范行那条记录，数量不减、一条不折叠', () => {
     const db = makeDb()
-    const canonical = seedEnterprise(db, { name: '同名冲突甲', uscc: '913302110000000007' })
+    const canonical = seedEnterprise(db, { name: '同名冲突甲', uscc: '91330206732109570E' })
     const canonicalRecord = seedRecord(db, canonical, 'innovative_sme', 'jxj')
     seedEvent(db, canonicalRecord, 'award', 2019, 2)
     const duplicate = seedEnterprise(db, { name: '同名冲突乙' })
     const dupRecord = seedRecord(db, duplicate, 'innovative_sme', 'jxj')
     seedEvent(db, dupRecord, 'award', 2021, 1)
 
-    const result = commitRosterImport(db, mergeRequest(duplicate, 'merge/conflict#sha256:m2', '913302110000000007'))
+    const result = commitRosterImport(db, mergeRequest(duplicate, 'merge/conflict#sha256:m2', '91330206732109570E'))
     expect(result.status).toBe('committed')
 
     const merged = db.select().from(schema.record).all().filter((r) => r.enterpriseId === canonical && r.titleCode === 'innovative_sme')
@@ -941,13 +941,13 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     const name = '合成同名不同统代企业'
     const enterpriseA = seedEnterprise(db, { name, uscc: '91330211255994457P' })
-    const enterpriseB = seedEnterprise(db, { name, uscc: '91330211000000001X' })
+    const enterpriseB = seedEnterprise(db, { name, uscc: '91330201753252106U' })
     const recordA = seedRecord(db, enterpriseA, 'specialized_sme', 'jxj')
     const recordB = seedRecord(db, enterpriseB, 'specialized_sme', 'jxj')
     const request = announcementRequest({ idempotencyKey: 'synthetic/group/distinct-uscc' })
     request.payload.announcement!.records = [
       { enterprise: { name, uscc: '91330211255994457P' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 4, evidence: [{ sourceFile: 'synthetic/group/a.pdf', attachment: '附件1', listNo: 1, page: 7 }] }] },
-      { enterprise: { name, uscc: '91330211000000001X' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 4, evidence: [{ sourceFile: 'synthetic/group/b.pdf', attachment: '附件1', listNo: 1, page: 7 }] }] },
+      { enterprise: { name, uscc: '91330201753252106U' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 4, evidence: [{ sourceFile: 'synthetic/group/b.pdf', attachment: '附件1', listNo: 1, page: 7 }] }] },
     ]
 
     try {
@@ -969,7 +969,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     const name = '合成歧义同名企业'
     const enterpriseId = seedEnterprise(db, { name, uscc: '91330211255994457P' })
-    seedEnterprise(db, { name, uscc: '91330211000000001X' })
+    seedEnterprise(db, { name, uscc: '91330201753252106U' })
     seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
     const before = rosterRowCounts(db)
     const request = announcementRequest({ idempotencyKey: 'synthetic/group/ambiguous-name' })
@@ -997,10 +997,10 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     const name = '合成歧义顺序企业'
     seedEnterprise(db, { name, uscc: '91330211255994457P' })
-    seedEnterprise(db, { name, uscc: '91330211000000001X' })
+    seedEnterprise(db, { name, uscc: '91330201753252106U' })
     const before = rosterRowCounts(db)
     const explicitUscc = {
-      enterprise: { name, uscc: '91330211000000001X' },
+      enterprise: { name, uscc: '91330201753252106U' },
       titleCode: 'specialized_sme',
       events: [{ eventType: 'award' as const, year: 2026, batchSeq: 5, evidence: [{ sourceFile: 'synthetic/ambiguous/explicit.pdf', attachment: '附件1', listNo: 1, page: 7 }] }],
     }
@@ -1043,7 +1043,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     const name = '合成单条歧义企业'
     seedEnterprise(db, { name, uscc: '91330211255994457P' })
-    seedEnterprise(db, { name, uscc: '91330211000000001X' })
+    seedEnterprise(db, { name, uscc: '91330201753252106U' })
     const before = rosterRowCounts(db)
     const request = announcementRequest({ idempotencyKey: 'synthetic/ambiguous/single-name-only' })
     request.payload.announcement!.records = [
@@ -1099,11 +1099,11 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     const name = '合成明确统代导入企业'
     seedEnterprise(db, { name, uscc: '91330211255994457P' })
-    const targetId = seedEnterprise(db, { name, uscc: '91330211000000001X' })
+    const targetId = seedEnterprise(db, { name, uscc: '91330201753252106U' })
     const recordId = seedRecord(db, targetId, 'specialized_sme', 'jxj')
     const request = announcementRequest({ idempotencyKey: 'synthetic/identity/explicit-uscc' })
     request.payload.announcement!.records = [
-      { enterprise: { name, uscc: '91330211000000001X' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 8, evidence: [{ sourceFile: 'synthetic/identity/explicit-uscc.pdf', attachment: '附件1', listNo: 1, page: 11 }] }] },
+      { enterprise: { name, uscc: '91330201753252106U' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 8, evidence: [{ sourceFile: 'synthetic/identity/explicit-uscc.pdf', attachment: '附件1', listNo: 1, page: 11 }] }] },
     ]
 
     try {
@@ -1126,7 +1126,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const server = await startRosterApi({ db, apiToken: TOKEN })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     const name = '合成空库批次归组企业'
-    const uscc = '91330211000000001X'
+    const uscc = '91330201753252106U'
     const explicit = {
       enterprise: { name, uscc },
       titleCode: 'specialized_sme',
@@ -1179,7 +1179,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       events: [{ eventType: 'award' as const, year: 2026, batchSeq: 10, evidence: [{ sourceFile: 'synthetic/batch-identity/a.pdf', attachment: '附件1', listNo: 1, page: 14 }] }],
     }
     const explicitB = {
-      enterprise: { name, uscc: '91330211000000001X' },
+      enterprise: { name, uscc: '91330201753252106U' },
       titleCode: 'specialized_sme',
       events: [{ eventType: 'award' as const, year: 2026, batchSeq: 10, evidence: [{ sourceFile: 'synthetic/batch-identity/b.pdf', attachment: '附件1', listNo: 1, page: 14 }] }],
     }
@@ -1227,7 +1227,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       .run()
     const before = rosterRowCounts(db)
     const explicitUsccB = {
-      enterprise: { name, uscc: '91330211000000001X' },
+      enterprise: { name, uscc: '91330201753252106U' },
       titleCode: 'specialized_sme',
       events: [{ eventType: 'award' as const, year: 2026, batchSeq: 12, evidence: [{ sourceFile: 'synthetic/mixed-candidates/explicit-b.pdf', attachment: '附件1', listNo: 1, page: 17 }] }],
     }
@@ -1256,6 +1256,106 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     } finally {
       await server.close()
     }
+  })
+
+  it.each([
+    ['length', '91330211255994457'],
+    ['charset', '9133021125599445IP'],
+    ['checksum', '91330211255994457Q'],
+  ] as const)('公告中的非空无效 USCC（%s）先报 uscc_format_invalid,不污染 name-only 身份候选', (kind, uscc) => {
+    const db = makeDb()
+    const name = `合成无效统代${kind}企业`
+    const request = announcementRequest({ idempotencyKey: `synthetic/invalid-uscc/${kind}` })
+    request.payload.announcement!.records = [
+      {
+        enterprise: { name, uscc },
+        titleCode: 'specialized_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 1 }],
+      },
+      {
+        enterprise: { name },
+        titleCode: 'innovative_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 2 }],
+      },
+    ]
+    const before = rosterRowCounts(db)
+
+    const preflight = preflightRosterImport(db, request)
+    expect(preflight.preflight.conflicts.map((item) => item.error?.code)).toEqual(['uscc_format_invalid'])
+    expect(rosterRowCounts(db)).toEqual(before)
+
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('failed')
+    expect(result.items.map((item) => item.error?.code)).toEqual(['uscc_format_invalid'])
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it('有效小写 USCC 按验证器允许的空白 / 不可见字符归一后仍作为唯一身份', () => {
+    const db = makeDb()
+    const name = '合成有效统代归一企业'
+    const rawUscc = ' 9133021125\u200B5994457p '
+    const request = announcementRequest({ idempotencyKey: 'synthetic/valid-uscc-normalized' })
+    request.payload.announcement!.records = [
+      {
+        enterprise: { name, uscc: rawUscc },
+        titleCode: 'specialized_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 1 }],
+      },
+      {
+        enterprise: { name },
+        titleCode: 'innovative_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 2 }],
+      },
+    ]
+
+    expect(preflightRosterImport(db, request).preflight.conflicts).toEqual([])
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('committed')
+    expect(db.select().from(schema.enterprise).all()).toMatchObject([{ name, usccNorm: '91330211255994457P' }])
+    expect(db.select().from(schema.enterprise).all()).toHaveLength(1)
+    expect(db.select().from(schema.record).all().map((record) => record.usccRaw)).toEqual([
+      '91330211255994457P',
+      '91330211255994457P',
+    ])
+  })
+
+  it.each([
+    ['missing', undefined],
+    ['null', null],
+    ['empty', ''],
+    ['whitespace', ' \t\u200B\u3000 '],
+  ] as const)('公告 USCC %s 视为缺失身份,仍允许按名称写入', (kind, value) => {
+    const db = makeDb()
+    const request = announcementRequest({ idempotencyKey: `synthetic/missing-uscc/${kind}` })
+    const enterprise = request.payload.announcement!.records[0]!.enterprise
+    if (value === undefined) delete enterprise.uscc
+    else enterprise.uscc = value
+
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('committed')
+    expect(db.select().from(schema.enterprise).all()).toHaveLength(1)
+    expect(db.select().from(schema.enterprise).all()[0]?.usccNorm).toBeNull()
+    expect(db.select().from(schema.record).all()[0]?.usccRaw).toBeNull()
+  })
+
+  it('历史无效企业 USCC 不作为有效代码证据写进 name-only 记录', () => {
+    const db = makeDb()
+    const name = '合成历史无效统代企业'
+    const legacyId = seedEnterprise(db, { name, uscc: '91330211255994457Q' })
+    const request = announcementRequest({ idempotencyKey: 'synthetic/legacy-invalid-uscc' })
+    request.payload.announcement!.records = [
+      {
+        enterprise: { name },
+        titleCode: 'specialized_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 1 }],
+      },
+    ]
+
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('committed')
+    expect(db.select().from(schema.enterprise).all()).toHaveLength(1)
+    expect(db.select().from(schema.enterprise).all()[0]).toMatchObject({ id: legacyId, usccNorm: '91330211255994457Q' })
+    expect(db.select().from(schema.record).all()[0]?.usccRaw).toBeNull()
   })
 
   it('空库中仅一个 name-only 记录仍可按名称新建企业', async () => {
@@ -1357,15 +1457,17 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     }
   })
 
-  it('统一导入 API 对 DOCX / Excel 出处忽略 page，PDF 页码仍持久化', async () => {
+  it('公告事件出处保留 PDF 正整数页码,并允许非 PDF 的缺省 / null 页码', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     const request = announcementRequest({ idempotencyKey: 'http/stable-evidence-pages#sha256:abc' })
     request.payload.announcement!.records[0]!.events![0]!.evidence = [
       { sourceFile: 'synthetic/notice.pdf', attachment: '附件', listNo: 1, page: 7 },
-      { sourceFile: 'synthetic/notice.docx', attachment: '正文', listNo: 2, page: 12 },
-      { sourceFile: 'synthetic/export.xlsx', attachment: 'Sheet1', listNo: 3, page: 13 },
+      { sourceFile: 'synthetic/pending.pdf', attachment: '附件', listNo: 2, page: null },
+      { sourceFile: 'synthetic/unset.pdf', attachment: '附件', listNo: 3 },
+      { sourceFile: 'synthetic/notice.docx', attachment: '正文', listNo: 4, page: null },
+      { sourceFile: 'synthetic/export.xlsx', attachment: 'Sheet1', listNo: 5 },
     ]
 
     try {
@@ -1381,12 +1483,64 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       const pageBySource = Object.fromEntries(evidence.map((entry) => [entry.sourceFile, entry.page]))
       expect(pageBySource).toEqual({
         'synthetic/notice.pdf': 7,
+        'synthetic/pending.pdf': null,
+        'synthetic/unset.pdf': null,
         'synthetic/notice.docx': null,
         'synthetic/export.xlsx': null,
       })
     } finally {
       await server.close()
     }
+  })
+
+  it.each([
+    ['0', 0],
+    ['negative', -1],
+    ['fractional', 2.5],
+    ['NaN', Number.NaN],
+    ['infinity', Number.POSITIVE_INFINITY],
+    ['numeric string', '3'],
+  ] as const)('公告 PDF 出处页码为 %s 时,以 page_invalid 拒绝整批且不写业务行', (label, page) => {
+    const db = makeDb()
+    const request = announcementRequest({ idempotencyKey: `http/invalid-announcement-page/${label}` })
+    const record = request.payload.announcement!.records[0]!
+    record.events![0]!.evidence![0]!.page = page as number
+    // 即使批内另一条是完全有效的记录,非法页码也必须挡在计划/事务之前。
+    request.payload.announcement!.records.push({
+      enterprise: { name: '页码无效时不得部分写入的第二家企业' },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award', year: 2026, batchSeq: 2 }],
+    })
+    const before = rosterRowCounts(db)
+
+    const preflight = preflightRosterImport(db, request)
+    expect(preflight.preflight.conflicts).toContainEqual(
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'page_invalid' }) }),
+    )
+    expect(rosterRowCounts(db)).toEqual(before)
+
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('failed')
+    expect(result.items).toContainEqual(
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'page_invalid' }) }),
+    )
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it('公告 Word / Excel 出处只要提供非 null page 就以 not_page_capable 拒绝整批', () => {
+    const db = makeDb()
+    const request = announcementRequest({ idempotencyKey: 'http/non-pdf-announcement-page' })
+    request.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/notice.pdf', attachment: '附件', listNo: 1, page: 7 },
+      { sourceFile: 'synthetic/notice.docx', attachment: '正文', listNo: 2, page: 1 },
+      { sourceFile: 'synthetic/export.xlsx', attachment: 'Sheet1', listNo: 3, page: 1 },
+    ]
+    const before = rosterRowCounts(db)
+
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('failed')
+    expect(result.items.filter((item) => item.error?.code === 'not_page_capable')).toHaveLength(2)
+    expect(rosterRowCounts(db)).toEqual(before)
   })
 
   it('出处指针显式重放会清空 DOCX 旧页码并保留 PDF 实际页码', async () => {
@@ -1407,8 +1561,8 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       sourceSha256: 'stable-content',
     })
     original.payload.announcement!.records[0]!.events![0]!.evidence = [
-      { sourceFile: 'synthetic/legacy/notice.docx', attachment: '正文', listNo: 1, page: 12 },
-      { sourceFile: 'synthetic/legacy/first-write.docx', attachment: '名单', listNo: 3, page: 12 },
+      { sourceFile: 'synthetic/legacy/notice.docx', attachment: '正文', listNo: 1, page: null },
+      { sourceFile: 'synthetic/legacy/first-write.docx', attachment: '名单', listNo: 3, page: null },
       { sourceFile: 'synthetic/legacy/notice.pdf', attachment: '附件', listNo: 2, page: 7 },
     ]
 
@@ -1427,8 +1581,8 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
         sourceSha256: 'stable-content',
       })
       relinked.payload.announcement!.records[0]!.events![0]!.evidence = [
-        { sourceFile: 'synthetic/library/notice.docx', attachment: '正文', listNo: 1, page: 12 },
-        { sourceFile: 'synthetic/library/first-write.docx', attachment: '名单', listNo: 3, page: 12 },
+        { sourceFile: 'synthetic/library/notice.docx', attachment: '正文', listNo: 1, page: null },
+        { sourceFile: 'synthetic/library/first-write.docx', attachment: '名单', listNo: 3, page: null },
         { sourceFile: 'synthetic/library/notice.pdf', attachment: '附件', listNo: 2, page: 7 },
       ]
 
@@ -1465,8 +1619,8 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       sourceSha256: 'stable-content',
     })
     original.payload.announcement!.records[0]!.events![0]!.evidence = [
-      { sourceFile: 'synthetic/legacy/duplicate.docx', attachment: '正文', listNo: 1, page: 12 },
-      { sourceFile: 'synthetic/legacy/duplicate-first-write.docx', attachment: '名单', listNo: 3, page: 12 },
+      { sourceFile: 'synthetic/legacy/duplicate.docx', attachment: '正文', listNo: 1, page: null },
+      { sourceFile: 'synthetic/legacy/duplicate-first-write.docx', attachment: '名单', listNo: 3, page: null },
       { sourceFile: 'synthetic/legacy/duplicate.pdf', attachment: '附件', listNo: 2, page: 7 },
     ]
 
@@ -1484,8 +1638,8 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
         sourceSha256: 'stable-content',
       })
       duplicate.payload.announcement!.records[0]!.events![0]!.evidence = [
-        { sourceFile: 'synthetic/library/duplicate.docx', attachment: '正文', listNo: 1, page: 12 },
-        { sourceFile: 'synthetic/library/duplicate-first-write.docx', attachment: '名单', listNo: 3, page: 12 },
+        { sourceFile: 'synthetic/library/duplicate.docx', attachment: '正文', listNo: 1, page: null },
+        { sourceFile: 'synthetic/library/duplicate-first-write.docx', attachment: '名单', listNo: 3, page: null },
         { sourceFile: 'synthetic/library/duplicate.pdf', attachment: '附件', listNo: 2, page: 7 },
       ]
 
@@ -1670,7 +1824,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     const enterpriseId = seedEnterprise(db, {
       name: '新事件重复坐标企业',
-      uscc: '913302110000000099',
+      uscc: '91330206793007818K',
     })
     const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
     const request = announcementRequest({
@@ -1679,7 +1833,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       sourceSha256: 'stable-content',
     })
     const record = request.payload.announcement!.records[0]!
-    record.enterprise = { name: '新事件重复坐标企业', uscc: '913302110000000099' }
+    record.enterprise = { name: '新事件重复坐标企业', uscc: '91330206793007818K' }
     const event = record.events![0]!
     record.events = sources.map((sourceFile) => ({
       ...event,
@@ -1771,7 +1925,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       sourceSha256: 'stable-content',
     })
     original.payload.announcement!.records[0]!.events![0]!.evidence = [
-      { sourceFile: 'synthetic/source-a.docx', attachment: '正文', listNo: 1, page: 12 },
+      { sourceFile: 'synthetic/source-a.docx', attachment: '正文', listNo: 1, page: null },
     ]
 
     try {
@@ -1785,11 +1939,11 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       target.payload.announcement!.records[0]!.events = [
         {
           ...event,
-          evidence: [{ sourceFile: 'synthetic/source-a.docx', attachment: '正文', listNo: 1, page: 12 }],
+          evidence: [{ sourceFile: 'synthetic/source-a.docx', attachment: '正文', listNo: 1, page: null }],
         },
         {
           ...event,
-          evidence: [{ sourceFile: 'synthetic/source-b.docx', attachment: '正文', listNo: 1, page: 12 }],
+          evidence: [{ sourceFile: 'synthetic/source-b.docx', attachment: '正文', listNo: 1, page: null }],
         },
       ]
 
@@ -1846,11 +2000,11 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       target.payload.announcement!.records[0]!.events = [
         {
           ...event,
-          evidence: [{ sourceFile: 'synthetic/source-b-conflict.docx', attachment: '正文', listNo: 1, page: 12 }],
+          evidence: [{ sourceFile: 'synthetic/source-b-conflict.docx', attachment: '正文', listNo: 1, page: null }],
         },
         {
           ...event,
-          evidence: [{ sourceFile: 'synthetic/source-c-conflict.docx', attachment: '正文', listNo: 1, page: 13 }],
+          evidence: [{ sourceFile: 'synthetic/source-c-conflict.docx', attachment: '正文', listNo: 1, page: null }],
         },
       ]
 
@@ -1968,8 +2122,8 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       sourceSha256: 'stable-content',
     })
     original.payload.announcement!.records[0]!.events![0]!.evidence = [
-      { sourceFile: 'synthetic/legacy/ambiguous-a.docx', attachment: '正文', listNo: 1, page: 12 },
-      { sourceFile: 'synthetic/legacy/ambiguous-b.docx', attachment: '正文', listNo: 1, page: 13 },
+      { sourceFile: 'synthetic/legacy/ambiguous-a.docx', attachment: '正文', listNo: 1, page: null },
+      { sourceFile: 'synthetic/legacy/ambiguous-b.docx', attachment: '正文', listNo: 1, page: null },
     ]
 
     try {
@@ -1989,7 +2143,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
         sourceSha256: 'stable-content',
       })
       relinked.payload.announcement!.records[0]!.events![0]!.evidence = [
-        { sourceFile: 'synthetic/library/ambiguous.docx', attachment: '正文', listNo: 1, page: 12 },
+        { sourceFile: 'synthetic/library/ambiguous.docx', attachment: '正文', listNo: 1, page: null },
       ]
 
       const result = await client.replay(relinked)
@@ -2473,7 +2627,7 @@ describe('读面：list_enterprises / list_differences', () => {
           announcement: {
             sourceDocument: { source: 'jxj', title: '读面' },
             records: [
-              { enterprise: { name: '宁波读面企业有限公司', uscc: '9133021100000000R1', district: '鄞州区' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2021, batchSeq: 1 }] },
+              { enterprise: { name: '宁波读面企业有限公司', uscc: '913302110000000098', district: '鄞州区' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2021, batchSeq: 1 }] },
               { enterprise: { name: '宁波仅平台企业' }, titleCode: 'innovative_sme', events: [] },
             ],
           },
@@ -2487,7 +2641,7 @@ describe('读面：list_enterprises / list_differences', () => {
       const all = listEnterprises(db, {})
       expect(all.counts.total).toBe(2)
       const target = all.rows.find((r) => r.name === '宁波读面企业有限公司')!
-      expect(target.uscc).toBe('9133021100000000R1')
+      expect(target.uscc).toBe('913302110000000098')
       expect(target.district).toBe('鄞州区')
       expect(target.rosterState).toBe('current')
       expect(target.titles).toEqual(['specialized_sme'])
@@ -2516,11 +2670,11 @@ describe('读面：list_enterprises / list_differences', () => {
         sourceIdentity: 'miit/relations/r2',
         payload: {
           platformQueries: [
-            { interface: 'apply_list', queryKey: '9133021100000000R2', queriedAt: '2026-10-16T07:00:00.000Z', status: 'success' },
+            { interface: 'apply_list', queryKey: '91330206793007818K', queriedAt: '2026-10-16T07:00:00.000Z', status: 'success' },
           ],
           announcement: {
             sourceDocument: { source: 'jxj', title: '读面差异' },
-            records: [{ enterprise: { name: '宁波差异企业', uscc: '9133021100000000R2' }, titleCode: 'specialized_sme', events: [] }],
+            records: [{ enterprise: { name: '宁波差异企业', uscc: '91330206793007818K' }, titleCode: 'specialized_sme', events: [] }],
           },
           differences: [
             { enterpriseName: '宁波差异企业', titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'no_record', recordedAt: '2026-10-15T08:00:00.000Z' },

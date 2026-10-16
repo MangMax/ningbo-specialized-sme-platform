@@ -28,12 +28,14 @@ import { eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import {
+  isPageCapable,
   planEvidencePages,
   type EvidencePageCandidate,
   type EvidencePageEntry,
   type EvidencePagePlan,
 } from '../../lib/roster/evidence-page'
 import { authorizeRosterWrite } from './roster-import-http'
+import { readPdfPageCount } from './pdf-pages'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -133,10 +135,10 @@ function summarize(plan: EvidencePagePlan, written: number, requested: number) {
  * 处理一次补录请求。`db` 由调用方给(路由用 `useDb()`;测试用临时库),
  * `apiToken` 从运行时配置读(Nuxt:`useRuntimeConfig().apiToken`)。
  */
-export function handleEvidencePagesRequest(
+export async function handleEvidencePagesRequest(
   request: EvidencePagesHttpRequest,
-  ctx: { db: Db; apiToken: string | null | undefined },
-): EvidencePagesHttpResponse {
+  ctx: { db: Db; apiToken: string | null | undefined; filesDir?: string },
+): Promise<EvidencePagesHttpResponse> {
   if (request.method !== 'POST') {
     return { status: 405, headers: { ...JSON_HEADERS, allow: 'POST' }, body: { message: '只接受 POST。' } }
   }
@@ -150,7 +152,16 @@ export function handleEvidencePagesRequest(
   }
 
   const candidates = readEvidencePageCandidates(ctx.db, sourceFilesOf(parsed.entries))
-  const plan = planEvidencePages(parsed.entries, candidates)
+  const sourceFiles = sourceFilesOf(parsed.entries).filter(isPageCapable)
+  const pageCounts = new Map<string, number | null>(
+    await Promise.all(
+      sourceFiles.map(async (sourceFile) => [
+        sourceFile,
+        ctx.filesDir ? await readPdfPageCount(ctx.filesDir, sourceFile) : null,
+      ] as const),
+    ),
+  )
+  const plan = planEvidencePages(parsed.entries, candidates, pageCounts)
 
   let written = 0
   if (!parsed.dryRun) {

@@ -26,7 +26,11 @@ export interface RosterApiServer {
   close(): Promise<void>
 }
 
-export async function startRosterApi(options: { db: Db; apiToken: string | null | undefined }): Promise<RosterApiServer> {
+export async function startRosterApi(options: {
+  db: Db
+  apiToken: string | null | undefined
+  filesDir?: string
+}): Promise<RosterApiServer> {
   // 写面只有这一条核心:`/preflight`、`/commit`、`/replay` 只差一个动作参数。
   const importRoute: FixtureHandler = (request) => {
     const action: RosterImportAction = request.path.endsWith('/commit')
@@ -47,9 +51,9 @@ export async function startRosterApi(options: { db: Db; apiToken: string | null 
   const evidencePagesRoute: FixtureHandler = (request) => {
     const out = handleEvidencePagesRequest(
       { method: request.method, headers: request.headers, body: request.body },
-      { db: options.db, apiToken: options.apiToken },
+      { db: options.db, apiToken: options.apiToken, filesDir: options.filesDir },
     )
-    return { status: out.status, headers: out.headers, body: out.body }
+    return out.then(({ status, headers, body }) => ({ status, headers, body }))
   }
 
   return startHttpFixture({

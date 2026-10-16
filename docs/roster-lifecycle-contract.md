@@ -1136,6 +1136,11 @@ REST 与 MCP `query_records` 共用同一参数解析和 `listRecords` 读模型
 }
 ```
 
+公告记录中的 `enterprise.uscc` 缺席、`null` 或空白表示未提供身份代码；非空值必须通过既有
+USCC 格式与校验位验证，否则该记录以 `uscc_format_invalid` 逐项报错并使整批不写。事件出处的
+`page` 缺席或 `null` 保持为 `null`；PDF 提供页码时必须是精确的正整数，否则报 `page_invalid`；
+Word / Excel 等非 PDF 出处若提供非 `null` 页码，报 `not_page_capable`。这些校验发生在身份规划与提交前。
+
 > **`year` / `collectedOn` 由调用方给出**(RL-05 的解析器**不从文件内容或文件名推断**年度：
 > 导出表里那列「维护批次」是平台口径的维护批次，不是快照年度)。`exportSnapshot.rows[].rawFields`
 > 的键是 **1-based 列号字符串**、只留**非空**值(契约 §1.7)；单张导出表实测 6273 行、数十列，
@@ -1685,7 +1690,8 @@ POST /api/roster/evidence/pages
 | 判据 | 不过时 |
 |---|---|
 | `sourceFile` 非空;`listNo` 是正整数;**且必须带 `enterpriseId` 或 `enterpriseName`** | `entry_incomplete` |
-| `page` 是 ≥1 的整数(**不取整、不夹到边界、不当成「没有页码」**) | `page_invalid` |
+| `page` 是正整数(**不取整、不夹到边界、不当成「没有页码」**),且未超出可读取的源 PDF 实际页数 | `page_invalid` |
+| 源 PDF 页数无法可靠读取 | `page_count_unknown` |
 | 来源是 **PDF**(Word / Excel 没有可复核的页) | `not_page_capable` |
 | 按 `(sourceFile, listNo)` + 定位能命中**恰好一条**出处行 | `no_match` / `ambiguous` |
 
@@ -1699,6 +1705,8 @@ POST /api/roster/evidence/pages
   那是「分节陷阱」的可观察探针 —— 报告要能区分「库里没有」与「同序号分属别的分节」。
 - **定不下来的条目一行不改**,逐条带 `reason` 回报;写入是**逐条尽力**而不是整批事务 ——
   一批里混着「已核对好」与「还没核对」,后者的正确处置是**留空待核**,不是把前者一起回滚。
+- **页数取自源 PDF 本身**(PDFium);不会用已渲染页图数量代替总页数。请求页超过已知总页数返回
+  `page_invalid`;源文件缺失或打不开时返回 `page_count_unknown` 并留空待核,不猜边界。
 - **同一条出处行被两条入参指向、且页码不同** ⇒ 两条都不写(`ambiguous`)。
   同页码是同一个事实的重复表达(批处理重跑常见),照写并计入 `unchanged`。
 - **幂等**:重跑同一批 `written: 0` / `unchanged` 全中。

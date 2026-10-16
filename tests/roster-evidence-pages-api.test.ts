@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 import { evidencePageState } from '../lib/roster/evidence-page'
+import { minimalPdf } from './helpers/minimal-pdf'
 import { startRosterApi, type RosterApiServer } from './helpers/roster-http-server'
 
 /**
@@ -21,6 +22,7 @@ import { startRosterApi, type RosterApiServer } from './helpers/roster-http-serv
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-evidence-pages-'))
 const db = useDb({ dbPath: join(dir, 'roster.db') })
+const filesDir = join(dir, 'files')
 const TOKEN = 'evidence-pages-test-token'
 
 const F145 = 'jxj/announcement/2022/甬经信中小〔2022〕145号关于公布宁波市“专精特新”中小企业名单的通知.pdf'
@@ -96,6 +98,10 @@ beforeAll(async () => {
   // 幂等用例专用:不跟别的用例抢同一行,免得「重跑」断言依赖执行顺序。
   seedEnterprise('idemRow', '宁波幂等测试有限公司', '海曙区')
   seedEnterprise('duplicateRow', '宁波重复页码申领有限公司', '海曙区')
+  seedEnterprise('boundary23', '宁波页码边界23页测试有限公司', '海曙区')
+  seedEnterprise('boundary24', '宁波页码边界24页测试有限公司', '海曙区')
+  seedEnterprise('outOfRange', '宁波页码越界测试有限公司', '海曙区')
+  seedEnterprise('unknownCount', '宁波页数未知测试有限公司', '海曙区')
 
   seedEvidence(ids.peiyuan!, F145, 6, { district: '海曙区' })
   seedEvidence(ids.kaicheng!, F145, 6, { district: '海曙区' })
@@ -106,8 +112,15 @@ beforeAll(async () => {
   seedEvidence(ids.xlsxRow!, F_XLSX, 3)
   seedEvidence(ids.idemRow!, F145, 200, { district: '海曙区' })
   seedEvidence(ids.duplicateRow!, F145, 201, { district: '海曙区' })
+  seedEvidence(ids.boundary23!, F145, 202, { district: '海曙区' })
+  seedEvidence(ids.boundary24!, F145, 203, { district: '海曙区' })
+  seedEvidence(ids.outOfRange!, F145, 204, { district: '海曙区' })
+  seedEvidence(ids.unknownCount!, 'synthetic/missing-count.pdf', 205, { district: '海曙区' })
 
-  server = await startRosterApi({ db, apiToken: TOKEN })
+  const sourcePdf = join(filesDir, F145)
+  mkdirSync(dirname(sourcePdf), { recursive: true })
+  writeFileSync(sourcePdf, minimalPdf({ pages: 23 }))
+  server = await startRosterApi({ db, apiToken: TOKEN, filesDir })
 })
 
 afterAll(async () => {
@@ -187,7 +200,7 @@ describe('POST /api/roster/evidence/pages —— 分节定位与留空待核', (
 
   it('同序号不同分节、企业名对不上 ⇒ 留空待核,并报出同序号有几条', async () => {
     const res = await post({
-      entries: [{ sourceFile: F145, listNo: 6, page: 99, enterpriseName: '宁波并不存在有限公司' }],
+      entries: [{ sourceFile: F145, listNo: 6, page: 22, enterpriseName: '宁波并不存在有限公司' }],
     })
 
     expect(res.json.summary).toMatchObject({ assigned: 0, written: 0, pending: 1 })
@@ -248,20 +261,20 @@ describe('POST /api/roster/evidence/pages —— 分节定位与留空待核', (
 
   it('重跑同一批是空操作:written 归零、unchanged 全中(幂等)', async () => {
     // 自成一段:先写再重放,不依赖别的用例留下的状态。
-    const entries = [{ sourceFile: F145, listNo: 200, page: 33, enterpriseName: '宁波幂等测试有限公司' }]
+    const entries = [{ sourceFile: F145, listNo: 200, page: 18, enterpriseName: '宁波幂等测试有限公司' }]
     const first = await post({ entries })
     expect(first.json.summary).toMatchObject({ assigned: 1, written: 1, unchanged: 0 })
 
     const again = await post({ entries })
     expect(again.json.summary).toMatchObject({ assigned: 1, written: 0, unchanged: 1, pending: 0 })
-    expect(evidenceOf(ids.idemRow!)).toEqual({ page: 33, state: 'assigned' })
+    expect(evidenceOf(ids.idemRow!)).toEqual({ page: 18, state: 'assigned' })
   })
 
   it('同一请求的相同 claim 只写一次，重复项计入 unchanged', async () => {
     const entry = {
       sourceFile: F145,
       listNo: 201,
-      page: 31,
+      page: 19,
       enterpriseName: '宁波重复页码申领有限公司',
     }
     const res = await post({ entries: [entry, { ...entry }] })
@@ -273,19 +286,61 @@ describe('POST /api/roster/evidence/pages —— 分节定位与留空待核', (
       unchanged: 1,
       pending: 0,
     })
-    expect(evidenceOf(ids.duplicateRow!)).toEqual({ page: 31, state: 'assigned' })
+    expect(evidenceOf(ids.duplicateRow!)).toEqual({ page: 19, state: 'assigned' })
   })
 
   it('同一行被两条页码互相矛盾地指向 ⇒ 两条都不写(不留一条没依据的页码)', async () => {
     const res = await post({
       entries: [
         { sourceFile: F145, listNo: 6, page: 21, enterpriseName: '宁波恒特汽车零部件有限公司' },
-        { sourceFile: F145, listNo: 6, page: 42, enterpriseName: '宁波恒特汽车零部件有限公司' },
+        { sourceFile: F145, listNo: 6, page: 22, enterpriseName: '宁波恒特汽车零部件有限公司' },
       ],
     })
     expect(res.json.summary).toMatchObject({ assigned: 0, written: 0, pending: 2 })
     expect(res.json.pending.every((p: any) => p.reason === 'ambiguous')).toBe(true)
     expect(evidenceOf(ids.hengte!).page).toBeNull()
+  })
+
+  it('核验源 PDF 页数：23 页可写、24 页与 999 页均留空且不写', async () => {
+    const page23 = await post({
+      entries: [{ sourceFile: F145, listNo: 202, page: 23, enterpriseName: '宁波页码边界23页测试有限公司' }],
+    })
+    expect(page23.json.summary).toMatchObject({ assigned: 1, written: 1, pending: 0 })
+    expect(evidenceOf(ids.boundary23!)).toEqual({ page: 23, state: 'assigned' })
+
+    const page24 = await post({
+      entries: [{ sourceFile: F145, listNo: 203, page: 24, enterpriseName: '宁波页码边界24页测试有限公司' }],
+    })
+    expect(page24.json.summary).toMatchObject({ assigned: 0, written: 0, pending: 1 })
+    expect(page24.json.pending[0]).toMatchObject({ reason: 'page_invalid' })
+    expect(page24.json.pending[0].detail).toContain('23 页')
+    expect(evidenceOf(ids.boundary24!)).toEqual({ page: null, state: 'pending' })
+
+    const entry = {
+      sourceFile: F145,
+      listNo: 204,
+      page: 999,
+      enterpriseName: '宁波页码越界测试有限公司',
+    }
+    const dryRun = await post({ dryRun: true, entries: [entry] })
+    expect(dryRun.json.summary).toMatchObject({ assigned: 0, written: 0, pending: 1 })
+    expect(dryRun.json.pending[0]).toMatchObject({ reason: 'page_invalid' })
+    expect(evidenceOf(ids.outOfRange!)).toEqual({ page: null, state: 'pending' })
+
+    const applied = await post({ entries: [entry] })
+    expect(applied.json.summary).toMatchObject({ assigned: 0, written: 0, pending: 1 })
+    expect(applied.json.pending[0]).toMatchObject({ reason: 'page_invalid' })
+    expect(evidenceOf(ids.outOfRange!)).toEqual({ page: null, state: 'pending' })
+  })
+
+  it('源 PDF 页数无法读取时保持 page_count_unknown 待核,不按页图或猜测写入', async () => {
+    const res = await post({
+      entries: [{ sourceFile: 'synthetic/missing-count.pdf', listNo: 205, page: 1, enterpriseName: '宁波页数未知测试有限公司' }],
+    })
+
+    expect(res.json.summary).toMatchObject({ assigned: 0, written: 0, pending: 1 })
+    expect(res.json.pending[0]).toMatchObject({ reason: 'page_count_unknown' })
+    expect(evidenceOf(ids.unknownCount!)).toEqual({ page: null, state: 'pending' })
   })
 })
 

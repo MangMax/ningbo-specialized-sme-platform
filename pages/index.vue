@@ -29,6 +29,7 @@ import {
   TITLE_SHORT,
 } from '~~/lib/labels'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
+import { useEvidencePreviewScrollRestore } from '~~/lib/roster/evidence-preview-return'
 import {
   EMPTY_LEDGER_STATE,
   ledgerExportLabel,
@@ -269,6 +270,17 @@ const listLoading = computed(() =>
       ? titlesStatus.value === 'loading'
       : differencesStatus.value === 'loading',
 )
+
+/** The active list has returned data (or a settled error) and is no longer refetching. */
+const listRendered = computed(() => {
+  if (listLoading.value) return false
+  return view.value === 'enterprise'
+    ? enterpriseData.value != null || enterprisesError.value != null
+    : view.value === 'title'
+      ? titleData.value != null || titlesError.value != null
+      : differenceData.value != null || differencesError.value != null
+})
+useEvidencePreviewScrollRestore(listRendered)
 
 const total = computed(() =>
   view.value === 'enterprise'
