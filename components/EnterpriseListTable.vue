@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import {
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
@@ -6,6 +7,7 @@ import {
   DIFF_STATUS_NONE_LABEL,
   TITLE_SHORT,
 } from '~~/lib/labels'
+import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -70,6 +72,12 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [id: number]; clearFilters: [] }>()
 
 const COLUMNS = 6
+const visibleAliasesByEnterpriseId = computed(() => new Map(
+  props.rows.map((row) => [
+    row.enterpriseId,
+    historicalAliasNamesForDisplay(row.aliasNames, row.name),
+  ]),
+))
 
 /**
  * 「称号 · 认定年」那一格的内容。
@@ -197,7 +205,7 @@ function railClass(row: EnterpriseListRow): string {
             </button>
             <!-- 曾用名跟在名称下面一行(设计稿的「原 …」),不占一列、也不撑宽这一格。 -->
             <span
-              v-for="alias in row.aliasNames"
+              v-for="alias in visibleAliasesByEnterpriseId.get(row.enterpriseId) ?? []"
               :key="alias"
               class="text-muted-foreground hidden truncate text-xs leading-4 sm:block"
               :title="`曾用名:${alias}`"

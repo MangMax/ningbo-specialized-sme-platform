@@ -110,3 +110,30 @@ describe('企业详情抽屉的差异原因', () => {
     expect(wrapper.get('[data-testid="difference-reason-chain"]').text()).toContain('待核实')
   })
 })
+
+describe('企业详情抽屉的曾用名', () => {
+  it.each([
+    {
+      enterpriseId: 987,
+      name: '宁波芯速联光电科技有限公司',
+      oldName: '宁波芯速联旧称有限公司',
+    },
+    {
+      enterpriseId: 1207,
+      name: '宁波九纵智能科技有限公司',
+      oldName: '宁波九纵旧称有限公司',
+    },
+  ])('不把企业 $enterpriseId 的现名显示成曾用名', ({ name, oldName }) => {
+    const detail = detailWithDifference()
+    queryData.value = {
+      ...detail,
+      enterprise: { ...detail.enterprise, name, aliasNames: [name, oldName] },
+    }
+    queryLoading.value = false
+
+    const wrapper = mountDrawer()
+    const aliasValue = wrapper.get('dl').findAll('dd')[1]!
+
+    expect(aliasValue.text()).toBe(oldName)
+  })
+})

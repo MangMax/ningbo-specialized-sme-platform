@@ -664,7 +664,7 @@
     "difference": {                // RL-20:企业的差异摘要
       "count": 1,                  // 企业 × 称号 × 方向的差异记录数
       "status": "confirmed_reason", // 可空;优先级最高的一条差异状态
-      "reasonCode": "platform_not_updated", // 可空
+      "reasonCode": "platform_stale", // 可空
       "anyCurrent": true           // 是否仍有当前差异
     }
   }],

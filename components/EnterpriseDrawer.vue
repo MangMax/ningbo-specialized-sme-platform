@@ -15,6 +15,7 @@ import {
   TITLES,
 } from '~~/lib/labels'
 import { reviewEventSuffix, timelineEventIdentity } from '~~/lib/roster/enterprise-timeline'
+import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
@@ -106,6 +107,12 @@ const { data, isLoading, error } = useQuery({
 })
 
 const detail = computed(() => data.value ?? null)
+const visibleHistoricalAliasNames = computed(() => {
+  const enterprise = detail.value?.enterprise
+  return enterprise
+    ? historicalAliasNamesForDisplay(enterprise.aliasNames, enterprise.name)
+    : []
+})
 
 /** 记录 id → 称号;事件只带 `recordId`,时间轴要按称号分。 */
 const titleOfRecord = computed(() => {
@@ -296,8 +303,8 @@ function eventSuffix(item: TimelineItem): string {
             <dd class="text-[13px]">{{ detail.enterprise.district ?? '属地未知' }}</dd>
             <dt class="text-muted-foreground text-xs">曾用名</dt>
             <dd class="text-[13px]">
-              <template v-if="detail.enterprise.aliasNames.length">
-                {{ detail.enterprise.aliasNames.join('、') }}
+              <template v-if="visibleHistoricalAliasNames.length">
+                {{ visibleHistoricalAliasNames.join('、') }}
               </template>
               <span v-else class="text-muted-foreground">—</span>
             </dd>

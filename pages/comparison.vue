@@ -177,7 +177,7 @@ const exportUrl = computed(
         />
       </div>
       <Select v-model="title">
-        <SelectTrigger size="sm" class="bg-card col-span-6 w-full shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 lg:col-span-1" aria-label="按称号筛选">
+        <SelectTrigger size="sm" class="bg-card col-span-5 w-full min-w-0 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 lg:col-span-1" aria-label="按称号筛选">
           <SelectValue />
         </SelectTrigger>
         <SelectContent class="shadow-none">
@@ -193,14 +193,14 @@ const exportUrl = computed(
           <SelectItem v-for="item in districtOptions" :key="item" :value="item">{{ item }}</SelectItem>
         </SelectContent>
       </Select>
-      <div class="col-span-3 min-w-0 lg:col-span-1" data-testid="comparison-direction-filter">
+      <div class="col-span-4 min-w-0 lg:col-span-1" data-testid="comparison-direction-filter">
         <Select v-model="direction">
           <SelectTrigger
             size="sm"
-            class="bg-card w-full px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100"
+            class="bg-card w-full min-w-0 px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100"
             aria-label="按比对方向筛选"
           >
-            <SelectValue />
+            <SelectValue class="min-w-0 flex-1 text-left" />
           </SelectTrigger>
           <SelectContent class="shadow-none">
             <SelectItem v-for="d in COMPARISON_DIRECTIONS" :key="d" :value="d">

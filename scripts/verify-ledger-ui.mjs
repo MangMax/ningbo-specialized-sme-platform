@@ -300,6 +300,16 @@ function comparisonFiltersViolation(m, label) {
   return null
 }
 
+function comparisonDirectionValueViolation(m, label) {
+  const direction = m.comparisonDirection
+  if (!direction?.trigger || !direction.label) return `${label}:找不到当前比对方向`
+  const value = direction.value
+  if (!value || value.text !== direction.label || value.display === 'none' || value.clientWidth < 1 || value.scrollWidth > value.clientWidth + 1 || value.textOverflow === 'ellipsis') {
+    return `${label}:当前比对方向文字被隐藏或裁切 ${JSON.stringify({ label: direction.label, value })}`
+  }
+  return null
+}
+
 function enterpriseDesktopDensityViolation(m, label) {
   if (m.innerWidth < 1024 || m.innerHeight < 800) return null
   const density = m.enterpriseDesktopDensity
@@ -740,6 +750,83 @@ async function verifyMissingRecognitionYearAndEvidence(cdp) {
     else ok('企业列表 · 出处:出处条目保留页码字段,RL-10 可接入页码跳转')
   } finally {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
+async function verifyCurrentNameAliasDisplay(cdp) {
+  const samples = [
+    { enterpriseId: 987, name: '宁波芯速联光电科技有限公司' },
+    { enterpriseId: 1207, name: '宁波九纵智能科技有限公司' },
+  ]
+
+  for (const sample of samples) {
+    const page = await openSession(
+      cdp,
+      `${BASE}/?q=${encodeURIComponent(sample.name)}`,
+      VIEWPORTS[0],
+    )
+    const { targetId, sessionId } = page
+    try {
+      const rawAliasNames = await evaluate(cdp, sessionId, `fetch('/api/roster/enterprises/${sample.enterpriseId}')
+        .then((response) => response.json())
+        .then((detail) => detail.enterprise.aliasNames)`)
+      if (!rawAliasNames.includes(sample.name)) {
+        bad(`企业列表 · 曾用名:企业 ${sample.enterpriseId} 的真实接口数据不再包含与现名相同的 confirmed 别名 ${JSON.stringify(rawAliasNames)}`)
+      } else {
+        ok(`企业列表 · 曾用名:企业 ${sample.enterpriseId} 的接口仍保留原始 confirmed 别名`)
+      }
+
+      const listState = await evaluate(cdp, sessionId, `(() => {
+        const row = [...document.querySelectorAll('tbody tr')]
+          .find((item) => item.querySelector('td:nth-child(2) button')?.textContent?.trim() === ${JSON.stringify(sample.name)});
+        return row ? {
+          aliases: [...row.querySelectorAll('td:nth-child(2) [title^="曾用名:"]')]
+            .map((item) => (item.textContent ?? '').trim()),
+        } : null;
+      })()`)
+      if (!listState) {
+        bad(`企业列表 · 曾用名:搜索不到企业 ${sample.enterpriseId} ${JSON.stringify(sample.name)}`)
+        continue
+      }
+      if (listState.aliases.includes(`原 ${sample.name}`)) {
+        bad(`企业列表 · 曾用名:列表把企业 ${sample.enterpriseId} 的现名显示成曾用名 ${JSON.stringify(listState.aliases)}`)
+      } else {
+        ok(`企业列表 · 曾用名:企业 ${sample.enterpriseId} 不把现名显示成曾用名`)
+      }
+
+      const detailReady = await waitUntil(cdp, sessionId, `(() => {
+        const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+        return drawer?.getAttribute('data-state') === 'open' &&
+          drawer.querySelector('h2')?.textContent?.trim() === ${JSON.stringify(sample.name)} &&
+          !drawer.querySelector('[data-slot="skeleton"]');
+      })()`)
+      if (!detailReady) {
+        const drawerState = await evaluate(cdp, sessionId, `(() => {
+          const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+          return drawer && {
+            state: drawer.getAttribute('data-state'),
+            title: drawer.querySelector('h2')?.textContent?.trim(),
+            skeletons: drawer.querySelectorAll('[data-slot="skeleton"]').length,
+            error: drawer.querySelector('.text-destructive')?.textContent?.trim(),
+          };
+        })()`)
+        bad(`企业列表 · 曾用名:企业 ${sample.enterpriseId} 的详情抽屉没有加载完成 ${JSON.stringify(drawerState)}`)
+        continue
+      }
+
+      const drawerAliasText = await evaluate(cdp, sessionId, `(() => {
+        const values = document.querySelector('[data-testid="enterprise-drawer"] dl')?.querySelectorAll('dd');
+        return (values?.[1]?.textContent ?? '').trim();
+      })()`)
+      const drawerAliasNames = drawerAliasText === '—' ? [] : drawerAliasText.split('、')
+      if (drawerAliasNames.includes(sample.name)) {
+        bad(`企业列表 · 曾用名:抽屉把企业 ${sample.enterpriseId} 的现名显示成曾用名 ${JSON.stringify(drawerAliasNames)}`)
+      } else {
+        ok(`企业列表 · 曾用名:企业 ${sample.enterpriseId} 的抽屉不把现名显示成曾用名`)
+      }
+    } finally {
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+    }
   }
 }
 
@@ -1205,6 +1292,8 @@ const MEASURE = `(() => {
   const body = root?.querySelector('tbody');
   const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
   const comparisonDirection = document.querySelector('[data-testid="comparison-direction-filter"]');
+  const comparisonDirectionTrigger = comparisonDirection?.querySelector('[role="combobox"]');
+  const comparisonDirectionValue = comparisonDirectionTrigger?.querySelector('[data-slot="select-value"]');
   const comparisonFilters = document.querySelector('[data-testid="comparison-filters"]');
   const comparisonSearch = comparisonFilters?.querySelector('input[aria-label*="搜索企业名称"]');
   const cellMetrics = (el) => el ? {
@@ -1259,7 +1348,8 @@ const MEASURE = `(() => {
     drawerOpen: document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state') === 'open',
     comparisonDirection: comparisonDirection ? {
       trigger: !!comparisonDirection.querySelector('[role="combobox"]'),
-      label: comparisonDirection.querySelector('[role="combobox"]')?.textContent?.trim() ?? '',
+      label: comparisonDirectionTrigger?.textContent?.trim() ?? '',
+      value: cellMetrics(comparisonDirectionValue),
     } : null,
     comparisonFilters: comparisonFilters ? {
       clientWidth: comparisonFilters.clientWidth,
@@ -1390,6 +1480,11 @@ async function main() {
           if (!m.comparisonDirection?.trigger || !m.comparisonDirection.label) {
             bad(`${label}:比对方向应使用项目 Select 过滤器 ${JSON.stringify(m.comparisonDirection)}`)
           } else ok(`${label}:比对方向使用项目 Select(${m.comparisonDirection.label})`)
+          if (viewport.width <= 420) {
+            const directionValue = comparisonDirectionValueViolation(m, label)
+            if (directionValue) bad(directionValue)
+            else ok(`${label}:当前比对方向完整可读`)
+          }
           const filters = comparisonFiltersViolation(m, label)
           if (filters) bad(filters)
           else ok(`${label}:比对搜索与筛选控件均在视口内`)
@@ -1499,6 +1594,23 @@ async function main() {
     else console.log(`✗ 720px筛选栏缺陷自检按预期变红:${tabletFiltersSelfCheck}`)
     if (tabletFiltersSelfCheck) ok('720px筛选栏缺陷自检:关闭临时 target 后缺陷已复原')
 
+    const mobileDirectionBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/comparison`,
+      `(() => {
+        const value = document.querySelector('[data-testid="comparison-direction-filter"] [data-slot="select-value"]');
+        value?.style.setProperty('max-width', '1px', 'important');
+        value?.style.setProperty('overflow', 'hidden', 'important');
+        return (${MEASURE});
+      })()`,
+      READY,
+      VIEWPORTS[1],
+    )
+    const mobileDirectionSelfCheck = comparisonDirectionValueViolation(mobileDirectionBroken, '窄屏方向显示缺陷自检')
+    if (!mobileDirectionSelfCheck) bad('窄屏方向显示缺陷自检:临时裁窄方向文字后,裁切断言仍未命中')
+    else console.log(`✗ 窄屏方向显示缺陷自检按预期变红:${mobileDirectionSelfCheck}`)
+    if (mobileDirectionSelfCheck) ok('窄屏方向显示缺陷自检:关闭临时 target 后缺陷已复原')
+
     const desktopDensityBroken = await openAndMeasure(
       cdp,
       `${BASE}/`,
@@ -1590,6 +1702,7 @@ async function main() {
     await verifyLedgerMobileLoadingOverflow(cdp)
     await verifyLedgerDrawerAsyncClose(cdp)
     await verifyMissingRecognitionYearAndEvidence(cdp)
+    await verifyCurrentNameAliasDisplay(cdp)
     await verifyKaichengExample(cdp)
     await verifyUnknownReviewOutcomeExample(cdp)
     await verifyLedgerLoadingAndDrawer(cdp)
