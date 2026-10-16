@@ -179,8 +179,9 @@ export interface LittleGiantImportReport {
 /**
  * 把一次解析结果编成**契约 §8.2** 的提交请求。
  *
- * 幂等键只由**源文件内容 SHA-256** 决定 ⇒ 同一份文件无论什么时候、由谁重复导入,
- * 都是同一个键(写入侧凭它保证不重复写企业/事件)。
+ * 幂等键由**来源标识(库内相对路径)+ 源文件内容 SHA-256** 决定(见
+ * [`littleGiantIdempotencyKey`]) ⇒ 同一份文件、同一个位置,无论什么时候、由谁重复导入,
+ * 都是同一个键(写入侧凭它保证不重复写企业/事件);文件入库换了位置 ⇒ 换键 ⇒ 重导一次以收敛出处指针。
  */
 export function buildLittleGiantImportRequest(
   workbook: LittleGiantWorkbook,

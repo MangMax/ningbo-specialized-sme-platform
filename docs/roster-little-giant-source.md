@@ -150,5 +150,23 @@ jxj/announcement/经信局公布历年小巨人企业名单.xlsx
   `enterprise` / `record` / `record_event` / `record_evidence` 四个计数**一行未变**,
   `/api/files?rescan=1` 的 `backfill.parts.orphanPaths` 为**空**(没有出处指向库外了)。
 
-**不要再把出处改回库外路径**:来源目录不是运行时的文件库,写进去预览就断。
+#### 口径对不上的条目清单怎么取(可复跑)
+
+「有 `record_evidence` 引用、但 `stored_file` 里没有对应 `rel_path`」的清单由回填直接报出
+(`server/utils/file-parts.ts` 的 `PartsBackfillStats.orphanPaths`,判据是
+`source_file` 与 `rel_path` **精确相等** —— 与文件列表的「被记录引用数」同一口径):
+
+```bash
+curl 'localhost:3000/api/files?rescan=1' | jq '.backfill.parts.orphanPaths'
+```
+
+| 时点 | 清单 | 原因 |
+|---|---|---|
+| RL-16 之前 | `["经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx"]`(牵涉 **511** 条出处) | RL-02 导入时文件还没入库,出处按**来源根相对路径**写;该路径不在 `files/` 里 ⇒ 预览解析不到 |
+| RL-16 之后 | `[]` | 文件按库内规则入库,重导一轮把 511 条指针收敛到库内路径 |
+
+同一判据的回归用例见 `tests/file-parts.test.ts`(orphanPath 会被报出且不猜)与
+`tests/roster-evidence-repoint.test.ts`(重导后指针收敛、行数不变)。
+
+**不要把出处改回库外路径**:来源目录不是运行时的文件库,写进去预览就断。
 

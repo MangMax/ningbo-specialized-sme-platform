@@ -8,6 +8,7 @@ import { Upload } from 'tus-js-client'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createTus, TUS_PATH, type TusConfig } from '../server/utils/tus'
 import { startTusServer, type MiniTusServer } from './helpers/tus-mini-server'
+import { INTERNALIZED_FILE_COUNT } from './helpers/file-store-expectations'
 
 /**
  * 「脚本内化」与「tus 上传」两条写入路径的**落位规则一致性**验证(票 02)。
@@ -29,13 +30,6 @@ import { startTusServer, type MiniTusServer } from './helpers/tus-mini-server'
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 /** 仓库里现有的文件库(19 份来源文件 + 3 份导出表 + README)。 */
 const LIBRARY_DIR = join(APP_ROOT, 'files')
-/**
- * 内化文件的期望数。**这个数怎么来的**(RL-16 重新核对):原有 24 − 3(入库培育 1 份 +
- * 重复 `.doc` 2 份,按 `lib/file-store-scope.ts` 移出)+ 1(跨年汇总的
- * `经信局公布历年小巨人企业名单.xlsx` 入库)= **22**。
- * 与 `stored-file.test.ts` 的同名常量一起改;⚠️ 新增/移出源文件后要跟着改。
- */
-const INTERNALIZED_FILE_COUNT = 22
 
 /**
  * `files/` 是否已就位。目录本身在 clone 里总是存在(只提交了 `README.md`),

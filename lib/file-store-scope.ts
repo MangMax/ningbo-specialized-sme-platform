@@ -35,7 +35,7 @@
  * 于是判据 = 兄弟名集合,调用方(回填)本来就在扫整个目录,顺手就有。
  */
 
-import { baseName, extensionOf } from './stored-file'
+import { baseName, directoryOf, extensionOf } from './stored-file'
 
 /** 入库范围判定的**原因码**。`in-scope` 是唯一「入库」的取值。 */
 export type StoreScopeReason =
@@ -56,19 +56,16 @@ const DETAIL: Record<StoreScopeReason, string> = {
   'human-ocr-docx': '同目录已有同名 .pdf —— 该 .docx 是人工 OCR 产物,PDF 才是权威原件',
 }
 
-/** 判定结果。 */
-export interface StoreScopeVerdict {
-  inScope: boolean
-  reason: StoreScopeReason
-  /** 一句话说明(中文),可直接进回填报告 / 验收输出。 */
-  detail: string
-}
+/** 判定结果。**判别联合**:`inScope` 判得动,`reason` 才收窄得到 —— 调用方不必做类型断言。 */
+export type StoreScopeVerdict =
+  | { inScope: true; reason: 'in-scope'; detail: string }
+  | { inScope: false; reason: Exclude<StoreScopeReason, 'in-scope'>; detail: string }
 
 /** 排除 **入库培育** 文件的关键词。与 `pipeline/src/files.ts` 的判据、`files/README.md` 同字面量。 */
 export const NURTURE_KEYWORD = '入库培育'
 
 /** 一份排除判定。 */
-function exclude(reason: StoreScopeReason): StoreScopeVerdict {
+function exclude(reason: Exclude<StoreScopeReason, 'in-scope'>): StoreScopeVerdict {
   return { inScope: false, reason, detail: DETAIL[reason] }
 }
 
@@ -76,12 +73,6 @@ function exclude(reason: StoreScopeReason): StoreScopeVerdict {
 function stemOf(filename: string): string {
   const ext = extensionOf(filename)
   return ext === '' ? filename : filename.slice(0, filename.length - ext.length - 1)
-}
-
-/** 目录段(去掉文件名);根下的文件返回空串。 */
-export function directoryOf(relPath: string): string {
-  const i = relPath.lastIndexOf('/')
-  return i < 0 ? '' : relPath.slice(0, i)
 }
 
 /**
@@ -125,18 +116,3 @@ export function scopeOf(relPath: string, siblings?: ReadonlySet<string>): StoreS
 
   return { inScope: true, reason: 'in-scope', detail: DETAIL['in-scope'] }
 }
-
-/**
- * 规则全表(判据 → 处置),给文档与验收核对用 —— **一处定义、多处引用**:
- * `files/README.md` 与清理技能里的那张表就该是这几行,不另抄一份。
- */
-export const STORE_SCOPE_RULES: ReadonlyArray<{
-  reason: StoreScopeReason
-  criterion: string
-  disposition: string
-}> = [
-  { reason: 'nurture', criterion: '文件名含「入库培育」', disposition: '不入库(已入库的移出;不构成称号,无历史可丢)' },
-  { reason: 'duplicate-doc', criterion: '.doc 且同目录有同名 .docx', disposition: '不入库(重复件;保留可预览的 .docx)' },
-  { reason: 'human-ocr-docx', criterion: '.docx 且同目录有同名 .pdf', disposition: '不入库(PDF 才是权威原件且可内联预览)' },
-  { reason: 'in-scope', criterion: '其余落在 <source>/<kind>/ 规则内的文件', disposition: '入库' },
-]

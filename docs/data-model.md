@@ -96,7 +96,7 @@ enterprise ──1:N── record ──1:N── record_event
 |---|---|
 | `id` PK | |
 | `record_event_id` FK | |
-| `source_file` | 如 `省专\2022\00公布文件`(工信部为导出文件名) |
+| `source_file` | **文件库(`files/`)内相对路径**,如 `jxj/announcement/2024/1/甬经信中小〔2024〕72号….pdf`;据此解析并预览/打开(口径见 [ADR-来源文件内化为仓库内的文件库](./adr/2026-10-13-source-files-in-repo.md))。**不是**来源目录路径 |
 | `attachment` | 附件 / 第一部分 / 第二部分 |
 | `list_no` | 序号 |
 

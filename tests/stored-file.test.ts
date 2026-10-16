@@ -3,9 +3,14 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { categoryStateOf, deriveClassification, deriveParts, parseBatch } from '../lib/stored-file'
-import { directoryOf, scopeOf, siblingIndex } from '../lib/file-store-scope'
+import { categoryStateOf, deriveClassification, deriveParts, directoryOf, parseBatch } from '../lib/stored-file'
+import { scopeOf, siblingIndex } from '../lib/file-store-scope'
 import { LITTLE_GIANT_SOURCE_FILE } from '../lib/roster/little-giant-import'
+import {
+  INTERNALIZED_FILE_COUNT,
+  INTERNALIZED_JXJ_COUNT,
+  INTERNALIZED_SET_COUNT,
+} from './helpers/file-store-expectations'
 import {
   backfillFromDisk,
   backfillStoredFiles,
@@ -479,36 +484,11 @@ describe('DELETE 默认不删磁盘', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * 真实文件库的**期望规模**与 `files/` 保持一致(RL-16 重新核对,2026-10-16)。
- *
- * ── 这个数怎么来的(逐条列出,不是「扫描结果自己比自己」)──────────────────
- * 用户 2026-10-16 反馈后,**入库范围**(`lib/file-store-scope.ts`)被定成可执行规则,
- * 文件库随之调整到**应有的集合**:
- *
- * | 文件 | 处置 |
- * |---|---|
- * | `2021/…〔2021〕160号…**入库培育**…pdf` | **移出**(培育对象不构成称号) |
- * | `2023/1/…“专精特新”…**通知.doc**` | **移出**(与可预览的 `.docx` 重复) |
- * | `2023/1/…**创新型**…**通知.doc**` | **移出**(与可预览的 `.docx` 重复) |
- * | `jxj/announcement/经信局公布历年小巨人企业名单.xlsx` | **入库**(历年汇总工作簿;无年份批次段) |
- *
- * 于是:原有 24 − 3(移出)+ 1(工作簿)= **22**。
- * 分布:jxj **19** 份(2021×0、2022×2、2023×4、2024×5、2025×4、2026×3、无年份×1)
- * + miit 导出表 **3** 份 = 22。
- *
- * ⚠️ **新增/移出源文件后要跟着改这个数**。它刻意写死:**判据不能是「扫描结果自己比自己」**,
- * 否则回填规则坏掉时测试照样绿。历史上这里写的是 23(早于 2021 入库培育那份文件入库),
- * 后来又被改成 24(把入库培育与两份重复 `.doc` 都算成了合法)——见本次修。
+ * 真实文件库的**期望规模** —— 数的来路(逐条)与「为什么写死」见
+ * [`tests/helpers/file-store-expectations.ts`](./helpers/file-store-expectations.ts),
+ * 那里也是 `reupload.test.ts` 用的同一份(一个数只有一处)。
  */
-const INTERNALIZED_FILE_COUNT = 22
-const INTERNALIZED_JXJ_COUNT = 19
-/**
- * 分类状态为 `set` 的文件数。**例外只有一份**:那份**跨年汇总**的工作簿没有单一的
- * 「公布年份」,按 `files/README.md`「year/batch 取值」第 4 条**省略年份段** ⇒
- * `categoryState='unset'`(= 年份待核,不是「不知道它是什么」)。
- * 「空值优于错值」:硬填一个年份才是错。
- */
-const INTERNALIZED_SET_COUNT = 21
+
 
 /**
  * `files/` 是否**已就位**。注意 `files/` 目录本身在 clone 里总是存在(只提交了 `README.md`),

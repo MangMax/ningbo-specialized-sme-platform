@@ -17,13 +17,14 @@ import {
   baseName,
   categoryStateOf,
   deriveClassification,
+  directoryOf,
   extensionOf,
   type CategoryState,
   type FileKind,
   type FileSource,
   type ParseState,
 } from '../../lib/stored-file'
-import { directoryOf, scopeOf, siblingIndex, type StoreScopeReason } from '../../lib/file-store-scope'
+import { scopeOf, siblingIndex, type StoreScopeReason } from '../../lib/file-store-scope'
 import type { StoredFilePart } from '../../lib/file-parts'
 import { listFileParts, type PartsBackfillStats } from './file-parts'
 
@@ -224,7 +225,7 @@ export interface BackfillReport extends BackfillStats {
  * 三条不回填的情形:
  *  1. 路径认不出分类(`<source>/<kind>/` 规则之外)→ 跳过并报出;
  *  2. **在入库范围之外**(入库培育 / 重复 `.doc` / 人工 OCR 的 `.docx`,判据见
- *     `lib/file-store-scope.ts`)→ 不禁用在表外,并带原因报出(RL-16)。规则**在这里生效**,
+ *     `lib/file-store-scope.ts`)→ **不进表**,并带原因报出(RL-16)。规则**在这里生效**,
  *     不是只写在文档里 —— 否则下次再把入库培育文件或重复 `.doc` 拷进来,它会照样混进列表;
  *  3. 该 `rel_path` 已被**人工移出库**(`removed_at` 非空)→ 跳过 —— 否则回填会把
  *     用户刚移出的文件又插回来,那就不是幂等了。
@@ -251,7 +252,7 @@ export function backfillStoredFiles(
   for (const f of scanned) {
     const scope = scopeOf(f.relPath, siblings.get(directoryOf(f.relPath)))
     if (!scope.inScope) {
-      stats.excluded.push({ relPath: f.relPath, reason: scope.reason as BackfillExclusion['reason'], detail: scope.detail })
+      stats.excluded.push({ relPath: f.relPath, reason: scope.reason, detail: scope.detail })
       continue
     }
     const derived = deriveClassification(f.relPath)
