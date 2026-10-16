@@ -555,7 +555,7 @@
   "announcement": {
     "sourceDocument": { "source": "jxj", "title": "…", "docNumber": "甬经信中小〔2024〕192号" },
     "records": [{
-      "enterprise": { "name": "…", "uscc": "913302…" },        // uscc 可空
+      "enterprise": { "name": "…", "uscc": "913302…", "district": "鄞州区" },  // uscc 可空;district 可空
       "titleCode": "specialized_sme",
       "events": [{ "eventType": "review", "year": 2021, "batchSeq": 1,
                    "decidedYear": 2024, "reviewOutcome": "failed",
@@ -584,7 +584,12 @@
 > **`year` / `collectedOn` 由调用方给出**(RL-05 的解析器**不从文件内容或文件名推断**年度：
 > 导出表里那列「维护批次」是平台口径的维护批次，不是快照年度)。`exportSnapshot.rows[].rawFields`
 > 的键是 **1-based 列号字符串**、只留**非空**值(契约 §1.7)；单张导出表实测 6273 行、数十列，
-> payload 是 MB 级(实测 7.6 MB 一次 POST 可完整接收并落库，无需调 `bodyLimit`)。
+> payload 是 MB 级且**真实体量远大于合成夹具的估计**。2026-10-16 用**真实导出表**实测
+> (`pnpm build` + 起 `.output` 打真路由):「专精特新中小企业」表 **306 列**,整行 `rawFields`
+> 让一次 POST 达 **33 MB**;小巨人 **6.4 MB**、创新型 **8.7 MB**。
+> **实测生产路由能完整收下并落库**(200 / `committed` / `written: 3268` / 3267 行,约 0.32s),
+> 无需调 `bodyLimit`。⚠️ 但每年 × 每称号约 33 MB 落 SQLite 的 JSON 列是可观体量 ——
+> 是否裁列或压缩留待后续决策,**当前按契约原样存,不擅自裁剪**。
 
 ### 8.4 `payload.merges` —— 归并与回填的写入形状(RL-11 增量补齐)
 
@@ -643,8 +648,8 @@
 
 | 字段 | 含义 |
 |---|---|
-| `add` | 本次将**新增**的行数(任一新行:企业 / 记录 / 事件 / 出处 / 别名 / 查询 / 关系 / 快照批 / 快照行 / 差异 / 归并)。 |
-| `update` | 本次将**复用或更新**的既有行数(按唯一键命中:如同一 `(称号, 年度, sha256)` 的快照批)。 |
+| `add` | 本次将**新增**的**计划项**数。⚠️ 计数单位是**计划项**(一个 `payload.records[]` 条目 = 1 项),**不是**「企业+记录+事件+出处」各算一行。实测:小巨人工作簿 511 行源数据 → `add: 510`(= 企业/记录数),而非 2000+。 |
+| `update` | 本次将**复用或更新**的既有计划项数(按唯一键命中:如同一 `(称号, 年度, sha256)` 的快照批)。 |
 | `remove` | 归并会**删除**的被并企业行数(= 成功的 `merges` 项数)。 |
 | `review` | 落在**待核**状态的行数(`pending` / `needs_review`,以及未知枚举原样入库的行)。 |
 | `conflicts` | 逐项冲突(`{ ok:false, kind, ref, error }`),**不静默丢行**。 |
