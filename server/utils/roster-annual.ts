@@ -110,7 +110,10 @@ function annualBlockedReason(
     const allCommitted = entries.length > 0 && entries.every((entry) => entry.batchStatus === 'committed')
     return allCommitted
       ? '这一批的幂等键在库里都已经是「已提交」：同键再提交一行都不会写（幂等）。要修出处指针请走 POST /api/roster/import/replay。'
-      : '这些幂等键此刻都不会写入任何东西（每一项都是「无变化」）。'
+      : // 这一支是「载荷里根本没有会写库的内容」(计划项为空)。**不能**把它写成
+        // 「每一项都是无变化」—— `unchanged` 说的是「命中既有记录坐标」,而这里连计划项都没有;
+        // 何况 `unchanged` **不代表什么都不会发生**(载荷里若有库里还没有的事件,提交会追加)。
+        '这一批载荷里没有任何会写库的内容（计划项为空），点应用不会写入任何业务数据。'
   }
   return null
 }

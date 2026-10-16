@@ -104,9 +104,11 @@ export interface AnnualPreviewEntry {
   counts: AnnualPreviewCounts
   items: AnnualPreviewItem[]
   /**
-   * 同键 `commit` 会不会真的写东西。
+   * 同键 `commit` 会不会**真的跑一遍**(因而可能写行)。
    * 已 `committed` 的键**一行不写**(§8.2 的幂等),预检不得对那种批次报一份做不到的计划
-   * (§8.9.2,RL-19 的事故现场)。有冲突时也不会写(整批 `failed`)。
+   * (§8.9.2,RL-19 的事故现场);有冲突时也不会写(整批 `failed`);计划项为空时也没什么可写。
+   * 其余情况为 `true` —— 注意「命中既有记录坐标」(`classifyPlannedItem` 的 `unchanged`)
+   * **不等于**「一行都不会写」:载荷里若有库里还没有的事件,提交会把它们**追加**进去。
    */
   willApply: boolean
 }
