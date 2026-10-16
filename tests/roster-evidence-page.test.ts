@@ -303,6 +303,29 @@ describe('跳转链接 —— 出处 → 预览页', () => {
     expect(isSafeBackPath('/?view=title')).toBe(true)
   })
 
+  it('返回目标拒绝控制字符和解析后跨源的 URL,并保留合法站内路径', () => {
+    const appOrigin = 'https://app.example'
+    const unsafe = [
+      '/\t/other.example/path',
+      '/\u0000?view=enterprise',
+      '/\u007f/path',
+      '/\u0085/path',
+      '//other.example/path',
+      '/\\other.example/path',
+      'https://other.example/path',
+    ]
+
+    for (const back of unsafe) {
+      expect(isSafeBackPath(back, appOrigin), JSON.stringify(back)).toBe(false)
+      expect(parseEvidencePreviewQuery({ file: F145, back }).back, JSON.stringify(back)).toBe('')
+      expect(evidencePreviewHref({ sourceFile: F145, page: 8, back })).not.toContain('back=')
+    }
+
+    const valid = '/?view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91'
+    expect(isSafeBackPath(valid, appOrigin)).toBe(true)
+    expect(parseEvidencePreviewQuery({ back: valid }).back).toBe(valid)
+  })
+
   it('解析端:坏 page 丢掉而不是夹到边界(不把坏参数变成「第 1 页」)', () => {
     for (const bad of ['0', '-3', 'abc', '2.5', '']) {
       expect(parseEvidencePreviewQuery({ file: F145, page: bad }).page).toBeNull()

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { ExternalLink, Eye, FileText } from '@lucide/vue'
 import {
@@ -167,6 +167,8 @@ const props = defineProps<{
   backQuery?: string
 }>()
 
+const emit = defineEmits<{ detailSettled: [enterpriseId: number] }>()
+
 const fullPageTo = computed(
   () =>
     `/enterprises/${props.enterpriseId}${props.backQuery ? `?back=${encodeURIComponent(props.backQuery)}` : ''}`,
@@ -177,6 +179,16 @@ const { data, isLoading, error } = useQuery({
   key: () => ['roster-enterprise', props.enterpriseId],
   query: () => apiGet<Detail>(`/api/roster/enterprises/${props.enterpriseId}`),
 })
+
+watch(
+  [isLoading, data, error],
+  () => {
+    if (!isLoading.value && (data.value != null || error.value != null)) {
+      emit('detailSettled', props.enterpriseId)
+    }
+  },
+  { immediate: true, flush: 'post' },
+)
 
 const detail = computed(() => data.value ?? null)
 const eventsByRecord = computed(() => {
@@ -314,7 +326,7 @@ function rememberPreviewReturn(event: MouseEvent) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
     return
   }
-  rememberEvidencePreviewReturn(previewBack.value)
+  rememberEvidencePreviewReturn(previewBack.value, event.currentTarget)
 }
 
 /** 三态里有页码的那种才可点;另两种只写字,不给链接(没有页码就没有可跳的页)。 */

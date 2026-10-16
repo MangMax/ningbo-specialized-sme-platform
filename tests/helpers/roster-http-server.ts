@@ -32,16 +32,16 @@ export async function startRosterApi(options: {
   filesDir?: string
 }): Promise<RosterApiServer> {
   // 写面只有这一条核心:`/preflight`、`/commit`、`/replay` 只差一个动作参数。
-  const importRoute: FixtureHandler = (request) => {
+  const importRoute: FixtureHandler = async (request) => {
     const action: RosterImportAction = request.path.endsWith('/commit')
       ? 'commit'
       : request.path.endsWith('/replay')
         ? 'replay'
         : 'preflight'
-    const out = handleRosterImportRequest(
+    const out = await handleRosterImportRequest(
       action,
       { method: request.method, headers: request.headers, body: request.body },
-      { db: options.db, apiToken: options.apiToken },
+      { db: options.db, apiToken: options.apiToken, filesDir: options.filesDir },
     )
     return { status: out.status, headers: out.headers, body: out.body }
   }

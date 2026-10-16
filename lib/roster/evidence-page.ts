@@ -376,8 +376,25 @@ export function planEvidencePages(
 export const EVIDENCE_PREVIEW_PATH = '/preview'
 
 /** 只认**站内相对路径**:`/` 开头、但不是 `//host`(协议相对)也不是 `/\`。 */
-export function isSafeBackPath(raw: unknown): raw is string {
-  return typeof raw === 'string' && /^\/(?!\/|\\)/.test(raw)
+export function isSafeBackPath(
+  raw: unknown,
+  applicationOrigin: string =
+    typeof globalThis.location === 'undefined' ? 'http://app.invalid' : globalThis.location.origin,
+): raw is string {
+  if (
+    typeof raw !== 'string' ||
+    !/^\/(?!\/|\\)/.test(raw) ||
+    /[\u0000-\u001f\u007f-\u009f]/.test(raw)
+  ) {
+    return false
+  }
+
+  try {
+    const base = new URL(applicationOrigin)
+    return new URL(raw, base).origin === base.origin
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -397,12 +414,13 @@ export function evidencePreviewHref(input: {
   sourceFile: string
   page?: number | null
   back?: string | null
+  applicationOrigin?: string
 }): string {
   const params = new URLSearchParams()
   params.set('file', input.sourceFile)
   const page = isPageCapable(input.sourceFile) ? positiveInt(input.page ?? null) : null
   if (page !== null) params.set('page', String(page))
-  if (isSafeBackPath(input.back)) params.set('back', input.back)
+  if (isSafeBackPath(input.back, input.applicationOrigin)) params.set('back', input.back)
   return `${EVIDENCE_PREVIEW_PATH}?${params.toString()}`
 }
 
@@ -422,7 +440,10 @@ export interface EvidencePreviewQuery {
  * 只可能是手改或拼接出错,这时最安全的动作是「打开这份文件但不定位」——
  * 硬凑成第 1 页会把一个坏参数变成一条看起来正常的定位。
  */
-export function parseEvidencePreviewQuery(query: Record<string, unknown> | undefined): EvidencePreviewQuery {
+export function parseEvidencePreviewQuery(
+  query: Record<string, unknown> | undefined,
+  applicationOrigin?: string,
+): EvidencePreviewQuery {
   const pick = (raw: unknown): string => {
     const v = Array.isArray(raw) ? raw[0] : raw
     return typeof v === 'string' ? v : ''
@@ -431,6 +452,6 @@ export function parseEvidencePreviewQuery(query: Record<string, unknown> | undef
   return {
     file: pick(query?.file).trim(),
     page: positiveInt(pick(query?.page)),
-    back: isSafeBackPath(back) ? back : '',
+    back: isSafeBackPath(back, applicationOrigin) ? back : '',
   }
 }

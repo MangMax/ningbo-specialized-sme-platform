@@ -53,7 +53,12 @@ defineRouteMeta({
         schema: { type: 'string' },
         description: '解析状态,多值:`unparsed` / `parsed` / `failed`。',
       },
-      { name: 'q', in: 'query', schema: { type: 'string' }, description: '文件名关键词(子串)。' },
+      {
+        name: 'q',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '用户可见名称或磁盘文件名关键词(子串)。',
+      },
       { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 50, maximum: 200 } },
       {

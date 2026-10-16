@@ -13,7 +13,7 @@
  * 夹具造数（企业/记录/事件）用 drizzle 直插（那是**输入**，不是被测行为）。
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -39,6 +39,7 @@ import {
 import { MCP_WRITE_TOOLS } from '../server/utils/mcp-auth'
 import { listDifferences, listEnterprises } from '../server/utils/mcp-roster'
 import { startRosterApi } from './helpers/roster-http-server'
+import { minimalPdf } from './helpers/minimal-pdf'
 
 const TOKEN = 'test-api-token-value'
 const SAME_SOURCE_SHA = 'a'.repeat(64)
@@ -1488,6 +1489,88 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
         'synthetic/notice.docx': null,
         'synthetic/export.xlsx': null,
       })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('统一导入按源 PDF 实际页数预检并拒绝越界或未知页码且不写部分数据', async () => {
+    const cases = [
+      { name: 'page 24', page: 24, sourceState: 'readable', expectedCode: 'page_invalid' },
+      { name: 'page 999', page: 999, sourceState: 'readable', expectedCode: 'page_invalid' },
+      { name: 'missing source', page: 8, sourceState: 'missing', expectedCode: 'page_count_unknown' },
+      { name: 'unreadable source', page: 8, sourceState: 'unreadable', expectedCode: 'page_count_unknown' },
+    ] as const
+
+    for (const entry of cases) {
+      const db = makeDb()
+      const filesDir = mkdtempSync(join(tmpdir(), 'spztx-import-page-count-'))
+      dirs.push(filesDir)
+      const sourceFile = `synthetic/page-count/${entry.name.replaceAll(' ', '-')}.pdf`
+      const sourcePath = join(filesDir, sourceFile)
+      if (entry.sourceState !== 'missing') {
+        mkdirSync(join(sourcePath, '..'), { recursive: true })
+        writeFileSync(sourcePath, entry.sourceState === 'readable' ? minimalPdf({ pages: 23 }) : 'not a PDF')
+      }
+      const server = await startRosterApi({ db, apiToken: TOKEN, filesDir })
+      const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+      const request = announcementRequest({
+        idempotencyKey: `http/import-page-count/${entry.name}`,
+        sourceIdentity: sourceFile,
+      })
+      request.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile, attachment: '附件1', listNo: 1, page: entry.page },
+      ]
+      request.payload.announcement!.records.push({
+        enterprise: { name: `页码验证失败时不得部分写入-${entry.name}` },
+        titleCode: 'specialized_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 2 }],
+      })
+      const before = rosterRowCounts(db)
+
+      try {
+        const preflight = await client.preflight(request)
+        expect(preflight.preflight.conflicts, entry.name).toContainEqual(
+          expect.objectContaining({ ok: false, error: expect.objectContaining({ code: entry.expectedCode }) }),
+        )
+        expect(rosterRowCounts(db), entry.name).toEqual(before)
+
+        const commit = await client.commit(request)
+        expect(commit.status, entry.name).toBe('failed')
+        expect(commit.items, entry.name).toContainEqual(
+          expect.objectContaining({ ok: false, error: expect.objectContaining({ code: entry.expectedCode }) }),
+        )
+        expect(rosterRowCounts(db), entry.name).toEqual(before)
+      } finally {
+        await server.close()
+      }
+    }
+  })
+
+  it('统一导入接受第 23 页这一实际 PDF 边界并持久化页码', async () => {
+    const db = makeDb()
+    const filesDir = mkdtempSync(join(tmpdir(), 'spztx-import-page-count-boundary-'))
+    dirs.push(filesDir)
+    const sourceFile = 'synthetic/page-count/boundary-23.pdf'
+    const sourcePath = join(filesDir, sourceFile)
+    mkdirSync(join(sourcePath, '..'), { recursive: true })
+    writeFileSync(sourcePath, minimalPdf({ pages: 23 }))
+    const server = await startRosterApi({ db, apiToken: TOKEN, filesDir })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const request = announcementRequest({
+      idempotencyKey: 'http/import-page-count/boundary-23',
+      sourceIdentity: sourceFile,
+    })
+    request.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile, attachment: '附件1', listNo: 1, page: 23 },
+    ]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toEqual([])
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(db.select().from(schema.recordEvidence).all().map((row) => row.page)).toEqual([23])
     } finally {
       await server.close()
     }

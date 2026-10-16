@@ -77,7 +77,7 @@ const props = defineProps<{
   backQuery: string
 }>()
 
-const emit = defineEmits<{ toggle: [id: number] }>()
+const emit = defineEmits<{ toggle: [id: number]; detailReady: [id: number] }>()
 
 /**
  * 首次认定 + 下次复核压成一行。三种标记各跟各的值,不合并:
@@ -151,7 +151,10 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
     (否则它会贴着页面滚、钻到顶栏底下),窄屏的横向滚动也由这同一层管
     (`table-container` 的默认 `overflow-auto` 会另起一个滚动上下文,这里放开)。
   -->
-  <div class="max-h-[max(360px,calc(100dvh-22rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible">
+  <div
+    data-evidence-return-scroll-container
+    class="max-h-[max(360px,calc(100dvh-22rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
+  >
     <Table class="min-w-[1000px] table-fixed">
     <TableHeader>
       <TableRow class="hover:bg-transparent">
@@ -238,7 +241,11 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
         </TableRow>
         <TableRow v-if="expandedId === row.enterpriseId" class="hover:bg-transparent">
           <TableCell :colspan="COLUMNS" class="p-0">
-            <RosterEnterprisePanel :enterprise-id="row.enterpriseId" :back-query="props.backQuery" />
+            <RosterEnterprisePanel
+              :enterprise-id="row.enterpriseId"
+              :back-query="props.backQuery"
+              @detail-settled="emit('detailReady', $event)"
+            />
           </TableCell>
         </TableRow>
       </template>

@@ -1028,6 +1028,8 @@ export function planRosterImport(
   context: {
     batchId?: number
     convergeOnly?: boolean
+    /** Source-PDF page-count failures collected by the REST/MCP boundary before planning. */
+    pageCountErrors?: readonly RosterImportItemResult[]
     /** 原提交批次保存的目标快照；空数组也表示该批次已记录过计划。 */
     evidenceRepointTargets?: readonly EvidenceRepointTarget[]
   } = {},
@@ -1040,7 +1042,10 @@ export function planRosterImport(
   // Announcement identity and event-evidence values must be rejected before the batch-wide
   // identity plan sees them. Otherwise a malformed USCC can become candidate identity evidence,
   // and an invalid page may be truncated later by the generic optionalInt used for years/sequence.
-  const announcementInputErrors = validateAnnouncementIdentityAndEvidence(payload.announcement)
+  const announcementInputErrors = [
+    ...validateAnnouncementIdentityAndEvidence(payload.announcement),
+    ...(context.pageCountErrors ?? []),
+  ]
   if (announcementInputErrors.length > 0) {
     return {
       items: announcementInputErrors.map((item) => ({ item, action: 'skip', review: false })),
@@ -3405,6 +3410,7 @@ class ExecStageFailure extends Error {
 export function preflightRosterImport(
   db: Db,
   request: RosterImportRequest,
+  pageCountErrors: readonly RosterImportItemResult[] = [],
 ): { batchId: number; status: 'preflight'; preflight: RosterImportPreflight } {
   const batch = ensureBatchRow(db, request)
 
@@ -3424,7 +3430,7 @@ export function preflightRosterImport(
     }
   }
 
-  const plan = planRosterImport(db, request, { batchId: batch.id })
+  const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors })
   const preflight = { ...summarizePlan(plan), batchStatus: batch.status }
   db.update(schema.importBatch)
     .set({ preflightResult: preflight })
@@ -3448,6 +3454,7 @@ export function preflightRosterImport(
 export function commitRosterImport(
   db: Db,
   request: RosterImportRequest,
+  pageCountErrors: readonly RosterImportItemResult[] = [],
 ): { batchId: number; status: 'committed' | 'failed'; summary: RosterImportSummary; items: RosterImportItemResult[]; error: string | null } {
   const batch = ensureBatchRow(db, request)
 
@@ -3460,7 +3467,7 @@ export function commitRosterImport(
     return { batchId: batch.id, status: 'committed', summary, items, error: null }
   }
 
-  const plan = planRosterImport(db, request, { batchId: batch.id })
+  const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors })
   const conflicts = plan.conflicts
 
   if (conflicts.length > 0) {

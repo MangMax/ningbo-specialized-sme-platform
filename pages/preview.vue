@@ -36,8 +36,9 @@ import type { PdfPagesState } from '~~/server/utils/pdf-pages'
  * 如果目标页超过 PDF 实际页数,则明确提示页码不存在。
  */
 const route = useRoute()
+const applicationOrigin = useRequestURL().origin
 
-const parsed = computed(() => parseEvidencePreviewQuery(route.query))
+const parsed = computed(() => parseEvidencePreviewQuery(route.query, applicationOrigin))
 const file = computed(() => parsed.value.file)
 const page = computed(() => parsed.value.page)
 /** 返回目标:台账(或企业详情)。没有 / 不合法就回台账首页 —— 绝不把来路不明的串当路径用。 */

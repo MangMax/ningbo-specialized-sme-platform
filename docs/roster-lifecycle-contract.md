@@ -1140,6 +1140,9 @@ REST 与 MCP `query_records` 共用同一参数解析和 `listRecords` 读模型
 USCC 格式与校验位验证，否则该记录以 `uscc_format_invalid` 逐项报错并使整批不写。事件出处的
 `page` 缺席或 `null` 保持为 `null`；PDF 提供页码时必须是精确的正整数，否则报 `page_invalid`；
 Word / Excel 等非 PDF 出处若提供非 `null` 页码，报 `not_page_capable`。这些校验发生在身份规划与提交前。
+预检和提交还会从配置的文件库根读取源 PDF 页数(PDFium):超出实际页数以 `page_invalid` 拒绝，源 PDF
+缺失、不可读或路径无法安全解析以 `page_count_unknown` 拒绝；拒绝时业务记录不部分写入。页图可能尚未全部
+渲染，不能用页图数量替代源 PDF 页数。
 
 > **`year` / `collectedOn` 由调用方给出**(RL-05 的解析器**不从文件内容或文件名推断**年度：
 > 导出表里那列「维护批次」是平台口径的维护批次，不是快照年度)。`exportSnapshot.rows[].rawFields`

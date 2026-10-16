@@ -122,6 +122,7 @@ const state = ref<LedgerState>(ledgerStateFromQuery(route.query))
 const page = ref(positiveInt(route.query.page) ?? 1)
 const pageSize = ref(clampSize(positiveInt(route.query.pageSize) ?? 25))
 const expanded = ref<number | null>(positiveInt(route.query.expand))
+const expandedDetailReadyId = ref<number | null>(null)
 
 /** 搜索框本地值(防抖后写进 `state.q`)。 */
 const search = ref(state.value.q)
@@ -280,7 +281,19 @@ const listRendered = computed(() => {
       ? titleData.value != null || titlesError.value != null
       : differenceData.value != null || differencesError.value != null
 })
-useEvidencePreviewScrollRestore(listRendered)
+watch(expanded, () => {
+  expandedDetailReadyId.value = null
+})
+const returnTargetRendered = computed(() => {
+  if (!listRendered.value) return false
+  if (view.value !== 'enterprise' || expanded.value === null) return true
+  const expandedRowIsVisible = enterpriseRows.value.some((row) => row.enterpriseId === expanded.value)
+  return !expandedRowIsVisible || expandedDetailReadyId.value === expanded.value
+})
+function onExpandedDetailSettled(enterpriseId: number) {
+  if (expanded.value === enterpriseId) expandedDetailReadyId.value = enterpriseId
+}
+useEvidencePreviewScrollRestore(returnTargetRendered)
 
 const total = computed(() =>
   view.value === 'enterprise'
@@ -783,6 +796,7 @@ useHead({
             :expanded-id="expanded"
             :back-query="backQuery"
             @toggle="toggle"
+            @detail-ready="onExpandedDetailSettled"
           />
           <RosterTitleTable
             v-else-if="view === 'title'"
