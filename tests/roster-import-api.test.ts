@@ -41,6 +41,7 @@ import { listDifferences, listEnterprises } from '../server/utils/mcp-roster'
 import { startRosterApi } from './helpers/roster-http-server'
 
 const TOKEN = 'test-api-token-value'
+const SAME_SOURCE_SHA = 'a'.repeat(64)
 const dirs: string[] = []
 
 /** 每个用例一个**全新临时库**（互不干扰；`useDb` 按路径缓存）。 */
@@ -100,8 +101,8 @@ function evidencePlanRequest(
   return {
     idempotencyKey,
     sourceKind: 'announcement',
-    sourceIdentity: 'jxj/announcement/2026/合成计划测试.pdf',
-    sourceSha256: 'synthetic-plan-sha',
+    sourceIdentity: sourceFile,
+    sourceSha256: SAME_SOURCE_SHA,
     payload: {
       announcement: {
         sourceDocument: { source, title: '合成计划测试公告' },
@@ -166,6 +167,15 @@ function seedEvent(
     .values({ recordId, eventType, year, batchSeq, sortKey: year })
     .returning({ id: schema.recordEvent.id })
     .get().id
+}
+
+/** 合成文件身份的服务端 SHA 证据；文件内容不落入仓库或真实文件库。 */
+function seedStoredFileHash(db: ReturnType<typeof makeDb>, relPath: string, sha256: string) {
+  const filename = relPath.split('/').at(-1) ?? relPath
+  const ext = filename.includes('.') ? filename.split('.').at(-1)!.toLowerCase() : ''
+  db.insert(schema.storedFile)
+    .values({ relPath, filename, ext, bytes: 1, sha256, categoryState: 'unset' })
+    .run()
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +407,39 @@ describe('出处重放记账不进入调用方逐项结果', () => {
       )
       expect(rosterRowCounts(db)).toEqual(before)
       expect(db.select().from(schema.enterprise).all()).toHaveLength(0)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('已有匹配记录时空事件仍经真实 HTTP 返回结构化错误且批次失败', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const enterpriseId = seedEnterprise(db, {
+      name: '合成计划企业有限公司',
+      uscc: '91330211255994457P',
+    })
+    const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    seedEvent(db, recordId, 'award', 2026, 1)
+    const before = rosterRowCounts(db)
+    const malformed = evidencePlanRequest('synthetic/null-event-existing#sha256:stable', 'synthetic/new.pdf')
+    malformed.payload.announcement!.records[0]!.events = [null as never]
+
+    try {
+      const result = await client.commit(malformed)
+
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({
+          kind: 'record_event',
+          ok: false,
+          error: expect.objectContaining({ code: 'event_type_unknown' }),
+        }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+      expect(db.select().from(schema.recordEvidence).all()).toHaveLength(0)
     } finally {
       await server.close()
     }
@@ -901,6 +944,14 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of [
+      'synthetic/legacy/notice.docx',
+      'synthetic/legacy/first-write.docx',
+      'synthetic/legacy/notice.pdf',
+      'synthetic/library/notice.docx',
+      'synthetic/library/first-write.docx',
+      'synthetic/library/notice.pdf',
+    ]) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
     const original = announcementRequest({
       idempotencyKey: 'synthetic/legacy/notice#sha256:stable-content',
       sourceIdentity: 'synthetic/legacy/notice',
@@ -951,6 +1002,14 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of [
+      'synthetic/legacy/duplicate.docx',
+      'synthetic/legacy/duplicate-first-write.docx',
+      'synthetic/legacy/duplicate.pdf',
+      'synthetic/library/duplicate.docx',
+      'synthetic/library/duplicate-first-write.docx',
+      'synthetic/library/duplicate.pdf',
+    ]) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
     const original = announcementRequest({
       idempotencyKey: 'synthetic/legacy/duplicate#sha256:stable-content',
       sourceIdentity: 'synthetic/legacy/duplicate',
@@ -996,6 +1055,101 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     }
   })
 
+  it('旧路径和目标路径有相同 SHA 时预检、commit 与 replay 才能收敛', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const oldPath = 'synthetic/hash-match/old.pdf'
+    const targetPath = 'synthetic/hash-match/new.pdf'
+    seedStoredFileHash(db, oldPath, SAME_SOURCE_SHA)
+    seedStoredFileHash(db, targetPath, SAME_SOURCE_SHA)
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/hash-match/old#sha256:same',
+      sourceIdentity: oldPath,
+      sourceSha256: SAME_SOURCE_SHA,
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: oldPath, attachment: '附件', listNo: 8, page: 7 },
+    ]
+
+    try {
+      expect((await client.commit(original)).status).toBe('committed')
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/hash-match/new#sha256:same',
+        sourceIdentity: targetPath,
+        sourceSha256: SAME_SOURCE_SHA,
+      })
+      target.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile: targetPath, attachment: '附件', listNo: 8, page: 7 },
+      ]
+
+      expect((await client.preflight(target)).preflight.evidenceRepoints).toBe(1)
+      expect((await client.commit(target)).summary.evidenceRepointed).toBe(1)
+      const evidence = db.select().from(schema.recordEvidence).all()[0]!
+      expect(evidence).toMatchObject({ sourceFile: targetPath, page: 7 })
+
+      // 将行复原为计划期旧路径，独立验证显式 replay 仍按两端 SHA 核对。
+      db.update(schema.recordEvidence).set({ sourceFile: oldPath }).where(eq(schema.recordEvidence.id, evidence.id)).run()
+      const replayed = await client.replay(target)
+      expect(replayed.status).toBe('replayed')
+      expect(replayed.evidenceRepointed).toBe(1)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([{ sourceFile: targetPath, page: 7 }])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['SHA 不同', 'b'.repeat(64), 'c'.repeat(64), true, true, 'evidence_content_hash_mismatch', false],
+    ['目标 SHA 未知', 'd'.repeat(64), 'e'.repeat(64), true, false, 'evidence_content_hash_unknown', false],
+    ['旧 SHA 未知且请求 hash 只绑定逻辑来源', 'f'.repeat(64), 'f'.repeat(64), false, true, 'evidence_content_hash_unknown', true],
+  ] as const)('旧/目标内容不能证明相同则保留旧出处并返回冲突（%s）', async (_case, oldSha, targetSha, registerOld, registerTarget, errorCode, oldSourceIsLogical) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const oldPath = `synthetic/hash-conflict/${_case}/old.pdf`
+    const targetPath = `synthetic/hash-conflict/${_case}/new.pdf`
+    if (registerOld) seedStoredFileHash(db, oldPath, oldSha)
+    if (registerTarget) seedStoredFileHash(db, targetPath, targetSha)
+    const original = announcementRequest({
+      idempotencyKey: `synthetic/hash-conflict/${_case}/old`,
+      sourceIdentity: oldSourceIsLogical ? `synthetic/hash-conflict/${_case}/logical-old-source` : oldPath,
+      sourceSha256: oldSha,
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: oldPath, attachment: '附件', listNo: 8, page: 7 },
+    ]
+
+    try {
+      expect((await client.commit(original)).status).toBe('committed')
+      const baseline = rosterRowCounts(db)
+      const target = announcementRequest({
+        idempotencyKey: `synthetic/hash-conflict/${_case}/target`,
+        sourceIdentity: registerTarget ? targetPath : `synthetic/hash-conflict/${_case}/logical-source`,
+        sourceSha256: targetSha,
+      })
+      target.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile: targetPath, attachment: '附件', listNo: 8, page: 7 },
+      ]
+
+      const preflight = await client.preflight(target)
+      expect(preflight.preflight.evidenceRepoints).toBe(0)
+      const committed = await client.commit(target)
+      expect(committed.status).toBe('failed')
+      expect(committed.items.some((item) => item.error?.code === errorCode)).toBe(true)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([{ sourceFile: oldPath, page: 7 }])
+      expect(rosterRowCounts(db)).toEqual(baseline)
+
+      const replayed = await client.replay(target)
+      expect(replayed.status).toBe('failed')
+      expect(replayed.items.some((item) => item.error?.code === errorCode)).toBe(true)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([{ sourceFile: oldPath, page: 7 }])
+      expect(rosterRowCounts(db)).toEqual(baseline)
+    } finally {
+      await server.close()
+    }
+  })
+
   it.each([
     ['B 后 A', ['synthetic/source-b.pdf', 'synthetic/source-a.pdf']],
     ['A 后 B', ['synthetic/source-a.pdf', 'synthetic/source-b.pdf']],
@@ -1003,6 +1157,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of ['synthetic/source-a.pdf', 'synthetic/source-b.pdf']) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
     const original = announcementRequest({
       idempotencyKey: 'synthetic/source-a-existing#sha256:stable-content',
       sourceIdentity: 'synthetic/source-a-existing',
@@ -1160,6 +1315,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of ['synthetic/source-a.docx', 'synthetic/source-b.docx']) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
     const original = announcementRequest({
       idempotencyKey: 'synthetic/source-a#sha256:stable-content',
       sourceIdentity: 'synthetic/source-a',
@@ -1216,6 +1372,11 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of [
+      'synthetic/source-a-conflict.docx',
+      'synthetic/source-b-conflict.docx',
+      'synthetic/source-c-conflict.docx',
+    ]) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
     const original = announcementRequest({
       idempotencyKey: 'synthetic/source-a-conflict#sha256:stable-content',
       sourceIdentity: 'synthetic/source-a-conflict',
@@ -1266,6 +1427,11 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of [
+      'synthetic/source-a-record-conflict.docx',
+      'synthetic/source-b-record-conflict.docx',
+      'synthetic/source-c-record-conflict.docx',
+    ]) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
     const original = announcementRequest({
       idempotencyKey: 'synthetic/source-a-record-conflict#sha256:stable-content',
       sourceIdentity: 'synthetic/source-a-record-conflict',

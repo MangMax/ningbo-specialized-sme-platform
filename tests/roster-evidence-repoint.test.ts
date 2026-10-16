@@ -39,6 +39,9 @@ const TOKEN = 'rl16-repoint-token-value'
  */
 const LEGACY_SOURCE_FILE = '经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx'
 const LIBRARY_SOURCE_FILE = LITTLE_GIANT_SOURCE_FILE
+const SHA_HISTORICAL = 'a'.repeat(64)
+const SHA_STABLE = 'b'.repeat(64)
+const SHA_OTHER_LISTNO = 'c'.repeat(64)
 
 const dirs: string[] = []
 
@@ -107,9 +110,9 @@ describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', 
     try {
       // 1) 历史批次:库外路径(RL-02 的口径)。
       const legacy = littleGiantRequest({
-        idempotencyKey: `${LEGACY_SOURCE_FILE}#sha256:sha-historical`,
+        idempotencyKey: `${LEGACY_SOURCE_FILE}#sha256:${SHA_HISTORICAL}`,
         sourceFile: LEGACY_SOURCE_FILE,
-        sha256: 'sha-historical',
+        sha256: SHA_HISTORICAL,
       })
       expect((await client.commit(legacy)).status).toBe('committed')
 
@@ -118,9 +121,9 @@ describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', 
 
       // 2) 文件入库后的重导:同一份内容,来源标识换成了库内路径 ⇒ 键也不同。
       const relinked = littleGiantRequest({
-        idempotencyKey: `${LIBRARY_SOURCE_FILE}#sha256:sha-historical`,
+        idempotencyKey: `${LIBRARY_SOURCE_FILE}#sha256:${SHA_HISTORICAL}`,
         sourceFile: LIBRARY_SOURCE_FILE,
-        sha256: 'sha-historical',
+        sha256: SHA_HISTORICAL,
       })
       const preflight = await client.preflight(relinked)
       // 预检如实报「会更新既有行」—— 否则它就不是「提交真会发生的事」。
@@ -154,9 +157,9 @@ describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', 
     const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
     try {
       const request = littleGiantRequest({
-        idempotencyKey: `${LIBRARY_SOURCE_FILE}#sha256:sha-stable`,
+        idempotencyKey: `${LIBRARY_SOURCE_FILE}#sha256:${SHA_STABLE}`,
         sourceFile: LIBRARY_SOURCE_FILE,
-        sha256: 'sha-stable',
+        sha256: SHA_STABLE,
       })
       const first = await client.commit(request)
       const counts = rosterRowCounts(db)
@@ -178,17 +181,17 @@ describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', 
     try {
       // 同一家企业、同一坐标的事件,但出处序号是 20(而不是重导载荷里的 14)。
       const legacy = littleGiantRequest({
-        idempotencyKey: `${LEGACY_SOURCE_FILE}#sha256:sha-other-listno`,
+        idempotencyKey: `${LEGACY_SOURCE_FILE}#sha256:${SHA_OTHER_LISTNO}`,
         sourceFile: LEGACY_SOURCE_FILE,
-        sha256: 'sha-other-listno',
+        sha256: SHA_OTHER_LISTNO,
         listNo: 20,
       })
       await client.commit(legacy)
 
       const relinked = littleGiantRequest({
-        idempotencyKey: `${LIBRARY_SOURCE_FILE}#sha256:sha-other-listno`,
+        idempotencyKey: `${LIBRARY_SOURCE_FILE}#sha256:${SHA_OTHER_LISTNO}`,
         sourceFile: LIBRARY_SOURCE_FILE,
-        sha256: 'sha-other-listno',
+        sha256: SHA_OTHER_LISTNO,
         listNo: 14,
       })
       const outcome = await client.commit(relinked)
@@ -272,7 +275,11 @@ describe('RL-19:预检报的行数 = 提交真改的行数(计划项口径与行
 
       // 1) 历史批次:出处全部指向**库外**路径(RL-02 的口径)。
       const legacy = withEvidencePath(
-        { ...request, idempotencyKey: `${LEGACY_SOURCE_FILE}#sha256:${workbook.sha256}` },
+        {
+          ...request,
+          idempotencyKey: `${LEGACY_SOURCE_FILE}#sha256:${workbook.sha256}`,
+          sourceIdentity: LEGACY_SOURCE_FILE,
+        },
         LEGACY_SOURCE_FILE,
       )
       expect((await client.commit(legacy)).status).toBe('committed')
@@ -340,7 +347,11 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
 
       // 1) 历史批次(库外路径、库外键)先落库。
       const legacy = withEvidencePath(
-        { ...request, idempotencyKey: `${LEGACY_SOURCE_FILE}#sha256:${workbook.sha256}` },
+        {
+          ...request,
+          idempotencyKey: `${LEGACY_SOURCE_FILE}#sha256:${workbook.sha256}`,
+          sourceIdentity: LEGACY_SOURCE_FILE,
+        },
         LEGACY_SOURCE_FILE,
       )
       await client.commit(legacy)

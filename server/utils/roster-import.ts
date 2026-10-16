@@ -725,6 +725,14 @@ interface EvidenceRepointTarget {
   sourceFile: string
 }
 
+type EvidenceContentHashIndex = Map<string, Set<string>>
+type EvidenceContentHashConflict = 'unknown' | 'mismatch'
+
+interface EvidenceRepointPlan {
+  targets: EvidenceRepointTarget[]
+  hashConflicts: Set<EvidenceContentHashConflict>
+}
+
 /** 公布文件记录的计划口径：正常写入 / 只收敛出处指针。 */
 type AnnouncementPlanMode = 'write' | 'converge'
 
@@ -920,6 +928,9 @@ export function planRosterImport(
   const payload = request.payload ?? {}
   const mode: AnnouncementPlanMode = context.convergeOnly ? 'converge' : 'write'
   const evidencePlanFingerprint = evidenceRepointPlanFingerprint(request)
+  const evidenceContentHashes = payload.announcement
+    ? evidenceContentHashIndex(db, request)
+    : new Map<string, Set<string>>()
   /** 本批将新建的企业键（供别名 / 差异 / 归并在预检时解析到同批企业）。 */
   const pending: PendingEnterprises = new Set()
   /** 本批将写入的平台查询自然键（供别名 / 差异 / 归并在预检时解析到同批关系行）。 */
@@ -927,7 +938,7 @@ export function planRosterImport(
   /** 先看整份载荷，标出同一出处行被指向多个不同目标路径的冲突。 */
   const announcementRecords = Array.isArray(payload.announcement?.records) ? payload.announcement.records : []
   const ambiguousEvidence = payload.announcement
-    ? ambiguousEvidenceRepointIds(db, payload.announcement, announcementRecords)
+    ? ambiguousEvidenceRepointIds(db, payload.announcement, announcementRecords, evidenceContentHashes)
     : new Set<number>()
   /** 新事件在首次写入前合并同坐标出处，避免重复项按遍历顺序覆盖来源。 */
   const plannedWriteEvents = payload.announcement && mode === 'write'
@@ -967,7 +978,7 @@ export function planRosterImport(
           create: null,
           earlierSameName: [],
           reusedInBatch: false,
-        }, mode, claimedEvidence, ambiguousEvidence, undefined, context.evidenceRepointTargets, evidencePlanFingerprint)
+        }, mode, claimedEvidence, ambiguousEvidence, undefined, context.evidenceRepointTargets, evidencePlanFingerprint, evidenceContentHashes)
       })
     } else {
       // 会**新建**的企业 —— 判据就是写入侧的身份规则（有统代只按统代、无统代才按名），
@@ -994,7 +1005,7 @@ export function planRosterImport(
           create,
           earlierSameName: create ? (earlierByName.get(create.nameNorm) ?? []) : [],
           reusedInBatch,
-        }, mode, claimedEvidence, ambiguousEvidence, plannedWriteEvents.get(index), context.evidenceRepointTargets, evidencePlanFingerprint)
+        }, mode, claimedEvidence, ambiguousEvidence, plannedWriteEvents.get(index), context.evidenceRepointTargets, evidencePlanFingerprint, evidenceContentHashes)
         if (create && identityKey != null) {
           const coordinates = plannedCoordinates.get(identityKey) ?? new Set<string>()
           coordinates.add(coordinate)
@@ -1060,6 +1071,7 @@ function planAnnouncementRecord(
   plannedWriteEvents?: readonly RosterImportEvent[],
   savedEvidenceRepointTargets?: readonly EvidenceRepointTarget[],
   evidencePlanFingerprint = '',
+  evidenceContentHashes: EvidenceContentHashIndex = new Map(),
 ): void {
   const ref = `record:${index}`
   const name = optionalString(record?.enterprise?.name)
@@ -1120,11 +1132,29 @@ function planAnnouncementRecord(
   // `claimedEvidence` 由整份计划共享（同一行不会被两条载荷记录各认领一次 —— 认领的粒度是
   // **出处行 id**）。目标操作在计划期冻结；提交和 replay 执行同一组 id/path，不会因前一项写入
   // 改变匹配结果。已提交批次的 replay 复用原提交快照，避免把已更新的目标误判成旧来源。
-  const repointTargets = existingRecord
+  const repointPlan = existingRecord
     ? mode === 'converge' && savedEvidenceRepointTargets !== undefined
-      ? evidenceRepointsFromSavedPlan(db, existingRecord.id, savedEvidenceRepointTargets, claimedEvidence)
-      : countEvidenceRepoints(db, existingRecord.id, events, claimedEvidence, ambiguousEvidence)
-    : []
+      ? evidenceRepointsFromSavedPlan(db, existingRecord.id, savedEvidenceRepointTargets, claimedEvidence, evidenceContentHashes)
+      : countEvidenceRepoints(db, existingRecord.id, events, claimedEvidence, ambiguousEvidence, evidenceContentHashes)
+    : { targets: [], hashConflicts: new Set<EvidenceContentHashConflict>() }
+  if (repointPlan.hashConflicts.size > 0) {
+    const mismatch = repointPlan.hashConflicts.has('mismatch')
+    push({
+      item: failure(
+        'record_evidence',
+        ref,
+        mismatch ? 'evidence_content_hash_mismatch' : 'evidence_content_hash_unknown',
+        mismatch
+          ? '旧出处与目标文件 SHA-256 不同，保留旧出处；请人工核对是否需要追加独立出处'
+          : '旧出处或目标文件缺少唯一可验证的 SHA-256，保留旧出处；请人工核对来源身份',
+        'evidence.sourceFile',
+      ),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  const repointTargets = repointPlan.targets
   const repoints = repointTargets.length
 
   // 收敛重放（§8.9.3）：只改既有出处行的指针，**不新建任何行**、也不记重名候选。
@@ -1480,6 +1510,7 @@ function findExistingEvent(tx: Executor, values: EventCoordinates): { id: number
 //  2. 附件、序号逐字匹配；页码只对目标 PDF 参与匹配。目标格式没有稳定分页时,两侧 page 都归一为
 //     null,且只有事件内唯一的 (附件, 序号) 行才允许收敛；多个候选视为歧义并跳过,不把一行错配给另一行。
 //     非 PDF 目标还会清理历史伪页码；PDF 的既有实际页码原样保留。路径只是「同一份文档在库里的位置」,不是身份。
+//     旧路径与目标路径还必须各自有唯一可验证的 SHA-256 且完全相同;缺失 / 冲突 / 不同都报告冲突并保留旧出处。
 //  3. **收敛的触发权在幂等键上**。键含来源标识(见 `lib/roster/little-giant-import.ts`):
 //     只有携带**同一份来源内容**、且来源标识变了的批次才会走到这里。
 
@@ -1490,6 +1521,54 @@ interface EvidenceCoordinateRow {
   attachment: string | null
   listNo: number | null
   page: number | null
+}
+
+/** 收集只与其精确路径身份绑定的 SHA-256；逻辑身份不能替另一条出处路径背书。 */
+function evidenceContentHashIndex(db: Executor, request: RosterImportRequest): EvidenceContentHashIndex {
+  const index: EvidenceContentHashIndex = new Map()
+  const add = (path: string | null | undefined, rawHash: unknown) => {
+    const sha256 = optionalString(rawHash)
+    if (!path || !sha256 || !/^[a-f0-9]{64}$/i.test(sha256)) return
+    const hashes = index.get(path) ?? new Set<string>()
+    hashes.add(sha256.toLowerCase())
+    index.set(path, hashes)
+  }
+
+  for (const file of db.select({ relPath: schema.storedFile.relPath, sha256: schema.storedFile.sha256 }).from(schema.storedFile).all()) {
+    add(file.relPath, file.sha256)
+  }
+  for (const batch of db
+    .select({ sourceKind: schema.importBatch.sourceKind, sourceIdentity: schema.importBatch.sourceIdentity, sourceSha256: schema.importBatch.sourceSha256, status: schema.importBatch.status })
+    .from(schema.importBatch)
+    .all()) {
+    if (batch.status === 'committed' && batch.sourceKind === 'announcement') {
+      add(batch.sourceIdentity, batch.sourceSha256)
+    }
+  }
+  // The current request's hash proves a path only when sourceIdentity is that exact path.
+  add(request.sourceIdentity, request.sourceSha256)
+  return index
+}
+
+function verifiedEvidenceContentHash(index: EvidenceContentHashIndex, path: string): string | null {
+  const hashes = index.get(path)
+  return hashes?.size === 1 ? [...hashes][0] ?? null : null
+}
+
+function evidenceContentHashMatch(
+  index: EvidenceContentHashIndex,
+  oldPath: string,
+  targetPath: string,
+): EvidenceContentHashConflict | 'same' {
+  const oldHash = verifiedEvidenceContentHash(index, oldPath)
+  const targetHash = verifiedEvidenceContentHash(index, targetPath)
+  if (!oldHash || !targetHash) return 'unknown'
+  return oldHash === targetHash ? 'same' : 'mismatch'
+}
+
+interface CandidateEvidencePaths {
+  pathsByRow: Map<number, Set<string>>
+  hashConflicts: Set<EvidenceContentHashConflict>
 }
 
 /** 页码只在目标来源是 PDF 时作为坐标；其它格式把请求值和存储值都归一成 null。 */
@@ -1511,14 +1590,17 @@ function matchesEvidenceCoordinates(row: EvidenceCoordinateRow, wanted: RosterIm
  * 两条载荷出处重复认领),且只在 `source_file` 真的不同时才改。
  */
 function repointTargets(
+  recordId: number,
+  recordEventId: number,
   existing: readonly EvidenceCoordinateRow[],
   wanted: readonly RosterImportEvidence[],
   taken: Set<number> = new Set(),
   ambiguous: ReadonlySet<number> = new Set(),
-): Array<{ id: number; fromSourceFile: string; sourceFile: string }> {
-  const targetPathsByRow = candidateTargetPathsByRow(existing, wanted)
+  evidenceContentHashes: EvidenceContentHashIndex,
+): EvidenceRepointPlan {
+  const { pathsByRow: targetPathsByRow, hashConflicts } = candidateTargetPathsByRow(existing, wanted, evidenceContentHashes)
   const existingById = new Map(existing.map((row) => [row.id, row]))
-  const out: Array<{ id: number; fromSourceFile: string; sourceFile: string }> = []
+  const out: EvidenceRepointTarget[] = []
   for (const [id, paths] of targetPathsByRow) {
     // 一条既有行若有多个不同目标路径或已被整份载荷判为冲突，不按载荷顺序猜一个。
     if (taken.has(id) || ambiguous.has(id) || paths.size !== 1) continue
@@ -1527,17 +1609,19 @@ function repointTargets(
     const current = existingById.get(id)
     if (!current) continue
     taken.add(id)
-    out.push({ id, fromSourceFile: current.sourceFile, sourceFile })
+    out.push({ id, recordId, recordEventId, fromSourceFile: current.sourceFile, sourceFile })
   }
-  return out
+  return { targets: out, hashConflicts }
 }
 
 /** 每个唯一坐标行收集本组载荷里实际需要改到的路径；同路径 no-op 不参与认领。 */
 function candidateTargetPathsByRow(
   existing: readonly EvidenceCoordinateRow[],
   wanted: readonly RosterImportEvidence[],
-): Map<number, Set<string>> {
+  evidenceContentHashes: EvidenceContentHashIndex,
+): CandidateEvidencePaths {
   const targetPathsByRow = new Map<number, Set<string>>()
+  const hashConflicts = new Set<EvidenceContentHashConflict>()
   for (const candidate of wanted) {
     const sourceFile = optionalString(candidate.sourceFile)
     if (!sourceFile) continue
@@ -1547,11 +1631,16 @@ function candidateTargetPathsByRow(
     if (matches.length !== 1) continue
     const [hit] = matches
     if (!hit || hit.sourceFile === sourceFile) continue
+    const hashMatch = evidenceContentHashMatch(evidenceContentHashes, hit.sourceFile, sourceFile)
+    if (hashMatch !== 'same') {
+      hashConflicts.add(hashMatch)
+      continue
+    }
     const paths = targetPathsByRow.get(hit.id) ?? new Set<string>()
     paths.add(sourceFile)
     targetPathsByRow.set(hit.id, paths)
   }
-  return targetPathsByRow
+  return { pathsByRow: targetPathsByRow, hashConflicts }
 }
 
 /**
@@ -1562,6 +1651,7 @@ function ambiguousEvidenceRepointIds(
   db: Executor,
   announcement: RosterImportAnnouncement,
   records: readonly RosterImportAnnouncement['records'][number][],
+  evidenceContentHashes: EvidenceContentHashIndex,
 ): Set<number> {
   const recordIdByIndex = new Map<number, number>()
   const storedRecords = db.select().from(schema.record).all()
@@ -1619,15 +1709,20 @@ function ambiguousEvidenceRepointIds(
   const targetPathsByEvidence = new Map<number, Set<string>>()
   for (const [index, recordId] of recordIdByIndex) {
     const storedEvents = eventsByRecord.get(recordId) ?? []
-    for (const event of records[index]?.events ?? []) {
+    const requestEvents = Array.isArray(records[index]?.events) ? records[index]!.events! : []
+    for (const rawEvent of requestEvents) {
+      // Invalid event elements must reach planAnnouncementRecord's structured validation.
+      if (!isObject(rawEvent)) continue
+      const event = rawEvent as unknown as RosterImportEvent
       const coords = eventCoordinates(recordId, event)
       const existingEvent = storedEvents.find((row) => matchesEventCoordinates(row, coords))
       if (!existingEvent) continue
       const candidates = candidateTargetPathsByRow(
         evidenceByEvent.get(existingEvent.id) ?? [],
-        event.evidence ?? [],
+        Array.isArray(event.evidence) ? event.evidence : [],
+        evidenceContentHashes,
       )
-      for (const [evidenceId, paths] of candidates) {
+      for (const [evidenceId, paths] of candidates.pathsByRow) {
         const allPaths = targetPathsByEvidence.get(evidenceId) ?? new Set<string>()
         for (const path of paths) allPaths.add(path)
         targetPathsByEvidence.set(evidenceId, allPaths)
@@ -1684,9 +1779,10 @@ function evidenceRepointsFromSavedPlan(
   recordId: number,
   saved: readonly EvidenceRepointTarget[],
   taken: Set<number>,
-): EvidenceRepointTarget[] {
+  evidenceContentHashes: EvidenceContentHashIndex,
+): EvidenceRepointPlan {
   const candidates = saved.filter((target) => target.recordId === recordId && !taken.has(target.id))
-  if (candidates.length === 0) return []
+  if (candidates.length === 0) return { targets: [], hashConflicts: new Set() }
   const evidenceRows = db
     .select({ id: schema.recordEvidence.id, sourceFile: schema.recordEvidence.sourceFile, recordEventId: schema.recordEvidence.recordEventId })
     .from(schema.recordEvidence)
@@ -1701,6 +1797,7 @@ function evidenceRepointsFromSavedPlan(
   const evidenceById = new Map(evidenceRows.map((row) => [row.id, row]))
   const recordIdByEvent = new Map(eventRows.map((row) => [row.id, row.recordId]))
   const targets: EvidenceRepointTarget[] = []
+  const hashConflicts = new Set<EvidenceContentHashConflict>()
   for (const target of candidates) {
     const row = evidenceById.get(target.id)
     if (
@@ -1709,10 +1806,15 @@ function evidenceRepointsFromSavedPlan(
       recordIdByEvent.get(target.recordEventId) !== recordId ||
       row.sourceFile !== target.fromSourceFile
     ) continue
+    const hashMatch = evidenceContentHashMatch(evidenceContentHashes, target.fromSourceFile, target.sourceFile)
+    if (hashMatch !== 'same') {
+      hashConflicts.add(hashMatch)
+      continue
+    }
     taken.add(target.id)
     targets.push(target)
   }
-  return targets
+  return { targets, hashConflicts }
 }
 
 /**
@@ -1728,14 +1830,15 @@ function countEvidenceRepoints(
   events: readonly RosterImportEvent[],
   taken: Set<number> = new Set(),
   ambiguous: ReadonlySet<number> = new Set(),
-): EvidenceRepointTarget[] {
-  if (events.length === 0) return []
+  evidenceContentHashes: EvidenceContentHashIndex,
+): EvidenceRepointPlan {
+  if (events.length === 0) return { targets: [], hashConflicts: new Set() }
   const eventRows = db
     .select()
     .from(schema.recordEvent)
     .where(eq(schema.recordEvent.recordId, recordId))
     .all()
-  if (eventRows.length === 0) return []
+  if (eventRows.length === 0) return { targets: [], hashConflicts: new Set() }
   const evidenceRows = db
     .select({
       id: schema.recordEvidence.id,
@@ -1762,20 +1865,17 @@ function countEvidenceRepoints(
   }
 
   const targets: EvidenceRepointTarget[] = []
+  const hashConflicts = new Set<EvidenceContentHashConflict>()
   const wantedByEvent = groupEventEvidenceById(events, (event) => {
     const coords = eventCoordinates(recordId, event)
     return eventRows.find((row) => matchesEventCoordinates(row, coords))?.id
   })
   for (const [eventId, wanted] of wantedByEvent) {
-    targets.push(
-      ...repointTargets(byEvent.get(eventId) ?? [], wanted, taken, ambiguous).map((target) => ({
-        ...target,
-        recordId,
-        recordEventId: eventId,
-      })),
-    )
+    const plan = repointTargets(recordId, eventId, byEvent.get(eventId) ?? [], wanted, taken, ambiguous, evidenceContentHashes)
+    for (const conflict of plan.hashConflicts) hashConflicts.add(conflict)
+    targets.push(...plan.targets)
   }
-  return targets
+  return { targets, hashConflicts }
 }
 // ---------------------------------------------------------------------------
 // 既有行查找（预检与执行阶段**共用同一份**谓词）
