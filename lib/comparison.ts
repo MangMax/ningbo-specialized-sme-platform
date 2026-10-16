@@ -65,7 +65,9 @@ export function getComparison(
   ) as ComparisonCounts
 
   const differences = TITLE_ORDER.flatMap((code): ComparisonRow[] => {
-    // 经信局不发布小巨人,即使输入含该来源也恒空。
+    // 小巨人的经信局侧来源(历年名单,RL-02)目前仍不参与比对 —— 现有行为保持不变;
+    // 是否解除排除由 RL-04 按用户裁决处理(2026-10-16:用户选择启用双向对比)。
+    // 注意:不再写成「经信局不发布小巨人」—— 该说法已被 RL-02 的历年名单证伪。
     if (code === 'little_giant') return []
     const titleCode = code as TitleCode
     const [jxj, miit] = partition(byTitle[code] ?? [], (r) => r.source === 'jxj')
