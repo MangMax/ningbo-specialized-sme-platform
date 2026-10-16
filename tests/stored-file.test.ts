@@ -409,12 +409,32 @@ describe('DELETE 默认不删磁盘', () => {
 // 4. 对真实文件库的验收核对
 // ---------------------------------------------------------------------------
 
-describe('对真实 files/ 的验收:23 个文件逐个对得上', () => {
-  it('回填恰好 23 行,且元数据与目录规则一致', async () => {
+/**
+ * 真实文件库的**期望规模**与 `files/` 保持一致(2026-10-16 核对)。
+ *
+ * 分布:2021×1、2022×2、2023×6、2024×5、2025×4、2026×3 = **21 份**经信局公布文件,
+ * 加 3 份工信部导出表 = **24**。
+ *
+ * ⚠️ **新增源文件后要跟着改这个数**。它刻意写死:**判据不能是「扫描结果自己比自己」**,
+ * 否则回填规则坏掉时测试照样绿。历史上这里写的是 23(早于 2021 入库培育那份文件入库),
+ * 文件加进来后没同步,于是长期假红 —— 见本次修。
+ */
+const INTERNALIZED_FILE_COUNT = 24
+const INTERNALIZED_JXJ_COUNT = 21
+
+/**
+ * `files/` 是否**已就位**。注意 `files/` 目录本身在 clone 里总是存在(只提交了 `README.md`),
+ * 所以判据要探到真实内容层 —— 拿 `miit/export` 当哨兵。
+ */
+const REAL_STORE = join(process.cwd(), 'files')
+const hasRealStore = existsSync(join(REAL_STORE, 'miit', 'export'))
+
+describe.skipIf(!hasRealStore)('对真实 files/ 的验收:逐个文件对得上', () => {
+  it('回填行数与目录规则一致,且元数据逐个对得上', async () => {
     // vitest 的工作目录就是 app 根,files/ 是仓库里的真实文件库。
-    const realRoot = join(process.cwd(), 'files')
+    const realRoot = REAL_STORE
     const scanned = await scanFileStore(realRoot)
-    expect(scanned).toHaveLength(23)
+    expect(scanned).toHaveLength(INTERNALIZED_FILE_COUNT)
 
     // 逐个按规则算一遍,再与「目录规则」人工核对的期望值比。
     const derived = scanned.map((f) => {
@@ -432,13 +452,14 @@ describe('对真实 files/ 的验收:23 个文件逐个对得上', () => {
     // 全部认得出分类(没有一个落到 skipped)。
     expect(derived.every((d) => d.source && d.kind)).toBe(true)
 
-    // 分布核对:20 份经信局公布文件 + 3 份工信部导出表。
-    expect(derived.filter((d) => d.source === 'jxj')).toHaveLength(20)
+    // 分布核对:21 份经信局公布文件 + 3 份工信部导出表。
+    expect(derived.filter((d) => d.source === 'jxj')).toHaveLength(INTERNALIZED_JXJ_COUNT)
     expect(derived.filter((d) => d.source === 'miit')).toHaveLength(3)
 
-    // 年份分布(按目录):2022×2、2023×6、2024×5、2025×4、2026×3、miit×3(无年份)。
+    // 年份分布(按目录):2021×1、2022×2、2023×6、2024×5、2025×4、2026×3、miit×3(无年份)。
     const byYear = new Map<number | null, number>()
     for (const d of derived) byYear.set(d.year, (byYear.get(d.year) ?? 0) + 1)
+    expect(byYear.get(2021)).toBe(1)
     expect(byYear.get(2022)).toBe(2)
     expect(byYear.get(2023)).toBe(6)
     expect(byYear.get(2024)).toBe(5)
