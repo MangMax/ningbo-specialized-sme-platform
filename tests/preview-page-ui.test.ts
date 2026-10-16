@@ -46,6 +46,7 @@ beforeEach(() => {
   mocks.galleryState = pagesState([])
   mocks.renderedPages = [1, 2, 3]
   vi.stubGlobal('useRoute', () => ({ query: { file, page: '3', back: '/?view=enterprise&page=2&expand=91' } }))
+  vi.stubGlobal('useRequestURL', () => ({ origin: window.location.origin }))
   vi.stubGlobal('useHead', vi.fn())
   vi.stubGlobal(
     '$fetch',
