@@ -461,6 +461,8 @@ interface PendingPlatformRef {
   rdjb: string
   queriedAt: string
   sequenceNos: number[]
+  /** 本批将写入的那些关系的 `relationKey`（权威锚点，见 `NormalizedRef.relationKey`）。 */
+  relationKeys: string[]
 }
 
 type PendingPlatformRefs = PendingPlatformRef[]
@@ -483,6 +485,11 @@ function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatfo
       sequenceNos: (Array.isArray(relations) ? relations : [])
         .map((relation) => optionalInt((relation as { sequenceNo?: unknown })?.sequenceNo))
         .filter((n): n is number => n != null),
+      // RL-06：`relationKey` 是**权威锚点**（平台的排序可能与解析顺序不同），所以本批将写入的
+      // 关系也要把 key 收进来，好在预检阶段就能校验「序号那条是不是 key 那条」。
+      relationKeys: (Array.isArray(relations) ? relations : [])
+        .map((relation) => optionalString((relation as { relationKey?: unknown })?.relationKey))
+        .filter((k): k is string => !!k),
     })
   }
   return out
@@ -495,6 +502,14 @@ interface NormalizedRef {
   rdjb: string
   queriedAt: string | null
   sequenceNo: number | null
+  /**
+   * 关系的**权威锚点**（`RL-06` 增量：父代理 2026-10-16，两个复查代理都实测「平台的排序可能
+   * 与其解析顺序不同，`sequenceNo` 只作参考」）。
+   *
+   * 给 `relationKey` 时：解析出的那条关系**必须**就是它；`sequenceNo` 同时给了却指到别的行
+   * ⇒ **报错**（`relation_ref_mismatch`），**不按其中一个猜**。不给则保持原行为（按 `sequenceNo`）。
+   */
+  relationKey: string | null
 }
 
 type RefError = { code: string; field: string; message: string }
@@ -520,6 +535,7 @@ function normalizeRef(ref: unknown, field: string): { ok: true; value: Normalize
       rdjb: optionalString(ref.rdjb) ?? '',
       queriedAt: optionalString(ref.queriedAt),
       sequenceNo: optionalInt(ref.sequenceNo),
+      relationKey: optionalString(ref.relationKey),
     },
   }
 }
@@ -586,17 +602,59 @@ function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, 
   if (dbHits.length + pendingHits.length === 0) {
     return { ok: false, error: { code: 'query_ref_not_found', field, message: `引用不到平台查询：${describeRef(ref)}` } }
   }
+  // RL-06 的 `relationKey` 校验要**按查询取关系行**；RL-18 的纪律是按键定位而不是整表扫 ——
+  // `queryId` 正是 `platform_relation_query_seq_uq` 的前缀，所以这里是索引前缀查询。
+  const relationsOf = (query: { id: number }) =>
+    source
+      .select()
+      .from(schema.platformRelation)
+      .where(eq(schema.platformRelation.queryId, query.id))
+      .all()
   // 「这条查询里有没有序号 N 的关系」= 关系表**唯一键**的按键定位（RL-18）。
   // 以前这里对每个候选查询各扫一遍整张 `platform_relation`。
   const dbWithSeq = dbHits.filter(
     (query) => findRelationRow(source, { queryId: query.id, sequenceNo: ref.sequenceNo! }) != null,
   )
+
   const pendingWithSeq = pendingHits.filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
   if (dbWithSeq.length + pendingWithSeq.length === 0) {
     return { ok: false, error: { code: 'relation_ref_not_found', field, message: `引用不到平台关系：${describeRef(ref)}（该查询里没有序号 ${ref.sequenceNo} 的关系）` } }
   }
   if (!ref.queriedAt && dbWithSeq.length + pendingWithSeq.length > 1) {
     return { ok: false, error: { code: 'relation_ref_ambiguous', field, message: `引用不唯一：${describeRef(ref)} 命中 ${dbWithSeq.length + pendingWithSeq.length} 条同序号关系；请补 queriedAt` } }
+  }
+  // **`relationKey` 是权威锚点**：给了就必须对得上；给了 key 又给了序号、两者指的不是同一行 ⇒
+  // 报错（不按其中一个猜）。判据是「库内/本批该查询下，序号那条的 key 是不是这个 key」。
+  if (ref.relationKey) {
+    const keyed = [
+      ...dbWithSeq.flatMap((query) =>
+        relationsOf(query)
+          .filter((relation) => relation.sequenceNo === ref.sequenceNo)
+          .map((relation) => relation.relationKey),
+      ),
+      ...pendingHits
+        .filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
+        .map((query) => (query.relationKeys.includes(ref.relationKey!) ? ref.relationKey : null)),
+    ].filter((key): key is string => key != null)
+    const anyKey = [
+      ...dbHits.flatMap((query) => relationsOf(query).map((relation) => relation.relationKey)),
+      ...pendingHits.flatMap((query) => query.relationKeys),
+    ]
+    if (!anyKey.includes(ref.relationKey)) {
+      return { ok: false, error: { code: 'relation_ref_not_found', field: `${field}.relationKey`, message: `引用不到平台关系：该查询下没有 relationKey=${ref.relationKey} 的关系` } }
+    }
+    if (!keyed.includes(ref.relationKey)) {
+      return {
+        ok: false,
+        error: {
+          code: 'relation_ref_mismatch',
+          field: `${field}.relationKey`,
+          message:
+            `序号与关系键不符：${describeRef(ref)} —— 序号 ${ref.sequenceNo} 那条的 relationKey ` +
+            `不是 ${ref.relationKey}。**按关系键为准、不猜**，请改用正确的序号，或只给 relationKey。`,
+        },
+      }
+    }
   }
   return { ok: true }
 }
@@ -605,6 +663,7 @@ function describeRef(ref: NormalizedRef): string {
   const parts = [`interface=${ref.interface}`, `queryKey=${ref.queryKey}`, `rdjb=${ref.rdjb || "''"}`]
   if (ref.queriedAt) parts.push(`queriedAt=${ref.queriedAt}`)
   if (ref.sequenceNo != null) parts.push(`sequenceNo=${ref.sequenceNo}`)
+  if (ref.relationKey) parts.push(`relationKey=${ref.relationKey}`)
   return parts.join(' ')
 }
 
@@ -625,8 +684,7 @@ function resolveRelationIdAt(source: Executor, ref: NormalizedRef): number | nul
   if (ref.sequenceNo == null) return null
   const queryId = resolveQueryIdAt(source, ref)
   if (queryId == null) return null
-  return findRelationRow(source, { queryId, sequenceNo: ref.sequenceNo })?.id ?? null
-}
+  return findRelationRow(source, { queryId, sequenceNo: ref.sequenceNo })?.id ?? null}
 
 // ---------------------------------------------------------------------------
 // 计划（预检与提交共用）
