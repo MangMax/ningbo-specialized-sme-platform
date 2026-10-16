@@ -261,6 +261,59 @@ export interface RosterImportMerge {
   note?: string | null
 }
 
+/**
+ * **公开来源证据**（RL-06）：补录统一社会信用代码必须**可复核**。
+ *
+ * 票面第 3 条：「每个补入代码均保存可复核的公开内容来源、查证日期和主体对应依据」——
+ * 所以这三样在契约里是**必填**，缺一即 `source_evidence_incomplete`，整批 `failed`。
+ * 搜索引擎摘要**不算**主体证据（票面明写）：`url` 要指向内容页，`basis` 要说清
+ * 「为什么这个主体就是本企业」。
+ */
+export interface RosterImportUsccSource {
+  /** 可复核的公开内容来源 URL。 */
+  url: string
+  /** 查证日期（`YYYY-MM-DD`）。 */
+  checkedOn: string
+  /** 名称 / 地区对应依据。 */
+  basis: string
+  /** 来源里写出的主体名称（原值，留档）。 */
+  name: string
+  /** 来源给出的地区（如 `宁波市/鄞州区`）；给不出留空，不猜。 */
+  region?: string | null
+}
+
+/**
+ * **补录统一社会信用代码**（RL-06 增量，`payload.usccBackfills`）。
+ *
+ * ── 它补的是 `payload` 缺的那一格 ────────────────────────────────────────
+ * §5.2 / §8.4 的 `merges` 只覆盖「规范行**已经存在**（该统代已挂在某家企业行上）」的情形 ——
+ * 那是**归并**。而 RL-06 走「库内核心词 → 候选 → 平台按统代验证」这条路时，候选统代有时
+ * **库里还没有任何一行持有**（该企业只出现在公布名单里，导出表从未见过它）：
+ * 这时没有任何「规范行」可以并过去，`merges` 表达不了，而 `announcement.records[].enterprise.uscc`
+ * 又会按统代**另起一行**（`upsertEnterprise` 有统代只按统代匹配）—— 那正是要避免的重复。
+ *
+ * 所以这里加一个**显式的、最小的**写入形状：给一家**本来没有统代**的企业**补上**这个值。
+ *
+ * ── 硬边界（票面第 4/5 条）──────────────────────────────────────────────
+ *  - **只补缺失值**：企业已有统代 ⇒ `uscc_already_present`，**不覆盖**；
+ *  - **不做身份合并**：这个统代已被**别的**企业占用 ⇒ `uscc_taken`（冲突），
+ *    要合并请走 `merges`（那条路要求平台关系证据，且是另一件事）；
+ *  - **不猜**：代码格式/校验位不合法 ⇒ `uscc_format_invalid`；来源三要素不齐 ⇒
+ *    `source_evidence_incomplete`。任一项不过 ⇒ 整批 `failed`，业务数据一行不落。
+ *  - 不写别名、不改名、不动 `record` —— 名称沿革是 `aliases` / `merges` 的事。
+ */
+export interface RosterImportUsccBackfill {
+  /** 归属企业 id。与 `enterpriseName` 恰给其一。 */
+  enterpriseId?: number
+  /** 归属企业名称（按归一化名找）。 */
+  enterpriseName?: string
+  /** 补入的统一社会信用代码；格式与校验位必须合法（GB 32100-2015）。 */
+  uscc: string
+  /** 公开来源证据（三要素必填）。 */
+  source: RosterImportUsccSource
+  note?: string | null
+}
+
 /** 预检与提交共用的写入载荷。 */
 export interface RosterImportPayload {
   announcement?: RosterImportAnnouncement
@@ -270,6 +323,11 @@ export interface RosterImportPayload {
   differences?: RosterImportDifference[]
   /** 归并与回填（RL-11 增量扩展，见 `RosterImportMerge`）。 */
   merges?: RosterImportMerge[]
+  /**
+   * 给**本来没有统代**的企业补录代码（RL-06 增量，见 `RosterImportUsccBackfill`）。
+   * 与 `merges` 的分工：`merges` 并身份，`usccBackfills` 只补一个缺失的值。
+   */
+  usccBackfills?: RosterImportUsccBackfill[]
 }
 
 /** 一次写入请求（预检与提交共用；幂等键在 body）。 */
