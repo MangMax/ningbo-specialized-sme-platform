@@ -20,6 +20,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema, useDb } from '../db'
 import { normalizeName } from '../lib/domain'
+import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 import {
   RosterImportApiError,
   createRosterImportClient,
@@ -702,6 +703,38 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       const unbound = db.select().from(schema.platformRelation).all().find((r) => r.usccRaw === '9133021100000000ZZ')!
       expect(unbound.enterpriseId).toBeNull()
       expect(unbound.verificationStatus).toBe('pending')
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('统一导入 API 对 DOCX / Excel 出处忽略 page，PDF 页码仍持久化', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const request = announcementRequest({ idempotencyKey: 'http/stable-evidence-pages#sha256:abc' })
+    request.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/notice.pdf', attachment: '附件', listNo: 1, page: 7 },
+      { sourceFile: 'synthetic/notice.docx', attachment: '正文', listNo: 2, page: 12 },
+      { sourceFile: 'synthetic/export.xlsx', attachment: 'Sheet1', listNo: 3, page: 13 },
+    ]
+
+    try {
+      const committed = await client.commit(request)
+      expect(committed.status).toBe('committed')
+
+      const enterprise = db
+        .select()
+        .from(schema.enterprise)
+        .where(eq(schema.enterprise.name, '宁波上航测绘股份有限公司'))
+        .get()!
+      const evidence = getRosterEnterpriseDetail(db, enterprise.id)!.evidence
+      const pageBySource = Object.fromEntries(evidence.map((entry) => [entry.sourceFile, entry.page]))
+      expect(pageBySource).toEqual({
+        'synthetic/notice.pdf': 7,
+        'synthetic/notice.docx': null,
+        'synthetic/export.xlsx': null,
+      })
     } finally {
       await server.close()
     }

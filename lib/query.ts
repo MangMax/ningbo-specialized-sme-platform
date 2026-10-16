@@ -5,6 +5,12 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import { isNingboDistrict, normalizeName } from './domain'
 import { EVENTS, LIFECYCLE_FLAGS, LIFECYCLE_FLAG_ORDER, SOURCE_ORDER, TITLE_ORDER } from './labels'
+import { isPageCapable } from './roster/evidence-page'
+import {
+  judgeFirstRecognition,
+  matchesRecognitionQuery,
+  type FirstRecognitionStatus,
+} from './roster/first-recognition'
 import {
   computeTitleLifecycle,
   effectiveYear,
@@ -723,7 +729,7 @@ export interface ExportRow {
 /**
  * 单条证据渲染为 `文件 / 附件 / 序号N / 第N页`。
  *
- * 页码只在**真的定下来**时才写(`page != null`)。没有页码**不写任何占位** ——
+ * 页码只对有稳定页序的 PDF 且**真的定下来**时才写。没有页码**不写任何占位** ——
  * 导出文本里的一句「页码待核」既没有可复核的值、又会让「这一列到底有没有数据」
  * 变得读不出来;那是界面上的说法(见 `evidencePageState`),不是导出文本的。
  */
@@ -737,7 +743,7 @@ function formatEvidence(v: {
     v.sourceFile,
     v.attachment,
     v.listNo != null ? `序号${v.listNo}` : null,
-    v.page != null ? `第${v.page}页` : null,
+    isPageCapable(v.sourceFile) && v.page != null ? `第${v.page}页` : null,
   ]).join(' / ')
 }
 

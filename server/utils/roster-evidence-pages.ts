@@ -109,7 +109,12 @@ function entriesOf(body: unknown): { entries: EvidencePageEntry[]; dryRun: boole
 }
 
 function summarize(plan: EvidencePagePlan, written: number, requested: number) {
-  const unchanged = plan.assignments.filter((a) => a.previous === a.page).length
+  const seenEvidence = new Set<number>()
+  let unchanged = 0
+  for (const assignment of plan.assignments) {
+    if (assignment.previous === assignment.page || seenEvidence.has(assignment.evidenceId)) unchanged += 1
+    seenEvidence.add(assignment.evidenceId)
+  }
   return {
     /** 入参给了几条。 */
     requested,
@@ -117,7 +122,7 @@ function summarize(plan: EvidencePagePlan, written: number, requested: number) {
     assigned: plan.assignments.length,
     /** 其中**真的改了库**的行数(空操作不算)。 */
     written,
-    /** 定得下来但值没变(幂等重跑)。 */
+    /** 定得下来但无需重复写(已有相同页码或本请求里的重复 claim)。 */
     unchanged,
     /** 留空待核的条数 —— 一行没改。 */
     pending: plan.pending.length,
@@ -149,13 +154,15 @@ export function handleEvidencePagesRequest(
 
   let written = 0
   if (!parsed.dryRun) {
+    const writtenEvidence = new Set<number>()
     for (const a of plan.assignments) {
-      if (a.previous === a.page) continue
+      if (a.previous === a.page || writtenEvidence.has(a.evidenceId)) continue
       ctx.db
         .update(schema.recordEvidence)
         .set({ page: a.page })
         .where(eq(schema.recordEvidence.id, a.evidenceId))
         .run()
+      writtenEvidence.add(a.evidenceId)
       written += 1
     }
   }

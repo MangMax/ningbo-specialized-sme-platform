@@ -318,4 +318,19 @@ describe('getEnterpriseDetail 的出处页码(RL-10)', () => {
     expect(row.evidence).toContain('序号7')
     expect(row.evidence).not.toContain('序号7 / ')
   })
+
+  it('导出保留 DOCX / Excel 出处但忽略其不稳定页码', () => {
+    withEvidence('宁波办公文件页码测试有限公司', [
+      { sourceFile: 'synthetic/notice.docx', listNo: 7, page: 12 },
+      { sourceFile: 'synthetic/export.xlsx', listNo: 8, page: 13 },
+      { sourceFile: 'synthetic/notice.pdf', listNo: 9, page: 8 },
+    ])
+
+    const row = allRecords(db(), { q: '宁波办公文件页码测试有限公司' })[0]!
+    expect(row.evidence).toContain('synthetic/notice.docx / 附件 / 序号7')
+    expect(row.evidence).toContain('synthetic/export.xlsx / 附件 / 序号8')
+    expect(row.evidence).not.toContain('第12页')
+    expect(row.evidence).not.toContain('第13页')
+    expect(row.evidence).toContain('synthetic/notice.pdf / 附件 / 序号9 / 第8页')
+  })
 })

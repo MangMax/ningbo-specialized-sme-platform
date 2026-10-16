@@ -20,6 +20,7 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
+import { isPageCapable } from '../../lib/roster/evidence-page'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
 import { missingUsccSourceFields, usccFormatVerdict } from '../../lib/roster/uscc-research'
@@ -1095,7 +1096,7 @@ function writeAnnouncementRecord(
           sourceFile: evidence.sourceFile,
           attachment: optionalString(evidence.attachment),
           listNo: optionalInt(evidence.listNo),
-          page: optionalInt(evidence.page),
+          page: isPageCapable(evidence.sourceFile) ? optionalInt(evidence.page) : null,
         })
         .returning({ id: schema.recordEvidence.id })
         .get().id

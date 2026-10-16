@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { ChevronLeft, FileDown } from '@lucide/vue'
 import { describeUnsupported, fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
 import {
@@ -61,9 +61,20 @@ const { data: pagesState } = useQuery({
   enabled: () => pdf.value,
 })
 
+/** 页图库刚完成的本地状态;父页查询缓存尚未重取时也能同步隐藏待渲染提示。 */
+const locallyRenderedPages = ref<{ file: string; pages: number[] } | null>(null)
+function onPagesRendered(state: PdfPagesState) {
+  if (state.file !== file.value) return
+  locallyRenderedPages.value = { file: state.file, pages: state.pages.map((page) => page.page) }
+}
+
 const requestedPageRendered = computed(() => {
   if (page.value === null) return false
-  return (pagesState.value?.pages ?? []).some((p) => p.page === page.value)
+  const local = locallyRenderedPages.value
+  return (
+    (local?.file === file.value && local.pages.includes(page.value)) ||
+    (pagesState.value?.pages ?? []).some((p) => p.page === page.value)
+  )
 })
 
 useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : '来源预览')) })
@@ -122,10 +133,16 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
       <!-- 要定位的那一页还没渲染:**说清为什么**,再让页图库给出渲染入口。不静默降级成「打开就是第一页」。 -->
       <Alert v-if="page !== null && !requestedPageRendered && pagesState">
         <AlertTitle>第 {{ page }} 页的页图还没有渲染</AlertTitle>
-        <AlertDescription>先渲染页图,再回到这一页。</AlertDescription>
+        <AlertDescription>先渲染页图,成功后会自动定位到这一页。</AlertDescription>
       </Alert>
 
-      <PageImageGallery v-if="pdf" class="min-h-[60vh]" :file="file" :page="page" />
+      <PageImageGallery
+        v-if="pdf"
+        class="min-h-[60vh]"
+        :file="file"
+        :page="page"
+        @pages-rendered="onPagesRendered"
+      />
       <FilePreview v-else class="min-h-[60vh]" :src="fileUrl(file)" :name="name" />
     </template>
   </div>

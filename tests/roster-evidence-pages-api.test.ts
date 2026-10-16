@@ -95,6 +95,7 @@ beforeAll(async () => {
   seedEnterprise('xlsxRow', '宁波某表公司', null)
   // 幂等用例专用:不跟别的用例抢同一行,免得「重跑」断言依赖执行顺序。
   seedEnterprise('idemRow', '宁波幂等测试有限公司', '海曙区')
+  seedEnterprise('duplicateRow', '宁波重复页码申领有限公司', '海曙区')
 
   seedEvidence(ids.peiyuan!, F145, 6, { district: '海曙区' })
   seedEvidence(ids.kaicheng!, F145, 6, { district: '海曙区' })
@@ -104,6 +105,7 @@ beforeAll(async () => {
   seedEvidence(ids.docxRow!, F_DOCX, 3, { district: '海曙区' })
   seedEvidence(ids.xlsxRow!, F_XLSX, 3)
   seedEvidence(ids.idemRow!, F145, 200, { district: '海曙区' })
+  seedEvidence(ids.duplicateRow!, F145, 201, { district: '海曙区' })
 
   server = await startRosterApi({ db, apiToken: TOKEN })
 })
@@ -253,6 +255,25 @@ describe('POST /api/roster/evidence/pages —— 分节定位与留空待核', (
     const again = await post({ entries })
     expect(again.json.summary).toMatchObject({ assigned: 1, written: 0, unchanged: 1, pending: 0 })
     expect(evidenceOf(ids.idemRow!)).toEqual({ page: 33, state: 'assigned' })
+  })
+
+  it('同一请求的相同 claim 只写一次，重复项计入 unchanged', async () => {
+    const entry = {
+      sourceFile: F145,
+      listNo: 201,
+      page: 31,
+      enterpriseName: '宁波重复页码申领有限公司',
+    }
+    const res = await post({ entries: [entry, { ...entry }] })
+
+    expect(res.json.summary).toMatchObject({
+      requested: 2,
+      assigned: 2,
+      written: 1,
+      unchanged: 1,
+      pending: 0,
+    })
+    expect(evidenceOf(ids.duplicateRow!)).toEqual({ page: 31, state: 'assigned' })
   })
 
   it('同一行被两条页码互相矛盾地指向 ⇒ 两条都不写(不留一条没依据的页码)', async () => {

@@ -55,10 +55,13 @@ const props = defineProps<{
    *
    * 落点是**单页视图**(`viewing`),不是自动滚到网格里的某一张 —— 深链的用途是
    * 「看这一页」,让人从一堆缩略图里自己找第 8 张不叫定位。该页还没渲染时,
-   * 网格视图会照常铺出来并给出渲染入口(`viewing` 会被底下那条 watch 收回),
+   * 网格视图会照常铺出来并给出渲染入口(`viewing` 暂时回到 null;目标页号会保留,待渲染后恢复),
    * 不会停在一个空白的单页上。
    */
   page?: number | null
+}>()
+const emit = defineEmits<{
+  'pages-rendered': [state: PdfPagesState]
 }>()
 
 /** 入参 `page` 折成「该看第几页」;不是 ≥1 的整数就没有落点(**不取整、不回落成第 1 页**)。 */
@@ -99,6 +102,8 @@ const dpi = ref<number>(DEFAULT_DPI)
 const dpiTouched = ref(false)
 /** 正在看的那一页;null = 网格。 */
 const viewing = ref<number | null>(null)
+/** 深链目标还没在页图中出现时暂存;渲染成功后用它恢复定位。 */
+const pendingPage = ref<number | null>(null)
 /**
  * 单页视图里那个 `ImagePreview` 的实例 —— 窄屏工具栏上那组缩放按钮靠它驱动
  * (`ImagePreview` 用 `defineExpose` 露出 `zoomBy` / `fit`)。用结构类型而不是
@@ -226,6 +231,7 @@ async function renderPages() {
     dpiTouched.value = false
     loadUnconfirmed.value = false
     summary.value = renderSummary(out)
+    emit('pages-rendered', out)
   } catch (error) {
     // 空串兜底,**不垫一句中文** —— describeRenderFailure 是唯一产出最终句子的一层,
     // 垫一句会被再包装一遍(独立审查 F1 报的重复标点就是这个)。
@@ -280,7 +286,8 @@ watch(
   () => props.file,
   () => {
     // 换文件 = 换一切,但**落点照旧按入参给**(深链打开时 `page` 就是它要的那一页)。
-    viewing.value = requestedPage()
+    pendingPage.value = requestedPage()
+    viewing.value = pendingPage.value
     summary.value = ''
     renderFailure.value = ''
     renderFailed.value = false
@@ -294,23 +301,36 @@ watch(
   { immediate: true },
 )
 
-/** 重渲染之后页图可能变少,正在看的那页就没了 —— 别停在一个空视图上。 */
+/** 清单变化后恢复尚未渲染的深链目标,或在当前页消失时退回网格。 */
 watch(
-  () => state.value?.pages.length,
+  () => state.value?.pages,
   () => {
+    const pending = pendingPage.value
+    if (pending !== null && state.value?.pages.some((page) => page.page === pending)) {
+      viewing.value = pending
+      pendingPage.value = null
+      return
+    }
     if (viewing.value !== null && !viewingPage.value) viewing.value = null
   },
 )
 
 /**
- * 深链的页码**变了**(同一个组件实例换 `?page=`):换到新落点。
+ * 深链的页码**变了**(同一个组件实例换 `?page=`):换到新落点,未渲染时先停在网格。
  * `file` 那条 watch 只在换文件时跑,地址栏里只改 `page` 时它不动 —— 少了这一条,
  * 「第 8 页 → 第 14 页」的第二次跳转会停在原地。
  */
 watch(
   () => props.page,
   () => {
-    viewing.value = requestedPage()
+    const requested = requestedPage()
+    pendingPage.value = requested
+    if (requested !== null && state.value?.pages.some((page) => page.page === requested)) {
+      viewing.value = requested
+      pendingPage.value = null
+    } else {
+      viewing.value = null
+    }
   },
 )
 </script>

@@ -310,7 +310,7 @@ export function planEvidencePages(
   })
 
   // 同一条出处行被两条入参指向、且页码**不同** ⇒ 两条都留空。同页码是同一个事实的
-  // 重复表达(批处理重跑常见),照着写即可,不算冲突。
+  // 重复表达(批处理重跑常见),保留各自的输入下标;写入侧只执行一次,重复项计入 unchanged。
   const conflicted = new Set<number>()
   for (const [evidenceId, claims] of claimed) {
     if (new Set(claims.map((c) => c.page)).size > 1) conflicted.add(evidenceId)
