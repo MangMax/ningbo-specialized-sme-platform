@@ -20,7 +20,7 @@
  */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { normalizeName } from '../domain'
+import { normalizeName, normalizeUscc } from '../domain'
 import { getComparison, type ComparisonDirection } from '../comparison'
 import { SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
@@ -146,10 +146,13 @@ function sourceRank(code: string): number {
   return i === -1 ? SOURCE_ORDER.length : i
 }
 
-/** 归一化统代:大小写与首尾空白不影响身份比较。 */
+/**
+ * 归一化统代后比对:`null` 表示「这个值给不出统代」。
+ * 规则本身在 `lib/domain.ts` 的 `normalizeUscc`(单一来源)—— 与写入侧落 `uscc_norm`
+ * 的口径必须是**同一条**,否则「按 USCC 认到同一家企业」在读写两侧会各判各的。
+ */
 function normUscc(uscc: string | null | undefined): string | null {
-  const v = uscc?.trim().toUpperCase()
-  return v ? v : null
+  return normalizeUscc(uscc) || null
 }
 
 /** 每条记录/快照行在内存里组织出来的企业画像(总表与详情共用)。 */

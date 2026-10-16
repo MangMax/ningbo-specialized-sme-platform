@@ -44,7 +44,7 @@ export async function startRosterPlatformApi(options: {
   }
 
   return startHttpFixture({
-    postRoutes: {
+    routes: {
       '/api/roster/import/preflight': importRoute,
       '/api/roster/import/commit': importRoute,
     },

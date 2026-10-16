@@ -612,6 +612,23 @@ describe('真实 HTTP：鉴权', () => {
       await server.close()
     }
   })
+
+  it('★ 方法不对 ⇒ 405 由**核心自己**给出(夹具不替它拦成 404)', async () => {
+    // 夹具按**路径**分发、不看方法,方法守卫留给 `handleRosterImportRequest`
+    // (`tests/helpers/http-fixture.ts` 的路由规则)。若夹具改成按方法分发,这条会变 404
+    // —— 那等于把核心的方法守卫从真 HTTP 面上悄悄摘掉。
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    try {
+      const got = await fetch(`${server.baseUrl}/api/roster/import/commit`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      })
+      expect(got.status).toBe(405)
+      expect(rosterRowCounts(db).enterprise).toBe(0)
+    } finally {
+      await server.close()
+    }
+  })
 })
 
 describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整性', () => {

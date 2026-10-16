@@ -25,6 +25,7 @@ import {
   buildPlatformWritePayload,
   type KnownEnterprise,
   type PlatformQueryInput,
+  type QueryRef,
   type RelationRef,
 } from '../lib/platform/payload'
 import type { PlatformQueriesResult } from '../lib/platform/read'
@@ -282,7 +283,7 @@ describe('第二批 · 曾用名、已核验处置与归并', () => {
 
   const refs = {
     relationIdOf: (ref: RelationRef) => relationIds.get(relationKeyOf(ref)) ?? null,
-    queryIdOf: (ref: Omit<RelationRef, 'sequenceNo'>) =>
+    queryIdOf: (ref: QueryRef) =>
       queryIds.get(`${ref.interface}|${ref.queryKey}|${ref.rdjb}`) ?? null,
   }
 

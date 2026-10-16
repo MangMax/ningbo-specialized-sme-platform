@@ -14,7 +14,8 @@
  * 同名多主体(同一名字挂在不同 USCC 下)是**冲突**,候选一律为空、不自动合并。
  */
 import { normalizeName } from '../domain'
-import type { PlatformInterface, PlatformRow, PlatformQueryMeta } from './types'
+import type { PlatformInterface } from '../labels'
+import type { PlatformRow, PlatformQueryMeta } from './types'
 
 /** 一条平台关系(已映射到契约 §1.4 的列含义)。 */
 export interface PlatformRelationRecord {

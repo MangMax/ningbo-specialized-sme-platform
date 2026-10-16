@@ -23,7 +23,7 @@ import {
   type PlatformRow,
   classifyPlatformResponse,
 } from './adapter'
-import type { PlatformInterface } from './types'
+import type { PlatformInterface } from '../labels'
 
 export type PlatformFetch = (
   input: string,

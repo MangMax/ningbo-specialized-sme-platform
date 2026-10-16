@@ -84,8 +84,7 @@ const DECLARE_KINDS = enumSet(schema.platformRelation.declareKind.enumValues)
  * 归一化规则本身只有一处实现:{@link normalizeUscc}(`lib/domain.ts`,紧邻 `normalizeName`)。
  */
 function usccOrNull(raw: unknown): string | null {
-  const value = normalizeUscc(typeof raw === 'string' || typeof raw === 'number' ? raw : null)
-  return value || null
+  return normalizeUscc(raw) || null
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

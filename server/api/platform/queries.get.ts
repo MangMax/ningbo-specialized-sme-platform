@@ -43,6 +43,9 @@ defineRouteMeta({
 
 /** 平台接口取值 —— 直接用唯一出处(`lib/labels.ts`),不在这里重列一遍。 */
 const INTERFACES = PLATFORM_INTERFACE_VALUES
+// ⚠️ 唯一**有意**的例外:上面 `defineRouteMeta` 里的 `enum` 必须保持**字面量** ——
+// nitro 的 `handlers-meta` 按 AST 静态求值抽 spec,写标识符它求值不出来(见 `tests/setup.ts`)。
+// 两处由 `tests/labels-enums.test.ts` 对齐钉死,所以不会各说各话。
 const STATUSES = ['success', 'failed', 'no_record', 'not_queried'] as const
 
 export default defineEventHandler((event) => {

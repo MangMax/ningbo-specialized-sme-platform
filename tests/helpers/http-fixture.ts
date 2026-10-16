@@ -15,9 +15,12 @@
  * `headerOf`、404/500 的 JSON 信封、query 的解析口径。各夹具只剩自己的**路由表**。
  *
  * ── 路由规则(一条,简单到不用记)────────────────────────────────────────
- * - `GET` → `getRoutes`;其余方法 → `postRoutes`;两者都按**不含 query 的路径**精确匹配。
- * - 没命中 ⇒ `404 {"message":"not found"}`;处理器抛异常 ⇒ `500 {"message":…}`。
- * - 两个核心函数自己会挡方法不对的请求(`405`),所以夹具不做方法白名单。
+ * - `routes` 按**不含 query 的路径**精确匹配,**不看方法** —— 命中就把请求原样交给核心,
+ *   方法不对由**核心自己**挡(写面回 405,读面回 405),夹具不替它做方法白名单。
+ *   (真实路由表里 `*.post.ts` 只接 POST,所以夹具「不看方法」比真实路由**更宽**;
+ *   这么定是为了让核心的方法守卫在真 HTTP 上也被走到,而不是被夹具静默吃掉。)
+ * - 未命中 `routes` 且方法是 `GET` ⇒ 再查 `getRoutes`(读面本来就是 GET 专属)。
+ * - 仍未命中 ⇒ `404 {"message":"not found"}`;处理器抛异常 ⇒ 状态码取 `statusCode`,否则 `500`。
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -46,9 +49,9 @@ export interface FixtureResponse {
 export type FixtureHandler = (request: FixtureRequest) => FixtureResponse
 
 export interface FixtureRoutes {
-  /** 非 GET 方法的路由表。 */
-  postRoutes?: Record<string, FixtureHandler>
-  /** GET 的路由表。 */
+  /** 路径 → 处理器,**任意方法**都交给它(写面走这里,方法不对由核心回 405)。 */
+  routes?: Record<string, FixtureHandler>
+  /** 路径 → 处理器,只接 `GET`(读面走这里)。 */
   getRoutes?: Record<string, FixtureHandler>
 }
 
@@ -84,7 +87,8 @@ async function dispatch(
 ): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
   const method = req.method ?? 'GET'
-  const handler = (method === 'GET' ? routes.getRoutes : routes.postRoutes)?.[url.pathname]
+  // 先查「不看方法」的表(写面),再按 GET 查读面 —— 方法守卫留给核心,不在这里拦。
+  const handler = routes.routes?.[url.pathname] ?? (method === 'GET' ? routes.getRoutes?.[url.pathname] : undefined)
   if (!handler) {
     sendJson(res, 404, {}, { message: 'not found' })
     return
@@ -98,7 +102,7 @@ async function dispatch(
       authorization: headerOf(req.headers.authorization),
       'x-api-token': headerOf(req.headers['x-api-token']),
     },
-    body: method === 'GET' ? null : parseJson(await readBody(req)),
+    body: parseJson(await readBody(req)),
   })
   sendJson(res, out.status, out.headers ?? {}, out.body)
 }

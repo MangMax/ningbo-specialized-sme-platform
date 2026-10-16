@@ -14,7 +14,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { MAX_PAGE_SIZE } from '../query'
-import type { PlatformInterface } from './types'
+import type { PlatformInterface } from '../labels'
 
 export interface PlatformQueryFilter {
   interface?: PlatformInterface

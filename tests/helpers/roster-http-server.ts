@@ -33,7 +33,7 @@ export async function startRosterApi(options: { db: Db; apiToken: string | null 
   }
 
   return startHttpFixture({
-    postRoutes: {
+    routes: {
       '/api/roster/import/preflight': importRoute,
       '/api/roster/import/commit': importRoute,
     },
