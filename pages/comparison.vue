@@ -55,7 +55,7 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 const COMPARISON_DIRECTIONS = Object.keys(
   COMPARISON_LABELS,
 ) as ComparisonDirection[]
-const titles = TITLE_ORDER.filter((code) => code !== 'little_giant')
+const titles = TITLE_ORDER
 const title = shallowRef('specialized_sme')
 const direction = shallowRef<ComparisonDirection>('missing_in_miit')
 const page = shallowRef(1)
@@ -162,7 +162,15 @@ const TH_CLASS =
     >
       <template #description>
         <span class="inline-block">按统代比对,不限年份。</span>
-        <span class="inline-block">小巨人无经信局名录。</span>
+        <!--
+          小巨人两侧(用户 2026-10-16 裁决启用,RL-04 落地):经信局**历年名单**(历史批次权威来源)
+          vs 工信部**导出表**(采集时点现状)。旧文案写「小巨人无经信局名录」——该说法已被
+          RL-02 的历年名单证伪,不能再留在页面上。
+        -->
+        <span class="inline-block">
+          小巨人两侧 = 经信局历年名单(权威历史批次)/ 工信部导出表(采集时点现状)。
+        </span>
+        <span class="inline-block">计数单位 = 企业 × 称号(同一企业多个称号会分别成行)。</span>
       </template>
       <template #actions>
         <div class="flex items-center gap-2">

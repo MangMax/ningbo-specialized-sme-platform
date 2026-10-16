@@ -49,6 +49,9 @@ beforeAll(() => {
   record(enterprise('reviewOnly', 'REVIEW'), 'jxj', 'innovative_sme', ['review'])
   record(enterprise('giantJ', 'GIANT-J'), 'jxj', 'little_giant')
   record(enterprise('giantM', 'GIANT-M'), 'miit', 'little_giant')
+  const giantBoth = enterprise('giantBoth', 'GIANT-BOTH')
+  record(giantBoth, 'jxj', 'little_giant')
+  record(giantBoth, 'miit', 'little_giant')
 })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -107,15 +110,29 @@ describe('getComparison 统代差集(企业 × 称号)', () => {
     })
   })
 
-  it('always returns empty little_giant differences, even with both source records', () => {
-    expect(getComparison(db, { title: ['little_giant'] }).rows).toEqual([])
-    expect(getComparison(db).counts.little_giant).toEqual({ missing_in_miit: 0, extra_in_miit: 0 })
+  /**
+   * 小巨人**双向对比已启用**(用户 2026-10-16 裁决,#4 落地)。
+   *
+   * 两侧变成:经信局**历年小巨人名单**(RL-02 导入,历史批次权威来源)
+   * vs 工信部**导出表**(采集时点现状)。旧期望是「小巨人恒空」——那是基于
+   * 「经信局不发布小巨人」这句**已被证伪**的断言,本次是有意变更,不是回归。
+   * 硬边界不变:平台导出永不改写公布历史;未匹配平台的公布条目仍然保留。
+   */
+  it('小巨人两侧都参与比对:公布有而平台无、平台有而公布无都能筛出同一企业', () => {
+    expect(members('missing_in_miit', 'little_giant')).toEqual([ids.giantJ])
+    expect(members('extra_in_miit', 'little_giant')).toEqual([ids.giantM])
+    // 两侧统代一致的那家**两个方向都不出现**(与其它称号同一判据)。
+    expect(getComparison(db).rows.filter((r) => r.enterpriseId === ids.giantBoth)).toEqual([])
+    // 筛选小巨人时只看得到小巨人,不会串到别的称号。
+    expect(
+      getComparison(db, { title: ['little_giant'] }).rows.map((r) => r.titleCode),
+    ).toEqual(['little_giant', 'little_giant'])
   })
 
   it('returns global counts consistent with complete rows and independent of filters', () => {
     const all = getComparison(db)
     expect(all.counts).toEqual({
-      little_giant: { missing_in_miit: 0, extra_in_miit: 0 },
+      little_giant: { missing_in_miit: 1, extra_in_miit: 1 },
       specialized_sme: { missing_in_miit: 5, extra_in_miit: 5 },
       innovative_sme: { missing_in_miit: 1, extra_in_miit: 1 },
     })
