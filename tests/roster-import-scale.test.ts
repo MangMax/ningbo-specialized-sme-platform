@@ -24,6 +24,17 @@
  * 「有没有整表扫」是**实现细节**，绑上去的用例一重构就假红。这里断言的是用户可观察的
  * 两件事：① 千条级单批能在**秒级**跑完（改前是分钟级＝实质卡死）；② 规模翻 4 倍时
  * 耗时**不是** 16 倍（平方），留出足够宽的余量以免 CI 抖动误报。
+ *
+ * ── 覆盖了哪几轴 ────────────────────────────────────────────────────────────
+ * 四条用例：**存档查询表**（计划阶段按唯一键找既有行，跑两次 —— 首写 + 换键重放）、
+ * **空档纯写入**（让平方项占主导，才能从增长比看出形状）、
+ * **企业表**（写入阶段每条关系按统代定位企业 —— 企业表是独立于本批的外部规模）。
+ * 只压批次不压企业表就看不见最后那条路径。
+ *
+ * ── ⚠️ 当前只在**手动跑**时执行 ─────────────────────────────────────────────
+ * 父代理 2026-10-16 裁决：不接进 CI（要不要为性能守单开一条 CI 作业是项目级决定，
+ * 不在 RL-18）。所以默认 `pnpm test` 里这三条是 **skipped**（`describe.runIf` 让它
+ * **可见**，而不是用顶层 `if` 藏掉）。要跑就照上面的命令。
  */
 
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -31,6 +42,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
+import { normalizeName } from '../lib/domain'
 import {
   commitRosterImport,
 } from '../server/utils/roster-import'
@@ -48,8 +60,23 @@ const RAW_RESPONSE_BYTES = 24_000
 /** 本批每条查询带几条关系。 */
 const RELATIONS_PER_QUERY = 4
 
+/**
+ * **企业表**的规模 —— 真实库实测 7352 行。
+ *
+ * 为什么要把它种进夹具：写入阶段每写一条平台关系，都要按 `usccRaw` 去企业表定位一次
+ * （`enterpriseByExactUscc` → `findEnterpriseByUscc`）。企业表是**独立于本批**的外部规模，
+ * 只压批次而不种企业，就看不见这条路径 —— 那正是 RL-18 收尾时补上的另一半。
+ */
+const ENTERPRISE_ROWS = Number(process.env.ROSTER_IMPORT_SCALE_ENTERPRISES ?? 7352)
+
 /** 千条级单批的**计划 + 提交**总预算。改前是分钟级，改后是秒级，这里留足余量。 */
 const BATCH_BUDGET_MS = 30_000
+
+/**
+ * **带企业表**时的预算。改后实测 ~0.6 s（见契约 §3.1c），给到 10 s 仍有十倍余量 ——
+ * 而企业侧退回整表线性时这里是 **22 s 量级**，会当场判死。
+ */
+const ENTERPRISE_BUDGET_MS = 10_000
 
 /**
  * vitest 的默认 `testTimeout` 是 5 秒 —— 对规模用例太短（即便改后也要几秒）。
@@ -68,6 +95,27 @@ function makeDb() {
 afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
 })
+
+/**
+ * 造一个**已存在**的企业表：`count` 行，各带一个统代。
+ *
+ * 键前缀刻意用 `93…`，与本批关系里的 `usccRaw`（`92…`）**不重叠** —— 于是每条关系都要
+ * 走一次「按统代定位、定位不到」的完整查找。命中与不命中在改前都要整表扫描，取不命中
+ * 是因为它更贴近实情（新查到的企业还没进名录）。
+ */
+function seedEnterprises(db: ReturnType<typeof makeDb>, count: number): void {
+  for (let i = 0; i < count; i += 1) {
+    const name = `存量企业${i}`
+    db.insert(schema.enterprise)
+      .values({
+        name,
+        nameNorm: normalizeName(name),
+        usccNorm: `93${String(330200000000000 + i).padStart(16, '0')}`,
+        qualityFlags: [],
+      })
+      .run()
+  }
+}
 
 /** 一段形状像平台 HTML 表格的假响应（只为占字节，不参与任何解析）。 */
 function fakeRawResponse(uscc: string): string {
@@ -100,8 +148,7 @@ function seedArchive(db: ReturnType<typeof makeDb>, count: number): void {
   }
 }
 
-/** 本批：`count` 条**新**查询（键与存档不重叠），每条带 `RELATIONS_PER_QUERY` 条关系。 */
-function scaleRequest(count: number, idempotencyKey: string): RosterImportRequest {
+/** 本批：`count` 条**新**查询（键与存档不重叠），每条带 `RELATIONS_PER_QUERY` 条关系。 */function scaleRequest(count: number, idempotencyKey: string): RosterImportRequest {
   return {
     idempotencyKey,
     sourceKind: 'alias_evidence',
@@ -184,6 +231,29 @@ describe.runIf(SCALE_ENABLED)('RL-18 规模：单批千条级平台查询', () =
     expect(countQueries()).toBe(queriesBefore)
     expect(countRelations()).toBe(relationsBefore)
     expect(elapsedMs).toBeLessThan(BATCH_BUDGET_MS)
+  }, CASE_TIMEOUT_MS)
+
+  /**
+   * 企业表这一轴：写入阶段每写一条关系都要按统代去企业表定位一次。
+   * 企业表是**独立于本批**的规模（真实库 7352 行）——
+   * 只压批次、不种企业，这条路径就完全看不见（RL-18 收尾补的就是它）。
+   */
+  it(`企业表 ${ENTERPRISE_ROWS} 行 × 单批 ${BATCH_QUERIES} 条查询能在预算内跑完`, () => {
+    const db = makeDb()
+    seedEnterprises(db, ENTERPRISE_ROWS)
+    seedArchive(db, ARCHIVE_QUERIES)
+    const request = scaleRequest(BATCH_QUERIES, 'scale/enterprise#sha256:rl18')
+
+    const { result, elapsedMs } = timedCommit(db, request)
+
+    expect(result.status).toBe('committed')
+    expect(result.summary.written).toBe(BATCH_QUERIES * (1 + RELATIONS_PER_QUERY))
+    // eslint-disable-next-line no-console
+    console.log(
+      `[RL-18 规模] 企业=${ENTERPRISE_ROWS} 存档=${ARCHIVE_QUERIES} 批次=${BATCH_QUERIES} ` +
+        `关系=${BATCH_QUERIES * RELATIONS_PER_QUERY} 计划+提交=${elapsedMs}ms`,
+    )
+    expect(elapsedMs).toBeLessThan(ENTERPRISE_BUDGET_MS)
   }, CASE_TIMEOUT_MS)
 
   /**
