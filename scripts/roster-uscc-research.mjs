@@ -50,6 +50,7 @@ if (args.includes('--help') || args.includes('-h')) {
       '  --base-url <URL>   应用基址（默认 http://127.0.0.1:3000）',
       '  --claims <file>    公开来源查证结果 JSON（数组；每项 { enterpriseId|enterpriseName, uscc, source }）',
       '  --verdicts <dir>   批次判断代理的判定文件目录（读 uscc-verdict-batch-1..5.json 整份上传）',
+      '  --extra-verdict <file>  额外的判定文件（如复查改判），可重复；整份上传',
       '  --q <关键词>       只处理名称/曾用名命中的目标',
       '  --title <代号>     只处理该称号（可重复，逗号分隔）',
       '  --dry-run          只读报告与计划，不提交',
@@ -66,6 +67,8 @@ const dryRun = args.includes('--dry-run')
 const strict = args.includes('--strict')
 const claimsFile = flag('claims')
 const verdictsDir = flag('verdicts')
+/** `--extra-verdict` 可重复：额外判定文件（如复查改判），路径原样读、内容原样上传。 */
+const extraVerdicts = args.flatMap((arg, i) => (arg === '--extra-verdict' && args[i + 1] ? [args[i + 1]] : []))
 /** 清单筛选：GET 走 query string，POST（带 claims）走 JSON body —— 同一组参数两种载体。 */
 const filters = {}
 if (flag('q')) filters.q = flag('q')
@@ -119,6 +122,14 @@ if (verdictsDir) {
         process.exit(2)
       }
       console.log(`（${file} 尚未产出，跳过）`)
+    }
+  }
+  for (const file of extraVerdicts) {
+    try {
+      verdictFiles.push({ file: file.split('/').pop(), value: JSON.parse(readFileSync(file, 'utf8')) })
+    } catch (error) {
+      console.error(`✗ 读 --extra-verdict ${file} 失败：${error.message}`)
+      process.exit(2)
     }
   }
   console.log(`（本轮读取判定文件 ${verdictFiles.length} 份）`)

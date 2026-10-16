@@ -782,7 +782,8 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
               : {}),
           note:
             `平台证据认领（${claim.batchRef ?? '判定文件'}）：${describeEvidenceLine(stored, supplied)}` +
-            `${claim.reason ? `；判定依据：${claim.reason}` : ''}`,
+            `${claim.reason ? `；判定依据：${claim.reason}` : ''}` +
+            `${claim.flagState && claim.flagState !== 'true' ? `；⚠ 判定文件里 qymcEqualsAnnouncedName ${claim.flagState === 'absent' ? '缺席' : '标 false'}（采纳依据是库里对得上的关系，不是这句话）` : ''}`,
         },
         backfill: null,
       })
@@ -823,7 +824,8 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
           checkedOn: supplied!.checkedOn,
           basis:
             `平台原始关系逐字证实：${describeEvidenceLine(stored, supplied)}` +
-            `${claim.reason ? `；判定依据：${claim.reason}` : ''}`,
+            `${claim.reason ? `；判定依据：${claim.reason}` : ''}` +
+            `${claim.flagState && claim.flagState !== 'true' ? `；⚠ 判定文件里 qymcEqualsAnnouncedName ${claim.flagState === 'absent' ? '缺席' : '标 false'}（采纳依据是库里对得上的关系，不是这句话）` : ''}`,
           name: target.name,
           region: target.city ?? '宁波市',
         },

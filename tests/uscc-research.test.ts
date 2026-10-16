@@ -749,6 +749,30 @@ describe('E · 补录经统一写入 API 落库（真实 HTTP）', () => {
     expect(db.select().from(schema.enterprise).all().find((e) => e.id === free)!.usccNorm).toBeNull()
   })
 
+  it('★ 同一企业在多份文件里重复出现且结论不同 ⇒ 按企业去重、取更强', () => {
+    const ingest = normalizeUsccVerdicts([
+      {
+        file: 'a.json',
+        value: {
+          batch: 1,
+          generatedAt: '2026-10-16T15:00:00.000Z',
+          items: [{ enterpriseId: 9301, name: '重复企业', verdict: 'not_found', candidateUscc: null }],
+        } as UsccVerdictFile,
+      },
+      {
+        file: 'b.json',
+        value: {
+          batch: 2,
+          generatedAt: '2026-10-16T15:30:00.000Z',
+          items: [{ enterpriseId: 9301, name: '重复企业', verdict: 'conflict', candidateUscc: '91330211MA2CL6FP24' }],
+        } as UsccVerdictFile,
+      },
+    ])
+    expect(ingest.untouched).toHaveLength(1)
+    expect(ingest.untouched[0]!.verdict).toBe('conflict')
+    expect(ingest.problems.join('|')).toContain('取更强结论')
+  })
+
   it('★ 同名多主体时按名定位 ⇒ `enterprise_ambiguous`（不猜是哪一家）', async () => {
     seedEnterprise({ name: '宁波同名双胞胎有限公司' })
     seedEnterprise({ name: '宁波同名双胞胎有限公司' })
@@ -830,17 +854,21 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     expect(ingest.batches).toEqual([
       { batch: 9, file: 'uscc-verdict-batch-9.json', generatedAt: '2026-10-16T16:00:00.000Z', items: 5 },
     ])
-    // 只有第一条被采纳；`interface` 写错的那条被过滤掉了（证据条目为空 ⇒ 交给计划判 no_platform_evidence）。
-    expect(ingest.platformClaims).toHaveLength(1)
+    // 两条 `resolved` 都进认领（**`qymcEqualsAnnouncedName` 不是判据**，采纳与否只看库里对不对得上；
+    // 那三态如实记进 `flagState`）；`interface` 写错的那条证据条目被过滤掉了。
+    // 另外三条（not_found / conflict / needs_human）原样列出、不动库。
+    expect(ingest.platformClaims).toHaveLength(2)
     expect(ingest.platformClaims[0]).toMatchObject({
       enterpriseId: outOfScope,
       enterpriseName: '宁波孤帆远影文创有限公司',
       uscc: '91330212MA2CL6FP2J',
       batchRef: 'uscc-verdict-batch-9',
       observedAt: '2026-10-16T16:00:00.000Z',
+      flagState: 'true',
       evidence: [],
     })
-    expect(ingest.untouched.map((row) => row.verdict).sort()).toEqual(['conflict', 'conflict', 'needs_human', 'not_found'])
+    expect(ingest.platformClaims[1]).toMatchObject({ enterpriseId: 9004, flagState: 'false' })
+    expect(ingest.untouched.map((row) => row.verdict).sort()).toEqual(['conflict', 'needs_human', 'not_found'])
     expect(ingest.untouched.every((row) => 'blocked' in row)).toBe(true)
     expect(ingest.problems).toEqual([])
   })

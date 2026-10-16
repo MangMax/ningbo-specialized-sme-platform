@@ -404,6 +404,13 @@ export interface UsccPlatformClaim {
      */
     query?: string | null
   }[]
+  /**
+   * 判定文件里 `qymcEqualsAnnouncedName` 的**三态**（`true` / 显式 `false` / 字段缺席）。
+   *
+   * 只用于报告区分「这条回填当时依赖的是代理的哪句话」——**它不是判据**：
+   * 采纳与否只由「库里对得上」决定（见 `server/utils/uscc-research.ts` 的证据解析）。
+   */
+  flagState?: 'true' | 'absent' | 'false'
   /** 判定依据（判定代理写的一句话）；落 `source_text` / `note`，供复核。 */
   reason?: string | null
   /** 证据来自哪个批次文件（如 `uscc-verdict-batch-3`）；落 `source_text`。 */

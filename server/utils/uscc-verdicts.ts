@@ -194,29 +194,13 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
         untouched.push({ enterpriseId, name, verdict: 'needs_human', reason: 'resolved 但没给候选统代', blocked: null })
         return
       }
-      if (item.qymcEqualsAnnouncedName !== true) {
-        // 代理没有说「qymc 逐字相等」（显式 false，或**该字段整个缺席**）⇒ 不采纳。
-        // 缺席不是 true，**不替它补一个 true** —— 但如实报出「它其实带了几条逐字相等的关系」，
-        // 免得是一整批的字段名笔误时，父代理要自己再去数一遍才能裁决。
-        const verbatim = (Array.isArray(item.platformEvidence) ? item.platformEvidence : []).filter((entry) =>
-          isByteEqualName(entry?.qymc, name),
-        ).length
-        const absent = item.qymcEqualsAnnouncedName === undefined || item.qymcEqualsAnnouncedName === null
-        untouched.push({
-          enterpriseId,
-          name,
-          verdict: 'conflict',
-          reason:
-            `判定文件标了 resolved，但 qymcEqualsAnnouncedName ${absent ? '**整个缺席**' : '不为 true'}` +
-            ` ⇒ 不写（回填只能由逐字相等的平台记录触发）。` +
-            (verbatim
-              ? `其 platformEvidence 里有 ${verbatim} 条 qymc 逐字等于公布名 ⇒ 若这是字段遗漏，请裁定后放开。`
-              : '其 platformEvidence 里也没有逐字相等的 qymc。') +
-            reason,
-          blocked: typeof item.blocked === 'string' && item.blocked.trim() ? item.blocked.trim() : null,
-        })
-        return
-      }
+      // `qymcEqualsAnnouncedName` 只是代理的**一句话**，不是我们的判据 —— 我们的判据是
+      // 「库里对得上」（`nameMatchLevel` 过的那条关系），所以它**缺席或标 false 都不拦**，
+      // 只把三态如实记下来（`flagState`）供报告区分。理由与父代理 ④ 同源：
+      // **用代码判据，不靠代理自律**。实测批次 5 整批漏写这个字段（15 条），
+      // 若因为字段缺席就整批不写，会把平台确实逐字证实过的企业留在清单里。
+      const flagState: 'true' | 'absent' | 'false' =
+        item.qymcEqualsAnnouncedName === true ? 'true' : item.qymcEqualsAnnouncedName === false ? 'false' : 'absent'
       // 接口取值**只认字典里的两个**：未知取值拒掉（原来「不是 apply_list 就当 business_list」是
       // 把不可信输入往一个合法类别上硬套 —— 那正是不该做的猜测）。序号也必须是正整数。
       const evidence = (Array.isArray(item.platformEvidence) ? item.platformEvidence : [])
@@ -273,6 +257,7 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
         enterpriseName: name,
         uscc,
         evidence,
+        flagState,
         reason: reason || null,
         batchRef: `uscc-verdict-batch-${value.batch ?? '?'}`,
         observedAt: generatedAt,
@@ -295,15 +280,45 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
     return false
   })
   const accepted = new Set(finalClaims.map((claim) => claim.enterpriseId))
-  const converged = untouched.filter((row) => {
-    if (row.enterpriseId == null) return true
-    if (conflictingEnterprises.has(row.enterpriseId)) return true
-    if (!accepted.has(row.enterpriseId)) return true
-    problems.push(
-      `企业 ${row.enterpriseId}「${row.name}」在某份判定文件里的结论是 ${row.verdict}，` +
-        `但另一份给出了可采纳的 resolved ⇒ 按「取更强结论」收敛为已补齐，本条不再计入冲突/未找到/待人工`,
-    )
-    return false
-  })
+  const converged: UsccVerdictUntouched[] = []
+  /** 企业 → 已经写进「不动库」清单的那一条（**按企业去重**，见下）。 */
+  const keptByEnterprise = new Map<number, UsccVerdictUntouched>()
+  const rank: Record<string, number> = { resolved: 3, conflict: 2, needs_human: 2, not_found: 1 }
+  for (const row of untouched) {
+    if (row.enterpriseId == null) {
+      converged.push(row)
+      continue
+    }
+    if (accepted.has(row.enterpriseId)) {
+      problems.push(
+        `企业 ${row.enterpriseId}「${row.name}」在某份判定文件里的结论是 ${row.verdict}，` +
+          `但另一份给出了可采纳的 resolved ⇒ 按「取更强结论」收敛为已补齐，本条不再计入冲突/未找到/待人工`,
+      )
+      continue
+    }
+    // **按企业去重、取更强结论**：同一家企业可能在两批里各有一条结论不同的记录
+    // （两个称号 / 复查改判）。五桶计数是**按企业**的，所以这里每个企业只留一条 ——
+    // 「更强」= `resolved` > `conflict`/`needs_human` > `not_found`。
+    // （实测 2411 在三份文件里各出现一次：conflict / not_found / not_found。）
+    const kept = keptByEnterprise.get(row.enterpriseId)
+    if (!kept) {
+      keptByEnterprise.set(row.enterpriseId, row)
+      converged.push(row)
+      continue
+    }
+    if ((rank[row.verdict] ?? 0) > (rank[kept.verdict] ?? 0)) {
+      problems.push(
+        `企业 ${row.enterpriseId}「${row.name}」在不同判定文件里的结论不一致` +
+          `（${kept.verdict} / ${row.verdict}）⇒ 按「取更强结论」留 ${row.verdict}`,
+      )
+      keptByEnterprise.set(row.enterpriseId, row)
+      converged[converged.indexOf(kept)] = row
+    } else {
+      problems.push(
+        `企业 ${row.enterpriseId}「${row.name}」重复出现在多份判定文件里（${kept.verdict} 与 ${row.verdict}）` +
+          '⇒ 按企业去重，保留更强的那条',
+      )
+    }
+  }
   return { platformClaims: finalClaims, untouched: converged, batches, problems }
 }
