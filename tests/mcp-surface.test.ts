@@ -38,14 +38,30 @@ import { getStoredFile, listStoredFiles } from '../server/utils/stored-files'
 // ---------------------------------------------------------------------------
 
 describe('mcp-auth 鉴权判据', () => {
-  it('写入 tool 名单就是票 18 的那三个 —— 新增写入口必须同时改这里', () => {
+  it('写入 tool 名单就是这几个 —— 新增写入口必须同时改这里', () => {
     // 这条断言是**防走神**用的:名单是「哪些调用会被要求鉴权」的唯一来源,
     // 悄悄加一个写入 tool 而不改它,就是开了一条绕过鉴权的写路。
+    // 票 18 的三个 + RL-11 的名录统一写入(`save_roster_batch`)。
     expect([...MCP_WRITE_TOOLS]).toEqual([
       'save_ocr_result',
       'set_file_category',
       'save_parse_result',
+      'save_roster_batch',
     ])
+  })
+
+  it('RL-11:名录写入 tool 是写入、只读预检不是', () => {
+    const call = (name: string) => ({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name, arguments: {} },
+    })
+    expect(writeToolCallIn(call('save_roster_batch'))).toBe('save_roster_batch')
+    // 只读预检按契约 §9 归为读 tool —— 不在此列(但仍不改业务数据)。
+    expect(writeToolCallIn(call('preflight_roster_batch'))).toBeNull()
+    expect(writeToolCallIn(call('list_enterprises'))).toBeNull()
+    expect(writeToolCallIn(call('list_differences'))).toBeNull()
   })
 
   it('readMcpToken 认 Bearer / 裸 token / X-MCP-Token,取不到给 null', () => {

@@ -26,16 +26,21 @@ import { createHash, timingSafeEqual } from 'node:crypto'
  * 写入 tool 的名单 —— **单一来源**。三个作用:
  *  1. 未带合法 token 时,中间件据此拒掉对应的 `tools/call`(HTTP 401);
  *  2. 各写入 tool 的 `enabled` 守卫据此决定要不要出现在 `tools/list` 里;
- *  3. 测试据此断言「名单恰好是这三个」。
+ *  3. 测试据此断言「名单恰好是这几个」。
  *
  * 新增写入 tool 时必须同时改这里,否则它会变成**绕过鉴权**的写入口 ——
  * 所以测试里有一条断言把名单钉死(`tests/mcp-surface.test.ts` 的「写入 tool 名单就是
  * 票 18 的那三个」)。
+ *
+ * RL-11 追加 `save_roster_batch`(名录统一写入):它改的是**名录实体**
+ * (`enterprise` / `record` / `record_event` / …),比文件元数据更重,必须有 token。
+ * 同批注册的 `preflight_roster_batch` 是**只读预检**(契约 §9 如此归类),不在此列。
  */
 export const MCP_WRITE_TOOLS = [
   'save_ocr_result',
   'set_file_category',
   'save_parse_result',
+  'save_roster_batch',
 ] as const
 
 /** 写入 tool 名(字面量联合)。 */
