@@ -20,7 +20,7 @@
  */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { normalizeName } from '../domain'
+import { normalizeName, normalizeUscc } from '../domain'
 import { getComparison, type ComparisonDirection } from '../comparison'
 import { SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
@@ -146,10 +146,13 @@ function sourceRank(code: string): number {
   return i === -1 ? SOURCE_ORDER.length : i
 }
 
-/** 归一化统代:大小写与首尾空白不影响身份比较。 */
+/**
+ * 归一化统代后比对:`null` 表示「这个值给不出统代」。
+ * 规则本身在 `lib/domain.ts` 的 `normalizeUscc`(单一来源)—— 与写入侧落 `uscc_norm`
+ * 的口径必须是**同一条**,否则「按 USCC 认到同一家企业」在读写两侧会各判各的。
+ */
 function normUscc(uscc: string | null | undefined): string | null {
-  const v = uscc?.trim().toUpperCase()
-  return v ? v : null
+  return normalizeUscc(uscc) || null
 }
 
 /** 每条记录/快照行在内存里组织出来的企业画像(总表与详情共用)。 */
@@ -170,21 +173,26 @@ interface Profile {
  *     「有任意 jxj 认定/复核事件」是它的充分条件之一,而入库培育(`nurture`)这类
  *     公布名单出现同样算——**官方历史不因平台快照缺失被删**(契约 §5 的硬边界)。
  *  2. 否则,**有正证据表明它只由平台引入且已从最新快照消失** ⇒ `removed_platform_only`:
- *     它在 ≥1 张导出快照里出现过,且**不在**它所涉称号的最新一张快照里。
+ *     它在 ≥1 张导出快照里出现过,而**它出现过的那些批次里,没有一张是「它自己那个称号」
+ *     的最新批次**。
  *  3. 其余(含「一张快照都没有」)⇒ `current`。
- *     **证据不足不误删** —— 「无从证明已移除」不等于「已移除」。
+ *     **证据不足不误删** —— 「无从证明已移除」不等于「已移除」;判据 2 的集合为空时
+ *     (没有正证据)一律落到这里。
+ *
+ * ⚠️ 「最新」必须按**批次自己的称号**判,不能按**企业记录的称号**判:企业可能出现在
+ * **别的称号**的快照里(实测:`platform_export_row` 只带 USCC,一家企业在一个称号的
+ * 快照批次里出现完全正常)。旧写法拿 `profile.records.map(r => r.titleCode)` 去查
+ * `latestBatchByTitle`,于是「企业记的称号一张快照都没有」时查到**空集** ⇒ 误判成
+ * `removed_platform_only` —— 可它明明就在最新快照里,违反契约 §5 的「证据不足不误删」。
  */
 function deriveRosterState(profile: Profile, index: SnapshotIndex): RosterState {
   if (profile.records.some((r) => r.source === 'jxj')) return 'current'
   if (!profile.records.length) return 'current'
   const present = index.presentByEnterprise.get(profile.enterprise.id)
   if (!present || present.size === 0) return 'current'
-  const latestIds = new Set(
-    profile.records
-      .map((r) => index.latestBatchByTitle.get(r.titleCode))
-      .filter((id): id is number => id != null),
-  )
-  const inLatest = [...latestIds].some((id) => present.has(id))
+  // 按 USCC 的**实际出现**(跨称号):它出现过的批次里只要有一张是「该批次所属称号」的
+  // 最新快照,它就还在最新快照里。
+  const inLatest = [...present].some((batchId) => index.latestBatchIds.has(batchId))
   return inLatest ? 'current' : 'removed_platform_only'
 }
 
@@ -274,14 +282,17 @@ function toRow(
 }
 
 /**
- * 导出快照的索引:哪些企业在哪几批快照里出现过,以及**每个称号的最新批次**是谁。
+ * 导出快照的索引:哪些企业在哪几批快照里出现过,以及**哪些批次是它自己那个称号的最新一张**。
  * 「最新」= 年度最大,同年取 id 最大(替换关系不影响:两版并存,后写的更新)。
  */
 interface SnapshotIndex {
   /** 企业 → 它出现过的批次 id 集合(按统代优先、其次归一化名命中)。 */
   presentByEnterprise: Map<number, Set<number>>
-  /** 称号 → 该称号最新一张快照批次的 id。 */
-  latestBatchByTitle: Map<string, number>
+  /**
+   * 「最新」批次的 id 集合 —— **按批次自己的称号**判定,与企业的 `record.titleCode` 无关。
+   * 判「还在不在最新快照里」时只查这一个集合(见 `deriveRosterState`)。
+   */
+  latestBatchIds: Set<number>
 }
 
 function indexSnapshots(snap: Snapshot): SnapshotIndex {
@@ -315,7 +326,7 @@ function indexSnapshots(snap: Snapshot): SnapshotIndex {
     else presentByEnterprise.set(enterpriseId, new Set([row.batchId]))
   }
 
-  return { presentByEnterprise, latestBatchByTitle }
+  return { presentByEnterprise, latestBatchIds: new Set(latestBatchByTitle.values()) }
 }
 
 /**

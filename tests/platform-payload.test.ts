@@ -12,6 +12,7 @@ import {
   classifyRawQuery,
   groupRelationsByUscc,
   relationFromRow,
+  type PlatformQueryMeta,
   type PlatformQueryOutcome,
   type PlatformRow,
 } from '../lib/platform'
@@ -25,7 +26,7 @@ const QUERIED_AT = '2026-10-15T17:11:21.514Z'
 /** 直接用行构造一次成功的查询(用于合成场景,不依赖真实夹具)。 */
 function outcomeWithRows(
   rows: PlatformRow[],
-  meta: { interface: 'business_list' | 'apply_list'; rdjb?: string; queryKey: string },
+  meta: PlatformQueryMeta,
 ): PlatformQueryOutcome {
   return {
     status: rows.length ? 'success' : 'no_record',

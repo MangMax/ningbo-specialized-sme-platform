@@ -28,7 +28,8 @@
  * ⇒ 「查询 → 关系 → 别名/差异证据」**一个批次**就能写完,不必拆两批。
  *
  * 两条通路并存,优先级明确:
- *   ① 传了 {@link BuildPayloadInput.refs} 且解析到了 id ⇒ 发**裸 id**(§8.7.4 的兼容写法);
+ *   ① 传了 {@link BuildPayloadInput.refs} 且解析到了 id ⇒ 发**裸 id**(§8.7.4 的兼容写法:
+ *      先提交 `platformQueries`、读回真 id 再提交 `aliases` / `differences` / `merges`);
  *   ② 否则有自然键 ⇒ 发**自然键引用**;
  *   ③ 两者都没有 ⇒ 退回契约 §1.2 的 `0` 哨兵(「无具体来源行引用」),绝不填假 id。
  *
@@ -36,7 +37,6 @@
  * `source_ref_conflict` / `evidence_ref_conflict` 并逐项报错。本模块**不**替调用方
  * 二选一 —— 静默取其中一个正是那条规则要禁掉的事。
  */
-
 import { createHash } from 'node:crypto'
 import { normalizeName } from '../domain'
 import type { ComparisonDirection } from '../comparison'
@@ -52,30 +52,7 @@ import type {
 } from '../roster-import-client'
 import type { PlatformQueryOutcome } from './client'
 import { type PlatformRelationRecord, relationFromRow } from './identity'
-
-/** 查询的自然键(`platform_query` 那一行的坐标);§8.7.1 的 `RosterPlatformRef` 去掉 `sequenceNo`。 */
-export interface PlatformQueryRef {
-  interface: 'business_list' | 'apply_list'
-  queryKey: string
-  rdjb: string
-  /** 给了就精确匹配那一次查询;省略则要求 `(interface, queryKey, rdjb)` 唯一。 */
-  queriedAt?: string
-}
-
-/** 查询引用 → §8.7.1 的引用形状。 */
-function queryPlatformRef(ref: PlatformQueryRef): RosterPlatformRef {
-  return {
-    interface: ref.interface,
-    queryKey: ref.queryKey,
-    rdjb: ref.rdjb,
-    ...(ref.queriedAt ? { queriedAt: ref.queriedAt } : {}),
-  }
-}
-
-/** 关系引用 → §8.7.1 的引用形状(关系引用必须带 `sequenceNo`)。 */
-function relationPlatformRef(ref: RelationRef): RosterPlatformRef {
-  return { ...queryPlatformRef(ref), sequenceNo: ref.sequenceNo }
-}
+import type { PlatformInterface } from '../labels'
 
 // ---------------------------------------------------------------------------
 // 输入
@@ -91,7 +68,7 @@ export interface KnownEnterprise {
 
 /** 一次平台查询的输入:身份(§1.3 唯一键前缀)+ 已归类的响应。 */
 export interface PlatformQueryInput {
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   queryKey: string
   rdjb: string
   queriedAt: string
@@ -102,15 +79,23 @@ export interface PlatformQueryInput {
 /** 平台关系的**自然键**:写入侧在本批事务内才生成行 id,客户端只能先用它指认。 */
 export interface RelationRef {
   queryKey: string
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   rdjb: string
   sequenceNo: number
   /**
    * 查询时点。**给了就精确匹配那一次查询**(契约 §8.7.2)——同一
    * `(interface, queryKey, rdjb)` 查过多次时,不给就会命中多次而报 `*_ref_ambiguous`。
+   * 也随 {@link QueryRef} 一起带上(它就是关系键去掉 `sequenceNo`)。
    */
   queriedAt?: string
 }
+
+/**
+ * **查询**的自然键:`(interface, queryKey, rdjb)` —— 契约 §8.7.1 里不带 `sequenceNo`
+ * 的那种引用(指认「证据出自**哪一次**查询」)。就是 {@link RelationRef} 去掉序号:
+ * 两者是同一个自然键,少一个 `sequenceNo` 而已,所以别再各写一遍那个三字段字面量。
+ */
+export type QueryRef = Omit<RelationRef, 'sequenceNo'>
 
 export interface AliasDecision {
   /** 归属企业;给 `enterpriseName` 亦可(写入侧按归一化名解析)。 */
@@ -164,7 +149,7 @@ export interface DifferenceDecision {
   measureCode?: DifferenceMeasureCode | null
   measureNote?: string | null
   /** 证据:平台查询 / 平台关系。自然键见 {@link DifferenceDecision.evidenceRelation}。 */
-  evidenceQuery?: PlatformQueryRef
+  evidenceQuery?: QueryRef
   evidenceRelation?: RelationRef
   evidenceQueryId?: number | null
   evidenceRelationId?: number | null
@@ -189,7 +174,7 @@ export interface MergeDecision {
   sourceKind?: 'platform_business' | 'platform_apply' | 'announcement' | 'manual'
   sourceRelation?: RelationRef
   sourceRefId?: number
-  evidenceQuery?: PlatformQueryRef
+  evidenceQuery?: QueryRef
   evidenceQueryId?: number | null
   note?: string | null
 }
@@ -212,7 +197,7 @@ export interface BuildPayloadInput {
    */
   refs?: {
     relationIdOf?: (ref: RelationRef) => number | null | undefined
-    queryIdOf?: (ref: PlatformQueryRef) => number | null | undefined
+    queryIdOf?: (ref: QueryRef) => number | null | undefined
   }
 }
 
@@ -316,8 +301,20 @@ function toRelationItem(
   }
 }
 
-/** 证据指针的两种写法:**恰给其一**(同给会被写入侧判 `*_ref_conflict`)。 */
-type RelationRefFields = { sourceRefId?: number; sourceRelationRef?: RosterPlatformRef }
+/** 查询引用 → §8.7.1 的引用形状。 */
+function queryPlatformRef(ref: QueryRef): RosterPlatformRef {
+  return {
+    interface: ref.interface,
+    queryKey: ref.queryKey,
+    rdjb: ref.rdjb,
+    ...(ref.queriedAt ? { queriedAt: ref.queriedAt } : {}),
+  }
+}
+
+/** 关系引用 → §8.7.1 的引用形状(关系引用必须带 `sequenceNo`)。 */
+function relationPlatformRef(ref: RelationRef): RosterPlatformRef {
+  return { ...queryPlatformRef(ref), sequenceNo: ref.sequenceNo }
+}
 
 /**
  * 别名/归并的**来源关系**指针。
@@ -329,7 +326,7 @@ type RelationRefFields = { sourceRefId?: number; sourceRelationRef?: RosterPlatf
 function relationRefFields(
   input: BuildPayloadInput,
   decision: { sourceRelation?: RelationRef; sourceRefId?: number },
-): RelationRefFields {
+): { sourceRefId?: number; sourceRelationRef?: RosterPlatformRef } {
   const relation = decision.sourceRelation
   const literalId = decision.sourceRefId
   if (!relation) return { sourceRefId: literalId ?? 0 }
@@ -346,7 +343,7 @@ function relationRefFields(
 /** 差异项的**查询证据**指针(与 `relationRefFields` 同一条非静默规则)。 */
 function queryRefFields(
   input: BuildPayloadInput,
-  decision: { evidenceQuery?: PlatformQueryRef; evidenceQueryId?: number | null },
+  decision: { evidenceQuery?: QueryRef; evidenceQueryId?: number | null },
 ): { evidenceQueryId?: number | null; evidenceQueryRef?: RosterPlatformRef } {
   const query = decision.evidenceQuery
   const literalId = decision.evidenceQueryId ?? null

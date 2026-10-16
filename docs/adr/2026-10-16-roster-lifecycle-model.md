@@ -106,7 +106,7 @@ erDiagram
 
 ## 5. 迁移 / 回填方案与不确定记录边界
 
-**迁移(本票已落)**:`db/migrations/0007_wandering_kate_bishop.sql`,**纯增量** ——
+**迁移(本票已落)**:`db/migrations/0007_premium_sinister_six.sql`,**纯增量** ——
 只 `CREATE TABLE` / `CREATE INDEX` 与新表,加上 `record_event` 两个**可空**列
 (`review_outcome` / `decided_year`)。**不改名、不删除、不改既有列语义**,既有 525 个测试
 的基线表现不变(见 §9)。

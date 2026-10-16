@@ -16,7 +16,7 @@ import {
   BUSINESS_GRID,
   BUSINESS_LIST_PATH,
   PLATFORM_BASE,
-  PLATFORM_RDJBS,
+  RDJB_VALUES,
   PlatformCredentialMissingError,
   PlatformResponseError,
   PlatformSessionExpiredError,
@@ -26,6 +26,7 @@ import {
   type PlatformRow,
   classifyPlatformResponse,
 } from './adapter'
+import type { PlatformInterface } from '../labels'
 
 export type PlatformFetch = (
   input: string,
@@ -45,7 +46,7 @@ const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36'
 
 export interface PlatformQueryOutcome extends PlatformResponseOutcome {
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   /** `business_list` 的 rdjb;`apply_list` 记空串(该接口不用此参数)。 */
   rdjb: string
   queryKey: string
@@ -96,7 +97,7 @@ function resolveCookie(option: PlatformQueryOptions['cookie']): string {
 export function classifyRawQuery(
   raw: string,
   input: {
-    interface: 'business_list' | 'apply_list'
+    interface: PlatformInterface
     rdjb?: string
     queryKey: string
     /** 真实查询时点;离线归类(回放已取回的原文)时可省,省略记空串。 */
@@ -188,16 +189,9 @@ function queryBody(queryKey: string, extra: Record<string, string> = {}): Record
   return { tyshxydm: queryKey, pageNum: '1', numPerPage: '50', ...extra }
 }
 
-/**
- * 按 USCC 把 `businessList` 的 **rdjb=1/2/3 全查**。
- *
- * 为什么必须三个全查:实测 `91330211255994457P` 的 `rdjb=1` 与 `rdjb=2` 各 0 行、
- * `rdjb=3` 有 6 行 —— 曾用名证据就在那 6 行里。只查本地称号映射出的那一个 `rdjb`
- * (旧 `pipeline/scripts/reconcile.ts:262` 的做法)会**整条漏掉证据**。
- */
 /** 一个查询槽位:接口 + (business_list 的)`rdjb`。 */
 export interface PlatformSlot {
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   rdjb?: PlatformRdjb
 }
 
@@ -249,7 +243,7 @@ export async function queryPlatformSlots(
  */
 export async function queryAllRdjb(options: PlatformQueryOptions): Promise<PlatformQueryOutcome[]> {
   return queryPlatformSlots(options, [
-    ...PLATFORM_RDJBS.map((rdjb) => ({ interface: 'business_list' as const, rdjb })),
+    ...RDJB_VALUES.map((rdjb) => ({ interface: 'business_list' as const, rdjb })),
     { interface: 'apply_list' as const },
   ])
 }

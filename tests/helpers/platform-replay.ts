@@ -14,6 +14,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BUSINESS_LIST_PATH, type PlatformFetch } from '../../lib/platform'
+import type { PlatformInterface } from '../../lib/labels'
 
 const FIXTURE_DIR = join(import.meta.dirname, '..', 'fixtures', 'platform')
 
@@ -29,7 +30,7 @@ export const EMPTY_APPLY_RESPONSE =
 /** 一次请求的坐标。`uscc` 取自表单的 `tyshxydm`。 */
 export interface PlatformCall {
   uscc: string
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   /** `business_list` 的 `rdjb`;`apply_list` 为空串。 */
   rdjb: string
 }

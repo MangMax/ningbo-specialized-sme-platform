@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import ExcelJS from 'exceljs'
-import { isNingboDistrict } from '../domain'
+import { isNingboDistrict, normalizeUscc } from '../domain'
 
 /**
  * RL-02 —— 经信局《公布历年小巨人企业名单》工作簿的**只读解析器**。
@@ -382,9 +382,4 @@ function parseBatchSeq(label: string): number | null {
 function parseListNo(raw: string): number {
   const value = Number(raw)
   return Number.isFinite(value) && raw !== '' ? value : 0
-}
-
-/** 统一社会信用代码归一:去全部空白 + 转大写(与既有比对口径一致)。 */
-export function normalizeUscc(raw: string): string {
-  return raw.replace(/\s+/gu, '').toUpperCase()
 }

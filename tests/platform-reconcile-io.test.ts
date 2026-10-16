@@ -213,7 +213,95 @@ describe('凭据:拿不到就不发请求、不写半截结果', () => {
   })
 })
 
+describe('实测案例 `91330206793007818K`:旧名要真的落进 enterprise_alias', () => {
+  const USCC = '91330206793007818K'
+  const NOW = '宁波一力实业有限公司'
+  const OLD = '宁波一力减震器有限公司'
+
+  const emptyBusiness = fixture('business-list-rdjb1-empty.html')
+  const reply = (call: PlatformCall) => {
+    if (call.interface === 'apply_list') {
+      return {
+        text: JSON.stringify({
+          zrarData: {
+            grid: {
+              applyGrid: {
+                maxCount: 2,
+                page: 1,
+                pageSize: 50,
+                pageSet: [
+                  { id: 'SQ-Y-2025', qymc: NOW, tyshxydm: USCC, szsfmc: '宁波市', cszt: '区县已审', sqsj: '2025-06-21 09:50:48', whpc: '2025-1', sblx: '复核', year: '2025', rdjb: '3' },
+                  { id: 'SQ-Y-2022', qymc: OLD, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2022-06-22 17:17:52', whpc: '2022-1', sblx: '申请', year: '2022', rdjb: '3' },
+                ],
+              },
+            },
+          },
+        }),
+      }
+    }
+    if (call.rdjb !== '3' && call.rdjb !== '2') return { text: emptyBusiness }
+    const rows =
+      call.rdjb === '3'
+        ? [
+            { id: 'SQ-Y-2022', qymc: OLD, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2022-06-22 17:17:52', whpc: '2022-1', sblx: '申请' },
+            { id: 'SQ-Y-2023', qymc: NOW, tyshxydm: USCC, szsfmc: '宁波市', cszt: '待审核', sqsj: '2023-04-19 16:46:01', whpc: '2022-1', sblx: '更新' },
+            { id: 'SQ-Y-2024', qymc: NOW, tyshxydm: USCC, szsfmc: '宁波市', cszt: '待审核', sqsj: '2024-05-21 14:10:06', whpc: '2022-1', sblx: '更新' },
+            { id: 'SQ-Y-2025', qymc: NOW, tyshxydm: USCC, szsfmc: '宁波市', cszt: '区县已审', sqsj: '2025-06-21 09:50:48', whpc: '2025-1', sblx: '复核' },
+          ]
+        : [{ id: 'SQ-Y-2023', qymc: NOW, tyshxydm: USCC, szsfmc: '宁波市', cszt: '待审核', sqsj: '2023-04-19 16:46:01', whpc: '2022-1', sblx: '更新' }]
+    return {
+      text: `<table name="businessListGrid"><tbody></tbody></table>\n<script>\n(function(data){ })( ${JSON.stringify({
+        zrarData: { grid: { businessListGrid: { maxCount: rows.length, page: 1, pageSize: 50, pageSet: rows } } },
+      })} );\n</script>`,
+    }
+  }
+
+  it('4 条关系(3 现名 + 1 旧名)⇒ 判 renamed,并把旧名写成 confirmed 别名(来源指向真关系行)', async () => {
+    const db = freshDb()
+    const enterpriseId = seedTarget(db, NOW, USCC)
+    db.delete(schema.record).run()
+    db.insert(schema.record).values({ enterpriseId, source: 'miit', titleCode: 'little_giant' }).run()
+
+    const platform = platformReplay(reply)
+    const report = await runPlatformReconcile({
+      db,
+      fetchImpl: platform.fetchImpl,
+      cookie: 'c=1',
+      retries: 0,
+      now: () => new Date('2026-10-16T02:00:00.000Z'),
+    })
+
+    // 四档都问了;rdjb=3 的 4 条关系逐条落库。
+    expect(new Set(platform.calls.map((call) => `${call.interface}|${call.rdjb}`))).toEqual(
+      new Set(['business_list|1', 'business_list|2', 'business_list|3', 'apply_list|']),
+    )
+    const relations = db.select().from(schema.platformRelation).all()
+    expect(relations).toHaveLength(4 + 1 + 2)
+
+    const difference = db.select().from(schema.differenceReason).all().find((row) => row.enterpriseId === enterpriseId)!
+    expect(difference.titleCode).toBe('little_giant')
+    expect(difference.direction).toBe('extra_in_miit')
+    expect(difference.reasonCode).toBe('renamed')
+    expect(difference.measureCode).toBe('update_current_name')
+
+    const alias = db.select().from(schema.enterpriseAlias).all()
+    expect(alias).toHaveLength(1)
+    expect(alias[0]!.enterpriseId).toBe(enterpriseId)
+    expect(alias[0]!.name).toBe(OLD)
+    expect(alias[0]!.nameNorm).toBe(OLD)
+    expect(alias[0]!.verificationStatus).toBe('confirmed')
+    expect(alias[0]!.sourceKind).toBe('platform_business')
+    // 自然键在**同一批**内解析:来源指向 rdjb=3 的那条旧名关系。
+    const source = relations.find((row) => row.id === alias[0]!.sourceRefId)!
+    expect(source.relationKey).toBe('SQ-Y-2022')
+    const sourceQuery = db.select().from(schema.platformQuery).all().find((row) => row.id === source.queryId)!
+    expect(`${sourceQuery.interface}|${sourceQuery.rdjb}`).toBe('business_list|3')
+    expect(report.counts.byReason).toEqual({ renamed: 1 })
+  })
+})
+
 describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', () => {
+
   it('rdjb=3 已有新鲜成功查询(含两个名字)⇒ 复用该证据判出更名,只补另外三个槽位', async () => {
     const db = freshDb()
     const USCC = '91330211000000088V'

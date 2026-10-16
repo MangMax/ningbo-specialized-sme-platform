@@ -33,6 +33,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { getComparison, type ComparisonDirection } from '../../lib/comparison'
 import { normalizeName } from '../../lib/domain'
+import type { PlatformInterface } from '../../lib/labels'
 import {
   type PlatformFetch,
   type PlatformQueryOutcome,
@@ -68,7 +69,7 @@ import { commitRosterImport, preflightRosterImport } from './roster-import'
 type Db = BetterSQLite3Database<typeof schema>
 
 /** 四个查询槽位:`businessList` 的 `rdjb=1/2/3` 加申报接口。 */
-const SLOTS: { interface: 'business_list' | 'apply_list'; rdjb: string }[] = [
+const SLOTS: { interface: PlatformInterface; rdjb: string }[] = [
   { interface: 'business_list', rdjb: '1' },
   { interface: 'business_list', rdjb: '2' },
   { interface: 'business_list', rdjb: '3' },
@@ -295,13 +296,13 @@ function freshStoredSlots(db: Db, queryKey: string, cutoffIso: string): Map<stri
       rawRows: relations.map(rawRowOf),
       raw: '',
       evidence: {
-        interface: query.interface as 'business_list' | 'apply_list',
+        interface: query.interface,
         rdjb: query.rdjb,
         queriedAt: query.queriedAt,
         status: query.status,
         failureReason: query.failureReason,
         relations: relations.map((row) => ({
-          interface: query.interface as 'business_list' | 'apply_list',
+          interface: query.interface,
           rdjb: query.rdjb,
           sequenceNo: row.sequenceNo,
           relationKey: row.relationKey,

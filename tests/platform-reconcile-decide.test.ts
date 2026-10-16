@@ -10,6 +10,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { classifyRawQuery, type PlatformRow } from '../lib/platform'
+import type { PlatformInterface } from '../lib/labels'
 import { relationFromRow, type PlatformRelationRecord } from '../lib/platform/identity'
 import {
   type ReconcileQueryEvidence,
@@ -27,7 +28,7 @@ const QUERIED_AT = '2026-10-15T17:11:21.514Z'
 /** 用真实夹具构造一次查询证据(走真的解析器,不手写记录)。 */
 function evidenceFromFixture(
   name: string,
-  meta: { interface: 'business_list' | 'apply_list'; rdjb?: string },
+  meta: { interface: PlatformInterface; rdjb?: string },
 ): ReconcileQueryEvidence {
   const outcome = classifyRawQuery(fixture(name), { ...meta, queryKey: USCC, queriedAt: QUERIED_AT })
   return {
@@ -44,7 +45,7 @@ function evidenceFromFixture(
 
 /** 合成一次查询(用于构造合成场景,不依赖真实夹具)。 */
 function evidence(
-  meta: { interface: 'business_list' | 'apply_list'; rdjb?: string },
+  meta: { interface: PlatformInterface; rdjb?: string },
   rows: PlatformRow[],
   status: ReconcileQueryEvidence['status'] = rows.length ? 'success' : 'no_record',
 ): ReconcileQueryEvidence {
@@ -62,7 +63,7 @@ function evidence(
 }
 
 function failedEvidence(
-  meta: { interface: 'business_list' | 'apply_list'; rdjb?: string },
+  meta: { interface: PlatformInterface; rdjb?: string },
   reason: string,
 ): ReconcileQueryEvidence {
   return {
@@ -136,8 +137,9 @@ describe('四态互不等价(契约 §3.2)', () => {
     const verdict = decideDifference(target({ direction: 'missing_in_miit' }), queries)
     expect(verdict.status).toBe('no_record')
     expect(verdict.reasonNote).toContain('0 条')
-    expect(verdict.measureCode).toBe('mark_platform_snapshot')
-    expect(verdict.verificationStatus).toBe('confirmed')
+    // 两个接口都查不到 ⇒ 无记录 + 转人工(父代理口径:no_record 配 manual_review)。
+    expect(verdict.measureCode).toBe('manual_review')
+    expect(verdict.verificationStatus).toBe('pending')
     // 与「失败」不是同一件事:这里每一次查询都成功了。
     expect(verdict.status).not.toBe('query_failed')
   })
@@ -419,19 +421,29 @@ describe('注销:只有来源明说时才判,绝不从别的字段推', () => {
 // ---------------------------------------------------------------------------
 
 describe('平台有记录、关系无异常:按方向给结论', () => {
-  it('missing_in_miit(公布侧有、导出表无)⇒ confirmed_no_diff + none(接口证实平台侧确有该企业)', () => {
-    // 名字只有一种,所以不会先命中「更名」—— 才好单看方向判据。
+  it('missing_in_miit(公布侧有、导出表无)但接口有记录 ⇒ platform_stale(平台未更新),不是「无差异」', () => {
+    // 用户 2026-10-16 的口径:官方已公布、平台审核信息滞后 ⇒ 这就是 platform_stale。
     const rows: PlatformRow[] = [
-      { id: 'SQ-1', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2024-06-01 10:00:00', rdjb: '2' },
-      { id: 'SQ-2', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '待审核', sqsj: '2025-06-01 10:00:00', rdjb: '2' },
+      { id: 'SQ-1', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '区县已审', sqsj: '2025-06-21 10:00:00', rdjb: '2' },
+      { id: 'SQ-2', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '待审核', sqsj: '2024-06-01 10:00:00', rdjb: '2' },
     ]
     const verdict = decideDifference(target({ direction: 'missing_in_miit' }), [
       evidence({ interface: 'business_list', rdjb: '2' }, rows),
     ])
-    expect(verdict.status).toBe('confirmed_no_diff')
-    expect(verdict.reasonCode).toBeNull()
-    expect(verdict.measureCode).toBe('none')
+    expect(verdict.status).toBe('confirmed_reason')
+    expect(verdict.reasonCode).toBe('platform_stale')
+    expect(verdict.measureCode).toBe('mark_platform_snapshot')
+    expect(verdict.verificationStatus).toBe('confirmed')
+    // reasonNote 要抄下关键 cszt 原文与年份 —— 判定必须能指回可读证据。
+    expect(verdict.reasonNote).toContain('区县已审')
+    expect(verdict.reasonNote).toContain('待审核')
+    expect(verdict.reasonNote).toContain('2024')
+    expect(verdict.reasonNote).toContain('2025')
     expect(verdict.evidenceQuery).not.toBeNull()
+    expect(verdict.evidenceRelation).not.toBeNull()
+    // ⚠️ 绝不能记成 no_record / confirmed_no_diff —— 那会把「平台滞后」误报成「无差异」。
+    expect(verdict.status).not.toBe('no_record')
+    expect(verdict.status).not.toBe('confirmed_no_diff')
   })
 
   it('extra_in_miit(导出表有、公布侧无)⇒ platform_stale + mark_platform_snapshot', () => {
@@ -447,6 +459,126 @@ describe('平台有记录、关系无异常:按方向给结论', () => {
     expect(verdict.reasonNote).toContain('在册')
     // 「标明平台时点」而不是改写历史 —— 措施文案必须说清这一点。
     expect(verdict.measureNote).toContain('不覆盖')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 父代理 2026-10-16 用真凭据实测的三个案例(表里的条数 / cszt / 年份 / qymc 逐字照搬)
+// ---------------------------------------------------------------------------
+
+describe('实测案例一 `91330206793007818K`:同一次查询里既有现行名又有旧名', () => {
+  const YILI = '91330206793007818K'
+  const YILI_NOW = '宁波一力实业有限公司'
+  const YILI_OLD = '宁波一力减震器有限公司'
+  const yiliTarget = (overrides: Partial<ReconcileTarget> = {}) =>
+    target({
+      enterpriseId: 7286,
+      enterpriseName: YILI_NOW,
+      enterpriseNameNorm: YILI_NOW,
+      uscc: YILI,
+      direction: 'extra_in_miit',
+      titleCode: 'little_giant',
+      ...overrides,
+    })
+
+  /** rdjb=3 → 4 条(1 条旧名 + 3 条现行名);rdjb=2 → 1 条;rdjb=1 → 0;申报 → 2 条。 */
+  const yiliQueries = (): ReconcileQueryEvidence[] => [
+    evidence({ interface: 'business_list', rdjb: '1' }, []),
+    evidence({ interface: 'business_list', rdjb: '2' }, [
+      { id: 'SQ-Y2', qymc: YILI_NOW, tyshxydm: YILI, szsfmc: '宁波市', cszt: '待审核', sqsj: '2023-04-19 16:46:01', whpc: '2022-1' },
+    ]),
+    evidence({ interface: 'business_list', rdjb: '3' }, [
+      { id: 'SQ332022062212391', qymc: YILI_OLD, tyshxydm: YILI, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2022-06-22 17:17:52', whpc: '2022-1', sblx: '申请' },
+      { id: 'SQ-Y-2023', qymc: YILI_NOW, tyshxydm: YILI, szsfmc: '宁波市', cszt: '待审核', sqsj: '2023-04-19 16:46:01', whpc: '2022-1', sblx: '更新' },
+      { id: 'SQ-Y-2024', qymc: YILI_NOW, tyshxydm: YILI, szsfmc: '宁波市', cszt: '待审核', sqsj: '2024-05-21 14:10:06', whpc: '2022-1', sblx: '更新' },
+      { id: 'SQ-Y-2025', qymc: YILI_NOW, tyshxydm: YILI, szsfmc: '宁波市', cszt: '区县已审', sqsj: '2025-06-21 09:50:48', whpc: '2025-1', sblx: '复核' },
+    ]),
+    evidence({ interface: 'apply_list' }, [
+      { id: 'SQ-Y-2025', qymc: YILI_NOW, tyshxydm: YILI, szsfmc: '宁波市', cszt: '区县已审', sqsj: '2025-06-21 09:50:48', whpc: '2025-1', sblx: '复核', year: '2025', rdjb: '3' },
+      { id: 'SQ332022062212391', qymc: YILI_OLD, tyshxydm: YILI, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2022-06-22 17:17:52', whpc: '2022-1', sblx: '申请', year: '2022', rdjb: '3' },
+    ]),
+  ]
+
+  it('4 条现行名 + 1 条旧名 ⇒ 识别出旧名是曾用名(不是把 4 条现行名当成曾用名)', () => {
+    const verdict = decideDifference(yiliTarget(), yiliQueries())
+    expect(verdict.aliases).toHaveLength(1)
+    expect(verdict.aliases[0]!.name).toBe(YILI_OLD)
+    expect(verdict.aliases[0]!.verificationStatus).toBe('confirmed')
+    expect(verdict.aliases[0]!.sourceRelation.rdjb).toBe('3')
+    expect(verdict.aliases[0]!.sourceRelation.sequenceNo).toBe(1)
+    expect(verdict.status).toBe('confirmed_reason')
+    expect(verdict.reasonCode).toBe('renamed')
+    expect(verdict.measureCode).toBe('update_current_name')
+  })
+
+  it('旧名那条的申报时间最早、现名最新 ⇒ 取「最新一次申报写出的名字」当现名', () => {
+    const queries = yiliQueries()
+    const rdjb3 = queries.find((query) => query.rdjb === '3')!
+    expect(rdjb3.relations).toHaveLength(4)
+    expect(rdjb3.relations.filter((relation) => relation.nameRaw === YILI_OLD)).toHaveLength(1)
+    expect(rdjb3.relations.filter((relation) => relation.nameRaw === YILI_NOW)).toHaveLength(3)
+    const verdict = decideDifference(yiliTarget(), queries)
+    expect(verdict.aliases.map((alias) => alias.name)).toEqual([YILI_OLD])
+  })
+})
+
+describe('实测案例三 `913302126102116572`:三条关系、名字只有一个 ⇒ platform_stale 抄下 cszt 原文与年份', () => {
+  const JUSHEN = '913302126102116572'
+  const NAME = '宁波巨神制泵实业有限公司'
+
+  it('missing_in_miit + 接口有 5 条关系 ⇒ confirmed_reason/platform_stale/mark_platform_snapshot', () => {
+    const verdict = decideDifference(
+      target({ enterpriseId: 1, enterpriseName: NAME, enterpriseNameNorm: NAME, uscc: JUSHEN, titleCode: 'little_giant', direction: 'missing_in_miit' }),
+      [
+        evidence({ interface: 'business_list', rdjb: '3' }, [
+          { id: 'SQ-J1', qymc: NAME, tyshxydm: JUSHEN, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2021-06-22 17:17:52', whpc: '2021-1' },
+          { id: 'SQ-J2', qymc: NAME, tyshxydm: JUSHEN, szsfmc: '宁波市', cszt: '待审核', sqsj: '2022-06-22 17:17:52', whpc: '2021-1' },
+          { id: 'SQ-J3', qymc: NAME, tyshxydm: JUSHEN, szsfmc: '宁波市', cszt: '待审核', sqsj: '2023-06-22 17:17:52', whpc: '2021-1' },
+        ]),
+        evidence({ interface: 'apply_list' }, [
+          { id: 'SQ-J2', qymc: NAME, tyshxydm: JUSHEN, szsfmc: '宁波市', cszt: '待审核', sqsj: '2022-06-22 17:17:52', sblx: '复核', year: '2022', rdjb: '3' },
+          { id: 'SQ-J1', qymc: NAME, tyshxydm: JUSHEN, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2021-06-22 17:17:52', sblx: '申请', year: '2021', rdjb: '3' },
+        ]),
+      ],
+    )
+    expect(verdict.status).toBe('confirmed_reason')
+    expect(verdict.reasonCode).toBe('platform_stale')
+    expect(verdict.measureCode).toBe('mark_platform_snapshot')
+    expect(verdict.verificationStatus).toBe('confirmed')
+    expect(verdict.aliases).toEqual([])
+    // 两类证据都在说明里:哪几档、哪些状态、哪些年份。
+    expect(verdict.reasonNote).toContain('business_list rdjb=3 3 条')
+    expect(verdict.reasonNote).toContain('apply_list 2 条')
+    expect(verdict.reasonNote).toContain('待审核')
+    expect(verdict.reasonNote).toContain('终审通过')
+    expect(verdict.reasonNote).toContain('2021')
+    expect(verdict.reasonNote).toContain('2022')
+    expect(verdict.reasonNote).toContain('滞后')
+  })
+})
+
+describe('平台未更新与更名是两个正交事实:原因取平台滞后,曾用名照写', () => {
+  it('missing_in_miit + 接口有记录 + 关系里带旧名 ⇒ platform_stale,同时仍产出曾用名', () => {
+    const USCC2 = '91330211000000021M'
+    const NOW = '宁波某实业有限公司'
+    const OLD = '宁波某实业厂'
+    const verdict = decideDifference(
+      target({ enterpriseId: 9, enterpriseName: NOW, enterpriseNameNorm: NOW, uscc: USCC2, direction: 'missing_in_miit' }),
+      [
+        evidence({ interface: 'business_list', rdjb: '3' }, [
+          { id: 'SQ-A', qymc: OLD, tyshxydm: USCC2, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2022-06-22 17:17:52' },
+          { id: 'SQ-B', qymc: NOW, tyshxydm: USCC2, szsfmc: '宁波市', cszt: '待审核', sqsj: '2025-06-21 09:50:48' },
+        ]),
+      ],
+    )
+    // 父代理口径:missing_in_miit + 任一接口有记录 ⇒ platform_stale(不能记成「无差异」)。
+    expect(verdict.reasonCode).toBe('platform_stale')
+    expect(verdict.measureCode).toBe('mark_platform_snapshot')
+    // 但曾用名是身份事实,照样要写出去 —— 否则这一轮就丢了更名证据。
+    expect(verdict.aliases).toHaveLength(1)
+    expect(verdict.aliases[0]!.name).toBe(OLD)
+    expect(verdict.aliases[0]!.verificationStatus).toBe('confirmed')
+    expect(verdict.reasonNote).toContain(OLD)
   })
 })
 

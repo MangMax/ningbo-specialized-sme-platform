@@ -18,6 +18,7 @@
  */
 
 import type { ComparisonDirection } from '../comparison'
+import type { PlatformInterface } from '../labels'
 import { normalizeName } from '../domain'
 import { aliasCandidatesOf, groupRelationsByUscc, type PlatformRelationRecord } from './identity'
 import type {
@@ -63,7 +64,7 @@ export interface ReconcileTarget {
 
 /** 一次查询的**证据形态**(纯数据)。构造方既可以是实查结果,也可以是从库里读回的历史。 */
 export interface ReconcileQueryEvidence {
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   /** `business_list` 的 rdjb;`apply_list` 为空串。 */
   rdjb: string
   queriedAt: string
@@ -76,7 +77,7 @@ export interface ReconcileQueryEvidence {
 
 /** 证据指针的**自然键**(契约 §8.7):写入侧在**同一批内**解析成真实行 id。 */
 export interface ReconcileQueryRef {
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   queryKey: string
   rdjb: string
   queriedAt: string
@@ -176,18 +177,21 @@ function relationYear(relation: PlatformRelationRecord): number | null {
 // ---------------------------------------------------------------------------
 
 /**
- * **更名**判定(契约 §5.1)。返回三者之一:
- *  - `verdict`:判出更名(原因 + 措施 + 逐条曾用名);
+ * **更名**判定(契约 §5.1)。返回三样:
+ *  - `aliases`:**该写的曾用名**(身份事实,与「这条差异为什么存在」正交 —— 所以
+ *    `missing_in_miit` 走 `platform_stale` 时也照样带着它一起写出去);
+ *  - `verdict`:把更名**当作差异原因**的判定(原因 + 措施 + 逐条曾用名)。只在没有更强
+ *    方向判据时使用:`missing_in_miit` 由父代理口径固定为 `platform_stale`,所以那时取
+ *    `aliases` 而不用这个 `verdict`;
  *  - `needsReview`:有更名**候选**但锚不到来源关系 —— 证据在手上却指不回具体行 ⇒ 转人工,
- *    绝不静默降级成别的结论(那样会把更名证据整个吞掉);
- *  - 两者皆空:没有更名证据,交给后面的省份/方向判据。
+ *    绝不静默降级成别的结论(那样会把更名证据整个吞掉)。
  */
 function decideRename(
   target: ReconcileTarget,
   uscc: string,
   relations: PlatformRelationRecord[],
   successes: ReconcileQueryEvidence[],
-): { verdict: DifferenceVerdict | null; needsReview: string | null } {
+): { verdict: DifferenceVerdict | null; needsReview: string | null; aliases: ReconcileAliasDecision[] } {
   const group = groupRelationsByUscc(relations).find((item) => item.uscc === uscc) ?? null
   const candidates = group ? aliasCandidatesOf(group) : []
 
@@ -219,6 +223,7 @@ function decideRename(
     if (unanchored.length > 0) {
       return {
         verdict: null,
+        aliases: [],
         needsReview:
           `平台关系里出现与现名不同的历史名称(${unanchored.join('、')}),` +
           '但找不到承载该名称的**具体关系行**(证据指针锚不上),无法写成可回溯的曾用名。',
@@ -227,6 +232,7 @@ function decideRename(
     const anchor = candidates[0]!.relations[0]!
     const query = queryOfRelation(successes, anchor)
     return {
+      aliases,
       verdict: {
         status: 'confirmed_reason',
         reasonCode: 'renamed',
@@ -255,10 +261,24 @@ function decideRename(
     if (!query) {
       return {
         verdict: null,
+        aliases: [],
         needsReview: `平台关系写出的名称「${differing[0]}」与本企业名不同,但锚不到承载它的关系行。`,
       }
     }
+    const singleAlias: ReconcileAliasDecision[] = [
+      {
+        name: differing[0]!,
+        sourceKind: anchor.sourceKind,
+        sourceRelation: relationRefOf(query, uscc, anchor),
+        validFrom: anchor.appliedAt,
+        verificationStatus: 'pending',
+        note:
+          `平台关系 ${anchor.relationKey ?? `#${anchor.sequenceNo}`} 的 qymc 写的是「${differing[0]}」,` +
+          `与本企业名「${target.enterpriseName}」不同;平台上仅此一个名字,先后待核。`,
+      },
+    ]
     return {
+      aliases: singleAlias,
       verdict: {
         status: 'confirmed_reason',
         reasonCode: 'renamed',
@@ -272,24 +292,13 @@ function decideRename(
         evidenceQuery: queryRefOf(query, uscc),
         evidenceRelation: relationRefOf(query, uscc, anchor),
         movedIn: null,
-        aliases: [
-          {
-            name: differing[0]!,
-            sourceKind: anchor.sourceKind,
-            sourceRelation: relationRefOf(query, uscc, anchor),
-            validFrom: anchor.appliedAt,
-            verificationStatus: 'pending',
-            note:
-              `平台关系 ${anchor.relationKey ?? `#${anchor.sequenceNo}`} 的 qymc 写的是「${differing[0]}」,` +
-              `与本企业名「${target.enterpriseName}」不同;平台上仅此一个名字,先后待核。`,
-          },
-        ],
+        aliases: singleAlias,
       },
       needsReview: null,
     }
   }
 
-  return { verdict: null, needsReview: null }
+  return { verdict: null, needsReview: null, aliases: [] }
 }
 
 /** 平台关系状态里表示「该条记录已作废」的取值(实测字典)。 */
@@ -418,31 +427,21 @@ export function decideDifference(
           .map((query) => `${query.interface}${query.rdjb ? ` rdjb=${query.rdjb}` : ''}`)
           .join('、')}),本结论不覆盖那几档。`
       : ''
-    if (target.direction === 'extra_in_miit') {
-      return {
-        status: 'no_record',
-        reasonCode: null,
-        reasonNote:
-          `平台导出表有该企业,但接口查询(${scope})均**成功且返回 0 条** —— ` +
-          `导出表(采集时点快照)与接口现状不一致,证据互相矛盾。${incomplete}`,
-        measureCode: 'manual_review',
-        measureNote: '导出表与接口现状冲突,需人工核实以哪一侧为准;不据此改写任何一侧。',
-        verificationStatus: 'pending',
-        evidenceQuery: queryRefOf(successes[0]!, target.uscc),
-        evidenceRelation: null,
-        movedIn: null,
-        aliases: [],
-      }
-    }
+    // 两个方向都只有「**任一次成功查询返回 0 条**」才算无记录;配 `manual_review`(待人工)。
+    // 注意 `missing_in_miit` 的另一半在下面:接口**有**记录时是 `platform_stale`(平台未更新),
+    // **不是**这里 —— 把「接口有记录」记成 `no_record` 会把「平台滞后」误报成「平台无记录」。
+    const contradiction =
+      target.direction === 'extra_in_miit'
+        ? '导出表(采集时点快照)与接口现状不一致,证据互相矛盾。'
+        : '公布名单有该企业,而平台两个接口都查不到 —— 先补查/复核后再定论。'
     return {
       status: 'no_record',
       reasonCode: null,
-      reasonNote: `接口查询(${scope})均成功且返回 0 条:平台确无该企业的关联记录。${incomplete}`,
-      measureCode: incomplete ? 'manual_review' : 'mark_platform_snapshot',
-      measureNote: incomplete
-        ? '先把没查成的档位补齐再定论;在此之前保留正式公布历史,不作任何回填。'
-        : '保留正式公布历史;平台快照缺此条属事实,照实标明,不覆盖公布名单。',
-      verificationStatus: incomplete ? 'pending' : 'confirmed',
+      reasonNote: `接口查询(${scope})均**成功且返回 0 条**:平台确无该企业的关联记录。${contradiction}${incomplete}`,
+      measureCode: 'manual_review',
+      measureNote:
+        '平台两个接口都没有这家企业的记录,按人工核实处理;不据此改写任何一侧,也不产生新企业。',
+      verificationStatus: 'pending',
       evidenceQuery: queryRefOf(successes[0]!, target.uscc),
       evidenceRelation: null,
       movedIn: null,
@@ -473,12 +472,16 @@ export function decideDifference(
   //    (a) 同一 `tyshxydm` 下 `qymc` 出现**多个不同写法** ⇒ 历史行本身就是曾用名证据;
   //    (b) 平台关系写出的名字与**本企业(公布侧)的名**不同 ⇒ 两侧名字不一致,同样是更名证据。
   //    (b) 覆盖平台上只写出一个名字、而那个名字与公布名不同的情形 —— 只按 (a) 找会整条漏掉。
-  const renameVerdict = decideRename(target, target.uscc, relations, successes)
-  if (renameVerdict.needsReview) {
+  //
+  //    **曾用名是身份事实,与「这条差异为什么存在」正交**:所以下面的 `missing_in_miit` 判据
+  //    即使给出 `platform_stale`,也照样把这里的曾用名一起写出去(父代理 2026-10-16 的
+  //    真实案例 `91330206793007818K`:4 条关系里既有现名又有旧名,旧名必须被识别出来)。
+  const rename = decideRename(target, target.uscc, relations, successes)
+  if (rename.needsReview) {
     return {
       status: 'needs_review',
       reasonCode: null,
-      reasonNote: renameVerdict.needsReview,
+      reasonNote: rename.needsReview,
       measureCode: 'manual_review',
       measureNote: '人工核对平台关系行与公布名;在此之前不作任何回填。',
       verificationStatus: 'pending',
@@ -488,7 +491,6 @@ export function decideDifference(
       aliases: [],
     }
   }
-  if (renameVerdict.verdict) return renameVerdict.verdict
 
   // 7. 省份证据:`szsfmc` ≠ 宁波市 ⇒ 不在本地。
   const provinces = [...new Set(relations.map((relation) => relation.province).filter((p): p is string => !!p))]
@@ -588,25 +590,39 @@ export function decideDifference(
   // 9. 平台有记录、关系无异常 —— 按方向给出结论。
   const anchor = latestRelation(relations) ?? relations[0]!
   const query = queryOfRelation(successes, anchor)
+
+  // ── `missing_in_miit`(公布名单有、导出表没有):**平台未更新** ──────────────
+  // 用户 2026-10-16 给的口径(已写进契约 §2.8/§3.2):接口**任一**返回 ≥1 条关系 ⇒
+  // 说明平台知道这家企业,只是导出表滞后(往往在最新一年的名单里;关系状态常见
+  // `待审核`/`区县已审`)。这是 `platform_stale`(平台未更新),**不是**「无差异」。
+  // ⚠️ 绝不能记成 `no_record`(那是「两个接口都查不到」)或 `confirmed_no_diff`
+  // (那会把「平台滞后」误报成「无差异」)。
   if (target.direction === 'missing_in_miit') {
-    // 平台接口**有**该 USCC 的记录 ⇒ 导出表缺这一条纯属采集时点口径,两侧并不矛盾。
     return {
-      status: 'confirmed_no_diff',
-      reasonCode: null,
+      status: 'confirmed_reason',
+      reasonCode: 'platform_stale',
       reasonNote:
-        `平台接口对 ${target.uscc} 返回 ${relations.length} 条关联记录(与导出表缺失相对)` +
-        '⇒ 平台侧确有该企业,导出表缺失属采集时点口径,无需处置。',
-      measureCode: 'none',
-      measureNote: '无需措施:正式公布历史照旧,平台侧记录已在库中可查。',
+        `公布名单有该企业、导出表没有,但平台接口对该 USCC 返回 ${relations.length} 条关联记录` +
+        `(${describeEvidenceScope(relations)})⇒ 平台知道这家企业,只是**审核信息滞后**于公布文件。` +
+        (rename.aliases.length
+          ? `同一 tyshxydm 下另写出历史名称「${rename.aliases.map((alias) => alias.name).join('、')}」。`
+          : ''),
+      measureCode: 'mark_platform_snapshot',
+      measureNote: '标明平台时点,不覆盖、不改写正式公布历史。',
       verificationStatus: 'confirmed',
       evidenceQuery: query ? queryRefOf(query, target.uscc) : null,
       evidenceRelation: query ? relationRefOf(query, target.uscc, anchor) : null,
       movedIn: null,
-      aliases: [],
+      // 曾用名与「这条差异为什么存在」正交:即使原因是平台滞后,旧名照样写出去。
+      aliases: rename.aliases,
     }
   }
 
-  // extra_in_miit:平台有、公布侧无。
+  // ── `extra_in_miit`(导出表有、公布侧无)──────────────────────────────────
+  // 有更名证据 ⇒ `renamed`(同一 USCC 两个名字,正好解释两侧为何看起来不是同一家);
+  // 否则按证据判 `platform_stale`(平台现状领先于公布文件)。
+  if (rename.verdict) return rename.verdict
+
   const sameTitle = relations.some(
     (relation) => RDJB_TITLE[relation.rdjb] === target.titleCode && GRANTED_STATUSES.includes(relation.status ?? ''),
   )
@@ -625,4 +641,31 @@ export function decideDifference(
     movedIn: null,
     aliases: [],
   }
+}
+
+/**
+ * 把「哪些档位、哪些状态、哪些年份」写成一句可读证据(`reasonNote` 要能指回原文)。
+ *
+ * 状态取 `cszt` 原文,年份优先取 `applyList` 的 `year`、否则从申报时间(`sqsj`)里取年 ——
+ * 都是来源**明写**的字段,不是推断。
+ */
+function describeEvidenceScope(relations: PlatformRelationRecord[]): string {
+  const byScope = new Map<string, number>()
+  for (const relation of relations) {
+    const scope = `${relation.interface}${relation.rdjb ? ` rdjb=${relation.rdjb}` : ''}`
+    byScope.set(scope, (byScope.get(scope) ?? 0) + 1)
+  }
+  const scopes = [...byScope.entries()].map(([scope, count]) => `${scope} ${count} 条`)
+  const statuses = [...new Set(relations.map((relation) => relation.status).filter((s): s is string => !!s))]
+  const years = [
+    ...new Set(
+      relations
+        .map((relation) => relation.year ?? (/^(\d{4})-\d{2}-\d{2}/.exec(relation.appliedAt ?? '')?.[1] ?? null))
+        .filter((year): year is string | number => year != null),
+    ),
+  ].sort()
+  const parts = [scopes.join(';')]
+  if (statuses.length) parts.push(`状态含「${statuses.join('」「')}」`)
+  if (years.length) parts.push(`年份 ${years.join('/')}`)
+  return parts.join(',')
 }
