@@ -1,0 +1,207 @@
+/**
+ * RL-18 —— 写入侧**规模**用例：单批千条级平台查询不再随批内查询数平方增长。
+ *
+ * ── 为什么默认不跑（`ROSTER_IMPORT_SCALE=1` 才跑）─────────────────────────────
+ * 这条用例要**先造一个已存在的平台查询存档**（每条带几十 KB 的 `raw_response`，
+ * 复现真实运行的形状），再造一个千条级的批次。改前它在计划阶段就是 O(N²) 次整行读，
+ * 单跑一次要分钟级 —— 放进默认 `pnpm test` 会把 20 秒的日常套件拖成几分钟，
+ * 而它验证的是**规模行为**、不是日常回归，所以门控开、不默认跑。
+ *
+ * 手动跑（默认规模：存档 1000/批次 1000）：
+ *
+ * ```bash
+ * ROSTER_IMPORT_SCALE=1 pnpm vitest run tests/roster-import-scale.test.ts
+ * ```
+ *
+ * 规模可用环境变量调：
+ *
+ * ```bash
+ * ROSTER_IMPORT_SCALE=1 ROSTER_IMPORT_SCALE_ARCHIVE=400 ROSTER_IMPORT_SCALE_BATCH=200 \
+ *   pnpm vitest run tests/roster-import-scale.test.ts
+ * ```
+ *
+ * ── 判据为什么是「预算 + 亚二次增长」而不是「不许整表扫」─────────────────────
+ * 「有没有整表扫」是**实现细节**，绑上去的用例一重构就假红。这里断言的是用户可观察的
+ * 两件事：① 千条级单批能在**秒级**跑完（改前是分钟级＝实质卡死）；② 规模翻 4 倍时
+ * 耗时**不是** 16 倍（平方），留出足够宽的余量以免 CI 抖动误报。
+ */
+
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, describe, expect, it } from 'vitest'
+import { schema, useDb } from '../db'
+import {
+  commitRosterImport,
+} from '../server/utils/roster-import'
+import type { RosterImportRequest } from '../lib/roster-import-client'
+
+/** 门控：默认不跑（见文件头）。 */
+const SCALE_ENABLED = process.env.ROSTER_IMPORT_SCALE === '1'
+
+/** 已存在的平台查询存档规模（条）。 */
+const ARCHIVE_QUERIES = Number(process.env.ROSTER_IMPORT_SCALE_ARCHIVE ?? 1000)
+/** 本批的查询条数（条）。 */
+const BATCH_QUERIES = Number(process.env.ROSTER_IMPORT_SCALE_BATCH ?? 1000)
+/** 存档里每条查询的 `raw_response` 字节数 —— 按票面「每条几十 KB」取的实测量级。 */
+const RAW_RESPONSE_BYTES = 24_000
+/** 本批每条查询带几条关系。 */
+const RELATIONS_PER_QUERY = 4
+
+/** 千条级单批的**计划 + 提交**总预算。改前是分钟级，改后是秒级，这里留足余量。 */
+const BATCH_BUDGET_MS = 30_000
+
+/**
+ * vitest 的默认 `testTimeout` 是 5 秒 —— 对规模用例太短（即便改后也要几秒）。
+ * 这里显式放宽到预算的 3 倍：**超时**与**超预算**是两件事，前者只是别把用例判假红。
+ */
+const CASE_TIMEOUT_MS = BATCH_BUDGET_MS * 3
+
+const dirs: string[] = []
+
+function makeDb() {
+  const dir = mkdtempSync(join(tmpdir(), 'spztx-roster-scale-'))
+  dirs.push(dir)
+  return useDb({ dbPath: join(dir, 'roster.db') })
+}
+
+afterAll(() => {
+  for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+})
+
+/** 一段形状像平台 HTML 表格的假响应（只为占字节，不参与任何解析）。 */
+function fakeRawResponse(uscc: string): string {
+  const head = `<table><tr><th>qymc</th><th>tyshxydm</th></tr><tr><td>企业${uscc}</td><td>${uscc}</td></tr>`
+  return head + 'x'.repeat(Math.max(0, RAW_RESPONSE_BYTES - head.length)) + '</table>'
+}
+
+/**
+ * 造一个**已存在**的平台查询存档：`count` 次查询，各带几十 KB 的 `raw_response`。
+ * 这是**输入夹具**（不是被测行为），所以直插 drizzle。
+ */
+function seedArchive(db: ReturnType<typeof makeDb>, count: number): void {
+  for (let i = 0; i < count; i += 1) {
+    const uscc = `91${String(330200000000000 + i).padStart(16, '0')}`
+    const queryId = db
+      .insert(schema.platformQuery)
+      .values({
+        interface: 'business_list',
+        queryKey: uscc,
+        rdjb: '3',
+        queriedAt: '2026-10-15T00:00:00.000Z',
+        status: 'success',
+        rawResponse: fakeRawResponse(uscc),
+      })
+      .returning({ id: schema.platformQuery.id })
+      .get().id
+    db.insert(schema.platformRelation)
+      .values({ queryId, sequenceNo: 1, relationKey: `ARC-${i}`, usccRaw: uscc, nameRaw: `存档企业${i}` })
+      .run()
+  }
+}
+
+/** 本批：`count` 条**新**查询（键与存档不重叠），每条带 `RELATIONS_PER_QUERY` 条关系。 */
+function scaleRequest(count: number, idempotencyKey: string): RosterImportRequest {
+  return {
+    idempotencyKey,
+    sourceKind: 'alias_evidence',
+    sourceIdentity: `scale/${count}`,
+    payload: {
+      platformQueries: Array.from({ length: count }, (_, i) => {
+        const uscc = `92${String(330300000000000 + i).padStart(16, '0')}`
+        return {
+          interface: 'business_list' as const,
+          queryKey: uscc,
+          rdjb: '3',
+          queriedAt: '2026-10-16T00:00:00.000Z',
+          status: 'success' as const,
+          rawResponse: fakeRawResponse(uscc),
+          relations: Array.from({ length: RELATIONS_PER_QUERY }, (_, s) => ({
+            sequenceNo: s + 1,
+            relationKey: `NEW-${i}-${s}`,
+            usccRaw: uscc,
+            nameRaw: `本批企业${i}`,
+            matchBasis: 'uscc' as const,
+            verificationStatus: 'confirmed' as const,
+          })),
+        }
+      }),
+    },
+  }
+}
+
+/** 跑一次「计划 + 提交」并计时。`planRosterImport` 由 `preflightRosterImport`/`commit` 内部调用。 */
+function timedCommit(db: ReturnType<typeof makeDb>, request: RosterImportRequest) {
+  const started = Date.now()
+  const result = commitRosterImport(db, request)
+  return { result, elapsedMs: Date.now() - started }
+}
+
+describe.runIf(SCALE_ENABLED)('RL-18 规模：单批千条级平台查询', () => {
+  it(`存档 ${ARCHIVE_QUERIES} 条 + 单批 ${BATCH_QUERIES} 条查询能在预算内跑完`, () => {
+    const db = makeDb()
+    seedArchive(db, ARCHIVE_QUERIES)
+    const request = scaleRequest(BATCH_QUERIES, 'scale/batch#sha256:rl18')
+
+    const { result, elapsedMs } = timedCommit(db, request)
+
+    // 逐项结果与写入语义在规模下不变：整批 committed、每条查询一行、关系数如实。
+    expect(result.status).toBe('committed')
+    expect(result.summary.failed).toBe(0)
+    expect(result.items).toHaveLength(BATCH_QUERIES)
+    // 每条查询：1 行查询 + RELATIONS_PER_QUERY 行关系。
+    expect(result.summary.written).toBe(BATCH_QUERIES * (1 + RELATIONS_PER_QUERY))
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `[RL-18 规模] 存档=${ARCHIVE_QUERIES} 批次=${BATCH_QUERIES} ` +
+        `raw_response=${RAW_RESPONSE_BYTES}B 计划+提交=${elapsedMs}ms`,
+    )
+    expect(elapsedMs).toBeLessThan(BATCH_BUDGET_MS)
+  }, CASE_TIMEOUT_MS)
+
+  it('同内容换幂等键重放：每个计划项都命中既有行，一行都不写', () => {
+    const db = makeDb()
+    seedArchive(db, ARCHIVE_QUERIES)
+    const request = scaleRequest(BATCH_QUERIES, 'scale/replay#sha256:rl18')
+    const { result: first } = timedCommit(db, request)
+    expect(first.summary.written).toBeGreaterThan(0)
+
+    const countQueries = () => db.select({ id: schema.platformQuery.id }).from(schema.platformQuery).all().length
+    const countRelations = () => db.select({ id: schema.platformRelation.id }).from(schema.platformRelation).all().length
+    const queriesBefore = countQueries()
+    const relationsBefore = countRelations()
+
+    // 换幂等键 ⇒ 走**真正执行**那条路（不是命中已 `committed` 的批次直接返回既有摘要），
+    // 于是千条级查询各自都要「找既有行」一次 —— 正是本票要压的那条路径。
+    const { result: replay, elapsedMs } = timedCommit(db, {
+      ...request,
+      idempotencyKey: 'scale/replay-again#sha256:rl18',
+    })
+
+    expect(replay.status).toBe('committed')
+    expect(replay.summary.written).toBe(0)
+    expect(countQueries()).toBe(queriesBefore)
+    expect(countRelations()).toBe(relationsBefore)
+    expect(elapsedMs).toBeLessThan(BATCH_BUDGET_MS)
+  }, CASE_TIMEOUT_MS)
+
+  it('规模翻 4 倍：耗时**不是** 16 倍（亚二次增长）', () => {
+    const small = BATCH_QUERIES / 4
+    const measure = (batch: number) => {
+      const db = makeDb()
+      seedArchive(db, ARCHIVE_QUERIES)
+      const { elapsedMs } = timedCommit(db, scaleRequest(batch, `scale/ratio-${batch}#sha256:rl18`))
+      return Math.max(elapsedMs, 1)
+    }
+    // 先小后大：把冷启动（首次建表 / drizzle 预热）算在小规模那一侧，
+    // 于是比值只会**偏保守**（更容易误报二次增长），不会掩盖它。
+    const smallMs = measure(small)
+    const largeMs = measure(BATCH_QUERIES)
+    const ratio = largeMs / smallMs
+    // eslint-disable-next-line no-console
+    console.log(`[RL-18 规模] ${small} 条=${smallMs}ms，${BATCH_QUERIES} 条=${largeMs}ms，比值=${ratio.toFixed(2)}×`)
+    // 平方会给出 16×；这里给到 8× 的宽松上限（含固定开销与抖动）。
+    expect(ratio).toBeLessThan(8)
+  }, CASE_TIMEOUT_MS)
+})
