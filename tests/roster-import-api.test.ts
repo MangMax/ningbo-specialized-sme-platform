@@ -92,7 +92,11 @@ function announcementRequest(over: Partial<RosterImportRequest> = {}): RosterImp
   }
 }
 
-function evidencePlanRequest(idempotencyKey: string, sourceFile: string): RosterImportRequest {
+function evidencePlanRequest(
+  idempotencyKey: string,
+  sourceFile: string,
+  source: 'jxj' | 'miit' = 'jxj',
+): RosterImportRequest {
   return {
     idempotencyKey,
     sourceKind: 'announcement',
@@ -100,7 +104,7 @@ function evidencePlanRequest(idempotencyKey: string, sourceFile: string): Roster
     sourceSha256: 'synthetic-plan-sha',
     payload: {
       announcement: {
-        sourceDocument: { source: 'jxj', title: '合成计划测试公告' },
+        sourceDocument: { source, title: '合成计划测试公告' },
         records: [
           {
             enterprise: { name: '合成计划企业有限公司', uscc: '91330211255994457P' },
@@ -372,6 +376,32 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
 })
 
 describe('出处重放记账不进入调用方逐项结果', () => {
+  it('空事件经真实 HTTP 返回结构化错误且不写业务行', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const malformed = announcementRequest({ idempotencyKey: 'synthetic/null-event#sha256:stable' })
+    malformed.payload.announcement!.records[0]!.events = [null as never]
+    const before = rosterRowCounts(db)
+
+    try {
+      const result = await client.commit(malformed)
+
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({
+          kind: 'record_event',
+          ok: false,
+          error: expect.objectContaining({ code: 'event_type_unknown' }),
+        }),
+      )
+      expect(rosterRowCounts(db)).toEqual(before)
+      expect(db.select().from(schema.enterprise).all()).toHaveLength(0)
+    } finally {
+      await server.close()
+    }
+  })
+
   it('commit、重试、replay 与批次读回隐藏内部目标快照，同时保留可重放记账', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
@@ -420,6 +450,50 @@ describe('出处重放记账不进入调用方逐项结果', () => {
       const storedReplayItems = replayLedger.itemResults as Array<{ detail?: Record<string, unknown> }>
       expect(storedReplayItems[0]?.detail?.evidenceRepointTargets).toHaveLength(1)
       expectPublicItems(readImportBatchOutcome(db, `${repoint.idempotencyKey}#repoint`)!.items!)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('replay 指纹包含公告默认来源，来源改变时重新解析目标记录', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const jxjBase = evidencePlanRequest('synthetic/default-source-jxj', 'synthetic/default-source-A.pdf')
+    const miitBase = evidencePlanRequest('synthetic/default-source-miit', 'synthetic/default-source-A.pdf', 'miit')
+    const target = evidencePlanRequest(
+      'synthetic/default-source-repoint#sha256:stable',
+      'synthetic/default-source-B.pdf',
+    )
+
+    try {
+      expect((await client.commit(jxjBase)).status).toBe('committed')
+      expect((await client.commit(miitBase)).status).toBe('committed')
+      const committed = await client.commit(target)
+      expect(committed.summary.evidenceRepointed).toBe(1)
+
+      const changedDefault = evidencePlanRequest(target.idempotencyKey, 'synthetic/default-source-B.pdf', 'miit')
+      const replayed = await client.replay(changedDefault)
+
+      expect(replayed.status).toBe('replayed')
+      expect(replayed.evidenceRepointed).toBe(1)
+      const enterprise = db.select().from(schema.enterprise).all().find((row) => row.name === '合成计划企业有限公司')!
+      const evidenceBySource = Object.fromEntries(
+        db
+          .select()
+          .from(schema.record)
+          .all()
+          .filter((record) => record.enterpriseId === enterprise.id)
+          .map((record) => {
+            const event = db.select().from(schema.recordEvent).all().find((row) => row.recordId === record.id)!
+            const evidence = db.select().from(schema.recordEvidence).all().find((row) => row.recordEventId === event.id)!
+            return [record.source, { sourceFile: evidence.sourceFile, page: evidence.page }]
+          }),
+      )
+      expect(evidenceBySource).toEqual({
+        jxj: { sourceFile: 'synthetic/default-source-B.pdf', page: 7 },
+        miit: { sourceFile: 'synthetic/default-source-B.pdf', page: 7 },
+      })
     } finally {
       await server.close()
     }

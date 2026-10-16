@@ -774,7 +774,20 @@ function planNewEventEvidence(
   const groups = new Map<string, Occurrence[]>()
   for (const [recordIndex, record] of records.entries()) {
     const events = Array.isArray(record?.events) ? record.events : []
-    planned.set(recordIndex, events.map((event) => ({ ...event, evidence: [...(event.evidence ?? [])] })))
+    planned.set(
+      recordIndex,
+      events.map((event) => {
+        const candidate: unknown = event
+        // Keep malformed array entries for planAnnouncementRecord's structured validation.
+        // In particular, JSON null must not throw here before it can become an item error.
+        if (!isObject(candidate)) return event
+        const evidence = candidate.evidence
+        return {
+          ...candidate,
+          evidence: Array.isArray(evidence) ? [...evidence] : (evidence ?? []),
+        } as unknown as RosterImportEvent
+      }),
+    )
 
     const name = optionalString(record?.enterprise?.name)
     const titleCode = optionalString(record?.titleCode)
@@ -863,7 +876,7 @@ function planNewEventEvidence(
   return planned
 }
 
-/** 对象键及集合数组顺序不影响公告记录的快照指纹;重复项仍按重数保留。 */
+/** 对象键及集合数组顺序不影响公告载荷的快照指纹;重复项仍按重数保留。 */
 function canonicalEvidencePlanJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(canonicalEvidencePlanJson).sort().join(',')}]`
@@ -877,10 +890,10 @@ function canonicalEvidencePlanJson(value: unknown): string {
   return JSON.stringify(value) ?? 'null'
 }
 
-/** 同一幂等键若被复用于不同公告载荷,不应复用旧的收敛目标快照。 */
+/** 同一幂等键若被复用于不同公告载荷或默认来源,不应复用旧的收敛目标快照。 */
 function evidenceRepointPlanFingerprint(request: RosterImportRequest): string {
   return createHash('sha256')
-    .update(canonicalEvidencePlanJson(request.payload?.announcement?.records ?? null))
+    .update(canonicalEvidencePlanJson(request.payload?.announcement ?? null))
     .digest('hex')
 }
 
