@@ -216,6 +216,10 @@ const MEASURE = `(() => {
     bucketRows: document.querySelectorAll('[data-bucket] tbody tr').length,
     itemRows: itemTableRowCount(),
     conflictText,
+    blockedWarning: (document.querySelector('[data-testid=annual-blocked-warning]')?.textContent ?? '').replace(/\s+/g, '').trim(),
+    bucketLabels: [...document.querySelectorAll('[data-bucket]')].map((card) =>
+      (card.querySelector('h3, [data-slot=card-title]')?.textContent ?? '').replace(/\s+/g, ' ').trim()),
+
     applyDisabled: applyButton ? applyButton.disabled : null,
     horizontalScrollingContainers: scrollers.filter((el) => el.scrollWidth > el.clientWidth).length,
   };
@@ -537,7 +541,20 @@ async function main() {
       if (m.buckets.removed !== 0 || m.buckets.blocked !== 1) {
         bad(`接口失效用例:removed=${m.buckets.removed} / blocked=${m.buckets.blocked},预期 0 / 1`)
       } else {
-        ok('接口失效用例:重查失败的企业进「不得据此删除(待核)」,不计入「将移出」')
+        ok('接口失效用例:重查失败的企业进「不得据此写原因」这一栏,不计入「将移出」')
+      }
+      // 页面上**必须**把「移出照样发生、被挡住的是原因」这句话说出来(独立审查点出的口径)。
+      if (!m.blockedWarning.includes('重查失败')) {
+        bad(`接口失效用例:没有看到「重查失败」的告警条(实测 ${JSON.stringify(m.blockedWarning.slice(0, 40))})`)
+      } else if (!m.blockedWarning.includes('原因不会被写下来')) {
+        bad('接口失效用例:告警条没有说清「被挡住的是原因」')
+      } else {
+        ok('接口失效用例:应用之前就说清了 —— 移出照样发生,被挡住的是原因')
+      }
+      if (m.bucketLabels.some((label) => label.includes('不得据此删除'))) {
+        bad(`接口失效用例:第三栏仍写着「不得据此删除」这种做不到的话:${JSON.stringify(m.bucketLabels)}`)
+      } else {
+        ok(`接口失效用例:三栏标题用的是能做到的说法 ${JSON.stringify(m.bucketLabels)}`)
       }
     })
 

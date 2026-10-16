@@ -410,6 +410,17 @@ const countCells = computed(() => [
         </Card>
       </div>
 
+      <!-- 重查失败:移出照样发生,但原因必须留待重查 —— 这句话必须在**应用之前**说清。 -->
+      <Alert v-if="preview.roster.counts.blocked > 0" data-testid="annual-blocked-warning">
+        <TriangleAlert />
+        <AlertTitle>{{ preview.roster.counts.blocked }} 家企业的接口重查失败了</AlertTitle>
+        <AlertDescription>
+          它们同样会被这张最新快照移出当前总表（成员资格只看公布记录与最新快照），
+          但<strong class="text-foreground font-medium">原因不会被写下来</strong>：失败 ≠ 无记录，不得据此记成「已迁出 / 已注销 / 无记录」。
+          要留下原因，先把这几家重查一遍再来。
+        </AlertDescription>
+      </Alert>
+
       <!-- 逐项明细 -->
       <Card class="rise-in gap-0 overflow-hidden py-0" style="--rise-index: 3">
         <CardHeader class="gap-1">
@@ -492,7 +503,11 @@ const countCells = computed(() => [
                   <DialogTitle>确认应用这一批年度增量？</DialogTitle>
                   <DialogDescription>
                     将写入 {{ preview.totals.add }} 项新增、{{ preview.totals.update }} 项更新、
-                    归并 {{ preview.totals.merge }} 行；总表里 {{ preview.roster.counts.removed }} 家将移出当前总表。
+                    归并 {{ preview.totals.merge }} 行；总表里
+                    {{ preview.roster.counts.removed + preview.roster.counts.blocked }} 家将移出当前总表
+                    <template v-if="preview.roster.counts.blocked">
+                      （其中 {{ preview.roster.counts.blocked }} 家的重查失败了：它们照样会移出，但原因不会被写下来）
+                    </template>。
                     写入是单批事务：有任何一项不合法则整批不落任何业务数据。
                   </DialogDescription>
                 </DialogHeader>
@@ -545,7 +560,7 @@ const countCells = computed(() => [
         </CardTitle>
         <CardDescription>
           最近 20 条导入批次（幂等键 / 来源 / 状态 / 摘要）。失败批次的逐项错误就在下面 ——
-          失败批次**一行业务数据都没落**，按同一条幂等键 + 修好的载荷重试即可，不会写第二遍。
+          失败批次<strong class="text-foreground font-medium">一行业务数据都没落</strong>，按同一条幂等键 + 修好的载荷重试即可，不会写第二遍。
         </CardDescription>
       </CardHeader>
       <CardContent class="p-0">

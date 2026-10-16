@@ -413,13 +413,15 @@ export function projectRosterStates(
     // 叠加**后**它出现过的批次(含投影批次)—— 判「只由平台引入」的正证据也在这里,
     // 于是调用方不必再按统代/名称自己匹配一遍导出表行(那会立刻长出第二套口径)。
     const batchIds = [...(index.presentByEnterprise.get(enterprise.id) ?? [])].sort((a, b) => a - b)
+    const anchorBatchIds = batchIds.filter((batchId) => index.latestBatchIds.has(batchId))
     states.set(enterprise.id, {
       state: deriveRosterState(
         { enterpriseId: enterprise.id, records: recordsByEnterprise.get(enterprise.id) ?? [] },
         index,
       ),
       batchIds,
-      inLatestSnapshot: batchIds.some((batchId) => index.latestBatchIds.has(batchId)),
+      anchorBatchIds,
+      inLatestSnapshot: anchorBatchIds.length > 0,
     })
   }
   return states
@@ -431,7 +433,12 @@ export interface ProjectedRosterState {
   /** 该企业出现过的批次 id(库内 + 投影),升序。空数组 = 一张快照里都没有。 */
   batchIds: number[]
   /**
-   * 它的锚点还在不在:它出现过的批次里,有**至少一张**是「该批次所属称号」的最新一张。
+   * `batchIds` 里那些**当时算最新**的批次(即「它上次出现在最新快照里」是哪几张),
+   * 升序。判「还在不在最新快照里」用的就是这个集合非空。
+   */
+  anchorBatchIds: number[]
+  /**
+   * 它的锚点还在不在:出现过的批次里,有**至少一张**是「该批次所属称号」的最新一张。
    * `false` 且 `batchIds` 非空 = **有正证据表明它已从最新快照消失**。
    */
   inLatestSnapshot: boolean

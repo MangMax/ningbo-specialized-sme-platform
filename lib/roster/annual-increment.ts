@@ -117,20 +117,31 @@ export interface AnnualRosterRow {
   name: string
   uscc: string | null
   district: string | null
-  /** 它出现过、且是「该批次所属称号的最新一张」的那张快照;给不出时为 `null`。 */
+  /**
+   * 它**上次出现在「最新快照」里**是哪一张(定位「只由平台引入」的正证据)。
+   * 给不出时为 `null` —— 它一张快照都没出现过,或出现过的几张都不是当时的最新一张。
+   */
   snapshot: { batchId: number; titleCode: string; year: number } | null
 }
 
 /**
- * 「企业会因新快照失去锚点」的三种去向。**这一分法就是票面验收里
- * 「将移出 / 不因平台缺失而删除 / 接口失败不得据此删除」三句话的可复核形状**。
+ * 「企业会因新快照失去锚点」的三种去向。**前两栏说的是「这张快照落库之后会怎样」,
+ * 第三栏说的是「谁会被移出、但原因这一层必须留待重查」**。
+ *
+ * ⚠️ **`blocked` 不是「不会被移出」**(契约 §8.11.1 有完整说明):当前总表的成员资格是
+ * **派生**的(§5,判据只有「公布记录」与「最新快照」两样),接口重查的结果**不在**这个派生里。
+ * 所以新快照一旦提交,`blocked` 里的企业**照样**会落到 `removed_platform_only`。
+ * 被挡住的是**原因 / 措施**那一层:不把「没查成」写成「平台没有」,也不写成
+ * 「已迁出 / 已注销」,留待重查 —— 这一层由写入侧的守卫挡(契约 §8.11.2),是票面第 3 条
+ * 要求的东西。要把**移出本身**也挡住,就得改 §5 的派生判据,那是 RL-04 的冻结面,
+ * 见 PR 里「需要裁决的点」。
  */
 export interface AnnualRosterDelta {
   /** **将移出当前总表**:只由平台导出引入、没有任何公布历史、且新快照里也不在。 */
   removed: AnnualRosterRow[]
   /**
-   * **不得据此删除**:这次重查的接口**失败了**(`failed` ≠ `no_record`,契约 §3.1)。
-   * 失败说明「没查成」,不说明「平台没有」⇒ 只能算待核,由重查后再判。
+   * **原因必须留待重查**:这次对它的重查**失败了**(`failed` ≠ `no_record`,契约 §3.1)。
+   * 它同样会被新快照移出(见上),但**不得**据此写原因 / 措施 / 「无记录」这类结论。
    */
   blocked: AnnualRosterRow[]
   /** **不因平台缺失而删除**:曾出现在正式公布文件(有 jxj 记录)⇒ 只更新平台状态。 */
@@ -153,26 +164,36 @@ export interface AnnualPreviewResponse {
 // 纯函数(页面与服务端共用,便于单测)
 // ---------------------------------------------------------------------------
 
+/**
+ * 全零的计数 —— **只此一份**:加字段时改这里,`sumCounts` 与调用方(服务端的预检零报)
+ * 都跟着走,不会各自维护一份字面量。
+ */
+export function zeroCounts(): AnnualPreviewCounts {
+  return { add: 0, update: 0, merge: 0, unchanged: 0, review: 0, conflicts: 0, candidates: 0, evidenceRepoints: 0 }
+}
+
 /** 累加若干项的计数(不改变各项)。 */
 export function sumCounts(list: AnnualPreviewCounts[]): AnnualPreviewCounts {
-  const total: AnnualPreviewCounts = {
-    add: 0,
-    update: 0,
-    merge: 0,
-    unchanged: 0,
-    review: 0,
-    conflicts: 0,
-    candidates: 0,
-    evidenceRepoints: 0,
-  }
+  const total = zeroCounts()
   for (const counts of list) {
     for (const key of Object.keys(total) as Array<keyof AnnualPreviewCounts>) total[key] += counts[key]
   }
   return total
 }
 
-/** 计划项的口径映射:预检的 `action` + `kind` → 逐项分类。**只在这里做一次。** */
-export function classifyPlannedItem(input: { action: string; kind: string; ok: boolean }): AnnualItemClass {
+/**
+ * 计划项的口径映射:预检的 `action`(见 `roster-import.ts` 的 `PlannedItem.action`) +
+ * `kind` + `ok` → 逐项分类。**只在这里做一次。**
+ *
+ * `action` 收窄成字面量联合(而不是 `string`):本函数唯一的职责就是**如实**告诉操作者
+ * 「这一项会怎样」,一个悄悄的 `else` 会把将来新增的动作**静默显示成「无变化」**。
+ * `note` 是「只记录、不计入任何影响计数」的那一档(目前只有重名候选用它)。
+ */
+export function classifyPlannedItem(input: {
+  action: 'add' | 'update' | 'skip' | 'note'
+  kind: string
+  ok: boolean
+}): AnnualItemClass {
   if (!input.ok) return 'conflict'
   if (input.kind === 'merge') return 'merge'
   if (input.action === 'add') return 'add'

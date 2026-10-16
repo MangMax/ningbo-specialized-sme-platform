@@ -28,6 +28,7 @@ import {
   classifyPlannedItem,
   queryKeyMatchesEnterprise,
   sumCounts,
+  zeroCounts,
   type AnnualIncrementBundle,
   type AnnualPreviewCounts,
   type AnnualPreviewEntry,
@@ -44,17 +45,6 @@ type Db = BetterSQLite3Database<typeof schema>
 
 /** 一年的年度更新是「1 份公布文件 + 3 张导出表」量级;超过这个数是调用方接错了(不是业务约束)。 */
 const MAX_ANNUAL_ENTRIES = 32
-
-const EMPTY_COUNTS: AnnualPreviewCounts = {
-  add: 0,
-  update: 0,
-  merge: 0,
-  unchanged: 0,
-  review: 0,
-  conflicts: 0,
-  candidates: 0,
-  evidenceRepoints: 0,
-}
 
 const EMPTY_PROJECTION: ProjectedSnapshot = { batches: [], rows: [] }
 
@@ -149,7 +139,7 @@ function prepareEntry(db: Db, request: RosterImportRequest, index: number): Prep
   // 已提交的键:**不重跑计划**。同键 commit 直接返回既有摘要、一行不写(§8.2),
   // 对它报一份「会改 N 行」的计划是假话(§8.9.2),而且要真算出来也不便宜。
   if (batchStatus === 'committed') {
-    return { entry: { ...base, counts: { ...EMPTY_COUNTS }, items: [], willApply: false }, announcedIds: [] }
+    return { entry: { ...base, counts: zeroCounts(), items: [], willApply: false }, announcedIds: [] }
   }
 
   const plan = planRosterImport(db, request, { batchId: batch?.id })
@@ -172,12 +162,16 @@ function prepareEntry(db: Db, request: RosterImportRequest, index: number): Prep
     }
   })
 
+  // 计数:口径沿用契约 §8.5 的预检计数(计数单位 = 计划项),但**按分类分桶**
+  // —— `add`/`update`/`merge`/`unchanged` 四桶互斥,再加 `review`/`conflicts`/`candidates`。
+  // 这一条必须守住:计划里的**冲突项**带的是 `action:'skip'`,不加 `ok` 判据就会
+  // 同时计进 `unchanged` —— 于是页面上「无变化 1 / 冲突 1」讲的是**同一行**,
+  // 而这一页的全部职责正是把「会发生什么」说准(§8.11.1 承诺逐项分类与计划项一一对应)。
   const counts: AnnualPreviewCounts = {
-    // 计数口径逐字沿用契约 §8.5 的预检计数(计数单位就是计划项) —— 不另立一套。
-    add: plan.items.filter((p) => p.action === 'add').length,
-    update: plan.items.filter((p) => p.action === 'update').length,
-    merge: plan.items.filter((p) => p.item.kind === 'merge' && p.item.ok).length,
-    unchanged: plan.items.filter((p) => p.action === 'skip').length,
+    add: plan.items.filter((p) => p.item.ok && p.action === 'add').length,
+    update: plan.items.filter((p) => p.item.ok && p.action === 'update').length,
+    merge: plan.items.filter((p) => p.item.ok && p.item.kind === 'merge').length,
+    unchanged: plan.items.filter((p) => p.item.ok && p.action === 'skip').length,
     review: plan.items.filter((p) => p.review).length,
     conflicts: plan.conflicts.length,
     candidates: plan.items.filter((p) => p.item.kind === 'duplicate_candidate').length,
@@ -394,10 +388,16 @@ function announcedEnterpriseIds(db: Db, fromPlans: number[]): Set<number> {
   return ids
 }
 
-/** 企业 → 它出现过、且（在叠加前）仍算锚点的那张快照(给页面标出「上次出现在哪张表」)。 */
+/**
+ * 企业 → 它**上次出现在最新快照里**的那张(叠加前),给页面标出「上次出现在哪张表」。
+ *
+ * 取的是 `anchorBatchIds`(出现过的批次 ∩ **当时算最新**的那些)里 id 最大的那张 ——
+ * 不是「它出现过的最后一张」:后者可能是某个**早已不是最新**的旧版本批次,拿它当
+ * 「还在不在最新快照里」的坐标会把结论说反(而这个坐标正是「只由平台引入」唯一的一条正证据)。
+ */
 function latestAnchorBatch(
   db: Db,
-  before: Map<number, { state: string; batchIds: number[] }>,
+  before: Map<number, { state: string; batchIds: number[]; anchorBatchIds: number[] }>,
   projected: ProjectedSnapshot,
 ): Map<number, { batchId: number; titleCode: string; year: number }> {
   const info = new Map<number, { titleCode: string; year: number }>()
@@ -408,8 +408,8 @@ function latestAnchorBatch(
 
   const out = new Map<number, { batchId: number; titleCode: string; year: number }>()
   for (const [enterpriseId, state] of before) {
-    // `batchIds` 升序 ⇒ 最后一张出现过的快照就是「最新的一次出现」。
-    const batchId = state.batchIds[state.batchIds.length - 1]
+    // `anchorBatchIds` 升序 ⇒ 最后一张就是「最近一次仍在最新快照里的出现」。
+    const batchId = state.anchorBatchIds[state.anchorBatchIds.length - 1]
     if (batchId == null) continue
     const meta = info.get(batchId)
     if (!meta) continue

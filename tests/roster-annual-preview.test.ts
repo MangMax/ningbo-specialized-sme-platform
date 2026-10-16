@@ -27,6 +27,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
 import type { RosterImportRequest } from '../lib/roster-import-client'
 import type { AnnualIncrementBundle } from '../lib/roster/annual-increment'
+import { allRosterEnterprises } from '../lib/roster/enterprise-roster'
 import { previewAnnualIncrement, validateAnnualBundle } from '../server/utils/roster-annual'
 import {
   commitRosterImport,
@@ -261,6 +262,22 @@ function annualBundle(overrides: Partial<{ snapshotRows: Array<{ uscc: string; n
 /** `rosterRowCounts` 是 `Record<string, number>`；按 `noUncheckedIndexedAccess` 取值要兜一下。 */
 const at = (counts: Record<string, number>, key: string): number => counts[key] ?? 0
 
+/** 今年这批里加一次**失败**的平台重查(针对「仅平台」那家);只记录失败,不据此下结论。 */
+function failedQueryBundle(): AnnualIncrementBundle {
+  const bundle = annualBundle()
+  bundle.entries[0]!.payload.platformQueries = [
+    {
+      interface: 'business_list',
+      queryKey: U.platformOnly,
+      rdjb: '2',
+      queriedAt: '2026-10-01T02:00:00.000Z',
+      status: 'failed',
+      failureReason: '登录超时',
+    },
+  ]
+  return bundle
+}
+
 /** 把一批（除指定项外）都提交掉 —— 用于验证「预览 = 提交」。 */
 function commitBundle(db: ReturnType<typeof makeDb>, bundle: AnnualIncrementBundle, skip: number[] = []) {
   const results = []
@@ -436,13 +453,12 @@ describe('RL-07 · 总表增减', () => {
     expect(snapshot.entries).toEqual([])
   })
 
-  it('提交之后按读侧口径复核：移出的那家确实变成 removed_platform_only，其余不变', async () => {
+  it('提交之后按读侧口径复核：移出的那家确实变成 removed_platform_only，其余不变', () => {
     const db = seededDb()
     const bundle = annualBundle()
     const roster = previewAnnualIncrement(db, bundle).roster
     commitBundle(db, bundle)
 
-    const { allRosterEnterprises } = await import('../lib/roster/enterprise-roster')
     const rows = allRosterEnterprises(db).rows
     const stateOf = (name: string) => rows.find((row) => row.name === name)!.rosterState
     expect(stateOf(NAME.platformOnly)).toBe('removed_platform_only')
@@ -490,24 +506,10 @@ describe('RL-07 · 多张平台表(真实年度形状)', () => {
 // ---------------------------------------------------------------------------
 
 describe('RL-07 · 接口失败不得据此删除或原因', () => {
-  /** 今年这批里加一次**失败**的平台重查（针对「仅平台」那家）。 */
-  function withFailedQuery(bundle: AnnualIncrementBundle): AnnualIncrementBundle {
-    bundle.entries[0]!.payload.platformQueries = [
-      {
-        interface: 'business_list',
-        queryKey: U.platformOnly,
-        rdjb: '2',
-        queriedAt: '2026-10-01T02:00:00.000Z',
-        status: 'failed',
-        failureReason: '登录超时',
-      },
-    ]
-    return bundle
-  }
 
   it('重查失败的企业列入**待核**，不计入「将移出」', () => {
     const db = seededDb()
-    const bundle = withFailedQuery(annualBundle())
+    const bundle = failedQueryBundle()
     const roster = previewAnnualIncrement(db, bundle).roster
     expect(roster.removed).toHaveLength(0)
     expect(roster.blocked.map((row) => row.name)).toEqual([NAME.platformOnly])
@@ -551,6 +553,58 @@ describe('RL-07 · 接口失败不得据此删除或原因', () => {
     expect(result.status).toBe('failed')
     expect(result.summary).toMatchObject({ written: 0, failed: 1 })
     expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it('★ 独立审查点出的计数口径:冲突项**不**同时计入「无变化」', () => {
+    const db = seededDb()
+    const bundle = annualBundle()
+    // 这一项会整批失败(规范行不存在),而计划里失败项的 `action` 是 `skip` ——
+    // 不加 `ok` 判据就会被数第二遍,于是页面上「无变化 1 / 冲突 1」讲的是同一行。
+    bundle.entries[0]!.payload.merges = [{ fromEnterpriseName: NAME.platformOnly, intoUscc: '91330299999999999Z' }]
+    const preview = previewAnnualIncrement(db, bundle)
+    const entry0 = preview.entries[0]!
+    // 这一项里:一条新增记录 + 一条命中既有坐标的记录 + 一条冲突的归并。
+    expect(entry0.counts).toMatchObject({ add: 1, unchanged: 1, merge: 0, conflicts: 1 })
+    // **分类与计数一一对应**:每一类(`item.class`)的数量就是那一桶的数 —— 冲突项
+    // 只算在冲突里,不再被 `action:'skip'` 带进「无变化」。
+    const byClass = (code: string) => entry0.items.filter((item) => item.class === code).length
+    expect(byClass('conflict')).toBe(entry0.counts.conflicts)
+    expect(byClass('unchanged')).toBe(entry0.counts.unchanged)
+    expect(byClass('merge')).toBe(entry0.counts.merge)
+    expect(preview.applyable).toBe(false)
+
+    // 极端一点的形状:**整项只有一条冲突** ⇒ 「无变化」必须是 0(修之前是 1)。
+    const onlyConflict = previewAnnualIncrement(db, {
+      year: 2026,
+      entries: [
+        {
+          idempotencyKey: 'annual/2026/merge-only-conflict',
+          sourceKind: 'alias_evidence',
+          sourceIdentity: 'jxj/merge-only',
+          payload: { merges: [{ fromEnterpriseName: NAME.platformOnly, intoUscc: '91330299999999999Z' }] },
+        },
+      ],
+    })
+    expect(onlyConflict.entries[0]!.counts).toMatchObject({ add: 0, unchanged: 0, merge: 0, conflicts: 1 })
+  })
+
+  it('★ 独立审查点出的口径:被挡住的只是**原因**,移出本身照样发生', () => {
+    const db = seededDb()
+    const bundle = failedQueryBundle()
+    // 只记录失败(不据此下结论)⇒ 可以应用,没有冲突。
+    const preview = previewAnnualIncrement(db, bundle)
+    expect(preview.totals.conflicts).toBe(0)
+    expect(preview.applyable).toBe(true)
+    expect(preview.roster.blocked.map((row) => row.name)).toEqual([NAME.platformOnly])
+
+    // 但应用之后,按读侧口径复核:这家**确实**离开了当前总表(成员资格是派生的,
+    // 上面那一次重查失败不在派生判据里)——
+    // 页面因此必须写成「不得据此**写原因**」而不是「不会移出」,并且在应用之前把这句话说出来。
+    commitBundle(db, bundle)
+    const rows = allRosterEnterprises(db).rows
+    expect(rows.find((row) => row.name === NAME.platformOnly)!.rosterState).toBe('removed_platform_only')
+    // 而且**一条原因都没写下来**(失败的结果不落成结论)。
+    expect(db.select().from(schema.differenceReason).all()).toHaveLength(0)
   })
 
   it('**如实记录失败本身**（query_failed + manual_review）仍然写得进去', () => {
@@ -641,6 +695,76 @@ describe('RL-07 · 刷新接口原因 / 措施及其证据', () => {
       verificationStatus: 'confirmed',
       // **证据指针**落在那次查询上(刷新证据 = 这一列指到新的查询行)。
       evidenceQueryId: query.id,
+    })
+  })
+})
+
+describe('RL-07 · 票面点名要覆盖的差异情形', () => {
+  it('外地迁入(带别的称号批次)与注销:原因、措施与迁入承载都落得下来', () => {
+    const db = seededDb()
+    const bundle = annualBundle()
+    bundle.entries[0]!.payload.platformQueries = [
+      {
+        interface: 'apply_list',
+        queryKey: U.platformOnly,
+        queriedAt: '2026-10-01T02:00:00.000Z',
+        status: 'no_record',
+      },
+      {
+        interface: 'business_list',
+        queryKey: U.crossTitle,
+        rdjb: '2',
+        queriedAt: '2026-10-01T02:05:00.000Z',
+        status: 'no_record',
+      },
+    ]
+    bundle.entries[0]!.payload.differences = [
+      {
+        // **外地迁入**:迁入尽量记原城市、称号、年份、批次;查不到留空待核,不猜。
+        uscc: U.crossTitle,
+        titleCode: 'innovative_sme',
+        direction: 'extra_in_miit',
+        status: 'confirmed_reason',
+        reasonCode: 'moved_in',
+        measureCode: 'record_moved_in',
+        verificationStatus: 'confirmed',
+        recordedAt: '2026-10-01T03:00:00.000Z',
+        evidenceQueryRef: { interface: 'business_list', queryKey: U.crossTitle, rdjb: '2' },
+        movedIn: { city: '绍兴市', titleCode: 'specialized_sme', year: 2024, batch: 2 },
+      },
+      {
+        // **公司注销**。
+        uscc: U.platformOnly,
+        titleCode: 'specialized_sme',
+        direction: 'extra_in_miit',
+        status: 'confirmed_reason',
+        reasonCode: 'deregistered',
+        measureCode: 'mark_deregistered',
+        verificationStatus: 'confirmed',
+        recordedAt: '2026-10-01T03:01:00.000Z',
+        evidenceQueryRef: { interface: 'apply_list', queryKey: U.platformOnly },
+      },
+    ]
+    // 那张 business_list 查询的键要指到迁入的那家(逐字匹配统代)。
+    bundle.entries[0]!.payload.platformQueries[1]!.queryKey = U.crossTitle
+
+    const preview = previewAnnualIncrement(db, bundle)
+    expect(preview.totals.conflicts).toBe(0)
+    expect(commitRosterImport(db, bundle.entries[0]!).status).toBe('committed')
+
+    const diffs = db.select().from(schema.differenceReason).all()
+    const movedIn = diffs.find((row) => row.reasonCode === 'moved_in')!
+    expect(movedIn).toMatchObject({
+      measureCode: 'record_moved_in',
+      verificationStatus: 'confirmed',
+      movedInCity: '绍兴市',
+      movedInTitleCode: 'specialized_sme',
+      movedInYear: 2024,
+      movedInBatch: 2,
+    })
+    expect(diffs.find((row) => row.reasonCode === 'deregistered')).toMatchObject({
+      measureCode: 'mark_deregistered',
+      status: 'confirmed_reason',
     })
   })
 })
