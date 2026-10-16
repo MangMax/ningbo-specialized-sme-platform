@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -10,7 +10,7 @@ import {
   type RosterImportCommitResponse,
   type RosterImportRequest,
 } from '../lib/roster-import-client'
-import { buildLittleGiantImportRequest } from '../lib/roster/little-giant-import'
+import { buildLittleGiantImportRequest, LITTLE_GIANT_SOURCE_FILE } from '../lib/roster/little-giant-import'
 import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../lib/roster/little-giant-workbook'
 import { rosterRowCounts } from '../server/utils/roster-import'
 import { startRosterApi, type RosterApiServer } from './helpers/roster-http-server'
@@ -205,6 +205,23 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
 
     expect(rosterRowCounts(db)).toEqual(before)
     expect(db.select().from(schema.importBatch).all()).toHaveLength(1)
+  })
+
+  it('出处指向**文件库内**的路径(RL-16);真件入库后那份文件解析得到', () => {
+    const rows = db.select({ sourceFile: schema.recordEvidence.sourceFile }).from(schema.recordEvidence).all()
+    expect(rows).toHaveLength(expected.evidences)
+    // 全批只有一个口径 —— 不混着「库内路径」与「库外路径」两种写法。
+    expect(new Set(rows.map((row) => row.sourceFile))).toEqual(new Set([source.sourceFile]))
+
+    // 「预览/跳转」要的是:库内相对路径 + 那份文件真的在文件库里。
+    // 全新 clone 没有运行时 `files/`(已 gitignore),故这半条只在文件库就位时判。
+    const fileStore = join(process.cwd(), 'files')
+    const hasRealFileStore = existsSync(join(fileStore, 'miit', 'export'))
+    if (source.real && hasRealFileStore) {
+      expect(source.sourceFile).toBe(LITTLE_GIANT_SOURCE_FILE)
+      expect(LITTLE_GIANT_SOURCE_FILE.startsWith('jxj/announcement/')).toBe(true)
+      expect(existsSync(join(fileStore, LITTLE_GIANT_SOURCE_FILE))).toBe(true)
+    }
   })
 
   describe.runIf(hasRealSource)('真件的具体数字(仅真件在时断言)', () => {

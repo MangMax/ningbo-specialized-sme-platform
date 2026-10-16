@@ -12,8 +12,9 @@ import { startTusServer, type MiniTusServer } from './helpers/tus-mini-server'
 /**
  * 「脚本内化」与「tus 上传」两条写入路径的**落位规则一致性**验证(票 02)。
  *
- * 遍历仓库文件库(`files/**`)里现有的内化文件(**当前 24 个**:21 份来源文件 + 3 份工信部
- * 导出表 —— 见 `files/README.md`),按**路径反推** metadata
+ * 遍历仓库文件库(`files/**`)里现有的内化文件(**当前 22 个**:19 份来源文件 + 3 份工信部
+ * 导出表 —— 见 `files/README.md` 与库里留存 `README.md` 的「入库范围」一节),
+ * 按**路径反推** metadata
  * (`source/kind/year/batch/filename`),再经 **tus 协议**(`tus-js-client` 走真实
  * HTTP)上传到**临时文件库**(不碰真实 `files/`),断言:
  *   1. 每个文件落到规则路径 `files/<source>/<kind>/<year>/<batch>/<filename>`,
@@ -26,12 +27,15 @@ import { startTusServer, type MiniTusServer } from './helpers/tus-mini-server'
  */
 
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
-/** 仓库里现有的文件库(21 份来源文件 + 3 份导出表 + README)。 */
+/** 仓库里现有的文件库(19 份来源文件 + 3 份导出表 + README)。 */
 const LIBRARY_DIR = join(APP_ROOT, 'files')
 /**
- * 内化文件的期望数。⚠️ 新增源文件后要跟着改(见 `stored-file.test.ts` 同名常量的说明)。
+ * 内化文件的期望数。**这个数怎么来的**(RL-16 重新核对):原有 24 − 3(入库培育 1 份 +
+ * 重复 `.doc` 2 份,按 `lib/file-store-scope.ts` 移出)+ 1(跨年汇总的
+ * `经信局公布历年小巨人企业名单.xlsx` 入库)= **22**。
+ * 与 `stored-file.test.ts` 的同名常量一起改;⚠️ 新增/移出源文件后要跟着改。
  */
-const INTERNALIZED_FILE_COUNT = 24
+const INTERNALIZED_FILE_COUNT = 22
 
 /**
  * `files/` 是否已就位。目录本身在 clone 里总是存在(只提交了 `README.md`),

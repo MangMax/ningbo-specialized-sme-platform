@@ -37,17 +37,40 @@ import {
  */
 
 /**
- * 出处的源文件标识 —— 用**来源根下的相对路径**(不含凭证),与 `record_evidence.source_file`
- * 同一口径。文件登记进文件库(`app/files/`)后,可经 `options.sourceFile` 换成库内相对路径;
- * 本票不改文件库,故用源目录口径作为默认值(TO-BACKFILL,绑 RL-13)。
+ * 出处的源文件标识 —— **文件库(`app/files/`)内的相对路径**,与 `record_evidence.source_file`
+ * 同一口径,预览/跳转据此解析(RL-16)。
+ *
+ * 这份工作簿从第 1 批到第 7 批**跨年**,没有单一的「公布年份/批次」,故按
+ * `files/README.md` 的「year/batch 取值」第 4 条**省略这两段**:
+ *
+ *     files/jxj/announcement/经信局公布历年小巨人企业名单.xlsx
+ *
+ * 这也正是 app 自己的落位规则对 `(source=jxj, kind=announcement, 无年、无批次)` 给出的路径
+ * (`server/utils/tus.ts` 的 `landingSegments`),故这份文件可以由**公开上传接口**原样落进去,
+ * 不需要为它开特例。
+ *
+ * ⚠️ 历史上这里是**来源根相对路径** `经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx`
+ * —— 那个路径不在文件库里,于是出处解析不到文件、预览全断(RL-02 交付时标为 TO-BACKFILL,
+ * RL-16 兑现)。**不要再改回库外路径。**
  */
-export const LITTLE_GIANT_SOURCE_FILE = '经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx'
+export const LITTLE_GIANT_SOURCE_FILE = 'jxj/announcement/经信局公布历年小巨人企业名单.xlsx'
 
 /** 公布文件标题。**文号来源里没给** ⇒ `docNumber` 留空,不猜。 */
 export const LITTLE_GIANT_SOURCE_TITLE = '经信局公布历年小巨人企业名单'
 
-/** 幂等键前缀。**同一来源文件重复导入必须用同一个键**,故键只由内容哈希决定。 */
-export const LITTLE_GIANT_IDEMPOTENCY_PREFIX = 'jxj/little-giant/historical'
+/**
+ * 幂等键 —— **来源文件标识 + 内容 SHA-256**(契约 §8.1 的形状:`<来源标识>#sha256:<内容>`)。
+ *
+ * 为什么键里带**路径**:文件入库(RL-16)后,同一份内容的来源标识从**库外路径**变成
+ * **库内路径** —— 那正是「该重导一次」的信号。重导时事件按坐标跳过(历史一行不改、
+ * 一行不重复),而**出处指针**收敛到库内路径(见 `server/utils/roster-import.ts` 的重放收敛)。
+ *
+ * 内容没变、标识没变 ⇒ 键不变 ⇒ 重复导入是彻底的空操作(**幂等**);
+ * 键不随调用者、时点变化,故同一份文件任何时候重复导入都是同一个键。
+ */
+export function littleGiantIdempotencyKey(sourceFile: string, sha256: string): string {
+  return `${sourceFile}#sha256:${sha256}`
+}
 
 // ---------------------------------------------------------------------------
 // 载荷类型:契约 §8.3 的**收窄版**(契约里那些 `?` 是给通用写入方的,本模块从不产半成品)
@@ -105,7 +128,7 @@ export interface LittleGiantImportRequest extends RosterImportRequest {
 export type { RosterImportPayload, RosterImportRequest }
 
 export interface LittleGiantImportOptions {
-  /** 出处的源文件标识。默认 [`LITTLE_GIANT_SOURCE_FILE`]。 */
+  /** 出处的源文件标识(**文件库内相对路径**)。默认 [`LITTLE_GIANT_SOURCE_FILE`]。 */
   sourceFile?: string
   /** 来源身份(入库 `import_batch.source_identity`)。默认与 `sourceFile` 同值。 */
   sourceIdentity?: string
@@ -165,7 +188,7 @@ export function buildLittleGiantImportRequest(
 ): LittleGiantImportRequest {
   const sourceFile = options.sourceFile ?? LITTLE_GIANT_SOURCE_FILE
   return {
-    idempotencyKey: `${LITTLE_GIANT_IDEMPOTENCY_PREFIX}#sha256:${workbook.sha256}`,
+    idempotencyKey: littleGiantIdempotencyKey(sourceFile, workbook.sha256),
     sourceKind: 'announcement',
     sourceIdentity: options.sourceIdentity ?? sourceFile,
     sourceSha256: workbook.sha256,

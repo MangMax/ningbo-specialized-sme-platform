@@ -11,7 +11,7 @@ import { listStoredFiles } from '../../utils/stored-files'
  * 就是 `/files` 页上那一份列表,不另立一套口径。
  *
  * 首次调用会顺带做一次**懒回填**(扫 `files/` 补 `stored_file`、按需补段),返回里的
- * `backfill` 就是这次的统计 —— 冷启动时用它核对「23 个文件」。
+ * `backfill` 就是这次的统计 —— 冷启动时用它核对「22 个文件」(RL-16 后的应有集合;**入库范围之外的文件在 `excluded` 里带原因列出**,不进列表)。
  */
 export default defineMcpTool({
   name: 'list_files',
