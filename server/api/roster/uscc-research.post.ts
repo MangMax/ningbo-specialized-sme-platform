@@ -86,7 +86,8 @@ export default defineEventHandler(async (event) => {
       filter: parsed.planFilter,
       targets,
       ...(parsed.enterpriseIds ? { enterpriseIds: parsed.enterpriseIds } : {}),
-      claims: parsed.claims,
+      // 公开来源认领 = 调用方直接给的 + 判定文件里 `verdict: 'found'` 归一化出来的。
+      claims: [...parsed.claims, ...(ingest?.claims ?? [])],
       // 给了认领（含判定文件）⇒ 计划**只判这些目标**，不顺手跑全库库内计划（见 planUsccResearch）。
       platformClaims: [...parsed.platformClaims, ...(ingest?.platformClaims ?? [])],
     }),
@@ -95,6 +96,7 @@ export default defineEventHandler(async (event) => {
           verdicts: {
             batches: ingest.batches,
             accepted: ingest.platformClaims.length,
+            foundClaims: ingest.claims.length,
             untouched: ingest.untouched,
             problems: ingest.problems,
           },

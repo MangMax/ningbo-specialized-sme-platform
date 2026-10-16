@@ -113,10 +113,40 @@ candidates whenever they exist.
   published name, and a plain fill keeps that name on the row — an alias would repeat the current
   name. Aliases are only meaningful on the **merge** path, where the canonical row carries a
   different (newer) name.
+- **A code found by web verification is a `public_source` fill**: keep the page URL, the date it was
+  fetched, and the researcher's own `basis` text (the correspondence between name, locality and
+  code). If the source page shows the registration status as `注销`/`吊销`, carry that in the note —
+  it does not change code ownership, but it must not be dropped.
 - **Do not write a duplicate alias.** `enterprise_alias`'s unique key includes `source_ref_id`, so
   the *same* name from a *different* relation creates a second row. Before writing an alias, look up
   `(enterprise_id, name_norm)`; if a `confirmed` alias with that name already exists, skip the alias
   (still perform the merge). Batches 1 and 5 both hit this (`335` / `783` / `1448`).
+
+## How each fill is recorded (`basisKind`)
+
+Every fill carries the **kind of basis** it rests on, so a reviewer can see at a glance which ones
+lean on a loosened criterion:
+
+| `basisKind` | meaning |
+|---|---|
+| `byte` | the platform relation's `qymc` is byte-equal to the published name |
+| `typographic` | it differs only in full/half-width brackets or whitespace |
+| `district_suffix` | it differs only by the presence of `县`/`区` after a district stem (narrow rule: delete at most one, immediately after a known district short name) |
+| `public_source` | the evidence is a **public content page** (URL + date fetched + basis); this holds for codes found by web verification |
+| `ocr_correction` | **a human-confirmed character correction**, e.g. an OCR misreading |
+
+`ocr_correction` recorded, in the user's own ruling for `宁波荔群精密模具有限公司`: the published
+`荔` (U+8354) is an **OCR misreading**, and the platform's `劦` (U+52E6) is correct. It is
+**neither byte-equal nor normalised-equal** (normalisation never turns 荔 into 劦), so it must be
+recorded as its own kind, with the wording *"published name confirmed by <who> to be an OCR
+misreading; the platform record is authoritative"*. Its evidence needs **both** the
+`platform_relation` row **and** the human confirmation. A confirmer must be named — an unattributed
+correction is refused.
+
+> ⚠️ **Never derive `ocr_correction` from glyph similarity.** 荔/劦 is a *precedent*, not a pattern
+> the software may apply. The system does **not** decide that two characters look alike — that is
+> the fuzzy-inference engine the spec forbids. Only an explicit, attributed human ruling may set
+> this kind.
 
 ## Red lines
 

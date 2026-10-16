@@ -32,9 +32,11 @@ import {
   coreWordOf,
   isValidUscc,
   judgeUsccClaim,
+  nameMatchLevel,
   usccFormatVerdict,
   type UsccResearchClaim,
 } from '../lib/roster/uscc-research'
+import { normalizeName } from '../lib/domain'
 import { createRosterImportClient, type RosterImportRequest } from '../lib/roster-import-client'
 import { classifyRawQuery } from '../lib/platform'
 import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../lib/platform/payload'
@@ -1261,6 +1263,198 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     expect(report.counts.filled).toBe(0)
     expect(report.request).toBeNull()
     expect(report.pending.some((row) => row.code === 'out_of_scope')).toBe(true)
+  })
+
+  it('★ 用字纠错（ocr_correction）：显式给才认，记档不写成任何一档「名称相等」', () => {
+    // 用户 2026-10-16 裁定：公布件「宁波荔群…」是 OCR 误读，平台记录「宁波加群…」为准。
+    const wrong = seedEnterprise({ name: '宁波荔群精密模具有限公司' })
+    const right = seedEnterprise({ name: '宁波劦群精密模具有限公司', uscc: '91330226MA282TE4X1' })
+    const correction = {
+      basisKind: 'ocr_correction' as const,
+      confirmedBy: '用户',
+      announcedName: '宁波荔群精密模具有限公司',
+      platformName: '宁波劦群精密模具有限公司',
+      note: '荔群属于 OCR 错误,正确的就是平台',
+    }
+    const evidence = [
+      {
+        interface: 'business_list' as const,
+        rdjb: '2',
+        sequenceNo: 1,
+        relationKey: 'SQ-ocr-1',
+        nameRaw: '宁波劦群精密模具有限公司',
+        status: '终审通过',
+        usccRaw: '91330226MA282TE4X1',
+      },
+    ]
+    // (1) **不给** correction ⇒ 三档判据一条都不成立（归一化不会把「荔」变成「劦」）⇒ 待人工。
+    const without = planUsccResearch(db, {
+      enterpriseIds: [wrong],
+      platformClaims: [
+        {
+          enterpriseId: wrong,
+          enterpriseName: '宁波荔群精密模具有限公司',
+          uscc: '91330226MA282TE4X1',
+          evidence,
+          batchRef: 'b',
+          observedAt: '2026-10-16T16:00:00.000Z',
+        },
+      ],
+    })
+    expect(without.counts).toMatchObject({ filled: 0, manual: 1 })
+    expect(without.pending[0]!.code).toBe('no_platform_evidence')
+    expect(without.request).toBeNull()
+
+    // (2) 给了 correction ⇒ 按「平台原文逐字」锚定，走归并；记档为 ocr_correction。
+    const with_ = planUsccResearch(db, {
+      enterpriseIds: [wrong],
+      platformClaims: [
+        {
+          enterpriseId: wrong,
+          enterpriseName: '宁波荔群精密模具有限公司',
+          uscc: '91330226MA282TE4X1',
+          evidence,
+          correction,
+          batchRef: 'uscc-recheck-extra-3',
+          observedAt: '2026-10-16T16:00:00.000Z',
+        },
+      ],
+    })
+    expect(with_.counts).toMatchObject({ filled: 1, closed: 1 })
+    expect(with_.counts.byBasisKind).toEqual({ ocr_correction: 1 })
+    const ready = with_.ready[0]!
+    expect(ready.basisKind).toBe('ocr_correction')
+    expect(ready.merge).toMatchObject({ fromEnterpriseId: wrong, intoUscc: '91330226MA282TE4X1' })
+    expect(ready.merge!.sourceRelationRef).toMatchObject({ relationKey: 'SQ-ocr-1' })
+    // 记档措辞：写清「用户确认为 OCR 误读 + 平台记录为准」，且**不**出现「名称相等」字样。
+    expect(ready.merge!.note).toContain('OCR 误读')
+    expect(ready.merge!.note).toContain('宁波劦群精密模具有限公司」为准')
+    expect(ready.merge!.note).toContain('人工确认')
+    expect(ready.merge!.note).not.toContain('逐字等于')
+    expect(ready.merge!.note).not.toContain('归一化后相等')
+    expect(right).toBeGreaterThan(0)
+  })
+
+  it('★ 用字纠错必须**指名确认人**：空白 confirmedBy ⇒ 拒收，不写', () => {
+    const wrong = seedEnterprise({ name: '宁波荔一误读企业有限公司' })
+    const report = planUsccResearch(db, {
+      enterpriseIds: [wrong],
+      platformClaims: [
+        {
+          enterpriseId: wrong,
+          enterpriseName: '宁波荔一误读企业有限公司',
+          uscc: '91330219MA2CL6FP2P',
+          evidence: [
+            {
+              interface: 'business_list',
+              rdjb: '2',
+              sequenceNo: 1,
+              relationKey: 'SQ-ocr-2',
+              nameRaw: '宁波劦一正写企业有限公司',
+            },
+          ],
+          correction: {
+            basisKind: 'ocr_correction',
+            confirmedBy: '   ',
+            announcedName: '宁波荔一误读企业有限公司',
+            platformName: '宁波劦一正写企业有限公司',
+            note: '无主纠错',
+          },
+          batchRef: 'b',
+          observedAt: '2026-10-16T16:00:00.000Z',
+        },
+      ],
+    })
+    expect(report.counts.filled).toBe(0)
+    expect(report.pending[0]!.code).toBe('correction_unattributed')
+    expect(report.request).toBeNull()
+  })
+
+  it('★ 归一化与逐字都**推不出** ocr_correction：荔/加 不是可套用的模式', () => {
+    // 这一条钉住红线：软件不判定字形相近。荔/劦 两字的任何「相等」判据都推不出来。
+    expect(nameMatchLevel('宁波荔群精密模具有限公司', '宁波劦群精密模具有限公司')).toBeNull()
+    expect(nameMatchLevel('宁波荔群精密模具有限公司', '宁波荔群精密模具有限公司')).toBe('byte')
+    // 归一化也不会把它们变成一样（归一化只去空白/零宽/括号/尾随符号、补「宁波」前缀）。
+    expect(normalizeName('宁波荔群精密模具有限公司')).not.toBe(normalizeName('宁波劦群精密模具有限公司'))
+  })
+
+  it('★ 联网核实 found ⇒ 公开主体来源认领（URL + 抓取日期 + 对应依据），三要素缺一不采纳', () => {
+    const ingest = normalizeUsccVerdicts([
+      {
+        file: 'uscc-webverify-verdict.json',
+        value: {
+          generatedAt: '2026-10-16T17:32:00+08:00',
+          items: [
+            {
+              enterpriseId: 244,
+              name: '宁波洒哇地咔电器有限公司',
+              verdict: 'found',
+              candidateUscc: '91330281074914761W',
+              sources: [
+                {
+                  url: 'https://www.chinapp.com/company/12056',
+                  fetchedAt: '2026-10-16T17:12:00+08:00',
+                  basis: '单企业页:标题与正文均含「宁波洒哇地咔电器有限公司」,表「统一社会信用代码 91330281074914761W」',
+                },
+              ],
+              notes: '名称与代码同页配对且区县(余姚市)一致。',
+            },
+            {
+              // 三要素不齐 ⇒ 不采纳、如实列进「不动库」（不猜）。
+              enterpriseId: 261,
+              name: '慈溪市振鹏管件有限公司',
+              verdict: 'found',
+              candidateUscc: '91330282724068481X',
+              sources: [{ url: '', fetchedAt: '', basis: '' }],
+            },
+          ],
+        } as UsccVerdictFile,
+      },
+    ])
+    expect(ingest.claims).toHaveLength(1)
+    expect(ingest.claims[0]).toMatchObject({
+      enterpriseId: 244,
+      uscc: '91330281074914761W',
+      source: {
+        url: 'https://www.chinapp.com/company/12056',
+        checkedOn: '2026-10-16',
+        name: '宁波洒哇地咔电器有限公司',
+      },
+    })
+    expect(ingest.claims[0]!.source.basis).toContain('统一社会信用代码')
+    expect(ingest.claims[0]!.note).toContain('余姚市')
+    expect(ingest.platformClaims).toEqual([])
+    expect(ingest.untouched.map((row) => row.verdict)).toEqual(['needs_human'])
+    expect(ingest.problems.join('|')).toContain('公开来源三要素不齐')
+  })
+
+  it('★ found 走公开来源那一档：补录载荷带上来源 URL 与查证日期（不写成名称相等）', () => {
+    const targetRow = seedEnterprise({ name: '宁波联网补录企业有限公司' })
+    const report = planUsccResearch(db, {
+      enterpriseIds: [targetRow],
+      claims: [
+        {
+          enterpriseId: targetRow,
+          uscc: '91330220MA2CL6FP25',
+          source: {
+            url: 'https://example.test/credit/2',
+            checkedOn: '2026-10-16',
+            basis: '公开信用信息页:名称/区划/代码同页配对',
+            name: '宁波联网补录企业有限公司',
+          },
+        },
+      ],
+    })
+    expect(report.counts).toMatchObject({ filled: 1, closed: 1 })
+    expect(report.counts.byBasisKind).toEqual({ public_source: 1 })
+    const ready = report.ready[0]!
+    expect(ready.basisKind).toBe('public_source')
+    expect(ready.backfill).toMatchObject({
+      enterpriseId: targetRow,
+      uscc: '91330220MA2CL6FP25',
+      source: { url: 'https://example.test/credit/2', checkedOn: '2026-10-16' },
+    })
+    expect(ready.merge).toBeNull()
   })
 
   it('★ 端到端：判定文件 → 服务端采纳 → 统一 API 落库 → 清单里少一家', async () => {

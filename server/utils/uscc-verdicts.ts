@@ -24,7 +24,12 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeUscc } from '../../lib/domain'
-import { isByteEqualName, nameMatchLevel, type UsccPlatformClaim } from '../../lib/roster/uscc-research'
+import {
+  isByteEqualName,
+  nameMatchLevel,
+  type UsccPlatformClaim,
+  type UsccResearchClaim,
+} from '../../lib/roster/uscc-research'
 
 /** 判定文件里的一条(形状见 `orchestration-notes/07-USCC-BATCH-BRIEF.md`)。 */
 export interface UsccVerdictItem {
@@ -53,6 +58,43 @@ export interface UsccVerdictItem {
    * 口径下相等」）。它**不是**我们的采纳判据（见下），所以只如实记档、不做准入门槛。
    */
   qymcEqualsAnnouncedName?: boolean | string | null
+  /**
+   * **人工确认的用字纠错**（如 OCR 误读）——由裁定者显式写进判定文件，
+   * 软件**永不**自行推出（见 `UsccBasisKind` 的注释：荔/劦 是先例，不是可套用的模式）。
+   *
+   * 接受几种写法：`correction: {…}`（本仓形状）、`ocrCorrection: {…}`（同义别名）、
+   * 以及把 `basisKind: "ocr_correction"` 写在外层的形态（此时 `announcedName` 取 `name`）。
+   * 缺 `platformName` 或缺 `confirmedBy` 的一律**不当作纠错** —— 那它自然会因为「没有任何一档
+   * 名称相等」而停在待人工，**不会**因为少写一个字段就悄悄按纠错写进去。
+   */
+  correction?: {
+    basisKind?: string
+    confirmedBy?: string
+    announcedName?: string
+    platformName?: string
+    note?: string
+  }
+  ocrCorrection?: {
+    basisKind?: string
+    confirmedBy?: string
+    announcedName?: string
+    platformName?: string
+    note?: string
+  }
+  basisKind?: string
+  /**
+   * 扁平形态的**确认出处**（extra-3 用的就是这一形态：没有 `correction` 对象，
+   * 只有 `basisKind: "ocr_correction"` + 这句话）。确认人从这句里取**分隔符之前**的那一段
+   * （如「用户 2026-10-16 确认:…」→ `用户`）；取不出确认人就不当作纠错（不认无主的纠错）。
+   */
+  basisSource?: string
+  /**
+   * **公开主体来源**（联网核实的产出）。`verdict === 'found'` 的条目靠它成立 ——
+   * 每条至少要有 `url` + `fetchedAt` + `basis`（契约 §8.10 的公开来源三要素）。
+   */
+  sources?: Array<{ url?: string; fetchedAt?: string; basis?: string }>
+  /** 核实说明（如来源页的登记状态「注销」）——落进补录载荷的 `note`，不丢。 */
+  notes?: string
   verdict?: string
   reason?: string | null
   blocked?: string | null
@@ -87,6 +129,11 @@ export interface UsccVerdictUntouched {
 }
 
 export interface UsccVerdictIngest {
+  /**
+   * 转成**公开主体来源认领**的条目（联网核实的 `found`）——
+   * 证据是内容页 URL + 抓取时刻 + 对应依据，走 `payload.usccBackfills`（§8.10 的公开来源那一档）。
+   */
+  claims: UsccResearchClaim[]
   /** 转成平台证据认领、准备进写入计划的条目。 */
   platformClaims: UsccPlatformClaim[]
   /** 未采纳的条目(冲突 / 未找到 / 待人工 / 库内已解决),原样带理由。 */
@@ -111,7 +158,7 @@ function hasUsableEvidence(claim: { uscc: string; evidence?: UsccPlatformClaim['
 export const USCC_VERDICT_FILES = [1, 2, 3, 4, 5].map((n) => `uscc-verdict-batch-${n}.json`)
 
 /** 只认这几种 verdict 取值;别的取值记 problem 并跳过。 */
-const KNOWN_VERDICTS = new Set(['resolved', 'conflict', 'not_found', 'needs_human', 'query_error'])
+const KNOWN_VERDICTS = new Set(['resolved', 'found', 'conflict', 'not_found', 'needs_human', 'query_error'])
 
 /**
  * 从目录里读判定文件(按固定文件名),返回归一化结果。
@@ -161,6 +208,7 @@ export function readUsccVerdicts(dir: string, files: readonly string[] = USCC_VE
 
 /** 归一化(纯函数,可单测):判定文件 → 平台证据认领 + 未采纳清单。 */
 export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVerdictFile }>): UsccVerdictIngest {
+  const claims: UsccResearchClaim[] = []
   const platformClaims: UsccPlatformClaim[] = []
   /** 已采纳的认领：enterpriseId → 那条（用来判「同一企业两批结论不同时取更强」）。 */
   const seenByEnterprise = new Map<number, UsccPlatformClaim>()
@@ -209,6 +257,36 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
       }
       if (!KNOWN_VERDICTS.has(verdict)) {
         problems.push(`${where}: verdict 取值未知（${verdict || '(空)'}）⇒ 跳过（不猜它能补）`)
+        return
+      }
+      if (verdict === 'found') {
+        // **联网核实**：证据是公开内容页（url + 抓取时刻 + 对应依据）。三要素缺一 ⇒ 不采纳
+        //（`judgeUsccClaim` 还会再判一次格式/校验位/地区），如实列进「不动库」。
+        const source = (Array.isArray(item.sources) ? item.sources : [])[0]
+        const url = typeof source?.url === 'string' ? source.url.trim() : ''
+        const fetchedAt = typeof source?.fetchedAt === 'string' ? source.fetchedAt.trim() : ''
+        const basis = typeof source?.basis === 'string' ? source.basis.trim() : ''
+        const uscc = typeof item.candidateUscc === 'string' ? item.candidateUscc.trim() : ''
+        if (!uscc || !url || !basis || !/^\d{4}-\d{2}-\d{2}/.test(fetchedAt)) {
+          problems.push(`${where}: verdict=found 但公开来源三要素不齐（url/fetchedAt/basis）或缺候选统代 ⇒ 不采纳`)
+          untouched.push({
+            enterpriseId,
+            name,
+            verdict: 'needs_human',
+            reason: `found 但公开来源证据不齐：${reason || '(未给理由)'}`,
+            blocked: null,
+          })
+          return
+        }
+        claims.push({
+          enterpriseId,
+          enterpriseName: name,
+          uscc,
+          // 证据形态 = **公开主体来源**（§8.10 那一档）：URL + 查证日期 + 主体对应依据 + 来源里的名称。
+          source: { url, checkedOn: fetchedAt.slice(0, 10), basis, name, region: null },
+          // 来源页的登记状态（如「注销」）如实带进 note —— 不影响代码归属，但不许丢。
+          note: typeof item.notes === 'string' && item.notes.trim() ? item.notes.trim() : null,
+        })
         return
       }
       if (verdict !== 'resolved') {
@@ -331,11 +409,52 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
         })
         return
       }
+      // **用字纠错只认显式输入**：形状对不上（缺 `platformName` / 缺确认人）就不当作纠错，
+      // 让这条例行回到普通判据 —— 那样它自然会因为「没有任何一档名称相等」而停在待人工，
+      // **不会**因为少写一个字段就悄悄按纠错写进去。
+      const rawCorrection = item.correction ?? item.ocrCorrection
+      const declaredKind = (typeof item.basisKind === 'string' ? item.basisKind : '') || rawCorrection?.basisKind
+      const basisSource = typeof item.basisSource === 'string' ? item.basisSource.trim() : ''
+      let correction: UsccPlatformClaim['correction']
+      if (declaredKind === 'ocr_correction') {
+        // 确认人：显式字段优先；否则从 `basisSource` 的**分隔符之前**取（「用户 2026-10-16 确认:…」→「用户」）。
+        // 取不出来 ⇒ **不当作纠错**（无主纠错不写）——让它回到普通判据，自然会停在待人工。
+        const confirmedBy =
+          (typeof rawCorrection?.confirmedBy === 'string' ? rawCorrection.confirmedBy.trim() : '') ||
+          // 「用户 2026-10-16 确认:…」→ 先切分隔符、再取第一个空白前的词 ⇒ `用户`
+          //（否则拼出来会读成「经用户 2026-10-16 确认确认为 OCR 误读」）。
+          (basisSource ? (basisSource.split(/[:：,，]/, 1)[0]!.trim().split(/\s+/, 1)[0] ?? '') : '')
+        // 平台的写法：显式字段优先；否则取该统代**证据行里唯一的那个 qymc**
+        //（不是「像不像」，是「这一次返回里平台只写了这一个名字」）；不唯一 ⇒ 不猜，拒收。
+        const distinctNames = [...new Set(evidence.map((row) => row.nameRaw).filter((value) => !!value))]
+        const platformName =
+          (typeof rawCorrection?.platformName === 'string' ? rawCorrection.platformName.trim() : '') ||
+          (distinctNames.length === 1 ? distinctNames[0]! : '')
+        const announcedName =
+          (typeof rawCorrection?.announcedName === 'string' ? rawCorrection.announcedName.trim() : '') || name
+        if (confirmedBy && platformName) {
+          correction = {
+            basisKind: 'ocr_correction',
+            confirmedBy,
+            announcedName,
+            platformName,
+            note: (typeof rawCorrection?.note === 'string' && rawCorrection.note.trim()) || basisSource || reason,
+          }
+        } else {
+          problems.push(
+            `${where}: 标了 basisKind=ocr_correction，但` +
+              `${confirmedBy ? '' : '取不到确认人（缺 confirmedBy，basisSource 里也没有）'}；` +
+              `${platformName ? '' : `该统代的证据行里有 ${distinctNames.length} 个不同的 qymc，定不出「平台写法」`}` +
+              '⇒ **不按纠错处理**（不猜），该条回到普通判据、停在待人工',
+          )
+        }
+      }
       const claim: UsccPlatformClaim = {
         enterpriseId,
         enterpriseName: name,
         uscc,
         evidence,
+        ...(correction ? { correction } : {}),
         flagState,
         reason: reason || null,
         // 批次号缺失时用**文件名**（`uscc-recheck-extra-2.json` 这类补充交接物没有 `batch`）——
@@ -360,7 +479,39 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
     )
     return false
   })
-  const accepted = new Set(finalClaims.map((claim) => claim.enterpriseId))
+  // **公开来源认领（`found`）也要进「已采纳」**：否则同一条会既算补齐、又留在「不动库」清单里
+  // （实测：联网核实把 6 家判成 found，而更早的文件把它们判成 conflict，重复计入时
+  // 「124 + 15」会超过 133）。
+  // 两份认领（平台证据 / 公开来源）给同一家企业**不同**统代时，同样按「两边都自称有证据 ⇒ 不猜」
+  // 处理：该企业整体不写（先出现的那条也撤回）。
+  const publicClaimByEnterprise = new Map<number, UsccResearchClaim>()
+  for (const claim of claims) {
+    if (claim.enterpriseId == null) continue
+    publicClaimByEnterprise.set(claim.enterpriseId, claim)
+  }
+  const withdrawnPublic = new Set<number>()
+  for (const claim of finalClaims) {
+    const id = claim.enterpriseId
+    if (id == null) continue
+    const publicClaim = publicClaimByEnterprise.get(id)
+    if (!publicClaim) continue
+    if (normalizeUscc(publicClaim.uscc) === normalizeUscc(claim.uscc)) continue
+    conflictingEnterprises.add(id)
+    withdrawnPublic.add(id)
+    problems.push(
+      `企业 ${claim.enterpriseId}「${claim.enterpriseName ?? ''}」的平台证据认领（${claim.uscc}）` +
+        `与公开来源认领（${publicClaim.uscc}）给的统代不同 ⇒ 两边都自称有证据，**不猜**，该企业整体不写`,
+    )
+  }
+  const keptClaims = claims.filter(
+    (claim) => claim.enterpriseId == null || !withdrawnPublic.has(claim.enterpriseId),
+  )
+  const accepted = new Set<number>([
+    ...finalClaims
+      .map((claim) => claim.enterpriseId)
+      .filter((id): id is number => id != null && !conflictingEnterprises.has(id)),
+    ...keptClaims.map((claim) => claim.enterpriseId).filter((id): id is number => id != null),
+  ])
   const converged: UsccVerdictUntouched[] = []
   /** 企业 → 已经写进「不动库」清单的那一条（**按企业去重**，见下）。 */
   const keptByEnterprise = new Map<number, UsccVerdictUntouched>()
@@ -401,5 +552,5 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
       )
     }
   }
-  return { platformClaims: finalClaims, untouched: converged, batches, problems }
+  return { claims: keptClaims, platformClaims: finalClaims, untouched: converged, batches, problems }
 }

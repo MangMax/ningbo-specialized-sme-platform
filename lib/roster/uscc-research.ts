@@ -346,6 +346,40 @@ export function nameMatchLevel(a: unknown, b: unknown): NameMatchLevel | null {
   return null
 }
 
+/**
+ * 证据**依据的种类** = 名称比对的三个档次 ∪ 一档**人工确认的用字纠错** ∪ 一档「公开来源」
+ * （后者的证据是内容页 URL + 查证日期，本来就不是名称比对，不冒充任何一种「名称相等」）。
+ *
+ * ── `ocr_correction` 这一档为什么必须单列（父代理 2026-10-16 裁定）──────────────
+ * 用户对 `宁波荔群精密模具有限公司`（荔 U+8354）的裁决是：**公布件是 OCR 误读，平台记录的
+ * `宁波劦群精密模具有限公司`（劦 U+52E6）才是对的**。这一条**既不是逐字相等、也不是归一化
+ * 相等**（归一化不会把「荔」变成「劦」），所以它**不能**塞进上面任何一档 —— 塞进去就等于
+ * 软件在断言「这两个名字是同一个」，而那句话是**用户说的**、不是软件算的。
+ *
+ * ⚠️ **绝不可由字形相近自动推出这一档。** 荔/劦 只是一个**先例**，不是可套用的模式；
+ * 系统**不自动判定字形相近**（那正是规格明令禁止的模糊推断引擎）。
+ * 所以 `nameMatchLevel()` **永远不会**返回 `'ocr_correction'` —— 它只能由调用方
+ * **显式**给出（`UsccPlatformClaim.correction`），且必须**指名确认人**。
+ */
+export type UsccBasisKind = NameMatchLevel | 'ocr_correction' | 'public_source'
+
+/** 人工确认的用字纠错（`ocr_correction` 档的输入形状）——**必须显式给、必须指名确认人**。 */
+export interface UsccNameCorrection {
+  basisKind: 'ocr_correction'
+  /** 谁确认的（如 `user` / `父代理`）——空白或缺席一律拒收（不认无主的纠错）。 */
+  confirmedBy: string
+  /** 公布件里的写法（**误读**的那个，按原文照抄）。 */
+  announcedName: string
+  /** 平台记录里的写法（**用户认定为准**的那个，按平台原文照抄）。 */
+  platformName: string
+  /** 裁定说明（原话摘录）。 */
+  note: string
+}
+
+/** `ocr_correction` 那一档的**记档措辞**（契约 §8.10 要求写清的两句，只在这里定义一次）。 */
+export const OCR_CORRECTION_BASIS =
+  '公布名经用户确认为 OCR 误读,平台唯一记录为『劦群』' as const
+
 /** 三档里至少到 `typographic` 才算「归一化后相等」；`byte` 之外都算放宽。 */
 export function isEquivalentName(a: unknown, b: unknown): boolean {
   return nameMatchLevel(a, b) != null
@@ -404,6 +438,14 @@ export interface UsccPlatformClaim {
      */
     query?: string | null
   }[]
+  /**
+   * **人工确认的用字纠错**（如 OCR 误读）——**显式给，软件永不自行推出**。
+   *
+   * 给了它：该认领的 `evidence[]` 里那条**平台写法**（`correction.platformName`，**逐字**）
+   * 就是锚定的关系行；证据记档为 `ocr_correction`，不写成任何一档「名称相等」。
+   * 见 `UsccBasisKind` / `UsccNameCorrection` 的注释与契约 §8.10。
+   */
+  correction?: UsccNameCorrection
   /**
    * 判定文件里 `qymcEqualsAnnouncedName` 的**四态**（`true` / 显式 `false` / 字段缺席 /
    * 写成字符串如 `"normalizeName"` = 只在归一化口径下相等）。
