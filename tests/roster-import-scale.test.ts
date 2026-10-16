@@ -33,7 +33,7 @@
  *
  * ── ⚠️ 当前只在**手动跑**时执行 ─────────────────────────────────────────────
  * 父代理 2026-10-16 裁决：不接进 CI（要不要为性能守单开一条 CI 作业是项目级决定，
- * 不在 RL-18）。所以默认 `pnpm test` 里这三条是 **skipped**（`describe.runIf` 让它
+ * 不在 RL-18）。所以默认 `pnpm test` 里这四条是 **skipped**（`describe.runIf` 让它
  * **可见**，而不是用顶层 `if` 藏掉）。要跑就照上面的命令。
  */
 
@@ -148,7 +148,8 @@ function seedArchive(db: ReturnType<typeof makeDb>, count: number): void {
   }
 }
 
-/** 本批：`count` 条**新**查询（键与存档不重叠），每条带 `RELATIONS_PER_QUERY` 条关系。 */function scaleRequest(count: number, idempotencyKey: string): RosterImportRequest {
+/** 本批：`count` 条**新**查询（键与存档不重叠），每条带 `RELATIONS_PER_QUERY` 条关系。 */
+function scaleRequest(count: number, idempotencyKey: string): RosterImportRequest {
   return {
     idempotencyKey,
     sourceKind: 'alias_evidence',

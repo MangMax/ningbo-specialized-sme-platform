@@ -1165,5 +1165,379 @@
         }
       ]
     }
+  },
+  {
+    "label": "commit: 同名多主体（按名定位取「第一行」的口径探针）",
+    "outcome": {
+      "batchId": 6,
+      "status": "committed",
+      "summary": {
+        "written": 9,
+        "skipped": 0,
+        "failed": 0
+      },
+      "items": [
+        {
+          "ok": true,
+          "kind": "record_event",
+          "ref": "record:3",
+          "detail": {
+            "enterpriseId": 3,
+            "recordId": 3,
+            "sourceDocumentId": 2,
+            "events": [
+              4
+            ],
+            "evidence": [],
+            "skipped": 0,
+            "evidenceRepointed": 0,
+            "rowsWritten": 4
+          }
+        },
+        {
+          "ok": true,
+          "kind": "record_event",
+          "ref": "record:4",
+          "detail": {
+            "enterpriseId": 4,
+            "recordId": 4,
+            "sourceDocumentId": 2,
+            "events": [
+              5
+            ],
+            "evidence": [],
+            "skipped": 0,
+            "evidenceRepointed": 0,
+            "rowsWritten": 3
+          }
+        },
+        {
+          "ok": true,
+          "kind": "duplicate_candidate",
+          "ref": "duplicate_candidate:91330200000000002X~uscc:91330200000000001X",
+          "detail": {
+            "candidate": {
+              "basis": "same_name_norm",
+              "nameNorm": "宁波甲乙丙丁有限公司",
+              "name": "宁波甲乙丙丁有限公司",
+              "newEnterpriseId": 4,
+              "newUscc": "91330200000000002X",
+              "sourceRef": "record:1",
+              "existingEnterpriseId": 3,
+              "existingEnterpriseName": "宁波甲乙丙丁有限公司",
+              "existingUscc": "91330200000000001X"
+            }
+          }
+        },
+        {
+          "ok": true,
+          "kind": "record_event",
+          "ref": "record:5",
+          "detail": {
+            "enterpriseId": 3,
+            "recordId": 5,
+            "sourceDocumentId": 2,
+            "events": [
+              6
+            ],
+            "evidence": [],
+            "skipped": 0,
+            "evidenceRepointed": 0,
+            "rowsWritten": 2
+          }
+        },
+        {
+          "ok": true,
+          "kind": "duplicate_candidate",
+          "ref": "duplicate_candidate:宁波甲乙丙丁有限公司~uscc:91330200000000001X",
+          "detail": {
+            "candidate": {
+              "basis": "same_name_norm",
+              "nameNorm": "宁波甲乙丙丁有限公司",
+              "name": "宁波甲乙丙丁有限公司",
+              "newEnterpriseId": 3,
+              "newUscc": null,
+              "sourceRef": "record:2",
+              "existingEnterpriseId": 3,
+              "existingEnterpriseName": "宁波甲乙丙丁有限公司",
+              "existingUscc": "91330200000000001X"
+            }
+          }
+        },
+        {
+          "ok": true,
+          "kind": "duplicate_candidate",
+          "ref": "duplicate_candidate:宁波甲乙丙丁有限公司~uscc:91330200000000002X",
+          "detail": {
+            "candidate": {
+              "basis": "same_name_norm",
+              "nameNorm": "宁波甲乙丙丁有限公司",
+              "name": "宁波甲乙丙丁有限公司",
+              "newEnterpriseId": 3,
+              "newUscc": null,
+              "sourceRef": "record:2",
+              "existingEnterpriseId": 4,
+              "existingEnterpriseName": "宁波甲乙丙丁有限公司",
+              "existingUscc": "91330200000000002X"
+            }
+          }
+        }
+      ],
+      "error": null
+    },
+    "rowCounts": {
+      "importBatch": 6,
+      "enterprise": 3,
+      "sourceDocument": 2,
+      "record": 5,
+      "recordEvent": 6,
+      "recordEvidence": 1,
+      "enterpriseAlias": 1,
+      "platformQuery": 2,
+      "platformRelation": 2,
+      "differenceReason": 1,
+      "platformExportBatch": 3,
+      "platformExportRow": 6
+    },
+    "changed": {
+      "importBatch": [
+        {
+          "error": null,
+          "id": 1,
+          "idempotencyKey": "sem/announce#sha256:a1",
+          "itemResultsSha": "f50b65ce05b53665",
+          "preflightResultSha": "debcb54bf19125de",
+          "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
+          "sourceKind": "announcement",
+          "sourceSha256": null,
+          "status": "committed",
+          "summarySha": "da92995cbd889376"
+        },
+        {
+          "error": "批次校验未通过：2 项有误，未写入任何数据",
+          "id": 2,
+          "idempotencyKey": "sem/announce-replay#sha256:a1",
+          "itemResultsSha": "81b91f2e820adb35",
+          "preflightResultSha": "ce310002c70c9f89",
+          "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
+          "sourceKind": "announcement",
+          "sourceSha256": null,
+          "status": "failed",
+          "summarySha": "2e863b6a92051e2c"
+        },
+        {
+          "error": null,
+          "id": 3,
+          "idempotencyKey": "sem/exp-v1#sha256:b1",
+          "itemResultsSha": "9a16a5093013a10b",
+          "preflightResultSha": "542d5bcc31172b99",
+          "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
+          "sourceKind": "platform_export",
+          "sourceSha256": null,
+          "status": "committed",
+          "summarySha": "04786c867990dc42"
+        },
+        {
+          "error": null,
+          "id": 4,
+          "idempotencyKey": "sem/exp-v2#sha256:b2",
+          "itemResultsSha": "a07d498253c972ef",
+          "preflightResultSha": "542d5bcc31172b99",
+          "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
+          "sourceKind": "platform_export",
+          "sourceSha256": null,
+          "status": "committed",
+          "summarySha": "04786c867990dc42"
+        },
+        {
+          "error": null,
+          "id": 5,
+          "idempotencyKey": "sem/broken#sha256:c1",
+          "itemResultsSha": "96c800a8fea6367a",
+          "preflightResultSha": "542d5bcc31172b99",
+          "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
+          "sourceKind": "platform_export",
+          "sourceSha256": null,
+          "status": "committed",
+          "summarySha": "04786c867990dc42"
+        },
+        {
+          "error": null,
+          "id": 6,
+          "idempotencyKey": "sem/duplicate-name#sha256:d1",
+          "itemResultsSha": "112dee04b9077647",
+          "preflightResultSha": "1dc88e02a1e8f478",
+          "sourceIdentity": "jxj/announcement/2026/2/同名多主体.pdf",
+          "sourceKind": "announcement",
+          "sourceSha256": null,
+          "status": "committed",
+          "summarySha": "16a11c9896f8160d"
+        }
+      ],
+      "enterprise": [
+        {
+          "city": null,
+          "district": null,
+          "id": 1,
+          "name": "宁波上航测绘股份有限公司",
+          "nameNorm": "宁波上航测绘股份有限公司",
+          "qualityFlags": [],
+          "regStatus": null,
+          "usccNorm": "91330211255994457P"
+        },
+        {
+          "city": null,
+          "district": null,
+          "id": 3,
+          "name": "宁波甲乙丙丁有限公司",
+          "nameNorm": "宁波甲乙丙丁有限公司",
+          "qualityFlags": [],
+          "regStatus": null,
+          "usccNorm": "91330200000000001X"
+        },
+        {
+          "city": null,
+          "district": null,
+          "id": 4,
+          "name": "宁波甲乙丙丁有限公司",
+          "nameNorm": "宁波甲乙丙丁有限公司",
+          "qualityFlags": [],
+          "regStatus": null,
+          "usccNorm": "91330200000000002X"
+        }
+      ],
+      "sourceDocument": [
+        {
+          "docNumber": "甬经信中小〔2026〕1号",
+          "id": 1,
+          "issueDate": null,
+          "path": "jxj/announcement/2026/1/一批到底.pdf",
+          "source": "jxj",
+          "title": "一批到底"
+        },
+        {
+          "docNumber": "甬经信中小〔2026〕99号",
+          "id": 2,
+          "issueDate": null,
+          "path": "jxj/announcement/2026/2/同名多主体.pdf",
+          "source": "jxj",
+          "title": "同名多主体"
+        }
+      ],
+      "record": [
+        {
+          "district": null,
+          "enterpriseId": 1,
+          "id": 1,
+          "nameRaw": "宁波上航测绘股份有限公司",
+          "qualityFlags": [],
+          "source": "jxj",
+          "titleCode": "specialized_sme",
+          "usccRaw": "91330211255994457P"
+        },
+        {
+          "district": null,
+          "enterpriseId": 1,
+          "id": 2,
+          "nameRaw": "宁波上航测绘有限公司",
+          "qualityFlags": [],
+          "source": "jxj",
+          "titleCode": "innovative_sme",
+          "usccRaw": null
+        },
+        {
+          "district": null,
+          "enterpriseId": 3,
+          "id": 3,
+          "nameRaw": "宁波甲乙丙丁有限公司",
+          "qualityFlags": [],
+          "source": "jxj",
+          "titleCode": "specialized_sme",
+          "usccRaw": "91330200000000001X"
+        },
+        {
+          "district": null,
+          "enterpriseId": 4,
+          "id": 4,
+          "nameRaw": "宁波甲乙丙丁有限公司",
+          "qualityFlags": [],
+          "source": "jxj",
+          "titleCode": "specialized_sme",
+          "usccRaw": "91330200000000002X"
+        },
+        {
+          "district": null,
+          "enterpriseId": 3,
+          "id": 5,
+          "nameRaw": "宁波甲乙丙丁有限公司",
+          "qualityFlags": [],
+          "source": "jxj",
+          "titleCode": "innovative_sme",
+          "usccRaw": null
+        }
+      ],
+      "recordEvent": [
+        {
+          "batchSeq": 2,
+          "decidedYear": null,
+          "eventType": "award",
+          "id": 1,
+          "recordId": 1,
+          "reviewOutcome": null,
+          "sortKey": 2022,
+          "year": 2022
+        },
+        {
+          "batchSeq": null,
+          "decidedYear": 2025,
+          "eventType": "review",
+          "id": 2,
+          "recordId": 1,
+          "reviewOutcome": "passed",
+          "sortKey": 2022,
+          "year": 2022
+        },
+        {
+          "batchSeq": 1,
+          "decidedYear": null,
+          "eventType": "award",
+          "id": 3,
+          "recordId": 2,
+          "reviewOutcome": null,
+          "sortKey": 2021,
+          "year": 2021
+        },
+        {
+          "batchSeq": 1,
+          "decidedYear": null,
+          "eventType": "award",
+          "id": 4,
+          "recordId": 3,
+          "reviewOutcome": null,
+          "sortKey": 2026,
+          "year": 2026
+        },
+        {
+          "batchSeq": 1,
+          "decidedYear": null,
+          "eventType": "award",
+          "id": 5,
+          "recordId": 4,
+          "reviewOutcome": null,
+          "sortKey": 2026,
+          "year": 2026
+        },
+        {
+          "batchSeq": 1,
+          "decidedYear": null,
+          "eventType": "award",
+          "id": 6,
+          "recordId": 5,
+          "reviewOutcome": null,
+          "sortKey": 2026,
+          "year": 2026
+        }
+      ]
+    }
   }
 ]

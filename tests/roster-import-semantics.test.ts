@@ -153,6 +153,39 @@ function snapshotBatch(key: string, sha: string, year: number): RosterImportRequ
   }
 }
 
+/**
+ * **同名多主体**批次 —— 直接压 `findEnterpriseByNorm` / `findEnterprisesByNorm` 的
+ * 「取第一行 / 取全部」口径（`enterprise_name_norm_idx` **不唯一**）。
+ *
+ * 三条记录用**逐字相同**的名字：
+ *  1. 带统代 A ⇒ 新建企业 A；
+ *  2. 带统代 B ⇒ 新建企业 B（与 A **同名不同统代**，正是本模型要如实保留的同名多主体），
+ *     并按 `findEnterprisesByNorm` 报出一条指向 A 的重名候选；
+ *  3. **不带统代** ⇒ 只按名定位、命中 `findEnterpriseByNorm`。
+ *
+ * 第 3 条落哪家企业取决于「同名里取哪一行」—— 所以它的 `record.enterpriseId` 就是
+ * 这个口径的**可观察**探针：改前改后取到不同行，黄金文件立刻红。
+ */
+function duplicateNameBatch(idempotencyKey: string): RosterImportRequest {
+  const sameName = '宁波甲乙丙丁有限公司'
+  return {
+    idempotencyKey,
+    sourceKind: 'announcement',
+    sourceIdentity: 'jxj/announcement/2026/2/同名多主体.pdf',
+    payload: {
+      announcement: {
+        sourceDocument: { source: 'jxj', title: '同名多主体', docNumber: '甬经信中小〔2026〕99号' },
+        records: [
+          { enterprise: { name: sameName, uscc: '91330200000000001X' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
+          { enterprise: { name: sameName, uscc: '91330200000000002X' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
+          // ★ 不带统代 ⇒ 走按名定位，压的就是「同名里取第一行」。
+          { enterprise: { name: sameName }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
+        ],
+      },
+    },
+  }
+}
+
 /** 逐项报错的批次：`sourceRowNo` 重复 ⇒ 整批 failed，业务数据一行不落。 */
 function brokenBatch(key: string): RosterImportRequest {
   const base = snapshotBatch(key, '3'.repeat(64), 2026)
@@ -198,6 +231,9 @@ describe('RL-18 写入语义快照：与集成 tip 的行为逐字一致', () =>
     )
     step('commit: 修好后以同一幂等键重试（本批转为 committed）', () =>
       commitRosterImport(db, snapshotBatch('sem/broken#sha256:c1', '3'.repeat(64), 2026)),
+    )
+    step('commit: 同名多主体（按名定位取「第一行」的口径探针）', () =>
+      commitRosterImport(db, duplicateNameBatch('sem/duplicate-name#sha256:d1')),
     )
 
     const actual = JSON.stringify(recorder.steps, null, 2)
