@@ -153,6 +153,35 @@ describe('目标收集:只取比对口径的差异集合,并把「无统代」�
     expect(collected.byUscc.get(USCC)!).toHaveLength(1)
   })
 
+  it('limit/offset 配成分页:逐片取完 → 不重、不漏(全量长跑靠它分片)', () => {
+    // 分页口径:在**全部差异目标**上滑窗(含无统代那些 —— 它们也是差异,也要在某一篇里落行)。
+    const signature = (target: { enterpriseId: number; titleCode: string; direction: string }) =>
+      `${target.enterpriseId}|${target.titleCode}|${target.direction}`
+    const idsIn = (collected: ReturnType<typeof collectReconcileTargets>) =>
+      [...collected.targets, ...collected.unqueryable].map(signature)
+
+    const all = collectReconcileTargets(db, { titles: ['specialized_sme'] })
+    const full = idsIn(all)
+    expect(full.length).toBeGreaterThan(2)
+
+    const first = collectReconcileTargets(db, { titles: ['specialized_sme'], limit: 1 })
+    const second = collectReconcileTargets(db, { titles: ['specialized_sme'], limit: 1, offset: 1 })
+    expect(idsIn(first)).not.toEqual(idsIn(second))
+
+    // 一片一片取完:总数与全集一致,且没有重复(片之间不重叠、也不漏)。
+    const paged: string[] = []
+    for (let offset = 0; ; offset += 1) {
+      const slice = collectReconcileTargets(db, { titles: ['specialized_sme'], limit: 1, offset })
+      const ids = idsIn(slice)
+      if (!ids.length) break
+      paged.push(...ids)
+      if (paged.length > full.length + 1) throw new Error('分页没有终止')
+    }
+    // 顺序按比对口径(无统代那类可能排在中间),所以比**集合**:数量一致、无重复、无遗漏。
+    expect([...paged].sort()).toEqual([...full].sort())
+    expect(new Set(paged).size).toBe(full.length)
+  })
+
   it('usccs 点名 ⇒ 只留点到的那个统代(小样本实查;无统代的自然一个都不命中)', () => {
     const collected = collectReconcileTargets(db, { titles: ['specialized_sme'], usccs: [USCC] })
     expect(collected.targets.map((target) => target.uscc)).toEqual([USCC])

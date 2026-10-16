@@ -29,7 +29,9 @@
  *   --titles a,b           只处理这些称号(如 specialized_sme,little_giant)
  *   --directions a,b       只处理这些方向(missing_in_miit / extra_in_miit)
  *   --usccs a,b            只查这几个统一社会信用代码(小样本实查 / 复现用)
- *   --limit N              最多处理多少个差异目标(分批长跑用)
+ *   --limit N              最多处理多少个差异目标(与 --offset 配成分页)
+  --offset N             跳过前 N 个差异目标(分批长跑用;与 --offset 配成分页)
+ *   --offset N             跳过前 N 个差异目标(分页的第二片起)
  *   --concurrency N        并发上限,1–12(默认 4)
  *   --freshness-hours N    复用新鲜查询与判定的窗口(默认 24)
  *   --dry-run              只判定、不回写
@@ -83,7 +85,8 @@ const HELP = `平台比对与原因回写 —— 无头长跑入口(RL-03)
   --titles a,b           只处理这些称号
   --directions a,b       只处理这些方向(missing_in_miit / extra_in_miit)
   --usccs a,b            只查这几个统一社会信用代码(小样本实查 / 复现用)
-  --limit N              最多处理多少个差异目标
+  --limit N              最多处理多少个差异目标(与 --offset 配成分页)
+  --offset N             跳过前 N 个差异目标
   --concurrency N        并发上限,1–12(默认 4)
   --freshness-hours N    复用新鲜查询与判定的窗口(默认 24)
   --dry-run              只判定、不回写
@@ -105,6 +108,7 @@ const titles = list('titles')
 const directions = list('directions')
 const usccs = list('usccs')
 const limit = flag('limit', null)
+const offset = flag('offset', null)
 const concurrency = flag('concurrency', null)
 const freshnessHours = flag('freshness-hours', null)
 const dryRun = has('dry-run')
@@ -124,11 +128,23 @@ function positiveInt(name, raw) {
   return value
 }
 
+/** `offset` 允许 0(等于不跳),其余同上。 */
+function nonNegativeInt(name, raw) {
+  if (raw == null) return undefined
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value < 0) {
+    process.stderr.write(`✗ --${name} 必须是 0 或正整数,收到:${raw}\n`)
+    process.exit(2)
+  }
+  return value
+}
+
 const jobParams = {
   ...(titles ? { titles } : {}),
   ...(directions ? { directions } : {}),
   ...(usccs ? { usccs } : {}),
   ...(limit != null ? { limit: positiveInt('limit', limit) } : {}),
+  ...(offset != null ? { offset: nonNegativeInt('offset', offset) } : {}),
   ...(concurrency != null ? { concurrency: positiveInt('concurrency', concurrency) } : {}),
   ...(freshnessHours != null ? { freshnessHours: positiveInt('freshness-hours', freshnessHours) } : {}),
   ...(dryRun ? { write: false } : {}),
@@ -196,6 +212,7 @@ async function runLocal() {
     directions,
     usccs,
     limit: jobParams.limit,
+    offset: jobParams.offset,
     concurrency: jobParams.concurrency,
     freshnessMs: jobParams.freshnessHours != null ? jobParams.freshnessHours * 3600_000 : undefined,
     write: !dryRun,
