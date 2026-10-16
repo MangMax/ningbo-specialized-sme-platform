@@ -1,4 +1,11 @@
 import { normalizeName } from '../domain'
+import type {
+  RosterImportEvidence,
+  RosterImportEvent,
+  RosterImportPayload,
+  RosterImportRecord,
+  RosterImportRequest,
+} from '../roster-import-client'
 import {
   LITTLE_GIANT_TITLE_CODE,
   batchSeqToYear,
@@ -20,6 +27,11 @@ import {
  *     它们在报告里带原因待核。
  *  3. **不猜**:来源没给的一律留空(文号、页码、复核结论);认不出的批次**不进**名单。
  *
+ * ── 为什么载荷类型从 `lib/roster-import-client.ts` 取 ────────────────
+ * 那是 RL-11 按契约 §8 落的**契约类型**(项目外 `pipeline/` 也直接 import 它)。
+ * 本模块只**产出**符合该类型的对象,不另立一套同形接口 —— 于是「我的载荷与写入侧
+ * 说的是不是同一个形状」由**类型检查**回答,而不是靠人比对两份同形声明。
+ *
  * 写库不在这里:「经真实 HTTP 提交」由 `POST /api/roster/import/commit`(RL-11) 完成,
  * 端到端见 `tests/little-giant-import-e2e.test.ts`。
  */
@@ -27,7 +39,7 @@ import {
 /**
  * 出处的源文件标识 —— 用**来源根下的相对路径**(不含凭证),与 `record_evidence.source_file`
  * 同一口径。文件登记进文件库(`app/files/`)后,可经 `options.sourceFile` 换成库内相对路径;
- * 本票不改文件库,故用源目录口径作为默认值。
+ * 本票不改文件库,故用源目录口径作为默认值(TO-BACKFILL,绑 RL-13)。
  */
 export const LITTLE_GIANT_SOURCE_FILE = '经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx'
 
@@ -37,53 +49,60 @@ export const LITTLE_GIANT_SOURCE_TITLE = '经信局公布历年小巨人企业�
 /** 幂等键前缀。**同一来源文件重复导入必须用同一个键**,故键只由内容哈希决定。 */
 export const LITTLE_GIANT_IDEMPOTENCY_PREFIX = 'jxj/little-giant/historical'
 
-export interface RosterImportEvidence {
+// ---------------------------------------------------------------------------
+// 载荷类型:契约 §8.3 的**收窄版**(契约里那些 `?` 是给通用写入方的,本模块从不产半成品)
+// ---------------------------------------------------------------------------
+
+/** 出处:本模块**总能**给全四项(契约里可空是因为它还要服务别的来源)。 */
+export interface LittleGiantImportEvidence extends RosterImportEvidence {
   sourceFile: string
   attachment: string | null
-  listNo: number | null
+  listNo: number
   page: number | null
 }
 
-export interface RosterImportEvent {
+/** 认定事件:这份来源只有认定,**没有**复核信息(故 `reviewOutcome` 恒为 `null`,不猜)。 */
+export interface LittleGiantImportEvent extends RosterImportEvent {
   eventType: 'award'
   year: number
   batchSeq: number
   decidedYear: number
   reviewOutcome: null
-  evidence: RosterImportEvidence[]
+  evidence: LittleGiantImportEvidence[]
 }
 
-export interface RosterImportEnterprise {
+/** 企业:属地来自源文件 B 列,随记录一起带上。 */
+export interface LittleGiantImportEnterprise {
   name: string
   uscc: string | null
-  /**
-   * 属地(源文件 B 列)。**契约 §8.3 示例里没有这个字段** —— 本票按源文件如实带上,
-   * 见交付说明的「需要父代理裁决的点」;若写入侧忽略它,属地的唯一来源就只剩源文件本身。
-   */
   district: string | null
 }
 
-export interface RosterImportRecord {
-  enterprise: RosterImportEnterprise
+/** 一条记录 = 一家企业 × 小巨人 × jxj,事件按批次序号排好。 */
+export interface LittleGiantImportRecord extends RosterImportRecord {
+  enterprise: LittleGiantImportEnterprise
   titleCode: string
-  events: RosterImportEvent[]
+  events: LittleGiantImportEvent[]
 }
 
-export interface RosterImportPayload {
+export interface LittleGiantImportPayload extends RosterImportPayload {
   announcement: {
     sourceDocument: { source: 'jxj'; title: string; docNumber: string | null }
-    records: RosterImportRecord[]
+    records: LittleGiantImportRecord[]
   }
 }
 
-/** `POST /api/roster/import/commit`(契约 §8.2)的请求体。 */
-export interface RosterImportRequest {
+/** 契约 §8.2 的提交请求体(本模块产出的那一份)。 */
+export interface LittleGiantImportRequest extends RosterImportRequest {
   idempotencyKey: string
   sourceKind: 'announcement'
   sourceIdentity: string
   sourceSha256: string
-  payload: RosterImportPayload
+  payload: LittleGiantImportPayload
 }
+
+/** 本模块产出的请求体就是契约 §8.2 的请求体 —— 收窄类型**继承**契约类型,故可互换。 */
+export type { RosterImportPayload, RosterImportRequest }
 
 export interface LittleGiantImportOptions {
   /** 出处的源文件标识。默认 [`LITTLE_GIANT_SOURCE_FILE`]。 */
@@ -143,7 +162,7 @@ export interface LittleGiantImportReport {
 export function buildLittleGiantImportRequest(
   workbook: LittleGiantWorkbook,
   options: LittleGiantImportOptions = {},
-): RosterImportRequest {
+): LittleGiantImportRequest {
   const sourceFile = options.sourceFile ?? LITTLE_GIANT_SOURCE_FILE
   return {
     idempotencyKey: `${LITTLE_GIANT_IDEMPOTENCY_PREFIX}#sha256:${workbook.sha256}`,
@@ -228,11 +247,11 @@ export function buildLittleGiantImportReport(
  *
  * 组的先后 = 首次出现的源行先后(稳定、可复现)。
  */
-function groupRecords(workbook: LittleGiantWorkbook, sourceFile: string): RosterImportRecord[] {
-  const groups = new Map<string, RosterImportRecord>()
+function groupRecords(workbook: LittleGiantWorkbook, sourceFile: string): LittleGiantImportRecord[] {
+  const groups = new Map<string, LittleGiantImportRecord>()
   for (const row of workbook.rows) {
     const key = row.uscc === '' ? `name:${normalizeName(row.name)}` : `uscc:${row.uscc}`
-    const event: RosterImportEvent = {
+    const event: LittleGiantImportEvent = {
       eventType: 'award',
       year: row.year,
       batchSeq: row.batchSeq,
@@ -257,6 +276,9 @@ function groupRecords(workbook: LittleGiantWorkbook, sourceFile: string): Roster
         enterprise: {
           name: row.name,
           uscc: row.uscc === '' ? null : row.uscc,
+          // 属地(源文件 B 列)一并带上:RL-11 会把它写进 `enterprise.district` /
+          // `record.district`(`lib/roster-import-client.ts` 的 `RosterImportRecord` 有这一项);
+          // 丢掉它,RL-04 的按区县筛选就没有来源。
           district: row.district === '' ? null : row.district,
         },
         titleCode: LITTLE_GIANT_TITLE_CODE,
