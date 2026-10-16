@@ -420,6 +420,57 @@
 归并后**总表一行**,同时保留:小巨人(miit)+ 专精特新中小企业(jxj, 2022 认定, 第 74 页)+
 专精特新中小企业(miit);**按现名或曾用名搜索都命中同一企业**;并展示该 USCC 的全部 6 条关联。
 
+### 5.3 主名称口径,与「重名候选」的证据驱动归并(RL-14 增量补齐)
+
+> **边界不变**:称号 / 年份 / 批次 / 认定与复核事件**仍以公布文件为唯一权威**(§0)。
+> 本节只规定**企业名称**这一项,以及「同一家公司被拆成两行」时怎么办。
+
+**① `enterprise.name` 以工信部导出表(最新情况)为准,公布名单里的名字是当年名(历史名)。**
+
+`enterprise.name` 取**平台导出表侧**的名称 —— 它代表**最新情况**;公布名单里的名字是
+**历年当年**的写法,属**历史名**。归并时因此:
+
+- 规范行(canonical)是**带统一社会信用代码**的那一行(该统代由平台接口/导出表引入),
+  归并**不改**它的 `name` ⇒ 「导出表侧的名字赢」;
+- **逐字不同名**时,被并的公布名写进 `enterprise_alias`
+  (`verification_status='confirmed'`,来源 = 平台关系);
+- **两侧名称逐字相同时不造别名**(没有任何第二个名字可留)⇒ 只并身份。
+  实测的 4 例重名(公布名 == 导出表名,逐字相同)都走这一支,归并净新增 0 行。
+- 判据用**逐字相等**而不是归一化相等:归一化会抹掉括号、空白与「宁波」前缀,
+  而「公布名写短名、导出表写全名」正是要靠别名留住的差异。
+
+> **归并「不改名」到什么程度**:它**不会**去写 `enterprise.name`(§8.4 的 `merges` 载荷里
+> 也没有承载「把规范行改名」的字段)。规则在这里的**操作性含义**是「选谁当规范行」:
+> 带统代的那行就是平台/导出侧,它的名字本来就是导出表的名字;历史名永远不会赢 ——
+> 它落在别名里。重名候选一路(N> 见 ②)两侧按定义同名(判据是 `name_norm` 相同),
+> 这一路因此没有名字被改写。**若日后要求「以 `platform_export_row` 的名字覆盖
+> `enterprise.name`(哪怕规范行已有别的名字)」,那是新的写行为,需另开切片** —— 见 ADR §12.1。
+
+**② 重名候选:同一家公司被拆成两行时,软件必须**显式报出来**。**
+
+`upsertEnterprise` 的身份规则是「**有统代只按统代、无统代才按名**」(§1.2 的身份键)。
+这个行为**本身正确** —— 按名自动合并会踩「同名多主体」,SPEC 明令禁止;但它的后果是:
+同一家公司带着统代再进来一次(jxj 历年工作簿 / 导出表),会与既有那条**同名但无统代**的行
+**另起一行**,而导入报告里**一个字都没有**。实测:导入经信局历年小巨人工作簿后
+**静默多出 4 家重复企业身份**(见 §8.8 的实测基准)。
+
+所以:**新建企业**时,只要库里(或本批更早)**已有 `name_norm` 相同的行**(不论它有无统代),
+就产生一条**重名候选**(`DuplicateNameCandidate`,见 §8.8)—— 字段含既有企业 id / 名 / 统代(可空)、
+新建企业 id / 统代、判定依据(`same_name_norm`)、触发它的载荷项引用。
+**候选不是结论**:匹配规则一点没放宽(那两行照样都在),是否归并另由下一条决定。
+
+**③ 归并必须**证据驱动**:平台自己说「这个统代就叫这个名字」。**
+
+判据(唯一的一条,可复核):
+
+> 拿候选的**新统代**去查**已落库**的平台关系;若存在一条关系的 `qymc`(`platform_relation.name_raw`)
+> **逐字等于**被并方名称,就是平台自己记录了「这个统代就叫这个名字」 ⇒ **独立原始证据成立** ⇒ 可并。
+> 查不到、或 `qymc` 与名称不符 ⇒ **不并**,列**待核**。
+
+没有相似度、没有推断、没有按名归并。此外**被并方自带统代的一律不并**
+(那说明它是**另一个已识别的主体**,同名只说明同名);同一条既有行被多条候选认领时
+**只并第一认领者,其余待核**。归并的执行形状见 §8.4,可运行入口见 §8.8。
+
 ---
 
 ## 6. 生命周期语义(读侧必须实现的判定)
@@ -532,6 +583,41 @@
 (`{ id, titleCode, year, collectedOn, originalFilename, sha256, importStatus, replacedBatchId }`),
 `diff` 含 `added` / `removed` / `changed` / `unchanged`,每处差异带两侧**源行号**
 `sourceRowNo`(可回溯到导出的物理行)。只读、不鉴权。
+
+### 7.8 `GET /api/roster/import/duplicate-candidates` — 重名候选报告(RL-14 增量)
+
+查询参数:`batchKey`(**必填**,产出候选的导入批次幂等键)。缺 `batchKey` ⇒ 400;
+该幂等键没有批次 ⇒ 404。只读、不鉴权。
+
+响应:
+
+```jsonc
+{
+  "batchKey": "jxj/workbook/little-giant#sha256:…",
+  "batchId": 12,
+  "counts": { "candidates": 4, "ready": 4, "pending": 0 },   // 计数
+  "candidates": [ /* DuplicateNameCandidate,见 §8.8 */ ],     // 明细
+  "ready": [{ "candidate": {…}, "evidence": {…}, "merge": {…} }],  // 证据成立、可并
+  "pending": [{ "candidate": {…}, "reason": "no_platform_query", "message": "…" }], // 不并,待核
+  "previous": { "batchId": 3, "idempotencyKey": "duplicate_merge:…" },  // 已执行过则指出那一次;否则 null
+  "request": { "idempotencyKey": "…", "sourceKind": "alias_evidence", "sourceIdentity": "…", "payload": { "merges": [ … ] } }
+}
+```
+
+- `request` **可直接 POST 给 `/api/roster/import/commit`**(§8.2);没有可并项时为 `null`
+  (**不发空批**)。于是「判定」与「落库」是同一条路,不存在第二种写入口。
+- `evidence` 记这条候选凭什么可并:`{ relationId, queryId, interface, queryKey, rdjb, queriedAt,
+  sequenceNo, relationKey, nameRaw, usccRaw, sourceKind }` —— `nameRaw` 就是那条 `qymc`。
+  取证据的规则是**确定性**的:只认**以该统代为查询键**的查询(按名查的键是 `name:<nameNorm>`,
+  不构成「这个统代叫这个名字」);**用户实测过的那一类形状(`business_list` + `rdjb=3`)优先**,
+  其余接口按查询时点新→旧(时点并列按行 id 大→小),查询内按序号小→大取第一条 `qymc` 逐字相等的
+  ⇒ 同一个库给出同一条证据,归并可重放。
+  接口不设门槛的理由:判据是「平台说这个统代叫什么」,`apply_list` 的关系同样带
+  `tyshxydm` + `qymc`,这句话不因接口而不同;用了哪一条**如实记进报告**供复核。
+  (字典外的接口不静默降级成某个类别,而是不拿来当证据。)
+- `pending.reason` 是可判别的原因:`no_target_uscc` / `no_platform_query`(没查过 ≠ 查了没有)/
+  `name_not_evidenced` / `source_gone` / `source_has_uscc`(同名多主体)/
+  `target_gone` / `source_claimed` / `same_enterprise`。**每一条都不得并。**
 
 ---
 
@@ -768,6 +854,77 @@
 裸 id(`aliases[].sourceRefId`、`differences[].evidenceQueryId` / `evidenceRelationId`、
 `merges[].sourceRefId` / `evidenceQueryId`)**继续可用**,语义不变:指向**已存在**的行
 (如「先写查询、读回 id 后再写别名」的既有做法)。既有写法不必改。
+
+### 8.8 重名候选的**显式化**与可执行的归并(RL-14 增量)
+
+> **只增量**:不改 §1 的任何表/列/枚举,不改 `upsertEnterprise` 的身份规则
+> (有统代只按统代、无统代才按名),不新建模糊推断。口径见 §5.3。
+
+#### 8.8.1 候选出现在哪里(报告的两处落点)
+
+| 落点 | 形状 | 何时 |
+|---|---|---|
+| `import_batch.item_results` | `{ ok:true, kind:"duplicate_candidate", ref:"duplicate_candidate:<新统代>~enterprise:<既有 id>", detail:{ candidate } }` | 提交后 |
+| `preflight`(§8.1 响应 / `import_batch.preflight_result`) | 多一个**增量**字段 `duplicateCandidates: DuplicateNameCandidate[]` | 预检时 |
+
+```jsonc
+// DuplicateNameCandidate
+{
+  "basis": "same_name_norm",        // 判定依据:归一化名相同(目前唯一取值)
+  "nameNorm": "宁波仁栋电气有限公司",
+  "name": "宁波仁栋电气有限公司",     // 本批新建侧的名称原值
+  "existingEnterpriseId": 186,      // 既有侧(库里已有,或本批更早写入的同名行)
+  "existingEnterpriseName": "宁波仁栋电气有限公司",
+  "existingUscc": null,             // 事故里正是「既有那行无统代」
+  "newEnterpriseId": 7394,          // 本批新建的那一行(预检阶段为 null —— 还没建)
+  "newUscc": "913302017133602847",
+  "sourceRef": "record:169"         // 触发新建的载荷项引用,供逐项追溯
+}
+```
+
+- 候选项在计划里的归类是 **`note`**:只记录,**不计入** `add` / `update` / `skip` / `review`,
+  也不写任何行(`rowsWritten: 0`)—— 它描述的是事实,不是影响。
+- 判「会新建」用的是**写入侧的同一份身份规则**,所以预检说「会新建」与提交**真的新建**是同一件事。
+- 逐字同名但**本批内**才出现的第二行也算候选(既有侧记为本批更早写入的那一行,
+  其 id 在**执行阶段**补齐)。
+- **禁止**把候选读成「已合并」:它只说明两行同名。
+
+#### 8.8.2 可运行的归并入口
+
+1. **只读报告**:`GET /api/roster/import/duplicate-candidates?batchKey=…`(§7.8)
+   —— 逐条判「可并 / 待核」,并给出可直接提交的 `request`。
+2. **提交**:把那份 `request` **原样 POST** 给 `POST /api/roster/import/commit`(§8.2)。
+   写入侧没有新增任何入口:同一份单批事务、同一份幂等键语义、同一份逐项错误与血缘。
+3. **脚本**:`node scripts/roster-duplicate-merge.mjs --base-url <URL> --batch-key <键>`
+   —— 上面两步的薄封装(`--dry-run` 只读、`--strict` 有待核则退出码 3;token 只从
+   `NUXT_API_TOKEN` 读,不打印)。
+
+**幂等键由服务端派生**:`duplicate_merge:<源批次键>#sha256:<归并内容的短哈希>` ⇒
+同样的证据重复执行**命中已提交批次、一行不增**;之后补了新证据 ⇒ 内容变了 ⇒ 新键 ⇒ 新批次
+(原先待核的那几条这时才可能被并)。`sourceKind='alias_evidence'`,
+`sourceIdentity='roster/duplicate-merge/<源批次键>'`(据此可查「本批候选执行过没有」,
+即 §7.8 的 `previous`)。
+
+#### 8.8.3 实测基准(2026-10-16,真数据)
+
+在**真实库的副本**上导入**真实的小巨人工作簿**(`buildLittleGiantImportRequest` → 同一套 API),
+再按 §5.3 的证据规则写入 4 组实测平台关系,然后用**上面那个脚本**执行:
+
+| 既有(无统代) | 新建(带统代) | 归并后 |
+|---|---|---|
+| enterprise:52 宁波昌隆机电有限公司 | enterprise:7391 `913302067562827060` | 1 行(7391) |
+| enterprise:81 宁波巨神制泵实业有限公司 | enterprise:7393 `913302126102116572` | 1 行(7393) |
+| enterprise:186 宁波仁栋电气有限公司 | enterprise:7394 `913302017133602847` | 1 行(7394) |
+| enterprise:354 宁波哲能精密塑料有限公司 | enterprise:7395 `91330205084796244Y` | 1 行(7395) |
+
+- 导入那一步:重名候选 **4 条**(正是原先**静默**产生的 4 家重复企业身份);
+  此时证据还没写 ⇒ `ready 0 / pending 4`(`no_platform_query`),**一行都没并**。
+- 写入证据后:`ready 4 / pending 0`;执行归并 `written 0`(两侧逐字同名 ⇒ 不造别名),
+  每条 `merge:<旧>-><新>` 把记录/事件/出处各 1 条并入规范行。
+- 血缘示例(`merge:52->7391`):
+  `{"fromEnterpriseId":52,"intoEnterpriseId":7391,"intoUscc":"913302067562827060","aliasId":null,
+    "evidenceQueryId":4,"childRowsMoved":{"records":1,"relations":0,"aliases":0,"differences":0},
+    "recordsMoved":[52],"recordsFolded":[],"eventsMoved":[52],"evidenceMoved":[52]}`
 
 ---
 

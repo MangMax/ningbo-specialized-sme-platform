@@ -21,8 +21,10 @@ import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER, type PlatformInterface } from '../../lib/labels'
 import type {
+  DuplicateNameCandidate,
   RosterImportAlias,
   RosterImportAnnouncement,
   RosterImportDifference,
@@ -165,8 +167,18 @@ interface ResolvedEnterprise {
   usccNorm: string | null
 }
 
-function findEnterpriseByUscc(db: Executor, usccNorm: string): ResolvedEnterprise | null {
+/** 按身份规则定位企业的入参（`name` / `uscc` 至少给一个；`uscc` 空串等同没给）。 */
+type EnterpriseSpec = { name?: string | null; uscc?: string | null }
+
+/** 按统代定位企业（**唯一**的身份键之一；重名候选与归并读侧共用这一份）。 */
+export function findEnterpriseByUscc(db: Executor, usccNorm: string): ResolvedEnterprise | null {
   const row = db.select().from(schema.enterprise).all().find((e) => e.usccNorm === usccNorm)
+  return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+}
+
+/** 按行 id 定位企业（归并/候选在写入阶段解析真 id 时用）。 */
+export function findEnterpriseById(db: Executor, id: number): ResolvedEnterprise | null {
+  const row = db.select().from(schema.enterprise).all().find((e) => e.id === id)
   return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
 }
 
@@ -176,13 +188,34 @@ function findEnterpriseByNorm(db: Executor, nameNorm: string): ResolvedEnterpris
 }
 
 /**
+ * 按 {@link upsertEnterprise} 的**身份规则**定位企业：有统代只按统代、无统代才按名。
+ *
+ * 与 {@link locateEnterprise} 的差别正是本票的事故根因：后者在「统代查不到」时会**退回按名找**，
+ * 所以预检会说「企业已存在」，而写入侧（只按统代）却会**新建一行** —— 重复于是静默产生。
+ * 这里把写入侧的规则单独摘出来，让「这次到底会不会新建」在预检阶段就能问对。
+ */
+function findEnterpriseByIdentity(db: Executor, spec: EnterpriseSpec): ResolvedEnterprise | null {
+  const uscc = usccOrNull(spec.uscc)
+  if (uscc) return findEnterpriseByUscc(db, uscc)
+  const name = optionalString(spec.name)
+  return name ? findEnterpriseByNorm(db, normalizeName(name)) : null
+}
+
+/** **全部**同名行（`name_norm` 相同）—— 不论它有没有统代。重名候选的判据基础。 */
+function findEnterprisesByNorm(db: Executor, nameNorm: string): ResolvedEnterprise[] {
+  return db
+    .select()
+    .from(schema.enterprise)
+    .all()
+    .filter((e) => e.nameNorm === nameNorm)
+    .map((e) => ({ id: e.id, name: e.name, nameNorm: e.nameNorm, usccNorm: e.usccNorm }))
+}
+
+/**
  * 按身份键定位企业：**统代优先，缺失时按归一化名**（既有决策，不改）。
  * 定位不到时返回 `null`（由调用方决定是新建还是报错）。
  */
-function locateEnterprise(
-  db: Executor,
-  spec: { name?: string | null; uscc?: string | null },
-): ResolvedEnterprise | null {
+function locateEnterprise(db: Executor, spec: EnterpriseSpec): ResolvedEnterprise | null {
   const uscc = usccOrNull(spec.uscc)
   if (uscc) {
     const byUscc = findEnterpriseByUscc(db, uscc)
@@ -200,6 +233,140 @@ function enterpriseByExactUscc(db: Executor, usccRaw: unknown): number | null {
   return findEnterpriseByUscc(db, uscc)?.id ?? null
 }
 
+// ---------------------------------------------------------------------------
+// 重名候选（RL-14）：把「静默多出一行」变成**显式的一条报告项**
+// ---------------------------------------------------------------------------
+//
+// 事故机制：`upsertEnterprise` 有统代时**只按统代匹配**（正确，按名合并会踩同名多主体），
+// 于是「同一家公司带统代再进来一次」会与既有那条「同名但无统代」的行另起一行，
+// 而导入报告里一个字都没有。本段**只做显式化**：
+//   - 不改 `upsertEnterprise` 的匹配规则；
+//   - 不按名自动合并；候选不是结论，归并另由证据驱动（§5.3 / §8.8）。
+//
+// 判据用的是**写入侧的同一份身份规则**（{@link findEnterpriseByIdentity}），所以预检说
+// 「会新建」与提交时**真的新建**是同一件事 —— 这正是以前对不上的地方。
+
+/** 本批将**新建**的企业身份（`records[i]` 一项；不会新建的是 `null`）。 */
+interface PendingEnterpriseCreate {
+  /** 触发新建的载荷项引用（`record:<i>`）。 */
+  ref: string
+  name: string
+  nameNorm: string
+  uscc: string | null
+}
+
+/** 一条待写的重名候选：`candidate.newEnterpriseId` 在预检阶段为 `null`（那一行还没建）。 */
+interface PlannedDuplicateCandidate {
+  candidate: DuplicateNameCandidate
+  /** 既有侧的解析口径（执行阶段据此取真 id）。 */
+  existing: { kind: 'enterprise'; id: number } | { kind: 'batch'; name: string; uscc: string | null }
+}
+
+/** 身份键（与 {@link pendingKeys} 同一套写法）：有统代按统代、无统代按归一化名。 */
+function identityKeyOf(spec: { name: string; uscc: string | null }): string {
+  return spec.uscc ? usccKey(spec.uscc) : nameKey(normalizeName(spec.name))
+}
+
+/**
+ * 本批**会新建**的企业（按 `records` 下标对齐；不会新建的是 `null`）。
+ *
+ * 两层排除，缺一不可：
+ *  1. 库里已按身份规则命中 ⇒ 这次是复用，不是新建；
+ *  2. 本批**更早**的记录已经新建过同一身份 ⇒ 这条会复用它，也不是新建。
+ */
+function planEnterpriseCreates(
+  db: Executor,
+  records: RosterImportAnnouncement['records'],
+): Array<PendingEnterpriseCreate | null> {
+  const out: Array<PendingEnterpriseCreate | null> = []
+  const seen = new Set<string>()
+  records.forEach((record, index) => {
+    const name = optionalString(record?.enterprise?.name)
+    if (!name) {
+      out.push(null)
+      return
+    }
+    const uscc = usccOrNull(record?.enterprise?.uscc)
+    if (findEnterpriseByIdentity(db, { name, uscc })) {
+      out.push(null)
+      return
+    }
+    const key = identityKeyOf({ name, uscc })
+    if (seen.has(key)) {
+      out.push(null)
+      return
+    }
+    seen.add(key)
+    out.push({ ref: `record:${index}`, name, nameNorm: normalizeName(name), uscc })
+  })
+  return out
+}
+
+/**
+ * 一条新建企业的重名候选：库里（或本批更早）**同名**的行各成一条候选。
+ *
+ * 同名 = `name_norm` 相同（与全库的身份口径一致），**不看有没有统代** ——
+ * 事故里正是「既有那行无统代、新建那行有统代」。
+ */
+function duplicateNameCandidates(
+  db: Executor,
+  create: PendingEnterpriseCreate,
+  earlierSameName: PendingEnterpriseCreate[],
+): PlannedDuplicateCandidate[] {
+  const base = {
+    basis: 'same_name_norm' as const,
+    nameNorm: create.nameNorm,
+    name: create.name,
+    newEnterpriseId: null,
+    newUscc: create.uscc,
+    sourceRef: create.ref,
+  }
+  return [
+    ...findEnterprisesByNorm(db, create.nameNorm).map(
+      (row): PlannedDuplicateCandidate => ({
+        candidate: {
+          ...base,
+          existingEnterpriseId: row.id,
+          existingEnterpriseName: row.name,
+          existingUscc: row.usccNorm,
+        },
+        existing: { kind: 'enterprise', id: row.id },
+      }),
+    ),
+    ...earlierSameName.map(
+      (twin): PlannedDuplicateCandidate => ({
+        candidate: {
+          ...base,
+          existingEnterpriseId: null,
+          existingEnterpriseName: twin.name,
+          existingUscc: twin.uscc,
+        },
+        existing: { kind: 'batch', name: twin.name, uscc: twin.uscc },
+      }),
+    ),
+  ]
+}
+
+/** 候选的稳定引用（同一批次里唯一，供逐项追溯与去重）。 */
+function duplicateCandidateRef(candidate: DuplicateNameCandidate): string {
+  return `duplicate_candidate:${candidate.newUscc ?? candidate.nameNorm}~${duplicateTwinKey(candidate)}`
+}
+
+/**
+ * 执行阶段**补齐 id**：新建行这时才存在。既有侧若本就在库里，其 id 计划时就有
+ * （条目描述的正是当时看到的那个状态，故保持原值）；本批更早的同名行这时也已插入，按身份解析。
+ */
+function resolveDuplicateCandidate(tx: Executor, planned: PlannedDuplicateCandidate): RosterImportItemResult {
+  const { candidate, existing } = planned
+  const existingEnterpriseId =
+    existing.kind === 'enterprise'
+      ? existing.id
+      : (findEnterpriseByIdentity(tx, existing)?.id ?? null)
+  const newEnterpriseId = findEnterpriseByIdentity(tx, { name: candidate.name, uscc: candidate.newUscc })?.id ?? null
+  const resolved: DuplicateNameCandidate = { ...candidate, existingEnterpriseId, newEnterpriseId }
+  return success('duplicate_candidate', duplicateCandidateRef(candidate), { candidate: resolved })
+}
+
 /**
  * **本批将新建**的企业键（`uscc:<norm>` / `name:<norm>`）。
  *
@@ -211,17 +378,21 @@ function enterpriseByExactUscc(db: Executor, usccRaw: unknown): number | null {
  */
 type PendingEnterprises = Set<string>
 
-function pendingKeys(spec: { name?: string | null; uscc?: string | null }): string[] {
+/** 身份键的两种写法。**只在这里拼**：{@link pendingKeys} 全给、{@link identityKeyOf} 按偏好给一个。 */
+const usccKey = (uscc: string) => `uscc:${uscc}`
+const nameKey = (nameNorm: string) => `name:${nameNorm}`
+
+function pendingKeys(spec: EnterpriseSpec): string[] {
   const keys: string[] = []
   const uscc = usccOrNull(spec.uscc)
-  if (uscc) keys.push(`uscc:${uscc}`)
+  if (uscc) keys.push(usccKey(uscc))
   const name = optionalString(spec.name)
-  if (name) keys.push(`name:${normalizeName(name)}`)
+  if (name) keys.push(nameKey(normalizeName(name)))
   return keys
 }
 
 /** 该企业是否**已存在或本批将新建**（预检判据）。 */
-function enterpriseKnown(db: Executor, pending: PendingEnterprises, spec: { name?: string | null; uscc?: string | null }): boolean {
+function enterpriseKnown(db: Executor, pending: PendingEnterprises, spec: EnterpriseSpec): boolean {
   if (locateEnterprise(db, spec)) return true
   return pendingKeys(spec).some((key) => pending.has(key))
 }
@@ -406,8 +577,8 @@ function resolveRelationIdAt(source: Executor, ref: NormalizedRef): number | nul
 /** 计划中的一项动作。 */
 interface PlannedItem {
   item: RosterImportItemResult
-  /** 预检的影响归类。 */
-  action: 'add' | 'update' | 'skip'
+  /** 预检的影响归类。`note` = **只记录、不计入任何影响计数**（如重名候选）。 */
+  action: 'add' | 'update' | 'skip' | 'note'
   /** 是否落在待核状态（`pending` / `needs_review` / 未知枚举）。 */
   review: boolean
   /** 确实要执行时才有的写入闭包（提交阶段调用）。 */
@@ -425,13 +596,18 @@ function summarizePlan(plan: Plan): RosterImportPreflight {
   let update = 0
   let remove = 0
   let review = 0
+  const duplicateCandidates: DuplicateNameCandidate[] = []
   for (const planned of plan.items) {
     if (planned.action === 'add') add += 1
     else if (planned.action === 'update') update += 1
     if (planned.review) review += 1
     if (planned.item.kind === 'merge' && planned.item.ok) remove += 1
+    const candidate = planned.item.detail?.candidate as DuplicateNameCandidate | undefined
+    if (planned.item.kind === 'duplicate_candidate' && planned.item.ok && candidate) {
+      duplicateCandidates.push(candidate)
+    }
   }
-  return { add, update, remove, review, conflicts: plan.conflicts }
+  return { add, update, remove, review, conflicts: plan.conflicts, duplicateCandidates }
 }
 
 /**
@@ -473,8 +649,20 @@ export function planRosterImport(
         const spec = { name: record?.enterprise?.name, uscc: record?.enterprise?.uscc }
         if (!locateEnterprise(db, spec)) for (const key of pendingKeys(spec)) pending.add(key)
       }
+      // 会**新建**的企业（按写入侧的身份规则判），以及重名候选需要的「本批更早的同名行」。
+      const creates = planEnterpriseCreates(db, records)
+      const earlierByName = new Map<string, PendingEnterpriseCreate[]>()
       records.forEach((record, index) => {
-        planAnnouncementRecord(db, request, announcement, record, index, push)
+        const create = creates[index] ?? null
+        planAnnouncementRecord(db, request, announcement, record, index, push, {
+          create,
+          earlierSameName: create ? (earlierByName.get(create.nameNorm) ?? []) : [],
+        })
+        if (create) {
+          const list = earlierByName.get(create.nameNorm) ?? []
+          list.push(create)
+          earlierByName.set(create.nameNorm, list)
+        }
       })
     }
   }
@@ -512,6 +700,10 @@ function planAnnouncementRecord(
   record: RosterImportAnnouncement['records'][number],
   index: number,
   push: (item: PlannedItem) => void,
+  candidates: { create: PendingEnterpriseCreate | null; earlierSameName: PendingEnterpriseCreate[] } = {
+    create: null,
+    earlierSameName: [],
+  },
 ): void {
   const ref = `record:${index}`
   const name = optionalString(record?.enterprise?.name)
@@ -572,6 +764,21 @@ function planAnnouncementRecord(
     review: !uscc,
     run: (tx) => writeAnnouncementRecord(tx, request, announcement, record, { name, uscc, district, titleCode, source, reason: { existingRecord } }),
   })
+
+  // 重名候选（RL-14）：这次**新建企业**，而库里（或本批更早）已经有同名的另一行。
+  // 只报出不合并、不计入影响计数（`action: 'note'`）—— 是否归并由证据决定（§5.3）。
+  if (candidates.create) {
+    for (const planned of duplicateNameCandidates(db, candidates.create, candidates.earlierSameName)) {
+      push({
+        item: success('duplicate_candidate', duplicateCandidateRef(planned.candidate), {
+          candidate: planned.candidate,
+        }),
+        action: 'note',
+        review: false,
+        run: (tx) => resolveDuplicateCandidate(tx, planned),
+      })
+    }
+  }
 }
 
 interface AnnouncementWriteReason {
@@ -1578,8 +1785,15 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   const ref = `merge:${from.id}->${into.id}`
 
   // 2. 写曾用名（旧名不丢）。证据指针：给了自然键就**必须**解析到真 id（解析不到 ⇒ 报错）。
+  //
+  //    **两侧名称逐字相同不造别名**（§5.3）：别名的用途是「旧名不丢」，
+  //    名称一模一样时根本没有第二个名字可留 —— 造一条与规范行同名的别名只会污染搜索与展示。
+  //    判据用**逐字相等**（不是归一化相等）：归一化会抹掉括号、空白与「宁波」前缀，
+  //    而「公布名写的是短名、导出表写的是全名」正是要靠别名留住的差异。
+  //    实测的 4 例重名归并（公布名 == 导出表名，逐字相同）都走这一支。
   const aliasName = optionalString(merge.aliasName) ?? from.name
   const aliasNameNorm = normalizeName(aliasName)
+  const sameName = aliasName === into.name
   const sourceKind = merge.sourceKind ?? 'manual'
   let sourceRefId = optionalInt(merge.sourceRefId) ?? 0
   if (sourceRelationRef) {
@@ -1608,21 +1822,25 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
         a.sourceKind === sourceKind &&
         a.sourceRefId === sourceRefId,
     )
-  const aliasId = existingAlias
-    ? existingAlias.id
-    : tx
-        .insert(schema.enterpriseAlias)
-        .values({
-          enterpriseId: into.id,
-          name: aliasName,
-          nameNorm: aliasNameNorm,
-          sourceKind,
-          sourceRefId,
-          verificationStatus: 'confirmed',
-          note: optionalString(merge.note) ?? `归并自 enterprise:${from.id}（${from.name}）`,
-        })
-        .returning({ id: schema.enterpriseAlias.id })
-        .get().id
+  const aliasId = sameName
+    ? null
+    : existingAlias
+      ? existingAlias.id
+      : tx
+          .insert(schema.enterpriseAlias)
+          .values({
+            enterpriseId: into.id,
+            name: aliasName,
+            nameNorm: aliasNameNorm,
+            sourceKind,
+            sourceRefId,
+            verificationStatus: 'confirmed',
+            note: optionalString(merge.note) ?? `归并自 enterprise:${from.id}（${from.name}）`,
+          })
+          .returning({ id: schema.enterpriseAlias.id })
+          .get().id
+  /** 这次归并**真的插进去**的那条曾用名（同名不造、已有行则复用 ⇒ 都不算新增）。 */
+  const aliasInserted = aliasId != null && !existingAlias
 
   // 3. 迁移子行（别名 / 差异 / 平台关系）。撞唯一键的**先删被并那条**（它在规范行已有等价行）。
   let aliasesMoved = 0
@@ -1724,8 +1942,9 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     eventsMoved,
     evidenceMoved,
   }
-  // 归并**净新增的行**只有那条曾用名（子行是改指、事件是改指、被并企业行是删除）。
-  return success('merge', ref, { lineage, rowsWritten: existingAlias ? 0 : 1 })
+  // 归并**净新增的行**只有那条曾用名（子行是改指、事件是改指、被并企业行是删除）；
+  // 两侧同名时连别名都不造（§5.3），净新增为 0。
+  return success('merge', ref, { lineage, rowsWritten: aliasInserted ? 1 : 0 })
 }
 
 // ---------------------------------------------------------------------------
@@ -1947,9 +2166,31 @@ export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
     preflight: (batch.preflightResult as RosterImportPreflight | null) ?? null,
     summary: (batch.summary as RosterImportSummary | null) ?? null,
     items: (batch.itemResults as RosterImportItemResult[] | null) ?? null,
+    /** 本次导入报出的重名候选（RL-14；计数 + 明细都在这里，见 {@link readDuplicateCandidates}）。 */
+    duplicateCandidates: readDuplicateCandidates(db, idempotencyKey),
     error: batch.error,
     committedAt: batch.committedAt,
   }
+}
+
+/**
+ * 取回某批**新建企业时发现的重名候选**（RL-14）。
+ *
+ * 候选写在 `import_batch.item_results` 里（`kind: 'duplicate_candidate'`），所以这里
+ * 只做一次过滤 —— 与 {@link readMergeLineage} 同一口径：报告不是另存的一份，是批次结果本身。
+ * 预检批（`status='preflight'`）没有 `item_results`，此时退回读 `preflight_result` 里的那一份。
+ */
+export function readDuplicateCandidates(db: Db, idempotencyKey: string): DuplicateNameCandidate[] {
+  const batch = findBatchByKey(db, idempotencyKey)
+  if (!batch) return []
+  const items = (batch.itemResults as RosterImportItemResult[] | null) ?? []
+  if (items.length > 0) {
+    return items
+      .filter((item) => item.ok && item.kind === 'duplicate_candidate')
+      .map((item) => item.detail?.candidate as DuplicateNameCandidate)
+      .filter((candidate): candidate is DuplicateNameCandidate => !!candidate && typeof candidate.nameNorm === 'string')
+  }
+  return (batch.preflightResult as RosterImportPreflight | null)?.duplicateCandidates ?? []
 }
 
 /** 取回某条 item 的归并血缘（`merges` 项）。 */
