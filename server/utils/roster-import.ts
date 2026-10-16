@@ -1072,7 +1072,8 @@ function writeAnnouncementRecord(
     if (duplicate) {
       skipped += 1
       // 重放：事件坐标已存在 ⇒ **历史一行不改、一行不加**。但出处**指针**可能因为来源文件
-      // 入库而改变（RL-16）—— 按 (附件, 序号, 页) 逐字匹配后只改 `source_file` 一列。
+      // 入库而改变（RL-16）—— 按 (附件, 序号, 页) 逐字匹配后收敛出处指针；目标不是 PDF 时，
+      // 同时清掉可能遗留的伪页码（§8.11）。
       // 这一份执行体与收敛重放（§8.9.3）共用，两处不会各算一套。
       evidenceRepointed += convergeEventEvidence(tx, duplicate.id, event)
       continue
@@ -1282,10 +1283,10 @@ function findExistingEvent(tx: Executor, values: EventCoordinates): { id: number
 // 只「跳过」,`record_evidence.source_file` 就永远指着库外路径,名录行点开预览解析不到文件。
 //
 // 三条边界(为什么这样做是安全的):
-//  1. **只有出处指针会变**。事件坐标(类型/年份/批次/结论/结论年份)逐字相同才进入这条路径,
-//     历史事实一行不改、一行不加、一行不删 —— 「公布历史不可改写」不受影响。
-//  2. **只改 `source_file` 一列**,且要 (附件, 序号, 页) **逐字匹配**上已存在的出处行才改 ——
-//     不会把 A 行的指针挪到 B 行的出处上。路径只是「同一份文档在库里的位置」,不是身份。
+//  1. **事件事实不变**。事件坐标(类型/年份/批次/结论/结论年份)逐字相同才进入这条路径,
+//     事件与出处行一行不加、一行不删；只收敛来源指针,并按目标文件类型清理不可靠页码。
+//  2. 要 (附件, 序号, 页) **逐字匹配**上已存在的出处行才改 —— 不会把 A 行的指针挪到 B 行的出处上。
+//     目标路径是非 PDF 时还会清理历史伪页码；PDF 的既有实际页码原样保留。路径只是「同一份文档在库里的位置」,不是身份。
 //  3. **收敛的触发权在幂等键上**。键含来源标识(见 `lib/roster/little-giant-import.ts`):
 //     只有携带**同一份来源内容**、且来源标识变了的批次才会走到这里。
 
@@ -1348,14 +1349,19 @@ function evidenceOf(tx: Executor, eventId: number): EvidenceCoordinateRow[] {
 /**
  * **执行**收敛：把某条既有事件下坐标逐字相同的出处行的 `source_file` 改到载荷给的新路径。
  *
- * 只发 `UPDATE record_evidence SET source_file = ?`，一行不加、一行不删、别的列一个字不动。
+ * PDF 目标只改 `source_file`，保留原有实际页码；非 PDF 目标同时将历史不可靠的 `page` 清为 `null`。
+ * 不推断或生成页码，也不改其它列；一行不加、一行不删。
  * 返回真改的行数（第二次跑同一份载荷必然为 0，因为指针已经相等 ⇒ 谓词不再命中）。
  */
 function convergeEventEvidence(tx: Executor, eventId: number, event: RosterImportEvent): number {
   let repointed = 0
   for (const target of repointTargets(evidenceOf(tx, eventId), event.evidence ?? [])) {
     tx.update(schema.recordEvidence)
-      .set({ sourceFile: target.sourceFile })
+      .set(
+        isPageCapable(target.sourceFile)
+          ? { sourceFile: target.sourceFile }
+          : { sourceFile: target.sourceFile, page: null },
+      )
       .where(eq(schema.recordEvidence.id, target.id))
       .run()
     repointed += 1
@@ -2908,7 +2914,7 @@ export function replayBatchKey(idempotencyKey: string): string {
  * 本函数就是那条路径：**显式**地再跑一次收敛。
  *
  * ── 它不做什么（为什么可以放心重复跑）──────────────────────────────────
- *  - **只改** `record_evidence.source_file`：不新建企业/记录/事件/出处，不归并，不删行；
+ *  - 收敛 `record_evidence.source_file`；目标为非 PDF 时同时清除无效 `page`：不新建企业/记录/事件/出处，不归并，不删行；
  *  - **只认既有**：库里没有的事件/记录一律跳过 —— 收敛不补历史（补历史请走 commit）；
  *  - 载荷里那些**会写新行**的类别（平台查询 / 别名 / 差异 / 快照 / 归并）根本**不进计划**
  *    （`convergeOnly`），故没有可执行的东西；

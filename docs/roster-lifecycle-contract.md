@@ -1427,7 +1427,7 @@ REST 与 MCP `query_records` 共用同一参数解析和 `listRecords` 读模型
 **收敛规则**(`server/utils/roster-import.ts` 的 `repointTargets`):
 
 - 事件坐标(eventType / year / batchSeq / reviewOutcome / decidedYear)**逐字相同**才进入这条路径;
-- 只在出处的 **(attachment, listNo, page) 逐字相同**时才改,且**只改 `source_file` 一列**;
+- 只在出处的 **(attachment, listNo, page) 逐字相同**时才改 `source_file`;目标来源为非 PDF 时,同时把历史不可靠的 `page` 清为 `null`(§8.11),PDF 页码原样保留,不推断页码;
 - **不新增、不删除、不合并**任何行(不变量:企业 / 记录 / 事件 / 出处计数不变);
 - 命中的出处行数逐项报在 `items[].detail.evidenceRepointed`(RL-16 新增字段,**不**计入 `summary.written`);
 - 同一幂等键重放仍是**彻底的空操作**(批次已 `committed` ⇒ 直接返回既有摘要,不重跑计划)。
@@ -1518,7 +1518,7 @@ POST /api/roster/import/replay
 
 **语义(逐条都是硬约束)**:
 
-- **只改** `record_evidence.source_file`:不新建企业 / 记录 / 事件 / 出处,不归并,不删行;
+- 收敛 `record_evidence.source_file`;目标来源为非 PDF 时同时清理 `page`,PDF 页码原样保留:不新建企业 / 记录 / 事件 / 出处,不归并,不删行;
 - **只认既有**:库里没有的记录 / 事件一律跳过 —— 收敛**不补历史**(补历史走 `commit`);
 - 载荷里那些**会写新行**的类别(平台查询 / 别名 / 差异 / 快照 / 归并)**根本不进计划**,
   故没有可执行的东西(与 `commit` 共用 `planRosterImport`,靠 `convergeOnly` 收窄);
