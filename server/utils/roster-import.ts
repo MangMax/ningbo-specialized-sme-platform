@@ -17,7 +17,7 @@
  * 既用于预检（只报数），也用于提交（照计划执行）—— 预检报的影响就是提交真会发生的事。
  */
 
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
@@ -480,6 +480,27 @@ function normalizeRef(ref: unknown, field: string): { ok: true; value: Normalize
   }
 }
 
+/**
+ * 自然键（除 `sequenceNo`）→ SQL 谓词。**只在这里拼**：{@link refCandidates}、
+ * {@link resolveQueryIdAt} 都靠它，于是「按自然键找查询」的口径只有一处。
+ *
+ * 谓词下推进 `WHERE` 是为了**按键定位**（RL-18）。注意这条路径与下面那四个
+ * `find*Row` 的**强度不同**，别混为一谈：
+ *  - 给了 `queriedAt` ⇒ 四列齐 ⇒ 命中 `platform_query_identity_uq`，至多一行；
+ *  - 没给 `queriedAt` ⇒ 三列 ⇒ 命中同一索引的**前三列前缀**，是一次索引区间扫描，
+ *    **可能命中多行**（`resolveQueryRefPlan` 的「引用不唯一」正是靠这个数条数）。
+ * 两种情况都只取 `id`，所以都不会碰 `raw_response` —— 那是本条路径真正省下的字节。
+ */
+function platformQueryWhere(ref: NormalizedRef) {
+  const conditions = [
+    eq(schema.platformQuery.interface, ref.interface as PlatformInterface),
+    eq(schema.platformQuery.queryKey, ref.queryKey),
+    eq(schema.platformQuery.rdjb, ref.rdjb),
+  ]
+  if (ref.queriedAt) conditions.push(eq(schema.platformQuery.queriedAt, ref.queriedAt))
+  return and(...conditions)
+}
+
 /** 按自然键在「库内 + 本批将写入」两处找候选查询。 */
 function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef) {
   const matches = (candidate: { interface: string; queryKey: string; rdjb: string; queriedAt: string }) =>
@@ -488,7 +509,12 @@ function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: Norm
     candidate.rdjb === ref.rdjb &&
     (ref.queriedAt ? candidate.queriedAt === ref.queriedAt : true)
   return {
-    dbHits: source.select().from(schema.platformQuery).all().filter(matches),
+    // 库内一侧**按键定位**且只取 `id`；本批一侧是内存数组，谓词留在 JS 里。
+    dbHits: source
+      .select({ id: schema.platformQuery.id })
+      .from(schema.platformQuery)
+      .where(platformQueryWhere(ref))
+      .all(),
     pendingHits: pending.filter(matches),
   }
 }
@@ -516,12 +542,10 @@ function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, 
   if (dbHits.length + pendingHits.length === 0) {
     return { ok: false, error: { code: 'query_ref_not_found', field, message: `引用不到平台查询：${describeRef(ref)}` } }
   }
-  const dbWithSeq = dbHits.filter((query) =>
-    source
-      .select()
-      .from(schema.platformRelation)
-      .all()
-      .some((relation) => relation.queryId === query.id && relation.sequenceNo === ref.sequenceNo),
+  // 「这条查询里有没有序号 N 的关系」= 关系表**唯一键**的按键定位（RL-18）。
+  // 以前这里对每个候选查询各扫一遍整张 `platform_relation`。
+  const dbWithSeq = dbHits.filter(
+    (query) => findRelationRow(source, { queryId: query.id, sequenceNo: ref.sequenceNo! }) != null,
   )
   const pendingWithSeq = pendingHits.filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
   if (dbWithSeq.length + pendingWithSeq.length === 0) {
@@ -543,16 +567,10 @@ function describeRef(ref: NormalizedRef): string {
 /** 执行阶段：解析出**真实**的 `platform_query.id`。 */
 function resolveQueryIdAt(source: Executor, ref: NormalizedRef): number | null {
   const hits = source
-    .select()
+    .select({ id: schema.platformQuery.id })
     .from(schema.platformQuery)
+    .where(platformQueryWhere(ref))
     .all()
-    .filter(
-      (query) =>
-        query.interface === ref.interface &&
-        query.queryKey === ref.queryKey &&
-        query.rdjb === ref.rdjb &&
-        (ref.queriedAt ? query.queriedAt === ref.queriedAt : true),
-    )
   if (hits.length === 0) return null
   if (ref.queriedAt) return hits[0]!.id
   return hits.length === 1 ? hits[0]!.id : null
@@ -563,13 +581,7 @@ function resolveRelationIdAt(source: Executor, ref: NormalizedRef): number | nul
   if (ref.sequenceNo == null) return null
   const queryId = resolveQueryIdAt(source, ref)
   if (queryId == null) return null
-  return (
-    source
-      .select()
-      .from(schema.platformRelation)
-      .all()
-      .find((relation) => relation.queryId === queryId && relation.sequenceNo === ref.sequenceNo)?.id ?? null
-  )
+  return findRelationRow(source, { queryId, sequenceNo: ref.sequenceNo })?.id ?? null
 }
 
 // ---------------------------------------------------------------------------
@@ -1207,78 +1219,103 @@ function countEvidenceRepoints(
 // 预检阶段按「载荷给的值」查一次、执行阶段按「解析出的真 id」再查一次 ——
 // 以前这两次各自把 `.select().from(t).all().find(...)` 与列比较抄了一遍，
 // 抄漏一列就成了「重放时多插一行」。现在两次都走下面这同一个函数。
+//
+// ── RL-18：这些函数一律是**按键定位**，不是整表线性找 ─────────────────────
+// 每条实体各有**两条**要走同一个身份的函数：别名、差异（预检 + 执行各一次），查询、关系
+// （预检取既有行、执行按真 id 再取一次）。以前它们各自把 `.select().from(t).all().find(...)`
+// 与列比较抄了一遍；现在一律走下面这四个 —— 于是「身份是哪几列」只有一处定义。
+//
+// 三条要求同时成立，缺一条都会让批量写入退化成卡死（实测见契约 §3.1c）：
+//  1. 谓词下推到 SQL 的 `WHERE`，并且**正好是 schema 里那条唯一索引的全部列**
+//     （`enterprise_alias_identity_uq` / `platform_query_identity_uq` /
+//     `platform_relation_query_seq_uq` / `difference_reason_version_uq`）⇒ 一次索引查找，
+//     而不是把整表读进内存再 `.find(...)`；
+//  2. 只 `select` 判定真正用得到的列 —— 调用方只要 `id`，所以**只取 `id`**。
+//     这条对 `platform_query` 是硬要求：整行里带着 `raw_response`（平台原始 HTML，
+//     几十 KB/条），比一个用不到它的键等于白读几十 KB；
+//  3. 唯一键 ⇒ 至多一行，所以 `.get()` 与原来的 `.find()` 取到的是同一行（`get()` 本就取首行）。
+//
+// 为什么是这三条：批内 N 条查询/关系/别名/差异，每条都要查一次 ⇒ 整表线性找就是
+// O(N × 表行数)（表随本批增长时即 N²），而每次还要把几十 KB 的 `raw_response` 读出来。
 
 /** 别名身份：`(enterprise_id, name_norm, source_kind, source_ref_id)`（契约 §1.2）。 */
 function findAliasRow(
   db: Executor,
   spec: { enterpriseId: number; nameNorm: string; sourceKind: string; sourceRefId: number },
-): typeof schema.enterpriseAlias.$inferSelect | undefined {
+): { id: number } | undefined {
   return db
-    .select()
+    .select({ id: schema.enterpriseAlias.id })
     .from(schema.enterpriseAlias)
-    .all()
-    .find(
-      (a) =>
-        a.enterpriseId === spec.enterpriseId &&
-        a.nameNorm === spec.nameNorm &&
-        a.sourceKind === spec.sourceKind &&
-        a.sourceRefId === spec.sourceRefId,
+    .where(
+      and(
+        eq(schema.enterpriseAlias.enterpriseId, spec.enterpriseId),
+        eq(schema.enterpriseAlias.nameNorm, spec.nameNorm),
+        eq(
+          schema.enterpriseAlias.sourceKind,
+          spec.sourceKind as typeof schema.enterpriseAlias.$inferSelect.sourceKind,
+        ),
+        eq(schema.enterpriseAlias.sourceRefId, spec.sourceRefId),
+      ),
     )
+    .get()
 }
 
 /** 查询身份：`(interface, query_key, rdjb, queried_at)`（契约 §1.3）。 */
 function findQueryRow(
   db: Executor,
   spec: { interface: PlatformInterface; queryKey: string; rdjb: string; queriedAt: string },
-): typeof schema.platformQuery.$inferSelect | undefined {
+): { id: number } | undefined {
   return db
-    .select()
+    .select({ id: schema.platformQuery.id })
     .from(schema.platformQuery)
-    .all()
-    .find(
-      (q) =>
-        q.interface === spec.interface &&
-        q.queryKey === spec.queryKey &&
-        q.rdjb === spec.rdjb &&
-        q.queriedAt === spec.queriedAt,
+    .where(
+      and(
+        eq(schema.platformQuery.interface, spec.interface),
+        eq(schema.platformQuery.queryKey, spec.queryKey),
+        eq(schema.platformQuery.rdjb, spec.rdjb),
+        eq(schema.platformQuery.queriedAt, spec.queriedAt),
+      ),
     )
+    .get()
 }
 
 /** 关系身份：`(query_id, sequence_no)`（契约 §1.4）。 */
 function findRelationRow(
   db: Executor,
   spec: { queryId: number; sequenceNo: number },
-): typeof schema.platformRelation.$inferSelect | undefined {
+): { id: number } | undefined {
   return db
-    .select()
+    .select({ id: schema.platformRelation.id })
     .from(schema.platformRelation)
-    .all()
-    .find((r) => r.queryId === spec.queryId && r.sequenceNo === spec.sequenceNo)
-}
-
-/** 差异身份：`(enterprise_id, title_code, direction, recorded_at)`（契约 §1.5）—— `find` 的谓词。 */
-function sameDifference(
-  row: typeof schema.differenceReason.$inferSelect,
-  spec: { enterpriseId: number; titleCode: string; direction: string; recordedAt: string },
-): boolean {
-  return (
-    row.enterpriseId === spec.enterpriseId &&
-    row.titleCode === spec.titleCode &&
-    row.direction === spec.direction &&
-    row.recordedAt === spec.recordedAt
-  )
+    .where(
+      and(
+        eq(schema.platformRelation.queryId, spec.queryId),
+        eq(schema.platformRelation.sequenceNo, spec.sequenceNo),
+      ),
+    )
+    .get()
 }
 
 /** 差异身份：`(enterprise_id, title_code, direction, recorded_at)`（契约 §1.5）。 */
 function findDifferenceRow(
   db: Executor,
   spec: { enterpriseId: number; titleCode: string; direction: string; recordedAt: string },
-): typeof schema.differenceReason.$inferSelect | undefined {
+): { id: number } | undefined {
   return db
-    .select()
+    .select({ id: schema.differenceReason.id })
     .from(schema.differenceReason)
-    .all()
-    .find((row) => sameDifference(row, spec))
+    .where(
+      and(
+        eq(schema.differenceReason.enterpriseId, spec.enterpriseId),
+        eq(schema.differenceReason.titleCode, spec.titleCode),
+        eq(
+          schema.differenceReason.direction,
+          spec.direction as typeof schema.differenceReason.$inferSelect.direction,
+        ),
+        eq(schema.differenceReason.recordedAt, spec.recordedAt),
+      ),
+    )
+    .get()
 }
 
 // --- 别名 ------------------------------------------------------------------
@@ -1993,17 +2030,13 @@ function ensureEnterpriseAlias(
   },
 ): { id: number; created: boolean } {
   const nameNorm = normalizeName(input.name)
-  const existing = tx
-    .select()
-    .from(schema.enterpriseAlias)
-    .all()
-    .find(
-      (a) =>
-        a.enterpriseId === input.enterpriseId &&
-        a.nameNorm === nameNorm &&
-        a.sourceKind === input.sourceKind &&
-        a.sourceRefId === input.sourceRefId,
-    )
+  // 按唯一键 `enterprise_alias_identity_uq` 定位（RL-18）:不再整表线性找，也不再把谓词抄一遍。
+  const existing = findAliasRow(tx, {
+    enterpriseId: input.enterpriseId,
+    nameNorm,
+    sourceKind: input.sourceKind,
+    sourceRefId: input.sourceRefId,
+  })
   if (existing) return { id: existing.id, created: false }
   const id = tx
     .insert(schema.enterpriseAlias)
@@ -2107,18 +2140,17 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
 
   // 3. 迁移子行（别名 / 差异 / 平台关系）。撞唯一键的**先删被并那条**（它在规范行已有等价行）。
   let aliasesMoved = 0
-  for (const alias of tx.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === from.id)) {
-    const clash = tx
-      .select()
-      .from(schema.enterpriseAlias)
-      .all()
-      .find(
-        (a) =>
-          a.enterpriseId === into.id &&
-          a.nameNorm === alias.nameNorm &&
-          a.sourceKind === alias.sourceKind &&
-          a.sourceRefId === alias.sourceRefId,
-      )
+  for (const alias of tx
+    .select()
+    .from(schema.enterpriseAlias)
+    .where(eq(schema.enterpriseAlias.enterpriseId, from.id))
+    .all()) {
+    const clash = findAliasRow(tx, {
+      enterpriseId: into.id,
+      nameNorm: alias.nameNorm,
+      sourceKind: alias.sourceKind,
+      sourceRefId: alias.sourceRefId,
+    })
     if (clash) {
       tx.delete(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.id, alias.id)).run()
     } else {
@@ -2128,18 +2160,17 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   }
 
   let differencesMoved = 0
-  for (const difference of tx.select().from(schema.differenceReason).all().filter((d) => d.enterpriseId === from.id)) {
-    const clash = tx
-      .select()
-      .from(schema.differenceReason)
-      .all()
-      .find(
-        (d) =>
-          d.enterpriseId === into.id &&
-          d.titleCode === difference.titleCode &&
-          d.direction === difference.direction &&
-          d.recordedAt === difference.recordedAt,
-      )
+  for (const difference of tx
+    .select()
+    .from(schema.differenceReason)
+    .where(eq(schema.differenceReason.enterpriseId, from.id))
+    .all()) {
+    const clash = findDifferenceRow(tx, {
+      enterpriseId: into.id,
+      titleCode: difference.titleCode,
+      direction: difference.direction,
+      recordedAt: difference.recordedAt,
+    })
     if (clash) {
       tx.delete(schema.differenceReason).where(eq(schema.differenceReason.id, difference.id)).run()
     } else {
@@ -2148,7 +2179,11 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     }
   }
 
-  const fromRelations = tx.select().from(schema.platformRelation).all().filter((r) => r.enterpriseId === from.id)
+  const fromRelations = tx
+    .select()
+    .from(schema.platformRelation)
+    .where(eq(schema.platformRelation.enterpriseId, from.id))
+    .all()
   for (const relation of fromRelations) {
     tx.update(schema.platformRelation).set({ enterpriseId: into.id }).where(eq(schema.platformRelation.id, relation.id)).run()
   }
