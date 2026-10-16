@@ -437,6 +437,28 @@ const UNIT = computed(() =>
   view.value === 'enterprise' ? '家企业' : view.value === 'title' ? '行(企业×称号)' : '项差异',
 )
 
+/**
+ * 页面标题(浏览器标签 / 历史记录 / 书签)。
+ *
+ * 全仓没有一处设过 `document.title`(实测为空字符串),所以这里顺手给台账页补上 ——
+ * 一个三视图、且视图与筛选都写在地址栏里的页面,标签页上只显示空白就完全认不出来。
+ * 带上视图名与当前条数:多开几个标签、或从历史里找回来时,一眼能看出是哪一个。
+ */
+const VIEW_TITLE: Record<LedgerView, string> = {
+  enterprise: '按企业',
+  title: '按企业×称号',
+  difference: '差异与原因',
+}
+const UNIT_SHORT = computed(() =>
+  view.value === 'enterprise' ? '家企业' : view.value === 'title' ? '行' : '项差异',
+)
+useHead({
+  title: computed(() => {
+    const n = total.value ? `${total.value.toLocaleString('zh-CN')} ${UNIT_SHORT.value}` : '加载中'
+    return `${VIEW_TITLE[view.value]} · ${n} · 名录台账`
+  }),
+})
+
 </script>
 
 <template>
@@ -697,7 +719,7 @@ const UNIT = computed(() =>
       <Pagination
         v-if="total > 0"
         v-slot="{ page: current }"
-        class="mx-0 ml-auto w-auto justify-end"
+        class="mx-0 w-full justify-center sm:ml-auto sm:w-auto sm:justify-end"
         :page="page"
         :items-per-page="pageSize"
         :total="total"
@@ -705,10 +727,15 @@ const UNIT = computed(() =>
         :show-edges="totalPages > 5"
         @update:page="setPage"
       >
-        <PaginationContent v-slot="{ items }">
+        <!-- 窄屏必须允许换行:`PaginationContent` 的基础类是 `flex-row`(不换行),
+             而 `sibling-count=1` + `show-edges` 在几百页时会有 11 个条目(实测 452px)。
+             不换行就会**撑破页面**并且横向溢出(实测 390 视口下 documentElement
+             scrollWidth 468 / clientWidth 390,溢出 78px)—— 表格自己有滚动容器,
+             分页条没有。 -->
+        <PaginationContent v-slot="{ items }" class="flex-wrap justify-center sm:justify-end">
           <!-- 首/末/上/下一页的禁用态与页码变更由 reka-ui 的 Pagination 自己管,
                这里只给图标和中文文案。 -->
-          <PaginationFirst>
+          <PaginationFirst class="hidden sm:flex">
             <ChevronsLeft class="size-4" />
             <span class="sr-only">第一页</span>
           </PaginationFirst>
@@ -730,7 +757,7 @@ const UNIT = computed(() =>
             <span class="hidden sm:block">下一页</span>
             <ChevronRight class="size-4" />
           </PaginationNext>
-          <PaginationLast>
+          <PaginationLast class="hidden sm:flex">
             <ChevronsRight class="size-4" />
             <span class="sr-only">最后一页</span>
           </PaginationLast>

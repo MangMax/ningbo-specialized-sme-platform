@@ -18,7 +18,8 @@
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:prod-openapi": "node scripts/verify-prod-openapi.mjs"
+    "verify:prod-openapi": "node scripts/verify-prod-openapi.mjs",
+    "verify:ledger-ui": "node scripts/verify-ledger-ui.mjs"
   },
   "dependencies": {
     "@embedpdf/vue-pdf-viewer": "^2.15.1",
