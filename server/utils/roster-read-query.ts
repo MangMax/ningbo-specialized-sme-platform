@@ -18,7 +18,7 @@ import {
   type RosterEnterpriseFilter,
   type RosterState,
 } from '../../lib/roster/enterprise-roster'
-import { FIRST_RECOGNITION_STATUSES } from '../../lib/roster/first-recognition'
+import { FIRST_RECOGNITION_STATUS_VALUES } from '../../lib/roster/first-recognition'
 import type { RosterRecognitionFilter } from '../../lib/roster/recognitions'
 
 /** 取单值字符串参数(数组取第一个),空串当「没给」。 */
@@ -82,7 +82,7 @@ export function parseRosterEnterpriseQuery(query: Record<string, unknown>): Rost
     firstYear: yearsParam(query.firstYear),
     firstStatus: knownOrThrow(
       parseCsvQuery(query.firstStatus),
-      FIRST_RECOGNITION_STATUSES,
+      FIRST_RECOGNITION_STATUS_VALUES,
       'firstStatus',
     ),
     page: intParam(query.page, 1),
@@ -104,7 +104,7 @@ export function parseRosterRecognitionQuery(
   return {
     title: knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title'),
     year: yearsParam(query.year),
-    status: knownOrThrow(parseCsvQuery(query.status), FIRST_RECOGNITION_STATUSES, 'status'),
+    status: knownOrThrow(parseCsvQuery(query.status), FIRST_RECOGNITION_STATUS_VALUES, 'status'),
     page: intParam(query.page, 1),
     pageSize: intParam(query.pageSize, 50),
   }

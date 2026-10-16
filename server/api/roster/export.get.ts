@@ -2,7 +2,7 @@ import ExcelJS from 'exceljs'
 import { useDb } from '@db'
 import { FIRST_RECOGNITION_REASONS, TITLES } from '~~/lib/labels'
 import { allRosterEnterprises, type RosterEnterpriseRow } from '~~/lib/roster/enterprise-roster'
-import type { FirstRecognitionEvidence } from '~~/lib/roster/first-recognition'
+import { evidencePointerText, firstRecognitionYearText } from '~~/lib/roster/first-recognition'
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
 
 /**
@@ -79,20 +79,11 @@ const ROSTER_STATE_LABELS: Record<string, string> = {
 function firstRecognitionText(row: RosterEnterpriseRow): string {
   return row.firstRecognition
     .map((f) => {
-      const year = f.year == null ? '年份未知' : String(f.year)
+      const year = firstRecognitionYearText({ firstYear: f.year })
       const pending = f.status === 'pending' ? `(待确认:${FIRST_RECOGNITION_REASONS[f.pendingReason ?? ''] ?? f.pendingReason})` : ''
       return `${TITLES[f.titleCode] ?? f.titleCode} ${year}${f.needsReview ? '(待核)' : ''}${pending}`
     })
     .join('; ')
-}
-
-/** 一处出处的写法:文件 → 附件 → 序号 → 页(缺哪样就不写哪样,不填占位符)。 */
-function evidenceText(v: FirstRecognitionEvidence): string {
-  const parts = [v.sourceFile]
-  if (v.attachment) parts.push(v.attachment)
-  if (v.listNo != null) parts.push(`序号 ${v.listNo}`)
-  if (v.page != null) parts.push(`第 ${v.page} 页`)
-  return parts.join(' · ')
 }
 
 /**
@@ -100,6 +91,7 @@ function evidenceText(v: FirstRecognitionEvidence): string {
  *
  * 票面要求「显示称号、年份和来源证据」,而证据指的就是这里:哪个文件、哪个附件、哪个序号。
  * 指不回去的**不编** —— 写「待确认:原因」,让人知道要补什么。
+ * 出处的写法取自 `first-recognition.ts` 的单一出处(台账表与展开面板用同一个函数)。
  */
 function firstRecognitionEvidenceText(row: RosterEnterpriseRow): string {
   return row.firstRecognition
@@ -109,7 +101,7 @@ function firstRecognitionEvidenceText(row: RosterEnterpriseRow): string {
         const why = FIRST_RECOGNITION_REASONS[f.pendingReason ?? ''] ?? f.pendingReason
         return `${title} —（待确认:${why ?? '没有存下来的出处'}）`
       }
-      return `${title} — ${f.evidence.map(evidenceText).join(' ; ')}`
+      return `${title} — ${f.evidence.map(evidencePointerText).join(' ; ')}`
     })
     .join('\n')
 }

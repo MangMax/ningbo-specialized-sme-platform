@@ -25,6 +25,10 @@
  * ⚠️ 数据不在位时(没给 `NUXT_DB_PATH`、库里没有首次认定)断言**判失败**,不静默跳过:
  * 一个「检查自己把自己跳过去」的验收比没有验收更坏。
  *
+ * ⚠️ 真库里 `pending`(待确认)是 **0 家**(9946 条认定一条都不缺年份、不缺出处),
+ * 所以「待确认」那一档要靠 `node scripts/make-rl08-pending-db.mjs` 造的库跑第二轮 ——
+ * 否则那几条断言只是 0 == 0 的空跑。
+ *
  * 用法:`NUXT_DB_PATH=<真库> node scripts/verify-ledger-ui.mjs [--port 3491] [--skip-build]`
  * 退出码 0 = 全部通过;非 0 = 有一条不符合预期(并打印实测数字)。
  */
@@ -208,6 +212,13 @@ const READY = `(() => (
   document.querySelectorAll('tbody tr').length > 0 &&
   !!document.querySelector('[data-slot=pagination]')
 ))()`
+
+/**
+ * 展开面板里那枚「首次认定」标记的抓手。**按 `data-testid` 认,不按文案认**:
+ * 文案随状态变(已确立 ⇒「首次认定」,待确认 ⇒「已知最早的认定(待确认)」),
+ * 靠文案选就会在待确认那一屏上静默选不到 —— 而「选不到」正是这一条要抓的东西。
+ */
+const FIRST_MARK = '[data-testid=first-recognition-mark]'
 
 /**
  * 就绪判据(筛不中任何东西时用):**没有骨架屏**、且**计数行已经写出「共 N 家」**。
@@ -527,7 +538,8 @@ async function main() {
         }
       } else {
         ok(
-          '首次认定状态筛选:计数与 chip 都对;本库 0 家待确认 ⇒ 标注这一条本轮无从渲染(由合成库那一轮验)',
+          '首次认定状态筛选:计数与 chip 都对;本库 0 家待确认 ⇒ 标注这一条本轮无从渲染,' +
+            '改用 `node scripts/make-rl08-pending-db.mjs` 造的库再跑一轮(脚本已随票提交,可复现)',
         )
       }
       if (p.scrollWidth > p.clientWidth) {
@@ -537,10 +549,57 @@ async function main() {
       }
     }
 
+    // ── ⑨b 面板里的「首次认定」标记必须**与时态一致** ─────────────────────────
+    //
+    // 抓的是这一条:待确认的首次认定**不能被说成结论**。`firstEventId` 只是「已知最早那条」,
+    // 存在更早但定不了年的认定时,那一年并不成立 —— 面板若照旧挂一句「首次认定就是这一条」,
+    // 就把待确认的结论说成了结论,与本契约 §7.5 的「照给,但不声称它是首次」自相矛盾。
+    // 这一段**不受 `--shots` 控制**:它是断言,截图才是可选的。
+    if (recognitions.rows.length) {
+      const pending = await json('/api/roster/enterprises?firstStatus=pending&pageSize=1')
+      if (pending.counts.total === 0) {
+        ok(
+          '面板首次认定标记的时态一致性:本库 0 家待确认 ⇒ 这一条本轮无从渲染,' +
+            '改用 `node scripts/make-rl08-pending-db.mjs` 造的库再跑一轮(脚本已随票提交,可复现)',
+        )
+      } else {
+        const { sessionId, targetId } = await openAndRun(cdp, `${BASE}/?firstStatus=pending`, READY_COUNTS, DESKTOP)
+        try {
+          await evaluate(
+            cdp,
+            sessionId,
+            `(() => {
+              const btn = [...document.querySelectorAll('tbody button')].find((b) => (b.textContent ?? '').includes('展开'));
+              btn?.click();
+              return !!btn;
+            })()`,
+          )
+          const landed = await waitUntil(cdp, sessionId, `!!document.querySelector('${FIRST_MARK}')`, 20000)
+          const mark = await evaluate(
+            cdp,
+            sessionId,
+            `(() => {
+              const el = document.querySelector('${FIRST_MARK}');
+              return { text: el?.textContent?.trim() ?? '', title: el?.getAttribute('title') ?? '' };
+            })()`,
+          )
+          if (!landed) bad('待确认那一屏:面板里没有标出「已知最早的那条认定」')
+          else if (!mark.text.includes('待确认') || !mark.title.includes('待确认')) {
+            bad(
+              `待确认的首次认定在面板里被说成了结论(badge=「${mark.text}」,title=「${mark.title.slice(0, 50)}」)`,
+            )
+          } else {
+            ok(`待确认的首次认定在面板里如实标注「${mark.text}」,并写明为什么不能算首次`)
+          }
+        } finally {
+          await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+        }
+      }
+    }
+
+    // ── ⑨c 截图(可选,`--shots <目录>`):给人眼再看一遍,不是断言 ─────────────
     if (SHOTS_DIR) {
-      // 「待确认」那一屏(合成库才有)与桌面上的展开面板,各留一张。
       const s1 = await openAndRun(cdp, `${BASE}/?firstStatus=pending`, READY_COUNTS, DESKTOP)
-      // 顺手把第一行摊开:待确认的**原因**与出处只长在面板里,截图要能一起看到。
       await evaluate(
         cdp,
         s1.sessionId,
@@ -550,7 +609,7 @@ async function main() {
           return !!btn;
         })()`,
       )
-      await waitUntil(cdp, s1.sessionId, `!!document.querySelector('[title*="首次认定就是这一条"]')`, 20000)
+      await waitUntil(cdp, s1.sessionId, `!!document.querySelector('${FIRST_MARK}')`, 20000)
       await shot(cdp, s1.sessionId, 'desktop-pending')
       await cdp.send('Target.closeTarget', { targetId: s1.targetId }).catch(() => {})
       const s2 = await openAndRun(cdp, `${BASE}/?firstYear=2024`, READY, DESKTOP)
@@ -563,7 +622,7 @@ async function main() {
           return !!btn;
         })()`,
       )
-      await waitUntil(cdp, s2.sessionId, `!!document.querySelector('[title*="首次认定就是这一条"]')`, 20000)
+      await waitUntil(cdp, s2.sessionId, `!!document.querySelector('${FIRST_MARK}')`, 20000)
       await shot(cdp, s2.sessionId, 'desktop-panel')
       await cdp.send('Target.closeTarget', { targetId: s2.targetId }).catch(() => {})
     }
@@ -632,8 +691,7 @@ async function main() {
             return !!btn;
           })()`,
         )
-        const MARK = `[title*="首次认定就是这一条"]`
-        const panelReady = clicked && (await waitUntil(cdp, sessionId, `!!document.querySelector('${MARK}')`, 20000))
+        const panelReady = clicked && (await waitUntil(cdp, sessionId, `!!document.querySelector('${FIRST_MARK}')`, 20000))
         if (!panelReady) {
           bad('桌面 1440:展开面板里没有把「哪一条事件算首次认定」标出来')
         } else {
@@ -641,13 +699,15 @@ async function main() {
             cdp,
             sessionId,
             `(() => {
-              const badge = document.querySelector('${MARK}');
+              const badge = document.querySelector('${FIRST_MARK}');
               const row = badge?.closest('li');
               return {
                 // 那一行**第一个**徽章是事件标签(EventChip):必须是「认定」,
                 // 不是复核 / 维护 / 培育。取 firstElementChild 是因为「首次认定」这四个字
                 // 就带「认定」,扫整行文本等于没判。
                 chip: row?.firstElementChild?.textContent?.trim() ?? '',
+                // 已确立的那一屏:徽章必须**敢**说「首次认定」。
+                markText: badge?.textContent?.trim() ?? '',
                 // 出处:同一称号块里那句「出处 …」。
                 hasWhere: /出处\\s*\\S/.test(document.body.textContent ?? ''),
                 overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -655,6 +715,7 @@ async function main() {
             })()`,
           )
           if (!panel.chip.startsWith('认定')) bad(`桌面 1440:「首次认定」标在了非认定事件上(${JSON.stringify(panel.chip)})`)
+          else if (panel.markText !== '首次认定') bad(`桌面 1440:已确立的首次认定没被标成「首次认定」(${JSON.stringify(panel.markText)})`)
           else if (!panel.hasWhere) bad('桌面 1440:展开面板里没有首次认定的出处')
           else if (panel.overflow) bad('桌面 1440:展开面板撑出横向溢出')
           else ok('桌面 1440:展开面板把「首次认定」标在认定事件那一行,并给出出处,无横向溢出')

@@ -18,8 +18,8 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
-import { effectiveDistrictOf, readRosterProfiles } from './enterprise-roster'
-import type { RecognitionEntry } from './first-recognition'
+import { effectiveDistrict, readRosterProfiles } from './enterprise-roster'
+import { matchesRecognitionQuery, type RecognitionEntry } from './first-recognition'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -89,23 +89,21 @@ export function listRosterRecognitions(
   filter: RosterRecognitionFilter = {},
 ): RosterRecognitionsResult {
   const { profiles } = readRosterProfiles(db)
-  const titles = filter.title?.length ? filter.title : null
-  const years = filter.year?.length ? filter.year : null
-  const statuses = filter.status?.length ? filter.status : null
+  // 端点侧的参数名 → 判据形状:`year` / `status` 在这里就叫这个名字(这个端点的主体本来就是
+  // 首次认定,`year` 没有第二种解释);总表那边同一个量叫 `firstYear` / `firstStatus`。
+  // **只做一次改名,判据本身是同一个函数** —— 否则同一个 URL 在两个端点上会给出两批人。
+  const query = { title: filter.title, firstYear: filter.year, firstStatus: filter.status }
 
   const rows: RosterRecognitionRow[] = []
   for (const profile of profiles) {
     for (const entry of profile.recognitions) {
-      if (titles && !titles.includes(entry.titleCode)) continue
-      // 年份给不出时**命中不了任何年份**:留空是「未知」,不该被当成某个年份的匹配。
-      if (years && (entry.firstYear == null || !years.includes(entry.firstYear))) continue
-      if (statuses && !statuses.includes(entry.status)) continue
+      if (!matchesRecognitionQuery(entry, query)) continue
       rows.push({
         ...entry,
         enterpriseId: profile.enterprise.id,
         name: profile.enterprise.name,
         uscc: profile.enterprise.usccNorm,
-        district: effectiveDistrictOf(profile),
+        district: effectiveDistrict(profile),
       })
     }
   }

@@ -26,8 +26,8 @@ import {
   VERIFICATION_STATUSES,
 } from '../lib/labels'
 import {
-  FIRST_RECOGNITION_PENDING_REASONS as FIRST_RECOGNITION_REASON_VALUES,
-  FIRST_RECOGNITION_STATUSES as FIRST_RECOGNITION_VALUES,
+  FIRST_RECOGNITION_PENDING_REASON_VALUES,
+  FIRST_RECOGNITION_STATUS_VALUES,
 } from '../lib/roster/first-recognition'
 
 /**
@@ -93,19 +93,19 @@ describe('首次认定的取值也是一处(RL-08,契约 §7.5 增量)', () => {
    * 标签表 ↔ 展示顺序 ↔ 网页上的筛选下拉」四者同键集合 —— 改一处忘另一处,这里立刻红。
    */
   it('两态:判定取值 / 标签表 / 展示顺序三方同键', () => {
-    expect(IDENTITY(Object.keys(FIRST_RECOGNITION_STATUSES))).toEqual(IDENTITY(FIRST_RECOGNITION_VALUES))
-    expect(IDENTITY(FIRST_RECOGNITION_STATUS_ORDER)).toEqual(IDENTITY(FIRST_RECOGNITION_VALUES))
+    expect(IDENTITY(Object.keys(FIRST_RECOGNITION_STATUSES))).toEqual(IDENTITY(FIRST_RECOGNITION_STATUS_VALUES))
+    expect(IDENTITY(FIRST_RECOGNITION_STATUS_ORDER)).toEqual(IDENTITY(FIRST_RECOGNITION_STATUS_VALUES))
   })
 
   it('三条待确认原因:判定取值 / 标签表 / 展示顺序(即优先级)三方一致', () => {
-    expect(IDENTITY(Object.keys(FIRST_RECOGNITION_REASONS))).toEqual(IDENTITY(FIRST_RECOGNITION_REASON_VALUES))
+    expect(IDENTITY(Object.keys(FIRST_RECOGNITION_REASONS))).toEqual(IDENTITY(FIRST_RECOGNITION_PENDING_REASON_VALUES))
     // 顺序 = 优先级,这里是**逐位**相等,不是同键集合 —— 判据的优先级是口径的一部分。
-    expect(FIRST_RECOGNITION_REASON_ORDER).toEqual([...FIRST_RECOGNITION_REASON_VALUES])
+    expect(FIRST_RECOGNITION_REASON_ORDER).toEqual([...FIRST_RECOGNITION_PENDING_REASON_VALUES])
   })
 
   it('每个取值都有非空标签(没有取值会掉到兜底的英文代号)', () => {
-    for (const code of FIRST_RECOGNITION_VALUES) expect(FIRST_RECOGNITION_STATUSES[code]).toBeTruthy()
-    for (const code of FIRST_RECOGNITION_REASON_VALUES) expect(FIRST_RECOGNITION_REASONS[code]).toBeTruthy()
+    for (const code of FIRST_RECOGNITION_STATUS_VALUES) expect(FIRST_RECOGNITION_STATUSES[code]).toBeTruthy()
+    for (const code of FIRST_RECOGNITION_PENDING_REASON_VALUES) expect(FIRST_RECOGNITION_REASONS[code]).toBeTruthy()
   })
 })
 

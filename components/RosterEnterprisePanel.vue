@@ -139,7 +139,7 @@ interface Recognition {
   firstYear: number | null
   firstEventId: number | null
   source: string | null
-  status: string
+  status: 'confirmed' | 'pending'
   pendingReason: string | null
   /** 首次认定那条事件的出处(与 `Evidence` 同形状,但不带 `eventId` —— 事件就是 `firstEventId`)。 */
   evidence: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
@@ -240,19 +240,30 @@ const recognitionByTitle = computed(
 )
 
 /**
- * 首次认定那一条事件的**身份**。事件列表里给它挂一枚「首次认定」标 ——
- * 「哪一条算首次」是这一票要回答的问题,让人自己按年份找是最容易看错的做法
- * (同一称号下往往还有复核与再次获批的事件,年份还更近)。
+ * 首次认定那一条事件的身份与状态。`pending` 只能标「已知最早」,不能写成结论。
  */
-const firstEventIds = computed(
-  () => new Set((detail.value?.recognitions ?? []).map((r) => r.firstEventId).filter((id): id is number => id != null)),
-)
+const firstRecognitionByEvent = computed(() => {
+  const map = new Map<number, Recognition>()
+  for (const recognition of detail.value?.recognitions ?? []) {
+    if (recognition.firstEventId != null) map.set(recognition.firstEventId, recognition)
+  }
+  return map
+})
 
 /** 首次认定的状态徽章文案与悬停原因(待确认时必须答得出「为什么」)。 */
 function recognitionNote(recognition: Recognition): string {
   if (recognition.status !== 'pending') return ''
   const why = FIRST_RECOGNITION_REASONS[recognition.pendingReason ?? ''] ?? recognition.pendingReason ?? ''
-  return why
+  return `首次认定状态待确认；这是当前已知最早的认定事件,不作为确立结论。原因：${why}`
+}
+
+function recognitionEventLabel(recognition: Recognition): string {
+  return recognition.status === 'pending' ? '已知最早的认定(待确认)' : '首次认定'
+}
+
+function recognitionEventTitle(recognition: Recognition): string {
+  if (recognition.status === 'pending') return recognitionNote(recognition)
+  return '该称号的首次认定就是这一条(最早的认定;复核通过或失败后再次获批都不会改变它)。'
 }
 
 /**
@@ -372,12 +383,13 @@ function openPreview(e: Evidence) {
                 >
                   <EventChip :type="event.eventType" :year="event.year" :seq="event.batchSeq" />
                   <Badge
-                    v-if="firstEventIds.has(event.id)"
+                    v-if="firstRecognitionByEvent.has(event.id)"
                     variant="secondary"
                     class="font-normal"
-                    title="该称号的首次认定就是这一条(最早的认定;复核通过或失败后再次获批都不会改变它)。"
+                    data-testid="first-recognition-mark"
+                    :title="recognitionEventTitle(firstRecognitionByEvent.get(event.id)!)"
                   >
-                    首次认定
+                    {{ recognitionEventLabel(firstRecognitionByEvent.get(event.id)!) }}
                   </Badge>
                   <Badge v-if="event.reviewOutcome" variant="outline" class="font-normal">
                     {{ REVIEW_OUTCOMES[event.reviewOutcome] ?? event.reviewOutcome }}

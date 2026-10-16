@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { FIRST_RECOGNITION_REASONS, TITLES, TITLE_SHORT } from '~~/lib/labels'
+import {
+  FIRST_RECOGNITION_HINT,
+  FIRST_RECOGNITION_REASONS,
+  TITLES,
+  TITLE_SHORT,
+} from '~~/lib/labels'
+import {
+  evidencePointerText,
+  firstRecognitionYearText,
+} from '~~/lib/roster/first-recognition'
 import RosterEnterprisePanel from '@/components/RosterEnterprisePanel.vue'
 import TitleBadge from '@/components/TitleBadge.vue'
 import { Badge } from '@/components/ui/badge'
@@ -80,7 +89,9 @@ function lifecycleText(row: EnterpriseRow): string {
   const first = row.firstRecognition.length
     ? row.firstRecognition
         .map((f) => {
-          const year = f.year == null ? '年份未知' : String(f.year)
+          // 年份文案与「未记录」的写法都取自单一出处(`first-recognition.ts`),
+          // 与导出、展开面板逐字一致 —— 三处各写一遍必然有一处先漂。
+          const year = firstRecognitionYearText({ firstYear: f.year })
           const pending = f.status === 'pending' ? '(待确认)' : ''
           return `${TITLE_SHORT[f.titleCode] ?? TITLES[f.titleCode] ?? f.titleCode} ${year}${pending}${f.needsReview ? '(待核)' : ''}`
         })
@@ -101,19 +112,15 @@ function firstRecognitionTitle(row: EnterpriseRow): string {
   return row.firstRecognition
     .map((f) => {
       const title = TITLES[f.titleCode] ?? f.titleCode
+      const year = firstRecognitionYearText({ firstYear: f.year })
       if (f.status === 'pending') {
+        // 待确认时**明说它待确认** —— 悬停说明里给出一个年份却不声明它是待确认,
+        // 读的人会把它当成结论(这正是票面要防的误标)。
         const why = FIRST_RECOGNITION_REASONS[f.pendingReason ?? ''] ?? f.pendingReason ?? ''
-        const year = f.year == null ? '年份未知' : String(f.year)
         return `${title}:待确认(${year})— ${why}`
       }
-      const where = f.evidence
-        .map((v) =>
-          [v.sourceFile, v.attachment, v.listNo == null ? null : `序号 ${v.listNo}`, v.page == null ? null : `第 ${v.page} 页`]
-            .filter(Boolean)
-            .join(' · '),
-        )
-        .join(' ; ')
-      return `${title}:${f.year} — 出处 ${where || '未记录'}`
+      const where = f.evidence.map(evidencePointerText).join(' ; ')
+      return `${title}:${year} — 出处 ${where || '未记录'}`
     })
     .join('\n')
 }
@@ -150,7 +157,11 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
       <TableRow class="hover:bg-transparent">
         <TableHead :class="TH_CLASS">企业名称</TableHead>
         <TableHead :class="[TH_CLASS, 'w-[22.5rem]']">称号</TableHead>
-        <TableHead :class="[TH_CLASS, 'w-72']">首次认定 · 下次复核</TableHead>
+        <!-- 表头带一句口径(悬停可见)。这一列里「(待确认)」和「(待核)」是两个不同的东西,
+             不写清就没人分得清,而口径说明**不占版面**(不进小字说明区)。 -->
+        <TableHead :class="[TH_CLASS, 'w-72']" :title="FIRST_RECOGNITION_HINT">
+          首次认定 · 下次复核
+        </TableHead>
         <TableHead :class="[TH_CLASS, 'w-14']">
           <span class="sr-only">展开</span>
         </TableHead>

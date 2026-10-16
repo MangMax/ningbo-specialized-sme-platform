@@ -772,15 +772,25 @@
 ```jsonc
 "counts": {
   "titlePairs": 9930,    // 符合条件的**企业 × 称号**数(= 行数,先于分页)
-  "enterprises": 7352,   // 符合条件的**企业**数(多称号企业只算一家)
-  "titles": { "little_giant": 0, "specialized_sme": 9930, "innovative_sme": 0 }
+  "enterprises": 7205,   // 符合条件的**企业**数(多称号企业只算一家)
+  // 真实库实测(2026-10-16):9930 = 6552 创新型 + 3378 专精特新,小巨人 0。
+  "titles": { "little_giant": 0, "specialized_sme": 3378, "innovative_sme": 6552 }
 }
 ```
 
 - **一行 = 一个企业 × 称号**。同一企业多称号就是多行;`counts.enterprises` 才是企业数。
 
+- **实测基线(真库 2026-10-16)**:9930 个(企业 × 称号)有认定,来自 7205 家企业
+  —— 两个单位**确实不是同一个数**,这不是理论差别。
+  ⚠️ 同一份实测还表明:9946 条 `award` **一条都不缺年份、也一条都不缺出处**
+  ⇒ `status='pending'` 在真库上**一次都不触发**。那一档的可复现验收要靠
+  `scripts/make-rl08-pending-db.mjs` 造的库(合成三家:已确立 / 缺出处 / 有更早的定不了年),
+  否则「待确认」的页面表现与徽章文案在真库上根本渲染不出来。
+
 - **与 §7.1 的 `firstRecognition` 是同一处计算**(`buildProfile` 一次算出,两处只是取舍字段),
-  所以两处不可能给出不同的首次年份。§7.1 那一项同时**增量补齐**同名字段
+  所以两处不可能给出不同的首次年份。**筛选判据同理**:`matchesRecognitionQuery`
+  (`lib/roster/first-recognition.ts`)是总表与本节清单共用的**唯一一份**判据 ——
+  两处各写一遍,一边加了条件另一边没加,就会「总表筛出 3 家、清单筛出 5 家」,而这两个数在页面上并排。§7.1 那一项同时**增量补齐**同名字段
   (`firstEventId` / `source` / `status` / `pendingReason` / `evidence` / `undatedAwardIds`),
   并把 `year` 放宽为**可空**(`null` = 一条都定不了年);`needsReview` **语义不变**。
 

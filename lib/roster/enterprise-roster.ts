@@ -26,6 +26,7 @@ import { SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import {
   judgeFirstRecognition,
+  matchesRecognitionQuery,
   type FirstRecognitionEvidence,
   type RecognitionEntry,
   type RecognitionEvent,
@@ -370,20 +371,13 @@ function buildProfile(
   }
 }
 
-/** 企业画像 —— 读模型内部形状。导出只为一件事:让 §7.5、§7.2 复用**同一处**属地口径。 */
-export type RosterProfile = Profile
-
 /**
  * 属地:企业自身属地优先,为空时退回它**最早那条带属地的记录**。
  *
- * 导出给 `lib/roster/recognitions.ts`:首次认定列表也带属地,而「属地」只该有这一个判法 ——
- * 两处各写一遍,同一家企业在总表与首次认定列表上会显示成两个区县。
+ * 导出给 `lib/roster/recognitions.ts`(§7.5 的清单也带属地):「属地」只该有这一个判法 ——
+ * 两处各写一遍,同一家企业在总表与首次认定清单上会显示成两个区县。
  */
-export function effectiveDistrictOf(profile: Profile): string | null {
-  return effectiveDistrict(profile)
-}
-
-function effectiveDistrict(profile: Profile): string | null {
+export function effectiveDistrict(profile: Profile): string | null {
   if (profile.enterprise.district) return profile.enterprise.district
   const withDistrict = profile.records.filter((r) => r.district).sort((a, b) => a.id - b.id)
   return withDistrict[0]?.district ?? null
@@ -531,9 +525,33 @@ export function readRosterProfiles(db: Db): {
   /** 别名:只带 `confirmed`(契约 §1.2 —— `pending` 不参与搜索)。 */
   confirmedAliases: Map<number, string[]>
 } {
+  const ctx = readRosterContext(db)
+  return {
+    profiles: ctx.snap.enterprises.map((e) => ctx.profileOf(e)),
+    snap: ctx.snap,
+    index: ctx.index,
+    confirmedAliases: ctx.confirmedAliases,
+  }
+}
+
+/** 读模型的三样公共前置:**快照 / 快照索引 / 已确认别名**,外加一个**按需**建画像的入口。 */
+interface RosterContext {
+  snap: Snapshot
+  index: SnapshotIndex
+  confirmedAliases: Map<number, string[]>
+  /** 取某家企业的画像(同一次请求里重复问只建一次)。 */
+  profileOf: (enterprise: Snapshot['enterprises'][number]) => Profile
+}
+
+/**
+ * 快照 + 索引 + 按需建画像。总表 / 首次认定清单要**全部**企业,**企业详情只要一家** ——
+ * 详情为了开一行去把 7352 家全建一遍,一次请求就是几千倍的无用功
+ * (实测:整表建画像 ≈ 3s,只建一家 ≈ 0.2s)。
+ * 两条路共用同一份索引与同一个 `buildProfile`,只是**建几家的差别**。
+ */
+function readRosterContext(db: Db): RosterContext {
   const snap = readSnapshot(db)
   const evidence = indexEvidence(snap)
-  const profiles = snap.enterprises.map((enterprise) => buildProfile(enterprise, snap, evidence))
   const confirmedAliases = new Map<number, string[]>()
   for (const alias of snap.aliases) {
     if (alias.verificationStatus !== 'confirmed') continue
@@ -541,7 +559,19 @@ export function readRosterProfiles(db: Db): {
     if (!list.includes(alias.name)) list.push(alias.name)
     confirmedAliases.set(alias.enterpriseId, list)
   }
-  return { profiles, snap, index: indexSnapshots(snap), confirmedAliases }
+  const built = new Map<number, Profile>()
+  return {
+    snap,
+    index: indexSnapshots(snap),
+    confirmedAliases,
+    profileOf: (enterprise) => {
+      const cached = built.get(enterprise.id)
+      if (cached) return cached
+      const profile = buildProfile(enterprise, snap, evidence)
+      built.set(enterprise.id, profile)
+      return profile
+    },
+  }
 }
 
 /**
@@ -566,15 +596,10 @@ function recognitionEntriesMatching(
   profile: Profile,
   filter: RosterEnterpriseFilter,
 ): RecognitionEntry[] {
-  const titles = filter.title?.length ? filter.title : null
-  const years = filter.firstYear?.length ? filter.firstYear : null
-  const statuses = filter.firstStatus?.length ? filter.firstStatus : null
-  return profile.recognitions.filter((entry) => {
-    if (titles && !titles.includes(entry.titleCode)) return false
-    if (years && (entry.firstYear == null || !years.includes(entry.firstYear))) return false
-    if (statuses && !statuses.includes(entry.status)) return false
-    return true
-  })
+  // 判据本体在 `first-recognition.ts`(与 §7.5 的清单**同一处**);这里只负责把企业侧的
+  // 参数名(`firstYear` / `firstStatus`)转成判据的形状,一个字段对一处,不做别的判断。
+  const query = { title: filter.title, firstYear: filter.firstYear, firstStatus: filter.firstStatus }
+  return profile.recognitions.filter((entry) => matchesRecognitionQuery(entry, query))
 }
 
 /**
@@ -904,11 +929,12 @@ function differenceUniverse(db: Db, snap: Snapshot): RosterDifferenceRow[] {
 }
 
 export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
-  const { snap, profiles, index } = readRosterProfiles(db)
+  // 只建**这一家**的画像:详情页开一行,不该把整库 7352 家全算一遍。
+  const { snap, index, profileOf } = readRosterContext(db)
   const enterprise = snap.enterprises.find((e) => e.id === id)
   if (!enterprise) return null
 
-  const profile = profiles.find((p) => p.enterprise.id === id)!
+  const profile = profileOf(enterprise)
   const aliasNames = snap.aliases
     .filter((a) => a.enterpriseId === id && a.verificationStatus === 'confirmed')
     .map((a) => a.name)

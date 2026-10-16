@@ -283,6 +283,23 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
     query = {}
   })
 
+  it('导出继承 firstStatus=pending,只导出待确认企业', async () => {
+    query = { firstStatus: 'pending' }
+    const bytes = await handlerExport({})
+    const wb = new ExcelJS.Workbook()
+    await wb.xlsx.load(Buffer.from(bytes) as never)
+    const ws = wb.worksheets[0]!
+    expect(String(ws.getRow(1).getCell(1).value)).toContain('1 家企业')
+    expect(ws.rowCount).toBe(3) // 说明 + 表头 + 乙企业
+
+    const headersRow = (ws.getRow(2).values as unknown[]).map(String)
+    const col = (name: string) => headersRow.indexOf(name)
+    expect(String(ws.getRow(3).getCell(col('企业名称')).value)).toBe('宁波乙接口测试有限公司')
+    expect(String(ws.getRow(3).getCell(col('首次认定')).value)).toContain('待确认')
+    expect(String(ws.getRow(3).getCell(col('首次认定出处')).value)).toContain('待确认')
+    query = {}
+  })
+
   it('导出的筛选继承是**同一份**解析:非法 firstYear 不炸(与既有 year 同口径,非数字剔除)', async () => {
     query = { firstYear: 'abc' }
     headers = {}

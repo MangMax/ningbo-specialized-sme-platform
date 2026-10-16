@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
-  FIRST_RECOGNITION_PENDING_REASONS,
-  FIRST_RECOGNITION_STATUSES,
+  FIRST_RECOGNITION_PENDING_REASON_VALUES,
+  FIRST_RECOGNITION_STATUS_VALUES,
+  FIRST_RECOGNITION_UNKNOWN_YEAR,
+  evidencePointerText,
+  firstRecognitionYearText,
   judgeFirstRecognition,
+  matchesRecognitionQuery,
   type FirstRecognitionEvidence,
+  type RecognitionEntry,
   type RecognitionEvent,
 } from '../lib/roster/first-recognition'
 import { computeTitleLifecycle } from '../lib/roster/lifecycle'
@@ -221,13 +226,77 @@ describe('历史不完整 ⇒ 待确认,不把当前窗口里最早的年份冒�
   })
 
   it('两态与三因都是可判别取值,且互不等价', () => {
-    expect(new Set(FIRST_RECOGNITION_STATUSES).size).toBe(2)
-    expect(new Set(FIRST_RECOGNITION_PENDING_REASONS).size).toBe(3)
-    expect(FIRST_RECOGNITION_PENDING_REASONS).toEqual([
+    expect(new Set(FIRST_RECOGNITION_STATUS_VALUES).size).toBe(2)
+    expect(new Set(FIRST_RECOGNITION_PENDING_REASON_VALUES).size).toBe(3)
+    expect(FIRST_RECOGNITION_PENDING_REASON_VALUES).toEqual([
       'no_dated_award',
       'undated_award',
       'no_evidence',
     ])
+  })
+})
+
+describe('筛选判据只有一处(企业总表与 §7.5 清单共用)', () => {
+  /**
+   * 这条判据被两个读模型共用(企业总表按「企业」判、§7.5 清单按行判)。它必须**只有一份**:
+   * 各写一遍的话,一边加了条件、另一边没加,于是「总表筛出 3 家、清单筛出 5 家」——
+   * 而这两个数在页面上是并排给人看的。
+   */
+  const entry = (over: Partial<RecognitionEntry> = {}): RecognitionEntry => ({
+    titleCode: 'specialized_sme',
+    firstYear: 2021,
+    firstEventId: 1,
+    source: 'jxj',
+    status: 'confirmed',
+    pendingReason: null,
+    evidence: [AWARD_2021],
+    undatedAwardIds: [],
+    ...over,
+  })
+
+  it('没给的项不参与(「没筛」就是全都放过)', () => {
+    expect(matchesRecognitionQuery(entry(), {})).toBe(true)
+    expect(matchesRecognitionQuery(entry(), { title: [], firstYear: [], firstStatus: [] })).toBe(true)
+  })
+
+  it('给的项逐条生效,多值取或', () => {
+    expect(matchesRecognitionQuery(entry(), { title: ['specialized_sme'] })).toBe(true)
+    expect(matchesRecognitionQuery(entry(), { title: ['innovative_sme'] })).toBe(false)
+    expect(matchesRecognitionQuery(entry(), { title: ['innovative_sme', 'specialized_sme'] })).toBe(true)
+    expect(matchesRecognitionQuery(entry(), { firstYear: [2021] })).toBe(true)
+    expect(matchesRecognitionQuery(entry(), { firstYear: [2022] })).toBe(false)
+    expect(matchesRecognitionQuery(entry(), { firstStatus: ['confirmed'] })).toBe(true)
+    expect(matchesRecognitionQuery(entry(), { firstStatus: ['pending'] })).toBe(false)
+    // 几项之间取与。
+    expect(matchesRecognitionQuery(entry(), { firstYear: [2021], firstStatus: ['pending'] })).toBe(false)
+  })
+
+  it('★ 年份给不出(`firstYear == null`)时**命中不了任何年份**', () => {
+    // 「未知」不是某个具体年份 —— 把它当成命中,等于替它挑了个年份。
+    const undated = entry({ firstYear: null, status: 'pending', pendingReason: 'no_dated_award' })
+    expect(matchesRecognitionQuery(undated, { firstYear: [2021] })).toBe(false)
+    expect(matchesRecognitionQuery(undated, { firstYear: [0] })).toBe(false)
+    // 但不给年份判据时它照样在(只按状态筛能筛到它)。
+    expect(matchesRecognitionQuery(undated, { firstStatus: ['pending'] })).toBe(true)
+  })
+})
+
+describe('展示用的两句话也只有一处(导出 / 台账表 / 展开面板共用)', () => {
+  it('年份文案:有年份给年份,没有就明说「年份未知」,不留空、不借别的年份', () => {
+    expect(firstRecognitionYearText({ firstYear: 2021 })).toBe('2021')
+    expect(firstRecognitionYearText({ firstYear: null })).toBe(FIRST_RECOGNITION_UNKNOWN_YEAR)
+    // 年份 0 是个值,不是「没有」—— 不能被当成缺失。
+    expect(firstRecognitionYearText({ firstYear: 0 })).toBe('0')
+  })
+
+  it('出处文案:文件 · 附件 · 序号 · 页,缺哪样不写哪样(不填占位符)', () => {
+    expect(evidencePointerText(AWARD_2021)).toBe(
+      'jxj/announcement/2022/甬经信中小〔2022〕145号….pdf · 附件一 · 序号 74',
+    )
+    expect(evidencePointerText({ sourceFile: 'a.pdf', attachment: null, listNo: null, page: null })).toBe('a.pdf')
+    expect(evidencePointerText({ sourceFile: 'a.pdf', attachment: '附件三', listNo: 1, page: 88 })).toBe(
+      'a.pdf · 附件三 · 序号 1 · 第 88 页',
+    )
   })
 })
 

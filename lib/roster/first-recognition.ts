@@ -26,20 +26,28 @@
  */
 import type { TitleLifecycle } from './lifecycle'
 
-/** 首次认定的两态。 */
-export const FIRST_RECOGNITION_STATUSES = ['confirmed', 'pending'] as const
-export type FirstRecognitionStatus = (typeof FIRST_RECOGNITION_STATUSES)[number]
+/**
+ * 首次认定的两态。
+ *
+ * 名字带 `_VALUES`:中文标签表在 `lib/labels.ts` 里叫 `FIRST_RECOGNITION_STATUSES`
+ * (与 `DIFFERENCE_STATUSES` / `VERIFICATION_STATUSES` 同一命名),同仓的
+ * `PLATFORM_INTERFACE_VALUES`↔`PLATFORM_INTERFACES` 就是这么分的。**两处同名会逼着调用方
+ * 起别名**,别名一起就没人分得清哪个是取值、哪个是文案。
+ */
+export const FIRST_RECOGNITION_STATUS_VALUES = ['confirmed', 'pending'] as const
+export type FirstRecognitionStatus = (typeof FIRST_RECOGNITION_STATUS_VALUES)[number]
 
 /**
  * 待确认的原因。**顺序即优先级**:三条同时成立时报最靠前的那个
  * (判据确定,不随实现顺序变 —— 同一条数据每次给出的原因都一样)。
  */
-export const FIRST_RECOGNITION_PENDING_REASONS = [
+export const FIRST_RECOGNITION_PENDING_REASON_VALUES = [
   'no_dated_award',
   'undated_award',
   'no_evidence',
 ] as const
-export type FirstRecognitionPendingReason = (typeof FIRST_RECOGNITION_PENDING_REASONS)[number]
+export type FirstRecognitionPendingReason =
+  (typeof FIRST_RECOGNITION_PENDING_REASON_VALUES)[number]
 
 /** 出处 —— 与 `record_evidence` 同形状(文件 / 附件 / 序号 / 页)。 */
 export interface FirstRecognitionEvidence {
@@ -138,4 +146,75 @@ export function judgeFirstRecognition(
     evidence,
     undatedAwardIds: [...lifecycle.undatedAwardIds],
   }
+}
+
+// ---------------------------------------------------------------------------
+// 筛选判据 —— **只有这一处**
+// ---------------------------------------------------------------------------
+
+/**
+ * 首次认定的四个判据(`title` / `firstYear` / `firstStatus` 三者 + 由它们共同约束的「同一个称号」)。
+ *
+ * 为什么把判据抽到这里,而不是在「企业总表」与「首次认定清单」里各写一遍:
+ * 两个读模型看的是**同一批** `RecognitionEntry`。判据各写一份,迟早一边加了新条件、
+ * 另一边没加,于是「总表筛出 3 家、首次认定清单筛出 5 家」—— 而这两个数在页面上是并排给人看的。
+ * 契约 §7.5.1 说它们取同一处计算,这条判据也是同一处的一部分。
+ */
+export interface RecognitionQuery {
+  /** 称号(多值,命中任一);给了就要求后面几项**落在同一个称号**上。 */
+  title?: string[]
+  /** **首次认定年份**(多值,命中任一)。 */
+  firstYear?: number[]
+  /** 首次认定状态(多值,命中任一)。 */
+  firstStatus?: string[]
+}
+
+/**
+ * 这条首次认定是否命中判据。没给的项不参与(「没筛」与「筛了个空」是两回事)。
+ *
+ * 年份给不出(`firstYear == null`)时**命中不了任何年份**:留空是「未知」,
+ * 不该被当成某个具体年份的匹配。
+ */
+export function matchesRecognitionQuery(entry: RecognitionEntry, query: RecognitionQuery): boolean {
+  const titles = query.title?.length ? query.title : null
+  const years = query.firstYear?.length ? query.firstYear : null
+  const statuses = query.firstStatus?.length ? query.firstStatus : null
+  if (titles && !titles.includes(entry.titleCode)) return false
+  if (years && (entry.firstYear == null || !years.includes(entry.firstYear))) return false
+  if (statuses && !statuses.includes(entry.status)) return false
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// 展示用的两句话 —— **三处共用一处**
+// ---------------------------------------------------------------------------
+
+/**
+ * 年份给不出时的显示文案。
+ *
+ * 三处(导出、台账表、展开面板)都要写它;各写一个字面量的话,改一处就会漏另一处,
+ * 而漏掉的那处会给读者一个**看起来像年份**的东西 —— 那正是这一票要防的。
+ */
+export const FIRST_RECOGNITION_UNKNOWN_YEAR = '年份未知'
+
+/** 首次认定那一项的年份文案:有年份给年份,没有就明说「年份未知」,不填空、不填别的年份。 */
+export function firstRecognitionYearText(entry: { firstYear: number | null }): string {
+  return entry.firstYear == null ? FIRST_RECOGNITION_UNKNOWN_YEAR : String(entry.firstYear)
+}
+
+/**
+ * 一处出处的写法:文件 · 附件 · 序号 · 页 —— **缺哪样就不写哪样**,不填占位符。
+ *
+ * 同样三处共用:票面要求「依据必须能回到出处(哪个文件、哪个附件、哪个序号)」,
+ * 三个地方各拼一遍的结果,必然是导出的那份和屏幕上的那份说的不一样。
+ */
+export function evidencePointerText(v: FirstRecognitionEvidence): string {
+  return [
+    v.sourceFile,
+    v.attachment,
+    v.listNo == null ? null : `序号 ${v.listNo}`,
+    v.page == null ? null : `第 ${v.page} 页`,
+  ]
+    .filter((part): part is string => !!part)
+    .join(' · ')
 }

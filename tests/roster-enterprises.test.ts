@@ -465,45 +465,73 @@ describe('§7.1 企业总表 —— 一企一行,称号与事件不折叠', () =
   /**
    * RL-08 增量:`firstRecognition` 的一项除了 `titleCode` / `year` / `needsReview`,
    * 还带首次认定**自己的**状态与出处(`status` / `pendingReason` / `evidence` / `source` /
-   * `firstEventId` / `undatedAwardIds`)。所以这里用 `toMatchObject` 只钉 RL-04 拥有的那三项
-   * —— 多出来的字段由 RL-08 的用例(`tests/roster-recognitions.test.ts`)负责,
-   * 不在这张票的文件里重复一遍。
+   * `firstEventId` / `undatedAwardIds`)。
    *
-   * 这个夹具的 award 事件**没有出处行** ⇒ 下面的 `status` 是 `pending`(`no_evidence`),
+   * 这里仍然用 `toEqual`(**不是** `toMatchObject`)—— 逐字段全等才有力量:
+   * 多出一个少写一个都会红,数组长度也被钉住。唯一给不出常量的是 `firstEventId`(运行期 id),
+   * 用 `expect.any(Number)` 明说「只要是条数就行」,而不是把整个对象放宽成「包含」。
+   *
+   * 这个夹具的 award 事件**没有出处行** ⇒ `status` 是 `pending`(`no_evidence`),
    * 那是如实:依据回不到出处的首次认定本来就不算确立(RL-08 口径)。
    */
   it('首次认定取最早的 award;没有 award 的称号不出现在 firstRecognition 里', () => {
     const row = rowOf('a')
     // 专精特新 2021 认定 ⇒ 2021;同年 + 3 = 下一次到期 2024。
-    expect(row.firstRecognition).toMatchObject([{ titleCode: 'specialized_sme', year: 2021, needsReview: false }])
+    expect(row.firstRecognition).toEqual([
+      {
+        titleCode: 'specialized_sme',
+        year: 2021,
+        firstEventId: expect.any(Number),
+        source: 'jxj',
+        status: 'pending',
+        pendingReason: 'no_evidence',
+        evidence: [],
+        undatedAwardIds: [],
+        needsReview: false,
+      },
+    ])
     expect(row.nextReviewYear).toBe(2024)
     // 小巨人只有 miit 维护记录(**没有** award)⇒ 不产生首次认定,也不产生锚点。
     expect(row.firstRecognition.some((f) => f.titleCode === 'little_giant')).toBe(false)
-    // 新字段在这里的行为:没有存下来的出处 ⇒ 待确认,原因点明是缺出处(不是「年份未知」)。
-    expect(row.firstRecognition[0]).toMatchObject({
-      status: 'pending',
-      pendingReason: 'no_evidence',
-      source: 'jxj',
-      evidence: [],
-      undatedAwardIds: [],
-    })
   })
 
   it('复核通过的称号锚点 = 结论年份,下一次到期 = 锚点 + 3', () => {
     const row = rowOf('reviewed')
-    expect(row.firstRecognition).toMatchObject([{ titleCode: 'specialized_sme', year: 2021, needsReview: false }])
+    expect(row.firstRecognition).toEqual([
+      {
+        titleCode: 'specialized_sme',
+        year: 2021,
+        firstEventId: expect.any(Number),
+        source: 'jxj',
+        status: 'pending',
+        pendingReason: 'no_evidence',
+        evidence: [],
+        undatedAwardIds: [],
+        needsReview: false,
+      },
+    ])
     expect(row.nextReviewYear).toBe(2027)
   })
 
   it('结论年份缺失 ⇒ 退回年份并标待核(不猜)', () => {
     const row = rowOf('noDecided')
-    expect(row.firstRecognition).toMatchObject([{ titleCode: 'specialized_sme', year: 2020, needsReview: true }])
+    // ⚠️ 两个「待」是两件事,这里同时出现:`needsReview` 说的是**锚点**缺结论年份,
+    // 而首次认定自己的状态是 `no_evidence`(这个夹具没有出处行)。
+    expect(row.firstRecognition).toEqual([
+      {
+        titleCode: 'specialized_sme',
+        year: 2020,
+        firstEventId: expect.any(Number),
+        source: 'jxj',
+        status: 'pending',
+        pendingReason: 'no_evidence',
+        evidence: [],
+        undatedAwardIds: [],
+        needsReview: true,
+      },
+    ])
     expect(row.anchorNeedsReview).toBe(true)
     expect(row.nextReviewYear).toBe(2023)
-    // ⚠️ 两个「待」是两件事:`needsReview` 说的是**锚点**缺结论年份(上面这条),
-    // 而首次认定自己的状态是 `no_evidence`(这个夹具没有出处行)。
-    expect(row.firstRecognition[0]!.needsReview).toBe(true)
-    expect(row.firstRecognition[0]!.pendingReason).toBe('no_evidence')
   })
 })
 
@@ -806,10 +834,19 @@ describe('回归案例:91330211255994457P 归并后总表一行', () => {
     ])
     // 出处一条不丢(第 74 页).
     expect(detail.evidence.map((v) => v.page)).toContain(74)
-    // 首次认定仍是 2022(jxj 那条 award)。RL-08 起这一项还带状态与出处,
-    // 所以只钉 RL-04 拥有的三项;新字段在这里由 §7.2 的 `recognitions` 段负责。
-    expect(detail.enterprise.firstRecognition).toMatchObject([
-      { titleCode: 'specialized_sme', year: 2022, needsReview: false },
+    // 首次认定仍是 2022(jxj 那条 award)。RL-08 起这一项还带状态与出处 —— 逐字段全等。
+    expect(detail.enterprise.firstRecognition).toEqual([
+      {
+        titleCode: 'specialized_sme',
+        year: 2022,
+        firstEventId: expect.any(Number),
+        source: 'jxj',
+        status: 'confirmed',
+        pendingReason: null,
+        evidence: [{ sourceFile: expect.stringContaining('145号'), attachment: expect.anything(), listNo: 74, page: 74 }],
+        undatedAwardIds: [],
+        needsReview: false,
+      },
     ])
     // §7.2 新增段:每个有认定的称号一条首次认定,与总表/§7.5 同一处计算。
     // 这条 award 的出处里带着第 74 页 ⇒ 依据回得到出处,状态是已确立。
