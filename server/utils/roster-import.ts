@@ -36,6 +36,7 @@ import type {
   RosterImportPayload,
   RosterImportPlatformQuery,
   RosterImportPreflight,
+  RosterImportReplayResponse,
   RosterImportRequest,
   RosterImportSummary,
 } from '../../lib/roster-import-client'
@@ -583,9 +584,18 @@ interface PlannedItem {
   action: 'add' | 'update' | 'skip' | 'note'
   /** 是否落在待核状态（`pending` / `needs_review` / 未知枚举）。 */
   review: boolean
+  /**
+   * 本项会让几行 `record_evidence.source_file` 收敛（行口径，RL-16/RL-19）。
+   * `summarizePlan` 把它求和成 `preflight.evidenceRepoints` —— 「预检答应的」与
+   * 「提交真改的」逐行可比对，就靠这一项**在计划期**就算准。
+   */
+  repoints?: number
   /** 确实要执行时才有的写入闭包（提交阶段调用）。 */
   run?: (tx: Executor) => RosterImportItemResult
 }
+
+/** 公布文件记录的计划口径：正常写入 / 只收敛出处指针。 */
+type AnnouncementPlanMode = 'write' | 'converge'
 
 interface Plan {
   items: PlannedItem[]
@@ -598,36 +608,51 @@ function summarizePlan(plan: Plan): RosterImportPreflight {
   let update = 0
   let remove = 0
   let review = 0
+  let evidenceRepoints = 0
   const duplicateCandidates: DuplicateNameCandidate[] = []
   for (const planned of plan.items) {
     if (planned.action === 'add') add += 1
     else if (planned.action === 'update') update += 1
     if (planned.review) review += 1
+    evidenceRepoints += planned.repoints ?? 0
     if (planned.item.kind === 'merge' && planned.item.ok) remove += 1
     const candidate = planned.item.detail?.candidate as DuplicateNameCandidate | undefined
     if (planned.item.kind === 'duplicate_candidate' && planned.item.ok && candidate) {
       duplicateCandidates.push(candidate)
     }
   }
-  return { add, update, remove, review, conflicts: plan.conflicts, duplicateCandidates }
+  return { add, update, remove, review, conflicts: plan.conflicts, evidenceRepoints, duplicateCandidates }
 }
 
 /**
  * 把载荷翻成一份**只读**计划。所有身份解析（企业、记录、查询）都在这里发生，
  * 因此预检报的 add/update/remove/review 就是提交真会发生的事。
+ *
+ * `context.convergeOnly`（RL-19，§8.9.3）只规划**公布文件记录的出处指针收敛**：
+ * 其余各类（平台查询 / 别名 / 差异 / 快照 / 归并）**一项都不进计划** —— 收敛重放
+ * 一行不加、一行不删，那几类都可能写新行，故它们根本没有执行闭包可跑。
  */
 export function planRosterImport(
   db: Executor,
   request: RosterImportRequest,
-  context: { batchId?: number } = {},
+  context: { batchId?: number; convergeOnly?: boolean } = {},
 ): Plan {
   const items: PlannedItem[] = []
   const conflicts: RosterImportItemResult[] = []
   const payload = request.payload ?? {}
+  const mode: AnnouncementPlanMode = context.convergeOnly ? 'converge' : 'write'
   /** 本批将新建的企业键（供别名 / 差异 / 归并在预检时解析到同批企业）。 */
   const pending: PendingEnterprises = new Set()
   /** 本批将写入的平台查询自然键（供别名 / 差异 / 归并在预检时解析到同批关系行）。 */
   const pendingRefs: PendingPlatformRefs = collectPendingPlatformRefs(payload)
+  /**
+   * **整份计划**已认领的出处行 id。
+   *
+   * 为什么必须跨记录共享：两条载荷记录若落到**同一条**既有记录上（同身份同坐标的重复行），
+   * 各自算一遍 repoints 会把同一行数两次 —— 而执行阶段第二条会发现指针已经改好了（0 行）。
+   * 于是预检报 2、提交改 1。共享一个集合，两处就都是 1。
+   */
+  const claimedEvidence = new Set<number>()
 
   const push = (planned: PlannedItem) => {
     items.push(planned)
@@ -644,6 +669,16 @@ export function planRosterImport(
         item: failure('announcement', 'announcement', 'source_document_invalid', 'announcement.sourceDocument.source 必须是 jxj / miit', 'sourceDocument.source'),
         action: 'skip',
         review: false,
+      })
+    } else if (mode === 'converge') {
+      // 收敛重放不需要「本批会新建谁」这套推断 —— 它明确不新建任何行，
+      // 故也不做 `planEnterpriseCreates`（那正是为了判 add/skip 而存在的）。
+      records.forEach((record, index) => {
+        planAnnouncementRecord(db, request, announcement, record, index, push, {
+          create: null,
+          earlierSameName: [],
+          reusedInBatch: false,
+        }, mode, claimedEvidence)
       })
     } else {
       // 会**新建**的企业 —— 判据就是写入侧的身份规则（有统代只按统代、无统代才按名），
@@ -670,7 +705,7 @@ export function planRosterImport(
           create,
           earlierSameName: create ? (earlierByName.get(create.nameNorm) ?? []) : [],
           reusedInBatch,
-        })
+        }, mode, claimedEvidence)
         if (create && identityKey != null) {
           const coordinates = plannedCoordinates.get(identityKey) ?? new Set<string>()
           coordinates.add(coordinate)
@@ -680,6 +715,9 @@ export function planRosterImport(
       })
     }
   }
+
+  // ---- 收敛重放到此为止（§8.9.3）：下面每一类都可能**写新行** ---------------
+  if (mode === 'converge') return { items, conflicts }
 
   // ---- 平台查询与关系 ------------------------------------------------------
   // **必须排在 aliases / differences / merges 之前**:那三项的自然键引用可能指向本批
@@ -719,6 +757,8 @@ function planAnnouncementRecord(
     earlierSameName: PendingEnterpriseCreate[]
     reusedInBatch: boolean
   } = { create: null, earlierSameName: [], reusedInBatch: false },
+  mode: AnnouncementPlanMode = 'write',
+  claimedEvidence: Set<number> = new Set(),
 ): void {
   const ref = `record:${index}`
   const name = optionalString(record?.enterprise?.name)
@@ -775,7 +815,43 @@ function planAnnouncementRecord(
   // 重放时**出处指针**可能需要收敛(RL-16):
   // 来源文件入库后同一份内容的标识从库外路径变成库内路径。事件坐标不变 ⇒ 历史一行不改,
   // 只有出处的 `source_file` 被指向新路径。这件事**要报进预检**,故按提交会改的行数定 action。
-  const repoints = existingRecord ? countEvidenceRepoints(db, existingRecord.id, events) : 0
+  //
+  // `claimedEvidence` 由整份计划共享（同一行不会被两条载荷记录各认领一次 —— 认领的粒度是
+  // **出处行 id**，`countEvidenceRepoints` 自己会把它装进去），于是「预检报的
+  // `evidenceRepoints`」就是执行阶段真会发出的 UPDATE 条数。
+  const repoints = existingRecord ? countEvidenceRepoints(db, existingRecord.id, events, claimedEvidence) : 0
+
+  // 收敛重放（§8.9.3）：只改既有出处行的指针，**不新建任何行**、也不记重名候选。
+  // 库状态在这一模式下没得商量 —— 载荷里有、库里没有的东西一律不写（故没有 `add`）。
+  if (mode === 'converge') {
+    const recordId = existingRecord?.id
+    push({
+      item: success('record', recordId != null ? `record:${recordId}` : ref, {
+        enterpriseId: existing?.id ?? null,
+        titleCode,
+        source,
+      }),
+      action: repoints > 0 ? 'update' : 'skip',
+      review: false,
+      repoints,
+      run:
+        repoints > 0 && recordId != null
+          ? (tx) => {
+              const evidenceRepointed = convergeRecordEvidence(tx, recordId, events)
+              return success('record', `record:${recordId}`, {
+                enterpriseId: existing?.id ?? null,
+                recordId,
+                evidenceRepointed,
+                // 收敛**只改指针**：一行没插，也没有事件被跳过。
+                skipped: 0,
+                rowsWritten: 0,
+              })
+            }
+          : undefined,
+    })
+    return
+  }
+
   // 这一条记录会**复用**既有行（`existingRecord`）吗？
   // 两条判据都必须在，否则预检又会与提交不一致：
   //  - 库里已有同坐标记录（库状态）；
@@ -793,6 +869,7 @@ function planAnnouncementRecord(
     // 复用且无收敛 ⇒ skip。
     action: !reused ? 'add' : repoints > 0 ? 'update' : 'skip',
     review: !uscc,
+    repoints,
     run: (tx) => writeAnnouncementRecord(tx, request, announcement, record, { name, uscc, district, titleCode, source, reason: { existingRecord } }),
   })
 
@@ -867,13 +944,8 @@ function writeAnnouncementRecord(
       skipped += 1
       // 重放：事件坐标已存在 ⇒ **历史一行不改、一行不加**。但出处**指针**可能因为来源文件
       // 入库而改变（RL-16）—— 按 (附件, 序号, 页) 逐字匹配后只改 `source_file` 一列。
-      for (const target of repointTargets(evidenceOf(tx, duplicate.id), event.evidence ?? [])) {
-        tx.update(schema.recordEvidence)
-          .set({ sourceFile: target.sourceFile })
-          .where(eq(schema.recordEvidence.id, target.id))
-          .run()
-        evidenceRepointed += 1
-      }
+      // 这一份执行体与收敛重放（§8.9.3）共用，两处不会各算一套。
+      evidenceRepointed += convergeEventEvidence(tx, duplicate.id, event)
       continue
     }
     const values = {
@@ -1145,13 +1217,51 @@ function evidenceOf(tx: Executor, eventId: number): EvidenceCoordinateRow[] {
 }
 
 /**
+ * **执行**收敛：把某条既有事件下坐标逐字相同的出处行的 `source_file` 改到载荷给的新路径。
+ *
+ * 只发 `UPDATE record_evidence SET source_file = ?`，一行不加、一行不删、别的列一个字不动。
+ * 返回真改的行数（第二次跑同一份载荷必然为 0，因为指针已经相等 ⇒ 谓词不再命中）。
+ */
+function convergeEventEvidence(tx: Executor, eventId: number, event: RosterImportEvent): number {
+  let repointed = 0
+  for (const target of repointTargets(evidenceOf(tx, eventId), event.evidence ?? [])) {
+    tx.update(schema.recordEvidence)
+      .set({ sourceFile: target.sourceFile })
+      .where(eq(schema.recordEvidence.id, target.id))
+      .run()
+    repointed += 1
+  }
+  return repointed
+}
+
+/**
+ * **收敛重放**的执行体（§8.9.3）：按事件坐标找**既有**事件，逐条收敛其出处指针。
+ *
+ * 与 `commit` 的重复分支共用 {@link convergeEventEvidence}（同一份谓词、同一份 UPDATE），
+ * 所以「预检算的」与「这里改的」不可能各算一套。库里没有的事件直接跳过 —— 收敛不补历史。
+ */
+function convergeRecordEvidence(tx: Executor, recordId: number, events: readonly RosterImportEvent[]): number {
+  let repointed = 0
+  for (const event of events) {
+    const hit = findExistingEvent(tx, eventCoordinates(recordId, event))
+    if (!hit) continue
+    repointed += convergeEventEvidence(tx, hit.id, event)
+  }
+  return repointed
+}
+
+/**
  * 本次载荷会把**已存在出处行**的 `source_file` 收敛掉几条 —— 预检用。
- * 与执行阶段同一份 `repointTargets`,故预检报的 `update` 就是提交真会改的行数。
+ * 与执行阶段同一份 `repointTargets`,故预检报的 `evidenceRepoints` 就是提交真会改的行数。
+ *
+ * `taken` 由调用方给（整份计划共享一个），否则两条载荷记录落到同一条既有记录时会各自
+ * 数一遍同一批出处行 —— 预检就会报出提交改不到的条数。
  */
 function countEvidenceRepoints(
   db: Executor,
   recordId: number,
   events: readonly RosterImportEvent[],
+  taken: Set<number> = new Set(),
 ): number {
   if (events.length === 0) return 0
   const eventRows = db
@@ -1185,7 +1295,6 @@ function countEvidenceRepoints(
     else byEvent.set(row.recordEventId, [row])
   }
 
-  const taken = new Set<number>()
   let count = 0
   for (const event of events) {
     const coords = eventCoordinates(recordId, event)
@@ -1198,7 +1307,6 @@ function countEvidenceRepoints(
   }
   return count
 }
-
 // ---------------------------------------------------------------------------
 // 既有行查找（预检与执行阶段**共用同一份**谓词）
 // ---------------------------------------------------------------------------
@@ -2262,14 +2370,38 @@ class ExecStageFailure extends Error {
 /**
  * 只读预检（契约 §8.1）：**不写业务数据**，只算影响并落一条 `status='preflight'` 的批次。
  * 同一幂等键重复调用：复用既有批次行、刷新它的预检结果。
+ *
+ * ⚠️ **已 `committed` 的幂等键另有一套语义（RL-19）**：同键的 `commit` 会**直接返回既有摘要、
+ * 一行不写**（§8.2 的幂等），所以对这样的请求报一份「会改 N 行」的计划是**假话** ——
+ * 它既不会发生，还会**覆写**那条已提交批次的预检记账，于是批次行里留下
+ * 「预检说改 N 行、摘要说改了 0 行」的自相矛盾记录（RL-19 的事故现场就是这个假象）。
+ * 这里如实报「同键提交什么都不会发生」并把 `batchStatus: 'committed'` 带出去；
+ * 真要补收敛就用 `POST /api/roster/import/replay`（§8.9.3）。
  */
 export function preflightRosterImport(
   db: Db,
   request: RosterImportRequest,
 ): { batchId: number; status: 'preflight'; preflight: RosterImportPreflight } {
   const batch = ensureBatchRow(db, request)
+
+  if (batch.status === 'committed') {
+    return {
+      batchId: batch.id,
+      status: 'preflight',
+      preflight: {
+        add: 0,
+        update: 0,
+        remove: 0,
+        review: 0,
+        conflicts: [],
+        evidenceRepoints: 0,
+        batchStatus: 'committed',
+      },
+    }
+  }
+
   const plan = planRosterImport(db, request, { batchId: batch.id })
-  const preflight = summarizePlan(plan)
+  const preflight = { ...summarizePlan(plan), batchStatus: batch.status }
   db.update(schema.importBatch)
     .set({ preflightResult: preflight })
     .where(eq(schema.importBatch.id, batch.id))
@@ -2296,7 +2428,7 @@ export function commitRosterImport(
   const batch = ensureBatchRow(db, request)
 
   if (batch.status === 'committed') {
-    const summary = (batch.summary as RosterImportSummary | null) ?? { written: 0, skipped: 0, failed: 0 }
+    const summary = (batch.summary as RosterImportSummary | null) ?? { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
     const items = (batch.itemResults as RosterImportItemResult[] | null) ?? []
     return { batchId: batch.id, status: 'committed', summary, items, error: null }
   }
@@ -2311,6 +2443,8 @@ export function commitRosterImport(
       // 整批失败 ⇒ 一行没写、也没有「复用」发生；如实为 0。
       skipped: 0,
       failed: conflicts.length,
+      // 整批回滚 ⇒ 出处指针一行也没动。
+      evidenceRepointed: 0,
     }
     const error = `批次校验未通过：${conflicts.length} 项有误，未写入任何数据`
     db.update(schema.importBatch)
@@ -2353,7 +2487,7 @@ export function commitRosterImport(
       const items = [...executed, ...rest]
       const failed = items.filter((item) => !item.ok).length
       const error = '批次执行阶段有项失败（已整批回滚，未写入任何数据）'
-      const summary: RosterImportSummary = { written: 0, skipped: 0, failed }
+      const summary: RosterImportSummary = { written: 0, skipped: 0, failed, evidenceRepointed: 0 }
       db.update(schema.importBatch)
         .set({ status: 'failed', itemResults: items, summary, error, preflightResult: summarizePlan(plan) })
         .where(eq(schema.importBatch.id, batch.id))
@@ -2366,10 +2500,10 @@ export function commitRosterImport(
       p.item.ok ? { ...p.item, ok: false, error: { code: 'commit_rolled_back', message: '整批回滚，本项未写入' } } : p.item,
     )
     db.update(schema.importBatch)
-      .set({ status: 'failed', itemResults: items, summary: { written: 0, skipped: 0, failed: plan.items.length }, error })
+      .set({ status: 'failed', itemResults: items, summary: { written: 0, skipped: 0, failed: plan.items.length, evidenceRepointed: 0 }, error })
       .where(eq(schema.importBatch.id, batch.id))
       .run()
-    return { batchId: batch.id, status: 'failed', summary: { written: 0, skipped: 0, failed: plan.items.length }, items, error }
+    return { batchId: batch.id, status: 'failed', summary: { written: 0, skipped: 0, failed: plan.items.length, evidenceRepointed: 0 }, items, error }
   }
 
   const summary = summarizeCommit(plan, items)
@@ -2387,6 +2521,85 @@ export function commitRosterImport(
   return { batchId: batch.id, status: 'committed', summary, items, error: null }
 }
 
+// ---------------------------------------------------------------------------
+// 出处指针收敛的**重放**（RL-19，契约 §8.9.3）
+// ---------------------------------------------------------------------------
+
+/**
+ * 收敛重放的记账键：`<原幂等键>#repoint`。
+ *
+ * 为什么不是原键：`import_batch.idempotency_key` 唯一，而原键那条批次已经 `committed`；
+ * 重放是**同一个请求的第二次动作**，它既要能重复跑（可重试），又要留下自己的账目。
+ * 派生键确定了这个派生是**确定性的** —— 同一份请求重放多少次都是同一行记账，
+ * 且一眼能看出它是哪一批的收敛。
+ */
+export function replayBatchKey(idempotencyKey: string): string {
+  return `${idempotencyKey}#repoint`
+}
+
+/**
+ * **出处指针收敛重放**（RL-19，契约 §8.9.3）。
+ *
+ * ── 它解决的事 ──────────────────────────────────────────────────────────
+ * 幂等键被**消费**之后（批次已 `committed`），同键的 `commit` 永远直接返回既有摘要、
+ * 一行不写（§8.2 的幂等 —— 这个行为本身要保留）。于是「那次提交跑的是旧构建 / 载荷当时
+ * 还指着库外路径」这类情况下，库里受影响的出处指针**再也没有路径能修回来**。
+ * 本函数就是那条路径：**显式**地再跑一次收敛。
+ *
+ * ── 它不做什么（为什么可以放心重复跑）──────────────────────────────────
+ *  - **只改** `record_evidence.source_file`：不新建企业/记录/事件/出处，不归并，不删行；
+ *  - **只认既有**：库里没有的事件/记录一律跳过 —— 收敛不补历史（补历史请走 commit）；
+ *  - 载荷里那些**会写新行**的类别（平台查询 / 别名 / 差异 / 快照 / 归并）根本**不进计划**
+ *    （`convergeOnly`），故没有可执行的东西；
+ *  - 幂等：指针已经收敛过之后，谓词不再命中 ⇒ `evidenceRepointed` 为 0。
+ *
+ * 计划与执行在同一次调用里先后发生、且之间没有别的写入 ⇒ 预算与实改必然一致
+ * （`update` / `evidenceRepointed` 与预检的 `update` / `evidenceRepoints` 同口径）。
+ */
+export function replayRosterImport(db: Db, request: RosterImportRequest): RosterImportReplayResponse {
+  const batch = ensureBatchRow(db, { ...request, idempotencyKey: replayBatchKey(request.idempotencyKey) })
+  const plan = planRosterImport(db, request, { batchId: batch.id, convergeOnly: true })
+  const preflight = summarizePlan(plan)
+
+  if (plan.conflicts.length > 0) {
+    const items = plan.items.map((planned) => planned.item)
+    const error = `收敛重放未执行：载荷有 ${plan.conflicts.length} 项不合法，未改动任何行`
+    db.update(schema.importBatch)
+      .set({
+        status: 'failed',
+        itemResults: items,
+        summary: { written: 0, skipped: 0, failed: plan.conflicts.length, evidenceRepointed: 0 },
+        preflightResult: preflight,
+        error,
+      })
+      .where(eq(schema.importBatch.id, batch.id))
+      .run()
+    return { batchId: batch.id, status: 'failed', update: 0, evidenceRepointed: 0, items, error }
+  }
+
+  // 只跑「有收敛可做」的那些项（`run` 只挂在这些项上）—— 其余项连闭包都没有。
+  const items = db.transaction((tx) =>
+    plan.items.map((planned) => (planned.run ? planned.run(tx) : planned.item)),
+  )
+  const evidenceRepointed = items.reduce((n, item) => n + (item.ok ? rowsRepointed(item) : 0), 0)
+  // 计划口径的「将收敛」= 有执行闭包的那些项（其余项连闭包都没有）。
+  const update = plan.items.filter((planned) => planned.run != null).length
+
+  db.update(schema.importBatch)
+    .set({
+      status: 'committed',
+      itemResults: items,
+      summary: { written: 0, skipped: 0, failed: 0, evidenceRepointed },
+      preflightResult: preflight,
+      error: null,
+      committedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.importBatch.id, batch.id))
+    .run()
+
+  return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items, error: null }
+}
+
 /**
  * `written` = 本次**真正插进库里的行数**；`skipped` = 命中的既有行/重复事件。
  *
@@ -2399,9 +2612,11 @@ export function commitRosterImport(
 function summarizeCommit(plan: Plan, items: RosterImportItemResult[]): RosterImportSummary {
   let written = 0
   let skipped = 0
+  let evidenceRepointed = 0
   for (const item of items) {
     if (!item.ok) continue
     written += rowsWritten(item)
+    evidenceRepointed += rowsRepointed(item)
     const itemSkipped = item.detail?.skipped
     if (typeof itemSkipped === 'number') skipped += itemSkipped
   }
@@ -2409,12 +2624,22 @@ function summarizeCommit(plan: Plan, items: RosterImportItemResult[]): RosterImp
   for (const planned of plan.items) {
     if (planned.action === 'skip' && planned.item.ok) skipped += 1
   }
-  return { written, skipped, failed: 0 }
+  return { written, skipped, failed: 0, evidenceRepointed }
 }
 
 /** 执行器自报的**真正插入行数**（见 `summarizeCommit`）；未自报算 0。 */
 function rowsWritten(item: RosterImportItemResult): number {
   const value = item.detail?.rowsWritten
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
+}
+
+/**
+ * 执行器自报的**真正收敛的出处行数**（RL-16/RL-19）；未自报算 0。
+ * 与 {@link rowsWritten} **分开**：收敛不是新增，不该进 `written`；但也不能不收账 ——
+ * 「预检答应的行数」与「提交真改的行数」要对得上，靠的就是这个求和。
+ */
+function rowsRepointed(item: RosterImportItemResult): number {
+  const value = item.detail?.evidenceRepointed
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
 }
 

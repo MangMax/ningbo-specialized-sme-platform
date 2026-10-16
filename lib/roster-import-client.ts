@@ -341,8 +341,24 @@ export interface RosterImportPreflight {
   /** 落在待核状态的行数（`pending` / `needs_review` / 未知枚举原样入库）。 */
   review: number
   conflicts: RosterImportItemResult[]
+  /**
+   * **行口径**：本次提交会真的改掉几行 `record_evidence.source_file`（出处指针收敛，RL-16/RL-19）。
+   *
+   * 为什么它和 `update` 不是同一个数：`update` 的单位是**计划项**（一个 `payload.records[]` 条目算一，
+   * 见契约 §8.5），而一条记录可以带多条事件、每条事件各有出处 —— 实测小巨人工作簿
+   * `update: 510`（510 条记录）而 `evidenceRepoints: 511`（511 行出处，有一条记录跨两批）。
+   * 两处都报出来，「预检答应的」与「提交真改的」才逐行可比对。
+   */
+  evidenceRepoints: number
   /** 本次导入会**新建**的重名候选（RL-14；明细可与提交后的 `item_results` 对照）。 */
   duplicateCandidates?: DuplicateNameCandidate[]
+  /**
+   * 预检时该幂等键在库里的批次状态（RL-19）。
+   *
+   * `'committed'` 是一个**必须看见**的信号：同键的 `commit` 不会再写任何东西（§8.2 的幂等），
+   * 此时上面的计数一律为 0 —— 若还有出处指针要收敛，走 `POST /api/roster/import/replay`（§8.9.3）。
+   */
+  batchStatus?: 'preflight' | 'committed' | 'failed'
 }
 
 export interface RosterImportPreflightResponse {
@@ -355,6 +371,13 @@ export interface RosterImportSummary {
   written: number
   skipped: number
   failed: number
+  /**
+   * **行口径**：本次提交真的改掉了几行 `record_evidence.source_file`（出处指针收敛，RL-16/RL-19）。
+   *
+   * 与 `preflight.evidenceRepoints` 同口径、可直接相等比对；它**不计入** `written`
+   * （那是**新增**的行数）。逐项明细在 `items[].detail.evidenceRepointed`。
+   */
+  evidenceRepointed: number
 }
 
 export interface RosterImportCommitResponse {
@@ -365,6 +388,24 @@ export interface RosterImportCommitResponse {
   error?: string | null
 }
 
+/**
+ * **出处指针收敛重放**的响应（RL-19，契约 §8.9.3）。
+ *
+ * 用途：幂等键已被消费（批次已 `committed`）、而库里仍有出处行指着库外/旧路径时，
+ * 用**同一份请求体**调 `POST /api/roster/import/replay` 把指针收敛掉。
+ */
+export interface RosterImportReplayResponse {
+  /** 本次收敛的记账批次 id（键 = `<原幂等键>#repoint`，见 §8.9.3）。 */
+  batchId: number
+  status: 'replayed' | 'failed'
+  /** 计划口径（与 §8.5 的 `update` 同口径）：本次将收敛的**计划项**数。 */
+  update: number
+  /** 行口径：本次**真的**改掉的出处行数（= 预检 `evidenceRepoints` 的同口径值）。 */
+  evidenceRepointed: number
+  items: RosterImportItemResult[]
+  error: string | null
+}
+
 // ---------------------------------------------------------------------------
 // HTTP 客户端
 // ---------------------------------------------------------------------------
@@ -373,6 +414,8 @@ export interface RosterImportCommitResponse {
 export const ROSTER_IMPORT_PREFLIGHT_PATH = '/api/roster/import/preflight'
 /** 提交路径。 */
 export const ROSTER_IMPORT_COMMIT_PATH = '/api/roster/import/commit'
+/** 出处指针**收敛重放**路径（RL-19，契约 §8.9.3）。请求体同提交。 */
+export const ROSTER_IMPORT_REPLAY_PATH = '/api/roster/import/replay'
 
 /** 服务端返回非 2xx（或响应体不是预期形状）时抛出。 */
 export class RosterImportApiError extends Error {
@@ -416,6 +459,14 @@ export class RosterImportClient {
   /** 事务提交。同一幂等键重复调用返回既有批次的摘要，不重复写企业/事件。 */
   async commit(request: RosterImportRequest): Promise<RosterImportCommitResponse> {
     return (await this.post(ROSTER_IMPORT_COMMIT_PATH, request)) as RosterImportCommitResponse
+  }
+
+  /**
+   * **出处指针收敛重放**（RL-19，契约 §8.9.3）：只把既有出处行的 `source_file` 收敛到
+   * 载荷给的新路径，一行不加、一行不删。对已 `committed` 的幂等键也能跑。
+   */
+  async replay(request: RosterImportRequest): Promise<RosterImportReplayResponse> {
+    return (await this.post(ROSTER_IMPORT_REPLAY_PATH, request)) as RosterImportReplayResponse
   }
 
   private async post(path: string, body: unknown): Promise<unknown> {

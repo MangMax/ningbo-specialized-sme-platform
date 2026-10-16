@@ -18,6 +18,7 @@ import { readApiToken, resolveApiAuth, unauthorizedApiMessage } from './api-auth
 import {
   commitRosterImport,
   preflightRosterImport,
+  replayRosterImport,
   validateImportRequest,
 } from './roster-import'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -39,7 +40,7 @@ export interface RosterHttpResponse {
   body: unknown
 }
 
-export type RosterImportAction = 'preflight' | 'commit'
+export type RosterImportAction = 'preflight' | 'commit' | 'replay'
 
 /** 从请求头折出鉴权状态（判据与 `api-guard.ts` 同源）。 */
 export function authorizeRosterWrite(
@@ -86,6 +87,10 @@ export function handleRosterImportRequest(
 
   if (action === 'preflight') {
     const result = preflightRosterImport(deps.db, validated.value)
+    return json(200, result)
+  }
+  if (action === 'replay') {
+    const result = replayRosterImport(deps.db, validated.value)
     return json(200, result)
   }
   const result = commitRosterImport(deps.db, validated.value)

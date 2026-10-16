@@ -19,14 +19,26 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
 import { createRosterImportClient, type RosterImportRequest } from '../lib/roster-import-client'
+import {
+  buildLittleGiantImportReport,
+  buildLittleGiantImportRequest,
+  LITTLE_GIANT_SOURCE_FILE,
+} from '../lib/roster/little-giant-import'
+import { parseLittleGiantWorkbook } from '../lib/roster/little-giant-workbook'
 import { rosterRowCounts } from '../server/utils/roster-import'
 import { startRosterApi } from './helpers/roster-http-server'
+import { loadLittleGiantSource } from './helpers/little-giant-source'
 
 const TOKEN = 'rl16-repoint-token-value'
 
-/** 库外路径(RL-02 的历史口径)与库内路径(RL-16 之后的唯一口径)。 */
+/**
+ * 库外路径(RL-02 的历史口径)与库内路径(RL-16 之后的唯一口径)。
+ *
+ * `LIBRARY_SOURCE_FILE` 与模块默认值同源 —— 真件与合成夹具都按**同一条规则**取：
+ * 那份工作簿入库后落在哪，出处就该指哪(`loadLittleGiantSource().sourceFile`)。
+ */
 const LEGACY_SOURCE_FILE = '经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx'
-const LIBRARY_SOURCE_FILE = 'jxj/announcement/经信局公布历年小巨人企业名单.xlsx'
+const LIBRARY_SOURCE_FILE = LITTLE_GIANT_SOURCE_FILE
 
 const dirs: string[] = []
 
@@ -190,4 +202,222 @@ describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', 
       await server.close()
     }
   })
+})
+
+// ---------------------------------------------------------------------------
+// RL-19(票 #20)—— 「预检答应了、提交没做」与幂等键被消费后的修复路径
+// ---------------------------------------------------------------------------
+//
+// 票面实测现象:`preflight = {"update":510}` 而 `summary = {"written":0,"skipped":1021}`,
+// 且每项 `evidenceRepointed: 0`。真正的原因是**两件事叠在一起**,下面两条用例各钉死一件:
+//
+//  1. 那次提交跑的是 **RL-16 合入前的构建** —— 旧计划把 510 条记录一律算 `skip`
+//     (旧代码是 `action: existingRecord ? 'skip' : 'add'`,且重复事件分支不做收敛),
+//     输出正是 `written: 0 / skipped: 1021`(= 510 个 skip 项 + 511 条被跳过的事件)。
+//     重新构建后**再跑 preflight** 就报出 `update: 510`(新代码算得出来),而**再跑 commit**
+//     只返回既有摘要 —— 于是批次行里留下「预检说 510、摘要说 0」的自相矛盾记录。
+//     ⇒ 谓词本身没坏,坏的是:预检在已提交批次上**覆写了记账**(现在已如实报「同键什么都不改」),
+//       以及幂等键一旦消费就**再没有重放路径**。
+//  2. 幂等键消费之后,库里那 511 条出处指针**永远修不回来** —— 本票补的 `replay` 入口。
+
+/** 把载荷里每一条出处的 `sourceFile` 换成给定路径(键与 sourceIdentity 不动)。 */
+function withEvidencePath(request: RosterImportRequest, sourceFile: string): RosterImportRequest {
+  const announcement = request.payload.announcement!
+  return {
+    ...request,
+    payload: {
+      ...request.payload,
+      announcement: {
+        ...announcement,
+        records: announcement.records.map((record) => ({
+          ...record,
+          events: (record.events ?? []).map((event) => ({
+            ...event,
+            evidence: (event.evidence ?? []).map((evidence) => ({ ...evidence, sourceFile })),
+          })),
+        })),
+      },
+    },
+  }
+}
+
+/** 出处行的**坐标三元组**(按行 id 排) —— 用来证明收敛只换了 `source_file`。 */
+function coordinateTriples(rows: ReturnType<typeof evidenceRows>) {
+  return [...rows].sort((a, b) => a.id - b.id).map((row) => [row.attachment, row.listNo, row.page])
+}
+
+/** 载荷里出处的**路径多重集** —— 收敛前后该换的都换了、不该换的一个没动。 */
+function sourceFiles(rows: ReturnType<typeof evidenceRows>) {
+  return [...new Set(rows.map((row) => row.sourceFile))].sort()
+}
+
+describe('RL-19:预检报的行数 = 提交真改的行数(计划项口径与行口径都对得上)', () => {
+  it('库中出处指向旧路径 → 以新来源标识重导 → 全部收敛,企业/记录/事件/出处计数一行不变', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    try {
+      const source = await loadLittleGiantSource()
+      const workbook = await parseLittleGiantWorkbook(source.buffer)
+      const report = buildLittleGiantImportReport(workbook)
+      const request = buildLittleGiantImportRequest(workbook, { sourceFile: LIBRARY_SOURCE_FILE })
+      // 报告的数字是**独立于写入侧**手算出来的(见 `lib/roster/little-giant-import.ts`
+      // 的 `totals`):记录数 = 去重后的企业数,事件数 = 出处行数(一条认定事件一条出处)。
+      const recordCount = report.totals.records
+      const evidenceCount = report.totals.evidences
+      expect(evidenceCount).toBeGreaterThan(0)
+
+      // 1) 历史批次:出处全部指向**库外**路径(RL-02 的口径)。
+      const legacy = withEvidencePath(
+        { ...request, idempotencyKey: `${LEGACY_SOURCE_FILE}#sha256:${workbook.sha256}` },
+        LEGACY_SOURCE_FILE,
+      )
+      expect((await client.commit(legacy)).status).toBe('committed')
+      const baseline = rosterRowCounts(db)
+      const before = evidenceRows(db)
+      expect(before).toHaveLength(evidenceCount)
+      expect(sourceFiles(before)).toEqual([LEGACY_SOURCE_FILE])
+
+      // 2) 文件入库后重导(来源标识换成库内路径 ⇒ 换键)。
+      const preflight = await client.preflight(request)
+      // 计划项口径(§8.5):一条记录算一项 ⇒ `update` = 记录数。
+      expect(preflight.preflight.add).toBe(0)
+      expect(preflight.preflight.update).toBe(recordCount)
+      // 行口径:一条记录可以带多条事件、每条各有出处 ⇒ 实测 510 项 / 511 行。
+      expect(preflight.preflight.evidenceRepoints).toBe(evidenceCount)
+      expect(preflight.preflight.batchStatus).not.toBe('committed')
+
+      const committed = await client.commit(request)
+      expect(committed.status).toBe('committed')
+      // ★ 票面验收:预检答应的**行数** = 提交真改的**行数**。
+      expect(committed.summary.evidenceRepointed).toBe(preflight.preflight.evidenceRepoints)
+      expect(committed.summary.evidenceRepointed).toBe(evidenceCount)
+      expect(committed.summary.written).toBe(0)
+      // 逐项自报的行数之和 = 摘要的合计数 —— 「有几项」不能当「改了几行」。
+      const perItem = committed.items.reduce((n, item) => n + ((item.detail?.evidenceRepointed as number) ?? 0), 0)
+      expect(perItem).toBe(evidenceCount)
+
+      // 3) 收敛:出处全部指向库内路径;四张业务表的计数一行不变。
+      const after = evidenceRows(db)
+      expect(sourceFiles(after)).toEqual([LIBRARY_SOURCE_FILE])
+      const counts = rosterRowCounts(db)
+      for (const table of ['enterprise', 'record', 'record_event', 'record_evidence', 'source_document'] as const) {
+        expect({ table, n: counts[table] }).toEqual({ table, n: baseline[table] })
+      }
+      // 4) 事件坐标与结论一个字节都没动(只有 source_file 变了)。
+      expect(coordinateTriples(after)).toEqual(coordinateTriples(before))
+    } finally {
+      await server.close()
+    }
+  }, 30_000)
+})
+
+describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)', () => {
+  /**
+   * 这条用例把票面的**事故现场**在测试里复现出来:
+   *
+   *  - `commit` 用「新来源标识」的键,但载荷里的出处**还指着旧路径** —— 这正是那次
+   *    「跑的是 RL-16 之前的构建」在库层面留下的样子:批次 `committed`、键被消费、
+   *    指针一条没动(`evidenceRepointed: 0`)。
+   *  - 之后(新构建下)无论怎么重跑都改不动:同键 `commit` 返回既有摘要,`preflight`
+   *    过去还会**覆写**成「update: 510」的假象 —— 现在如实说「同键提交什么都不改」。
+   *  - 补收敛的唯一路径是显式的 `replay`。
+   */
+  it('键已消费 → 预检如实报「同键提交什么都不改」→ commit 空操作 → replay 把指针收敛掉,计数一行不变', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    try {
+      const source = await loadLittleGiantSource()
+      const workbook = await parseLittleGiantWorkbook(source.buffer)
+      const report = buildLittleGiantImportReport(workbook)
+      const request = buildLittleGiantImportRequest(workbook, { sourceFile: LIBRARY_SOURCE_FILE })
+      const recordCount = report.totals.records
+      const evidenceCount = report.totals.evidences
+
+      // 1) 历史批次(库外路径、库外键)先落库。
+      const legacy = withEvidencePath(
+        { ...request, idempotencyKey: `${LEGACY_SOURCE_FILE}#sha256:${workbook.sha256}` },
+        LEGACY_SOURCE_FILE,
+      )
+      await client.commit(legacy)
+      const baseline = rosterRowCounts(db)
+
+      // 2) ★ 事故:键换成了新来源标识,载荷里的出处却还指着旧路径 ⇒ 批次 committed,指针一条没动。
+      //    这一条提交的输出形状与票面实测**逐字一致**:`written: 0`,而 `skipped` = 被跳过的事件数
+      //    + 判为 skip 的计划项数(`records`)。真件上正是 `0 / 1021`(= 511 + 510)。
+      const consumed = await client.commit(withEvidencePath(request, LEGACY_SOURCE_FILE))
+      expect(consumed.status).toBe('committed')
+      expect(consumed.summary.written).toBe(0)
+      expect(consumed.summary.evidenceRepointed).toBe(0)
+      expect(consumed.summary.skipped).toBe(evidenceCount + recordCount)
+      expect(sourceFiles(evidenceRows(db))).toEqual([LEGACY_SOURCE_FILE])
+
+      // 3) 键被消费之后的**如实**预检:同键提交不会再改任何行 —— 不再报一份做不到的计划。
+      const after = await client.preflight(request)
+      expect(after.preflight).toMatchObject({
+        add: 0,
+        update: 0,
+        evidenceRepoints: 0,
+        batchStatus: 'committed',
+      })
+
+      // 同键 commit 更是彻底的空操作(返回既有摘要),指针还是没动。
+      const again = await client.commit(request)
+      expect(again.batchId).toBe(consumed.batchId)
+      expect(again.summary).toEqual(consumed.summary)
+      expect(sourceFiles(evidenceRows(db))).toEqual([LEGACY_SOURCE_FILE])
+
+      // 4) ★ 唯一能让收敛真发生的那条路径:显式重放。
+      const replay = await client.replay(request)
+      expect(replay.status).toBe('replayed')
+      expect(replay.evidenceRepointed).toBe(evidenceCount)
+      // 计划口径的 `update` 与行口径的 `evidenceRepointed` 各司其职(记录数 ≤ 出处行数)。
+      expect(replay.update).toBe(recordCount)
+      expect(sourceFiles(evidenceRows(db))).toEqual([LIBRARY_SOURCE_FILE])
+
+      // 5) 不变量:企业 / 记录 / 事件 / 出处计数一行不变。
+      const finalCounts = rosterRowCounts(db)
+      for (const table of ['enterprise', 'record', 'record_event', 'record_evidence', 'source_document'] as const) {
+        expect({ table, n: finalCounts[table] }).toEqual({ table, n: baseline[table] })
+      }
+
+      // 6) 重放本身也幂等:再放一次改 0 行(不堆行、不重复记账)。
+      const replay2 = await client.replay(request)
+      expect(replay2.evidenceRepointed).toBe(0)
+      expect(replay2.batchId).toBe(replay.batchId)
+      expect(replay2.update).toBe(0)
+      expect(rosterRowCounts(db)).toEqual(finalCounts)
+      // 重放的记账行键是派生键(`<原键>#repoint`),不覆盖原批次的账。
+      const batches = db.select().from(schema.importBatch).all()
+      expect(batches.find((b) => b.id === consumed.batchId)!.status).toBe('committed')
+      expect(batches.filter((b) => b.idempotencyKey.endsWith('#repoint')).length).toBe(1)
+    } finally {
+      await server.close()
+    }
+  }, 30_000)
+
+  it('重放**只**改指针:在空库上重放,业务表一行都不新增', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    try {
+      const source = await loadLittleGiantSource()
+      const workbook = await parseLittleGiantWorkbook(source.buffer)
+      const request = buildLittleGiantImportRequest(workbook, { sourceFile: LIBRARY_SOURCE_FILE })
+
+      // 库里根本没有这些记录/事件 ⇒ 重放什么也收敛不了(而**绝不**顺手把它们建出来)。
+      const replay = await client.replay(request)
+      expect(replay.status).toBe('replayed')
+      expect(replay.evidenceRepointed).toBe(0)
+      expect(replay.update).toBe(0)
+      const counts = rosterRowCounts(db)
+      expect(counts.enterprise).toBe(0)
+      expect(counts.record).toBe(0)
+      expect(counts.record_event).toBe(0)
+      expect(counts.record_evidence).toBe(0)
+    } finally {
+      await server.close()
+    }
+  }, 30_000)
 })

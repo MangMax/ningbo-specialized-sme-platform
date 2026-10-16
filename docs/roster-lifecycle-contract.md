@@ -1021,7 +1021,7 @@
     "evidenceQueryId":4,"childRowsMoved":{"records":1,"relations":0,"aliases":0,"differences":0},
     "recordsMoved":[52],"recordsFolded":[],"eventsMoved":[52],"evidenceMoved":[52]}`
 
-### 8.9 重放时的**出处指针收敛**(RL-16 增量补齐)
+### 8.9 重放时的**出处指针收敛**(RL-16 增量补齐;RL-19 补齐重放路径)
 
 **场景**:来源文件入库后,同一份内容的标识从**库外路径**变成**库内路径**
 (如 `经信局名单/小巨人/….xlsx` → `jxj/announcement/经信局公布历年小巨人企业名单.xlsx`)。
@@ -1032,13 +1032,98 @@
 - 事件坐标(eventType / year / batchSeq / reviewOutcome / decidedYear)**逐字相同**才进入这条路径;
 - 只在出处的 **(attachment, listNo, page) 逐字相同**时才改,且**只改 `source_file` 一列**;
 - **不新增、不删除、不合并**任何行(不变量:企业 / 记录 / 事件 / 出处计数不变);
-- 命中的出处行数逐项报在 `items[].detail.evidenceRepointed`(新增字段,**不**计入 `summary.written`);
-- 预检的 `update`(**§8.5**)如实计入本次将收敛的出处行数 —— 预检报的就是提交真会改的;
+- 命中的出处行数逐项报在 `items[].detail.evidenceRepointed`(RL-16 新增字段,**不**计入 `summary.written`);
 - 同一幂等键重放仍是**彻底的空操作**(批次已 `committed` ⇒ 直接返回既有摘要,不重跑计划)。
 
 **为什么可以改历史批次的行**:变的不是历史事实,是**同一份文档在库里的位置**。收敛只在
 「同一份来源内容(同 `sha256`)且坐标逐字相同」时发生,故不会把一条出处挪到另一条上;
 「公布历史不可改写」指的是事件坐标与结论,那些一个字节都没动。
+
+#### 8.9.1 计划项口径与**行口径**都要报(RL-19)
+
+§8.5 的 `update` 计数单位是**计划项**(一个 `payload.records[]` 条目算一),而收敛改的是**行**;
+一条记录可以带多条事件、每条事件各有出处。两处都报出来,「预检答应的」与「提交真改的」
+才逐行可比对:
+
+| 位置 | 字段 | 口径 |
+|---|---|---|
+| 预检响应 | `preflight.update` | 计划项数(§8.5) |
+| 预检响应 | `preflight.evidenceRepoints` | **行**数:本次会改掉几行 `record_evidence.source_file` |
+| 提交响应 | `summary.written` | 新增的行数(收敛**不算**,它是 UPDATE) |
+| 提交响应 | `summary.evidenceRepointed` | **行**数:本次真的改掉了几行 |
+| 提交响应 | `items[].detail.evidenceRepointed` | 该项自己改掉的行数(求和 = `summary.evidenceRepointed`) |
+
+**实测基准(2026-10-16,真数据)**:511 行小巨人工作簿 → `preflight.update = 510`(510 条记录)、
+`preflight.evidenceRepoints = 511`(511 行出处,其中一条企业跨两批 ⇒ 一条记录两条事件两条出处);
+提交后 `summary.evidenceRepointed = 511`、`summary.written = 0`,四张业务表计数一行不变。
+**验收判据**:`preflight.evidenceRepoints === summary.evidenceRepointed`(若 `conflicts` 非空则整批
+`failed`、一行不写 —— 与 §8.5 的既有限定一致)。
+
+#### 8.9.2 已 `committed` 的幂等键:预检必须说真话(RL-19)
+
+同键 `commit` 对已提交批次**不重跑计划、直接返回既有摘要**(§8.2 的幂等,保持不变)。
+因此对这样的请求,**预检不得报一份做不到的计划**,也不得**覆写**那条已提交批次的预检记账。
+
+- `POST …/preflight` 遇到 `status='committed'` 的批次时返回
+  `{ add:0, update:0, remove:0, review:0, conflicts:[], evidenceRepoints:0, batchStatus:'committed' }`,
+  且**不写** `import_batch.preflight_result`;
+- 原因(这是 RL-19 的事故现场):那次提交跑的是 **RL-16 合入前的构建**,输出
+  `{"written":0,"skipped":1021}`(510 个 `skip` 计划项 + 511 条被跳过的事件);
+  重新构建后**再跑预检**得到 `{"update":510}` 并覆写了记账,于是批次行里留下
+  「预检说改 510 行、摘要说改了 0 行」的自相矛盾记录 —— 读起来像「谓词一条都不命中」,
+  实际是**两个构建的产物被拼在了一起**。谓词(`repointTargets`)本身没有问题。
+- 已消费的键要补收敛,走 §8.9.3 的显式重放入口。
+
+#### 8.9.3 `POST /api/roster/import/replay` —— 收敛的**显式重放入口**(RL-19 增量补齐)
+
+**为什么需要它**:出处指针的收敛依赖「来源文件已经入库」,而这件事可能**晚于**那次提交
+(提交跑的是旧构建 / 载荷当时还指着库外路径 / 文件后落位)。幂等键一旦消费,上面所有
+正常路径都改不动了 —— 受影响的库**永远修不回来**。本入口把「收敛」这件事**从批次是否
+已 `committed` 里解耦**:它是可以显式、重复调用的一次动作。
+
+```jsonc
+POST /api/roster/import/replay
+{
+  "idempotencyKey": "jxj/announcement/…xlsx#sha256:5de6298a…",  // 必填;与那次提交**同一个键**
+  "sourceKind": "announcement",
+  "sourceIdentity": "jxj/announcement/经信局公布历年小巨人企业名单.xlsx",
+  "sourceSha256": "5de6298a…",
+  "payload": { /* §8.3;本入口只读其中出处的坐标与路径 */ }
+}
+```
+
+响应:
+
+```jsonc
+{
+  "batchId": 7,               // 本次收敛的**记账**行 id
+  "status": "replayed",       // 或 "failed"(载荷有逐项冲突 ⇒ 一行不改)
+  "update": 510,              // 计划项口径:将收敛的计划项数(= 预检的 `update`)
+  "evidenceRepointed": 511,   // 行口径:真的改掉的出处行数(= 预检的 `evidenceRepoints`)
+  "items": [ { "ok": true, "kind": "record", "ref": "record:19749",
+               "detail": { "recordId": 19749, "evidenceRepointed": 1, "rowsWritten": 0 } } ],
+  "error": null
+}
+```
+
+**语义(逐条都是硬约束)**:
+
+- **只改** `record_evidence.source_file`:不新建企业 / 记录 / 事件 / 出处,不归并,不删行;
+- **只认既有**:库里没有的记录 / 事件一律跳过 —— 收敛**不补历史**(补历史走 `commit`);
+- 载荷里那些**会写新行**的类别(平台查询 / 别名 / 差异 / 快照 / 归并)**根本不进计划**,
+  故没有可执行的东西(与 `commit` 共用 `planRosterImport`,靠 `convergeOnly` 收窄);
+- **与批次状态无关**:原键已 `committed` 也照跑 —— 这正是它的用途;
+- **幂等**:指针已经收敛过之后,谓词不再命中 ⇒ `evidenceRepointed: 0`(重复调用安全);
+- **记账**:写一条 `import_batch`,键 = `<原幂等键>#repoint`(确定性派生,重放多次同一行,
+  不覆盖原批次的账)、`status='committed'`、`summary = { written:0, skipped:0, failed:0,
+  evidenceRepointed }`;载荷有冲突时置 `status='failed'` 且一行不改;
+- 鉴权与 `commit` 同分法(§8 开头,`NUXT_API_TOKEN`,未配 ⇒ 关闭)。
+
+**为什么它不会把指针改坏**:它不是自动发生的 —— 只有调用方**显式**拿一份载荷来重放时才跑,
+且只做「按 (attachment, listNo, page) 逐字匹配、同坐标事件下」的那一列替换。
+`commit` 的行为一个字没变(已提交批次仍是彻底的空操作),所以既有的「同键重放不写库」
+这条保证不受影响。**风险留给显式调用方**:用一份**过时**的载荷(出处仍指着库外路径)
+去重放,就会把指针收敛到那条过时路径上 —— 这是调用方给错了输入,不是自动路径能造成的。
 
 ---
 
