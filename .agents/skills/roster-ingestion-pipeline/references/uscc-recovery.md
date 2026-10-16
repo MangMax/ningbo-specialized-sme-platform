@@ -134,6 +134,7 @@ lean on a loosened criterion:
 | `district_suffix` | it differs only by the presence of `县`/`区` after a district stem (narrow rule: delete at most one, immediately after a known district short name) |
 | `public_source` | the evidence is a **public content page** (URL + date fetched + basis); this holds for codes found by web verification |
 | `ocr_correction` | **a human-confirmed character correction**, e.g. an OCR misreading |
+| `cross_source` (recorded as `basisKind: "public_source"`) | a merge stitched from **two independent segments**: ① published name ↔ code from a **public source page**; ② code ↔ current name from the **platform queried by code** |
 
 `ocr_correction` recorded, in the user's own ruling for `宁波荔群精密模具有限公司`: the published
 `荔` (U+8354) is an **OCR misreading**, and the platform's `劦` (U+52E6) is correct. It is
@@ -142,6 +143,14 @@ recorded as its own kind, with the wording *"published name confirmed by <who> t
 misreading; the platform record is authoritative"*. Its evidence needs **both** the
 `platform_relation` row **and** the human confirmation. A confirmer must be named — an unattributed
 correction is refused.
+
+For a `cross_source` merge the note must state, without hedging: that **the name the platform holds under
+that code is X and differs from the published name**, and that **querying the platform's `qymc` by the
+published name returns 0 rows — the platform does not index old names** (the control case `宁波劦群`
+showed that even a genuine match returns 0 rows), so the merge is driven by the two segments, not by a
+platform name match. Never write "names are equal / equal after normalisation / similar names" in such a
+note. When the platform's current name is unrelated to the published one, cite the **cross-corroborating
+source pages** instead of judging how alike the names are.
 
 > ⚠️ **Never derive `ocr_correction` from glyph similarity.** 荔/劦 is a *precedent*, not a pattern
 > the software may apply. The system does **not** decide that two characters look alike — that is

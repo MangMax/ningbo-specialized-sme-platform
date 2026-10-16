@@ -27,6 +27,7 @@ import { normalizeUscc } from '../../lib/domain'
 import {
   isByteEqualName,
   nameMatchLevel,
+  sourceSiteOf,
   type UsccPlatformClaim,
   type UsccResearchClaim,
 } from '../../lib/roster/uscc-research'
@@ -88,6 +89,17 @@ export interface UsccVerdictItem {
    * （如「用户 2026-10-16 确认:…」→ `用户`）；取不出确认人就不当作纠错（不认无主的纠错）。
    */
   basisSource?: string
+  /**
+   * **平台按码核实**的产出（`platform-verify-aclass.json` 的形态）：该码在平台上是否存在、
+   * 平台上持有的现名与行数、以及**按公布名查返回几行**。见 `UsccCrossSourceMerge`。
+   */
+  holderRowId?: number | null
+  holderName?: string | null
+  businessListByCode?: { rowCount?: number; qymcValues?: string[]; rdjb?: string }
+  queryListByCode?: { rowCount?: number; qymcValues?: string[] }
+  queryListByName?: { rowCount?: number }
+  /** 各 rdjb 的 `businessList` 按码返回（`{ "1": {...}, "2": {...} }`）——某个 rdjb 可能恰好 0 行。 */
+  businessListByCodeAllRdjb?: Record<string, { rowCount?: number; qymcValues?: string[] }>
   /**
    * **公开主体来源**（联网核实的产出）。`verdict === 'found'` 的条目靠它成立 ——
    * 每条至少要有 `url` + `fetchedAt` + `basis`（契约 §8.10 的公开来源三要素）。
@@ -158,7 +170,16 @@ function hasUsableEvidence(claim: { uscc: string; evidence?: UsccPlatformClaim['
 export const USCC_VERDICT_FILES = [1, 2, 3, 4, 5].map((n) => `uscc-verdict-batch-${n}.json`)
 
 /** 只认这几种 verdict 取值;别的取值记 problem 并跳过。 */
-const KNOWN_VERDICTS = new Set(['resolved', 'found', 'conflict', 'not_found', 'needs_human', 'query_error'])
+const KNOWN_VERDICTS = new Set([
+  'resolved',
+  'found',
+  'conflict',
+  'not_found',
+  'needs_human',
+  'query_error',
+  /** 平台按码核实的结论（`platform-verify-aclass.json`）：该码在平台存在。 */
+  'platform_code_exists',
+])
 
 /**
  * 从目录里读判定文件(按固定文件名),返回归一化结果。
@@ -209,7 +230,16 @@ export function readUsccVerdicts(dir: string, files: readonly string[] = USCC_VE
 /** 归一化(纯函数,可单测):判定文件 → 平台证据认领 + 未采纳清单。 */
 export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVerdictFile }>): UsccVerdictIngest {
   const claims: UsccResearchClaim[] = []
+  /**
+   * `found` 条目带来的**公开来源**（按企业 id 索引）——两段拼成的归并要用它的第一段。
+   * 先扫一遍收集，再处理各类条目，于是**与文件先后顺序无关**。
+   */
+  const publicSourceByEnterprise = new Map<number, UsccResearchClaim['source']>()
+  /** 同一家企业**全部**公开来源页的 URL（≥2 页即两页互证 —— 见 `renameNote` 的拼法）。 */
+  const publicUrlsByEnterprise = new Map<number, string[]>()
   const platformClaims: UsccPlatformClaim[] = []
+  /** 两段来源拼成的归并认领（见 `UsccCrossSourceMerge`）——与 `platformClaims` 同一路处理。 */
+  const crossSourceClaims: UsccPlatformClaim[] = []
   /** 已采纳的认领：enterpriseId → 那条（用来判「同一企业两批结论不同时取更强」）。 */
   const seenByEnterprise = new Map<number, UsccPlatformClaim>()
   /**
@@ -221,6 +251,31 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
   const untouched: UsccVerdictUntouched[] = []
   const batches: UsccVerdictIngest['batches'] = []
   const problems: string[] = []
+
+  // 第一遍：收集公开来源（`found` 条目的 sources[0]）。
+  for (const { value } of input) {
+    const items = Array.isArray(value.items) ? value.items : Array.isArray(value.resolvedItems) ? value.resolvedItems : []
+    for (const item of items) {
+      const id = typeof item?.enterpriseId === 'number' ? Math.trunc(item.enterpriseId) : null
+      if (id == null || publicSourceByEnterprise.has(id)) continue
+      const source = (Array.isArray(item.sources) ? item.sources : [])[0]
+      const url = typeof source?.url === 'string' ? source.url.trim() : ''
+      const fetchedAt = typeof source?.fetchedAt === 'string' ? source.fetchedAt.trim() : ''
+      const basis = typeof source?.basis === 'string' ? source.basis.trim() : ''
+      const allUrls = (Array.isArray(item.sources) ? item.sources : [])
+        .map((entry) => (typeof entry?.url === 'string' ? entry.url.trim() : ''))
+        .filter((value) => !!value)
+      if (allUrls.length) publicUrlsByEnterprise.set(id, allUrls)
+      if (!url || !basis || !/^\d{4}-\d{2}-\d{2}/.test(fetchedAt)) continue
+      publicSourceByEnterprise.set(id, {
+        url,
+        checkedOn: fetchedAt.slice(0, 10),
+        basis,
+        name: typeof item.name === 'string' ? item.name : '',
+        region: null,
+      })
+    }
+  }
 
   for (const { file, value } of input) {
     const items = Array.isArray(value.items)
@@ -254,6 +309,92 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
       const verdict = rawVerdict || 'resolved'
       if (!rawVerdict) {
         problems.push(`${where}: 判定文件未给 verdict ⇒ 按 resolved 处理（只作线索，采纳仍看库里证据）`)
+      }
+      // **平台按码核实**（`platform-verify-aclass.json` 形态）：该码在平台存在、平台上写着另一个名字。
+      // 这类条目**不是** `found`（不是公开来源直接给出「公布名↔代码」），也**不是** `resolved`
+      //（平台从未用公布名写过这个码）——它靠**两段拼**，所以单列一条识别分支。
+      if (item.businessListByCode || item.queryListByCode) {
+        const holderRowId = typeof item.holderRowId === 'number' ? Math.trunc(item.holderRowId) : null
+        const holderName = typeof item.holderName === 'string' ? item.holderName.trim() : ''
+        const uscc = typeof item.candidateUscc === 'string' ? item.candidateUscc.trim() : ''
+        // **哪一次返回有行就用哪一次**：实测 221 的 `businessList` **rdjb=3 是 0 行**，
+        // 而 rdjb=2 有 4 行、`queryList` 有 1 行 —— 只看 `businessListByCode` 会把
+        // 「平台确实持有这个码」误判成「没有行」。顺序：rdjb=3 → rdjb=1/2 → queryList。
+        const byCodeCandidates: Array<{
+          interface: 'business_list' | 'apply_list'
+          rdjb: string
+          rowCount: number
+          qymc: string
+        }> = []
+        const push = (interface_: 'business_list' | 'apply_list', rdjb: string, entry?: { rowCount?: number; qymcValues?: string[] }) => {
+          const count = Number(entry?.rowCount ?? 0)
+          const qymc = (entry?.qymcValues ?? []).find((value) => !!value) ?? ''
+          if (count >= 1 && qymc) byCodeCandidates.push({ interface: interface_, rdjb, rowCount: count, qymc })
+        }
+        push('business_list', item.businessListByCode?.rdjb ?? '', item.businessListByCode)
+        for (const [rdjb, entry] of Object.entries(item.businessListByCodeAllRdjb ?? {})) {
+          push('business_list', rdjb, entry)
+        }
+        push('apply_list', '', item.queryListByCode)
+        const chosen = byCodeCandidates[0]
+        const byCode = chosen
+        const qymc = chosen?.qymc ?? ''
+        const rowCount = chosen?.rowCount ?? 0
+        const publicSource = publicSourceByEnterprise.get(enterpriseId)
+        // **只有「有规范行可并」且「有公开来源页」的才走两段拼**：
+        // 没有 holder（平台那个码在库里没行）或没有公开来源页的，一律不写、如实列出
+        //（实测：262 / 288 / 423 无 holder，298 无公开来源页 —— 这 4 家按用户裁定留人工）。
+        if (holderRowId != null && holderName && publicSource && uscc && qymc && rowCount >= 1) {
+          crossSourceClaims.push({
+            enterpriseId,
+            enterpriseName: name,
+            uscc,
+            crossSource: {
+              publicSource: {
+                url: publicSource.url,
+                fetchedAt: publicSource.checkedOn,
+                basis: publicSource.basis,
+                site: sourceSiteOf(publicSource.url),
+              },
+              platformByCode: {
+                // 第二段用**平台按码**那一次「确实有行」的返回（见上面候选的选择顺序）。
+                interface: byCode!.interface,
+                rdjb: byCode!.rdjb,
+                rowCount,
+                qymc,
+              },
+              nameQueryRowCount: Number(item.queryListByName?.rowCount ?? 0),
+              // 现名与公布名**不相干**不是异常：公开来源页（≥2 页即**互证**）已说明该码确实
+              // 曾登记在公布名下、后改名。这里只陈述这个**事实**，不判定「像不像」
+              //（系统不做模糊推断）—— 所以措辞是「互证 + 两段」，不是「名称相似」。
+              renameNote: (() => {
+                const urls = publicUrlsByEnterprise.get(enterpriseId) ?? [publicSource.url]
+                return urls.length >= 2
+                  ? `公开来源页 **${urls.length} 页互证**（${urls.join('、')}）⇒ 该码确实曾登记在公布名下，` +
+                      `后经更名：现名「${qymc}」与公布名不相干**不是异常**，而是更名的结果。`
+                  : `平台现名「${qymc}」与公布名不同；本档只据「公开来源页配对 + 平台按码持有的现名」两段判断，` +
+                      '不判定两者在字形或名称上是否相近。'
+              })(),
+              controlNote: null,
+            },
+            batchRef: file.replace(/\.json$/, ''),
+            observedAt: generatedAt,
+          })
+          return
+        }
+        untouched.push({
+          enterpriseId,
+          name,
+          verdict: 'needs_human',
+          reason:
+            !holderRowId || !holderName
+              ? '平台按码核实：该码在库里没有可并入的规范行（无 holder）⇒ 按用户裁定留人工'
+              : !publicSource
+                ? '平台按码核实：缺公开来源页（没有「公布名↔代码」那一段）⇒ 留人工'
+                : `平台按码核实：证据不完整（qymc/行数/代码有缺）⇒ 留人工。${reason || ''}`,
+          blocked: null,
+        })
+        return
       }
       if (!KNOWN_VERDICTS.has(verdict)) {
         problems.push(`${where}: verdict 取值未知（${verdict || '(空)'}）⇒ 跳过（不猜它能补）`)
@@ -511,6 +652,11 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
       .map((claim) => claim.enterpriseId)
       .filter((id): id is number => id != null && !conflictingEnterprises.has(id)),
     ...keptClaims.map((claim) => claim.enterpriseId).filter((id): id is number => id != null),
+    // **两段拼成的归并也要算「已采纳」** —— 它们同样进了 `platformClaims`（见返回处），
+    // 不入集就会让同一家企业既算补齐、又留在「不动库」清单里（实测 128 + 9 > 133）。
+    ...crossSourceClaims
+      .map((claim) => claim.enterpriseId)
+      .filter((id): id is number => id != null && !conflictingEnterprises.has(id)),
   ])
   const converged: UsccVerdictUntouched[] = []
   /** 企业 → 已经写进「不动库」清单的那一条（**按企业去重**，见下）。 */
@@ -552,5 +698,11 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
       )
     }
   }
-  return { claims: keptClaims, platformClaims: finalClaims, untouched: converged, batches, problems }
+  return {
+    claims: keptClaims,
+    platformClaims: [...finalClaims, ...crossSourceClaims],
+    untouched: converged,
+    batches,
+    problems,
+  }
 }

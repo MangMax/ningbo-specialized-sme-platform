@@ -376,6 +376,74 @@ export interface UsccNameCorrection {
   note: string
 }
 
+/**
+ * **两段来源拼成的归并证据**（RL-06 增量，父代理 2026-10-16 用户裁定）。
+ *
+ * 适用形态：公布名单里那一行**没有统代**，而平台在那个统代下持有的是**另一个名字**
+ * （更名 / 加「股份」/ 行政区划改写 …），并且：
+ *  - **第一段**「公布名 ↔ 代码」由**公开来源页**给出（页面把名称、区划、代码同页配对）；
+ *  - **第二段**「代码 ↔ 现名」由**平台**给出（按码 `businessList` / `queryList` 的逐字 `qymc`）。
+ *
+ * ⚠️ **它不是由平台名称匹配触发的**：按公布名查平台 `qymc` 返回 **0 行**
+ *（实测复核：平台**不索引旧名**；对照组「宁波劦群」证明了**真匹配也会 0 行**，
+ *详见 `uscc-recheck-extra-3.json` 与 `platform-verify-aclass.json` 的 `queryListByName`）。
+ * 所以这一档**绝不是**「名称相等 / 归一化后相等 / 名称相似」——两段缺一不可，且必须如实记档。
+ */
+export interface UsccCrossSourceMerge {
+  /** 第一段：公开来源页（公布名 ↔ 代码）。 */
+  publicSource: {
+    url: string
+    /** 抓取时刻。 */
+    fetchedAt: string
+    /** 核实者写的对应依据，**原样保留**（不许改写成「名称相等」）。 */
+    basis: string
+    /** 来源站点（如 `百度知道` / `工场` / `x315` / `likuso`）——由 URL 主机名确定性映射，认不出留空。 */
+    site: string | null
+  }
+  /** 第二段：平台**按代码**查到的现名与行数。 */
+  platformByCode: {
+    interface: 'business_list' | 'apply_list'
+    rdjb: string
+    rowCount: number
+    /** 平台在该码下持有的**现名原文**（逐字）。 */
+    qymc: string
+  }
+  /** 平台按**公布名**查 `qymc` 的返回行数（实测 0：平台不索引旧名）。 */
+  nameQueryRowCount: number
+  /** 现名与公布名**毫不相干**时的解释（如顺兴开浩的公开来源页两页互证）。 */
+  renameNote?: string | null
+  /** 对照组说明（默认引用「宁波劦群」那次实测）。 */
+  controlNote?: string | null
+}
+
+/**
+ * 公开来源站点标签：按 URL **主机名**确定性映射（不做猜测，认不出就留空）。
+ *
+ * 用途只是让 `note` 里能一眼看出「这份公布名↔代码的配对出自哪个站」。
+ */
+export const SOURCE_SITE_BY_HOST: Array<[string, string]> = [
+  ['zhidao.baidu.com', '百度知道'],
+  ['baike.baidu.com', '百度百科'],
+  ['aiqicha.baidu.com', '爱企查'],
+  ['qiye.gongchang.com', '工场'],
+  ['www.x315.cn', 'x315'],
+  ['x315.cn', 'x315'],
+  ['www.likuso.com', 'likuso'],
+  ['likuso.com', 'likuso'],
+  ['www.psznh.com', 'psznh'],
+  ['psznh.com', 'psznh'],
+  ['www.chinapp.com', 'chinapp'],
+  ['baike.so.com', '360百科'],
+  ['baike.shuidi.cn', '水滴信用'],
+]
+
+/** 从 URL 取站点标签；认不出返回 `null`（不猜）。 */
+export function sourceSiteOf(url: unknown): string | null {
+  if (typeof url !== 'string' || !url.trim()) return null
+  const host = url.trim().replace(/^https?:\/\//, '').split('/', 1)[0]!.toLowerCase()
+  return SOURCE_SITE_BY_HOST.find(([domain]) => host === domain)?.[1] ?? null
+}
+
 /** `ocr_correction` 那一档的**记档措辞**（契约 §8.10 要求写清的两句，只在这里定义一次）。 */
 export const OCR_CORRECTION_BASIS =
   '公布名经用户确认为 OCR 误读,平台唯一记录为『劦群』' as const
@@ -438,6 +506,13 @@ export interface UsccPlatformClaim {
      */
     query?: string | null
   }[]
+  /**
+   * **两段来源拼成的归并证据**（公布名↔代码 由公开来源页、代码↔现名 由平台）。
+   *
+   * 给了它：`basisKind` 记 `public_source`，note 必须写清「平台在该码下持有的现名与公布名不同」
+   * 与「按公布名查平台返回 0 行 ⇒ 本归并非平台名称匹配触发」两句（见 `UsccCrossSourceMerge`）。
+   */
+  crossSource?: UsccCrossSourceMerge
   /**
    * **人工确认的用字纠错**（如 OCR 误读）——**显式给，软件永不自行推出**。
    *
