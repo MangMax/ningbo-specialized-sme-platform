@@ -4,9 +4,12 @@
  * - {@link ./adapter}:纯解析 + 四态归类(可离线单测);
  * - {@link ./client}:可注入 fetch 的薄客户端,`rdjb=1/2/3` 全查;
  * - {@link ./identity}:关系分组与曾用名候选(**只呈现证据,不推测**);
- * - {@link ./payload}:契约 §8.3 的统一写入载荷构造;
- * - {@link ./write}:经统一 API 提交(不直写 SQL);
+ * - {@link ./payload}:契约 §8.3 的写入载荷构造(类型直接用 RL-11 的
+ *   `lib/roster-import-client.ts`,不另定义一套);
  * - {@link ./read}:`GET /api/platform/queries` 的读模型。
+ *
+ * **提交**走 RL-11 的统一客户端(`createRosterImportClient`,契约 §8)——
+ * 本模块不自带写客户端(那是同一条路的第二份实现)。
  */
 export * from './adapter'
 export * from './client'

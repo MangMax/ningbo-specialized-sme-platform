@@ -44,7 +44,7 @@ function outcome(name: string, meta: Parameters<typeof classifyRawQuery>[1]): Pl
   return classifyRawQuery(fixture(name), meta)
 }
 
-/** 真实回归案例的四个查询:rdjb=1/2 各 0 行(no_record),rdjb=3 六行,申报两行。 */
+/** 真实回归案例的查询:rdjb=1/2 各 0 行(no_record),rdjb=3 六行,申报两行。 */
 const queries: PlatformQueryInput[] = [
   {
     interface: 'business_list',
@@ -92,7 +92,7 @@ describe('buildPlatformWritePayload:平台查询与关系逐条落库(§8.3)', (
   })
 
   it('四个查询各成一条 platformQuery,rdjb 进键、状态各按实际', () => {
-    const rows = request.payload.platformQueries
+    const rows = request.payload.platformQueries!
     expect(rows).toHaveLength(4)
     expect(rows.map((q) => `${q.interface}:${q.rdjb}`)).toEqual([
       'business_list:1',
@@ -109,27 +109,27 @@ describe('buildPlatformWritePayload:平台查询与关系逐条落库(§8.3)', (
   })
 
   it('rdjb=3 的 6 条关系逐条保留,sequenceNo 从 1 起', () => {
-    const relations = request.payload.platformQueries[2]!.relations!
+    const relations = request.payload.platformQueries![2]!.relations!
     expect(relations).toHaveLength(6)
     expect(relations.map((r) => r.sequenceNo)).toEqual([1, 2, 3, 4, 5, 6])
     expect(relations.map((r) => r.relationKey)).toContain('SQ332022062212391')
     // 0 行的两次查询没有关系行。
-    expect(request.payload.platformQueries[0]!.relations ?? []).toEqual([])
+    expect(request.payload.platformQueries![0]!.relations ?? []).toEqual([])
   })
 
   it('alias_name_raw 恒为 null —— 平台没有「曾用名」列,不得把 qymc 复制进去充数(C1)', () => {
-    for (const query of request.payload.platformQueries) {
+    for (const query of request.payload.platformQueries!) {
       for (const relation of query.relations ?? []) {
         expect(relation.aliasNameRaw).toBeNull()
       }
     }
   })
 
-  it('匹配依据按统代判定:同 USCC 的关系归到该企业,标 confirmed', () => {
-    const relations = request.payload.platformQueries[2]!.relations!
-    for (const relation of relations) {
+  it('匹配依据按统代判定:同 USCC 的关系归到该企业,标 confirmed 且写出 enterpriseId', () => {
+    for (const relation of request.payload.platformQueries![2]!.relations!) {
       expect(relation.matchBasis).toBe('uscc')
       expect(relation.verificationStatus).toBe('confirmed')
+      expect(relation.enterpriseId).toBe(7289)
     }
   })
 
@@ -153,9 +153,10 @@ describe('buildPlatformWritePayload:平台查询与关系逐条落库(§8.3)', (
       differences: [],
       merges: [],
     })
-    const relations = request.payload.platformQueries[0]!.relations!
+    const relations = request.payload.platformQueries![0]!.relations!
     expect(relations[0]!.matchBasis).toBe('none')
     expect(relations[0]!.verificationStatus).toBe('pending')
+    expect(relations[0]!.enterpriseId ?? null).toBeNull()
   })
 
   it('批次信封有幂等键与来源身份(不含凭证)', () => {
@@ -165,46 +166,53 @@ describe('buildPlatformWritePayload:平台查询与关系逐条落库(§8.3)', (
     expect(request.sourceIdentity).toBe('platform/91330211255994457P.json')
   })
 
-  it('同一输入重复构造 → 同一幂等键(重放不重复写)', () => {
+  it('同一输入重复构造 → 同一幂等键(重放不重复写);内容不同 → 另一个键', () => {
     const again = buildPlatformWritePayload({
       sourceIdentity: 'platform/91330211255994457P.json',
       queries, enterprises, aliases: [], differences: [], merges: [],
     })
     expect(again.idempotencyKey).toBe(request.idempotencyKey)
+    // 「先写查询、再补别名」的第二批内容不同 ⇒ 必须是**另一个**键,否则第二批会被当成重放。
+    const secondBatch = buildPlatformWritePayload({
+      sourceIdentity: 'platform/91330211255994457P.json',
+      queries, enterprises, differences: [], merges: [],
+      aliases: [{ enterpriseId: 7289, name: '宁波上航测绘有限公司', sourceKind: 'platform_business' }],
+    })
+    expect(secondBatch.idempotencyKey).not.toBe(request.idempotencyKey)
   })
 })
 
 describe('buildPlatformWritePayload:代理确认的曾用名(§5.1)', () => {
-  it('确认后的旧名写成 confirmed 别名,挂上来源关系与接口', () => {
-    const request = buildPlatformWritePayload({
-      sourceIdentity: 'x',
-      queries,
-      enterprises,
-      aliases: [
-        {
-          enterpriseId: 7289,
-          name: '宁波上航测绘有限公司',
-          sourceKind: 'platform_business',
-          sourceRelation: { queryKey: USCC, interface: 'business_list', rdjb: '3', sequenceNo: 1 },
-          sourceRefId: 0,
-          validFrom: '2022-06-22 17:17:52',
-          note: '平台关系 SQ332022062212391 明确写出',
-        },
-      ],
-      differences: [],
-      merges: [],
+  it('确认后的旧名写成 confirmed 别名,来源关系自然键可换成已落库的关系 id', () => {
+    const ref = { queryKey: USCC, interface: 'business_list' as const, rdjb: '3', sequenceNo: 1 }
+    const decision = {
+      enterpriseId: 7289,
+      name: '宁波上航测绘有限公司',
+      sourceKind: 'platform_business' as const,
+      sourceRelation: ref,
+      validFrom: '2022-06-22 17:17:52',
+      note: '平台关系 SQ332022062212391 明确写出',
+    }
+
+    // 未提供 refs(关系还没落库)⇒ 用契约 §1.2 的 0 哨兵,不填假 id。
+    const beforeWrite = buildPlatformWritePayload({
+      sourceIdentity: 'x', queries, enterprises, aliases: [decision], differences: [], merges: [],
     })
-    const alias = request.payload.aliases![0]!
-    expect(alias.name).toBe('宁波上航测绘有限公司')
-    expect(alias.uscc).toBe(USCC)
-    expect(alias.enterpriseName).toBe('宁波上航测绘股份有限公司')
-    expect(alias.sourceKind).toBe('platform_business')
-    expect(alias.verificationStatus).toBe('confirmed')
-    expect(alias.validFrom).toBe('2022-06-22 17:17:52')
-    // 来源关系用自然键指认,写入侧解析成 platform_relation.id(见 C2 协调点)。
-    expect(alias.sourceRelationRef).toEqual({
-      queryKey: USCC, interface: 'business_list', rdjb: '3', sequenceNo: 1,
+    const draft = beforeWrite.payload.aliases![0]!
+    expect(draft.name).toBe('宁波上航测绘有限公司')
+    expect(draft.uscc).toBe(USCC)
+    expect(draft.enterpriseName).toBe('宁波上航测绘股份有限公司')
+    expect(draft.sourceKind).toBe('platform_business')
+    expect(draft.verificationStatus).toBe('confirmed')
+    expect(draft.validFrom).toBe('2022-06-22 17:17:52')
+    expect(draft.sourceRefId).toBe(0)
+
+    // 读回真 id 后 ⇒ 自然键解析成 `platform_relation.id`,写进来源证据。
+    const afterWrite = buildPlatformWritePayload({
+      sourceIdentity: 'x', queries, enterprises, aliases: [decision], differences: [], merges: [],
+      refs: { relationIdOf: (r) => (r.sequenceNo === 1 && r.rdjb === '3' ? 501 : null) },
     })
+    expect(afterWrite.payload.aliases![0]!.sourceRefId).toBe(501)
   })
 
   it('同名多主体(同一名字挂在不同 USCC 下)被降级为 pending,不自动回填', () => {
@@ -231,17 +239,14 @@ describe('buildPlatformWritePayload:代理确认的曾用名(§5.1)', () => {
         { id: 1, name: '某企业', nameNorm: '某企业', uscc: '91330211000000001A' },
         { id: 2, name: '某企业', nameNorm: '某企业', uscc: '91330211000000002B' },
       ],
-      aliases: [
-        { enterpriseId: 1, name, sourceKind: 'platform_business', sourceRefId: 0 },
-      ],
+      aliases: [{ enterpriseId: 1, name, sourceKind: 'platform_business', sourceRefId: 0 }],
       differences: [],
       merges: [],
     })
     const alias = request.payload.aliases![0]!
     // 该名字同时挂在两个 USCC 下 ⇒ 冲突,由人解决,绝不自动 confirmed。
     expect(alias.verificationStatus).toBe('pending')
-    expect(alias.conflict?.code).toBe('ambiguous_subject')
-    expect(alias.conflict?.usccs.sort()).toEqual(['91330211000000001A', '91330211000000002B'])
+    expect(alias.note).toContain('2 个统一社会信用代码')
   })
 
   it('归属企业解析不到时也降级为待核(不凭一个名字就写成 confirmed)', () => {
@@ -252,7 +257,7 @@ describe('buildPlatformWritePayload:代理确认的曾用名(§5.1)', () => {
     })
     const alias = request.payload.aliases![0]!
     expect(alias.verificationStatus).toBe('pending')
-    expect(alias.conflict?.note).toContain('归属企业无法确定')
+    expect(alias.note).toContain('归属企业无法确定')
   })
 
   it('来源统代与目标企业统代不一致时,同样降级为待核', () => {
@@ -268,21 +273,35 @@ describe('buildPlatformWritePayload:代理确认的曾用名(§5.1)', () => {
         },
       ],
       enterprises: [{ id: 7, name: '宁波现名有限公司', nameNorm: '宁波现名有限公司', uscc: USCC }],
-      aliases: [
-        { enterpriseId: 7, name: '宁波旧名有限公司', sourceKind: 'platform_business', sourceRefId: 0 },
-      ],
+      aliases: [{ enterpriseId: 7, name: '宁波旧名有限公司', sourceKind: 'platform_business', sourceRefId: 0 }],
       differences: [],
       merges: [],
     })
-    expect(request.payload.aliases![0]!.verificationStatus).toBe('pending')
-    expect(request.payload.aliases![0]!.conflict?.note).toContain('统代')
+    const alias = request.payload.aliases![0]!
+    expect(alias.verificationStatus).toBe('pending')
+    expect(alias.note).toContain('统代')
   })
 })
 
 describe('buildPlatformWritePayload:差异原因与后续措施成对(§2.8 / §1.5)', () => {
-  const base = {
-    sourceIdentity: 'x', queries, enterprises, aliases: [], merges: [],
-  }
+  const base = { sourceIdentity: 'x', queries, enterprises, aliases: [], merges: [] }
+
+  it('差异项按 enterpriseName / uscc 归属(写入侧按归一化名或统代解析,不是 enterpriseId)', () => {
+    const request = buildPlatformWritePayload({
+      ...base,
+      differences: [
+        {
+          enterpriseId: 7289, titleCode: 'specialized_sme', direction: 'extra_in_miit',
+          status: 'confirmed_reason', reasonCode: 'renamed', measureCode: 'update_current_name',
+          verificationStatus: 'confirmed', recordedAt: '2026-10-14T00:00:00.000Z',
+        },
+      ],
+    })
+    const row = request.payload.differences![0]!
+    expect(row.enterpriseName).toBe('宁波上航测绘股份有限公司')
+    expect(row.uscc).toBe(USCC)
+    expect((row as unknown as Record<string, unknown>).enterpriseId).toBeUndefined()
+  })
 
   it('五类已知原因各带配对的措施', () => {
     const reasons = [
@@ -359,6 +378,88 @@ describe('buildPlatformWritePayload:差异原因与后续措施成对(§2.8 / §
     })
     expect(new Set(request.payload.differences!.map((d) => d.status)).size).toBe(4)
   })
+
+  it('证据指针:自然键经 refs 换成已落库的 query / relation id', () => {
+    const request = buildPlatformWritePayload({
+      ...base,
+      differences: [
+        {
+          enterpriseId: 7289, titleCode: 'specialized_sme', direction: 'extra_in_miit',
+          status: 'confirmed_reason', reasonCode: 'renamed', measureCode: 'update_current_name',
+          verificationStatus: 'confirmed', recordedAt: '2026-10-14T00:00:00.000Z',
+          evidenceQuery: { interface: 'business_list', queryKey: USCC, rdjb: '3' },
+          evidenceRelation: { queryKey: USCC, interface: 'business_list', rdjb: '3', sequenceNo: 1 },
+        },
+      ],
+      refs: {
+        queryIdOf: (q) => (q.rdjb === '3' ? 77 : null),
+        relationIdOf: (r) => (r.sequenceNo === 1 ? 501 : null),
+      },
+    })
+    const row = request.payload.differences![0]!
+    expect(row.evidenceQueryId).toBe(77)
+    expect(row.evidenceRelationId).toBe(501)
+  })
+})
+
+describe('buildPlatformWritePayload:确认主体后的归并与回填(契约 §8.4)', () => {
+  const request = buildPlatformWritePayload({
+    sourceIdentity: 'x', queries, enterprises, aliases: [], differences: [],
+    merges: [
+      {
+        fromEnterpriseId: 375,
+        fromEnterpriseName: '宁波上航测绘有限公司',
+        intoUscc: USCC,
+        aliasName: '宁波上航测绘有限公司',
+        sourceKind: 'platform_business',
+        sourceRefId: 0,
+        evidenceQueryId: 0,
+        note: 'businessList rdjb=3 的 qymc 差异行',
+      },
+    ],
+  })
+
+  it('归并项带目标统代、旧名、来源类别与证据引用', () => {
+    const merge = request.payload.merges![0]!
+    expect(merge.fromEnterpriseId).toBe(375)
+    expect(merge.intoUscc).toBe(USCC)
+    expect(merge.aliasName).toBe('宁波上航测绘有限公司')
+    expect(merge.sourceKind).toBe('platform_business')
+    expect(merge.sourceRefId).toBe(0)
+    expect(merge.evidenceQueryId).toBe(0)
+    expect(merge.note).toContain('qymc')
+  })
+
+  it('`fromEnterpriseId` 与 `fromEnterpriseName` **恰给其一**(契约 §8.4)', () => {
+    const byId = buildPlatformWritePayload({
+      sourceIdentity: 'x', queries, enterprises, aliases: [], differences: [],
+      merges: [{ fromEnterpriseId: 375, fromEnterpriseName: '宁波上航测绘有限公司', intoUscc: USCC }],
+    }).payload.merges![0]!
+    expect(byId.fromEnterpriseId).toBe(375)
+    expect(byId.fromEnterpriseName).toBeUndefined()
+
+    const byName = buildPlatformWritePayload({
+      sourceIdentity: 'x', queries, enterprises, aliases: [], differences: [],
+      merges: [{ fromEnterpriseName: '宁波上航测绘有限公司', intoUscc: USCC }],
+    }).payload.merges![0]!
+    expect(byName.fromEnterpriseName).toBe('宁波上航测绘有限公司')
+    expect(byName.fromEnterpriseId).toBeUndefined()
+  })
+
+  it('归并的来源证据也可经自然键换成已落库的 id', () => {
+    const merge = buildPlatformWritePayload({
+      sourceIdentity: 'x', queries, enterprises, aliases: [], differences: [],
+      merges: [{
+        fromEnterpriseId: 375, intoUscc: USCC, aliasName: '宁波上航测绘有限公司',
+        sourceKind: 'platform_business',
+        sourceRelation: { queryKey: USCC, interface: 'business_list', rdjb: '3', sequenceNo: 1 },
+        evidenceQuery: { interface: 'business_list', queryKey: USCC, rdjb: '3' },
+      }],
+      refs: { relationIdOf: () => 501, queryIdOf: () => 77 },
+    }).payload.merges![0]!
+    expect(merge.sourceRefId).toBe(501)
+    expect(merge.evidenceQueryId).toBe(77)
+  })
 })
 
 describe('回归案例端到端:6 条真实关系 → 候选 → 确认 → 载荷', () => {
@@ -389,55 +490,21 @@ describe('回归案例端到端:6 条真实关系 → 候选 → 确认 → 载�
           fromEnterpriseName: '宁波上航测绘有限公司',
           intoUscc: USCC,
           aliasName: candidate!.name,
+          sourceKind: 'platform_business',
         },
       ],
+      // 关系已经落库、读回了真 id —— 于是来源指针指向那条原始关系。
+      refs: { relationIdOf: (r) => (r.sequenceNo === 1 && r.interface === 'business_list' ? 501 : null) },
     })
 
     const alias = request.payload.aliases![0]!
     expect(alias.verificationStatus).toBe('confirmed')
-    expect(alias.sourceRelationRef).toEqual({
-      queryKey: USCC, interface: 'business_list', rdjb: '3', sequenceNo: 1,
-    })
+    expect(alias.sourceRefId).toBe(501)
     // 6 条关系一条不少;旧名的两条仍在,且匹配依据是统代。
-    const rdjb3 = request.payload.platformQueries[2]!.relations!
+    const rdjb3 = request.payload.platformQueries![2]!.relations!
     expect(rdjb3).toHaveLength(6)
     expect(rdjb3.filter((r) => r.nameRaw === '宁波上航测绘有限公司')).toHaveLength(2)
     expect(rdjb3.every((r) => r.matchBasis === 'uscc')).toBe(true)
-    // 归并项与别名同批提交(重放幂等)。
     expect(request.payload.merges![0]!.fromEnterpriseId).toBe(375)
-  })
-})
-
-describe('buildPlatformWritePayload:确认主体后的归并与回填(C2)', () => {
-  const request = buildPlatformWritePayload({
-    sourceIdentity: 'x', queries, enterprises, aliases: [], differences: [],
-    merges: [
-      {
-        fromEnterpriseId: 375,
-        fromEnterpriseName: '宁波上航测绘有限公司',
-        intoUscc: USCC,
-        aliasName: '宁波上航测绘有限公司',
-        sourceRefId: 0,
-        evidenceQueryId: 0,
-      },
-    ],
-  })
-
-  it('归并项带来源企业、目标统代、旧名与证据引用', () => {
-    const merge = request.payload.merges![0]!
-    expect(merge.fromEnterpriseId).toBe(375)
-    expect(merge.fromEnterpriseName).toBe('宁波上航测绘有限公司')
-    expect(merge.intoUscc).toBe(USCC)
-    expect(merge.aliasName).toBe('宁波上航测绘有限公司')
-    expect(merge).toHaveProperty('sourceRefId')
-    expect(merge).toHaveProperty('evidenceQueryId')
-  })
-
-  it('归并项经真实 API 可重放:幂等键随来源身份稳定', () => {
-    const again = buildPlatformWritePayload({
-      sourceIdentity: 'x', queries, enterprises, aliases: [], differences: [],
-      merges: [{ fromEnterpriseId: 375, intoUscc: USCC, aliasName: '宁波上航测绘有限公司' }],
-    })
-    expect(again.idempotencyKey).toBe(request.idempotencyKey)
   })
 })
