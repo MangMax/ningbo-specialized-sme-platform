@@ -180,7 +180,7 @@ function railClass(row: EnterpriseListRow): string {
           @click="emit('select', row.enterpriseId)"
         >
           <TableCell class="p-0 align-middle">
-            <span class="block h-5 w-[3px] rounded-r-sm" :class="railClass(row)" />
+          <span class="block h-5 w-[6px] rounded-r-sm" :class="railClass(row)" />
           </TableCell>
 
           <TableCell class="max-w-0">
@@ -234,7 +234,7 @@ function railClass(row: EnterpriseListRow): string {
           用户看得见自己在哪一批数据上等,而不是面对一张白表。这一行也**不兼任铺满表体**。
         -->
         <TableRow v-if="loading" class="hover:bg-transparent">
-          <TableCell class="p-0"><span class="block h-5 w-[3px]" /></TableCell>
+          <TableCell class="p-0"><span class="block h-5 w-[6px]" /></TableCell>
           <TableCell><Skeleton class="h-3 w-40" /></TableCell>
           <TableCell><Skeleton class="h-3 w-32" /></TableCell>
           <TableCell><Skeleton class="h-3 w-12" /></TableCell>

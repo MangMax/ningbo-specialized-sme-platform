@@ -630,7 +630,7 @@ useHead({
  * 减少动效时把条固定在左边三分之一的静态位置(仍能看出「在加载」)。
  */
 .ledger-progress {
-  animation: ledger-progress 1100ms ease-in-out infinite;
+  animation: ledger-progress 1100ms var(--ease-snap) infinite;
 }
 
 @keyframes ledger-progress {

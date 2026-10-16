@@ -231,7 +231,22 @@ const fullPageTo = computed(() => {
 })
 
 const statusVariant = (code: string) => DIFFERENCE_STATUS_VARIANTS[code] ?? 'outline'
-const eventLabel = (type: string) => EVENTS[type] ?? type
+const eventLabel = (type: string) => {
+  // 抽屉复用方向卡的事件词:认定 / 复核 / 维持。
+  if (type === 'maintain') return '维持'
+  return EVENTS[type] ?? type
+}
+
+function directionLabel(direction: string) {
+  if (direction === 'missing_in_miit') return '应纳未纳'
+  if (direction === 'extra_in_miit') return '平台多出'
+  return comparisonDirectionNote(direction)
+}
+
+function measureLabel(code: string) {
+  if (code === 'mark_platform_snapshot') return '标记平台快照'
+  return DIFFERENCE_MEASURES[code] ?? code
+}
 
 /**
  * 「认定 / 复核 / 维持」这一档上要跟的那半句。
@@ -290,7 +305,7 @@ function eventSuffix(item: TimelineItem): string {
               v-for="item in timeline"
               :key="item.key"
               class="grid grid-cols-[38px_16px_1fr] items-start"
-              :class="item.year == null ? 'min-h-0' : 'min-h-14'"
+              :class="item.year == null ? 'min-h-0' : 'min-h-10'"
             >
               <span class="text-muted-foreground pr-2.5 text-right text-xs leading-5 tabular-nums">
                 {{ item.firstOfYear && item.year != null ? item.year : '' }}
@@ -362,33 +377,33 @@ function eventSuffix(item: TimelineItem): string {
               <ol class="mt-2 flex flex-col" data-testid="difference-reason-chain">
                 <li
                   v-for="(step, i) in [
-                    { k: '方向', v: comparisonDirectionNote(d.direction) },
+                    { k: '方向', v: directionLabel(d.direction) },
                     {
                       k: '原因',
                       v: d.reasonCode ? (DIFFERENCE_REASONS[d.reasonCode] ?? d.reasonCode) : '待核实',
                     },
                     {
                       k: '措施',
-                      v: d.measureCode ? (DIFFERENCE_MEASURES[d.measureCode] ?? d.measureCode) : '—',
+                      v: d.measureCode ? measureLabel(d.measureCode) : '—',
                     },
                   ]"
                   :key="step.k"
-                  class="grid grid-cols-[38px_12px_1fr] items-start"
+                  class="grid grid-cols-[42px_18px_1fr] items-start"
                 >
                   <span class="text-muted-foreground pr-2 text-right text-xs leading-5">{{ step.k }}</span>
                   <span class="relative self-stretch">
                     <span
                       v-if="i < 2"
-                      class="bg-border absolute top-3 bottom-0 left-[5px] w-px"
+                      class="bg-border absolute top-3 bottom-0 left-[8px] w-px"
                     />
                     <span
-                      class="absolute top-[7px] left-[4px] size-1.5 rounded-full"
+                      class="absolute top-[6px] left-[5px] size-2 rounded-full"
                       :class="i === 0 ? 'bg-muted-foreground' : 'bg-primary'"
                     />
                     <ArrowDown
                       v-if="i < 2"
                       aria-hidden="true"
-                      class="absolute bottom-[-2px] left-0 size-[11px]"
+                      class="absolute bottom-[-2px] left-[2px] size-3"
                       :class="i === 1 ? 'text-primary' : 'text-muted-foreground'"
                     />
                   </span>

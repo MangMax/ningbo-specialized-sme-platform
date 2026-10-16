@@ -428,7 +428,7 @@ const exportUrl = computed(
 }
 
 .comparison-progress {
-  animation: comparison-progress 1100ms ease-in-out infinite;
+  animation: comparison-progress 1100ms var(--ease-snap) infinite;
 }
 
 @keyframes comparison-progress {

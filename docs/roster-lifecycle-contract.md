@@ -628,6 +628,7 @@
 查询参数:`q`(名称 / **已确认**曾用名 / **统代**关键词,走 §5 搜索口径)、`title`(可重复)、
 `district`、`rosterState`(`current` \| `removed_platform_only`)、
 `source`(可重复,`jxj` \| `miit`)、`eventType`(可重复)、`year`(可重复)、
+`diffStatus`(可重复,RL-20)、`sort`(RL-20,默认 `recognition`)、
 `page`(默认 1)、`pageSize`(默认 50)。
 
 > `source` / `eventType` / `year` 是 **RL-17 增量**(合并台账后「按企业」要能承接
@@ -636,6 +637,12 @@
 > 「来源与事件落在同一条记录上、类型与年份落在同一条事件上」这两条不能松 ——
 > 松了,同一个 URL 在「按企业」与「按企业×称号」下会给出两批不同的企业。
 > `q` 的统代匹配同样是 RL-17 增量(`/api/records` 一直认统代,两个分组共用一个搜索框)。
+
+> `diffStatus` / `sort` 与下方差异摘要字段是 RL-20 的只读列表页扩展,不改变记录、差异或写入语义。
+> `diffStatus` 命中「该企业存在一条该状态的差异记录」;取值为
+> `not_queried` / `query_failed` / `no_record` / `needs_review` / `confirmed_no_diff` /
+> `confirmed_reason`,另有 `none` 表示该企业没有差异记录。`sort` 支持 `recognition`
+> (最早首次认定年,新到旧,默认)、`name` 与 `title`;各顺序以名称和企业 id 稳定收尾。
 
 响应(字段级):
 
@@ -651,13 +658,21 @@
     "rosterState": "current",
     "titles": ["specialized_sme", "innovative_sme"],
     "aliasNames": ["宁波旧名…"],    // 仅 confirmed
-    "firstRecognition": [{ "titleCode": "specialized_sme", "year": 2021 }],
-    "nextReviewYear": 2028          // 可空;锚点+3
+    "firstRecognition": [{ "titleCode": "specialized_sme", "year": 2021, "needsReview": false }],
+    "nextReviewYear": 2028,         // 可空;锚点+3
+    "anchorNeedsReview": false,    // 锚点事件缺少决定年份时待核
+    "difference": {                // RL-20:企业的差异摘要
+      "count": 1,                  // 企业 × 称号 × 方向的差异记录数
+      "status": "confirmed_reason", // 可空;优先级最高的一条差异状态
+      "reasonCode": "platform_not_updated", // 可空
+      "anyCurrent": true           // 是否仍有当前差异
+    }
   }],
   "counts": {
     "total": 1,                     // **企业数**(与筛选同口径、先于分页)
     "titlePairs": 2,                // **企业 × 称号**数 = titles 各桶之和
-    "titles": { "specialized_sme": 1, "innovative_sme": 1 }
+    "titles": { "specialized_sme": 1, "innovative_sme": 1 },
+    "differences": 1               // RL-20:筛选内差异记录数,先于分页
   },
   "page": 1, "pageSize": 50
 }

@@ -85,6 +85,7 @@ class Cdp {
       const waiter = this.pending.get(msg.id)
       if (waiter) {
         this.pending.delete(msg.id)
+        clearTimeout(waiter.timeout)
         msg.error ? waiter.reject(new Error(JSON.stringify(msg.error))) : waiter.resolve(msg.result)
       }
     })
@@ -94,11 +95,11 @@ class Cdp {
     const id = ++this.seq
     const payload = { id, method, params, ...(sessionId ? { sessionId } : {}) }
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
-      this.ws.send(JSON.stringify(payload))
-      setTimeout(() => {
+      const timeout = setTimeout(() => {
         if (this.pending.delete(id)) reject(new Error(`CDP ${method} 超时`))
       }, 30_000)
+      this.pending.set(id, { resolve, reject, timeout })
+      this.ws.send(JSON.stringify(payload))
     })
   }
 }
@@ -252,6 +253,24 @@ function shadowViolation(m, label) {
     : null
 }
 
+function statusRailViolation(m, label) {
+  return m.statusRailWidth === 6
+    ? null
+    : `${label}:最左状态条应为 6px,实测 ${m.statusRailWidth}px`
+}
+
+const EXPECTED_EASING = 'cubic-bezier(0.32,0.72,0,1)'
+const normalizeEasing = (value) => String(value ?? '').replaceAll(/\s/g, '')
+
+function motionCurveViolation(m, label) {
+  const mismatches = Object.entries(m.motionCurves ?? {})
+    .filter(([, value]) => value != null && normalizeEasing(value) !== EXPECTED_EASING)
+    .map(([part, value]) => `${part}=${JSON.stringify(value)}`)
+  return mismatches.length
+    ? `${label}:核心动效未共用 --ease-snap(${mismatches.join(', ')})`
+    : null
+}
+
 async function installMotionAndFetchGate(cdp, sessionId) {
   await evaluate(cdp, sessionId, `(() => {
     window.__rl20Motion = { control: false, table: false, drawer: false };
@@ -319,6 +338,18 @@ async function waitForLoadingEvidence(cdp, sessionId, pageKind) {
     return !!gate?.requested && (status?.textContent ?? '').includes('正在') && !!document.querySelector(${JSON.stringify(bodySelector)});
   })()`
   return waitUntil(cdp, sessionId, expression)
+}
+
+async function verifyLoadingEasing(cdp, sessionId, selector, label) {
+  const timing = await evaluate(cdp, sessionId, `(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    return el ? getComputedStyle(el).animationTimingFunction : null;
+  })()`)
+  if (normalizeEasing(timing) !== EXPECTED_EASING) {
+    bad(`${label}:进度线应使用 --ease-snap,实测 ${JSON.stringify(timing)}`)
+  } else {
+    ok(`${label}:进度线与基本动效共用 --ease-snap`)
+  }
 }
 
 async function verifyLedgerSearchLoading(cdp) {
@@ -440,6 +471,55 @@ async function verifyMissingRecognitionYearAndEvidence(cdp) {
   }
 }
 
+async function verifyKaichengExample(cdp) {
+  const name = '宁波开诚生态技术股份有限公司'
+  const page = await openSession(
+    cdp,
+    `${BASE}/?q=${encodeURIComponent(name)}`,
+    VIEWPORTS[0],
+    `(() => {
+      const status = document.querySelector('[data-testid="ledger-loading-status"]');
+      const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+      return !(status?.textContent ?? '').includes('正在') &&
+        drawer?.getAttribute('data-state') === 'open' && drawer.querySelector('h2')?.textContent?.trim() === ${JSON.stringify(name)};
+    })()`,
+  )
+  const { targetId, sessionId } = page
+  try {
+    const example = await evaluate(cdp, sessionId, `(() => {
+      const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+      const row = [...document.querySelectorAll('tbody tr')].find((tr) => tr.querySelector('button')?.textContent?.trim() === ${JSON.stringify(name)});
+      const headings = [...drawer.querySelectorAll('h3')];
+      const history = headings.find((el) => el.textContent?.trim() === '称号历史')?.nextElementSibling;
+      const chain = drawer.querySelector('[data-testid="difference-reason-chain"]');
+      const years = history ? [...history.querySelectorAll(':scope > li > span:first-child')].map((el) => el.textContent?.trim()).filter(Boolean) : [];
+      return {
+        rowCount: [...document.querySelectorAll('tbody tr button')].length,
+        selected: row?.getAttribute('aria-current'),
+        uscc: drawer.querySelector('header p')?.textContent?.trim(),
+        alias: drawer.textContent?.includes('宁波开诚生态技术有限公司') ?? false,
+        years,
+        historyText: history?.textContent?.replace(/\\s+/g, ' ').trim() ?? '',
+        chainText: chain?.textContent?.replace(/\\s+/g, ' ').trim() ?? '',
+        chainSteps: chain?.querySelectorAll(':scope > li').length ?? 0,
+      };
+    })()`)
+    const okExample = example.rowCount === 1 && example.selected === 'true' &&
+      example.uscc === '9133021274738281XA' && example.alias &&
+      ['2021', '2022', '2024'].every((year) => example.years.includes(year)) &&
+      example.years.filter((year) => year === '2024').length === 1 &&
+      example.historyText.includes('认定') && example.historyText.includes('维持') &&
+      example.chainSteps === 3 && ['方向', '原因', '措施', '平台多出', '平台未更新', '标记平台快照'].every((value) => example.chainText.includes(value))
+    if (!okExample) {
+      bad(`企业列表 · 开诚示例:开诚行的真实事件链与原因措施链未完整呈现 ${JSON.stringify(example)}`)
+    } else {
+      ok('企业列表 · 开诚示例:筛选后行、称号历史、曾用名与方向→原因→措施链均对应真实样例')
+    }
+  } finally {
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
 async function verifyLedgerLoadingAndDrawer(cdp) {
   const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0])
   const { targetId, sessionId } = page
@@ -457,6 +537,7 @@ async function verifyLedgerLoadingAndDrawer(cdp) {
       const loading = await waitForLoadingEvidence(cdp, sessionId, 'ledger')
       if (!loading) bad('企业列表 · 排序:加载请求期间没有可见状态或表体忙碌标记')
       else ok('企业列表 · 排序:Pinia Colada isLoading 提示在请求期间可见')
+      if (loading) await verifyLoadingEasing(cdp, sessionId, '.ledger-progress', '企业列表 · 加载')
       const motion = await waitUntil(cdp, sessionId, 'window.__rl20Motion.control && window.__rl20Motion.table')
       if (!motion) bad('企业列表 · 排序:没有观察到控件反馈和表体位移动效事件')
       else ok('企业列表 · 控件与表体:transitionrun 事件均已观察')
@@ -547,6 +628,7 @@ async function verifyComparisonSearchAndMotion(cdp) {
     const searchLoading = await waitForLoadingEvidence(cdp, sessionId, 'comparison')
     if (!searchLoading) bad('两侧名录比对 · 搜索:请求期间没有可见加载状态')
     else ok('两侧名录比对 · 搜索:请求期间显示加载状态')
+    if (searchLoading) await verifyLoadingEasing(cdp, sessionId, '.comparison-progress', '两侧名录比对 · 加载')
     await finishFetchGate(cdp, sessionId)
     const searched = await waitUntil(cdp, sessionId, `(() => {
       const status = document.querySelector('[data-testid="comparison-loading-status"]');
@@ -724,6 +806,10 @@ const MEASURE = `(() => {
   const nextButton = [...document.querySelectorAll('button')].find((el) => (el.textContent ?? '').includes('下一页'));
   const pagination = document.querySelector('[data-slot=pagination]') || nextButton?.parentElement?.parentElement;
   const rect = pagination ? pagination.getBoundingClientRect() : null;
+  const rail = document.querySelector('.ledger-page tbody tr:not([data-loading="true"]) td:first-child > span');
+  const control = root?.querySelector('[data-slot="select-trigger"]');
+  const body = root?.querySelector('tbody');
+  const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
   return {
     title: document.title,
     scrollWidth: de.scrollWidth,
@@ -735,6 +821,12 @@ const MEASURE = `(() => {
     searchInput: !!document.querySelector('input[aria-label*="企业名称"]'),
     loadingStatus: !!document.querySelector('[data-testid="ledger-loading-status"],[data-testid="comparison-loading-status"]'),
     drawerOpen: document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state') === 'open',
+    statusRailWidth: rail ? Math.round(rail.getBoundingClientRect().width) : null,
+    motionCurves: {
+      control: control ? getComputedStyle(control).transitionTimingFunction : null,
+      table: body ? getComputedStyle(body).transitionTimingFunction : null,
+      drawer: drawer ? getComputedStyle(drawer).animationTimingFunction : null,
+    },
     pagination: rect ? { left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width) } : null,
     // 分页条是不是真的换行了(条目用了不止一行高度)
     paginationRows: pagination
@@ -813,6 +905,14 @@ async function main() {
         else ok(`${label}:加载状态容器已渲染`)
         if (page.query === '/' && m.nativeSelectCount !== 0) bad(`${label}:仍有 ${m.nativeSelectCount} 个原生 select`)
         if (page.query === '/' && !m.drawerOpen) bad(`${label}:企业侧边抽屉未打开`)
+        if (page.query === '/') {
+          const rail = statusRailViolation(m, label)
+          if (rail) bad(rail)
+          else ok(`${label}:最左状态条实测 6px`)
+        }
+        const motionCurve = motionCurveViolation(m, label)
+        if (motionCurve) bad(motionCurve)
+        else ok(`${label}:控件、表体${page.query === '/' ? '与抽屉' : ''}使用同一缓动曲线`)
 
         if (m.pagination) {
           if (m.pagination.right > m.innerWidth) {
@@ -843,6 +943,18 @@ async function main() {
     if (!selfCheck) bad('缺陷自检:临时恢复横向溢出后,横溢出断言仍未命中')
     else console.log(`✗ 缺陷自检按预期变红:${selfCheck}`)
     if (selfCheck) ok('缺陷自检:关闭临时 target 后缺陷已复原')
+
+    const railBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/`,
+      `(() => { const rail = document.querySelector('.ledger-page tbody tr:not([data-loading="true"]) td:first-child > span'); rail?.style.setProperty('width', '3px', 'important'); return (${MEASURE}); })()`,
+      READY,
+      VIEWPORTS[0],
+    )
+    const railSelfCheck = statusRailViolation(railBroken, '状态条宽度缺陷自检')
+    if (!railSelfCheck) bad('状态条宽度缺陷自检:临时恢复 3px 状态条后断言仍未命中')
+    else console.log(`✗ 状态条宽度缺陷自检按预期变红:${railSelfCheck}`)
+    if (railSelfCheck) ok('状态条宽度缺陷自检:关闭临时 target 后缺陷已复原')
 
     const shadowBroken = await openAndMeasure(
       cdp,
@@ -897,6 +1009,7 @@ async function main() {
 
     await verifyLedgerSearchLoading(cdp)
     await verifyMissingRecognitionYearAndEvidence(cdp)
+    await verifyKaichengExample(cdp)
     await verifyLedgerLoadingAndDrawer(cdp)
     await verifyComparisonSearchAndMotion(cdp)
     await verifyCustomPageSizeInputShadow(cdp)
