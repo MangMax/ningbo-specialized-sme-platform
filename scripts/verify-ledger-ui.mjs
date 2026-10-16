@@ -404,7 +404,7 @@ function statusRailHierarchyViolation(m, label) {
   if (!hasUnselected) return `${label}:缺少未选中的已确认状态条`
 
   const inconsistent = rails.filter((rail) => {
-    if (!rail.color || rail.color.alpha <= 0 || rail.effectiveAlpha == null) return true
+    if (!rail.color || rail.color.alpha <= 0 || !Number.isFinite(rail.effectiveAlpha) || rail.effectiveAlpha <= 0) return true
     const colorDistance = Math.max(
       Math.abs(rail.color.red - primary.red),
       Math.abs(rail.color.green - primary.green),
@@ -1851,6 +1851,15 @@ const MEASURE = `(() => {
     const [red, green, blue, alpha] = colorContext.getImageData(0, 0, 1, 1).data;
     return { red, green, blue, alpha: alpha / 255 };
   };
+  const measureEffectiveOpacity = (el) => {
+    let opacity = 1;
+    for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
+      const value = Number.parseFloat(getComputedStyle(ancestor).opacity);
+      if (!Number.isFinite(value)) return null;
+      opacity *= value;
+    }
+    return opacity;
+  };
   const statusRailPrimaryColor = measureColor(getComputedStyle(document.documentElement).getPropertyValue('--primary').trim());
   const ledgerExport = document.querySelector('.ledger-page a[href^="/api/roster/export"]');
   const ledgerTable = document.querySelector('.ledger-page table');
@@ -1997,7 +2006,7 @@ const MEASURE = `(() => {
         selected: rail?.getAttribute('data-selected') === 'true',
         kind: rail?.getAttribute('data-rail-kind') ?? 'none',
         color,
-        effectiveAlpha: color && style ? color.alpha * Number.parseFloat(style.opacity || '1') : null,
+        effectiveAlpha: color && rail ? color.alpha * measureEffectiveOpacity(rail) : null,
       };
     }),
     enterpriseDrawerReading: enterpriseRow && enterpriseDrawer ? {
@@ -2478,8 +2487,36 @@ async function main() {
     if (!railHierarchyBroken.statusRailHierarchy?.some((rail) => rail.kind === 'confirmed' && !rail.selected)) {
       bad('状态条层级缺陷自检:当前首屏没有可供注入的非选中已确认状态条')
     } else if (!railHierarchySelfCheck) bad('状态条层级缺陷自检:临时覆盖非选中行的背景色后,computed color 断言仍未命中')
-    else console.log(`✗ 状态条层级缺陷自检按预期变红:${railHierarchySelfCheck}`)
-    if (railHierarchySelfCheck) ok('状态条层级缺陷自检:关闭临时 target 后缺陷已复原')
+    else {
+      console.log(`✗ 状态条层级缺陷自检按预期变红:${railHierarchySelfCheck}`)
+      const cleanRailHierarchy = await openAndMeasure(cdp, `${BASE}/`, MEASURE, READY, VIEWPORTS[0])
+      const cleanRailHierarchyViolation = statusRailHierarchyViolation(cleanRailHierarchy, '状态条层级干净 target')
+      if (cleanRailHierarchyViolation) bad(`状态条层级干净 target:${cleanRailHierarchyViolation}`)
+      else ok('状态条层级缺陷自检:新 target 实测原始颜色层级已恢复')
+    }
+
+    const railAncestorOpacityBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/`,
+      `(() => {
+        const rail = document.querySelector('.ledger-page tbody tr [data-rail-kind="confirmed"][data-selected="false"]');
+        rail?.parentElement?.style.setProperty('opacity', '0', 'important');
+        return (${MEASURE});
+      })()`,
+      READY,
+      VIEWPORTS[0],
+    )
+    const railAncestorOpacitySelfCheck = statusRailHierarchyViolation(railAncestorOpacityBroken, '状态条祖先透明度缺陷自检')
+    if (!railAncestorOpacityBroken.statusRailHierarchy?.some((rail) => rail.kind === 'confirmed' && !rail.selected)) {
+      bad('状态条祖先透明度缺陷自检:当前首屏没有可供注入的非选中已确认状态条')
+    } else if (!railAncestorOpacitySelfCheck) bad('状态条祖先透明度缺陷自检:祖先 opacity:0 后,有效 alpha 断言仍未命中')
+    else {
+      console.log(`✗ 状态条祖先透明度缺陷自检按预期变红:${railAncestorOpacitySelfCheck}`)
+      const cleanRailAncestorOpacity = await openAndMeasure(cdp, `${BASE}/`, MEASURE, READY, VIEWPORTS[0])
+      const cleanRailAncestorOpacityViolation = statusRailHierarchyViolation(cleanRailAncestorOpacity, '状态条祖先透明度干净 target')
+      if (cleanRailAncestorOpacityViolation) bad(`状态条祖先透明度干净 target:${cleanRailAncestorOpacityViolation}`)
+      else ok('状态条祖先透明度缺陷自检:新 target 实测原始颜色层级已恢复')
+    }
 
     const comparisonRecordBroken = await openAndMeasure(
       cdp,
