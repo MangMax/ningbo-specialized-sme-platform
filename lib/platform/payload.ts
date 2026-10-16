@@ -43,6 +43,7 @@ import type {
 } from '../roster-import-client'
 import type { PlatformQueryOutcome } from './client'
 import { type PlatformRelationRecord, relationFromRow } from './identity'
+import type { PlatformInterface } from '../labels'
 
 // ---------------------------------------------------------------------------
 // 输入
@@ -58,7 +59,7 @@ export interface KnownEnterprise {
 
 /** 一次平台查询的输入:身份(§1.3 唯一键前缀)+ 已归类的响应。 */
 export interface PlatformQueryInput {
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   queryKey: string
   rdjb: string
   queriedAt: string
@@ -69,10 +70,17 @@ export interface PlatformQueryInput {
 /** 平台关系的**自然键**:写入侧在本批事务内才生成行 id,客户端只能先用它指认。 */
 export interface RelationRef {
   queryKey: string
-  interface: 'business_list' | 'apply_list'
+  interface: PlatformInterface
   rdjb: string
   sequenceNo: number
 }
+
+/**
+ * **查询**的自然键:`(interface, queryKey, rdjb)` —— 契约 §8.7.1 里不带 `sequenceNo`
+ * 的那种引用(指认「证据出自**哪一次**查询」)。就是 {@link RelationRef} 去掉序号:
+ * 两者是同一个自然键,少一个 `sequenceNo` 而已,所以别再各写一遍那个三字段字面量。
+ */
+export type QueryRef = Omit<RelationRef, 'sequenceNo'>
 
 export interface AliasDecision {
   /** 归属企业;给 `enterpriseName` 亦可(写入侧按归一化名解析)。 */
@@ -126,7 +134,7 @@ export interface DifferenceDecision {
   measureCode?: DifferenceMeasureCode | null
   measureNote?: string | null
   /** 证据:平台查询 / 平台关系。自然键见 {@link DifferenceDecision.evidenceRelation}。 */
-  evidenceQuery?: { interface: 'business_list' | 'apply_list'; queryKey: string; rdjb: string }
+  evidenceQuery?: QueryRef
   evidenceRelation?: RelationRef
   evidenceQueryId?: number | null
   evidenceRelationId?: number | null
@@ -151,7 +159,7 @@ export interface MergeDecision {
   sourceKind?: 'platform_business' | 'platform_apply' | 'announcement' | 'manual'
   sourceRelation?: RelationRef
   sourceRefId?: number
-  evidenceQuery?: { interface: 'business_list' | 'apply_list'; queryKey: string; rdjb: string }
+  evidenceQuery?: QueryRef
   evidenceQueryId?: number | null
   note?: string | null
 }
@@ -174,7 +182,7 @@ export interface BuildPayloadInput {
    */
   refs?: {
     relationIdOf?: (ref: RelationRef) => number | null | undefined
-    queryIdOf?: (ref: { interface: 'business_list' | 'apply_list'; queryKey: string; rdjb: string }) => number | null | undefined
+    queryIdOf?: (ref: QueryRef) => number | null | undefined
   }
 }
 
@@ -288,7 +296,7 @@ function relationIdOf(input: BuildPayloadInput, decision: { sourceRelation?: Rel
 
 function queryIdOf(
   input: BuildPayloadInput,
-  decision: { evidenceQuery?: { interface: 'business_list' | 'apply_list'; queryKey: string; rdjb: string }; evidenceQueryId?: number | null },
+  decision: { evidenceQuery?: QueryRef; evidenceQueryId?: number | null },
 ): number | null {
   if (decision.evidenceQuery && input.refs?.queryIdOf) {
     const resolved = input.refs.queryIdOf(decision.evidenceQuery)

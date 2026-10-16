@@ -78,3 +78,24 @@ export function normalizeName(
       [...longCodes][0] === [...shortCodes][0]) return long
   return name
 }
+
+/**
+ * 统一社会信用代码归一:**去全部空白 + 转大写**。
+ *
+ * 公布文件与平台响应解析写入、写入 API 的身份比较、以及读侧的统代比对都必须同规则,
+ * 所以只有这一处实现 —— 原先 `lib/roster/little-giant-workbook.ts` 与
+ * `server/utils/roster-import.ts` 各写了一遍,两处注释都自称「与既有口径一致」,
+ * 那正是漂移的开始。
+ *
+ * 入参是 `unknown`:调用方手上的值常常是「不知道是什么」的(JSON 载荷、工作表单元格)。
+ * **给不出值时返回空串**,「空」的落点由调用方决定(写入侧按「未给统代」处理,
+ * 解析侧按「源里缺」处理);本函数**不**在这里替调用方决定 `null` 还是 `''`。
+ *
+ * 唯一**有意**的例外:`lib/platform-snapshots.ts` 的 `snapshotRowKey` 用的是
+ * 「trim + 大写」,那是 RL-05 快照行身份键**自己写明**的口径(见该函数注释),
+ * 不是这里的漏网之鱼 —— 要改它等于改快照 diff 的键规则,不属本处收敛范围。
+ */
+export function normalizeUscc(raw: unknown): string {
+  if (typeof raw !== 'string' && typeof raw !== 'number') return ''
+  return String(raw).replace(/\s+/gu, '').toUpperCase()
+}

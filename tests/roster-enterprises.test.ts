@@ -9,6 +9,7 @@ import {
   listRosterDifferences,
   listRosterEnterprises,
 } from '../lib/roster/enterprise-roster'
+import type { PlatformInterface } from '../lib/labels'
 import { startRosterApi, type RosterApiServer } from './helpers/roster-http-server'
 
 /**
@@ -151,7 +152,7 @@ function difference(
 }
 
 function query(
-  interfaceName: 'business_list' | 'apply_list',
+  interfaceName: PlatformInterface,
   queryKey: string,
   rdjb: string,
   status: 'success' | 'failed' | 'no_record' | 'not_queried',
