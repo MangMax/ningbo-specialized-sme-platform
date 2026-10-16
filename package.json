@@ -21,7 +21,8 @@
     "verify:prod-openapi": "node scripts/verify-prod-openapi.mjs",
     "verify:ledger-ui": "node scripts/verify-ledger-ui.mjs",
     "verify:evidence-page-jump": "node scripts/verify-evidence-page-jump.mjs",
-    "verify:detail-return-scroll": "node scripts/verify-detail-return-scroll.mjs"
+    "verify:detail-return-scroll": "node scripts/verify-detail-return-scroll.mjs",
+    "verify:roster-return-chain": "node scripts/verify-roster-return-chain.mjs"
   },
   "dependencies": {
     "@embedpdf/vue-pdf-viewer": "^2.15.1",

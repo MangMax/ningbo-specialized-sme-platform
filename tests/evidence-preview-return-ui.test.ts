@@ -4,7 +4,10 @@ import { defineComponent, h, ref, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RosterEnterpriseTable, { type EnterpriseRow } from '../components/RosterEnterpriseTable.vue'
 import RosterTitleTable, { type TitleRow } from '../components/RosterTitleTable.vue'
-import { useEvidencePreviewScrollRestore } from '../lib/roster/evidence-preview-return'
+import {
+  shouldNuxtScrollToTop,
+  useEvidencePreviewScrollRestore,
+} from '../lib/roster/evidence-preview-return'
 import EnterprisePage from '../pages/enterprises/[id].vue'
 
 vi.mock('@tanstack/vue-virtual', async () => {
@@ -24,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   setDetail: null as ((value: unknown) => void) | null,
   setLoading: null as ((value: boolean) => void) | null,
 }))
+
+const DETAIL_OPEN_EVIDENCE_STATE_KEY = 'roster:enterprise-detail-open-evidence'
 
 vi.mock('@pinia/colada', async () => {
   const { ref } = await import('vue')
@@ -117,6 +122,12 @@ const NuxtLinkStub = {
   template:
     '<a :href="typeof to === \'string\' ? to : JSON.stringify(to)" :data-target="typeof to === \'string\' ? to : JSON.stringify(to)"><slot /></a>',
 }
+const CollapsibleStub = defineComponent({
+  props: { open: { type: Boolean, default: false } },
+  setup(props, { slots }) {
+    return () => h('div', slots.default?.({ open: props.open }))
+  },
+})
 const globalStubs = {
   NuxtLink: NuxtLinkStub,
   PageHeader: {
@@ -130,7 +141,7 @@ const globalStubs = {
   TitleBadge: true,
   Badge: true,
   Button: { template: '<button><slot /></button>' },
-  Collapsible: { template: '<div><slot /></div>' },
+  Collapsible: CollapsibleStub,
   CollapsibleContent: { template: '<div><slot /></div>' },
   CollapsibleTrigger: { template: '<button><slot /></button>' },
   Skeleton: true,
@@ -205,7 +216,7 @@ describe('出处预览返回滚动恢复', () => {
     history.replaceState(null, '', '/')
     vi.stubGlobal('useHead', vi.fn())
     vi.stubGlobal('$fetch', vi.fn(async () => ({})))
-    currentRoute = { query: {} }
+    currentRoute = { params: { id: '91' }, query: {}, fullPath: '/enterprises/91' }
     capturedPageMeta = {}
     openedTitleRowPath = ''
     vi.stubGlobal('useRoute', () => currentRoute)
@@ -284,14 +295,27 @@ describe('出处预览返回滚动恢复', () => {
     returned.unmount()
   })
 
-  it('详情页关闭 Nuxt 自动归顶，避免路由滚动覆盖页面自己的就绪后恢复', () => {
+  it('详情和名录返回依来源路由关闭 Nuxt 自动归顶', () => {
     mocks.detail = fullDetail
     mocks.loading = false
     const detailPage = mount(EnterprisePage, {
       attachTo: document.body,
       global: { stubs: globalStubs },
     })
-    expect(capturedPageMeta.scrollToTop).toBe(false)
+    const scrollToTop = capturedPageMeta.scrollToTop as (
+      to: { fullPath: string },
+      from: { path: string },
+    ) => boolean
+    expect(scrollToTop({ fullPath: '/enterprises/91' }, { path: '/' })).toBe(true)
+    // Nuxt may ask for its position after the ready-state restore consumed the session entry.
+    expect(scrollToTop({ fullPath: '/enterprises/91' }, { path: '/preview' })).toBe(false)
+    expect(shouldNuxtScrollToTop('/?view=title&page=2', '/enterprises/91')).toBe(false)
+    expect(shouldNuxtScrollToTop('/?view=title&page=2', '/files')).toBe(true)
+    sessionStorage.setItem(
+      'roster:evidence-preview-return',
+      JSON.stringify([{ back: '/enterprises/91', scrollY: 70, scrollTop: null }]),
+    )
+    expect(scrollToTop({ fullPath: '/enterprises/91' }, { path: '/' })).toBe(false)
     detailPage.unmount()
   })
 
@@ -586,6 +610,10 @@ describe('出处预览返回滚动恢复', () => {
     expect(previewUrl.searchParams.get('back')).toBe(detailPath)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"back":"${detailPath}"`)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"scrollY":${windowTop}`)
+    expect(JSON.parse(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)!)).toEqual({
+      back: detailPath,
+      keys: [JSON.stringify(['91', 'specialized_sme', 'jxj', 0])],
+    })
     source.unmount()
 
     history.pushState(null, '', detailPath)
@@ -611,7 +639,9 @@ describe('出处预览返回滚动恢复', () => {
     expect(frames).toHaveLength(1)
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: windowTop, behavior: 'instant' })
+    expect(returned.findAll('button').some((button) => button.text().includes('收起出处'))).toBe(true)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
+    expect(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)).toBeNull()
     returned.unmount()
   })
 })

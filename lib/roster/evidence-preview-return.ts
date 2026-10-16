@@ -49,6 +49,20 @@ function writeSavedReturns(states: EvidencePreviewReturnState[]): void {
   }
 }
 
+/** Whether the target route has a saved offset that its own ready-state hook will restore. */
+export function hasEvidencePreviewReturn(back: string): boolean {
+  return readSavedReturns().some((state) => state.back === back)
+}
+
+/**
+ * Keep Nuxt's top reset out of roster return navigations. The restore composable can consume
+ * session state before Vue Router asks Nuxt for its final position, so route origin is durable.
+ */
+export function shouldNuxtScrollToTop(toFullPath: string, fromPath: string): boolean {
+  if (fromPath === '/preview' || /^\/enterprises\/\d+$/.test(fromPath)) return false
+  return !hasEvidencePreviewReturn(toFullPath)
+}
+
 /** Remember both ledger scroll layers when a same-tab evidence link is activated. */
 export function rememberEvidencePreviewReturn(back: unknown, source?: EventTarget | null): void {
   if (typeof window === 'undefined' || !isSafeBackPath(back)) return

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { groupBy, orderBy, uniq } from 'es-toolkit'
 import { ChevronRight, Eye } from '@lucide/vue'
 import { TITLES, TITLE_ORDER, SOURCE_ORDER, QUALITY_FLAGS } from '~~/lib/labels'
@@ -13,6 +13,7 @@ import {
 } from '~~/lib/roster/evidence-page'
 import {
   rememberEvidencePreviewReturn,
+  shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
 } from '~~/lib/roster/evidence-preview-return'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
@@ -23,9 +24,9 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 
-// This page restores a saved detail offset after its data renders. Nuxt's default scrollBehavior
-// otherwise applies its top:0 position after page:loading:end and overwrites that restoration.
-definePageMeta({ scrollToTop: false })
+// When returning from preview, Nuxt's delayed default top reset would overwrite the async restore.
+// Route origin stays available even when the ready-state restore has consumed its session entry.
+definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
 
 interface Evidence {
   sourceFile: string
@@ -85,6 +86,44 @@ const { data, isLoading, error } = useQuery({
 const detail = computed(() => data.value ?? null)
 const detailRendered = computed(() => detail.value !== null || error.value != null)
 useEvidencePreviewScrollRestore(detailRendered)
+
+const EVIDENCE_DISCLOSURE_RETURN_KEY = 'roster:enterprise-detail-open-evidence'
+const openEvidenceKeys = ref<string[]>([])
+
+function evidenceDisclosureKey(titleCode: string, source: string, eventIndex: number): string {
+  return JSON.stringify([id.value, titleCode, source, eventIndex])
+}
+
+function evidenceDisclosureOpen(key: string): boolean {
+  return openEvidenceKeys.value.includes(key)
+}
+
+function setEvidenceDisclosureOpen(key: string, open: boolean): void {
+  const next = new Set(openEvidenceKeys.value)
+  if (open) next.add(key)
+  else next.delete(key)
+  openEvidenceKeys.value = [...next]
+}
+
+onMounted(() => {
+  try {
+    const raw = window.sessionStorage.getItem(EVIDENCE_DISCLOSURE_RETURN_KEY)
+    window.sessionStorage.removeItem(EVIDENCE_DISCLOSURE_RETURN_KEY)
+    if (!raw) return
+    const state: unknown = JSON.parse(raw)
+    if (!state || typeof state !== 'object') return
+    const candidate = state as { back?: unknown; keys?: unknown }
+    if (
+      candidate.back === route.fullPath &&
+      Array.isArray(candidate.keys) &&
+      candidate.keys.every((key) => typeof key === 'string')
+    ) {
+      openEvidenceKeys.value = candidate.keys
+    }
+  } catch {
+    // Storage may be unavailable; the page remains usable without disclosure restoration.
+  }
+})
 
 /**
  * 页面标题(RL-17 收尾):企业名 + 页面名。详情是异步取的,所以先给一个不含名字的兜底,
@@ -176,8 +215,18 @@ function pageHref(e: Evidence): string {
   return evidencePreviewHref({ sourceFile: e.sourceFile, page: e.page, back: route.fullPath })
 }
 
-function rememberPagePreviewReturn(event: MouseEvent): void {
+function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  const keys = new Set(openEvidenceKeys.value)
+  keys.add(key)
+  try {
+    window.sessionStorage.setItem(
+      EVIDENCE_DISCLOSURE_RETURN_KEY,
+      JSON.stringify({ back: route.fullPath, keys: [...keys] }),
+    )
+  } catch {
+    // Storage may be unavailable; ordinary preview navigation still works.
+  }
   rememberEvidencePreviewReturn(route.fullPath, event.currentTarget)
 }
 </script>
@@ -277,7 +326,11 @@ function rememberPagePreviewReturn(event: MouseEvent): void {
 
             <ul v-if="rec.events.length" class="mt-3 flex flex-col gap-2">
               <li v-for="(ev, i) in rec.events" :key="i">
-                <Collapsible v-slot="{ open }">
+                <Collapsible
+                  :open="evidenceDisclosureOpen(evidenceDisclosureKey(g.titleCode, rec.source, i))"
+                  @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(g.titleCode, rec.source, i), $event)"
+                  v-slot="{ open }"
+                >
                   <div class="flex flex-wrap items-center gap-2">
                     <EventChip :type="ev.type" :year="ev.year" :seq="ev.seq" />
                     <CollapsibleTrigger v-if="ev.evidence.length" as-child>
@@ -335,7 +388,7 @@ function rememberPagePreviewReturn(event: MouseEvent): void {
                         <NuxtLink
                           v-if="pageStateOf(e) === 'assigned'"
                           :to="pageHref(e)"
-                          @click="rememberPagePreviewReturn"
+                          @click="rememberPagePreviewReturn($event, evidenceDisclosureKey(g.titleCode, rec.source, i))"
                           class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
                         >
                           第 {{ e.page }} 页

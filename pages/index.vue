@@ -29,7 +29,10 @@ import {
   TITLE_SHORT,
 } from '~~/lib/labels'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
-import { useEvidencePreviewScrollRestore } from '~~/lib/roster/evidence-preview-return'
+import {
+  shouldNuxtScrollToTop,
+  useEvidencePreviewScrollRestore,
+} from '~~/lib/roster/evidence-preview-return'
 import {
   EMPTY_LEDGER_STATE,
   ledgerExportLabel,
@@ -63,6 +66,10 @@ import {
 } from '@/components/ui/pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+
+// A roster return is restored after its filtered rows (and expanded row) render. Use route origin
+// to avoid Nuxt's later top reset even if that hook consumes the saved offset first.
+definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
 
 /**
  * **名录台账** —— 合并后的唯一台账入口(RL-17)。
