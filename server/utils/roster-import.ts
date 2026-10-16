@@ -218,8 +218,14 @@ export function findEnterpriseById(db: Executor, id: number): ResolvedEnterprise
  *
  * 这条索引**不唯一**（同名多主体正是本模型要如实保留的），所以命中可能不止一行。
  * 取「第一行」的口径与改前一致：`.get()` 与原来的 `.all().find()` 都是**按 rowid 升序的第一行**
- * （全表扫描本就是 rowid 序；走索引时索引项是 `(name_norm, rowid)` 序，同一 `name_norm` 内
- * 仍是 rowid 序）。
+ * —— 全表扫描本就是 rowid 序；走索引时索引项是 `(name_norm, rowid)` 序，同一 `name_norm` 内
+ * 仍是 rowid 序。（实测把查询计划逼成 `SCAN enterprise` 也仍取到同一行，见
+ * `tests/roster-import-semantics.test.ts` 的同名多主体场景。）
+ *
+ * 一处**已知且不可达**的差别：SQL 绑定经 better-sqlite3 的 UTF-8 编码，**落单的代理对**
+ * （lone surrogate）会被换成 U+FFFD，于是它**可能**匹配到 JS `===` 匹配不到的行。
+ * `nameNorm` 一律来自 {@link normalizeName}，输入是真实企业名／平台 JSON，取不到落单代理对，
+ * 所以这条差别够不着；写在这里是为了不把「完全一致」说成无条件成立。
  */
 function findEnterpriseByNorm(db: Executor, nameNorm: string): ResolvedEnterprise | null {
   return db
@@ -233,7 +239,8 @@ function findEnterpriseByNorm(db: Executor, nameNorm: string): ResolvedEnterpris
  * **全部**同名行（`name_norm` 相同）—— 不论它有没有统代。重名候选的判据基础。
  *
  * RL-18：谓词进 `WHERE`（命中 `enterprise_name_norm_idx`）。返回的是**同一个集合**，
- * 且仍是 rowid 升序（重名候选的先后顺序因此不变）。
+ * 且仍是 rowid 升序（重名候选的先后顺序因此不变）——「为什么第一行不变」的完整理由与
+ * 那处已知不可达的差别见 {@link findEnterpriseByNorm}。
  */
 function findEnterprisesByNorm(db: Executor, nameNorm: string): ResolvedEnterprise[] {
   return db
@@ -3078,7 +3085,8 @@ export function enterpriseExists(db: Db, id: number): boolean {
 export function searchEnterpriseIdsByName(db: Db, raw: string): number[] {
   const norm = normalizeName(raw)
   const ids = new Set<number>()
-  for (const e of db.select().from(schema.enterprise).all()) if (e.nameNorm === norm) ids.add(e.id)
+  // 按名定位走与写入侧**同一个** `name_norm` 查找，不在这里再抄一份谓词（RL-18 收敛）。
+  for (const e of findEnterprisesByNorm(db, norm)) ids.add(e.id)
   for (const a of db.select().from(schema.enterpriseAlias).all()) {
     if (a.nameNorm === norm && a.verificationStatus === 'confirmed') ids.add(a.enterpriseId)
   }
