@@ -36,6 +36,8 @@ import {
   PLATFORM_INTERFACE_URLS,
   usccFormatVerdict,
   type NameMatchLevel,
+  type UsccBasisKind,
+  type UsccNameCorrection,
   type UsccChecklistFilter,
   type UsccChecklistResult,
   type UsccChecklistRow,
@@ -378,6 +380,11 @@ export interface UsccResearchReady {
   /** 被平台原始关系证实的**那一个**候选（候选多个时说明凭什么是它：凭证据，不凭名字像）。 */
   chosen: UsccLibraryCandidate | null
   uscc: string
+  /**
+   * 本项依据的**种类**：库内证据命中的档次（`byte` / `typographic` / `district_suffix`），
+   * 或 `ocr_correction`（人工确认的用字纠错 —— **从不由字形相近自动推出**）。
+   */
+  basisKind: UsccBasisKind
   /** 让身份成立的那条**平台原始关系**（库里已有 ⇒ 真实行；批内新写 ⇒ 见 `evidenceRef`）。 */
   evidence: DuplicateMergeEvidence | null
   /** 批内新写时的**自然键**（契约 §8.7）；库里已有真实行时为 `null`。 */
@@ -430,6 +437,8 @@ export interface UsccResearchReport {
     ready: number
     /** 其中「规范行已有同名 confirmed 曾用名 ⇒ 不再重复写别名」的条数。 */
     aliasAlreadyPresent: number
+    /** 每条可执行项**依据的种类**（逐字 / 字形 / 区县写法 / 人工确认的用字纠错 / 公开来源）。 */
+    byBasisKind: Record<string, number>
   }
   /** 按目标逐条给出结论（`filled` / `conflict` / `not_found` / `manual` 四桶）。 */
   outcomes: UsccTargetOutcome[]
@@ -610,6 +619,8 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       candidates: [],
       chosen: null,
       uscc,
+      // 公开来源那一路的证据是内容页，不是名称比对 ⇒ 单列一档，不冒充任何一种「名称相等」。
+      basisKind: 'public_source',
       evidence: null,
       evidenceRef: null,
       platformQueries: [],
@@ -701,11 +712,36 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
     }
 
     // 证据解析：先看库里已有的关系，再看判定文件带来的摘要。
-    // 判据：父代理 2026-10-16 裁定「归一化后相等即成立，A 类仍不抹平」——
-    // 即逐字之外还认「全/半角括号与空白」与「区县后缀有无」两类**可命名的字形/写法差异**。
-    // 实际命中到哪一档会记进 `evidence.nameMatch`，报告里能一眼看出哪些回填依赖放宽判据。
-    const stored = findUsccKeyedRelationEvidence(db, { uscc, name: target.name }, evidenceIndex, nameMatchLevel)
-    const supplied = pickSuppliedEvidence(claim, target.name, uscc)
+    // 判据分层（父代理 2026-10-16 裁定）：
+    //  - 默认：`nameMatchLevel` 的三档（逐字 / 全半角括号与空白 / 区县后缀有无）；
+    //  - **人工确认的用字纠错**：`claim.correction` 显式给出时，改成与
+    //    `correction.platformName`（平台原文）**逐字**比对 —— 那一档**绝不**由字形相近推出，
+    //    只能由这件事的负责人显式交出（见 `UsccBasisKind` 的注释）。
+    // 实际命中到哪一档记进 `evidence` / `note` / `basis`，报告里能一眼看出哪些回填依赖放宽判据。
+    if (claim.correction && !claim.correction.confirmedBy?.trim()) {
+      pending.set(target.enterpriseId, {
+        targetId: target.enterpriseId,
+        targetName: target.name,
+        outcome: 'manual',
+        code: 'correction_unattributed',
+        message:
+          '用字纠错（`ocr_correction`）必须**指名确认人** —— 空白的 `confirmedBy` 一律拒收，' +
+          '不认无主的「这两个名字其实是同一个」。',
+        candidates: [],
+      })
+      continue
+    }
+    const correctionMatch = claim.correction
+      ? (a: unknown, b: unknown) => (!isByteEqualName(a, claim.correction!.platformName) ? null : ('byte' as const))
+      : null
+    const evidenceName = claim.correction ? claim.correction.platformName : target.name
+    const stored = findUsccKeyedRelationEvidence(
+      db,
+      { uscc, name: evidenceName },
+      evidenceIndex,
+      correctionMatch ?? nameMatchLevel,
+    )
+    const supplied = pickSuppliedEvidence(claim, evidenceName, uscc)
     if (!stored.ok && !supplied) {
       const why = stored.reason === 'no_platform_query' ? '库里没有以该统代为查询键的平台查询' : stored.message
       pending.set(target.enterpriseId, {
@@ -730,6 +766,8 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
     )
     const anchorRelation =
       anchorGroup?.relations.find((relation) => relation.nameRaw === supplied!.nameRaw) ?? null
+    // 本项依据的种类：人工确认的用字纠错（显式给）> 库内证据命中的档次。
+    const basisKind = claim.correction ? ('ocr_correction' as const) : (stored.ok ? stored.evidence.nameMatch ?? 'byte' : supplied!.nameMatch)
     const evidenceRef: RosterPlatformRef | null =
       stored.ok || !anchorRelation
         ? null
@@ -772,6 +810,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
         chosen: null,
         uscc,
         evidence: stored.ok ? stored.evidence : null,
+        basisKind,
         evidenceRef,
         platformQueries,
         platformQuery,
@@ -796,7 +835,8 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
               ? { evidenceQueryId: stored.evidence.queryId }
               : {}),
           note:
-            `平台证据认领（${claim.batchRef ?? '判定文件'}）：${describeEvidenceLine(stored, supplied)}` +
+            `平台证据认领（${claim.batchRef ?? '判定文件'}）：${describeEvidenceLine(stored, supplied, claim.correction)}` +
+            `${claim.correction ? `；${describeCorrection(claim.correction)}` : ''}` +
             `${claim.reason ? `；判定依据：${claim.reason}` : ''}` +
             `${claim.flagState && claim.flagState !== 'true' ? `；⚠ 判定文件里 qymcEqualsAnnouncedName ${claim.flagState === 'absent' ? '缺席' : '标 false'}（采纳依据是库里对得上的关系，不是这句话）` : ''}`,
         },
@@ -823,6 +863,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       chosen: null,
       uscc,
       evidence: stored.ok ? stored.evidence : null,
+      basisKind,
       evidenceRef,
       platformQueries,
       platformQuery,
@@ -839,7 +880,8 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
           url: PLATFORM_INTERFACE_URLS[supplied!.interface],
           checkedOn: supplied!.checkedOn,
           basis:
-            `平台原始关系逐字证实：${describeEvidenceLine(stored, supplied)}` +
+            `平台原始关系逐字证实：${describeEvidenceLine(stored, supplied, claim.correction)}` +
+            `${claim.correction ? `；${describeCorrection(claim.correction)}` : ''}` +
             `${claim.reason ? `；判定依据：${claim.reason}` : ''}` +
             `${claim.flagState && claim.flagState !== 'true' ? `；⚠ 判定文件里 qymcEqualsAnnouncedName ${claim.flagState === 'absent' ? '缺席' : '标 false'}（采纳依据是库里对得上的关系，不是这句话）` : ''}`,
           name: target.name,
@@ -944,6 +986,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
         candidates,
         chosen: candidate,
         uscc: candidate.uscc,
+        basisKind: evidence.nameMatch ?? 'byte',
         evidence,
         evidenceRef: null,
         platformQueries: [],
@@ -1073,6 +1116,10 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       },
       ready: ready.length,
       aliasAlreadyPresent: ready.filter((item) => item.aliasAlreadyPresent).length,
+      byBasisKind: ready.reduce<Record<string, number>>((acc, item) => {
+        acc[item.basisKind ?? 'unknown'] = (acc[item.basisKind ?? 'unknown'] ?? 0) + 1
+        return acc
+      }, {}),
     },
     outcomes,
     ready,
@@ -1273,25 +1320,47 @@ function pickSuppliedEvidence(
 function describeEvidenceLine(
   stored: { ok: true; evidence: DuplicateMergeEvidence } | { ok: false; reason: string; message: string },
   supplied: SuppliedEvidence | null,
+  correction?: UsccNameCorrection | null,
 ): string {
   if (stored.ok) {
     const e = stored.evidence
+    // 用字纠错时**不能**写成「与公布名相等」—— 那条关系站的只是**平台记录的写法**，
+    // 判定「公布名是误读」是人的事，写在后面那句纠错说明里。
+    const how = correction ? `为「${e.nameRaw}」（平台记录写法，与公布名不一致，见下用字纠错）` : `${matchWords(e.nameMatch)}「${e.nameRaw}」`
     return (
       `${e.interface}${e.rdjb ? ` rdjb=${e.rdjb}` : ''} 序号 ${e.sequenceNo}` +
-      `${e.relationKey ? `（${e.relationKey}）` : ''} 于 ${e.queriedAt} 返回的 qymc ${matchWords(e.nameMatch)}「${e.nameRaw}」（库内关系 ${e.relationId}）`
+      `${e.relationKey ? `（${e.relationKey}）` : ''} 于 ${e.queriedAt} 返回的 qymc ${how}（库内关系 ${e.relationId}）`
     )
   }
   const e = supplied!
+  const how = correction
+    ? `为「${e.nameRaw}」（平台记录写法，与公布名不一致，见下用字纠错）`
+    : `${matchWords(e.nameMatch)}「${e.nameRaw}」`
   return (
     `${e.interface}${e.rdjb ? ` rdjb=${e.rdjb}` : ''}` +
     `${e.relationKey ? ` relationKey=${e.relationKey}` : '（未给 relationKey）'} 返回的 qymc ` +
-    `${matchWords(e.nameMatch)}「${e.nameRaw}」（随本批写入，见本批 platformQueries）`
+    `${how}（随本批写入，见本批 platformQueries）`
   )
 }
 
-/** 把比对档次写成一句可读的判据说明（逐字 / 字形等价 / 区县后缀写法）。 */
-function matchWords(level: NameMatchLevel | undefined): string {
+/** 把比对档次写成一句可读的判据说明（逐字 / 字形等价 / 区县后缀写法 / 人工纠错）。 */
+function matchWords(level: UsccBasisKind | undefined): string {
+  if (level === 'ocr_correction') return '经人工确认的用字纠错后等于'
   if (level === 'typographic') return '仅字形等价（全/半角括号、空白差异）于'
   if (level === 'district_suffix') return '仅区县后缀写法差异于'
   return '逐字等于'
+}
+
+/**
+ * `ocr_correction` 那一档的**记档文案**（契约 §8.10 要求写清的三件事，只在这里拼一次）：
+ * 谁确认的、公布名的写法是误读、平台记录的写法为准。
+ *
+ * ⚠️ 不写成「名称相等」也不写成「归一化后相等」—— 它两样都不是（归一化不会把「荔」变成「劦」）。
+ */
+function describeCorrection(correction: UsccNameCorrection): string {
+  return (
+    `用字纠错（人工确认，非自动判定字形相近）：公布名「${correction.announcedName}」` +
+    `经${correction.confirmedBy}确认为 OCR 误读，平台记录「${correction.platformName}」为准` +
+    (correction.note ? `；裁定原话：${correction.note}` : '')
+  )
 }
