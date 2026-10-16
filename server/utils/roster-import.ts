@@ -651,18 +651,29 @@ export function planRosterImport(
       for (const create of creates) {
         if (create) for (const key of pendingKeys(create)) pending.add(key)
       }
-      // 重名候选要用到「本批更早写入的同名行」。
+      // 本批**已计划**的两张索引（都只装「本批会新建」的那些记录）：
+      //  - 「身份键 → 已计划过的 (称号, 来源) 坐标」：同一批里两条记录同身份又同坐标时，
+      //    写入侧会**复用**前一条新建的企业与记录 ⇒ 后一条要计 `skip`，不能计 `add`；
+      //  - 「name_norm → 已计划新建的同名企业」：重名候选用。
+      const plannedCoordinates = new Map<string, Set<string>>()
       const earlierByName = new Map<string, PendingEnterpriseCreate[]>()
       records.forEach((record, index) => {
         const create = creates[index] ?? null
+        const name = optionalString(record?.enterprise?.name)
+        const uscc = usccOrNull(record?.enterprise?.uscc)
+        const coordinate = `${optionalString(record?.titleCode) ?? ''}/${optionalString(record?.source) ?? optionalString(announcement.sourceDocument?.source) ?? ''}`
+        const identityKey = name ? identityKeyOf({ name, uscc }) : null
+        const reusedInBatch = identityKey != null && (plannedCoordinates.get(identityKey)?.has(coordinate) ?? false)
         planAnnouncementRecord(db, request, announcement, record, index, push, {
           create,
           earlierSameName: create ? (earlierByName.get(create.nameNorm) ?? []) : [],
+          reusedInBatch,
         })
-        if (create) {
-          const list = earlierByName.get(create.nameNorm) ?? []
-          list.push(create)
-          earlierByName.set(create.nameNorm, list)
+        if (create && identityKey != null) {
+          const coordinates = plannedCoordinates.get(identityKey) ?? new Set<string>()
+          coordinates.add(coordinate)
+          plannedCoordinates.set(identityKey, coordinates)
+          earlierByName.set(create.nameNorm, [...(earlierByName.get(create.nameNorm) ?? []), create])
         }
       })
     }
@@ -701,10 +712,11 @@ function planAnnouncementRecord(
   record: RosterImportAnnouncement['records'][number],
   index: number,
   push: (item: PlannedItem) => void,
-  candidates: { create: PendingEnterpriseCreate | null; earlierSameName: PendingEnterpriseCreate[] } = {
-    create: null,
-    earlierSameName: [],
-  },
+  candidates: {
+    create: PendingEnterpriseCreate | null
+    earlierSameName: PendingEnterpriseCreate[]
+    reusedInBatch: boolean
+  } = { create: null, earlierSameName: [], reusedInBatch: false },
 ): void {
   const ref = `record:${index}`
   const name = optionalString(record?.enterprise?.name)
@@ -758,13 +770,20 @@ function planAnnouncementRecord(
       .find((r) => r.enterpriseId === existing.id && r.titleCode === titleCode && r.source === source)
   }
 
+  // 这一条记录会**复用**既有行（`existingRecord`）吗？
+  // 两条判据都必须在，否则预检又会与提交不一致：
+  //  - 库里已有同坐标记录（库状态）；
+  //  - 或**本批更早**的记录已经为**同一身份的同一坐标**建过（写入侧会复用那条，
+  //    `rowsWritten` 为 0）—— 库里此刻看不到它，只看库会把这种情况误报成 `add`。
+  const reused = !!existingRecord || candidates.reusedInBatch
+
   push({
     item: success(
       'record',
       existing ? `record:${existingRecord?.id ?? ref}` : ref,
       { enterpriseId: existing?.id ?? null, titleCode, source },
     ),
-    action: existingRecord ? 'skip' : 'add',
+    action: reused ? 'skip' : 'add',
     review: !uscc,
     run: (tx) => writeAnnouncementRecord(tx, request, announcement, record, { name, uscc, district, titleCode, source, reason: { existingRecord } }),
   })
@@ -1772,8 +1791,13 @@ function planMerge(
   push({
     item: success('merge', `merge:${fromRaw ?? fromName}->${intoUscc}`, {
       intoUscc,
-      /** 一致性：预检要说清「这条归并会不会给规范行改名」（§5.3 ①）。 */
-      canonicalName: optionalString(merge.canonicalName),
+      /**
+       * 请求里给的 `canonicalName`（`null` = 没要求改名）。
+       *
+       * ⚠️ 这是**请求**不是结论：真会不会改名取决于**执行时**规范行的现名（而规范行可能本批才建），
+       * 且与现名逐字相同时不改。权威答案在血缘的 `rename`（`null` = 确实没改名）。
+       */
+      requestedCanonicalName: optionalString(merge.canonicalName),
     }),
     action: 'update',
     review: false,
@@ -1790,7 +1814,8 @@ function ensureEnterpriseAlias(
   input: {
     enterpriseId: number
     name: string
-    sourceKind: 'platform_business' | 'platform_apply' | 'announcement' | 'manual'
+    /** 来源类别取值**从冻结的表列派生**，不在这里再抄一遍枚举。 */
+    sourceKind: (typeof schema.enterpriseAlias.sourceKind.enumValues)[number]
     sourceRefId: number
     note: string
   },
@@ -1878,13 +1903,15 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
       .run()
   }
   // 被顶掉的原名：来源与本次归并同一份证据（调用方给的关系行）。
+  // 说明文字**不能**被调用方的 `note` 顶掉 —— 那条别名为什么存在，只在这里说得清。
+  const renameNote = `主名称改为「${canonicalName}」（导出表侧）后被顶掉的原名`
   const renameAlias = renamedFrom
     ? ensureEnterpriseAlias(tx, {
         enterpriseId: into.id,
         name: renamedFrom,
         sourceKind,
         sourceRefId,
-        note: optionalString(merge.note) ?? `主名称改为「${canonicalName}」（导出表侧）后被顶掉的原名`,
+        note: optionalString(merge.note) ? `${renameNote}；${optionalString(merge.note)}` : renameNote,
       })
     : { id: null, created: false }
 

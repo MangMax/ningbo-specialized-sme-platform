@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
+import { getPlatformExportRows, listPlatformSnapshots } from '../../lib/platform-snapshots'
 import {
   duplicateTwinKey,
   type DuplicateMergeEvidence,
@@ -139,31 +140,29 @@ function candidateKey(candidate: DuplicateNameCandidate): string {
 /**
  * **导出表侧的主名称**（§5.3 ①，只读）：该统代在工信部导出快照里的企业名。
  *
- * 取**最新情况**：`collectedOn` 最新的那一批（并列取批 id 大的),批内取源行号最小的那一行。
- * 名字为空的不算（空值优于错误值）。**取不到就返回 `null`,绝不猜** —— 调用方据此不改规范行名。
+ * 取**最新情况** —— 判据与读侧**同一套**（`lib/roster/enterprise-roster.ts` 的
+ * `latestBatchByTitle`：**年份大者新,同年按批 id**),不另立一套「最新」的定义。
+ * 批内取该统代**源行号最小**的那一行的名字；名字为空的批次不算（空值优于错误值）。
+ * **取不到就返回 `null`,绝不猜** —— 调用方据此不改规范行名。
+ *
+ * 表的读走 `lib/platform-snapshots.ts` 的两个读函数（导出快照的读侧在那边），
+ * 本函数不自己扫表 —— 「导出快照长什么样」只有一处知识。
  */
 export function findExportSideName(db: Db, usccRaw: string | null): string | null {
   const uscc = normalizeUscc(usccRaw)
   if (!uscc) return null
-  const batches = db.select().from(schema.platformExportBatch).all()
-  const rows = db
-    .select()
-    .from(schema.platformExportRow)
-    .all()
-    .filter((row) => normalizeUscc(row.usccRaw) === uscc && !!row.nameRaw?.trim())
-  if (rows.length === 0) return null
-  const rank = (row: (typeof rows)[number]) => {
-    const batch = batches.find((b) => b.id === row.batchId)
-    return { collectedOn: batch?.collectedOn ?? '', batchId: row.batchId }
+  // 读侧返回的是 (称号 → 年份 → 批 id) 升序,这里要的是「最新」:按同一组字段重排一次(纯算术比较,
+  // 不在比较器里查库),命中即返回 ⇒ 通常只读一个批次的快照行。
+  const batches = [...listPlatformSnapshots(db)].sort((a, b) =>
+    a.batch.year !== b.batch.year ? b.batch.year - a.batch.year : b.batch.id - a.batch.id,
+  )
+  for (const item of batches) {
+    const row = getPlatformExportRows(db, item.batch.id).find(
+      (candidate) => normalizeUscc(candidate.usccRaw) === uscc && !!candidate.nameRaw?.trim(),
+    )
+    if (row?.nameRaw) return row.nameRaw.trim()
   }
-  const best = [...rows].sort((a, b) => {
-    const ra = rank(a)
-    const rb = rank(b)
-    if (ra.collectedOn !== rb.collectedOn) return ra.collectedOn < rb.collectedOn ? 1 : -1
-    if (ra.batchId !== rb.batchId) return rb.batchId - ra.batchId
-    return a.sourceRowNo - b.sourceRowNo
-  })[0]!
-  return best.nameRaw!.trim()
+  return null
 }
 
 /** 幂等键：源批次 + **归并内容**（同证据同键 ⇒ 重放不增行；新证据新键 ⇒ 可再跑一批）。 */

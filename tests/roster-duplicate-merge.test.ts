@@ -698,6 +698,30 @@ describe('⑤ · 预检按写入侧的身份规则判 add/skip（不再用带按
     expect(record.item.ref).toBe('record:0')
   })
 
+  it('同一批里两条**同身份同坐标**的记录：后一条计 skip（写入侧会复用前一条建的行）', () => {
+    // 只看库状态的判据会把第二条也报成 `add`（库里此刻还没有那一行），而提交时
+    // `upsertEnterprise` / `upsertRecord` 会复用前一条建的企业与记录 ⇒ 又回到
+    // 「预检说 2 条新增、提交只写 1 条」。两处判据已在计划里合并（`reusedInBatch`）。
+    const twin: RosterImportRequest = {
+      ...request,
+      idempotencyKey: 'rl14/preflight-identity-twin#sha256:p2',
+      payload: {
+        announcement: {
+          ...request.payload.announcement!,
+          records: [request.payload.announcement!.records[0]!, request.payload.announcement!.records[0]!],
+        },
+      },
+    }
+    const plan = planRosterImport(db, twin)
+    expect(plan.items.map((i) => `${i.item.kind}:${i.action}`)).toEqual([
+      'record:add',
+      // 第一条记录**新建**企业时，库里那条同名行（本 describe 的种子）⇒ 一条候选（不写行）。
+      'duplicate_candidate:note',
+      // 第二条记录同身份同坐标 ⇒ 复用第一条建的企业与记录。
+      'record:skip',
+    ])
+  })
+
   it('提交后：written 与 skipped 不再自相矛盾，记录项指向**新建**那行', async () => {
     const pre = await client().preflight(request)
     expect(pre.preflight.add).toBe(1)
@@ -811,6 +835,12 @@ describe('① · 主名称以导出表为准：归并把规范行改成导出名
       canonicalName: EXPORT_NAME,
       sourceRefId: evidenceRelationId,
     })
+    // 预检的 merge 项只说**请求**里给了什么（`requestedCanonicalName`）—— 真会不会改名在执行时定，
+    // 权威答案在血缘 `rename`。名字如实，不承诺做不到的事。
+    const plan = planRosterImport(db, report.request!)
+    const mergeItem = plan.items.find((i) => i.item.kind === 'merge')!
+    expect(mergeItem.action).toBe('update')
+    expect(mergeItem.item.detail!.requestedCanonicalName).toBe(EXPORT_NAME)
   })
 
   it('★ 执行：规范行 name = **导出名**，被顶掉的原名是 confirmed 别名（来源 = 落库关系）', async () => {
