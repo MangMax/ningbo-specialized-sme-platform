@@ -270,8 +270,8 @@ const exportUrl = computed(
                   <Empty v-if="!isLoading && !error && !rows.length" class="h-full">
                     <EmptyHeader>
                       <EmptyMedia variant="icon"><GitCompareArrows /></EmptyMedia>
-                      <EmptyTitle>{{ showCurated ? '暂无差异' : '暂无待核对企业' }}</EmptyTitle>
-                      <EmptyDescription>{{ curatedCount(direction) && !showCurated ? '当前方向均已核实，可开启「显示已核实」查看。' : '当前称号与方向没有差异企业。' }}</EmptyDescription>
+                      <EmptyTitle>没有匹配的企业</EmptyTitle>
+                      <EmptyDescription>当前筛选条件下没有匹配结果。</EmptyDescription>
                     </EmptyHeader>
                   </Empty>
                   <Table v-else class="min-w-[1090px] table-fixed">

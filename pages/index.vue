@@ -542,7 +542,7 @@ useHead({
           type="number"
           min="1"
           :max="200"
-          class="bg-card h-8 w-20"
+          class="bg-card h-8 w-20 shadow-none"
           aria-label="自定义每页条数"
           @change="onSizeInput"
         />

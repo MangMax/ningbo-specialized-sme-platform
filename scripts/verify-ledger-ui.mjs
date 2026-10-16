@@ -556,6 +556,26 @@ async function verifyComparisonSearchAndMotion(cdp) {
     if (!searched) bad(`两侧名录比对 · 搜索:输入「${name}」后没有返回匹配企业`)
     else ok(`两侧名录比对 · 搜索:名称筛选返回 ${JSON.stringify(name)}`)
 
+    const emptyQuery = 'RL20空筛选验证-不存在'
+    await setInputValue(cdp, sessionId, 'input[aria-label*="企业名称"]', emptyQuery)
+    const emptyState = await waitUntil(cdp, sessionId, `(() => {
+      const status = document.querySelector('[data-testid="comparison-loading-status"]');
+      const rows = document.querySelectorAll('tbody tr');
+      const title = document.querySelector('[data-slot="empty-title"]')?.textContent?.trim();
+      const description = document.querySelector('[data-slot="empty-description"]')?.textContent?.trim();
+      return !(status?.textContent ?? '').includes('正在') && rows.length === 0 &&
+        title === '没有匹配的企业' && description === '当前筛选条件下没有匹配结果。';
+    })()`)
+    if (!emptyState) {
+      const state = await evaluate(cdp, sessionId, `(() => ({
+        status: document.querySelector('[data-testid="comparison-loading-status"]')?.textContent,
+        rows: document.querySelectorAll('tbody tr').length,
+        title: document.querySelector('[data-slot="empty-title"]')?.textContent?.trim(),
+        description: document.querySelector('[data-slot="empty-description"]')?.textContent?.trim(),
+      }))()`)
+      bad(`两侧名录比对 · 空筛选:零匹配时的空状态不准确 ${JSON.stringify(state)}`)
+    } else ok('两侧名录比对 · 空筛选:零匹配结果使用准确的空状态文案')
+
     // 清空名称筛选,恢复多页数据并用真按钮验收对比表翻页的加载状态。
     await setInputValue(cdp, sessionId, 'input[aria-label*="企业名称"]', '')
     const clearIdle = await waitUntil(cdp, sessionId, `(() => !(document.querySelector('[data-testid="comparison-loading-status"]')?.textContent ?? '').includes('正在') && [...document.querySelectorAll('tbody tr a')].length > 0 && !(document.querySelector('[data-testid="comparison-loading-status"]')?.textContent ?? '').includes('共 1 条'))()`)
@@ -588,6 +608,43 @@ async function verifyComparisonSearchAndMotion(cdp) {
     }
   } finally {
     await finishFetchGate(cdp, sessionId).catch(() => {})
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
+async function verifyCustomPageSizeInputShadow(cdp) {
+  const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0])
+  const { targetId, sessionId } = page
+  try {
+    await clickSelector(cdp, sessionId, '[role="combobox"][aria-label="每页条数"]')
+    const customOption = await waitUntil(cdp, sessionId, `(() => [...document.querySelectorAll('[role="option"]')].some((el) => (el.textContent ?? '').includes('自定义')))()`)
+    if (!customOption) {
+      bad('企业列表 · 自定义每页:Select 中没有「自定义」选项')
+      return
+    }
+    await clickElementContaining(cdp, sessionId, '[role="option"]', '自定义')
+    const inputReady = await waitUntil(cdp, sessionId, `!!document.querySelector('[aria-label="自定义每页条数"]')`)
+    if (!inputReady) {
+      bad('企业列表 · 自定义每页:选择「自定义」后没有显示输入框')
+      return
+    }
+    const measurement = await evaluate(cdp, sessionId, `(${MEASURE})`)
+    const shadow = shadowViolation(measurement, '企业列表 · 自定义每页')
+    if (shadow) bad(shadow)
+    else ok('企业列表 · 自定义每页:显示的数字输入框无阴影')
+
+    const broken = await evaluate(cdp, sessionId, `(() => {
+      const input = document.querySelector('[aria-label="自定义每页条数"]');
+      input?.style.setProperty('transition', 'none', 'important');
+      input?.style.setProperty('box-shadow', 'rgba(0, 0, 0, 0.2) 0px 1px 2px 0px', 'important');
+      if (input) void input.offsetWidth;
+      return (${MEASURE});
+    })()`)
+    const selfCheck = shadowViolation(broken, '自定义每页阴影缺陷自检')
+    if (!selfCheck) bad(`自定义每页阴影缺陷自检:重新注入阴影后断言仍未命中 ${JSON.stringify(broken)}`)
+    else console.log(`✗ 自定义每页阴影缺陷自检按预期变红:${selfCheck}`)
+    if (selfCheck) ok('自定义每页阴影缺陷自检:关闭临时 target 后缺陷已复原')
+  } finally {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
   }
 }
@@ -648,7 +705,7 @@ const MEASURE = `(() => {
   const de = document.documentElement;
   const root = document.querySelector('.ledger-page, .comparison-page');
   const shadowTargets = [
-    ...(root?.querySelectorAll('[data-slot="card"], [data-slot="button"], [data-slot="input"], [data-slot="textarea"], [data-slot="switch"], [data-slot="tabs-trigger"], [data-slot="select-trigger"]') ?? []),
+    ...(root?.querySelectorAll('[data-slot="card"], [data-slot="button"], [data-slot="input"], [data-slot="textarea"], [data-slot="switch"], [data-slot="tabs-trigger"], [data-slot="select-trigger"], [aria-label="自定义每页条数"]') ?? []),
     ...document.querySelectorAll('[data-testid="enterprise-drawer"], [data-slot="dialog-content"], [data-slot="select-content"], [data-slot="dropdown-menu-content"]'),
   ];
   const hasVisibleShadow = (el) => {
@@ -842,6 +899,7 @@ async function main() {
     await verifyMissingRecognitionYearAndEvidence(cdp)
     await verifyLedgerLoadingAndDrawer(cdp)
     await verifyComparisonSearchAndMotion(cdp)
+    await verifyCustomPageSizeInputShadow(cdp)
     await verifyFilesSearchLoading(cdp)
 
     // 页面减法:行内徽章自身就是状态,图例和横向滚动操作说明不再常驻占高。
