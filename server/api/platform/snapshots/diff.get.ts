@@ -1,11 +1,5 @@
 import { useDb } from '@db'
-import {
-  diffPlatformSnapshots,
-  getPlatformExportRows,
-  getPlatformSnapshotBatch,
-  type PlatformSnapshotBatch,
-} from '~~/lib/platform-snapshots'
-import { parsePositiveInt } from '../../../utils/platform-snapshot-query'
+import { handlePlatformSnapshotRequest } from '../../../utils/platform-snapshots-http'
 
 /**
  * **比较两个导出快照**(RL-05 验收:新增 / 消失 / 字段变化,并追溯到原始行)。
@@ -13,7 +7,8 @@ import { parsePositiveInt } from '../../../utils/platform-snapshot-query'
  * `from` = 旧批号,`to` = 新批号;两批必须同称号(拿中小表比创新型表只会全是增删,
  * 没有意义)。每处差异都带源行号 `sourceRowNo`,可回溯到导出的物理行。
  *
- * 这是 §7.7 快照读接口的**增量**补充(契约未定义 diff 端点),只读、不鉴权。
+ * 这是 §7.7 快照读接口的**增量**补充(契约 §7.7 已收录),只读、不鉴权。
+ * 逻辑在 `server/utils/platform-snapshots-http.ts`(不 import h3,可被真实 HTTP 回放测试驱动)。
  */
 defineRouteMeta({
   openAPI: {
@@ -33,40 +28,12 @@ defineRouteMeta({
 })
 
 export default defineEventHandler((event) => {
-  const q = getQuery(event)
-  const fromId = parsePositiveInt(q.from)
-  const toId = parsePositiveInt(q.to)
-  if (fromId === null || toId === null) {
-    throw createError({ statusCode: 400, message: '需要正整数参数 from 与 to(两个快照批次 id)。' })
-  }
-
-  const db = useDb()
-  const from = getPlatformSnapshotBatch(db, fromId)
-  const to = getPlatformSnapshotBatch(db, toId)
-  if (!from || !to) {
-    throw createError({ statusCode: 404, message: `快照批次不存在:${!from ? `from=${fromId} ` : ''}${!to ? `to=${toId}` : ''}` })
-  }
-  if (from.titleCode !== to.titleCode) {
-    throw createError({
-      statusCode: 400,
-      message: `两批称号不同(${from.titleCode} vs ${to.titleCode}),不能相互比较。`,
-    })
-  }
-
-  const diff = diffPlatformSnapshots(getPlatformExportRows(db, fromId), getPlatformExportRows(db, toId))
-  return { from: summarize(from), to: summarize(to), diff }
+  const response = handlePlatformSnapshotRequest(
+    'diff',
+    { method: getMethod(event), query: getQuery(event) as Record<string, unknown> },
+    { db: useDb() },
+  )
+  setResponseStatus(event, response.status)
+  for (const [name, value] of Object.entries(response.headers)) setHeader(event, name, value)
+  return response.body
 })
-
-/** 比较结果里附带的批次摘要(够看清是哪两版,不塞整批行)。 */
-function summarize(batch: PlatformSnapshotBatch) {
-  return {
-    id: batch.id,
-    titleCode: batch.titleCode,
-    year: batch.year,
-    collectedOn: batch.collectedOn,
-    originalFilename: batch.originalFilename,
-    sha256: batch.sha256,
-    importStatus: batch.importStatus,
-    replacedBatchId: batch.replacedBatchId,
-  }
-}
