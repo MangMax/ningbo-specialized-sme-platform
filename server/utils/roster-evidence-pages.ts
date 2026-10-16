@@ -73,6 +73,8 @@ export function readEvidencePageCandidates(db: Db, sourceFiles: readonly string[
       enterpriseId: schema.enterprise.id,
       enterpriseName: schema.enterprise.name,
       district: schema.record.district,
+      // 企业自身属地也带上:界面上显示的有效属地是它优先(见 `EvidencePageCandidate`)。
+      enterpriseDistrict: schema.enterprise.district,
     })
     .from(schema.recordEvidence)
     .innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId))

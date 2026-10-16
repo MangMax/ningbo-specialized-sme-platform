@@ -1,4 +1,5 @@
 import { useDb } from '@db'
+import { createCoreRouteHandler } from '../../../utils/core-route'
 import { handleEvidencePagesRequest } from '../../../utils/roster-evidence-pages'
 
 /**
@@ -98,31 +99,15 @@ defineRouteMeta({
       },
       400: { description: '请求体不合法(缺 `entries` / 空数组 / 不是对象)。' },
       401: { description: '未带 token、token 不匹配,或服务端未配置 `NUXT_API_TOKEN`。' },
-      405: { description: '只接受 POST。' },
+      // ⚠️ 这里**不列 405**:本文件只注册 POST,真实面上对 `/api/roster/evidence/pages` 发 GET
+      // 会落到 SPA 兜底(实测 200 + 应用外壳 HTML),**不是**核心那条 405 —— 把核心会返回
+      // 的状态码写进**路由**的 spec,等于给读者一个他永远观测不到的承诺。
+      // 核心自己仍守方法(直接调用方 / 测试夹具走的是它),见 `roster-evidence-pages.ts`。
     },
   },
 })
 
-export default defineEventHandler(async (event) => {
-  const response = handleEvidencePagesRequest(
-    {
-      method: getMethod(event),
-      headers: {
-        authorization: headerValue(event, 'authorization'),
-        'x-api-token': headerValue(event, 'x-api-token'),
-      },
-      // body 解析失败给 `null`,由核心报 400 —— 与导入那三条路由同一处置。
-      body: await readBody(event).catch(() => null),
-    },
-    { db: useDb(), apiToken: useRuntimeConfig().apiToken },
-  )
-  setResponseStatus(event, response.status)
-  for (const [name, value] of Object.entries(response.headers)) setHeader(event, name, value)
-  return response.body
-})
-
-/** h3 的 `getHeader` 返回 `string | undefined`;重复头(数组)当没带。 */
-function headerValue(event: Parameters<typeof getHeader>[0], name: string): string | undefined {
-  const value = getHeader(event, name)
-  return typeof value === 'string' ? value : undefined
-}
+export default createCoreRouteHandler(handleEvidencePagesRequest, () => ({
+  db: useDb(),
+  apiToken: useRuntimeConfig().apiToken,
+}))

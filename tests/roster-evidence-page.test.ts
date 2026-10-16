@@ -28,12 +28,12 @@ const F145 = 'jxj/announcement/2022/甬经信中小〔2022〕145号关于公布�
 /** 真库里 145号 的三条「序号 6」—— 三条都是海曙区,分属三张分节名单。 */
 function candidates(): EvidencePageCandidate[] {
   return [
-    { evidenceId: 1, sourceFile: F145, listNo: 6, enterpriseId: 101, enterpriseName: '宁波培源股份有限公司', district: '海曙区', page: null },
-    { evidenceId: 2, sourceFile: F145, listNo: 6, enterpriseId: 204, enterpriseName: '宁波开诚生态技术有限公司', district: '海曙区', page: null },
-    { evidenceId: 3, sourceFile: F145, listNo: 6, enterpriseId: 217, enterpriseName: '宁波恒特汽车零部件有限公司', district: '海曙区', page: null },
+    { evidenceId: 1, sourceFile: F145, listNo: 6, enterpriseId: 101, enterpriseName: '宁波培源股份有限公司', district: '海曙区', enterpriseDistrict: '海曙区', page: null },
+    { evidenceId: 2, sourceFile: F145, listNo: 6, enterpriseId: 204, enterpriseName: '宁波开诚生态技术有限公司', district: '海曙区', enterpriseDistrict: '海曙区', page: null },
+    { evidenceId: 3, sourceFile: F145, listNo: 6, enterpriseId: 217, enterpriseName: '宁波恒特汽车零部件有限公司', district: '海曙区', enterpriseDistrict: '海曙区', page: null },
     // 同一份文件里的两家近似名(附件一 序号 65 / 附件三 序号 104)—— 都不能被对方吸走。
-    { evidenceId: 4, sourceFile: F145, listNo: 65, enterpriseId: 65, enterpriseName: '宁波力劲科技有限公司', district: '北仑区', page: null },
-    { evidenceId: 5, sourceFile: F145, listNo: 104, enterpriseId: 405, enterpriseName: '宁波力劲机械有限公司', district: '北仑区', page: null },
+    { evidenceId: 4, sourceFile: F145, listNo: 65, enterpriseId: 65, enterpriseName: '宁波力劲科技有限公司', district: '北仑区', enterpriseDistrict: '北仑区', page: null },
+    { evidenceId: 5, sourceFile: F145, listNo: 104, enterpriseId: 405, enterpriseName: '宁波力劲机械有限公司', district: '北仑区', enterpriseDistrict: '北仑区', page: null },
   ]
 }
 
@@ -93,7 +93,7 @@ describe('planEvidencePages —— 分节定位(裸序号一律拒收)', () => {
 
   it('用 enterpriseId 定位同样有效,不受全角/半角括号影响(葛洲坝展慈)', () => {
     const rows: EvidencePageCandidate[] = [
-      { evidenceId: 9, sourceFile: F145, listNo: 65, enterpriseId: 262, enterpriseName: '葛洲坝展慈(宁波)金属工业有限公司', district: '慈溪市', page: null },
+      { evidenceId: 9, sourceFile: F145, listNo: 65, enterpriseId: 262, enterpriseName: '葛洲坝展慈(宁波)金属工业有限公司', district: '慈溪市', enterpriseDistrict: '慈溪市', page: null },
     ]
     const plan = planEvidencePages(
       [{ sourceFile: F145, listNo: 65, page: 10, enterpriseName: '葛洲坝展慈（宁波）金属工业有限公司' }],
@@ -105,8 +105,8 @@ describe('planEvidencePages —— 分节定位(裸序号一律拒收)', () => {
 
   it('district 能给候选进一步收窄', () => {
     const rows: EvidencePageCandidate[] = [
-      { evidenceId: 7, sourceFile: F145, listNo: 20, enterpriseId: 300, enterpriseName: '宁波甲乙丙有限公司', district: '海曙区', page: null },
-      { evidenceId: 8, sourceFile: F145, listNo: 20, enterpriseId: 301, enterpriseName: '宁波甲乙丙有限公司', district: '慈溪市', page: null },
+      { evidenceId: 7, sourceFile: F145, listNo: 20, enterpriseId: 300, enterpriseName: '宁波甲乙丙有限公司', district: '海曙区', enterpriseDistrict: '海曙区', page: null },
+      { evidenceId: 8, sourceFile: F145, listNo: 20, enterpriseId: 301, enterpriseName: '宁波甲乙丙有限公司', district: '慈溪市', enterpriseDistrict: '慈溪市', page: null },
     ]
     const ok = planEvidencePages(
       [{ sourceFile: F145, listNo: 20, page: 4, enterpriseId: 301, district: '慈溪市' }],
@@ -119,6 +119,38 @@ describe('planEvidencePages —— 分节定位(裸序号一律拒收)', () => {
     expect(ambiguous.assignments).toEqual([])
     expect(ambiguous.pending[0]!.reason).toBe('ambiguous')
     expect(ambiguous.pending[0]!.candidateIds).toEqual([7, 8])
+  })
+
+  it('★ 属地按「有效属地」认:记录上的对不上、**企业自身**的对得上,也算命中', () => {
+    // 界面上给人看的属地是「有效属地」,它**优先取企业自身的**(见
+    // `lib/roster/enterprise-roster.ts` 的 `effectiveDistrict`)。调用方多半照着界面抄,
+    // 只认记录上的那一个,就会让一条看起来完全正确的条目莫名其妙 `no_match`。
+    const rows: EvidencePageCandidate[] = [
+      {
+        evidenceId: 30,
+        sourceFile: F145,
+        listNo: 70,
+        enterpriseId: 900,
+        enterpriseName: '宁波属地测试有限公司',
+        district: null, // 记录没写属地
+        enterpriseDistrict: '江北区', // 企业自身写了
+        page: null,
+      },
+    ]
+    const plan = planEvidencePages(
+      [{ sourceFile: F145, listNo: 70, page: 12, enterpriseId: 900, district: '江北区' }],
+      rows,
+    )
+    expect(plan.pending).toEqual([])
+    expect(plan.assignments.map((a) => a.evidenceId)).toEqual([30])
+
+    // 两边都不是这个属地 ⇒ 仍然留空待核。
+    const miss = planEvidencePages(
+      [{ sourceFile: F145, listNo: 70, page: 12, enterpriseId: 900, district: '象山县' }],
+      rows,
+    )
+    expect(miss.assignments).toEqual([])
+    expect(miss.pending[0]!.reason).toBe('no_match')
   })
 
   it('page 不是 ≥1 的整数 ⇒ 拒收,不取整也不当成「没有页码」', () => {
@@ -141,6 +173,7 @@ describe('planEvidencePages —— 分节定位(裸序号一律拒收)', () => {
         enterpriseId: 5,
         enterpriseName: '宁波某公司',
         district: null,
+        enterpriseDistrict: null,
         page: null,
       },
     ]
@@ -163,6 +196,10 @@ describe('planEvidencePages —— 分节定位(裸序号一律拒收)', () => {
     expect(plan.assignments).toEqual([])
     expect(plan.pending).toHaveLength(2)
     expect(plan.pending.every((p) => p.reason === 'ambiguous')).toBe(true)
+    // ★ 待核项里的 `sameListNo` 报的仍是**同 (文件, 序号) 在库里一共几条**(分节探针),
+    // 不是「这条冲突涉及几行」。145号 的序号 6 是 3 条 —— 写死 1 就等于把这个探针关掉。
+    expect(plan.pending.map((p) => p.sameListNo)).toEqual([3, 3])
+    expect(plan.pending.every((p) => p.candidateIds.length === 1)).toBe(true)
   })
 
   it('同一行被重复写同一个页码 ⇒ 照写(幂等重跑的常见形状)', () => {

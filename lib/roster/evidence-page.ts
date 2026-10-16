@@ -32,17 +32,12 @@
  * 那些行。判定仍然由原始记录(那条出处行 + 人工核对的页码)触发。
  */
 import { normalizeName } from '../domain'
+// `lib/preview.ts` 是**零依赖**的纯规则(它只按扩展名分派预览类型,不 import 任何东西),
+// 所以「取扩展名」这件事直接用它的那一份,不另抄一遍 —— 抄一份就多一处会跟它走偏的口径。
+import { extensionOf } from '../preview'
 
 /** 只有 PDF 有**稳定的实际页序**;Word / Excel / 图片没有「第 N 页」这回事。 */
 const PAGE_CAPABLE_EXT = 'pdf'
-
-/** 取路径的扩展名(小写、不含点)。与 `lib/preview.ts` 同口径,但不依赖它(纯规则不引 UI 层)。 */
-function extensionOf(path: string): string {
-  const clean = path.split(/[?#]/, 1)[0] ?? ''
-  const base = clean.split('/').pop() ?? ''
-  const dot = base.lastIndexOf('.')
-  return dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
-}
 
 /**
  * 这份来源**给不给得出页码**。
@@ -118,7 +113,16 @@ export interface EvidencePageCandidate {
   listNo: number | null
   enterpriseId: number
   enterpriseName: string
+  /**
+   * 这条**记录**上的属地(公布文件里那一行印的属地)。
+   * ⚠️ 判定时**不能只看它** —— 界面上显示、导出里写的属地是「有效属地」
+   * (`lib/roster/enterprise-roster.ts` 的 `effectiveDistrict`:**企业自身属地优先**,
+   * 为空才退回记录)。调用方多半是照着界面抄的属地,所以两个都要认,否则一条
+   * 看起来完全正确的条目会莫名其妙 `no_match`。
+   */
   district: string | null
+  /** 这个**企业**自身的属地(见上)。 */
+  enterpriseDistrict: string | null
   /** 这一行**当前**的页码;`null` = 还没定。重跑时用来报「本来就是这个值」。 */
   page: number | null
 }
@@ -256,7 +260,11 @@ export function planEvidencePages(
       ) {
         return false
       }
-      if (entry.district != null && entry.district !== '' && c.district !== entry.district) return false
+      // 属地:记录上的与**企业自身**的都算 —— 界面上给人看的是「有效属地」,
+      // 而它优先取企业自身的(见 `EvidencePageCandidate.district` 的说明)。
+      if (entry.district != null && entry.district !== '') {
+        if (c.district !== entry.district && c.enterpriseDistrict !== entry.district) return false
+      }
       return true
     })
 
@@ -316,13 +324,17 @@ export function planEvidencePages(
       continue
     }
     const pages = [...new Set(claimed.get(a.evidenceId)!.map((c) => c.page))].sort((x, y) => x - y)
+    // `sameListNo` 报的是**同 (文件, 序号) 在库里一共有几条**,不是「这条冲突涉及几行」——
+    // 它是分节陷阱的探针,任何一条待核都要给出真实的池子大小(与 `no_match` 同一口径)。
     pending.push({
       index: a.index,
       entry: a.entry,
       reason: 'ambiguous',
       detail: `同一出处行(evidence #${a.evidenceId})被本批的两条入参分别指到第 ${pages.join(' / ')} 页 —— 页码互相矛盾,这一行不写,等人工核对后再补。`,
       candidateIds: [a.evidenceId],
-      sameListNo: 1,
+      sameListNo: candidates.filter(
+        (c) => c.sourceFile === a.entry.sourceFile.trim() && c.listNo === a.entry.listNo,
+      ).length,
     })
   }
   return { assignments: kept, pending }
