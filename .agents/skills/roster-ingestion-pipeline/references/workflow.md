@@ -27,6 +27,7 @@ Roster entities — enterprises, confirmed aliases (曾用名), title events, so
 - Include **every** in-scope official roster row, including rows unmatched to any export snapshot.
 - Merging a no-credit-code enterprise into its canonical row is a `payload.merges` item (§8.4), not a direct `uscc_norm` update; the merge lineage (which records/events/evidence moved) is stored in `import_batch.item_results` and can be read back.
 - A batch may reference enterprises it creates in the same payload; identities resolve at write time.
+- **Evidence pointers can target rows created in the same batch.** `aliases[].sourceRelationRef`, `differences[].evidenceQueryRef` / `evidenceRelationRef` and `merges[].sourceRelationRef` / `evidenceQueryRef` take a natural key `{ interface, queryKey, rdjb?, queriedAt?, sequenceNo? }` (contract §8.7) — so one batch can write query → relations → alias/difference evidence without a second round trip. Do **not** invent row ids, and do not rely on `relationKey` alone (it is ambiguous across interfaces). Bare ids stay supported for rows that already exist. An unresolvable reference fails the whole batch, per-item, with nothing written.
 - Export snapshots: `year` / `collectedOn` come from the caller, never inferred from the file or its name.
 
 Do not substitute direct SQLite writes or a one-off importer for this path.

@@ -877,7 +877,231 @@ describe('大载荷：MB 级导出快照经真实 HTTP 提交', () => {
 
 
 // ---------------------------------------------------------------------------
-// 9. 读面（list_enterprises / list_differences）
+// 9b. 批内自然键引用（别名 / 差异 / 归并的证据指针指向本批新建的查询 / 关系）
+// ---------------------------------------------------------------------------
+
+describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 差异 / 归并」', () => {
+  /**
+   * 一个 payload 同时含 `platformQueries`（含多条 relations）、`aliases`（自然键指本批关系）、
+   * `differences`（自然键指本批查询与关系）、`announcement`（企业 + 事件）与 `merges`。
+   * 关键：关系/查询的 id 由本批事务内生成，客户端**事前不可能知道** —— 自然键必须在**同一批内**解析。
+   */
+  const oneBatch = (): RosterImportRequest => ({
+    idempotencyKey: 'one-batch/evidence#sha256:x1',
+    sourceKind: 'announcement',
+    sourceIdentity: 'jxj/announcement/2026/1/一批到底.pdf',
+    payload: {
+      platformQueries: [
+        {
+          interface: 'business_list',
+          queryKey: '91330211255994457P',
+          rdjb: '3',
+          queriedAt: '2026-10-16T03:00:00.000Z',
+          status: 'success',
+          relations: [
+            { sequenceNo: 1, relationKey: 'SQ-1', usccRaw: '91330211255994457P', nameRaw: '宁波上航测绘股份有限公司', matchBasis: 'uscc', verificationStatus: 'confirmed' },
+            { sequenceNo: 2, relationKey: 'SQ-2', usccRaw: '91330211255994457P', nameRaw: '宁波上航测绘有限公司', matchBasis: 'alias', verificationStatus: 'confirmed' },
+          ],
+        },
+        { interface: 'apply_list', queryKey: '91330211255994457P', queriedAt: '2026-10-16T03:01:00.000Z', status: 'no_record' },
+      ],
+      announcement: {
+        sourceDocument: { source: 'jxj', title: '一批到底' },
+        records: [
+          {
+            enterprise: { name: '宁波上航测绘股份有限公司', uscc: '91330211255994457P' },
+            titleCode: 'specialized_sme',
+            events: [{ eventType: 'award', year: 2022, batchSeq: 2, evidence: [{ sourceFile: 'jxj/announcement/2022/145号.pdf', listNo: 74, page: 74 }] }],
+          },
+          // 无统代主体，待本批归并。
+          { enterprise: { name: '宁波上航测绘有限公司' }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2021, batchSeq: 1 }] },
+        ],
+      },
+      aliases: [
+        {
+          uscc: '91330211255994457P',
+          name: '宁波上航测绘有限公司',
+          sourceKind: 'platform_business',
+          verificationStatus: 'confirmed',
+          // ★ 指向**本批新建**的关系行（第 2 条）；带 queriedAt 精确匹配。
+          sourceRelationRef: { interface: 'business_list', queryKey: '91330211255994457P', rdjb: '3', queriedAt: '2026-10-16T03:00:00.000Z', sequenceNo: 2 },
+        },
+      ],
+      differences: [
+        {
+          uscc: '91330211255994457P',
+          titleCode: 'specialized_sme',
+          direction: 'missing_in_miit',
+          status: 'confirmed_reason',
+          reasonCode: 'platform_stale',
+          measureCode: 'mark_platform_snapshot',
+          verificationStatus: 'confirmed',
+          recordedAt: '2026-10-16T04:00:00.000Z',
+          // ★ 省略 queriedAt ⇒ 靠 (interface, queryKey, rdjb) 唯一命中本批那次查询。
+          evidenceQueryRef: { interface: 'business_list', queryKey: '91330211255994457P', rdjb: '3' },
+          evidenceRelationRef: { interface: 'business_list', queryKey: '91330211255994457P', rdjb: '3', sequenceNo: 1 },
+        },
+      ],
+      merges: [
+        {
+          fromEnterpriseName: '宁波上航测绘有限公司',
+          intoUscc: '91330211255994457P',
+          aliasName: '宁波上航测绘有限公司',
+          sourceKind: 'platform_business',
+          sourceRelationRef: { interface: 'business_list', queryKey: '91330211255994457P', rdjb: '3', sequenceNo: 2 },
+          evidenceQueryRef: { interface: 'business_list', queryKey: '91330211255994457P', rdjb: '3' },
+        },
+      ],
+    },
+  })
+
+  it('★ 一次 commit 完成；证据指针落的是**本批新建行**的真实 id（不是 0 哨兵、不是猜的）', () => {
+    const db = makeDb()
+    const result = commitRosterImport(db, oneBatch())
+
+    expect(result.status).toBe('committed')
+    expect(result.error).toBeNull()
+    expect(result.summary.failed).toBe(0)
+    expect(result.items.every((item) => item.ok)).toBe(true)
+    // **只有一个批次** —— 不需要「先写查询、读回 id、再写别名」的两批绕行。
+    expect(db.select().from(schema.importBatch).all()).toHaveLength(1)
+
+    const relations = db.select().from(schema.platformRelation).all()
+    const rel1 = relations.find((r) => r.relationKey === 'SQ-1')!
+    const rel2 = relations.find((r) => r.relationKey === 'SQ-2')!
+    const query = db.select().from(schema.platformQuery).all().find((q) => q.interface === 'business_list' && q.rdjb === '3')!
+
+    // 别名：source_ref_id = 本批新建的第 2 条关系的真实 id。
+    const canonical = db.select().from(schema.enterprise).all().find((e) => e.usccNorm === '91330211255994457P')!
+    const aliases = db.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === canonical.id && a.name === '宁波上航测绘有限公司')
+    expect(aliases).toHaveLength(1)
+    expect(aliases[0]!.sourceRefId).toBe(rel2.id)
+    expect(aliases[0]!.sourceRefId).not.toBe(0)
+    expect(aliases[0]!.verificationStatus).toBe('confirmed')
+
+    // 差异：evidence_query_id / evidence_relation_id 都指向本批新建的行。
+    const difference = db.select().from(schema.differenceReason).all()[0]!
+    expect(difference.evidenceQueryId).toBe(query.id)
+    expect(difference.evidenceRelationId).toBe(rel1.id)
+
+    // 归并：曾用名的来源关系解析成同一条真实关系；血缘里的查询证据也是真实 id。
+    const mergeItem = result.items.find((item) => item.kind === 'merge')!
+    const lineage = mergeItem.detail!.lineage as { aliasId: number; evidenceQueryId: number | null; fromEnterpriseId: number }
+    expect(lineage.aliasId).toBe(aliases[0]!.id)
+    expect(lineage.evidenceQueryId).toBe(query.id)
+
+    // 归并仍按 §5.2 生效：被并企业行删除，称号/事件/出处一条不丢。
+    expect(enterpriseExists(db, lineage.fromEnterpriseId)).toBe(false)
+    expect(db.select().from(schema.record).all().filter((r) => r.enterpriseId === canonical.id).map((r) => r.titleCode).sort()).toEqual(['innovative_sme', 'specialized_sme'])
+    expect(db.select().from(schema.recordEvidence).all()[0]!.page).toBe(74)
+
+    // 血缘可从批次行查回（父代理裁决 #4）。
+    const replayedLineage = readMergeLineage(db, 'one-batch/evidence#sha256:x1', lineage.fromEnterpriseId)!
+    expect(replayedLineage.evidenceQueryId).toBe(query.id)
+  })
+
+  it('★ 自然键解析不到 ⇒ 整批 failed，业务数据一行不落，逐项报错', () => {
+    const db = makeDb()
+    const before = rosterRowCounts(db)
+
+    // (a) 关系序号不存在
+    const missingSeq = oneBatch()
+    missingSeq.idempotencyKey = 'one-batch/missing-seq#sha256:x2'
+    ;(missingSeq.payload.aliases![0] as { sourceRelationRef: { sequenceNo: number } }).sourceRelationRef.sequenceNo = 99
+    const a = commitRosterImport(db, missingSeq)
+    expect(a.status).toBe('failed')
+    expect(a.items.find((item) => !item.ok)!.error!.code).toBe('relation_ref_not_found')
+    expect(rosterRowCounts(db)).toEqual(before)
+
+    // (b) 查询键根本不存在
+    const missingQuery = oneBatch()
+    missingQuery.idempotencyKey = 'one-batch/missing-query#sha256:x3'
+    ;(missingQuery.payload.differences![0] as { evidenceQueryRef: { queryKey: string } }).evidenceQueryRef.queryKey = '91330211000000000Z'
+    const b = commitRosterImport(db, missingQuery)
+    expect(b.status).toBe('failed')
+    expect(b.items.some((item) => item.error?.code === 'query_ref_not_found')).toBe(true)
+    expect(rosterRowCounts(db)).toEqual(before)
+
+    // (c) 关系引用缺 sequenceNo
+    const noSeq = oneBatch()
+    noSeq.idempotencyKey = 'one-batch/no-seq#sha256:x4'
+    delete (noSeq.payload.differences![0] as { evidenceRelationRef?: unknown }).evidenceRelationRef
+    ;(noSeq.payload.differences![0] as unknown as { evidenceRelationRef: Record<string, unknown> }).evidenceRelationRef = { interface: 'business_list', queryKey: '91330211255994457P', rdjb: '3' }
+    const c = commitRosterImport(db, noSeq)
+    expect(c.status).toBe('failed')
+    expect(c.items.some((item) => item.error?.code === 'ref_sequence_no_required')).toBe(true)
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it('裸 id 与自然键同时给 ⇒ 逐项报错（不静默取一个）', () => {
+    const db = makeDb()
+    const request = oneBatch()
+    request.idempotencyKey = 'one-batch/conflict#sha256:x5'
+    ;(request.payload.aliases![0] as { sourceRefId?: number }).sourceRefId = 7
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('failed')
+    expect(result.items.find((i) => !i.ok)!.error!.code).toBe('source_ref_conflict')
+    expect(rosterRowCounts(db).enterprise).toBe(0)
+
+    const request2 = oneBatch()
+    request2.idempotencyKey = 'one-batch/conflict2#sha256:x6'
+    ;(request2.payload.differences![0] as { evidenceRelationId?: number }).evidenceRelationId = 3
+    const result2 = commitRosterImport(db, request2)
+    expect(result2.status).toBe('failed')
+    expect(result2.items.some((i) => i.error?.code === 'evidence_ref_conflict')).toBe(true)
+  })
+
+  it('★ 自然键不含时点时要求唯一：同 (interface, queryKey, rdjb) 两次查询 ⇒ 逐项报错', () => {
+    const db = makeDb()
+    const before = rosterRowCounts(db)
+    const request = oneBatch()
+    request.idempotencyKey = 'one-batch/ambiguous#sha256:x7'
+    // 再插一次同 (interface, queryKey, rdjb) 但不同 queriedAt 的查询（含同样的序号 2）。
+    request.payload.platformQueries!.push({
+      interface: 'business_list',
+      queryKey: '91330211255994457P',
+      rdjb: '3',
+      queriedAt: '2026-10-17T03:00:00.000Z',
+      status: 'success',
+      relations: [{ sequenceNo: 2, relationKey: 'SQ-2b', usccRaw: '91330211255994457P', nameRaw: '宁波上航测绘有限公司' }],
+    })
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('failed')
+    // 别名那次引用带了 queriedAt ⇒ 不歧义；差异/归并省略了 queriedAt ⇒ 歧义。
+    expect(result.items.some((i) => i.error?.code === 'relation_ref_ambiguous' || i.error?.code === 'query_ref_ambiguous')).toBe(true)
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it('兼容：显式裸 id 继续可用（指向**已存在**的行），不被自然键逻辑覆盖', () => {
+    const db = makeDb()
+    const canonical = seedEnterprise(db, { name: '宁波显式企业有限公司', uscc: '9133021100000000E1' })
+    const result = commitRosterImport(db, {
+      idempotencyKey: 'literal-id#sha256:x8',
+      sourceKind: 'alias_evidence',
+      sourceIdentity: 'miit/relations/literal',
+      payload: {
+        aliases: [
+          {
+            uscc: '9133021100000000E1',
+            name: '宁波显式旧名有限公司',
+            sourceKind: 'platform_business',
+            sourceRefId: 12345,
+            verificationStatus: 'confirmed',
+          },
+          // 不给来源 ⇒ 契约 §1.2 的 0 哨兵（「无具体来源行引用」）。
+          { uscc: '9133021100000000E1', name: '宁波无来源旧名', sourceKind: 'manual', verificationStatus: 'confirmed' },
+        ],
+      },
+    })
+    expect(result.status).toBe('committed')
+    const rows = db.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === canonical)
+    expect(rows.find((a) => a.name === '宁波显式旧名有限公司')!.sourceRefId).toBe(12345)
+    expect(rows.find((a) => a.name === '宁波无来源旧名')!.sourceRefId).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 10. 读面（list_enterprises / list_differences）
 // ---------------------------------------------------------------------------
 
 describe('读面：list_enterprises / list_differences', () => {

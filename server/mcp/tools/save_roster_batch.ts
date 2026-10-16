@@ -38,6 +38,9 @@ export default defineMcpTool({
     '**单批事务**：要么整批 `committed`，要么 `failed`（`error` 说明原因）—— 绝不部分提交；',
     '逐项错误形如 `{ ok:false, kind, ref, error:{ code, field?, message } }`，不静默丢行。',
     '`payload` 形状见 `docs/roster-lifecycle-contract.md` §8.3；归并项 `merges` 见 §8.4，血缘可从返回项的 `detail.lineage` 取回。',
+    '证据指针可用**自然键**指向**本批新建**的查询/关系（`aliases[].sourceRelationRef`、',
+    '`differences[].evidenceQueryRef`/`evidenceRelationRef`、`merges[].sourceRelationRef`/`evidenceQueryRef`，见契约 §8.7）——',
+    '一个批次即可写完「查询 → 关系 → 别名/差异证据」；裸 id 仍可用于已存在的行。',
     '**需要鉴权**（Authorization: Bearer <NUXT_MCP_TOKEN>）。',
   ].join('\n'),
   inputSchema: {
