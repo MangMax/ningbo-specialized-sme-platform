@@ -106,7 +106,7 @@ describe('RL-02 导入请求:来源证据与源文件身份', () => {
     ])
   })
 
-  it('请求体就是契约 §8.2 的形状,幂等键由源文件内容 SHA-256 决定', async () => {
+  it('请求体就是契约 §8.2 的形状,幂等键 = 来源文件标识 + 内容 SHA-256', async () => {
     const buffer = await buildLittleGiantWorkbookBuffer(DUPLICATE_ACROSS_BATCHES)
     const workbook = await parseLittleGiantWorkbook(buffer)
     const request = buildLittleGiantImportRequest(workbook)
@@ -114,12 +114,31 @@ describe('RL-02 导入请求:来源证据与源文件身份', () => {
     expect(request.sourceKind).toBe('announcement')
     expect(request.sourceSha256).toBe(workbook.sha256)
     expect(request.sourceIdentity).toBe(LITTLE_GIANT_SOURCE_FILE)
-    expect(request.idempotencyKey).toBe(`jxj/little-giant/historical#sha256:${workbook.sha256}`)
+    // 键的形状就是契约 §8.1 给的那一种:`<来源标识>#sha256:<内容>`。
+    expect(request.idempotencyKey).toBe(`${LITTLE_GIANT_SOURCE_FILE}#sha256:${workbook.sha256}`)
     expect(request.payload.announcement.sourceDocument).toEqual({
       source: 'jxj',
       title: '经信局公布历年小巨人企业名单',
       docNumber: null,
     })
+  })
+
+  it('出处指向的是**库内**相对路径(RL-16:库外路径解析不到文件,预览会断)', () => {
+    // 这条盯着历史上那个 TO-BACKFILL —— 来源根口径 `经信局名单/小巨人/…` 不在文件库里。
+    expect(LITTLE_GIANT_SOURCE_FILE.startsWith('jxj/announcement/')).toBe(true)
+    expect(LITTLE_GIANT_SOURCE_FILE).not.toContain('经信局名单/')
+    expect(LITTLE_GIANT_SOURCE_FILE.endsWith('经信局公布历年小巨人企业名单.xlsx')).toBe(true)
+  })
+
+  it('换来源标识(文件入库后)→ 换键 ⇒ 触发一次重导;内容变 → 也换键', async () => {
+    const buffer = await buildLittleGiantWorkbookBuffer(DUPLICATE_ACROSS_BATCHES)
+    const workbook = await parseLittleGiantWorkbook(buffer)
+    const base = buildLittleGiantImportRequest(workbook)
+    const moved = buildLittleGiantImportRequest(workbook, {
+      sourceFile: 'jxj/announcement/2024/1/moved.xlsx',
+    })
+    expect(moved.idempotencyKey).not.toBe(base.idempotencyKey)
+    expect(moved.idempotencyKey).toBe(`jxj/announcement/2024/1/moved.xlsx#sha256:${workbook.sha256}`)
   })
 
   it('同一份文件重复构造 → 请求体**逐字相同**(同一幂等键);换内容 → 换键', async () => {

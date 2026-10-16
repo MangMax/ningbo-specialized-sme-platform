@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { LITTLE_GIANT_SOURCE_FILE } from '../../lib/roster/little-giant-import'
 import { buildLittleGiantWorkbookBuffer, type FixtureRow } from './little-giant-workbook-fixture'
 
 /**
@@ -55,7 +56,10 @@ export interface LittleGiantSource {
   real: boolean
   buffer: Buffer
   /**
-   * 写进「出处」与 `source_identity` 的标识。真件用来源根下的相对路径;
+   * 写进「出处」与 `source_identity` 的标识。
+   *
+   * **库内相对路径**(RL-16):这份工作簿已入库,出处必须指得到文件,否则名录行点开预览会断。
+   * 真件用 `LITTLE_GIANT_SOURCE_FILE`(模块的默认值,与文件库里的那一条逐字相同);
    * 合成夹具用一个明确标着 fixture 的逻辑标识(免得跟真件记录混在一起)。
    */
   sourceFile: string
@@ -69,7 +73,8 @@ export async function loadLittleGiantSource(): Promise<LittleGiantSource> {
       path: littleGiantSourcePath,
       real: true,
       buffer: readFileSync(littleGiantSourcePath),
-      sourceFile: '经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx',
+      // 与模块默认值同源:库内相对路径(真件入库后就在这个位置)。
+      sourceFile: LITTLE_GIANT_SOURCE_FILE,
     }
   }
   return {

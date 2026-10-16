@@ -14,7 +14,8 @@ import { SOURCE_ORDER } from '~~/lib/labels'
  * 文件库列表。`GET /api/files?source=&categoryState=&parseState=&q=&page=&pageSize=`
  *
  * **首次请求懒回填**,两趟:
- *  1. 扫 `files/` 反推分类写 `stored_file`(票 09)—— 要算 23 个文件的 SHA-256;
+ *  1. 扫 `files/` 反推分类写 `stored_file`(票 09)—— 要算 22 个文件的 SHA-256
+ *     (**入库范围之外**的文件不进表,在 `backfill.excluded` 里带原因列出 —— RL-16);
  *  2. 从 `record_evidence` 聚合出**段**写 `stored_file_part`(票 17,必须先有第 1 趟,
  *     段要挂到 `stored_file.id` 上)。
  * 之后每请求只查表。`?rescan=1` 强制两趟都重跑(验收与排查用;**幂等**)。
@@ -24,7 +25,7 @@ let backfilled = false
 /**
  * 文件库列表。
  *
- * **首次请求会懒回填**(要算 23 个文件的 SHA-256),所以第一次可能比之后慢 ——
+ * **首次请求会懒回填**(要算 22 个文件的 SHA-256),所以第一次可能比之后慢 ——
  * 这一点写进 spec,免得代理以为接口不稳定。`rescan=1` 强制重跑(幂等)。
  */
 defineRouteMeta({
@@ -105,7 +106,7 @@ export default defineEventHandler(async (event) => {
   return {
     rows: result.rows,
     total: result.total,
-    /** 回填统计只在真的跑过回填时出现,便于验收时核对「23 个」。 */
+    /** 回填统计只在真的跑过回填时出现,便于验收时核对「22 个」。 */
     ...(backfill ? { backfill } : {}),
   }
 })

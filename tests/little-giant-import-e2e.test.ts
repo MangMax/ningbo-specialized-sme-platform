@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -10,9 +10,10 @@ import {
   type RosterImportCommitResponse,
   type RosterImportRequest,
 } from '../lib/roster-import-client'
-import { buildLittleGiantImportRequest } from '../lib/roster/little-giant-import'
+import { buildLittleGiantImportRequest, LITTLE_GIANT_SOURCE_FILE } from '../lib/roster/little-giant-import'
 import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../lib/roster/little-giant-workbook'
 import { rosterRowCounts } from '../server/utils/roster-import'
+import { landingSegments } from '../server/utils/tus'
 import { startRosterApi, type RosterApiServer } from './helpers/roster-http-server'
 import { SYNTHETIC_DUPLICATE_USCC, hasRealSource, loadLittleGiantSource, type LittleGiantSource } from './helpers/little-giant-source'
 
@@ -33,6 +34,13 @@ import { SYNTHETIC_DUPLICATE_USCC, hasRealSource, loadLittleGiantSource, type Li
  */
 
 const TOKEN = 'rl02-e2e-token-value'
+
+/**
+ * 真实**文件库**是否就位(全新 clone 只提交了 `files/README.md`,运行时数据已 gitignore)。
+ * 用它把「出处解析得到文件」那半条**显式** skip 掉 —— 写成 `if (...)` 的话,文件库不在时
+ * 那几条断言会**静默通过**,读起来像验过了。
+ */
+const hasRealFileStore = existsSync(join(process.cwd(), 'files', 'miit', 'export'))
 
 /** 合成夹具的期望(独立于 payload 构造器,手数出来的 7 行里的 6 家 / 7 条事件)。 */
 const EXPECTED_SYNTHETIC = { rows: 7, enterprises: 6, records: 6, events: 7, evidences: 7 }
@@ -206,6 +214,33 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
     expect(rosterRowCounts(db)).toEqual(before)
     expect(db.select().from(schema.importBatch).all()).toHaveLength(1)
   })
+
+  it('出处指向**文件库内**的路径(RL-16),全批一个口径', () => {
+    const rows = db.select({ sourceFile: schema.recordEvidence.sourceFile }).from(schema.recordEvidence).all()
+    expect(rows).toHaveLength(expected.evidences)
+    // 全批只有一个口径 —— 不混着「库内路径」与「库外路径」两种写法。
+    expect(new Set(rows.map((row) => row.sourceFile))).toEqual(new Set([source.sourceFile]))
+  })
+
+  describe.runIf(hasRealSource && hasRealFileStore)(
+    '出处解析得到文件(仅真件 + 真实文件库都在时断言)',
+    () => {
+      it('台账指的库内路径就是落位规则算出来的那一条,且那份文件在盘上', () => {
+        // 1) 「可复现的入库」:这条路径不是手写的,是 app 落位规则对该 metadata 的输出 ——
+        //    所以经公开上传接口(tus + register)一定能把它放进去,不需要为这个文件开特例。
+        expect(
+          landingSegments({
+            source: 'jxj',
+            kind: 'announcement',
+            filename: LITTLE_GIANT_SOURCE_FILE.split('/').pop(),
+          }).join('/'),
+        ).toBe(LITTLE_GIANT_SOURCE_FILE)
+        // 2) 「预览/跳转」要的那一半:那份文件真的在文件库里。
+        expect(source.sourceFile).toBe(LITTLE_GIANT_SOURCE_FILE)
+        expect(existsSync(join(process.cwd(), 'files', LITTLE_GIANT_SOURCE_FILE))).toBe(true)
+      })
+    },
+  )
 
   describe.runIf(hasRealSource)('真件的具体数字(仅真件在时断言)', () => {
     it('511 条源行 / 510 个信用代码 / 511 条事件,批次分布为第 1–7 批', () => {

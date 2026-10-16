@@ -8,12 +8,14 @@ import { Upload } from 'tus-js-client'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createTus, TUS_PATH, type TusConfig } from '../server/utils/tus'
 import { startTusServer, type MiniTusServer } from './helpers/tus-mini-server'
+import { INTERNALIZED_FILE_COUNT } from './helpers/file-store-expectations'
 
 /**
  * 「脚本内化」与「tus 上传」两条写入路径的**落位规则一致性**验证(票 02)。
  *
- * 遍历仓库文件库(`files/**`)里现有的内化文件(**当前 24 个**:21 份来源文件 + 3 份工信部
- * 导出表 —— 见 `files/README.md`),按**路径反推** metadata
+ * 遍历仓库文件库(`files/**`)里现有的内化文件(**当前 22 个**:19 份来源文件 + 3 份工信部
+ * 导出表 —— 见 `files/README.md` 与库里留存 `README.md` 的「入库范围」一节),
+ * 按**路径反推** metadata
  * (`source/kind/year/batch/filename`),再经 **tus 协议**(`tus-js-client` 走真实
  * HTTP)上传到**临时文件库**(不碰真实 `files/`),断言:
  *   1. 每个文件落到规则路径 `files/<source>/<kind>/<year>/<batch>/<filename>`,
@@ -26,12 +28,8 @@ import { startTusServer, type MiniTusServer } from './helpers/tus-mini-server'
  */
 
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
-/** 仓库里现有的文件库(21 份来源文件 + 3 份导出表 + README)。 */
+/** 仓库里现有的文件库(19 份来源文件 + 3 份导出表 + README)。 */
 const LIBRARY_DIR = join(APP_ROOT, 'files')
-/**
- * 内化文件的期望数。⚠️ 新增源文件后要跟着改(见 `stored-file.test.ts` 同名常量的说明)。
- */
-const INTERNALIZED_FILE_COUNT = 24
 
 /**
  * `files/` 是否已就位。目录本身在 clone 里总是存在(只提交了 `README.md`),

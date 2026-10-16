@@ -775,7 +775,7 @@
 | 字段 | 含义 |
 |---|---|
 | `add` | 本次将**新增**的**计划项**数。⚠️ 计数单位是**计划项**(一个 `payload.records[]` 条目 = 1 项),**不是**「企业+记录+事件+出处」各算一行。实测:小巨人工作簿 511 行源数据 → `add: 510`(= 企业/记录数),而非 2000+。 |
-| `update` | 本次将**复用或更新**的既有计划项数(按唯一键命中:如同一 `(称号, 年度, sha256)` 的快照批)。 |
+| `update` | 本次将**复用或更新**的既有计划项数(按唯一键命中:如同一 `(称号, 年度, sha256)` 的快照批)。**重放时若只有出处的 `source_file` 需要收敛(§8.8),该 `payload.records[]` 项也计入 `update`** —— 那一项确实改了既有行,不该报成 `skip`。 |
 | `remove` | 归并会**删除**的被并企业行数(= 成功的 `merges` 项数)。 |
 | `review` | 落在**待核**状态的行数(`pending` / `needs_review`,以及未知枚举原样入库的行)。 |
 | `conflicts` | 逐项冲突(`{ ok:false, kind, ref, error }`),**不静默丢行**。 |
@@ -925,6 +925,25 @@
   `{"fromEnterpriseId":52,"intoEnterpriseId":7391,"intoUscc":"913302067562827060","aliasId":null,
     "evidenceQueryId":4,"childRowsMoved":{"records":1,"relations":0,"aliases":0,"differences":0},
     "recordsMoved":[52],"recordsFolded":[],"eventsMoved":[52],"evidenceMoved":[52]}`
+
+### 8.9 重放时的**出处指针收敛**(RL-16 增量补齐)
+
+**场景**:来源文件入库后,同一份内容的标识从**库外路径**变成**库内路径**
+(如 `经信局名单/小巨人/….xlsx` → `jxj/announcement/经信局公布历年小巨人企业名单.xlsx`)。
+此时 `sourceIdentity` 与幂等键(§8.1 的 `<来源标识>#sha256:<内容>`)随之改变 ⇒ 用新键**重导一次**。
+
+**收敛规则**(`server/utils/roster-import.ts` 的 `repointTargets`):
+
+- 事件坐标(eventType / year / batchSeq / reviewOutcome / decidedYear)**逐字相同**才进入这条路径;
+- 只在出处的 **(attachment, listNo, page) 逐字相同**时才改,且**只改 `source_file` 一列**;
+- **不新增、不删除、不合并**任何行(不变量:企业 / 记录 / 事件 / 出处计数不变);
+- 命中的出处行数逐项报在 `items[].detail.evidenceRepointed`(新增字段,**不**计入 `summary.written`);
+- 预检的 `update`(**§8.5**)如实计入本次将收敛的出处行数 —— 预检报的就是提交真会改的;
+- 同一幂等键重放仍是**彻底的空操作**(批次已 `committed` ⇒ 直接返回既有摘要,不重跑计划)。
+
+**为什么可以改历史批次的行**:变的不是历史事实,是**同一份文档在库里的位置**。收敛只在
+「同一份来源内容(同 `sha256`)且坐标逐字相同」时发生,故不会把一条出处挪到另一条上;
+「公布历史不可改写」指的是事件坐标与结论,那些一个字节都没动。
 
 ---
 

@@ -17,7 +17,7 @@
  * 既用于预检（只报数），也用于提交（照计划执行）—— 预检报的影响就是提交真会发生的事。
  */
 
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
@@ -28,6 +28,8 @@ import type {
   RosterImportAlias,
   RosterImportAnnouncement,
   RosterImportDifference,
+  RosterImportEvidence,
+  RosterImportEvent,
   RosterImportExportSnapshot,
   RosterImportItemResult,
   RosterImportMerge,
@@ -754,13 +756,18 @@ function planAnnouncementRecord(
       .find((r) => r.enterpriseId === existing.id && r.titleCode === titleCode && r.source === source)
   }
 
+  // 重放时**出处指针**可能需要收敛(RL-16):
+  // 来源文件入库后同一份内容的标识从库外路径变成库内路径。事件坐标不变 ⇒ 历史一行不改,
+  // 只有出处的 `source_file` 被指向新路径。这件事**要报进预检**,故按提交会改的行数定 action。
+  const repoints = existingRecord ? countEvidenceRepoints(db, existingRecord.id, events) : 0
+
   push({
     item: success(
       'record',
       existing ? `record:${existingRecord?.id ?? ref}` : ref,
       { enterpriseId: existing?.id ?? null, titleCode, source },
     ),
-    action: existingRecord ? 'skip' : 'add',
+    action: existingRecord ? (repoints > 0 ? 'update' : 'skip') : 'add',
     review: !uscc,
     run: (tx) => writeAnnouncementRecord(tx, request, announcement, record, { name, uscc, district, titleCode, source, reason: { existingRecord } }),
   })
@@ -828,7 +835,23 @@ function writeAnnouncementRecord(
   const writtenEvents: number[] = []
   const writtenEvidence: number[] = []
   let skipped = 0
+  let evidenceRepointed = 0
   for (const event of record.events ?? []) {
+    const coords = eventCoordinates(recordId, event)
+    const duplicate = findExistingEvent(tx, coords)
+    if (duplicate) {
+      skipped += 1
+      // 重放：事件坐标已存在 ⇒ **历史一行不改、一行不加**。但出处**指针**可能因为来源文件
+      // 入库而改变（RL-16）—— 按 (附件, 序号, 页) 逐字匹配后只改 `source_file` 一列。
+      for (const target of repointTargets(evidenceOf(tx, duplicate.id), event.evidence ?? [])) {
+        tx.update(schema.recordEvidence)
+          .set({ sourceFile: target.sourceFile })
+          .where(eq(schema.recordEvidence.id, target.id))
+          .run()
+        evidenceRepointed += 1
+      }
+      continue
+    }
     const values = {
       recordId,
       eventType: event.eventType,
@@ -837,11 +860,6 @@ function writeAnnouncementRecord(
       sortKey: optionalInt(event.year) ?? 0,
       reviewOutcome: (event.reviewOutcome ?? null) as 'passed' | 'failed' | null,
       decidedYear: optionalInt(event.decidedYear),
-    }
-    const duplicate = findExistingEvent(tx, values)
-    if (duplicate) {
-      skipped += 1
-      continue
     }
     const eventId = tx.insert(schema.recordEvent).values(values).returning({ id: schema.recordEvent.id }).get().id
     writtenEvents.push(eventId)
@@ -868,6 +886,12 @@ function writeAnnouncementRecord(
     events: writtenEvents,
     evidence: writtenEvidence,
     skipped,
+    /**
+     * **被收敛了指针**的既有出处行数(RL-16)。它不是新增行(`rowsWritten` 不含它),
+     * 但也不是「什么都没发生」—— 单独报出来,免得重放看起来像纯空操作。
+     * 0 表示本次没有任何出处需要改(绝大多数的重放都是 0)。
+     */
+    evidenceRepointed,
     /**
      * 本项**真正插入的行数**：新企业 / 新来源文件 / 新记录 / 新事件 / 新出处。
      * 重放同一内容时全是 0（企业与记录按自然键复用、同坐标事件跳过）——
@@ -977,31 +1001,178 @@ function upsertRecord(
   return { id, created: true }
 }
 
-/** 同坐标的**完全相同**事件（含复核结论与结论年份）—— 命中即跳过，保证重放不堆行。 */
-function findExistingEvent(
-  tx: Executor,
-  values: {
-    recordId: number
-    eventType: string
-    year: number | null
-    batchSeq: number | null
-    reviewOutcome: string | null
-    decidedYear: number | null
-  },
-): { id: number } | undefined {
+/**
+ * 事件的**坐标**(重放判重与收敛比对共用同一份取值)。
+ *
+ * 为什么抽出来:预检(算「将要更新几行」)与执行(真的改哪几行)必须**同一条判据** ——
+ * 两处各算一次迟早会漂,而漂了以后预检报的就不再是提交真会发生的事(本文件开头的承诺)。
+ */
+interface EventCoordinates {
+  recordId: number
+  eventType: string
+  year: number | null
+  batchSeq: number | null
+  reviewOutcome: string | null
+  decidedYear: number | null
+}
+
+/** 由载荷里的一条事件 + 它所属记录算出坐标。 */
+function eventCoordinates(recordId: number, event: RosterImportEvent): EventCoordinates {
+  return {
+    recordId,
+    eventType: String(event.eventType),
+    year: optionalInt(event.year),
+    batchSeq: optionalInt(event.batchSeq),
+    reviewOutcome: event.reviewOutcome == null ? null : String(event.reviewOutcome),
+    decidedYear: optionalInt(event.decidedYear),
+  }
+}
+
+/** 一行 `record_event` 是不是这个坐标。 */
+function matchesEventCoordinates(row: EventCoordinates, values: EventCoordinates): boolean {
+  return (
+    row.recordId === values.recordId &&
+    row.eventType === values.eventType &&
+    (row.year ?? null) === values.year &&
+    (row.batchSeq ?? null) === values.batchSeq &&
+    (row.reviewOutcome ?? null) === values.reviewOutcome &&
+    (row.decidedYear ?? null) === values.decidedYear
+  )
+}
+
+/** 同坐标的**完全相同**事件(含复核结论与结论年份)—— 命中即跳过,保证重放不堆行。 */
+function findExistingEvent(tx: Executor, values: EventCoordinates): { id: number } | undefined {
   return tx
     .select()
     .from(schema.recordEvent)
     .all()
-    .find(
-      (e) =>
-        e.recordId === values.recordId &&
-        e.eventType === values.eventType &&
-        (e.year ?? null) === values.year &&
-        (e.batchSeq ?? null) === values.batchSeq &&
-        (e.reviewOutcome ?? null) === values.reviewOutcome &&
-        (e.decidedYear ?? null) === values.decidedYear,
+    .find((e) => matchesEventCoordinates(e, values))
+}
+
+// ---------------------------------------------------------------------------
+// 重放时的**出处指针收敛**(RL-16)
+// ---------------------------------------------------------------------------
+//
+// 背景:来源文件入库后,同一份内容的标识从**库外路径**变成**库内路径**。若重放既有事件时
+// 只「跳过」,`record_evidence.source_file` 就永远指着库外路径,名录行点开预览解析不到文件。
+//
+// 三条边界(为什么这样做是安全的):
+//  1. **只有出处指针会变**。事件坐标(类型/年份/批次/结论/结论年份)逐字相同才进入这条路径,
+//     历史事实一行不改、一行不加、一行不删 —— 「公布历史不可改写」不受影响。
+//  2. **只改 `source_file` 一列**,且要 (附件, 序号, 页) **逐字匹配**上已存在的出处行才改 ——
+//     不会把 A 行的指针挪到 B 行的出处上。路径只是「同一份文档在库里的位置」,不是身份。
+//  3. **收敛的触发权在幂等键上**。键含来源标识(见 `lib/roster/little-giant-import.ts`):
+//     只有携带**同一份来源内容**、且来源标识变了的批次才会走到这里。
+
+/** 一行出处行里参与**坐标匹配**的三项(路径不参与 —— 它正是要被收敛的那一项)。 */
+interface EvidenceCoordinateRow {
+  id: number
+  sourceFile: string
+  attachment: string | null
+  listNo: number | null
+  page: number | null
+}
+
+/** 已存在出处行的坐标是否与载荷里的那条出处逐字相同。 */
+function matchesEvidenceCoordinates(row: EvidenceCoordinateRow, wanted: RosterImportEvidence): boolean {
+  return (
+    (row.attachment ?? null) === (optionalString(wanted.attachment) ?? null) &&
+    (row.listNo ?? null) === (optionalInt(wanted.listNo) ?? null) &&
+    (row.page ?? null) === (optionalInt(wanted.page) ?? null)
+  )
+}
+
+/**
+ * 算出**这次要改哪几条出处行**。一进一出各一条、按行一一对应(同一条已存在的行不会被
+ * 两条载荷出处重复认领),且只在 `source_file` 真的不同时才改。
+ */
+function repointTargets(
+  existing: readonly EvidenceCoordinateRow[],
+  wanted: readonly RosterImportEvidence[],
+  taken: Set<number> = new Set(),
+): Array<{ id: number; sourceFile: string }> {
+  const out: Array<{ id: number; sourceFile: string }> = []
+  for (const candidate of wanted) {
+    const sourceFile = optionalString(candidate.sourceFile)
+    if (!sourceFile) continue
+    const hit = existing.find(
+      (row) => !taken.has(row.id) && matchesEvidenceCoordinates(row, candidate) && row.sourceFile !== sourceFile,
     )
+    if (!hit) continue
+    taken.add(hit.id)
+    out.push({ id: hit.id, sourceFile })
+  }
+  return out
+}
+
+/** 某条事件的出处行(只取坐标匹配要用的列)。 */
+function evidenceOf(tx: Executor, eventId: number): EvidenceCoordinateRow[] {
+  return tx
+    .select({
+      id: schema.recordEvidence.id,
+      sourceFile: schema.recordEvidence.sourceFile,
+      attachment: schema.recordEvidence.attachment,
+      listNo: schema.recordEvidence.listNo,
+      page: schema.recordEvidence.page,
+    })
+    .from(schema.recordEvidence)
+    .where(eq(schema.recordEvidence.recordEventId, eventId))
+    .all()
+}
+
+/**
+ * 本次载荷会把**已存在出处行**的 `source_file` 收敛掉几条 —— 预检用。
+ * 与执行阶段同一份 `repointTargets`,故预检报的 `update` 就是提交真会改的行数。
+ */
+function countEvidenceRepoints(
+  db: Executor,
+  recordId: number,
+  events: readonly RosterImportEvent[],
+): number {
+  if (events.length === 0) return 0
+  const eventRows = db
+    .select()
+    .from(schema.recordEvent)
+    .where(eq(schema.recordEvent.recordId, recordId))
+    .all()
+  if (eventRows.length === 0) return 0
+  const evidenceRows = db
+    .select({
+      id: schema.recordEvidence.id,
+      recordEventId: schema.recordEvidence.recordEventId,
+      sourceFile: schema.recordEvidence.sourceFile,
+      attachment: schema.recordEvidence.attachment,
+      listNo: schema.recordEvidence.listNo,
+      page: schema.recordEvidence.page,
+    })
+    .from(schema.recordEvidence)
+    .where(
+      inArray(
+        schema.recordEvidence.recordEventId,
+        eventRows.map((row) => row.id),
+      ),
+    )
+    .all()
+
+  const byEvent = new Map<number, EvidenceCoordinateRow[]>()
+  for (const row of evidenceRows) {
+    const list = byEvent.get(row.recordEventId)
+    if (list) list.push(row)
+    else byEvent.set(row.recordEventId, [row])
+  }
+
+  const taken = new Set<number>()
+  let count = 0
+  for (const event of events) {
+    const coords = eventCoordinates(recordId, event)
+    const hit = eventRows.find((row) => matchesEventCoordinates(row, coords))
+    if (!hit) continue
+    for (const target of repointTargets(byEvent.get(hit.id) ?? [], event.evidence ?? [], taken)) {
+      taken.add(target.id)
+      count += 1
+    }
+  }
+  return count
 }
 
 // ---------------------------------------------------------------------------

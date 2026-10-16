@@ -17,6 +17,20 @@ When one file reaches OCR-ready state, hand off that file immediately with: file
 5. Parse the announcement body and attachment to determine title, award/review event, year and batch. If one PDF has multiple attachments or years, create separate event groups with their own evidence.
 6. Write the original file, generated images, OCR output, corrected rows, event records and source evidence through the app's API/MCP contract. Replaying the same source batch must be idempotent.
 
+## File-store scope (RL-16)
+
+Whether a file belongs in the file store is decided by **one executable rule** — `lib/file-store-scope.ts` (`scopeOf()`), enforced by the backfill in `server/utils/stored-files.ts` and reported as `backfill.excluded`. The prose table lives in `files/README.md`; keep the two in step.
+
+- Filename contains 入库培育 → **out**. A nurture list is not a designation; the 2021 awards live in 〔2022〕145号.
+- `.doc` with a same-name `.docx` beside it → **out**; keep the previewable `.docx`.
+- `.docx` with a same-name `.pdf` beside it → **out** (human OCR product; the PDF is the authoritative, inline-previewable original).
+- Notice files (申报/复核通知) → **out**, judged on the **source directory segment**, never the filename — nearly every roster file is named "…名单的通知".
+- Everything else under `<source>/<kind>/` → in.
+
+Moving a file out is explicit (`DELETE /api/files/:id?deleteDisk=1`). The backfill never resurrects a removed file, and it keeps out-of-scope files out of `stored_file` even if they reappear on disk (report them; do not silently re-index).
+
+`record_evidence.source_file` is a **file-store-relative path** and must resolve to a file that is actually in the store. Point it at the processing directory instead and the roster row's preview silently breaks. So: put the file in the store first (`POST /api/uploads` tus, then `POST /api/files/register`), then import with the store-relative path. When a source file moves into the store, the import idempotency key (source identity + content hash) changes — re-run the same batch: enterprises, records and events are skipped (history stays untouched) and only the evidence `source_file` pointers are converged onto the new path. Re-running with an unchanged key is a no-op.
+
 ## Roster write path (RL-11)
 
 Roster entities — enterprises, confirmed aliases (曾用名), title events, source evidence, platform queries/relations, export snapshots, difference reasons/measures, and merges — are written through **one** path. Discover it live (`GET /_openapi.json` in dev, or MCP `tools/list`), but the shapes are frozen in `docs/roster-lifecycle-contract.md` §8:
