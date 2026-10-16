@@ -73,6 +73,38 @@ export interface RosterImportAnnouncement {
   records: RosterImportRecord[]
 }
 
+/**
+ * 平台查询 / 关系的**自然键**（批内引用）。
+ *
+ * ── 为什么必须有它 ──────────────────────────────────────────────────────
+ * `enterprise_alias.source_ref_id` / `difference_reason.evidence_query_id` /
+ * `evidence_relation_id` 存的是**整数行 id**，而 `platform_query` / `platform_relation`
+ * 的 id 由写入侧在**本批事务内**生成 —— 客户端构造载荷时**不可能预知**。
+ * 若只认裸 id，写入方就被迫拆成两批（先写查询、读回 id、再写别名与差异），
+ * 而契约的验收要求是「**一个批次**可提交企业、**带来源证据的**已确认曾用名、
+ * 差异原因和后续措施」。自然键让证据指针在**同一批内**指到本批新建的关系行。
+ *
+ * ── 键的构成（为什么不是 `relationKey`）──────────────────────────────────
+ * `platform_query` 的唯一键是 `(interface, query_key, rdjb, queried_at)`；
+ * `platform_relation` 的唯一键是 `(query_id, sequence_no)` —— 这就是自然键的来源。
+ * **不能只用 `relationKey`（如 `SQ332022062212391`）**：实测同一 `relationKey` 在
+ * `business_list` 与 `apply_list` 下**各出现一次**，单靠它有歧义。
+ *
+ * `queriedAt` 可省：省了就用 `(interface, queryKey, rdjb)` 匹配，并要求**恰好命中一次**
+ * （命中多次 ⇒ 逐项报错，绝不猜）；给了就精确匹配那一次查询。
+ */
+export interface RosterPlatformRef {
+  interface: 'business_list' | 'apply_list'
+  /** 查询键：统一社会信用代码，或 `name:<nameNorm>`。 */
+  queryKey: string
+  /** `business_list` 的认定级别（`1`/`2`/`3`）；默认 `''`。 */
+  rdjb?: string
+  /** 查询时点（ISO）。给了就精确匹配；不给则要求 `(interface, queryKey, rdjb)` 唯一。 */
+  queriedAt?: string
+  /** 关系序号（同一次查询内第几条，从 1 起）。**关系引用必填**；查询引用不用。 */
+  sequenceNo?: number
+}
+
 /** 企业曾用名 / 别名（身份历史，是**证据**不是身份）。 */
 export interface RosterImportAlias {
   /** 归属企业：给 `uscc` 优先，否则按 `enterpriseName` 归一化名找。 */
@@ -80,8 +112,13 @@ export interface RosterImportAlias {
   uscc?: string | null
   name: string
   sourceKind: 'platform_business' | 'platform_apply' | 'announcement' | 'manual'
-  /** 来源证据行 id（如 `platform_relation.id`）；0 = 无具体来源行引用。 */
+  /** 来源证据行 id（如 `platform_relation.id`，**已存在**的行）；0 = 无具体来源行引用。 */
   sourceRefId?: number
+  /**
+   * 来源关系行的**自然键**（可指向**本批新建**的关系）。与 `sourceRefId` **恰给其一**；
+   * 两个都给 ⇒ 逐项报错（不静默取一个）。
+   */
+  sourceRelationRef?: RosterPlatformRef
   verificationStatus?: 'confirmed' | 'pending'
   validFrom?: string | null
   validTo?: string | null
@@ -168,6 +205,10 @@ export interface RosterImportDifference {
   measureNote?: string | null
   evidenceQueryId?: number | null
   evidenceRelationId?: number | null
+  /** 平台**查询**的自然键（指向本批新建的查询）。与 `evidenceQueryId` 恰给其一。 */
+  evidenceQueryRef?: RosterPlatformRef
+  /** 平台**关系**的自然键（指向本批新建的关系）。与 `evidenceRelationId` 恰给其一。 */
+  evidenceRelationRef?: RosterPlatformRef
   /** 迁入承载；缺项留空待核，不猜。 */
   movedIn?: {
     city?: string | null
@@ -198,10 +239,14 @@ export interface RosterImportMerge {
   aliasName?: string
   /** 曾用名的来源类别；默认 `manual`。 */
   sourceKind?: 'platform_business' | 'platform_apply' | 'announcement' | 'manual'
-  /** 曾用名的来源证据行 id（如 `platform_relation.id`）。 */
+  /** 曾用名的来源证据行 id（如 `platform_relation.id`，**已存在**的行）。 */
   sourceRefId?: number
-  /** 支撑这次归并的查询证据（仅记录在血缘里，不落列）。 */
+  /** 曾用名来源关系行的**自然键**（可指向本批新建的关系）。与 `sourceRefId` 恰给其一。 */
+  sourceRelationRef?: RosterPlatformRef
+  /** 支撑这次归并的查询证据（记入血缘）。与 `evidenceQueryRef` 恰给其一。 */
   evidenceQueryId?: number | null
+  /** 支撑这次归并的查询证据的**自然键**（可指向本批新建的查询）。 */
+  evidenceQueryRef?: RosterPlatformRef
   note?: string | null
 }
 

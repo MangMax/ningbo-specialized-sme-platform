@@ -590,6 +590,11 @@
 > **实测生产路由能完整收下并落库**(200 / `committed` / `written: 3268` / 3267 行,约 0.32s),
 > 无需调 `bodyLimit`。⚠️ 但每年 × 每称号约 33 MB 落 SQLite 的 JSON 列是可观体量 ——
 > 是否裁列或压缩留待后续决策,**当前按契约原样存,不擅自裁剪**。
+>
+> **证据指针可以指向本批新建的查询/关系**:`aliases[].sourceRelationRef`、
+> `differences[].evidenceQueryRef` / `evidenceRelationRef`、`merges[].sourceRelationRef` /
+> `evidenceQueryRef` —— 自然键与解析规则见 **§8.7**。裸 id(`sourceRefId` / `evidenceQueryId` /
+> `evidenceRelationId`)继续可用,指向**已存在**的行。
 
 ### 8.4 `payload.merges` —— 归并与回填的写入形状(RL-11 增量补齐)
 
@@ -604,8 +609,11 @@
   "intoUscc": "91330211255994457P", // 规范行(保留的那家)的统一社会信用代码
   "aliasName": "宁波上航测绘有限公司",  // 写进曾用名的名称;不给则用被并企业的现名
   "sourceKind": "platform_business", // 曾用名来源类别(§2.2);默认 manual
-  "sourceRefId": 7,                 // 曾用名的来源证据行 id(如 platform_relation.id);默认 0
+  "sourceRefId": 7,                 // 曾用名的来源证据行 id(如 platform_relation.id,**已存在**的行);默认 0
+  "sourceRelationRef": { "interface": "business_list", "queryKey": "91330211255994457P",
+                         "rdjb": "3", "sequenceNo": 2 },  // 或自然键(可指本批新建的关系);与 sourceRefId 恰给其一,见 §8.7
   "evidenceQueryId": 4,             // 支撑本次归并的查询证据(记入血缘,不落列);可空
+  "evidenceQueryRef": { "interface": "business_list", "queryKey": "91330211255994457P", "rdjb": "3" }, // 或自然键,见 §8.7
   "note": "businessList rdjb=3 的 qymc 差异行"   // 可空
 }]
 ```
@@ -663,10 +671,75 @@
 同 `sha256` 重放命中唯一键 `(title_code, year, sha256)` ⇒ **不新建批**;换内容 ⇒ 新版本,
 用 `replaced_batch_id` 指向被替换的旧版,**两版并存**(旧快照不因替换而消失)。
 
+### 8.7 `payload` 的**批内自然键引用**(RL-11 增量补齐)
+
+> **父代理补正(2026-10-16)**:§8.3 的证据指针（`aliases[].sourceRefId`、
+> `differences[].evidenceQueryId` / `evidenceRelationId`、`merges[].sourceRefId`）只收**裸整数 id**,
+> 而那些 id 由写入侧在**本批事务内**生成 —— 客户端构造载荷时**不可能预知**。
+> 只认裸 id 会把「查询 → 关系 → 别名/差异证据」逼成**两批**（先写查询、读回 id、再写别名）,
+> 而验收第 2 条要求「**一个批次**可提交企业、**带来源证据的**已确认曾用名、
+> 差异原因和后续措施」—— 两批不算满足。本节补上**同一批内**的证据指针。
+
+#### 8.7.1 引用形状 `RosterPlatformRef`
+
+`platform_query` 的唯一键是 `(interface, query_key, rdjb, queried_at)`,
+`platform_relation` 的唯一键是 `(query_id, sequence_no)` —— 自然键即由此而来:
+
+```jsonc
+{ "interface": "business_list",   // 必填;business_list | apply_list
+  "queryKey": "91330211255994457P", // 必填;统一社会信用代码 或 name:<nameNorm>
+  "rdjb": "3",                    // 可空;businessList 的认定级别,默认 ''
+  "queriedAt": "2026-10-16T03:00:00.000Z", // 可空;**给了**就精确匹配那一次查询
+  "sequenceNo": 2 }               // **关系引用必填**(同一次查询内第几条,从 1 起);查询引用不用
+```
+
+**为什么不认 `relationKey`（如 `SQ332022062212391`）**:实测同一 `relationKey` 在
+`business_list` 与 `apply_list` 下**各出现一次** —— 单靠它有歧义,自然键**必须含接口**。
+
+落点与字段名:
+
+| 载荷项 | 字段 | 指向 |
+|---|---|---|
+| `aliases[]` | `sourceRelationRef` | `platform_relation` 行(→ `enterprise_alias.source_ref_id`) |
+| `differences[]` | `evidenceQueryRef` | `platform_query` 行(→ `difference_reason.evidence_query_id`) |
+| `differences[]` | `evidenceRelationRef` | `platform_relation` 行(→ `difference_reason.evidence_relation_id`) |
+| `merges[]` | `sourceRelationRef` | `platform_relation` 行(→ 归并写出的 `enterprise_alias.source_ref_id`) |
+| `merges[]` | `evidenceQueryRef` | `platform_query` 行(只进血缘 `lineage.evidenceQueryId`) |
+
+#### 8.7.2 解析时机与顺序（**批内**引用）
+
+写入的**执行顺序**固定为:公布文件(企业/记录/事件/出处) → `platformQueries`(查询 + 关系)
+→ `aliases` → `differences` → `exportSnapshot` → `merges`。
+自然键在**写入阶段**(关系与查询已插入之后)解析成真实行 id 落列 ——
+所以「**同一批**先写查询与关系、再用自然键给别名/差异补证据」是合法的,无需二次批。
+(载荷里的键序不影响执行顺序;`merges` 最后执行,才能把本批新建的记录一并折进规范行。)
+
+`queriedAt` **可省**:省了就用 `(interface, queryKey, rdjb)` 匹配,并要求**恰好命中一次**
+(命中多次 ⇒ 逐项报错,绝不猜);给了就精确匹配那一次查询。
+
+#### 8.7.3 冲突与失败规则(绝不静默、绝不猜)
+
+- **同一列裸 id 与自然键恰给其一**:两个都给 ⇒ 逐项报错
+  （`source_ref_conflict` / `evidence_ref_conflict`），**不静默取其中一个**。
+- **解析不到 ⇒ 逐项报错、整批 `failed`、业务数据一行不落**，错误码:
+  `query_ref_not_found`（查询不存在）/ `relation_ref_not_found`（该查询里没有这个序号）/
+  `ref_sequence_no_required`（关系引用缺 `sequenceNo`）/
+  `query_ref_ambiguous` · `relation_ref_ambiguous`（省了 `queriedAt` 且命中多次）/
+  `ref_interface_unknown` · `ref_query_key_required` · `ref_shape_invalid`。
+- **绝不落 `0` 哨兵**:`source_ref_id = 0` 只表示「本就没给来源行」;
+  给了引用就必须解析到真实行,解析不到报错而不是退回哨兵。
+- 执行阶段的项失败同样**回滚整批**:已完成项标 `commit_rolled_back`、
+  未执行项标 `not_executed`，`status='failed'`、`written=0`。
+
+#### 8.7.4 兼容
+
+裸 id(`aliases[].sourceRefId`、`differences[].evidenceQueryId` / `evidenceRelationId`、
+`merges[].sourceRefId` / `evidenceQueryId`)**继续可用**,语义不变:指向**已存在**的行
+(如「先写查询、读回 id 后再写别名」的既有做法)。既有写法不必改。
+
 ---
 
 ## 9. MCP tool 形状(RL-11 实现)
-
 > **RL-01 不注册任何新 tool**(写入 tool 名单由 `server/utils/mcp-auth.ts` 的
 > `MCP_WRITE_TOOLS` 单点维护,且有测试钉死 —— 新增写入 tool 必须同时改那里)。
 > 下面是 RL-11 要注册的形状。

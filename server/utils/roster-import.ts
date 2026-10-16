@@ -232,6 +232,179 @@ function enterpriseKnown(db: Executor, pending: PendingEnterprises, spec: { name
 }
 
 // ---------------------------------------------------------------------------
+// 平台查询 / 关系的**批内自然键**引用（与上面的「本批新建企业」同一套机制）
+//
+// `enterprise_alias.source_ref_id` / `difference_reason.evidence_*_id` 是整数行 id，
+// 由本批事务内生成 —— 客户端事前不可能知道。自然键 `(interface, query_key, rdjb[, queried_at])`
+// `(+ sequence_no)` 让证据指针在**同一批内**指到本批新建的查询/关系行：
+//   - 预检阶段：查库 + 查「本批将写入」的索引，判「能不能解析」；解析不到 ⇒ 逐项报错；
+//   - 执行阶段：关系已插入，**真实**解析出行 id 落列。
+// **绝不静默落 0 哨兵、绝不猜**（`source_ref_id = 0` 只表示「本就没给来源行」）。
+// ---------------------------------------------------------------------------
+
+/** 本批将写入的平台查询（自然键 + 它声明的关系序号）。 */
+interface PendingPlatformRef {
+  interface: string
+  queryKey: string
+  rdjb: string
+  queriedAt: string
+  sequenceNos: number[]
+}
+
+type PendingPlatformRefs = PendingPlatformRef[]
+
+/** 从载荷里收集「本批将写入」的平台查询自然键。 */
+function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatformRefs {
+  const out: PendingPlatformRefs = []
+  for (const query of Array.isArray(payload.platformQueries) ? payload.platformQueries : []) {
+    if (!isObject(query)) continue
+    const iface = optionalString((query as { interface?: unknown }).interface)
+    const queryKey = optionalString((query as { queryKey?: unknown }).queryKey)
+    const queriedAt = optionalString((query as { queriedAt?: unknown }).queriedAt)
+    if (!iface || !queryKey || !queriedAt) continue
+    const relations = (query as { relations?: unknown }).relations
+    out.push({
+      interface: iface,
+      queryKey,
+      rdjb: optionalString((query as { rdjb?: unknown }).rdjb) ?? '',
+      queriedAt,
+      sequenceNos: (Array.isArray(relations) ? relations : [])
+        .map((relation) => optionalInt((relation as { sequenceNo?: unknown })?.sequenceNo))
+        .filter((n): n is number => n != null),
+    })
+  }
+  return out
+}
+
+/** 归一后的自然键（`queriedAt` 可空 = 要求 `(interface, queryKey, rdjb)` 唯一）。 */
+interface NormalizedRef {
+  interface: string
+  queryKey: string
+  rdjb: string
+  queriedAt: string | null
+  sequenceNo: number | null
+}
+
+type RefError = { code: string; field: string; message: string }
+
+/** 校验自然键的形状（不查库）。 */
+function normalizeRef(ref: unknown, field: string): { ok: true; value: NormalizedRef } | { ok: false; error: RefError } {
+  if (!isObject(ref)) {
+    return { ok: false, error: { code: 'ref_shape_invalid', field, message: `引用必须是对象 { interface, queryKey, rdjb?, queriedAt?, sequenceNo? }` } }
+  }
+  const iface = optionalString(ref.interface)
+  if (!iface || !PLATFORM_INTERFACES.has(iface)) {
+    return { ok: false, error: { code: 'ref_interface_unknown', field: `${field}.interface`, message: `引用缺少 interface 或取值不在字典内：${String(ref.interface)}` } }
+  }
+  const queryKey = optionalString(ref.queryKey)
+  if (!queryKey) {
+    return { ok: false, error: { code: 'ref_query_key_required', field: `${field}.queryKey`, message: '引用缺少 queryKey' } }
+  }
+  return {
+    ok: true,
+    value: {
+      interface: iface,
+      queryKey,
+      rdjb: optionalString(ref.rdjb) ?? '',
+      queriedAt: optionalString(ref.queriedAt),
+      sequenceNo: optionalInt(ref.sequenceNo),
+    },
+  }
+}
+
+/** 按自然键在「库内 + 本批将写入」两处找候选查询。 */
+function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef) {
+  const matches = (candidate: { interface: string; queryKey: string; rdjb: string; queriedAt: string }) =>
+    candidate.interface === ref.interface &&
+    candidate.queryKey === ref.queryKey &&
+    candidate.rdjb === ref.rdjb &&
+    (ref.queriedAt ? candidate.queriedAt === ref.queriedAt : true)
+  return {
+    dbHits: source.select().from(schema.platformQuery).all().filter(matches),
+    pendingHits: pending.filter(matches),
+  }
+}
+
+/** 预检阶段的「查询能不能解析」。 */
+function resolveQueryRefPlan(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef, field: string): { ok: true } | { ok: false; error: RefError } {
+  const { dbHits, pendingHits } = refCandidates(source, pending, ref)
+  const total = dbHits.length + pendingHits.length
+  if (total === 0) {
+    return { ok: false, error: { code: 'query_ref_not_found', field, message: `引用不到平台查询：${describeRef(ref)}` } }
+  }
+  // 没给 queriedAt ⇒ 必须唯一命中（给了一次查询的时点就不必）。
+  if (!ref.queriedAt && total > 1) {
+    return { ok: false, error: { code: 'query_ref_ambiguous', field, message: `引用不唯一：${describeRef(ref)} 命中 ${total} 次查询；请补 queriedAt` } }
+  }
+  return { ok: true }
+}
+
+/** 预检阶段的「关系能不能解析」。 */
+function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef, field: string): { ok: true } | { ok: false; error: RefError } {
+  if (ref.sequenceNo == null || ref.sequenceNo < 1) {
+    return { ok: false, error: { code: 'ref_sequence_no_required', field: `${field}.sequenceNo`, message: '关系引用缺少 sequenceNo（同一次查询内第几条，从 1 起）' } }
+  }
+  const { dbHits, pendingHits } = refCandidates(source, pending, ref)
+  if (dbHits.length + pendingHits.length === 0) {
+    return { ok: false, error: { code: 'query_ref_not_found', field, message: `引用不到平台查询：${describeRef(ref)}` } }
+  }
+  const dbWithSeq = dbHits.filter((query) =>
+    source
+      .select()
+      .from(schema.platformRelation)
+      .all()
+      .some((relation) => relation.queryId === query.id && relation.sequenceNo === ref.sequenceNo),
+  )
+  const pendingWithSeq = pendingHits.filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
+  if (dbWithSeq.length + pendingWithSeq.length === 0) {
+    return { ok: false, error: { code: 'relation_ref_not_found', field, message: `引用不到平台关系：${describeRef(ref)}（该查询里没有序号 ${ref.sequenceNo} 的关系）` } }
+  }
+  if (!ref.queriedAt && dbWithSeq.length + pendingWithSeq.length > 1) {
+    return { ok: false, error: { code: 'relation_ref_ambiguous', field, message: `引用不唯一：${describeRef(ref)} 命中 ${dbWithSeq.length + pendingWithSeq.length} 条同序号关系；请补 queriedAt` } }
+  }
+  return { ok: true }
+}
+
+function describeRef(ref: NormalizedRef): string {
+  const parts = [`interface=${ref.interface}`, `queryKey=${ref.queryKey}`, `rdjb=${ref.rdjb || "''"}`]
+  if (ref.queriedAt) parts.push(`queriedAt=${ref.queriedAt}`)
+  if (ref.sequenceNo != null) parts.push(`sequenceNo=${ref.sequenceNo}`)
+  return parts.join(' ')
+}
+
+/** 执行阶段：解析出**真实**的 `platform_query.id`。 */
+function resolveQueryIdAt(source: Executor, ref: NormalizedRef): number | null {
+  const hits = source
+    .select()
+    .from(schema.platformQuery)
+    .all()
+    .filter(
+      (query) =>
+        query.interface === ref.interface &&
+        query.queryKey === ref.queryKey &&
+        query.rdjb === ref.rdjb &&
+        (ref.queriedAt ? query.queriedAt === ref.queriedAt : true),
+    )
+  if (hits.length === 0) return null
+  if (ref.queriedAt) return hits[0]!.id
+  return hits.length === 1 ? hits[0]!.id : null
+}
+
+/** 执行阶段：解析出**真实**的 `platform_relation.id`。 */
+function resolveRelationIdAt(source: Executor, ref: NormalizedRef): number | null {
+  if (ref.sequenceNo == null) return null
+  const queryId = resolveQueryIdAt(source, ref)
+  if (queryId == null) return null
+  return (
+    source
+      .select()
+      .from(schema.platformRelation)
+      .all()
+      .find((relation) => relation.queryId === queryId && relation.sequenceNo === ref.sequenceNo)?.id ?? null
+  )
+}
+
+// ---------------------------------------------------------------------------
 // 计划（预检与提交共用）
 // ---------------------------------------------------------------------------
 
@@ -280,6 +453,8 @@ export function planRosterImport(
   const payload = request.payload ?? {}
   /** 本批将新建的企业键（供别名 / 差异 / 归并在预检时解析到同批企业）。 */
   const pending: PendingEnterprises = new Set()
+  /** 本批将写入的平台查询自然键（供别名 / 差异 / 归并在预检时解析到同批关系行）。 */
+  const pendingRefs: PendingPlatformRefs = collectPendingPlatformRefs(payload)
 
   const push = (planned: PlannedItem) => {
     items.push(planned)
@@ -309,24 +484,26 @@ export function planRosterImport(
     }
   }
 
-  // ---- 曾用名 / 别名 -------------------------------------------------------
-  const aliases = Array.isArray(payload.aliases) ? payload.aliases : []
-  aliases.forEach((alias, index) => planAlias(db, pending, alias, index, push))
-
   // ---- 平台查询与关系 ------------------------------------------------------
+  // **必须排在 aliases / differences / merges 之前**:那三项的自然键引用可能指向本批
+  // 新建的查询/关系行,执行阶段要按「关系已插入」的顺序落真实 id（见本节顶部说明）。
   const queries = Array.isArray(payload.platformQueries) ? payload.platformQueries : []
   queries.forEach((query, index) => planPlatformQuery(db, query, index, push))
+
+  // ---- 曾用名 / 别名 -------------------------------------------------------
+  const aliases = Array.isArray(payload.aliases) ? payload.aliases : []
+  aliases.forEach((alias, index) => planAlias(db, pending, pendingRefs, alias, index, push))
+
+  // ---- 差异原因与措施 ------------------------------------------------------
+  const differences = Array.isArray(payload.differences) ? payload.differences : []
+  differences.forEach((difference, index) => planDifference(db, pending, pendingRefs, difference, index, push))
 
   // ---- 导出快照 ------------------------------------------------------------
   if (payload.exportSnapshot) planExportSnapshot(db, payload.exportSnapshot, context, push)
 
-  // ---- 差异原因与措施 ------------------------------------------------------
-  const differences = Array.isArray(payload.differences) ? payload.differences : []
-  differences.forEach((difference, index) => planDifference(db, pending, difference, index, push))
-
   // ---- 归并与回填（最后做，才能把本批新建的记录一并折进规范行）--------------
   const merges = Array.isArray(payload.merges) ? payload.merges : []
-  merges.forEach((merge, index) => planMerge(db, pending, merge, index, push))
+  merges.forEach((merge, index) => planMerge(db, pending, pendingRefs, merge, index, push))
 
   return { items, conflicts }
 }
@@ -602,6 +779,7 @@ function findExistingEvent(
 function planAlias(
   db: Executor,
   pending: PendingEnterprises,
+  pendingRefs: PendingPlatformRefs,
   alias: RosterImportAlias,
   index: number,
   push: (item: PlannedItem) => void,
@@ -620,24 +798,48 @@ function planAlias(
     push({ item: failure('alias', ref, 'verification_status_unknown', `verificationStatus 必须是 confirmed / pending`, 'verificationStatus'), action: 'skip', review: false })
     return
   }
+  // 来源证据：**裸 id 与自然键恰给其一**（两个都给 ⇒ 报错，不静默取一个）。
+  const hasId = optionalInt(alias.sourceRefId) != null
+  const hasRef = alias.sourceRelationRef != null
+  if (hasId && hasRef) {
+    push({ item: failure('alias', ref, 'source_ref_conflict', '同时给了 sourceRefId 与 sourceRelationRef；请只给其一', 'sourceRelationRef'), action: 'skip', review: false })
+    return
+  }
+  let relationRef: NormalizedRef | null = null
+  if (hasRef) {
+    const normalized = normalizeRef(alias.sourceRelationRef, 'aliases[].sourceRelationRef')
+    if (!normalized.ok) {
+      push({ item: failure('alias', ref, normalized.error.code, normalized.error.message, normalized.error.field), action: 'skip', review: false })
+      return
+    }
+    const resolved = resolveRelationRefPlan(db, pendingRefs, normalized.value, 'aliases[].sourceRelationRef')
+    if (!resolved.ok) {
+      push({ item: failure('alias', ref, resolved.error.code, resolved.error.message, resolved.error.field), action: 'skip', review: false })
+      return
+    }
+    relationRef = normalized.value
+  }
   const spec = { name: alias.enterpriseName, uscc: alias.uscc }
   if (!enterpriseKnown(db, pending, spec)) {
     push({ item: failure('alias', ref, 'enterprise_not_found', `别名找不到归属企业：${optionalString(alias.enterpriseName) ?? normalizeUscc(alias.uscc) ?? '(空)'}`, 'enterpriseName'), action: 'skip', review: false })
     return
   }
   const nameNorm = normalizeName(name)
-  const sourceRefId = optionalInt(alias.sourceRefId) ?? 0
-  const existing = db
-    .select()
-    .from(schema.enterpriseAlias)
-    .all()
-    .find(
-      (a) =>
-        a.enterpriseId === (locateEnterprise(db, spec)?.id ?? -1) &&
-        a.nameNorm === nameNorm &&
-        a.sourceKind === alias.sourceKind &&
-        a.sourceRefId === sourceRefId,
-    )
+  // 裸 id 就用给的；自然键要到执行阶段才解析出真 id（0 只表示「本就没给来源行」）。
+  const literalSourceRefId = optionalInt(alias.sourceRefId)
+  const existing = literalSourceRefId == null
+    ? undefined
+    : db
+        .select()
+        .from(schema.enterpriseAlias)
+        .all()
+        .find(
+          (a) =>
+            a.enterpriseId === (locateEnterprise(db, spec)?.id ?? -1) &&
+            a.nameNorm === nameNorm &&
+            a.sourceKind === alias.sourceKind &&
+            a.sourceRefId === literalSourceRefId,
+        )
   push({
     item: success('alias', existing ? `alias:${existing.id}` : ref, { enterpriseId: locateEnterprise(db, spec)?.id ?? null }),
     action: existing ? 'skip' : 'add',
@@ -646,6 +848,15 @@ function planAlias(
       // 执行时解析真 id：同批先插入的企业此刻已在库里。
       const enterprise = locateEnterprise(tx, spec)
       if (!enterprise) return failure('alias', ref, 'enterprise_not_found', '别名归属企业在写入阶段不存在', 'enterpriseName')
+      let sourceRefId = literalSourceRefId ?? 0
+      if (relationRef) {
+        const resolved = resolveRelationIdAt(tx, relationRef)
+        if (resolved == null) {
+          // 预检已判过可行；到这里仍解析不到说明批次内自相矛盾 —— 报错而不是落 0 哨兵。
+          return failure('alias', ref, 'relation_ref_not_found', `执行阶段解析不到平台关系：${describeRef(relationRef)}`, 'sourceRelationRef')
+        }
+        sourceRefId = resolved
+      }
       const already = tx
         .select()
         .from(schema.enterpriseAlias)
@@ -673,7 +884,7 @@ function planAlias(
         })
         .returning({ id: schema.enterpriseAlias.id })
         .get().id
-      return success('alias', `alias:${id}`, { enterpriseId: enterprise.id })
+      return success('alias', `alias:${id}`, { enterpriseId: enterprise.id, sourceRefId })
     },
   })
 }
@@ -970,9 +1181,71 @@ function writeExportSnapshot(
 
 // --- 差异原因与措施 --------------------------------------------------------
 
+/** 差异项的证据指针（每列：裸 id 或自然键）。 */
+interface EvidenceRefs {
+  queryIdLiteral: number | null
+  queryRef: NormalizedRef | null
+  relationIdLiteral: number | null
+  relationRef: NormalizedRef | null
+}
+
+/**
+ * 校验并解析差异项的两列证据指针。返回 `null` 表示已把逐项错误 push 出去。
+ * 规则：同一列**裸 id 与自然键恰给其一**（两个都给 ⇒ 逐项报错，不静默取一个）；
+ * 自然键在预检阶段判可行性（查库 + 查本批将写入的索引）。
+ */
+function collectEvidenceRefs(
+  db: Executor,
+  pendingRefs: PendingPlatformRefs,
+  difference: RosterImportDifference,
+  ref: string,
+  push: (item: PlannedItem) => void,
+): EvidenceRefs | null {
+  const reject = (code: string, message: string, field: string): null => {
+    push({ item: failure('difference', ref, code, message, field), action: 'skip', review: false })
+    return null
+  }
+  const queryIdLiteral = optionalInt(difference.evidenceQueryId)
+  const relationIdLiteral = optionalInt(difference.evidenceRelationId)
+  if (queryIdLiteral != null && difference.evidenceQueryRef != null) {
+    return reject('evidence_ref_conflict', '同时给了 evidenceQueryId 与 evidenceQueryRef；请只给其一', 'differences[].evidenceQueryRef')
+  }
+  if (relationIdLiteral != null && difference.evidenceRelationRef != null) {
+    return reject('evidence_ref_conflict', '同时给了 evidenceRelationId 与 evidenceRelationRef；请只给其一', 'differences[].evidenceRelationRef')
+  }
+  let queryRef: NormalizedRef | null = null
+  if (difference.evidenceQueryRef != null) {
+    const normalized = normalizeRef(difference.evidenceQueryRef, 'differences[].evidenceQueryRef')
+    if (!normalized.ok) return reject(normalized.error.code, normalized.error.message, normalized.error.field)
+    const resolved = resolveQueryRefPlan(db, pendingRefs, normalized.value, 'differences[].evidenceQueryRef')
+    if (!resolved.ok) return reject(resolved.error.code, resolved.error.message, resolved.error.field)
+    queryRef = normalized.value
+  }
+  let relationRef: NormalizedRef | null = null
+  if (difference.evidenceRelationRef != null) {
+    const normalized = normalizeRef(difference.evidenceRelationRef, 'differences[].evidenceRelationRef')
+    if (!normalized.ok) return reject(normalized.error.code, normalized.error.message, normalized.error.field)
+    const resolved = resolveRelationRefPlan(db, pendingRefs, normalized.value, 'differences[].evidenceRelationRef')
+    if (!resolved.ok) return reject(resolved.error.code, resolved.error.message, resolved.error.field)
+    relationRef = normalized.value
+  }
+  return { queryIdLiteral, queryRef, relationIdLiteral, relationRef }
+}
+
+/** 按归属企业的 `.find` 谓词复用（三处形状一致，抽出来免得漂）。 */
+function sameDifference(row: typeof schema.differenceReason.$inferSelect, spec: { enterpriseId: number; titleCode: string; direction: string; recordedAt: string }): boolean {
+  return (
+    row.enterpriseId === spec.enterpriseId &&
+    row.titleCode === spec.titleCode &&
+    row.direction === spec.direction &&
+    row.recordedAt === spec.recordedAt
+  )
+}
+
 function planDifference(
   db: Executor,
   pending: PendingEnterprises,
+  pendingRefs: PendingPlatformRefs,
   difference: RosterImportDifference,
   index: number,
   push: (item: PlannedItem) => void,
@@ -1004,6 +1277,9 @@ function planDifference(
     push({ item: failure('difference', ref, 'recorded_at_required', '差异解释缺少 recordedAt（登记时点）', 'recordedAt'), action: 'skip', review: false })
     return
   }
+  // 证据指针：每列**裸 id 与自然键恰给其一**。
+  const refs = collectEvidenceRefs(db, pendingRefs, difference, ref, push)
+  if (!refs) return
   const spec = { name: difference.enterpriseName, uscc: difference.uscc }
   if (!enterpriseKnown(db, pending, spec)) {
     push({ item: failure('difference', ref, 'enterprise_not_found', `差异找不到归属企业：${optionalString(difference.enterpriseName) ?? normalizeUscc(difference.uscc) ?? '(空)'}`, 'enterpriseName'), action: 'skip', review: false })
@@ -1015,13 +1291,7 @@ function planDifference(
         .select()
         .from(schema.differenceReason)
         .all()
-        .find(
-          (d) =>
-            d.enterpriseId === current.id &&
-            d.titleCode === difference.titleCode &&
-            d.direction === difference.direction &&
-            d.recordedAt === recordedAt,
-        )
+        .find((row) => sameDifference(row, { enterpriseId: current.id, titleCode: difference.titleCode, direction: difference.direction, recordedAt }))
     : undefined
   const status = difference.status ?? 'not_queried'
   push({
@@ -1031,17 +1301,26 @@ function planDifference(
     run: (tx) => {
       const enterprise = locateEnterprise(tx, spec)
       if (!enterprise) return failure('difference', ref, 'enterprise_not_found', '差异归属企业在写入阶段不存在', 'enterpriseName')
+      // 执行阶段解析真 id（本批新建的查询/关系此刻已插入）。
+      let evidenceQueryId = refs.queryIdLiteral
+      if (refs.queryRef) {
+        evidenceQueryId = resolveQueryIdAt(tx, refs.queryRef)
+        if (evidenceQueryId == null) {
+          return failure('difference', ref, 'query_ref_not_found', `执行阶段解析不到平台查询：${describeRef(refs.queryRef)}`, 'differences[].evidenceQueryRef')
+        }
+      }
+      let evidenceRelationId = refs.relationIdLiteral
+      if (refs.relationRef) {
+        evidenceRelationId = resolveRelationIdAt(tx, refs.relationRef)
+        if (evidenceRelationId == null) {
+          return failure('difference', ref, 'relation_ref_not_found', `执行阶段解析不到平台关系：${describeRef(refs.relationRef)}`, 'differences[].evidenceRelationRef')
+        }
+      }
       const already = tx
         .select()
         .from(schema.differenceReason)
         .all()
-        .find(
-          (d) =>
-            d.enterpriseId === enterprise.id &&
-            d.titleCode === difference.titleCode &&
-            d.direction === difference.direction &&
-            d.recordedAt === recordedAt,
-        )
+        .find((row) => sameDifference(row, { enterpriseId: enterprise.id, titleCode: difference.titleCode, direction: difference.direction, recordedAt }))
       if (already) return success('difference', `difference:${already.id}`, { enterpriseId: enterprise.id })
       const id = tx
         .insert(schema.differenceReason)
@@ -1054,8 +1333,8 @@ function planDifference(
           reasonNote: optionalString(difference.reasonNote),
           measureCode: (difference.measureCode ?? null) as typeof schema.differenceReason.$inferInsert.measureCode,
           measureNote: optionalString(difference.measureNote),
-          evidenceQueryId: optionalInt(difference.evidenceQueryId),
-          evidenceRelationId: optionalInt(difference.evidenceRelationId),
+          evidenceQueryId,
+          evidenceRelationId,
           movedInCity: optionalString(difference.movedIn?.city),
           movedInTitleCode: optionalString(difference.movedIn?.titleCode),
           movedInYear: optionalInt(difference.movedIn?.year),
@@ -1065,7 +1344,7 @@ function planDifference(
         })
         .returning({ id: schema.differenceReason.id })
         .get().id
-      return success('difference', `difference:${id}`, { enterpriseId: enterprise.id })
+      return success('difference', `difference:${id}`, { enterpriseId: enterprise.id, evidenceQueryId, evidenceRelationId })
     },
   })
 }
@@ -1079,6 +1358,8 @@ export interface MergeLineage {
   intoEnterpriseId: number
   intoUscc: string
   aliasId: number | null
+  /** 支撑本次归并的查询证据（裸 id 或自然键解析所得）；未给为 null。 */
+  evidenceQueryId: number | null
   childRowsMoved: { aliases: number; differences: number; relations: number; records: number }
   /** 直接改指规范行的记录 id（无同坐标冲突）。 */
   recordsMoved: number[]
@@ -1092,11 +1373,16 @@ export interface MergeLineage {
 
 interface MergePlan {
   merge: RosterImportMerge
+  /** 曾用名来源关系的自然键（执行阶段解析成真 id）。 */
+  sourceRelationRef: NormalizedRef | null
+  /** 支撑归并的查询证据的自然键（执行阶段解析成真 id，只进血缘）。 */
+  evidenceQueryRef: NormalizedRef | null
 }
 
 function planMerge(
   db: Executor,
   pending: PendingEnterprises,
+  pendingRefs: PendingPlatformRefs,
   merge: RosterImportMerge,
   index: number,
   push: (item: PlannedItem) => void,
@@ -1110,6 +1396,43 @@ function planMerge(
   if (merge.sourceKind != null && !ALIAS_SOURCE_KINDS.has(String(merge.sourceKind))) {
     push({ item: failure('merge', ref, 'alias_source_kind_unknown', `sourceKind 不在字典内：${String(merge.sourceKind)}`, 'sourceKind'), action: 'skip', review: false })
     return
+  }
+  // 证据指针：同别名/差异的规则 —— 每列**裸 id 与自然键恰给其一**。
+  if (optionalInt(merge.sourceRefId) != null && merge.sourceRelationRef != null) {
+    push({ item: failure('merge', ref, 'source_ref_conflict', '同时给了 sourceRefId 与 sourceRelationRef；请只给其一', 'merges[].sourceRelationRef'), action: 'skip', review: false })
+    return
+  }
+  if (optionalInt(merge.evidenceQueryId) != null && merge.evidenceQueryRef != null) {
+    push({ item: failure('merge', ref, 'evidence_ref_conflict', '同时给了 evidenceQueryId 与 evidenceQueryRef；请只给其一', 'merges[].evidenceQueryRef'), action: 'skip', review: false })
+    return
+  }
+  let sourceRelationRef: NormalizedRef | null = null
+  if (merge.sourceRelationRef != null) {
+    const normalized = normalizeRef(merge.sourceRelationRef, 'merges[].sourceRelationRef')
+    if (!normalized.ok) {
+      push({ item: failure('merge', ref, normalized.error.code, normalized.error.message, normalized.error.field), action: 'skip', review: false })
+      return
+    }
+    const resolved = resolveRelationRefPlan(db, pendingRefs, normalized.value, 'merges[].sourceRelationRef')
+    if (!resolved.ok) {
+      push({ item: failure('merge', ref, resolved.error.code, resolved.error.message, resolved.error.field), action: 'skip', review: false })
+      return
+    }
+    sourceRelationRef = normalized.value
+  }
+  let evidenceQueryRef: NormalizedRef | null = null
+  if (merge.evidenceQueryRef != null) {
+    const normalized = normalizeRef(merge.evidenceQueryRef, 'merges[].evidenceQueryRef')
+    if (!normalized.ok) {
+      push({ item: failure('merge', ref, normalized.error.code, normalized.error.message, normalized.error.field), action: 'skip', review: false })
+      return
+    }
+    const resolved = resolveQueryRefPlan(db, pendingRefs, normalized.value, 'merges[].evidenceQueryRef')
+    if (!resolved.ok) {
+      push({ item: failure('merge', ref, resolved.error.code, resolved.error.message, resolved.error.field), action: 'skip', review: false })
+      return
+    }
+    evidenceQueryRef = normalized.value
   }
   const fromRaw = optionalInt(merge.fromEnterpriseId)
   const fromName = optionalString(merge.fromEnterpriseName)
@@ -1132,7 +1455,7 @@ function planMerge(
     return
   }
 
-  const plan: MergePlan = { merge }
+  const plan: MergePlan = { merge, sourceRelationRef, evidenceQueryRef }
   push({
     item: success('merge', `merge:${fromRaw ?? fromName}->${intoUscc}`, { intoUscc }),
     action: 'update',
@@ -1147,7 +1470,7 @@ function planMerge(
  * 出处挂在事件上随之归入规范行；最后删除被并的空企业行。
  */
 function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
-  const { merge } = plan
+  const { merge, sourceRelationRef, evidenceQueryRef } = plan
   const ref0 = `merge:${optionalInt(merge.fromEnterpriseId) ?? optionalString(merge.fromEnterpriseName)}`
 
   const intoUscc = normalizeUscc(merge.intoUscc)!
@@ -1164,11 +1487,26 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   if (from.id === into.id) return failure('merge', ref0, 'merge_same_enterprise', '被并企业与规范行是同一行', 'fromEnterpriseId')
   const ref = `merge:${from.id}->${into.id}`
 
-  // 2. 写曾用名（旧名不丢）。
+  // 2. 写曾用名（旧名不丢）。证据指针：给了自然键就**必须**解析到真 id（解析不到 ⇒ 报错）。
   const aliasName = optionalString(merge.aliasName) ?? from.name
   const aliasNameNorm = normalizeName(aliasName)
   const sourceKind = merge.sourceKind ?? 'manual'
-  const sourceRefId = optionalInt(merge.sourceRefId) ?? 0
+  let sourceRefId = optionalInt(merge.sourceRefId) ?? 0
+  if (sourceRelationRef) {
+    const resolved = resolveRelationIdAt(tx, sourceRelationRef)
+    if (resolved == null) {
+      return failure('merge', ref, 'relation_ref_not_found', `执行阶段解析不到平台关系：${describeRef(sourceRelationRef)}`, 'merges[].sourceRelationRef')
+    }
+    sourceRefId = resolved
+  }
+  let mergeEvidenceQueryId = optionalInt(merge.evidenceQueryId)
+  if (evidenceQueryRef) {
+    const resolved = resolveQueryIdAt(tx, evidenceQueryRef)
+    if (resolved == null) {
+      return failure('merge', ref, 'query_ref_not_found', `执行阶段解析不到平台查询：${describeRef(evidenceQueryRef)}`, 'merges[].evidenceQueryRef')
+    }
+    mergeEvidenceQueryId = resolved
+  }
   const existingAlias = tx
     .select()
     .from(schema.enterpriseAlias)
@@ -1284,6 +1622,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     intoEnterpriseId: into.id,
     intoUscc: into.usccNorm ?? '',
     aliasId,
+    evidenceQueryId: mergeEvidenceQueryId,
     childRowsMoved: {
       aliases: aliasesMoved,
       differences: differencesMoved,
@@ -1333,6 +1672,14 @@ function ensureBatchRow(db: Db, request: RosterImportRequest) {
 // ---------------------------------------------------------------------------
 // 预检
 // ---------------------------------------------------------------------------
+
+/** 执行阶段有项返回 `ok:false` 时抛出 —— 用来回滚整批（绝不部分提交）。 */
+class ExecStageFailure extends Error {
+  constructor(readonly executed: RosterImportItemResult[]) {
+    super('批次执行阶段有项失败')
+    this.name = 'ExecStageFailure'
+  }
+}
 
 /**
  * 只读预检（契约 §8.1）：**不写业务数据**，只算影响并落一条 `status='preflight'` 的批次。
@@ -1406,11 +1753,35 @@ export function commitRosterImport(
     items = db.transaction((tx) => {
       const out: RosterImportItemResult[] = []
       for (const planned of plan.items) {
-        out.push(planned.run ? planned.run(tx) : planned.item)
+        const result = planned.run ? planned.run(tx) : planned.item
+        out.push(result)
+        // 执行阶段（关系插入之后）解析自然键等**只能在这一刻**判定的失败：
+        // 抛出去回滚整批 —— 绝不部分提交。
+        if (!result.ok) throw new ExecStageFailure(out)
       }
       return out
     })
   } catch (cause) {
+    if (cause instanceof ExecStageFailure) {
+      // 已完成项 + 未执行项都如实标失败（整批已回滚，一行没写）。
+      const executed = cause.executed.map((item) =>
+        item.ok ? { ...item, ok: false, error: { code: 'commit_rolled_back', message: '整批回滚，本项未写入' } } : item,
+      )
+      const rest = plan.items.slice(executed.length).map((planned) => ({
+        ...planned.item,
+        ok: false,
+        error: { code: 'not_executed', message: '整批回滚，本项未执行' },
+      }))
+      const items = [...executed, ...rest]
+      const failed = items.filter((item) => !item.ok).length
+      const error = '批次执行阶段有项失败（已整批回滚，未写入任何数据）'
+      const summary: RosterImportSummary = { written: 0, skipped: 0, failed }
+      db.update(schema.importBatch)
+        .set({ status: 'failed', itemResults: items, summary, error, preflightResult: summarizePlan(plan) })
+        .where(eq(schema.importBatch.id, batch.id))
+        .run()
+      return { batchId: batch.id, status: 'failed', summary, items, error }
+    }
     const message = cause instanceof Error ? cause.message : String(cause)
     const error = `批次提交失败（已整批回滚，未写入任何数据）：${message}`
     const items = plan.items.map((p) =>
