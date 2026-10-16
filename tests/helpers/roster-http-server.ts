@@ -6,13 +6,14 @@
  * 抽到 [`http-fixture.ts`](./http-fixture.ts);这里只剩本夹具的路由表 ——
  * 把**同一份** `handleRosterImportRequest`(Nitro 路由也调它)挂上去,测的不是替身实现。
  *
- * 只认三条路径:`/api/roster/import/preflight`、`/commit` 与 `/replay`(RL-19 的收敛重放);
- * 其余一律 404。
+ * 只认这几条路径:`/api/roster/import/preflight`、`/commit` 与 `/replay`(RL-19 的收敛重放),
+ * 以及 RL-07 的年度增量两条只读面(`/annual/preview` 与 `/batches`);其余一律 404。
  */
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { handleRosterImportRequest, type RosterImportAction } from '../../server/utils/roster-import-http'
+import { handleAnnualPreviewRequest, handleImportBatchesRequest } from '../../server/utils/roster-annual-http'
 import { startHttpFixture, type FixtureHandler } from './http-fixture'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -38,11 +39,27 @@ export async function startRosterApi(options: { db: Db; apiToken: string | null 
     return { status: out.status, headers: out.headers, body: out.body }
   }
 
+  // RL-07 的两条**只读**面:年度增量预览与批次流水。与上面同一个分法 —— 挂的是 Nitro 路由
+  // 也在调的同一份核心函数(`server/utils/roster-annual-http.ts`)。
+  const annualPreview: FixtureHandler = (request) => {
+    const out = handleAnnualPreviewRequest(
+      { method: request.method, body: request.body },
+      { db: options.db },
+    )
+    return { status: out.status, headers: out.headers, body: out.body }
+  }
+  const batchList: FixtureHandler = (request) => {
+    const out = handleImportBatchesRequest({ method: request.method, query: request.query }, { db: options.db })
+    return { status: out.status, headers: out.headers, body: out.body }
+  }
+
   return startHttpFixture({
     routes: {
       '/api/roster/import/preflight': importRoute,
       '/api/roster/import/commit': importRoute,
       '/api/roster/import/replay': importRoute,
+      '/api/roster/import/annual/preview': annualPreview,
     },
+    getRoutes: { '/api/roster/import/batches': batchList },
   })
 }

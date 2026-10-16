@@ -196,11 +196,21 @@ interface Profile {
  * 快照批次里出现完全正常)。旧写法拿 `profile.records.map(r => r.titleCode)` 去查
  * `latestBatchByTitle`,于是「企业记的称号一张快照都没有」时查到**空集** ⇒ 误判成
  * `removed_platform_only` —— 可它明明就在最新快照里,违反契约 §5 的「证据不足不误删」。
+ *
+ * 入参只要「企业 id + 它有哪些记录(来源)」这两样 —— 判据本来就用不到别的东西。
+ * 收窄成这个形状是为了让**投影**(RL-07 的年度增量预览:{@link projectRosterStates})
+ * 能直接喂它,而不必为全库每个企业先算一遍生命周期(`buildProfile` 的代价在
+ * 事件表上是平方级)。收窄**不改判据**:`selectRosterEnterprises` 传的还是同一个 profile。
  */
-function deriveRosterState(profile: Profile, index: SnapshotIndex): RosterState {
+interface RosterStateInput {
+  enterpriseId: number
+  records: readonly { source: string }[]
+}
+
+function deriveRosterState(profile: RosterStateInput, index: SnapshotIndex): RosterState {
   if (profile.records.some((r) => r.source === 'jxj')) return 'current'
   if (!profile.records.length) return 'current'
-  const present = index.presentByEnterprise.get(profile.enterprise.id)
+  const present = index.presentByEnterprise.get(profile.enterpriseId)
   if (!present || present.size === 0) return 'current'
   // 按 USCC 的**实际出现**(跨称号):它出现过的批次里只要有一张是「该批次所属称号」的
   // 最新快照,它就还在最新快照里。
@@ -307,7 +317,16 @@ interface SnapshotIndex {
   latestBatchIds: Set<number>
 }
 
-function indexSnapshots(snap: Snapshot): SnapshotIndex {
+/**
+ * 一份**尚未写入**的导出快照(RL-07 年度增量预览用):批次与行都是载荷里的,
+ * 库里还没有对应行,故 `id` 由调用方给的**合成 id** 表示(见 {@link projectRosterStates})。
+ */
+export interface ProjectedSnapshot {
+  batches: Array<{ id: number; titleCode: string; year: number }>
+  rows: Array<{ batchId: number; usccRaw: string | null; nameRaw: string | null }>
+}
+
+function indexSnapshots(snap: Snapshot, projected?: ProjectedSnapshot): SnapshotIndex {
   const usccToEnterprise = new Map<string, number>()
   const nameToEnterprise = new Map<string, number>()
   for (const e of snap.enterprises) {
@@ -316,29 +335,117 @@ function indexSnapshots(snap: Snapshot): SnapshotIndex {
     nameToEnterprise.set(e.nameNorm, e.id)
   }
 
-  const latestBatchByTitle = new Map<string, number>()
-  const batchById = new Map(snap.exportBatches.map((b) => [b.id, b]))
+  // 库内批次 + 投影批次走**同一段**比较逻辑:另抄一份「谁最新」就是把口径分家。
+  // 投影批次的 id 是合成的(必然大于库内最大 id),于是同年并列时**投影的那张更新**
+  // —— 这正是写入侧的行为(同年换 sha 出第二版,后写的那版 id 更大)。
+  const latestBatchByTitle = new Map<string, { year: number; id: number }>()
   for (const batch of snap.exportBatches) {
-    const known = latestBatchByTitle.get(batch.titleCode)
-    const prev = known == null ? undefined : batchById.get(known)
+    const prev = latestBatchByTitle.get(batch.titleCode)
     if (!prev || batch.year > prev.year || (batch.year === prev.year && batch.id > prev.id)) {
-      latestBatchByTitle.set(batch.titleCode, batch.id)
+      latestBatchByTitle.set(batch.titleCode, { year: batch.year, id: batch.id })
+    }
+  }
+  for (const batch of projected?.batches ?? []) {
+    const prev = latestBatchByTitle.get(batch.titleCode)
+    if (!prev || batch.year > prev.year || (batch.year === prev.year && batch.id > prev.id)) {
+      latestBatchByTitle.set(batch.titleCode, { year: batch.year, id: batch.id })
     }
   }
 
   const presentByEnterprise = new Map<number, Set<number>>()
-  for (const row of snap.exportRows) {
+  const addPresence = (row: { batchId: number; usccRaw: string | null; nameRaw: string | null }) => {
     const uscc = normUscc(row.usccRaw)
     const enterpriseId =
       (uscc != null ? usccToEnterprise.get(uscc) : undefined) ??
       (row.nameRaw ? nameToEnterprise.get(normalizeName(row.nameRaw)) : undefined)
-    if (enterpriseId == null) continue
+    if (enterpriseId == null) return
     const bucket = presentByEnterprise.get(enterpriseId)
     if (bucket) bucket.add(row.batchId)
     else presentByEnterprise.set(enterpriseId, new Set([row.batchId]))
   }
+  for (const row of snap.exportRows) addPresence(row)
+  for (const row of projected?.rows ?? []) addPresence(row)
 
-  return { presentByEnterprise, latestBatchIds: new Set(latestBatchByTitle.values()) }
+  return {
+    presentByEnterprise,
+    latestBatchIds: new Set([...latestBatchByTitle.values()].map((b) => b.id)),
+  }
+}
+
+/**
+ * 在**当前库状态之上**叠加一份尚未写入的导出快照,返回叠加后的派生状态(契约 §5)。
+ *
+ * ── 为什么要有它(RL-07)────────────────────────────────────────────────
+ * 年度增量预览必须能回答「这批快照落库之后,谁会**离开当前总表**」。而
+ * `rosterState` 是**派生**的(不落列),所以这个问题的答案不是一张待写清单,而是
+ * 「同一份派生口径作用在**叠加后**的库上」。把 `deriveRosterState` 再抄一遍就会
+ * 长出第二套「谁算移除」的判据 —— 那正是本仓反复踩过的坑。故此处只做**叠加**,
+ * 派生仍然只有 `deriveRosterState` 一份。
+ *
+ * ── 调用方的硬约束 ────────────────────────────────────────────────────
+ * `projected.batches[].id` 必须是**大于库内所有批次 id** 的合成值(否则同年并列时
+ * 「谁更新」会判反)。{@link nextSyntheticBatchIds} 给出这个序列。
+ *
+ * ── 为什么除了 `state` 还要给 `inLatestSnapshot` ─────────────────────────
+ * 年度预览要问的是「**谁因为这张新快照失去了锚点**」,而那**不等于**
+ * 「前后都是 `current`」。反例就是它自己的用处:一家有公布历史的企业**恰恰因为**有 jxj
+ * 记录,去掉 jxj 之后它会落到判据 3(「一条记录都没有 ⇒ current」),于是「失去锚点」这件事
+ * 被两条不同的规则盖住了 —— 拿 `state` 去比前后,这家人就**看不见**,「曾出现在公布文件的
+ * 企业不因平台缺失而删除」那一条也就没法列出来。
+ * 所以这里另外如实给出**锚点本身**(叠加后它出现过的批次里,有没有一张是「该批次所属称号」
+ * 的最新一张)。判据没有第二份:`inLatestSnapshot` 就是 `deriveRosterState` 判据 2 用的那个
+ * 同一个集合,`state` 仍然只由 `deriveRosterState` 给出。
+ */
+export function projectRosterStates(
+  db: Db,
+  projected: ProjectedSnapshot,
+): Map<number, ProjectedRosterState> {
+  const snap = readSnapshot(db)
+  const index = indexSnapshots(snap, projected)
+  const recordsByEnterprise = new Map<number, { source: string }[]>()
+  for (const record of snap.records) {
+    const list = recordsByEnterprise.get(record.enterpriseId)
+    if (list) list.push(record)
+    else recordsByEnterprise.set(record.enterpriseId, [record])
+  }
+  const states = new Map<number, ProjectedRosterState>()
+  for (const enterprise of snap.enterprises) {
+    // 叠加**后**它出现过的批次(含投影批次)—— 判「只由平台引入」的正证据也在这里,
+    // 于是调用方不必再按统代/名称自己匹配一遍导出表行(那会立刻长出第二套口径)。
+    const batchIds = [...(index.presentByEnterprise.get(enterprise.id) ?? [])].sort((a, b) => a - b)
+    states.set(enterprise.id, {
+      state: deriveRosterState(
+        { enterpriseId: enterprise.id, records: recordsByEnterprise.get(enterprise.id) ?? [] },
+        index,
+      ),
+      batchIds,
+      inLatestSnapshot: batchIds.some((batchId) => index.latestBatchIds.has(batchId)),
+    })
+  }
+  return states
+}
+
+/** {@link projectRosterStates} 的一行:叠加后的派生状态 + 它出现过的快照批次。 */
+export interface ProjectedRosterState {
+  state: RosterState
+  /** 该企业出现过的批次 id(库内 + 投影),升序。空数组 = 一张快照里都没有。 */
+  batchIds: number[]
+  /**
+   * 它的锚点还在不在:它出现过的批次里,有**至少一张**是「该批次所属称号」的最新一张。
+   * `false` 且 `batchIds` 非空 = **有正证据表明它已从最新快照消失**。
+   */
+  inLatestSnapshot: boolean
+}
+
+/** 投影批次的合成 id 序列:从库内最大批次 id + 1 起,单调递增(见 {@link projectRosterStates})。 */
+export function nextSyntheticBatchIds(db: Db, count: number): number[] {
+  const ids = db
+    .select({ id: schema.platformExportBatch.id })
+    .from(schema.platformExportBatch)
+    .all()
+    .map((b) => b.id)
+  const base = (ids.length ? Math.max(...ids) : 0) + 1
+  return Array.from({ length: count }, (_, i) => base + i)
 }
 
 /**
@@ -427,7 +534,7 @@ function selectRosterEnterprises(
   const candidates = profiles.map((profile) => ({
     profile,
     aliasNames: [...(confirmedAliases.get(profile.enterprise.id) ?? [])].sort(),
-    state: deriveRosterState(profile, index),
+    state: deriveRosterState({ enterpriseId: profile.enterprise.id, records: profile.records }, index),
   }))
   const rows = candidates
     .filter(({ profile, aliasNames, state }) => {
@@ -721,7 +828,11 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
     .filter((name, index, list) => list.indexOf(name) === index)
     .sort()
 
-  const row = toRow(profile, aliasNames, deriveRosterState(profile, indexSnapshots(snap)))
+  const row = toRow(
+    profile,
+    aliasNames,
+    deriveRosterState({ enterpriseId: profile.enterprise.id, records: profile.records }, indexSnapshots(snap)),
+  )
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
   const eventIds = new Set(events.map((e) => e.id))
 
