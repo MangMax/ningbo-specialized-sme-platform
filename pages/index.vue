@@ -427,7 +427,7 @@ useHead({
       <Select v-model="districtModel">
         <SelectTrigger
           size="sm"
-          class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-28 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap"
+          class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-28 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100"
           :data-active="state.district !== ''"
           aria-label="按属地筛选"
         >
@@ -448,7 +448,7 @@ useHead({
       <Select v-model="sortModel">
         <SelectTrigger
           size="sm"
-          class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-28 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap"
+          class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-28 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100"
           :data-active="state.sort !== DEFAULT_SORT"
           aria-label="排序方式"
         >
@@ -528,7 +528,7 @@ useHead({
       <div class="flex items-center gap-2">
         <span class="text-muted-foreground text-xs">每页</span>
         <Select v-model="sizeModel">
-          <SelectTrigger size="sm" class="bg-card w-20 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap" aria-label="每页条数">
+          <SelectTrigger size="sm" class="bg-card w-20 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100" aria-label="每页条数">
             <SelectValue />
           </SelectTrigger>
           <SelectContent class="shadow-none">

@@ -133,6 +133,7 @@ const recordedAt = computed(() => formatFetchTime(props.disposition.recordedAt))
 const open = ref(false)
 /** 按下瞬间是否已经打开 —— 决定这次点击是「开」还是「关」。 */
 let openOnPointerDown = false
+let openOnClickCapture = false
 
 /**
  * 让开多少:最长的状态文本「已确认无差异」约 86px,留 100px 保证 tooltip 的右缘
@@ -148,8 +149,14 @@ const wideEnough = useMediaQuery('(min-width: 640px)')
 function onPointerDown() {
   openOnPointerDown = open.value
 }
-function onClick() {
-  open.value = !openOnPointerDown
+function onClickCapture() {
+  // Snapshot before Reka's bubbling click listener requests a close.
+  openOnClickCapture = open.value
+}
+function onClick(event: MouseEvent) {
+  // Reka closes on pointerdown and again on click. Pointer activation uses the
+  // pre-pointerdown snapshot; keyboard/AT click uses the capture-phase snapshot.
+  open.value = !(event.detail === 0 ? openOnClickCapture : openOnPointerDown)
 }
 </script>
 
@@ -164,6 +171,7 @@ function onClick() {
           data-testid="reconcile-status-trigger"
           class="inline-flex max-w-full flex-wrap items-baseline gap-x-1 text-left text-[13px] leading-5 underline decoration-border underline-offset-2 hover:decoration-foreground focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           @pointerdown="onPointerDown"
+          @click.capture="onClickCapture"
           @click="onClick"
         >
           <span class="font-medium" :class="statusTone">{{ statusLabel }}</span>

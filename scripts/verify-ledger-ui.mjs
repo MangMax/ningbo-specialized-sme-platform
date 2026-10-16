@@ -152,11 +152,12 @@ async function waitUntil(cdp, sessionId, expression, timeoutMs = 30_000) {
  * 每次都新建 target:**同一个 target 反复 navigate 会带上上一页的滚动位置与
  * `documentElement` 状态**,量出来的宽度偶尔是上一页的,那次串味很难查。
  */
-async function openAndMeasure(cdp, url, expression, readyExpression, viewport = VIEWPORTS[0]) {
+async function openAndMeasure(cdp, url, expression, readyExpression, viewport = VIEWPORTS[0], mediaFeatures = []) {
   const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' })
   const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
   try {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false }, sessionId)
+    if (mediaFeatures.length) await cdp.send('Emulation.setEmulatedMedia', { features: mediaFeatures }, sessionId)
     await cdp.send('Page.enable', {}, sessionId)
     await cdp.send('Page.navigate', { url }, sessionId)
     if (readyExpression) {
@@ -1235,6 +1236,39 @@ async function main() {
           ok(`${label}:document.title = ${JSON.stringify(m.title)}`)
         }
       }
+    }
+
+    // Respect the project-wide reduced-motion control feedback policy on every list/comparison Select.
+    for (const page of PAGES) {
+      const result = await openAndMeasure(
+        cdp,
+        `${BASE}${page.query}`,
+        `(() => {
+          const triggers = [...document.querySelectorAll('[data-slot="select-trigger"]')];
+          return {
+            reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+            triggers: triggers.map((el) => ({
+              label: el.getAttribute('aria-label') ?? '',
+              classes: el.className,
+              transitionProperty: getComputedStyle(el).transitionProperty,
+            })),
+          };
+        })()`,
+        READY,
+        VIEWPORTS[0],
+        [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+      )
+      const label = `${page.name} · 减少动态效果`
+      if (!result.reducedMotion) bad(`${label}:Chrome 未应用 prefers-reduced-motion: reduce`)
+      else ok(`${label}:Chrome 已应用 prefers-reduced-motion: reduce`)
+      if (result.triggers.length !== 3) bad(`${label}:预期 3 个 Select 触发器,实测 ${result.triggers.length}`)
+      const missing = result.triggers.filter((trigger) =>
+        !trigger.classes.includes('motion-reduce:transition-none') ||
+        !trigger.classes.includes('motion-reduce:active:scale-100') ||
+        trigger.transitionProperty !== 'none',
+      )
+      if (missing.length) bad(`${label}:Select 按压反馈未遵循减少动态效果策略 ${JSON.stringify(missing)}`)
+      else ok(`${label}:3 个 Select 均禁用过渡并取消按压缩放`)
     }
 
     // 先把页面根部横向撑开 80px,确认上面的同一条断言会命中;target 随后关闭,缺陷随 DOM 一并复原。

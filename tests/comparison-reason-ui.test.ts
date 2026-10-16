@@ -63,6 +63,28 @@ afterEach(() => {
 })
 
 describe('比对行「平台解释」列:读库内状态与原因', () => {
+  it('键盘 click 按当前打开状态切换,不读取旧 pointerdown 快照', async () => {
+    const wrapper = mountIn(ComparisonReconcile, {
+      props: { explanation: null, disposition: disposition() },
+      attachTo: document.body,
+    })
+    const trigger = wrapper.get('[data-testid="reconcile-status-trigger"]')
+    const clickDetails: number[] = []
+    trigger.element.addEventListener('click', (event) => clickDetails.push((event as MouseEvent).detail))
+
+    await trigger.trigger('pointerdown')
+    await trigger.trigger('click', { detail: 1 })
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+
+    await trigger.trigger('click', { detail: 0 })
+    expect(clickDetails).toEqual([1, 0])
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    await trigger.trigger('click', { detail: 0 })
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    await trigger.trigger('click', { detail: 0 })
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+  })
+
   it('平台未更新(confirmed_reason + platform_stale)显示成「已确认原因 · 平台未更新」,**不是**「无记录」', async () => {
     const wrapper = mountIn(
       ComparisonReconcile,

@@ -177,7 +177,7 @@ const exportUrl = computed(
         />
       </div>
       <Select v-model="title">
-        <SelectTrigger size="sm" class="bg-card col-span-6 w-full shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] lg:col-span-1" aria-label="按称号筛选">
+        <SelectTrigger size="sm" class="bg-card col-span-6 w-full shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 lg:col-span-1" aria-label="按称号筛选">
           <SelectValue />
         </SelectTrigger>
         <SelectContent class="shadow-none">
@@ -185,7 +185,7 @@ const exportUrl = computed(
         </SelectContent>
       </Select>
       <Select v-model="districtModel">
-        <SelectTrigger size="sm" class="bg-card col-span-3 w-full px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] lg:col-span-1" aria-label="按区县筛选">
+        <SelectTrigger size="sm" class="bg-card col-span-3 w-full px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 lg:col-span-1" aria-label="按区县筛选">
           <SelectValue />
         </SelectTrigger>
         <SelectContent class="shadow-none">
@@ -197,7 +197,7 @@ const exportUrl = computed(
         <Select v-model="direction">
           <SelectTrigger
             size="sm"
-            class="bg-card w-full px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98]"
+            class="bg-card w-full px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100"
             aria-label="按比对方向筛选"
           >
             <SelectValue />
