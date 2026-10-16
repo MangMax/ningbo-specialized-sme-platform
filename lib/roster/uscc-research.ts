@@ -260,6 +260,64 @@ export interface UsccResearchClaim {
 /** 公开来源**地区与本企业属地不符**时的判据用的城名（全库都在这座城市）。 */
 export const LOCAL_CITY = '宁波'
 
+/**
+ * 一条**平台证据认领**：某个统代的平台关系写出的 `qymc` 逐字等于本企业的公布名。
+ *
+ * 这是路径一（④⑤ 两步）的输入形态 —— 与 {@link UsccResearchClaim}（公开来源）的区别在
+ * **证据种类**：这里的证据是**平台原始关系**，那才是「平台自己说这个统代就叫这个名字」。
+ * 批次判断代理交接的判定文件就走这条形态。
+ *
+ * ⚠️ **判定文件只是线索，不是证据**。`evidence` 里写的字段要**在库里对得上**才算数
+ * （见 `server/utils/uscc-research.ts` 的证据解析）：
+
+ *  - 库里**已有**那条关系（RL-03 实查落库的）⇒ 直接用真实行 id；
+ *  - 库里没有、而判定文件带来了 `evidence` ⇒ 用**批内自然键**（契约 §8.7）把这批查询/关系
+ *    与别名/归并的证据指针一起写进同一批 —— 归属由这批自己写下的行证明；
+ *  - 两边都没有 ⇒ `no_platform_evidence`，**不写**（文件说 `resolved` 也不算数）。
+ */
+export interface UsccPlatformClaim {
+  /** 归属企业：给 `enterpriseId` 优先，否则按 `enterpriseName` 归一化名找。 */
+  enterpriseId?: number
+  enterpriseName?: string
+  /** 待补（或规范化行已持有）的统一社会信用代码。 */
+  uscc: string
+  /**
+   * 判定代理交接的**原始关系摘要**（写进库做证据用）。缺省时只认库里**已有**的关系。
+   */
+  evidence?: {
+    interface: 'business_list' | 'apply_list'
+    /** `business_list` 的 rdjb；`apply_list` 为空串。 */
+    rdjb?: string
+    /** 同一次查询内第几条（从 1 起）。 */
+    sequenceNo: number
+    /** 平台关联主键（如 `SQ332022062212391`）。 */
+    relationKey?: string | null
+    /** 该关系的 `qymc` —— **必须逐字等于**本企业的公布名，否则不构成证据。 */
+    nameRaw: string
+    /** 该关系的 `cszt`（存续状态）。 */
+    status?: string | null
+    /** 该关系的 `tyshxydm`；与 `uscc` 不一致时这条讲的是别的企业（拒掉它）。 */
+    usccRaw?: string | null
+    /**
+     * 代理**实际发出去的那次查询**（如 `qymc=余姚市宏达喷雾器有限公司` / `tyshxydm=9133…`）。
+     * 记进 `source_text`，用来分清「按名反查」与「按统代正查」两条路。
+     */
+    query?: string | null
+  }[]
+  /** 判定依据（判定代理写的一句话）；落 `source_text` / `note`，供复核。 */
+  reason?: string | null
+  /** 证据来自哪个批次文件（如 `uscc-verdict-batch-3`）；落 `source_text`。 */
+  batchRef?: string | null
+  /**
+   * 证据的**产出时刻**（判定文件里的 `generatedAt`）。
+   *
+   * 为什么要写它：判定文件的原始平台响应**没有随文件交接**（只有字段摘要），所以这批
+   * `platform_query` 行的 `queried_at` 用的是**代理产出的时刻**而不是平台响应时刻 ——
+   * 这一点在 `source_text` 里如实写明，不留「看着像原始响应时刻」的假象。
+   */
+  observedAt?: string | null
+}
+
 /** 一条 claim 在**判定层**的可行性结论（写入层还会再校验一遍，两边规则同源）。 */
 export type UsccClaimVerdict =
   | { ok: true }

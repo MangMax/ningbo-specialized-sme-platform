@@ -6,7 +6,7 @@
  * 差别是这里**不 import h3**：解析结果是 `{ok}` 结果对象，由路由翻成 400，
  * 于是同一份解析能在裸 node 的测试里直接跑（见 `tests/uscc-research.test.ts`）。
  */
-import type { UsccChecklistFilter, UsccResearchClaim } from '../../lib/roster/uscc-research'
+import type { UsccChecklistFilter, UsccPlatformClaim, UsccResearchClaim } from '../../lib/roster/uscc-research'
 import { TITLE_ORDER } from '../../lib/labels'
 import { MAX_PAGE_SIZE } from '../../lib/query'
 
@@ -19,6 +19,18 @@ export type UsccQueryParse =
       planFilter: Omit<UsccChecklistFilter, 'page' | 'pageSize'>
       /** 公开来源查证结果（GET 恒为空数组）。 */
       claims: UsccResearchClaim[]
+      /** 平台证据认领（GET 恒为空数组）。 */
+      platformClaims: UsccPlatformClaim[]
+      /** 只处理这些企业（按 id）；不传则「给了认领就只判认领里的企业」。 */
+      enterpriseIds?: number[]
+      /**
+       * **批次判断代理的判定文件原文**（`{ file, value }` 依次成对）。
+       *
+       * 为什么把原文整份收下来、而不是让调用方自己算成认领：与 RL-14 的脚本同一个取舍 ——
+       * 「哪些条目能被采纳」是**服务端**的判定（`normalizeUsccVerdicts`），脚本只搬运文件。
+       * 于是判定规则只有一处，脚本里不可能漂。
+       */
+      verdictFiles: Array<{ file: string; value: Record<string, unknown> }>
     }
   | { ok: false; message: string }
 
@@ -62,6 +74,8 @@ export function parseUsccChecklistQuery(query: Record<string, unknown>): UsccQue
     ok: true,
     planFilter,
     claims: [],
+    platformClaims: [],
+    verdictFiles: [],
     filter: {
       ...planFilter,
       page: intParam(query.page, 1, Number.MAX_SAFE_INTEGER),
@@ -83,11 +97,14 @@ export function parseUsccResearchBody(body: unknown): UsccQueryParse {
   const record = (body ?? {}) as Record<string, unknown>
   const base = parseUsccChecklistQuery(record)
   if (!base.ok) return base
+  // ⚠️ 这里**不能早退**：`claims` 缺席只是「这一轮没有公开来源结果」，后面还有
+  // `verdictFiles` / `platformClaims` 要解析。原来写成 `if (raw == null) return base`
+  // 会让「只交判定文件」的那一轮**静默丢掉整份文件**（判定文件里 100 多条全被忽略，
+  // 而接口照样 200）。缺席就是空数组，往下走。
   const raw = record.claims
-  if (raw == null) return base
-  if (!Array.isArray(raw)) return { ok: false, message: 'claims 必须是数组' }
+  if (raw != null && !Array.isArray(raw)) return { ok: false, message: 'claims 必须是数组' }
   const claims: UsccResearchClaim[] = []
-  for (const [index, item] of raw.entries()) {
+  for (const [index, item] of (Array.isArray(raw) ? raw : []).entries()) {
     if (item == null || typeof item !== 'object' || Array.isArray(item)) {
       return { ok: false, message: `claims[${index}] 必须是对象` }
     }
@@ -113,5 +130,79 @@ export function parseUsccResearchBody(body: unknown): UsccQueryParse {
       note: typeof claim.note === 'string' ? claim.note : null,
     })
   }
-  return { ...base, claims }
+
+  const rawIds = record.enterpriseIds
+  if (rawIds != null && (!Array.isArray(rawIds) || rawIds.some((id) => typeof id !== 'number' || !Number.isInteger(id)))) {
+    return { ok: false, message: 'enterpriseIds 必须是整数数组' }
+  }
+  const enterpriseIds = Array.isArray(rawIds) ? (rawIds as number[]) : undefined
+
+  const verdictFiles: Array<{ file: string; value: Record<string, unknown> }> = []
+  const rawFiles = record.verdictFiles
+  if (rawFiles != null) {
+    if (!Array.isArray(rawFiles)) return { ok: false, message: 'verdictFiles 必须是数组' }
+    for (const [index, entry] of rawFiles.entries()) {
+      if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) {
+        return { ok: false, message: `verdictFiles[${index}] 必须是对象` }
+      }
+      const row = entry as Record<string, unknown>
+      const file = str(row.file)
+      const value = row.value
+      if (!file) return { ok: false, message: `verdictFiles[${index}].file 必填` }
+      if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+        return { ok: false, message: `verdictFiles[${index}].value 必须是对象` }
+      }
+      verdictFiles.push({ file, value: value as Record<string, unknown> })
+    }
+  }
+
+  const rawPlatform = record.platformClaims
+  if (rawPlatform == null) return { ...base, claims, platformClaims: [], verdictFiles, enterpriseIds }
+  if (!Array.isArray(rawPlatform)) return { ok: false, message: 'platformClaims 必须是数组' }
+  const platformClaims: UsccPlatformClaim[] = []
+  for (const [index, item] of rawPlatform.entries()) {
+    if (item == null || typeof item !== 'object' || Array.isArray(item)) {
+      return { ok: false, message: `platformClaims[${index}] 必须是对象` }
+    }
+    const claim = item as Record<string, unknown>
+    if (typeof claim.uscc !== 'string' && typeof claim.uscc !== 'number') {
+      return { ok: false, message: `platformClaims[${index}].uscc 必填` }
+    }
+    if (claim.enterpriseId == null && !str(claim.enterpriseName)) {
+      return { ok: false, message: `platformClaims[${index}] 需要 enterpriseId 或 enterpriseName` }
+    }
+    const rawEvidence = claim.evidence
+    if (rawEvidence != null && !Array.isArray(rawEvidence)) {
+      return { ok: false, message: `platformClaims[${index}].evidence 必须是数组` }
+    }
+    const evidence = (Array.isArray(rawEvidence) ? rawEvidence : []).flatMap((entry) => {
+      if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) return []
+      const row = entry as Record<string, unknown>
+      if (row.interface !== 'business_list' && row.interface !== 'apply_list') return []
+      const sequenceNo = Number(row.sequenceNo)
+      if (!Number.isInteger(sequenceNo) || sequenceNo < 1) return []
+      if (typeof row.nameRaw !== 'string' || !row.nameRaw) return []
+      return [
+        {
+          interface: row.interface as 'business_list' | 'apply_list',
+          rdjb: typeof row.rdjb === 'string' ? row.rdjb : '',
+          sequenceNo,
+          relationKey: typeof row.relationKey === 'string' ? row.relationKey : null,
+          nameRaw: row.nameRaw,
+          status: typeof row.status === 'string' ? row.status : null,
+          usccRaw: typeof row.usccRaw === 'string' ? row.usccRaw : null,
+        },
+      ]
+    })
+    platformClaims.push({
+      ...(typeof claim.enterpriseId === 'number' ? { enterpriseId: Math.trunc(claim.enterpriseId) } : {}),
+      ...(str(claim.enterpriseName) ? { enterpriseName: str(claim.enterpriseName) } : {}),
+      uscc: String(claim.uscc),
+      evidence,
+      reason: typeof claim.reason === 'string' ? claim.reason : null,
+      batchRef: typeof claim.batchRef === 'string' ? claim.batchRef : null,
+      observedAt: typeof claim.observedAt === 'string' ? claim.observedAt : null,
+    })
+  }
+  return { ...base, claims, platformClaims, verdictFiles, enterpriseIds }
 }

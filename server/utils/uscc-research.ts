@@ -30,20 +30,24 @@ import { normalizeName, normalizeUscc } from '../../lib/domain'
 import {
   coreWordOf,
   judgeUsccClaim,
+  usccFormatVerdict,
   type UsccChecklistFilter,
   type UsccChecklistResult,
   type UsccChecklistRow,
   type UsccInterfaceTrace,
   type UsccLibraryCandidate,
   type UsccQueryTrace,
+  type UsccPlatformClaim,
   type UsccResearchClaim,
   type UsccSourceEvidence,
   type UsccTargetOutcome,
 } from '../../lib/roster/uscc-research'
 import type {
   RosterImportMerge,
+  RosterImportPlatformQuery,
   RosterImportRequest,
   RosterImportUsccBackfill,
+  RosterPlatformRef,
 } from '../../lib/roster-import-client'
 import { allRosterEnterprises } from '../../lib/roster/enterprise-roster'
 import type { DuplicateMergeEvidence } from '../../lib/roster/duplicate-merge'
@@ -351,20 +355,34 @@ export function findLibraryCandidates(
 // 计划（只读；产出可提交的 payload）
 // ---------------------------------------------------------------------------
 
-/** 一条**可以执行**的补齐项。`merge` 与 `backfill` 恰给其一。 */
+/** 一条**可以执行**的补齐项。`merge` / `backfill` 至少给其一。 */
 export interface UsccResearchReady {
   outcome: 'filled'
   targetId: number
   targetName: string
-  /** `library` = 库内候选 + 平台按统代验证；`public_source` = 公开来源查证（票面路径二）。 */
-  route: 'library' | 'public_source'
-  /** 库内候选（`public_source` 路线为 `[]`）。 */
+  /**
+   * 候选是**怎么找到的**：
+   *  - `library` —— 库内核心词检索命中候选，再由平台按统代逐字证实；
+   *  - `platform_claim` —— 批次判断代理的判定文件带来候选统代（库里可能还没有那条关系）；
+   *  - `public_source` —— 公开来源查证（票面路径二）。
+   */
+  route: 'library' | 'platform_claim' | 'public_source'
+  /** 库内候选（`library` 之外为空数组）。 */
   candidates: UsccLibraryCandidate[]
   /** 被平台原始关系证实的**那一个**候选（候选多个时说明凭什么是它：凭证据，不凭名字像）。 */
   chosen: UsccLibraryCandidate | null
   uscc: string
-  /** 让身份成立的那条**平台原始关系**（`library` 路线必有；`public_source` 路线为 `null`）。 */
+  /** 让身份成立的那条**平台原始关系**（库里已有 ⇒ 真实行；批内新写 ⇒ 见 `evidenceRef`）。 */
   evidence: DuplicateMergeEvidence | null
+  /** 批内新写时的**自然键**（契约 §8.7）；库里已有真实行时为 `null`。 */
+  evidenceRef: RosterPlatformRef | null
+  /** 本项需要**写入**的平台查询（判定文件带来证据、库里还没有时）；否则 `null`。 */
+  platformQuery: RosterImportPlatformQuery | null
+  /**
+   * 规范行上**已经有**同名（`name_norm`）的 `confirmed` 曾用名 ⇒ 本轮**不再写**第二条
+   * （只并身份，不重复留名）。见 `hasConfirmedAlias` 的注释。
+   */
+  aliasAlreadyPresent: boolean
   /** 规范行（该统代的企业行）已存在 ⇒ 归并（§8.4）。 */
   merge: RosterImportMerge | null
   /** 该统代库里还没有任何一行持有 ⇒ 只补一个缺失值（§8.10）。 */
@@ -394,9 +412,11 @@ export interface UsccResearchReport {
     /** **闭合数量** = 本次补齐的家数（写完这些目标就不再缺统代）。 */
     closed: number
     /** 补齐走的是哪条路。 */
-    byRoute: { library: number; public_source: number }
+    byRoute: { library: number; platform_claim: number; public_source: number }
     /** 可执行项（写入载荷里的条数）。 */
     ready: number
+    /** 其中「规范行已有同名 confirmed 曾用名 ⇒ 不再重复写别名」的条数。 */
+    aliasAlreadyPresent: number
   }
   /** 按目标逐条给出结论（`filled` / `conflict` / `not_found` / `manual` 四桶）。 */
   outcomes: UsccTargetOutcome[]
@@ -412,6 +432,11 @@ export interface UsccResearchReport {
 export interface UsccResearchOptions {
   /** 公开来源查证结果（票面路径二）。不传则只跑库内路径。 */
   claims?: UsccResearchClaim[]
+  /**
+   * **平台证据认领**（路径一 ④⑤）：批次判断代理的判定文件经 {@link normalizeUsccVerdicts}
+   * 归一化后从这里进来。文件只是线索 —— 证据仍要在库里对得上（见处理块的注释）。
+   */
+  platformClaims?: UsccPlatformClaim[]
   /** 只处理这些企业（按 id）；不传则处理清单里的全部。 */
   enterpriseIds?: number[]
   /**
@@ -457,7 +482,20 @@ export const USCC_RESEARCH_SOURCE_IDENTITY = 'roster/uscc-research'
  */
 export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): UsccResearchReport {
   const allTargets = listAllTargets(db, options)
-  const restrict = options.enterpriseIds ? new Set(options.enterpriseIds) : null
+  // ── 范围：给了**认领**（公开来源 claim / 平台证据认领）就**只判这些目标** ──────────
+  // 为什么必须这样：认领是「逐家查证的结果」，调用方要的是「把这些查到的写进去」。
+  // 若还顺手跑全库库内计划，就会**顺带**把库内路径能解决的几十家也一起归并了 ——
+  // 那不是这次要写的东西（真实数据上库内路径能并 31 家，全跑会让一次「判定文件写回」
+  // 变成一次全量归并）。要全库跑就**不给认领**，或显式给 `enterpriseIds`。
+  const restrict = options.enterpriseIds
+    ? new Set(options.enterpriseIds)
+    : options.claims?.length || options.platformClaims?.length
+      ? new Set(
+          [...(options.claims ?? []), ...(options.platformClaims ?? [])]
+            .map((claim) => claim.enterpriseId)
+            .filter((id): id is number => typeof id === 'number'),
+        )
+      : null
   const targets = allTargets.filter((row) => (restrict ? restrict.has(row.enterpriseId) : true))
   const dictionary = buildDictionary(db)
   // 证据查找的索引**只建一次**：判据不变，但不必对上百个候选各扫一遍平台两张表
@@ -540,6 +578,9 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       chosen: null,
       uscc,
       evidence: null,
+      evidenceRef: null,
+      platformQuery: null,
+      aliasAlreadyPresent: false,
       merge: null,
       backfill: {
         enterpriseId: target.enterpriseId,
@@ -552,6 +593,198 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
           region: claim.source.region ?? null,
         },
         note: claim.note ?? null,
+      },
+    })
+  }
+
+  // ---- 平台证据认领（路径一 ④⑤；批次判断代理的判定文件走这条）---------------
+  //
+  // ⚠️ **判定文件只是线索，不是证据**：文件说 `resolved` / `qymcEqualsAnnouncedName=true` 都不算数，
+  // 这里要**在库里对得上**才算 —— 库里已有那条关系就直接用；库里还没有、而文件带来了
+  // `evidence` 摘要，就把这批查询/关系**连同证据指针一起写进同一批**（§8.7 的批内自然键），
+  // 归属由本批自己写下的行证明。两边都没有 ⇒ **不写**（`no_platform_evidence`）。
+  for (const claim of options.platformClaims ?? []) {
+    const target = locateTarget(allTargets, claim)
+    if (!target) {
+      pending.set(claim.enterpriseId ?? -2, {
+        targetId: claim.enterpriseId ?? -2,
+        targetName: claim.enterpriseName ?? '(未指定)',
+        outcome: 'manual',
+        code: 'claim_target_not_found',
+        message: `平台证据认领找不到归属企业：${claim.enterpriseId ?? claim.enterpriseName ?? '(空)'}`,
+        candidates: [],
+      })
+      continue
+    }
+    const uscc = normalizeUscc(claim.uscc)
+    if (usccFormatVerdict(claim?.uscc) !== 'ok' || !uscc) {
+      pending.set(target.enterpriseId, {
+        targetId: target.enterpriseId,
+        targetName: target.name,
+        outcome: 'conflict',
+        code: 'uscc_format_invalid',
+        message: `统一社会信用代码 ${String(claim?.uscc ?? '(空)')} 的格式或校验位不合法（GB 32100-2015）`,
+        candidates: [],
+      })
+      continue
+    }
+    const holder = findEnterpriseByUscc(db, uscc)
+    if (holder && holder.id === target.enterpriseId) {
+      pending.set(target.enterpriseId, {
+        targetId: target.enterpriseId,
+        targetName: target.name,
+        outcome: 'manual',
+        code: 'already_resolved',
+        message: `企业 ${target.enterpriseId} 已持有统代 ${uscc} ⇒ 无需再补（只补缺失值）`,
+        candidates: [],
+      })
+      continue
+    }
+    const claimedBy = claimedCodes.get(uscc)
+    if (claimedBy != null && claimedBy !== target.enterpriseId) {
+      pending.set(target.enterpriseId, {
+        targetId: target.enterpriseId,
+        targetName: target.name,
+        outcome: 'conflict',
+        code: 'uscc_taken',
+        message: `统代 ${uscc} 本轮已被企业 ${claimedBy} 认领 ⇒ 冲突（同一轮内不重复认领同一个代码，也不自动合并身份）`,
+        candidates: [],
+      })
+      continue
+    }
+
+    // 证据解析：先看库里已有的关系，再看判定文件带来的摘要。
+    const stored = findUsccKeyedRelationEvidence(db, { uscc, name: target.name }, evidenceIndex)
+    const supplied = pickSuppliedEvidence(claim, target.name, uscc)
+    if (!stored.ok && !supplied) {
+      const why = stored.reason === 'no_platform_query' ? '库里没有以该统代为查询键的平台查询' : stored.message
+      pending.set(target.enterpriseId, {
+        targetId: target.enterpriseId,
+        targetName: target.name,
+        outcome: 'manual',
+        code: 'no_platform_evidence',
+        message:
+          `判定文件说 ${uscc} 就是本企业的统代，但**平台原始证据对不上**：${why}；` +
+          '判定文件里也没有一条 qymc 逐字等于公布名的关系摘要 ⇒ 不写（文件不是证据）。',
+        candidates: [],
+      })
+      continue
+    }
+    claimedCodes.set(uscc, target.enterpriseId)
+
+    const evidenceRef: RosterPlatformRef | null = stored.ok
+      ? null
+      : {
+          interface: supplied!.interface,
+          queryKey: uscc,
+          rdjb: supplied!.rdjb,
+          queriedAt: supplied!.queriedAt,
+          sequenceNo: supplied!.sequenceNo,
+        }
+    const platformQuery: RosterImportPlatformQuery | null = stored.ok
+      ? null
+      : {
+          interface: supplied!.interface,
+          queryKey: uscc,
+          rdjb: supplied!.rdjb,
+          queriedAt: supplied!.queriedAt,
+          status: 'success',
+          failureReason: null,
+          rawResponse: null,
+          relations: [
+            {
+              sequenceNo: supplied!.sequenceNo,
+              relationKey: supplied!.relationKey,
+              usccRaw: uscc,
+              nameRaw: supplied!.nameRaw,
+              status: supplied!.status,
+              matchBasis: 'uscc',
+              verificationStatus: 'confirmed',
+              sourceText:
+                `由批次判断代理交接的判定文件（${claim.batchRef ?? '(未标批次)'}）转写；` +
+                `原始平台响应**未随文件交接**，此行的 queried_at 取该判定文件的产出时刻。` +
+                `${supplied!.query ? `代理实发查询：${supplied!.query}。` : ''}依据：${claim.reason ?? '(未给理由)'}`,
+            },
+          ],
+        }
+
+    if (holder) {
+      // 该统代已挂在另一家企业行上 ⇒ §5.2 的**归并**（不是 UPDATE：会撞 enterprise_uscc_norm_uq）。
+      const exportName = findExportSideName(db, uscc)
+      const canonicalName = exportName && exportName !== holder.name ? exportName : null
+      const sameName = target.name === holder.name
+      // ① 别名去重：规范行上已有同名 confirmed 别名 ⇒ 不再写第二条（只并身份，不重复留名）。
+      const aliasAlreadyPresent = !sameName && hasConfirmedAlias(db, holder.id, target.name)
+      resolved.set(target.enterpriseId, {
+        outcome: 'filled',
+        targetId: target.enterpriseId,
+        targetName: target.name,
+        route: 'platform_claim',
+        candidates: [],
+        chosen: null,
+        uscc,
+        evidence: stored.ok ? stored.evidence : null,
+        evidenceRef,
+        platformQuery,
+        aliasAlreadyPresent,
+        merge: {
+          fromEnterpriseId: target.enterpriseId,
+          intoUscc: uscc,
+          ...(canonicalName ? { canonicalName } : {}),
+          ...(sameName || aliasAlreadyPresent ? {} : { aliasName: target.name }),
+          sourceKind: supplied?.sourceKind ?? 'platform_business',
+          ...(evidenceRef ? { sourceRelationRef: evidenceRef } : { sourceRefId: stored.ok ? stored.evidence.relationId : 0 }),
+          ...(evidenceRef
+            ? { evidenceQueryRef: { interface: evidenceRef.interface, queryKey: uscc, rdjb: evidenceRef.rdjb, queriedAt: evidenceRef.queriedAt } }
+            : stored.ok
+              ? { evidenceQueryId: stored.evidence.queryId }
+              : {}),
+          note:
+            `平台证据认领（${claim.batchRef ?? '判定文件'}）：${describeEvidenceLine(stored, supplied)}` +
+            `${claim.reason ? `；判定依据：${claim.reason}` : ''}`,
+        },
+        backfill: null,
+      })
+      if (!sameName) {
+        const entry = dictionary.find((item) => item.enterpriseId === holder.id)
+        if (entry && !entry.names.some((item) => item.value === target.name)) {
+          entry.names.push({ value: target.name, norm: normalizeName(target.name), matchedBy: 'alias' })
+        }
+      }
+      continue
+    }
+
+    // 库里没有任何一行持有该统代 ⇒ 只补一个缺失值（§8.10）。
+    // **不写曾用名**：判据要求 `qymc` 逐字等于本企业名，而本企业名不会因为补个统代而变 ——
+    // 写出来的别名会与现名逐字相同，那是个自指的别名（§5.3 只在两侧名称不同时才留别名）。
+    resolved.set(target.enterpriseId, {
+      outcome: 'filled',
+      targetId: target.enterpriseId,
+      targetName: target.name,
+      route: 'platform_claim',
+      candidates: [],
+      chosen: null,
+      uscc,
+      evidence: stored.ok ? stored.evidence : null,
+      evidenceRef,
+      platformQuery,
+      aliasAlreadyPresent: false,
+      merge: null,
+      backfill: {
+        enterpriseId: target.enterpriseId,
+        uscc,
+        // `usccBackfills.source` 的三要素是**公开来源**的形状；这一条的证据是**平台原始关系**，
+        // 所以把 URL 位放平台接口地址、依据位放「哪条关系逐字相等」，如实说明来源是平台。
+        source: {
+          url: 'https://zjtx.miit.gov.cn/zxqy/',
+          checkedOn: supplied!.checkedOn,
+          basis:
+            `平台原始关系逐字证实：${describeEvidenceLine(stored, supplied)}` +
+            `${claim.reason ? `；判定依据：${claim.reason}` : ''}`,
+          name: target.name,
+          region: target.city ?? '宁波市',
+        },
+        note: `平台证据认领（${claim.batchRef ?? '判定文件'}）`,
       },
     })
   }
@@ -634,6 +867,9 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       const exportName = findExportSideName(db, candidate.uscc)
       const canonicalName = exportName && exportName !== into.name ? exportName : null
       const sameName = target.name === into.name
+      // ① 别名去重（同上）：**库内按曾用名命中的那条路尤其容易撞** —— 名字既然能命中，
+      // 说明它本来就已经是规范行的别名了，再写一条只是把同一个名字留第二遍。
+      const aliasAlreadyPresent = !sameName && hasConfirmedAlias(db, into.id, target.name)
       resolved.set(targetId, {
         outcome: 'filled',
         targetId,
@@ -643,11 +879,14 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
         chosen: candidate,
         uscc: candidate.uscc,
         evidence,
+        evidenceRef: null,
+        platformQuery: null,
+        aliasAlreadyPresent,
         merge: {
           fromEnterpriseId: targetId,
           intoUscc: candidate.uscc,
           ...(canonicalName ? { canonicalName } : {}),
-          ...(sameName ? {} : { aliasName: target.name }),
+          ...(sameName || aliasAlreadyPresent ? {} : { aliasName: target.name }),
           sourceKind: evidence.sourceKind,
           sourceRefId: evidence.relationId,
           evidenceQueryId: evidence.queryId,
@@ -702,7 +941,8 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
             ? `库内核心词「${row.coreWord}」命中候选企业 ${filled.chosen?.enterpriseId ?? ''}「${filled.chosen?.matchedName ?? ''}」，` +
               `其统代 ${filled.uscc} 在已落库的平台关系（${filled.evidence?.interface ?? ''}` +
               `${filled.evidence?.rdjb ? ` rdjb=${filled.evidence.rdjb}` : ''} 序号 ${filled.evidence?.sequenceNo ?? ''}` +
-              `${filled.evidence?.relationKey ? ` ${filled.evidence.relationKey}` : ''}）里的 qymc 逐字等于企业名 ⇒ 归并补录`
+              `${filled.evidence?.relationKey ? ` ${filled.evidence.relationKey}` : ''}）里的 qymc 逐字等于企业名 ⇒ ` +
+              (filled.aliasAlreadyPresent ? '规范行已有同名曾用名 ⇒ 只并身份、不重复写别名' : '归并补录')
             : `公开来源查证给出统代 ${filled.uscc} ⇒ 补录（来源 ${filled.backfill?.source.url ?? ''}）`,
         candidates: filled.candidates,
         uscc: filled.uscc,
@@ -733,6 +973,11 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
     })
   }
 
+  // 载荷顺序不敏感（写入侧的执行顺序固定：platformQueries → aliases → … → merges，见 §8.7.2），
+  // 但**都必须在同一批里**，否则批内自然键引用解析不到（"有证据的曾用名"就会落成 0 哨兵）。
+  const platformQueries = ready
+    .map((item) => item.platformQuery)
+    .filter((item): item is RosterImportPlatformQuery => item != null)
   const merges = ready.map((item) => item.merge).filter((item): item is RosterImportMerge => item != null)
   const backfills = ready.map((item) => item.backfill).filter((item): item is RosterImportUsccBackfill => item != null)
 
@@ -750,9 +995,11 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       closed: countOf('filled'),
       byRoute: {
         library: ready.filter((item) => item.route === 'library').length,
+        platform_claim: ready.filter((item) => item.route === 'platform_claim').length,
         public_source: ready.filter((item) => item.route === 'public_source').length,
       },
       ready: ready.length,
+      aliasAlreadyPresent: ready.filter((item) => item.aliasAlreadyPresent).length,
     },
     outcomes,
     ready,
@@ -761,10 +1008,11 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       ready.length === 0
         ? null
         : {
-            idempotencyKey: usccResearchIdempotencyKey({ merges, backfills }),
+            idempotencyKey: usccResearchIdempotencyKey({ platformQueries, merges, backfills }),
             sourceKind: 'alias_evidence',
             sourceIdentity: USCC_RESEARCH_SOURCE_IDENTITY,
             payload: {
+              ...(platformQueries.length ? { platformQueries } : {}),
               ...(merges.length ? { merges } : {}),
               ...(backfills.length ? { usccBackfills: backfills } : {}),
             },
@@ -777,16 +1025,127 @@ function listAllTargets(db: Db, options: UsccResearchOptions): UsccChecklistRow[
   return options.targets ? [...options.targets] : collectUsccTargets(db, options.filter ?? {})
 }
 
-/** claim 归属的企业：给 id 用 id，否则按归一化名找（同名多主体时返回第一条并让写入层拒绝）。 */
-function locateTarget(targets: readonly UsccChecklistRow[], claim: UsccResearchClaim): UsccChecklistRow | null {
+/**
+ * 认领归属的企业：给 id 用 id，否则按归一化名找。
+ *
+ * 两种认领（公开来源 `UsccResearchClaim` / 平台证据 `UsccPlatformClaim`）共用这一处 ——
+ * 「这条认领讲的是哪家企业」只有一种解法，两边各写一遍迟早会漂。
+ */
+function locateTarget(
+  targets: readonly UsccChecklistRow[],
+  claim: { enterpriseId?: number; enterpriseName?: string },
+): UsccChecklistRow | null {
   if (claim.enterpriseId != null) return targets.find((row) => row.enterpriseId === claim.enterpriseId) ?? null
   const norm = claim.enterpriseName ? normalizeName(claim.enterpriseName) : ''
   if (!norm) return null
   return targets.find((row) => normalizeName(row.name) === norm) ?? null
 }
 
+/**
+ * 规范行上是不是**已经有**同名（`name_norm`）的已确认曾用名？
+ *
+ * 为什么要在计划里判这一条：`enterprise_alias` 的唯一键是
+ * `(enterprise_id, name_norm, source_kind, source_ref_id)` —— 含 `source_ref_id`，
+ * 所以「同一家企业、同一个名字、换一条来源关系」**不撞唯一键**，会实打实写出第二条别名行。
+ * 那不算错（§1.2 有意让不同来源各自成条留证），但对**搜索与展示**是纯噪音：
+ * 名字已经能被搜到、详情页上却同名并列两行。批次 5 实测 `335 / 783 / 1448` 三家就是这样。
+ *
+ * 所以：**写别名之前按 `(enterprise_id, name_norm)` 查一次**，已有 `confirmed` 的同名别名
+ * 就不再写（并在报告里标 `aliasAlreadyPresent`）。只认 `confirmed`：`pending` 的同名别名
+ * 换成 `confirmed` 是一次**升级**，该写还是要写。
+ */
+function hasConfirmedAlias(db: Db, enterpriseId: number, name: string): boolean {
+  const norm = normalizeName(name)
+  return db
+    .select()
+    .from(schema.enterpriseAlias)
+    .all()
+    .some((row) => row.enterpriseId === enterpriseId && row.nameNorm === norm && row.verificationStatus === 'confirmed')
+}
+
 /** 单条按统代找企业（与写入层同一个身份键；只读，返回最小形状）。 */
 function findEnterpriseByUscc(db: Db, uscc: string): { id: number; name: string } | null {
   const row = db.select().from(schema.enterprise).all().find((e) => normalizeUscc(e.usccNorm) === uscc)
   return row ? { id: row.id, name: row.name } : null
+}
+
+// ---------------------------------------------------------------------------
+// 平台证据认领的证据解析
+// ---------------------------------------------------------------------------
+
+/** 判定文件带来的一条**可用的**证据（字段已归一化；`queriedAt` 来自认领的 `observedAt`）。 */
+interface SuppliedEvidence {
+  interface: 'business_list' | 'apply_list'
+  rdjb: string
+  sequenceNo: number
+  relationKey: string | null
+  nameRaw: string
+  status: string | null
+  sourceKind: 'platform_business' | 'platform_apply'
+  /** 代理实际发出的那次查询（如 `qymc=…`）；判定文件没给就留空。 */
+  query: string | null
+  queriedAt: string
+  /** 公开来源形状的 `checkedOn`（`usccBackfills` 必填）—— 取产出时刻的日期部分。 */
+  checkedOn: string
+}
+
+/**
+ * 从一枚认领里挑出**能当证据用的**那条关系摘要。
+ *
+ * 三条判据缺一不可（都是「逐字 / 明确」类的，没有一条靠像不像）：
+ *  1. `nameRaw` **逐字等于**本企业的公布名 —— 判据本体；
+ *  2. `usccRaw` 缺席或**等于**本认领的统代 —— 否则这条讲的是别的企业；
+ *  3. 认领带 `observedAt` —— 平台查询行的 `queried_at` 是 NOT NULL，**不编时间**（不猜）。
+ *
+ * 多条都满足时取**第一条**（`evidence[]` 的顺序即判定代理给出的顺序），保证可重放。
+ */
+function pickSuppliedEvidence(
+  claim: UsccPlatformClaim,
+  targetName: string,
+  uscc: string,
+): SuppliedEvidence | null {
+  const observedAt = typeof claim.observedAt === 'string' ? claim.observedAt.trim() : ''
+  if (!/^\d{4}-\d{2}-\d{2}/.test(observedAt)) return null
+  for (const item of claim.evidence ?? []) {
+    if (!item || typeof item !== 'object') continue
+    if (item.interface !== 'business_list' && item.interface !== 'apply_list') continue
+    if (item.nameRaw !== targetName) continue
+    const sequenceNo = Number(item.sequenceNo)
+    if (!Number.isInteger(sequenceNo) || sequenceNo < 1) continue
+    const rawUscc = normalizeUscc(item.usccRaw)
+    if (rawUscc && rawUscc !== uscc) continue
+    return {
+      interface: item.interface,
+      rdjb: item.interface === 'business_list' ? (item.rdjb ?? '') : '',
+      sequenceNo,
+      relationKey: item.relationKey ?? null,
+      nameRaw: item.nameRaw,
+      status: item.status ?? null,
+      sourceKind: item.interface === 'business_list' ? 'platform_business' : 'platform_apply',
+      query: typeof item.query === 'string' && item.query.trim() ? item.query.trim() : null,
+      queriedAt: observedAt,
+      checkedOn: observedAt.slice(0, 10),
+    }
+  }
+  return null
+}
+
+/** 把「证据是哪一条」写成一句可读的话（进 `note` / `source.basis`），供复核。 */
+function describeEvidenceLine(
+  stored: { ok: true; evidence: DuplicateMergeEvidence } | { ok: false; reason: string; message: string },
+  supplied: SuppliedEvidence | null,
+): string {
+  if (stored.ok) {
+    const e = stored.evidence
+    return (
+      `${e.interface}${e.rdjb ? ` rdjb=${e.rdjb}` : ''} 序号 ${e.sequenceNo}` +
+      `${e.relationKey ? `（${e.relationKey}）` : ''} 于 ${e.queriedAt} 返回的 qymc 逐字等于「${e.nameRaw}」（库内关系 ${e.relationId}）`
+    )
+  }
+  const e = supplied!
+  return (
+    `${e.interface}${e.rdjb ? ` rdjb=${e.rdjb}` : ''} 序号 ${e.sequenceNo}` +
+    `${e.relationKey ? `（${e.relationKey}）` : ''} 返回的 qymc 逐字等于「${e.nameRaw}」` +
+    `（随本批写入，见本批 platformQueries）`
+  )
 }

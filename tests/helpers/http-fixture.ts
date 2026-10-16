@@ -46,7 +46,12 @@ export interface FixtureResponse {
   body?: unknown
 }
 
-export type FixtureHandler = (request: FixtureRequest) => FixtureResponse
+/**
+ * 处理器可以返回承诺：路由文件本来是 `defineEventHandler(async (event) => …)`，
+ * 夹具调的是同一个函数 —— 同步的 `handler(...)` 会把 Promise 当响应体发出去（`{}`）。
+ * 所以这里 await 一次：同步处理器不受影响（await 非承诺值原样返回），异步的才拿到真响应体。
+ */
+export type FixtureHandler = (request: FixtureRequest) => FixtureResponse | Promise<FixtureResponse>
 
 export interface FixtureRoutes {
   /** 路径 → 处理器,**任意方法**都交给它(写面走这里,方法不对由核心回 405)。 */
@@ -93,7 +98,7 @@ async function dispatch(
     sendJson(res, 404, {}, { message: 'not found' })
     return
   }
-  const out = handler({
+  const out = await handler({
     method,
     path: url.pathname,
     url,

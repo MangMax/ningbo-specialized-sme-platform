@@ -1,6 +1,7 @@
 import { useDb } from '@db'
 import { collectUsccTargets, pageUsccChecklist, planUsccResearch } from '~~/server/utils/uscc-research'
 import { parseUsccResearchBody } from '~~/server/utils/uscc-research-query'
+import { normalizeUsccVerdicts, type UsccVerdictFile } from '~~/server/utils/uscc-verdicts'
 
 /**
  * 与 `GET` 同一份清单与计划，但**多收一批公开来源查证结果**（票面路径二）。
@@ -72,8 +73,32 @@ export default defineEventHandler(async (event) => {
   const db = useDb()
   // **一次全表扫描**：清单与计划共用同一份目标行（见 `collectUsccTargets` 的注释）。
   const targets = collectUsccTargets(db, parsed.planFilter)
+  // 判定文件**只做归一化**（哪些条目能被采纳是服务端判定）：采纳的进平台证据认领，
+  // 未采纳的（冲突 / 未找到 / 待人工）如实回给调用方，一行都不写。
+  const ingest = parsed.verdictFiles.length
+    ? normalizeUsccVerdicts(
+        parsed.verdictFiles.map(({ file, value }) => ({ file, value: value as UsccVerdictFile })),
+      )
+    : null
   return {
     checklist: pageUsccChecklist(targets, parsed.filter),
-    plan: planUsccResearch(db, { filter: parsed.planFilter, targets, claims: parsed.claims }),
+    plan: planUsccResearch(db, {
+      filter: parsed.planFilter,
+      targets,
+      ...(parsed.enterpriseIds ? { enterpriseIds: parsed.enterpriseIds } : {}),
+      claims: parsed.claims,
+      // 给了认领（含判定文件）⇒ 计划**只判这些目标**，不顺手跑全库库内计划（见 planUsccResearch）。
+      platformClaims: [...parsed.platformClaims, ...(ingest?.platformClaims ?? [])],
+    }),
+    ...(ingest
+      ? {
+          verdicts: {
+            batches: ingest.batches,
+            accepted: ingest.platformClaims.length,
+            untouched: ingest.untouched,
+            problems: ingest.problems,
+          },
+        }
+      : {}),
   }
 })
