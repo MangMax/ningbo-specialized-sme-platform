@@ -258,6 +258,29 @@
 | 2.6 | 关系匹配依据 | `uscc` 按统一社会信用代码 / `alias` 按曾用名 / `manual` 人工确认 / `none` 未匹配 | `RELATION_MATCH_BASES` |
 | 2.7 | 差异状态 | 见 §3 | `DIFFERENCE_STATUSES` |
 | 2.8 | 差异原因 | `moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 / `platform_stale` 平台未更新 / `moved_in` 迁入 / `other` 其他 | `DIFFERENCE_REASONS` |
+
+> **`platform_stale`(平台未更新)的确切口径**(用户 2026-10-16 定义,附真实案例):
+> **公布名单里有、导出表里没有**(`missing_in_miit`),但**查接口其实有记录** ——
+> 申报记录里可能只是 `待审核` / `区县已审` 之类,**往往出现在最新一年的名单里**。
+> 即:官方已经公布了,但**平台审核信息滞后**。
+>
+> 判据(对 `direction = missing_in_miit` 的差异):`businessList`(`rdjb=1/2/3`)**或**
+> `applyList` **任一返回 ≥ 1 条关系** ⇒ `confirmed_reason` + `reason_code='platform_stale'` +
+> `measure_code='mark_platform_snapshot'`,`verification_status='confirmed'`,证据指向那些关系
+> (用 §8.7 的自然键),`reason_note` 抄下关键 `cszt` 原文与出现的年份。
+> **只有两个接口都查不到任何关系时**才落 `no_record`(配 `manual_review`)。
+>
+> ⚠️ **绝不能**把「接口有记录」记成 `no_record` 或 `confirmed_no_diff` ——
+> 那会把「平台滞后」误报成「无差异」。
+>
+> 实测案例(真实凭据查明):`91330206793007818K`(rdjb=3 → 4 条、rdjb=2 → 1 条、申报 2 条,
+> 其中含曾用名 `宁波一力减震器有限公司`)、`913302126102116572`(rdjb=3 → 3 条、申报 2 条,
+> 状态 `2022 待审核` / `2021 终审通过`)、`91330624062002925P`(rdjb=3 → 4 条、rdjb=2 → 3 条,
+> 申报 4 条;统代属地 3306=绍兴 ⇒ 可能是**迁入**候选)。
+>
+> **原因与身份事实正交**:同一 `tyshxydm` 下写出了历史名称(更名证据)时,即使这条差异的
+> 原因是 `platform_stale`,**曾用名照样写进 `enterprise_alias`**(它记录的是身份沿革,
+> 不是「这条差异为什么存在」)。
 | 2.9 | 后续措施 | `keep_history` 保留正式公布历史 / `mark_platform_snapshot` 标明平台时点,不覆盖历史 / `mark_moved_out` 记录迁出状态 / `mark_deregistered` 记录注销主体状态 / `update_current_name` 更新当前名并保留旧名为曾用名 / `record_moved_in` 记录迁入来源(城市/称号/年份/批次) / `manual_review` 转人工核实 / `none` 无需措施 | `DIFFERENCE_MEASURES` |
 | 2.10 | 导出批次导入状态 | `pending` 待导入 / `imported` 已导入 / `failed` 导入失败 | `EXPORT_IMPORT_STATUSES` |
 | 2.11 | 统一批次状态 | `preflight` 预检 / `committed` 已提交 / `failed` 提交失败 | `IMPORT_BATCH_STATUSES` |
@@ -310,6 +333,15 @@
 > 前五个里 `未查询 / 查询失败 / 无记录 / 已确认无差异` 四态互不等价。
 > `confirmed_reason` 承载「外迁/注销/更名/平台未更新/迁入」五类**已确认原因**。
 > (是否把 `confirmed_reason` 并入 `confirmed_no_diff` —— 见 ADR「待父代理裁决」。)
+>
+> **四态与 `platform_stale` 的分界**(2026-10-16 补,与 §2.8 的定义配套):
+>  - `no_record` = 平台的**成功查询**返回 **0 条关系**(两个接口都查不到);
+>  - `confirmed_reason` + `platform_stale` = 至少一个接口**返回了关系**,
+>    只是导出表滞后于公布文件。**«接口有记录» 不等于 «无差异»**。
+>
+> **`confirmed_no_diff` 当前不由本仓的判定引擎产出**:`missing_in_miit` 且有记录的情形
+> 已由 §2.8 的口径归入 `platform_stale`。枚举取值**保留**(冻结表不改),由人工/其它写入方
+> 在确有「两侧一致、无需处置」的证据时使用。
 
 ---
 

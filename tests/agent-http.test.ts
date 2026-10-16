@@ -198,19 +198,18 @@ describe('任务种类注册表', () => {
     expect(() => registerJob(spec)).toThrow(/重复登记/)
   })
 
-  it('生产登记表:render-pages 与 ocr 已接入,reconcile 已登记但明确报「尚未接入」', () => {
+  it('生产登记表:三个 kind 都已接入(reconcile 由 RL-03 收尾切片接上)', () => {
     registerJobSpecs()
     const kinds = jobSpecs()
     expect(kinds.map((s) => s.kind)).toEqual(['ocr', 'reconcile', 'render-pages'])
-    // 票 14 把 ocr 从 todo 接上了(结果表落地)—— 两个已接入的 kind 都要有 run。
-    for (const k of ['render-pages', 'ocr']) {
+    // 票 14 把 ocr 从 todo 接上了;RL-03 收尾把 reconcile 也接上了(核心逻辑搬进 app)。
+    // 三个已接入的 kind 都要有 run。
+    for (const k of ['render-pages', 'ocr', 'reconcile']) {
       expect(getJobSpec(k)!.status).toBe('ready')
       expect(getJobSpec(k)!.run).toBeTypeOf('function')
     }
-    // 未接入的那个要**说清为什么、接在哪张票上** —— 只说「没接」等于没说。
-    expect(getJobSpec('reconcile')!.status).toBe('todo')
-    expect(getJobSpec('reconcile')!.note).toMatch(/尚未接入/)
-    expect(getJobSpec('reconcile')!.note).toContain('票 16')
+    // 「怎么拼 params」是给代理看的,不能只报名字。
+    expect(getJobSpec('reconcile')!.paramsHint).toMatch(/titles/)
     // 幂等:重复调用不会撞「重复登记」。
     expect(() => registerJobSpecs()).not.toThrow()
   })
