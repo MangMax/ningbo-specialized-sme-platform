@@ -11,6 +11,10 @@ import {
   evidencePreviewHref,
   type EvidencePageState,
 } from '~~/lib/roster/evidence-page'
+import {
+  rememberEvidencePreviewReturn,
+  useEvidencePreviewScrollRestore,
+} from '~~/lib/roster/evidence-preview-return'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -75,6 +79,8 @@ const { data, isLoading, error } = useQuery({
 })
 
 const detail = computed(() => data.value ?? null)
+const detailRendered = computed(() => detail.value !== null || error.value != null)
+useEvidencePreviewScrollRestore(detailRendered)
 
 /**
  * 页面标题(RL-17 收尾):企业名 + 页面名。详情是异步取的,所以先给一个不含名字的兜底,
@@ -164,6 +170,11 @@ function pageWordOf(e: Evidence): string {
  */
 function pageHref(e: Evidence): string {
   return evidencePreviewHref({ sourceFile: e.sourceFile, page: e.page, back: route.fullPath })
+}
+
+function rememberPagePreviewReturn(event: MouseEvent): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  rememberEvidencePreviewReturn(route.fullPath, event.currentTarget)
 }
 </script>
 
@@ -320,6 +331,7 @@ function pageHref(e: Evidence): string {
                         <NuxtLink
                           v-if="pageStateOf(e) === 'assigned'"
                           :to="pageHref(e)"
+                          @click="rememberPagePreviewReturn"
                           class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
                         >
                           第 {{ e.page }} 页

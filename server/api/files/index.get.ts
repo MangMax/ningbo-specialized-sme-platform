@@ -68,7 +68,44 @@ defineRouteMeta({
         description: '强制重跑回填(幂等;验收与排查用)。',
       },
     ],
-    responses: { 200: { description: '分页的文件列表(含段与引用数);跑过回填时带 `backfill`。' } },
+    responses: {
+      200: {
+        description: '分页的文件列表(含段与引用数);跑过回填时带 `backfill`。',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['rows', 'total'],
+              properties: {
+                rows: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    additionalProperties: true,
+                    required: ['displayName', 'filename'],
+                    properties: {
+                      displayName: {
+                        type: 'string',
+                        description: '用户可见名称；未设置时等于磁盘文件名 filename。',
+                      },
+                      filename: {
+                        type: 'string',
+                        description: '磁盘上的原始文件名；修改 displayName 不会改动它。',
+                      },
+                    },
+                  },
+                },
+                total: { type: 'integer', description: '符合筛选条件的文件总数。' },
+                backfill: {
+                  type: 'object',
+                  description: '仅本次请求执行惰性回填或强制重扫时出现。',
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   },
 })
 

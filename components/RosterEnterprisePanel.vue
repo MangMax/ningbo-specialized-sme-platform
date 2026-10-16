@@ -318,6 +318,11 @@ function openPreview(e: Evidence) {
  */
 const previewBack = computed(() => (props.backQuery ? `/?${props.backQuery}` : '/'))
 
+function rememberFullDetailReturn(event: MouseEvent): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  rememberEvidencePreviewReturn(previewBack.value, event.currentTarget)
+}
+
 function pageHref(v: Evidence): string {
   return evidencePreviewHref({ sourceFile: v.sourceFile, page: v.page, back: previewBack.value })
 }
@@ -344,7 +349,9 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
       <!-- 展开已经装下称号历史与证据;要更深的（文件出处、拆分记录）去完整企业页。 -->
       <div class="flex justify-end">
         <Button as-child variant="ghost" size="sm" class="h-6 gap-1 px-1.5 text-[11px]">
-          <NuxtLink :to="fullPageTo">完整企业页 <ExternalLink class="size-3" /></NuxtLink>
+          <NuxtLink :to="fullPageTo" @click="rememberFullDetailReturn">
+            完整企业页 <ExternalLink class="size-3" />
+          </NuxtLink>
         </Button>
       </div>
 
