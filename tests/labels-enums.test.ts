@@ -9,6 +9,10 @@ import {
   DIFFERENCE_STATUS_VARIANTS,
   EVENTS,
   EXPORT_IMPORT_STATUSES,
+  FIRST_RECOGNITION_REASONS,
+  FIRST_RECOGNITION_REASON_ORDER,
+  FIRST_RECOGNITION_STATUSES,
+  FIRST_RECOGNITION_STATUS_ORDER,
   IMPORT_BATCH_STATUSES,
   IMPORT_SOURCE_KINDS,
   PLATFORM_INTERFACES,
@@ -21,6 +25,10 @@ import {
   SOURCES,
   VERIFICATION_STATUSES,
 } from '../lib/labels'
+import {
+  FIRST_RECOGNITION_PENDING_REASON_VALUES,
+  FIRST_RECOGNITION_STATUS_VALUES,
+} from '../lib/roster/first-recognition'
 
 /**
  * 枚举取值只有**一份**:`db/schema.ts` 的列枚举(库层面的冻结)与 `lib/labels.ts` 的
@@ -76,6 +84,28 @@ describe('差异状态的标签 / 徽章色 / 展示顺序同键集合(RL-15)', 
     for (const code of schema.differenceReason.status.enumValues) {
       expect(DIFFERENCE_STATUS_VARIANTS[code]).toBeTruthy()
     }
+  })
+})
+
+describe('首次认定的取值也是一处(RL-08,契约 §7.5 增量)', () => {
+  /**
+   * 这两组取值不是 schema 列(它们是**判定结果**),所以钉法换成「判定的取值集合 ↔
+   * 标签表 ↔ 展示顺序 ↔ 网页上的筛选下拉」四者同键集合 —— 改一处忘另一处,这里立刻红。
+   */
+  it('两态:判定取值 / 标签表 / 展示顺序三方同键', () => {
+    expect(IDENTITY(Object.keys(FIRST_RECOGNITION_STATUSES))).toEqual(IDENTITY(FIRST_RECOGNITION_STATUS_VALUES))
+    expect(IDENTITY(FIRST_RECOGNITION_STATUS_ORDER)).toEqual(IDENTITY(FIRST_RECOGNITION_STATUS_VALUES))
+  })
+
+  it('三条待确认原因:判定取值 / 标签表 / 展示顺序(即优先级)三方一致', () => {
+    expect(IDENTITY(Object.keys(FIRST_RECOGNITION_REASONS))).toEqual(IDENTITY(FIRST_RECOGNITION_PENDING_REASON_VALUES))
+    // 顺序 = 优先级,这里是**逐位**相等,不是同键集合 —— 判据的优先级是口径的一部分。
+    expect(FIRST_RECOGNITION_REASON_ORDER).toEqual([...FIRST_RECOGNITION_PENDING_REASON_VALUES])
+  })
+
+  it('每个取值都有非空标签(没有取值会掉到兜底的英文代号)', () => {
+    for (const code of FIRST_RECOGNITION_STATUS_VALUES) expect(FIRST_RECOGNITION_STATUSES[code]).toBeTruthy()
+    for (const code of FIRST_RECOGNITION_PENDING_REASON_VALUES) expect(FIRST_RECOGNITION_REASONS[code]).toBeTruthy()
   })
 })
 

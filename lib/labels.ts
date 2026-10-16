@@ -495,6 +495,44 @@ export const COMPARISON_DIRECTION_NOTES: Record<string, string> = {
   extra_in_miit: '平台有而公布无',
 }
 
+/**
+ * 首次认定的两态(RL-08,契约 §7.5 增量)。
+ *
+ * 取值本身定义在 `lib/roster/first-recognition.ts`(判定与取值同处),这里只放**中文标签与
+ * 展示顺序** —— 与全仓别的枚举同一分法(`*_ORDER` + 标签表),页面不再各写一份。
+ */
+export const FIRST_RECOGNITION_STATUSES: Record<string, string> = {
+  confirmed: '已确立',
+  pending: '待确认',
+}
+export const FIRST_RECOGNITION_STATUS_ORDER: string[] = ['confirmed', 'pending']
+
+/**
+ * 首次认定「待确认」的原因 —— 三条**互不等价**,像差异六态一样必须彼此可区分:
+ * 是「一条都定不了年」还是「另有现存 award 缺有效年份」还是「没有出处」,处理方式不同。
+ */
+export const FIRST_RECOGNITION_REASONS: Record<string, string> = {
+  no_dated_award: '认定事件定不了年',
+  undated_award: '现存认定缺有效年份',
+  no_evidence: '首次认定没有存下来的出处',
+}
+/** 展示顺序 = 判定里的优先级(`no_dated_award` > `undated_award` > `no_evidence`)。 */
+export const FIRST_RECOGNITION_REASON_ORDER: string[] = [
+  'no_dated_award',
+  'undated_award',
+  'no_evidence',
+]
+
+/**
+ * 首次认定一栏的表头提示(台账表的列头 `title`,**这是它唯一的用处**)。
+ *
+ * 写成纯文本:它出现在 `title` 属性里,漂进去的 Markdown 星号会**原样**显示给用户。
+ */
+export const FIRST_RECOGNITION_HINT =
+  '首次认定按「企业 × 称号」算:该企业在该称号上最早的那次认定。' +
+  '复核通过不是新的首次认定;复核未通过后再次获批也不重置。' +
+  '标「待确认」的原因有三种且互不相同:认定事件定不了年 / 现存认定缺有效年份 / 首次认定没有存下来的出处。'
+
 /** 方向代号 → 标签(`COMPARISON_LABELS` 是 `as const`,动态字符串取不到,这里放宽一次)。 */
 export function comparisonDirectionLabel(code: string): string {
   return (COMPARISON_LABELS as Record<string, string>)[code] ?? code

@@ -67,6 +67,23 @@ export interface TitleLifecycle {
   firstRecognitionYear: number | null
   /** 首次认定所依据的那条事件 id(供 #8 的 `firstEventId` 复用)。 */
   firstRecognitionEventId: number | null
+  /**
+   * 该(企业 × 称号)下 `award` 事件的条数(RL-08 增量)。
+   *
+   * 首次认定读模型靠它区分两件长得一样、含义完全不同的事:
+   * `awardCount === 0`(这个称号**从来没认定过**)与「有认定但一条都定不了年」。
+   * 前者连一行首次认定都不该有;后者必须**留空并标待确认**(契约 §6.1、issue #8)。
+   */
+  awardCount: number
+  /**
+   * **定不了年**的 `award` 事件 id(升序,RL-08 增量)。
+   *
+   * `year` 与 `decided_year` 都空的现存认定事件无法参与年份比较。若数据库里有这种记录,
+   * 首次年份需标待确认;这里给出具体事件 id,不把缺年份与整条事件未入库混为一谈。
+   *
+   * 只看 `award`:复核事件定不了年不影响「首次认定是哪年」。
+   */
+  undatedAwardIds: number[]
   /** 复核锚点年份(最近一次授予/延续有效资格的年份);没有候选时为 `null`。 */
   anchorYear: number | null
   /** 锚点所依据的那条事件 id(供 #9 的 `basisEventId` 复用)。 */
@@ -102,6 +119,11 @@ export function computeTitleLifecycle(events: LifecycleEvent[]): TitleLifecycle 
   // ① 首次认定 = 最早的 award(按有效年份,同年按 id)。复核事件一概不参与。
   const earliestAward = chronological(awards).find((e) => effectiveYear(e) != null)
   const firstRecognitionYear = earliestAward ? effectiveYear(earliestAward) : null
+  // 定不了年的 award:它们不参与上面的比较,但**可能更早** ⇒ 首次认定据此标待确认。
+  const undatedAwardIds = awards
+    .filter((e) => effectiveYear(e) == null)
+    .map((e) => e.id)
+    .sort((a, b) => a - b)
 
   // ② 锚点候选 = award ∪ `reviewOutcome='passed'` 的 review(契约 §6.4)。
   //    结论未知的复核(`reviewOutcome=null`)**不猜成通过**,因此不进候选。
@@ -130,6 +152,8 @@ export function computeTitleLifecycle(events: LifecycleEvent[]): TitleLifecycle 
   return {
     firstRecognitionYear,
     firstRecognitionEventId: earliestAward?.id ?? null,
+    awardCount: awards.length,
+    undatedAwardIds,
     anchorYear,
     anchorEventId: lastAnchor?.id ?? null,
     dueYear: anchorYear != null && state === 'active' ? anchorYear + 3 : null,
