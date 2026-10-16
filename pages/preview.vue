@@ -62,26 +62,25 @@ const { data: pagesState } = useQuery({
   enabled: () => pdf.value,
 })
 
-/** 页图库刚完成的本地状态;父页查询缓存尚未重取时也能同步隐藏待渲染提示。 */
-const locallyRenderedPages = ref<{ file: string; pages: number[]; pageCount: number | null } | null>(null)
+/** 页图库已读到的现状；同一份状态同时决定页图定位和页数提示。 */
+const galleryPageState = ref<PdfPagesState | null>(null)
 watch(file, () => {
-  locallyRenderedPages.value = null
+  galleryPageState.value = null
 })
 
-function onPagesRendered(state: PdfPagesState) {
+function onPagesState(state: PdfPagesState) {
   if (state.file !== file.value) return
-  locallyRenderedPages.value = {
-    file: state.file,
-    pages: state.pages.map((page) => page.page),
-    pageCount: state.pageCount,
-  }
+  galleryPageState.value = state
 }
 
-const currentPdfPageCount = computed(() => {
-  const local = locallyRenderedPages.value
-  if (local?.file === file.value) return local.pageCount
-  return pagesState.value?.pageCount ?? null
+const currentPdfPageState = computed(() => {
+  const galleryState = galleryPageState.value
+  if (galleryState?.file === file.value) return galleryState
+  const queryState = pagesState.value
+  return queryState?.file === file.value ? queryState : null
 })
+
+const currentPdfPageCount = computed(() => currentPdfPageState.value?.pageCount ?? null)
 
 const requestedPageOutOfRange = computed(
   () =>
@@ -90,9 +89,7 @@ const requestedPageOutOfRange = computed(
 
 const requestedPageRendered = computed(() => {
   if (page.value === null) return false
-  const local = locallyRenderedPages.value
-  if (local?.file === file.value) return local.pages.includes(page.value)
-  return (pagesState.value?.pages ?? []).some((p) => p.page === page.value)
+  return currentPdfPageState.value?.pages.some((p) => p.page === page.value) ?? false
 })
 
 useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : '来源预览')) })
@@ -149,7 +146,7 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
 
     <template v-else>
       <!-- 要定位的那一页还没渲染:**说清为什么**,再让页图库给出渲染入口。不静默降级成「打开就是第一页」。 -->
-      <Alert v-if="page !== null && !requestedPageRendered && pagesState">
+      <Alert v-if="page !== null && !requestedPageRendered && currentPdfPageState">
         <AlertTitle v-if="requestedPageOutOfRange">第 {{ page }} 页不存在</AlertTitle>
         <AlertTitle v-else>第 {{ page }} 页的页图还没有渲染</AlertTitle>
         <AlertDescription v-if="requestedPageOutOfRange">
@@ -163,7 +160,7 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
         class="min-h-[60vh]"
         :file="file"
         :page="page"
-        @pages-rendered="onPagesRendered"
+        @pages-state="onPagesState"
       />
       <FilePreview v-else class="min-h-[60vh]" :src="fileUrl(file)" :name="name" />
     </template>

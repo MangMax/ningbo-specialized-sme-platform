@@ -61,7 +61,7 @@ const props = defineProps<{
   page?: number | null
 }>()
 const emit = defineEmits<{
-  'pages-rendered': [state: PdfPagesState]
+  'pages-state': [state: PdfPagesState]
 }>()
 
 /** 入参 `page` 折成「该看第几页」;不是 ≥1 的整数就没有落点(**不取整、不回落成第 1 页**)。 */
@@ -202,6 +202,7 @@ async function load() {
     )
     // 二次核对失败也算拿到了结果(第一次的清单仍有效)—— 照常铺出来,只标记未核对。
     state.value = loaded.state
+    emit('pages-state', loaded.state)
     loadUnconfirmed.value = !loaded.dpiConfirmed
     if (!dpiTouched.value) dpi.value = loaded.state.dpi
   } catch (error) {
@@ -231,7 +232,7 @@ async function renderPages() {
     dpiTouched.value = false
     loadUnconfirmed.value = false
     summary.value = renderSummary(out)
-    emit('pages-rendered', out)
+    emit('pages-state', out)
   } catch (error) {
     // 空串兜底,**不垫一句中文** —— describeRenderFailure 是唯一产出最终句子的一层,
     // 垫一句会被再包装一遍(独立审查 F1 报的重复标点就是这个)。

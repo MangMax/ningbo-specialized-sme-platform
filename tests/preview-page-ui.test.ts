@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import PreviewPage from '../pages/preview.vue'
 import type { PdfPagesState, RenderOutcome } from '../server/utils/pdf-pages'
 
-const mocks = vi.hoisted(() => ({ pageState: null as unknown, renderedPages: [1, 2, 3] as number[] }))
+const mocks = vi.hoisted(() => ({
+  pageState: null as unknown,
+  galleryState: null as unknown,
+  renderedPages: [1, 2, 3] as number[],
+}))
 
 vi.mock('@pinia/colada', async () => {
   const { ref } = await import('vue')
@@ -39,6 +43,7 @@ function pagesState(pages: number[]): PdfPagesState {
 
 beforeEach(() => {
   mocks.pageState = pagesState([])
+  mocks.galleryState = pagesState([])
   mocks.renderedPages = [1, 2, 3]
   vi.stubGlobal('useRoute', () => ({ query: { file, page: '3', back: '/?view=enterprise&page=2&expand=91' } }))
   vi.stubGlobal('useHead', vi.fn())
@@ -54,7 +59,7 @@ beforeEach(() => {
           elapsedMs: 1,
         } satisfies RenderOutcome
       }
-      return pagesState([])
+      return (mocks.galleryState as PdfPagesState | null) ?? pagesState([])
     }),
   )
 })
@@ -107,7 +112,8 @@ describe('来源预览页图深链', () => {
     })
 
     await flushPromises()
-    expect(wrapper.text()).not.toContain('第 3 页的页图还没有渲染')
+    // 画廊读取的当前状态优先于父页可能过期的查询缓存。
+    expect(wrapper.text()).toContain('第 3 页的页图还没有渲染')
 
     const render = wrapper.findAll('button').find((button) => button.text().includes('渲染页图'))
     expect(render).toBeDefined()
@@ -139,6 +145,32 @@ describe('来源预览页图深链', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('第 4 页不存在')
+    expect(wrapper.text()).toContain('该 PDF 共 3 页，请检查来源页码。')
+    wrapper.unmount()
+  })
+
+  it('父页查询没有数据时仍用画廊读取的页数提示页码越界', async () => {
+    mocks.pageState = null
+    mocks.galleryState = pagesState([1, 2, 3])
+    vi.stubGlobal('useRoute', () => ({ query: { file, page: '5', back: '/' } }))
+
+    const wrapper = mount(PreviewPage, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          PageHeader: { template: '<div><slot name="breadcrumb"/><slot name="actions"/></div>' },
+          NuxtLink: { props: ['to'], template: '<a :href="to"><slot/></a>' },
+          ImagePreview: {
+            props: ['name'],
+            template: '<div data-test="single-page-preview">{{ name }}</div>',
+          },
+        },
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('第 5 页不存在')
     expect(wrapper.text()).toContain('该 PDF 共 3 页，请检查来源页码。')
     wrapper.unmount()
   })
