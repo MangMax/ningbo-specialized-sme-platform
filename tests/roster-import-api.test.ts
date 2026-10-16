@@ -988,6 +988,136 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     }
   })
 
+  it.each([
+    ['USCC 第二家在前', false],
+    ['name-only 在前', true],
+  ] as const)('明确指向第二家 USCC 的记录与歧义 name-only 记录顺序无关地整批失败（%s）', async (_order, nameOnlyFirst) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成歧义顺序企业'
+    seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    seedEnterprise(db, { name, uscc: '91330211000000001X' })
+    const before = rosterRowCounts(db)
+    const explicitUscc = {
+      enterprise: { name, uscc: '91330211000000001X' },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 5, evidence: [{ sourceFile: 'synthetic/ambiguous/explicit.pdf', attachment: '附件1', listNo: 1, page: 7 }] }],
+    }
+    const nameOnly = {
+      enterprise: { name },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 5, evidence: [{ sourceFile: 'synthetic/ambiguous/name-only.pdf', attachment: '附件1', listNo: 2, page: 8 }] }],
+    }
+    const request = announcementRequest({ idempotencyKey: `synthetic/ambiguous-order/${nameOnlyFirst ? 'name-first' : 'uscc-first'}` })
+    request.payload.announcement!.records = nameOnlyFirst ? [nameOnly, explicitUscc] : [explicitUscc, nameOnly]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toContainEqual(
+        expect.objectContaining({
+          ok: false,
+          error: expect.objectContaining({ code: 'enterprise_ambiguous' }),
+        }),
+      )
+      expect(rosterRowCounts(db)).toEqual(before)
+
+      const result = await client.commit(request)
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({
+          ok: false,
+          error: expect.objectContaining({ code: 'enterprise_ambiguous' }),
+        }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('单条 name-only 记录命中多家同名企业时预检与提交均结构化拒绝', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成单条歧义企业'
+    seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    seedEnterprise(db, { name, uscc: '91330211000000001X' })
+    const before = rosterRowCounts(db)
+    const request = announcementRequest({ idempotencyKey: 'synthetic/ambiguous/single-name-only' })
+    request.payload.announcement!.records = [
+      { enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 6, evidence: [{ sourceFile: 'synthetic/ambiguous/single.pdf', attachment: '附件1', listNo: 1, page: 9 }] }] },
+    ]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(rosterRowCounts(db)).toEqual(before)
+
+      const result = await client.commit(request)
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('唯一名称写法仍可写入既有企业', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成唯一名称导入企业'
+    const enterpriseId = seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    const request = announcementRequest({ idempotencyKey: 'synthetic/identity/unique-name' })
+    request.payload.announcement!.records = [
+      { enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 7, evidence: [{ sourceFile: 'synthetic/identity/unique-name.pdf', attachment: '附件1', listNo: 1, page: 10 }] }] },
+    ]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toEqual([])
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(db.select().from(schema.recordEvent).all().map((event) => event.recordId)).toEqual([recordId])
+      expect(db.select().from(schema.recordEvidence).all().map((evidence) => evidence.sourceFile)).toEqual(['synthetic/identity/unique-name.pdf'])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('存在同名企业时明确 USCC 仍可写入对应既有企业', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成明确统代导入企业'
+    seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    const targetId = seedEnterprise(db, { name, uscc: '91330211000000001X' })
+    const recordId = seedRecord(db, targetId, 'specialized_sme', 'jxj')
+    const request = announcementRequest({ idempotencyKey: 'synthetic/identity/explicit-uscc' })
+    request.payload.announcement!.records = [
+      { enterprise: { name, uscc: '91330211000000001X' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 8, evidence: [{ sourceFile: 'synthetic/identity/explicit-uscc.pdf', attachment: '附件1', listNo: 1, page: 11 }] }] },
+    ]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toEqual([])
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(db.select().from(schema.recordEvent).all().map((event) => event.recordId)).toEqual([recordId])
+      expect(db.select().from(schema.recordEvidence).all().map((evidence) => evidence.sourceFile)).toEqual(['synthetic/identity/explicit-uscc.pdf'])
+    } finally {
+      await server.close()
+    }
+  })
+
   it('客户端走完整个回放序列，结果与直接调核心逻辑一致', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })

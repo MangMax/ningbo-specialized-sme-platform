@@ -765,25 +765,23 @@ function summarizePlan(plan: Plan): RosterImportPreflight {
 
 /**
  * 同一批次里尚不存在的相同事件坐标先按安全的企业身份汇总出处，再只由首次出现项插入。
- * 不同来源文件是不同证据关系，全部保留；完全相同的关系只插入一次。身份有歧义且会撞到
- * 同一个写入目标时记逐项冲突，不把证据猜并到某个同名主体。
+ * 不同来源文件是不同证据关系，全部保留；完全相同的关系只插入一次。无统代名称本身不唯一时
+ * 单独保留，不把证据猜并到某个同名主体；具体逐项冲突由 {@link planAnnouncementRecord} 在
+ * 预检和提交共用的记录规划中报告。
  */
 function planNewEventEvidence(
   db: Executor,
   announcement: RosterImportAnnouncement,
   records: readonly RosterImportAnnouncement['records'][number][],
-): { eventsByRecord: Map<number, RosterImportEvent[]>; ambiguousTargetRecords: Map<number, number> } {
+): { eventsByRecord: Map<number, RosterImportEvent[]> } {
   interface Occurrence {
     recordIndex: number
     eventIndex: number
     event: RosterImportEvent
-    destinationKey: string
-    ambiguousIdentity: boolean
   }
 
   const planned = new Map<number, RosterImportEvent[]>()
   const groups = new Map<string, Occurrence[]>()
-  const destinationCoordinates = new Map<string, Occurrence[]>()
   for (const [recordIndex, record] of records.entries()) {
     const events = Array.isArray(record?.events) ? record.events : []
     planned.set(
@@ -816,10 +814,6 @@ function planNewEventEvidence(
       : nameMatches.length === 1
         ? `enterprise:${nameMatches[0]!.id}`
         : identityKeyOf({ name, uscc: null })
-    const destinationIdentity = resolvedByWriteIdentity
-      ? `enterprise:${resolvedByWriteIdentity.id}`
-      : identityKeyOf({ name, uscc })
-
     events.forEach((event, eventIndex) => {
       if (!EVENT_TYPES.has(String(event?.eventType))) return
       const coordinates = eventCoordinates(0, event)
@@ -827,31 +821,16 @@ function planNewEventEvidence(
         recordIndex,
         eventIndex,
         event,
-        destinationKey: JSON.stringify([destinationIdentity, titleCode, source, coordinates]),
-        ambiguousIdentity: ambiguousNameOnly,
       }
-      const destinationGroup = destinationCoordinates.get(occurrence.destinationKey) ?? []
-      destinationGroup.push(occurrence)
-      destinationCoordinates.set(occurrence.destinationKey, destinationGroup)
 
-      // 一条不唯一的名称无法确认企业身份；单独保留，后面若它与另一项会落到同一
-      // 写入坐标，则报冲突，不能把出处合并到按名称偶然命中的第一家。
+      // 一条不唯一的名称无法确认企业身份，不能按名称查询碰巧返回的第一家参与归组。
+      // planAnnouncementRecord 会在任何写入解析前拒绝这条 name-only 记录。
       const identityKey = ambiguousNameOnly ? `ambiguous:${recordIndex}:${eventIndex}` : groupIdentity
       const key = JSON.stringify([identityKey, titleCode, source, coordinates])
       const occurrences = groups.get(key) ?? []
       occurrences.push(occurrence)
       groups.set(key, occurrences)
     })
-  }
-
-  const ambiguousTargetRecords = new Map<number, number>()
-  for (const occurrences of destinationCoordinates.values()) {
-    if (occurrences.length < 2 || !occurrences.some((occurrence) => occurrence.ambiguousIdentity)) continue
-    for (const occurrence of occurrences) {
-      if (!ambiguousTargetRecords.has(occurrence.recordIndex)) {
-        ambiguousTargetRecords.set(occurrence.recordIndex, occurrence.eventIndex)
-      }
-    }
   }
 
   for (const occurrences of groups.values()) {
@@ -935,7 +914,7 @@ function planNewEventEvidence(
     }
   }
 
-  return { eventsByRecord: planned, ambiguousTargetRecords }
+  return { eventsByRecord: planned }
 }
 
 /** 对象键及集合数组顺序不影响公告载荷的快照指纹;重复项仍按重数保留。 */
@@ -997,7 +976,7 @@ export function planRosterImport(
   /** 新事件在首次写入前合并同坐标出处，避免重复项按遍历顺序覆盖来源。 */
   const newEventEvidencePlan = payload.announcement && mode === 'write'
     ? planNewEventEvidence(db, payload.announcement, announcementRecords)
-    : { eventsByRecord: new Map<number, RosterImportEvent[]>(), ambiguousTargetRecords: new Map<number, number>() }
+    : { eventsByRecord: new Map<number, RosterImportEvent[]>() }
   const plannedWriteEvents = newEventEvidencePlan.eventsByRecord
   /**
    * **整份计划**已认领的出处行 id。
@@ -1067,19 +1046,6 @@ export function planRosterImport(
           plannedCoordinates.set(identityKey, coordinates)
           earlierByName.set(create.nameNorm, [...(earlierByName.get(create.nameNorm) ?? []), create])
         }
-      })
-    }
-    for (const [recordIndex, eventIndex] of newEventEvidencePlan.ambiguousTargetRecords) {
-      push({
-        item: failure(
-          'record_event',
-          `record:${recordIndex}#${eventIndex}`,
-          'enterprise_ambiguous',
-          '同一事件坐标涉及无法唯一定位的同名企业，未合并出处；请明确统一社会信用代码或拆分核实',
-          'enterprise.uscc',
-        ),
-        action: 'skip',
-        review: false,
       })
     }
   }
@@ -1179,6 +1145,20 @@ function planAnnouncementRecord(
   }
 
   const uscc = usccOrNull(record.enterprise.uscc)
+  if (!uscc && findEnterprisesByNorm(db, normalizeName(name)).length > 1) {
+    push({
+      item: failure(
+        'record',
+        ref,
+        'enterprise_ambiguous',
+        '归一化名称命中多家既有企业，缺少统一社会信用代码无法唯一定位；请补充统代后重试',
+        'enterprise.uscc',
+      ),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
   // 定位用**写入侧的身份规则**（预检与提交必须同一套）：
   // `locateEnterprise` 在「统代查不到」时会退回按名找，于是预检会说「企业已存在、这条是 skip」，
   // 而 `upsertEnterprise`（只按统代）却会新建一行 —— 那是本票事故的根因，不能用它来决定 add/skip。
