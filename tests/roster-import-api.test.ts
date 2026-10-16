@@ -839,6 +839,193 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     }
   })
 
+  it('同路径 no-op 不占用后续目标：预检、commit、replay 同计一行', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/source-a#sha256:stable-content',
+      sourceIdentity: 'synthetic/source-a',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/source-a.docx', attachment: '正文', listNo: 1, page: 12 },
+    ]
+
+    try {
+      await client.commit(original)
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/source-b#sha256:stable-content',
+        sourceIdentity: 'synthetic/source-b',
+        sourceSha256: 'stable-content',
+      })
+      const event = target.payload.announcement!.records[0]!.events![0]!
+      target.payload.announcement!.records[0]!.events = [
+        {
+          ...event,
+          evidence: [{ sourceFile: 'synthetic/source-a.docx', attachment: '正文', listNo: 1, page: 12 }],
+        },
+        {
+          ...event,
+          evidence: [{ sourceFile: 'synthetic/source-b.docx', attachment: '正文', listNo: 1, page: 12 }],
+        },
+      ]
+
+      const preflight = await client.preflight(target)
+      expect(preflight.preflight.evidenceRepoints).toBe(1)
+
+      const committed = await client.commit(target)
+      expect(committed.summary.evidenceRepointed).toBe(1)
+      let evidence = db.select().from(schema.recordEvidence).all()
+      expect(evidence).toHaveLength(1)
+      expect(evidence[0]).toMatchObject({ sourceFile: 'synthetic/source-b.docx', page: null })
+
+      // 独立复核显式 replay：把测试行恢复到已知初态后，重放同一份载荷仍计划并执行一行。
+      db.update(schema.recordEvidence)
+        .set({ sourceFile: 'synthetic/source-a.docx' })
+        .where(eq(schema.recordEvidence.id, evidence[0]!.id))
+        .run()
+      const replayed = await client.replay(target)
+      expect(replayed.evidenceRepointed).toBe(1)
+      evidence = db.select().from(schema.recordEvidence).all()
+      expect(evidence).toHaveLength(1)
+      expect(evidence[0]).toMatchObject({ sourceFile: 'synthetic/source-b.docx', page: null })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('同一出处有多个不同目标路径时按歧义跳过：预检、commit、replay 均不改行', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/source-a-conflict#sha256:stable-content',
+      sourceIdentity: 'synthetic/source-a-conflict',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/source-a-conflict.docx', attachment: '正文', listNo: 1, page: null },
+    ]
+
+    try {
+      await client.commit(original)
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/conflicting-targets#sha256:stable-content',
+        sourceIdentity: 'synthetic/conflicting-targets',
+        sourceSha256: 'stable-content',
+      })
+      const event = target.payload.announcement!.records[0]!.events![0]!
+      target.payload.announcement!.records[0]!.events = [
+        {
+          ...event,
+          evidence: [{ sourceFile: 'synthetic/source-b-conflict.docx', attachment: '正文', listNo: 1, page: 12 }],
+        },
+        {
+          ...event,
+          evidence: [{ sourceFile: 'synthetic/source-c-conflict.docx', attachment: '正文', listNo: 1, page: 13 }],
+        },
+      ]
+
+      const preflight = await client.preflight(target)
+      expect(preflight.preflight.evidenceRepoints).toBe(0)
+      const committed = await client.commit(target)
+      expect(committed.summary.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-a-conflict.docx', page: null },
+      ])
+
+      const replayed = await client.replay(target)
+      expect(replayed.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-a-conflict.docx', page: null },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('跨重复记录的不同目标路径也按歧义跳过：计划和两种写入不改行', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/source-a-record-conflict#sha256:stable-content',
+      sourceIdentity: 'synthetic/source-a-record-conflict',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/source-a-record-conflict.docx', attachment: '正文', listNo: 1, page: null },
+    ]
+
+    try {
+      await client.commit(original)
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/conflicting-record-targets#sha256:stable-content',
+        sourceIdentity: 'synthetic/conflicting-record-targets',
+        sourceSha256: 'stable-content',
+      })
+      const record = target.payload.announcement!.records[0]!
+      const event = record.events![0]!
+      const evidence = (sourceFile: string) => [
+        { sourceFile, attachment: '正文', listNo: 1, page: 12 },
+      ]
+      target.payload.announcement!.records = [
+        { ...record, events: [{ ...event, evidence: evidence('synthetic/source-b-record-conflict.docx') }] },
+        { ...record, events: [{ ...event, evidence: evidence('synthetic/source-c-record-conflict.docx') }] },
+      ]
+
+      expect((await client.preflight(target)).preflight.evidenceRepoints).toBe(0)
+      expect((await client.commit(target)).summary.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-a-record-conflict.docx', page: null },
+      ])
+
+      const replayed = await client.replay(target)
+      expect(replayed.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-a-record-conflict.docx', page: null },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('PDF 出处仍按实际页号精确匹配', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/pdf-page-seven#sha256:stable-content',
+      sourceIdentity: 'synthetic/pdf-page-seven',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/source-a.pdf', attachment: '正文', listNo: 1, page: 7 },
+    ]
+
+    try {
+      await client.commit(original)
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/pdf-page-eight#sha256:stable-content',
+        sourceIdentity: 'synthetic/pdf-page-eight',
+        sourceSha256: 'stable-content',
+      })
+      target.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile: 'synthetic/source-b.pdf', attachment: '正文', listNo: 1, page: 8 },
+      ]
+
+      expect((await client.preflight(target)).preflight.evidenceRepoints).toBe(0)
+      expect((await client.commit(target)).summary.evidenceRepointed).toBe(0)
+      expect((await client.replay(target)).evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-a.pdf', attachment: '正文', listNo: 1, page: 7 },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
   it('非 PDF 页码归一后出处坐标不唯一时不误收敛', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })

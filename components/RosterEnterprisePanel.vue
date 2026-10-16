@@ -24,6 +24,7 @@ import {
 } from '~~/lib/labels'
 import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
 import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
+import { evidencePointerText } from '~~/lib/roster/first-recognition'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import EventChip from '@/components/EventChip.vue'
 import SourceChip from '@/components/SourceChip.vue'
@@ -378,7 +379,7 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
                   {{
                     recognitionByTitle
                       .get(group.titleCode)!
-                      .evidence.map((v) => `${v.sourceFile}${v.attachment ? ` ${v.attachment}` : ''}${v.listNo != null ? ` 序号 ${v.listNo}` : ''}${v.page != null ? ` 第 ${v.page} 页` : ''}`)
+                      .evidence.map((v) => evidencePointerText(v))
                       .join(' ; ')
                   }}
                 </template>

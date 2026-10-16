@@ -1428,6 +1428,7 @@ REST 与 MCP `query_records` 共用同一参数解析和 `listRecords` 读模型
 
 - 事件坐标(eventType / year / batchSeq / reviewOutcome / decidedYear)**逐字相同**才进入这条路径;
 - 出处的 `attachment` 与 `listNo` 逐字匹配。目标 `sourceFile` 为 PDF 时,`page` 也逐字匹配(含 `null`);目标为 DOCX / Excel 等无稳定分页格式时,请求页码与已有页码都归一为 `null`,不参与匹配,且事件内必须只有一条相同附件与序号的候选行才收敛,多条候选按歧义跳过;
+- 同一既有事件坐标在载荷中重复出现时,先合并全部出处目标再判定:与现有 `sourceFile` 相同的 no-op 不认领出处行;同一行出现多个不同目标路径时按歧义跳过,不按载荷顺序猜配;
 - 目标格式为非 PDF 时,命中的历史 `page` 清为 `null`(§8.11);PDF 的既有实际页码原样保留,不推断页码。格式按目标 `sourceFile` 的扩展名判定;
 - **不新增、不删除、不合并**任何行(不变量:企业 / 记录 / 事件 / 出处计数不变);
 - 命中的出处行数逐项报在 `items[].detail.evidenceRepointed`(RL-16 新增字段,**不**计入 `summary.written`);
