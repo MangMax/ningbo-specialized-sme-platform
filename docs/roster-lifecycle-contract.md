@@ -708,6 +708,41 @@
 
 查询参数:`year`(必填)、`title`。响应行:`{ enterpriseId, name, titleCode, anchorYear, dueYear, basisEventId }`。
 
+**增量(RL-09 交付,父代理 2026-10-16 待裁决)**:上句的五个字段**逐字保留**(名字与语义都不改),
+以下是**追加**,因为票面 #9 还要求「清单显示企业、称号、到期年份、锚点事件、批次和来源」「能回到出处」
+以及「证据不全时进入待确认列表」—— 五字段的行装不下这些。
+
+- **查询参数追加**:`status`(`due` 到期清单 / `pending` 待确认清单,默认 `due`)、`page`、`pageSize`。
+  `year` 是**到期年**(不是事件年):2021 认定的那批只在 2024 的清单里出现,2025 的清单里没有它。
+  缺 `year` 或不是四位公历年 ⇒ **400**(不静默退回某一年)。`title` 多值(命中任一),不在字典内 ⇒ 400。
+- **响应信封**:`{ year, status, rows, pending, counts, page, pageSize }`。`status=due` 时 `rows` 有内容,
+  `status=pending` 时 `pending` 有内容(另一侧为空数组)。
+  `counts = { due, pending, titles: { [称号]: { due, pending } } }`,**与筛选同口径、先于分页**,
+  `due + pending` 是该称号下全部**有资格声称**的企业 × 称号数(不存在第三类看不见的行)。
+- **行追加字段**(依据与出处):`uscc` / `district` / `basisEventType` / `basisEventYear`
+  (复核事件里是**被复核的原认定年份**)/ `basisDecidedYear` / `anchorYearSource`
+  (`decided_year` | `event_year`)/ `firstYear` / `firstEventId` / `source` / `batchSeq` /
+  `evidence: [{ sourceFile, attachment, listNo, page }]`(逐条保留,不折叠)。
+- **待确认行**:`anchorYear` 可空,`tentativeDueYear`(**未经确认**的推算值)可空,
+  `reasons: ReviewPendingReason[]` 取值为可判别的字典:
+  `no_anchor_year` / `review_outcome_unknown` / `review_year_unconfirmed` / `no_batch` / `no_evidence`
+  (文案见 `lib/labels.ts` 的 `REVIEW_PENDING_REASONS`)。
+- **新增 `GET /api/roster/reviews/export`** —— 与列表**同一套参数解析、同一段读模型**
+  (`allRosterReviews`),两个工作表对应两张清单,**不受分页截断**。
+
+**两处口径(实现时的判断,列在这里待裁决)**:
+
+1. **`decided_year` 缺失对 `award` 锚点不算缺口**。§6.4 说 `decided_year` 缺失即「退回 `year` 并标待核」;
+   但该列存在的理由(ADR §4.7)是**复核事件**的 `year` 记的是被复核的原认定年份 —— 而 `award` 的 `year`
+   **按定义就是认定年份**。若按字面一律隔离,真实库里(迁移 0007 之前的历史行 `decided_year` 恒为 NULL)
+   **100% 的行**都会掉进待确认,清单就废了。故:锚点是 `award` ⇒ 退回值可信,进到期清单并如实标
+   `anchorYearSource='event_year'`;锚点是 `reviewOutcome='passed'` 且缺 `decided_year` ⇒ 退回的是**另一个年份**,
+   算出的到期年按构造就是错的 ⇒ `review_year_unconfirmed`,进待确认。
+2. **待确认清单不带目标年份筛选**。「到期年算不出来」的行不属于任何一年;若按目标年份筛,
+   它们在任何一年都不会出现 ⇒ **静默消失**,而那正是本票要防的事。故待确认清单是「该称号下的证据确认队列」,
+   每行仍带 `tentativeDueYear` 供人判断它将来落到哪一年。**若父代理认为该清单应随目标年份收窄,
+   这是唯一要改的一处**(`collectReviewCandidates` 的 pending 分支)。
+
 ### 7.5 `GET /api/roster/recognitions` — 首次认定(RL-08)
 
 查询参数:`title`、`year`。响应行:`{ enterpriseId, titleCode, firstYear, firstEventId, source }`。

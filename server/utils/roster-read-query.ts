@@ -11,13 +11,21 @@
  */
 import { parseCsvQuery } from '../../lib/csv'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../lib/comparison'
-import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES, EVENT_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../../lib/labels'
+import {
+  DIFFERENCE_REASONS,
+  DIFFERENCE_STATUSES,
+  EVENT_ORDER,
+  REVIEW_STATUS_ORDER,
+  SOURCE_ORDER,
+  TITLE_ORDER,
+} from '../../lib/labels'
 import {
   ROSTER_STATES,
   type RosterDifferenceFilter,
   type RosterEnterpriseFilter,
   type RosterState,
 } from '../../lib/roster/enterprise-roster'
+import { type ReviewStatus, type RosterReviewFilter } from '../../lib/roster/review-list'
 
 /** 取单值字符串参数(数组取第一个),空串当「没给」。 */
 export function strParam(value: unknown): string | undefined {
@@ -94,6 +102,40 @@ export function parseRosterDifferenceQuery(query: Record<string, unknown>): Rost
     ) as ComparisonDirection[] | undefined,
     status: knownOrThrow(parseCsvQuery(query.status), Object.keys(DIFFERENCE_STATUSES), 'status'),
     reason: knownOrThrow(parseCsvQuery(query.reason), Object.keys(DIFFERENCE_REASONS), 'reason'),
+    page: intParam(query.page, 1),
+    pageSize: intParam(query.pageSize, 50),
+  }
+}
+
+/**
+ * §7.4 复核清单的查询参数(RL-09)。
+ *
+ * `year` 是**到期年份**(不是事件年份),且**必填** —— 契约 §7.4 就是这么定的。
+ * 缺了它就给 400,不退回「今年」:清单的整个含义都挂在目标年份上,
+ * 静默用一个默认年会让用户拿到一份**不是他要的那一年**的清单,而页面看不出来。
+ *
+ * `status` 缺省为 `due`(到期清单),也可给 `pending`(待确认清单)。
+ */
+export function parseRosterReviewQuery(
+  query: Record<string, unknown>,
+): RosterReviewFilter & { status?: ReviewStatus; page: number; pageSize: number } {
+  const raw = strParam(query.year)
+  const year = raw != null ? Number(raw) : Number.NaN
+  // 年份是四位公历年:太小的值(如把 2027 打成 27)会静默给出空清单,不如直接打回。
+  if (!Number.isInteger(year) || year < 1900 || year > 2999) {
+    throw createError({ statusCode: 400, statusMessage: 'year is required and must be a 4-digit year' })
+  }
+  const status = strParam(query.status)
+  if (status != null && !(REVIEW_STATUS_ORDER as readonly string[]).includes(status)) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: `Unknown status; expected ${REVIEW_STATUS_ORDER.join(', ')}`,
+    })
+  }
+  return {
+    year,
+    title: knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title'),
+    status: status as ReviewStatus | undefined,
     page: intParam(query.page, 1),
     pageSize: intParam(query.pageSize, 50),
   }
