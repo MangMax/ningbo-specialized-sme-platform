@@ -164,42 +164,20 @@ export const VERIFICATION_STATUSES: Record<string, string> = {
 /** 核验状态展示顺序。 */
 export const VERIFICATION_STATUS_ORDER: string[] = ['confirmed', 'pending']
 
-/**
- * 复核清单的**两种分层**(RL-09,契约 §7.4 增量)。
- *
- * `due` 到期清单 = 锚点 / 批次 / 出处证据齐全,可以直接当工作单;
- * `pending` 待确认清单 = 有资格声称但到期年不可信或算不出,隔离出来交人确认。
- */
-export const REVIEW_STATUSES: Record<string, string> = {
-  due: '到期清单',
-  pending: '待确认清单',
-}
-
-/** 复核清单分层展示顺序。 */
-export const REVIEW_STATUS_ORDER: string[] = ['due', 'pending']
-
-/**
- * **待确认的原因**(RL-09)→ 中文名。取值与 `lib/roster/review-list.ts` 的
- * `REVIEW_PENDING_REASON_VALUES` 由 `tests/roster-reviews.test.ts` 钉住逐字一致
- * (标签表是叶子模块,不能反向 import 读模型 —— 两个来源靠用例对齐,与
- * `db/schema.ts` ↔ 本文件的既有做法相同)。
- *
- * 每条都写在**要补什么证据**上,不写「数据有问题」这种不可操作的话:
- * 人看到它就知道该翻公布文件还是回平台查申报记录。
- */
-export const REVIEW_PENDING_REASONS: Record<string, string> = {
-  no_anchor_year: '有认定/复核事件但都没有年份,算不出到期年',
-  review_outcome_unknown: '复核结论未知:资格是被延续还是被终止无从判断',
-  review_year_unconfirmed: '复核通过的历史事件缺结论年份,不能拿被复核年份当结论年',
+/** 生命周期读模型中的待核原因。 */
+export const LIFECYCLE_FLAGS: Record<string, string> = {
+  decided_year_missing: '至少一条认定/复核事件缺少结论年份，生命周期计算按规则回退到事件所涉年份',
+  review_outcome_unknown: '有复核事件但没记结论',
   no_batch: '认定/复核事件缺批次序号',
   no_evidence: '认定/复核事件没有出处记录',
+  no_anchor_year: '没有任何可算的年份',
 }
 
-/** 待确认原因展示顺序。列表顺序稳定,便于对比两轮导出的差异。 */
-export const REVIEW_PENDING_REASON_ORDER: string[] = [
+/** 生命周期标记顺序。 */
+export const LIFECYCLE_FLAG_ORDER: string[] = [
   'no_anchor_year',
+  'decided_year_missing',
   'review_outcome_unknown',
-  'review_year_unconfirmed',
   'no_batch',
   'no_evidence',
 ]

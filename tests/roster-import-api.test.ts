@@ -725,20 +725,28 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
 // ---------------------------------------------------------------------------
 
 describe('MCP 面：tool 注册与写入名单', () => {
-  it('save_roster_batch 在写入名单里；只读的三个不在', () => {
+  it('save_roster_batch 在写入名单里；所有名录只读 tool 都不在', () => {
     expect([...MCP_WRITE_TOOLS]).toContain('save_roster_batch')
-    for (const name of ['preflight_roster_batch', 'list_enterprises', 'list_differences']) {
+    for (const name of [
+      'preflight_roster_batch',
+      'list_enterprises',
+      'list_differences',
+      'query_records',
+      'get_enterprise_detail',
+    ]) {
       expect([...MCP_WRITE_TOOLS]).not.toContain(name)
     }
   })
 
-  it('四个 tool 文件都声明了对应的 tool 名', () => {
+  it('统一写入与名录查询 tool 文件都声明了对应的 tool 名', () => {
     const base = join(process.cwd(), 'server/mcp/tools')
     const expected: Array<[string, string]> = [
       ['save_roster_batch.ts', 'save_roster_batch'],
       ['preflight_roster_batch.ts', 'preflight_roster_batch'],
       ['list_enterprises.ts', 'list_enterprises'],
       ['list_differences.ts', 'list_differences'],
+      ['query_records.ts', 'query_records'],
+      ['get_enterprise_detail.ts', 'get_enterprise_detail'],
     ]
     for (const [file, name] of expected) {
       const source = readFileSync(join(base, file), 'utf8')
