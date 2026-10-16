@@ -71,7 +71,7 @@ db.insert(schema.differenceReason)
 let handler: (event: unknown) => {
   rows: { enterpriseId: number; explanation: unknown; platform: unknown }[]
   reconcile: { generatedAt: string | null; matched: number }
-  platform: { withEvidence: number }
+  platform: { withEvidence: number; withExplanation: number; withoutExplanation: number }
 }
 let query: Record<string, unknown> = {}
 
@@ -97,11 +97,44 @@ describe('GET /api/comparison:库内平台证据 + 旧解释缓存兼容', () =>
     const row = result.rows.find((r) => r.enterpriseId === withEvidence)!
     expect(row.platform).toMatchObject({
       aliases: [{ name: '宁波上航测绘有限公司', verificationStatus: 'confirmed' }],
-      disposition: { status: 'confirmed_reason', reasonCode: 'renamed', measureCode: 'update_current_name' },
+      disposition: {
+        status: 'confirmed_reason',
+        reasonCode: 'renamed',
+        measureCode: 'update_current_name',
+        explanationId: expect.any(Number),
+      },
       relationCount: 1,
     })
     expect(result.platform.withEvidence).toBe(1)
-    expect(result.rows.find((r) => r.enterpriseId === plain)!.platform).toBeNull()
+    expect(result.platform.withExplanation).toBe(1)
+    expect(result.platform.withoutExplanation).toBe(1)
+  })
+
+  it('没有解释记录的行仍带出「未查询」默认态 —— 整页不再有「无数据」的行(RL-15)', () => {
+    query = {}
+    const result = handler({})
+    const row = result.rows.find((r) => r.enterpriseId === plain)!
+    expect(row.platform).toMatchObject({
+      disposition: { explanationId: null, status: 'not_queried', reasonCode: null, measureCode: null },
+      queries: [],
+      relationCount: 0,
+    })
+    expect(result.platform.withoutExplanation).toBe(1)
+  })
+
+  it('查询证据带出**可展开的原始关系原文**(时点 / 接口 / 关系)', () => {
+    query = {}
+    const result = handler({})
+    const row = result.rows.find((r) => r.enterpriseId === withEvidence)!
+    const platform = row.platform as {
+      queries: { interface: string; queriedAt: string; status: string; relations: { nameRaw: string | null }[] }[]
+    }
+    expect(platform.queries[0]).toMatchObject({
+      interface: 'business_list',
+      queriedAt: '2026-10-15T17:11:21.514Z',
+      status: 'success',
+    })
+    expect(platform.queries[0]!.relations.map((r) => r.nameRaw)).toEqual(['宁波上航测绘有限公司'])
   })
 
   it('解释缓存存在时照旧挂上 explanation(旧路径未被破坏)', () => {
