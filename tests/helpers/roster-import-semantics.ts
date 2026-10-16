@@ -18,7 +18,11 @@
  * 黄金文件与判据见 `tests/roster-import-semantics.test.ts`。
  */
 
-import { schema, type useDb } from '../../db'
+import { createHash } from 'node:crypto'
+import { schema, useDb } from '../../db'
+
+/** 本文件里到处要用的库句柄类型（与 `tests/roster-import-api.test.ts` 的 `makeDb()` 同一个返回值）。 */
+type TestDb = ReturnType<typeof useDb>
 
 /** 名录写入面能碰到的全部表。 */
 export interface RosterStateTables {
@@ -52,10 +56,36 @@ function canonical(rows: Array<Record<string, unknown>>): unknown[] {
     .sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0))
 }
 
+/**
+ * 一块大 JSON 列的**摘要**。
+ *
+ * `import_batch` 的 `preflightResult` / `itemResults` / `summary` 是整批逐项结果的原文，
+ * 一块就几 KB —— 直接进黄金文件的话，光是它们就占了这个夹具三分之二的字节，而它们
+ * **逐步都与同一步的 `outcome` 逐字重复**（`outcome` 就是那一次调用的返回值，里面
+ * 带着同一份 `items` / `summary`）。所以这里留摘要：内容一变摘要就变，回归照样抓得住，
+ * 而人读的那一份在 `outcome` 里。
+ */
+function digest(value: unknown): string | null {
+  if (value == null) return null
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16)
+}
+
+/** `import_batch` 行：三块大 JSON 列换成 {@link digest}。 */
+function bookkeepingRow(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(row)) {
+    if (key === 'preflightResult') out.preflightResultSha = digest(value)
+    else if (key === 'itemResults') out.itemResultsSha = digest(value)
+    else if (key === 'summary') out.summarySha = digest(value)
+    else out[key] = value
+  }
+  return out
+}
+
 /** 快照当前库里所有相关表（未规范化前的原始行）。 */
-function readTables(db: ReturnType<typeof useDb>): RosterStateTables {
+function readTables(db: TestDb): RosterStateTables {
   return {
-    importBatch: canonical(db.select().from(schema.importBatch).all()),
+    importBatch: canonical(db.select().from(schema.importBatch).all().map(bookkeepingRow)),
     enterprise: canonical(db.select().from(schema.enterprise).all()),
     sourceDocument: canonical(db.select().from(schema.sourceDocument).all()),
     record: canonical(db.select().from(schema.record).all()),
@@ -86,7 +116,7 @@ export interface SnapshotStep {
  * 造一个**逐步记录器**：每调一次就把当前状态与上一步比，只留变了的表。
  * 传入同一个 `db`，并且**按时间顺序**调用。
  */
-export function createSemanticRecorder(db: ReturnType<typeof useDb>) {
+export function createSemanticRecorder(db: TestDb) {
   let previous: RosterStateTables | null = null
   const steps: SnapshotStep[] = []
   return {

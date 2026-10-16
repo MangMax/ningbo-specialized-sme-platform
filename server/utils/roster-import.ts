@@ -484,13 +484,16 @@ function normalizeRef(ref: unknown, field: string): { ok: true; value: Normalize
  * 自然键（除 `sequenceNo`）→ SQL 谓词。**只在这里拼**：{@link refCandidates}、
  * {@link resolveQueryIdAt} 都靠它，于是「按自然键找查询」的口径只有一处。
  *
- * 谓词下推进 `WHERE` 是 RL-18 的本体：它命中 `platform_query_identity_uq` 这唯一的索引，
- * 于是**按键定位**取代「整表读进内存再线性找」—— 后者对批内 N 条查询就是 N 次整表读，
- * 而每次还把 `raw_response`（平台原始 HTML，几十 KB/条）一并读出来比一个根本用不到它的键。
+ * 谓词下推进 `WHERE` 是为了**按键定位**（RL-18）。注意这条路径与下面那四个
+ * `find*Row` 的**强度不同**，别混为一谈：
+ *  - 给了 `queriedAt` ⇒ 四列齐 ⇒ 命中 `platform_query_identity_uq`，至多一行；
+ *  - 没给 `queriedAt` ⇒ 三列 ⇒ 命中同一索引的**前三列前缀**，是一次索引区间扫描，
+ *    **可能命中多行**（`resolveQueryRefPlan` 的「引用不唯一」正是靠这个数条数）。
+ * 两种情况都只取 `id`，所以都不会碰 `raw_response` —— 那是本条路径真正省下的字节。
  */
 function platformQueryWhere(ref: NormalizedRef) {
   const conditions = [
-    eq(schema.platformQuery.interface, ref.interface as typeof schema.platformQuery.$inferSelect.interface),
+    eq(schema.platformQuery.interface, ref.interface as PlatformInterface),
     eq(schema.platformQuery.queryKey, ref.queryKey),
     eq(schema.platformQuery.rdjb, ref.rdjb),
   ]
@@ -506,8 +509,7 @@ function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: Norm
     candidate.rdjb === ref.rdjb &&
     (ref.queriedAt ? candidate.queriedAt === ref.queriedAt : true)
   return {
-    // 库内一侧**按键定位**且**只取 `id`**（判定数条数/取 id，用不到 `raw_response`）；
-    // 本批一侧是内存数组，谓词留在 JS 里。
+    // 库内一侧**按键定位**且只取 `id`；本批一侧是内存数组，谓词留在 JS 里。
     dbHits: source
       .select({ id: schema.platformQuery.id })
       .from(schema.platformQuery)
@@ -1195,19 +1197,22 @@ function countEvidenceRepoints(
 // 抄漏一列就成了「重放时多插一行」。现在两次都走下面这同一个函数。
 //
 // ── RL-18：这些函数一律是**按键定位**，不是整表线性找 ─────────────────────
-// 三件事同时成立，缺一条都会让批量写入退化成卡死：
-//  1. 谓词下推到 SQL 的 `WHERE`，并且**正好命中 schema 里那条唯一索引**
+// 每条实体各有**两条**要走同一个身份的函数：别名、差异（预检 + 执行各一次），查询、关系
+// （预检取既有行、执行按真 id 再取一次）。以前它们各自把 `.select().from(t).all().find(...)`
+// 与列比较抄了一遍；现在一律走下面这四个 —— 于是「身份是哪几列」只有一处定义。
+//
+// 三条要求同时成立，缺一条都会让批量写入退化成卡死（实测见契约 §3.1c）：
+//  1. 谓词下推到 SQL 的 `WHERE`，并且**正好是 schema 里那条唯一索引的全部列**
 //     （`enterprise_alias_identity_uq` / `platform_query_identity_uq` /
 //     `platform_relation_query_seq_uq` / `difference_reason_version_uq`）⇒ 一次索引查找，
 //     而不是把整表读进内存再 `.find(...)`；
 //  2. 只 `select` 判定真正用得到的列 —— 调用方只要 `id`，所以**只取 `id`**。
 //     这条对 `platform_query` 是硬要求：整行里带着 `raw_response`（平台原始 HTML，
 //     几十 KB/条），比一个用不到它的键等于白读几十 KB；
-//  3. 唯一键 ⇒ 至多一行，所以 `.get()` 与原来的 `.find()` 取到的是同一行（`get()` 本就
-//     取首行）。
+//  3. 唯一键 ⇒ 至多一行，所以 `.get()` 与原来的 `.find()` 取到的是同一行（`get()` 本就取首行）。
+//
 // 为什么是这三条：批内 N 条查询/关系/别名/差异，每条都要查一次 ⇒ 整表线性找就是
 // O(N × 表行数)（表随本批增长时即 N²），而每次还要把几十 KB 的 `raw_response` 读出来。
-// 实测记得见契约 §3.1c。
 
 /** 别名身份：`(enterprise_id, name_norm, source_kind, source_ref_id)`（契约 §1.2）。 */
 function findAliasRow(
@@ -2014,17 +2019,12 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     }
     mergeEvidenceQueryId = resolved
   }
-  const existingAlias = tx
-    .select()
-    .from(schema.enterpriseAlias)
-    .all()
-    .find(
-      (a) =>
-        a.enterpriseId === into.id &&
-        a.nameNorm === aliasNameNorm &&
-        a.sourceKind === sourceKind &&
-        a.sourceRefId === sourceRefId,
-    )
+  const existingAlias = findAliasRow(tx, {
+    enterpriseId: into.id,
+    nameNorm: aliasNameNorm,
+    sourceKind,
+    sourceRefId,
+  })
   const aliasId = sameName
     ? null
     : existingAlias
@@ -2047,18 +2047,17 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
 
   // 3. 迁移子行（别名 / 差异 / 平台关系）。撞唯一键的**先删被并那条**（它在规范行已有等价行）。
   let aliasesMoved = 0
-  for (const alias of tx.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === from.id)) {
-    const clash = tx
-      .select()
-      .from(schema.enterpriseAlias)
-      .all()
-      .find(
-        (a) =>
-          a.enterpriseId === into.id &&
-          a.nameNorm === alias.nameNorm &&
-          a.sourceKind === alias.sourceKind &&
-          a.sourceRefId === alias.sourceRefId,
-      )
+  for (const alias of tx
+    .select()
+    .from(schema.enterpriseAlias)
+    .where(eq(schema.enterpriseAlias.enterpriseId, from.id))
+    .all()) {
+    const clash = findAliasRow(tx, {
+      enterpriseId: into.id,
+      nameNorm: alias.nameNorm,
+      sourceKind: alias.sourceKind,
+      sourceRefId: alias.sourceRefId,
+    })
     if (clash) {
       tx.delete(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.id, alias.id)).run()
     } else {
@@ -2068,18 +2067,17 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   }
 
   let differencesMoved = 0
-  for (const difference of tx.select().from(schema.differenceReason).all().filter((d) => d.enterpriseId === from.id)) {
-    const clash = tx
-      .select()
-      .from(schema.differenceReason)
-      .all()
-      .find(
-        (d) =>
-          d.enterpriseId === into.id &&
-          d.titleCode === difference.titleCode &&
-          d.direction === difference.direction &&
-          d.recordedAt === difference.recordedAt,
-      )
+  for (const difference of tx
+    .select()
+    .from(schema.differenceReason)
+    .where(eq(schema.differenceReason.enterpriseId, from.id))
+    .all()) {
+    const clash = findDifferenceRow(tx, {
+      enterpriseId: into.id,
+      titleCode: difference.titleCode,
+      direction: difference.direction,
+      recordedAt: difference.recordedAt,
+    })
     if (clash) {
       tx.delete(schema.differenceReason).where(eq(schema.differenceReason.id, difference.id)).run()
     } else {
@@ -2088,7 +2086,11 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     }
   }
 
-  const fromRelations = tx.select().from(schema.platformRelation).all().filter((r) => r.enterpriseId === from.id)
+  const fromRelations = tx
+    .select()
+    .from(schema.platformRelation)
+    .where(eq(schema.platformRelation.enterpriseId, from.id))
+    .all()
   for (const relation of fromRelations) {
     tx.update(schema.platformRelation).set({ enterpriseId: into.id }).where(eq(schema.platformRelation.id, relation.id)).run()
   }

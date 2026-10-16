@@ -33,20 +33,13 @@
           "error": null,
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
-          "itemResults": null,
-          "preflightResult": {
-            "add": 6,
-            "update": 1,
-            "remove": 1,
-            "review": 1,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": null,
+          "preflightResultSha": "debcb54bf19125de",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "preflight",
-          "summary": null
+          "summarySha": null
         }
       ],
       "enterprise": [],
@@ -207,136 +200,13 @@
           "error": null,
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "recordId": 1,
-                "sourceDocumentId": 1,
-                "events": [
-                  1,
-                  2
-                ],
-                "evidence": [
-                  1
-                ],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 6
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:2",
-              "detail": {
-                "enterpriseId": 2,
-                "recordId": 2,
-                "sourceDocumentId": 1,
-                "events": [
-                  3
-                ],
-                "evidence": [],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relations": [
-                  1,
-                  2
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relations": [],
-                "skipped": 0,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:1",
-              "detail": {
-                "enterpriseId": 1,
-                "sourceRefId": 2,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "difference",
-              "ref": "difference:1",
-              "detail": {
-                "enterpriseId": 1,
-                "evidenceQueryId": 1,
-                "evidenceRelationId": 1,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "merge",
-              "ref": "merge:2->1",
-              "detail": {
-                "lineage": {
-                  "fromEnterpriseId": 2,
-                  "fromEnterpriseName": "宁波上航测绘有限公司",
-                  "intoEnterpriseId": 1,
-                  "intoUscc": "91330211255994457P",
-                  "aliasId": 1,
-                  "evidenceQueryId": 1,
-                  "childRowsMoved": {
-                    "aliases": 0,
-                    "differences": 0,
-                    "relations": 0,
-                    "records": 1
-                  },
-                  "recordsMoved": [
-                    2
-                  ],
-                  "recordsFolded": [],
-                  "eventsMoved": [
-                    3
-                  ],
-                  "evidenceMoved": []
-                },
-                "rowsWritten": 0
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 6,
-            "update": 1,
-            "remove": 1,
-            "review": 1,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "5b5d7d1057752353",
+          "preflightResultSha": "debcb54bf19125de",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 15,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "da92995cbd889376"
         }
       ],
       "enterprise": [
@@ -628,245 +498,25 @@
           "error": null,
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "recordId": 1,
-                "sourceDocumentId": 1,
-                "events": [
-                  1,
-                  2
-                ],
-                "evidence": [
-                  1
-                ],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 6
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:2",
-              "detail": {
-                "enterpriseId": 2,
-                "recordId": 2,
-                "sourceDocumentId": 1,
-                "events": [
-                  3
-                ],
-                "evidence": [],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relations": [
-                  1,
-                  2
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relations": [],
-                "skipped": 0,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:1",
-              "detail": {
-                "enterpriseId": 1,
-                "sourceRefId": 2,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "difference",
-              "ref": "difference:1",
-              "detail": {
-                "enterpriseId": 1,
-                "evidenceQueryId": 1,
-                "evidenceRelationId": 1,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "merge",
-              "ref": "merge:2->1",
-              "detail": {
-                "lineage": {
-                  "fromEnterpriseId": 2,
-                  "fromEnterpriseName": "宁波上航测绘有限公司",
-                  "intoEnterpriseId": 1,
-                  "intoUscc": "91330211255994457P",
-                  "aliasId": 1,
-                  "evidenceQueryId": 1,
-                  "childRowsMoved": {
-                    "aliases": 0,
-                    "differences": 0,
-                    "relations": 0,
-                    "records": 1
-                  },
-                  "recordsMoved": [
-                    2
-                  ],
-                  "recordsFolded": [],
-                  "eventsMoved": [
-                    3
-                  ],
-                  "evidenceMoved": []
-                },
-                "rowsWritten": 0
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 6,
-            "update": 1,
-            "remove": 1,
-            "review": 1,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "5b5d7d1057752353",
+          "preflightResultSha": "debcb54bf19125de",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 15,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "da92995cbd889376"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
           "id": 2,
           "idempotencyKey": "sem/announce-replay#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "titleCode": "specialized_sme",
-                "source": "jxj"
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": null,
-                "titleCode": "innovative_sme",
-                "source": "jxj"
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relationCount": 0
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relationCount": 0
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:0",
-              "detail": {
-                "enterpriseId": 1
-              }
-            },
-            {
-              "ok": false,
-              "kind": "difference",
-              "ref": "difference:0",
-              "error": {
-                "code": "query_ref_ambiguous",
-                "field": "differences[].evidenceQueryRef",
-                "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 命中 2 次查询；请补 queriedAt"
-              }
-            },
-            {
-              "ok": false,
-              "kind": "merge",
-              "ref": "merge:0",
-              "error": {
-                "code": "relation_ref_ambiguous",
-                "field": "merges[].sourceRelationRef",
-                "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 sequenceNo=2 命中 2 条同序号关系；请补 queriedAt"
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 2,
-            "update": 2,
-            "remove": 0,
-            "review": 1,
-            "conflicts": [
-              {
-                "ok": false,
-                "kind": "difference",
-                "ref": "difference:0",
-                "error": {
-                  "code": "query_ref_ambiguous",
-                  "field": "differences[].evidenceQueryRef",
-                  "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 命中 2 次查询；请补 queriedAt"
-                }
-              },
-              {
-                "ok": false,
-                "kind": "merge",
-                "ref": "merge:0",
-                "error": {
-                  "code": "relation_ref_ambiguous",
-                  "field": "merges[].sourceRelationRef",
-                  "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 sequenceNo=2 命中 2 条同序号关系；请补 queriedAt"
-                }
-              }
-            ],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "81b91f2e820adb35",
+          "preflightResultSha": "ce310002c70c9f89",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "failed",
-          "summary": {
-            "written": 0,
-            "skipped": 0,
-            "failed": 2
-          }
+          "summarySha": "2e863b6a92051e2c"
         }
       ]
     }
@@ -918,282 +568,37 @@
           "error": null,
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "recordId": 1,
-                "sourceDocumentId": 1,
-                "events": [
-                  1,
-                  2
-                ],
-                "evidence": [
-                  1
-                ],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 6
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:2",
-              "detail": {
-                "enterpriseId": 2,
-                "recordId": 2,
-                "sourceDocumentId": 1,
-                "events": [
-                  3
-                ],
-                "evidence": [],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relations": [
-                  1,
-                  2
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relations": [],
-                "skipped": 0,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:1",
-              "detail": {
-                "enterpriseId": 1,
-                "sourceRefId": 2,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "difference",
-              "ref": "difference:1",
-              "detail": {
-                "enterpriseId": 1,
-                "evidenceQueryId": 1,
-                "evidenceRelationId": 1,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "merge",
-              "ref": "merge:2->1",
-              "detail": {
-                "lineage": {
-                  "fromEnterpriseId": 2,
-                  "fromEnterpriseName": "宁波上航测绘有限公司",
-                  "intoEnterpriseId": 1,
-                  "intoUscc": "91330211255994457P",
-                  "aliasId": 1,
-                  "evidenceQueryId": 1,
-                  "childRowsMoved": {
-                    "aliases": 0,
-                    "differences": 0,
-                    "relations": 0,
-                    "records": 1
-                  },
-                  "recordsMoved": [
-                    2
-                  ],
-                  "recordsFolded": [],
-                  "eventsMoved": [
-                    3
-                  ],
-                  "evidenceMoved": []
-                },
-                "rowsWritten": 0
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 6,
-            "update": 1,
-            "remove": 1,
-            "review": 1,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "5b5d7d1057752353",
+          "preflightResultSha": "debcb54bf19125de",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 15,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "da92995cbd889376"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
           "id": 2,
           "idempotencyKey": "sem/announce-replay#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "titleCode": "specialized_sme",
-                "source": "jxj"
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": null,
-                "titleCode": "innovative_sme",
-                "source": "jxj"
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relationCount": 0
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relationCount": 0
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:0",
-              "detail": {
-                "enterpriseId": 1
-              }
-            },
-            {
-              "ok": false,
-              "kind": "difference",
-              "ref": "difference:0",
-              "error": {
-                "code": "query_ref_ambiguous",
-                "field": "differences[].evidenceQueryRef",
-                "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 命中 2 次查询；请补 queriedAt"
-              }
-            },
-            {
-              "ok": false,
-              "kind": "merge",
-              "ref": "merge:0",
-              "error": {
-                "code": "relation_ref_ambiguous",
-                "field": "merges[].sourceRelationRef",
-                "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 sequenceNo=2 命中 2 条同序号关系；请补 queriedAt"
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 2,
-            "update": 2,
-            "remove": 0,
-            "review": 1,
-            "conflicts": [
-              {
-                "ok": false,
-                "kind": "difference",
-                "ref": "difference:0",
-                "error": {
-                  "code": "query_ref_ambiguous",
-                  "field": "differences[].evidenceQueryRef",
-                  "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 命中 2 次查询；请补 queriedAt"
-                }
-              },
-              {
-                "ok": false,
-                "kind": "merge",
-                "ref": "merge:0",
-                "error": {
-                  "code": "relation_ref_ambiguous",
-                  "field": "merges[].sourceRelationRef",
-                  "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 sequenceNo=2 命中 2 条同序号关系；请补 queriedAt"
-                }
-              }
-            ],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "81b91f2e820adb35",
+          "preflightResultSha": "ce310002c70c9f89",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "failed",
-          "summary": {
-            "written": 0,
-            "skipped": 0,
-            "failed": 2
-          }
+          "summarySha": "2e863b6a92051e2c"
         },
         {
           "error": null,
           "id": 3,
           "idempotencyKey": "sem/exp-v1#sha256:b1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "export_batch",
-              "ref": "export:1",
-              "detail": {
-                "rows": [
-                  1,
-                  2
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 1,
-            "update": 0,
-            "remove": 0,
-            "review": 0,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "9a16a5093013a10b",
+          "preflightResultSha": "542d5bcc31172b99",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 3,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "04786c867990dc42"
         }
       ],
       "platformExportBatch": [
@@ -1290,319 +695,49 @@
           "error": null,
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "recordId": 1,
-                "sourceDocumentId": 1,
-                "events": [
-                  1,
-                  2
-                ],
-                "evidence": [
-                  1
-                ],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 6
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:2",
-              "detail": {
-                "enterpriseId": 2,
-                "recordId": 2,
-                "sourceDocumentId": 1,
-                "events": [
-                  3
-                ],
-                "evidence": [],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relations": [
-                  1,
-                  2
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relations": [],
-                "skipped": 0,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:1",
-              "detail": {
-                "enterpriseId": 1,
-                "sourceRefId": 2,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "difference",
-              "ref": "difference:1",
-              "detail": {
-                "enterpriseId": 1,
-                "evidenceQueryId": 1,
-                "evidenceRelationId": 1,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "merge",
-              "ref": "merge:2->1",
-              "detail": {
-                "lineage": {
-                  "fromEnterpriseId": 2,
-                  "fromEnterpriseName": "宁波上航测绘有限公司",
-                  "intoEnterpriseId": 1,
-                  "intoUscc": "91330211255994457P",
-                  "aliasId": 1,
-                  "evidenceQueryId": 1,
-                  "childRowsMoved": {
-                    "aliases": 0,
-                    "differences": 0,
-                    "relations": 0,
-                    "records": 1
-                  },
-                  "recordsMoved": [
-                    2
-                  ],
-                  "recordsFolded": [],
-                  "eventsMoved": [
-                    3
-                  ],
-                  "evidenceMoved": []
-                },
-                "rowsWritten": 0
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 6,
-            "update": 1,
-            "remove": 1,
-            "review": 1,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "5b5d7d1057752353",
+          "preflightResultSha": "debcb54bf19125de",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 15,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "da92995cbd889376"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
           "id": 2,
           "idempotencyKey": "sem/announce-replay#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "titleCode": "specialized_sme",
-                "source": "jxj"
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": null,
-                "titleCode": "innovative_sme",
-                "source": "jxj"
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relationCount": 0
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relationCount": 0
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:0",
-              "detail": {
-                "enterpriseId": 1
-              }
-            },
-            {
-              "ok": false,
-              "kind": "difference",
-              "ref": "difference:0",
-              "error": {
-                "code": "query_ref_ambiguous",
-                "field": "differences[].evidenceQueryRef",
-                "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 命中 2 次查询；请补 queriedAt"
-              }
-            },
-            {
-              "ok": false,
-              "kind": "merge",
-              "ref": "merge:0",
-              "error": {
-                "code": "relation_ref_ambiguous",
-                "field": "merges[].sourceRelationRef",
-                "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 sequenceNo=2 命中 2 条同序号关系；请补 queriedAt"
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 2,
-            "update": 2,
-            "remove": 0,
-            "review": 1,
-            "conflicts": [
-              {
-                "ok": false,
-                "kind": "difference",
-                "ref": "difference:0",
-                "error": {
-                  "code": "query_ref_ambiguous",
-                  "field": "differences[].evidenceQueryRef",
-                  "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 命中 2 次查询；请补 queriedAt"
-                }
-              },
-              {
-                "ok": false,
-                "kind": "merge",
-                "ref": "merge:0",
-                "error": {
-                  "code": "relation_ref_ambiguous",
-                  "field": "merges[].sourceRelationRef",
-                  "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 sequenceNo=2 命中 2 条同序号关系；请补 queriedAt"
-                }
-              }
-            ],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "81b91f2e820adb35",
+          "preflightResultSha": "ce310002c70c9f89",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "failed",
-          "summary": {
-            "written": 0,
-            "skipped": 0,
-            "failed": 2
-          }
+          "summarySha": "2e863b6a92051e2c"
         },
         {
           "error": null,
           "id": 3,
           "idempotencyKey": "sem/exp-v1#sha256:b1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "export_batch",
-              "ref": "export:1",
-              "detail": {
-                "rows": [
-                  1,
-                  2
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 1,
-            "update": 0,
-            "remove": 0,
-            "review": 0,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "9a16a5093013a10b",
+          "preflightResultSha": "542d5bcc31172b99",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 3,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "04786c867990dc42"
         },
         {
           "error": null,
           "id": 4,
           "idempotencyKey": "sem/exp-v2#sha256:b2",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "export_batch",
-              "ref": "export:2",
-              "detail": {
-                "rows": [
-                  3,
-                  4
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 1,
-            "update": 0,
-            "remove": 0,
-            "review": 0,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "a07d498253c972ef",
+          "preflightResultSha": "542d5bcc31172b99",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 3,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "04786c867990dc42"
         }
       ],
       "platformExportBatch": [
@@ -1737,364 +872,61 @@
           "error": null,
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "recordId": 1,
-                "sourceDocumentId": 1,
-                "events": [
-                  1,
-                  2
-                ],
-                "evidence": [
-                  1
-                ],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 6
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:2",
-              "detail": {
-                "enterpriseId": 2,
-                "recordId": 2,
-                "sourceDocumentId": 1,
-                "events": [
-                  3
-                ],
-                "evidence": [],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relations": [
-                  1,
-                  2
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relations": [],
-                "skipped": 0,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:1",
-              "detail": {
-                "enterpriseId": 1,
-                "sourceRefId": 2,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "difference",
-              "ref": "difference:1",
-              "detail": {
-                "enterpriseId": 1,
-                "evidenceQueryId": 1,
-                "evidenceRelationId": 1,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "merge",
-              "ref": "merge:2->1",
-              "detail": {
-                "lineage": {
-                  "fromEnterpriseId": 2,
-                  "fromEnterpriseName": "宁波上航测绘有限公司",
-                  "intoEnterpriseId": 1,
-                  "intoUscc": "91330211255994457P",
-                  "aliasId": 1,
-                  "evidenceQueryId": 1,
-                  "childRowsMoved": {
-                    "aliases": 0,
-                    "differences": 0,
-                    "relations": 0,
-                    "records": 1
-                  },
-                  "recordsMoved": [
-                    2
-                  ],
-                  "recordsFolded": [],
-                  "eventsMoved": [
-                    3
-                  ],
-                  "evidenceMoved": []
-                },
-                "rowsWritten": 0
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 6,
-            "update": 1,
-            "remove": 1,
-            "review": 1,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "5b5d7d1057752353",
+          "preflightResultSha": "debcb54bf19125de",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 15,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "da92995cbd889376"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
           "id": 2,
           "idempotencyKey": "sem/announce-replay#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "titleCode": "specialized_sme",
-                "source": "jxj"
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": null,
-                "titleCode": "innovative_sme",
-                "source": "jxj"
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relationCount": 0
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relationCount": 0
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:0",
-              "detail": {
-                "enterpriseId": 1
-              }
-            },
-            {
-              "ok": false,
-              "kind": "difference",
-              "ref": "difference:0",
-              "error": {
-                "code": "query_ref_ambiguous",
-                "field": "differences[].evidenceQueryRef",
-                "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 命中 2 次查询；请补 queriedAt"
-              }
-            },
-            {
-              "ok": false,
-              "kind": "merge",
-              "ref": "merge:0",
-              "error": {
-                "code": "relation_ref_ambiguous",
-                "field": "merges[].sourceRelationRef",
-                "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 sequenceNo=2 命中 2 条同序号关系；请补 queriedAt"
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 2,
-            "update": 2,
-            "remove": 0,
-            "review": 1,
-            "conflicts": [
-              {
-                "ok": false,
-                "kind": "difference",
-                "ref": "difference:0",
-                "error": {
-                  "code": "query_ref_ambiguous",
-                  "field": "differences[].evidenceQueryRef",
-                  "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 命中 2 次查询；请补 queriedAt"
-                }
-              },
-              {
-                "ok": false,
-                "kind": "merge",
-                "ref": "merge:0",
-                "error": {
-                  "code": "relation_ref_ambiguous",
-                  "field": "merges[].sourceRelationRef",
-                  "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 sequenceNo=2 命中 2 条同序号关系；请补 queriedAt"
-                }
-              }
-            ],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "81b91f2e820adb35",
+          "preflightResultSha": "ce310002c70c9f89",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "failed",
-          "summary": {
-            "written": 0,
-            "skipped": 0,
-            "failed": 2
-          }
+          "summarySha": "2e863b6a92051e2c"
         },
         {
           "error": null,
           "id": 3,
           "idempotencyKey": "sem/exp-v1#sha256:b1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "export_batch",
-              "ref": "export:1",
-              "detail": {
-                "rows": [
-                  1,
-                  2
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 1,
-            "update": 0,
-            "remove": 0,
-            "review": 0,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "9a16a5093013a10b",
+          "preflightResultSha": "542d5bcc31172b99",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 3,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "04786c867990dc42"
         },
         {
           "error": null,
           "id": 4,
           "idempotencyKey": "sem/exp-v2#sha256:b2",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "export_batch",
-              "ref": "export:2",
-              "detail": {
-                "rows": [
-                  3,
-                  4
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 1,
-            "update": 0,
-            "remove": 0,
-            "review": 0,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "a07d498253c972ef",
+          "preflightResultSha": "542d5bcc31172b99",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 3,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "04786c867990dc42"
         },
         {
           "error": "批次校验未通过：1 项有误，未写入任何数据",
           "id": 5,
           "idempotencyKey": "sem/broken#sha256:c1",
-          "itemResults": [
-            {
-              "ok": false,
-              "kind": "export_row",
-              "ref": "export:row:3",
-              "error": {
-                "code": "source_row_no_duplicate",
-                "field": "rows[].sourceRowNo",
-                "message": "快照行号重复：3"
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 0,
-            "update": 0,
-            "remove": 0,
-            "review": 0,
-            "conflicts": [
-              {
-                "ok": false,
-                "kind": "export_row",
-                "ref": "export:row:3",
-                "error": {
-                  "code": "source_row_no_duplicate",
-                  "field": "rows[].sourceRowNo",
-                  "message": "快照行号重复：3"
-                }
-              }
-            ],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "6a5b23325a6bee85",
+          "preflightResultSha": "6ded97097d9eff37",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "failed",
-          "summary": {
-            "written": 0,
-            "skipped": 0,
-            "failed": 1
-          }
+          "summarySha": "97fb41d4cb2cdb1f"
         }
       ]
     }
@@ -2146,356 +978,61 @@
           "error": null,
           "id": 1,
           "idempotencyKey": "sem/announce#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "recordId": 1,
-                "sourceDocumentId": 1,
-                "events": [
-                  1,
-                  2
-                ],
-                "evidence": [
-                  1
-                ],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 6
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record_event",
-              "ref": "record:2",
-              "detail": {
-                "enterpriseId": 2,
-                "recordId": 2,
-                "sourceDocumentId": 1,
-                "events": [
-                  3
-                ],
-                "evidence": [],
-                "skipped": 0,
-                "evidenceRepointed": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relations": [
-                  1,
-                  2
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relations": [],
-                "skipped": 0,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:1",
-              "detail": {
-                "enterpriseId": 1,
-                "sourceRefId": 2,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "difference",
-              "ref": "difference:1",
-              "detail": {
-                "enterpriseId": 1,
-                "evidenceQueryId": 1,
-                "evidenceRelationId": 1,
-                "rowsWritten": 1
-              }
-            },
-            {
-              "ok": true,
-              "kind": "merge",
-              "ref": "merge:2->1",
-              "detail": {
-                "lineage": {
-                  "fromEnterpriseId": 2,
-                  "fromEnterpriseName": "宁波上航测绘有限公司",
-                  "intoEnterpriseId": 1,
-                  "intoUscc": "91330211255994457P",
-                  "aliasId": 1,
-                  "evidenceQueryId": 1,
-                  "childRowsMoved": {
-                    "aliases": 0,
-                    "differences": 0,
-                    "relations": 0,
-                    "records": 1
-                  },
-                  "recordsMoved": [
-                    2
-                  ],
-                  "recordsFolded": [],
-                  "eventsMoved": [
-                    3
-                  ],
-                  "evidenceMoved": []
-                },
-                "rowsWritten": 0
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 6,
-            "update": 1,
-            "remove": 1,
-            "review": 1,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "5b5d7d1057752353",
+          "preflightResultSha": "debcb54bf19125de",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 15,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "da92995cbd889376"
         },
         {
           "error": "批次校验未通过：2 项有误，未写入任何数据",
           "id": 2,
           "idempotencyKey": "sem/announce-replay#sha256:a1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "record",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": 1,
-                "titleCode": "specialized_sme",
-                "source": "jxj"
-              }
-            },
-            {
-              "ok": true,
-              "kind": "record",
-              "ref": "record:1",
-              "detail": {
-                "enterpriseId": null,
-                "titleCode": "innovative_sme",
-                "source": "jxj"
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:1",
-              "detail": {
-                "relationCount": 0
-              }
-            },
-            {
-              "ok": true,
-              "kind": "platform_query",
-              "ref": "query:2",
-              "detail": {
-                "relationCount": 0
-              }
-            },
-            {
-              "ok": true,
-              "kind": "alias",
-              "ref": "alias:0",
-              "detail": {
-                "enterpriseId": 1
-              }
-            },
-            {
-              "ok": false,
-              "kind": "difference",
-              "ref": "difference:0",
-              "error": {
-                "code": "query_ref_ambiguous",
-                "field": "differences[].evidenceQueryRef",
-                "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 命中 2 次查询；请补 queriedAt"
-              }
-            },
-            {
-              "ok": false,
-              "kind": "merge",
-              "ref": "merge:0",
-              "error": {
-                "code": "relation_ref_ambiguous",
-                "field": "merges[].sourceRelationRef",
-                "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 sequenceNo=2 命中 2 条同序号关系；请补 queriedAt"
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 2,
-            "update": 2,
-            "remove": 0,
-            "review": 1,
-            "conflicts": [
-              {
-                "ok": false,
-                "kind": "difference",
-                "ref": "difference:0",
-                "error": {
-                  "code": "query_ref_ambiguous",
-                  "field": "differences[].evidenceQueryRef",
-                  "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 命中 2 次查询；请补 queriedAt"
-                }
-              },
-              {
-                "ok": false,
-                "kind": "merge",
-                "ref": "merge:0",
-                "error": {
-                  "code": "relation_ref_ambiguous",
-                  "field": "merges[].sourceRelationRef",
-                  "message": "引用不唯一：interface=business_list queryKey=91330211255994457P rdjb=3 sequenceNo=2 命中 2 条同序号关系；请补 queriedAt"
-                }
-              }
-            ],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "81b91f2e820adb35",
+          "preflightResultSha": "ce310002c70c9f89",
           "sourceIdentity": "jxj/announcement/2026/1/一批到底.pdf",
           "sourceKind": "announcement",
           "sourceSha256": null,
           "status": "failed",
-          "summary": {
-            "written": 0,
-            "skipped": 0,
-            "failed": 2
-          }
+          "summarySha": "2e863b6a92051e2c"
         },
         {
           "error": null,
           "id": 3,
           "idempotencyKey": "sem/exp-v1#sha256:b1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "export_batch",
-              "ref": "export:1",
-              "detail": {
-                "rows": [
-                  1,
-                  2
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 1,
-            "update": 0,
-            "remove": 0,
-            "review": 0,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "9a16a5093013a10b",
+          "preflightResultSha": "542d5bcc31172b99",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 3,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "04786c867990dc42"
         },
         {
           "error": null,
           "id": 4,
           "idempotencyKey": "sem/exp-v2#sha256:b2",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "export_batch",
-              "ref": "export:2",
-              "detail": {
-                "rows": [
-                  3,
-                  4
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 1,
-            "update": 0,
-            "remove": 0,
-            "review": 0,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "a07d498253c972ef",
+          "preflightResultSha": "542d5bcc31172b99",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 3,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "04786c867990dc42"
         },
         {
           "error": null,
           "id": 5,
           "idempotencyKey": "sem/broken#sha256:c1",
-          "itemResults": [
-            {
-              "ok": true,
-              "kind": "export_batch",
-              "ref": "export:3",
-              "detail": {
-                "rows": [
-                  5,
-                  6
-                ],
-                "skipped": 0,
-                "rowsWritten": 3
-              }
-            }
-          ],
-          "preflightResult": {
-            "add": 1,
-            "update": 0,
-            "remove": 0,
-            "review": 0,
-            "conflicts": [],
-            "duplicateCandidates": []
-          },
+          "itemResultsSha": "96c800a8fea6367a",
+          "preflightResultSha": "542d5bcc31172b99",
           "sourceIdentity": "miit/export/专精特新中小企业导出Excel.xlsx",
           "sourceKind": "platform_export",
           "sourceSha256": null,
           "status": "committed",
-          "summary": {
-            "written": 3,
-            "skipped": 0,
-            "failed": 0
-          }
+          "summarySha": "04786c867990dc42"
         }
       ],
       "platformExportBatch": [

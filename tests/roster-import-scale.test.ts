@@ -186,11 +186,21 @@ describe.runIf(SCALE_ENABLED)('RL-18 规模：单批千条级平台查询', () =
     expect(elapsedMs).toBeLessThan(BATCH_BUDGET_MS)
   }, CASE_TIMEOUT_MS)
 
-  it('规模翻 4 倍：耗时**不是** 16 倍（亚二次增长）', () => {
+  /**
+   * 增长比是**唯一**能直接看出「平方」的判据，但它只在**平方那一项真的占主导**时才灵。
+   *
+   * 所以这里刻意让**存档为空**：库是空的 ⇒ 计划阶段没有可扫的行，代价全落在**提交**阶段 ——
+   * 而提交阶段表是**边写边涨**的，第 i 条查询要扫 i 行 ⇒ 恰好是 N²/2。改前这条会给出
+   * 接近 16× 的比值（诚实实测，不是推的），改后近线性。
+   *
+   * 为什么不用「存档=1000」那种更贴近真实的形状：那时计划阶段的代价是 O(N × 固定的存档行数)，
+   * 对 N 只是**线性**，于是改前改后的比值都在 4–6× 一带 —— 这条用例会**在改前也通过**，
+   * 等于什么都没守。宁可把形状说清楚，也不留一条看着像守、实际守不住的断言。
+   */
+  it('规模翻 4 倍：耗时**不是** 16 倍（空存档，纯提交阶段的平方项）', () => {
     const small = BATCH_QUERIES / 4
     const measure = (batch: number) => {
       const db = makeDb()
-      seedArchive(db, ARCHIVE_QUERIES)
       const { elapsedMs } = timedCommit(db, scaleRequest(batch, `scale/ratio-${batch}#sha256:rl18`))
       return Math.max(elapsedMs, 1)
     }
@@ -200,7 +210,7 @@ describe.runIf(SCALE_ENABLED)('RL-18 规模：单批千条级平台查询', () =
     const largeMs = measure(BATCH_QUERIES)
     const ratio = largeMs / smallMs
     // eslint-disable-next-line no-console
-    console.log(`[RL-18 规模] ${small} 条=${smallMs}ms，${BATCH_QUERIES} 条=${largeMs}ms，比值=${ratio.toFixed(2)}×`)
+    console.log(`[RL-18 规模] 空存档；${small} 条=${smallMs}ms，${BATCH_QUERIES} 条=${largeMs}ms，比值=${ratio.toFixed(2)}×`)
     // 平方会给出 16×；这里给到 8× 的宽松上限（含固定开销与抖动）。
     expect(ratio).toBeLessThan(8)
   }, CASE_TIMEOUT_MS)
