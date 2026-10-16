@@ -24,7 +24,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { normalizeUscc } from '../../lib/domain'
-import { isByteEqualName, type UsccPlatformClaim } from '../../lib/roster/uscc-research'
+import { isByteEqualName, nameMatchLevel, type UsccPlatformClaim } from '../../lib/roster/uscc-research'
 
 /** 判定文件里的一条(形状见 `orchestration-notes/07-USCC-BATCH-BRIEF.md`)。 */
 export interface UsccVerdictItem {
@@ -35,6 +35,7 @@ export interface UsccVerdictItem {
   libraryHits?: Array<{ enterpriseId?: number; name?: string; uscc?: string | null; district?: string | null }>
   candidateUscc?: string | null
   platformEvidence?: Array<{
+    /** `business_list` / `apply_list`；复查文件里 queryList 那条可能写作 `query_list`。 */
     interface?: string
     rdjb?: string
     sequenceNo?: number
@@ -46,7 +47,12 @@ export interface UsccVerdictItem {
     /** 代理实际发出的那次查询（如 `qymc=…`），留作证据出处。 */
     query?: string | null
   }>
-  qymcEqualsAnnouncedName?: boolean
+  /**
+   * 代理的判据断言。**三/四种形态都见过**：布尔 `true`/`false`、
+   * 整个字段缺席（批次 5），以及**字符串**（复查文件写 `"normalizeName"`，意为「只在归一化
+   * 口径下相等」）。它**不是**我们的采纳判据（见下），所以只如实记档、不做准入门槛。
+   */
+  qymcEqualsAnnouncedName?: boolean | string | null
   verdict?: string
   reason?: string | null
   blocked?: string | null
@@ -55,7 +61,13 @@ export interface UsccVerdictItem {
 export interface UsccVerdictFile {
   batch?: number
   generatedAt?: string
+  /** 常规形态。 */
   items?: UsccVerdictItem[]
+  /**
+   * **只含转正条目的交接形态**（复查代理给补充证据时用这个键）。
+   * 与 `items` 同形，只是键名不同 —— 两种都收，缺一个就会把整份文件当成空的。
+   */
+  resolvedItems?: UsccVerdictItem[]
 }
 
 /** 判定文件里**没被采纳**的一条(逐条带文件给的理由,绝不静默丢弃)。 */
@@ -83,6 +95,16 @@ export interface UsccVerdictIngest {
   batches: Array<{ batch: number | null; file: string; generatedAt: string | null; items: number }>
   /** 文件本身的问题(缺字段 / 形状不对 / 文件读不了);**逐条列出不静默**。 */
   problems: string[]
+}
+
+/**
+ * 这条认领带来的证据里，有没有一条与公布名**同档**的 `qymc`（即「能拿去锚定」的那种）。
+ *
+ * 用途只有一个：同一企业、同一候选统代被两份文件分别给出时，**优先采用带可用证据的那份**。
+ * 判据与计划侧同一处（`nameMatchLevel`），不在这里另写一套。
+ */
+function hasUsableEvidence(claim: { uscc: string; evidence?: UsccPlatformClaim['evidence'] }, name: string): boolean {
+  return (claim.evidence ?? []).some((entry) => nameMatchLevel(entry?.nameRaw, name) != null)
 }
 
 /** 默认的判定文件名(5 批)。 */
@@ -153,7 +175,11 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
   const problems: string[] = []
 
   for (const { file, value } of input) {
-    const items = Array.isArray(value.items) ? value.items : []
+    const items = Array.isArray(value.items)
+      ? value.items
+      : Array.isArray(value.resolvedItems)
+        ? value.resolvedItems
+        : []
     const generatedAt = typeof value.generatedAt === 'string' && value.generatedAt.trim() ? value.generatedAt.trim() : null
     batches.push({ batch: typeof value.batch === 'number' ? value.batch : null, file, generatedAt, items: items.length })
     if (!generatedAt) {
@@ -168,11 +194,18 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
       }
       const enterpriseId = typeof item.enterpriseId === 'number' ? Math.trunc(item.enterpriseId) : null
       const name = typeof item.name === 'string' ? item.name.trim() : ''
-      const verdict = typeof item.verdict === 'string' ? item.verdict.trim() : ''
       const reason = typeof item.reason === 'string' ? item.reason.trim() : ''
       if (enterpriseId == null || !name) {
         problems.push(`${where}: 缺 enterpriseId / name`)
         return
+      }
+      // `verdict` **缺席**按 `resolved` 处理并记一条 problem：补充证据的交接文件
+      // （`resolvedItems`）本来就不带这个字段，而它只装已转正的条目。反正采纳与否由
+      // 「库里对得上」决定，缺字段不会让不该写的写进去。
+      const rawVerdict = typeof item.verdict === 'string' ? item.verdict.trim() : ''
+      const verdict = rawVerdict || 'resolved'
+      if (!rawVerdict) {
+        problems.push(`${where}: 判定文件未给 verdict ⇒ 按 resolved 处理（只作线索，采纳仍看库里证据）`)
       }
       if (!KNOWN_VERDICTS.has(verdict)) {
         problems.push(`${where}: verdict 取值未知（${verdict || '(空)'}）⇒ 跳过（不猜它能补）`)
@@ -199,14 +232,31 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
       // 只把三态如实记下来（`flagState`）供报告区分。理由与父代理 ④ 同源：
       // **用代码判据，不靠代理自律**。实测批次 5 整批漏写这个字段（15 条），
       // 若因为字段缺席就整批不写，会把平台确实逐字证实过的企业留在清单里。
-      const flagState: 'true' | 'absent' | 'false' =
-        item.qymcEqualsAnnouncedName === true ? 'true' : item.qymcEqualsAnnouncedName === false ? 'false' : 'absent'
+      // 三态之外的第四态：复查文件把它写成**字符串**（如 `"normalizeName"`，表示「只在归一化
+      // 口径下相等」）。那不是布尔，但信息量比 `absent` 大，所以单列一态（`normalized`）。
+      const flagState: UsccPlatformClaim['flagState'] =
+        item.qymcEqualsAnnouncedName === true
+          ? 'true'
+          : item.qymcEqualsAnnouncedName === false
+            ? 'false'
+            : typeof item.qymcEqualsAnnouncedName === 'string' && item.qymcEqualsAnnouncedName.trim()
+              ? 'normalized'
+              : 'absent'
       // 接口取值**只认字典里的两个**：未知取值拒掉（原来「不是 apply_list 就当 business_list」是
       // 把不可信输入往一个合法类别上硬套 —— 那正是不该做的猜测）。序号也必须是正整数。
       const evidence = (Array.isArray(item.platformEvidence) ? item.platformEvidence : [])
-        .filter((entry) => entry?.interface === 'business_list' || entry?.interface === 'apply_list')
+        .filter(
+          (entry) =>
+            entry?.interface === 'business_list' ||
+            entry?.interface === 'apply_list' ||
+            entry?.interface === 'query_list',
+        )
         .map((entry) => ({
-          interface: entry.interface as 'business_list' | 'apply_list',
+          // 判定文件里 queryList 那条可能写成 `query_list`（复查文件的拼写）——它**就是**
+          // `apply_list` 端点，映射过去并把原始拼写留在证据里；其余未知取值一律拒掉。
+          interface: (entry.interface === 'query_list' ? 'apply_list' : entry.interface) as
+            | 'business_list'
+            | 'apply_list',
           rdjb: typeof entry.rdjb === 'string' ? entry.rdjb : '',
           sequenceNo: typeof entry.sequenceNo === 'number' ? Math.trunc(entry.sequenceNo) : Number.NaN,
           relationKey: typeof entry.relationKey === 'string' ? entry.relationKey : null,
@@ -216,8 +266,14 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
           usccRaw: typeof entry.tyshxydm === 'string' ? entry.tyshxydm : null,
           query: typeof entry.query === 'string' ? entry.query : null,
         }))
-        // 逐字相等：与计划侧**同一个具名判据**（`isByteEqualName`），不在这里另写一次比较。
-        .filter((entry) => Number.isInteger(entry.sequenceNo) && entry.sequenceNo >= 1 && isByteEqualName(entry.nameRaw, name))
+        // 这里**只做结构过滤**（接口在字典内、序号是正整数、名称非空），**不按名称筛**：
+        //  1. 平台原文与公布名常常只在**归一化口径**下相等（复查文件实测 6/6 都是
+        //     `typographic` 或 `district_suffix` 档）—— 按逐字筛会把整批证据丢光，
+        //     于是「判定文件里没有一条逐字相等的摘要」这种误判（`384` 就这么被卡住过）；
+        //  2. 同一次返回里的**现名行**也要留住（父代理明确「seq4/5 是现名,也一并给了」）,
+        //     它们进库后是「这个统代还叫过什么」的背景。
+        // 名称比对的判据只有一处：计划侧 `pickSuppliedEvidence` 用 `nameMatchLevel` 挑锚点。
+        .filter((entry) => Number.isInteger(entry.sequenceNo) && entry.sequenceNo >= 1 && !!entry.nameRaw)
       // **按企业去重，取最强结论**（父代理 2026-10-16 裁定）：
       // 同一家企业可能有两个称号 ⇒ 在两个批次各出现一次（实测 10 家）。两批结论不同时取
       // **更强**的那个（`resolved` > `conflict`/`needs_human` > `not_found`）——「resolved」
@@ -227,6 +283,29 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
       const existing = seenByEnterprise.get(enterpriseId)
       if (existing) {
         if (normalizeUscc(existing.uscc) === normalizeUscc(uscc)) {
+          // 同一家企业、同一个候选统代：**哪一份能写、就用哪一份**。
+          // 补充证据的交接物（`uscc-recheck-extra-*.json`）后到，而先到的可能只带来结论、
+          // 没带关系摘要 —— 按「先到先得」会让这种企业停在 `no_platform_evidence`
+          // （实测 507 / 384 就是这样）。所以：**后到的那份带可用证据、先到的不带** ⇒ 换成后者。
+          if (!hasUsableEvidence(existing, name) && hasUsableEvidence({ uscc, evidence } as UsccPlatformClaim, name)) {
+            const upgraded: UsccPlatformClaim = {
+              enterpriseId,
+              enterpriseName: name,
+              uscc,
+              evidence,
+              flagState,
+              reason: reason || null,
+              batchRef: value.batch != null ? `uscc-verdict-batch-${value.batch}` : file.replace(/\.json$/, ''),
+              observedAt: generatedAt,
+            }
+            platformClaims[platformClaims.indexOf(existing)] = upgraded
+            seenByEnterprise.set(enterpriseId, upgraded)
+            problems.push(
+              `企业 ${enterpriseId}「${name}」两份文件给了同一个候选统代 ${uscc}，` +
+                `${existing.batchRef} 那份没带可用的关系摘要、${upgraded.batchRef} 带了 ⇒ 采用后者作证据`,
+            )
+            return
+          }
           untouched.push({
             enterpriseId,
             name,
@@ -259,7 +338,9 @@ export function normalizeUsccVerdicts(input: Array<{ file: string; value: UsccVe
         evidence,
         flagState,
         reason: reason || null,
-        batchRef: `uscc-verdict-batch-${value.batch ?? '?'}`,
+        // 批次号缺失时用**文件名**（`uscc-recheck-extra-2.json` 这类补充交接物没有 `batch`）——
+        // 证据出处必须可指回一份具体的文件。
+        batchRef: value.batch != null ? `uscc-verdict-batch-${value.batch}` : file.replace(/\.json$/, ''),
         observedAt: generatedAt,
       }
       platformClaims.push(claim)

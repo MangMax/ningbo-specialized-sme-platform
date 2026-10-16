@@ -836,6 +836,17 @@
   库里没有而文件带来了 `evidence` 摘要就用 §8.7 的**批内自然键**把查询/关系与证据指针写进同一批,
   两边都没有 ⇒ `no_platform_evidence`,一行不写。「代理说 resolved」本身不构成任何写权限。
 
+**补充证据的交接形态**:复查代理交回来的文件可能用 **`resolvedItems`**(而不是 `items`)、
+**不带 `verdict`**(整份都是已转正条目)、并且把 queryList 那条写成 **`query_list`**。
+这些都在归一化层接受:`resolvedItems` 与 `items` 等价;`verdict` 缺席按 `resolved` 处理并记一条
+`problem`(采纳与否仍由证据判据决定);`query_list` 映射为 `apply_list`(它就是 queryList 端点),
+原始拼写留在证据里。`qymcEqualsAnnouncedName` 可以写成**字符串**(如 `"normalizeName"`,
+意为「只在归一化口径下相等」)——同样只记档、不作准入门槛。
+
+**同一企业、同一候选统代被两份文件分别给出**时,**采用带可用证据的那份**(不按先到先得):
+先到的那份可能只带来结论、没有关系摘要,按先到先得会让本可补齐的企业停在
+`no_platform_evidence`(实测 `507` / `384` 就是这样被卡住过)。
+
 **关于 `queried_at` 与 `raw_response`**:判定文件的交接物只有字段摘要(原始平台响应没随文件走),
 所以由它转写出来的 `platform_query` 行,其 `queried_at` 用的是该文件的 `generatedAt`(**代理产出时刻**,
 不是平台响应时刻)、`raw_response` 留空;两件事都写进那条关系的 `source_text`,不留「看着像原始响应」的假象。
@@ -1072,8 +1083,21 @@
   "sequenceNo": 2 }               // **关系引用必填**(同一次查询内第几条,从 1 起);查询引用不用
 ```
 
-**为什么不认 `relationKey`（如 `SQ332022062212391`）**:实测同一 `relationKey` 在
-`business_list` 与 `apply_list` 下**各出现一次** —— 单靠它有歧义,自然键**必须含接口**。
+**为什么不认「只给 `relationKey`」**:实测同一 `relationKey` 在 `business_list` 与 `apply_list`
+下**各出现一次** —— 单靠它有歧义,自然键**必须含接口**。
+`sequenceNo` 仍是**关系引用必填**(自然键要能唯一定位),但它是**参考值**;真正的**权威锚点**是
+`relationKey`(RL-06 增量,父代理 2026-10-16:实测「平台的排序可能与解析顺序不同」)。
+所以引用里可以**同时**给 `relationKey` —— 给了就按它校验:
+
+```jsonc
+{ "interface": "business_list", "queryKey": "913302…", "rdjb": "2",
+  "queriedAt": "2026-10-16T08:16:12Z", "sequenceNo": 1,
+  "relationKey": "SQ332023042745662" }   // 权威锚点;与 sequenceNo 指的不是同一行 ⇒ 报错
+```
+
+- 该查询下**没有**这个 `relationKey` ⇒ 逐项报错 `relation_ref_not_found`;
+- 有,但它与 `sequenceNo` 指的不是同一行 ⇒ 逐项报错 **`relation_ref_mismatch`**，
+  **绝不按其中一个猜**;执行阶段会再校验一遍,不符即整批回滚。
 
 落点与字段名:
 

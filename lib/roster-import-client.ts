@@ -104,6 +104,16 @@ export interface RosterPlatformRef {
   queriedAt?: string
   /** 关系序号（同一次查询内第几条，从 1 起）。**关系引用必填**；查询引用不用。 */
   sequenceNo?: number
+  /**
+   * 关系的**权威锚点**（RL-06 增量）。
+   *
+   * 为什么需要它：实测「平台的排序可能与其解析顺序不同，`sequenceNo` 只作参考」——
+   * 序号对不上时按序号去锚，会把别名/归并的证据指针指到**另一条关系**上。
+   * 给了 `relationKey` 时：解析出的那条关系**必须**就是它；同时给了 `sequenceNo` 却指到别的行
+   * ⇒ 逐项报错 `relation_ref_mismatch`，**绝不按其中一个猜**。
+   * 两个都给是最稳的用法：`relationKey` 定身份、`sequenceNo` 交叉校验。
+   */
+  relationKey?: string | null
 }
 
 /** 企业曾用名 / 别名（身份历史，是**证据**不是身份）。 */

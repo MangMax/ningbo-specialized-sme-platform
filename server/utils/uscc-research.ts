@@ -50,6 +50,7 @@ import {
 import type {
   RosterImportMerge,
   RosterImportPlatformQuery,
+  RosterImportRelation,
   RosterImportRequest,
   RosterImportUsccBackfill,
   RosterPlatformRef,
@@ -381,7 +382,14 @@ export interface UsccResearchReady {
   evidence: DuplicateMergeEvidence | null
   /** 批内新写时的**自然键**（契约 §8.7）；库里已有真实行时为 `null`。 */
   evidenceRef: RosterPlatformRef | null
-  /** 本项需要**写入**的平台查询（判定文件带来证据、库里还没有时）；否则 `null`。 */
+  /**
+   * 本项需要**写入**的平台查询（判定文件带来证据、库里还没有时）；否则 `null`。
+   *
+   * 一个认领可能带多组证据（`business_list rdjb=2`、`query_list` …），**整组**都写，
+   * 所以这里是数组。
+   */
+  platformQueries: RosterImportPlatformQuery[]
+  /** 便捷字段 = `platformQueries[0] ?? null`（只关心「有没有新证据」时看它）。 */
   platformQuery: RosterImportPlatformQuery | null
   /**
    * 规范行上**已经有**同名（`name_norm`）的 `confirmed` 曾用名 ⇒ 本轮**不再写**第二条
@@ -604,6 +612,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       uscc,
       evidence: null,
       evidenceRef: null,
+      platformQueries: [],
       platformQuery: null,
       aliasAlreadyPresent: false,
       merge: null,
@@ -713,41 +722,39 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
     }
     claimedCodes.set(uscc, target.enterpriseId)
 
-    const evidenceRef: RosterPlatformRef | null = stored.ok
-      ? null
-      : {
-          interface: supplied!.interface,
+    // 整组写：判定文件里该 (接口, rdjb) 的全部行都进同一条 `platform_query`，
+    // 于是命中那一行的序号**必然**存在于写进去的那组里，锚点解析得到。
+    const groups = stored.ok ? [] : groupSuppliedEvidence(claim)
+    const anchorGroup = groups.find(
+      (group) => group.interface === supplied!.interface && group.rdjb === supplied!.rdjb,
+    )
+    const anchorRelation =
+      anchorGroup?.relations.find((relation) => relation.nameRaw === supplied!.nameRaw) ?? null
+    const evidenceRef: RosterPlatformRef | null =
+      stored.ok || !anchorRelation
+        ? null
+        : {
+            interface: supplied!.interface,
+            queryKey: uscc,
+            rdjb: supplied!.rdjb,
+            queriedAt: supplied!.queriedAt,
+            sequenceNo: anchorRelation.sequenceNo,
+            // **权威锚点**：序号只作参考，`relationKey` 说话（父代理 2026-10-16）。
+            relationKey: anchorRelation.relationKey ?? null,
+          }
+    const platformQueries: RosterImportPlatformQuery[] = stored.ok
+      ? []
+      : groups.map((group) => ({
+          interface: group.interface,
           queryKey: uscc,
-          rdjb: supplied!.rdjb,
-          queriedAt: supplied!.queriedAt,
-          sequenceNo: supplied!.sequenceNo,
-        }
-    const platformQuery: RosterImportPlatformQuery | null = stored.ok
-      ? null
-      : {
-          interface: supplied!.interface,
-          queryKey: uscc,
-          rdjb: supplied!.rdjb,
+          rdjb: group.rdjb,
           queriedAt: supplied!.queriedAt,
           status: 'success',
           failureReason: null,
           rawResponse: null,
-          relations: [
-            {
-              sequenceNo: supplied!.sequenceNo,
-              relationKey: supplied!.relationKey,
-              usccRaw: uscc,
-              nameRaw: supplied!.nameRaw,
-              status: supplied!.status,
-              matchBasis: 'uscc',
-              verificationStatus: 'confirmed',
-              sourceText:
-                `由批次判断代理交接的判定文件（${claim.batchRef ?? '(未标批次)'}）转写；` +
-                `原始平台响应**未随文件交接**，此行的 queried_at 取该判定文件的产出时刻。` +
-                `${supplied!.query ? `代理实发查询：${supplied!.query}。` : ''}依据：${claim.reason ?? '(未给理由)'}`,
-            },
-          ],
-        }
+          relations: group.relations,
+        }))
+    const platformQuery: RosterImportPlatformQuery | null = platformQueries[0] ?? null
 
     if (holder) {
       // 该统代已挂在另一家企业行上 ⇒ §5.2 的**归并**（不是 UPDATE：会撞 enterprise_uscc_norm_uq）。
@@ -766,6 +773,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
         uscc,
         evidence: stored.ok ? stored.evidence : null,
         evidenceRef,
+        platformQueries,
         platformQuery,
         aliasAlreadyPresent,
         merge: {
@@ -776,7 +784,14 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
           sourceKind: supplied?.sourceKind ?? 'platform_business',
           ...(evidenceRef ? { sourceRelationRef: evidenceRef } : { sourceRefId: stored.ok ? stored.evidence.relationId : 0 }),
           ...(evidenceRef
-            ? { evidenceQueryRef: { interface: evidenceRef.interface, queryKey: uscc, rdjb: evidenceRef.rdjb, queriedAt: evidenceRef.queriedAt } }
+            ? {
+                evidenceQueryRef: {
+                  interface: evidenceRef.interface,
+                  queryKey: uscc,
+                  rdjb: evidenceRef.rdjb,
+                  queriedAt: evidenceRef.queriedAt,
+                },
+              }
             : stored.ok
               ? { evidenceQueryId: stored.evidence.queryId }
               : {}),
@@ -809,6 +824,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       uscc,
       evidence: stored.ok ? stored.evidence : null,
       evidenceRef,
+      platformQueries,
       platformQuery,
       aliasAlreadyPresent: false,
       merge: null,
@@ -930,6 +946,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
         uscc: candidate.uscc,
         evidence,
         evidenceRef: null,
+        platformQueries: [],
         platformQuery: null,
         aliasAlreadyPresent,
         merge: {
@@ -1033,9 +1050,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
 
   // 载荷顺序不敏感（写入侧的执行顺序固定：platformQueries → aliases → … → merges，见 §8.7.2），
   // 但**都必须在同一批里**，否则批内自然键引用解析不到（"有证据的曾用名"就会落成 0 哨兵）。
-  const platformQueries = ready
-    .map((item) => item.platformQuery)
-    .filter((item): item is RosterImportPlatformQuery => item != null)
+  const platformQueries = ready.flatMap((item) => item.platformQueries)
   const merges = ready.map((item) => item.merge).filter((item): item is RosterImportMerge => item != null)
   const backfills = ready.map((item) => item.backfill).filter((item): item is RosterImportUsccBackfill => item != null)
 
@@ -1135,7 +1150,13 @@ function findEnterpriseByUscc(db: Db, uscc: string): { id: number; name: string 
 interface SuppliedEvidence {
   interface: 'business_list' | 'apply_list'
   rdjb: string
-  sequenceNo: number
+  /**
+   * 平台关联主键 —— **权威锚点**（父代理 2026-10-16：序号只作参考）。
+   *
+   * ⚠️ 这里**不再放序号**：序号是由「本次要写入的那一组」决定的（见 `groupSuppliedEvidence`），
+   * 一条关系摘要单看不知道自己在组里排第几。真正的序号由 `anchorRelation.sequenceNo` 给出，
+   * 审计文案改用 `relationKey` —— 它才是锚点，也不会因为组顺序变化而失真。
+   */
   relationKey: string | null
   nameRaw: string
   status: string | null
@@ -1150,14 +1171,71 @@ interface SuppliedEvidence {
 }
 
 /**
- * 从一枚认领里挑出**能当证据用的**那条关系摘要。
+ * 把一枚认领带来的证据**按 (接口, rdjb) 分组**，每组整组写进一条 `platform_query`。
  *
- * 三条判据缺一不可（都是「逐字 / 明确」类的，没有一条靠像不像）：
- *  1. `nameRaw` **逐字等于**本企业的公布名 —— 判据本体；
+ * 为什么整组写、而不是只写命中的那一条：判定文件给的是平台**一次返回的全部行**
+ * （含同一统代下的现名行）。只挑一条写，`platform_relation` 里就少了「这个统代还叫过什么」
+ * 的背景，而且 `sequenceNo` 会失去原本的页内位置；整组写则与平台那次返回同形。
+ *
+ * 只收**字典内**的接口（`business_list` / `apply_list`）；判定文件里写成 `query_list`
+ * 的一律在归一化那一步映射成 `apply_list`（它就是 queryList 端点），映射事实记在 `source_text`。
+ */
+function groupSuppliedEvidence(claim: UsccPlatformClaim): Array<{
+  interface: 'business_list' | 'apply_list'
+  rdjb: string
+  relations: RosterImportRelation[]
+}> {
+  const groups = new Map<string, { interface: 'business_list' | 'apply_list'; rdjb: string; relations: RosterImportRelation[] }>()
+  for (const item of claim.evidence ?? []) {
+    if (!item || typeof item !== 'object') continue
+    if (item.interface !== 'business_list' && item.interface !== 'apply_list') continue
+    if (!item.nameRaw) continue
+    const rdjb = item.interface === 'business_list' ? (item.rdjb ?? '') : ''
+    const key = `${item.interface}|${rdjb}`
+    const group = groups.get(key) ?? { interface: item.interface, rdjb, relations: [] }
+    const level = nameMatchLevel(item.nameRaw, claim.enterpriseName ?? '')
+    // 序号**保留判定文件给的页内序号**（extra-1/2 里它是「按平台返回 pageSet 的顺序、绑 pageSize=50」），
+    // 因为那是来源事实；只有在缺席/非法/与本组内已有行**撞号**时才补一个空位
+    //（`platform_relation` 的唯一键是 `(query_id, sequence_no)`，撞号会插不进去），
+    // 并把这次「补号」写进 `source_text` —— 不静默改来源数字。
+    const given = Number(item.sequenceNo)
+    const taken = new Set(group.relations.map((relation) => relation.sequenceNo))
+    let sequenceNo = Number.isInteger(given) && given >= 1 && !taken.has(given) ? given : 1
+    while (taken.has(sequenceNo)) sequenceNo += 1
+    group.relations.push({
+      sequenceNo,
+      relationKey: item.relationKey ?? null,
+      usccRaw: claim.uscc,
+      nameRaw: item.nameRaw,
+      status: item.status ?? null,
+      // 这个统代的行都属于这家企业；名称对得上公布名的那条标 `alias`（它就是「曾用名证据」），
+      // 其余（现名行等）标 `uscc` —— 两者都是「平台说这些行属于这个统代」，没有推断成分。
+      matchBasis: level ? 'alias' : 'uscc',
+      verificationStatus: level ? 'confirmed' : 'pending',
+      sourceText:
+        `由批次判断代理交接的判定文件（${claim.batchRef ?? '(未标批次)'}）转写；` +
+        `原始平台响应**未随文件交接**，此行的 queried_at 取该判定文件的产出时刻。` +
+        `${item.query ? `代理实发查询：${item.query}。` : ''}` +
+        `${level ? `名称比对档次：${level}。` : '本行名称与公布名不同档（例如现名行）。'}` +
+        `依据：${claim.reason ?? '(未给理由)'}` +
+        (sequenceNo === given ? '' : `（判定文件里该行的序号为 ${String(item.sequenceNo ?? '(空)')}，与本组内已有行撞号或非法，已补为 ${sequenceNo}）`),
+      rawFields: null,
+    })
+    groups.set(key, group)
+  }
+  return [...groups.values()]
+}
+
+/**
+ * 从一枚认领里挑出**能当证据用的**那条关系（判据本体）。
+ *
+ * 必需条件：
+ *  1. `nameRaw` 与公布名**同档**（逐字 / 字形 / 区县写法，见 `nameMatchLevel`）—— 判据本体；
  *  2. `usccRaw` 缺席或**等于**本认领的统代 —— 否则这条讲的是别的企业；
  *  3. 认领带 `observedAt` —— 平台查询行的 `queried_at` 是 NOT NULL，**不编时间**（不猜）。
  *
- * 多条都满足时取**第一条**（`evidence[]` 的顺序即判定代理给出的顺序），保证可重放。
+ * 多条同档时**优先逐字相等那条**（`equalsAnnouncedNameByte` 或 `nameMatchLevel === 'byte'`），
+ * 否则取判定文件里第一条 —— 顺序固定，保证可重放。
  */
 function pickSuppliedEvidence(
   claim: UsccPlatformClaim,
@@ -1166,19 +1244,17 @@ function pickSuppliedEvidence(
 ): SuppliedEvidence | null {
   const observedAt = typeof claim.observedAt === 'string' ? claim.observedAt.trim() : ''
   if (!/^\d{4}-\d{2}-\d{2}/.test(observedAt)) return null
+  const candidates: SuppliedEvidence[] = []
   for (const item of claim.evidence ?? []) {
     if (!item || typeof item !== 'object') continue
     if (item.interface !== 'business_list' && item.interface !== 'apply_list') continue
     const level = nameMatchLevel(item.nameRaw, targetName)
     if (!level) continue
-    const sequenceNo = Number(item.sequenceNo)
-    if (!Number.isInteger(sequenceNo) || sequenceNo < 1) continue
     const rawUscc = normalizeUscc(item.usccRaw)
     if (rawUscc && rawUscc !== uscc) continue
-    return {
+    candidates.push({
       interface: item.interface,
       rdjb: item.interface === 'business_list' ? (item.rdjb ?? '') : '',
-      sequenceNo,
       relationKey: item.relationKey ?? null,
       nameRaw: item.nameRaw,
       status: item.status ?? null,
@@ -1187,9 +1263,10 @@ function pickSuppliedEvidence(
       query: typeof item.query === 'string' && item.query.trim() ? item.query.trim() : null,
       queriedAt: observedAt,
       checkedOn: observedAt.slice(0, 10),
-    }
+    })
   }
-  return null
+  if (!candidates.length) return null
+  return candidates.find((item) => item.nameMatch === 'byte') ?? candidates[0]!
 }
 
 /** 把「证据是哪一条」写成一句可读的话（进 `note` / `source.basis`），供复核。 */
@@ -1206,9 +1283,9 @@ function describeEvidenceLine(
   }
   const e = supplied!
   return (
-    `${e.interface}${e.rdjb ? ` rdjb=${e.rdjb}` : ''} 序号 ${e.sequenceNo}` +
-    `${e.relationKey ? `（${e.relationKey}）` : ''} 返回的 qymc ${matchWords(e.nameMatch)}「${e.nameRaw}」` +
-    `（随本批写入，见本批 platformQueries）`
+    `${e.interface}${e.rdjb ? ` rdjb=${e.rdjb}` : ''}` +
+    `${e.relationKey ? ` relationKey=${e.relationKey}` : '（未给 relationKey）'} 返回的 qymc ` +
+    `${matchWords(e.nameMatch)}「${e.nameRaw}」（随本批写入，见本批 platformQueries）`
   )
 }
 

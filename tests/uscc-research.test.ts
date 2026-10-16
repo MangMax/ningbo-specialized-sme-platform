@@ -749,6 +749,84 @@ describe('E · 补录经统一写入 API 落库（真实 HTTP）', () => {
     expect(db.select().from(schema.enterprise).all().find((e) => e.id === free)!.usccNorm).toBeNull()
   })
 
+  it('★ 归一化档的证据不被丢掉：平台原文（全角括号）也能锚定', () => {
+    const ingest = normalizeUsccVerdicts([
+      {
+        file: 'norm.json',
+        value: {
+          batch: 7,
+          generatedAt: '2026-10-16T16:00:00.000Z',
+          items: [
+            {
+              enterpriseId: 9501,
+              name: '航天云网云制造科技(浙江)有限公司',
+              candidateUscc: '91330201MA2CJG8W1P',
+              platformEvidence: [
+                {
+                  interface: 'business_list',
+                  rdjb: '2',
+                  sequenceNo: 1,
+                  relationKey: 'SQ-norm-1',
+                  // 平台原文：**全角**括号 —— 与公布名只差字形档。
+                  qymc: '航天云网云制造科技（浙江）有限公司',
+                  tyshxydm: '91330201MA2CJG8W1P',
+                },
+                {
+                  interface: 'business_list',
+                  rdjb: '2',
+                  sequenceNo: 2,
+                  relationKey: 'SQ-norm-2',
+                  // 现名行：与公布名不同档，也要留住（进库作背景）。
+                  qymc: '航天云网云制造科技股份有限公司',
+                  tyshxydm: '91330201MA2CJG8W1P',
+                },
+              ],
+            },
+          ],
+        } as UsccVerdictFile,
+      },
+    ])
+    expect(ingest.platformClaims).toHaveLength(1)
+    expect(ingest.platformClaims[0]!.evidence).toHaveLength(2)
+    expect(ingest.platformClaims[0]!.evidence!.map((row) => row.relationKey)).toEqual(['SQ-norm-1', 'SQ-norm-2'])
+  })
+
+  it('★ 同一企业同一统代被两份文件给出：**带可用证据的那份胜**（不按先到先得）', () => {
+    const bare = {
+      enterpriseId: 9401,
+      name: '宁波先到无证据企业有限公司',
+      verdict: 'resolved',
+      candidateUscc: '91330211MA2CL6FP24',
+      platformEvidence: [],
+    }
+    const withEvidence = {
+      ...bare,
+      platformEvidence: [
+        {
+          interface: 'business_list',
+          rdjb: '2',
+          sequenceNo: 3,
+          relationKey: 'SQ-late-1',
+          qymc: '宁波先到无证据企业有限公司',
+          tyshxydm: '91330211MA2CL6FP24',
+          cszt: '待审核',
+        },
+      ],
+    }
+    const ingest = normalizeUsccVerdicts([
+      { file: 'early.json', value: { batch: 1, generatedAt: '2026-10-16T15:00:00.000Z', items: [bare] } as UsccVerdictFile },
+      {
+        file: 'late.json',
+        value: { batch: 2, generatedAt: '2026-10-16T15:30:00.000Z', items: [withEvidence] } as UsccVerdictFile,
+      },
+    ])
+    expect(ingest.platformClaims).toHaveLength(1)
+    expect(ingest.platformClaims[0]!.batchRef).toBe('uscc-verdict-batch-2')
+    expect(ingest.platformClaims[0]!.evidence).toHaveLength(1)
+    expect(ingest.untouched).toEqual([])
+    expect(ingest.problems.join('|')).toContain('采用后者作证据')
+  })
+
   it('★ 同一企业在多份文件里重复出现且结论不同 ⇒ 按企业去重、取更强', () => {
     const ingest = normalizeUsccVerdicts([
       {
@@ -868,6 +946,9 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
       evidence: [],
     })
     expect(ingest.platformClaims[1]).toMatchObject({ enterpriseId: 9004, flagState: 'false' })
+    // 证据**只做结构过滤、不按名称筛**：平台原文常与公布名只在归一化口径下相等
+    //（逐字筛会把整批证据丢光），且同一次返回里的现名行也要留住。
+    expect(ingest.platformClaims[1]!.evidence).toEqual([])
     expect(ingest.untouched.map((row) => row.verdict).sort()).toEqual(['conflict', 'needs_human', 'not_found'])
     expect(ingest.untouched.every((row) => 'blocked' in row)).toBe(true)
     expect(ingest.problems).toEqual([])
@@ -950,6 +1031,8 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
       rdjb: '3',
       queriedAt: '2026-10-16T16:00:00.000Z',
       sequenceNo: 1,
+      // 权威锚点：`sequenceNo` 只作参考，`relationKey` 说话（父代理 2026-10-16）。
+      relationKey: 'SQ-verdict-1',
     })
     expect(ready.platformQuery).toMatchObject({
       interface: 'business_list',
@@ -963,8 +1046,11 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
           relationKey: 'SQ-verdict-1',
           nameRaw: '宁波判定断言企业有限公司',
           usccRaw: '91330213MA2CL6FP21',
-          matchBasis: 'uscc',
+          // 这一行**就是**「曾用名证据」本身（`qymc` 与公布名同档）⇒ `alias` + `confirmed`；
+          // 同一次返回里的现名行会是 `uscc` + `pending`（见 groupSuppliedEvidence 的注释）。
+          matchBasis: 'alias',
           verificationStatus: 'confirmed',
+          rawFields: null,
         }),
       ],
     })
@@ -1008,8 +1094,16 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
       intoUscc: '91330214MA2CL6FP2F',
       aliasName: '宁波待并入企业有限公司',
       sourceKind: 'platform_business',
-      sourceRelationRef: { interface: 'business_list', queryKey: '91330214MA2CL6FP2F', rdjb: '3', sequenceNo: 2 },
+      sourceRelationRef: {
+        interface: 'business_list',
+        queryKey: '91330214MA2CL6FP2F',
+        rdjb: '3',
+        sequenceNo: 2,
+        relationKey: 'SQ-verdict-2',
+      },
     })
+    // 审计文案以 **relationKey** 为锚（序号只作参考；一条摘要单看也不知道自己排第几）。
+    expect(ready.merge!.note).toContain('relationKey=SQ-verdict-2')
     expect(held).toBeGreaterThan(0)
   })
 

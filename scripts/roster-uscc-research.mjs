@@ -50,7 +50,7 @@ if (args.includes('--help') || args.includes('-h')) {
       '  --base-url <URL>   应用基址（默认 http://127.0.0.1:3000）',
       '  --claims <file>    公开来源查证结果 JSON（数组；每项 { enterpriseId|enterpriseName, uscc, source }）',
       '  --verdicts <dir>   批次判断代理的判定文件目录（读 uscc-verdict-batch-1..5.json 整份上传）',
-      '  --extra-verdict <file>  额外的判定文件（如复查改判），可重复；整份上传',
+      '  --extra-verdict <file>  额外的判定文件（如复查改判 / 补充证据），可重复；整份上传',
       '  --q <关键词>       只处理名称/曾用名命中的目标',
       '  --title <代号>     只处理该称号（可重复，逗号分隔）',
       '  --dry-run          只读报告与计划，不提交',
