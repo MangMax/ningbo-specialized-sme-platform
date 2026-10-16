@@ -602,11 +602,21 @@ function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, 
   if (dbHits.length + pendingHits.length === 0) {
     return { ok: false, error: { code: 'query_ref_not_found', field, message: `引用不到平台查询：${describeRef(ref)}` } }
   }
+  // RL-06 的 `relationKey` 校验要**按查询取关系行**；RL-18 的纪律是按键定位而不是整表扫 ——
+  // `queryId` 正是 `platform_relation_query_seq_uq` 的前缀，所以这里是索引前缀查询。
+  const relationsOf = (query: { id: number }) =>
+    source
+      .select()
+      .from(schema.platformRelation)
+      .where(eq(schema.platformRelation.queryId, query.id))
+      .all()
   // 「这条查询里有没有序号 N 的关系」= 关系表**唯一键**的按键定位（RL-18）。
   // 以前这里对每个候选查询各扫一遍整张 `platform_relation`。
   const dbWithSeq = dbHits.filter(
     (query) => findRelationRow(source, { queryId: query.id, sequenceNo: ref.sequenceNo! }) != null,
-  )  const pendingWithSeq = pendingHits.filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
+  )
+
+  const pendingWithSeq = pendingHits.filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
   if (dbWithSeq.length + pendingWithSeq.length === 0) {
     return { ok: false, error: { code: 'relation_ref_not_found', field, message: `引用不到平台关系：${describeRef(ref)}（该查询里没有序号 ${ref.sequenceNo} 的关系）` } }
   }
