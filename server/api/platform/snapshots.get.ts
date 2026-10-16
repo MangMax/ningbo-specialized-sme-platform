@@ -1,6 +1,5 @@
 import { useDb } from '@db'
-import { listPlatformSnapshots } from '~~/lib/platform-snapshots'
-import { parseIntegerList, toList } from '../../utils/platform-snapshot-query'
+import { handlePlatformSnapshotRequest } from '../../utils/platform-snapshots-http'
 
 /**
  * 平台导出**快照与版本**(契约 §7.7,RL-05)。
@@ -9,6 +8,7 @@ import { parseIntegerList, toList } from '../../utils/platform-snapshot-query'
  * (`record*`)**分开存储、分开查询** —— 平台快照永不改写公布历史(契约 §0)。
  *
  * 读接口**不鉴权**(与既有分法一致:读不鉴权,写/任务鉴权)。
+ * 逻辑在 `server/utils/platform-snapshots-http.ts`(不 import h3,可被真实 HTTP 回放测试驱动)。
  */
 defineRouteMeta({
   openAPI: {
@@ -27,23 +27,19 @@ defineRouteMeta({
       { name: 'year', in: 'query', schema: { type: 'integer' }, description: '快照年度,多值。' },
     ],
     responses: {
-      200: { description: '快照批次列表。每行:`{ batch, replacedBatchId, rowCount, importStatus }`。' },
+      200: { description: '快照批次列表。响应信封 `{ rows, count }`;行:`{ batch, replacedBatchId, rowCount, importStatus }`。' },
       400: { description: '年度参数不是正整数。' },
     },
   },
 })
 
 export default defineEventHandler((event) => {
-  const q = getQuery(event)
-  const { values: years, invalid } = parseIntegerList(q.year)
-  if (invalid.length) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: `年度参数无效:${invalid.join(',')}`,
-      message: `年度参数必须是正整数:${invalid.join(',')}`,
-    })
-  }
-
-  const rows = listPlatformSnapshots(useDb(), { title: toList(q.title), year: years })
-  return { rows, count: rows.length }
+  const response = handlePlatformSnapshotRequest(
+    'snapshots',
+    { method: getMethod(event), query: getQuery(event) as Record<string, unknown> },
+    { db: useDb() },
+  )
+  setResponseStatus(event, response.status)
+  for (const [name, value] of Object.entries(response.headers)) setHeader(event, name, value)
+  return response.body
 })
