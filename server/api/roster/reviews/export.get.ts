@@ -1,11 +1,9 @@
 import ExcelJS from 'exceljs'
 import { useDb } from '@db'
-import { REVIEW_PENDING_REASONS, SOURCES, TITLES } from '~~/lib/labels'
-import { allRosterReviews, type ReviewPendingRow, type ReviewRow } from '~~/lib/roster/review-list'
-import {
-  parseRosterReviewQuery,
-  strParam,
-} from '../../../utils/roster-read-query'
+import { SOURCES, TITLES } from '~~/lib/labels'
+import { allRosterReviews } from '~~/lib/roster/review-list'
+import { reviewEvidenceText, reviewPendingReasonLabels } from '~~/lib/roster/review-view'
+import { parseRosterReviewQuery, strParam } from '../../../utils/roster-read-query'
 
 /**
  * **复核清单导出**(RL-09)。与 `GET /api/roster/reviews` **同一套参数解析、
@@ -50,19 +48,6 @@ defineRouteMeta({
   },
 })
 
-/** 锚点事件的出处汇总为一行文本(文件 / 附件 / 序号 / 页,逐条用分号隔开)。 */
-function evidenceText(row: ReviewRow | ReviewPendingRow): string {
-  return row.evidence
-    .map((v) => {
-      const parts = [v.sourceFile]
-      if (v.attachment) parts.push(v.attachment)
-      if (v.listNo != null) parts.push(`序号${v.listNo}`)
-      if (v.page != null) parts.push(`第${v.page}页`)
-      return parts.join(' / ')
-    })
-    .join('; ')
-}
-
 const TITLE_TEXT = (code: string) => TITLES[code] ?? code
 const SOURCE_TEXT = (code: string | null) => (code ? (SOURCES[code] ?? code) : '')
 const EVENT_TEXT: Record<string, string> = { award: '认定', review: '复核' }
@@ -103,7 +88,7 @@ export default defineEventHandler(async (event) => {
         first: row.firstYear ?? '',
         batch: row.batchSeq ?? '—',
         source: SOURCE_TEXT(row.source),
-        evidence: evidenceText(row),
+        evidence: row.evidence.map(reviewEvidenceText).join('; '),
       })
     }
     ws.spliceRows(1, 0, [
@@ -136,14 +121,14 @@ export default defineEventHandler(async (event) => {
         uscc: row.uscc ?? '',
         district: row.district ?? '',
         title: TITLE_TEXT(row.titleCode),
-        reasons: row.reasons.map((r) => REVIEW_PENDING_REASONS[r] ?? r).join('; '),
+        reasons: reviewPendingReasonLabels(row.reasons).join('; '),
         anchorYear: row.anchorYear ?? '',
         tentative: row.tentativeDueYear ?? '',
         basis: `${EVENT_TEXT[row.basisEventType ?? ''] ?? row.basisEventType ?? ''} 事件 #${row.basisEventId ?? ''}`,
         first: row.firstYear ?? '',
         batch: row.batchSeq ?? '—',
         source: SOURCE_TEXT(row.source),
-        evidence: evidenceText(row),
+        evidence: row.evidence.map(reviewEvidenceText).join('; '),
       })
     }
     ws.spliceRows(1, 0, [

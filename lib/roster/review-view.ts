@@ -16,7 +16,14 @@
  * 2. 年份可以超出下拉里的候选范围(深链、分享链接)。所以候选里**总是带上**
  *    当前 state 的那一年,免得地址栏里明明是 2030、控件上却显示成别的年份。
  */
-import { REVIEW_PENDING_REASONS, REVIEW_STATUS_ORDER, TITLES, TITLE_ORDER } from '../labels'
+import { parseCsvQuery } from '../csv'
+import {
+  REVIEW_PENDING_REASONS,
+  REVIEW_PENDING_REASON_ORDER,
+  REVIEW_STATUS_ORDER,
+  TITLES,
+  TITLE_ORDER,
+} from '../labels'
 import type { ReviewEvidence, ReviewPendingReason, ReviewStatus } from './review-list'
 
 /** 地址栏参数名(与读接口的查询参数同名,不再翻译一次)。 */
@@ -54,15 +61,6 @@ export function parseYear(value: unknown): number | null {
   return Number.isInteger(n) && n >= 1900 && n <= 2999 ? n : null
 }
 
-function csv(value: unknown): string[] {
-  if (value == null) return []
-  const list = (Array.isArray(value) ? value : [value])
-    .flatMap((v) => String(v).split(','))
-    .map((s) => s.trim())
-    .filter(Boolean)
-  return list
-}
-
 function positiveInt(value: unknown): number | null {
   const raw = Array.isArray(value) ? value[0] : value
   const n = Number(typeof raw === 'string' ? raw.trim() : raw)
@@ -75,10 +73,12 @@ export function reviewStateFromQuery(
   now: Date | number | string = new Date(),
 ): ReviewViewState {
   const year = parseYear(query[YEAR_PARAM]) ?? defaultTargetYear(now)
-  const status = csv(query[STATUS_PARAM])[0]
+  // 多值参数一律走 `lib/csv.ts`(仓库里的唯一出处):逗号分隔与重复参数都认,
+  // 空项剔除,一项不剩时是「没筛」。这里不再抄一遍 —— 抄的那份迟早和它分叉。
+  const status = parseCsvQuery(query[STATUS_PARAM])?.[0]
   return {
     year: String(year),
-    title: csv(query[TITLE_PARAM]).filter((t) => TITLE_ORDER.includes(t)),
+    title: (parseCsvQuery(query[TITLE_PARAM]) ?? []).filter((t) => TITLE_ORDER.includes(t)),
     status: (REVIEW_STATUS_ORDER as readonly string[]).includes(status ?? '')
       ? (status as ReviewStatus)
       : 'due',
@@ -109,11 +109,14 @@ export function reviewListQuery(state: ReviewViewState): Record<string, string> 
 /**
  * 导出地址 —— 与列表**同源**。
  *
- * 不带分页(导的是当前筛选下的**全部**),但保留 `status`:两个分层各自可导出,
- * 导出的内容与该分层看到的一致。
+ * 不带分页(导的是当前筛选下的**全部**),且**一定带上 `status`** ——
+ * 这一条是审核抓出来的:**接口把「没给 `status`」当成「两个工作表都写」**,
+ * 所以列表在「到期清单」时若沿用「默认分层不写进地址」的规则导出,下载回来的文件里
+ * 会**多出一个页面上根本没有的「待确认清单」工作表**,和「导出与页面筛选结果一致」正好相反。
+ * 页面地址栏可以省掉默认值,导出地址不行。
  */
 export function reviewExportUrl(state: ReviewViewState): string {
-  const query = reviewQueryFromState(state)
+  const query: Record<string, string> = { ...reviewQueryFromState(state), [STATUS_PARAM]: state.status }
   delete query[PAGE_PARAM]
   delete query[PAGE_SIZE_PARAM]
   const s = new URLSearchParams(query).toString()
@@ -123,6 +126,9 @@ export function reviewExportUrl(state: ReviewViewState): string {
 /**
  * 目标年份下拉的候选:默认年所在的一段(±5 / +10),外加**当前 state 的那一年**
  * —— 深链到范围外的年份时,控件不会显示成另一个年份。
+ *
+ * 默认那一年(下一年)在候选里**标出「下一年」**:票面写的是「用户可选择『下一年』
+ * 或指定年份」,而只列一串年份时,使用者得自己心算哪一年才是下一年。
  */
 export function reviewYearOptions(
   current: string,
@@ -133,7 +139,9 @@ export function reviewYearOptions(
   for (let y = base - 5; y <= base + 10; y++) years.add(y)
   const picked = parseYear(current)
   if (picked != null) years.add(picked)
-  return [...years].sort((a, b) => a - b).map((y) => ({ value: y, label: `${y} 年` }))
+  return [...years]
+    .sort((a, b) => a - b)
+    .map((y) => ({ value: y, label: y === base ? `${y} 年(下一年)` : `${y} 年` }))
 }
 
 /** 称号下拉的候选。 */
@@ -141,9 +149,18 @@ export function reviewTitleOptions(): { value: string; label: string }[] {
   return TITLE_ORDER.map((code) => ({ value: code, label: TITLES[code] ?? code }))
 }
 
-/** 待确认原因的文案(顺序固定,便于两轮导出对比)。 */
+/**
+ * 待确认原因的文案。**按字典顺序输出**(不按传入顺序)—— 同一批行在两轮导出 / 两次截屏里
+ * 逐行可比;`REVIEW_PENDING_REASON_ORDER` 因此有了生产消费者,不只是对齐用例的陪衬。
+ */
 export function reviewPendingReasonLabels(reasons: readonly ReviewPendingReason[]): string[] {
-  return reasons.map((code) => REVIEW_PENDING_REASONS[code] ?? code)
+  const rank = (code: string) => {
+    const i = REVIEW_PENDING_REASON_ORDER.indexOf(code)
+    return i === -1 ? REVIEW_PENDING_REASON_ORDER.length : i
+  }
+  return [...reasons]
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+    .map((code) => REVIEW_PENDING_REASONS[code] ?? code)
 }
 
 /** 出处一行 → 可读文本:`文件 / 附件 / 序号N / 第N页`。缺哪项就不写哪项(不猜)。 */

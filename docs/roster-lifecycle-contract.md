@@ -717,8 +717,10 @@
   缺 `year` 或不是四位公历年 ⇒ **400**(不静默退回某一年)。`title` 多值(命中任一),不在字典内 ⇒ 400。
 - **响应信封**:`{ year, status, rows, pending, counts, page, pageSize }`。`status=due` 时 `rows` 有内容,
   `status=pending` 时 `pending` 有内容(另一侧为空数组)。
-  `counts = { due, pending, titles: { [称号]: { due, pending } } }`,**与筛选同口径、先于分页**,
-  `due + pending` 是该称号下全部**有资格声称**的企业 × 称号数(不存在第三类看不见的行)。
+  `counts = { due, pending, titles: { [称号]: { due, pending } } }`,**与筛选同口径、先于分页**。
+  ⚠️ `due` 与 `pending` **互斥但不穷尽,不许相加当全集**(实测 `year=2027`:3087 + 3038 = 6125,
+  而该称号下有资格声称的企业 × 称号是 9961):**证据齐全、但到期年在别处**的那些对,
+  在这一年的清单里两边都不出现。`due` 只数「到期年 == 目标年」;`pending` 数全部待确认项。
 - **行追加字段**(依据与出处):`uscc` / `district` / `basisEventType` / `basisEventYear`
   (复核事件里是**被复核的原认定年份**)/ `basisDecidedYear` / `anchorYearSource`
   (`decided_year` | `event_year`)/ `firstYear` / `firstEventId` / `source` / `batchSeq` /

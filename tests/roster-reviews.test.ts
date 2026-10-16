@@ -340,6 +340,21 @@ describe('称号筛选、计数与分页', () => {
     expect(p1.counts.due).toBeGreaterThanOrEqual(2)
   })
 
+  // 审核抓出来的口径错误:`due + pending` 曾被写成「全部有资格声称的对」。
+  // 实测不成立 —— 「证据齐全、但到期年在别处」的对在这一年的清单里两边都不出现。
+  // 这条用例把**正确**的语义钉住,免得那句话再被写回去。
+  it('计数互斥但**不穷尽**:到期年在别处的行,两张清单里都不出现', () => {
+    const r2027 = collectReviewCandidates(db, { year: 2027 })
+    const r2031 = collectReviewCandidates(db, { year: 2031 })
+    // 宁波筛选甲/乙 锚点 2024 ⇒ 2027 到期;换到 2031,它们既不在到期清单、也不在待确认清单。
+    expect(r2027.due.some((x) => x.name === '宁波筛选甲有限公司')).toBe(true)
+    expect(r2031.due.some((x) => x.name === '宁波筛选甲有限公司')).toBe(false)
+    expect(r2031.pending.some((x) => x.name === '宁波筛选甲有限公司')).toBe(false)
+    // 换年份只动 due;pending 是确认队列,与目标年份无关。
+    expect(r2031.counts.pending).toBe(r2027.counts.pending)
+    expect(r2031.counts.due).not.toBe(r2027.counts.due)
+  })
+
   it('status=pending 时把待确认行放在 pending 里,rows 为空', () => {
     const r = listRosterReviews(db, { year: 2024, status: 'pending', pageSize: 200 })
     expect(Array.isArray(r.rows)).toBe(true)

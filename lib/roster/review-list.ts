@@ -145,8 +145,11 @@ export interface RosterReviewFilter {
 /**
  * 计数:**先于分页、与筛选同口径**。
  *
- * `due` 与 `pending` 互斥且穷尽(两者之和 = 该称号下全部有资格声称的企业 × 称号数),
- * 所以页面上「N 项到期 · M 项待确认」就是全貌,不存在第三类看不见的行。
+ * ⚠️ 两者**互斥但不穷尽**,别把它俩加起来当全集(实测 `year=2027`:due 3087 + pending 3038 = 6125,
+ * 而该称号下有资格声称的企业 × 称号是 9961):**证据齐全、但到期年在别处**的那些对,
+ * 在这一年的清单里两边都不出现(2027 那次相差的 3836 对,锚点分别在 2023 / 2025 / 2026)。
+ * 这不是漏洞 —— 「2027 年到期」这份清单本来就不该收别年的行;但**不许**据此宣称
+ * 「页面上两个数字相加就是全部」。要看别年,换目标年份。
  */
 export interface RosterReviewCounts {
   due: number
@@ -307,8 +310,10 @@ export function collectReviewCandidates(db: Db, filter: RosterReviewFilter): Ros
   }
 
   for (const { enterpriseId, titleCode, events } of byPair.values()) {
-    // 只有**有资格声称**的(企业 × 称号)才进清单:入库培育 / 维护不构成称号有效期(契约 §6.6),
-    // 从来没有认定/复核事件的称号不在复核清单的语义范围内(不是「待确认」,是「不适用」)。
+    // 只有**有资格声称**的(企业 × 称号)才进清单。契约 §6.6 明说 `nurture`(入库培育)不构成
+    // 称号有效期;`maintain`(维护)则由 §6.1 / §6.4 的口径排除 —— 首次认定只看 `award`、
+    // 锚点只在 `award` ∪ `reviewOutcome='passed'` 上取(实现在 `lifecycle.ts`)。
+    // 两类都没有的称号(实测小巨人目前只有维护事件)不是「待确认」,而是**不适用**:没有资格可复核。
     if (!events.some(isQualifyingEvent)) continue
 
     const enterprise = enterprises.get(enterpriseId)

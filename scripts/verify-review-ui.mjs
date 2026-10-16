@@ -51,8 +51,8 @@ const DESKTOP = { width: 1440, height: 900 }
 const NARROW = { width: 390, height: 844 }
 
 /** 表格的列(到期清单)。 */
-const DUE_HEADERS = ['企业名称', '称号', '到期年份', '锚点(依据)', '批次']
-const PENDING_HEADERS = ['企业名称', '称号', '暂定到期年份', '待确认原因', '批次']
+const DUE_HEADERS = ['企业名称', '称号', '到期年份', '锚点(依据)', '批次', '来源']
+const PENDING_HEADERS = ['企业名称', '称号', '暂定到期年份', '待确认原因', '批次', '来源']
 
 /** 页面上不该出现的**解释性小字**(本轮 UI 方向:页面不解释,免得把界面写成说明书)。 */
 const FORBIDDEN_TEXT = ['说明', '注意:', '此列表', '不得直接当工作单用', '不按目标年份筛', '口径:']
@@ -211,7 +211,10 @@ async function main() {
       const p = new URLSearchParams(new URL(due.exportHref, BASE).search)
       if (p.get('year') !== String(TARGET_YEAR)) bad(`${dueLabel}:导出链接年份不符 ${due.exportHref}`)
       else if (p.has('page') || p.has('pageSize')) bad(`${dueLabel}:导出链接带上了分页 ${due.exportHref}`)
-      else ok(`${dueLabel}:导出链接 ${due.exportHref}`)
+      // 导出地址**必须**带上当前分层:接口把「没给 status」当成「两个工作表都写」,
+      // 省掉它,「到期清单」页导出来的文件里就会多一个页面上没有的「待确认清单」。
+      else if (p.get('status') !== 'due') bad(`${dueLabel}:导出链接没带 status=due ⇒ 会多导出一个工作表 ${due.exportHref}`)
+      else ok(`${dueLabel}:导出链接自带 status=due ${due.exportHref}`)
     }
 
     // ── ③ 点开一行:抽屉里给得出依据与出处 ─────────────────────────────
@@ -269,6 +272,13 @@ async function main() {
     checkShape(pending, pendingLabel)
     checkHeaders(pending, pendingLabel, PENDING_HEADERS)
 
+    if (!pending.exportHref) bad(`${pendingLabel}:没有导出链接`)
+    else {
+      const p = new URLSearchParams(new URL(pending.exportHref, BASE).search)
+      if (p.get('status') !== 'pending') bad(`${pendingLabel}:导出链接没带 status=pending ${pending.exportHref}`)
+      else ok(`${pendingLabel}:导出链接自带 status=pending`)
+    }
+
     // 待确认清单**不按年份筛**:它是确认队列,与目标年份无关。
     const pendingOtherYear = await openAndMeasure(cdp, {
       url: `${BASE}/reviews?year=2031&status=pending`,
@@ -323,7 +333,7 @@ async function main() {
   }
   console.log(
     `\n✓ 桌面与窄屏都无横向溢出、分页条在视口内;到期年份全为 ${TARGET_YEAR};列齐;抽屉给得出依据与出处;` +
-      '待确认清单成区且不按年份筛;翻页有加载状态;筛选用项目组件、无 tab、无解释小字',
+      '待确认清单成区且不按年份筛;翻页有加载状态;导出链接自带分层;筛选用项目组件、无 tab、无解释小字',
   )
 }
 

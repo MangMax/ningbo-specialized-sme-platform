@@ -108,16 +108,26 @@ describe('导出与列表同源(票面 #9 的「导出与页面筛选结果一�
     expect(exportUrl.pathname).toBe('/api/roster/reviews/export')
   })
 
-  it('默认分层也要带上 —— 否则导出会比列表多出一整个「待确认」', () => {
+  // 这条是审核抓出来的:接口把「没给 status」当成「两个工作表都写」,而页面地址栏为了干净
+  // 会省掉默认分层 —— 两者一叠加,「到期清单」页导出来的文件里会多一个页面上根本没有的
+  // 「待确认清单」工作表,正好和「导出与页面筛选结果一致」相反。所以导出地址**一定**带 status。
+  it('导出地址**一定**带上当前分层(否则会比列表多出一整个「待确认」)', () => {
+    const due = reviewStateFromQuery({ year: '2027' }, NOW)
+    expect(new URLSearchParams(new URL(reviewExportUrl(due), 'http://x').search).get('status')).toBe('due')
+
+    const pending = reviewStateFromQuery({ year: '2027', status: 'pending' }, NOW)
+    expect(new URLSearchParams(new URL(reviewExportUrl(pending), 'http://x').search).get('status')).toBe('pending')
+  })
+
+  it('页面地址栏仍省默认分层,导出地址不省 —— 两者只在这一处不同', () => {
     const s = reviewStateFromQuery({ year: '2027' }, NOW)
-    const exportParams = new URLSearchParams(new URL(reviewExportUrl(s), 'http://x').search)
-    expect(exportParams.get('status')).toBeNull() // 不写 = 接口默认 due,与列表一致
-    expect(exportParams.get('year')).toBe('2027')
+    expect(reviewQueryFromState(s)).toEqual({ year: '2027' })
+    expect(reviewExportUrl(s)).toContain('status=due')
   })
 
   it('没有任何筛选时也给得出导出地址', () => {
     expect(reviewExportUrl({ year: '', title: [], status: 'due', page: 1, pageSize: 50 })).toBe(
-      '/api/roster/reviews/export',
+      '/api/roster/reviews/export?status=due',
     )
   })
 })
@@ -130,6 +140,13 @@ describe('控件候选', () => {
     expect(options).toContain(2037) // 上界 = 默认年 + 10
     expect(options).toContain(2030) // 深链到默认范围之外的年份
     expect(options).toEqual([...options].sort((a, b) => a - b))
+  })
+
+  it('默认那一年标出「下一年」(票面:「用户可选择「下一年」或指定年份」)', () => {
+    const options = reviewYearOptions('2027', NOW)
+    const base = options.find((o) => o.value === 2027)
+    expect(base?.label).toBe('2027 年(下一年)')
+    expect(options.find((o) => o.value === 2026)?.label).toBe('2026 年')
   })
 
   it('称号候选来自字典,顺序即展示顺序', () => {
@@ -163,6 +180,16 @@ describe('展示文案', () => {
   it('待确认原因的文案取字典,顺序不变', () => {
     expect(reviewPendingReasonLabels(['no_batch', 'no_evidence'])).toEqual([
       '认定/复核事件缺批次序号',
+      '认定/复核事件没有出处记录',
+    ])
+  })
+
+  it('待确认原因**按字典顺序**输出,与传入顺序无关(两轮导出逐行可比)', () => {
+    const expected = reviewPendingReasonLabels(['no_batch', 'no_evidence'])
+    expect(reviewPendingReasonLabels(['no_evidence', 'no_batch'])).toEqual(expected)
+    // 字典顺序:no_anchor_year → review_outcome_unknown → review_year_unconfirmed → no_batch → no_evidence
+    expect(reviewPendingReasonLabels(['no_evidence', 'no_anchor_year'])).toEqual([
+      '有认定/复核事件但都没有年份,算不出到期年',
       '认定/复核事件没有出处记录',
     ])
   })

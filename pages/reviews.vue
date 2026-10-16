@@ -10,7 +10,7 @@ import {
   ExternalLink,
   LoaderCircle,
 } from '@lucide/vue'
-import { EVENTS, SOURCES, TITLES, TITLE_ORDER } from '~~/lib/labels'
+import { EVENTS, REVIEW_STATUSES, REVIEW_STATUS_ORDER, SOURCES, TITLES, TITLE_ORDER } from '~~/lib/labels'
 import type { ReviewPendingRow, ReviewRow, ReviewStatus } from '~~/lib/roster/review-list'
 import {
   REVIEW_PAGE_SIZE_PRESETS,
@@ -211,8 +211,9 @@ useHead({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="due">到期清单</SelectItem>
-          <SelectItem value="pending">待确认清单</SelectItem>
+          <SelectItem v-for="code in REVIEW_STATUS_ORDER" :key="code" :value="code">
+            {{ REVIEW_STATUSES[code] ?? code }}
+          </SelectItem>
         </SelectContent>
       </Select>
 
@@ -282,7 +283,7 @@ useHead({
       :class="isLoading ? 'opacity-60' : ''"
     >
       <CardContent class="p-0">
-        <Table class="min-w-[640px]" data-testid="review-table">
+        <Table class="min-w-[780px]" data-testid="review-table">
             <TableHeader>
               <TableRow>
                 <TableHead class="w-72">企业名称</TableHead>
@@ -290,6 +291,7 @@ useHead({
                 <TableHead class="w-24">{{ isPendingView ? '暂定到期年份' : '到期年份' }}</TableHead>
                 <TableHead class="w-40">{{ isPendingView ? '待确认原因' : '锚点(依据)' }}</TableHead>
                 <TableHead class="w-20">批次</TableHead>
+                <TableHead class="w-20">来源</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -320,6 +322,7 @@ useHead({
                   <template v-else>{{ basisText(row) }}</template>
                 </TableCell>
                 <TableCell class="text-muted-foreground text-xs tabular-nums">{{ row.batchSeq ?? '—' }}</TableCell>
+                <TableCell class="text-muted-foreground text-xs">{{ sourceText(row.source) }}</TableCell>
               </TableRow>
           </TableBody>
         </Table>

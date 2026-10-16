@@ -17,6 +17,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
+/** CDP 调用与页面就绪的默认超时(两处共用一个数,免得各写各的)。 */
+const DEFAULT_TIMEOUT_MS = 30_000
+
 /** 等一个 HTTP 端点起来(轮询,直到超时)。 */
 export async function waitForHttp(url, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs
@@ -55,7 +58,7 @@ class Cdp {
       this.ws.send(JSON.stringify(payload))
       setTimeout(() => {
         if (this.pending.delete(id)) reject(new Error(`CDP ${method} 超时`))
-      }, 30_000)
+      }, DEFAULT_TIMEOUT_MS)
     })
   }
 }
@@ -138,7 +141,7 @@ export async function evaluate(cdp, sessionId, expression) {
  * 加载中的页面,断言被**静默跳过**而脚本照样打印 ✓ —— 那比没有验收更坏,它给出假的安心。
  * 所以这里等不到就返回 false,由调用方**判失败**。
  */
-export async function waitUntil(cdp, sessionId, expression, timeoutMs = 30_000) {
+export async function waitUntil(cdp, sessionId, expression, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (await evaluate(cdp, sessionId, expression)) return true

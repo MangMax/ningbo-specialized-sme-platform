@@ -32,7 +32,9 @@ import { parseRosterReviewQuery } from '../../utils/roster-read-query'
  * 「到期年算不出来」的行不属于任何一年,若按目标年份筛,它们在任何一年都不会出现
  * ⇒ 静默消失,而那正是本票要防的事。所以待确认清单是**该称号下的确认队列**,
  * 与目标年份无关;每行仍带 `tentativeDueYear` 供人判断它将来落到哪一年。
- * `counts.due` 与 `counts.pending` 都**先于分页**、与 `title` 筛选同口径,两者之和是全貌。
+ * `counts.due` 与 `counts.pending` 都**先于分页**、与 `title` 筛选同口径,但**互斥而不穷尽** ——
+ * 「证据齐全、到期年在别处」的那些对在这一年里两边都不出现(实测 2027:3087 + 3038 = 6125,
+ * 而有资格声称的是 9961)。`counts` 不是全集,是**这一年这份清单**的口径。
  */
 defineRouteMeta({
   openAPI: {
