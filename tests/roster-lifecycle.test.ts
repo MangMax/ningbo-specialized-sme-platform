@@ -133,3 +133,47 @@ describe('lib/roster/lifecycle —— 契约 §6 的三年复核语义', () => {
     expect(computeTitleLifecycle(events)).toEqual(computeTitleLifecycle([...events].reverse()))
   })
 })
+
+/**
+ * RL-08 增量:把「有没有 award」与「有没有**定不了年**的 award」也算出来。
+ *
+ * 首次认定用得到这两件事,而它们只在这一层看得见(读模型手上只有事件):
+ *  - `awardCount === 0` ⇒ 该称号从来没正式认定过,连一行首次认定都不该有;
+ *  - `undatedAwardIds` 非空 ⇒ 有一条无法定年的认定**可能早于**已知最早那条,
+ *    所以「已知最早的年份」**不能算作首次**(issue #8 验收第 3 条)。
+ */
+describe('lib/roster/lifecycle —— 首次认定的两条前置事实(RL-08 增量)', () => {
+  it('awardCount 只数 award:复核 / 维护 / 培育都不算', () => {
+    expect(computeTitleLifecycle([ev(1, 'award', 2021), ev(2, 'award', 2025)]).awardCount).toBe(2)
+    expect(
+      computeTitleLifecycle([
+        ev(1, 'review', 2021, { decidedYear: 2024, reviewOutcome: 'passed' }),
+        ev(2, 'maintain', 2025),
+        ev(3, 'nurture', 2023),
+      ]).awardCount,
+    ).toBe(0)
+    expect(computeTitleLifecycle([]).awardCount).toBe(0)
+  })
+
+  it('undatedAwardIds 列出**定不了年**的 award(id 升序),有序 —— 它是「首次可能更早」的依据', () => {
+    const lc = computeTitleLifecycle([
+      ev(7, 'award', null, { decidedYear: null }),
+      ev(2, 'award', null, { decidedYear: null }),
+      ev(5, 'award', 2024),
+    ])
+    expect(lc.undatedAwardIds).toEqual([2, 7])
+    // 年份照给(已知最早那条),但**不是**「首次」—— 上面两条可能更早。
+    expect(lc.firstRecognitionYear).toBe(2024)
+  })
+
+  it('没有无法定年的 award 时为空数组(不是 undefined,免得调用方各判各的)', () => {
+    const lc = computeTitleLifecycle([ev(1, 'award', 2020, { decidedYear: 2020 })])
+    expect(lc.undatedAwardIds).toEqual([])
+    // 复核定不了年**不算**「首次可能更早」——首次只看 award。
+    const withUndatedReview = computeTitleLifecycle([
+      ev(1, 'award', 2020),
+      ev(2, 'review', 2020, { decidedYear: null, reviewOutcome: 'passed' }),
+    ])
+    expect(withUndatedReview.undatedAwardIds).toEqual([])
+  })
+})

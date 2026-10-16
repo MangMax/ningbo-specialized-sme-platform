@@ -10,6 +10,8 @@ import {
   DIFFERENCE_STATUSES,
   DIFFERENCE_STATUS_ORDER,
   DIFFERENCE_STATUS_VARIANTS,
+  FIRST_RECOGNITION_REASONS,
+  FIRST_RECOGNITION_STATUSES,
   PLATFORM_INTERFACES,
   PLATFORM_QUERY_STATUSES,
   PLATFORM_RDJBS,
@@ -128,12 +130,27 @@ interface Relation {
   matchBasis: string
   verificationStatus: string
 }
+/**
+ * 首次认定(§7.2 的 `recognitions` 段,RL-08)。**与总表、§7.5 是同一处计算** ——
+ * 面板不自己判「哪条算首次」,只把它标出来。
+ */
+interface Recognition {
+  titleCode: string
+  firstYear: number | null
+  firstEventId: number | null
+  source: string | null
+  status: string
+  pendingReason: string | null
+  /** 首次认定那条事件的出处(与 `Evidence` 同形状,但不带 `eventId` —— 事件就是 `firstEventId`)。 */
+  evidence: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
+}
 interface Detail {
   enterprise: { name: string; uscc: string | null }
   aliases: Alias[]
   records: RecordRow[]
   events: EventRow[]
   evidence: Evidence[]
+  recognitions: Recognition[]
   differences: Difference[]
   platform: { queries: QueryRow[]; relations: Relation[] }
 }
@@ -217,6 +234,27 @@ const relationsByQuery = computed(() => {
 })
 const relationCount = computed(() => detail.value?.platform.relations.length ?? 0)
 
+/** 称号 → 该称号的首次认定(§7.2 的 `recognitions` 段;缺席 = 该称号没有正式认定)。 */
+const recognitionByTitle = computed(
+  () => new Map((detail.value?.recognitions ?? []).map((r) => [r.titleCode, r])),
+)
+
+/**
+ * 首次认定那一条事件的**身份**。事件列表里给它挂一枚「首次认定」标 ——
+ * 「哪一条算首次」是这一票要回答的问题,让人自己按年份找是最容易看错的做法
+ * (同一称号下往往还有复核与再次获批的事件,年份还更近)。
+ */
+const firstEventIds = computed(
+  () => new Set((detail.value?.recognitions ?? []).map((r) => r.firstEventId).filter((id): id is number => id != null)),
+)
+
+/** 首次认定的状态徽章文案与悬停原因(待确认时必须答得出「为什么」)。 */
+function recognitionNote(recognition: Recognition): string {
+  if (recognition.status !== 'pending') return ''
+  const why = FIRST_RECOGNITION_REASONS[recognition.pendingReason ?? ''] ?? recognition.pendingReason ?? ''
+  return why
+}
+
 /**
  * 差异状态徽章:六态颜色**只从 `DIFFERENCE_STATUS_VARIANTS` 取**(单一出处,与台账表同款)。
  * 这里不再写本地级联 —— 原来的那份把「未查询」与「无记录」画成同一枚 outline、
@@ -296,6 +334,29 @@ function openPreview(e: Evidence) {
                 · 资格已终止(复核未通过)
               </template>
             </span>
+            <!-- RL-08:首次认定**自己的**状态(与上面那个「待核」是两件事)与出处。 -->
+            <template v-if="recognitionByTitle.get(group.titleCode)">
+              <Badge
+                v-if="recognitionByTitle.get(group.titleCode)!.status === 'pending'"
+                variant="dashed"
+                class="font-normal"
+                :title="recognitionNote(recognitionByTitle.get(group.titleCode)!)"
+              >
+                首次认定{{ FIRST_RECOGNITION_STATUSES.pending }}
+              </Badge>
+              <span class="text-muted-foreground text-[11px]">
+                出处
+                <template v-if="recognitionByTitle.get(group.titleCode)!.evidence.length">
+                  {{
+                    recognitionByTitle
+                      .get(group.titleCode)!
+                      .evidence.map((v) => `${v.sourceFile}${v.attachment ? ` ${v.attachment}` : ''}${v.listNo != null ? ` 序号 ${v.listNo}` : ''}${v.page != null ? ` 第 ${v.page} 页` : ''}`)
+                      .join(' ; ')
+                  }}
+                </template>
+                <template v-else>未记录</template>
+              </span>
+            </template>
           </div>
           <div class="flex flex-col gap-2">
             <div v-for="record in group.records" :key="record.id" class="flex flex-col gap-1.5">
@@ -310,6 +371,14 @@ function openPreview(e: Evidence) {
                   class="flex flex-wrap items-center gap-x-2 gap-y-1"
                 >
                   <EventChip :type="event.eventType" :year="event.year" :seq="event.batchSeq" />
+                  <Badge
+                    v-if="firstEventIds.has(event.id)"
+                    variant="secondary"
+                    class="font-normal"
+                    title="该称号的首次认定就是这一条(最早的认定;复核通过或失败后再次获批都不会改变它)。"
+                  >
+                    首次认定
+                  </Badge>
                   <Badge v-if="event.reviewOutcome" variant="outline" class="font-normal">
                     {{ REVIEW_OUTCOMES[event.reviewOutcome] ?? event.reviewOutcome }}
                   </Badge>

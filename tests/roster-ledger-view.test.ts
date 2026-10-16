@@ -33,6 +33,8 @@ const ALL_ON: LedgerState = {
   source: ['miit'],
   eventType: ['award'],
   year: ['2023', '2024'],
+  firstYear: ['2021'],
+  firstStatus: ['pending'],
   direction: 'missing_in_miit',
   status: ['needs_review'],
   reason: ['platform_stale'],
@@ -77,6 +79,15 @@ describe('ledgerStateFromQuery —— 地址栏读回', () => {
       'innovative_sme',
     ])
   })
+
+  it('首次认定两个判据能从地址栏读回(深链与「返回不丢上下文」)', () => {
+    const state = ledgerStateFromQuery({ firstYear: '2021,2022', firstStatus: 'pending' })
+    expect(state.firstYear).toEqual(['2021', '2022'])
+    expect(state.firstStatus).toEqual(['pending'])
+    // 没给就是没筛,不是默认塞一个值进去。
+    expect(ledgerStateFromQuery({}).firstYear).toEqual([])
+    expect(ledgerStateFromQuery({}).firstStatus).toEqual([])
+  })
 })
 
 describe('ledgerQueryFromState —— 回写地址栏', () => {
@@ -103,6 +114,9 @@ describe('ledgerQueryFromState —— 回写地址栏', () => {
     expect(ent.district).toBe('余姚市')
     expect(ent.rosterState).toBe('current')
     expect(ent.direction).toBeUndefined()
+    // RL-08:首次认定两个判据也是**企业粒度**的(行就是一家企业)。
+    expect(ent.firstYear).toBe('2021')
+    expect(ent.firstStatus).toBe('pending')
 
     const diff = ledgerQueryFromState('difference', ALL_ON)
     expect(diff.direction).toBe('missing_in_miit')
@@ -113,6 +127,8 @@ describe('ledgerQueryFromState —— 回写地址栏', () => {
     expect(diff.eventType).toBeUndefined()
     expect(diff.year).toBeUndefined()
     expect(diff.rosterState).toBeUndefined()
+    expect(diff.firstYear).toBeUndefined()
+    expect(diff.firstStatus).toBeUndefined()
     // 搜索对三个视图都生效。
     expect(diff.q).toBe('宁波')
   })
@@ -158,6 +174,10 @@ describe('LEDGER_VIEW_FILTERS —— 一张表说清「每个视图认哪些筛�
     expect(toTitle.eventType).toEqual(ALL_ON.eventType)
     expect(toTitle.year).toEqual(ALL_ON.year)
 
+    // 首次认定是企业粒度的判据:切走时清掉,否则它会变成看不见、清不掉、切回来又生效的条件。
+    expect(toTitle.firstYear).toEqual([])
+    expect(toTitle.firstStatus).toEqual([])
+
     // 切到差异:属地 / 总表状态 / 记录侧判据都清掉。
     const toDiff = filtersForView('difference', ALL_ON)
     for (const key of ['district', 'rosterState'] as const) expect(toDiff[key]).toBe('')
@@ -173,6 +193,21 @@ describe('LEDGER_VIEW_FILTERS —— 一张表说清「每个视图认哪些筛�
     expect(toEnt.reason).toEqual([])
     expect(toEnt.district).toBe(ALL_ON.district)
     expect(toEnt.rosterState).toBe(ALL_ON.rosterState)
+  })
+
+  it('**首次认定只在「按企业」下存在**(刻意的收窄,不是漏了)', () => {
+    /**
+     * RL-08:首次认定是**企业 × 称号**的量(「这家企业在专精特新上的首次认定是哪年」),
+     * 而 `按企业×称号` 那一栏的行来自 `/api/records`,它读的是**事件行**,不算首次认定
+     * —— 放进去就是「同一个 URL,两种结果」。所以它只归企业分组,切走时被清掉。
+     */
+    expect(LEDGER_VIEW_FILTERS.enterprise).toEqual(
+      expect.arrayContaining(['firstYear', 'firstStatus']),
+    )
+    expect(LEDGER_VIEW_FILTERS.title).not.toContain('firstYear')
+    expect(LEDGER_VIEW_FILTERS.difference).not.toContain('firstStatus')
+    expect(ledgerQueryFromState('title', ALL_ON).firstYear).toBeUndefined()
+    expect(ledgerQueryFromState('difference', ALL_ON).firstStatus).toBeUndefined()
   })
 
   it('**属地只在「按企业」下存在**(刻意的收窄,不是漏了)', () => {
@@ -219,6 +254,13 @@ describe('ledgerExportUrl —— 筛选与导出同口径', () => {
     for (const key of ['title', 'source', 'eventType', 'year', 'q']) {
       expect(ent.get(key)).toBe(ttl.get(key))
     }
+  })
+
+  it('首次认定筛选被导出**继承**(筛选进 URL,导出读的是同一个对象)', () => {
+    const url = ledgerExportUrl('enterprise', ALL_ON)!
+    const p = new URLSearchParams(url.split('?')[1])
+    expect(p.get('firstYear')).toBe('2021')
+    expect(p.get('firstStatus')).toBe('pending')
   })
 
   it('差异粒度不给导出(宁可不给按钮,也不给口径说不清的导出)', () => {

@@ -18,6 +18,8 @@ import {
   type RosterEnterpriseFilter,
   type RosterState,
 } from '../../lib/roster/enterprise-roster'
+import { FIRST_RECOGNITION_STATUSES } from '../../lib/roster/first-recognition'
+import type { RosterRecognitionFilter } from '../../lib/roster/recognitions'
 
 /** 取单值字符串参数(数组取第一个),空串当「没给」。 */
 export function strParam(value: unknown): string | undefined {
@@ -75,6 +77,34 @@ export function parseRosterEnterpriseQuery(query: Record<string, unknown>): Rost
     source: knownOrThrow(parseCsvQuery(query.source), SOURCE_ORDER, 'source'),
     eventType: knownOrThrow(parseCsvQuery(query.eventType), EVENT_ORDER, 'eventType'),
     year: yearsParam(query.year),
+    // RL-08:「首次认定」的两个判据。**必须与 `year` 分名字** —— `year` 筛的是事件年份,
+    // 这里筛的是该称号的首次认定年份,混成一个参数就是「同一个参数两种意思」。
+    firstYear: yearsParam(query.firstYear),
+    firstStatus: knownOrThrow(
+      parseCsvQuery(query.firstStatus),
+      FIRST_RECOGNITION_STATUSES,
+      'firstStatus',
+    ),
+    page: intParam(query.page, 1),
+    pageSize: intParam(query.pageSize, 50),
+  }
+}
+
+/**
+ * §7.5 首次认定清单的筛选参数。
+ *
+ * 与总表那份分开写(不共用 `parseRosterEnterpriseQuery`)的理由:这个端点的 `year`
+ * **就是**首次认定年份,没有第二种解释;总表那边同一个量叫 `firstYear`,因为它得与事件年份
+ * 并存。硬凑成一个函数,只会让两边各带一半用不上的参数。
+ * 共用的是**每个参数的解析口径**(`knownOrThrow` / `yearsParam` / `intParam`),那才是会漂移的部分。
+ */
+export function parseRosterRecognitionQuery(
+  query: Record<string, unknown>,
+): RosterRecognitionFilter {
+  return {
+    title: knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title'),
+    year: yearsParam(query.year),
+    status: knownOrThrow(parseCsvQuery(query.status), FIRST_RECOGNITION_STATUSES, 'status'),
     page: intParam(query.page, 1),
     pageSize: intParam(query.pageSize, 50),
   }

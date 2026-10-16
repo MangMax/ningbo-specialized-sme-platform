@@ -613,6 +613,10 @@
    `decided_year` 缺失时退回 `year` 并把该企业标为**待核**。
 5. **失败复核不再进入当前有效资格的复核队列**:`reviewOutcome='failed'` 终止当前有效资格。
 6. **`nurture`(入库培育)不计入称号有效期**,不参与首次认定/复核清单。
+7. **(RL-08 增量)首次认定的「确立」**:上面第 1 条给出的是**年份**;能不能拿它当结论,
+   还要看依据是否成立 —— 定不了年的认定可能更早、没有出处的年份回不到原始记录,
+   两种都**标待确认**(判据见 §7.5)。为此 `computeTitleLifecycle` 一并给出
+   `awardCount`(该称号有没有正式认定过)与 `undatedAwardIds`(哪些认定定不了年)。
 
 > 验收样例见 ADR §9 与 `tests/lifecycle-contract.test.ts`。
 
@@ -628,6 +632,8 @@
 查询参数:`q`(名称 / **已确认**曾用名 / **统代**关键词,走 §5 搜索口径)、`title`(可重复)、
 `district`、`rosterState`(`current` \| `removed_platform_only`)、
 `source`(可重复,`jxj` \| `miit`)、`eventType`(可重复)、`year`(可重复)、
+`firstYear`(可重复,**首次认定年份**,RL-08 增量,与 `year` 不是一回事)、
+`firstStatus`(可重复,`confirmed` \| `pending`,RL-08 增量)、
 `page`(默认 1)、`pageSize`(默认 50)。
 
 > `source` / `eventType` / `year` 是 **RL-17 增量**(合并台账后「按企业」要能承接
@@ -662,6 +668,11 @@
   "page": 1, "pageSize": 50
 }
 ```
+
+> **RL-08 增量**(见 §7.5.1):`firstRecognition` 的一项还带
+> `firstEventId` / `source` / `status` / `pendingReason` / `evidence` / `undatedAwardIds`,
+> `year` 放宽为可空;`counts` 增加 `recognitionPairs`;查询参数增加
+> `firstYear` / `firstStatus`(与 `year` **不是一回事**)。
 
 ### 7.2 `GET /api/roster/enterprises/:id` — 企业详情(RL-04)
 
@@ -711,6 +722,85 @@
 ### 7.5 `GET /api/roster/recognitions` — 首次认定(RL-08)
 
 查询参数:`title`、`year`。响应行:`{ enterpriseId, titleCode, firstYear, firstEventId, source }`。
+
+**增量(RL-08 交付,2026-10-16)**。原形状是**最小骨架**:它给得出年份与事件 id,
+却给不出票面(issue #8)明写的两件事 —— 「首次认定的依据必须能回到出处」与
+「历史不完整时标待确认,不把当前窗口里最早的年份冒充首次」。补齐如下(全是**加字段**,不改既有字段含义):
+
+- **行形状补齐**(`firstYear` / `firstEventId` / `source` 语义**不变**):
+
+```jsonc
+{
+  "enterpriseId": 1, "name": "宁波…有限公司",        // name / uscc / district 是增量:
+  "uscc": "913302…", "district": "鄞州区",           // 清单要能直接读,不能只给一个 id
+  "titleCode": "specialized_sme",
+  "firstYear": 2021,          // 已知最早那次认定(award)的年份;**给不出时为 null**
+  "firstEventId": 9,          // 那条认定事件;`null` 同 firstYear
+  "source": "jxj",            // 那条认定所在记录的来源(§6.1 的「数据源」)
+  "status": "confirmed",      // 增量:`confirmed` | `pending`
+  "pendingReason": null,      // 增量:见下表;`status='pending'` 时必非空
+  "evidence": [               // 增量:`firstEventId` 那条事件的**全部**出处,一条不折叠
+    { "sourceFile": "jxj/announcement/2022/甬经信中小〔2022〕145号….pdf",
+      "attachment": "附件一", "listNo": 74, "page": null }
+  ],
+  "undatedAwardIds": []       // 增量:该称号下**定不了年**的 award 事件 id(升序)
+}
+```
+
+- **`status` 的判据**(确定性,与 `lib/roster/first-recognition.ts` 一处实现)。
+  `pending` 的三种原因**互不等价**、**按此优先级**取第一条成立的:
+
+  | `pendingReason` | 什么时候 | `firstYear` |
+  |---|---|---|
+  | `no_dated_award` | 有认定,但**一条都定不了年**(`year` 与 `decided_year` 都空) | `null`(**不猜**) |
+  | `undated_award` | 已知最早那条定得了年,但**还有更早的认定定不了年** | 照给,但**不声称它是首次** |
+  | `no_evidence` | 年份有了,那条认定却**没有存下来的出处** | 照给,依据回不到出处 |
+
+  三条之外一律 `confirmed`。**口径说明**:`no_dated_award` / `undated_award` 就是
+  issue #8 第 3 条要防的「拿当前已导入数据里最早的年份冒充首次」—— 定不了年的认定
+  可能更早,所以只能标待确认;`no_evidence` 则是「依据回不到出处」(§3 的
+  「证据不足留空并标待核,绝不猜填」)。它们与 §7.1 的 `needsReview`(**锚点**口径,§6.4)
+  是**两件事**,不共用一个字段。
+
+- **查询参数增量**:`status`(多值,`confirmed` / `pending`)+ 分页 `page` / `pageSize`
+  (默认 1 / 50,上限 `MAX_PAGE_SIZE` = 200)。9930 条级别的清单不分页无法使用。
+  非法 `title` / `status` 一律 400(不静默放过)。
+
+- **计数增量**:响应信封与 §7.1 / §7.3 同构 `{ rows, counts, page, pageSize }`,
+  且计数**两个单位都给**(issue #8 验收第 5 条「统计清楚标示企业数或企业×称号数」):
+
+```jsonc
+"counts": {
+  "titlePairs": 9930,    // 符合条件的**企业 × 称号**数(= 行数,先于分页)
+  "enterprises": 7352,   // 符合条件的**企业**数(多称号企业只算一家)
+  "titles": { "little_giant": 0, "specialized_sme": 9930, "innovative_sme": 0 }
+}
+```
+
+- **一行 = 一个企业 × 称号**。同一企业多称号就是多行;`counts.enterprises` 才是企业数。
+
+- **与 §7.1 的 `firstRecognition` 是同一处计算**(`buildProfile` 一次算出,两处只是取舍字段),
+  所以两处不可能给出不同的首次年份。§7.1 那一项同时**增量补齐**同名字段
+  (`firstEventId` / `source` / `status` / `pendingReason` / `evidence` / `undatedAwardIds`),
+  并把 `year` 放宽为**可空**(`null` = 一条都定不了年);`needsReview` **语义不变**。
+
+#### 7.5.1 §7.1 / §7.2 的增量(RL-08)
+
+- **§7.1 `counts`** 增加 `recognitionPairs`:本次筛选下**符合首次认定判据**的
+  「企业 × 称号」数。它与 `titlePairs` 不同 —— 后者数的是符合条件企业的**全部**称号;
+  给了 `firstYear` / `firstStatus` 之后两者不再相等,不单列就会被当成同一个数。
+- **§7.1 查询参数**增加 `firstYear`(多值,**首次认定年份**)、`firstStatus`(多值)。
+  ⚠️ 与既有的 `year` **不是一回事**:`year` 筛的是**事件**年份(任何类型的事件)。
+  判据与 `title` **落在同一个称号上**(与 RL-17 那条「来源与事件必须落在同一条记录上」同构):
+  「存在一个称号,几个判据都落在它身上」。`firstYear` **不匹配** `firstYear == null` 的称号
+  ——「未知」不是某个具体年份。
+  同理 §7.3(差异)与记录粒度分组**不认**这两项(`lib/roster/ledger-view.ts` 的
+  `LEDGER_VIEW_FILTERS` 里只有 `enterprise` 有)。
+- **§7.2 详情**增加 `recognitions: RecognitionEntry[]`(每个有认定的称号一条),
+  展开面板据此标出**哪一条事件是首次认定**并直接给出它的出处。
+- **导出**(`GET /api/roster/export`)继承上述筛选(与列表同一份解析),并新增一列
+  **「首次认定出处」**(文件 · 附件 · 序号 · 页;没有出处的写「待确认:原因」)。
+  首行口径里补上「其中 N 个『企业 × 称号』有首次认定」。
 
 ### 7.6 `GET /api/platform/queries` — 平台查询证据(RL-03)
 
