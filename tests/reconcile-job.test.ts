@@ -6,21 +6,18 @@
  * 参数校验发生在**提交那一刻**(错参数同步 400,不是先建一个注定失败的任务)、
  * 进度分母可见、取消是**尽力而为**且保留已完成的部分明细。
  *
- * 平台响应来自夹具(通过 `globalThis.fetch` 注入),凭据用 `MIUT_COOKIE` 环境变量注入;
+ * 平台响应来自夹具(通过 `globalThis.fetch` 注入),凭据用 `MIIT_COOKIE` 环境变量注入;
  * 都不落库、不进日志。
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
-import { BUSINESS_LIST_PATH } from '../lib/platform'
 import { clearJobSpecs, getJobSpec, jobSpecs, type JobContext, type JobSpec } from '../server/utils/job-runner'
 import { registerJobSpecs } from '../server/utils/job-specs'
 import { runPlatformReconcile } from '../server/utils/platform-reconcile'
-
-const fixture = (name: string) =>
-  readFileSync(join(import.meta.dirname, 'fixtures/platform', name), 'utf8')
+import { EMPTY_APPLY_RESPONSE, platformFixture as fixture, platformReplay, type PlatformCall } from './helpers/platform-replay'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-reconcile-job-'))
 const db = useDb({ dbPath: join(dir, 'job.db') })
@@ -33,23 +30,21 @@ const enterpriseId = db
   .get().id
 db.insert(schema.record).values({ enterpriseId, source: 'miit', titleCode: 'specialized_sme', district: '镇海区' }).run()
 
-const EMPTY_APPLY = '{"zrarData":{"grid":{"applyGrid":{"maxCount":0,"page":1,"pageSize":50,"pageSet":[]}}}}'
-
-/** 直接把夹具挂到 `globalThis.fetch`(job 不接收注入的 fetch,它走默认全局)。 */
-function stubGlobalFetch() {
-  const calls: string[] = []
-  vi.stubGlobal('fetch', async (url: string, init: { body: string }) => {
-    const body = new URLSearchParams(init.body)
-    const rdjb = body.get('rdjb')
-    calls.push(`${url.includes(BUSINESS_LIST_PATH) ? 'B' : 'A'}${rdjb ?? ''}`)
-    const text = url.includes(BUSINESS_LIST_PATH)
-      ? rdjb === '3'
-        ? fixture('business-list-rdjb3.html')
-        : fixture(`business-list-rdjb${rdjb}-empty.html`)
-      : EMPTY_APPLY
-    return { ok: true, status: 200, text: async () => text }
-  })
-  return calls
+/**
+ * 把夹具挂到 `globalThis.fetch` —— job **不接收**注入的 fetch(参数要走 JSON),
+ * 它走默认全局,所以这里替掉全局,复用的仍是同一份 `platformReplay` 脚手架。
+ */
+function stubGlobalFetch(): PlatformCall[] {
+  const replay = platformReplay((call: PlatformCall) => ({
+    text:
+      call.interface === 'business_list'
+        ? call.rdjb === '3'
+          ? fixture('business-list-rdjb3.html')
+          : fixture(`business-list-rdjb${call.rdjb}-empty.html`)
+        : EMPTY_APPLY_RESPONSE,
+  }))
+  vi.stubGlobal('fetch', replay.fetchImpl)
+  return replay.calls
 }
 
 function clearEvidence() {

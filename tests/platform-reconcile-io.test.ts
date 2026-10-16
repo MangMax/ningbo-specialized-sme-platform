@@ -8,16 +8,15 @@
  *
  * 全部离线:平台响应来自夹具,凭据是注入值(不落库、不进日志)。
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
-import { BUSINESS_LIST_PATH, type PlatformFetch } from '../lib/platform'
 import { runPlatformReconcile } from '../server/utils/platform-reconcile'
+import { emptyReply, platformFixture, platformReplay, type PlatformCall } from './helpers/platform-replay'
 
-const fixture = (name: string) =>
-  readFileSync(join(import.meta.dirname, 'fixtures/platform', name), 'utf8')
+const fixture = platformFixture
 
 const dirs: string[] = []
 function freshDb() {
@@ -41,50 +40,7 @@ function seedTarget(db: ReturnType<typeof freshDb>, name: string, uscc: string) 
   return id
 }
 
-const EMPTY_BUSINESS = fixture('business-list-rdjb1-empty.html')
-const EMPTY_APPLY = '{"zrarData":{"grid":{"applyGrid":{"maxCount":0,"page":1,"pageSize":50,"pageSet":[]}}}}'
-
-interface Call {
-  uscc: string
-  rdjb: string
-  interface: 'business_list' | 'apply_list'
-}
-
-/** 可编程的假 fetch:按调用计数决定这一跳回什么,并记录在飞并发峰值。 */
-function stub(reply: (call: Call, attempt: number) => { status?: number; text: string }, delayMs = 0) {
-  const calls: Call[] = []
-  const attempts = new Map<string, number>()
-  let inFlight = 0
-  let peak = 0
-  const fetchImpl: PlatformFetch = async (url, init) => {
-    const body = new URLSearchParams(init.body)
-    const isBusiness = url.includes(BUSINESS_LIST_PATH)
-    const call: Call = {
-      uscc: body.get('tyshxydm') ?? '',
-      rdjb: body.get('rdjb') ?? '',
-      interface: isBusiness ? 'business_list' : 'apply_list',
-    }
-    calls.push(call)
-    const key = `${call.uscc}|${call.interface}|${call.rdjb}`
-    const attempt = (attempts.get(key) ?? 0) + 1
-    attempts.set(key, attempt)
-    inFlight += 1
-    peak = Math.max(peak, inFlight)
-    try {
-      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs))
-      const result = reply(call, attempt)
-      const status = result.status ?? 200
-      return { ok: status >= 200 && status < 300, status, text: async () => result.text }
-    } finally {
-      inFlight -= 1
-    }
-  }
-  return { fetchImpl, calls, peak: () => peak }
-}
-
-const ok = (call: Call): { text: string } => ({
-  text: call.interface === 'business_list' ? EMPTY_BUSINESS : EMPTY_APPLY,
-})
+const ok = (call: PlatformCall) => emptyReply(call)
 
 describe('并发上限', () => {
   it('concurrency=2 时同时在飞的请求不超过 2,且确实并行(不是串行)', async () => {
@@ -92,7 +48,7 @@ describe('并发上限', () => {
     for (const n of ['91330211000000001A', '91330211000000002B', '91330211000000003C']) {
       seedTarget(db, `企业${n.slice(-3)}`, n)
     }
-    const platform = stub(ok, 15)
+    const platform = platformReplay(ok, { delayMs: 15 })
     const report = await runPlatformReconcile({
       db,
       fetchImpl: platform.fetchImpl,
@@ -112,7 +68,7 @@ describe('退避重试:5xx 重试,4xx 与会话过期不重试', () => {
     const db = freshDb()
     seedTarget(db, '宁波重试科技有限公司', '91330211000000011R')
     const sleeps: number[] = []
-    const platform = stub((call, attempt) => {
+    const platform = platformReplay((call, attempt) => {
       if (call.interface === 'business_list' && call.rdjb === '3' && attempt === 1) {
         return { status: 502, text: 'bad gateway' }
       }
@@ -140,7 +96,7 @@ describe('退避重试:5xx 重试,4xx 与会话过期不重试', () => {
     const db = freshDb()
     const target = seedTarget(db, '宁波四零四科技有限公司', '91330211000000044X')
     const sleeps: number[] = []
-    const platform = stub((call) =>
+    const platform = platformReplay((call) =>
       call.interface === 'business_list' && call.rdjb === '3' ? { status: 400, text: 'bad request' } : ok(call),
     )
     const report = await runPlatformReconcile({
@@ -177,7 +133,7 @@ describe('会话过期:HTTP 200 也要归 failed(不是 no_record)', () => {
   it('四个请求全回过期页 ⇒ 查询 failed、差异 query_failed,绝不冒充「无记录」', async () => {
     const db = freshDb()
     seedTarget(db, '宁波过期科技有限公司', '91330211000000055Y')
-    const platform = stub(() => ({ text: fixture('session-expired.json') }))
+    const platform = platformReplay(() => ({ text: fixture('session-expired.json') }))
     const report = await runPlatformReconcile({
       db,
       fetchImpl: platform.fetchImpl,
@@ -206,7 +162,7 @@ describe('凭据:拿不到就不发请求、不写半截结果', () => {
   it('无凭据 ⇒ 明确报错,库里一行不写(不产出「一片未查询」)', async () => {
     const db = freshDb()
     seedTarget(db, '宁波无凭据科技有限公司', '91330211000000066Z')
-    const platform = stub(ok)
+    const platform = platformReplay(ok)
     await expect(
       runPlatformReconcile({
         db,
@@ -242,7 +198,7 @@ describe('凭据:拿不到就不发请求、不写半截结果', () => {
         })
         .run()
     }
-    const platform = stub(ok)
+    const platform = platformReplay(ok)
     const report = await runPlatformReconcile({
       db,
       fetchImpl: platform.fetchImpl,
@@ -302,7 +258,7 @@ describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', ()
       })
       .run()
 
-    const platform = stub(ok)
+    const platform = platformReplay(ok)
     const report = await runPlatformReconcile({
       db,
       fetchImpl: platform.fetchImpl,
@@ -341,7 +297,7 @@ describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', ()
         status: 'no_record',
       })
       .run()
-    const platform = stub(ok)
+    const platform = platformReplay(ok)
     const report = await runPlatformReconcile({
       db,
       fetchImpl: platform.fetchImpl,

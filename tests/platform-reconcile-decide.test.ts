@@ -8,8 +8,6 @@
  * 真实字节来自父代理在已登录会话里代取的 `91330211255994457P` 四个响应
  * (`tests/fixtures/platform/`,已裁剪、不含凭证)。
  */
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { classifyRawQuery, type PlatformRow } from '../lib/platform'
 import { relationFromRow, type PlatformRelationRecord } from '../lib/platform/identity'
@@ -19,8 +17,7 @@ import {
   decideDifference,
 } from '../lib/platform/reconcile'
 
-const fixture = (name: string) =>
-  readFileSync(join(import.meta.dirname, 'fixtures/platform', name), 'utf8')
+import { platformFixture as fixture } from './helpers/platform-replay'
 
 const USCC = '91330211255994457P'
 const OLD_NAME = '宁波上航测绘有限公司'
@@ -231,6 +228,101 @@ describe('更名:同一 tyshxydm 下 qymc 不同 ⇒ 曾用名证据(契约 §5.
     expect(verdict.aliases).toEqual([])
     expect(verdict.reasonCode).not.toBe('renamed')
   })
+
+  it('平台上只写出**一个**名字、且与公布名不同 ⇒ 也判 renamed(两侧名字不一致本身就是证据)', () => {
+    const rows: PlatformRow[] = [
+      { id: 'SQ-X', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2025-01-01 10:00:00' },
+    ]
+    // 本企业(公布侧)名是旧名;平台写的是新名 ⇒ 更名确实发生了。
+    const verdict = decideDifference(
+      target({ enterpriseName: OLD_NAME, enterpriseNameNorm: OLD_NAME }),
+      [evidence({ interface: 'business_list', rdjb: '3' }, rows)],
+    )
+    expect(verdict.status).toBe('confirmed_reason')
+    expect(verdict.reasonCode).toBe('renamed')
+    expect(verdict.measureCode).toBe('update_current_name')
+    // 单个名字定不出先后 ⇒ 整条与曾用名都标待核,不由软件指定谁是现名。
+    expect(verdict.verificationStatus).toBe('pending')
+    expect(verdict.reasonNote).toContain(OLD_NAME)
+    expect(verdict.reasonNote).toContain(NEW_NAME)
+    expect(verdict.aliases).toHaveLength(1)
+    expect(verdict.aliases[0]!.name).toBe(NEW_NAME)
+    expect(verdict.aliases[0]!.verificationStatus).toBe('pending')
+    expect(verdict.aliases[0]!.sourceRelation.rdjb).toBe('3')
+  })
+
+  it('平台名字与公布名一致 ⇒ 不判更名(回到方向判据)', () => {
+    const rows: PlatformRow[] = [
+      { id: 'SQ-X', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2025-01-01 10:00:00' },
+    ]
+    const verdict = decideDifference(target(), [evidence({ interface: 'business_list', rdjb: '3' }, rows)])
+    expect(verdict.reasonCode).toBe('platform_stale')
+    expect(verdict.aliases).toEqual([])
+  })
+})
+
+describe('证据指针必须指回**那条关系所在的那次查询**(同一接口有多个 rdjb 时尤其要紧)', () => {
+  it('rdjb=1 与 rdjb=3 都有 sequenceNo=1 时,指针取 rdjb=3(承载旧名的那一次)', () => {
+    const rdjb1 = evidence({ interface: 'business_list', rdjb: '1' }, [
+      { id: 'SQ-A', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2023-01-01 10:00:00' },
+    ])
+    const rdjb3 = evidence({ interface: 'business_list', rdjb: '3' }, [
+      { id: 'SQ-OLD', qymc: OLD_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2022-06-22 17:17:52' },
+      { id: 'SQ-NEW', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '待审核', sqsj: '2025-06-21 09:50:48' },
+    ])
+    const verdict = decideDifference(target(), [rdjb1, rdjb3])
+    // 旧名来自 rdjb=3 的第 1 条 —— 指针必须写 rdjb=3,否则 §8.7 的自然键会解析到
+    // rdjb=1 的另一个查询(那里根本没有这条关系)。
+    expect(verdict.aliases[0]!.sourceRelation).toEqual({
+      interface: 'business_list',
+      queryKey: USCC,
+      rdjb: '3',
+      queriedAt: QUERIED_AT,
+      sequenceNo: 1,
+    })
+    expect(verdict.evidenceRelation).toEqual({
+      interface: 'business_list',
+      queryKey: USCC,
+      rdjb: '3',
+      queriedAt: QUERIED_AT,
+      sequenceNo: 1,
+    })
+    expect(verdict.evidenceQuery!.rdjb).toBe('3')
+  })
+})
+
+describe('平台记录全部作废:原因落 `other`(有证据,但不在五个已知原因内)', () => {
+  it('状态全部「撤回 / 终审不通过」⇒ other + keep_history,原文写进 reasonNote', () => {
+    const rows: PlatformRow[] = [
+      { id: 'SQ-1', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '撤回', sqsj: '2024-01-01 10:00:00' },
+      { id: 'SQ-2', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审不通过', sqsj: '2024-06-01 10:00:00' },
+    ]
+    const verdict = decideDifference(target(), [evidence({ interface: 'business_list', rdjb: '3' }, rows)])
+    expect(verdict.status).toBe('confirmed_reason')
+    expect(verdict.reasonCode).toBe('other')
+    expect(verdict.measureCode).toBe('keep_history')
+    expect(verdict.reasonNote).toContain('撤回')
+    expect(verdict.reasonNote).toContain('终审不通过')
+    expect(verdict.verificationStatus).toBe('confirmed')
+  })
+
+  it('部分撤回、部分在册 ⇒ 不判 other(不能把在册记录一起说成作废)', () => {
+    const rows: PlatformRow[] = [
+      { id: 'SQ-1', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '撤回', sqsj: '2024-01-01 10:00:00' },
+      { id: 'SQ-2', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2025-01-01 10:00:00' },
+    ]
+    const verdict = decideDifference(target(), [evidence({ interface: 'business_list', rdjb: '3' }, rows)])
+    expect(verdict.reasonCode).not.toBe('other')
+    expect(verdict.reasonCode).toBe('platform_stale')
+  })
+
+  it('「待审核」不算作废(在办,不是撤了)', () => {
+    const rows: PlatformRow[] = [
+      { id: 'SQ-1', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '待审核', sqsj: '2025-01-01 10:00:00' },
+    ]
+    const verdict = decideDifference(target(), [evidence({ interface: 'business_list', rdjb: '3' }, rows)])
+    expect(verdict.reasonCode).toBe('platform_stale')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -371,6 +463,8 @@ describe('全局不变量:每条判定都成对、都能指回证据或明确说
     { name: '更名', target: target(), queries: realQueries() },
     { name: '外迁', target: target(), queries: [evidence({ interface: 'business_list', rdjb: '3' }, [{ id: 'SQ-1', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '深圳市', cszt: '终审通过', sqsj: '2024-01-01 10:00:00' }])] },
     { name: '待核', target: target(), queries: [evidence({ interface: 'business_list', rdjb: '3' }, [{ id: 'SQ-1', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过' }, { id: 'SQ-2', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '深圳市', cszt: '终审通过' }])] },
+    { name: '更名为待核(平台单个名字≠公布名)', target: target({ enterpriseName: OLD_NAME, enterpriseNameNorm: OLD_NAME }), queries: [evidence({ interface: 'business_list', rdjb: '3' }, [{ id: 'SQ-1', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '终审通过', sqsj: '2025-01-01 10:00:00' }])] },
+    { name: '其他(记录全部作废)', target: target(), queries: [evidence({ interface: 'business_list', rdjb: '3' }, [{ id: 'SQ-1', qymc: NEW_NAME, tyshxydm: USCC, szsfmc: '宁波市', cszt: '撤回', sqsj: '2024-01-01 10:00:00' }])] },
   ]
 
   it.each(scenarios)('$name:有 status、有措施、有可读说明', ({ target: subject, queries }) => {
@@ -380,14 +474,18 @@ describe('全局不变量:每条判定都成对、都能指回证据或明确说
     // 「原因 + 措施」成对:两条说明都不许空着。
     expect(verdict.reasonNote.trim().length).toBeGreaterThan(0)
     expect(verdict.measureNote.trim().length).toBeGreaterThan(0)
-    // `confirmed_*` 才算已确认;`needs_review` 必须待核 —— 不许出现
-    // 「状态说已确认、核验状态还说 pending」这种自相矛盾的行。
-    if (verdict.status.startsWith('confirmed')) {
-      expect(verdict.verificationStatus).toBe('confirmed')
-    }
+    // 待核实必须**只配** manual_review,并落在 `pending`(契约 §3.2 的配对)。
     if (verdict.status === 'needs_review') {
       expect(verdict.verificationStatus).toBe('pending')
+      expect(verdict.measureCode).toBe('manual_review')
     }
+    // 已确认原因 ⇒ 必须写出原因码与措施,不留半截。
+    if (verdict.status === 'confirmed_reason') {
+      expect(verdict.reasonCode).not.toBeNull()
+      expect(verdict.measureCode).not.toBe('manual_review')
+    }
+    // 「原因 + 措施」成对:给了原因就必须给措施(反之亦然)。
+    expect(verdict.reasonCode == null || verdict.measureCode != null).toBe(true)
     // 没有证据指针时,说明里必须写清「缺什么」,不能一句「无法判断」了事。
     if (!verdict.evidenceQuery && verdict.status !== 'not_queried') {
       expect(verdict.reasonNote.length).toBeGreaterThan(10)

@@ -121,17 +121,24 @@ function relationRefOf(query: ReconcileQueryEvidence, queryKey: string, relation
   return { ...queryRefOf(query, queryKey), sequenceNo: relation.sequenceNo }
 }
 
-/** 找到某条关系的**出处在哪个查询**里(同一条关系只会出现在一次查询内)。 */
+/**
+ * 找到某条关系的**出处在哪个查询**里。
+ *
+ * 判据必须含 `rdjb`:同一次核查里 `business_list` 有 rdjb=1/2/3 **三个**槽位,每个槽位都从
+ * `sequence_no=1` 起编号 —— 只按 `interface` + `sequenceNo` 找会命中第一个槽位,于是把
+ * 「rdjb=1 的第一次查询」写进只可能来自 rdjb=3 的那条关系的证据指针里(§8.7 的自然键会
+ * 因此解析到**另一个**查询)。所以按关系自带的 `interface` + `rdjb` 双键定位。
+ */
 function queryOfRelation(
   queries: ReconcileQueryEvidence[],
   relation: PlatformRelationRecord,
 ): ReconcileQueryEvidence | null {
   return (
-    queries.find((query) =>
-      query.relations.some(
-        (candidate) =>
-          candidate.sequenceNo === relation.sequenceNo && candidate.interface === relation.interface,
-      ),
+    queries.find(
+      (query) =>
+        query.interface === relation.interface &&
+        query.rdjb === relation.rdjb &&
+        query.relations.some((candidate) => candidate.sequenceNo === relation.sequenceNo),
     ) ?? null
   )
 }
@@ -169,6 +176,159 @@ function relationYear(relation: PlatformRelationRecord): number | null {
 // ---------------------------------------------------------------------------
 
 /**
+ * **更名**判定(契约 §5.1)。返回三者之一:
+ *  - `verdict`:判出更名(原因 + 措施 + 逐条曾用名);
+ *  - `needsReview`:有更名**候选**但锚不到来源关系 —— 证据在手上却指不回具体行 ⇒ 转人工,
+ *    绝不静默降级成别的结论(那样会把更名证据整个吞掉);
+ *  - 两者皆空:没有更名证据,交给后面的省份/方向判据。
+ */
+function decideRename(
+  target: ReconcileTarget,
+  uscc: string,
+  relations: PlatformRelationRecord[],
+  successes: ReconcileQueryEvidence[],
+): { verdict: DifferenceVerdict | null; needsReview: string | null } {
+  const group = groupRelationsByUscc(relations).find((item) => item.uscc === uscc) ?? null
+  const candidates = group ? aliasCandidatesOf(group) : []
+
+  if (candidates.length > 0) {
+    const aliases: ReconcileAliasDecision[] = []
+    const unanchored: string[] = []
+    for (const candidate of candidates) {
+      const anchor = candidate.relations[0]!
+      const query = queryOfRelation(successes, anchor)
+      if (!query) {
+        unanchored.push(candidate.name)
+        continue
+      }
+      aliases.push({
+        name: candidate.name,
+        sourceKind: candidate.sourceKind,
+        sourceRelation: relationRefOf(query, uscc, anchor),
+        validFrom: candidate.validFrom,
+        // 证据明确:同一 USCC、`qymc` 不同、且**最新一次申报唯一确定现名** ⇒ 可以确认为历史名称。
+        // (`aliasCandidatesOf` 的候选默认是 `pending`;这里升级为 `confirmed` 正是「由证据确认」那一步,
+        //  不是软件的猜测 —— 时间序无法定出先后时它根本不产候选。)
+        verificationStatus: 'confirmed',
+        note:
+          `平台关系 ${candidate.relations.map((relation) => relation.relationKey ?? `#${relation.sequenceNo}`).join(' / ')} ` +
+          `的 qymc 写的是「${candidate.name}」,与同一 tyshxydm 下最新申报写出的现名不同 ⇒ 历史名称。`,
+      })
+    }
+    // 有候选却一条都锚不到来源 ⇒ 不静默降级,如实转人工并说明缺什么。
+    if (unanchored.length > 0) {
+      return {
+        verdict: null,
+        needsReview:
+          `平台关系里出现与现名不同的历史名称(${unanchored.join('、')}),` +
+          '但找不到承载该名称的**具体关系行**(证据指针锚不上),无法写成可回溯的曾用名。',
+      }
+    }
+    const anchor = candidates[0]!.relations[0]!
+    const query = queryOfRelation(successes, anchor)
+    return {
+      verdict: {
+        status: 'confirmed_reason',
+        reasonCode: 'renamed',
+        reasonNote:
+          `平台关系里同一 tyshxydm 下出现 ${aliases.length + 1} 个不同 qymc:` +
+          `${aliases.map((alias) => alias.name).join('、')} 与现名并列 ⇒ 更名证据明确。`,
+        measureCode: 'update_current_name',
+        measureNote: '现名与曾用名都保留并都可查;旧名写成 enterprise_alias(来源=平台关系行)。',
+        verificationStatus: 'confirmed',
+        evidenceQuery: query ? queryRefOf(query, uscc) : null,
+        evidenceRelation: query ? relationRefOf(query, uscc, anchor) : null,
+        movedIn: null,
+        aliases,
+      },
+      needsReview: null,
+    }
+  }
+
+  // (b) 平台上只写出**一个**名字,而它与本企业(公布侧)的名不同 ⇒ 两侧名字不一致。
+  //     方向定不出来(单个名字无法说明谁是现名、谁是旧名)⇒ 曾用名标 `pending`,不猜。
+  const names = [...new Set(relations.map((relation) => relation.nameRaw).filter((name): name is string => !!name))]
+  const differing = names.filter((name) => normalizeName(name) !== target.enterpriseNameNorm)
+  if (differing.length === 1 && names.length === 1) {
+    const anchor = relations.find((relation) => relation.nameRaw === differing[0])!
+    const query = queryOfRelation(successes, anchor)
+    if (!query) {
+      return {
+        verdict: null,
+        needsReview: `平台关系写出的名称「${differing[0]}」与本企业名不同,但锚不到承载它的关系行。`,
+      }
+    }
+    return {
+      verdict: {
+        status: 'confirmed_reason',
+        reasonCode: 'renamed',
+        reasonNote:
+          `平台关系的 qymc 写的是「${differing[0]}」,而本企业(公布侧)名是「${target.enterpriseName}」` +
+          '⇒ 两侧名称不一致,更名证据明确;但平台上只有这一个名字,定不出孰先孰后。',
+        measureCode: 'update_current_name',
+        measureNote: '现名与曾用名都保留并都可查;由人核对名称沿革后再定当前名。',
+        // 更名本身有证据;方向待核 ⇒ 整条标待核,曾用名也标 `pending`。
+        verificationStatus: 'pending',
+        evidenceQuery: queryRefOf(query, uscc),
+        evidenceRelation: relationRefOf(query, uscc, anchor),
+        movedIn: null,
+        aliases: [
+          {
+            name: differing[0]!,
+            sourceKind: anchor.sourceKind,
+            sourceRelation: relationRefOf(query, uscc, anchor),
+            validFrom: anchor.appliedAt,
+            verificationStatus: 'pending',
+            note:
+              `平台关系 ${anchor.relationKey ?? `#${anchor.sequenceNo}`} 的 qymc 写的是「${differing[0]}」,` +
+              `与本企业名「${target.enterpriseName}」不同;平台上仅此一个名字,先后待核。`,
+          },
+        ],
+      },
+      needsReview: null,
+    }
+  }
+
+  return { verdict: null, needsReview: null }
+}
+
+/** 平台关系状态里表示「该条记录已作废」的取值(实测字典)。 */
+const VOID_STATUSES = ['撤回', '已退回', '已退回待审核', '终审不通过']
+
+/**
+ * 平台记录**全部作废**(撤回 / 退回 / 终审不通过)⇒ 原因落 `other`。
+ *
+ * 为什么用 `other` 而不是硬塞进 `platform_stale`:来源**明说**的是「这条记录被撤了」,
+ * 而 `platform_stale`(平台未更新)描述的是「平台还停在旧状态」—— 两者是不同的可读事实。
+ * 契约要求未知原因用 `other` + `reasonNote` 并把新原因的说明写清楚,**不新增枚举值**。
+ * 措施配 `keep_history`:平台侧作废不妨碍、也不改动任何正式公布历史。
+ */
+function decideVoidRelations(
+  uscc: string,
+  relations: PlatformRelationRecord[],
+  successes: ReconcileQueryEvidence[],
+): DifferenceVerdict | null {
+  const statuses = [...new Set(relations.map((relation) => relation.status).filter((s): s is string => !!s))]
+  if (statuses.length === 0 || !statuses.every((status) => VOID_STATUSES.includes(status))) return null
+  const anchor = relations[0]!
+  const query = queryOfRelation(successes, anchor)
+  return {
+    status: 'confirmed_reason',
+    reasonCode: 'other',
+    reasonNote:
+      `平台关系状态全部为「${statuses.join('、')}」(该记录已作废/未通过),` +
+      '既不是「平台未更新」也不是「两侧一致」—— 按证据落「其他」,原文见 reasonNote 与证据行。',
+    measureCode: 'keep_history',
+    measureNote: '保留正式公布历史与平台原文;**不**据此改写任何一侧。',
+    verificationStatus: 'confirmed',
+    evidenceQuery: query ? queryRefOf(query, uscc) : null,
+    evidenceRelation: query ? relationRefOf(query, uscc, anchor) : null,
+    movedIn: null,
+    aliases: [],
+  }
+}
+
+/**
  * 判定一个差异目标的**原因与后置动作**。
  *
  * 判据按优先级排列,**先命中先返回** —— 顺序本身就是「哪条证据更硬」的表态:
@@ -176,11 +336,12 @@ function relationYear(relation: PlatformRelationRecord): number | null {
  *  2. 没有任何一次成功查询 ⇒ `query_failed`;
  *  3. 成功但 0 条关联 ⇒ `no_record`;
  *  4. 有证据明说的注销/吊销 ⇒ `deregistered`;
- *  5. 同一 USCC 下出现多个 `qymc` ⇒ `renamed`(曾用名证据就在关系行里);
+ *  5. 更名证据(同一 USCC 下多个 `qymc`,或平台名 ≠ 公布名)⇒ `renamed`;
  *  6. 省份证据 ⇒ `moved_out` / `moved_in`;
- *  7. 按方向:平台有记录时 `missing_in_miit` ⇒ `confirmed_no_diff`、
+ *  7. 平台记录状态全部撤回/退回/终审不通过 ⇒ `other`(有证据但不在已知五因内);
+ *  8. 按方向:平台有记录时 `missing_in_miit` ⇒ `confirmed_no_diff`、
  *     `extra_in_miit` ⇒ `platform_stale`;
- *  8. 其余 ⇒ `needs_review`,并在 `reasonNote` 写清缺什么证据。
+ *  9. 其余 ⇒ `needs_review`,并在 `reasonNote` 写清缺什么证据。
  */
 export function decideDifference(
   target: ReconcileTarget,
@@ -308,46 +469,26 @@ export function decideDifference(
     }
   }
 
-  // 6. 同一 `tyshxydm` 下 `qymc` 不同 ⇒ 曾用名证据(契约 §5.1)。
-  const group = groupRelationsByUscc(relations)[0] ?? null
-  const candidates = group ? aliasCandidatesOf(group) : []
-  if (candidates.length > 0) {
-    const aliases: ReconcileAliasDecision[] = []
-    for (const candidate of candidates) {
-      const anchor = candidate.relations[0]!
-      const query = queryOfRelation(successes, anchor)
-      if (!query) continue
-      aliases.push({
-        name: candidate.name,
-        sourceKind: candidate.sourceKind,
-        sourceRelation: relationRefOf(query, target.uscc, anchor),
-        validFrom: candidate.validFrom,
-        // 证据明确:同一 USCC、`qymc` 不同、且最新一次申报唯一确定现名。
-        verificationStatus: 'confirmed',
-        note:
-          `平台关系 ${candidate.relations.map((relation) => relation.relationKey ?? `#${relation.sequenceNo}`).join(' / ')} ` +
-          `的 qymc 写的是「${candidate.name}」,与同一 tyshxydm 下最新申报写出的现名不同 ⇒ 历史名称。`,
-      })
-    }
-    if (aliases.length > 0) {
-      const anchor = candidates[0]!.relations[0]!
-      const query = queryOfRelation(successes, anchor)
-      return {
-        status: 'confirmed_reason',
-        reasonCode: 'renamed',
-        reasonNote:
-          `平台关系里同一 tyshxydm 下出现 ${aliases.length + 1} 个不同 qymc:` +
-          `${aliases.map((alias) => alias.name).join('、')} 与现名并列 ⇒ 更名证据明确。`,
-        measureCode: 'update_current_name',
-        measureNote: '现名与曾用名都保留并都可查;旧名写成 enterprise_alias(来源=平台关系行)。',
-        verificationStatus: 'confirmed',
-        evidenceQuery: query ? queryRefOf(query, target.uscc) : null,
-        evidenceRelation: query ? relationRefOf(query, target.uscc, anchor) : null,
-        movedIn: null,
-        aliases,
-      }
+  // 6. 更名 ⇒ 曾用名证据(契约 §5.1)。两条判据都属于「显式证据」:
+  //    (a) 同一 `tyshxydm` 下 `qymc` 出现**多个不同写法** ⇒ 历史行本身就是曾用名证据;
+  //    (b) 平台关系写出的名字与**本企业(公布侧)的名**不同 ⇒ 两侧名字不一致,同样是更名证据。
+  //    (b) 覆盖平台上只写出一个名字、而那个名字与公布名不同的情形 —— 只按 (a) 找会整条漏掉。
+  const renameVerdict = decideRename(target, target.uscc, relations, successes)
+  if (renameVerdict.needsReview) {
+    return {
+      status: 'needs_review',
+      reasonCode: null,
+      reasonNote: renameVerdict.needsReview,
+      measureCode: 'manual_review',
+      measureNote: '人工核对平台关系行与公布名;在此之前不作任何回填。',
+      verificationStatus: 'pending',
+      evidenceQuery: null,
+      evidenceRelation: null,
+      movedIn: null,
+      aliases: [],
     }
   }
+  if (renameVerdict.verdict) return renameVerdict.verdict
 
   // 7. 省份证据:`szsfmc` ≠ 宁波市 ⇒ 不在本地。
   const provinces = [...new Set(relations.map((relation) => relation.province).filter((p): p is string => !!p))]
@@ -440,7 +581,11 @@ export function decideDifference(
     }
   }
 
-  // 8. 平台有记录、关系无异常 —— 按方向给出结论。
+  // 8. 平台记录**全部作废**(撤回 / 退回 / 终审不通过)⇒ 原因落 `other`(有证据、但不在五个已知原因里)。
+  const voidVerdict = decideVoidRelations(target.uscc, relations, successes)
+  if (voidVerdict) return voidVerdict
+
+  // 9. 平台有记录、关系无异常 —— 按方向给出结论。
   const anchor = latestRelation(relations) ?? relations[0]!
   const query = queryOfRelation(successes, anchor)
   if (target.direction === 'missing_in_miit') {

@@ -15,12 +15,11 @@
  * 不进网络、不用真凭据:平台响应来自 `tests/fixtures/platform/`(父代理已登录会话代取的
  * 真实响应,已裁剪、不含凭证);凭据用注入值,不落库、不进日志。
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
-import { APPLY_LIST_PATH, BUSINESS_LIST_PATH, type PlatformFetch } from '../lib/platform'
 import type { PlatformRelationRow, PlatformQueriesResult } from '../lib/platform/read'
 import {
   collectReconcileTargets,
@@ -28,9 +27,13 @@ import {
   type ReconcileReport,
 } from '../server/utils/platform-reconcile'
 import { startEvidenceServer, type EvidenceServer } from './helpers/platform-evidence-server'
-
-const fixture = (name: string) =>
-  readFileSync(join(import.meta.dirname, 'fixtures/platform', name), 'utf8')
+import {
+  EMPTY_APPLY_RESPONSE,
+  platformFixture as fixture,
+  platformReplay,
+  type PlatformCall,
+  type PlatformReplay,
+} from './helpers/platform-replay'
 
 const USCC = '91330211255994457P'
 const OTHER_USCC = '91330211316904639T'
@@ -61,26 +64,15 @@ const legacy = seed(OLD_NAME, null, 'jxj')
 const third = seed(THIRD, THIRD_USCC, 'miit')
 
 // ---------------------------------------------------------------------------
-// 可注入的假 fetch:按「接口 + rdjb + USCC」回夹具,并记录每次调用
+// 平台回应:默认走**真实夹具**(USCC 那家 rdjb=3 有 6 条含旧名;其余一律 0 行)
 // ---------------------------------------------------------------------------
 
-interface Call {
-  uscc: string
-  interface: 'business_list' | 'apply_list'
-  rdjb: string
-}
-
-const EMPTY_HTML = readFileSync(join(import.meta.dirname, 'fixtures/platform/business-list-rdjb1-empty.html'), 'utf8')
+const EMPTY_BUSINESS = fixture('business-list-rdjb1-empty.html')
 
 /** 默认回复:USCC 走真实夹具(rdjb=3 有 6 条含旧名);其余 USCC 一律 0 行。 */
-function defaultReply(call: Call): { text: string } {
+const defaultReply = (call: PlatformCall) => {
   if (call.uscc !== USCC) {
-    return {
-      text:
-        call.interface === 'business_list'
-          ? EMPTY_HTML
-          : '{"zrarData":{"grid":{"applyGrid":{"maxCount":0,"page":1,"pageSize":50,"pageSet":[]}}}}',
-    }
+    return { text: call.interface === 'business_list' ? EMPTY_BUSINESS : EMPTY_APPLY_RESPONSE }
   }
   if (call.interface === 'business_list') {
     return {
@@ -88,56 +80,6 @@ function defaultReply(call: Call): { text: string } {
     }
   }
   return { text: fixture('apply-list.json') }
-}
-
-interface FakePlatform {
-  fetchImpl: PlatformFetch
-  calls: Call[]
-  maxInFlight(): number
-  reset(): void
-}
-
-function fakePlatform(
-  reply: (call: Call, attempt: number) => { status?: number; text: string } | Promise<{ status?: number; text: string }>,
-  options: { delayMs?: number } = {},
-): FakePlatform {
-  const calls: Call[] = []
-  const attempts = new Map<string, number>()
-  let inFlight = 0
-  let peak = 0
-  const fetchImpl: PlatformFetch = async (url, init) => {
-    const body = new URLSearchParams(init.body)
-    const isBusiness = url.includes(BUSINESS_LIST_PATH)
-    const call: Call = {
-      uscc: body.get('tyshxydm') ?? '',
-      interface: isBusiness ? 'business_list' : 'apply_list',
-      rdjb: body.get('rdjb') ?? '',
-    }
-    calls.push(call)
-    const key = `${call.uscc}|${call.interface}|${call.rdjb}`
-    const attempt = (attempts.get(key) ?? 0) + 1
-    attempts.set(key, attempt)
-    inFlight += 1
-    peak = Math.max(peak, inFlight)
-    try {
-      if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs))
-      const result = await reply(call, attempt)
-      const status = result.status ?? 200
-      return { ok: status >= 200 && status < 300, status, text: async () => result.text }
-    } finally {
-      inFlight -= 1
-    }
-  }
-  return {
-    fetchImpl,
-    calls,
-    maxInFlight: () => peak,
-    reset: () => {
-      calls.length = 0
-      attempts.clear()
-      peak = 0
-    },
-  }
 }
 
 const platformQueries = () => db.select().from(schema.platformQuery).all()
@@ -161,7 +103,7 @@ const baseOptions = () => ({
   retries: 0,
 })
 
-let fake = fakePlatform(defaultReply)
+let fake: PlatformReplay = platformReplay(defaultReply)
 let server: EvidenceServer
 let currentQuery: Record<string, unknown> = {}
 
@@ -228,7 +170,7 @@ describe('端到端:一次运行把证据、原因与措施经统一 API 写回'
 
   beforeAll(async () => {
     clearEvidence()
-    fake = fakePlatform(defaultReply)
+    fake = platformReplay(defaultReply)
     report = await runPlatformReconcile({
       ...baseOptions(),
       fetchImpl: fake.fetchImpl,
@@ -406,7 +348,7 @@ describe('可续跑:重跑复用新鲜证据,不重复打平台、不重复堆�
       aliases: aliases().length,
       batches: db.select().from(schema.importBatch).all().length,
     }
-    const replay = fakePlatform(defaultReply)
+    const replay = platformReplay(defaultReply)
     const second = await runPlatformReconcile({
       ...baseOptions(),
       fetchImpl: replay.fetchImpl,
@@ -454,7 +396,7 @@ describe('可续跑:重跑复用新鲜证据,不重复打平台、不重复堆�
 describe('试跑与取消', () => {
   it('write:false ⇒ 只判定不回写(库里一行不加)', async () => {
     clearEvidence()
-    const dry = fakePlatform(defaultReply)
+    const dry = platformReplay(defaultReply)
     const report = await runPlatformReconcile({
       ...baseOptions(),
       fetchImpl: dry.fetchImpl,
@@ -470,7 +412,7 @@ describe('试跑与取消', () => {
 
   it('取消 ⇒ 报告如实标 cancelled、不写回,且进度分步可见', async () => {
     clearEvidence()
-    const cancelling = fakePlatform(defaultReply)
+    const cancelling = platformReplay(defaultReply)
     let calls = 0
     const progress: [number, number][] = []
     const report = await runPlatformReconcile({

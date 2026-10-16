@@ -29,24 +29,14 @@
  *
  * 两条通路并存,优先级明确:
  *   ① 传了 {@link BuildPayloadInput.refs} 且解析到了 id ⇒ 发**裸 id**(§8.7.4 的兼容写法);
- *   ② 否则有自然键 ⇒ 发**自然键引用**(绝不同时发两者 —— 写入侧会把「都给了」判为
- *      `source_ref_conflict` / `evidence_ref_conflict`,不静默取一个);
+ *   ② 否则有自然键 ⇒ 发**自然键引用**;
  *   ③ 两者都没有 ⇒ 退回契约 §1.2 的 `0` 哨兵(「无具体来源行引用」),绝不填假 id。
+ *
+ * **同一次决策里既给了裸 id 又给了自然键 ⇒ 两个都发出去**,让写入侧按 §8.7.3 判
+ * `source_ref_conflict` / `evidence_ref_conflict` 并逐项报错。本模块**不**替调用方
+ * 二选一 —— 静默取其中一个正是那条规则要禁掉的事。
  */
 
-/** 关系/查询的**自然键** → 契约 §8.7.1 的 `RosterPlatformRef` 形状。 */
-function toPlatformRef(
-  ref: { interface: 'business_list' | 'apply_list'; queryKey: string; rdjb: string; queriedAt?: string; sequenceNo?: number },
-  withSequence: boolean,
-): RosterPlatformRef {
-  return {
-    interface: ref.interface,
-    queryKey: ref.queryKey,
-    rdjb: ref.rdjb,
-    ...(ref.queriedAt ? { queriedAt: ref.queriedAt } : {}),
-    ...(withSequence ? { sequenceNo: ref.sequenceNo } : {}),
-  }
-}
 import { createHash } from 'node:crypto'
 import { normalizeName } from '../domain'
 import type { ComparisonDirection } from '../comparison'
@@ -62,6 +52,30 @@ import type {
 } from '../roster-import-client'
 import type { PlatformQueryOutcome } from './client'
 import { type PlatformRelationRecord, relationFromRow } from './identity'
+
+/** 查询的自然键(`platform_query` 那一行的坐标);§8.7.1 的 `RosterPlatformRef` 去掉 `sequenceNo`。 */
+export interface PlatformQueryRef {
+  interface: 'business_list' | 'apply_list'
+  queryKey: string
+  rdjb: string
+  /** 给了就精确匹配那一次查询;省略则要求 `(interface, queryKey, rdjb)` 唯一。 */
+  queriedAt?: string
+}
+
+/** 查询引用 → §8.7.1 的引用形状。 */
+function queryPlatformRef(ref: PlatformQueryRef): RosterPlatformRef {
+  return {
+    interface: ref.interface,
+    queryKey: ref.queryKey,
+    rdjb: ref.rdjb,
+    ...(ref.queriedAt ? { queriedAt: ref.queriedAt } : {}),
+  }
+}
+
+/** 关系引用 → §8.7.1 的引用形状(关系引用必须带 `sequenceNo`)。 */
+function relationPlatformRef(ref: RelationRef): RosterPlatformRef {
+  return { ...queryPlatformRef(ref), sequenceNo: ref.sequenceNo }
+}
 
 // ---------------------------------------------------------------------------
 // 输入
@@ -150,7 +164,7 @@ export interface DifferenceDecision {
   measureCode?: DifferenceMeasureCode | null
   measureNote?: string | null
   /** 证据:平台查询 / 平台关系。自然键见 {@link DifferenceDecision.evidenceRelation}。 */
-  evidenceQuery?: { interface: 'business_list' | 'apply_list'; queryKey: string; rdjb: string; queriedAt?: string }
+  evidenceQuery?: PlatformQueryRef
   evidenceRelation?: RelationRef
   evidenceQueryId?: number | null
   evidenceRelationId?: number | null
@@ -175,7 +189,7 @@ export interface MergeDecision {
   sourceKind?: 'platform_business' | 'platform_apply' | 'announcement' | 'manual'
   sourceRelation?: RelationRef
   sourceRefId?: number
-  evidenceQuery?: { interface: 'business_list' | 'apply_list'; queryKey: string; rdjb: string; queriedAt?: string }
+  evidenceQuery?: PlatformQueryRef
   evidenceQueryId?: number | null
   note?: string | null
 }
@@ -198,7 +212,7 @@ export interface BuildPayloadInput {
    */
   refs?: {
     relationIdOf?: (ref: RelationRef) => number | null | undefined
-    queryIdOf?: (ref: { interface: 'business_list' | 'apply_list'; queryKey: string; rdjb: string }) => number | null | undefined
+    queryIdOf?: (ref: PlatformQueryRef) => number | null | undefined
   }
 }
 
@@ -307,50 +321,60 @@ type RelationRefFields = { sourceRefId?: number; sourceRelationRef?: RosterPlatf
 
 /**
  * 别名/归并的**来源关系**指针。
- * 有自然键就发自然键(指向**本批新建**的关系行);传了 `refs` 且解析到 id 才发裸 id。
+ *
+ * 有自然键就发自然键(可指向**本批新建**的关系行);`refs` 解析到 id 就发裸 id。
+ * **两个都给了**⇒ 把两个都发出去,让写入侧按 §8.7.3 报 `source_ref_conflict` ——
+ * 本模块不替调用方二选一(静默取一个正是那条规则要禁掉的)。
  */
 function relationRefFields(
   input: BuildPayloadInput,
   decision: { sourceRelation?: RelationRef; sourceRefId?: number },
 ): RelationRefFields {
   const relation = decision.sourceRelation
-  if (relation) {
-    const resolved = input.refs?.relationIdOf?.(relation)
-    if (resolved != null) return { sourceRefId: resolved }
-    return { sourceRelationRef: toPlatformRef(relation, true) }
+  const literalId = decision.sourceRefId
+  if (!relation) return { sourceRefId: literalId ?? 0 }
+
+  const asLiteral = input.refs?.relationIdOf?.(relation) ?? literalId ?? null
+  if (asLiteral == null) return { sourceRelationRef: relationPlatformRef(relation) }
+  return {
+    sourceRefId: asLiteral,
+    // 调用方**同时**给了裸 id ⇒ 把自然键也发出去,交给写入侧判冲突。
+    ...(literalId != null ? { sourceRelationRef: relationPlatformRef(relation) } : {}),
   }
-  return { sourceRefId: decision.sourceRefId ?? 0 }
 }
 
-/** 差异项的**查询证据**指针。 */
+/** 差异项的**查询证据**指针(与 `relationRefFields` 同一条非静默规则)。 */
 function queryRefFields(
   input: BuildPayloadInput,
-  decision: {
-    evidenceQuery?: { interface: 'business_list' | 'apply_list'; queryKey: string; rdjb: string; queriedAt?: string }
-    evidenceQueryId?: number | null
-  },
+  decision: { evidenceQuery?: PlatformQueryRef; evidenceQueryId?: number | null },
 ): { evidenceQueryId?: number | null; evidenceQueryRef?: RosterPlatformRef } {
   const query = decision.evidenceQuery
-  if (query) {
-    const resolved = input.refs?.queryIdOf?.(query)
-    if (resolved != null) return { evidenceQueryId: resolved }
-    return { evidenceQueryRef: toPlatformRef(query, false) }
+  const literalId = decision.evidenceQueryId ?? null
+  if (!query) return { evidenceQueryId: literalId }
+
+  const asLiteral = input.refs?.queryIdOf?.(query) ?? literalId
+  if (asLiteral == null) return { evidenceQueryRef: queryPlatformRef(query) }
+  return {
+    evidenceQueryId: asLiteral,
+    ...(literalId != null ? { evidenceQueryRef: queryPlatformRef(query) } : {}),
   }
-  return { evidenceQueryId: decision.evidenceQueryId ?? null }
 }
 
-/** 差异项的**关系证据**指针。 */
+/** 差异项的**关系证据**指针(与 `relationRefFields` 同一条非静默规则)。 */
 function relationEvidenceFields(
   input: BuildPayloadInput,
   decision: { evidenceRelation?: RelationRef; evidenceRelationId?: number | null },
 ): { evidenceRelationId?: number | null; evidenceRelationRef?: RosterPlatformRef } {
   const relation = decision.evidenceRelation
-  if (relation) {
-    const resolved = input.refs?.relationIdOf?.(relation)
-    if (resolved != null) return { evidenceRelationId: resolved }
-    return { evidenceRelationRef: toPlatformRef(relation, true) }
+  const literalId = decision.evidenceRelationId ?? null
+  if (!relation) return { evidenceRelationId: literalId }
+
+  const asLiteral = input.refs?.relationIdOf?.(relation) ?? literalId
+  if (asLiteral == null) return { evidenceRelationRef: relationPlatformRef(relation) }
+  return {
+    evidenceRelationId: asLiteral,
+    ...(literalId != null ? { evidenceRelationRef: relationPlatformRef(relation) } : {}),
   }
-  return { evidenceRelationId: decision.evidenceRelationId ?? null }
 }
 
 /**

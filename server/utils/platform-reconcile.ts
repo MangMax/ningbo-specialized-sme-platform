@@ -208,8 +208,8 @@ export interface ReconcileReport {
 // 并发池
 // ---------------------------------------------------------------------------
 
-/** 有上限的并发映射:保持结果顺序,`limit` 至少 1。 */
-export async function mapWithConcurrency<T, R>(
+/** 有上限的并发映射:保持结果顺序,`limit` 至少 1。模块内自用(不是本模块对外的 API)。 */
+async function mapWithConcurrency<T, R>(
   items: T[],
   limit: number,
   fn: (item: T, index: number) => Promise<R>,
