@@ -92,6 +92,34 @@ function announcementRequest(over: Partial<RosterImportRequest> = {}): RosterImp
   }
 }
 
+function evidencePlanRequest(idempotencyKey: string, sourceFile: string): RosterImportRequest {
+  return {
+    idempotencyKey,
+    sourceKind: 'announcement',
+    sourceIdentity: 'jxj/announcement/2026/合成计划测试.pdf',
+    sourceSha256: 'synthetic-plan-sha',
+    payload: {
+      announcement: {
+        sourceDocument: { source: 'jxj', title: '合成计划测试公告' },
+        records: [
+          {
+            enterprise: { name: '合成计划企业有限公司', uscc: '91330211255994457P' },
+            titleCode: 'specialized_sme',
+            events: [
+              {
+                eventType: 'award',
+                year: 2026,
+                batchSeq: 1,
+                evidence: [{ sourceFile, attachment: '附件1', listNo: 1, page: 7 }],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  }
+}
+
 function seedEnterprise(
   db: ReturnType<typeof makeDb>,
   input: { name: string; uscc?: string | null; district?: string | null },
@@ -340,6 +368,61 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
     const snapshotItem = replay.items.find((i) => i.kind === 'export_batch')!
     expect(snapshotItem.detail!.rows).toEqual([])
     expect(snapshotItem.detail!.rowsWritten).toBe(0)
+  })
+})
+
+describe('出处重放记账不进入调用方逐项结果', () => {
+  it('commit、重试、replay 与批次读回隐藏内部目标快照，同时保留可重放记账', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const expectPublicItems = (items: Array<{ detail?: Record<string, unknown> }>) => {
+      for (const item of items) {
+        expect(item.detail).not.toHaveProperty('evidenceRepointTargets')
+        expect(item.detail).not.toHaveProperty('evidenceRepointPlanFingerprint')
+      }
+    }
+
+    try {
+      const base = evidencePlanRequest('synthetic/evidence-plan-base', 'jxj/announcement/2026/计划-A.pdf')
+      const first = await client.commit(base)
+      expect(first.status).toBe('committed')
+      expectPublicItems(first.items)
+
+      const repoint = evidencePlanRequest('synthetic/evidence-plan-repoint', 'jxj/announcement/2026/计划-B.pdf')
+      const committed = await client.commit(repoint)
+      expect(committed.status).toBe('committed')
+      expect(committed.summary.evidenceRepointed).toBe(1)
+      expect(committed.items.reduce((n, item) => n + Number(item.detail?.evidenceRepointed ?? 0), 0)).toBe(1)
+      expectPublicItems(committed.items)
+
+      const committedLedger = db.select().from(schema.importBatch).all().find((batch) => batch.idempotencyKey === repoint.idempotencyKey)!
+      const storedCommitItems = committedLedger.itemResults as Array<{ detail?: Record<string, unknown> }>
+      expect(storedCommitItems[0]?.detail?.evidenceRepointTargets).toHaveLength(1)
+      expect(storedCommitItems[0]?.detail?.evidenceRepointPlanFingerprint).toMatch(/^[0-9a-f]{64}$/)
+
+      // 幂等读回和 outcome 查询都投影成同一份调用方结果。
+      const retried = await client.commit(repoint)
+      expectPublicItems(retried.items)
+      expectPublicItems(readImportBatchOutcome(db, repoint.idempotencyKey)!.items!)
+
+      // 同一批次的显式 replay 仍能按载荷计划更新出处，但响应不泄漏计划快照。
+      const replayRequest = evidencePlanRequest(repoint.idempotencyKey, 'jxj/announcement/2026/计划-C.pdf')
+      const replay = await client.replay(replayRequest)
+      expect(replay.status).toBe('replayed')
+      expect(replay.evidenceRepointed).toBe(1)
+      expectPublicItems(replay.items)
+      expect(db.select().from(schema.recordEvidence).all().map((row) => ({ sourceFile: row.sourceFile, page: row.page }))).toEqual([
+        { sourceFile: 'jxj/announcement/2026/计划-C.pdf', page: 7 },
+      ])
+
+      const replayLedger = db.select().from(schema.importBatch).all().find((batch) => batch.idempotencyKey === `${repoint.idempotencyKey}#repoint`)!
+      const storedReplayItems = replayLedger.itemResults as Array<{ detail?: Record<string, unknown> }>
+      expect(storedReplayItems[0]?.detail?.evidenceRepointTargets).toHaveLength(1)
+      expectPublicItems(readImportBatchOutcome(db, `${repoint.idempotencyKey}#repoint`)!.items!)
+    } finally {
+      await server.close()
+    }
   })
 })
 

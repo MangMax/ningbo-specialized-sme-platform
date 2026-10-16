@@ -68,6 +68,11 @@
  * 不存在手改走样的可能。
  * （它同时纠正了父代理两处说法：相同前缀是 **1172** 行而非 1163；以及上面那条
  * `preflightResultSha` 的成因 —— 父代理原先写成「随摘要多一字段而变」是错的。）
+ *
+ * ── 内部重放记账不进入 API 黄金（2026-10-17，RL-10 收尾）────────────────────
+ * `evidenceRepointTargets` 与 `evidenceRepointPlanFingerprint` 持久化供显式 replay 复用，
+ * 但不属于调用方逐项结果。语义记录器对 `item_results` 按同一公开投影求摘要，故此类内部
+ * 记账变动不要求重生黄金；API 返回的逐项结果仍逐字冻结。
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

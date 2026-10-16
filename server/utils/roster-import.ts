@@ -3118,7 +3118,7 @@ export function commitRosterImport(
     // 摘要类型里它是必填，所以读回时补 0（「那一批没有收敛」是事实，不是缺失）——
     // 否则调用方拿到的是 `undefined`，把它当数字用就会静默算错。
     const summary = readSummaryOf(batch.summary) ?? { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
-    const items = (batch.itemResults as RosterImportItemResult[] | null) ?? []
+    const items = publicRosterImportItems((batch.itemResults as RosterImportItemResult[] | null) ?? [])
     return { batchId: batch.id, status: 'committed', summary, items, error: null }
   }
 
@@ -3146,7 +3146,7 @@ export function commitRosterImport(
       })
       .where(eq(schema.importBatch.id, batch.id))
       .run()
-    return { batchId: batch.id, status: 'failed', summary, items, error }
+    return { batchId: batch.id, status: 'failed', summary, items: publicRosterImportItems(items), error }
   }
 
   let items: RosterImportItemResult[]
@@ -3181,7 +3181,7 @@ export function commitRosterImport(
         .set({ status: 'failed', itemResults: items, summary, error, preflightResult: summarizePlan(plan) })
         .where(eq(schema.importBatch.id, batch.id))
         .run()
-      return { batchId: batch.id, status: 'failed', summary, items, error }
+      return { batchId: batch.id, status: 'failed', summary, items: publicRosterImportItems(items), error }
     }
     const message = cause instanceof Error ? cause.message : String(cause)
     const error = `批次提交失败（已整批回滚，未写入任何数据）：${message}`
@@ -3192,7 +3192,13 @@ export function commitRosterImport(
       .set({ status: 'failed', itemResults: items, summary: { written: 0, skipped: 0, failed: plan.items.length, evidenceRepointed: 0 }, error })
       .where(eq(schema.importBatch.id, batch.id))
       .run()
-    return { batchId: batch.id, status: 'failed', summary: { written: 0, skipped: 0, failed: plan.items.length, evidenceRepointed: 0 }, items, error }
+    return {
+      batchId: batch.id,
+      status: 'failed',
+      summary: { written: 0, skipped: 0, failed: plan.items.length, evidenceRepointed: 0 },
+      items: publicRosterImportItems(items),
+      error,
+    }
   }
 
   const summary = summarizeCommit(plan, items)
@@ -3207,7 +3213,21 @@ export function commitRosterImport(
     })
     .where(eq(schema.importBatch.id, batch.id))
     .run()
-  return { batchId: batch.id, status: 'committed', summary, items, error: null }
+  return { batchId: batch.id, status: 'committed', summary, items: publicRosterImportItems(items), error: null }
+}
+
+/** Keep replay snapshots in the batch ledger, but expose only caller-facing item details. */
+function publicRosterImportItems(items: readonly RosterImportItemResult[]): RosterImportItemResult[] {
+  return items.map((item) => {
+    if (!item.detail) return item
+    const detail = { ...item.detail }
+    delete detail.evidenceRepointTargets
+    delete detail.evidenceRepointPlanFingerprint
+    if (Object.keys(detail).length === Object.keys(item.detail).length) return item
+    const publicItem = { ...item }
+    delete publicItem.detail
+    return Object.keys(detail).length > 0 ? { ...publicItem, detail } : publicItem
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -3302,7 +3322,7 @@ export function replayRosterImport(db: Db, request: RosterImportRequest): Roster
       })
       .where(eq(schema.importBatch.id, batch.id))
       .run()
-    return { batchId: batch.id, status: 'failed', update: 0, evidenceRepointed: 0, items, error }
+    return { batchId: batch.id, status: 'failed', update: 0, evidenceRepointed: 0, items: publicRosterImportItems(items), error }
   }
 
   // 只跑「有收敛可做」的那些项（`run` 只挂在这些项上）—— 其余项连闭包都没有。
@@ -3325,7 +3345,7 @@ export function replayRosterImport(db: Db, request: RosterImportRequest): Roster
     .where(eq(schema.importBatch.id, batch.id))
     .run()
 
-  return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items, error: null }
+  return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items: publicRosterImportItems(items), error: null }
 }
 
 /**
@@ -3406,7 +3426,9 @@ export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
     preflight: (batch.preflightResult as RosterImportPreflight | null) ?? null,
     // 与 `commitRosterImport` 的读回同一份补法：本票之前提交的批次没有 `evidenceRepointed`。
     summary: readSummaryOf(batch.summary),
-    items: (batch.itemResults as RosterImportItemResult[] | null) ?? null,
+    items: batch.itemResults == null
+      ? null
+      : publicRosterImportItems((batch.itemResults as RosterImportItemResult[] | null) ?? []),
     /** 本次导入报出的重名候选（RL-14；计数 + 明细都在这里，见 {@link readDuplicateCandidates}）。 */
     duplicateCandidates: readDuplicateCandidates(db, idempotencyKey),
     error: batch.error,
