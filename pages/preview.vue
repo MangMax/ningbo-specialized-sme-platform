@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ChevronLeft, FileDown } from '@lucide/vue'
 import { describeUnsupported, fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
 import {
@@ -63,6 +63,10 @@ const { data: pagesState } = useQuery({
 
 /** 页图库刚完成的本地状态;父页查询缓存尚未重取时也能同步隐藏待渲染提示。 */
 const locallyRenderedPages = ref<{ file: string; pages: number[] } | null>(null)
+watch(file, () => {
+  locallyRenderedPages.value = null
+})
+
 function onPagesRendered(state: PdfPagesState) {
   if (state.file !== file.value) return
   locallyRenderedPages.value = { file: state.file, pages: state.pages.map((page) => page.page) }
@@ -71,10 +75,8 @@ function onPagesRendered(state: PdfPagesState) {
 const requestedPageRendered = computed(() => {
   if (page.value === null) return false
   const local = locallyRenderedPages.value
-  return (
-    (local?.file === file.value && local.pages.includes(page.value)) ||
-    (pagesState.value?.pages ?? []).some((p) => p.page === page.value)
-  )
+  if (local?.file === file.value) return local.pages.includes(page.value)
+  return (pagesState.value?.pages ?? []).some((p) => p.page === page.value)
 })
 
 useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : '来源预览')) })

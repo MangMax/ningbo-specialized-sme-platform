@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import PreviewPage from '../pages/preview.vue'
 import type { PdfPagesState, RenderOutcome } from '../server/utils/pdf-pages'
 
-const mocks = vi.hoisted(() => ({ pageState: null as unknown }))
+const mocks = vi.hoisted(() => ({ pageState: null as unknown, renderedPages: [1, 2, 3] as number[] }))
 
 vi.mock('@pinia/colada', async () => {
   const { ref } = await import('vue')
@@ -39,6 +39,7 @@ function pagesState(pages: number[]): PdfPagesState {
 
 beforeEach(() => {
   mocks.pageState = pagesState([])
+  mocks.renderedPages = [1, 2, 3]
   vi.stubGlobal('useRoute', () => ({ query: { file, page: '3', back: '/?view=enterprise&page=2&expand=91' } }))
   vi.stubGlobal('useHead', vi.fn())
   vi.stubGlobal(
@@ -46,8 +47,8 @@ beforeEach(() => {
     vi.fn(async (_url: string, options?: { method?: string }) => {
       if (options?.method === 'POST') {
         return {
-          ...pagesState([1, 2, 3]),
-          written: 3,
+          ...pagesState(mocks.renderedPages),
+          written: mocks.renderedPages.length,
           skipped: 0,
           removed: 0,
           elapsedMs: 1,
@@ -84,6 +85,37 @@ describe('来源预览页图深链', () => {
 
     expect(wrapper.find('[data-test="single-page-preview"]').text()).toBe('第 3 页')
     expect(wrapper.text()).not.toContain('第 3 页的页图还没有渲染')
+    wrapper.unmount()
+  })
+
+  it('新渲染结果不含目标页时，不让旧查询缓存隐藏待渲染提示', async () => {
+    mocks.pageState = pagesState([3])
+    mocks.renderedPages = [1, 2]
+
+    const wrapper = mount(PreviewPage, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          PageHeader: { template: '<div><slot name="breadcrumb"/><slot name="actions"/></div>' },
+          NuxtLink: { props: ['to'], template: '<a :href="to"><slot/></a>' },
+          ImagePreview: {
+            props: ['name'],
+            template: '<div data-test="single-page-preview">{{ name }}</div>',
+          },
+        },
+      },
+    })
+
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('第 3 页的页图还没有渲染')
+
+    const render = wrapper.findAll('button').find((button) => button.text().includes('渲染页图'))
+    expect(render).toBeDefined()
+    await render!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('第 3 页的页图还没有渲染')
+    expect(wrapper.find('[data-test="single-page-preview"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })
