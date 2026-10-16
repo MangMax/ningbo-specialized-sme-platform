@@ -11,7 +11,7 @@
  */
 import { parseCsvQuery } from '../../lib/csv'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../lib/comparison'
-import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES, TITLE_ORDER } from '../../lib/labels'
+import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES, EVENT_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../../lib/labels'
 import {
   ROSTER_STATES,
   type RosterDifferenceFilter,
@@ -44,6 +44,18 @@ function knownOrThrow(
   return values
 }
 
+/**
+ * 事件年份(多值)。**非数字项剔除**而不是给 400:年份是自由文本输入里最容易带进
+ * 杂字符的一类(粘贴、手输),剔除后仍按剩下的年份筛,比整条请求打回 400 更有用;
+ * 全被剔除时等于没筛(与 `parseCsvQuery` 的「没筛」语义一致)。
+ */
+function yearsParam(value: unknown): number[] | undefined {
+  const list = parseCsvQuery(value)
+    ?.map((s) => Number(s))
+    .filter((n) => Number.isInteger(n) && n > 0)
+  return list?.length ? list : undefined
+}
+
 /** §7.1 总表的筛选参数。 */
 export function parseRosterEnterpriseQuery(query: Record<string, unknown>): RosterEnterpriseFilter {
   const title = knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title')
@@ -59,6 +71,10 @@ export function parseRosterEnterpriseQuery(query: Record<string, unknown>): Rost
     title,
     district: strParam(query.district),
     rosterState: rosterState as RosterState | undefined,
+    // RL-17:合并台账后 `/stats` 的下钻会带这三项进企业粒度,缺一就静默变成不筛。
+    source: knownOrThrow(parseCsvQuery(query.source), SOURCE_ORDER, 'source'),
+    eventType: knownOrThrow(parseCsvQuery(query.eventType), EVENT_ORDER, 'eventType'),
+    year: yearsParam(query.year),
     page: intParam(query.page, 1),
     pageSize: intParam(query.pageSize, 50),
   }
@@ -67,6 +83,9 @@ export function parseRosterEnterpriseQuery(query: Record<string, unknown>): Rost
 /** §7.3 差异的筛选参数。 */
 export function parseRosterDifferenceQuery(query: Record<string, unknown>): RosterDifferenceFilter {
   return {
+    // RL-17:合并台账的搜索框对三个视图都生效,差异视图也必须读 `q`
+    // —— 否则切到「差异与原因」再搜是静默不筛。
+    q: strParam(query.q),
     title: knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title'),
     direction: knownOrThrow(
       parseCsvQuery(query.direction),

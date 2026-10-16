@@ -42,6 +42,24 @@ interface EnterpriseDetail {
 const route = useRoute()
 const id = computed(() => String(route.params.id ?? ''))
 
+/**
+ * 返回名录台账。
+ *
+ * 台账把「视图 + 全部筛选 + 页码」都放在地址栏里,所以进企业详情时把那份筛选串
+ * 作为 `back` 带过来(见 `RosterEnterprisePanel` / `RosterTitleTable` 的链接)。
+ * 没有 `back`(直接输 URL、从别处进来)就退回台账首页。
+ *
+ * 只接受**查询串**形状(`a=1&b=2`),兑成 query 对象再交给 router —— 不直接拼进 `to`,
+ * 免得把一个来路不明的字符串当路径用。
+ */
+const backTo = computed(() => {
+  const raw = typeof route.query.back === 'string' ? route.query.back : ''
+  if (!raw) return '/'
+  const query: Record<string, string> = {}
+  for (const [k, v] of new URLSearchParams(raw)) query[k] = v
+  return { path: '/', query }
+})
+
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading, error } = useQuery({
   key: () => ['enterprise', id.value],
@@ -133,7 +151,7 @@ function openPreview(e: Evidence) {
     <template v-else-if="detail">
       <PageHeader class="rise-in" style="--rise-index: 0" :title="detail.name">
         <template #breadcrumb>
-          <NuxtLink to="/" class="hover:text-foreground hover:underline">台账</NuxtLink>
+          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">名录台账</NuxtLink>
           <span class="mx-1.5">/</span>
           <span>企业详情</span>
         </template>

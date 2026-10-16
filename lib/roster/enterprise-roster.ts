@@ -101,13 +101,25 @@ export interface RosterEnterpriseRow {
 }
 
 export interface RosterEnterpriseFilter {
-  /** 名称 / **已确认**曾用名关键词(契约 §5 搜索口径)。 */
+  /** 名称 / **已确认**曾用名 / 统代关键词(契约 §5 搜索口径;统代为 RL-17 增量)。 */
   q?: string
   /** 称号(多值,命中任一)。 */
   title?: string[]
   /** 属地(= 企业自身属地,为空时退回记录属地)。 */
   district?: string
   rosterState?: RosterState
+  /**
+   * 来源(多值,命中任一)—— RL-17 增量:命中「该企业**存在**一条该来源的记录」。
+   *
+   * 与 `/api/records` 的 `source` 同构,只是把粒度从「企业 × 称号」抬到「企业」:
+   * 合并后的台账只有一个入口,而 `/stats` 的下钻是 `/?source=…`;企业粒度不认这一项的话,
+   * 下钻会**静默变成不筛**。
+   */
+  source?: string[]
+  /** 事件类型(多值,命中任一):该企业**存在**一条该类型的事件。 */
+  eventType?: string[]
+  /** 事件年份(多值,命中任一):该企业**存在**一条该年份的事件。 */
+  year?: number[]
   page?: number
   pageSize?: number
 }
@@ -354,6 +366,39 @@ export function allRosterEnterprises(
   return selectRosterEnterprises(db, filter)
 }
 
+/**
+ * 记录侧的三个增量判据(RL-17)。**在 profile 上判**,不是在企业行上判 ——
+ * `RosterEnterpriseRow` 是接口面,不该为了筛选多长出几个字段。
+ *
+ * 口径与 `/api/records` 的 `buildWhere` **同构**。那里把 `source` 落在 record 行上,
+ * 把 `eventType` / `year` 落成一条 EXISTS —— 类型与年份必须在**同一条事件**上,而这条
+ * EXISTS 又挂在**那条** record 上。抬到企业粒度就是:
+ *
+ * > **存在**一条该企业的记录,它满足来源判据,且它上面有一条事件同时满足类型与年份判据。
+ *
+ * 为什么非要「同一条」:合并后两种分组共用一个 URL,用户在 `按企业` 与 `按企业×称号`
+ * 之间切换时,看到的必须是**同一批企业**。松成「各自存在」,企业粒度会命中更多
+ * (企业有一条 2023 复核、另有一条 2021 认定,就会被 `eventType=award&year=2023` 判中),
+ * 两个分组当场对不上。
+ *
+ * 缺省即不判:「没给这一项」与「给了个筛不中的值」必须分开(前者返回全部,后者返回 0 条)。
+ */
+function matchesRecordFilters(profile: Profile, filter: RosterEnterpriseFilter): boolean {
+  const sources = filter.source?.length ? filter.source : null
+  const types = filter.eventType?.length ? filter.eventType : null
+  const years = filter.year?.length ? filter.year : null
+  if (!sources && !types && !years) return true
+  return profile.records.some((record) => {
+    if (sources && !sources.includes(record.source)) return false
+    if (!types && !years) return true
+    return (profile.eventsByRecord.get(record.id) ?? []).some(
+      (e) =>
+        (!types || types.includes(e.eventType)) &&
+        (!years || (e.year != null && years.includes(e.year))),
+    )
+  })
+}
+
 function selectRosterEnterprises(
   db: Db,
   filter: RosterEnterpriseFilter,
@@ -372,24 +417,35 @@ function selectRosterEnterprises(
   }
 
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
-  const rows = profiles
-    .map((profile) => {
-      const aliasNames = [...(confirmedAliases.get(profile.enterprise.id) ?? [])].sort()
-      const state = deriveRosterState(profile, index)
-      return toRow(profile, aliasNames, state)
-    })
-    .filter((row) => {
-      if (filter.title?.length && !row.titles.some((t) => filter.title!.includes(t))) return false
-      if (filter.district && row.district !== filter.district) return false
-      if (filter.rosterState && row.rosterState !== filter.rosterState) return false
-      if (needle) {
+  /**
+   * 统代匹配(RL-17 增量)。合并后的台账三个视图共用一个搜索框,框上写着
+   * 「企业名 / 曾用名 / 统一社会信用代码」;`/api/records` 那一侧一直认统代,
+   * 企业粒度不认的话,粘贴一个统代进来会**静默返回 0 家**。
+   * 口径与 `lib/query.ts` 的 `q` 逐字一致:归一化大写后的子串匹配。
+   */
+  const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
+  const candidates = profiles.map((profile) => ({
+    profile,
+    aliasNames: [...(confirmedAliases.get(profile.enterprise.id) ?? [])].sort(),
+    state: deriveRosterState(profile, index),
+  }))
+  const rows = candidates
+    .filter(({ profile, aliasNames, state }) => {
+      if (filter.rosterState && state !== filter.rosterState) return false
+      if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return false
+      if (filter.district && effectiveDistrict(profile) !== filter.district) return false
+      if (!matchesRecordFilters(profile, filter)) return false
+      if (needle || usccNeedle) {
         const hit =
-          normalizeName(row.name).includes(needle) ||
-          row.aliasNames.some((alias) => normalizeName(alias).includes(needle))
+          (needle != null && normalizeName(profile.enterprise.name).includes(needle)) ||
+          (needle != null && aliasNames.some((alias) => normalizeName(alias).includes(needle))) ||
+          (usccNeedle != null &&
+            (profile.enterprise.usccNorm ?? '').toUpperCase().includes(usccNeedle))
         if (!hit) return false
       }
       return true
     })
+    .map(({ profile, aliasNames, state }) => toRow(profile, aliasNames, state))
     .sort(
       (a, b) =>
         titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') ||
@@ -776,6 +832,15 @@ export interface RosterDifferenceFilter {
   direction?: ComparisonDirection[]
   status?: string[]
   reason?: string[]
+  /**
+   * 企业名称 / **已确认**曾用名 / 统代关键词(RL-17 增量)。
+   *
+   * 合并后台账只有一个搜索框,三个视图共用。原来总表的搜索在两个页签间共享,
+   * 但差异查询根本不读 `q` —— 切到「差异与原因」再搜,结果是**静默不筛**,
+   * 看到的是没过滤的列表。这里补上,口径与总表逐字一致
+   * (`normalizeName` + 仅 `confirmed` 别名 + 统代子串)。
+   */
+  q?: string
   page?: number
   pageSize?: number
 }
@@ -798,12 +863,33 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
   const snap = readSnapshot(db)
   const differenceRows = differenceUniverse(db, snap)
 
+  // 别名:只带 `confirmed`(契约 §1.2),与总表的搜索口径同一处规则。
+  const confirmedAliases = new Map<number, string[]>()
+  for (const alias of snap.aliases) {
+    if (alias.verificationStatus !== 'confirmed') continue
+    const list = confirmedAliases.get(alias.enterpriseId) ?? []
+    if (!list.includes(alias.name)) list.push(alias.name)
+    confirmedAliases.set(alias.enterpriseId, list)
+  }
+  const needle = filter.q?.trim() ? normalizeName(filter.q) : null
+  const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
+
   const rows = differenceRows
     .filter((row) => {
       if (filter.title?.length && !filter.title.includes(row.titleCode)) return false
       if (filter.direction?.length && !filter.direction.includes(row.direction)) return false
       if (filter.status?.length && !filter.status.includes(row.status)) return false
       if (filter.reason?.length && !(row.reasonCode != null && filter.reason.includes(row.reasonCode))) return false
+      if (needle || usccNeedle) {
+        const hit =
+          (needle != null && normalizeName(row.name).includes(needle)) ||
+          (needle != null &&
+            (confirmedAliases.get(row.enterpriseId) ?? []).some((alias) =>
+              normalizeName(alias).includes(needle),
+            )) ||
+          (usccNeedle != null && (row.uscc ?? '').toUpperCase().includes(usccNeedle))
+        if (!hit) return false
+      }
       return true
     })
     .sort(
