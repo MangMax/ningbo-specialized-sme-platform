@@ -22,7 +22,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../domain'
 import { getComparison, type ComparisonDirection } from '../comparison'
-import { SOURCE_ORDER, TITLE_ORDER } from '../labels'
+import { DIFFERENCE_STATUS_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import { computeTitleLifecycle, type LifecycleEvent, type TitleLifecycle } from './lifecycle'
 
@@ -51,13 +51,42 @@ interface Snapshot {
   relations: (typeof schema.platformRelation)['$inferSelect'][]
   queries: (typeof schema.platformQuery)['$inferSelect'][]
   differences: (typeof schema.differenceReason)['$inferSelect'][]
+  /**
+   * 按外键分好桶的索引 —— **这一层是性能承重结构,不是便利**。
+   *
+   * 总表要给**每**一家企业建一次画像(7,298 家),而画像里的「这家企业的记录」与
+   * 「这条记录的事件」原先都是 `snap.records.filter(...)` / `snap.events.filter(...)`:
+   * 每次过滤扫全表,于是总表接口是 **O(企业数 × 事件数) ≈ 7,298 × 21,700 ≈ 1.6 亿次**比较,
+   * 实测 **~2.4–3.5 秒**(其他读接口 0.2 秒级)。这正是「换筛选条件要等好几秒」的根因。
+   *
+   * 索引一次建好(遍历两遍、O(n)),之后每家都是 Map 命中。**顺序语义与逐行 filter 逐字相同**:
+   * 桶是按 `snap.*` 的原顺序 push 出来的,所以「同一记录下的多条事件」的相对顺序不变。
+   */
+  recordsByEnterprise: Map<number, (typeof schema.record)['$inferSelect'][]>
+  eventsByRecord: Map<number, (typeof schema.recordEvent)['$inferSelect'][]>
 }
 
 function readSnapshot(db: Db): Snapshot {
+  const records = db.select().from(schema.record).all()
+  const events = db.select().from(schema.recordEvent).all()
+
+  const recordsByEnterprise = new Map<number, typeof records>()
+  for (const record of records) {
+    const bucket = recordsByEnterprise.get(record.enterpriseId)
+    if (bucket) bucket.push(record)
+    else recordsByEnterprise.set(record.enterpriseId, [record])
+  }
+  const eventsByRecord = new Map<number, typeof events>()
+  for (const event of events) {
+    const bucket = eventsByRecord.get(event.recordId)
+    if (bucket) bucket.push(event)
+    else eventsByRecord.set(event.recordId, [event])
+  }
+
   return {
     enterprises: db.select().from(schema.enterprise).all(),
-    records: db.select().from(schema.record).all(),
-    events: db.select().from(schema.recordEvent).all(),
+    records,
+    events,
     evidence: db.select().from(schema.recordEvidence).all(),
     aliases: db.select().from(schema.enterpriseAlias).all(),
     exportRows: db.select().from(schema.platformExportRow).all(),
@@ -65,6 +94,8 @@ function readSnapshot(db: Db): Snapshot {
     relations: db.select().from(schema.platformRelation).all(),
     queries: db.select().from(schema.platformQuery).all(),
     differences: db.select().from(schema.differenceReason).all(),
+    recordsByEnterprise,
+    eventsByRecord,
   }
 }
 
@@ -98,6 +129,41 @@ export interface RosterEnterpriseRow {
   nextReviewYear: number | null
   /** 锚点计算中用到缺 `decided_year` 的事件 ⇒ **待核**(不猜)。 */
   anchorNeedsReview: boolean
+  /** 该企业的差异摘要(RL-20:台账页「差异状态」列与最左状态条都只读它)。 */
+  difference: RosterEnterpriseDifference
+}
+
+/**
+ * 一家企业的差异摘要(RL-20)。
+ *
+ * ── 口径 = `differenceUniverse`(与 `/api/roster/differences` 的 `total` 逐字相同)──
+ * 不筛时实测 **821** 条,状态分布 **676 已确认原因 / 143 未查询 / 2 无记录**,
+ * 方向分布 **762 应纳未纳 / 59 平台多出** —— 与 `_shared-brief.md` 的真实计数逐项吻合。
+ * 这里**刻意不**只取 `inCurrentDifference`(那是 712):那 109 条的差额正是「两侧后来对齐了、
+ * 解释留档」的坐标,而它们**有**理由记录、也**有**状态,`RosterEnterprisePanel` 一直在页面上
+ * 明示着(「当前已不是差异(解释留档)」)。页脚、筛选项与列三处读同一个数,才不会各说各话。
+ *
+ * ── 为什么要「最要紧的一条」而不是把全部摆出来 ──────────────────────────
+ * 表里一行只能写一个状态,而一家企业**可能有多条**差异、且状态各不相同
+ * (实测:开诚 = `specialized_sme` 的「平台多出 · 已确认原因」+ 同称号「应纳未纳 · 未查询」;
+ * 上航测绘同形)。所以必须定死「取哪一条」,否则同一家企业会在不同实现里显示成不同状态
+ * —— 那正是上一版设计稿踩过的坑(同一位置两个说法)。
+ *
+ * 判据:**按状态机的展示顺序取最靠后的那一条**(`DIFFERENCE_STATUS_ORDER`:
+ * 未查询 → 查询失败 → 无记录 → 待核实 → 已确认无差异 → 已确认原因)。
+ * 于是「已确认原因」压过「未查询」—— 已经查明的原因比「还没查」更该让人看到,
+ * 与设计稿逐行对得上(开诚显示「已确认原因 · 平台未更新」,福至显示「无差异」)。
+ * 同状态多条时按称号等级、再按方向定序,保证**同一份数据每次取到同一条**。
+ */
+export interface RosterEnterpriseDifference {
+  /** 该企业的差异坐标数(企业 × 称号 × 方向);0 = 该企业一条差异记录都没有。 */
+  count: number
+  /** 「最要紧」那一条的展示态;**`count === 0` 时为 `null`**(页面显示「无差异」)。 */
+  status: string | null
+  /** 与 `status` 配对的原因(`confirmed_reason` 才有;其余为 `null`)。 */
+  reasonCode: string | null
+  /** 这些坐标里有没有**当前确实还是差异**的那些(`false` = 全部只是留档解释)。 */
+  anyCurrent: boolean
 }
 
 export interface RosterEnterpriseFilter {
@@ -120,9 +186,38 @@ export interface RosterEnterpriseFilter {
   eventType?: string[]
   /** 事件年份(多值,命中任一):该企业**存在**一条该年份的事件。 */
   year?: number[]
+  /**
+   * 差异状态(多值,命中任一)—— RL-20 增量。取值 = 六个差异状态 **∪** `none`。
+   *
+   * `none` 是**伪状态**,不是 `difference_reason.status` 的取值:它表示「该企业
+   * **一条差异记录都没有**」(设计稿表里的「无差异」那一档)。用户要找干净的企业时,
+   * 这是唯一能表达它的条件 —— 六个状态里没有一个能筛出「没有差异」。
+   */
+  diffStatus?: string[]
+  /** 排序(RL-20)。见 `RosterEnterpriseSort`。 */
+  sort?: RosterEnterpriseSort
   page?: number
   pageSize?: number
 }
+
+/**
+ * 总表排序(RL-20)。取值即页面「排序」下拉的三个选项。
+ *
+ * - `recognition`(**默认**,设计卡上的「认定年」):按该企业**最早的**首次认定年
+ *   **新→旧**;没有首次认定的企业排在最后。近期认定的先进屏 —— 名录管理员多数时候
+ *   是来跟当年度的批次。
+ * - `name`:企业名称(本地化排序)。
+ * - `title`:称号等级(小巨人 → 专精特新 → 创新型),即 RL-17 之前的默认主序。
+ *
+ * 三种排序**都不省略** tie-break(名称 → id),否则同一份数据在两次请求里可能给出
+ * 不同的页内顺序,分页时会出现「某一行两侧都出现 / 一侧都没有」。
+ */
+export const ROSTER_ENTERPRISE_SORTS = ['recognition', 'name', 'title'] as const
+export type RosterEnterpriseSort = (typeof ROSTER_ENTERPRISE_SORTS)[number]
+export const DEFAULT_ROSTER_ENTERPRISE_SORT: RosterEnterpriseSort = 'recognition'
+
+/** 「无差异」这一档在 `diffStatus` 里的伪状态取值。 */
+export const DIFF_STATUS_NONE = 'none'
 
 export interface RosterCounts {
   /** **企业数**(与筛选同口径、不受分页影响)。 */
@@ -131,6 +226,13 @@ export interface RosterCounts {
   titlePairs: number
   /** 每个称号下的**企业数**(多称号企业在各桶里各计一次)。 */
   titles: Record<string, number>
+  /**
+   * 本筛选下这些企业合计有多少条**差异记录**(企业 × 称号 × 方向)—— RL-20。
+   *
+   * 口径与 `/api/roster/differences` 的 `total` 同一处:`differenceUniverse` 的行数。
+   * 不筛时实测 **821**,与页面脚注、`_shared-brief.md` 的「合计 821」逐字相同。
+   */
+  differences: number
 }
 
 export interface RosterEnterprisesResult {
@@ -209,10 +311,10 @@ function deriveRosterState(profile: Profile, index: SnapshotIndex): RosterState 
 }
 
 function buildProfile(enterprise: Snapshot['enterprises'][number], snap: Snapshot): Profile {
-  const records = snap.records.filter((r) => r.enterpriseId === enterprise.id)
+  const records = snap.recordsByEnterprise.get(enterprise.id) ?? []
   const eventsByRecord = new Map<number, Snapshot['events']>()
   for (const record of records) {
-    eventsByRecord.set(record.id, snap.events.filter((e) => e.recordId === record.id))
+    eventsByRecord.set(record.id, snap.eventsByRecord.get(record.id) ?? [])
   }
 
   // 生命周期按 **(企业 × 称号)** 算,把该称号下**全部来源**的事件合起来
@@ -276,6 +378,7 @@ function toRow(
   profile: Profile,
   aliasNames: string[],
   rosterState: RosterState,
+  difference: RosterEnterpriseDifference,
 ): RosterEnterpriseRow {
   return {
     enterpriseId: profile.enterprise.id,
@@ -290,7 +393,72 @@ function toRow(
     firstRecognition: profile.summary.firstRecognition,
     nextReviewYear: profile.summary.nextReviewYear,
     anchorNeedsReview: profile.summary.anchorNeedsReview,
+    difference,
   }
+}
+
+/** 状态机的展示顺序给出的优先级;不认识的取值排最后(不吞、也不静默当成已知态)。 */
+function statusRank(code: string): number {
+  const i = DIFFERENCE_STATUS_ORDER.indexOf(code)
+  return i === -1 ? DIFFERENCE_STATUS_ORDER.length : i
+}
+
+/**
+ * 两条当前差异里,**哪一条更该显示在这一行上**:负数 = `a` 胜。
+ *
+ * 三级判据,缺一不可:
+ *  1. **状态机顺序靠后的胜**(`confirmed_reason` > `not_queried`)—— 主判据;
+ *  2. 同状态按**称号等级**(小巨人 > 专精特新 > 创新型),让同一家企业的摘要稳定落在高等级称号上;
+ *  3. 再同则按方向代号字典序。
+ *
+ * 后两级不是「锦上添花」:没有它们,同状态多条时取到哪一条取决于 Map 的插入顺序,
+ * 也就是取决于上一层的 SQL 返回顺序 —— 那是不可依赖的(换一次查询计划就变)。
+ */
+function compareDifferencePriority(a: RosterDifferenceRow, b: RosterDifferenceRow): number {
+  return (
+    statusRank(b.status) - statusRank(a.status) ||
+    titleRank(a.titleCode) - titleRank(b.titleCode) ||
+    a.direction.localeCompare(b.direction)
+  )
+}
+
+/**
+ * 每家企业一条**差异摘要**(RL-20)。口径见 `RosterEnterpriseDifference` 的注释。
+ */
+function enterpriseDifferenceSummaries(db: Db, snap: Snapshot): Map<number, RosterEnterpriseDifference> {
+  const out = new Map<number, RosterEnterpriseDifference>()
+  /** 每家在选「最要紧」时用到的那条,只在本次调用里有意义 —— 不进入返回行。 */
+  const best = new Map<number, RosterDifferenceRow>()
+  for (const row of differenceUniverse(db, snap)) {
+    const kept = out.get(row.enterpriseId)
+    if (!kept) {
+      out.set(row.enterpriseId, {
+        count: 1,
+        status: row.status,
+        reasonCode: row.reasonCode,
+        anyCurrent: row.inCurrentDifference,
+      })
+      best.set(row.enterpriseId, row)
+      continue
+    }
+    kept.count += 1
+    kept.anyCurrent ||= row.inCurrentDifference
+    const incumbent = best.get(row.enterpriseId)!
+    if (compareDifferencePriority(row, incumbent) < 0) {
+      kept.status = row.status
+      kept.reasonCode = row.reasonCode
+      best.set(row.enterpriseId, row)
+    }
+  }
+  return out
+}
+
+/** 一条差异记录都没有的企业 —— 与 `enterpriseDifferenceSummaries` 的缺省项**同一形状**。 */
+const NO_DIFFERENCE: RosterEnterpriseDifference = {
+  count: 0,
+  status: null,
+  reasonCode: null,
+  anyCurrent: false,
 }
 
 /**
@@ -406,6 +574,7 @@ function selectRosterEnterprises(
   const snap = readSnapshot(db)
   const profiles = snap.enterprises.map((enterprise) => buildProfile(enterprise, snap))
   const index = indexSnapshots(snap)
+  const differenceSummaries = enterpriseDifferenceSummaries(db, snap)
 
   // 别名:只带 `confirmed`(契约 §1.2 —— `pending` 不参与搜索)。
   const confirmedAliases = new Map<number, string[]>()
@@ -424,16 +593,25 @@ function selectRosterEnterprises(
    * 口径与 `lib/query.ts` 的 `q` 逐字一致:归一化大写后的子串匹配。
    */
   const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
+  const diffStatuses = filter.diffStatus?.length ? filter.diffStatus : null
   const candidates = profiles.map((profile) => ({
     profile,
     aliasNames: [...(confirmedAliases.get(profile.enterprise.id) ?? [])].sort(),
     state: deriveRosterState(profile, index),
+    difference: differenceSummaries.get(profile.enterprise.id) ?? NO_DIFFERENCE,
   }))
   const rows = candidates
-    .filter(({ profile, aliasNames, state }) => {
+    .filter(({ profile, aliasNames, state, difference }) => {
       if (filter.rosterState && state !== filter.rosterState) return false
       if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return false
       if (filter.district && effectiveDistrict(profile) !== filter.district) return false
+      if (diffStatuses) {
+        // `none` 是伪状态(**没有差异**),不是 `difference_reason.status` 的取值 ——
+        // 与真状态并列参与「命中任一」。分开判:拿 `status === 'none'` 去比会静默筛空。
+        const hit =
+          (diffStatuses.includes(DIFF_STATUS_NONE) && difference.count === 0) ||
+          (difference.status != null && diffStatuses.includes(difference.status))
+        if (!hit) return false      }
       if (!matchesRecordFilters(profile, filter)) return false
       if (needle || usccNeedle) {
         const hit =
@@ -445,13 +623,8 @@ function selectRosterEnterprises(
       }
       return true
     })
-    .map(({ profile, aliasNames, state }) => toRow(profile, aliasNames, state))
-    .sort(
-      (a, b) =>
-        titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') ||
-        a.name.localeCompare(b.name) ||
-        a.enterpriseId - b.enterpriseId,
-    )
+    .map(({ profile, aliasNames, state, difference }) => toRow(profile, aliasNames, state, difference))
+    .sort(enterpriseComparator(filter.sort ?? DEFAULT_ROSTER_ENTERPRISE_SORT))
 
   const titles: Record<string, number> = Object.fromEntries(TITLE_ORDER.map((code) => [code, 0]))
   for (const row of rows) for (const code of row.titles) titles[code] = (titles[code] ?? 0) + 1
@@ -459,9 +632,42 @@ function selectRosterEnterprises(
     total: rows.length,
     titlePairs: Object.values(titles).reduce((a, b) => a + b, 0),
     titles,
+    differences: rows.reduce((sum, row) => sum + row.difference.count, 0),
   }
 
   return { rows, counts }
+}
+
+/** 该企业**最早**的首次认定年;一项都没有时 `null`(排序里排最后)。 */
+function earliestRecognition(row: RosterEnterpriseRow): number | null {
+  const years = row.firstRecognition.map((f) => f.year)
+  return years.length ? Math.min(...years) : null
+}
+
+/**
+ * 总表排序(RL-20)。**每个分支都带同一组收尾 tie-break**(名称 → id):
+ * 少了它,同名同等级的行在两次请求间可能换序,分页时会出现两边都出现 / 两边都没有。
+ */
+function enterpriseComparator(
+  sort: RosterEnterpriseSort,
+): (a: RosterEnterpriseRow, b: RosterEnterpriseRow) => number {
+  const byName = (a: RosterEnterpriseRow, b: RosterEnterpriseRow) =>
+    a.name.localeCompare(b.name) || a.enterpriseId - b.enterpriseId
+  if (sort === 'name') return byName
+  if (sort === 'title') {
+    return (a, b) =>
+      titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') || byName(a, b)
+  }
+  // `recognition`:新 → 旧;没有首次认定年的排最后。
+  return (a, b) => {
+    const ya = earliestRecognition(a)
+    const yb = earliestRecognition(b)
+    if (ya == null || yb == null) {
+      if (ya !== yb) return ya == null ? 1 : -1
+      return byName(a, b)
+    }
+    return yb - ya || byName(a, b)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -721,7 +927,10 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
     .filter((name, index, list) => list.indexOf(name) === index)
     .sort()
 
-  const row = toRow(profile, aliasNames, deriveRosterState(profile, indexSnapshots(snap)))
+  // 详情页的 `enterprise.difference` 与总表**同一处算**(`enterpriseDifferenceSummaries`),
+  // 于是「表里那一行写的状态」与「点进去看到的状态」不会各说各话。
+  const difference = enterpriseDifferenceSummaries(db, snap).get(id) ?? NO_DIFFERENCE
+  const row = toRow(profile, aliasNames, deriveRosterState(profile, indexSnapshots(snap)), difference)
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
   const eventIds = new Set(events.map((e) => e.id))
 

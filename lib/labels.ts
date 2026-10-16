@@ -310,6 +310,66 @@ export const DIFFERENCE_COLUMN_HINT =
   '「查询失败」与「无记录」不是一回事:前者是查询没执行成功,后者是查询成功但平台返回 0 条。'
 
 /**
+ * 差异状态 → 台账列表最左那条 6px 状态条的取向(RL-20)。
+ *
+ * ── 为什么是**三档**而不是六档 ──────────────────────────────────────────
+ * 状态条只有 6px 宽,是一条**色带**而不是一枚徽章:它要在向下滚动时连成一条可读的带
+ * (方向卡里的「记忆点」),所以它只回答**一个问题** —— **这条差异查清了没有**:
+ *
+ * | 取向 | 含义 | 取值 |
+ * |---|---|---|
+ * | `confirmed` | 有结论(已查明原因 / 已确认无差异) | `confirmed_reason` / `confirmed_no_diff` |
+ * | `open` | 还没结论(未查询 / 待核实 / 无记录) | `not_queried` / `needs_review` / `no_record` |
+ * | `failed` | **查询本身没成功**(要重查) | `query_failed` |
+ *
+ * 六态**彼此可区分**这件事仍然由中文标签承重(表里「差异状态」列写全、抽屉里那枚徽章
+ * 走 `DIFFERENCE_STATUS_VARIANTS` 的六态)—— 与 `DIFFERENCE_STATUS_VARIANTS` 那段注释里
+ * 「颜色是冗余加固,不是承重结构」是同一条判据。**一条 6px 色带扛不起六态**,
+ * 硬塞进去只会变成一片认不出的花色 —— 那正是方向卡「换掉彩色胶囊」要躲开的东西。
+ *
+ * 没有画到的一档:**一条差异记录都没有的企业不画状态条**(方向卡:「无差异的行不画状态条」)。
+ * 于是「空白 / 藏青 / 灰 / 红」四种观感各有确定含义,滚动时那条带就是差异分布本身。
+ */
+export const DIFFERENCE_STATUS_RAILS: Record<string, 'confirmed' | 'open' | 'failed'> = {
+  not_queried: 'open',
+  query_failed: 'failed',
+  no_record: 'open',
+  needs_review: 'open',
+  confirmed_no_diff: 'confirmed',
+  confirmed_reason: 'confirmed',
+}
+
+/** 「一条差异记录都没有」这一档的文案(筛选里的伪状态 `none`)。 */
+export const DIFF_STATUS_NONE_LABEL = '无差异'
+
+/**
+ * 台账页(「企业列表」)的页面名 —— 页头、侧边栏入口、`document.title` 三处**只认这一个**。
+ *
+ * 用户明确点过名:「页面名与侧边栏入口都改叫**企业列表**」(旧名「名录台账」)。
+ * 三处各写一遍字面量,迟早会出现「页头改了、侧栏忘了」这种只改一半的状态,
+ * 而那种错在单看任一屏时都看不出来。
+ */
+export const ENTERPRISE_LIST_TITLE = '企业列表'
+
+/**
+ * 总表排序的选项文案(RL-20)。键与 `ROSTER_ENTERPRISE_SORTS` 同集合(有测试钉住)。
+ * 「认定年」后面那半句方向写在 `title` 里,不占控件上的位置 —— 与设计稿上那个
+ * 只写「认定年」的控件逐字一致。
+ */
+export const ENTERPRISE_SORT_LABELS: Record<string, string> = {
+  recognition: '认定年',
+  name: '企业名称',
+  title: '称号等级',
+}
+export const ENTERPRISE_SORT_ORDER: string[] = ['recognition', 'name', 'title']
+/** 排序选项的悬停说明(方向写在这里,不挤进控件)。 */
+export const ENTERPRISE_SORT_HINTS: Record<string, string> = {
+  recognition: '按该企业最早的首次认定年排,新认定的在前',
+  name: '按企业名称排',
+  title: '按称号等级排:专精特新“小巨人” → 专精特新中小企业 → 创新型中小企业',
+}
+
+/**
  * 比对页差异状态图例的固定说明句(RL-15)。徽章只列**当前结果里真出现过**的取值。
  *
  * ── 这句话改过两次(两次都是盲测报「文案与行为不符」)────────────────────────

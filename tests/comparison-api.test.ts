@@ -35,7 +35,7 @@ function record(enterpriseId: number, source: 'jxj' | 'miit') {
 const withEvidence = enterprise('宁波上航测绘股份有限公司', USCC)
 record(withEvidence, 'miit')
 const plain = enterprise('宁波无证据企业', PLAIN_USCC)
-record(plain, 'jxj')
+db.insert(schema.record).values({ enterpriseId: plain, source: 'jxj', titleCode: 'specialized_sme', district: '余姚市' }).run()
 
 db.insert(schema.enterpriseAlias)
   .values({
@@ -45,6 +45,16 @@ db.insert(schema.enterpriseAlias)
     sourceKind: 'platform_business',
     sourceRefId: 0,
     verificationStatus: 'confirmed',
+  })
+  .run()
+db.insert(schema.enterpriseAlias)
+  .values({
+    enterpriseId: plain,
+    name: '宁波待核实旧名',
+    nameNorm: '宁波待核实旧名',
+    sourceKind: 'platform_business',
+    sourceRefId: 0,
+    verificationStatus: 'pending',
   })
   .run()
 const queryId = db
@@ -72,6 +82,9 @@ let handler: (event: unknown) => {
   rows: { enterpriseId: number; explanation: unknown; platform: unknown }[]
   reconcile: { generatedAt: string | null; matched: number }
   platform: { withEvidence: number; withExplanation: number; withoutExplanation: number }
+  total: number
+  counts: Record<string, Record<string, number>>
+  curatedCounts: Record<string, Record<string, number>>
 }
 let query: Record<string, unknown> = {}
 
@@ -105,7 +118,7 @@ describe('GET /api/comparison:库内平台证据 + 旧解释缓存兼容', () =>
       },
       relationCount: 1,
     })
-    expect(result.platform.withEvidence).toBe(1)
+    expect(result.platform.withEvidence).toBe(2)
     expect(result.platform.withExplanation).toBe(1)
     expect(result.platform.withoutExplanation).toBe(1)
   })
@@ -180,5 +193,29 @@ describe('GET /api/comparison:库内平台证据 + 旧解释缓存兼容', () =>
     const result = handler({})
     expect(result.rows.every((row) => (row as { direction?: string }).direction === 'extra_in_miit')).toBe(true)
     query = {}
+  })
+
+  it('q 按现名、已确认曾用名或大小写无关的统代子串搜索', () => {
+    query = { q: '上航 测绘', district: '镇海区' }
+    expect(handler({}).rows.map((row) => row.enterpriseId)).toEqual([withEvidence])
+
+    query = { q: '94457p', district: '镇海区' }
+    expect(handler({}).rows.map((row) => row.enterpriseId)).toEqual([withEvidence])
+  })
+
+  it('区县精确筛选且全局计数不随可见行过滤变化', () => {
+    query = {}
+    const global = handler({})
+    query = { district: '余姚市', title: 'specialized_sme' }
+    const result = handler({})
+    expect(result.total).toBe(1)
+    expect(result.rows.map((row) => row.enterpriseId)).toEqual([plain])
+    expect(result.counts).toEqual(global.counts)
+    expect(result.curatedCounts).toEqual(global.curatedCounts)
+  })
+
+  it('待核实曾用名不参与搜索', () => {
+    query = { q: '待核实旧名' }
+    expect(handler({}).total).toBe(0)
   })
 })

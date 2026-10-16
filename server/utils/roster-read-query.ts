@@ -13,9 +13,13 @@ import { parseCsvQuery } from '../../lib/csv'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../lib/comparison'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES, EVENT_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../../lib/labels'
 import {
+  DEFAULT_ROSTER_ENTERPRISE_SORT,
+  DIFF_STATUS_NONE,
+  ROSTER_ENTERPRISE_SORTS,
   ROSTER_STATES,
   type RosterDifferenceFilter,
   type RosterEnterpriseFilter,
+  type RosterEnterpriseSort,
   type RosterState,
 } from '../../lib/roster/enterprise-roster'
 
@@ -56,6 +60,26 @@ function yearsParam(value: unknown): number[] | undefined {
   return list?.length ? list : undefined
 }
 
+/** `diffStatus` 的合法取值:六个差异状态 **∪** 伪状态 `none`(当前无差异)。 */
+const DIFF_STATUS_VALUES: string[] = [...Object.keys(DIFFERENCE_STATUSES), DIFF_STATUS_NONE]
+
+/**
+ * 排序参数。**非法取值给 400,不静默退回默认** —— 与「取值说不清就不猜」同一规矩:
+ * 静默退回默认会让使用者以为自己在看「按认定年」的序,实际拿到的是另一种,
+ * 而这种错在页面上完全看不出来(列表总有顺序)。
+ */
+function sortParam(value: unknown): RosterEnterpriseSort {
+  const raw = strParam(value)
+  if (raw == null) return DEFAULT_ROSTER_ENTERPRISE_SORT
+  if (!(ROSTER_ENTERPRISE_SORTS as readonly string[]).includes(raw)) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: `Unknown sort; expected ${ROSTER_ENTERPRISE_SORTS.join(', ')}`,
+    })
+  }
+  return raw as RosterEnterpriseSort
+}
+
 /** §7.1 总表的筛选参数。 */
 export function parseRosterEnterpriseQuery(query: Record<string, unknown>): RosterEnterpriseFilter {
   const title = knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title')
@@ -75,6 +99,9 @@ export function parseRosterEnterpriseQuery(query: Record<string, unknown>): Rost
     source: knownOrThrow(parseCsvQuery(query.source), SOURCE_ORDER, 'source'),
     eventType: knownOrThrow(parseCsvQuery(query.eventType), EVENT_ORDER, 'eventType'),
     year: yearsParam(query.year),
+    // RL-20:台账页「差异状态」与「排序」两个筛选项。
+    diffStatus: knownOrThrow(parseCsvQuery(query.diffStatus), DIFF_STATUS_VALUES, 'diffStatus'),
+    sort: sortParam(query.sort),
     page: intParam(query.page, 1),
     pageSize: intParam(query.pageSize, 50),
   }

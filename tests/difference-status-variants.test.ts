@@ -89,7 +89,7 @@ describe('六态两两可区分', () => {
    */
   it('调用点不给状态徽章压字重或字色(否则六态会静默糊回去)', () => {
     for (const file of [
-      'components/RosterDifferenceTable.vue',
+      'components/EnterpriseDrawer.vue',
       'components/RosterEnterprisePanel.vue',
     ]) {
       const src = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
@@ -194,7 +194,7 @@ describe('六态两两可区分', () => {
      * 所以把它也钉住 —— 两个调用点都必须渲染 `DIFFERENCE_STATUSES[...]` 的文字。
      */
     for (const file of [
-      'components/RosterDifferenceTable.vue',
+      'components/EnterpriseDrawer.vue',
       'components/RosterEnterprisePanel.vue',
     ]) {
       const src = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
