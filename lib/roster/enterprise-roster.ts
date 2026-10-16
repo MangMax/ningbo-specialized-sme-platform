@@ -24,6 +24,13 @@ import { normalizeName, normalizeUscc } from '../domain'
 import { getComparison, type ComparisonDirection } from '../comparison'
 import { SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
+import {
+  judgeFirstRecognition,
+  matchesRecognitionQuery,
+  type FirstRecognitionEvidence,
+  type RecognitionEntry,
+  type RecognitionEvent,
+} from './first-recognition'
 import { computeTitleLifecycle, type LifecycleEvent, type TitleLifecycle } from './lifecycle'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -72,11 +79,21 @@ function readSnapshot(db: Db): Snapshot {
 // §7.1 企业总表
 // ---------------------------------------------------------------------------
 
-/** `firstRecognition` 的一项:该称号的首次认定年份。 */
-export interface FirstRecognition {
-  titleCode: string
-  year: number
-  /** 该称号的首次认定事件缺 `decided_year`(锚点/首次认定退回 `year`)⇒ **待核**。 */
+/**
+ * `firstRecognition` 的一项:该称号的首次认定(契约 §7.1 + RL-08 增量)。
+ *
+ * ── 两个「待」不是一回事,别并成一个 ─────────────────────────────────────
+ *  - `year` / `evidence` / `status` 是**首次认定本身**的口径:年份取不取得到、依据回不回得了出处。
+ *    取不到就**留空**并标 `status='pending'` + `pendingReason`,不拿当前窗口里最早的年份冒充。
+ *  - `needsReview` 是**复核锚点**的口径(契约 §6.4):锚点算的时候用到了缺 `decided_year`
+ *    的事件。它与首次认定的年份无关,原样保留(RL-04 的 §7.1 形状不变)。
+ *
+ * 合成一个标志就会分不清「这个年份存疑」还是「下次到期存疑」—— 而这两件事要办的手续不同。
+ */
+export interface FirstRecognition extends Omit<RecognitionEntry, 'firstYear'> {
+  /** §7.1 冻结形状里的字段名(值 = `RecognitionEntry.firstYear`)。 */
+  year: number | null
+  /** 该称号的**锚点**计算用到了缺 `decided_year` 的事件 ⇒ 待核(不变)。 */
   needsReview: boolean
 }
 
@@ -120,6 +137,18 @@ export interface RosterEnterpriseFilter {
   eventType?: string[]
   /** 事件年份(多值,命中任一):该企业**存在**一条该年份的事件。 */
   year?: number[]
+  /**
+   * **首次认定年份**(多值,命中任一;RL-08 增量)。
+   *
+   * 与上面的 `year` **不是一回事**,所以名字不能混:`year` 筛的是**事件**年份(任何类型的事件),
+   * 这里筛的是该称号**首次认定**的年份。两者在同一条 URL 上必须能分开说。
+   *
+   * 判据与 `title` / `firstStatus` **落在同一个称号上**(见 `matchesFirstRecognition`):
+   * 「创新型 2022 首次认定」不会命中一个创新型 2021、专精特新 2022 的企业。
+   */
+  firstYear?: number[]
+  /** **首次认定的状态**(多值:`confirmed` / `pending`;RL-08 增量)。同上,与 `title` 同称号。 */
+  firstStatus?: string[]
   page?: number
   pageSize?: number
 }
@@ -131,6 +160,15 @@ export interface RosterCounts {
   titlePairs: number
   /** 每个称号下的**企业数**(多称号企业在各桶里各计一次)。 */
   titles: Record<string, number>
+  /**
+   * **首次认定的「企业 × 称号」数**(RL-08 增量):本次筛选下命中的企业里,
+   * 有 `award` 的(企业 × 称号)一共几个 —— 既含 `confirmed` 也含 `pending`。
+   *
+   * 为什么要单列:`titlePairs` 是「符合条件企业的**全部**称号」,在给了 `firstYear` /
+   * `firstStatus` 之后就不再等于「命中的首次认定数」。票面要求「统计清楚标示企业数或
+   * 企业×称号数」,给首次认定一个自己的单位,才不至于让用户把两个数当成一个。
+   */
+  recognitionPairs: number
 }
 
 export interface RosterEnterprisesResult {
@@ -175,6 +213,12 @@ interface Profile {
   /** 每称号的生命周期(跨该称号下**全部来源**的记录)。 */
   lifecycleByTitle: Map<string, TitleLifecycle>
   titles: string[]
+  /**
+   * 每个有 `award` 的称号一条首次认定(RL-08),按称号等级排序。
+   * **只算一次**:§7.1 的行、§7.2 的详情、§7.5 的接口都从这里取,不各算一遍。
+   */
+  recognitions: RecognitionEntry[]
+  recognitionsByTitle: Map<string, RecognitionEntry>
   summary: { firstRecognition: FirstRecognition[]; nextReviewYear: number | null; anchorNeedsReview: boolean }
 }
 
@@ -218,7 +262,33 @@ function deriveRosterState(profile: RosterStateInput, index: SnapshotIndex): Ros
   return inLatest ? 'current' : 'removed_platform_only'
 }
 
-function buildProfile(enterprise: Snapshot['enterprises'][number], snap: Snapshot): Profile {
+/**
+ * 事件 → 出处的索引(全快照建**一次**)。
+ *
+ * 为什么必须提到外面:它是按 `record_event_id` 索引的,与「哪家企业」无关。
+ * 放在 `buildProfile` 里逐企业重建,就是 7352 家 × 21189 条出处 —— 这是**读取路径**,
+ * 一次页面请求不该做两亿次操作。
+ */
+function indexEvidence(snap: Snapshot): Map<number, FirstRecognitionEvidence[]> {
+  const byEvent = new Map<number, FirstRecognitionEvidence[]>()
+  for (const v of snap.evidence) {
+    const list = byEvent.get(v.recordEventId) ?? []
+    list.push({
+      sourceFile: v.sourceFile,
+      attachment: v.attachment,
+      listNo: v.listNo,
+      page: v.page,
+    })
+    byEvent.set(v.recordEventId, list)
+  }
+  return byEvent
+}
+
+function buildProfile(
+  enterprise: Snapshot['enterprises'][number],
+  snap: Snapshot,
+  evidenceByEvent: ReadonlyMap<number, readonly FirstRecognitionEvidence[]>,
+): Profile {
   const records = snap.records.filter((r) => r.enterpriseId === enterprise.id)
   const eventsByRecord = new Map<number, Snapshot['events']>()
   for (const record of records) {
@@ -247,14 +317,48 @@ function buildProfile(enterprise: Snapshot['enterprises'][number], snap: Snapsho
   }
 
   const titles = [...eventsByTitle.keys()].sort((a, b) => titleRank(a) - titleRank(b))
-  const firstRecognition = titles
-    .map((titleCode) => {
-      const lc = lifecycleByTitle.get(titleCode)!
-      return lc.firstRecognitionYear == null
-        ? null
-        : { titleCode, year: lc.firstRecognitionYear, needsReview: lc.needsReview }
+
+  // ── 首次认定(RL-08)────────────────────────────────────────────────────
+  // 按 (企业 × 称号) 各判一次;「哪一年」由 `computeTitleLifecycle` 算(唯一一处),
+  // 这里只把事件与出处备齐交给判定 —— 判定与展示都**不另算一遍年份**。
+  const recognitions: RecognitionEntry[] = []
+  for (const titleCode of titles) {
+    const events: RecognitionEvent[] = []
+    for (const record of records) {
+      if (record.titleCode !== titleCode) continue
+      for (const e of eventsByRecord.get(record.id) ?? []) {
+        events.push({
+          id: e.id,
+          eventType: e.eventType,
+          year: e.year,
+          decidedYear: e.decidedYear,
+          reviewOutcome: e.reviewOutcome,
+          source: record.source,
+        })
+      }
+    }
+    const entry = judgeFirstRecognition({
+      titleCode,
+      lifecycle: lifecycleByTitle.get(titleCode)!,
+      events,
+      evidenceByEvent,
     })
-    .filter((x): x is FirstRecognition => x != null)
+    if (entry) recognitions.push(entry)
+  }
+
+  // §7.1 的行形状:判定结果 + §7.1 的字段名(`year`)+ **锚点口径**的待核(原样保留)。
+  const firstRecognition: FirstRecognition[] = recognitions.map((entry) => ({
+    titleCode: entry.titleCode,
+    year: entry.firstYear,
+    firstEventId: entry.firstEventId,
+    source: entry.source,
+    status: entry.status,
+    pendingReason: entry.pendingReason,
+    evidence: entry.evidence,
+    undatedAwardIds: entry.undatedAwardIds,
+    needsReview: lifecycleByTitle.get(entry.titleCode)!.needsReview,
+  }))
+
   const dues = titles
     .map((titleCode) => lifecycleByTitle.get(titleCode)!.dueYear)
     .filter((y): y is number => y != null)
@@ -267,6 +371,8 @@ function buildProfile(enterprise: Snapshot['enterprises'][number], snap: Snapsho
     eventsByRecord,
     lifecycleByTitle,
     titles,
+    recognitions,
+    recognitionsByTitle: new Map(recognitions.map((e) => [e.titleCode, e])),
     summary: {
       firstRecognition,
       nextReviewYear: dues.length ? Math.min(...dues) : null,
@@ -275,8 +381,13 @@ function buildProfile(enterprise: Snapshot['enterprises'][number], snap: Snapsho
   }
 }
 
-/** 属地:企业自身属地优先,为空时退回它**最早那条带属地的记录**。 */
-function effectiveDistrict(profile: Profile): string | null {
+/**
+ * 属地:企业自身属地优先,为空时退回它**最早那条带属地的记录**。
+ *
+ * 导出给 `lib/roster/recognitions.ts`(§7.5 的清单也带属地):「属地」只该有这一个判法 ——
+ * 两处各写一遍,同一家企业在总表与首次认定清单上会显示成两个区县。
+ */
+export function effectiveDistrict(profile: Profile): string | null {
   if (profile.enterprise.district) return profile.enterprise.district
   const withDistrict = profile.records.filter((r) => r.district).sort((a, b) => a.id - b.id)
   return withDistrict[0]?.district ?? null
@@ -513,15 +624,48 @@ function matchesRecordFilters(profile: Profile, filter: RosterEnterpriseFilter):
   })
 }
 
-function selectRosterEnterprises(
-  db: Db,
-  filter: RosterEnterpriseFilter,
-): { rows: RosterEnterpriseRow[]; counts: RosterCounts } {
-  const snap = readSnapshot(db)
-  const profiles = snap.enterprises.map((enterprise) => buildProfile(enterprise, snap))
-  const index = indexSnapshots(snap)
+/**
+ * 读一次快照、把全部企业建成 profile —— **三个读模型共用这一处组织方式**。
+ *
+ * 为什么要抽出来:§7.1(企业总表)、§7.2(企业详情)、§7.5(首次认定)看的都是同一种
+ * 「企业画像」(称号 / 每称号的生命周期 / 每称号的首次认定)。各写一遍的结果,是同一家
+ * 企业的首次认定在总表和首次认定接口上给出不同的年份 —— 而票面恰恰要求两处一致。
+ * 组织一次,取三份。
+ */
+export function readRosterProfiles(db: Db): {
+  profiles: Profile[]
+  snap: Snapshot
+  index: SnapshotIndex
+  /** 别名:只带 `confirmed`(契约 §1.2 —— `pending` 不参与搜索)。 */
+  confirmedAliases: Map<number, string[]>
+} {
+  const ctx = readRosterContext(db)
+  return {
+    profiles: ctx.snap.enterprises.map((e) => ctx.profileOf(e)),
+    snap: ctx.snap,
+    index: ctx.index,
+    confirmedAliases: ctx.confirmedAliases,
+  }
+}
 
-  // 别名:只带 `confirmed`(契约 §1.2 —— `pending` 不参与搜索)。
+/** 读模型的三样公共前置:**快照 / 快照索引 / 已确认别名**,外加一个**按需**建画像的入口。 */
+interface RosterContext {
+  snap: Snapshot
+  index: SnapshotIndex
+  confirmedAliases: Map<number, string[]>
+  /** 取某家企业的画像(同一次请求里重复问只建一次)。 */
+  profileOf: (enterprise: Snapshot['enterprises'][number]) => Profile
+}
+
+/**
+ * 快照 + 索引 + 按需建画像。总表 / 首次认定清单要**全部**企业,**企业详情只要一家** ——
+ * 详情为了开一行去把 7352 家全建一遍,一次请求就是几千倍的无用功
+ * (实测:整表建画像 ≈ 3s,只建一家 ≈ 0.2s)。
+ * 两条路共用同一份索引与同一个 `buildProfile`,只是**建几家的差别**。
+ */
+function readRosterContext(db: Db): RosterContext {
+  const snap = readSnapshot(db)
+  const evidence = indexEvidence(snap)
   const confirmedAliases = new Map<number, string[]>()
   for (const alias of snap.aliases) {
     if (alias.verificationStatus !== 'confirmed') continue
@@ -529,6 +673,65 @@ function selectRosterEnterprises(
     if (!list.includes(alias.name)) list.push(alias.name)
     confirmedAliases.set(alias.enterpriseId, list)
   }
+  const built = new Map<number, Profile>()
+  return {
+    snap,
+    index: indexSnapshots(snap),
+    confirmedAliases,
+    profileOf: (enterprise) => {
+      const cached = built.get(enterprise.id)
+      if (cached) return cached
+      const profile = buildProfile(enterprise, snap, evidence)
+      built.set(enterprise.id, profile)
+      return profile
+    },
+  }
+}
+
+/**
+ * 该企业上**符合本次筛选**的那些(企业 × 称号)首次认定(RL-08)。
+ *
+ * ── 为什么非要「同一个称号」──────────────────────────────────────────────
+ * 首次认定本来就是**企业 × 称号**的量。若把 `title` 与 `firstYear` 各判各的,
+ * `title=innovative_sme&firstYear=2022` 会命中一个「创新型 2021 认定、专精特新 2022 认定」
+ * 的企业 —— 用户要的是「**创新的**首次认定在 2022」,拿到手的却是另一回事。
+ * 这与 RL-17 那条「来源与事件必须落在同一条记录上」是同一类错误,判法也照抄:
+ * **存在一个称号,几个判据都落在它身上**。
+ *
+ * 判据没给时不筛(返回该企业全部首次认定)⇒ 这一个函数同时给出两个答案:
+ *  - **筛选** —— 结果非空即命中(见 `matchesFirstRecognition`);
+ *  - **计数** —— `counts.recognitionPairs` 就是各企业这个数组的长度之和。
+ *    两者由同一段代码算出,不会出现「筛出来 3 家、计数说 5 条」这种对不上的局面。
+ *
+ * 年份给不出(`firstYear == null`)时**命中不了任何年份**:留空是「未知」,
+ * 不该被当成某个具体年份的匹配。
+ */
+function recognitionEntriesMatching(
+  profile: Profile,
+  filter: RosterEnterpriseFilter,
+): RecognitionEntry[] {
+  // 判据本体在 `first-recognition.ts`(与 §7.5 的清单**同一处**);这里只负责把企业侧的
+  // 参数名(`firstYear` / `firstStatus`)转成判据的形状,一个字段对一处,不做别的判断。
+  const query = { title: filter.title, firstYear: filter.firstYear, firstStatus: filter.firstStatus }
+  return profile.recognitions.filter((entry) => matchesRecognitionQuery(entry, query))
+}
+
+/**
+ * 首次认定的增量判据:该企业**有没有**符合上述判据的首次认定。
+ *
+ * 没给 `firstYear` / `firstStatus` 时返回 `true` —— 称号判据仍由调用方独立走一遍,
+ * 语义一字不变(既有的 `?title=…` URL 行为不受影响)。
+ */
+function matchesFirstRecognition(profile: Profile, filter: RosterEnterpriseFilter): boolean {
+  if (!filter.firstYear?.length && !filter.firstStatus?.length) return true
+  return recognitionEntriesMatching(profile, filter).length > 0
+}
+
+function selectRosterEnterprises(
+  db: Db,
+  filter: RosterEnterpriseFilter,
+): { rows: RosterEnterpriseRow[]; counts: RosterCounts } {
+  const { profiles, index, confirmedAliases } = readRosterProfiles(db)
 
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
   /**
@@ -543,12 +746,13 @@ function selectRosterEnterprises(
     aliasNames: [...(confirmedAliases.get(profile.enterprise.id) ?? [])].sort(),
     state: deriveRosterState({ enterpriseId: profile.enterprise.id, records: profile.records }, index),
   }))
-  const rows = candidates
+  const matched = candidates
     .filter(({ profile, aliasNames, state }) => {
       if (filter.rosterState && state !== filter.rosterState) return false
       if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return false
       if (filter.district && effectiveDistrict(profile) !== filter.district) return false
       if (!matchesRecordFilters(profile, filter)) return false
+      if (!matchesFirstRecognition(profile, filter)) return false
       if (needle || usccNeedle) {
         const hit =
           (needle != null && normalizeName(profile.enterprise.name).includes(needle)) ||
@@ -559,7 +763,13 @@ function selectRosterEnterprises(
       }
       return true
     })
-    .map(({ profile, aliasNames, state }) => toRow(profile, aliasNames, state))
+    // 命中的首次认定在**同一处**算出来:计数与筛选判据由此不可能各说各的。
+    .map(({ profile, aliasNames, state }) => ({
+      row: toRow(profile, aliasNames, state),
+      recognitionPairs: recognitionEntriesMatching(profile, filter).length,
+    }))
+  const rows = matched
+    .map((m) => m.row)
     .sort(
       (a, b) =>
         titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') ||
@@ -573,6 +783,9 @@ function selectRosterEnterprises(
     total: rows.length,
     titlePairs: Object.values(titles).reduce((a, b) => a + b, 0),
     titles,
+    // 「首次认定」自己的单位 —— 与 `titlePairs` 不同:后者数的是**全部**称号,
+    // 给了首次认定判据之后两者不再相等,不单列就会让人把前者当成命中数。
+    recognitionPairs: matched.reduce((n, m) => n + m.recognitionPairs, 0),
   }
 
   return { rows, counts }
@@ -699,6 +912,12 @@ export interface RosterEnterpriseDetail {
   records: RosterRecordRow[]
   events: RosterEventRow[]
   evidence: RosterEvidenceRow[]
+  /**
+   * 每个有认定的称号一条**首次认定**(RL-08 增量,与 §7.5 的行、§7.1 的
+   * `firstRecognition` **同一处计算**)。展开面板据此标「首次认定」并把出处摆在旁边,
+   * 不必自己再判一次「哪条算首次」。
+   */
+  recognitions: RecognitionEntry[]
   differences: RosterDifferenceRow[]
   platform: {
     queries: RosterPlatformQueryRow[]
@@ -824,11 +1043,12 @@ function differenceUniverse(db: Db, snap: Snapshot): RosterDifferenceRow[] {
 }
 
 export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
-  const snap = readSnapshot(db)
+  // 只建**这一家**的画像:详情页开一行,不该把整库 7352 家全算一遍。
+  const { snap, index, profileOf } = readRosterContext(db)
   const enterprise = snap.enterprises.find((e) => e.id === id)
   if (!enterprise) return null
 
-  const profile = buildProfile(enterprise, snap)
+  const profile = profileOf(enterprise)
   const aliasNames = snap.aliases
     .filter((a) => a.enterpriseId === id && a.verificationStatus === 'confirmed')
     .map((a) => a.name)
@@ -838,7 +1058,7 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
   const row = toRow(
     profile,
     aliasNames,
-    deriveRosterState({ enterpriseId: profile.enterprise.id, records: profile.records }, indexSnapshots(snap)),
+    deriveRosterState({ enterpriseId: profile.enterprise.id, records: profile.records }, index),
   )
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
   const eventIds = new Set(events.map((e) => e.id))
@@ -915,6 +1135,7 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
         listNo: v.listNo,
         page: v.page,
       })),
+    recognitions: profile.recognitions,
     differences: differenceRows
       .filter((r) => r.enterpriseId === id)
       .sort((a, b) => titleRank(a.titleCode) - titleRank(b.titleCode) || a.direction.localeCompare(b.direction)),

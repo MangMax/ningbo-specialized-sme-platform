@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { TITLES, TITLE_SHORT } from '~~/lib/labels'
+import {
+  FIRST_RECOGNITION_HINT,
+  FIRST_RECOGNITION_REASONS,
+  TITLES,
+  TITLE_SHORT,
+} from '~~/lib/labels'
+import {
+  evidencePointerText,
+  firstRecognitionYearText,
+} from '~~/lib/roster/first-recognition'
 import RosterEnterprisePanel from '@/components/RosterEnterprisePanel.vue'
 import TitleBadge from '@/components/TitleBadge.vue'
 import { Badge } from '@/components/ui/badge'
@@ -42,7 +51,19 @@ export interface EnterpriseRow {
   rosterState: 'current' | 'removed_platform_only'
   titles: string[]
   aliasNames: string[]
-  firstRecognition: { titleCode: string; year: number; needsReview: boolean }[]
+  /**
+   * 每个有认定的称号一项(RL-08 起带首次认定**自己的**状态与依据)。
+   * `year` 可为 `null`:一条认定都定不了年时**留空并标待确认**,不拿别的年份顶上。
+   * `needsReview` 是**锚点**口径的待核,与 `status` 是两件事(见 §7.1 的注释)。
+   */
+  firstRecognition: {
+    titleCode: string
+    year: number | null
+    status: 'confirmed' | 'pending'
+    pendingReason: string | null
+    evidence: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
+    needsReview: boolean
+  }[]
   nextReviewYear: number | null
   anchorNeedsReview: boolean
 }
@@ -58,15 +79,50 @@ const props = defineProps<{
 
 const emit = defineEmits<{ toggle: [id: number] }>()
 
-/** 首次认定 + 下次复核压成一行;`(待核)` 跟着它自己的那个值,不合并成一个笼统标记。 */
+/**
+ * 首次认定 + 下次复核压成一行。三种标记各跟各的值,不合并:
+ *  - `(待确认)` 是**首次认定本身**:年份给不出 / 有更早的认定定不了年 / 没有出处;
+ *  - `(待核)`    是**复核锚点**:算到期时用到了缺结论年份的事件;
+ *  - 年份给不出时显示 `年份未知`,而不是把一个别的年份当成首次。
+ */
 function lifecycleText(row: EnterpriseRow): string {
   const first = row.firstRecognition.length
     ? row.firstRecognition
-        .map((f) => `${TITLE_SHORT[f.titleCode] ?? TITLES[f.titleCode] ?? f.titleCode} ${f.year}${f.needsReview ? '(待核)' : ''}`)
+        .map((f) => {
+          // 年份文案与「未记录」的写法都取自单一出处(`first-recognition.ts`),
+          // 与导出、展开面板逐字一致 —— 三处各写一遍必然有一处先漂。
+          const year = firstRecognitionYearText({ firstYear: f.year })
+          const pending = f.status === 'pending' ? '(待确认)' : ''
+          return `${TITLE_SHORT[f.titleCode] ?? TITLES[f.titleCode] ?? f.titleCode} ${year}${pending}${f.needsReview ? '(待核)' : ''}`
+        })
         .join(' · ')
     : '—'
   const next = row.nextReviewYear == null ? '—' : `${row.nextReviewYear}${row.anchorNeedsReview ? '(待核)' : ''}`
   return `首次 ${first}　复核 ${next}`
+}
+
+/**
+ * 悬停说明:每个称号的首次认定**依据**。
+ *
+ * 出处(哪个文件、哪个附件、哪个序号)**挂在 tooltip 上**,不另开一列 ——
+ * 这一列本来就按实测宽度切过(`w-72`,见文件顶部那段),再塞一段出处必然靠裁字换列,
+ * 而「首次认定的依据」正是这张票要求能看到的东西,不能裁。展开面板里逐条列全文。
+ */
+function firstRecognitionTitle(row: EnterpriseRow): string {
+  return row.firstRecognition
+    .map((f) => {
+      const title = TITLES[f.titleCode] ?? f.titleCode
+      const year = firstRecognitionYearText({ firstYear: f.year })
+      if (f.status === 'pending') {
+        // 待确认时**明说它待确认** —— 悬停说明里给出一个年份却不声明它是待确认,
+        // 读的人会把它当成结论(这正是票面要防的误标)。
+        const why = FIRST_RECOGNITION_REASONS[f.pendingReason ?? ''] ?? f.pendingReason ?? ''
+        return `${title}:待确认(${year})— ${why}`
+      }
+      const where = f.evidence.map(evidencePointerText).join(' ; ')
+      return `${title}:${year} — 出处 ${where || '未记录'}`
+    })
+    .join('\n')
 }
 
 const COLUMNS = 4
@@ -101,7 +157,11 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
       <TableRow class="hover:bg-transparent">
         <TableHead :class="TH_CLASS">企业名称</TableHead>
         <TableHead :class="[TH_CLASS, 'w-[22.5rem]']">称号</TableHead>
-        <TableHead :class="[TH_CLASS, 'w-72']">首次认定 · 下次复核</TableHead>
+        <!-- 表头带一句口径(悬停可见)。这一列里「(待确认)」和「(待核)」是两个不同的东西,
+             不写清就没人分得清,而口径说明**不占版面**(不进小字说明区)。 -->
+        <TableHead :class="[TH_CLASS, 'w-72']" :title="FIRST_RECOGNITION_HINT">
+          首次认定 · 下次复核
+        </TableHead>
         <TableHead :class="[TH_CLASS, 'w-14']">
           <span class="sr-only">展开</span>
         </TableHead>
@@ -162,7 +222,7 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
           <!-- `whitespace-normal` 是必须的:shadcn 的 `TableCell` 基础类带 `whitespace-nowrap`,
                不覆盖它,这串文字既不会换行、又会被单元格的溢出裁掉尾部的「复核 …(待核)」。 -->
           <TableCell class="text-muted-foreground text-[11px] leading-snug whitespace-normal">
-            <div :title="lifecycleText(row)">{{ lifecycleText(row) }}</div>
+            <div :title="`${lifecycleText(row)}\n${firstRecognitionTitle(row)}`">{{ lifecycleText(row) }}</div>
           </TableCell>
           <TableCell>
             <Button

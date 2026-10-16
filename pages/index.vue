@@ -8,6 +8,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   ExternalLink,
+  LoaderCircle,
   Search,
 } from '@lucide/vue'
 import {
@@ -19,6 +20,8 @@ import {
   DIFFERENCE_STATUS_ORDER,
   EVENTS,
   EVENT_ORDER,
+  FIRST_RECOGNITION_STATUSES,
+  FIRST_RECOGNITION_STATUS_ORDER,
   SOURCES,
   SOURCE_ORDER,
   TITLES,
@@ -86,6 +89,8 @@ interface Counts {
   total: number
   titlePairs: number
   titles: Record<string, number>
+  /** 符合本次筛选的「企业 × 称号」**首次认定**数(RL-08)。 */
+  recognitionPairs: number
 }
 
 const apiGet = $fetch as unknown as <T>(
@@ -201,6 +206,7 @@ const listQuery = computed(() => ({
 const {
   data: enterpriseData,
   isLoading: loadingEnterprises,
+  asyncStatus: enterprisesStatus,
   error: enterprisesError,
   refetch: refetchEnterprises,
 } = useQuery({
@@ -216,6 +222,7 @@ const {
 const {
   data: titleData,
   isLoading: loadingTitles,
+  asyncStatus: titlesStatus,
   error: titlesError,
   refetch: refetchTitles,
 } = useQuery({
@@ -228,6 +235,7 @@ const {
 const {
   data: differenceData,
   isLoading: loadingDifferences,
+  asyncStatus: differencesStatus,
   error: differencesError,
   refetch: refetchDifferences,
 } = useQuery({
@@ -244,7 +252,22 @@ const enterpriseRows = computed(() => enterpriseData.value?.rows ?? [])
 const titleRows = computed(() => titleData.value?.rows ?? [])
 const differenceRows = computed(() => differenceData.value?.rows ?? [])
 const counts = computed<Counts>(
-  () => enterpriseData.value?.counts ?? { total: 0, titlePairs: 0, titles: {} },
+  () => enterpriseData.value?.counts ?? { total: 0, titlePairs: 0, titles: {}, recognitionPairs: 0 },
+)
+
+/**
+ * 当前视图**正在取数**(含改筛选后的后台重取)。
+ *
+ * 为什么需要它:`placeholderData` 让上一批结果留在屏上(这是对的,不该闪成空白),
+ * 但那样一来「改了筛选,数还没回来」就**完全看不出来** —— 用户会以为新条件筛出来就是
+ * 这一屏。`isLoading` 只覆盖「第一次加载」,所以这里看 `asyncStatus`。
+ */
+const listLoading = computed(() =>
+  view.value === 'enterprise'
+    ? enterprisesStatus.value === 'loading'
+    : view.value === 'title'
+      ? titlesStatus.value === 'loading'
+      : differencesStatus.value === 'loading',
 )
 
 const total = computed(() =>
@@ -258,6 +281,26 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.v
 watch(totalPages, (max) => {
   if (page.value > max) page.value = max
 })
+
+/** 屏上当前有多少行(用来区分「第一次加载」与「旧结果还在、新的在路上」)。 */
+const rowsOnScreen = computed(() =>
+  view.value === 'enterprise'
+    ? enterpriseRows.value.length
+    : view.value === 'title'
+      ? titleRows.value.length
+      : differenceRows.value.length,
+)
+
+/**
+ * 屏上**已有结果**、但当前条件的那一批还在路上。
+ *
+ * 为什么要单独说一句:`placeholderData` 会把上一批结果留在屏上(对的,不该闪成空白),
+ * 于是「改了筛选、数还没回来」看上去和「已经筛好了」一模一样 —— 用户会照着**旧条件的数字**
+ * 下判断。`isLoading` 在 colada 里就是 `asyncStatus === 'loading'`(重取时同样为真),
+ * 没有「第几次」的信息,所以这里用「屏上有没有行」来区分:第一次加载时屏上是骨架屏,
+ * 不该再叠一个「加载中」。
+ */
+const listRefetching = computed(() => listLoading.value && rowsOnScreen.value > 0)
 
 const activeError = computed(() =>
   view.value === 'enterprise'
@@ -282,6 +325,13 @@ const statusOptions = computed(() =>
 )
 const reasonOptions = computed(() =>
   DIFFERENCE_REASON_ORDER.map((code) => ({ value: code, label: DIFFERENCE_REASONS[code] ?? code })),
+)
+/** 首次认定状态(RL-08):两态,标签取自 `lib/labels.ts` 的单一出处。 */
+const firstStatusOptions = computed(() =>
+  FIRST_RECOGNITION_STATUS_ORDER.map((code) => ({
+    value: code,
+    label: FIRST_RECOGNITION_STATUSES[code] ?? code,
+  })),
 )
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 
@@ -317,7 +367,10 @@ const activeFilters = computed<ActiveFilter[]>(() => {
   const patch = (key: keyof LedgerState, value: unknown) => {
     state.value = { ...state.value, [key]: value }
   }
-  const without = (key: 'title' | 'source' | 'eventType' | 'year' | 'status' | 'reason', drop: string) =>
+  const without = (
+    key: 'title' | 'source' | 'eventType' | 'year' | 'firstYear' | 'firstStatus' | 'status' | 'reason',
+    drop: string,
+  ) =>
     patch(
       key,
       s[key].filter((x) => x !== drop),
@@ -352,6 +405,16 @@ const activeFilters = computed<ActiveFilter[]>(() => {
       clear: () => without('eventType', v),
     })),
     ...s.year.map((v) => ({ key: `year:${v}`, label: `年份 · ${v}`, clear: () => without('year', v) })),
+    ...s.firstYear.map((v) => ({
+      key: `firstYear:${v}`,
+      label: `首次认定 · ${v}`,
+      clear: () => without('firstYear', v),
+    })),
+    ...s.firstStatus.map((v) => ({
+      key: `firstStatus:${v}`,
+      label: `首次认定 · ${FIRST_RECOGNITION_STATUSES[v] ?? v}`,
+      clear: () => without('firstStatus', v),
+    })),
     ...s.status.map((v) => ({
       key: `status:${v}`,
       label: `状态 · ${DIFFERENCE_STATUSES[v] ?? v}`,
@@ -545,6 +608,22 @@ useHead({
           />
         </template>
         <template v-if="view === 'enterprise'">
+          <!-- RL-08:首次认定两个判据(年份 / 状态)。与上面的「年份」是两回事:
+               那个筛**事件**年份,这两个筛该称号**首次认定**的年份与状态。 -->
+          <MultiSelectFilter
+            v-model="state.firstYear"
+            :options="yearOptions"
+            placeholder="首次认定年份"
+            summary-prefix="首次认定"
+            class="w-32"
+          />
+          <MultiSelectFilter
+            v-model="state.firstStatus"
+            :options="firstStatusOptions"
+            placeholder="首次认定状态"
+            summary-prefix="首次认定"
+            class="w-32"
+          />
           <select
             v-model="state.district"
             class="border-input bg-background h-8 rounded-md border px-2 text-sm"
@@ -618,13 +697,24 @@ useHead({
       class="rise-in text-muted-foreground text-[13px] leading-relaxed tabular-nums"
       style="--rise-index: 2"
       aria-live="polite"
+      :aria-busy="listRefetching"
       data-testid="ledger-counts"
     >
+      <!-- 改筛选后正在重取:旧数字还在,但必须让人知道它已经过期。 -->
+      <span
+        v-if="listRefetching"
+        class="text-muted-foreground mr-2 inline-flex items-center gap-1"
+        data-testid="ledger-loading"
+      >
+        <LoaderCircle class="size-3 animate-spin" aria-hidden="true" />加载中
+      </span>
       <template v-if="view === 'enterprise'">
         共 <span class="text-foreground font-medium">{{ counts.total.toLocaleString('zh-CN') }}</span>
         <strong>家企业</strong> · 合计
         <span class="text-foreground font-medium">{{ counts.titlePairs.toLocaleString('zh-CN') }}</span>
-        个 <strong>企业 × 称号</strong>(多称号企业在企业数里只算一家,在每个称号里各计一次;导出与本页同筛选、同口径)
+        个 <strong>企业 × 称号</strong>(多称号企业在企业数里只算一家,在每个称号里各计一次;导出与本页同筛选、同口径),
+        其中 <span class="text-foreground font-medium">{{ counts.recognitionPairs.toLocaleString('zh-CN') }}</span>
+        个有<strong>首次认定</strong>
       </template>
       <template v-else-if="view === 'title'">
         符合条件 <span class="text-foreground font-medium">{{ total.toLocaleString('zh-CN') }}</span> 行

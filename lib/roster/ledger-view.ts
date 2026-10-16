@@ -44,6 +44,13 @@ export interface LedgerState {
   source: string[]
   eventType: string[]
   year: string[]
+  /**
+   * **首次认定年份**(RL-08)。与上面的 `year` 不是一回事:`year` 筛的是**事件**年份,
+   * 这里筛的是该称号**首次认定**的年份。两个控件、两个参数名,谁也别借谁的。
+   */
+  firstYear: string[]
+  /** **首次认定状态**(RL-08):`confirmed` / `pending`。 */
+  firstStatus: string[]
   direction: string
   status: string[]
   reason: string[]
@@ -57,6 +64,8 @@ export const EMPTY_LEDGER_STATE: LedgerState = {
   source: [],
   eventType: [],
   year: [],
+  firstYear: [],
+  firstStatus: [],
   direction: '',
   status: [],
   reason: [],
@@ -74,6 +83,8 @@ export function ledgerStateFromQuery(query: Record<string, unknown>): LedgerStat
     source: csv(query.source),
     eventType: csv(query.eventType),
     year: csv(query.year),
+    firstYear: csv(query.firstYear),
+    firstStatus: csv(query.firstStatus),
     direction: str(query.direction),
     status: csv(query.status),
     reason: csv(query.reason),
@@ -93,7 +104,20 @@ export function ledgerStateFromQuery(query: Record<string, unknown>): LedgerStat
  * 这是「切换分组不换人」的那一半,所以两个视图都列上,谁也不许只改一边。
  */
 export const LEDGER_VIEW_FILTERS: Record<LedgerView, readonly (keyof LedgerState)[]> = {
-  enterprise: ['q', 'title', 'source', 'eventType', 'year', 'district', 'rosterState'],
+  // `firstYear` / `firstStatus` 是 RL-08 增量,同样只归**企业**粒度:
+  // 首次认定是「这家企业在某称号上的首次年份」,而 `按企业×称号` 的行取自 `/api/records`,
+  // 它读事件行、不算首次认定 —— 放进去就是「同一个 URL,两种结果」。
+  enterprise: [
+    'q',
+    'title',
+    'source',
+    'eventType',
+    'year',
+    'firstYear',
+    'firstStatus',
+    'district',
+    'rosterState',
+  ],
   title: ['q', 'title', 'source', 'eventType', 'year'],
   difference: ['q', 'title', 'direction', 'status', 'reason'],
 }
