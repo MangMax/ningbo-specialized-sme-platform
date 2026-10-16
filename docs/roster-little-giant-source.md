@@ -83,21 +83,43 @@
 ## 7. 怎么复核
 
 ```bash
-# 解析 + 报告(真实源文件)
+# 结构 + 逐行交代 + 报告(真件在就用真件)
 pnpm test tests/little-giant-source-file.test.ts
 
 # 换源文件路径 / 落一份报告 JSON
 RL02_LITTLE_GIANT_XLSX=/abs/path/x.xlsx RL02_REPORT_OUT=/tmp/rl02.json \
   pnpm test tests/little-giant-source-file.test.ts
 
-# 端到端(经真实 HTTP 提交;见下节说明)
-RL02_E2E=1 pnpm test tests/little-giant-import-e2e.test.ts
+# 端到端:经真实 HTTP 提交(默认跑,不需要任何环境变量)
+pnpm test tests/little-giant-import-e2e.test.ts
 ```
 
-## 8. 提交路径的状态
+真件不在本机时**不会整组跳过**:`tests/helpers/little-giant-source.ts` 会退成一份
+**结构等价**的合成夹具(单表、单行表头、r2 起、G 与 I 同表头、K 起是杂项、
+跨批次同码 `91330211316904639T`),**同一条写入链路**照跑;只有「真件才有的具体数字」
+那几条断言会跳过。想看夹具路径下的表现:
+
+```bash
+RL02_LITTLE_GIANT_XLSX=/nonexistent/none.xlsx pnpm test
+```
+
+## 8. 提交路径的状态(已打通)
 
 写入**只经**契约 §8.2 的 `POST /api/roster/import/commit`(RL-11),
-请求体由 `lib/roster/little-giant-import.ts` 按 §8.3 构造,幂等键 = `jxj/little-giant/historical#sha256:<源文件 SHA-256>`。
+请求体由 `lib/roster/little-giant-import.ts` 按 §8.3 构造,幂等键 =
+`jxj/little-giant/historical#sha256:<源文件 SHA-256>`。
 
-**RL-11 未合入前该端点在集成分支上不存在**(实测:POST 落到 SPA 兜底,回 `200 text/html`)⇒
-端到端用例报明确阻塞。解析、报告、payload 与幂等键均已就绪,边界一到即可复跑。
+端到端(`tests/little-giant-import-e2e.test.ts`)在**真端口**上起 RL-11 的
+`handleRosterImportRequest`(Nitro 路由同款),用 `lib/roster-import-client.ts` 提交,实测:
+
+| 断言 | 实测 |
+|---|---|
+| 预检不写业务数据(`add` = 计划项数,`conflicts` 空) | 0 行业务数据;`add` = 510 |
+| 首次提交 | `status='committed'`;`enterprise` 510 / `record` 510 / `record_event` **511** / `record_evidence` 511;`import_batch` 1 |
+| `91330211316904639T` | 企业 **1** 行,事件 **2** 条(第 2 批 → 2020、第 6 批 → 2024) |
+| 出处(listNo 14) | `source_file` / `attachment` = 工作表名 / `list_no` 14 / `page` NULL |
+| 同幂等键再提交 | `batchId` 不变;企业 / 记录 / 事件 / 出处**一个都不多** |
+
+`record_evidence.source_file` 目前是**来源根相对路径**;等文件登记进文件库(`app/files/`)
+后换成库内相对路径(TO-BACKFILL,绑 RL-13)。
+

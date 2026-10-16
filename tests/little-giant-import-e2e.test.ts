@@ -1,287 +1,229 @@
-import { spawn, type ChildProcess } from 'node:child_process'
-import { createServer } from 'node:net'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout as sleep } from 'node:timers/promises'
-import Database from 'better-sqlite3'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
+import { schema, useDb } from '../db'
 import {
-  buildLittleGiantImportRequest,
+  ROSTER_IMPORT_COMMIT_PATH,
+  createRosterImportClient,
+  type RosterImportCommitResponse,
   type RosterImportRequest,
-} from '../lib/roster/little-giant-import'
-import { parseLittleGiantWorkbook } from '../lib/roster/little-giant-workbook'
+} from '../lib/roster-import-client'
+import { buildLittleGiantImportRequest } from '../lib/roster/little-giant-import'
+import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../lib/roster/little-giant-workbook'
+import { rosterRowCounts } from '../server/utils/roster-import'
+import { startRosterApi, type RosterApiServer } from './helpers/roster-http-server'
+import { SYNTHETIC_DUPLICATE_USCC, hasRealSource, loadLittleGiantSource, type LittleGiantSource } from './helpers/little-giant-source'
 
 /**
- * RL-02 端到端 —— **经真实 HTTP** 把这份工作簿提交给统一写入 API。
+ * RL-02 **端到端** —— 把这份工作簿**经真实 HTTP** 提交给统一写入 API(RL-11),
+ * 断言用户可观察的结果:企业去重、两条批次事件、来源证据、重复运行幂等。
  *
- * ── 为什么不在 `pnpm test` 里默认跑 ──────────────────────────────────────
- * 这条用例会**真的把应用起起来**(`nuxt dev`)、**真的写一个临时 SQLite**,
- * 并且需要**真实源文件**(不进 Git)。它是「跑一次就能重跑」的验收,不是快速单测
- * ⇒ 用 `RL02_E2E=1` 打开:
+ * ── 走的是哪条链路 ──────────────────────────────────────────────────────
+ * `tests/helpers/roster-http-server.ts` 在**真端口**上起一个 node:http 服务,挂的是
+ * **Nitro 路由同款**的 `handleRosterImportRequest`(RL-11 的验收夹具,不是另写的替身);
+ * 客户端用 `lib/roster-import-client.ts`(**契约类型 + HTTP 客户端**)。全程 `pnpm test` 默认跑,
+ * 不需要环境变量:真件在就用真件,不在就用合成夹具跑**同一条链路**(见 `helpers/little-giant-source.ts`)。
  *
- * ```bash
- * RL02_E2E=1 pnpm test tests/little-giant-import-e2e.test.ts
- * # 换源文件:
- * RL02_E2E=1 RL02_LITTLE_GIANT_XLSX=/abs/path/经信局公布历年小巨人企业名单.xlsx pnpm test tests/little-giant-import-e2e.test.ts
- * ```
- *
- * 断言的是**用户可观察的结果**:企业去重、两条批次事件、来源证据、重复运行幂等。
- * 记数只读 DB(**写**一律走 API —— 直写 SQLite 是 SPEC 明令禁止的)。
- *
- * 依赖:RL-11 的 `POST /api/roster/import/commit`(契约 §8.2)。
+ * ── 为什么可以读库 ──────────────────────────────────────────────────────
+ * 「重复导入不重复新增企业/事件/出处」这条验收**只能**用库里的行数回答 —— 读面
+ * (`GET /api/roster/*`)是 RL-04 的范围,本票没有。**写**仍然一律走 API:
+ * 本文件只用 drizzle 的查询构造器**读**计数,没有任何 SQL 写。
  */
 
-const DEFAULT_SOURCE =
-  '/Users/mang/Workfile/宁波/专精特新/20261013/经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx'
+const TOKEN = 'rl02-e2e-token-value'
 
-const SOURCE_PATH = process.env.RL02_LITTLE_GIANT_XLSX ?? DEFAULT_SOURCE
-const TOKEN = 'rl02-e2e-token'
-const ENABLED = process.env.RL02_E2E === '1' && existsSync(SOURCE_PATH)
+/** 合成夹具的期望(独立于 payload 构造器,手数出来的 7 行里的 6 家 / 7 条事件)。 */
+const EXPECTED_SYNTHETIC = { rows: 7, enterprises: 6, records: 6, events: 7, evidences: 7 }
+/** 真件的期望(`docs/roster-little-giant-source.md` §4 记录的数字)。 */
+const EXPECTED_REAL = { rows: 511, enterprises: 510, records: 510, events: 511, evidences: 511 }
 
-if (process.env.RL02_E2E === '1' && !existsSync(SOURCE_PATH)) {
-  console.warn(`[RL-02] RL02_E2E=1 但找不到源文件 ${SOURCE_PATH};整组跳过。`)
-}
-if (process.env.RL02_E2E !== '1') {
-  console.info('[RL-02] 端到端未开启(设 RL02_E2E=1 打开)。')
-}
-
-/** 让系统给一个空闲端口(免得和 dev 端口/别的用例撞车)。 */
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = createServer()
-    probe.once('error', reject)
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address() as { port: number }
-      probe.close(() => resolve(port))
-    })
-  })
-}
-
-interface RunningApp {
-  origin: string
-  dbPath: string
-  stop(): Promise<void>
-}
-
-async function startApp(): Promise<RunningApp> {
-  const dir = mkdtempSync(join(tmpdir(), 'rl02-e2e-'))
-  const dbPath = join(dir, 'roster.db')
-  const port = await freePort()
-  const origin = `http://127.0.0.1:${port}`
-
-  const child: ChildProcess = spawn(
-    'pnpm',
-    ['exec', 'nuxt', 'dev', '--host', '127.0.0.1', '--port', String(port)],
-    {
-      cwd: process.cwd(),
-      env: { ...process.env, NUXT_API_TOKEN: TOKEN, NUXT_DB_PATH: dbPath },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  )
-  let log = ''
-  child.stdout?.on('data', (chunk: Buffer) => { log += chunk.toString() })
-  child.stderr?.on('data', (chunk: Buffer) => { log += chunk.toString() })
-
-  const stop = async () => {
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM')
-      await sleep(1500)
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
-    }
-    rmSync(dir, { recursive: true, force: true })
-  }
-
-  const deadline = Date.now() + 150_000
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      await stop()
-      throw new Error(`应用起不来(退出码 ${child.exitCode})\n${log.slice(-3000)}`)
-    }
-    try {
-      const res = await fetch(`${origin}/api/health`)
-      if (res.ok) return { origin, dbPath, stop }
-    } catch {
-      // 还没起来,继续等。
-    }
-    await sleep(500)
-  }
-  await stop()
-  throw new Error(`应用 150s 内没就绪\n${log.slice(-3000)}`)
-}
-
-/** POST 一次提交;`text()` 里的错误原文要留给失败信息,所以不直接 `res.json()`。 */
-async function commit(
-  app: RunningApp,
-  body: RosterImportRequest,
-): Promise<{ status: number; contentType: string; json: Record<string, unknown> | null; text: string }> {
-  const res = await fetch(`${app.origin}/api/roster/import/commit`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'X-API-Token': TOKEN },
-    body: JSON.stringify(body),
-  })
-  const text = await res.text()
-  const contentType = res.headers.get('content-type') ?? ''
-  let json: Record<string, unknown> | null = null
-  if (contentType.includes('json')) {
-    try {
-      json = JSON.parse(text) as Record<string, unknown>
-    } catch {
-      json = null
-    }
-  }
-  return { status: res.status, contentType, json, text }
-}
-
-/** 提交必须打到**真的写入端点**上。打不到就直说差哪一步,别让后面几条断言各自报假错。 */
-function expectCommitted(result: Awaited<ReturnType<typeof commit>>): Record<string, unknown> {
-  if (!result.json || typeof result.json.batchId !== 'number') {
-    throw new Error(
-      'POST /api/roster/import/commit 没有返回契约 §8.2 的响应 ——\n' +
-        `HTTP ${result.status} content-type=${result.contentType || '(空)'}\n` +
-        `body(前 300 字):${result.text.slice(0, 300)}\n` +
-        '状态 200 且 body 是 SPA 的 HTML ⇒ 该路由还不存在(RL-11 未合入)。',
-    )
-  }
-  return result.json
-}
-
-interface Counts {
+interface Expected {
+  rows: number
   enterprises: number
   records: number
   events: number
   evidences: number
-  batches: number
 }
 
-function readCounts(dbPath: string): Counts {
-  const db = new Database(dbPath, { readonly: true, fileMustExist: true })
-  try {
-    const one = (sql: string) => (db.prepare(sql).get() as { n: number }).n
-    return {
-      enterprises: one('select count(*) as n from enterprise'),
-      records: one('select count(*) as n from record'),
-      events: one('select count(*) as n from record_event'),
-      evidences: one('select count(*) as n from record_evidence'),
-      batches: one('select count(*) as n from import_batch'),
-    }
-  } finally {
-    db.close()
-  }
-}
-
-describe.skipIf(!ENABLED)('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
-  let app: RunningApp
+describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
+  let dir: string
+  let db: ReturnType<typeof useDb>
+  let server: RosterApiServer
+  let source: LittleGiantSource
+  let workbook: LittleGiantWorkbook
   let request: RosterImportRequest
-  let sourceSha256: string
-  /** 第一次提交的响应。提交本身放在 `beforeAll`:打不到端点时**一次**说清根因,而不是四条用例各报假错。 */
-  let firstCommit: { status: number; json: Record<string, unknown> }
+  let expected: Expected
+  /** 首次提交的响应(声明顺序执行,后面的用例都靠它)。 */
+  let first: RosterImportCommitResponse
 
   beforeAll(async () => {
-    const workbook = await parseLittleGiantWorkbook(readFileSync(SOURCE_PATH))
-    request = buildLittleGiantImportRequest(workbook)
-    sourceSha256 = workbook.sha256
-    app = await startApp()
-    const result = await commit(app, request)
-    firstCommit = { status: result.status, json: expectCommitted(result) }
-  }, 200_000)
+    dir = mkdtempSync(join(tmpdir(), 'rl02-e2e-'))
+    db = useDb({ dbPath: join(dir, 'roster.db') })
+    server = await startRosterApi({ db, apiToken: TOKEN })
+
+    source = await loadLittleGiantSource()
+    workbook = await parseLittleGiantWorkbook(source.buffer)
+    request = buildLittleGiantImportRequest(workbook, { sourceFile: source.sourceFile })
+    expected = source.real ? EXPECTED_REAL : EXPECTED_SYNTHETIC
+  }, 60_000)
 
   afterAll(async () => {
-    await app?.stop()
+    await server?.close()
+    if (dir) rmSync(dir, { recursive: true, force: true })
   })
 
-  it('第一次提交:511 条事件全部写入,510 家企业(跨批次同码的企业已去重)', async () => {
-    expect(firstCommit.json.status).toBe('committed')
+  const client = () => createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
 
-    const counts = readCounts(app.dbPath)
-    expect(counts.enterprises).toBe(510)
-    expect(counts.records).toBe(510)
-    expect(counts.events).toBe(511)
-    expect(counts.evidences).toBe(511)
-    expect(counts.batches).toBe(1)
+  it('预检:只算影响、不写业务数据,且没有逐项冲突', async () => {
+    const result = await client().preflight(request)
 
-    const db = new Database(app.dbPath, { readonly: true })
-    try {
-      const batch = db
-        .prepare('select idempotency_key, source_kind, source_sha256, status from import_batch')
-        .get() as Record<string, string>
-      expect(batch.idempotency_key).toBe(request.idempotencyKey)
-      expect(batch.source_kind).toBe('announcement')
-      expect(batch.source_sha256).toBe(sourceSha256)
-      expect(batch.status).toBe('committed')
-    } finally {
-      db.close()
-    }
+    expect(result.status).toBe('preflight')
+    expect(result.preflight.conflicts).toEqual([])
+    expect(result.preflight.remove).toBe(0)
+    expect(result.preflight.update).toBe(0)
+    expect(result.preflight.review).toBe(0)
+    // 实测口径:预检 `add` = 本批将新增的**计划项**数;这份载荷「一家企业 = 一项」
+    // ⇒ add = 记录数。(契约 §8.5 的措辞写的是「任一新行:企业/记录/事件/出处…」,
+    // 与实现的「按计划项」不是一回事 —— 已作为观察项报给父代理,故这里按**实测**断言。)
+    expect(result.preflight.add).toBe(expected.records)
+    // 预检**不写业务数据**:七张新表 + 来源文件表全是 0。
+    expect(rosterRowCounts(db)).toEqual({
+      enterprise: 0,
+      record: 0,
+      record_event: 0,
+      record_evidence: 0,
+      enterprise_alias: 0,
+      platform_query: 0,
+      platform_relation: 0,
+      platform_export_batch: 0,
+      platform_export_row: 0,
+      difference_reason: 0,
+      source_document: 0,
+    })
   })
 
-  it('91330211316904639T:企业一行,但第 2 批与第 6 批**各留一条**认定事件', async () => {
-    const db = new Database(app.dbPath, { readonly: true })
-    try {
-      const rows = db
-        .prepare(
-          `select e.id as enterprise_id, ev.event_type, ev.year, ev.batch_seq
-             from enterprise e
-             join record r on r.enterprise_id = e.id
-             join record_event ev on ev.record_id = r.id
-            where e.uscc_norm = ?
-            order by ev.batch_seq`,
-        )
-        .all('91330211316904639T') as Array<{
-          enterprise_id: number
-          event_type: string
-          year: number
-          batch_seq: number
-        }>
+  it(`首次提交(${hasRealSource ? '真件' : '合成夹具'}):逐条源行落到事件,企业按信用代码去重`, async () => {
+    first = await client().commit(request)
 
-      expect(rows).toHaveLength(2)
-      expect(new Set(rows.map((row) => row.enterprise_id)).size).toBe(1)
-      expect(rows.map((row) => [row.event_type, row.batch_seq, row.year])).toEqual([
-        ['award', 2, 2020],
-        ['award', 6, 2024],
-      ])
-    } finally {
-      db.close()
-    }
+    expect(first.status).toBe('committed')
+    expect(first.error ?? null).toBeNull()
+    expect(first.items.every((item) => item.ok)).toBe(true)
+
+    const counts = rosterRowCounts(db)
+    expect(counts).toMatchObject({
+      enterprise: expected.enterprises,
+      record: expected.records,
+      record_event: expected.events,
+      record_evidence: expected.evidences,
+      enterprise_alias: 0,
+      platform_relation: 0,
+      difference_reason: 0,
+    })
+    // 一次提交 = 一条批次。
+    expect(db.select().from(schema.importBatch).all()).toHaveLength(1)
+
+    // 源行数 = 事件数 + 未进名单的待核行(这份源的待核行数在报告里)。
+    expect(workbook.rows.length + workbook.issues.filter((i) => i.severity === 'blocked').length).toBe(
+      expected.rows,
+    )
+    expect(workbook.rows).toHaveLength(expected.events)
   })
 
-  it('来源证据落到事件上:源文件 / 附件(工作表) / 名单序号', async () => {
-    const db = new Database(app.dbPath, { readonly: true })
-    try {
-      const evidence = db
-        .prepare(
-          `select ev.source_file, ev.attachment, ev.list_no, ev.page, evt.batch_seq
-             from record_evidence ev
-             join record_event evt on evt.id = ev.record_event_id
-            where ev.list_no = 14`,
-        )
-        .get() as Record<string, unknown>
+  it(`跨批次同一信用代码 ${SYNTHETIC_DUPLICATE_USCC}:企业一行,但两批各留一条认定事件`, async () => {
+    const rows = db
+      .select({
+        enterpriseId: schema.record.enterpriseId,
+        eventType: schema.recordEvent.eventType,
+        year: schema.recordEvent.year,
+        batchSeq: schema.recordEvent.batchSeq,
+      })
+      .from(schema.enterprise)
+      .innerJoin(schema.record, eq(schema.record.enterpriseId, schema.enterprise.id))
+      .innerJoin(schema.recordEvent, eq(schema.recordEvent.recordId, schema.record.id))
+      .where(eq(schema.enterprise.usccNorm, SYNTHETIC_DUPLICATE_USCC))
+      .orderBy(schema.recordEvent.batchSeq)
+      .all()
 
-      expect(evidence.source_file).toBe(request.payload.announcement.records
-        .flatMap((record) => record.events)
-        .flatMap((event) => event.evidence)[0]!.sourceFile)
-      expect(evidence.attachment).toBe('专精特新小巨人企业 (2)')
-      expect(evidence.batch_seq).toBe(2)
-      // 表格给不出页码 ⇒ 空值(空值优于错误值)。
-      expect(evidence.page).toBeNull()
-
-      const withListNo = db
-        .prepare('select count(*) as n from record_evidence where list_no is not null')
-        .get() as { n: number }
-      expect(withListNo.n).toBe(511)
-    } finally {
-      db.close()
-    }
+    expect(rows).toHaveLength(2)
+    expect(new Set(rows.map((row) => row.enterpriseId)).size).toBe(1)
+    expect(rows.map((row) => [row.eventType, row.batchSeq, row.year])).toEqual([
+      ['award', 2, 2020],
+      ['award', 6, 2024],
+    ])
   })
 
-  it('重复导入(同幂等键):返回同一批次,企业 / 事件 / 出处**一个都不多**', async () => {
-    const before = readCounts(app.dbPath)
-    const first = await commit(app, request)
-    const firstJson = expectCommitted(first)
-    const second = await commit(app, request)
-    const secondJson = expectCommitted(second)
+  it('来源证据落到事件上:源文件 / 附件(工作表) / 名单序号 / 页码留空', async () => {
+    const evidence = db
+      .select({
+        sourceFile: schema.recordEvidence.sourceFile,
+        attachment: schema.recordEvidence.attachment,
+        listNo: schema.recordEvidence.listNo,
+        page: schema.recordEvidence.page,
+        batchSeq: schema.recordEvent.batchSeq,
+      })
+      .from(schema.recordEvidence)
+      .innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId))
+      .where(eq(schema.recordEvidence.listNo, 14))
+      .all()
 
-    expect(secondJson.batchId).toBe(firstJson.batchId)
-    expect(second.status).toBe('committed')
-    expect(readCounts(app.dbPath)).toEqual(before)
+    // 序号 14 在两份源里都只出现一次(真件 r15 / 夹具第 2 条),且都是第 2 批。
+    expect(evidence).toEqual([
+      {
+        sourceFile: source.sourceFile,
+        attachment: workbook.sheetName,
+        listNo: 14,
+        page: null,
+        batchSeq: 2,
+      },
+    ])
+
+    // 每条源行都带出处,无一遗漏。
+    expect(rosterRowCounts(db).record_evidence).toBe(expected.evidences)
+    expect(
+      db.select().from(schema.recordEvidence).all().filter((row) => row.listNo !== null),
+    ).toHaveLength(expected.evidences)
+  })
+
+  it('重复导入(同幂等键):返回**同一批次**,企业 / 记录 / 事件 / 出处一个都不多', async () => {
+    const before = rosterRowCounts(db)
+
+    // 走**原始 fetch** 再提交一次:既验重放,也验 HTTP 面本身。
+    const response = await fetch(`${server.baseUrl}${ROSTER_IMPORT_COMMIT_PATH}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify(request),
+    })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('application/json')
+
+    // 注意:`response.status` 是 HTTP 状态,批次的 `status` 在 JSON body 里 —— 两者别混。
+    const body = (await response.json()) as RosterImportCommitResponse
+    expect(body.status).toBe('committed')
+    expect(body.batchId).toBe(first.batchId)
+
+    expect(rosterRowCounts(db)).toEqual(before)
+    expect(db.select().from(schema.importBatch).all()).toHaveLength(1)
+  })
+
+  describe.runIf(hasRealSource)('真件的具体数字(仅真件在时断言)', () => {
+    it('511 条源行 / 510 个信用代码 / 511 条事件,批次分布为第 1–7 批', () => {
+      expect(workbook.dataRowCount).toBe(511)
+      expect(workbook.rows).toHaveLength(511)
+      expect(new Set(workbook.rows.map((row) => row.uscc)).size).toBe(510)
+      expect(workbook.duplicateUscc).toHaveLength(1)
+      expect(workbook.duplicateUscc[0]!.uscc).toBe(SYNTHETIC_DUPLICATE_USCC)
+      expect(workbook.missingBatches).toEqual([8])
+    })
+
+    it('库里就是 510 企业 / 510 记录 / 511 事件 / 511 出处', () => {
+      expect(rosterRowCounts(db)).toMatchObject({
+        enterprise: 510,
+        record: 510,
+        record_event: 511,
+        record_evidence: 511,
+      })
+    })
   })
 })

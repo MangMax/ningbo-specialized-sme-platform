@@ -12,8 +12,8 @@ import { startTusServer, type MiniTusServer } from './helpers/tus-mini-server'
 /**
  * 「脚本内化」与「tus 上传」两条写入路径的**落位规则一致性**验证(票 02)。
  *
- * 遍历仓库文件库(`files/**`)里现有的内化文件(当前 23 个:21 个来源文件,
- * 加上 2 个由 `.doc` 转出的 `.docx` —— 见 files/README.md),按**路径反推** metadata
+ * 遍历仓库文件库(`files/**`)里现有的内化文件(**当前 24 个**:21 份来源文件 + 3 份工信部
+ * 导出表 —— 见 `files/README.md`),按**路径反推** metadata
  * (`source/kind/year/batch/filename`),再经 **tus 协议**(`tus-js-client` 走真实
  * HTTP)上传到**临时文件库**(不碰真实 `files/`),断言:
  *   1. 每个文件落到规则路径 `files/<source>/<kind>/<year>/<batch>/<filename>`,
@@ -26,8 +26,18 @@ import { startTusServer, type MiniTusServer } from './helpers/tus-mini-server'
  */
 
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
-/** 仓库里现有的文件库(22 个来源文件 + 2 个 `.doc` 转出的 `.docx` + README)。 */
+/** 仓库里现有的文件库(21 份来源文件 + 3 份导出表 + README)。 */
 const LIBRARY_DIR = join(APP_ROOT, 'files')
+/**
+ * 内化文件的期望数。⚠️ 新增源文件后要跟着改(见 `stored-file.test.ts` 同名常量的说明)。
+ */
+const INTERNALIZED_FILE_COUNT = 24
+
+/**
+ * `files/` 是否已就位。目录本身在 clone 里总是存在(只提交了 `README.md`),
+ * 故探到真实内容层;未就位时**显式跳过**而不是假红 —— 全新 clone 没有运行时数据。
+ */
+const hasRealStore = existsSync(join(LIBRARY_DIR, 'miit', 'export'))
 
 /** 文件库根下与落位规则无关的说明文件。 */
 const NON_DATA_FILES = new Set(['README.md'])
@@ -125,7 +135,7 @@ function tusUpload(
   })
 }
 
-describe('票 02:现有 23 个文件按 tus 规则重传,落位一致', () => {
+describe.skipIf(!hasRealStore)('票 02:现有内化文件按 tus 规则重传,落位一致', () => {
   let work: string
   let server: MiniTusServer
   let reUploadDir: string
@@ -155,8 +165,8 @@ describe('票 02:现有 23 个文件按 tus 规则重传,落位一致', () => {
     await rm(work, { recursive: true, force: true })
   })
 
-  it('扫描到的文件数与内化的 23 个一致', () => {
-    expect(library).toHaveLength(23)
+  it('扫描到的文件数与内化的文件数一致', () => {
+    expect(library).toHaveLength(INTERNALIZED_FILE_COUNT)
     // README 被排除;规则里 source/kind 都在白名单内。
     expect(library.every((f) => ['jxj', 'miit'].includes(f.metadata.source!))).toBe(true)
   })
@@ -207,8 +217,8 @@ describe('票 02:现有 23 个文件按 tus 规则重传,落位一致', () => {
     expect(await readFile(suffixed)).toEqual(altBytes)
   })
 
-  it('打印 23 个文件的上传结果清单', () => {
-    expect(report).toHaveLength(23)
+  it('打印内化文件的上传结果清单', () => {
+    expect(report).toHaveLength(INTERNALIZED_FILE_COUNT)
     const lines = report.map((r) => `${r.rel}  (${r.bytes} bytes)  → ${r.landed}  [ok]`)
     console.log(`\n[tus 重传] ${report.length} 个文件:\n${lines.join('\n')}\n`)
     expect(report.every((r) => r.ok)).toBe(true)
