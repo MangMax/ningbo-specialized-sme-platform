@@ -136,25 +136,25 @@ function railClass(row: EnterpriseListRow): string {
     滚动上下文,这里放开)。
   -->
   <div class="overflow-auto [&_[data-slot=table-container]]:overflow-visible">
-    <Table class="min-w-[980px] table-fixed">
+    <Table class="w-full min-w-0 table-fixed sm:min-w-[980px]">
       <TableHeader>
         <TableRow class="hover:bg-transparent">
           <TableHead class="bg-muted h-9 w-[6px] p-0">
             <span class="sr-only">差异状态</span>
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 text-xs font-semibold tracking-wide">
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[32%] text-xs font-semibold tracking-wide sm:w-auto">
             企业名称
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[11.5rem] text-xs font-semibold tracking-wide">
+          <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[11.5rem] text-xs font-semibold tracking-wide sm:table-cell">
             统一社会信用代码
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[4.5rem] text-xs font-semibold tracking-wide">
+          <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[4.5rem] text-xs font-semibold tracking-wide sm:table-cell">
             属地
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[17rem] text-xs font-semibold tracking-wide">
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[33%] text-xs font-semibold tracking-wide sm:w-[17rem]">
             称号 · 认定年
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[12rem] text-xs font-semibold tracking-wide">
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[35%] text-xs font-semibold tracking-wide sm:w-[12rem]">
             差异状态
           </TableHead>
         </TableRow>
@@ -183,10 +183,10 @@ function railClass(row: EnterpriseListRow): string {
           <span class="block h-5 w-[6px] rounded-r-sm" :class="railClass(row)" />
           </TableCell>
 
-          <TableCell class="max-w-0">
+          <TableCell class="max-w-0 break-words [overflow-wrap:anywhere]">
             <button
               type="button"
-              class="block max-w-full truncate text-left text-[13px] font-medium hover:underline"
+              class="block max-w-full whitespace-normal break-words text-left text-[13px] leading-4 font-medium hover:underline sm:truncate"
               :title="row.name"
               @click.stop="emit('select', row.enterpriseId)"
             >
@@ -196,20 +196,20 @@ function railClass(row: EnterpriseListRow): string {
             <span
               v-for="alias in row.aliasNames"
               :key="alias"
-              class="text-muted-foreground block truncate text-xs leading-4"
+              class="text-muted-foreground hidden truncate text-xs leading-4 sm:block"
               :title="`曾用名:${alias}`"
             >
               原 {{ alias }}
             </span>
           </TableCell>
 
-          <TableCell class="text-muted-foreground font-mono text-xs tabular-nums">
+          <TableCell class="text-muted-foreground hidden font-mono text-xs tabular-nums sm:table-cell">
             {{ row.uscc ?? '无统一社会信用代码' }}
           </TableCell>
 
-          <TableCell class="text-[13px]">{{ row.district ?? '属地未知' }}</TableCell>
+          <TableCell class="hidden text-[13px] sm:table-cell">{{ row.district ?? '属地未知' }}</TableCell>
 
-          <TableCell class="text-[13px]" data-testid="title-recognition-cell">
+          <TableCell class="text-[13px] whitespace-normal break-words leading-4 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="title-recognition-cell">
             <span v-if="!row.titles.length" class="text-muted-foreground">—</span>
             <template v-for="(item, i) in titleItems(row)" v-else :key="item.code">
               <span v-if="i" class="text-muted-foreground px-1">·</span>
@@ -218,7 +218,7 @@ function railClass(row: EnterpriseListRow): string {
             </template>
           </TableCell>
 
-          <TableCell class="text-[13px]">
+          <TableCell class="text-[13px] whitespace-normal break-words leading-4 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="enterprise-difference-cell">
             <span :class="row.difference.count ? '' : 'text-muted-foreground'">
               {{ differenceStatusText(row) }}
             </span>

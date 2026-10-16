@@ -50,7 +50,7 @@ function disposition(patch: Partial<ComparisonDisposition> = {}): ComparisonDisp
 
 /** 展开 tooltip 并取回它渲染出的文字(内容 teleport 到 body)。 */
 async function openAndReadText(wrapper: ReturnType<typeof mount>): Promise<string> {
-  await wrapper.get('[data-testid="reconcile-badge"]').trigger('click')
+  await wrapper.get('[data-testid="reconcile-status-trigger"]').trigger('click')
   await new Promise((r) => setTimeout(r, 0))
   await wrapper.vm.$nextTick()
   return document.body.textContent ?? ''
@@ -84,7 +84,7 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
         attachTo: document.body,
       },
     )
-    expect(wrapper.get('[data-testid="reconcile-badge"]').text()).toBe('已确认原因')
+    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('已确认原因')
     const text = await openAndReadText(wrapper)
     expect(text).toContain('平台未更新')
     expect(text).toContain('标明平台时点,不覆盖历史')
@@ -106,7 +106,7 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
       },
       attachTo: document.body,
     })
-    expect(wrapper.get('[data-testid="reconcile-badge"]').text()).toBe('待核实')
+    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('待核实')
     const text = await openAndReadText(wrapper)
     expect(text).toContain('转人工核实')
     expect(text).toContain('申报时间不足以排出先后')
@@ -117,7 +117,7 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
       props: { explanation: null, disposition: disposition({ explanationId: null, status: 'not_queried' }) },
       attachTo: document.body,
     })
-    expect(wrapper.get('[data-testid="reconcile-badge"]').text()).toBe('未查询')
+    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('未查询')
     expect(wrapper.find('[data-testid="reconcile-empty"]').exists()).toBe(false)
     const text = await openAndReadText(wrapper)
     expect(text).toContain('还没有解释记录')
@@ -215,8 +215,8 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
       },
       attachTo: document.body,
     })
-    // 主徽章是库内状态,不是缓存的「平台有记录」。
-    expect(wrapper.get('[data-testid="reconcile-badge"]').text()).toBe('已确认原因')
+    // 主状态文本来自库内,不是缓存的「平台有记录」。
+    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('已确认原因')
     const text = await openAndReadText(wrapper)
     expect(text).toContain('平台未更新')
     expect(text).toContain('旧解释缓存')

@@ -36,6 +36,7 @@ const BASE = `http://127.0.0.1:${PORT}`
 const VIEWPORTS = [
   { name: '桌面 1440×900', width: 1440, height: 900 },
   { name: '窄屏 390×844', width: 390, height: 844 },
+  { name: '200% 等效视口 720×900', width: 720, height: 900 },
 ]
 
 const problems = []
@@ -257,6 +258,45 @@ function statusRailViolation(m, label) {
   return m.statusRailWidth === 6
     ? null
     : `${label}:最左状态条应为 6px,实测 ${m.statusRailWidth}px`
+}
+
+function mobileCoreContentViolation(m, label) {
+  if (m.innerWidth > 420) return null
+  if (m.enterpriseMobileContent) {
+    const { tableWidth, containerWidth, name, title, difference } = m.enterpriseMobileContent
+    if (tableWidth > containerWidth + 1) return `${label}:企业列表窄屏表格仍需横向滚动(${tableWidth}px / ${containerWidth}px)`
+    if (!name || name.display === 'none' || name.textOverflow === 'ellipsis' || name.scrollWidth > name.clientWidth) {
+      return `${label}:企业列表窄屏企业名称被隐藏或截断 ${JSON.stringify(name)}`
+    }
+    if (!title || title.display === 'none' || !title.text || title.whiteSpace !== 'normal' || title.scrollWidth > title.clientWidth) {
+      return `${label}:企业列表窄屏称号与认定年被隐藏或裁切 ${JSON.stringify(title)}`
+    }
+    if (!difference || difference.display === 'none' || !difference.text || difference.whiteSpace !== 'normal' || difference.scrollWidth > difference.clientWidth) {
+      return `${label}:企业列表窄屏差异状态被隐藏或裁切 ${JSON.stringify(difference)}`
+    }
+  }
+  if (m.comparisonMobileContent) {
+    const { tableWidth, containerWidth, name, details } = m.comparisonMobileContent
+    if (tableWidth > containerWidth + 1) return `${label}:对比页窄屏表格仍需横向滚动(${tableWidth}px / ${containerWidth}px)`
+    if (!name || name.display === 'none' || name.textOverflow === 'ellipsis' || name.scrollWidth > name.clientWidth) {
+      return `${label}:对比页窄屏企业名称被隐藏或截断 ${JSON.stringify(name)}`
+    }
+    if (!details || details.display === 'none' || details.whiteSpace !== 'normal' || !details.text || details.height < 1 || !details.hasStatus) {
+      return `${label}:对比页窄屏首行未显示比对状态与解释 ${JSON.stringify(details)}`
+    }
+  }
+  return null
+}
+
+function comparisonFiltersViolation(m, label) {
+  const filters = m.comparisonFilters
+  if (!filters) return `${label}:找不到对比页筛选栏`
+  const outside = filters.controls.filter((control) => control.left < -1 || control.right > m.innerWidth + 1)
+  const searchTooNarrow = m.innerWidth < 1024 && filters.searchWidth < filters.clientWidth * 0.9
+  if (filters.scrollWidth > filters.clientWidth + 1 || outside.length || searchTooNarrow) {
+    return `${label}:对比页筛选栏控件越界或窄屏搜索框未铺满 ${JSON.stringify({ filters, outside, searchTooNarrow })}`
+  }
+  return null
 }
 
 const EXPECTED_EASING = 'cubic-bezier(0.32,0.72,0,1)'
@@ -783,14 +823,17 @@ async function verifyComparisonSearchAndMotion(cdp) {
 
     await startFetchGate(cdp, sessionId, '/api/comparison')
     const directionFilter = await evaluate(cdp, sessionId, `(() => {
-      const group = document.querySelector('[data-testid="comparison-direction-filter"]');
-      const buttons = [...(group?.querySelectorAll('button[aria-pressed]') ?? [])];
-      return { role: group?.getAttribute('role'), buttons: buttons.length, selected: buttons.filter((button) => button.getAttribute('aria-pressed') === 'true').length };
+      const wrapper = document.querySelector('[data-testid="comparison-direction-filter"]');
+      const trigger = wrapper?.querySelector('[role="combobox"]');
+      return { trigger: !!trigger, label: trigger?.textContent?.trim() ?? '' };
     })()`)
-    if (directionFilter.role !== 'group' || directionFilter.buttons !== 2 || directionFilter.selected !== 1) {
-      bad(`两侧名录比对 · 方向筛选:控件不是双选项过滤组 ${JSON.stringify(directionFilter)}`)
+    if (!directionFilter.trigger || !directionFilter.label) {
+      bad(`两侧名录比对 · 方向筛选:控件未使用项目 Select ${JSON.stringify(directionFilter)}`)
     } else {
-      await clickSelector(cdp, sessionId, '[data-testid="comparison-direction-filter"] button[aria-pressed="false"]')
+      await clickSelector(cdp, sessionId, '[data-testid="comparison-direction-filter"] [role="combobox"]')
+      const optionReady = await waitUntil(cdp, sessionId, `(() => [...document.querySelectorAll('[role="option"]')].some((el) => (el.textContent ?? '').includes('应出未出')))()`)
+      if (!optionReady) bad('两侧名录比对 · 方向筛选:Select 中没有「应出未出」选项')
+      await clickElementContaining(cdp, sessionId, '[role="option"]', '应出未出')
       const loading = await waitForLoadingEvidence(cdp, sessionId, 'comparison')
       if (!loading) bad('两侧名录比对 · 方向筛选:请求期间没有可见加载状态')
       else ok('两侧名录比对 · 方向筛选:请求期间显示加载状态')
@@ -926,6 +969,31 @@ const MEASURE = `(() => {
   const body = root?.querySelector('tbody');
   const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
   const comparisonDirection = document.querySelector('[data-testid="comparison-direction-filter"]');
+  const comparisonFilters = document.querySelector('[data-testid="comparison-filters"]');
+  const comparisonSearch = comparisonFilters?.querySelector('input[aria-label*="搜索企业名称"]');
+  const cellMetrics = (el) => el ? {
+    text: (el.textContent ?? '').trim(),
+    display: getComputedStyle(el).display,
+    whiteSpace: getComputedStyle(el).whiteSpace,
+    textOverflow: getComputedStyle(el).textOverflow,
+    clientWidth: el.clientWidth,
+    scrollWidth: el.scrollWidth,
+  } : null;
+  const enterpriseRow = root?.classList.contains('ledger-page')
+    ? document.querySelector('.ledger-page tbody tr:not([data-loading="true"])')
+    : null;
+  const enterpriseName = enterpriseRow?.querySelector('td:nth-child(2) button');
+  const enterpriseTitle = enterpriseRow?.querySelector('[data-testid="title-recognition-cell"]');
+  const enterpriseDifference = enterpriseRow?.querySelector('[data-testid="enterprise-difference-cell"]');
+  const comparisonRow = root?.classList.contains('comparison-page')
+    ? document.querySelector('.comparison-page tbody tr:not([data-loading="true"])')
+    : null;
+  const comparisonScroller = root?.classList.contains('comparison-page')
+    ? document.querySelector('.comparison-page [aria-label="比对结果表格(可横向滚动)"]')
+    : null;
+  const comparisonName = comparisonRow?.querySelector('[data-testid="comparison-enterprise-name"]');
+  const comparisonDetails = comparisonRow?.querySelector('[data-testid="comparison-mobile-details"]');
+  const firstRect = comparisonDetails?.getBoundingClientRect();
   const comparisonNames = [...(root?.querySelectorAll('[data-testid="comparison-enterprise-name"]') ?? [])].map((el) => ({
     text: (el.textContent ?? '').trim(),
     textOverflow: getComputedStyle(el).textOverflow,
@@ -954,9 +1022,37 @@ const MEASURE = `(() => {
     loadingStatus: !!document.querySelector('[data-testid="ledger-loading-status"],[data-testid="comparison-loading-status"]'),
     drawerOpen: document.querySelector('[data-testid="enterprise-drawer"]')?.getAttribute('data-state') === 'open',
     comparisonDirection: comparisonDirection ? {
-      role: comparisonDirection.getAttribute('role'),
-      options: comparisonDirection.querySelectorAll('button[aria-pressed]').length,
-      selected: comparisonDirection.querySelectorAll('button[aria-pressed="true"]').length,
+      trigger: !!comparisonDirection.querySelector('[role="combobox"]'),
+      label: comparisonDirection.querySelector('[role="combobox"]')?.textContent?.trim() ?? '',
+    } : null,
+    comparisonFilters: comparisonFilters ? {
+      clientWidth: comparisonFilters.clientWidth,
+      scrollWidth: comparisonFilters.scrollWidth,
+      searchWidth: Math.round(comparisonSearch?.getBoundingClientRect().width ?? 0),
+      gridTemplateColumns: getComputedStyle(comparisonFilters).gridTemplateColumns,
+      controls: [...comparisonFilters.querySelectorAll('input,[role="combobox"]')].map((el) => {
+        const rect = el.getBoundingClientRect();
+        return { label: el.getAttribute('aria-label') ?? '', left: Math.round(rect.left), right: Math.round(rect.right) };
+      }),
+    } : null,
+    enterpriseMobileContent: enterpriseRow ? {
+      tableWidth: Math.round(enterpriseRow.closest('table')?.getBoundingClientRect().width ?? 0),
+      containerWidth: Math.round(enterpriseRow.closest('.overflow-auto')?.clientWidth ?? 0),
+      name: cellMetrics(enterpriseName),
+      title: cellMetrics(enterpriseTitle),
+      difference: cellMetrics(enterpriseDifference),
+    } : null,
+    comparisonMobileContent: comparisonRow ? {
+      tableWidth: Math.round(comparisonRow.closest('table')?.getBoundingClientRect().width ?? 0),
+      containerWidth: comparisonScroller?.clientWidth ?? 0,
+      name: cellMetrics(comparisonName),
+      details: comparisonDetails ? {
+        text: (comparisonDetails.textContent ?? '').trim(),
+        display: getComputedStyle(comparisonDetails).display,
+        whiteSpace: getComputedStyle(comparisonDetails).whiteSpace,
+        height: Math.round(firstRect?.height ?? 0),
+        hasStatus: !!comparisonDetails.querySelector('[data-testid="reconcile-status-trigger"]'),
+      } : null,
     } : null,
     comparisonNames,
     evidenceSummaries,
@@ -1053,9 +1149,12 @@ async function main() {
           } else ok(`${label}:导出控件到表格间距已收紧(${m.ledgerExportTableGap}px)`)
         }
         if (page.query === '/comparison') {
-          if (m.comparisonDirection?.role !== 'group' || m.comparisonDirection.options !== 2 || m.comparisonDirection.selected !== 1) {
-            bad(`${label}:比对方向应为双选项过滤组 ${JSON.stringify(m.comparisonDirection)}`)
-          } else ok(`${label}:比对方向是紧凑过滤组,当前选项明确`)
+          if (!m.comparisonDirection?.trigger || !m.comparisonDirection.label) {
+            bad(`${label}:比对方向应使用项目 Select 过滤器 ${JSON.stringify(m.comparisonDirection)}`)
+          } else ok(`${label}:比对方向使用项目 Select(${m.comparisonDirection.label})`)
+          const filters = comparisonFiltersViolation(m, label)
+          if (filters) bad(filters)
+          else ok(`${label}:比对搜索与筛选控件均在视口内`)
           if (!m.comparisonNames.length || m.comparisonNames.some((name) => !name.text || name.textOverflow === 'ellipsis' || name.whiteSpace === 'nowrap' || name.scrollWidth > name.clientWidth)) {
             bad(`${label}:企业名称在表格列内仍被截断 ${JSON.stringify(m.comparisonNames.slice(0, 2))}`)
           } else {
@@ -1072,6 +1171,11 @@ async function main() {
           const rail = statusRailViolation(m, label)
           if (rail) bad(rail)
           else ok(`${label}:最左状态条实测 6px`)
+        }
+        if (viewport.width === 390) {
+          const mobileContent = mobileCoreContentViolation(m, label)
+          if (mobileContent) bad(mobileContent)
+          else ok(`${label}:窄屏首行可见企业名称、业务字段及状态,表格不需横向滚动`)
         }
         const motionCurve = motionCurveViolation(m, label)
         if (motionCurve) bad(motionCurve)
@@ -1106,6 +1210,30 @@ async function main() {
     if (!selfCheck) bad('缺陷自检:临时恢复横向溢出后,横溢出断言仍未命中')
     else console.log(`✗ 缺陷自检按预期变红:${selfCheck}`)
     if (selfCheck) ok('缺陷自检:关闭临时 target 后缺陷已复原')
+
+    const tabletFiltersBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/comparison`,
+      `(() => { const filters = document.querySelector('[data-testid="comparison-filters"]'); filters?.style.setProperty('grid-template-columns', 'repeat(12, minmax(200px, 1fr))', 'important'); return (${MEASURE}); })()`,
+      READY,
+      VIEWPORTS[2],
+    )
+    const tabletFiltersSelfCheck = comparisonFiltersViolation(tabletFiltersBroken, '720px筛选栏缺陷自检')
+    if (!tabletFiltersSelfCheck) bad('720px筛选栏缺陷自检:临时撑宽筛选栏后,控件越界断言仍未命中')
+    else console.log(`✗ 720px筛选栏缺陷自检按预期变红:${tabletFiltersSelfCheck}`)
+    if (tabletFiltersSelfCheck) ok('720px筛选栏缺陷自检:关闭临时 target 后缺陷已复原')
+
+    const mobileBroken = await openAndMeasure(
+      cdp,
+      `${BASE}/`,
+      `(() => { document.querySelector('.ledger-page [data-testid="title-recognition-cell"]')?.style.setProperty('display', 'none', 'important'); return (${MEASURE}); })()`,
+      READY,
+      VIEWPORTS[1],
+    )
+    const mobileSelfCheck = mobileCoreContentViolation(mobileBroken, '窄屏内容缺陷自检')
+    if (!mobileSelfCheck) bad('窄屏内容缺陷自检:临时隐藏称号列后,首屏关键字段断言仍未命中')
+    else console.log(`✗ 窄屏内容缺陷自检按预期变红:${mobileSelfCheck}`)
+    if (mobileSelfCheck) ok('窄屏内容缺陷自检:关闭临时 target 后缺陷已复原')
 
     const railBroken = await openAndMeasure(
       cdp,
@@ -1240,7 +1368,7 @@ async function main() {
     process.exit(1)
   }
   console.log(`\n结果:${passed} 项通过,0 项失败`)
-  console.log('✓ 企业列表与比对页已覆盖桌面/390px、表格唯一性、搜索与加载、分页、排序、抽屉动效及 /roster 查询串重定向')
+  console.log('✓ 企业列表与比对页已覆盖桌面/390px/720px、表格唯一性、搜索与加载、分页、排序、抽屉动效及 /roster 查询串重定向')
 }
 
 main().catch((err) => {

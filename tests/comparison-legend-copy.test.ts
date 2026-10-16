@@ -25,11 +25,12 @@ describe('比对页减法与证据展开', () => {
     expect(PLATFORM_EVIDENCE_SRC).toContain('data-testid="platform-relation"')
   })
 
-  it('平台解释状态徽章保留触屏、键盘和点击的解释入口', () => {
-    expect(RECONCILE_SRC).toContain('data-testid="reconcile-badge"')
-    expect(RECONCILE_SRC).toMatch(/role="button"[\s\S]{0,100}tabindex="0"/)
+  it('平台解释用原生按钮触发原因提示,保留键盘和触屏可达性', () => {
+    expect(RECONCILE_SRC).toContain('data-testid="reconcile-status-trigger"')
+    expect(RECONCILE_SRC).toMatch(/<button[\s\S]{0,100}type="button"/)
     expect(RECONCILE_SRC).toMatch(/@click="onClick"/)
-    expect(RECONCILE_SRC).toMatch(/@keydown="onKeydown"/)
+    expect(RECONCILE_SRC).toMatch(/@pointerdown="onPointerDown"/)
+    expect(RECONCILE_SRC).not.toContain('Badge')
     expect(RECONCILE_SRC).toContain('原因:')
     expect(RECONCILE_SRC).toContain('后续措施:')
   })

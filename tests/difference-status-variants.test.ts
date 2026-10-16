@@ -80,7 +80,7 @@ describe('六态两两可区分', () => {
   })
 
   /**
-   * 调用点不许给状态徽章挂 `font-*` / `text-*` 的 class。
+   * 旧企业详情面板仍用状态徽章,其调用点不许挂 `font-*` / `text-*` 的 class。
    *
    * 这条来自一次真实回归:`quiet`(待核实)与 `outline`(无记录)之间**只有字色**这一处
    * 差别(灰字 vs 深字)。调用点随手挂一个 `class="text-…"` 就会被 `twMerge` 判为同族、
@@ -88,10 +88,7 @@ describe('六态两两可区分', () => {
    * (它比的是没挂 class 的版本)。所以这里直接看源码,把「调用点别压字重/字色」钉住。
    */
   it('调用点不给状态徽章压字重或字色(否则六态会静默糊回去)', () => {
-    for (const file of [
-      'components/EnterpriseDrawer.vue',
-      'components/RosterEnterprisePanel.vue',
-    ]) {
+    for (const file of ['components/RosterEnterprisePanel.vue']) {
       const src = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
       const line = src.split('\n').find((l) => l.includes(':variant="statusVariant('))
       expect(line, `${file} 里找不到状态徽章那行`).toBeTruthy()
@@ -99,6 +96,14 @@ describe('六态两两可区分', () => {
         /class="[^"]*(?:font-|text-)/,
       )
     }
+  })
+
+  it('RL-20 抽屉状态使用文字与单色提示,不再套状态徽章', () => {
+    const src = readFileSync(new URL('../components/EnterpriseDrawer.vue', import.meta.url), 'utf8')
+    expect(src).toContain('DIFFERENCE_STATUS_RAILS')
+    expect(src).toContain('statusTextClass(d.status)')
+    expect(src).not.toContain('components/ui/badge')
+    expect(src).toContain('历史差异')
   })
 
   /**

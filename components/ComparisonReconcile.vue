@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
-import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   DIFFERENCE_MEASURES,
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
-  DIFFERENCE_STATUS_VARIANTS,
+  DIFFERENCE_STATUS_RAILS,
   RECONCILE_LABELS,
   RECONCILE_SOURCE,
   TITLES,
@@ -24,7 +23,7 @@ import { formatFetchTime } from '~~/lib/reconcile-time'
  * 原来这一列只读 `data/platform-reconcile.json` 的离线解释缓存。用户 2026-10-16 反馈
  * 「三个称号从平台获取的数据都没了」—— 根因正是**缓存缺失时整列退化成 `—`**,
  * 而库里其实有 `difference_reason` / `platform_query` / `platform_relation`。
- * 现在**主徽章取自库内解释记录**(`disposition`),离线缓存只在 tooltip 里作**对照**。
+ * 现在**主状态文字取自库内解释记录**(`disposition`),离线缓存只在 tooltip 里作**对照**。
  *
  * ── 显示纪律(与契约 §3 / §2.8 一致)────────────────────────────────────
  *  - 状态**只**从 `difference_reason.status` 取;没有解释记录时是状态机的默认态
@@ -53,9 +52,9 @@ import { formatFetchTime } from '~~/lib/reconcile-time'
  *
  * ## 位置(两轮评审都要过的约束)
  *
- * tooltip 固定挂在徽章**下方**并**整块让开徽章列**:`align="end"` + `align-offset`
- * ⇒ 它的右缘落在徽章左缘之外。于是既不遮吸顶表头 / 口径说明 / 任何一行的核实控件,
- * 也**不遮相邻行的同列徽章**。
+ * tooltip 固定挂在状态文字**下方**并**整块让开解释列**:`align="end"` + `align-offset`
+ * ⇒ 它的右缘落在触发文本左缘之外。于是既不遮吸顶表头 / 口径说明 / 任何一行的核实控件,
+ * 也**不遮相邻行的同列状态**。
  */
 const props = defineProps<{
   /** 库内**当前**处置(始终存在;没有解释记录时状态即 `not_queried`)。 */
@@ -67,9 +66,13 @@ const props = defineProps<{
 const statusLabel = computed(
   () => DIFFERENCE_STATUSES[props.disposition.status] ?? props.disposition.status,
 )
-const variant = computed(
-  () => DIFFERENCE_STATUS_VARIANTS[props.disposition.status] ?? 'quiet',
-)
+const statusTone = computed(() => {
+  switch (DIFFERENCE_STATUS_RAILS[props.disposition.status]) {
+    case 'confirmed': return 'text-primary'
+    case 'failed': return 'text-destructive'
+    default: return 'text-muted-foreground'
+  }
+})
 const reasonLabel = computed(() =>
   props.disposition.reasonCode
     ? (DIFFERENCE_REASONS[props.disposition.reasonCode] ?? props.disposition.reasonCode)
@@ -132,8 +135,8 @@ const open = ref(false)
 let openOnPointerDown = false
 
 /**
- * 让开多少:最长的标签「已确认无差异」约 86px,留 100px 保证 tooltip 的右缘
- * 落在徽章左缘之外(实测各标签 ≤ 88px)。
+ * 让开多少:最长的状态文本「已确认无差异」约 86px,留 100px 保证 tooltip 的右缘
+ * 落在触发文本左缘之外(实测各标签 ≤ 88px)。
  *
  * ⚠️ 实测 `align="end"` 下 **正** offset 才是往左让(reka 的 alignOffset 与直觉相反:
  * 传 -100 时右缘反而右移 100px)。窄屏另说 —— 352px 的面板放进 390px 视口,
@@ -148,34 +151,24 @@ function onPointerDown() {
 function onClick() {
   open.value = !openOnPointerDown
 }
-function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' || event.key === ' ') {
-    event.preventDefault()
-    open.value = !open.value
-  } else if (event.key === 'Escape') {
-    open.value = false
-  }
-}
 </script>
 
 <template>
   <TooltipProvider>
     <Tooltip :open="open" @update:open="open = $event">
       <TooltipTrigger as-child>
-        <Badge
-          :variant="variant"
-          role="button"
-          tabindex="0"
+        <button
+          type="button"
           :aria-expanded="open"
-          :aria-label="`${statusLabel}:展开平台原因与证据`"
-          data-testid="reconcile-badge"
-          class="cursor-pointer focus-visible:border-foreground/50 focus-visible:ring-2 focus-visible:ring-foreground/50 focus-visible:outline-none"
+          :aria-label="`${statusLabel}${reasonLabel ? `：${reasonLabel}` : ''}，展开平台原因与证据`"
+          data-testid="reconcile-status-trigger"
+          class="inline-flex max-w-full flex-wrap items-baseline gap-x-1 text-left text-[13px] leading-5 underline decoration-border underline-offset-2 hover:decoration-foreground focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           @pointerdown="onPointerDown"
           @click="onClick"
-          @keydown="onKeydown"
         >
-          {{ statusLabel }}
-        </Badge>
+          <span class="font-medium" :class="statusTone">{{ statusLabel }}</span>
+          <span v-if="reasonLabel" class="text-muted-foreground">· {{ reasonLabel }}</span>
+        </button>
       </TooltipTrigger>
       <TooltipContent
         side="bottom"

@@ -8,14 +8,13 @@ import {
   DIFFERENCE_MEASURES,
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
-  DIFFERENCE_STATUS_VARIANTS,
+  DIFFERENCE_STATUS_RAILS,
   EVENT_ORDER,
   EVENTS,
   TITLE_ORDER,
   TITLES,
 } from '~~/lib/labels'
 import { reviewEventSuffix, timelineEventIdentity } from '~~/lib/roster/enterprise-timeline'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
@@ -235,7 +234,13 @@ const fullPageTo = computed(() => {
   return `/enterprises/${props.enterpriseId}${q}`
 })
 
-const statusVariant = (code: string) => DIFFERENCE_STATUS_VARIANTS[code] ?? 'outline'
+const statusTextClass = (code: string) => {
+  switch (DIFFERENCE_STATUS_RAILS[code]) {
+    case 'confirmed': return 'text-primary'
+    case 'failed': return 'text-destructive'
+    default: return 'text-muted-foreground'
+  }
+}
 const eventLabel = (type: string) => {
   // 抽屉复用方向卡的事件词:认定 / 复核 / 维持。
   if (type === 'maintain') return '维持'
@@ -360,20 +365,10 @@ function eventSuffix(item: TimelineItem): string {
           <template v-if="differences.length">
             <h3 class="text-muted-foreground mt-5 border-t pt-4 text-xs font-medium">差异</h3>
             <div v-for="d in differences" :key="`${d.titleCode}-${d.direction}`" class="mt-3">
-              <div class="flex flex-wrap items-center gap-1.5">
-                <Badge variant="quiet" class="font-normal">{{ TITLES[d.titleCode] ?? d.titleCode }}</Badge>
-                <!--
-                  状态徽章**不挂 `font-*` / `text-*`**:六态之间有一对只差字色
-                  (`no_record` 深字 vs `needs_review` 灰字),调用点随手压一个字重或字色
-                  就会被 `twMerge` 判为同族、后写的赢,把唯一的差别抹平。
-                  `tests/difference-status-variants.test.ts` 逐字钉着这条。
-                -->
-                <Badge :variant="statusVariant(d.status)">
-                  {{ DIFFERENCE_STATUSES[d.status] ?? d.status }}
-                </Badge>
-                <Badge v-if="!d.inCurrentDifference" variant="outline" class="font-normal">
-                  历史差异
-                </Badge>
+              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px] leading-5">
+                <span class="font-medium">{{ TITLES[d.titleCode] ?? d.titleCode }}</span>
+                <span :class="statusTextClass(d.status)">{{ DIFFERENCE_STATUSES[d.status] ?? d.status }}</span>
+                <span v-if="!d.inCurrentDifference" class="text-muted-foreground">历史差异</span>
               </div>
               <!--
                 原因链:方向 → 原因 → 措施。三段之间用**连线**接起来(不是三个并排的 chip),

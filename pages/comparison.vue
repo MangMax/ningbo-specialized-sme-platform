@@ -119,11 +119,6 @@ watch([rows, isLoading], () => {
   void nextTick(measure)
 })
 
-const counts = computed(
-  () => data.value?.counts[title.value as keyof ComparisonCounts],
-)
-const curatedCount = (d: ComparisonDirection) => data.value?.curatedCounts[title.value as keyof ComparisonCounts]?.[d] ?? 0
-const count = (d: ComparisonDirection) => counts.value ? counts.value[d] - (showCurated.value ? 0 : curatedCount(d)) : '—'
 async function refreshCuration() {
   await queryCache.invalidateQueries({ key: ['comparison'] })
   if (page.value > totalPages.value) page.value = totalPages.value
@@ -168,8 +163,11 @@ const exportUrl = computed(
       </template>
     </PageHeader>
 
-    <div class="grid min-w-0 gap-2 sm:grid-cols-[minmax(16rem,1fr)_14rem_12rem]">
-      <div class="relative min-w-0">
+    <div
+      data-testid="comparison-filters"
+      class="grid min-w-0 grid-cols-12 gap-2 lg:grid-cols-[minmax(16rem,1fr)_14rem_12rem_14rem]"
+    >
+      <div class="relative col-span-12 min-w-0 lg:col-span-1">
         <Search class="text-muted-foreground absolute top-2 left-2.5 size-3.5" />
         <Input
           v-model="q"
@@ -179,7 +177,7 @@ const exportUrl = computed(
         />
       </div>
       <Select v-model="title">
-        <SelectTrigger size="sm" class="bg-card w-full shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap" aria-label="按称号筛选">
+        <SelectTrigger size="sm" class="bg-card col-span-6 w-full shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] lg:col-span-1" aria-label="按称号筛选">
           <SelectValue />
         </SelectTrigger>
         <SelectContent class="shadow-none">
@@ -187,7 +185,7 @@ const exportUrl = computed(
         </SelectContent>
       </Select>
       <Select v-model="districtModel">
-        <SelectTrigger size="sm" class="bg-card w-full shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap" aria-label="按区县筛选">
+        <SelectTrigger size="sm" class="bg-card col-span-3 w-full px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] lg:col-span-1" aria-label="按区县筛选">
           <SelectValue />
         </SelectTrigger>
         <SelectContent class="shadow-none">
@@ -195,6 +193,22 @@ const exportUrl = computed(
           <SelectItem v-for="item in districtOptions" :key="item" :value="item">{{ item }}</SelectItem>
         </SelectContent>
       </Select>
+      <div class="col-span-3 min-w-0 lg:col-span-1" data-testid="comparison-direction-filter">
+        <Select v-model="direction">
+          <SelectTrigger
+            size="sm"
+            class="bg-card w-full px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98]"
+            aria-label="按比对方向筛选"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent class="shadow-none">
+            <SelectItem v-for="d in COMPARISON_DIRECTIONS" :key="d" :value="d">
+              {{ COMPARISON_LABELS[d] }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
     </div>
 
     <TransitionGroup
@@ -228,24 +242,6 @@ const exportUrl = computed(
     </TransitionGroup>
 
     <div class="flex min-w-0 flex-col gap-2">
-      <div class="flex w-fit max-w-full flex-wrap items-center gap-1" role="group" aria-label="比对方向" data-testid="comparison-direction-filter">
-        <span class="text-muted-foreground pr-1 text-xs">方向</span>
-        <Button
-          v-for="d in COMPARISON_DIRECTIONS"
-          :key="d"
-          type="button"
-          size="sm"
-          :variant="direction === d ? 'outline' : 'ghost'"
-          :aria-pressed="direction === d"
-          :data-selected="direction === d"
-          class="h-7 gap-1.5 px-2 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap"
-          :class="direction === d ? 'border-primary/45 bg-accent/50 text-accent-foreground' : 'text-muted-foreground'"
-          @click="direction = d"
-        >
-          {{ COMPARISON_LABELS[d] }}
-          <Badge variant="quiet" class="min-w-[3ch] tabular-nums">{{ count(d) }}</Badge>
-        </Button>
-      </div>
       <div class="flex min-w-0 flex-col gap-2" data-testid="comparison-results">
             <div class="relative h-5 shrink-0" aria-live="polite" data-testid="comparison-loading-status">
               <span v-if="isLoading" class="text-muted-foreground absolute top-0.5 left-0 text-[13px]">正在搜索与加载比对结果…</span>
@@ -281,26 +277,27 @@ const exportUrl = computed(
                       <EmptyDescription>当前筛选条件下没有匹配结果。</EmptyDescription>
                     </EmptyHeader>
                   </Empty>
-                  <Table v-else class="min-w-[1090px] table-fixed">
+                  <Table v-else class="w-full min-w-0 table-fixed sm:min-w-[1090px]">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
-                        <TableHead :class="[TH_CLASS, 'w-[320px] md:w-[28%]']"
+                        <TableHead :class="[TH_CLASS, 'w-[38%] sm:w-[320px] md:w-[28%]']"
                           >企业名称</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-[165px]']"
+                        <TableHead :class="[TH_CLASS, 'hidden w-[165px] sm:table-cell']"
                           >统一社会信用代码</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-[72px]']">区县</TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-[108px]']"
+                        <TableHead :class="[TH_CLASS, 'hidden w-[72px] sm:table-cell']">区县</TableHead>
+                        <TableHead :class="[TH_CLASS, 'hidden w-[108px] sm:table-cell']"
                           >另一侧状态</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-[140px]']">
+                        <TableHead :class="[TH_CLASS, 'hidden w-[140px] sm:table-cell']">
                           平台解释
                         </TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-[250px]']">
+                        <TableHead :class="[TH_CLASS, 'hidden w-[250px] sm:table-cell']">
                           平台证据
                         </TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-[190px]']">核实与备注</TableHead>
+                        <TableHead :class="[TH_CLASS, 'hidden w-[190px] sm:table-cell']">核实与备注</TableHead>
+                        <TableHead colspan="6" :class="[TH_CLASS, 'w-[62%] sm:hidden']">比对、原因与证据</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody
@@ -310,16 +307,16 @@ const exportUrl = computed(
                     >
                       <template v-if="isLoading && !rows.length">
                         <TableRow v-for="i in 8" :key="i" class="h-11">
-                          <TableCell v-for="j in 7" :key="j"
-                            ><Skeleton class="h-4 w-full"
-                          /></TableCell>
+                          <TableCell><Skeleton class="h-4 w-full" /></TableCell>
+                          <TableCell colspan="6" class="sm:hidden"><Skeleton class="h-4 w-full" /></TableCell>
+                          <TableCell v-for="j in 6" :key="j" class="hidden sm:table-cell"><Skeleton class="h-4 w-full" /></TableCell>
                         </TableRow>
                       </template>
                       <TableRow
                         v-for="row in rows"
                         v-else
                         :key="`${row.enterpriseId}-${row.titleCode}-${row.direction}`"
-                          class="min-h-9 [&>td]:py-1 [&>td]:align-top"
+                        class="min-h-9 [&>td]:py-1 [&>td]:align-top"
                       >
                         <TableCell class="font-medium">
                           <NuxtLink
@@ -330,7 +327,7 @@ const exportUrl = computed(
                             >{{ row.name }}</NuxtLink
                           >
                           <!-- 已确认曾用名压成单行,避免别名把比对行撑高。 -->
-                          <div v-if="confirmedAliasNames(row).length" class="mt-1 flex min-w-0 flex-nowrap gap-1 overflow-hidden" data-testid="comparison-aliases">
+                          <div v-if="confirmedAliasNames(row).length" class="mt-1 hidden min-w-0 flex-nowrap gap-1 overflow-hidden sm:flex" data-testid="comparison-aliases">
                             <Badge variant="quiet" class="max-w-full truncate font-normal" :title="confirmedAliasNames(row)[0]">
                               曾用名 {{ confirmedAliasNames(row)[0] }}
                             </Badge>
@@ -339,29 +336,40 @@ const exportUrl = computed(
                             </Badge>
                           </div>
                           <div v-if="(row.evidence.currentCity && row.evidence.currentCity !== '宁波市') || /注销|吊销/.test(row.evidence.regStatus ?? '') || !row.uscc" class="mt-1 flex flex-wrap gap-1">
-                            <Badge v-if="row.evidence.currentCity && row.evidence.currentCity !== '宁波市'" variant="outline">{{ row.evidence.currentCity }}</Badge>
-                            <Badge v-if="/注销|吊销/.test(row.evidence.regStatus ?? '')" variant="destructive">{{ row.evidence.regStatus }}</Badge>
-                            <Badge v-if="!row.uscc" variant="outline">{{ COMPARISON_NO_USCC }}</Badge>
+                            <span v-if="row.evidence.currentCity && row.evidence.currentCity !== '宁波市'" class="text-muted-foreground text-[13px]">{{ row.evidence.currentCity }}</span>
+                            <span v-if="/注销|吊销/.test(row.evidence.regStatus ?? '')" class="text-destructive text-[13px]">{{ row.evidence.regStatus }}</span>
+                            <span v-if="!row.uscc" class="text-muted-foreground text-[13px]">{{ COMPARISON_NO_USCC }}</span>
                           </div>
                         </TableCell>
                         <TableCell
-                          class="text-muted-foreground font-mono text-xs"
+                          class="text-muted-foreground hidden font-mono text-xs sm:table-cell"
                           >{{ row.uscc ?? '—' }}</TableCell
                         >
-                        <TableCell class="text-muted-foreground text-xs">{{
+                        <TableCell class="text-muted-foreground hidden text-xs sm:table-cell">{{
                           row.district ?? '—'
                         }}</TableCell>
-                        <TableCell class="text-muted-foreground text-xs">{{
+                        <TableCell class="text-muted-foreground hidden whitespace-normal break-words text-[13px] leading-4 sm:table-cell [overflow-wrap:anywhere]">{{
                           COMPARISON_OTHER_SIDE[row.direction]
                         }}</TableCell>
-                        <TableCell>
+                        <TableCell class="hidden sm:table-cell">
                           <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
                         </TableCell>
-                        <TableCell>
+                        <TableCell class="hidden sm:table-cell">
                           <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" />
                         </TableCell>
-                        <TableCell>
+                        <TableCell class="hidden sm:table-cell">
                           <ComparisonCuration :row="row" @saved="refreshCuration" />
+                        </TableCell>
+                        <TableCell colspan="6" class="whitespace-normal sm:hidden">
+                          <div class="flex min-w-0 flex-col gap-1.5" data-testid="comparison-mobile-details">
+                            <div class="border-b pb-1 text-[13px] leading-5">
+                              <span class="text-muted-foreground">{{ COMPARISON_OTHER_SIDE[row.direction] }}</span>
+                              <span class="text-muted-foreground px-1">·</span>
+                              <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
+                            </div>
+                            <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" />
+                            <ComparisonCuration :row="row" :compact="true" @saved="refreshCuration" />
+                          </div>
                         </TableCell>
                       </TableRow>
                     </TableBody>
