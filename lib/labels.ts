@@ -415,7 +415,7 @@ export const DIFFERENCE_LEGEND_NOTE =
 export const DIFFERENCE_REASONS: Record<string, string> = {
   moved_out: '外迁',
   deregistered: '注销',
-  renamed: '更名',
+  renamed: '已更名',
   platform_stale: '平台未更新',
   moved_in: '迁入',
   other: '其他',

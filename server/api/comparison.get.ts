@@ -2,7 +2,7 @@ import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparison'
 import { attachPlatformEvidence } from '~~/lib/comparison-platform'
 import { getCuratedComparison } from '~~/lib/curation'
-import { normalizeName, normalizeUscc } from '~~/lib/domain'
+import { filterComparisonRows } from '~~/lib/comparison-filter'
 import { TITLE_ORDER } from '~~/lib/labels'
 import { MAX_PAGE_SIZE } from '~~/lib/query'
 import { attachReconcile, readReconcile } from '~~/lib/reconcile'
@@ -99,32 +99,19 @@ export default defineEventHandler((event) => {
   const config = useRuntimeConfig(event)
   const db = useDb()
   const result = getCuratedComparison(db, config.curatedPath)
-  const district = typeof q.district === 'string' ? q.district.trim() : ''
-  const search = typeof q.q === 'string' ? q.q.trim() : ''
-  const nameNeedle = normalizeName(search)
-  const usccNeedle = normalizeUscc(search)
   const { counts, curatedCounts } = result
   // 旧解释缓存(`data/platform-reconcile.json`)是**对照**,缺失时 explanation 全为 null;
   // 原因与证据以库内为准(见下方 `platform` 段)。
   const reconcile = readReconcile(config.reconcilePath)
   // 库内平台原因与证据(RL-15 起的**主源**):每一行都带 platform。
   const enriched = attachPlatformEvidence(attachReconcile(result.rows, reconcile), db)
-  const matching = enriched.filter((row) => {
-    if (title?.length && !title.includes(row.titleCode)) return false
-    if (district && row.district !== district) return false
-    if (!search) return true
-    const confirmedAliasHit = row.platform.aliases.some(
-      (alias) => alias.verificationStatus === 'confirmed' && normalizeName(alias.name).includes(nameNeedle),
-    )
-    return (
-      (nameNeedle !== '' && normalizeName(row.name).includes(nameNeedle)) ||
-      (usccNeedle !== '' && normalizeUscc(row.uscc).includes(usccNeedle)) ||
-      confirmedAliasHit
-    )
+  const rows = filterComparisonRows(enriched, {
+    title,
+    direction: direction as ComparisonDirection | undefined,
+    district: typeof q.district === 'string' ? q.district : undefined,
+    q: typeof q.q === 'string' ? q.q : undefined,
+    showCurated: q.showCurated === 'true',
   })
-  const rows = matching.filter(
-    (row) => (!direction || row.direction === direction) && (q.showCurated === 'true' || !row.curated),
-  )
   const page = Math.max(1, Math.floor(num(q.page, 1)))
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25))))
   const withExplanation = rows.filter((row) => row.platform.disposition.explanationId != null).length

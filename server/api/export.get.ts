@@ -8,9 +8,11 @@ import {
   COMPARISON_LABELS,
   COMPARISON_NO_USCC,
 } from '~~/lib/labels'
+import { attachPlatformEvidence } from '~~/lib/comparison-platform'
+import { getCuratedComparison } from '~~/lib/curation'
+import { filterComparisonRows } from '~~/lib/comparison-filter'
 import {
   COMPARISON_DIRECTIONS,
-  getComparison,
   type ComparisonDirection,
 } from '~~/lib/comparison'
 
@@ -106,7 +108,20 @@ export default defineEventHandler(async (event) => {
         statusMessage: 'Comparison export requires a valid title and direction',
       })
     }
-    const { rows } = getComparison(useDb(), { title: [title], direction })
+    if (q.showCurated != null && !['true', 'false', ''].includes(String(q.showCurated))) {
+      throw createError({ statusCode: 400, statusMessage: 'showCurated must be true or false' })
+    }
+    const db = useDb()
+    const config = useRuntimeConfig(event)
+    const comparison = getCuratedComparison(db, config.curatedPath)
+    const enriched = attachPlatformEvidence(comparison.rows, db)
+    const rows = filterComparisonRows(enriched, {
+      title: [title],
+      direction,
+      q: str(q.q),
+      district: str(q.district),
+      showCurated: str(q.showCurated) === 'true',
+    })
     const ws = wb.addWorksheet('比对')
     ws.columns = [
       { header: '企业名称', key: 'name', width: 34 },

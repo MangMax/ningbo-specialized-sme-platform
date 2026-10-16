@@ -140,12 +140,25 @@ function toRouteQuery(): Record<string, string> {
 /** 完整筛选串(含分页之外的一切),用于「详情页返回台账不丢上下文」。 */
 const backQuery = computed(() => new URLSearchParams(toRouteQuery()).toString())
 
+/**
+ * Route writes are asynchronous. Ignore intermediate query updates from our own
+ * replace() calls so a just-closed drawer cannot be reopened by its stale
+ * `expand` value while the close update is still navigating.
+ */
+let pendingRouteQuery: string | null = null
+
 watch(
   [state, page, pageSize, selected],
   () => {
     const next = toRouteQuery()
-    if (normalize(next) === normalize(route.query)) return
-    router.replace({ path: route.path, query: next })
+    const serialized = normalize(next)
+    if (serialized === normalize(route.query)) return
+    pendingRouteQuery = serialized
+    void router.replace({ path: route.path, query: next }).then(() => {
+      if (pendingRouteQuery === serialized && normalize(route.query) === serialized) {
+        pendingRouteQuery = null
+      }
+    })
   },
   { deep: true },
 )
@@ -154,7 +167,12 @@ watch(
 watch(
   () => route.query,
   (q) => {
-    if (normalize(q) === normalize(toRouteQuery())) return
+    const serialized = normalize(q)
+    if (pendingRouteQuery !== null) {
+      if (serialized === pendingRouteQuery) pendingRouteQuery = null
+      return
+    }
+    if (serialized === normalize(toRouteQuery())) return
     state.value = ledgerStateFromQuery(q)
     search.value = state.value.q
     page.value = positiveInt(q.page) ?? 1
@@ -163,6 +181,11 @@ watch(
   },
   { deep: true },
 )
+
+function closeDrawer() {
+  selected.value = null
+  pendingRouteQuery = normalize(toRouteQuery())
+}
 
 /** 筛选一变就回到第一页(页码不是筛选,不参与这个信号)。 */
 const filterSignature = computed(() => normalize(ledgerListQuery(state.value)))
@@ -614,7 +637,7 @@ useHead({
       :enterprise-id="selected"
       :back-query="backQuery"
       :return-focus-target="drawerReturnFocusTarget"
-      @close="selected = null"
+      @close="closeDrawer"
     />
   </div>
 </template>

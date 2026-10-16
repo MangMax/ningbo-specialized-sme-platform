@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { useColorMode } from '@vueuse/core'
 import { computed } from 'vue'
 import { Moon, Sun } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { useAppColorMode } from '@/composables/useAppColorMode'
 
-const colorMode = useColorMode({ selector: 'html' })
+const colorMode = useAppColorMode()
 const isDark = computed(() => colorMode.value === 'dark')
 
 function toggle(event: MouseEvent) {

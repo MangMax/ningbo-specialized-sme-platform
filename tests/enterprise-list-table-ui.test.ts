@@ -70,6 +70,34 @@ describe('企业列表的曾用名', () => {
     expect(nameCell.text()).toContain('原 宁波上航测绘有限公司')
     expect(nameCell.text()).not.toContain('原 宁波上航测绘股份有限公司')
   })
+
+  it('不把只差全半角括号的规范化同名显示为曾用名', () => {
+    const currentName = '中化(浙江)膜产业发展有限公司'
+    const alias = '中化（浙江）膜产业发展有限公司'
+    const wrapper = mount(EnterpriseListTable, {
+      props: {
+        rows: [{
+          enterpriseId: 3832,
+          name: currentName,
+          uscc: null,
+          district: null,
+          aliasNames: [alias],
+          titles: [],
+          firstRecognition: [],
+          difference: { count: 0, status: null, reasonCode: null, anyCurrent: false },
+        }],
+        loading: false,
+        hasError: false,
+        selectedId: null,
+        filtered: false,
+      },
+    })
+    mounted.push(wrapper)
+
+    const nameCell = wrapper.get('tbody tr td:nth-child(2)')
+    expect(nameCell.text()).toContain(currentName)
+    expect(nameCell.text()).not.toContain(`原 ${alias}`)
+  })
 })
 
 describe('企业列表的抽屉触发器', () => {

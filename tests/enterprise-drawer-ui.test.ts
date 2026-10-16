@@ -49,7 +49,6 @@ function mountDrawer(returnFocusTarget: HTMLButtonElement | null = null) {
     props: { enterpriseId: 1, backQuery: '', returnFocusTarget },
     global: {
       stubs: {
-        DialogRoot: { template: '<div><slot /></div>' },
         DialogContent: {
           name: 'DialogContentStub',
           emits: ['interactOutside', 'openAutoFocus', 'closeAutoFocus'],
@@ -130,14 +129,18 @@ describe('企业详情抽屉的焦点返回', () => {
     tableBody.remove()
   })
 
-  it('抽屉关闭状态落定时恢复触发器焦点', async () => {
+  it('由 Dialog 的关闭自动聚焦事件恢复触发器焦点', async () => {
     const trigger = document.createElement('button')
     document.body.append(trigger)
     const wrapper = mountDrawer(trigger)
 
     await wrapper.setProps({ enterpriseId: null })
+    expect(document.activeElement).not.toBe(trigger)
+    const closeEvent = new Event('closeAutoFocus', { cancelable: true })
+    wrapper.findComponent({ name: 'DialogContentStub' }).vm.$emit('closeAutoFocus', closeEvent)
 
     expect(document.activeElement).toBe(trigger)
+    expect(closeEvent.defaultPrevented).toBe(true)
     trigger.remove()
   })
 
@@ -152,6 +155,11 @@ describe('企业详情抽屉的焦点返回', () => {
 
     await wrapper.setProps({ enterpriseId: null })
 
+    expect(document.activeElement).toBe(outside)
+    const closeEvent = new Event('closeAutoFocus', { cancelable: true })
+    content.vm.$emit('closeAutoFocus', closeEvent)
+
+    expect(closeEvent.defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(outside)
     trigger.remove()
     outside.remove()
@@ -194,7 +202,7 @@ describe('企业详情抽屉的差异原因', () => {
 })
 
 describe('企业详情抽屉的复核年份', () => {
-  it('锚点年份退回时明确标为待核', () => {
+  it('只有下次复核年份对应的称号锚点待核时才标记该年份', () => {
     queryData.value = {
       ...detailWithDifference(),
       enterprise: {
@@ -202,6 +210,29 @@ describe('企业详情抽屉的复核年份', () => {
         nextReviewYear: 2023,
         anchorNeedsReview: true,
       },
+      records: [
+        { id: 1, titleCode: 'little_giant', source: 'jxj', district: null, lifecycle: { dueYear: 2023, needsReview: false, firstRecognitionYear: 2020, state: 'active' } },
+        { id: 2, titleCode: 'specialized_sme', source: 'jxj', district: null, lifecycle: { dueYear: 2029, needsReview: true, firstRecognitionYear: 2021, state: 'active' } },
+      ],
+    }
+    queryLoading.value = false
+    const wrapper = mountDrawer()
+
+    expect(wrapper.get('[data-testid="next-review-value"]').text()).toContain('2023')
+    expect(wrapper.get('[data-testid="next-review-value"]').text()).not.toContain('待核')
+  })
+
+  it('下次复核年份本身的锚点待核时显示待核标记', () => {
+    queryData.value = {
+      ...detailWithDifference(),
+      enterprise: {
+        ...detailWithDifference().enterprise,
+        nextReviewYear: 2023,
+        anchorNeedsReview: false,
+      },
+      records: [
+        { id: 1, titleCode: 'little_giant', source: 'jxj', district: null, lifecycle: { dueYear: 2023, needsReview: true, firstRecognitionYear: 2020, state: 'active' } },
+      ],
     }
     queryLoading.value = false
     const wrapper = mountDrawer()

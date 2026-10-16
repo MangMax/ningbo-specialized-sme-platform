@@ -144,10 +144,17 @@ function clearAllFilters() {
 }
 const TH_CLASS =
   'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs font-medium'
-const exportUrl = computed(
-  () =>
-    `/api/export?${new URLSearchParams({ mode: 'comparison', title: title.value, direction: direction.value })}`,
-)
+const exportUrl = computed(() => {
+  const params = new URLSearchParams({
+    mode: 'comparison',
+    title: title.value,
+    direction: direction.value,
+    showCurated: showCurated.value ? 'true' : 'false',
+  })
+  if (q.value.trim()) params.set('q', q.value.trim())
+  if (district.value) params.set('district', district.value)
+  return `/api/export?${params}`
+})
 </script>
 
 <template>

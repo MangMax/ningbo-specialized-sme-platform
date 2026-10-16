@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
-import { DialogContent, DialogRoot, DialogTitle } from 'reka-ui'
+import { DialogClose, DialogContent, DialogRoot, DialogTitle } from 'reka-ui'
 import { ArrowDown, ExternalLink, X } from '@lucide/vue'
 import {
   comparisonDirectionNote,
@@ -104,20 +104,8 @@ const open = computed(() => props.enterpriseId != null)
 let interactedOutside = false
 let openingTrigger: HTMLElement | null = null
 
-watch(open, (isOpen, wasOpen) => {
-  if (isOpen) {
-    interactedOutside = false
-    return
-  }
-  if (!wasOpen) return
-
-  const shouldRestoreFocus = !interactedOutside
-  const target = props.returnFocusTarget?.isConnected ? props.returnFocusTarget : openingTrigger
-  interactedOutside = false
-  openingTrigger = null
-  if (shouldRestoreFocus && target?.isConnected && document.activeElement !== target) {
-    target.focus()
-  }
+watch(open, (isOpen) => {
+  if (isOpen) interactedOutside = false
 }, { flush: 'post' })
 
 function onInteractOutside(event: Event) {
@@ -152,6 +140,13 @@ const { data, isLoading, error } = useQuery({
 })
 
 const detail = computed(() => data.value ?? null)
+const nextReviewNeedsReview = computed(() => {
+  const year = detail.value?.enterprise.nextReviewYear
+  if (year == null || !detail.value) return false
+  return detail.value.records.some(
+    (record) => record.lifecycle.dueYear === year && record.lifecycle.needsReview,
+  )
+})
 const visibleHistoricalAliasNames = computed(() => {
   const enterprise = detail.value?.enterprise
   return enterprise
@@ -339,9 +334,11 @@ function eventSuffix(item: TimelineItem): string {
               {{ detail.enterprise.uscc ?? '无统一社会信用代码' }}
             </p>
           </div>
-          <Button variant="ghost" size="icon" class="size-7 shrink-0" aria-label="关闭" @click="emit('close')">
-            <X class="size-4" />
-          </Button>
+          <DialogClose as-child>
+            <Button variant="ghost" size="icon" class="size-7 shrink-0" aria-label="关闭">
+              <X class="size-4" />
+            </Button>
+          </DialogClose>
         </header>
 
         <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -360,7 +357,7 @@ function eventSuffix(item: TimelineItem): string {
             <dd data-testid="next-review-value" class="text-[13px] tabular-nums">
               <span v-if="detail.enterprise.nextReviewYear == null" class="text-muted-foreground">—</span>
               <template v-else>
-                {{ detail.enterprise.nextReviewYear }}<span v-if="detail.enterprise.anchorNeedsReview" class="text-muted-foreground ml-1 text-xs">待核</span>
+                {{ detail.enterprise.nextReviewYear }}<span v-if="nextReviewNeedsReview" class="text-muted-foreground ml-1 text-xs">待核</span>
               </template>
             </dd>
           </dl>
