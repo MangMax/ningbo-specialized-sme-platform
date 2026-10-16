@@ -150,6 +150,18 @@ event(nurtureRecord, { type: 'nurture', year: 2024, seq: 1 })
 
 let routeQuery: Record<string, unknown> = {}
 let recordsHandler: (event: unknown) => unknown
+let recordsRouteMeta: {
+  openAPI?: {
+    summary?: string
+    parameters?: Array<{
+      name: string
+      in: string
+      style?: string
+      explode?: boolean
+      schema?: { type?: string; items?: { type?: string; enum?: string[] } }
+    }>
+  }
+}
 let queryRecordsTool: { handler: (input: Record<string, unknown>) => unknown }
 let rosterEnterprisesHandler: (event: unknown) => unknown
 let listEnterprisesTool: {
@@ -159,7 +171,12 @@ let listEnterprisesTool: {
 let enterpriseDetailTool: { handler: (input: { enterpriseId: number }) => unknown }
 
 beforeAll(async () => {
-  vi.stubGlobal('defineRouteMeta', () => undefined)
+  vi.stubGlobal('defineRouteMeta', (meta: typeof recordsRouteMeta) => {
+    if (meta.openAPI?.summary === '查台账记录') {
+      recordsRouteMeta = meta
+    }
+    return meta
+  })
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('getQuery', () => routeQuery)
   vi.stubGlobal('createError', (options: { statusCode?: number; statusMessage?: string }) =>
@@ -178,6 +195,17 @@ beforeAll(async () => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('通用记录查询的生命周期投影', () => {
+  it('REST OpenAPI 将 firstStatus 声明为逗号分隔的枚举数组', () => {
+    const parameter = recordsRouteMeta?.openAPI?.parameters?.find((item) => item.name === 'firstStatus')
+
+    expect(parameter).toMatchObject({
+      in: 'query',
+      style: 'form',
+      explode: false,
+      schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
+    })
+  })
+
   it('failed review 后重新 award 保留首次认定，并把新认定作为到期锚点', () => {
     const row = listRecords(db, { dueYear: 2027, pageSize: 200 }).rows.find((r) => r.enterpriseId === reassessed)!
     expect(row.lifecycle).toMatchObject({

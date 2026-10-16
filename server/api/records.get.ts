@@ -39,8 +39,11 @@ defineRouteMeta({
       {
         name: 'firstStatus',
         in: 'query',
-        schema: { type: 'string', enum: ['confirmed', 'pending'] },
-        description: '首次认定状态,多值：`confirmed` / `pending`；判据与首次认定读模型一致。',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
+        description:
+          '首次认定状态,逗号分隔多值：`confirmed` / `pending`；也接受重复参数。判据与首次认定读模型一致。',
       },
       {
         name: 'dueYear',
