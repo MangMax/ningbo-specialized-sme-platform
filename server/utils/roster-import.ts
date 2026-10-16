@@ -22,6 +22,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
+import { usccFormatVerdict } from '../../lib/roster/uscc-research'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER, type PlatformInterface } from '../../lib/labels'
 import type {
   DuplicateNameCandidate,
@@ -38,6 +39,7 @@ import type {
   RosterImportPreflight,
   RosterImportRequest,
   RosterImportSummary,
+  RosterImportUsccBackfill,
 } from '../../lib/roster-import-client'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -697,6 +699,14 @@ export function planRosterImport(
 
   // ---- 导出快照 ------------------------------------------------------------
   if (payload.exportSnapshot) planExportSnapshot(db, payload.exportSnapshot, context, push)
+
+  // ---- 补录统一社会信用代码（RL-06）：只补**本来没有**的值，不并身份 -------------
+  // 排在 `merges` **之前**：本项只把一家无统代企业的 `uscc_norm` 填上，而 `merges` 会
+  // **删掉**被并企业行 —— 两项若指向同一行，先归并会让补录在写入阶段找不到企业
+  // （进而整批回滚）。读侧计划从不为同一个目标同时给出两者（见
+  // `server/utils/uscc-research.ts`：一个目标要么有规范行可并、要么只能补录）。
+  const backfills = Array.isArray(payload.usccBackfills) ? payload.usccBackfills : []
+  backfills.forEach((backfill, index) => planUsccBackfill(db, backfill, index, push))
 
   // ---- 归并与回填（最后做，才能把本批新建的记录一并折进规范行）--------------
   const merges = Array.isArray(payload.merges) ? payload.merges : []
@@ -1974,6 +1984,185 @@ function planMerge(
     action: 'update',
     review: false,
     run: (tx) => executeMerge(tx, plan),
+  })
+}
+
+// --- 补录统一社会信用代码（RL-06，契约 §8.10）-------------------------------
+
+/**
+ * 一次补录的**血缘**（落 `import_batch.item_results[].detail.lineage`，与归并同一处可查）。
+ *
+ * 与归并血缘的分工很清楚：归并记「哪两行合成了一行、迁了哪些子行」；
+ * 补录只记「哪一行被填上了哪个值，依据是哪条公开来源」——**没有**任何身份变更。
+ */
+export interface UsccBackfillLineage {
+  enterpriseId: number
+  enterpriseName: string
+  uscc: string
+  /** 补录前的统代 —— 恒为 `null`（已有统代的一律拒绝写入，不覆盖）。 */
+  previousUscc: null
+  /** 公开来源证据（URL / 查证日期 / 对应依据 / 来源名称 / 地区）。 */
+  source: RosterImportUsccBackfill['source']
+  note: string | null
+}
+
+interface UsccBackfillPlan {
+  ref: string
+  backfill: RosterImportUsccBackfill
+  enterpriseId: number
+  uscc: string
+}
+
+/**
+ * 计划一条补录（契约 §8.10）。判据**全部是客观的**，一条都不靠名称相似：
+ *
+ *  - **代码格式/校验位**（GB 32100-2015，`usccFormatVerdict`）不合法 ⇒ 拒绝（不填猜测值）；
+ *  - **公开来源三要素**（URL / 查证日期 / 对应依据）+ 来源名称，缺一 ⇒ `source_evidence_incomplete`；
+ *  - 目标企业必须存在；**按名定位时要求同名行唯一**（同名多主体 ⇒ `enterprise_ambiguous`，不猜是哪一家）；
+ *  - 目标企业**已有统代** ⇒ `uscc_already_present`（**不覆盖已有代码**）；
+ *  - 该统代已被**别的**企业占用 ⇒ `uscc_taken`（冲突；要合并身份请走 `merges`，那是另一件事）。
+ *
+ * 任一项不过 ⇒ 逐项报错、整批 `failed`、业务数据一行不落（与其它载荷项同一条规则）。
+ */
+function planUsccBackfill(
+  db: Executor,
+  backfill: RosterImportUsccBackfill,
+  index: number,
+  push: (item: PlannedItem) => void,
+): void {
+  const ref = `uscc_backfill:${index}`
+  const uscc = usccOrNull(backfill?.uscc)
+  const verdict = usccFormatVerdict(backfill?.uscc)
+  if (!uscc || verdict !== 'ok') {
+    const why =
+      verdict === 'length' ? '长度不是 18 位' : verdict === 'charset' ? '含字符集外的字符' : '校验位不符'
+    push({
+      item: failure('uscc_backfill', ref, 'uscc_format_invalid', `统一社会信用代码不合法（${why}）：${String(backfill?.uscc ?? '(空)')}`, 'uscc'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  const source = backfill?.source
+  const missing = [
+    optionalString(source?.url) ? null : '公开来源 URL',
+    optionalString(source?.checkedOn) && /^\d{4}-\d{2}-\d{2}$/.test(optionalString(source?.checkedOn)!) ? null : '查证日期(YYYY-MM-DD)',
+    optionalString(source?.basis) ? null : '主体对应依据',
+    optionalString(source?.name) ? null : '来源里的主体名称',
+  ].filter((item): item is string => item != null)
+  if (missing.length) {
+    push({
+      item: failure('uscc_backfill', ref, 'source_evidence_incomplete', `补录缺少可复核的公开来源证据：${missing.join('、')}`, 'source'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+
+  const idRaw = optionalInt(backfill?.enterpriseId)
+  const name = optionalString(backfill?.enterpriseName)
+  if (idRaw == null && !name) {
+    push({
+      item: failure('uscc_backfill', ref, 'enterprise_required', '补录缺少 enterpriseId 或 enterpriseName', 'enterpriseId'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  let target: ResolvedEnterprise | null = null
+  if (idRaw != null) {
+    target = findEnterpriseById(db, idRaw)
+  } else {
+    // **按名定位必须唯一**：同名多主体时软件不猜是哪一家（票面第 4 条）。
+    const sameName = findEnterprisesByNorm(db, normalizeName(name!))
+    if (sameName.length > 1) {
+      push({
+        item: failure('uscc_backfill', ref, 'enterprise_ambiguous', `同名企业有 ${sameName.length} 家（${sameName.map((e) => e.id).join('、')}）⇒ 同名多主体，不猜是哪一家`, 'enterpriseName'),
+        action: 'skip',
+        review: false,
+      })
+      return
+    }
+    target = sameName[0] ?? null
+  }
+  if (!target) {
+    push({
+      item: failure('uscc_backfill', ref, 'enterprise_not_found', `补录找不到归属企业：${idRaw ?? name}`, 'enterpriseId'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  if (target.usccNorm) {
+    push({
+      item: failure('uscc_backfill', ref, 'uscc_already_present', `企业 ${target.id} 已有统代 ${target.usccNorm} ⇒ 只补缺失值，不覆盖`, 'uscc'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  const holder = findEnterpriseByUscc(db, uscc)
+  if (holder && holder.id !== target.id) {
+    push({
+      item: failure('uscc_backfill', ref, 'uscc_taken', `统代 ${uscc} 已被企业 ${holder.id}「${holder.name}」占用 ⇒ 冲突，不覆盖、不自动合并身份`, 'uscc'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+
+  const plan: UsccBackfillPlan = { ref, backfill, enterpriseId: target.id, uscc }
+  push({
+    item: success('uscc_backfill', `uscc_backfill:${target.id}->${uscc}`, {
+      enterpriseId: target.id,
+      enterpriseName: target.name,
+      uscc,
+      sourceUrl: optionalString(source?.url),
+    }),
+    action: 'update',
+    review: false,
+    run: (tx) => executeUsccBackfill(tx, plan),
+  })
+}
+
+/**
+ * 执行一条补录：把 `uscc_norm` 填上，并摘掉 `quality_flags` 里的 `uscc_missing`。
+ *
+ * **只动这两处** —— 不写别名、不改名、不动 `record` / `record_event` / 出处 / 关系
+ * （票面第 5 条：不因补代码自动合并身份）。写入阶段再校验一遍「企业还在、仍无统代、
+ * 统代没被占」：计划与执行之间库状态可能变（同批更早的项就可能），任何一条不过就
+ * 抛 `ExecStageFailure` 让整批回滚，**绝不**写出一个自相矛盾的状态。
+ */
+function executeUsccBackfill(tx: Executor, plan: UsccBackfillPlan): RosterImportItemResult {
+  const row = tx.select().from(schema.enterprise).all().find((e) => e.id === plan.enterpriseId)
+  if (!row) {
+    return failure('uscc_backfill', plan.ref, 'enterprise_not_found', `写入阶段找不到企业 ${plan.enterpriseId}`, 'enterpriseId')
+  }
+  if (row.usccNorm) {
+    return failure('uscc_backfill', plan.ref, 'uscc_already_present', `企业 ${row.id} 在写入阶段已有统代 ${row.usccNorm} ⇒ 不覆盖`, 'uscc')
+  }
+  const holder = findEnterpriseByUscc(tx, plan.uscc)
+  if (holder && holder.id !== row.id) {
+    return failure('uscc_backfill', plan.ref, 'uscc_taken', `统代 ${plan.uscc} 在写入阶段已被企业 ${holder.id} 占用`, 'uscc')
+  }
+  const qualityFlags = (row.qualityFlags ?? []).filter((flag) => flag !== 'uscc_missing')
+  tx.update(schema.enterprise)
+    .set({ usccNorm: plan.uscc, qualityFlags })
+    .where(eq(schema.enterprise.id, row.id))
+    .run()
+  const lineage: UsccBackfillLineage = {
+    enterpriseId: row.id,
+    enterpriseName: row.name,
+    uscc: plan.uscc,
+    previousUscc: null,
+    source: plan.backfill.source,
+    note: optionalString(plan.backfill?.note),
+  }
+  return success('uscc_backfill', `uscc_backfill:${row.id}->${plan.uscc}`, {
+    enterpriseId: row.id,
+    uscc: plan.uscc,
+    rowsWritten: 1,
+    lineage,
   })
 }
 

@@ -680,6 +680,99 @@
 
 ---
 
+### 7.9 `GET|POST /api/roster/uscc-research` — 缺统一社会信用代码企业:待查清单 + 补录计划(RL-06 增量)
+
+**只读,不鉴权**(与 §7.8 同一分法:读侧判证据、写侧只有入口)。`GET` 走**库内**路径;
+`POST` 同一路径,多收一批**公开来源查证结果** `claims`(结构化成百条,不适合放进 query string)。
+
+查询参数(两者共用):`q`(名称 / 已确认曾用名关键词)、`title`(逗号分隔,可重复)、`district`、
+`page`(清单页码,默认 1)、`pageSize`(默认 50)。`title` 不在字典内 ⇒ 400。
+
+```jsonc
+{
+  "checklist": {
+    "rows": [{
+      "enterpriseId": 375, "name": "宁波上航测绘有限公司", "district": "镇海区", "city": null,
+      "titles": ["specialized_sme"],
+      "aliasNames": [],                       // 仅 confirmed(§1.2)
+      "traces": [{ "explanationId": 825, "enterpriseId": 375, "titleCode": "specialized_sme",
+                   "direction": "missing_in_miit", "status": "not_queried",
+                   "reasonCode": null, "reasonNote": "本企业无统一社会信用代码…" }],
+      "evidence": [{ "titleCode": "specialized_sme", "sourceFile": "jxj/announcement/2022/…145号….pdf",
+                     "attachment": "附件", "listNo": 74, "page": null }],
+      "queries": [],                          // 以该企业为查询键的平台查询(无统代时通常为空)
+      "coreWord": "上航测绘"                   // 检索用,**不是**身份判据
+    }],
+    "counts": { "total": 133, "titles": { "specialized_sme": 85, "innovative_sme": 58 } },
+    "page": 1, "pageSize": 50
+  },
+  "plan": {
+    "counts": { "targets": 133, "withCandidates": 38, "filled": 31, "conflict": 0,
+                "notFound": 95, "manual": 7, "closed": 31,
+                "byRoute": { "library": 31, "public_source": 0 }, "ready": 31 },
+    "outcomes": [{ "enterpriseId": 375, "name": "宁波上航测绘有限公司", "outcome": "filled",
+                   "code": "library", "message": "…", "candidates": [ … ], "uscc": "91330211255994457P" }],
+    "ready": [{ "outcome": "filled", "targetId": 375, "targetName": "宁波上航测绘有限公司",
+                "route": "library", "candidates": [ … ], "chosen": { … }, "uscc": "91330211255994457P",
+                "evidence": { "relationId": 337, "queryId": 159, "interface": "business_list", "rdjb": "3",
+                              "queriedAt": "…", "sequenceNo": 1, "relationKey": "SQ332022062212391",
+                              "nameRaw": "宁波上航测绘有限公司", "usccRaw": "91330211255994457P",
+                              "sourceKind": "platform_business" },
+                "merge": { … }, "backfill": null }],
+    "pending": [{ "targetId": 10, "targetName": "宁波星箭航天机械有限公司", "outcome": "not_found",
+                  "code": "no_candidate", "message": "…", "candidates": [] }],
+    "request": { "idempotencyKey": "uscc_research#sha256:…", "sourceKind": "alias_evidence",
+                 "sourceIdentity": "roster/uscc-research",
+                 "payload": { "merges": [ … ], "usccBackfills": [ … ] } }
+  }
+}
+```
+
+**清单口径 = 「仍缺统代」**(`enterprise.uscc_norm IS NULL`,与 `GET /api/quality?kind=uscc_missing`
+同一口径)**且仍在当前总表**(`rosterState === 'current'`)。这就是票面说的「接口曾用名匹配后仍未
+解决的企业」:实测库里 133 家无统代企业**全部**停在 `not_queried`(平台两接口按统代取数,无统代
+直查不了),两者是同一集合;但清单**按缺统代筛**,因为那才是「还没解决」的定义。补齐/归并之后
+该企业自动离开清单(票面第 6 条),不需要额外的排除规则。
+
+**四桶互斥、逐条有理由**(`plan.outcomes`,相加恒等于 `counts.targets`):
+
+| 情形 | 桶 | `code` |
+|---|---|---|
+| 公开来源 claim 给出一个库里没人占用的合法统代 | `filled` | `public_source` |
+| claim 的代码违法 / 被别家占用 / 地区不符 | `conflict` | `uscc_format_invalid` / `uscc_taken` / `region_mismatch` |
+| claim 证据三要素不齐 | `manual` | `source_evidence_incomplete` |
+| 库内核心词搜不到候选 | `not_found` | `no_candidate` |
+| 有候选,但**没有一个**被平台原始关系逐字证实 | `manual` | `candidate_without_platform_evidence` |
+| **恰好一个**候选被逐字证实 | `filled` | `library` |
+| **两个及以上**不同统代都被逐字证实 | `conflict` | `multiple_subjects` |
+
+`closed` = `filled`(那些目标写完就不再缺统代)。`byRoute` 说明补齐走的是哪条路。
+
+**名称只用于生成候选**:库内检索的判据只有「字符串包含」(现名 ∪ **已确认**曾用名 ⊇ 核心词),
+没有相似度、没有编辑距离;候选能不能补录**只由平台原始关系的逐字 `qymc` 决定**
+(证据规则与 §7.8 同一份实现 —— `findUsccKeyedRelationEvidence`)。**同一轮内收敛**:某目标一旦
+补齐,它的名字立刻进字典,本轮后续目标即可命中 —— 不把收敛推到下一轮。
+
+**写入口仍然只有 §8.2**:`plan.request` 可直接 `POST /api/roster/import/commit`
+(有规范行 ⇒ `payload.merges`,§8.4;库里没人持有该统代 ⇒ `payload.usccBackfills`,§8.10)。
+没有可执行项时 `request` 为 `null`(**不发空批**)。`POST` 的 `claims` 形状:
+
+```jsonc
+{ "q": "…", "title": "…", "district": "…",
+  "claims": [{ "enterpriseId": 10,               // 或 enterpriseName
+               "uscc": "91330211MA2CL6FP24",
+               "source": { "url": "https://…", "checkedOn": "2026-10-16",
+                           "basis": "公开信用信息页:主体名…、注册地宁波市、统代一致",
+                           "name": "宁波星箭航天机械有限公司", "region": "宁波市/海曙区" },
+               "note": null }] }
+```
+
+`claims` 只做**形状**检查(400),语义判定(格式/校验位、三要素、地区、是否被占用)一律在
+计划里做**一处**。可运行入口:`node scripts/roster-uscc-research.mjs [--claims claims.json]`
+(只读报告 + 把 `request` 转投 `/commit`;`--dry-run` 只读,`--strict` 有未补齐项退出码 3)。
+
+---
+
 ## 8. 写接口(RL-11 实现)
 
 > **鉴权**:`Authorization: Bearer <NUXT_API_TOKEN>` 或 `X-API-Token`(与 `server/utils/api-auth.ts` 同分法)。
@@ -754,7 +847,9 @@
                     "direction": "missing_in_miit", "status": "confirmed_reason",
                     "reasonCode": "moved_out", "measureCode": "mark_moved_out",
                     "movedIn": null, "verificationStatus": "confirmed",
-                    "evidenceQueryId": 4, "recordedAt": "2026-10-14T08:00:00Z" }]
+                    "evidenceQueryId": 4, "recordedAt": "2026-10-14T08:00:00Z" }],
+  "merges": [{ /* 归并与回填,见 §8.4 */ }],
+  "usccBackfills": [{ /* 给本来没有统代的企业补录代码,见 §8.10(RL-06 增量) */ }]
 }
 ```
 
@@ -772,6 +867,10 @@
 > `differences[].evidenceQueryRef` / `evidenceRelationRef`、`merges[].sourceRelationRef` /
 > `evidenceQueryRef` —— 自然键与解析规则见 **§8.7**。裸 id(`sourceRefId` / `evidenceQueryId` /
 > `evidenceRelationId`)继续可用,指向**已存在**的行。
+>
+> **两个「回填」形状的分工**(先读 §5.2 / §8.4 / §8.10):
+> `merges` 并身份(该统代**已挂在某家企业行上**,把无统代的那行并过去);
+> `usccBackfills` 只补一个缺失的值(该统代**库里还没有任何一行持有**,§8.10,RL-06 增量)。
 
 ### 8.4 `payload.merges` —— 归并与回填的写入形状(RL-11 增量补齐)
 
@@ -1039,6 +1138,68 @@
 **为什么可以改历史批次的行**:变的不是历史事实,是**同一份文档在库里的位置**。收敛只在
 「同一份来源内容(同 `sha256`)且坐标逐字相同」时发生,故不会把一条出处挪到另一条上;
 「公布历史不可改写」指的是事件坐标与结论,那些一个字节都没动。
+
+### 8.10 `payload.usccBackfills` —— 补录统一社会信用代码(RL-06 增量补齐)
+
+> **只增量**:不改 §1 的任何表 / 列 / 枚举,不改任何既有写入语义。
+> 只新增一个 `payload` 键,语义见下。
+
+**它补的是 `payload` 缺的那一格。** §5.2/§8.4 的 `merges` 只覆盖「规范行**已经存在**
+(那个统代已挂在某家企业行上)」的情形 —— 那是**归并**。而 RL-06 走「库内核心词 → 候选 →
+平台按统代验证」这条路时,候选统代有时**库里还没有任何一行持有**(该企业只出现在公布名单里,
+导出表从未见过它):这时没有「规范行」可以并过去,`merges` 表达不了;而
+`announcement.records[].enterprise.uscc` 又会按统代**另起一行**(`upsertEnterprise` 有统代只按
+统代匹配)—— 那正是要避免的重复。
+
+```jsonc
+"usccBackfills": [{
+  "enterpriseId": 10,                      // 与 enterpriseName 恰给其一
+  "enterpriseName": "宁波星箭航天机械有限公司",
+  "uscc": "91330211MA2CL6FP24",            // 必填;格式与校验位必须合法(GB 32100-2015)
+  "source": {                              // 公开来源证据:三要素必填
+    "url": "https://…",                    // 可复核的公开内容来源(搜索引擎摘要不算)
+    "checkedOn": "2026-10-16",             // 查证日期 YYYY-MM-DD
+    "basis": "公开信用信息页:主体名…、注册地宁波市、统代一致",  // 名称/地区对应依据
+    "name": "宁波星箭航天机械有限公司",       // 来源里写出的主体名称(原值,留档)
+    "region": "宁波市/海曙区"               // 来源给出的地区;给不出留空,不猜
+  },
+  "note": null
+}]
+```
+
+**执行语义(逐条硬边界)**:
+
+| 判据 | 不过时 |
+|---|---|
+| 代码**格式与校验位**合法(GB 32100-2015:18 位、字符集不含 `I O S V Z`、加权校验位) | 逐项报错 `uscc_format_invalid`,`field: "uscc"` |
+| 公开来源三要素(**URL / 查证日期 / 主体对应依据**)+ 来源名称齐备 | `source_evidence_incomplete`,`field: "source"` |
+| 目标企业存在;按名定位时**同名行唯一** | `enterprise_not_found` / `enterprise_ambiguous`(同名多主体不猜) |
+| 目标企业**本来没有**统代 | `uscc_already_present` —— **不覆盖已有代码** |
+| 该统代**未被别的企业占用** | `uscc_taken` —— **不自动合并身份**(要合并走 `merges`,那条路要平台关系证据) |
+
+任一项不过 ⇒ 逐项报错、**整批 `failed`、业务数据一行不落**(与其它载荷项同一条规则)。
+成功时**只动两处**:`enterprise.uscc_norm` = 该代码,并从 `quality_flags` 里摘掉
+`uscc_missing`(那个标记说的就是「缺统代」,补上以后它不再为真)。**不写别名、不改名、不动
+`record` / `record_event` / 出处 / 关系** —— 名称沿革是 `aliases` / `merges` 的事。
+
+**血缘**(落 `import_batch.item_results[].detail.lineage`,与归并同一处可查):
+
+```jsonc
+{ "ok": true, "kind": "uscc_backfill", "ref": "uscc_backfill:10->91330211MA2CL6FP24",
+  "detail": { "enterpriseId": 10, "uscc": "91330211MA2CL6FP24", "rowsWritten": 1,
+              "lineage": { "enterpriseId": 10, "enterpriseName": "宁波星箭航天机械有限公司",
+                           "uscc": "91330211MA2CL6FP24", "previousUscc": null,   // 恒为 null(不覆盖)
+                           "source": { /* 与载荷同形 */ }, "note": null } } }
+```
+
+- **预检计数**:成功的补录项计 `update`(它改的是一条既有企业行),`review` 为 `false`
+  (证据齐备才算数,不存在「待核的补录」)。
+- **执行顺序**:`usccBackfills` 排在 `merges` **之前**(§8.7.2 的固定顺序 + 这一项)。
+  理由是 `merges` 会**删掉**被并企业行 —— 两项若指向同一行,先归并会让补录在写入阶段找不到
+  企业(进而整批回滚)。读侧计划从不为同一个目标同时给出两者:一个目标要么有规范行可并,
+  要么只能补录。写入阶段会**再校验一遍**(企业还在、仍无统代、统代没被占),任何一条不过就
+  抛 `ExecStageFailure` 让整批回滚,**绝不**写出自相矛盾的状态。
+- **只读的计划入口**见 §7.9;可运行入口见 `scripts/roster-uscc-research.mjs`。
 
 ---
 
