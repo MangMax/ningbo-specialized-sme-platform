@@ -86,7 +86,7 @@ defineRouteMeta({
                     requested: { type: 'integer', description: '入参给了几条。' },
                     assigned: { type: 'integer', description: '定得下来的条数(含值没变的)。' },
                     written: { type: 'integer', description: '真的改了库的行数。' },
-                    unchanged: { type: 'integer', description: '本来就是这个页码(幂等重跑)。' },
+                    unchanged: { type: 'integer', description: '已有相同页码，或本次请求中重复指向同一出处的条目。' },
                     pending: { type: 'integer', description: '留空待核的条数。' },
                   },
                 },
