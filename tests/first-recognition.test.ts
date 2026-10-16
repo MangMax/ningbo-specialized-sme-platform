@@ -25,8 +25,7 @@ import { computeTitleLifecycle } from '../lib/roster/lifecycle'
  * 「关键回归案例」):2021 首次认定 → 2024 复核未通过 → 2025 再次获批 ⇒ 首次仍是 2021。
  * 期望值取自文档,不是照代码推的。
  *
- * 另一条是「历史不完整」:有一条 `award` **定不了年**,它就可能早于已知最早那条 ——
- * 此时**不能**把当前窗口里最早的年份冒充首次,要标待确认(issue #8 验收第 3 条)。
+ * 另一组用例验证数据库中**现存 award** 缺有效年份或出处时的待确认状态；它不模拟整条事件未入库。
  */
 
 function ev(
@@ -97,17 +96,25 @@ describe('首次认定 = 最早的那次 award(按企业 × 称号)', () => {
   })
 
   it('跨批次多认定:取**最早**那条,不是最近那条', () => {
-    // 回归案例的形状:同一信用代码在第 2 批与第 6 批各出现一次 ⇒ 企业去重、两条事件都留。
+    // 两次正式公布的认定:首次与后续批次都来自经信局公布文件,不是平台导出快照。
     const entry = judge(
-      'little_giant',
-      [ev(2, 'award', 2020, { source: 'jxj' }), ev(6, 'award', 2024, { source: 'miit' })],
-      { 2: [evd('jxj/workbook/小巨人历史名单.xlsx', { listNo: 12 })], 6: [evd('miit/export/2024.xlsx')] },
+      'specialized_sme',
+      [ev(2, 'award', 2021), ev(6, 'award', 2024)],
+      {
+        2: [AWARD_2021],
+        6: [
+          evd(
+            'jxj/announcement/2024/2/甬经信中小〔2024〕192号关于公布2024年第二批认定及2021年第二批到期复核通过宁波市“专精特新”中小企业名单的通知.pdf',
+            { attachment: '附件一', listNo: 3 },
+          ),
+        ],
+      },
     )!
-    expect(entry.firstYear).toBe(2020)
+    expect(entry.firstYear).toBe(2021)
     expect(entry.firstEventId).toBe(2)
     expect(entry.source).toBe('jxj')
-    // 出处是**最早那条**的出处(第 2 批),不是第 6 批的。
-    expect(entry.evidence).toEqual([evd('jxj/workbook/小巨人历史名单.xlsx', { listNo: 12 })])
+    // 出处是**最早那条**的正式公布依据,不是后续批次。
+    expect(entry.evidence).toEqual([AWARD_2021])
   })
 
   it('事件顺序不影响结论(同一年按 id 定序)', () => {
@@ -173,19 +180,19 @@ describe('首次认定 = 最早的那次 award(按企业 × 称号)', () => {
   })
 })
 
-describe('历史不完整 ⇒ 待确认,不把当前窗口里最早的年份冒充首次', () => {
+describe('现存 award 缺有效年份或出处 ⇒ 待确认', () => {
   it('存在**无法定年**的 award ⇒ 待确认,并指出是哪几条事件', () => {
-    // 最早那条 award 定不了年(来源没给年份),另一条是 2024。
+    // 一条现存 award 定不了年,另一条是 2024。
     const entry = judge(
       'specialized_sme',
       [ev(1, 'award', null, { decidedYear: null }), ev(2, 'award', 2024)],
       { 2: [evd('jxj/announcement/2024/….pdf')] },
     )!
-    // 已知最早那条的年份照给(2024),但**不声称**它是首次。
+    // 已知最早的有年份 award 为 2024,但因另一条现存 award 缺年份而标待确认。
     expect(entry.firstYear).toBe(2024)
     expect(entry.status).toBe('pending')
     expect(entry.pendingReason).toBe('undated_award')
-    // 依据可回到出处:是「#1 这条定不了年」让 2024 不能算首次。
+    // 事件 id 可回查:数据库中确有这条缺有效年份的 award。
     expect(entry.undatedAwardIds).toEqual([1])
   })
 

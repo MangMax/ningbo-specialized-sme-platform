@@ -139,8 +139,8 @@ describe('lib/roster/lifecycle —— 契约 §6 的三年复核语义', () => {
  *
  * 首次认定用得到这两件事,而它们只在这一层看得见(读模型手上只有事件):
  *  - `awardCount === 0` ⇒ 该称号从来没正式认定过,连一行首次认定都不该有;
- *  - `undatedAwardIds` 非空 ⇒ 有一条无法定年的认定**可能早于**已知最早那条,
- *    所以「已知最早的年份」**不能算作首次**(issue #8 验收第 3 条)。
+ *  - `undatedAwardIds` 非空 ⇒ 有现存认定无法定年,不能与有年份的 award 排出先后,
+ *    因而首次状态待确认。
  */
 describe('lib/roster/lifecycle —— 首次认定的两条前置事实(RL-08 增量)', () => {
   it('awardCount 只数 award:复核 / 维护 / 培育都不算', () => {

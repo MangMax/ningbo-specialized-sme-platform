@@ -335,11 +335,15 @@ const firstStatusOptions = computed(() =>
 )
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 
-/** 事件 / 年份的可选项来自数据(统计端点),口径与统计页一致。 */
+/** 事件年份与首次认定年份分别取各自的统计桶,不混用 `record_event.year` 与生命周期年份。 */
 const { data: stats } = useQuery({
   key: () => ['stats'],
   query: () =>
-    apiGet<{ byEvent: { key: string; n: number }[]; byYear: { key: string; n: number }[] }>('/api/stats'),
+    apiGet<{
+      byEvent: { key: string; n: number }[]
+      byYear: { key: string; n: number }[]
+      byFirstRecognitionYear: { key: string; n: number }[]
+    }>('/api/stats'),
 })
 const eventOptions = computed(() => {
   const present = new Set((stats.value?.byEvent ?? []).map((b) => b.key))
@@ -349,6 +353,13 @@ const eventOptions = computed(() => {
 })
 const yearOptions = computed(() =>
   (stats.value?.byYear ?? [])
+    .map((b) => b.key)
+    .filter((k) => /^\d{4}$/.test(k))
+    .sort((a, b) => b.localeCompare(a))
+    .map((y) => ({ value: y, label: y })),
+)
+const firstYearOptions = computed(() =>
+  (stats.value?.byFirstRecognitionYear ?? [])
     .map((b) => b.key)
     .filter((k) => /^\d{4}$/.test(k))
     .sort((a, b) => b.localeCompare(a))
@@ -612,7 +623,7 @@ useHead({
                那个筛**事件**年份,这两个筛该称号**首次认定**的年份与状态。 -->
           <MultiSelectFilter
             v-model="state.firstYear"
-            :options="yearOptions"
+            :options="firstYearOptions"
             placeholder="首次认定年份"
             summary-prefix="首次认定"
             class="w-32"

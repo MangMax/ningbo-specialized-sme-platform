@@ -73,7 +73,7 @@ const ROSTER_STATE_LABELS: Record<string, string> = {
  * 首次认定 / 下次复核这种派生量,**值旁边写清它到底是什么** —— 不猜、不含糊。
  *
  * `(待核)` 是**锚点**口径(缺 `decided_year`),`(待确认)` 是**首次认定本身**的口径
- * (年份给不出 / 有更早的认定定不了年 / 没有出处)。两个标记各自跟着自己的值走,
+ * (年份给不出 / 现存 award 缺有效年份 / 没有出处)。两个标记各自跟着自己的值走,
  * 不合成一个 —— 导出件常被单独转发,读的人得能分清是哪件事待办。
  */
 function firstRecognitionText(row: RosterEnterpriseRow): string {

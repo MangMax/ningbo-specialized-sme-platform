@@ -84,7 +84,7 @@ function readSnapshot(db: Db): Snapshot {
  *
  * ── 两个「待」不是一回事,别并成一个 ─────────────────────────────────────
  *  - `year` / `evidence` / `status` 是**首次认定本身**的口径:年份取不取得到、依据回不回得了出处。
- *    取不到就**留空**并标 `status='pending'` + `pendingReason`,不拿当前窗口里最早的年份冒充。
+ *    仅数据库里现存 award 缺有效年份或首次出处时标 `status='pending'` + `pendingReason`。
  *  - `needsReview` 是**复核锚点**的口径(契约 §6.4):锚点算的时候用到了缺 `decided_year`
  *    的事件。它与首次认定的年份无关,原样保留(RL-04 的 §7.1 形状不变)。
  *

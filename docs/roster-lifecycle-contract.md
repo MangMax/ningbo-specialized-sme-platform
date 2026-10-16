@@ -613,9 +613,9 @@
    `decided_year` 缺失时退回 `year` 并把该企业标为**待核**。
 5. **失败复核不再进入当前有效资格的复核队列**:`reviewOutcome='failed'` 终止当前有效资格。
 6. **`nurture`(入库培育)不计入称号有效期**,不参与首次认定/复核清单。
-7. **(RL-08 增量)首次认定的「确立」**:上面第 1 条给出的是**年份**;能不能拿它当结论,
-   还要看依据是否成立 —— 定不了年的认定可能更早、没有出处的年份回不到原始记录,
-   两种都**标待确认**(判据见 §7.5)。为此 `computeTitleLifecycle` 一并给出
+7. **(RL-08 增量)首次认定的「确立」**:在数据库中该企业 × 称号的全部事件里,
+   只取最早正式 `award`；年份使用 `decided_year ?? year`。复核、维护、培育不参与首次计算。
+   若现存 award 缺有效年份或首次事件没有出处,则**标待确认**(判据见 §7.5)。为此 `computeTitleLifecycle` 一并给出
    `awardCount`(该称号有没有正式认定过)与 `undatedAwardIds`(哪些认定定不了年)。
 
 > 验收样例见 ADR §9 与 `tests/lifecycle-contract.test.ts`。
@@ -663,7 +663,8 @@
   "counts": {
     "total": 1,                     // **企业数**(与筛选同口径、先于分页)
     "titlePairs": 2,                // **企业 × 称号**数 = titles 各桶之和
-    "titles": { "specialized_sme": 1, "innovative_sme": 1 }
+    "titles": { "specialized_sme": 1, "innovative_sme": 1 },
+    "recognitionPairs": 1           // 命中首次认定判据的**企业 × 称号**数
   },
   "page": 1, "pageSize": 50
 }
@@ -682,10 +683,14 @@
   "aliases":    [{ "id": 3, "name": "宁波旧名…", "sourceKind": "platform_business",
                    "sourceRefId": 7, "verificationStatus": "confirmed", "validFrom": null }],
   "records":    [{ "id": 5, "titleCode": "specialized_sme", "source": "jxj" }],
-  "events":     [{ "id": 9, "recordId": 5, "eventType": "review", "year": 2021,
+  "events":     [{ "id": 8, "recordId": 5, "eventType": "award", "year": 2021,
+                   "batchSeq": 1, "decidedYear": 2021, "reviewOutcome": null },
+                  { "id": 9, "recordId": 5, "eventType": "review", "year": 2021,
                    "batchSeq": 1, "decidedYear": 2024, "reviewOutcome": "failed" }],
-  "evidence":   [{ "eventId": 9, "sourceFile": "…192号.docx", "attachment": "附件2",
-                   "listNo": 3, "page": 7 }],
+  "evidence":   [{ "eventId": 8, "sourceFile": "…145号.pdf", "attachment": "附件一",
+                   "listNo": 74, "page": 7 }],
+  "recognitions": [{ "titleCode": "specialized_sme", "firstYear": 2021, "firstEventId": 8,
+                     "status": "confirmed", "pendingReason": null, "evidence": [/* 首次 award 出处 */] }],
   "differences":[{ "id": 2, "titleCode": "specialized_sme", "direction": "missing_in_miit",
                    "status": "confirmed_reason", "reasonCode": "moved_out",
                    "measureCode": "mark_moved_out", "recordedAt": "2026-10-14T06:00:00Z",
@@ -724,8 +729,7 @@
 查询参数:`title`、`year`。响应行:`{ enterpriseId, titleCode, firstYear, firstEventId, source }`。
 
 **增量(RL-08 交付,2026-10-16)**。原形状是**最小骨架**:它给得出年份与事件 id,
-却给不出票面(issue #8)明写的两件事 —— 「首次认定的依据必须能回到出处」与
-「历史不完整时标待确认,不把当前窗口里最早的年份冒充首次」。补齐如下(全是**加字段**,不改既有字段含义):
+却给不出票面(issue #8)明写的「首次认定的依据必须能回到出处」。实现按数据库中该企业 × 称号的完整事件集计算；正式名单是否完整入库由独立的清理入库验收负责，不把整条未入库事件建模成产品状态。补齐如下(全是**加字段**,不改既有字段含义):
 
 - **行形状补齐**(`firstYear` / `firstEventId` / `source` 语义**不变**):
 
@@ -753,12 +757,11 @@
   | `pendingReason` | 什么时候 | `firstYear` |
   |---|---|---|
   | `no_dated_award` | 有认定,但**一条都定不了年**(`year` 与 `decided_year` 都空) | `null`(**不猜**) |
-  | `undated_award` | 已知最早那条定得了年,但**还有更早的认定定不了年** | 照给,但**不声称它是首次** |
+  | `undated_award` | 有现存 award 定不了有效年份(`year` 与 `decided_year` 都空),但另有可定年的 award | 给出已知最早的年份,状态待确认 |
   | `no_evidence` | 年份有了,那条认定却**没有存下来的出处** | 照给,依据回不到出处 |
 
-  三条之外一律 `confirmed`。**口径说明**:`no_dated_award` / `undated_award` 就是
-  issue #8 第 3 条要防的「拿当前已导入数据里最早的年份冒充首次」—— 定不了年的认定
-  可能更早,所以只能标待确认;`no_evidence` 则是「依据回不到出处」(§3 的
+  三条之外一律 `confirmed`。这些待确认原因只对应数据库中**实际存在**但缺有效年份或出处的 award；
+  它们不表示数据库可能漏了一条更早事件。`no_evidence` 是「依据回不到出处」(§3 的
   「证据不足留空并标待核,绝不猜填」)。它们与 §7.1 的 `needsReview`(**锚点**口径,§6.4)
   是**两件事**,不共用一个字段。
 
@@ -771,21 +774,14 @@
 
 ```jsonc
 "counts": {
-  "titlePairs": 9930,    // 符合条件的**企业 × 称号**数(= 行数,先于分页)
-  "enterprises": 7205,   // 符合条件的**企业**数(多称号企业只算一家)
-  // 真实库实测(2026-10-16):9930 = 6552 创新型 + 3378 专精特新,小巨人 0。
-  "titles": { "little_giant": 0, "specialized_sme": 3378, "innovative_sme": 6552 }
+  "titlePairs": 2,       // 符合条件的**企业 × 称号**数(= 行数,先于分页)
+  "enterprises": 1,      // 符合条件的**企业**数(多称号企业只算一家)
+  "titles": { "little_giant": 0, "specialized_sme": 1, "innovative_sme": 1 }
 }
 ```
 
 - **一行 = 一个企业 × 称号**。同一企业多称号就是多行;`counts.enterprises` 才是企业数。
-
-- **实测基线(真库 2026-10-16)**:9930 个(企业 × 称号)有认定,来自 7205 家企业
-  —— 两个单位**确实不是同一个数**,这不是理论差别。
-  ⚠️ 同一份实测还表明:9946 条 `award` **一条都不缺年份、也一条都不缺出处**
-  ⇒ `status='pending'` 在真库上**一次都不触发**。那一档的可复现验收要靠
-  `scripts/make-rl08-pending-db.mjs` 造的库(合成三家:已确立 / 缺出处 / 有更早的定不了年),
-  否则「待确认」的页面表现与徽章文案在真库上根本渲染不出来。
+- **空数据口径**:没有 award 的数据库返回空 `rows` 与 0 计数。相关行为通过合成 fixture / 隔离 SQLite 验证；正式历史名单完整性与未复核文件由独立清理入库验收核对，不作为功能实现前置条件。
 
 - **与 §7.1 的 `firstRecognition` 是同一处计算**(`buildProfile` 一次算出,两处只是取舍字段),
   所以两处不可能给出不同的首次年份。**筛选判据同理**:`matchesRecognitionQuery`

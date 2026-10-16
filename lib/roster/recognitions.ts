@@ -62,6 +62,12 @@ export interface RosterRecognitionsResult {
   pageSize: number
 }
 
+export interface FirstRecognitionYearFilter {
+  title?: string
+  district?: string
+  source?: string
+}
+
 const DEFAULT_PAGE_SIZE = 50
 
 function pageOf(input: { page?: number; pageSize?: number }): { page: number; pageSize: number } {
@@ -129,4 +135,41 @@ export function listRosterRecognitions(
     page,
     pageSize,
   }
+}
+
+/**
+ * 可选的首次认定年份,计数单位为企业 × 称号。
+ *
+ * 年份来自同一份 `RecognitionEntry`,因此采用生命周期里的 `decidedYear ?? year` 语义。
+ * `title` / `district` / `source` 沿用 `/api/stats` 的记录筛选:先看企业是否有符合筛选的
+ * 对应称号记录,再按该称号唯一的首次认定年份计一次。
+ */
+export function getFirstRecognitionYearBuckets(
+  db: Db,
+  filter: FirstRecognitionYearFilter = {},
+): { key: string; n: number }[] {
+  const { profiles } = readRosterProfiles(db)
+  const counts = new Map<number, number>()
+
+  for (const profile of profiles) {
+    const matchingTitles = new Set(
+      profile.records
+        .filter(
+          (record) =>
+            (!filter.title || record.titleCode === filter.title) &&
+            (!filter.district || record.district === filter.district) &&
+            (!filter.source || record.source === filter.source),
+        )
+        .map((record) => record.titleCode),
+    )
+
+    for (const entry of profile.recognitions) {
+      if (entry.firstYear == null || !matchingTitles.has(entry.titleCode)) continue
+      counts.set(entry.firstYear, (counts.get(entry.firstYear) ?? 0) + 1)
+    }
+  }
+
+  return [...counts]
+    .sort(([a], [b]) => a - b)
+    .map(([year, n]) => ({ key: String(year), n }))
 }

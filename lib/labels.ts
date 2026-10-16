@@ -549,12 +549,11 @@ export const FIRST_RECOGNITION_STATUS_ORDER: string[] = ['confirmed', 'pending']
 
 /**
  * 首次认定「待确认」的原因 —— 三条**互不等价**,像差异六态一样必须彼此可区分:
- * 是「一条都定不了年」还是「有更早的定不了年」还是「没有出处」,要办的事完全不同
- * (前两条要回去补来源,第三条要回去补出处)。
+ * 是「一条都定不了年」还是「另有现存 award 缺有效年份」还是「没有出处」,处理方式不同。
  */
 export const FIRST_RECOGNITION_REASONS: Record<string, string> = {
   no_dated_award: '认定事件定不了年',
-  undated_award: '存在更早但定不了年的认定',
+  undated_award: '现存认定缺有效年份',
   no_evidence: '首次认定没有存下来的出处',
 }
 /** 展示顺序 = 判定里的优先级(`no_dated_award` > `undated_award` > `no_evidence`)。 */
@@ -572,7 +571,7 @@ export const FIRST_RECOGNITION_REASON_ORDER: string[] = [
 export const FIRST_RECOGNITION_HINT =
   '首次认定按「企业 × 称号」算:该企业在该称号上最早的那次认定。' +
   '复核通过不是新的首次认定;复核未通过后再次获批也不重置。' +
-  '标「待确认」的原因有三种且互不相同:认定事件定不了年 / 存在更早但定不了年的认定 / 首次认定没有存下来的出处。'
+  '标「待确认」的原因有三种且互不相同:认定事件定不了年 / 现存认定缺有效年份 / 首次认定没有存下来的出处。'
 
 /** 方向代号 → 标签(`COMPARISON_LABELS` 是 `as const`,动态字符串取不到,这里放宽一次)。 */
 export function comparisonDirectionLabel(code: string): string {

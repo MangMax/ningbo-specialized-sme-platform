@@ -20,7 +20,7 @@ defineRouteMeta({
     tags: ['名录'],
     summary: '企业详情(跨称号)',
     description:
-      '含 aliases / records / events / evidence / differences / platform。`platform.relations` 保留该企业的**全部**平台关联(不按统代折叠)。',
+      '含 aliases / records / events / evidence / recognitions / differences / platform。`recognitions` 按企业 × 称号返回最早正式 `award`、年份(`decidedYear ?? year`)、出处与状态(`confirmed` / `pending`)；`platform.relations` 保留该企业的**全部**平台关联(不按统代折叠)。',
     responses: {
       200: { description: '企业详情。' },
       400: { description: 'id 不是数字。' },

@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
+import { FIRST_RECOGNITION_STATUS_ORDER } from '../lib/labels'
+import { FIRST_RECOGNITION_STATUS_VALUES } from '../lib/roster/first-recognition'
 
 /**
  * RL-08 —— 首次认定的**接口面**(契约 §7.5 + 增量)。
@@ -17,7 +19,7 @@ import { schema, useDb } from '../db'
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-recognitions-api-'))
-const db = useDb({ dbPath: join(dir, 'api.db') })
+let db = useDb({ dbPath: join(dir, 'api.db') })
 
 const FILE_2022 = 'jxj/announcement/2022/甬经信中小〔2022〕145号关于公布宁波市“专精特新”中小企业名单的通知.pdf'
 
@@ -100,6 +102,10 @@ let handlerEnterprises: (event: unknown) => {
   counts: { total: number; titlePairs: number; recognitionPairs: number }
 }
 let handlerExport: (event: unknown) => Promise<Uint8Array>
+let handlerStats: (event: unknown) => {
+  byYear: { key: string; n: number }[]
+  byFirstRecognitionYear: { key: string; n: number }[]
+}
 
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -127,6 +133,7 @@ beforeAll(async () => {
   handlerRecognitions = (await import('../server/api/roster/recognitions.get')).default as unknown as typeof handlerRecognitions
   handlerEnterprises = (await import('../server/api/roster/enterprises.get')).default as unknown as typeof handlerEnterprises
   handlerExport = (await import('../server/api/roster/export.get')).default as unknown as typeof handlerExport
+  handlerStats = (await import('../server/api/stats.get')).default as unknown as typeof handlerStats
 })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -309,5 +316,101 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
     // 全被剔除 ⇒ 等于没筛 ⇒ 两家都在。
     expect(String(wb.worksheets[0]!.getRow(1).getCell(1).value)).toContain('2 家企业')
     query = {}
+  })
+
+  it('仅有 decidedYear 的 award 可在首次年份选项中选择,列表和导出按同一 firstYear 语义返回', async () => {
+    const previousDb = db
+    try {
+      db = useDb({ dbPath: join(dir, 'decided-year-only.db') })
+      const decidedYearOnlyId = seed('宁波仅结论年份接口测试有限公司', '91330211AAAAAAA103X', null, 'specialized_sme', [
+        {
+          eventType: 'award',
+          year: null,
+          decidedYear: 2024,
+          evidence: [
+            {
+              sourceFile:
+                'jxj/announcement/2024/2/甬经信中小〔2024〕192号关于公布2024年第二批认定及2021年第二批到期复核通过宁波市“专精特新”中小企业名单的通知.pdf',
+              attachment: '附件一',
+              listNo: 3,
+            },
+          ],
+        },
+      ])
+
+      const stats = handlerStats({})
+      expect(stats.byYear.some((bucket) => bucket.key === '2024')).toBe(false)
+      expect(stats.byFirstRecognitionYear).toEqual([{ key: '2024', n: 1 }])
+
+      query = { firstYear: '2024' }
+      expect(handlerEnterprises({}).rows.map((row) => row.enterpriseId)).toEqual([decidedYearOnlyId])
+
+      const bytes = await handlerExport({})
+      const workbook = new ExcelJS.Workbook()
+      await workbook.xlsx.load(Buffer.from(bytes) as never)
+      const worksheet = workbook.worksheets[0]!
+      expect(String(worksheet.getRow(1).getCell(1).value)).toContain('1 家企业')
+      expect(worksheet.rowCount).toBe(3) // 说明 + 表头 + 该企业
+      expect(String(worksheet.getRow(3).getCell(1).value)).toContain('宁波仅结论年份接口测试有限公司')
+
+      const pageSource = readFileSync(join(process.cwd(), 'pages/index.vue'), 'utf8')
+      expect(pageSource).toContain('stats.value?.byFirstRecognitionYear')
+      expect(pageSource).toContain(':options="firstYearOptions"')
+    } finally {
+      db = previousDb
+      query = {}
+    }
+  })
+
+  it('空库返回空的首次认定、企业列表、统计桶和导出', async () => {
+    const previousDb = db
+    try {
+      db = useDb({ dbPath: join(dir, 'empty.db') })
+      query = {}
+
+      const recognitions = handlerRecognitions({})
+      expect(recognitions.rows).toEqual([])
+      expect(recognitions.counts).toMatchObject({ titlePairs: 0, enterprises: 0 })
+
+      const enterprises = handlerEnterprises({})
+      expect(enterprises.rows).toEqual([])
+      expect(enterprises.counts).toMatchObject({ total: 0, titlePairs: 0, recognitionPairs: 0 })
+
+      const stats = handlerStats({})
+      expect(stats.byYear).toEqual([])
+      expect(stats.byFirstRecognitionYear).toEqual([])
+
+      const bytes = await handlerExport({})
+      const workbook = new ExcelJS.Workbook()
+      await workbook.xlsx.load(Buffer.from(bytes) as never)
+      expect(workbook.worksheets[0]!.rowCount).toBe(2) // 说明 + 表头,无数据行
+      expect(String(workbook.worksheets[0]!.getRow(1).getCell(1).value)).toContain('0 家企业')
+    } finally {
+      db = previousDb
+      query = {}
+    }
+  })
+
+  it('企业总表和详情 OpenAPI 描述首次认定筛选、计数单位、recognitions 与状态枚举', () => {
+    const listSource = readFileSync(join(process.cwd(), 'server/api/roster/enterprises.get.ts'), 'utf8')
+    const detailSource = readFileSync(join(process.cwd(), 'server/api/roster/enterprises/[id].get.ts'), 'utf8')
+    const recognitionsSource = readFileSync(join(process.cwd(), 'server/api/roster/recognitions.get.ts'), 'utf8')
+
+    expect(listSource).toContain("name: 'firstYear'")
+    expect(listSource).toContain("name: 'firstStatus'")
+    expect(listSource).toContain("enum: ['confirmed', 'pending']")
+    expect(listSource).toContain('counts.total')
+    expect(listSource).toContain('counts.titlePairs')
+    expect(listSource).toContain('counts.recognitionPairs')
+    expect(listSource).toContain('counts.titles')
+    expect(listSource).toContain('企业数')
+    expect(listSource).toContain('企业 × 称号')
+    expect(detailSource).toContain('recognitions')
+    expect(detailSource).toContain('confirmed')
+    expect(detailSource).toContain('pending')
+    expect(recognitionsSource).toContain("enum: ['confirmed', 'pending']")
+    expect(FIRST_RECOGNITION_STATUS_VALUES).toEqual(['confirmed', 'pending'])
+    expect(FIRST_RECOGNITION_STATUS_ORDER).toEqual(['confirmed', 'pending'])
+    expect(FIRST_RECOGNITION_STATUS_VALUES).toEqual(['confirmed', 'pending'])
   })
 })
