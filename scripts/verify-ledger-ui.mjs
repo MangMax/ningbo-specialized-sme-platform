@@ -520,6 +520,82 @@ async function verifyLedgerSearchLoading(cdp) {
   }
 }
 
+async function verifyLedgerMobileLoadingOverflow(cdp) {
+  const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[1])
+  const { targetId, sessionId } = page
+  try {
+    await installMotionAndFetchGate(cdp, sessionId)
+    const name = await evaluate(cdp, sessionId, `document.querySelector('tbody tr button')?.textContent?.trim() ?? ''`)
+    if (!name) {
+      bad('企业列表 · 窄屏加载:初始结果没有可筛选的企业名称')
+      return
+    }
+
+    const drawerClose = await closeEnterpriseDrawer(cdp, sessionId)
+    if (!drawerClose.ready || !drawerClose.closed || !drawerClose.animationEnd) {
+      bad(`企业列表 · 窄屏加载:筛选前没有完成抽屉关闭动画 ${JSON.stringify(drawerClose)}`)
+      return
+    }
+
+    await startFetchGate(cdp, sessionId, '/api/roster/enterprises?')
+    await setInputValue(cdp, sessionId, 'input[aria-label*="企业名称"]', name)
+    const loading = await waitForLoadingEvidence(cdp, sessionId, 'ledger')
+    if (!loading) {
+      bad('企业列表 · 窄屏加载:没有进入真实请求中的加载状态')
+      return
+    }
+
+    const measurement = await evaluate(cdp, sessionId, `(() => {
+      const scroller = document.querySelector('[data-testid="enterprise-table-scroll"]');
+      const table = scroller?.querySelector('table');
+      const skeletonRow = [...(scroller?.querySelectorAll('tbody tr') ?? [])]
+        .find((row) => row.querySelector('[data-slot="skeleton"]'));
+      return {
+        clientWidth: scroller?.clientWidth ?? 0,
+        scrollWidth: scroller?.scrollWidth ?? 0,
+        tableWidth: Math.round(table?.getBoundingClientRect().width ?? 0),
+        loading: scroller?.querySelector('tbody')?.getAttribute('data-loading') === 'true',
+        skeletonCells: [...(skeletonRow?.querySelectorAll('td') ?? [])].map((cell) => ({
+          display: getComputedStyle(cell).display,
+          width: Math.round(cell.getBoundingClientRect().width),
+        })),
+      };
+    })()`)
+    if (!measurement.loading || measurement.skeletonCells.length !== 6) {
+      bad(`企业列表 · 窄屏加载:没有量到六格加载行 ${JSON.stringify(measurement)}`)
+    }
+    if (measurement.scrollWidth > measurement.clientWidth + 1) {
+      bad(`企业列表 · 窄屏加载:表格容器仍可横向滚动(${measurement.scrollWidth}px / ${measurement.clientWidth}px) ${JSON.stringify(measurement)}`)
+    } else {
+      ok(`企业列表 · 窄屏加载:表格与骨架不横向溢出(${measurement.scrollWidth}px ≤ ${measurement.clientWidth}px)`)
+    }
+    if (measurement.skeletonCells[2]?.display !== 'none' || measurement.skeletonCells[3]?.display !== 'none') {
+      bad(`企业列表 · 窄屏加载:统一代码与属地骨架列应隐藏 ${JSON.stringify(measurement.skeletonCells)}`)
+    } else {
+      ok('企业列表 · 窄屏加载:统一代码与属地骨架列随正文列一同隐藏')
+    }
+
+    // 注入同类表内溢出，确认上面的新断言能抓住移动加载行回归。
+    await evaluate(cdp, sessionId, `(() => {
+      const table = document.querySelector('[data-testid="enterprise-table-scroll"] table');
+      table?.style.setProperty('min-width', '500px', 'important');
+    })()`)
+    const brokenWidth = await evaluate(cdp, sessionId, `(() => {
+      const scroller = document.querySelector('[data-testid="enterprise-table-scroll"]');
+      return { clientWidth: scroller?.clientWidth ?? 0, scrollWidth: scroller?.scrollWidth ?? 0 };
+    })()`)
+    if (brokenWidth.scrollWidth <= brokenWidth.clientWidth + 1) {
+      bad(`企业列表 · 窄屏加载缺陷自检:注入骨架宽度后仍未检出 ${JSON.stringify(brokenWidth)}`)
+    } else {
+      console.log(`✗ 企业列表 · 窄屏加载缺陷自检按预期变红:表格容器横向滚动 ${brokenWidth.scrollWidth}px / ${brokenWidth.clientWidth}px`)
+      ok('企业列表 · 窄屏加载缺陷自检:关闭临时 target 后缺陷已复原')
+    }
+  } finally {
+    await finishFetchGate(cdp, sessionId).catch(() => {})
+    await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
 async function verifyMissingRecognitionYearAndEvidence(cdp) {
   const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0])
   const { targetId, sessionId } = page
@@ -781,6 +857,31 @@ async function verifyComparisonSearchAndMotion(cdp) {
   const { targetId, sessionId } = page
   try {
     await installMotionAndFetchGate(cdp, sessionId)
+    await clickSelector(cdp, sessionId, '[data-testid="reconcile-status-trigger"]')
+    const tooltipReady = await waitUntil(cdp, sessionId, `(() => {
+      const tooltip = document.querySelector('[data-slot="tooltip-content"]');
+      return !!tooltip && getComputedStyle(tooltip).visibility !== 'hidden' && tooltip.getBoundingClientRect().height > 0;
+    })()`)
+    if (!tooltipReady) {
+      bad('两侧名录比对 · 原因字号:点击状态后没有打开原因浮层')
+    } else {
+      const typography = await evaluate(cdp, sessionId, `(() => {
+        const tooltip = document.querySelector('[data-slot="tooltip-content"]');
+        return {
+          paragraphs: [...(tooltip?.querySelectorAll('p') ?? [])].map((paragraph) => ({
+            text: (paragraph.textContent ?? '').trim(),
+            fontSize: Number.parseFloat(getComputedStyle(paragraph).fontSize),
+            lineHeight: Number.parseFloat(getComputedStyle(paragraph).lineHeight),
+          })),
+        };
+      })()`)
+      const tooSmall = typography.paragraphs.filter((paragraph) => paragraph.fontSize < 13 || paragraph.lineHeight < 19)
+      if (!typography.paragraphs.length || tooSmall.length) {
+        bad(`两侧名录比对 · 原因字号:浮层正文应不小于 13px 且行高至少 19px ${JSON.stringify(typography)}`)
+      } else {
+        ok(`两侧名录比对 · 原因字号:${typography.paragraphs.length} 段浮层正文均为 ≥13px / ≥19px`)
+      }
+    }
     const name = await evaluate(cdp, sessionId, `document.querySelector('tbody tr a')?.textContent?.trim() ?? ''`)
     if (!name) {
       bad('两侧名录比对 · 搜索:筛选方向后没有结果可用于搜索验收')
@@ -1384,6 +1485,7 @@ async function main() {
     }
 
     await verifyLedgerSearchLoading(cdp)
+    await verifyLedgerMobileLoadingOverflow(cdp)
     await verifyMissingRecognitionYearAndEvidence(cdp)
     await verifyKaichengExample(cdp)
     await verifyUnknownReviewOutcomeExample(cdp)

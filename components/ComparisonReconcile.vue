@@ -186,31 +186,31 @@ function onClick(event: MouseEvent) {
         :collision-padding="12"
         class="max-w-[min(24rem,var(--reka-tooltip-content-available-width,24rem))]"
       >
-        <div class="flex flex-col gap-1">
-          <p class="font-medium">{{ statusLabel }}</p>
+        <div class="flex flex-col gap-1 text-[13px] leading-5">
+          <p class="font-medium text-[13px] leading-5">{{ statusLabel }}</p>
           <!-- 没有解释记录:如实说明「还没存下解释」,不说「无数据」。 -->
-          <p v-if="!hasRecord" class="text-page/90 text-xs leading-relaxed" data-testid="reconcile-no-record">
+          <p v-if="!hasRecord" class="text-page/90 text-[13px] leading-5" data-testid="reconcile-no-record">
             还没有解释记录 —— 状态为状态机的默认态「未查询」(还不曾查过,不是平台没有)。
           </p>
           <template v-else>
-            <p v-if="reasonLabel || disposition.reasonNote" class="text-page/90 text-xs leading-relaxed">
+            <p v-if="reasonLabel || disposition.reasonNote" class="text-page/90 text-[13px] leading-5">
               <span class="font-medium">原因:</span>{{ reasonLabel ?? '—'
               }}<template v-if="reasonSuffix"> — {{ reasonSuffix }}</template>
             </p>
-            <p v-else class="text-page/90 text-xs leading-relaxed">原因:—(该状态无需原因编码)</p>
-            <p v-if="measureLabel || disposition.measureNote" class="text-page/90 text-xs leading-relaxed">
+            <p v-else class="text-page/90 text-[13px] leading-5">原因:—(该状态无需原因编码)</p>
+            <p v-if="measureLabel || disposition.measureNote" class="text-page/90 text-[13px] leading-5">
               <span class="font-medium">后续措施:</span>{{ measureLabel ?? '—'
               }}<template v-if="measureSuffix"> — {{ measureSuffix }}</template>
             </p>
-            <p v-else class="text-page/90 text-xs leading-relaxed">后续措施:—</p>
-            <p class="text-page/90 text-xs leading-relaxed">
+            <p v-else class="text-page/90 text-[13px] leading-5">后续措施:—</p>
+            <p class="text-page/90 text-[13px] leading-5">
               <span class="font-medium">迁入来源:</span>
               <template v-if="movedInText">
                 {{ movedInText }}<span v-if="!movedInComplete" class="text-destructive"> · 待补证</span>
               </template>
               <template v-else>—</template>
             </p>
-            <p class="text-page/85 text-xs leading-relaxed">
+            <p class="text-page/85 text-[13px] leading-5">
               核验:{{ VERIFICATION_STATUSES[disposition.verificationStatus] ?? disposition.verificationStatus
               }}<template v-if="recordedAt"> · 登记 {{ recordedAt }}</template>
             </p>
@@ -218,7 +218,7 @@ function onClick(event: MouseEvent) {
           <!-- 旧解释缓存:只作对照,不是主源;它缺失时这一行不出现。 -->
           <p
             v-if="explanation && cachedLabel"
-            class="text-page/85 text-xs leading-relaxed"
+            class="text-page/85 text-[13px] leading-5"
             data-testid="reconcile-cached"
           >
             旧解释缓存:{{ cachedLabel }}<template v-if="cachedNote"> — {{ cachedNote }}</template>

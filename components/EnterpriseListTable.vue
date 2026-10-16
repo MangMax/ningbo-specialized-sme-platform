@@ -238,14 +238,14 @@ function railClass(row: EnterpriseListRow): string {
         -->
         <TableRow v-if="loading" class="hover:bg-transparent">
           <TableCell class="p-0"><span class="block h-5 w-[6px]" /></TableCell>
-          <TableCell><Skeleton class="h-3 w-40" /></TableCell>
-          <TableCell><Skeleton class="h-3 w-32" /></TableCell>
-          <TableCell><Skeleton class="h-3 w-12" /></TableCell>
+          <TableCell><Skeleton class="h-3 w-full max-w-40" /></TableCell>
+          <TableCell class="hidden sm:table-cell"><Skeleton class="h-3 w-32" /></TableCell>
+          <TableCell class="hidden sm:table-cell"><Skeleton class="h-3 w-12" /></TableCell>
           <TableCell>
-            <Skeleton class="h-3 w-28" />
-            <Skeleton class="ml-2 inline-block h-3 w-16" />
+            <Skeleton class="h-3 w-full max-w-28" />
+            <Skeleton class="ml-2 hidden h-3 w-16 sm:inline-block" />
           </TableCell>
-          <TableCell><Skeleton class="h-3 w-24" /></TableCell>
+          <TableCell><Skeleton class="h-3 w-full max-w-24" /></TableCell>
         </TableRow>
 
         <TableRow v-if="!loading && !hasError && !rows.length" class="hover:bg-transparent">
