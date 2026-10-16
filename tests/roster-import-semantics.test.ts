@@ -16,6 +16,13 @@
  * ```
  *
  * 规范化规则（丢 `createdAt`、按 `id` 排序）见 `tests/helpers/roster-import-semantics.ts`。
+ *
+ * ── 一次**有据的**重新生成（2026-10-16，合入时）─────────────────────────────
+ * 黄金文件原先冻结在 `f71825b`。合入 RL-18 时它与集成 tip 不一致，父代理**逐行核对差异**，
+ * 确认**只有 14 行**、且**全部**来自 RL-16b 那条被授权的行为新增：归并项的 `detail` 多了
+ * `canonicalName` 与血缘 `rename`（以及随之变化的 `itemResultsSha`）——
+ * 这是**新增可观察字段**，不是"找到之后做什么"被改动。RL-18 自身的改动（按键定位）**未改任何字节**。
+ * 因此在该合并提交里重新生成，并在此留痕；**今后再要重新生成，同样必须先逐行归因**。
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
