@@ -394,13 +394,29 @@ function statusRailViolation(m, label) {
 }
 
 function statusRailHierarchyViolation(m, label) {
-  const inconsistent = (m.statusRailHierarchy ?? []).filter((rail) =>
-    rail.kind === 'confirmed' && (rail.selected
-      ? !rail.className.includes('bg-primary') || rail.className.includes('bg-primary/40')
-      : !rail.className.includes('bg-primary/40')),
-  )
+  const rails = (m.statusRailHierarchy ?? []).filter((rail) => rail.kind === 'confirmed')
+  const primary = m.statusRailPrimaryColor
+  if (!primary || primary.alpha <= 0) {
+    return `${label}:无法读取主题主色来验证状态条层级`
+  }
+
+  const hasUnselected = rails.some((rail) => !rail.selected)
+  if (!hasUnselected) return `${label}:缺少未选中的已确认状态条`
+
+  const inconsistent = rails.filter((rail) => {
+    if (!rail.color || rail.color.alpha <= 0 || rail.effectiveAlpha == null) return true
+    const colorDistance = Math.max(
+      Math.abs(rail.color.red - primary.red),
+      Math.abs(rail.color.green - primary.green),
+      Math.abs(rail.color.blue - primary.blue),
+    )
+    if (colorDistance > 3) return true
+    return rail.selected
+      ? Math.abs(rail.effectiveAlpha - primary.alpha) > 0.05
+      : rail.effectiveAlpha >= primary.alpha - 0.05
+  })
   return inconsistent.length
-    ? `${label}:当前选中行与其他已确认行的状态条层级不清 ${JSON.stringify(inconsistent.slice(0, 3))}`
+    ? `${label}:已确认状态条没有呈现主色与降低不透明度的层级 ${JSON.stringify(inconsistent.slice(0, 3))}`
     : null
 }
 
@@ -1824,6 +1840,18 @@ const MEASURE = `(() => {
       }
     : null;
   const rail = document.querySelector('.ledger-page tbody tr:not([data-loading="true"]) td:first-child > span');
+  const colorCanvas = document.createElement('canvas');
+  const colorContext = colorCanvas.getContext('2d', { willReadFrequently: true });
+  const measureColor = (value) => {
+    if (!colorContext || !value) return null;
+    colorContext.clearRect(0, 0, 1, 1);
+    colorContext.fillStyle = 'rgba(0, 0, 0, 0)';
+    colorContext.fillStyle = value;
+    colorContext.fillRect(0, 0, 1, 1);
+    const [red, green, blue, alpha] = colorContext.getImageData(0, 0, 1, 1).data;
+    return { red, green, blue, alpha: alpha / 255 };
+  };
+  const statusRailPrimaryColor = measureColor(getComputedStyle(document.documentElement).getPropertyValue('--primary').trim());
   const ledgerExport = document.querySelector('.ledger-page a[href^="/api/roster/export"]');
   const ledgerTable = document.querySelector('.ledger-page table');
   const control = root?.querySelector('[data-slot="select-trigger"]');
@@ -1960,13 +1988,16 @@ const MEASURE = `(() => {
     } : null,
     enterpriseTimelineYears,
     enterpriseDifferenceStatuses,
+    statusRailPrimaryColor,
     statusRailHierarchy: enterpriseRows.map((row) => {
       const rail = row.querySelector('td:first-child > span');
-      const className = rail?.className ?? '';
+      const style = rail ? getComputedStyle(rail) : null;
+      const color = style ? measureColor(style.backgroundColor) : null;
       return {
         selected: rail?.getAttribute('data-selected') === 'true',
         kind: rail?.getAttribute('data-rail-kind') ?? 'none',
-        className,
+        color,
+        effectiveAlpha: color && style ? color.alpha * Number.parseFloat(style.opacity || '1') : null,
       };
     }),
     enterpriseDrawerReading: enterpriseRow && enterpriseDrawer ? {
@@ -2190,7 +2221,7 @@ async function main() {
           else ok(`${label}:最左状态条实测 6px`)
           const hierarchy = statusRailHierarchyViolation(m, label)
           if (hierarchy) bad(hierarchy)
-          else ok(`${label}:选中行状态条更醒目,其他已确认状态条降低饱和度`)
+          else ok(`${label}:已确认状态条实测使用主色,未选中行降低不透明度`)
           const timelineYears = timelineYearViolation(m, label)
           if (timelineYears) bad(timelineYears)
           else if (m.enterpriseTimelineYears.length) ok(`${label}:抽屉每条称号历史事件均标有年份或待核`)
@@ -2437,7 +2468,7 @@ async function main() {
       `${BASE}/`,
       `(() => {
         const rail = document.querySelector('.ledger-page tbody tr [data-rail-kind="confirmed"][data-selected="false"]');
-        if (rail) { rail.classList.remove('bg-primary/40'); rail.classList.add('bg-primary'); }
+        if (rail) rail.style.setProperty('background-color', getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(), 'important');
         return (${MEASURE});
       })()`,
       READY,
@@ -2446,7 +2477,7 @@ async function main() {
     const railHierarchySelfCheck = statusRailHierarchyViolation(railHierarchyBroken, '状态条层级缺陷自检')
     if (!railHierarchyBroken.statusRailHierarchy?.some((rail) => rail.kind === 'confirmed' && !rail.selected)) {
       bad('状态条层级缺陷自检:当前首屏没有可供注入的非选中已确认状态条')
-    } else if (!railHierarchySelfCheck) bad('状态条层级缺陷自检:临时加深非选中行状态条后,层级断言仍未命中')
+    } else if (!railHierarchySelfCheck) bad('状态条层级缺陷自检:临时覆盖非选中行的背景色后,computed color 断言仍未命中')
     else console.log(`✗ 状态条层级缺陷自检按预期变红:${railHierarchySelfCheck}`)
     if (railHierarchySelfCheck) ok('状态条层级缺陷自检:关闭临时 target 后缺陷已复原')
 
