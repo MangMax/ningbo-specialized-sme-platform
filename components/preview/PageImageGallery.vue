@@ -197,18 +197,21 @@ async function resolveRequestedPage(): Promise<void> {
   if (target === null || !current || loading.value) return
 
   targetPageIssue.value = ''
-  if (current.pages.some((page) => page.page === target)) {
+  const currentIsFresh = current.upToDate && !loadUnconfirmed.value
+  if (currentIsFresh && current.pages.some((page) => page.page === target)) {
     pendingPage.value = null
     viewing.value = target
     return
   }
-  if (current.pageCount === null) {
+  // A stale manifest does not establish the current PDF page count. Let the render endpoint
+  // inspect the source before deciding whether the target is out of range.
+  if (currentIsFresh && current.pageCount === null) {
     pendingPage.value = null
     viewing.value = null
     targetPageIssue.value = `无法确认 PDF 页数，不能定位到第 ${target} 页。`
     return
   }
-  if (target > current.pageCount) {
+  if (currentIsFresh && current.pageCount !== null && target > current.pageCount) {
     pendingPage.value = null
     viewing.value = null
     return

@@ -6,6 +6,7 @@ import RosterEnterpriseTable, { type EnterpriseRow } from '../components/RosterE
 import RosterTitleTable, { type TitleRow } from '../components/RosterTitleTable.vue'
 import {
   hasEvidencePreviewReturn,
+  rememberEvidencePreviewReturn,
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
 } from '../lib/roster/evidence-preview-return'
@@ -362,6 +363,25 @@ describe('出处预览返回滚动恢复', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 96, behavior: 'instant' })
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
     returned.unmount()
+  })
+
+  it('详情来源预览后真实 history.back 在恢复状态已消费时仍抑制 Nuxt 顶端复位', async () => {
+    const detailPath = '/enterprises/91?back=view%3Dtitle%26page%3D2'
+    history.replaceState(null, '', detailPath)
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 70 })
+    rememberEvidencePreviewReturn(detailPath)
+    history.pushState(null, '', `/preview?file=synthetic.pdf&back=${encodeURIComponent(detailPath)}`)
+
+    // 页面恢复钩子会先消费 sessionStorage；Nuxt 的 delayed scrollBehavior 随后才计算位置。
+    sessionStorage.removeItem('roster:evidence-preview-return')
+    const returned = new Promise<void>((resolve) => {
+      window.addEventListener('popstate', () => resolve(), { once: true })
+    })
+    history.back()
+    await returned
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe(detailPath)
+    expect(shouldNuxtScrollToTop(detailPath, '')).toBe(false)
   })
 
   it('从名录行进详情再经预览返回，保留名录筛选、页码、展开行和表格滚动', async () => {

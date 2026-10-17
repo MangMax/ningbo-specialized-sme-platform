@@ -2,6 +2,7 @@ import { nextTick, onMounted, watch, type Ref } from 'vue'
 import { isSafeBackPath } from './evidence-page'
 
 const RETURN_STATE_KEY = 'roster:evidence-preview-return'
+const HISTORY_RETURN_PATH_KEY = '__rosterEvidencePreviewReturnPath'
 
 interface EvidencePreviewReturnState {
   back: string
@@ -81,8 +82,55 @@ export function hasEvidencePreviewReturn(back: string): boolean {
  * session state before Vue Router asks Nuxt for its final position, so route origin is durable.
  */
 export function shouldNuxtScrollToTop(toFullPath: string, fromPath: string): boolean {
-  if (fromPath === '/preview' || /^\/enterprises\/\d+$/.test(fromPath)) return false
+  if (fromPath === '/preview' || /^\/enterprises\/\d+$/.test(fromPath)) {
+    consumeHistoryReturnPath(toFullPath)
+    return false
+  }
+  if (consumeHistoryReturnPath(toFullPath)) return false
   return !hasEvidencePreviewReturn(toFullPath)
+}
+
+/**
+ * Nuxt 4.6 wraps `scrollBehavior` with START_LOCATION as `from`, and its callback can run after
+ * the ready-state hook consumed sessionStorage. Keep a one-shot marker on the browser history
+ * entry itself so the delayed callback can still suppress `{ top: 0 }` on a real Back traversal.
+ */
+function consumeHistoryReturnPath(toFullPath: string): boolean {
+  if (typeof window === 'undefined') return false
+  const toKey = returnPathKey(toFullPath)
+  const current = window.history.state
+  if (
+    toKey === null ||
+    !current ||
+    typeof current !== 'object' ||
+    current[HISTORY_RETURN_PATH_KEY] !== toKey
+  ) return false
+
+  const next = { ...current }
+  delete next[HISTORY_RETURN_PATH_KEY]
+  try {
+    window.history.replaceState(next, '', window.location.href)
+  } catch {
+    // A restricted browser may refuse state replacement; scroll suppression still applies once.
+  }
+  return true
+}
+
+function rememberHistoryReturnPath(back: string): void {
+  if (typeof window === 'undefined') return
+  const backKey = returnPathKey(back)
+  if (backKey === null) return
+
+  const current = window.history.state
+  const next = current && typeof current === 'object' && !Array.isArray(current)
+    ? { ...current }
+    : {}
+  next[HISTORY_RETURN_PATH_KEY] = backKey
+  try {
+    window.history.replaceState(next, '', window.location.href)
+  } catch {
+    // Session state remains available for the normal in-app return path.
+  }
 }
 
 /** Remember both ledger scroll layers when a same-tab evidence link is activated. */
@@ -105,6 +153,7 @@ export function rememberEvidencePreviewReturn(back: unknown, source?: EventTarge
     const saved = readSavedReturns().filter((entry) => entry.back !== back)
     saved.push(state)
     writeSavedReturns(saved)
+    rememberHistoryReturnPath(back)
   } catch {
     // Storage may be unavailable in a restricted browser context; normal navigation still works.
   }
