@@ -166,6 +166,16 @@ async function openAndMeasure(cdp, url, expression, readyExpression, viewport = 
       const ready = await waitUntil(cdp, sessionId, readyExpression)
       if (!ready) throw new Error(`${url} 在 30s 内没有渲染出数据行 —— 量不出东西,按失败算`)
     }
+    // Before any scripted interaction, the list must start with a closed drawer.
+    if (new URL(url).pathname === '/' && !new URL(url).searchParams.has('expand')) {
+      const initial = await evaluate(cdp, sessionId, `({ drawer: !!document.querySelector('[data-testid="enterprise-drawer"]'), selected: !!document.querySelector('tbody [aria-current="true"]'), gap: document.querySelector('[data-testid="ledger-loading-status"]')?.getBoundingClientRect().height })`)
+      if (initial.drawer || initial.selected || initial.gap !== 0) throw new Error(`企业列表初始状态不符: ${JSON.stringify(initial)}`)
+    }
+    // Layout/drawer checks explicitly open a row; the application itself starts closed.
+    if (new URL(url).pathname === '/' && !new URL(url).searchParams.has('expand')) {
+      await evaluate(cdp, sessionId, `document.querySelector('[data-testid="enterprise-name-trigger"]')?.click()`)
+      await waitUntil(cdp, sessionId, `!!document.querySelector('[data-testid="enterprise-drawer"] h2') && !document.querySelector('[data-testid="enterprise-drawer"] [data-slot="skeleton"]')`)
+    }
     return await evaluate(cdp, sessionId, expression)
   } finally {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
@@ -188,7 +198,58 @@ async function openSession(cdp, url, viewport, readyExpression = READY, options 
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
     throw new Error(`${url} 在 30s 内没有渲染出表格数据`)
   }
+  if (new URL(url).pathname === '/' && !new URL(url).searchParams.has('expand') && options.openDrawer !== false) {
+    await evaluate(cdp, sessionId, `document.querySelector('[data-testid="enterprise-name-trigger"]')?.click()`)
+    await waitUntil(cdp, sessionId, `!!document.querySelector('[data-testid="enterprise-drawer"]') && !document.querySelector('[data-testid="enterprise-drawer"] [data-slot="skeleton"]')`)
+  }
   return { targetId, sessionId }
+}
+
+async function verifyLedgerCompactSummaries(cdp) {
+  const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0], READY, {
+    openDrawer: false,
+    beforeLoadScript: `(() => {
+      const original = window.fetch.bind(window);
+      window.fetch = async (...args) => {
+        const response = await original(...args);
+        if (!String(args[0]).includes('/api/roster/enterprises?')) return response;
+        const data = await response.clone().json();
+        if (data.rows?.length) data.rows[0].aliasNames = ['历史名称甲', '历史名称乙', '历史名称丙'];
+        return new Response(JSON.stringify(data), {status: response.status, headers: response.headers});
+      };
+    })()`,
+  });
+  const {targetId, sessionId} = page;
+  try {
+    const initial = await evaluate(cdp, sessionId, `({
+      drawer: !!document.querySelector('[data-testid="enterprise-drawer"]'),
+      rails: document.querySelectorAll('[data-rail-kind]').length,
+      gap: document.querySelector('[data-testid="ledger-loading-status"]').getBoundingClientRect().height,
+      reason: document.querySelector('[data-testid="enterprise-difference-cell"]').textContent.trim(),
+      alias: document.querySelector('[data-testid="alias-summary"]').textContent.trim(),
+      title: document.querySelector('[data-testid="title-recognition-list"]').textContent.trim(),
+    })`);
+    if (initial.drawer || initial.rails || initial.gap !== 0 || initial.reason.includes('已确认原因')) bad(`企业列表反馈回归:初始状态错误 ${JSON.stringify(initial)}`);
+    else ok('企业列表反馈回归:首次进入抽屉关闭、无行前状态块、无加载空白占位、原因直接显示');
+    if (!initial.alias.includes('+2') || initial.alias.includes('历史名称乙')) bad(`企业列表反馈回归:多曾用名折叠错误 ${JSON.stringify(initial)}`);
+    else ok('企业列表反馈回归:三个曾用名只显示首项与 +2（浏览器响应夹具，不写库）');
+    for (const [trigger, content, label] of [
+      ['[data-testid="alias-summary"]', '[data-testid="all-enterprise-aliases"]', '曾用名'],
+      ['[data-testid="title-recognition-list"]', '[data-testid="all-title-awards"]', '称号年份批次'],
+    ]) {
+      const point = await evaluate(cdp, sessionId, `(() => {const r = document.querySelector(${JSON.stringify(trigger)}).getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2};})()`);
+      await cdp.send('Input.dispatchMouseEvent', {type:'mouseMoved', ...point}, sessionId);
+      const visible = await waitUntil(cdp, sessionId, `!!document.querySelector(${JSON.stringify(content)})`);
+      const text = visible && await evaluate(cdp, sessionId, `document.querySelector(${JSON.stringify(content)}).textContent.trim()`);
+      if (!visible || (label === '曾用名' && !['历史名称甲','历史名称乙','历史名称丙'].every((name) => text.includes(name)))) bad(`企业列表反馈回归:${label}悬浮卡片未完整展示 ${text}`);
+      else ok(`企业列表反馈回归:${label}悬停后完整卡片可见`);
+      await cdp.send('Input.dispatchMouseEvent', {type:'mouseMoved',x:1,y:1},sessionId);
+      await waitUntil(cdp,sessionId,`!document.querySelector(${JSON.stringify(content)})`);
+    }
+    const drawer = await evaluate(cdp,sessionId,`!!document.querySelector('[data-testid="enterprise-drawer"]')`);
+    if (drawer) bad('企业列表反馈回归:悬浮摘要误开详情抽屉');
+    else ok('企业列表反馈回归:悬浮摘要不会触发详情抽屉');
+  } finally { await cdp.send('Target.closeTarget', {targetId}).catch(() => {}); }
 }
 
 async function verifyLightThemeDefault(cdp) {
@@ -388,35 +449,8 @@ function shadowViolation(m, label) {
 }
 
 function statusRailViolation(m, label) {
-  return m.statusRailWidth === 6
-    ? null
-    : `${label}:最左状态条应为 6px,实测 ${m.statusRailWidth}px`
-}
-
-function statusRailHierarchyViolation(m, label) {
-  const rails = (m.statusRailHierarchy ?? []).filter((rail) => rail.kind === 'confirmed')
-  const primary = m.statusRailPrimaryColor
-  if (!primary || primary.alpha <= 0) {
-    return `${label}:无法读取主题主色来验证状态条层级`
-  }
-
-  const hasUnselected = rails.some((rail) => !rail.selected)
-  if (!hasUnselected) return `${label}:缺少未选中的已确认状态条`
-
-  const inconsistent = rails.filter((rail) => {
-    if (!rail.color || rail.color.alpha <= 0 || !Number.isFinite(rail.effectiveAlpha) || rail.effectiveAlpha <= 0) return true
-    const colorDistance = Math.max(
-      Math.abs(rail.color.red - primary.red),
-      Math.abs(rail.color.green - primary.green),
-      Math.abs(rail.color.blue - primary.blue),
-    )
-    if (colorDistance > 3) return true
-    return rail.selected
-      ? Math.abs(rail.effectiveAlpha - primary.alpha) > 0.05
-      : rail.effectiveAlpha >= primary.alpha - 0.05
-  })
-  return inconsistent.length
-    ? `${label}:已确认状态条没有呈现主色与降低不透明度的层级 ${JSON.stringify(inconsistent.slice(0, 3))}`
+  return m.statusRailHierarchy?.some((rail) => rail.kind !== 'none')
+    ? `${label}:仍存在已移除的行前状态块`
     : null
 }
 
@@ -685,7 +719,7 @@ async function verifyLedgerSearchLoading(cdp) {
   try {
     await installMotionAndFetchGate(cdp, sessionId)
     const name = await evaluate(cdp, sessionId, `(() => {
-      const names = [...document.querySelectorAll('tbody tr button')].map((el) => (el.textContent ?? '').trim()).filter(Boolean);
+      const names = [...document.querySelectorAll('[data-testid=enterprise-name-trigger]')].map((el) => (el.textContent ?? '').trim()).filter(Boolean);
       return names.at(-1) ?? '';
     })()`)
     if (!name) {
@@ -712,7 +746,7 @@ async function verifyLedgerSearchLoading(cdp) {
       const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
       const title = drawer?.querySelector('h2')?.textContent?.trim();
       return !(status?.textContent ?? '').includes('正在') && rows.length === 1 && !!match &&
-        match.getAttribute('aria-current') === 'true' && drawer?.getAttribute('data-state') === 'open' && title === ${JSON.stringify(name)};
+        !match.getAttribute('aria-current') && !drawer;
     })()`)
     if (!searchIdle) {
       const state = await evaluate(cdp, sessionId, `(() => ({
@@ -722,9 +756,9 @@ async function verifyLedgerSearchLoading(cdp) {
         drawer: (() => { const el = document.querySelector('[data-testid="enterprise-drawer"]'); return el && { state: el.getAttribute('data-state'), title: el.querySelector('h2')?.textContent?.trim() }; })(),
         url: location.href,
       }))()`)
-      bad(`企业列表 · 搜索:当前结果落定后,选中行与抽屉没有同步到唯一匹配企业 ${JSON.stringify(state)}`)
+      bad(`企业列表 · 搜索:搜索结果落定后抽屉不应自动打开 ${JSON.stringify(state)}`)
     }
-    else ok(`企业列表 · 搜索:结果落定后抽屉同步到 ${JSON.stringify(name)}`)
+    else ok(`企业列表 · 搜索:搜索结果落定后抽屉保持关闭: ${JSON.stringify(name)}`)
 
     const emptyQuery = 'RL20无匹配企业校验'
     await setInputValue(cdp, sessionId, 'input[aria-label*="企业名称"]', emptyQuery)
@@ -758,7 +792,7 @@ async function verifyLedgerMobileLoadingOverflow(cdp) {
   const { targetId, sessionId } = page
   try {
     await installMotionAndFetchGate(cdp, sessionId)
-    const name = await evaluate(cdp, sessionId, `document.querySelector('tbody tr button')?.textContent?.trim() ?? ''`)
+    const name = await evaluate(cdp, sessionId, `document.querySelector('[data-testid=enterprise-name-trigger]')?.textContent?.trim() ?? ''`)
     if (!name) {
       bad('企业列表 · 窄屏加载:初始结果没有可筛选的企业名称')
       return
@@ -794,17 +828,17 @@ async function verifyLedgerMobileLoadingOverflow(cdp) {
         })),
       };
     })()`)
-    if (!measurement.loading || measurement.skeletonCells.length !== 6) {
-      bad(`企业列表 · 窄屏加载:没有量到六格加载行 ${JSON.stringify(measurement)}`)
+    if (!measurement.loading || measurement.skeletonCells.length !== 5) {
+      bad(`企业列表 · 窄屏加载:没有量到五格加载行 ${JSON.stringify(measurement)}`)
     }
     if (measurement.scrollWidth > measurement.clientWidth + 1) {
       bad(`企业列表 · 窄屏加载:表格容器仍可横向滚动(${measurement.scrollWidth}px / ${measurement.clientWidth}px) ${JSON.stringify(measurement)}`)
     } else {
       ok(`企业列表 · 窄屏加载:表格与骨架不横向溢出(${measurement.scrollWidth}px ≤ ${measurement.clientWidth}px)`)
     }
-    // EnterpriseListTable order is status, company, title/year, USCC, district, difference.
+    // EnterpriseListTable order is company, title/year, USCC, district, difference.
     // Keep this assertion semantic after moving the title/year column beside the company name.
-    if (measurement.skeletonCells[3]?.display !== 'none' || measurement.skeletonCells[4]?.display !== 'none') {
+    if (measurement.skeletonCells[2]?.display !== 'none' || measurement.skeletonCells[3]?.display !== 'none') {
       bad(`企业列表 · 窄屏加载:统一代码与属地骨架列应隐藏 ${JSON.stringify(measurement.skeletonCells)}`)
     } else {
       ok('企业列表 · 窄屏加载:统一代码与属地骨架列随正文列一同隐藏')
@@ -837,7 +871,7 @@ async function verifyLedgerDrawerAsyncClose(cdp) {
   try {
     await installMotionAndFetchGate(cdp, sessionId)
     const names = await evaluate(cdp, sessionId, `[
-      ...new Set([...document.querySelectorAll('tbody tr:not([aria-current="true"]) button')]
+      ...new Set([...document.querySelectorAll('tbody tr:not([aria-current="true"]) [data-testid="enterprise-name-trigger"]')]
         .map((button) => (button.textContent ?? '').trim()).filter(Boolean))
     ].slice(0, 2)`)
     if (names.length < 2) {
@@ -852,7 +886,7 @@ async function verifyLedgerDrawerAsyncClose(cdp) {
     }
 
     await startFetchGate(cdp, sessionId, '/api/roster/enterprises/')
-    await clickElementContaining(cdp, sessionId, 'tbody tr button', names[0])
+    await clickElementContaining(cdp, sessionId, '[data-testid=enterprise-name-trigger]', names[0])
     const loadingReady = await waitUntil(cdp, sessionId, `(() => {
       const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
       return window.__rl20FetchGate?.requested && drawer?.getAttribute('data-state') === 'open' &&
@@ -890,7 +924,7 @@ async function verifyLedgerDrawerAsyncClose(cdp) {
     await evaluate(cdp, sessionId, 'window.__rl20DrawerOpenMotion = null')
     await cdp.send('Network.enable', {}, sessionId)
     await cdp.send('Network.setBlockedURLs', { urls: [`${BASE}/api/roster/enterprises/*`] }, sessionId)
-    await clickElementContaining(cdp, sessionId, 'tbody tr button', names[1])
+    await clickElementContaining(cdp, sessionId, '[data-testid=enterprise-name-trigger]', names[1])
     const errorReady = await waitUntil(cdp, sessionId, `(() => {
       const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
       return drawer?.getAttribute('data-state') === 'open' &&
@@ -903,7 +937,7 @@ async function verifyLedgerDrawerAsyncClose(cdp) {
         const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
         return {
           drawer: drawer && { state: drawer.getAttribute('data-state'), text: drawer.textContent?.slice(0, 160), close: !!drawer.querySelector('button[aria-label="关闭"]') },
-          selected: [...document.querySelectorAll('tbody tr[aria-current="true"] button')].map((button) => button.textContent?.trim()),
+          selected: [...document.querySelectorAll('tbody tr[aria-current="true"] [data-testid="enterprise-name-trigger"]')].map((button) => button.textContent?.trim()),
         };
       })()`)
       bad(`企业列表 · 窄屏抽屉:详情失败后没有带关闭按钮的错误态 ${JSON.stringify(state)}`)
@@ -946,7 +980,7 @@ async function verifyLedgerDrawerFocus(cdp) {
     }
 
     const openPoint = await evaluate(cdp, sessionId, `(() => {
-      const button = document.querySelector('tbody tr button');
+      const button = document.querySelector('[data-testid=enterprise-name-trigger]');
       if (!button) return null;
       window.__rl20DrawerOpenMotion = null;
       window.__rl20FocusReturnTarget = button;
@@ -1060,15 +1094,14 @@ async function verifyMissingRecognitionYearAndEvidence(cdp) {
     }
 
     await setInputValue(cdp, sessionId, 'input[aria-label*="企业名称"]', target.name)
-    const visible = await waitUntil(cdp, sessionId, `(() => {
-      const row = [...document.querySelectorAll('tbody tr')].find((tr) => tr.querySelector('button')?.textContent?.trim() === ${JSON.stringify(target.name)});
-      return row?.querySelector('[data-testid="title-recognition-cell"]')?.textContent?.includes('年待核') ?? false;
-    })()`)
+    await waitUntil(cdp, sessionId, `document.querySelector('[data-testid="enterprise-name-trigger"]')?.textContent.trim() === ${JSON.stringify(target.name)}`)
+    await clickSelector(cdp, sessionId, '[data-testid="title-recognition-list"]')
+    const visible = await waitUntil(cdp, sessionId, `document.querySelector('[data-testid="all-title-awards"]')?.textContent.includes('年待核')`)
     if (!visible) {
       bad(`企业列表 · 称号与出处:企业 ${JSON.stringify(target.name)} 的无认定年称号没有显示「年待核」`)
       return
     }
-    ok(`企业列表 · 称号:企业 ${JSON.stringify(target.name)} 的无认定年称号保留并显示「年待核」`)
+    ok(`企业列表 · 称号:企业 ${JSON.stringify(target.name)} 的无认定年称号在完整卡片中保留并显示「年待核」`)
 
     await evaluate(cdp, sessionId, `(() => {
       const row = [...document.querySelectorAll('tbody tr')].find((tr) => tr.querySelector('button')?.textContent?.trim() === ${JSON.stringify(target.name)});
@@ -1118,9 +1151,9 @@ async function verifyCurrentNameAliasDisplay(cdp) {
 
       const listState = await evaluate(cdp, sessionId, `(() => {
         const row = [...document.querySelectorAll('tbody tr')]
-          .find((item) => item.querySelector('td:nth-child(2) button')?.textContent?.trim() === ${JSON.stringify(sample.name)});
+          .find((item) => item.querySelector('td:first-child button')?.textContent?.trim() === ${JSON.stringify(sample.name)});
         return row ? {
-          aliases: [...row.querySelectorAll('td:nth-child(2) [title^="曾用名:"]')]
+          aliases: [...row.querySelectorAll('td:first-child [data-testid="alias-summary"]')]
             .map((item) => (item.textContent ?? '').trim()),
         } : null;
       })()`)
@@ -1134,6 +1167,7 @@ async function verifyCurrentNameAliasDisplay(cdp) {
         ok(`企业列表 · 曾用名:企业 ${sample.enterpriseId} 不把现名显示成曾用名`)
       }
 
+      await evaluate(cdp, sessionId, `document.querySelector('[data-testid=enterprise-name-trigger]')?.click()`)
       const detailReady = await waitUntil(cdp, sessionId, `(() => {
         const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
         return drawer?.getAttribute('data-state') === 'open' &&
@@ -1330,7 +1364,7 @@ async function verifyKaichengExample(cdp) {
         };
       }) : [];
       return {
-        rowCount: [...document.querySelectorAll('tbody tr button')].length,
+        rowCount: [...document.querySelectorAll('[data-testid=enterprise-name-trigger]')].length,
         selected: row?.getAttribute('aria-current'),
         uscc: drawer.querySelector('header p')?.textContent?.trim(),
         alias: drawer.textContent?.includes('宁波开诚生态技术有限公司') ?? false,
@@ -1430,6 +1464,7 @@ async function verifyLedgerLoadingAndDrawer(cdp) {
 
     // 翻页:同一张表应显示与筛选、排序相同的加载提示。
     // 右侧抽屉按方向卡覆盖表格,先收起它,否则分页按钮被面板覆盖会点到后面的详情链接。
+    await evaluate(cdp, sessionId, `document.querySelector('[data-testid=enterprise-name-trigger]')?.click()`);
     const drawerReadyForPaging = await waitUntil(cdp, sessionId, `(() => {
       const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
       return drawer?.getAttribute('data-state') === 'open' && !!drawer.querySelector('button[aria-label="关闭"]');
@@ -1468,6 +1503,7 @@ async function verifyLedgerLoadingAndDrawer(cdp) {
     }
 
     // 抽屉:只记录 data-state=open 的入场动画,并比较首尾位置,关闭动画不能冒充滑入。
+    await evaluate(cdp, sessionId, `document.querySelector('[data-testid=enterprise-name-trigger]')?.click()`);
     const drawerReadyForMotion = await waitUntil(cdp, sessionId, `(() => {
       const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
       return drawer?.getAttribute('data-state') === 'open' && !!drawer.querySelector('button[aria-label="关闭"]');
@@ -1481,7 +1517,7 @@ async function verifyLedgerLoadingAndDrawer(cdp) {
       await evaluate(cdp, sessionId, `(() => {
         window.__rl20Motion.drawer = false;
         window.__rl20DrawerOpenMotion = null;
-        document.querySelector('tbody tr button')?.click();
+        document.querySelector('[data-testid=enterprise-name-trigger]')?.click();
       })()`)
       const drawerMotionEnded = await waitUntil(cdp, sessionId, 'window.__rl20DrawerOpenMotion?.ended === true')
       const drawerMotion = await evaluate(cdp, sessionId, 'window.__rl20DrawerOpenMotion')
@@ -1839,55 +1875,11 @@ const MEASURE = `(() => {
         paginationBottom: Math.round(rect.bottom),
       }
     : null;
-  const rail = document.querySelector('.ledger-page tbody tr:not([data-loading="true"]) td:first-child > span');
-  const colorCanvas = document.createElement('canvas');
-  const colorContext = colorCanvas.getContext('2d', { willReadFrequently: true });
-  const measureColor = (value) => {
-    if (!colorContext || !value) return null;
-    colorContext.clearRect(0, 0, 1, 1);
-    colorContext.fillStyle = 'rgba(0, 0, 0, 0)';
-    colorContext.fillStyle = value;
-    colorContext.fillRect(0, 0, 1, 1);
-    const [red, green, blue, alpha] = colorContext.getImageData(0, 0, 1, 1).data;
-    return { red, green, blue, alpha: alpha / 255 };
-  };
-  const measureEffectiveOpacity = (el) => {
-    let opacity = 1;
-    for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
-      const value = Number.parseFloat(getComputedStyle(ancestor).opacity);
-      if (!Number.isFinite(value)) return null;
-      opacity *= value;
-    }
-    return opacity;
-  };
-  const statusRailPrimaryColor = measureColor(getComputedStyle(document.documentElement).getPropertyValue('--primary').trim());
-  const ledgerExport = document.querySelector('.ledger-page a[href^="/api/roster/export"]');
-  const ledgerTable = document.querySelector('.ledger-page table');
-  const control = root?.querySelector('[data-slot="select-trigger"]');
-  const body = root?.querySelector('tbody');
-  const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
-  const comparisonDirection = document.querySelector('[data-testid="comparison-direction-filter"]');
-  const comparisonDirectionTrigger = comparisonDirection?.querySelector('[role="combobox"]');
-  const comparisonDirectionValue = comparisonDirectionTrigger?.querySelector('[data-slot="select-value"]');
-  const comparisonFilters = document.querySelector('[data-testid="comparison-filters"]');
-  const comparisonSearch = comparisonFilters?.querySelector('input[aria-label*="搜索企业名称"]');
-  const cellMetrics = (el) => el ? {
-    text: (el.textContent ?? '').trim(),
-    display: getComputedStyle(el).display,
-    whiteSpace: getComputedStyle(el).whiteSpace,
-    textOverflow: getComputedStyle(el).textOverflow,
-    clientWidth: el.clientWidth,
-    scrollWidth: el.scrollWidth,
-  } : null;
-  const comparisonFilterValues = ['按称号筛选', '按区县筛选'].map((label) => {
-    const trigger = [...(comparisonFilters?.querySelectorAll('[role="combobox"]') ?? [])]
-      .find((el) => el.getAttribute('aria-label') === label);
-    return { label, value: cellMetrics(trigger?.querySelector('[data-slot="select-value"]')) };
-  });
+
   const enterpriseRow = root?.classList.contains('ledger-page')
     ? document.querySelector('.ledger-page tbody tr:not([data-loading="true"])')
     : null;
-  const enterpriseName = enterpriseRow?.querySelector('td:nth-child(2) button');
+  const enterpriseName = enterpriseRow?.querySelector('td:first-child button');
   const enterpriseTitle = enterpriseRow?.querySelector('[data-testid="title-recognition-cell"]');
   const enterpriseTitlePairs = [...(enterpriseTitle?.querySelectorAll('[data-testid="title-recognition-pair"]') ?? [])].map((el) => ({
     ...cellMetrics(el),
@@ -1997,18 +1989,7 @@ const MEASURE = `(() => {
     } : null,
     enterpriseTimelineYears,
     enterpriseDifferenceStatuses,
-    statusRailPrimaryColor,
-    statusRailHierarchy: enterpriseRows.map((row) => {
-      const rail = row.querySelector('td:first-child > span');
-      const style = rail ? getComputedStyle(rail) : null;
-      const color = style ? measureColor(style.backgroundColor) : null;
-      return {
-        selected: rail?.getAttribute('data-selected') === 'true',
-        kind: rail?.getAttribute('data-rail-kind') ?? 'none',
-        color,
-        effectiveAlpha: color && rail ? color.alpha * measureEffectiveOpacity(rail) : null,
-      };
-    }),
+    statusRailHierarchy: [...document.querySelectorAll('.ledger-page tbody [data-rail-kind]')].map((rail) => ({kind: rail.getAttribute('data-rail-kind')})),
     enterpriseDrawerReading: enterpriseRow && enterpriseDrawer ? {
       open: enterpriseDrawer.getAttribute('data-state') === 'open',
       drawerLeft: Math.round(enterpriseDrawerRect?.left ?? 0),
@@ -2041,7 +2022,6 @@ const MEASURE = `(() => {
     } : null,
     comparisonNames,
     evidenceSummaries,
-    statusRailWidth: rail ? Math.round(rail.getBoundingClientRect().width) : null,
     ledgerExportTableGap: ledgerExport && ledgerTable
       ? Math.round(ledgerTable.getBoundingClientRect().top - ledgerExport.getBoundingClientRect().bottom)
       : null,
@@ -2227,10 +2207,7 @@ async function main() {
         if (page.query === '/') {
           const rail = statusRailViolation(m, label)
           if (rail) bad(rail)
-          else ok(`${label}:最左状态条实测 6px`)
-          const hierarchy = statusRailHierarchyViolation(m, label)
-          if (hierarchy) bad(hierarchy)
-          else ok(`${label}:已确认状态条实测使用主色,未选中行降低不透明度`)
+          else ok(`${label}:行前没有状态块`)
           const timelineYears = timelineYearViolation(m, label)
           if (timelineYears) bad(timelineYears)
           else if (m.enterpriseTimelineYears.length) ok(`${label}:抽屉每条称号历史事件均标有年份或待核`)
@@ -2460,63 +2437,15 @@ async function main() {
     else console.log(`✗ 抽屉事件年份缺陷自检按预期变红:${timelineYearSelfCheck}`)
     if (timelineYearSelfCheck) ok('抽屉事件年份缺陷自检:关闭临时 target 后缺陷已复原')
 
-    const railBroken = await openAndMeasure(
-      cdp,
-      `${BASE}/`,
-      `(() => { const rail = document.querySelector('.ledger-page tbody tr:not([data-loading="true"]) td:first-child > span'); rail?.style.setProperty('width', '3px', 'important'); return (${MEASURE}); })()`,
-      READY,
-      VIEWPORTS[0],
-    )
-    const railSelfCheck = statusRailViolation(railBroken, '状态条宽度缺陷自检')
-    if (!railSelfCheck) bad('状态条宽度缺陷自检:临时恢复 3px 状态条后断言仍未命中')
-    else console.log(`✗ 状态条宽度缺陷自检按预期变红:${railSelfCheck}`)
-    if (railSelfCheck) ok('状态条宽度缺陷自检:关闭临时 target 后缺陷已复原')
-
-    const railHierarchyBroken = await openAndMeasure(
-      cdp,
-      `${BASE}/`,
-      `(() => {
-        const rail = document.querySelector('.ledger-page tbody tr [data-rail-kind="confirmed"][data-selected="false"]');
-        if (rail) rail.style.setProperty('background-color', getComputedStyle(document.documentElement).getPropertyValue('--primary').trim(), 'important');
-        return (${MEASURE});
-      })()`,
-      READY,
-      VIEWPORTS[0],
-    )
-    const railHierarchySelfCheck = statusRailHierarchyViolation(railHierarchyBroken, '状态条层级缺陷自检')
-    if (!railHierarchyBroken.statusRailHierarchy?.some((rail) => rail.kind === 'confirmed' && !rail.selected)) {
-      bad('状态条层级缺陷自检:当前首屏没有可供注入的非选中已确认状态条')
-    } else if (!railHierarchySelfCheck) bad('状态条层级缺陷自检:临时覆盖非选中行的背景色后,computed color 断言仍未命中')
-    else {
-      console.log(`✗ 状态条层级缺陷自检按预期变红:${railHierarchySelfCheck}`)
-      const cleanRailHierarchy = await openAndMeasure(cdp, `${BASE}/`, MEASURE, READY, VIEWPORTS[0])
-      const cleanRailHierarchyViolation = statusRailHierarchyViolation(cleanRailHierarchy, '状态条层级干净 target')
-      if (cleanRailHierarchyViolation) bad(`状态条层级干净 target:${cleanRailHierarchyViolation}`)
-      else ok('状态条层级缺陷自检:新 target 实测原始颜色层级已恢复')
-    }
-
-    const railAncestorOpacityBroken = await openAndMeasure(
-      cdp,
-      `${BASE}/`,
-      `(() => {
-        const rail = document.querySelector('.ledger-page tbody tr [data-rail-kind="confirmed"][data-selected="false"]');
-        rail?.parentElement?.style.setProperty('opacity', '0', 'important');
-        return (${MEASURE});
-      })()`,
-      READY,
-      VIEWPORTS[0],
-    )
-    const railAncestorOpacitySelfCheck = statusRailHierarchyViolation(railAncestorOpacityBroken, '状态条祖先透明度缺陷自检')
-    if (!railAncestorOpacityBroken.statusRailHierarchy?.some((rail) => rail.kind === 'confirmed' && !rail.selected)) {
-      bad('状态条祖先透明度缺陷自检:当前首屏没有可供注入的非选中已确认状态条')
-    } else if (!railAncestorOpacitySelfCheck) bad('状态条祖先透明度缺陷自检:祖先 opacity:0 后,有效 alpha 断言仍未命中')
-    else {
-      console.log(`✗ 状态条祖先透明度缺陷自检按预期变红:${railAncestorOpacitySelfCheck}`)
-      const cleanRailAncestorOpacity = await openAndMeasure(cdp, `${BASE}/`, MEASURE, READY, VIEWPORTS[0])
-      const cleanRailAncestorOpacityViolation = statusRailHierarchyViolation(cleanRailAncestorOpacity, '状态条祖先透明度干净 target')
-      if (cleanRailAncestorOpacityViolation) bad(`状态条祖先透明度干净 target:${cleanRailAncestorOpacityViolation}`)
-      else ok('状态条祖先透明度缺陷自检:新 target 实测原始颜色层级已恢复')
-    }
+    const railBroken = await openAndMeasure(cdp, `${BASE}/`, `(() => {
+      const marker = document.createElement('span');
+      marker.dataset.railKind = 'confirmed';
+      document.querySelector('.ledger-page tbody tr td')?.prepend(marker);
+      return (${MEASURE});
+    })()`, READY, VIEWPORTS[0]);
+    const railSelfCheck = statusRailViolation(railBroken, '行前状态块缺陷自检');
+    if (!railSelfCheck) bad('行前状态块缺陷自检:恢复状态块后断言未命中');
+    else ok('行前状态块缺陷自检:恢复状态块后按预期失败');
 
     const comparisonRecordBroken = await openAndMeasure(
       cdp,
@@ -2581,6 +2510,7 @@ async function main() {
       }
     }
 
+    await verifyLedgerCompactSummaries(cdp)
     await verifyLedgerSearchLoading(cdp)
     await verifyLedgerMobileLoadingOverflow(cdp)
     await verifyLedgerDrawerAsyncClose(cdp)

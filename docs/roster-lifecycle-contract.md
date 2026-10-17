@@ -659,6 +659,7 @@
     "titles": ["specialized_sme", "innovative_sme"],
     "aliasNames": ["宁波旧名…"],    // 仅 confirmed
     "firstRecognition": [{ "titleCode": "specialized_sme", "year": 2021, "needsReview": false }],
+    "awards": [{ "titleCode": "specialized_sme", "year": 2021, "batchSeq": 1 }], // 正式认定年份批次，按原始事件去重；复核/维持仅详情返回
     "nextReviewYear": 2028,         // 可空;锚点+3
     "anchorNeedsReview": false,    // 锚点事件缺少决定年份时待核
     "difference": {                // RL-20:企业的差异摘要

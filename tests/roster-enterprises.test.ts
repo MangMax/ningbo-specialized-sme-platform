@@ -848,3 +848,22 @@ describe('回归案例:91330211255994457P 归并后总表一行', () => {
     ])
   })
 })
+
+describe('企业列表正式认定批次摘要', () => {
+  it('合并来源重复批次，保留原始年份批次，不混入复核或维持', () => {
+    const id = enterprise('awardSummary', '认定批次摘要测试企业', null)
+    record(id, 'specialized_sme', 'jxj', [
+      { eventType: 'award', year: 2020, decidedYear: 2021, batchSeq: 2 },
+      { eventType: 'review', year: 2024, batchSeq: 1 },
+    ])
+    record(id, 'specialized_sme', 'miit', [
+      { eventType: 'award', year: 2020, batchSeq: 2 },
+      { eventType: 'award', year: 2022, batchSeq: 1 },
+      { eventType: 'maintain', year: 2025 },
+    ])
+    expect(listRosterEnterprises(db, { q: '认定批次摘要测试企业' }).rows[0]!.awards).toEqual([
+      { titleCode: 'specialized_sme', year: 2020, batchSeq: 2 },
+      { titleCode: 'specialized_sme', year: 2022, batchSeq: 1 },
+    ])
+  })
+})

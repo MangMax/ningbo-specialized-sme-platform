@@ -136,11 +136,13 @@ export interface RosterEnterpriseRow {
   aliasNames: string[]
   /** 每个有 `award` 事件的称号一项(没有 award 的称号不出现)。 */
   firstRecognition: FirstRecognition[]
+  /** 正式认定的年份/批次摘要，不包含复核与维持事件。 */
+  awards: { titleCode: string; year: number | null; batchSeq: number | null }[]
   /** 下一次复核到期 = 各称号锚点 + 3 的**最早**一个;无从计算时 `null`。 */
   nextReviewYear: number | null
   /** 锚点计算中用到缺 `decided_year` 的事件 ⇒ **待核**(不猜)。 */
   anchorNeedsReview: boolean
-  /** 该企业的差异摘要(RL-20:台账页「差异状态」列与最左状态条都只读它)。 */
+  /** 该企业的差异摘要(RL-20:台账页「差异状态」列只读它)。 */
   difference: RosterEnterpriseDifference
 }
 
@@ -398,6 +400,14 @@ function toRow(
     titles: profile.titles,
     aliasNames,
     firstRecognition: profile.summary.firstRecognition,
+    awards: [...new Map(profile.records.flatMap((record) =>
+      (profile.eventsByRecord.get(record.id) ?? [])
+        .filter((event) => event.eventType === 'award')
+        .map((event) => {
+          const item = { titleCode: record.titleCode, year: event.year, batchSeq: event.batchSeq }
+          return [`${item.titleCode}:${item.year}:${item.batchSeq}`, item] as const
+        }),
+    )).values()].sort((a, b) => titleRank(a.titleCode) - titleRank(b.titleCode) || (a.year ?? Infinity) - (b.year ?? Infinity) || (a.batchSeq ?? 0) - (b.batchSeq ?? 0)),
     nextReviewYear: profile.summary.nextReviewYear,
     anchorNeedsReview: profile.summary.anchorNeedsReview,
     difference,

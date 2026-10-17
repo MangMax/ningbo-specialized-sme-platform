@@ -64,7 +64,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
  * 1. 「**只要一个表格**」 —— 原先这里按 `view` 切三种分组(按企业 / 按企业×称号 /
  *    差异与原因),三个 tab、三张表、三套筛选可见性。现在只剩**企业粒度**那一张,
  *    `view` 参数整组退役。差异不再单独成表:它的**状态**落到表里的「差异状态」列与
- *    最左那条 6px 状态条,**原因 → 措施**落到抽屉里。
+ *    原因摘要,**原因 → 措施**落到抽屉里。
  * 2. 「称号历史、原因用**侧边抽屉**展示,**原因也要可视化**」 —— 见 `EnterpriseDrawer`。
  * 3. 「**删掉解释小字**」 —— 上一版表格上方那一整段「共 X 家企业 · 合计 Y 个企业×称号
  *    (多称号企业在企业数里只算一家…)」、每视图的计数说明、空态里的「可放宽…再试」全部删掉。
@@ -75,7 +75,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
  * 5. 页面名与侧边栏入口都叫「企业列表」(`lib/labels.ts` 的 `ENTERPRISE_LIST_TITLE` 一处定义)。
  *
  * ── 状态全在地址栏(深链与「返回不丢上下文」)────────────────────────────
- * 全部筛选、排序、页码、打开的抽屉都回写到 URL,用 `replace`(改条件不该把历史塞满)。
+ * 全部筛选、排序、页码、用户打开的抽屉都回写到 URL,用 `replace`(改条件不该把历史塞满)。
  * 刷新、分享链接、从企业详情返回、前进后退,都落回同一个视图。
  */
 
@@ -228,27 +228,13 @@ watch(totalPages, (max) => {
   if (page.value > max) page.value = max
 })
 
-/**
- * 抽屉默认开在**当前结果的第一行**(设计稿写死的:「抽屉在真实产品里开在你点的那一行,
- * 默认是第一行」)。于是首屏一眼就能看到「称号历史 + 原因」长什么样,不用先猜要点哪里。
- *
- * 只在**结果集真的换了**的时候应用一次(按请求键记账):后台重取同一批数据不该把
- * 用户已经关掉的抽屉又弹开。当前选中的企业如果还在新结果里,就留着不动。
- */
-let appliedResultKey: string | null = null
+/** 查询落定只清理已离开结果集的选择；打开抽屉始终由用户触发。 */
 watch([data, resultKey], ([result, key]) => {
-  // `placeholderData` 会暂时保留上一批行。只有当前查询自己的结果落定后才能改抽屉选择。
-  if (!result || result.resultKey !== key || appliedResultKey === key) return
-  appliedResultKey = key
-  const list = result.rows
-  if (!list.length) {
+  if (!result || result.resultKey !== key || selected.value == null) return
+  if (!result.rows.some((row) => row.enterpriseId === selected.value)) {
     selected.value = null
     drawerReturnFocusTarget.value = null
-    return
   }
-  if (selected.value != null && list.some((r) => r.enterpriseId === selected.value)) return
-  drawerReturnFocusTarget.value = null
-  selected.value = list[0]!.enterpriseId
 }, { flush: 'post' })
 
 function retry() {
@@ -515,20 +501,6 @@ useHead({
       </Button>
     </TransitionGroup>
 
-    <!--
-      「正在搜索」的落位(硬要求 3)。**高度常驻**(24px),不随着加载与否伸缩 ——
-      否则每次筛选中整张表都会上下跳一下,那是比没有提示更烦人的东西。
-      实现上**不压暗表体**:本项目踩过 `tbody{opacity:.7}` 的坑,它把 `--muted-foreground`
-      从 5.05:1 压到 2.7:1 —— 加载的那几百毫秒里正文正好读不了。进度线 + 一行状态字。
-    -->
-    <div class="relative h-5 shrink-0 sm:h-6" aria-live="polite" data-testid="ledger-loading-status">
-      <template v-if="isLoading">
-        <span class="text-muted-foreground absolute top-0.5 left-0 text-xs">正在搜索…</span>
-        <span class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
-          <span class="bg-primary ledger-progress block h-0.5 w-1/3 rounded-full" />
-        </span>
-      </template>
-    </div>
 
     <Alert v-if="error" variant="destructive">
       <AlertTitle>企业列表加载失败</AlertTitle>
@@ -538,7 +510,15 @@ useHead({
     </Alert>
 
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
-      <CardContent class="p-0">
+      <CardContent class="relative p-0">
+        <div class="absolute inset-x-0 top-0 z-20 h-0" aria-live="polite" data-testid="ledger-loading-status">
+      <template v-if="isLoading">
+        <span class="bg-card text-muted-foreground absolute right-0 -top-5 z-20 px-2 text-[13px]">正在搜索…</span>
+        <span class="bg-muted absolute inset-x-0 -bottom-2 block h-0.5 overflow-hidden">
+          <span class="bg-primary ledger-progress block h-0.5 w-1/3" />
+        </span>
+      </template>
+    </div>
         <EnterpriseListTable
           :rows="rows"
           :loading="isLoading"

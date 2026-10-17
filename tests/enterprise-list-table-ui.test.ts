@@ -40,7 +40,7 @@ describe('企业列表的曾用名', () => {
     })
     mounted.push(wrapper)
 
-    const nameCell = wrapper.get('tbody tr td:nth-child(2)')
+    const nameCell = wrapper.get('tbody tr td:first-child')
     expect(nameCell.text()).toContain(name)
     expect(nameCell.text()).not.toContain(`原 ${name}`)
   })
@@ -66,7 +66,7 @@ describe('企业列表的曾用名', () => {
     })
     mounted.push(wrapper)
 
-    const nameCell = wrapper.get('tbody tr td:nth-child(2)')
+    const nameCell = wrapper.get('tbody tr td:first-child')
     expect(nameCell.text()).toContain('原 宁波上航测绘有限公司')
     expect(nameCell.text()).not.toContain('原 宁波上航测绘股份有限公司')
   })
@@ -94,7 +94,7 @@ describe('企业列表的曾用名', () => {
     })
     mounted.push(wrapper)
 
-    const nameCell = wrapper.get('tbody tr td:nth-child(2)')
+    const nameCell = wrapper.get('tbody tr td:first-child')
     expect(nameCell.text()).toContain(currentName)
     expect(nameCell.text()).not.toContain(`原 ${alias}`)
   })
