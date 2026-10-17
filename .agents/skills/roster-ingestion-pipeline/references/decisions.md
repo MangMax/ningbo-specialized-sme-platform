@@ -1,16 +1,28 @@
 # Business rules for roster cleanup
 
-- The published announcement and its roster attachment decide whether and when a company received or reviewed a designation. Use the attachment/body, not a filename or current export, to determine year and batch.
-- The three designations form one deduplicated enterprise list with separate designation histories. Keep repeated company events, such as the same credit code appearing in two Little Giant batches.
-- A company absent from an export can still be a valid published enterprise. A platform-only enterprise can be an inbound relocation or stale/current record. Use both platform interfaces to explain it; keep all returned relation rows and original title/year/batch when verifiable.
-- Matching aids visual review; it never filters away official roster rows. Verify candidate matches and unmatched rows against their cited page before finalizing the file.
-- The earliest formal award per enterprise and title is its first recognition. A review is not a new first recognition. Reapproval after a failed review does not reset that marker.
-- Review is due three years after the latest effective award or passed review. A failed review leaves the current active review cohort; later reapproval changes the next due year but not first-recognition history.
-- For annual refresh, import the newest three export files as a new comparison snapshot. Remove a current-list enterprise only when it was platform-only, has never appeared in an official roster and is absent from the new platform exports. Keep official historical designation events even if the platform later drops them.
-- Do not infer an enterprise identity from a name alone when multiple candidates exist. A valid credit code and a documented alias are stronger evidence; unresolved cases remain unresolved.
-- **The two platform interfaces do not filter the same way.** `businessList` (relation records) accepts **only** `rdjb` + `tyshxydm` — passing `qymc` is ignored and returns nothing. `queryList` (declaration records) accepts `tyshxydm` **or** `qymc` (substring) plus `rdjb` / `sblx` / `cszt` / `whpc`. So an enterprise with no code is *not* unqueryable: look it up by name through `queryList`. Query **both** interfaces — for one code `queryList` returned 7 rows where `businessList` returned 4. When judging "platform not updated" versus "record voided", read `cszt` as it actually appears (`区县已审` / `省已审` / `终审通过` / `已退回` / `撤回` / `已退回待审核`) rather than against a short list you happened to see.
-- **A missing credit code is recovered in a fixed order: library first, platform second** (see [`uscc-recovery.md`](./uscc-recovery.md)). Names and core keywords generate candidates only; identity is decided by a platform record whose `qymc` is byte-equal to the published name. No similarity scoring, no merging by name.
-- **Filling a code is often a merge, not an update.** `enterprise.uscc_norm` is unique, so a code already held by another enterprise row can only be attached by merging (`payload.merges`, §5.2); decide per row from the **current database**, never from a handover file's field. Fill only when nothing holds the code (`payload.usccBackfills`, §8.10). Write an alias for the published name only on the merge path, and only if the canonical row does not already carry a `confirmed` alias with that name.
-- **Get the candidate code first, then query `businessList` by that code.** `queryList?qymc=` does not index the old names that appear only in `businessList` "更新" rows, so using it as the fallback for a renamed company finds nothing and looks like "no platform record" (measured on `507 宁波沈鑫电子有限公司`). A `queryList` zero-row answer is not evidence of absence. Also enumerate full-width/half-width bracket variants in any name query, and never default the code query to a single `rdjb`.
-- **Locality is not identity evidence.** A candidate code whose embedded administrative division contradicts the published district can still be the right subject when the platform's `qymc` is byte-equal; record the mismatch, do not veto on it. And never let the platform query default to one `rdjb` — `rdjb=3` alone returns nothing for an all-`innovative_sme` batch (26 of 29 codes looked empty), and `queryList` is sensitive to full-width vs half-width brackets, so enumerate those variants.
-- Whether a file belongs in the file store is one rule, not a habit: `lib/file-store-scope.ts` (prose in `files/README.md`). A nurture-only list, a `.doc` that duplicates a previewable `.docx`, or a `.docx` that duplicates a `.pdf` does not belong there. Evidence addresses the file store, never the processing directory — an out-of-store pointer breaks preview with no error.
+## Source authority
+
+- The published announcement body and its attachments establish the designation, title, event type, year and batch. A notice file name or current platform state does not establish those facts.
+- The three MIIT exports are comparison snapshots for their stated collection period. They do not replace official roster history.
+- Every row in an in-scope official roster remains in the import, including rows unmatched to exports or missing an identity code. Comparison is a review aid, not an inclusion filter.
+- Keep repeated designation events. Deduplicate enterprises across titles, but retain each award and review event with its own source.
+
+## Event and lifecycle rules
+
+- The earliest formal award for an enterprise and title is its first recognition. A review is not a new first recognition. Reapproval after a failed review does not reset first recognition.
+- Review due dates follow the user-confirmed three-year rule from the latest effective award or passed review. A failed review leaves the active cohort; later reapproval changes the next due year, not the first-recognition history.
+- Platform application and maintenance fields are not formal announcement events. In particular, `sqsj`, `whpc`, `whpcyear`, and maintenance labels must not be converted into an official award year or batch. Interpret a field in the context of its interface; see [`uscc-recovery.md`](./uscc-recovery.md).
+- RL-07 does not use automatic incremental rechecks. For a requested year, use the existing query API to review that year; do not create a separate review interface.
+- An enterprise absent from an export may still be a valid official roster row. A platform-only row may be current, stale or moved; do not infer its cause without evidence.
+
+## Identity and evidence
+
+- Names, aliases, locality and search results produce candidates. They do not confirm identity or authorize a merge by themselves. A confirmed alias needs its source evidence and explicit confirmation under the current contract.
+- Keep a missing code empty when sources do not close the identity chain. Invalid codes, multiple plausible subjects, partial searches and unresolved conflicts stay pending.
+- Separate page evidence, event metadata and enterprise identity. An OCR correction changes the transcription only when the source page supports it; it does not establish a new enterprise identity.
+- Use [`uscc-recovery.md`](./uscc-recovery.md) for candidate discovery, current interface limits and the exact `cross_source` boundary.
+
+## File handling
+
+- File-store membership follows the one executable rule in `lib/file-store-scope.ts`, with its prose counterpart in `files/README.md`. Evidence file paths must resolve inside the file store.
+- Keep credentials in runtime secret storage. Keep business databases, source documents and uploaded files outside Git.
