@@ -166,7 +166,8 @@ it('keeps the readable page until the newest distant target image is decoded', a
   await wrapper.get('form').trigger('submit')
   expect(control.move).not.toHaveBeenCalled()
   expect(wrapper.get('output').text()).toBe('3 / 12')
-  expect(wrapper.get('[role="status"]').text()).toContain('9')
+  expect(wrapper.find('[role="status"]').exists()).toBe(false)
+  expect(wrapper.get('[aria-busy]').attributes('aria-busy')).toBe('true')
   const old = control.raster
   await wrapper.get('input').setValue('11')
   await wrapper.get('form').trigger('submit')
