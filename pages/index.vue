@@ -29,6 +29,7 @@ import {
   ledgerExportUrl,
   ledgerListQuery,
   ledgerStateFromQuery,
+  ledgerYearOptions,
   type LedgerState,
 } from '~~/lib/roster/ledger-view'
 import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '~~/lib/roster/ledger-contract'
@@ -250,6 +251,14 @@ function selectRow(id: number, trigger: HTMLButtonElement | null) {
 const titleOptions = computed(() =>
   TITLE_ORDER.map((code) => ({ value: code, label: TITLES[code] ?? code, short: TITLE_SHORT[code] })),
 )
+const { data: yearStats } = useQuery({
+  key: () => ['stats'],
+  query: () => apiGet<{ byYear: { key: string; n: number }[] }>('/api/stats'),
+})
+const yearOptions = computed(() => ledgerYearOptions(
+  (yearStats.value?.byYear ?? []).map(bucket => bucket.key),
+  state.value.year,
+))
 const statusOptions = ROSTER_DIFFERENCE_FILTER_OPTIONS
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 
@@ -271,7 +280,7 @@ const districtModel = computed({
 const sortOptions = computed(() =>
   ENTERPRISE_SORT_ORDER.map((code) => ({
     value: code,
-    label: ENTERPRISE_SORT_LABELS[code] ?? code,
+    label: code === 'recognition' ? '认定年排序' : (ENTERPRISE_SORT_LABELS[code] ?? code),
     hint: ENTERPRISE_SORT_HINTS[code] ?? '',
   })),
 )
@@ -279,7 +288,7 @@ const sortOptions = computed(() =>
 /**
  * 生效中的条件摊平成一行,每项可单独撤掉。
  *
- * `source` / `eventType` / `year` / `rosterState` **没有常驻控件**(它们来自 `/stats` 的下钻),
+ * `source` / `eventType` / `rosterState` **没有常驻控件**(它们来自 `/stats` 的下钻),
  * 但一直在 state 里生效 —— 所以必须出现在这一行里。不出现在这里,它们就是**静默筛选**:
  * 地址栏里带着、页面上看不见、也清不掉。
  */
@@ -453,10 +462,17 @@ useHead({
         summary-prefix="差异"
         class="w-32 shadow-none"
       />
+      <MultiSelectFilter
+        v-model="state.year"
+        :options="yearOptions"
+        placeholder="全部年份"
+        summary-prefix="年份"
+        class="w-28 shadow-none"
+      />
       <Select v-model="sortModel">
         <SelectTrigger
           size="sm"
-          class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-28 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100"
+          class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-32 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100"
           :data-active="state.sort !== DEFAULT_SORT"
           aria-label="排序方式"
         >

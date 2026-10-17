@@ -13,7 +13,7 @@
  *     迟早有一边漏掉新加的项,而漏掉的表现是**导出多出几行**,没人会在页面上发现。
  *  2. **「没有静默筛选」** —— 地址栏里带着、页面上却看不见的条件,用户既不知道它在生效,
  *     也清不掉。所以状态里认的每一项,要么是筛选条上的控件,要么是筛选条下面那排可撤掉的
- *     条件 chip(`source` / `eventType` / `year` / `rosterState` 走后者:它们是 `/stats`
+ *     条件 chip(`source` / `eventType` / `rosterState` 走后者:它们是 `/stats`
  *     下钻带进来的,不给常驻控件,但**绝不静默丢弃**)。
  */
 import { parseCsvQuery } from '../csv'
@@ -140,3 +140,11 @@ export function ledgerExportUrl(state: LedgerState): string {
 
 /** 导出按钮上的文案:**写清粒度与格式**,免得把「企业」当成「企业×称号」。 */
 export const LEDGER_EXPORT_LABEL = '导出当前筛选(企业,xlsx)'
+
+/** 年份来自实际事件统计；分享链接中已选年份在统计加载期间仍可见。 */
+export function ledgerYearOptions(years: readonly string[], selected: readonly string[] = []) {
+  return [...new Set([...years, ...selected])]
+    .filter(year => /^\d{4}$/.test(year))
+    .sort((a, b) => Number(b) - Number(a))
+    .map(value => ({ value, label: value }))
+}

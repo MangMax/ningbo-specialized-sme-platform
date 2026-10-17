@@ -9,6 +9,7 @@ import {
   ledgerListQuery,
   ledgerQueryFromState,
   ledgerStateFromQuery,
+  ledgerYearOptions,
   type LedgerState,
 } from '../lib/roster/ledger-view'
 
@@ -79,5 +80,29 @@ describe('企业差异状态菜单与原因筛选',()=>{
     expect(query.diffStatus).toBe('other,query_failed')
     expect(ledgerStateFromQuery(query).diffStatus).toEqual(['other','query_failed'])
     expect(new URL(ledgerExportUrl(state),'http://local').searchParams.get('diffStatus')).toBe(query.diffStatus)
+  })
+})
+
+describe('企业列表年份筛选', () => {
+  it('年份取实际统计并去重降序，已选年份保留且排除未知桶', () => {
+    expect(ledgerYearOptions(['2022', '2026', '未知', '2022', ''], ['2024', '2022'])).toEqual([
+      { value: '2026', label: '2026' },
+      { value: '2024', label: '2024' },
+      { value: '2022', label: '2022' },
+    ])
+    expect(ledgerYearOptions([])).toEqual([])
+    expect(ledgerYearOptions([], ['2024'])).toEqual([{ value: '2024', label: '2024' }])
+  })
+  it('年份多选可与称号组合，地址刷新和导出保留同一条件', () => {
+    const state = ledgerStateFromQuery({ year: '2024,2022', title: 'little_giant', page: '3' })
+    const query = ledgerListQuery(state)
+    expect(query.year).toBe('2024,2022')
+    expect(query.title).toBe('little_giant')
+    expect(ledgerStateFromQuery(query)).toEqual(state)
+    const url = new URL(ledgerExportUrl(state), 'http://local')
+    expect(url.searchParams.get('year')).toBe(query.year)
+    expect(url.searchParams.get('title')).toBe(query.title)
+    expect(url.searchParams.has('page')).toBe(false)
+    expect(ledgerListQuery({ ...state, year: [] })).not.toHaveProperty('year')
   })
 })

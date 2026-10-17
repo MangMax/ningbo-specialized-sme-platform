@@ -1572,6 +1572,64 @@ async function verifyUnknownReviewOutcomeExample(cdp) {
   }
 }
 
+async function verifyLedgerYearFilter(cdp) {
+  for (const viewport of VIEWPORTS.slice(0, 2)) {
+    const { targetId, sessionId } = await openSession(cdp, `${BASE}/?page=2`, viewport, READY, { openDrawer: false })
+    const label = `企业列表 · ${viewport.width}px年份筛选`
+    try {
+      const triggerExists = await evaluate(cdp, sessionId, `(() => [...document.querySelectorAll('button')].some(el => el.textContent.trim() === '全部年份'))()`)
+      if (!triggerExists) { bad(`${label}:缺少年份筛选入口`); continue }
+      ok(`${label}:有独立年份入口，认定年排序与筛选区分`)
+      // 将本次原始缺陷恢复到DOM，确认入口断言能失败，再恢复节点。
+      const negative = await evaluate(cdp, sessionId, `(() => {
+        const el = [...document.querySelectorAll('button')].find(el => el.textContent.trim() === '全部年份');
+        const anchor = document.createComment('year-filter'); el.replaceWith(anchor);
+        const missing = ![...document.querySelectorAll('button')].some(el => el.textContent.trim() === '全部年份');
+        anchor.replaceWith(el); return missing;
+      })()`)
+      if (!negative) bad(`${label}:缺入口断言未命中`)
+      else ok(`${label}:恢复无年份入口时断言按预期变红`)
+      await clickElementContaining(cdp, sessionId, 'button', '全部年份')
+      const ready = await waitUntil(cdp, sessionId, `(() => [...document.querySelectorAll('[role="menuitemcheckbox"]')].some(el => el.textContent.trim() === '2024'))()`)
+      if (!ready) { bad(`${label}:实际统计未提供2024`); continue }
+      await installMotionAndFetchGate(cdp, sessionId)
+      await startFetchGate(cdp, sessionId, '/api/roster/enterprises?')
+      await clickElementContaining(cdp, sessionId, '[role="menuitemcheckbox"]', '2024')
+      const loading = await waitForLoadingEvidence(cdp, sessionId, 'ledger')
+      if (!loading) bad(`${label}:选择年份后没有请求加载提示`)
+      else ok(`${label}:年份选择触发真实加载提示`)
+      await finishFetchGate(cdp, sessionId)
+      const singleReady = await waitUntil(cdp, sessionId, `(() => new URL(location.href).searchParams.get('year') === '2024' && !new URL(location.href).searchParams.has('page') && document.querySelector('tbody')?.dataset.loading !== 'true')()`)
+      if (!singleReady) bad(`${label}:年份未写入URL或未回到第一页`)
+      else ok(`${label}:单年生效并重置第一页`)
+      await clickElementContaining(cdp, sessionId, '[role="menuitemcheckbox"]', '2022')
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId)
+      const multiReady = await waitUntil(cdp, sessionId, `(() => new URL(location.href).searchParams.get('year') === '2024,2022' && document.querySelector('tbody')?.dataset.loading !== 'true' && !document.querySelector('[data-slot="skeleton"]'))()`)
+      const match = multiReady && await evaluate(cdp, sessionId, `(async () => {
+        const expected = await (await fetch('/api/roster/enterprises?year=2024,2022&pageSize=25')).json();
+        const names = [...document.querySelectorAll('[data-testid="enterprise-name-trigger"]')].map(el => el.textContent.trim());
+        return { matches: JSON.stringify(names) === JSON.stringify(expected.rows.map(row => row.name)), total:expected.counts.total,
+          exportYear: new URL(document.querySelector('a[href^="/api/roster/export"]').href).searchParams.get('year'),
+          chips:document.body.textContent.includes('年份 · 2024') && document.body.textContent.includes('年份 · 2022'),
+          overflow:Math.max(0, document.documentElement.scrollWidth - innerWidth) };
+      })()`)
+      if (!match?.matches || match.exportYear !== '2024,2022' || !match.chips || match.overflow > 0) bad(`${label}:多选结果/标签/导出/溢出不符 ${JSON.stringify(match)}`)
+      else ok(`${label}:多选与API${match.total}家结果一致，chip/导出一致，横向溢出0px`)
+      await cdp.send('Page.reload', {}, sessionId)
+      const refreshed = await waitUntil(cdp, sessionId, `(() => document.body.textContent.includes('年份 · 2024') && document.body.textContent.includes('年份 · 2022') && !document.querySelector('[data-slot="skeleton"]') && !!document.querySelector('[data-testid="enterprise-name-trigger"]'))()`)
+      if (!refreshed) bad(`${label}:刷新丢失多选年份`)
+      else ok(`${label}:刷新保留多选年份与结果`)
+      await clickElementContaining(cdp, sessionId, 'button', '清除全部')
+      const cleared = await waitUntil(cdp, sessionId, `(() => !new URL(location.href).searchParams.has('year') && document.querySelector('tbody')?.dataset.loading !== 'true' && !document.body.textContent.includes('年份 · 2024') && document.querySelector('a[href^="/api/roster/export"]')?.getAttribute('href') === '/api/roster/export')()`)
+      if (!cleared) bad(`${label}:清除后仍保留年份条件`)
+      else ok(`${label}:清除同步移除URL、chip与导出条件`)
+    } finally {
+      await finishFetchGate(cdp, sessionId).catch(() => {})
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+    }
+  }
+}
+
 async function verifyLedgerReasonFilter(cdp) {
   for (const viewport of [VIEWPORTS[0], VIEWPORTS.find(view => view.width === 390)]) {
     const page = await openSession(cdp, `${BASE}/`, viewport, READY, { openDrawer: false })
@@ -2750,6 +2808,7 @@ async function main() {
     await verifyKaichengExample(cdp)
     await verifyTimelineConnections(cdp)
     await verifyUnknownReviewOutcomeExample(cdp)
+    await verifyLedgerYearFilter(cdp)
     await verifyLedgerReasonFilter(cdp)
     await verifyLedgerLoadingAndDrawer(cdp)
     await verifyComparisonSearchAndMotion(cdp)
