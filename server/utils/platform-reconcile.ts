@@ -541,19 +541,24 @@ export function reconcileIdempotencyKey(input: {
   return `platform_reconcile:${createHash('sha256').update(JSON.stringify({ queries, differences, aliases })).digest('hex').slice(0, 32)}`
 }
 
-/** 该目标是否已有**新鲜**的差异判定(新鲜则复用既有结论,不重复堆行)。 */
+/** 该目标是否已有**新鲜且有效**的最新差异判定(失败不复用,也不被旧结论遮盖)。 */
 function hasFreshDecision(db: Db, target: ReconcileTarget, cutoffIso: string): boolean {
-  return db
+  const matching = db
     .select()
     .from(schema.differenceReason)
     .where(eq(schema.differenceReason.enterpriseId, target.enterpriseId))
     .all()
-    .some(
-      (row) =>
-        row.titleCode === target.titleCode &&
-        row.direction === target.direction &&
-        row.recordedAt >= cutoffIso,
-    )
+    .filter((row) => row.titleCode === target.titleCode && row.direction === target.direction)
+    .sort((left, right) => left.recordedAt.localeCompare(right.recordedAt))
+  const latest = matching[matching.length - 1]
+
+  return (
+    latest !== undefined &&
+    latest.recordedAt >= cutoffIso &&
+    // A failed attempt is not a reusable conclusion. Checking only the latest row also prevents
+    // an older successful explanation from hiding a newer failure for the same target.
+    latest.status !== 'query_failed'
+  )
 }
 
 // ---------------------------------------------------------------------------

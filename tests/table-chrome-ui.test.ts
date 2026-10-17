@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import TablePagination from '../components/TablePagination.vue'
 import TableLoadingStatus from '../components/TableLoadingStatus.vue'
+import TableFailureState from '../components/TableFailureState.vue'
 import { Select } from '../components/ui/select'
 
 const mounted: ReturnType<typeof mount>[] = []
@@ -67,5 +68,34 @@ describe('统一表顶加载提示', () => {
       expect(view.find(`.${kind}-progress`).exists()).toBe(true)
       expect(view.attributes('aria-live')).toBe('polite')
     }
+  })
+})
+
+describe('表格内失败态', () => {
+  it('首次失败保留筛选说明和独立重试入口，不出现空结果文案', async () => {
+    const view = mount(TableFailureState, { props: { title: '企业列表暂时无法加载' } })
+    mounted.push(view)
+    expect(view.attributes('role')).toBe('status')
+    expect(view.attributes('data-compact')).toBe('false')
+    expect(view.text()).toContain('筛选条件已保留')
+    expect(view.text()).not.toContain('没有匹配')
+    await view.get('[data-testid="table-retry"]').trigger('click')
+    expect(view.emitted('retry')).toEqual([[]])
+  })
+  it('已有数据刷新失败明确提示旧结果，重试中按钮禁用且区域保持', async () => {
+    const view = mount(TableFailureState, { props: { title: '文件列表暂时无法加载', compact: true } })
+    mounted.push(view)
+    expect(view.attributes('data-compact')).toBe('true')
+    expect(view.text()).toContain('显示的是上次加载的结果')
+    await view.setProps({ pending: true })
+    const button = view.get('[data-testid="table-retry"]')
+    expect(button.text()).toBe('正在重试')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(view.attributes('aria-busy')).toBe('true')
+    await button.trigger('click')
+    expect(view.emitted('retry')).toBeUndefined()
+    await view.setProps({ pending: false })
+    expect(button.text()).toBe('重新加载')
+    expect(button.attributes('disabled')).toBeUndefined()
   })
 })

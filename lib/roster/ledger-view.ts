@@ -37,6 +37,10 @@ export interface LedgerState {
   source: string[]
   eventType: string[]
   year: string[]
+  /** 首次正式认定年份(RL-08),与事件年份 `year` 分开保留。 */
+  firstYear: string[]
+  /** 首次认定状态(RL-08):confirmed / pending。 */
+  firstStatus: string[]
   /** 差异状态(RL-20);`none` 表示「一条差异记录都没有」。 */
   diffStatus: string[]
   /** 排序(RL-20)。 */
@@ -51,6 +55,8 @@ export const EMPTY_LEDGER_STATE: LedgerState = {
   source: [],
   eventType: [],
   year: [],
+  firstYear: [],
+  firstStatus: [],
   diffStatus: [],
   sort: DEFAULT_SORT,
 }
@@ -67,13 +73,15 @@ export const LEDGER_FILTER_KEYS = [
   'source',
   'eventType',
   'year',
+  'firstYear',
+  'firstStatus',
   'district',
   'rosterState',
   'diffStatus',
 ] as const satisfies readonly (keyof LedgerState)[]
 
 /** 多值键(逗号分隔)。其余是单值。 */
-export const LEDGER_MULTI_KEYS = ['title', 'source', 'eventType', 'year', 'diffStatus'] as const
+export const LEDGER_MULTI_KEYS = ['title', 'source', 'eventType', 'year', 'firstYear', 'firstStatus', 'diffStatus'] as const
 
 /** 从地址栏读回筛选状态(刷新、分享、前进后退都靠它)。 */
 export function ledgerStateFromQuery(query: Record<string, unknown>): LedgerState {
@@ -87,6 +95,8 @@ export function ledgerStateFromQuery(query: Record<string, unknown>): LedgerStat
     source: csv(query.source),
     eventType: csv(query.eventType),
     year: csv(query.year),
+    firstYear: csv(query.firstYear),
+    firstStatus: csv(query.firstStatus),
     diffStatus: csv(query.diffStatus),
     // 认不出的排序**退回默认**,不让它进请求。这一层是「地址栏 → 页面状态」:
     // 一个手改坏的 `?sort=…` 该把页面照常渲染出来,不该把整页打成错误;

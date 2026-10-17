@@ -164,6 +164,24 @@ export const VERIFICATION_STATUSES: Record<string, string> = {
 /** 核验状态展示顺序。 */
 export const VERIFICATION_STATUS_ORDER: string[] = ['confirmed', 'pending']
 
+/** 生命周期读模型中的待核原因。 */
+export const LIFECYCLE_FLAGS: Record<string, string> = {
+  decided_year_missing: '至少一条认定/复核事件缺少结论年份，生命周期计算按规则回退到事件所涉年份',
+  review_outcome_unknown: '有复核事件但没记结论',
+  no_batch: '认定/复核事件缺批次序号',
+  no_evidence: '认定/复核事件没有出处记录',
+  no_anchor_year: '没有任何可算的年份',
+}
+
+/** 生命周期标记顺序。 */
+export const LIFECYCLE_FLAG_ORDER: string[] = [
+  'no_anchor_year',
+  'decided_year_missing',
+  'review_outcome_unknown',
+  'no_batch',
+  'no_evidence',
+]
+
 /**
  * 两个平台接口**取值**与联合类型(契约 §2.4)。**唯一出处** —— 适配层、写入侧、
  * 读接口、查询路由一律引用它,不要各自内联拼写 `'business_list' | 'apply_list'`
@@ -309,27 +327,7 @@ export const DIFFERENCE_COLUMN_HINT =
   '库内平台解释:状态取自解释记录(difference_reason)——未查询 / 查询失败 / 无记录 / 待核实 / 已确认无差异 / 已确认原因,并配对的后续措施。' +
   '「查询失败」与「无记录」不是一回事:前者是查询没执行成功,后者是查询成功但平台返回 0 条。'
 
-/**
- * 差异状态 → 台账列表最左那条 6px 状态条的取向(RL-20)。
- *
- * ── 为什么是**三档**而不是六档 ──────────────────────────────────────────
- * 状态条只有 6px 宽,是一条**色带**而不是一枚徽章:它要在向下滚动时连成一条可读的带
- * (方向卡里的「记忆点」),所以它只回答**一个问题** —— **这条差异查清了没有**:
- *
- * | 取向 | 含义 | 取值 |
- * |---|---|---|
- * | `confirmed` | 有结论(已查明原因 / 已确认无差异) | `confirmed_reason` / `confirmed_no_diff` |
- * | `open` | 还没结论(未查询 / 待核实 / 无记录) | `not_queried` / `needs_review` / `no_record` |
- * | `failed` | **查询本身没成功**(要重查) | `query_failed` |
- *
- * 六态**彼此可区分**这件事仍然由中文标签承重(表里「差异状态」列写全、抽屉里那枚徽章
- * 走 `DIFFERENCE_STATUS_VARIANTS` 的六态)—— 与 `DIFFERENCE_STATUS_VARIANTS` 那段注释里
- * 「颜色是冗余加固,不是承重结构」是同一条判据。**一条 6px 色带扛不起六态**,
- * 硬塞进去只会变成一片认不出的花色 —— 那正是方向卡「换掉彩色胶囊」要躲开的东西。
- *
- * 没有画到的一档:**一条差异记录都没有的企业不画状态条**(方向卡:「无差异的行不画状态条」)。
- * 于是「空白 / 藏青 / 灰 / 红」四种观感各有确定含义,滚动时那条带就是差异分布本身。
- */
+/** 差异状态 → 企业列表状态条的三档取向。六态仍由表格标签与详情徽章区分。 */
 export const DIFFERENCE_STATUS_RAILS: Record<string, 'confirmed' | 'open' | 'failed'> = {
   not_queried: 'open',
   query_failed: 'failed',
@@ -342,27 +340,16 @@ export const DIFFERENCE_STATUS_RAILS: Record<string, 'confirmed' | 'open' | 'fai
 /** 「一条差异记录都没有」这一档的文案(筛选里的伪状态 `none`)。 */
 export const DIFF_STATUS_NONE_LABEL = '无差异'
 
-/**
- * 台账页(「企业列表」)的页面名 —— 页头、侧边栏入口、`document.title` 三处**只认这一个**。
- *
- * 用户明确点过名:「页面名与侧边栏入口都改叫**企业列表**」(旧名「名录台账」)。
- * 三处各写一遍字面量,迟早会出现「页头改了、侧栏忘了」这种只改一半的状态,
- * 而那种错在单看任一屏时都看不出来。
- */
+/** 台账页名称在页头、侧边栏入口与 document.title 三处共用。 */
 export const ENTERPRISE_LIST_TITLE = '企业列表'
 
-/**
- * 总表排序的选项文案(RL-20)。键与 `ROSTER_ENTERPRISE_SORTS` 同集合(有测试钉住)。
- * 「认定年」后面那半句方向写在 `title` 里,不占控件上的位置 —— 与设计稿上那个
- * 只写「认定年」的控件逐字一致。
- */
+/** 企业列表排序选项(RL-20)。 */
 export const ENTERPRISE_SORT_LABELS: Record<string, string> = {
   recognition: '认定年',
   name: '企业名称',
   title: '称号等级',
 }
 export const ENTERPRISE_SORT_ORDER: string[] = ['recognition', 'name', 'title']
-/** 排序选项的悬停说明(方向写在这里,不挤进控件)。 */
 export const ENTERPRISE_SORT_HINTS: Record<string, string> = {
   recognition: '按该企业最早的首次认定年排,新认定的在前',
   name: '按企业名称排',
@@ -554,6 +541,44 @@ export const COMPARISON_DIRECTION_NOTES: Record<string, string> = {
   missing_in_miit: '公布有而平台无',
   extra_in_miit: '平台有而公布无',
 }
+
+/**
+ * 首次认定的两态(RL-08,契约 §7.5 增量)。
+ *
+ * 取值本身定义在 `lib/roster/first-recognition.ts`(判定与取值同处),这里只放**中文标签与
+ * 展示顺序** —— 与全仓别的枚举同一分法(`*_ORDER` + 标签表),页面不再各写一份。
+ */
+export const FIRST_RECOGNITION_STATUSES: Record<string, string> = {
+  confirmed: '已确立',
+  pending: '待确认',
+}
+export const FIRST_RECOGNITION_STATUS_ORDER: string[] = ['confirmed', 'pending']
+
+/**
+ * 首次认定「待确认」的原因 —— 三条**互不等价**,像差异六态一样必须彼此可区分:
+ * 是「一条都定不了年」还是「另有现存 award 缺有效年份」还是「没有出处」,处理方式不同。
+ */
+export const FIRST_RECOGNITION_REASONS: Record<string, string> = {
+  no_dated_award: '认定事件定不了年',
+  undated_award: '现存认定缺有效年份',
+  no_evidence: '首次认定没有存下来的出处',
+}
+/** 展示顺序 = 判定里的优先级(`no_dated_award` > `undated_award` > `no_evidence`)。 */
+export const FIRST_RECOGNITION_REASON_ORDER: string[] = [
+  'no_dated_award',
+  'undated_award',
+  'no_evidence',
+]
+
+/**
+ * 首次认定一栏的表头提示(台账表的列头 `title`,**这是它唯一的用处**)。
+ *
+ * 写成纯文本:它出现在 `title` 属性里,漂进去的 Markdown 星号会**原样**显示给用户。
+ */
+export const FIRST_RECOGNITION_HINT =
+  '首次认定按「企业 × 称号」算:该企业在该称号上最早的那次认定。' +
+  '复核通过不是新的首次认定;复核未通过后再次获批也不重置。' +
+  '标「待确认」的原因有三种且互不相同:认定事件定不了年 / 现存认定缺有效年份 / 首次认定没有存下来的出处。'
 
 /** 方向代号 → 标签(`COMPARISON_LABELS` 是 `as const`,动态字符串取不到,这里放宽一次)。 */
 export function comparisonDirectionLabel(code: string): string {

@@ -18,6 +18,8 @@ const FILTERED: LedgerState = {
   q: '宁波开诚',
   title: ['little_giant', 'specialized_sme'],
   district: '海曙区',
+  firstYear: ['2021', '2022'],
+  firstStatus: ['pending'],
   diffStatus: ['confirmed_reason', 'none'],
   sort: 'name',
 }
@@ -28,6 +30,8 @@ describe('企业列表状态与 URL 映射', () => {
       q: ' 宁波开诚 ',
       title: 'little_giant,specialized_sme',
       district: '海曙区',
+      firstYear: '2021,2022',
+      firstStatus: 'pending',
       diffStatus: 'confirmed_reason,none',
       sort: 'name',
       view: 'difference',
@@ -40,10 +44,12 @@ describe('企业列表状态与 URL 映射', () => {
 
   it('只有企业列表的筛选键会进入地址与请求,不再写三视图参数', () => {
     const query = ledgerQueryFromState(FILTERED)
-    expect(Object.keys(query).sort()).toEqual(['q', 'title', 'district', 'diffStatus', 'sort'].sort())
+    expect(Object.keys(query).sort()).toEqual(['q', 'title', 'district', 'firstYear', 'firstStatus', 'diffStatus', 'sort'].sort())
     expect(Object.keys(query).filter((key) => key !== 'sort').every((key) => LEDGER_FILTER_KEYS.includes(key as never))).toBe(true)
     expect(query).not.toHaveProperty('view')
     expect(query.title).toBe('little_giant,specialized_sme')
+    expect(query.firstYear).toBe('2021,2022')
+    expect(query.firstStatus).toBe('pending')
     expect(query.diffStatus).toBe('confirmed_reason,none')
     expect(ledgerListQuery(FILTERED)).toEqual(query)
   })

@@ -1,8 +1,9 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { categoryStateOf, deriveClassification, deriveParts, directoryOf, parseBatch } from '../lib/stored-file'
 import { scopeOf, siblingIndex } from '../lib/file-store-scope'
 import { LITTLE_GIANT_SOURCE_FILE } from '../lib/roster/little-giant-import'
@@ -17,6 +18,7 @@ import {
   listStoredFiles,
   parseMetadataPatch,
   removeStoredFile,
+  resolveInsideRoot,
   scanFileStore,
   updateStoredFile,
 } from '../server/utils/stored-files'
@@ -324,6 +326,66 @@ describe('入库范围:不该入库的文件不进表,并带原因报出', () =>
 })
 
 describe('PATCH 只改元数据', () => {
+  it('拒绝当前未支持的展示名 PATCH 后既有出处仍按原 rel_path 解析到预览文件', () => {
+    const row = db.select().from(schema.storedFile).all().find((r) => r.relPath.includes('72号'))!
+    const enterpriseId = db
+      .insert(schema.enterprise)
+      .values({ name: '预览路径稳定性测试', nameNorm: '预览路径稳定性测试' })
+      .returning({ id: schema.enterprise.id })
+      .get().id
+    const recordId = db
+      .insert(schema.record)
+      .values({ enterpriseId, titleCode: 'specialized_sme', source: 'jxj' })
+      .returning({ id: schema.record.id })
+      .get().id
+    const recordEventId = db
+      .insert(schema.recordEvent)
+      .values({ recordId, eventType: 'award', year: 2024, batchSeq: 1 })
+      .returning({ id: schema.recordEvent.id })
+      .get().id
+    const evidence = db
+      .insert(schema.recordEvidence)
+      .values({ recordEventId, sourceFile: row.relPath, page: 3 })
+      .returning({ id: schema.recordEvidence.id })
+      .get()
+    try {
+      const previewBefore = resolveInsideRoot(filesRoot, row.relPath)
+      expect(previewBefore).not.toBeNull()
+      expect(readFileSync(previewBefore!, 'utf8')).toBe('pdf-one')
+
+      // 本仓文件 PATCH 当前只接受分类元数据；展示名字段尚未提供，磁盘名也不能被改。
+      expect(() => parseMetadataPatch({ displayName: '新展示名.pdf' })).toThrow(/不可修改/)
+      expect(db.select().from(schema.storedFile).all().find((item) => item.id === row.id)).toMatchObject({
+        id: row.id,
+        relPath: row.relPath,
+        filename: row.filename,
+      })
+      const evidenceAfterRejectedPatch = db
+        .select()
+        .from(schema.recordEvidence)
+        .where(eq(schema.recordEvidence.id, evidence.id))
+        .get()!
+      expect(evidenceAfterRejectedPatch.sourceFile).toBe(row.relPath)
+      expect(resolveInsideRoot(filesRoot, evidenceAfterRejectedPatch.sourceFile)).toBe(previewBefore)
+
+      const updated = updateStoredFile(db, row.id, parseMetadataPatch({ year: 2021 }))!
+
+      expect(updated.id).toBe(row.id)
+      expect(updated.relPath).toBe(row.relPath)
+      const storedEvidence = db.select().from(schema.recordEvidence).all().find((item) => item.id === evidence.id)!
+      expect(storedEvidence.sourceFile).toBe(row.relPath)
+      const previewAfter = resolveInsideRoot(filesRoot, storedEvidence.sourceFile)
+      expect(previewAfter).toBe(previewBefore)
+      expect(readFileSync(previewAfter!, 'utf8')).toBe('pdf-one')
+    } finally {
+      db.delete(schema.recordEvidence).where(eq(schema.recordEvidence.id, evidence.id)).run()
+      db.delete(schema.recordEvent).where(eq(schema.recordEvent.id, recordEventId)).run()
+      db.delete(schema.record).where(eq(schema.record.id, recordId)).run()
+      db.delete(schema.enterprise).where(eq(schema.enterprise.id, enterpriseId)).run()
+      updateStoredFile(db, row.id, { year: row.year })
+    }
+  })
+
   it('改年份:rel_path 不变、磁盘文件不变、列表立刻反映', () => {
     const row = db.select().from(schema.storedFile).all().find((r) => r.relPath.includes('72号'))!
     const abs = join(filesRoot, row.relPath)

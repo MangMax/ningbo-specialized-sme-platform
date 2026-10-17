@@ -42,7 +42,6 @@ import {
   EmptyDescription,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 
 const COMPARISON_DIRECTIONS = Object.keys(
   COMPARISON_LABELS,
@@ -262,19 +261,12 @@ const exportUrl = computed(() => {
 
     <div class="flex min-w-0 flex-col gap-2">
       <div class="flex min-w-0 flex-col gap-2" data-testid="comparison-results">
-            <Alert v-if="error" variant="destructive">
-              <AlertTitle>比对数据加载失败</AlertTitle>
-              <AlertDescription
-                ><Button variant="outline" size="sm" @click="refetch()"
-                  >重试</Button
-                ></AlertDescription
-              >
-            </Alert>
             <Card class="min-w-0 gap-0 overflow-hidden py-0 shadow-none">
               <CardContent class="relative p-0">
                 <TableLoadingStatus kind="comparison" :loading="isLoading" label="正在搜索与加载比对结果…" />
+                <TableFailureState v-if="error" title="比对结果暂时无法加载" :compact="rows.length > 0" :pending="isLoading" @retry="refetch()" />
                 <!-- 宽表在容器内横向滚动,窄屏收在当前视口中。 -->
-                <div class="relative min-w-0">
+                <div v-if="!error || rows.length > 0" class="relative min-w-0">
                   <div
                     ref="scroller"
                     tabindex="0"
@@ -408,7 +400,7 @@ const exportUrl = computed(() => {
                 </div>
               </CardContent>
             </Card>
-            <TablePagination data-testid="comparison-pagination" :page="page" :page-size="pageSize" :total="data?.total ?? 0" unit="条" :loading="isLoading" @update:page="setPage" @update:page-size="setPageSize" />
+            <TablePagination v-if="!error || rows.length > 0" data-testid="comparison-pagination" :page="page" :page-size="pageSize" :total="data?.total ?? 0" unit="条" :loading="isLoading" @update:page="setPage" @update:page-size="setPageSize" />
 
       </div>
     </div>

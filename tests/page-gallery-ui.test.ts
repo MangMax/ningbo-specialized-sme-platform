@@ -129,3 +129,56 @@ describe('页图库分辨率下拉:非预设的当前 DPI', () => {
     expect(vm.dpi).toBe(300) // 预设照常生效
   })
 })
+
+describe('页图库深链与页图 freshness', () => {
+  it('目标页虽有缓存但状态 stale 时先重渲染，单页视图只使用更新后的页图', async () => {
+    const stale = {
+      ...stateAt(300),
+      pageCount: 3,
+      rendered: 3,
+      upToDate: false,
+      pages: [1, 2, 3].map((page) => ({
+        ...stateAt(300).pages[0],
+        page,
+        relPath: `jxj/announcement/2022/.公布.pdf.pages/p${String(page).padStart(3, '0')}.png`,
+        url: `/stale/page-${page}.png`,
+      })),
+    }
+    const fresh = {
+      ...stale,
+      upToDate: true,
+      manifest: { ...stale.manifest!, renderedAt: '2026-10-17T00:00:00.000Z' },
+      pages: stale.pages.map((page) => ({ ...page, url: `/fresh/page-${page.page}.png` })),
+      written: 3,
+      skipped: 0,
+      removed: 0,
+      elapsedMs: 1,
+    }
+    const fetch = vi.fn(async (_url: string, options?: { method?: string }) =>
+      options?.method === 'POST' ? fresh : stale,
+    )
+    vi.stubGlobal('$fetch', fetch)
+    const gallery = mount(PageImageGallery, {
+      props: { file, page: 3 },
+      attachTo: document.body,
+      global: {
+        stubs: {
+          ImagePreview: {
+            props: ['name', 'src'],
+            template: '<div data-test="single-page-preview" :data-src="src">{{ name }}</div>',
+          },
+        },
+      },
+    })
+
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('/api/pdf-pages', expect.objectContaining({ method: 'POST' }))
+      const src = gallery.find('[data-test="single-page-preview"]').attributes('data-src')
+      expect(src).toContain('/fresh/page-3.png')
+      expect(src).not.toContain('/stale/')
+    })
+    expect(gallery.find('[data-test="single-page-preview"]').text()).toBe('第 3 页')
+    expect(fetch.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
+    gallery.unmount()
+  })
+})

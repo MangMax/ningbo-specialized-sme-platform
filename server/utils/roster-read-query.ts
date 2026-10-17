@@ -10,18 +10,28 @@
  * 而不知道为什么。
  */
 import { parseCsvQuery } from '../../lib/csv'
-import { ROSTER_DIFFERENCE_FILTER_VALUES } from '../../lib/roster/ledger-contract'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../lib/comparison'
-import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES, EVENT_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../../lib/labels'
 import {
-  DEFAULT_ROSTER_ENTERPRISE_SORT,
-  ROSTER_ENTERPRISE_SORTS,
-  ROSTER_STATES,
+  DIFFERENCE_REASONS,
+  DIFFERENCE_STATUSES,
+  EVENT_ORDER,
+  SOURCE_ORDER,
+  TITLE_ORDER,
+} from '../../lib/labels'
+import type { EventType, RecordQuery } from '../../lib/query'
+import {
   type RosterDifferenceFilter,
   type RosterEnterpriseFilter,
-  type RosterEnterpriseSort,
   type RosterState,
 } from '../../lib/roster/enterprise-roster'
+import { FIRST_RECOGNITION_STATUS_VALUES } from '../../lib/roster/first-recognition'
+import type { RosterRecognitionFilter } from '../../lib/roster/recognitions'
+import {
+  DEFAULT_ROSTER_ENTERPRISE_SORT,
+  ROSTER_DIFFERENCE_FILTER_VALUES,
+  ROSTER_ENTERPRISE_SORTS,
+} from '../../lib/roster/ledger-contract'
+import type { RosterEnterpriseSort } from '../../lib/roster/ledger-contract'
 
 /** 取单值字符串参数(数组取第一个),空串当「没给」。 */
 export function strParam(value: unknown): string | undefined {
@@ -60,11 +70,6 @@ function yearsParam(value: unknown): number[] | undefined {
   return list?.length ? list : undefined
 }
 
-/**
- * 排序参数。**非法取值给 400,不静默退回默认** —— 与「取值说不清就不猜」同一规矩:
- * 静默退回默认会让使用者以为自己在看「按认定年」的序,实际拿到的是另一种,
- * 而这种错在页面上完全看不出来(列表总有顺序)。
- */
 function sortParam(value: unknown): RosterEnterpriseSort {
   const raw = strParam(value)
   if (raw == null) return DEFAULT_ROSTER_ENTERPRISE_SORT
@@ -77,16 +82,59 @@ function sortParam(value: unknown): RosterEnterpriseSort {
   return raw as RosterEnterpriseSort
 }
 
+const ROSTER_STATE_VALUES: readonly RosterState[] = ['current', 'removed_platform_only']
+
+/** §7.0 通用记录查询。`year` 是事件年份；`dueYear` 是生命周期到期年份。 */
+export function parseRecordQuery(query: Record<string, unknown>): RecordQuery {
+  const dueYearValues = parseCsvQuery(query.dueYear)
+  let dueYear: number | undefined
+  if (dueYearValues) {
+    const [raw] = dueYearValues
+    const parsed = raw && /^\d{4}$/.test(raw) ? Number(raw) : Number.NaN
+    if (dueYearValues.length !== 1 || !Number.isInteger(parsed) || parsed < 1900 || parsed > 2999) {
+      throw createError({ statusCode: 400, statusMessage: 'dueYear must be one 4-digit year' })
+    }
+    dueYear = parsed
+  }
+
+  return {
+    title: knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title'),
+    source: knownOrThrow(parseCsvQuery(query.source), SOURCE_ORDER, 'source'),
+    district: strParam(query.district),
+    eventType: knownOrThrow(parseCsvQuery(query.eventType), EVENT_ORDER, 'eventType') as
+      | EventType[]
+      | undefined,
+    year: yearsParam(query.year),
+    // RL-08:首次认定年份来自共享生命周期计算，与事件 `year` 分开。
+    firstYear: yearsParam(query.firstYear),
+    firstStatus: knownOrThrow(
+      parseCsvQuery(query.firstStatus),
+      FIRST_RECOGNITION_STATUS_VALUES,
+      'firstStatus',
+    ) as RecordQuery['firstStatus'],
+    dueYear,
+    q: strParam(query.q),
+    flags: strParam(query.flags),
+    page: intParam(query.page, 1),
+    pageSize: intParam(query.pageSize, 25),
+  }
+}
+
 /** §7.1 总表的筛选参数。 */
 export function parseRosterEnterpriseQuery(query: Record<string, unknown>): RosterEnterpriseFilter {
   const title = knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title')
   const rosterState = strParam(query.rosterState)
-  if (rosterState != null && !(ROSTER_STATES as readonly string[]).includes(rosterState)) {
+  if (rosterState != null && !(ROSTER_STATE_VALUES as readonly string[]).includes(rosterState)) {
     throw createError({
       statusCode: 400,
-      statusMessage: `Unknown rosterState; expected ${ROSTER_STATES.join(', ')}`,
+      statusMessage: `Unknown rosterState; expected ${ROSTER_STATE_VALUES.join(', ')}`,
     })
   }
+  const diffStatus = knownOrThrow(
+    parseCsvQuery(query.diffStatus),
+    ROSTER_DIFFERENCE_FILTER_VALUES,
+    'diffStatus',
+  )
   return {
     q: strParam(query.q),
     title,
@@ -96,9 +144,36 @@ export function parseRosterEnterpriseQuery(query: Record<string, unknown>): Rost
     source: knownOrThrow(parseCsvQuery(query.source), SOURCE_ORDER, 'source'),
     eventType: knownOrThrow(parseCsvQuery(query.eventType), EVENT_ORDER, 'eventType'),
     year: yearsParam(query.year),
-    // RL-20:台账页「差异状态」与「排序」两个筛选项。
-    diffStatus: knownOrThrow(parseCsvQuery(query.diffStatus), ROSTER_DIFFERENCE_FILTER_VALUES, 'diffStatus'),
+    // RL-08:「首次认定」的两个判据。**必须与 `year` 分名字** —— `year` 筛的是事件年份,
+    // 这里筛的是该称号的首次认定年份,混成一个参数就是「同一个参数两种意思」。
+    firstYear: yearsParam(query.firstYear),
+    firstStatus: knownOrThrow(
+      parseCsvQuery(query.firstStatus),
+      FIRST_RECOGNITION_STATUS_VALUES,
+      'firstStatus',
+    ),
+    diffStatus,
     sort: sortParam(query.sort),
+    page: intParam(query.page, 1),
+    pageSize: intParam(query.pageSize, 50),
+  }
+}
+
+/**
+ * §7.5 首次认定清单的筛选参数。
+ *
+ * 与总表那份分开写(不共用 `parseRosterEnterpriseQuery`)的理由:这个端点的 `year`
+ * **就是**首次认定年份,没有第二种解释;总表那边同一个量叫 `firstYear`,因为它得与事件年份
+ * 并存。硬凑成一个函数,只会让两边各带一半用不上的参数。
+ * 共用的是**每个参数的解析口径**(`knownOrThrow` / `yearsParam` / `intParam`),那才是会漂移的部分。
+ */
+export function parseRosterRecognitionQuery(
+  query: Record<string, unknown>,
+): RosterRecognitionFilter {
+  return {
+    title: knownOrThrow(parseCsvQuery(query.title), TITLE_ORDER, 'title'),
+    year: yearsParam(query.year),
+    status: knownOrThrow(parseCsvQuery(query.status), FIRST_RECOGNITION_STATUS_VALUES, 'status'),
     page: intParam(query.page, 1),
     pageSize: intParam(query.pageSize, 50),
   }

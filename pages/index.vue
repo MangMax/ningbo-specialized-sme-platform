@@ -12,6 +12,8 @@ import {
   ENTERPRISE_SORT_LABELS,
   ENTERPRISE_SORT_ORDER,
   EVENTS,
+  FIRST_RECOGNITION_STATUSES,
+  FIRST_RECOGNITION_STATUS_ORDER,
   SOURCES,
   TITLES,
   TITLE_ORDER,
@@ -35,7 +37,6 @@ import EnterpriseListTable, {
 } from '@/components/EnterpriseListTable.vue'
 import FilterChip from '@/components/FilterChip.vue'
 import MultiSelectFilter from '@/components/MultiSelectFilter.vue'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -69,6 +70,7 @@ interface Counts {
   total: number
   titlePairs: number
   titles: Record<string, number>
+  recognitionPairs: number
   differences: number
 }
 
@@ -206,17 +208,20 @@ const { data, isLoading, error, refetch } = useQuery({
 
 const rows = computed(() => data.value?.rows ?? [])
 const counts = computed<Counts>(
-  () => data.value?.counts ?? { total: 0, titlePairs: 0, titles: {}, differences: 0 },
+  () => data.value?.counts ?? { total: 0, titlePairs: 0, titles: {}, recognitionPairs: 0, differences: 0 },
 )
 const total = computed(() => counts.value.total)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
-watch(totalPages, (max) => {
-  if (page.value > max) page.value = max
-})
 
-/** 查询落定只清理已离开结果集的选择；打开抽屉始终由用户触发。 */
-watch([data, resultKey], ([result, key]) => {
-  if (!result || result.resultKey !== key || selected.value == null) return
+/** 只在成功响应结算后纠正页码并清理已离开结果集的选择。失败响应不能把页码退回 1。 */
+watch([data, resultKey, isLoading, error], ([result, key, loading, failure]) => {
+  if (!result || result.resultKey !== key || loading || failure) return
+  const maxPage = Math.max(1, Math.ceil(result.counts.total / pageSize.value))
+  if (page.value > maxPage) {
+    page.value = maxPage
+    return
+  }
+  if (selected.value == null) return
   if (!result.rows.some((row) => row.enterpriseId === selected.value)) {
     selected.value = null
     drawerReturnFocusTarget.value = null
@@ -240,12 +245,25 @@ const titleOptions = computed(() =>
 )
 const { data: yearStats } = useQuery({
   key: () => ['stats'],
-  query: () => apiGet<{ byYear: { key: string; n: number }[] }>('/api/stats'),
+  query: () => apiGet<{
+    byYear: { key: string; n: number }[]
+    byFirstRecognitionYear: { key: string; n: number }[]
+  }>('/api/stats'),
 })
 const yearOptions = computed(() => ledgerYearOptions(
   (yearStats.value?.byYear ?? []).map(bucket => bucket.key),
   state.value.year,
 ))
+const firstYearOptions = computed(() => ledgerYearOptions(
+  (yearStats.value?.byFirstRecognitionYear ?? []).map(bucket => bucket.key),
+  state.value.firstYear,
+))
+const firstStatusOptions = computed(() =>
+  FIRST_RECOGNITION_STATUS_ORDER.map(code => ({
+    value: code,
+    label: FIRST_RECOGNITION_STATUSES[code] ?? code,
+  })),
+)
 const statusOptions = ROSTER_DIFFERENCE_FILTER_OPTIONS
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 
@@ -291,7 +309,7 @@ const activeFilters = computed<ActiveFilter[]>(() => {
     state.value = { ...state.value, [key]: value }
   }
   const without = (
-    key: 'title' | 'source' | 'eventType' | 'year' | 'diffStatus',
+    key: 'title' | 'source' | 'eventType' | 'year' | 'firstYear' | 'firstStatus' | 'diffStatus',
     drop: string,
   ) =>
     patch(
@@ -324,6 +342,16 @@ const activeFilters = computed<ActiveFilter[]>(() => {
       clear: () => without('eventType', v),
     })),
     ...s.year.map((v) => ({ key: `year:${v}`, label: `年份 · ${v}`, clear: () => without('year', v) })),
+    ...s.firstYear.map((v) => ({
+      key: `firstYear:${v}`,
+      label: `首次认定年 · ${v}`,
+      clear: () => without('firstYear', v),
+    })),
+    ...s.firstStatus.map((v) => ({
+      key: `firstStatus:${v}`,
+      label: `首次认定 · ${FIRST_RECOGNITION_STATUSES[v] ?? v}`,
+      clear: () => without('firstStatus', v),
+    })),
     ...(s.rosterState
       ? [
           {
@@ -435,6 +463,20 @@ useHead({
         summary-prefix="年份"
         class="w-28 shadow-none"
       />
+      <MultiSelectFilter
+        v-model="state.firstYear"
+        :options="firstYearOptions"
+        placeholder="首次认定年份"
+        summary-prefix="首次认定"
+        class="w-32 shadow-none"
+      />
+      <MultiSelectFilter
+        v-model="state.firstStatus"
+        :options="firstStatusOptions"
+        placeholder="首次认定状态"
+        summary-prefix="首次认定"
+        class="w-32 shadow-none"
+      />
       <Select v-model="sortModel">
         <SelectTrigger
           size="sm"
@@ -475,17 +517,12 @@ useHead({
     </TransitionGroup>
 
 
-    <Alert v-if="error" variant="destructive">
-      <AlertTitle>企业列表加载失败</AlertTitle>
-      <AlertDescription
-        ><Button variant="outline" size="sm" @click="retry()">重试</Button></AlertDescription
-      >
-    </Alert>
-
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在搜索…" />
+        <TableFailureState v-if="error" title="企业列表暂时无法加载" :compact="rows.length > 0" :pending="isLoading" @retry="retry" />
         <EnterpriseListTable
+          v-if="!error || rows.length > 0"
           :rows="rows"
           :loading="isLoading"
           :has-error="!!error"
@@ -497,8 +534,8 @@ useHead({
       </CardContent>
     </Card>
 
-    <TablePagination :page="page" :page-size="pageSize" :total="total" unit="家企业" @update:page="setPage" @update:page-size="setPageSize">
-      共 {{ total.toLocaleString('zh-CN') }} 家 · 差异 {{ counts.differences.toLocaleString('zh-CN') }} 条
+    <TablePagination v-if="!error || rows.length > 0" :page="page" :page-size="pageSize" :total="total" unit="家企业" @update:page="setPage" @update:page-size="setPageSize">
+      共 {{ total.toLocaleString('zh-CN') }} 家<span v-if="state.firstYear.length || state.firstStatus.length"> · 首次认定 {{ counts.recognitionPairs.toLocaleString('zh-CN') }} 组</span> · 差异 {{ counts.differences.toLocaleString('zh-CN') }} 条
     </TablePagination>
 
     <!--

@@ -24,20 +24,23 @@ import { normalizeName, normalizeUscc } from '../domain'
 import { getComparison, type ComparisonDirection } from '../comparison'
 import { DIFFERENCE_STATUS_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
-import {
-  DEFAULT_ROSTER_ENTERPRISE_SORT,
-  ROSTER_ENTERPRISE_SORTS,
-} from './ledger-contract'
+import { isPageCapable } from './evidence-page'
+import { DEFAULT_ROSTER_ENTERPRISE_SORT, ROSTER_ENTERPRISE_SORTS } from './ledger-contract'
 import type { RosterEnterpriseSort } from './ledger-contract'
+import {
+  judgeFirstRecognition,
+  matchesRecognitionQuery,
+  type FirstRecognitionEvidence,
+  type RecognitionEntry,
+  type RecognitionEvent,
+} from './first-recognition'
 import { computeTitleLifecycle, type LifecycleEvent, type TitleLifecycle } from './lifecycle'
 
-export {
-  DEFAULT_ROSTER_ENTERPRISE_SORT,
-  ROSTER_ENTERPRISE_SORTS,
-} from './ledger-contract'
-export type { RosterEnterpriseSort } from './ledger-contract'
-
 type Db = BetterSQLite3Database<typeof schema>
+
+export { DEFAULT_ROSTER_ENTERPRISE_SORT, ROSTER_ENTERPRISE_SORTS } from './ledger-contract'
+export type { RosterEnterpriseSort } from './ledger-contract'
+export const DIFF_STATUS_NONE = 'none'
 
 /** 当前总表成员状态(派生、不落列)。 */
 export const ROSTER_STATES = ['current', 'removed_platform_only'] as const
@@ -62,17 +65,6 @@ interface Snapshot {
   relations: (typeof schema.platformRelation)['$inferSelect'][]
   queries: (typeof schema.platformQuery)['$inferSelect'][]
   differences: (typeof schema.differenceReason)['$inferSelect'][]
-  /**
-   * 按外键分好桶的索引 —— **这一层是性能承重结构,不是便利**。
-   *
-   * 总表要给**每**一家企业建一次画像(7,298 家),而画像里的「这家企业的记录」与
-   * 「这条记录的事件」原先都是 `snap.records.filter(...)` / `snap.events.filter(...)`:
-   * 每次过滤扫全表,于是总表接口是 **O(企业数 × 事件数) ≈ 7,298 × 21,700 ≈ 1.6 亿次**比较,
-   * 实测 **~2.4–3.5 秒**(其他读接口 0.2 秒级)。这正是「换筛选条件要等好几秒」的根因。
-   *
-   * 索引一次建好(遍历两遍、O(n)),之后每家都是 Map 命中。**顺序语义与逐行 filter 逐字相同**:
-   * 桶是按 `snap.*` 的原顺序 push 出来的,所以「同一记录下的多条事件」的相对顺序不变。
-   */
   recordsByEnterprise: Map<number, (typeof schema.record)['$inferSelect'][]>
   eventsByRecord: Map<number, (typeof schema.recordEvent)['$inferSelect'][]>
 }
@@ -80,7 +72,6 @@ interface Snapshot {
 function readSnapshot(db: Db): Snapshot {
   const records = db.select().from(schema.record).all()
   const events = db.select().from(schema.recordEvent).all()
-
   const recordsByEnterprise = new Map<number, typeof records>()
   for (const record of records) {
     const bucket = recordsByEnterprise.get(record.enterpriseId)
@@ -93,12 +84,15 @@ function readSnapshot(db: Db): Snapshot {
     if (bucket) bucket.push(event)
     else eventsByRecord.set(event.recordId, [event])
   }
-
   return {
     enterprises: db.select().from(schema.enterprise).all(),
     records,
     events,
-    evidence: db.select().from(schema.recordEvidence).all(),
+    // Legacy rows may contain guessed Word/Excel page numbers from before the API guard existed.
+    // Normalize only this read snapshot; never rewrite or migrate the stored evidence.
+    evidence: db.select().from(schema.recordEvidence).all().map((row) =>
+      isPageCapable(row.sourceFile) ? row : { ...row, page: null },
+    ),
     aliases: db.select().from(schema.enterpriseAlias).all(),
     exportRows: db.select().from(schema.platformExportRow).all(),
     exportBatches: db.select().from(schema.platformExportBatch).all(),
@@ -114,11 +108,21 @@ function readSnapshot(db: Db): Snapshot {
 // §7.1 企业总表
 // ---------------------------------------------------------------------------
 
-/** `firstRecognition` 的一项:该称号的首次认定年份。 */
-export interface FirstRecognition {
-  titleCode: string
-  year: number
-  /** 该称号的首次认定事件缺 `decided_year`(锚点/首次认定退回 `year`)⇒ **待核**。 */
+/**
+ * `firstRecognition` 的一项:该称号的首次认定(契约 §7.1 + RL-08 增量)。
+ *
+ * ── 两个「待」不是一回事,别并成一个 ─────────────────────────────────────
+ *  - `year` / `evidence` / `status` 是**首次认定本身**的口径:年份取不取得到、依据回不回得了出处。
+ *    仅数据库里现存 award 缺有效年份或首次出处时标 `status='pending'` + `pendingReason`。
+ *  - `needsReview` 是**复核锚点**的口径(契约 §6.4):锚点算的时候用到了缺 `decided_year`
+ *    的事件。它与首次认定的年份无关,原样保留(RL-04 的 §7.1 形状不变)。
+ *
+ * 合成一个标志就会分不清「这个年份存疑」还是「下次到期存疑」—— 而这两件事要办的手续不同。
+ */
+export interface FirstRecognition extends Omit<RecognitionEntry, 'firstYear'> {
+  /** §7.1 冻结形状里的字段名(值 = `RecognitionEntry.firstYear`)。 */
+  year: number | null
+  /** 该称号的**锚点**计算用到了缺 `decided_year` 的事件 ⇒ 待核(不变)。 */
   needsReview: boolean
 }
 
@@ -146,36 +150,11 @@ export interface RosterEnterpriseRow {
   difference: RosterEnterpriseDifference
 }
 
-/**
- * 一家企业的差异摘要(RL-20)。
- *
- * ── 口径 = `differenceUniverse`(与 `/api/roster/differences` 的 `total` 逐字相同)──
- * 不筛时实测 **821** 条,状态分布 **676 已确认原因 / 143 未查询 / 2 无记录**,
- * 方向分布 **762 应纳未纳 / 59 平台多出** —— 与 `_shared-brief.md` 的真实计数逐项吻合。
- * 这里**刻意不**只取 `inCurrentDifference`(那是 712):那 109 条的差额正是「两侧后来对齐了、
- * 解释留档」的坐标,而它们**有**理由记录、也**有**状态,`RosterEnterprisePanel` 一直在页面上
- * 明示着(「当前已不是差异(解释留档)」)。页脚、筛选项与列三处读同一个数,才不会各说各话。
- *
- * ── 为什么要「最要紧的一条」而不是把全部摆出来 ──────────────────────────
- * 表里一行只能写一个状态,而一家企业**可能有多条**差异、且状态各不相同
- * (实测:开诚 = `specialized_sme` 的「平台多出 · 已确认原因」+ 同称号「应纳未纳 · 未查询」;
- * 上航测绘同形)。所以必须定死「取哪一条」,否则同一家企业会在不同实现里显示成不同状态
- * —— 那正是上一版设计稿踩过的坑(同一位置两个说法)。
- *
- * 判据:**按状态机的展示顺序取最靠后的那一条**(`DIFFERENCE_STATUS_ORDER`:
- * 未查询 → 查询失败 → 无记录 → 待核实 → 已确认无差异 → 已确认原因)。
- * 于是「已确认原因」压过「未查询」—— 已经查明的原因比「还没查」更该让人看到,
- * 与设计稿逐行对得上(开诚显示「已确认原因 · 平台未更新」,福至显示「无差异」)。
- * 同状态多条时按称号等级、再按方向定序,保证**同一份数据每次取到同一条**。
- */
+/** 一家企业的差异摘要，沿用 `/api/roster/differences` 的展示态与当前差异口径。 */
 export interface RosterEnterpriseDifference {
-  /** 该企业的差异坐标数(企业 × 称号 × 方向);0 = 该企业一条差异记录都没有。 */
   count: number
-  /** 「最要紧」那一条的展示态;**`count === 0` 时为 `null`**(页面显示「无差异」)。 */
   status: string | null
-  /** 与 `status` 配对的原因(`confirmed_reason` 才有;其余为 `null`)。 */
   reasonCode: string | null
-  /** 这些坐标里有没有**当前确实还是差异**的那些(`false` = 全部只是留档解释)。 */
   anyCurrent: boolean
 }
 
@@ -200,33 +179,24 @@ export interface RosterEnterpriseFilter {
   /** 事件年份(多值,命中任一):该企业**存在**一条该年份的事件。 */
   year?: number[]
   /**
-   * 差异状态(多值,命中任一)—— RL-20 增量。取值 = 六个差异状态、可见差异原因及 `none`。原因按当前展示摘要匹配。
+   * **首次认定年份**(多值,命中任一;RL-08 增量)。
    *
-   * `none` 是**伪状态**,不是 `difference_reason.status` 的取值:它表示「该企业
-   * **一条差异记录都没有**」(设计稿表里的「无差异」那一档)。用户要找干净的企业时,
-   * 这是唯一能表达它的条件 —— 六个状态里没有一个能筛出「没有差异」。
+   * 与上面的 `year` **不是一回事**,所以名字不能混:`year` 筛的是**事件**年份(任何类型的事件),
+   * 这里筛的是该称号**首次认定**的年份。两者在同一条 URL 上必须能分开说。
+   *
+   * 判据与 `title` / `firstStatus` **落在同一个称号上**(见 `matchesFirstRecognition`):
+   * 「创新型 2022 首次认定」不会命中一个创新型 2021、专精特新 2022 的企业。
    */
+  firstYear?: number[]
+  /** **首次认定的状态**(多值:`confirmed` / `pending`;RL-08 增量)。同上,与 `title` 同称号。 */
+  firstStatus?: string[]
+  /** 差异状态或可见差异原因(多值);`none` 表示没有差异记录。 */
   diffStatus?: string[]
-  /** 排序(RL-20)。见 `RosterEnterpriseSort`。 */
+  /** 总表排序(RL-20)。 */
   sort?: RosterEnterpriseSort
   page?: number
   pageSize?: number
 }
-
-/**
- * 总表排序(RL-20)。取值即页面「排序」下拉的三个选项。
- *
- * - `recognition`(**默认**,设计卡上的「认定年」):按该企业**最早的**首次认定年
- *   **新→旧**;没有首次认定的企业排在最后。近期认定的先进屏 —— 名录管理员多数时候
- *   是来跟当年度的批次。
- * - `name`:企业名称(本地化排序)。
- * - `title`:称号等级(小巨人 → 专精特新 → 创新型),即 RL-17 之前的默认主序。
- *
- * 三种排序**都不省略** tie-break(名称 → id),否则同一份数据在两次请求里可能给出
- * 不同的页内顺序,分页时会出现「某一行两侧都出现 / 一侧都没有」。
- */
-/** 「无差异」这一档在 `diffStatus` 里的伪状态取值。 */
-export const DIFF_STATUS_NONE = 'none'
 
 export interface RosterCounts {
   /** **企业数**(与筛选同口径、不受分页影响)。 */
@@ -236,11 +206,15 @@ export interface RosterCounts {
   /** 每个称号下的**企业数**(多称号企业在各桶里各计一次)。 */
   titles: Record<string, number>
   /**
-   * 本筛选下这些企业合计有多少条**差异记录**(企业 × 称号 × 方向)—— RL-20。
+   * **首次认定的「企业 × 称号」数**(RL-08 增量):本次筛选下命中的企业里,
+   * 有 `award` 的(企业 × 称号)一共几个 —— 既含 `confirmed` 也含 `pending`。
    *
-   * 口径与 `/api/roster/differences` 的 `total` 同一处:`differenceUniverse` 的行数。
-   * 不筛时实测 **821**,与页面脚注、`_shared-brief.md` 的「合计 821」逐字相同。
+   * 为什么要单列:`titlePairs` 是「符合条件企业的**全部**称号」,在给了 `firstYear` /
+   * `firstStatus` 之后就不再等于「命中的首次认定数」。票面要求「统计清楚标示企业数或
+   * 企业×称号数」,给首次认定一个自己的单位,才不至于让用户把两个数当成一个。
    */
+  recognitionPairs: number
+  /** 本筛选企业中的差异坐标总数(企业 × 称号 × 方向)。 */
   differences: number
 }
 
@@ -286,6 +260,12 @@ interface Profile {
   /** 每称号的生命周期(跨该称号下**全部来源**的记录)。 */
   lifecycleByTitle: Map<string, TitleLifecycle>
   titles: string[]
+  /**
+   * 每个有 `award` 的称号一条首次认定(RL-08),按称号等级排序。
+   * **只算一次**:§7.1 的行、§7.2 的详情、§7.5 的接口都从这里取,不各算一遍。
+   */
+  recognitions: RecognitionEntry[]
+  recognitionsByTitle: Map<string, RecognitionEntry>
   summary: { firstRecognition: FirstRecognition[]; nextReviewYear: number | null; anchorNeedsReview: boolean }
 }
 
@@ -319,7 +299,33 @@ function deriveRosterState(profile: Profile, index: SnapshotIndex): RosterState 
   return inLatest ? 'current' : 'removed_platform_only'
 }
 
-function buildProfile(enterprise: Snapshot['enterprises'][number], snap: Snapshot): Profile {
+/**
+ * 事件 → 出处的索引(全快照建**一次**)。
+ *
+ * 为什么必须提到外面:它是按 `record_event_id` 索引的,与「哪家企业」无关。
+ * 放在 `buildProfile` 里逐企业重建,就是 7352 家 × 21189 条出处 —— 这是**读取路径**,
+ * 一次页面请求不该做两亿次操作。
+ */
+function indexEvidence(snap: Snapshot): Map<number, FirstRecognitionEvidence[]> {
+  const byEvent = new Map<number, FirstRecognitionEvidence[]>()
+  for (const v of snap.evidence) {
+    const list = byEvent.get(v.recordEventId) ?? []
+    list.push({
+      sourceFile: v.sourceFile,
+      attachment: v.attachment,
+      listNo: v.listNo,
+      page: v.page,
+    })
+    byEvent.set(v.recordEventId, list)
+  }
+  return byEvent
+}
+
+function buildProfile(
+  enterprise: Snapshot['enterprises'][number],
+  snap: Snapshot,
+  evidenceByEvent: ReadonlyMap<number, readonly FirstRecognitionEvidence[]>,
+): Profile {
   const records = snap.recordsByEnterprise.get(enterprise.id) ?? []
   const eventsByRecord = new Map<number, Snapshot['events']>()
   for (const record of records) {
@@ -348,14 +354,48 @@ function buildProfile(enterprise: Snapshot['enterprises'][number], snap: Snapsho
   }
 
   const titles = [...eventsByTitle.keys()].sort((a, b) => titleRank(a) - titleRank(b))
-  const firstRecognition = titles
-    .map((titleCode) => {
-      const lc = lifecycleByTitle.get(titleCode)!
-      return lc.firstRecognitionYear == null
-        ? null
-        : { titleCode, year: lc.firstRecognitionYear, needsReview: lc.needsReview }
+
+  // ── 首次认定(RL-08)────────────────────────────────────────────────────
+  // 按 (企业 × 称号) 各判一次;「哪一年」由 `computeTitleLifecycle` 算(唯一一处),
+  // 这里只把事件与出处备齐交给判定 —— 判定与展示都**不另算一遍年份**。
+  const recognitions: RecognitionEntry[] = []
+  for (const titleCode of titles) {
+    const events: RecognitionEvent[] = []
+    for (const record of records) {
+      if (record.titleCode !== titleCode) continue
+      for (const e of eventsByRecord.get(record.id) ?? []) {
+        events.push({
+          id: e.id,
+          eventType: e.eventType,
+          year: e.year,
+          decidedYear: e.decidedYear,
+          reviewOutcome: e.reviewOutcome,
+          source: record.source,
+        })
+      }
+    }
+    const entry = judgeFirstRecognition({
+      titleCode,
+      lifecycle: lifecycleByTitle.get(titleCode)!,
+      events,
+      evidenceByEvent,
     })
-    .filter((x): x is FirstRecognition => x != null)
+    if (entry) recognitions.push(entry)
+  }
+
+  // §7.1 的行形状:判定结果 + §7.1 的字段名(`year`)+ **锚点口径**的待核(原样保留)。
+  const firstRecognition: FirstRecognition[] = recognitions.map((entry) => ({
+    titleCode: entry.titleCode,
+    year: entry.firstYear,
+    firstEventId: entry.firstEventId,
+    source: entry.source,
+    status: entry.status,
+    pendingReason: entry.pendingReason,
+    evidence: entry.evidence,
+    undatedAwardIds: entry.undatedAwardIds,
+    needsReview: lifecycleByTitle.get(entry.titleCode)!.needsReview,
+  }))
+
   const dues = titles
     .map((titleCode) => lifecycleByTitle.get(titleCode)!.dueYear)
     .filter((y): y is number => y != null)
@@ -368,6 +408,8 @@ function buildProfile(enterprise: Snapshot['enterprises'][number], snap: Snapsho
     eventsByRecord,
     lifecycleByTitle,
     titles,
+    recognitions,
+    recognitionsByTitle: new Map(recognitions.map((e) => [e.titleCode, e])),
     summary: {
       firstRecognition,
       nextReviewYear: dues.length ? Math.min(...dues) : null,
@@ -376,8 +418,13 @@ function buildProfile(enterprise: Snapshot['enterprises'][number], snap: Snapsho
   }
 }
 
-/** 属地:企业自身属地优先,为空时退回它**最早那条带属地的记录**。 */
-function effectiveDistrict(profile: Profile): string | null {
+/**
+ * 属地:企业自身属地优先,为空时退回它**最早那条带属地的记录**。
+ *
+ * 导出给 `lib/roster/recognitions.ts`(§7.5 的清单也带属地):「属地」只该有这一个判法 ——
+ * 两处各写一遍,同一家企业在总表与首次认定清单上会显示成两个区县。
+ */
+export function effectiveDistrict(profile: Profile): string | null {
   if (profile.enterprise.district) return profile.enterprise.district
   const withDistrict = profile.records.filter((r) => r.district).sort((a, b) => a.id - b.id)
   return withDistrict[0]?.district ?? null
@@ -389,6 +436,18 @@ function toRow(
   rosterState: RosterState,
   difference: RosterEnterpriseDifference,
 ): RosterEnterpriseRow {
+  const awards = [...new Map(profile.records.flatMap((record) =>
+    (profile.eventsByRecord.get(record.id) ?? [])
+      .filter((event) => event.eventType === 'award')
+      .map((event) => {
+        const item = { titleCode: record.titleCode, year: event.year, batchSeq: event.batchSeq }
+        return [`${item.titleCode}:${item.year}:${item.batchSeq}`, item] as const
+      }),
+  )).values()].sort((a, b) =>
+    titleRank(a.titleCode) - titleRank(b.titleCode) ||
+    (a.year ?? Infinity) - (b.year ?? Infinity) ||
+    (a.batchSeq ?? 0) - (b.batchSeq ?? 0),
+  )
   return {
     enterpriseId: profile.enterprise.id,
     name: profile.enterprise.name,
@@ -400,37 +459,19 @@ function toRow(
     titles: profile.titles,
     aliasNames,
     firstRecognition: profile.summary.firstRecognition,
-    awards: [...new Map(profile.records.flatMap((record) =>
-      (profile.eventsByRecord.get(record.id) ?? [])
-        .filter((event) => event.eventType === 'award')
-        .map((event) => {
-          const item = { titleCode: record.titleCode, year: event.year, batchSeq: event.batchSeq }
-          return [`${item.titleCode}:${item.year}:${item.batchSeq}`, item] as const
-        }),
-    )).values()].sort((a, b) => titleRank(a.titleCode) - titleRank(b.titleCode) || (a.year ?? Infinity) - (b.year ?? Infinity) || (a.batchSeq ?? 0) - (b.batchSeq ?? 0)),
+    awards,
     nextReviewYear: profile.summary.nextReviewYear,
     anchorNeedsReview: profile.summary.anchorNeedsReview,
     difference,
   }
 }
 
-/** 状态机的展示顺序给出的优先级;不认识的取值排最后(不吞、也不静默当成已知态)。 */
+/** 差异状态顺序越靠后越优先;未知值稳定排在已知值之后。 */
 function statusRank(code: string): number {
   const i = DIFFERENCE_STATUS_ORDER.indexOf(code)
   return i === -1 ? DIFFERENCE_STATUS_ORDER.length : i
 }
 
-/**
- * 两条当前差异里,**哪一条更该显示在这一行上**:负数 = `a` 胜。
- *
- * 三级判据,缺一不可:
- *  1. **状态机顺序靠后的胜**(`confirmed_reason` > `not_queried`)—— 主判据;
- *  2. 同状态按**称号等级**(小巨人 > 专精特新 > 创新型),让同一家企业的摘要稳定落在高等级称号上;
- *  3. 再同则按方向代号字典序。
- *
- * 后两级不是「锦上添花」:没有它们,同状态多条时取到哪一条取决于 Map 的插入顺序,
- * 也就是取决于上一层的 SQL 返回顺序 —— 那是不可依赖的(换一次查询计划就变)。
- */
 function compareDifferencePriority(a: RosterDifferenceRow, b: RosterDifferenceRow): number {
   return (
     statusRank(b.status) - statusRank(a.status) ||
@@ -439,38 +480,33 @@ function compareDifferencePriority(a: RosterDifferenceRow, b: RosterDifferenceRo
   )
 }
 
-/**
- * 每家企业一条**差异摘要**(RL-20)。口径见 `RosterEnterpriseDifference` 的注释。
- */
 function enterpriseDifferenceSummaries(rows: RosterDifferenceRow[]): Map<number, RosterEnterpriseDifference> {
-  const out = new Map<number, RosterEnterpriseDifference>()
-  /** 每家在选「最要紧」时用到的那条,只在本次调用里有意义 —— 不进入返回行。 */
-  const best = new Map<number, RosterDifferenceRow>()
+  const summaries = new Map<number, RosterEnterpriseDifference>()
+  const bestRows = new Map<number, RosterDifferenceRow>()
   for (const row of rows) {
-    const kept = out.get(row.enterpriseId)
-    if (!kept) {
-      out.set(row.enterpriseId, {
+    const summary = summaries.get(row.enterpriseId)
+    if (!summary) {
+      summaries.set(row.enterpriseId, {
         count: 1,
         status: row.status,
         reasonCode: row.reasonCode,
         anyCurrent: row.inCurrentDifference,
       })
-      best.set(row.enterpriseId, row)
+      bestRows.set(row.enterpriseId, row)
       continue
     }
-    kept.count += 1
-    kept.anyCurrent ||= row.inCurrentDifference
-    const incumbent = best.get(row.enterpriseId)!
-    if (compareDifferencePriority(row, incumbent) < 0) {
-      kept.status = row.status
-      kept.reasonCode = row.reasonCode
-      best.set(row.enterpriseId, row)
+    summary.count += 1
+    summary.anyCurrent ||= row.inCurrentDifference
+    const best = bestRows.get(row.enterpriseId)!
+    if (compareDifferencePriority(row, best) < 0) {
+      summary.status = row.status
+      summary.reasonCode = row.reasonCode
+      bestRows.set(row.enterpriseId, row)
     }
   }
-  return out
+  return summaries
 }
 
-/** 一条差异记录都没有的企业 —— 与 `enterpriseDifferenceSummaries` 的缺省项**同一形状**。 */
 const NO_DIFFERENCE: RosterEnterpriseDifference = {
   count: 0,
   status: null,
@@ -584,13 +620,114 @@ function matchesRecordFilters(profile: Profile, filter: RosterEnterpriseFilter):
   })
 }
 
+/**
+ * 读一次快照、把全部企业建成 profile —— **三个读模型共用这一处组织方式**。
+ *
+ * 为什么要抽出来:§7.1(企业总表)、§7.2(企业详情)、§7.5(首次认定)看的都是同一种
+ * 「企业画像」(称号 / 每称号的生命周期 / 每称号的首次认定)。各写一遍的结果,是同一家
+ * 企业的首次认定在总表和首次认定接口上给出不同的年份 —— 而票面恰恰要求两处一致。
+ * 组织一次,取三份。
+ */
+export function readRosterProfiles(db: Db): {
+  profiles: Profile[]
+  snap: Snapshot
+  index: SnapshotIndex
+  /** 别名:只带 `confirmed`(契约 §1.2 —— `pending` 不参与搜索)。 */
+  confirmedAliases: Map<number, string[]>
+} {
+  const ctx = readRosterContext(db)
+  return {
+    profiles: ctx.snap.enterprises.map((e) => ctx.profileOf(e)),
+    snap: ctx.snap,
+    index: ctx.index,
+    confirmedAliases: ctx.confirmedAliases,
+  }
+}
+
+/** 读模型的三样公共前置:**快照 / 快照索引 / 已确认别名**,外加一个**按需**建画像的入口。 */
+interface RosterContext {
+  snap: Snapshot
+  index: SnapshotIndex
+  confirmedAliases: Map<number, string[]>
+  /** 取某家企业的画像(同一次请求里重复问只建一次)。 */
+  profileOf: (enterprise: Snapshot['enterprises'][number]) => Profile
+}
+
+/**
+ * 快照 + 索引 + 按需建画像。总表 / 首次认定清单要**全部**企业,**企业详情只要一家** ——
+ * 详情为了开一行去把 7352 家全建一遍,一次请求就是几千倍的无用功
+ * (实测:整表建画像 ≈ 3s,只建一家 ≈ 0.2s)。
+ * 两条路共用同一份索引与同一个 `buildProfile`,只是**建几家的差别**。
+ */
+function readRosterContext(db: Db): RosterContext {
+  const snap = readSnapshot(db)
+  const evidence = indexEvidence(snap)
+  const confirmedAliases = new Map<number, string[]>()
+  for (const alias of snap.aliases) {
+    if (alias.verificationStatus !== 'confirmed') continue
+    const list = confirmedAliases.get(alias.enterpriseId) ?? []
+    if (!list.includes(alias.name)) list.push(alias.name)
+    confirmedAliases.set(alias.enterpriseId, list)
+  }
+  const built = new Map<number, Profile>()
+  return {
+    snap,
+    index: indexSnapshots(snap),
+    confirmedAliases,
+    profileOf: (enterprise) => {
+      const cached = built.get(enterprise.id)
+      if (cached) return cached
+      const profile = buildProfile(enterprise, snap, evidence)
+      built.set(enterprise.id, profile)
+      return profile
+    },
+  }
+}
+
+/**
+ * 该企业上**符合本次筛选**的那些(企业 × 称号)首次认定(RL-08)。
+ *
+ * ── 为什么非要「同一个称号」──────────────────────────────────────────────
+ * 首次认定本来就是**企业 × 称号**的量。若把 `title` 与 `firstYear` 各判各的,
+ * `title=innovative_sme&firstYear=2022` 会命中一个「创新型 2021 认定、专精特新 2022 认定」
+ * 的企业 —— 用户要的是「**创新的**首次认定在 2022」,拿到手的却是另一回事。
+ * 这与 RL-17 那条「来源与事件必须落在同一条记录上」是同一类错误,判法也照抄:
+ * **存在一个称号,几个判据都落在它身上**。
+ *
+ * 判据没给时不筛(返回该企业全部首次认定)⇒ 这一个函数同时给出两个答案:
+ *  - **筛选** —— 结果非空即命中(见 `matchesFirstRecognition`);
+ *  - **计数** —— `counts.recognitionPairs` 就是各企业这个数组的长度之和。
+ *    两者由同一段代码算出,不会出现「筛出来 3 家、计数说 5 条」这种对不上的局面。
+ *
+ * 年份给不出(`firstYear == null`)时**命中不了任何年份**:留空是「未知」,
+ * 不该被当成某个具体年份的匹配。
+ */
+function recognitionEntriesMatching(
+  profile: Profile,
+  filter: RosterEnterpriseFilter,
+): RecognitionEntry[] {
+  // 判据本体在 `first-recognition.ts`(与 §7.5 的清单**同一处**);这里只负责把企业侧的
+  // 参数名(`firstYear` / `firstStatus`)转成判据的形状,一个字段对一处,不做别的判断。
+  const query = { title: filter.title, firstYear: filter.firstYear, firstStatus: filter.firstStatus }
+  return profile.recognitions.filter((entry) => matchesRecognitionQuery(entry, query))
+}
+
+/**
+ * 首次认定的增量判据:该企业**有没有**符合上述判据的首次认定。
+ *
+ * 没给 `firstYear` / `firstStatus` 时返回 `true` —— 称号判据仍由调用方独立走一遍,
+ * 语义一字不变(既有的 `?title=…` URL 行为不受影响)。
+ */
+function matchesFirstRecognition(profile: Profile, filter: RosterEnterpriseFilter): boolean {
+  if (!filter.firstYear?.length && !filter.firstStatus?.length) return true
+  return recognitionEntriesMatching(profile, filter).length > 0
+}
+
 function selectRosterEnterprises(
   db: Db,
   filter: RosterEnterpriseFilter,
 ): { rows: RosterEnterpriseRow[]; counts: RosterCounts } {
-  const snap = readSnapshot(db)
-  const profiles = snap.enterprises.map((enterprise) => buildProfile(enterprise, snap))
-  const index = indexSnapshots(snap)
+  const { profiles, index, confirmedAliases, snap } = readRosterProfiles(db)
   const differenceRows = differenceUniverse(db, snap)
   const differenceStatusesByEnterprise = new Map<number, Set<string>>()
   for (const row of differenceRows) {
@@ -599,15 +736,6 @@ function selectRosterEnterprises(
     differenceStatusesByEnterprise.set(row.enterpriseId, statuses)
   }
   const differenceSummaries = enterpriseDifferenceSummaries(differenceRows)
-
-  // 别名:只带 `confirmed`(契约 §1.2 —— `pending` 不参与搜索)。
-  const confirmedAliases = new Map<number, string[]>()
-  for (const alias of snap.aliases) {
-    if (alias.verificationStatus !== 'confirmed') continue
-    const list = confirmedAliases.get(alias.enterpriseId) ?? []
-    if (!list.includes(alias.name)) list.push(alias.name)
-    confirmedAliases.set(alias.enterpriseId, list)
-  }
 
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
   /**
@@ -625,20 +753,22 @@ function selectRosterEnterprises(
     difference: differenceSummaries.get(profile.enterprise.id) ?? NO_DIFFERENCE,
     differenceStatuses: differenceStatusesByEnterprise.get(profile.enterprise.id) ?? new Set<string>(),
   }))
-  const rows = candidates
+  const matched = candidates
     .filter(({ profile, aliasNames, state, difference, differenceStatuses }) => {
       if (filter.rosterState && state !== filter.rosterState) return false
       if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return false
       if (filter.district && effectiveDistrict(profile) !== filter.district) return false
       if (diffStatuses) {
-        // `none` 是伪状态(**没有差异**),不是 `difference_reason.status` 的取值。
-        // 状态按企业的全部差异行判断；原因匹配当前可见摘要，确保选“其他”时该列也显示“其他”。
         const hit =
           (diffStatuses.includes(DIFF_STATUS_NONE) && differenceStatuses.size === 0) ||
-          diffStatuses.some((value) => value !== DIFF_STATUS_NONE && (differenceStatuses.has(value) || difference.reasonCode === value))
+          diffStatuses.some((value) =>
+            value !== DIFF_STATUS_NONE &&
+            (differenceStatuses.has(value) || difference.reasonCode === value),
+          )
         if (!hit) return false
       }
       if (!matchesRecordFilters(profile, filter)) return false
+      if (!matchesFirstRecognition(profile, filter)) return false
       if (needle || usccNeedle) {
         const hit =
           (needle != null && normalizeName(profile.enterprise.name).includes(needle)) ||
@@ -649,8 +779,12 @@ function selectRosterEnterprises(
       }
       return true
     })
-    .map(({ profile, aliasNames, state, difference }) => toRow(profile, aliasNames, state, difference))
-    .sort(enterpriseComparator(filter.sort ?? DEFAULT_ROSTER_ENTERPRISE_SORT))
+    // 命中的首次认定在**同一处**算出来:计数与筛选判据由此不可能各说各的。
+    .map(({ profile, aliasNames, state, difference }) => ({
+      row: toRow(profile, aliasNames, state, difference),
+      recognitionPairs: recognitionEntriesMatching(profile, filter).length,
+    }))
+  const rows = matched.map((m) => m.row).sort(enterpriseComparator(filter.sort ?? DEFAULT_ROSTER_ENTERPRISE_SORT))
 
   const titles: Record<string, number> = Object.fromEntries(TITLE_ORDER.map((code) => [code, 0]))
   for (const row of rows) for (const code of row.titles) titles[code] = (titles[code] ?? 0) + 1
@@ -658,40 +792,31 @@ function selectRosterEnterprises(
     total: rows.length,
     titlePairs: Object.values(titles).reduce((a, b) => a + b, 0),
     titles,
+    // 「首次认定」自己的单位 —— 与 `titlePairs` 不同:后者数的是**全部**称号,
+    // 给了首次认定判据之后两者不再相等,不单列就会让人把前者当成命中数。
+    recognitionPairs: matched.reduce((n, m) => n + m.recognitionPairs, 0),
     differences: rows.reduce((sum, row) => sum + row.difference.count, 0),
   }
 
   return { rows, counts }
 }
 
-/** 该企业**最早**的首次认定年;一项都没有时 `null`(排序里排最后)。 */
 function earliestRecognition(row: RosterEnterpriseRow): number | null {
-  const years = row.firstRecognition.map((f) => f.year)
+  const years = row.firstRecognition.map((first) => first.year).filter((year): year is number => year != null)
   return years.length ? Math.min(...years) : null
 }
 
-/**
- * 总表排序(RL-20)。**每个分支都带同一组收尾 tie-break**(名称 → id):
- * 少了它,同名同等级的行在两次请求间可能换序,分页时会出现两边都出现 / 两边都没有。
- */
-function enterpriseComparator(
-  sort: RosterEnterpriseSort,
-): (a: RosterEnterpriseRow, b: RosterEnterpriseRow) => number {
+function enterpriseComparator(sort: RosterEnterpriseSort): (a: RosterEnterpriseRow, b: RosterEnterpriseRow) => number {
   const byName = (a: RosterEnterpriseRow, b: RosterEnterpriseRow) =>
     a.name.localeCompare(b.name) || a.enterpriseId - b.enterpriseId
   if (sort === 'name') return byName
   if (sort === 'title') {
-    return (a, b) =>
-      titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') || byName(a, b)
+    return (a, b) => titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') || byName(a, b)
   }
-  // `recognition`:新 → 旧;没有首次认定年的排最后。
   return (a, b) => {
     const ya = earliestRecognition(a)
     const yb = earliestRecognition(b)
-    if (ya == null || yb == null) {
-      if (ya !== yb) return ya == null ? 1 : -1
-      return byName(a, b)
-    }
+    if (ya == null || yb == null) return ya === yb ? byName(a, b) : ya == null ? 1 : -1
     return yb - ya || byName(a, b)
   }
 }
@@ -817,6 +942,12 @@ export interface RosterEnterpriseDetail {
   records: RosterRecordRow[]
   events: RosterEventRow[]
   evidence: RosterEvidenceRow[]
+  /**
+   * 每个有认定的称号一条**首次认定**(RL-08 增量,与 §7.5 的行、§7.1 的
+   * `firstRecognition` **同一处计算**)。展开面板据此标「首次认定」并把出处摆在旁边,
+   * 不必自己再判一次「哪条算首次」。
+   */
+  recognitions: RecognitionEntry[]
   differences: RosterDifferenceRow[]
   platform: {
     queries: RosterPlatformQueryRow[]
@@ -942,25 +1073,23 @@ function differenceUniverse(db: Db, snap: Snapshot): RosterDifferenceRow[] {
 }
 
 export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
-  const snap = readSnapshot(db)
+  // 只建**这一家**的画像:详情页开一行,不该把整库 7352 家全算一遍。
+  const { snap, index, profileOf } = readRosterContext(db)
   const enterprise = snap.enterprises.find((e) => e.id === id)
   if (!enterprise) return null
 
-  const profile = buildProfile(enterprise, snap)
+  const profile = profileOf(enterprise)
   const aliasNames = snap.aliases
     .filter((a) => a.enterpriseId === id && a.verificationStatus === 'confirmed')
     .map((a) => a.name)
     .filter((name, index, list) => list.indexOf(name) === index)
     .sort()
 
-  // 详情页的 `enterprise.difference` 与总表**同一处算**(`enterpriseDifferenceSummaries`),
-  // 于是「表里那一行写的状态」与「点进去看到的状态」不会各说各话。
-  const difference = enterpriseDifferenceSummaries(differenceUniverse(db, snap)).get(id) ?? NO_DIFFERENCE
-  const row = toRow(profile, aliasNames, deriveRosterState(profile, indexSnapshots(snap)), difference)
+  const differenceRows = differenceUniverse(db, snap)
+  const difference = enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE
+  const row = toRow(profile, aliasNames, deriveRosterState(profile, index), difference)
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
   const eventIds = new Set(events.map((e) => e.id))
-
-  const differenceRows = differenceUniverse(db, snap)
 
   const relations = snap.relations
     .filter((r) => r.enterpriseId === id)
@@ -1032,6 +1161,7 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
         listNo: v.listNo,
         page: v.page,
       })),
+    recognitions: profile.recognitions,
     differences: differenceRows
       .filter((r) => r.enterpriseId === id)
       .sort((a, b) => titleRank(a.titleCode) - titleRank(b.titleCode) || a.direction.localeCompare(b.direction)),

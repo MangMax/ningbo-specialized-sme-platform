@@ -399,6 +399,69 @@ describe('可续跑:重跑复用新鲜证据,不重复打平台、不重复堆�
     }).toEqual(before)
   })
 
+  it('失败后的成功重试:最新失败压过更旧成功结论,保留两次审计记录', async () => {
+    clearEvidence()
+    const failedReplay = platformReplay(() => ({ status: 400, text: 'temporary platform failure' }))
+    const failed = await runPlatformReconcile({
+      ...baseOptions(),
+      fetchImpl: failedReplay.fetchImpl,
+      titles: ['specialized_sme'],
+      usccs: [USCC],
+    })
+
+    expect(failedReplay.calls).toHaveLength(4)
+    expect(failed.counts.queryFailed).toBe(1)
+    expect(differences()).toHaveLength(1)
+    expect(differences()[0]!.status).toBe('query_failed')
+
+    // 模拟同一目标已有更早的成功解释；较新的 query_failed 必须优先于它。
+    db.insert(schema.differenceReason)
+      .values({
+        enterpriseId: canonical,
+        titleCode: 'specialized_sme',
+        direction: 'extra_in_miit',
+        status: 'confirmed_reason',
+        reasonCode: 'renamed',
+        reasonNote: 'older successful explanation',
+        measureCode: 'update_current_name',
+        measureNote: 'older successful explanation',
+        verificationStatus: 'confirmed',
+        recordedAt: '2026-10-16T01:59:00.000Z',
+      })
+      .run()
+
+    const successReplay = platformReplay(defaultReply)
+    const retried = await runPlatformReconcile({
+      ...baseOptions(),
+      fetchImpl: successReplay.fetchImpl,
+      titles: ['specialized_sme'],
+      usccs: [USCC],
+      now: () => new Date('2026-10-16T02:01:00.000Z'),
+    })
+
+    expect(successReplay.calls).toHaveLength(4)
+    expect(retried.queries.network).toBe(4)
+    expect(retried.counts.reusedFresh).toBe(0)
+    expect(retried.counts.queryFailed).toBe(0)
+    expect(retried.counts.confirmed).toBe(1)
+    expect(retried.write?.status).toBe('committed')
+
+    const history = differences().sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
+    expect(history.map((row) => [row.recordedAt, row.status])).toEqual([
+      ['2026-10-16T01:59:00.000Z', 'confirmed_reason'],
+      ['2026-10-16T02:00:00.000Z', 'query_failed'],
+      ['2026-10-16T02:01:00.000Z', 'confirmed_reason'],
+    ])
+    const queries = platformQueries()
+    expect(queries).toHaveLength(8)
+    const failedQueries = queries.filter((row) => row.queriedAt === '2026-10-16T02:00:00.000Z')
+    const retriedQueries = queries.filter((row) => row.queriedAt === '2026-10-16T02:01:00.000Z')
+    expect(failedQueries).toHaveLength(4)
+    expect(failedQueries.every((row) => row.status === 'failed')).toBe(true)
+    expect(retriedQueries).toHaveLength(4)
+    expect(retriedQueries.every((row) => row.status !== 'failed')).toBe(true)
+  })
+
   it('幂等键由证据内容派生:同一目标集 + 同一证据 ⇒ 同一个键', async () => {
     const { reconcileIdempotencyKey } = await import('../server/utils/platform-reconcile')
     const sample = {

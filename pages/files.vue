@@ -42,6 +42,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
+import RenameFileDialog from '@/components/files/RenameFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
 import UploadDialog from '@/components/files/UploadDialog.vue'
 import PdfViewDialog from '@/components/files/PdfViewDialog.vue'
@@ -104,7 +105,7 @@ const params = computed(() => ({
   pageSize: pageSize.value,
 }))
 
-const { data, isLoading } = useQuery({
+const { data, isLoading, error, refetch } = useQuery({
   key: () => ['files', params.value],
   query: () => apiGet<FilesResponse>('/api/files', { query: params.value }),
   // 换筛选/翻页时保留上一批数据,避免表体清空 → 文档高度骤变 → 页面闪一下并跳回顶部。
@@ -116,7 +117,7 @@ const total = computed(() => data.value?.total ?? 0)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
 /**
- * 表格是否真的横向溢出了(12 列合计 1126px,1440 侧栏展开时装得下,更窄就装不下)。
+ * 表格是否真的横向溢出了(12 列合计 1154px,1440 侧栏展开时装得下,更窄就装不下)。
  *
  * 只用来决定「钉住的操作列要不要画左边那条分界线」:没溢出时不会有列从它底下滑过,
  * 画线就是凭空多一根;溢出了才需要划出「这列是钉住的」。
@@ -232,6 +233,11 @@ const editOpen = ref(false)
 const editPending = ref(false)
 const editFailure = ref('')
 
+const renaming = ref<StoredFileRow | null>(null)
+const renameOpen = ref(false)
+const renamePending = ref(false)
+const renameFailure = ref('')
+
 const deleting = ref<StoredFileRow | null>(null)
 const deleteOpen = ref(false)
 const deletePending = ref(false)
@@ -250,6 +256,12 @@ function openDelete(row: StoredFileRow) {
   deleting.value = row
   deleteFailure.value = ''
   deleteOpen.value = true
+}
+
+function openRename(row: StoredFileRow) {
+  renaming.value = row
+  renameFailure.value = ''
+  renameOpen.value = true
 }
 
 function openPreview(row: StoredFileRow) {
@@ -285,6 +297,25 @@ async function saveMetadata(form: MetadataForm) {
   }
 }
 
+/** 只提交用户可见名称;从不把它作为磁盘文件名或路径。 */
+async function saveDisplayName(displayName: string) {
+  if (!renaming.value) return
+  renamePending.value = true
+  renameFailure.value = ''
+  try {
+    await $fetch(`/api/files/${renaming.value.id}`, {
+      method: 'PATCH',
+      body: { displayName },
+    })
+    renameOpen.value = false
+    await refresh()
+  } catch (error) {
+    renameFailure.value = describeFetchError(error)
+  } finally {
+    renamePending.value = false
+  }
+}
+
 async function confirmDelete(deleteDisk: boolean) {
   if (!deleting.value) return
   deletePending.value = true
@@ -313,8 +344,8 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
 /**
  * 操作列的表头 / 单元格:横向滚动时**钉在表格右边**。
  *
- * 这一页 12 列合计 1126px,1280 / 1366 视口(侧栏展开)装不下,会横向滚动;而编辑 /
- * 预览 / 移出恰恰是这一页最常做的事。不钉住的话,默认视野里够不到它们 —— 用户得先
+ * 这一页 12 列合计 1154px,1280 / 1366 视口(侧栏展开)装不下,会横向滚动;而编辑 /
+ * 改名 / 预览 / 移出恰恰是这一页的常用操作。不钉住的话,默认视野里够不到它们 —— 用户得先
  * 横向滚到底才知道能操作。钉住后无论滚到哪一段,操作始终在。
  *
  * 底色见样式区：必须使用实心底色，避免滚动内容透过固定列。
@@ -323,11 +354,11 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
  * 单元格 `z-10` 低于表头的 `z-30`:上下滚时行内单元格不会盖住表头。
  */
 const ACTION_TH = computed(
-  () => `${TH_CLASS} sticky right-0 z-30 w-[138px] ${isPinned.value ? 'pin-edge' : ''}`,
+  () => `${TH_CLASS} sticky right-0 z-30 w-[166px] ${isPinned.value ? 'pin-edge' : ''}`,
 )
 const ACTION_TD = computed(
   () =>
-    `bg-card group-hover:bg-accent/70 sticky right-0 z-10 w-[138px] transition-colors ${isPinned.value ? 'pin-edge' : ''}`,
+    `bg-card group-hover:bg-accent/70 sticky right-0 z-10 w-[166px] transition-colors ${isPinned.value ? 'pin-edge' : ''}`,
 )
 
 function setPage(n: number) {
@@ -466,13 +497,15 @@ function publishedYearBatch(row: StoredFileRow): string {
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="files" :loading="isLoading" label="正在筛选与加载文件…" />
+        <TableFailureState v-if="error" title="文件列表暂时无法加载" :compact="rows.length > 0" :pending="isLoading" @retry="refetch()" />
         <div
+          v-if="!error || rows.length > 0"
           ref="tableScroller"
           data-testid="files-table-scroll"
           class="data-table-scroll [&_[data-slot=table-container]]:overflow-visible"
           :aria-busy="isLoading"
         >
-          <!-- 12 列。列宽按**实测文字宽度**逐列定,合计 1126px。
+          <!-- 12 列。恢复改名操作后,表格总宽为 1154px。
                1440(侧栏展开)容器 1124px → 不横滚;1280 / 1366 装不下(实测 1280 差 144px,
                1366 差 58px),这时**操作列钉在右边**(见下面的 `sticky right-0`)——
                编辑/预览/移出是这一页最常做的事,不能因为横向滚动就够不到。
@@ -480,7 +513,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                文件名留 209px:放下「甬经信中小〔2026〕101号关于…」,截断点落在文号之后,
                邻近的两份文件才不会截成同一个样子。
                `table-fixed`:列宽按表头的 w-* 逐列算,宽屏下也不会某一列吃满剩余空间。 -->
-          <Table class="data-table min-w-[1126px] table-fixed">
+          <Table class="data-table min-w-[1154px] table-fixed">
             <TableHeader>
               <TableRow class="hover:bg-transparent">
                 <TableHead :class="[TH_CLASS, 'w-8']">
@@ -565,9 +598,9 @@ function publishedYearBatch(row: StoredFileRow): string {
                            `block` 不能省:行内元素的 overflow 不生效,不加就会顶出去压住右边列。 -->
                       <span
                         class="block truncate font-medium"
-                        :title="`${row.filename}\n${row.relPath}`"
+                        :title="`${row.displayName}\n磁盘文件名:${row.filename}\n${row.relPath}`"
                       >
-                        {{ row.filename }}
+                        {{ row.displayName }}
                       </span>
                     </TableCell>
                     <TableCell>
@@ -666,6 +699,16 @@ function publishedYearBatch(row: StoredFileRow): string {
                           @click="openEdit(row)"
                         >
                           编辑
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          class="h-7 px-1.5 text-xs"
+                          :aria-label="`修改 ${row.displayName} 的用户可见名称`"
+                          title="只改用户可见名称"
+                          @click="openRename(row)"
+                        >
+                          改名
                         </Button>
                         <Button
                           variant="ghost"
@@ -779,7 +822,7 @@ function publishedYearBatch(row: StoredFileRow): string {
       </CardContent>
     </Card>
 
-    <TablePagination :page="page" :page-size="pageSize" :total="total" unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
+    <TablePagination v-if="!error || rows.length > 0" :page="page" :page-size="pageSize" :total="total" unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
 
     <UploadDialog v-model:open="uploadOpen" @registered="refresh()" />
 
@@ -791,9 +834,17 @@ function publishedYearBatch(row: StoredFileRow): string {
       @save="saveMetadata"
     />
 
+    <RenameFileDialog
+      v-model:open="renameOpen"
+      :file="renaming"
+      :pending="renamePending"
+      :failure="renameFailure"
+      @save="saveDisplayName"
+    />
+
     <DeleteFileDialog
       v-model:open="deleteOpen"
-      :filename="deleting?.filename ?? ''"
+      :filename="deleting?.displayName ?? ''"
       :rel-path="deleting?.relPath ?? ''"
       :reference-count="deleting?.referenceCount ?? 0"
       :pending="deletePending"
@@ -802,20 +853,20 @@ function publishedYearBatch(row: StoredFileRow): string {
     />
 
     <!-- PDF 走「原文 / 页图」两视图弹窗(票 13 的页图在这里看);其余格式仍是单一预览弹窗。
-         为什么页图不做成第四颗行操作按钮:操作列 138px 正好装下三颗,再加一颗这张表
-         就会回到横向滚动 —— 详细理由见 `components/files/PdfViewDialog.vue`。 -->
+         为什么页图不做成第五颗行操作按钮:操作列 166px 已容纳编辑/改名/预览/移出,
+         再加一颗会继续扩宽表格 —— 详细理由见 `components/files/PdfViewDialog.vue`。 -->
     <PdfViewDialog
       v-if="previewFile && isPdfPath(previewFile.relPath)"
       v-model:open="previewOpen"
       :src="previewSrc"
-      :name="previewFile.filename"
+      :name="previewFile.displayName"
       :file="previewFile.relPath"
     />
     <FilePreviewDialog
       v-else
       v-model:open="previewOpen"
       :src="previewSrc"
-      :name="previewFile?.filename ?? ''"
+      :name="previewFile?.displayName ?? ''"
     />
   </div>
 </template>
@@ -838,7 +889,7 @@ function publishedYearBatch(row: StoredFileRow): string {
  * 这里只留一个不跟任何工具类打架的:分隔线。
  *
  * 分隔线只在真的横向溢出时才加(`isPinned`)。用 inset 的 box-shadow 而不是
- * border-left:border 会占 1px 宽、把量好的 138px 列挤成 137px;阴影不占位。
+ * border-left:border 会占 1px 宽、把量好的 166px 列挤成 165px;阴影不占位。
  */
 .pin-edge {
   box-shadow: inset 1px 0 0 var(--border);

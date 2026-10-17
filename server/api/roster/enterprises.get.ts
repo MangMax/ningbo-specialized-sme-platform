@@ -1,5 +1,10 @@
 import { useDb } from '@db'
-import { DIFF_STATUS_NONE, ROSTER_ENTERPRISE_SORTS, ROSTER_STATES, listRosterEnterprises } from '~~/lib/roster/enterprise-roster'
+import {
+  DIFF_STATUS_NONE,
+  ROSTER_ENTERPRISE_SORTS,
+  ROSTER_STATES,
+  listRosterEnterprises,
+} from '~~/lib/roster/enterprise-roster'
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
 
 /**
@@ -10,9 +15,8 @@ import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
  *
  * ── 计数口径(页面必须说清这一条)────────────────────────────────────────
  * `counts.total` 是**企业数**;`counts.titles[称号]` 是各称号下的**企业数**;
- * `counts.titlePairs` 是**企业 × 称号**数(`titles` 各桶之和);`counts.differences`
- * 是本筛选下这些企业合计的**差异记录条数**(RL-20,与 `/api/roster/differences` 同一处口径)。
- * 多称号企业在 `total` 里只算一家,但在每个称号桶里各计一次。四者与**筛选同口径、先于分页**。
+ * `counts.titlePairs` 是**企业 × 称号**数(`titles` 各桶之和)。多称号企业在
+ * `total` 里只算一家,但在每个称号桶里各计一次。三者与**筛选同口径、先于分页**。
  *
  * ── `q` 的搜索口径(契约 §1.2/§5)────────────────────────────────────────
  * 命中**现名或任一已确认曾用名**即返回同一企业;`pending` 别名**不参与搜索**
@@ -25,7 +29,7 @@ defineRouteMeta({
     tags: ['名录'],
     summary: '跨称号去重企业总表',
     description:
-      '一行 = 一家企业(跨称号去重);`counts.total` 是企业数,`counts.titles` 是各称号的企业数,`counts.titlePairs` 是企业 × 称号数,`counts.differences` 是差异记录条数。',
+      '`counts.total` 是符合筛选的企业数；`counts.titles[称号]` 是各称号下的企业数；`counts.titlePairs` 是这些企业的全部企业 × 称号数；`counts.recognitionPairs` 是命中首次认定筛选的企业 × 称号数；`counts.differences` 是这些企业合计的差异记录数。计数均先于分页。',
     parameters: [
       { name: 'q', in: 'query', schema: { type: 'string' }, description: '名称 / **已确认**曾用名关键词。' },
       {
@@ -65,21 +69,38 @@ defineRouteMeta({
         name: 'diffStatus',
         in: 'query',
         schema: { type: 'string' },
-        description: `差异状态,多值(RL-20):\`not_queried\` / \`query_failed\` / \`no_record\` / \`needs_review\` / \`confirmed_no_diff\` / \`confirmed_reason\`,或伪状态 \`${DIFF_STATUS_NONE}\`(**一条差异记录都没有**)。也可选择原因代码 moved_out / deregistered / renamed / platform_stale / moved_in / other，按表格当前可见摘要原因匹配。状态仍命中企业任一差异记录；同参数多值取或。`,
+        description: `差异状态,多值(RL-20):六个差异状态、伪状态 \`${DIFF_STATUS_NONE}\`(**一条差异记录都没有**)及已展示原因代码。状态匹配企业任一差异记录,原因匹配企业当前摘要原因；同参数多值取或。`,
       },
       {
         name: 'sort',
         in: 'query',
         schema: { type: 'string', enum: [...ROSTER_ENTERPRISE_SORTS], default: 'recognition' },
+        description: '排序(RL-20):按最早首次认定年新到旧(默认)、企业名称或称号等级；名称和 id 保证稳定顺序。',
+      },
+      {
+        name: 'firstYear',
+        in: 'query',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'integer' } },
         description:
-          '排序(RL-20):`recognition`(该企业最早的首次认定年,新→旧,默认)/ `name` / `title`(称号等级)。三者都以名称与 id 收尾定序。',
+          '首次正式认定年份,逗号分隔多值；也接受重复参数。按同一企业 × 称号的最早 `award`，年份使用 `decidedYear ?? year`。非数字项剔除。',
+      },
+      {
+        name: 'firstStatus',
+        in: 'query',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
+        description:
+          '首次认定状态,逗号分隔多值：`confirmed`(已确立) / `pending`(现有 award 缺有效年份或首次出处待确认)；也接受重复参数。',
       },
       { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 50, maximum: 200 } },
     ],
     responses: {
       200: { description: '企业总表(`rows` / `counts` / `page` / `pageSize`)。' },
-      400: { description: '`title` / `rosterState` / `source` / `eventType` / `diffStatus` / `sort` 取值非法。' },
+      400: { description: '`title` / `rosterState` / `source` / `eventType` / `firstStatus` / `diffStatus` / `sort` 取值非法。' },
     },
   },
 })

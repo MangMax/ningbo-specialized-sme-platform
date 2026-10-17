@@ -1635,6 +1635,72 @@ async function verifyLedgerYearFilter(cdp) {
   }
 }
 
+/** Preserve main's RL-08 deep-link checks on the redesigned single enterprise list. */
+async function verifyLedgerFirstRecognitionFilter(cdp) {
+  const json = async (path) => {
+    const response = await fetch(`${BASE}${path}`)
+    if (!response.ok) throw new Error(`${path} → HTTP ${response.status}`)
+    return response.json()
+  }
+  const recognitions = await json('/api/roster/recognitions?pageSize=200')
+  if (!recognitions.rows.length) {
+    bad('首次认定筛选:当前库没有首次认定样本，无法验证深链')
+    return
+  }
+  const sample = recognitions.rows.find((row) => row.status === 'confirmed' && row.firstYear != null)
+  if (!sample) {
+    bad('首次认定筛选:接口没有 confirmed 且带年份的样本')
+    return
+  }
+  const unfiltered = await json('/api/roster/enterprises?pageSize=1')
+  const expectedYear = await json(`/api/roster/enterprises?firstYear=${sample.firstYear}&pageSize=1`)
+  if (!(expectedYear.counts.total < unfiltered.counts.total)) {
+    bad(`首次认定年份未缩小企业集合(firstYear=${sample.firstYear}: ${expectedYear.counts.total}/${unfiltered.counts.total})`)
+  } else {
+    ok(`首次认定年份筛选确实生效: ${sample.firstYear} 年 ${expectedYear.counts.total}/${unfiltered.counts.total} 家`)
+  }
+
+  for (const viewport of VIEWPORTS.slice(0, 2)) {
+    const label = `企业列表 · ${viewport.width}px首次认定筛选`
+    const ready = `(() => !document.querySelector('[data-slot=skeleton]') && !!document.querySelector('[data-testid="table-pagination"]') && !document.querySelector('[data-testid="ledger-loading-status"]')?.textContent.includes('正在'))()`
+    const yearPage = await openSession(cdp, `${BASE}/?firstYear=${sample.firstYear}`, viewport, ready, { openDrawer: false })
+    try {
+      const yearView = await evaluate(cdp, yearPage.sessionId, `(() => ({
+        search: location.search,
+        count: document.querySelector('[data-testid="table-total"]')?.textContent ?? '',
+        chip: document.body.textContent.includes('首次认定年 · ${sample.firstYear}'),
+        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      }))()`)
+      const shown = Number(yearView.count.match(/共\s*([\d,]+)/)?.[1]?.replaceAll(',', '') ?? NaN)
+      if (!yearView.search.includes(`firstYear=${sample.firstYear}`) || shown !== expectedYear.counts.total || !yearView.chip) {
+        bad(`${label}:年份深链、计数或可见 chip 不符 ${JSON.stringify({ yearView, expected: expectedYear.counts.total, shown })}`)
+      } else ok(`${label}:firstYear 深链、${shown} 家计数与可见 chip 均匹配接口`)
+      if (yearView.overflow > 1) bad(`${label}:页面横向溢出 ${yearView.overflow}px`)
+      else ok(`${label}:页面横向溢出 ${yearView.overflow}px`)
+    } finally {
+      await cdp.send('Target.closeTarget', { targetId: yearPage.targetId }).catch(() => {})
+    }
+
+    const pending = await json('/api/roster/enterprises?firstStatus=pending&pageSize=1')
+    const pendingPage = await openSession(cdp, `${BASE}/?firstStatus=pending`, viewport, ready, { openDrawer: false })
+    try {
+      const statusView = await evaluate(cdp, pendingPage.sessionId, `(() => ({
+        search: location.search,
+        count: document.querySelector('[data-testid="table-total"]')?.textContent ?? '',
+        chip: document.body.textContent.includes('首次认定 · 待确认'),
+        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      }))()`)
+      const shown = Number(statusView.count.match(/共\s*([\d,]+)/)?.[1]?.replaceAll(',', '') ?? NaN)
+      if (!statusView.search.includes('firstStatus=pending') || shown !== pending.counts.total || !statusView.chip) {
+        bad(`${label}:待确认深链、计数或 chip 不符 ${JSON.stringify({ statusView, expected: pending.counts.total, shown })}`)
+      } else ok(`${label}:待确认深链、${shown} 家计数与可见 chip 均匹配接口`)
+      if (statusView.overflow > 1) bad(`${label}:待确认筛选页面横向溢出 ${statusView.overflow}px`)
+    } finally {
+      await cdp.send('Target.closeTarget', { targetId: pendingPage.targetId }).catch(() => {})
+    }
+  }
+}
+
 async function verifyLedgerReasonFilter(cdp) {
   for (const viewport of [VIEWPORTS[0], VIEWPORTS.find(view => view.width === 390)]) {
     const page = await openSession(cdp, `${BASE}/`, viewport, READY, { openDrawer: false })
@@ -3044,6 +3110,7 @@ async function main() {
     await verifyKaichengExample(cdp)
     await verifyTimelineConnections(cdp)
     await verifyUnknownReviewOutcomeExample(cdp)
+    await verifyLedgerFirstRecognitionFilter(cdp)
     await verifyLedgerYearFilter(cdp)
     await verifyLedgerReasonFilter(cdp)
     await verifyLedgerLoadingAndDrawer(cdp)

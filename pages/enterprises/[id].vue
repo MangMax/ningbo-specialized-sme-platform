@@ -1,10 +1,21 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { groupBy, orderBy, uniq } from 'es-toolkit'
 import { ChevronRight, Eye } from '@lucide/vue'
 import { TITLES, TITLE_ORDER, SOURCE_ORDER, QUALITY_FLAGS } from '~~/lib/labels'
 import { fileUrl, fileNameOf, isPreviewable } from '~~/lib/preview'
+import {
+  EVIDENCE_PAGE_WORDS,
+  evidencePageState,
+  evidencePreviewHref,
+  type EvidencePageState,
+} from '~~/lib/roster/evidence-page'
+import {
+  rememberEvidencePreviewReturn,
+  shouldNuxtScrollToTop,
+  useEvidencePreviewScrollRestore,
+} from '~~/lib/roster/evidence-preview-return'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -13,10 +24,13 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 
+definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
+
 interface Evidence {
   sourceFile: string
   attachment: string | null
   listNo: number | null
+  page: number | null
 }
 interface DetailEvent {
   type: string
@@ -67,6 +81,46 @@ const { data, isLoading, error } = useQuery({
 })
 
 const detail = computed(() => data.value ?? null)
+const detailRendered = computed(() => detail.value !== null || error.value != null)
+useEvidencePreviewScrollRestore(detailRendered)
+
+const EVIDENCE_DISCLOSURE_RETURN_KEY = 'roster:enterprise-detail-open-evidence'
+const openEvidenceKeys = ref<string[]>([])
+
+function evidenceDisclosureKey(titleCode: string, source: string, eventIndex: number): string {
+  return JSON.stringify([id.value, titleCode, source, eventIndex])
+}
+
+function evidenceDisclosureOpen(key: string): boolean {
+  return openEvidenceKeys.value.includes(key)
+}
+
+function setEvidenceDisclosureOpen(key: string, open: boolean): void {
+  const next = new Set(openEvidenceKeys.value)
+  if (open) next.add(key)
+  else next.delete(key)
+  openEvidenceKeys.value = [...next]
+}
+
+onMounted(() => {
+  try {
+    const raw = window.sessionStorage.getItem(EVIDENCE_DISCLOSURE_RETURN_KEY)
+    window.sessionStorage.removeItem(EVIDENCE_DISCLOSURE_RETURN_KEY)
+    if (!raw) return
+    const state: unknown = JSON.parse(raw)
+    if (!state || typeof state !== 'object') return
+    const candidate = state as { back?: unknown; keys?: unknown }
+    if (
+      candidate.back === route.fullPath &&
+      Array.isArray(candidate.keys) &&
+      candidate.keys.every((key) => typeof key === 'string')
+    ) {
+      openEvidenceKeys.value = candidate.keys
+    }
+  } catch {
+    // Storage may be unavailable; the page remains usable without disclosure restoration.
+  }
+})
 
 /**
  * 页面标题(RL-17 收尾):企业名 + 页面名。详情是异步取的,所以先给一个不含名字的兜底,
@@ -130,6 +184,32 @@ function openPreview(e: Evidence) {
   previewSrc.value = fileUrl(e.sourceFile)
   previewName.value = fileNameOf(e.sourceFile)
   previewOpen.value = true
+}
+
+const pageStateOf = (e: Evidence): EvidencePageState => evidencePageState(e.sourceFile, e.page)
+
+function pageWordOf(e: Evidence): string {
+  const state = pageStateOf(e)
+  return state === 'assigned' ? '' : EVIDENCE_PAGE_WORDS[state]
+}
+
+function pageHref(e: Evidence): string {
+  return evidencePreviewHref({ sourceFile: e.sourceFile, page: e.page, back: route.fullPath })
+}
+
+function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  const keys = new Set(openEvidenceKeys.value)
+  keys.add(key)
+  try {
+    window.sessionStorage.setItem(
+      EVIDENCE_DISCLOSURE_RETURN_KEY,
+      JSON.stringify({ back: route.fullPath, keys: [...keys] }),
+    )
+  } catch {
+    // Storage may be unavailable; ordinary preview navigation still works.
+  }
+  rememberEvidencePreviewReturn(route.fullPath, event.currentTarget)
 }
 </script>
 
@@ -227,7 +307,11 @@ function openPreview(e: Evidence) {
 
             <ul v-if="rec.events.length" class="mt-3 flex flex-col gap-2">
               <li v-for="(ev, i) in rec.events" :key="i">
-                <Collapsible v-slot="{ open }">
+                <Collapsible
+                  :open="evidenceDisclosureOpen(evidenceDisclosureKey(g.titleCode, rec.source, i))"
+                  @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(g.titleCode, rec.source, i), $event)"
+                  v-slot="{ open }"
+                >
                   <div class="flex flex-wrap items-center gap-2">
                     <EventChip :type="ev.type" :year="ev.year" :seq="ev.seq" />
                     <CollapsibleTrigger v-if="ev.evidence.length" as-child>
@@ -278,6 +362,18 @@ function openPreview(e: Evidence) {
                       <div v-if="e.listNo != null" class="flex gap-2">
                         <span class="text-muted-foreground w-14 shrink-0">序号</span>
                         <span class="tabular-nums">{{ e.listNo }}</span>
+                      </div>
+                      <div class="flex gap-2">
+                        <span class="text-muted-foreground w-14 shrink-0">页码</span>
+                        <NuxtLink
+                          v-if="pageStateOf(e) === 'assigned'"
+                          :to="pageHref(e)"
+                          class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
+                          @click="rememberPagePreviewReturn($event, evidenceDisclosureKey(g.titleCode, rec.source, i))"
+                        >
+                          第 {{ e.page }} 页
+                        </NuxtLink>
+                        <span v-else class="text-muted-foreground/70">{{ pageWordOf(e) }}</span>
                       </div>
                     </div>
                   </CollapsibleContent>

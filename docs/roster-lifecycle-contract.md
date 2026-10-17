@@ -613,6 +613,10 @@
    `decided_year` 缺失时退回 `year` 并把该企业标为**待核**。
 5. **失败复核不再进入当前有效资格的复核队列**:`reviewOutcome='failed'` 终止当前有效资格。
 6. **`nurture`(入库培育)不计入称号有效期**,不参与首次认定/复核清单。
+7. **(RL-08 增量)首次认定的「确立」**:在数据库中该企业 × 称号的全部事件里,
+   只取最早正式 `award`；年份使用 `decided_year ?? year`。复核、维护、培育不参与首次计算。
+   若现存 award 缺有效年份或首次事件没有出处,则**标待确认**(判据见 §7.5)。为此 `computeTitleLifecycle` 一并给出
+   `awardCount`(该称号有没有正式认定过)与 `undatedAwardIds`(哪些认定定不了年)。
 
 > 验收样例见 ADR §9 与 `tests/lifecycle-contract.test.ts`。
 
@@ -628,6 +632,8 @@
 查询参数:`q`(名称 / **已确认**曾用名 / **统代**关键词,走 §5 搜索口径)、`title`(可重复)、
 `district`、`rosterState`(`current` \| `removed_platform_only`)、
 `source`(可重复,`jxj` \| `miit`)、`eventType`(可重复)、`year`(可重复)、
+`firstYear`(可重复,**首次认定年份**,RL-08 增量,与 `year` 不是一回事)、
+`firstStatus`(可重复,`confirmed` \| `pending`,RL-08 增量)、
 `diffStatus`(可重复,RL-20)、`sort`(RL-20,默认 `recognition`)、
 `page`(默认 1)、`pageSize`(默认 50)。
 
@@ -638,11 +644,8 @@
 > 松了,同一个 URL 在「按企业」与「按企业×称号」下会给出两批不同的企业。
 > `q` 的统代匹配同样是 RL-17 增量(`/api/records` 一直认统代,两个分组共用一个搜索框)。
 
-> `diffStatus` / `sort` 与下方差异摘要字段是 RL-20 的只读列表页扩展,不改变记录、差异或写入语义。
-> `diffStatus` 命中「该企业存在一条该状态的差异记录」;取值为
-> `not_queried` / `query_failed` / `no_record` / `needs_review` / `confirmed_no_diff` /
-> `confirmed_reason`；也接受原因 `moved_out` / `deregistered` / `renamed` / `platform_stale` / `moved_in` / `other`，按企业当前展示摘要的原因匹配，确保筛选与可见列一致。同参数多值取或；`none` 表示该企业没有差异记录。列表与导出共用解析、筛选、计数口径，先筛后分页。`sort` 支持 `recognition`
-> (最早首次认定年,新到旧,默认)、`name` 与 `title`;各顺序以名称和企业 id 稳定收尾。
+> `diffStatus` 与差异摘要是 RL-20 的只读列表扩展,不改变记录、差异或写入语义。
+> `diffStatus` 可取六个差异状态、原因代码或 `none`。状态匹配企业任一差异记录；原因按企业当前摘要的原因匹配，保证筛选与可见列一致；同参数多值取或。`none` 表示没有差异记录。列表和导出共用解析、筛选与计数口径，先筛后分页。`sort` 支持 `recognition`(最早首次认定年,新到旧,默认)、`name` 与 `title`;各顺序以名称和企业 id 稳定收尾。
 
 响应(字段级):
 
@@ -658,14 +661,14 @@
     "rosterState": "current",
     "titles": ["specialized_sme", "innovative_sme"],
     "aliasNames": ["宁波旧名…"],    // 仅 confirmed
-    "firstRecognition": [{ "titleCode": "specialized_sme", "year": 2021, "needsReview": false }],
-    "awards": [{ "titleCode": "specialized_sme", "year": 2021, "batchSeq": 1 }], // 正式认定年份批次，按原始事件去重；复核/维持仅详情返回
+    "firstRecognition": [{ "titleCode": "specialized_sme", "year": 2021 }],
+    "awards": [{ "titleCode": "specialized_sme", "year": 2021, "batchSeq": 1 }], // 正式认定年份与批次；不折叠复核/维持事件
     "nextReviewYear": 2028,         // 可空;锚点+3
-    "anchorNeedsReview": false,    // 锚点事件缺少决定年份时待核
-    "difference": {                // RL-20:企业的差异摘要
+    "anchorNeedsReview": false,    // 锚点事件缺少结论年份时待核
+    "difference": {                // RL-20:企业差异摘要
       "count": 1,                  // 企业 × 称号 × 方向的差异记录数
-      "status": "confirmed_reason", // 可空;优先级最高的一条差异状态
-      "reasonCode": "platform_stale", // 可空
+      "status": "confirmed_reason", // 可空;摘要状态
+      "reasonCode": "platform_stale", // 可空;与摘要状态配对
       "anyCurrent": true           // 是否仍有当前差异
     }
   }],
@@ -673,11 +676,17 @@
     "total": 1,                     // **企业数**(与筛选同口径、先于分页)
     "titlePairs": 2,                // **企业 × 称号**数 = titles 各桶之和
     "titles": { "specialized_sme": 1, "innovative_sme": 1 },
-    "differences": 1               // RL-20:筛选内差异记录数,先于分页
+    "recognitionPairs": 1,          // 命中首次认定判据的**企业 × 称号**数
+    "differences": 1                // RL-20:筛选内差异记录数,先于分页
   },
   "page": 1, "pageSize": 50
 }
 ```
+
+> **RL-08 增量**(见 §7.5.1):`firstRecognition` 的一项还带
+> `firstEventId` / `source` / `status` / `pendingReason` / `evidence` / `undatedAwardIds`,
+> `year` 放宽为可空;`counts` 增加 `recognitionPairs`;查询参数增加
+> `firstYear` / `firstStatus`(与 `year` **不是一回事**)。
 
 ### 7.2 `GET /api/roster/enterprises/:id` — 企业详情(RL-04)
 
@@ -687,10 +696,14 @@
   "aliases":    [{ "id": 3, "name": "宁波旧名…", "sourceKind": "platform_business",
                    "sourceRefId": 7, "verificationStatus": "confirmed", "validFrom": null }],
   "records":    [{ "id": 5, "titleCode": "specialized_sme", "source": "jxj" }],
-  "events":     [{ "id": 9, "recordId": 5, "eventType": "review", "year": 2021,
+  "events":     [{ "id": 8, "recordId": 5, "eventType": "award", "year": 2021,
+                   "batchSeq": 1, "decidedYear": 2021, "reviewOutcome": null },
+                  { "id": 9, "recordId": 5, "eventType": "review", "year": 2021,
                    "batchSeq": 1, "decidedYear": 2024, "reviewOutcome": "failed" }],
-  "evidence":   [{ "eventId": 9, "sourceFile": "…192号.docx", "attachment": "附件2",
-                   "listNo": 3, "page": 7 }],
+  "evidence":   [{ "eventId": 8, "sourceFile": "…145号.pdf", "attachment": "附件一",
+                   "listNo": 74, "page": 7 }],
+  "recognitions": [{ "titleCode": "specialized_sme", "firstYear": 2021, "firstEventId": 8,
+                     "status": "confirmed", "pendingReason": null, "evidence": [/* 首次 award 出处 */] }],
   "differences":[{ "id": 2, "titleCode": "specialized_sme", "direction": "missing_in_miit",
                    "status": "confirmed_reason", "reasonCode": "moved_out",
                    "measureCode": "mark_moved_out", "recordedAt": "2026-10-14T06:00:00Z",
@@ -720,13 +733,117 @@
 }
 ```
 
-### 7.4 `GET /api/roster/reviews` — 下一年度复核清单(RL-09)
+### 7.4 `GET /api/records` — 通用企业×称号记录查询(RL-09)
 
-查询参数:`year`(必填)、`title`。响应行:`{ enterpriseId, name, titleCode, anchorYear, dueYear, basisEventId }`。
+查询参数:`title`、`source`、`district`、`eventType`、`year`、`firstYear`、`firstStatus`、`dueYear`、`q`、`flags`、`page`、`pageSize`。
+多值参数可用逗号分隔或重复传入。`year` 过滤事件的**所涉年份**；`firstYear` 过滤首次正式认定年份
+(`decidedYear ?? year`)，与事件年份不同；`firstStatus` 取 `confirmed` / `pending` 并使用 §7.5 的首次认定判据；
+`dueYear` 是生命周期到期年份筛选，单值精确匹配。派生筛选先读取完整事件历史，再于分页前过滤；分页和 total 基于筛选后的组合。
+
+`q` 搜当前企业名、`confirmed` 曾用名和归一化统一社会信用代码。`pending` 别名不参与搜索。
+事件筛选只决定哪些企业×称号行出现；返回行保留该组**全部来源、全部事件和全部事件出处**，避免筛选
+把其他来源或历史事件裁掉。
+
+每行粒度为一组 `{ enterpriseId, titleCode }`，含企业现名、统代、属地、来源、质量标记以及：
+
+- `events[]`:事件 id、所属记录 id、事件类型、事件所涉年份 `year`、结论年份 `decidedYear`、复核结论、批次序号、来源及 `evidence[]`。出处逐条给出 `{ sourceFile, attachment, listNo, page }`。
+- `lifecycle`:调用 §6 的 `computeTitleLifecycle` 得到的首次认定年份/事件、当前锚点年份/事件、到期年份、资格状态和 `needsReview`；`status` 明确区分 `active` / `needs_review` / `terminated` / `undatable` / `not_applicable`。
+  `anchorEventId`、`firstRecognitionEventId` 可直接关联回 `events[]`。
+- `firstYear` 只匹配 `lifecycle.firstRecognitionYear`;无法确定首次年份的行不匹配具体年份。它不改变 `year` 对事件年份的筛选语义。
+- `lifecycle.flags[]`: `{ code, reason }` 待核提示。缺结论年份、复核结论未知、缺批次、缺出处或无法确定锚点只增加提示，**不会把行从未筛选结果中隔离**。
+  对未知复核结论不猜成通过或未通过；已明确未通过且后续没有重新认定时，按 §6 标记为资格终止，`dueYear` 为空。
+- `flags[]`:企业数据质量标记，含义与现有记录查询一致。
+
+不带 `dueYear` 时可查看全部命中记录及其生命周期状态，包括无法计算到期年的记录和原因；传入 `dueYear=2027`
+则只返回共享生命周期算法计算结果恰为 2027 的行。缺少字段的提示不改变确定的 `dueYear`，也不代替用户口径另造一套计算。
+
+REST 与 MCP `query_records` 共用同一参数解析和 `listRecords` 读模型。企业详情 MCP tool `get_enterprise_detail`
+复用 `GET /api/roster/enterprises/:id` 的 `getRosterEnterpriseDetail` 读模型。别名、归并和归并时规范名更新
+仍经 §8.3 的 `preflight_roster_batch` / `save_roster_batch` 统一预检与事务提交。
 
 ### 7.5 `GET /api/roster/recognitions` — 首次认定(RL-08)
 
 查询参数:`title`、`year`。响应行:`{ enterpriseId, titleCode, firstYear, firstEventId, source }`。
+
+**增量(RL-08 交付,2026-10-16)**。原形状是**最小骨架**:它给得出年份与事件 id,
+却给不出票面(issue #8)明写的「首次认定的依据必须能回到出处」。实现按数据库中该企业 × 称号的完整事件集计算；正式名单是否完整入库由独立的清理入库验收负责，不把整条未入库事件建模成产品状态。补齐如下(全是**加字段**,不改既有字段含义):
+
+- **行形状补齐**(`firstYear` / `firstEventId` / `source` 语义**不变**):
+
+```jsonc
+{
+  "enterpriseId": 1, "name": "宁波…有限公司",        // name / uscc / district 是增量:
+  "uscc": "913302…", "district": "鄞州区",           // 清单要能直接读,不能只给一个 id
+  "titleCode": "specialized_sme",
+  "firstYear": 2021,          // 已知最早那次认定(award)的年份;**给不出时为 null**
+  "firstEventId": 9,          // 那条认定事件;`null` 同 firstYear
+  "source": "jxj",            // 那条认定所在记录的来源(§6.1 的「数据源」)
+  "status": "confirmed",      // 增量:`confirmed` | `pending`
+  "pendingReason": null,      // 增量:见下表;`status='pending'` 时必非空
+  "evidence": [               // 增量:`firstEventId` 那条事件的**全部**出处,一条不折叠
+    { "sourceFile": "jxj/announcement/2022/甬经信中小〔2022〕145号….pdf",
+      "attachment": "附件一", "listNo": 74, "page": null }
+  ],
+  "undatedAwardIds": []       // 增量:该称号下**定不了年**的 award 事件 id(升序)
+}
+```
+
+- **`status` 的判据**(确定性,与 `lib/roster/first-recognition.ts` 一处实现)。
+  `pending` 的三种原因**互不等价**、**按此优先级**取第一条成立的:
+
+  | `pendingReason` | 什么时候 | `firstYear` |
+  |---|---|---|
+  | `no_dated_award` | 有认定,但**一条都定不了年**(`year` 与 `decided_year` 都空) | `null`(**不猜**) |
+  | `undated_award` | 有现存 award 定不了有效年份(`year` 与 `decided_year` 都空),但另有可定年的 award | 给出已知最早的年份,状态待确认 |
+  | `no_evidence` | 年份有了,那条认定却**没有存下来的出处** | 照给,依据回不到出处 |
+
+  三条之外一律 `confirmed`。这些待确认原因只对应数据库中**实际存在**但缺有效年份或出处的 award；
+  它们不表示数据库可能漏了一条更早事件。`no_evidence` 是「依据回不到出处」(§3 的
+  「证据不足留空并标待核,绝不猜填」)。它们与 §7.1 的 `needsReview`(**锚点**口径,§6.4)
+  是**两件事**,不共用一个字段。
+
+- **查询参数增量**:`status`(多值,`confirmed` / `pending`)+ 分页 `page` / `pageSize`
+  (默认 1 / 50,上限 `MAX_PAGE_SIZE` = 200)。9930 条级别的清单不分页无法使用。
+  非法 `title` / `status` 一律 400(不静默放过)。
+
+- **计数增量**:响应信封与 §7.1 / §7.3 同构 `{ rows, counts, page, pageSize }`,
+  且计数**两个单位都给**(issue #8 验收第 5 条「统计清楚标示企业数或企业×称号数」):
+
+```jsonc
+"counts": {
+  "titlePairs": 2,       // 符合条件的**企业 × 称号**数(= 行数,先于分页)
+  "enterprises": 1,      // 符合条件的**企业**数(多称号企业只算一家)
+  "titles": { "little_giant": 0, "specialized_sme": 1, "innovative_sme": 1 }
+}
+```
+
+- **一行 = 一个企业 × 称号**。同一企业多称号就是多行;`counts.enterprises` 才是企业数。
+- **空数据口径**:没有 award 的数据库返回空 `rows` 与 0 计数。相关行为通过合成 fixture / 隔离 SQLite 验证；正式历史名单完整性与未复核文件由独立清理入库验收核对，不作为功能实现前置条件。
+
+- **与 §7.1 的 `firstRecognition` 是同一处计算**(`buildProfile` 一次算出,两处只是取舍字段),
+  所以两处不可能给出不同的首次年份。**筛选判据同理**:`matchesRecognitionQuery`
+  (`lib/roster/first-recognition.ts`)是总表与本节清单共用的**唯一一份**判据 ——
+  两处各写一遍,一边加了条件另一边没加,就会「总表筛出 3 家、清单筛出 5 家」,而这两个数在页面上并排。§7.1 那一项同时**增量补齐**同名字段
+  (`firstEventId` / `source` / `status` / `pendingReason` / `evidence` / `undatedAwardIds`),
+  并把 `year` 放宽为**可空**(`null` = 一条都定不了年);`needsReview` **语义不变**。
+
+#### 7.5.1 §7.1 / §7.2 的增量(RL-08)
+
+- **§7.1 `counts`** 增加 `recognitionPairs`:本次筛选下**符合首次认定判据**的
+  「企业 × 称号」数。它与 `titlePairs` 不同 —— 后者数的是符合条件企业的**全部**称号;
+  给了 `firstYear` / `firstStatus` 之后两者不再相等,不单列就会被当成同一个数。
+- **§7.1 查询参数**增加 `firstYear`(多值,**首次认定年份**)、`firstStatus`(多值)。
+  ⚠️ 与既有的 `year` **不是一回事**:`year` 筛的是**事件**年份(任何类型的事件)。
+  判据与 `title` **落在同一个称号上**(与 RL-17 那条「来源与事件必须落在同一条记录上」同构):
+  「存在一个称号,几个判据都落在它身上」。`firstYear` **不匹配** `firstYear == null` 的称号
+  ——「未知」不是某个具体年份。
+  同理 §7.3(差异)与记录粒度分组**不认**这两项(`lib/roster/ledger-view.ts` 的
+  `LEDGER_VIEW_FILTERS` 里只有 `enterprise` 有)。
+- **§7.2 详情**增加 `recognitions: RecognitionEntry[]`(每个有认定的称号一条),
+  展开面板据此标出**哪一条事件是首次认定**并直接给出它的出处。
+- **导出**(`GET /api/roster/export`)继承上述筛选(与列表同一份解析),并新增一列
+  **「首次认定出处」**(文件 · 附件 · 序号 · 页;没有出处的写「待确认:原因」)。
+  首行口径里补上「其中 N 个『企业 × 称号』有首次认定」。
 
 ### 7.6 `GET /api/platform/queries` — 平台查询证据(RL-03)
 
@@ -1033,6 +1150,14 @@
 }
 ```
 
+公告记录中的 `enterprise.uscc` 缺席、`null` 或空白表示未提供身份代码；非空值必须通过既有
+USCC 格式与校验位验证，否则该记录以 `uscc_format_invalid` 逐项报错并使整批不写。事件出处的
+`page` 缺席或 `null` 保持为 `null`；PDF 提供页码时必须是精确的正整数，否则报 `page_invalid`；
+Word / Excel 等非 PDF 出处若提供非 `null` 页码，报 `not_page_capable`。这些校验发生在身份规划与提交前。
+预检和提交还会从配置的文件库根读取源 PDF 页数(PDFium):超出实际页数以 `page_invalid` 拒绝，源 PDF
+缺失、不可读或路径无法安全解析以 `page_count_unknown` 拒绝；拒绝时业务记录不部分写入。页图可能尚未全部
+渲染，不能用页图数量替代源 PDF 页数。
+
 > **`year` / `collectedOn` 由调用方给出**(RL-05 的解析器**不从文件内容或文件名推断**年度：
 > 导出表里那列「维护批次」是平台口径的维护批次，不是快照年度)。`exportSnapshot.rows[].rawFields`
 > 的键是 **1-based 列号字符串**、只留**非空**值(契约 §1.7)；单张导出表实测 6273 行、数十列，
@@ -1324,10 +1449,14 @@
 **收敛规则**(`server/utils/roster-import.ts` 的 `repointTargets`):
 
 - 事件坐标(eventType / year / batchSeq / reviewOutcome / decidedYear)**逐字相同**才进入这条路径;
-- 只在出处的 **(attachment, listNo, page) 逐字相同**时才改,且**只改 `source_file` 一列**;
-- **不新增、不删除、不合并**任何行(不变量:企业 / 记录 / 事件 / 出处计数不变);
-- 命中的出处行数逐项报在 `items[].detail.evidenceRepointed`(RL-16 新增字段,**不**计入 `summary.written`);
-- 同一幂等键重放仍是**彻底的空操作**(批次已 `committed` ⇒ 直接返回既有摘要,不重跑计划)。
+- 出处的 `attachment` 与 `listNo` 逐字匹配。目标 `sourceFile` 为 PDF 时,`page` 也逐字匹配(含 `null`);目标为 DOCX / Excel 等无稳定分页格式时,请求页码与已有页码都归一为 `null`,不参与匹配,且事件内必须只有一条相同附件与序号的候选行才收敛,多条候选按歧义跳过;
+- 收敛前必须验证旧路径和目标路径各自唯一的内容 SHA-256 相同。路径哈希来自 `stored_file.sha256`,或来自 `sourceIdentity` 与该路径逐字相同时的当前请求 / 已提交公告批次 `sourceSha256`;只接受 64 位十六进制 SHA。逻辑来源标识不能替其他证据路径背书。任一哈希缺失 / 冲突或两端不同,预检与写入返回出处冲突并保持旧出处;不得按坐标覆盖权威来源。需要保存不同内容的正式来源时,由调用方单独处理为独立出处;
+- 同一既有事件坐标在载荷中重复出现时,先合并全部出处目标再判定:与现有 `sourceFile` 相同的 no-op 不认领出处行;同一行出现多个不同有效目标路径时按歧义跳过,不按载荷顺序猜配。计划期冻结具体出处行、旧路径和目标路径;预检数出的行由普通 commit 按此计划最多更新一次。目标快照与对象键及数组顺序规范化后的完整公告载荷 SHA-256 指纹（包括 `sourceDocument.source` 等记录默认值上下文）只作为服务端 replay 记账持久化,不属于 API `items[].detail`。显式 replay 仅在原批次来源标识与规范化公告载荷指纹都一致时复用快照;仅当行仍指向记录的旧路径时更新,已到目标或已指向第三条路径则跳过,不会因重算而反向切换;
+- 普通 commit 中同一批载荷里尚不存在的记录/事件坐标重复出现时,先合并所有出处关系再写新事件。既有企业按唯一解析到的 `enterprise.id` 归组:给了 USCC 按精确 USCC 定位;未给 USCC 时,只有同名候选恰为一家才与其归组。若无 USCC 的名称命中多家既有企业,无论该记录是否与其他记录重复、事件坐标是否相同,预检与 commit 都返回现有 `enterprise_ambiguous` 逐项错误并整批不写;不得因名称查询首条或与另一条 USCC 记录分组结果不同而猜配。对于库内没有同名企业的新身份,计划先按整份公告的规范化名称汇总显式 USCC 候选:恰有一个不同 USCC 时,name-only 项在预检、commit 中都映射到该 USCC 身份,同称号/来源/事件坐标的出处合并后只写一个事件;有多个不同 USCC 时,name-only 项返回 `enterprise_ambiguous` 并使整批不写,显式 USCC 项仍各按自己的统代定位;没有显式 USCC 候选时,单独的 name-only 项仍按名称新建无统代企业。此映射按整批候选决定,不按输入先后推断,也不只凭名称把不同统代合并。明确 USCC 仍按精确企业定位,不同 USCC 不因名称相同而合并。不同 `sourceFile` 保留为不同出处行;完全相同的 `(sourceFile, attachment, listNo, page)`(非 PDF 页码归一为 `null` 后)只写一次,并按规范化坐标稳定排序后由首次出现项插入。后续重复事件只跳过,不重新收敛来源,所以输入顺序、普通 commit 重试和显式 replay 都不会丢来源或改变来源集合;
+- 目标格式为非 PDF 时,命中的历史 `page` 清为 `null`(§8.11);PDF 的既有实际页码原样保留,不推断页码。格式按目标 `sourceFile` 的扩展名判定;
+- 收敛既有事件时**不新增、不删除、不合并**任何行(不变量:企业 / 记录 / 事件 / 出处计数不变);
+- 命中的出处行数逐项报在 `items[].detail.evidenceRepointed`(RL-16 新增字段,**不**计入 `summary.written`);内部目标快照供显式 replay 复用,但不返回给调用方;
+- 同一幂等键的普通 `commit` 仍是**彻底的空操作**(批次已 `committed` ⇒ 直接返回既有摘要,不重跑计划)。补收敛走独立的 `POST …/replay`(§8.9.3),其结果按原提交快照保持幂等。
 
 **为什么可以改历史批次的行**:变的不是历史事实,是**同一份文档在库里的位置**。收敛只在
 「同一份来源内容(同 `sha256`)且坐标逐字相同」时发生,故不会把一条出处挪到另一条上;
@@ -1415,7 +1544,7 @@ POST /api/roster/import/replay
 
 **语义(逐条都是硬约束)**:
 
-- **只改** `record_evidence.source_file`:不新建企业 / 记录 / 事件 / 出处,不归并,不删行;
+- 收敛 `record_evidence.source_file`;目标来源为非 PDF 时同时清理 `page`,PDF 页码原样保留:不新建企业 / 记录 / 事件 / 出处,不归并,不删行;
 - **只认既有**:库里没有的记录 / 事件一律跳过 —— 收敛**不补历史**(补历史走 `commit`);
 - 载荷里那些**会写新行**的类别(平台查询 / 别名 / 差异 / 快照 / 归并)**根本不进计划**,
   故没有可执行的东西(与 `commit` 共用 `planRosterImport`,靠 `convergeOnly` 收窄);
@@ -1528,35 +1657,124 @@ POST /api/roster/import/replay
   抛 `ExecStageFailure` 让整批回滚,**绝不**写出自相矛盾的状态。
 - **只读的计划入口**见 §7.9;可运行入口见 `scripts/roster-uscc-research.mjs`。
 
+### 8.11 `POST /api/roster/evidence/pages` —— 出处页码补录(RL-10 增量补齐)
+
+> **只增量**:不改 §1 的任何表 / 列 / 枚举(用的就是既有的 `record_evidence.page`),
+> 不改任何既有写入语义,也不改 §8.3 的 `evidence[]`(它本来就能带 `page`)。
+>
+> ⚠️ **这是本节第二条写入口**,与 §8.6 / §8.7 里「不存在第二种写入口」「写入口仍然只有 §8.2」
+> 那两句**不冲突**——那两句说的是 **RL-06 研究流程**(核心词候选 → 平台验证 → 回填)**自己**
+> 不另开一条落库路,它产出的东西照样走 §8.2 的 `commit`。本节是**另一件事**:
+> §8.3 的 `evidence[].page` 只管**今后**的导入,而库里已有一批 `page` 全为 `null` 的既有行要补,
+> 那是对既有行的 UPDATE,不该也不能造一条导入批次账。**它不碰企业 / 记录 / 事件,也不做归并。**
+
+**它补的是「既有行」的那一格。** §8.3 的 `evidence[].page` 只对**今后**的导入有效;
+库里已有的两万余条出处是在这个字段还没人填的时候落下的 —— 那是一批 `page` 全为 `null` 的行。
+补页码是**对既有行的 UPDATE**,不是一次新的导入:不改企业 / 记录 / 事件,也不该再造一条批次账。
+
+```jsonc
+POST /api/roster/evidence/pages
+{
+  "dryRun": false,                     // 可选;true = 只报结论、一行不写
+  "entries": [
+    { "sourceFile": "jxj/announcement/2022/甬经信中小〔2022〕145号….pdf",
+      "listNo": 6,                     // 名单里的**序号** —— 不是页码
+      "page": 8,                       // **PDF 实际页序**(1 起)
+      "enterpriseId": 204,             // 定位:与 enterpriseName 至少给一个
+      "enterpriseName": "宁波开诚生态技术有限公司",   // 可选,逐字归一后比对
+      "district": "海曙区",             // 可选,进一步收窄
+      "basis": "人工核对页图:附件二第 6 行" }        // 留档用,不参与判定
+  ]
+}
+```
+
+响应:
+
+```jsonc
+{
+  "status": "applied",                 // 或 "dry_run"
+  "summary": { "requested": 17, "assigned": 15, "written": 15, "unchanged": 0, "pending": 2 },
+  "assignments": [ { "index": 0, "evidenceId": 204, "sourceFile": "…", "listNo": 6,
+                     "page": 8, "previous": null, "basis": "人工核对页图:附件二第 6 行" } ],
+  "pending": [ { "index": 1, "sourceFile": "…", "listNo": 6, "page": 9,
+                 "reason": "no_match", "detail": "…序号 6 有 3 条(分节不同…),但没有一条与本条给定的企业 / 属地一致 —— 不猜。",
+                 "candidateIds": [1, 2, 3], "sameListNo": 3 } ]
+}
+```
+
+**语义(逐条都是硬约束)**:
+
+| 判据 | 不过时 |
+|---|---|
+| `sourceFile` 非空;`listNo` 是正整数;**且必须带 `enterpriseId` 或 `enterpriseName`** | `entry_incomplete` |
+| `page` 是正整数(**不取整、不夹到边界、不当成「没有页码」**),且未超出可读取的源 PDF 实际页数 | `page_invalid` |
+| 源 PDF 页数无法可靠读取 | `page_count_unknown` |
+| 来源是 **PDF**(Word / Excel 没有可复核的页) | `not_page_capable` |
+| 按 `(sourceFile, listNo)` + 定位能命中**恰好一条**出处行 | `no_match` / `ambiguous` |
+
+- **裸序号一律拒收。** 判据不是洁癖:`record_evidence` 只有 `(source_file, attachment, list_no)`,
+  **没有分节列**,而一份公布文件里可以并置**多张序号各自从 1 起算**的名单 ——
+  `甬经信中小〔2022〕145号` 的「附件」里就是三张(一、198 行;二、104 行;三、413 行,共 715 家)。
+  库里「145号 + 序号 6」命中 **3 条**完全不同的企业。拿裸序号定位就会把页码写到**错的公司**上。
+- **定位信息只用来收窄候选,不用来「像不像」判定**:`enterpriseName` 走 `normalizeName` 的
+  **逐字归一**(括号、空白、不可见字符),不是相似度、不是编辑距离。
+- **`no_match` 与 `ambiguous` 都要把「同序号有几条」报出来**(`sameListNo` / `candidateIds`):
+  那是「分节陷阱」的可观察探针 —— 报告要能区分「库里没有」与「同序号分属别的分节」。
+- **定不下来的条目一行不改**,逐条带 `reason` 回报;写入是**逐条尽力**而不是整批事务 ——
+  一批里混着「已核对好」与「还没核对」,后者的正确处置是**留空待核**,不是把前者一起回滚。
+- **页数取自源 PDF 本身**(PDFium);不会用已渲染页图数量代替总页数。请求页超过已知总页数返回
+  `page_invalid`;源文件缺失或打不开时返回 `page_count_unknown` 并留空待核,不猜边界。
+- **同一条出处行被两条入参指向、且页码不同** ⇒ 两条都不写(`ambiguous`)。
+  同页码是同一个事实的重复表达(批处理重跑常见),照写并计入 `unchanged`。
+- **幂等**:重跑同一批 `written: 0` / `unchanged` 全中。
+- **非 PDF 永远没有页码**,在**链接层**也成立:`evidencePreviewHref()` 对非 PDF 不写 `page` 参数 ——
+  票面要求「Word、Excel 等没有可靠分页的文件不跳转到猜测页」,这条口径在写入、读模型、链接三处一致。
+- 鉴权与 §8 其它写入口同分法(`NUXT_API_TOKEN`,未配 ⇒ 关闭);可运行入口见
+  `scripts/roster-evidence-pages.mjs`(读人工核对的页图结论,`--dry-run` 先看结论)。
+
+**页码是 PDF 实际页序,与附件无关**(票面「附件切换和跨页名单的页码与 PDF 实际页序一致」)。
+页码取的是**整份 PDF 的页**;一张页可以同时装着两个附件的内容,这时**同一个页码**对两个附件都成立。
+实测(`甬经信中小〔2022〕145号`,逐页读过页图):**第 8 页**下半是分节标题
+「二、有效期:2021年12月1日至2024年11月31日」+ 附件二 序号 1–6,上半是附件一 序号 194–198,
+页脚印着「— 8 —」。所以「附件二 序号 6 → 第 8 页」是对的,**不能**把它算成「附件二的第 6 页」。
+同理第 14 页的序号 104 是「宁波力劲机械有限公司」(附件三),而第 8 页附近的序号 65 是
+「宁波力劲科技有限公司」(附件一)—— **同一份文件里的两家近似名,分属两个附件、两个页码,绝不合并**。
+
+> ⚠️ **已知交互(留给父代理裁决,RL-10 未改)**:§8.9 的出处指针收敛按
+> **(attachment, listNo, page) 逐字相同**配对,而本入口会把既有行的 `page` 从 `null` 改成实际页。
+> 于是**被补过页码的那些行**,在有人拿一份 `page: null` 的载荷重放收敛(§8.9.3)时不再命中,
+> `source_file` 不会被改 —— 也就是「重命名来源文件后仍解析到同一内容」这条路径**对这批行失效**。
+> 改它要动 §8.9 冻结的配对谓词(RL-16/RL-19 的领地),故本票**不动**,在此记明场景与影响面
+> (仅限被补过页码的行;`.docx` / Excel 行的 `page` 仍是 `null`,不受影响)。
+
 ---
 
-## 9. MCP tool 形状(RL-11 实现)
+## 9. MCP tool 形状(RL-11 / RL-09 实现)
 > **RL-01 不注册任何新 tool**(写入 tool 名单由 `server/utils/mcp-auth.ts` 的
 > `MCP_WRITE_TOOLS` 单点维护,且有测试钉死 —— 新增写入 tool 必须同时改那里)。
-> 下面是 RL-11 要注册的形状。
+> 下面是 RL-11 和 RL-09 要注册的形状。
 
 | tool | 读写 | 参数 | 说明 |
 |---|---|---|---|
 | `save_roster_batch` | **写**(需 `NUXT_MCP_TOKEN`) | `{ idempotencyKey, sourceKind, sourceIdentity, sourceSha256?, payload }` | 等价 `POST /api/roster/import/commit`;返回 `{ batchId, status, summary, items }` |
 | `preflight_roster_batch` | 读(只读预检) | 同上 | 等价 `POST …/preflight` |
-| `list_enterprises` | 读 | `{ q?, title?, page?, pageSize? }` | 等价 `GET /api/roster/enterprises` |
+| `list_enterprises` | 读 | `{ q?, title?: string \| string[], firstYear?, firstStatus?, page?, pageSize? }` | 等价 `GET /api/roster/enterprises`；`title` 接受单个称号或称号数组；首次认定筛选按同一个企业×称号匹配 |
 | `list_differences` | 读 | `{ title?, direction?, status?, page?, pageSize? }` | 等价 `GET /api/roster/differences` |
+| `query_records` | 读 | `{ title?, source?, district?, eventType?, year?, firstYear?, firstStatus?, dueYear?, q?, flags?, page?, pageSize? }` | 与 `GET /api/records` 共用参数解析和企业×称号读模型；`year` 是事件年份，`firstYear` 是首次认定年份，`firstStatus` 与 §7.5 判据一致，`dueYear` 是到期年份 |
+| `get_enterprise_detail` | 读 | `{ enterpriseId }` | 与 `GET /api/roster/enterprises/:id` 共用详情读模型 |
 
 「只读不鉴权,写入必带 token」沿用既有分法;token 只从 `NUXT_MCP_TOKEN` 读。
 
-> **实现说明(RL-11)**:
+> **实现说明(RL-11 / RL-09)**:
 > - **写入清单是单点维护的**:新增写入 tool 必须同时改 `server/utils/mcp-auth.ts` 的
->   `MCP_WRITE_TOOLS`(测试把它钉死)。RL-11 追加 `save_roster_batch`;**全部四个 tool 均已注册**
->   (实测真机 `/mcp`:`tools/list` 无 token 时 8 个只读 tool,带 token 时 12 个,
->   `save_roster_batch` 未鉴权调用→HTTP 401)。
+>   `MCP_WRITE_TOOLS`(测试把它钉死)。RL-11 追加 `save_roster_batch`;名录查询 tool 均为只读，
+>   不加入写入名单。
 > - **`preflight_roster_batch` 按本表归为「读」**(不需 token)。注意它**不是纯读**:
 >   与 HTTP 的 `/preflight` 一样,它会在 `import_batch` 落一条 `status='preflight'` 的记账行
 >   (**不改任何业务数据**)。这是本表「只读预检」的字面落地;若日后要求它也必须带 token,
 >   改 `MCP_WRITE_TOOLS` 即可(一处)。
-> - **`list_enterprises` / `list_differences` 是 §7.1 / §7.3 读模型的**最小只读面**,
->   由 RL-11 为「写入后自查」提供(RL-04 负责完整读模型与 `GET /api/roster/*` 端点)。
->   两者**字段同名**,RL-04 落地后可把这两个 tool 重新指向同一实现;`firstRecognition` /
->   `nextReviewYear` 等生命周期字段属 RL-08 / RL-09,未在此代做。
+> - `query_records` 与 REST `GET /api/records` 共用 `parseRecordQuery` 和 `listRecords`；
+>   `get_enterprise_detail` 与 REST 企业详情共用 `getRosterEnterpriseDetail`。两者均为只读 tool。
 
 
 ---
