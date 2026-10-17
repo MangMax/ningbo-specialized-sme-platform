@@ -10,7 +10,7 @@ import { resolvePreviewKind } from '~~/lib/preview'
  * 文件预览入口。按扩展名分派到对应的预览器:
  *
  *   docx / xlsx / pptx → OfficePreview(@silurus/ooxml,画布渲染)
- *   pdf                → PdfPreview(EmbedPDF,自带完整界面)
+ *   pdf                → PdfPreview(EmbedPDF headless，共享只读阅读器)
  *   png / jpg / webp…  → ImagePreview(自研)
  *
  * 调用方只给一个地址和名字,不用关心后面用哪个库。

@@ -1,0 +1,56 @@
+<script setup lang="ts">
+import { onMounted, onBeforeUnmount, shallowRef, useTemplateRef } from 'vue'
+import { EmbedPDF } from '@embedpdf/core/vue'
+import { createPluginRegistration } from '@embedpdf/core'
+import type { PdfEngine } from '@embedpdf/models'
+import { DocumentManagerPluginPackage } from '@embedpdf/plugin-document-manager/vue'
+import { ViewportPluginPackage } from '@embedpdf/plugin-viewport/vue'
+import { ScrollPluginPackage } from '@embedpdf/plugin-scroll/vue'
+import { RenderPluginPackage } from '@embedpdf/plugin-render/vue'
+import { ZoomPluginPackage, ZoomMode } from '@embedpdf/plugin-zoom/vue'
+import { ThumbnailPluginPackage } from '@embedpdf/plugin-thumbnail/vue'
+import { SearchPluginPackage } from '@embedpdf/plugin-search/vue'
+import { SelectionPluginPackage } from '@embedpdf/plugin-selection/vue'
+import { InteractionManagerPluginPackage } from '@embedpdf/plugin-interaction-manager/vue'
+import PdfReaderDocument from './PdfReaderDocument.vue'
+import type { PdfReadingPosition } from '~~/lib/pdf-reader'
+const props = defineProps<{ src: string; tools: boolean }>()
+const emit = defineEmits<{ ready: [event: { totalPages: number }]; position: [position: PdfReadingPosition]; navigate: [position: PdfReadingPosition]; error: [message: string] }>()
+const engine = shallowRef<PdfEngine | null>(null)
+const documentView = useTemplateRef('documentView')
+let alive = true
+const startup = new AbortController()
+const plugins = [
+  createPluginRegistration(DocumentManagerPluginPackage, { initialDocuments: [{ url: props.src, documentId: 'reader' }] }),
+  createPluginRegistration(ViewportPluginPackage),
+  createPluginRegistration(ScrollPluginPackage, { defaultBufferSize: 1 }),
+  createPluginRegistration(RenderPluginPackage),
+  createPluginRegistration(ZoomPluginPackage, { defaultZoomLevel: ZoomMode.FitPage }),
+  createPluginRegistration(InteractionManagerPluginPackage),
+  createPluginRegistration(SelectionPluginPackage),
+  createPluginRegistration(SearchPluginPackage),
+  createPluginRegistration(ThumbnailPluginPackage, { buffer: 1, scrollBehavior: 'instant' }),
+]
+onMounted(async () => {
+  try {
+    const wasmUrl = new URL('/pdfium.wasm', window.location.origin).href
+    // In 2.15.1 a rejected worker WASM initialization can leave document tasks pending.
+    // Validate the same-origin asset before creating the worker. Its subsequent fetch
+    // can use the HTTP cache; theme and layout changes never repeat this initialization.
+    const response = await fetch(wasmUrl, { signal: startup.signal })
+    if (!response.ok || !WebAssembly.validate(await response.arrayBuffer())) throw new Error('Invalid PDFium resource')
+    if (!alive) return
+    const { createPdfiumEngine } = await import('@embedpdf/engines/pdfium-worker-engine')
+    if (!alive) return
+    engine.value = createPdfiumEngine(wasmUrl, { fontFallback: null })
+  } catch { if (alive) emit('error', 'PDF 引擎资源加载失败，请重试。') }
+})
+onBeforeUnmount(() => { alive = false; startup.abort(); engine.value?.destroy?.(); engine.value = null })
+function navigate(position: PdfReadingPosition) { documentView.value?.navigate(position) }
+defineExpose({ navigate })
+</script>
+<template>
+  <EmbedPDF v-if="engine" :engine="engine" :plugins="plugins" class="flex min-h-0 flex-1 flex-col">
+    <PdfReaderDocument ref="documentView" document-id="reader" :tools="tools" :engine="engine" @ready="emit('ready', $event)" @position="emit('position', $event)" @navigate="emit('navigate', $event)" @error="emit('error', $event)" />
+  </EmbedPDF>
+</template>
