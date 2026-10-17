@@ -63,15 +63,20 @@ defineRouteMeta({
       {
         name: 'firstYear',
         in: 'query',
-        schema: { type: 'string' },
-        description: '首次正式认定年份,多值；按同一企业 × 称号的最早 `award`，年份使用 `decidedYear ?? year`。非数字项剔除。',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'integer' } },
+        description:
+          '首次正式认定年份,逗号分隔多值；也接受重复参数。按同一企业 × 称号的最早 `award`，年份使用 `decidedYear ?? year`。非数字项剔除。',
       },
       {
         name: 'firstStatus',
         in: 'query',
-        // Keep literal enum values here: Nitro's OpenAPI extractor emits [] for imported spreads.
-        schema: { type: 'string', enum: ['confirmed', 'pending'] },
-        description: '首次认定状态,多值：`confirmed`(已确立) / `pending`(现有 award 缺有效年份或首次出处待确认)。',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
+        description:
+          '首次认定状态,逗号分隔多值：`confirmed`(已确立) / `pending`(现有 award 缺有效年份或首次出处待确认)；也接受重复参数。',
       },
       { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 50, maximum: 200 } },

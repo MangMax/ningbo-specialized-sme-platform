@@ -87,6 +87,13 @@ export function parseRecordQuery(query: Record<string, unknown>): RecordQuery {
       | EventType[]
       | undefined,
     year: yearsParam(query.year),
+    // RL-08:首次认定年份来自共享生命周期计算，与事件 `year` 分开。
+    firstYear: yearsParam(query.firstYear),
+    firstStatus: knownOrThrow(
+      parseCsvQuery(query.firstStatus),
+      FIRST_RECOGNITION_STATUS_VALUES,
+      'firstStatus',
+    ) as RecordQuery['firstStatus'],
     dueYear,
     q: strParam(query.q),
     flags: strParam(query.flags),

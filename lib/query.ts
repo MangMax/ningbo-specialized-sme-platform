@@ -39,6 +39,10 @@ export interface RecordQuery {
   eventType?: EventType[]
   /** 命中「该组合下存在此年份的事件」。 */
   year?: number[]
+  /** 命中生命周期计算出的最早正式认定年份；与事件年份 `year` 分开。 */
+  firstYear?: number[]
+  /** 命中共享首次认定判定出的状态。 */
+  firstStatus?: FirstRecognitionStatus[]
   /** 精确匹配生命周期计算出的到期年份；与事件年份 `year` 分开。 */
   dueYear?: number
   q?: string
@@ -52,7 +56,10 @@ export interface RecordQuery {
 }
 
 /** Filters accepted by the existing Excel export; it has no lifecycle due-year mode. */
-export type RecordFilterQuery = Omit<RecordQuery, 'dueYear' | 'page' | 'pageSize'>
+export type RecordFilterQuery = Omit<
+  RecordQuery,
+  'dueYear' | 'firstYear' | 'firstStatus' | 'page' | 'pageSize'
+>
 
 export type LifecycleFlag =
   | 'decided_year_missing'
@@ -204,8 +211,8 @@ function buildEventExists(db: Db, params: RecordQuery): SQL | undefined {
 /**
  * 分页列出「企业 × 称号」组合,合并该组合下**全部来源、历史事件与出处**。
  *
- * `year` 先按事件年份选中组合；`dueYear` 则在完整事件历史上调用生命周期读模型后精确筛选。
- * 后者必须在分页前计算，否则到期年份的 total 和分页结果都会错。
+ * `year` 先按事件年份选中组合；`dueYear`、`firstYear` 与 `firstStatus` 则在完整事件历史上筛选。
+ * 派生值必须在分页前计算，否则 total 和分页结果都会错。
  */
 export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; total: number } {
   const where = buildWhere(db, params)
@@ -227,14 +234,23 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
       .groupBy(schema.record.enterpriseId, schema.record.titleCode)
       .orderBy(sql`min(${titleRank})`, sql`min(${schema.enterprise.name})`)
 
-  if (params.dueYear != null) {
-    // 生命周期到期年是派生值，先对所有事件筛中的候选组合计算，再排序/分页。
+  if (params.dueYear != null || params.firstYear?.length || params.firstStatus?.length) {
+    // 生命周期到期年、首次认定年与首次认定状态都是派生值，先对所有候选组合计算，再排序/分页。
     const candidates = groupsQuery().all()
     if (!candidates.length) return { rows: [], total: 0 }
-    const dueRows = buildRecordRows(db, candidates).filter((row) => row.lifecycle.dueYear === params.dueYear)
+    const derivedRows = buildRecordRows(db, candidates).filter((row) => {
+      if (params.dueYear != null && row.lifecycle.dueYear !== params.dueYear) return false
+      if (
+        (params.firstYear?.length || params.firstStatus?.length) &&
+        !matchesRecordRecognition(row, params)
+      ) {
+        return false
+      }
+      return true
+    })
     return {
-      rows: dueRows.slice((page - 1) * pageSize, page * pageSize),
-      total: dueRows.length,
+      rows: derivedRows.slice((page - 1) * pageSize, page * pageSize),
+      total: derivedRows.length,
     }
   }
 
@@ -250,6 +266,30 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
 
   const pageGroups = groupsQuery().limit(pageSize).offset((page - 1) * pageSize).all()
   return { rows: buildRecordRows(db, pageGroups), total }
+}
+
+/** 首次年份与状态都使用 RL-08 已有的共享判定和筛选语义。 */
+function matchesRecordRecognition(row: RecordRow, params: RecordQuery): boolean {
+  const recognition = judgeFirstRecognition({
+    titleCode: row.titleCode,
+    lifecycle: row.lifecycle,
+    events: row.events.map((event) => ({
+      id: event.id,
+      eventType: event.type,
+      year: event.year,
+      decidedYear: event.decidedYear,
+      reviewOutcome: event.reviewOutcome,
+      source: event.source,
+    })),
+    evidenceByEvent: new Map(row.events.map((event) => [event.id, event.evidence])),
+  })
+  return (
+    recognition != null &&
+    matchesRecognitionQuery(recognition, {
+      firstYear: params.firstYear,
+      firstStatus: params.firstStatus,
+    })
+  )
 }
 
 /** 读取分组下全部来源/事件/出处并投影同一生命周期结果。 */

@@ -44,9 +44,10 @@ defineRouteMeta({
       {
         name: 'status',
         in: 'query',
-        // Keep literal enum values here: Nitro's OpenAPI extractor emits [] for imported spreads.
-        schema: { type: 'string', enum: ['confirmed', 'pending'] },
-        description: '首次认定状态,多值:`confirmed`(已确立)/ `pending`(待确认)。',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
+        description: '首次认定状态,逗号分隔多值:`confirmed`(已确立) / `pending`(待确认);也接受重复参数。',
       },
       { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 50, maximum: 200 } },

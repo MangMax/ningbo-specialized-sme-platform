@@ -1,19 +1,23 @@
 /**
- * RL-11 的企业总表/差异只读投影（契约 §9）。
+ * RL-11 名录只读工具的投影（契约 §9）。
  *
  * 名录只读工具包括 `list_enterprises` / `list_differences` / `query_records` /
  * `get_enterprise_detail`。它们**不鉴权**（沿用「只读不鉴权、写入必带 token」的既有分法）。
  *
  * ── 范围声明（重要）────────────────────────────────────────────────────
- * 契约 §7.1 / §7.3 的完整 REST 读模型由 RL-04 实现。本文件保留 RL-11 写入后的核对口径：
- * 身份 + 称号 + 已确认曾用名 + 差异的当前解释 + 证据指向。
- * 记录查询和企业详情分别由 `query_records` 与 `get_enterprise_detail` 提供，并直接复用 REST
- * 的参数解析和读模型。
+ * `list_enterprises` 直接复用 §7.1 的 REST 总表读模型，保证首次认定、出处、生命周期摘要、
+ * 计数和分页与 REST 一致。`list_differences` 保留 RL-11 写入后的核对投影：差异当前解释与证据。
+ * 记录查询和企业详情分别由 `query_records` 与 `get_enterprise_detail` 提供，并复用 REST 读模型。
  */
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { normalizeName } from '../../lib/domain'
+import {
+  listRosterEnterprises,
+  type RosterEnterpriseRow,
+  type RosterEnterprisesResult,
+} from '../../lib/roster/enterprise-roster'
+import type { FirstRecognitionStatus } from '../../lib/roster/first-recognition'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -21,32 +25,20 @@ export interface ListEnterprisesInput {
   /** 名称/曾用名关键词（走契约 §5 搜索口径：现名 + **已确认**曾用名）。 */
   q?: string
   /** 称号过滤（等值）。 */
-  title?: string
+  title?: string | string[]
   district?: string
   rosterState?: 'current' | 'removed_platform_only'
+  /** 首次正式认定年份(多值,不同于事件年份)。 */
+  firstYear?: number[]
+  /** 首次认定状态(多值,使用共享首次认定判定)。 */
+  firstStatus?: FirstRecognitionStatus[]
   page?: number
   pageSize?: number
 }
 
-export interface ListEnterpriseRow {
-  enterpriseId: number
-  name: string
-  uscc: string | null
-  district: string | null
-  city: string | null
-  regStatus: string | null
-  rosterState: 'current' | 'removed_platform_only'
-  titles: string[]
-  /** 仅 `confirmed` 的曾用名（未确认不参与搜索/展示）。 */
-  aliasNames: string[]
-}
-
-export interface ListEnterprisesResult {
-  rows: ListEnterpriseRow[]
-  counts: { total: number; titles: Record<string, number> }
-  page: number
-  pageSize: number
-}
+/** MCP 与 REST 共享企业总表的完整行形状。 */
+export type ListEnterpriseRow = RosterEnterpriseRow
+export type ListEnterprisesResult = RosterEnterprisesResult
 
 const PAGE_SIZE_MAX = 200
 
@@ -58,72 +50,19 @@ function pageOf(input: { page?: number; pageSize?: number }): { page: number; pa
 
 /**
  * 企业总表（**跨称号去重**：一行 = 一家企业，`titles` 是它拿过的称号）。
- * `rosterState` 按契约 §5 的派生口径做**最小**判定：有 jxj 记录且带事件 ⇒ `current`，
- * 否则 `removed_platform_only`（完整口径由 RL-04 实现）。
+ * 所有筛选、首次认定字段和计数都由 REST 共用读模型计算，避免 MCP 与 UI/HTTP 结果分叉。
  */
 export function listEnterprises(db: Db, input: ListEnterprisesInput = {}): ListEnterprisesResult {
-  const enterprises = db.select().from(schema.enterprise).all()
-  const records = db.select().from(schema.record).all()
-  const events = db.select().from(schema.recordEvent).all()
-  const aliases = db.select().from(schema.enterpriseAlias).all()
-
-  const eventsByRecord = new Set(events.map((e) => e.recordId))
-  const titlesByEnterprise = new Map<number, string[]>()
-  const hasJxjEvent = new Set<number>()
-  for (const record of records) {
-    const list = titlesByEnterprise.get(record.enterpriseId) ?? []
-    if (!list.includes(record.titleCode)) list.push(record.titleCode)
-    titlesByEnterprise.set(record.enterpriseId, list)
-    if (record.source === 'jxj' && eventsByRecord.has(record.id)) hasJxjEvent.add(record.enterpriseId)
-  }
-  const aliasNamesByEnterprise = new Map<number, string[]>()
-  for (const alias of aliases) {
-    if (alias.verificationStatus !== 'confirmed') continue
-    const list = aliasNamesByEnterprise.get(alias.enterpriseId) ?? []
-    if (!list.includes(alias.name)) list.push(alias.name)
-    aliasNamesByEnterprise.set(alias.enterpriseId, list)
-  }
-
-  const term = input.q?.trim() ? normalizeName(input.q) : null
-  const rows = enterprises
-    .map((enterprise): ListEnterpriseRow => {
-      const titles = (titlesByEnterprise.get(enterprise.id) ?? []).sort()
-      const aliasNames = (aliasNamesByEnterprise.get(enterprise.id) ?? []).sort()
-      return {
-        enterpriseId: enterprise.id,
-        name: enterprise.name,
-        uscc: enterprise.usccNorm,
-        district: enterprise.district,
-        city: enterprise.city,
-        regStatus: enterprise.regStatus,
-        rosterState: hasJxjEvent.has(enterprise.id) ? 'current' : 'removed_platform_only',
-        titles,
-        aliasNames,
-      }
-    })
-    .filter((row) => {
-      if (input.title && !row.titles.includes(input.title)) return false
-      if (input.district && row.district !== input.district) return false
-      if (input.rosterState && row.rosterState !== input.rosterState) return false
-      if (term) {
-        const hit =
-          normalizeName(row.name).includes(term) ||
-          row.aliasNames.some((alias) => normalizeName(alias).includes(term))
-        if (!hit) return false
-      }
-      return true
-    })
-    .sort((a, b) => a.enterpriseId - b.enterpriseId)
-
-  const counts = { total: rows.length, titles: countTitles(rows) }
-  const { page, pageSize } = pageOf(input)
-  return { rows: rows.slice((page - 1) * pageSize, page * pageSize), counts, page, pageSize }
-}
-
-function countTitles(rows: ListEnterpriseRow[]): Record<string, number> {
-  const counts: Record<string, number> = {}
-  for (const row of rows) for (const title of row.titles) counts[title] = (counts[title] ?? 0) + 1
-  return counts
+  return listRosterEnterprises(db, {
+    q: input.q,
+    title: input.title == null ? undefined : Array.isArray(input.title) ? input.title : [input.title],
+    district: input.district,
+    rosterState: input.rosterState,
+    firstYear: input.firstYear,
+    firstStatus: input.firstStatus,
+    page: input.page,
+    pageSize: input.pageSize,
+  })
 }
 
 export interface ListDifferencesInput {
