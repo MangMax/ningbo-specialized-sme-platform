@@ -80,7 +80,9 @@ export function buildWorkbenchRows(input: {
 export type PageReviewState = 'text' | 'empty' | 'none'
 
 /** 这一页属于哪一档。未识别（`result` 为 null）与「识别出来是空的」是两件事。 */
-export function pageReviewState(result: { markdown: string } | null): PageReviewState {
+export function pageReviewState(
+  result: { markdown: string } | null,
+): PageReviewState {
   if (!result) return 'none'
   return result.markdown.trim() === '' ? 'empty' : 'text'
 }
@@ -102,7 +104,10 @@ export const STATE_WORD: Record<PageReviewState, string> = {
  * 三档状态 → 徽章变体（**靠线型与线重分档，不靠颜色**）。
  * 实线加粗 = 已成立；次级实线 = 要留意但不是错；虚线 = 还没坐实。
  */
-export const STATE_BADGE: Record<PageReviewState, 'solid' | 'quiet' | 'dashed'> = {
+export const STATE_BADGE: Record<
+  PageReviewState,
+  'solid' | 'quiet' | 'dashed'
+> = {
   text: 'solid',
   empty: 'quiet',
   none: 'dashed',
@@ -119,7 +124,9 @@ export interface WorkbenchCounts {
 }
 
 /** 按**页码**数一遍三档。数的是行（页面实际列出的页），不是库里的行数。 */
-export function workbenchCounts(rows: readonly WorkbenchRow[]): WorkbenchCounts {
+export function workbenchCounts(
+  rows: readonly WorkbenchRow[],
+): WorkbenchCounts {
   const counts: WorkbenchCounts = { text: 0, empty: 0, none: 0 }
   for (const row of rows) counts[pageReviewState(row.result)] += 1
   return counts
@@ -157,14 +164,19 @@ export function confirmWrittenPage(
   readBack: string | null,
 ): { ok: boolean; message: string } {
   if (readBack === null) {
-    return { ok: false, message: '读回时这一页没有结果 —— 写入可能没落库,请重试一次。' }
+    return {
+      ok: false,
+      message: '读回时这一页没有结果 —— 写入可能没落库,请重试一次。',
+    }
   }
-  const same = normalizeMarkdownBody(submitted) === normalizeMarkdownBody(readBack)
+  const same =
+    normalizeMarkdownBody(submitted) === normalizeMarkdownBody(readBack)
   return same
     ? { ok: true, message: '已写入并读回一致。' }
     : {
         ok: false,
-        message: '读回的文本与提交的不一致(可能被别的会话改过)。请刷新后重新核对这一页。',
+        message:
+          '读回的文本与提交的不一致(可能被别的会话改过)。请刷新后重新核对这一页。',
       }
 }
 
@@ -185,7 +197,8 @@ export function confirmWrittenPage(
  *    也该允许把整份结果导进来(否则用户得先渲染完所有页才能干活)。所以它降级为提示,
  *    与 `jobs/ocr.ts` 里 `renderedPageCount` 的取舍一致。
  */
-export type ImportGuard = { ok: true; warning: string | null } | { ok: false; message: string }
+export type ImportGuard =
+  { ok: true; warning: string | null } | { ok: false; message: string }
 
 /** 导入的页数与「这份文件到底是几页」的核对。 */
 export function guardImportedPageCount(input: {
@@ -218,7 +231,11 @@ export function guardImportedPageCount(input: {
         '所以不写入。请确认结果是这份文件跑出来的;只识别了部分页时,请按页单独导入。',
     }
   }
-  if (input.rendered !== null && input.rendered > 0 && input.rendered !== input.imported) {
+  if (
+    input.rendered !== null &&
+    input.rendered > 0 &&
+    input.rendered !== input.imported
+  ) {
     return {
       ok: true,
       warning:
@@ -270,3 +287,44 @@ export const JSONL_IMPORT_HINT =
 export const MARKDOWN_IMPORT_HINT =
   '整份结果要自带页码标记(`<!-- page: 1 -->`,也认 `## 第 1 页`);' +
   '只贴一页的正文时,请在下面填上它的页码。'
+
+export interface PageFilters {
+  states: PageReviewState[]
+  range: string
+  text: string
+}
+
+/** Parse physical page ranges without expanding user-controlled large ranges. */
+export function parsePageRange(value: string): Array<[number, number]> | null {
+  if (!value.trim()) return []
+  const tokens = value.replaceAll('，', ',').replace(/[–—]/g, '-').split(',')
+  if (tokens.length > 200) return null
+  const ranges: Array<[number, number]> = []
+  for (const token of tokens) {
+    const match = /^\s*([1-9]\d*)(?:\s*-\s*([1-9]\d*))?\s*$/.exec(token)
+    if (!match) return null
+    const start = Number(match[1])
+    const end = Number(match[2] ?? match[1])
+    if (!Number.isSafeInteger(end) || end < start) return null
+    ranges.push([start, end])
+  }
+  return ranges
+}
+
+export function filterWorkbenchRows(
+  rows: readonly WorkbenchRow[],
+  filters: PageFilters,
+): WorkbenchRow[] {
+  const ranges = parsePageRange(filters.range)
+  if (!ranges) return []
+  const keyword = filters.text.trim().toLocaleLowerCase()
+  return rows.filter(
+    (row) =>
+      (!filters.states.length ||
+        filters.states.includes(pageReviewState(row.result))) &&
+      (!ranges.length ||
+        ranges.some(([a, b]) => row.page >= a && row.page <= b)) &&
+      (!keyword ||
+        (row.result?.markdown ?? '').toLocaleLowerCase().includes(keyword)),
+  )
+}
