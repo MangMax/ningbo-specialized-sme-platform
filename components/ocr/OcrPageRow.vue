@@ -12,44 +12,13 @@ import {
   STATE_WORD,
   type PageReviewState,
 } from '~~/lib/ocr-workbench'
+import OcrPageBody from './OcrPageBody.vue'
 import { OCR_CHANNELS } from '~~/lib/labels'
 import { pageLabel } from '~~/lib/page-gallery'
 
-/**
- * 工作台的一行 = **一页**:左页图、右 OCR 文本,下面是这一页的操作。
- *
- * 一行的主张很简单:**图与文本必须并排**。校对 OCR 就是把文本对着页面看,
- * 两个东西分屏或分页摆,人就得在脑子里对地址 —— 那正是这类工具最容易做得没用的地方。
- *
- * ── 三档状态,靠**线型与线重**分(不靠颜色)──────────────────────────────
- * 独立评审指出原来的两档不够用:「空结果」和「有文本」共用一个「已识别」徽章,
- * 徽章与紧挨着的正文互相拆台。现在三档对应三种线型 ——
- * **有文本**(实线加粗)/ **空结果**(次级实线)/ **未识别**(虚线),
- * 与 DESIGN.md 的「用线型与线重表达是不是已成立」同一套语汇,灰度打印也读得出。
- *
- * 未识别的页**另外**在缩略图左上角挂一枚**金色方标**:金色是本仓「国家级」那套
- * 图形标记的第三色,只做图形、不写金色文字。这一枚让「哪几页还没做」在缩到
- * 480px 的缩略图上、以及转灰度之后,都还看得出来。
- *
- * ── 三种状态,同一行里切换 ───────────────────────────────────────────
- *  - **读**:已有结果的 markdown 原文(不渲染 —— 仓里没有 markdown 渲染器,
- *    而「原文」恰是校对时要看的:表格与标题的结构都在,渲染反而会藏掉 `|` 与 `#`);
- *  - **改**:`Textarea` + 保存 / 取消。**允许存空文本**(空白页也要占一行,页号不能断),
- *    所以不做「空内容不许保存」这种校验;
- *  - **删**:二次确认(`确认删除` / `取消`)。删除是不可逆的(重做要花 API 额度),
- *    所以不弹系统对话框、也不一点就删,而是就地把按钮换成一对确认键。
- *
- * ── 键盘(独立评审 P3)──────────────────────────────────────────────────
- * 「可键盘操作」不能只是「每个控件都能 Tab 到」:确认条一出现焦点掉到 `body`,
- * 键盘用户想取消就得从页顶重走一遍几十行。所以这里**自己搬焦点** ——
- * 确认条出现时焦点落在「确认删除」,取消 / `Esc` 之后回到原来那颗按钮;
- * 编辑态里 `Esc` 与「取消」等价,回焦到「编辑 / 手工录入」。
- *
- * 每个动作的 pending / 失败由父页面给(`pending` / `failure`):这一行不自己发请求,
- * 所以「正在保存哪一页」「哪一页失败了」是**同一份状态**在管,不会各行其是。
- */
 const props = defineProps<{
   row: WorkbenchRow
+  filePath: string
   /**
    * 页图地址的**版本号**(票 13 清单里的渲染时间)。
    *
@@ -62,7 +31,9 @@ const props = defineProps<{
   pending?: boolean
   /** 这一行最近一次失败的说明(空串 = 没有)。 */
   failure?: string
-  /** 刚刚写入成功 —— 给一次短促的描边,让「变的是这一行」落在这行上。 */
+  /** Refresh/error snapshots remain readable but cannot be written. */
+  disabled?: boolean
+  /** Confirmed write/readback; also closes the editor. */
   highlight?: boolean
 }>()
 
@@ -73,11 +44,22 @@ const emit = defineEmits<{
   remove: [page: number]
   /** 选中这一页去看大图(宽屏进右侧对照栏,窄屏开弹窗)。 */
   preview: [page: number]
+  dirty: [dirty: boolean]
 }>()
 
 const editing = ref(false)
 const confirmingDelete = ref(false)
+const removing = ref(false)
 const draft = ref('')
+watch(
+  [editing, draft],
+  () =>
+    emit(
+      'dirty',
+      editing.value && draft.value !== (result.value?.markdown ?? ''),
+    ),
+  { flush: 'sync' },
+)
 
 /** 几处要自己搬焦点的位置(见组件头部「键盘」一节):编辑框,以及三颗互为锚点的按钮。 */
 const editor = ref<{ $el?: HTMLTextAreaElement } | null>(null)
@@ -93,7 +75,9 @@ const state = computed<PageReviewState>(() => pageReviewState(result.value))
 const imageSrc = computed(() => {
   const url = image.value?.url
   if (!url) return ''
-  return props.imageVersion ? `${url}?v=${encodeURIComponent(props.imageVersion)}` : url
+  return props.imageVersion
+    ? `${url}?v=${encodeURIComponent(props.imageVersion)}`
+    : url
 })
 
 /**
@@ -112,7 +96,9 @@ const metaParts = computed(() => {
 })
 
 /** 时间单独一段,`whitespace-nowrap` —— 窄屏下日期不能被拆到两行。 */
-const timeText = computed(() => (result.value ? formatTime(result.value.createdAt) : ''))
+const timeText = computed(() =>
+  result.value ? formatTime(result.value.createdAt) : '',
+)
 
 /** 时间:只到分钟。校对场景里精确到秒没有意义,反而占宽度。 */
 function formatTime(iso: string): string {
@@ -122,18 +108,6 @@ function formatTime(iso: string): string {
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`
 }
 
-/**
- * 把焦点搬到某个模板 ref 上,**等它真的接住为止**。
- *
- * 收 ref 而不是收元素:调用点写的都是 `focusEl(deleteButton)` 这种「那颗按钮」的意思,
- * 取值这一步在这里一次做掉。
- *
- * 为什么要重试:「读 / 改」两个分支套在 `Transition` 里,换分支时目标元素**不是**
- * 一次 `nextTick` 之后就挂上的(`mode="out-in"` 要先把旧分支的离开走完)。只等一次
- * `nextTick` 会落空,焦点掉回 `body` —— 键盘用户想取消就得从页顶重走一遍几十行,
- * 而独立评审实测到的正是这一幕。与其猜要等几帧,不如**每帧试一次、接住就停**:
- * 上限 4 帧(约 66ms)是兜底,正常一两帧就命中。
- */
 async function focusEl(target: { value: { $el?: HTMLElement } | null }) {
   for (let frame = 0; frame < 4; frame += 1) {
     await nextTick()
@@ -163,6 +137,7 @@ function cancelEdit() {
 
 function submit() {
   emit('save', props.row.page, draft.value)
+  void focusEl(editor)
 }
 
 function askDelete() {
@@ -176,27 +151,32 @@ function cancelDelete() {
 }
 
 function confirmDelete() {
+  removing.value = true
   emit('remove', props.row.page)
   confirmingDelete.value = false
 }
 
 /** `Esc` = 「取消」:编辑态退编辑,确认态退确认。焦点各回原位。 */
 function onEscape() {
+  if (props.pending) return
   if (editing.value) cancelEdit()
   else if (confirmingDelete.value) cancelDelete()
 }
 
-/**
- * 保存成功、父页面刷新后关掉编辑器。判据是「这一页的结果变了」——
- * 而不是「父页面说成功了」:失败时编辑器必须留着,让人能接着改
- * (关掉就等于把刚写的正文丢了)。
- */
+/** Only confirmed write/readback closes the editor, including a no-op or empty save. */
+watch([() => props.highlight, () => props.pending], ([saved, pending]) => {
+  if (saved && !pending && editing.value) {
+    editing.value = false
+    draft.value = ''
+    void focusEl(editButton)
+  }
+})
 watch(
-  () => result.value?.createdAt,
-  (next, previous) => {
-    if (next && next !== previous) {
-      editing.value = false
-      draft.value = ''
+  () => props.pending,
+  (pending, wasPending) => {
+    if (!pending && wasPending && removing.value) {
+      removing.value = false
+      void focusEl(editButton)
     }
   },
 )
@@ -208,15 +188,12 @@ watch(
     :class="highlight ? 'border-primary/40 ring-primary/20 ring-2' : ''"
     @keydown.esc="onEscape"
   >
-    <div class="flex flex-col gap-3 sm:flex-row">
-      <!-- 左:页图。**只是定位用的索引**,不指望在这儿读正文 ——
-           要读字走右边那颗「放大看」。所以它比一屏能放下的行数更值得让步:窄一点、矮一点,
-           同屏多出两三行。宽屏另有常驻的对照栏(见 pages/ocr.vue)。 -->
-      <div class="flex shrink-0 flex-col gap-1.5 sm:w-20">
+    <div class="flex flex-col gap-3 lg:flex-row">
+      <div class="flex shrink-0 flex-col gap-1.5 lg:w-1/2">
         <button
           v-if="image"
           type="button"
-          class="group focus-visible:border-ring focus-visible:ring-ring/50 relative block aspect-[210/297] w-16 overflow-hidden rounded-sm border bg-white focus-visible:ring-3 focus-visible:outline-none sm:w-full"
+          class="group focus-visible:border-ring focus-visible:ring-ring/50 relative block aspect-[210/297] w-full overflow-hidden rounded-sm border bg-white focus-visible:ring-3 focus-visible:outline-none lg:w-full"
           :aria-label="`放大看${pageLabel(row.page)}`"
           @click="emit('preview', row.page)"
         >
@@ -229,10 +206,7 @@ watch(
             decoding="async"
             class="size-full object-contain"
           />
-          <!-- 待校对的金色方标:金色是本仓「国家级」那套图形标记的第三色(见
-               `TitleBadge` / `SourceChip` 的 `bg-mark-national size-1.5 rounded-[1px]`),
-               这里借它做**唯一一处品牌色落点**,只画图形、不写金色文字。
-               放在角上而不是整条边 —— 单侧色条是模型默认做法,一角方标是这套台账自己的语言。 -->
+
           <span
             v-if="state === 'none'"
             aria-hidden="true"
@@ -248,11 +222,13 @@ watch(
         <!-- 没渲染过:说清这一页现在缺什么,而不是留一块空白。 -->
         <div
           v-else
-          class="text-muted-foreground flex aspect-[210/297] w-16 flex-col items-center justify-center gap-1 rounded-sm border border-dashed px-1 text-center text-[10px] leading-tight sm:w-full"
+          class="text-muted-foreground flex aspect-[210/297] w-full flex-col items-center justify-center gap-1 rounded-sm border border-dashed px-1 text-center text-[10px] leading-tight lg:w-full"
         >
           <span>未渲染</span>
         </div>
-        <span class="text-xs font-medium tabular-nums">{{ pageLabel(row.page) }}</span>
+        <span class="text-xs font-medium tabular-nums">{{
+          pageLabel(row.page)
+        }}</span>
       </div>
 
       <!-- 右:文本与操作。`min-w-0` 是必须的 —— 不写的话长表格会把这一行撑破,不再换行。 -->
@@ -260,7 +236,8 @@ watch(
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Badge :variant="STATE_BADGE[state]">{{ STATE_WORD[state] }}</Badge>
           <span v-if="metaParts.length" class="text-muted-foreground text-xs">
-            {{ metaParts.join(' · ') }}<template v-if="timeText">
+            {{ metaParts.join(' · ')
+            }}<template v-if="timeText">
               · <span class="whitespace-nowrap">{{ timeText }}</span></template
             >
           </span>
@@ -277,38 +254,53 @@ watch(
             <Textarea
               ref="editor"
               v-model="draft"
+              :readonly="pending"
+              :disabled="disabled"
               :aria-label="`${pageLabel(row.page)}的 OCR 文本`"
               class="max-h-[26rem] min-h-32 font-mono text-xs"
               placeholder="这一页的识别文本(markdown)。空白页留空即可 —— 空结果也会占住页号。"
             />
             <div class="flex flex-wrap items-center gap-2">
-              <Button size="sm" :disabled="pending" @click="submit">
-                <Loader2 v-if="pending" class="animate-spin" />
+              <Button size="sm" :disabled="pending || disabled" @click="submit">
+                <Loader2
+                  v-if="pending"
+                  class="animate-spin motion-reduce:animate-none"
+                />
                 <Check v-else />
                 {{ pending ? '保存中…' : '保存' }}
               </Button>
-              <Button variant="ghost" size="sm" :disabled="pending" @click="cancelEdit">
+              <Button
+                variant="ghost"
+                size="sm"
+                :disabled="pending"
+                @click="cancelEdit"
+              >
                 <X />
                 取消
               </Button>
-              <span class="text-muted-foreground text-xs">保存会覆盖这一页原有的文本。</span>
+              <span class="text-muted-foreground text-xs"
+                >保存会覆盖这一页原有的文本。</span
+              >
             </div>
           </div>
 
           <div v-else key="read" class="flex flex-col gap-2">
             <!-- 原文而不是渲染后的结果:校对要看的正是 `|` 与 `#` 这些结构标记,
                  渲染一遍反而把它们藏掉。空的正文不写第二句话 —— 徽章已经写着「空结果」。 -->
-            <pre
+            <OcrPageBody
               v-if="result"
-              class="bg-muted/40 max-h-[13rem] overflow-auto rounded-sm p-2 font-mono text-xs leading-relaxed whitespace-pre-wrap"
-            >{{ result.markdown || '(空)' }}</pre>
+              :markdown="result.markdown"
+              :file-path="filePath"
+              :page="row.page"
+              class="max-h-[65vh]"
+            />
 
             <div class="flex flex-wrap items-center gap-2">
               <Button
                 ref="editButton"
                 variant="outline"
                 size="sm"
-                :disabled="pending"
+                :disabled="pending || disabled"
                 @click="startEdit"
               >
                 <Pencil />
@@ -320,7 +312,7 @@ watch(
                   ref="deleteButton"
                   variant="outline"
                   size="sm"
-                  :disabled="pending"
+                  :disabled="pending || disabled"
                   @click="askDelete"
                 >
                   <Trash2 />
@@ -336,14 +328,22 @@ watch(
                     ref="confirmButton"
                     variant="destructive"
                     size="sm"
-                    :disabled="pending"
+                    :disabled="pending || disabled"
                     @click="confirmDelete"
                   >
-                    <Loader2 v-if="pending" class="animate-spin" />
+                    <Loader2
+                      v-if="pending"
+                      class="animate-spin motion-reduce:animate-none"
+                    />
                     <Trash2 v-else />
                     确认删除
                   </Button>
-                  <Button variant="ghost" size="sm" :disabled="pending" @click="cancelDelete">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    :disabled="pending || disabled"
+                    @click="cancelDelete"
+                  >
                     取消
                   </Button>
                 </template>
@@ -355,7 +355,9 @@ watch(
         <Alert v-if="failure" variant="destructive">
           <!-- `!` 是必须的:destructive 的说明文字默认带 90% 透明,深色下对比度不足
                (与文件页、页图库同一处处理)。 -->
-          <AlertDescription class="text-destructive! font-medium">{{ failure }}</AlertDescription>
+          <AlertDescription class="text-destructive! font-medium">{{
+            failure
+          }}</AlertDescription>
         </Alert>
       </div>
     </div>
