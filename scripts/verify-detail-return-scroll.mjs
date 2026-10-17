@@ -170,10 +170,10 @@ async function main() {
 
     // Router completion precedes Nuxt's page transition/render. Wait for the
     // public return link rather than a fixed delay or router-private ready flag.
-    await waitUntil(cdp, sessionId, `location.pathname === '/preview' && [...document.querySelectorAll('a')].some(a => a.textContent.includes('返回') && a.getAttribute('href')?.startsWith('/enterprises/35'))`)
+    await waitUntil(cdp, sessionId, `location.pathname === '/preview' && [...document.querySelectorAll('a')].some(a => a.textContent.trim() === '返回企业详情' && a.getAttribute('href')?.startsWith('/enterprises/35'))`)
     await evaluate(cdp, sessionId, `(() => {
       window.__detailReturnScrollCalls.length = 0;
-      [...document.querySelectorAll('a')].find(a => a.textContent.includes('返回') && a.getAttribute('href')?.startsWith('/enterprises/35')).click();
+      [...document.querySelectorAll('a')].find(a => a.textContent.trim() === '返回企业详情' && a.getAttribute('href')?.startsWith('/enterprises/35')).click();
     })()`)
 
     await waitUntil(cdp, sessionId, `location.pathname === '/enterprises/35' && document.body.innerText.includes('未能加载企业详情')`)

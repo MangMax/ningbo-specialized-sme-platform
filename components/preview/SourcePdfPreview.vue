@@ -35,6 +35,7 @@ const status = computed(() => {
   if (!actual.value || pending.value?.page === props.sourcePage) return `正在定位来源第 ${props.sourcePage} 页…`
   return `来源第 ${props.sourcePage} 页 · 当前浏览第 ${actual.value.page} 页`
 })
+const statusNeedsSpace = computed(() => !!(props.invalid || sourceOutOfRange.value || outOfRange.value || error.value || props.sourcePage === null || !actual.value || pending.value))
 function ready(event: PdfReadyEvent) { if (event.src === src.value) total.value = event.totalPages }
 function navigation(event: PdfNavigationRequest) {
   if (event.src !== src.value) return
@@ -50,6 +51,13 @@ function visible(event: PdfPositionEvent) {
   error.value = ''
   emit('visible', actual.value, explicit.value)
   explicit.value = false
+}
+function galleryVisible(page: number) {
+  if (view.value !== 'pages') return
+  galleryPage.value = page
+  // Gallery events include initialization/external restores: synchronize by replace,
+  // without adding a reader visit or claiming an original-PDF render.
+  emit('visible', { page }, false)
 }
 async function returnToSource() {
   if (!props.sourcePage) return
@@ -78,14 +86,15 @@ async function changeView(value: string | number) {
       </Tabs>
       <Button v-if="sourcePage !== null" variant="outline" size="sm" :disabled="sourceOutOfRange" @click="returnToSource">回到来源第 {{ sourcePage }} 页</Button>
     </div>
-    <Alert v-if="view === 'pdf'" :variant="invalid || outOfRange || sourceOutOfRange || error ? 'destructive' : 'default'">
+    <Alert v-if="view === 'pdf' && statusNeedsSpace" :variant="invalid || outOfRange || sourceOutOfRange || error ? 'destructive' : 'default'">
       <AlertDescription role="status" aria-live="polite">{{ status }}</AlertDescription>
     </Alert>
+    <span v-else-if="view === 'pdf'" role="status" aria-live="polite" class="sr-only">{{ status }}</span>
     <div v-if="originalOpened" v-show="view === 'pdf'" class="flex h-[75vh] min-h-96 flex-col">
       <ClientOnly>
         <PdfPreview ref="reader" :src="src" :name="name" :target-position="target" @ready="ready" @navigation-request="navigation" @position-change="visible" @error="error = $event" />
       </ClientOnly>
     </div>
-    <PageImageGallery v-if="view === 'pages'" class="h-[75vh] min-h-96" :file="file" :page="galleryPage ?? target?.page" @page-change="galleryPage = $event" />
+    <PageImageGallery v-if="view === 'pages'" class="h-[75vh] min-h-96" :file="file" :page="galleryPage ?? target?.page" @page-change="galleryVisible" />
   </div>
 </template>

@@ -274,3 +274,48 @@ it('restores an external gallery URL target instead of retaining the previous im
   expect(attempts.at(-1)).toEqual({ page: 5 })
   wrapper.unmount()
 })
+
+it('shares gallery selections immediately and reopens them without creating initialization or restore visits', async () => {
+  const { wrapper, engine, router } = await open({ file, page: '3', back, view: 'pages' })
+  const push = vi.spyOn(router, 'push')
+  wrapper.findComponent(Gallery).vm.$emit('page-change', 3)
+  await flushPromises()
+  expect(push).not.toHaveBeenCalled()
+  await wrapper.get('button[aria-label="查看页图第7页"]').trigger('click')
+  await flushPromises()
+  expect(router.currentRoute.value.query).toMatchObject({ page: '7', sourcePage: '3', view: 'pages', back })
+  expect(wrapper.text()).toContain('页图目标 7')
+  expect(push).not.toHaveBeenCalled()
+  const share = router.currentRoute.value.query
+  await router.push({ path: '/preview', query: { ...share, page: '5' } })
+  await flushPromises()
+  wrapper.findComponent(Gallery).vm.$emit('page-change', 5)
+  await flushPromises()
+  expect(push).toHaveBeenCalledTimes(1)
+  expect(router.currentRoute.value.query.page).toBe('5')
+  expect(engine().exists()).toBe(false)
+  wrapper.unmount()
+  const again = await open(share as Record<string, string>)
+  expect(again.wrapper.text()).toContain('页图目标 7')
+  await again.wrapper.findAll('[role="tab"]').find(t => t.text() === '原文')!.trigger('mousedown', { button: 0, ctrlKey: false })
+  await flushPromises()
+  again.engine().vm.$emit('ready', { totalPages: 12 }); await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 7 })
+  again.engine().vm.$emit('position', { page: 7 }); await flushPromises()
+  expect(again.wrapper.get('button[aria-label="阅读位置后退"]').attributes('disabled')).toBeDefined()
+  again.wrapper.unmount()
+})
+
+it.each([
+  ['/enterprises/91?back=q%3Dtest', '返回企业详情'],
+  ['/?q=test&page=2', '返回企业列表'],
+  ['//outside.example', '返回企业列表'],
+  ['/files?folder=synthetic', '返回文件库'],
+  ['/quality', '返回质量检查'],
+])('names the validated return destination for %s', async (back, label) => {
+  const { wrapper } = await open({ file, page: '3', back })
+  const link = wrapper.findAll('a').find(a => a.text() === label)
+  expect(link?.exists()).toBe(true)
+  expect(link?.attributes('href')).toBe(back === '//outside.example' ? '/' : back)
+  wrapper.unmount()
+})

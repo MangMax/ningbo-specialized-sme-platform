@@ -18,6 +18,12 @@ const { parsed, sourcePage, target, invalid, visible, changeView } = useSourcePd
 const file = computed(() => parsed.value.file)
 const page = sourcePage
 const backTo = computed(() => parsed.value.back || '/')
+const backLabel = computed(() => {
+  const path = new URL(backTo.value, 'http://app.invalid').pathname
+  if (/^\/enterprises\/\d+\/?$/.test(path)) return '返回企业详情'
+  const names: Record<string, string> = { '/': '企业列表', '/files': '文件库', '/roster': '名录记录', '/quality': '质量检查', '/stats': '统计分析', '/comparison': '企业对比', '/ocr': 'OCR 工作台', '/platform-queries': '平台查询' }
+  return `返回${names[path] ?? ` ${path}`}`
+})
 const name = computed(() => file.value ? fileNameOf(file.value) : '')
 const pdf = computed(() => isPageCapable(file.value))
 const previewable = computed(() => file.value ? isPreviewable(file.value) : false)
@@ -39,10 +45,10 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
       <template #actions>
         <div class="flex items-center gap-3">
           <!-- 页码三态就在这儿说清楚:有页码 / 待核 / 这类文件本来就没有页。 -->
-          <Badge v-if="pageState === 'assigned'" variant="secondary" class="tabular-nums">
+          <Badge v-if="!pdf && pageState === 'assigned'" variant="secondary" class="tabular-nums">
             来源第 {{ page }} 页
           </Badge>
-          <span v-else-if="pageState === 'pending'" class="text-muted-foreground text-xs">
+          <span v-else-if="!pdf && pageState === 'pending'" class="text-muted-foreground text-xs">
             {{ EVIDENCE_PAGE_WORDS.pending }}
           </span>
           <a
@@ -59,7 +65,7 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
             :to="backTo"
             class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
           >
-            <ChevronLeft class="size-3.5" />返回
+            <ChevronLeft class="size-3.5" />{{ backLabel }}
           </NuxtLink>
         </div>
       </template>

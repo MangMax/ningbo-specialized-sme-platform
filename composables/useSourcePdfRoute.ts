@@ -35,11 +35,13 @@ export function useSourcePdfRoute() {
     lastPage = undefined
     target.value = readTarget() ?? (first(route.query.page) === undefined ? { page: 1 } : undefined)
   })
-  function enqueue(destination: Parameters<typeof router.resolve>[0], explicit: boolean) {
+  function enqueue(request: Parameters<typeof router.resolve>[0] | (() => Parameters<typeof router.resolve>[0]), explicit: boolean) {
     const owner = generation
-    const path = router.resolve(destination).fullPath
     queue = queue.then(async () => {
-      if (owner !== generation || route.path !== '/preview' || path === route.fullPath) return
+      if (owner !== generation || route.path !== '/preview') return
+      const destination = typeof request === 'function' ? request() : request
+      const path = router.resolve(destination).fullPath
+      if (path === route.fullPath) return
       owned.add(path)
       try { await router[explicit ? 'push' : 'replace'](destination) }
       finally { owned.delete(path) }
@@ -62,7 +64,7 @@ export function useSourcePdfRoute() {
     if (explicit || changedPage) write(position, explicit)
     else timer = setTimeout(() => write(position, false), 300)
   }
-  function changeView(view: string) { clearTimeout(timer); enqueue({ path: '/preview', query: { ...route.query, view: view === 'pages' ? 'pages' : undefined }, hash: route.hash }, false) }
+  function changeView(view: string) { clearTimeout(timer); enqueue(() => ({ path: '/preview', query: { ...route.query, view: view === 'pages' ? 'pages' : undefined }, hash: route.hash }), false) }
   onScopeDispose(() => { generation++; clearTimeout(timer) })
   return { parsed, sourcePage, target, invalid, visible, changeView }
 }

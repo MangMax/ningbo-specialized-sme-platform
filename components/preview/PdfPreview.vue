@@ -135,7 +135,8 @@ defineExpose({ navigate })
       <Button variant="ghost" size="icon-sm" aria-label="阅读工具" :aria-expanded="tools" @click="tools = !tools"><SlidersHorizontal /></Button>
       <Button variant="ghost" size="icon-sm" as-child><a :href="src" :download="title" aria-label="下载原文"><Download /></a></Button>
       <Button variant="ghost" size="icon-sm" :aria-label="fullscreen ? '退出全屏' : '全屏阅读'" @click="toggleFullscreen"><Minimize v-if="fullscreen" /><Maximize v-else /></Button>
-      <div role="group" aria-label="文档内阅读位置" class="flex items-center gap-1">
+      <div role="group" aria-label="文档内阅读位置" class="flex shrink-0 items-center gap-1 border-l pl-2">
+        <span class="text-muted-foreground text-xs">位置历史</span>
         <Button variant="ghost" size="icon-sm" aria-label="阅读位置后退" title="阅读位置后退" :disabled="status !== 'ready' || !past.length" @click="revisit('back')"><ChevronLeft /></Button>
         <Button variant="ghost" size="icon-sm" aria-label="阅读位置前进" title="阅读位置前进" :disabled="status !== 'ready' || !future.length" @click="revisit('forward')"><ChevronRight /></Button>
       </div>

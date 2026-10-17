@@ -433,6 +433,14 @@ async function runCurrentLedgerReturn(cdp, sessionId, viewport) {
     button.click(); return button.textContent.trim();
   })()`)
   await waitUntil(cdp, sessionId, `!!document.querySelector('[data-testid="enterprise-drawer"]') && [...document.querySelectorAll('a')].some(a => a.textContent.includes('完整企业页'))`)
+  // Drawer rendering precedes the asynchronous router.replace. Wait for the
+  // public URL to identify that same enterprise before capturing the return URL.
+  await waitUntil(cdp, sessionId, `(() => {
+    const link = [...document.querySelectorAll('a')].find(a => a.textContent.includes('完整企业页'));
+    if (!link) return false;
+    const id = new URL(link.href).pathname.split('/').pop();
+    return !!id && new URLSearchParams(location.search).get('expand') === id;
+  })()`)
   const listBefore = await setScrollOffsets(cdp, sessionId, { tableTop: 1538, tableLeft: viewport.listScrollLeft, windowTop: viewport.listScrollY })
   const listPath = await evaluate(cdp, sessionId, 'location.pathname + location.search')
   const expanded = new URL(listPath, BASE).searchParams.get('expand')
@@ -451,7 +459,7 @@ async function runCurrentLedgerReturn(cdp, sessionId, viewport) {
   await waitUntil(cdp, sessionId, "location.pathname === '/preview'")
   await exerciseReading(cdp, sessionId, viewport)
   await evaluate(cdp, sessionId, 'window.__rl10ScrollCalls.length = 0')
-  await evaluate(cdp, sessionId, "[...document.querySelectorAll('a')].find(a => a.textContent.trim() === '返回').click()")
+  await evaluate(cdp, sessionId, "[...document.querySelectorAll('a')].find(a => a.textContent.trim() === '返回企业详情').click()")
   await waitForStableCondition(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(detailPath)} && Math.abs(window.scrollY - ${detailBefore.scrollY}) <= 2 && [...document.querySelectorAll('button')].some(b => b.textContent.includes('收起出处')) && !window.__rl10ScrollCalls.some(p => p.top === 0)`)
   const detailAfter = await evaluate(cdp, sessionId, '({path:location.pathname+location.search,scrollY:window.scrollY,disclosure:document.body.innerText.includes("收起出处"),calls:window.__rl10ScrollCalls})')
   await saveEvidence(cdp, sessionId, `${viewport.width}-detail-return`, { before: detailBefore, after: detailAfter })
