@@ -380,14 +380,15 @@ useHead({
 
 <template>
   <div class="ledger-page flex min-w-0 flex-col gap-2 sm:gap-3">
-    <!-- 页头:页面名 + 总数(左)· 搜索(右)。设计稿的第 1 行。 -->
-    <div class="flex flex-wrap items-center justify-start gap-x-4 gap-y-2">
-      <h1 class="flex items-baseline gap-2 text-[15px] leading-6 font-semibold">
-        {{ ENTERPRISE_LIST_TITLE }}
-        <span class="text-muted-foreground text-xs font-normal tabular-nums" aria-live="polite">
-          {{ total ? total.toLocaleString('zh-CN') : '—' }}
-        </span>
-      </h1>
+    <PageHeader class="rise-in" style="--rise-index: 0" :title="ENTERPRISE_LIST_TITLE">
+      <template #actions>
+        <Button as-child variant="outline" size="sm">
+          <a :href="exportUrl"><ExternalLink class="size-3.5" />{{ LEDGER_EXPORT_LABEL }}</a>
+        </Button>
+      </template>
+    </PageHeader>
+
+    <div data-testid="ledger-filters" class="rise-in flex flex-wrap items-center gap-2" style="--rise-index: 1">
       <div class="relative w-full sm:w-72">
         <Search
           class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
@@ -399,10 +400,6 @@ useHead({
           aria-label="按企业名称、已确认曾用名或统一社会信用代码搜索"
         />
       </div>
-    </div>
-
-    <!-- 筛选:压成一行。设计稿的第 2 行。 -->
-    <div class="flex flex-wrap items-center gap-2">
       <MultiSelectFilter
         v-model="state.title"
         :options="titleOptions"
@@ -453,10 +450,6 @@ useHead({
           </SelectItem>
         </SelectContent>
       </Select>
-
-      <Button as-child variant="outline" size="sm" class="ml-auto">
-        <a :href="exportUrl"><ExternalLink class="size-3.5" />{{ LEDGER_EXPORT_LABEL }}</a>
-      </Button>
     </div>
 
     <!-- 生效中的条件:一个都不许藏着(见 `activeFilters` 的注释)。 -->
@@ -489,7 +482,7 @@ useHead({
       >
     </Alert>
 
-    <Card class="gap-0 overflow-hidden py-0 shadow-none">
+    <Card class="rise-in gap-0 overflow-hidden py-0 shadow-none" style="--rise-index: 2">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在搜索…" />
         <EnterpriseListTable

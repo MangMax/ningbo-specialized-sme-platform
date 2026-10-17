@@ -16,6 +16,7 @@
  * 用法:`node scripts/verify-ledger-ui.mjs [--port 3491] [--skip-build] [--focus-only]`
  * 退出码 0 = 全部通过;非 0 = 有一条不符合预期(并打印实测数字)。
  * `--focus-only` 只跑抽屉 Esc / 关闭按钮 / 外部点击后的焦点回归,适合快速诊断。
+ * `--entry-only` 只检查共用页头、进入动画与减少动态效果偏好。
  */
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
@@ -32,6 +33,7 @@ const PORT = Number(flag('port', '3491'))
 const DEBUG_PORT = PORT + 1
 const SKIP_BUILD = args.includes('--skip-build')
 const FOCUS_ONLY = args.includes('--focus-only')
+const ENTRY_ONLY = args.includes('--entry-only')
 const BASE = `http://127.0.0.1:${PORT}`
 
 /** 桌面与窄屏逻辑视口;页面根节点的实测宽度都在下面报告。 */
@@ -2432,8 +2434,8 @@ const MEASURE = `(() => {
     } : null,
     comparisonNames,
     evidenceSummaries,
-    ledgerExportTableGap: ledgerExport && ledgerTable
-      ? Math.round(ledgerTable.getBoundingClientRect().top - ledgerExport.getBoundingClientRect().bottom)
+    ledgerToolbarTableGap: document.querySelector('[data-testid="ledger-filters"]') && ledgerTable
+      ? Math.round(ledgerTable.getBoundingClientRect().top - document.querySelector('[data-testid="ledger-filters"]').getBoundingClientRect().bottom)
       : null,
     ledgerExportLabel: ledgerExport ? (ledgerExport.innerText ?? ledgerExport.textContent ?? '').trim() : '',
     motionCurves: {
@@ -2508,6 +2510,49 @@ async function verifyEnterpriseDifferenceColors(cdp) {
   else ok('状态文字色缺陷自检:关闭注入 target 后真实计算样式恢复')
 }
 
+function pageEntryAppearanceViolation(state, width) {
+  return !state.header || !state.actions || state.font !== '20px' || state.lineHeight !== '25px' || state.gap !== (width >= 640 ? '12px' : '8px') || state.overflow
+}
+
+async function verifyPageEntryAppearance(cdp) {
+  const capture = `window.__pageEntry = [];
+    for (const phase of ['animationstart','animationend']) document.addEventListener(phase, event => {
+      if (event.animationName !== 'rise-in') return;
+      const style=getComputedStyle(event.target);
+      window.__pageEntry.push({phase,index:style.getPropertyValue('--rise-index').trim(),elapsed:event.elapsedTime,easing:style.animationTimingFunction});
+    },true);`;
+  for (const viewport of VIEWPORTS) {
+    for (const path of ['/', '/comparison']) {
+      const {targetId,sessionId}=await openSession(cdp,BASE+path,viewport,READY,{openDrawer:false,beforeLoadScript:capture});
+      try {
+        const ended=await waitUntil(cdp,sessionId,`['0','1','2'].every(index=>window.__pageEntry.some(e=>e.phase==='animationend'&&e.index===index))`);
+        const state=await evaluate(cdp,sessionId,`(()=>{
+          const root=document.querySelector('.ledger-page,.comparison-page'), heading=root.querySelector('h1'), header=heading.closest('header');
+          const style=getComputedStyle(heading), sections=[...root.querySelectorAll('.rise-in')];
+          return {font:style.fontSize,lineHeight:style.lineHeight,header:!!header,actions:!!header?.querySelector('a[href*="export"]'),
+            gap:getComputedStyle(root).rowGap,overflow:document.documentElement.scrollWidth>innerWidth,
+            indices:sections.map(el=>getComputedStyle(el).getPropertyValue('--rise-index').trim()),events:window.__pageEntry};})()`);
+        const label=path+' · '+viewport.width+'px进入效果';
+        if (pageEntryAppearanceViolation(state,viewport.width)) bad(label+':共用页头、操作布局或间距不符 '+JSON.stringify(state));
+        else ok(label+':共用20px标题、页头右侧导出与一致区块间距，无横向溢出');
+        if (!ended||state.events.filter(e=>e.phase==='animationend'&&['0','1','2'].includes(e.index)).some(e=>Math.abs(e.elapsed-.22)>.01||normalizeEasing(e.easing)!==EXPECTED_EASING)) bad(label+':未观察到三个区块的完整进入动画 '+JSON.stringify(state.events));
+        else ok(label+':标题/筛选/表格均观察到animationstart与animationend，共用220ms缓动');
+      } finally {await cdp.send('Target.closeTarget',{targetId});}
+    }
+  }
+  for (const path of ['/', '/comparison']) {
+    const {targetId,sessionId}=await openSession(cdp,BASE+path,VIEWPORTS[0],READY,{openDrawer:false,beforeLoadScript:capture,mediaFeatures:[{name:'prefers-reduced-motion',value:'reduce'}]});
+    try {
+      const reduced=await evaluate(cdp,sessionId,`window.__pageEntry.length===0&&[...document.querySelectorAll('.rise-in')].every(el=>getComputedStyle(el).animationName==='none')`);
+      if (!reduced) bad(path+'进入效果:减少动态效果偏好未停用动画');
+      else ok(path+'进入效果:减少动态效果偏好下无进入动画');
+      const broken=await evaluate(cdp,sessionId,`(()=>{const heading=document.querySelector('h1'),header=heading.closest('header'),root=document.querySelector('.ledger-page,.comparison-page');heading.style.fontSize='15px';const style=getComputedStyle(heading);return {font:style.fontSize,lineHeight:style.lineHeight,header:!!header,actions:!!header.querySelector('a[href*="export"]'),gap:getComputedStyle(root).rowGap,overflow:document.documentElement.scrollWidth>innerWidth};})()`);
+      if (!pageEntryAppearanceViolation(broken,VIEWPORTS[0].width)) bad(path+'进入效果:恢复小标题后断言未命中');
+      else ok(path+'进入效果:恢复15px小标题后按预期变红');
+    } finally {await cdp.send('Target.closeTarget',{targetId});}
+  }
+}
+
 async function main() {
   if (!SKIP_BUILD) {
     console.log('▶ pnpm build')
@@ -2555,7 +2600,8 @@ async function main() {
     cdp = await connect(version.webSocketDebuggerUrl)
 
     if (FOCUS_ONLY) await verifyLedgerDrawerFocus(cdp)
-    if (!FOCUS_ONLY) {
+    if (!FOCUS_ONLY) await verifyPageEntryAppearance(cdp)
+    if (!FOCUS_ONLY && !ENTRY_ONLY) {
     await verifyLightThemeDefault(cdp)
     for (const viewport of VIEWPORTS) {
       for (const page of PAGES) {
@@ -2586,9 +2632,9 @@ async function main() {
           else ok(`${label}:导出控件可见文字为 ${JSON.stringify(m.ledgerExportLabel)}`)
         }
         if (page.query === '/' && viewport.width === 390) {
-          if (m.ledgerExportTableGap == null || m.ledgerExportTableGap > 60) {
-            bad(`${label}:导出控件到表格之间留白仍偏大 ${JSON.stringify(m.ledgerExportTableGap)}px`)
-          } else ok(`${label}:导出控件到表格间距已收紧(${m.ledgerExportTableGap}px)`)
+          if (m.ledgerToolbarTableGap == null || m.ledgerToolbarTableGap > 60) {
+            bad(`${label}:筛选栏到表格之间留白仍偏大 ${JSON.stringify(m.ledgerToolbarTableGap)}px`)
+          } else ok(`${label}:筛选栏到表格间距已收紧(${m.ledgerToolbarTableGap}px)`)
         }
         if (page.query === '/comparison') {
           if (!m.comparisonDirection?.trigger || !m.comparisonDirection.label) {
@@ -3005,7 +3051,8 @@ async function main() {
     process.exit(1)
   }
   console.log(`\n结果:${passed} 项通过,0 项失败`)
-  if (FOCUS_ONLY) console.log('✓ 抽屉焦点回归已覆盖关闭按钮与外部点击')
+  if (ENTRY_ONLY) console.log('✓ 共用页头与进入动效已覆盖1440/390/720px及减少动态效果偏好')
+  else if (FOCUS_ONLY) console.log('✓ 抽屉焦点回归已覆盖关闭按钮与外部点击')
   else console.log('✓ 企业列表与比对页已覆盖桌面/390px/720px、表格唯一性、搜索与加载、分页、排序、抽屉动效及 /roster 查询串重定向')
 }
 
