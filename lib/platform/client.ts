@@ -2,14 +2,13 @@
  * 平台两个接口的**薄客户端**(RL-03):可注入 `fetch`,离线可测。
  *
  * 与 {@link ./adapter} 的分工:`adapter.ts` 是纯解析(收一份原始响应 → 三态),
- * 本文件只负责「发请求 → 把原文交给 adapter 归类」。**凭据只从环境读、不入库、不进日志**;
+ * 本文件只负责「发请求 → 把原文交给 adapter 归类」。凭据由调用方注入,独立脚本可从环境读取;
  * 拿不到凭据时**不发请求**,四次查询一律记 `failed`(未查询 ≠ 无记录)。
  *
  * 生产上真实响应由父协调者在**已登录的桌面 Chrome 会话**里代取并落地为证据文件,
  * 由 `classifyPlatformResponse` 直接归类 —— 本客户端是同一口径下的取数路径,
  * 让适配层在没有真实凭证的环境里也能被完整测到。
  */
-import { existsSync, readFileSync } from 'node:fs'
 import {
   APPLY_GRID,
   APPLY_LIST_PATH,
@@ -40,7 +39,6 @@ export type PlatformFetch = (
 
 /** cookie 环境变量名。仓库里只留 `.env.example` 占位,真实值不入库。 */
 export const COOKIE_ENV = 'MIIT_COOKIE'
-export const COOKIE_FILE_ENV = 'MIIT_COOKIE_FILE'
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36'
@@ -77,7 +75,7 @@ export interface PlatformQueryOptions {
  * 「这次实查能不能开始」;拿不到就不该产出「一片未查询」的假结果。
  *
  * 给了 `option` 就以它为准(测试注入、或服务端从运行时配置取),否则按
- * {@link COOKIE_ENV} → {@link COOKIE_FILE_ENV} 的顺序读环境。
+ * {@link COOKIE_ENV} 读环境。显式空字符串或返回空字符串的函数会禁止环境回退。
  */
 export function hasPlatformCredential(option: PlatformQueryOptions['cookie'] = null): boolean {
   return resolveCookie(option).length > 0
@@ -85,12 +83,8 @@ export function hasPlatformCredential(option: PlatformQueryOptions['cookie'] = n
 
 export function resolveCookie(option: PlatformQueryOptions['cookie']): string {
   if (typeof option === 'function') return option().trim()
-  if (option) return option.trim()
-  const inline = process.env[COOKIE_ENV]?.trim()
-  if (inline) return inline
-  const file = process.env[COOKIE_FILE_ENV]?.trim()
-  if (file && existsSync(file)) return readFileSync(file, 'utf8').trim()
-  return ''
+  if (typeof option === 'string') return option.trim()
+  return process.env[COOKIE_ENV]?.trim() ?? ''
 }
 
 /** 干跑一次取数(不发请求),把结果归成三态 —— 供测试与「用已取回的原文入库」。 */
@@ -150,7 +144,7 @@ async function post(
   const cookie = resolveCookie(options.cookie)
   if (!cookie) {
     throw new PlatformCredentialMissingError(
-      `未配置平台会话凭据:请设 ${COOKIE_ENV}(整条 Cookie 值)或 ${COOKIE_FILE_ENV}(文件路径)。凭据不入库,仓库只留 .env.example 占位。`,
+      `未配置平台会话凭据:请由调用方提供,或设置 ${COOKIE_ENV}(整条 Cookie 值)。`,
     )
   }
   const fetchImpl = options.fetchImpl ?? (globalThis.fetch as unknown as PlatformFetch)
@@ -245,7 +239,7 @@ export async function queryPlatformSlots(
     try {
       const path = slot.interface === 'business_list' ? BUSINESS_LIST_PATH : APPLY_LIST_PATH
       const body = slot.interface === 'business_list' ? queryBody(uscc, { rdjb: slot.rdjb! }) : queryBody(uscc)
-      if (credentialError) throw new Error('平台凭据文件不可用，请检查权限。')
+      if (credentialError) throw new Error('平台凭据不可用，请检查凭据来源。')
       const raw = await post(fixed, path, body)
       const outcome = classifyRawQuery(raw, { ...base, queriedAt })
       const rows = sanitize(outcome.rows) as PlatformRow[]

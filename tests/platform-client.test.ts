@@ -1,15 +1,19 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BUSINESS_LIST_PATH,
   APPLY_LIST_PATH,
   type PlatformFetch,
   queryAllRdjb,
+  hasPlatformCredential,
 } from '../lib/platform'
 
 const fixture = (name: string) =>
   readFileSync(join(import.meta.dirname, 'fixtures/platform', name), 'utf8')
+
+afterEach(() => vi.unstubAllEnvs())
 
 interface Call {
   url: string
@@ -106,6 +110,46 @@ describe('queryAllRdjb:按 USCC 把 rdjb=1/2/3 全查再合并', () => {
       expect(outcome.status).toBe('failed')
       expect(outcome.failureReason).toContain('凭据')
     }
+  })
+
+  it('ignores a legacy credential file and makes no requests without an environment credential', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'platform-legacy-cookie-'))
+    const path = join(dir, 'cookie.txt')
+    writeFileSync(path, 'session=synthetic-file-cookie')
+    vi.stubEnv('MIIT_COOKIE', '')
+    vi.stubEnv('MIIT_COOKIE_FILE', path)
+    try {
+      const { fetchImpl, calls } = fakeFetch(normalReply)
+      expect(hasPlatformCredential()).toBe(false)
+      const outcomes = await queryAllRdjb({ uscc: '91330211255994457P', fetchImpl })
+      expect(calls).toHaveLength(0)
+      expect(outcomes).toHaveLength(4)
+      expect(outcomes.every(outcome => outcome.status === 'failed' && outcome.failureReason?.includes('凭据'))).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the environment credential for standalone calls', async () => {
+    vi.stubEnv('MIIT_COOKIE', '  session=synthetic-env-cookie  ')
+    const { fetchImpl, calls } = fakeFetch(normalReply)
+    expect(hasPlatformCredential()).toBe(true)
+    await queryAllRdjb({ uscc: '91330211255994457P', fetchImpl })
+    expect(calls).toHaveLength(4)
+    expect(calls.every(call => call.cookie === 'session=synthetic-env-cookie')).toBe(true)
+  })
+
+  it.each([
+    { name: 'empty string', cookie: '' },
+    { name: 'empty resolver', cookie: () => '' },
+  ])('keeps an injected $name authoritative over an environment credential', async ({ cookie }) => {
+    vi.stubEnv('MIIT_COOKIE', 'session=synthetic-env-cookie')
+    const { fetchImpl, calls } = fakeFetch(normalReply)
+    expect(hasPlatformCredential(cookie)).toBe(false)
+    const outcomes = await queryAllRdjb({ uscc: '91330211255994457P', fetchImpl, cookie })
+    expect(calls).toHaveLength(0)
+    expect(outcomes).toHaveLength(4)
+    expect(outcomes.every(outcome => outcome.status === 'failed')).toBe(true)
   })
 })
 

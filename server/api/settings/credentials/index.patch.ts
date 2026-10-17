@@ -61,7 +61,6 @@ defineRouteMeta({ openAPI: { tags: ['Settings'], summary: '保存 OCR token 或�
                 "enum": [
                   "saved",
                   "MIIT_COOKIE",
-                  "MIIT_COOKIE_FILE",
                   "none"
                 ]
               },

@@ -61,7 +61,6 @@ defineRouteMeta({ openAPI: { tags: ['Settings'], summary: '读取配置状态，
                 "enum": [
                   "saved",
                   "MIIT_COOKIE",
-                  "MIIT_COOKIE_FILE",
                   "none"
                 ]
               },

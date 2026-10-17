@@ -61,7 +61,6 @@ defineRouteMeta({ openAPI: { tags: ['Settings'], summary: '显式清除页面凭
                 "enum": [
                   "saved",
                   "MIIT_COOKIE",
-                  "MIIT_COOKIE_FILE",
                   "none"
                 ]
               },

@@ -10,7 +10,7 @@
  * 不打外网:这里跑的都是「到不了网络」的路径(缺库、参数非法、缺凭据)。
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -74,6 +74,7 @@ describe('用法与参数', () => {
     expect(result.stdout).toContain('--dry-run')
     expect(result.stdout).toContain('--base-url')
     expect(result.stdout).toContain('MIIT_COOKIE')
+    expect(result.stdout).not.toContain('MIIT_COOKIE_FILE')
   })
 
   it('参数非法 ⇒ 2 退出并说明原因(不静默用默认值把长跑跑偏)', () => {
@@ -94,7 +95,7 @@ describe('用法与参数', () => {
 })
 
 describe('缺凭据:明确失败,一行不写', () => {
-  it('有目标但拿不到 MIIT_COOKIE / MIIT_COOKIE_FILE ⇒ 1 退出,库里没有任何证据行', () => {
+  it('有目标但只有旧凭据文件 ⇒ 1 退出,库里没有任何证据行', () => {
     const dbPath = join(dir, 'target.db')
     const db = useDb({ dbPath })
     const enterpriseId = db
@@ -104,7 +105,9 @@ describe('缺凭据:明确失败,一行不写', () => {
       .get().id
     db.insert(schema.record).values({ enterpriseId, source: 'miit', titleCode: 'specialized_sme' }).run()
 
-    const result = run(['--db', dbPath, '--titles', 'specialized_sme'])
+    const cookiePath = join(dir, 'legacy-cookie.txt')
+    writeFileSync(cookiePath, 'session=synthetic-legacy-cookie')
+    const result = run(['--db', dbPath, '--titles', 'specialized_sme'], { MIIT_COOKIE_FILE: cookiePath })
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('MIIT_COOKIE')
     // 「不产出一片『未查询』的假结果」是硬约束 —— 库里必须干净。

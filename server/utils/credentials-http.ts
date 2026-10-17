@@ -27,7 +27,7 @@ export function handleCredentialsRequest(action: 'state' | 'reveal', request: Co
     } else if (request.method !== 'GET') return json(405, { message: '不支持的方法' })
     return json(200, credentialStatus(ctx))
   } catch {
-    // Never forward filesystem paths, JSON parse excerpts, credentials or upstream exceptions.
-    return json(503, { message: '配置存储不可用，请检查外置目录与权限后重试；旧配置未被覆盖。' })
+    // Never forward SQL errors, credentials or upstream exceptions.
+    return json(503, { message: '配置存储不可用，请检查数据库后重试。' })
   }
 }

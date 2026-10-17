@@ -54,6 +54,7 @@ afterAll(() => {
 })
 
 beforeEach(async () => {
+  db.delete(schema.serviceCredential).run()
   db.delete(schema.ocrResult).run()
   db.delete(schema.storedFile).run()
   // 页图与「成功页中转」都是派生缓存,会留在盘上跨用例。不清的话,后面某个用例
@@ -705,15 +706,13 @@ describe('中转命中判据(纯函数)', () => {
 
 it('uses saved credentials for new OCR runs while a running submit and poll retain their startup snapshot', async () => {
   const { updateCredential } = await import('../server/utils/credential-state')
-  const stateDir = join(dir, 'credential-state')
-  process.env.NUXT_CREDENTIALS_STATE_DIR = stateDir
   try {
-    updateCredential('ocrToken', 'synthetic-start-value', { stateDir, env: {} })
+    updateCredential('ocrToken', 'synthetic-start-value', { db, env: {} })
     const file = 'credential-snapshot.pdf'
     const credentialFileId = await seedPdf(file, 1)
     await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
     api = await startMiniOcrApi({ pages: ['# synthetic result'], onSubmit: () => {
-      updateCredential('ocrToken', 'synthetic-replacement', { stateDir, env: {} })
+      updateCredential('ocrToken', 'synthetic-replacement', { db, env: {} })
     } })
     process.env.NUXT_OCR_BASE_URL = api.origin
     const params = { files: [file], model: null }
@@ -731,7 +730,7 @@ it('uses saved credentials for new OCR runs while a running submit and poll reta
     expect((await runOcr(ctxOf().ctx, params)).error).toBeUndefined()
     expect(api.authSeen.filter(Boolean).every(value => value === 'Bearer synthetic-replacement')).toBe(true)
     expect(resolveOcrConfig({ token: 'synthetic-explicit' }).token === 'synthetic-explicit').toBe(true)
-  } finally { delete process.env.NUXT_CREDENTIALS_STATE_DIR }
+  } finally { db.delete(schema.serviceCredential).run() }
 })
 it('redacts credential echoes from external OCR failures before task results are persisted', async () => {
   const secret = 'synthetic-error-secret'
@@ -745,17 +744,11 @@ it('redacts credential echoes from external OCR failures before task results are
   expect(result.error).toBeDefined()
   expect(JSON.stringify(result).includes(secret)).toBe(false)
 })
-it('fails closed with a sanitized error when persisted credential state is malformed before OCR starts', async () => {
-  const stateDir = join(dir, 'broken-credential-state')
-  await mkdir(stateDir, { recursive: true })
-  await writeFile(join(stateDir, 'credentials.json'), '{synthetic-corrupt-secret')
-  process.env.NUXT_CREDENTIALS_STATE_DIR = stateDir
+it('fails closed with a sanitized error when the credential database is unavailable before OCR starts', async () => {
+  db.$client.exec('ALTER TABLE service_credential RENAME TO unavailable_credential')
   try {
-    let message = ''
-    try { await runOcr(ctxOf().ctx, { files: ['unopened.pdf'], model: null }) } catch (error) { message = (error as Error).message }
-    expect(message).toContain('凭据配置存储不可用')
-    expect(message.includes('synthetic-corrupt-secret')).toBe(false)
-  } finally { delete process.env.NUXT_CREDENTIALS_STATE_DIR }
+    await expect(runOcr(ctxOf().ctx, { files: ['unopened.pdf'], model: null })).rejects.toThrow('凭据配置存储不可用')
+  } finally { db.$client.exec('ALTER TABLE unavailable_credential RENAME TO service_credential') }
 })
 
 it('queued OCR retains its submission credential for submit and poll without persisting it in job history', async () => {
@@ -763,20 +756,18 @@ it('queued OCR retains its submission credential for submit and poll without per
   const { ocrSpec } = await import('../server/utils/jobs/ocr')
   const { getJob } = await import('../server/utils/job-store')
   const { updateCredential } = await import('../server/utils/credential-state')
-  const stateDir = join(dir, 'ocr-queue-state')
-  process.env.NUXT_CREDENTIALS_STATE_DIR = stateDir
   let release: (() => void) | undefined
   try {
     const file = 'queued-credential.pdf'
     await seedPdf(file, 1); await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
     api = await startMiniOcrApi({ pages: ['# queued synthetic result'] })
     process.env.NUXT_OCR_BASE_URL = api.origin
-    updateCredential('ocrToken', 'synthetic-queued-ocr-A', { stateDir, env: {} })
+    updateCredential('ocrToken', 'synthetic-queued-ocr-A', { db, env: {} })
     clearJobSpecs(); registerJob(ocrSpec)
     registerJob({ kind: 'hold', status: 'ready', summary: 'synthetic gate', parse: () => ({ ok: true, params: {} }), run: async () => { await new Promise<void>(r => { release = r }); return { result: {} } } })
     submitJob(db, { kind: 'hold', params: {}, filesDir })
     const row = submitJob(db, { kind: 'ocr', params: { files: [file], model: null }, filesDir })
-    updateCredential('ocrToken', 'synthetic-queued-ocr-B', { stateDir, env: {} })
+    updateCredential('ocrToken', 'synthetic-queued-ocr-B', { db, env: {} })
     release!(); release = undefined; await whenIdle()
     expect(getJob(db, row.id)?.state).toBe('done')
     expect(api.stats.submits).toBe(1)
@@ -784,7 +775,7 @@ it('queued OCR retains its submission credential for submit and poll without per
     expect(api.authSeen.filter(Boolean).every(value => value === 'Bearer synthetic-queued-ocr-A')).toBe(true)
     const text = JSON.stringify(getJob(db, row.id))
     expect(text.includes('synthetic-queued-ocr-A') || text.includes('synthetic-queued-ocr-B')).toBe(false)
-  } finally { release?.(); await whenIdle(); delete process.env.NUXT_CREDENTIALS_STATE_DIR; clearJobSpecs() }
+  } finally { release?.(); await whenIdle(); db.delete(schema.serviceCredential).run(); clearJobSpecs() }
 })
 
 it.each([{ name: 'failed', failed: true }, { name: 'successful', failed: false }])('keeps encoded OCR credentials out of persisted job history and OCR rows ($name)', async ({ failed }) => {
@@ -792,12 +783,10 @@ it.each([{ name: 'failed', failed: true }, { name: 'successful', failed: false }
   const { ocrSpec } = await import('../server/utils/jobs/ocr')
   const { getJob } = await import('../server/utils/job-store')
   const { updateCredential } = await import('../server/utils/credential-state')
-  const stateDir = join(dir, 'encoded-echo-state')
-  process.env.NUXT_CREDENTIALS_STATE_DIR = stateDir
   const token = 'synthetic-"quoted"\\+/=task-secret'
   const echoes = [token, encodeURIComponent(token), JSON.stringify(token).slice(1, -1)]
   try {
-    updateCredential('ocrToken', token, { stateDir, env: {} })
+    updateCredential('ocrToken', token, { db, env: {} })
     const file = 'encoded-echo.pdf'
     const fileId = await seedPdf(file, 1)
     await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
@@ -817,6 +806,6 @@ it.each([{ name: 'failed', failed: true }, { name: 'successful', failed: false }
     expect(output.includes('[REDACTED]')).toBe(true)
     expect(listOcrResults(db, fileId).length).toBe(failed ? 0 : 1)
   } finally {
-    await whenIdle(); clearJobSpecs(); delete process.env.NUXT_CREDENTIALS_STATE_DIR
+    await whenIdle(); clearJobSpecs(); db.delete(schema.serviceCredential).run()
   }
 })

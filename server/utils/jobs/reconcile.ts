@@ -20,8 +20,8 @@ import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-
  * 指到本批新建的查询与关系)。
  *
  * ── 凭据 ──────────────────────────────────────────────────────────────────
- * 从统一凭据服务读取页面保存值，回退 `MIIT_COOKIE` / `MIIT_COOKIE_FILE`,**不入库、不进日志、不进仓库**;
- * 拿不到就明确失败,绝不写「一片未查询」的假结果。长跑请把凭据放在 0600 的文件里。
+ * 从数据库凭据表读取页面保存值，回退 `MIIT_COOKIE`；原值不进入任务历史、业务证据或日志;
+ * 拿不到就明确失败，绝不写「一片未查询」的假结果。
  *
  * ── 可续跑 ────────────────────────────────────────────────────────────────
  * 24 小时内的既有查询与既有判定会被复用(不再打平台、不重复堆行);
@@ -134,7 +134,7 @@ export const reconcileSpec: JobSpec = {
     ' limit?: number(最多处理多少个差异目标,分批长跑用);offset?: number(跳过前 N 个,与 limit 配成分页);' +
     ' concurrency?: 1–12(默认 4);freshnessHours?: number(复用新鲜查询/判定的窗口,默认 24);' +
     ' write?: boolean(默认 true;false = 只判定不回写) }',
-  note: '需要配置页 Cookie 或 MIIT_COOKIE / MIIT_COOKIE_FILE(提交时内存快照,不入库);无统代的差异查不了,会单独计入报告。',
+  note: '需要配置页 Cookie 或 MIIT_COOKIE(提交时内存快照，不进入任务历史);无统代的差异查不了,会单独计入报告。',
   parse: parseReconcileParams,
   prepare: () => {
     const cookie = resolvePlatformCookie()
