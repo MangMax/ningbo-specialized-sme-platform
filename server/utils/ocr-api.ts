@@ -331,16 +331,34 @@ async function fetchWithTimeout(
   }
 }
 
+/** Common reversible wire representations, longest first so an inner raw value
+ * cannot leave a reconstructable escaped prefix/suffix behind. Kept local to OCR. */
+function ocrTokenRedactor(token: string): (text: string) => string {
+  if (!token) return text => text
+  const json = JSON.stringify(token).slice(1, -1)
+  const forms = new Set([token, json, json.replaceAll('/', '\\/'), encodeURI(token), encodeURIComponent(token), new URLSearchParams({ token }).toString().slice(6)])
+  // JSON permits a Unicode escape for any character, and slash escaping is optional.
+  forms.add(token.split('').map(char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`).join(''))
+  for (const form of [...forms]) {
+    forms.add(encodeURIComponent(form))
+    forms.add(JSON.stringify(form).slice(1, -1))
+  }
+  for (const form of [...forms]) forms.add(form.replace(/%[0-9A-F]{2}/g, part => part.toLowerCase()))
+  const ordered = [...forms].sort((a, b) => b.length - a.length)
+  return text => ordered.reduce((result, form) => result.split(form).join('[REDACTED]'), text)
+}
+
 async function readErrorText(res: Response, token: string): Promise<string> {
   try {
     const rawText = await res.text()
-    const text = token ? rawText.split(token).join('[REDACTED]') : rawText
+    const redact = ocrTokenRedactor(token)
+    let detail = rawText
     try {
-      const parsed = JSON.parse(text) as Record<string, unknown>
-      return messageOf(parsed) ?? text.slice(0, 300)
+      detail = messageOf(JSON.parse(rawText) as Record<string, unknown>) ?? rawText
     } catch {
-      return text.slice(0, 300)
+      // Plain text (or malformed JSON) still needs scrubbing before truncation.
     }
+    return redact(detail).slice(0, 300)
   } catch {
     return '(响应体读不出来)'
   }
@@ -546,7 +564,7 @@ async function ocrImageFileWithRetries(options: OcrApiOptions): Promise<OcrImage
  */
 export async function ocrImageFile(options: OcrApiOptions): Promise<OcrImageOut> {
   const token = options.token?.trim() || ''
-  const redact = (text: string) => token ? text.split(token).join('[REDACTED]') : text
+  const redact = ocrTokenRedactor(token)
   const redactValue = (value: unknown): unknown => {
     if (typeof value === 'string') return redact(value)
     if (Array.isArray(value)) return value.map(redactValue)

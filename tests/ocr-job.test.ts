@@ -786,3 +786,37 @@ it('queued OCR retains its submission credential for submit and poll without per
     expect(text.includes('synthetic-queued-ocr-A') || text.includes('synthetic-queued-ocr-B')).toBe(false)
   } finally { release?.(); await whenIdle(); delete process.env.NUXT_CREDENTIALS_STATE_DIR; clearJobSpecs() }
 })
+
+it.each([{ name: 'failed', failed: true }, { name: 'successful', failed: false }])('keeps encoded OCR credentials out of persisted job history and OCR rows ($name)', async ({ failed }) => {
+  const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../server/utils/job-runner')
+  const { ocrSpec } = await import('../server/utils/jobs/ocr')
+  const { getJob } = await import('../server/utils/job-store')
+  const { updateCredential } = await import('../server/utils/credential-state')
+  const stateDir = join(dir, 'encoded-echo-state')
+  process.env.NUXT_CREDENTIALS_STATE_DIR = stateDir
+  const token = 'synthetic-"quoted"\\+/=task-secret'
+  const echoes = [token, encodeURIComponent(token), JSON.stringify(token).slice(1, -1)]
+  try {
+    updateCredential('ocrToken', token, { stateDir, env: {} })
+    const file = 'encoded-echo.pdf'
+    const fileId = await seedPdf(file, 1)
+    await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
+    const text = `echoes ${echoes.join(' | ')} end`
+    api = await startMiniOcrApi({ pages: [text], ...(failed ? { failWith: text } : {}) })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    clearJobSpecs(); registerJob(ocrSpec)
+    const submitted = submitJob(db, { kind: 'ocr', params: { files: [file] }, filesDir })
+    await whenIdle()
+    const job = getJob(db, submitted.id)
+    expect(job?.state).toBe(failed ? 'failed' : 'done')
+    expect(api.stats.submits).toBe(1)
+    expect(api.stats.polls).toBeGreaterThan(0)
+    expect(api.authSeen.filter(Boolean).every(value => value === `Bearer ${token}`)).toBe(true)
+    const output = JSON.stringify({ job, ocr: listOcrResults(db, fileId) })
+    expect(echoes.some(echo => output.includes(JSON.stringify(echo).slice(1, -1)))).toBe(false)
+    expect(output.includes('[REDACTED]')).toBe(true)
+    expect(listOcrResults(db, fileId).length).toBe(failed ? 0 : 1)
+  } finally {
+    await whenIdle(); clearJobSpecs(); delete process.env.NUXT_CREDENTIALS_STATE_DIR
+  }
+})
