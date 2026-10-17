@@ -14,7 +14,8 @@
  *     但 `changed` 里只放内容**与上一步不同**的表。按顺序把 `changed` 叠起来就是每一步的
  *     完整状态；不叠的话同一批行会在 7 个步骤里重复 7 遍，黄金文件白白大三倍。
  *
- * 于此之外一个字节都不改：所有列、所有 `item_results`、所有血缘都原样进快照。
+ * `item_results` 摘要按调用方可见投影计算；重放目标快照与请求指纹属于服务端记账，
+ * 由 replay 路径另行覆盖，不纳入 API 可观察语义黄金。其他结果与所有列仍按原样进快照。
  * 黄金文件与判据见 `tests/roster-import-semantics.test.ts`。
  */
 
@@ -70,12 +71,31 @@ function digest(value: unknown): string | null {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16)
 }
 
+/** 去掉仅供 replay 使用的内部细节，与统一导入 API 的 item 响应投影保持一致。 */
+function observableItemResults(value: unknown): unknown {
+  if (!Array.isArray(value)) return value
+  return value.map((raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
+    const item = raw as Record<string, unknown>
+    if (!item.detail || typeof item.detail !== 'object' || Array.isArray(item.detail)) return raw
+    const originalDetail = item.detail as Record<string, unknown>
+    const detail = { ...originalDetail }
+    delete detail.evidenceRepointTargets
+    delete detail.evidenceRepointPlanFingerprint
+    if (Object.keys(detail).length === Object.keys(originalDetail).length) return raw
+    const projected = { ...item }
+    if (Object.keys(detail).length > 0) projected.detail = detail
+    else delete projected.detail
+    return projected
+  })
+}
+
 /** `import_batch` 行：三块大 JSON 列换成 {@link digest}。 */
 function bookkeepingRow(row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(row)) {
     if (key === 'preflightResult') out.preflightResultSha = digest(value)
-    else if (key === 'itemResults') out.itemResultsSha = digest(value)
+    else if (key === 'itemResults') out.itemResultsSha = digest(observableItemResults(value))
     else if (key === 'summary') out.summarySha = digest(value)
     else out[key] = value
   }

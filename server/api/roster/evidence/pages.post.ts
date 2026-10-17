@@ -32,7 +32,7 @@ defineRouteMeta({
       '不新建/删除任何行。**每条必须带 `enterpriseId` 或 `enterpriseName`(可加 `district`)定位** —— ' +
       '同一份公布文件里可以并置多张「序号各自从 1 起算」的分节名单(如 145号 的三张),' +
       '裸序号会定位到错的企业。定不下来的条目**一行不改**,在 `pending[]` 里带原因回报' +
-      '(`entry_incomplete` / `page_invalid` / `not_page_capable` / `no_match` / `ambiguous`)。' +
+      '(`entry_incomplete` / `page_invalid` / `page_count_unknown` / `not_page_capable` / `no_match` / `ambiguous`)。' +
       '`dryRun: true` 只报结论不写库。需要 token:`Authorization: Bearer <NUXT_API_TOKEN>`(或 `X-API-Token`);' +
       '未配 token 时本接口整体关闭。',
     security: [{ bearerAuth: [] }],
@@ -86,7 +86,7 @@ defineRouteMeta({
                     requested: { type: 'integer', description: '入参给了几条。' },
                     assigned: { type: 'integer', description: '定得下来的条数(含值没变的)。' },
                     written: { type: 'integer', description: '真的改了库的行数。' },
-                    unchanged: { type: 'integer', description: '本来就是这个页码(幂等重跑)。' },
+                    unchanged: { type: 'integer', description: '已有相同页码，或本次请求中重复指向同一出处的条目。' },
                     pending: { type: 'integer', description: '留空待核的条数。' },
                   },
                 },
@@ -107,7 +107,7 @@ defineRouteMeta({
   },
 })
 
-export default createCoreRouteHandler(handleEvidencePagesRequest, () => ({
-  db: useDb(),
-  apiToken: useRuntimeConfig().apiToken,
-}))
+export default createCoreRouteHandler(handleEvidencePagesRequest, () => {
+  const config = useRuntimeConfig()
+  return { db: useDb(), apiToken: config.apiToken, filesDir: config.filesDir }
+})

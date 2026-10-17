@@ -43,8 +43,8 @@ export interface EvidenceServerOptions {
 }
 
 export async function startEvidenceServer(options: EvidenceServerOptions): Promise<EvidenceServer> {
-  const importRoute: FixtureHandler = (request) => {
-    const out = handleRosterImportRequest(
+  const importRoute: FixtureHandler = async (request) => {
+    const out = await handleRosterImportRequest(
       request.path.endsWith('/commit') ? 'commit' : 'preflight',
       { method: request.method, headers: request.headers, body: request.body },
       { db: options.db, apiToken: options.apiToken },

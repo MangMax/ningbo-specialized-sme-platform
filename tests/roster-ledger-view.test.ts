@@ -109,7 +109,7 @@ describe('ledgerQueryFromState —— 回写地址栏', () => {
     }
   })
 
-  it('企业粒度才有属地与总表状态;差异粒度才有方向 / 状态 / 原因', () => {
+  it('企业和称号粒度保留属地筛选;总表状态与首次认定仅属企业,差异只认差异判据', () => {
     const ent = ledgerQueryFromState('enterprise', ALL_ON)
     expect(ent.district).toBe('余姚市')
     expect(ent.rosterState).toBe('current')
@@ -117,6 +117,11 @@ describe('ledgerQueryFromState —— 回写地址栏', () => {
     // RL-08:首次认定两个判据也是**企业粒度**的(行就是一家企业)。
     expect(ent.firstYear).toBe('2021')
     expect(ent.firstStatus).toBe('pending')
+
+    const title = ledgerQueryFromState('title', ALL_ON)
+    expect(title.district).toBe('余姚市')
+    expect(title.rosterState).toBeUndefined()
+    expect(title.firstYear).toBeUndefined()
 
     const diff = ledgerQueryFromState('difference', ALL_ON)
     expect(diff.direction).toBe('missing_in_miit')
@@ -160,10 +165,10 @@ describe('LEDGER_VIEW_FILTERS —— 一张表说清「每个视图认哪些筛�
   })
 
   it('切换视图清掉该视图用不到的条件(留一个看不见的条件 = 静默筛选)', () => {
-    // 切到「按企业×称号」:属地与总表状态是**企业属性**,这里用不到;
-    // 差异侧的三个判据更不用说。
+    // 切到「按企业×称号」:保留事件和属地筛选;总表状态与首次认定是企业粒度,
+    // 差异侧的三个判据也用不到。
     const toTitle = filtersForView('title', ALL_ON)
-    expect(toTitle.district).toBe('')
+    expect(toTitle.district).toBe(ALL_ON.district)
     expect(toTitle.rosterState).toBe('')
     expect(toTitle.direction).toBe('')
     expect(toTitle.status).toEqual([])
@@ -210,16 +215,12 @@ describe('LEDGER_VIEW_FILTERS —— 一张表说清「每个视图认哪些筛�
     expect(ledgerQueryFromState('difference', ALL_ON).firstStatus).toBeUndefined()
   })
 
-  it('**属地只在「按企业」下存在**(刻意的收窄,不是漏了)', () => {
-    /**
-     * 两个读模型对「属地」的口径本来就不同:企业总表按**企业属地**(为空时退回最早记录的
-     * 属地),记录读模型按**每条记录的属地**。实测 13 个区县里有 11 个给出不同的企业集合
-     * —— 同一个 `district` 值在两个分组下不是同一批人。放进共用筛选条就会变成
-     * 「同一个 URL,两种结果」,所以它只归企业分组;切走时由 `filtersForView` 清掉。
-     */
-    expect(LEDGER_VIEW_FILTERS.title).not.toContain('district')
+  it('企业与称号视图都声明属地筛选;差异视图不声明', () => {
+    // 企业视图按企业属地筛;称号视图沿用 /api/records 的记录属地筛选语义。
+    expect(LEDGER_VIEW_FILTERS.enterprise).toContain('district')
+    expect(LEDGER_VIEW_FILTERS.title).toContain('district')
     expect(LEDGER_VIEW_FILTERS.difference).not.toContain('district')
-    expect(ledgerQueryFromState('title', ALL_ON).district).toBeUndefined()
+    expect(ledgerQueryFromState('title', ALL_ON).district).toBe('余姚市')
   })
 })
 

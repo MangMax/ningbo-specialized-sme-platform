@@ -137,8 +137,20 @@ const nurtureOnly = enterprise('宁波仅培育企业', null)
 const nurtureRecord = record(nurtureOnly)
 event(nurtureRecord, { type: 'nurture', year: 2024, seq: 1 })
 
+// Legacy rows can contain page numbers for formats without stable pagination.
+const legacyDocx = enterprise('宁波旧版 Word 页码企业', null)
+const legacyDocxRecord = record(legacyDocx)
+const legacyDocxEvent = event(legacyDocxRecord, { type: 'award', year: 2020, seq: 1 })
+evidence(legacyDocxEvent, 'jxj/announcement/legacy.docx', 12)
+const legacyXlsx = enterprise('宁波旧版 Excel 页码企业', null)
+const legacyXlsxRecord = record(legacyXlsx)
+const legacyXlsxEvent = event(legacyXlsxRecord, { type: 'award', year: 2020, seq: 1 })
+evidence(legacyXlsxEvent, 'jxj/announcement/legacy.xlsx', 9)
+
 let routeQuery: Record<string, unknown> = {}
+let routeId: unknown = null
 let recordsHandler: (event: unknown) => unknown
+let enterpriseDetailHandler: (event: unknown) => unknown
 let queryRecordsTool: { handler: (input: Record<string, unknown>) => unknown }
 let enterpriseDetailTool: { handler: (input: { enterpriseId: number }) => unknown }
 
@@ -146,12 +158,14 @@ beforeAll(async () => {
   vi.stubGlobal('defineRouteMeta', () => undefined)
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('getQuery', () => routeQuery)
+  vi.stubGlobal('getRouterParam', () => routeId)
   vi.stubGlobal('createError', (options: { statusCode?: number; statusMessage?: string }) =>
     Object.assign(new Error(options.statusMessage), options),
   )
   vi.doMock('@db', () => ({ useDb: () => db }))
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
   recordsHandler = (await import('../server/api/records.get')).default as unknown as typeof recordsHandler
+  enterpriseDetailHandler = (await import('../server/api/enterprises/[id].get')).default as unknown as typeof enterpriseDetailHandler
   queryRecordsTool = (await import('../server/mcp/tools/query_records')).default as unknown as typeof queryRecordsTool
   enterpriseDetailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as unknown as typeof enterpriseDetailTool
 })
@@ -262,6 +276,34 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
     const yearAndDueYearMcp = await queryRecordsTool.handler({ year: [2021], dueYear: 2028 })
     expect(yearAndDueYearMcp).toEqual(yearAndDueYearRest)
     expect((yearAndDueYearRest as { rows: { enterpriseId: number }[] }).rows.map((r) => r.enterpriseId)).toContain(passed)
+  })
+
+  it('详情与 GET /api/records 对 legacy DOCX/XLSX 隐藏不可靠的数字页码', () => {
+    routeQuery = {}
+    const result = recordsHandler({}) as {
+      rows: { enterpriseId: number; events: { evidence: { sourceFile: string; page: number | null }[] }[] }[]
+    }
+    const docxRecord = result.rows.find((row) => row.enterpriseId === legacyDocx)!
+    const xlsxRecord = result.rows.find((row) => row.enterpriseId === legacyXlsx)!
+    expect(docxRecord.events.flatMap((item) => item.evidence)).toEqual([
+      { sourceFile: 'jxj/announcement/legacy.docx', attachment: '附件2', listNo: 19, page: null },
+    ])
+    expect(xlsxRecord.events.flatMap((item) => item.evidence)).toEqual([
+      { sourceFile: 'jxj/announcement/legacy.xlsx', attachment: '附件2', listNo: 19, page: null },
+    ])
+
+    routeId = String(legacyDocx)
+    const detail = enterpriseDetailHandler({}) as {
+      records: { events: { evidence: { sourceFile: string; page: number | null }[] }[] }[]
+    }
+    expect(detail.records.flatMap((item) => item.events.flatMap((entry) => entry.evidence))).toEqual([
+      { sourceFile: 'jxj/announcement/legacy.docx', attachment: '附件2', listNo: 19, page: null },
+    ])
+    routeId = String(legacyXlsx)
+    const xlsxDetail = enterpriseDetailHandler({}) as typeof detail
+    expect(xlsxDetail.records.flatMap((item) => item.events.flatMap((entry) => entry.evidence))).toEqual([
+      { sourceFile: 'jxj/announcement/legacy.xlsx', attachment: '附件2', listNo: 19, page: null },
+    ])
   })
 
   it('MCP 输入 schema 暴露 dueYear 与通用查询条件', () => {

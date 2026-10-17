@@ -68,6 +68,16 @@
  * 不存在手改走样的可能。
  * （它同时纠正了父代理两处说法：相同前缀是 **1172** 行而非 1163；以及上面那条
  * `preflightResultSha` 的成因 —— 父代理原先写成「随摘要多一字段而变」是错的。）
+ *
+ * ── 内部重放记账不进入 API 黄金（2026-10-17，RL-10 收尾）────────────────────
+ * `evidenceRepointTargets` 与 `evidenceRepointPlanFingerprint` 持久化供显式 replay 复用，
+ * 但不属于调用方逐项结果。语义记录器对 `item_results` 按同一公开投影求摘要，故此类内部
+ * 记账变动不要求重生黄金；API 返回的逐项结果仍逐字冻结。
+ *
+ * ── RL-10 批次身份歧义规则（2026-10-17）──────────────────────────────
+ * 本轮只重生新增的最后一步：其 name-only 项与两个不同 USCC 候选同名，现须按 §8.9
+ * 返回 `enterprise_ambiguous` 并使整批失败。此前黄金记录了“取第一行”并成功写入，已不再
+ * 符合合同；前七步及其可观察结果仍必须逐字不变。
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -199,17 +209,16 @@ function snapshotBatch(key: string, sha: string, year: number): RosterImportRequ
 }
 
 /**
- * **同名多主体**批次 —— 直接压 `findEnterpriseByNorm` / `findEnterprisesByNorm` 的
- * 「取第一行 / 取全部」口径（`enterprise_name_norm_idx` **不唯一**）。
+ * **同名多主体**批次 —— 验证 `findEnterpriseByNorm` / `findEnterprisesByNorm` 不会让
+ * name-only 项按 `enterprise_name_norm_idx` 中的首行猜配（该索引**不唯一**）。
  *
  * 三条记录用**逐字相同**的名字：
  *  1. 带统代 A ⇒ 新建企业 A；
  *  2. 带统代 B ⇒ 新建企业 B（与 A **同名不同统代**，正是本模型要如实保留的同名多主体），
  *     并按 `findEnterprisesByNorm` 报出一条指向 A 的重名候选；
- *  3. **不带统代** ⇒ 只按名定位、命中 `findEnterpriseByNorm`。
+ *  3. **不带统代** ⇒ 两个不同 USCC 候选同名，必须报 `enterprise_ambiguous`。
  *
- * 第 3 条落哪家企业取决于「同名里取哪一行」—— 所以它的 `record.enterpriseId` 就是
- * 这个口径的**可观察**探针：改前改后取到不同行，黄金文件立刻红。
+ * 黄金把第 3 条的结构化错误及整批无写入作为可观察契约，防止按数据库行序猜配。
  */
 function duplicateNameBatch(idempotencyKey: string): RosterImportRequest {
   const sameName = '宁波甲乙丙丁有限公司'
@@ -221,9 +230,9 @@ function duplicateNameBatch(idempotencyKey: string): RosterImportRequest {
       announcement: {
         sourceDocument: { source: 'jxj', title: '同名多主体', docNumber: '甬经信中小〔2026〕99号' },
         records: [
-          { enterprise: { name: sameName, uscc: '91330200000000001X' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
-          { enterprise: { name: sameName, uscc: '91330200000000002X' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
-          // ★ 不带统代 ⇒ 走按名定位，压的就是「同名里取第一行」。
+          { enterprise: { name: sameName, uscc: '91330200000000001H' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
+          { enterprise: { name: sameName, uscc: '91330200000000002L' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
+          // ★ 不带统代，面对两个不同 USCC 候选时不得按名称猜配。
           { enterprise: { name: sameName }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 1 }] },
         ],
       },
@@ -277,7 +286,7 @@ describe('RL-18 写入语义快照：与集成 tip 的行为逐字一致', () =>
     step('commit: 修好后以同一幂等键重试（本批转为 committed）', () =>
       commitRosterImport(db, snapshotBatch('sem/broken#sha256:c1', '3'.repeat(64), 2026)),
     )
-    step('commit: 同名多主体（按名定位取「第一行」的口径探针）', () =>
+    step('commit: 同名多 USCC 候选含 name-only（失败关闭）', () =>
       commitRosterImport(db, duplicateNameBatch('sem/duplicate-name#sha256:d1')),
     )
 

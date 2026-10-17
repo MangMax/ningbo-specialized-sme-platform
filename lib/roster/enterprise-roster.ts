@@ -24,6 +24,7 @@ import { normalizeName, normalizeUscc } from '../domain'
 import { getComparison, type ComparisonDirection } from '../comparison'
 import { SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
+import { isPageCapable } from './evidence-page'
 import {
   judgeFirstRecognition,
   matchesRecognitionQuery,
@@ -65,7 +66,11 @@ function readSnapshot(db: Db): Snapshot {
     enterprises: db.select().from(schema.enterprise).all(),
     records: db.select().from(schema.record).all(),
     events: db.select().from(schema.recordEvent).all(),
-    evidence: db.select().from(schema.recordEvidence).all(),
+    // Legacy rows may contain guessed Word/Excel page numbers from before the API guard existed.
+    // Normalize only this read snapshot; never rewrite or migrate the stored evidence.
+    evidence: db.select().from(schema.recordEvidence).all().map((row) =>
+      isPageCapable(row.sourceFile) ? row : { ...row, page: null },
+    ),
     aliases: db.select().from(schema.enterpriseAlias).all(),
     exportRows: db.select().from(schema.platformExportRow).all(),
     exportBatches: db.select().from(schema.platformExportBatch).all(),

@@ -156,6 +156,8 @@ export const storedFile = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     /** 文件库内相对路径,`/` 分隔。unique。 */
     relPath: text('rel_path').notNull(),
+    /** 用户可见名称覆写;null 表示沿用磁盘文件名。 */
+    displayName: text('display_name'),
     /** 磁盘事实:文件名(含扩展名)、小写扩展名(不含点)、字节数、内容 SHA-256。 */
     filename: text('filename').notNull(),
     ext: text('ext').notNull(),
@@ -198,6 +200,23 @@ export const storedFile = sqliteTable(
     index('stored_file_category_state_idx').on(t.categoryState),
     index('stored_file_parse_state_idx').on(t.parseState),
   ],
+)
+
+/** 用户显示名称的追加式改名历史;磁盘文件名与来源路径保存在 stored_file 本身。 */
+export const storedFileAudit = sqliteTable(
+  'stored_file_audit',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    storedFileId: integer('stored_file_id')
+      .notNull()
+      .references(() => storedFile.id),
+    oldDisplayName: text('old_display_name').notNull(),
+    newDisplayName: text('new_display_name').notNull(),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [index('stored_file_audit_file_idx').on(t.storedFileId)],
 )
 
 /**

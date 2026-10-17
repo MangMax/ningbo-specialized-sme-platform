@@ -26,8 +26,8 @@ export async function startRosterPlatformApi(options: {
   db: Db
   apiToken: string | null | undefined
 }): Promise<RosterPlatformServer> {
-  const importRoute: FixtureHandler = (request) => {
-    const out = handleRosterImportRequest(
+  const importRoute: FixtureHandler = async (request) => {
+    const out = await handleRosterImportRequest(
       request.path.endsWith('/commit') ? 'commit' : 'preflight',
       { method: request.method, headers: request.headers, body: request.body },
       { db: options.db, apiToken: options.apiToken },

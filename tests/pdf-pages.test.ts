@@ -247,6 +247,15 @@ describe('渲染 4 页夹具(pdfium + sharp 端到端)', () => {
     }
   })
 
+  it('深链第 3 页映射到含 3 个合成标记的第三页页图', async () => {
+    await ensure(REL, 3)
+    const image = sharp(await readFile(join(root, pageImageRelPath(REL, 3))))
+    const { data, info } = await image.raw().toBuffer({ resolveWithObject: true })
+    const band = markBand(DPI)
+
+    expect(countDarkRuns(data, info.width, info.channels, band.fromRow, band.toRow)).toBe(3)
+  })
+
   it('清单里记的尺寸/字节与磁盘一致', async () => {
     const out = await ensure(REL, 4)
     for (const page of out.pages) {
@@ -310,6 +319,35 @@ describe('渲染 4 页夹具(pdfium + sharp 端到端)', () => {
     expect(out.removed).toBe(2)
     expect(await names(dirAbs)).toEqual(['.pages.json', 'p001.png', 'p002.png'])
     expect(out.pages.map((p) => p.page)).toEqual([1, 2])
+  })
+
+  it('临时文件根中的同路径 PDF 源变更会标 stale，渲染以新源内容更新目标页图', async () => {
+    await removePdfPages(root, REL)
+    const source = await writeFixture(REL, 3)
+    const first = await renderPdfPages(root, REL, { dpi: DPI })
+    const firstManifest = JSON.parse(await readFile(join(dirAbs, '.pages.json'), 'utf8')) as {
+      sourceSha256: string
+    }
+    const previousHash = firstManifest.sourceSha256
+    expect(first.upToDate).toBe(true)
+
+    // 模拟隔离文件根中的旧页图与被替换源文件：同页数、不同页面宽度/字节内容。
+    await writeFile(source, minimalPdf({ pages: 3, widthPt: 1000, heightPt: PAGE_PT.height }))
+    const stale = await listPdfPages(root, REL, DPI)
+    expect(stale.upToDate).toBe(false)
+    expect(stale.pages.map((page) => page.page)).toEqual([1, 2, 3])
+
+    const refreshed = await renderPdfPages(root, REL, { dpi: DPI })
+    const currentManifest = JSON.parse(await readFile(join(dirAbs, '.pages.json'), 'utf8')) as {
+      sourceSha256: string
+    }
+    const pageTwo = await sharp(await readFile(join(dirAbs, 'p002.png'))).metadata()
+    expect(refreshed.written).toBe(3)
+    expect(refreshed.upToDate).toBe(true)
+    expect(currentManifest.sourceSha256).not.toBe(previousHash)
+    expect({ width: pageTwo.width, height: pageTwo.height }).toEqual(
+      pixelSizeFor(1000, PAGE_PT.height, DPI),
+    )
   })
 
   it('force 无视清单,无条件重渲染', async () => {

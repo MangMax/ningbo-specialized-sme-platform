@@ -12,8 +12,9 @@ export default defineMcpTool({
   title: '文件详情',
   annotations: { readOnlyHint: true, openWorldHint: false },
   description: [
-    '按 `fileId` 或 `relPath` 取一个文件的完整元数据(含引用数与 `parts`)。两者**恰给其一**。',
+    '按 `fileId` 或 `relPath` 取一个文件的完整元数据(含引用数与 `parts`)。两者**恰给其一**。返回 `displayName`(用户可见名称)与 `filename`(磁盘文件名)。',
     '`relPath` 与 `record_evidence.source_file` 同口径,如 `jxj/announcement/2024/2/甬经信中小〔2024〕192号….pdf`。',
+    '改用户可见名称请用 `PATCH /api/files/{id}` 的 `displayName`;该操作追加审计记录,不改变 `stored_file.id`、磁盘文件名/路径或出处。',
     '`removedAt` 非空表示该文件已被移出库(软删除,磁盘文件通常还在)。',
   ].join('\n'),
   inputSchema: fileRefShape,

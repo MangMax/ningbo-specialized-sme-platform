@@ -240,6 +240,18 @@ async function countPages(absPath: string): Promise<number | null> {
 }
 
 /**
+ * Read the source PDF's actual page count without consulting rendered page images or their manifest.
+ * An unreadable/missing source returns `null`; callers must keep page evidence pending in that case.
+ */
+export async function readPdfPageCount(root: string, pdfRelPath: string): Promise<number | null> {
+  try {
+    return await countPages(resolveWithinRoot(root, pdfRelPath))
+  } catch {
+    return null
+  }
+}
+
+/**
  * 一份 PDF 的页图现状。**不写任何文件**。
  *
  * 顺序:读清单 → 「清单是否仍然成立」(源哈希 + dpi + 每页文件在不在、尺寸对不对、

@@ -23,6 +23,7 @@ import {
 } from './roster-import'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
+import { validateRosterImportPageCounts } from './roster-import-page-validation'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -70,11 +71,11 @@ export function authorizeRosterWrite(
  * 处理一次预检或提交请求。`db` 由调用方给（路由用 `useDb()`；测试用临时库），
  * `apiToken` 从运行时配置读（Nuxt：`useRuntimeConfig().apiToken`）。
  */
-export function handleRosterImportRequest(
+export async function handleRosterImportRequest(
   action: RosterImportAction,
   request: RosterHttpRequest,
-  deps: { db: Db; apiToken: string | null | undefined },
-): RosterHttpResponse {
+  deps: { db: Db; apiToken: string | null | undefined; filesDir?: string },
+): Promise<RosterHttpResponse> {
   if (request.method !== 'POST') {
     return json(405, { message: `本端点是 POST：/api/roster/import/${action}` })
   }
@@ -85,15 +86,20 @@ export function handleRosterImportRequest(
   const validated = validateImportRequest(request.body)
   if (!validated.ok) return json(validated.status, { message: validated.message })
 
+  const pageCountErrors =
+    (action === 'preflight' || action === 'commit') && deps.filesDir
+      ? await validateRosterImportPageCounts(validated.value, deps.filesDir)
+      : []
+
   if (action === 'preflight') {
-    const result = preflightRosterImport(deps.db, validated.value)
+    const result = preflightRosterImport(deps.db, validated.value, pageCountErrors)
     return json(200, result)
   }
   if (action === 'replay') {
     const result = replayRosterImport(deps.db, validated.value)
     return json(200, result)
   }
-  const result = commitRosterImport(deps.db, validated.value)
+  const result = commitRosterImport(deps.db, validated.value, pageCountErrors)
   return json(200, result)
 }
 

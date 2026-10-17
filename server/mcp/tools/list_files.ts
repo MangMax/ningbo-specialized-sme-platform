@@ -18,8 +18,8 @@ export default defineMcpTool({
   title: '文件库列表',
   annotations: { readOnlyHint: true, openWorldHint: false },
   description: [
-    '列出文件库里的文件(元数据 + 处理状态 + 该文件含哪些段)。',
-    '筛选:来源 / 分类状态 / 解析状态 / 文件名关键词;分页 page(从 1 起)、pageSize(默认 50,上限 200)。',
+    '列出文件库里的文件(元数据 + 处理状态 + 该文件含哪些段)。返回 displayName(用户可见名称)与 filename(磁盘文件名);relPath 是稳定的库内路径。',
+    '筛选:来源 / 分类状态 / 解析状态 / 用户可见名称或磁盘文件名关键词;分页 page(从 1 起)、pageSize(默认 50,上限 200)。',
     '**没有**类别(announcement / export)筛选 —— 查询层(`listStoredFiles`)没有这一维,`/api/files` 也没有;',
     '需要按类别收窄时,用 `source` 筛(经信局公布文件与工信部导出表的类别是固定的)或自己按 `kind` 过滤返回的 `rows`。',
     '`year` `batch` 是**公布**年份/批次(单值,目录给的);文件**内容**里的年份/批次看 `parts`。',
@@ -32,7 +32,7 @@ export default defineMcpTool({
       .optional()
       .describe('分类状态:set 已定 / inferred 程序推的 / unset 未定(票 12 待回写的就是 unset)'),
     parseState: z.enum(['unparsed', 'parsed', 'failed']).optional().describe('解析状态'),
-    q: z.string().optional().describe('文件名关键词(子串,ASCII 大小写不敏感)'),
+    q: z.string().optional().describe('用户可见名称或磁盘文件名关键词(子串,ASCII 大小写不敏感)'),
     page: z.number().int().min(1).optional().describe('页码,从 1 起(默认 1)'),
     pageSize: z.number().int().min(1).max(200).optional().describe('每页条数(默认 50,上限 200)'),
     includeRemoved: z.boolean().optional().describe('是否含已移出库的文件(removed_at 非空),默认不含'),

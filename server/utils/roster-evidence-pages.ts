@@ -28,12 +28,14 @@ import { eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import {
+  isPageCapable,
   planEvidencePages,
   type EvidencePageCandidate,
   type EvidencePageEntry,
   type EvidencePagePlan,
 } from '../../lib/roster/evidence-page'
 import { authorizeRosterWrite } from './roster-import-http'
+import { readPdfPageCount } from './pdf-pages'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -109,7 +111,12 @@ function entriesOf(body: unknown): { entries: EvidencePageEntry[]; dryRun: boole
 }
 
 function summarize(plan: EvidencePagePlan, written: number, requested: number) {
-  const unchanged = plan.assignments.filter((a) => a.previous === a.page).length
+  const seenEvidence = new Set<number>()
+  let unchanged = 0
+  for (const assignment of plan.assignments) {
+    if (assignment.previous === assignment.page || seenEvidence.has(assignment.evidenceId)) unchanged += 1
+    seenEvidence.add(assignment.evidenceId)
+  }
   return {
     /** 入参给了几条。 */
     requested,
@@ -117,7 +124,7 @@ function summarize(plan: EvidencePagePlan, written: number, requested: number) {
     assigned: plan.assignments.length,
     /** 其中**真的改了库**的行数(空操作不算)。 */
     written,
-    /** 定得下来但值没变(幂等重跑)。 */
+    /** 定得下来但无需重复写(已有相同页码或本请求里的重复 claim)。 */
     unchanged,
     /** 留空待核的条数 —— 一行没改。 */
     pending: plan.pending.length,
@@ -128,10 +135,10 @@ function summarize(plan: EvidencePagePlan, written: number, requested: number) {
  * 处理一次补录请求。`db` 由调用方给(路由用 `useDb()`;测试用临时库),
  * `apiToken` 从运行时配置读(Nuxt:`useRuntimeConfig().apiToken`)。
  */
-export function handleEvidencePagesRequest(
+export async function handleEvidencePagesRequest(
   request: EvidencePagesHttpRequest,
-  ctx: { db: Db; apiToken: string | null | undefined },
-): EvidencePagesHttpResponse {
+  ctx: { db: Db; apiToken: string | null | undefined; filesDir?: string },
+): Promise<EvidencePagesHttpResponse> {
   if (request.method !== 'POST') {
     return { status: 405, headers: { ...JSON_HEADERS, allow: 'POST' }, body: { message: '只接受 POST。' } }
   }
@@ -145,17 +152,28 @@ export function handleEvidencePagesRequest(
   }
 
   const candidates = readEvidencePageCandidates(ctx.db, sourceFilesOf(parsed.entries))
-  const plan = planEvidencePages(parsed.entries, candidates)
+  const sourceFiles = sourceFilesOf(parsed.entries).filter(isPageCapable)
+  const pageCounts = new Map<string, number | null>(
+    await Promise.all(
+      sourceFiles.map(async (sourceFile) => [
+        sourceFile,
+        ctx.filesDir ? await readPdfPageCount(ctx.filesDir, sourceFile) : null,
+      ] as const),
+    ),
+  )
+  const plan = planEvidencePages(parsed.entries, candidates, pageCounts)
 
   let written = 0
   if (!parsed.dryRun) {
+    const writtenEvidence = new Set<number>()
     for (const a of plan.assignments) {
-      if (a.previous === a.page) continue
+      if (a.previous === a.page || writtenEvidence.has(a.evidenceId)) continue
       ctx.db
         .update(schema.recordEvidence)
         .set({ page: a.page })
         .where(eq(schema.recordEvidence.id, a.evidenceId))
         .run()
+      writtenEvidence.add(a.evidenceId)
       written += 1
     }
   }

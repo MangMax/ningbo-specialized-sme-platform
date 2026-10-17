@@ -30,6 +30,10 @@ import {
 } from '~~/lib/labels'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
 import {
+  shouldNuxtScrollToTop,
+  useEvidencePreviewScrollRestore,
+} from '~~/lib/roster/evidence-preview-return'
+import {
   EMPTY_LEDGER_STATE,
   ledgerExportLabel,
   ledgerExportUrl,
@@ -62,6 +66,10 @@ import {
 } from '@/components/ui/pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+
+// A roster return is restored after its filtered rows (and expanded row) render. Use route origin
+// to avoid Nuxt's later top reset even if that hook consumes the saved offset first.
+definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
 
 /**
  * **名录台账** —— 合并后的唯一台账入口(RL-17)。
@@ -121,6 +129,7 @@ const state = ref<LedgerState>(ledgerStateFromQuery(route.query))
 const page = ref(positiveInt(route.query.page) ?? 1)
 const pageSize = ref(clampSize(positiveInt(route.query.pageSize) ?? 25))
 const expanded = ref<number | null>(positiveInt(route.query.expand))
+const expandedDetailReadyId = ref<number | null>(null)
 
 /** 搜索框本地值(防抖后写进 `state.q`)。 */
 const search = ref(state.value.q)
@@ -269,6 +278,29 @@ const listLoading = computed(() =>
       ? titlesStatus.value === 'loading'
       : differencesStatus.value === 'loading',
 )
+
+/** The active list has returned data (or a settled error) and is no longer refetching. */
+const listRendered = computed(() => {
+  if (listLoading.value) return false
+  return view.value === 'enterprise'
+    ? enterpriseData.value != null || enterprisesError.value != null
+    : view.value === 'title'
+      ? titleData.value != null || titlesError.value != null
+      : differenceData.value != null || differencesError.value != null
+})
+watch(expanded, () => {
+  expandedDetailReadyId.value = null
+})
+const returnTargetRendered = computed(() => {
+  if (!listRendered.value) return false
+  if (view.value !== 'enterprise' || expanded.value === null) return true
+  const expandedRowIsVisible = enterpriseRows.value.some((row) => row.enterpriseId === expanded.value)
+  return !expandedRowIsVisible || expandedDetailReadyId.value === expanded.value
+})
+function onExpandedDetailSettled(enterpriseId: number) {
+  if (expanded.value === enterpriseId) expandedDetailReadyId.value = enterpriseId
+}
+useEvidencePreviewScrollRestore(returnTargetRendered)
 
 const total = computed(() =>
   view.value === 'enterprise'
@@ -617,6 +649,14 @@ useHead({
             summary-prefix="年份"
             class="w-24"
           />
+          <select
+            v-model="state.district"
+            class="border-input bg-background h-8 rounded-md border px-2 text-sm"
+            aria-label="按属地筛选"
+          >
+            <option value="">全部属地</option>
+            <option v-for="d in districtOptions" :key="d" :value="d">{{ d }}</option>
+          </select>
         </template>
         <template v-if="view === 'enterprise'">
           <!-- RL-08:首次认定两个判据(年份 / 状态)。与上面的「年份」是两回事:
@@ -635,14 +675,6 @@ useHead({
             summary-prefix="首次认定"
             class="w-32"
           />
-          <select
-            v-model="state.district"
-            class="border-input bg-background h-8 rounded-md border px-2 text-sm"
-            aria-label="按属地筛选"
-          >
-            <option value="">全部属地</option>
-            <option v-for="d in districtOptions" :key="d" :value="d">{{ d }}</option>
-          </select>
           <select
             v-model="state.rosterState"
             class="border-input bg-background h-8 rounded-md border px-2 text-sm"
@@ -771,6 +803,7 @@ useHead({
             :expanded-id="expanded"
             :back-query="backQuery"
             @toggle="toggle"
+            @detail-ready="onExpandedDetailSettled"
           />
           <RosterTitleTable
             v-else-if="view === 'title'"
