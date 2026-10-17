@@ -513,8 +513,8 @@ useHead({
       <CardContent class="relative p-0">
         <div class="absolute inset-x-0 top-0 z-20 h-0" aria-live="polite" data-testid="ledger-loading-status">
       <template v-if="isLoading">
-        <span class="bg-card text-muted-foreground absolute right-0 -top-5 z-20 px-2 text-[13px]">正在搜索…</span>
-        <span class="bg-muted absolute inset-x-0 -bottom-2 block h-0.5 overflow-hidden">
+        <span class="bg-card text-muted-foreground absolute right-2 top-1 z-20 px-2 text-[13px]">正在搜索…</span>
+        <span class="bg-muted absolute inset-x-0 top-0 block h-0.5 overflow-hidden">
           <span class="bg-primary ledger-progress block h-0.5 w-1/3" />
         </span>
       </template>

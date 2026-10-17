@@ -14,7 +14,7 @@ const items = computed(() => props.titles.flatMap((code) => {
   const awards = props.awards?.filter((item) => item.titleCode === code) ?? []
   return awards.length ? awards : [{ titleCode: code, year: props.firstRecognition.find((item) => item.titleCode === code)?.year ?? null, batchSeq: null }]
 }))
-const batch = (item: typeof items.value[number]) => item.year == null ? '年待核' : `${item.year}${item.batchSeq == null ? '' : `-${item.batchSeq}`}`
+const batch = (item: typeof items.value[number]) => `${item.year ?? '年待核'}${item.batchSeq == null ? '' : `-${item.batchSeq}`}`
 const variant = (code: string): BadgeVariants['variant'] => {
   const rank = TITLE_RANK[code]
   return rank != null && rank <= 3 ? `tier-${rank}` as BadgeVariants['variant'] : 'quiet'

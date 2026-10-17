@@ -194,13 +194,15 @@ async function openSession(cdp, url, viewport, readyExpression = READY, options 
     await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: options.beforeLoadScript }, sessionId)
   }
   await cdp.send('Page.navigate', { url }, sessionId)
+  // Explicit interaction precedes drawer-specific readiness; the product starts closed.
+  if (new URL(url).pathname === '/' && !new URL(url).searchParams.has('expand') && options.openDrawer !== false) {
+    if (!(await waitUntil(cdp, sessionId, READY))) throw new Error(`${url}:列表数据未就绪`);
+    await evaluate(cdp, sessionId, `document.querySelector('[data-testid="enterprise-name-trigger"]')?.click()`);
+  }
+
   if (!(await waitUntil(cdp, sessionId, readyExpression))) {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
     throw new Error(`${url} 在 30s 内没有渲染出表格数据`)
-  }
-  if (new URL(url).pathname === '/' && !new URL(url).searchParams.has('expand') && options.openDrawer !== false) {
-    await evaluate(cdp, sessionId, `document.querySelector('[data-testid="enterprise-name-trigger"]')?.click()`)
-    await waitUntil(cdp, sessionId, `!!document.querySelector('[data-testid="enterprise-drawer"]') && !document.querySelector('[data-testid="enterprise-drawer"] [data-slot="skeleton"]')`)
   }
   return { targetId, sessionId }
 }
@@ -696,6 +698,17 @@ async function waitForLoadingEvidence(cdp, sessionId, pageKind) {
   const expression = `(() => {
     const status = document.querySelector(${JSON.stringify(statusSelector)});
     const gate = window.__rl20FetchGate;
+    const message = [...(status?.querySelectorAll('*') ?? [])].find((el) => !el.children.length && el.textContent.includes('正在')) ?? status;
+    const rect = message?.getBoundingClientRect();
+    if (!rect || rect.width < 1 || rect.height < 1 || rect.top < 0 || rect.bottom > innerHeight || getComputedStyle(message).visibility === 'hidden') return false;
+    for (let parent = message.parentElement; parent; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      if (Number.parseFloat(style.opacity) === 0) return false;
+      if (/(hidden|clip|auto|scroll)/.test(style.overflow + style.overflowY + style.overflowX)) {
+        const bounds = parent.getBoundingClientRect();
+        if (rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1 || rect.left < bounds.left - 1 || rect.right > bounds.right + 1) return false;
+      }
+    }
     return !!gate?.requested && (status?.textContent ?? '').includes('正在') && !!document.querySelector(${JSON.stringify(bodySelector)});
   })()`
   return waitUntil(cdp, sessionId, expression)
@@ -1308,6 +1321,8 @@ async function verifyNextReviewFlagBinding(cdp) {
       record.lifecycle?.dueYear === detail.enterprise.nextReviewYear && record.lifecycle?.needsReview,
     )
     await setInputValue(cdp, sessionId, 'input[aria-label*="企业名称"]', detail.enterprise.name)
+    await waitUntil(cdp, sessionId, `document.querySelector('[data-testid="enterprise-name-trigger"]')?.textContent.trim() === ${JSON.stringify(detail.enterprise.name)}`)
+    await clickSelector(cdp, sessionId, '[data-testid="enterprise-name-trigger"]')
     const rendered = await waitUntil(cdp, sessionId, `(() => {
       const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
       const year = drawer?.querySelector('[data-testid="next-review-value"]');
@@ -1876,6 +1891,29 @@ const MEASURE = `(() => {
       }
     : null;
 
+  const ledgerExport = document.querySelector('.ledger-page a[href^="/api/roster/export"]');
+  const ledgerTable = document.querySelector('.ledger-page table');
+  const control = root?.querySelector('[data-slot="select-trigger"]');
+  const body = root?.querySelector('tbody');
+  const drawer = document.querySelector('[data-testid="enterprise-drawer"]');
+  const comparisonDirection = document.querySelector('[data-testid="comparison-direction-filter"]');
+  const comparisonDirectionTrigger = comparisonDirection?.querySelector('[role="combobox"]');
+  const comparisonDirectionValue = comparisonDirectionTrigger?.querySelector('[data-slot="select-value"]');
+  const comparisonFilters = document.querySelector('[data-testid="comparison-filters"]');
+  const comparisonSearch = comparisonFilters?.querySelector('input[aria-label*="搜索企业名称"]');
+  const cellMetrics = (el) => el ? {
+    text: (el.textContent ?? '').trim(),
+    display: getComputedStyle(el).display,
+    whiteSpace: getComputedStyle(el).whiteSpace,
+    textOverflow: getComputedStyle(el).textOverflow,
+    clientWidth: el.clientWidth,
+    scrollWidth: el.scrollWidth,
+  } : null;
+  const comparisonFilterValues = ['按称号筛选', '按区县筛选'].map((label) => {
+    const trigger = [...(comparisonFilters?.querySelectorAll('[role="combobox"]') ?? [])]
+      .find((el) => el.getAttribute('aria-label') === label);
+    return { label, value: cellMetrics(trigger?.querySelector('[data-slot="select-value"]')) };
+  });
   const enterpriseRow = root?.classList.contains('ledger-page')
     ? document.querySelector('.ledger-page tbody tr:not([data-loading="true"])')
     : null;
