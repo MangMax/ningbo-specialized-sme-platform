@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ContentPreview from '@/components/preview/ContentPreview.vue'
+import { fileNameOf } from '~~/lib/preview'
 import { useAppColorMode } from '@/composables/useAppColorMode'
 
 /** Display only. The row editor remains the sole source of write payloads. */
@@ -18,6 +19,7 @@ const colorMode = useAppColorMode()
     :source="markdown"
     format="markdown"
     :name="`第 ${page} 页.md`"
+    :context="fileNameOf(filePath)"
     :theme="colorMode === 'dark' ? 'dark' : 'light'"
   />
 </template>

@@ -10,6 +10,8 @@
 | `format?: 'markdown' \| 'text'` | `markdown` |
 | `language?: string` | Markdown 默认 `markdown`，其他默认 `text`；未知语言显示纯文本 |
 | `name?: string` | `正文.md`；工具栏与下载文件名 |
+| `context?: string` | 调用者提供的来源上下文；替换默认格式说明，长名截断并可查看完整标题，页名保持可见 |
+| `hideName?: boolean` | 默认 false；独立文本来源页已在页头显示文件名时，隐藏工具栏中的重复名称；不改变下载文件名 |
 | `theme?: 'light' \| 'dark'` | `light`；响应外部变化，也可在工具栏切换 |
 | `mode?: 'rendered' \| 'source'` | `rendered`；支持 `v-model:mode` |
 | `readonly?: boolean` | `true`；组件始终只读，传 false 也不会启用编辑 |
@@ -40,7 +42,7 @@
 
 ## 视觉与验证
 
-沿用当前 oil-ui 路线的中性色、细边框、共享 shadcn Button 与现有 Dialog；工具栏换行、内容内部滚动。只添加按钮自身的既有状态反馈，不引入额外内容动画。桌面和 390px 用临时合成文件及隔离只读 SQLite 验证。详细命令、日志与浏览器证据放在 `/tmp/ningbo-46-49-context/`，不提交数据或凭据。未做独立视觉评审（用户明确禁止派子代理）。
+沿用当前 oil-ui 路线的中性色、细边框、共享 shadcn Button 与现有 Dialog；工具栏换行、内容内部滚动。只添加按钮自身的既有状态反馈，不引入额外内容动画。桌面和 390px 用临时合成文件及隔离 SQLite 夹具验证。详细命令、日志与浏览器证据放在 `/tmp/ningbo-46-49-context/`，不提交数据或凭据。本次集成已执行独立规格、规范与截图视觉审核；叶子实施者不再派发子任务。审核发现及修复验证见同目录交接报告，截图只证明静态版式，交互与焦点以实际行为验证为准。
 
 初始客户端挂载前只输出惰性 pre 原文，不为了短暂的源码占位初始化 Shiki；阅读模式只有遇到围栏代码才加载对应高亮语言。
 

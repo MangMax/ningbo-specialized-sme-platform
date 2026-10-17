@@ -16,6 +16,7 @@ import {
   type PageReviewState,
 } from '~~/lib/ocr-workbench'
 const props = defineProps<{
+  compact?: boolean
   filters: PageFilters
   pages: number[]
   currentPage: number | null
@@ -26,6 +27,8 @@ const emit = defineEmits<{
   filter: [filters: PageFilters]
   navigate: [page: number]
 }>()
+const navigation = ref<HTMLElement | null>(null)
+defineExpose({ focus: () => navigation.value?.focus() })
 const expanded = ref(true)
 const jump = ref('')
 const jumpError = ref('')
@@ -62,10 +65,12 @@ function go() {
 
 <template>
   <section
-    aria-label="页筛选与导航"
+    ref="navigation"
+    tabindex="-1"
+    :aria-label="compact ? '正文底部页导航' : '页筛选与导航'"
     class="bg-card flex min-w-0 flex-col gap-3 rounded-lg border p-3"
   >
-    <Collapsible v-model:open="expanded" class="flex flex-col gap-3">
+    <Collapsible v-if="!compact" v-model:open="expanded" class="flex flex-col gap-3">
       <CollapsibleTrigger as-child
         ><Button variant="ghost" size="sm" class="self-start">{{
           expanded ? '收起页筛选' : '展开页筛选'
@@ -136,13 +141,14 @@ function go() {
         >全文件 {{ total }} 页 · 命中 {{ pages.length }} 页</span
       >
       <Button
+        v-if="!compact"
         size="sm"
         variant="ghost"
         :disabled="disabled"
         @click="emit('filter', { states: [], range: '', text: '' })"
         >清除页筛选</Button
       >
-      <form class="flex items-center gap-2" @submit.prevent="go">
+      <form v-if="!compact" class="flex items-center gap-2" @submit.prevent="go">
         <Input
           v-model="jump"
           class="w-20"

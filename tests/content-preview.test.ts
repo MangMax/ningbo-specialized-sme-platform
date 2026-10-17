@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { mount, flushPromises } from '@vue/test-utils'
+import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { expect, it } from 'vitest'
 import ContentPreview from '../components/preview/ContentPreview.vue'
 
@@ -23,9 +23,16 @@ it('copies and downloads the exact source and switches source wrap and theme wit
   const source = '# 原文\r\n\r\n<table>  标签 </table>\r\n```json\r\n{"企业":1}\r\n```\r\n'
   const writeText = vi.fn().mockResolvedValue(undefined)
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
-  const wrapper = mount(ContentPreview, { props: { source, format: 'markdown', name: '名单.md' } })
+  const wrapper = mount(ContentPreview, { attachTo: document.body, props: { source, format: 'markdown', name: '名单.md' } })
   await flushPromises()
-  const click = async (label: string) => wrapper.findAll('button').find(button => button.text() === label)!.trigger('click')
+  const click = async (label: string) => {
+    const button = wrapper.findAll('button').find(button => button.text() === label)
+    if (button) return button.trigger('click')
+    await wrapper.findAll('button').find(b => b.text() === '更多操作')!.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    await new DOMWrapper(document.body).findAll('[role="menuitem"]').find(item => item.text() === label)!.trigger('click')
+    await flushPromises()
+  }
   await click('复制原文')
   expect(writeText).toHaveBeenCalledWith(source)
   await click('查看源码')
@@ -102,5 +109,28 @@ it('rejects dangerous link protocols and nested active markup without changing c
   expect(wrapper.findAll('a[href^="javascript:"], a[href^="data:"], svg, form, input, [onfocus]').map(node => node.element.parentElement?.outerHTML)).toEqual([])
   await wrapper.findAll('button').find(button => button.text() === '复制原文')!.trigger('click')
   expect(writeText).toHaveBeenCalledWith(source)
+  wrapper.unmount()
+})
+
+
+it('shows caller context and keeps secondary preview actions reachable from the menu', async () => {
+  const wrapper = mount(ContentPreview, { attachTo: document.body, props: {
+    source: '# 正文', name: '第 7 页.md', context: '原始公告长文件名.pdf · 第 7 页',
+  } })
+  await flushPromises()
+  const toolbar = wrapper.get('[role="toolbar"]')
+  expect(toolbar.text()).toContain('原始公告长文件名.pdf · 第 7 页')
+  expect(toolbar.text()).not.toContain('Markdown 文档 · markdown')
+  expect(toolbar.findAll('button').map(b => b.text())).toEqual(['查看源码', '复制原文', '更多操作'])
+  const more = toolbar.findAll('button').find(b => b.text() === '更多操作')!
+  await more.trigger('keydown', { key: 'Enter' })
+  await flushPromises()
+  const menu = new DOMWrapper(document.body).get('[role="menu"]')
+  expect(menu.text()).toContain('下载')
+  expect(menu.text()).toContain('深色主题')
+  await menu.findAll('[role="menuitem"]').find(item => item.text() === '自动换行')!.trigger('click')
+  await flushPromises()
+  await wrapper.findAll('button').find(b => b.text() === '查看源码')!.trigger('click')
+  expect(wrapper.find('.wrap-code').exists()).toBe(true)
   wrapper.unmount()
 })
