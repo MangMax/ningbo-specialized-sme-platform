@@ -231,7 +231,6 @@ defineExpose({ navigate })
       <PdfNavigationPanel v-if="sidebarVisited && doc?.status === 'loaded'" :document-id="documentId" :engine="engine" :current-page="position.page" @navigate="choose" @close="closeSidebar" />
       </div>
       <div ref="pageSurface" class="relative min-h-0 min-w-0 flex-1" :aria-busy="!!pendingTarget">
-        <p v-if="pendingTarget" role="status" class="bg-card/95 pointer-events-none absolute inset-x-0 top-0 z-10 px-3 py-1 text-center text-sm">正在前往第 {{ pendingTarget.page }} 页…</p>
         <div v-if="navigationFailure" role="alert" class="bg-card/95 absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-2 p-2 text-sm"><span>第 {{ navigationFailure.page }} 页未能加载，保留当前页。</span><Button variant="outline" size="sm" @click="navigate(navigationFailure, { animate: true })">重试跳页</Button></div>
         <!-- Reserve the vertical gutter even when all pages fit. Otherwise fit-mode
              zoom can toggle the scrollbar and alternate between two viewport sizes. -->
