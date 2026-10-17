@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import CredentialSettings from '../components/settings/CredentialSettings.vue'
+
+// Happy DOM creates unhandled WAAPI cancellation promises during teardown.
+// Exercise Motion's JS fallback here; real browser acceptance checks native motion.
+const nativeAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+beforeAll(() => { Reflect.deleteProperty(Element.prototype, 'animate') })
+afterAll(() => { if (nativeAnimate) Object.defineProperty(Element.prototype, 'animate', nativeAnimate) })
 const request = vi.fn()
 let view: ReturnType<typeof mount>
 afterEach(() => { view?.unmount(); vi.unstubAllGlobals(); vi.restoreAllMocks() })

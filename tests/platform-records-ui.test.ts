@@ -1,8 +1,14 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import PlatformRecords from '../components/PlatformRecords.vue'
 import { platformFailureForDisplay } from '../lib/roster/platform-records'
+
+// Happy DOM creates unhandled WAAPI cancellation promises during teardown.
+// Exercise Motion's JS fallback here; real browser acceptance checks native motion.
+const nativeAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+beforeAll(() => { Reflect.deleteProperty(Element.prototype, 'animate') })
+afterAll(() => { if (nativeAnimate) Object.defineProperty(Element.prototype, 'animate', nativeAnimate) })
 const query = {id: 1,interface:'business_list',queryKey:'9133021274738281XA',rdjb:'2',queriedAt:'2026-10-16',status:'success',failureReason:null,relationCount:1}
 const record = {id: 1,queryId:1,sequenceNo:1,relationKey:'SQ001',nameRaw:'平台原名',usccRaw:'9133021274738281XA',province:'宁波市',status:'待审核',batch:'2025-1',declareKind:'update',appliedAt:'2025-03-01',awardBatchLabel:'2022年第一批',year:2025,matchBasis:'uscc',verificationStatus:'confirmed'}
 describe('面向用户的平台记录表',()=>{
