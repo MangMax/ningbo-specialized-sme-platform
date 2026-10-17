@@ -233,3 +233,96 @@ describe('ocrImageFile 单张 PNG 重试', () => {
     expect(api.stats.submits).toBe(0)
   }, 10_000)
 })
+it('redacts a long credential before truncating a plain-text upstream error', async () => {
+  const token = 'synthetic-' + 'z'.repeat(400) + '-tail'
+  let message = ''
+  try {
+    await ocrImageFile({ token, filePath: imagePath, fetchImpl: async () => new Response(token, { status: 403 }) })
+  } catch (error) { message = (error as Error).message }
+  expect(message.includes(token.slice(0, 100))).toBe(false)
+  expect(message.includes('[REDACTED]')).toBe(true)
+})
+it('removes credential echoes from successful OCR markdown and nested raw results', async () => {
+  const token = 'synthetic-success-secret'
+  api = await startMiniOcrApi({ pages: [`text ${token} end`] })
+  const result = await ocrImageFile({ token, baseUrl: api.origin, filePath: imagePath })
+  expect(JSON.stringify(result).includes(token)).toBe(false)
+  expect(JSON.stringify(result).includes('[REDACTED]')).toBe(true)
+})
+
+it('redacts URL-encoded credentials in upstream JSON errors at the public image boundary', async () => {
+  const token = 'synthetic+/=encoding-secret'
+  const encoded = encodeURIComponent(token)
+  let message = ''
+  try {
+    await ocrImageFile({ token, filePath: imagePath, fetchImpl: async () => Response.json({ message: `denied ${encoded}` }, { status: 401 }) })
+  } catch (error) { message = (error as Error).message }
+  expect(message.includes(encoded)).toBe(false)
+  expect(message.includes('[REDACTED]')).toBe(true)
+})
+
+const echoForms = [
+  { name: 'raw', encode: (value: string) => value },
+  { name: 'json-escaped', encode: (value: string) => JSON.stringify(value).slice(1, -1) },
+  { name: 'json-slash-escaped', encode: (value: string) => JSON.stringify(value).slice(1, -1).replaceAll('/', '\\/') },
+  { name: 'url', encode: encodeURIComponent },
+  { name: 'url-lowercase', encode: (value: string) => encodeURIComponent(value).replace(/%[0-9A-F]{2}/g, part => part.toLowerCase()) },
+  { name: 'form', encode: (value: string) => new URLSearchParams({ token: value }).toString().slice(6) },
+  { name: 'nested-url', encode: (value: string) => encodeURIComponent(encodeURIComponent(value)) },
+  { name: 'unicode-json', encode: (value: string) => value.split('').map(char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`).join('') },
+]
+
+const errorStages = [
+  'submit-http-json', 'submit-http-text', 'poll-http', 'download-http',
+  'submit-api', 'poll-api', 'failed-job', 'network', 'unknown-state',
+] as const
+
+for (const stage of errorStages) {
+  it.each(echoForms)(`scrubs ${stage} credential echoes before returning errors ($name)`, async ({ encode }) => {
+    const token = 'synthetic "quoted"\\path+/= ' + 'z'.repeat(400) + '-tail'
+    const echo = encode(token)
+    let calls = 0
+    let message = ''
+    try {
+      await ocrImageFile({ token, filePath: imagePath, fetchImpl: async () => {
+        calls += 1
+        const submitted = () => Response.json({ code: 0, data: { jobId: 'safe-job' } })
+        const done = () => Response.json({ code: 0, data: { state: 'done', resultUrl: { jsonUrl: 'http://fake.invalid/result' } } })
+        if (stage === 'network') throw new Error(`network ${echo}`)
+        if (stage === 'submit-http-json') return Response.json({ message: `denied ${echo}` }, { status: 401 })
+        if (stage === 'submit-http-text') return new Response(`denied ${echo}`, { status: 403 })
+        if (stage === 'submit-api') return Response.json({ code: 1, message: `denied ${echo}` })
+        if (calls === 1) return submitted()
+        if (stage === 'poll-http') return new Response(`denied ${echo}`, { status: 403 })
+        if (stage === 'poll-api') return Response.json({ code: 1, message: `denied ${echo}` })
+        if (stage === 'failed-job') return Response.json({ code: 0, data: { state: 'failed', errorMsg: `denied ${echo}` } })
+        if (stage === 'unknown-state') return Response.json({ code: 0, data: { state: echo } })
+        if (calls === 2) return done()
+        return new Response(`denied ${echo}`, { status: 403 })
+      } })
+    } catch (error) { message = (error as Error).message }
+    // Boolean assertions keep synthetic credentials out of failure diagnostics.
+    expect(message.includes(echo.slice(0, 100))).toBe(false)
+    expect(message.includes(token.slice(0, 100))).toBe(false)
+    expect(message.includes('[REDACTED]')).toBe(true)
+    if (stage.includes('http')) expect(message.length).toBeLessThan(370)
+  })
+}
+
+it.each(echoForms)('scrubs successful job IDs, markdown, nested raw values and keys ($name)', async ({ encode }) => {
+  const token = 'synthetic "quoted"\\path+/= secret'
+  const echo = encode(token)
+  let calls = 0
+  const result = await ocrImageFile({ token, filePath: imagePath, fetchImpl: async () => {
+    calls += 1
+    if (calls === 1) return Response.json({ code: 0, data: { jobId: echo } })
+    if (calls === 2) return Response.json({ code: 0, data: { state: 'done', resultUrl: { jsonUrl: 'http://fake.invalid/result' } } })
+    return new Response(JSON.stringify({ result: { layoutParsingResults: [{ markdown: { text: `text ${echo} end` }, nested: { [echo]: [echo] } }] } }))
+  } })
+  expect(result.jobId === '[REDACTED]').toBe(true)
+  expect(result.page.markdown === 'text [REDACTED] end').toBe(true)
+  // Normalize the serialization layer before checking for literal wire echoes.
+  const raw = JSON.stringify(result.page.raw)
+  expect(raw.includes(JSON.stringify(echo).slice(1, -1))).toBe(false)
+  expect(raw.includes('"nested":{"[REDACTED]":["[REDACTED]"]}')).toBe(true)
+})

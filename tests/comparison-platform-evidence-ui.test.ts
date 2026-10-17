@@ -1,11 +1,16 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import ComparisonPlatformEvidence from '../components/ComparisonPlatformEvidence.vue'
 import type {
   ComparisonDisposition,
   ComparisonPlatformEvidence as PlatformEvidence,
 } from '../lib/comparison-platform'
+
+// Exercise real Motion's JS fallback; Happy DOM's WAAPI cancellation rejects on teardown.
+const nativeAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+beforeAll(() => { Reflect.deleteProperty(Element.prototype, 'animate') })
+afterAll(() => { if (nativeAnimate) Object.defineProperty(Element.prototype, 'animate', nativeAnimate) })
 
 const mounted: ReturnType<typeof mount>[] = []
 

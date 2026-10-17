@@ -18,8 +18,7 @@
  *     token 从 `NUXT_API_TOKEN` 读(不进命令行,免得出现在 `ps` 里)。
  *
  * ── 凭据 ──────────────────────────────────────────────────────────────────
- * 平台会话凭据只从 `MIIT_COOKIE` / `MIIT_COOKIE_FILE` 读,**不入库、不进日志、不进仓库**。
- * 建议放一个 0600 权限、仓库之外的文件,再用 `MIIT_COOKIE_FILE` 指过去。
+ * 独立脚本可通过 `MIIT_COOKIE` 提供平台会话凭据,凭据不进日志、不进仓库。
  *
  * 用法:
  *   node scripts/reconcile-live.mjs [选项]
@@ -95,7 +94,7 @@ const HELP = `平台比对与原因回写 —— 无头长跑入口(RL-03)
   --poll-seconds N       轮询间隔(默认 3)
   --help                 显示本说明
 
-凭据:平台会话只从 MIIT_COOKIE / MIIT_COOKIE_FILE 读(不入库、不进日志、不进仓库)。
+凭据:独立脚本可从 MIIT_COOKIE 读取平台会话(不进日志、不进仓库)。
 `
 
 if (has('help')) {
@@ -205,9 +204,11 @@ async function runLocal() {
   }
   const { useDb } = await import('../db/client.ts')
   const { runPlatformReconcile } = await import('../server/utils/platform-reconcile.ts')
+  const { resolveCookie } = await import('../lib/platform/client.ts')
   const db = useDb({ dbPath })
   return runPlatformReconcile({
     db,
+    cookie: () => resolveCookie(undefined),
     titles,
     directions,
     usccs,

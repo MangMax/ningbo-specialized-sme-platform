@@ -120,6 +120,9 @@ export interface JobSpec {
   parse: (raw: Record<string, unknown>) => JobParseResult
   /** 提交时就能算出的**分母**(进度条的 total)。默认 1。 */
   total?: (params: Record<string, unknown>) => number
+  /** Capture submission-time dependencies in a closure, retained only in the process queue.
+   * Never put credentials in params, progress or the business database. */
+  prepare?: () => NonNullable<JobSpec['run']>
   run?: (ctx: JobContext, params: Record<string, unknown>) => Promise<JobCompletion>
 }
 
@@ -150,6 +153,7 @@ export function clearJobSpecs(): void {
 // ---------------------------------------------------------------------------
 
 interface QueueEntry {
+  run: NonNullable<JobSpec['run']>
   jobId: string
   kind: string
   db: Db
@@ -217,6 +221,7 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
   if (!spec) throw new Error(`任务种类未登记:${input.kind}`)
   if (spec.status !== 'ready' || !spec.run) throw new Error(`任务种类尚未接入:${input.kind}`)
 
+  const run = spec.prepare?.() ?? spec.run
   const total = spec.total?.(input.params) ?? 1
   const row = createJob(db, {
     id: input.id ?? newJobId(),
@@ -225,7 +230,7 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
     progress: { done: 0, total },
   })
 
-  queue.push({ jobId: row.id, kind: input.kind, db, filesDir: input.filesDir })
+  queue.push({ run, jobId: row.id, kind: input.kind, db, filesDir: input.filesDir })
   drainQueue()
   return row
 }
@@ -294,7 +299,7 @@ async function runOne(entry: QueueEntry): Promise<void> {
       cancelled: () => cancelRequested.has(jobId),
     }
 
-    const completion = await spec.run(ctx, running.params)
+    const completion = await entry.run(ctx, running.params)
     // 收尾时把进度顶到分母 —— handler 可能把自己的循环跑完了却没报最后一格。
     // 被取消时不顶:停在 1/4 才是**它真实的进度**,顶成 4/4 就是在说谎。
     if (!completion.cancelled) {
