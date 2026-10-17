@@ -18,7 +18,10 @@ export function platformNoteForDisplay(note: string | null | undefined): string 
 /** 查询未完成时，给出用户能采取行动的原因，不暴露请求参数或错误堆栈。 */
 export function platformFailureForDisplay(reason: string | null | undefined): string | null {
   if (!reason) return null
-  if (/登录|会话|session|cookie|unauthori[sz]ed|\b40[13]\b/i.test(reason)) return '平台登录已失效，请重新登录后查询。'
+  if (/\b403\b|permission denied|forbidden/i.test(reason)) return '平台拒绝了本次查询，请检查登录状态或访问权限。'
+  if (/登录.{0,6}(失效|过期)|(session|login).{0,12}expired/i.test(reason)) return '平台登录已失效，请重新登录后查询。'
+  if (/unauthori[sz]ed|\b401\b/i.test(reason)) return '平台需要登录验证，请登录后查询。'
+  if (/session|cookie/i.test(reason)) return '平台查询未完成，请稍后重试。'
   if (/限流|频繁|too many|rate.limit|\b429\b/i.test(reason)) return '平台查询过于频繁，请稍后重试。'
   if (/超时|timeout|timed out/i.test(reason)) return '平台响应超时，请稍后重试。'
   if (/ECONN|ENOTFOUND|network|fetch failed/i.test(reason)) return '暂时无法连接平台，请稍后重试。'
