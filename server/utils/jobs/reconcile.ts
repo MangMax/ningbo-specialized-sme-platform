@@ -1,3 +1,4 @@
+import { resolvePlatformCookie } from '../credential-state'
 import type { ComparisonDirection } from '../../../lib/comparison'
 import { TITLE_ORDER } from '../../../lib/labels'
 import { runPlatformReconcile, type ReconcileReport } from '../platform-reconcile'
@@ -19,7 +20,7 @@ import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-
  * 指到本批新建的查询与关系)。
  *
  * ── 凭据 ──────────────────────────────────────────────────────────────────
- * 只从 `MIIT_COOKIE` / `MIIT_COOKIE_FILE` 读,**不入库、不进日志、不进仓库**;
+ * 从统一凭据服务读取页面保存值，回退 `MIIT_COOKIE` / `MIIT_COOKIE_FILE`,**不入库、不进日志、不进仓库**;
  * 拿不到就明确失败,绝不写「一片未查询」的假结果。长跑请把凭据放在 0600 的文件里。
  *
  * ── 可续跑 ────────────────────────────────────────────────────────────────
@@ -133,29 +134,36 @@ export const reconcileSpec: JobSpec = {
     ' limit?: number(最多处理多少个差异目标,分批长跑用);offset?: number(跳过前 N 个,与 limit 配成分页);' +
     ' concurrency?: 1–12(默认 4);freshnessHours?: number(复用新鲜查询/判定的窗口,默认 24);' +
     ' write?: boolean(默认 true;false = 只判定不回写) }',
-  note: '需要 MIIT_COOKIE / MIIT_COOKIE_FILE(只从环境读,不入库);无统代的差异查不了,会单独计入报告。',
+  note: '需要配置页 Cookie 或 MIIT_COOKIE / MIIT_COOKIE_FILE(提交时内存快照,不入库);无统代的差异查不了,会单独计入报告。',
   parse: parseReconcileParams,
-  async run(ctx: JobContext, params: Record<string, unknown>): Promise<JobCompletion> {
-    const freshnessHours = numberParam(params, 'freshnessHours')
-    const report: ReconcileReport = await runPlatformReconcile({
-      db: ctx.db,
-      titles: params.titles as string[] | undefined,
-      directions: params.directions as ComparisonDirection[] | undefined,
-      usccs: params.usccs as string[] | undefined,
-      limit: numberParam(params, 'limit'),
-      offset: numberParam(params, 'offset'),
-      concurrency: numberParam(params, 'concurrency'),
-      freshnessMs: freshnessHours != null ? freshnessHours * 60 * 60 * 1000 : undefined,
-      write: params.write !== false,
-      onProgress: (done, total) => ctx.progress(done, total),
-      shouldCancel: () => ctx.cancelled(),
-    })
-
-    // 被取消时**主动停下并保留已判定的部分** —— 取消不该把做完的那部分明细一起丢掉
-    // (见 `JobCompletion.cancelled` 的说明)。
-    if (report.cancelled) {
-      return { result: report, cancelled: true }
-    }
-    return { result: report }
+  prepare: () => {
+    const cookie = resolvePlatformCookie()
+    return (ctx, params) => runReconcile(ctx, params, cookie)
   },
+  run: (ctx, params) => runReconcile(ctx, params, resolvePlatformCookie()),
+}
+
+async function runReconcile(ctx: JobContext, params: Record<string, unknown>, cookie: string): Promise<JobCompletion> {
+  const freshnessHours = numberParam(params, 'freshnessHours')
+  const report: ReconcileReport = await runPlatformReconcile({
+    db: ctx.db,
+    cookie: () => cookie,
+    titles: params.titles as string[] | undefined,
+    directions: params.directions as ComparisonDirection[] | undefined,
+    usccs: params.usccs as string[] | undefined,
+    limit: numberParam(params, 'limit'),
+    offset: numberParam(params, 'offset'),
+    concurrency: numberParam(params, 'concurrency'),
+    freshnessMs: freshnessHours != null ? freshnessHours * 60 * 60 * 1000 : undefined,
+    write: params.write !== false,
+    onProgress: (done, total) => ctx.progress(done, total),
+    shouldCancel: () => ctx.cancelled(),
+  })
+
+  // 被取消时**主动停下并保留已判定的部分** —— 取消不该把做完的那部分明细一起丢掉
+  // (见 `JobCompletion.cancelled` 的说明)。
+  if (report.cancelled) {
+    return { result: report, cancelled: true }
+  }
+  return { result: report }
 }

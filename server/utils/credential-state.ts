@@ -1,9 +1,9 @@
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, closeSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 
 /** Narrow shared boundary for subsequent credential kinds; never uses the business DB. */
-export type CredentialKey = 'ocrToken'
+export type CredentialKey = 'ocrToken' | 'miitCookie'
 export interface CredentialValue { value: string; updatedAt: string }
 interface State { version: 1; values: Partial<Record<CredentialKey, CredentialValue>> }
 export interface CredentialContext {
@@ -52,23 +52,50 @@ function readState(ctx: CredentialContext): State {
 }
 export function resolveCredential(key: CredentialKey, ctx: CredentialContext = credentialContext(), override?: string) {
   if (override?.trim()) return { value: override.trim(), source: 'override', updatedAt: null, hasSaved: false }
-  const saved = readState(ctx).values[key]
+  return resolveFromState(key, ctx, readState(ctx))
+}
+function resolveFromState(key: CredentialKey, ctx: CredentialContext, state: State) {
+  const saved = state.values[key]
   if (saved) return { ...saved, source: 'saved', hasSaved: true }
   const env = ctx.env ?? process.env
+  if (key === 'miitCookie') {
+    if (env.MIIT_COOKIE?.trim()) return { value: env.MIIT_COOKIE.trim(), source: 'MIIT_COOKIE', updatedAt: null, hasSaved: false }
+    const file = env.MIIT_COOKIE_FILE?.trim()
+    try {
+      if (file && existsSync(file)) {
+        const value = readFileSync(file, 'utf8').trim()
+        if (value) return { value, source: 'MIIT_COOKIE_FILE', updatedAt: null, hasSaved: false }
+      }
+    } catch { throw new Error('平台凭据文件不可用，请检查权限。') }
+    return { value: '', source: 'none', updatedAt: null, hasSaved: false }
+  }
   if (ctx.ocrToken?.trim() || env.NUXT_OCR_TOKEN?.trim()) return { value: (ctx.ocrToken?.trim() || env.NUXT_OCR_TOKEN!.trim()), source: 'NUXT_OCR_TOKEN', updatedAt: null, hasSaved: false }
   if (env.PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN?.trim()) return { value: env.PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN.trim(), source: 'PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN', updatedAt: null, hasSaved: false }
   return { value: '', source: 'none', updatedAt: null, hasSaved: false }
 }
 export function credentialStatus(ctx: CredentialContext) {
-  const { value, ...rest } = resolveCredential('ocrToken', ctx)
-  return { ocrToken: { ...rest, configured: !!value, masked: !value ? '' : value.length <= 8 ? '********' : `${value.slice(0, 3)}********${value.slice(-3)}` } }
+  const state = readState(ctx)
+  const status = (key: CredentialKey) => {
+    const { value, ...rest } = resolveFromState(key, ctx, state)
+    return { ...rest, configured: !!value, masked: !value ? '' : value.length <= 8 ? '********' : `${value.slice(0, 3)}********${value.slice(-3)}` }
+  }
+  return { ocrToken: status('ocrToken'), miitCookie: status('miitCookie') }
 }
 /** Synchronous read/modify/atomic-rename serializes independent HTTP updates in this process.
  * Deploy one writer process per state directory. Failed pre-rename writes leave the old file intact. */
 export function updateCredential(key: CredentialKey, value: string | null, ctx: CredentialContext): void {
+  updateCredentials({ [key]: value }, ctx)
+}
+export function updateCredentials(values: Partial<Record<CredentialKey, string | null>>, ctx: CredentialContext): void {
   const state = readState(ctx)
-  if (value === null) delete state.values[key]
-  else state.values[key] = { value, updatedAt: new Date().toISOString() }
+  for (const key of ['ocrToken', 'miitCookie'] as const) {
+    const value = values[key]
+    if (value === null) delete state.values[key]
+    else if (value !== undefined) state.values[key] = { value, updatedAt: new Date().toISOString() }
+  }
+  // A clear must not report failure after discarding the old override when fallback is unreadable.
+  resolveFromState('ocrToken', ctx, state)
+  resolveFromState('miitCookie', ctx, state)
   const file = stateFile(ctx, true)
   if (!file) throw new Error('未配置外置持久目录')
   const temporary = `${file}.${randomUUID()}.tmp`
@@ -79,4 +106,12 @@ export function updateCredential(key: CredentialKey, value: string | null, ctx: 
   } finally {
     try { unlinkSync(temporary) } catch { /* renamed or failed before creation */ }
   }
+}
+
+/** Shared application query boundary. CLI keeps lib/platform/client's standalone env semantics.
+ * A callback (including an empty result) is a controlled override, never a request parameter. */
+export function resolvePlatformCookie(override?: string | (() => string) | null, ctx: CredentialContext = credentialContext()): string {
+  if (typeof override === 'function') return override().trim()
+  if (override) return override.trim()
+  return resolveCredential('miitCookie', ctx).value
 }

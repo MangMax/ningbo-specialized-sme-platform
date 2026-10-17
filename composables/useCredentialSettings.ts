@@ -6,24 +6,27 @@ export interface CredentialStatus {
   updatedAt: string | null
   hasSaved: boolean
 }
-export interface CredentialState { ocrToken: CredentialStatus }
+export type CredentialKey = 'ocrToken' | 'miitCookie'
+export interface CredentialState { ocrToken: CredentialStatus; miitCookie: CredentialStatus }
+const labels = { ocrToken: 'OCR token', miitCookie: '平台 Cookie' }
+const empty = () => ({ ocrToken: '', miitCookie: '' })
 export function useCredentialSettings() {
   const adminToken = ref('')
-  const replacement = ref('')
+  const replacement = ref(empty())
   const state = ref<CredentialState | null>(null)
-  const raw = ref('')
+  const raw = ref(empty())
   const busy = ref(false)
   const message = ref('')
   const failed = ref(false)
   let generation = 0
   let controller: AbortController | undefined
-  const canRead = computed(() => !!state.value?.ocrToken.configured)
+  const canRead = computed(() => ({ ocrToken: !!state.value?.ocrToken.configured, miitCookie: !!state.value?.miitCookie?.configured }))
   const request = <T>(url: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', body?: object) => $fetch<T>(url, {
     method, body, headers: { authorization: `Bearer ${adminToken.value}` }, cache: 'no-store', signal: controller?.signal,
   })
   function clearMemory() {
     generation++; controller?.abort(); busy.value = false
-    state.value = null; raw.value = ''; replacement.value = ''; message.value = ''; failed.value = false
+    state.value = null; raw.value = empty(); replacement.value = empty(); message.value = ''; failed.value = false
   }
   watch(adminToken, clearMemory, { flush: 'sync' })
   function clearAuthorization() { clearMemory(); adminToken.value = '' }
@@ -51,35 +54,35 @@ export function useCredentialSettings() {
     const current = generation
     await perform(async () => {
       const result = await request<CredentialState>('/api/settings/credentials', 'GET')
-      if (current === generation) { state.value = result; raw.value = '' }
+      if (current === generation) { state.value = result; raw.value = empty() }
     })
   }
-  async function save() {
-    if (!replacement.value.trim()) { failed.value = true; message.value = '请输入非空 OCR token。'; return }
+  async function save(key: CredentialKey = 'ocrToken') {
+    if (!replacement.value[key].trim()) { failed.value = true; message.value = `请输入非空${labels[key]}。`; return }
     const current = generation
     await perform(async () => {
-      const result = await request<CredentialState>('/api/settings/credentials', 'PATCH', { ocrToken: replacement.value })
-      if (current === generation) { state.value = result; raw.value = ''; replacement.value = ''; message.value = '已保存。新任务将使用当前配置；尚未验证服务可用性。' }
+      const result = await request<CredentialState>('/api/settings/credentials', 'PATCH', { [key]: replacement.value[key] })
+      if (current === generation) { state.value = result; raw.value[key] = ''; replacement.value[key] = ''; message.value = '已保存。新任务将使用当前配置；尚未验证服务可用性。' }
     })
   }
-  async function clear() {
+  async function clear(key: CredentialKey = 'ocrToken') {
     const current = generation
     await perform(async () => {
-      const result = await request<CredentialState>('/api/settings/credentials', 'DELETE', { key: 'ocrToken' })
-      if (current === generation) { state.value = result; raw.value = ''; message.value = '已清除页面保存值，当前有效来源见上方。' }
+      const result = await request<CredentialState>('/api/settings/credentials', 'DELETE', { key })
+      if (current === generation) { state.value = result; raw.value[key] = ''; message.value = '已清除页面保存值，当前有效来源见上方。' }
     })
   }
-  async function reveal(copy = false) {
-    if (!canRead.value) return
-    if (!copy && raw.value) { raw.value = ''; return }
+  async function reveal(key: CredentialKey = 'ocrToken', copy = false) {
+    if (!canRead.value[key]) return
+    if (!copy && raw.value[key]) { raw.value[key] = ''; return }
     const current = generation
     await perform(async () => {
-      const result = await request<{ value: string }>('/api/settings/credentials/ocrToken/reveal', 'POST', {})
+      const result = await request<{ value: string }>(`/api/settings/credentials/${key}/reveal`, 'POST', {})
       if (current !== generation) return
       if (copy) {
-        try { await navigator.clipboard.writeText(result.value); if (current === generation) message.value = '已复制完整 OCR token。' }
+        try { await navigator.clipboard.writeText(result.value); if (current === generation) message.value = `已复制完整${labels[key]}。` }
         catch { if (current === generation) { failed.value = true; message.value = '复制失败，请允许剪贴板访问后重试。' } }
-      } else raw.value = result.value
+      } else raw.value[key] = result.value
     })
   }
   return { adminToken, replacement, state, raw, busy, failed, message, canRead, load, save, clear, reveal }
