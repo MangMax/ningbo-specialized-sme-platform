@@ -1803,14 +1803,14 @@ async function verifyComparisonSearchAndMotion(cdp) {
     await installMotionAndFetchGate(cdp, sessionId)
     await clickSelector(cdp, sessionId, '[data-testid="reconcile-status-trigger"]')
     const tooltipReady = await waitUntil(cdp, sessionId, `(() => {
-      const tooltip = document.querySelector('[data-slot="tooltip-content"]');
+      const tooltip = document.querySelector('[data-slot="hover-card-content"]');
       return !!tooltip && getComputedStyle(tooltip).visibility !== 'hidden' && tooltip.getBoundingClientRect().height > 0;
     })()`)
     if (!tooltipReady) {
       bad('两侧名录比对 · 原因字号:点击状态后没有打开原因浮层')
     } else {
       const typography = await evaluate(cdp, sessionId, `(() => {
-        const tooltip = document.querySelector('[data-slot="tooltip-content"]');
+        const tooltip = document.querySelector('[data-slot="hover-card-content"]');
         return {
           paragraphs: [...(tooltip?.querySelectorAll('p') ?? [])].map((paragraph) => ({
             text: (paragraph.textContent ?? '').trim(),

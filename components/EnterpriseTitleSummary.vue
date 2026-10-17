@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import { TITLES, TITLE_SHORT, TITLE_RANK } from '~~/lib/labels'
 import { Badge, type BadgeVariants } from '@/components/ui/badge'
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { HoverCard, HoverCardTrigger } from '@/components/ui/hover-card'
+import TableHoverCardContent from './TableHoverCardContent.vue'
 
 const props = defineProps<{
   titles: string[]
@@ -33,13 +34,13 @@ const variant = (code: string): BadgeVariants['variant'] => {
         <Badge v-if="items.length > 1" variant="quiet" class="py-0 text-[13px] leading-[18px] tabular-nums" data-testid="title-overflow-trigger">+{{ items.length - 1 }}</Badge>
       </button>
     </HoverCardTrigger>
-    <HoverCardContent align="start" class="w-80 max-w-[calc(100vw-2rem)] p-3 shadow-none" @click.stop>
+    <TableHoverCardContent @click.stop>
       <div class="mb-2 text-sm font-medium">称号 · 年份批次</div>
       <div class="flex flex-wrap gap-1.5" data-testid="all-title-awards">
         <Badge v-for="(item, index) in items" :key="index" :variant="variant(item.titleCode)" class="whitespace-normal text-[13px] font-normal">
           {{ TITLES[item.titleCode] ?? item.titleCode }} {{ batch(item) }}
         </Badge>
       </div>
-    </HoverCardContent>
+    </TableHoverCardContent>
   </HoverCard>
 </template>
