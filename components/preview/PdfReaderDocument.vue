@@ -120,12 +120,12 @@ defineExpose({ navigate })
           <Scroller v-if="mode === 'continuous'" :document-id="documentId">
             <template #default="{ page }">
               <div :style="{ width: `${page.width}px`, height: `${page.height}px`, position: 'relative' }" :aria-label="`PDF 第 ${page.pageNumber} 页`">
-                <PdfReaderPage :key="`${page.pageIndex}:${scale}`" :document-id="documentId" :page-index="page.pageIndex" :scale="scale" @ready="rendered" @release="loaded.delete($event)" @error="emit('error', $event)" />
+                <PdfReaderPage :key="`${page.pageIndex}:${scale}`" :document-id="documentId" :page-index="page.pageIndex" :scale="scale" @ready="rendered" @release="loaded.delete($event)" />
               </div>
             </template>
           </Scroller>
           <div v-else :style="singleSize" :aria-label="`PDF 第 ${singlePage} 页`">
-            <PdfReaderPage :key="`${singlePage}:${scale}`" :document-id="documentId" :page-index="singlePage - 1" :scale="scale" @ready="rendered" @release="loaded.delete($event)" @error="emit('error', $event)" />
+            <PdfReaderPage :key="`${singlePage}:${scale}`" :document-id="documentId" :page-index="singlePage - 1" :scale="scale" @ready="rendered" @release="loaded.delete($event)" />
           </div>
         </Viewport>
       </div>

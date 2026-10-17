@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, shallowRef, toRaw, watch } from 'vue'
-import type { PdfBookmarkObject, PdfEngine } from '@embedpdf/models'
-import { PdfActionType, PdfErrorCode } from '@embedpdf/models'
+import type { PdfBookmarkObject, PdfDestinationObject, PdfEngine } from '@embedpdf/models'
+import { PdfActionType, PdfErrorCode, PdfZoomMode } from '@embedpdf/models'
 import { useDocumentState } from '@embedpdf/core/vue'
 import { ThumbnailsPane, ThumbImg } from '@embedpdf/plugin-thumbnail/vue'
 import { useSearch } from '@embedpdf/plugin-search/vue'
@@ -27,11 +27,27 @@ watch(() => doc.value?.document, (document, _, cleanup) => {
   task.wait(result => { if (active) { bookmarks.value = result.bookmarks; outlineStatus.value = 'ready' } }, () => { if (active) outlineStatus.value = 'error' })
   cleanup(() => { active = false; task.abort({ code: PdfErrorCode.Cancelled, message: 'reader closed' }) })
 }, { immediate: true })
-function flatten(items: PdfBookmarkObject[], depth = 0): { title: string; page?: number; depth: number }[] {
+function destinationPosition(destination: PdfDestinationObject): PdfReadingPosition {
+  const page = doc.value?.document?.pages[destination.pageIndex]
+  let point: { x: number; y: number } | undefined
+  // PDF destinations use bottom-left user space; scroll uses top-left page space.
+  if (page && destination.zoom.mode === PdfZoomMode.XYZ) {
+    const { x, y } = destination.zoom.params
+    if (Number.isFinite(x) && Number.isFinite(y)) point = { x: Math.max(0, x), y: Math.max(0, page.size.height - y) }
+  } else if (page) {
+    const view = destination.view
+    const mode = destination.zoom.mode
+    const x = mode === PdfZoomMode.FitVertical || mode === PdfZoomMode.FitBoundingBoxVertical || mode === PdfZoomMode.FitRectangle ? view[0] : 0
+    const top = mode === PdfZoomMode.FitHorizontal || mode === PdfZoomMode.FitBoundingBoxHorizontal ? view[0] : mode === PdfZoomMode.FitRectangle ? view[3] : undefined
+    if (x !== undefined && Number.isFinite(x) && (top === undefined || Number.isFinite(top)) && (top !== undefined || mode === PdfZoomMode.FitVertical || mode === PdfZoomMode.FitBoundingBoxVertical)) point = { x: Math.max(0, x), y: top === undefined ? 0 : Math.max(0, page.size.height - top) }
+  }
+  return { page: destination.pageIndex + 1, ...(point ? { point } : {}) }
+}
+function flatten(items: PdfBookmarkObject[], depth = 0): { title: string; position?: PdfReadingPosition; depth: number }[] {
   return items.flatMap(item => {
     const target = item.target
     const destination = target?.type === 'destination' ? target.destination : target?.type === 'action' && target.action.type === PdfActionType.Goto ? target.action.destination : null
-    return [{ title: item.title, page: destination ? destination.pageIndex + 1 : undefined, depth }, ...flatten(item.children ?? [], depth + 1)]
+    return [{ title: item.title, position: destination ? destinationPosition(destination) : undefined, depth }, ...flatten(item.children ?? [], depth + 1)]
   })
 }
 const outline = computed(() => flatten(bookmarks.value))
@@ -69,7 +85,7 @@ function choose(position: PdfReadingPosition) { emit('navigate', position) }
         <p v-if="outlineStatus === 'loading'" role="status" class="text-muted-foreground p-2 text-sm">正在读取目录…</p>
         <p v-else-if="outlineStatus === 'error'" role="alert" class="p-2 text-sm">无法读取目录，可用页码导航。</p>
         <p v-else-if="!outline.length" class="text-muted-foreground p-2 text-sm">这份 PDF 没有目录。</p>
-        <ul v-else class="flex flex-col gap-1"><li v-for="(item, index) in outline" :key="index" :style="{ paddingLeft: `${Math.min(item.depth, 5) * 12}px` }"><Button variant="ghost" size="sm" class="h-auto w-full justify-start whitespace-normal text-left" :disabled="!item.page" @click="choose({ page: item.page! })">{{ item.title }}<span v-if="item.page" class="text-muted-foreground ml-auto pl-2">{{ item.page }}</span></Button></li></ul>
+        <ul v-else class="flex flex-col gap-1"><li v-for="(item, index) in outline" :key="index" :style="{ paddingLeft: `${Math.min(item.depth, 5) * 12}px` }"><Button variant="ghost" size="sm" class="h-auto w-full justify-start whitespace-normal text-left" :disabled="!item.position" @click="choose(item.position!)">{{ item.title }}<span v-if="item.position" class="text-muted-foreground ml-auto pl-2">{{ item.position.page }}</span></Button></li></ul>
       </TabsContent>
       <TabsContent value="search" class="flex min-h-0 flex-1 flex-col gap-2">
         <form class="flex gap-1" @submit.prevent="runSearch"><Input v-model="query" aria-label="搜索 PDF 文本" placeholder="查找原文" /><Button type="submit" size="sm" :disabled="!query.trim() || searchState.loading">查找</Button></form>

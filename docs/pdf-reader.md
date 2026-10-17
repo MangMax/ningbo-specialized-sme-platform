@@ -42,3 +42,9 @@ Before creating a worker, the reader fetches and validates the same-origin WASM.
 ## Validation boundaries
 
 `tests/pdf-reader.test.ts` controls engine readiness and actual-visible-position events at the shared component. `tests/pdf-reader-engine.test.ts` controls resource creation/failure/disposal. These tests do not establish real PDF rendering; the isolated browser acceptance artifacts and command logs are under `/tmp/ningbo-pdf-40-42/41/`.
+
+## Recoverable page rendering and native destinations
+
+A page bitmap failure stays local to that physical page, including virtualized buffer pages. Its alert names the failed page and offers a page-only retry; the document session, last confirmed position, navigation, and other rendered pages stay mounted. Only a successful retry load makes that page eligible for visible-position reports again. Document/startup failures still use the document retry path.
+
+Native XYZ and coordinate-bearing Fit destinations preserve their page anchor through the shared navigation boundary. Engine 2.15.1 destinations use PDF bottom-left user space; the application converts the top coordinate to the scroll capability's top-left unscaled page space. Page-only or unresolvable destinations remain page-only.
