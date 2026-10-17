@@ -74,9 +74,9 @@ function choose(position: PdfReadingPosition) { emit('navigate', position) }
       <TabsContent value="thumbnails" class="min-h-0 flex-1 overflow-hidden">
         <ThumbnailsPane :document-id="documentId" class="h-full">
           <template #default="{ meta }">
-            <button type="button" :aria-label="`跳到第 ${meta.pageIndex + 1} 页`" :aria-current="currentPage === meta.pageIndex + 1 ? 'page' : undefined" class="focus-visible:ring-ring flex h-full w-full flex-col items-center gap-1 rounded border p-1 text-sm focus-visible:ring-2" @click="choose({ page: meta.pageIndex + 1 })">
-              <ThumbImg :document-id="documentId" :meta="meta" />
-              <span>{{ meta.pageIndex + 1 }}</span>
+            <button type="button" :aria-label="`跳到第 ${meta.pageIndex + 1} 页`" :aria-current="currentPage === meta.pageIndex + 1 ? 'page' : undefined" class="pdf-thumbnail focus-visible:ring-ring absolute left-0 flex w-full flex-col items-center rounded text-sm focus-visible:ring-2" :style="{ top: `${meta.top}px`, height: `${meta.wrapperHeight}px`, paddingTop: `${meta.padding ?? 0}px` }" @click="choose({ page: meta.pageIndex + 1 })">
+              <span class="pdf-thumbnail-image outline-border overflow-hidden rounded outline-2 -outline-offset-2" :style="{ width: `${meta.width}px`, height: `${meta.height}px` }"><ThumbImg :document-id="documentId" :meta="meta" class="size-full" /></span>
+              <span class="flex shrink-0 items-center justify-center" :style="{ height: `${meta.labelHeight}px`, marginTop: `${meta.padding ?? 0}px` }">{{ meta.pageIndex + 1 }}</span>
             </button>
           </template>
         </ThumbnailsPane>
@@ -98,3 +98,9 @@ function choose(position: PdfReadingPosition) { emit('navigate', position) }
     </Tabs>
   </aside>
 </template>
+
+<style scoped>
+.pdf-thumbnail[aria-current="page"] .pdf-thumbnail-image { outline-color: var(--primary); box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring); }
+.pdf-thumbnail[aria-current="page"] { font-weight: 600; }
+@media (prefers-reduced-motion: no-preference) { .pdf-thumbnail { transition: transform 100ms ease-out; } .pdf-thumbnail:active { transform: scale(.98); } }
+</style>

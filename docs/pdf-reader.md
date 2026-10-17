@@ -27,7 +27,7 @@
 
 ## Engine and resources
 
-All direct EmbedPDF dependencies are pinned to **2.15.1**, matching the original lockfile. The full viewer dependency was removed. Public `EmbedPDF`, plugin capabilities, `Scroller`, render/selection/search layers and virtual thumbnail pane provide the engine behavior; application components own the UI. Continuous reading uses the virtual scroller (one-page buffer); single-page reading mounts only its current page.
+All direct EmbedPDF dependencies are pinned to **2.15.1**, matching the original lockfile. The full viewer dependency was removed. Public `EmbedPDF`, plugin capabilities, `Scroller`, render/selection/search layers and virtual thumbnail pane provide the engine behavior; application components own the UI. Continuous reading uses the virtual scroller (two-page buffer); single-page reading mounts only its current page.
 
 Official API references (checked against installed 2.15.1 declaration files and source):
 
@@ -71,3 +71,11 @@ Native XYZ and coordinate-bearing Fit destinations preserve their page anchor th
 Gallery `page-change` reports also synchronize the share URL immediately, retaining `sourcePage` and using replace: gallery initialization and external restores are never inferred to be reader visits. View-switch URL writes read the latest query when their queued operation executes so a rapid switch cannot overwrite a newly confirmed gallery page with the previous original page.
 
 On source pages the source-return action and actual-page toolbar carry normal source/current state. Visible status space is reserved for pending, unknown, invalid, out-of-range and failed states; a normal successful status remains announced. The visible “位置历史” label separates reading-location arrows from physical-page controls. Context-return labels name the validated destination without changing safe-back rules.
+
+## Motion and prepared destinations
+
+Explicit actions opt into short motion. Initial/external position restores remain instant; adjacent page-only actions use the public smooth scroll capability, while distant destinations receive a short arrival transition. The current page stays readable with a pending-target status until the latest target raster has decoded. Navigation and virtual page consumers share public `RenderCapability.renderPage` tasks in a document-owned image pool: mounted consumers plus at most two idle rasters, no whole-document prerender or assumed plugin cache. Scale changes retain the last successful image until the next one decodes. Errors retain the current page with a target-specific retry. All image URLs/tasks are disposed on document unmount.
+
+Position confirmation requires an actual loaded page and positive visibility, and waits for public viewport smooth-scroll activity to stop. The frame fallback only rechecks no-distance scroll metrics. A requested short page may be confirmed from its loaded visibility even when several pages fit and the dominant page differs. Passive scroll releases that preference when the offset changes.
+
+Tool and navigation panels retain both transition directions, immediately become inert when closed, and return focus to their toggles. CSS container queries use the reader width (768px threshold), so embedded/narrow readers overlay navigation without squeezing the page. Auto-fit remains driven by the public viewport resize/zoom debounce; stable scrollbar gutter and physical-page keys are preserved. Reduced motion removes panel/page displacement and uses instant navigation.

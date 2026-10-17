@@ -6,3 +6,6 @@ export type PdfReadingMode = 'continuous' | 'single'
 
 /** User intent, never inferred from passive position changes. External restores do not emit it. */
 export interface PdfNavigationRequest extends PdfPositionEvent { reason: 'explicit' | 'history' }
+
+/** Motion is opt-in for explicit reading actions; restoration stays exact. */
+export interface PdfNavigationOptions { animate?: boolean }

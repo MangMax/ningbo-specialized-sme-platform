@@ -10,6 +10,8 @@ const props = withDefaults(defineProps<{ src: string; name?: string; targetPage?
 const emit = defineEmits<{ ready: [event: PdfReadyEvent]; 'position-change': [event: PdfPositionEvent]; error: [message: string]; 'navigation-request': [event: PdfNavigationRequest] }>()
 const engine = useTemplateRef('engine')
 const shell = useTemplateRef<HTMLElement>('shell')
+const toolsToggle = useTemplateRef<{ $el: HTMLButtonElement }>('toolsToggle')
+function toggleTools() { tools.value = !tools.value; if (!tools.value) toolsToggle.value?.$el?.focus() }
 const title = computed(() => props.name || props.src.split('/').pop() || 'PDF 文档')
 const status = shallowRef<'loading' | 'ready' | 'error'>('loading')
 const total = shallowRef(0)
@@ -92,7 +94,7 @@ function send(position: PdfReadingPosition) {
     lastTarget = position; message.value = ''
     flight = request ?? { position, reason: 'external', from: current.value }
     if (flight.reason !== 'external') emit('navigation-request', { src: props.src, ...position, reason: flight.reason })
-    engine.value?.navigate(position)
+    engine.value?.navigate(position, { animate: flight.reason === 'explicit' })
   } else flight = null
 }
 function navigate(position: PdfReadingPosition, reason: Navigation['reason'] = 'external', direction?: Navigation['direction']) {
@@ -132,7 +134,7 @@ defineExpose({ navigate })
   <section ref="shell" data-preview-shell tabindex="0" aria-label="PDF 阅读器" class="bg-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border" @keydown="keydown">
     <div role="toolbar" aria-label="PDF 查阅" class="flex flex-wrap items-center gap-1 border-b p-2">
       <span :title="title" class="min-w-0 flex-1 truncate px-1 text-sm font-medium">{{ title }}</span>
-      <Button variant="ghost" size="icon-sm" aria-label="阅读工具" :aria-expanded="tools" @click="tools = !tools"><SlidersHorizontal /></Button>
+      <Button ref="toolsToggle" variant="ghost" size="icon-sm" aria-label="阅读工具" :aria-expanded="tools" @click="toggleTools"><SlidersHorizontal /></Button>
       <Button variant="ghost" size="icon-sm" as-child><a :href="src" :download="title" aria-label="下载原文"><Download /></a></Button>
       <Button variant="ghost" size="icon-sm" :aria-label="fullscreen ? '退出全屏' : '全屏阅读'" @click="toggleFullscreen"><Minimize v-if="fullscreen" /><Maximize v-else /></Button>
       <div role="group" aria-label="文档内阅读位置" class="flex shrink-0 items-center gap-1 border-l pl-2">
