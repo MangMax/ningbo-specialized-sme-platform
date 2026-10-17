@@ -1,15 +1,19 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   BUSINESS_LIST_PATH,
   APPLY_LIST_PATH,
   type PlatformFetch,
   queryAllRdjb,
+  hasPlatformCredential,
 } from '../lib/platform'
 
 const fixture = (name: string) =>
   readFileSync(join(import.meta.dirname, 'fixtures/platform', name), 'utf8')
+
+afterEach(() => vi.unstubAllEnvs())
 
 interface Call {
   url: string
@@ -107,4 +111,87 @@ describe('queryAllRdjb:按 USCC 把 rdjb=1/2/3 全查再合并', () => {
       expect(outcome.failureReason).toContain('凭据')
     }
   })
+
+  it('ignores a legacy credential file and makes no requests without an environment credential', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'platform-legacy-cookie-'))
+    const path = join(dir, 'cookie.txt')
+    writeFileSync(path, 'session=synthetic-file-cookie')
+    vi.stubEnv('MIIT_COOKIE', '')
+    vi.stubEnv('MIIT_COOKIE_FILE', path)
+    try {
+      const { fetchImpl, calls } = fakeFetch(normalReply)
+      expect(hasPlatformCredential()).toBe(false)
+      const outcomes = await queryAllRdjb({ uscc: '91330211255994457P', fetchImpl })
+      expect(calls).toHaveLength(0)
+      expect(outcomes).toHaveLength(4)
+      expect(outcomes.every(outcome => outcome.status === 'failed' && outcome.failureReason?.includes('凭据'))).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the environment credential for standalone calls', async () => {
+    vi.stubEnv('MIIT_COOKIE', '  session=synthetic-env-cookie  ')
+    const { fetchImpl, calls } = fakeFetch(normalReply)
+    expect(hasPlatformCredential()).toBe(true)
+    await queryAllRdjb({ uscc: '91330211255994457P', fetchImpl })
+    expect(calls).toHaveLength(4)
+    expect(calls.every(call => call.cookie === 'session=synthetic-env-cookie')).toBe(true)
+  })
+
+  it.each([
+    { name: 'empty string', cookie: '' },
+    { name: 'empty resolver', cookie: () => '' },
+  ])('keeps an injected $name authoritative over an environment credential', async ({ cookie }) => {
+    vi.stubEnv('MIIT_COOKIE', 'session=synthetic-env-cookie')
+    const { fetchImpl, calls } = fakeFetch(normalReply)
+    expect(hasPlatformCredential(cookie)).toBe(false)
+    const outcomes = await queryAllRdjb({ uscc: '91330211255994457P', fetchImpl, cookie })
+    expect(calls).toHaveLength(0)
+    expect(outcomes).toHaveLength(4)
+    expect(outcomes.every(outcome => outcome.status === 'failed')).toBe(true)
+  })
+})
+
+it('freezes a query credential across slots and removes credential echoes from success and failure evidence', async () => {
+  let current = 'session=synthetic-first'
+  const seen: boolean[] = []
+  const outcomes = await queryAllRdjb({ uscc: '91330211255994457P', cookie: () => current, retries: 0, fetchImpl: async (_url, init) => {
+    seen.push(init.headers.Cookie === 'session=synthetic-first')
+    current = 'session=synthetic-next'
+    if (seen.length === 2) throw new Error('proxy echoed session=synthetic-first')
+    if (seen.length === 3) return { ok: false, status: 403, text: async () => 'session=synthetic-first' }
+    return { ok: true, status: 200, text: async () => fixture('business-list-rdjb1-empty.html') + '<!--session=synthetic-first-->' }
+  } })
+  expect(seen).toEqual([true, true, true, true])
+  expect(JSON.stringify(outcomes).includes('session=synthetic-first')).toBe(false)
+  expect(outcomes.map(o => o.status)).toEqual(['no_record', 'failed', 'failed', 'failed'])
+})
+it('redacts a session component echoed separately or JSON-escaped in successful raw evidence and long HTTP errors', async () => {
+  const session = 'synthetic-secret-\"session\\39'
+  const cookie = `JSESSIONID=${session}; route=synthetic-route`
+  const good = fixture('business-list-rdjb1-empty.html') + `<!--${session}:${JSON.stringify(session)}:${encodeURIComponent(session)}-->`
+  const result = await queryAllRdjb({ uscc: '91330211255994457P', cookie, retries: 0, fetchImpl: async (_url, init) => ({ ok: false, status: 403, text: async () => (init.headers.Cookie + ':' + session).repeat(30) }) })
+  expect(JSON.stringify(result).includes(session)).toBe(false)
+  const successful = await queryAllRdjb({ uscc: '91330211255994457P', cookie, fetchImpl: async () => ({ ok: true, status: 200, text: async () => good }) })
+  expect(successful[0]?.status).toBe('no_record')
+  expect(successful[0]?.raw.includes(session)).toBe(false)
+  expect(successful[0]?.raw.includes(JSON.stringify(session).slice(1, -1))).toBe(false)
+  expect(successful[0]?.raw.includes(encodeURIComponent(session))).toBe(false)
+})
+it('blocks credential echoes in structured business rows from becoming identity evidence', async () => {
+  const secret = 'session=synthetic-row-credential'
+  const raw = fixture('business-list-rdjb3.html').replace('宁波上航测绘股份有限公司', secret)
+  const result = await queryAllRdjb({ uscc: '91330211255994457P', cookie: secret, fetchImpl: async () => ({ ok: true, status: 200, text: async () => raw }) })
+  const first = result[0]!
+  expect(first.status).toBe('failed')
+  expect(first.rows).toEqual([])
+  expect(JSON.stringify(result).includes(secret)).toBe(false)
+})
+it.each(['c', 'sid=.'])('preserves unrelated field names with a short Cookie and redacts its explicit echo (%s)', async cookie => {
+  const raw = fixture('business-list-rdjb3.html') + `<!--${cookie}-->`
+  const result = await queryAllRdjb({ uscc: '91330211255994457P', cookie, fetchImpl: async () => ({ ok: true, status: 200, text: async () => raw }) })
+  expect(result[0]?.status).toBe('success')
+  expect(result[0]?.rows).toHaveLength(6)
+  expect(result[0]?.raw.includes(`<!--${cookie}-->`)).toBe(false)
 })

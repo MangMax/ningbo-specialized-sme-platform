@@ -2,7 +2,8 @@
 import type { TabsContentProps } from "reka-ui";
 import type { HTMLAttributes } from "vue";
 import { reactiveOmit } from "@vueuse/core";
-import { TabsContent } from "reka-ui";
+import { Motion, useReducedMotion } from "motion-v";
+import { Primitive, TabsContent } from "reka-ui";
 import { cn } from "@/lib/utils";
 
 const props = defineProps<
@@ -10,14 +11,28 @@ const props = defineProps<
 >();
 
 const delegatedProps = reactiveOmit(props, "class");
+const reducedMotion = useReducedMotion();
 </script>
 
 <template>
   <TabsContent
     data-slot="tabs-content"
-    :class="cn('flex-1 outline-none', props.class)"
     v-bind="delegatedProps"
+    as-child
   >
-    <slot />
+    <Motion
+      as-child
+      :initial="reducedMotion ? false : { opacity: 0, y: 6 }"
+      :animate="{ opacity: 1, y: 0 }"
+      :transition="{ duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' }"
+    >
+      <Primitive
+        :as="props.as || 'div'"
+        :as-child="props.asChild"
+        :class="cn('flex-1 outline-none', props.class)"
+      >
+        <slot />
+      </Primitive>
+    </Motion>
   </TabsContent>
 </template>

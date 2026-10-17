@@ -2,12 +2,14 @@
 import type { LucideIcon } from '@lucide/vue'
 import {
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
 
 defineProps<{
+  label?: string
   items: {
     title: string
     url: string
@@ -23,6 +25,7 @@ const isActive = (url: string) =>
 
 <template>
   <SidebarGroup>
+    <SidebarGroupLabel v-if="label">{{ label }}</SidebarGroupLabel>
     <SidebarMenu>
       <SidebarMenuItem v-for="item in items" :key="item.title">
         <SidebarMenuButton as-child :is-active="isActive(item.url)" :tooltip="item.title">
