@@ -37,7 +37,7 @@ watch(state, value => { if (!value) activePlatform.value = 'ocrToken' })
     <Tabs v-if="state" v-model="activePlatform" class="gap-4">
       <div class="flex items-center justify-between gap-3">
         <TabsList aria-label="平台密钥配置" class="min-w-0 max-w-full overflow-x-auto">
-          <TabsTrigger v-for="platform in platforms" :key="platform.key" :value="platform.key" :disabled="busy">
+          <TabsTrigger v-for="platform in platforms" :key="platform.key" :value="platform.key" :disabled="busy" class="disabled:opacity-100">
             {{ platform.tab }}
           </TabsTrigger>
         </TabsList>

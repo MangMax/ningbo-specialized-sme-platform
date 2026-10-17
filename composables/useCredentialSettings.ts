@@ -1,4 +1,5 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { toast } from 'vue-sonner'
 export interface CredentialStatus {
   configured: boolean
   source: string
@@ -46,7 +47,10 @@ export function useCredentialSettings() {
     pending.value = operation; failed.value = false; message.value = ''; controller = new AbortController()
     const current = generation
     try { await action() } catch {
-      if (current === generation) { failed.value = true; message.value = '操作失败，请检查网络与配置存储后重试。' }
+      if (current === generation) {
+        if (operation.type === 'copy') toast.error('复制失败，请检查网络后重试。')
+        else { failed.value = true; message.value = '操作失败，请检查网络与配置存储后重试。' }
+      }
     } finally {
       if (current === generation) {
         pending.value = null
@@ -88,8 +92,8 @@ export function useCredentialSettings() {
       const result = await request<{ value: string }>(`/api/settings/credentials/${key}/reveal`, 'POST', {})
       if (current !== generation) return
       if (copy) {
-        try { await navigator.clipboard.writeText(result.value); if (current === generation) message.value = `已复制完整${labels[key]}。` }
-        catch { if (current === generation) { failed.value = true; message.value = '复制失败，请允许剪贴板访问后重试。' } }
+        try { await navigator.clipboard.writeText(result.value); if (current === generation) toast.success(`已复制完整${labels[key]}。`) }
+        catch { if (current === generation) toast.error('复制失败，请允许剪贴板访问后重试。') }
       } else raw.value[key] = result.value
     })
   }

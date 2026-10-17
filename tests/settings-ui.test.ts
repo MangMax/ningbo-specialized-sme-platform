@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils'
-import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import CredentialSettings from '../components/settings/CredentialSettings.vue'
+import { Toaster, toast } from 'vue-sonner'
 
 // Happy DOM creates unhandled WAAPI cancellation promises during teardown.
 // Exercise Motion's JS fallback here; real browser acceptance checks native motion.
@@ -10,7 +11,13 @@ beforeAll(() => { Reflect.deleteProperty(Element.prototype, 'animate') })
 afterAll(() => { if (nativeAnimate) Object.defineProperty(Element.prototype, 'animate', nativeAnimate) })
 const request = vi.fn()
 let view: ReturnType<typeof mount>
-afterEach(() => { view?.unmount(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+let toaster: ReturnType<typeof mount>
+beforeEach(() => { toaster = mount(Toaster, { attachTo: document.body }) })
+afterEach(() => { view?.unmount(); toast.dismiss(); toaster.unmount(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+async function expectToast(text: string) {
+  await vi.waitFor(() => expect([...document.querySelectorAll('[data-sonner-toast]')].some(el => el.textContent?.includes(text))).toBe(true))
+  expect(view.text()).not.toContain(text)
+}
 function status(source = 'saved') { return { ocrToken: { configured: true, source, masked: 'syn********ret', updatedAt: null, hasSaved: source === 'saved' } } }
 function tab(name: string) {
   const match = view.findAll('[role="tab"]').find(item => item.text() === name)
@@ -43,8 +50,28 @@ it('automatically loads masked state without management authorization, explicitl
   request.mockResolvedValueOnce({ value: 'synthetic-secret' })
   await view.get('[aria-label="复制 OCR token"]').trigger('click'); await flushPromises()
   expect(writeText.mock.calls[0]?.[0] === 'synthetic-secret').toBe(true)
-  expect(view.text()).toContain('已复制')
+  await expectToast('已复制')
   expect(view.text().includes('synthetic-secret')).toBe(false)
+})
+
+it('uses a Sonner error for failed copy requests and ignores copy results after leaving the page', async () => {
+  await open()
+  request.mockRejectedValueOnce(new Error('synthetic sensitive failure'))
+  await view.get('[aria-label="复制 OCR token"]').trigger('click'); await flushPromises()
+  await expectToast('复制失败，请检查网络后重试。')
+  expect(document.body.textContent).not.toContain('synthetic sensitive failure')
+  expect(view.find('[role="alert"]').exists()).toBe(false)
+
+  let finish!: (value: unknown) => void
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  request.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+  await view.get('[aria-label="复制 OCR token"]').trigger('click')
+  window.dispatchEvent(new Event('pagehide'))
+  finish({ value: 'synthetic-late-copy' }); await flushPromises()
+  expect(writeText).not.toHaveBeenCalled()
+  expect(document.body.textContent).not.toContain('已复制')
+  expect(document.body.textContent).not.toContain('synthetic-late-copy')
 })
 it('preserves replacement input after failure and retries save; clears only the saved override', async () => {
   await open()
@@ -70,8 +97,8 @@ it('reports clipboard failure and clears revealed values on leaving', async () =
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
   request.mockResolvedValueOnce({ value: 'synthetic-secret' })
   await view.get('[aria-label="复制 OCR token"]').trigger('click'); await flushPromises()
-  expect(view.text()).toContain('复制失败')
-  expect(view.text()).not.toContain('已复制')
+  await expectToast('复制失败')
+  expect(document.querySelector('[data-sonner-toast]')?.textContent).not.toContain('已复制')
   request.mockResolvedValueOnce({ value: 'synthetic-secret' })
   await view.get('[aria-label="显示 OCR token"]').trigger('click'); await flushPromises()
   window.dispatchEvent(new Event('pagehide')); await flushPromises()
@@ -148,7 +175,7 @@ it('manages Cookie independently with masked copy, reveal, hide, failed save ret
   request.mockResolvedValueOnce({ value: 'session=synthetic-cookie-secret' })
   await view.get('[aria-label="复制平台 Cookie"]').trigger('click'); await flushPromises()
   expect(writeText.mock.calls[0]?.[0] === 'session=synthetic-cookie-secret').toBe(true)
-  expect(view.text()).toContain('已复制完整平台 Cookie')
+  await expectToast('已复制完整平台 Cookie')
   expect(view.text().includes('session=synthetic-cookie-secret')).toBe(false)
   await view.get('#miit-cookie-replacement').setValue('session=synthetic-new-cookie')
   request.mockRejectedValueOnce(new Error('sensitive echo'))
@@ -231,7 +258,7 @@ it('shows configuration without source or verification claims and scopes pending
   expect(view.get('[data-testid="save-ocr-token"]').text()).toBe('保存 OCR token')
   finish({ value: 'synthetic-copy-only' }); await flushPromises()
   expect(writeText).toHaveBeenCalledWith('synthetic-copy-only')
-  expect(view.text()).toContain('已复制完整OCR token')
+  await expectToast('已复制完整OCR token')
   expect(view.text()).not.toContain('synthetic-copy-only')
   expect(view.get('[aria-label="复制 OCR token"]').attributes('aria-busy')).toBe('false')
 
