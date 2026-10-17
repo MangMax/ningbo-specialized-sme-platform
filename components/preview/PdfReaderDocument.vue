@@ -43,13 +43,14 @@ const navigationFailure = shallowRef<PdfReadingPosition | null>(null)
 let request = 0
 let moving = false
 let awaitingScroll = false
+let waitForSmooth = false
 let preferred: { page: number; offset: { x: number; y: number } } | null = null
 let prepared: ReturnType<typeof images.acquire> | null = null
 let frame = 0
 const pageSurface = useTemplateRef<HTMLElement>('pageSurface')
 let arrival: Animation | undefined
 function cancelNavigation() {
-  request++; pendingTarget.value = null; moving = false; awaitingScroll = false
+  request++; pendingTarget.value = null; moving = false; awaitingScroll = false; waitForSmooth = false
   prepared?.release(); prepared = null
   cancelAnimationFrame(frame); arrival?.cancel()
 }
@@ -101,7 +102,7 @@ function report() {
   const visible = requested || metrics.pageVisibilityMetrics.find(p => p.pageNumber === metrics.currentPage)
   if (!visible || visible.visiblePercentage <= 0 || !loaded.has(visible.pageNumber)) return
   if (pendingTarget.value) {
-    if (visible.pageNumber !== pendingTarget.value.page || viewport.value?.forDocument(props.documentId).isSmoothScrolling()) return
+    if (visible.pageNumber !== pendingTarget.value.page || waitForSmooth && viewport.value?.forDocument(props.documentId).isSmoothScrolling()) return
     preferred = { page: visible.pageNumber, offset: { ...metrics.scrollOffset } }
   }
   finishNavigation()
@@ -136,14 +137,22 @@ async function navigate(target: PdfReadingPosition, options: PdfNavigationOption
     moving = true
     awaitingScroll = mode.value === 'continuous'
     const animate = options.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const adjacent = Math.abs(target.page - position.value.page) <= 1
+    const adjacent = Math.abs(target.page - position.value.page) === 1
     if (mode.value === 'single') {
       singleRestore = target
       singlePage.value = target.page
       await nextTick()
       if (loaded.has(target.page)) await rendered(target.page)
     } else {
-      scroll.value?.forDocument(props.documentId).scrollToPage({ pageNumber: target.page, pageCoordinates: target.point, behavior: animate && adjacent && !target.point ? 'smooth' : 'instant' })
+      const scope = scroll.value?.forDocument(props.documentId)
+      const metrics = viewport.value?.forDocument(props.documentId).getMetrics()
+      const rect = scope?.getRectPositionForPage?.(target.page - 1, { origin: { x: 0, y: 0 }, size: { width: 0, height: 0 } })
+      const gap = viewport.value?.getViewportGap?.() ?? 0
+      // Smooth requests with no physical movement never produce scroll activity in
+      // 2.15.1. Avoid starting one, including clamped short documents/last pages.
+      const sameOffset = metrics && rect && Math.abs(metrics.scrollTop - Math.max(0, Math.min(rect.origin.y + gap, metrics.scrollHeight - metrics.clientHeight))) < 1 && Math.abs(metrics.scrollLeft - Math.max(0, Math.min(rect.origin.x + gap, metrics.scrollWidth - metrics.clientWidth))) < 1
+      waitForSmooth = !!(animate && adjacent && !target.point && !sameOffset)
+      scope?.scrollToPage({ pageNumber: target.page, pageCoordinates: target.point, behavior: waitForSmooth ? 'smooth' : 'instant' })
     }
     if (owner !== request || readingMode !== mode.value) return
     if (animate && (mode.value === 'single' || !adjacent)) {

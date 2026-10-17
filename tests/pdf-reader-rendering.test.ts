@@ -242,3 +242,19 @@ it('adds only the latest rendered visit to reading history after a rapid target 
   expect(control.move).toHaveBeenLastCalledWith({ pageNumber: 3, pageCoordinates: { x: 0, y: 240 }, behavior: 'instant' })
   wrapper.unmount()
 })
+
+it('finishes an instant layout correction without inheriting a superseded smooth scroll', async () => {
+  const wrapper = await reader()
+  await wrapper.get('button[aria-label="下一页"]').trigger('click')
+  await flushPromises()
+  control.smooth = true
+  control.documentState.value = { ...control.documentState.value, scale: 1.1 }
+  await flushPromises()
+  control.metrics = { scrollOffset: { x: 0, y: 2250 }, currentPage: 4, pageVisibilityMetrics: [{ pageNumber: 4, visiblePercentage: 100, original: { pageX: 0, pageY: 0 } }] }
+  wrapper.findAllComponents(Layer)[1]!.vm.$emit('load')
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  await flushPromises()
+  expect(wrapper.get('output').text()).toBe('4 / 12')
+  expect(wrapper.find('[aria-busy="true"]').exists()).toBe(false)
+  wrapper.unmount()
+})
