@@ -34,13 +34,13 @@ it('resolves saved Cookie before environment and file, survives a new context, c
 it('fails closed on unreadable Cookie file without exposing file details', () => {
   const file = join(dir, 'unreadable.txt'); writeFileSync(file, 'session=synthetic-file'); chmodSync(file, 0)
   try {
-    const response = handleCredentialsRequest('state', { method: 'GET', headers: { 'x-api-token': 'synthetic-admin' }, body: null }, { ...context(), apiToken: 'synthetic-admin', env: { MIIT_COOKIE_FILE: file } })
+    const response = handleCredentialsRequest('state', { method: 'GET', headers: { 'x-api-token': 'synthetic-admin' }, body: null }, { ...context(), env: { MIIT_COOKIE_FILE: file } })
     expect(response.status).toBe(503)
     expect(JSON.stringify(response).includes(file)).toBe(false)
   } finally { chmodSync(file, 0o600); rmSync(file) }
 })
 it('rejects invalid Cookie and mixed invalid requests without changing either saved credential', () => {
-  const ctx = { ...context(), apiToken: 'synthetic-admin' }
+  const ctx = { ...context() }
   updateCredential('miitCookie', 'session=synthetic-kept', ctx)
   updateCredential('ocrToken', 'synthetic-ocr-kept', ctx)
   for (const miitCookie of [' ', '\r\nsession=bad', null, 42, 'x'.repeat(65537)]) {
@@ -71,7 +71,7 @@ it('sends saved Cookie to a controlled HTTP service, fixes an in-flight operatio
 })
 it('keeps the saved override if clearing would expose an unreadable fallback', () => {
   const file = join(dir, 'broken-clear.txt'); writeFileSync(file, 'session=synthetic-file'); chmodSync(file, 0)
-  const ctx = { ...context(), apiToken: 'synthetic-admin', env: { MIIT_COOKIE_FILE: file } }
+  const ctx = { ...context(), env: { MIIT_COOKIE_FILE: file } }
   try {
     updateCredential('miitCookie', 'session=synthetic-kept', ctx)
     const response = handleCredentialsRequest('state', { method: 'DELETE', headers: { 'x-api-token': 'synthetic-admin' }, body: { key: 'miitCookie' } }, ctx)

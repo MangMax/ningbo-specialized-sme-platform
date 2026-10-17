@@ -1,4 +1,4 @@
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 export interface CredentialStatus {
   configured: boolean
   source: string
@@ -11,7 +11,6 @@ export interface CredentialState { ocrToken: CredentialStatus; miitCookie: Crede
 const labels = { ocrToken: 'OCR token', miitCookie: '平台 Cookie' }
 const empty = () => ({ ocrToken: '', miitCookie: '' })
 export function useCredentialSettings() {
-  const adminToken = ref('')
   const replacement = ref(empty())
   const state = ref<CredentialState | null>(null)
   const raw = ref(empty())
@@ -22,23 +21,30 @@ export function useCredentialSettings() {
   let controller: AbortController | undefined
   const canRead = computed(() => ({ ocrToken: !!state.value?.ocrToken.configured, miitCookie: !!state.value?.miitCookie?.configured }))
   const request = <T>(url: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', body?: object) => $fetch<T>(url, {
-    method, body, headers: { authorization: `Bearer ${adminToken.value}` }, cache: 'no-store', signal: controller?.signal,
+    method, body, cache: 'no-store', signal: controller?.signal,
   })
   function clearMemory() {
     generation++; controller?.abort(); busy.value = false
     state.value = null; raw.value = empty(); replacement.value = empty(); message.value = ''; failed.value = false
   }
-  watch(adminToken, clearMemory, { flush: 'sync' })
-  function clearAuthorization() { clearMemory(); adminToken.value = '' }
-  onMounted(() => window.addEventListener('pagehide', clearAuthorization))
-  onBeforeUnmount(() => { window.removeEventListener('pagehide', clearAuthorization); clearAuthorization() })
+  function restorePage(event: PageTransitionEvent) { if (event.persisted) void load() }
+  onMounted(() => {
+    window.addEventListener('pagehide', clearMemory)
+    window.addEventListener('pageshow', restorePage)
+    void load()
+  })
+  onBeforeUnmount(() => {
+    window.removeEventListener('pagehide', clearMemory)
+    window.removeEventListener('pageshow', restorePage)
+    clearMemory()
+  })
   async function perform(action: () => Promise<void>) {
-    if (busy.value || !adminToken.value.trim()) return
+    if (busy.value) return
     const focused = typeof document !== 'undefined' ? document.activeElement as HTMLElement | null : null
     busy.value = true; failed.value = false; message.value = ''; controller = new AbortController()
     const current = generation
     try { await action() } catch {
-      if (current === generation) { failed.value = true; message.value = '操作失败，请检查管理授权、网络与配置存储后重试。' }
+      if (current === generation) { failed.value = true; message.value = '操作失败，请检查网络与配置存储后重试。' }
     } finally {
       if (current === generation) {
         busy.value = false
@@ -85,5 +91,5 @@ export function useCredentialSettings() {
       } else raw.value[key] = result.value
     })
   }
-  return { adminToken, replacement, state, raw, busy, failed, message, canRead, load, save, clear, reveal }
+  return { replacement, state, raw, busy, failed, message, canRead, load, save, clear, reveal }
 }

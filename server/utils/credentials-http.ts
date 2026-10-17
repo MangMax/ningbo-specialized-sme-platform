@@ -1,10 +1,7 @@
-import { readApiToken, resolveApiAuth } from './api-auth'
 import { credentialStatus, resolveCredential, updateCredential, updateCredentials, type CredentialKey, type CredentialContext } from './credential-state'
 import type { CoreRequest, CoreResponse } from './core-route'
-export function handleCredentialsRequest(action: 'state' | 'reveal', request: CoreRequest, ctx: CredentialContext & { apiToken?: string | null }, revealKey: CredentialKey = 'ocrToken'): CoreResponse {
+export function handleCredentialsRequest(action: 'state' | 'reveal', request: CoreRequest, ctx: CredentialContext, revealKey: CredentialKey = 'ocrToken'): CoreResponse {
   const json = (status: number, body: unknown): CoreResponse => ({ status, body, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
-  const auth = resolveApiAuth({ given: readApiToken(request.headers), configured: ctx.apiToken })
-  if (!auth.writeAuthorized) return { ...json(401, { message: '需要 API 管理授权' }), headers: { ...json(401, {}).headers, 'www-authenticate': 'Bearer realm="agent-api"' } }
   try {
     if (action === 'reveal') {
       if (request.method !== 'POST') return json(405, { message: '仅支持 POST' })
