@@ -14,25 +14,37 @@ const props = defineProps<ToasterProps>()
       '--normal-bg': 'var(--popover)',
       '--normal-text': 'var(--popover-foreground)',
       '--normal-border': 'var(--border)',
+      '--success-bg': 'var(--popover)',
+      '--success-text': 'var(--popover-foreground)',
+      '--success-border': 'var(--border)',
+      '--info-bg': 'var(--popover)',
+      '--info-text': 'var(--popover-foreground)',
+      '--info-border': 'var(--border)',
+      '--warning-bg': 'var(--popover)',
+      '--warning-text': 'var(--popover-foreground)',
+      '--warning-border': 'var(--border)',
+      '--error-bg': 'var(--popover)',
+      '--error-text': 'var(--popover-foreground)',
+      '--error-border': 'var(--border)',
       '--border-radius': 'var(--radius)',
     }"
     v-bind="props"
   >
     <template #success-icon>
-      <CircleCheckIcon class="size-4" />
+      <CircleCheckIcon class="text-success size-4" />
     </template>
     <template #info-icon>
-      <InfoIcon class="size-4" />
+      <InfoIcon class="text-info size-4" />
     </template>
     <template #warning-icon>
-      <TriangleAlertIcon class="size-4" />
+      <TriangleAlertIcon class="text-warning size-4" />
     </template>
     <template #error-icon>
-      <OctagonXIcon class="size-4" />
+      <OctagonXIcon class="text-destructive size-4" />
     </template>
     <template #loading-icon>
       <div>
-        <Loader2Icon class="size-4 animate-spin" />
+        <Loader2Icon class="text-primary size-4 animate-spin motion-reduce:animate-none" />
       </div>
     </template>
     <template #close-icon>
@@ -40,3 +52,41 @@ const props = defineProps<ToasterProps>()
     </template>
   </Sonner>
 </template>
+
+<style>
+/* Keep Sonner's positioning/interaction CSS; this wrapper owns its theme. */
+.toaster[data-sonner-toaster] {
+  font-family: inherit;
+}
+
+.toaster[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-description] {
+  color: var(--muted-foreground);
+}
+
+.toaster[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-button] {
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.toaster[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-cancel] {
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+}
+
+.toaster[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-close-button] {
+  color: var(--muted-foreground);
+  background: var(--popover);
+  border-color: var(--border);
+}
+
+.toaster[data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-close-button]:hover {
+  color: var(--accent-foreground);
+  background: var(--accent);
+  border-color: var(--input);
+}
+
+.toaster[data-sonner-toaster] [data-sonner-toast][data-styled='true'] :is([data-button], [data-close-button]):focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+</style>
