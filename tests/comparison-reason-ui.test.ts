@@ -351,10 +351,10 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
     expect(relation.text()).toContain('宁波平台滞后企业')
     expect(relation.text()).toContain('91330211000000002Y')
     expect(relation.text()).toContain('待审核')
-    expect(relation.text()).toContain('SQ332025000000001')
+    expect(relation.text()).not.toContain('SQ332025000000001')
     expect(relation.text()).toContain('2025-03-01')
-    expect(relation.text()).toContain('已确认')
-    expect(relation.text()).toContain('按统一社会信用代码')
+    expect(relation.text()).not.toContain('已确认')
+    expect(relation.text()).not.toContain('按统一社会信用代码')
   })
 
   it('没有曾用名也没有查询时给「—」,不编造', () => {

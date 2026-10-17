@@ -9,7 +9,7 @@ describe('面向用户的平台记录表',()=>{
  it('逐条表格展示原始企业、状态与批次，并将接口参数译成业务名称',()=>{
   const view=mount(PlatformRecords,{props:{queries:[query],relations:[record]}})
   expect(view.find('table').exists()).toBe(true)
-  for(const text of ['关联记录','专精特新中小企业','平台原名','9133021274738281XA','待审核','2025-1','2022年第一批','2025-03-01','更新','SQ001']) expect(view.text()).toContain(text)
+  for(const text of ['关联记录','专精特新中小企业','平台原名','9133021274738281XA','待审核','2025-1','2025-03-01','更新']) expect(view.text()).toContain(text)
   expect(view.text()).not.toMatch(/business_list|businessList|rdjb|queryId|matchBasis/)
   view.unmount()
  })
@@ -27,12 +27,35 @@ describe('面向用户的平台记录表',()=>{
   const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,interface:'apply_list',rdjb:''}],relations:[record,{...record,id:2,queryId:2}]}})
   expect(view.findAll('table').map(table=>table.attributes('aria-label'))).toEqual(['关联记录','申报记录'])
   for(const table of view.findAll('table')) {
-   expect(table.findAll('th').map(th=>th.text())).toEqual(['序号','企业名称','信用代码','区域','称号','申报类型','办理状态','申报时间','平台编号','维护批次','认定批次','年份','核实状态','匹配依据'])
-   expect(table.findAll('tbody tr')).toHaveLength(1)
-   expect(table.findAll('tbody td').slice(1,9).map(td=>td.text())).toEqual(['平台原名','9133021274738281XA','宁波市','专精特新中小企业','更新','待审核','2025-03-01','SQ001'])
+   expect(table.findAll('thead th').map(th=>th.text())).toEqual(['序号','企业名称','信用代码','省份','申报类型','办理状态','申报时间','维护批次'])
+   expect(table.findAll('[data-testid="platform-relation"]')).toHaveLength(1)
+   expect(table.findAll('tbody td').slice(1).map(td=>td.text())).toEqual(['平台原名','9133021274738281XA','宁波市','更新','待审核','2025-03-01','2025-1'])
   }
   expect(view.text()).not.toContain('查询企业')
-  expect(view.findAll('tbody tr').every(row=>row.text().includes('按统一社会信用代码'))).toBe(true)
+  expect(view.text()).not.toMatch(/认定批次|核实状态|年份|平台编号|匹配依据|2022年第一批|SQ001/)
+  view.unmount()
+ })
+ it('全部Tab按称号树形分组，分组可折叠且每组序号从1开始',async()=>{
+  const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,rdjb:'1'}],relations:[{...record,sequenceNo:4},{...record,id:2,sequenceNo:8},{...record,id:3,queryId:2,sequenceNo:7}]}})
+  const table=view.get('table[aria-label="关联记录"]')
+  expect(table.findAll('tbody[data-record-title]')).toHaveLength(2)
+  expect(table.findAll('[data-testid="platform-title-group"] button').map(button=>button.text())).toEqual(['创新型中小企业1 条','专精特新中小企业2 条'])
+  expect(table.findAll('tbody[data-record-title="2"] [data-testid="platform-relation"]').map(row=>row.find('td').text())).toEqual(['1','2'])
+  const toggle=table.get('tbody[data-record-title="2"] button')
+  await toggle.trigger('click')
+  expect(toggle.attributes('aria-expanded')).toBe('false')
+  expect(table.findAll('[data-testid="platform-relation"]').map(row=>row.attributes('data-record-id'))).toEqual(['3'])
+  await toggle.trigger('click')
+  expect(table.findAll('[data-testid="platform-relation"]')).toHaveLength(3)
+  view.unmount()
+ })
+ it('单称号Tab不显示树分组，序号从1连续排列且不改原始查询序号',async()=>{
+  const input=[{...record,sequenceNo:4},{...record,id:2,sequenceNo:9}]
+  const view=mount(PlatformRecords,{props:{queries:[query],relations:input}})
+  await view.findAll('[role="tab"]').find(tab=>tab.text()==='专精特新中小企业')!.trigger('keydown',{key:'Enter'})
+  expect(view.findAll('[data-testid="platform-title-group"]')).toHaveLength(0)
+  expect(view.findAll('[data-testid="platform-relation"]').map(row=>row.find('td').text())).toEqual(['1','2'])
+  expect(input.map(record=>record.sequenceNo)).toEqual([4,9])
   view.unmount()
  })
  it('称号Tab筛选两张表，相同平台编号唯一对应时保留申报归属',async()=>{

@@ -230,15 +230,23 @@ async function verifyPlatformRecordTables(cdp) {
         const state = await evaluate(cdp, sessionId, `(() => {
           const root = document.querySelector('${selector}');
           const rect = root?.getBoundingClientRect();
-          return { text:root?.textContent, rows:root?.querySelectorAll('[data-testid="platform-relation"]').length, tabs:root?.querySelectorAll('[role="tab"]').length, headers:[...root.querySelectorAll('table:first-of-type th')].map(el=>el.textContent.trim()), rowHeights:[...root.querySelectorAll('[data-testid="platform-relation"]')].map(el=>el.getBoundingClientRect().height), tables:root?.querySelectorAll('table').length, width:rect?.width, viewport:innerWidth, overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth, original:document.body.textContent.includes('原始说明') };
+          return { text:root?.textContent, rows:root?.querySelectorAll('[data-testid="platform-relation"]').length, groups:root?.querySelectorAll('[data-testid="platform-title-group"]').length, numbering:[...root.querySelectorAll('tbody[data-record-title]')].map(group=>[...group.querySelectorAll('[data-testid="platform-relation"] td:first-child')].map(cell=>cell.textContent.trim())), tabs:root?.querySelectorAll('[role="tab"]').length, headers:[...root.querySelectorAll('table:first-of-type thead th')].map(el=>el.textContent.trim()), rowHeights:[...root.querySelectorAll('[data-testid="platform-relation"]')].map(el=>el.getBoundingClientRect().height), tables:root?.querySelectorAll('table').length, width:rect?.width, viewport:innerWidth, overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth, original:document.body.textContent.includes('原始说明') };
         })()`);
-        if (!ready || state.tables !== 2 || !state.rows || state.tabs < 2 || !['信用代码','区域','申报时间','平台编号'].every(label=>state.headers.includes(label)) || Math.max(...state.rowHeights) > 40 || (state.text ?? '').includes('查询企业') || /business_list|apply_list|businessList|applyList|rdjb|tyshxydm/.test(state.text ?? '') || state.overflow > 1 || (kind === 'comparison' && state.width > state.viewport) || state.original) bad(`平台记录表 · ${kind} ${viewport.name}:记录表不可读 ${JSON.stringify(state)}`);
+        if (!ready || state.tables !== 2 || !state.rows || state.tabs < 2 || !['信用代码','省份','申报时间','维护批次'].every(label=>state.headers.includes(label)) || ['区域','认定批次','年份','核实状态','匹配依据','平台编号'].some(label=>state.headers.includes(label)) || !state.groups || state.numbering.some(numbers=>numbers.some((number,index)=>Number(number) !== index+1)) || Math.max(...state.rowHeights) > 40 || (state.text ?? '').includes('查询企业') || /business_list|apply_list|businessList|applyList|rdjb|tyshxydm/.test(state.text ?? '') || state.overflow > 1 || (kind === 'comparison' && state.width > state.viewport) || state.original) bad(`平台记录表 · ${kind} ${viewport.name}:记录表不可读 ${JSON.stringify(state)}`);
         else ok(`平台记录表 · ${kind} ${viewport.name}:${state.tabs} 个称号Tab/${state.rows} 条原始记录以两张表显示，最大行高 ${Math.max(...state.rowHeights)}px，页面无溢出`);
+        const groupToggle = `${selector} [data-testid="platform-title-group"] button`;
+        const groupRows = await evaluate(cdp,sessionId,`document.querySelector('${groupToggle}')?.closest('tbody')?.querySelectorAll('[data-testid="platform-relation"]').length`);
+        await clickSelector(cdp,sessionId,`${groupToggle} svg`);
+        const collapsed = await waitUntil(cdp,sessionId,`document.querySelector('${groupToggle}')?.getAttribute('aria-expanded') === 'false' && document.querySelectorAll('${selector} [data-testid="platform-relation"]').length === ${state.rows - groupRows}`);
+        await clickSelector(cdp,sessionId,`${groupToggle} svg`);
+        const expanded = await waitUntil(cdp,sessionId,`document.querySelector('${groupToggle}')?.getAttribute('aria-expanded') === 'true' && document.querySelectorAll('${selector} [data-testid="platform-relation"]').length === ${state.rows}`);
+        if (!collapsed || !expanded) bad(`平台记录表 · ${kind}:称号树分组无法折叠或展开`);
+        else ok(`平台记录表 · ${kind}:全部Tab按称号树形分组，折叠/展开不丢行，每组序号从1开始`);
         const titleSelector = `${selector} [role="tab"][data-title-value="2"]`;
         const hasTitle = await evaluate(cdp,sessionId,`!!document.querySelector('${titleSelector}')`);
         if (hasTitle) {
           await clickSelector(cdp,sessionId,titleSelector);
-          const switched = await waitUntil(cdp,sessionId,`document.querySelector('${titleSelector}')?.getAttribute('aria-selected') === 'true' && document.querySelectorAll('${selector} table').length === 2`);
+          const switched = await waitUntil(cdp,sessionId,`document.querySelector('${titleSelector}')?.getAttribute('aria-selected') === 'true' && document.querySelectorAll('${selector} table').length === 2 && !document.querySelector('${selector} [data-testid="platform-title-group"]') && [...document.querySelectorAll('${selector} tbody[data-record-title]')].every(group=>[...group.querySelectorAll('[data-testid="platform-relation"] td:first-child')].every((cell,index)=>Number(cell.textContent.trim()) === index+1))`);
           if (!switched) bad(`平台记录表 · ${kind}:称号Tab未切换`);
           else ok(`平台记录表 · ${kind}:称号Tab切换后仍为关联/申报两张表`);
           await clickSelector(cdp,sessionId,`${selector} [role="tab"][data-title-value="all"]`);
