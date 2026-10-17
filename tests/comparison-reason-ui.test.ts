@@ -296,7 +296,7 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
     expect(document.querySelector('[data-testid="platform-pending-aliases"]')?.textContent).not.toContain('宁波创涵自动化设备有限公司')
   })
 
-  it('查询证据带出接口、时点与关系条数,展开后是**原始关系**字段', async () => {
+  it('平台记录详情以两张表保留时间与原始字段', async () => {
     const wrapper = mountIn(ComparisonPlatformEvidence, {
       props: {
         enterpriseId: 7289,
@@ -345,12 +345,15 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
     // 关系原文默认收起(表窄),点开后逐条可见。
     expect(wrapper.find('[data-testid="platform-relation"]').exists()).toBe(false)
     await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
-    expect(document.querySelector('[data-testid="platform-query-summary"]')?.textContent).toContain('称号查询记录')
+    expect([...document.querySelectorAll('[data-testid="platform-records"] table')].map(table=>table.getAttribute('aria-label'))).toEqual(['关联记录','申报记录'])
     expect(document.querySelector('[data-testid="platform-query-summary"]')?.textContent).toContain('2026-10-16')
     const relation = { text: () => document.querySelector('[data-testid="platform-relation"]')?.textContent ?? '' }
     expect(relation.text()).toContain('宁波平台滞后企业')
     expect(relation.text()).toContain('91330211000000002Y')
     expect(relation.text()).toContain('待审核')
+    expect(relation.text()).toContain('SQ332025000000001')
+    expect(relation.text()).toContain('2025-03-01')
+    expect(relation.text()).toContain('已确认')
     expect(relation.text()).toContain('按统一社会信用代码')
   })
 

@@ -61,7 +61,7 @@ const compactSummary = computed(() => {
       <DialogTrigger as-child>
         <button type="button" data-testid="platform-evidence-details-toggle" class="text-primary text-[13px] leading-5 hover:underline">查看平台记录</button>
       </DialogTrigger>
-      <DialogContent v-if="showDetails" class="max-h-[90dvh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] flex flex-col overflow-hidden p-4 shadow-none sm:max-w-6xl" data-testid="platform-records-dialog">
+      <DialogContent v-if="showDetails" class="max-h-[90dvh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] flex flex-col overflow-hidden p-4 shadow-none sm:max-w-7xl" data-testid="platform-records-dialog">
         <DialogHeader>
           <DialogTitle class="pr-6">平台记录</DialogTitle>
           <DialogDescription>{{ currentName }}</DialogDescription>

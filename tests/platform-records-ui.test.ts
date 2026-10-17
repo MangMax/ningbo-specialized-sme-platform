@@ -9,16 +9,46 @@ describe('面向用户的平台记录表',()=>{
  it('逐条表格展示原始企业、状态与批次，并将接口参数译成业务名称',()=>{
   const view=mount(PlatformRecords,{props:{queries:[query],relations:[record]}})
   expect(view.find('table').exists()).toBe(true)
-  for(const text of ['称号查询记录','专精特新中小企业','平台原名','9133021274738281XA','待审核','2025-1','2022年第一批','2025-03-01','更新','SQ001']) expect(view.text()).toContain(text)
+  for(const text of ['关联记录','专精特新中小企业','平台原名','9133021274738281XA','待审核','2025-1','2022年第一批','2025-03-01','更新','SQ001']) expect(view.text()).toContain(text)
   expect(view.text()).not.toMatch(/business_list|businessList|rdjb|queryId|matchBasis/)
   view.unmount()
  })
- it('查询失败、返回空和未查询分别显示，不把失败当作无记录',()=>{
-  const view=mount(PlatformRecords,{props:{queries:[{...query,id:2,status:'failed',relationCount:0},{...query,id:3,status:'no_record',relationCount:0},{...query,id:4,status:'not_queried',relationCount:0}],relations:[]}})
-  expect(view.text()).toContain('查询失败')
-  expect(view.text()).toContain('本次查询未完成')
-  expect(view.text()).toContain('平台未返回记录')
-  expect(view.text()).toContain('尚未查询')
+ it.each([
+  ['failed', '本次查询未完成'],
+  ['no_record', '平台未返回记录'],
+  ['not_queried', '尚未查询'],
+ ])('查询状态 %s 保留独立空状态', (status, message)=>{
+  const view=mount(PlatformRecords,{props:{queries:[{...query,status,relationCount:0}],relations:[]}})
+  expect(view.get('[data-record-kind="business_list"]').text()).toContain(message)
+  if(status === 'failed') expect(view.text()).not.toContain('平台未返回记录')
+  view.unmount()
+ })
+ it('仅展示关联和申报两张表，字段各占一列且没有重复查询企业',()=>{
+  const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,interface:'apply_list',rdjb:''}],relations:[record,{...record,id:2,queryId:2}]}})
+  expect(view.findAll('table').map(table=>table.attributes('aria-label'))).toEqual(['关联记录','申报记录'])
+  for(const table of view.findAll('table')) {
+   expect(table.findAll('th').map(th=>th.text())).toEqual(['序号','企业名称','信用代码','区域','称号','申报类型','办理状态','申报时间','平台编号','维护批次','认定批次','年份','核实状态','匹配依据'])
+   expect(table.findAll('tbody tr')).toHaveLength(1)
+   expect(table.findAll('tbody td').slice(1,9).map(td=>td.text())).toEqual(['平台原名','9133021274738281XA','宁波市','专精特新中小企业','更新','待审核','2025-03-01','SQ001'])
+  }
+  expect(view.text()).not.toContain('查询企业')
+  expect(view.findAll('tbody tr').every(row=>row.text().includes('按统一社会信用代码'))).toBe(true)
+  view.unmount()
+ })
+ it('称号Tab筛选两张表，相同平台编号唯一对应时保留申报归属',async()=>{
+  const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,rdjb:'1'},{...query,id:3,interface:'apply_list',rdjb:''}],relations:[record,{...record,id:2,queryId:2,relationKey:'OTHER'},{...record,id:3,queryId:3}]}})
+  await view.findAll('[role="tab"]').find(tab=>tab.text()==='专精特新中小企业')!.trigger('keydown', {key:'Enter'})
+  expect(view.findAll('[data-testid="platform-relation"]').map(row=>row.attributes('data-record-id'))).toEqual(['1','3'])
+  expect(view.findAll('table')).toHaveLength(2)
+  await view.findAll('[role="tab"]').find(tab=>tab.text()==='创新型中小企业')!.trigger('keydown', {key:'Enter'})
+  expect(view.findAll('[data-testid="platform-relation"]').map(row=>row.attributes('data-record-id'))).toEqual(['2'])
+  view.unmount()
+ })
+ it('称号不明确的申报不猜测归属，全部Tab不丢原始行',async()=>{
+  const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,rdjb:'1'},{...query,id:3,interface:'apply_list',rdjb:''}],relations:[record,{...record,id:2,queryId:2},{...record,id:3,queryId:3},{...record,id:4,queryId:3,relationKey:'UNKNOWN'}]}})
+  expect(view.findAll('[data-testid="platform-relation"]')).toHaveLength(4)
+  await view.findAll('[role="tab"]').find(tab=>tab.text()==='称号未标注')!.trigger('keydown', {key:'Enter'})
+  expect(view.findAll('[data-testid="platform-relation"]').map(row=>row.attributes('data-record-id'))).toEqual(['3','4'])
   view.unmount()
  })
  it('失败原因保留业务含义并隐藏开发错误细节',()=>{

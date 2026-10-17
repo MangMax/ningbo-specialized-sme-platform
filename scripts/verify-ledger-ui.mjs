@@ -230,10 +230,22 @@ async function verifyPlatformRecordTables(cdp) {
         const state = await evaluate(cdp, sessionId, `(() => {
           const root = document.querySelector('${selector}');
           const rect = root?.getBoundingClientRect();
-          return { text:root?.textContent, rows:root?.querySelectorAll('[data-testid="platform-relation"]').length, groups:root?.querySelectorAll('[data-testid="platform-query-group"]').length, tables:root?.querySelectorAll('table').length, width:rect?.width, viewport:innerWidth, overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth, original:document.body.textContent.includes('原始说明') };
+          return { text:root?.textContent, rows:root?.querySelectorAll('[data-testid="platform-relation"]').length, tabs:root?.querySelectorAll('[role="tab"]').length, headers:[...root.querySelectorAll('table:first-of-type th')].map(el=>el.textContent.trim()), rowHeights:[...root.querySelectorAll('[data-testid="platform-relation"]')].map(el=>el.getBoundingClientRect().height), tables:root?.querySelectorAll('table').length, width:rect?.width, viewport:innerWidth, overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth, original:document.body.textContent.includes('原始说明') };
         })()`);
-        if (!ready || !state.tables || !state.rows || /business_list|apply_list|businessList|applyList|rdjb|tyshxydm/.test(state.text ?? '') || state.overflow > 1 || (kind === 'comparison' && state.width > state.viewport) || state.original) bad(`平台记录表 · ${kind} ${viewport.name}:记录表不可读 ${JSON.stringify(state)}`);
-        else ok(`平台记录表 · ${kind} ${viewport.name}:${state.groups} 次查询/${state.rows} 条原始记录以中文表格显示，页面无溢出`);
+        if (!ready || state.tables !== 2 || !state.rows || state.tabs < 2 || !['信用代码','区域','申报时间','平台编号'].every(label=>state.headers.includes(label)) || Math.max(...state.rowHeights) > 40 || (state.text ?? '').includes('查询企业') || /business_list|apply_list|businessList|applyList|rdjb|tyshxydm/.test(state.text ?? '') || state.overflow > 1 || (kind === 'comparison' && state.width > state.viewport) || state.original) bad(`平台记录表 · ${kind} ${viewport.name}:记录表不可读 ${JSON.stringify(state)}`);
+        else ok(`平台记录表 · ${kind} ${viewport.name}:${state.tabs} 个称号Tab/${state.rows} 条原始记录以两张表显示，最大行高 ${Math.max(...state.rowHeights)}px，页面无溢出`);
+        const titleSelector = `${selector} [role="tab"][data-title-value="2"]`;
+        const hasTitle = await evaluate(cdp,sessionId,`!!document.querySelector('${titleSelector}')`);
+        if (hasTitle) {
+          await clickSelector(cdp,sessionId,titleSelector);
+          const switched = await waitUntil(cdp,sessionId,`document.querySelector('${titleSelector}')?.getAttribute('aria-selected') === 'true' && document.querySelectorAll('${selector} table').length === 2`);
+          if (!switched) bad(`平台记录表 · ${kind}:称号Tab未切换`);
+          else ok(`平台记录表 · ${kind}:称号Tab切换后仍为关联/申报两张表`);
+          await clickSelector(cdp,sessionId,`${selector} [role="tab"][data-title-value="all"]`);
+          const restoredRows = await waitUntil(cdp,sessionId,`document.querySelectorAll('${selector} [data-testid="platform-relation"]').length === ${state.rows}`);
+          if (!restoredRows) bad(`平台记录表 · ${kind}:返回全部后丢失原始行`);
+          else ok(`平台记录表 · ${kind}:返回全部保留 ${state.rows} 条原始记录`);
+        } else bad(`平台记录表 · ${kind}:缺少当前对比称号Tab`);
         if (kind === 'comparison') {
           await clickSelector(cdp,sessionId,'[data-testid="platform-records-dialog"] [data-slot="dialog-close"]');
           const restored = await waitUntil(cdp,sessionId,`!document.querySelector('[data-testid="platform-records-dialog"]') && document.activeElement?.getAttribute('data-testid') === 'platform-evidence-details-toggle'`);
@@ -587,12 +599,8 @@ function comparisonDirectionValueViolation(m, label) {
 function enterpriseDrawerReadingViolation(m, label) {
   const reading = m.enterpriseDrawerReading
   if (!reading?.open) return `${label}:桌面企业抽屉未打开,无法核对表格连续阅读`
-  const hidden = ['search', 'name', 'title'].filter((key) => !reading[key]?.fitsBeforeDrawer)
-  if (hidden.length) {
-    return `${label}:抽屉打开时搜索或企业核心字段被遮住 ${JSON.stringify({ hidden, reading })}`
-  }
-  if (reading.title.scrollWidth > reading.title.clientWidth + 2) {
-    return `${label}:抽屉打开时称号与认定年在单元格内溢出 ${JSON.stringify(reading.title)}`
+  if (reading.drawerLeft < -1 || reading.drawerRight > reading.viewport + 1 || reading.drawerWidth < 960 || !reading.closeVisible || !reading.headingVisible) {
+    return `${label}:宽抽屉、企业标题或关闭入口越出视口 ${JSON.stringify(reading)}`
   }
   return null
 }
@@ -1495,7 +1503,8 @@ async function verifyUnknownReviewOutcomeExample(cdp) {
 }
 
 async function verifyLedgerLoadingAndDrawer(cdp) {
-  const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0])
+  // 加宽后的抽屉覆盖筛选区域；按真实操作先在关闭状态验证排序。
+  const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0], READY, { openDrawer: false })
   const { targetId, sessionId } = page
   try {
     await installMotionAndFetchGate(cdp, sessionId)
@@ -1713,7 +1722,7 @@ async function verifyComparisonSearchAndMotion(cdp) {
 }
 
 async function verifyCustomPageSizeInputShadow(cdp) {
-  const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0])
+  const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0], READY, { openDrawer: false })
   const { targetId, sessionId } = page
   try {
     await clickSelector(cdp, sessionId, '[role="combobox"][aria-label="每页条数"]')
@@ -2074,6 +2083,11 @@ const MEASURE = `(() => {
     enterpriseDrawerReading: enterpriseRow && enterpriseDrawer ? {
       open: enterpriseDrawer.getAttribute('data-state') === 'open',
       drawerLeft: Math.round(enterpriseDrawerRect?.left ?? 0),
+      drawerRight: Math.round(enterpriseDrawerRect?.right ?? 0),
+      drawerWidth: Math.round(enterpriseDrawerRect?.width ?? 0),
+      viewport: innerWidth,
+      closeVisible: (() => { const r=enterpriseDrawer.querySelector('button[aria-label="关闭"]')?.getBoundingClientRect(); return !!r && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })(),
+      headingVisible: (() => { const r=enterpriseDrawer.querySelector('h2')?.getBoundingClientRect(); return !!r && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })(),
       search: elementVisibility(enterpriseSearch),
       name: elementVisibility(enterpriseName),
       title: elementVisibility(enterpriseTitle),
@@ -2295,7 +2309,7 @@ async function main() {
           if (viewport.width >= 1024) {
             const reading = enterpriseDrawerReadingViolation(m, label)
             if (reading) bad(reading)
-            else ok(`${label}:抽屉打开时搜索、企业名与称号认定年均可见`)
+            else ok(`${label}:宽抽屉、企业标题与关闭入口均在视口内`)
           }
         }
         if (page.query === '/comparison') {
@@ -2455,14 +2469,14 @@ async function main() {
     const drawerReadingBroken = await openAndMeasure(
       cdp,
       `${BASE}/`,
-      `(() => { document.querySelector('[data-testid="title-recognition-cell"]')?.style.setProperty('transform', 'translateX(600px)', 'important'); return (${MEASURE}); })()`,
+      `(() => { document.querySelector('[data-testid="enterprise-drawer"]')?.style.setProperty('max-width', 'none', 'important'); document.querySelector('[data-testid="enterprise-drawer"]')?.style.setProperty('width', 'calc(100vw + 100px)', 'important'); return (${MEASURE}); })()`,
       READY,
       VIEWPORTS[0],
     )
-    const drawerReadingSelfCheck = enterpriseDrawerReadingViolation(drawerReadingBroken, '桌面抽屉遮挡缺陷自检')
-    if (!drawerReadingSelfCheck) bad('桌面抽屉遮挡缺陷自检:临时移出称号列后,连续阅读断言仍未命中')
-    else console.log(`✗ 桌面抽屉遮挡缺陷自检按预期变红:${drawerReadingSelfCheck}`)
-    if (drawerReadingSelfCheck) ok('桌面抽屉遮挡缺陷自检:关闭临时 target 后缺陷已复原')
+    const drawerReadingSelfCheck = enterpriseDrawerReadingViolation(drawerReadingBroken, '宽抽屉边界缺陷自检')
+    if (!drawerReadingSelfCheck) bad('宽抽屉边界缺陷自检:临时扩大抽屉到视口之外后,边界断言仍未命中')
+    else console.log(`✗ 宽抽屉边界缺陷自检按预期变红:${drawerReadingSelfCheck}`)
+    if (drawerReadingSelfCheck) ok('宽抽屉边界缺陷自检:关闭临时 target 后缺陷已复原')
 
     const comparisonFlowBroken = await openAndMeasure(
       cdp,

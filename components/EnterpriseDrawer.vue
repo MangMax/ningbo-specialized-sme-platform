@@ -316,7 +316,7 @@ function eventSuffix(item: TimelineItem): string {
     <DialogContent
       data-testid="enterprise-drawer"
       :aria-describedby="undefined"
-      class="enterprise-drawer bg-card shadow-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right ease-snap fixed inset-y-0 right-0 z-40 flex w-[440px] max-w-full flex-col border-l duration-200 outline-none motion-reduce:animate-none"
+      class="enterprise-drawer bg-card shadow-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right ease-snap fixed inset-y-0 right-0 z-40 flex w-full sm:w-[min(1280px,calc(100vw-2rem))] max-w-full flex-col border-l duration-200 outline-none motion-reduce:animate-none"
       @interact-outside="onInteractOutside"
       @open-auto-focus="onOpenAutoFocus"
       @close-auto-focus="onCloseAutoFocus"
