@@ -66,6 +66,7 @@ it('shares actual pages while retaining source provenance and restores URL histo
   await input().setValue('9')
   await wrapper.get('form').trigger('submit')
   expect(router.currentRoute.value.query.page).toBe('3')
+  expect(wrapper.findAll('[role="status"]').find(status => status.text().includes('来源第 3 页'))?.classes()).toContain('sr-only')
   engine().vm.$emit('position', { page: 9 })
   await flushPromises()
   expect(router.currentRoute.value.query).toMatchObject({ page: '9', sourcePage: '3', back })

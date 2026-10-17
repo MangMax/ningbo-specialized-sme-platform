@@ -35,7 +35,7 @@ const status = computed(() => {
   if (!actual.value || pending.value?.page === props.sourcePage) return `正在定位来源第 ${props.sourcePage} 页…`
   return `来源第 ${props.sourcePage} 页 · 当前浏览第 ${actual.value.page} 页`
 })
-const statusNeedsSpace = computed(() => !!(props.invalid || sourceOutOfRange.value || outOfRange.value || error.value || props.sourcePage === null || !actual.value || pending.value))
+const statusNeedsSpace = computed(() => !!(props.invalid || sourceOutOfRange.value || outOfRange.value || error.value || props.sourcePage === null))
 function ready(event: PdfReadyEvent) { if (event.src === src.value) total.value = event.totalPages }
 function navigation(event: PdfNavigationRequest) {
   if (event.src !== src.value) return
