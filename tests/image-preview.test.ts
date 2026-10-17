@@ -460,6 +460,46 @@ describe('适应与手动下限:组件级(req 1–3)', () => {
     expect(NATURAL.w * Math.max(0.25, expected)).toBeGreaterThan(VIEWPORT.w)
   })
 
+  it('keeps adapting after automatic fit, preserves manual zoom, and resumes after fit', async () => {
+    let resized = () => {}
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resized = callback }
+      observe() {}
+      disconnect() {}
+    })
+    try {
+      const { wrapper, viewport, vm } = await fittedPreview()
+      Object.defineProperty(viewport, 'clientWidth', { value: 300, configurable: true })
+      resized()
+      await wrapper.vm.$nextTick()
+      expect(vm.zoom).toBeCloseTo((300 - PAD) / NATURAL.w, 6)
+      vm.zoomBy(2)
+      await wrapper.vm.$nextTick()
+      const manual = vm.zoom
+      Object.defineProperty(viewport, 'clientWidth', { value: 400, configurable: true })
+      resized()
+      await wrapper.vm.$nextTick()
+      expect(vm.zoom).toBe(manual)
+      ;(wrapper.vm as unknown as { fit: () => void }).fit()
+      await wrapper.vm.$nextTick()
+      Object.defineProperty(viewport, 'clientWidth', { value: 320, configurable: true })
+      resized()
+      await wrapper.vm.$nextTick()
+      expect(vm.zoom).toBeCloseTo((320 - PAD) / NATURAL.w, 6)
+      wrapper.unmount()
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('does not reset a manually zoomed page on a repeated load event', async () => {
+    const { wrapper, vm } = await fittedPreview()
+    vm.zoomBy(2)
+    await wrapper.vm.$nextTick()
+    const manual = vm.zoom
+    await wrapper.find('img').trigger('load')
+    expect(vm.zoom).toBe(manual)
+    wrapper.unmount()
+  })
+
   it('below-fit 往返:点「放大」到 fit 之上,再点「缩小」**回到 fit** 并重新禁用', async () => {
     // 全程走**真实按钮**(predicate + handler 两侧契约),与浏览器实测同一条路径。
     const { wrapper, vm } = await fittedPreview()

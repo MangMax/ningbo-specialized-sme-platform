@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FileImage } from '@lucide/vue'
 import PreviewStates from '@/components/preview/PreviewStates.vue'
 import PreviewToolbar from '@/components/preview/PreviewToolbar.vue'
@@ -59,6 +59,7 @@ const rotation = ref(0)
 const pan = ref({ x: 0, y: 0 })
 const dragging = ref(false)
 const fullscreen = ref(false)
+const viewportRevision = ref(0)
 
 // 上限沿用既有常数;下限分**三层**(见 `lib/preview.ts`)——
 //  · **手动**缩放的配置下限:`props.zoomMin`(默认 25%,页图库传 10%);
@@ -77,6 +78,7 @@ const displayH = computed(() => (quarterTurned.value ? natural.value.w : natural
 
 /** 适应窗口的比例(contain),容器没测量出来前按 1 处理。 */
 function fitScale(): number {
+  viewportRevision.value
   const box = viewport.value
   if (!box || !displayW.value || !displayH.value) return 1
   const pad = 32
@@ -107,20 +109,26 @@ const clampZoom = (v: number) => nextZoom(v, zoom.value, effectiveZoomMin.value,
 
 /** 1:1 也要能看:不超过适应比例的 4 倍,免得小图被拉到糊。 */
 function fit() {
+  userAdjusted.value = false
+  if (!viewport.value || viewport.value.clientWidth <= 32 || viewport.value.clientHeight <= 32) return
   // 「适应」按绝对上下限取,不按手动下限 —— 它要能把整页装下(见上面的常量说明)。
   zoom.value = fitZoom(fitScale(), ZOOM_MAX)
   pan.value = { x: 0, y: 0 }
 }
 function actualSize() {
+  userAdjusted.value = true
   zoom.value = 1
   pan.value = { x: 0, y: 0 }
 }
 
-function onLoad(e: Event) {
+async function onLoad(e: Event) {
   const el = e.target as HTMLImageElement
   natural.value = { w: el.naturalWidth, h: el.naturalHeight }
   status.value = 'ready'
-  fit()
+  // Ready controls can wrap onto another toolbar row. Measure after that layout,
+  // and never let a duplicate load override a zoom performed in the meantime.
+  await nextTick()
+  if (el === img.value && !userAdjusted.value) fit()
 }
 function onError() {
   status.value = 'error'
@@ -156,6 +164,7 @@ function onWheel(e: WheelEvent) {
   e.preventDefault()
   const box = viewport.value
   if (!box) return
+  userAdjusted.value = true
   const rect = box.getBoundingClientRect()
   // 指针相对容器中心的位置,缩放时按这个偏移补偿平移,视觉上就是「围绕指针」。
   const cx = e.clientX - rect.left - rect.width / 2
@@ -172,19 +181,23 @@ function onWheel(e: WheelEvent) {
 
 /** 按钮缩放,围绕视口中心。 */
 function zoomBy(factor: number) {
+  userAdjusted.value = true
   const next = clampZoom(zoom.value * factor)
   const ratio = next / zoom.value
   pan.value = { x: pan.value.x * ratio, y: pan.value.y * ratio }
   zoom.value = next
 }
 function onZoomModel(v: number) {
-  const ratio = v / zoom.value
+  userAdjusted.value = true
+  const next = clampZoom(v)
+  const ratio = next / zoom.value
   pan.value = { x: pan.value.x * ratio, y: pan.value.y * ratio }
-  zoom.value = clampZoom(v)
+  zoom.value = next
 }
 
 /** 只有内容超出容器时才允许拖,否则光标和手感都是错的。 */
 const canPan = computed(() => {
+  viewportRevision.value
   const box = viewport.value
   if (!box || status.value !== 'ready') return false
   return displayW.value * zoom.value > box.clientWidth || displayH.value * zoom.value > box.clientHeight
@@ -235,6 +248,7 @@ onMounted(() => {
   document.addEventListener('fullscreenchange', onFullscreenChange)
   if (viewport.value && typeof ResizeObserver !== 'undefined') {
     ro = new ResizeObserver(() => {
+      viewportRevision.value++
       if (status.value === 'ready' && !userAdjusted.value) fit()
     })
     ro.observe(viewport.value)
@@ -245,10 +259,6 @@ onBeforeUnmount(() => {
   ro?.disconnect()
 })
 
-// 手动调整过之后,窗口变化不再自动覆盖用户的缩放。
-watch(zoom, () => {
-  if (status.value === 'ready') userAdjusted.value = true
-})
 watch(
   () => props.src,
   () => {
@@ -280,10 +290,12 @@ defineExpose({
 })
 
 const imgStyle = computed(() => ({
-  width: natural.value.w ? `${natural.value.w * zoom.value}px` : undefined,
-  height: natural.value.h ? `${natural.value.h * zoom.value}px` : undefined,
-  transform: `translate(${pan.value.x}px, ${pan.value.y}px) rotate(${rotation.value}deg)`,
-  transition: dragging.value ? 'none' : 'transform 120ms var(--ease-snap)',
+  width: natural.value.w ? `${natural.value.w}px` : undefined,
+  height: natural.value.h ? `${natural.value.h}px` : undefined,
+  // Scale and pointer compensation must change in one frame. Animating only the
+  // translation makes the image jump to its new size before its anchor catches up.
+  transform: `translate(${pan.value.x}px, ${pan.value.y}px) rotate(${rotation.value}deg) scale(${zoom.value})`,
+  transition: 'none',
 }))
 </script>
 
