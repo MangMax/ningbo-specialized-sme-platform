@@ -42,7 +42,7 @@ function onSizeInput(event: Event) {
     <div class="flex items-center gap-2">
       <span class="text-muted-foreground">每页</span>
       <Select v-model="sizeModel">
-        <SelectTrigger size="sm" class="bg-card w-20 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100" aria-label="每页条数">
+      <SelectTrigger size="sm" class="bg-card w-20 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100" aria-label="每页条数" :disabled="loading">
           <SelectValue />
         </SelectTrigger>
         <SelectContent class="shadow-none">
@@ -50,7 +50,7 @@ function onSizeInput(event: Event) {
           <SelectItem value="custom">自定义…</SelectItem>
         </SelectContent>
       </Select>
-      <Input v-if="sizeModel === 'custom'" :model-value="pageSize" type="number" min="1" max="200" class="bg-card h-8 w-20 shadow-none" aria-label="自定义每页条数" @change="onSizeInput" />
+      <Input v-if="sizeModel === 'custom'" :model-value="pageSize" type="number" min="1" max="200" class="bg-card h-8 w-20 shadow-none" aria-label="自定义每页条数" :disabled="loading" @change="onSizeInput" />
       <span class="text-muted-foreground">{{ unit }}</span>
     </div>
     <span class="text-muted-foreground tabular-nums" data-testid="table-total">

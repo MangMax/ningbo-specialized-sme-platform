@@ -47,11 +47,18 @@ describe('统一表格分页', () => {
     const view = pagination({ page: 1, loading: true })
     expect(view.get('[data-slot="pagination-previous"]').attributes('disabled')).toBeDefined()
     expect(view.get('[data-slot="pagination-next"]').attributes('disabled')).toBeDefined()
+    expect(view.get('[aria-label="每页条数"]').attributes('disabled')).toBeDefined()
     await view.get('[data-slot="pagination-next"]').trigger('click')
     expect(view.emitted('update:page')).toBeUndefined()
     await view.setProps({ loading: false, page: 7 })
     expect(view.get('[data-slot="pagination-next"]').attributes('disabled')).toBeDefined()
     expect(view.get('[data-slot="pagination-previous"]').attributes('disabled')).toBeUndefined()
+    expect(view.get('[aria-label="每页条数"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('请求失败时也锁定自定义每页数量,重试仍对应失败目标', () => {
+    const view = pagination({ page: 1, pageSize: 37, loading: true })
+    expect(view.get<HTMLInputElement>('[aria-label="自定义每页条数"]').attributes('disabled')).toBeDefined()
   })
 })
 
@@ -97,5 +104,18 @@ describe('表格内失败态', () => {
     await view.setProps({ pending: false })
     expect(button.text()).toBe('重新加载')
     expect(button.attributes('disabled')).toBeUndefined()
+  })
+
+  it('分页目标失败时明确标出旧结果来源页与失败目标页', () => {
+    const view = mount(TableFailureState, {
+      props: {
+        title: '企业列表暂时无法加载',
+        compact: true,
+        description: '显示上次成功的第 1 页；当前筛选请求的第 2 页未加载成功。',
+      },
+    })
+    mounted.push(view)
+    expect(view.text()).toContain('上次成功的第 1 页')
+    expect(view.text()).toContain('第 2 页未加载成功')
   })
 })

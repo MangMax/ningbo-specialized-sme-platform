@@ -17,6 +17,8 @@ import { describeFetchError } from '~~/lib/upload-register'
 import { fileUrl } from '~~/lib/preview'
 import { isPdfPath } from '~~/lib/pdf-page'
 import { joinSeries, partBatches, partYears } from '~~/lib/file-parts'
+import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
+import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
 import type { BackfillReport, StoredFileRow } from '~~/server/utils/stored-files'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -104,17 +106,31 @@ const params = computed(() => ({
   page: page.value,
   pageSize: pageSize.value,
 }))
+type FilesQueryParams = typeof params.value
+type FilesQueryResult = FilesResponse & { request: QueryRequestSnapshot<FilesQueryParams> }
 
-const { data, isLoading, error, refetch } = useQuery({
+const activeRequest = computed(() => captureQueryRequest('files', params.value))
+const { data, isLoading, error, refetch } = useQuery<FilesQueryResult>({
   key: () => ['files', params.value],
-  query: () => apiGet<FilesResponse>('/api/files', { query: params.value }),
+  query: async ({ entry }) => {
+    const request = captureQueryRequest('files', entry.key[1] as typeof params.value)
+    const response = await apiGet<FilesResponse>('/api/files', { query: request.params })
+    return { ...response, request }
+  },
   // 换筛选/翻页时保留上一批数据,避免表体清空 → 文档高度骤变 → 页面闪一下并跳回顶部。
   placeholderData: (previous) => previous,
 })
 
-const rows = computed<StoredFileRow[]>(() => data.value?.rows ?? [])
-const total = computed(() => data.value?.total ?? 0)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const {
+  displayed: displayedResult,
+  paginationDisabled,
+  failureDescription,
+} = useRetainedQuerySnapshot<FilesQueryParams, FilesQueryResult>(data, isLoading, error, activeRequest)
+const rows = computed<StoredFileRow[]>(() => displayedResult.value?.rows ?? [])
+const total = computed(() => displayedResult.value?.total ?? 0)
+const displayedPage = computed(() => displayedResult.value?.request.page ?? page.value)
+const displayedPageSize = computed(() => displayedResult.value?.request.pageSize ?? pageSize.value)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / displayedPageSize.value)))
 
 /**
  * 表格是否真的横向溢出了(12 列合计 1154px,1440 侧栏展开时装得下,更窄就装不下)。
@@ -497,7 +513,7 @@ function publishedYearBatch(row: StoredFileRow): string {
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="files" :loading="isLoading" label="正在筛选与加载文件…" />
-        <TableFailureState v-if="error" title="文件列表暂时无法加载" :compact="rows.length > 0" :pending="isLoading" @retry="refetch()" />
+        <TableFailureState v-if="error" title="文件列表暂时无法加载" :compact="rows.length > 0" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
         <div
           v-if="!error || rows.length > 0"
           ref="tableScroller"
@@ -822,7 +838,7 @@ function publishedYearBatch(row: StoredFileRow): string {
       </CardContent>
     </Card>
 
-    <TablePagination v-if="!error || rows.length > 0" :page="page" :page-size="pageSize" :total="total" unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
+    <TablePagination v-if="!error || rows.length > 0" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
 
     <UploadDialog v-model:open="uploadOpen" @registered="refresh()" />
 

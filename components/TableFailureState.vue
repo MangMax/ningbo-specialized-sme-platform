@@ -6,6 +6,7 @@ withDefaults(defineProps<{
   title: string
   compact?: boolean
   pending?: boolean
+  description?: string
 }>(), { compact: false, pending: false })
 defineEmits<{ retry: [] }>()
 </script>
@@ -24,7 +25,7 @@ defineEmits<{ retry: [] }>()
       <div class="min-w-0">
         <p class="text-foreground text-sm font-medium leading-5" data-testid="table-failure-title">{{ title }}</p>
         <p class="text-muted-foreground mt-1 text-[13px] leading-5">
-          {{ compact ? '显示的是上次加载的结果。' : '筛选条件已保留，可以重新加载。' }}
+          {{ description ?? (compact ? '显示的是上次加载的结果。' : '筛选条件已保留，可以重新加载。') }}
         </p>
       </div>
       <Button

@@ -31,6 +31,8 @@ import {
   type LedgerState,
 } from '~~/lib/roster/ledger-view'
 import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '~~/lib/roster/ledger-contract'
+import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
+import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
 import EnterpriseDrawer from '@/components/EnterpriseDrawer.vue'
 import EnterpriseListTable, {
   type EnterpriseListRow,
@@ -188,35 +190,50 @@ const listQuery = computed(() => ({
   page: page.value,
   pageSize: pageSize.value,
 }))
+type LedgerListQueryParams = typeof listQuery.value
+type LedgerListQueryResult = {
+  rows: EnterpriseListRow[]
+  counts: Counts
+  request: QueryRequestSnapshot<LedgerListQueryParams>
+}
 
-const resultKey = computed(() => JSON.stringify({ q: listQuery.value, size: pageSize.value }))
+const activeRequest = computed(() => captureQueryRequest('ledger-enterprises', listQuery.value))
+const activeRequestKey = computed(() => activeRequest.value.key)
 
-const { data, isLoading, error, refetch } = useQuery({
+const { data, isLoading, error, refetch } = useQuery<LedgerListQueryResult>({
   key: () => ['ledger-enterprises', listQuery.value],
-  query: async () => {
-    const query = { ...listQuery.value }
-    const requestKey = resultKey.value
+  query: async ({ entry }) => {
+    // Read the immutable params belonging to this cache entry. Reactive page or
+    // filter refs may already have moved by the time this async query executes.
+    const request = captureQueryRequest('ledger-enterprises', entry.key[1] as typeof listQuery.value)
     const response = await apiGet<{ rows: EnterpriseListRow[]; counts: Counts }>(
       '/api/roster/enterprises',
-      { query },
+      { query: request.params },
     )
-    return { ...response, resultKey: requestKey }
+    return { ...response, request }
   },
   // 换条件时**留住上一批行**:表体只轻微浮起,不清空 —— 空表会让用户以为「筛没了」。
   placeholderData: (previous) => previous,
 })
 
-const rows = computed(() => data.value?.rows ?? [])
+const {
+  displayed: displayedResult,
+  paginationDisabled,
+  failureDescription,
+} = useRetainedQuerySnapshot<LedgerListQueryParams, LedgerListQueryResult>(data, isLoading, error, activeRequest)
+const rows = computed(() => displayedResult.value?.rows ?? [])
 const counts = computed<Counts>(
-  () => data.value?.counts ?? { total: 0, titlePairs: 0, titles: {}, recognitionPairs: 0, differences: 0 },
+  () => displayedResult.value?.counts ?? { total: 0, titlePairs: 0, titles: {}, recognitionPairs: 0, differences: 0 },
 )
 const total = computed(() => counts.value.total)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const displayedPage = computed(() => displayedResult.value?.request.page ?? page.value)
+const displayedPageSize = computed(() => displayedResult.value?.request.pageSize ?? pageSize.value)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / displayedPageSize.value)))
 
 /** 只在成功响应结算后纠正页码并清理已离开结果集的选择。失败响应不能把页码退回 1。 */
-watch([data, resultKey, isLoading, error], ([result, key, loading, failure]) => {
-  if (!result || result.resultKey !== key || loading || failure) return
-  const maxPage = Math.max(1, Math.ceil(result.counts.total / pageSize.value))
+watch([data, activeRequestKey, isLoading, error], ([result, key, loading, failure]) => {
+  if (!result || result.request.key !== key || loading || failure) return
+  const maxPage = Math.max(1, Math.ceil(result.counts.total / result.request.pageSize))
   if (page.value > maxPage) {
     page.value = maxPage
     return
@@ -520,7 +537,7 @@ useHead({
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在搜索…" />
-        <TableFailureState v-if="error" title="企业列表暂时无法加载" :compact="rows.length > 0" :pending="isLoading" @retry="retry" />
+        <TableFailureState v-if="error" title="企业列表暂时无法加载" :compact="rows.length > 0" :pending="isLoading" :description="failureDescription" @retry="retry" />
         <EnterpriseListTable
           v-if="!error || rows.length > 0"
           :rows="rows"
@@ -534,7 +551,7 @@ useHead({
       </CardContent>
     </Card>
 
-    <TablePagination v-if="!error || rows.length > 0" :page="page" :page-size="pageSize" :total="total" unit="家企业" @update:page="setPage" @update:page-size="setPageSize">
+    <TablePagination v-if="!error || rows.length > 0" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="家企业" @update:page="setPage" @update:page-size="setPageSize">
       共 {{ total.toLocaleString('zh-CN') }} 家<span v-if="state.firstYear.length || state.firstStatus.length"> · 首次认定 {{ counts.recognitionPairs.toLocaleString('zh-CN') }} 组</span> · 差异 {{ counts.differences.toLocaleString('zh-CN') }} 条
     </TablePagination>
 

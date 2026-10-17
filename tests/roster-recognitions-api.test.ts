@@ -354,8 +354,10 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
       expect(String(worksheet.getRow(3).getCell(1).value)).toContain('宁波仅结论年份接口测试有限公司')
 
       const pageSource = readFileSync(join(process.cwd(), 'pages/index.vue'), 'utf8')
-      expect(pageSource).toContain('stats.value?.byFirstRecognitionYear')
+      expect(pageSource).toContain('yearStats.value?.byFirstRecognitionYear')
+      expect(pageSource).toContain('yearStats.value?.byYear')
       expect(pageSource).toContain(':options="firstYearOptions"')
+      expect(pageSource).toContain(':options="yearOptions"')
     } finally {
       db = previousDb
       query = {}

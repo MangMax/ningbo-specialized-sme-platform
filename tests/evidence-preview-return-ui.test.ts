@@ -492,7 +492,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
       { back: safeBack, scrollY: listWindowTop, scrollTop: listTableTop, scrollLeft: listTableLeft },
     ])
-    const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('名录台账'))
+    const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('企业列表'))
     expect(ledgerLink?.attributes('data-target')).toBe(
       JSON.stringify({ path: '/', query: { view: 'enterprise', q: '开诚', page: '2', expand: '91' } }),
     )
@@ -642,7 +642,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
       { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop, scrollLeft: ledgerTableLeft },
     ])
-    const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('名录台账'))
+    const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('企业列表'))
     expect(ledgerLink?.attributes('data-target')).toBe(
       JSON.stringify({ path: '/', query: { view: 'title', district: '海曙区', page: '2' } }),
     )

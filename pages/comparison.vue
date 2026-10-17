@@ -11,6 +11,8 @@ import type { ComparisonPlatformEvidence } from '~~/lib/comparison-platform'
 import type { ReconcileEntry } from '~~/lib/reconcile'
 import { useScrollEdges } from '~~/lib/scroll-edges'
 import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
+import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
+import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -77,6 +79,19 @@ const params = computed(() => ({
   pageSize: pageSize.value,
   showCurated: showCurated.value,
 }))
+type ComparisonQueryParams = typeof params.value
+type ComparisonApiResponse = {
+  rows: (CuratedRow & { explanation: ReconcileEntry | null; platform: ComparisonPlatformEvidence })[]
+  total: number
+  counts: ComparisonCounts
+  curatedCounts: ComparisonCounts
+  reconcile: { generatedAt: string | null; matched: number }
+  platform: { withEvidence: number; withExplanation: number; withoutExplanation: number }
+}
+type ComparisonQueryResult = ComparisonApiResponse & {
+  request: QueryRequestSnapshot<ComparisonQueryParams>
+}
+const activeRequest = computed(() => captureQueryRequest('comparison', params.value))
 
 /**
  * 页面标题(RL-17 收尾)。全仓原先没有一处设过 `document.title`,所以标签页/历史记录/书签
@@ -91,20 +106,22 @@ useHead({
       }`,
   ),
 })
-const { data, isLoading, error, refetch } = useQuery({
+const { data, isLoading, error, refetch } = useQuery<ComparisonQueryResult>({
   key: () => ['comparison', params.value],
-  query: () =>
-    $fetch<{
-      rows: (CuratedRow & { explanation: ReconcileEntry | null; platform: ComparisonPlatformEvidence })[]
-      total: number
-      counts: ComparisonCounts
-      curatedCounts: ComparisonCounts
-      reconcile: { generatedAt: string | null; matched: number }
-      platform: { withEvidence: number; withExplanation: number; withoutExplanation: number }
-    }>('/api/comparison', { query: params.value }),
+  query: async ({ entry }) => {
+    const request = captureQueryRequest('comparison', entry.key[1] as typeof params.value)
+    const response = await $fetch<ComparisonApiResponse>('/api/comparison', { query: request.params })
+    return { ...response, request }
+  },
   placeholderData: (previous) => previous,
 })
-const rows = computed(() => data.value?.rows ?? [])
+const {
+  displayed: displayedResult,
+  hasCurrentSnapshot,
+  paginationDisabled,
+  failureDescription,
+} = useRetainedQuerySnapshot<ComparisonQueryParams, ComparisonQueryResult>(data, isLoading, error, activeRequest)
+const rows = computed<ComparisonApiResponse['rows']>(() => displayedResult.value?.rows ?? [])
 /** 行上**已确认**的曾用名(待核实的不算 —— 契约 §1.2:`pending` 不参与搜索/归并)。 */
 function confirmedAliasNames(row: { name: string; platform: ComparisonPlatformEvidence }): string[] {
   const aliases = row.platform.aliases.filter((alias) => alias.verificationStatus === 'confirmed')
@@ -124,11 +141,14 @@ watch([rows, isLoading], () => {
 
 async function refreshCuration() {
   await queryCache.invalidateQueries({ key: ['comparison'] })
+  if (error.value || !hasCurrentSnapshot.value) return
   if (page.value > totalPages.value) page.value = totalPages.value
 }
 const totalPages = computed(() =>
-  Math.max(1, Math.ceil((data.value?.total ?? 0) / pageSize.value)),
+  Math.max(1, Math.ceil((displayedResult.value?.total ?? 0) / (displayedResult.value?.request.pageSize ?? pageSize.value))),
 )
+const displayedPage = computed(() => displayedResult.value?.request.page ?? page.value)
+const displayedPageSize = computed(() => displayedResult.value?.request.pageSize ?? pageSize.value)
 const activeFilters = computed(() => [
   ...(q.value.trim() ? [{ key: 'q', label: `搜索：${q.value.trim()}` }] : []),
   ...(district.value ? [{ key: 'district', label: district.value }] : []),
@@ -264,7 +284,7 @@ const exportUrl = computed(() => {
             <Card class="min-w-0 gap-0 overflow-hidden py-0 shadow-none">
               <CardContent class="relative p-0">
                 <TableLoadingStatus kind="comparison" :loading="isLoading" label="正在搜索与加载比对结果…" />
-                <TableFailureState v-if="error" title="比对结果暂时无法加载" :compact="rows.length > 0" :pending="isLoading" @retry="refetch()" />
+                <TableFailureState v-if="error" title="比对结果暂时无法加载" :compact="rows.length > 0" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
                 <!-- 宽表在容器内横向滚动,窄屏收在当前视口中。 -->
                 <div v-if="!error || rows.length > 0" class="relative min-w-0">
                   <div
@@ -400,7 +420,7 @@ const exportUrl = computed(() => {
                 </div>
               </CardContent>
             </Card>
-            <TablePagination v-if="!error || rows.length > 0" data-testid="comparison-pagination" :page="page" :page-size="pageSize" :total="data?.total ?? 0" unit="条" :loading="isLoading" @update:page="setPage" @update:page-size="setPageSize" />
+            <TablePagination v-if="!error || rows.length > 0" data-testid="comparison-pagination" :page="displayedPage" :page-size="displayedPageSize" :total="displayedResult?.total ?? 0" unit="条" :loading="paginationDisabled" @update:page="setPage" @update:page-size="setPageSize" />
 
       </div>
     </div>
