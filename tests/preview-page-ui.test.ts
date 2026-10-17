@@ -151,7 +151,7 @@ describe('来源预览页图深链', () => {
     })
 
     await flushPromises()
-    expect(wrapper.text()).toContain('无法确认 PDF 页数')
+    expect(wrapper.text()).toContain('无法确认 PDF 的实际页数，不能验证目标页；不会静默打开其他页')
     expect(wrapper.find('[data-test="single-page-preview"]').exists()).toBe(false)
     wrapper.unmount()
   })
