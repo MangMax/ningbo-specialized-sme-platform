@@ -8,6 +8,13 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core'
 
+/** 后台外部服务凭据。仅配置服务读取，不加入台账导出或任务历史。 */
+export const serviceCredential = sqliteTable('service_credential', {
+  key: text('key', { enum: ['ocrToken', 'miitCookie'] }).primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+})
+
 /**
  * 称号字典。三种梯度,等级由高到低:小巨人 > 专精特新中小企业 > 创新型中小企业。
  * 见 GLOSSARY.md / docs/data-model.md。

@@ -16,7 +16,7 @@
  *
  * ── 它不做什么 ────────────────────────────────────────────────────────────
  * **不查平台、不写库**。凭据一概不需要。要产生数据请先跑
- * `scripts/reconcile-live.mjs`(那条链需要 `MIIT_COOKIE` / `MIIT_COOKIE_FILE`)。
+ * `scripts/reconcile-live.mjs`(独立脚本支持 `MIIT_COOKIE`)。
  *
  * 用法:
  *   node scripts/roster-reason-report.mjs [选项]

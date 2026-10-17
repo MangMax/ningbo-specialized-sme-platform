@@ -52,6 +52,11 @@ const db = new Database(outPath)
 db.pragma('foreign_keys = ON')
 // 源库可能停在 0006(还没有 RL-01 冻结的那些表)—— 按 drizzle 的迁移台账补齐。
 migrate(drizzle(db), { migrationsFolder: resolve(process.cwd(), 'db/migrations') })
+// 演示副本不能携带部署凭据，包括已删除记录占用的页空间。
+db.pragma('secure_delete = ON')
+db.exec('DELETE FROM service_credential')
+db.exec('VACUUM')
+db.pragma('wal_checkpoint(TRUNCATE)')
 
 const USCC = '91330211255994457P'
 const NEW_NAME = '宁波上航测绘股份有限公司'

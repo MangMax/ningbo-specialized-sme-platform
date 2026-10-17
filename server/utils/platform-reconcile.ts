@@ -19,7 +19,7 @@
  *  - 会话过期是 **HTTP 200 + `{"statusCode":"301",...}`** ⇒ `failed`,不是 `no_record`。
  *
  * ── 凭据 ──────────────────────────────────────────────────────────────────
- * 只从 `MIIT_COOKIE` / `MIIT_COOKIE_FILE` 读(**不入库、不进日志、不进仓库**)。
+ * 应用传入数据库凭据快照；独立 CLI 从 `MIIT_COOKIE` 读取。原值不进入查询证据或日志。
  * 拿不到凭据时**不发请求、也不写「一片未查询」的假结果**:直接以明确原因失败。
  *
  * ── 不建模糊推断引擎 ─────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ import type { PlatformInterface } from '../../lib/labels'
 import {
   type PlatformFetch,
   type PlatformQueryOutcome,
-  hasPlatformCredential,
+  resolveCookie,
   queryPlatformSlots,
 } from '../../lib/platform/client'
 import type { PlatformRdjb, PlatformRow } from '../../lib/platform/adapter'
@@ -596,11 +596,12 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
 
   // 凭据:拿不到就**不发请求、不写半截结果**,直接以明确原因失败 —— 绝不产出
   // 「一片未查询」的假证据(pipeline 的同一条纪律)。判据用**有效凭据**:调用方显式给的
-  // 优先,其次是 MIIT_COOKIE / MIIT_COOKIE_FILE。
-  if (missingSlots > 0 && !hasPlatformCredential(options.cookie)) {
+  // 优先，其次是 MIIT_COOKIE。
+  const cookie = missingSlots > 0 ? resolveCookie(options.cookie) : ''
+  if (missingSlots > 0 && !cookie) {
     throw new Error(
-      '未配置平台会话凭据:请设 MIIT_COOKIE(整条 Cookie 值)或 MIIT_COOKIE_FILE(文件路径)。' +
-        '凭据不入库、不进日志、不进仓库;本次不写任何结果。',
+      '未配置平台会话凭据:请在密钥配置页保存 Cookie，或设置 MIIT_COOKIE。' +
+        '凭据不进入查询证据或日志；本次不写任何结果。',
     )
   }
 
@@ -630,7 +631,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
         {
           uscc,
           fetchImpl: options.fetchImpl,
-          cookie: options.cookie,
+          cookie: () => cookie,
           retries: options.retries,
           sleep: options.sleep,
           // `queried_at` 用**请求前的真实时点**(注入时钟时用注入的,便于固定断言)。

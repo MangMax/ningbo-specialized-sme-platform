@@ -211,13 +211,13 @@ async function currentPageImages(filesDir: string, relPath: string): Promise<Pag
 export async function runOcr(
   ctx: JobContext,
   params: Record<string, unknown>,
+  config = resolveOcrConfig(),
 ): Promise<JobCompletion> {
   const { files, model } = params as unknown as OcrParams
-  const config = resolveOcrConfig()
   if (!config.token) {
     // 配置错**在动手之前**就报出来 —— 逐份失败会得到 N 条一模一样的错,而它一次就说清了。
     throw new Error(
-      '缺少 OCR token:设 `NUXT_OCR_TOKEN`(或 `PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN`)再提交。' +
+      '缺少 OCR token:在配置页面保存,或设 `NUXT_OCR_TOKEN`(或 `PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN`)再提交。' +
         '凭证不入库;页面通路(b 上传结果)不需要 token。',
     )
   }
@@ -375,5 +375,9 @@ export const ocrSpec: JobSpec = {
   parse: parseOcrParams,
   // 分母提交时就知道 —— 轮询方一上来就能看到「一共 3 份」。
   total: (params) => (params.files as string[]).length,
+  prepare: () => {
+    const config = resolveOcrConfig()
+    return (ctx, params) => runOcr(ctx, params, config)
+  },
   run: runOcr,
 }

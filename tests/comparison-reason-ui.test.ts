@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import ComparisonReconcile from '../components/ComparisonReconcile.vue'
 import ComparisonPlatformEvidence from '../components/ComparisonPlatformEvidence.vue'
 import type {
@@ -9,6 +9,11 @@ import type {
 } from '../lib/comparison-platform'
 import type { ReconcileEntry } from '../lib/reconcile'
 import { TITLES } from '../lib/labels'
+
+// Exercise real Motion's JS fallback; Happy DOM's WAAPI cancellation rejects on teardown.
+const nativeAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+beforeAll(() => { Reflect.deleteProperty(Element.prototype, 'animate') })
+afterAll(() => { if (nativeAnimate) Object.defineProperty(Element.prototype, 'animate', nativeAnimate) })
 
 /**
  * 比对页「平台解释 / 平台证据」两列的**库内口径**(RL-15)。

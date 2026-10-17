@@ -1,3 +1,4 @@
+import { credentialContext, resolveCredential } from './credential-state'
 /**
  * **通路 a:在线 PaddleOCR API**(票 14)。每次异步提交一张已渲染页图 → 轮询 → 取 JSONL 结果。
  *
@@ -19,7 +20,7 @@
  * HTTP 5xx(提交、查询或任务终态返回)时最多尝试三次(250ms、500ms 间隔);4xx、超时与网络错误不重试。
  *
  * ── 凭证 ───────────────────────────────────────────────────────────────
- * **不入库、不入仓库**(SPEC 硬约束)。从环境变量读:`NUXT_OCR_TOKEN`,或与 MCP 配置
+ * **不入库、不入仓库**(SPEC 硬约束)。从外置页面配置或环境变量读:`NUXT_OCR_TOKEN`,或与 MCP 配置
  * 同名的那颗 `PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN`。仓库里只有 `.env.example` 的占位名。
  */
 
@@ -299,7 +300,7 @@ export function pagesFromJsonl(text: string): OcrPageOut[] {
     try {
       parsed = JSON.parse(raw)
     } catch (error) {
-      throw new OcrApiError(`结果不是合法 JSONL(第 ${i + 1} 行):${(error as Error).message}`)
+      throw new OcrApiError(`结果不是合法 JSONL(第 ${i + 1} 行)`)
     }
     for (const page of pagesFromJsonlLine(parsed, i)) pages.push(page)
   }
@@ -330,15 +331,34 @@ async function fetchWithTimeout(
   }
 }
 
-async function readErrorText(res: Response): Promise<string> {
+/** Common reversible wire representations, longest first so an inner raw value
+ * cannot leave a reconstructable escaped prefix/suffix behind. Kept local to OCR. */
+function ocrTokenRedactor(token: string): (text: string) => string {
+  if (!token) return text => text
+  const json = JSON.stringify(token).slice(1, -1)
+  const forms = new Set([token, json, json.replaceAll('/', '\\/'), encodeURI(token), encodeURIComponent(token), new URLSearchParams({ token }).toString().slice(6)])
+  // JSON permits a Unicode escape for any character, and slash escaping is optional.
+  forms.add(token.split('').map(char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`).join(''))
+  for (const form of [...forms]) {
+    forms.add(encodeURIComponent(form))
+    forms.add(JSON.stringify(form).slice(1, -1))
+  }
+  for (const form of [...forms]) forms.add(form.replace(/%[0-9A-F]{2}/g, part => part.toLowerCase()))
+  const ordered = [...forms].sort((a, b) => b.length - a.length)
+  return text => ordered.reduce((result, form) => result.split(form).join('[REDACTED]'), text)
+}
+
+async function readErrorText(res: Response, token: string): Promise<string> {
   try {
-    const text = await res.text()
+    const rawText = await res.text()
+    const redact = ocrTokenRedactor(token)
+    let detail = rawText
     try {
-      const parsed = JSON.parse(text) as Record<string, unknown>
-      return messageOf(parsed) ?? text.slice(0, 300)
+      detail = messageOf(JSON.parse(rawText) as Record<string, unknown>) ?? rawText
     } catch {
-      return text.slice(0, 300)
+      // Plain text (or malformed JSON) still needs scrubbing before truncation.
     }
+    return redact(detail).slice(0, 300)
   } catch {
     return '(响应体读不出来)'
   }
@@ -357,7 +377,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
   if (!token) {
     throw new OcrApiError(
       '缺少 OCR token:设 `NUXT_OCR_TOKEN`(或 `PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN`)。' +
-        '凭证不入库、不入仓库,只从环境变量/`.env` 读。',
+        '凭证不入库、不入仓库;可在配置页面保存或使用部署环境值。',
       401,
     )
   }
@@ -413,7 +433,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
     '提交单张 PNG OCR 任务',
   )
   if (!submitRes.ok) {
-    const detail = await readErrorText(submitRes)
+    const detail = await readErrorText(submitRes, token)
     throw new OcrApiError(
       `提交 OCR 任务被拒(HTTP ${submitRes.status}):${detail}`,
       submitRes.status === 401 || submitRes.status === 403 ? 401 : 502,
@@ -441,7 +461,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
     )
     if (!statusRes.ok) {
       throw new OcrApiError(
-        `查询 OCR 任务失败(HTTP ${statusRes.status}):${await readErrorText(statusRes)}`,
+        `查询 OCR 任务失败(HTTP ${statusRes.status}):${await readErrorText(statusRes, token)}`,
         statusRes.status === 401 || statusRes.status === 403 ? 401 : 502,
         statusRes.status,
       )
@@ -496,7 +516,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
   )
   if (!jsonRes.ok) {
     throw new OcrApiError(
-      `下载 OCR 结果失败(HTTP ${jsonRes.status}):${await readErrorText(jsonRes)}`,
+      `下载 OCR 结果失败(HTTP ${jsonRes.status}):${await readErrorText(jsonRes, token)}`,
       jsonRes.status === 401 || jsonRes.status === 403 ? 401 : 502,
       jsonRes.status,
     )
@@ -542,15 +562,29 @@ async function ocrImageFileWithRetries(options: OcrApiOptions): Promise<OcrImage
  * 同一进程内共享 8 个远端 job 槽位;一个槽会一直占到 OCR 结果取回或重试耗尽。
  * 这样不同 PDF 的页图可以交错推进,又不会在多份 PDF 同时展开时无上限地冲击 Paddle。
  */
-export function ocrImageFile(options: OcrApiOptions): Promise<OcrImageOut> {
-  return withPaddleJobPermit(options.isCancelled, () => ocrImageFileWithRetries(options))
+export async function ocrImageFile(options: OcrApiOptions): Promise<OcrImageOut> {
+  const token = options.token?.trim() || ''
+  const redact = ocrTokenRedactor(token)
+  const redactValue = (value: unknown): unknown => {
+    if (typeof value === 'string') return redact(value)
+    if (Array.isArray(value)) return value.map(redactValue)
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, entry]) => [redact(key), redactValue(entry)]))
+    return value
+  }
+  try {
+    const result = await withPaddleJobPermit(options.isCancelled, () => ocrImageFileWithRetries(options))
+    return redactValue(result) as OcrImageOut
+  } catch (error) {
+    const message = redact(error instanceof Error ? error.message : String(error))
+    throw new OcrApiError(message, error instanceof OcrApiError ? error.statusCode : 502, error instanceof OcrApiError ? error.remoteStatus : undefined)
+  }
 }
 
 async function safeJson(res: Response, what: string): Promise<unknown> {
   try {
     return await res.json()
   } catch (error) {
-    throw new OcrApiError(`${what}不是合法 JSON:${(error as Error).message}`)
+    throw new OcrApiError(`${what}不是合法 JSON`)
   }
 }
 
@@ -558,7 +592,7 @@ async function safeJson(res: Response, what: string): Promise<unknown> {
  * 取 OCR 配置(token / 地址 / 模型 / 等待上限)。
  *
  * ── 取值顺序(每一档都有人真的会用)────────────────────────────────────
- *  - **token**:显式 override → `NUXT_OCR_TOKEN`(`runtimeConfig.ocrToken`)→
+ *  - **token**:显式 override → 页面保存值 → `NUXT_OCR_TOKEN`(`runtimeConfig.ocrToken`)→
  *    `PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN`。最后一档是**与用户 MCP 配置同名的那颗变量**
  *    (见 SPEC 的技术前提表:同一颗 token 同时给 MCP 与 API)—— 让人为同一样东西配两遍
  *    是没必要的,而且那一档在用户机器上**本来就已经是满的**。
@@ -595,12 +629,7 @@ export function resolveOcrConfig(override: { token?: string } = {}): {
     ocrPollTimeoutMs?: number
   }
   const env = process.env
-  const token =
-    clean(override.token) ||
-    clean(config.ocrToken) ||
-    clean(env.NUXT_OCR_TOKEN) ||
-    clean(env.PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN) ||
-    ''
+  const token = resolveCredential('ocrToken', { ...credentialContext(), ocrToken: config.ocrToken }, override.token).value
   const pollTimeoutMs = firstNumber(
     [config.ocrPollTimeoutMs, Number(env.NUXT_OCR_POLL_TIMEOUT_MS)],
     DEFAULT_POLL_TIMEOUT_MS,
