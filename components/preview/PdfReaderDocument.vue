@@ -25,6 +25,8 @@ const { provides: zoom, state: zoomState } = useZoom(() => props.documentId)
 const { provides: selection } = useSelectionCapability()
 const colorMode = useAppColorMode()
 const root = useTemplateRef<HTMLElement>('root')
+const toolsPanel = useTemplateRef<HTMLElement>('toolsPanel')
+const navigationPanel = useTemplateRef<HTMLElement>('navigationPanel')
 const navigationToggle = useTemplateRef<{ $el: HTMLButtonElement }>('navigationToggle')
 const sidebar = shallowRef(false)
 const sidebarVisited = shallowRef(false)
@@ -48,6 +50,28 @@ let preferred: { page: number; offset: { x: number; y: number } } | null = null
 let prepared: ReturnType<typeof images.acquire> | null = null
 let frame = 0
 const pageSurface = useTemplateRef<HTMLElement>('pageSurface')
+let layoutAnchor: PdfReadingPosition | null = null
+let layoutEpoch = 0
+// Keep one anchor through interrupted panel transitions. Wait on the browser's
+// actual transitions, then fit and restore once at the final viewport size.
+watch(() => [props.tools, sidebar.value], async () => {
+  layoutAnchor ??= pendingTarget.value ?? position.value
+  const owner = ++layoutEpoch
+  await nextTick()
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  if (owner !== layoutEpoch) return
+  const animations = [toolsPanel.value, navigationPanel.value].flatMap(el => el?.getAnimations?.() ?? [])
+  await Promise.allSettled(animations.map(animation => animation.finished))
+  if (owner !== layoutEpoch) return
+  const target = pendingTarget.value ?? layoutAnchor
+  const level = zoomState.value.zoomLevel
+  if (typeof level === 'string') zoom.value?.requestZoom(level)
+  await nextTick()
+  if (owner !== layoutEpoch) return
+  layoutAnchor = null
+  if (target) void navigate(target)
+})
+onBeforeUnmount(() => { layoutEpoch++; layoutAnchor = null })
 let arrival: Animation | undefined
 function cancelNavigation() {
   request++; pendingTarget.value = null; moving = false; awaitingScroll = false; waitForSmooth = false
@@ -85,7 +109,7 @@ watch(scroll, (capability, _, cleanup) => {
   cleanup(() => off.forEach(fn => fn()))
 }, { immediate: true })
 function report() {
-  if (awaitingScroll || pendingTarget.value && !moving) return
+  if (layoutAnchor || awaitingScroll || pendingTarget.value && !moving) return
   if (mode.value === 'single') {
     if (!loaded.has(singlePage.value) || singleRestore) return
     if (pendingTarget.value && pendingTarget.value.page !== singlePage.value) return
@@ -190,7 +214,7 @@ defineExpose({ navigate })
 </script>
 <template>
   <div ref="root" class="pdf-document flex min-h-0 flex-1 flex-col" @keydown="copy">
-    <div role="group" aria-label="阅读工具" class="pdf-tools-shell" :data-open="tools" :inert="!tools" :aria-hidden="!tools"><div class="pdf-tools-clip">
+    <div ref="toolsPanel" role="group" aria-label="阅读工具" class="pdf-tools-shell" :data-open="tools" :inert="!tools" :aria-hidden="!tools"><div class="pdf-tools-clip">
     <div class="pdf-tools flex flex-wrap items-center gap-1 border-b px-2 py-1">
       <Button ref="navigationToggle" variant="ghost" size="sm" :aria-expanded="sidebar" @click="sidebar = !sidebar"><PanelLeft data-icon="inline-start" />导航</Button>
       <Button variant="ghost" size="icon-sm" aria-label="缩小" @click="zoom?.zoomOut()"><Minus /></Button>
@@ -203,7 +227,7 @@ defineExpose({ navigate })
     </div>
     </div></div>
     <div class="bg-muted relative flex min-h-0 flex-1 overflow-hidden">
-      <div class="pdf-navigation" :data-open="sidebar && tools" :inert="!sidebar || !tools" :aria-hidden="!sidebar || !tools" @keydown.esc.stop="closeSidebar">
+      <div ref="navigationPanel" class="pdf-navigation" :data-open="sidebar && tools" :inert="!sidebar || !tools" :aria-hidden="!sidebar || !tools" @keydown.esc.stop="closeSidebar">
       <PdfNavigationPanel v-if="sidebarVisited && doc?.status === 'loaded'" :document-id="documentId" :engine="engine" :current-page="position.page" @navigate="choose" @close="closeSidebar" />
       </div>
       <div ref="pageSurface" class="relative min-h-0 min-w-0 flex-1" :aria-busy="!!pendingTarget">
