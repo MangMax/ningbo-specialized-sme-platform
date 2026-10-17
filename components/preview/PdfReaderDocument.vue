@@ -116,16 +116,18 @@ defineExpose({ navigate })
     <div class="bg-muted relative flex min-h-0 flex-1 overflow-hidden">
       <PdfNavigationPanel v-if="sidebar && doc?.status === 'loaded'" class="pdf-navigation absolute inset-y-0 left-0 z-10 sm:static sm:shrink-0" :document-id="documentId" :engine="engine" :current-page="position.page" @navigate="choose" @close="sidebar = false" />
       <div class="min-h-0 min-w-0 flex-1">
-        <Viewport v-if="doc?.status === 'loaded'" :document-id="documentId" class="h-full w-full" @scroll="mode === 'single' && report()">
+        <!-- Reserve the vertical gutter even when all pages fit. Otherwise fit-mode
+             zoom can toggle the scrollbar and alternate between two viewport sizes. -->
+        <Viewport v-if="doc?.status === 'loaded'" :document-id="documentId" class="h-full w-full" style="scrollbar-gutter: stable" @scroll="mode === 'single' && report()">
           <Scroller v-if="mode === 'continuous'" :document-id="documentId">
             <template #default="{ page }">
               <div :style="{ width: `${page.width}px`, height: `${page.height}px`, position: 'relative' }" :aria-label="`PDF 第 ${page.pageNumber} 页`">
-                <PdfReaderPage :key="`${page.pageIndex}:${scale}`" :document-id="documentId" :page-index="page.pageIndex" :scale="scale" @ready="rendered" @release="loaded.delete($event)" />
+                <PdfReaderPage :key="page.pageIndex" :document-id="documentId" :page-index="page.pageIndex" :scale="scale" @ready="rendered" @release="loaded.delete($event)" />
               </div>
             </template>
           </Scroller>
           <div v-else :style="singleSize" :aria-label="`PDF 第 ${singlePage} 页`">
-            <PdfReaderPage :key="`${singlePage}:${scale}`" :document-id="documentId" :page-index="singlePage - 1" :scale="scale" @ready="rendered" @release="loaded.delete($event)" />
+            <PdfReaderPage :key="singlePage" :document-id="documentId" :page-index="singlePage - 1" :scale="scale" @ready="rendered" @release="loaded.delete($event)" />
           </div>
         </Viewport>
       </div>

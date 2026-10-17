@@ -6,13 +6,13 @@ import { PdfActionType, PdfZoomMode } from '@embedpdf/models'
 import PdfPreview from '../components/preview/PdfPreview.vue'
 
 // Control only the public headless engine/hooks. Exercise the real application tree.
-const control = vi.hoisted(() => ({ layout: null as any, scroll: null as any, move: vi.fn(), destroy: vi.fn(), viewport: { scrollLeft: 0, scrollTop: 240 }, bookmarks: [] as any[] }))
+const control = vi.hoisted(() => ({ documentState: null as any, layout: null as any, scroll: null as any, move: vi.fn(), destroy: vi.fn(), viewport: { scrollLeft: 0, scrollTop: 240 }, bookmarks: [] as any[] }))
 vi.mock('@embedpdf/engines/pdfium-worker-engine', () => ({ createPdfiumEngine: () => ({ destroy: control.destroy, getBookmarks: () => ({ wait: (ok: any) => ok({ bookmarks: control.bookmarks }), abort() {} }) }) }))
 vi.mock('@embedpdf/core/vue', async () => {
   const { shallowRef, defineComponent, h } = await import('vue')
   return {
     EmbedPDF: defineComponent({ setup: (_, { slots }) => () => h('div', slots.default?.()) }),
-    useDocumentState: () => shallowRef({ status: 'loaded', scale: 1, document: { pages: Array.from({ length: 12 }, () => ({ size: { width: 600, height: 1800 } })) } }),
+    useDocumentState: () => control.documentState,
   }
 })
 vi.mock('@embedpdf/plugin-scroll/vue', async (original) => {
@@ -33,7 +33,7 @@ vi.mock('@embedpdf/plugin-zoom/vue', async (original) => ({ ...await original<an
 vi.mock('@embedpdf/plugin-selection/vue', async (original) => ({ ...await original<any>(), useSelectionCapability: () => ({ provides: shallowRef(null) }) }))
 vi.mock('@embedpdf/plugin-search/vue', async (original) => ({ ...await original<any>(), useSearch: () => ({ provides: shallowRef(null), state: shallowRef({ results: [], total: 0 }) }) }))
 const Slot = defineComponent({ setup: (_, { slots }) => () => h('div', slots.default?.()) })
-const Layer = defineComponent({ name: 'RenderLayer', props: ['pageIndex'], emits: ['load', 'error'], setup: props => () => h('div', `pixels ${props.pageIndex + 1}`) })
+const Layer = defineComponent({ name: 'RenderLayer', props: ['pageIndex', 'scale'], emits: ['load', 'error'], setup: props => () => h('div', `pixels ${props.pageIndex + 1}`) })
 async function reader() {
   const wrapper = mount(PdfPreview, { props: { src: '/a.pdf' }, global: { stubs: { Viewport: Slot, PagePointerProvider: Slot, RenderLayer: Layer, SearchLayer: true, SelectionLayer: true, ThumbnailsPane: true } } })
   await vi.dynamicImportSettled(); await flushPromises()
@@ -44,10 +44,25 @@ async function reader() {
   return wrapper
 }
 beforeEach(() => {
+  control.documentState = shallowRef({ status: 'loaded', scale: 1, document: { pages: Array.from({ length: 12 }, () => ({ size: { width: 600, height: 1800 } })) } })
   control.move.mockClear(); control.destroy.mockClear(); control.bookmarks = []
   vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(new Uint8Array([0,97,115,109,1,0,0,0])))))
 })
 afterEach(() => vi.unstubAllGlobals())
+it('retains rendered pages while zoom changes and updates their render scale', async () => {
+  const wrapper = await reader()
+  const successfulPage = wrapper.findAllComponents(Layer)[0]!.element
+  for (const scale of [1.27, 1.3, 1.25]) {
+    control.documentState.value = { ...control.documentState.value, scale }
+    await flushPromises()
+    const page = wrapper.findAllComponents(Layer)[0]!
+    expect(page.element).toBe(successfulPage)
+    expect(page.props('scale')).toBe(scale)
+    expect(wrapper.get('output[aria-label="当前实际页"]').text()).toBe('3 / 12')
+    expect(control.destroy).not.toHaveBeenCalled()
+  }
+  wrapper.unmount()
+})
 it.each([3, 4])('retains the successful document and retries only failed physical page %i', async (failedPage) => {
   const wrapper = await reader()
   const success = wrapper.findAllComponents(Layer).find(l => l.props('pageIndex') !== failedPage - 1)!.element
