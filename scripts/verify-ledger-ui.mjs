@@ -215,7 +215,12 @@ async function verifyPlatformRecordTables(cdp) {
       try {
         if (kind === 'comparison') {
           const sample = await evaluate(cdp,sessionId,`document.querySelector('tbody a[href^="/enterprises/"]')?.textContent.trim()`);
+          await installMotionAndFetchGate(cdp,sessionId);
+          await startFetchGate(cdp,sessionId,'/api/comparison');
           await setInputValue(cdp, sessionId, 'input[aria-label*="搜索企业名称"]', sample);
+          const searching = await waitForLoadingEvidence(cdp,sessionId,'comparison');
+          if (!searching) bad('平台记录表:打开前未观察到真实搜索请求');
+          await finishFetchGate(cdp,sessionId);
           await waitUntil(cdp, sessionId, `document.querySelector('tbody a[href^="/enterprises/"]')?.textContent.trim() === ${JSON.stringify(sample)} && !document.querySelector('[data-testid="comparison-loading-status"]')?.textContent.includes('正在')`);
           const point = await evaluate(cdp, sessionId, `(() => { const button = [...document.querySelectorAll('[data-testid="platform-evidence-details-toggle"]')].find(el => el.getBoundingClientRect().width > 0); const r = button?.getBoundingClientRect(); return r && {x:r.left+r.width/2,y:r.top+r.height/2};})()`);
           await clickPoint(cdp, sessionId, point, '查看平台记录');
