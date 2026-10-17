@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { computed, nextTick, shallowRef, watch } from 'vue'
-import { ChevronLeft, ChevronRight, GitCompareArrows, Search } from '@lucide/vue'
+import { GitCompareArrows, Search } from '@lucide/vue'
 import type {
   ComparisonCounts,
   ComparisonDirection,
@@ -55,7 +55,7 @@ const district = shallowRef('')
 const page = shallowRef(1)
 const showCurated = shallowRef(false)
 const queryCache = useQueryCache()
-const pageSize = 25
+const pageSize = shallowRef(25)
 const ALL_DISTRICTS = '__all__'
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 const districtModel = computed({
@@ -75,7 +75,7 @@ const params = computed(() => ({
   q: q.value,
   district: district.value,
   page: page.value,
-  pageSize,
+  pageSize: pageSize.value,
   showCurated: showCurated.value,
 }))
 
@@ -128,7 +128,7 @@ async function refreshCuration() {
   if (page.value > totalPages.value) page.value = totalPages.value
 }
 const totalPages = computed(() =>
-  Math.max(1, Math.ceil((data.value?.total ?? 0) / pageSize)),
+  Math.max(1, Math.ceil((data.value?.total ?? 0) / pageSize.value)),
 )
 const activeFilters = computed(() => [
   ...(q.value.trim() ? [{ key: 'q', label: `搜索：${q.value.trim()}` }] : []),
@@ -141,6 +141,15 @@ function clearFilter(key: string) {
 function clearAllFilters() {
   q.value = ''
   district.value = ''
+}
+function setPage(value: number) {
+  page.value = Math.min(totalPages.value, Math.max(1, value))
+  scroller.value?.scrollIntoView({ block: 'start', behavior: 'instant' })
+}
+function setPageSize(value: number) {
+  pageSize.value = Math.min(200, Math.max(1, Math.trunc(value) || 25))
+  page.value = 1
+  scroller.value?.scrollIntoView({ block: 'start', behavior: 'instant' })
 }
 const TH_CLASS =
   'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs font-medium'
@@ -254,13 +263,6 @@ const exportUrl = computed(() => {
 
     <div class="flex min-w-0 flex-col gap-2">
       <div class="flex min-w-0 flex-col gap-2" data-testid="comparison-results">
-            <div class="relative h-5 shrink-0" aria-live="polite" data-testid="comparison-loading-status">
-              <span v-if="isLoading" class="bg-card text-muted-foreground fixed right-4 bottom-4 z-50 rounded-sm border px-3 py-2 text-[13px]">正在搜索与加载比对结果…</span>
-              <span v-else class="text-muted-foreground absolute top-0.5 left-0 text-[13px] tabular-nums">共 {{ data?.total ?? 0 }} 条</span>
-              <span v-if="isLoading" class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
-                <span class="comparison-progress bg-primary block h-0.5 w-1/3 rounded-full" />
-              </span>
-            </div>
             <Alert v-if="error" variant="destructive">
               <AlertTitle>比对数据加载失败</AlertTitle>
               <AlertDescription
@@ -270,7 +272,8 @@ const exportUrl = computed(() => {
               >
             </Alert>
             <Card class="min-w-0 gap-0 overflow-hidden py-0 shadow-none">
-              <CardContent class="p-0">
+              <CardContent class="relative p-0">
+                <TableLoadingStatus kind="comparison" :loading="isLoading" label="正在搜索与加载比对结果…" />
                 <!-- 宽表在容器内横向滚动,窄屏收在当前视口中。 -->
                 <div class="relative min-w-0">
                   <div
@@ -279,7 +282,7 @@ const exportUrl = computed(() => {
                     role="region"
                     aria-label="比对结果表格(可横向滚动)"
                     data-testid="comparison-table-scroll"
-                    class="overflow-x-auto overflow-y-visible [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&_[data-slot=table-container]]:overflow-visible"
+                    class="scroll-mt-16 overflow-x-auto overflow-y-visible [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&_[data-slot=table-container]]:overflow-visible"
                     :aria-busy="isLoading"
                   >
                   <Empty v-if="!isLoading && !error && !rows.length" class="h-full">
@@ -289,7 +292,7 @@ const exportUrl = computed(() => {
                       <EmptyDescription>当前筛选条件下没有匹配结果。</EmptyDescription>
                     </EmptyHeader>
                   </Empty>
-                  <Table v-else class="w-full min-w-0 table-fixed sm:min-w-[1090px]">
+                  <Table v-else class="data-table w-full min-w-0 table-fixed sm:min-w-[1090px]">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
                         <TableHead :class="[TH_CLASS, 'w-[38%] sm:w-[320px] md:w-[28%]']"
@@ -406,30 +409,8 @@ const exportUrl = computed(() => {
                 </div>
               </CardContent>
             </Card>
-            <div data-testid="comparison-pagination" class="flex items-center justify-between gap-2">
-              <span class="text-muted-foreground text-[13px] tabular-nums"
-                >第 {{ page }} / {{ totalPages }} 页 · 每页
-                {{ pageSize }} 条</span
-              >
-              <div class="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  :disabled="page <= 1 || isLoading"
-                  aria-label="上一页"
-                  @click="page--"
-                  ><ChevronLeft />上一页</Button
-                >
-                <Button
-                  variant="outline"
-                  size="sm"
-                  :disabled="page >= totalPages || isLoading"
-                  aria-label="下一页"
-                  @click="page++"
-                  >下一页<ChevronRight
-                /></Button>
-              </div>
-            </div>
+            <TablePagination data-testid="comparison-pagination" :page="page" :page-size="pageSize" :total="data?.total ?? 0" unit="条" :loading="isLoading" @update:page="setPage" @update:page-size="setPageSize" />
+
       </div>
     </div>
   </div>
@@ -454,16 +435,4 @@ const exportUrl = computed(() => {
   line-height: 1.5;
 }
 
-.comparison-progress {
-  animation: comparison-progress 1100ms var(--ease-snap) infinite;
-}
-
-@keyframes comparison-progress {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(300%); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .comparison-progress { animation: none; }
-}
 </style>

@@ -97,7 +97,7 @@ function differenceReason(row: EnterpriseListRow): string {
     data-testid="enterprise-table-scroll"
     class="overflow-auto lg:max-h-[min(640px,calc(100dvh-260px))] [&_[data-slot=table-container]]:overflow-visible"
   >
-    <Table class="w-full min-w-0 table-fixed sm:min-w-[980px]">
+    <Table class="data-table w-full min-w-0 table-fixed sm:min-w-[980px]">
       <TableHeader class="sticky top-0 z-10">
         <TableRow class="hover:bg-transparent">
           <TableHead class="bg-muted text-muted-foreground h-9 w-[28%] text-xs font-semibold tracking-wide sm:w-[20rem]">

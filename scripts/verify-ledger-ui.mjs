@@ -1946,6 +1946,111 @@ async function verifyCustomPageSizeInputShadow(cdp) {
   }
 }
 
+function tableChromeViolation(m) {
+  if (!m || m.statusHeight !== 0 || m.statusPosition !== 'absolute' || Math.abs(m.statusTop - m.cardTop) > 2 || !m.statusInCard) return '加载状态未贴表顶或仍占空白行';
+  if (m.pagerCount !== 1 || m.pagerTop < m.cardBottom - 1 || !m.sizeInsidePager || !m.totalInsidePager) return '总数或每页条数未与页码统一置于表后';
+  if (m.headerFont !== '13px' || m.headerWeight !== '600' || m.headerHeight !== 36 || m.headerPadding !== '12px' || m.cellPadding !== '6px') return '表头字号字重高度或表体间距未统一';
+  if (m.overflow > 0) return '页面级横向溢出';
+  return null;
+}
+
+async function verifySharedTableChrome(cdp) {
+  for (const viewport of VIEWPORTS.slice(0, 2)) {
+    for (const spec of [{kind:'ledger',path:'/',api:'/api/roster/enterprises?'},{kind:'files',path:'/files',api:'/api/files?'},{kind:'comparison',path:'/comparison',api:'/api/comparison'}]) {
+      const ready = `(() => !document.querySelector('[data-slot="skeleton"]') && !!document.querySelector('.data-table tbody tr') && !!document.querySelector('[data-table-pagination]') && !document.querySelector('[data-testid="${spec.kind}-loading-status"]')?.textContent.includes('正在'))()`;
+      const { targetId, sessionId } = await openSession(cdp, `${BASE}${spec.path}`, viewport, ready, {openDrawer:false});
+      const label = `${spec.kind} · ${viewport.width}px统一表格`;
+      const measure = `(() => {
+        const table = document.querySelector('.data-table'), card = table?.closest('.bg-card.border.rounded-lg');
+        const status = document.querySelector('[data-testid="${spec.kind}-loading-status"]');
+        const pager = document.querySelector('[data-table-pagination]');
+        if (!table || !card || !status || !pager) return null;
+        const header = [...table.querySelectorAll('thead th')].find(el=>el.getBoundingClientRect().width>0);
+        const cell = [...table.querySelectorAll('tbody td')].find(el=>el.getBoundingClientRect().width>0);
+        if (!header || !cell) return null;
+        const h = getComputedStyle(header), c = getComputedStyle(cell);
+        return {statusHeight:status.getBoundingClientRect().height,statusPosition:getComputedStyle(status).position,statusTop:status.getBoundingClientRect().top,
+          statusInCard:card.contains(status),cardTop:card.getBoundingClientRect().top,cardBottom:card.getBoundingClientRect().bottom,
+          pagerCount:document.querySelectorAll('[data-table-pagination]').length,pagerTop:pager.getBoundingClientRect().top,
+          sizeInsidePager:!!pager.querySelector('[aria-label="每页条数"]'),totalInsidePager:!!pager.querySelector('[data-testid="table-total"]'),
+          headerFont:h.fontSize,headerWeight:h.fontWeight,headerHeight:header.getBoundingClientRect().height,headerPadding:h.paddingLeft,cellPadding:c.paddingTop,
+          overflow:Math.max(0,document.documentElement.scrollWidth-innerWidth)};
+      })()`;
+      try {
+        const m = await evaluate(cdp, sessionId, measure), issue = tableChromeViolation(m);
+        if (issue) bad(`${label}:${issue} ${JSON.stringify(m)}`);
+        else ok(`${label}:36px表头/13px字号/6px行内距，空闲无占位，数量与页码均在表后，页面无溢出`);
+        const broken = await evaluate(cdp, sessionId, `(() => {
+          const status=document.querySelector('[data-testid="${spec.kind}-loading-status"]'), anchor=document.createComment('loading-anchor');
+          status.replaceWith(anchor); document.querySelector('.data-table').closest('.bg-card.border.rounded-lg').before(status);
+          status.style.cssText='position:relative;height:24px'; const m=(${measure});
+          anchor.replaceWith(status); status.removeAttribute('style'); return m;
+        })()`);
+        if (!tableChromeViolation(broken)) bad(`${label}:恢复悬空加载行后断言未命中`);
+        else ok(`${label}:恢复表外24px空白加载行后按预期变红`);
+        const upperPager = await evaluate(cdp, sessionId, `(() => {
+          const pager=document.querySelector('[data-table-pagination]'), anchor=document.createComment('pagination-anchor');
+          pager.replaceWith(anchor); document.querySelector('.data-table').closest('.bg-card.border.rounded-lg').before(pager);
+          const m=(${measure}); anchor.replaceWith(pager); return m;
+        })()`);
+        if (!tableChromeViolation(upperPager)) bad(`${label}:分页移到表上方后断言未命中`);
+        else ok(`${label}:数量与页码恢复到表上方后按预期变红`);
+        if (spec.kind === 'files') {
+          const expand = '.data-table > tbody > tr:first-child td:first-child button';
+          const icon = await evaluate(cdp, sessionId, `!!document.querySelector('${expand} svg')`);
+          await clickSelector(cdp, sessionId, expand);
+          const expanded = await waitUntil(cdp, sessionId, `!!document.querySelector('.data-table tbody table tbody tr')`);
+          if (!icon || !expanded) bad(`${label}:文件展开箭头或段明细丢失`);
+          else ok(`${label}:文件展开图标和段明细保持可用`);
+          await clickSelector(cdp, sessionId, expand);
+        }
+        await installMotionAndFetchGate(cdp, sessionId);
+        await clickSelector(cdp, sessionId, '[aria-label="每页条数"]');
+        await waitUntil(cdp, sessionId, `(() => [...document.querySelectorAll('[role="option"]')].some(el=>el.textContent.includes('自定义')))()`);
+        await clickElementContaining(cdp, sessionId, '[role="option"]', '自定义');
+        const customReady = await waitUntil(cdp, sessionId, `!!document.querySelector('[aria-label="自定义每页条数"]')`);
+        if (!customReady) {bad(`${label}:未出现自定义数量输入`);continue;}
+        await startFetchGate(cdp, sessionId, spec.api);
+        await evaluate(cdp, sessionId, `(() => {const el=document.querySelector('[aria-label="自定义每页条数"]');el.value='1';el.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+        const loading = await waitUntil(cdp, sessionId, `window.__rl20FetchGate.requested && !!document.querySelector('tbody[data-loading="true"]') && document.querySelector('[data-testid="${spec.kind}-loading-status"]').textContent.includes('正在')`);
+        const progress = loading && await evaluate(cdp, sessionId, `(() => {
+          const status=document.querySelector('[data-testid="${spec.kind}-loading-status"]'), bar=status.querySelector('.table-progress'), line=bar.parentElement;
+          const message=[...status.querySelectorAll('span')].find(el=>el.textContent.includes('正在'));
+          const card=status.closest('.bg-card.border.rounded-lg');
+          return {height:status.getBoundingClientRect().height,topGap:Math.abs(line.getBoundingClientRect().top-card.getBoundingClientRect().top),messagePosition:getComputedStyle(message).position,
+            animation:getComputedStyle(bar).animationName,easing:getComputedStyle(bar).animationTimingFunction};
+        })()`);
+        if (!progress || progress.height !== 0 || progress.topGap > 2 || progress.messagePosition !== 'absolute' || progress.animation === 'none' || normalizeEasing(progress.easing) !== EXPECTED_EASING) bad(`${label}:加载条仍悬空或未使用共用动效 ${JSON.stringify(progress)}`);
+        else ok(`${label}:真实数量请求中进度线贴表顶，文字位于表头内，共用缓动且不占布局`);
+        if (loading) {
+          const motion = await evaluate(cdp, sessionId, `new Promise(resolve => {
+            const samples=[]; function frame() {
+              const bar=document.querySelector('.table-progress'), b=bar.getBoundingClientRect(), c=bar.parentElement.getBoundingClientRect();
+              samples.push({x:b.x,visible:Math.max(0,Math.min(b.right,c.right)-Math.max(b.left,c.left)),width:b.width});
+              if(samples.length<40) requestAnimationFrame(frame);else resolve({minVisible:Math.min(...samples.map(s=>s.visible)),width:samples[0].width,travel:Math.max(...samples.map(s=>s.x))-Math.min(...samples.map(s=>s.x))});
+            } frame();
+          })`);
+          if (motion.minVisible < motion.width - 2 || motion.travel < 4) bad(`${label}:进度段不可见或未观察到真实位移 ${JSON.stringify(motion)}`);
+          else ok(`${label}:40帧观察进度段始终完整可见且实际移动${Math.round(motion.travel)}px`);
+        }
+        await finishFetchGate(cdp, sessionId);
+        const one = await waitUntil(cdp, sessionId, `(() => document.querySelector('tbody')?.dataset.loading !== 'true' && document.querySelectorAll('.data-table > tbody > tr').length===1 && !document.querySelector('[data-slot="skeleton"]'))()`);
+        if (!one) bad(`${label}:每页1条未生效`);
+        else ok(`${label}:每页1条实际返回并显示1行`);
+        await startFetchGate(cdp, sessionId, spec.api);
+        await clickSelector(cdp, sessionId, '[data-slot="pagination-next"]');
+        const paging = await waitUntil(cdp, sessionId, `window.__rl20FetchGate.requested && !!document.querySelector('tbody[data-loading="true"]')`);
+        if (!paging) bad(`${label}:底部分页未触发真实加载`);
+        else ok(`${label}:底部分页按钮触发真实加载`);
+        await finishFetchGate(cdp, sessionId);
+      } finally {
+        await finishFetchGate(cdp, sessionId).catch(()=>{});
+        await cdp.send('Target.closeTarget',{targetId}).catch(()=>{});
+      }
+    }
+  }
+}
+
 async function verifyFilesSearchLoading(cdp) {
   const ready = `(() => !document.querySelector('[data-slot="skeleton"]') && !!document.querySelector('table tbody tr td:nth-of-type(2)'))()`
   const page = await openSession(cdp, `${BASE}/files`, VIEWPORTS[0], ready)
@@ -1990,7 +2095,7 @@ const READY = `(() => (
 
 function reducedMotionViolation(result, label) {
   if (!result.reducedMotion) return `${label}:Chrome 未应用 prefers-reduced-motion: reduce`
-  if (result.triggers.length !== 3) return `${label}:预期 3 个 Select 触发器,实测 ${result.triggers.length}`
+  if (result.triggers.length !== result.expectedCount) return `${label}:预期 ${result.expectedCount} 个 Select 触发器,实测 ${result.triggers.length}`
   const violations = result.triggers.filter((trigger) => {
     const durations = String(trigger.pressed.transitionDuration ?? '')
       .split(',')
@@ -2070,6 +2175,7 @@ async function measureReducedMotionSelects(cdp, page, injectScale = false) {
       await waitUntil(cdp, sessionId, `(() => !document.querySelector('[data-slot="select-content"]'))()`)
     }
     return {
+      expectedCount: page.query === '/comparison' ? 4 : 3,
       reducedMotion: await evaluate(cdp, sessionId, `matchMedia('(prefers-reduced-motion: reduce)').matches`),
       triggers,
     }
@@ -2793,6 +2899,7 @@ async function main() {
       }
     }
 
+    await verifySharedTableChrome(cdp)
     await verifyPlatformRecordTables(cdp)
     await verifyLedgerCompactSummaries(cdp)
     await verifyLedgerSearchLoading(cdp)

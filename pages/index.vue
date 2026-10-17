@@ -3,10 +3,6 @@ import { computed, ref, shallowRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { watchDebounced } from '@vueuse/core'
 import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
   ExternalLink,
   Search,
 } from '@lucide/vue'
@@ -43,16 +39,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import {
-  Pagination,
-  PaginationContent,
-  PaginationEllipsis,
-  PaginationFirst,
-  PaginationItem,
-  PaginationLast,
-  PaginationNext,
-  PaginationPrevious,
-} from '@/components/ui/pagination'
+
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 /**
@@ -378,27 +365,9 @@ const sortModel = computed({
   },
 })
 
-const PAGE_SIZE_PRESETS = [25, 50, 100, 200]
-const customSize = ref(false)
-const sizeModel = computed({
-  get: () => (customSize.value ? 'custom' : String(pageSize.value)),
-  set: (v: string) => {
-    if (v === 'custom') {
-      customSize.value = true
-      return
-    }
-    customSize.value = false
-    setPageSize(Number(v))
-  },
-})
-const isCustomSize = computed(() => customSize.value)
 function setPageSize(n: number) {
   pageSize.value = clampSize(Math.trunc(n) || DEFAULT_PAGE_SIZE)
   page.value = 1
-}
-function onSizeInput(e: Event) {
-  const value = Number((e.target as HTMLInputElement).value)
-  if (Number.isFinite(value) && value > 0) setPageSize(value)
 }
 
 useHead({
@@ -522,14 +491,7 @@ useHead({
 
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
-        <div class="absolute inset-x-0 top-0 z-20 h-0" aria-live="polite" data-testid="ledger-loading-status">
-      <template v-if="isLoading">
-        <span class="bg-card text-muted-foreground absolute right-2 top-1 z-20 px-2 text-[13px]">正在搜索…</span>
-        <span class="bg-muted absolute inset-x-0 top-0 block h-0.5 overflow-hidden">
-          <span class="bg-primary ledger-progress block h-0.5 w-1/3" />
-        </span>
-      </template>
-    </div>
+        <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在搜索…" />
         <EnterpriseListTable
           :rows="rows"
           :loading="isLoading"
@@ -542,83 +504,9 @@ useHead({
       </CardContent>
     </Card>
 
-    <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
-      <div class="flex items-center gap-2">
-        <span class="text-muted-foreground text-xs">每页</span>
-        <Select v-model="sizeModel">
-          <SelectTrigger size="sm" class="bg-card w-20 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100" aria-label="每页条数">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent class="shadow-none">
-            <SelectItem v-for="n in PAGE_SIZE_PRESETS" :key="n" :value="String(n)">{{ n }}</SelectItem>
-            <SelectItem value="custom">自定义…</SelectItem>
-          </SelectContent>
-        </Select>
-        <Input
-          v-if="isCustomSize"
-          :model-value="pageSize"
-          type="number"
-          min="1"
-          :max="200"
-          class="bg-card h-8 w-20 shadow-none"
-          aria-label="自定义每页条数"
-          @change="onSizeInput"
-        />
-        <span class="text-muted-foreground text-xs">家企业</span>
-      </div>
-
-      <span class="text-muted-foreground text-xs tabular-nums">
-        共 {{ total.toLocaleString('zh-CN') }} 家 · 差异
-        {{ counts.differences.toLocaleString('zh-CN') }} 条
-      </span>
-
-      <Pagination
-        v-if="total > 0"
-        v-slot="{ page: current }"
-        class="mx-0 w-full justify-center sm:ml-auto sm:w-auto sm:justify-end"
-        :page="page"
-        :items-per-page="pageSize"
-        :total="total"
-        :sibling-count="1"
-        :show-edges="totalPages > 5"
-        @update:page="setPage"
-      >
-        <!--
-          窄屏必须允许换行:`PaginationContent` 的基础类是 `flex-row`(不换行),
-          而 `sibling-count=1` + `show-edges` 在几百页时会有 11 个条目(实测 452px)。
-          不换行就会**撑破页面**并且横向溢出(实测 390 视口下 documentElement
-          scrollWidth 468 / clientWidth 390,溢出 78px)—— 表格自己有滚动容器,分页条没有。
-        -->
-        <PaginationContent v-slot="{ items }" class="flex-wrap justify-center sm:justify-end">
-          <PaginationFirst class="hidden sm:flex">
-            <ChevronsLeft class="size-4" />
-            <span class="sr-only">第一页</span>
-          </PaginationFirst>
-          <PaginationPrevious>
-            <ChevronLeft class="size-4" />
-            <span class="hidden sm:block">上一页</span>
-          </PaginationPrevious>
-          <template v-for="(item, index) in items" :key="index">
-            <PaginationItem
-              v-if="item.type === 'page'"
-              :value="item.value"
-              :is-active="item.value === current"
-            >
-              {{ item.value }}
-            </PaginationItem>
-            <PaginationEllipsis v-else :index="index" />
-          </template>
-          <PaginationNext>
-            <span class="hidden sm:block">下一页</span>
-            <ChevronRight class="size-4" />
-          </PaginationNext>
-          <PaginationLast class="hidden sm:flex">
-            <ChevronsRight class="size-4" />
-            <span class="sr-only">最后一页</span>
-          </PaginationLast>
-        </PaginationContent>
-      </Pagination>
-    </div>
+    <TablePagination :page="page" :page-size="pageSize" :total="total" unit="家企业" @update:page="setPage" @update:page-size="setPageSize">
+      共 {{ total.toLocaleString('zh-CN') }} 家 · 差异 {{ counts.differences.toLocaleString('zh-CN') }} 条
+    </TablePagination>
 
     <!--
       抽屉(三处基本动效之三:滑出)。**非模态**:开着它照样能看表、能接着点别的行
@@ -643,27 +531,4 @@ useHead({
   line-height: 1.5;
 }
 
-/*
- * 进度线自己跑起来:2px 的条从左边滑到右边,是「正在查」的**可见证据**。
- * 用 transform 而不是 background-position —— 前者走合成层,不触发重绘。
- * 减少动效时把条固定在左边三分之一的静态位置(仍能看出「在加载」)。
- */
-.ledger-progress {
-  animation: ledger-progress 1100ms var(--ease-snap) infinite;
-}
-
-@keyframes ledger-progress {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(300%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ledger-progress {
-    animation: none;
-  }
-}
 </style>

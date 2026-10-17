@@ -373,3 +373,21 @@ html.theme-transition::view-transition-new(root) {
     scrollbar-color: color-mix(in oklab, var(--foreground) 22%, transparent) transparent;
   }
 }
+
+/* Enterprise list, files and comparison share table typography and spacing. */
+.data-table {
+  font-size: 13px;
+  line-height: 20px;
+}
+.data-table > thead > tr > th {
+  height: 36px;
+  padding-inline: 12px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+.data-table > tbody > tr > td {
+  padding-block: 6px;
+}

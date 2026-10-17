@@ -2,7 +2,7 @@
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue'
 import { watchDebounced } from '@vueuse/core'
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FolderUp, Search } from '@lucide/vue'
+import { ChevronRight, FolderUp, Search } from '@lucide/vue'
 import {
   CATEGORY_STATE_ORDER,
   CATEGORY_STATES,
@@ -29,21 +29,8 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
-import {
-  Pagination,
-  PaginationContent,
-  PaginationEllipsis,
-  PaginationItem,
-  PaginationNext,
-  PaginationPrevious,
-} from '@/components/ui/pagination'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+
+
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -104,7 +91,6 @@ watchDebounced(
 )
 
 // —— 分页 ——
-const PAGE_SIZE_PRESETS = [25, 50, 100, 200]
 const MAX_PAGE_SIZE = 200
 const page = ref(1)
 const pageSize = ref(50)
@@ -130,7 +116,7 @@ const total = computed(() => data.value?.total ?? 0)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
 /**
- * 表格是否真的横向溢出了(12 列合计 1118px,1440 侧栏展开时装得下,更窄就装不下)。
+ * 表格是否真的横向溢出了(12 列合计 1126px,1440 侧栏展开时装得下,更窄就装不下)。
  *
  * 只用来决定「钉住的操作列要不要画左边那条分界线」:没溢出时不会有列从它底下滑过,
  * 画线就是凭空多一根;溢出了才需要划出「这列是钉住的」。
@@ -327,11 +313,11 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
 /**
  * 操作列的表头 / 单元格:横向滚动时**钉在表格右边**。
  *
- * 这一页 12 列合计 1118px,1280 / 1366 视口(侧栏展开)装不下,会横向滚动;而编辑 /
+ * 这一页 12 列合计 1126px,1280 / 1366 视口(侧栏展开)装不下,会横向滚动;而编辑 /
  * 预览 / 移出恰恰是这一页最常做的事。不钉住的话,默认视野里够不到它们 —— 用户得先
  * 横向滚到底才知道能操作。钉住后无论滚到哪一段,操作始终在。
  *
- * 底色见 `<style scoped>` 里的 `.pin-action`:必须**实心**(钉住的列会盖在中间列上),
+ * 底色见样式区：必须使用实心底色，避免滚动内容透过固定列。
  * 且 hover 时与行的 `bg-accent/70` 同色,否则一行里后面几列一变深、这列还是白的,
  * 像是浮在外面。左边那条分界线只在真的溢出时才画(见 `isPinned`)。
  * 单元格 `z-10` 低于表头的 `z-30`:上下滚时行内单元格不会盖住表头。
@@ -400,7 +386,7 @@ function publishedYearBatch(row: StoredFileRow): string {
 </script>
 
 <template>
-  <div class="flex flex-col gap-4">
+  <div class="files-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader
       class="rise-in"
       style="--rise-index: 0"
@@ -453,10 +439,7 @@ function publishedYearBatch(row: StoredFileRow): string {
         @update:model-value="onFilterChange"
       />
 
-      <span class="text-muted-foreground ml-auto text-xs tabular-nums">
-        符合条件
-        <span class="text-foreground font-medium">{{ total.toLocaleString('zh-CN') }}</span> 个文件
-      </span>
+
     </div>
 
     <!-- 生效中的条件摊开写出来:光看下拉按钮看不出到底勾了哪几项。与台账页同一行样式。 -->
@@ -482,23 +465,16 @@ function publishedYearBatch(row: StoredFileRow): string {
       </Button>
     </TransitionGroup>
 
-    <div class="relative h-6 shrink-0" aria-live="polite" data-testid="files-loading-status">
-      <template v-if="isLoading">
-        <span class="text-muted-foreground absolute top-0.5 left-0 text-[13px]">正在筛选与加载文件…</span>
-        <span class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
-          <span class="bg-primary block h-0.5 w-1/3 rounded-full" />
-        </span>
-      </template>
-    </div>
-
-    <Card class="rise-in gap-0 overflow-hidden py-0" style="--rise-index: 2">
-      <CardContent class="p-0">
+    <Card class="gap-0 overflow-hidden py-0 shadow-none" style="--rise-index: 2">
+      <CardContent class="relative p-0">
+        <TableLoadingStatus kind="files" :loading="isLoading" label="正在筛选与加载文件…" />
         <div
           ref="tableScroller"
+          data-testid="files-table-scroll"
           class="max-h-[max(320px,calc(100dvh-17rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
           :aria-busy="isLoading"
         >
-          <!-- 12 列。列宽按**实测文字宽度**逐列定,合计 1118px。
+          <!-- 12 列。列宽按**实测文字宽度**逐列定,合计 1126px。
                1440(侧栏展开)容器 1124px → 不横滚;1280 / 1366 装不下(实测 1280 差 144px,
                1366 差 58px),这时**操作列钉在右边**(见下面的 `sticky right-0`)——
                编辑/预览/移出是这一页最常做的事,不能因为横向滚动就够不到。
@@ -506,7 +482,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                文件名留 209px:放下「甬经信中小〔2026〕101号关于…」,截断点落在文号之后,
                邻近的两份文件才不会截成同一个样子。
                `table-fixed`:列宽按表头的 w-* 逐列算,宽屏下也不会某一列吃满剩余空间。 -->
-          <Table class="min-w-[1118px] table-fixed">
+          <Table class="data-table min-w-[1126px] table-fixed">
             <TableHeader>
               <TableRow class="hover:bg-transparent">
                 <TableHead :class="[TH_CLASS, 'w-8']">
@@ -514,7 +490,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                 </TableHead>
                 <TableHead :class="[TH_CLASS, 'w-[209px]']">文件名</TableHead>
                 <TableHead :class="[TH_CLASS, 'w-[81px]']">来源</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[72px]']">类别</TableHead>
+                <TableHead :class="[TH_CLASS, 'w-[80px]']">类别</TableHead>
                 <TableHead
                   :class="[TH_CLASS, 'w-[92px]']"
                   title="目录给出的公布年份/批次 —— 这份文件是哪一批公布的(单值)"
@@ -559,7 +535,7 @@ function publishedYearBatch(row: StoredFileRow): string {
 
               <template v-else-if="rows.length">
                 <template v-for="row in rows" :key="row.id">
-                  <TableRow class="group hover:bg-accent/70 h-11">
+                  <TableRow class="group hover:bg-accent/70">
                     <TableCell class="pr-0">
                       <Button
                         v-if="row.parts.length"
@@ -805,65 +781,7 @@ function publishedYearBatch(row: StoredFileRow): string {
       </CardContent>
     </Card>
 
-    <div class="rise-in flex flex-wrap items-center gap-x-4 gap-y-3" style="--rise-index: 3">
-      <div class="flex items-center gap-2">
-        <span class="text-muted-foreground text-xs">每页</span>
-        <Select :model-value="String(pageSize)" @update:model-value="(v) => setPageSize(Number(v))">
-          <SelectTrigger class="bg-card h-8 w-20" aria-label="每页条数">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="n in PAGE_SIZE_PRESETS" :key="n" :value="String(n)">{{ n }}</SelectItem>
-          </SelectContent>
-        </Select>
-        <span class="text-muted-foreground text-xs">个</span>
-      </div>
-
-      <span class="text-muted-foreground text-xs tabular-nums">
-        第 {{ page }} / {{ totalPages }} 页
-      </span>
-
-      <Pagination
-        v-if="total > 0"
-        v-slot="{ page: current }"
-        class="mx-0 ml-auto w-auto justify-end"
-        :page="page"
-        :items-per-page="pageSize"
-        :total="total"
-        :sibling-count="1"
-        :show-edges="totalPages > 5"
-        @update:page="setPage"
-      >
-        <PaginationContent v-slot="{ items }">
-          <PaginationFirst>
-            <ChevronsLeft class="size-4" />
-            <span class="sr-only">第一页</span>
-          </PaginationFirst>
-          <PaginationPrevious>
-            <ChevronLeft class="size-4" />
-            <span class="hidden sm:block">上一页</span>
-          </PaginationPrevious>
-          <template v-for="(item, index) in items" :key="index">
-            <PaginationItem
-              v-if="item.type === 'page'"
-              :value="item.value"
-              :is-active="item.value === current"
-            >
-              {{ item.value }}
-            </PaginationItem>
-            <PaginationEllipsis v-else :index="index" />
-          </template>
-          <PaginationNext>
-            <span class="hidden sm:block">下一页</span>
-            <ChevronRight class="size-4" />
-          </PaginationNext>
-          <PaginationLast>
-            <ChevronsRight class="size-4" />
-            <span class="sr-only">最后一页</span>
-          </PaginationLast>
-        </PaginationContent>
-      </Pagination>
-    </div>
+    <TablePagination :page="page" :page-size="pageSize" :total="total" unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
 
     <UploadDialog v-model:open="uploadOpen" @registered="refresh()" />
 
@@ -905,6 +823,9 @@ function publishedYearBatch(row: StoredFileRow): string {
 </template>
 
 <style scoped>
+.files-page :deep(.text-xs), .files-page :deep(.text-sm) { font-size: 13px; line-height: 1.5; }
+.files-page :deep([data-slot='button']) { box-shadow: none; }
+
 /*
  * 钉在右边的「操作」列:横向滚动时它盖在中间列上,所以底色必须是**实心**的
  * (`bg-card` / hover 的 `bg-accent`),半透明会透出底下的文字。
