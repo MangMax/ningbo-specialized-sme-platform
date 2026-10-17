@@ -6,7 +6,7 @@ import { PdfActionType, PdfZoomMode } from '@embedpdf/models'
 import PdfPreview from '../components/preview/PdfPreview.vue'
 
 // Control only the public headless engine/hooks. Exercise the real application tree.
-const control = vi.hoisted(() => ({ documentState: null as any, layout: null as any, scroll: null as any, move: vi.fn(), destroy: vi.fn(), viewport: { scrollLeft: 0, scrollTop: 240 }, bookmarks: [] as any[] }))
+const control = vi.hoisted(() => ({ documentState: null as any, layout: null as any, scroll: null as any, move: vi.fn(), destroy: vi.fn(), viewport: { scrollLeft: 0, scrollTop: 240 }, bookmarks: [] as any[], manualRaster: false, raster: null as any, activity: null as any, smooth: false, metrics: null as any }))
 vi.mock('@embedpdf/engines/pdfium-worker-engine', () => ({ createPdfiumEngine: () => ({ destroy: control.destroy, getBookmarks: () => ({ wait: (ok: any) => ok({ bookmarks: control.bookmarks }), abort() {} }) }) }))
 vi.mock('@embedpdf/core/vue', async () => {
   const { shallowRef, defineComponent, h } = await import('vue')
@@ -23,19 +23,20 @@ vi.mock('@embedpdf/plugin-scroll/vue', async (original) => {
     useScrollCapability: () => ({ provides: shallowRef({
       onLayoutReady: (fn: any) => { control.layout = fn; return () => {} },
       onScroll: (fn: any) => { control.scroll = fn; return () => {} },
-      forDocument: () => ({ scrollToPage: control.move, getMetrics: () => ({ currentPage: 3, pageVisibilityMetrics: [{ pageNumber: 3, visiblePercentage: 100, original: { pageX: 0, pageY: 240 } }] }) }),
+      forDocument: () => ({ scrollToPage: control.move, getMetrics: () => control.metrics ?? ({ scrollOffset: { x: 0, y: 240 }, currentPage: 3, pageVisibilityMetrics: [{ pageNumber: 3, visiblePercentage: 100, original: { pageX: 0, pageY: 240 } }] }) }),
     }) }),
   }
 })
+vi.mock('@embedpdf/plugin-render/vue', async (original) => ({ ...await original<any>(), useRenderCapability: () => ({ provides: shallowRef({ forDocument: () => ({ renderPage: () => ({ wait: (ok: any, fail: any) => { control.raster = { ok, fail }; if (!control.manualRaster) ok(new Blob(['pixels'])) }, abort() {} }) }) }) }) }))
 vi.mock('@embedpdf/plugin-document-manager/vue', async (original) => ({ ...await original<any>(), useDocumentManagerCapability: () => ({ provides: shallowRef({ onDocumentError: () => () => {} }) }) }))
-vi.mock('@embedpdf/plugin-viewport/vue', async (original) => ({ ...await original<any>(), useViewportCapability: () => ({ provides: shallowRef({ forDocument: () => ({ getMetrics: () => control.viewport, scrollTo: ({ x, y }: any) => { control.viewport = { scrollLeft: x, scrollTop: y } } }) }) }) }))
+vi.mock('@embedpdf/plugin-viewport/vue', async (original) => ({ ...await original<any>(), useViewportCapability: () => ({ provides: shallowRef({ onScrollActivity: (fn: any) => { control.activity = fn; return () => {} }, forDocument: () => ({ isSmoothScrolling: () => control.smooth, getMetrics: () => control.viewport, scrollTo: ({ x, y }: any) => { control.viewport = { scrollLeft: x, scrollTop: y } } }) }) }) }))
 vi.mock('@embedpdf/plugin-zoom/vue', async (original) => ({ ...await original<any>(), useZoom: () => ({ provides: shallowRef(null), state: shallowRef({ currentZoomLevel: 1 }) }) }))
 vi.mock('@embedpdf/plugin-selection/vue', async (original) => ({ ...await original<any>(), useSelectionCapability: () => ({ provides: shallowRef(null) }) }))
 vi.mock('@embedpdf/plugin-search/vue', async (original) => ({ ...await original<any>(), useSearch: () => ({ provides: shallowRef(null), state: shallowRef({ results: [], total: 0 }) }) }))
 const Slot = defineComponent({ setup: (_, { slots }) => () => h('div', slots.default?.()) })
 const Layer = defineComponent({ name: 'RenderLayer', props: ['pageIndex', 'scale'], emits: ['load', 'error'], setup: props => () => h('div', `pixels ${props.pageIndex + 1}`) })
-async function reader() {
-  const wrapper = mount(PdfPreview, { props: { src: '/a.pdf' }, global: { stubs: { Viewport: Slot, PagePointerProvider: Slot, RenderLayer: Layer, SearchLayer: true, SelectionLayer: true, ThumbnailsPane: true } } })
+async function reader(onPositionChange?: (...args: any[]) => void) {
+  const wrapper = mount(PdfPreview, { attachTo: document.body, props: { src: '/a.pdf', onPositionChange }, global: { stubs: { Viewport: Slot, PagePointerProvider: Slot, PdfPageImage: Layer, SearchLayer: true, SelectionLayer: true, ThumbnailsPane: true } } })
   await vi.dynamicImportSettled(); await flushPromises()
   control.layout({ documentId: 'reader', totalPages: 12 })
   await flushPromises()
@@ -45,6 +46,13 @@ async function reader() {
 }
 beforeEach(() => {
   control.documentState = shallowRef({ status: 'loaded', scale: 1, document: { pages: Array.from({ length: 12 }, () => ({ size: { width: 600, height: 1800 } })) } })
+  vi.spyOn(HTMLElement.prototype, 'animate').mockReturnValue({ cancel() {} } as Animation)
+  control.metrics = null; control.smooth = false
+  control.manualRaster = false
+  control.raster = null
+  vi.stubGlobal('Image', class { src = ''; decode() { return Promise.resolve() } })
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:prepared')
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
   control.move.mockClear(); control.destroy.mockClear(); control.bookmarks = []
   vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(new Uint8Array([0,97,115,109,1,0,0,0])))))
 })
@@ -81,7 +89,7 @@ it.each([3, 4])('retains the successful document and retries only failed physica
   expect(wrapper.findAllComponents(Layer).find(l => l.props('pageIndex') !== failedPage - 1)!.element).toBe(success)
   expect(wrapper.emitted('error')).toBeUndefined()
   await wrapper.get('button[aria-label="下一页"]').trigger('click')
-  expect(control.move).toHaveBeenLastCalledWith({ pageNumber: 4, pageCoordinates: undefined, behavior: 'instant' })
+  expect(control.move).toHaveBeenLastCalledWith({ pageNumber: 4, pageCoordinates: undefined, behavior: 'smooth' })
   wrapper.unmount()
 })
 
@@ -99,7 +107,7 @@ it('navigates native destination and goto bookmarks to their page coordinates', 
   // Tabs use their visible accessible labels, never library-owned layout selectors.
   const tab = wrapper.findAll('[role="tab"]').find(t => t.text() === '目录')!
   await tab.trigger('mousedown', { button: 0, ctrlKey: false }); await tab.trigger('click'); await flushPromises()
-  for (const title of ['Lower chapter', 'Goto chapter', 'Horizontal chapter', 'Page only']) await wrapper.findAll('button').find(b => b.text().startsWith(title))!.trigger('click')
+  for (const title of ['Lower chapter', 'Goto chapter', 'Horizontal chapter', 'Page only']) { await wrapper.findAll('button').find(b => b.text().startsWith(title))!.trigger('click'); await flushPromises() }
   expect(control.move.mock.calls.map(([target]) => target)).toEqual([
     { pageNumber: 3, pageCoordinates: { x: 40, y: 550 }, behavior: 'instant' },
     { pageNumber: 4, pageCoordinates: { x: 25, y: 900 }, behavior: 'instant' },
@@ -123,7 +131,84 @@ it('keeps the confirmed page and anchor through tools theme and reading mode cha
   await findButton('连续').trigger('mousedown', { button: 0, ctrlKey: false })
   await flushPromises()
   control.layout({ documentId: 'reader', totalPages: 12 })
+  await flushPromises()
   expect(control.move).toHaveBeenLastCalledWith({ pageNumber: 3, pageCoordinates: { x: 0, y: 240 }, behavior: 'instant' })
   expect(control.destroy).not.toHaveBeenCalled()
   wrapper.unmount()
+})
+
+it('returns focus to the tools toggle and immediately hides closed controls from interaction', async () => {
+  const wrapper = await reader()
+  await wrapper.get('button[aria-label="阅读工具"]').trigger('click')
+  const tools = wrapper.get('[aria-label="阅读工具"][role="group"]')
+  await wrapper.get('button[aria-label="放大"]').trigger('focus')
+  await wrapper.get('button[aria-label="阅读工具"]').trigger('click')
+  expect(tools.attributes('inert')).toBeDefined()
+  expect(tools.attributes('aria-hidden')).toBe('true')
+  expect(document.activeElement?.getAttribute('aria-label')).toBe('阅读工具')
+  wrapper.unmount()
+})
+
+it('keeps the readable page until the newest distant target image is decoded', async () => {
+  const wrapper = await reader()
+  control.manualRaster = true
+  await wrapper.get('input').setValue('9')
+  await wrapper.get('form').trigger('submit')
+  expect(control.move).not.toHaveBeenCalled()
+  expect(wrapper.get('output').text()).toBe('3 / 12')
+  expect(wrapper.get('[role="status"]').text()).toContain('9')
+  const old = control.raster
+  await wrapper.get('input').setValue('11')
+  await wrapper.get('form').trigger('submit')
+  old.ok(new Blob(['old']))
+  await flushPromises()
+  expect(control.move).not.toHaveBeenCalled()
+  control.raster.ok(new Blob(['new']))
+  await flushPromises()
+  expect(control.move).toHaveBeenCalledExactlyOnceWith({ pageNumber: 11, pageCoordinates: undefined, behavior: 'instant' })
+  expect(wrapper.get('output').text()).toBe('3 / 12')
+  wrapper.unmount()
+})
+
+it('confirms an adjacent destination only after its actual image loads and smooth scrolling stops', async () => {
+  const wrapper = await reader()
+  await wrapper.get('button[aria-label="下一页"]').trigger('click')
+  await flushPromises()
+  expect(control.move).toHaveBeenLastCalledWith({ pageNumber: 4, pageCoordinates: undefined, behavior: 'smooth' })
+  control.metrics = { scrollOffset: { x: 0, y: 2040 }, currentPage: 4, pageVisibilityMetrics: [{ pageNumber: 4, visiblePercentage: 100, original: { pageX: 0, pageY: 0 } }] }
+  control.smooth = true
+  wrapper.findAllComponents(Layer)[1]!.vm.$emit('load')
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  control.scroll({ documentId: 'reader' })
+  expect(wrapper.get('output').text()).toBe('3 / 12')
+  control.activity({ documentId: 'other', activity: { isSmoothScrolling: false } })
+  expect(wrapper.get('output').text()).toBe('3 / 12')
+  control.smooth = false
+  control.activity({ documentId: 'reader', activity: { isSmoothScrolling: false } })
+  await flushPromises()
+  expect(wrapper.get('output').text()).toBe('4 / 12')
+  wrapper.unmount()
+})
+
+it('retains the current page on a failed target and retries without replacing the document', async () => {
+  const observation = vi.fn()
+  const wrapper = await reader(observation)
+  control.manualRaster = true
+  await wrapper.get('input').setValue('9')
+  await wrapper.get('form').trigger('submit')
+  control.raster.fail(new Error('render failed'))
+  await flushPromises()
+  expect(wrapper.get('output').text()).toBe('3 / 12')
+  expect(wrapper.get('[role="alert"]').text()).toContain('第 9 页未能加载')
+  expect(control.move).not.toHaveBeenCalled()
+  await wrapper.findAll('button').find(b => b.text() === '重试跳页')!.trigger('click')
+  control.raster.ok(new Blob(['recovered']))
+  await flushPromises()
+  expect(control.move).toHaveBeenCalledExactlyOnceWith({ pageNumber: 9, pageCoordinates: undefined, behavior: 'instant' })
+  expect(control.destroy).not.toHaveBeenCalled()
+  const lastPosition = observation.mock.calls.length
+  wrapper.unmount()
+  control.raster.ok(new Blob(['late']))
+  await flushPromises()
+  expect(observation).toHaveBeenCalledTimes(lastPosition)
 })

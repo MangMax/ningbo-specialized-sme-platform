@@ -4,12 +4,14 @@ import { ChevronFirst, ChevronLast, ChevronLeft, ChevronRight, Download, Maximiz
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import PdfEngine from './PdfEngine.vue'
-import type { PdfReadingPosition, PdfPositionEvent, PdfReadyEvent } from '~~/lib/pdf-reader'
+import type { PdfNavigationOptions, PdfReadingPosition, PdfPositionEvent, PdfReadyEvent } from '~~/lib/pdf-reader'
 
 const props = withDefaults(defineProps<{ src: string; name?: string; targetPage?: number; targetPosition?: PdfReadingPosition }>(), { name: '' })
 const emit = defineEmits<{ ready: [event: PdfReadyEvent]; 'position-change': [event: PdfPositionEvent]; error: [message: string] }>()
 const engine = useTemplateRef('engine')
 const shell = useTemplateRef<HTMLElement>('shell')
+const toolsToggle = useTemplateRef<{ $el: HTMLButtonElement }>('toolsToggle')
+function toggleTools() { tools.value = !tools.value; if (!tools.value) toolsToggle.value?.$el?.focus() }
 const title = computed(() => props.name || props.src.split('/').pop() || 'PDF 文档')
 const status = shallowRef<'loading' | 'ready' | 'error'>('loading')
 const total = shallowRef(0)
@@ -49,7 +51,7 @@ watch(session, (value, previous) => {
 }, { immediate: true, flush: 'sync' })
 watch(() => [props.targetPage, props.targetPosition] as const, () => {
   const target = props.targetPosition ?? (props.targetPage === undefined ? null : { page: props.targetPage })
-  if (target) navigate(target)
+  if (target) navigate(target, { animate: false })
 }, { flush: 'post' })
 function fail(error: string) { status.value = 'error'; message.value = error; emit('error', error) }
 function valid(position: PdfReadingPosition) {
@@ -60,14 +62,14 @@ function valid(position: PdfReadingPosition) {
   }
   return true
 }
-function send(position: PdfReadingPosition) {
+function send(position: PdfReadingPosition, options?: PdfNavigationOptions) {
   pending.value = null
-  if (valid(position)) { lastTarget = position; message.value = ''; engine.value?.navigate(position) }
+  if (valid(position)) { lastTarget = position; message.value = ''; engine.value?.navigate(position, options) }
 }
-function navigate(position: PdfReadingPosition) {
+function navigate(position: PdfReadingPosition, options: PdfNavigationOptions = { animate: true }) {
   lastTarget = position
   pending.value = position
-  if (status.value === 'ready') send(position)
+  if (status.value === 'ready') send(position, options)
 }
 function submit() {
   if (!/^\d+$/.test(input.value)) { message.value = `请输入 1 至 ${total.value} 的整数页码。`; return }
@@ -95,7 +97,7 @@ defineExpose({ navigate })
   <section ref="shell" data-preview-shell tabindex="0" aria-label="PDF 阅读器" class="bg-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border" @keydown="keydown">
     <div role="toolbar" aria-label="PDF 查阅" class="flex flex-wrap items-center gap-1 border-b p-2">
       <span :title="title" class="min-w-0 flex-1 truncate px-1 text-sm font-medium">{{ title }}</span>
-      <Button variant="ghost" size="icon-sm" aria-label="阅读工具" :aria-expanded="tools" @click="tools = !tools"><SlidersHorizontal /></Button>
+      <Button ref="toolsToggle" variant="ghost" size="icon-sm" aria-label="阅读工具" :aria-expanded="tools" @click="toggleTools"><SlidersHorizontal /></Button>
       <Button variant="ghost" size="icon-sm" as-child><a :href="src" :download="title" aria-label="下载原文"><Download /></a></Button>
       <Button variant="ghost" size="icon-sm" :aria-label="fullscreen ? '退出全屏' : '全屏阅读'" @click="toggleFullscreen"><Minimize v-if="fullscreen" /><Maximize v-else /></Button>
       <div class="flex w-full items-center justify-center gap-1 sm:w-auto" role="group" aria-label="实际 PDF 页码">

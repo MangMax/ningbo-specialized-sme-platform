@@ -13,7 +13,7 @@ import { SearchPluginPackage } from '@embedpdf/plugin-search/vue'
 import { SelectionPluginPackage } from '@embedpdf/plugin-selection/vue'
 import { InteractionManagerPluginPackage } from '@embedpdf/plugin-interaction-manager/vue'
 import PdfReaderDocument from './PdfReaderDocument.vue'
-import type { PdfReadingPosition } from '~~/lib/pdf-reader'
+import type { PdfNavigationOptions, PdfReadingPosition } from '~~/lib/pdf-reader'
 const props = defineProps<{ src: string; tools: boolean }>()
 const emit = defineEmits<{ ready: [event: { totalPages: number }]; position: [position: PdfReadingPosition]; navigate: [position: PdfReadingPosition]; error: [message: string] }>()
 const engine = shallowRef<PdfEngine | null>(null)
@@ -23,13 +23,13 @@ const startup = new AbortController()
 const plugins = [
   createPluginRegistration(DocumentManagerPluginPackage, { initialDocuments: [{ url: props.src, documentId: 'reader' }] }),
   createPluginRegistration(ViewportPluginPackage),
-  createPluginRegistration(ScrollPluginPackage, { defaultBufferSize: 1 }),
+  createPluginRegistration(ScrollPluginPackage, { defaultBufferSize: 2 }),
   createPluginRegistration(RenderPluginPackage),
   createPluginRegistration(ZoomPluginPackage, { defaultZoomLevel: ZoomMode.FitPage }),
   createPluginRegistration(InteractionManagerPluginPackage),
   createPluginRegistration(SelectionPluginPackage),
   createPluginRegistration(SearchPluginPackage),
-  createPluginRegistration(ThumbnailPluginPackage, { buffer: 1, scrollBehavior: 'instant' }),
+  createPluginRegistration(ThumbnailPluginPackage, { width: 150, gap: 12, buffer: 3, labelHeight: 30, imagePadding: 2, paddingY: 12, scrollBehavior: 'instant' }),
 ]
 onMounted(async () => {
   try {
@@ -46,7 +46,7 @@ onMounted(async () => {
   } catch { if (alive) emit('error', 'PDF 引擎资源加载失败，请重试。') }
 })
 onBeforeUnmount(() => { alive = false; startup.abort(); engine.value?.destroy?.(); engine.value = null })
-function navigate(position: PdfReadingPosition) { documentView.value?.navigate(position) }
+function navigate(position: PdfReadingPosition, options?: PdfNavigationOptions) { documentView.value?.navigate(position, options) }
 defineExpose({ navigate })
 </script>
 <template>

@@ -17,7 +17,7 @@
 - `src` identifies the document. Changing it destroys the previous engine and clears visible reading state. `name` is display-only.
 - `targetPage?: number` is a one-based physical PDF page. For restoring an anchor, pass `targetPosition?: PdfReadingPosition` instead; it takes precedence over `targetPage`.
 - `PdfReadingPosition = { page: number; point?: { x: number; y: number } }`. Coordinates are unscaled PDF page coordinates from the scroll capability, not screen pixels.
-- Exposed `navigate(position)` uses the same queue/validation path as the toolbar, thumbnails, native bookmarks and search results. It works before readiness and also allows repeating a target equal to the current prop.
+- Exposed `navigate(position, { animate?: boolean })` uses the same queue/validation path as the toolbar, thumbnails, native bookmarks and search results. It works before readiness and also allows repeating a target equal to the current prop.
 - `ready({ src, totalPages })` means the document layout can accept navigation. It **does not** confirm that a requested page has rendered. The newest pre-ready target wins.
 - `position-change({ src, page, point })` reports the actual visible, rendered page and reading anchor. Confirm a source target against this event. Initialization and passive scrolling also emit it; consumers should deduplicate/throttle URL updates. Event consumers must not assign every observed page back to `targetPage`, which would turn passive reading into navigation.
 - `error(message: string)` reports load/resource failures and invalid requested pages. Invalid navigation retains the current document/page; fatal errors show a retry action. Retry retains the most recent requested target. No event changes roster/evidence data.
@@ -27,7 +27,7 @@
 
 ## Engine and resources
 
-All direct EmbedPDF dependencies are pinned to **2.15.1**, matching the original lockfile. The full viewer dependency was removed. Public `EmbedPDF`, plugin capabilities, `Scroller`, render/selection/search layers and virtual thumbnail pane provide the engine behavior; application components own the UI. Continuous reading uses the virtual scroller (one-page buffer); single-page reading mounts only its current page.
+All direct EmbedPDF dependencies are pinned to **2.15.1**, matching the original lockfile. The full viewer dependency was removed. Public `EmbedPDF`, plugin capabilities, `Scroller`, render/selection/search layers and virtual thumbnail pane provide the engine behavior; application components own the UI. Continuous reading uses the virtual scroller (two-page buffer); single-page reading mounts only its current page.
 
 Official API references (checked against installed 2.15.1 declaration files and source):
 
@@ -48,3 +48,11 @@ Before creating a worker, the reader fetches and validates the same-origin WASM.
 A page bitmap failure stays local to that physical page, including virtualized buffer pages. Its alert names the failed page and offers a page-only retry; the document session, last confirmed position, navigation, and other rendered pages stay mounted. Only a successful retry load makes that page eligible for visible-position reports again. Document/startup failures still use the document retry path.
 
 Native XYZ and coordinate-bearing Fit destinations preserve their page anchor through the shared navigation boundary. Engine 2.15.1 destinations use PDF bottom-left user space; the application converts the top coordinate to the scroll capability's top-left unscaled page space. Page-only or unresolvable destinations remain page-only.
+
+## Motion and prepared destinations
+
+Explicit actions opt into short motion. Initial/external position restores remain instant; adjacent page-only actions use the public smooth scroll capability, while distant destinations receive a short arrival transition. The current page stays readable with a pending-target status until the latest target raster has decoded. Navigation and virtual page consumers share public `RenderCapability.renderPage` tasks in a document-owned image pool: mounted consumers plus at most two idle rasters, no whole-document prerender or assumed plugin cache. Scale changes retain the last successful image until the next one decodes. Errors retain the current page with a target-specific retry. All image URLs/tasks are disposed on document unmount.
+
+Position confirmation requires an actual loaded page and positive visibility, and waits for public viewport smooth-scroll activity to stop. The frame fallback only rechecks no-distance scroll metrics. A requested short page may be confirmed from its loaded visibility even when several pages fit and the dominant page differs. Passive scroll releases that preference when the offset changes.
+
+Tool and navigation panels retain both transition directions, immediately become inert when closed, and return focus to their toggles. CSS container queries use the reader width (768px threshold), so embedded/narrow readers overlay navigation without squeezing the page. Auto-fit remains driven by the public viewport resize/zoom debounce; stable scrollbar gutter and physical-page keys are preserved. Reduced motion removes panel/page displacement and uses instant navigation.
