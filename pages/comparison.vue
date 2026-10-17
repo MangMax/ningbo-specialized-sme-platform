@@ -306,7 +306,7 @@ const exportUrl = computed(() => {
                           平台解释
                         </TableHead>
                         <TableHead :class="[TH_CLASS, 'hidden w-[250px] sm:table-cell']">
-                          平台证据
+                          平台记录
                         </TableHead>
                         <TableHead :class="[TH_CLASS, 'hidden w-[190px] sm:table-cell']">核实与备注</TableHead>
                         <TableHead colspan="6" :class="[TH_CLASS, 'w-[62%] sm:hidden']">比对、原因与证据</TableHead>

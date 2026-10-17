@@ -207,6 +207,35 @@ async function openSession(cdp, url, viewport, readyExpression = READY, options 
   return { targetId, sessionId }
 }
 
+async function verifyPlatformRecordTables(cdp) {
+  for (const viewport of VIEWPORTS.slice(0, 2)) {
+    for (const kind of ['ledger', 'comparison']) {
+      const path = kind === 'ledger' ? '/?q=宁波开诚' : '/comparison?q=宁波开诚';
+      const { targetId, sessionId } = await openSession(cdp, BASE + encodeURI(path), viewport);
+      try {
+        if (kind === 'comparison') {
+          const point = await evaluate(cdp, sessionId, `(() => { const button = [...document.querySelectorAll('[data-testid="platform-evidence-details-toggle"]')].find(el => el.getBoundingClientRect().width > 0); const r = button?.getBoundingClientRect(); return r && {x:r.left+r.width/2,y:r.top+r.height/2};})()`);
+          await clickPoint(cdp, sessionId, point, '查看平台记录');
+        }
+        const selector = kind === 'ledger' ? '[data-testid="drawer-platform-records"]' : '[data-testid="platform-records-dialog"]';
+        const ready = await waitUntil(cdp, sessionId, `!!document.querySelector('${selector} [data-testid="platform-relation"]')`);
+        const state = await evaluate(cdp, sessionId, `(() => {
+          const root = document.querySelector('${selector}');
+          const rect = root?.getBoundingClientRect();
+          return { text:root?.textContent, rows:root?.querySelectorAll('[data-testid="platform-relation"]').length, groups:root?.querySelectorAll('[data-testid="platform-query-group"]').length, tables:root?.querySelectorAll('table').length, width:rect?.width, viewport:innerWidth, overflow:document.documentElement.scrollWidth-document.documentElement.clientWidth, original:document.body.textContent.includes('原始说明') };
+        })()`);
+        if (!ready || !state.tables || !state.rows || /business_list|apply_list|businessList|applyList|rdjb|tyshxydm/.test(state.text ?? '') || state.overflow > 1 || (kind === 'comparison' && state.width > state.viewport) || state.original) bad(`平台记录表 · ${kind} ${viewport.name}:记录表不可读 ${JSON.stringify(state)}`);
+        else ok(`平台记录表 · ${kind} ${viewport.name}:${state.groups} 次查询/${state.rows} 条原始记录以中文表格显示，页面无溢出`);
+        if (kind === 'ledger') {
+          const expected = await evaluate(cdp,sessionId,`fetch('/api/roster/enterprises/3449').then(r=>r.json()).then(d=>d.platform.relations.length)`);
+          if (state.rows !== expected) bad(`平台记录表:抽屉漏记录 ${state.rows}/${expected}`);
+          else ok(`平台记录表:抽屉原始明细与详情接口逐条数量一致(${expected})`);
+        }
+      } finally { await cdp.send('Target.closeTarget', { targetId }).catch(() => {}); }
+    }
+  }
+}
+
 async function verifyLedgerCompactSummaries(cdp) {
   const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0], READY, {
     openDrawer: false,
@@ -1256,7 +1285,7 @@ async function verifyComparisonCurrentNameAliasDisplay(cdp) {
         toggle?.click();
         return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve({
           rowAliasText,
-          evidenceAliasText: [...(evidence?.querySelectorAll('[data-testid="platform-confirmed-aliases"], [data-testid="platform-pending-aliases"]') ?? [])]
+          evidenceAliasText: [...(document.querySelector('[data-testid="platform-records-dialog"]')?.querySelectorAll('[data-testid="platform-confirmed-aliases"], [data-testid="platform-pending-aliases"]') ?? [])]
             .map((item) => item.textContent ?? '').join(' '),
           expanded: toggle?.getAttribute('aria-expanded') ?? null,
           hasEvidence: !!evidence,
@@ -1995,7 +2024,7 @@ const MEASURE = `(() => {
     scrollWidth: de.scrollWidth,
     clientWidth: de.clientWidth,
     innerWidth: window.innerWidth,
-    tableCount: document.querySelectorAll('table').length,
+    tableCount: [...document.querySelectorAll('.ledger-page table, .comparison-page table')].filter(table => !table.closest('[data-testid="enterprise-drawer"],[data-testid="platform-records-dialog"]')).length,
     nativeSelectCount: document.querySelectorAll('select').length,
     shadowedTargets,
     searchInput: !!document.querySelector('input[aria-label*="企业名称"]'),
@@ -2548,6 +2577,7 @@ async function main() {
       }
     }
 
+    await verifyPlatformRecordTables(cdp)
     await verifyLedgerCompactSummaries(cdp)
     await verifyLedgerSearchLoading(cdp)
     await verifyLedgerMobileLoadingOverflow(cdp)
@@ -2577,7 +2607,7 @@ async function main() {
       }))()`,
       `(() => !document.querySelector('[data-slot=skeleton]') && document.querySelectorAll('thead th').length > 0)()`,
     )
-    if (!comparisonCopy.headers.includes('平台解释') || !comparisonCopy.headers.includes('平台证据')) {
+    if (!comparisonCopy.headers.includes('平台解释') || !comparisonCopy.headers.includes('平台记录')) {
       bad(`/comparison:平台解释 / 平台证据列头缺失 ${JSON.stringify(comparisonCopy.headers)}`)
     } else {
       ok('/comparison:平台解释与平台证据列头保留')

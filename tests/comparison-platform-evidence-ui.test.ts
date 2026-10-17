@@ -27,6 +27,8 @@ function disposition(): ComparisonDisposition {
 
 function mountEvidence(evidence: PlatformEvidence) {
   const wrapper = mount(ComparisonPlatformEvidence, {
+    attachTo: document.body,
+    global: { stubs: { NuxtLink: { template: '<a><slot /></a>' } } },
     props: {
       enterpriseId: 42,
       currentName: '宁波接口异常企业有限公司',
@@ -66,15 +68,16 @@ describe('比对行平台证据的可见状态与展开交互', () => {
     const toggle = wrapper.get('[data-testid="platform-evidence-details-toggle"]')
 
     expect(summary.text()).toContain('查询失败 ×1')
-    expect(toggle.text()).toBe('查看证据')
+    expect(toggle.text()).toBe('查看平台记录')
     expect(toggle.attributes('aria-expanded')).toBe('false')
 
     await toggle.trigger('click')
 
-    expect(toggle.text()).toBe('收起证据')
+    expect(toggle.text()).toBe('查看平台记录')
     expect(toggle.attributes('aria-expanded')).toBe('true')
-    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('业务接口')
-    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('2026-10-16')
-    expect(wrapper.text()).toContain('平台接口暂不可用')
+    expect(document.querySelector('[data-testid="platform-query-summary"]')?.textContent).toContain('称号查询记录')
+    expect(document.querySelector('[data-testid="platform-query-summary"]')?.textContent).toContain('2026-10-16')
+    expect(document.body.textContent).toContain('本次查询未完成')
+    expect(document.body.textContent).not.toMatch(/business_list|rdjb|businessList/)
   })
 })

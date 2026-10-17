@@ -106,7 +106,7 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
         attachTo: document.body,
       },
     )
-    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('已确认原因')
+    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('平台未更新')
     const text = await openAndReadText(wrapper)
     expect(text).toContain('平台未更新')
     expect(text).toContain('标明平台时点,不覆盖历史')
@@ -142,7 +142,7 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
     expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('未查询')
     expect(wrapper.find('[data-testid="reconcile-empty"]').exists()).toBe(false)
     const text = await openAndReadText(wrapper)
-    expect(text).toContain('还没有解释记录')
+    expect(text).toContain('尚未核实差异')
   })
 
   it('无统代无法直查:如实显示「未查询 · 转人工核实」与原因说明', async () => {
@@ -238,10 +238,10 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
       attachTo: document.body,
     })
     // 主状态文本来自库内,不是缓存的「平台有记录」。
-    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('已确认原因')
+    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('平台未更新')
     const text = await openAndReadText(wrapper)
     expect(text).toContain('平台未更新')
-    expect(text).toContain('旧解释缓存')
+    expect(text).toContain('历史核实结果')
     expect(text).toContain('平台有记录(离线缓存样本)')
     expect(text).toContain('2026-10-15')
   })
@@ -272,8 +272,8 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
     expect(wrapper.text()).toContain('已确认曾用名 1')
     await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
     expect(wrapper.text()).toContain('曾用名')
-    expect(wrapper.text()).toContain('宁波上航测绘有限公司')
-    expect(wrapper.text()).not.toContain('宁波上航测绘股份有限公司')
+    expect(document.querySelector('[data-testid="platform-confirmed-aliases"]')?.textContent).toContain('宁波上航测绘有限公司')
+    expect(document.querySelector('[data-testid="platform-confirmed-aliases"]')?.textContent).not.toContain('宁波上航测绘股份有限公司')
     expect(wrapper.text()).not.toContain('待核别名')
   })
 
@@ -292,8 +292,8 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
     })
     expect(wrapper.text()).toContain('待核别名 1')
     await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
-    expect(wrapper.text()).toContain('宁波市鑫磊工具有限公司')
-    expect(wrapper.text()).not.toContain('宁波创涵自动化设备有限公司')
+    expect(document.querySelector('[data-testid="platform-pending-aliases"]')?.textContent).toContain('宁波市鑫磊工具有限公司')
+    expect(document.querySelector('[data-testid="platform-pending-aliases"]')?.textContent).not.toContain('宁波创涵自动化设备有限公司')
   })
 
   it('查询证据带出接口、时点与关系条数,展开后是**原始关系**字段', async () => {
@@ -340,15 +340,14 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
       attachTo: document.body,
     })
     expect(wrapper.get('[data-testid="platform-evidence-summary"]').text()).toContain('查询成功 ×1')
-    expect(wrapper.get('[data-testid="platform-evidence-summary"]').text()).toContain('关系 1')
+    expect(wrapper.get('[data-testid="platform-evidence-summary"]').text()).toContain('平台记录 1 条')
     // 详情默认收起以保持行高;点开后才出现接口、时点与原始关系入口。
     // 关系原文默认收起(表窄),点开后逐条可见。
     expect(wrapper.find('[data-testid="platform-relation"]').exists()).toBe(false)
     await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
-    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('业务接口')
-    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('2026-10-16')
-    await wrapper.get('[data-testid="platform-evidence-toggle"]').trigger('click')
-    const relation = wrapper.get('[data-testid="platform-relation"]')
+    expect(document.querySelector('[data-testid="platform-query-summary"]')?.textContent).toContain('称号查询记录')
+    expect(document.querySelector('[data-testid="platform-query-summary"]')?.textContent).toContain('2026-10-16')
+    const relation = { text: () => document.querySelector('[data-testid="platform-relation"]')?.textContent ?? '' }
     expect(relation.text()).toContain('宁波平台滞后企业')
     expect(relation.text()).toContain('91330211000000002Y')
     expect(relation.text()).toContain('待审核')

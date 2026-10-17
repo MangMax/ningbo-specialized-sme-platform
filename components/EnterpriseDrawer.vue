@@ -16,6 +16,8 @@ import {
 } from '~~/lib/labels'
 import { reviewEventSuffix, timelineEventIdentity } from '~~/lib/roster/enterprise-timeline'
 import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
+import PlatformRecords from '@/components/PlatformRecords.vue'
+import type { PlatformRecordQuery, PlatformRecord } from '~~/lib/roster/platform-records'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
@@ -87,6 +89,7 @@ interface Detail {
   events: EventRow[]
   evidence: { eventId: number; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
   differences: Difference[]
+  platform?: { queries: PlatformRecordQuery[]; relations: PlatformRecord[] }
 }
 
 const props = defineProps<{
@@ -465,15 +468,14 @@ function eventSuffix(item: TimelineItem): string {
                   <span class="text-[13px] leading-5">{{ step.v }}</span>
                 </li>
               </ol>
-              <details v-if="d.reasonNote || d.measureNote" class="text-muted-foreground mt-2 border-l pl-2 text-[13px] leading-5">
-                <summary class="cursor-pointer font-medium">原始说明</summary>
-                <div class="mt-1 space-y-1">
-                  <p v-if="d.reasonNote"><span class="font-medium">原因</span> {{ d.reasonNote }}</p>
-                  <p v-if="d.measureNote"><span class="font-medium">措施</span> {{ d.measureNote }}</p>
-                </div>
-              </details>
+
             </div>
           </template>
+        <section class="mt-4 border-t pt-4" data-testid="drawer-platform-records">
+          <h3 class="mb-3 text-sm font-medium">平台记录</h3>
+          <PlatformRecords :queries="detail.platform?.queries ?? []" :relations="detail.platform?.relations ?? []" />
+        </section>
+
         </div>
 
         <footer class="border-t px-5 py-3">

@@ -14,6 +14,7 @@ import {
 } from '~~/lib/labels'
 import type { ComparisonDisposition } from '~~/lib/comparison-platform'
 import type { ReconcileEntry } from '~~/lib/reconcile'
+import { platformNoteForDisplay } from '~~/lib/roster/platform-records'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 
 /**
@@ -115,10 +116,10 @@ const hasRecord = computed(() => props.disposition.explanationId != null)
  */
 function noteSuffix(label: string | null, note: string | null): string | null {
   if (!note) return null
-  if (!label) return note
-  return note.replace(/[。.]+$/, '') === label.replace(/[。.]+$/, '') ? null : note
+  if (!label) return platformNoteForDisplay(note)
+  return note.replace(/[。.]+$/, '') === label.replace(/[。.]+$/, '') ? null : platformNoteForDisplay(note)
 }
-const reasonSuffix = computed(() => noteSuffix(reasonLabel.value, props.disposition.reasonNote))
+const reasonSuffix = computed(() => /business_list|businessList|rdjb=/.test(props.disposition.reasonNote ?? '') ? null : noteSuffix(reasonLabel.value, props.disposition.reasonNote))
 const measureSuffix = computed(() => noteSuffix(measureLabel.value, props.disposition.measureNote))
 
 /** 旧缓存的对照行;取数时间与缓存自身的 `fetchedAt` 同源(与旧版行为一致)。 */
@@ -174,8 +175,7 @@ function onClick(event: MouseEvent) {
           @click.capture="onClickCapture"
           @click="onClick"
         >
-          <span class="font-medium" :class="statusTone">{{ statusLabel }}</span>
-          <span v-if="reasonLabel" class="text-muted-foreground">· {{ reasonLabel }}</span>
+          <span class="font-medium" :class="statusTone">{{ reasonLabel ?? statusLabel }}</span>
         </button>
       </TooltipTrigger>
       <TooltipContent
@@ -190,14 +190,14 @@ function onClick(event: MouseEvent) {
           <p class="font-medium text-[13px] leading-5">{{ statusLabel }}</p>
           <!-- 没有解释记录:如实说明「还没存下解释」,不说「无数据」。 -->
           <p v-if="!hasRecord" class="text-page/90 text-[13px] leading-5" data-testid="reconcile-no-record">
-            还没有解释记录 —— 状态为状态机的默认态「未查询」(还不曾查过,不是平台没有)。
+            尚未核实差异，请查看平台记录。
           </p>
           <template v-else>
             <p v-if="reasonLabel || disposition.reasonNote" class="text-page/90 text-[13px] leading-5">
               <span class="font-medium">原因:</span>{{ reasonLabel ?? '—'
               }}<template v-if="reasonSuffix"> — {{ reasonSuffix }}</template>
             </p>
-            <p v-else class="text-page/90 text-[13px] leading-5">原因:—(该状态无需原因编码)</p>
+            <p v-else class="text-page/90 text-[13px] leading-5">原因:尚无已确认原因</p>
             <p v-if="measureLabel || disposition.measureNote" class="text-page/90 text-[13px] leading-5">
               <span class="font-medium">后续措施:</span>{{ measureLabel ?? '—'
               }}<template v-if="measureSuffix"> — {{ measureSuffix }}</template>
@@ -215,13 +215,13 @@ function onClick(event: MouseEvent) {
               }}<template v-if="recordedAt"> · 登记 {{ recordedAt }}</template>
             </p>
           </template>
-          <!-- 旧解释缓存:只作对照,不是主源;它缺失时这一行不出现。 -->
+          <!-- 历史核实结果:只作对照,不是主源;它缺失时这一行不出现。 -->
           <p
             v-if="explanation && cachedLabel"
             class="text-page/85 text-[13px] leading-5"
             data-testid="reconcile-cached"
           >
-            旧解释缓存:{{ cachedLabel }}<template v-if="cachedNote"> — {{ cachedNote }}</template>
+            历史核实结果:{{ cachedLabel }}<template v-if="cachedNote"> — {{ platformNoteForDisplay(cachedNote) }}</template>
             <template v-if="cachedFetched">({{ RECONCILE_SOURCE }} · 取数 {{ cachedFetched }})</template>
           </p>
         </div>

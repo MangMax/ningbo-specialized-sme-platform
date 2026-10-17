@@ -175,8 +175,8 @@ export type PlatformInterface = (typeof PLATFORM_INTERFACE_VALUES)[number]
 
 /** 平台接口(`platform_query.interface`)→ 中文名。 */
 export const PLATFORM_INTERFACES: Record<string, string> = {
-  business_list: '业务接口(businessList)',
-  apply_list: '申报接口(applyList)',
+  business_list: '称号查询记录',
+  apply_list: '申报办理记录',
 }
 
 /** 平台接口展示顺序(即取值顺序)。 */
