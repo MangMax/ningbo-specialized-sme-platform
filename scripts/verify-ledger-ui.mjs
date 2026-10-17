@@ -210,12 +210,13 @@ async function openSession(cdp, url, viewport, readyExpression = READY, options 
 async function verifyPlatformRecordTables(cdp) {
   for (const viewport of VIEWPORTS.slice(0, 2)) {
     for (const kind of ['ledger', 'comparison']) {
-      const path = kind === 'ledger' ? '/?q=宁波开诚' : '/comparison?q=宁波开诚';
+      const path = kind === 'ledger' ? '/?q=宁波开诚' : '/comparison';
       const { targetId, sessionId } = await openSession(cdp, BASE + encodeURI(path), viewport);
       try {
         if (kind === 'comparison') {
-          await setInputValue(cdp, sessionId, 'input[aria-label*="搜索企业名称"]', '宁波开诚');
-          await waitUntil(cdp, sessionId, `document.querySelector('tbody a[href="/enterprises/3449"]')`);
+          const sample = await evaluate(cdp,sessionId,`document.querySelector('tbody a[href^="/enterprises/"]')?.textContent.trim()`);
+          await setInputValue(cdp, sessionId, 'input[aria-label*="搜索企业名称"]', sample);
+          await waitUntil(cdp, sessionId, `document.querySelector('tbody a[href^="/enterprises/"]')?.textContent.trim() === ${JSON.stringify(sample)} && !document.querySelector('[data-testid="comparison-loading-status"]')?.textContent.includes('正在')`);
           const point = await evaluate(cdp, sessionId, `(() => { const button = [...document.querySelectorAll('[data-testid="platform-evidence-details-toggle"]')].find(el => el.getBoundingClientRect().width > 0); const r = button?.getBoundingClientRect(); return r && {x:r.left+r.width/2,y:r.top+r.height/2};})()`);
           await clickPoint(cdp, sessionId, point, '查看平台记录');
         }
