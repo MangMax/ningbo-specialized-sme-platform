@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Copy, Eye, EyeOff } from '@lucide/vue'
+import { Motion, useReducedMotion } from 'motion-v'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -7,6 +8,7 @@ import LoadingIndicator from './LoadingIndicator.vue'
 import type { CredentialOperation, CredentialStatus } from '@/composables/useCredentialSettings'
 defineProps<{ id: string; label: string; status: CredentialStatus; raw: string; replacement: string; busy: boolean; operation?: CredentialOperation; canRead: boolean; description: string }>()
 defineEmits<{ 'update:replacement': [value: string | number]; save: []; clear: []; reveal: [copy: boolean] }>()
+const reducedMotion = useReducedMotion()
 </script>
 
 <template>
@@ -18,14 +20,18 @@ defineEmits<{ 'update:replacement': [value: string | number]; save: []; clear: [
     <div class="space-y-2">
       <div class="bg-muted flex min-w-0 items-start gap-2 rounded-md p-3">
         <code class="min-w-0 flex-1 self-center break-all text-sm" :aria-label="`当前 ${label}`">{{ raw || status.masked || '尚未配置' }}</code>
-        <Button type="button" variant="ghost" size="icon" class="relative shrink-0" :aria-label="`${raw ? '隐藏' : '显示'}${label === 'OCR token' ? ' ' : ''}${label}`" :aria-busy="operation === 'reveal'" :disabled="!canRead || busy" @click="$emit('reveal', false)">
-          <span class="inline-flex size-4 items-center justify-center"><EyeOff v-if="raw" :class="{ invisible: operation === 'reveal' }" /><Eye v-else :class="{ invisible: operation === 'reveal' }" /></span>
-          <span class="pointer-events-none absolute inset-0 flex items-center justify-center"><LoadingIndicator :active="operation === 'reveal'" /></span>
-        </Button>
-        <Button type="button" variant="ghost" size="icon" class="relative shrink-0" :aria-label="`复制${label === 'OCR token' ? ' ' : ''}${label}`" :aria-busy="operation === 'copy'" :disabled="!canRead || busy" @click="$emit('reveal', true)">
-          <Copy :class="{ invisible: operation === 'copy' }" />
-          <span class="pointer-events-none absolute inset-0 flex items-center justify-center"><LoadingIndicator :active="operation === 'copy'" /></span>
-        </Button>
+        <Motion as-child :while-press="reducedMotion ? undefined : { scale: 0.9 }" :transition="{ duration: 0.12, ease: 'easeOut' }">
+          <Button type="button" variant="ghost" size="icon" class="relative shrink-0 active:scale-100 active:bg-primary/15 active:text-primary" :aria-label="`${raw ? '隐藏' : '显示'}${label === 'OCR token' ? ' ' : ''}${label}`" :aria-busy="operation === 'reveal'" :disabled="!canRead || busy" @click="$emit('reveal', false)">
+            <span class="inline-flex size-4 items-center justify-center"><EyeOff v-if="raw" :class="{ invisible: operation === 'reveal' }" /><Eye v-else :class="{ invisible: operation === 'reveal' }" /></span>
+            <span class="pointer-events-none absolute inset-0 flex items-center justify-center"><LoadingIndicator :active="operation === 'reveal'" /></span>
+          </Button>
+        </Motion>
+        <Motion as-child :while-press="reducedMotion ? undefined : { scale: 0.9 }" :transition="{ duration: 0.12, ease: 'easeOut' }">
+          <Button type="button" variant="ghost" size="icon" class="relative shrink-0 active:scale-100 active:bg-primary/15 active:text-primary" :aria-label="`复制${label === 'OCR token' ? ' ' : ''}${label}`" :aria-busy="operation === 'copy'" :disabled="!canRead || busy" @click="$emit('reveal', true)">
+            <Copy :class="{ invisible: operation === 'copy' }" />
+            <span class="pointer-events-none absolute inset-0 flex items-center justify-center"><LoadingIndicator :active="operation === 'copy'" /></span>
+          </Button>
+        </Motion>
       </div>
     </div>
     <form class="space-y-3" @submit.prevent="$emit('save')">
