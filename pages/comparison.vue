@@ -282,7 +282,7 @@ const exportUrl = computed(() => {
                     role="region"
                     aria-label="比对结果表格(可横向滚动)"
                     data-testid="comparison-table-scroll"
-                    class="scroll-mt-16 overflow-x-auto overflow-y-visible [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&_[data-slot=table-container]]:overflow-visible"
+                    class="data-table-scroll scroll-mt-16 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&_[data-slot=table-container]]:overflow-visible"
                     :aria-busy="isLoading"
                   >
                   <Empty v-if="!isLoading && !error && !rows.length" class="h-full">

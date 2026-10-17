@@ -616,14 +616,15 @@ function enterpriseDrawerReadingViolation(m, label) {
 function comparisonTableFlowViolation(m, label) {
   const flow = m.comparisonTableFlow
   if (!flow || flow.rows < 1) return `${label}:没有可检查的对比结果表格行`
-  if (flow.scrollHeight > flow.clientHeight + 1 || flow.tableBottom > flow.scrollerBottom + 1) {
-    return `${label}:对比结果被截在内部滚动区,分页先于完整表格 ${JSON.stringify(flow)}`
+  const expectedMax = Math.max(320, m.innerHeight - 272)
+  if (flow.clientHeight > expectedMax + 1) {
+    return `${label}:表格超过统一窗口高度上限 ${JSON.stringify(flow)}`
   }
-  if (flow.paginationTop < flow.tableBottom - 1) {
-    return `${label}:对比页分页条出现在当前结果行读完之前 ${JSON.stringify(flow)}`
+  if (flow.scrollHeight > flow.clientHeight + 1 && !['auto', 'scroll'].includes(flow.overflowY)) {
+    return `${label}:长表缺少内部滚动路径 ${JSON.stringify(flow)}`
   }
-  if (flow.rows >= 20 && flow.documentScrollHeight <= m.innerHeight) {
-    return `${label}:对比页长表没有可见的页面级继续滚动路径 ${JSON.stringify(flow)}`
+  if (flow.paginationTop < flow.scrollerBottom - 1) {
+    return `${label}:分页条未位于表格容器下方 ${JSON.stringify(flow)}`
   }
   return null
 }
@@ -632,8 +633,10 @@ function enterpriseDesktopDensityViolation(m, label) {
   if (m.innerWidth < 1024 || m.innerHeight < 800) return null
   const density = m.enterpriseDesktopDensity
   if (!density) return `${label}:找不到企业列表桌面表格滚动区或分页位置`
-  if (density.visibleRows < 18) {
-    return `${label}:企业列表桌面首屏不足 18 行(${density.visibleRows} 行可完整阅读)`
+  // 文件页统一高度在900px窗口为628px，可完整容纳17行33px数据与36px表头。
+  const minimumRows = Math.floor((Math.min(628, Math.max(320, m.innerHeight - 272)) - 36) / 33)
+  if (density.visibleRows < minimumRows) {
+    return `${label}:统一高度下企业列表首屏不足 ${minimumRows} 行(${density.visibleRows} 行可完整阅读)`
   }
   if (density.paginationBottom > m.innerHeight) {
     return `${label}:企业列表桌面分页不在首屏(${density.paginationBottom}px > ${m.innerHeight}px)`
@@ -1951,6 +1954,7 @@ function tableChromeViolation(m) {
   if (m.pagerCount !== 1 || m.pagerTop < m.cardBottom - 1 || !m.sizeInsidePager || !m.totalInsidePager) return '总数或每页条数未与页码统一置于表后';
   if (m.headerFont !== '13px' || m.headerWeight !== '600' || m.headerHeight !== 36 || m.headerPadding !== '12px' || m.cellPadding !== '6px') return '表头字号字重高度或表体间距未统一';
   if (m.overflow > 0) return '页面级横向溢出';
+  if (Math.abs(m.tableMaxHeight - Math.max(320, m.viewportHeight - 272)) > 1 || m.tableHeight > m.tableMaxHeight + 1 || m.tableOverflow !== 'auto') return '表格高度或内部滚动规则未统一';
   return null;
 }
 
@@ -1969,7 +1973,9 @@ async function verifySharedTableChrome(cdp) {
         const cell = [...table.querySelectorAll('tbody td')].find(el=>el.getBoundingClientRect().width>0);
         if (!header || !cell) return null;
         const h = getComputedStyle(header), c = getComputedStyle(cell);
-        return {statusHeight:status.getBoundingClientRect().height,statusPosition:getComputedStyle(status).position,statusTop:status.getBoundingClientRect().top,
+        const scroll = table.closest('.data-table-scroll'), scrollStyle = scroll && getComputedStyle(scroll);
+        if (!scroll || !scrollStyle) return null;
+        return {tableMaxHeight:parseFloat(scrollStyle.maxHeight),tableHeight:scroll.clientHeight,tableOverflow:scrollStyle.overflowY,viewportHeight:innerHeight,statusHeight:status.getBoundingClientRect().height,statusPosition:getComputedStyle(status).position,statusTop:status.getBoundingClientRect().top,
           statusInCard:card.contains(status),cardTop:card.getBoundingClientRect().top,cardBottom:card.getBoundingClientRect().bottom,
           pagerCount:document.querySelectorAll('[data-table-pagination]').length,pagerTop:pager.getBoundingClientRect().top,
           sizeInsidePager:!!pager.querySelector('[aria-label="每页条数"]'),totalInsidePager:!!pager.querySelector('[data-testid="table-total"]'),
@@ -1995,6 +2001,21 @@ async function verifySharedTableChrome(cdp) {
         })()`);
         if (!tableChromeViolation(upperPager)) bad(`${label}:分页移到表上方后断言未命中`);
         else ok(`${label}:数量与页码恢复到表上方后按预期变红`);
+        const heightBroken = await evaluate(cdp, sessionId, `(() => {
+          const scroll=document.querySelector('.data-table-scroll');
+          scroll.style.maxHeight='10000px'; const m=(${measure}); scroll.style.removeProperty('max-height'); return m;
+        })()`);
+        if (!tableChromeViolation(heightBroken)) bad(`${label}:取消统一高度后断言未命中`);
+        else ok(`${label}:统一高度上限${m.tableMaxHeight}px，恢复长表铺开后按预期变红`);
+        const endReachable = await evaluate(cdp, sessionId, `(() => {
+          const scroll=document.querySelector('.data-table-scroll'); scroll.scrollTop=scroll.scrollHeight;
+          const last=[...scroll.querySelectorAll('.data-table > tbody > tr')].at(-1)?.getBoundingClientRect();
+          const header=[...scroll.querySelectorAll('thead th')].find(el=>el.getBoundingClientRect().width>0)?.getBoundingClientRect(), box=scroll.getBoundingClientRect();
+          const result=!!last && last.bottom<=box.bottom+1 && !!header && header.bottom>=box.top;
+          scroll.scrollTop=0; return result;
+        })()`);
+        if (!endReachable) bad(`${label}:滚动到底未能阅读末行或固定表头丢失`);
+        else ok(`${label}:表内滚动可达末行，表头保持可见`);
         if (spec.kind === 'files') {
           const expand = '.data-table > tbody > tr:first-child td:first-child button';
           const icon = await evaluate(cdp, sessionId, `!!document.querySelector('${expand} svg')`);
@@ -2609,7 +2630,7 @@ async function main() {
         if (page.query === '/comparison') {
           const flow = comparisonTableFlowViolation(m, label)
           if (flow) bad(flow)
-          else ok(`${label}:本页全部 ${m.comparisonTableFlow.rows} 行在分页前完整展开，可继续滚动页面阅读`)
+          else ok(`${label}:本页 ${m.comparisonTableFlow.rows} 行保留在统一高度的滚动区内，分页位于容器下方`)
         }
         if (viewport.width === 390) {
           const mobileContent = mobileCoreContentViolation(m, label)
@@ -2775,14 +2796,14 @@ async function main() {
     const comparisonFlowBroken = await openAndMeasure(
       cdp,
       `${BASE}/comparison`,
-      `(() => { const scroller = document.querySelector('[data-testid="comparison-table-scroll"]'); scroller?.style.setProperty('height', '320px', 'important'); scroller?.style.setProperty('max-height', '320px', 'important'); scroller?.style.setProperty('overflow-y', 'auto', 'important'); return (${MEASURE}); })()`,
+      `(() => { const scroller = document.querySelector('[data-testid="comparison-table-scroll"]'); scroller?.style.setProperty('max-height', 'none', 'important'); scroller?.style.setProperty('overflow-y', 'visible', 'important'); return (${MEASURE}); })()`,
       READY,
       VIEWPORTS[1],
     )
-    const comparisonFlowSelfCheck = comparisonTableFlowViolation(comparisonFlowBroken, '对比表分页前截断缺陷自检')
-    if (!comparisonFlowSelfCheck) bad('对比表分页前截断缺陷自检:临时恢复内部滚动截断后,表格连续阅读断言仍未命中')
-    else console.log(`✗ 对比表分页前截断缺陷自检按预期变红:${comparisonFlowSelfCheck}`)
-    if (comparisonFlowSelfCheck) ok('对比表分页前截断缺陷自检:关闭临时 target 后缺陷已复原')
+    const comparisonFlowSelfCheck = comparisonTableFlowViolation(comparisonFlowBroken, '对比表高度缺陷自检')
+    if (!comparisonFlowSelfCheck) bad('对比表高度缺陷自检:临时取消高度限制后,统一高度断言仍未命中')
+    else console.log(`✗ 对比表高度缺陷自检按预期变红:${comparisonFlowSelfCheck}`)
+    if (comparisonFlowSelfCheck) ok('对比表高度缺陷自检:关闭临时 target 后缺陷已复原')
 
     const mobileBroken = await openAndMeasure(
       cdp,

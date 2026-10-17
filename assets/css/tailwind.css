@@ -391,3 +391,9 @@ html.theme-transition::view-transition-new(root) {
 .data-table > tbody > tr > td {
   padding-block: 6px;
 }
+
+/* Keep all three list pages within the same viewport-based table budget. */
+.data-table-scroll {
+  max-height: max(320px, calc(100dvh - 17rem));
+  overflow: auto;
+}

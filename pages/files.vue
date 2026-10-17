@@ -471,7 +471,7 @@ function publishedYearBatch(row: StoredFileRow): string {
         <div
           ref="tableScroller"
           data-testid="files-table-scroll"
-          class="max-h-[max(320px,calc(100dvh-17rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
+          class="data-table-scroll [&_[data-slot=table-container]]:overflow-visible"
           :aria-busy="isLoading"
         >
           <!-- 12 列。列宽按**实测文字宽度**逐列定,合计 1126px。
