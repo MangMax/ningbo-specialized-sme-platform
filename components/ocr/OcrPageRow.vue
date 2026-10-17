@@ -147,10 +147,25 @@ function formatTime(iso: string): string {
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`
 }
 
+/**
+ * Focus ownership token. `focusEl` waits a few frames because overlays can move
+ * focus after they unmount; a *new* focus intent (opening the delete dialog,
+ * confirming it, downloading) cancels any older pending loop, so a stale
+ * "return to the row menu" request cannot steal focus long after the row's
+ * action has completed.
+ */
+let focusRequest = 0
+
+function cancelPendingFocus() {
+  focusRequest += 1
+}
+
 async function focusEl(target: { value: { $el?: HTMLElement } | null }) {
+  const request = ++focusRequest
   for (let frame = 0; frame < 4; frame += 1) {
     await nextTick()
     await new Promise((resolve) => requestAnimationFrame(resolve))
+    if (request !== focusRequest) return
     const el = target.value?.$el
     if (!el || typeof el.focus !== 'function') continue
     el.focus()
@@ -158,10 +173,39 @@ async function focusEl(target: { value: { $el?: HTMLElement } | null }) {
   }
 }
 
-function focusEditor() {
+/** Last caret place before the editor lost focus (e.g. the discard dialog). */
+const savedCaret = ref<{ start: number; end: number } | null>(null)
+
+function rememberCaret() {
+  const el = editor.value?.$el
+  if (!(el instanceof HTMLTextAreaElement)) return
+  savedCaret.value = { start: el.selectionStart, end: el.selectionEnd }
+}
+
+/**
+ * Focus the editor. `reset: true` is for a fresh edit (start at the document
+ * head). Returning from the discard confirmation uses `reset: false`: the draft
+ * and the caret the user was working at are still there, and re-entering at
+ * 0,0 would silently throw their place away.
+ */
+function focusEditor(reset = true) {
+  // Capture the caret before the focus dance: browsers keep the selection
+  // across blur, but jsdom (and some focus implementations) reset it to 0.
+  const current = editor.value?.$el
+  const caret = !reset
+    ? (savedCaret.value ??
+      (current instanceof HTMLTextAreaElement
+        ? { start: current.selectionStart, end: current.selectionEnd }
+        : null))
+    : null
   void focusEl(editor).then(() => {
     const el = editor.value?.$el
     if (!(el instanceof HTMLTextAreaElement)) return
+    if (!reset) {
+      if (caret) el.setSelectionRange(caret.start, caret.end)
+      return
+    }
+    savedCaret.value = null
     // Entering edit should start at the document head, not wherever the
     // browser's default caret-at-end put the scroll position. On a short
     // viewport the browser's focus scroll can also leave the first line half
@@ -198,13 +242,16 @@ function download() {
   anchor.download = `${pageLabel(props.row.page)}.md`
   anchor.click()
   setTimeout(() => URL.revokeObjectURL(url), 0)
+  void focusEl(overflowTrigger)
 }
 
 function askDelete() {
+  cancelPendingFocus()
   deleteOpen.value = true
 }
 
 function confirmDelete() {
+  cancelPendingFocus()
   deleteOpen.value = false
   emit('remove', props.row.page)
 }
@@ -220,6 +267,18 @@ function cancelDelete() {
  * overflow trigger a frame later and stealing it back.
  */
 function preventDeleteAutoFocus(event: Event) {
+  event.preventDefault()
+}
+
+/**
+ * The row menu must not restore focus to its trigger on close.
+ *
+ * With the delete flow that restore can land *after* the row has already been
+ * deleted and the parent moved focus to the bottom bar, silently stealing it
+ * back. Ownership is explicit instead: download returns focus to the trigger;
+ * the delete dialog owns focus while it is open, and the parent owns it after.
+ */
+function preventMenuAutoFocus(event: Event) {
   event.preventDefault()
 }
 
@@ -291,6 +350,7 @@ onMounted(() => {
   void nextTick(() => observeOverflow())
 })
 onBeforeUnmount(() => {
+  cancelPendingFocus()
   observer?.disconnect()
   mutation?.disconnect()
 })
@@ -516,7 +576,10 @@ onBeforeUnmount(() => {
                     <MoreHorizontal />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent
+                  align="end"
+                  @close-auto-focus="preventMenuAutoFocus"
+                >
                   <DropdownMenuItem :disabled="!hasText" @select="download">
                     <Download />
                     下载原文
@@ -570,6 +633,10 @@ onBeforeUnmount(() => {
             class="h-full min-h-0 w-full resize-none rounded-none border-0 bg-transparent p-4 font-mono text-[length:var(--ocr-code-size)] leading-relaxed shadow-none transition-none focus-visible:ring-0 motion-reduce:transition-none"
             placeholder="这一页的识别文本（原始 Markdown）。空白页留空即可——空结果也会占住页号。"
             @update:model-value="emit('update:draft', $event)"
+            @select="rememberCaret"
+            @keyup="rememberCaret"
+            @click="rememberCaret"
+            @blur="rememberCaret"
           />
           <OcrPageBody
             v-else-if="hasText"
@@ -589,7 +656,7 @@ onBeforeUnmount(() => {
             <p class="text-foreground font-medium">
               {{ result ? STATE_WORD[state] : '这一页还没有识别文本' }}
             </p>
-            <p class="text-xs">
+            <p class="text-[13px] leading-relaxed">
               {{
                 result
                   ? '这一页的正文为空（已保存为空结果）。可以编辑、手工补录，或继续翻页。'

@@ -72,7 +72,7 @@ defineExpose({ focusEdit, focusBar })
     ref="bar"
     tabindex="-1"
     aria-label="翻页与页操作"
-    class="ocr-bottombar bg-card flex h-14 shrink-0 items-center gap-2 border-t px-2.5 sm:px-3"
+    class="ocr-bottombar bg-card flex h-14 shrink-0 items-center gap-2 rounded-md border px-2.5 sm:px-3"
   >
     <Button
       variant="outline"
@@ -97,14 +97,12 @@ defineExpose({ focusEdit, focusBar })
       <ChevronRight />
     </Button>
 
+    <!-- 这里只说明键盘有翻页；不再画一对带边框的 kbd 方块，免得被看成第二套翻页按钮。 -->
     <span
-      class="text-muted-foreground ml-1 hidden items-center gap-1 text-[11px] lg:inline-flex"
+      class="text-muted-foreground ml-1 hidden text-[11px] lg:inline"
       title="键盘 ← → 翻页；输入或编辑时不触发"
+      >键盘 ← / → 翻页</span
     >
-      <kbd class="bg-muted rounded-sm border px-1.5 py-0.5 font-mono text-[10px]">←</kbd>
-      <kbd class="bg-muted rounded-sm border px-1.5 py-0.5 font-mono text-[10px]">→</kbd>
-      翻页
-    </span>
 
     <div class="ml-auto flex items-center gap-2">
       <span

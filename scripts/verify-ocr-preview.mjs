@@ -430,7 +430,8 @@ try {
         await click('跳转实际页号')
         await wait("document.querySelector('input[aria-label=\"跳转实际页号\"]')")
         await fill('input[aria-label="跳转实际页号"]', '4')
-        await click('跳转', '[data-slot="popover-content"]')
+        // Desktop opens the page navigator as a Popover; narrow screens use a Sheet.
+        await click('跳转', '[data-slot="popover-content"], [data-slot="sheet-content"]')
         await wait("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 4 / 97 页') && document.querySelector('.preview-content')")
         assert.equal(await ev('window.scrollY'), 0)
         assert.equal(await ev("document.querySelector('.preview-content').scrollTop"), 0)
@@ -444,6 +445,18 @@ try {
         await sleep(150)
         assert.equal(await ev("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 5 / 97 页')"), true)
         await cancel()
+
+        // Page navigator: every physical page is listed, thumbnails stay lazy, and a
+        // page can be picked directly (no typing first). Popover on desktop, Sheet at 390.
+        await click('跳转实际页号')
+        await wait(`!!document.querySelector('[data-ocr-page-cell]')`)
+        assert.equal(await ev("document.querySelectorAll('[data-ocr-page-cell]').length"), 97, 'navigator did not list every physical page')
+        assert.ok(await ev("document.querySelectorAll('[data-ocr-page-cell] img').length < 97"), 'navigator eagerly loaded every page image')
+        assert.equal(await ev("document.querySelector('[data-ocr-page-cell][aria-current=\"page\"]')?.dataset.page"), '5', 'navigator did not mark the current page')
+        await ev(`document.querySelector('[data-ocr-page-cell][data-page="6"]').click()`)
+        await wait("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 6 / 97 页')")
+        await key('Escape', 'Escape')
+        await wait(`!document.querySelector('[data-slot="popover-content"], [data-slot="sheet-content"]')`)
 
         if (width === 390) {
           await click('页图', '[data-slot="tabs-list"]')
@@ -602,10 +615,10 @@ try {
         await key('Escape', 'Escape')
         await wait(`!document.querySelector('[data-slot="sheet-content"]')`)
         await click('跳转实际页号')
-        await wait(`!!document.querySelector('[data-slot="popover-content"]')`)
-        assert.equal(await ev(`document.querySelector('[data-slot="popover-content"]').innerText.includes('全文件 97 页') && document.querySelector('[data-slot="popover-content"]').innerText.includes('有文本 95')`), true, 'short viewport lost the full counts')
+        await wait(`!!document.querySelector('[data-slot="popover-content"], [data-slot="sheet-content"]')`)
+        assert.equal(await ev(`(() => { const el=document.querySelector('[data-slot="popover-content"], [data-slot="sheet-content"]'); return !!el && el.innerText.includes('全文件 97 页') && el.innerText.includes('有文本 95') })()`), true, 'short viewport lost the full counts')
         await key('Escape', 'Escape')
-        await wait(`!document.querySelector('[data-slot="popover-content"]')`)
+        await wait(`!document.querySelector('[data-slot="popover-content"], [data-slot="sheet-content"]')`)
       }
       await edit()
       assert.ok(await ev("parseFloat(getComputedStyle(document.querySelector('textarea')).fontSize) >= 14"), `${width}x${height} editor font below 14px`)

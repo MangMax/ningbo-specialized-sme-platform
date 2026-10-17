@@ -123,14 +123,15 @@ function fileMeta(file: StoredFileRow) {
             @update:model-value="emit('filter', 'q', String($event))"
           />
         </div>
-        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <!-- 两个筛选控件成组、均匀占列：trigger 默认 w-fit 会在列里留下大空洞。 -->
+        <div class="grid grid-cols-2 gap-2">
           <Select
             :model-value="source || 'all'"
             @update:model-value="
               emit('filter', 'source', $event === 'all' ? '' : String($event))
             "
           >
-            <SelectTrigger aria-label="按来源筛选">
+            <SelectTrigger class="w-full" aria-label="按来源筛选">
               <SelectValue placeholder="全部来源" />
             </SelectTrigger>
             <SelectContent>
@@ -148,7 +149,7 @@ function fileMeta(file: StoredFileRow) {
               emit('filter', 'year', $event === 'all' ? '' : String($event))
             "
           >
-            <SelectTrigger aria-label="按公布年份筛选">
+            <SelectTrigger class="w-full" aria-label="按公布年份筛选">
               <SelectValue placeholder="全部公布年份" />
             </SelectTrigger>
             <SelectContent>

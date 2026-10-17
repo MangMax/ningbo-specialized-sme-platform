@@ -43,12 +43,18 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Input } from '@/components/ui/input'
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import ImagePreview from '@/components/preview/ImagePreview.vue'
@@ -57,6 +63,7 @@ import OcrFilePicker from './OcrFilePicker.vue'
 import OcrFilterPanel from './OcrFilterPanel.vue'
 import OcrImportDialog from './OcrImportDialog.vue'
 import OcrPageBody from './OcrPageBody.vue'
+import OcrPageNavigator from './OcrPageNavigator.vue'
 import OcrPageRow from './OcrPageRow.vue'
 import {
   pageReviewState,
@@ -124,7 +131,9 @@ const {
 } = useOcrWorkbench()
 
 const isNarrow = useMediaQuery('(max-width: 1023px)')
-const pageRow = useTemplateRef<{ focusEditor: () => void }>('pageRow')
+const pageRow = useTemplateRef<{
+  focusEditor: (reset?: boolean) => void
+}>('pageRow')
 const bottomBar = useTemplateRef<{
   focusEdit: () => Promise<void>
   focusBar: () => Promise<void>
@@ -137,9 +146,11 @@ const compareTrigger = ref<HTMLElement | null>(null)
 const compareMode = ref<'rendered' | 'source'>('rendered')
 const compareWrap = ref(true)
 const compareMessage = ref('')
-const jumpOpen = ref(false)
-const jump = ref('')
-const jumpError = ref('')
+/** 快速页面导航：桌面 Popover，移动端底部 Sheet；两种壳共用同一面板。 */
+const pageNavOpen = ref(false)
+const pageNavTrigger = useTemplateRef<{ $el?: HTMLButtonElement }>(
+  'pageNavTrigger',
+)
 
 const editing = ref(false)
 const draft = ref('')
@@ -199,11 +210,6 @@ watch(
   },
 )
 
-watch(currentPage, (page) => {
-  jump.value = page === null ? '' : String(page)
-  jumpError.value = ''
-})
-
 const pages = computed(() => visibleRows.value.map((row) => row.page))
 const pageIndex = computed(() =>
   currentPage.value === null ? -1 : pages.value.indexOf(currentPage.value),
@@ -262,6 +268,25 @@ const activeFilterCount = computed(
     (filters.value.range.trim() ? 1 : 0) +
     (filters.value.text.trim() ? 1 : 0),
 )
+const filtered = computed(() => activeFilterCount.value > 0)
+/**
+ * 页面导航的守卫与原因。与底栏/筛选同一口径：草稿与写入在飞时不能跳页，
+ * 但仍允许打开面板浏览（页面格子只做 aria-disabled，不用 disabled 把焦点也拿走）。
+ */
+const navDisabled = computed(
+  () =>
+    dirty.value ||
+    writeBusy.value ||
+    !ready.value ||
+    !!detailError.value,
+)
+const navBlockedReason = computed(() => {
+  if (dirty.value) return '有未保存的草稿，保存或取消编辑后才能跳到别的页。'
+  if (writeBusy.value) return '写入处理中，完成后再跳到别的页。'
+  if (detailError.value) return '这份文件的结果现在读不到，先重试读取。'
+  if (!ready.value) return '文件还在读取中，稍后再跳页。'
+  return ''
+})
 interface FilterChip {
   key: string
   label: string
@@ -337,7 +362,7 @@ function leaveEdit() {
 /** Keep the draft and put the caret back where the user was working. */
 function keepEditing() {
   discardOpen.value = false
-  void nextTick(() => pageRow.value?.focusEditor())
+  void nextTick(() => pageRow.value?.focusEditor(false))
 }
 
 /**
@@ -347,7 +372,8 @@ function keepEditing() {
 function onDiscardOpen(value: boolean) {
   discardOpen.value = value
   if (!value && editing.value) {
-    void nextTick(() => pageRow.value?.focusEditor())
+    // Esc closes only the confirmation: keep the draft *and* the caret place.
+    void nextTick(() => pageRow.value?.focusEditor(false))
   }
 }
 
@@ -403,20 +429,20 @@ function goNext() {
     navigate(pages.value[pageIndex.value + 1]!)
 }
 
-function goToPage() {
-  const value = jump.value.trim()
-  const page = Number(value)
-  if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(page)) {
-    jumpError.value = '请输入正整数页号。'
-    return
-  }
-  if (!pages.value.includes(page)) {
-    jumpError.value = '请输入当前命中范围内的实际页号。'
-    return
-  }
-  jumpError.value = ''
-  jumpOpen.value = false
+/**
+ * 页面导航面板的唯一出口。桌面保持打开以便连续翻看；移动端点完即回到文档，
+ * 并把焦点交还页号触发按钮，避免焦点落到 body。
+ */
+function selectNavigatorPage(page: number) {
   navigate(page)
+  if (!isNarrow.value) return
+  closePageNav()
+}
+
+/** 输入页号后关闭面板；焦点回到页号入口，不落到 body。 */
+function closePageNav() {
+  pageNavOpen.value = false
+  void nextTick(() => pageNavTrigger.value?.$el?.focus())
 }
 
 function openCompare(trigger?: HTMLElement) {
@@ -476,13 +502,19 @@ async function copyCompare() {
 }
 
 /**
- * Controls that own their own arrow-key behavior (inputs, menus, tabs, buttons,
- * links…). The global pager must never `preventDefault()` on those.
+ * Controls that own their own arrow-key behavior: text fields, selects, menus,
+ * tabs and switches. The global pager must never `preventDefault()` on those.
+ *
+ * Plain buttons/links are intentionally **not** excluded: a button does not
+ * consume ←/→, and after clicking the footer pager the user should be able to
+ * keep paging with the keyboard. The page-nav grid handles its own arrows and
+ * calls `preventDefault()`, so `event.defaultPrevented` stops the global pager
+ * before this check.
  */
 function isInteractiveTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
   return !!target.closest(
-    'input, textarea, select, button, a[href], summary, [contenteditable="true"], [role="textbox"], [role="menu"], [role="menuitem"], [role="tab"], [role="switch"], [role="checkbox"], [role="button"], [data-slot="dialog-content"], [data-slot="sheet-content"], [data-slot="popover-content"]',
+    'input, textarea, select, [contenteditable="true"], [role="textbox"], [role="menu"], [role="menuitem"], [role="tab"], [role="switch"], [role="checkbox"], [data-slot="dialog-content"], [data-slot="sheet-content"], [data-slot="popover-content"]',
   )
 }
 
@@ -504,7 +536,7 @@ function onRootEscape(event: KeyboardEvent) {
     compareOpen.value ||
     fileOpen.value ||
     filterOpen.value ||
-    jumpOpen.value
+    pageNavOpen.value
   )
     return
   if (!editing.value || pendingPage.value !== null) return
@@ -528,7 +560,7 @@ function onKeydown(event: KeyboardEvent) {
     compareOpen.value ||
     fileOpen.value ||
     filterOpen.value ||
-    jumpOpen.value
+    pageNavOpen.value
   )
     return
   if (isInteractiveTarget(event.target) || isScrollableContent(event.target))
@@ -568,410 +600,480 @@ const fileSheetBlockedReason = computed(() =>
     aria-label="识别校对工作台"
     @keydown.esc="onRootEscape"
   >
-    <header class="bg-card shrink-0 border-b">
-      <div class="ocr-topbar flex h-14 min-w-0 items-center gap-2 px-2.5 sm:px-3">
-        <span class="hidden shrink-0 text-sm font-semibold md:inline">识别校对</span>
+    <!-- 顶栏、工作区、底栏共用同一列容器与左右锚线：三块同宽、同圆角、同描边，
+         不会再出现“通栏硬边横条贴着圆角卡片”的割裂。 -->
+    <div class="ocr-shell flex min-h-0 flex-1 flex-col gap-2 p-2">
+      <header class="bg-card shrink-0 overflow-hidden rounded-md border">
+        <div class="ocr-topbar flex h-14 min-w-0 items-center gap-2 px-2.5 sm:px-3">
+          <span class="hidden shrink-0 text-sm font-semibold md:inline">识别校对</span>
 
-        <div
-          role="region"
-          aria-label="当前文件与页号"
-          class="flex min-w-0 flex-1 items-center gap-1"
-        >
-          <Button
-            variant="outline"
-            size="sm"
-            class="max-w-[52vw] min-w-0 sm:max-w-xs"
-            aria-label="选择 PDF 文件"
-            :disabled="writeBusy"
-            @click="fileOpen = true"
+          <div
+            role="region"
+            aria-label="当前文件与页号"
+            class="flex min-w-0 flex-1 items-center gap-1"
           >
-            <FileText class="shrink-0" />
-            <span class="truncate" :title="displayName || '选择 PDF'">{{
-              displayName || '选择 PDF'
-            }}</span>
-            <ChevronDown class="shrink-0 opacity-60" />
-          </Button>
-
-          <Popover v-model:open="jumpOpen">
-            <PopoverTrigger as-child>
-              <Button
-                variant="ghost"
-                size="sm"
-                class="shrink-0 gap-1 tabular-nums"
-                :disabled="currentPage === null"
-                aria-label="跳转实际页号"
-                title="跳到实际页号"
-              >
-                <span aria-live="polite">
-                  {{
-                    currentPage === null
-                      ? '无命中页'
-                      : `第 ${currentPage} / ${rows.length} 页`
-                  }}
-                </span>
-                <ChevronDown class="size-3.5 opacity-60" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="start" class="w-64">
-              <form class="flex flex-col gap-2" @submit.prevent="goToPage">
-                <label class="text-xs font-medium" for="ocr-jump">跳到实际页号</label>
-                <div class="flex items-center gap-2">
-                  <Input
-                    id="ocr-jump"
-                    v-model="jump"
-                    class="w-24"
-                    inputmode="numeric"
-                    aria-label="跳转实际页号"
-                  />
-                  <Button size="sm" :disabled="!pages.length">跳转</Button>
-                </div>
-                <p v-if="jumpError" role="alert" class="text-destructive text-xs">
-                  {{ jumpError }}
-                </p>
-                <p v-else class="text-muted-foreground text-[11px] leading-relaxed">
-                  当前命中 {{ pages.length }} 页 · 全文件 {{ rows.length }} 页 ·
-                  有文本 {{ counts.text }} · 空结果 {{ counts.empty }} · 未识别
-                  {{ counts.none }}
-                </p>
-              </form>
-            </PopoverContent>
-          </Popover>
-        </div>
-
-        <div class="ml-auto flex shrink-0 items-center gap-1">
-          <!-- Short viewports hide the metadata row to give the document height;
-               the filter entry and its active count move up here. -->
-          <Button
-            variant="ghost"
-            size="sm"
-            class="ocr-short-filter hidden h-8 gap-1 px-2"
-            :disabled="!ready || !!detailError"
-            aria-label="筛选当前文件"
-            @click="filterOpen = true"
-          >
-            <Filter />
-            <span v-if="activeFilterCount" class="tabular-nums">{{
-              activeFilterCount
-            }}</span>
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger as-child>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="size-9"
-                aria-label="工作台更多操作"
-              >
-                <MoreHorizontal />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" class="w-52">
-              <DropdownMenuGroup>
-                <DropdownMenuItem @select="refreshAll">
-                  <RefreshCw />
-                  刷新文件与结果
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  :disabled="!canImport"
-                  :title="canImport ? undefined : IMPORT_NOT_READY"
-                  @select="importOpen = true"
-                >
-                  <Upload />
-                  导入识别结果
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  v-if="
-                    selectedPath &&
-                    (renderedCount < (pageCount ?? 0) || renderedCount === 0)
-                  "
-                  :disabled="rendering || writeBusy"
-                  @select="renderPageImages"
-                >
-                  <Loader2 v-if="rendering" class="animate-spin motion-reduce:animate-none" />
-                  <Images v-else />
-                  {{ rendering ? '渲染中…' : '渲染页图' }}
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-
-      <!-- 文件级身份只在这里出现一次：计数、筛选入口与活跃条件、状态行。 -->
-      <div
-        v-if="selectedPath"
-        class="ocr-meta-row flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 border-t px-2.5 py-1.5 text-xs sm:px-3"
-      >
-        <span class="text-muted-foreground shrink-0 tabular-nums">
-          有文本 {{ counts.text }} · 空结果 {{ counts.empty }} · 未识别
-          {{ counts.none }}
-        </span>
-        <Badge
-          v-if="currentPage !== null"
-          :variant="STATE_BADGE[currentState]"
-          class="shrink-0"
-          >{{ STATE_WORD[currentState] }}</Badge
-        >
-        <span
-          v-if="activeFilterCount"
-          class="text-muted-foreground shrink-0 tabular-nums"
-          >命中 {{ visibleRows.length }} 页</span
-        >
-
-        <Button
-          variant="outline"
-          size="sm"
-          class="h-7 shrink-0 px-2"
-          :disabled="!ready || !!detailError"
-          @click="filterOpen = true"
-        >
-          <Filter />
-          筛选<template v-if="activeFilterCount">
-            <span class="tabular-nums">{{ activeFilterCount }}</span></template
-          >
-        </Button>
-
-        <!-- Chips stay removable at every width (390 included): one horizontally
-             scrollable row on narrow screens, wrapped from sm up. -->
-        <span
-          class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto sm:flex-wrap sm:overflow-visible"
-        >
-          <Badge
-            v-for="chip in filterChips"
-            :key="chip.key"
-            variant="quiet"
-            class="max-w-44 shrink-0 gap-1 sm:max-w-52"
-          >
-            <span class="truncate">{{ chip.label }}</span>
-            <button
-              type="button"
-              class="hover:bg-foreground/10 focus-visible:ring-ring -mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded-sm focus-visible:ring-2 focus-visible:outline-none"
-              :aria-label="`移除筛选：${chip.label}`"
-              :disabled="dirty"
-              @click="chip.remove"
-            >
-              <X class="size-3.5" />
-            </button>
-          </Badge>
-          <Button
-            v-if="activeFilterCount && visibleRows.length"
-            variant="ghost"
-            size="sm"
-            class="h-7 shrink-0 px-1.5 text-xs"
-            :disabled="dirty"
-            @click="clearFilters"
-            >清除条件</Button
-          >
-        </span>
-
-        <span class="ml-auto flex min-w-0 items-center gap-2">
-          <span
-            v-if="dirty"
-            role="status"
-            class="text-foreground max-w-full truncate text-[11px] font-medium"
-            title="有未保存的草稿，请先保存或取消编辑，再切换文件、页面或筛选。"
-            >有未保存的草稿，请先保存或取消编辑，再切换文件、页面或筛选。</span
-          >
-          <template v-else>
-            <span
-              v-if="status"
-              role="status"
-              class="max-w-full truncate text-[11px]"
-              :class="
-                status.tone === 'error'
-                  ? 'text-destructive font-medium'
-                  : 'text-muted-foreground'
-              "
-              :title="status.message"
-              >{{ status.message }}</span
-            >
-            <span
-              v-if="notice && visibleRows.length"
-              role="status"
-              class="text-muted-foreground max-w-full truncate text-[11px]"
-              :title="notice"
-              >{{ notice }}</span
-            >
-            <span
-              v-if="detailLoading && loadedPath"
-              role="status"
-              class="text-muted-foreground truncate text-[11px]"
-              >正在刷新，保留上次成功读取的当前文件内容…</span
-            >
-          </template>
-        </span>
-      </div>
-      <div v-else class="text-muted-foreground border-t px-3 py-2 text-xs">
-        选择一份文件后，这里显示页数与识别状态。
-      </div>
-    </header>
-
-    <main
-      class="ocr-workspace-scroll relative min-h-0 flex-1 overflow-hidden"
-      aria-label="校对内容"
-    >
-      <div
-        v-if="!selectedPath"
-        class="flex h-full items-center justify-center p-6"
-      >
-        <Empty class="border-0 bg-transparent">
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><FileSearch /></EmptyMedia>
-            <EmptyTitle>选择一份 PDF 开始校对</EmptyTitle>
-            <EmptyDescription>
-              文件选择在顶栏；切换文件才会重置页码与页筛选。
-            </EmptyDescription>
-          </EmptyHeader>
-          <Button size="sm" @click="fileOpen = true">选择 PDF</Button>
-        </Empty>
-      </div>
-
-      <div
-        v-else-if="detailLoading && !loadedPath"
-        class="flex h-full flex-col gap-2 p-3"
-      >
-        <Skeleton class="h-10 w-full" />
-        <Skeleton class="h-full w-full" />
-      </div>
-
-      <div
-        v-else-if="detailError && !loadedPath"
-        class="flex h-full items-center justify-center p-6"
-      >
-        <Empty class="border-0 bg-transparent">
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><FileWarning /></EmptyMedia>
-            <EmptyTitle>读不到这份文件的结果</EmptyTitle>
-            <EmptyDescription>{{ detailError }}</EmptyDescription>
-          </EmptyHeader>
-          <Button
-            variant="outline"
-            size="sm"
-            :disabled="detailLoading"
-            @click="selectedPath && loadDetail(selectedPath)"
-          >
-            <RefreshCw />
-            重试
-          </Button>
-        </Empty>
-      </div>
-
-      <div
-        v-else-if="!rows.length"
-        class="flex h-full items-center justify-center p-6"
-      >
-        <Empty class="border-0 bg-transparent">
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><FileText /></EmptyMedia>
-            <EmptyTitle>这一页还没有可校对的内容</EmptyTitle>
-            <EmptyDescription>
-              读不到这份 PDF 的页数（文件可能已损坏或被移走），所以列不出页码。
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      </div>
-
-      <div
-        v-else-if="!visibleRows.length && !currentRow"
-        class="flex h-full items-center justify-center p-6"
-      >
-        <Empty class="border-0 bg-transparent">
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><FileText /></EmptyMedia>
-            <EmptyTitle>没有命中页</EmptyTitle>
-            <EmptyDescription>
-              调整条件或清除当前筛选，恢复这份文件的全部实际页。
-            </EmptyDescription>
-          </EmptyHeader>
-          <Button
-            variant="outline"
-            size="sm"
-            :disabled="dirty"
-            @click="clearFilters"
-            >清除页筛选</Button
-          >
-        </Empty>
-      </div>
-
-      <div v-else class="flex h-full min-h-0 flex-col">
-        <Tabs
-          :model-value="view"
-          class="ocr-view-tabs shrink-0 gap-0 border-b px-2 py-1.5 lg:hidden"
-          @update:model-value="(value) => setView(String(value) as OcrView)"
-        >
-          <TabsList class="grid w-full grid-cols-3" aria-label="校对视图">
-            <TabsTrigger value="text">文本</TabsTrigger>
-            <TabsTrigger value="image">页图</TabsTrigger>
-            <TabsTrigger value="compare">对照</TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        <Alert
-          v-if="detailError && loadedPath"
-          variant="destructive"
-          class="mx-2 mt-2 shrink-0"
-        >
-          <AlertDescription class="text-destructive! font-medium">
-            {{ detailError }}
             <Button
               variant="outline"
               size="sm"
-              class="ml-2"
-              @click="retry"
-              >重试读取</Button
+              class="max-w-[52vw] min-w-0 sm:max-w-xs"
+              aria-label="选择 PDF 文件"
+              :disabled="writeBusy"
+              @click="fileOpen = true"
             >
-          </AlertDescription>
-        </Alert>
+              <FileText class="shrink-0" />
+              <span class="truncate" :title="displayName || '选择 PDF'">{{
+                displayName || '选择 PDF'
+              }}</span>
+              <ChevronDown class="shrink-0 opacity-60" />
+            </Button>
 
-        <ul role="list" class="ocr-workspace-list min-h-0 flex-1 p-2 sm:p-3">
-          <Transition
-            enter-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
-            enter-from-class="translate-y-1 opacity-0"
-            leave-active-class="hidden"
+            <!-- 页面导航：桌面用 Popover（覆盖层，不占文档宽），移动端点开是底部 Sheet。
+                 一个入口同时承担“输入实际页号”和“直接点页/缩略图”。 -->
+            <Popover v-if="!isNarrow" v-model:open="pageNavOpen">
+              <PopoverTrigger as-child>
+                <Button
+                  ref="pageNavTrigger"
+                  variant="ghost"
+                  size="sm"
+                  class="shrink-0 gap-1 tabular-nums"
+                  :disabled="currentPage === null"
+                  aria-label="跳转实际页号"
+                  aria-haspopup="dialog"
+                  :aria-expanded="pageNavOpen"
+                  :title="
+                    currentPage === null
+                      ? '当前没有可跳转的页'
+                      : '打开页导航：直接点页或输入实际页号'
+                  "
+                >
+                  <span aria-live="polite">
+                    {{
+                      currentPage === null
+                        ? '无命中页'
+                        : `第 ${currentPage} / ${rows.length} 页`
+                    }}
+                  </span>
+                  <ChevronDown class="size-3.5 opacity-60" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                class="w-[min(88vw,24rem)] p-0"
+              >
+                <OcrPageNavigator
+                  :pages="pages"
+                  :rows="rows"
+                  :current-page="currentPage"
+                  :total-pages="rows.length"
+                  :counts="counts"
+                  :filtered="filtered"
+                  :disabled="navDisabled"
+                  :blocked-reason="navBlockedReason"
+                  :image-version="imageVersion"
+                  variant="popover"
+                  @navigate="selectNavigatorPage"
+                  @clear-filters="clearFilters"
+                  @close="closePageNav"
+                />
+              </PopoverContent>
+            </Popover>
+            <Button
+              v-else
+              ref="pageNavTrigger"
+              variant="ghost"
+              size="sm"
+              class="shrink-0 gap-1 tabular-nums"
+              :disabled="currentPage === null"
+              aria-label="跳转实际页号"
+              aria-haspopup="dialog"
+              :aria-expanded="pageNavOpen"
+              :title="
+                currentPage === null
+                  ? '当前没有可跳转的页'
+                  : '打开页导航：直接点页或输入实际页号'
+              "
+              @click="pageNavOpen = true"
+            >
+              <span aria-live="polite">
+                {{
+                  currentPage === null
+                    ? '无命中页'
+                    : `第 ${currentPage} / ${rows.length} 页`
+                }}
+              </span>
+              <ChevronDown class="size-3.5 opacity-60" />
+            </Button>
+          </div>
+
+          <div class="ml-auto flex shrink-0 items-center gap-1">
+            <!-- Short viewports hide the metadata row to give the document height;
+                 the filter entry and its active count move up here. -->
+            <Button
+              variant="ghost"
+              size="sm"
+              class="ocr-short-filter hidden h-8 gap-1 px-2"
+              :disabled="!ready || !!detailError"
+              aria-label="筛选当前文件"
+              @click="filterOpen = true"
+            >
+              <Filter />
+              <span v-if="activeFilterCount" class="tabular-nums">{{
+                activeFilterCount
+              }}</span>
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-9"
+                  aria-label="工作台更多操作"
+                >
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" class="w-52">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem @select="refreshAll">
+                    <RefreshCw />
+                    刷新文件与结果
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    :disabled="!canImport"
+                    :title="canImport ? undefined : IMPORT_NOT_READY"
+                    @select="importOpen = true"
+                  >
+                    <Upload />
+                    导入识别结果
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    v-if="
+                      selectedPath &&
+                      (renderedCount < (pageCount ?? 0) || renderedCount === 0)
+                    "
+                    :disabled="rendering || writeBusy"
+                    @select="renderPageImages"
+                  >
+                    <Loader2 v-if="rendering" class="animate-spin motion-reduce:animate-none" />
+                    <Images v-else />
+                    {{ rendering ? '渲染中…' : '渲染页图' }}
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+        <!-- 文件级身份只在这里出现一次：计数、筛选入口与活跃条件、状态行。 -->
+        <div
+          v-if="selectedPath"
+          class="ocr-meta-row flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 border-t px-2.5 py-1.5 text-xs sm:px-3"
+        >
+          <span class="text-muted-foreground shrink-0 tabular-nums">
+            有文本 {{ counts.text }} · 空结果 {{ counts.empty }} · 未识别
+            {{ counts.none }}
+          </span>
+          <Badge
+            v-if="currentPage !== null"
+            :variant="STATE_BADGE[currentState]"
+            class="shrink-0"
+            >{{ STATE_WORD[currentState] }}</Badge
           >
-            <OcrPageRow
-              v-if="currentRow"
-              ref="pageRow"
-              :key="`${selectedPath}:${currentRow.page}`"
-              :row="currentRow"
-              :file-path="selectedPath"
-              :image-version="imageVersion"
-              :editing="editing"
-              :draft="draft"
-              :pending="pendingPage === currentRow.page"
-              :failure="rowFailureMessage"
-              :failure-action="rowFailureAction"
-              :disabled="detailLoading || !!detailError"
-              :highlight="justSaved === currentRow.page"
-              :view="view"
-              class="h-full"
-              @update:draft="draft = $event"
-              @save="(page, markdown) => savePage(page, markdown)"
-              @remove="removeCurrent"
-              @preview="(_page, trigger) => openCompare(trigger)"
-              @retry="retry"
-              @render="renderPageImages"
-            />
-          </Transition>
-        </ul>
-      </div>
-    </main>
+          <span
+            v-if="activeFilterCount"
+            class="text-muted-foreground shrink-0 tabular-nums"
+            >命中 {{ visibleRows.length }} 页</span
+          >
 
-    <OcrBottomBar
-      ref="bottomBar"
-      :current-page="currentPage"
-      :pages="pages"
-      :editing="editing"
-      :dirty="dirty"
-      :pending="pendingPage !== null"
-      :disabled="writeBusy || !ready || !!detailError"
-      :can-edit="canEdit"
-      :edit-label="editLabel"
-      @navigate="navigate"
-      @edit="startEdit"
-      @save="saveDraft"
-      @cancel="cancelEdit"
-    />
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-7 shrink-0 px-2"
+            :disabled="!ready || !!detailError"
+            @click="filterOpen = true"
+          >
+            <Filter />
+            筛选<template v-if="activeFilterCount">
+              <span class="tabular-nums">{{ activeFilterCount }}</span></template
+            >
+          </Button>
+
+          <!-- Chips stay removable at every width (390 included): one horizontally
+               scrollable row on narrow screens, wrapped from sm up. -->
+          <span
+            class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto sm:flex-wrap sm:overflow-visible"
+          >
+            <Badge
+              v-for="chip in filterChips"
+              :key="chip.key"
+              variant="quiet"
+              class="max-w-44 shrink-0 gap-1 sm:max-w-52"
+            >
+              <span class="truncate">{{ chip.label }}</span>
+              <button
+                type="button"
+                class="hover:bg-foreground/10 focus-visible:ring-ring -mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded-sm focus-visible:ring-2 focus-visible:outline-none"
+                :aria-label="`移除筛选：${chip.label}`"
+                :disabled="dirty"
+                @click="chip.remove"
+              >
+                <X class="size-3.5" />
+              </button>
+            </Badge>
+            <Button
+              v-if="activeFilterCount && visibleRows.length"
+              variant="ghost"
+              size="sm"
+              class="h-7 shrink-0 px-1.5 text-xs"
+              :disabled="dirty"
+              @click="clearFilters"
+              >清除条件</Button
+            >
+          </span>
+
+          <span class="ml-auto flex min-w-0 items-center gap-2">
+            <span
+              v-if="dirty"
+              role="status"
+              class="text-foreground max-w-full truncate text-[11px] font-medium"
+              title="有未保存的草稿，请先保存或取消编辑，再切换文件、页面或筛选。"
+              >有未保存的草稿，请先保存或取消编辑，再切换文件、页面或筛选。</span
+            >
+            <template v-else>
+              <span
+                v-if="status"
+                role="status"
+                class="max-w-full truncate text-[11px]"
+                :class="
+                  status.tone === 'error'
+                    ? 'text-destructive font-medium'
+                    : 'text-muted-foreground'
+                "
+                :title="status.message"
+                >{{ status.message }}</span
+              >
+              <span
+                v-if="notice && visibleRows.length"
+                role="status"
+                class="text-muted-foreground max-w-full truncate text-[11px]"
+                :title="notice"
+                >{{ notice }}</span
+              >
+              <span
+                v-if="detailLoading && loadedPath"
+                role="status"
+                class="text-muted-foreground truncate text-[11px]"
+                >正在刷新，保留上次成功读取的当前文件内容…</span
+              >
+            </template>
+          </span>
+        </div>
+        <div v-else class="text-muted-foreground border-t px-3 py-2 text-xs">
+          选择一份文件后，这里显示页数与识别状态。
+        </div>
+      </header>
+
+      <main
+        class="ocr-workspace-scroll relative min-h-0 flex-1 overflow-hidden"
+        aria-label="校对内容"
+      >
+        <div
+          v-if="!selectedPath"
+          class="flex h-full items-center justify-center p-6"
+        >
+          <Empty class="border-0 bg-transparent">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><FileSearch /></EmptyMedia>
+              <EmptyTitle>选择一份 PDF 开始校对</EmptyTitle>
+              <EmptyDescription>
+                文件选择在顶栏；切换文件才会重置页码与页筛选。
+              </EmptyDescription>
+            </EmptyHeader>
+            <Button size="sm" @click="fileOpen = true">选择 PDF</Button>
+          </Empty>
+        </div>
+
+        <div
+          v-else-if="detailLoading && !loadedPath"
+          class="flex h-full flex-col gap-2 p-3"
+        >
+          <Skeleton class="h-10 w-full" />
+          <Skeleton class="h-full w-full" />
+        </div>
+
+        <div
+          v-else-if="detailError && !loadedPath"
+          class="flex h-full items-center justify-center p-6"
+        >
+          <Empty class="border-0 bg-transparent">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><FileWarning /></EmptyMedia>
+              <EmptyTitle>读不到这份文件的结果</EmptyTitle>
+              <EmptyDescription>{{ detailError }}</EmptyDescription>
+            </EmptyHeader>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="detailLoading"
+              @click="selectedPath && loadDetail(selectedPath)"
+            >
+              <RefreshCw />
+              重试
+            </Button>
+          </Empty>
+        </div>
+
+        <div
+          v-else-if="!rows.length"
+          class="flex h-full items-center justify-center p-6"
+        >
+          <Empty class="border-0 bg-transparent">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><FileText /></EmptyMedia>
+              <EmptyTitle>这一页还没有可校对的内容</EmptyTitle>
+              <EmptyDescription>
+                读不到这份 PDF 的页数（文件可能已损坏或被移走），所以列不出页码。
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </div>
+
+        <div
+          v-else-if="!visibleRows.length && !currentRow"
+          class="flex h-full items-center justify-center p-6"
+        >
+          <Empty class="border-0 bg-transparent">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><FileText /></EmptyMedia>
+              <EmptyTitle>没有命中页</EmptyTitle>
+              <EmptyDescription>
+                调整条件或清除当前筛选，恢复这份文件的全部实际页。
+              </EmptyDescription>
+            </EmptyHeader>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="dirty"
+              @click="clearFilters"
+              >清除页筛选</Button
+            >
+          </Empty>
+        </div>
+
+        <div v-else class="flex h-full min-h-0 flex-col">
+          <!-- Native wrapper: the Reka Tabs root sits under motion-v's LayoutGroup,
+               so a class/data-v placed on the Vue component root never lands on a DOM
+               node. The wrapper is the element the scoped short-viewport rules target. -->
+          <div class="ocr-view-tabs shrink-0 py-1.5 lg:hidden">
+            <Tabs
+              :model-value="view"
+              class="gap-0"
+              @update:model-value="(value) => setView(String(value) as OcrView)"
+            >
+              <TabsList class="grid w-full grid-cols-3" aria-label="校对视图">
+                <TabsTrigger value="text">文本</TabsTrigger>
+                <TabsTrigger value="image">页图</TabsTrigger>
+                <TabsTrigger value="compare">对照</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+
+          <Alert
+            v-if="detailError && loadedPath"
+            variant="destructive"
+            class="mt-2 shrink-0"
+          >
+            <AlertDescription class="text-destructive! font-medium">
+              {{ detailError }}
+              <Button
+                variant="outline"
+                size="sm"
+                class="ml-2"
+                @click="retry"
+                >重试读取</Button
+              >
+            </AlertDescription>
+          </Alert>
+
+          <ul role="list" class="ocr-workspace-list min-h-0 flex-1">
+            <Transition
+              enter-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
+              enter-from-class="translate-y-1 opacity-0"
+              leave-active-class="hidden"
+            >
+              <OcrPageRow
+                v-if="currentRow"
+                ref="pageRow"
+                :key="`${selectedPath}:${currentRow.page}`"
+                :row="currentRow"
+                :file-path="selectedPath"
+                :image-version="imageVersion"
+                :editing="editing"
+                :draft="draft"
+                :pending="pendingPage === currentRow.page"
+                :failure="rowFailureMessage"
+                :failure-action="rowFailureAction"
+                :disabled="detailLoading || !!detailError"
+                :highlight="justSaved === currentRow.page"
+                :view="view"
+                class="h-full"
+                @update:draft="draft = $event"
+                @save="(page, markdown) => savePage(page, markdown)"
+                @remove="removeCurrent"
+                @preview="(_page, trigger) => openCompare(trigger)"
+                @retry="retry"
+                @render="renderPageImages"
+              />
+            </Transition>
+          </ul>
+        </div>
+      </main>
+
+      <OcrBottomBar
+        ref="bottomBar"
+        :current-page="currentPage"
+        :pages="pages"
+        :editing="editing"
+        :dirty="dirty"
+        :pending="pendingPage !== null"
+        :disabled="writeBusy || !ready || !!detailError"
+        :can-edit="canEdit"
+        :edit-label="editLabel"
+        @navigate="navigate"
+        @edit="startEdit"
+        @save="saveDraft"
+        @cancel="cancelEdit"
+      />
+    </div>
+
+    <!-- 移动端的同一面板：底部 Sheet，点选后关闭并回到当前页上下文。 -->
+    <Sheet v-if="isNarrow" v-model:open="pageNavOpen">
+      <SheetContent side="bottom" class="max-h-[85dvh] gap-0 p-0">
+        <!-- 面板自己带可见标题；这里只给读屏一个标题与说明。 -->
+        <SheetHeader class="sr-only">
+          <SheetTitle>页面导航</SheetTitle>
+          <SheetDescription>
+            直接点缩略图或输入实际页号；这里只列当前筛选命中的页。
+          </SheetDescription>
+        </SheetHeader>
+        <OcrPageNavigator
+          :pages="pages"
+          :rows="rows"
+          :current-page="currentPage"
+          :total-pages="rows.length"
+          :counts="counts"
+          :filtered="filtered"
+          :disabled="navDisabled"
+          :blocked-reason="navBlockedReason"
+          :image-version="imageVersion"
+          variant="sheet"
+          class="min-h-0 flex-1"
+          @navigate="selectNavigatorPage"
+          @clear-filters="clearFilters"
+          @close="closePageNav"
+        />
+      </SheetContent>
+    </Sheet>
 
     <OcrFilePicker
       v-model:open="fileOpen"
@@ -1294,6 +1396,20 @@ const fileSheetBlockedReason = computed(() =>
  * the filter entry moves into the top row.
  */
 @media (max-height: 560px) {
+  /*
+   * 短视口不拿留白换“圆角感”：shell 归零，卡片退成贴边横条（去掉左右圆角与
+   * 左右边框），把宝贵的行数全部留给文档。桌面/常规高度仍是同宽圆角表面。
+   */
+  .ocr-shell {
+    padding: 0;
+    gap: 0;
+  }
+  .ocr-shell > header,
+  .ocr-shell > .ocr-bottombar {
+    border-radius: 0;
+    border-right-width: 0;
+    border-left-width: 0;
+  }
   .ocr-meta-row {
     display: none;
   }

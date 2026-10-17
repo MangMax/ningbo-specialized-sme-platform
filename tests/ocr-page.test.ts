@@ -242,8 +242,12 @@ async function setStates(wrapper: Harness['wrapper'], states: string[]) {
 }
 
 async function jumpTo(wrapper: Harness['wrapper'], value: string) {
-  await wrapper.get('button[aria-label="跳转实际页号"]').trigger('click')
-  await flushPromises()
+  // 桌面页导航在跳页后保持打开（方便连续翻看），所以只在新开时点触发器。
+  const trigger = wrapper.get('button[aria-label="跳转实际页号"]')
+  if (trigger.attributes('aria-expanded') !== 'true') {
+    await trigger.trigger('click')
+    await flushPromises()
+  }
   const sheet = body()
   const input = sheet.get('input[aria-label="跳转实际页号"]')
   await input.setValue(value)
@@ -252,6 +256,19 @@ async function jumpTo(wrapper: Harness['wrapper'], value: string) {
     .find((item) => item.text().trim() === '跳转')!
   await submit.trigger('click')
   await flushPromises()
+}
+
+async function openPageNav(wrapper: Harness['wrapper']) {
+  const trigger = wrapper.get('button[aria-label="跳转实际页号"]')
+  if (trigger.attributes('aria-expanded') !== 'true') {
+    await trigger.trigger('click')
+    await flushPromises()
+  }
+  return body()
+}
+
+function pageCells() {
+  return body().findAll('[data-ocr-page-cell]')
 }
 
 function rows(wrapper: Harness['wrapper']) {
@@ -311,7 +328,12 @@ async function chooseMenu(bodyWrapper: DOMWrapper<Element>, label: string) {
   await flushPromises()
 }
 
-async function loadA(pageCount = 4, markdown = '甲公司', page2Markdown = '') {
+async function loadA(
+  pageCount = 4,
+  markdown = '甲公司',
+  page2Markdown = '',
+  imagePages: number[] = [],
+) {
   harness = await mountPage()
   await selectFile(harness.wrapper, 'A-慢')
   const response = ocrList(FILE_A.relPath, markdown)
@@ -319,9 +341,17 @@ async function loadA(pageCount = 4, markdown = '甲公司', page2Markdown = '') 
   response.pages.push({ ...response.pages[0]!, page: 4, markdown: '乙公司' })
   response.count = 3
   harness.ocr.get(FILE_A.relPath)!.resolve(response)
-  harness.pdf
-    .get(FILE_A.relPath)!
-    .resolve(pagesState(FILE_A.relPath, pageCount))
+  harness.pdf.get(FILE_A.relPath)!.resolve({
+    ...pagesState(FILE_A.relPath, pageCount),
+    pages: imagePages.map((page) => ({
+      page,
+      relPath: `pages/${FILE_A.relPath}/p${page}.png`,
+      url: `/api/files/pages/p${page}.png`,
+      width: 1000,
+      height: 1414,
+      bytes: 1024,
+    })),
+  })
   await flushPromises()
   return harness
 }
@@ -782,16 +812,24 @@ describe('草稿保护与动作', () => {
     ).toMatchObject({ query: { file: FILE_A.relPath, page: 1 } })
     ocr.get(FILE_A.relPath)!.resolve({ count: 0, pages: [] })
     await flushPromises()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    await flushPromises()
-    expect(wrapper.text()).toContain('已删除第 1 页')
-    expect(rows(wrapper)[0]!.text()).toContain('未识别')
-    expect(wrapper.text()).toContain('手工录入')
-    expect(
-      (document.activeElement as HTMLElement | null)?.closest(
-        '[aria-label="翻页与页操作"]',
-      ),
-    ).not.toBeNull()
+    // 焦点回归是异步的（请求收尾 → nextTick → focusBar，且弹层关闭还会回焦一次）。
+    // 用可观察的等待代替固定 setTimeout，避免并行负载下的偶发失败。
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('已删除第 1 页')
+      expect(rows(wrapper)[0]!.text()).toContain('未识别')
+      expect(wrapper.text()).toContain('手工录入')
+      const active = document.activeElement as HTMLElement | null
+      const info = {
+        inBar: !!active?.closest('[aria-label="翻页与页操作"]'),
+        tag: active?.tagName ?? null,
+        aria: active?.getAttribute?.('aria-label') ?? null,
+        text: active?.textContent?.trim().slice(0, 24) ?? null,
+        dialogOpen: !!document.querySelector('[data-slot="dialog-content"]'),
+        focusGuards: document.querySelectorAll('[data-reka-focus-guard]')
+          .length,
+      }
+      expect(info.inBar, JSON.stringify(info)).toBe(true)
+    })
   })
 
   it('刷新失败保留同文件内容并关闭写入，重试恢复', async () => {
@@ -1396,7 +1434,11 @@ describe('R2 复核回归', () => {
     await button(wrapper, '编辑').trigger('click')
     await flushPromises()
     await wrapper.get('textarea').setValue('未保存修订')
-    ;(wrapper.get('textarea').element as HTMLTextAreaElement).focus()
+    const editor = wrapper.get('textarea').element as HTMLTextAreaElement
+    editor.focus()
+    // Returning from the confirmation keeps the caret place, not 0,0.
+    editor.setSelectionRange(1, 4)
+    editor.dispatchEvent(new Event('select', { bubbles: true }))
 
     await wrapper
       .get('.ocr-workbench')
@@ -1413,6 +1455,8 @@ describe('R2 复核回归', () => {
     await vi.waitFor(() =>
       expect(document.activeElement).toBe(wrapper.get('textarea').element),
     )
+    expect(editor.selectionStart).toBe(1)
+    expect(editor.selectionEnd).toBe(4)
 
     await button(wrapper, '取消').trigger('click')
     await flushPromises()
@@ -1454,5 +1498,184 @@ describe('R2 复核回归', () => {
     expect(document.querySelector('[data-slot="sheet-content"]')).not.toBeNull()
     expect(wrapper.get('textarea').element).toHaveProperty('value', '未保存修订')
     expect(pageText(wrapper)).toContain('A-慢.pdf')
+  })
+})
+
+describe('R3 快速页面导航', () => {
+  it('入口直接列页：点第 3 页即跳转，当前页与三档状态可读', async () => {
+    const { wrapper, router } = await loadA(12, '甲公司', '', [1, 2, 3])
+    const panel = await openPageNav(wrapper)
+    expect(panel.get('[data-ocr-page-nav-summary]').text()).toContain(
+      '全文件 12 页',
+    )
+    expect(pageCells()).toHaveLength(12)
+
+    const current = panel.get('[data-ocr-page-cell][aria-current="page"]')
+    expect(current.attributes('data-page')).toBe('1')
+    expect(current.attributes('aria-label')).toContain('当前页')
+    expect(current.attributes('aria-label')).toContain('有文本')
+    expect(current.attributes('tabindex')).toBe('0')
+
+    const third = panel.get('[data-ocr-page-cell][data-page="3"]')
+    expect(third.attributes('tabindex')).toBe('-1')
+    await third.trigger('click')
+    await flushPromises()
+    expect(pageText(wrapper)).toContain('第 3 / 12 页')
+    expect(router.currentRoute.value.query.page).toBe('3')
+    expect(
+      panel
+        .get('[data-ocr-page-cell][data-page="3"]')
+        .attributes('aria-current'),
+    ).toBe('page')
+    expect(
+      panel
+        .get('[data-ocr-page-cell][data-page="2"]')
+        .attributes('aria-label'),
+    ).toContain('空结果')
+    expect(
+      panel
+        .get('[data-ocr-page-cell][data-page="5"]')
+        .attributes('aria-label'),
+    ).toContain('未识别')
+  })
+
+  it('缩略图只为已有页图的页挂 img，缺图页仍可点选', async () => {
+    const { wrapper } = await loadA(6, '甲公司', '', [1, 2])
+    const panel = await openPageNav(wrapper)
+    expect(panel.findAll('[data-ocr-page-cell] img')).toHaveLength(2)
+    const missing = panel.get('[data-ocr-page-cell][data-page="5"]')
+    expect(missing.text()).toContain('无页图')
+    await missing.trigger('click')
+    await flushPromises()
+    expect(pageText(wrapper)).toContain('第 5 / 6 页')
+  })
+
+  it('筛选时只列命中实际页；清除筛选是显式动作', async () => {
+    const { wrapper, router } = await loadA(97)
+    const sheet = await openFilters(wrapper)
+    await sheet.get('input[aria-label="实际页号或范围"]').setValue('2-4')
+    await applyFilters(wrapper)
+    expect(pageText(wrapper)).toContain('第 2 / 97 页')
+
+    const panel = await openPageNav(wrapper)
+    expect(pageCells()).toHaveLength(3)
+    expect(pageCells().map((cell) => cell.attributes('data-page'))).toEqual([
+      '2',
+      '3',
+      '4',
+    ])
+    expect(panel.text()).toContain('当前命中 3 页')
+    expect(panel.find('[data-ocr-page-cell][data-page="1"]').exists()).toBe(
+      false,
+    )
+
+    const clear = panel
+      .findAll('button')
+      .find((item) => item.text().includes('清除页筛选'))!
+    await clear.trigger('click')
+    await flushPromises()
+    expect(pageCells()).toHaveLength(97)
+    expect(pageText(wrapper)).toContain('第 2 / 97 页')
+    expect(router.currentRoute.value.query.range).toBeUndefined()
+  })
+
+  it('有未保存草稿时页格不接受跳转，并说明原因', async () => {
+    const { wrapper } = await loadA(6)
+    await button(wrapper, '编辑').trigger('click')
+    await flushPromises()
+    await wrapper.get('textarea').setValue('未保存修订')
+    // 进入编辑后的 focus 回归要跑几帧；等编辑器真正拿到焦点（可观察状态）再开面板，
+    // 避免把「焦点被编辑器拉回去」误判成面板自己关闭。
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(wrapper.get('textarea').element),
+    )
+
+    const panel = await openPageNav(wrapper)
+    expect(panel.text()).toContain('有未保存的草稿')
+    const cell = panel.get('[data-ocr-page-cell][data-page="3"]')
+    expect(cell.attributes('aria-disabled')).toBe('true')
+    await cell.trigger('click')
+    await flushPromises()
+    expect(pageText(wrapper)).toContain('第 1 / 6 页')
+    expect(wrapper.get('textarea').element).toHaveProperty(
+      'value',
+      '未保存修订',
+    )
+  })
+
+  it('方向键在页面网格内移动焦点', async () => {
+    const { wrapper } = await loadA(12)
+    const panel = await openPageNav(wrapper)
+    const first = panel.get('[data-ocr-page-cell][data-page="1"]')
+    ;(first.element as HTMLElement).focus()
+    await first.trigger('keydown', { key: 'ArrowRight' })
+    expect((document.activeElement as HTMLElement).dataset.page).toBe('2')
+    await new DOMWrapper(document.activeElement as HTMLElement).trigger(
+      'keydown',
+      { key: 'ArrowDown' },
+    )
+    expect((document.activeElement as HTMLElement).dataset.page).toBe('7')
+    await new DOMWrapper(document.activeElement as HTMLElement).trigger(
+      'keydown',
+      { key: 'End' },
+    )
+    expect((document.activeElement as HTMLElement).dataset.page).toBe('12')
+    await new DOMWrapper(document.activeElement as HTMLElement).trigger(
+      'keydown',
+      { key: 'Home' },
+    )
+    expect((document.activeElement as HTMLElement).dataset.page).toBe('1')
+  })
+
+  it('点过底栏下一页后，←/→ 仍继续翻页；文本输入内不触发', async () => {
+    const { wrapper } = await loadA(6)
+    const next = wrapper
+      .findAll('button')
+      .find((item) => item.attributes('aria-label') === '下一页')!
+    ;(next.element as HTMLElement).focus()
+    await next.trigger('click')
+    await flushPromises()
+    expect(pageText(wrapper)).toContain('第 2 / 6 页')
+    // 真实键盘事件从焦点按钮冒泡到 window；按钮不消费方向键。
+    ;(next.element as HTMLElement).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+    )
+    await flushPromises()
+    expect(pageText(wrapper)).toContain('第 3 / 6 页')
+
+    // 第 3 页没有识别结果，编辑入口写作「手工录入」。
+    await wrapper.get('button[aria-label="手工录入"]').trigger('click')
+    await flushPromises()
+    ;(wrapper.get('textarea').element as HTMLTextAreaElement).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+    )
+    await flushPromises()
+    expect(pageText(wrapper)).toContain('第 3 / 6 页')
+  })
+
+  it('移动端用底部 Sheet：点页后面板关闭、焦点回到页号入口', async () => {
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      media,
+      matches: true,
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent() {
+        return true
+      },
+    }))
+    const { wrapper } = await loadA(6)
+    const trigger = wrapper.get('button[aria-label="跳转实际页号"]')
+    await trigger.trigger('click')
+    await flushPromises()
+    const sheet = body().get('[data-slot="sheet-content"]')
+    expect(sheet.text()).toContain('页面导航')
+    await sheet.get('[data-ocr-page-cell][data-page="4"]').trigger('click')
+    await flushPromises()
+    expect(pageText(wrapper)).toContain('第 4 / 6 页')
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger.element))
   })
 })
