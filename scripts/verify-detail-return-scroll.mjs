@@ -9,25 +9,12 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { startIsolatedNuxt, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
 
-const PORT = Number(process.argv[2] ?? 3494)
-const DEBUG_PORT = PORT + 1
-const BASE = `http://127.0.0.1:${PORT}`
+const PORT_HINT = Number(process.argv[2] ?? process.env.RL10_TEST_PORT ?? 0)
+let BASE
 const TEMP_ROOT = mkdtempSync(join(tmpdir(), 'rl10-detail-scroll-'))
 const CHROME_PROFILE = mkdtempSync(join(tmpdir(), 'rl10-detail-scroll-chrome-'))
-
-async function waitForHttp(url, timeoutMs = 60_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      if ((await fetch(url)).ok) return
-    } catch {
-      /* server is starting */
-    }
-    await sleep(250)
-  }
-  throw new Error(`Timed out waiting for ${url}`)
-}
 
 class Cdp {
   constructor(socket) {
@@ -46,9 +33,19 @@ class Cdp {
   send(method, params = {}, sessionId) {
     const id = ++this.sequence
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      let timeout
+      this.pending.set(id, {
+        resolve: (result) => {
+          clearTimeout(timeout)
+          resolve(result)
+        },
+        reject: (error) => {
+          clearTimeout(timeout)
+          reject(error)
+        },
+      })
       this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }))
-      setTimeout(() => {
+      timeout = setTimeout(() => {
         if (this.pending.delete(id)) reject(new Error(`CDP ${method} timed out`))
       }, 30_000)
     })
@@ -79,27 +76,21 @@ async function waitUntil(cdp, sessionId, expression, timeoutMs = 60_000) {
 }
 
 async function main() {
-  const server = spawn(join(process.cwd(), 'node_modules/.bin/nuxt'), [
-    'dev',
-    '--host',
-    '127.0.0.1',
-    '--port',
-    String(PORT),
-  ], {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      NUXT_DB_PATH: join(TEMP_ROOT, 'roster.db'),
-      NUXT_FILES_DIR: join(TEMP_ROOT, 'files'),
-      NUXT_INCOMING_DIR: join(TEMP_ROOT, 'incoming'),
-    },
-  })
+  let service
   let chrome
   let cdp
 
   try {
-    await waitForHttp(`${BASE}/`)
+    service = await startIsolatedNuxt({
+      cwd: process.cwd(),
+      portHint: PORT_HINT,
+      env: {
+        NUXT_DB_PATH: join(TEMP_ROOT, 'roster.db'),
+        NUXT_FILES_DIR: join(TEMP_ROOT, 'files'),
+        NUXT_INCOMING_DIR: join(TEMP_ROOT, 'incoming'),
+      },
+    })
+    BASE = service.baseUrl
     const chromePath = process.env.CHROME_BIN ?? [
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
       '/usr/bin/google-chrome',
@@ -109,7 +100,7 @@ async function main() {
 
     chrome = spawn(chromePath, [
       '--headless=new',
-      `--remote-debugging-port=${DEBUG_PORT}`,
+      '--remote-debugging-port=0',
       `--user-data-dir=${CHROME_PROFILE}`,
       '--no-first-run',
       '--no-default-browser-check',
@@ -117,8 +108,7 @@ async function main() {
       '--no-sandbox',
       'about:blank',
     ], { stdio: 'ignore' })
-    await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`)
-    const version = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).json()
+    const version = await waitForChromeDevTools(chrome, CHROME_PROFILE)
     cdp = new Cdp(new WebSocket(version.webSocketDebuggerUrl))
     await new Promise((resolve, reject) => {
       cdp.socket.addEventListener('open', resolve, { once: true })
@@ -206,14 +196,8 @@ async function main() {
     console.log(`  route scroll calls after return: ${JSON.stringify(final.calls)}`)
     await cdp.send('Target.closeTarget', { targetId })
   } finally {
-    try {
-      await cdp?.send('Browser.close')
-    } catch {
-      /* ignore shutdown errors */
-    }
-    chrome?.kill()
-    server.kill()
-    await sleep(500)
+    await stopOwnedChild(chrome)
+    await service?.stop()
     rmSync(TEMP_ROOT, { recursive: true, force: true })
     rmSync(CHROME_PROFILE, { recursive: true, force: true })
   }

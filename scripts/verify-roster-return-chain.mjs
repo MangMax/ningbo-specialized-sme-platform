@@ -6,36 +6,24 @@
  * No official source documents or OCR results are used.
  */
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { minimalPdf } from '../tests/helpers/minimal-pdf.ts'
+import { startIsolatedNuxt, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
 
-const PORT = Number(process.argv[2] ?? 3496)
-const DEBUG_PORT = PORT + 1
-const BASE = `http://127.0.0.1:${PORT}`
+const PORT_HINT = Number(process.argv[2] ?? process.env.RL10_TEST_PORT ?? 0)
+let BASE
 const TEMP_ROOT = mkdtempSync(join(tmpdir(), 'rl10-return-chain-'))
 const FILES_ROOT = join(TEMP_ROOT, 'files')
-const API_TOKEN = 'rl10-synthetic-browser-test-token'
+const API_TOKEN = randomBytes(32).toString('hex')
 const SOURCE_FILE = 'jxj/announcement/2024/1/rl10-synthetic-return.pdf'
 const VIEWPORTS = [
   { label: 'desktop 1280×800', width: 1280, height: 800, detailScrollY: 106.5, listScrollY: 96 },
   { label: 'narrow 390×844', width: 390, height: 844, detailScrollY: 94.5, listScrollY: 296 },
 ]
-
-async function waitForHttp(url, timeoutMs = 60_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      if ((await fetch(url)).ok) return
-    } catch {
-      /* server is starting */
-    }
-    await sleep(250)
-  }
-  throw new Error(`Timed out waiting for ${url}`)
-}
 
 async function postJson(path, body) {
   const response = await fetch(`${BASE}${path}`, {
@@ -183,24 +171,30 @@ async function startChrome() {
   if (!chromePath) throw new Error('Chrome not found; set CHROME_BIN to its executable')
 
   const profile = mkdtempSync(join(tmpdir(), 'rl10-return-chain-chrome-'))
-  const chrome = spawn(chromePath, [
-    '--headless=new',
-    `--remote-debugging-port=${DEBUG_PORT}`,
-    `--user-data-dir=${profile}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-gpu',
-    '--no-sandbox',
-    'about:blank',
-  ], { stdio: 'ignore' })
-  await waitForHttp(`http://127.0.0.1:${DEBUG_PORT}/json/version`)
-  const version = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).json()
-  const cdp = new Cdp(new WebSocket(version.webSocketDebuggerUrl))
-  await new Promise((resolve, reject) => {
-    cdp.socket.addEventListener('open', resolve, { once: true })
-    cdp.socket.addEventListener('error', reject, { once: true })
-  })
-  return { chrome, cdp, profile }
+  let chrome
+  try {
+    chrome = spawn(chromePath, [
+      '--headless=new',
+      '--remote-debugging-port=0',
+      `--user-data-dir=${profile}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-gpu',
+      '--no-sandbox',
+      'about:blank',
+    ], { stdio: 'ignore' })
+    const version = await waitForChromeDevTools(chrome, profile)
+    const cdp = new Cdp(new WebSocket(version.webSocketDebuggerUrl))
+    await new Promise((resolve, reject) => {
+      cdp.socket.addEventListener('open', resolve, { once: true })
+      cdp.socket.addEventListener('error', reject, { once: true })
+    })
+    return { chrome, cdp, profile }
+  } catch (error) {
+    await stopOwnedChild(chrome)
+    rmSync(profile, { recursive: true, force: true })
+    throw error
+  }
 }
 
 async function setViewport(cdp, sessionId, viewport) {
@@ -450,30 +444,24 @@ async function runExpandedEnterpriseReturn(cdp, sessionId, viewport) {
 }
 
 async function main() {
-  const server = spawn(join(process.cwd(), 'node_modules/.bin/nuxt'), [
-    'dev',
-    '--host',
-    '127.0.0.1',
-    '--port',
-    String(PORT),
-  ], {
-    cwd: process.cwd(),
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      NUXT_DB_PATH: join(TEMP_ROOT, 'roster.db'),
-      NUXT_FILES_DIR: FILES_ROOT,
-      NUXT_INCOMING_DIR: join(TEMP_ROOT, 'incoming'),
-      NUXT_API_TOKEN: API_TOKEN,
-    },
-  })
+  let service
   let chrome
   let cdp
   let profile
   let targetId
 
   try {
-    await waitForHttp(`${BASE}/`)
+    service = await startIsolatedNuxt({
+      cwd: process.cwd(),
+      portHint: PORT_HINT,
+      env: {
+        NUXT_DB_PATH: join(TEMP_ROOT, 'roster.db'),
+        NUXT_FILES_DIR: FILES_ROOT,
+        NUXT_INCOMING_DIR: join(TEMP_ROOT, 'incoming'),
+        NUXT_API_TOKEN: API_TOKEN,
+      },
+    })
+    BASE = service.baseUrl
     await seedViaApplicationApis()
     const browser = await startChrome()
     chrome = browser.chrome
@@ -504,14 +492,8 @@ async function main() {
     }
     await cdp.send('Target.closeTarget', { targetId })
   } finally {
-    try {
-      await cdp?.send('Browser.close')
-    } catch {
-      /* ignore shutdown errors */
-    }
-    chrome?.kill()
-    server.kill()
-    await sleep(500)
+    await stopOwnedChild(chrome)
+    await service?.stop()
     rmSync(TEMP_ROOT, { recursive: true, force: true })
     if (profile) rmSync(profile, { recursive: true, force: true })
   }
