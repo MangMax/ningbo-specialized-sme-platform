@@ -157,7 +157,7 @@ function openPreview(e: Evidence) {
     </Alert>
 
     <template v-else-if="detail">
-      <PageHeader class="rise-in" style="--rise-index: 0" :title="detail.name">
+      <PageHeader :title="detail.name">
         <template #breadcrumb>
           <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">企业列表</NuxtLink>
           <span class="mx-1.5">/</span>
@@ -173,7 +173,7 @@ function openPreview(e: Evidence) {
         </template>
       </PageHeader>
 
-      <Alert v-if="usccMissing" class="rise-in" style="--rise-index: 1" variant="destructive">
+      <Alert v-if="usccMissing" variant="destructive">
         <AlertTitle>缺统一社会信用代码,记录按企业名称归并</AlertTitle>
         <AlertDescription>
           该企业没有统一社会信用代码,台账按<strong>企业名称</strong>把记录归到一起。
@@ -189,10 +189,9 @@ function openPreview(e: Evidence) {
 
       <!-- 称号 × 来源 -->
       <Card
-        v-for="(g, gi) in groups"
+        v-for="g in groups"
         :key="g.titleCode"
-        class="rise-in gap-0 overflow-hidden py-0"
-        :style="{ '--rise-index': gi + 2 }"
+        class="gap-0 overflow-hidden py-0"
       >
         <CardHeader class="gap-1.5 border-b px-5 py-4">
           <!-- 来源不再写成一行文字:下面每个来源自己带方标,写两遍是重复。 -->

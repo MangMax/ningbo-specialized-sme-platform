@@ -169,8 +169,6 @@ const exportUrl = computed(() => {
 <template>
   <div class="comparison-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader
-      class="rise-in"
-      style="--rise-index: 0"
       title="两侧名录比对"
     >
       <template #actions>
@@ -186,8 +184,7 @@ const exportUrl = computed(() => {
 
     <div
       data-testid="comparison-filters"
-      class="rise-in grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-8 lg:grid-cols-[minmax(16rem,1fr)_14rem_12rem_14rem]"
-      style="--rise-index: 1"
+      class="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-8 lg:grid-cols-[minmax(16rem,1fr)_14rem_12rem_14rem]"
     >
       <div class="relative col-span-2 min-w-0 sm:col-span-8 lg:col-span-1">
         <Search class="text-muted-foreground absolute top-2 left-2.5 size-3.5" />
@@ -263,7 +260,7 @@ const exportUrl = computed(() => {
       >清除全部</Button>
     </TransitionGroup>
 
-    <div class="rise-in flex min-w-0 flex-col gap-2" style="--rise-index: 2">
+    <div class="flex min-w-0 flex-col gap-2">
       <div class="flex min-w-0 flex-col gap-2" data-testid="comparison-results">
             <Alert v-if="error" variant="destructive">
               <AlertTitle>比对数据加载失败</AlertTitle>

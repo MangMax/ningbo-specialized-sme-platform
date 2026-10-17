@@ -16,7 +16,7 @@
  * 用法:`node scripts/verify-ledger-ui.mjs [--port 3491] [--skip-build] [--focus-only]`
  * 退出码 0 = 全部通过;非 0 = 有一条不符合预期(并打印实测数字)。
  * `--focus-only` 只跑抽屉 Esc / 关闭按钮 / 外部点击后的焦点回归,适合快速诊断。
- * `--entry-only` 只检查共用页头、进入动画与减少动态效果偏好。
+ * `--entry-only` 只检查共用页头、Nuxt整页过渡、查询不重播与减少动态效果偏好。
  */
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
@@ -2514,42 +2514,104 @@ function pageEntryAppearanceViolation(state, width) {
   return !state.header || !state.actions || state.font !== '20px' || state.lineHeight !== '25px' || state.gap !== (width >= 640 ? '12px' : '8px') || state.overflow
 }
 
+function routeMotionViolation(events, phase, duration) {
+  const start = events.find(event => event.phase === phase && event.type === 'transitionrun')
+  const end = events.find(event => event.phase === phase && event.type === (phase === 'leave' ? 'removed' : 'transitionend'))
+  if (!start || !end) return `${phase}缺少真实开始/结束事件`
+  if (phase === 'leave') {
+    if (Math.abs(start.duration - duration) > .01 || end.minOpacity > .1 || end.elapsed < .05 || end.elapsed > .4) return 'leave未实际淡出后移除旧页'
+  } else if (Math.abs(end.elapsed - duration) > .01) return `${phase}时长不符`
+  if (!normalizeEasing(end.easing).includes(EXPECTED_EASING)) return `${phase}缓动不符`
+  return null
+}
+
 async function verifyPageEntryAppearance(cdp) {
-  const capture = `window.__pageEntry = [];
-    for (const phase of ['animationstart','animationend']) document.addEventListener(phase, event => {
-      if (event.animationName !== 'rise-in') return;
-      const style=getComputedStyle(event.target);
-      window.__pageEntry.push({phase,index:style.getPropertyValue('--rise-index').trim(),elapsed:event.elapsedTime,easing:style.animationTimingFunction});
+  const capture = `window.__pageEntry=[];window.__legacyEntry=0;
+    document.addEventListener('animationstart',event=>{if(event.animationName==='rise-in')window.__legacyEntry++},true);
+    window.__routeNavigate=path=>{const link=document.querySelector('a[href="'+path+'"]');if(link)link.click();else return document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$router.push(path)};
+    document.addEventListener('transitionrun',event=>{
+      if(event.propertyName!=='opacity')return;
+      const target=event.target;
+      const phase=target.classList.contains('page-enter-active')?'enter':target.classList.contains('page-leave-active')?'leave':null;
+      if(!phase)return;
+      const style=getComputedStyle(target),easing=style.transitionTimingFunction,begin=performance.now();
+      window.__pageEntry.push({type:'transitionrun',phase,elapsed:event.elapsedTime,time:begin,easing,duration:parseFloat(style.transitionDuration)});
+      if(phase==='leave'){
+        let minOpacity=Number(style.opacity),finished=false;
+        const sample=()=>{if(finished||!target.isConnected)return;minOpacity=Math.min(minOpacity,Number(getComputedStyle(target).opacity));requestAnimationFrame(sample)};
+        requestAnimationFrame(sample);
+        const observer=new MutationObserver(()=>{
+          if(target.isConnected)return;
+          finished=true;observer.disconnect();
+          window.__pageEntry.push({type:'removed',phase,elapsed:(performance.now()-begin)/1000,time:performance.now(),easing,minOpacity});
+        });
+        observer.observe(document.body,{childList:true,subtree:true});
+      }
+      // Vue can remove the root/classes before transitionend bubbles to document.
+      // Capture completion directly on the node using the phase observed at start.
+      const finish=end=>{
+        if(end.target!==target||end.propertyName!=='opacity')return;
+        window.__pageEntry.push({type:'transitionend',phase,elapsed:end.elapsedTime,time:performance.now(),easing});
+        target.removeEventListener('transitionend',finish);
+      };
+      target.addEventListener('transitionend',finish);
     },true);`;
+  const appearance = `(()=>{
+    const root=document.querySelector('.ledger-page,.comparison-page'),heading=root.querySelector('h1'),header=heading.closest('header'),style=getComputedStyle(heading);
+    return {font:style.fontSize,lineHeight:style.lineHeight,header:!!header,actions:!!header?.querySelector('a[href*="export"]'),gap:getComputedStyle(root).rowGap,overflow:document.documentElement.scrollWidth>innerWidth};})()`;
   for (const viewport of VIEWPORTS) {
-    for (const path of ['/', '/comparison']) {
-      const {targetId,sessionId}=await openSession(cdp,BASE+path,viewport,READY,{openDrawer:false,beforeLoadScript:capture});
-      try {
-        const ended=await waitUntil(cdp,sessionId,`['0','1','2'].every(index=>window.__pageEntry.some(e=>e.phase==='animationend'&&e.index===index))`);
-        const state=await evaluate(cdp,sessionId,`(()=>{
-          const root=document.querySelector('.ledger-page,.comparison-page'), heading=root.querySelector('h1'), header=heading.closest('header');
-          const style=getComputedStyle(heading), sections=[...root.querySelectorAll('.rise-in')];
-          return {font:style.fontSize,lineHeight:style.lineHeight,header:!!header,actions:!!header?.querySelector('a[href*="export"]'),
-            gap:getComputedStyle(root).rowGap,overflow:document.documentElement.scrollWidth>innerWidth,
-            indices:sections.map(el=>getComputedStyle(el).getPropertyValue('--rise-index').trim()),events:window.__pageEntry};})()`);
-        const label=path+' · '+viewport.width+'px进入效果';
-        if (pageEntryAppearanceViolation(state,viewport.width)) bad(label+':共用页头、操作布局或间距不符 '+JSON.stringify(state));
-        else ok(label+':共用20px标题、页头右侧导出与一致区块间距，无横向溢出');
-        if (!ended||state.events.filter(e=>e.phase==='animationend'&&['0','1','2'].includes(e.index)).some(e=>Math.abs(e.elapsed-.22)>.01||normalizeEasing(e.easing)!==EXPECTED_EASING)) bad(label+':未观察到三个区块的完整进入动画 '+JSON.stringify(state.events));
-        else ok(label+':标题/筛选/表格均观察到animationstart与animationend，共用220ms缓动');
-      } finally {await cdp.send('Target.closeTarget',{targetId});}
-    }
-  }
-  for (const path of ['/', '/comparison']) {
-    const {targetId,sessionId}=await openSession(cdp,BASE+path,VIEWPORTS[0],READY,{openDrawer:false,beforeLoadScript:capture,mediaFeatures:[{name:'prefers-reduced-motion',value:'reduce'}]});
+    const {targetId,sessionId}=await openSession(cdp,BASE+'/',viewport,READY,{openDrawer:false,beforeLoadScript:capture});
+    const label=viewport.width+'px Nuxt路由过渡';
     try {
-      const reduced=await evaluate(cdp,sessionId,`window.__pageEntry.length===0&&[...document.querySelectorAll('.rise-in')].every(el=>getComputedStyle(el).animationName==='none')`);
-      if (!reduced) bad(path+'进入效果:减少动态效果偏好未停用动画');
-      else ok(path+'进入效果:减少动态效果偏好下无进入动画');
-      const broken=await evaluate(cdp,sessionId,`(()=>{const heading=document.querySelector('h1'),header=heading.closest('header'),root=document.querySelector('.ledger-page,.comparison-page');heading.style.fontSize='15px';const style=getComputedStyle(heading);return {font:style.fontSize,lineHeight:style.lineHeight,header:!!header,actions:!!header.querySelector('a[href*="export"]'),gap:getComputedStyle(root).rowGap,overflow:document.documentElement.scrollWidth>innerWidth};})()`);
-      if (!pageEntryAppearanceViolation(broken,VIEWPORTS[0].width)) bad(path+'进入效果:恢复小标题后断言未命中');
-      else ok(path+'进入效果:恢复15px小标题后按预期变红');
+      await waitUntil(cdp,sessionId,`window.__pageEntry.some(e=>e.phase==='enter'&&e.type==='transitionend')`);
+      const initial=await evaluate(cdp,sessionId,'window.__pageEntry');
+      const initialIssue=routeMotionViolation(initial,'enter',.18);
+      if(initialIssue)bad(label+':首次打开 '+initialIssue+' '+JSON.stringify(initial));
+      else ok(label+':首次打开由Nuxt appear执行180ms进入过渡');
+      const state=await evaluate(cdp,sessionId,appearance);
+      if(pageEntryAppearanceViolation(state,viewport.width))bad(label+':共用页头布局不符 '+JSON.stringify(state));
+      else ok(label+':20px共用页头、操作位置与区块间距保持一致');
+      await evaluate(cdp,sessionId,`window.__shellHeader=document.querySelector('main>header');window.__shellTrigger=document.querySelector('[data-slot="sidebar-trigger"]')`);
+      const paths=viewport.width===1440?['/files','/comparison','/stats','/quality','/ocr','/']:['/files','/comparison','/'];
+      for(const path of paths){
+        await evaluate(cdp,sessionId,`window.__pageEntry=[];window.__routeNavigate(${JSON.stringify(path)})`);
+        const settled=await waitUntil(cdp,sessionId,`location.pathname===${JSON.stringify(path)}&&window.__pageEntry.some(e=>e.phase==='enter'&&e.type==='transitionend')&&!document.querySelector('.page-enter-active,.page-leave-active')`);
+        const result=await evaluate(cdp,sessionId,`({events:window.__pageEntry,legacy:window.__legacyEntry,shell:window.__shellHeader===document.querySelector('main>header')&&window.__shellTrigger===document.querySelector('[data-slot="sidebar-trigger"]'),overflow:document.documentElement.scrollWidth>innerWidth})`);
+        const leave=routeMotionViolation(result.events,'leave',.1),enter=routeMotionViolation(result.events,'enter',.18);
+        const leaveEnd=result.events.find(e=>e.phase==='leave'&&e.type==='removed'),enterStart=result.events.find(e=>e.phase==='enter'&&e.type==='transitionrun');
+        if(!settled||leave||enter||!leaveEnd||!enterStart||leaveEnd.time>enterStart.time)bad(label+path+':未按先离开后进入执行 '+JSON.stringify(result));
+        else ok(label+path+':客户端路由切换先100ms淡出并移除旧页、后180ms进入，均有实际采样');
+        if(!result.shell||result.legacy||result.overflow)bad(label+path+':外壳重建、旧动画叠加或页面溢出 '+JSON.stringify(result));
+        else ok(label+path+':侧栏/顶栏节点保持，无区块重复动画与横向溢出');
+        if(path==='/comparison'){
+          const comparison=await evaluate(cdp,sessionId,appearance);
+          if(pageEntryAppearanceViolation(comparison,viewport.width))bad(label+':对比页共用页头不符 '+JSON.stringify(comparison));
+          else ok(label+':对比页共用页头保持一致');
+        }
+      }
+      await waitUntil(cdp,sessionId,READY);
+      await evaluate(cdp,sessionId,`window.__pageEntry=[];window.__queryHeading=document.querySelector('h1')`);
+      await setInputValue(cdp,sessionId,'input[aria-label*="企业名称"]','宁波');
+      const queried=await waitUntil(cdp,sessionId,`new URLSearchParams(location.search).get('q')==='宁波'&&(${READY})`);
+      const query=await evaluate(cdp,sessionId,`({events:window.__pageEntry,same:window.__queryHeading===document.querySelector('h1')})`);
+      if(!queried||query.events.length||!query.same)bad(label+':查询条件改变触发了整页重播 '+JSON.stringify(query));
+      else ok(label+':真实搜索仅更新结果，未重建页面或重播路由动画');
+      await evaluate(cdp,sessionId,`window.__pageEntry=[];document.querySelector('.ledger-page').style.transition='none';window.__routeNavigate('/files')`);
+      await waitUntil(cdp,sessionId,`location.pathname==='/files'&&window.__pageEntry.some(e=>e.phase==='enter'&&e.type==='transitionend')`);
+      const broken=await evaluate(cdp,sessionId,'window.__pageEntry');
+      if(!routeMotionViolation(broken,'leave',.1))bad(label+':停用离场过渡后断言未命中');
+      else ok(label+':停用旧页离场过渡后按预期变红');
     } finally {await cdp.send('Target.closeTarget',{targetId});}
+  }
+  for(const viewport of VIEWPORTS.slice(0,2)){
+    const {targetId,sessionId}=await openSession(cdp,BASE+'/',viewport,READY,{openDrawer:false,beforeLoadScript:capture,mediaFeatures:[{name:'prefers-reduced-motion',value:'reduce'}]});
+    try{
+      await evaluate(cdp,sessionId,`window.__routeNavigate('/comparison')`);
+      const settled=await waitUntil(cdp,sessionId,`location.pathname==='/comparison'&&!!document.querySelector('.comparison-page')&&!document.querySelector('.page-enter-active,.page-leave-active')`);
+      const reduced=await evaluate(cdp,sessionId,`(()=>{const probe=document.createElement('div');probe.className='page-enter-active page-enter-from';document.body.append(probe);const s=getComputedStyle(probe);const result={duration:s.transitionDuration,opacity:s.opacity,transform:s.transform,events:window.__pageEntry,legacy:window.__legacyEntry};probe.remove();return result;})()`);
+      if(!settled||reduced.events.length||reduced.legacy||reduced.duration!=='0s'||reduced.opacity!=='1'||reduced.transform!=='none')bad(viewport.width+'px减少动态效果:整页过渡未停用 '+JSON.stringify(reduced));
+      else ok(viewport.width+'px减少动态效果:首次进入及客户端切换直接到位，无淡入/位移');
+    }finally{await cdp.send('Target.closeTarget',{targetId});}
   }
 }
 
@@ -3051,7 +3113,7 @@ async function main() {
     process.exit(1)
   }
   console.log(`\n结果:${passed} 项通过,0 项失败`)
-  if (ENTRY_ONLY) console.log('✓ 共用页头与进入动效已覆盖1440/390/720px及减少动态效果偏好')
+  if (ENTRY_ONLY) console.log('✓ Nuxt路由进入/离开、外壳保持、查询不重播与减少动态效果偏好已验证')
   else if (FOCUS_ONLY) console.log('✓ 抽屉焦点回归已覆盖关闭按钮与外部点击')
   else console.log('✓ 企业列表与比对页已覆盖桌面/390px/720px、表格唯一性、搜索与加载、分页、排序、抽屉动效及 /roster 查询串重定向')
 }

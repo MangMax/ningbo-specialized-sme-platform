@@ -142,18 +142,17 @@ const kpis = computed(() => [
         <Skeleton v-for="i in 4" :key="i" class="h-[104px] rounded-lg" />
       </template>
       <StatTile
-        v-for="(k, i) in kpis"
+        v-for="k in kpis"
         v-else
         :key="k.label"
         :label="k.label"
         :value="k.value"
         :hint="k.hint"
-        :index="i"
       />
     </div>
 
     <div class="grid gap-5 lg:grid-cols-2">
-      <Card class="rise-in" style="--rise-index: 4">
+      <Card >
         <CardHeader class="gap-1">
           <CardTitle class="text-base">称号梯度</CardTitle>
           <CardDescription>由高到低:小巨人 → 专精特新中小企业 → 创新型中小企业</CardDescription>
@@ -186,7 +185,7 @@ const kpis = computed(() => [
         </CardContent>
       </Card>
 
-      <Card class="rise-in" style="--rise-index: 5">
+      <Card >
         <CardHeader class="gap-1">
           <CardTitle class="text-base">来源与事件构成</CardTitle>
           <CardDescription>两个来源并列记录;一条记录可含认定、复核等多个事件</CardDescription>
@@ -227,7 +226,7 @@ const kpis = computed(() => [
     </div>
 
     <div class="grid gap-5 lg:grid-cols-2">
-      <Card class="rise-in" style="--rise-index: 6">
+      <Card >
         <CardHeader class="gap-1">
           <CardTitle class="text-base">区县分布</CardTitle>
           <CardDescription>按记录属地计数,共 {{ districts.length }} 个属地</CardDescription>
@@ -250,7 +249,7 @@ const kpis = computed(() => [
         </CardContent>
       </Card>
 
-      <Card class="rise-in" style="--rise-index: 7">
+      <Card >
         <CardHeader class="gap-1">
           <CardTitle class="text-base">年份趋势</CardTitle>
           <CardDescription>按记录事件的年份计数,缺失年份不计入</CardDescription>

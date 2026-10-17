@@ -7,6 +7,9 @@ export default defineNuxtConfig({
   compatibilityDate: '2026-10-13',
   ssr: false,
   devtools: { enabled: true },
+  app: {
+    pageTransition: { name: 'page', mode: 'out-in', appear: true },
+  },
 
   modules: [
     '@pinia/nuxt',

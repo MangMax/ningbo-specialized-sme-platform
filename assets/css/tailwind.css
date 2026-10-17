@@ -280,29 +280,30 @@ html.theme-transition::view-transition-new(root) {
   }
 }
 
-/* ---------------------------------------------------------------------------
- * 首次进入的出场(三处基本动效之三):卡片按阅读顺序 35ms 递增上浮。
- * 只播一次;偏好减少动效时直接到位。
- * ------------------------------------------------------------------------- */
-@keyframes rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
+/* Nuxt owns route enter/leave; the application shell stays in place. */
+.page-enter-active {
+  transition: opacity 180ms var(--ease-snap), transform 180ms var(--ease-snap);
+}
+.page-leave-active {
+  transition: opacity 100ms var(--ease-snap), transform 100ms var(--ease-snap);
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-2px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-enter-active,
+  .page-leave-active {
+    transition: none;
   }
-  to {
+  .page-enter-from,
+  .page-leave-to {
     opacity: 1;
     transform: none;
-  }
-}
-
-.rise-in {
-  animation: rise-in 220ms var(--ease-snap) both;
-  animation-delay: calc(var(--rise-index, 0) * 35ms);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .rise-in {
-    animation: none;
   }
 }
 

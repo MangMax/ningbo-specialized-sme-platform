@@ -388,8 +388,6 @@ function publishedYearBatch(row: StoredFileRow): string {
 <template>
   <div class="files-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader
-      class="rise-in"
-      style="--rise-index: 0"
       title="文件管理"
       description="文件库里的全部来源文件;展开任意一行看它含哪些段。"
     >
@@ -404,7 +402,7 @@ function publishedYearBatch(row: StoredFileRow): string {
     </PageHeader>
 
     <!-- 工具栏:搜索 + 三个多选筛选。左侧筛,右侧只报当前条数。 -->
-    <div class="rise-in flex flex-wrap items-center gap-2" style="--rise-index: 1">
+    <div class="flex flex-wrap items-center gap-2">
       <div class="relative min-w-56 flex-1 sm:max-w-xs">
         <Search
           class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
@@ -465,7 +463,7 @@ function publishedYearBatch(row: StoredFileRow): string {
       </Button>
     </TransitionGroup>
 
-    <Card class="gap-0 overflow-hidden py-0 shadow-none" style="--rise-index: 2">
+    <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="files" :loading="isLoading" label="正在筛选与加载文件…" />
         <div

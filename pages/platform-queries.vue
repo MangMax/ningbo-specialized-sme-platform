@@ -60,7 +60,7 @@ const rdjbLabel = (rdjb: string) => (rdjb ? (PLATFORM_RDJBS[rdjb] ?? rdjb) : '�
 
 <template>
   <div class="flex min-w-0 flex-col gap-4" :aria-busy="isLoading">
-    <PageHeader class="rise-in" title="平台查询证据">
+    <PageHeader title="平台查询证据">
       <template #breadcrumb>
         <NuxtLink to="/comparison" class="hover:text-foreground hover:underline">两侧名录比对</NuxtLink>
         <span class="mx-1.5">/</span><span>平台查询证据</span>

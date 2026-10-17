@@ -380,7 +380,7 @@ useHead({
 
 <template>
   <div class="ledger-page flex min-w-0 flex-col gap-2 sm:gap-3">
-    <PageHeader class="rise-in" style="--rise-index: 0" :title="ENTERPRISE_LIST_TITLE">
+    <PageHeader :title="ENTERPRISE_LIST_TITLE">
       <template #actions>
         <Button as-child variant="outline" size="sm">
           <a :href="exportUrl"><ExternalLink class="size-3.5" />{{ LEDGER_EXPORT_LABEL }}</a>
@@ -388,7 +388,7 @@ useHead({
       </template>
     </PageHeader>
 
-    <div data-testid="ledger-filters" class="rise-in flex flex-wrap items-center gap-2" style="--rise-index: 1">
+    <div data-testid="ledger-filters" class="flex flex-wrap items-center gap-2">
       <div class="relative w-full sm:w-72">
         <Search
           class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
@@ -482,7 +482,7 @@ useHead({
       >
     </Alert>
 
-    <Card class="rise-in gap-0 overflow-hidden py-0 shadow-none" style="--rise-index: 2">
+    <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在搜索…" />
         <EnterpriseListTable

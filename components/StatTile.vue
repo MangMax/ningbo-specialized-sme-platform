@@ -11,10 +11,8 @@ const props = withDefaults(
     label: string
     value: number | string
     hint?: string
-    /** 出场序,决定首次进入的 35ms 递增延迟。 */
-    index?: number
   }>(),
-  { hint: '', index: 0 },
+  { hint: '' },
 )
 
 const display = computed(() =>
@@ -23,7 +21,7 @@ const display = computed(() =>
 </script>
 
 <template>
-  <Card class="rise-in gap-0 py-0" :style="{ '--rise-index': index }">
+  <Card class="gap-0 py-0">
     <CardContent class="flex flex-col gap-1.5 p-5">
       <span class="text-muted-foreground text-xs">{{ label }}</span>
       <span class="text-2xl leading-none font-semibold tracking-tight tabular-nums">
