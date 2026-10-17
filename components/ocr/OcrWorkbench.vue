@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { nextTick, useTemplateRef } from 'vue'
 import { useOcrWorkbench } from '@/composables/useOcrWorkbench'
 import OcrPageNavigation from './OcrPageNavigation.vue'
 import OcrPageBody from './OcrPageBody.vue'
@@ -94,6 +95,27 @@ const {
   runImport,
   pageNumbers,
 } = useOcrWorkbench()
+
+const pageNavigation = useTemplateRef('pageNavigation')
+/** Keep the departing row until Transition's removal, not just the API response. */
+let focusRow: Element | null = null
+function restoreRemovedRowFocus() {
+  if (!focusRow || focusRow.isConnected) return
+  if (document.activeElement === document.body) pageNavigation.value?.focus()
+  focusRow = null
+}
+async function writeWithFocus(action: () => Promise<void>) {
+  const page = currentRow.value?.page
+  const origin = document.activeElement
+  const row = origin instanceof HTMLElement ? origin.closest('li') : null
+  focusRow = row?.closest('ul[role="list"]') ? row : null
+  await action()
+  await nextTick()
+  // A retained row handles its own editor/confirmation focus.
+  if (currentRow.value?.page === page) focusRow = null
+  else restoreRemovedRowFocus()
+}
+
 </script>
 
 <template>
@@ -199,6 +221,7 @@ const {
           </div>
 
           <OcrPageNavigation
+            ref="pageNavigation"
             :filters="filters"
             :pages="visibleRows.map((r) => r.page)"
             :current-page="currentPage"
@@ -308,6 +331,7 @@ const {
 
           <ul v-else class="flex flex-col gap-2" role="list">
             <Transition
+              @after-leave="restoreRemovedRowFocus"
               enter-active-class="transition-opacity duration-150 ease-snap motion-reduce:transition-none"
               enter-from-class="opacity-0"
               leave-active-class="hidden"
@@ -327,12 +351,22 @@ const {
                   rowFailure?.page === currentRow.page ? rowFailure.message : ''
                 "
                 :highlight="justSaved === currentRow.page"
-                @save="savePage"
-                @remove="removePage"
+                @save="(page, markdown) => writeWithFocus(() => savePage(page, markdown))"
+                @remove="(page) => writeWithFocus(() => removePage(page))"
                 @preview="previewPage = $event"
               />
             </Transition>
           </ul>
+          <OcrPageNavigation
+            v-if="rows.length"
+            compact
+            :filters="filters"
+            :pages="visibleRows.map((r) => r.page)"
+            :current-page="currentPage"
+            :total="rows.length"
+            :disabled="writeBusy || dirty || !ready"
+            @navigate="navigate"
+          />
         </template>
       </div>
     </div>
@@ -354,7 +388,7 @@ const {
     >
       <DialogContent
         data-ocr-comparison
-        class="flex h-[92vh] w-[96vw] flex-col border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1500px,96vw)] [&_[data-slot=dialog-close]]:top-2 [&_[data-slot=dialog-close]]:z-10 [&_[role=toolbar]]:pr-10"
+        class="flex h-[92vh] w-[96vw] flex-col border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1500px,96vw)] [&_[data-slot=dialog-close]]:top-2 [&_[data-slot=dialog-close]]:z-10 [&_[data-comparison-image]_[role=toolbar]]:pr-10"
       >
         <DialogTitle class="sr-only">
           {{
@@ -372,6 +406,7 @@ const {
         >
           <ImagePreview
             v-if="previewSrc"
+            data-comparison-image
             class="min-h-0"
             :src="previewSrc"
             :name="previewPage === null ? '' : pageLabel(previewPage)"

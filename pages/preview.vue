@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ChevronLeft, FileDown } from '@lucide/vue'
-import { describeUnsupported, fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
+import { describeUnsupported, fileNameOf, fileUrl, isPreviewable, resolvePreviewKind } from '~~/lib/preview'
 import {
   EVIDENCE_PAGE_WORDS,
   evidencePageState,
@@ -25,6 +25,7 @@ const backLabel = computed(() => {
   return `返回${names[path] ?? ` ${path}`}`
 })
 const name = computed(() => file.value ? fileNameOf(file.value) : '')
+const text = computed(() => ['markdown', 'text'].includes(resolvePreviewKind(file.value)?.kind ?? ''))
 const pdf = computed(() => isPageCapable(file.value))
 const previewable = computed(() => file.value ? isPreviewable(file.value) : false)
 const pageState = computed(() => evidencePageState(file.value, page.value))
@@ -39,7 +40,7 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
         <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">名录台账</NuxtLink>
         <span class="mx-1.5">/</span><span>来源预览</span>
       </template>
-      <template #description>
+      <template v-if="!text || file !== name" #description>
         <span class="inline-block font-mono break-all">{{ file || '(缺 file 参数)' }}</span>
       </template>
       <template #actions>
@@ -52,7 +53,7 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
             {{ EVIDENCE_PAGE_WORDS.pending }}
           </span>
           <a
-            v-if="file && previewable"
+            v-if="file && previewable && !text"
             :href="fileUrl(file)"
             class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
             target="_blank"
@@ -83,7 +84,7 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
 
     <template v-else>
       <SourcePdfPreview v-if="pdf" :key="file" :file="file" :name="name" :source-page="sourcePage" :target="target" :invalid="invalid" @visible="visible" @view-change="changeView" :view="route.query.view === 'pages' ? 'pages' : 'pdf'" />
-      <FilePreview v-else class="min-h-[60vh]" :src="fileUrl(file)" :name="name" />
+      <FilePreview v-else :hide-text-name="text" class="min-h-[60vh]" :src="fileUrl(file)" :name="name" />
     </template>
   </div>
 </template>

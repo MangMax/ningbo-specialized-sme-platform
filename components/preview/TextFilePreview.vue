@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import ContentPreview from './ContentPreview.vue'
 import PreviewStates from './PreviewStates.vue'
 import { describeLoadError, retrySrc } from '~~/lib/preview'
-const props = withDefaults(defineProps<{ src: string; name?: string; format: 'markdown' | 'text'; language?: string }>(), { name: '', language: 'text' })
+const props = withDefaults(defineProps<{ src: string; name?: string; hideName?: boolean; format: 'markdown' | 'text'; language?: string }>(), { name: '', language: 'text' })
 const emit = defineEmits<{ error: [message: string] }>()
 const mounted = ref(false)
 const attempt = ref(0)
@@ -71,6 +71,6 @@ watch(() => [props.src, attempt.value, mounted.value] as const, async ([src, ret
       <Button v-if="status === 'error' && downloadSrc" as-child variant="ghost" size="sm" class="mx-auto mb-4"><a :href="downloadSrc" :download="name || true">下载原文</a></Button>
     </div>
     <p v-if="loadedSrc && status !== 'ready'" class="border-b px-4 py-2 text-xs text-muted-foreground">仍显示上次读取的 {{ loadedName }}；目标文件：{{ name || src }}。</p>
-    <ContentPreview v-if="loadedSrc" class="min-h-0 flex-1 border-0" :source="source" :name="loadedName" :format="loadedFormat" :language="loadedLanguage" @error="emit('error', $event)" />
+    <ContentPreview v-if="loadedSrc" class="min-h-0 flex-1 border-0" :source="source" :name="loadedName" :hide-name="hideName" :format="loadedFormat" :language="loadedLanguage" @error="emit('error', $event)" />
   </div>
 </template>

@@ -834,6 +834,9 @@ it('主区与同页对照使用可读名单表格和精确源码复制，显示�
   await flushPromises()
   const dialog = new DOMWrapper(document.body).get('[role="dialog"]')
   expect(dialog.get('td[rowspan="2"]').text()).toBe('宁波甲公司')
+  expect(dialog.get('[role="toolbar"][aria-label="正文预览操作"]').text()).toContain('A-慢.pdf')
+  expect(dialog.get('[role="toolbar"][aria-label="正文预览操作"]').text()).toContain('第 1 页.md')
+  expect(dialog.get('[role="toolbar"][aria-label="正文预览操作"]').text()).not.toContain('Markdown 文档 · markdown')
   await dialog.findAll('button').find(b => b.text() === '查看源码')!.trigger('click')
   await flushPromises()
   expect(dialog.get('pre').element.textContent!.replace(/\r\n/g, '\n')).toBe(source.replace(/\r\n/g, '\n'))
@@ -847,7 +850,10 @@ it('渲染和源码后的编辑仍取原始 Markdown，取消与失败保留焦�
   const source = '# 标题\n\n<table><tr><td onclick="alert(1)">企业甲</td></tr></table>\n'
   const { wrapper, fetchMock, ocr } = await loadA(4, source)
   await button(wrapper, '查看源码').trigger('click')
-  await button(wrapper, '深色主题').trigger('click')
+  await button(wrapper, '更多操作').trigger('keydown', { key: 'Enter' })
+  await flushPromises()
+  await new DOMWrapper(document.body).findAll('[role="menuitem"]').find(item => item.text() === '深色主题')!.trigger('click')
+  await flushPromises()
   expect(rows(wrapper)[0]!.get('[data-theme]').attributes('data-theme')).toBe('dark')
   await button(wrapper, '渲染预览').trigger('click')
   await button(wrapper, '编辑').trigger('click')
@@ -935,4 +941,83 @@ it('OCR 主区跟随应用主题切换，换文件后不保留旧源码视图或
     await toggle.get('button').trigger('click')
     toggle.unmount()
   }
+})
+
+
+it.each([['保存', true], ['保存', false], ['删除', true], ['删除', false]] as const)('%s使当前页退出正文筛选后焦点可继续操作（另一命中页：%s）', async (action, another) => {
+  const { wrapper, fetchMock, ocr } = await loadA()
+  await wrapper.get('[aria-label="当前文件正文关键词"]').setValue('公司')
+  await flushPromises()
+  const original = fetchMock.getMockImplementation()! as (url: string, opts?: unknown) => Promise<unknown>
+  fetchMock.mockImplementation((url, opts) => opts?.method
+    ? Promise.resolve({ written: 1, deleted: 1, remaining: another ? 1 : 0 })
+    : original(url, opts))
+  if (action === '保存') {
+    await button(wrapper, '编辑').trigger('click')
+    await wrapper.get('textarea').setValue('修订后正文')
+    ;(wrapper.get('textarea').element as HTMLTextAreaElement).focus()
+    await button(wrapper, '保存').trigger('click')
+  } else {
+    await button(wrapper, '删除').trigger('click')
+    const confirm = button(wrapper, '确认删除')
+    ;(confirm.element as HTMLButtonElement).focus()
+    await confirm.trigger('click')
+  }
+  await flushPromises()
+  const response = ocrList(FILE_A.relPath, '修订后正文')
+  if (action === '删除') response.pages = []
+  if (another) response.pages.push({ ...ocrList(FILE_A.relPath, '乙公司').pages[0]!, page: 4 })
+  response.count = response.pages.length
+  ocr.get(FILE_A.relPath)!.resolve(response)
+  await flushPromises()
+  await vi.waitFor(() => {
+    expect(document.activeElement).not.toBe(document.body)
+    expect(document.activeElement?.isConnected).toBe(true)
+    expect(document.activeElement?.closest('[aria-label="页筛选与导航"]')).not.toBeNull()
+  })
+  expect(rows(wrapper)).toHaveLength(another ? 1 : 0)
+  expect(wrapper.text()).toContain(another ? '当前第 4 页' : '没有命中页')
+  wrapper.unmount()
+  harness = null
+  document.body.innerHTML = ''
+})
+
+it('正文底部导航复用命中实际页，草稿与写入中禁用，且不重复筛选控件', async () => {
+  const { wrapper, fetchMock, ocr } = await loadA()
+  await wrapper.get('[aria-label="实际页号或范围"]').setValue('1,4')
+  await flushPromises()
+  const bottom = () => wrapper.get('[aria-label="正文底部页导航"]')
+  const next = () => bottom().findAll('button').find(b => b.text() === '下一处')!
+  expect(bottom().findAll('input')).toHaveLength(0)
+  expect(wrapper.findAll('#ocr-range')).toHaveLength(1)
+  expect(wrapper.findAll('#ocr-state-text')).toHaveLength(1)
+  await next().trigger('click')
+  await flushPromises()
+  expect(rows(wrapper)[0]!.text()).toContain('第 4 页')
+  expect(bottom().text()).toContain('当前第 4 页')
+  const prev = () => bottom().findAll('button').find(b => b.text() === '上一处')!
+  await button(wrapper, '编辑').trigger('click')
+  await wrapper.get('textarea').setValue('乙公司修订')
+  expect(prev().attributes()).toHaveProperty('disabled')
+  await button(wrapper, '取消').trigger('click')
+  await flushPromises()
+  expect(prev().attributes()).not.toHaveProperty('disabled')
+  const original = fetchMock.getMockImplementation()! as (url: string, opts?: unknown) => Promise<unknown>
+  const pending = deferred<unknown>()
+  fetchMock.mockImplementation((url, opts) => opts?.method === 'POST' ? pending.promise : original(url, opts))
+  await button(wrapper, '编辑').trigger('click')
+  await wrapper.get('textarea').setValue('乙公司修订')
+  await button(wrapper, '保存').trigger('click')
+  await flushPromises()
+  expect(prev().attributes()).toHaveProperty('disabled')
+  pending.resolve({ written: 1 })
+  await flushPromises()
+  const response = ocrList(FILE_A.relPath, '甲公司')
+  response.pages.push({ ...response.pages[0]!, page: 4, markdown: '乙公司修订' })
+  ocr.get(FILE_A.relPath)!.resolve(response)
+  await flushPromises()
+  expect(prev().attributes()).not.toHaveProperty('disabled')
+  await prev().trigger('click')
+  await flushPromises()
+  expect(rows(wrapper)[0]!.text()).toContain('第 1 页')
 })

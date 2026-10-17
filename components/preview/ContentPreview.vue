@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onErrorCaptured, onMounted, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import CodePreview from './CodePreview.vue'
 import MarkdownPreview from './MarkdownPreview.vue'
 
@@ -9,6 +10,8 @@ const props = withDefaults(defineProps<{
   format?: 'markdown' | 'text'
   language?: string
   name?: string
+  context?: string
+  hideName?: boolean
   theme?: 'light' | 'dark'
   mode?: 'rendered' | 'source'
   readonly?: boolean
@@ -52,14 +55,28 @@ function download() {
 <template>
   <section class="content-preview bg-card text-card-foreground flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border" :class="{ 'preview-dark': localTheme === 'dark' }" :data-theme="localTheme" :aria-label="name">
     <div role="toolbar" aria-label="正文预览操作" class="bg-card flex shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1">
-      <div class="flex min-w-0 basis-full items-center gap-2 sm:basis-auto sm:flex-1">
-        <span class="truncate text-xs font-medium" :title="name">{{ name }}</span><span class="text-muted-foreground text-xs">{{ format === 'markdown' ? 'Markdown 文档' : '代码 / 纯文本' }} · {{ language }}</span>
+      <div class="flex min-w-0 basis-full items-center gap-2">
+        <template v-if="context">
+          <span class="min-w-0 flex-1 truncate text-xs font-medium" :title="context">{{ context }}</span>
+          <span class="shrink-0 text-xs font-medium">{{ name }}</span>
+        </template>
+        <template v-else>
+          <span v-if="!hideName" class="truncate text-xs font-medium" :title="name">{{ name }}</span>
+          <span class="text-muted-foreground shrink-0 text-xs">{{ format === 'markdown' ? 'Markdown 文档' : '代码 / 纯文本' }} · {{ language }}</span>
+        </template>
       </div>
-      <Button v-if="format === 'markdown'" variant="ghost" size="sm" class="px-2 text-xs" :aria-pressed="mode === 'source'" @click="changeMode">{{ mode === 'rendered' ? '查看源码' : '渲染预览' }}</Button>
-      <Button variant="ghost" size="sm" class="px-2 text-xs" :aria-pressed="wrap" @click="wrap = !wrap">{{ wrap ? '取消换行' : '自动换行' }}</Button>
-      <Button variant="ghost" size="sm" class="px-2 text-xs" @click="localTheme = localTheme === 'light' ? 'dark' : 'light'">{{ localTheme === 'light' ? '深色主题' : '浅色主题' }}</Button>
-      <Button variant="ghost" size="sm" class="px-2 text-xs" @click="copy">复制原文</Button>
-      <Button variant="ghost" size="sm" class="px-2 text-xs" @click="download">下载</Button>
+      <Button v-if="format === 'markdown'" variant="ghost" size="sm" :aria-pressed="mode === 'source'" @click="changeMode">{{ mode === 'rendered' ? '查看源码' : '渲染预览' }}</Button>
+      <Button variant="ghost" size="sm" @click="copy">复制原文</Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger as-child><Button variant="ghost" size="sm">更多操作</Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuGroup>
+            <DropdownMenuItem @select="wrap = !wrap">{{ wrap ? '取消换行' : '自动换行' }}</DropdownMenuItem>
+            <DropdownMenuItem @select="localTheme = localTheme === 'light' ? 'dark' : 'light'">{{ localTheme === 'light' ? '深色主题' : '浅色主题' }}</DropdownMenuItem>
+            <DropdownMenuItem @select="download">下载</DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
     <p v-if="message" role="status" class="border-b px-4 py-2 text-xs text-muted-foreground">{{ message }}</p>
     <p v-if="tooLarge" role="status" class="px-4 py-2 text-xs text-muted-foreground">正文较大，已显示源码，可复制或下载完整原文。</p>

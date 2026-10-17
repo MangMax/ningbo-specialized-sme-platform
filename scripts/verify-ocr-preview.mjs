@@ -100,9 +100,17 @@ try {
         if (await ev(expression)) return
         await sleep(60)
       }
+      console.error('Timeout state', await ev(`JSON.stringify({active:document.activeElement?.outerHTML.slice(0,700),rows:[...document.querySelectorAll('ul[role="list"]>li')].map(e=>e.id),navigation:document.querySelector('[aria-label="页筛选与导航"]')?.outerHTML.slice(0,150),alerts:[...document.querySelectorAll('[role="alert"],[role="status"]')].map(e=>e.textContent)})`))
       throw new Error(`Condition timed out: ${expression}`)
     }
-    const click = label => ev(`(() => { const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)}); if(!b || b.disabled) throw new Error('Button unavailable: '+${JSON.stringify(label)}); b.click(); })()`)
+    // Scope repeated navigation controls by their user-visible region, never by first match.
+    const click = (label, scope = 'body') => ev(`(() => { const matches=[...document.querySelector(${JSON.stringify(scope)}).querySelectorAll('button,[role="menuitem"]')].filter(b=>b.textContent.trim()===${JSON.stringify(label)}); if(matches.length!==1 || matches[0].disabled) throw new Error('Ambiguous/unavailable control: '+${JSON.stringify(label)}); matches[0].focus(); matches[0].click(); })()`)
+    const more = async (label, scope = 'ul[role="list"]') => {
+      await ev(`(() => { const b=[...document.querySelector(${JSON.stringify(scope)}).querySelectorAll('button')].find(b=>b.textContent.trim()==='更多操作'); b.focus(); b.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); })()`)
+      await wait(`!!document.querySelector('[role="menu"]')`)
+      await click(label, '[role="menu"]')
+      await wait(`!document.querySelector('[role="menu"]')`)
+    }
     const fill = async (selector, value) => {
       await wait(`!!document.querySelector(${JSON.stringify(selector)})`)
       return ev(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); if(!el) throw new Error('Input missing'); Object.getOwnPropertyDescriptor(el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,'value').set.call(el,${JSON.stringify(value)}); el.dispatchEvent(new Event('input',{bubbles:true})); })()`)
@@ -115,21 +123,25 @@ try {
     await cdp.send('Page.enable', {}, sid)
     await cdp.send('Browser.grantPermissions', { origin: base, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'] })
     const requests = [], failures = [], external = [], completed = new Set()
+    const downloads = [], finishedDownloads = new Set()
+    await cdp.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath: join(root, 'downloads'), eventsEnabled: true })
     let failWrite = false, failRead = false, held = null, holdRead = false
     cdp.onEvent = m => {
+      if (m.method === 'Network.requestWillBeSent' && /^https?:/.test(m.params.request.url) && !m.params.request.url.startsWith(base + '/')) external.push(m.params.request.url)
+      if (m.method === 'Browser.downloadWillBegin') downloads.push(m.params)
+      if (m.method === 'Browser.downloadProgress' && m.params.state === 'completed') finishedDownloads.add(m.params.guid)
       if (m.method === 'Network.loadingFinished' || m.method === 'Network.loadingFailed') completed.add(m.params.requestId)
       if (m.method !== 'Fetch.requestPaused') return
       const { requestId, request } = m.params
       const url = new URL(request.url)
       const api = url.pathname === '/api/ocr-results'
       if (api) requests.push({ method: request.method, url: request.url, body: request.postData })
-      if (!request.url.startsWith(base)) external.push(request.url)
       if (api && holdRead && request.method === 'GET' && url.searchParams.get('file') === 'workbench-97.pdf') { held = { requestId, networkId: m.params.networkId }; holdRead = false; return }
       const fail = api && ((failWrite && request.method === 'POST') || (failRead && request.method === 'GET'))
-      cdp.send(fail ? 'Fetch.failRequest' : 'Fetch.continueRequest', { requestId, ...(fail ? { errorReason: 'Failed' } : {}) }, sid).catch(e => failures.push(String(e)))
+      cdp.send(fail ? 'Fetch.failRequest' : 'Fetch.continueRequest', { requestId, ...(fail ? { errorReason: 'Failed' } : {}) }, sid).catch(e => failures.push({ error: String(e), url: request.url, networkId: m.params.networkId }))
     }
     await cdp.send('Network.enable', {}, sid)
-    await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] }, sid)
+    await cdp.send('Fetch.enable', { patterns: [{ urlPattern: `${base}/api/ocr-results*`, requestStage: 'Request' }] }, sid)
     for (const width of [1440, 390]) {
       await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: width === 390 ? 844 : 1000, deviceScaleFactor: 1, mobile: false }, sid)
       for (const motion of ['no-preference', 'reduce']) {
@@ -143,10 +155,12 @@ try {
         const writesBefore = requests.filter(r => r.method !== 'GET').length
         await click('查看源码')
         await wait("document.querySelector('.content-preview pre')?.textContent.includes('<table>')")
+        await more('自动换行')
+        await wait("getComputedStyle(document.querySelector('ul[role=list] .content-preview pre')).whiteSpace === 'pre-wrap'")
         await click('复制原文')
         await wait("document.body.innerText.includes('已复制原文')")
         assert.equal(await ev('navigator.clipboard.readText()'), source)
-        await click('深色主题')
+        await more('深色主题')
         assert.equal(await ev("document.querySelector('.content-preview').dataset.theme"), 'dark')
         await click('渲染预览')
         await wait("document.querySelector('td[rowspan=\"2\"]')")
@@ -154,12 +168,26 @@ try {
         assert.equal(await ev("(() => { const el=[...document.querySelectorAll('.safe-preview-html')].find(e=>e.scrollWidth>e.clientWidth); if(!el)return false; el.scrollLeft=200; return el.scrollLeft>0; })()"), true)
         await ev("document.querySelector('[aria-label=\"放大看第 1 页\"]').click()")
         await wait("document.querySelector('[role=dialog] td[rowspan=\"2\"]')")
+        assert.equal(await ev("document.querySelector('[role=dialog] [aria-label=\"正文预览操作\"]').innerText.includes('workbench-97.pdf')"), true)
+        assert.equal(await ev("document.querySelector('[role=dialog] [aria-label=\"正文预览操作\"]').innerText.includes('第 1 页.md')"), true)
         await wait("[...document.querySelectorAll('[role=dialog] img')].some(img=>img.complete && img.naturalWidth>0)")
         if (motion === 'reduce') {
           assert.deepEqual(await ev("[...document.querySelectorAll('[data-slot=dialog-overlay],[role=dialog]')].flatMap(e=>e.getAnimations({subtree:true}).filter(a=>a.playState==='running').map(a=>({name:a.animationName,property:a.transitionProperty,target:a.effect.target.outerHTML.slice(0,400)})))"), [], 'comparison dialog still animates under reduce')
         }
         await ev("[...document.querySelectorAll('[role=dialog] button')].find(b=>b.textContent.trim()==='查看源码').click()")
         await wait("document.querySelector('[role=dialog] pre')")
+        await more('自动换行', '[role=dialog]')
+        await wait("getComputedStyle(document.querySelector('[role=dialog] .content-preview pre')).whiteSpace === 'pre-wrap'")
+        await more('深色主题', '[role=dialog]')
+        assert.equal(await ev("document.querySelector('[role=dialog] .content-preview').dataset.theme"), 'dark')
+        const downloadCount = downloads.length
+        await more('下载', '[role=dialog]')
+        const downloadDeadline = Date.now() + 15000
+        while ((downloads.length === downloadCount || !finishedDownloads.has(downloads.at(-1)?.guid)) && Date.now() < downloadDeadline) await sleep(50)
+        assert.equal(downloads.length, downloadCount + 1)
+        assert.equal(finishedDownloads.has(downloads.at(-1).guid), true)
+        assert.equal(downloads.at(-1).suggestedFilename, '第 1 页.md')
+        assert.equal(readFileSync(join(root, 'downloads', downloads.at(-1).guid), 'utf8'), source)
         await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sid)
         await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sid)
         await wait("!document.querySelector('[role=dialog]')")
@@ -184,6 +212,7 @@ try {
         console.log(JSON.stringify({ width, motion, displayAndCancel: 'passed' }))
       }
     }
+    await navigate()
     // Both write and readback failure paths use real UI and intercepted transport failures.
     await click('编辑')
     await fill('textarea', source + '\n已校对')
@@ -206,6 +235,44 @@ try {
     // Restore the synthetic target so final before/after comparison covers every other field.
     await click('编辑'); await fill('textarea', source); await click('保存')
     await wait("!document.querySelector('textarea') && document.body.innerText.includes('宁波甲企业')")
+    // A saved row can leave its filter. Focus must survive both remaining and empty matches.
+    for (const [width, motion] of [[1440, 'no-preference'], [1440, 'reduce'], [390, 'no-preference'], [390, 'reduce']]) {
+      await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: motion }] }, sid)
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: width === 390 ? 844 : 1000, deviceScaleFactor: 1, mobile: false }, sid)
+      for (const another of [true, false]) {
+        await navigate()
+        await fill('[aria-label="当前文件正文关键词"]', another ? '企业' : '宁波甲企业')
+        await click('编辑')
+        await fill('textarea', '修订完成')
+        assert.equal(await ev("[...document.querySelector('[aria-label=\"正文底部页导航\"]').querySelectorAll('button')].every(b=>b.disabled)"), true)
+        await click('保存')
+        await wait("document.activeElement?.getAttribute('aria-label')==='页筛选与导航'")
+        assert.equal(await ev("!!document.querySelector('ul[role=list] li')"), another)
+        if (another) assert.equal(await ev("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 4 页')"), true)
+        else await wait("document.body.innerText.includes('没有命中页')")
+        await click('清除页筛选', '[aria-label="页筛选与导航"]')
+        await navigate()
+        await click('编辑'); await fill('textarea', source); await click('保存')
+        await wait("!document.querySelector('textarea') && document.body.innerText.includes('宁波甲企业')")
+        // Create then delete only the originally unrecognized page; all existing raw rows stay intact.
+        await navigate('workbench-97.pdf', 3)
+        await click('手工录入'); await fill('textarea', '删除校验 企业'); await click('保存')
+        await wait("!document.querySelector('textarea') && document.body.innerText.includes('删除校验')")
+        await fill('[aria-label="当前文件正文关键词"]', another ? '企业' : '删除校验')
+        await wait("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 3 页')")
+        await click('删除'); await click('确认删除')
+        await wait("document.activeElement?.getAttribute('aria-label')==='页筛选与导航'")
+        assert.equal(await ev("!!document.querySelector('ul[role=list] li')"), another)
+        await click('清除页筛选', '[aria-label="页筛选与导航"]')
+        // Both pagers use the same physical-page state and navigation action.
+        await navigate()
+        await click('下一处', '[aria-label="正文底部页导航"]')
+        await wait("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 2 页') && new URL(location.href).searchParams.get('page')==='2'")
+        await click('上一处', '[aria-label="页筛选与导航"]')
+        await wait("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 1 页')")
+        console.log(JSON.stringify({ width, motion, another, saveAndDeleteFilterFocus: 'passed', bottomPager: 'passed' }))
+      }
+    }
     await navigate('workbench-97.pdf', 97)
     await wait("document.querySelector('.content-preview h1')?.textContent==='第97页'")
     await click('查看源码')

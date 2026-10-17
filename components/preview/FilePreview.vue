@@ -28,6 +28,8 @@ const props = withDefaults(
     name?: string
     /** 图片的替代文本。 */
     alt?: string
+    /** Standalone text pages already show the filename in their page heading. */
+    hideTextName?: boolean
   }>(),
   { name: '', alt: '' },
 )
@@ -42,6 +44,7 @@ const info = computed(() => resolvePreviewKind(props.src) ?? (props.src.startsWi
     v-if="info && (info.kind === 'markdown' || info.kind === 'text')"
     :src="src"
     :name="name"
+    :hide-name="hideTextName"
     :format="info.kind"
     :language="info.language"
     @error="emit('error', $event)"
