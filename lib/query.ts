@@ -336,7 +336,7 @@ function buildRecordRows(
         sourceFile,
         attachment,
         listNo,
-        page,
+        page: isPageCapable(sourceFile) ? page : null,
       })),
     }))
     const lifecycleEvents: LifecycleEvent[] = merged.map((e) => ({
@@ -525,7 +525,7 @@ export function getEnterpriseDetail(db: Db, id: number): EnterpriseDetail | null
           sourceFile: v.sourceFile,
           attachment: v.attachment,
           listNo: v.listNo,
-          page: v.page,
+          page: isPageCapable(v.sourceFile) ? v.page : null,
         })),
       })),
     })),

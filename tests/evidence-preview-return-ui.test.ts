@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RosterEnterpriseTable, { type EnterpriseRow } from '../components/RosterEnterpriseTable.vue'
 import RosterTitleTable, { type TitleRow } from '../components/RosterTitleTable.vue'
 import {
+  hasEvidencePreviewReturn,
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
 } from '../lib/roster/evidence-preview-return'
@@ -110,7 +111,13 @@ const titleRow: TitleRow = {
   district: '海曙区',
   titleCode: 'specialized_sme',
   sources: ['jxj'],
-  events: [{ type: 'award', year: 2022, seq: 1, source: 'jxj' }],
+  events: [{
+    type: 'award',
+    year: 2022,
+    seq: 1,
+    source: 'jxj',
+    evidence: [{ sourceFile: 'jxj/announcement/title-view.pdf', attachment: '附件一', listNo: 3, page: 7 }],
+  }],
 }
 
 let currentRoute: Record<string, unknown>
@@ -199,7 +206,7 @@ function titleLedgerHarness(ready: Ref<boolean>) {
           rows: ready.value ? [titleRow] : [],
           loading: !ready.value,
           hasError: false,
-          backQuery: 'view=title&page=2',
+          backQuery: 'view=title&district=%E6%B5%B7%E6%9B%99%E5%8C%BA&page=2',
           onOpen: (path: string) => (openedTitleRowPath = path),
         })
     },
@@ -226,9 +233,9 @@ describe('出处预览返回滚动恢复', () => {
   })
 
   it.each([
-    { label: '桌面表格滚动', width: 1440, height: 900, tableTop: 383, windowTop: 90 },
-    { label: '390×844 窄屏表格滚动', width: 390, height: 844, tableTop: 339, windowTop: 42 },
-  ])('$label 保留筛选 / 页码 / 展开行,并在表格与详情渲染后恢复两层滚动', async ({ width, height, tableTop, windowTop }) => {
+    { label: '桌面表格滚动', width: 1440, height: 900, tableTop: 383, tableLeft: 0, windowTop: 90 },
+    { label: '390×844 窄屏表格滚动', width: 390, height: 844, tableTop: 339, tableLeft: 644, windowTop: 42 },
+  ])('$label 保留筛选 / 页码 / 展开行,并在表格与详情渲染后恢复三层滚动', async ({ width, height, tableTop, tableLeft, windowTop }) => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
     Object.defineProperty(window, 'scrollY', { configurable: true, value: windowTop })
@@ -243,6 +250,7 @@ describe('出处预览返回滚动恢复', () => {
     ) as HTMLElement | null
     expect(tableScroller).not.toBeNull()
     tableScroller!.scrollTop = tableTop
+    tableScroller!.scrollLeft = tableLeft
 
     const sourceLink = source.findAll('a').find((link) => link.text().includes('第 8 页'))
     expect(sourceLink).toBeDefined()
@@ -253,6 +261,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(previewUrl.searchParams.get('back')).toBe(safeBack)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"scrollY":${windowTop}`)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"scrollTop":${tableTop}`)
+    expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"scrollLeft":${tableLeft}`)
     source.unmount()
 
     history.pushState(null, '', previewUrl.searchParams.get('back')!)
@@ -290,6 +299,7 @@ describe('出处预览返回滚动恢复', () => {
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: windowTop, behavior: 'instant' })
     expect(returnedScroller!.scrollTop).toBe(tableTop)
+    expect(returnedScroller!.scrollLeft).toBe(tableLeft)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
 
     returned.unmount()
@@ -313,15 +323,51 @@ describe('出处预览返回滚动恢复', () => {
     expect(shouldNuxtScrollToTop('/?view=title&page=2', '/files')).toBe(true)
     sessionStorage.setItem(
       'roster:evidence-preview-return',
-      JSON.stringify([{ back: '/enterprises/91', scrollY: 70, scrollTop: null }]),
+      JSON.stringify([{ back: '/enterprises/91', scrollY: 70, scrollTop: null, scrollLeft: null }]),
     )
     expect(scrollToTop({ fullPath: '/enterprises/91' }, { path: '/' })).toBe(false)
     detailPage.unmount()
   })
 
+  it('浏览器 Back 的默认企业 URL 匹配显式 view=enterprise 回链状态', async () => {
+    const historyPath = '/?page=2&pageSize=100&expand=91'
+    const savedBack = '/?view=enterprise&page=2&pageSize=100&expand=91'
+    sessionStorage.setItem(
+      'roster:evidence-preview-return',
+      JSON.stringify([{ back: savedBack, scrollY: 96, scrollTop: 1538, scrollLeft: 0 }]),
+    )
+    history.replaceState(null, '', historyPath)
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
+    expect(hasEvidencePreviewReturn(historyPath)).toBe(true)
+    expect(shouldNuxtScrollToTop(historyPath, '/enterprises/91')).toBe(false)
+
+    const frames: FrameRequestCallback[] = []
+    const scrollTo = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.stubGlobal('scrollTo', scrollTo)
+    const ready = ref(true)
+    const returned = mount(ledgerHarness(ready), {
+      attachTo: document.body,
+      global: { stubs: globalStubs },
+    })
+    await flushPromises()
+    expect(frames).toHaveLength(1)
+    frames[0]!(0)
+    const scroller = returned.element.querySelector('[data-evidence-return-scroll-container]') as HTMLElement
+    expect(scroller.scrollTop).toBe(1538)
+    expect(scroller.scrollLeft).toBe(0)
+    expect(scrollTo).toHaveBeenCalledWith({ top: 96, behavior: 'instant' })
+    expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
+    returned.unmount()
+  })
+
   it('从名录行进详情再经预览返回，保留名录筛选、页码、展开行和表格滚动', async () => {
     const listWindowTop = 90
     const listTableTop = 383
+    const listTableLeft = 128
     const detailWindowTop = 214
     const detailPathPrefix = '/enterprises/91?back=view%3Denterprise%26q%3D%25E5%25BC%2580%25E8%25AF%259A%26page%3D2%26expand%3D91'
     Object.defineProperty(window, 'scrollY', { configurable: true, value: listWindowTop })
@@ -340,6 +386,7 @@ describe('出处预览返回滚动恢复', () => {
     ) as HTMLElement | null
     expect(rosterScroller).not.toBeNull()
     rosterScroller!.scrollTop = listTableTop
+    rosterScroller!.scrollLeft = listTableLeft
     const fullDetailLink = roster.findAll('a').find((link) => link.text().includes('完整企业页'))
     expect(fullDetailLink).toBeDefined()
     await fullDetailLink!.trigger('click', { button: 0 })
@@ -351,9 +398,10 @@ describe('出处预览返回滚动恢复', () => {
       back: string
       scrollY: number
       scrollTop: number | null
+      scrollLeft: number | null
     }[]
     expect(rosterState).toHaveLength(1)
-    expect(rosterState[0]).toEqual({ back: safeBack, scrollY: listWindowTop, scrollTop: listTableTop })
+    expect(rosterState[0]).toEqual({ back: safeBack, scrollY: listWindowTop, scrollTop: listTableTop, scrollLeft: listTableLeft })
     roster.unmount()
 
     const detailPath = `${fullDetailUrl.pathname}${fullDetailUrl.search}`
@@ -381,17 +429,20 @@ describe('出处预览返回滚动恢复', () => {
       back: string
       scrollY: number
       scrollTop: number | null
+      scrollLeft: number | null
     }[]
     expect(chainedStates).toHaveLength(2)
     expect(chainedStates.find((state) => state.back === safeBack)).toEqual({
       back: safeBack,
       scrollY: listWindowTop,
       scrollTop: listTableTop,
+      scrollLeft: listTableLeft,
     })
     expect(chainedStates.find((state) => state.back === detailPath)).toEqual({
       back: detailPath,
       scrollY: detailWindowTop,
       scrollTop: null,
+      scrollLeft: null,
     })
     detailPage.unmount()
 
@@ -418,7 +469,9 @@ describe('出处预览返回滚动恢复', () => {
     expect(frames).toHaveLength(1)
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: detailWindowTop, behavior: 'instant' })
-    expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toHaveLength(1)
+    expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
+      { back: safeBack, scrollY: listWindowTop, scrollTop: listTableTop, scrollLeft: listTableLeft },
+    ])
     const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('名录台账'))
     expect(ledgerLink?.attributes('data-target')).toBe(
       JSON.stringify({ path: '/', query: { view: 'enterprise', q: '开诚', page: '2', expand: '91' } }),
@@ -444,6 +497,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(returnedReady.value).toBe(false)
     expect(scrollTo).not.toHaveBeenCalled()
     expect(returnedScroller?.scrollTop).toBe(0)
+    expect(returnedScroller?.scrollLeft).toBe(0)
     mocks.setDetail?.(detail)
     mocks.setLoading?.(false)
     await flushPromises()
@@ -452,16 +506,18 @@ describe('出处预览返回滚动恢复', () => {
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: listWindowTop, behavior: 'instant' })
     expect(returnedScroller?.scrollTop).toBe(listTableTop)
+    expect(returnedScroller?.scrollLeft).toBe(listTableLeft)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
     ledgerReturn.unmount()
   })
 
   it('称号视图名称入口保留 view/page 和表格滚动，并完成详情预览返回链', async () => {
-    const ledgerPath = '/?view=title&page=2'
-    const backQuery = 'view=title&page=2'
-    const detailPath = '/enterprises/35?back=view%3Dtitle%26page%3D2'
+    const ledgerPath = '/?view=title&district=%E6%B5%B7%E6%9B%99%E5%8C%BA&page=2'
+    const backQuery = 'view=title&district=%E6%B5%B7%E6%9B%99%E5%8C%BA&page=2'
+    const detailPath = `/enterprises/35?back=${encodeURIComponent(backQuery)}`
     const ledgerWindowTop = 70
     const ledgerTableTop = 247
+    const ledgerTableLeft = 96
     const detailWindowTop = 118
 
     history.replaceState(null, '', ledgerPath)
@@ -474,6 +530,7 @@ describe('出处预览返回滚动恢复', () => {
     const titleScroller = titleLedger.element as HTMLElement
     expect(titleScroller.matches('[data-evidence-return-scroll-container]')).toBe(true)
     titleScroller.scrollTop = ledgerTableTop
+    titleScroller.scrollLeft = ledgerTableLeft
 
     const enterpriseNameLink = titleLedger
       .findAll('a')
@@ -482,15 +539,29 @@ describe('出处预览返回滚动恢复', () => {
     const titleDetailUrl = new URL(enterpriseNameLink!.attributes('href')!, window.location.origin)
     expect(titleDetailUrl.pathname).toBe('/enterprises/35')
     expect(titleDetailUrl.searchParams.get('back')).toBe(backQuery)
+    expect(titleDetailUrl.searchParams.get('back')).toContain('district=%E6%B5%B7%E6%9B%99%E5%8C%BA')
     await enterpriseNameLink!.trigger('click', { button: 0 })
     expect(openedTitleRowPath).toBe('')
     const ledgerState = JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!) as {
       back: string
       scrollY: number
       scrollTop: number | null
+      scrollLeft: number | null
     }[]
     expect(ledgerState).toEqual([
-      { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop },
+      { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop, scrollLeft: ledgerTableLeft },
+    ])
+    sessionStorage.removeItem('roster:evidence-preview-return')
+    const sourceLink = titleLedger.findAll('a').find((link) => link.text().includes('第 7 页'))
+    expect(sourceLink).toBeDefined()
+    const sourceUrl = new URL(sourceLink!.attributes('href')!, window.location.origin)
+    expect(sourceUrl.pathname).toBe('/preview')
+    expect(sourceUrl.searchParams.get('file')).toBe('jxj/announcement/title-view.pdf')
+    expect(sourceUrl.searchParams.get('page')).toBe('7')
+    expect(sourceUrl.searchParams.get('back')).toBe(ledgerPath)
+    await sourceLink!.trigger('click', { button: 0 })
+    expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
+      { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop, scrollLeft: ledgerTableLeft },
     ])
     titleLedger.unmount()
 
@@ -515,8 +586,8 @@ describe('出处预览返回滚动恢复', () => {
     expect(previewUrl.pathname).toBe('/preview')
     expect(previewUrl.searchParams.get('back')).toBe(detailPath)
     expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
-      { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop },
-      { back: detailPath, scrollY: detailWindowTop, scrollTop: null },
+      { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop, scrollLeft: ledgerTableLeft },
+      { back: detailPath, scrollY: detailWindowTop, scrollTop: null, scrollLeft: null },
     ])
     detailPage.unmount()
 
@@ -549,11 +620,11 @@ describe('出处预览返回滚动恢复', () => {
     detailFrames[0]!(0)
     expect(window.scrollY).toBe(detailWindowTop)
     expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
-      { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop },
+      { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop, scrollLeft: ledgerTableLeft },
     ])
     const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('名录台账'))
     expect(ledgerLink?.attributes('data-target')).toBe(
-      JSON.stringify({ path: '/', query: { view: 'title', page: '2' } }),
+      JSON.stringify({ path: '/', query: { view: 'title', district: '海曙区', page: '2' } }),
     )
     detailReturn.unmount()
 
@@ -580,6 +651,7 @@ describe('出处预览返回滚动恢复', () => {
     const restoredTitleScroller = ledgerReturn.element as HTMLElement
     expect(restoredTitleScroller.matches('[data-evidence-return-scroll-container]')).toBe(true)
     expect(restoredTitleScroller.scrollTop).toBe(ledgerTableTop)
+    expect(restoredTitleScroller.scrollLeft).toBe(ledgerTableLeft)
     expect(window.scrollY).toBe(ledgerWindowTop)
     expect(window.location.pathname + window.location.search).toBe(ledgerPath)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()

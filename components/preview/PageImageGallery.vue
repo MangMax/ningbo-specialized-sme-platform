@@ -94,6 +94,10 @@ const rendering = ref(false)
 const renderFailure = ref('')
 /** 渲染失败过。与 `renderFailure` 分开:网络失败时说明是空串,但状态仍然是「失败」。 */
 const renderFailed = ref(false)
+/** 深链不能可靠定位时单独报告,不能退回显示另一页。 */
+const targetPageIssue = ref('')
+/** 每份文件的每个深链目标只自动尝试渲染一次。 */
+const autoRenderKey = ref('')
 /** 上一次渲染的一句话交代(写了几页、跳了几页、多久)。 */
 const summary = ref('')
 /** 当前选的分辨率。取到现状后跟磁盘上的一致 —— 打开就该显示「现在是什么」,不是「默认是什么」。 */
@@ -187,6 +191,41 @@ const viewingPage = computed<PageImageRef | null>(
   () => state.value?.pages.find((p) => p.page === viewing.value) ?? null,
 )
 
+async function resolveRequestedPage(): Promise<void> {
+  const target = requestedPage()
+  const current = state.value
+  if (target === null || !current || loading.value) return
+
+  targetPageIssue.value = ''
+  if (current.pages.some((page) => page.page === target)) {
+    pendingPage.value = null
+    viewing.value = target
+    return
+  }
+  if (current.pageCount === null) {
+    pendingPage.value = null
+    viewing.value = null
+    targetPageIssue.value = `无法确认 PDF 页数，不能定位到第 ${target} 页。`
+    return
+  }
+  if (target > current.pageCount) {
+    pendingPage.value = null
+    viewing.value = null
+    return
+  }
+
+  pendingPage.value = target
+  viewing.value = null
+  const key = `${props.file}:${target}`
+  if (autoRenderKey.value === key) return
+  autoRenderKey.value = key
+  await renderPages()
+  if (!renderFailed.value && !state.value?.pages.some((page) => page.page === target)) {
+    pendingPage.value = null
+    targetPageIssue.value = `页图渲染完成，但结果中没有第 ${target} 页；未打开其他页面。`
+  }
+}
+
 /** 网格里给 `<img>` 的地址(带渲染版本号,免得换了 DPI 还显示浏览器缓存里的旧图)。 */
 function srcOf(page: PageImageRef): string {
   return state.value ? pageImageSrc(state.value, page) : page.url
@@ -210,6 +249,7 @@ async function load() {
   } finally {
     loading.value = false
   }
+  await resolveRequestedPage()
 }
 
 /**
@@ -292,6 +332,8 @@ watch(
     summary.value = ''
     renderFailure.value = ''
     renderFailed.value = false
+    targetPageIssue.value = ''
+    autoRenderKey.value = ''
     loadError.value = ''
     loadUnconfirmed.value = false
     dpiTouched.value = false
@@ -325,12 +367,15 @@ watch(
   () => props.page,
   () => {
     const requested = requestedPage()
+    targetPageIssue.value = ''
+    autoRenderKey.value = ''
     pendingPage.value = requested
     if (requested !== null && state.value?.pages.some((page) => page.page === requested)) {
       viewing.value = requested
       pendingPage.value = null
     } else {
       viewing.value = null
+      void resolveRequestedPage()
     }
   },
 )
@@ -444,7 +489,12 @@ watch(
     </div>
 
     <!-- 失败 / 上一次的小结。放在工具栏下面、内容上面:两种视图下都看得见。 -->
-    <div v-if="renderFailed || summary" class="flex shrink-0 flex-col gap-2 border-b px-3 py-2">
+    <div v-if="renderFailed || summary || targetPageIssue" class="flex shrink-0 flex-col gap-2 border-b px-3 py-2">
+      <Alert v-if="targetPageIssue" role="alert" variant="destructive">
+        <AlertDescription class="text-destructive! font-medium">
+          {{ targetPageIssue }}
+        </AlertDescription>
+      </Alert>
       <Alert v-if="renderFailed" variant="destructive">
         <!-- `!` 是必须的:`alertVariants` 的 destructive 给说明文字加了 90% 透明,
              深色下只剩 4.25:1(低于 4.5:1);那条规则同权重、位置更靠后,

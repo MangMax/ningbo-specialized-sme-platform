@@ -4,6 +4,10 @@ interface JsonSchema {
   type?: string
   description?: string
   required?: string[]
+  enum?: string[]
+  nullable?: boolean
+  format?: string
+  additionalProperties?: boolean
   items?: JsonSchema
   properties?: Record<string, JsonSchema>
 }
@@ -13,6 +17,7 @@ interface CapturedRouteMeta {
     responses?: Record<
       number,
       {
+        description?: string
         content?: Record<string, { schema?: JsonSchema }>
       }
     >
@@ -46,5 +51,34 @@ describe('GET /api/files OpenAPI response', () => {
       type: 'string',
       description: '磁盘上的原始文件名；修改 displayName 不会改动它。',
     })
+  })
+})
+
+describe('PATCH /api/files/{id} OpenAPI response', () => {
+  it('declares the updated file row schema including display and disk names', async () => {
+    let captured: CapturedRouteMeta | undefined
+    vi.stubGlobal('defineRouteMeta', (meta: CapturedRouteMeta) => {
+      captured = meta
+      return meta
+    })
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    vi.resetModules()
+
+    await import('../server/api/files/[id].patch')
+
+    const response = captured?.openAPI?.responses?.[200]
+    const schema = response?.content?.['application/json']?.schema
+    expect(response?.description).toContain('更新后的文件行')
+    expect(schema?.type).toBe('object')
+    expect(schema?.required).toEqual([
+      'id', 'relPath', 'displayName', 'filename', 'ext', 'bytes', 'sha256', 'source', 'kind',
+      'year', 'batch', 'titleCode', 'categoryState', 'parseState', 'createdAt', 'removedAt',
+      'referenceCount', 'parts',
+    ])
+    expect(schema?.properties?.id?.type).toBe('integer')
+    expect(schema?.properties?.relPath?.type).toBe('string')
+    expect(schema?.properties?.displayName?.type).toBe('string')
+    expect(schema?.properties?.filename?.description).toContain('原始文件名')
+    expect(schema?.properties?.parts?.items?.properties?.origin?.enum).toEqual(['derived', 'agent', 'legacy'])
   })
 })

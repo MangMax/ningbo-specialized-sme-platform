@@ -12,6 +12,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
+import { evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import {
   Table,
   TableBody,
@@ -38,7 +39,13 @@ export interface TitleRow {
   district: string | null
   titleCode: string
   sources: string[]
-  events: { type: string; year: number | null; seq: number | null; source: string }[]
+  events: {
+    type: string
+    year: number | null
+    seq: number | null
+    source: string
+    evidence?: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
+  }[]
 }
 
 const props = defineProps<{
@@ -97,6 +104,22 @@ function rememberEnterpriseReturn(event: MouseEvent): void {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   const back = props.backQuery ? `/?${props.backQuery}` : '/'
   rememberEvidencePreviewReturn(back, event.currentTarget)
+}
+
+function evidenceHref(evidence: NonNullable<TitleRow['events'][number]['evidence']>[number]): string {
+  const back = props.backQuery ? `/?${props.backQuery}` : '/'
+  return evidencePreviewHref({ sourceFile: evidence.sourceFile, page: evidence.page, back })
+}
+
+function evidenceLabel(evidence: NonNullable<TitleRow['events'][number]['evidence']>[number]): string {
+  const filename = evidence.sourceFile.split('/').pop() ?? evidence.sourceFile
+  return `${evidence.page == null ? '' : `第 ${evidence.page} 页 · `}${filename}`
+}
+
+function rememberEvidenceReturn(event: MouseEvent): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  const back = props.backQuery ? `/?${props.backQuery}` : '/'
+  rememberEvidencePreviewReturn(back, scrollRef.value)
 }
 
 /** 整行可点,但拖选文字时不该跳走。 */
@@ -180,13 +203,20 @@ function openRow(id: number, event: MouseEvent) {
             <TableCell @click.stop>
               <HoverCard :open-delay="100" :close-delay="120">
                 <HoverCardTrigger class="flex flex-wrap items-center gap-1">
-                  <EventChip
-                    v-for="(e, i) in item.row.events.slice(0, MAX_VISIBLE_EVENTS)"
-                    :key="i"
-                    :type="e.type"
-                    :year="e.year"
-                    :seq="e.seq"
-                  />
+                  <template v-for="(e, i) in item.row.events.slice(0, MAX_VISIBLE_EVENTS)" :key="i">
+                    <EventChip :type="e.type" :year="e.year" :seq="e.seq" />
+                    <NuxtLink
+                      v-for="(evidence, evidenceIndex) in (e.evidence ?? []).slice(0, 1)"
+                      :key="`${evidence.sourceFile}-${evidenceIndex}`"
+                      :to="evidenceHref(evidence)"
+                      :title="evidence.sourceFile"
+                      :aria-label="`${evidence.sourceFile}${evidence.page == null ? '' : `，第 ${evidence.page} 页`}`"
+                      class="text-primary max-w-36 truncate text-[10px] underline underline-offset-2 hover:no-underline"
+                      @click.stop="rememberEvidenceReturn"
+                    >
+                      {{ evidenceLabel(evidence) }}
+                    </NuxtLink>
+                  </template>
                   <Badge
                     v-if="item.row.events.length > MAX_VISIBLE_EVENTS"
                     variant="quiet"
@@ -206,9 +236,18 @@ function openRow(id: number, event: MouseEvent) {
                     </span>
                   </div>
                   <ul class="mt-2.5 flex flex-col gap-1.5 border-t pt-2.5">
-                    <li v-for="(e, i) in item.row.events" :key="i" class="flex items-center gap-1.5">
+                    <li v-for="(e, i) in item.row.events" :key="i" class="flex flex-col items-start gap-1.5">
                       <EventChip :type="e.type" :year="e.year" :seq="e.seq" />
                       <SourceChip :code="e.source" />
+                      <NuxtLink
+                        v-for="(evidence, evidenceIndex) in e.evidence ?? []"
+                        :key="`${evidence.sourceFile}-${evidenceIndex}`"
+                        :to="evidenceHref(evidence)"
+                        class="text-primary max-w-full break-all text-[11px] underline underline-offset-2 hover:no-underline"
+                        @click.stop="rememberEvidenceReturn"
+                      >
+                        {{ evidence.sourceFile }}<template v-if="evidence.page != null"> · 第 {{ evidence.page }} 页</template>
+                      </NuxtLink>
                     </li>
                   </ul>
                 </HoverCardContent>

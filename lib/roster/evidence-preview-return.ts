@@ -7,6 +7,7 @@ interface EvidencePreviewReturnState {
   back: string
   scrollY: number
   scrollTop: number | null
+  scrollLeft: number | null
 }
 
 function validState(value: unknown): value is EvidencePreviewReturnState {
@@ -21,7 +22,10 @@ function validState(value: unknown): value is EvidencePreviewReturnState {
     state.scrollY >= 0 &&
     (state.scrollTop === undefined ||
       state.scrollTop === null ||
-      (typeof state.scrollTop === 'number' && Number.isFinite(state.scrollTop) && state.scrollTop >= 0))
+        (typeof state.scrollTop === 'number' && Number.isFinite(state.scrollTop) && state.scrollTop >= 0)) &&
+      (state.scrollLeft === undefined ||
+        state.scrollLeft === null ||
+        (typeof state.scrollLeft === 'number' && Number.isFinite(state.scrollLeft) && state.scrollLeft >= 0))
   )
 }
 
@@ -49,9 +53,27 @@ function writeSavedReturns(states: EvidencePreviewReturnState[]): void {
   }
 }
 
+/** Canonicalize equivalent ledger URLs for history traversal, including the implicit default view. */
+function returnPathKey(value: string): string | null {
+  if (typeof window === 'undefined' || !isSafeBackPath(value, window.location.origin)) return null
+  try {
+    const url = new URL(value, window.location.origin)
+    if (url.origin !== window.location.origin) return null
+    const entries = [...url.searchParams.entries()].filter(
+      ([key, entryValue]) => !(url.pathname === '/' && key === 'view' && entryValue === 'enterprise'),
+    )
+    entries.sort(([aKey, aValue], [bKey, bValue]) => aKey.localeCompare(bKey) || aValue.localeCompare(bValue))
+    const query = new URLSearchParams(entries).toString()
+    return `${url.pathname}${query ? `?${query}` : ''}${url.hash}`
+  } catch {
+    return null
+  }
+}
+
 /** Whether the target route has a saved offset that its own ready-state hook will restore. */
 export function hasEvidencePreviewReturn(back: string): boolean {
-  return readSavedReturns().some((state) => state.back === back)
+  const backKey = returnPathKey(back)
+  return backKey !== null && readSavedReturns().some((state) => returnPathKey(state.back) === backKey)
 }
 
 /**
@@ -72,10 +94,14 @@ export function rememberEvidencePreviewReturn(back: unknown, source?: EventTarge
   const sourceElement = typeof Element !== 'undefined' && source instanceof Element ? source : null
   const scrollContainer = sourceElement?.closest<HTMLElement>('[data-evidence-return-scroll-container]') ?? null
   const scrollTop = scrollContainer?.scrollTop ?? null
-  if (scrollTop !== null && (!Number.isFinite(scrollTop) || scrollTop < 0)) return
+  const scrollLeft = scrollContainer?.scrollLeft ?? null
+  if (
+    (scrollTop !== null && (!Number.isFinite(scrollTop) || scrollTop < 0)) ||
+    (scrollLeft !== null && (!Number.isFinite(scrollLeft) || scrollLeft < 0))
+  ) return
 
   try {
-    const state: EvidencePreviewReturnState = { back, scrollY, scrollTop }
+    const state: EvidencePreviewReturnState = { back, scrollY, scrollTop, scrollLeft }
     const saved = readSavedReturns().filter((entry) => entry.back !== back)
     saved.push(state)
     writeSavedReturns(saved)
@@ -89,11 +115,19 @@ function takeEvidencePreviewScroll(currentPath: string): EvidencePreviewReturnSt
   if (typeof window === 'undefined') return null
 
   const saved = readSavedReturns()
-  const matchingIndex = saved.findIndex((state) => state.back === currentPath)
+  const currentKey = returnPathKey(currentPath)
+  const matchingIndex = currentKey === null ? -1 : saved.findIndex((state) => returnPathKey(state.back) === currentKey)
   if (matchingIndex < 0) return null
   const [state] = saved.splice(matchingIndex, 1)
   writeSavedReturns(saved)
-  return state ? { back: state.back, scrollY: state.scrollY, scrollTop: state.scrollTop ?? null } : null
+  return state
+    ? {
+        back: state.back,
+        scrollY: state.scrollY,
+        scrollTop: state.scrollTop ?? null,
+        scrollLeft: state.scrollLeft ?? null,
+      }
+    : null
 }
 
 /**
@@ -115,7 +149,10 @@ export function useEvidencePreviewScrollRestore(ready: Readonly<Ref<boolean>>): 
       window.requestAnimationFrame(() => {
         if (state.scrollTop !== null) {
           const tableScroller = document.querySelector<HTMLElement>('[data-evidence-return-scroll-container]')
-          if (tableScroller) tableScroller.scrollTop = state.scrollTop
+          if (tableScroller) {
+            tableScroller.scrollTop = state.scrollTop
+            if (state.scrollLeft !== null) tableScroller.scrollLeft = state.scrollLeft
+          }
         }
         window.scrollTo({ top: state.scrollY, behavior: 'instant' })
       })

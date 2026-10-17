@@ -649,6 +649,14 @@ useHead({
             summary-prefix="年份"
             class="w-24"
           />
+          <select
+            v-model="state.district"
+            class="border-input bg-background h-8 rounded-md border px-2 text-sm"
+            aria-label="按属地筛选"
+          >
+            <option value="">全部属地</option>
+            <option v-for="d in districtOptions" :key="d" :value="d">{{ d }}</option>
+          </select>
         </template>
         <template v-if="view === 'enterprise'">
           <!-- RL-08:首次认定两个判据(年份 / 状态)。与上面的「年份」是两回事:
@@ -667,14 +675,6 @@ useHead({
             summary-prefix="首次认定"
             class="w-32"
           />
-          <select
-            v-model="state.district"
-            class="border-input bg-background h-8 rounded-md border px-2 text-sm"
-            aria-label="按属地筛选"
-          >
-            <option value="">全部属地</option>
-            <option v-for="d in districtOptions" :key="d" :value="d">{{ d }}</option>
-          </select>
           <select
             v-model="state.rosterState"
             class="border-input bg-background h-8 rounded-md border px-2 text-sm"

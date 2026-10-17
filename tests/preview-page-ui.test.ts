@@ -66,7 +66,7 @@ beforeEach(() => {
 })
 
 describe('来源预览页图深链', () => {
-  it('渲染尚未生成的目标页后自动打开该页并清除待渲染提示', async () => {
+  it('有效深链自动生成缺失页图并打开目标页', async () => {
     const wrapper = mount(PreviewPage, {
       attachTo: document.body,
       global: {
@@ -74,29 +74,39 @@ describe('来源预览页图深链', () => {
           PageHeader: { template: '<div><slot name="breadcrumb"/><slot name="actions"/></div>' },
           NuxtLink: { props: ['to'], template: '<a :href="to"><slot/></a>' },
           ImagePreview: {
-            props: ['name'],
-            template: '<div data-test="single-page-preview">{{ name }}</div>',
+            props: ['name', 'src'],
+            template: '<div data-test="single-page-preview" :data-src="src">{{ name }}</div>',
           },
         },
       },
     })
 
     await flushPromises()
-    expect(wrapper.text()).toContain('第 3 页的页图还没有渲染')
-
-    const render = wrapper.findAll('button').find((button) => button.text().includes('渲染页图'))
-    expect(render).toBeDefined()
-    await render!.trigger('click')
+    await vi.waitFor(() => {
+      expect(vi.mocked($fetch)).toHaveBeenCalledWith('/api/pdf-pages', {
+        method: 'POST',
+        body: expect.objectContaining({ file, dpi: expect.any(Number) }),
+      })
+    })
     await flushPromises()
 
     expect(wrapper.find('[data-test="single-page-preview"]').text()).toBe('第 3 页')
+    expect(wrapper.find('[data-test="single-page-preview"]').attributes('data-src')).toContain(
+      '/synthetic/page-3.png',
+    )
     expect(wrapper.text()).not.toContain('第 3 页的页图还没有渲染')
     wrapper.unmount()
   })
 
-  it('新渲染结果不含目标页时，不让旧查询缓存隐藏待渲染提示', async () => {
+  it('渲染失败时明确报错且不退回到其他页', async () => {
     mocks.pageState = pagesState([3])
-    mocks.renderedPages = [1, 2]
+    vi.stubGlobal(
+      '$fetch',
+      vi.fn(async (_url: string, options?: { method?: string }) => {
+        if (options?.method === 'POST') throw new Error('synthetic renderer failure')
+        return pagesState([1, 2])
+      }),
+    )
 
     const wrapper = mount(PreviewPage, {
       attachTo: document.body,
@@ -113,15 +123,35 @@ describe('来源预览页图深链', () => {
     })
 
     await flushPromises()
-    // 画廊读取的当前状态优先于父页可能过期的查询缓存。
-    expect(wrapper.text()).toContain('第 3 页的页图还没有渲染')
-
-    const render = wrapper.findAll('button').find((button) => button.text().includes('渲染页图'))
-    expect(render).toBeDefined()
-    await render!.trigger('click')
+    await vi.waitFor(() => {
+      expect(vi.mocked($fetch)).toHaveBeenCalledWith('/api/pdf-pages', expect.objectContaining({ method: 'POST' }))
+    })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('第 3 页的页图还没有渲染')
+    expect(wrapper.text()).toContain('渲染没有成功')
+    expect(wrapper.find('[data-test="single-page-preview"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('实际页数未知时明确说明无法确认深链落点', async () => {
+    const stateWithUnknownCount = { ...pagesState([]), pageCount: null }
+    mocks.pageState = stateWithUnknownCount
+    mocks.galleryState = stateWithUnknownCount
+    vi.stubGlobal('$fetch', vi.fn(async () => stateWithUnknownCount))
+
+    const wrapper = mount(PreviewPage, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          PageHeader: { template: '<div><slot name="breadcrumb"/><slot name="actions"/></div>' },
+          NuxtLink: { props: ['to'], template: '<a :href="to"><slot/></a>' },
+          ImagePreview: { template: '<div data-test="single-page-preview" />' },
+        },
+      },
+    })
+
+    await flushPromises()
+    expect(wrapper.text()).toContain('无法确认 PDF 页数')
     expect(wrapper.find('[data-test="single-page-preview"]').exists()).toBe(false)
     wrapper.unmount()
   })
@@ -194,6 +224,34 @@ describe('来源预览页图深链', () => {
     const backLinks = wrapper.findAll('a').filter((link) => link.attributes('href') === back)
     expect(backLinks.length).toBeGreaterThanOrEqual(2)
     expect(backLinks.map((link) => link.text()).join(' ')).toContain('返回')
+    wrapper.unmount()
+  })
+
+  it('实际页数未知但目标页图已存在时仍打开对应页图', async () => {
+    const stateWithKnownTarget = { ...pagesState([3]), pageCount: null }
+    mocks.pageState = stateWithKnownTarget
+    mocks.galleryState = stateWithKnownTarget
+
+    const wrapper = mount(PreviewPage, {
+      attachTo: document.body,
+      global: {
+        stubs: {
+          PageHeader: { template: '<div><slot name="breadcrumb"/><slot name="actions"/></div>' },
+          NuxtLink: { props: ['to'], template: '<a :href="to"><slot/></a>' },
+          ImagePreview: {
+            props: ['name', 'src'],
+            template: '<div data-test="single-page-preview" :data-src="src">{{ name }}</div>',
+          },
+        },
+      },
+    })
+
+    await flushPromises()
+    expect(wrapper.find('[data-test="single-page-preview"]').text()).toBe('第 3 页')
+    expect(wrapper.find('[data-test="single-page-preview"]').attributes('data-src')).toContain(
+      '/synthetic/page-3.png',
+    )
+    expect(wrapper.text()).not.toContain('无法确认 PDF 页数')
     wrapper.unmount()
   })
 })

@@ -153,7 +153,12 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
         <AlertDescription v-if="requestedPageOutOfRange">
           该 PDF 共 {{ currentPdfPageCount }} 页，请检查来源页码。
         </AlertDescription>
-        <AlertDescription v-else>先渲染页图；如果 PDF 中存在这一页，渲染后会自动定位。</AlertDescription>
+        <AlertDescription v-else-if="currentPdfPageCount === null">
+          无法确认 PDF 的实际页数，不能验证目标页；不会静默打开其他页，请检查源文件后重试。
+        </AlertDescription>
+        <AlertDescription v-else>
+          正在尝试生成目标页；成功后会自动定位。若失败会显示原因，不会打开其他页。
+        </AlertDescription>
       </Alert>
 
       <PageImageGallery

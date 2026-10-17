@@ -21,8 +21,8 @@ const FILES_ROOT = join(TEMP_ROOT, 'files')
 const API_TOKEN = randomBytes(32).toString('hex')
 const SOURCE_FILE = 'jxj/announcement/2024/1/rl10-synthetic-return.pdf'
 const VIEWPORTS = [
-  { label: 'desktop 1280×800', width: 1280, height: 800, detailScrollY: 106.5, listScrollY: 96 },
-  { label: 'narrow 390×844', width: 390, height: 844, detailScrollY: 94.5, listScrollY: 296 },
+  { label: 'desktop 1280×800', width: 1280, height: 800, detailScrollY: 2000, listScrollY: 96, listScrollLeft: 0 },
+  { label: 'narrow 390×844', width: 390, height: 844, detailScrollY: 2000, listScrollY: 296, listScrollLeft: 644 },
 ]
 
 async function postJson(path, body) {
@@ -42,7 +42,7 @@ async function postJson(path, body) {
 async function seedViaApplicationApis() {
   const sourceAbs = join(FILES_ROOT, SOURCE_FILE)
   mkdirSync(dirname(sourceAbs), { recursive: true })
-  writeFileSync(sourceAbs, minimalPdf({ pages: 1 }))
+  writeFileSync(sourceAbs, minimalPdf({ pages: 3 }))
 
   await postJson('/api/files/register', {
     relPath: SOURCE_FILE,
@@ -68,7 +68,7 @@ async function seedViaApplicationApis() {
           sourceFile: SOURCE_FILE,
           attachment: '合成附件一',
           listNo: 1,
-          page: 1,
+          page: 3,
         },
       ],
     }],
@@ -219,21 +219,41 @@ async function openInitialLedger(cdp, sessionId, path, title) {
     const filler = document.createElement('section');
     filler.id = 'rl10-window-scroll-fixture';
     filler.textContent = 'Synthetic browser scroll fixture';
-    filler.style.cssText = 'position:absolute;top:850px;left:0;width:1px;height:1200px;z-index:-1;pointer-events:none;';
+    filler.style.cssText = 'position:absolute;top:2500px;left:0;width:1px;height:1200px;z-index:-1;pointer-events:none;';
     document.body.appendChild(filler);
   })()`)
   await evaluate(cdp, sessionId, 'sessionStorage.clear()')
+  await waitForRealScrollableLedger(cdp, sessionId)
 }
 
-async function setScrollOffsets(cdp, sessionId, { tableTop, windowTop }) {
+async function waitForRealScrollableLedger(cdp, sessionId) {
+  await waitUntil(cdp, sessionId, `(() => {
+    const scroller = document.querySelector('[data-evidence-return-scroll-container]');
+    if (!scroller || scroller.scrollHeight <= scroller.clientHeight) return false;
+    return [...scroller.querySelectorAll('tbody tr')].some((row) =>
+      !row.hasAttribute('aria-hidden') &&
+      !row.querySelector('[data-slot="skeleton"]') &&
+      row.textContent.trim().length > 0
+    );
+  })()`)
+}
+
+async function setScrollOffsets(cdp, sessionId, { tableTop, tableLeft = 0, windowTop }) {
   return evaluate(cdp, sessionId, `(() => {
     const scroller = document.querySelector('[data-evidence-return-scroll-container]');
     if (!scroller) throw new Error('roster scroll container missing');
-    scroller.scrollTop = Math.min(${tableTop}, scroller.scrollHeight - scroller.clientHeight - 1);
+    const tableMax = scroller.scrollHeight - scroller.clientHeight;
+    const tableLeftMax = scroller.scrollWidth - scroller.clientWidth;
+    if (tableMax <= 0) throw new Error('roster table has no vertical scroll range; data rows may not be ready');
+    if (${tableLeft} > 0 && tableLeftMax <= 0) throw new Error('roster table has no horizontal scroll range');
+    scroller.scrollTop = Math.min(${tableTop}, tableMax);
+    scroller.scrollLeft = Math.min(${tableLeft}, tableLeftMax);
     window.scrollTo({ top: ${windowTop}, behavior: 'instant' });
     return {
       tableTop: scroller.scrollTop,
-      tableMax: scroller.scrollHeight - scroller.clientHeight,
+      tableMax,
+      tableLeft: scroller.scrollLeft,
+      tableLeftMax,
       windowTop: window.scrollY,
       windowMax: document.documentElement.scrollHeight - window.innerHeight,
     };
@@ -242,15 +262,63 @@ async function setScrollOffsets(cdp, sessionId, { tableTop, windowTop }) {
 
 async function runTitlePreviewReturn(cdp, sessionId, viewport) {
   await setViewport(cdp, sessionId, viewport)
-  await openInitialLedger(cdp, sessionId, '/?view=title&page=2&pageSize=100', '按企业×称号')
-  await waitUntil(cdp, sessionId, "document.querySelectorAll('[data-evidence-return-scroll-container] tbody tr').length > 0")
+  await openInitialLedger(cdp, sessionId, '/?view=title&district=海曙区&page=2&pageSize=100', '按企业×称号')
 
-  const before = await setScrollOffsets(cdp, sessionId, { tableTop: 1538.5, windowTop: viewport.listScrollY })
+  const before = await setScrollOffsets(cdp, sessionId, {
+    tableTop: 1538.5,
+    tableLeft: viewport.listScrollLeft,
+    windowTop: viewport.listScrollY,
+  })
   assert(before.tableTop > 0, `${viewport.label}: title table did not scroll: ${JSON.stringify(before)}`)
+  assert(Math.abs(before.tableLeft - viewport.listScrollLeft) <= 1,
+    `${viewport.label}: title table could not reach the measured horizontal offset: ${JSON.stringify(before)}`)
   assert(Math.abs(before.tableTop - 1538.5) <= 1,
     `${viewport.label}: title table could not reach the measured return offset: ${JSON.stringify(before)}`)
   assert(before.windowTop > 0, `${viewport.label}: title page window did not scroll: ${JSON.stringify(before)}`)
   await sleep(150)
+
+  await waitUntil(cdp, sessionId, "[...document.querySelectorAll('a[href^=\"/preview\"]')].some((a) => a.textContent.includes('rl10-synthetic-return.pdf') && a.textContent.includes('第 3 页'))")
+  const titleSourceHref = await evaluate(cdp, sessionId, `(() => {
+    const scroller = document.querySelector('[data-evidence-return-scroll-container]');
+    const box = scroller.getBoundingClientRect();
+    const link = [...scroller.querySelectorAll('a[href^="/preview"]')].find((a) => {
+      const r = a.getBoundingClientRect();
+      return a.textContent.includes('rl10-synthetic-return.pdf') && a.textContent.includes('第 3 页') && r.bottom > box.top && r.top < box.bottom;
+    });
+    if (!link) throw new Error('title event source page link missing');
+    const url = new URL(link.href);
+    const backUrl = new URL(url.searchParams.get('back'), location.origin);
+    const back = backUrl.searchParams;
+    if (backUrl.pathname !== '/' || url.searchParams.get('page') !== '3' || back.get('view') !== 'title' || back.get('district') !== '海曙区' || back.get('page') !== '2' || back.get('pageSize') !== '100') {
+      throw new Error('title event page link lost page or filter context: ' + link.href);
+    }
+    link.click();
+    return url.pathname + url.search;
+  })()`)
+  await waitUntil(cdp, sessionId, `location.pathname === '/preview' && new URLSearchParams(location.search).get('page') === '3'`)
+  await waitUntil(cdp, sessionId, "[...document.querySelectorAll('button')].some((button) => button.textContent.includes('返回全部页'))")
+  await waitUntil(cdp, sessionId, "[...document.querySelectorAll('img')].some((img) => img.complete && img.naturalWidth > 0)")
+  await evaluate(cdp, sessionId, `(() => {
+    const link = [...document.querySelectorAll('a')].find((a) => a.textContent.includes('返回') && a.href.includes('view=title'));
+    if (!link) throw new Error('title event preview return link missing');
+    link.click();
+  })()`)
+  await waitForRealScrollableLedger(cdp, sessionId)
+  await sleep(400)
+  const titleSourceReturn = await evaluate(cdp, sessionId, `({
+    path: location.pathname + location.search,
+    tableTop: document.querySelector('[data-evidence-return-scroll-container]').scrollTop,
+    tableLeft: document.querySelector('[data-evidence-return-scroll-container]').scrollLeft,
+    windowTop: window.scrollY,
+    state: sessionStorage.getItem('roster:evidence-preview-return'),
+  })`)
+  assert(Math.abs(titleSourceReturn.tableTop - before.tableTop) <= 2,
+    `${viewport.label}: title source return lost vertical table scroll: ${JSON.stringify(titleSourceReturn)}`)
+  assert(Math.abs(titleSourceReturn.tableLeft - before.tableLeft) <= 2,
+    `${viewport.label}: title source return lost horizontal table scroll: ${JSON.stringify(titleSourceReturn)}`)
+  assert(Math.abs(titleSourceReturn.windowTop - before.windowTop) <= 2,
+    `${viewport.label}: title source return lost window scroll: ${JSON.stringify(titleSourceReturn)}`)
+  assert(titleSourceReturn.state === null, `${viewport.label}: title source return state was not consumed`)
 
   const detailHref = await evaluate(cdp, sessionId, `(() => {
     const scroller = document.querySelector('[data-evidence-return-scroll-container]');
@@ -262,7 +330,7 @@ async function runTitlePreviewReturn(cdp, sessionId, viewport) {
     if (!link) throw new Error('visible title-view company name link missing');
     const url = new URL(link.href);
     const back = new URLSearchParams(url.searchParams.get('back'));
-    if (back.get('view') !== 'title' || back.get('page') !== '2' || back.get('pageSize') !== '100') {
+    if (back.get('view') !== 'title' || back.get('district') !== '海曙区' || back.get('page') !== '2' || back.get('pageSize') !== '100') {
       throw new Error('title-view name link lost its return query: ' + link.href);
     }
     link.click();
@@ -277,9 +345,9 @@ async function runTitlePreviewReturn(cdp, sessionId, viewport) {
     const disclosure = [...document.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith('出处 '));
     disclosure.click();
   })()`)
-  await waitUntil(cdp, sessionId, "[...document.querySelectorAll('a[href^=\"/preview\"]')].some((a) => a.textContent.includes('第 1 页'))")
+  await waitUntil(cdp, sessionId, "[...document.querySelectorAll('a[href^=\"/preview\"]')].some((a) => a.textContent.includes('第 3 页'))")
   const sourceState = await evaluate(cdp, sessionId, `(() => {
-    const pageLink = [...document.querySelectorAll('a[href^="/preview"]')].find((a) => a.textContent.includes('第 1 页'));
+    const pageLink = [...document.querySelectorAll('a[href^="/preview"]')].find((a) => a.textContent.includes('第 3 页'));
     if (!pageLink) throw new Error('opened detail evidence did not expose its PDF page link');
     const url = new URL(pageLink.href);
     if (url.searchParams.get('back') !== location.pathname + location.search) {
@@ -335,11 +403,13 @@ async function runTitlePreviewReturn(cdp, sessionId, viewport) {
     link.click();
   })()`)
   await evaluate(cdp, sessionId, 'window.__rl10ScrollCalls.length = 0')
-  await waitUntil(cdp, sessionId, `location.pathname === '/' && new URLSearchParams(location.search).get('view') === 'title' && new URLSearchParams(location.search).get('page') === '2' && !!document.querySelector('[data-evidence-return-scroll-container]')`)
+  await waitUntil(cdp, sessionId, `location.pathname === '/' && new URLSearchParams(location.search).get('view') === 'title' && new URLSearchParams(location.search).get('district') === '海曙区' && new URLSearchParams(location.search).get('page') === '2'`)
+  await waitForRealScrollableLedger(cdp, sessionId)
   await sleep(600)
   const ledgerAfter = await evaluate(cdp, sessionId, `({
     path: location.pathname + location.search,
     tableTop: document.querySelector('[data-evidence-return-scroll-container]').scrollTop,
+    tableLeft: document.querySelector('[data-evidence-return-scroll-container]').scrollLeft,
     windowTop: window.scrollY,
     calls: window.__rl10ScrollCalls,
     state: sessionStorage.getItem('roster:evidence-preview-return'),
@@ -350,15 +420,19 @@ async function runTitlePreviewReturn(cdp, sessionId, viewport) {
     `${viewport.label}: title page lost after return: ${JSON.stringify(ledgerAfter)}`)
   assert(new URLSearchParams(new URL(`${BASE}${ledgerAfter.path}`).search).get('pageSize') === '100',
     `${viewport.label}: title page size lost after return: ${JSON.stringify(ledgerAfter)}`)
+  assert(new URLSearchParams(new URL(`${BASE}${ledgerAfter.path}`).search).get('district') === '海曙区',
+    `${viewport.label}: title district filter lost after return: ${JSON.stringify(ledgerAfter)}`)
   assert(Math.abs(ledgerAfter.tableTop - before.tableTop) <= 2,
     `${viewport.label}: title table scroll changed ${before.tableTop}→${ledgerAfter.tableTop}`)
+  assert(Math.abs(ledgerAfter.tableLeft - before.tableLeft) <= 2,
+    `${viewport.label}: title horizontal table scroll changed ${before.tableLeft}→${ledgerAfter.tableLeft}`)
   assert(Math.abs(ledgerAfter.windowTop - before.windowTop) <= 2,
     `${viewport.label}: title window scroll changed ${before.windowTop}→${ledgerAfter.windowTop}`)
   assert(!ledgerAfter.calls.some((call) => call.top === 0),
     `${viewport.label}: Nuxt applied a later top:0 after title restore: ${JSON.stringify(ledgerAfter.calls)}`)
   assert(ledgerAfter.state === null, `${viewport.label}: title return state was not consumed`)
 
-  console.log(`✓ ${viewport.label} title → PDF → detail → title: detail ${sourceState.scrollY}→${detailAfter.scrollY}, evidence open; table ${before.tableTop}→${ledgerAfter.tableTop}, window ${before.windowTop}→${ledgerAfter.windowTop}`)
+  console.log(`✓ ${viewport.label} title event PDF + detail preview returns: event page ${titleSourceHref}; detail ${sourceState.scrollY}→${detailAfter.scrollY}, evidence open; table ${before.tableTop}/${before.tableLeft}→${ledgerAfter.tableTop}/${ledgerAfter.tableLeft}, window ${before.windowTop}→${ledgerAfter.windowTop}`)
 }
 
 async function runExpandedEnterpriseReturn(cdp, sessionId, viewport) {
@@ -366,8 +440,14 @@ async function runExpandedEnterpriseReturn(cdp, sessionId, viewport) {
   await openInitialLedger(cdp, sessionId, '/?page=2&pageSize=100', '按企业')
 
   await waitUntil(cdp, sessionId, "[...document.querySelectorAll('[data-evidence-return-scroll-container] button')].some((b) => b.textContent.trim() === '展开')")
-  const before = await setScrollOffsets(cdp, sessionId, { tableTop: 1538.5, windowTop: viewport.listScrollY })
+  const before = await setScrollOffsets(cdp, sessionId, {
+    tableTop: 1538.5,
+    tableLeft: viewport.listScrollLeft,
+    windowTop: viewport.listScrollY,
+  })
   assert(before.tableTop > 0, `${viewport.label}: enterprise table did not scroll: ${JSON.stringify(before)}`)
+  assert(Math.abs(before.tableLeft - viewport.listScrollLeft) <= 1,
+    `${viewport.label}: enterprise table could not reach the measured horizontal offset: ${JSON.stringify(before)}`)
   assert(Math.abs(before.tableTop - 1538.5) <= 1,
     `${viewport.label}: enterprise table could not reach the measured return offset: ${JSON.stringify(before)}`)
 
@@ -385,7 +465,11 @@ async function runExpandedEnterpriseReturn(cdp, sessionId, viewport) {
   })()`)
   await waitUntil(cdp, sessionId, "[...document.querySelectorAll('a')].some((a) => a.textContent.includes('完整企业页'))")
 
-  const stateBeforeDetail = await setScrollOffsets(cdp, sessionId, { tableTop: before.tableTop, windowTop: viewport.listScrollY })
+  const stateBeforeDetail = await setScrollOffsets(cdp, sessionId, {
+    tableTop: before.tableTop,
+    tableLeft: before.tableLeft,
+    windowTop: viewport.listScrollY,
+  })
   const detailHref = await evaluate(cdp, sessionId, `(() => {
     const scroller = document.querySelector('[data-evidence-return-scroll-container]');
     const link = [...scroller.querySelectorAll('a')].find((a) => a.textContent.includes('完整企业页'));
@@ -401,28 +485,32 @@ async function runExpandedEnterpriseReturn(cdp, sessionId, viewport) {
   await waitUntil(cdp, sessionId, `location.pathname.startsWith('/enterprises/') && !!document.querySelector('h1')`)
   assert(await evaluate(cdp, sessionId, 'location.pathname + location.search') === detailHref,
     `${viewport.label}: enterprise full-detail navigation path mismatch`)
+  const savedReturnState = await evaluate(cdp, sessionId, `sessionStorage.getItem('roster:evidence-preview-return')`)
   await evaluate(cdp, sessionId, 'window.__rl10ScrollCalls.length = 0')
 
   const backHref = await evaluate(cdp, sessionId, `(() => {
-    const link = [...document.querySelectorAll('a')].find((a) => a.textContent.includes('名录台账') && a.href.includes('expand='));
-    if (!link) throw new Error('expanded enterprise breadcrumb return missing');
-    link.click();
-    return link.href;
+    const back = new URLSearchParams(location.search).get('back');
+    if (!back) throw new Error('detail route lost the roster history context');
+    history.back();
+    return '/?' + back;
   })()`)
-  await waitUntil(cdp, sessionId, `location.pathname === '/' && new URLSearchParams(location.search).get('page') === '2' && new URLSearchParams(location.search).get('expand') !== null && !!document.querySelector('[data-evidence-return-scroll-container]')`)
+  await waitUntil(cdp, sessionId, `location.pathname === '/' && new URLSearchParams(location.search).get('page') === '2' && new URLSearchParams(location.search).get('expand') !== null`)
+  await waitForRealScrollableLedger(cdp, sessionId)
   await waitUntil(cdp, sessionId, "[...document.querySelectorAll('a')].some((a) => a.textContent.includes('完整企业页'))")
   await sleep(600)
 
   const after = await evaluate(cdp, sessionId, `({
     path: location.pathname + location.search,
     tableTop: document.querySelector('[data-evidence-return-scroll-container]').scrollTop,
+    tableLeft: document.querySelector('[data-evidence-return-scroll-container]').scrollLeft,
     windowTop: window.scrollY,
     expanded: [...document.querySelectorAll('[data-evidence-return-scroll-container] button[aria-expanded="true"]')].length,
     detailLinks: [...document.querySelectorAll('a')].filter((a) => a.textContent.includes('完整企业页')).length,
     calls: window.__rl10ScrollCalls,
     state: sessionStorage.getItem('roster:evidence-preview-return'),
+    savedAtDetail: ${JSON.stringify(savedReturnState)},
   })`)
-  const expected = new URL(backHref)
+  const expected = new URL(backHref, BASE)
   const actual = new URL(`${BASE}${after.path}`)
   assert(actual.searchParams.get('page') === expected.searchParams.get('page'),
     `${viewport.label}: enterprise ledger page changed: ${JSON.stringify(after)}`)
@@ -431,7 +519,9 @@ async function runExpandedEnterpriseReturn(cdp, sessionId, viewport) {
   assert(actual.searchParams.get('pageSize') === '100',
     `${viewport.label}: enterprise page size was lost: ${JSON.stringify(after)}`)
   assert(Math.abs(after.tableTop - stateBeforeDetail.tableTop) <= 2,
-    `${viewport.label}: expanded enterprise table scroll changed ${stateBeforeDetail.tableTop}→${after.tableTop}`)
+    `${viewport.label}: expanded enterprise table scroll changed ${stateBeforeDetail.tableTop}→${after.tableTop}: ${JSON.stringify(after)}`)
+  assert(Math.abs(after.tableLeft - stateBeforeDetail.tableLeft) <= 2,
+    `${viewport.label}: expanded enterprise horizontal scroll changed ${stateBeforeDetail.tableLeft}→${after.tableLeft}`)
   assert(Math.abs(after.windowTop - stateBeforeDetail.windowTop) <= 2,
     `${viewport.label}: expanded enterprise window scroll changed ${stateBeforeDetail.windowTop}→${after.windowTop}`)
   assert(!after.calls.some((call) => call.top === 0),
@@ -440,7 +530,7 @@ async function runExpandedEnterpriseReturn(cdp, sessionId, viewport) {
     `${viewport.label}: expanded enterprise row did not finish rendering: ${JSON.stringify(after)}`)
   assert(after.state === null, `${viewport.label}: enterprise return state was not consumed`)
 
-  console.log(`✓ ${viewport.label} enterprise detail → ledger: table ${stateBeforeDetail.tableTop}→${after.tableTop}, window ${stateBeforeDetail.windowTop}→${after.windowTop}, expanded row retained`)
+  console.log(`✓ ${viewport.label} browser Back enterprise detail → ledger: table ${stateBeforeDetail.tableTop}/${stateBeforeDetail.tableLeft}→${after.tableTop}/${after.tableLeft}, window ${stateBeforeDetail.windowTop}→${after.windowTop}, expanded row retained`)
 }
 
 async function main() {

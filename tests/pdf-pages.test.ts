@@ -247,6 +247,15 @@ describe('渲染 4 页夹具(pdfium + sharp 端到端)', () => {
     }
   })
 
+  it('深链第 3 页映射到含 3 个合成标记的第三页页图', async () => {
+    await ensure(REL, 3)
+    const image = sharp(await readFile(join(root, pageImageRelPath(REL, 3))))
+    const { data, info } = await image.raw().toBuffer({ resolveWithObject: true })
+    const band = markBand(DPI)
+
+    expect(countDarkRuns(data, info.width, info.channels, band.fromRow, band.toRow)).toBe(3)
+  })
+
   it('清单里记的尺寸/字节与磁盘一致', async () => {
     const out = await ensure(REL, 4)
     for (const page of out.pages) {
