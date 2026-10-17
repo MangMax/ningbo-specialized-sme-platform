@@ -36,6 +36,6 @@ async function copy() {
 </template>
 
 <style scoped>
-.code-preview :deep(pre) { margin: 0; overflow: auto; padding: 1rem; font-size: .8125rem; line-height: 1.7; tab-size: 2; }
+.code-preview :deep(pre) { margin: 0; overflow: auto; padding: 1rem; font-size: var(--code-font-size, .8125rem); line-height: 1.7; tab-size: 2; }
 .wrap-code :deep(pre), .wrap-code :deep(code) { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
