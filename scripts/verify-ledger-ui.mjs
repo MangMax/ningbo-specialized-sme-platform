@@ -2469,7 +2469,7 @@ async function main() {
     const drawerReadingBroken = await openAndMeasure(
       cdp,
       `${BASE}/`,
-      `(() => { document.querySelector('[data-testid="enterprise-drawer"]')?.style.setProperty('max-width', 'none', 'important'); document.querySelector('[data-testid="enterprise-drawer"]')?.style.setProperty('width', 'calc(100vw + 100px)', 'important'); return (${MEASURE}); })()`,
+      `(() => { document.querySelector('[data-testid="enterprise-drawer"]')?.style.setProperty('transition', 'none', 'important'); document.querySelector('[data-testid="enterprise-drawer"]')?.style.setProperty('animation', 'none', 'important'); document.querySelector('[data-testid="enterprise-drawer"]')?.style.setProperty('max-width', 'none', 'important'); document.querySelector('[data-testid="enterprise-drawer"]')?.style.setProperty('width', 'calc(100vw + 100px)', 'important'); return (${MEASURE}); })()`,
       READY,
       VIEWPORTS[0],
     )
