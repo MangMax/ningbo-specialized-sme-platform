@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
+import { shouldNuxtScrollToTop, useEvidencePreviewScrollRestore } from '~~/lib/roster/evidence-preview-return'
 import { watchDebounced } from '@vueuse/core'
 import {
   ExternalLink,
@@ -80,6 +81,8 @@ const apiGet = $fetch as unknown as <T>(
   url: string,
   opts?: { query?: Record<string, unknown> },
 ) => Promise<T>
+
+definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
 
 const route = useRoute()
 const router = useRouter()
@@ -222,6 +225,8 @@ const {
   failureDescription,
 } = useRetainedQuerySnapshot<LedgerListQueryParams, LedgerListQueryResult>(data, isLoading, error, activeRequest)
 const rows = computed(() => displayedResult.value?.rows ?? [])
+const returnRowsReady = computed(() => !isLoading.value && (displayedResult.value?.request.key === activeRequestKey.value || error.value != null))
+useEvidencePreviewScrollRestore(returnRowsReady)
 const counts = computed<Counts>(
   () => displayedResult.value?.counts ?? { total: 0, titlePairs: 0, titles: {}, recognitionPairs: 0, differences: 0 },
 )

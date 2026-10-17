@@ -15,6 +15,7 @@ import {
   TITLES,
 } from '~~/lib/labels'
 import { reviewEventSuffix, timelineEventIdentity } from '~~/lib/roster/enterprise-timeline'
+import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import PlatformRecords from '@/components/PlatformRecords.vue'
 import type { PlatformRecordQuery, PlatformRecord } from '~~/lib/roster/platform-records'
@@ -296,6 +297,11 @@ const fullPageTo = computed(() => {
   return `/enterprises/${props.enterpriseId}${q}`
 })
 
+function rememberLedger(event: MouseEvent) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  rememberEvidencePreviewReturn(props.backQuery ? `/?${props.backQuery}` : '/', document.querySelector('[data-testid="enterprise-table-scroll"]') ?? document.querySelector('[data-evidence-return-scroll-container]'))
+}
+
 const statusTextClass = (code: string) => {
   switch (DIFFERENCE_STATUS_RAILS[code]) {
     case 'confirmed': return 'text-primary'
@@ -507,7 +513,7 @@ function eventSuffix(item: TimelineItem): string {
 
         <footer class="border-t px-5 py-3">
           <Button as-child variant="ghost" size="sm" class="h-7 gap-1 px-1.5 text-xs">
-            <NuxtLink :to="fullPageTo">完整企业页 <ExternalLink class="size-3" /></NuxtLink>
+            <NuxtLink :to="fullPageTo" @click="rememberLedger">完整企业页 <ExternalLink class="size-3" /></NuxtLink>
           </Button>
         </footer>
       </div>

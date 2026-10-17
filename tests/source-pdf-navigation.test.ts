@@ -1,0 +1,322 @@
+// @vitest-environment happy-dom
+import { defineComponent, h, ref } from 'vue'
+import { mount, flushPromises } from '@vue/test-utils'
+import { createRouter, createMemoryHistory, useRoute, useRouter } from 'vue-router'
+import { beforeEach, expect, it, vi } from 'vitest'
+import PreviewPage from '../pages/preview.vue'
+
+vi.mock('@pinia/colada', () => ({ useQuery: () => ({ data: ref(null) }) }))
+
+const attempts: unknown[] = []
+const Engine = defineComponent({
+  name: 'PdfEngine', props: ['src'], emits: ['ready', 'position', 'error', 'navigate'],
+  setup(_, { expose }) { expose({ navigate: (position: unknown) => attempts.push(position) }); return () => h('div', { 'data-engine': '' }) },
+})
+const Gallery = defineComponent({ props: ['file', 'page'], emits: ['page-change'], setup(props, { emit }) { return () => h('button', { 'aria-label': '查看页图第7页', onClick: () => emit('page-change', 7) }, `页图目标 ${props.page}`) } })
+const file = 'synthetic/notice.pdf'
+const back = '/enterprises/91?back=view%3Dtitle%26page%3D2%26expand%3D91'
+beforeEach(() => {
+  attempts.length = 0
+  vi.stubGlobal('useRoute', useRoute)
+  vi.stubGlobal('useRouter', useRouter)
+  vi.stubGlobal('useRequestURL', () => ({ origin: window.location.origin }))
+  vi.stubGlobal('useHead', vi.fn())
+  vi.stubGlobal('$fetch', vi.fn())
+})
+async function open(query: Record<string, string> = { file, page: '3', back }) {
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/preview', component: { template: '<div/>' } }] })
+  await router.push({ path: '/preview', query })
+  const wrapper = mount(PreviewPage, { global: { plugins: [router], stubs: {
+    PdfEngine: Engine, PageImageGallery: Gallery,
+    ClientOnly: { template: '<slot/>' },
+    PageHeader: { template: '<header><slot name="breadcrumb"/><slot name="actions"/></header>' },
+    NuxtLink: { props: ['to'], template: '<a :href="to"><slot/></a>' },
+  } } })
+  await flushPromises()
+  return { wrapper, router, engine: () => wrapper.findComponent(Engine) }
+}
+
+it('opens original source without page images and confirms only the rendered source page', async () => {
+  const { wrapper, engine } = await open()
+  expect(engine().exists()).toBe(true)
+  expect($fetch).not.toHaveBeenCalled()
+  expect(wrapper.text()).toContain('正在定位来源第 3 页')
+  engine().vm.$emit('ready', { totalPages: 12 })
+  await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 3 })
+  expect(wrapper.text()).not.toContain('已定位来源第 3 页')
+  engine().vm.$emit('position', { page: 1 })
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('已定位来源第 3 页')
+  engine().vm.$emit('position', { page: 3 })
+  await flushPromises()
+  expect(wrapper.text()).toContain('已定位来源第 3 页')
+  expect(wrapper.findAll('a').filter(a => a.attributes('href') === back).length).toBe(2)
+  wrapper.unmount()
+})
+
+it('shares actual pages while retaining source provenance and restores URL history without navigation loops', async () => {
+  const { wrapper, engine, router } = await open()
+  engine().vm.$emit('ready', { totalPages: 12 })
+  await flushPromises()
+  engine().vm.$emit('position', { page: 3, point: { x: 0, y: 20 } })
+  await flushPromises()
+  expect(router.currentRoute.value.query).toMatchObject({ file, page: '3', sourcePage: '3', back })
+  const input = () => wrapper.get('input[aria-label="跳转页码"]')
+  await input().setValue('9')
+  await wrapper.get('form').trigger('submit')
+  expect(router.currentRoute.value.query.page).toBe('3')
+  expect(wrapper.findAll('[role="status"]').find(status => status.text().includes('来源第 3 页'))?.classes()).toContain('sr-only')
+  engine().vm.$emit('position', { page: 9 })
+  await flushPromises()
+  expect(router.currentRoute.value.query).toMatchObject({ page: '9', sourcePage: '3', back })
+  expect(wrapper.text()).toContain('来源第 3 页 · 当前浏览第 9 页')
+  const navigations = attempts.length
+  engine().vm.$emit('position', { page: 10 })
+  await flushPromises()
+  expect(router.currentRoute.value.query.page).toBe('10')
+  expect(attempts).toHaveLength(navigations)
+  router.back()
+  await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 3, point: { x: 0, y: 20 } })
+  engine().vm.$emit('position', { page: 3, point: { x: 0, y: 20 } })
+  await flushPromises()
+  router.forward()
+  await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 10 })
+  engine().vm.$emit('position', { page: 10 })
+  await flushPromises()
+  await wrapper.get('button[aria-label="阅读位置后退"]').trigger('click')
+  expect(attempts.at(-1)).toEqual({ page: 3, point: { x: 0, y: 20 } })
+  engine().vm.$emit('position', { page: 3 })
+  await flushPromises()
+  await input().setValue('8')
+  await wrapper.get('form').trigger('submit')
+  engine().vm.$emit('position', { page: 8 })
+  await flushPromises()
+  await wrapper.findAll('button').find(b => b.text() === '回到来源第 3 页')!.trigger('click')
+  expect(attempts.at(-1)).toEqual({ page: 3 })
+  engine().vm.$emit('position', { page: 3 })
+  await flushPromises()
+  expect(wrapper.text()).toContain('已定位来源第 3 页')
+  const share = router.currentRoute.value.query
+  wrapper.unmount()
+  const reopened = await open(share as Record<string, string>)
+  reopened.engine().vm.$emit('ready', { totalPages: 12 })
+  await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 3 })
+  reopened.wrapper.unmount()
+})
+
+it('keeps unknown source pending after reading, sharing and reopening page one', async () => {
+  const { wrapper, engine, router } = await open({ file, back })
+  engine().vm.$emit('ready', { totalPages: 12 })
+  engine().vm.$emit('position', { page: 1 })
+  await flushPromises()
+  expect(wrapper.text()).toContain('来源页码待核')
+  expect(wrapper.text()).not.toContain('已定位来源')
+  expect(router.currentRoute.value.query).toMatchObject({ page: '1', sourcePage: 'unknown' })
+  expect(wrapper.findAll('button').some(b => b.text().includes('回到来源'))).toBe(false)
+  const query = router.currentRoute.value.query
+  wrapper.unmount()
+  const again = await open(query as Record<string, string>)
+  expect(again.wrapper.text()).toContain('来源页码待核')
+  again.wrapper.unmount()
+})
+
+it.each(['', '0', '-1', '2.5', 'abc'])('reports invalid source parameter %j without claiming page one', async page => {
+  const { wrapper, engine, router } = await open({ file, page, back: '//outside.example' })
+  expect(wrapper.text()).toContain('来源页码参数无效')
+  engine().vm.$emit('ready', { totalPages: 12 })
+  engine().vm.$emit('position', { page: 1 })
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('已定位来源')
+  expect(router.currentRoute.value.query.page).toBe(page)
+  expect(wrapper.findAll('a').filter(a => a.attributes('href') === '/').length).toBe(2)
+  wrapper.unmount()
+})
+
+it('reports out-of-range from the original PDF and retains a failed target for retry', async () => {
+  const { wrapper, engine } = await open({ file, page: '13', back })
+  engine().vm.$emit('ready', { totalPages: 12 })
+  await flushPromises()
+  expect(wrapper.text()).toContain('第 13 页不存在')
+  expect(attempts).toEqual([])
+  wrapper.unmount()
+  const second = await open()
+  second.engine().vm.$emit('error', '文件暂时不可用')
+  await flushPromises()
+  expect(second.wrapper.text()).toContain('定位未完成')
+  await second.wrapper.findAll('button').find(b => b.text() === '重试读取 PDF')!.trigger('click')
+  second.engine().vm.$emit('ready', { totalPages: 12 })
+  await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 3 })
+  expect(second.wrapper.text()).not.toContain('已定位来源')
+  second.engine().vm.$emit('position', { page: 3 })
+  await flushPromises()
+  expect(second.wrapper.text()).toContain('已定位来源第 3 页')
+  second.wrapper.unmount()
+})
+
+it('keeps an impossible source explicit when a shared link opens a valid browsing page', async () => {
+  const { wrapper, engine } = await open({ file, page: '2', sourcePage: '13', back })
+  engine().vm.$emit('ready', { totalPages: 12 })
+  engine().vm.$emit('position', { page: 2 })
+  await flushPromises()
+  expect(wrapper.text()).toContain('来源第 13 页不存在')
+  expect(wrapper.findAll('button').find(b => b.text() === '回到来源第 13 页')!.attributes('disabled')).toBeDefined()
+  expect(wrapper.get('output[aria-label="当前实际页"]').text()).toBe('2 / 12')
+  wrapper.unmount()
+})
+
+it('switches independent image review at the actual page and restores its selected page without resetting reading history', async () => {
+  const { wrapper, engine, router } = await open()
+  engine().vm.$emit('ready', { totalPages: 12 })
+  engine().vm.$emit('position', { page: 3 })
+  await flushPromises()
+  await wrapper.get('input[aria-label="跳转页码"]').setValue('2')
+  await wrapper.get('form').trigger('submit')
+  engine().vm.$emit('position', { page: 2 })
+  await flushPromises()
+  const originalEngine = engine().element
+  await wrapper.get('[role="tab"][data-state="inactive"]').trigger('mousedown', { button: 0, ctrlKey: false })
+  await flushPromises()
+  expect(wrapper.text()).toContain('页图目标 2')
+  expect(router.currentRoute.value.query).toMatchObject({ page: '2', view: 'pages', sourcePage: '3' })
+  await wrapper.get('button[aria-label="查看页图第7页"]').trigger('click')
+  await wrapper.findAll('[role="tab"]').find(t => t.text() === '原文')!.trigger('mousedown', { button: 0, ctrlKey: false })
+  await flushPromises()
+  expect(engine().element).toBe(originalEngine)
+  expect(attempts.at(-1)).toEqual({ page: 7 })
+  engine().vm.$emit('position', { page: 7 })
+  await flushPromises()
+  expect(router.currentRoute.value.query.page).toBe('7')
+  await wrapper.get('button[aria-label="阅读位置后退"]').trigger('click')
+  expect(attempts.at(-1)).toEqual({ page: 3 })
+  wrapper.unmount()
+})
+
+it('isolates document changes and restores an external target without accepting the previous document events', async () => {
+  const { wrapper, engine, router } = await open()
+  const old = engine()
+  old.vm.$emit('ready', { totalPages: 12 })
+  old.vm.$emit('position', { page: 3 })
+  await flushPromises()
+  await router.push({ path: '/preview', query: { file: 'synthetic/second.pdf', page: '2', sourcePage: 'unknown', back } })
+  await flushPromises()
+  old.vm.$emit('position', { page: 9 })
+  old.vm.$emit('error', 'old document error')
+  engine().vm.$emit('ready', { totalPages: 2 })
+  await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 2 })
+  expect(wrapper.text()).not.toContain('old document error')
+  expect(wrapper.get('button[aria-label="阅读位置后退"]').attributes('disabled')).toBeDefined()
+  engine().vm.$emit('position', { page: 2 })
+  await flushPromises()
+  expect(router.currentRoute.value.query.file).toBe('synthetic/second.pdf')
+  expect(wrapper.text()).toContain('来源页码待核')
+  wrapper.unmount()
+})
+
+it('opens image review independently and starts the original reader only when requested', async () => {
+  const { wrapper, engine } = await open({ file, page: '3', back, view: 'pages' })
+  expect(wrapper.text()).toContain('页图目标 3')
+  expect(engine().exists()).toBe(false)
+  await wrapper.findAll('[role="tab"]').find(t => t.text() === '原文')!.trigger('mousedown', { button: 0, ctrlKey: false })
+  await flushPromises()
+  engine().vm.$emit('ready', { totalPages: 12 })
+  await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 3 })
+  wrapper.unmount()
+})
+
+it('restores the normal first screen when browser history returns to an unknown source without a page', async () => {
+  const { wrapper, engine, router } = await open({ file, back })
+  engine().vm.$emit('ready', { totalPages: 12 })
+  engine().vm.$emit('position', { page: 1 })
+  await flushPromises()
+  await wrapper.get('input').setValue('8')
+  await wrapper.get('form').trigger('submit')
+  engine().vm.$emit('position', { page: 8 })
+  await flushPromises()
+  await router.push({ path: '/preview', query: { file, back } })
+  await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 1 })
+  expect(wrapper.text()).toContain('来源页码待核')
+  wrapper.unmount()
+})
+
+it('lets a valid explicit page recover an out-of-range browsing link while retaining its source target', async () => {
+  const { wrapper, engine, router } = await open({ file, page: '99', sourcePage: '3', back })
+  engine().vm.$emit('ready', { totalPages: 12 })
+  await flushPromises()
+  expect(wrapper.text()).toContain('第 99 页不存在')
+  engine().vm.$emit('position', { page: 1 })
+  await wrapper.get('input').setValue('2')
+  await wrapper.get('form').trigger('submit')
+  engine().vm.$emit('position', { page: 2 })
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('第 99 页不存在')
+  expect(wrapper.text()).toContain('来源第 3 页 · 当前浏览第 2 页')
+  expect(router.currentRoute.value.query).toMatchObject({ page: '2', sourcePage: '3' })
+  wrapper.unmount()
+})
+
+it('restores an external gallery URL target instead of retaining the previous image selection', async () => {
+  const { wrapper, engine, router } = await open({ file, page: '3', sourcePage: '3', back, view: 'pages' })
+  await wrapper.get('button[aria-label="查看页图第7页"]').trigger('click')
+  await router.push({ path: '/preview', query: { file, page: '5', sourcePage: '3', back, view: 'pages' } })
+  await flushPromises()
+  expect(wrapper.text()).toContain('页图目标 5')
+  await wrapper.findAll('[role="tab"]').find(t => t.text() === '原文')!.trigger('mousedown', { button: 0, ctrlKey: false })
+  await flushPromises()
+  engine().vm.$emit('ready', { totalPages: 12 })
+  await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 5 })
+  wrapper.unmount()
+})
+
+it('shares gallery selections immediately and reopens them without creating initialization or restore visits', async () => {
+  const { wrapper, engine, router } = await open({ file, page: '3', back, view: 'pages' })
+  const push = vi.spyOn(router, 'push')
+  wrapper.findComponent(Gallery).vm.$emit('page-change', 3)
+  await flushPromises()
+  expect(push).not.toHaveBeenCalled()
+  await wrapper.get('button[aria-label="查看页图第7页"]').trigger('click')
+  await flushPromises()
+  expect(router.currentRoute.value.query).toMatchObject({ page: '7', sourcePage: '3', view: 'pages', back })
+  expect(wrapper.text()).toContain('页图目标 7')
+  expect(push).not.toHaveBeenCalled()
+  const share = router.currentRoute.value.query
+  await router.push({ path: '/preview', query: { ...share, page: '5' } })
+  await flushPromises()
+  wrapper.findComponent(Gallery).vm.$emit('page-change', 5)
+  await flushPromises()
+  expect(push).toHaveBeenCalledTimes(1)
+  expect(router.currentRoute.value.query.page).toBe('5')
+  expect(engine().exists()).toBe(false)
+  wrapper.unmount()
+  const again = await open(share as Record<string, string>)
+  expect(again.wrapper.text()).toContain('页图目标 7')
+  await again.wrapper.findAll('[role="tab"]').find(t => t.text() === '原文')!.trigger('mousedown', { button: 0, ctrlKey: false })
+  await flushPromises()
+  again.engine().vm.$emit('ready', { totalPages: 12 }); await flushPromises()
+  expect(attempts.at(-1)).toEqual({ page: 7 })
+  again.engine().vm.$emit('position', { page: 7 }); await flushPromises()
+  expect(again.wrapper.get('button[aria-label="阅读位置后退"]').attributes('disabled')).toBeDefined()
+  again.wrapper.unmount()
+})
+
+it.each([
+  ['/enterprises/91?back=q%3Dtest', '返回企业详情'],
+  ['/?q=test&page=2', '返回企业列表'],
+  ['//outside.example', '返回企业列表'],
+  ['/files?folder=synthetic', '返回文件库'],
+  ['/quality', '返回质量检查'],
+])('names the validated return destination for %s', async (back, label) => {
+  const { wrapper } = await open({ file, page: '3', back })
+  const link = wrapper.findAll('a').find(a => a.text() === label)
+  expect(link?.exists()).toBe(true)
+  expect(link?.attributes('href')).toBe(back === '//outside.example' ? '/' : back)
+  wrapper.unmount()
+})

@@ -6,7 +6,7 @@ import { PdfActionType, PdfZoomMode } from '@embedpdf/models'
 import PdfPreview from '../components/preview/PdfPreview.vue'
 
 // Control only the public headless engine/hooks. Exercise the real application tree.
-const control = vi.hoisted(() => ({ documentState: null as any, layout: null as any, scroll: null as any, move: vi.fn(), destroy: vi.fn(), viewport: { scrollLeft: 0, scrollTop: 240 }, bookmarks: [] as any[], manualRaster: false, raster: null as any, activity: null as any, smooth: false, metrics: null as any }))
+const control = vi.hoisted(() => ({ documentState: null as any, layout: null as any, scroll: null as any, move: vi.fn(), destroy: vi.fn(), viewport: { scrollLeft: 0, scrollTop: 240 }, bookmarks: [] as any[], manualRaster: false, raster: null as any, activity: null as any, pages: null as any, smooth: false, metrics: null as any }))
 vi.mock('@embedpdf/engines/pdfium-worker-engine', () => ({ createPdfiumEngine: () => ({ destroy: control.destroy, getBookmarks: () => ({ wait: (ok: any) => ok({ bookmarks: control.bookmarks }), abort() {} }) }) }))
 vi.mock('@embedpdf/core/vue', async () => {
   const { shallowRef, defineComponent, h } = await import('vue')
@@ -19,7 +19,7 @@ vi.mock('@embedpdf/plugin-scroll/vue', async (original) => {
   const actual = await original<any>()
   const { shallowRef, defineComponent, h } = await import('vue')
   return { ...actual,
-    Scroller: defineComponent({ setup: (_, { slots }) => () => h('div', [3, 4].map(page => slots.default?.({ page: { pageNumber: page, pageIndex: page - 1, width: 600, height: 1800 } }))) }),
+    Scroller: defineComponent({ setup: (_, { slots }) => () => h('div', control.pages.value.map((page: number) => slots.default?.({ page: { pageNumber: page, pageIndex: page - 1, width: 600, height: 1800 } }))) }),
     useScrollCapability: () => ({ provides: shallowRef({
       onLayoutReady: (fn: any) => { control.layout = fn; return () => {} },
       onScroll: (fn: any) => { control.scroll = fn; return () => {} },
@@ -47,6 +47,7 @@ async function reader(onPositionChange?: (...args: any[]) => void) {
 beforeEach(() => {
   control.documentState = shallowRef({ status: 'loaded', scale: 1, document: { pages: Array.from({ length: 12 }, () => ({ size: { width: 600, height: 1800 } })) } })
   vi.spyOn(HTMLElement.prototype, 'animate').mockReturnValue({ cancel() {} } as Animation)
+  control.pages = shallowRef([3, 4])
   control.metrics = null; control.smooth = false
   control.manualRaster = false
   control.raster = null
@@ -221,6 +222,35 @@ it('retains the current page on a failed target and retries without replacing th
   control.raster.ok(new Blob(['late']))
   await flushPromises()
   expect(observation).toHaveBeenCalledTimes(lastPosition)
+})
+
+it('adds only the latest rendered visit to reading history after a rapid target replacement', async () => {
+  const wrapper = await reader()
+  control.manualRaster = true
+  await wrapper.get('input').setValue('9')
+  await wrapper.get('form').trigger('submit')
+  const replaced = control.raster
+  await wrapper.get('input').setValue('11')
+  await wrapper.get('form').trigger('submit')
+  const back = () => wrapper.get('button[aria-label="阅读位置后退"]')
+  expect(back().attributes('disabled')).toBeDefined()
+  replaced.ok(new Blob(['replaced']))
+  await flushPromises()
+  expect(control.move).not.toHaveBeenCalled()
+  control.raster.ok(new Blob(['latest']))
+  await flushPromises()
+  control.pages.value = [10, 11, 12]
+  control.metrics = { scrollOffset: { x: 0, y: 20000 }, currentPage: 11, pageVisibilityMetrics: [{ pageNumber: 11, visiblePercentage: 100, original: { pageX: 0, pageY: 0 } }] }
+  await flushPromises()
+  wrapper.findAllComponents(Layer).find(l => l.props('pageIndex') === 10)!.vm.$emit('load')
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  await flushPromises()
+  expect(wrapper.get('output').text()).toBe('11 / 12')
+  await back().trigger('click')
+  control.raster.ok(new Blob(['back']))
+  await flushPromises()
+  expect(control.move).toHaveBeenLastCalledWith({ pageNumber: 3, pageCoordinates: { x: 0, y: 240 }, behavior: 'instant' })
+  wrapper.unmount()
 })
 
 it('finishes an instant layout correction without inheriting a superseded smooth scroll', async () => {

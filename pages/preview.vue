@@ -1,97 +1,33 @@
 <script setup lang="ts">
-import { useQuery } from '@pinia/colada'
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { ChevronLeft, FileDown } from '@lucide/vue'
 import { describeUnsupported, fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
 import {
   EVIDENCE_PAGE_WORDS,
   evidencePageState,
   isPageCapable,
-  parseEvidencePreviewQuery,
 } from '~~/lib/roster/evidence-page'
 import FilePreview from '@/components/preview/FilePreview.vue'
-import PageImageGallery from '@/components/preview/PageImageGallery.vue'
+import { useSourcePdfRoute } from '@/composables/useSourcePdfRoute'
+import SourcePdfPreview from '@/components/preview/SourcePdfPreview.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
-import type { PdfPagesState } from '~~/server/utils/pdf-pages'
 
-/**
- * `/preview?file=<相对路径>[&page=N][&back=<台账筛选串>]` —— **来源预览(RL-10 的跳转落点)**。
- *
- * ── 为什么是**页面**而不是弹窗 ──────────────────────────────────────────
- *
- * 票面要求「从名录记录打开对应来源预览并跳转到实际页」,并且「**返回**后保留原筛选与查看位置」。
- * 有「返回」就意味着**去过别处** —— 所以跳转是一次真导航:地址栏里带着 `file` 与 `page`,
- * 可分享、可收藏、可前进后退;`back` 带着台账那份完整筛选串(含 `view` / 各筛选 / 页码 / `expand`),
- * 返回时原样落回,而不是丢回一个没筛过的第一页。
- *
- * ── 页码是**PDF 实际页序**,不是序号 ────────────────────────────────────
- *
- * 定点落在 `page` 指定的那一页上(页图,由 `/api/pdf-pages` 按页给出)。**`page` 为空时
- * 不写 `page` 参数、也不回落成第 1 页** —— 序号与页码是两回事,拿序号凑一个页码,
- * 在「序号各自从 1 起算」的分节名单里会指向完全不同的企业。
- *
- * 页图**要先渲染**才取得到。没渲染时页图库会照常铺出网格并给出渲染入口(那是它本来的
- * 空态),本页在上面补一句说明,让「为什么没定位到第 N 页」当场有答案,而不是静默降级；
- * 如果目标页超过 PDF 实际页数,则明确提示页码不存在。
- */
 const route = useRoute()
-const applicationOrigin = useRequestURL().origin
-
-const parsed = computed(() => parseEvidencePreviewQuery(route.query, applicationOrigin))
+const { parsed, sourcePage, target, invalid, visible, changeView } = useSourcePdfRoute()
 const file = computed(() => parsed.value.file)
-const page = computed(() => parsed.value.page)
-/** 返回目标:台账(或企业详情)。没有 / 不合法就回台账首页 —— 绝不把来路不明的串当路径用。 */
+const page = sourcePage
 const backTo = computed(() => parsed.value.back || '/')
-
-const name = computed(() => (file.value ? fileNameOf(file.value) : ''))
+const backLabel = computed(() => {
+  const path = new URL(backTo.value, 'http://app.invalid').pathname
+  if (/^\/enterprises\/\d+\/?$/.test(path)) return '返回企业详情'
+  const names: Record<string, string> = { '/': '企业列表', '/files': '文件库', '/roster': '名录记录', '/quality': '质量检查', '/stats': '统计分析', '/comparison': '企业对比', '/ocr': 'OCR 工作台', '/platform-queries': '平台查询' }
+  return `返回${names[path] ?? ` ${path}`}`
+})
+const name = computed(() => file.value ? fileNameOf(file.value) : '')
 const pdf = computed(() => isPageCapable(file.value))
-const previewable = computed(() => (file.value ? isPreviewable(file.value) : false))
-/** 三态:有页码 / 页码待核(PDF 未定)/ 本来就没有页(Word、Excel)。 */
+const previewable = computed(() => file.value ? isPreviewable(file.value) : false)
 const pageState = computed(() => evidencePageState(file.value, page.value))
-
-/**
- * 页图现状 —— 只为了回答一个问题:**要定位的那一页,磁盘上有没有**。
- * 有 ⇒ 页图库会直接落在单页视图;没有 ⇒ 它会铺网格并给出渲染入口,本页据此说明。
- *
- * 非 PDF 或没有 `page` 时**不发这个请求**(`enabled`),省掉一次无意义的往返。
- */
-const apiGet = $fetch as unknown as <T>(url: string, opts?: { query?: Record<string, unknown> }) => Promise<T>
-const { data: pagesState } = useQuery({
-  key: () => ['preview-pages', file.value],
-  query: () => apiGet<PdfPagesState>('/api/pdf-pages', { query: { file: file.value } }),
-  enabled: () => pdf.value,
-})
-
-/** 页图库已读到的现状；同一份状态同时决定页图定位和页数提示。 */
-const galleryPageState = ref<PdfPagesState | null>(null)
-watch(file, () => {
-  galleryPageState.value = null
-})
-
-function onPagesState(state: PdfPagesState) {
-  if (state.file !== file.value) return
-  galleryPageState.value = state
-}
-
-const currentPdfPageState = computed(() => {
-  const galleryState = galleryPageState.value
-  if (galleryState?.file === file.value) return galleryState
-  const queryState = pagesState.value
-  return queryState?.file === file.value ? queryState : null
-})
-
-const currentPdfPageCount = computed(() => currentPdfPageState.value?.pageCount ?? null)
-
-const requestedPageOutOfRange = computed(
-  () =>
-    page.value !== null && currentPdfPageCount.value !== null && page.value > currentPdfPageCount.value,
-)
-
-const requestedPageRendered = computed(() => {
-  if (page.value === null) return false
-  return currentPdfPageState.value?.pages.some((p) => p.page === page.value) ?? false
-})
 
 useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : '来源预览')) })
 </script>
@@ -109,10 +45,10 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
       <template #actions>
         <div class="flex items-center gap-3">
           <!-- 页码三态就在这儿说清楚:有页码 / 待核 / 这类文件本来就没有页。 -->
-          <Badge v-if="pageState === 'assigned'" variant="secondary" class="tabular-nums">
-            第 {{ page }} 页
+          <Badge v-if="!pdf && pageState === 'assigned'" variant="secondary" class="tabular-nums">
+            来源第 {{ page }} 页
           </Badge>
-          <span v-else-if="pageState === 'pending'" class="text-muted-foreground text-xs">
+          <span v-else-if="!pdf && pageState === 'pending'" class="text-muted-foreground text-xs">
             {{ EVIDENCE_PAGE_WORDS.pending }}
           </span>
           <a
@@ -129,7 +65,7 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
             :to="backTo"
             class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
           >
-            <ChevronLeft class="size-3.5" />返回
+            <ChevronLeft class="size-3.5" />{{ backLabel }}
           </NuxtLink>
         </div>
       </template>
@@ -146,28 +82,7 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
     </Alert>
 
     <template v-else>
-      <!-- 要定位的那一页还没渲染:**说清为什么**,再让页图库给出渲染入口。不静默降级成「打开就是第一页」。 -->
-      <Alert v-if="page !== null && !requestedPageRendered && currentPdfPageState">
-        <AlertTitle v-if="requestedPageOutOfRange">第 {{ page }} 页不存在</AlertTitle>
-        <AlertTitle v-else>第 {{ page }} 页的页图还没有渲染</AlertTitle>
-        <AlertDescription v-if="requestedPageOutOfRange">
-          该 PDF 共 {{ currentPdfPageCount }} 页，请检查来源页码。
-        </AlertDescription>
-        <AlertDescription v-else-if="currentPdfPageCount === null">
-          无法确认 PDF 的实际页数，不能验证目标页；不会静默打开其他页，请检查源文件后重试。
-        </AlertDescription>
-        <AlertDescription v-else>
-          正在尝试生成目标页；成功后会自动定位。若失败会显示原因，不会打开其他页。
-        </AlertDescription>
-      </Alert>
-
-      <PageImageGallery
-        v-if="pdf"
-        class="min-h-[60vh]"
-        :file="file"
-        :page="page"
-        @pages-state="onPagesState"
-      />
+      <SourcePdfPreview v-if="pdf" :key="file" :file="file" :name="name" :source-page="sourcePage" :target="target" :invalid="invalid" @visible="visible" @view-change="changeView" :view="route.query.view === 'pages' ? 'pages' : 'pdf'" />
       <FilePreview v-else class="min-h-[60vh]" :src="fileUrl(file)" :name="name" />
     </template>
   </div>
