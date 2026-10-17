@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, shallowRef, watch } from 'vue'
+import { computed, nextTick, shallowRef, watch, onBeforeUnmount } from 'vue'
 import type { PdfEngine } from '@embedpdf/models'
 import { useDocumentState } from '@embedpdf/core/vue'
 import { useDocumentManagerCapability } from '@embedpdf/plugin-document-manager/vue'
@@ -29,6 +29,12 @@ const singlePage = shallowRef(1)
 const loaded = new Set<number>()
 const layoutReady = shallowRef(false)
 const position = shallowRef<PdfReadingPosition>({ page: 1, point: { x: 0, y: 0 } })
+// When several short pages fit, the engine's dominant page can remain 1 even
+// after scrollToPage(3). Confirm the requested page only from loaded visibility metrics.
+let navigationEpoch = 0
+let awaitingScroll = false
+onBeforeUnmount(() => { navigationEpoch++ })
+let preferred: { page: number; offset?: { x: number; y: number } } | null = null
 let restore: PdfReadingPosition | null = null
 let singleRestore: PdfReadingPosition | null = null
 const scale = computed(() => doc.value?.scale ?? 1)
@@ -53,6 +59,7 @@ watch(scroll, (capability, _, cleanup) => {
   cleanup(() => off.forEach(fn => fn()))
 }, { immediate: true })
 function report() {
+  if (awaitingScroll) return
   if (mode.value === 'single') {
     if (!loaded.has(singlePage.value) || singleRestore) return
     const metrics = viewport.value?.forDocument(props.documentId).getMetrics()
@@ -60,10 +67,13 @@ function report() {
     return
   }
   const metrics = scroll.value?.forDocument(props.documentId).getMetrics()
-  if (!metrics || !loaded.has(metrics.currentPage) || restore) return
-  const visible = metrics.pageVisibilityMetrics.find(p => p.pageNumber === metrics.currentPage)
-  if (!visible || visible.visiblePercentage <= 0) return
-  publish({ page: metrics.currentPage, point: { x: visible.original.pageX, y: visible.original.pageY } })
+  if (!metrics || restore) return
+  if (preferred?.offset && (Math.abs(metrics.scrollOffset.x - preferred.offset.x) > 1 || Math.abs(metrics.scrollOffset.y - preferred.offset.y) > 1)) preferred = null
+  const requested = preferred && metrics.pageVisibilityMetrics.find(p => p.pageNumber === preferred!.page && p.visiblePercentage > 0 && loaded.has(p.pageNumber))
+  if (requested && preferred) preferred.offset = { ...metrics.scrollOffset }
+  const visible = requested || metrics.pageVisibilityMetrics.find(p => p.pageNumber === metrics.currentPage)
+  if (!visible || visible.visiblePercentage <= 0 || !loaded.has(visible.pageNumber)) return
+  publish({ page: visible.pageNumber, point: { x: visible.original.pageX, y: visible.original.pageY } })
 }
 function publish(value: PdfReadingPosition) { position.value = value; emit('position', value) }
 async function rendered(page: number) {
@@ -81,7 +91,19 @@ function navigate(target: PdfReadingPosition) {
     singlePage.value = target.page
     singleRestore = target
     if (loaded.has(target.page)) void rendered(target.page)
-  } else scroll.value?.forDocument(props.documentId).scrollToPage({ pageNumber: target.page, pageCoordinates: target.point, behavior: 'instant' })
+  } else {
+    preferred = { page: target.page }
+    awaitingScroll = true
+    const owner = ++navigationEpoch
+    scroll.value?.forDocument(props.documentId).scrollToPage({ pageNumber: target.page, pageCoordinates: target.point, behavior: 'instant' })
+    // The official Vue viewport executes scroll requests in rAF. Wait for that
+    // frame and its scroll metrics, including the no-scroll case where all pages fit.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (owner !== navigationEpoch) return
+      awaitingScroll = false
+      report()
+    }))
+  }
 }
 function changeMode(value: unknown) {
   if (value !== 'single' && value !== 'continuous' || value === mode.value) return

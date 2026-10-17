@@ -42,3 +42,23 @@ Before creating a worker, the reader fetches and validates the same-origin WASM.
 ## Validation boundaries
 
 `tests/pdf-reader.test.ts` controls engine readiness and actual-visible-position events at the shared component. `tests/pdf-reader-engine.test.ts` controls resource creation/failure/disposal. These tests do not establish real PDF rendering; the isolated browser acceptance artifacts and command logs are under `/tmp/ningbo-pdf-40-42/41/`.
+
+## Source navigation and history (#42)
+
+The shared reader now owns up to 100 in-memory reading locations per document, including page-coordinate anchors. Toolbar, keyboard, thumbnails, native outline and search all enter the same explicit navigation path. `navigation-request({src,page,point?,reason:'explicit'|'history'})` announces validated user intent; it does **not** confirm visibility. The visit is committed only on a rendered position event for that destination. Passive scrolling, initialization and `navigate(position)` / target-prop restores never append visits. `navigate(position, 'explicit')` is available for the source-return action. Document changes clear both history directions; no reading history is persisted.
+
+When several short pages fit in the viewport at once, the engine's dominant page may stay at 1. A requested page is reported only after its render is loaded and its public visibility metric is positive. That visible selection remains stable until the scroll offset changes, then normal dominant-page reporting resumes. No page number alone establishes visibility.
+
+`pages/preview.vue` composes `SourcePdfPreview` with `useSourcePdfRoute`:
+
+- Legacy `file/page/back` links still open the same physical PDF target. The initial `page` is also the source target when `sourcePage` is absent.
+- Canonical reading URLs use `page` for the actual browsing page and `sourcePage=N` for the original source target. `sourcePage=unknown` preserves missing evidence pages even when reading page 1. Invalid source values remain invalid, rather than becoming unknown or page 1. Optional `x/y` encode finite nonnegative PDF coordinates, rounded to 0.01 units.
+- Only external URL changes drive reader target props. Owned URL writes are ignored as echoes. Confirmed explicit visits push browser history; passive page changes replace, and repeated anchor changes debounce for 300ms. Pending writes are invalidated when leaving or externally restoring the route.
+- Browser Back/Forward restores document/page/anchor without appending reader history. “阅读位置后退/前进”, “回到来源第 N 页” and the enterprise-context “返回” remain distinct actions.
+- Original PDF is the default, independent of `/api/pdf-pages`; its page count comes from reader readiness. A page-image view mounts its existing gallery only when selected. Opening directly into the gallery does not start the original engine. After first use the original reader stays mounted while switching tabs, preserving its history; selecting a gallery page restores that physical page on returning to original, without recording an extra visit.
+- The original rendered position, not a requested target or gallery cache count, confirms source location. Failures retain their requested target for retry. Invalid and out-of-range targets remain explicit. Gallery generation/retry remains inside the separate gallery view.
+- The existing safe-back parser and `fileUrl`/file API root boundary remain unchanged. No reader event changes evidence, list numbers, source files or OCR.
+
+The integrated RL-20 list replaced the retired title/expanded-row views with an enterprise drawer before #42. The current list now reconnects the existing session return seam: the complete-enterprise-page link saves its filtered `expand` context and table/window scroll; the list restores only after current rows render, and reuses the existing Nuxt delayed-scroll suppression. Legacy component return-chain tests remain in place.
+
+Synthetic browser acceptance: `RL10_EVIDENCE_DIR=/tmp/<run> node scripts/verify-roster-return-chain.mjs <free-port>` creates its own DB/files/incoming and browser profile, exercises actual rendered square-count pixels plus source/internal/browser navigation and the list→drawer→detail→PDF return chain at 1280×800 and 390×844, then checks original source/database hashes. `RL10_KEEP_FIXTURES=1` retains the generated fixture and writes its location to `fixture.json`; `RL10_FIXTURE_ONLY=1` seeds and exits for a separately launched read-only production server. Run this and `verify-detail-return-scroll.mjs` serially: Nuxt owns a per-worktree dev lock. Neither script reads real business databases or source files.

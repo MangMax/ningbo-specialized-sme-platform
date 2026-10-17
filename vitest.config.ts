@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
@@ -8,6 +9,9 @@ export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
+      // Exercise the same router version that Nuxt owns (not a second test-only router).
+      'vue-router': createRequire(import.meta.resolve('nuxt/package.json')).resolve('vue-router'),
+      '~': fileURLToPath(new URL('.', import.meta.url)),
       '~~': fileURLToPath(new URL('.', import.meta.url)),
       '@db': fileURLToPath(new URL('./db', import.meta.url)),
       '@': fileURLToPath(new URL('.', import.meta.url)),

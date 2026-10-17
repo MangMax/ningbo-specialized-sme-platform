@@ -3,3 +3,6 @@ export interface PdfReadingPosition { page: number; point?: { x: number; y: numb
 export interface PdfPositionEvent extends PdfReadingPosition { src: string }
 export interface PdfReadyEvent { src: string; totalPages: number }
 export type PdfReadingMode = 'continuous' | 'single'
+
+/** User intent, never inferred from passive position changes. External restores do not emit it. */
+export interface PdfNavigationRequest extends PdfPositionEvent { reason: 'explicit' | 'history' }

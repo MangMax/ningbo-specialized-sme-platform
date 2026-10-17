@@ -62,11 +62,13 @@ async function evaluate(cdp, sessionId, expression) {
   return result.result.value
 }
 
-async function waitUntil(cdp, sessionId, expression, timeoutMs = 60_000) {
+async function waitUntil(cdp, sessionId, expression, timeoutMs = 60_000, stableSamples = 1) {
+  let consecutive = 0
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
-      if (await evaluate(cdp, sessionId, expression)) return
+      if (await evaluate(cdp, sessionId, expression)) { if (++consecutive >= stableSamples) return }
+      else consecutive = 0
     } catch {
       // Navigation can replace the execution context between polls.
     }
@@ -163,19 +165,19 @@ async function main() {
         path: '/preview',
         query: { file: 'jxj/announcement/test.pdf', page: '8', back: detailPath }
       });
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      window.__detailReturnScrollCalls.length = 0;
-
-      const backLink = [...document.querySelectorAll('a')].find((link) =>
-        link.textContent.includes('返回') && link.getAttribute('href')?.startsWith('/enterprises/35')
-      );
-      if (!backLink) throw new Error('preview return link was not rendered');
-      backLink.click();
       return detailPath;
     })()`)
 
+    // Router completion precedes Nuxt's page transition/render. Wait for the
+    // public return link rather than a fixed delay or router-private ready flag.
+    await waitUntil(cdp, sessionId, `location.pathname === '/preview' && [...document.querySelectorAll('a')].some(a => a.textContent.includes('返回') && a.getAttribute('href')?.startsWith('/enterprises/35'))`)
+    await evaluate(cdp, sessionId, `(() => {
+      window.__detailReturnScrollCalls.length = 0;
+      [...document.querySelectorAll('a')].find(a => a.textContent.includes('返回') && a.getAttribute('href')?.startsWith('/enterprises/35')).click();
+    })()`)
+
     await waitUntil(cdp, sessionId, `location.pathname === '/enterprises/35' && document.body.innerText.includes('未能加载企业详情')`)
-    await sleep(500)
+    await waitUntil(cdp, sessionId, `window.scrollY === 70 && sessionStorage.getItem('roster:evidence-preview-return') === null && window.__detailReturnScrollCalls.some(p => p.top === 70)`, 60_000, 5)
     const final = await evaluate(cdp, sessionId, `({
       path: location.pathname + location.search,
       scrollY: window.scrollY,

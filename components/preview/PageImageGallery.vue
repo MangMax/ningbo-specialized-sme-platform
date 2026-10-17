@@ -62,6 +62,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   'pages-state': [state: PdfPagesState]
+  'page-change': [page: number]
 }>()
 
 /** 入参 `page` 折成「该看第几页」;不是 ≥1 的整数就没有落点(**不取整、不回落成第 1 页**)。 */
@@ -191,6 +192,9 @@ const viewingPage = computed<PageImageRef | null>(
   () => state.value?.pages.find((p) => p.page === viewing.value) ?? null,
 )
 
+// Selection is a gallery location, not confirmation of an original PDF render.
+watch(viewingPage, page => { if (page) emit('page-change', page.page) })
+
 async function resolveRequestedPage(): Promise<void> {
   const target = requestedPage()
   const current = state.value
@@ -212,6 +216,7 @@ async function resolveRequestedPage(): Promise<void> {
     return
   }
   if (currentIsFresh && current.pageCount !== null && target > current.pageCount) {
+    targetPageIssue.value = `第 ${target} 页不存在。该 PDF 共 ${current.pageCount} 页，请检查来源页码。`
     pendingPage.value = null
     viewing.value = null
     return
