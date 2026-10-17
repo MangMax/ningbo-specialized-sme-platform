@@ -656,8 +656,6 @@ async function refreshAll() {
 <template>
   <div class="flex min-w-0 flex-col gap-4">
     <PageHeader
-      class="rise-in"
-      style="--rise-index: 0"
       title="识别校对"
       description="逐页对着页图核对 OCR 文本。"
     >
@@ -677,7 +675,7 @@ async function refreshAll() {
     <div class="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
       <!-- 左栏:选文件。宽屏**吸顶** —— 翻到第 40 页还能换文件,不必滚回顶部
            (一份 56 页的 PDF 实测 16774px)。 -->
-      <Card class="rise-in h-fit lg:sticky lg:top-20" style="--rise-index: 1">
+      <Card class="h-fit lg:sticky lg:top-20">
         <CardHeader>
           <CardTitle class="text-sm">选择 PDF</CardTitle>
         </CardHeader>
@@ -732,7 +730,7 @@ async function refreshAll() {
 
       <!-- 右栏:逐页校对。 -->
       <div class="flex min-w-0 flex-col gap-3">
-        <Empty v-if="!selectedPath" class="rise-in bg-card rounded-lg border py-12" style="--rise-index: 2">
+        <Empty v-if="!selectedPath" class="bg-card rounded-lg border py-12">
           <EmptyHeader>
             <EmptyMedia variant="icon"><Images /></EmptyMedia>
             <EmptyTitle>先选一份 PDF</EmptyTitle>
@@ -743,8 +741,7 @@ async function refreshAll() {
           <!-- 文件条**吸顶**:翻到几十页之后,当前是哪一份、还剩几页要校对、导入入口
                都还在视野里。`top-14` 让开顶栏(布局里那条 `sticky top-0 z-30`)。 -->
           <div
-            class="rise-in bg-card sticky top-14 z-20 flex flex-col gap-x-3 gap-y-2 rounded-lg border px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center"
-            style="--rise-index: 2"
+            class="bg-card sticky top-14 z-20 flex flex-col gap-x-3 gap-y-2 rounded-lg border px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center"
           >
             <span class="min-w-0 truncate text-sm font-medium sm:flex-1" :title="selected?.filename">
               {{ selected?.filename ?? selectedPath }}
@@ -858,16 +855,11 @@ async function refreshAll() {
           </Empty>
 
           <ul v-else class="flex flex-col gap-2" role="list">
-            <!-- `rise-in` 接在页头那三块之后(0/1/2),逐行递增 35ms。
-                 **只给前 7 行**:97 页的文件若每行都带上,末行要等 3.4 s 才出现 ——
-                 出场动效是交代「读好了」,不是让人等着看动画;第 8 行起直接到位,
-                 也就不会出现「四十几个卡同时打闪」那一幕。 -->
             <OcrPageRow
-              v-for="(row, index) in visibleRows"
+              v-for="row in visibleRows"
               :id="`ocr-row-${row.page}`"
               :key="row.page"
-              :class="['scroll-mt-32', index <= 6 ? 'rise-in' : '']"
-              :style="index <= 6 ? { '--rise-index': Math.min(index, 6) + 3 } : undefined"
+              class="scroll-mt-32"
               :row="row"
               :image-version="imageVersion"
               :pending="pendingPage === row.page"

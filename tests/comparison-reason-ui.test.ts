@@ -50,7 +50,7 @@ function disposition(patch: Partial<ComparisonDisposition> = {}): ComparisonDisp
 
 /** 展开 tooltip 并取回它渲染出的文字(内容 teleport 到 body)。 */
 async function openAndReadText(wrapper: ReturnType<typeof mount>): Promise<string> {
-  await wrapper.get('[data-testid="reconcile-badge"]').trigger('click')
+  await wrapper.get('[data-testid="reconcile-status-trigger"]').trigger('click')
   await new Promise((r) => setTimeout(r, 0))
   await wrapper.vm.$nextTick()
   return document.body.textContent ?? ''
@@ -63,6 +63,28 @@ afterEach(() => {
 })
 
 describe('比对行「平台解释」列:读库内状态与原因', () => {
+  it('键盘 click 按当前打开状态切换,不读取旧 pointerdown 快照', async () => {
+    const wrapper = mountIn(ComparisonReconcile, {
+      props: { explanation: null, disposition: disposition() },
+      attachTo: document.body,
+    })
+    const trigger = wrapper.get('[data-testid="reconcile-status-trigger"]')
+    const clickDetails: number[] = []
+    trigger.element.addEventListener('click', (event) => clickDetails.push((event as MouseEvent).detail))
+
+    await trigger.trigger('pointerdown')
+    await trigger.trigger('click', { detail: 1 })
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+
+    await trigger.trigger('click', { detail: 0 })
+    expect(clickDetails).toEqual([1, 0])
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+    await trigger.trigger('click', { detail: 0 })
+    expect(trigger.attributes('aria-expanded')).toBe('true')
+    await trigger.trigger('click', { detail: 0 })
+    expect(trigger.attributes('aria-expanded')).toBe('false')
+  })
+
   it('平台未更新(confirmed_reason + platform_stale)显示成「已确认原因 · 平台未更新」,**不是**「无记录」', async () => {
     const wrapper = mountIn(
       ComparisonReconcile,
@@ -84,7 +106,7 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
         attachTo: document.body,
       },
     )
-    expect(wrapper.get('[data-testid="reconcile-badge"]').text()).toBe('已确认原因')
+    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('平台未更新')
     const text = await openAndReadText(wrapper)
     expect(text).toContain('平台未更新')
     expect(text).toContain('标明平台时点,不覆盖历史')
@@ -106,7 +128,7 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
       },
       attachTo: document.body,
     })
-    expect(wrapper.get('[data-testid="reconcile-badge"]').text()).toBe('待核实')
+    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('待核实')
     const text = await openAndReadText(wrapper)
     expect(text).toContain('转人工核实')
     expect(text).toContain('申报时间不足以排出先后')
@@ -117,10 +139,10 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
       props: { explanation: null, disposition: disposition({ explanationId: null, status: 'not_queried' }) },
       attachTo: document.body,
     })
-    expect(wrapper.get('[data-testid="reconcile-badge"]').text()).toBe('未查询')
+    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('未查询')
     expect(wrapper.find('[data-testid="reconcile-empty"]').exists()).toBe(false)
     const text = await openAndReadText(wrapper)
-    expect(text).toContain('还没有解释记录')
+    expect(text).toContain('尚未核实差异')
   })
 
   it('无统代无法直查:如实显示「未查询 · 转人工核实」与原因说明', async () => {
@@ -215,11 +237,11 @@ describe('比对行「平台解释」列:读库内状态与原因', () => {
       },
       attachTo: document.body,
     })
-    // 主徽章是库内状态,不是缓存的「平台有记录」。
-    expect(wrapper.get('[data-testid="reconcile-badge"]').text()).toBe('已确认原因')
+    // 主状态文本来自库内,不是缓存的「平台有记录」。
+    expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('平台未更新')
     const text = await openAndReadText(wrapper)
     expect(text).toContain('平台未更新')
-    expect(text).toContain('旧解释缓存')
+    expect(text).toContain('历史核实结果')
     expect(text).toContain('平台有记录(离线缓存样本)')
     expect(text).toContain('2026-10-15')
   })
@@ -234,28 +256,51 @@ function evidence(patch: Partial<PlatformEvidence> = {}): PlatformEvidence {
 }
 
 describe('比对行「平台证据」列:库内查询与原始关系原文', () => {
-  it('曾用名分「已确认 / 待核」两组;待核的不并入现名', () => {
+  it('曾用名分「已确认 / 待核」两组;待核的不并入现名', async () => {
     const wrapper = mountIn(ComparisonPlatformEvidence, {
       props: {
-        enterpriseId: 1,
+        enterpriseId: 7289,
+        currentName: '宁波上航测绘股份有限公司',
         evidence: evidence({
           aliases: [
             { id: 1, name: '宁波上航测绘有限公司', nameNorm: '宁波上航测绘有限公司', sourceKind: 'platform_business', sourceRefId: 0, verificationStatus: 'confirmed', validFrom: null, note: null },
-            { id: 2, name: '宁波疑似旧名有限公司', nameNorm: '宁波疑似旧名有限公司', sourceKind: 'platform_apply', sourceRefId: 0, verificationStatus: 'pending', validFrom: null, note: null },
+            { id: 2, name: '宁波上航测绘股份有限公司', nameNorm: '宁波上航测绘股份有限公司', sourceKind: 'platform_business', sourceRefId: 0, verificationStatus: 'confirmed', validFrom: null, note: null },
           ],
         }),
       },
     })
+    expect(wrapper.text()).toContain('已确认曾用名 1')
+    await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
     expect(wrapper.text()).toContain('曾用名')
-    expect(wrapper.text()).toContain('宁波上航测绘有限公司')
-    expect(wrapper.text()).toContain('待核别名')
-    expect(wrapper.text()).toContain('宁波疑似旧名有限公司')
+    expect(document.querySelector('[data-testid="platform-confirmed-aliases"]')?.textContent).toContain('宁波上航测绘有限公司')
+    expect(document.querySelector('[data-testid="platform-confirmed-aliases"]')?.textContent).not.toContain('宁波上航测绘股份有限公司')
+    expect(wrapper.text()).not.toContain('待核别名')
   })
 
-  it('查询证据带出接口、时点与关系条数,展开后是**原始关系**字段', async () => {
+  it('待核历史别名保留待核状态且不把现名显示成别名', async () => {
     const wrapper = mountIn(ComparisonPlatformEvidence, {
       props: {
-        enterpriseId: 7,
+        enterpriseId: 6923,
+        currentName: '宁波创涵自动化设备有限公司',
+        evidence: evidence({
+          aliases: [
+            { id: 1, name: '宁波创涵自动化设备有限公司', nameNorm: '宁波创涵自动化设备有限公司', sourceKind: 'platform_business', sourceRefId: 0, verificationStatus: 'pending', validFrom: null, note: null },
+            { id: 2, name: '宁波市鑫磊工具有限公司', nameNorm: '宁波市鑫磊工具有限公司', sourceKind: 'platform_apply', sourceRefId: 0, verificationStatus: 'pending', validFrom: null, note: null },
+          ],
+        }),
+      },
+    })
+    expect(wrapper.text()).toContain('待核别名 1')
+    await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
+    expect(document.querySelector('[data-testid="platform-pending-aliases"]')?.textContent).toContain('宁波市鑫磊工具有限公司')
+    expect(document.querySelector('[data-testid="platform-pending-aliases"]')?.textContent).not.toContain('宁波创涵自动化设备有限公司')
+  })
+
+  it('平台记录详情以两张表保留时间与原始字段', async () => {
+    const wrapper = mountIn(ComparisonPlatformEvidence, {
+      props: {
+        enterpriseId: 7289,
+        currentName: '宁波上航测绘股份有限公司',
         evidence: evidence({
           relationCount: 1,
           queries: [
@@ -294,21 +339,26 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
       },
       attachTo: document.body,
     })
-    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('业务接口')
-    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('2026-10-16')
-    expect(wrapper.get('[data-testid="platform-query-summary"]').text()).toContain('关系 1 条')
+    expect(wrapper.get('[data-testid="platform-evidence-summary"]').text()).toContain('查询成功 ×1')
+    expect(wrapper.get('[data-testid="platform-evidence-summary"]').text()).toContain('平台记录 1 条')
+    // 详情默认收起以保持行高;点开后才出现接口、时点与原始关系入口。
     // 关系原文默认收起(表窄),点开后逐条可见。
     expect(wrapper.find('[data-testid="platform-relation"]').exists()).toBe(false)
-    await wrapper.get('[data-testid="platform-evidence-toggle"]').trigger('click')
-    const relation = wrapper.get('[data-testid="platform-relation"]')
+    await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
+    expect([...document.querySelectorAll('[data-testid="platform-records"] table')].map(table=>table.getAttribute('aria-label'))).toEqual(['关联记录','申报记录'])
+    expect(document.querySelector('[data-testid="platform-query-summary"]')?.textContent).toContain('2026-10-16')
+    const relation = { text: () => document.querySelector('[data-testid="platform-relation"]')?.textContent ?? '' }
     expect(relation.text()).toContain('宁波平台滞后企业')
     expect(relation.text()).toContain('91330211000000002Y')
     expect(relation.text()).toContain('待审核')
-    expect(relation.text()).toContain('按统一社会信用代码')
+    expect(relation.text()).not.toContain('SQ332025000000001')
+    expect(relation.text()).toContain('2025-03-01')
+    expect(relation.text()).not.toContain('已确认')
+    expect(relation.text()).not.toContain('按统一社会信用代码')
   })
 
   it('没有曾用名也没有查询时给「—」,不编造', () => {
-    const wrapper = mountIn(ComparisonPlatformEvidence, { props: { enterpriseId: 9, evidence: evidence() } })
+    const wrapper = mountIn(ComparisonPlatformEvidence, { props: { enterpriseId: 987, currentName: '宁波芯速联光电科技有限公司', evidence: evidence() } })
     expect(wrapper.text().trim()).toBe('—')
   })
 })

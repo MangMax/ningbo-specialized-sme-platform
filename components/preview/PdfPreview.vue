@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { FileText } from '@lucide/vue'
+import { useAppColorMode } from '@/composables/useAppColorMode'
 import PreviewToolbar from '@/components/preview/PreviewToolbar.vue'
 import PreviewStates from '@/components/preview/PreviewStates.vue'
 import { PDFViewer } from '@embedpdf/vue-pdf-viewer'
@@ -34,7 +35,7 @@ const props = withDefaults(
 const info = computed(() => resolvePreviewKind(props.src))
 const title = computed(() => props.name || props.src.split('/').pop() || props.src)
 
-const colorMode = useColorMode({ selector: 'html' })
+const colorMode = useAppColorMode()
 const status = ref<'loading' | 'ready' | 'error'>('loading')
 const errorMessage = ref('')
 

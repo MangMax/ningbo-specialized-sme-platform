@@ -24,15 +24,12 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 
-// When returning from preview, Nuxt's delayed default top reset would overwrite the async restore.
-// Route origin stays available even when the ready-state restore has consumed its session entry.
 definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
 
 interface Evidence {
   sourceFile: string
   attachment: string | null
   listNo: number | null
-  /** **PDF 实际页序**(RL-10);给不出就是 `null`。与 `listNo`(序号)是两回事。 */
   page: number | null
 }
 interface DetailEvent {
@@ -189,28 +186,13 @@ function openPreview(e: Evidence) {
   previewOpen.value = true
 }
 
-// —— RL-10:出处页码 ——
-
-/**
- * 这一条出处的页码该怎么说。
- *
- *  - `assigned` —— 有页码(可点,跳到该页);
- *  - `pending` —— 这份来源本该有页码(PDF)但**还没定** ⇒ 写「页码待核」,不编一个数字;
- *  - `unavailable` —— Word / Excel 这类**没有可靠分页**的来源 ⇒ 留空(`—`),也不给跳转。
- */
 const pageStateOf = (e: Evidence): EvidencePageState => evidencePageState(e.sourceFile, e.page)
 
-/** 没有页码时该写哪个字(「页码待核」/ 「—」);有页码时走链接,不走这里。 */
 function pageWordOf(e: Evidence): string {
   const state = pageStateOf(e)
   return state === 'assigned' ? '' : EVIDENCE_PAGE_WORDS[state]
 }
 
-/**
- * 跳到来源预览的**地址**(不是按钮):票面要求「返回后保留原筛选与查看位置」——
- * 有返回就得有去过,所以跳转是一次真导航。`back` 带上**本页完整地址**
- * (含它自己的 `back`,于是返回链是 预览 → 企业详情 → 台账,一层不丢)。
- */
 function pageHref(e: Evidence): string {
   return evidencePreviewHref({ sourceFile: e.sourceFile, page: e.page, back: route.fullPath })
 }
@@ -255,9 +237,9 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
     </Alert>
 
     <template v-else-if="detail">
-      <PageHeader class="rise-in" style="--rise-index: 0" :title="detail.name">
+      <PageHeader :title="detail.name">
         <template #breadcrumb>
-          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">名录台账</NuxtLink>
+          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">企业列表</NuxtLink>
           <span class="mx-1.5">/</span>
           <span>企业详情</span>
         </template>
@@ -271,7 +253,7 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
         </template>
       </PageHeader>
 
-      <Alert v-if="usccMissing" class="rise-in" style="--rise-index: 1" variant="destructive">
+      <Alert v-if="usccMissing" variant="destructive">
         <AlertTitle>缺统一社会信用代码,记录按企业名称归并</AlertTitle>
         <AlertDescription>
           该企业没有统一社会信用代码,台账按<strong>企业名称</strong>把记录归到一起。
@@ -287,10 +269,9 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
 
       <!-- 称号 × 来源 -->
       <Card
-        v-for="(g, gi) in groups"
+        v-for="g in groups"
         :key="g.titleCode"
-        class="rise-in gap-0 overflow-hidden py-0"
-        :style="{ '--rise-index': gi + 2 }"
+        class="gap-0 overflow-hidden py-0"
       >
         <CardHeader class="gap-1.5 border-b px-5 py-4">
           <!-- 来源不再写成一行文字:下面每个来源自己带方标,写两遍是重复。 -->
@@ -382,14 +363,13 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
                         <span class="text-muted-foreground w-14 shrink-0">序号</span>
                         <span class="tabular-nums">{{ e.listNo }}</span>
                       </div>
-                      <!-- 页码(RL-10):有页码才可点;没有就留空 —— 不拿序号凑数字。 -->
                       <div class="flex gap-2">
                         <span class="text-muted-foreground w-14 shrink-0">页码</span>
                         <NuxtLink
                           v-if="pageStateOf(e) === 'assigned'"
                           :to="pageHref(e)"
-                          @click="rememberPagePreviewReturn($event, evidenceDisclosureKey(g.titleCode, rec.source, i))"
                           class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
+                          @click="rememberPagePreviewReturn($event, evidenceDisclosureKey(g.titleCode, rec.source, i))"
                         >
                           第 {{ e.page }} 页
                         </NuxtLink>

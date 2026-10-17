@@ -2,6 +2,7 @@ import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparison'
 import { attachPlatformEvidence } from '~~/lib/comparison-platform'
 import { getCuratedComparison } from '~~/lib/curation'
+import { filterComparisonRows } from '~~/lib/comparison-filter'
 import { TITLE_ORDER } from '~~/lib/labels'
 import { MAX_PAGE_SIZE } from '~~/lib/query'
 import { attachReconcile, readReconcile } from '~~/lib/reconcile'
@@ -44,13 +45,26 @@ defineRouteMeta({
         schema: { type: 'string', enum: ['true', 'false'] },
         description: '`true` 时**也**返回已被人工标注排除的行(默认不返回)。',
       },
+      {
+        name: 'q',
+        in: 'query',
+        schema: { type: 'string' },
+        description:
+          '企业名称 / **已确认**曾用名 / 统一社会信用代码关键词(RL-20)。口径与 `/api/roster/enterprises` 的 `q` 同一处:名称按 `normalizeName` 归一后子串匹配,统代按大写子串,别名只认 `confirmed`。',
+      },
+      {
+        name: 'district',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '区县(精确,等于该行记录上的属地)。RL-20 增量。',
+      },
       { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 25 } },
     ],
     responses: {
       200: {
         description:
-          '比对结果(`rows` / `total` / `counts` / `curatedCounts` / `platform` / `reconcile`)。',
+          '比对结果(`rows` / `total` / `counts` / `curatedCounts` / `platform` / `reconcile`)。`counts` 与 `curatedCounts` 是全局计数,不随可见行过滤和分页变化。',
       },
       400: { description: 'title / direction / showCurated 取值非法。' },
     },
@@ -86,16 +100,18 @@ export default defineEventHandler((event) => {
   const db = useDb()
   const result = getCuratedComparison(db, config.curatedPath)
   const { counts, curatedCounts } = result
-  const filtered = result.rows.filter(row =>
-    (!title?.length || title.includes(row.titleCode)) &&
-    (!direction || row.direction === direction) &&
-    (q.showCurated === 'true' || !row.curated),
-  )
   // 旧解释缓存(`data/platform-reconcile.json`)是**对照**,缺失时 explanation 全为 null;
   // 原因与证据以库内为准(见下方 `platform` 段)。
   const reconcile = readReconcile(config.reconcilePath)
   // 库内平台原因与证据(RL-15 起的**主源**):每一行都带 platform。
-  const rows = attachPlatformEvidence(attachReconcile(filtered, reconcile), db)
+  const enriched = attachPlatformEvidence(attachReconcile(result.rows, reconcile), db)
+  const rows = filterComparisonRows(enriched, {
+    title,
+    direction: direction as ComparisonDirection | undefined,
+    district: typeof q.district === 'string' ? q.district : undefined,
+    q: typeof q.q === 'string' ? q.q : undefined,
+    showCurated: q.showCurated === 'true',
+  })
   const page = Math.max(1, Math.floor(num(q.page, 1)))
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25))))
   const withExplanation = rows.filter((row) => row.platform.disposition.explanationId != null).length

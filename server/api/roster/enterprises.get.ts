@@ -1,5 +1,10 @@
 import { useDb } from '@db'
-import { ROSTER_STATES, listRosterEnterprises } from '~~/lib/roster/enterprise-roster'
+import {
+  DIFF_STATUS_NONE,
+  ROSTER_ENTERPRISE_SORTS,
+  ROSTER_STATES,
+  listRosterEnterprises,
+} from '~~/lib/roster/enterprise-roster'
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
 
 /**
@@ -24,7 +29,7 @@ defineRouteMeta({
     tags: ['名录'],
     summary: '跨称号去重企业总表',
     description:
-      '`counts.total` 是符合筛选的企业数；`counts.titles[称号]` 是各称号下的企业数；`counts.titlePairs` 是这些企业的全部企业 × 称号数；`counts.recognitionPairs` 是命中首次认定筛选的企业 × 称号数。计数均先于分页。',
+      '`counts.total` 是符合筛选的企业数；`counts.titles[称号]` 是各称号下的企业数；`counts.titlePairs` 是这些企业的全部企业 × 称号数；`counts.recognitionPairs` 是命中首次认定筛选的企业 × 称号数；`counts.differences` 是这些企业合计的差异记录数。计数均先于分页。',
     parameters: [
       { name: 'q', in: 'query', schema: { type: 'string' }, description: '名称 / **已确认**曾用名关键词。' },
       {
@@ -61,6 +66,18 @@ defineRouteMeta({
         description: '事件年份,多值。非数字项剔除。',
       },
       {
+        name: 'diffStatus',
+        in: 'query',
+        schema: { type: 'string' },
+        description: `差异状态,多值(RL-20):六个差异状态、伪状态 \`${DIFF_STATUS_NONE}\`(**一条差异记录都没有**)及已展示原因代码。状态匹配企业任一差异记录,原因匹配企业当前摘要原因；同参数多值取或。`,
+      },
+      {
+        name: 'sort',
+        in: 'query',
+        schema: { type: 'string', enum: [...ROSTER_ENTERPRISE_SORTS], default: 'recognition' },
+        description: '排序(RL-20):按最早首次认定年新到旧(默认)、企业名称或称号等级；名称和 id 保证稳定顺序。',
+      },
+      {
         name: 'firstYear',
         in: 'query',
         style: 'form',
@@ -83,7 +100,7 @@ defineRouteMeta({
     ],
     responses: {
       200: { description: '企业总表(`rows` / `counts` / `page` / `pageSize`)。' },
-      400: { description: '`title` / `rosterState` / `source` / `eventType` / `firstStatus` 取值非法。' },
+      400: { description: '`title` / `rosterState` / `source` / `eventType` / `firstStatus` / `diffStatus` / `sort` 取值非法。' },
     },
   },
 })

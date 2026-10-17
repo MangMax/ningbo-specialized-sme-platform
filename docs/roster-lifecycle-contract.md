@@ -634,6 +634,7 @@
 `source`(可重复,`jxj` \| `miit`)、`eventType`(可重复)、`year`(可重复)、
 `firstYear`(可重复,**首次认定年份**,RL-08 增量,与 `year` 不是一回事)、
 `firstStatus`(可重复,`confirmed` \| `pending`,RL-08 增量)、
+`diffStatus`(可重复,RL-20)、`sort`(RL-20,默认 `recognition`)、
 `page`(默认 1)、`pageSize`(默认 50)。
 
 > `source` / `eventType` / `year` 是 **RL-17 增量**(合并台账后「按企业」要能承接
@@ -642,6 +643,9 @@
 > 「来源与事件落在同一条记录上、类型与年份落在同一条事件上」这两条不能松 ——
 > 松了,同一个 URL 在「按企业」与「按企业×称号」下会给出两批不同的企业。
 > `q` 的统代匹配同样是 RL-17 增量(`/api/records` 一直认统代,两个分组共用一个搜索框)。
+
+> `diffStatus` 与差异摘要是 RL-20 的只读列表扩展,不改变记录、差异或写入语义。
+> `diffStatus` 可取六个差异状态、原因代码或 `none`。状态匹配企业任一差异记录；原因按企业当前摘要的原因匹配，保证筛选与可见列一致；同参数多值取或。`none` 表示没有差异记录。列表和导出共用解析、筛选与计数口径，先筛后分页。`sort` 支持 `recognition`(最早首次认定年,新到旧,默认)、`name` 与 `title`;各顺序以名称和企业 id 稳定收尾。
 
 响应(字段级):
 
@@ -658,13 +662,22 @@
     "titles": ["specialized_sme", "innovative_sme"],
     "aliasNames": ["宁波旧名…"],    // 仅 confirmed
     "firstRecognition": [{ "titleCode": "specialized_sme", "year": 2021 }],
-    "nextReviewYear": 2028          // 可空;锚点+3
+    "awards": [{ "titleCode": "specialized_sme", "year": 2021, "batchSeq": 1 }], // 正式认定年份与批次；不折叠复核/维持事件
+    "nextReviewYear": 2028,         // 可空;锚点+3
+    "anchorNeedsReview": false,    // 锚点事件缺少结论年份时待核
+    "difference": {                // RL-20:企业差异摘要
+      "count": 1,                  // 企业 × 称号 × 方向的差异记录数
+      "status": "confirmed_reason", // 可空;摘要状态
+      "reasonCode": "platform_stale", // 可空;与摘要状态配对
+      "anyCurrent": true           // 是否仍有当前差异
+    }
   }],
   "counts": {
     "total": 1,                     // **企业数**(与筛选同口径、先于分页)
     "titlePairs": 2,                // **企业 × 称号**数 = titles 各桶之和
     "titles": { "specialized_sme": 1, "innovative_sme": 1 },
-    "recognitionPairs": 1           // 命中首次认定判据的**企业 × 称号**数
+    "recognitionPairs": 1,          // 命中首次认定判据的**企业 × 称号**数
+    "differences": 1                // RL-20:筛选内差异记录数,先于分页
   },
   "page": 1, "pageSize": 50
 }

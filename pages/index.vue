@@ -1,95 +1,70 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { watchDebounced } from '@vueuse/core'
 import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
   ExternalLink,
-  LoaderCircle,
   Search,
 } from '@lucide/vue'
 import {
-  comparisonDirectionLabel,
-  comparisonDirectionNote,
-  DIFFERENCE_REASONS,
-  DIFFERENCE_REASON_ORDER,
-  DIFFERENCE_STATUSES,
-  DIFFERENCE_STATUS_ORDER,
+  ENTERPRISE_LIST_TITLE,
+  ENTERPRISE_SORT_HINTS,
+  ENTERPRISE_SORT_LABELS,
+  ENTERPRISE_SORT_ORDER,
   EVENTS,
-  EVENT_ORDER,
   FIRST_RECOGNITION_STATUSES,
   FIRST_RECOGNITION_STATUS_ORDER,
   SOURCES,
-  SOURCE_ORDER,
   TITLES,
   TITLE_ORDER,
   TITLE_SHORT,
 } from '~~/lib/labels'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
 import {
-  shouldNuxtScrollToTop,
-  useEvidencePreviewScrollRestore,
-} from '~~/lib/roster/evidence-preview-return'
-import {
+  DEFAULT_SORT,
   EMPTY_LEDGER_STATE,
-  ledgerExportLabel,
+  LEDGER_EXPORT_LABEL,
   ledgerExportUrl,
   ledgerListQuery,
-  filtersForView,
   ledgerStateFromQuery,
-  parseLedgerView,
-  VIEW_PARAM,
+  ledgerYearOptions,
   type LedgerState,
-  type LedgerView,
 } from '~~/lib/roster/ledger-view'
+import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '~~/lib/roster/ledger-contract'
+import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
+import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
+import EnterpriseDrawer from '@/components/EnterpriseDrawer.vue'
+import EnterpriseListTable, {
+  type EnterpriseListRow,
+} from '@/components/EnterpriseListTable.vue'
 import FilterChip from '@/components/FilterChip.vue'
 import MultiSelectFilter from '@/components/MultiSelectFilter.vue'
-import RosterDifferenceTable, { type DifferenceRow } from '@/components/RosterDifferenceTable.vue'
-import RosterEnterpriseTable, { type EnterpriseRow } from '@/components/RosterEnterpriseTable.vue'
-import RosterTitleTable, { type TitleRow } from '@/components/RosterTitleTable.vue'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import {
-  Pagination,
-  PaginationContent,
-  PaginationEllipsis,
-  PaginationFirst,
-  PaginationItem,
-  PaginationLast,
-  PaginationNext,
-  PaginationPrevious,
-} from '@/components/ui/pagination'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 
-// A roster return is restored after its filtered rows (and expanded row) render. Use route origin
-// to avoid Nuxt's later top reset even if that hook consumes the saved offset first.
-definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 /**
- * **名录台账** —— 合并后的唯一台账入口(RL-17)。
+ * **企业列表**(RL-20)—— 一行一家企业的唯一台账表。
  *
- * 原先 `/`(记录台账)与 `/roster`(企业总表)是两个入口讲同一件事:`/api/records` 的一行
- * 本来就是**企业 × 称号**(它的 `total` 数的是「企业 × 称号」组合数),与企业总表的
- * `counts.titlePairs` 是同一个数字。所以这里不是把两个页面拼起来,而是把**同一份数据的
- * 两种分组**收进一个工具栏:一个筛选条、一个导出按钮、一个搜索框。
+ * ── 这一票删掉了什么(用户原话逐条对得上)────────────────────────────────
  *
- * 三个视图(映射全在 `lib/roster/ledger-view.ts`,有单测):
- *  - `enterprise`(默认)—— 一企一行,展开见全部称号 / 批次 / 事件 / 出处;
- *  - `title`             —— 一行一个企业 × 称号,来源与事件列在行内;
- *  - `difference`        —— 差异与原因,每 (企业 × 称号 × 方向) 一条当前解释。
- *
- * ── 口径(页面上说清,导出里也写)────────────────────────────────────────
- * **企业数** ≠ **企业 × 称号**数。多称号企业在企业数里只算一家,在每个称号桶里各计一次。
- * `按企业` 报前者,`按企业×称号` 报后者;计数行把两个数字并排写出来。
+ * 1. 「**只要一个表格**」 —— 原先这里按 `view` 切三种分组(按企业 / 按企业×称号 /
+ *    差异与原因),三个 tab、三张表、三套筛选可见性。现在只剩**企业粒度**那一张,
+ *    `view` 参数整组退役。差异不再单独成表:它的**状态**落到表里的「差异状态」列与
+ *    原因摘要,**原因 → 措施**落到抽屉里。
+ * 2. 「称号历史、原因用**侧边抽屉**展示,**原因也要可视化**」 —— 见 `EnterpriseDrawer`。
+ * 3. 「**删掉解释小字**」 —— 上一版表格上方那一整段「共 X 家企业 · 合计 Y 个企业×称号
+ *    (多称号企业在企业数里只算一家…)」、每视图的计数说明、空态里的「可放宽…再试」全部删掉。
+ *    留下的只有页头的总数、筛选控件、表和页脚——**页面上没有一句解释性的话**。
+ * 4. 「把原生 `<select>` 全部换成项目已有的 `Select` 组件」 —— 原先这一页同时存在两套:
+ *    手写的原生 `<select>`(属地 / 总表状态 / 差异方向)与正规的 `Select`(每页条数)。
+ *    现在单值筛选用 `Select`、多值筛选用 `MultiSelectFilter`,**没有一处原生 `<select>`**。
+ * 5. 页面名与侧边栏入口都叫「企业列表」(`lib/labels.ts` 的 `ENTERPRISE_LIST_TITLE` 一处定义)。
  *
  * ── 状态全在地址栏(深链与「返回不丢上下文」)────────────────────────────
- * 视图、全部筛选、页码、展开的行都回写到 URL,用 `replace`(勾选不该把历史塞满)。
+ * 全部筛选、排序、页码、用户打开的抽屉都回写到 URL,用 `replace`(改条件不该把历史塞满)。
  * 刷新、分享链接、从企业详情返回、前进后退,都落回同一个视图。
  */
 
@@ -97,8 +72,8 @@ interface Counts {
   total: number
   titlePairs: number
   titles: Record<string, number>
-  /** 符合本次筛选的「企业 × 称号」**首次认定**数(RL-08)。 */
   recognitionPairs: number
+  differences: number
 }
 
 const apiGet = $fetch as unknown as <T>(
@@ -124,12 +99,12 @@ const positiveInt = (v: unknown): number | null => {
 const clampSize = (n: number) => Math.min(200, Math.max(1, n))
 
 // —— 页面状态:唯一写入方是下面的 watcher,唯一读取方是模板与取数 ——
-const view = ref<LedgerView>(parseLedgerView(route.query[VIEW_PARAM]))
 const state = ref<LedgerState>(ledgerStateFromQuery(route.query))
 const page = ref(positiveInt(route.query.page) ?? 1)
 const pageSize = ref(clampSize(positiveInt(route.query.pageSize) ?? 25))
-const expanded = ref<number | null>(positiveInt(route.query.expand))
-const expandedDetailReadyId = ref<number | null>(null)
+/** 抽屉里那家;**`null` = 抽屉关着**。地址栏参数沿用旧的 `expand`(同一件事的旧写法)。 */
+const selected = ref<number | null>(positiveInt(route.query.expand))
+const drawerReturnFocusTarget = shallowRef<HTMLButtonElement | null>(null)
 
 /** 搜索框本地值(防抖后写进 `state.q`)。 */
 const search = ref(state.value.q)
@@ -145,28 +120,35 @@ const DEFAULT_PAGE_SIZE = 25
 
 /** 页面状态 → 地址栏。只写**有值**的东西,免得分享出一串空参数。 */
 function toRouteQuery(): Record<string, string> {
-  // `view` 由 `ledgerListQuery` 自己写(非默认视图才写),这里不再补一次 ——
-  // 补的那行是 no-op,却让人以为「view 由这里负责」。
-  const q = ledgerListQuery(view.value, state.value)
+  const q = ledgerListQuery(state.value)
   if (page.value > 1) q.page = String(page.value)
   if (pageSize.value !== DEFAULT_PAGE_SIZE) q.pageSize = String(pageSize.value)
-  if (view.value === 'enterprise' && expanded.value != null) q.expand = String(expanded.value)
+  if (selected.value != null) q.expand = String(selected.value)
   return q
 }
 
-/** 完整台账的筛选串(含 `view`),企业详情页靠它「返回台账」落回同一批筛选。 */
-const backQuery = computed(() => {
-  const p = new URLSearchParams({ ...toRouteQuery() })
-  if (!p.has(VIEW_PARAM)) p.set(VIEW_PARAM, view.value)
-  return p.toString()
-})
+/** 完整筛选串(含分页之外的一切),用于「详情页返回台账不丢上下文」。 */
+const backQuery = computed(() => new URLSearchParams(toRouteQuery()).toString())
+
+/**
+ * Route writes are asynchronous. Ignore intermediate query updates from our own
+ * replace() calls so a just-closed drawer cannot be reopened by its stale
+ * `expand` value while the close update is still navigating.
+ */
+let pendingRouteQuery: string | null = null
 
 watch(
-  [view, state, page, pageSize, expanded],
+  [state, page, pageSize, selected],
   () => {
     const next = toRouteQuery()
-    if (normalize(next) === normalize(route.query)) return
-    router.replace({ path: route.path, query: next })
+    const serialized = normalize(next)
+    if (serialized === normalize(route.query)) return
+    pendingRouteQuery = serialized
+    void router.replace({ path: route.path, query: next }).then(() => {
+      if (pendingRouteQuery === serialized && normalize(route.query) === serialized) {
+        pendingRouteQuery = null
+      }
+    })
   },
   { deep: true },
 )
@@ -175,230 +157,163 @@ watch(
 watch(
   () => route.query,
   (q) => {
-    if (normalize(q) === normalize(toRouteQuery())) return
-    view.value = parseLedgerView(q[VIEW_PARAM])
+    const serialized = normalize(q)
+    if (pendingRouteQuery !== null) {
+      if (serialized === pendingRouteQuery) pendingRouteQuery = null
+      return
+    }
+    if (serialized === normalize(toRouteQuery())) return
     state.value = ledgerStateFromQuery(q)
     search.value = state.value.q
     page.value = positiveInt(q.page) ?? 1
     pageSize.value = clampSize(positiveInt(q.pageSize) ?? 25)
-    expanded.value = positiveInt(q.expand)
+    selected.value = positiveInt(q.expand)
   },
   { deep: true },
 )
 
-/** 筛选一变就回到第一页、并收起展开行(页码不是筛选,不参与这个信号)。 */
-const filterSignature = computed(() => normalize(ledgerListQuery(view.value, state.value)))
+function closeDrawer() {
+  selected.value = null
+  pendingRouteQuery = normalize(toRouteQuery())
+}
+
+/** 筛选一变就回到第一页(页码不是筛选,不参与这个信号)。 */
+const filterSignature = computed(() => normalize(ledgerListQuery(state.value)))
 watch(filterSignature, (next, prev) => {
   if (next === prev) return
   page.value = 1
-  expanded.value = null
 })
 
-/** 视图切换:把该视图用不到的筛选**清掉** —— 留在 URL 里会变成看不见、切回来又突然生效的条件。 */
-function setView(next: LedgerView) {
-  if (next === view.value) return
-  // 清哪些、留哪些由 `LEDGER_VIEW_FILTERS` 一处说了算:留一个该视图不发的条件,
-  // 地址栏不体现、用户清不掉,切回来却会生效。
-  state.value = filtersForView(next, state.value)
-  view.value = next
-  page.value = 1
-  expanded.value = null
-}
-
-// —— 取数:只取当前视图,不预取另外两个 ——
+// —— 取数 ——
 const listQuery = computed(() => ({
-  ...ledgerListQuery(view.value, state.value),
+  ...ledgerListQuery(state.value),
   page: page.value,
   pageSize: pageSize.value,
 }))
-
-const {
-  data: enterpriseData,
-  isLoading: loadingEnterprises,
-  asyncStatus: enterprisesStatus,
-  error: enterprisesError,
-  refetch: refetchEnterprises,
-} = useQuery({
-  key: () => ['ledger-enterprises', listQuery.value],
-  query: () =>
-    apiGet<{ rows: EnterpriseRow[]; counts: Counts }>('/api/roster/enterprises', {
-      query: listQuery.value,
-    }),
-  enabled: () => view.value === 'enterprise',
-  placeholderData: (previous) => previous,
-})
-
-const {
-  data: titleData,
-  isLoading: loadingTitles,
-  asyncStatus: titlesStatus,
-  error: titlesError,
-  refetch: refetchTitles,
-} = useQuery({
-  key: () => ['ledger-titles', listQuery.value],
-  query: () => apiGet<{ rows: TitleRow[]; total: number }>('/api/records', { query: listQuery.value }),
-  enabled: () => view.value === 'title',
-  placeholderData: (previous) => previous,
-})
-
-const {
-  data: differenceData,
-  isLoading: loadingDifferences,
-  asyncStatus: differencesStatus,
-  error: differencesError,
-  refetch: refetchDifferences,
-} = useQuery({
-  key: () => ['ledger-differences', listQuery.value],
-  query: () =>
-    apiGet<{ rows: DifferenceRow[]; total: number }>('/api/roster/differences', {
-      query: listQuery.value,
-    }),
-  enabled: () => view.value === 'difference',
-  placeholderData: (previous) => previous,
-})
-
-const enterpriseRows = computed(() => enterpriseData.value?.rows ?? [])
-const titleRows = computed(() => titleData.value?.rows ?? [])
-const differenceRows = computed(() => differenceData.value?.rows ?? [])
-const counts = computed<Counts>(
-  () => enterpriseData.value?.counts ?? { total: 0, titlePairs: 0, titles: {}, recognitionPairs: 0 },
-)
-
-/**
- * 当前视图**正在取数**(含改筛选后的后台重取)。
- *
- * 为什么需要它:`placeholderData` 让上一批结果留在屏上(这是对的,不该闪成空白),
- * 但那样一来「改了筛选,数还没回来」就**完全看不出来** —— 用户会以为新条件筛出来就是
- * 这一屏。`isLoading` 只覆盖「第一次加载」,所以这里看 `asyncStatus`。
- */
-const listLoading = computed(() =>
-  view.value === 'enterprise'
-    ? enterprisesStatus.value === 'loading'
-    : view.value === 'title'
-      ? titlesStatus.value === 'loading'
-      : differencesStatus.value === 'loading',
-)
-
-/** The active list has returned data (or a settled error) and is no longer refetching. */
-const listRendered = computed(() => {
-  if (listLoading.value) return false
-  return view.value === 'enterprise'
-    ? enterpriseData.value != null || enterprisesError.value != null
-    : view.value === 'title'
-      ? titleData.value != null || titlesError.value != null
-      : differenceData.value != null || differencesError.value != null
-})
-watch(expanded, () => {
-  expandedDetailReadyId.value = null
-})
-const returnTargetRendered = computed(() => {
-  if (!listRendered.value) return false
-  if (view.value !== 'enterprise' || expanded.value === null) return true
-  const expandedRowIsVisible = enterpriseRows.value.some((row) => row.enterpriseId === expanded.value)
-  return !expandedRowIsVisible || expandedDetailReadyId.value === expanded.value
-})
-function onExpandedDetailSettled(enterpriseId: number) {
-  if (expanded.value === enterpriseId) expandedDetailReadyId.value = enterpriseId
+type LedgerListQueryParams = typeof listQuery.value
+type LedgerListQueryResult = {
+  rows: EnterpriseListRow[]
+  counts: Counts
+  request: QueryRequestSnapshot<LedgerListQueryParams>
 }
-useEvidencePreviewScrollRestore(returnTargetRendered)
 
-const total = computed(() =>
-  view.value === 'enterprise'
-    ? counts.value.total
-    : view.value === 'title'
-      ? (titleData.value?.total ?? 0)
-      : (differenceData.value?.total ?? 0),
-)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
-watch(totalPages, (max) => {
-  if (page.value > max) page.value = max
+const activeRequest = computed(() => captureQueryRequest('ledger-enterprises', listQuery.value))
+const activeRequestKey = computed(() => activeRequest.value.key)
+
+const { data, isLoading, error, refetch } = useQuery<LedgerListQueryResult>({
+  key: () => ['ledger-enterprises', listQuery.value],
+  query: async ({ entry }) => {
+    // Read the immutable params belonging to this cache entry. Reactive page or
+    // filter refs may already have moved by the time this async query executes.
+    const request = captureQueryRequest('ledger-enterprises', entry.key[1] as typeof listQuery.value)
+    const response = await apiGet<{ rows: EnterpriseListRow[]; counts: Counts }>(
+      '/api/roster/enterprises',
+      { query: request.params },
+    )
+    return { ...response, request }
+  },
+  // 换条件时**留住上一批行**:表体只轻微浮起,不清空 —— 空表会让用户以为「筛没了」。
+  placeholderData: (previous) => previous,
 })
 
-/** 屏上当前有多少行(用来区分「第一次加载」与「旧结果还在、新的在路上」)。 */
-const rowsOnScreen = computed(() =>
-  view.value === 'enterprise'
-    ? enterpriseRows.value.length
-    : view.value === 'title'
-      ? titleRows.value.length
-      : differenceRows.value.length,
+const {
+  displayed: displayedResult,
+  paginationDisabled,
+  failureDescription,
+} = useRetainedQuerySnapshot<LedgerListQueryParams, LedgerListQueryResult>(data, isLoading, error, activeRequest)
+const rows = computed(() => displayedResult.value?.rows ?? [])
+const counts = computed<Counts>(
+  () => displayedResult.value?.counts ?? { total: 0, titlePairs: 0, titles: {}, recognitionPairs: 0, differences: 0 },
 )
+const total = computed(() => counts.value.total)
+const displayedPage = computed(() => displayedResult.value?.request.page ?? page.value)
+const displayedPageSize = computed(() => displayedResult.value?.request.pageSize ?? pageSize.value)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / displayedPageSize.value)))
 
-/**
- * 屏上**已有结果**、但当前条件的那一批还在路上。
- *
- * 为什么要单独说一句:`placeholderData` 会把上一批结果留在屏上(对的,不该闪成空白),
- * 于是「改了筛选、数还没回来」看上去和「已经筛好了」一模一样 —— 用户会照着**旧条件的数字**
- * 下判断。`isLoading` 在 colada 里就是 `asyncStatus === 'loading'`(重取时同样为真),
- * 没有「第几次」的信息,所以这里用「屏上有没有行」来区分:第一次加载时屏上是骨架屏,
- * 不该再叠一个「加载中」。
- */
-const listRefetching = computed(() => listLoading.value && rowsOnScreen.value > 0)
+/** 只在成功响应结算后纠正页码并清理已离开结果集的选择。失败响应不能把页码退回 1。 */
+watch([data, activeRequestKey, isLoading, error], ([result, key, loading, failure]) => {
+  if (!result || result.request.key !== key || loading || failure) return
+  const maxPage = Math.max(1, Math.ceil(result.counts.total / result.request.pageSize))
+  if (page.value > maxPage) {
+    page.value = maxPage
+    return
+  }
+  if (selected.value == null) return
+  if (!result.rows.some((row) => row.enterpriseId === selected.value)) {
+    selected.value = null
+    drawerReturnFocusTarget.value = null
+  }
+}, { flush: 'post' })
 
-const activeError = computed(() =>
-  view.value === 'enterprise'
-    ? enterprisesError.value
-    : view.value === 'title'
-      ? titlesError.value
-      : differencesError.value,
-)
 function retry() {
-  if (view.value === 'enterprise') refetchEnterprises()
-  else if (view.value === 'title') refetchTitles()
-  else refetchDifferences()
+  refetch()
+}
+function setPage(n: number) {
+  page.value = Math.min(Math.max(1, n), totalPages.value)
+}
+function selectRow(id: number, trigger: HTMLButtonElement | null) {
+  selected.value = id
+  drawerReturnFocusTarget.value = trigger
 }
 
 // —— 筛选项 ——
 const titleOptions = computed(() =>
   TITLE_ORDER.map((code) => ({ value: code, label: TITLES[code] ?? code, short: TITLE_SHORT[code] })),
 )
-const sourceOptions = computed(() => SOURCE_ORDER.map((code) => ({ value: code, label: SOURCES[code] ?? code })))
-const statusOptions = computed(() =>
-  DIFFERENCE_STATUS_ORDER.map((code) => ({ value: code, label: DIFFERENCE_STATUSES[code] ?? code })),
-)
-const reasonOptions = computed(() =>
-  DIFFERENCE_REASON_ORDER.map((code) => ({ value: code, label: DIFFERENCE_REASONS[code] ?? code })),
-)
-/** 首次认定状态(RL-08):两态,标签取自 `lib/labels.ts` 的单一出处。 */
+const { data: yearStats } = useQuery({
+  key: () => ['stats'],
+  query: () => apiGet<{
+    byYear: { key: string; n: number }[]
+    byFirstRecognitionYear: { key: string; n: number }[]
+  }>('/api/stats'),
+})
+const yearOptions = computed(() => ledgerYearOptions(
+  (yearStats.value?.byYear ?? []).map(bucket => bucket.key),
+  state.value.year,
+))
+const firstYearOptions = computed(() => ledgerYearOptions(
+  (yearStats.value?.byFirstRecognitionYear ?? []).map(bucket => bucket.key),
+  state.value.firstYear,
+))
 const firstStatusOptions = computed(() =>
-  FIRST_RECOGNITION_STATUS_ORDER.map((code) => ({
+  FIRST_RECOGNITION_STATUS_ORDER.map(code => ({
     value: code,
     label: FIRST_RECOGNITION_STATUSES[code] ?? code,
   })),
 )
+const statusOptions = ROSTER_DIFFERENCE_FILTER_OPTIONS
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 
-/** 事件年份与首次认定年份分别取各自的统计桶,不混用 `record_event.year` 与生命周期年份。 */
-const { data: stats } = useQuery({
-  key: () => ['stats'],
-  query: () =>
-    apiGet<{
-      byEvent: { key: string; n: number }[]
-      byYear: { key: string; n: number }[]
-      byFirstRecognitionYear: { key: string; n: number }[]
-    }>('/api/stats'),
+/**
+ * 「全部」在 `Select` 里必须是一个**非空**的哨兵值。
+ *
+ * 空字符串不行:reka-ui 的 `SelectItem` 用 `''` 表示「没有值」,给它会触发
+ * 「item 的 value 不能是空串」的守卫(实测会往控制台报警告),而控制台干净是
+ * `verify-ledger-ui` 的一条硬线。所以界面用哨兵、状态里仍然存 `''`(「没筛」)。
+ */
+const ALL_DISTRICTS = '__all__'
+const districtModel = computed({
+  get: () => state.value.district || ALL_DISTRICTS,
+  set: (v: string) => {
+    state.value = { ...state.value, district: v === ALL_DISTRICTS ? '' : v }
+  },
 })
-const eventOptions = computed(() => {
-  const present = new Set((stats.value?.byEvent ?? []).map((b) => b.key))
-  const known = EVENT_ORDER.filter((k) => present.has(k))
-  const list = known.length ? known : EVENT_ORDER
-  return list.map((k) => ({ value: k, label: EVENTS[k] ?? k }))
-})
-const yearOptions = computed(() =>
-  (stats.value?.byYear ?? [])
-    .map((b) => b.key)
-    .filter((k) => /^\d{4}$/.test(k))
-    .sort((a, b) => b.localeCompare(a))
-    .map((y) => ({ value: y, label: y })),
-)
-const firstYearOptions = computed(() =>
-  (stats.value?.byFirstRecognitionYear ?? [])
-    .map((b) => b.key)
-    .filter((k) => /^\d{4}$/.test(k))
-    .sort((a, b) => b.localeCompare(a))
-    .map((y) => ({ value: y, label: y })),
+
+const sortOptions = computed(() =>
+  ENTERPRISE_SORT_ORDER.map((code) => ({
+    value: code,
+    label: code === 'recognition' ? '认定年排序' : (ENTERPRISE_SORT_LABELS[code] ?? code),
+    hint: ENTERPRISE_SORT_HINTS[code] ?? '',
+  })),
 )
 
-// —— 生效中的条件:摊平成一行,每项可单独撤掉 ——
+/**
+ * 生效中的条件摊平成一行,每项可单独撤掉。
+ *
+ * `source` / `eventType` / `rosterState` **没有常驻控件**(它们来自 `/stats` 的下钻),
+ * 但一直在 state 里生效 —— 所以必须出现在这一行里。不出现在这里,它们就是**静默筛选**:
+ * 地址栏里带着、页面上看不见、也清不掉。
+ */
 interface ActiveFilter {
   key: string
   label: string
@@ -411,7 +326,7 @@ const activeFilters = computed<ActiveFilter[]>(() => {
     state.value = { ...state.value, [key]: value }
   }
   const without = (
-    key: 'title' | 'source' | 'eventType' | 'year' | 'firstYear' | 'firstStatus' | 'status' | 'reason',
+    key: 'title' | 'source' | 'eventType' | 'year' | 'firstYear' | 'firstStatus' | 'diffStatus',
     drop: string,
   ) =>
     patch(
@@ -428,15 +343,11 @@ const activeFilters = computed<ActiveFilter[]>(() => {
     ...(s.district
       ? [{ key: 'district', label: `属地 · ${s.district}`, clear: () => patch('district', '') }]
       : []),
-    ...(s.rosterState
-      ? [
-          {
-            key: 'rosterState',
-            label: `总表状态 · ${s.rosterState === 'current' ? '当前总表' : '仅平台引入(已移除)'}`,
-            clear: () => patch('rosterState', ''),
-          },
-        ]
-      : []),
+    ...s.diffStatus.map((v) => ({
+      key: `diffStatus:${v}`,
+      label: `差异状态 · ${rosterDifferenceFilterLabel(v)}`,
+      clear: () => without('diffStatus', v),
+    })),
     ...s.source.map((v) => ({
       key: `source:${v}`,
       label: `来源 · ${SOURCES[v] ?? v}`,
@@ -450,7 +361,7 @@ const activeFilters = computed<ActiveFilter[]>(() => {
     ...s.year.map((v) => ({ key: `year:${v}`, label: `年份 · ${v}`, clear: () => without('year', v) })),
     ...s.firstYear.map((v) => ({
       key: `firstYear:${v}`,
-      label: `首次认定 · ${v}`,
+      label: `首次认定年 · ${v}`,
       clear: () => without('firstYear', v),
     })),
     ...s.firstStatus.map((v) => ({
@@ -458,22 +369,12 @@ const activeFilters = computed<ActiveFilter[]>(() => {
       label: `首次认定 · ${FIRST_RECOGNITION_STATUSES[v] ?? v}`,
       clear: () => without('firstStatus', v),
     })),
-    ...s.status.map((v) => ({
-      key: `status:${v}`,
-      label: `状态 · ${DIFFERENCE_STATUSES[v] ?? v}`,
-      clear: () => without('status', v),
-    })),
-    ...s.reason.map((v) => ({
-      key: `reason:${v}`,
-      label: `原因 · ${DIFFERENCE_REASONS[v] ?? v}`,
-      clear: () => without('reason', v),
-    })),
-    ...(s.direction
+    ...(s.rosterState
       ? [
           {
-            key: 'direction',
-            label: `方向 · ${comparisonDirectionLabel(s.direction)}`,
-            clear: () => patch('direction', ''),
+            key: 'rosterState',
+            label: `总表状态 · ${s.rosterState === 'current' ? '当前总表' : '仅平台引入(已移除)'}`,
+            clear: () => patch('rosterState', ''),
           },
         ]
       : []),
@@ -492,411 +393,189 @@ const activeFilters = computed<ActiveFilter[]>(() => {
   ]
 })
 
+const filtered = computed(() => activeFilters.value.length > 0)
+
 function clearFilters() {
   search.value = ''
   state.value = { ...EMPTY_LEDGER_STATE }
 }
 
-const exportUrl = computed(() => ledgerExportUrl(view.value, state.value))
+const exportUrl = computed(() => ledgerExportUrl(state.value))
 
-// —— 每页条数 ——
-const PAGE_SIZE_PRESETS = [25, 50, 100, 200]
-const customSize = ref(false)
-const sizeModel = computed({
-  get: () => (customSize.value ? 'custom' : String(pageSize.value)),
+// —— 排序 / 每页条数(都是显示偏好,不是筛选)——
+const sortModel = computed({
+  get: () => state.value.sort,
   set: (v: string) => {
-    if (v === 'custom') {
-      customSize.value = true
-      return
-    }
-    customSize.value = false
-    setPageSize(Number(v))
+    state.value = { ...state.value, sort: v as LedgerState['sort'] }
   },
 })
-const isCustomSize = computed(() => customSize.value)
+
 function setPageSize(n: number) {
   pageSize.value = clampSize(Math.trunc(n) || DEFAULT_PAGE_SIZE)
   page.value = 1
 }
-function onSizeInput(e: Event) {
-  const value = Number((e.target as HTMLInputElement).value)
-  if (Number.isFinite(value) && value > 0) setPageSize(value)
-}
-function setPage(n: number) {
-  page.value = Math.min(Math.max(1, n), totalPages.value)
-}
 
-function toggle(id: number) {
-  expanded.value = expanded.value === id ? null : id
-}
-function openEnterprise(path: string) {
-  router.push(path)
-}
-
-const VIEW_TABS: { value: LedgerView; label: string; hint: string }[] = [
-  { value: 'enterprise', label: '按企业', hint: '一行一家企业,跨称号去重;称号与事件在展开里' },
-  { value: 'title', label: '按企业×称号', hint: '一行一个企业×称号,来源与事件直接列在行内' },
-  { value: 'difference', label: '差异与原因', hint: '每(企业 × 称号 × 方向)一条当前解释' },
-]
-
-const UNIT = computed(() =>
-  view.value === 'enterprise' ? '家企业' : view.value === 'title' ? '行(企业×称号)' : '项差异',
-)
-
-/**
- * 页面标题(浏览器标签 / 历史记录 / 书签)。
- *
- * 全仓没有一处设过 `document.title`(实测为空字符串),所以这里顺手给台账页补上 ——
- * 一个三视图、且视图与筛选都写在地址栏里的页面,标签页上只显示空白就完全认不出来。
- * 带上视图名与当前条数:多开几个标签、或从历史里找回来时,一眼能看出是哪一个。
- */
-const VIEW_TITLE: Record<LedgerView, string> = {
-  enterprise: '按企业',
-  title: '按企业×称号',
-  difference: '差异与原因',
-}
-const UNIT_SHORT = computed(() =>
-  view.value === 'enterprise' ? '家企业' : view.value === 'title' ? '行' : '项差异',
-)
 useHead({
   title: computed(() => {
-    const n = total.value ? `${total.value.toLocaleString('zh-CN')} ${UNIT_SHORT.value}` : '加载中'
-    return `${VIEW_TITLE[view.value]} · ${n} · 名录台账`
+    const n = total.value ? `${total.value.toLocaleString('zh-CN')} 家企业` : '加载中'
+    return `${ENTERPRISE_LIST_TITLE} · ${n}`
   }),
 })
-
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
-    <PageHeader class="rise-in" style="--rise-index: 0" title="名录台账">
-      <template #description>
-        <span class="inline-block">
-          公布文件是唯一权威来源,平台只作对照。同一份数据两种分组:<strong>按企业</strong>一企一行,
-          <strong>按企业×称号</strong>一行一个称号并列出来源与事件。
-        </span>
-      </template>
+  <div class="ledger-page flex min-w-0 flex-col gap-2 sm:gap-3">
+    <PageHeader :title="ENTERPRISE_LIST_TITLE">
       <template #actions>
-        <Button v-if="exportUrl" as-child variant="outline" size="sm">
-          <a :href="exportUrl"><ExternalLink class="size-3.5" />{{ ledgerExportLabel(view) }}</a>
+        <Button as-child variant="outline" size="sm">
+          <a :href="exportUrl"><ExternalLink class="size-3.5" />{{ LEDGER_EXPORT_LABEL }}</a>
         </Button>
       </template>
     </PageHeader>
 
-    <!-- 分组 + 筛选条:三个视图共用。 -->
-    <div class="rise-in flex flex-col gap-2" style="--rise-index: 1">
-      <div class="flex flex-wrap items-center gap-2">
-        <div class="bg-muted inline-flex rounded-md p-0.5" role="tablist" aria-label="台账分组">
-          <button
-            v-for="t in VIEW_TABS"
-            :key="t.value"
-            type="button"
-            role="tab"
-            :aria-selected="view === t.value"
-            :title="t.hint"
-            class="rounded-sm px-3 py-1 text-xs transition-colors"
-            :class="
-              view === t.value
-                ? 'bg-background text-foreground font-medium shadow-xs'
-                : 'text-muted-foreground hover:text-foreground'
-            "
-            @click="setView(t.value)"
-          >
-            {{ t.label }}
-          </button>
-        </div>
-
-        <div class="relative min-w-48 flex-1 sm:max-w-56">
-          <Search
-            class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-          />
-          <Input
-            v-model="search"
-            class="bg-card h-8 pl-8"
-            placeholder="企业名 / 曾用名 / 统一社会信用代码"
-            aria-label="按企业名称、已确认曾用名或统一社会信用代码搜索"
-          />
-        </div>
-
-        <Separator orientation="vertical" class="hidden h-5 sm:block" />
-
-        <MultiSelectFilter
-          v-model="state.title"
-          :options="titleOptions"
-          placeholder="全部称号"
-          summary-prefix="称号"
-          class="w-28"
+    <div data-testid="ledger-filters" class="flex flex-wrap items-center gap-2">
+      <div class="relative w-full sm:w-72">
+        <Search
+          class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
         />
-        <template v-if="view !== 'difference'">
-          <MultiSelectFilter
-            v-model="state.source"
-            :options="sourceOptions"
-            placeholder="全部来源"
-            summary-prefix="来源"
-            class="w-24"
-          />
-          <MultiSelectFilter
-            v-model="state.eventType"
-            :options="eventOptions"
-            placeholder="全部事件"
-            summary-prefix="事件"
-            class="w-24"
-          />
-          <MultiSelectFilter
-            v-model="state.year"
-            :options="yearOptions"
-            placeholder="全部年份"
-            summary-prefix="年份"
-            class="w-24"
-          />
-          <select
-            v-model="state.district"
-            class="border-input bg-background h-8 rounded-md border px-2 text-sm"
-            aria-label="按属地筛选"
-          >
-            <option value="">全部属地</option>
-            <option v-for="d in districtOptions" :key="d" :value="d">{{ d }}</option>
-          </select>
-        </template>
-        <template v-if="view === 'enterprise'">
-          <!-- RL-08:首次认定两个判据(年份 / 状态)。与上面的「年份」是两回事:
-               那个筛**事件**年份,这两个筛该称号**首次认定**的年份与状态。 -->
-          <MultiSelectFilter
-            v-model="state.firstYear"
-            :options="firstYearOptions"
-            placeholder="首次认定年份"
-            summary-prefix="首次认定"
-            class="w-32"
-          />
-          <MultiSelectFilter
-            v-model="state.firstStatus"
-            :options="firstStatusOptions"
-            placeholder="首次认定状态"
-            summary-prefix="首次认定"
-            class="w-32"
-          />
-          <select
-            v-model="state.rosterState"
-            class="border-input bg-background h-8 rounded-md border px-2 text-sm"
-            aria-label="按总表状态筛选"
-          >
-            <option value="">全部总表状态</option>
-            <option value="current">当前总表</option>
-            <option value="removed_platform_only">仅平台引入(已从当前总表移除)</option>
-          </select>
-        </template>
-        <template v-if="view === 'difference'">
-          <select
-            v-model="state.direction"
-            class="border-input bg-background h-8 rounded-md border px-2 text-sm"
-            aria-label="按差异方向筛选"
-          >
-            <option value="">两个方向</option>
-            <option value="missing_in_miit">{{ comparisonDirectionLabel('missing_in_miit') }}({{ comparisonDirectionNote('missing_in_miit') }})</option>
-            <option value="extra_in_miit">{{ comparisonDirectionLabel('extra_in_miit') }}({{ comparisonDirectionNote('extra_in_miit') }})</option>
-          </select>
-          <MultiSelectFilter
-            v-model="state.status"
-            :options="statusOptions"
-            placeholder="全部状态"
-            summary-prefix="状态"
-            class="w-24"
-          />
-          <MultiSelectFilter
-            v-model="state.reason"
-            :options="reasonOptions"
-            placeholder="全部原因"
-            summary-prefix="原因"
-            class="w-24"
-          />
-        </template>
+        <Input
+          v-model="search"
+          class="bg-card h-8 pl-8 shadow-none"
+          placeholder="搜索企业名称或统一社会信用代码"
+          aria-label="按企业名称、已确认曾用名或统一社会信用代码搜索"
+        />
       </div>
-
-      <!-- 生效中的条件摊开写出来:光看下拉按钮看不出年份里到底勾了哪几年 -->
-      <TransitionGroup
-        v-if="activeFilters.length"
-        tag="div"
-        class="flex flex-wrap items-center gap-1.5"
-        enter-active-class="transition duration-150 ease-snap"
-        enter-from-class="scale-90 opacity-0"
-        leave-active-class="transition duration-100 ease-snap"
-        leave-to-class="scale-90 opacity-0"
-        move-class="transition duration-150 ease-snap"
-      >
-        <FilterChip v-for="f in activeFilters" :key="f.key" :label="f.label" @remove="f.clear()" />
-        <Button
-          variant="ghost"
+      <MultiSelectFilter
+        v-model="state.title"
+        :options="titleOptions"
+        placeholder="全部称号"
+        summary-prefix="称号"
+        class="w-28 shadow-none"
+      />
+      <Select v-model="districtModel">
+        <SelectTrigger
           size="sm"
-          class="text-muted-foreground h-6 px-1.5 text-xs"
-          @click="clearFilters"
+          class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-28 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100"
+          :data-active="state.district !== ''"
+          aria-label="按属地筛选"
         >
-          清除全部
-        </Button>
-      </TransitionGroup>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent class="shadow-none">
+          <SelectItem :value="ALL_DISTRICTS">全部属地</SelectItem>
+          <SelectItem v-for="d in districtOptions" :key="d" :value="d">{{ d }}</SelectItem>
+        </SelectContent>
+      </Select>
+      <MultiSelectFilter
+        v-model="state.diffStatus"
+        :options="statusOptions"
+        placeholder="全部差异状态"
+        summary-prefix="差异"
+        class="w-32 shadow-none"
+      />
+      <MultiSelectFilter
+        v-model="state.year"
+        :options="yearOptions"
+        placeholder="全部年份"
+        summary-prefix="年份"
+        class="w-28 shadow-none"
+      />
+      <MultiSelectFilter
+        v-model="state.firstYear"
+        :options="firstYearOptions"
+        placeholder="首次认定年份"
+        summary-prefix="首次认定"
+        class="w-32 shadow-none"
+      />
+      <MultiSelectFilter
+        v-model="state.firstStatus"
+        :options="firstStatusOptions"
+        placeholder="首次认定状态"
+        summary-prefix="首次认定"
+        class="w-32 shadow-none"
+      />
+      <Select v-model="sortModel">
+        <SelectTrigger
+          size="sm"
+          class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-32 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100"
+          :data-active="state.sort !== DEFAULT_SORT"
+          aria-label="排序方式"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent class="shadow-none">
+          <SelectItem v-for="opt in sortOptions" :key="opt.value" :value="opt.value" :title="opt.hint">
+            {{ opt.label }}
+          </SelectItem>
+        </SelectContent>
+      </Select>
     </div>
 
-    <!-- ── 计数行:两个口径并排说清 ─────────────────────────────────────── -->
-    <p
-      class="rise-in text-muted-foreground text-[13px] leading-relaxed tabular-nums"
-      style="--rise-index: 2"
-      aria-live="polite"
-      :aria-busy="listRefetching"
-      data-testid="ledger-counts"
+    <!-- 生效中的条件:一个都不许藏着(见 `activeFilters` 的注释)。 -->
+    <TransitionGroup
+      v-if="activeFilters.length"
+      tag="div"
+      class="flex flex-wrap items-center gap-1.5"
+      enter-active-class="transition duration-150 ease-snap"
+      enter-from-class="scale-90 opacity-0"
+      leave-active-class="transition duration-100 ease-snap"
+      leave-to-class="scale-90 opacity-0"
+      move-class="transition duration-150 ease-snap"
     >
-      <!-- 改筛选后正在重取:旧数字还在,但必须让人知道它已经过期。 -->
-      <span
-        v-if="listRefetching"
-        class="text-muted-foreground mr-2 inline-flex items-center gap-1"
-        data-testid="ledger-loading"
+      <FilterChip v-for="f in activeFilters" :key="f.key" :label="f.label" @remove="f.clear()" />
+      <Button
+        variant="ghost"
+        size="sm"
+        class="text-muted-foreground h-6 px-1.5 text-xs"
+        @click="clearFilters"
       >
-        <LoaderCircle class="size-3 animate-spin" aria-hidden="true" />加载中
-      </span>
-      <template v-if="view === 'enterprise'">
-        共 <span class="text-foreground font-medium">{{ counts.total.toLocaleString('zh-CN') }}</span>
-        <strong>家企业</strong> · 合计
-        <span class="text-foreground font-medium">{{ counts.titlePairs.toLocaleString('zh-CN') }}</span>
-        个 <strong>企业 × 称号</strong>(多称号企业在企业数里只算一家,在每个称号里各计一次;导出与本页同筛选、同口径),
-        其中 <span class="text-foreground font-medium">{{ counts.recognitionPairs.toLocaleString('zh-CN') }}</span>
-        个有<strong>首次认定</strong>
-      </template>
-      <template v-else-if="view === 'title'">
-        符合条件 <span class="text-foreground font-medium">{{ total.toLocaleString('zh-CN') }}</span> 行
-        <strong>企业 × 称号</strong>(本视图按企业×称号分行;切到「按企业」把同一批企业去重成一行一家)
-      </template>
-      <template v-else>
-        本筛选下 <span class="text-foreground font-medium">{{ total.toLocaleString('zh-CN') }}</span> 项差异
-        (一行 = 一个企业 × 称号 × 方向的<strong>当前</strong>解释;状态只从已存下的解释记录取,没有的显示状态机的「未查询」)
-      </template>
-    </p>
+        清除全部
+      </Button>
+    </TransitionGroup>
 
-    <!--
-      称号桶只在「按企业」下有意义:它是**企业数**按称号分的桶,来自企业读模型的 `counts`。
-      「按企业×称号」的分行数(10,501)按定义就等于这些桶之和,再列一遍是重复;
-      而记录读接口只给一个合计,拿不到分称号的企业数 —— 与其显示一排 0,不如不显示。
-    -->
-    <div
-      v-if="view === 'enterprise'"
-      class="rise-in flex flex-wrap gap-x-4 gap-y-1 text-xs"
-      style="--rise-index: 2"
-    >
-      <span v-for="code in TITLE_ORDER" :key="code" class="text-muted-foreground tabular-nums">
-        {{ TITLES[code] }}
-        <span class="text-foreground font-medium">{{ counts.titles[code] ?? 0 }}</span> 家
-      </span>
-    </div>
 
-    <Alert v-if="activeError" variant="destructive">
-      <AlertTitle>台账加载失败</AlertTitle>
-      <AlertDescription
-        ><Button variant="outline" size="sm" @click="retry()">重试</Button></AlertDescription
-      >
-    </Alert>
-
-    <Card class="rise-in gap-0 overflow-hidden py-0" style="--rise-index: 3">
-      <CardContent class="p-0">
-        <div>
-          <RosterEnterpriseTable
-            v-if="view === 'enterprise'"
-            :rows="enterpriseRows"
-            :loading="loadingEnterprises"
-            :has-error="!!enterprisesError"
-            :expanded-id="expanded"
-            :back-query="backQuery"
-            @toggle="toggle"
-            @detail-ready="onExpandedDetailSettled"
-          />
-          <RosterTitleTable
-            v-else-if="view === 'title'"
-            :rows="titleRows"
-            :loading="loadingTitles"
-            :has-error="!!titlesError"
-            :back-query="backQuery"
-            @open="openEnterprise"
-          />
-          <RosterDifferenceTable
-            v-else
-            :rows="differenceRows"
-            :loading="loadingDifferences"
-            :has-error="!!differencesError"
-          />
-        </div>
+    <Card class="gap-0 overflow-hidden py-0 shadow-none">
+      <CardContent class="relative p-0">
+        <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在搜索…" />
+        <TableFailureState v-if="error" title="企业列表暂时无法加载" :compact="rows.length > 0" :pending="isLoading" :description="failureDescription" @retry="retry" />
+        <EnterpriseListTable
+          v-if="!error || rows.length > 0"
+          :rows="rows"
+          :loading="isLoading"
+          :has-error="!!error"
+          :selected-id="selected"
+          :filtered="filtered"
+          @select="selectRow"
+          @clear-filters="clearFilters"
+        />
       </CardContent>
     </Card>
 
-    <div class="rise-in flex flex-wrap items-center gap-x-4 gap-y-3" style="--rise-index: 4">
-      <div class="flex items-center gap-2">
-        <span class="text-muted-foreground text-xs">每页</span>
-        <Select v-model="sizeModel">
-          <SelectTrigger class="bg-card h-8 w-20" aria-label="每页条数">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="n in PAGE_SIZE_PRESETS" :key="n" :value="String(n)">{{ n }}</SelectItem>
-            <SelectItem value="custom">自定义…</SelectItem>
-          </SelectContent>
-        </Select>
-        <Input
-          v-if="isCustomSize"
-          :model-value="pageSize"
-          type="number"
-          min="1"
-          :max="200"
-          class="bg-card h-8 w-20"
-          aria-label="自定义每页条数"
-          @change="onSizeInput"
-        />
-        <span class="text-muted-foreground text-xs">{{ UNIT }}</span>
-      </div>
+    <TablePagination v-if="!error || rows.length > 0" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="家企业" @update:page="setPage" @update:page-size="setPageSize">
+      共 {{ total.toLocaleString('zh-CN') }} 家<span v-if="state.firstYear.length || state.firstStatus.length"> · 首次认定 {{ counts.recognitionPairs.toLocaleString('zh-CN') }} 组</span> · 差异 {{ counts.differences.toLocaleString('zh-CN') }} 条
+    </TablePagination>
 
-      <span class="text-muted-foreground text-xs tabular-nums">第 {{ page }} / {{ totalPages }} 页</span>
-
-      <Pagination
-        v-if="total > 0"
-        v-slot="{ page: current }"
-        class="mx-0 w-full justify-center sm:ml-auto sm:w-auto sm:justify-end"
-        :page="page"
-        :items-per-page="pageSize"
-        :total="total"
-        :sibling-count="1"
-        :show-edges="totalPages > 5"
-        @update:page="setPage"
-      >
-        <!-- 窄屏必须允许换行:`PaginationContent` 的基础类是 `flex-row`(不换行),
-             而 `sibling-count=1` + `show-edges` 在几百页时会有 11 个条目(实测 452px)。
-             不换行就会**撑破页面**并且横向溢出(实测 390 视口下 documentElement
-             scrollWidth 468 / clientWidth 390,溢出 78px)—— 表格自己有滚动容器,
-             分页条没有。 -->
-        <PaginationContent v-slot="{ items }" class="flex-wrap justify-center sm:justify-end">
-          <!-- 首/末/上/下一页的禁用态与页码变更由 reka-ui 的 Pagination 自己管,
-               这里只给图标和中文文案。 -->
-          <PaginationFirst class="hidden sm:flex">
-            <ChevronsLeft class="size-4" />
-            <span class="sr-only">第一页</span>
-          </PaginationFirst>
-          <PaginationPrevious>
-            <ChevronLeft class="size-4" />
-            <span class="hidden sm:block">上一页</span>
-          </PaginationPrevious>
-          <template v-for="(item, index) in items" :key="index">
-            <PaginationItem
-              v-if="item.type === 'page'"
-              :value="item.value"
-              :is-active="item.value === current"
-            >
-              {{ item.value }}
-            </PaginationItem>
-            <PaginationEllipsis v-else :index="index" />
-          </template>
-          <PaginationNext>
-            <span class="hidden sm:block">下一页</span>
-            <ChevronRight class="size-4" />
-          </PaginationNext>
-          <PaginationLast class="hidden sm:flex">
-            <ChevronsRight class="size-4" />
-            <span class="sr-only">最后一页</span>
-          </PaginationLast>
-        </PaginationContent>
-      </Pagination>
-    </div>
+    <!--
+      抽屉(三处基本动效之三:滑出)。**非模态**:开着它照样能看表、能接着点别的行
+      —— 设计稿里被选中的那一行是亮着的,表格没有变暗。
+    -->
+    <EnterpriseDrawer
+      :enterprise-id="selected"
+      :back-query="backQuery"
+      :return-focus-target="drawerReturnFocusTarget"
+      @close="closeDrawer"
+    />
   </div>
 </template>
+
+<style scoped>
+.ledger-page :deep([data-slot='button']) {
+  box-shadow: none;
+}
+
+.ledger-page :deep(.text-xs) {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+</style>

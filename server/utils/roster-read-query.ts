@@ -26,6 +26,12 @@ import {
 } from '../../lib/roster/enterprise-roster'
 import { FIRST_RECOGNITION_STATUS_VALUES } from '../../lib/roster/first-recognition'
 import type { RosterRecognitionFilter } from '../../lib/roster/recognitions'
+import {
+  DEFAULT_ROSTER_ENTERPRISE_SORT,
+  ROSTER_DIFFERENCE_FILTER_VALUES,
+  ROSTER_ENTERPRISE_SORTS,
+} from '../../lib/roster/ledger-contract'
+import type { RosterEnterpriseSort } from '../../lib/roster/ledger-contract'
 
 /** 取单值字符串参数(数组取第一个),空串当「没给」。 */
 export function strParam(value: unknown): string | undefined {
@@ -62,6 +68,18 @@ function yearsParam(value: unknown): number[] | undefined {
     ?.map((s) => Number(s))
     .filter((n) => Number.isInteger(n) && n > 0)
   return list?.length ? list : undefined
+}
+
+function sortParam(value: unknown): RosterEnterpriseSort {
+  const raw = strParam(value)
+  if (raw == null) return DEFAULT_ROSTER_ENTERPRISE_SORT
+  if (!(ROSTER_ENTERPRISE_SORTS as readonly string[]).includes(raw)) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: `Unknown sort; expected ${ROSTER_ENTERPRISE_SORTS.join(', ')}`,
+    })
+  }
+  return raw as RosterEnterpriseSort
 }
 
 const ROSTER_STATE_VALUES: readonly RosterState[] = ['current', 'removed_platform_only']
@@ -112,6 +130,11 @@ export function parseRosterEnterpriseQuery(query: Record<string, unknown>): Rost
       statusMessage: `Unknown rosterState; expected ${ROSTER_STATE_VALUES.join(', ')}`,
     })
   }
+  const diffStatus = knownOrThrow(
+    parseCsvQuery(query.diffStatus),
+    ROSTER_DIFFERENCE_FILTER_VALUES,
+    'diffStatus',
+  )
   return {
     q: strParam(query.q),
     title,
@@ -129,6 +152,8 @@ export function parseRosterEnterpriseQuery(query: Record<string, unknown>): Rost
       FIRST_RECOGNITION_STATUS_VALUES,
       'firstStatus',
     ),
+    diffStatus,
+    sort: sortParam(query.sort),
     page: intParam(query.page, 1),
     pageSize: intParam(query.pageSize, 50),
   }

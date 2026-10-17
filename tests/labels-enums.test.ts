@@ -6,6 +6,7 @@ import {
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
   DIFFERENCE_STATUS_ORDER,
+  DIFFERENCE_STATUS_RAILS,
   DIFFERENCE_STATUS_VARIANTS,
   EVENTS,
   EXPORT_IMPORT_STATUSES,
@@ -78,6 +79,7 @@ describe('差异状态的标签 / 徽章色 / 展示顺序同键集合(RL-15)', 
     expect(IDENTITY(Object.keys(DIFFERENCE_STATUSES))).toEqual(IDENTITY(values))
     expect(IDENTITY(Object.keys(DIFFERENCE_STATUS_VARIANTS))).toEqual(IDENTITY(values))
     expect(IDENTITY(DIFFERENCE_STATUS_ORDER)).toEqual(IDENTITY(values))
+    expect(IDENTITY(Object.keys(DIFFERENCE_STATUS_RAILS))).toEqual(IDENTITY(values))
   })
 
   it('每个状态都有徽章色 —— 没有取值会掉到兜底的 quiet', () => {

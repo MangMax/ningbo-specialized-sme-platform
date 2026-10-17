@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { computed, nextTick, shallowRef, watch } from 'vue'
-import { ArrowLeftRight, ChevronLeft, ChevronRight, GitCompareArrows } from '@lucide/vue'
+import { GitCompareArrows, Search } from '@lucide/vue'
 import type {
   ComparisonCounts,
   ComparisonDirection,
@@ -9,8 +9,13 @@ import type {
 import type { CuratedRow } from '~~/lib/curation'
 import type { ComparisonPlatformEvidence } from '~~/lib/comparison-platform'
 import type { ReconcileEntry } from '~~/lib/reconcile'
-import { latestFetchLabel } from '~~/lib/reconcile-time'
 import { useScrollEdges } from '~~/lib/scroll-edges'
+import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
+import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
+import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
+import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import {
@@ -19,16 +24,7 @@ import {
   COMPARISON_LABELS,
   COMPARISON_OTHER_SIDE,
   COMPARISON_NO_USCC,
-  DIFFERENCE_LEGEND_NOTE,
-  DIFFERENCE_LEGEND_TITLE,
-  DIFFERENCE_STATUSES,
-  DIFFERENCE_STATUS_ORDER,
-  DIFFERENCE_STATUS_VARIANTS,
-  DIFFERENCE_COLUMN_HINT,
-  RECONCILE_BASIS,
-  RECONCILE_REASONS,
 } from '~~/lib/labels'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableBody,
@@ -48,7 +44,6 @@ import {
   EmptyDescription,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 
 const COMPARISON_DIRECTIONS = Object.keys(
   COMPARISON_LABELS,
@@ -56,12 +51,20 @@ const COMPARISON_DIRECTIONS = Object.keys(
 const titles = TITLE_ORDER
 const title = shallowRef('specialized_sme')
 const direction = shallowRef<ComparisonDirection>('missing_in_miit')
+const q = shallowRef('')
+const district = shallowRef('')
 const page = shallowRef(1)
 const showCurated = shallowRef(false)
 const queryCache = useQueryCache()
-const pageSize = 25
+const pageSize = shallowRef(25)
+const ALL_DISTRICTS = '__all__'
+const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
+const districtModel = computed({
+  get: () => district.value || ALL_DISTRICTS,
+  set: (value: string) => { district.value = value === ALL_DISTRICTS ? '' : value },
+})
 watch(
-  [title, direction, showCurated],
+  [title, direction, q, district, showCurated],
   () => {
     page.value = 1
   },
@@ -70,10 +73,25 @@ watch(
 const params = computed(() => ({
   title: title.value,
   direction: direction.value,
+  q: q.value,
+  district: district.value,
   page: page.value,
-  pageSize,
+  pageSize: pageSize.value,
   showCurated: showCurated.value,
 }))
+type ComparisonQueryParams = typeof params.value
+type ComparisonApiResponse = {
+  rows: (CuratedRow & { explanation: ReconcileEntry | null; platform: ComparisonPlatformEvidence })[]
+  total: number
+  counts: ComparisonCounts
+  curatedCounts: ComparisonCounts
+  reconcile: { generatedAt: string | null; matched: number }
+  platform: { withEvidence: number; withExplanation: number; withoutExplanation: number }
+}
+type ComparisonQueryResult = ComparisonApiResponse & {
+  request: QueryRequestSnapshot<ComparisonQueryParams>
+}
+const activeRequest = computed(() => captureQueryRequest('comparison', params.value))
 
 /**
  * 页面标题(RL-17 收尾)。全仓原先没有一处设过 `document.title`,所以标签页/历史记录/书签
@@ -88,103 +106,93 @@ useHead({
       }`,
   ),
 })
-const { data, isLoading, error, refetch } = useQuery({
+const { data, isLoading, error, refetch } = useQuery<ComparisonQueryResult>({
   key: () => ['comparison', params.value],
-  query: () =>
-    $fetch<{
-      rows: (CuratedRow & { explanation: ReconcileEntry | null; platform: ComparisonPlatformEvidence })[]
-      total: number
-      counts: ComparisonCounts
-      curatedCounts: ComparisonCounts
-      reconcile: { generatedAt: string | null; matched: number }
-      platform: { withEvidence: number; withExplanation: number; withoutExplanation: number }
-    }>('/api/comparison', { query: params.value }),
+  query: async ({ entry }) => {
+    const request = captureQueryRequest('comparison', entry.key[1] as typeof params.value)
+    const response = await $fetch<ComparisonApiResponse>('/api/comparison', { query: request.params })
+    return { ...response, request }
+  },
   placeholderData: (previous) => previous,
 })
-const rows = computed(() => data.value?.rows ?? [])
+const {
+  displayed: displayedResult,
+  hasCurrentSnapshot,
+  paginationDisabled,
+  failureDescription,
+} = useRetainedQuerySnapshot<ComparisonQueryParams, ComparisonQueryResult>(data, isLoading, error, activeRequest)
+const rows = computed<ComparisonApiResponse['rows']>(() => displayedResult.value?.rows ?? [])
 /** 行上**已确认**的曾用名(待核实的不算 —— 契约 §1.2:`pending` 不参与搜索/归并)。 */
-function confirmedAliasNames(row: { platform: ComparisonPlatformEvidence }): string[] {
-  return row.platform.aliases
-    .filter((alias) => alias.verificationStatus === 'confirmed')
-    .map((alias) => alias.name)
+function confirmedAliasNames(row: { name: string; platform: ComparisonPlatformEvidence }): string[] {
+  const aliases = row.platform.aliases.filter((alias) => alias.verificationStatus === 'confirmed')
+  const historicalNames = new Set(historicalAliasNamesForDisplay(
+    aliases.map((alias) => alias.name),
+    row.name,
+  ))
+  return aliases.filter((alias) => historicalNames.has(alias.name)).map((alias) => alias.name)
 }
-const reconcileInfo = computed(() => data.value?.reconcile ?? null)
-const platformInfo = computed(() => data.value?.platform ?? null)
-/** 旧解释缓存(存在时)的取数时间 —— 只作对照,不用它当平台取数时间。 */
-const cacheFetchLabel = computed(() => latestFetchLabel(rows.value.map((row) => row.explanation)))
-/**
- * 「平台解释」列的口径说明。**数据源是库内**(`difference_reason`),不是离线缓存 ——
- * 旧文案「本方向还没有平台解释」正是用户看到「数据都没了」的那句话,已删掉。
- */
-const hint = computed(() => DIFFERENCE_COLUMN_HINT)
-/** 表头 tooltip 仍按方向给半句口径(两个方向不共处一行)。 */
-const basisHint = computed(() => `${RECONCILE_BASIS}${RECONCILE_REASONS[direction.value]}`)
-/**
- * 图例只列**当前结果里真出现过**的状态(按状态机顺序)。
- * 全量列六种会把图例撑成一张词表,而屏幕上可能一个都没有。
- */
-const legendCodes = computed(() => {
-  const seen = new Set(rows.value.map((row) => row.platform.disposition.status))
-  return DIFFERENCE_STATUS_ORDER.filter((code) => seen.has(code))
-})
-
-// 宽表在窄屏下的**边缘提示**:右侧渐隐 + 一行提示,滑到最右即消失。
+// 宽表在窄屏下保留容器内横向滚动;边缘渐隐提示还有列可读。
 const scroller = shallowRef<HTMLElement | null>(null)
 const { edges, bars, measure } = useScrollEdges(scroller)
-const showScrollHint = computed(() => edges.value.right)
 // 表体从骨架/空态换成真实表格时内容宽度会变,重算一次。
 watch([rows, isLoading], () => {
   void nextTick(measure)
 })
 
-const counts = computed(
-  () => data.value?.counts[title.value as keyof ComparisonCounts],
-)
-const curatedCount = (d: ComparisonDirection) => data.value?.curatedCounts[title.value as keyof ComparisonCounts]?.[d] ?? 0
-const count = (d: ComparisonDirection) => counts.value ? counts.value[d] - (showCurated.value ? 0 : curatedCount(d)) : '—'
-const countLabel = (d: ComparisonDirection) => {
-  if (!counts.value) return '加载中…'
-  const verified = curatedCount(d)
-  return showCurated.value
-    ? `${count(d)} 条（含 ${verified} 条已核实）`
-    : `${count(d)} 条${verified ? `（另 ${verified} 条已核实）` : ''}`
-}
 async function refreshCuration() {
   await queryCache.invalidateQueries({ key: ['comparison'] })
+  if (error.value || !hasCurrentSnapshot.value) return
   if (page.value > totalPages.value) page.value = totalPages.value
 }
 const totalPages = computed(() =>
-  Math.max(1, Math.ceil((data.value?.total ?? 0) / pageSize)),
+  Math.max(1, Math.ceil((displayedResult.value?.total ?? 0) / (displayedResult.value?.request.pageSize ?? pageSize.value))),
 )
-const exportUrl = computed(
-  () =>
-    `/api/export?${new URLSearchParams({ mode: 'comparison', title: title.value, direction: direction.value })}`,
-)
+const displayedPage = computed(() => displayedResult.value?.request.page ?? page.value)
+const displayedPageSize = computed(() => displayedResult.value?.request.pageSize ?? pageSize.value)
+const activeFilters = computed(() => [
+  ...(q.value.trim() ? [{ key: 'q', label: `搜索：${q.value.trim()}` }] : []),
+  ...(district.value ? [{ key: 'district', label: district.value }] : []),
+])
+function clearFilter(key: string) {
+  if (key === 'q') q.value = ''
+  if (key === 'district') district.value = ''
+}
+function clearAllFilters() {
+  q.value = ''
+  district.value = ''
+}
+function setPage(value: number) {
+  page.value = Math.min(totalPages.value, Math.max(1, value))
+  scroller.value?.scrollIntoView({ block: 'start', behavior: 'instant' })
+}
+function setPageSize(value: number) {
+  pageSize.value = Math.min(200, Math.max(1, Math.trunc(value) || 25))
+  page.value = 1
+  scroller.value?.scrollIntoView({ block: 'start', behavior: 'instant' })
+}
 const TH_CLASS =
   'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs font-medium'
+const exportUrl = computed(() => {
+  const params = new URLSearchParams({
+    mode: 'comparison',
+    title: title.value,
+    direction: direction.value,
+    showCurated: showCurated.value ? 'true' : 'false',
+  })
+  if (q.value.trim()) params.set('q', q.value.trim())
+  if (district.value) params.set('district', district.value)
+  return `/api/export?${params}`
+})
 </script>
 
 <template>
-  <div class="comparison-page flex min-w-0 flex-col gap-4">
+  <div class="comparison-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader
-      class="rise-in"
       title="两侧名录比对"
     >
-      <template #description>
-        <span class="inline-block">按统代比对,不限年份。</span>
-        <!--
-          小巨人两侧(用户 2026-10-16 裁决启用,RL-04 落地):经信局**历年名单**(历史批次权威来源)
-          vs 工信部**导出表**(采集时点现状)。旧文案写「小巨人无经信局名录」——该说法已被
-          RL-02 的历年名单证伪,不能再留在页面上。
-        -->
-        <span class="inline-block">
-          小巨人两侧 = 经信局历年名单(权威历史批次)/ 工信部导出表(采集时点现状)。
-        </span>
-        <span class="inline-block">计数单位 = 企业 × 称号(同一企业多个称号会分别成行)。</span>
-      </template>
       <template #actions>
         <div class="flex items-center gap-2">
-          <Switch id="show-curated" v-model="showCurated" />
+          <Switch id="show-curated" v-model="showCurated" class="shadow-none" />
           <Label for="show-curated">显示已核实</Label>
         </div>
         <Button as-child variant="outline" size="sm"
@@ -193,255 +201,240 @@ const TH_CLASS =
       </template>
     </PageHeader>
 
-    <Tabs v-model="title" class="min-w-0 gap-4">
-      <TabsList aria-label="比对称号" class="max-w-full">
-        <TabsTrigger v-for="code in titles" :key="code" :value="code">{{
-          TITLES[code]
-        }}</TabsTrigger>
-      </TabsList>
-      <!-- 复用同一个面板和滚动容器,切换只更新查询,不重建表体。 -->
-      <TabsContent :value="title" class="flex min-w-0 flex-col gap-4">
-        <Tabs v-model="direction" class="min-w-0 gap-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <TabsList aria-label="比对方向" class="w-full sm:w-fit">
-              <TabsTrigger
-                v-for="d in COMPARISON_DIRECTIONS"
-                :key="d"
-                :value="d"
-                class="sm:min-w-36"
-              >
-                {{ COMPARISON_LABELS[d]
-                }}<Badge variant="secondary" class="min-w-[3ch] tabular-nums">{{
-                  count(d)
-                }}</Badge>
-              </TabsTrigger>
-            </TabsList>
-          </div>
-          <TabsContent :value="direction" class="flex min-w-0 flex-col gap-3">
-            <p class="text-muted-foreground min-h-5 text-[13px] tabular-nums" aria-live="polite">
-              {{ countLabel(direction) }}
-            </p>
-            <!-- 口径与取数说明:**以公布文件为准**加粗单列一次;原因按方向只给半句。
-                 旧文案「本方向还没有平台解释」已删 —— 原因与证据现在读**库内**,
-                 缓存缺失不该再让页面说「没有」。 -->
-            <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-              <p
-                class="text-muted-foreground text-xs leading-relaxed"
-                data-testid="reconcile-basis"
-                :title="basisHint"
-              >
-                <strong class="text-foreground font-medium">{{ RECONCILE_BASIS }}</strong
-                >{{ RECONCILE_REASONS[direction] }}
-              </p>
-              <p
-                v-if="platformInfo"
-                class="text-muted-foreground text-xs leading-relaxed"
-                data-testid="platform-provenance"
-              >
-                平台原因与证据取自<strong class="text-foreground font-medium">库内</strong>记录(差异解释 / 平台查询与关系);
-                本方向 {{ platformInfo?.withExplanation ?? 0 }} 行有解释记录,
-                {{ platformInfo?.withoutExplanation ?? 0 }} 行还没有解释记录(显示为「未查询」)。
-                <template v-if="reconcileInfo?.generatedAt">
-                  另:旧解释缓存(生成于 {{ reconcileInfo.generatedAt.slice(0, 10) }})覆盖
-                  {{ reconcileInfo.matched }} 行,仅作对照<template v-if="cacheFetchLabel"
-                    >(最近取数 {{ cacheFetchLabel }})</template
-                  >。
-                </template>
-              </p>
-            </div>
-            <!-- 图例:徽章是库内解释记录里的差异状态;只列当前结果里出现过的取值。 -->
-            <div
-              v-if="legendCodes.length"
-              data-testid="platform-legend"
-              class="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
-            >
-              <span>{{ DIFFERENCE_LEGEND_TITLE }}:</span>
-              <Badge
-                v-for="code in legendCodes"
-                :key="code"
-                :variant="DIFFERENCE_STATUS_VARIANTS[code] ?? 'quiet'"
-                class="font-normal"
-                >{{ DIFFERENCE_STATUSES[code] ?? code }}</Badge
-              >
-              <span class="basis-full sm:basis-auto">{{ DIFFERENCE_LEGEND_NOTE }}</span>
-            </div>
-            <Alert v-if="error" variant="destructive">
-              <AlertTitle>比对数据加载失败</AlertTitle>
-              <AlertDescription
-                ><Button variant="outline" size="sm" @click="refetch()"
-                  >重试</Button
-                ></AlertDescription
-              >
-            </Alert>
-            <Card class="min-w-0 gap-0 overflow-hidden py-0">
-              <CardContent class="p-0">
-                <!-- 宽表 + 容器内横向滚动(与台账一致,不做移动卡片列表)。
-                     窄屏首屏给可见提示:右侧渐隐 + 一行字;滑到最右两者都消失。 -->
-                <p
-                  v-if="showScrollHint"
-                  data-testid="scroll-hint"
-                  class="text-muted-foreground flex items-center gap-1 px-3 py-1.5 text-xs"
-                >
-                  <ArrowLeftRight class="size-3.5 shrink-0" />表格较宽,可左右滑动查看全部列
-                </p>
-                <div class="relative min-w-0">
+    <div
+      data-testid="comparison-filters"
+      class="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-8 lg:grid-cols-[minmax(16rem,1fr)_14rem_12rem_14rem]"
+    >
+      <div class="relative col-span-2 min-w-0 sm:col-span-8 lg:col-span-1">
+        <Search class="text-muted-foreground absolute top-2 left-2.5 size-3.5" />
+        <Input
+          v-model="q"
+          aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"
+          placeholder="搜索企业名称、曾用名或统一社会信用代码"
+          class="bg-card h-8 pl-8 shadow-none"
+        />
+      </div>
+      <Select v-model="title">
+        <SelectTrigger size="sm" class="bg-card col-span-1 w-full min-w-0 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 sm:col-span-2 lg:col-span-1" aria-label="按称号筛选">
+          <SelectValue class="min-w-0 flex-1" />
+        </SelectTrigger>
+        <SelectContent class="shadow-none">
+          <SelectItem v-for="code in titles" :key="code" :value="code">{{ TITLES[code] }}</SelectItem>
+        </SelectContent>
+      </Select>
+      <Select v-model="districtModel">
+        <SelectTrigger size="sm" class="bg-card col-span-1 w-full min-w-0 px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 sm:col-span-2 lg:col-span-1" aria-label="按区县筛选">
+          <SelectValue class="min-w-0 flex-1" />
+        </SelectTrigger>
+        <SelectContent class="shadow-none">
+          <SelectItem :value="ALL_DISTRICTS">全部区县</SelectItem>
+          <SelectItem v-for="item in districtOptions" :key="item" :value="item">{{ item }}</SelectItem>
+        </SelectContent>
+      </Select>
+      <div class="col-span-2 min-w-0 sm:col-span-4 lg:col-span-1" data-testid="comparison-direction-filter">
+        <Select v-model="direction">
+          <SelectTrigger
+            size="sm"
+            class="bg-card w-full min-w-0 px-2 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100"
+            aria-label="按比对方向筛选"
+          >
+            <SelectValue class="min-w-0 flex-1 text-left" />
+          </SelectTrigger>
+          <SelectContent class="shadow-none">
+            <SelectItem v-for="d in COMPARISON_DIRECTIONS" :key="d" :value="d">
+              {{ COMPARISON_LABELS[d] }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+
+    <TransitionGroup
+      v-if="activeFilters.length"
+      tag="div"
+      class="flex flex-wrap items-center gap-1.5"
+      enter-active-class="transition duration-150 ease-snap"
+      enter-from-class="scale-90 opacity-0"
+      leave-active-class="transition duration-100 ease-snap"
+      leave-to-class="scale-90 opacity-0"
+      move-class="transition duration-150 ease-snap"
+    >
+      <Button
+        v-for="filter in activeFilters"
+        :key="filter.key"
+        variant="secondary"
+        size="sm"
+        class="h-6 max-w-full gap-1 px-2 text-xs active:scale-[0.98] transition-transform duration-150 ease-snap"
+        :aria-label="`移除筛选：${filter.label}`"
+        @click="clearFilter(filter.key)"
+      >
+        <span class="truncate">{{ filter.label }}</span><span aria-hidden="true">×</span>
+      </Button>
+      <Button
+        key="clear"
+        variant="ghost"
+        size="sm"
+        class="h-6 px-1.5 text-xs"
+        @click="clearAllFilters"
+      >清除全部</Button>
+    </TransitionGroup>
+
+    <div class="flex min-w-0 flex-col gap-2">
+      <div class="flex min-w-0 flex-col gap-2" data-testid="comparison-results">
+            <Card class="min-w-0 gap-0 overflow-hidden py-0 shadow-none">
+              <CardContent class="relative p-0">
+                <TableLoadingStatus kind="comparison" :loading="isLoading" label="正在搜索与加载比对结果…" />
+                <TableFailureState v-if="error" title="比对结果暂时无法加载" :compact="rows.length > 0" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
+                <!-- 宽表在容器内横向滚动,窄屏收在当前视口中。 -->
+                <div v-if="!error || rows.length > 0" class="relative min-w-0">
                   <div
                     ref="scroller"
                     tabindex="0"
                     role="region"
                     aria-label="比对结果表格(可横向滚动)"
-                    class="h-[max(320px,calc(100dvh-29rem))] overflow-auto [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-1.5 [&_[data-slot=table-container]]:overflow-visible"
+                    data-testid="comparison-table-scroll"
+                    class="data-table-scroll scroll-mt-16 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:h-1.5 [&_[data-slot=table-container]]:overflow-visible"
                     :aria-busy="isLoading"
                   >
                   <Empty v-if="!isLoading && !error && !rows.length" class="h-full">
                     <EmptyHeader>
                       <EmptyMedia variant="icon"><GitCompareArrows /></EmptyMedia>
-                      <EmptyTitle>{{ showCurated ? '暂无差异' : '暂无待核对企业' }}</EmptyTitle>
-                      <EmptyDescription>{{ curatedCount(direction) && !showCurated ? '当前方向均已核实，可开启「显示已核实」查看。' : '当前称号与方向没有差异企业。' }}</EmptyDescription>
+                      <EmptyTitle>没有匹配的企业</EmptyTitle>
+                      <EmptyDescription>当前筛选条件下没有匹配结果。</EmptyDescription>
                     </EmptyHeader>
                   </Empty>
-                  <!-- `min-w` 要 ≥ Σ 固定列宽 ÷ (1 − 企业名称列的 28%)，否则 table-fixed
-                       会把亏空全压到名称列上(实测 1180 时名称列只剩 236px,
-                       核实/备注也一起被挤)。平台证据列加宽到 w-64 后该阈值是 ≈1312px。 -->
-                  <Table v-else class="min-w-[1320px] table-fixed">
+                  <Table v-else class="data-table w-full min-w-0 table-fixed sm:min-w-[1090px]">
                     <TableHeader>
                       <TableRow class="hover:bg-transparent">
-                        <TableHead :class="[TH_CLASS, 'w-[28%]']"
+                        <TableHead :class="[TH_CLASS, 'w-[38%] sm:w-[320px] md:w-[28%]']"
                           >企业名称</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-44']"
+                        <TableHead :class="[TH_CLASS, 'hidden w-[165px] sm:table-cell']"
                           >统一社会信用代码</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-20']">区县</TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-32']"
+                        <TableHead :class="[TH_CLASS, 'hidden w-[72px] sm:table-cell']">区县</TableHead>
+                        <TableHead :class="[TH_CLASS, 'hidden w-[108px] sm:table-cell']"
                           >另一侧状态</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'w-28']">
-                          <span :title="hint">平台解释</span>
+                        <TableHead :class="[TH_CLASS, 'hidden w-[140px] sm:table-cell']">
+                          平台解释
                         </TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-64']">
-                          <span title="库内平台证据:曾用名、平台查询与逐条原始关系">平台证据</span>
+                        <TableHead :class="[TH_CLASS, 'hidden w-[250px] sm:table-cell']">
+                          平台记录
                         </TableHead>
-                        <TableHead :class="[TH_CLASS, 'w-48']">核实与备注</TableHead>
+                        <TableHead :class="[TH_CLASS, 'hidden w-[190px] sm:table-cell']">核实与备注</TableHead>
+                        <TableHead colspan="6" :class="[TH_CLASS, 'w-[62%] sm:hidden']">比对、原因与证据</TableHead>
                       </TableRow>
                     </TableHeader>
-                    <TableBody>
+                    <TableBody
+                      class="transition-transform duration-200 ease-snap will-change-transform motion-reduce:transition-none"
+                      :class="isLoading ? '-translate-y-0.5' : 'translate-y-0'"
+                      :data-loading="isLoading ? 'true' : 'false'"
+                    >
                       <template v-if="isLoading && !rows.length">
                         <TableRow v-for="i in 8" :key="i" class="h-11">
-                          <TableCell v-for="j in 7" :key="j"
-                            ><Skeleton class="h-4 w-full"
-                          /></TableCell>
+                          <TableCell><Skeleton class="h-4 w-full" /></TableCell>
+                          <TableCell colspan="6" class="sm:hidden"><Skeleton class="h-4 w-full" /></TableCell>
+                          <TableCell v-for="j in 6" :key="j" class="hidden sm:table-cell"><Skeleton class="h-4 w-full" /></TableCell>
                         </TableRow>
                       </template>
                       <TableRow
                         v-for="row in rows"
                         v-else
                         :key="`${row.enterpriseId}-${row.titleCode}-${row.direction}`"
-                        class="h-11 [&>td]:py-1.5"
+                        data-testid="comparison-record-row"
+                        class="min-h-9 border-b-2 border-border sm:border-b [&>td]:py-1 [&>td]:align-top"
                       >
                         <TableCell class="font-medium">
-                          <div class="truncate">
                           <NuxtLink
                             :to="`/enterprises/${row.enterpriseId}`"
                             :title="row.name"
-                            class="hover:text-primary hover:underline"
+                            data-testid="comparison-enterprise-name"
+                            class="block whitespace-normal break-words text-[13px] leading-4 hover:text-primary hover:underline"
                             >{{ row.name }}</NuxtLink
                           >
-                          </div>
-                          <!-- 曾用名(已确认)在行内直接可见 —— 现名与曾用名都能核对到同一行。 -->
-                          <div v-if="confirmedAliasNames(row).length" class="mt-1 flex flex-wrap gap-1" data-testid="comparison-aliases">
-                            <Badge
-                              v-for="alias in confirmedAliasNames(row)"
-                              :key="alias"
-                              variant="quiet"
-                              class="font-normal"
-                              >曾用名 {{ alias }}</Badge
-                            >
+                          <!-- 已确认曾用名压成单行,避免别名把比对行撑高。 -->
+                          <div v-if="confirmedAliasNames(row).length" class="mt-1 hidden min-w-0 flex-nowrap gap-1 overflow-hidden sm:flex" data-testid="comparison-aliases">
+                            <Badge variant="quiet" class="max-w-full truncate font-normal" :title="confirmedAliasNames(row)[0]">
+                              曾用名 {{ confirmedAliasNames(row)[0] }}
+                            </Badge>
+                            <Badge v-if="confirmedAliasNames(row).length > 1" variant="quiet" class="shrink-0 font-normal">
+                              +{{ confirmedAliasNames(row).length - 1 }}
+                            </Badge>
                           </div>
                           <div v-if="(row.evidence.currentCity && row.evidence.currentCity !== '宁波市') || /注销|吊销/.test(row.evidence.regStatus ?? '') || !row.uscc" class="mt-1 flex flex-wrap gap-1">
-                            <Badge v-if="row.evidence.currentCity && row.evidence.currentCity !== '宁波市'" variant="outline">{{ row.evidence.currentCity }}</Badge>
-                            <Badge v-if="/注销|吊销/.test(row.evidence.regStatus ?? '')" variant="destructive">{{ row.evidence.regStatus }}</Badge>
-                            <Badge v-if="!row.uscc" variant="outline">{{ COMPARISON_NO_USCC }}</Badge>
+                            <span v-if="row.evidence.currentCity && row.evidence.currentCity !== '宁波市'" class="text-muted-foreground text-[13px]">{{ row.evidence.currentCity }}</span>
+                            <span v-if="/注销|吊销/.test(row.evidence.regStatus ?? '')" class="text-destructive text-[13px]">{{ row.evidence.regStatus }}</span>
+                            <span v-if="!row.uscc" class="text-muted-foreground text-[13px]">{{ COMPARISON_NO_USCC }}</span>
                           </div>
                         </TableCell>
                         <TableCell
-                          class="text-muted-foreground font-mono text-xs"
+                          class="text-muted-foreground hidden font-mono text-xs sm:table-cell"
                           >{{ row.uscc ?? '—' }}</TableCell
                         >
-                        <TableCell class="text-muted-foreground text-xs">{{
+                        <TableCell class="text-muted-foreground hidden text-xs sm:table-cell">{{
                           row.district ?? '—'
                         }}</TableCell>
-                        <TableCell class="text-muted-foreground text-xs">{{
+                        <TableCell class="text-muted-foreground hidden whitespace-normal break-words text-[13px] leading-4 sm:table-cell [overflow-wrap:anywhere]">{{
                           COMPARISON_OTHER_SIDE[row.direction]
                         }}</TableCell>
-                        <TableCell>
+                        <TableCell class="hidden sm:table-cell">
                           <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
                         </TableCell>
-                        <TableCell>
-                          <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" />
+                        <TableCell class="hidden sm:table-cell">
+                          <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />
                         </TableCell>
-                        <TableCell>
+                        <TableCell class="hidden sm:table-cell">
                           <ComparisonCuration :row="row" @saved="refreshCuration" />
+                        </TableCell>
+                        <TableCell colspan="6" class="whitespace-normal sm:hidden">
+                          <div class="flex min-w-0 flex-col gap-1" data-testid="comparison-mobile-details">
+                            <div class="border-b border-border/50 pb-1 text-[13px] leading-5" data-testid="comparison-mobile-status-divider">
+                              <span class="text-muted-foreground">{{ COMPARISON_OTHER_SIDE[row.direction] }}</span>
+                              <span class="text-muted-foreground px-1">·</span>
+                              <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
+                            </div>
+                            <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />
+                            <ComparisonCuration :row="row" :compact="true" @saved="refreshCuration" />
+                          </div>
                         </TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>
                   </div>
-                  <!-- 边缘阴影(不是不透明遮罩):该侧还有内容时才出现。
-                       两轮评审的教训 —— 用 `from-card` 铺到不透明会(a)看起来像硬遮罩、
-                       (b)在滚动条/卡边处留 1px 接缝、(c)暗色下压出一条更深的色带。
-                       改成**半透明阴影**(永远不到不透明),并只覆盖**表头以下**的数据区
-                       (`top-9`),绝不会给表头文字上色。`pointer-events-none` 不吃事件。 -->
+                  <!-- 用窄边线提示表格容器内仍可横向滚动，不覆盖或淡化数据文字。 -->
                   <div
                     v-show="edges.right"
                     data-testid="scroll-fade-right"
                     aria-hidden="true"
-                    class="from-foreground/14 pointer-events-none absolute top-9 z-10 w-8 bg-gradient-to-l to-transparent dark:from-black/40"
+                    class="pointer-events-none absolute top-9 z-10 w-px bg-border"
                     :style="{ right: `${bars.vertical}px`, bottom: `${bars.horizontal}px` }"
                   />
                   <div
                     v-show="edges.left"
                     data-testid="scroll-fade-left"
                     aria-hidden="true"
-                    class="from-foreground/14 pointer-events-none absolute top-9 left-0 z-10 w-8 bg-gradient-to-r to-transparent dark:from-black/40"
+                    class="pointer-events-none absolute top-9 left-0 z-10 w-px bg-border"
                     :style="{ bottom: `${bars.horizontal}px` }"
                   />
                 </div>
               </CardContent>
             </Card>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-muted-foreground text-xs tabular-nums"
-                >第 {{ page }} / {{ totalPages }} 页 · 每页
-                {{ pageSize }} 条</span
-              >
-              <div class="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  :disabled="page <= 1 || isLoading"
-                  aria-label="上一页"
-                  @click="page--"
-                  ><ChevronLeft />上一页</Button
-                >
-                <Button
-                  variant="outline"
-                  size="sm"
-                  :disabled="page >= totalPages || isLoading"
-                  aria-label="下一页"
-                  @click="page++"
-                  >下一页<ChevronRight
-                /></Button>
-              </div>
-            </div>
-          </TabsContent>
-        </Tabs>
-      </TabsContent>
-    </Tabs>
+            <TablePagination v-if="!error || rows.length > 0" data-testid="comparison-pagination" :page="displayedPage" :page-size="displayedPageSize" :total="displayedResult?.total ?? 0" unit="条" :loading="paginationDisabled" @update:page="setPage" @update:page-size="setPageSize" />
+
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.comparison-page :deep(.rise-in) {
-  animation-duration: 200ms;
+.comparison-page :deep([data-slot='button']) {
+  box-shadow: none;
 }
+
+.comparison-page :deep(.text-xs) {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 </style>

@@ -193,8 +193,8 @@ export type PlatformInterface = (typeof PLATFORM_INTERFACE_VALUES)[number]
 
 /** 平台接口(`platform_query.interface`)→ 中文名。 */
 export const PLATFORM_INTERFACES: Record<string, string> = {
-  business_list: '业务接口(businessList)',
-  apply_list: '申报接口(applyList)',
+  business_list: '称号查询记录',
+  apply_list: '申报办理记录',
 }
 
 /** 平台接口展示顺序(即取值顺序)。 */
@@ -327,6 +327,35 @@ export const DIFFERENCE_COLUMN_HINT =
   '库内平台解释:状态取自解释记录(difference_reason)——未查询 / 查询失败 / 无记录 / 待核实 / 已确认无差异 / 已确认原因,并配对的后续措施。' +
   '「查询失败」与「无记录」不是一回事:前者是查询没执行成功,后者是查询成功但平台返回 0 条。'
 
+/** 差异状态 → 企业列表状态条的三档取向。六态仍由表格标签与详情徽章区分。 */
+export const DIFFERENCE_STATUS_RAILS: Record<string, 'confirmed' | 'open' | 'failed'> = {
+  not_queried: 'open',
+  query_failed: 'failed',
+  no_record: 'open',
+  needs_review: 'open',
+  confirmed_no_diff: 'confirmed',
+  confirmed_reason: 'confirmed',
+}
+
+/** 「一条差异记录都没有」这一档的文案(筛选里的伪状态 `none`)。 */
+export const DIFF_STATUS_NONE_LABEL = '无差异'
+
+/** 台账页名称在页头、侧边栏入口与 document.title 三处共用。 */
+export const ENTERPRISE_LIST_TITLE = '企业列表'
+
+/** 企业列表排序选项(RL-20)。 */
+export const ENTERPRISE_SORT_LABELS: Record<string, string> = {
+  recognition: '认定年',
+  name: '企业名称',
+  title: '称号等级',
+}
+export const ENTERPRISE_SORT_ORDER: string[] = ['recognition', 'name', 'title']
+export const ENTERPRISE_SORT_HINTS: Record<string, string> = {
+  recognition: '按该企业最早的首次认定年排,新认定的在前',
+  name: '按企业名称排',
+  title: '按称号等级排:专精特新“小巨人” → 专精特新中小企业 → 创新型中小企业',
+}
+
 /**
  * 比对页差异状态图例的固定说明句(RL-15)。徽章只列**当前结果里真出现过**的取值。
  *
@@ -373,7 +402,7 @@ export const DIFFERENCE_LEGEND_NOTE =
 export const DIFFERENCE_REASONS: Record<string, string> = {
   moved_out: '外迁',
   deregistered: '注销',
-  renamed: '更名',
+  renamed: '已更名',
   platform_stale: '平台未更新',
   moved_in: '迁入',
   other: '其他',

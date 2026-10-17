@@ -59,8 +59,8 @@ const rdjbLabel = (rdjb: string) => (rdjb ? (PLATFORM_RDJBS[rdjb] ?? rdjb) : '�
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
-    <PageHeader class="rise-in" title="平台查询证据">
+  <div class="flex min-w-0 flex-col gap-4" :aria-busy="isLoading">
+    <PageHeader title="平台查询证据">
       <template #breadcrumb>
         <NuxtLink to="/comparison" class="hover:text-foreground hover:underline">两侧名录比对</NuxtLink>
         <span class="mx-1.5">/</span><span>平台查询证据</span>
@@ -75,6 +75,15 @@ const rdjbLabel = (rdjb: string) => (rdjb ? (PLATFORM_RDJBS[rdjb] ?? rdjb) : '�
         </NuxtLink>
       </template>
     </PageHeader>
+
+    <div class="relative h-6 shrink-0" aria-live="polite" data-testid="platform-queries-loading-status">
+      <template v-if="isLoading">
+        <span class="text-muted-foreground absolute top-0.5 left-0 text-[13px]">正在加载平台查询记录…</span>
+        <span class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
+          <span class="bg-primary block h-0.5 w-1/3 rounded-full" />
+        </span>
+      </template>
+    </div>
 
     <p v-if="!isLoading && !error" class="text-muted-foreground text-[13px] tabular-nums" aria-live="polite">
       共 {{ rows.length }} 次查询 · {{ totalRelations }} 条关系

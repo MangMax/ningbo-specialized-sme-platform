@@ -84,7 +84,7 @@ function setChecked(value: string, checked: boolean) {
         <ChevronDown class="size-3.5 shrink-0 opacity-50" />
       </Button>
     </DropdownMenuTrigger>
-    <DropdownMenuContent align="start" class="w-52">
+    <DropdownMenuContent align="start" class="w-52 shadow-none">
       <DropdownMenuLabel class="text-muted-foreground text-xs font-normal">
         {{ placeholder.replace('全部', '按') }}
       </DropdownMenuLabel>

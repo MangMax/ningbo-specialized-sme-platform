@@ -1,59 +1,50 @@
 /**
- * **合并台账的视图与筛选映射**(RL-17)—— 纯函数,可单测。
+ * **企业列表页的筛选状态与 URL 映射**(RL-20 重写;原为 RL-17 的「三视图合并台账」)。
  *
- * 合并后 `/` 一个入口下有三种视图,共用一条筛选条:
+ * ── 这一票把「三种分组」删掉了 ───────────────────────────────────────────
+ * 用户原话:「**只要一个表格**」。原先 `/` 一个入口下按 `view` 切三种分组
+ * (按企业 / 按企业×称号 / 差异与原因),每种分组用到的筛选还不一样 —— 于是这个模块
+ * 里最早长出来的是 `LEDGER_VIEW_FILTERS`(每视图认哪些筛选)与 `filtersForView`(切视图时
+ * 清掉用不到的)。这些**随三视图一起去掉**:现在只有一个企业粒度的表,筛选集合也只有一份。
  *
- *  - `enterprise` —— 按企业(RL-04):一行一家企业,展开见全部称号与出处;
- *  - `title`      —— 按企业×称号(原 `/` 台账:一行一个企业×称号,来源与事件列在行内);
- *  - `difference` —— 差异与原因(RL-04 §7.3)。
+ * 留下的两条不变量,理由不变:
  *
- * ── 为什么把它抽出来 ───────────────────────────────────────────────────
- * 这一票最容易悄悄坏掉的是**两句话**,而它们都不是能靠肉眼盯住的:
- *
- *  1. 「筛选与导出同口径」—— 如果导出 URL 与列表请求各拼一遍参数,
- *     迟早有一边漏掉新加的 `source` / `eventType` / `year`,而漏掉的表现是
- *     **导出多出几行**,没人会在页面上发现。这里列表与导出**读同一个对象**。
- *  2. 「切换分组不换人」—— 两种分组共用同一个 URL,`按企业` 与 `按企业×称号`
- *     必须拿到同一批筛选。这里两个视图的查询由**同一份 state** 派生,
- *     记录侧判据(`source` / `eventType` / `year`)两边逐字一致。
- *
- * 页面只负责把 state 绑到控件上,不再自己拼参数。
+ *  1. **「筛选与导出同口径」** —— 导出地址与列表请求**读同一个对象**。两处各拼一遍参数,
+ *     迟早有一边漏掉新加的项,而漏掉的表现是**导出多出几行**,没人会在页面上发现。
+ *  2. **「没有静默筛选」** —— 地址栏里带着、页面上却看不见的条件,用户既不知道它在生效,
+ *     也清不掉。所以状态里认的每一项,要么是筛选条上的控件,要么是筛选条下面那排可撤掉的
+ *     条件 chip(`source` / `eventType` / `rosterState` 走后者:它们是 `/stats`
+ *     下钻带进来的,不给常驻控件,但**绝不静默丢弃**)。
  */
 import { parseCsvQuery } from '../csv'
+import {
+  DEFAULT_ROSTER_ENTERPRISE_SORT,
+  ROSTER_ENTERPRISE_SORTS,
+} from './ledger-contract'
+import type { RosterEnterpriseSort } from './ledger-contract'
 
-export const LEDGER_VIEWS = ['enterprise', 'title', 'difference'] as const
-export type LedgerView = (typeof LEDGER_VIEWS)[number]
-
-/** 默认视图 = 企业粒度(RL-04 的一企一行)。 */
-export const DEFAULT_LEDGER_VIEW: LedgerView = 'enterprise'
-
-/** 视图在地址栏里的参数名。 */
-export const VIEW_PARAM = 'view'
-
-export function parseLedgerView(value: unknown): LedgerView {
-  const raw = typeof value === 'string' ? value.trim() : ''
-  return (LEDGER_VIEWS as readonly string[]).includes(raw) ? (raw as LedgerView) : DEFAULT_LEDGER_VIEW
-}
+/** 排序的地址栏参数名(`sort`),以及默认值 —— 默认值不写进地址栏。 */
+export const SORT_PARAM = 'sort'
+export const DEFAULT_SORT: RosterEnterpriseSort = DEFAULT_ROSTER_ENTERPRISE_SORT
 
 /** 页面上的筛选状态。字符串数组一律是「多值」,空数组 = 没筛。 */
 export interface LedgerState {
   q: string
   title: string[]
   district: string
+  /** 总表成员状态(派生)。`/stats` 下钻会带,页面上只以 chip 出现。 */
   rosterState: string
   source: string[]
   eventType: string[]
   year: string[]
-  /**
-   * **首次认定年份**(RL-08)。与上面的 `year` 不是一回事:`year` 筛的是**事件**年份,
-   * 这里筛的是该称号**首次认定**的年份。两个控件、两个参数名,谁也别借谁的。
-   */
+  /** 首次正式认定年份(RL-08),与事件年份 `year` 分开保留。 */
   firstYear: string[]
-  /** **首次认定状态**(RL-08):`confirmed` / `pending`。 */
+  /** 首次认定状态(RL-08):confirmed / pending。 */
   firstStatus: string[]
-  direction: string
-  status: string[]
-  reason: string[]
+  /** 差异状态(RL-20);`none` 表示「一条差异记录都没有」。 */
+  diffStatus: string[]
+  /** 排序(RL-20)。 */
+  sort: RosterEnterpriseSort
 }
 
 export const EMPTY_LEDGER_STATE: LedgerState = {
@@ -66,10 +57,31 @@ export const EMPTY_LEDGER_STATE: LedgerState = {
   year: [],
   firstYear: [],
   firstStatus: [],
-  direction: '',
-  status: [],
-  reason: [],
+  diffStatus: [],
+  sort: DEFAULT_SORT,
 }
+
+/**
+ * 页面认的全部筛选键 —— 取数、回写地址、chip 三处**只认这一张表**。
+ *
+ * `sort` 不在其中:它是**显示偏好**(排法),不是筛选,所以取数时单独拼、地址栏里
+ * 只在非默认时才写(与 `pageSize` 同一档)。
+ */
+export const LEDGER_FILTER_KEYS = [
+  'q',
+  'title',
+  'source',
+  'eventType',
+  'year',
+  'firstYear',
+  'firstStatus',
+  'district',
+  'rosterState',
+  'diffStatus',
+] as const satisfies readonly (keyof LedgerState)[]
+
+/** 多值键(逗号分隔)。其余是单值。 */
+export const LEDGER_MULTI_KEYS = ['title', 'source', 'eventType', 'year', 'firstYear', 'firstStatus', 'diffStatus'] as const
 
 /** 从地址栏读回筛选状态(刷新、分享、前进后退都靠它)。 */
 export function ledgerStateFromQuery(query: Record<string, unknown>): LedgerState {
@@ -85,48 +97,26 @@ export function ledgerStateFromQuery(query: Record<string, unknown>): LedgerStat
     year: csv(query.year),
     firstYear: csv(query.firstYear),
     firstStatus: csv(query.firstStatus),
-    direction: str(query.direction),
-    status: csv(query.status),
-    reason: csv(query.reason),
+    diffStatus: csv(query.diffStatus),
+    // 认不出的排序**退回默认**,不让它进请求。这一层是「地址栏 → 页面状态」:
+    // 一个手改坏的 `?sort=…` 该把页面照常渲染出来,不该把整页打成错误;
+    // 读接口那一侧仍然对未知取值给 400(`parseRosterEnterpriseQuery`),那是给
+    // 程序调用者的守卫,不是给地址栏的。
+    sort: sortOf(query[SORT_PARAM]),
   }
 }
 
-/**
- * **每个视图认哪些筛选项** —— 取数、回写地址、切换视图时清理,都只认这一张表。
- *
- * 为什么必须是一张表:取数、回写地址与切换视图清理以前各写一遍 `if (view === 'enterprise')`,
- * 条件容易漂移。两个读模型都接受 `district`,但各自按自己的记录/企业属地口径筛选;
- * 差异视图不接受它。
- *
- * 记录侧判据(`source` / `eventType` / `year`)在两种分组下**逐字一致** ——
- * 这是「切换分组不换人」的那一半,所以两个视图都列上,谁也不许只改一边。
- */
-export const LEDGER_VIEW_FILTERS: Record<LedgerView, readonly (keyof LedgerState)[]> = {
-  // `firstYear` / `firstStatus` 是 RL-08 增量,同样只归**企业**粒度:
-  // 首次认定是「这家企业在某称号上的首次年份」,而 `按企业×称号` 的行取自 `/api/records`,
-  // 它读事件行、不算首次认定 —— 放进去就是「同一个 URL,两种结果」。
-  enterprise: [
-    'q',
-    'title',
-    'source',
-    'eventType',
-    'year',
-    'firstYear',
-    'firstStatus',
-    'district',
-    'rosterState',
-  ],
-  title: ['q', 'title', 'source', 'eventType', 'year', 'district'],
-  difference: ['q', 'title', 'direction', 'status', 'reason'],
+function sortOf(value: unknown): RosterEnterpriseSort {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  return (ROSTER_ENTERPRISE_SORTS as readonly string[]).includes(raw)
+    ? (raw as RosterEnterpriseSort)
+    : DEFAULT_SORT
 }
 
-/**
- * 「没筛」的项不写进地址;多值用逗号分隔(与全部读接口的 `parseCsvQuery` 一致)。
- */
-export function ledgerQueryFromState(view: LedgerView, state: LedgerState): Record<string, string> {
+/** 「没筛」的项不写进地址;多值用逗号分隔(与全部读接口的 `parseCsvQuery` 一致)。 */
+export function ledgerQueryFromState(state: LedgerState): Record<string, string> {
   const p: Record<string, string> = {}
-  if (view !== DEFAULT_LEDGER_VIEW) p[VIEW_PARAM] = view
-  for (const key of LEDGER_VIEW_FILTERS[view]) {
+  for (const key of LEDGER_FILTER_KEYS) {
     const value = state[key]
     if (Array.isArray(value)) {
       if (value.length) p[key] = value.join(',')
@@ -134,59 +124,37 @@ export function ledgerQueryFromState(view: LedgerView, state: LedgerState): Reco
       p[key] = value
     }
   }
+  if (state.sort !== DEFAULT_SORT) p[SORT_PARAM] = state.sort
   return p
 }
 
-/**
- * 切到某视图时,把**该视图用不到的**筛选清掉,其余原样留下。
- *
- * 清而不是留:留在 state 里的条件地址栏不体现,用户看不见、也清不掉,
- * 切回来却会生效 —— 那是静默筛选,和「失败 ≠ 无记录」是同一类错误。
- */
-export function filtersForView(view: LedgerView, state: LedgerState): LedgerState {
-  const keep = new Set<keyof LedgerState>(LEDGER_VIEW_FILTERS[view])
-  const out = { ...EMPTY_LEDGER_STATE }
-  for (const key of keep) {
-    // 逐字段搬,`keep` 已按视图裁过,类型上仍是同一张表。
-    ;(out as Record<string, unknown>)[key] = state[key]
-  }
-  return out
-}
-
-/**
- * 列表请求的查询串:直接喂给该视图的读接口。
- *
- * `pageSize` 由调用方补(它是「每页条数」这个显示偏好,不是筛选)。
- */
-export function ledgerListQuery(
-  view: LedgerView,
-  state: LedgerState,
-): Record<string, string> {
-  return ledgerQueryFromState(view, state)
+/** 列表请求的查询串。`page` / `pageSize` 由调用方补(它们是显示偏好,不是筛选)。 */
+export function ledgerListQuery(state: LedgerState): Record<string, string> {
+  return ledgerQueryFromState(state)
 }
 
 /**
  * 导出地址 —— 与列表**同源**。
  *
- * 不带分页:`/api/roster/export` 与 `/api/export` 导的都是**当前筛选下的全部**,
- * 页面只显示一页;把 `page` / `pageSize` 带上只会让「导出 = 你看到的全部」这句话不成立。
+ * 不带分页:导的是**当前筛选下的全部**,页面只显示一页;把 `page` / `pageSize` 带上
+ * 只会让「导出 = 你看到的全部」这句话不成立。
  *
- * `difference` 视图返回 `null`:RL-04 与既有台账都没有「导出差异」,
- * 这一票不新增导出面,所以宁可不给按钮,也不给一个口径说不清的导出。
+ * 排序也一并带走:同一批筛选、两种排法导出来的行集合相同,但顺序不同,
+ * 用户在页面上按认定年看、导出却是另一种序,会以为导错了。
  */
-export function ledgerExportUrl(view: LedgerView, state: LedgerState): string | null {
-  if (view === 'difference') return null
-  const query = ledgerQueryFromState(view, state)
-  // `view` 只是页面上的视图选择,导出端点靠**路径**区分粒度,不读它;
-  // 带上只会让「导出参数 = 筛选参数」这句话不再逐字成立。
-  delete query[VIEW_PARAM]
-  const p = new URLSearchParams(query)
+export function ledgerExportUrl(state: LedgerState): string {
+  const p = new URLSearchParams(ledgerQueryFromState(state))
   const s = p.toString()
-  const base = view === 'enterprise' ? '/api/roster/export' : '/api/export'
-  return s ? `${base}?${s}` : base
+  return s ? `/api/roster/export?${s}` : '/api/roster/export'
 }
 
-/** 导出按钮上的文案:说明导的是哪个粒度,免得把「企业」当成「企业×称号」。 */
-export function ledgerExportLabel(view: LedgerView): string {
-  return view === 'title' ? '导出当前筛选(企业×称号)' : '导出当前筛选(企业,xlsx)'
+/** 导出按钮上的文案:**写清粒度与格式**,免得把「企业」当成「企业×称号」。 */
+export const LEDGER_EXPORT_LABEL = '导出当前筛选(企业,xlsx)'
+
+/** 年份来自实际事件统计；分享链接中已选年份在统计加载期间仍可见。 */
+export function ledgerYearOptions(years: readonly string[], selected: readonly string[] = []) {
+  return [...new Set([...years, ...selected])]
+    .filter(year => /^\d{4}$/.test(year))
+    .sort((a, b) => Number(b) - Number(a))
+    .map(value => ({ value, label: value }))
 }

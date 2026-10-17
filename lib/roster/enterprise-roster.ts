@@ -22,9 +22,11 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../domain'
 import { getComparison, type ComparisonDirection } from '../comparison'
-import { SOURCE_ORDER, TITLE_ORDER } from '../labels'
+import { DIFFERENCE_STATUS_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import { isPageCapable } from './evidence-page'
+import { DEFAULT_ROSTER_ENTERPRISE_SORT, ROSTER_ENTERPRISE_SORTS } from './ledger-contract'
+import type { RosterEnterpriseSort } from './ledger-contract'
 import {
   judgeFirstRecognition,
   matchesRecognitionQuery,
@@ -35,6 +37,10 @@ import {
 import { computeTitleLifecycle, type LifecycleEvent, type TitleLifecycle } from './lifecycle'
 
 type Db = BetterSQLite3Database<typeof schema>
+
+export { DEFAULT_ROSTER_ENTERPRISE_SORT, ROSTER_ENTERPRISE_SORTS } from './ledger-contract'
+export type { RosterEnterpriseSort } from './ledger-contract'
+export const DIFF_STATUS_NONE = 'none'
 
 /** 当前总表成员状态(派生、不落列)。 */
 export const ROSTER_STATES = ['current', 'removed_platform_only'] as const
@@ -59,13 +65,29 @@ interface Snapshot {
   relations: (typeof schema.platformRelation)['$inferSelect'][]
   queries: (typeof schema.platformQuery)['$inferSelect'][]
   differences: (typeof schema.differenceReason)['$inferSelect'][]
+  recordsByEnterprise: Map<number, (typeof schema.record)['$inferSelect'][]>
+  eventsByRecord: Map<number, (typeof schema.recordEvent)['$inferSelect'][]>
 }
 
 function readSnapshot(db: Db): Snapshot {
+  const records = db.select().from(schema.record).all()
+  const events = db.select().from(schema.recordEvent).all()
+  const recordsByEnterprise = new Map<number, typeof records>()
+  for (const record of records) {
+    const bucket = recordsByEnterprise.get(record.enterpriseId)
+    if (bucket) bucket.push(record)
+    else recordsByEnterprise.set(record.enterpriseId, [record])
+  }
+  const eventsByRecord = new Map<number, typeof events>()
+  for (const event of events) {
+    const bucket = eventsByRecord.get(event.recordId)
+    if (bucket) bucket.push(event)
+    else eventsByRecord.set(event.recordId, [event])
+  }
   return {
     enterprises: db.select().from(schema.enterprise).all(),
-    records: db.select().from(schema.record).all(),
-    events: db.select().from(schema.recordEvent).all(),
+    records,
+    events,
     // Legacy rows may contain guessed Word/Excel page numbers from before the API guard existed.
     // Normalize only this read snapshot; never rewrite or migrate the stored evidence.
     evidence: db.select().from(schema.recordEvidence).all().map((row) =>
@@ -77,6 +99,8 @@ function readSnapshot(db: Db): Snapshot {
     relations: db.select().from(schema.platformRelation).all(),
     queries: db.select().from(schema.platformQuery).all(),
     differences: db.select().from(schema.differenceReason).all(),
+    recordsByEnterprise,
+    eventsByRecord,
   }
 }
 
@@ -116,10 +140,22 @@ export interface RosterEnterpriseRow {
   aliasNames: string[]
   /** 每个有 `award` 事件的称号一项(没有 award 的称号不出现)。 */
   firstRecognition: FirstRecognition[]
+  /** 正式认定的年份/批次摘要，不包含复核与维持事件。 */
+  awards: { titleCode: string; year: number | null; batchSeq: number | null }[]
   /** 下一次复核到期 = 各称号锚点 + 3 的**最早**一个;无从计算时 `null`。 */
   nextReviewYear: number | null
   /** 锚点计算中用到缺 `decided_year` 的事件 ⇒ **待核**(不猜)。 */
   anchorNeedsReview: boolean
+  /** 该企业的差异摘要(RL-20:台账页「差异状态」列只读它)。 */
+  difference: RosterEnterpriseDifference
+}
+
+/** 一家企业的差异摘要，沿用 `/api/roster/differences` 的展示态与当前差异口径。 */
+export interface RosterEnterpriseDifference {
+  count: number
+  status: string | null
+  reasonCode: string | null
+  anyCurrent: boolean
 }
 
 export interface RosterEnterpriseFilter {
@@ -154,6 +190,10 @@ export interface RosterEnterpriseFilter {
   firstYear?: number[]
   /** **首次认定的状态**(多值:`confirmed` / `pending`;RL-08 增量)。同上,与 `title` 同称号。 */
   firstStatus?: string[]
+  /** 差异状态或可见差异原因(多值);`none` 表示没有差异记录。 */
+  diffStatus?: string[]
+  /** 总表排序(RL-20)。 */
+  sort?: RosterEnterpriseSort
   page?: number
   pageSize?: number
 }
@@ -174,6 +214,8 @@ export interface RosterCounts {
    * 企业×称号数」,给首次认定一个自己的单位,才不至于让用户把两个数当成一个。
    */
   recognitionPairs: number
+  /** 本筛选企业中的差异坐标总数(企业 × 称号 × 方向)。 */
+  differences: number
 }
 
 export interface RosterEnterprisesResult {
@@ -284,10 +326,10 @@ function buildProfile(
   snap: Snapshot,
   evidenceByEvent: ReadonlyMap<number, readonly FirstRecognitionEvidence[]>,
 ): Profile {
-  const records = snap.records.filter((r) => r.enterpriseId === enterprise.id)
+  const records = snap.recordsByEnterprise.get(enterprise.id) ?? []
   const eventsByRecord = new Map<number, Snapshot['events']>()
   for (const record of records) {
-    eventsByRecord.set(record.id, snap.events.filter((e) => e.recordId === record.id))
+    eventsByRecord.set(record.id, snap.eventsByRecord.get(record.id) ?? [])
   }
 
   // 生命周期按 **(企业 × 称号)** 算,把该称号下**全部来源**的事件合起来
@@ -392,7 +434,20 @@ function toRow(
   profile: Profile,
   aliasNames: string[],
   rosterState: RosterState,
+  difference: RosterEnterpriseDifference,
 ): RosterEnterpriseRow {
+  const awards = [...new Map(profile.records.flatMap((record) =>
+    (profile.eventsByRecord.get(record.id) ?? [])
+      .filter((event) => event.eventType === 'award')
+      .map((event) => {
+        const item = { titleCode: record.titleCode, year: event.year, batchSeq: event.batchSeq }
+        return [`${item.titleCode}:${item.year}:${item.batchSeq}`, item] as const
+      }),
+  )).values()].sort((a, b) =>
+    titleRank(a.titleCode) - titleRank(b.titleCode) ||
+    (a.year ?? Infinity) - (b.year ?? Infinity) ||
+    (a.batchSeq ?? 0) - (b.batchSeq ?? 0),
+  )
   return {
     enterpriseId: profile.enterprise.id,
     name: profile.enterprise.name,
@@ -404,9 +459,59 @@ function toRow(
     titles: profile.titles,
     aliasNames,
     firstRecognition: profile.summary.firstRecognition,
+    awards,
     nextReviewYear: profile.summary.nextReviewYear,
     anchorNeedsReview: profile.summary.anchorNeedsReview,
+    difference,
   }
+}
+
+/** 差异状态顺序越靠后越优先;未知值稳定排在已知值之后。 */
+function statusRank(code: string): number {
+  const i = DIFFERENCE_STATUS_ORDER.indexOf(code)
+  return i === -1 ? DIFFERENCE_STATUS_ORDER.length : i
+}
+
+function compareDifferencePriority(a: RosterDifferenceRow, b: RosterDifferenceRow): number {
+  return (
+    statusRank(b.status) - statusRank(a.status) ||
+    titleRank(a.titleCode) - titleRank(b.titleCode) ||
+    a.direction.localeCompare(b.direction)
+  )
+}
+
+function enterpriseDifferenceSummaries(rows: RosterDifferenceRow[]): Map<number, RosterEnterpriseDifference> {
+  const summaries = new Map<number, RosterEnterpriseDifference>()
+  const bestRows = new Map<number, RosterDifferenceRow>()
+  for (const row of rows) {
+    const summary = summaries.get(row.enterpriseId)
+    if (!summary) {
+      summaries.set(row.enterpriseId, {
+        count: 1,
+        status: row.status,
+        reasonCode: row.reasonCode,
+        anyCurrent: row.inCurrentDifference,
+      })
+      bestRows.set(row.enterpriseId, row)
+      continue
+    }
+    summary.count += 1
+    summary.anyCurrent ||= row.inCurrentDifference
+    const best = bestRows.get(row.enterpriseId)!
+    if (compareDifferencePriority(row, best) < 0) {
+      summary.status = row.status
+      summary.reasonCode = row.reasonCode
+      bestRows.set(row.enterpriseId, row)
+    }
+  }
+  return summaries
+}
+
+const NO_DIFFERENCE: RosterEnterpriseDifference = {
+  count: 0,
+  status: null,
+  reasonCode: null,
+  anyCurrent: false,
 }
 
 /**
@@ -622,7 +727,15 @@ function selectRosterEnterprises(
   db: Db,
   filter: RosterEnterpriseFilter,
 ): { rows: RosterEnterpriseRow[]; counts: RosterCounts } {
-  const { profiles, index, confirmedAliases } = readRosterProfiles(db)
+  const { profiles, index, confirmedAliases, snap } = readRosterProfiles(db)
+  const differenceRows = differenceUniverse(db, snap)
+  const differenceStatusesByEnterprise = new Map<number, Set<string>>()
+  for (const row of differenceRows) {
+    const statuses = differenceStatusesByEnterprise.get(row.enterpriseId) ?? new Set<string>()
+    statuses.add(row.status)
+    differenceStatusesByEnterprise.set(row.enterpriseId, statuses)
+  }
+  const differenceSummaries = enterpriseDifferenceSummaries(differenceRows)
 
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
   /**
@@ -632,16 +745,28 @@ function selectRosterEnterprises(
    * 口径与 `lib/query.ts` 的 `q` 逐字一致:归一化大写后的子串匹配。
    */
   const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
+  const diffStatuses = filter.diffStatus?.length ? filter.diffStatus : null
   const candidates = profiles.map((profile) => ({
     profile,
     aliasNames: [...(confirmedAliases.get(profile.enterprise.id) ?? [])].sort(),
     state: deriveRosterState(profile, index),
+    difference: differenceSummaries.get(profile.enterprise.id) ?? NO_DIFFERENCE,
+    differenceStatuses: differenceStatusesByEnterprise.get(profile.enterprise.id) ?? new Set<string>(),
   }))
   const matched = candidates
-    .filter(({ profile, aliasNames, state }) => {
+    .filter(({ profile, aliasNames, state, difference, differenceStatuses }) => {
       if (filter.rosterState && state !== filter.rosterState) return false
       if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return false
       if (filter.district && effectiveDistrict(profile) !== filter.district) return false
+      if (diffStatuses) {
+        const hit =
+          (diffStatuses.includes(DIFF_STATUS_NONE) && differenceStatuses.size === 0) ||
+          diffStatuses.some((value) =>
+            value !== DIFF_STATUS_NONE &&
+            (differenceStatuses.has(value) || difference.reasonCode === value),
+          )
+        if (!hit) return false
+      }
       if (!matchesRecordFilters(profile, filter)) return false
       if (!matchesFirstRecognition(profile, filter)) return false
       if (needle || usccNeedle) {
@@ -655,18 +780,11 @@ function selectRosterEnterprises(
       return true
     })
     // 命中的首次认定在**同一处**算出来:计数与筛选判据由此不可能各说各的。
-    .map(({ profile, aliasNames, state }) => ({
-      row: toRow(profile, aliasNames, state),
+    .map(({ profile, aliasNames, state, difference }) => ({
+      row: toRow(profile, aliasNames, state, difference),
       recognitionPairs: recognitionEntriesMatching(profile, filter).length,
     }))
-  const rows = matched
-    .map((m) => m.row)
-    .sort(
-      (a, b) =>
-        titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') ||
-        a.name.localeCompare(b.name) ||
-        a.enterpriseId - b.enterpriseId,
-    )
+  const rows = matched.map((m) => m.row).sort(enterpriseComparator(filter.sort ?? DEFAULT_ROSTER_ENTERPRISE_SORT))
 
   const titles: Record<string, number> = Object.fromEntries(TITLE_ORDER.map((code) => [code, 0]))
   for (const row of rows) for (const code of row.titles) titles[code] = (titles[code] ?? 0) + 1
@@ -677,9 +795,30 @@ function selectRosterEnterprises(
     // 「首次认定」自己的单位 —— 与 `titlePairs` 不同:后者数的是**全部**称号,
     // 给了首次认定判据之后两者不再相等,不单列就会让人把前者当成命中数。
     recognitionPairs: matched.reduce((n, m) => n + m.recognitionPairs, 0),
+    differences: rows.reduce((sum, row) => sum + row.difference.count, 0),
   }
 
   return { rows, counts }
+}
+
+function earliestRecognition(row: RosterEnterpriseRow): number | null {
+  const years = row.firstRecognition.map((first) => first.year).filter((year): year is number => year != null)
+  return years.length ? Math.min(...years) : null
+}
+
+function enterpriseComparator(sort: RosterEnterpriseSort): (a: RosterEnterpriseRow, b: RosterEnterpriseRow) => number {
+  const byName = (a: RosterEnterpriseRow, b: RosterEnterpriseRow) =>
+    a.name.localeCompare(b.name) || a.enterpriseId - b.enterpriseId
+  if (sort === 'name') return byName
+  if (sort === 'title') {
+    return (a, b) => titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') || byName(a, b)
+  }
+  return (a, b) => {
+    const ya = earliestRecognition(a)
+    const yb = earliestRecognition(b)
+    if (ya == null || yb == null) return ya === yb ? byName(a, b) : ya == null ? 1 : -1
+    return yb - ya || byName(a, b)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -946,11 +1085,11 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
     .filter((name, index, list) => list.indexOf(name) === index)
     .sort()
 
-  const row = toRow(profile, aliasNames, deriveRosterState(profile, index))
+  const differenceRows = differenceUniverse(db, snap)
+  const difference = enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE
+  const row = toRow(profile, aliasNames, deriveRosterState(profile, index), difference)
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
   const eventIds = new Set(events.map((e) => e.id))
-
-  const differenceRows = differenceUniverse(db, snap)
 
   const relations = snap.relations
     .filter((r) => r.enterpriseId === id)

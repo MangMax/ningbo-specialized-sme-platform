@@ -52,8 +52,8 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs f
 </script>
 
 <template>
-  <div class="flex flex-col gap-5">
-    <PageHeader class="rise-in" style="--rise-index: 0" title="数据质量">
+  <div class="flex flex-col gap-5" :aria-busy="isLoading">
+    <PageHeader title="数据质量">
       <template #description>
         导入时自动判定的待核对项,共
         <span class="text-foreground font-medium tabular-nums">{{ totalFlagged }}</span> 家,
@@ -61,11 +61,19 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs f
       </template>
     </PageHeader>
 
+    <div class="relative h-6 shrink-0" aria-live="polite" data-testid="quality-loading-status">
+      <template v-if="isLoading">
+        <span class="text-muted-foreground absolute top-0.5 left-0 text-[13px]">正在加载质量清单…</span>
+        <span class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
+          <span class="bg-primary block h-0.5 w-1/3 rounded-full" />
+        </span>
+      </template>
+    </div>
+
     <!-- 索引:点一条跳到下面的清单。清单本身重复一遍数字,这里只做导航。 -->
     <div
       v-if="groups.length"
-      class="rise-in bg-card flex flex-wrap items-center gap-1.5 rounded-lg border p-2"
-      style="--rise-index: 1"
+      class="bg-card flex flex-wrap items-center gap-1.5 rounded-lg border p-2"
     >
       <a
         v-for="g in groups"
@@ -99,11 +107,10 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs f
     </Empty>
 
     <Card
-      v-for="(g, gi) in groups"
+      v-for="g in groups"
       :id="`q-${g.kind}`"
       :key="g.kind"
-      class="rise-in scroll-mt-20 gap-0 overflow-hidden py-0"
-      :style="{ '--rise-index': gi + 2 }"
+      class="scroll-mt-20 gap-0 overflow-hidden py-0"
     >
       <CardHeader class="gap-1 border-b px-5 py-4">
         <div class="flex items-baseline justify-between gap-3">

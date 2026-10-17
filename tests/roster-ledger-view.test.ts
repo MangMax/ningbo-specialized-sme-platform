@@ -1,280 +1,114 @@
 import { describe, expect, it } from 'vitest'
+import { DIFFERENCE_REASONS } from '../lib/labels'
+import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '../lib/roster/ledger-contract'
 import {
-  DEFAULT_LEDGER_VIEW,
+  DEFAULT_SORT,
   EMPTY_LEDGER_STATE,
-  LEDGER_VIEWS,
-  filtersForView,
-  LEDGER_VIEW_FILTERS,
-  ledgerExportLabel,
+  LEDGER_FILTER_KEYS,
   ledgerExportUrl,
   ledgerListQuery,
   ledgerQueryFromState,
   ledgerStateFromQuery,
-  parseLedgerView,
-  VIEW_PARAM,
+  ledgerYearOptions,
   type LedgerState,
 } from '../lib/roster/ledger-view'
 
-/**
- * RL-17 合并台账的**视图 ↔ 筛选 ↔ 导出**映射。
- *
- * 两条最容易被忽略、坏掉也看不出来的性质,在这一层钉住:
- *  1. 「筛选与导出同口径」—— 导出 URL 与列表查询**由同一份 state 派生**,
- *     这里断言两者的参数集合逐字一致(导出不多也不少)。
- *  2. 「切换分组不换人」—— `按企业` 与 `按企业×称号` 的记录侧判据
- *     (`source` / `eventType` / `year`)必须逐字一致。
- */
-
-const ALL_ON: LedgerState = {
-  q: '宁波',
-  title: ['little_giant', 'innovative_sme'],
-  district: '余姚市',
-  rosterState: 'current',
-  source: ['miit'],
-  eventType: ['award'],
-  year: ['2023', '2024'],
-  firstYear: ['2021'],
+const FILTERED: LedgerState = {
+  ...EMPTY_LEDGER_STATE,
+  q: '宁波开诚',
+  title: ['little_giant', 'specialized_sme'],
+  district: '海曙区',
+  firstYear: ['2021', '2022'],
   firstStatus: ['pending'],
-  direction: 'missing_in_miit',
-  status: ['needs_review'],
-  reason: ['platform_stale'],
+  diffStatus: ['confirmed_reason', 'none'],
+  sort: 'name',
 }
 
-describe('parseLedgerView', () => {
-  it('缺省 / 空 / 不认识的值一律回到企业粒度', () => {
-    expect(parseLedgerView(undefined)).toBe('enterprise')
-    expect(parseLedgerView('')).toBe('enterprise')
-    expect(parseLedgerView('   ')).toBe('enterprise')
-    expect(parseLedgerView('nothing')).toBe('enterprise')
-    expect(DEFAULT_LEDGER_VIEW).toBe('enterprise')
+describe('企业列表状态与 URL 映射', () => {
+  it('多值按逗号读回,空条件不进入状态', () => {
+    expect(ledgerStateFromQuery({
+      q: ' 宁波开诚 ',
+      title: 'little_giant,specialized_sme',
+      district: '海曙区',
+      firstYear: '2021,2022',
+      firstStatus: 'pending',
+      diffStatus: 'confirmed_reason,none',
+      sort: 'name',
+      view: 'difference',
+    })).toEqual(FILTERED)
   })
 
-  it('三个视图都认得', () => {
-    for (const v of LEDGER_VIEWS) expect(parseLedgerView(v)).toBe(v)
+  it('未知排序退回默认值', () => {
+    expect(ledgerStateFromQuery({ sort: 'random' }).sort).toBe(DEFAULT_SORT)
+  })
+
+  it('只有企业列表的筛选键会进入地址与请求,不再写三视图参数', () => {
+    const query = ledgerQueryFromState(FILTERED)
+    expect(Object.keys(query).sort()).toEqual(['q', 'title', 'district', 'firstYear', 'firstStatus', 'diffStatus', 'sort'].sort())
+    expect(Object.keys(query).filter((key) => key !== 'sort').every((key) => LEDGER_FILTER_KEYS.includes(key as never))).toBe(true)
+    expect(query).not.toHaveProperty('view')
+    expect(query.title).toBe('little_giant,specialized_sme')
+    expect(query.firstYear).toBe('2021,2022')
+    expect(query.firstStatus).toBe('pending')
+    expect(query.diffStatus).toBe('confirmed_reason,none')
+    expect(ledgerListQuery(FILTERED)).toEqual(query)
+  })
+
+  it('地址往返保留筛选与排序', () => {
+    const query = ledgerQueryFromState(FILTERED)
+    expect(ledgerQueryFromState(ledgerStateFromQuery(query))).toEqual(query)
+  })
+
+  it('导出只带当前筛选,不带分页,空筛选仍有有效地址', () => {
+    const url = ledgerExportUrl(FILTERED)
+    const params = new URL(url, 'http://local').searchParams
+    expect(url.startsWith('/api/roster/export?')).toBe(true)
+    expect(params.get('q')).toBe(FILTERED.q)
+    expect(params.get('district')).toBe(FILTERED.district)
+    expect(params.get('sort')).toBe(FILTERED.sort)
+    expect(params.has('page')).toBe(false)
+    expect(ledgerExportUrl(EMPTY_LEDGER_STATE)).toBe('/api/roster/export')
   })
 })
 
-describe('ledgerStateFromQuery —— 地址栏读回', () => {
-  it('多值按逗号分隔读回,空串当没筛', () => {
-    const state = ledgerStateFromQuery({
-      q: ' 宁波 ',
-      title: 'little_giant,innovative_sme',
-      district: '',
-      source: 'miit',
-      year: '2023,2024',
-      direction: 'extra_in_miit',
-    })
-    expect(state.q).toBe('宁波')
-    expect(state.title).toEqual(['little_giant', 'innovative_sme'])
-    expect(state.district).toBe('')
-    expect(state.source).toEqual(['miit'])
-    expect(state.year).toEqual(['2023', '2024'])
-    expect(state.direction).toBe('extra_in_miit')
-    expect(state.status).toEqual([])
-  })
 
-  it('重复参数也认(与全部读接口的 parseCsvQuery 同一处规则)', () => {
-    expect(ledgerStateFromQuery({ title: ['little_giant', 'innovative_sme'] }).title).toEqual([
-      'little_giant',
-      'innovative_sme',
+describe('企业差异状态菜单与原因筛选',()=>{
+  it('菜单覆盖每一种可见原因，其他在按钮和筛选chip中使用中文',()=>{
+    for(const [value,label] of Object.entries(DIFFERENCE_REASONS)) {
+      expect(ROSTER_DIFFERENCE_FILTER_OPTIONS).toContainEqual({value,label})
+      expect(rosterDifferenceFilterLabel(value)).toBe(label)
+    }
+    expect(rosterDifferenceFilterLabel('other')).toBe('其他')
+  })
+  it('其他与现有状态的多选经过URL、刷新及导出保持同一值',()=>{
+    const state={...EMPTY_LEDGER_STATE,diffStatus:['other','query_failed']}
+    const query=ledgerListQuery(state)
+    expect(query.diffStatus).toBe('other,query_failed')
+    expect(ledgerStateFromQuery(query).diffStatus).toEqual(['other','query_failed'])
+    expect(new URL(ledgerExportUrl(state),'http://local').searchParams.get('diffStatus')).toBe(query.diffStatus)
+  })
+})
+
+describe('企业列表年份筛选', () => {
+  it('年份取实际统计并去重降序，已选年份保留且排除未知桶', () => {
+    expect(ledgerYearOptions(['2022', '2026', '未知', '2022', ''], ['2024', '2022'])).toEqual([
+      { value: '2026', label: '2026' },
+      { value: '2024', label: '2024' },
+      { value: '2022', label: '2022' },
     ])
+    expect(ledgerYearOptions([])).toEqual([])
+    expect(ledgerYearOptions([], ['2024'])).toEqual([{ value: '2024', label: '2024' }])
   })
-
-  it('首次认定两个判据能从地址栏读回(深链与「返回不丢上下文」)', () => {
-    const state = ledgerStateFromQuery({ firstYear: '2021,2022', firstStatus: 'pending' })
-    expect(state.firstYear).toEqual(['2021', '2022'])
-    expect(state.firstStatus).toEqual(['pending'])
-    // 没给就是没筛,不是默认塞一个值进去。
-    expect(ledgerStateFromQuery({}).firstYear).toEqual([])
-    expect(ledgerStateFromQuery({}).firstStatus).toEqual([])
-  })
-})
-
-describe('ledgerQueryFromState —— 回写地址栏', () => {
-  it('默认视图不写 view;别的视图写', () => {
-    expect(ledgerQueryFromState('enterprise', EMPTY_LEDGER_STATE)[VIEW_PARAM]).toBeUndefined()
-    expect(ledgerQueryFromState('title', EMPTY_LEDGER_STATE)[VIEW_PARAM]).toBe('title')
-    expect(ledgerQueryFromState('difference', EMPTY_LEDGER_STATE)[VIEW_PARAM]).toBe('difference')
-  })
-
-  it('没筛的项不写进地址(免得分享出一串空参数)', () => {
-    expect(ledgerQueryFromState('enterprise', EMPTY_LEDGER_STATE)).toEqual({})
-  })
-
-  it('两个分组拿到的记录侧判据逐字一致(切换分组不换人)', () => {
-    const a = ledgerQueryFromState('enterprise', ALL_ON)
-    const b = ledgerQueryFromState('title', ALL_ON)
-    for (const key of ['q', 'title', 'source', 'eventType', 'year']) {
-      expect(a[key]).toEqual(b[key])
-    }
-  })
-
-  it('企业和称号粒度保留属地筛选;总表状态与首次认定仅属企业,差异只认差异判据', () => {
-    const ent = ledgerQueryFromState('enterprise', ALL_ON)
-    expect(ent.district).toBe('余姚市')
-    expect(ent.rosterState).toBe('current')
-    expect(ent.direction).toBeUndefined()
-    // RL-08:首次认定两个判据也是**企业粒度**的(行就是一家企业)。
-    expect(ent.firstYear).toBe('2021')
-    expect(ent.firstStatus).toBe('pending')
-
-    const title = ledgerQueryFromState('title', ALL_ON)
-    expect(title.district).toBe('余姚市')
-    expect(title.rosterState).toBeUndefined()
-    expect(title.firstYear).toBeUndefined()
-
-    const diff = ledgerQueryFromState('difference', ALL_ON)
-    expect(diff.direction).toBe('missing_in_miit')
-    expect(diff.status).toBe('needs_review')
-    expect(diff.reason).toBe('platform_stale')
-    // 差异行没有「来源 / 事件 / 年份」这三个属性,不该把 postal 参数带上。
-    expect(diff.source).toBeUndefined()
-    expect(diff.eventType).toBeUndefined()
-    expect(diff.year).toBeUndefined()
-    expect(diff.rosterState).toBeUndefined()
-    expect(diff.firstYear).toBeUndefined()
-    expect(diff.firstStatus).toBeUndefined()
-    // 搜索对三个视图都生效。
-    expect(diff.q).toBe('宁波')
-  })
-
-  it('往返一趟不丢信息', () => {
-    for (const view of LEDGER_VIEWS) {
-      const query = ledgerQueryFromState(view, ALL_ON)
-      const back = ledgerStateFromQuery(query)
-      expect(ledgerQueryFromState(view, back)).toEqual(query)
-    }
-  })
-})
-
-describe('LEDGER_VIEW_FILTERS —— 一张表说清「每个视图认哪些筛选」', () => {
-  it('emitted 的每个参数都是该视图声明认的(取数与声明不许漂移)', () => {
-    for (const view of LEDGER_VIEWS) {
-      const emitted = Object.keys(ledgerQueryFromState(view, ALL_ON)).filter((k) => k !== VIEW_PARAM)
-      for (const key of emitted) {
-        expect(LEDGER_VIEW_FILTERS[view], `${view} 发出了没声明的 ${key}`).toContain(key)
-      }
-    }
-  })
-
-  it('两个分组的记录侧判据声明一致(切换分组不换人)', () => {
-    for (const key of ['q', 'title', 'source', 'eventType', 'year']) {
-      expect(LEDGER_VIEW_FILTERS.enterprise).toContain(key)
-      expect(LEDGER_VIEW_FILTERS.title).toContain(key)
-    }
-  })
-
-  it('切换视图清掉该视图用不到的条件(留一个看不见的条件 = 静默筛选)', () => {
-    // 切到「按企业×称号」:保留事件和属地筛选;总表状态与首次认定是企业粒度,
-    // 差异侧的三个判据也用不到。
-    const toTitle = filtersForView('title', ALL_ON)
-    expect(toTitle.district).toBe(ALL_ON.district)
-    expect(toTitle.rosterState).toBe('')
-    expect(toTitle.direction).toBe('')
-    expect(toTitle.status).toEqual([])
-    expect(toTitle.reason).toEqual([])
-    // 记录侧判据留下(两种分组共用同一批人)。
-    expect(toTitle.q).toBe(ALL_ON.q)
-    expect(toTitle.source).toEqual(ALL_ON.source)
-    expect(toTitle.eventType).toEqual(ALL_ON.eventType)
-    expect(toTitle.year).toEqual(ALL_ON.year)
-
-    // 首次认定是企业粒度的判据:切走时清掉,否则它会变成看不见、清不掉、切回来又生效的条件。
-    expect(toTitle.firstYear).toEqual([])
-    expect(toTitle.firstStatus).toEqual([])
-
-    // 切到差异:属地 / 总表状态 / 记录侧判据都清掉。
-    const toDiff = filtersForView('difference', ALL_ON)
-    for (const key of ['district', 'rosterState'] as const) expect(toDiff[key]).toBe('')
-    for (const key of ['source', 'eventType', 'year'] as const) expect(toDiff[key]).toEqual([])
-    expect(toDiff.title).toEqual(ALL_ON.title)
-    expect(toDiff.direction).toBe(ALL_ON.direction)
-    expect(toDiff.status).toEqual(ALL_ON.status)
-
-    // 切回企业:差异侧清掉,企业侧与记录侧都在。
-    const toEnt = filtersForView('enterprise', ALL_ON)
-    expect(toEnt.direction).toBe('')
-    expect(toEnt.status).toEqual([])
-    expect(toEnt.reason).toEqual([])
-    expect(toEnt.district).toBe(ALL_ON.district)
-    expect(toEnt.rosterState).toBe(ALL_ON.rosterState)
-  })
-
-  it('**首次认定只在「按企业」下存在**(刻意的收窄,不是漏了)', () => {
-    /**
-     * RL-08:首次认定是**企业 × 称号**的量(「这家企业在专精特新上的首次认定是哪年」),
-     * 而 `按企业×称号` 那一栏的行来自 `/api/records`,它读的是**事件行**,不算首次认定
-     * —— 放进去就是「同一个 URL,两种结果」。所以它只归企业分组,切走时被清掉。
-     */
-    expect(LEDGER_VIEW_FILTERS.enterprise).toEqual(
-      expect.arrayContaining(['firstYear', 'firstStatus']),
-    )
-    expect(LEDGER_VIEW_FILTERS.title).not.toContain('firstYear')
-    expect(LEDGER_VIEW_FILTERS.difference).not.toContain('firstStatus')
-    expect(ledgerQueryFromState('title', ALL_ON).firstYear).toBeUndefined()
-    expect(ledgerQueryFromState('difference', ALL_ON).firstStatus).toBeUndefined()
-  })
-
-  it('企业与称号视图都声明属地筛选;差异视图不声明', () => {
-    // 企业视图按企业属地筛;称号视图沿用 /api/records 的记录属地筛选语义。
-    expect(LEDGER_VIEW_FILTERS.enterprise).toContain('district')
-    expect(LEDGER_VIEW_FILTERS.title).toContain('district')
-    expect(LEDGER_VIEW_FILTERS.difference).not.toContain('district')
-    expect(ledgerQueryFromState('title', ALL_ON).district).toBe('余姚市')
-  })
-})
-
-describe('ledgerExportUrl —— 筛选与导出同口径', () => {
-  /** 参数集合。`view` 不算「筛选」:导出端点靠路径区分粒度,不读它。 */
-  const paramPairs = (url: string) => {
-    const p = new URL(url, 'http://x').searchParams
-    p.delete(VIEW_PARAM)
-    return [...p.entries()].sort()
-  }
-  const listPairs = (view: 'enterprise' | 'title') => {
-    const p = new URLSearchParams(ledgerListQuery(view, ALL_ON))
-    p.delete(VIEW_PARAM)
-    return [...p.entries()].sort()
-  }
-
-  it('企业粒度导出到 /api/roster/export,参数与列表请求逐字一致', () => {
-    const url = ledgerExportUrl('enterprise', ALL_ON)
-    expect(url!.startsWith('/api/roster/export?')).toBe(true)
-    expect(paramPairs(url!)).toEqual(listPairs('enterprise'))
-  })
-
-  it('企业×称号粒度导出到 /api/export,参数与列表请求逐字一致', () => {
-    const url = ledgerExportUrl('title', ALL_ON)
-    expect(url!.startsWith('/api/export?')).toBe(true)
-    expect(paramPairs(url!)).toEqual(listPairs('title'))
-  })
-
-  it('两个分组的导出仍带着同一批记录侧判据', () => {
-    const ent = new URLSearchParams(ledgerExportUrl('enterprise', ALL_ON)!.split('?')[1])
-    const ttl = new URLSearchParams(ledgerExportUrl('title', ALL_ON)!.split('?')[1])
-    for (const key of ['title', 'source', 'eventType', 'year', 'q']) {
-      expect(ent.get(key)).toBe(ttl.get(key))
-    }
-  })
-
-  it('首次认定筛选被导出**继承**(筛选进 URL,导出读的是同一个对象)', () => {
-    const url = ledgerExportUrl('enterprise', ALL_ON)!
-    const p = new URLSearchParams(url.split('?')[1])
-    expect(p.get('firstYear')).toBe('2021')
-    expect(p.get('firstStatus')).toBe('pending')
-  })
-
-  it('差异粒度不给导出(宁可不给按钮,也不给口径说不清的导出)', () => {
-    expect(ledgerExportUrl('difference', ALL_ON)).toBeNull()
-  })
-
-  it('没有筛选时也给得出地址(导出全部)', () => {
-    expect(ledgerExportUrl('enterprise', EMPTY_LEDGER_STATE)).toBe('/api/roster/export')
-    expect(ledgerExportUrl('title', EMPTY_LEDGER_STATE)).toBe('/api/export')
-  })
-
-  it('按钮文案写明导出的粒度', () => {
-    expect(ledgerExportLabel('enterprise')).toContain('企业')
-    expect(ledgerExportLabel('title')).toContain('企业×称号')
+  it('年份多选可与称号组合，地址刷新和导出保留同一条件', () => {
+    const state = ledgerStateFromQuery({ year: '2024,2022', title: 'little_giant', page: '3' })
+    const query = ledgerListQuery(state)
+    expect(query.year).toBe('2024,2022')
+    expect(query.title).toBe('little_giant')
+    expect(ledgerStateFromQuery(query)).toEqual(state)
+    const url = new URL(ledgerExportUrl(state), 'http://local')
+    expect(url.searchParams.get('year')).toBe(query.year)
+    expect(url.searchParams.get('title')).toBe(query.title)
+    expect(url.searchParams.has('page')).toBe(false)
+    expect(ledgerListQuery({ ...state, year: [] })).not.toHaveProperty('year')
   })
 })

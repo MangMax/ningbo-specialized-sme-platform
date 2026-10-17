@@ -24,6 +24,10 @@ beforeAll(async () => {
   vi.stubGlobal('createError', (opts: object) =>
     Object.assign(new Error('Bad query'), opts),
   )
+  vi.stubGlobal('useRuntimeConfig', () => ({
+    curatedPath: join(dir, 'curation.json'),
+    reconcilePath: join(dir, 'reconcile.json'),
+  }))
   handler = (await import('../server/api/export.get'))
     .default as unknown as typeof handler
   const seed = (
@@ -118,6 +122,26 @@ describe('comparison export route', () => {
     expect(ws.rowCount).toBe(2)
     expect(ws.getRow(2).getCell(1).value).toBe('反方向')
     expect(ws.getRow(2).getCell(5).value).toBe('应出未出')
+  })
+  it('applies the current name search and district filters', async () => {
+    const ws = await exported({
+      mode: 'comparison',
+      title: 'specialized_sme',
+      direction: 'missing_in_miit',
+      q: '市专02',
+      district: '鄞州区',
+    })
+    expect(ws.rowCount).toBe(2)
+    expect(ws.getRow(2).getCell(1).value).toBe('市专02')
+
+    const empty = await exported({
+      mode: 'comparison',
+      title: 'specialized_sme',
+      direction: 'missing_in_miit',
+      q: '市专02',
+      district: '海曙区',
+    })
+    expect(empty.rowCount).toBe(1)
   })
   it('keeps the existing ledger export available without mode', async () => {
     const ws = await exported({ title: 'innovative_sme' })

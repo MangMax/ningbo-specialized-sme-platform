@@ -115,7 +115,9 @@ export default defineEventHandler(async (event) => {
 
   const force = q.rescan === '1' || q.rescan === 'true'
   let backfill: BackfillReport | undefined
-  if (!backfilled || force) {
+  // `NUXT_DB_READONLY=1` is used to inspect a production snapshot without changing it.
+  // That snapshot is already materialized, so skip the GET-side lazy backfill in this mode.
+  if (process.env.NUXT_DB_READONLY !== '1' && (!backfilled || force)) {
     const files = await backfillFromDisk(db, useRuntimeConfig().filesDir)
     backfill = { ...files, parts: backfillFileParts(db) }
     backfilled = true
