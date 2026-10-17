@@ -164,6 +164,24 @@ export const VERIFICATION_STATUSES: Record<string, string> = {
 /** 核验状态展示顺序。 */
 export const VERIFICATION_STATUS_ORDER: string[] = ['confirmed', 'pending']
 
+/** 生命周期读模型中的待核原因。 */
+export const LIFECYCLE_FLAGS: Record<string, string> = {
+  decided_year_missing: '至少一条认定/复核事件缺少结论年份，生命周期计算按规则回退到事件所涉年份',
+  review_outcome_unknown: '有复核事件但没记结论',
+  no_batch: '认定/复核事件缺批次序号',
+  no_evidence: '认定/复核事件没有出处记录',
+  no_anchor_year: '没有任何可算的年份',
+}
+
+/** 生命周期标记顺序。 */
+export const LIFECYCLE_FLAG_ORDER: string[] = [
+  'no_anchor_year',
+  'decided_year_missing',
+  'review_outcome_unknown',
+  'no_batch',
+  'no_evidence',
+]
+
 /**
  * 两个平台接口**取值**与联合类型(契约 §2.4)。**唯一出处** —— 适配层、写入侧、
  * 读接口、查询路由一律引用它,不要各自内联拼写 `'business_list' | 'apply_list'`
@@ -258,6 +276,94 @@ export const DIFFERENCE_STATUS_ORDER: string[] = [
   'confirmed_no_diff',
   'confirmed_reason',
 ]
+
+/**
+ * 差异状态 → 徽章变体。**这是六态颜色的唯一出处** —— 页面与展开面板都从这里取,
+ * 不许再各写一份本地级联。
+ *
+ * 为什么必须是唯一出处:契约 §3.2 要求「未查询 / 查询失败 / 无记录」等四态**彼此可区分**
+ * (用户反馈过的「失败 ≠ 无记录、未查询 ≠ 无记录」就靠这条守住)。而颜色一旦在三个文件里
+ * 各写一遍,就会出现两份把 `not_queried` 与 `no_record` 画成同一枚 outline、
+ * 把 `needs_review` 与 `query_failed` 一律画红的实现 —— 四态当场糊成两态。
+ *
+ * ── 怎么挑的这六个 ──────────────────────────────────────────────────────
+ * `Badge` 的基础类**本来就带 `font-medium`**(见 `components/ui/badge/index.ts`),
+ * 所以「字重」不是可用的区分通道:`solid` 与 `outline` 的差别其实只剩**边框浓淡**一处,
+ * 六态会退化成五态半。挑变体时按**实际渲染出来**的差别算,因此取:
+ *
+ * | 状态 | 变体 | 实际差别 | 读作 |
+ * |---|---|---|---|
+ * | `not_queried` 未查询 | `dashed` | 灰字 + **虚线**框 | 还什么都没做 |
+ * | `query_failed` 查询失败 | `destructive` | **红实底** + 白字 | 出错,要重查 |
+ * | `no_record` 无记录 | `outline` | **深字** + 实线框 | 查过了,平台确实没有 |
+ * | `needs_review` 待核实 | `quiet` | **灰字** + 实线框 | 证据不足,等人裁决 |
+ * | `confirmed_no_diff` 已确认无差异 | `secondary` | **浅灰实底** | 已确认,且无事 |
+ * | `confirmed_reason` 已确认原因 | `default` | **主色实底** | 已确认,有结论 |
+ *
+ * 四个通道:有无底色(3 有 / 3 无)· 底色色相(红 / 灰 / 主色)· 字色(深 / 灰)·
+ * 线型(虚线 / 实线)。逐对至少差一个,且没有一对只差边框浓淡。
+ *
+ * 为什么留 `dashed` 给「未查询」:它是唯一还没被占用的第六种观感(线型通道),
+ * 语义上也贴 —— 「尚未发生」。代价是 `dashed` 在事件徽章那边表示「入库培育」;
+ * 两处都在**同一列的上下文里**用,不会并排出现,但这条跨语义复用要在评审时知道。
+ * 另一条路是给 `Badge` 新增一个警告色变体,那属于改共享组件的视觉语言,不在这张票里。
+ *
+ * `tests/difference-status-variants.test.ts` 把「六态**解析出来的 class** 两两不同」
+ * 与「调用点不许压字重/字色」两条一起钉住。
+ */
+export const DIFFERENCE_STATUS_VARIANTS: Record<
+  string,
+  'dashed' | 'destructive' | 'outline' | 'quiet' | 'secondary' | 'default'
+> = {
+  not_queried: 'dashed',
+  query_failed: 'destructive',
+  no_record: 'outline',
+  needs_review: 'quiet',
+  confirmed_no_diff: 'secondary',
+  confirmed_reason: 'default',
+}
+
+export const DIFFERENCE_COLUMN_HINT =
+  '库内平台解释:状态取自解释记录(difference_reason)——未查询 / 查询失败 / 无记录 / 待核实 / 已确认无差异 / 已确认原因,并配对的后续措施。' +
+  '「查询失败」与「无记录」不是一回事:前者是查询没执行成功,后者是查询成功但平台返回 0 条。'
+
+/**
+ * 比对页差异状态图例的固定说明句(RL-15)。徽章只列**当前结果里真出现过**的取值。
+ *
+ * ── 这句话改过两次(两次都是盲测报「文案与行为不符」)────────────────────────
+ *
+ * 原文:「徽章是库内解释记录里的差异状态;悬停、键盘聚焦或点按可展开原因、配对措施与
+ * 接口证据。」它**印在图例那一排徽章下面**,读起来像在说这些图例徽章 —— 而图例徽章是
+ * 纯展示的 `Badge`,悬停什么都不会发生(盲测按 `[data-state="open"]` 实测没有)。
+ * 可展开的那一枚在**表里**:`ComparisonReconcile` 的徽章带 `role="button"` /
+ * `tabindex="0"` / click + keydown 与 Tooltip(悬停 / 真实键盘 Tab / 点按三种都验过)。
+ * 所以**不给图例徽章新加交互**(那是凭空造一个没人在等的控件),改文案指向真正的对象。
+ *
+ * 第二版又错了两处,一并订正:
+ *
+ *  1. **列名写错**。第二版写「表里『平台原因』那一列」,而该列的列头是 **「平台解释」**
+ *     (`pages/comparison.vue`)。用户按字面**找不到那一列**。
+ *     统一到**列头那个词**:列头是用户在屏幕上真正看到的东西,而领域语言同样是「解释」——
+ *     契约把这一组读接口叫「差异与解释」,常量也一直是 `DIFFERENCE_COLUMN_HINT`(「库内平台解释」)、
+ *     `RECONCILE_SOURCE`(「平台解释的取数来源」)。`difference_reason` 只是**表名**,
+ *     不该出现在给用户看的句子里。同一次把 `DIFFERENCE_COLUMN_HINT` 里那句
+ *     「库内平台原因」也改成「库内平台解释」(它是同一个列头的 `title`,同一处不一致)。
+ *  2. **浮层里没有「接口证据」**。实测 `ComparisonReconcile` 的浮层只有
+ *     原因 / 后续措施 / 迁入来源 / 核验(以及可选的旧解释缓存);证据在**隔壁**
+ *     「平台证据」那一列。所以不再声称浮层里有证据,而是**指向隔壁那一列**。
+ */
+export const DIFFERENCE_LEGEND_TITLE = '状态图例'
+export const DIFFERENCE_LEGEND_NOTE =
+  '徽章只表示取值本身。表里「平台解释」那一列的状态徽章,悬停、键盘聚焦或点按可展开原因、后续措施、迁入来源与核验;接口证据在隔壁「平台证据」那一列。'
+
+// ── 父代理合入裁决(2026-10-16)───────────────────────────────────────────
+// RL-15 与 RL-17 各建了一份同名表,取值不同。**RL-15 那份有缺陷**:
+// `not_queried` 与 `confirmed_no_diff` 都取 `quiet` ⇒ 两态不可区分,
+// 而它自己引用的契约 §3.2 恰恰要求「未查询 / 查询失败 / 无记录 / 已确认无差异」彼此可区分。
+// 故**取 RL-17 那组**(六态两两不同,且逐对至少差一个**可见通道**——按实际渲染算过)。
+// RL-15 的 DIFFERENCE_COLUMN_HINT / DIFFERENCE_LEGEND_* 保留(RL-17 未定义)。
+// RL-15 注释里「仓里另有两处本地级联待收敛」也**已由 RL-17 收敛完毕**:
+// `pages/roster.vue` 退化为 302 重定向,`components/RosterEnterprisePanel.vue` 改为从本表取。
 
 /**
  * 差异原因(`difference_reason.reason_code`)→ 中文名。
@@ -359,6 +465,14 @@ export const COMPARISON_NO_USCC = '无统代,另一侧无可匹配身份'
 /**
  * 平台解释(入库管线重整 票 16):拿工信部平台两个接口的记录解释「为什么这一行是差异」。
  * 文案与 `pipeline/src/reconcile.ts` 的 `REASON_LABELS` **同值** —— 取值一侧变了另一侧要跟着改。
+ *
+ * ⚠️ **这是旧 JSON 解释缓存(`data/platform-reconcile.json`)的词表,不是库内差异状态的词表。**
+ * RL-15 起,比对页的主源是 `difference_reason`(见下面 `DIFFERENCE_STATUSES` /
+ * `DIFFERENCE_REASONS` / `DIFFERENCE_MEASURES`);这套 `RECONCILE_*` 只剩两个用途:
+ *  - `ComparisonReconcile.vue` 的「旧解释缓存」**对照**行(`RECONCILE_LABELS` / `RECONCILE_SOURCE`);
+ *  - `lib/reconcile.ts` 那条**保持兼容**的旧路径,以及 `tests/reconcile.test.ts` 的钉桩。
+ * 下面 `RECONCILE_VARIANTS` / `RECONCILE_ORDER` / `RECONCILE_LEGEND_*` 目前**只有测试引用** ——
+ * 它们是旧图例的取值集,删除要连 `tests/reconcile.test.ts` 一起改,留待与旧缓存一并退役。
  */
 export const RECONCILE_LABELS = {
   deregistered: '已注销',
@@ -384,6 +498,67 @@ export const RECONCILE_VARIANTS: Record<
   on_platform: 'secondary',
   no_platform_record: 'quiet',
   unknown: 'quiet',
+}
+
+/**
+ * 差异方向 → 一句话说明,用在需要写全的地方(徽章、展开面板、下拉选项)。
+ *
+ * 与 `COMPARISON_LABELS` 的分工:`COMPARISON_LABELS` 是**短标签**(应纳未纳 / 应出未出),
+ * 适合列头与 chip;这里是**能独立读懂的自述**(公布有而平台无 / 平台有而公布无),
+ * 适合用户第一次遇到这个词的地方。两处都写死在各自的模板里过,合并时才发现
+ * 「同一个方向的三种说法」散在三个文件 —— 收在这里一份。
+ */
+export const COMPARISON_DIRECTION_NOTES: Record<string, string> = {
+  missing_in_miit: '公布有而平台无',
+  extra_in_miit: '平台有而公布无',
+}
+
+/**
+ * 首次认定的两态(RL-08,契约 §7.5 增量)。
+ *
+ * 取值本身定义在 `lib/roster/first-recognition.ts`(判定与取值同处),这里只放**中文标签与
+ * 展示顺序** —— 与全仓别的枚举同一分法(`*_ORDER` + 标签表),页面不再各写一份。
+ */
+export const FIRST_RECOGNITION_STATUSES: Record<string, string> = {
+  confirmed: '已确立',
+  pending: '待确认',
+}
+export const FIRST_RECOGNITION_STATUS_ORDER: string[] = ['confirmed', 'pending']
+
+/**
+ * 首次认定「待确认」的原因 —— 三条**互不等价**,像差异六态一样必须彼此可区分:
+ * 是「一条都定不了年」还是「另有现存 award 缺有效年份」还是「没有出处」,处理方式不同。
+ */
+export const FIRST_RECOGNITION_REASONS: Record<string, string> = {
+  no_dated_award: '认定事件定不了年',
+  undated_award: '现存认定缺有效年份',
+  no_evidence: '首次认定没有存下来的出处',
+}
+/** 展示顺序 = 判定里的优先级(`no_dated_award` > `undated_award` > `no_evidence`)。 */
+export const FIRST_RECOGNITION_REASON_ORDER: string[] = [
+  'no_dated_award',
+  'undated_award',
+  'no_evidence',
+]
+
+/**
+ * 首次认定一栏的表头提示(台账表的列头 `title`,**这是它唯一的用处**)。
+ *
+ * 写成纯文本:它出现在 `title` 属性里,漂进去的 Markdown 星号会**原样**显示给用户。
+ */
+export const FIRST_RECOGNITION_HINT =
+  '首次认定按「企业 × 称号」算:该企业在该称号上最早的那次认定。' +
+  '复核通过不是新的首次认定;复核未通过后再次获批也不重置。' +
+  '标「待确认」的原因有三种且互不相同:认定事件定不了年 / 现存认定缺有效年份 / 首次认定没有存下来的出处。'
+
+/** 方向代号 → 标签(`COMPARISON_LABELS` 是 `as const`,动态字符串取不到,这里放宽一次)。 */
+export function comparisonDirectionLabel(code: string): string {
+  return (COMPARISON_LABELS as Record<string, string>)[code] ?? code
+}
+
+/** 方向代号 → 一句话说明;不认识的取值原样返回,不吞。 */
+export function comparisonDirectionNote(code: string): string {
+  return COMPARISON_DIRECTION_NOTES[code] ?? code
 }
 
 /** 平台解释的取数来源(页面脚注、行内 tooltip 共用;**同一处定义**,避免两处写法漂移)。 */
@@ -427,9 +602,28 @@ export const RECONCILE_ORDER = [
 /**
  * 图例的固定说明句:一行讲清「这些徽章是什么」+「怎么展开」。
  * 徽章本身只列**当前结果里真出现过的**取值,所以图例不会长成一张词表。
+ *
+ * ── ⚠️ 这组 `RECONCILE_LEGEND_*` 目前**没有任何地方引用**(2026-10-16 RL-17 实测)
+ * 上面那条注释说「只有测试引用」,对 `RECONCILE_VARIANTS` / `RECONCILE_ORDER` 成立
+ * (`tests/reconcile.test.ts` 在用),但这三个 `RECONCILE_LEGEND_*` 常量**连测试都没有引用** ——
+ * 全仓 grep 只剩它们自己的定义。它们与旧 JSON 解释缓存图例一起退役,退役时要连这条注释一起清。
+ * 下面按「文案与屏幕一致」把浮层那句话改对了,但要知道:**它现在不渲染在任何一个页面上**。
+ *
+ * ── 这句话 2026-10-16 改过(父代理裁决「一起收」)────────────────────────────
+ * 原文「徽章是平台侧的结论;悬停、键盘聚焦或点按可展开该企业的登记位置、关联记录与取数时间。」
+ * 有三处与 `components/ComparisonPlatformEvidence.vue` 的实际行为不符:
+ *
+ *  1. **「悬停」不成立**:该组件没有任何 `Tooltip` / `Popover`,悬停什么都不会发生。
+ *  2. **「可展开…登记位置…取数时间」不成立**:这两样是**直接印在单元格里**的
+ *     (查询摘要那行就是「接口 · 认定级别 · 查询状态 · 取数时间 · 关系 N 条」),不在任何展开区后面。
+ *  3. **「登记位置」不是屏幕上的词**:这个单元格里没有这四个字。
+ *
+ * 真的交互只有一处:`<button>` 「展开原始关系(N 条)」→ 展开逐条关系原文(原生 button,
+ * 点按与键盘都可用)。所以文案只保留这一处,并把「直接显示」说成直接显示。
+ * 引用的名称一律用屏幕上的原字:「平台证据」(列头)、「展开原始关系」(按钮)。
  */
 export const RECONCILE_LEGEND_TITLE = '图例'
 export const RECONCILE_LEGEND_NOTE =
-  '徽章是平台侧的结论;悬停、键盘聚焦或点按可展开该企业的登记位置、关联记录与取数时间。'
+  '徽章是平台侧的结论。「平台证据」列直接给出曾用名,以及每次平台查询的接口、状态、取数时间和关系条数;逐条关系原文要点「展开原始关系」按钮(点按或键盘都可以)。'
 /** 图例最多显示几个徽章(超出的用「…」收尾,避免图例比表格还高)。 */
 export const RECONCILE_LEGEND_MAX = 5

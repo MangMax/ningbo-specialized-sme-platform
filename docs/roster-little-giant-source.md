@@ -8,6 +8,7 @@
 | 项 | 值 |
 |---|---|
 | 路径(本机源目录,**不提交**) | `/Users/mang/Workfile/宁波/专精特新/20261013/经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx` |
+| **入库后的库内相对路径**(= 台账出处口径) | `jxj/announcement/经信局公布历年小巨人企业名单.xlsx`(见下 §8.1) |
 | 字节数 | 187,857 |
 | SHA-256 | `5de6298a2a6a7e69a920b70db0e2e8d544acdc3c0a05102b6a2eff76a3323d84` |
 | 工作表数 | **1** |
@@ -120,6 +121,52 @@ RL02_LITTLE_GIANT_XLSX=/nonexistent/none.xlsx pnpm test
 | 出处(listNo 14) | `source_file` / `attachment` = 工作表名 / `list_no` 14 / `page` NULL |
 | 同幂等键再提交 | `batchId` 不变;企业 / 记录 / 事件 / 出处**一个都不多** |
 
-`record_evidence.source_file` 目前是**来源根相对路径**;等文件登记进文件库(`app/files/`)
-后换成库内相对路径(TO-BACKFILL,绑 RL-13)。
+### 8.1 出处口径:文件库内相对路径(RL-16 兑现)
+
+RL-02 交付时 `record_evidence.source_file` 用的是**来源根相对路径**
+`经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx` —— 那个路径**不在文件库**
+(`files/`)里,于是出处解析不到文件、名录行的预览与跳转全断(TO-BACKFILL,RL-16 兑现)。
+
+现在这份工作簿已按库内命名规则入库,**出处一律指库内路径**:
+
+```
+jxj/announcement/经信局公布历年小巨人企业名单.xlsx
+```
+
+- 路径怎么定的:这份工作簿跨第 1–7 批,**没有**单一的「公布年份/批次」,故按
+  `files/README.md`「year/batch 取值」第 4 条**省略这两段**(⇒ `category_state='unset'`,
+  意思是年份待核,不是未分类)。它也正是 app 落位规则
+  (`server/utils/tus.ts` 的 `landingSegments`)对 `(jxj, announcement, 无年、无批次)` 算出的路径,
+  所以这份文件可以经**公开上传接口**原样落进去,不必开特例。
+- 入库动作走**应用公开 API**:`POST /api/uploads`(tus)→ `POST /api/files/register`。
+  幂等:登记以 `rel_path` 为键、内容按 SHA-256 判重,重复导入不产生第二份文件。
+- **已落库的旧批次怎么收敛**:导入的幂等键 = `来源标识 + 内容 SHA-256`
+  (`lib/roster/little-giant-import.ts` 的 `littleGiantIdempotencyKey`)。来源标识从库外换成库内
+  ⇒ 键变了 ⇒ **重导一次**。重导时:`enterprise` / `record` / `record_event` **一行不增**
+  (事件按坐标跳过),只有出处的 `source_file` 被收敛到新路径
+  (`server/utils/roster-import.ts` 的 `repointTargets`,逐条报在 item 的 `evidenceRepointed`)。
+  同内容再重导 ⇒ 同键 ⇒ 彻底空操作。
+- **实测**(运行时库,511 条出处):重导后 511 条全部指向库内路径,
+  `enterprise` / `record` / `record_event` / `record_evidence` 四个计数**一行未变**,
+  `/api/files?rescan=1` 的 `backfill.parts.orphanPaths` 为**空**(没有出处指向库外了)。
+
+#### 口径对不上的条目清单怎么取(可复跑)
+
+「有 `record_evidence` 引用、但 `stored_file` 里没有对应 `rel_path`」的清单由回填直接报出
+(`server/utils/file-parts.ts` 的 `PartsBackfillStats.orphanPaths`,判据是
+`source_file` 与 `rel_path` **精确相等** —— 与文件列表的「被记录引用数」同一口径):
+
+```bash
+curl 'localhost:3000/api/files?rescan=1' | jq '.backfill.parts.orphanPaths'
+```
+
+| 时点 | 清单 | 原因 |
+|---|---|---|
+| RL-16 之前 | `["经信局名单/小巨人/经信局公布历年小巨人企业名单.xlsx"]`(牵涉 **511** 条出处) | RL-02 导入时文件还没入库,出处按**来源根相对路径**写;该路径不在 `files/` 里 ⇒ 预览解析不到 |
+| RL-16 之后 | `[]` | 文件按库内规则入库,重导一轮把 511 条指针收敛到库内路径 |
+
+同一判据的回归用例见 `tests/file-parts.test.ts`(orphanPath 会被报出且不猜)与
+`tests/roster-evidence-repoint.test.ts`(重导后指针收敛、行数不变)。
+
+**不要把出处改回库外路径**:来源目录不是运行时的文件库,写进去预览就断。
 

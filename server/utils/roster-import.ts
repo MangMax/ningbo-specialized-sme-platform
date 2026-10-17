@@ -17,23 +17,32 @@
  * 既用于预检（只报数），也用于提交（照计划执行）—— 预检报的影响就是提交真会发生的事。
  */
 
-import { eq } from 'drizzle-orm'
+import { createHash } from 'node:crypto'
+import { and, eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
+import { isPageCapable } from '../../lib/roster/evidence-page'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
+import { missingUsccSourceFields, usccFormatVerdict } from '../../lib/roster/uscc-research'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER, type PlatformInterface } from '../../lib/labels'
 import type {
+  DuplicateNameCandidate,
   RosterImportAlias,
   RosterImportAnnouncement,
   RosterImportDifference,
+  RosterImportEvidence,
+  RosterImportEvent,
   RosterImportExportSnapshot,
   RosterImportItemResult,
   RosterImportMerge,
   RosterImportPayload,
   RosterImportPlatformQuery,
   RosterImportPreflight,
+  RosterImportReplayResponse,
   RosterImportRequest,
   RosterImportSummary,
+  RosterImportUsccBackfill,
 } from '../../lib/roster-import-client'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -165,24 +174,103 @@ interface ResolvedEnterprise {
   usccNorm: string | null
 }
 
-function findEnterpriseByUscc(db: Executor, usccNorm: string): ResolvedEnterprise | null {
-  const row = db.select().from(schema.enterprise).all().find((e) => e.usccNorm === usccNorm)
-  return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+/** 按身份规则定位企业的入参（`name` / `uscc` 至少给一个；`uscc` 空串等同没给）。 */
+type EnterpriseSpec = { name?: string | null; uscc?: string | null }
+
+/**
+ * 定位企业时要取的列 —— **只有**这四列（{@link ResolvedEnterprise} 的形状）。
+ *
+ * 只取这四列是有意的（RL-18）：`enterprise` 表还有 `district` / `quality_flags` 等列，
+ * 而按身份键定位一行用不到它们。
+ */
+const enterpriseColumns = {
+  id: schema.enterprise.id,
+  name: schema.enterprise.name,
+  nameNorm: schema.enterprise.nameNorm,
+  usccNorm: schema.enterprise.usccNorm,
 }
 
+/**
+ * 按统代定位企业（**唯一**的身份键之一；重名候选与归并读侧共用这一份）。
+ *
+ * RL-18：**按键定位** —— 谓词进 `WHERE`、命中 `enterprise_uscc_norm_uq`（唯一索引）。
+ * 以前是 `select().all().find(...)`，即每次调用都整表读进内存再线性找；而这条路径是
+ * **写入阶段每条平台关系**都要走一次的（`enterpriseByExactUscc`），企业表达万行时
+ * 单批就是分钟级 —— 实测对比见契约 §3.1c。
+ */
+export function findEnterpriseByUscc(db: Executor, usccNorm: string): ResolvedEnterprise | null {
+  return db
+    .select(enterpriseColumns)
+    .from(schema.enterprise)
+    .where(eq(schema.enterprise.usccNorm, usccNorm))
+    .get() ?? null
+}
+
+/** 按行 id 定位企业（归并/候选在写入阶段解析真 id 时用）—— RL-18：命中主键。 */
+export function findEnterpriseById(db: Executor, id: number): ResolvedEnterprise | null {
+  return db
+    .select(enterpriseColumns)
+    .from(schema.enterprise)
+    .where(eq(schema.enterprise.id, id))
+    .get() ?? null
+}
+
+/**
+ * 按归一化名定位企业 —— RL-18：命中 `enterprise_name_norm_idx`。
+ *
+ * 这条索引**不唯一**（同名多主体正是本模型要如实保留的），所以命中可能不止一行。
+ * 取「第一行」的口径与改前一致：`.get()` 与原来的 `.all().find()` 都是**按 rowid 升序的第一行**
+ * —— 全表扫描本就是 rowid 序；走索引时索引项是 `(name_norm, rowid)` 序，同一 `name_norm` 内
+ * 仍是 rowid 序。（实测把查询计划逼成 `SCAN enterprise` 也仍取到同一行，见
+ * `tests/roster-import-semantics.test.ts` 的同名多主体场景。）
+ *
+ * 一处**已知且不可达**的差别：SQL 绑定经 better-sqlite3 的 UTF-8 编码，**落单的代理对**
+ * （lone surrogate）会被换成 U+FFFD，于是它**可能**匹配到 JS `===` 匹配不到的行。
+ * `nameNorm` 一律来自 {@link normalizeName}，输入是真实企业名／平台 JSON，取不到落单代理对，
+ * 所以这条差别够不着；写在这里是为了不把「完全一致」说成无条件成立。
+ */
 function findEnterpriseByNorm(db: Executor, nameNorm: string): ResolvedEnterprise | null {
-  const row = db.select().from(schema.enterprise).all().find((e) => e.nameNorm === nameNorm)
-  return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
+  return db
+    .select(enterpriseColumns)
+    .from(schema.enterprise)
+    .where(eq(schema.enterprise.nameNorm, nameNorm))
+    .get() ?? null
+}
+
+/**
+ * **全部**同名行（`name_norm` 相同）—— 不论它有没有统代。重名候选的判据基础。
+ *
+ * RL-18：谓词进 `WHERE`（命中 `enterprise_name_norm_idx`）。返回的是**同一个集合**，
+ * 且仍是 rowid 升序（重名候选的先后顺序因此不变）——「为什么第一行不变」的完整理由与
+ * 那处已知不可达的差别见 {@link findEnterpriseByNorm}。
+ */
+function findEnterprisesByNorm(db: Executor, nameNorm: string): ResolvedEnterprise[] {
+  return db
+    .select(enterpriseColumns)
+    .from(schema.enterprise)
+    .where(eq(schema.enterprise.nameNorm, nameNorm))
+    .all()
+}
+
+/**
+ * 按 {@link upsertEnterprise} 的**身份规则**定位企业：有统代只按统代、无统代才按名。
+ *
+ * 与 {@link locateEnterprise} 的差别正是本票的事故根因：后者在「统代查不到」时会**退回按名找**，
+ * 所以预检会说「企业已存在」，而写入侧（只按统代）却会**新建一行** —— 重复于是静默产生。
+ * 这里把写入侧的规则单独摘出来，让「这次到底会不会新建」在预检阶段就能问对。
+ */
+function findEnterpriseByIdentity(db: Executor, spec: EnterpriseSpec): ResolvedEnterprise | null {
+  const uscc = usccOrNull(spec.uscc)
+  if (uscc) return findEnterpriseByUscc(db, uscc)
+  const name = optionalString(spec.name)
+  return name ? findEnterpriseByNorm(db, normalizeName(name)) : null
 }
 
 /**
  * 按身份键定位企业：**统代优先，缺失时按归一化名**（既有决策，不改）。
  * 定位不到时返回 `null`（由调用方决定是新建还是报错）。
  */
-function locateEnterprise(
-  db: Executor,
-  spec: { name?: string | null; uscc?: string | null },
-): ResolvedEnterprise | null {
+function locateEnterprise(db: Executor, spec: EnterpriseSpec): ResolvedEnterprise | null {
   const uscc = usccOrNull(spec.uscc)
   if (uscc) {
     const byUscc = findEnterpriseByUscc(db, uscc)
@@ -200,6 +288,211 @@ function enterpriseByExactUscc(db: Executor, usccRaw: unknown): number | null {
   return findEnterpriseByUscc(db, uscc)?.id ?? null
 }
 
+// ---------------------------------------------------------------------------
+// 重名候选（RL-14）：把「静默多出一行」变成**显式的一条报告项**
+// ---------------------------------------------------------------------------
+//
+// 事故机制：`upsertEnterprise` 有统代时**只按统代匹配**（正确，按名合并会踩同名多主体），
+// 于是「同一家公司带统代再进来一次」会与既有那条「同名但无统代」的行另起一行，
+// 而导入报告里一个字都没有。本段**只做显式化**：
+//   - 不改 `upsertEnterprise` 的匹配规则；
+//   - 不按名自动合并；候选不是结论，归并另由证据驱动（§5.3 / §8.8）。
+//
+// 判据用的是**写入侧的同一份身份规则**（{@link findEnterpriseByIdentity}），所以预检说
+// 「会新建」与提交时**真的新建**是同一件事 —— 这正是以前对不上的地方。
+
+/** 本批将**新建**的企业身份（`records[i]` 一项；不会新建的是 `null`）。 */
+interface PendingEnterpriseCreate {
+  /** 触发新建的载荷项引用（`record:<i>`）。 */
+  ref: string
+  name: string
+  nameNorm: string
+  uscc: string | null
+}
+
+/** 一条待写的重名候选：`candidate.newEnterpriseId` 在预检阶段为 `null`（那一行还没建）。 */
+interface PlannedDuplicateCandidate {
+  candidate: DuplicateNameCandidate
+  /** 既有侧的解析口径（执行阶段据此取真 id）。 */
+  existing: { kind: 'enterprise'; id: number } | { kind: 'batch'; name: string; uscc: string | null }
+}
+
+/** 身份键（与 {@link pendingKeys} 同一套写法）：有统代按统代、无统代按归一化名。 */
+function identityKeyOf(spec: { name: string; uscc: string | null }): string {
+  return spec.uscc ? usccKey(spec.uscc) : nameKey(normalizeName(spec.name))
+}
+
+interface AnnouncementBatchIdentityPlan {
+  /** 身份解析使用的 USCC；名称项只会映射到唯一的既有 / 本批身份候选。 */
+  identityUsccByRecord: Map<number, string | null>
+  ambiguousNameOnlyRecords: Set<number>
+}
+
+/**
+ * 从整份公告为 name-only 项解析稳定的身份。候选集合同时包含既有同名企业和本批显式 USCC；
+ * 只有合并后恰好一个身份时才归组，多个候选失败关闭。
+ */
+function planAnnouncementBatchIdentity(
+  db: Executor,
+  records: RosterImportAnnouncement['records'],
+): AnnouncementBatchIdentityPlan {
+  const usccCandidatesByName = new Map<string, Set<string>>()
+  for (const record of records) {
+    const name = optionalString(record?.enterprise?.name)
+    const uscc = usccOrNull(record?.enterprise?.uscc)
+    if (!name || !uscc) continue
+    const nameNorm = normalizeName(name)
+    const candidates = usccCandidatesByName.get(nameNorm) ?? new Set<string>()
+    candidates.add(uscc)
+    usccCandidatesByName.set(nameNorm, candidates)
+  }
+
+  const existingByName = new Map<string, ResolvedEnterprise[]>()
+  const identityUsccByRecord = new Map<number, string | null>()
+  const ambiguousNameOnlyRecords = new Set<number>()
+  records.forEach((record, index) => {
+    const name = optionalString(record?.enterprise?.name)
+    const requestedUscc = usccOrNull(record?.enterprise?.uscc)
+    let identityUscc = requestedUscc
+
+    if (!requestedUscc && name) {
+      const nameNorm = normalizeName(name)
+      let existing = existingByName.get(nameNorm)
+      if (!existing) {
+        existing = findEnterprisesByNorm(db, nameNorm)
+        existingByName.set(nameNorm, existing)
+      }
+      const identities = new Map<string, string | null>()
+      for (const enterprise of existing) {
+        const existingUscc = enterprise.usccNorm && usccFormatVerdict(enterprise.usccNorm) === 'ok'
+          ? usccOrNull(enterprise.usccNorm)
+          : null
+        const identity = existingUscc
+          ? usccKey(existingUscc)
+          : `enterprise:${enterprise.id}`
+        identities.set(identity, existingUscc)
+      }
+      for (const uscc of usccCandidatesByName.get(nameNorm) ?? []) {
+        identities.set(usccKey(uscc), uscc)
+      }
+      if (identities.size > 1) {
+        ambiguousNameOnlyRecords.add(index)
+      } else if (identities.size === 1) {
+        identityUscc = [...identities.values()][0] ?? null
+      }
+    }
+
+    identityUsccByRecord.set(index, identityUscc)
+  })
+
+  return { identityUsccByRecord, ambiguousNameOnlyRecords }
+}
+
+/**
+ * 本批**会新建**的企业（按 `records` 下标对齐；不会新建的是 `null`）。
+ *
+ * 两层排除，缺一不可：
+ *  1. 库里已按身份规则命中 ⇒ 这次是复用，不是新建；
+ *  2. 本批**更早**的记录已经新建过同一身份 ⇒ 这条会复用它，也不是新建。
+ */
+function planEnterpriseCreates(
+  db: Executor,
+  records: RosterImportAnnouncement['records'],
+  identityPlan: AnnouncementBatchIdentityPlan,
+): Array<PendingEnterpriseCreate | null> {
+  const out: Array<PendingEnterpriseCreate | null> = []
+  const seen = new Set<string>()
+  records.forEach((record, index) => {
+    const name = optionalString(record?.enterprise?.name)
+    if (!name) {
+      out.push(null)
+      return
+    }
+    if (identityPlan.ambiguousNameOnlyRecords.has(index)) {
+      out.push(null)
+      return
+    }
+    const uscc = identityPlan.identityUsccByRecord.get(index) ?? usccOrNull(record?.enterprise?.uscc)
+    if (findEnterpriseByIdentity(db, { name, uscc })) {
+      out.push(null)
+      return
+    }
+    const key = identityKeyOf({ name, uscc })
+    if (seen.has(key)) {
+      out.push(null)
+      return
+    }
+    seen.add(key)
+    out.push({ ref: `record:${index}`, name, nameNorm: normalizeName(name), uscc })
+  })
+  return out
+}
+
+/**
+ * 一条新建企业的重名候选：库里（或本批更早）**同名**的行各成一条候选。
+ *
+ * 同名 = `name_norm` 相同（与全库的身份口径一致），**不看有没有统代** ——
+ * 事故里正是「既有那行无统代、新建那行有统代」。
+ */
+function duplicateNameCandidates(
+  db: Executor,
+  create: PendingEnterpriseCreate,
+  earlierSameName: PendingEnterpriseCreate[],
+): PlannedDuplicateCandidate[] {
+  const base = {
+    basis: 'same_name_norm' as const,
+    nameNorm: create.nameNorm,
+    name: create.name,
+    newEnterpriseId: null,
+    newUscc: create.uscc,
+    sourceRef: create.ref,
+  }
+  return [
+    ...findEnterprisesByNorm(db, create.nameNorm).map(
+      (row): PlannedDuplicateCandidate => ({
+        candidate: {
+          ...base,
+          existingEnterpriseId: row.id,
+          existingEnterpriseName: row.name,
+          existingUscc: row.usccNorm,
+        },
+        existing: { kind: 'enterprise', id: row.id },
+      }),
+    ),
+    ...earlierSameName.map(
+      (twin): PlannedDuplicateCandidate => ({
+        candidate: {
+          ...base,
+          existingEnterpriseId: null,
+          existingEnterpriseName: twin.name,
+          existingUscc: twin.uscc,
+        },
+        existing: { kind: 'batch', name: twin.name, uscc: twin.uscc },
+      }),
+    ),
+  ]
+}
+
+/** 候选的稳定引用（同一批次里唯一，供逐项追溯与去重）。 */
+function duplicateCandidateRef(candidate: DuplicateNameCandidate): string {
+  return `duplicate_candidate:${candidate.newUscc ?? candidate.nameNorm}~${duplicateTwinKey(candidate)}`
+}
+
+/**
+ * 执行阶段**补齐 id**：新建行这时才存在。既有侧若本就在库里，其 id 计划时就有
+ * （条目描述的正是当时看到的那个状态，故保持原值）；本批更早的同名行这时也已插入，按身份解析。
+ */
+function resolveDuplicateCandidate(tx: Executor, planned: PlannedDuplicateCandidate): RosterImportItemResult {
+  const { candidate, existing } = planned
+  const existingEnterpriseId =
+    existing.kind === 'enterprise'
+      ? existing.id
+      : (findEnterpriseByIdentity(tx, existing)?.id ?? null)
+  const newEnterpriseId = findEnterpriseByIdentity(tx, { name: candidate.name, uscc: candidate.newUscc })?.id ?? null
+  const resolved: DuplicateNameCandidate = { ...candidate, existingEnterpriseId, newEnterpriseId }
+  return success('duplicate_candidate', duplicateCandidateRef(candidate), { candidate: resolved })
+}
+
 /**
  * **本批将新建**的企业键（`uscc:<norm>` / `name:<norm>`）。
  *
@@ -211,17 +504,21 @@ function enterpriseByExactUscc(db: Executor, usccRaw: unknown): number | null {
  */
 type PendingEnterprises = Set<string>
 
-function pendingKeys(spec: { name?: string | null; uscc?: string | null }): string[] {
+/** 身份键的两种写法。**只在这里拼**：{@link pendingKeys} 全给、{@link identityKeyOf} 按偏好给一个。 */
+const usccKey = (uscc: string) => `uscc:${uscc}`
+const nameKey = (nameNorm: string) => `name:${nameNorm}`
+
+function pendingKeys(spec: EnterpriseSpec): string[] {
   const keys: string[] = []
   const uscc = usccOrNull(spec.uscc)
-  if (uscc) keys.push(`uscc:${uscc}`)
+  if (uscc) keys.push(usccKey(uscc))
   const name = optionalString(spec.name)
-  if (name) keys.push(`name:${normalizeName(name)}`)
+  if (name) keys.push(nameKey(normalizeName(name)))
   return keys
 }
 
 /** 该企业是否**已存在或本批将新建**（预检判据）。 */
-function enterpriseKnown(db: Executor, pending: PendingEnterprises, spec: { name?: string | null; uscc?: string | null }): boolean {
+function enterpriseKnown(db: Executor, pending: PendingEnterprises, spec: EnterpriseSpec): boolean {
   if (locateEnterprise(db, spec)) return true
   return pendingKeys(spec).some((key) => pending.has(key))
 }
@@ -244,6 +541,16 @@ interface PendingPlatformRef {
   rdjb: string
   queriedAt: string
   sequenceNos: number[]
+  /** 本批将写入的那些关系的 `relationKey`（权威锚点，见 `NormalizedRef.relationKey`）。 */
+  relationKeys: string[]
+  /** 预检用的平台原始身份事实；只用于校验平台别名已有证据是否支持目标 qymc。 */
+  relations: Array<{
+    sequenceNo: number
+    relationKey: string | null
+    enterpriseId: number | null
+    usccRaw: string | null
+    nameRaw: string | null
+  }>
 }
 
 type PendingPlatformRefs = PendingPlatformRef[]
@@ -266,6 +573,20 @@ function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatfo
       sequenceNos: (Array.isArray(relations) ? relations : [])
         .map((relation) => optionalInt((relation as { sequenceNo?: unknown })?.sequenceNo))
         .filter((n): n is number => n != null),
+      // RL-06：`relationKey` 是**权威锚点**（平台的排序可能与解析顺序不同），所以本批将写入的
+      // 关系也要把 key 收进来，好在预检阶段就能校验「序号那条是不是 key 那条」。
+      relationKeys: (Array.isArray(relations) ? relations : [])
+        .map((relation) => optionalString((relation as { relationKey?: unknown })?.relationKey))
+        .filter((k): k is string => !!k),
+      relations: (Array.isArray(relations) ? relations : [])
+        .map((relation) => ({
+          sequenceNo: optionalInt((relation as { sequenceNo?: unknown })?.sequenceNo),
+          relationKey: optionalString((relation as { relationKey?: unknown })?.relationKey),
+          enterpriseId: optionalInt((relation as { enterpriseId?: unknown })?.enterpriseId),
+          usccRaw: optionalString((relation as { usccRaw?: unknown })?.usccRaw),
+          nameRaw: optionalString((relation as { nameRaw?: unknown })?.nameRaw),
+        }))
+        .filter((relation): relation is PendingPlatformRef['relations'][number] => relation.sequenceNo != null),
     })
   }
   return out
@@ -278,6 +599,14 @@ interface NormalizedRef {
   rdjb: string
   queriedAt: string | null
   sequenceNo: number | null
+  /**
+   * 关系的**权威锚点**（`RL-06` 增量：父代理 2026-10-16，两个复查代理都实测「平台的排序可能
+   * 与其解析顺序不同，`sequenceNo` 只作参考」）。
+   *
+   * 给 `relationKey` 时：解析出的那条关系**必须**就是它；`sequenceNo` 同时给了却指到别的行
+   * ⇒ **报错**（`relation_ref_mismatch`），**不按其中一个猜**。不给则保持原行为（按 `sequenceNo`）。
+   */
+  relationKey: string | null
 }
 
 type RefError = { code: string; field: string; message: string }
@@ -303,8 +632,30 @@ function normalizeRef(ref: unknown, field: string): { ok: true; value: Normalize
       rdjb: optionalString(ref.rdjb) ?? '',
       queriedAt: optionalString(ref.queriedAt),
       sequenceNo: optionalInt(ref.sequenceNo),
+      relationKey: optionalString(ref.relationKey),
     },
   }
+}
+
+/**
+ * 自然键（除 `sequenceNo`）→ SQL 谓词。**只在这里拼**：{@link refCandidates}、
+ * {@link resolveQueryIdAt} 都靠它，于是「按自然键找查询」的口径只有一处。
+ *
+ * 谓词下推进 `WHERE` 是为了**按键定位**（RL-18）。注意这条路径与下面那四个
+ * `find*Row` 的**强度不同**，别混为一谈：
+ *  - 给了 `queriedAt` ⇒ 四列齐 ⇒ 命中 `platform_query_identity_uq`，至多一行；
+ *  - 没给 `queriedAt` ⇒ 三列 ⇒ 命中同一索引的**前三列前缀**，是一次索引区间扫描，
+ *    **可能命中多行**（`resolveQueryRefPlan` 的「引用不唯一」正是靠这个数条数）。
+ * 两种情况都只取 `id`，所以都不会碰 `raw_response` —— 那是本条路径真正省下的字节。
+ */
+function platformQueryWhere(ref: NormalizedRef) {
+  const conditions = [
+    eq(schema.platformQuery.interface, ref.interface as PlatformInterface),
+    eq(schema.platformQuery.queryKey, ref.queryKey),
+    eq(schema.platformQuery.rdjb, ref.rdjb),
+  ]
+  if (ref.queriedAt) conditions.push(eq(schema.platformQuery.queriedAt, ref.queriedAt))
+  return and(...conditions)
 }
 
 /** 按自然键在「库内 + 本批将写入」两处找候选查询。 */
@@ -315,7 +666,12 @@ function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: Norm
     candidate.rdjb === ref.rdjb &&
     (ref.queriedAt ? candidate.queriedAt === ref.queriedAt : true)
   return {
-    dbHits: source.select().from(schema.platformQuery).all().filter(matches),
+    // 库内一侧**按键定位**且只取 `id`；本批一侧是内存数组，谓词留在 JS 里。
+    dbHits: source
+      .select({ id: schema.platformQuery.id })
+      .from(schema.platformQuery)
+      .where(platformQueryWhere(ref))
+      .all(),
     pendingHits: pending.filter(matches),
   }
 }
@@ -343,19 +699,59 @@ function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, 
   if (dbHits.length + pendingHits.length === 0) {
     return { ok: false, error: { code: 'query_ref_not_found', field, message: `引用不到平台查询：${describeRef(ref)}` } }
   }
-  const dbWithSeq = dbHits.filter((query) =>
+  // RL-06 的 `relationKey` 校验要**按查询取关系行**；RL-18 的纪律是按键定位而不是整表扫 ——
+  // `queryId` 正是 `platform_relation_query_seq_uq` 的前缀，所以这里是索引前缀查询。
+  const relationsOf = (query: { id: number }) =>
     source
       .select()
       .from(schema.platformRelation)
+      .where(eq(schema.platformRelation.queryId, query.id))
       .all()
-      .some((relation) => relation.queryId === query.id && relation.sequenceNo === ref.sequenceNo),
+  // 「这条查询里有没有序号 N 的关系」= 关系表**唯一键**的按键定位（RL-18）。
+  // 以前这里对每个候选查询各扫一遍整张 `platform_relation`。
+  const dbWithSeq = dbHits.filter(
+    (query) => findRelationRow(source, { queryId: query.id, sequenceNo: ref.sequenceNo! }) != null,
   )
+
   const pendingWithSeq = pendingHits.filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
   if (dbWithSeq.length + pendingWithSeq.length === 0) {
     return { ok: false, error: { code: 'relation_ref_not_found', field, message: `引用不到平台关系：${describeRef(ref)}（该查询里没有序号 ${ref.sequenceNo} 的关系）` } }
   }
   if (!ref.queriedAt && dbWithSeq.length + pendingWithSeq.length > 1) {
     return { ok: false, error: { code: 'relation_ref_ambiguous', field, message: `引用不唯一：${describeRef(ref)} 命中 ${dbWithSeq.length + pendingWithSeq.length} 条同序号关系；请补 queriedAt` } }
+  }
+  // **`relationKey` 是权威锚点**：给了就必须对得上；给了 key 又给了序号、两者指的不是同一行 ⇒
+  // 报错（不按其中一个猜）。判据是「库内/本批该查询下，序号那条的 key 是不是这个 key」。
+  if (ref.relationKey) {
+    const keyed = [
+      ...dbWithSeq.flatMap((query) =>
+        relationsOf(query)
+          .filter((relation) => relation.sequenceNo === ref.sequenceNo)
+          .map((relation) => relation.relationKey),
+      ),
+      ...pendingHits
+        .filter((query) => query.sequenceNos.includes(ref.sequenceNo!))
+        .map((query) => (query.relationKeys.includes(ref.relationKey!) ? ref.relationKey : null)),
+    ].filter((key): key is string => key != null)
+    const anyKey = [
+      ...dbHits.flatMap((query) => relationsOf(query).map((relation) => relation.relationKey)),
+      ...pendingHits.flatMap((query) => query.relationKeys),
+    ]
+    if (!anyKey.includes(ref.relationKey)) {
+      return { ok: false, error: { code: 'relation_ref_not_found', field: `${field}.relationKey`, message: `引用不到平台关系：该查询下没有 relationKey=${ref.relationKey} 的关系` } }
+    }
+    if (!keyed.includes(ref.relationKey)) {
+      return {
+        ok: false,
+        error: {
+          code: 'relation_ref_mismatch',
+          field: `${field}.relationKey`,
+          message:
+            `序号与关系键不符：${describeRef(ref)} —— 序号 ${ref.sequenceNo} 那条的 relationKey ` +
+            `不是 ${ref.relationKey}。**按关系键为准、不猜**，请改用正确的序号，或只给 relationKey。`,
+        },
+      }
+    }
   }
   return { ok: true }
 }
@@ -364,22 +760,17 @@ function describeRef(ref: NormalizedRef): string {
   const parts = [`interface=${ref.interface}`, `queryKey=${ref.queryKey}`, `rdjb=${ref.rdjb || "''"}`]
   if (ref.queriedAt) parts.push(`queriedAt=${ref.queriedAt}`)
   if (ref.sequenceNo != null) parts.push(`sequenceNo=${ref.sequenceNo}`)
+  if (ref.relationKey) parts.push(`relationKey=${ref.relationKey}`)
   return parts.join(' ')
 }
 
 /** 执行阶段：解析出**真实**的 `platform_query.id`。 */
 function resolveQueryIdAt(source: Executor, ref: NormalizedRef): number | null {
   const hits = source
-    .select()
+    .select({ id: schema.platformQuery.id })
     .from(schema.platformQuery)
+    .where(platformQueryWhere(ref))
     .all()
-    .filter(
-      (query) =>
-        query.interface === ref.interface &&
-        query.queryKey === ref.queryKey &&
-        query.rdjb === ref.rdjb &&
-        (ref.queriedAt ? query.queriedAt === ref.queriedAt : true),
-    )
   if (hits.length === 0) return null
   if (ref.queriedAt) return hits[0]!.id
   return hits.length === 1 ? hits[0]!.id : null
@@ -390,13 +781,83 @@ function resolveRelationIdAt(source: Executor, ref: NormalizedRef): number | nul
   if (ref.sequenceNo == null) return null
   const queryId = resolveQueryIdAt(source, ref)
   if (queryId == null) return null
-  return (
-    source
-      .select()
-      .from(schema.platformRelation)
-      .all()
-      .find((relation) => relation.queryId === queryId && relation.sequenceNo === ref.sequenceNo)?.id ?? null
-  )
+  return findRelationRow(source, { queryId, sequenceNo: ref.sequenceNo })?.id ?? null}
+
+interface PlatformAliasRelationEvidence {
+  interface: string
+  enterpriseId: number | null
+  usccRaw: string | null
+  nameRaw: string | null
+}
+
+/** Load the actual platform row facts used to validate a platform-sourced alias. */
+function findPlatformAliasRelationEvidence(source: Executor, relationId: number): PlatformAliasRelationEvidence | null {
+  return source
+    .select({
+      interface: schema.platformQuery.interface,
+      enterpriseId: schema.platformRelation.enterpriseId,
+      usccRaw: schema.platformRelation.usccRaw,
+      nameRaw: schema.platformRelation.nameRaw,
+    })
+    .from(schema.platformRelation)
+    .innerJoin(schema.platformQuery, eq(schema.platformQuery.id, schema.platformRelation.queryId))
+    .where(eq(schema.platformRelation.id, relationId))
+    .get() ?? null
+}
+
+/** Get the asserted row facts for a relation that will be inserted by this request. */
+function findPendingPlatformAliasRelationEvidence(
+  pending: PendingPlatformRefs,
+  ref: NormalizedRef,
+): PlatformAliasRelationEvidence | null {
+  const matches = pending
+    .filter((query) =>
+      query.interface === ref.interface &&
+      query.queryKey === ref.queryKey &&
+      query.rdjb === ref.rdjb &&
+      (ref.queriedAt ? query.queriedAt === ref.queriedAt : true),
+    )
+    .flatMap((query) =>
+      query.relations
+        .filter((relation) =>
+          relation.sequenceNo === ref.sequenceNo &&
+          (!ref.relationKey || relation.relationKey === ref.relationKey),
+        )
+        .map((relation) => ({
+          interface: query.interface,
+          enterpriseId: relation.enterpriseId,
+          usccRaw: relation.usccRaw,
+          nameRaw: relation.nameRaw,
+        })),
+    )
+  return matches.length === 1 ? matches[0]! : null
+}
+
+/** Validate the existing row facts; never infer a missing USCC or qymc from a name. */
+function platformAliasEvidenceMismatch(
+  source: Executor,
+  sourceKind: string,
+  aliasName: string,
+  targetUscc: string | null,
+  targetEnterpriseId: number | null,
+  evidence: PlatformAliasRelationEvidence,
+): string | null {
+  const expectedInterface = sourceKind === 'platform_business' ? 'business_list' : 'apply_list'
+  if (
+    evidence.interface !== expectedInterface ||
+    !targetUscc ||
+    usccOrNull(evidence.usccRaw) !== targetUscc ||
+    evidence.nameRaw !== aliasName
+  ) {
+    return '平台关系的接口、统一社会信用代码或 qymc 与该别名不一致'
+  }
+  if (evidence.enterpriseId != null) {
+    const owner = findEnterpriseById(source, evidence.enterpriseId)
+    if (!owner || (targetEnterpriseId != null ? owner.id !== targetEnterpriseId : owner.usccNorm !== targetUscc)) {
+      return '平台关系已归属的企业与该别名归属企业不一致'
+    }
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -406,13 +867,39 @@ function resolveRelationIdAt(source: Executor, ref: NormalizedRef): number | nul
 /** 计划中的一项动作。 */
 interface PlannedItem {
   item: RosterImportItemResult
-  /** 预检的影响归类。 */
-  action: 'add' | 'update' | 'skip'
+  /** 预检的影响归类。`note` = **只记录、不计入任何影响计数**（如重名候选）。 */
+  action: 'add' | 'update' | 'skip' | 'note'
   /** 是否落在待核状态（`pending` / `needs_review` / 未知枚举）。 */
   review: boolean
+  /**
+   * 本项会让几行 `record_evidence.source_file` 收敛（行口径，RL-16/RL-19）。
+   * `summarizePlan` 把它求和成 `preflight.evidenceRepoints` —— 「预检答应的」与
+   * 「提交真改的」逐行可比对，就靠这一项**在计划期**就算准。
+   */
+  repoints?: number
   /** 确实要执行时才有的写入闭包（提交阶段调用）。 */
   run?: (tx: Executor) => RosterImportItemResult
 }
+
+/** 一条已冻结的出处指针更新，供 commit 与显式 replay 执行同一计划。 */
+interface EvidenceRepointTarget {
+  id: number
+  recordId: number
+  recordEventId: number
+  fromSourceFile: string
+  sourceFile: string
+}
+
+type EvidenceContentHashIndex = Map<string, Set<string>>
+type EvidenceContentHashConflict = 'unknown' | 'mismatch'
+
+interface EvidenceRepointPlan {
+  targets: EvidenceRepointTarget[]
+  hashConflicts: Set<EvidenceContentHashConflict>
+}
+
+/** 公布文件记录的计划口径：正常写入 / 只收敛出处指针。 */
+type AnnouncementPlanMode = 'write' | 'converge'
 
 interface Plan {
   items: PlannedItem[]
@@ -425,31 +912,276 @@ function summarizePlan(plan: Plan): RosterImportPreflight {
   let update = 0
   let remove = 0
   let review = 0
+  let evidenceRepoints = 0
+  const duplicateCandidates: DuplicateNameCandidate[] = []
   for (const planned of plan.items) {
     if (planned.action === 'add') add += 1
     else if (planned.action === 'update') update += 1
     if (planned.review) review += 1
+    evidenceRepoints += planned.repoints ?? 0
     if (planned.item.kind === 'merge' && planned.item.ok) remove += 1
+    const candidate = planned.item.detail?.candidate as DuplicateNameCandidate | undefined
+    if (planned.item.kind === 'duplicate_candidate' && planned.item.ok && candidate) {
+      duplicateCandidates.push(candidate)
+    }
   }
-  return { add, update, remove, review, conflicts: plan.conflicts }
+  return { add, update, remove, review, conflicts: plan.conflicts, evidenceRepoints, duplicateCandidates }
+}
+
+/**
+ * 同一批次里尚不存在的相同事件坐标先按安全的企业身份汇总出处，再只由首次出现项插入。
+ * 不同来源文件是不同证据关系，全部保留；完全相同的关系只插入一次。无统代名称本身不唯一时
+ * 单独保留，不把证据猜并到某个同名主体；具体逐项冲突由 {@link planAnnouncementRecord} 在
+ * 预检和提交共用的记录规划中报告。
+ */
+function planNewEventEvidence(
+  db: Executor,
+  announcement: RosterImportAnnouncement,
+  records: readonly RosterImportAnnouncement['records'][number][],
+  identityPlan: AnnouncementBatchIdentityPlan,
+): { eventsByRecord: Map<number, RosterImportEvent[]> } {
+  interface Occurrence {
+    recordIndex: number
+    eventIndex: number
+    event: RosterImportEvent
+  }
+
+  const planned = new Map<number, RosterImportEvent[]>()
+  const groups = new Map<string, Occurrence[]>()
+  for (const [recordIndex, record] of records.entries()) {
+    const events = Array.isArray(record?.events) ? record.events : []
+    planned.set(
+      recordIndex,
+      events.map((event) => {
+        const candidate: unknown = event
+        // Keep malformed array entries for planAnnouncementRecord's structured validation.
+        // In particular, JSON null must not throw here before it can become an item error.
+        if (!isObject(candidate)) return event
+        const evidence = candidate.evidence
+        return {
+          ...candidate,
+          evidence: Array.isArray(evidence) ? [...evidence] : (evidence ?? []),
+        } as unknown as RosterImportEvent
+      }),
+    )
+
+    const name = optionalString(record?.enterprise?.name)
+    const titleCode = optionalString(record?.titleCode)
+    const source = record?.source ?? announcement.sourceDocument?.source
+    if (!name || !titleCode || !TITLE_CODES.has(titleCode) || !SOURCES.has(String(source))) continue
+    const requestedUscc = usccOrNull(record.enterprise?.uscc)
+    const uscc = identityPlan.identityUsccByRecord.get(recordIndex) ?? requestedUscc
+    const nameMatches = findEnterprisesByNorm(db, normalizeName(name))
+    const resolvedByWriteIdentity = findEnterpriseByIdentity(db, { name, uscc })
+    const ambiguousNameOnly = !requestedUscc && (
+      identityPlan.ambiguousNameOnlyRecords.has(recordIndex) || nameMatches.length > 1
+    )
+    const groupIdentity = uscc
+      ? resolvedByWriteIdentity
+        ? `enterprise:${resolvedByWriteIdentity.id}`
+        : identityKeyOf({ name, uscc })
+      : nameMatches.length === 1
+        ? `enterprise:${nameMatches[0]!.id}`
+        : identityKeyOf({ name, uscc: null })
+    events.forEach((event, eventIndex) => {
+      if (!EVENT_TYPES.has(String(event?.eventType))) return
+      const coordinates = eventCoordinates(0, event)
+      const occurrence: Occurrence = {
+        recordIndex,
+        eventIndex,
+        event,
+      }
+
+      // 一条不唯一的名称无法确认企业身份，不能按名称查询碰巧返回的第一家参与归组。
+      // planAnnouncementRecord 会在任何写入解析前拒绝这条 name-only 记录。
+      const identityKey = ambiguousNameOnly ? `ambiguous:${recordIndex}:${eventIndex}` : groupIdentity
+      const key = JSON.stringify([identityKey, titleCode, source, coordinates])
+      const occurrences = groups.get(key) ?? []
+      occurrences.push(occurrence)
+      groups.set(key, occurrences)
+    })
+  }
+
+  for (const occurrences of groups.values()) {
+    if (occurrences.length < 2) continue
+    const first = occurrences[0]
+    if (!first) continue
+    const representative = records[first.recordIndex]
+    if (!representative) continue
+    const name = optionalString(representative?.enterprise?.name)
+    const titleCode = optionalString(representative?.titleCode)
+    const source = representative?.source ?? announcement.sourceDocument?.source
+    if (!name || !titleCode || !SOURCES.has(String(source))) continue
+    const requestedUscc = usccOrNull(representative.enterprise?.uscc)
+    const uscc = identityPlan.identityUsccByRecord.get(first.recordIndex) ?? requestedUscc
+    const enterprise = findEnterpriseByIdentity(db, { name, uscc })
+    const storedRecord = enterprise
+      ? db
+          .select()
+          .from(schema.record)
+          .where(
+            and(
+              eq(schema.record.enterpriseId, enterprise.id),
+              eq(schema.record.titleCode, titleCode),
+              eq(schema.record.source, source),
+            ),
+          )
+          .get()
+      : undefined
+    const existingEvent = storedRecord
+      ? db
+          .select()
+          .from(schema.recordEvent)
+          .where(eq(schema.recordEvent.recordId, storedRecord.id))
+          .all()
+          .find((row) => matchesEventCoordinates(row, eventCoordinates(storedRecord.id, first.event)))
+      : undefined
+    if (existingEvent) continue
+
+    const uniqueEvidence = new Map<string, RosterImportEvidence>()
+    const invalidEvidence: unknown[] = []
+    for (const occurrence of occurrences) {
+      const evidenceValues: unknown[] = Array.isArray(occurrence.event.evidence) ? occurrence.event.evidence : []
+      for (const rawEvidence of evidenceValues) {
+        // Keep malformed entries in the planned event. The original payload is validated below,
+        // and these entries must become structured record_evidence errors rather than disappear.
+        if (!isObject(rawEvidence)) {
+          invalidEvidence.push(rawEvidence)
+          continue
+        }
+        const sourceFile = optionalString(rawEvidence.sourceFile)
+        if (!sourceFile) {
+          invalidEvidence.push(rawEvidence)
+          continue
+        }
+        const normalized: RosterImportEvidence = {
+          sourceFile,
+          attachment: optionalString(rawEvidence.attachment),
+          listNo: optionalInt(rawEvidence.listNo),
+          page: isPageCapable(sourceFile) ? optionalInt(rawEvidence.page) : null,
+        }
+        const key = JSON.stringify([
+          normalized.sourceFile,
+          normalized.attachment ?? null,
+          normalized.listNo ?? null,
+          normalized.page ?? null,
+        ])
+        uniqueEvidence.set(key, normalized)
+      }
+    }
+    const mergedEvidence = [...uniqueEvidence.entries()]
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([, evidence]) => evidence)
+    mergedEvidence.push(...(invalidEvidence as RosterImportEvidence[]))
+    const [firstOccurrence, ...duplicates] = occurrences
+    if (firstOccurrence) {
+      const event = planned.get(firstOccurrence.recordIndex)?.[firstOccurrence.eventIndex]
+      if (event) planned.get(firstOccurrence.recordIndex)![firstOccurrence.eventIndex] = { ...event, evidence: mergedEvidence }
+    }
+    for (const duplicate of duplicates) {
+      const event = planned.get(duplicate.recordIndex)?.[duplicate.eventIndex]
+      if (event) planned.get(duplicate.recordIndex)![duplicate.eventIndex] = { ...event, evidence: [] }
+    }
+  }
+
+  return { eventsByRecord: planned }
+}
+
+/** 对象键及集合数组顺序不影响公告载荷的快照指纹;重复项仍按重数保留。 */
+function canonicalEvidencePlanJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalEvidencePlanJson).sort().join(',')}]`
+  }
+  if (value !== null && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, child]) => child !== undefined)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${canonicalEvidencePlanJson(child)}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+/** 同一幂等键若被复用于不同公告载荷或默认来源,不应复用旧的收敛目标快照。 */
+function evidenceRepointPlanFingerprint(request: RosterImportRequest): string {
+  return createHash('sha256')
+    .update(canonicalEvidencePlanJson(request.payload?.announcement ?? null))
+    .digest('hex')
 }
 
 /**
  * 把载荷翻成一份**只读**计划。所有身份解析（企业、记录、查询）都在这里发生，
  * 因此预检报的 add/update/remove/review 就是提交真会发生的事。
+ *
+ * `context.convergeOnly`（RL-19，§8.9.3）只规划**公布文件记录的出处指针收敛**：
+ * 其余各类（平台查询 / 别名 / 差异 / 快照 / 归并）**一项都不进计划** —— 收敛重放
+ * 一行不加、一行不删，那几类都可能写新行，故它们根本没有执行闭包可跑。
  */
 export function planRosterImport(
   db: Executor,
   request: RosterImportRequest,
-  context: { batchId?: number } = {},
+  context: {
+    batchId?: number
+    convergeOnly?: boolean
+    /** Source-PDF page-count failures collected by the REST/MCP boundary before planning. */
+    pageCountErrors?: readonly RosterImportItemResult[]
+    /** 原提交批次保存的目标快照；空数组也表示该批次已记录过计划。 */
+    evidenceRepointTargets?: readonly EvidenceRepointTarget[]
+  } = {},
 ): Plan {
   const items: PlannedItem[] = []
   const conflicts: RosterImportItemResult[] = []
   const payload = request.payload ?? {}
+  const mode: AnnouncementPlanMode = context.convergeOnly ? 'converge' : 'write'
+
+  // Announcement identity and event-evidence values must be rejected before the batch-wide
+  // identity plan sees them. Otherwise a malformed USCC can become candidate identity evidence,
+  // and an invalid page may be truncated later by the generic optionalInt used for years/sequence.
+  const announcementInputErrors = [
+    ...validateAnnouncementIdentityAndEvidence(payload.announcement),
+    ...(context.pageCountErrors ?? []),
+  ]
+  if (announcementInputErrors.length > 0) {
+    return {
+      items: announcementInputErrors.map((item) => ({ item, action: 'skip', review: false })),
+      conflicts: announcementInputErrors,
+    }
+  }
+
+  const evidencePlanFingerprint = evidenceRepointPlanFingerprint(request)
+  const evidenceContentHashes = payload.announcement
+    ? evidenceContentHashIndex(db, request)
+    : new Map<string, Set<string>>()
   /** 本批将新建的企业键（供别名 / 差异 / 归并在预检时解析到同批企业）。 */
   const pending: PendingEnterprises = new Set()
+  /** 本批新建主体的名称与统代（用于确认平台别名/按名归并是否只有一个真实候选）。 */
+  const pendingEnterpriseCreates: PendingEnterpriseCreate[] = []
   /** 本批将写入的平台查询自然键（供别名 / 差异 / 归并在预检时解析到同批关系行）。 */
   const pendingRefs: PendingPlatformRefs = collectPendingPlatformRefs(payload)
+  /** 先看整份载荷，标出同一出处行被指向多个不同目标路径的冲突。 */
+  const announcementRecords = Array.isArray(payload.announcement?.records) ? payload.announcement.records : []
+  const announcementIdentityPlan = payload.announcement && mode === 'write'
+    ? planAnnouncementBatchIdentity(db, announcementRecords)
+    : {
+        identityUsccByRecord: new Map<number, string | null>(),
+        ambiguousNameOnlyRecords: new Set<number>(),
+      }
+  const ambiguousEvidence = payload.announcement
+    ? ambiguousEvidenceRepointIds(db, payload.announcement, announcementRecords, evidenceContentHashes)
+    : new Set<number>()
+  /** 新事件在首次写入前合并同坐标出处，避免重复项按遍历顺序覆盖来源。 */
+  const newEventEvidencePlan = payload.announcement && mode === 'write'
+    ? planNewEventEvidence(db, payload.announcement, announcementRecords, announcementIdentityPlan)
+    : { eventsByRecord: new Map<number, RosterImportEvent[]>() }
+  const plannedWriteEvents = newEventEvidencePlan.eventsByRecord
+  /**
+   * **整份计划**已认领的出处行 id。
+   *
+   * 为什么必须跨记录共享：两条载荷记录若落到**同一条**既有记录上（同身份同坐标的重复行），
+   * 各自算一遍 repoints 会把同一行数两次 —— 而执行阶段第二条会发现指针已经改好了（0 行）。
+   * 同路径 no-op 不会认领；多目标冲突已由 `ambiguousEvidence` 在整份载荷上统一屏蔽。
+   * 共享集合后每行只进入一个计划项，执行时使用该项冻结的目标，不会因前项写入而反向匹配。
+   */
+  const claimedEvidence = new Set<number>()
 
   const push = (planned: PlannedItem) => {
     items.push(planned)
@@ -467,17 +1199,60 @@ export function planRosterImport(
         action: 'skip',
         review: false,
       })
-    } else {
-      // 先登记本批会新建的企业（记录级身份），再规划各项 —— 顺序不影响解析。
-      for (const record of records) {
-        const spec = { name: record?.enterprise?.name, uscc: record?.enterprise?.uscc }
-        if (!locateEnterprise(db, spec)) for (const key of pendingKeys(spec)) pending.add(key)
-      }
+    } else if (mode === 'converge') {
+      // 收敛重放不需要「本批会新建谁」这套推断 —— 它明确不新建任何行，
+      // 故也不做 `planEnterpriseCreates`（那正是为了判 add/skip 而存在的）。
       records.forEach((record, index) => {
-        planAnnouncementRecord(db, request, announcement, record, index, push)
+        planAnnouncementRecord(db, request, announcement, record, index, push, {
+          create: null,
+          earlierSameName: [],
+          reusedInBatch: false,
+        }, mode, claimedEvidence, ambiguousEvidence, undefined, context.evidenceRepointTargets, evidencePlanFingerprint, evidenceContentHashes)
+      })
+    } else {
+      // 会**新建**的企业 —— 判据就是写入侧的身份规则（有统代只按统代、无统代才按名），
+      // 不再用带「按名回退」的 {@link locateEnterprise}：那会让预检说「复用既有行」而
+      // 写入侧**另起一行**（事故根因），本批的引用解析也跟着算错。**同一套规则只此一份**。
+      const creates = planEnterpriseCreates(db, records, announcementIdentityPlan)
+      for (const create of creates) {
+        if (create) {
+          pendingEnterpriseCreates.push(create)
+          for (const key of pendingKeys(create)) pending.add(key)
+        }
+      }
+      // 本批**已计划**的两张索引（都只装「本批会新建」的那些记录）：
+      //  - 「身份键 → 已计划过的 (称号, 来源) 坐标」：同一批里两条记录同身份又同坐标时，
+      //    写入侧会**复用**前一条新建的企业与记录 ⇒ 后一条要计 `skip`，不能计 `add`；
+      //  - 「name_norm → 已计划新建的同名企业」：重名候选用。
+      const plannedCoordinates = new Map<string, Set<string>>()
+      const earlierByName = new Map<string, PendingEnterpriseCreate[]>()
+      records.forEach((record, index) => {
+        const create = creates[index] ?? null
+        const name = optionalString(record?.enterprise?.name)
+        const requestedUscc = usccOrNull(record?.enterprise?.uscc)
+        const uscc = announcementIdentityPlan.identityUsccByRecord.get(index) ?? requestedUscc
+        const coordinate = `${optionalString(record?.titleCode) ?? ''}/${optionalString(record?.source) ?? optionalString(announcement.sourceDocument?.source) ?? ''}`
+        const identityKey = name ? identityKeyOf({ name, uscc }) : null
+        const reusedInBatch = identityKey != null && (plannedCoordinates.get(identityKey)?.has(coordinate) ?? false)
+        planAnnouncementRecord(db, request, announcement, record, index, push, {
+          create,
+          earlierSameName: create ? (earlierByName.get(create.nameNorm) ?? []) : [],
+          reusedInBatch,
+          identityUscc: uscc,
+          ambiguousNameOnly: announcementIdentityPlan.ambiguousNameOnlyRecords.has(index),
+        }, mode, claimedEvidence, ambiguousEvidence, plannedWriteEvents.get(index), context.evidenceRepointTargets, evidencePlanFingerprint, evidenceContentHashes)
+        if (create && identityKey != null) {
+          const coordinates = plannedCoordinates.get(identityKey) ?? new Set<string>()
+          coordinates.add(coordinate)
+          plannedCoordinates.set(identityKey, coordinates)
+          earlierByName.set(create.nameNorm, [...(earlierByName.get(create.nameNorm) ?? []), create])
+        }
       })
     }
   }
+
+  // ---- 收敛重放到此为止（§8.9.3）：下面每一类都可能**写新行** ---------------
+  if (mode === 'converge') return { items, conflicts }
 
   // ---- 平台查询与关系 ------------------------------------------------------
   // **必须排在 aliases / differences / merges 之前**:那三项的自然键引用可能指向本批
@@ -487,7 +1262,7 @@ export function planRosterImport(
 
   // ---- 曾用名 / 别名 -------------------------------------------------------
   const aliases = Array.isArray(payload.aliases) ? payload.aliases : []
-  aliases.forEach((alias, index) => planAlias(db, pending, pendingRefs, alias, index, push))
+  aliases.forEach((alias, index) => planAlias(db, pending, pendingEnterpriseCreates, pendingRefs, alias, index, push))
 
   // ---- 差异原因与措施 ------------------------------------------------------
   const differences = Array.isArray(payload.differences) ? payload.differences : []
@@ -496,11 +1271,92 @@ export function planRosterImport(
   // ---- 导出快照 ------------------------------------------------------------
   if (payload.exportSnapshot) planExportSnapshot(db, payload.exportSnapshot, context, push)
 
+  // ---- 补录统一社会信用代码（RL-06）：只补**本来没有**的值，不并身份 -------------
+  // 排在 `merges` **之前**：本项只把一家无统代企业的 `uscc_norm` 填上，而 `merges` 会
+  // **删掉**被并企业行 —— 两项若指向同一行，先归并会让补录在写入阶段找不到企业
+  // （进而整批回滚）。读侧计划从不为同一个目标同时给出两者（见
+  // `server/utils/uscc-research.ts`：一个目标要么有规范行可并、要么只能补录）。
+  const backfills = Array.isArray(payload.usccBackfills) ? payload.usccBackfills : []
+  backfills.forEach((backfill, index) => planUsccBackfill(db, backfill, index, push))
+
   // ---- 归并与回填（最后做，才能把本批新建的记录一并折进规范行）--------------
   const merges = Array.isArray(payload.merges) ? payload.merges : []
-  merges.forEach((merge, index) => planMerge(db, pending, pendingRefs, merge, index, push))
+  merges.forEach((merge, index) => planMerge(db, pending, pendingEnterpriseCreates, pendingRefs, merge, index, push))
 
   return { items, conflicts }
+}
+
+/**
+ * Validate the two announcement-only values whose malformed forms can change identity or evidence
+ * meaning. Generic `optionalInt` remains shared by years and batch fields and is not changed here.
+ */
+function validateAnnouncementIdentityAndEvidence(
+  announcement: RosterImportAnnouncement | null | undefined,
+): RosterImportItemResult[] {
+  if (!announcement || !Array.isArray(announcement.records)) return []
+
+  const errors: RosterImportItemResult[] = []
+  announcement.records.forEach((record, recordIndex) => {
+    const enterprise = isObject(record?.enterprise) ? record.enterprise : null
+    const rawUscc = enterprise?.uscc
+    const hasNonblankUscc =
+      rawUscc !== null &&
+      rawUscc !== undefined &&
+      (typeof rawUscc !== 'string' || normalizeUscc(rawUscc) !== '')
+    if (hasNonblankUscc) {
+      const verdict = usccFormatVerdict(rawUscc)
+      if (verdict !== 'ok') {
+        const why =
+          verdict === 'length' ? '长度不是 18 位' : verdict === 'charset' ? '含字符集外的字符' : '校验位不符'
+        errors.push(
+          failure(
+            'record',
+            `record:${recordIndex}`,
+            'uscc_format_invalid',
+            `统一社会信用代码不合法（${why}）：${String(rawUscc)}`,
+            'enterprise.uscc',
+          ),
+        )
+      }
+    }
+
+    const events = Array.isArray(record?.events) ? record.events : []
+    events.forEach((event, eventIndex) => {
+      const evidence = Array.isArray(event?.evidence) ? event.evidence : []
+      evidence.forEach((item, evidenceIndex) => {
+        if (!isObject(item)) return
+        const sourceFile = optionalString(item.sourceFile)
+        if (!sourceFile || item.page === null || item.page === undefined) return
+        const ref = `record:${recordIndex}#${eventIndex}/e${evidenceIndex}`
+        if (!isPageCapable(sourceFile)) {
+          errors.push(
+            failure(
+              'record_evidence',
+              ref,
+              'not_page_capable',
+              `${sourceFile} 不是 PDF，不能提供可复核的实际页码；请移除 page 或设为 null`,
+              'evidence.page',
+            ),
+          )
+          return
+        }
+        const page = item.page
+        if (typeof page !== 'number' || !Number.isFinite(page) || !Number.isInteger(page) || page < 1) {
+          errors.push(
+            failure(
+              'record_evidence',
+              ref,
+              'page_invalid',
+              `PDF 出处 page 必须是正整数，收到：${String(page)}`,
+              'evidence.page',
+            ),
+          )
+        }
+      })
+    })
+  })
+
+  return errors
 }
 
 // --- 公布文件 --------------------------------------------------------------
@@ -512,6 +1368,20 @@ function planAnnouncementRecord(
   record: RosterImportAnnouncement['records'][number],
   index: number,
   push: (item: PlannedItem) => void,
+  candidates: {
+    create: PendingEnterpriseCreate | null
+    earlierSameName: PendingEnterpriseCreate[]
+    reusedInBatch: boolean
+    identityUscc?: string | null
+    ambiguousNameOnly?: boolean
+  } = { create: null, earlierSameName: [], reusedInBatch: false },
+  mode: AnnouncementPlanMode = 'write',
+  claimedEvidence: Set<number> = new Set(),
+  ambiguousEvidence: ReadonlySet<number> = new Set(),
+  plannedWriteEvents?: readonly RosterImportEvent[],
+  savedEvidenceRepointTargets?: readonly EvidenceRepointTarget[],
+  evidencePlanFingerprint = '',
+  evidenceContentHashes: EvidenceContentHashIndex = new Map(),
 ): void {
   const ref = `record:${index}`
   const name = optionalString(record?.enterprise?.name)
@@ -550,8 +1420,28 @@ function planAnnouncementRecord(
     }
   }
 
-  const uscc = usccOrNull(record.enterprise.uscc)
-  const existing = locateEnterprise(db, { name, uscc })
+  const requestedUscc = usccOrNull(record.enterprise.uscc)
+  const identityUscc = candidates.identityUscc !== undefined ? candidates.identityUscc : requestedUscc
+  if (!requestedUscc && (
+    candidates.ambiguousNameOnly || findEnterprisesByNorm(db, normalizeName(name)).length > 1
+  )) {
+    push({
+      item: failure(
+        'record',
+        ref,
+        'enterprise_ambiguous',
+        '归一化名称命中多家既有企业，缺少统一社会信用代码无法唯一定位；请补充统代后重试',
+        'enterprise.uscc',
+      ),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  // 定位用**写入侧的身份规则**（预检与提交必须同一套）：
+  // `locateEnterprise` 在「统代查不到」时会退回按名找，于是预检会说「企业已存在、这条是 skip」，
+  // 而 `upsertEnterprise`（只按统代）却会新建一行 —— 那是本票事故的根因，不能用它来决定 add/skip。
+  const existing = findEnterpriseByIdentity(db, { name, uscc: identityUscc })
   const district = optionalString(record.enterprise.district)
   let existingRecord: { id: number } | undefined
   if (existing) {
@@ -562,16 +1452,120 @@ function planAnnouncementRecord(
       .find((r) => r.enterpriseId === existing.id && r.titleCode === titleCode && r.source === source)
   }
 
+  // 重放时**出处指针**可能需要收敛(RL-16):
+  // 来源文件入库后同一份内容的标识从库外路径变成库内路径。事件坐标不变 ⇒ 历史一行不改,
+  // 只有出处的 `source_file` 被指向新路径。这件事**要报进预检**,故按提交会改的行数定 action。
+  //
+  // `claimedEvidence` 由整份计划共享（同一行不会被两条载荷记录各认领一次 —— 认领的粒度是
+  // **出处行 id**）。目标操作在计划期冻结；提交和 replay 执行同一组 id/path，不会因前一项写入
+  // 改变匹配结果。已提交批次的 replay 复用原提交快照，避免把已更新的目标误判成旧来源。
+  const repointPlan = existingRecord
+    ? mode === 'converge' && savedEvidenceRepointTargets !== undefined
+      ? evidenceRepointsFromSavedPlan(db, existingRecord.id, savedEvidenceRepointTargets, claimedEvidence, evidenceContentHashes)
+      : countEvidenceRepoints(db, existingRecord.id, events, claimedEvidence, ambiguousEvidence, evidenceContentHashes)
+    : { targets: [], hashConflicts: new Set<EvidenceContentHashConflict>() }
+  if (repointPlan.hashConflicts.size > 0) {
+    const mismatch = repointPlan.hashConflicts.has('mismatch')
+    push({
+      item: failure(
+        'record_evidence',
+        ref,
+        mismatch ? 'evidence_content_hash_mismatch' : 'evidence_content_hash_unknown',
+        mismatch
+          ? '旧出处与目标文件 SHA-256 不同，保留旧出处；请人工核对是否需要追加独立出处'
+          : '旧出处或目标文件缺少唯一可验证的 SHA-256，保留旧出处；请人工核对来源身份',
+        'evidence.sourceFile',
+      ),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  const repointTargets = repointPlan.targets
+  const repoints = repointTargets.length
+
+  // 收敛重放（§8.9.3）：只改既有出处行的指针，**不新建任何行**、也不记重名候选。
+  // 库状态在这一模式下没得商量 —— 载荷里有、库里没有的东西一律不写（故没有 `add`）。
+  if (mode === 'converge') {
+    const recordId = existingRecord?.id
+    push({
+      item: success('record', recordId != null ? `record:${recordId}` : ref, {
+        enterpriseId: existing?.id ?? null,
+        titleCode,
+        source,
+      }),
+      action: repoints > 0 ? 'update' : 'skip',
+      review: false,
+      repoints,
+      run:
+        repoints > 0 && recordId != null
+          ? (tx) => {
+              const evidenceRepointed = applyEvidenceRepointTargets(tx, repointTargets)
+              return success('record', `record:${recordId}`, {
+                enterpriseId: existing?.id ?? null,
+                recordId,
+                evidenceRepointed,
+                evidenceRepointTargets: repointTargets,
+                evidenceRepointPlanFingerprint: evidencePlanFingerprint,
+                // 收敛**只改指针**：一行没插，也没有事件被跳过。
+                skipped: 0,
+                rowsWritten: 0,
+              })
+            }
+          : undefined,
+    })
+    return
+  }
+
+  // 这一条记录会**复用**既有行（`existingRecord`）吗？
+  // 两条判据都必须在，否则预检又会与提交不一致：
+  //  - 库里已有同坐标记录（库状态）；
+  //  - 或**本批更早**的记录已经为**同一身份的同一坐标**建过（写入侧会复用那条，
+  //    `rowsWritten` 为 0）—— 库里此刻看不到它，只看库会把这种情况误报成 `add`。
+  const reused = !!existingRecord || candidates.reusedInBatch
+  const writeEvents = plannedWriteEvents ?? events
+
   push({
     item: success(
       'record',
       existing ? `record:${existingRecord?.id ?? ref}` : ref,
       { enterpriseId: existing?.id ?? null, titleCode, source },
     ),
-    action: existingRecord ? 'skip' : 'add',
-    review: !uscc,
-    run: (tx) => writeAnnouncementRecord(tx, request, announcement, record, { name, uscc, district, titleCode, source, reason: { existingRecord } }),
+    // 两条判据**都要**：不复用 ⇒ add；复用且有出处指针收敛 ⇒ update（预检如实计入 §8.5）；
+    // 复用且无收敛 ⇒ skip。
+    action: !reused ? 'add' : repoints > 0 ? 'update' : 'skip',
+    review: !requestedUscc,
+    repoints,
+    run: (tx) => {
+      const result = writeAnnouncementRecord(
+        tx,
+        request,
+        announcement,
+        { ...record, events: [...writeEvents] },
+        { name, uscc: identityUscc, district, titleCode, source, reason: { existingRecord } },
+        repointTargets,
+      )
+      return {
+        ...result,
+        detail: { ...(result.detail ?? {}), evidenceRepointPlanFingerprint: evidencePlanFingerprint },
+      }
+    },
   })
+
+  // 重名候选（RL-14）：这次**新建企业**，而库里（或本批更早）已经有同名的另一行。
+  // 只报出不合并、不计入影响计数（`action: 'note'`）—— 是否归并由证据决定（§5.3）。
+  if (candidates.create) {
+    for (const planned of duplicateNameCandidates(db, candidates.create, candidates.earlierSameName)) {
+      push({
+        item: success('duplicate_candidate', duplicateCandidateRef(planned.candidate), {
+          candidate: planned.candidate,
+        }),
+        action: 'note',
+        review: false,
+        run: (tx) => resolveDuplicateCandidate(tx, planned),
+      })
+    }
+  }
 }
 
 interface AnnouncementWriteReason {
@@ -591,6 +1585,7 @@ function writeAnnouncementRecord(
     source: 'jxj' | 'miit'
     reason: AnnouncementWriteReason
   },
+  repointTargets: readonly EvidenceRepointTarget[] = [],
 ): RosterImportItemResult {
   const { name, uscc, district, titleCode, source } = resolved
 
@@ -616,12 +1611,21 @@ function writeAnnouncementRecord(
     district,
   })
   const recordId = recordRow.id
+  const evidenceRepointed = applyEvidenceRepointTargets(tx, repointTargets)
 
   // 事件 + 出处：同坐标的完全相同事件**跳过**（重放安全），否则新增。
   const writtenEvents: number[] = []
   const writtenEvidence: number[] = []
   let skipped = 0
   for (const event of record.events ?? []) {
+    const coords = eventCoordinates(recordId, event)
+    const duplicate = findExistingEvent(tx, coords)
+    if (duplicate) {
+      skipped += 1
+      // 既有事件的出处指针已由计划期冻结的 `repointTargets` 更新；不在执行期重新匹配。
+      // 新事件的重复坐标已在计划期合并到首次出现项，其余项在此只计跳过。
+      continue
+    }
     const values = {
       recordId,
       eventType: event.eventType,
@@ -630,11 +1634,6 @@ function writeAnnouncementRecord(
       sortKey: optionalInt(event.year) ?? 0,
       reviewOutcome: (event.reviewOutcome ?? null) as 'passed' | 'failed' | null,
       decidedYear: optionalInt(event.decidedYear),
-    }
-    const duplicate = findExistingEvent(tx, values)
-    if (duplicate) {
-      skipped += 1
-      continue
     }
     const eventId = tx.insert(schema.recordEvent).values(values).returning({ id: schema.recordEvent.id }).get().id
     writtenEvents.push(eventId)
@@ -646,7 +1645,7 @@ function writeAnnouncementRecord(
           sourceFile: evidence.sourceFile,
           attachment: optionalString(evidence.attachment),
           listNo: optionalInt(evidence.listNo),
-          page: optionalInt(evidence.page),
+          page: isPageCapable(evidence.sourceFile) ? optionalInt(evidence.page) : null,
         })
         .returning({ id: schema.recordEvidence.id })
         .get().id
@@ -661,6 +1660,13 @@ function writeAnnouncementRecord(
     events: writtenEvents,
     evidence: writtenEvidence,
     skipped,
+    /**
+     * **被收敛了指针**的既有出处行数(RL-16)。它不是新增行(`rowsWritten` 不含它),
+     * 但也不是「什么都没发生」—— 单独报出来,免得重放看起来像纯空操作。
+     * 0 表示本次没有任何出处需要改(绝大多数的重放都是 0)。
+     */
+    evidenceRepointed,
+    evidenceRepointTargets: repointTargets,
     /**
      * 本项**真正插入的行数**：新企业 / 新来源文件 / 新记录 / 新事件 / 新出处。
      * 重放同一内容时全是 0（企业与记录按自然键复用、同坐标事件跳过）——
@@ -770,33 +1776,436 @@ function upsertRecord(
   return { id, created: true }
 }
 
-/** 同坐标的**完全相同**事件（含复核结论与结论年份）—— 命中即跳过，保证重放不堆行。 */
-function findExistingEvent(
-  tx: Executor,
-  values: {
-    recordId: number
-    eventType: string
-    year: number | null
-    batchSeq: number | null
-    reviewOutcome: string | null
-    decidedYear: number | null
-  },
-): { id: number } | undefined {
+/**
+ * 事件的**坐标**(重放判重与收敛比对共用同一份取值)。
+ *
+ * 为什么抽出来:预检(算「将要更新几行」)与执行(真的改哪几行)必须**同一条判据** ——
+ * 两处各算一次迟早会漂,而漂了以后预检报的就不再是提交真会发生的事(本文件开头的承诺)。
+ */
+interface EventCoordinates {
+  recordId: number
+  eventType: string
+  year: number | null
+  batchSeq: number | null
+  reviewOutcome: string | null
+  decidedYear: number | null
+}
+
+/** 由载荷里的一条事件 + 它所属记录算出坐标。 */
+function eventCoordinates(recordId: number, event: RosterImportEvent): EventCoordinates {
+  return {
+    recordId,
+    eventType: String(event.eventType),
+    year: optionalInt(event.year),
+    batchSeq: optionalInt(event.batchSeq),
+    reviewOutcome: event.reviewOutcome == null ? null : String(event.reviewOutcome),
+    decidedYear: optionalInt(event.decidedYear),
+  }
+}
+
+/** 一行 `record_event` 是不是这个坐标。 */
+function matchesEventCoordinates(row: EventCoordinates, values: EventCoordinates): boolean {
+  return (
+    row.recordId === values.recordId &&
+    row.eventType === values.eventType &&
+    (row.year ?? null) === values.year &&
+    (row.batchSeq ?? null) === values.batchSeq &&
+    (row.reviewOutcome ?? null) === values.reviewOutcome &&
+    (row.decidedYear ?? null) === values.decidedYear
+  )
+}
+
+/** 同坐标的**完全相同**事件(含复核结论与结论年份)—— 命中即跳过,保证重放不堆行。 */
+function findExistingEvent(tx: Executor, values: EventCoordinates): { id: number } | undefined {
   return tx
     .select()
     .from(schema.recordEvent)
     .all()
-    .find(
-      (e) =>
-        e.recordId === values.recordId &&
-        e.eventType === values.eventType &&
-        (e.year ?? null) === values.year &&
-        (e.batchSeq ?? null) === values.batchSeq &&
-        (e.reviewOutcome ?? null) === values.reviewOutcome &&
-        (e.decidedYear ?? null) === values.decidedYear,
-    )
+    .find((e) => matchesEventCoordinates(e, values))
 }
 
+// ---------------------------------------------------------------------------
+// 重放时的**出处指针收敛**(RL-16)
+// ---------------------------------------------------------------------------
+//
+// 背景:来源文件入库后,同一份内容的标识从**库外路径**变成**库内路径**。若重放既有事件时
+// 只「跳过」,`record_evidence.source_file` 就永远指着库外路径,名录行点开预览解析不到文件。
+//
+// 三条边界(为什么这样做是安全的):
+//  1. **事件事实不变**。事件坐标(类型/年份/批次/结论/结论年份)逐字相同才进入这条路径,
+//     事件与出处行一行不加、一行不删；只收敛来源指针,并按目标文件类型清理不可靠页码。
+//  2. 附件、序号逐字匹配；页码只对目标 PDF 参与匹配。目标格式没有稳定分页时,两侧 page 都归一为
+//     null,且只有事件内唯一的 (附件, 序号) 行才允许收敛；多个候选视为歧义并跳过,不把一行错配给另一行。
+//     非 PDF 目标还会清理历史伪页码；PDF 的既有实际页码原样保留。路径只是「同一份文档在库里的位置」,不是身份。
+//     旧路径与目标路径还必须各自有唯一可验证的 SHA-256 且完全相同;缺失 / 冲突 / 不同都报告冲突并保留旧出处。
+//  3. **收敛的触发权在幂等键上**。键含来源标识(见 `lib/roster/little-giant-import.ts`):
+//     只有携带**同一份来源内容**、且来源标识变了的批次才会走到这里。
+
+/** 出处行的坐标字段(路径不参与 —— 它正是要被收敛的那一项)。 */
+interface EvidenceCoordinateRow {
+  id: number
+  sourceFile: string
+  attachment: string | null
+  listNo: number | null
+  page: number | null
+}
+
+/** 收集只与其精确路径身份绑定的 SHA-256；逻辑身份不能替另一条出处路径背书。 */
+function evidenceContentHashIndex(db: Executor, request: RosterImportRequest): EvidenceContentHashIndex {
+  const index: EvidenceContentHashIndex = new Map()
+  const add = (path: string | null | undefined, rawHash: unknown) => {
+    const sha256 = optionalString(rawHash)
+    if (!path || !sha256 || !/^[a-f0-9]{64}$/i.test(sha256)) return
+    const hashes = index.get(path) ?? new Set<string>()
+    hashes.add(sha256.toLowerCase())
+    index.set(path, hashes)
+  }
+
+  for (const file of db.select({ relPath: schema.storedFile.relPath, sha256: schema.storedFile.sha256 }).from(schema.storedFile).all()) {
+    add(file.relPath, file.sha256)
+  }
+  for (const batch of db
+    .select({ sourceKind: schema.importBatch.sourceKind, sourceIdentity: schema.importBatch.sourceIdentity, sourceSha256: schema.importBatch.sourceSha256, status: schema.importBatch.status })
+    .from(schema.importBatch)
+    .all()) {
+    if (batch.status === 'committed' && batch.sourceKind === 'announcement') {
+      add(batch.sourceIdentity, batch.sourceSha256)
+    }
+  }
+  // The current request's hash proves a path only when sourceIdentity is that exact path.
+  add(request.sourceIdentity, request.sourceSha256)
+  return index
+}
+
+function verifiedEvidenceContentHash(index: EvidenceContentHashIndex, path: string): string | null {
+  const hashes = index.get(path)
+  return hashes?.size === 1 ? [...hashes][0] ?? null : null
+}
+
+function evidenceContentHashMatch(
+  index: EvidenceContentHashIndex,
+  oldPath: string,
+  targetPath: string,
+): EvidenceContentHashConflict | 'same' {
+  const oldHash = verifiedEvidenceContentHash(index, oldPath)
+  const targetHash = verifiedEvidenceContentHash(index, targetPath)
+  if (!oldHash || !targetHash) return 'unknown'
+  return oldHash === targetHash ? 'same' : 'mismatch'
+}
+
+interface CandidateEvidencePaths {
+  pathsByRow: Map<number, Set<string>>
+  hashConflicts: Set<EvidenceContentHashConflict>
+}
+
+/** 页码只在目标来源是 PDF 时作为坐标；其它格式把请求值和存储值都归一成 null。 */
+function evidencePageCoordinate(sourceFile: string, page: unknown): number | null {
+  return isPageCapable(sourceFile) ? (optionalInt(page) ?? null) : null
+}
+
+/** 已存在出处行的格式化坐标是否与载荷里的那条出处相同。 */
+function matchesEvidenceCoordinates(row: EvidenceCoordinateRow, wanted: RosterImportEvidence): boolean {
+  return (
+    (row.attachment ?? null) === (optionalString(wanted.attachment) ?? null) &&
+    (row.listNo ?? null) === (optionalInt(wanted.listNo) ?? null) &&
+    evidencePageCoordinate(wanted.sourceFile, row.page) === evidencePageCoordinate(wanted.sourceFile, wanted.page)
+  )
+}
+
+/**
+ * 算出**这次要改哪几条出处行**。一进一出各一条、按行一一对应(同一条已存在的行不会被
+ * 两条载荷出处重复认领),且只在 `source_file` 真的不同时才改。
+ */
+function repointTargets(
+  recordId: number,
+  recordEventId: number,
+  existing: readonly EvidenceCoordinateRow[],
+  wanted: readonly RosterImportEvidence[],
+  taken: Set<number> = new Set(),
+  ambiguous: ReadonlySet<number> = new Set(),
+  evidenceContentHashes: EvidenceContentHashIndex,
+): EvidenceRepointPlan {
+  const { pathsByRow: targetPathsByRow, hashConflicts } = candidateTargetPathsByRow(existing, wanted, evidenceContentHashes)
+  const existingById = new Map(existing.map((row) => [row.id, row]))
+  const out: EvidenceRepointTarget[] = []
+  for (const [id, paths] of targetPathsByRow) {
+    // 一条既有行若有多个不同目标路径或已被整份载荷判为冲突，不按载荷顺序猜一个。
+    if (taken.has(id) || ambiguous.has(id) || paths.size !== 1) continue
+    const [sourceFile] = paths
+    if (!sourceFile) continue
+    const current = existingById.get(id)
+    if (!current) continue
+    taken.add(id)
+    out.push({ id, recordId, recordEventId, fromSourceFile: current.sourceFile, sourceFile })
+  }
+  return { targets: out, hashConflicts }
+}
+
+/** 每个唯一坐标行收集本组载荷里实际需要改到的路径；同路径 no-op 不参与认领。 */
+function candidateTargetPathsByRow(
+  existing: readonly EvidenceCoordinateRow[],
+  wanted: readonly RosterImportEvidence[],
+  evidenceContentHashes: EvidenceContentHashIndex,
+): CandidateEvidencePaths {
+  const targetPathsByRow = new Map<number, Set<string>>()
+  const hashConflicts = new Set<EvidenceContentHashConflict>()
+  for (const rawCandidate of wanted as readonly unknown[]) {
+    if (!isObject(rawCandidate)) continue
+    const candidate = rawCandidate as unknown as RosterImportEvidence
+    const sourceFile = optionalString(candidate.sourceFile)
+    if (!sourceFile) continue
+    // 按目标格式归一坐标后必须只命中一行。非 PDF 的 page 不参与坐标；PDF 页号仍精确参与。
+    // 同路径候选是 no-op，不认领该行；这样后续有效路径仍可更新它。
+    const matches = existing.filter((row) => matchesEvidenceCoordinates(row, candidate))
+    if (matches.length !== 1) continue
+    const [hit] = matches
+    if (!hit || hit.sourceFile === sourceFile) continue
+    const hashMatch = evidenceContentHashMatch(evidenceContentHashes, hit.sourceFile, sourceFile)
+    if (hashMatch !== 'same') {
+      hashConflicts.add(hashMatch)
+      continue
+    }
+    const paths = targetPathsByRow.get(hit.id) ?? new Set<string>()
+    paths.add(sourceFile)
+    targetPathsByRow.set(hit.id, paths)
+  }
+  return { pathsByRow: targetPathsByRow, hashConflicts }
+}
+
+/**
+ * 扫描整份公告载荷，把同一既有出处行被不同记录指向多个路径的情况标为歧义。
+ * 这样预检、普通提交与显式重放对跨记录重复键也采用同一决定。
+ */
+function ambiguousEvidenceRepointIds(
+  db: Executor,
+  announcement: RosterImportAnnouncement,
+  records: readonly RosterImportAnnouncement['records'][number][],
+  evidenceContentHashes: EvidenceContentHashIndex,
+): Set<number> {
+  const recordIdByIndex = new Map<number, number>()
+  const storedRecords = db.select().from(schema.record).all()
+  for (const [index, record] of records.entries()) {
+    const name = optionalString(record?.enterprise?.name)
+    const titleCode = optionalString(record?.titleCode)
+    const source = record?.source ?? announcement.sourceDocument?.source
+    if (!name || !titleCode || !TITLE_CODES.has(titleCode) || !SOURCES.has(String(source))) continue
+    const enterprise = findEnterpriseByIdentity(db, {
+      name,
+      uscc: usccOrNull(record.enterprise?.uscc),
+    })
+    if (!enterprise) continue
+    const existingRecord = storedRecords.find(
+      (row) => row.enterpriseId === enterprise.id && row.titleCode === titleCode && row.source === source,
+    )
+    if (existingRecord) recordIdByIndex.set(index, existingRecord.id)
+  }
+  if (recordIdByIndex.size === 0) return new Set()
+
+  const recordIds = [...new Set(recordIdByIndex.values())]
+  const eventRows = db
+    .select()
+    .from(schema.recordEvent)
+    .where(inArray(schema.recordEvent.recordId, recordIds))
+    .all()
+  if (eventRows.length === 0) return new Set()
+  const eventIds = eventRows.map((event) => event.id)
+  const evidenceRows = db
+    .select({
+      id: schema.recordEvidence.id,
+      recordEventId: schema.recordEvidence.recordEventId,
+      sourceFile: schema.recordEvidence.sourceFile,
+      attachment: schema.recordEvidence.attachment,
+      listNo: schema.recordEvidence.listNo,
+      page: schema.recordEvidence.page,
+    })
+    .from(schema.recordEvidence)
+    .where(inArray(schema.recordEvidence.recordEventId, eventIds))
+    .all()
+
+  const eventsByRecord = new Map<number, typeof eventRows>()
+  for (const row of eventRows) {
+    const rows = eventsByRecord.get(row.recordId) ?? []
+    rows.push(row)
+    eventsByRecord.set(row.recordId, rows)
+  }
+  const evidenceByEvent = new Map<number, EvidenceCoordinateRow[]>()
+  for (const row of evidenceRows) {
+    const rows = evidenceByEvent.get(row.recordEventId) ?? []
+    rows.push(row)
+    evidenceByEvent.set(row.recordEventId, rows)
+  }
+
+  const targetPathsByEvidence = new Map<number, Set<string>>()
+  for (const [index, recordId] of recordIdByIndex) {
+    const storedEvents = eventsByRecord.get(recordId) ?? []
+    const requestEvents = Array.isArray(records[index]?.events) ? records[index]!.events! : []
+    for (const rawEvent of requestEvents) {
+      // Invalid event elements must reach planAnnouncementRecord's structured validation.
+      if (!isObject(rawEvent)) continue
+      const event = rawEvent as unknown as RosterImportEvent
+      const coords = eventCoordinates(recordId, event)
+      const existingEvent = storedEvents.find((row) => matchesEventCoordinates(row, coords))
+      if (!existingEvent) continue
+      const candidates = candidateTargetPathsByRow(
+        evidenceByEvent.get(existingEvent.id) ?? [],
+        Array.isArray(event.evidence) ? event.evidence : [],
+        evidenceContentHashes,
+      )
+      for (const [evidenceId, paths] of candidates.pathsByRow) {
+        const allPaths = targetPathsByEvidence.get(evidenceId) ?? new Set<string>()
+        for (const path of paths) allPaths.add(path)
+        targetPathsByEvidence.set(evidenceId, allPaths)
+      }
+    }
+  }
+
+  return new Set([...targetPathsByEvidence].filter(([, paths]) => paths.size > 1).map(([id]) => id))
+}
+
+/** 将重复出现的同一事件坐标合并，之后一次性按出处行解析目标与歧义。 */
+function groupEventEvidenceById(
+  events: readonly RosterImportEvent[],
+  eventIdFor: (event: RosterImportEvent) => number | undefined,
+): Map<number, RosterImportEvidence[]> {
+  const byEvent = new Map<number, RosterImportEvidence[]>()
+  for (const event of events) {
+    const eventId = eventIdFor(event)
+    if (eventId == null) continue
+    const evidence = byEvent.get(eventId) ?? []
+    evidence.push(...(event.evidence ?? []))
+    byEvent.set(eventId, evidence)
+  }
+  return byEvent
+}
+
+/** 执行计划期冻结的收敛目标；路径或事件已被别的操作改变时安全跳过。 */
+function applyEvidenceRepointTargets(tx: Executor, targets: readonly EvidenceRepointTarget[]): number {
+  let repointed = 0
+  for (const target of targets) {
+    const result = tx
+      .update(schema.recordEvidence)
+      .set(
+        isPageCapable(target.sourceFile)
+          ? { sourceFile: target.sourceFile }
+          : { sourceFile: target.sourceFile, page: null },
+      )
+      .where(
+        and(
+          eq(schema.recordEvidence.id, target.id),
+          eq(schema.recordEvidence.recordEventId, target.recordEventId),
+          eq(schema.recordEvidence.sourceFile, target.fromSourceFile),
+        ),
+      )
+      .run()
+    if (result.changes > 0) repointed += 1
+  }
+  return repointed
+}
+
+/** 已提交批次的目标快照只在原路径仍然存在时重放，已到达目标则自然成为 no-op。 */
+function evidenceRepointsFromSavedPlan(
+  db: Executor,
+  recordId: number,
+  saved: readonly EvidenceRepointTarget[],
+  taken: Set<number>,
+  evidenceContentHashes: EvidenceContentHashIndex,
+): EvidenceRepointPlan {
+  const candidates = saved.filter((target) => target.recordId === recordId && !taken.has(target.id))
+  if (candidates.length === 0) return { targets: [], hashConflicts: new Set() }
+  const evidenceRows = db
+    .select({ id: schema.recordEvidence.id, sourceFile: schema.recordEvidence.sourceFile, recordEventId: schema.recordEvidence.recordEventId })
+    .from(schema.recordEvidence)
+    .where(inArray(schema.recordEvidence.id, candidates.map((target) => target.id)))
+    .all()
+  const eventIds = [...new Set(candidates.map((target) => target.recordEventId))]
+  const eventRows = db
+    .select({ id: schema.recordEvent.id, recordId: schema.recordEvent.recordId })
+    .from(schema.recordEvent)
+    .where(inArray(schema.recordEvent.id, eventIds))
+    .all()
+  const evidenceById = new Map(evidenceRows.map((row) => [row.id, row]))
+  const recordIdByEvent = new Map(eventRows.map((row) => [row.id, row.recordId]))
+  const targets: EvidenceRepointTarget[] = []
+  const hashConflicts = new Set<EvidenceContentHashConflict>()
+  for (const target of candidates) {
+    const row = evidenceById.get(target.id)
+    if (
+      !row ||
+      row.recordEventId !== target.recordEventId ||
+      recordIdByEvent.get(target.recordEventId) !== recordId ||
+      row.sourceFile !== target.fromSourceFile
+    ) continue
+    const hashMatch = evidenceContentHashMatch(evidenceContentHashes, target.fromSourceFile, target.sourceFile)
+    if (hashMatch !== 'same') {
+      hashConflicts.add(hashMatch)
+      continue
+    }
+    taken.add(target.id)
+    targets.push(target)
+  }
+  return { targets, hashConflicts }
+}
+
+/**
+ * 本次载荷会把**已存在出处行**的 `source_file` 收敛掉几条 —— 预检用。
+ * 与执行阶段同一份 `repointTargets`,故预检报的 `evidenceRepoints` 就是提交真会改的行数。
+ *
+ * `taken` 由调用方给（整份计划共享一个），否则两条载荷记录落到同一条既有记录时会各自
+ * 数一遍同一批出处行 —— 预检就会报出提交改不到的条数。
+ */
+function countEvidenceRepoints(
+  db: Executor,
+  recordId: number,
+  events: readonly RosterImportEvent[],
+  taken: Set<number> = new Set(),
+  ambiguous: ReadonlySet<number> = new Set(),
+  evidenceContentHashes: EvidenceContentHashIndex,
+): EvidenceRepointPlan {
+  if (events.length === 0) return { targets: [], hashConflicts: new Set() }
+  const eventRows = db
+    .select()
+    .from(schema.recordEvent)
+    .where(eq(schema.recordEvent.recordId, recordId))
+    .all()
+  if (eventRows.length === 0) return { targets: [], hashConflicts: new Set() }
+  const evidenceRows = db
+    .select({
+      id: schema.recordEvidence.id,
+      recordEventId: schema.recordEvidence.recordEventId,
+      sourceFile: schema.recordEvidence.sourceFile,
+      attachment: schema.recordEvidence.attachment,
+      listNo: schema.recordEvidence.listNo,
+      page: schema.recordEvidence.page,
+    })
+    .from(schema.recordEvidence)
+    .where(
+      inArray(
+        schema.recordEvidence.recordEventId,
+        eventRows.map((row) => row.id),
+      ),
+    )
+    .all()
+
+  const byEvent = new Map<number, EvidenceCoordinateRow[]>()
+  for (const row of evidenceRows) {
+    const list = byEvent.get(row.recordEventId)
+    if (list) list.push(row)
+    else byEvent.set(row.recordEventId, [row])
+  }
+
+  const targets: EvidenceRepointTarget[] = []
+  const hashConflicts = new Set<EvidenceContentHashConflict>()
+  const wantedByEvent = groupEventEvidenceById(events, (event) => {
+    const coords = eventCoordinates(recordId, event)
+    return eventRows.find((row) => matchesEventCoordinates(row, coords))?.id
+  })
+  for (const [eventId, wanted] of wantedByEvent) {
+    const plan = repointTargets(recordId, eventId, byEvent.get(eventId) ?? [], wanted, taken, ambiguous, evidenceContentHashes)
+    for (const conflict of plan.hashConflicts) hashConflicts.add(conflict)
+    targets.push(...plan.targets)
+  }
+  return { targets, hashConflicts }
+}
 // ---------------------------------------------------------------------------
 // 既有行查找（预检与执行阶段**共用同一份**谓词）
 // ---------------------------------------------------------------------------
@@ -805,78 +2214,161 @@ function findExistingEvent(
 // 预检阶段按「载荷给的值」查一次、执行阶段按「解析出的真 id」再查一次 ——
 // 以前这两次各自把 `.select().from(t).all().find(...)` 与列比较抄了一遍，
 // 抄漏一列就成了「重放时多插一行」。现在两次都走下面这同一个函数。
+//
+// ── RL-18：这些函数一律是**按键定位**，不是整表线性找 ─────────────────────
+// 每条实体各有**两条**要走同一个身份的函数：别名、差异（预检 + 执行各一次），查询、关系
+// （预检取既有行、执行按真 id 再取一次）。以前它们各自把 `.select().from(t).all().find(...)`
+// 与列比较抄了一遍；现在一律走下面这四个 —— 于是「身份是哪几列」只有一处定义。
+//
+// 三条要求同时成立，缺一条都会让批量写入退化成卡死（实测见契约 §3.1c）：
+//  1. 谓词下推到 SQL 的 `WHERE`，并且**正好是 schema 里那条唯一索引的全部列**
+//     （`enterprise_alias_identity_uq` / `platform_query_identity_uq` /
+//     `platform_relation_query_seq_uq` / `difference_reason_version_uq`）⇒ 一次索引查找，
+//     而不是把整表读进内存再 `.find(...)`；
+//  2. 只 `select` 判定真正用得到的列 —— 调用方只要 `id`，所以**只取 `id`**。
+//     这条对 `platform_query` 是硬要求：整行里带着 `raw_response`（平台原始 HTML，
+//     几十 KB/条），比一个用不到它的键等于白读几十 KB；
+//  3. 唯一键 ⇒ 至多一行，所以 `.get()` 与原来的 `.find()` 取到的是同一行（`get()` 本就取首行）。
+//
+// 为什么是这三条：批内 N 条查询/关系/别名/差异，每条都要查一次 ⇒ 整表线性找就是
+// O(N × 表行数)（表随本批增长时即 N²），而每次还要把几十 KB 的 `raw_response` 读出来。
 
 /** 别名身份：`(enterprise_id, name_norm, source_kind, source_ref_id)`（契约 §1.2）。 */
 function findAliasRow(
   db: Executor,
   spec: { enterpriseId: number; nameNorm: string; sourceKind: string; sourceRefId: number },
-): typeof schema.enterpriseAlias.$inferSelect | undefined {
+): { id: number } | undefined {
   return db
-    .select()
+    .select({ id: schema.enterpriseAlias.id })
     .from(schema.enterpriseAlias)
-    .all()
-    .find(
-      (a) =>
-        a.enterpriseId === spec.enterpriseId &&
-        a.nameNorm === spec.nameNorm &&
-        a.sourceKind === spec.sourceKind &&
-        a.sourceRefId === spec.sourceRefId,
+    .where(
+      and(
+        eq(schema.enterpriseAlias.enterpriseId, spec.enterpriseId),
+        eq(schema.enterpriseAlias.nameNorm, spec.nameNorm),
+        eq(
+          schema.enterpriseAlias.sourceKind,
+          spec.sourceKind as typeof schema.enterpriseAlias.$inferSelect.sourceKind,
+        ),
+        eq(schema.enterpriseAlias.sourceRefId, spec.sourceRefId),
+      ),
     )
+    .get()
 }
 
 /** 查询身份：`(interface, query_key, rdjb, queried_at)`（契约 §1.3）。 */
 function findQueryRow(
   db: Executor,
   spec: { interface: PlatformInterface; queryKey: string; rdjb: string; queriedAt: string },
-): typeof schema.platformQuery.$inferSelect | undefined {
+): { id: number } | undefined {
   return db
-    .select()
+    .select({ id: schema.platformQuery.id })
     .from(schema.platformQuery)
-    .all()
-    .find(
-      (q) =>
-        q.interface === spec.interface &&
-        q.queryKey === spec.queryKey &&
-        q.rdjb === spec.rdjb &&
-        q.queriedAt === spec.queriedAt,
+    .where(
+      and(
+        eq(schema.platformQuery.interface, spec.interface),
+        eq(schema.platformQuery.queryKey, spec.queryKey),
+        eq(schema.platformQuery.rdjb, spec.rdjb),
+        eq(schema.platformQuery.queriedAt, spec.queriedAt),
+      ),
     )
+    .get()
 }
 
 /** 关系身份：`(query_id, sequence_no)`（契约 §1.4）。 */
 function findRelationRow(
   db: Executor,
   spec: { queryId: number; sequenceNo: number },
-): typeof schema.platformRelation.$inferSelect | undefined {
+): { id: number } | undefined {
   return db
-    .select()
+    .select({ id: schema.platformRelation.id })
     .from(schema.platformRelation)
-    .all()
-    .find((r) => r.queryId === spec.queryId && r.sequenceNo === spec.sequenceNo)
-}
-
-/** 差异身份：`(enterprise_id, title_code, direction, recorded_at)`（契约 §1.5）—— `find` 的谓词。 */
-function sameDifference(
-  row: typeof schema.differenceReason.$inferSelect,
-  spec: { enterpriseId: number; titleCode: string; direction: string; recordedAt: string },
-): boolean {
-  return (
-    row.enterpriseId === spec.enterpriseId &&
-    row.titleCode === spec.titleCode &&
-    row.direction === spec.direction &&
-    row.recordedAt === spec.recordedAt
-  )
+    .where(
+      and(
+        eq(schema.platformRelation.queryId, spec.queryId),
+        eq(schema.platformRelation.sequenceNo, spec.sequenceNo),
+      ),
+    )
+    .get()
 }
 
 /** 差异身份：`(enterprise_id, title_code, direction, recorded_at)`（契约 §1.5）。 */
 function findDifferenceRow(
   db: Executor,
   spec: { enterpriseId: number; titleCode: string; direction: string; recordedAt: string },
-): typeof schema.differenceReason.$inferSelect | undefined {
+): { id: number } | undefined {
+  return db
+    .select({ id: schema.differenceReason.id })
+    .from(schema.differenceReason)
+    .where(
+      and(
+        eq(schema.differenceReason.enterpriseId, spec.enterpriseId),
+        eq(schema.differenceReason.titleCode, spec.titleCode),
+        eq(
+          schema.differenceReason.direction,
+          spec.direction as typeof schema.differenceReason.$inferSelect.direction,
+        ),
+        eq(schema.differenceReason.recordedAt, spec.recordedAt),
+      ),
+    )
+    .get()
+}
+
+type DifferenceRow = typeof schema.differenceReason.$inferSelect
+
+function findDifferenceContentRow(
+  db: Executor,
+  spec: { enterpriseId: number; titleCode: string; direction: string; recordedAt: string },
+): DifferenceRow | undefined {
   return db
     .select()
     .from(schema.differenceReason)
+    .where(
+      and(
+        eq(schema.differenceReason.enterpriseId, spec.enterpriseId),
+        eq(schema.differenceReason.titleCode, spec.titleCode),
+        eq(schema.differenceReason.direction, spec.direction as typeof schema.differenceReason.$inferSelect.direction),
+        eq(schema.differenceReason.recordedAt, spec.recordedAt),
+      ),
+    )
+    .get()
+}
+
+/** Identity and createdAt are metadata; every other stored semantic field must agree to dedupe. */
+function sameDifferenceContent(left: DifferenceRow, right: DifferenceRow): boolean {
+  return left.status === right.status &&
+    left.reasonCode === right.reasonCode &&
+    left.reasonNote === right.reasonNote &&
+    left.measureCode === right.measureCode &&
+    left.measureNote === right.measureNote &&
+    left.evidenceQueryId === right.evidenceQueryId &&
+    left.evidenceRelationId === right.evidenceRelationId &&
+    left.movedInCity === right.movedInCity &&
+    left.movedInTitleCode === right.movedInTitleCode &&
+    left.movedInYear === right.movedInYear &&
+    left.movedInBatch === right.movedInBatch &&
+    left.verificationStatus === right.verificationStatus
+}
+
+function findMergeDifferenceConflict(
+  db: Executor,
+  fromEnterpriseId: number,
+  intoEnterpriseId: number,
+): DifferenceRow | null {
+  const sourceRows = db
+    .select()
+    .from(schema.differenceReason)
+    .where(eq(schema.differenceReason.enterpriseId, fromEnterpriseId))
     .all()
-    .find((row) => sameDifference(row, spec))
+  for (const sourceRow of sourceRows) {
+    const targetRow = findDifferenceContentRow(db, {
+      enterpriseId: intoEnterpriseId,
+      titleCode: sourceRow.titleCode,
+      direction: sourceRow.direction,
+      recordedAt: sourceRow.recordedAt,
+    })
+    if (targetRow && !sameDifferenceContent(sourceRow, targetRow)) return sourceRow
+  }
+  return null
 }
 
 // --- 别名 ------------------------------------------------------------------
@@ -884,6 +2376,7 @@ function findDifferenceRow(
 function planAlias(
   db: Executor,
   pending: PendingEnterprises,
+  pendingEnterpriseCreates: PendingEnterpriseCreate[],
   pendingRefs: PendingPlatformRefs,
   alias: RosterImportAlias,
   index: number,
@@ -930,9 +2423,61 @@ function planAlias(
     return
   }
   const nameNorm = normalizeName(name)
-  // 裸 id 就用给的；自然键要到执行阶段才解析出真 id（0 只表示「本就没给来源行」）。
   const literalSourceRefId = optionalInt(alias.sourceRefId)
-  const plannedEnterpriseId = locateEnterprise(db, spec)?.id
+  const platformSource = alias.sourceKind === 'platform_business' || alias.sourceKind === 'platform_apply'
+  const explicitUscc = usccOrNull(alias.uscc)
+  const enterpriseName = optionalString(alias.enterpriseName)
+  const existingByName = enterpriseName ? findEnterprisesByNorm(db, normalizeName(enterpriseName)) : []
+  const pendingByName = enterpriseName
+    ? pendingEnterpriseCreates.filter((create) => create.nameNorm === normalizeName(enterpriseName))
+    : []
+  if (platformSource && !explicitUscc && existingByName.length + pendingByName.length > 1) {
+    push({
+      item: failure('alias', ref, 'enterprise_ambiguous', `同名归属企业有 ${existingByName.length + pendingByName.length} 个候选 ⇒ 不猜是哪一家`, 'enterpriseName'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  const target = explicitUscc
+    ? findEnterpriseByUscc(db, explicitUscc)
+    : existingByName[0] ?? null
+  if (platformSource && explicitUscc && !target && !pending.has(usccKey(explicitUscc))) {
+    push({ item: failure('alias', ref, 'enterprise_not_found', `统代 ${explicitUscc} 不存在且本批不创建该企业`, 'uscc'), action: 'skip', review: false })
+    return
+  }
+  const targetUscc = explicitUscc ?? target?.usccNorm ?? pendingByName[0]?.uscc ?? null
+  const plannedEnterpriseId = target?.id ?? (platformSource ? null : locateEnterprise(db, spec)?.id)
+  let sourceEvidence: PlatformAliasRelationEvidence | null = null
+  if (platformSource) {
+    const verificationStatus = alias.verificationStatus ?? 'pending'
+    if (literalSourceRefId != null && literalSourceRefId !== 0) {
+      sourceEvidence = findPlatformAliasRelationEvidence(db, literalSourceRefId)
+      if (!sourceEvidence) {
+        push({ item: failure('alias', ref, 'alias_source_evidence_mismatch', `平台关系 id=${literalSourceRefId} 不存在`, 'sourceRefId'), action: 'skip', review: false })
+        return
+      }
+    } else if (relationRef) {
+      const relationId = resolveRelationIdAt(db, relationRef)
+      sourceEvidence = relationId != null
+        ? findPlatformAliasRelationEvidence(db, relationId)
+        : findPendingPlatformAliasRelationEvidence(pendingRefs, relationRef)
+      if (!sourceEvidence) {
+        push({ item: failure('alias', ref, 'alias_source_evidence_mismatch', `自然键未能解析出唯一的平台关系事实：${describeRef(relationRef)}`, 'sourceRelationRef'), action: 'skip', review: false })
+        return
+      }
+    } else if (verificationStatus === 'confirmed') {
+      push({ item: failure('alias', ref, 'alias_source_evidence_required', 'confirmed 平台别名必须引用支持该统一社会信用代码与 qymc 的平台关系', 'sourceRefId'), action: 'skip', review: false })
+      return
+    }
+    if (sourceEvidence) {
+      const mismatch = platformAliasEvidenceMismatch(db, alias.sourceKind, name, targetUscc, target?.id ?? null, sourceEvidence)
+      if (mismatch) {
+        push({ item: failure('alias', ref, 'alias_source_evidence_mismatch', mismatch, relationRef ? 'sourceRelationRef' : 'sourceRefId'), action: 'skip', review: false })
+        return
+      }
+    }
+  }
   const existing =
     literalSourceRefId == null || plannedEnterpriseId == null
       ? undefined
@@ -958,6 +2503,23 @@ function planAlias(
           return failure('alias', ref, 'relation_ref_not_found', `执行阶段解析不到平台关系：${describeRef(relationRef)}`, 'sourceRelationRef')
         }
         sourceRefId = resolved
+      }
+      if (platformSource) {
+        const verificationStatus = alias.verificationStatus ?? 'pending'
+        const hasSourceReference = sourceRefId !== 0
+        const evidence = hasSourceReference ? findPlatformAliasRelationEvidence(tx, sourceRefId) : null
+        if (hasSourceReference && !evidence) {
+          return failure('alias', ref, 'alias_source_evidence_mismatch', `平台关系 id=${sourceRefId} 不存在`, relationRef ? 'sourceRelationRef' : 'sourceRefId')
+        }
+        if (!evidence && verificationStatus === 'confirmed') {
+          return failure('alias', ref, 'alias_source_evidence_required', 'confirmed 平台别名必须引用支持该统一社会信用代码与 qymc 的平台关系', 'sourceRefId')
+        }
+        if (evidence) {
+          const mismatch = platformAliasEvidenceMismatch(tx, alias.sourceKind, name, enterprise.usccNorm, enterprise.id, evidence)
+          if (mismatch) {
+            return failure('alias', ref, 'alias_source_evidence_mismatch', mismatch, relationRef ? 'sourceRelationRef' : 'sourceRefId')
+          }
+        }
       }
       const already = findAliasRow(tx, {
         enterpriseId: enterprise.id,
@@ -1447,6 +3009,13 @@ export interface MergeLineage {
   fromEnterpriseName: string
   intoEnterpriseId: number
   intoUscc: string
+  /** 规范行**最终**的名字（给了 `merges[].canonicalName` 就是导出表侧的名字）。 */
+  canonicalName: string
+  /**
+   * **主名称改名**（§5.3 ①）：给 `canonicalName` 且与原名不同时记下 `from → to`，
+   * 以及被顶掉原名落成的那条别名 id；没改名是 `null`。
+   */
+  rename: { from: string; to: string; aliasId: number | null } | null
   aliasId: number | null
   /** 支撑本次归并的查询证据（裸 id 或自然键解析所得）；未给为 null。 */
   evidenceQueryId: number | null
@@ -1463,6 +3032,8 @@ export interface MergeLineage {
 
 interface MergePlan {
   merge: RosterImportMerge
+  /** 当时能唯一定位的来源主体；本批新建且唯一时保留 null，写入阶段再按名唯一解析。 */
+  sourceEnterpriseId: number | null
   /** 曾用名来源关系的自然键（执行阶段解析成真 id）。 */
   sourceRelationRef: NormalizedRef | null
   /** 支撑归并的查询证据的自然键（执行阶段解析成真 id，只进血缘）。 */
@@ -1472,6 +3043,7 @@ interface MergePlan {
 function planMerge(
   db: Executor,
   pending: PendingEnterprises,
+  pendingEnterpriseCreates: PendingEnterpriseCreate[],
   pendingRefs: PendingPlatformRefs,
   merge: RosterImportMerge,
   index: number,
@@ -1485,6 +3057,11 @@ function planMerge(
   }
   if (merge.sourceKind != null && !ALIAS_SOURCE_KINDS.has(String(merge.sourceKind))) {
     push({ item: failure('merge', ref, 'alias_source_kind_unknown', `sourceKind 不在字典内：${String(merge.sourceKind)}`, 'sourceKind'), action: 'skip', review: false })
+    return
+  }
+  // 主名称：**不给就不改名**（缺省行为）；给了就必须是非空字符串，不静默忽略一个坏值。
+  if (merge.canonicalName != null && !optionalString(merge.canonicalName)) {
+    push({ item: failure('merge', ref, 'canonical_name_invalid', 'canonicalName 必须是非空字符串（不给则不改名）', 'merges[].canonicalName'), action: 'skip', review: false })
     return
   }
   // 证据指针：同别名/差异的规则 —— 每列**裸 id 与自然键恰给其一**。
@@ -1530,14 +3107,32 @@ function planMerge(
     push({ item: failure('merge', ref, 'merge_source_required', '归并缺少 fromEnterpriseId 或 fromEnterpriseName', 'fromEnterpriseId'), action: 'skip', review: false })
     return
   }
-  const fromSpec = { name: fromName, uscc: null }
-  const fromKnown =
-    fromRaw != null
-      ? db.select().from(schema.enterprise).all().some((e) => e.id === fromRaw)
-      : enterpriseKnown(db, pending, fromSpec)
-  if (!fromKnown) {
-    push({ item: failure('merge', ref, 'merge_source_not_found', `被并企业不存在：${fromRaw ?? fromName}`, 'fromEnterpriseId'), action: 'skip', review: false })
-    return
+  let sourceEnterpriseId: number | null = null
+  if (fromRaw != null) {
+    const byId = findEnterpriseById(db, fromRaw)
+    if (!byId) {
+      push({ item: failure('merge', ref, 'merge_source_not_found', `被并企业不存在：${fromRaw}`, 'fromEnterpriseId'), action: 'skip', review: false })
+      return
+    }
+    if (fromName && normalizeName(fromName) !== byId.nameNorm) {
+      push({ item: failure('merge', ref, 'enterprise_selector_conflict', `enterpriseId=${fromRaw} 的名称与给定 fromEnterpriseName 不一致`, 'fromEnterpriseName'), action: 'skip', review: false })
+      return
+    }
+    sourceEnterpriseId = byId.id
+  } else {
+    const nameNorm = normalizeName(fromName!)
+    const databaseMatches = findEnterprisesByNorm(db, nameNorm)
+    const pendingMatches = pendingEnterpriseCreates.filter((create) => create.nameNorm === nameNorm)
+    const candidateCount = databaseMatches.length + pendingMatches.length
+    if (candidateCount > 1) {
+      push({ item: failure('merge', ref, 'enterprise_ambiguous', `同名企业有 ${candidateCount} 个候选 ⇒ 不猜是哪一家`, 'fromEnterpriseName'), action: 'skip', review: false })
+      return
+    }
+    if (candidateCount === 1) sourceEnterpriseId = databaseMatches[0]?.id ?? null
+    if (candidateCount === 0 && !pending.has(nameKey(nameNorm))) {
+      push({ item: failure('merge', ref, 'merge_source_not_found', `被并企业不存在：${fromName}`, 'fromEnterpriseName'), action: 'skip', review: false })
+      return
+    }
   }
   // 规范行可以已存在，也可以是**本批刚写进去**的企业（执行时解析）。
   if (!findEnterpriseByUscc(db, intoUscc) && !pending.has(`uscc:${intoUscc}`)) {
@@ -1545,13 +3140,295 @@ function planMerge(
     return
   }
 
-  const plan: MergePlan = { merge, sourceRelationRef, evidenceQueryRef }
+  const targetEnterprise = findEnterpriseByUscc(db, intoUscc)
+  if (sourceEnterpriseId != null && targetEnterprise) {
+    const conflictingDifference = findMergeDifferenceConflict(db, sourceEnterpriseId, targetEnterprise.id)
+    if (conflictingDifference) {
+      push({
+        item: failure(
+          'merge',
+          ref,
+          'merge_difference_conflict',
+          `差异唯一键已存在但内容不同：${conflictingDifference.titleCode}/${conflictingDifference.direction}/${conflictingDifference.recordedAt}`,
+          'merges',
+        ),
+        action: 'skip',
+        review: false,
+      })
+      return
+    }
+  }
+
+  const plan: MergePlan = { merge, sourceEnterpriseId, sourceRelationRef, evidenceQueryRef }
   push({
-    item: success('merge', `merge:${fromRaw ?? fromName}->${intoUscc}`, { intoUscc }),
+    item: success('merge', `merge:${fromRaw ?? fromName}->${intoUscc}`, {
+      intoUscc,
+      /**
+       * 请求里给的 `canonicalName`（`null` = 没要求改名）。
+       *
+       * ⚠️ 这是**请求**不是结论：真会不会改名取决于**执行时**规范行的现名（而规范行可能本批才建），
+       * 且与现名逐字相同时不改。权威答案在血缘的 `rename`（`null` = 确实没改名）。
+       */
+      requestedCanonicalName: optionalString(merge.canonicalName),
+    }),
     action: 'update',
     review: false,
     run: (tx) => executeMerge(tx, plan),
   })
+}
+
+// --- 补录统一社会信用代码（RL-06，契约 §8.10）-------------------------------
+
+/**
+ * 一次补录的**血缘**（落 `import_batch.item_results[].detail.lineage`，与归并同一处可查）。
+ *
+ * 与归并血缘的分工很清楚：归并记「哪两行合成了一行、迁了哪些子行」；
+ * 补录只记「哪一行被填上了哪个值，依据是哪条公开来源」——**没有**任何身份变更。
+ */
+export interface UsccBackfillLineage {
+  enterpriseId: number
+  enterpriseName: string
+  uscc: string
+  /** 补录前的统代 —— 恒为 `null`（已有统代的一律拒绝写入，不覆盖）。 */
+  previousUscc: null
+  /** 公开来源证据（URL / 查证日期 / 对应依据 / 来源名称 / 地区）。 */
+  source: RosterImportUsccBackfill['source']
+  note: string | null
+}
+
+interface UsccBackfillPlan {
+  ref: string
+  backfill: RosterImportUsccBackfill
+  enterpriseId: number
+  uscc: string
+}
+
+/**
+ * 计划一条补录（契约 §8.10）。判据**全部是客观的**，一条都不靠名称相似：
+ *
+ *  - **代码格式/校验位**（GB 32100-2015，`usccFormatVerdict`）不合法 ⇒ 拒绝（不填猜测值）；
+ *  - **公开来源三要素**（URL / 查证日期 / 对应依据）+ 来源名称，缺一 ⇒ `source_evidence_incomplete`；
+ *  - 目标企业必须存在；**按名定位时要求同名行唯一**（同名多主体 ⇒ `enterprise_ambiguous`，不猜是哪一家）；
+ *  - 目标企业**已有统代** ⇒ `uscc_already_present`（**不覆盖已有代码**）；
+ *  - 该统代已被**别的**企业占用 ⇒ `uscc_taken`（冲突；要合并身份请走 `merges`，那是另一件事）。
+ *
+ * 任一项不过 ⇒ 逐项报错、整批 `failed`、业务数据一行不落（与其它载荷项同一条规则）。
+ */
+function planUsccBackfill(
+  db: Executor,
+  backfill: RosterImportUsccBackfill,
+  index: number,
+  push: (item: PlannedItem) => void,
+): void {
+  const ref = `uscc_backfill:${index}`
+  const uscc = usccOrNull(backfill?.uscc)
+  const verdict = usccFormatVerdict(backfill?.uscc)
+  if (!uscc || verdict !== 'ok') {
+    const why =
+      verdict === 'length' ? '长度不是 18 位' : verdict === 'charset' ? '含字符集外的字符' : '校验位不符'
+    push({
+      item: failure('uscc_backfill', ref, 'uscc_format_invalid', `统一社会信用代码不合法（${why}）：${String(backfill?.uscc ?? '(空)')}`, 'uscc'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  // 三要素的判据与计划侧**同一处实现**（`missingUsccSourceFields`）——两处各写一遍会漂，
+  // 漂了以后「计划说能写、写入拒了」或反过来放行一条不可复核的来源都很难发现。
+  const source = backfill?.source
+  const missing = missingUsccSourceFields(source)
+  if (missing.length) {
+    push({
+      item: failure('uscc_backfill', ref, 'source_evidence_incomplete', `补录缺少可复核的公开来源证据：${missing.join('、')}`, 'source'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+
+  const idRaw = optionalInt(backfill?.enterpriseId)
+  const name = optionalString(backfill?.enterpriseName)
+  if (idRaw == null && !name) {
+    push({
+      item: failure('uscc_backfill', ref, 'enterprise_required', '补录缺少 enterpriseId 或 enterpriseName', 'enterpriseId'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  let target: ResolvedEnterprise | null = null
+  if (idRaw != null) {
+    target = findEnterpriseById(db, idRaw)
+    if (target && name && normalizeName(name) !== target.nameNorm) {
+      push({
+        item: failure('uscc_backfill', ref, 'enterprise_selector_conflict', `enterpriseId=${idRaw} 的名称与给定 enterpriseName 不一致`, 'enterpriseName'),
+        action: 'skip',
+        review: false,
+      })
+      return
+    }
+  } else {
+    // **按名定位必须唯一**：同名多主体时软件不猜是哪一家（票面第 4 条）。
+    const sameName = findEnterprisesByNorm(db, normalizeName(name!))
+    if (sameName.length > 1) {
+      push({
+        item: failure('uscc_backfill', ref, 'enterprise_ambiguous', `同名企业有 ${sameName.length} 家（${sameName.map((e) => e.id).join('、')}）⇒ 同名多主体，不猜是哪一家`, 'enterpriseName'),
+        action: 'skip',
+        review: false,
+      })
+      return
+    }
+    target = sameName[0] ?? null
+  }
+  if (!target) {
+    push({
+      item: failure('uscc_backfill', ref, 'enterprise_not_found', `补录找不到归属企业：${idRaw ?? name}`, 'enterpriseId'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  if (target.usccNorm) {
+    push({
+      item: failure('uscc_backfill', ref, 'uscc_already_present', `企业 ${target.id} 已有统代 ${target.usccNorm} ⇒ 只补缺失值，不覆盖`, 'uscc'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  const holder = findEnterpriseByUscc(db, uscc)
+  if (holder && holder.id !== target.id) {
+    push({
+      item: failure('uscc_backfill', ref, 'uscc_taken', `统代 ${uscc} 已被企业 ${holder.id}「${holder.name}」占用 ⇒ 冲突，不覆盖、不自动合并身份`, 'uscc'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+
+  const plan: UsccBackfillPlan = { ref, backfill, enterpriseId: target.id, uscc }
+  push({
+    item: success('uscc_backfill', `uscc_backfill:${target.id}->${uscc}`, {
+      enterpriseId: target.id,
+      enterpriseName: target.name,
+      uscc,
+      sourceUrl: optionalString(source?.url),
+    }),
+    action: 'update',
+    review: false,
+    run: (tx) => executeUsccBackfill(tx, plan),
+  })
+}
+
+/**
+ * 执行一条补录：把 `uscc_norm` 填上，并摘掉 `quality_flags` 里的 `uscc_missing`。
+ *
+ * **只动这两处** —— 不写别名、不改名、不动 `record` / `record_event` / 出处 / 关系
+ * （票面第 5 条：不因补代码自动合并身份）。写入阶段再校验一遍「企业还在、仍无统代、
+ * 统代没被占」：计划与执行之间库状态可能变（同批更早的项就可能），任何一条不过就
+ * 抛 `ExecStageFailure` 让整批回滚，**绝不**写出一个自相矛盾的状态。
+ */
+function executeUsccBackfill(tx: Executor, plan: UsccBackfillPlan): RosterImportItemResult {
+  const row = tx.select().from(schema.enterprise).all().find((e) => e.id === plan.enterpriseId)
+  if (!row) {
+    return failure('uscc_backfill', plan.ref, 'enterprise_not_found', `写入阶段找不到企业 ${plan.enterpriseId}`, 'enterpriseId')
+  }
+  if (row.usccNorm) {
+    return failure('uscc_backfill', plan.ref, 'uscc_already_present', `企业 ${row.id} 在写入阶段已有统代 ${row.usccNorm} ⇒ 不覆盖`, 'uscc')
+  }
+  const holder = findEnterpriseByUscc(tx, plan.uscc)
+  if (holder && holder.id !== row.id) {
+    return failure('uscc_backfill', plan.ref, 'uscc_taken', `统代 ${plan.uscc} 在写入阶段已被企业 ${holder.id} 占用`, 'uscc')
+  }
+  const qualityFlags = (row.qualityFlags ?? []).filter((flag) => flag !== 'uscc_missing')
+  tx.update(schema.enterprise)
+    .set({ usccNorm: plan.uscc, qualityFlags })
+    .where(eq(schema.enterprise.id, row.id))
+    .run()
+  const lineage: UsccBackfillLineage = {
+    enterpriseId: row.id,
+    enterpriseName: row.name,
+    uscc: plan.uscc,
+    previousUscc: null,
+    source: plan.backfill.source,
+    note: optionalString(plan.backfill?.note),
+  }
+  return success('uscc_backfill', `uscc_backfill:${row.id}->${plan.uscc}`, {
+    enterpriseId: row.id,
+    uscc: plan.uscc,
+    rowsWritten: 1,
+    lineage,
+  })
+}
+
+/**
+ * 取或建一条曾用名 —— 唯一键 `(enterprise_id, name_norm, source_kind, source_ref_id)`（§1.2）。
+ * 归并要写**两条**别名（被并方的名字、被顶掉的规范行原名），规则只此一份。
+ */
+function ensureEnterpriseAlias(
+  tx: Executor,
+  input: {
+    enterpriseId: number
+    name: string
+    /** 来源类别取值**从冻结的表列派生**，不在这里再抄一遍枚举。 */
+    sourceKind: (typeof schema.enterpriseAlias.sourceKind.enumValues)[number]
+    sourceRefId: number
+    note: string
+    /**
+     * **按 `(enterprise_id, name_norm)` 去重**（RL-06 增量）——先查同名 `confirmed` 别名，
+     * 有就**复用**它、不再插第二条。
+     *
+     * 为什么归并要它：唯一键含 `source_ref_id`，所以「同一家企业、同一个名字、换一条来源关系」
+     * 不撞唯一键，会实打实写出第二行。而归并是**按候选统代**触发的，一轮里同一个名字可能
+     * 因为不同的关系行被写两遍（实测:一次 96 条的写回里 26 条命中）。那不算「逐条留证」，
+     * 只是把同一个名字留了两遍 —— 搜索与展示上是纯噪音（详情页同名并列）。
+     *
+     * 只认 `confirmed`：`pending` 的同名别名换成 `confirmed` 是一次**升级**，该写还是要写。
+     * 缺省 `false` ⇒ `aliases[]` 那条**显式**写别名的路保持契约 §1.2 的原行为
+     * （调用方主动写一条来自某个来源的别名，本来就该在该来源下各成一条）。
+     */
+    dedupeByName?: boolean
+  },
+): { id: number; created: boolean } {
+  const nameNorm = normalizeName(input.name)
+  // 去重档（RL-06）：同一 `(企业, 别名)` 下若已有**已确认**的别名，直接复用 —— 归并两处启用。
+  // 这一路**不是唯一键**，所以按列 `eq` 定位（不吃整表），与下面的唯一键定位同一纪律（RL-18）。
+  if (input.dedupeByName) {
+    const sameName = tx
+      .select({ id: schema.enterpriseAlias.id })
+      .from(schema.enterpriseAlias)
+      .where(
+        and(
+          eq(schema.enterpriseAlias.enterpriseId, input.enterpriseId),
+          eq(schema.enterpriseAlias.nameNorm, nameNorm),
+          eq(schema.enterpriseAlias.verificationStatus, 'confirmed'),
+        ),
+      )
+      .get()
+    if (sameName) return { id: sameName.id, created: false }
+  }
+  // 按唯一键 `enterprise_alias_identity_uq` 定位（RL-18）:不再整表线性找，也不再把谓词抄一遍。
+  const existing = findAliasRow(tx, {
+    enterpriseId: input.enterpriseId,
+    nameNorm,
+    sourceKind: input.sourceKind,
+    sourceRefId: input.sourceRefId,
+  })
+  if (existing) return { id: existing.id, created: false }
+  const id = tx
+    .insert(schema.enterpriseAlias)
+    .values({
+      enterpriseId: input.enterpriseId,
+      name: input.name,
+      nameNorm,
+      sourceKind: input.sourceKind,
+      sourceRefId: input.sourceRefId,
+      verificationStatus: 'confirmed',
+      note: input.note,
+    })
+    .returning({ id: schema.enterpriseAlias.id })
+    .get().id
+  return { id, created: true }
 }
 
 /**
@@ -1560,26 +3437,34 @@ function planMerge(
  * 出处挂在事件上随之归入规范行；最后删除被并的空企业行。
  */
 function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
-  const { merge, sourceRelationRef, evidenceQueryRef } = plan
+  const { merge, sourceEnterpriseId, sourceRelationRef, evidenceQueryRef } = plan
   const ref0 = `merge:${optionalInt(merge.fromEnterpriseId) ?? optionalString(merge.fromEnterpriseName)}`
 
   const intoUscc = usccOrNull(merge.intoUscc)!
   const into = findEnterpriseByUscc(tx, intoUscc)
-  const fromRaw = optionalInt(merge.fromEnterpriseId)
-  const from = fromRaw != null
-    ? (() => {
-        const row = tx.select().from(schema.enterprise).all().find((e) => e.id === fromRaw)
-        return row ? { id: row.id, name: row.name, nameNorm: row.nameNorm, usccNorm: row.usccNorm } : null
-      })()
-    : findEnterpriseByNorm(tx, normalizeName(optionalString(merge.fromEnterpriseName)!))
+  const fromName = optionalString(merge.fromEnterpriseName)
+  let from = sourceEnterpriseId != null ? findEnterpriseById(tx, sourceEnterpriseId) : null
+  if (sourceEnterpriseId == null && fromName) {
+    const matches = findEnterprisesByNorm(tx, normalizeName(fromName))
+    if (matches.length > 1) return failure('merge', ref0, 'enterprise_ambiguous', `同名企业有 ${matches.length} 个候选 ⇒ 不猜是哪一家`, 'fromEnterpriseName')
+    from = matches[0] ?? null
+  }
   if (!from) return failure('merge', ref0, 'merge_source_not_found', '被并企业在写入阶段不存在', 'fromEnterpriseId')
   if (!into) return failure('merge', ref0, 'merge_target_not_found', '规范行在写入阶段不存在', 'intoUscc')
   if (from.id === into.id) return failure('merge', ref0, 'merge_same_enterprise', '被并企业与规范行是同一行', 'fromEnterpriseId')
   const ref = `merge:${from.id}->${into.id}`
+  const conflictingDifference = findMergeDifferenceConflict(tx, from.id, into.id)
+  if (conflictingDifference) {
+    return failure(
+      'merge',
+      ref,
+      'merge_difference_conflict',
+      `差异唯一键已存在但内容不同：${conflictingDifference.titleCode}/${conflictingDifference.direction}/${conflictingDifference.recordedAt}`,
+      'merges',
+    )
+  }
 
-  // 2. 写曾用名（旧名不丢）。证据指针：给了自然键就**必须**解析到真 id（解析不到 ⇒ 报错）。
-  const aliasName = optionalString(merge.aliasName) ?? from.name
-  const aliasNameNorm = normalizeName(aliasName)
+  // 2. 主名称与曾用名（§5.3）。证据指针：给了自然键就**必须**解析到真 id（解析不到 ⇒ 报错）。
   const sourceKind = merge.sourceKind ?? 'manual'
   let sourceRefId = optionalInt(merge.sourceRefId) ?? 0
   if (sourceRelationRef) {
@@ -1597,47 +3482,65 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     }
     mergeEvidenceQueryId = resolved
   }
-  const existingAlias = tx
-    .select()
-    .from(schema.enterpriseAlias)
-    .all()
-    .find(
-      (a) =>
-        a.enterpriseId === into.id &&
-        a.nameNorm === aliasNameNorm &&
-        a.sourceKind === sourceKind &&
-        a.sourceRefId === sourceRefId,
-    )
-  const aliasId = existingAlias
-    ? existingAlias.id
-    : tx
-        .insert(schema.enterpriseAlias)
-        .values({
+
+  // 2a. **主名称改名**（§5.3 ①：以导出表/最新平台态为准）。给了 `canonicalName` 且与原名不同
+  //     ⇒ 规范行改名为它，**被顶掉的原名落成别名**（旧名同样不丢）；不给 ⇒ 保持不动（缺省行为）。
+  const requestedName = optionalString(merge.canonicalName)
+  const renamedFrom = requestedName && requestedName !== into.name ? into.name : null
+  const canonicalName = requestedName ?? into.name
+  if (renamedFrom && requestedName) {
+    tx.update(schema.enterprise)
+      .set({ name: requestedName, nameNorm: normalizeName(requestedName) })
+      .where(eq(schema.enterprise.id, into.id))
+      .run()
+  }
+  // 被顶掉的原名：来源与本次归并同一份证据（调用方给的关系行）。
+  // 说明文字**不能**被调用方的 `note` 顶掉 —— 那条别名为什么存在，只在这里说得清。
+  const renameNote = `主名称改为「${canonicalName}」（导出表侧）后被顶掉的原名`
+  const renameAlias = renamedFrom
+    ? ensureEnterpriseAlias(tx, {
+        enterpriseId: into.id,
+        name: renamedFrom,
+        sourceKind,
+        sourceRefId,
+        note: optionalString(merge.note) ? `${renameNote}；${optionalString(merge.note)}` : renameNote,
+        dedupeByName: true,
+      })
+    : { id: null, created: false }
+
+  // 2b. 被并方的名字（§5.3）：**与规范行最终名称逐字相同则不造别名** —— 别名的用途是「旧名不丢」，
+  //     名称一模一样时根本没有第二个名字可留（造一条同名别名只会污染搜索与展示）。
+  //     判据用**逐字相等**（不是归一化相等）：归一化会抹掉括号、空白与「宁波」前缀，
+  //     而「公布名写的是短名、导出表写的是全名」正是要靠别名留住的差异。
+  //     实测的 4 例重名归并（公布名 == 导出表名，逐字相同）都走这一支。
+  const aliasName = optionalString(merge.aliasName) ?? from.name
+  const mergeAlias =
+    aliasName === canonicalName
+      ? { id: null, created: false }
+      : ensureEnterpriseAlias(tx, {
           enterpriseId: into.id,
           name: aliasName,
-          nameNorm: aliasNameNorm,
           sourceKind,
           sourceRefId,
-          verificationStatus: 'confirmed',
           note: optionalString(merge.note) ?? `归并自 enterprise:${from.id}（${from.name}）`,
+          // 归并这一侧按 `(enterprise_id, name_norm)` 去重（见 `ensureEnterpriseAlias` 的注释）。
+          dedupeByName: true,
         })
-        .returning({ id: schema.enterpriseAlias.id })
-        .get().id
+  const aliasId = mergeAlias.id
 
   // 3. 迁移子行（别名 / 差异 / 平台关系）。撞唯一键的**先删被并那条**（它在规范行已有等价行）。
   let aliasesMoved = 0
-  for (const alias of tx.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === from.id)) {
-    const clash = tx
-      .select()
-      .from(schema.enterpriseAlias)
-      .all()
-      .find(
-        (a) =>
-          a.enterpriseId === into.id &&
-          a.nameNorm === alias.nameNorm &&
-          a.sourceKind === alias.sourceKind &&
-          a.sourceRefId === alias.sourceRefId,
-      )
+  for (const alias of tx
+    .select()
+    .from(schema.enterpriseAlias)
+    .where(eq(schema.enterpriseAlias.enterpriseId, from.id))
+    .all()) {
+    const clash = findAliasRow(tx, {
+      enterpriseId: into.id,
+      nameNorm: alias.nameNorm,
+      sourceKind: alias.sourceKind,
+      sourceRefId: alias.sourceRefId,
+    })
     if (clash) {
       tx.delete(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.id, alias.id)).run()
     } else {
@@ -1647,19 +3550,33 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   }
 
   let differencesMoved = 0
-  for (const difference of tx.select().from(schema.differenceReason).all().filter((d) => d.enterpriseId === from.id)) {
-    const clash = tx
-      .select()
-      .from(schema.differenceReason)
-      .all()
-      .find(
-        (d) =>
-          d.enterpriseId === into.id &&
-          d.titleCode === difference.titleCode &&
-          d.direction === difference.direction &&
-          d.recordedAt === difference.recordedAt,
-      )
+  for (const difference of tx
+    .select()
+    .from(schema.differenceReason)
+    .where(eq(schema.differenceReason.enterpriseId, from.id))
+    .all()) {
+    const clash = findDifferenceRow(tx, {
+      enterpriseId: into.id,
+      titleCode: difference.titleCode,
+      direction: difference.direction,
+      recordedAt: difference.recordedAt,
+    })
     if (clash) {
+      const targetDifference = findDifferenceContentRow(tx, {
+        enterpriseId: into.id,
+        titleCode: difference.titleCode,
+        direction: difference.direction,
+        recordedAt: difference.recordedAt,
+      })
+      if (targetDifference && !sameDifferenceContent(difference, targetDifference)) {
+        return failure(
+          'merge',
+          ref,
+          'merge_difference_conflict',
+          `差异唯一键已存在但内容不同：${difference.titleCode}/${difference.direction}/${difference.recordedAt}`,
+          'merges',
+        )
+      }
       tx.delete(schema.differenceReason).where(eq(schema.differenceReason.id, difference.id)).run()
     } else {
       tx.update(schema.differenceReason).set({ enterpriseId: into.id }).where(eq(schema.differenceReason.id, difference.id)).run()
@@ -1667,7 +3584,11 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     }
   }
 
-  const fromRelations = tx.select().from(schema.platformRelation).all().filter((r) => r.enterpriseId === from.id)
+  const fromRelations = tx
+    .select()
+    .from(schema.platformRelation)
+    .where(eq(schema.platformRelation.enterpriseId, from.id))
+    .all()
   for (const relation of fromRelations) {
     tx.update(schema.platformRelation).set({ enterpriseId: into.id }).where(eq(schema.platformRelation.id, relation.id)).run()
   }
@@ -1711,6 +3632,8 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     fromEnterpriseName: from.name,
     intoEnterpriseId: into.id,
     intoUscc: into.usccNorm ?? '',
+    canonicalName,
+    rename: renamedFrom ? { from: renamedFrom, to: canonicalName, aliasId: renameAlias.id } : null,
     aliasId,
     evidenceQueryId: mergeEvidenceQueryId,
     childRowsMoved: {
@@ -1724,8 +3647,12 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     eventsMoved,
     evidenceMoved,
   }
-  // 归并**净新增的行**只有那条曾用名（子行是改指、事件是改指、被并企业行是删除）。
-  return success('merge', ref, { lineage, rowsWritten: existingAlias ? 0 : 1 })
+  // 归并**净新增的行**只有别名（子行是改指、事件是改指、被并企业行是删除）：
+  // 被并方名与规范行最终名逐字相同时不造那条别名；改名时另加一条「被顶掉的原名」。
+  return success('merge', ref, {
+    lineage,
+    rowsWritten: (mergeAlias.created ? 1 : 0) + (renameAlias.created ? 1 : 0),
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -1775,14 +3702,39 @@ class ExecStageFailure extends Error {
 /**
  * 只读预检（契约 §8.1）：**不写业务数据**，只算影响并落一条 `status='preflight'` 的批次。
  * 同一幂等键重复调用：复用既有批次行、刷新它的预检结果。
+ *
+ * ⚠️ **已 `committed` 的幂等键另有一套语义（RL-19）**：同键的 `commit` 会**直接返回既有摘要、
+ * 一行不写**（§8.2 的幂等），所以对这样的请求报一份「会改 N 行」的计划是**假话** ——
+ * 它既不会发生，还会**覆写**那条已提交批次的预检记账，于是批次行里留下
+ * 「预检说改 N 行、摘要说改了 0 行」的自相矛盾记录（RL-19 的事故现场就是这个假象）。
+ * 这里如实报「同键提交什么都不会发生」并把 `batchStatus: 'committed'` 带出去；
+ * 真要补收敛就用 `POST /api/roster/import/replay`（§8.9.3）。
  */
 export function preflightRosterImport(
   db: Db,
   request: RosterImportRequest,
+  pageCountErrors: readonly RosterImportItemResult[] = [],
 ): { batchId: number; status: 'preflight'; preflight: RosterImportPreflight } {
   const batch = ensureBatchRow(db, request)
-  const plan = planRosterImport(db, request, { batchId: batch.id })
-  const preflight = summarizePlan(plan)
+
+  if (batch.status === 'committed') {
+    return {
+      batchId: batch.id,
+      status: 'preflight',
+      preflight: {
+        add: 0,
+        update: 0,
+        remove: 0,
+        review: 0,
+        conflicts: [],
+        evidenceRepoints: 0,
+        batchStatus: 'committed',
+      },
+    }
+  }
+
+  const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors })
+  const preflight = { ...summarizePlan(plan), batchStatus: batch.status }
   db.update(schema.importBatch)
     .set({ preflightResult: preflight })
     .where(eq(schema.importBatch.id, batch.id))
@@ -1805,16 +3757,20 @@ export function preflightRosterImport(
 export function commitRosterImport(
   db: Db,
   request: RosterImportRequest,
+  pageCountErrors: readonly RosterImportItemResult[] = [],
 ): { batchId: number; status: 'committed' | 'failed'; summary: RosterImportSummary; items: RosterImportItemResult[]; error: string | null } {
   const batch = ensureBatchRow(db, request)
 
   if (batch.status === 'committed') {
-    const summary = (batch.summary as RosterImportSummary | null) ?? { written: 0, skipped: 0, failed: 0 }
-    const items = (batch.itemResults as RosterImportItemResult[] | null) ?? []
+    // 存的是**当次**写下的 JSON：在本票引入 `evidenceRepointed` 之前提交的批次没有这一项。
+    // 摘要类型里它是必填，所以读回时补 0（「那一批没有收敛」是事实，不是缺失）——
+    // 否则调用方拿到的是 `undefined`，把它当数字用就会静默算错。
+    const summary = readSummaryOf(batch.summary) ?? { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
+    const items = publicRosterImportItems((batch.itemResults as RosterImportItemResult[] | null) ?? [])
     return { batchId: batch.id, status: 'committed', summary, items, error: null }
   }
 
-  const plan = planRosterImport(db, request, { batchId: batch.id })
+  const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors })
   const conflicts = plan.conflicts
 
   if (conflicts.length > 0) {
@@ -1824,6 +3780,8 @@ export function commitRosterImport(
       // 整批失败 ⇒ 一行没写、也没有「复用」发生；如实为 0。
       skipped: 0,
       failed: conflicts.length,
+      // 整批回滚 ⇒ 出处指针一行也没动。
+      evidenceRepointed: 0,
     }
     const error = `批次校验未通过：${conflicts.length} 项有误，未写入任何数据`
     db.update(schema.importBatch)
@@ -1836,7 +3794,7 @@ export function commitRosterImport(
       })
       .where(eq(schema.importBatch.id, batch.id))
       .run()
-    return { batchId: batch.id, status: 'failed', summary, items, error }
+    return { batchId: batch.id, status: 'failed', summary, items: publicRosterImportItems(items), error }
   }
 
   let items: RosterImportItemResult[]
@@ -1866,12 +3824,12 @@ export function commitRosterImport(
       const items = [...executed, ...rest]
       const failed = items.filter((item) => !item.ok).length
       const error = '批次执行阶段有项失败（已整批回滚，未写入任何数据）'
-      const summary: RosterImportSummary = { written: 0, skipped: 0, failed }
+      const summary: RosterImportSummary = { written: 0, skipped: 0, failed, evidenceRepointed: 0 }
       db.update(schema.importBatch)
         .set({ status: 'failed', itemResults: items, summary, error, preflightResult: summarizePlan(plan) })
         .where(eq(schema.importBatch.id, batch.id))
         .run()
-      return { batchId: batch.id, status: 'failed', summary, items, error }
+      return { batchId: batch.id, status: 'failed', summary, items: publicRosterImportItems(items), error }
     }
     const message = cause instanceof Error ? cause.message : String(cause)
     const error = `批次提交失败（已整批回滚，未写入任何数据）：${message}`
@@ -1879,10 +3837,16 @@ export function commitRosterImport(
       p.item.ok ? { ...p.item, ok: false, error: { code: 'commit_rolled_back', message: '整批回滚，本项未写入' } } : p.item,
     )
     db.update(schema.importBatch)
-      .set({ status: 'failed', itemResults: items, summary: { written: 0, skipped: 0, failed: plan.items.length }, error })
+      .set({ status: 'failed', itemResults: items, summary: { written: 0, skipped: 0, failed: plan.items.length, evidenceRepointed: 0 }, error })
       .where(eq(schema.importBatch.id, batch.id))
       .run()
-    return { batchId: batch.id, status: 'failed', summary: { written: 0, skipped: 0, failed: plan.items.length }, items, error }
+    return {
+      batchId: batch.id,
+      status: 'failed',
+      summary: { written: 0, skipped: 0, failed: plan.items.length, evidenceRepointed: 0 },
+      items: publicRosterImportItems(items),
+      error,
+    }
   }
 
   const summary = summarizeCommit(plan, items)
@@ -1897,7 +3861,139 @@ export function commitRosterImport(
     })
     .where(eq(schema.importBatch.id, batch.id))
     .run()
-  return { batchId: batch.id, status: 'committed', summary, items, error: null }
+  return { batchId: batch.id, status: 'committed', summary, items: publicRosterImportItems(items), error: null }
+}
+
+/** Keep replay snapshots in the batch ledger, but expose only caller-facing item details. */
+function publicRosterImportItems(items: readonly RosterImportItemResult[]): RosterImportItemResult[] {
+  return items.map((item) => {
+    if (!item.detail) return item
+    const detail = { ...item.detail }
+    delete detail.evidenceRepointTargets
+    delete detail.evidenceRepointPlanFingerprint
+    if (Object.keys(detail).length === Object.keys(item.detail).length) return item
+    const publicItem = { ...item }
+    delete publicItem.detail
+    return Object.keys(detail).length > 0 ? { ...publicItem, detail } : publicItem
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 出处指针收敛的**重放**（RL-19，契约 §8.9.3）
+// ---------------------------------------------------------------------------
+
+/**
+ * 收敛重放的记账键：`<原幂等键>#repoint`。
+ *
+ * 为什么不是原键：`import_batch.idempotency_key` 唯一，而原键那条批次已经 `committed`；
+ * 重放是**同一个请求的第二次动作**，它既要能重复跑（可重试），又要留下自己的账目。
+ * 派生键确定了这个派生是**确定性的** —— 同一份请求重放多少次都是同一行记账，
+ * 且一眼能看出它是哪一批的收敛。
+ */
+export function replayBatchKey(idempotencyKey: string): string {
+  return `${idempotencyKey}#repoint`
+}
+
+/** 从原提交批次读取目标快照；旧批次没有快照时返回 undefined，保留兼容重算路径。 */
+function evidenceRepointPlanFromItems(items: unknown, fingerprint: string): EvidenceRepointTarget[] | undefined {
+  if (!Array.isArray(items)) return undefined
+  let hasPlan = false
+  let samePayload = true
+  const targets: EvidenceRepointTarget[] = []
+  for (const item of items) {
+    if (!isObject(item) || !isObject(item.detail) || !Array.isArray(item.detail.evidenceRepointTargets)) continue
+    hasPlan = true
+    if (item.detail.evidenceRepointPlanFingerprint !== fingerprint) samePayload = false
+    for (const raw of item.detail.evidenceRepointTargets) {
+      if (!isObject(raw)) continue
+      const { id, recordId, recordEventId, fromSourceFile, sourceFile } = raw
+      if (
+        typeof id === 'number' && Number.isInteger(id) &&
+        typeof recordId === 'number' && Number.isInteger(recordId) &&
+        typeof recordEventId === 'number' && Number.isInteger(recordEventId) &&
+        typeof fromSourceFile === 'string' && typeof sourceFile === 'string'
+      ) {
+        targets.push({ id, recordId, recordEventId, fromSourceFile, sourceFile })
+      }
+    }
+  }
+  return hasPlan && samePayload ? targets : undefined
+}
+
+/**
+ * **出处指针收敛重放**（RL-19，契约 §8.9.3）。
+ *
+ * ── 它解决的事 ──────────────────────────────────────────────────────────
+ * 幂等键被**消费**之后（批次已 `committed`），同键的 `commit` 永远直接返回既有摘要、
+ * 一行不写（§8.2 的幂等 —— 这个行为本身要保留）。于是「那次提交跑的是旧构建 / 载荷当时
+ * 还指着库外路径」这类情况下，库里受影响的出处指针**再也没有路径能修回来**。
+ * 本函数就是那条路径：**显式**地再跑一次收敛。
+ *
+ * ── 它不做什么（为什么可以放心重复跑）──────────────────────────────────
+ *  - 收敛 `record_evidence.source_file`；目标为非 PDF 时同时清除无效 `page`：不新建企业/记录/事件/出处，不归并，不删行；
+ *  - **只认既有**：库里没有的事件/记录一律跳过 —— 收敛不补历史（补历史请走 commit）；
+ *  - 载荷里那些**会写新行**的类别（平台查询 / 别名 / 差异 / 快照 / 归并）根本**不进计划**
+ *    （`convergeOnly`），故没有可执行的东西；
+ *  - 幂等：指针已经收敛过之后，谓词不再命中 ⇒ `evidenceRepointed` 为 0。
+ *
+ * 计划与执行在同一次调用里先后发生、且之间没有别的写入 ⇒ 预算与实改必然一致
+ * （`update` / `evidenceRepointed` 与预检的 `update` / `evidenceRepoints` 同口径）。
+ */
+export function replayRosterImport(db: Db, request: RosterImportRequest): RosterImportReplayResponse {
+  const originalBatch = findBatchByKey(db, request.idempotencyKey)
+  const sameCommittedSourceIdentity =
+    originalBatch?.status === 'committed' &&
+    originalBatch.sourceKind === request.sourceKind &&
+    originalBatch.sourceIdentity === request.sourceIdentity &&
+    (originalBatch.sourceSha256 ?? null) === (request.sourceSha256 ?? null)
+  const evidenceRepointTargets = sameCommittedSourceIdentity
+    ? evidenceRepointPlanFromItems(originalBatch.itemResults, evidenceRepointPlanFingerprint(request))
+    : undefined
+  const batch = ensureBatchRow(db, { ...request, idempotencyKey: replayBatchKey(request.idempotencyKey) })
+  const plan = planRosterImport(db, request, {
+    batchId: batch.id,
+    convergeOnly: true,
+    evidenceRepointTargets,
+  })
+  const preflight = summarizePlan(plan)
+
+  if (plan.conflicts.length > 0) {
+    const items = plan.items.map((planned) => planned.item)
+    const error = `收敛重放未执行：载荷有 ${plan.conflicts.length} 项不合法，未改动任何行`
+    db.update(schema.importBatch)
+      .set({
+        status: 'failed',
+        itemResults: items,
+        summary: { written: 0, skipped: 0, failed: plan.conflicts.length, evidenceRepointed: 0 },
+        preflightResult: preflight,
+        error,
+      })
+      .where(eq(schema.importBatch.id, batch.id))
+      .run()
+    return { batchId: batch.id, status: 'failed', update: 0, evidenceRepointed: 0, items: publicRosterImportItems(items), error }
+  }
+
+  // 只跑「有收敛可做」的那些项（`run` 只挂在这些项上）—— 其余项连闭包都没有。
+  const items = db.transaction((tx) =>
+    plan.items.map((planned) => (planned.run ? planned.run(tx) : planned.item)),
+  )
+  const evidenceRepointed = items.reduce((n, item) => n + (item.ok ? rowsRepointed(item) : 0), 0)
+  // 计划口径的「将收敛」= 有执行闭包的那些项（其余项连闭包都没有）。
+  const update = plan.items.filter((planned) => planned.run != null).length
+
+  db.update(schema.importBatch)
+    .set({
+      status: 'committed',
+      itemResults: items,
+      summary: { written: 0, skipped: 0, failed: 0, evidenceRepointed },
+      preflightResult: preflight,
+      error: null,
+      committedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.importBatch.id, batch.id))
+    .run()
+
+  return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items: publicRosterImportItems(items), error: null }
 }
 
 /**
@@ -1912,9 +4008,11 @@ export function commitRosterImport(
 function summarizeCommit(plan: Plan, items: RosterImportItemResult[]): RosterImportSummary {
   let written = 0
   let skipped = 0
+  let evidenceRepointed = 0
   for (const item of items) {
     if (!item.ok) continue
     written += rowsWritten(item)
+    evidenceRepointed += rowsRepointed(item)
     const itemSkipped = item.detail?.skipped
     if (typeof itemSkipped === 'number') skipped += itemSkipped
   }
@@ -1922,7 +4020,7 @@ function summarizeCommit(plan: Plan, items: RosterImportItemResult[]): RosterImp
   for (const planned of plan.items) {
     if (planned.action === 'skip' && planned.item.ok) skipped += 1
   }
-  return { written, skipped, failed: 0 }
+  return { written, skipped, failed: 0, evidenceRepointed }
 }
 
 /** 执行器自报的**真正插入行数**（见 `summarizeCommit`）；未自报算 0。 */
@@ -1931,9 +4029,38 @@ function rowsWritten(item: RosterImportItemResult): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
 }
 
+/**
+ * 执行器自报的**真正收敛的出处行数**（RL-16/RL-19）；未自报算 0。
+ * 与 {@link rowsWritten} **分开**：收敛不是新增，不该进 `written`；但也不能不收账 ——
+ * 「预检答应的行数」与「提交真改的行数」要对得上，靠的就是这个求和。
+ */
+function rowsRepointed(item: RosterImportItemResult): number {
+  const value = item.detail?.evidenceRepointed
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
+}
+
 // ---------------------------------------------------------------------------
 // 往返一致性（写入后可用它查回「写了什么」）-------------------------------
 // ---------------------------------------------------------------------------
+
+/**
+ * 读回 `import_batch.summary`，把**本票之前**提交的批次缺的 `evidenceRepointed` 补成 0。
+ *
+ * 摘要 JSON 是**当次**写下的：RL-19 引入 `evidenceRepointed` 之前提交的行里没有这一项，
+ * 而类型里它是必填 —— 不补，调用方就会拿到 `undefined` 并静默算错。缺这一项恰好等价于
+ * 「那一批没收敛过任何出处行」，所以补 0 是**事实**，不是猜测。没有摘要则返回 `null`
+ * （预检批还没提交过，与既有口径一致）。
+ */
+function readSummaryOf(raw: unknown): RosterImportSummary | null {
+  if (!isObject(raw)) return null
+  const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+  return {
+    written: num(raw.written),
+    skipped: num(raw.skipped),
+    failed: num(raw.failed),
+    evidenceRepointed: num(raw.evidenceRepointed),
+  }
+}
 
 /** 从批次行读出可查询的结果摘要（契约：`item_results` / `summary` 可查）。 */
 export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
@@ -1945,11 +4072,36 @@ export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
     sourceKind: batch.sourceKind,
     sourceIdentity: batch.sourceIdentity,
     preflight: (batch.preflightResult as RosterImportPreflight | null) ?? null,
-    summary: (batch.summary as RosterImportSummary | null) ?? null,
-    items: (batch.itemResults as RosterImportItemResult[] | null) ?? null,
+    // 与 `commitRosterImport` 的读回同一份补法：本票之前提交的批次没有 `evidenceRepointed`。
+    summary: readSummaryOf(batch.summary),
+    items: batch.itemResults == null
+      ? null
+      : publicRosterImportItems((batch.itemResults as RosterImportItemResult[] | null) ?? []),
+    /** 本次导入报出的重名候选（RL-14；计数 + 明细都在这里，见 {@link readDuplicateCandidates}）。 */
+    duplicateCandidates: readDuplicateCandidates(db, idempotencyKey),
     error: batch.error,
     committedAt: batch.committedAt,
   }
+}
+
+/**
+ * 取回某批**新建企业时发现的重名候选**（RL-14）。
+ *
+ * 候选写在 `import_batch.item_results` 里（`kind: 'duplicate_candidate'`），所以这里
+ * 只做一次过滤 —— 与 {@link readMergeLineage} 同一口径：报告不是另存的一份，是批次结果本身。
+ * 预检批（`status='preflight'`）没有 `item_results`，此时退回读 `preflight_result` 里的那一份。
+ */
+export function readDuplicateCandidates(db: Db, idempotencyKey: string): DuplicateNameCandidate[] {
+  const batch = findBatchByKey(db, idempotencyKey)
+  if (!batch) return []
+  const items = (batch.itemResults as RosterImportItemResult[] | null) ?? []
+  if (items.length > 0) {
+    return items
+      .filter((item) => item.ok && item.kind === 'duplicate_candidate')
+      .map((item) => item.detail?.candidate as DuplicateNameCandidate)
+      .filter((candidate): candidate is DuplicateNameCandidate => !!candidate && typeof candidate.nameNorm === 'string')
+  }
+  return (batch.preflightResult as RosterImportPreflight | null)?.duplicateCandidates ?? []
 }
 
 /** 取回某条 item 的归并血缘（`merges` 项）。 */
@@ -1964,14 +4116,15 @@ export function readMergeLineage(db: Db, idempotencyKey: string, fromEnterpriseI
 
 /** 供测试/调用方按 id 直接取企业（验证归并后只剩规范行）。 */
 export function enterpriseExists(db: Db, id: number): boolean {
-  return db.select().from(schema.enterprise).all().some((e) => e.id === id)
+  return findEnterpriseById(db, id) != null
 }
 
 /** 归并后按现名或曾用名搜索命中同一企业（契约 §5.1 的搜索口径：现名 + **已确认**曾用名）。 */
 export function searchEnterpriseIdsByName(db: Db, raw: string): number[] {
   const norm = normalizeName(raw)
   const ids = new Set<number>()
-  for (const e of db.select().from(schema.enterprise).all()) if (e.nameNorm === norm) ids.add(e.id)
+  // 按名定位走与写入侧**同一个** `name_norm` 查找，不在这里再抄一份谓词（RL-18 收敛）。
+  for (const e of findEnterprisesByNorm(db, norm)) ids.add(e.id)
   for (const a of db.select().from(schema.enterpriseAlias).all()) {
     if (a.nameNorm === norm && a.verificationStatus === 'confirmed') ids.add(a.enterpriseId)
   }

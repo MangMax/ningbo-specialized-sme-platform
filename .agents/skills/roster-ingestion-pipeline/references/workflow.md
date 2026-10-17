@@ -13,9 +13,23 @@ When one file reaches OCR-ready state, hand off that file immediately with: file
 1. Parse OCR text into enterprise rows and attach each row to its actual page.
 2. Compare rows against all three current export snapshots. Prefer a validated credit code; then use normalized exact names and sourced aliases. Keep the match method and candidate source.
 3. Visually verify the source page for matched rows and unmatched rows. Confirm names, credit codes, row boundaries, page numbers and duplicated paragraphs. Do not visually re-read every unrelated page if OCR and export matching already narrows the proof set.
-4. Correct OCR transcription from the page image. For missing credit codes, search public registry/official sources and retain URL plus retrieval date. Leave ambiguous candidates unresolved.
+4. Correct OCR transcription from the page image. For missing credit codes, follow [`uscc-recovery.md`](./uscc-recovery.md): core keyword → search our own rows **and confirmed aliases** → candidate codes → verify **by code** against the platform → fill only on a byte-equal `qymc`; fall back to `queryList?qymc=` when the library has nothing. Keep URL plus retrieval date for public-source findings. Leave ambiguous candidates unresolved.
 5. Parse the announcement body and attachment to determine title, award/review event, year and batch. If one PDF has multiple attachments or years, create separate event groups with their own evidence.
 6. Write the original file, generated images, OCR output, corrected rows, event records and source evidence through the app's API/MCP contract. Replaying the same source batch must be idempotent.
+
+## File-store scope (RL-16)
+
+Whether a file belongs in the file store is decided by **one executable rule** — `lib/file-store-scope.ts` (`scopeOf()`), enforced by the backfill in `server/utils/stored-files.ts` and reported as `backfill.excluded`. The prose table lives in `files/README.md`; keep the two in step.
+
+- Filename contains 入库培育 → **out**. A nurture list is not a designation; the 2021 awards live in 〔2022〕145号.
+- `.doc` with a same-name `.docx` beside it → **out**; keep the previewable `.docx`.
+- `.docx` with a same-name `.pdf` beside it → **out** (human OCR product; the PDF is the authoritative, inline-previewable original).
+- Notice files (申报/复核通知) → **out**, judged on the **source directory segment**, never the filename — nearly every roster file is named "…名单的通知".
+- Everything else under `<source>/<kind>/` → in.
+
+Moving a file out is explicit (`DELETE /api/files/:id?deleteDisk=1`). The backfill never resurrects a removed file, and it keeps out-of-scope files out of `stored_file` even if they reappear on disk (report them; do not silently re-index).
+
+`record_evidence.source_file` is a **file-store-relative path** and must resolve to a file that is actually in the store. Point it at the processing directory instead and the roster row's preview silently breaks. So: put the file in the store first (`POST /api/uploads` tus, then `POST /api/files/register`), then import with the store-relative path. When a source file moves into the store, the import idempotency key (source identity + content hash) changes — re-run the same batch: enterprises, records and events are skipped (history stays untouched) and only the evidence `source_file` pointers are converged onto the new path. Re-running with an unchanged key is a no-op.
 
 ## Roster write path (RL-11)
 
@@ -26,6 +40,7 @@ Roster entities — enterprises, confirmed aliases (曾用名), title events, so
 - **One batch = one atomic write.** Either the whole batch is `committed`, or it is `failed` with per-item errors (`{ ok:false, kind, ref, error:{ code, field?, message } }`) and **no business rows written**. Never treat a partial batch as done.
 - Include **every** in-scope official roster row, including rows unmatched to any export snapshot.
 - Merging a no-credit-code enterprise into its canonical row is a `payload.merges` item (§8.4), not a direct `uscc_norm` update; the merge lineage (which records/events/evidence moved) is stored in `import_batch.item_results` and can be read back.
+- Filling a **missing** code on an enterprise no other row can own is a `payload.usccBackfills` item (§8.10) and needs reviewable public-source evidence (`url` + `checkedOn` + `basis` + source name). It writes **only** the code (and clears the `uscc_missing` flag): it never overwrites an existing code (`uscc_already_present`), never takes a code another enterprise holds (`uscc_taken`), and never merges identities. Invalid code (length/charset/check digit) or thin evidence fails the whole batch.
 - A batch may reference enterprises it creates in the same payload; identities resolve at write time.
 - **Evidence pointers can target rows created in the same batch.** `aliases[].sourceRelationRef`, `differences[].evidenceQueryRef` / `evidenceRelationRef` and `merges[].sourceRelationRef` / `evidenceQueryRef` take a natural key `{ interface, queryKey, rdjb?, queriedAt?, sequenceNo? }` (contract §8.7) — so one batch can write query → relations → alias/difference evidence without a second round trip. Do **not** invent row ids, and do not rely on `relationKey` alone (it is ambiguous across interfaces). Bare ids stay supported for rows that already exist. An unresolvable reference fails the whole batch, per-item, with nothing written.
 - Export snapshots: `year` / `collectedOn` come from the caller, never inferred from the file or its name.

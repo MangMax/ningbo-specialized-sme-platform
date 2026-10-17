@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { and, count, eq, sql, type SQL } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { allRecords, getQuality, getStats, listRecords, type EventType } from '../lib/query'
+import { allRecords, getEnterpriseDetail, getQuality, getStats, listRecords, type EventType } from '../lib/query'
 
 let dir: string
 let db: (typeof import('../db'))['useDb']
@@ -262,5 +262,75 @@ describe('listRecords flags filter', () => {
   it('filters to groups whose enterprise has no USCC', () => {
     const d = db()
     expect(listRecords(d, { flags: 'uscc_missing' }).total).toBe(3)
+  })
+})
+
+describe('getEnterpriseDetail 的出处页码(RL-10)', () => {
+  /** 一条出处:文件 / 附件 / 序号 / 页码。页码给不出就是 `null`(Word / Excel 那条路)。 */
+  const withEvidence = (name: string, evidence: { sourceFile: string; listNo: number; page: number | null }[]) => {
+    const d = db()
+    const enterpriseId = d
+      .insert(schema.enterprise)
+      .values({ usccNorm: null, name, nameNorm: name })
+      .returning({ id: schema.enterprise.id })
+      .get().id
+    const recordId = d
+      .insert(schema.record)
+      .values({ enterpriseId, titleCode: 'specialized_sme', source: 'jxj', district: '海曙区' })
+      .returning({ id: schema.record.id })
+      .get().id
+    const eventId = d
+      .insert(schema.recordEvent)
+      .values({ recordId, eventType: 'award', year: 2022, sortKey: 2022 })
+      .returning({ id: schema.recordEvent.id })
+      .get().id
+    for (const v of evidence) {
+      d.insert(schema.recordEvidence)
+        .values({ recordEventId: eventId, sourceFile: v.sourceFile, attachment: '附件', listNo: v.listNo, page: v.page })
+        .run()
+    }
+    return enterpriseId
+  }
+
+  it('详情逐条带页码 —— 有页码、没有页码都照实给(不补 0、不补 1)', () => {
+    const F145 = 'jxj/announcement/2022/甬经信中小〔2022〕145号关于公布宁波市“专精特新”中小企业名单的通知.pdf'
+    const id = withEvidence('宁波页码测试有限公司', [
+      { sourceFile: F145, listNo: 6, page: 8 },
+      { sourceFile: F145, listNo: 7, page: null },
+    ])
+
+    const detail = getEnterpriseDetail(db(), id)!
+    expect(detail.records[0]!.events[0]!.evidence).toEqual([
+      { sourceFile: F145, attachment: '附件', listNo: 6, page: 8 },
+      { sourceFile: F145, attachment: '附件', listNo: 7, page: null },
+    ])
+  })
+
+  it('导出文本把页码拼在末尾;没有页码就**不写占位**(那一列读得出有没有值)', () => {
+    const F145 = 'jxj/announcement/2022/甬经信中小〔2022〕145号关于公布宁波市“专精特新”中小企业名单的通知.pdf'
+    withEvidence('宁波导出页码公司', [
+      { sourceFile: F145, listNo: 6, page: 8 },
+      { sourceFile: F145, listNo: 7, page: null },
+    ])
+
+    const row = allRecords(db(), { q: '宁波导出页码公司' })[0]!
+    expect(row.evidence).toContain('序号6 / 第8页')
+    expect(row.evidence).toContain('序号7')
+    expect(row.evidence).not.toContain('序号7 / ')
+  })
+
+  it('导出保留 DOCX / Excel 出处但忽略其不稳定页码', () => {
+    withEvidence('宁波办公文件页码测试有限公司', [
+      { sourceFile: 'synthetic/notice.docx', listNo: 7, page: 12 },
+      { sourceFile: 'synthetic/export.xlsx', listNo: 8, page: 13 },
+      { sourceFile: 'synthetic/notice.pdf', listNo: 9, page: 8 },
+    ])
+
+    const row = allRecords(db(), { q: '宁波办公文件页码测试有限公司' })[0]!
+    expect(row.evidence).toContain('synthetic/notice.docx / 附件 / 序号7')
+    expect(row.evidence).toContain('synthetic/export.xlsx / 附件 / 序号8')
+    expect(row.evidence).not.toContain('第12页')
+    expect(row.evidence).not.toContain('第13页')
+    expect(row.evidence).toContain('synthetic/notice.pdf / 附件 / 序号9 / 第8页')
   })
 })

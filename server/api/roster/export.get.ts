@@ -1,7 +1,8 @@
 import ExcelJS from 'exceljs'
 import { useDb } from '@db'
-import { TITLES } from '~~/lib/labels'
+import { FIRST_RECOGNITION_REASONS, TITLES } from '~~/lib/labels'
 import { allRosterEnterprises, type RosterEnterpriseRow } from '~~/lib/roster/enterprise-roster'
+import { evidencePointerText, firstRecognitionYearText } from '~~/lib/roster/first-recognition'
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
 
 /**
@@ -28,6 +29,30 @@ defineRouteMeta({
       { name: 'title', in: 'query', schema: { type: 'string' }, description: '称号代号,多值。' },
       { name: 'district', in: 'query', schema: { type: 'string' } },
       { name: 'rosterState', in: 'query', schema: { type: 'string', enum: ['current', 'removed_platform_only'] } },
+      { name: 'source', in: 'query', schema: { type: 'string' }, description: '来源,多值(与列表同口径)。' },
+      {
+        name: 'eventType',
+        in: 'query',
+        schema: { type: 'string' },
+        description: '事件类型,多值;与 `year` 一起给时须落在同一条事件上。',
+      },
+      { name: 'year', in: 'query', schema: { type: 'string' }, description: '事件年份,多值。' },
+      {
+        name: 'firstYear',
+        in: 'query',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'integer' } },
+        description: '**首次认定年份**,逗号分隔多值；也接受重复参数(与 `year` 不是同一个判据)。',
+      },
+      {
+        name: 'firstStatus',
+        in: 'query',
+        style: 'form',
+        explode: false,
+        schema: { type: 'array', items: { type: 'string', enum: ['confirmed', 'pending'] } },
+        description: '首次认定状态,逗号分隔多值:`confirmed` / `pending`;也接受重复参数。',
+      },
     ],
     responses: {
       200: {
@@ -38,7 +63,7 @@ defineRouteMeta({
           },
         },
       },
-      400: { description: '`title` / `rosterState` 取值非法。' },
+      400: { description: '`title` / `rosterState` / `source` / `eventType` / `firstStatus` 取值非法。' },
     },
   },
 })
@@ -48,11 +73,41 @@ const ROSTER_STATE_LABELS: Record<string, string> = {
   removed_platform_only: '仅平台引入(已从当前总表移除)',
 }
 
-/** 首次认定 / 下次复核这种派生量,**缺结论年份时把「待核」写在值旁边** —— 不猜。 */
+/**
+ * 首次认定 / 下次复核这种派生量,**值旁边写清它到底是什么** —— 不猜、不含糊。
+ *
+ * `(待核)` 是**锚点**口径(缺 `decided_year`),`(待确认)` 是**首次认定本身**的口径
+ * (年份给不出 / 现存 award 缺有效年份 / 没有出处)。两个标记各自跟着自己的值走,
+ * 不合成一个 —— 导出件常被单独转发,读的人得能分清是哪件事待办。
+ */
 function firstRecognitionText(row: RosterEnterpriseRow): string {
   return row.firstRecognition
-    .map((f) => `${TITLES[f.titleCode] ?? f.titleCode} ${f.year}${f.needsReview ? '(待核)' : ''}`)
+    .map((f) => {
+      const year = firstRecognitionYearText({ firstYear: f.year })
+      const pending = f.status === 'pending' ? `(待确认:${FIRST_RECOGNITION_REASONS[f.pendingReason ?? ''] ?? f.pendingReason})` : ''
+      return `${TITLES[f.titleCode] ?? f.titleCode} ${year}${f.needsReview ? '(待核)' : ''}${pending}`
+    })
     .join('; ')
+}
+
+/**
+ * **首次认定出处** —— 每个首次认定指回它自己那条认定事件的原始出处(RL-08)。
+ *
+ * 票面要求「显示称号、年份和来源证据」,而证据指的就是这里:哪个文件、哪个附件、哪个序号。
+ * 指不回去的**不编** —— 写「待确认:原因」,让人知道要补什么。
+ * 出处的写法取自 `first-recognition.ts` 的单一出处(台账表与展开面板用同一个函数)。
+ */
+function firstRecognitionEvidenceText(row: RosterEnterpriseRow): string {
+  return row.firstRecognition
+    .map((f) => {
+      const title = TITLES[f.titleCode] ?? f.titleCode
+      if (!f.evidence.length) {
+        const why = FIRST_RECOGNITION_REASONS[f.pendingReason ?? ''] ?? f.pendingReason
+        return `${title} —（待确认:${why ?? '没有存下来的出处'}）`
+      }
+      return `${title} — ${f.evidence.map(evidencePointerText).join(' ; ')}`
+    })
+    .join('\n')
 }
 
 export default defineEventHandler(async (event) => {
@@ -69,7 +124,8 @@ export default defineEventHandler(async (event) => {
     { header: '当前总表状态', key: 'rosterState', width: 26 },
     { header: '称号(一行一家企业,多称号用、分隔)', key: 'titles', width: 40 },
     { header: '曾用名(已确认)', key: 'aliases', width: 30 },
-    { header: '首次认定', key: 'firstRecognition', width: 32 },
+    { header: '首次认定', key: 'firstRecognition', width: 42 },
+    { header: '首次认定出处', key: 'firstRecognitionEvidence', width: 60 },
     { header: '下次复核', key: 'nextReview', width: 12 },
   ]
 
@@ -84,15 +140,24 @@ export default defineEventHandler(async (event) => {
       titles: row.titles.map((code) => TITLES[code] ?? code).join('、'),
       aliases: row.aliasNames.join('、'),
       firstRecognition: firstRecognitionText(row),
+      firstRecognitionEvidence: firstRecognitionEvidenceText(row),
       nextReview:
         row.nextReviewYear == null ? '' : `${row.nextReviewYear}${row.anchorNeedsReview ? '(待核)' : ''}`,
     })
   }
 
+  // 长文本(出处是「文件 · 附件 · 序号 · 页」串起来的)换行显示,不撑成一整行看不见头。
+  for (const key of ['firstRecognition', 'firstRecognitionEvidence']) {
+    ws.getColumn(key).alignment = { wrapText: true, vertical: 'top' }
+  }
+
   // 口径写在**数据上面**,离开页面也还看得见(导出的文件常被单独转发)。
   ws.spliceRows(1, 0, [
     `口径:一行 = 一家企业(跨称号去重)。本次筛选共 ${counts.total} 家企业,` +
-      `合计 ${counts.titlePairs} 个「企业 × 称号」(多称号企业在「称号」列内以、分隔,不重复成多行)。` +
+      `合计 ${counts.titlePairs} 个「企业 × 称号」(多称号企业在「称号」列内以、分隔,不重复成多行);` +
+      `其中 ${counts.recognitionPairs} 个「企业 × 称号」有首次认定。` +
+      `首次认定按**企业 × 称号**算最早那次认定:复核通过不是新的首次认定,复核失败后再次获批也不重置。` +
+      `标「待确认」的以「首次认定出处」列为准(认定事件定不了年 / 存在更早但定不了年的认定 / 没有存下来的出处)。` +
       `导出为当前筛选下的全部企业,不受页面分页限制。`,
   ])
 

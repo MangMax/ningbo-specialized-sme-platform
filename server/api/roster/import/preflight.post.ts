@@ -1,5 +1,4 @@
-import { useDb } from '@db'
-import { handleRosterImportRequest } from '../../../utils/roster-import-http'
+import { createRosterImportHandler } from '../../../utils/roster-import-route'
 
 /**
  * **只读预检**：`POST /api/roster/import/preflight`（契约 §8.1）。
@@ -75,26 +74,4 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler(async (event) => {
-  const response = handleRosterImportRequest(
-    'preflight',
-    {
-      method: getMethod(event),
-      headers: {
-        authorization: headerString(event, 'authorization'),
-        'x-api-token': headerString(event, 'x-api-token'),
-      },
-      body: await readBody(event).catch(() => null),
-    },
-    { db: useDb(), apiToken: useRuntimeConfig().apiToken },
-  )
-  setResponseStatus(event, response.status)
-  for (const [name, value] of Object.entries(response.headers)) setHeader(event, name, value)
-  return response.body
-})
-
-/** h3 的 `getHeader` 会返回 `string | undefined`；重复头（数组）当没带。 */
-function headerString(event: Parameters<typeof getHeader>[0], name: string): string | undefined {
-  const value = getHeader(event, name)
-  return typeof value === 'string' ? value : undefined
-}
+export default createRosterImportHandler('preflight')

@@ -122,8 +122,19 @@ describe('comparison export route', () => {
   it('keeps the existing ledger export available without mode', async () => {
     const ws = await exported({ title: 'innovative_sme' })
     expect(ws.name).toBe('台账')
-    expect(ws.rowCount).toBe(2)
-    expect(ws.getRow(2).getCell(1).value).toBe('其他称号')
+
+    // RL-17 给这条导出补了一行**口径**(导出的文件常被单独转发):第 1 行是口径说明,
+    // 第 2 行才是表头,数据从第 3 行开始 —— 所以原来断言的「rowCount 2 / 第 2 行是数据」
+    // 都往后挪一行,并顺手把口径内容也钉住(它说的正是合并台账的两个口径)。
+    expect(ws.rowCount).toBe(3)
+    const unit = String(ws.getRow(1).getCell(1).value)
+    expect(unit).toContain('一行 = 一个「企业 × 称号」')
+    expect(unit).toContain('共 1 行')
+    expect(unit).toContain('属于 1 家企业')
+    expect(unit).toContain('不受页面分页限制')
+
+    expect(ws.getRow(2).getCell(1).value).toBe('企业名称')
+    expect(ws.getRow(3).getCell(1).value).toBe('其他称号')
   })
   it('rejects incomplete or invalid comparison filters', async () => {
     for (const params of [

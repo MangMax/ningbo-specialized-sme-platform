@@ -1,10 +1,21 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { groupBy, orderBy, uniq } from 'es-toolkit'
 import { ChevronRight, Eye } from '@lucide/vue'
 import { TITLES, TITLE_ORDER, SOURCE_ORDER, QUALITY_FLAGS } from '~~/lib/labels'
 import { fileUrl, fileNameOf, isPreviewable } from '~~/lib/preview'
+import {
+  EVIDENCE_PAGE_WORDS,
+  evidencePageState,
+  evidencePreviewHref,
+  type EvidencePageState,
+} from '~~/lib/roster/evidence-page'
+import {
+  rememberEvidencePreviewReturn,
+  shouldNuxtScrollToTop,
+  useEvidencePreviewScrollRestore,
+} from '~~/lib/roster/evidence-preview-return'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -13,10 +24,16 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 
+// When returning from preview, Nuxt's delayed default top reset would overwrite the async restore.
+// Route origin stays available even when the ready-state restore has consumed its session entry.
+definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
+
 interface Evidence {
   sourceFile: string
   attachment: string | null
   listNo: number | null
+  /** **PDF 实际页序**(RL-10);给不出就是 `null`。与 `listNo`(序号)是两回事。 */
+  page: number | null
 }
 interface DetailEvent {
   type: string
@@ -42,6 +59,24 @@ interface EnterpriseDetail {
 const route = useRoute()
 const id = computed(() => String(route.params.id ?? ''))
 
+/**
+ * 返回名录台账。
+ *
+ * 台账把「视图 + 全部筛选 + 页码」都放在地址栏里,所以进企业详情时把那份筛选串
+ * 作为 `back` 带过来(见 `RosterEnterprisePanel` / `RosterTitleTable` 的链接)。
+ * 没有 `back`(直接输 URL、从别处进来)就退回台账首页。
+ *
+ * 只接受**查询串**形状(`a=1&b=2`),兑成 query 对象再交给 router —— 不直接拼进 `to`,
+ * 免得把一个来路不明的字符串当路径用。
+ */
+const backTo = computed(() => {
+  const raw = typeof route.query.back === 'string' ? route.query.back : ''
+  if (!raw) return '/'
+  const query: Record<string, string> = {}
+  for (const [k, v] of new URLSearchParams(raw)) query[k] = v
+  return { path: '/', query }
+})
+
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading, error } = useQuery({
   key: () => ['enterprise', id.value],
@@ -49,6 +84,54 @@ const { data, isLoading, error } = useQuery({
 })
 
 const detail = computed(() => data.value ?? null)
+const detailRendered = computed(() => detail.value !== null || error.value != null)
+useEvidencePreviewScrollRestore(detailRendered)
+
+const EVIDENCE_DISCLOSURE_RETURN_KEY = 'roster:enterprise-detail-open-evidence'
+const openEvidenceKeys = ref<string[]>([])
+
+function evidenceDisclosureKey(titleCode: string, source: string, eventIndex: number): string {
+  return JSON.stringify([id.value, titleCode, source, eventIndex])
+}
+
+function evidenceDisclosureOpen(key: string): boolean {
+  return openEvidenceKeys.value.includes(key)
+}
+
+function setEvidenceDisclosureOpen(key: string, open: boolean): void {
+  const next = new Set(openEvidenceKeys.value)
+  if (open) next.add(key)
+  else next.delete(key)
+  openEvidenceKeys.value = [...next]
+}
+
+onMounted(() => {
+  try {
+    const raw = window.sessionStorage.getItem(EVIDENCE_DISCLOSURE_RETURN_KEY)
+    window.sessionStorage.removeItem(EVIDENCE_DISCLOSURE_RETURN_KEY)
+    if (!raw) return
+    const state: unknown = JSON.parse(raw)
+    if (!state || typeof state !== 'object') return
+    const candidate = state as { back?: unknown; keys?: unknown }
+    if (
+      candidate.back === route.fullPath &&
+      Array.isArray(candidate.keys) &&
+      candidate.keys.every((key) => typeof key === 'string')
+    ) {
+      openEvidenceKeys.value = candidate.keys
+    }
+  } catch {
+    // Storage may be unavailable; the page remains usable without disclosure restoration.
+  }
+})
+
+/**
+ * 页面标题(RL-17 收尾):企业名 + 页面名。详情是异步取的,所以先给一个不含名字的兜底,
+ * 拿到之后自动换成企业名 —— 空白标题在历史记录里完全认不出是哪个企业。
+ */
+useHead({
+  title: computed(() => (detail.value ? `${detail.value.name} · 企业详情` : '企业详情')),
+})
 const usccMissing = computed(() => detail.value?.qualityFlags?.includes('uscc_missing') ?? false)
 const otherFlags = computed(() => (detail.value?.qualityFlags ?? []).filter((f) => f !== 'uscc_missing'))
 const recordCount = computed(() => detail.value?.records.length ?? 0)
@@ -105,6 +188,47 @@ function openPreview(e: Evidence) {
   previewName.value = fileNameOf(e.sourceFile)
   previewOpen.value = true
 }
+
+// —— RL-10:出处页码 ——
+
+/**
+ * 这一条出处的页码该怎么说。
+ *
+ *  - `assigned` —— 有页码(可点,跳到该页);
+ *  - `pending` —— 这份来源本该有页码(PDF)但**还没定** ⇒ 写「页码待核」,不编一个数字;
+ *  - `unavailable` —— Word / Excel 这类**没有可靠分页**的来源 ⇒ 留空(`—`),也不给跳转。
+ */
+const pageStateOf = (e: Evidence): EvidencePageState => evidencePageState(e.sourceFile, e.page)
+
+/** 没有页码时该写哪个字(「页码待核」/ 「—」);有页码时走链接,不走这里。 */
+function pageWordOf(e: Evidence): string {
+  const state = pageStateOf(e)
+  return state === 'assigned' ? '' : EVIDENCE_PAGE_WORDS[state]
+}
+
+/**
+ * 跳到来源预览的**地址**(不是按钮):票面要求「返回后保留原筛选与查看位置」——
+ * 有返回就得有去过,所以跳转是一次真导航。`back` 带上**本页完整地址**
+ * (含它自己的 `back`,于是返回链是 预览 → 企业详情 → 台账,一层不丢)。
+ */
+function pageHref(e: Evidence): string {
+  return evidencePreviewHref({ sourceFile: e.sourceFile, page: e.page, back: route.fullPath })
+}
+
+function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  const keys = new Set(openEvidenceKeys.value)
+  keys.add(key)
+  try {
+    window.sessionStorage.setItem(
+      EVIDENCE_DISCLOSURE_RETURN_KEY,
+      JSON.stringify({ back: route.fullPath, keys: [...keys] }),
+    )
+  } catch {
+    // Storage may be unavailable; ordinary preview navigation still works.
+  }
+  rememberEvidencePreviewReturn(route.fullPath, event.currentTarget)
+}
 </script>
 
 <template>
@@ -133,7 +257,7 @@ function openPreview(e: Evidence) {
     <template v-else-if="detail">
       <PageHeader class="rise-in" style="--rise-index: 0" :title="detail.name">
         <template #breadcrumb>
-          <NuxtLink to="/" class="hover:text-foreground hover:underline">台账</NuxtLink>
+          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">名录台账</NuxtLink>
           <span class="mx-1.5">/</span>
           <span>企业详情</span>
         </template>
@@ -202,7 +326,11 @@ function openPreview(e: Evidence) {
 
             <ul v-if="rec.events.length" class="mt-3 flex flex-col gap-2">
               <li v-for="(ev, i) in rec.events" :key="i">
-                <Collapsible v-slot="{ open }">
+                <Collapsible
+                  :open="evidenceDisclosureOpen(evidenceDisclosureKey(g.titleCode, rec.source, i))"
+                  @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(g.titleCode, rec.source, i), $event)"
+                  v-slot="{ open }"
+                >
                   <div class="flex flex-wrap items-center gap-2">
                     <EventChip :type="ev.type" :year="ev.year" :seq="ev.seq" />
                     <CollapsibleTrigger v-if="ev.evidence.length" as-child>
@@ -253,6 +381,19 @@ function openPreview(e: Evidence) {
                       <div v-if="e.listNo != null" class="flex gap-2">
                         <span class="text-muted-foreground w-14 shrink-0">序号</span>
                         <span class="tabular-nums">{{ e.listNo }}</span>
+                      </div>
+                      <!-- 页码(RL-10):有页码才可点;没有就留空 —— 不拿序号凑数字。 -->
+                      <div class="flex gap-2">
+                        <span class="text-muted-foreground w-14 shrink-0">页码</span>
+                        <NuxtLink
+                          v-if="pageStateOf(e) === 'assigned'"
+                          :to="pageHref(e)"
+                          @click="rememberPagePreviewReturn($event, evidenceDisclosureKey(g.titleCode, rec.source, i))"
+                          class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
+                        >
+                          第 {{ e.page }} 页
+                        </NuxtLink>
+                        <span v-else class="text-muted-foreground/70">{{ pageWordOf(e) }}</span>
                       </div>
                     </div>
                   </CollapsibleContent>

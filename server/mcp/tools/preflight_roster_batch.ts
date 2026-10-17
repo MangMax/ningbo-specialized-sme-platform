@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { preflightRosterImport, validateImportRequest } from '../../utils/roster-import'
+import { validateRosterImportPageCounts } from '../../utils/roster-import-page-validation'
 
 /**
  * `preflight_roster_batch` —— 名录导入的**只读预检**（RL-11，契约 §9）。
@@ -44,6 +45,7 @@ export default defineMcpTool({
       payload: input.payload,
     })
     if (!validated.ok) throw createError({ statusCode: validated.status, message: validated.message })
-    return preflightRosterImport(useDb(), validated.value)
+    const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
+    return preflightRosterImport(useDb(), validated.value, pageCountErrors)
   },
 })

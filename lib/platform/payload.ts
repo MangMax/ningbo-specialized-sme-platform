@@ -19,15 +19,23 @@
  *  - 不能确认的候选**降级为 `pending`**:同名多主体 / 来源与目标统代不符 / 归属企业解析不到。
  *    软件不猜、不自动回填;原因写进 `note`,不新增契约里没有的字段。
  *
- * ── 关系证据怎么指认(`sourceRefId` / `evidenceQueryId`)────────────────────
+ * ── 关系证据怎么指认(`sourceRelationRef` / `evidenceQueryRef`)──────────────
  * `enterprise_alias.source_ref_id` 与 `difference_reason.evidence_query_id` 是**整数**行 id,
  * 而 `platform_query` / `platform_relation` 的 id 由写入侧在**本批事务内**生成 —— 客户端构造
- * 载荷时不可能预知。所以证据指针分两段落地(两次批次,**都是同一个统一 API**):
- *   ① 先提交 `platformQueries`(查询 + 逐条关系);
- *   ② 从只读接口读回 `platform_relation.id` / `platform_query.id`;
- *   ③ 再提交 `aliases` / `differences` / `merges`,用 {@link BuildPayloadInput.refs}
- *      把自然键换成真 id(传的是**已落库的** id,不是猜的)。
- * 不给 `refs` 时退回契约 §1.2 的 `0` 哨兵(「无具体来源行引用」),绝不填假 id。
+ * 载荷时不可能预知。契约 §8.7 为此补了**批内自然键引用**:`sourceRelationRef` /
+ * `evidenceQueryRef` / `evidenceRelationRef` 直接用
+ * `(interface, queryKey, rdjb, queriedAt, sequenceNo)` 指认,写入侧在**同一批**里解析成真 id。
+ * ⇒ 「查询 → 关系 → 别名/差异证据」**一个批次**就能写完,不必拆两批。
+ *
+ * 两条通路并存,优先级明确:
+ *   ① 传了 {@link BuildPayloadInput.refs} 且解析到了 id ⇒ 发**裸 id**(§8.7.4 的兼容写法:
+ *      先提交 `platformQueries`、读回真 id 再提交 `aliases` / `differences` / `merges`);
+ *   ② 否则有自然键 ⇒ 发**自然键引用**;
+ *   ③ 两者都没有 ⇒ 退回契约 §1.2 的 `0` 哨兵(「无具体来源行引用」),绝不填假 id。
+ *
+ * **同一次决策里既给了裸 id 又给了自然键 ⇒ 两个都发出去**,让写入侧按 §8.7.3 判
+ * `source_ref_conflict` / `evidence_ref_conflict` 并逐项报错。本模块**不**替调用方
+ * 二选一 —— 静默取其中一个正是那条规则要禁掉的事。
  */
 import { createHash } from 'node:crypto'
 import { normalizeName } from '../domain'
@@ -40,6 +48,7 @@ import type {
   RosterImportPlatformQuery,
   RosterImportRelation,
   RosterImportRequest,
+  RosterPlatformRef,
 } from '../roster-import-client'
 import type { PlatformQueryOutcome } from './client'
 import { type PlatformRelationRecord, relationFromRow } from './identity'
@@ -73,6 +82,12 @@ export interface RelationRef {
   interface: PlatformInterface
   rdjb: string
   sequenceNo: number
+  /**
+   * 查询时点。**给了就精确匹配那一次查询**(契约 §8.7.2)——同一
+   * `(interface, queryKey, rdjb)` 查过多次时,不给就会命中多次而报 `*_ref_ambiguous`。
+   * 也随 {@link QueryRef} 一起带上(它就是关系键去掉 `sequenceNo`)。
+   */
+  queriedAt?: string
 }
 
 /**
@@ -286,23 +301,77 @@ function toRelationItem(
   }
 }
 
-function relationIdOf(input: BuildPayloadInput, decision: { sourceRelation?: RelationRef; sourceRefId?: number }): number {
-  if (decision.sourceRelation && input.refs?.relationIdOf) {
-    const resolved = input.refs.relationIdOf(decision.sourceRelation)
-    if (resolved != null) return resolved
+/** 查询引用 → §8.7.1 的引用形状。 */
+function queryPlatformRef(ref: QueryRef): RosterPlatformRef {
+  return {
+    interface: ref.interface,
+    queryKey: ref.queryKey,
+    rdjb: ref.rdjb,
+    ...(ref.queriedAt ? { queriedAt: ref.queriedAt } : {}),
   }
-  return decision.sourceRefId ?? 0
 }
 
-function queryIdOf(
+/** 关系引用 → §8.7.1 的引用形状(关系引用必须带 `sequenceNo`)。 */
+function relationPlatformRef(ref: RelationRef): RosterPlatformRef {
+  return { ...queryPlatformRef(ref), sequenceNo: ref.sequenceNo }
+}
+
+/**
+ * 别名/归并的**来源关系**指针。
+ *
+ * 有自然键就发自然键(可指向**本批新建**的关系行);`refs` 解析到 id 就发裸 id。
+ * **两个都给了**⇒ 把两个都发出去,让写入侧按 §8.7.3 报 `source_ref_conflict` ——
+ * 本模块不替调用方二选一(静默取一个正是那条规则要禁掉的)。
+ */
+function relationRefFields(
+  input: BuildPayloadInput,
+  decision: { sourceRelation?: RelationRef; sourceRefId?: number },
+): { sourceRefId?: number; sourceRelationRef?: RosterPlatformRef } {
+  const relation = decision.sourceRelation
+  const literalId = decision.sourceRefId
+  if (!relation) return { sourceRefId: literalId ?? 0 }
+
+  const asLiteral = input.refs?.relationIdOf?.(relation) ?? literalId ?? null
+  if (asLiteral == null) return { sourceRelationRef: relationPlatformRef(relation) }
+  return {
+    sourceRefId: asLiteral,
+    // 调用方**同时**给了裸 id ⇒ 把自然键也发出去,交给写入侧判冲突。
+    ...(literalId != null ? { sourceRelationRef: relationPlatformRef(relation) } : {}),
+  }
+}
+
+/** 差异项的**查询证据**指针(与 `relationRefFields` 同一条非静默规则)。 */
+function queryRefFields(
   input: BuildPayloadInput,
   decision: { evidenceQuery?: QueryRef; evidenceQueryId?: number | null },
-): number | null {
-  if (decision.evidenceQuery && input.refs?.queryIdOf) {
-    const resolved = input.refs.queryIdOf(decision.evidenceQuery)
-    if (resolved != null) return resolved
+): { evidenceQueryId?: number | null; evidenceQueryRef?: RosterPlatformRef } {
+  const query = decision.evidenceQuery
+  const literalId = decision.evidenceQueryId ?? null
+  if (!query) return { evidenceQueryId: literalId }
+
+  const asLiteral = input.refs?.queryIdOf?.(query) ?? literalId
+  if (asLiteral == null) return { evidenceQueryRef: queryPlatformRef(query) }
+  return {
+    evidenceQueryId: asLiteral,
+    ...(literalId != null ? { evidenceQueryRef: queryPlatformRef(query) } : {}),
   }
-  return decision.evidenceQueryId ?? null
+}
+
+/** 差异项的**关系证据**指针(与 `relationRefFields` 同一条非静默规则)。 */
+function relationEvidenceFields(
+  input: BuildPayloadInput,
+  decision: { evidenceRelation?: RelationRef; evidenceRelationId?: number | null },
+): { evidenceRelationId?: number | null; evidenceRelationRef?: RosterPlatformRef } {
+  const relation = decision.evidenceRelation
+  const literalId = decision.evidenceRelationId ?? null
+  if (!relation) return { evidenceRelationId: literalId }
+
+  const asLiteral = input.refs?.relationIdOf?.(relation) ?? literalId
+  if (asLiteral == null) return { evidenceRelationRef: relationPlatformRef(relation) }
+  return {
+    evidenceRelationId: asLiteral,
+    ...(literalId != null ? { evidenceRelationRef: relationPlatformRef(relation) } : {}),
+  }
 }
 
 /**
@@ -338,7 +407,7 @@ function toAliasItem(
     uscc: enterprise?.uscc ?? usccs[0] ?? null,
     name: decision.name,
     sourceKind: decision.sourceKind,
-    sourceRefId: relationIdOf(input, decision),
+    ...relationRefFields(input, decision),
     verificationStatus: conflict ? 'pending' : (decision.verificationStatus ?? 'confirmed'),
     validFrom: decision.validFrom ?? null,
     note: reason ? [decision.note, reason].filter(Boolean).join(' —— ') : (decision.note ?? null),
@@ -388,11 +457,8 @@ export function buildPlatformWritePayload(input: BuildPayloadInput): RosterImpor
       reasonNote: decision.reasonNote ?? null,
       measureCode: decision.measureCode ?? null,
       measureNote: decision.measureNote ?? null,
-      evidenceQueryId: queryIdOf(input, decision),
-      evidenceRelationId:
-        decision.evidenceRelation && input.refs?.relationIdOf
-          ? (input.refs.relationIdOf(decision.evidenceRelation) ?? decision.evidenceRelationId ?? null)
-          : (decision.evidenceRelationId ?? null),
+      ...queryRefFields(input, decision),
+      ...relationEvidenceFields(input, decision),
       movedIn: decision.movedIn
         ? {
             city: decision.movedIn.city ?? null,
@@ -412,8 +478,8 @@ export function buildPlatformWritePayload(input: BuildPayloadInput): RosterImpor
       intoUscc: decision.intoUscc,
       aliasName: decision.aliasName,
       sourceKind: decision.sourceKind,
-      sourceRefId: relationIdOf(input, decision),
-      evidenceQueryId: queryIdOf(input, decision),
+      ...relationRefFields(input, decision),
+      ...queryRefFields(input, decision),
       note: decision.note ?? null,
     }
     return decision.fromEnterpriseId != null

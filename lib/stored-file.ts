@@ -148,6 +148,18 @@ export function baseName(relPath: string): string {
 }
 
 /**
+ * 路径的**目录段**(去掉文件名);根下的文件返回空串。
+ *
+ * 与 `baseName` 成对放在这里:`baseName` 是「取末段」,它是「取其余」—— 两处各写一份
+ * `lastIndexOf('/')` 的话,改了一处另一处就漂(库内路径一律 `/` 分隔,与
+ * `stored_file.rel_path` 同口径)。
+ */
+export function directoryOf(relPath: string): string {
+  const i = relPath.lastIndexOf('/')
+  return i < 0 ? '' : relPath.slice(0, i)
+}
+
+/**
  * 由相对路径反推分类。
  *
  * - `jxj/announcement/…` → 经信局公布文件,年份/批次按目录(回退文件名);

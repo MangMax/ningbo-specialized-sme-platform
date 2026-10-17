@@ -88,8 +88,16 @@ const yearRows = computed(() =>
 )
 const countCats = { n: { name: '记录数', color: 'var(--chart-1)' } }
 
-/** 台账页的筛选链接,如 /?title=little_giant。 */
-const drillTo = (param: string, value: string) => `/?${param}=${encodeURIComponent(value)}`
+/**
+ * 台账页的筛选链接,如 `/?title=little_giant&view=title`。
+ *
+ * `view=title` 不能省:这一页的每个桶计的都是**企业 × 称号**行数(`byEvent` / `byYear` /
+ * `bySource` 全按记录侧聚合),而合并后的台账**默认落在「按企业」**上。少了这个参数,
+ * 点「工信部 8,123 条」会落到一个「有工信部记录的企业」列表上 —— 数字与落到的行**对不上**,
+ * 而且是静默的:页面看起来正常,只是口径已经不是刚才那个数了。
+ */
+const drillTo = (param: string, value: string) =>
+  `/?${param}=${encodeURIComponent(value)}&view=title`
 
 /** 户均记录数,保留一位小数。 */
 const recordsPerEnterprise = computed(() => {

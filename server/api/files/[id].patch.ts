@@ -1,60 +1,146 @@
 import { useDb } from '@db'
-import { parseMetadataPatch, updateStoredFile } from '../../utils/stored-files'
+import { handleStoredFilePatchRequest } from '../../utils/stored-file-patch-http'
 
 /**
- * 改一个文件的**元数据**。`PATCH /api/files/:id`
- *
- * 只改 `source / kind / year / batch / title_code / category_state / parse_state`;
- * **不动 `rel_path`、不动磁盘上的文件**(票 09 硬要求,`parseMetadataPatch` 会拒掉
- * 任何磁盘事实字段)。返回改后的整行,让列表能就地更新。
+ * 改文件元数据,或只改用户可见名称。改名不改磁盘 `filename` / `relPath`、文件 ID、OCR、页图或出处,
+ * 并在 `stored_file_audit` 追加一条历史记录。
  */
 defineRouteMeta({
   openAPI: {
     tags: ['文件库'],
-    summary: '改文件元数据',
-    description: '只改元数据;`relPath` / `bytes` / `sha256` 等磁盘事实字段一律 400。',
+    summary: '改文件元数据或显示名称',
+    description:
+      '元数据更新只接受 source / kind / year / batch / titleCode。显示名称更新只接受 displayName；它只改变用户可见名称并追加审计记录，保持 stored_file.id、filename、relPath、磁盘文件、OCR、页图和出处不变。',
     requestBody: {
       required: true,
       content: {
         'application/json': {
           schema: {
             type: 'object',
-            properties: {
-              source: { type: 'string', enum: ['jxj', 'miit'], nullable: true },
-              kind: { type: 'string', enum: ['announcement', 'export'], nullable: true },
-              year: { type: 'integer', nullable: true, description: '**公布**年份(1900–2100)。' },
-              batch: { type: 'integer', nullable: true, description: '**公布**批次。' },
-              titleCode: { type: 'string', nullable: true },
-            },
-            description: '至多给这五个字段。null 表示**清空**该字段(不是「不改」)。',
+            oneOf: [
+              {
+                type: 'object',
+                properties: {
+                  source: { type: 'string', enum: ['jxj', 'miit'], nullable: true },
+                  kind: { type: 'string', enum: ['announcement', 'export'], nullable: true },
+                  year: { type: 'integer', nullable: true, description: '**公布**年份(1900–2100)。' },
+                  batch: { type: 'integer', nullable: true, description: '**公布**批次。' },
+                  titleCode: { type: 'string', nullable: true },
+                },
+                additionalProperties: false,
+                description: '元数据更新。null 表示清空对应字段。',
+              },
+              {
+                type: 'object',
+                required: ['displayName'],
+                properties: {
+                  displayName: {
+                    type: 'string',
+                    description: '非空且最多 255 个字符的用户可见名称;只接受此字段,不作为磁盘文件名或路径。',
+                  },
+                },
+                additionalProperties: false,
+                description: '只改显示名称并追加审计记录;保持 id、filename、relPath、磁盘内容和出处不变。',
+              },
+            ],
           },
         },
       },
     },
     responses: {
-      200: { description: '改后的整行。' },
-      400: { description: 'id 非法 / 出现不可修改的字段 / 取值不在白名单。' },
+      200: {
+        description: '更新后的文件行(含用户可见 displayName 和磁盘 filename / relPath)。',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              required: [
+                'id',
+                'relPath',
+                'displayName',
+                'filename',
+                'ext',
+                'bytes',
+                'sha256',
+                'source',
+                'kind',
+                'year',
+                'batch',
+                'titleCode',
+                'categoryState',
+                'parseState',
+                'createdAt',
+                'removedAt',
+                'referenceCount',
+                'parts',
+              ],
+              properties: {
+                id: { type: 'integer', description: '稳定的 stored_file 主键。' },
+                relPath: { type: 'string', description: '文件库内相对路径;显示名更新不会改变此路径。' },
+                displayName: { type: 'string', description: '用户可见名称。' },
+                filename: { type: 'string', description: '磁盘上的原始文件名;显示名更新不会改变它。' },
+                ext: { type: 'string', description: '文件扩展名。' },
+                bytes: { type: 'integer', description: '原文件字节数。' },
+                sha256: { type: 'string', description: '原文件 SHA-256。' },
+                source: { type: 'string', enum: ['jxj', 'miit'], nullable: true },
+                kind: { type: 'string', enum: ['announcement', 'export'], nullable: true },
+                year: { type: 'integer', nullable: true, description: '公布年份。' },
+                batch: { type: 'integer', nullable: true, description: '公布批次。' },
+                titleCode: { type: 'string', nullable: true },
+                categoryState: { type: 'string', enum: ['set', 'inferred', 'unset'] },
+                parseState: { type: 'string', enum: ['unparsed', 'parsed', 'failed'] },
+                createdAt: { type: 'string', format: 'date-time' },
+                removedAt: { type: 'string', format: 'date-time', nullable: true },
+                referenceCount: { type: 'integer', description: '当前出处引用数。' },
+                parts: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: [
+                      'titleCode',
+                      'eventKind',
+                      'year',
+                      'batch',
+                      'attachment',
+                      'rowCount',
+                      'origin',
+                      'hasConflict',
+                    ],
+                    properties: {
+                      titleCode: { type: 'string' },
+                      eventKind: { type: 'string', enum: ['award', 'review', 'maintain', 'nurture'] },
+                      year: { type: 'integer', nullable: true },
+                      batch: { type: 'integer', nullable: true },
+                      attachment: { type: 'string', nullable: true },
+                      rowCount: { type: 'integer' },
+                      origin: { type: 'string', enum: ['derived', 'agent', 'legacy'] },
+                      hasConflict: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      400: { description: 'id 非法、请求字段混合/不支持,或字段值无效。' },
       404: { description: '文件不存在。' },
     },
   },
 })
 
 export default defineEventHandler(async (event) => {
-  const id = Number(getRouterParam(event, 'id'))
-  if (!Number.isInteger(id) || id <= 0) {
-    throw createError({ statusCode: 400, statusMessage: '文件 id 非法' })
+  const result = handleStoredFilePatchRequest(
+    'PATCH',
+    getRouterParam(event, 'id'),
+    await readBody(event),
+    useDb(),
+  )
+  if (result.status !== 200) {
+    const message = (result.body as { message?: string }).message ?? '文件更新失败'
+    throw createError({ statusCode: result.status as 400 | 404 | 405, message })
   }
-
-  let patch
-  try {
-    patch = parseMetadataPatch(await readBody(event))
-  } catch (error) {
-    // 用 `message` 而不是 `statusMessage`:h3 会对较长的 statusMessage 告警
-    // (它将被按 HTTP 语义净化)。前端从 `data.message` 取这句话。
-    throw createError({ statusCode: 400, message: (error as Error).message })
-  }
-
-  const row = updateStoredFile(useDb(), id, patch)
-  if (!row) throw createError({ statusCode: 404, message: '文件不存在' })
-  return row
+  return result.body
 })

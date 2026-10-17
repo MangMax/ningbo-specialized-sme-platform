@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, readdir, rm, stat } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
-import { and, desc, eq, inArray, isNull, like, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { compact } from 'es-toolkit'
 import * as schema from '../../db/schema'
@@ -17,12 +17,14 @@ import {
   baseName,
   categoryStateOf,
   deriveClassification,
+  directoryOf,
   extensionOf,
   type CategoryState,
   type FileKind,
   type FileSource,
   type ParseState,
 } from '../../lib/stored-file'
+import { scopeOf, siblingIndex, type StoreScopeReason } from '../../lib/file-store-scope'
 import type { StoredFilePart } from '../../lib/file-parts'
 import { listFileParts, type PartsBackfillStats } from './file-parts'
 
@@ -44,6 +46,8 @@ export const PARSE_STATES: readonly ParseState[] = PARSE_STATE_ORDER as ParseSta
 export interface StoredFileRow {
   id: number
   relPath: string
+  /** 用户可见名称;没有覆写时等于磁盘 filename。 */
+  displayName: string
   filename: string
   ext: string
   bytes: number
@@ -74,7 +78,7 @@ export interface StoredFileQuery {
   source?: FileSource[]
   categoryState?: CategoryState[]
   parseState?: ParseState[]
-  /** 文件名关键词(子串,ASCII 大小写不敏感 —— SQLite `LIKE` 的语义)。 */
+  /** 用户可见名称或磁盘文件名关键词(子串,ASCII 大小写不敏感 —— SQLite `LIKE` 的语义)。 */
   q?: string
   /** 是否包含已移出库的文件。默认不含。 */
   includeRemoved?: boolean
@@ -189,6 +193,23 @@ export interface BackfillStats {
    * 这些文件仍**不入表** —— 不猜。
    */
   skipped: string[]
+  /**
+   * **认得出、但在入库范围之外**的文件(RL-16)。与 `skipped` 分开报:
+   * 前者是「我不认识它」,后者是「我认识它,但按 `files/README.md` 的规则它不该入库」——
+   * 两种不入表的理由完全不同,合成一个清单就没法验收了。
+   *
+   * 判据的唯一来源是 `lib/file-store-scope.ts`(纯函数,可单测)。
+   */
+  excluded: BackfillExclusion[]
+}
+
+/** 一条入库范围排除记录。 */
+export interface BackfillExclusion {
+  relPath: string
+  /** 排除原因码(`lib/file-store-scope.ts` 的 `StoreScopeReason`,不会是 `in-scope`)。 */
+  reason: Exclude<StoreScopeReason, 'in-scope'>
+  /** 中文说明,直接可读。 */
+  detail: string
 }
 
 /**
@@ -203,9 +224,12 @@ export interface BackfillReport extends BackfillStats {
  * 扫描文件库,按目录规则反推分类,写入 `stored_file`。**幂等**:以 `rel_path` 为键,
  * 重跑不产生重复行,也不改动已有的**分类**(回填只补磁盘事实与首次分类)。
  *
- * 两条不回填的情形:
+ * 三条不回填的情形:
  *  1. 路径认不出分类(`<source>/<kind>/` 规则之外)→ 跳过并报出;
- *  2. 该 `rel_path` 已被**人工移出库**(`removed_at` 非空)→ 跳过 —— 否则回填会把
+ *  2. **在入库范围之外**(入库培育 / 重复 `.doc` / 人工 OCR 的 `.docx`,判据见
+ *     `lib/file-store-scope.ts`)→ **不进表**,并带原因报出(RL-16)。规则**在这里生效**,
+ *     不是只写在文档里 —— 否则下次再把入库培育文件或重复 `.doc` 拷进来,它会照样混进列表;
+ *  3. 该 `rel_path` 已被**人工移出库**(`removed_at` 非空)→ 跳过 —— 否则回填会把
  *     用户刚移出的文件又插回来,那就不是幂等了。
  *
  * 已有的行:**只刷新磁盘事实**(filename/ext/bytes/sha256),不覆盖分类 ——
@@ -215,7 +239,10 @@ export function backfillStoredFiles(
   db: Db,
   scanned: ScannedFile[],
 ): BackfillStats {
-  const stats: BackfillStats = { inserted: 0, updated: 0, unchanged: 0, skipped: [] }
+  const stats: BackfillStats = { inserted: 0, updated: 0, unchanged: 0, skipped: [], excluded: [] }
+  // 兄弟名集合来自**本次扫描**的结果:同目录的 `.doc` 与 `.docx` 都在里面,
+  // 「同名兄弟」的两条判据才能成立(见 lib/file-store-scope.ts 的文件头)。
+  const siblings = siblingIndex(scanned.map((f) => f.relPath))
   const existing = new Map(
     db
       .select()
@@ -225,6 +252,11 @@ export function backfillStoredFiles(
   )
 
   for (const f of scanned) {
+    const scope = scopeOf(f.relPath, siblings.get(directoryOf(f.relPath)))
+    if (!scope.inScope) {
+      stats.excluded.push({ relPath: f.relPath, reason: scope.reason, detail: scope.detail })
+      continue
+    }
     const derived = deriveClassification(f.relPath)
     if (!derived) {
       stats.skipped.push(f.relPath)
@@ -289,6 +321,7 @@ function referenceCountExpr(): SQL<number> {
 const fileColumns = {
   id: schema.storedFile.id,
   relPath: schema.storedFile.relPath,
+  displayName: sql<string>`coalesce(${schema.storedFile.displayName}, ${schema.storedFile.filename})`,
   filename: schema.storedFile.filename,
   ext: schema.storedFile.ext,
   bytes: schema.storedFile.bytes,
@@ -316,7 +349,12 @@ export function buildFileWhere(params: StoredFileQuery): SQL | undefined {
     conds.push(inArray(schema.storedFile.parseState, params.parseState))
   }
   if (params.q) {
-    conds.push(like(schema.storedFile.filename, `%${params.q}%`))
+    conds.push(
+      or(
+        like(schema.storedFile.displayName, `%${params.q}%`),
+        like(schema.storedFile.filename, `%${params.q}%`),
+      ),
+    )
   }
   const filtered = compact(conds)
   return filtered.length ? and(...filtered) : undefined
@@ -466,6 +504,47 @@ export function parseMetadataPatch(body: unknown): FileMetadataPatch {
   }
 
   return patch
+}
+
+/** 解析用户可见文件名。这个字段不会被用于路径或磁盘操作。 */
+export function parseDisplayNamePatch(body: unknown): string {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new Error('请求体必须是对象')
+  }
+  const patch = body as Record<string, unknown>
+  const keys = Object.keys(patch)
+  if (keys.length !== 1 || keys[0] !== 'displayName') {
+    throw new Error('改显示名称时只能提供 displayName')
+  }
+  if (typeof patch.displayName !== 'string') throw new Error('显示名称必须是字符串')
+  const displayName = patch.displayName.trim()
+  if (!displayName) throw new Error('显示名称不能为空')
+  if (Array.from(displayName).length > 255) throw new Error('显示名称不能超过 255 个字符')
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(displayName)) throw new Error('显示名称不能包含控制字符')
+  return displayName
+}
+
+/** 只更新用户可见名称并追加历史;`filename` / `relPath` 与磁盘内容保持不变。 */
+export function renameStoredFileDisplayName(
+  db: Db,
+  id: number,
+  displayName: string,
+): StoredFileRow | null {
+  return db.transaction((tx) => {
+    const current = tx.select().from(schema.storedFile).where(eq(schema.storedFile.id, id)).get()
+    if (!current) return null
+    const oldDisplayName = current.displayName ?? current.filename
+    if (oldDisplayName === displayName) return getStoredFile(tx, id)
+
+    tx.update(schema.storedFile)
+      .set({ displayName: displayName === current.filename ? null : displayName })
+      .where(eq(schema.storedFile.id, id))
+      .run()
+    tx.insert(schema.storedFileAudit)
+      .values({ storedFileId: id, oldDisplayName, newDisplayName: displayName })
+      .run()
+    return getStoredFile(tx, id)
+  })
 }
 
 /**

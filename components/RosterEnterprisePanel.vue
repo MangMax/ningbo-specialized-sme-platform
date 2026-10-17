@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { ExternalLink, Eye, FileText } from '@lucide/vue'
 import {
   ALIAS_SOURCE_KINDS,
+  comparisonDirectionNote,
   DIFFERENCE_MEASURES,
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
   DIFFERENCE_STATUS_ORDER,
+  DIFFERENCE_STATUS_VARIANTS,
+  FIRST_RECOGNITION_REASONS,
+  FIRST_RECOGNITION_STATUSES,
   PLATFORM_INTERFACES,
   PLATFORM_QUERY_STATUSES,
   PLATFORM_RDJBS,
@@ -19,11 +23,14 @@ import {
   VERIFICATION_STATUSES,
 } from '~~/lib/labels'
 import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
+import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
+import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
+import { evidencePointerText } from '~~/lib/roster/first-recognition'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import EventChip from '@/components/EventChip.vue'
 import SourceChip from '@/components/SourceChip.vue'
 import TitleBadge from '@/components/TitleBadge.vue'
-import { Badge } from '@/components/ui/badge'
+import { Badge, type BadgeVariants } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Collapsible,
@@ -126,23 +133,62 @@ interface Relation {
   matchBasis: string
   verificationStatus: string
 }
+/**
+ * 首次认定(§7.2 的 `recognitions` 段,RL-08)。**与总表、§7.5 是同一处计算** ——
+ * 面板不自己判「哪条算首次」,只把它标出来。
+ */
+interface Recognition {
+  titleCode: string
+  firstYear: number | null
+  firstEventId: number | null
+  source: string | null
+  status: 'confirmed' | 'pending'
+  pendingReason: string | null
+  /** 首次认定那条事件的出处(与 `Evidence` 同形状,但不带 `eventId` —— 事件就是 `firstEventId`)。 */
+  evidence: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
+}
 interface Detail {
   enterprise: { name: string; uscc: string | null }
   aliases: Alias[]
   records: RecordRow[]
   events: EventRow[]
   evidence: Evidence[]
+  recognitions: Recognition[]
   differences: Difference[]
   platform: { queries: QueryRow[]; relations: Relation[] }
 }
 
-const props = defineProps<{ enterpriseId: number }>()
+const props = defineProps<{
+  enterpriseId: number
+  /**
+   * 当前台账的筛选串(不含 `view`)—— 带上它跳到完整企业页,那边的「返回台账」
+   * 才能落回同一批筛选,而不是把用户丢回一个没筛过的第一页。
+   */
+  backQuery?: string
+}>()
+
+const emit = defineEmits<{ detailSettled: [enterpriseId: number] }>()
+
+const fullPageTo = computed(
+  () =>
+    `/enterprises/${props.enterpriseId}${props.backQuery ? `?back=${encodeURIComponent(props.backQuery)}` : ''}`,
+)
 
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading, error } = useQuery({
   key: () => ['roster-enterprise', props.enterpriseId],
   query: () => apiGet<Detail>(`/api/roster/enterprises/${props.enterpriseId}`),
 })
+
+watch(
+  [isLoading, data, error],
+  () => {
+    if (!isLoading.value && (data.value != null || error.value != null)) {
+      emit('detailSettled', props.enterpriseId)
+    }
+  },
+  { immediate: true, flush: 'post' },
+)
 
 const detail = computed(() => data.value ?? null)
 const eventsByRecord = computed(() => {
@@ -203,12 +249,46 @@ const relationsByQuery = computed(() => {
 })
 const relationCount = computed(() => detail.value?.platform.relations.length ?? 0)
 
-/** 差异状态徽章:已确认的用实色,未查/失败/待核用描边 —— 「确定」与「还没确定」一眼分得开。 */
-function statusVariant(code: string) {
-  if (code === 'confirmed_reason' || code === 'confirmed_no_diff') return 'secondary' as const
-  if (code === 'needs_review' || code === 'query_failed') return 'destructive' as const
-  return 'outline' as const
+/** 称号 → 该称号的首次认定(§7.2 的 `recognitions` 段;缺席 = 该称号没有正式认定)。 */
+const recognitionByTitle = computed(
+  () => new Map((detail.value?.recognitions ?? []).map((r) => [r.titleCode, r])),
+)
+
+/**
+ * 首次认定那一条事件的身份与状态。`pending` 只能标「已知最早」,不能写成结论。
+ */
+const firstRecognitionByEvent = computed(() => {
+  const map = new Map<number, Recognition>()
+  for (const recognition of detail.value?.recognitions ?? []) {
+    if (recognition.firstEventId != null) map.set(recognition.firstEventId, recognition)
+  }
+  return map
+})
+
+/** 首次认定的状态徽章文案与悬停原因(待确认时必须答得出「为什么」)。 */
+function recognitionNote(recognition: Recognition): string {
+  if (recognition.status !== 'pending') return ''
+  const why = FIRST_RECOGNITION_REASONS[recognition.pendingReason ?? ''] ?? recognition.pendingReason ?? ''
+  return `首次认定状态待确认；这是当前已知最早的认定事件,不作为确立结论。原因：${why}`
 }
+
+function recognitionEventLabel(recognition: Recognition): string {
+  return recognition.status === 'pending' ? '已知最早的认定(待确认)' : '首次认定'
+}
+
+function recognitionEventTitle(recognition: Recognition): string {
+  if (recognition.status === 'pending') return recognitionNote(recognition)
+  return '该称号的首次认定就是这一条(最早的认定;复核通过或失败后再次获批都不会改变它)。'
+}
+
+/**
+ * 差异状态徽章:六态颜色**只从 `DIFFERENCE_STATUS_VARIANTS` 取**(单一出处,与台账表同款)。
+ * 这里不再写本地级联 —— 原来的那份把「未查询」与「无记录」画成同一枚 outline、
+ * 把「待核实」与「查询失败」一律画红,恰好违反契约 §3.2 的「四态必须彼此可区分」。
+ * 状态值本身只来自读模型的 `difference_reason.status`,不回推到别处。
+ */
+const statusVariant = (code: string): BadgeVariants['variant'] =>
+  (DIFFERENCE_STATUS_VARIANTS[code] ?? 'outline') as BadgeVariants['variant']
 const movedInText = (movedIn: MovedIn) =>
   [
     movedIn.city,
@@ -228,6 +308,34 @@ function openPreview(e: Evidence) {
   previewName.value = fileNameOf(e.sourceFile)
   previewOpen.value = true
 }
+
+// —— RL-10:出处页码的跳转 ——
+
+/**
+ * 展开面板里的页码是**链接**(跳转是一次真导航,不是弹窗),所以它得带上「回哪去」。
+ * `backQuery` 本来就是这个面板已经握着的台账筛选串(含 `view` / 页码 / `expand`),
+ * 拼成台账地址即可 —— 回来时筛选与展开位置原样落回。
+ */
+const previewBack = computed(() => (props.backQuery ? `/?${props.backQuery}` : '/'))
+
+function rememberFullDetailReturn(event: MouseEvent): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  rememberEvidencePreviewReturn(previewBack.value, event.currentTarget)
+}
+
+function pageHref(v: Evidence): string {
+  return evidencePreviewHref({ sourceFile: v.sourceFile, page: v.page, back: previewBack.value })
+}
+
+function rememberPreviewReturn(event: MouseEvent) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return
+  }
+  rememberEvidencePreviewReturn(previewBack.value, event.currentTarget)
+}
+
+/** 三态里有页码的那种才可点;另两种只写字,不给链接(没有页码就没有可跳的页)。 */
+const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
 </script>
 
 <template>
@@ -238,6 +346,15 @@ function openPreview(e: Evidence) {
     </p>
 
     <div v-else-if="detail" class="flex flex-col gap-4">
+      <!-- 展开已经装下称号历史与证据;要更深的（文件出处、拆分记录）去完整企业页。 -->
+      <div class="flex justify-end">
+        <Button as-child variant="ghost" size="sm" class="h-6 gap-1 px-1.5 text-[11px]">
+          <NuxtLink :to="fullPageTo" @click="rememberFullDetailReturn">
+            完整企业页 <ExternalLink class="size-3" />
+          </NuxtLink>
+        </Button>
+      </div>
+
       <!-- 曾用名:已确认的参与搜索,pending 的也在(只是不参与) -->
       <section v-if="detail.aliases.length" class="flex flex-col gap-1.5">
         <h4 class="text-muted-foreground text-xs font-medium">曾用名 / 别名</h4>
@@ -273,6 +390,29 @@ function openPreview(e: Evidence) {
                 · 资格已终止(复核未通过)
               </template>
             </span>
+            <!-- RL-08:首次认定**自己的**状态(与上面那个「待核」是两件事)与出处。 -->
+            <template v-if="recognitionByTitle.get(group.titleCode)">
+              <Badge
+                v-if="recognitionByTitle.get(group.titleCode)!.status === 'pending'"
+                variant="dashed"
+                class="font-normal"
+                :title="recognitionNote(recognitionByTitle.get(group.titleCode)!)"
+              >
+                首次认定{{ FIRST_RECOGNITION_STATUSES.pending }}
+              </Badge>
+              <span class="text-muted-foreground text-[11px]">
+                出处
+                <template v-if="recognitionByTitle.get(group.titleCode)!.evidence.length">
+                  {{
+                    recognitionByTitle
+                      .get(group.titleCode)!
+                      .evidence.map((v) => evidencePointerText(v))
+                      .join(' ; ')
+                  }}
+                </template>
+                <template v-else>未记录</template>
+              </span>
+            </template>
           </div>
           <div class="flex flex-col gap-2">
             <div v-for="record in group.records" :key="record.id" class="flex flex-col gap-1.5">
@@ -287,6 +427,15 @@ function openPreview(e: Evidence) {
                   class="flex flex-wrap items-center gap-x-2 gap-y-1"
                 >
                   <EventChip :type="event.eventType" :year="event.year" :seq="event.batchSeq" />
+                  <Badge
+                    v-if="firstRecognitionByEvent.has(event.id)"
+                    variant="secondary"
+                    class="font-normal"
+                    data-testid="first-recognition-mark"
+                    :title="recognitionEventTitle(firstRecognitionByEvent.get(event.id)!)"
+                  >
+                    {{ recognitionEventLabel(firstRecognitionByEvent.get(event.id)!) }}
+                  </Badge>
                   <Badge v-if="event.reviewOutcome" variant="outline" class="font-normal">
                     {{ REVIEW_OUTCOMES[event.reviewOutcome] ?? event.reviewOutcome }}
                   </Badge>
@@ -323,8 +472,20 @@ function openPreview(e: Evidence) {
                   <span v-if="v.listNo != null" class="text-muted-foreground tabular-nums">
                     序号 {{ v.listNo }}
                   </span>
-                  <span v-if="v.page != null" class="text-muted-foreground tabular-nums">
+                  <!--
+                    页码(RL-10):可点时**跳到该 PDF 的实际页**;没有页码时留空 ——
+                    PDF 写「页码待核」,Word / Excel 不写(这类来源没有可复核的「第 N 页」)。
+                  -->
+                  <NuxtLink
+                    v-if="pageStateOf(v) === 'assigned'"
+                    :to="pageHref(v)"
+                    @click="rememberPreviewReturn"
+                    class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
+                  >
                     第 {{ v.page }} 页
+                  </NuxtLink>
+                  <span v-else-if="pageStateOf(v) === 'pending'" class="text-muted-foreground/70">
+                    {{ EVIDENCE_PAGE_WORDS.pending }}
                   </span>
                   <Button
                     v-if="isPreviewable(v.sourceFile)"
@@ -353,9 +514,9 @@ function openPreview(e: Evidence) {
           <div class="flex flex-wrap items-center gap-2">
             <TitleBadge :code="d.titleCode" />
             <Badge variant="quiet" class="font-normal">
-              {{ d.direction === 'missing_in_miit' ? '公布有而平台无' : '平台有而公布无' }}
+              {{ comparisonDirectionNote(d.direction) }}
             </Badge>
-            <Badge :variant="statusVariant(d.status)" class="font-normal">
+            <Badge :variant="statusVariant(d.status)">
               {{ DIFFERENCE_STATUSES[d.status] ?? d.status }}
             </Badge>
             <Badge v-if="!d.inCurrentDifference" variant="outline" class="font-normal">

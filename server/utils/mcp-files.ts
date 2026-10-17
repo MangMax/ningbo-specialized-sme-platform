@@ -14,6 +14,7 @@ import {
   getStoredFile,
   parseMetadataPatch,
   updateStoredFile,
+  type BackfillExclusion,
   type BackfillReport,
   type FileMetadataPatch,
   type StoredFileRow,
@@ -163,7 +164,13 @@ function needParts(db: Db, firstRun: boolean): boolean {
   return derivedCount === 0
 }
 
-const NO_FILE_STATS = { inserted: 0, updated: 0, unchanged: 0, skipped: [] as string[] }
+const NO_FILE_STATS = {
+  inserted: 0,
+  updated: 0,
+  unchanged: 0,
+  skipped: [] as string[],
+  excluded: [] as BackfillExclusion[],
+}
 const NO_PART_STATS: PartsBackfillStats = { files: 0, parts: 0, orphanPaths: [] }
 
 /**
@@ -171,7 +178,7 @@ const NO_PART_STATS: PartsBackfillStats = { files: 0, parts: 0, orphanPaths: [] 
  *
  * 与 `/api/files` 的懒回填**同一顺序、同一幂等性**,只是触发点不同 —— MCP 客户端不走那个
  * 路由,所以它自己入口也要有一次。返回**本次是否真的跑了**(没跑返回 `null`),便于验收时
- * 核对「第一次调用会回填出 23 个文件」。
+ * 核对「第一次调用会回填出 22 个文件」(RL-16 后的应有集合,见 `files/README.md`)。
  *
  * `force`(对应 `/api/files?rescan=1`)只强制**文件行**那一趟;段那一趟仍守 `needParts`
  * 的判据,不因为 `force` 就去覆盖已有段。
@@ -271,7 +278,7 @@ export interface FileRef {
  * 各自记得它;写 tool 不用回填(它们按 id/relPath 指向一个已经存在的文件)。
  *
  * 返回 `backfill`:本次真的跑了回填时是统计,没跑(库已就绪)时是 `null`。只读 tool 里
- * 只有 `list_files` 会把它放进返回值(与 `/api/files` 同形,便于验收核对「23 个」),
+ * 只有 `list_files` 会把它放进返回值(与 `/api/files` 同形,便于验收核对「22 个」),
  * 其余几个丢掉即可。
  */
 export async function openFileStore(): Promise<{

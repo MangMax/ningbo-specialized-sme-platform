@@ -1,60 +1,82 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { ComparisonPlatformEvidence } from '~~/lib/comparison-platform'
 import {
-  DIFFERENCE_MEASURES,
-  DIFFERENCE_REASONS,
-  DIFFERENCE_STATUSES,
+  PLATFORM_INTERFACES,
+  PLATFORM_QUERY_STATUSES,
+  PLATFORM_RDJBS,
+  RELATION_DECLARE_KINDS,
+  RELATION_MATCH_BASES,
   VERIFICATION_STATUSES,
 } from '~~/lib/labels'
+import { formatFetchTime } from '~~/lib/reconcile-time'
 import { Badge } from '@/components/ui/badge'
 
 /**
- * 比对行的**库内平台证据**(RL-03 的现有接缝):让现名之外的
- * **曾用名**(`enterprise_alias`)与**已核验处置**(`difference_reason`:原因 + 配对措施)
- * 在比对页就能看到,并能**跳转**到该企业的全部平台关系(`/platform-queries`)。
+ * 比对行的**库内平台证据**(RL-03 的接缝,RL-15 补齐可展开的接口证据)。
  *
- * 与「平台解释」列分工不同:`ComparisonReconcile` 展示的是**离线解释缓存**
- * (`data/platform-reconcile.json`);这里展示的是**库内证据**。两者都缺时这一格为空 —
- * 证据是增强项,不该让比对页挂掉。
+ * 让现名之外的**曾用名**(`enterprise_alias`)与**平台查询 / 原始关系**
+ * (`platform_query` / `platform_relation`)在比对页就能看到,并能**跳转**到该企业的
+ * 全部平台关系(`/platform-queries`)。
+ *
+ * ── 与「平台解释」列的分工 ────────────────────────────────────────────────
+ * 那一列答「**为什么**这条是差异」(状态 / 原因 / 配对措施,取自 `difference_reason`);
+ * 这一列给「**凭什么**」—— 查询时点、接口、以及逐条**原始关系原文**。
+ * 两列都只读库,**没有任何二次推导**;缓存缺失与它们无关。
+ *
+ * 关系原文默认**收起**(表窄,撑开会把行高拉爆),点一下展开 —— 证据要能展开,
+ * 但不该默认占满屏。
  */
 const props = defineProps<{
-  evidence: ComparisonPlatformEvidence | null
+  evidence: ComparisonPlatformEvidence
   enterpriseId: number
 }>()
 
-const aliases = computed(() => props.evidence?.aliases ?? [])
+const aliases = computed(() => props.evidence.aliases)
 const confirmedAliases = computed(() => aliases.value.filter((a) => a.verificationStatus === 'confirmed'))
 const pendingAliases = computed(() => aliases.value.filter((a) => a.verificationStatus !== 'confirmed'))
-const disposition = computed(() => props.evidence?.disposition ?? null)
-const relationCount = computed(() => props.evidence?.relationCount ?? 0)
+const queries = computed(() => props.evidence.queries)
+const relationCount = computed(() => props.evidence.relationCount)
+const hasEvidence = computed(() => aliases.value.length > 0 || queries.value.length > 0)
+const relationTotal = computed(() => queries.value.reduce((sum, query) => sum + query.relations.length, 0))
 
-const statusLabel = computed(() =>
-  disposition.value ? (DIFFERENCE_STATUSES[disposition.value.status] ?? disposition.value.status) : null,
-)
-const reasonLabel = computed(() =>
-  disposition.value?.reasonCode
-    ? (DIFFERENCE_REASONS[disposition.value.reasonCode] ?? disposition.value.reasonCode)
-    : null,
-)
-const measureLabel = computed(() =>
-  disposition.value?.measureCode
-    ? (DIFFERENCE_MEASURES[disposition.value.measureCode] ?? disposition.value.measureCode)
-    : null,
-)
-/** 迁入的原城市/称号/年份/批次;缺项留空待核,不猜填。 */
-const movedIn = computed(() => {
-  const value = disposition.value?.movedIn
-  if (!value) return null
-  const parts = [value.city, value.titleCode, value.year != null ? `${value.year} 年` : null, value.batch != null ? `第 ${value.batch} 批` : null]
-  const filled = parts.filter((p): p is string => !!p)
-  return filled.length ? filled.join(' · ') : null
-})
+const showRelations = ref(false)
 const link = computed(() => `/platform-queries?enterpriseId=${props.enterpriseId}`)
+
+/** 查询摘要:「业务接口(businessList) · rdjb=2 专精特新中小企业 · 查询成功 · 2026-10-16 · 关系 2 条」。 */
+function querySummary(query: ComparisonPlatformEvidence['queries'][number]): string {
+  const parts = [
+    PLATFORM_INTERFACES[query.interface] ?? query.interface,
+    query.rdjb ? `rdjb=${query.rdjb} ${PLATFORM_RDJBS[query.rdjb] ?? ''}`.trim() : null,
+    PLATFORM_QUERY_STATUSES[query.status] ?? query.status,
+    formatFetchTime(query.queriedAt) ?? query.queriedAt,
+    `关系 ${query.relationCount} 条`,
+  ]
+  return parts.filter((part): part is string => !!part).join(' · ')
+}
+
+/** 关系的可读原文;取不到的字段留空,**不猜填**。 */
+function relationFields(relation: ComparisonPlatformEvidence['queries'][number]['relations'][number]): string[] {
+  return [
+    relation.nameRaw ? `企业名称 ${relation.nameRaw}` : null,
+    relation.usccRaw ? `统一社会信用代码 ${relation.usccRaw}` : null,
+    relation.province ? `省市 ${relation.province}` : null,
+    relation.status ? `状态 ${relation.status}` : null,
+    relation.batch ? `维护批次 ${relation.batch}` : null,
+    relation.declareKind
+      ? `申报类型 ${RELATION_DECLARE_KINDS[relation.declareKind] ?? relation.declareKind}`
+      : null,
+    relation.appliedAt ? `申报时间 ${relation.appliedAt}` : null,
+    relation.year != null ? `申报记录年份 ${relation.year}` : null,
+    relation.awardBatchLabel ? `认定批次 ${relation.awardBatchLabel}` : null,
+    relation.aliasNameRaw ? `关系写出曾用名 ${relation.aliasNameRaw}` : null,
+    relation.relationKey ? `关联主键 ${relation.relationKey}` : null,
+  ].filter((part): part is string => !!part)
+}
 </script>
 
 <template>
-  <div v-if="evidence" class="flex flex-col gap-1" data-testid="comparison-platform-evidence">
+  <div v-if="hasEvidence" class="flex flex-col gap-1" data-testid="comparison-platform-evidence">
     <div v-if="confirmedAliases.length" class="flex flex-wrap items-center gap-1 text-xs">
       <span class="text-muted-foreground">曾用名</span>
       <Badge
@@ -77,15 +99,48 @@ const link = computed(() => `/platform-queries?enterpriseId=${props.enterpriseId
         >{{ alias.name }}</Badge
       >
     </div>
-    <div v-if="disposition" class="flex flex-wrap items-center gap-1 text-xs">
-      <Badge variant="secondary" class="font-normal">{{ statusLabel }}</Badge>
-      <span v-if="reasonLabel" class="text-muted-foreground">{{ reasonLabel }}</span>
-      <span v-if="measureLabel" class="text-muted-foreground">→ {{ measureLabel }}</span>
-      <span v-if="disposition.verificationStatus !== 'confirmed'" class="text-muted-foreground">
-        ({{ VERIFICATION_STATUSES[disposition.verificationStatus] ?? disposition.verificationStatus }})
-      </span>
-    </div>
-    <p v-if="movedIn" class="text-muted-foreground text-xs">迁入来源:{{ movedIn }}</p>
+    <ul v-if="queries.length" class="flex flex-col gap-0.5 text-xs">
+      <li
+        v-for="query in queries"
+        :key="query.id"
+        data-testid="platform-query-summary"
+        class="text-muted-foreground"
+      >
+        {{ querySummary(query) }}
+        <span v-if="query.failureReason" class="text-destructive"> — {{ query.failureReason }}</span>
+      </li>
+    </ul>
+    <button
+      v-if="relationTotal"
+      type="button"
+      data-testid="platform-evidence-toggle"
+      class="text-primary w-fit text-xs hover:underline"
+      :aria-expanded="showRelations"
+      @click="showRelations = !showRelations"
+    >
+      {{ showRelations ? '收起原始关系' : `展开原始关系(${relationTotal} 条)` }}
+    </button>
+    <!-- 展开区自己滚:实测一个统代最多 6 条关系、逐条 9 个字段,
+         不限高会把**一行**撑到 1000px 以上,把整张表读坏。 -->
+    <ul v-if="showRelations" class="flex max-h-48 flex-col gap-1 overflow-auto pr-1">
+      <template v-for="query in queries" :key="query.id">
+        <li
+          v-for="relation in query.relations"
+          :key="relation.id"
+          data-testid="platform-relation"
+          class="bg-muted/40 flex flex-col gap-0.5 rounded-sm p-1.5 text-xs"
+        >
+          <span class="text-muted-foreground"
+            >#{{ relation.sequenceNo }} · {{ PLATFORM_INTERFACES[query.interface] ?? query.interface }}</span
+          >
+          <span v-for="field in relationFields(relation)" :key="field">{{ field }}</span>
+          <span class="text-muted-foreground"
+            >匹配依据 {{ RELATION_MATCH_BASES[relation.matchBasis] ?? relation.matchBasis }} ·
+            {{ VERIFICATION_STATUSES[relation.verificationStatus] ?? relation.verificationStatus }}</span
+          >
+        </li>
+      </template>
+    </ul>
     <NuxtLink
       v-if="relationCount"
       :to="link"

@@ -195,7 +195,7 @@ describe('GET /api/roster/enterprises(契约 §7.1)', () => {
 })
 
 describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
-  it('返回 detail 的六段(enterprise / aliases / records / events / evidence / differences / platform)', () => {
+  it('返回 detail 的七段(enterprise / aliases / records / events / evidence / recognitions / differences / platform)', () => {
     routerParam = String(enterpriseId)
     const out = handlerDetail({}) as Record<string, unknown>
     expect(Object.keys(out).sort()).toEqual([
@@ -205,6 +205,7 @@ describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
       'events',
       'evidence',
       'platform',
+      'recognitions',
       'records',
     ])
     expect((out.enterprise as { enterpriseId: number }).enterpriseId).toBe(enterpriseId)

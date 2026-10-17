@@ -1,19 +1,34 @@
 /**
- * 比对行 × 平台证据的**接缝**(RL-03 交付物 3)。
+ * 比对行 × 平台证据的**接缝**(RL-03 交付物 3;RL-15 收口为**以库内为准**)。
  *
  * 比对页原来只把 `data/platform-reconcile.json` 的**离线解释缓存**挂在行上
- * (见 `lib/reconcile.ts`,那条路径**保持兼容、一字不改**)。本模块补的是**库内证据**:
- *  - 该企业的**现名 / 已确认曾用名**(`enterprise_alias`);
+ * (见 `lib/reconcile.ts`,那条路径**保持兼容、一字不改**)。本模块是**库内**那条路:
+ *  - 该企业的**现名 / 曾用名**(`enterprise_alias`);
  *  - 该差异的**已核验处置**(`difference_reason`,原因 + 配对措施,取 `recordedAt` 最新那条);
- *  - 该企业的**平台查询与关系条数**(`platform_query` / `platform_relation`)—— 供「查看全部关系」跳转。
+ *  - 该企业的**平台查询与原始关系**(`platform_query` / `platform_relation`)—— 可展开的接口证据。
  *
- * 两者互不覆盖:库内证据是权威证据,JSON 缓存是旧的离线增强;读不到库内证据时为 `null`,
- * 页面照常渲染(与 `reconcile` 同样是增强项,不该让比对页挂掉)。
+ * ── RL-15 改了什么(以及为什么) ────────────────────────────────────────────
+ * 用户 2026-10-16 反馈「三个称号从平台获取的数据都没了」。根因是**解释缓存缺失**
+ * (`data/platform-reconcile.json` 在某环境不存在)时,旧的「平台解释」列整列退化成 `—`,
+ * 而库里其实有 `difference_reason` / `platform_query` / `platform_relation` —— 页面却把它
+ * 当成空。所以:
+ *
+ *  1. **每一行都带 `platform`**(不再有 `null`):状态机的**默认态**是 `not_queried`
+ *     (「还没查过」,不是「没有」),由 `disposition.explanationId === null` 说清
+ *     「还没存下解释」。这与 `lib/roster/enterprise-roster.ts` 的差异读模型**同一口径**
+ *     (父代理 2026-10-16 裁决 #1:展示态**只从 `difference_reason.status` 取**)。
+ *  2. **读侧绝不二次推导**:不从查询/关系反推「无记录」或「已确认」,也不改写原因 ——
+ *     接口有记录时库里的 `confirmed_reason` + `platform_stale` 原样带出,
+ *     **不得**显示成 `no_record` / `confirmed_no_diff`。
+ *  3. 旧 JSON 缓存仍由 `lib/reconcile.ts` 照旧挂 `explanation`,页面只把它当**对照**。
+ *
+ * 取数一次读完(与 `enterprise-roster.ts` 同一取舍:台账是几千级,拼 join 不如内存组织)。
  */
 import { inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import type { ComparisonDirection } from './comparison'
+import { normalizeUscc } from './domain'
 
 export interface ComparisonAlias {
   id: number
@@ -27,7 +42,11 @@ export interface ComparisonAlias {
 }
 
 export interface ComparisonDisposition {
-  id: number
+  /**
+   * 存下来的解释行 id;**`null` = 还没有解释记录** —— 此时 `status` 就是状态机的
+   * 默认态 `not_queried`(与 `lib/roster/enterprise-roster.ts` 的 `explanationId` 同义)。
+   */
+  explanationId: number | null
   status: string
   reasonCode: string | null
   reasonNote: string | null
@@ -35,25 +54,52 @@ export interface ComparisonDisposition {
   measureNote: string | null
   movedIn: { city: string | null; titleCode: string | null; year: number | null; batch: number | null } | null
   verificationStatus: string
-  recordedAt: string
+  /** 该解释的登记时点;没有解释记录时为 `null`。 */
+  recordedAt: string | null
   evidenceQueryId: number | null
   evidenceRelationId: number | null
+}
+
+/** 一条**平台原始关系**(`platform_relation`)—— 可展开的接口证据原文。 */
+export interface ComparisonRelation {
+  id: number
+  queryId: number
+  sequenceNo: number
+  relationKey: string | null
+  usccRaw: string | null
+  nameRaw: string | null
+  aliasNameRaw: string | null
+  province: string | null
+  status: string | null
+  batch: string | null
+  declareKind: string | null
+  appliedAt: string | null
+  awardBatchLabel: string | null
+  year: number | null
+  matchBasis: string
+  verificationStatus: string
 }
 
 export interface ComparisonQuerySummary {
   id: number
   interface: string
+  queryKey: string
   rdjb: string
   queriedAt: string
   status: string
   failureReason: string | null
   relationCount: number
+  /** 这次查询返回的**全部**关系(逐条原文;不按企业二次过滤 —— 查询本身就是证据)。 */
+  relations: ComparisonRelation[]
 }
 
 export interface ComparisonPlatformEvidence {
   aliases: ComparisonAlias[]
-  /** **当前**处置 = `recordedAt` 最新的那条(时态化,旧解释不丢但只展示最新)。 */
-  disposition: ComparisonDisposition | null
+  /**
+   * **当前**处置 = `recordedAt` 最新的那条(时态化,旧解释不丢但只展示最新)。
+   * 没有解释记录时也给一条:状态即状态机的默认态 `not_queried`。
+   */
+  disposition: ComparisonDisposition
   queries: ComparisonQuerySummary[]
   /** 归到该企业的关系总条数。 */
   relationCount: number
@@ -68,13 +114,25 @@ interface RowKey {
 /**
  * 给比对行附加库内平台证据。按 `enterpriseId` **批量取数**(不是每行一次查询),
  * 并只把「对得上 `(企业, 称号, 方向)`」的那条处置挂到行上。
+ *
+ * **每一行都返回 `platform`**(永不为 `null`):没有解释记录时,处置就是状态机的
+ * 默认态 `not_queried` + `explanationId: null`。页面因此不会再有「整列 —」的观感。
  */
+/**
+ * 归一化统代后比对:`''` → `null` 表示「这个值给不出统代」。
+ * 规则本身在 `lib/domain.ts` 的 `normalizeUscc`(**单一来源**)—— 与写入侧落
+ * `uscc_norm`、与 `enterprise-roster.ts` 的 `normUscc` 是同一条,不另写一份。
+ */
+function normUscc(uscc: string | null | undefined): string | null {
+  return normalizeUscc(uscc) || null
+}
+
 export function attachPlatformEvidence<T extends RowKey>(
   rows: T[],
   db: BetterSQLite3Database<typeof schema>,
-): (T & { platform: ComparisonPlatformEvidence | null })[] {
+): (T & { platform: ComparisonPlatformEvidence })[] {
   const enterpriseIds = [...new Set(rows.map((row) => row.enterpriseId))]
-  if (!enterpriseIds.length) return rows.map((row) => ({ ...row, platform: null }))
+  if (!enterpriseIds.length) return []
 
   const aliases = db
     .select()
@@ -89,22 +147,56 @@ export function attachPlatformEvidence<T extends RowKey>(
     .where(inArray(schema.differenceReason.enterpriseId, enterpriseIds))
     .all()
 
-  const relationRows = db
+  // 企业自身的查询键 —— 与 `lib/roster/enterprise-roster.ts` 同一口径。
+  const enterprises = db
     .select({
-      queryId: schema.platformRelation.queryId,
-      enterpriseId: schema.platformRelation.enterpriseId,
+      id: schema.enterprise.id,
+      nameNorm: schema.enterprise.nameNorm,
+      usccNorm: schema.enterprise.usccNorm,
     })
+    .from(schema.enterprise)
+    .where(inArray(schema.enterprise.id, enterpriseIds))
+    .all()
+  /** 企业 → 自己的查询键(统一社会信用代码 / `name:<nameNorm>`)。 */
+  const ownKeysByEnterprise = new Map<number, Set<string>>()
+  for (const enterprise of enterprises) {
+    const keys = new Set<string>([`name:${enterprise.nameNorm}`])
+    const uscc = normUscc(enterprise.usccNorm)
+    if (uscc) keys.add(uscc)
+    ownKeysByEnterprise.set(enterprise.id, keys)
+  }
+  const queriedEnterpriseByKey = new Map<string, number[]>()
+  for (const [enterpriseId, keys] of ownKeysByEnterprise) {
+    for (const key of keys) {
+      const bucket = queriedEnterpriseByKey.get(key)
+      if (bucket) bucket.push(enterpriseId)
+      else queriedEnterpriseByKey.set(key, [enterpriseId])
+    }
+  }
+
+  // 关系:**归到该企业的** ∪ **属于该企业查询的**。后者是必须的 —— 一条关系可能
+  // 没归到任何企业(`enterprise_id` 为空),但它仍然是「这个统代查出来的原文」。
+  const relationRows = db
+    .select()
     .from(schema.platformRelation)
-    .where(inArray(schema.platformRelation.enterpriseId, enterpriseIds))
+    .where(
+      sql`${schema.platformRelation.enterpriseId} in ${enterpriseIds} or ${schema.platformRelation.queryId} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds})`,
+    )
+    .orderBy(schema.platformRelation.queryId, schema.platformRelation.sequenceNo)
     .all()
 
+  // 查询 = **按关系归属的** ∪ **查询键就是它的**。后者是必须的:`no_record` / `failed`
+  // 这类查询**一条关系都不返回**,只看关系就把它们整条丢掉了 —— 而「查过、接口确无记录」
+  // 与「查询没成功执行」正是要看得见的四态里的两态(契约 §3.1)。
+  // 判定键与 `enterprise-roster.ts` 的 `ownKeys` 逐字一致(先用过 `normUscc`)。
+  const allKeys = [...queriedEnterpriseByKey.keys()]
   const queries = db
     .select()
     .from(schema.platformQuery)
     .where(
-      enterpriseIds.length
-        ? sql`${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds})`
-        : sql`0`,
+      allKeys.length
+        ? sql`${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds}) or ${schema.platformQuery.queryKey} in ${allKeys}`
+        : sql`${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds})`,
     )
     .all()
 
@@ -125,12 +217,33 @@ export function attachPlatformEvidence<T extends RowKey>(
     else aliasesByEnterprise.set(alias.enterpriseId, [item])
   }
 
-  const relationsByQuery = new Map<number, number>()
+  const toRelation = (row: typeof schema.platformRelation.$inferSelect): ComparisonRelation => ({
+    id: row.id,
+    queryId: row.queryId,
+    sequenceNo: row.sequenceNo,
+    relationKey: row.relationKey,
+    usccRaw: row.usccRaw,
+    nameRaw: row.nameRaw,
+    aliasNameRaw: row.aliasNameRaw,
+    province: row.province,
+    status: row.status,
+    batch: row.batch,
+    declareKind: row.declareKind,
+    appliedAt: row.appliedAt,
+    awardBatchLabel: row.awardBatchLabel,
+    year: row.year,
+    matchBasis: row.matchBasis,
+    verificationStatus: row.verificationStatus,
+  })
+
+  const relationsByQuery = new Map<number, ComparisonRelation[]>()
   const relationsByEnterprise = new Map<number, number>()
   /** 查询 → 有关系归到它的企业集合(用于把查询摘要挂到每个相关企业上)。 */
   const enterprisesByQuery = new Map<number, Set<number>>()
   for (const row of relationRows) {
-    relationsByQuery.set(row.queryId, (relationsByQuery.get(row.queryId) ?? 0) + 1)
+    const list = relationsByQuery.get(row.queryId)
+    if (list) list.push(toRelation(row))
+    else relationsByQuery.set(row.queryId, [toRelation(row)])
     if (row.enterpriseId != null) {
       relationsByEnterprise.set(row.enterpriseId, (relationsByEnterprise.get(row.enterpriseId) ?? 0) + 1)
       const bucket = enterprisesByQuery.get(row.queryId)
@@ -141,17 +254,25 @@ export function attachPlatformEvidence<T extends RowKey>(
 
   const queriesByEnterprise = new Map<number, ComparisonQuerySummary[]>()
   for (const query of queries) {
+    const relations = relationsByQuery.get(query.id) ?? []
     const summary: ComparisonQuerySummary = {
       id: query.id,
       interface: query.interface,
+      queryKey: query.queryKey,
       rdjb: query.rdjb,
       queriedAt: query.queriedAt,
       status: query.status,
       failureReason: query.failureReason,
-      relationCount: relationsByQuery.get(query.id) ?? 0,
+      relationCount: relations.length,
+      relations,
     }
     // 一个查询可能同时有关系归到多个企业;按关系归属逐个企业挂。
-    for (const enterpriseId of enterprisesByQuery.get(query.id) ?? []) {
+    const owners = new Set<number>(enterprisesByQuery.get(query.id) ?? [])
+    // 再加上「查询键就是它」的企业 —— 没有关系的那种查询靠这一条才挂得上。
+    for (const enterpriseId of queriedEnterpriseByKey.get(normUscc(query.queryKey) ?? query.queryKey) ?? []) {
+      owners.add(enterpriseId)
+    }
+    for (const enterpriseId of owners) {
       const bucket = queriesByEnterprise.get(enterpriseId)
       if (bucket) bucket.push(summary)
       else queriesByEnterprise.set(enterpriseId, [summary])
@@ -162,9 +283,9 @@ export function attachPlatformEvidence<T extends RowKey>(
   for (const row of dispositions) {
     const key = `${row.enterpriseId}|${row.titleCode}|${row.direction}`
     const previous = latestDisposition.get(key)
-    if (previous && previous.recordedAt >= row.recordedAt) continue
+    if (previous && previous.recordedAt != null && previous.recordedAt >= row.recordedAt) continue
     latestDisposition.set(key, {
-      id: row.id,
+      explanationId: row.id,
       status: row.status,
       reasonCode: row.reasonCode,
       reasonNote: row.reasonNote,
@@ -183,15 +304,33 @@ export function attachPlatformEvidence<T extends RowKey>(
     })
   }
 
+  /**
+   * 没有解释记录时的处置:**状态机的默认态**(契约 §3.2 的 `not_queried`)。
+   * 这里**不**看查询、不看关系 —— 展示态只从 `difference_reason.status` 取。
+   */
+  const defaultDisposition: ComparisonDisposition = {
+    explanationId: null,
+    status: 'not_queried',
+    reasonCode: null,
+    reasonNote: null,
+    measureCode: null,
+    measureNote: null,
+    movedIn: null,
+    verificationStatus: 'pending',
+    recordedAt: null,
+    evidenceQueryId: null,
+    evidenceRelationId: null,
+  }
+
   return rows.map((row) => {
     const rowAliases = aliasesByEnterprise.get(row.enterpriseId) ?? []
     const rowQueries = queriesByEnterprise.get(row.enterpriseId) ?? []
-    const disposition = latestDisposition.get(`${row.enterpriseId}|${row.titleCode}|${row.direction}`) ?? null
+    const disposition =
+      latestDisposition.get(`${row.enterpriseId}|${row.titleCode}|${row.direction}`) ?? defaultDisposition
     const relationCount = relationsByEnterprise.get(row.enterpriseId) ?? 0
-    const empty = !rowAliases.length && !disposition && !rowQueries.length
     return {
       ...row,
-      platform: empty ? null : { aliases: rowAliases, disposition, queries: rowQueries, relationCount },
+      platform: { aliases: rowAliases, disposition, queries: rowQueries, relationCount },
     }
   })
 }

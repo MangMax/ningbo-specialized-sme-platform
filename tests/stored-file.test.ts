@@ -1,15 +1,24 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { categoryStateOf, deriveClassification, deriveParts, parseBatch } from '../lib/stored-file'
+import { eq } from 'drizzle-orm'
+import { categoryStateOf, deriveClassification, deriveParts, directoryOf, parseBatch } from '../lib/stored-file'
+import { scopeOf, siblingIndex } from '../lib/file-store-scope'
+import { LITTLE_GIANT_SOURCE_FILE } from '../lib/roster/little-giant-import'
+import {
+  INTERNALIZED_FILE_COUNT,
+  INTERNALIZED_JXJ_COUNT,
+  INTERNALIZED_SET_COUNT,
+} from './helpers/file-store-expectations'
 import {
   backfillFromDisk,
   backfillStoredFiles,
   listStoredFiles,
   parseMetadataPatch,
   removeStoredFile,
+  resolveInsideRoot,
   scanFileStore,
   updateStoredFile,
 } from '../server/utils/stored-files'
@@ -21,8 +30,10 @@ import {
  *  1. 分类规则(`lib/stored-file.ts`)——从目录反推 source/kind/year/batch;
  *  2. 回填幂等 —— 重跑两次行数不变;
  *  3. 元数据 PATCH 只改元数据 —— 不动 `rel_path`、不动磁盘。
+ *  4. **入库范围**(RL-16)——「哪些文件该进文件库」在回填里真的生效。
  *
- * 最后一块额外对**真实的 `files/`** 跑一遍,核对「23 个文件逐个对得上」这条验收。
+ * 最后一块额外对**真实的 `files/`** 跑一遍,核对「22 个文件逐个对得上」这条验收
+ * (这个数怎么来的见下面的常量说明)。
  */
 
 // ---------------------------------------------------------------------------
@@ -249,7 +260,132 @@ describe('stored_file 回填', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// 3. 入库范围(RL-16):规则在**回填**里生效,不只是写在文档里
+// ---------------------------------------------------------------------------
+
+describe('入库范围:不该入库的文件不进表,并带原因报出', () => {
+  let scopeDir: string
+  let scopeRoot: string
+  let scopeDb: ReturnType<(typeof import('../db'))['useDb']>
+
+  /** 同一目录里的三类「该排除」样本,加三份该收的。顺序按 relPath 排(扫描结果就是这么排的)。 */
+  const EXCLUDED = [
+    ['jxj/announcement/2021/甬经信中小〔2021〕160号关于公布2021-2022宁波市“专精特新”入库培育企业名单的通知.pdf', 'nurture'],
+    ['jxj/announcement/2022/甬经信中小〔2022〕145号 通知.docx', 'human-ocr-docx'],
+    ['jxj/announcement/2023/1/关于公布2023年宁波市“专精特新”中小企业名单的通知.doc', 'duplicate-doc'],
+  ] as const
+  const IN_SCOPE = [
+    // 与上面那份 .doc 同名的转出件:可预览,收。
+    'jxj/announcement/2023/1/关于公布2023年宁波市“专精特新”中小企业名单的通知.docx',
+    // 与上面那份 .docx 同名的原件:权威可内联预览,收。
+    'jxj/announcement/2022/甬经信中小〔2022〕145号 通知.pdf',
+    // 跨年汇总工作簿:没有年份/批次段,但仍在范围内。
+    'jxj/announcement/经信局公布历年小巨人企业名单.xlsx',
+  ]
+
+  beforeAll(async () => {
+    scopeDir = mkdtempSync(join(tmpdir(), 'spztx-scope-'))
+    scopeRoot = join(scopeDir, 'files')
+    for (const [rel] of EXCLUDED) {
+      const abs = join(scopeRoot, rel)
+      await mkdir(join(abs, '..'), { recursive: true })
+      await writeFile(abs, `body:${rel}`)
+    }
+    for (const rel of IN_SCOPE) {
+      const abs = join(scopeRoot, rel)
+      await mkdir(join(abs, '..'), { recursive: true })
+      await writeFile(abs, `body:${rel}`)
+    }
+    scopeDb = useDb({ dbPath: join(scopeDir, 'scope.db') })
+  })
+
+  afterAll(() => rmSync(scopeDir, { recursive: true, force: true }))
+
+  it('回填只收在范围内的文件;三类排除逐条带原因报出', async () => {
+    const stats = await backfillFromDisk(scopeDb, scopeRoot)
+
+    expect(stats.inserted).toBe(IN_SCOPE.length)
+    expect(stats.excluded.map((e) => [e.relPath, e.reason])).toEqual(
+      EXCLUDED.map(([rel, reason]) => [rel, reason]),
+    )
+    // 排除理由是可读的一句话,不是空串 —— 报告要能直接给人看。
+    expect(stats.excluded.every((e) => e.detail.length > 0)).toBe(true)
+
+    const stored = scopeDb.select().from(schema.storedFile).all().map((r) => r.relPath).sort()
+    expect(stored).toEqual([...IN_SCOPE].sort())
+  })
+
+  it('重跑仍幂等:该收的一个不多、该排的一个也不进(规则真的在用,不是只写在文档里)', async () => {
+    const first = scopeDb.select().from(schema.storedFile).all().length
+    const second = await backfillFromDisk(scopeDb, scopeRoot)
+    expect(second.inserted).toBe(0)
+    expect(second.excluded).toHaveLength(EXCLUDED.length)
+    expect(scopeDb.select().from(schema.storedFile).all().length).toBe(first)
+  })
+})
+
 describe('PATCH 只改元数据', () => {
+  it('拒绝当前未支持的展示名 PATCH 后既有出处仍按原 rel_path 解析到预览文件', () => {
+    const row = db.select().from(schema.storedFile).all().find((r) => r.relPath.includes('72号'))!
+    const enterpriseId = db
+      .insert(schema.enterprise)
+      .values({ name: '预览路径稳定性测试', nameNorm: '预览路径稳定性测试' })
+      .returning({ id: schema.enterprise.id })
+      .get().id
+    const recordId = db
+      .insert(schema.record)
+      .values({ enterpriseId, titleCode: 'specialized_sme', source: 'jxj' })
+      .returning({ id: schema.record.id })
+      .get().id
+    const recordEventId = db
+      .insert(schema.recordEvent)
+      .values({ recordId, eventType: 'award', year: 2024, batchSeq: 1 })
+      .returning({ id: schema.recordEvent.id })
+      .get().id
+    const evidence = db
+      .insert(schema.recordEvidence)
+      .values({ recordEventId, sourceFile: row.relPath, page: 3 })
+      .returning({ id: schema.recordEvidence.id })
+      .get()
+    try {
+      const previewBefore = resolveInsideRoot(filesRoot, row.relPath)
+      expect(previewBefore).not.toBeNull()
+      expect(readFileSync(previewBefore!, 'utf8')).toBe('pdf-one')
+
+      // 本仓文件 PATCH 当前只接受分类元数据；展示名字段尚未提供，磁盘名也不能被改。
+      expect(() => parseMetadataPatch({ displayName: '新展示名.pdf' })).toThrow(/不可修改/)
+      expect(db.select().from(schema.storedFile).all().find((item) => item.id === row.id)).toMatchObject({
+        id: row.id,
+        relPath: row.relPath,
+        filename: row.filename,
+      })
+      const evidenceAfterRejectedPatch = db
+        .select()
+        .from(schema.recordEvidence)
+        .where(eq(schema.recordEvidence.id, evidence.id))
+        .get()!
+      expect(evidenceAfterRejectedPatch.sourceFile).toBe(row.relPath)
+      expect(resolveInsideRoot(filesRoot, evidenceAfterRejectedPatch.sourceFile)).toBe(previewBefore)
+
+      const updated = updateStoredFile(db, row.id, parseMetadataPatch({ year: 2021 }))!
+
+      expect(updated.id).toBe(row.id)
+      expect(updated.relPath).toBe(row.relPath)
+      const storedEvidence = db.select().from(schema.recordEvidence).all().find((item) => item.id === evidence.id)!
+      expect(storedEvidence.sourceFile).toBe(row.relPath)
+      const previewAfter = resolveInsideRoot(filesRoot, storedEvidence.sourceFile)
+      expect(previewAfter).toBe(previewBefore)
+      expect(readFileSync(previewAfter!, 'utf8')).toBe('pdf-one')
+    } finally {
+      db.delete(schema.recordEvidence).where(eq(schema.recordEvidence.id, evidence.id)).run()
+      db.delete(schema.recordEvent).where(eq(schema.recordEvent.id, recordEventId)).run()
+      db.delete(schema.record).where(eq(schema.record.id, recordId)).run()
+      db.delete(schema.enterprise).where(eq(schema.enterprise.id, enterpriseId)).run()
+      updateStoredFile(db, row.id, { year: row.year })
+    }
+  })
+
   it('改年份:rel_path 不变、磁盘文件不变、列表立刻反映', () => {
     const row = db.select().from(schema.storedFile).all().find((r) => r.relPath.includes('72号'))!
     const abs = join(filesRoot, row.relPath)
@@ -410,17 +546,11 @@ describe('DELETE 默认不删磁盘', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * 真实文件库的**期望规模**与 `files/` 保持一致(2026-10-16 核对)。
- *
- * 分布:2021×1、2022×2、2023×6、2024×5、2025×4、2026×3 = **21 份**经信局公布文件,
- * 加 3 份工信部导出表 = **24**。
- *
- * ⚠️ **新增源文件后要跟着改这个数**。它刻意写死:**判据不能是「扫描结果自己比自己」**,
- * 否则回填规则坏掉时测试照样绿。历史上这里写的是 23(早于 2021 入库培育那份文件入库),
- * 文件加进来后没同步,于是长期假红 —— 见本次修。
+ * 真实文件库的**期望规模** —— 数的来路(逐条)与「为什么写死」见
+ * [`tests/helpers/file-store-expectations.ts`](./helpers/file-store-expectations.ts),
+ * 那里也是 `reupload.test.ts` 用的同一份(一个数只有一处)。
  */
-const INTERNALIZED_FILE_COUNT = 24
-const INTERNALIZED_JXJ_COUNT = 21
+
 
 /**
  * `files/` 是否**已就位**。注意 `files/` 目录本身在 clone 里总是存在(只提交了 `README.md`),
@@ -452,20 +582,21 @@ describe.skipIf(!hasRealStore)('对真实 files/ 的验收:逐个文件对得上
     // 全部认得出分类(没有一个落到 skipped)。
     expect(derived.every((d) => d.source && d.kind)).toBe(true)
 
-    // 分布核对:21 份经信局公布文件 + 3 份工信部导出表。
+    // 分布核对:19 份经信局公布文件 + 3 份工信部导出表。
     expect(derived.filter((d) => d.source === 'jxj')).toHaveLength(INTERNALIZED_JXJ_COUNT)
     expect(derived.filter((d) => d.source === 'miit')).toHaveLength(3)
 
-    // 年份分布(按目录):2021×1、2022×2、2023×6、2024×5、2025×4、2026×3、miit×3(无年份)。
+    // 年份分布(按目录):2021×0、2022×2、2023×4、2024×5、2025×4、2026×3、无年份×4。
+    // 无年份的 4 份 = 3 份导出表(本来就没有年份) + 1 份跨年汇总工作簿。
     const byYear = new Map<number | null, number>()
     for (const d of derived) byYear.set(d.year, (byYear.get(d.year) ?? 0) + 1)
-    expect(byYear.get(2021)).toBe(1)
+    expect(byYear.get(2021)).toBeUndefined()
     expect(byYear.get(2022)).toBe(2)
-    expect(byYear.get(2023)).toBe(6)
+    expect(byYear.get(2023)).toBe(4)
     expect(byYear.get(2024)).toBe(5)
     expect(byYear.get(2025)).toBe(4)
     expect(byYear.get(2026)).toBe(3)
-    expect(byYear.get(null)).toBe(3)
+    expect(byYear.get(null)).toBe(4)
 
     // 两份 2022 的目录里没有批次段 → 批次为空(不是补出来的)。
     const y2022 = derived.filter((d) => d.year === 2022)
@@ -475,7 +606,34 @@ describe.skipIf(!hasRealStore)('对真实 files/ 的验收:逐个文件对得上
     const batches = new Set(derived.filter((d) => d.batch !== null).map((d) => d.batch))
     expect([...batches].sort()).toEqual([1, 2])
 
-    // 全部 23 个「分类已定」(含 3 份导出表与 2 份无批次的年份公布文件)。
-    expect(derived.every((d) => d.state === 'set')).toBe(true)
+    // 分类已定的 21 份(含 3 份导出表与 2 份无批次的年份公布文件);
+    // 唯一的 `unset` 是那份**跨年汇总**工作簿 —— 它没有单一公布年份,留空不猜。
+    const unset = derived.filter((d) => d.state === 'unset')
+    expect(derived.filter((d) => d.state === 'set')).toHaveLength(INTERNALIZED_SET_COUNT)
+    expect(unset.map((d) => d.rel)).toEqual(['jxj/announcement/经信局公布历年小巨人企业名单.xlsx'])
+  })
+
+  it('该移出的三份确实不在磁盘上;该入库的工作簿在;规则在真实库上一条都不命中', async () => {
+    const scanned = await scanFileStore(REAL_STORE)
+    const paths = scanned.map((f) => f.relPath)
+
+    // 三份移出件(逐条列出,而不是「反正数对得上」)。
+    expect(paths).not.toContain(
+      'jxj/announcement/2021/甬经信中小〔2021〕160号关于公布2021-2022宁波市“专精特新”入库培育企业名单的通知.pdf',
+    )
+    expect(paths).not.toContain('jxj/announcement/2023/1/关于公布2023年宁波市“专精特新”中小企业名单的通知.doc')
+    expect(paths).not.toContain('jxj/announcement/2023/1/关于公布2023年第一批宁波市创新型中小企业名单的通知.doc')
+    // 两份可预览的 `.docx` 留下(它们是台账 `record_evidence.source_file` 指的那一份)。
+    expect(paths).toContain('jxj/announcement/2023/1/关于公布2023年宁波市“专精特新”中小企业名单的通知.docx')
+    expect(paths).toContain('jxj/announcement/2023/1/关于公布2023年第一批宁波市创新型中小企业名单的通知.docx')
+    // 该入库的工作簿在,且路径**正是 app 落位规则给的那一条**。
+    expect(paths).toContain(LITTLE_GIANT_SOURCE_FILE)
+
+    // 规则与磁盘一致:真实库上**一条排除判据都不该命中**(该排的已经排干净了)。
+    const siblings = siblingIndex(paths)
+    const excluded = scanned
+      .map((f) => scopeOf(f.relPath, siblings.get(directoryOf(f.relPath))))
+      .filter((verdict) => !verdict.inScope)
+    expect(excluded).toEqual([])
   })
 })

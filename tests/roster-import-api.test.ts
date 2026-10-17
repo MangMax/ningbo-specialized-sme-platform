@@ -13,13 +13,14 @@
  * 夹具造数（企业/记录/事件）用 drizzle 直插（那是**输入**，不是被测行为）。
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema, useDb } from '../db'
 import { normalizeName } from '../lib/domain'
+import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 import {
   RosterImportApiError,
   createRosterImportClient,
@@ -38,8 +39,10 @@ import {
 import { MCP_WRITE_TOOLS } from '../server/utils/mcp-auth'
 import { listDifferences, listEnterprises } from '../server/utils/mcp-roster'
 import { startRosterApi } from './helpers/roster-http-server'
+import { minimalPdf } from './helpers/minimal-pdf'
 
 const TOKEN = 'test-api-token-value'
+const SAME_SOURCE_SHA = 'a'.repeat(64)
 const dirs: string[] = []
 
 /** 每个用例一个**全新临时库**（互不干扰；`useDb` 按路径缓存）。 */
@@ -91,6 +94,38 @@ function announcementRequest(over: Partial<RosterImportRequest> = {}): RosterImp
   }
 }
 
+function evidencePlanRequest(
+  idempotencyKey: string,
+  sourceFile: string,
+  source: 'jxj' | 'miit' = 'jxj',
+): RosterImportRequest {
+  return {
+    idempotencyKey,
+    sourceKind: 'announcement',
+    sourceIdentity: sourceFile,
+    sourceSha256: SAME_SOURCE_SHA,
+    payload: {
+      announcement: {
+        sourceDocument: { source, title: '合成计划测试公告' },
+        records: [
+          {
+            enterprise: { name: '合成计划企业有限公司', uscc: '91330211255994457P' },
+            titleCode: 'specialized_sme',
+            events: [
+              {
+                eventType: 'award',
+                year: 2026,
+                batchSeq: 1,
+                evidence: [{ sourceFile, attachment: '附件1', listNo: 1, page: 7 }],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  }
+}
+
 function seedEnterprise(
   db: ReturnType<typeof makeDb>,
   input: { name: string; uscc?: string | null; district?: string | null },
@@ -132,6 +167,78 @@ function seedEvent(
     .insert(schema.recordEvent)
     .values({ recordId, eventType, year, batchSeq, sortKey: year })
     .returning({ id: schema.recordEvent.id })
+    .get().id
+}
+
+/** 合成文件身份的服务端 SHA 证据；文件内容不落入仓库或真实文件库。 */
+function seedStoredFileHash(db: ReturnType<typeof makeDb>, relPath: string, sha256: string) {
+  const filename = relPath.split('/').at(-1) ?? relPath
+  const ext = filename.includes('.') ? filename.split('.').at(-1)!.toLowerCase() : ''
+  db.insert(schema.storedFile)
+    .values({ relPath, filename, ext, bytes: 1, sha256, categoryState: 'unset' })
+    .run()
+}
+
+async function withRosterHttp<T>(
+  db: ReturnType<typeof makeDb>,
+  run: (client: ReturnType<typeof createRosterImportClient>) => Promise<T>,
+): Promise<T> {
+  const server = await startRosterApi({ db, apiToken: TOKEN })
+  try {
+    return await run(createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN }))
+  } finally {
+    await server.close()
+  }
+}
+
+function boundaryRequest(
+  idempotencyKey: string,
+  payload: RosterImportRequest['payload'],
+): RosterImportRequest {
+  return {
+    idempotencyKey,
+    sourceKind: 'alias_evidence',
+    sourceIdentity: 'tests/roster-write-boundaries',
+    payload,
+  }
+}
+
+function seedPlatformRelation(
+  db: ReturnType<typeof makeDb>,
+  input: {
+    queryKey: string
+    usccRaw: string
+    nameRaw: string
+    queriedAt?: string
+    interface?: 'business_list' | 'apply_list'
+    rdjb?: string
+    enterpriseId?: number | null
+  },
+) {
+  const queryId = db
+    .insert(schema.platformQuery)
+    .values({
+      interface: input.interface ?? 'business_list',
+      queryKey: input.queryKey,
+      rdjb: input.rdjb ?? '3',
+      queriedAt: input.queriedAt ?? '2026-10-17T01:00:00.000Z',
+      status: 'success',
+    })
+    .returning({ id: schema.platformQuery.id })
+    .get().id
+  return db
+    .insert(schema.platformRelation)
+    .values({
+      queryId,
+      sequenceNo: 1,
+      relationKey: `SQ-${queryId}`,
+      enterpriseId: input.enterpriseId ?? null,
+      usccRaw: input.usccRaw,
+      nameRaw: input.nameRaw,
+      matchBasis: 'uscc',
+      verificationStatus: 'confirmed',
+    })
+    .returning({ id: schema.platformRelation.id })
     .get().id
 }
 
@@ -190,7 +297,7 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
         sourceDocument: { source: 'jxj', title: '全量表', docNumber: '甬经信中小〔2026〕1号' },
         records: [
           {
-            enterprise: { name: '甲企业有限公司', uscc: '913302110000000001' },
+            enterprise: { name: '甲企业有限公司', uscc: '913302017133602847' },
             titleCode: 'specialized_sme',
             events: [
               {
@@ -207,24 +314,36 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
         ],
       },
       aliases: [
-        { enterpriseName: '甲企业有限公司', name: '甲企业旧名有限公司', sourceKind: 'platform_business', sourceRefId: 7, verificationStatus: 'confirmed' },
+        {
+          enterpriseName: '甲企业有限公司',
+          name: '甲企业旧名有限公司',
+          sourceKind: 'platform_business',
+          sourceRelationRef: {
+            interface: 'business_list',
+            queryKey: '913302017133602847',
+            rdjb: '3',
+            queriedAt: '2026-10-16T03:00:00.000Z',
+            sequenceNo: 2,
+          },
+          verificationStatus: 'confirmed',
+        },
         { enterpriseName: '甲企业有限公司', name: '疑似同名待核有限公司', sourceKind: 'platform_apply', verificationStatus: 'pending' },
       ],
       platformQueries: [
         {
           interface: 'business_list',
-          queryKey: '913302110000000001',
+          queryKey: '913302017133602847',
           rdjb: '3',
           queriedAt: '2026-10-16T03:00:00.000Z',
           status: 'success',
           relations: [
-            { sequenceNo: 1, relationKey: 'SQ1', usccRaw: '913302110000000001', nameRaw: '甲企业有限公司', matchBasis: 'uscc', verificationStatus: 'confirmed' },
-            { sequenceNo: 2, relationKey: 'SQ2', usccRaw: '913302110000000001', nameRaw: '甲企业旧名有限公司', aliasNameRaw: '甲企业旧名有限公司', matchBasis: 'alias', verificationStatus: 'confirmed' },
+            { sequenceNo: 1, relationKey: 'SQ1', usccRaw: '913302017133602847', nameRaw: '甲企业有限公司', matchBasis: 'uscc', verificationStatus: 'confirmed' },
+            { sequenceNo: 2, relationKey: 'SQ2', usccRaw: '913302017133602847', nameRaw: '甲企业旧名有限公司', aliasNameRaw: '甲企业旧名有限公司', matchBasis: 'alias', verificationStatus: 'confirmed' },
             // 未知 sblx 取值：原样入库 + 标待核（不因未知取值崩溃）。
-            { sequenceNo: 3, relationKey: 'SQ3', usccRaw: '913302110000000001', nameRaw: '甲企业有限公司', declareKind: '复核确认' },
+            { sequenceNo: 3, relationKey: 'SQ3', usccRaw: '913302017133602847', nameRaw: '甲企业有限公司', declareKind: '复核确认' },
           ],
         },
-        { interface: 'business_list', queryKey: '913302110000000001', rdjb: '1', queriedAt: '2026-10-16T03:01:00.000Z', status: 'no_record' },
+        { interface: 'business_list', queryKey: '913302017133602847', rdjb: '1', queriedAt: '2026-10-16T03:01:00.000Z', status: 'no_record' },
       ],
       exportSnapshot: {
         titleCode: 'specialized_sme',
@@ -233,7 +352,7 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
         originalFilename: '专精特新中小企业导出Excel.xlsx',
         sha256: 'f'.repeat(64),
         rows: [
-          { sourceRowNo: 1, usccRaw: '913302110000000001', nameRaw: '甲企业有限公司' },
+          { sourceRowNo: 1, usccRaw: '913302017133602847', nameRaw: '甲企业有限公司' },
           { sourceRowNo: 2, usccRaw: '91330211000000000X', nameRaw: '平台有的企业' },
         ],
       },
@@ -342,6 +461,225 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
   })
 })
 
+describe('出处重放记账不进入调用方逐项结果', () => {
+  it('空事件经真实 HTTP 返回结构化错误且不写业务行', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const malformed = announcementRequest({ idempotencyKey: 'synthetic/null-event#sha256:stable' })
+    malformed.payload.announcement!.records[0]!.events = [null as never]
+    const before = rosterRowCounts(db)
+
+    try {
+      const result = await client.commit(malformed)
+
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({
+          kind: 'record_event',
+          ok: false,
+          error: expect.objectContaining({ code: 'event_type_unknown' }),
+        }),
+      )
+      expect(rosterRowCounts(db)).toEqual(before)
+      expect(db.select().from(schema.enterprise).all()).toHaveLength(0)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('已有匹配记录时空事件仍经真实 HTTP 返回结构化错误且批次失败', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const enterpriseId = seedEnterprise(db, {
+      name: '合成计划企业有限公司',
+      uscc: '91330211255994457P',
+    })
+    const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    seedEvent(db, recordId, 'award', 2026, 1)
+    const before = rosterRowCounts(db)
+    const malformed = evidencePlanRequest('synthetic/null-event-existing#sha256:stable', 'synthetic/new.pdf')
+    malformed.payload.announcement!.records[0]!.events = [null as never]
+
+    try {
+      const result = await client.commit(malformed)
+
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({
+          kind: 'record_event',
+          ok: false,
+          error: expect.objectContaining({ code: 'event_type_unknown' }),
+        }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+      expect(db.select().from(schema.recordEvidence).all()).toHaveLength(0)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('已有匹配事件遇到 evidence:[null] 时返回结构化出处错误且不写入', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const enterpriseId = seedEnterprise(db, { name: '合成空出处企业有限公司', uscc: '91330211255994457P' })
+    const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    seedEvent(db, recordId, 'award', 2026, 1)
+    const before = rosterRowCounts(db)
+    const malformed = evidencePlanRequest('synthetic/null-evidence-existing#sha256:stable', 'synthetic/new.pdf')
+    malformed.payload.announcement!.records[0]!.events![0]!.evidence = [null as never]
+
+    try {
+      const result = await client.commit(malformed)
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({
+          kind: 'record_evidence',
+          ok: false,
+          error: expect.objectContaining({ code: 'source_file_required', field: 'evidence.sourceFile' }),
+        }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+      expect(db.select().from(schema.recordEvidence).all()).toHaveLength(0)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('同批重复新事件合并遇到 evidence:[null] 时保留结构化出处错误且不写入', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const enterpriseId = seedEnterprise(db, { name: '合成重复新事件空出处企业', uscc: '91330211255994457P' })
+    seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    const before = rosterRowCounts(db)
+    const malformed = evidencePlanRequest('synthetic/null-evidence-duplicate-new#sha256:stable', 'synthetic/new.pdf')
+    malformed.payload.announcement!.records[0]!.events = [
+      { eventType: 'award', year: 2026, batchSeq: 1, evidence: [null as never] },
+      { eventType: 'award', year: 2026, batchSeq: 1, evidence: [{ sourceFile: 'synthetic/valid.pdf', attachment: '附件2', listNo: 2, page: 8 }] },
+    ]
+
+    try {
+      const result = await client.commit(malformed)
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({
+          kind: 'record_evidence',
+          ok: false,
+          error: expect.objectContaining({ code: 'source_file_required', field: 'evidence.sourceFile' }),
+        }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+      expect(db.select().from(schema.recordEvent).all()).toHaveLength(0)
+      expect(db.select().from(schema.recordEvidence).all()).toHaveLength(0)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('commit、重试、replay 与批次读回隐藏内部目标快照，同时保留可重放记账', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const expectPublicItems = (items: Array<{ detail?: Record<string, unknown> }>) => {
+      for (const item of items) {
+        expect(item.detail).not.toHaveProperty('evidenceRepointTargets')
+        expect(item.detail).not.toHaveProperty('evidenceRepointPlanFingerprint')
+      }
+    }
+
+    try {
+      const base = evidencePlanRequest('synthetic/evidence-plan-base', 'jxj/announcement/2026/计划-A.pdf')
+      const first = await client.commit(base)
+      expect(first.status).toBe('committed')
+      expectPublicItems(first.items)
+
+      const repoint = evidencePlanRequest('synthetic/evidence-plan-repoint', 'jxj/announcement/2026/计划-B.pdf')
+      const committed = await client.commit(repoint)
+      expect(committed.status).toBe('committed')
+      expect(committed.summary.evidenceRepointed).toBe(1)
+      expect(committed.items.reduce((n, item) => n + Number(item.detail?.evidenceRepointed ?? 0), 0)).toBe(1)
+      expectPublicItems(committed.items)
+
+      const committedLedger = db.select().from(schema.importBatch).all().find((batch) => batch.idempotencyKey === repoint.idempotencyKey)!
+      const storedCommitItems = committedLedger.itemResults as Array<{ detail?: Record<string, unknown> }>
+      expect(storedCommitItems[0]?.detail?.evidenceRepointTargets).toHaveLength(1)
+      expect(storedCommitItems[0]?.detail?.evidenceRepointPlanFingerprint).toMatch(/^[0-9a-f]{64}$/)
+
+      // 幂等读回和 outcome 查询都投影成同一份调用方结果。
+      const retried = await client.commit(repoint)
+      expectPublicItems(retried.items)
+      expectPublicItems(readImportBatchOutcome(db, repoint.idempotencyKey)!.items!)
+
+      // 同一批次的显式 replay 仍能按载荷计划更新出处，但响应不泄漏计划快照。
+      const replayRequest = evidencePlanRequest(repoint.idempotencyKey, 'jxj/announcement/2026/计划-C.pdf')
+      const replay = await client.replay(replayRequest)
+      expect(replay.status).toBe('replayed')
+      expect(replay.evidenceRepointed).toBe(1)
+      expectPublicItems(replay.items)
+      expect(db.select().from(schema.recordEvidence).all().map((row) => ({ sourceFile: row.sourceFile, page: row.page }))).toEqual([
+        { sourceFile: 'jxj/announcement/2026/计划-C.pdf', page: 7 },
+      ])
+
+      const replayLedger = db.select().from(schema.importBatch).all().find((batch) => batch.idempotencyKey === `${repoint.idempotencyKey}#repoint`)!
+      const storedReplayItems = replayLedger.itemResults as Array<{ detail?: Record<string, unknown> }>
+      expect(storedReplayItems[0]?.detail?.evidenceRepointTargets).toHaveLength(1)
+      expectPublicItems(readImportBatchOutcome(db, `${repoint.idempotencyKey}#repoint`)!.items!)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('replay 指纹包含公告默认来源，来源改变时重新解析目标记录', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const jxjBase = evidencePlanRequest('synthetic/default-source-jxj', 'synthetic/default-source-A.pdf')
+    const miitBase = evidencePlanRequest('synthetic/default-source-miit', 'synthetic/default-source-A.pdf', 'miit')
+    const target = evidencePlanRequest(
+      'synthetic/default-source-repoint#sha256:stable',
+      'synthetic/default-source-B.pdf',
+    )
+
+    try {
+      expect((await client.commit(jxjBase)).status).toBe('committed')
+      expect((await client.commit(miitBase)).status).toBe('committed')
+      const committed = await client.commit(target)
+      expect(committed.summary.evidenceRepointed).toBe(1)
+
+      const changedDefault = evidencePlanRequest(target.idempotencyKey, 'synthetic/default-source-B.pdf', 'miit')
+      const replayed = await client.replay(changedDefault)
+
+      expect(replayed.status).toBe('replayed')
+      expect(replayed.evidenceRepointed).toBe(1)
+      const enterprise = db.select().from(schema.enterprise).all().find((row) => row.name === '合成计划企业有限公司')!
+      const evidenceBySource = Object.fromEntries(
+        db
+          .select()
+          .from(schema.record)
+          .all()
+          .filter((record) => record.enterpriseId === enterprise.id)
+          .map((record) => {
+            const event = db.select().from(schema.recordEvent).all().find((row) => row.recordId === record.id)!
+            const evidence = db.select().from(schema.recordEvidence).all().find((row) => row.recordEventId === event.id)!
+            return [record.source, { sourceFile: evidence.sourceFile, page: evidence.page }]
+          }),
+      )
+      expect(evidenceBySource).toEqual({
+        jxj: { sourceFile: 'synthetic/default-source-B.pdf', page: 7 },
+        miit: { sourceFile: 'synthetic/default-source-B.pdf', page: 7 },
+      })
+    } finally {
+      await server.close()
+    }
+  })
+})
+
 // ---------------------------------------------------------------------------
 // 3. 逐项错误 + 单批事务（绝不部分提交）
 // ---------------------------------------------------------------------------
@@ -355,7 +693,7 @@ describe('逐项错误与单批事务', () => {
       announcement: {
         sourceDocument: { source: 'jxj', title: '坏行表' },
         records: [
-          { enterprise: { name: '好企业', uscc: '913302110000000002' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] },
+          { enterprise: { name: '好企业', uscc: '91330211000000012K' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] },
           // ★ 称号不在字典内 —— 逐项报错，不静默丢行；整批不落库。
           { enterprise: { name: '坏企业' }, titleCode: 'not_a_title', events: [{ eventType: 'award', year: 2026 }] },
         ],
@@ -400,7 +738,7 @@ describe('逐项错误与单批事务', () => {
         announcement: {
           sourceDocument: { source: 'jxj', title: '坏行表' },
           records: [
-            { enterprise: { name: '好企业', uscc: '913302110000000002' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] },
+            { enterprise: { name: '好企业', uscc: '91330211000000012K' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] },
           ],
         },
         differences: [
@@ -521,14 +859,14 @@ describe('归并与回填：血缘在 item_results 中可查询', () => {
 
   it('★ 同 (企业,称号,来源) 冲突时：事件折到规范行那条记录，数量不减、一条不折叠', () => {
     const db = makeDb()
-    const canonical = seedEnterprise(db, { name: '同名冲突甲', uscc: '913302110000000007' })
+    const canonical = seedEnterprise(db, { name: '同名冲突甲', uscc: '91330206732109570E' })
     const canonicalRecord = seedRecord(db, canonical, 'innovative_sme', 'jxj')
     seedEvent(db, canonicalRecord, 'award', 2019, 2)
     const duplicate = seedEnterprise(db, { name: '同名冲突乙' })
     const dupRecord = seedRecord(db, duplicate, 'innovative_sme', 'jxj')
     seedEvent(db, dupRecord, 'award', 2021, 1)
 
-    const result = commitRosterImport(db, mergeRequest(duplicate, 'merge/conflict#sha256:m2', '913302110000000007'))
+    const result = commitRosterImport(db, mergeRequest(duplicate, 'merge/conflict#sha256:m2', '91330206732109570E'))
     expect(result.status).toBe('committed')
 
     const merged = db.select().from(schema.record).all().filter((r) => r.enterpriseId === canonical && r.titleCode === 'innovative_sme')
@@ -548,6 +886,347 @@ describe('归并与回填：血缘在 item_results 中可查询', () => {
     expect(result.status).toBe('failed')
     expect(result.items[0]!.error!.code).toBe('merge_source_not_found')
     expect(rosterRowCounts(db)).toEqual(before)
+  })
+})
+
+describe('API 写入边界：归并选择器与差异冲突', () => {
+  const TARGET_USCC = '91330211255994457P'
+
+  it('按名定位到多家企业时拒绝归并，不选择首条同名行', async () => {
+    const db = makeDb()
+    const duplicateName = '宁波同名归并边界企业有限公司'
+    const first = seedEnterprise(db, { name: duplicateName })
+    const second = seedEnterprise(db, { name: duplicateName })
+    seedEnterprise(db, { name: '宁波统代规范行有限公司', uscc: TARGET_USCC })
+    const before = rosterRowCounts(db)
+    const request = boundaryRequest('write-boundary/merge-ambiguous', {
+      merges: [{ fromEnterpriseName: duplicateName, intoUscc: TARGET_USCC, sourceKind: 'manual' }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.summary.written).toBe(0)
+    expect(result.items.find((item) => item.kind === 'merge')!.error!.code).toBe('enterprise_ambiguous')
+    expect(enterpriseExists(db, first)).toBe(true)
+    expect(enterpriseExists(db, second)).toBe(true)
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it('归并同时给出的 ID 与名称冲突时拒绝，不按 ID 静默删除另一主体', async () => {
+    const db = makeDb()
+    const fromId = seedEnterprise(db, { name: '宁波归并ID主体有限公司' })
+    seedEnterprise(db, { name: '宁波归并名称主体有限公司' })
+    seedEnterprise(db, { name: '宁波归并规范行有限公司', uscc: TARGET_USCC })
+    const before = rosterRowCounts(db)
+    const request = boundaryRequest('write-boundary/merge-selector-conflict', {
+      merges: [{
+        fromEnterpriseId: fromId,
+        fromEnterpriseName: '宁波归并名称主体有限公司',
+        intoUscc: TARGET_USCC,
+        sourceKind: 'manual',
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.items.find((item) => item.kind === 'merge')!.error!.code).toBe('enterprise_selector_conflict')
+    expect(enterpriseExists(db, fromId)).toBe(true)
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it.each([
+    { label: 'omitted sourceRefId', source: {}, expectedCode: 'alias_source_evidence_required' },
+    { label: 'unknown sourceRefId', source: { sourceRefId: 999999 }, expectedCode: 'alias_source_evidence_mismatch' },
+  ])('confirmed platform alias rejects $label', async ({ label, source, expectedCode }) => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
+    const request = boundaryRequest(`write-boundary/alias-${label}`, {
+      aliases: [{
+        uscc: TARGET_USCC,
+        name: '宁波未经平台支持的曾用名有限公司',
+        sourceKind: 'platform_business',
+        verificationStatus: 'confirmed',
+        ...source,
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.items.find((item) => item.kind === 'alias')!.error!.code).toBe(expectedCode)
+    expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
+    expect(searchEnterpriseIdsByName(db, '宁波未经平台支持的曾用名有限公司')).toEqual([])
+    expect(enterpriseExists(db, enterpriseId)).toBe(true)
+  })
+
+  it('裸关系 ID 指向其他统代时拒绝 confirmed 平台别名', async () => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
+    const relationId = seedPlatformRelation(db, {
+      queryKey: '91330206793007818K',
+      usccRaw: '91330206793007818K',
+      nameRaw: '宁波待核旧名有限公司',
+    })
+    const request = boundaryRequest('write-boundary/alias-wrong-uscc-id', {
+      aliases: [{
+        uscc: TARGET_USCC,
+        name: '宁波待核旧名有限公司',
+        sourceKind: 'platform_business',
+        sourceRefId: relationId,
+        verificationStatus: 'confirmed',
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.items.find((item) => item.kind === 'alias')!.error!.code).toBe('alias_source_evidence_mismatch')
+    expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
+    expect(enterpriseExists(db, enterpriseId)).toBe(true)
+  })
+
+  it('裸关系 ID 已归属另一企业时拒绝 confirmed 平台别名', async () => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
+    const otherEnterpriseId = seedEnterprise(db, { name: '宁波关系归属企业有限公司', uscc: '91330206793007818K' })
+    const relationId = seedPlatformRelation(db, {
+      queryKey: TARGET_USCC,
+      usccRaw: TARGET_USCC,
+      nameRaw: '宁波关系归属冲突旧名有限公司',
+      enterpriseId: otherEnterpriseId,
+    })
+    const request = boundaryRequest('write-boundary/alias-wrong-owner-id', {
+      aliases: [{
+        uscc: TARGET_USCC,
+        name: '宁波关系归属冲突旧名有限公司',
+        sourceKind: 'platform_business',
+        sourceRefId: relationId,
+        verificationStatus: 'confirmed',
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.items.find((item) => item.kind === 'alias')!.error!.code).toBe('alias_source_evidence_mismatch')
+    expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
+    expect(enterpriseExists(db, enterpriseId)).toBe(true)
+    expect(enterpriseExists(db, otherEnterpriseId)).toBe(true)
+  })
+
+  it('批内自然键关系的 qymc 不等于别名时拒绝 confirmed 平台别名', async () => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
+    const request = boundaryRequest('write-boundary/alias-wrong-qymc-ref', {
+      platformQueries: [{
+        interface: 'business_list',
+        queryKey: TARGET_USCC,
+        rdjb: '3',
+        queriedAt: '2026-10-17T02:00:00.000Z',
+        status: 'success',
+        relations: [{
+          sequenceNo: 1,
+          relationKey: 'SQ-wrong-qymc',
+          usccRaw: TARGET_USCC,
+          nameRaw: '宁波平台实际返回名称有限公司',
+          matchBasis: 'uscc',
+          verificationStatus: 'confirmed',
+        }],
+      }],
+      aliases: [{
+        uscc: TARGET_USCC,
+        name: '宁波未经返回的曾用名有限公司',
+        sourceKind: 'platform_business',
+        verificationStatus: 'confirmed',
+        sourceRelationRef: {
+          interface: 'business_list',
+          queryKey: TARGET_USCC,
+          rdjb: '3',
+          queriedAt: '2026-10-17T02:00:00.000Z',
+          sequenceNo: 1,
+        },
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.items.find((item) => item.kind === 'alias')!.error!.code).toBe('alias_source_evidence_mismatch')
+    expect(db.select().from(schema.platformQuery).all()).toHaveLength(0)
+    expect(db.select().from(schema.platformRelation).all()).toHaveLength(0)
+    expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
+    expect(enterpriseExists(db, enterpriseId)).toBe(true)
+  })
+
+  it('同統代且 qymc 逐字匹配的批内关系可确认平台别名', async () => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
+    const aliasName = '宁波平台已返回的历史名称有限公司'
+    const request = boundaryRequest('write-boundary/alias-valid-qymc-ref', {
+      platformQueries: [{
+        interface: 'business_list',
+        queryKey: TARGET_USCC,
+        rdjb: '3',
+        queriedAt: '2026-10-17T03:00:00.000Z',
+        status: 'success',
+        relations: [{
+          sequenceNo: 1,
+          relationKey: 'SQ-valid-qymc',
+          usccRaw: TARGET_USCC,
+          nameRaw: aliasName,
+          matchBasis: 'uscc',
+          verificationStatus: 'confirmed',
+        }],
+      }],
+      aliases: [{
+        uscc: TARGET_USCC,
+        name: aliasName,
+        sourceKind: 'platform_business',
+        verificationStatus: 'confirmed',
+        sourceRelationRef: {
+          interface: 'business_list',
+          queryKey: TARGET_USCC,
+          rdjb: '3',
+          queriedAt: '2026-10-17T03:00:00.000Z',
+          sequenceNo: 1,
+        },
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('committed')
+    const relation = db.select().from(schema.platformRelation).all()[0]!
+    expect(db.select().from(schema.enterpriseAlias).all()).toMatchObject([{
+      enterpriseId,
+      name: aliasName,
+      sourceKind: 'platform_business',
+      sourceRefId: relation.id,
+      verificationStatus: 'confirmed',
+    }])
+  })
+
+  it('pending 平台别名仍不可搜索，announcement/manual confirmed 别名可无平台关系', async () => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波本地来源别名目标有限公司', uscc: TARGET_USCC })
+    const pendingName = '宁波待核平台名称有限公司'
+    const announcementName = '宁波公告来源历史名称有限公司'
+    const manualName = '宁波人工登记历史名称有限公司'
+    const request = boundaryRequest('write-boundary/alias-pending-and-local', {
+      aliases: [
+        { uscc: TARGET_USCC, name: pendingName, sourceKind: 'platform_business', verificationStatus: 'pending' },
+        { uscc: TARGET_USCC, name: announcementName, sourceKind: 'announcement', verificationStatus: 'confirmed' },
+        { uscc: TARGET_USCC, name: manualName, sourceKind: 'manual', verificationStatus: 'confirmed' },
+      ],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('committed')
+    expect(searchEnterpriseIdsByName(db, pendingName)).toEqual([])
+    expect(searchEnterpriseIdsByName(db, announcementName)).toEqual([enterpriseId])
+    expect(searchEnterpriseIdsByName(db, manualName)).toEqual([enterpriseId])
+    expect(db.select().from(schema.enterpriseAlias).all().map((alias) => alias.verificationStatus)).toEqual([
+      'pending', 'confirmed', 'confirmed',
+    ])
+  })
+
+  it('归并时同唯一键但内容不同的差异行预检拒绝，提交整批不写', async () => {
+    const db = makeDb()
+    const name = '宁波差异冲突归并企业有限公司'
+    const from = seedEnterprise(db, { name })
+    const into = seedEnterprise(db, { name, uscc: TARGET_USCC })
+    const sourceEvidenceId = db.insert(schema.platformQuery).values({
+      interface: 'business_list', queryKey: TARGET_USCC, rdjb: '3',
+      queriedAt: '2026-10-17T04:00:00.000Z', status: 'success',
+    }).returning({ id: schema.platformQuery.id }).get().id
+    const targetEvidenceId = db.insert(schema.platformQuery).values({
+      interface: 'business_list', queryKey: TARGET_USCC, rdjb: '3',
+      queriedAt: '2026-10-17T04:01:00.000Z', status: 'success',
+    }).returning({ id: schema.platformQuery.id }).get().id
+    const recordedAt = '2026-10-17T04:02:00.000Z'
+    const sourceDifferenceId = db.insert(schema.differenceReason).values({
+      enterpriseId: from,
+      titleCode: 'specialized_sme',
+      direction: 'missing_in_miit',
+      status: 'confirmed_reason',
+      reasonCode: 'renamed',
+      reasonNote: '来源行记录了更名',
+      measureCode: 'update_current_name',
+      evidenceQueryId: sourceEvidenceId,
+      verificationStatus: 'confirmed',
+      recordedAt,
+    }).returning({ id: schema.differenceReason.id }).get().id
+    const targetDifferenceId = db.insert(schema.differenceReason).values({
+      enterpriseId: into,
+      titleCode: 'specialized_sme',
+      direction: 'missing_in_miit',
+      status: 'needs_review',
+      reasonCode: null,
+      measureCode: 'manual_review',
+      evidenceQueryId: targetEvidenceId,
+      verificationStatus: 'pending',
+      recordedAt,
+    }).returning({ id: schema.differenceReason.id }).get().id
+    const beforeEnterprises = db.select().from(schema.enterprise).all()
+    const beforeDifferences = db.select().from(schema.differenceReason).all()
+    const request = boundaryRequest('write-boundary/merge-difference-conflict', {
+      merges: [{ fromEnterpriseId: from, intoUscc: TARGET_USCC, sourceKind: 'manual' }],
+    })
+
+    const result = await withRosterHttp(db, async (client) => {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts.find((item) => item.kind === 'merge')!.error!.code)
+        .toBe('merge_difference_conflict')
+      return client.commit(request)
+    })
+
+    expect(result.status).toBe('failed')
+    expect(result.summary.written).toBe(0)
+    expect(enterpriseExists(db, from)).toBe(true)
+    expect(db.select().from(schema.enterprise).all()).toEqual(beforeEnterprises)
+    expect(db.select().from(schema.differenceReason).all()).toEqual(beforeDifferences)
+    expect(db.select().from(schema.differenceReason).all().map((row) => row.id)).toEqual([
+      sourceDifferenceId, targetDifferenceId,
+    ])
+  })
+
+  it('归并时同唯一键且内容等价的差异行仍按原规则保留一条', async () => {
+    const db = makeDb()
+    const name = '宁波差异等价归并企业有限公司'
+    const from = seedEnterprise(db, { name })
+    const into = seedEnterprise(db, { name, uscc: TARGET_USCC })
+    const evidenceQueryId = db.insert(schema.platformQuery).values({
+      interface: 'business_list', queryKey: TARGET_USCC, rdjb: '3',
+      queriedAt: '2026-10-17T05:00:00.000Z', status: 'success',
+    }).returning({ id: schema.platformQuery.id }).get().id
+    const recordedAt = '2026-10-17T05:01:00.000Z'
+    const difference = {
+      titleCode: 'specialized_sme' as const,
+      direction: 'missing_in_miit' as const,
+      status: 'confirmed_reason' as const,
+      reasonCode: 'platform_stale' as const,
+      reasonNote: '平台快照仍未同步',
+      measureCode: 'mark_platform_snapshot' as const,
+      evidenceQueryId,
+      verificationStatus: 'confirmed' as const,
+      recordedAt,
+    }
+    db.insert(schema.differenceReason).values({ enterpriseId: from, ...difference }).run()
+    db.insert(schema.differenceReason).values({ enterpriseId: into, ...difference }).run()
+    const request = boundaryRequest('write-boundary/merge-difference-equivalent', {
+      merges: [{ fromEnterpriseId: from, intoUscc: TARGET_USCC, sourceKind: 'manual' }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('committed')
+    expect(enterpriseExists(db, from)).toBe(false)
+    const kept = db.select().from(schema.differenceReason).all().filter((row) => row.enterpriseId === into)
+    expect(kept).toHaveLength(1)
+    expect(kept[0]).toMatchObject(difference)
   })
 })
 
@@ -632,6 +1311,494 @@ describe('真实 HTTP：鉴权', () => {
 })
 
 describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整性', () => {
+  it.each([
+    ['USCC 后名称', false],
+    ['名称后 USCC', true],
+  ] as const)('唯一既有企业的统代与名称写法合并重复新事件出处且顺序无关（%s）', async (_order, reverse) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成写法归组企业有限公司'
+    const uscc = '91330211255994457P'
+    const enterpriseId = seedEnterprise(db, { name, uscc })
+    const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    const shared = { sourceFile: 'synthetic/group/shared.pdf', attachment: '附件1', listNo: 1, page: 7 }
+    const withUscc = {
+      enterprise: { name, uscc },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 4, evidence: [shared, { sourceFile: 'synthetic/group/uscc.pdf', attachment: '附件1', listNo: 2, page: 8 }] }],
+    }
+    const withoutUscc = {
+      enterprise: { name },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 4, evidence: [shared, { sourceFile: 'synthetic/group/name.pdf', attachment: '附件2', listNo: 3, page: 9 }] }],
+    }
+    const request = announcementRequest({ idempotencyKey: `synthetic/group/${reverse ? 'name-first' : 'uscc-first'}` })
+    request.payload.announcement!.records = reverse ? [withoutUscc, withUscc] : [withUscc, withoutUscc]
+
+    try {
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(db.select().from(schema.record).all()).toHaveLength(1)
+      expect(db.select().from(schema.recordEvent).all()).toHaveLength(1)
+      expect(db.select().from(schema.recordEvidence).all().map(({ sourceFile, attachment, listNo, page }) => ({ sourceFile, attachment, listNo, page })).sort((a, b) => a.sourceFile.localeCompare(b.sourceFile))).toEqual([
+        { sourceFile: 'synthetic/group/name.pdf', attachment: '附件2', listNo: 3, page: 9 },
+        shared,
+        { sourceFile: 'synthetic/group/uscc.pdf', attachment: '附件1', listNo: 2, page: 8 },
+      ])
+      expect(db.select().from(schema.recordEvent).all()[0]?.recordId).toBe(recordId)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('同名但不同 USCC 的既有企业各自写入事件和出处，不跨企业合并', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成同名不同统代企业'
+    const enterpriseA = seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    const enterpriseB = seedEnterprise(db, { name, uscc: '91330201753252106U' })
+    const recordA = seedRecord(db, enterpriseA, 'specialized_sme', 'jxj')
+    const recordB = seedRecord(db, enterpriseB, 'specialized_sme', 'jxj')
+    const request = announcementRequest({ idempotencyKey: 'synthetic/group/distinct-uscc' })
+    request.payload.announcement!.records = [
+      { enterprise: { name, uscc: '91330211255994457P' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 4, evidence: [{ sourceFile: 'synthetic/group/a.pdf', attachment: '附件1', listNo: 1, page: 7 }] }] },
+      { enterprise: { name, uscc: '91330201753252106U' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 4, evidence: [{ sourceFile: 'synthetic/group/b.pdf', attachment: '附件1', listNo: 1, page: 7 }] }] },
+    ]
+
+    try {
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(db.select().from(schema.recordEvent).all().map((event) => event.recordId).sort()).toEqual([recordA, recordB].sort())
+      expect(db.select().from(schema.recordEvidence).all().map((row) => [row.recordEventId, row.sourceFile]).sort((a, b) => String(a[1]).localeCompare(String(b[1])))).toEqual([
+        [db.select().from(schema.recordEvent).all().find((event) => event.recordId === recordA)!.id, 'synthetic/group/a.pdf'],
+        [db.select().from(schema.recordEvent).all().find((event) => event.recordId === recordB)!.id, 'synthetic/group/b.pdf'],
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('重复事件落到有歧义的同名企业时返回冲突且不写入', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成歧义同名企业'
+    const enterpriseId = seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    seedEnterprise(db, { name, uscc: '91330201753252106U' })
+    seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    const before = rosterRowCounts(db)
+    const request = announcementRequest({ idempotencyKey: 'synthetic/group/ambiguous-name' })
+    request.payload.announcement!.records = [
+      { enterprise: { name, uscc: '91330211255994457P' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 4, evidence: [{ sourceFile: 'synthetic/group/known.pdf', attachment: '附件1', listNo: 1, page: 7 }] }] },
+      { enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 4, evidence: [{ sourceFile: 'synthetic/group/ambiguous.pdf', attachment: '附件2', listNo: 2, page: 8 }] }] },
+    ]
+
+    try {
+      const result = await client.commit(request)
+      expect(result.status).toBe('failed')
+      expect(result.items.some((item) => item.error?.code === 'enterprise_ambiguous')).toBe(true)
+      expect(rosterRowCounts(db)).toEqual(before)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['USCC 第二家在前', false],
+    ['name-only 在前', true],
+  ] as const)('明确指向第二家 USCC 的记录与歧义 name-only 记录顺序无关地整批失败（%s）', async (_order, nameOnlyFirst) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成歧义顺序企业'
+    seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    seedEnterprise(db, { name, uscc: '91330201753252106U' })
+    const before = rosterRowCounts(db)
+    const explicitUscc = {
+      enterprise: { name, uscc: '91330201753252106U' },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 5, evidence: [{ sourceFile: 'synthetic/ambiguous/explicit.pdf', attachment: '附件1', listNo: 1, page: 7 }] }],
+    }
+    const nameOnly = {
+      enterprise: { name },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 5, evidence: [{ sourceFile: 'synthetic/ambiguous/name-only.pdf', attachment: '附件1', listNo: 2, page: 8 }] }],
+    }
+    const request = announcementRequest({ idempotencyKey: `synthetic/ambiguous-order/${nameOnlyFirst ? 'name-first' : 'uscc-first'}` })
+    request.payload.announcement!.records = nameOnlyFirst ? [nameOnly, explicitUscc] : [explicitUscc, nameOnly]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toContainEqual(
+        expect.objectContaining({
+          ok: false,
+          error: expect.objectContaining({ code: 'enterprise_ambiguous' }),
+        }),
+      )
+      expect(rosterRowCounts(db)).toEqual(before)
+
+      const result = await client.commit(request)
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({
+          ok: false,
+          error: expect.objectContaining({ code: 'enterprise_ambiguous' }),
+        }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('单条 name-only 记录命中多家同名企业时预检与提交均结构化拒绝', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成单条歧义企业'
+    seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    seedEnterprise(db, { name, uscc: '91330201753252106U' })
+    const before = rosterRowCounts(db)
+    const request = announcementRequest({ idempotencyKey: 'synthetic/ambiguous/single-name-only' })
+    request.payload.announcement!.records = [
+      { enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 6, evidence: [{ sourceFile: 'synthetic/ambiguous/single.pdf', attachment: '附件1', listNo: 1, page: 9 }] }] },
+    ]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(rosterRowCounts(db)).toEqual(before)
+
+      const result = await client.commit(request)
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('唯一名称写法仍可写入既有企业', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成唯一名称导入企业'
+    const enterpriseId = seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    const request = announcementRequest({ idempotencyKey: 'synthetic/identity/unique-name' })
+    request.payload.announcement!.records = [
+      { enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 7, evidence: [{ sourceFile: 'synthetic/identity/unique-name.pdf', attachment: '附件1', listNo: 1, page: 10 }] }] },
+    ]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toEqual([])
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(db.select().from(schema.recordEvent).all().map((event) => event.recordId)).toEqual([recordId])
+      expect(db.select().from(schema.recordEvidence).all().map((evidence) => evidence.sourceFile)).toEqual(['synthetic/identity/unique-name.pdf'])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('存在同名企业时明确 USCC 仍可写入对应既有企业', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成明确统代导入企业'
+    seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    const targetId = seedEnterprise(db, { name, uscc: '91330201753252106U' })
+    const recordId = seedRecord(db, targetId, 'specialized_sme', 'jxj')
+    const request = announcementRequest({ idempotencyKey: 'synthetic/identity/explicit-uscc' })
+    request.payload.announcement!.records = [
+      { enterprise: { name, uscc: '91330201753252106U' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 8, evidence: [{ sourceFile: 'synthetic/identity/explicit-uscc.pdf', attachment: '附件1', listNo: 1, page: 11 }] }] },
+    ]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toEqual([])
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(db.select().from(schema.recordEvent).all().map((event) => event.recordId)).toEqual([recordId])
+      expect(db.select().from(schema.recordEvidence).all().map((evidence) => evidence.sourceFile)).toEqual(['synthetic/identity/explicit-uscc.pdf'])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['USCC 在前', false],
+    ['name-only 在前', true],
+  ] as const)('空库同名混合 USCC/name-only 记录顺序无关地写成一个企业事件和两条出处（%s）', async (_order, nameOnlyFirst) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成空库批次归组企业'
+    const uscc = '91330201753252106U'
+    const explicit = {
+      enterprise: { name, uscc },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 9, evidence: [{ sourceFile: 'synthetic/batch-identity/explicit.pdf', attachment: '附件1', listNo: 1, page: 12 }] }],
+    }
+    const nameOnly = {
+      enterprise: { name },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 9, evidence: [{ sourceFile: 'synthetic/batch-identity/name-only.pdf', attachment: '附件1', listNo: 2, page: 13 }] }],
+    }
+    const request = announcementRequest({ idempotencyKey: `synthetic/batch-identity/${nameOnlyFirst ? 'name-first' : 'uscc-first'}` })
+    request.payload.announcement!.records = nameOnlyFirst ? [nameOnly, explicit] : [explicit, nameOnly]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight).toMatchObject({ add: 1, conflicts: [] })
+      expect(rosterRowCounts(db)).toMatchObject({ enterprise: 0, record: 0, record_event: 0, record_evidence: 0 })
+
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(result.summary.failed).toBe(0)
+      expect(rosterRowCounts(db)).toMatchObject({ enterprise: 1, record: 1, record_event: 1, record_evidence: 2 })
+
+      const [enterprise] = db.select().from(schema.enterprise).all()
+      expect(enterprise).toMatchObject({ name, usccNorm: uscc })
+      const [record] = db.select().from(schema.record).all()
+      expect(record).toMatchObject({ enterpriseId: enterprise!.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: uscc })
+      const [event] = db.select().from(schema.recordEvent).all()
+      expect(event).toMatchObject({ recordId: record!.id, eventType: 'award', year: 2026, batchSeq: 9 })
+      expect(db.select().from(schema.recordEvidence).all().map(({ sourceFile, attachment, listNo, page }) => ({ sourceFile, attachment, listNo, page })).sort((a, b) => a.sourceFile.localeCompare(b.sourceFile))).toEqual([
+        { sourceFile: 'synthetic/batch-identity/explicit.pdf', attachment: '附件1', listNo: 1, page: 12 },
+        { sourceFile: 'synthetic/batch-identity/name-only.pdf', attachment: '附件1', listNo: 2, page: 13 },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['name-only 在前', true],
+    ['name-only 在后', false],
+  ] as const)('批内同名多 USCC 时 name-only 返回 enterprise_ambiguous 且整批不写（%s）', async (_order, nameOnlyFirst) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成批内多统代歧义企业'
+    const explicitA = {
+      enterprise: { name, uscc: '91330211255994457P' },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 10, evidence: [{ sourceFile: 'synthetic/batch-identity/a.pdf', attachment: '附件1', listNo: 1, page: 14 }] }],
+    }
+    const explicitB = {
+      enterprise: { name, uscc: '91330201753252106U' },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 10, evidence: [{ sourceFile: 'synthetic/batch-identity/b.pdf', attachment: '附件1', listNo: 1, page: 14 }] }],
+    }
+    const nameOnly = {
+      enterprise: { name },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 10, evidence: [{ sourceFile: 'synthetic/batch-identity/name-only-ambiguous.pdf', attachment: '附件2', listNo: 2, page: 15 }] }],
+    }
+    const request = announcementRequest({ idempotencyKey: `synthetic/batch-identity/ambiguous/${nameOnlyFirst ? 'name-first' : 'name-last'}` })
+    request.payload.announcement!.records = nameOnlyFirst ? [nameOnly, explicitA, explicitB] : [explicitA, explicitB, nameOnly]
+    const before = rosterRowCounts(db)
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(rosterRowCounts(db)).toEqual(before)
+
+      const result = await client.commit(request)
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['name-only 在前', true],
+    ['显式 USCC B 在前', false],
+  ] as const)('既有 USCC A 与批内 USCC B 是不同候选时 name-only 顺序无关地整批失败（%s）', async (_order, nameOnlyFirst) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成既有与批内统代混合候选企业'
+    const enterpriseA = seedEnterprise(db, { name, uscc: '91330211255994457P' })
+    const existingRecord = seedRecord(db, enterpriseA, 'specialized_sme', 'jxj')
+    const existingEvent = seedEvent(db, existingRecord, 'award', 2022, 1)
+    db.insert(schema.recordEvidence)
+      .values({ recordEventId: existingEvent, sourceFile: 'synthetic/identity-existing/a.pdf', attachment: '附件1', listNo: 1, page: 1 })
+      .run()
+    const before = rosterRowCounts(db)
+    const explicitUsccB = {
+      enterprise: { name, uscc: '91330201753252106U' },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 12, evidence: [{ sourceFile: 'synthetic/mixed-candidates/explicit-b.pdf', attachment: '附件1', listNo: 1, page: 17 }] }],
+    }
+    const nameOnly = {
+      enterprise: { name },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award' as const, year: 2026, batchSeq: 12, evidence: [{ sourceFile: 'synthetic/mixed-candidates/name-only.pdf', attachment: '附件1', listNo: 2, page: 18 }] }],
+    }
+    const request = announcementRequest({ idempotencyKey: `synthetic/mixed-candidates/${nameOnlyFirst ? 'name-first' : 'uscc-first'}` })
+    request.payload.announcement!.records = nameOnlyFirst ? [nameOnly, explicitUsccB] : [explicitUsccB, nameOnly]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(rosterRowCounts(db)).toEqual(before)
+
+      const result = await client.commit(request)
+      expect(result.status).toBe('failed')
+      expect(result.items).toContainEqual(
+        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
+      )
+      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      expect(rosterRowCounts(db)).toEqual(before)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['length', '91330211255994457'],
+    ['charset', '9133021125599445IP'],
+    ['checksum', '91330211255994457Q'],
+  ] as const)('公告中的非空无效 USCC（%s）先报 uscc_format_invalid,不污染 name-only 身份候选', (kind, uscc) => {
+    const db = makeDb()
+    const name = `合成无效统代${kind}企业`
+    const request = announcementRequest({ idempotencyKey: `synthetic/invalid-uscc/${kind}` })
+    request.payload.announcement!.records = [
+      {
+        enterprise: { name, uscc },
+        titleCode: 'specialized_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 1 }],
+      },
+      {
+        enterprise: { name },
+        titleCode: 'innovative_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 2 }],
+      },
+    ]
+    const before = rosterRowCounts(db)
+
+    const preflight = preflightRosterImport(db, request)
+    expect(preflight.preflight.conflicts.map((item) => item.error?.code)).toEqual(['uscc_format_invalid'])
+    expect(rosterRowCounts(db)).toEqual(before)
+
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('failed')
+    expect(result.items.map((item) => item.error?.code)).toEqual(['uscc_format_invalid'])
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it('有效小写 USCC 按验证器允许的空白 / 不可见字符归一后仍作为唯一身份', () => {
+    const db = makeDb()
+    const name = '合成有效统代归一企业'
+    const rawUscc = ' 9133021125\u200B5994457p '
+    const request = announcementRequest({ idempotencyKey: 'synthetic/valid-uscc-normalized' })
+    request.payload.announcement!.records = [
+      {
+        enterprise: { name, uscc: rawUscc },
+        titleCode: 'specialized_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 1 }],
+      },
+      {
+        enterprise: { name },
+        titleCode: 'innovative_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 2 }],
+      },
+    ]
+
+    expect(preflightRosterImport(db, request).preflight.conflicts).toEqual([])
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('committed')
+    expect(db.select().from(schema.enterprise).all()).toMatchObject([{ name, usccNorm: '91330211255994457P' }])
+    expect(db.select().from(schema.enterprise).all()).toHaveLength(1)
+    expect(db.select().from(schema.record).all().map((record) => record.usccRaw)).toEqual([
+      '91330211255994457P',
+      '91330211255994457P',
+    ])
+  })
+
+  it.each([
+    ['missing', undefined],
+    ['null', null],
+    ['empty', ''],
+    ['whitespace', ' \t\u200B\u3000 '],
+  ] as const)('公告 USCC %s 视为缺失身份,仍允许按名称写入', (kind, value) => {
+    const db = makeDb()
+    const request = announcementRequest({ idempotencyKey: `synthetic/missing-uscc/${kind}` })
+    const enterprise = request.payload.announcement!.records[0]!.enterprise
+    if (value === undefined) delete enterprise.uscc
+    else enterprise.uscc = value
+
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('committed')
+    expect(db.select().from(schema.enterprise).all()).toHaveLength(1)
+    expect(db.select().from(schema.enterprise).all()[0]?.usccNorm).toBeNull()
+    expect(db.select().from(schema.record).all()[0]?.usccRaw).toBeNull()
+  })
+
+  it('历史无效企业 USCC 不作为有效代码证据写进 name-only 记录', () => {
+    const db = makeDb()
+    const name = '合成历史无效统代企业'
+    const legacyId = seedEnterprise(db, { name, uscc: '91330211255994457Q' })
+    const request = announcementRequest({ idempotencyKey: 'synthetic/legacy-invalid-uscc' })
+    request.payload.announcement!.records = [
+      {
+        enterprise: { name },
+        titleCode: 'specialized_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 1 }],
+      },
+    ]
+
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('committed')
+    expect(db.select().from(schema.enterprise).all()).toHaveLength(1)
+    expect(db.select().from(schema.enterprise).all()[0]).toMatchObject({ id: legacyId, usccNorm: '91330211255994457Q' })
+    expect(db.select().from(schema.record).all()[0]?.usccRaw).toBeNull()
+  })
+
+  it('空库中仅一个 name-only 记录仍可按名称新建企业', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const name = '合成空库单名称企业'
+    const request = announcementRequest({ idempotencyKey: 'synthetic/batch-identity/single-name-only' })
+    request.payload.announcement!.records = [
+      { enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026, batchSeq: 11, evidence: [{ sourceFile: 'synthetic/batch-identity/single-name-only.pdf', attachment: '附件1', listNo: 1, page: 16 }] }] },
+    ]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight).toMatchObject({ add: 1, conflicts: [] })
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(rosterRowCounts(db)).toMatchObject({ enterprise: 1, record: 1, record_event: 1, record_evidence: 1 })
+      expect(db.select().from(schema.enterprise).all()[0]).toMatchObject({ name, usccNorm: null })
+      expect(db.select().from(schema.record).all()[0]?.usccRaw).toBeNull()
+      expect(db.select().from(schema.recordEvidence).all().map((row) => row.sourceFile)).toEqual(['synthetic/batch-identity/single-name-only.pdf'])
+    } finally {
+      await server.close()
+    }
+  })
+
   it('客户端走完整个回放序列，结果与直接调核心逻辑一致', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
@@ -707,6 +1874,789 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     }
   })
 
+  it('公告事件出处保留 PDF 正整数页码,并允许非 PDF 的缺省 / null 页码', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const request = announcementRequest({ idempotencyKey: 'http/stable-evidence-pages#sha256:abc' })
+    request.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/notice.pdf', attachment: '附件', listNo: 1, page: 7 },
+      { sourceFile: 'synthetic/pending.pdf', attachment: '附件', listNo: 2, page: null },
+      { sourceFile: 'synthetic/unset.pdf', attachment: '附件', listNo: 3 },
+      { sourceFile: 'synthetic/notice.docx', attachment: '正文', listNo: 4, page: null },
+      { sourceFile: 'synthetic/export.xlsx', attachment: 'Sheet1', listNo: 5 },
+    ]
+
+    try {
+      const committed = await client.commit(request)
+      expect(committed.status).toBe('committed')
+
+      const enterprise = db
+        .select()
+        .from(schema.enterprise)
+        .where(eq(schema.enterprise.name, '宁波上航测绘股份有限公司'))
+        .get()!
+      const evidence = getRosterEnterpriseDetail(db, enterprise.id)!.evidence
+      const pageBySource = Object.fromEntries(evidence.map((entry) => [entry.sourceFile, entry.page]))
+      expect(pageBySource).toEqual({
+        'synthetic/notice.pdf': 7,
+        'synthetic/pending.pdf': null,
+        'synthetic/unset.pdf': null,
+        'synthetic/notice.docx': null,
+        'synthetic/export.xlsx': null,
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('统一导入按源 PDF 实际页数预检并拒绝越界或未知页码且不写部分数据', async () => {
+    const cases = [
+      { name: 'page 24', page: 24, sourceState: 'readable', expectedCode: 'page_invalid' },
+      { name: 'page 999', page: 999, sourceState: 'readable', expectedCode: 'page_invalid' },
+      { name: 'missing source', page: 8, sourceState: 'missing', expectedCode: 'page_count_unknown' },
+      { name: 'unreadable source', page: 8, sourceState: 'unreadable', expectedCode: 'page_count_unknown' },
+    ] as const
+
+    for (const entry of cases) {
+      const db = makeDb()
+      const filesDir = mkdtempSync(join(tmpdir(), 'spztx-import-page-count-'))
+      dirs.push(filesDir)
+      const sourceFile = `synthetic/page-count/${entry.name.replaceAll(' ', '-')}.pdf`
+      const sourcePath = join(filesDir, sourceFile)
+      if (entry.sourceState !== 'missing') {
+        mkdirSync(join(sourcePath, '..'), { recursive: true })
+        writeFileSync(sourcePath, entry.sourceState === 'readable' ? minimalPdf({ pages: 23 }) : 'not a PDF')
+      }
+      const server = await startRosterApi({ db, apiToken: TOKEN, filesDir })
+      const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+      const request = announcementRequest({
+        idempotencyKey: `http/import-page-count/${entry.name}`,
+        sourceIdentity: sourceFile,
+      })
+      request.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile, attachment: '附件1', listNo: 1, page: entry.page },
+      ]
+      request.payload.announcement!.records.push({
+        enterprise: { name: `页码验证失败时不得部分写入-${entry.name}` },
+        titleCode: 'specialized_sme',
+        events: [{ eventType: 'award', year: 2026, batchSeq: 2 }],
+      })
+      const before = rosterRowCounts(db)
+
+      try {
+        const preflight = await client.preflight(request)
+        expect(preflight.preflight.conflicts, entry.name).toContainEqual(
+          expect.objectContaining({ ok: false, error: expect.objectContaining({ code: entry.expectedCode }) }),
+        )
+        expect(rosterRowCounts(db), entry.name).toEqual(before)
+
+        const commit = await client.commit(request)
+        expect(commit.status, entry.name).toBe('failed')
+        expect(commit.items, entry.name).toContainEqual(
+          expect.objectContaining({ ok: false, error: expect.objectContaining({ code: entry.expectedCode }) }),
+        )
+        expect(rosterRowCounts(db), entry.name).toEqual(before)
+      } finally {
+        await server.close()
+      }
+    }
+  })
+
+  it('统一导入接受第 23 页这一实际 PDF 边界并持久化页码', async () => {
+    const db = makeDb()
+    const filesDir = mkdtempSync(join(tmpdir(), 'spztx-import-page-count-boundary-'))
+    dirs.push(filesDir)
+    const sourceFile = 'synthetic/page-count/boundary-23.pdf'
+    const sourcePath = join(filesDir, sourceFile)
+    mkdirSync(join(sourcePath, '..'), { recursive: true })
+    writeFileSync(sourcePath, minimalPdf({ pages: 23 }))
+    const server = await startRosterApi({ db, apiToken: TOKEN, filesDir })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const request = announcementRequest({
+      idempotencyKey: 'http/import-page-count/boundary-23',
+      sourceIdentity: sourceFile,
+    })
+    request.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile, attachment: '附件1', listNo: 1, page: 23 },
+    ]
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts).toEqual([])
+      const result = await client.commit(request)
+      expect(result.status).toBe('committed')
+      expect(db.select().from(schema.recordEvidence).all().map((row) => row.page)).toEqual([23])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['0', 0],
+    ['negative', -1],
+    ['fractional', 2.5],
+    ['NaN', Number.NaN],
+    ['infinity', Number.POSITIVE_INFINITY],
+    ['numeric string', '3'],
+  ] as const)('公告 PDF 出处页码为 %s 时,以 page_invalid 拒绝整批且不写业务行', (label, page) => {
+    const db = makeDb()
+    const request = announcementRequest({ idempotencyKey: `http/invalid-announcement-page/${label}` })
+    const record = request.payload.announcement!.records[0]!
+    record.events![0]!.evidence![0]!.page = page as number
+    // 即使批内另一条是完全有效的记录,非法页码也必须挡在计划/事务之前。
+    request.payload.announcement!.records.push({
+      enterprise: { name: '页码无效时不得部分写入的第二家企业' },
+      titleCode: 'specialized_sme',
+      events: [{ eventType: 'award', year: 2026, batchSeq: 2 }],
+    })
+    const before = rosterRowCounts(db)
+
+    const preflight = preflightRosterImport(db, request)
+    expect(preflight.preflight.conflicts).toContainEqual(
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'page_invalid' }) }),
+    )
+    expect(rosterRowCounts(db)).toEqual(before)
+
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('failed')
+    expect(result.items).toContainEqual(
+      expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'page_invalid' }) }),
+    )
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it('公告 Word / Excel 出处只要提供非 null page 就以 not_page_capable 拒绝整批', () => {
+    const db = makeDb()
+    const request = announcementRequest({ idempotencyKey: 'http/non-pdf-announcement-page' })
+    request.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/notice.pdf', attachment: '附件', listNo: 1, page: 7 },
+      { sourceFile: 'synthetic/notice.docx', attachment: '正文', listNo: 2, page: 1 },
+      { sourceFile: 'synthetic/export.xlsx', attachment: 'Sheet1', listNo: 3, page: 1 },
+    ]
+    const before = rosterRowCounts(db)
+
+    const result = commitRosterImport(db, request)
+    expect(result.status).toBe('failed')
+    expect(result.items.filter((item) => item.error?.code === 'not_page_capable')).toHaveLength(2)
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it('出处指针显式重放会清空 DOCX 旧页码并保留 PDF 实际页码', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of [
+      'synthetic/legacy/notice.docx',
+      'synthetic/legacy/first-write.docx',
+      'synthetic/legacy/notice.pdf',
+      'synthetic/library/notice.docx',
+      'synthetic/library/first-write.docx',
+      'synthetic/library/notice.pdf',
+    ]) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/legacy/notice#sha256:stable-content',
+      sourceIdentity: 'synthetic/legacy/notice',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/legacy/notice.docx', attachment: '正文', listNo: 1, page: null },
+      { sourceFile: 'synthetic/legacy/first-write.docx', attachment: '名单', listNo: 3, page: null },
+      { sourceFile: 'synthetic/legacy/notice.pdf', attachment: '附件', listNo: 2, page: 7 },
+    ]
+
+    try {
+      await client.commit(original)
+      const seeded = db.select().from(schema.recordEvidence).all()
+      const docx = seeded.find((row) => row.sourceFile.endsWith('notice.docx'))!
+      const firstWriteDocx = seeded.find((row) => row.sourceFile.endsWith('first-write.docx'))!
+      expect(firstWriteDocx.page).toBeNull()
+      // 合成一条历史坏数据：新导入已会清空 DOCX 页码，但旧行可能带着不可靠值。
+      db.update(schema.recordEvidence).set({ page: 12 }).where(eq(schema.recordEvidence.id, docx.id)).run()
+
+      const relinked = announcementRequest({
+        idempotencyKey: 'synthetic/library/notice#sha256:stable-content',
+        sourceIdentity: 'synthetic/library/notice',
+        sourceSha256: 'stable-content',
+      })
+      relinked.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile: 'synthetic/library/notice.docx', attachment: '正文', listNo: 1, page: null },
+        { sourceFile: 'synthetic/library/first-write.docx', attachment: '名单', listNo: 3, page: null },
+        { sourceFile: 'synthetic/library/notice.pdf', attachment: '附件', listNo: 2, page: 7 },
+      ]
+
+      const result = await client.replay(relinked)
+      expect(result.status).toBe('replayed')
+      expect(result.evidenceRepointed).toBe(3)
+      const evidence = db.select().from(schema.recordEvidence).all()
+      expect(evidence).toHaveLength(3)
+      expect(Object.fromEntries(evidence.map((row) => [row.sourceFile, row.page]))).toEqual({
+        'synthetic/library/notice.docx': null,
+        'synthetic/library/first-write.docx': null,
+        'synthetic/library/notice.pdf': 7,
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('重复事件提交共用非 PDF 页码清空与 PDF 页码保留规则', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of [
+      'synthetic/legacy/duplicate.docx',
+      'synthetic/legacy/duplicate-first-write.docx',
+      'synthetic/legacy/duplicate.pdf',
+      'synthetic/library/duplicate.docx',
+      'synthetic/library/duplicate-first-write.docx',
+      'synthetic/library/duplicate.pdf',
+    ]) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/legacy/duplicate#sha256:stable-content',
+      sourceIdentity: 'synthetic/legacy/duplicate',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/legacy/duplicate.docx', attachment: '正文', listNo: 1, page: null },
+      { sourceFile: 'synthetic/legacy/duplicate-first-write.docx', attachment: '名单', listNo: 3, page: null },
+      { sourceFile: 'synthetic/legacy/duplicate.pdf', attachment: '附件', listNo: 2, page: 7 },
+    ]
+
+    try {
+      await client.commit(original)
+      const seeded = db.select().from(schema.recordEvidence).all()
+      const docx = seeded.find((row) => row.sourceFile.endsWith('/duplicate.docx'))!
+      const firstWriteDocx = seeded.find((row) => row.sourceFile.endsWith('duplicate-first-write.docx'))!
+      expect(firstWriteDocx.page).toBeNull()
+      db.update(schema.recordEvidence).set({ page: 12 }).where(eq(schema.recordEvidence.id, docx.id)).run()
+
+      const duplicate = announcementRequest({
+        idempotencyKey: 'synthetic/library/duplicate#sha256:stable-content',
+        sourceIdentity: 'synthetic/library/duplicate',
+        sourceSha256: 'stable-content',
+      })
+      duplicate.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile: 'synthetic/library/duplicate.docx', attachment: '正文', listNo: 1, page: null },
+        { sourceFile: 'synthetic/library/duplicate-first-write.docx', attachment: '名单', listNo: 3, page: null },
+        { sourceFile: 'synthetic/library/duplicate.pdf', attachment: '附件', listNo: 2, page: 7 },
+      ]
+
+      const result = await client.commit(duplicate)
+      expect(result.status).toBe('committed')
+      expect(result.summary.evidenceRepointed).toBe(3)
+      const evidence = db.select().from(schema.recordEvidence).all()
+      expect(evidence).toHaveLength(3)
+      expect(Object.fromEntries(evidence.map((row) => [row.sourceFile, row.page]))).toEqual({
+        'synthetic/library/duplicate.docx': null,
+        'synthetic/library/duplicate-first-write.docx': null,
+        'synthetic/library/duplicate.pdf': 7,
+      })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('旧路径和目标路径有相同 SHA 时预检、commit 与 replay 才能收敛', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const oldPath = 'synthetic/hash-match/old.pdf'
+    const targetPath = 'synthetic/hash-match/new.pdf'
+    seedStoredFileHash(db, oldPath, SAME_SOURCE_SHA)
+    seedStoredFileHash(db, targetPath, SAME_SOURCE_SHA)
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/hash-match/old#sha256:same',
+      sourceIdentity: oldPath,
+      sourceSha256: SAME_SOURCE_SHA,
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: oldPath, attachment: '附件', listNo: 8, page: 7 },
+    ]
+
+    try {
+      expect((await client.commit(original)).status).toBe('committed')
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/hash-match/new#sha256:same',
+        sourceIdentity: targetPath,
+        sourceSha256: SAME_SOURCE_SHA,
+      })
+      target.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile: targetPath, attachment: '附件', listNo: 8, page: 7 },
+      ]
+
+      expect((await client.preflight(target)).preflight.evidenceRepoints).toBe(1)
+      expect((await client.commit(target)).summary.evidenceRepointed).toBe(1)
+      const evidence = db.select().from(schema.recordEvidence).all()[0]!
+      expect(evidence).toMatchObject({ sourceFile: targetPath, page: 7 })
+
+      // 将行复原为计划期旧路径，独立验证显式 replay 仍按两端 SHA 核对。
+      db.update(schema.recordEvidence).set({ sourceFile: oldPath }).where(eq(schema.recordEvidence.id, evidence.id)).run()
+      const replayed = await client.replay(target)
+      expect(replayed.status).toBe('replayed')
+      expect(replayed.evidenceRepointed).toBe(1)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([{ sourceFile: targetPath, page: 7 }])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['SHA 不同', 'b'.repeat(64), 'c'.repeat(64), true, true, 'evidence_content_hash_mismatch', false],
+    ['目标 SHA 未知', 'd'.repeat(64), 'e'.repeat(64), true, false, 'evidence_content_hash_unknown', false],
+    ['旧 SHA 未知且请求 hash 只绑定逻辑来源', 'f'.repeat(64), 'f'.repeat(64), false, true, 'evidence_content_hash_unknown', true],
+  ] as const)('旧/目标内容不能证明相同则保留旧出处并返回冲突（%s）', async (_case, oldSha, targetSha, registerOld, registerTarget, errorCode, oldSourceIsLogical) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const oldPath = `synthetic/hash-conflict/${_case}/old.pdf`
+    const targetPath = `synthetic/hash-conflict/${_case}/new.pdf`
+    if (registerOld) seedStoredFileHash(db, oldPath, oldSha)
+    if (registerTarget) seedStoredFileHash(db, targetPath, targetSha)
+    const original = announcementRequest({
+      idempotencyKey: `synthetic/hash-conflict/${_case}/old`,
+      sourceIdentity: oldSourceIsLogical ? `synthetic/hash-conflict/${_case}/logical-old-source` : oldPath,
+      sourceSha256: oldSha,
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: oldPath, attachment: '附件', listNo: 8, page: 7 },
+    ]
+
+    try {
+      expect((await client.commit(original)).status).toBe('committed')
+      const baseline = rosterRowCounts(db)
+      const target = announcementRequest({
+        idempotencyKey: `synthetic/hash-conflict/${_case}/target`,
+        sourceIdentity: registerTarget ? targetPath : `synthetic/hash-conflict/${_case}/logical-source`,
+        sourceSha256: targetSha,
+      })
+      target.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile: targetPath, attachment: '附件', listNo: 8, page: 7 },
+      ]
+
+      const preflight = await client.preflight(target)
+      expect(preflight.preflight.evidenceRepoints).toBe(0)
+      const committed = await client.commit(target)
+      expect(committed.status).toBe('failed')
+      expect(committed.items.some((item) => item.error?.code === errorCode)).toBe(true)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([{ sourceFile: oldPath, page: 7 }])
+      expect(rosterRowCounts(db)).toEqual(baseline)
+
+      const replayed = await client.replay(target)
+      expect(replayed.status).toBe('failed')
+      expect(replayed.items.some((item) => item.error?.code === errorCode)).toBe(true)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([{ sourceFile: oldPath, page: 7 }])
+      expect(rosterRowCounts(db)).toEqual(baseline)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['B 后 A', ['synthetic/source-b.pdf', 'synthetic/source-a.pdf']],
+    ['A 后 B', ['synthetic/source-a.pdf', 'synthetic/source-b.pdf']],
+  ] as const)('重复坐标的既有出处按计划只改一次，commit 与 replay 不反向切换（%s）', async (_order, sources) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of ['synthetic/source-a.pdf', 'synthetic/source-b.pdf']) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/source-a-existing#sha256:stable-content',
+      sourceIdentity: 'synthetic/source-a-existing',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/source-a.pdf', attachment: '附件', listNo: 7, page: 7 },
+    ]
+
+    try {
+      await client.commit(original)
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/source-b-existing#sha256:stable-content',
+        sourceIdentity: 'synthetic/source-b-existing',
+        sourceSha256: 'stable-content',
+      })
+      const event = target.payload.announcement!.records[0]!.events![0]!
+      target.payload.announcement!.records[0]!.events = sources.map((sourceFile) => ({
+        ...event,
+        evidence: [{ sourceFile, attachment: '附件', listNo: 7, page: 7 }],
+      }))
+
+      const preflight = await client.preflight(target)
+      expect(preflight.preflight.evidenceRepoints).toBe(1)
+
+      const committed = await client.commit(target)
+      expect(committed.summary.evidenceRepointed).toBe(1)
+      let evidence = db.select().from(schema.recordEvidence).all()
+      expect(evidence).toHaveLength(1)
+      expect(evidence[0]).toMatchObject({ sourceFile: 'synthetic/source-b.pdf', page: 7 })
+
+      // 用确定的初态独立核对显式 replay，同时保留提交批次的计划快照。
+      db.update(schema.recordEvidence)
+        .set({ sourceFile: 'synthetic/source-a.pdf' })
+        .where(eq(schema.recordEvidence.id, evidence[0]!.id))
+        .run()
+      const replayed = await client.replay(target)
+      expect(replayed.evidenceRepointed).toBe(1)
+      evidence = db.select().from(schema.recordEvidence).all()
+      expect(evidence).toHaveLength(1)
+      expect(evidence[0]).toMatchObject({ sourceFile: 'synthetic/source-b.pdf', page: 7 })
+
+      // 同一语义输入换序重放也复用计划快照，不会把旧来源 A 重新写回。
+      target.payload.announcement!.records[0]!.events!.reverse()
+      const retried = await client.replay(target)
+      expect(retried.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-b.pdf', page: 7 },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['A 后 B', ['synthetic/new-event-a.pdf', 'synthetic/new-event-a.pdf', 'synthetic/new-event-b.pdf']],
+    ['B 后 A', ['synthetic/new-event-b.pdf', 'synthetic/new-event-a.pdf', 'synthetic/new-event-a.pdf']],
+  ] as const)('同载荷中新事件的重复坐标合并不同来源且去重，顺序无关（%s）', async (_order, sources) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const enterpriseId = seedEnterprise(db, {
+      name: '新事件重复坐标企业',
+      uscc: '91330206793007818K',
+    })
+    const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    const request = announcementRequest({
+      idempotencyKey: `synthetic/new-event-${_order}#sha256:stable-content`,
+      sourceIdentity: 'synthetic/new-event-duplicates',
+      sourceSha256: 'stable-content',
+    })
+    const record = request.payload.announcement!.records[0]!
+    record.enterprise = { name: '新事件重复坐标企业', uscc: '91330206793007818K' }
+    const event = record.events![0]!
+    record.events = sources.map((sourceFile) => ({
+      ...event,
+      evidence: [{ sourceFile, attachment: '附件', listNo: 9, page: 7 }],
+    }))
+
+    try {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.evidenceRepoints).toBe(0)
+
+      const committed = await client.commit(request)
+      expect(committed.status).toBe('committed')
+      expect(db.select().from(schema.record).all().filter((row) => row.enterpriseId === enterpriseId)).toHaveLength(1)
+      const events = db.select().from(schema.recordEvent).all().filter((row) => row.recordId === recordId)
+      expect(events).toHaveLength(1)
+      const evidence = db.select().from(schema.recordEvidence).all().filter((row) => row.recordEventId === events[0]!.id)
+      expect(evidence).toHaveLength(2)
+      expect(evidence.map(({ sourceFile, page }) => ({ sourceFile, page })).sort((a, b) =>
+        a.sourceFile < b.sourceFile ? -1 : a.sourceFile > b.sourceFile ? 1 : 0,
+      )).toEqual([
+        { sourceFile: 'synthetic/new-event-a.pdf', page: 7 },
+        { sourceFile: 'synthetic/new-event-b.pdf', page: 7 },
+      ])
+
+      // 同键 commit 与显式 replay 都保持新事件里的完整来源集合。
+      const retried = await client.commit(request)
+      expect(retried.status).toBe('committed')
+      const replayed = await client.replay(request)
+      expect(replayed.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvent).all().filter((row) => row.recordId === recordId)).toHaveLength(1)
+      expect(db.select().from(schema.recordEvidence).all().filter((row) => row.recordEventId === events[0]!.id)).toHaveLength(2)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it.each([
+    ['A 后 B', ['synthetic/repeated-record-a.pdf', 'synthetic/repeated-record-b.pdf']],
+    ['B 后 A', ['synthetic/repeated-record-b.pdf', 'synthetic/repeated-record-a.pdf']],
+  ] as const)('跨重复 records 项的新事件出处也按整份载荷合并（%s）', async (_order, sources) => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const enterpriseId = seedEnterprise(db, { name: '跨记录新事件企业', uscc: '913302110000000098' })
+    const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
+    const request = announcementRequest({
+      idempotencyKey: `synthetic/repeated-record-${_order}#sha256:stable-content`,
+      sourceIdentity: 'synthetic/repeated-record-events',
+      sourceSha256: 'stable-content',
+    })
+    const record = request.payload.announcement!.records[0]!
+    record.enterprise = { name: '跨记录新事件企业', uscc: '913302110000000098' }
+    const event = record.events![0]!
+    request.payload.announcement!.records = sources.map((sourceFile) => ({
+      ...record,
+      events: [{ ...event, evidence: [{ sourceFile, attachment: '附件', listNo: 10, page: 7 }] }],
+    }))
+
+    try {
+      expect((await client.preflight(request)).preflight.evidenceRepoints).toBe(0)
+      expect((await client.commit(request)).status).toBe('committed')
+      expect(db.select().from(schema.record).all().filter((row) => row.enterpriseId === enterpriseId)).toHaveLength(1)
+      const events = db.select().from(schema.recordEvent).all().filter((row) => row.recordId === recordId)
+      expect(events).toHaveLength(1)
+      const evidence = db.select().from(schema.recordEvidence).all().filter((row) => row.recordEventId === events[0]!.id)
+      expect(evidence.map(({ sourceFile, page }) => ({ sourceFile, page })).sort((a, b) =>
+        a.sourceFile < b.sourceFile ? -1 : a.sourceFile > b.sourceFile ? 1 : 0,
+      )).toEqual([
+        { sourceFile: 'synthetic/repeated-record-a.pdf', page: 7 },
+        { sourceFile: 'synthetic/repeated-record-b.pdf', page: 7 },
+      ])
+      expect((await client.commit(request)).status).toBe('committed')
+      expect(db.select().from(schema.recordEvidence).all().filter((row) => row.recordEventId === events[0]!.id)).toHaveLength(2)
+      expect((await client.replay(request)).evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all().filter((row) => row.recordEventId === events[0]!.id)).toHaveLength(2)
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('同路径 no-op 不占用后续目标：预检、commit、replay 同计一行', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of ['synthetic/source-a.docx', 'synthetic/source-b.docx']) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/source-a#sha256:stable-content',
+      sourceIdentity: 'synthetic/source-a',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/source-a.docx', attachment: '正文', listNo: 1, page: null },
+    ]
+
+    try {
+      await client.commit(original)
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/source-b#sha256:stable-content',
+        sourceIdentity: 'synthetic/source-b',
+        sourceSha256: 'stable-content',
+      })
+      const event = target.payload.announcement!.records[0]!.events![0]!
+      target.payload.announcement!.records[0]!.events = [
+        {
+          ...event,
+          evidence: [{ sourceFile: 'synthetic/source-a.docx', attachment: '正文', listNo: 1, page: null }],
+        },
+        {
+          ...event,
+          evidence: [{ sourceFile: 'synthetic/source-b.docx', attachment: '正文', listNo: 1, page: null }],
+        },
+      ]
+
+      const preflight = await client.preflight(target)
+      expect(preflight.preflight.evidenceRepoints).toBe(1)
+
+      const committed = await client.commit(target)
+      expect(committed.summary.evidenceRepointed).toBe(1)
+      let evidence = db.select().from(schema.recordEvidence).all()
+      expect(evidence).toHaveLength(1)
+      expect(evidence[0]).toMatchObject({ sourceFile: 'synthetic/source-b.docx', page: null })
+
+      // 独立复核显式 replay：把测试行恢复到已知初态后，重放同一份载荷仍计划并执行一行。
+      db.update(schema.recordEvidence)
+        .set({ sourceFile: 'synthetic/source-a.docx' })
+        .where(eq(schema.recordEvidence.id, evidence[0]!.id))
+        .run()
+      const replayed = await client.replay(target)
+      expect(replayed.evidenceRepointed).toBe(1)
+      evidence = db.select().from(schema.recordEvidence).all()
+      expect(evidence).toHaveLength(1)
+      expect(evidence[0]).toMatchObject({ sourceFile: 'synthetic/source-b.docx', page: null })
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('同一出处有多个不同目标路径时按歧义跳过：预检、commit、replay 均不改行', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of [
+      'synthetic/source-a-conflict.docx',
+      'synthetic/source-b-conflict.docx',
+      'synthetic/source-c-conflict.docx',
+    ]) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/source-a-conflict#sha256:stable-content',
+      sourceIdentity: 'synthetic/source-a-conflict',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/source-a-conflict.docx', attachment: '正文', listNo: 1, page: null },
+    ]
+
+    try {
+      await client.commit(original)
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/conflicting-targets#sha256:stable-content',
+        sourceIdentity: 'synthetic/conflicting-targets',
+        sourceSha256: 'stable-content',
+      })
+      const event = target.payload.announcement!.records[0]!.events![0]!
+      target.payload.announcement!.records[0]!.events = [
+        {
+          ...event,
+          evidence: [{ sourceFile: 'synthetic/source-b-conflict.docx', attachment: '正文', listNo: 1, page: null }],
+        },
+        {
+          ...event,
+          evidence: [{ sourceFile: 'synthetic/source-c-conflict.docx', attachment: '正文', listNo: 1, page: null }],
+        },
+      ]
+
+      const preflight = await client.preflight(target)
+      expect(preflight.preflight.evidenceRepoints).toBe(0)
+      const committed = await client.commit(target)
+      expect(committed.summary.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-a-conflict.docx', page: null },
+      ])
+
+      const replayed = await client.replay(target)
+      expect(replayed.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-a-conflict.docx', page: null },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('跨重复记录的不同目标路径也按歧义跳过：计划和两种写入不改行', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    for (const path of [
+      'synthetic/source-a-record-conflict.docx',
+      'synthetic/source-b-record-conflict.docx',
+      'synthetic/source-c-record-conflict.docx',
+    ]) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/source-a-record-conflict#sha256:stable-content',
+      sourceIdentity: 'synthetic/source-a-record-conflict',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/source-a-record-conflict.docx', attachment: '正文', listNo: 1, page: null },
+    ]
+
+    try {
+      await client.commit(original)
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/conflicting-record-targets#sha256:stable-content',
+        sourceIdentity: 'synthetic/conflicting-record-targets',
+        sourceSha256: 'stable-content',
+      })
+      const record = target.payload.announcement!.records[0]!
+      const event = record.events![0]!
+      const evidence = (sourceFile: string) => [
+        { sourceFile, attachment: '正文', listNo: 1, page: 12 },
+      ]
+      target.payload.announcement!.records = [
+        { ...record, events: [{ ...event, evidence: evidence('synthetic/source-b-record-conflict.docx') }] },
+        { ...record, events: [{ ...event, evidence: evidence('synthetic/source-c-record-conflict.docx') }] },
+      ]
+
+      expect((await client.preflight(target)).preflight.evidenceRepoints).toBe(0)
+      expect((await client.commit(target)).summary.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-a-record-conflict.docx', page: null },
+      ])
+
+      const replayed = await client.replay(target)
+      expect(replayed.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-a-record-conflict.docx', page: null },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('PDF 出处仍按实际页号精确匹配', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/pdf-page-seven#sha256:stable-content',
+      sourceIdentity: 'synthetic/pdf-page-seven',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/source-a.pdf', attachment: '正文', listNo: 1, page: 7 },
+    ]
+
+    try {
+      await client.commit(original)
+      const target = announcementRequest({
+        idempotencyKey: 'synthetic/pdf-page-eight#sha256:stable-content',
+        sourceIdentity: 'synthetic/pdf-page-eight',
+        sourceSha256: 'stable-content',
+      })
+      target.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile: 'synthetic/source-b.pdf', attachment: '正文', listNo: 1, page: 8 },
+      ]
+
+      expect((await client.preflight(target)).preflight.evidenceRepoints).toBe(0)
+      expect((await client.commit(target)).summary.evidenceRepointed).toBe(0)
+      expect((await client.replay(target)).evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/source-a.pdf', attachment: '正文', listNo: 1, page: 7 },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('非 PDF 页码归一后出处坐标不唯一时不误收敛', async () => {
+    const db = makeDb()
+    const server = await startRosterApi({ db, apiToken: TOKEN })
+    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const original = announcementRequest({
+      idempotencyKey: 'synthetic/legacy/ambiguous#sha256:stable-content',
+      sourceIdentity: 'synthetic/legacy/ambiguous',
+      sourceSha256: 'stable-content',
+    })
+    original.payload.announcement!.records[0]!.events![0]!.evidence = [
+      { sourceFile: 'synthetic/legacy/ambiguous-a.docx', attachment: '正文', listNo: 1, page: null },
+      { sourceFile: 'synthetic/legacy/ambiguous-b.docx', attachment: '正文', listNo: 1, page: null },
+    ]
+
+    try {
+      await client.commit(original)
+      const seeded = db.select().from(schema.recordEvidence).all()
+      expect(seeded.map((row) => row.page)).toEqual([null, null])
+      for (const row of seeded) {
+        db.update(schema.recordEvidence)
+          .set({ page: row.sourceFile.endsWith('ambiguous-a.docx') ? 12 : 13 })
+          .where(eq(schema.recordEvidence.id, row.id))
+          .run()
+      }
+
+      const relinked = announcementRequest({
+        idempotencyKey: 'synthetic/library/ambiguous#sha256:stable-content',
+        sourceIdentity: 'synthetic/library/ambiguous',
+        sourceSha256: 'stable-content',
+      })
+      relinked.payload.announcement!.records[0]!.events![0]!.evidence = [
+        { sourceFile: 'synthetic/library/ambiguous.docx', attachment: '正文', listNo: 1, page: null },
+      ]
+
+      const result = await client.replay(relinked)
+      expect(result.status).toBe('replayed')
+      expect(result.evidenceRepointed).toBe(0)
+      expect(db.select().from(schema.recordEvidence).all()).toMatchObject([
+        { sourceFile: 'synthetic/legacy/ambiguous-a.docx', page: 12 },
+        { sourceFile: 'synthetic/legacy/ambiguous-b.docx', page: 13 },
+      ])
+    } finally {
+      await server.close()
+    }
+  })
+
   it('客户端把非 2xx 翻成 RosterImportApiError（带状态码与文案）', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
@@ -725,20 +2675,28 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
 // ---------------------------------------------------------------------------
 
 describe('MCP 面：tool 注册与写入名单', () => {
-  it('save_roster_batch 在写入名单里；只读的三个不在', () => {
+  it('save_roster_batch 在写入名单里；所有名录只读 tool 都不在', () => {
     expect([...MCP_WRITE_TOOLS]).toContain('save_roster_batch')
-    for (const name of ['preflight_roster_batch', 'list_enterprises', 'list_differences']) {
+    for (const name of [
+      'preflight_roster_batch',
+      'list_enterprises',
+      'list_differences',
+      'query_records',
+      'get_enterprise_detail',
+    ]) {
       expect([...MCP_WRITE_TOOLS]).not.toContain(name)
     }
   })
 
-  it('四个 tool 文件都声明了对应的 tool 名', () => {
+  it('统一写入与名录查询 tool 文件都声明了对应的 tool 名', () => {
     const base = join(process.cwd(), 'server/mcp/tools')
     const expected: Array<[string, string]> = [
       ['save_roster_batch.ts', 'save_roster_batch'],
       ['preflight_roster_batch.ts', 'preflight_roster_batch'],
       ['list_enterprises.ts', 'list_enterprises'],
       ['list_differences.ts', 'list_differences'],
+      ['query_records.ts', 'query_records'],
+      ['get_enterprise_detail.ts', 'get_enterprise_detail'],
     ]
     for (const [file, name] of expected) {
       const source = readFileSync(join(base, file), 'utf8')
@@ -754,18 +2712,28 @@ describe('MCP 面：tool 注册与写入名单', () => {
 // ---------------------------------------------------------------------------
 
 describe('HTTP 路由面', () => {
-  it('两个写路由都带顶层 defineRouteMeta（OpenAPI 可发现）并绑定 NUXT_API_TOKEN', () => {
+  it('三个写路由（preflight / commit / replay）都带顶层 defineRouteMeta（OpenAPI 可发现）并绑定 NUXT_API_TOKEN', () => {
     const base = join(process.cwd(), 'server/api/roster/import')
-    for (const file of ['preflight.post.ts', 'commit.post.ts']) {
+    for (const file of ['preflight.post.ts', 'commit.post.ts', 'replay.post.ts']) {
       const source = readFileSync(join(base, file), 'utf8')
       expect(source, file).toContain('defineRouteMeta({')
       // 宏必须在**顶层**（nitro 的 handlers-meta 插件只认顶层 ExpressionStatement）。
       expect(/^defineRouteMeta\(/m.test(source), file).toBe(true)
       // 鉴权判据从运行时读（token 值不进源码），且声明了 bearerAuth 安全方案。
-      expect(source, file).toContain('useRuntimeConfig().apiToken')
       expect(source, file).toContain('security: [{ bearerAuth: [] }]')
-      // 路由只是胶水：逻辑在 transport 无关的 handler 里（真实 HTTP 测试打的是它）。
-      expect(source, file).toContain('handleRosterImportRequest')
+      // 路由只是胶水：逻辑在 transport 无关的 handler 里（真实 HTTP 测试打的是它），
+      // 而且三条路由共用**同一份**胶水工厂（RL-19 收拢，免得各抄一份、抄漏一处）。
+      expect(source, file).toContain('createRosterImportHandler(')
+      expect(source, file).toMatch(/^export default createRosterImportHandler\('(\w+)'\)$/m)
+    }
+    // 工厂里才读运行时 token（`useRuntimeConfig().apiToken`）—— 每条路由各自再读一遍
+    // 就是三份会各自漂的实现。
+    const factory = readFileSync(join(process.cwd(), 'server/utils/roster-import-route.ts'), 'utf8')
+    expect(factory).toContain('useRuntimeConfig().apiToken')
+    for (const action of ['preflight', 'commit', 'replay'] as const) {
+      expect(readFileSync(join(base, `${action}.post.ts`), 'utf8'), action).toContain(
+        `createRosterImportHandler('${action}')`,
+      )
     }
   })
 })
@@ -1112,9 +3080,14 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
     expect(rosterRowCounts(db)).toEqual(before)
   })
 
-  it('兼容：显式裸 id 继续可用（指向**已存在**的行），不被自然键逻辑覆盖', () => {
+  it('兼容：显式裸 id 继续可用（指向支持该统代与 qymc 的**已存在**行）', () => {
     const db = makeDb()
     const canonical = seedEnterprise(db, { name: '宁波显式企业有限公司', uscc: '9133021100000000E1' })
+    const relationId = seedPlatformRelation(db, {
+      queryKey: '9133021100000000E1',
+      usccRaw: '9133021100000000E1',
+      nameRaw: '宁波显式旧名有限公司',
+    })
     const result = commitRosterImport(db, {
       idempotencyKey: 'literal-id#sha256:x8',
       sourceKind: 'alias_evidence',
@@ -1125,7 +3098,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
             uscc: '9133021100000000E1',
             name: '宁波显式旧名有限公司',
             sourceKind: 'platform_business',
-            sourceRefId: 12345,
+            sourceRefId: relationId,
             verificationStatus: 'confirmed',
           },
           // 不给来源 ⇒ 契约 §1.2 的 0 哨兵（「无具体来源行引用」）。
@@ -1135,7 +3108,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
     })
     expect(result.status).toBe('committed')
     const rows = db.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === canonical)
-    expect(rows.find((a) => a.name === '宁波显式旧名有限公司')!.sourceRefId).toBe(12345)
+    expect(rows.find((a) => a.name === '宁波显式旧名有限公司')!.sourceRefId).toBe(relationId)
     expect(rows.find((a) => a.name === '宁波无来源旧名')!.sourceRefId).toBe(0)
   })
 })
@@ -1158,28 +3131,55 @@ describe('读面：list_enterprises / list_differences', () => {
           announcement: {
             sourceDocument: { source: 'jxj', title: '读面' },
             records: [
-              { enterprise: { name: '宁波读面企业有限公司', uscc: '9133021100000000R1', district: '鄞州区' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2021, batchSeq: 1 }] },
+              { enterprise: { name: '宁波读面企业有限公司', uscc: '913302110000000098', district: '鄞州区' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2021, batchSeq: 1 }] },
               { enterprise: { name: '宁波仅平台企业' }, titleCode: 'innovative_sme', events: [] },
             ],
           },
           aliases: [
-            { enterpriseName: '宁波读面企业有限公司', name: '宁波读面旧名', sourceKind: 'platform_business', verificationStatus: 'confirmed' },
+            {
+              enterpriseName: '宁波读面企业有限公司',
+              name: '宁波读面旧名',
+              sourceKind: 'platform_business',
+              verificationStatus: 'confirmed',
+              sourceRelationRef: {
+                interface: 'business_list',
+                queryKey: '913302110000000098',
+                rdjb: '3',
+                queriedAt: '2026-10-17T06:00:00.000Z',
+                sequenceNo: 1,
+              },
+            },
             { enterpriseName: '宁波读面企业有限公司', name: '宁波读面未核别名', sourceKind: 'platform_apply', verificationStatus: 'pending' },
           ],
+          platformQueries: [{
+            interface: 'business_list',
+            queryKey: '913302110000000098',
+            rdjb: '3',
+            queriedAt: '2026-10-17T06:00:00.000Z',
+            status: 'success',
+            relations: [{
+              sequenceNo: 1,
+              relationKey: 'SQ-read-alias',
+              usccRaw: '913302110000000098',
+              nameRaw: '宁波读面旧名',
+              matchBasis: 'uscc',
+              verificationStatus: 'confirmed',
+            }],
+          }],
         },
       })
 
       const all = listEnterprises(db, {})
       expect(all.counts.total).toBe(2)
       const target = all.rows.find((r) => r.name === '宁波读面企业有限公司')!
-      expect(target.uscc).toBe('9133021100000000R1')
+      expect(target.uscc).toBe('913302110000000098')
       expect(target.district).toBe('鄞州区')
       expect(target.rosterState).toBe('current')
       expect(target.titles).toEqual(['specialized_sme'])
       expect(target.aliasNames).toEqual(['宁波读面旧名'])
 
-      // 只由平台引入、无 jxj 事件 ⇒ removed_platform_only。
-      expect(all.rows.find((r) => r.name === '宁波仅平台企业')!.rosterState).toBe('removed_platform_only')
+      // 只有平台侧记录且没有导出快照 ⇒ 无法证明已移除，按完整读模型保留为 current。
+      expect(all.rows.find((r) => r.name === '宁波仅平台企业')!.rosterState).toBe('current')
 
       expect(listEnterprises(db, { q: '宁波读面旧名' }).rows.map((r) => r.name)).toEqual(['宁波读面企业有限公司'])
       expect(listEnterprises(db, { q: '宁波读面未核别名' }).rows).toEqual([])
@@ -1201,11 +3201,11 @@ describe('读面：list_enterprises / list_differences', () => {
         sourceIdentity: 'miit/relations/r2',
         payload: {
           platformQueries: [
-            { interface: 'apply_list', queryKey: '9133021100000000R2', queriedAt: '2026-10-16T07:00:00.000Z', status: 'success' },
+            { interface: 'apply_list', queryKey: '91330206793007818K', queriedAt: '2026-10-16T07:00:00.000Z', status: 'success' },
           ],
           announcement: {
             sourceDocument: { source: 'jxj', title: '读面差异' },
-            records: [{ enterprise: { name: '宁波差异企业', uscc: '9133021100000000R2' }, titleCode: 'specialized_sme', events: [] }],
+            records: [{ enterprise: { name: '宁波差异企业', uscc: '91330206793007818K' }, titleCode: 'specialized_sme', events: [] }],
           },
           differences: [
             { enterpriseName: '宁波差异企业', titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'no_record', recordedAt: '2026-10-15T08:00:00.000Z' },

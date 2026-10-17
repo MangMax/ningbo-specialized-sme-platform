@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { commitRosterImport, validateImportRequest } from '../../utils/roster-import'
+import { validateRosterImportPageCounts } from '../../utils/roster-import-page-validation'
 import { writeGuard } from '../../utils/mcp-guard'
 
 /**
@@ -61,6 +62,7 @@ export default defineMcpTool({
       payload: input.payload,
     })
     if (!validated.ok) throw createError({ statusCode: validated.status, message: validated.message })
-    return commitRosterImport(useDb(), validated.value)
+    const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
+    return commitRosterImport(useDb(), validated.value, pageCountErrors)
   },
 })
