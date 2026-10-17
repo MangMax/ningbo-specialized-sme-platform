@@ -1,6 +1,6 @@
 # 本机 Docker Compose 部署
 
-镜像运行源代码固定为 `3a7d896d8c5d76647e94c94f2a843fe35a0c12fc`，Node 基础镜像固定到官方 `node:22-bookworm-slim` 多架构摘要，依赖按 `pnpm-lock.yaml` 和 pnpm `12.11.2` 安装。Nuxt 使用 Node server 产物启动。数据库迁移从 `/app/db/migrations` 加载。
+镜像运行源代码固定为 `3a7d896d8c5d76647e94c94f2a843fe35a0c12fc`，Node 基础镜像固定到官方 `node:22-bookworm-slim` 多架构摘要，依赖按 `pnpm-lock.yaml` 和 pnpm `12.11.2` 安装。Nuxt 使用 Node server 产物启动。数据库迁移从 `/app/db/migrations` 加载。运行层只复制 `.output` 与迁移文件，不复制根 `node_modules`；构建阶段不执行 `pnpm prune`，避免它再次触发项目的 `postinstall`（`nuxt prepare`）。
 
 ## 从 Git 跟踪快照构建
 

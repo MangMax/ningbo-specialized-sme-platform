@@ -15,7 +15,6 @@ RUN npm install --global --no-audit --no-fund pnpm@12.11.2
 COPY . .
 RUN pnpm install --frozen-lockfile --store-dir /tmp/pnpm-store \
   && pnpm build \
-  && pnpm prune --prod \
   && rm -rf /tmp/pnpm-store
 
 FROM ${NODE_IMAGE} AS runtime
@@ -31,7 +30,6 @@ LABEL org.opencontainers.image.source="https://github.com/MangMax/ningbo-special
   org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 COPY --from=build --chown=node:node /app/.output/ ./.output/
-COPY --from=build --chown=node:node /app/node_modules/ ./node_modules/
 # db/client.ts resolves migrations from process.cwd(), outside .output.
 COPY --from=build --chown=node:node /app/db/migrations/ ./db/migrations/
 
