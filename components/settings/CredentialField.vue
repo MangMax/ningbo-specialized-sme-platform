@@ -9,7 +9,7 @@ defineEmits<{ 'update:replacement': [value: string | number]; save: []; clear: [
 </script>
 
 <template>
-  <section class="space-y-5 rounded-lg border p-5" :aria-labelledby="`${id}-heading`">
+  <section class="bg-card text-card-foreground space-y-5 rounded-lg border p-5 shadow-xs" :aria-labelledby="`${id}-heading`">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <h2 :id="`${id}-heading`" class="font-semibold">{{ label === 'OCR token' ? '在线 OCR token' : label }}</h2>
       <span class="text-sm font-medium">{{ status.configured ? '已配置 · 未验证' : '未配置' }}</span>

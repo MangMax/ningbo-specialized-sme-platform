@@ -23,7 +23,7 @@ watch(state, value => { if (!value) activePlatform.value = 'ocrToken' })
 </script>
 
 <template>
-  <div class="flex max-w-3xl flex-col gap-6" :aria-busy="busy">
+  <div class="flex w-full flex-col gap-6" :aria-busy="busy">
     <p v-if="!state && busy" role="status" class="text-muted-foreground flex items-center gap-2 text-sm">
       <LoaderCircle class="size-4 animate-spin motion-reduce:animate-none" />正在读取密钥配置…
     </p>
