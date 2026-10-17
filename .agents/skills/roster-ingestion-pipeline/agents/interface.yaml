@@ -1,0 +1,19 @@
+interface:
+  display_name: "Roster Ingestion Pipeline"
+  short_description: "Clean and import Ningbo SME designation rosters with the current app API/MCP workflow."
+  default_prompt: "Use $roster-ingestion-pipeline to clean or import these roster files."
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets:
+    - "openai"
+  activation:
+    mode: "manual"
+  execution:
+    context: "inline"
+    shell: "bash"
+  trust:
+    source_tier: "local"
+    remote_inline_execution: "forbid"
+    remote_metadata_policy: "Do not place credentials, business databases, or source files in Git."
+  degradation:
+    openai: "Follow SKILL.md; keep unsupported cases pending."

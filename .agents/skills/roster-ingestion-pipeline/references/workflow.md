@@ -2,51 +2,48 @@
 
 ## Intake manifest
 
-For every supplied file, record its original name, type, hash, suspected source, purpose, duplicate relationship and processing state. Do not create roster entries from administrative notice text alone; inspect its attachments and include the parts that actually contain enterprise names. Treat the three MIIT spreadsheets as current comparison snapshots. Exclude nurture-only or unrelated notice files unless the user includes them in the requested roster scope.
+For every supplied file, record its original name, type, hash, source, purpose, duplicate relationship and processing state. Classify published announcements and their roster attachments as designation evidence; classify the three MIIT spreadsheets as current-state comparison snapshots. Do not create roster rows from notice prose alone: inspect the attachments and include all in-scope official rows, including rows unmatched to exports.
 
-Assign one owner per file. For PDFs, page rendering is the prerequisite for OCR. Render pages in parallel across PDFs and submit all rendered page images concurrently when the provider allows it. Retry transient 5xx responses at the single-image request boundary; do not retry permanent 4xx responses. Preserve each successful page when another page fails.
+The file-store decision has one source of truth: [`lib/file-store-scope.ts`](../../../../lib/file-store-scope.ts), with its prose table in [`files/README.md`](../../../../files/README.md). Read both before deciding whether a file belongs in the store. Do not hand-place or hand-delete files around that rule.
 
-When one file reaches OCR-ready state, hand off that file immediately with: file ID/path, source document purpose, page-image paths, OCR page results, likely title/event segments, match candidates, unresolved rows, and write API references. The correction worker continues independently while other PDFs render or OCR.
+Before reprocessing an existing file or batch, inspect its current app state and reuse completed, verified outputs. Add or repair only missing items; do not restart a complete import without a specific gap.
 
-## Correction and matching
+## Extract and hand off
 
-1. Parse OCR text into enterprise rows and attach each row to its actual page.
-2. Compare rows against all three current export snapshots. Prefer a validated credit code; then use normalized exact names and sourced aliases. Keep the match method and candidate source.
-3. Visually verify the source page for matched rows and unmatched rows. Confirm names, credit codes, row boundaries, page numbers and duplicated paragraphs. Do not visually re-read every unrelated page if OCR and export matching already narrows the proof set.
-4. Correct OCR transcription from the page image. For missing credit codes, follow [`uscc-recovery.md`](./uscc-recovery.md): core keyword → search our own rows **and confirmed aliases** → candidate codes → verify **by code** against the platform → fill only on a byte-equal `qymc`; fall back to `queryList?qymc=` when the library has nothing. Keep URL plus retrieval date for public-source findings. Leave ambiguous candidates unresolved.
-5. Parse the announcement body and attachment to determine title, award/review event, year and batch. If one PDF has multiple attachments or years, create separate event groups with their own evidence.
-6. Write the original file, generated images, OCR output, corrected rows, event records and source evidence through the app's API/MCP contract. Replaying the same source batch must be idempotent.
+- Render every PDF page to a page-addressable image. Extract DOCX/XLSX text directly; do not OCR office documents.
+- Submit OCR page images through the shared limit in [`orchestration.md`](./orchestration.md). A successful page remains usable when another page fails.
+- Assign one owner per file. Hand a file to correction as soon as all page outcomes are known; list failed pages explicitly and keep the file partial until they are recovered or accepted as unresolved.
+- Include the source file ID/path, attachment, page count, page-image references, OCR text per page, failures, likely row ranges and current status in the handoff.
 
-## File-store scope (RL-16)
+## Correct and verify
 
-Whether a file belongs in the file store is decided by **one executable rule** — `lib/file-store-scope.ts` (`scopeOf()`), enforced by the backfill in `server/utils/stored-files.ts` and reported as `backfill.excluded`. The prose table lives in `files/README.md`; keep the two in step.
+1. Parse OCR text into enterprise rows and retain the exact source file and page for each row.
+2. Compare against all three current export snapshots. A valid code is a strong matching key; current names and confirmed aliases generate candidates. Keep matched, unmatched and ambiguous rows.
+3. Visually verify every official roster row against its cited source page, including OCR text, code, row boundary and page number. OCR narrows where to inspect; it does not replace source review.
+4. Correct transcription only to what the source page supports. Keep event metadata and enterprise identity separate from page-level correction.
+5. Determine title, event type, year and batch from the announcement body and attachment. Platform application/maintenance fields do not establish formal event year or batch; see [`decisions.md`](./decisions.md).
+6. For missing codes, follow [`uscc-recovery.md`](./uscc-recovery.md). A row with a missing code remains part of the official roster and can be imported with identity pending.
 
-- Filename contains 入库培育 → **out**. A nurture list is not a designation; the 2021 awards live in 〔2022〕145号.
-- `.doc` with a same-name `.docx` beside it → **out**; keep the previewable `.docx`.
-- `.docx` with a same-name `.pdf` beside it → **out** (human OCR product; the PDF is the authoritative, inline-previewable original).
-- Notice files (申报/复核通知) → **out**, judged on the **source directory segment**, never the filename — nearly every roster file is named "…名单的通知".
-- Everything else under `<source>/<kind>/` → in.
+## Write through the current app contract
 
-Moving a file out is explicit (`DELETE /api/files/:id?deleteDisk=1`). The backfill never resurrects a removed file, and it keeps out-of-scope files out of `stored_file` even if they reappear on disk (report them; do not silently re-index).
+Before a write, inspect the running app's `/_openapi.json` or MCP `tools/list`; use the current schema and [`docs/roster-lifecycle-contract.md`](../../../../docs/roster-lifecycle-contract.md) as the payload reference.
 
-`record_evidence.source_file` is a **file-store-relative path** and must resolve to a file that is actually in the store. Point it at the processing directory instead and the roster row's preview silently breaks. So: put the file in the store first (`POST /api/uploads` tus, then `POST /api/files/register`), then import with the store-relative path. When a source file moves into the store, the import idempotency key (source identity + content hash) changes — re-run the same batch: enterprises, records and events are skipped (history stays untouched) and only the evidence `source_file` pointers are converged onto the new path. Re-running with an unchanged key is a no-op.
+Confirm the intended app/database target and its current baseline or recoverable backup before the first mutation. Keep backups outside Git. If the target or recovery point cannot be verified, stop before writing.
 
-## Roster write path (RL-11)
+- Use TUS for file transfer, then the app's file registration, page-image, OCR and parse interfaces. `record_evidence.source_file` must be a file-store-relative path to a file that is already in the store.
+- Write roster entities and supported platform evidence through the unified import: HTTP `POST /api/roster/import/preflight` then `/commit`, or MCP `preflight_roster_batch` then `save_roster_batch`. Preserve one source identity, hash and idempotency key for the batch.
+- The current platform evidence enum supports `business_list` (businessList) and `apply_list` (queryList). The app client submits only page 1 with page size 50; that client response alone does not prove that all platform relations were searched. The separate queryBusList browser search has no current app REST/MCP query or evidence type. Do not relabel it as either supported interface; keep unsupported live-source evidence pending for #33.
+- Store public-source and platform evidence only in payload shapes the current contract accepts. The supported public-source backfill and merge shapes are described in contract §§8.4 and 8.10. Follow the stricter `cross_source` gate in [`uscc-recovery.md`](./uscc-recovery.md).
+- One batch is atomic: a failed commit writes no business rows. Do not substitute direct SQLite writes or a one-off importer. If a result is uncertain, follow the same-key recovery in [`orchestration.md`](./orchestration.md).
 
-Roster entities — enterprises, confirmed aliases (曾用名), title events, source evidence, platform queries/relations, export snapshots, difference reasons/measures, and merges — are written through **one** path. Discover it live (`GET /_openapi.json` in dev, or MCP `tools/list`), but the shapes are frozen in `docs/roster-lifecycle-contract.md` §8:
+### Correcting existing events and evidence (#34)
 
-- **HTTP**: `POST /api/roster/import/preflight` (read-only impact preview; writes no business data) then `POST /api/roster/import/commit` (single-batch transaction). Both need a token (`Authorization: Bearer <NUXT_API_TOKEN>`); with no token configured, writing is off. `idempotencyKey` in the body makes replay safe — the same source re-submitted never duplicates enterprises or events.
-- **MCP**: `preflight_roster_batch` (read) and `save_roster_batch` (write, needs `NUXT_MCP_TOKEN`). After writing, verify with `list_enterprises` / `list_differences`.
-- **One batch = one atomic write.** Either the whole batch is `committed`, or it is `failed` with per-item errors (`{ ok:false, kind, ref, error:{ code, field?, message } }`) and **no business rows written**. Never treat a partial batch as done.
-- Include **every** in-scope official roster row, including rows unmatched to any export snapshot.
-- Merging a no-credit-code enterprise into its canonical row is a `payload.merges` item (§8.4), not a direct `uscc_norm` update; the merge lineage (which records/events/evidence moved) is stored in `import_batch.item_results` and can be read back.
-- Filling a **missing** code on an enterprise no other row can own is a `payload.usccBackfills` item (§8.10) and needs reviewable public-source evidence (`url` + `checkedOn` + `basis` + source name). It writes **only** the code (and clears the `uscc_missing` flag): it never overwrites an existing code (`uscc_already_present`), never takes a code another enterprise holds (`uscc_taken`), and never merges identities. Invalid code (length/charset/check digit) or thin evidence fails the whole batch.
-- A batch may reference enterprises it creates in the same payload; identities resolve at write time.
-- **Evidence pointers can target rows created in the same batch.** `aliases[].sourceRelationRef`, `differences[].evidenceQueryRef` / `evidenceRelationRef` and `merges[].sourceRelationRef` / `evidenceQueryRef` take a natural key `{ interface, queryKey, rdjb?, queriedAt?, sequenceNo? }` (contract §8.7) — so one batch can write query → relations → alias/difference evidence without a second round trip. Do **not** invent row ids, and do not rely on `relationKey` alone (it is ambiguous across interfaces). Bare ids stay supported for rows that already exist. An unresolvable reference fails the whole batch, per-item, with nothing written.
-- Export snapshots: `year` / `collectedOn` come from the caller, never inferred from the file or its name.
+The current unified import is not a correction API for stored `record_event` fields or existing evidence coordinates. For a confirmed error in event year, `decidedYear`, `reviewOutcome`, batch, `attachment` or `listNo`, first record the applicable `eventId`, `evidenceId` and `enterpriseId`; source file ID and content hash; exact expected old value and proposed value; original source-page evidence; and the confirmation basis. Track unsupported corrections in #34 and keep them pending. Do not change the idempotency key and reimport to create a replacement event, and do not bypass the contract with SQLite or direct SQL.
 
-Do not substitute direct SQLite writes or a one-off importer for this path.
+The existing `POST /api/roster/evidence/pages` endpoint (contract §8.11) applies only to a verified PDF actual-page correction on an existing evidence row. It updates `page` only; it cannot change event metadata, `attachment` or `listNo`. The request locates a unique row by file-store-relative `sourceFile`, `listNo`, and `enterpriseId` or `enterpriseName`; include `basis`. First submit the exact entry with `dryRun: true`, then compare the returned `evidenceId` and `previous` value with the correction record and confirm the single assignment against the source page. Apply only the same confirmed entry with `dryRun: false`, then verify the response. The route does not accept an expected-old-value precondition, so if the target or current value may have changed since preview, rerun the dry run; if uniqueness or the confirmed page cannot be established, leave it pending. Do not treat this page-only route as a general correction API.
+
+After an import, read the duplicate-name candidate report at `GET /api/roster/import/duplicate-candidates?batchKey=…` (contract §7.8). Candidates without supported platform relation evidence remain pending; do not merge by name.
 
 ## Completion report
 
-Report counts at each boundary: input files; in-scope files; duplicate aliases skipped; PDF pages rendered; OCR pages succeeded/failed; rows parsed; rows matched/unmatched to each export; rows visually verified; enterprises/events written; credit codes researched/filled/ambiguous; API errors. Never describe OCR completion as import completion.
+Report counts and status separately for input/in-scope files, duplicate files, rendered pages, OCR success/failure, parsed official rows, visual verification, export matches, events, identity research, written batches and API errors. Distinguish file/metadata state, page/OCR state, event metadata, identity and write state. Never describe OCR completion as import completion or a missing code as a missing roster row.
