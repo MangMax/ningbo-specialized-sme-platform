@@ -1,244 +1,122 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
-import { FileText } from '@lucide/vue'
-import { useAppColorMode } from '@/composables/useAppColorMode'
-import PreviewToolbar from '@/components/preview/PreviewToolbar.vue'
-import PreviewStates from '@/components/preview/PreviewStates.vue'
-import { PDFViewer } from '@embedpdf/vue-pdf-viewer'
-import { resolvePreviewKind } from '~~/lib/preview'
+import { computed, shallowRef, useTemplateRef, watch, onBeforeUnmount } from 'vue'
+import { ChevronFirst, ChevronLast, ChevronLeft, ChevronRight, Download, Maximize, Minimize, SlidersHorizontal } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import PdfEngine from './PdfEngine.vue'
+import type { PdfNavigationOptions, PdfReadingPosition, PdfPositionEvent, PdfReadyEvent } from '~~/lib/pdf-reader'
 
-/**
- * PDF 预览。用 EmbedPDF 的 `PDFViewer` —— 它自带完整界面(工具栏、缩略图、
- * 搜索、批注),这里做的是**把它收进我们这一套**:
- *
- *  - 主题:把项目的 CSS 变量读出来,映射到 EmbedPDF 的语义色 token 上,
- *    并跟着深浅主题切换重建。这样它不会在藏青界面上糊一块灰色控件。
- *  - 语言:默认 en,显式设成 zh-CN。
- *  - 权限:这是个查阅工具,只读。批注、印章、签名、密文全部关掉,
- *    避免用户以为改动会保存回原文件。
- *
- * EmbedPDF 自带工具栏,所以这个预览器**不叠加**自己的工具栏 —— 叠一层会
- * 出现两个工具栏、两套缩放按钮。导航与缩放交给它自己的控件。
- *
- * 主题用 `:key` 绑在 colorMode 上:`PDFViewer` 只在 onMounted 里 init 一次,
- * 换 config 不会重建,所以用户切深浅主题时得让它整个重新挂载,否则 PDF 会
- * 停在旧主题里 —— 而这个看板是有明暗切换的。
- */
-const props = withDefaults(
-  defineProps<{
-    src: string
-    name?: string
-  }>(),
-  { name: '' },
-)
-
-const info = computed(() => resolvePreviewKind(props.src))
-const title = computed(() => props.name || props.src.split('/').pop() || props.src)
-
-const colorMode = useAppColorMode()
-const status = ref<'loading' | 'ready' | 'error'>('loading')
-const errorMessage = ref('')
-
-/**
- * 把当前主题的 CSS 变量读成 EmbedPDF 的 token。
- *
- * 必须在主题生效之后读,而且变量是 oklch 字面量 —— 直接交给它没问题,
- * 现代浏览器都认;不认的时候它会退回自己的默认色,不会崩。
- */
-function cssVar(name: string): string {
-  if (typeof window === 'undefined') return ''
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-}
-
-const themeOverrides = computed(() => {
-  // 依赖 colorMode,主题一换就重算,PDFViewer 收到新 config 会重建。
-  void colorMode.value
+const props = withDefaults(defineProps<{ src: string; name?: string; targetPage?: number; targetPosition?: PdfReadingPosition }>(), { name: '' })
+const emit = defineEmits<{ ready: [event: PdfReadyEvent]; 'position-change': [event: PdfPositionEvent]; error: [message: string] }>()
+const engine = useTemplateRef('engine')
+const shell = useTemplateRef<HTMLElement>('shell')
+const toolsToggle = useTemplateRef<{ $el: HTMLButtonElement }>('toolsToggle')
+function toggleTools() { tools.value = !tools.value; if (!tools.value) toolsToggle.value?.$el?.focus() }
+const title = computed(() => props.name || props.src.split('/').pop() || 'PDF 文档')
+const status = shallowRef<'loading' | 'ready' | 'error'>('loading')
+const total = shallowRef(0)
+const current = shallowRef<PdfReadingPosition | null>(null)
+const input = shallowRef('')
+const message = shallowRef('')
+const tools = shallowRef(false)
+const retry = shallowRef(0)
+const fullscreen = shallowRef(false)
+const pending = shallowRef<PdfReadingPosition | null>(null)
+let lastTarget: PdfReadingPosition | null = null
+// Every document/retry owns its callbacks. Late events from a destroyed engine are inert.
+const session = computed(() => ({ src: props.src, retry: retry.value }))
+const handlers = computed(() => {
+  const owner = session.value
   return {
-    background: {
-      app: cssVar('--background'),
-      surface: cssVar('--card'),
-      surfaceAlt: cssVar('--muted'),
-      elevated: cssVar('--popover'),
-      input: cssVar('--card'),
+    ready: ({ totalPages }: { totalPages: number }) => {
+      if (owner !== session.value || status.value === 'error') return
+      total.value = totalPages
+      status.value = 'ready'
+      emit('ready', { src: owner.src, totalPages })
+      if (pending.value) send(pending.value)
     },
-    foreground: {
-      primary: cssVar('--foreground'),
-      secondary: cssVar('--muted-foreground'),
-      muted: cssVar('--muted-foreground'),
-      onAccent: cssVar('--primary-foreground'),
+    position: (position: PdfReadingPosition) => {
+      if (owner !== session.value || status.value !== 'ready') return
+      current.value = position
+      input.value = String(position.page)
+      emit('position-change', { src: owner.src, ...position })
     },
-    border: {
-      default: cssVar('--border'),
-      subtle: cssVar('--border'),
-      strong: cssVar('--input'),
-    },
-    accent: {
-      primary: cssVar('--primary'),
-      primaryForeground: cssVar('--primary-foreground'),
-      primaryLight: cssVar('--accent'),
-    },
-    interactive: {
-      hover: cssVar('--accent'),
-      active: cssVar('--accent'),
-      selected: cssVar('--accent'),
-      focus: cssVar('--ring'),
-      focusRing: cssVar('--ring'),
-    },
-    state: {
-      error: cssVar('--destructive'),
-      warning: cssVar('--mark-national'),
-    },
-    scrollbar: {
-      track: 'transparent',
-      thumb: cssVar('--border'),
-    },
+    error: (error: string) => { if (owner === session.value) fail(error) },
   }
 })
-
-/**
- * pdfium 引擎的 wasm 地址。
- *
- * **两点都不能省,都是实测踩出来的**
- *
- * 1. **必须自托管**。库的默认值是
- *    `https://cdn.jsdelivr.net/npm/@embedpdf/pdfium@2.15.1/dist/pdfium.wasm` ——
- *    不指定它,每台打开的机器都要去公网 CDN 拉一个 4.6 MB 的 wasm。
- *    这是个政务内网工具,不该在运行时依赖公网。文件在 `public/pdfium.wasm`。
- *
- * 2. **必须是绝对地址**。写相对路径 `/pdfium.wasm` 会让查看器**永久卡在
- *    「Initializing plugins…」**:引擎在 blob URL 的 worker 里取 wasm,
- *    worker 的 origin 是不透明的,相对路径解析不到。实测改成绝对地址才通过。
- *
- * 验证方式(想确认真的没走 CDN):把 `public/pdfium.wasm` 改名,预览会立刻失败;
- * 改回来就正常 —— 说明用的是本地这份,没有回落到 CDN。
- */
-function wasmUrl(): string {
-  const path = '/pdfium.wasm'
-  return typeof window === 'undefined' ? path : new URL(path, window.location.origin).href
+watch(session, (value, previous) => {
+  status.value = 'loading'; total.value = 0; current.value = null; input.value = ''; message.value = ''
+  if (!previous || value.src !== previous.src) lastTarget = props.targetPosition ?? (props.targetPage === undefined ? null : { page: props.targetPage })
+  pending.value = lastTarget
+}, { immediate: true, flush: 'sync' })
+watch(() => [props.targetPage, props.targetPosition] as const, () => {
+  const target = props.targetPosition ?? (props.targetPage === undefined ? null : { page: props.targetPage })
+  if (target) navigate(target, { animate: false })
+}, { flush: 'post' })
+function fail(error: string) { status.value = 'error'; message.value = error; emit('error', error) }
+function valid(position: PdfReadingPosition) {
+  if (!Number.isInteger(position.page) || position.page < 1 || position.page > total.value) {
+    message.value = `请输入 1 至 ${total.value} 的整数页码。`
+    emit('error', message.value)
+    return false
+  }
+  return true
 }
-
-const config = computed(() => ({
-  src: props.src,
-  wasmUrl: wasmUrl(),
-  // 跟随项目主题,而不是跟随系统 —— 用户在页面里切了主题,这里也要跟着。
-  theme: {
-    preference: (colorMode.value === 'dark' ? 'dark' : 'light') as 'light' | 'dark',
-    light: themeOverrides.value,
-    dark: themeOverrides.value,
-  },
-  i18n: { defaultLocale: 'zh-CN' as const },
-  /**
-   * 只读查阅:关掉一切暗示「可以改这份文件」的东西。
-   *
-   * `annotation` / `redaction` 是批注与密文;`insert` / `form` / `signature` /
-   * `stamp` 是工具栏上的「插入 / 表单」两个模式页 —— 它们会让用户以为能往
-   * 这份公布文件里填东西,而这个看板是只读台账,改动也存不回去。
-   * 类别名取自库内默认 schema(未导出,只能按名屏蔽)。
-   */
-  disabledCategories: [
-    'annotation',
-    'redaction',
-    'insert',
-    'form',
-    'signature',
-    'stamp',
-  ] as string[],
-  tabBar: 'never' as const,
-  // 字体回退默认走 CDN;关掉,避免内网环境挂在不必要的跨域请求上。
-  fontFallback: null,
-  /**
-   * 界面字体同样默认走公网:不指定时初始化就会去
-   * `fonts.googleapis.com` 拉 Open Sans。内网工具不该有这种请求,
-   * 设 `null` 让它回落到系统字体栈(中文界面本来就用系统字体更合适)。
-   */
-  fonts: { ui: null },
-  /**
-   * 印章库会去 `cdn.jsdelivr.net` 拉 `default-stamps/{locale}/manifest.json`
-   * 与 `stamps.pdf`。只读台账不需要印章,关掉。
-   *
-   * **两个键的分工,实测出来的(别只留一个)**:
-   *  - 请求来自插件的 `defaultConfig.manifests`(**不是** `defaultLibrary`);
-   *    `defaultLibrary: false` 只关「默认库的创建」,**拦不住那次 fetch**。
-   *  - 真正拦住的是 `manifests: []`。A/B 各在全新页面上量过一次:
-   *      只给 defaultLibrary:false → 站外 2 条
-   *      再加 manifests:[]        → 站外 0 条
-   *  - 另外:上面 `disabledCategories` 里的 `stamp` 只是**藏掉界面**,
-   *    插件照样取素材 —— 三个键各管一件事,不能互相替代。
-   *
-   * **验收这类「关掉请求」的改动,两个坑都要防**(各栽过一次):
-   *  1. 打开预览前先 `performance.clearResourceTimings()` —— 不清会把上一次的
-   *     残留读成「已修好」;
-   *  2. 确认服的是**新模块** —— `PDFViewer.init()` 只在 `onMounted` 跑一次,
-   *     HMR 不重新挂载的话新 config 根本没进去。改完等 Vite 拾取,或干脆
-   *     整页重载(URL 加个 query)再量。
-   *  否则「量到 0」可能只是量到了旧代码或旧记录。
-   */
-  stamp: { defaultLibrary: false as const, manifests: [] },
-}))
-
-function onReady() {
-  status.value = 'ready'
+function send(position: PdfReadingPosition, options?: PdfNavigationOptions) {
+  pending.value = null
+  if (valid(position)) { lastTarget = position; message.value = ''; engine.value?.navigate(position, options) }
 }
-function onError() {
-  status.value = 'error'
-  errorMessage.value = 'PDF 引擎没能加载这个文件,可能已损坏或路径失效。'
+function navigate(position: PdfReadingPosition, options: PdfNavigationOptions = { animate: true }) {
+  lastTarget = position
+  pending.value = position
+  if (status.value === 'ready') send(position, options)
 }
-
-const fullscreen = ref(false)
-const shell = ref<HTMLElement | null>(null)
-function toggleFullscreen() {
-  if (!shell.value) return
-  if (document.fullscreenElement) void document.exitFullscreen()
-  else void shell.value.requestFullscreen?.()
+function submit() {
+  if (!/^\d+$/.test(input.value)) { message.value = `请输入 1 至 ${total.value} 的整数页码。`; return }
+  navigate({ page: Number(input.value) })
 }
-function onFullscreenChange() {
-  fullscreen.value = !!document.fullscreenElement
+function keydown(event: KeyboardEvent) {
+  if ((event.target as HTMLElement).closest('input,textarea,select,[contenteditable="true"],button,[role="tab"]') || event.ctrlKey || event.metaKey || event.altKey) return
+  const page = current.value?.page ?? 1
+  const target = { ArrowLeft: page - 1, ArrowRight: page + 1, Home: 1, End: total.value }[event.key]
+  if (target !== undefined && status.value === 'ready') { event.preventDefault(); navigate({ page: target }) }
 }
-if (typeof document !== 'undefined') {
-  document.addEventListener('fullscreenchange', onFullscreenChange)
-  onBeforeUnmount(() => document.removeEventListener('fullscreenchange', onFullscreenChange))
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen()
+    else await shell.value?.requestFullscreen()
+  } catch { message.value = '浏览器未允许全屏，可继续阅读。' }
 }
+function fullscreenChanged() { fullscreen.value = document.fullscreenElement === shell.value }
+document.addEventListener('fullscreenchange', fullscreenChanged)
+onBeforeUnmount(() => document.removeEventListener('fullscreenchange', fullscreenChanged))
+defineExpose({ navigate })
 </script>
 
 <template>
-  <!--
-    两行头部的取舍:EmbedPDF 自带工具栏,而它没有文件名、下载、全屏,
-    所以上面这一条补的是它缺的那几样,不是重复它的缩放与翻页。
-
-    合并成一条需要替换它的整套 UI schema,而 `viewerUISchema` 没有导出
-    (只导出了类型),只能从零写一份完整 schema;或者放弃它的界面走 headless。
-    两条路都比「预览组件」这件事本身重,所以这里让它读上去是一个两行头部:
-    背景同色、中间不画分隔线、行高收窄(见 .preview-pdf-header)。
-  -->
-  <div ref="shell" data-preview-shell class="preview-pdf-header bg-card flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border">
-    <!--
-      EmbedPDF 自带完整工具栏,这里只补两件它没有的:文件名,以及下载。
-      自己的工具栏上不再放缩放/翻页,免得和它的控件打架。
-    -->
-    <PreviewToolbar
-      :title="title"
-      :kind-label="info?.label ?? 'PDF 文档'"
-      :icon="FileText"
-      :unit="null"
-      :href="src"
-      :fullscreen="fullscreen"
-      :actions-disabled="status === 'error'"
-      @toggle-fullscreen="toggleFullscreen"
-    />
-    <div class="relative min-h-0 flex-1" :class="status === 'ready' ? 'preview-ready' : ''">
-      <PreviewStates
-        v-if="status === 'error'"
-        class="absolute inset-0 z-10"
-        status="error"
-        :message="errorMessage"
-      />
-      <PDFViewer
-        :key="colorMode"
-        class="h-full w-full"
-        :config="config"
-        @ready="onReady"
-        @error="onError"
-      />
+  <section ref="shell" data-preview-shell tabindex="0" aria-label="PDF 阅读器" class="bg-card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border" @keydown="keydown">
+    <div role="toolbar" aria-label="PDF 查阅" class="flex flex-wrap items-center gap-1 border-b p-2">
+      <span :title="title" class="min-w-0 flex-1 truncate px-1 text-sm font-medium">{{ title }}</span>
+      <Button ref="toolsToggle" variant="ghost" size="icon-sm" aria-label="阅读工具" :aria-expanded="tools" @click="toggleTools"><SlidersHorizontal /></Button>
+      <Button variant="ghost" size="icon-sm" as-child><a :href="src" :download="title" aria-label="下载原文"><Download /></a></Button>
+      <Button variant="ghost" size="icon-sm" :aria-label="fullscreen ? '退出全屏' : '全屏阅读'" @click="toggleFullscreen"><Minimize v-if="fullscreen" /><Maximize v-else /></Button>
+      <div class="flex w-full items-center justify-center gap-1 sm:w-auto" role="group" aria-label="实际 PDF 页码">
+        <Button variant="ghost" size="icon-sm" aria-label="首页" :disabled="status !== 'ready' || current?.page === 1" @click="navigate({ page: 1 })"><ChevronFirst /></Button>
+        <Button variant="ghost" size="icon-sm" aria-label="上一页" :disabled="status !== 'ready' || !current || current.page <= 1" @click="navigate({ page: (current?.page ?? 1) - 1 })"><ChevronLeft /></Button>
+        <form class="flex items-center gap-1" @submit.prevent="submit">
+          <Input v-model="input" aria-label="跳转页码" inputmode="numeric" :aria-invalid="!!message" :disabled="status !== 'ready'" class="w-14 text-center tabular-nums" />
+          <output aria-label="当前实际页" class="text-muted-foreground whitespace-nowrap text-sm tabular-nums">{{ current?.page ?? '—' }} / {{ total || '—' }}</output>
+          <Button variant="ghost" size="sm" :disabled="status !== 'ready'" type="submit">跳转</Button>
+        </form>
+        <Button variant="ghost" size="icon-sm" aria-label="下一页" :disabled="status !== 'ready' || !current || current.page >= total" @click="navigate({ page: (current?.page ?? 1) + 1 })"><ChevronRight /></Button>
+        <Button variant="ghost" size="icon-sm" aria-label="末页" :disabled="status !== 'ready' || current?.page === total" @click="navigate({ page: total })"><ChevronLast /></Button>
+      </div>
     </div>
-  </div>
+    <div v-if="message" role="alert" class="text-destructive px-3 py-2 text-sm">{{ message }}</div>
+    <div v-if="status === 'error'" class="flex flex-1 flex-col items-center justify-center gap-3"><Button variant="outline" @click="retry++">重试读取 PDF</Button></div>
+    <template v-else>
+      <p v-if="status === 'loading'" role="status" class="text-muted-foreground px-3 py-2 text-sm">正在读取 PDF…</p>
+      <PdfEngine :key="`${session.src}:${session.retry}`" ref="engine" :src="src" :tools="tools" @ready="handlers.ready" @position="handlers.position" @navigate="navigate" @error="handlers.error" />
+    </template>
+  </section>
 </template>
