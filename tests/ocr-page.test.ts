@@ -12,6 +12,8 @@ import {
 } from 'vitest'
 import { createRouter, createMemoryHistory, RouterView } from 'vue-router'
 import OcrPage from '../pages/ocr.vue'
+import OcrPageRow from '../components/ocr/OcrPageRow.vue'
+import type { WorkbenchRow } from '../lib/ocr-workbench'
 
 /**
  * 「识别校对」页的读回/写回竞态、草稿保护、筛选与单页工作区回归。
@@ -1433,8 +1435,16 @@ describe('R2 复核回归', () => {
     const { wrapper } = await loadA()
     await button(wrapper, '编辑').trigger('click')
     await flushPromises()
-    await wrapper.get('textarea').setValue('未保存修订')
     const editor = wrapper.get('textarea').element as HTMLTextAreaElement
+    // Entry focus is frame-based. Wait for the observable fresh-edit state
+    // (focused, caret at the head) before placing the user's caret; a person
+    // cannot select text before that entry intent has settled.
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(editor)
+      expect(editor.selectionStart).toBe(0)
+      expect(editor.selectionEnd).toBe(0)
+    })
+    await wrapper.get('textarea').setValue('未保存修订')
     editor.focus()
     // Returning from the confirmation keeps the caret place, not 0,0.
     editor.setSelectionRange(1, 4)
@@ -1452,11 +1462,13 @@ describe('R2 复核回归', () => {
       .trigger('click')
     await flushPromises()
     expect(wrapper.get('textarea').element).toHaveProperty('value', '未保存修订')
-    await vi.waitFor(() =>
-      expect(document.activeElement).toBe(wrapper.get('textarea').element),
-    )
-    expect(editor.selectionStart).toBe(1)
-    expect(editor.selectionEnd).toBe(4)
+    // The return-to-caret restore is also frame-based; assert the settled,
+    // user-observable outcome (focus + selection), not an intermediate frame.
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(wrapper.get('textarea').element)
+      expect(editor.selectionStart).toBe(1)
+      expect(editor.selectionEnd).toBe(4)
+    })
 
     await button(wrapper, '取消').trigger('click')
     await flushPromises()
@@ -1498,6 +1510,69 @@ describe('R2 复核回归', () => {
     expect(document.querySelector('[data-slot="sheet-content"]')).not.toBeNull()
     expect(wrapper.get('textarea').element).toHaveProperty('value', '未保存修订')
     expect(pageText(wrapper)).toContain('A-慢.pdf')
+  })
+})
+
+describe('编辑焦点所有权', () => {
+  it('旧 focus 请求被新意图取代后，其续体不得改回新的 caret', async () => {
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback)
+      return frames.length
+    })
+
+    const row: WorkbenchRow = {
+      page: 1,
+      image: null,
+      result: {
+        page: 1,
+        markdown: '原文内容甲乙丙',
+        pageRelPath: null,
+        engine: 'paddleocr',
+        model: null,
+        channel: 'upload',
+        createdAt: '2026-10-15T00:00:00.000Z',
+      },
+    }
+    const wrapper = mount(OcrPageRow, {
+      attachTo: document.body,
+      props: {
+        row,
+        filePath: 'a.pdf',
+        editing: true,
+        draft: '原文内容甲乙丙',
+        view: 'text',
+      },
+    })
+    try {
+      const textarea = wrapper.get('textarea').element as HTMLTextAreaElement
+      textarea.focus()
+      textarea.setSelectionRange(1, 4)
+      textarea.dispatchEvent(new Event('select', { bubbles: true }))
+
+      const exposed = wrapper.vm as unknown as {
+        focusEditor: (reset?: boolean) => void
+      }
+      // 旧的「新进编辑回到文首」请求，随后被「回到原 caret」的新意图取代。
+      exposed.focusEditor(true)
+      exposed.focusEditor(false)
+      await flushPromises()
+      expect(frames).toHaveLength(2)
+
+      // 新意图先落地：聚焦 + 恢复 1..4。
+      frames[1]!(0)
+      await flushPromises()
+      expect(document.activeElement).toBe(textarea)
+      expect(textarea.selectionStart).toBe(1)
+
+      // 被取代的旧请求迟到时必须放弃自己的续体，不能把 caret 改回 0。
+      frames[0]!(0)
+      await flushPromises()
+      expect(textarea.selectionStart).toBe(1)
+      expect(textarea.selectionEnd).toBe(4)
+    } finally {
+      wrapper.unmount()
+    }
   })
 })
 

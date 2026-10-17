@@ -153,6 +153,14 @@ function formatTime(iso: string): string {
  * confirming it, downloading) cancels any older pending loop, so a stale
  * "return to the row menu" request cannot steal focus long after the row's
  * action has completed.
+ *
+ * The token also has to gate the caller's follow-up work: a superseded request
+ * still resolves (it returns early on its next frame), so its continuation must
+ * know it lost ownership. Otherwise an old "fresh edit resets to the document
+ * head" continuation can run after a newer intent already restored the user's
+ * caret. `focusEl` therefore resolves to its request generation, or `null` when
+ * a newer intent superseded it; the caller re-checks that generation when its
+ * continuation runs (a newer intent may start in between).
  */
 let focusRequest = 0
 
@@ -160,17 +168,22 @@ function cancelPendingFocus() {
   focusRequest += 1
 }
 
-async function focusEl(target: { value: { $el?: HTMLElement } | null }) {
+async function focusEl(target: {
+  value: { $el?: HTMLElement } | null
+}): Promise<number | null> {
   const request = ++focusRequest
   for (let frame = 0; frame < 4; frame += 1) {
     await nextTick()
     await new Promise((resolve) => requestAnimationFrame(resolve))
-    if (request !== focusRequest) return
+    if (request !== focusRequest) return null
     const el = target.value?.$el
     if (!el || typeof el.focus !== 'function') continue
     el.focus()
-    if (document.activeElement === el) return
+    if (document.activeElement === el) return request
   }
+  // Exhausted the retry window while still owning the intent: the caller may
+  // apply its policy (the target may simply have been absent).
+  return request === focusRequest ? request : null
 }
 
 /** Last caret place before the editor lost focus (e.g. the discard dialog). */
@@ -198,7 +211,10 @@ function focusEditor(reset = true) {
         ? { start: current.selectionStart, end: current.selectionEnd }
         : null))
     : null
-  void focusEl(editor).then(() => {
+  void focusEl(editor).then((request) => {
+    // A newer focus intent superseded this one (or started while this
+    // continuation was queued): it owns the caret now.
+    if (request === null || request !== focusRequest) return
     const el = editor.value?.$el
     if (!(el instanceof HTMLTextAreaElement)) return
     if (!reset) {
