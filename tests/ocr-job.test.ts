@@ -702,3 +702,58 @@ describe('中转命中判据(纯函数)', () => {
     expect(ocrPageCacheKey(a, 'v')).not.toBe(ocrPageCacheKey(a, 'v2'))
   })
 })
+
+it('uses saved credentials for new OCR runs while a running submit and poll retain their startup snapshot', async () => {
+  const { updateCredential } = await import('../server/utils/credential-state')
+  const stateDir = join(dir, 'credential-state')
+  process.env.NUXT_CREDENTIALS_STATE_DIR = stateDir
+  try {
+    updateCredential('ocrToken', 'synthetic-start-value', { stateDir, env: {} })
+    const file = 'credential-snapshot.pdf'
+    const credentialFileId = await seedPdf(file, 1)
+    await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
+    api = await startMiniOcrApi({ pages: ['# synthetic result'], onSubmit: () => {
+      updateCredential('ocrToken', 'synthetic-replacement', { stateDir, env: {} })
+    } })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const params = { files: [file], model: null }
+    const first = await runOcr(ctxOf().ctx, params)
+    expect(first.error).toBeUndefined()
+    expect(api.authSeen.filter(Boolean).every(value => value === 'Bearer synthetic-start-value')).toBe(true)
+    expect(api.stats.polls).toBeGreaterThan(0)
+    expect(JSON.stringify({ params, result: first }).includes('synthetic-start-value')).toBe(false)
+    expect(JSON.stringify(listOcrResults(db, credentialFileId)).includes('synthetic-start-value')).toBe(false)
+    await api.close()
+    api = await startMiniOcrApi({ pages: ['# second result'] })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    // Remove only derived cache so the next run makes an actual external request.
+    await rm(ocrPageCacheDirAbs(filesDir, file), { recursive: true, force: true })
+    expect((await runOcr(ctxOf().ctx, params)).error).toBeUndefined()
+    expect(api.authSeen.filter(Boolean).every(value => value === 'Bearer synthetic-replacement')).toBe(true)
+    expect(resolveOcrConfig({ token: 'synthetic-explicit' }).token === 'synthetic-explicit').toBe(true)
+  } finally { delete process.env.NUXT_CREDENTIALS_STATE_DIR }
+})
+it('redacts credential echoes from external OCR failures before task results are persisted', async () => {
+  const secret = 'synthetic-error-secret'
+  process.env.NUXT_OCR_TOKEN = secret
+  const rel = 'credential-error.pdf'
+  await seedPdf(rel, 1)
+  await renderPdfPages(filesDir, rel, { dpi: DEFAULT_DPI })
+  api = await startMiniOcrApi({ pages: [], failWith: `authorization ${secret} rejected` })
+  process.env.NUXT_OCR_BASE_URL = api.origin
+  const result = await runOcr(ctxOf().ctx, { files: [rel], model: null })
+  expect(result.error).toBeDefined()
+  expect(JSON.stringify(result).includes(secret)).toBe(false)
+})
+it('fails closed with a sanitized error when persisted credential state is malformed before OCR starts', async () => {
+  const stateDir = join(dir, 'broken-credential-state')
+  await mkdir(stateDir, { recursive: true })
+  await writeFile(join(stateDir, 'credentials.json'), '{synthetic-corrupt-secret')
+  process.env.NUXT_CREDENTIALS_STATE_DIR = stateDir
+  try {
+    let message = ''
+    try { await runOcr(ctxOf().ctx, { files: ['unopened.pdf'], model: null }) } catch (error) { message = (error as Error).message }
+    expect(message).toContain('凭据配置存储不可用')
+    expect(message.includes('synthetic-corrupt-secret')).toBe(false)
+  } finally { delete process.env.NUXT_CREDENTIALS_STATE_DIR }
+})
