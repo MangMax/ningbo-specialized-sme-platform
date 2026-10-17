@@ -44,6 +44,7 @@ interface Lifecycle {
   dueYear: number | null
   state: 'none' | 'active' | 'terminated'
   needsReview: boolean
+  anchorEventId?: number | null
 }
 interface RecordRow {
   id: number
@@ -143,12 +144,30 @@ const { data, isLoading, error } = useQuery({
 })
 
 const detail = computed(() => data.value ?? null)
-const nextReviewNeedsReview = computed(() => {
-  const year = detail.value?.enterprise.nextReviewYear
-  if (year == null || !detail.value) return false
-  return detail.value.records.some(
-    (record) => record.lifecycle.dueYear === year && record.lifecycle.needsReview,
-  )
+/** 每个称号的复核安排使用后端生命周期；认定年份与批次必须来自对应事件。 */
+const nextReviews = computed(() => {
+  if (!detail.value) return []
+  const records = detail.value.records
+  const events = detail.value.events
+  const recordTitles = new Map(records.map(record => [record.id, record.titleCode]))
+  const seen = new Set<string>()
+  return records.filter(record => {
+    if (seen.has(record.titleCode) || record.lifecycle.state !== 'active') return false
+    seen.add(record.titleCode)
+    return true
+  }).map(record => {
+    const lifecycle = record.lifecycle
+    const anchor = events.find(event => event.id === lifecycle.anchorEventId && recordTitles.get(event.recordId) === record.titleCode)
+    const originalYear = anchor?.eventType === 'award'
+      ? anchor.year ?? anchor.decidedYear
+      : anchor?.eventType === 'review' ? anchor.year : null
+    const awards = anchor?.eventType === 'award' ? [anchor] : events.filter(event =>
+      event.eventType === 'award' && recordTitles.get(event.recordId) === record.titleCode && originalYear != null && event.year === originalYear,
+    )
+    const batches = new Set(awards.map(event => event.batchSeq))
+    const batchSeq = batches.size === 1 && !batches.has(null) ? [...batches][0]! : null
+    return {titleCode:record.titleCode, dueYear:lifecycle.dueYear, needsReview:lifecycle.needsReview, originalYear, batchSeq}
+  }).sort((a,b) => (a.dueYear ?? Infinity) - (b.dueYear ?? Infinity) || TITLE_ORDER.indexOf(a.titleCode) - TITLE_ORDER.indexOf(b.titleCode))
 })
 const visibleHistoricalAliasNames = computed(() => {
   const enterprise = detail.value?.enterprise
@@ -350,11 +369,19 @@ function eventSuffix(item: TimelineItem): string {
               <span v-else class="text-muted-foreground">—</span>
             </dd>
             <dt class="text-muted-foreground text-xs">下次复核</dt>
-            <dd data-testid="next-review-value" class="text-[13px] tabular-nums">
-              <span v-if="detail.enterprise.nextReviewYear == null" class="text-muted-foreground">—</span>
-              <template v-else>
-                {{ detail.enterprise.nextReviewYear }}<span v-if="nextReviewNeedsReview" class="text-muted-foreground ml-1 text-xs">待核</span>
-              </template>
+            <dd data-testid="next-review-value" class="min-w-0 text-[13px] tabular-nums">
+              <ul v-if="nextReviews.length" class="space-y-2">
+                <li v-for="item in nextReviews" :key="item.titleCode" data-testid="next-review-item" :data-title-code="item.titleCode">
+                  <div class="flex flex-wrap items-baseline gap-x-2">
+                    <span class="font-medium">{{ TITLES[item.titleCode] ?? item.titleCode }}</span>
+                    <span data-testid="next-review-year" :data-review-year="item.dueYear" :data-needs-review="item.needsReview">
+                      {{ item.dueYear == null ? '复核年份待核' : `${item.dueYear}年复核` }}<span v-if="item.needsReview" class="text-muted-foreground"> · 待核</span>
+                    </span>
+                  </div>
+                  <div class="text-muted-foreground" data-testid="next-review-cohort">原认定：{{ item.originalYear == null ? '年份待核' : `${item.originalYear}年` }} · {{ item.batchSeq == null ? '批次待核' : `第${item.batchSeq}批` }}</div>
+                </li>
+              </ul>
+              <span v-else class="text-muted-foreground">—</span>
             </dd>
           </dl>
 

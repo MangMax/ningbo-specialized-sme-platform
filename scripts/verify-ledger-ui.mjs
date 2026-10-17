@@ -1392,7 +1392,7 @@ async function verifyNextReviewFlagBinding(cdp) {
       bad('企业列表 · 下次复核待核:企业 312 的复核年份没有渲染')
       return
     }
-    const marked = await evaluate(cdp, sessionId, `document.querySelector('[data-testid="next-review-value"]')?.textContent?.includes('待核') ?? false`)
+    const marked = await evaluate(cdp, sessionId, `[...document.querySelectorAll('[data-testid="next-review-year"][data-review-year="${detail.enterprise.nextReviewYear}"]')].some(element => element.textContent.includes('待核'))`)
     if (marked !== expectedNeedsReview) {
       bad(`企业列表 · 下次复核待核:标记没有绑定到产生该年份的称号 ${JSON.stringify({ year: detail.enterprise.nextReviewYear, expectedNeedsReview, marked })}`)
     } else {
@@ -1400,6 +1400,37 @@ async function verifyNextReviewFlagBinding(cdp) {
     }
   } finally {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
+function nextReviewDetailViolation(items) {
+  const expected = [
+    ['specialized_sme','专精特新中小企业',2024,'原认定：2021年 · 批次待核',true],
+    ['innovative_sme','创新型中小企业',2025,'原认定：2022年 · 批次待核',true],
+    ['little_giant','专精特新“小巨人”',2027,'原认定：2024年 · 第6批',false],
+  ]
+  if (items.length !== expected.length) return '未逐称号列出三个复核安排'
+  return expected.some(([title,label,year,cohort,pending],index) => {
+    const item=items[index];
+    return item.title !== title || !item.text.includes(label) || !item.year.includes(`${year}年复核`) || item.year.includes('待核') !== pending || item.cohort !== cohort || item.scrollWidth > item.clientWidth+1;
+  }) ? '称号、复核年、认定年批次或待核状态不匹配/越界' : null
+}
+
+async function verifyNextReviewDetails(cdp) {
+  const measure = `(() => [...document.querySelectorAll('[data-testid="next-review-item"]')].map(element=>({
+    title:element.dataset.titleCode,text:element.textContent,year:element.querySelector('[data-testid="next-review-year"]')?.textContent.trim() ?? '',cohort:element.querySelector('[data-testid="next-review-cohort"]')?.textContent.trim() ?? '',clientWidth:element.clientWidth,scrollWidth:element.scrollWidth,
+  })))()`;
+  for (const viewport of VIEWPORTS.slice(0,2)) {
+    const {targetId,sessionId}=await openSession(cdp,`${BASE}/?q=${encodeURIComponent('宁波开诚')}&expand=3449`,viewport,`document.querySelectorAll('[data-testid="next-review-item"]').length === 3`);
+    try {
+      const items=await evaluate(cdp,sessionId,measure);
+      const violation=nextReviewDetailViolation(items);
+      if (violation) bad(`下次复核详情 · ${viewport.name}:${violation} ${JSON.stringify(items)}`);
+      else ok(`下次复核详情 · ${viewport.name}:三个称号分别显示复核年/原认定年批次，缺批次待核，无越界`);
+      await evaluate(cdp,sessionId,`document.querySelector('[data-testid="next-review-value"]').textContent='2024 待核'`);
+      if (!nextReviewDetailViolation(await evaluate(cdp,sessionId,measure))) bad(`下次复核详情 · ${viewport.name}:恢复仅有年份后断言未变红`);
+      else ok(`下次复核详情 · ${viewport.name}:恢复仅有年份后按预期变红`);
+    } finally {await cdp.send('Target.closeTarget',{targetId}).catch(()=>{});}
   }
 }
 
@@ -2655,6 +2686,7 @@ async function main() {
     await verifyComparisonCurrentNameAliasDisplay(cdp)
     await verifyComparisonExportFilters(cdp)
     await verifyNextReviewFlagBinding(cdp)
+    await verifyNextReviewDetails(cdp)
     await verifyKaichengExample(cdp)
     await verifyTimelineConnections(cdp)
     await verifyUnknownReviewOutcomeExample(cdp)

@@ -4,6 +4,7 @@ import { ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
 import EnterpriseDrawer from '../components/EnterpriseDrawer.vue'
+import type { RosterEventRow } from '../lib/roster/enterprise-roster'
 
 vi.mock('@pinia/colada', () => ({ useQuery: vi.fn() }))
 
@@ -234,8 +235,8 @@ describe('企业详情抽屉的复核年份', () => {
     queryLoading.value = false
     const wrapper = mountDrawer()
 
-    expect(wrapper.get('[data-testid="next-review-value"]').text()).toContain('2023')
-    expect(wrapper.get('[data-testid="next-review-value"]').text()).not.toContain('待核')
+    expect(wrapper.get('[data-testid="next-review-year"][data-review-year="2023"]').text()).toContain('2023')
+    expect(wrapper.get('[data-testid="next-review-year"][data-review-year="2023"]').text()).not.toContain('待核')
   })
 
   it('下次复核年份本身的锚点待核时显示待核标记', () => {
@@ -253,8 +254,8 @@ describe('企业详情抽屉的复核年份', () => {
     queryLoading.value = false
     const wrapper = mountDrawer()
 
-    expect(wrapper.get('[data-testid="next-review-value"]').text()).toContain('2023')
-    expect(wrapper.get('[data-testid="next-review-value"]').text()).toContain('待核')
+    expect(wrapper.get('[data-testid="next-review-year"][data-review-year="2023"]').text()).toContain('2023')
+    expect(wrapper.get('[data-testid="next-review-year"][data-review-year="2023"]').text()).toContain('待核')
   })
 })
 
@@ -341,5 +342,70 @@ describe('企业详情抽屉的称号时间线', () => {
     const wrapper=mountDrawer()
     expect(wrapper.findAll('[data-testid="timeline-node"]')).toHaveLength(1)
     expect(wrapper.findAll('[data-testid="timeline-connector"]')).toHaveLength(0)
+  })
+})
+
+
+describe('企业详情抽屉的复核称号与认定批次',()=>{
+  const lifecycle={firstRecognitionYear:2021,dueYear:2027,state:'active',needsReview:false,anchorEventId:2}
+  const award: RosterEventRow={id:1,recordId:1,eventType:'award',year:2021,decidedYear:2021,batchSeq:3,reviewOutcome:null}
+  const review: RosterEventRow={id:2,recordId:1,eventType:'review',year:2021,decidedYear:2024,batchSeq:1,reviewOutcome:'passed'}
+  function reviewDetail(events: RosterEventRow[]=[award,review]) {
+    return {...detailWithDifference(),records:[{id:1,titleCode:'specialized_sme',source:'jxj',district:null,lifecycle}],events}
+  }
+
+  it('逐称号展示复核年与原认定年批次，同称号跨来源只显示一次',()=>{
+    queryData.value={...detailWithDifference(),records:[
+      {id:2,titleCode:'little_giant',source:'miit',district:null,lifecycle:{...lifecycle,anchorEventId:10,firstRecognitionYear:2024}},
+      {id:1,titleCode:'little_giant',source:'jxj',district:null,lifecycle:{...lifecycle,anchorEventId:10,firstRecognitionYear:2024}},
+      {id:3,titleCode:'specialized_sme',source:'jxj',district:null,lifecycle:{...lifecycle,anchorEventId:20,dueYear:2024,needsReview:true}},
+    ],events:[{...award,id:10,year:2024,decidedYear:2024,batchSeq:6},{...award,id:20,recordId:3,batchSeq:2}]}
+    queryLoading.value=false
+    const view=mountDrawer()
+    const items=view.findAll('[data-testid="next-review-item"]')
+    expect(items.map(item=>item.attributes('data-title-code'))).toEqual(['specialized_sme','little_giant'])
+    expect(items[0]!.text()).toContain('专精特新中小企业')
+    expect(items[0]!.get('[data-testid="next-review-year"]').text()).toBe('2024年复核 · 待核')
+    expect(items[0]!.get('[data-testid="next-review-cohort"]').text()).toBe('原认定：2021年 · 第2批')
+    expect(items[1]!.text()).toContain('专精特新“小巨人”')
+    expect(items[1]!.get('[data-testid="next-review-year"]').text()).toBe('2027年复核')
+    expect(items[1]!.get('[data-testid="next-review-cohort"]').text()).toBe('原认定：2024年 · 第6批')
+  })
+
+  it('复核锚点关联原认定批次，不把复核批次当认定批次',()=>{
+    queryData.value=reviewDetail()
+    queryLoading.value=false
+    const view=mountDrawer()
+    expect(view.get('[data-testid="next-review-cohort"]').text()).toBe('原认定：2021年 · 第3批')
+    expect(view.get('[data-testid="next-review-year"]').text()).toBe('2027年复核')
+    expect(review.batchSeq).toBe(1)
+  })
+
+  it.each([
+    ['缺失', [{...award,batchSeq:null},review]],
+    ['冲突', [award,{...award,id:3,batchSeq:4},review]],
+  ])('认定批次%s时明确待核，不猜测',(_label,events)=>{
+    queryData.value=reviewDetail(events)
+    queryLoading.value=false
+    const view=mountDrawer()
+    expect(view.get('[data-testid="next-review-cohort"]').text()).toBe('原认定：2021年 · 批次待核')
+  })
+
+  it('锚点事件缺失时不拿首次认定年份冒充当前复核批次',()=>{
+    const detail=reviewDetail()
+    queryData.value={...detail,records:[{...detail.records[0],lifecycle:{...lifecycle,anchorEventId:99}}]}
+    queryLoading.value=false
+    const view=mountDrawer()
+    expect(view.get('[data-testid="next-review-cohort"]').text()).toBe('原认定：年份待核 · 批次待核')
+    expect(view.get('[data-testid="next-review-year"]').text()).toBe('2027年复核')
+  })
+
+  it('已终止资格不显示下次复核安排',()=>{
+    const detail=reviewDetail()
+    queryData.value={...detail,records:[{...detail.records[0],lifecycle:{...lifecycle,state:'terminated',dueYear:null}}]}
+    queryLoading.value=false
+    const view=mountDrawer()
+    expect(view.findAll('[data-testid="next-review-item"]')).toHaveLength(0)
+    expect(view.get('[data-testid="next-review-value"]').text()).toBe('—')
   })
 })
