@@ -170,6 +170,7 @@ export function useOcrWorkbench() {
     source,
     year,
     filters,
+    view,
     dirty,
     notice,
     filteredRows: visibleRows,
@@ -177,6 +178,7 @@ export function useOcrWorkbench() {
     selectFile,
     navigate,
     setFilters,
+    setView,
     setFileFilter,
     blocked,
   } = useOcrNavigation({ files: pdfFiles, rows, ready, busy: writeBusy })
@@ -321,6 +323,9 @@ export function useOcrWorkbench() {
       pagesState.value = state
       results.value = read.rows
       loadedPath.value = relPath
+      // A verified re-read is the recovery point: a stale "写入已提交,但读回失败"
+      // (or a delete failure) must not keep hanging over a row that is now readable.
+      rowFailure.value = null
     } catch (error) {
       if (relPath !== selectedPath.value || generation !== detailGeneration)
         return
@@ -381,8 +386,21 @@ export function useOcrWorkbench() {
   // 动作
   // ---------------------------------------------------------------------------
 
-  /** 哪一行正在飞(保存 / 删除)。同一时刻只允许一个动作 —— 一次点两页会撞在同一份状态上。 */
-  const rowFailure = ref<{ page: number; message: string } | null>(null)
+  /**
+   * 哪一行正在飞(保存 / 删除),以及这次失败**该由哪个动作来重试**。
+   *
+   * 失败行内只有一个「重试」入口,但三种失败的重试语义完全不同:
+   *  - `save`  : POST 没提交,重试就是重新提交当前草稿;
+   *  - `delete`: DELETE 没提交,重试必须先重新确认删除,不能静默再删;
+   *  - `read`  : 写入/删除**已经提交**,只是读回失败,重试只能 GET ——
+   *    再发一次 POST/DELETE 会把「读回缺失」误当成「没写成」。
+   * 不记录来源,`retry()` 就只能靠猜(旧实现正是这样把读回失败变成了死按钮)。
+   */
+  const rowFailure = ref<{
+    page: number
+    message: string
+    action: 'save' | 'delete' | 'read'
+  } | null>(null)
 
   /**
    * 一次写该写到**哪一份文件**上。
@@ -421,7 +439,12 @@ export function useOcrWorkbench() {
       committed = true
       const next = await reloadResults(relPath)
       if (next === null) {
-        if (relPath === selectedPath.value) rowFailure.value = { page, message: '写入已提交,但读回失败 —— 请重试读取后核对这一页。' }
+        if (relPath === selectedPath.value)
+          rowFailure.value = {
+            page,
+            action: 'read',
+            message: '写入已提交,但读回失败 —— 请重试读取后核对这一页。',
+          }
         return
       }
       // **读回核对**:落库会做归一(去掉行尾空白与首尾空行),所以提交与读回的比较
@@ -435,13 +458,19 @@ export function useOcrWorkbench() {
       if (check.ok) {
         dirty.value = false
         flashSaved(page)
-      } else rowFailure.value = { page, message: check.message }
+      } else
+        rowFailure.value = {
+          page,
+          action: 'save',
+          message: check.message,
+        }
     } catch (error) {
       if (relPath !== selectedPath.value) return
       // 写失败与**读回**失败分开说:读回失败时写入其实已经提交(再点一次是幂等覆盖),
-      // 报成「保存失败」会让人以为白写了一遍。
+      // 报成「保存失败」会让人以为白写了一遍。重试动作也随之不同:读回失败只许 GET。
       rowFailure.value = {
         page,
+        action: committed ? 'read' : 'save',
         message: describeFetchError(
           error,
           committed
@@ -461,12 +490,24 @@ export function useOcrWorkbench() {
     pendingPage.value = page
     rowFailure.value = null
     justSaved.value = null
+    /** DELETE 是否已经提交 —— 决定失败后是「重试删除」还是只能「重试读取」。 */
+    let committed = false
     try {
       const out = await api<DeleteResponse>('/api/ocr-results', {
         method: 'DELETE',
         query: { file: relPath, page },
       })
-      if ((await reloadResults(relPath)) === null) return
+      committed = true
+      if ((await reloadResults(relPath)) === null) {
+        if (relPath === selectedPath.value)
+          rowFailure.value = {
+            page,
+            action: 'read',
+            // 删除已经落库;再发一次 DELETE 是多余且危险的重复动作。
+            message: '删除已提交,但读回失败 —— 请重试读取后核对。',
+          }
+        return
+      }
       status.value = {
         tone: 'ok',
         message:
@@ -480,7 +521,13 @@ export function useOcrWorkbench() {
       if (relPath === selectedPath.value)
         rowFailure.value = {
           page,
-          message: describeFetchError(error, '删除失败,请重试。'),
+          action: committed ? 'read' : 'delete',
+          message: describeFetchError(
+            error,
+            committed
+              ? '删除已提交,但读回失败 —— 请重试读取后核对。'
+              : '删除失败,请重试。',
+          ),
         }
     } finally {
       pendingPage.value = null
@@ -532,6 +579,31 @@ export function useOcrWorkbench() {
       // 这次渲染确实结束了;不收会让按钮永远转着。
       rendering.value = false
     }
+  }
+
+  /**
+   * 恢复路径的读回确认:一次**已提交**的写入,在随后一次成功读取之后核对原草稿。
+   *
+   * `reloadResults` 失败时我们没有拿到读回值,不能假装保存完成;用户点「重试读取」
+   * 再读成功后,这里用与保存路径同一份归一规则确认「库里就是刚才那份草稿」。
+   * 只有确认一致才收掉编辑态并给出成功反馈;不一致则继续保留草稿与失败说明。
+   * 纯读,不发任何写请求。
+   */
+  function confirmPageSaved(page: number, markdown: string): boolean {
+    const got = rows.value.find((row) => row.page === page)?.result?.markdown ?? null
+    const check = confirmWrittenPage(markdown, got)
+    status.value = {
+      tone: check.ok ? 'ok' : 'warn',
+      message: `${pageLabel(page)}保存完成:${check.message}`,
+    }
+    if (check.ok) {
+      rowFailure.value = null
+      dirty.value = false
+      flashSaved(page)
+    } else {
+      rowFailure.value = { page, action: 'save', message: check.message }
+    }
+    return check.ok
   }
 
   // ---------------------------------------------------------------------------
@@ -663,6 +735,7 @@ export function useOcrWorkbench() {
     canImport,
     IMPORT_NOT_READY,
     filters,
+    view,
     visibleRows,
     currentPage,
     currentRow,
@@ -670,6 +743,7 @@ export function useOcrWorkbench() {
     notice,
     ready,
     setFilters,
+    setView,
     navigate,
     status,
     loadedPath,
@@ -682,6 +756,7 @@ export function useOcrWorkbench() {
     justSaved,
     savePage,
     removePage,
+    confirmPageSaved,
     previewPage,
     previewSrc,
     previewRow,
