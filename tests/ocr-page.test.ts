@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import {
   afterAll,
@@ -28,11 +28,11 @@ import OcrPage from '../pages/ocr.vue'
  *    逐页直接读;拿不到就**一页都不给**(没有行就没有编辑框)。这里断言的是
  *    「正文缺失时**没有可编辑的行**」。
  *
- * 环境是 happy-dom,`$fetch` 由用例自己实现 —— 请求的**完成次序**因此完全可控,
+ * 环境是 jsdom,`$fetch` 由用例自己实现 —— 请求的**完成次序**因此完全可控,
  * 这正是复现竞态需要的能力(真浏览器里靠网速碰运气)。
  */
 
-// Happy DOM's partial WAAPI rejects cancelled decorative tab animations. Use the
+// DOM emulators' partial WAAPI rejects cancelled decorative tab animations. Use the
 // same no-WAAPI runtime as tabs-ui tests; browser acceptance checks actual motion.
 const nativeAnimate = Object.getOwnPropertyDescriptor(
   Element.prototype,
@@ -221,6 +221,10 @@ let harness: Harness | null = null
 
 beforeEach(() => {
   vi.useRealTimers()
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    media, matches: false, onchange: null, addEventListener() {}, removeEventListener() {},
+    addListener() {}, removeListener() {}, dispatchEvent() { return true },
+  }))
 })
 
 afterEach(() => {
@@ -416,10 +420,10 @@ describe('单页工作区与组合筛选', () => {
   })
 })
 
-async function loadA(pageCount = 4) {
+async function loadA(pageCount = 4, markdown = '甲公司') {
   harness = await mountPage()
   await selectFile(harness.wrapper, 'A-慢')
-  const response = ocrList(FILE_A.relPath, '甲公司')
+  const response = ocrList(FILE_A.relPath, markdown)
   response.pages.push({ ...response.pages[0]!, page: 2, markdown: '' })
   response.pages.push({ ...response.pages[0]!, page: 4, markdown: '乙公司' })
   response.count = 3
@@ -806,4 +810,129 @@ it('提交成功但读回缺少逐页正文时明确已提交并保留草稿', a
   await flushPromises()
   expect(wrapper.text()).toContain('写入已提交,但读回失败')
   expect(wrapper.get('textarea').element).toHaveProperty('value', '需要确认的人工修订')
+})
+
+it('主区与同页对照使用可读名单表格和精确源码复制，显示操作不写入', async () => {
+  const source = '# 原始名单\r\n\r\n<table><tr><td rowspan="2">宁波甲公司</td><td>2026</td></tr><tr><td>合并名单</td></tr></table>\r\n\r\n- 原始条目\r\n'
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+  harness = await mountPage()
+  const { wrapper, pdf, ocr, fetchMock } = harness
+  await selectFile(wrapper, 'A-慢')
+  const response = ocrList(FILE_A.relPath, source)
+  ocr.get(FILE_A.relPath)!.resolve(response)
+  pdf.get(FILE_A.relPath)!.resolve({ ...pagesState(FILE_A.relPath), pages: [{ page: 1, url: '/api/files/synthetic/page-1.png' }] })
+  await flushPromises()
+  expect(rows(wrapper)[0]!.get('h1').text()).toBe('原始名单')
+  expect(rows(wrapper)[0]!.get('td[rowspan="2"]').text()).toBe('宁波甲公司')
+  await button(wrapper, '查看源码').trigger('click')
+  await flushPromises()
+  expect(rows(wrapper)[0]!.get('pre').element.textContent!.replace(/\r\n/g, '\n')).toBe(source.replace(/\r\n/g, '\n'))
+  await button(wrapper, '复制原文').trigger('click')
+  expect(writeText).toHaveBeenLastCalledWith(source)
+  await wrapper.get('[aria-label="放大看第 1 页"]').trigger('click')
+  await flushPromises()
+  const dialog = new DOMWrapper(document.body).get('[role="dialog"]')
+  expect(dialog.get('td[rowspan="2"]').text()).toBe('宁波甲公司')
+  await dialog.findAll('button').find(b => b.text() === '查看源码')!.trigger('click')
+  await flushPromises()
+  expect(dialog.get('pre').element.textContent!.replace(/\r\n/g, '\n')).toBe(source.replace(/\r\n/g, '\n'))
+  await dialog.findAll('button').find(b => b.text() === '复制原文')!.trigger('click')
+  expect(writeText).toHaveBeenLastCalledWith(source)
+  expect(fetchMock.mock.calls.filter(([, options]) => options?.method && options.method !== 'GET')).toEqual([])
+  expect(response.pages[0]!.markdown).toBe(source)
+})
+
+it('渲染和源码后的编辑仍取原始 Markdown，取消与失败保留焦点和草稿且不自动保存', async () => {
+  const source = '# 标题\n\n<table><tr><td onclick="alert(1)">企业甲</td></tr></table>\n'
+  const { wrapper, fetchMock, ocr } = await loadA(4, source)
+  await button(wrapper, '查看源码').trigger('click')
+  await button(wrapper, '深色主题').trigger('click')
+  expect(rows(wrapper)[0]!.get('[data-theme]').attributes('data-theme')).toBe('dark')
+  await button(wrapper, '渲染预览').trigger('click')
+  await button(wrapper, '编辑').trigger('click')
+  await vi.waitFor(() => expect(document.activeElement).toBe(wrapper.get('textarea').element))
+  expect(wrapper.get('textarea').element).toHaveProperty('value', source)
+  await wrapper.get('textarea').setValue('未提交草稿')
+  await selectFile(wrapper, 'B-快')
+  expect(wrapper.get('textarea').element).toHaveProperty('value', '未提交草稿')
+  await button(wrapper, '取消').trigger('click')
+  await vi.waitFor(() => expect(document.activeElement).toBe(button(wrapper, '编辑').element))
+  expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')).toEqual([])
+  await button(wrapper, '编辑').trigger('click')
+  expect(wrapper.get('textarea').element).toHaveProperty('value', source)
+  const original = fetchMock.getMockImplementation()! as (url: string, opts?: unknown) => Promise<unknown>
+  let fail = true
+  fetchMock.mockImplementation((url, opts) => {
+    if (opts?.method === 'POST' && url === '/api/ocr-results')
+      return fail ? Promise.reject(new Error('保存失败,请重试。')) : Promise.resolve({ written: 1, pages: [1] })
+    return original(url, opts)
+  })
+  const edited = source + '\n校对  '
+  await wrapper.get('textarea').setValue(edited)
+  await button(wrapper, '保存').trigger('click')
+  await flushPromises()
+  await vi.waitFor(() => expect(document.activeElement).toBe(wrapper.get('textarea').element))
+  expect(wrapper.get('textarea').element).toHaveProperty('value', edited)
+  expect(wrapper.text()).toContain('保存失败')
+  fail = false
+  await button(wrapper, '保存').trigger('click')
+  await flushPromises()
+  const writes = fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')
+  expect(writes.map(([, options]) => options?.body)).toEqual([
+    { file: FILE_A.relPath, page: 1, markdown: edited },
+    { file: FILE_A.relPath, page: 1, markdown: edited },
+  ])
+  ocr.get(FILE_A.relPath)!.resolve(ocrList(FILE_A.relPath, '# 标题\n\n<table><tr><td onclick="alert(1)">企业甲</td></tr></table>\n\n校对'))
+  await flushPromises()
+  expect(wrapper.find('textarea').exists()).toBe(false)
+  expect(rows(wrapper)[0]!.find('[onclick]').exists()).toBe(false)
+  expect(rows(wrapper)[0]!.get('td').text()).toBe('企业甲')
+})
+
+it('空结果与未识别保持不同，97 页仅当前页提供预览和源码且复制失败不改变状态', async () => {
+  const { wrapper, fetchMock } = await loadA(97, '# 第一页\n\n- 原始条目')
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) }, configurable: true })
+  expect(wrapper.findAll('[aria-label="正文预览操作"]')).toHaveLength(1)
+  await button(wrapper, '复制原文').trigger('click')
+  await flushPromises()
+  expect(rows(wrapper)[0]!.text()).toContain('有文本')
+  expect(wrapper.text()).toContain('复制失败')
+  await wrapper.get('[aria-label="跳转实际页号"]').setValue('2')
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  expect(rows(wrapper)[0]!.text()).toContain('空结果')
+  expect(rows(wrapper)[0]!.text()).toContain('正文为空')
+  await button(wrapper, '查看源码').trigger('click')
+  expect(rows(wrapper)[0]!.text()).toContain('空结果')
+  await wrapper.get('[aria-label="跳转实际页号"]').setValue('97')
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  expect(rows(wrapper)[0]!.text()).toContain('未识别')
+  expect(wrapper.find('[aria-label="正文预览操作"]').exists()).toBe(false)
+  expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')).toEqual([])
+})
+
+it('OCR 主区跟随应用主题切换，换文件后不保留旧源码视图或复制提示', async () => {
+  const ThemeToggle = (await import('../components/ThemeToggle.vue')).default
+  const toggle = mount(ThemeToggle)
+  try {
+    const { wrapper, pdf, ocr } = await loadA()
+    const themeBefore = rows(wrapper)[0]!.get('[data-theme]').attributes('data-theme')
+    await toggle.get('button').trigger('click')
+    await flushPromises()
+    expect(rows(wrapper)[0]!.get('[data-theme]').attributes('data-theme')).toBe(themeBefore === 'dark' ? 'light' : 'dark')
+    await button(wrapper, '查看源码').trigger('click')
+    await selectFile(wrapper, 'B-快')
+    ocr.get(FILE_B.relPath)!.resolve(ocrList(FILE_B.relPath, '# B 的新正文'))
+    pdf.get(FILE_B.relPath)!.resolve(pagesState(FILE_B.relPath))
+    await flushPromises()
+    expect(rows(wrapper)[0]!.get('h1').text()).toBe('B 的新正文')
+    expect(button(wrapper, '查看源码')).toBeTruthy()
+    expect(wrapper.text()).not.toContain('甲公司')
+  } finally {
+    // Return the shared app color mode to its previous value for later cases.
+    await toggle.get('button').trigger('click')
+    toggle.unmount()
+  }
 })

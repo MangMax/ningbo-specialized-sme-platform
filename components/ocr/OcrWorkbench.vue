@@ -353,6 +353,7 @@ const {
       @update:open="(v: boolean) => !v && (previewPage = null)"
     >
       <DialogContent
+        data-ocr-comparison
         class="flex h-[92vh] w-[96vw] flex-col border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1500px,96vw)] [&_[data-slot=dialog-close]]:top-2 [&_[data-slot=dialog-close]]:z-10 [&_[role=toolbar]]:pr-10"
       >
         <DialogTitle class="sr-only">
@@ -367,7 +368,7 @@ const {
         </DialogDescription>
 
         <div
-          class="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)]"
+          class="grid min-h-0 flex-1 grid-cols-1 grid-rows-2 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)] lg:grid-rows-1"
         >
           <ImagePreview
             v-if="previewSrc"
@@ -388,8 +389,7 @@ const {
                 previewMeta
               }}</span>
             </div>
-            <!-- 与行内同一条规则:空结果就写「(空)」,不再说「还没有识别文本」——
-                 那句话属于「未识别」那一档。 -->
+            <!-- 主区与对照共用同一正文 seam；空字符串和没有 OCR 记录保持不同。 -->
             <OcrPageBody
               v-if="previewRow?.result"
               :markdown="previewRow.result.markdown"
@@ -406,3 +406,15 @@ const {
     </Dialog>
   </div>
 </template>
+
+<style scoped>
+/* The comparison is teleported; limit reduced motion to this OCR dialog and its overlay. */
+@media (prefers-reduced-motion: reduce) {
+  :global([data-ocr-comparison]),
+  :global([data-ocr-comparison] *),
+  :global([data-slot='dialog-overlay']:has(~ [data-ocr-comparison])) {
+    animation: none;
+    transition: none;
+  }
+}
+</style>

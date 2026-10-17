@@ -148,7 +148,16 @@ export function retrySrc(src: string, attempt: number): string {
 export function resolvePreviewKind(path: string): PreviewKindInfo | null {
   let clean: string
   try { clean = decodeURIComponent(path.split(/[?#]/, 1)[0] ?? '') } catch { return null }
-  if (clean.split('/').some(segment => segment.startsWith('.'))) return null
+  const segments = clean.split('/')
+  if (segments.some(segment => segment.startsWith('.'))) {
+    // OCR page images predate text previews and live in a hidden derived directory.
+    // Keep that exact PNG convention readable, without admitting hidden text/cache files.
+    const pageImage = /^\.[^.][^/]*\.pdf\.pages$/i.test(segments.at(-2) ?? '')
+      && /^p\d{3,}\.png$/.test(segments.at(-1) ?? '')
+      && Number((segments.at(-1) ?? '').slice(1, -4)) > 0
+      && segments.slice(0, -2).every(segment => !segment.startsWith('.'))
+    if (!pageImage) return null
+  }
   const ext = extensionOf(clean)
   return BY_EXTENSION[ext] ?? null
 }

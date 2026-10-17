@@ -257,7 +257,7 @@ watch(
               :readonly="pending"
               :disabled="disabled"
               :aria-label="`${pageLabel(row.page)}的 OCR 文本`"
-              class="max-h-[26rem] min-h-32 font-mono text-xs"
+              class="max-h-[26rem] min-h-32 font-mono text-xs motion-reduce:transition-none"
               placeholder="这一页的识别文本(markdown)。空白页留空即可 —— 空结果也会占住页号。"
             />
             <div class="flex flex-wrap items-center gap-2">
@@ -285,8 +285,7 @@ watch(
           </div>
 
           <div v-else key="read" class="flex flex-col gap-2">
-            <!-- 原文而不是渲染后的结果:校对要看的正是 `|` 与 `#` 这些结构标记,
-                 渲染一遍反而把它们藏掉。空的正文不写第二句话 —— 徽章已经写着「空结果」。 -->
+            <!-- 共享只读预览直接接收原文；编辑与保存仍使用独立的原始 Markdown 草稿。 -->
             <OcrPageBody
               v-if="result"
               :markdown="result.markdown"
