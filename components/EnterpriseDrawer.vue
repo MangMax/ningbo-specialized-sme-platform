@@ -32,8 +32,8 @@ import { Skeleton } from '@/components/ui/skeleton'
  *
  * ── 三块内容,都是实打实从 `/api/roster/enterprises/:id` 取的 ─────────────
  * 1. **事实三行**:属地 / 曾用名 / 差异状态;
- * 2. **竖向时间轴**:该企业**每个称号**的历次事件(认定 / 复核 / 维持),
- *    按「结论年份 → 称号先来后到 → 认定在复核维持前」排;每条事件都标出结论年份,
+ * 2. **竖向时间轴**:该企业**每个称号**的历次事件(认定 / 复核 / 维护),
+ *    按「结论年份 → 称号先来后到 → 认定在复核维护前」排;每条事件都标出结论年份,
  *    同年事件共享年份值,但各自可直接核对;
  * 3. **差异块**:方向 · 原因 → 措施 的**可视化链**,外加依据原文与措施原文。
  *    这一块就是用户要求的「原因也要可视化」在行级之外的那一半(行级是那条 6px 状态条)。
@@ -201,7 +201,7 @@ const evidenceItems = computed(() => {
  * 称号的「先来后到」序号:按**首次认定年**升序,同年按称号等级。
  *
  * 时间轴同年内的顺序就靠它 —— 于是那一年里先拿到的称号排在前面,与设计稿逐行一致
- * (开诚 2024 那一组:专精特新维持 → 创新型维持 → 小巨人认定 → 小巨人维持)。
+ * (开诚 2024 那一组:专精特新维护 → 创新型维护 → 小巨人认定 → 小巨人维护)。
  */
 const titleSequence = computed(() => {
   const order = new Map<string, number>()
@@ -242,7 +242,7 @@ interface TimelineItem {
  * 时间轴。三步:
  *  1. 事件按 `recordId` 认回称号;只有同一称号下**批次、原年份、结论年份和结论**
  *     都相同的事件才合并,避免跨来源重复,同时保住不同批次与不同复核事实;
- *  2. 按 (年份, 称号先来后到, 事件类型) 排 —— `EVENT_ORDER` 正好是「认定 → 复核 → 维持」;
+ *  2. 按 (年份, 称号先来后到, 事件类型) 排 —— `EVENT_ORDER` 正好是「认定 → 复核 → 维护」;
  *  3. 每条事件都保留自己的结论年份;待核年份显示「待核」,不从原认定年份推测。
  */
 const timeline = computed<TimelineItem[]>(() => {
@@ -303,11 +303,7 @@ const statusTextClass = (code: string) => {
     default: return 'text-muted-foreground'
   }
 }
-const eventLabel = (type: string) => {
-  // 用户指定抽屉将 maintain 展示为“复核”；只改文案，不改变原始事件类型。
-  if (type === 'maintain') return '复核'
-  return EVENTS[type] ?? type
-}
+const eventLabel = (type: string) => EVENTS[type] ?? type
 
 function directionLabel(direction: string) {
   if (direction === 'missing_in_miit') return '应纳未纳'
@@ -321,7 +317,7 @@ function measureLabel(code: string) {
 }
 
 /**
- * 「认定 / 复核 / 维持」这一档上要跟的那半句。
+ * 「认定 / 复核 / 维护」这一档上要跟的那半句。
  * 复核的**结论年份未知**时必须说出来 —— 锚点待核靠它,不能只写一个年份让人以为已知。
  */
 function eventSuffix(item: TimelineItem): string {

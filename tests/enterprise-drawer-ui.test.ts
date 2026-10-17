@@ -311,17 +311,19 @@ describe('企业详情抽屉的称号时间线', () => {
     }
   }
 
-  it('maintain在抽屉及出处展示为复核，原始事件类型保持不变',()=>{
-    const detail=timelineDetail(['award','maintain'])
+  it('维护与复核按原始事件类型区分，时间线和出处显示一致',()=>{
+    const detail=timelineDetail(['award','maintain','review'])
     queryData.value={...detail,evidence:[{eventId:2,sourceFile:'名单.pdf',attachment:null,listNo:1,page:null}]}
     queryLoading.value=false
     const wrapper=mountDrawer()
     const events=wrapper.findAll('[data-testid="timeline-event"]')
     expect(events[0]!.text()).toContain('认定')
-    expect(events[1]!.text()).toContain('复核')
-    expect(wrapper.get('[data-testid="enterprise-evidence"] li p').text()).toBe('2021 · 专精特新“小巨人” · 复核')
+    expect(events[1]!.text()).toContain('维护')
+    expect(events[1]!.text()).not.toContain('复核')
+    expect(events[2]!.text()).toContain('复核')
+    expect(wrapper.get('[data-testid="enterprise-evidence"] li p').text()).toBe('2021 · 专精特新“小巨人” · 维护')
     expect(wrapper.text()).not.toContain('维持')
-    expect(detail.events.map(event=>event.eventType)).toEqual(['award','maintain'])
+    expect(detail.events.map(event=>event.eventType)).toEqual(['award','maintain','review'])
   })
 
   it('首尾连接线止于圆点中心，中间事件贯穿整行',()=>{

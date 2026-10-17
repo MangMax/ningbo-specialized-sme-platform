@@ -1484,10 +1484,10 @@ async function verifyKaichengExample(cdp) {
     const expectedEvents = [
       '专精特新中小企业认定',
       '创新型中小企业认定',
-      '专精特新中小企业复核',
-      '创新型中小企业复核',
+      '专精特新中小企业维护',
+      '创新型中小企业维护',
       '专精特新“小巨人”认定',
-      '专精特新“小巨人”复核',
+      '专精特新“小巨人”维护',
     ]
     const valueStarts = example.chainLayout.map((item) => item.valueLeft)
     const connectorGaps = example.chainLayout.map((item) => item.valueLeft - item.connectorCenter)
@@ -1531,8 +1531,8 @@ async function verifyTimelineConnections(cdp) {
     try {
       const rows = await evaluate(cdp,sessionId,measure);
       const violation = timelineConnectionViolation(rows);
-      if (violation || rows.some(row => row.text.includes('维持'))) bad(`称号时间线 · ${viewport.name}:${violation ?? '仍显示维持'} ${JSON.stringify(rows)}`);
-      else ok(`称号时间线 · ${viewport.name}:6个节点连线连续，首尾止于圆心，maintain显示复核`);
+      if (violation || rows.some(row => row.text.includes('维持')) || !rows.some(row => row.text.includes('维护'))) bad(`称号时间线 · ${viewport.name}:${violation ?? '维护事件文案不正确'} ${JSON.stringify(rows)}`);
+      else ok(`称号时间线 · ${viewport.name}:6个节点连线连续，首尾止于圆心，maintain按原始类型显示维护`);
       await evaluate(cdp,sessionId,`(() => {const line=[...document.querySelectorAll('[data-testid="timeline-connector"]')].at(-1);line.style.setProperty('top','9px','important');line.style.setProperty('height','12px','important');})()`);
       const broken = timelineConnectionViolation(await evaluate(cdp,sessionId,measure));
       if (!broken) bad(`称号时间线 · ${viewport.name}:恢复末端断口后断言未变红`);
