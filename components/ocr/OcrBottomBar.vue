@@ -72,7 +72,7 @@ defineExpose({ focusEdit, focusBar })
     ref="bar"
     tabindex="-1"
     aria-label="翻页与页操作"
-    class="bg-card flex h-14 shrink-0 items-center gap-2 border-t px-2.5 sm:px-3"
+    class="ocr-bottombar bg-card flex h-14 shrink-0 items-center gap-2 border-t px-2.5 sm:px-3"
   >
     <Button
       variant="outline"

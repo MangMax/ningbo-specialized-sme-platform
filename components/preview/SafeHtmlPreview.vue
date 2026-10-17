@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import DOMPurify from 'dompurify'
 import { previewLink } from '~~/lib/content-preview-security'
 
-const props = defineProps<{ source: string; resources?: Readonly<Record<string, string>> }>()
+const props = defineProps<{ source: string; resources?: Readonly<Record<string, string>>; focusable?: boolean }>()
 const html = computed(() => {
   if (typeof document === 'undefined') return ''
   const tags = ['table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption', 'p', 'br', 'hr', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'span', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'a', 'img']
@@ -52,4 +52,20 @@ const html = computed(() => {
 })
 </script>
 
-<template><div class="safe-preview-html overflow-x-auto" v-html="html" /></template>
+<template>
+  <div
+    class="safe-preview-html overflow-x-auto"
+    :tabindex="focusable ? 0 : undefined"
+    :role="focusable ? 'region' : undefined"
+    :aria-label="focusable ? '渲染表格（可横向滚动）' : undefined"
+    :class="focusable ? 'safe-preview-scroll-focus' : ''"
+    v-html="html"
+  />
+</template>
+
+<style scoped>
+.safe-preview-scroll-focus:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+</style>

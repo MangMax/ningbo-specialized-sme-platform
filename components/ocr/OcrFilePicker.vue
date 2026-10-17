@@ -47,6 +47,8 @@ const props = defineProps<{
   filesLoading: boolean
   filesError: string
   disabled: boolean
+  /** 有未保存草稿/写入在飞时不允许切换；原因显示在 Sheet 内。 */
+  blockedReason?: string
 }>()
 
 const emit = defineEmits<{
@@ -74,9 +76,10 @@ function clearFilters() {
 }
 
 function choose(path: string) {
-  if (props.disabled) return
+  if (props.disabled || props.blockedReason) return
+  // The parent closes the sheet only after an accepted selection. Closing here
+  // would hide the fact that the draft guard rejected the switch.
   emit('select', path)
-  open.value = false
 }
 
 function display(file: StoredFileRow) {
@@ -200,7 +203,7 @@ function fileMeta(file: StoredFileRow) {
           >
             <Check class="mt-0.5 size-4 shrink-0" />
             <div class="min-w-0 flex-1">
-              <p class="truncate text-sm font-medium" :title="selected.filename">
+              <p class="truncate text-sm font-medium" :title="display(selected)">
                 {{ display(selected) }}
               </p>
               <p class="text-muted-foreground mt-0.5 truncate text-[11px]">
@@ -235,13 +238,18 @@ function fileMeta(file: StoredFileRow) {
             <button
               type="button"
               class="hover:bg-accent/60 focus-visible:border-ring focus-visible:ring-ring/50 flex min-h-11 w-full items-start gap-2 rounded-sm px-2 py-2 text-left transition-colors focus-visible:ring-3 focus-visible:outline-none"
-              :disabled="disabled"
+              :disabled="disabled || !!blockedReason"
               :title="file.filename"
               @click="choose(file.relPath)"
             >
               <FileText class="text-muted-foreground mt-0.5 size-4 shrink-0" />
               <span class="min-w-0 flex-1">
-                <span class="block truncate text-sm">{{ display(file) }}</span>
+                <!-- Full name is available on hover/focus (title) and wraps on
+                     narrow screens; truncation must not hide the distinguishing
+                     tail of two similarly named files. -->
+                <span class="block text-sm break-words sm:truncate">{{
+                  display(file)
+                }}</span>
                 <span class="text-muted-foreground mt-0.5 block truncate text-[11px]">
                   {{ fileMeta(file) }}
                 </span>
@@ -252,19 +260,26 @@ function fileMeta(file: StoredFileRow) {
 
         <p
           v-if="!filesLoading && !fileMatches.length"
-          class="text-muted-foreground px-2 py-4 text-xs leading-relaxed"
+          class="text-muted-foreground px-2 py-4 text-[13px] leading-relaxed"
         >
-          没有匹配的 PDF。文件库里只登记了非 PDF 时，这一页没有可校对的扫描件。
+          没有匹配的 PDF。
         </p>
         <p
           v-else-if="selected && !otherFiles.length"
-          class="text-muted-foreground px-2 py-4 text-xs leading-relaxed"
+          class="text-muted-foreground px-2 py-4 text-[13px] leading-relaxed"
         >
           没有其他匹配文件。
         </p>
       </div>
 
       <SheetFooter class="border-t px-4 py-3">
+        <p
+          v-if="blockedReason"
+          role="status"
+          class="text-destructive text-[13px] leading-relaxed font-medium"
+        >
+          {{ blockedReason }}
+        </p>
         <p class="text-muted-foreground text-[11px] leading-relaxed">
           选中即切换；切换文件会把页码重置为第 1 页，并清空页筛选。
         </p>

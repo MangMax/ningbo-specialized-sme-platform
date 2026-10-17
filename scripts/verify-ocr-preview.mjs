@@ -144,6 +144,11 @@ try {
       await wait(`!!document.querySelector('[data-slot="sheet-content"] li')`)
       const rowHeight = await ev(`Math.min(...[...document.querySelectorAll('[data-slot="sheet-content"] li button')].map(b => b.getBoundingClientRect().height))`)
       assert.ok(rowHeight >= 44, `file row height ${rowHeight} < 44`)
+      // Every file row exposes the full name somewhere (title, plus wrapping on narrow).
+      assert.equal(await ev(`[...document.querySelectorAll('[data-slot="sheet-content"] li button')].every(b => !!b.getAttribute('title'))`), true, 'file row missing full-name title')
+      if (await ev('innerWidth < 640')) {
+        assert.equal(await ev(`[...document.querySelectorAll('[data-slot="sheet-content"] li button > span > span:first-child')].every(n => getComputedStyle(n).whiteSpace !== 'nowrap')`), true, 'narrow file names still truncate to one line')
+      }
       return rowHeight
     }
     const selectFile = async (label) => {
@@ -182,7 +187,15 @@ try {
     }
     const cancel = async () => {
       await click('取消', '[aria-label="翻页与页操作"]')
-      await wait(`!document.querySelector('textarea')`)
+      // A dirty draft must ask before discarding; a clean edit exits immediately.
+      if (await ev(`!!document.querySelector('[data-slot="dialog-content"]')`)) {
+        await click('放弃草稿', '[data-slot="dialog-content"]')
+      }
+      await wait(`!document.querySelector('textarea') && !document.querySelector('[data-slot="dialog-content"]')`)
+    }
+    const key = async (name, code) => {
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: name, code, windowsVirtualKeyCode: name === 'Escape' ? 27 : 39 }, sid)
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: name, code, windowsVirtualKeyCode: name === 'Escape' ? 27 : 39 }, sid)
     }
 
     await cdp.send('Runtime.enable', {}, sid)
@@ -191,7 +204,7 @@ try {
     const requests = [], failures = [], external = [], completed = new Set()
     const downloads = [], finishedDownloads = new Set()
     await cdp.send('Browser.setDownloadBehavior', { behavior: 'allowAndName', downloadPath: join(root, 'downloads'), eventsEnabled: true })
-    let failWrite = false, failRead = false, held = null, holdRead = false
+    let failWrite = false, failRead = false, held = null, holdRead = false, missingMarkdown = false
     cdp.onEvent = m => {
       if (m.method === 'Network.requestWillBeSent' && /^https?:/.test(m.params.request.url) && !m.params.request.url.startsWith(base + '/')) external.push(m.params.request.url)
       if (m.method === 'Browser.downloadWillBegin') downloads.push(m.params)
@@ -203,6 +216,24 @@ try {
       const api = url.pathname === '/api/ocr-results'
       if (api) requests.push({ method: request.method, url: request.url, body: request.postData })
       if (api && holdRead && request.method === 'GET' && url.searchParams.get('file') === 'workbench-97.pdf') { held = { requestId, networkId: m.params.networkId }; holdRead = false; return }
+      if (api && missingMarkdown && request.method === 'GET') {
+        missingMarkdown = false
+        // A successful response whose per-page body is absent: the app must not
+        // treat this as an empty result, and must not re-POST on retry.
+        const body = JSON.stringify({
+          file: { id: 1, relPath: 'workbench-97.pdf', filename: 'workbench-97.pdf', ext: 'pdf', parseState: 'unparsed' },
+          channels: ['upload'],
+          pages: [{ page: 1, engine: 'fixture', model: null, channel: 'upload', createdAt: '2026-10-15T00:00:00.000Z', pageRelPath: null, url: null }],
+          count: 1,
+        })
+        cdp.send('Fetch.fulfillRequest', {
+          requestId,
+          responseCode: 200,
+          responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+          body: Buffer.from(body).toString('base64'),
+        }, sid).catch(e => failures.push({ error: String(e), url: request.url }))
+        return
+      }
       const fail = api && ((failWrite && request.method === 'POST') || (failRead && request.method === 'GET'))
       cdp.send(fail ? 'Fetch.failRequest' : 'Fetch.continueRequest', { requestId, ...(fail ? { errorReason: 'Failed' } : {}) }, sid).catch(e => failures.push({ error: String(e), url: request.url, networkId: m.params.networkId }))
     }
@@ -239,10 +270,21 @@ try {
           assert.equal(await ev(`document.body.innerText.includes('文本') && document.body.innerText.includes('页图') && document.body.innerText.includes('对照')`), true)
         }
 
+        assert.equal(await ev("document.body.innerText.includes('共 97 页')"), false, 'duplicate total-page chrome still present')
+        if (width === 1440) {
+          assert.equal(await ev("!!document.querySelector('[class*=\"bg-black/35\"]')"), false, 'page image still dimmed by a hover/focus overlay')
+          assert.equal(await ev("document.querySelector('[data-ocr-zoom-hint]')?.textContent.includes('放大')"), true, 'zoom affordance missing')
+          const imageBox = await ev(`(() => { const r=document.querySelector('[aria-label="放大看第 1 页"]').getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2} })()`)
+          await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: imageBox.x, y: imageBox.y }, sid)
+          await wait("parseFloat(getComputedStyle(document.querySelector('[data-ocr-zoom-hint]')).opacity) > 0.9")
+          assert.ok(await ev("document.querySelector('[data-ocr-zoom-hint]').getBoundingClientRect().height >= 20"), 'zoom hint too small')
+        }
+
         const writesBefore = requests.filter(r => r.method !== 'GET').length
         await click('源码')
         await wait("document.querySelector('.content-preview pre')?.textContent.includes('<table>')")
         assert.ok(await ev("parseFloat(getComputedStyle(document.querySelector('.content-preview pre')).fontSize) >= 14"), 'source font below 14px')
+        assert.equal(await ev("document.querySelector('.content-preview pre')?.getAttribute('tabindex')"), '0', 'source scroller not keyboard reachable')
         // Wrap is visible and on by default; toggling both directions works.
         await wait("getComputedStyle(document.querySelector('ul[role=list] .content-preview pre')).whiteSpace === 'pre-wrap'")
         await click('自动换行')
@@ -254,6 +296,8 @@ try {
         assert.equal(await ev('navigator.clipboard.readText()'), source)
         await click('预览')
         await wait("document.querySelector('td[rowspan=\"2\"]')")
+        assert.equal(await ev("document.querySelector('.safe-preview-html')?.getAttribute('tabindex')"), '0', 'table scroller not keyboard reachable')
+        assert.equal(await ev("document.querySelector('.safe-preview-html')?.getAttribute('role')"), 'region')
         // Long tables scroll locally at both widths; the hint is visible.
         assert.equal(await ev("(() => { const el=[document.querySelector('.preview-content'),...document.querySelectorAll('.preview-content .safe-preview-html,.preview-content pre')].find(e=>e && e.scrollWidth>e.clientWidth); if(!el)return false; el.scrollLeft=200; return el.scrollLeft>0; })()"), true)
         assert.equal(await ev("!!document.querySelector('[data-ocr-horizontal-hint]')"), true)
@@ -263,16 +307,36 @@ try {
         await wait("document.activeElement?.tagName==='TEXTAREA'")
         assert.equal(await ev("document.querySelector('textarea').value"), source)
         assert.ok(await ev("parseFloat(getComputedStyle(document.querySelector('textarea')).fontSize) >= 14"), 'editor font below 14px')
+        assert.equal(await ev("document.body.innerText.includes('保存写入原始文本')"), false, 'duplicate save explanation still shown')
+        assert.equal(await ev("(document.body.innerText.match(/保存使用原始 Markdown/g)||[]).length"), 1, 'save explanation missing/duplicated')
         assert.equal(await ev(`!!document.querySelector('[aria-label="翻页与页操作"] button')`), true)
         if (motion === 'reduce') {
           assert.equal(await ev("document.querySelector('ul[role=\"list\"] li').getAnimations({subtree:true}).some(a=>a.playState==='running')"), false)
         }
         await fill('textarea', source + '\n校对草稿')
-        await selectFile('second.pdf')
-        await wait("document.body.innerText.includes('未保存')")
+        // The file sheet must stay open and explain why a dirty draft blocks the switch.
+        await openFileSheet()
+        assert.equal(await ev(`!!document.querySelector('[data-slot="sheet-content"]')?.innerText.includes('有未保存的草稿')`), true, 'file sheet missing blocked reason')
+        assert.equal(await ev(`[...document.querySelectorAll('[data-slot="sheet-content"] li button')].every(b => b.disabled)`), true, 'file rows not disabled while dirty')
+        await ev(`(() => { const b=[...document.querySelectorAll('[data-slot="sheet-content"] li button')].find(b=>b.textContent.includes('second.pdf')); b?.click() })()`)
+        await sleep(150)
+        assert.equal(await ev(`!!document.querySelector('[data-slot="sheet-content"]')`), true, 'blocked file switch silently closed the sheet')
         assert.equal(await ev("document.querySelector('textarea').value"), source + '\n校对草稿')
         assert.equal(await ev("new URL(location.href).searchParams.get('file')"), 'workbench-97.pdf')
-        await cancel()
+        await key('Escape', 'Escape')
+        await wait(`!document.querySelector('[data-slot="sheet-content"]')`)
+
+        // Dirty cancel/Esc: confirm first; refusing keeps the draft.
+        await click('取消', '[aria-label="翻页与页操作"]')
+        await wait(`!!document.querySelector('[data-slot="dialog-content"]')`)
+        assert.equal(await ev(`document.querySelector('[data-slot="dialog-content"]').innerText.includes('放弃未保存的校对')`), true)
+        await key('Escape', 'Escape')
+        await wait(`!document.querySelector('[data-slot="dialog-content"]')`)
+        assert.equal(await ev("document.querySelector('textarea').value"), source + '\n校对草稿', 'Esc in the discard dialog lost the draft')
+        await click('取消', '[aria-label="翻页与页操作"]')
+        await wait(`!!document.querySelector('[data-slot="dialog-content"]')`)
+        await click('放弃草稿', '[data-slot="dialog-content"]')
+        await wait(`!document.querySelector('textarea')`)
         assert.equal(await ev("document.activeElement?.getAttribute('aria-label')"), '编辑')
         assert.equal(await ev("document.activeElement?.closest('[aria-label=\"翻页与页操作\"]') !== null"), true)
 
@@ -282,13 +346,22 @@ try {
           await click('页图', '[data-slot="tabs-list"]')
           await wait("getComputedStyle(document.querySelector('section[aria-label=\"当前页页图\"]')).display !== 'none'")
         }
-        await ev("document.querySelector('[aria-label=\"放大看第 1 页\"]').click()")
+        await click('打开当前页对照', 'section[aria-label="当前页页图"]')
         await wait("document.querySelector('[role=dialog]')")
         await wait("[...document.querySelectorAll('[role=dialog] img')].some(img=>img.complete && img.naturalWidth>0)")
         assert.equal(await ev("document.querySelector('[role=dialog] td[rowspan=\"2\"]')?.textContent === '宁波甲企业'"), true)
         assert.equal(await ev("document.querySelector('[role=dialog] [role=dialog]') === null"), true)
-        if (width === 390) assert.equal(await ev("document.querySelector('[role=dialog]').innerText.includes('上方是页图，下方是识别文本')"), true)
-        else assert.equal(await ev("document.querySelector('[role=dialog]').innerText.includes('左侧是页图，右侧是识别文本')"), true)
+        assert.equal(await ev("document.querySelector('[role=dialog]').innerText.includes('关闭后停留当前对照页')"), true, 'compare copy still promises a return to the old page')
+        if (width === 390) {
+          assert.equal(await ev("document.querySelector('[role=dialog]').innerText.includes('上方是页图，下方是识别文本')"), true)
+          assert.ok(await ev("document.querySelector('[role=dialog] [data-comparison-image] img').getBoundingClientRect().width >= 240"), '390 compare image is a thumbnail')
+        } else {
+          assert.equal(await ev("document.querySelector('[role=dialog]').innerText.includes('左侧是页图，右侧是识别文本')"), true)
+          const imageCol = await ev("document.querySelector('[role=dialog] [data-comparison-image]').getBoundingClientRect().width")
+          const textCol = await ev("document.querySelector('[role=dialog] section[aria-label=\"对照识别文本\"]').getBoundingClientRect().width")
+          assert.ok(imageCol <= 620, `compare image column wastes width: ${imageCol}`)
+          assert.ok(textCol >= imageCol && textCol >= 700, `compare text pane too narrow: ${textCol}`)
+        }
         await click('对照下一页', '[role=dialog]')
         await wait("document.querySelector('[role=dialog]').innerText.includes('第 2 页') && document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 2 / 97 页')")
         await click('对照上一页', '[role=dialog]')
@@ -304,7 +377,7 @@ try {
         await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sid)
         await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sid)
         await wait("!document.querySelector('[role=dialog]')")
-        assert.equal(await ev("document.activeElement?.getAttribute('aria-label')"), '放大看第 1 页')
+        assert.equal(await ev("document.activeElement?.getAttribute('aria-label')"), '打开当前页对照')
         if (width === 390) {
           await click('文本', '[data-slot="tabs-list"]')
           await wait("getComputedStyle(document.querySelector('section[aria-label=\"当前页识别文本\"]')).display !== 'none'")
@@ -332,6 +405,8 @@ try {
         await fill('[aria-label="当前文件正文关键词"]', '字段0')
         await applyFilters()
         await wait("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 1 / 97 页') && document.body.innerText.includes('命中 1 页')")
+        // Chip removal is reachable at every width (390 included) with a real target.
+        assert.equal(await ev(`(() => { const b=document.querySelector('button[aria-label^="移除筛选"]'); if(!b) return false; const r=b.getBoundingClientRect(); return r.width>=24 && r.height>=24 && r.width>0 })()`), true, 'chip remove target below 24px or invisible')
         await openFilters()
         await fill('[aria-label="实际页号或范围"]', '50-60')
         await applyFilters()
@@ -339,6 +414,16 @@ try {
         assert.equal(await ev("(document.body.innerText.match(/清除页筛选/g) || []).length"), 1)
         await click('清除页筛选')
         await wait("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 1 / 97 页')")
+
+        if (width === 1440) {
+          await openFileSheet()
+          await fill('[aria-label="按文件名搜索"]', 'zzz')
+          await wait("document.body.innerText.includes('没有匹配的 PDF')")
+          assert.ok(await ev(`(() => { const p=[...document.querySelectorAll('[data-slot="sheet-content"] p')].find(p=>p.textContent.includes('没有匹配的 PDF')); return p && parseFloat(getComputedStyle(p).fontSize) >= 13 })()`), 'file empty-state text below 13px')
+          await fill('[aria-label="按文件名搜索"]', '')
+          await key('Escape', 'Escape')
+          await wait("!document.querySelector('[data-slot=\"sheet-content\"]')")
+        }
 
         // Jump to a page with content and verify pane scroll reset without page scroll.
         await ev("document.querySelector('.preview-content').scrollTop = 120")
@@ -364,8 +449,24 @@ try {
           await click('页图', '[data-slot="tabs-list"]')
           await wait("getComputedStyle(document.querySelector('section[aria-label=\"当前页页图\"]')).display !== 'none'")
           assert.equal(await ev("getComputedStyle(document.querySelector('section[aria-label=\"当前页识别文本\"]')).display"), 'none')
+          assert.ok(await ev("document.querySelector('section[aria-label=\"当前页页图\"] img').getBoundingClientRect().width >= 240"), '390 image tab still thumbnail-sized')
           await click('对照', '[data-slot="tabs-list"]')
           await wait("getComputedStyle(document.querySelector('section[aria-label=\"当前页页图\"]')).display !== 'none' && getComputedStyle(document.querySelector('section[aria-label=\"当前页识别文本\"]')).display !== 'none'")
+          assert.ok(await ev("document.querySelector('section[aria-label=\"当前页页图\"] img').getBoundingClientRect().width >= 240"), '390 compare image still 118px-wide thumbnail')
+          assert.ok(await ev(`(() => { const el=document.querySelector('section[aria-label="当前页识别文本"] .preview-content'); const lh=parseFloat(getComputedStyle(el).lineHeight)||24; return el.clientHeight/lh >= 4 })()`), '390 compare text context too short')
+          // Real wheel zoom over the in-place viewer increases the page image.
+          await sleep(250)
+          const before = await ev("document.querySelector('section[aria-label=\"当前页页图\"] img').getBoundingClientRect().width")
+          const box = await ev(`(() => { const r=document.querySelector('section[aria-label="当前页页图"] [data-preview-shell] div.relative').getBoundingClientRect(); return { x: r.x + r.width/2, y: Math.min(Math.max(r.y + r.height/2, 20), innerHeight-20) } })()`)
+          const hit = await ev(`(() => { const e=document.elementFromPoint(${box.x}, ${box.y}); return e ? e.tagName + '.' + String(e.className) : 'none' })()`)
+          await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: box.x, y: box.y, deltaX: 0, deltaY: -160 }, sid)
+          const deadline = Date.now() + 5000
+          while (Date.now() < deadline) {
+            if (await ev("document.querySelector('section[aria-label=\"当前页页图\"] img').getBoundingClientRect().width") > before * 1.05) break
+            await sleep(60)
+          }
+          console.log(JSON.stringify({ zoomProbe: { before, box, hit, after: await ev("document.querySelector('section[aria-label=\"当前页页图\"] img').getBoundingClientRect().width") } }))
+          assert.ok(await ev("document.querySelector('section[aria-label=\"当前页页图\"] img').getBoundingClientRect().width") > before * 1.05, '390 compare image cannot be zoomed in place')
           await click('文本', '[data-slot="tabs-list"]')
           await wait("getComputedStyle(document.querySelector('section[aria-label=\"当前页识别文本\"]')).display !== 'none'")
         }
@@ -379,16 +480,34 @@ try {
     await fill('textarea', source + '\n已校对')
     failWrite = true
     await save()
-    await wait("document.body.innerText.includes('保存失败') && !document.querySelector('textarea').readOnly")
+    await wait("document.body.innerText.includes('保存失败') && !!document.querySelector('textarea') && !document.querySelector('textarea').readOnly")
     assert.equal(await ev("document.querySelector('textarea').value"), source + '\n已校对')
     failWrite = false; failRead = true
     await save()
-    await wait("document.body.innerText.includes('已提交') && document.body.innerText.includes('读回失败') && !document.querySelector('textarea').readOnly")
+    await wait("document.body.innerText.includes('已提交') && document.body.innerText.includes('读回失败') && !!document.querySelector('textarea') && !document.querySelector('textarea').readOnly && !document.querySelector('textarea').disabled")
+    const postsBeforeReadRetry = requests.filter(r => r.method === 'POST').length
     failRead = false
-    await save()
+    // A committed write whose readback failed retries with GET only.
+    await click('重试读取', 'section[aria-label="当前页识别文本"]')
     await wait("!document.querySelector('textarea') && document.body.innerText.includes('保存完成')")
+    assert.equal(requests.filter(r => r.method === 'POST').length, postsBeforeReadRetry, 'readback retry repeated the POST')
     await navigate()
     await wait("document.body.innerText.includes('已校对')")
+
+    // POST committed, then a successful GET whose per-page markdown is absent.
+    await edit(); await fill('textarea', source + '\n缺失读回校对')
+    missingMarkdown = true
+    await save()
+    await wait("document.body.innerText.includes('写入已提交,但读回失败') && !!document.querySelector('textarea') && !document.querySelector('textarea').disabled && !document.querySelector('textarea').readOnly")
+    assert.equal(await ev("document.querySelector('textarea').value"), source + '\n缺失读回校对')
+    const postsBeforeMissingRetry = requests.filter(r => r.method === 'POST').length
+    missingMarkdown = false
+    await click('重试读取', 'section[aria-label="当前页识别文本"]')
+    await wait("!document.querySelector('textarea') && document.body.innerText.includes('保存完成')")
+    assert.equal(requests.filter(r => r.method === 'POST').length, postsBeforeMissingRetry, 'missing-markdown retry repeated the POST')
+    await navigate()
+    await wait("document.body.innerText.includes('缺失读回校对')")
+
     await edit(); await fill('textarea', ''); await save()
     await wait("!document.querySelector('textarea') && document.body.innerText.includes('空结果') && document.body.innerText.includes('正文为空')")
     await navigate()
@@ -460,18 +579,95 @@ try {
       }
     }
 
-    // 200% browser zoom is approximated by halving the CSS viewport (720x450),
-    // which is how browser zoom reflows layout. It is not a @2x screenshot.
-    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 720, height: 450, deviceScaleFactor: 1, mobile: false }, sid)
+    // Short viewports: 1280x600 and 720x450 (the CSS reflow equivalent of ~200%
+    // browser zoom; not a real zoom and not a @2x screenshot). The document still
+    // does not scroll; the workspace keeps a readable minimum and scrolls inside
+    // `main`, with the fixed bottom bar reachable.
+    for (const [width, height] of [[1280, 600], [720, 450]]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }, sid)
+      await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] }, sid)
+      await navigate()
+      await wait("document.querySelector('td[rowspan=\"2\"]')")
+      assert.equal(await ev('document.documentElement.scrollWidth <= innerWidth + 1'), true, `${width}x${height} horizontal overflow`)
+      assert.equal(await ev('document.documentElement.scrollHeight <= innerHeight + 1'), true, `${width}x${height} document scroll`)
+      assert.equal(await ev(`(() => { const r=document.querySelector('footer[aria-label="翻页与页操作"]').getBoundingClientRect(); return r.bottom <= innerHeight + 1 && r.top < innerHeight })()`), true, `${width}x${height} bottom bar off-screen`)
+      const readable = await ev(`(() => { const el=document.querySelector('.preview-content'); const lh=parseFloat(getComputedStyle(el).lineHeight)||parseFloat(getComputedStyle(el).fontSize)*1.5; const main=document.querySelector('main[aria-label="校对内容"]'); const mr=main.getBoundingClientRect(); const er=el.getBoundingClientRect(); const visible=Math.max(0, Math.min(er.bottom, mr.bottom) - Math.max(er.top, mr.top)); return { lines: visible/lh, pane: visible, workspaceScrolls: main.scrollHeight > main.clientHeight } })()`)
+      assert.ok(readable.lines >= 8, `${width}x${height} text collapsed to ${readable.lines.toFixed(1)} lines`)
+      if (height <= 560) {
+        // Compact chrome keeps the filter and the full counts reachable.
+        assert.equal(await ev(`getComputedStyle(document.querySelector('.ocr-meta-row')).display`), 'none', 'short viewport kept the metadata row')
+        assert.equal(await ev(`(() => { const b=document.querySelector('button[aria-label="筛选当前文件"]'); return b && getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().height > 0 })()`), true, 'short viewport lost the filter entry')
+        await click('筛选当前文件')
+        await wait(`!!document.querySelector('[data-slot="sheet-content"]')`)
+        await key('Escape', 'Escape')
+        await wait(`!document.querySelector('[data-slot="sheet-content"]')`)
+        await click('跳转实际页号')
+        await wait(`!!document.querySelector('[data-slot="popover-content"]')`)
+        assert.equal(await ev(`document.querySelector('[data-slot="popover-content"]').innerText.includes('全文件 97 页') && document.querySelector('[data-slot="popover-content"]').innerText.includes('有文本 95')`), true, 'short viewport lost the full counts')
+        await key('Escape', 'Escape')
+        await wait(`!document.querySelector('[data-slot="popover-content"]')`)
+      }
+      await edit()
+      assert.ok(await ev("parseFloat(getComputedStyle(document.querySelector('textarea')).fontSize) >= 14"), `${width}x${height} editor font below 14px`)
+      const editorLines = await ev(`(() => { const el=document.querySelector('textarea'); const lh=parseFloat(getComputedStyle(el).lineHeight)||22; const main=document.querySelector('main[aria-label="校对内容"]'); const mr=main.getBoundingClientRect(); const er=el.getBoundingClientRect(); const visible=Math.max(0, Math.min(er.bottom, mr.bottom) - Math.max(er.top, mr.top)); return visible/lh })()`)
+      assert.ok(editorLines >= 8, `${width}x${height} editor collapsed to ${editorLines.toFixed(1)} lines`)
+      await cancel()
+
+      if (width === 720) {
+        // The compare tab must be usable without leaving the view: page image at
+        // fit width (zoomable) plus a text context below it.
+        await click('对照', '[data-slot="tabs-list"]')
+        await wait("getComputedStyle(document.querySelector('section[aria-label=\"当前页页图\"]')).display !== 'none' && getComputedStyle(document.querySelector('section[aria-label=\"当前页识别文本\"]')).display !== 'none'")
+        assert.ok(await ev("document.querySelector('section[aria-label=\"当前页页图\"] img').getBoundingClientRect().width >= 240"), '720x450 compare tab image collapsed')
+        assert.ok(await ev(`(() => { const el=document.querySelector('section[aria-label="当前页识别文本"] .preview-content'); const lh=parseFloat(getComputedStyle(el).lineHeight)||24; return el.clientHeight/lh >= 4 })()`), '720x450 compare tab text context too short')
+      }
+      await click('打开当前页对照', 'section[aria-label="当前页页图"]')
+      await wait("document.querySelector('[role=dialog]')")
+      await wait("[...document.querySelectorAll('[role=dialog] img')].some(img=>img.complete && img.naturalWidth>0)")
+      if (width === 720) {
+        // Short heights: one scrollable column with real reading heights, not two
+        // panes squeezed into ~160px each.
+        const paneHeights = await ev(`(() => { const img=document.querySelector('[role=dialog] [data-comparison-image]').getBoundingClientRect(); const txt=document.querySelector('[role=dialog] section[aria-label="对照识别文本"]').getBoundingClientRect(); return { img: img.height, txt: txt.height } })()`)
+        assert.ok(paneHeights.img >= 280 && paneHeights.txt >= 280, `720x450 compare panes collapsed: ${JSON.stringify(paneHeights)}`)
+        const dialogLines = await ev(`(() => { const el=document.querySelector('[role=dialog] section[aria-label="对照识别文本"] .preview-content'); const lh=parseFloat(getComputedStyle(el).lineHeight)||24; return el.clientHeight/lh })()`)
+        assert.ok(dialogLines >= 8, `720x450 compare text collapsed to ${dialogLines.toFixed(1)} lines`)
+        assert.ok(await ev("document.querySelector('[role=dialog] [data-comparison-image] img').getBoundingClientRect().width >= 240"), '720x450 compare page image too small')
+      } else {
+        const imageCol = await ev("document.querySelector('[role=dialog] [data-comparison-image]').getBoundingClientRect().width")
+        const textCol = await ev("document.querySelector('[role=dialog] section[aria-label=\"对照识别文本\"]').getBoundingClientRect().width")
+        assert.ok(textCol >= 600 && textCol >= imageCol, `1280x600 compare text too narrow: ${textCol} vs image ${imageCol}`)
+      }
+      await key('Escape', 'Escape')
+      await wait("!document.querySelector('[role=dialog]')")
+      console.log(JSON.stringify({ shortViewport: `${width}x${height}`, readableLines: Number(readable.lines.toFixed(1)), editorLines: Number(editorLines.toFixed(1)), workspaceScrolls: readable.workspaceScrolls }))
+    }
+
+    // Real keyboard input on a focused horizontal scroller: it scrolls the table
+    // and does not page; a non-interactive focus still pages.
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sid)
     await navigate()
     await wait("document.querySelector('td[rowspan=\"2\"]')")
-    assert.equal(await ev('document.documentElement.scrollWidth <= innerWidth + 1'), true, '200% horizontal overflow')
-    assert.equal(await ev('document.documentElement.scrollHeight <= innerHeight + 1'), true, '200% vertical scroll')
-    assert.equal(await ev(`(() => { const r=document.querySelector('footer[aria-label="翻页与页操作"]').getBoundingClientRect(); return r.bottom <= innerHeight + 1 })()`), true, '200% bottom bar off-screen')
-    await edit()
-    assert.ok(await ev("parseFloat(getComputedStyle(document.querySelector('textarea')).fontSize) >= 14"), '200% editor font below 14px')
-    await cancel()
-    console.log(JSON.stringify({ zoom: '720x450 CSS viewport (~200% reflow)', passed: true }))
+    assert.equal(await ev("document.querySelector('.safe-preview-html').getAttribute('tabindex')"), '0')
+    const scrollerInfo = await ev(`(() => {
+      const els = [document.querySelector('.preview-content'), ...document.querySelectorAll('.preview-content .safe-preview-html, .preview-content pre')]
+      const el = els.find(e => e && e.scrollWidth > e.clientWidth)
+      if (!el) return { found: false, candidates: els.map(e => e && ({ tag: e.tagName, cls: e.className, sw: e.scrollWidth, cw: e.clientWidth })) }
+      el.focus()
+      return { found: true, tag: el.tagName, cls: String(el.className), sw: el.scrollWidth, cw: el.clientWidth, active: document.activeElement === el, tab: el.getAttribute('tabindex') }
+    })()`)
+    assert.ok(scrollerInfo.found, `no horizontal scroller: ${JSON.stringify(scrollerInfo)}`)
+    console.log(JSON.stringify({ scrollerInfo }))
+    const scrollBefore = await ev("document.activeElement.scrollLeft")
+    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 }, sid)
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 }, sid)
+    await sleep(250)
+    const scrollAfter = await ev("document.activeElement.scrollLeft")
+    assert.ok(scrollAfter > scrollBefore + 10, `ArrowRight did not scroll the table (${scrollBefore} → ${scrollAfter})`)
+    assert.equal(await ev("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 1 / 97 页')"), true, 'ArrowRight on a focused table paged instead of scrolling')
+    await ev("document.activeElement?.blur()")
+    await key('ArrowRight', 'ArrowRight')
+    await wait("document.querySelector('[aria-label=\"当前文件与页号\"]').innerText.includes('第 2 / 97 页')")
+    console.log(JSON.stringify({ keyboardWideTable: 'passed' }))
 
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sid)
     await navigate('workbench-97.pdf', 97)

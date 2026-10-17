@@ -39,8 +39,15 @@ const props = withDefaults(
      * 必须是同一个下限,否则「图片缩到 19%、缩小键却是灰的」。
      */
     zoomMin?: number
+    /**
+     * How the initial/auto fit behaves. `contain` keeps the whole page visible
+     * (the historical behaviour); `width` fills the viewport width and lets the
+     * user pan vertically. The OCR comparison panes opt into `width` on narrow
+     * screens so a page is never reduced to a thumbnail.
+     */
+    fitMode?: 'contain' | 'width'
   }>(),
-  { name: '', alt: '', hideKindLabel: false, zoomMin: 0.25 },
+  { name: '', alt: '', hideKindLabel: false, zoomMin: 0.25, fitMode: 'contain' },
 )
 
 const info = computed(() => resolvePreviewKind(props.src))
@@ -110,10 +117,25 @@ const clampZoom = (v: number) => nextZoom(v, zoom.value, effectiveZoomMin.value,
 /** 1:1 也要能看:不超过适应比例的 4 倍,免得小图被拉到糊。 */
 function fit() {
   userAdjusted.value = false
-  if (!viewport.value || viewport.value.clientWidth <= 32 || viewport.value.clientHeight <= 32) return
-  // 「适应」按绝对上下限取,不按手动下限 —— 它要能把整页装下(见上面的常量说明)。
-  zoom.value = fitZoom(fitScale(), ZOOM_MAX)
-  pan.value = { x: 0, y: 0 }
+  const box = viewport.value
+  if (!box || box.clientWidth <= 32 || box.clientHeight <= 32) return
+  if (props.fitMode === 'width' && displayW.value) {
+    // Fill the pane width; the vertical overflow is panned/scrolled. This is the
+    // narrow comparison path: a fine, readable page instead of a 118px contain.
+    const pad = 16
+    const widthScale = Math.max(0, box.clientWidth - pad) / displayW.value
+    zoom.value = Math.min(Math.max(widthScale, fitZoom(fitScale(), ZOOM_MAX)), ZOOM_MAX)
+  } else {
+    // 「适应」按绝对上下限取,不按手动下限 —— 它要能把整页装下(见上面的常量说明)。
+    zoom.value = fitZoom(fitScale(), ZOOM_MAX)
+  }
+  // Fit-width keeps the page top aligned (otherwise the centred overflow shows a
+  // middle slice of the page); the user pans down from the heading.
+  const scaledHeight = displayH.value * zoom.value
+  pan.value =
+    props.fitMode === 'width' && scaledHeight > box.clientHeight
+      ? { x: 0, y: (scaledHeight - box.clientHeight) / 2 }
+      : { x: 0, y: 0 }
 }
 function actualSize() {
   userAdjusted.value = true

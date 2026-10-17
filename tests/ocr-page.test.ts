@@ -262,6 +262,24 @@ function button(wrapper: Harness['wrapper'], text: string) {
   return wrapper.findAll('button').find((item) => item.text().trim() === text)!
 }
 
+/** 取消一个 dirty 编辑：必须经过明确的放弃确认。 */
+async function confirmDiscard(wrapper: Harness['wrapper']) {
+  await button(wrapper, '取消').trigger('click')
+  await flushPromises()
+  const dialog = new DOMWrapper(document.body)
+    .findAll('[data-slot="dialog-content"]')
+    .at(-1)!
+  expect(dialog.text(), '取消 dirty 草稿必须弹出放弃确认').toContain(
+    '放弃未保存的校对',
+  )
+  const discard = dialog
+    .findAll('button')
+    .find((item) => item.text().trim() === '放弃草稿')
+  expect(discard, '确认弹层应有「放弃草稿」').toBeTruthy()
+  await discard!.trigger('click')
+  await flushPromises()
+}
+
 function pageText(wrapper: Harness['wrapper']) {
   return wrapper.get('[aria-label="当前文件与页号"]').text()
 }
@@ -397,13 +415,13 @@ describe('R1 渲染回包：晚到也不许换掉页图', () => {
     pdf.get(FILE_B.relPath)!.resolve(pagesState(FILE_B.relPath, 3))
     ocr.get(FILE_B.relPath)!.resolve(ocrList(FILE_B.relPath, 'B 的第一页正文'))
     await flushPromises()
-    expect(wrapper.text()).toContain('共 3 页')
+    expect(pageText(wrapper)).toContain('/ 3 页')
 
     render.get(FILE_A.relPath)!.resolve(renderOutcome(FILE_A.relPath, 1))
     await flushPromises()
 
     expect(wrapper.text()).toContain('B 的第一页正文')
-    expect(wrapper.text()).toContain('共 3 页')
+    expect(pageText(wrapper)).toContain('/ 3 页')
     expect(wrapper.text()).not.toContain('A 的第一页正文')
   })
 })
@@ -457,7 +475,7 @@ describe('单页工作区与组合筛选', () => {
     pdf.get(FILE_A.relPath)!.resolve(pagesState(FILE_A.relPath, 97))
     await flushPromises()
     expect(rows(wrapper)).toHaveLength(1)
-    expect(wrapper.text()).toContain('共 97 页')
+    expect(wrapper.text()).not.toContain('共 97 页')
     expect(pageText(wrapper)).toContain('第 1 / 97 页')
 
     const sheet = await setStates(wrapper, ['text', 'empty'])
@@ -603,8 +621,7 @@ describe('草稿保护与动作', () => {
     await chooseMenu(menu, '刷新文件与结果')
     expect(fetchMock.mock.calls).toHaveLength(before)
 
-    await button(wrapper, '取消').trigger('click')
-    await flushPromises()
+    await confirmDiscard(wrapper)
     expect(
       (document.activeElement as HTMLElement | null)?.closest(
         '[aria-label="翻页与页操作"]',
@@ -630,7 +647,7 @@ describe('草稿保护与动作', () => {
     oldPdf.resolve(pagesState(FILE_A.relPath, 99))
     await flushPromises()
     expect(wrapper.text()).toContain('新 A 正文')
-    expect(wrapper.text()).toContain('共 7 页')
+    expect(pageText(wrapper)).toContain('/ 7 页')
     expect(wrapper.text()).not.toContain('旧 A 正文')
   })
 
@@ -690,7 +707,7 @@ describe('草稿保护与动作', () => {
 
     failWrite = false
     failRead = true
-    await wrapper.findAll('button').find((item) => item.text().trim() === '重试')!.trigger('click')
+    await wrapper.findAll('button').find((item) => item.text().trim() === '重试保存')!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('写入已提交,但读回失败')
     expect(wrapper.get('textarea').element).toHaveProperty('value', '校对后正文')
@@ -926,8 +943,7 @@ describe('阅读、源码与编辑', () => {
     await flushPromises()
     expect(wrapper.get('textarea').element).toHaveProperty('value', source)
     await wrapper.get('textarea').setValue(source + '\n校对草稿')
-    await button(wrapper, '取消').trigger('click')
-    await flushPromises()
+    await confirmDiscard(wrapper)
     expect(wrapper.find('textarea').exists()).toBe(false)
     expect(
       (document.activeElement as HTMLElement | null)?.closest(
@@ -1088,10 +1104,355 @@ describe('唯一翻页器与焦点', () => {
     oldPdf.reject(new Error('旧文件读失败'))
     await flushPromises()
     expect(rows(wrapper)[0]!.text()).toContain('B 已成功')
-    expect(wrapper.text()).toContain('共 3 页')
+    expect(pageText(wrapper)).toContain('/ 3 页')
     expect(wrapper.text()).not.toContain('读不到这份文件的结果')
     expect(
       wrapper.get('button[aria-label="编辑"]').attributes('disabled'),
     ).toBeUndefined()
+  })
+})
+
+/**
+ * R2 回归：评审确认的行为空洞。这些用例按「用户可见入口 → 可观察结果」写，
+ * 覆盖对照弹窗安全渲染/精确复制、HTML 事件属性清洗、主题跟随、
+ * 读回缺失的重试分派、键盘横向滚动、以及脏草稿取消确认。
+ */
+describe('R2 复核回归', () => {
+  it('提交成功但读回缺少逐页正文：保留可选草稿，重试只发 GET，恢复后正常结束编辑', async () => {
+    const { wrapper, fetchMock } = await loadA()
+    const original = fetchMock.getMockImplementation()! as (
+      url: string,
+      opts?: unknown,
+    ) => Promise<unknown>
+    let posts = 0
+    fetchMock.mockImplementation((url, opts) => {
+      const options = opts as { method?: string } | undefined
+      if (url === '/api/ocr-results' && options?.method === 'POST') {
+        posts += 1
+        return Promise.resolve({ written: 1, pages: [1] })
+      }
+      return original(url, opts)
+    })
+
+    await button(wrapper, '编辑').trigger('click')
+    await flushPromises()
+    await wrapper.get('textarea').setValue('需要确认的人工修订')
+    await button(wrapper, '保存').trigger('click')
+    await flushPromises()
+    harness!.ocr.get(FILE_A.relPath)!.resolve(ocrList(FILE_A.relPath, undefined))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('写入已提交,但读回失败')
+    const textarea = wrapper.get('textarea')
+    expect(textarea.element).toHaveProperty('value', '需要确认的人工修订')
+    // The draft stays editable/selectable: detailError is not a write in flight.
+    expect(textarea.attributes('disabled')).toBeUndefined()
+    expect(textarea.attributes('readonly')).toBeUndefined()
+
+    const retryRead = wrapper
+      .findAll('button')
+      .find((item) => item.text().trim() === '重试读取')
+    expect(retryRead, '读回缺失必须给出「重试读取」').toBeTruthy()
+    await retryRead!.trigger('click')
+    await flushPromises()
+    harness!.pdf.get(FILE_A.relPath)!.resolve(pagesState(FILE_A.relPath, 4))
+    harness!.ocr
+      .get(FILE_A.relPath)!
+      .resolve(ocrList(FILE_A.relPath, '需要确认的人工修订'))
+    await flushPromises()
+
+    expect(posts).toBe(1)
+    expect(wrapper.find('textarea').exists()).toBe(false)
+    expect(rows(wrapper)[0]!.text()).toContain('需要确认的人工修订')
+    expect(wrapper.text()).toContain('保存完成')
+  })
+
+  it('删除失败先重新确认；已提交但读回失败只重读，不重复 DELETE', async () => {
+    const { wrapper, fetchMock } = await loadA()
+    const original = fetchMock.getMockImplementation()! as (
+      url: string,
+      opts?: unknown,
+    ) => Promise<unknown>
+    let failDelete = true
+    let failCommittedRead = false
+    fetchMock.mockImplementation((url, opts) => {
+      const options = opts as { method?: string } | undefined
+      if (url === '/api/ocr-results' && options?.method === 'DELETE') {
+        if (failDelete) return Promise.reject(new Error('删除失败,请重试。'))
+        return Promise.resolve({ deleted: 1, remaining: 0 })
+      }
+      if (url === '/api/ocr-results' && !options?.method && failCommittedRead) {
+        failCommittedRead = false
+        return Promise.reject(new Error('读回断网'))
+      }
+      return original(url, opts)
+    })
+
+    const menu = await openRowMenu(wrapper)
+    await chooseMenu(menu, '删除本页结果')
+    await body()
+      .findAll('button')
+      .find((item) => item.text().trim() === '确认删除')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('删除失败')
+    const retryDelete = wrapper
+      .findAll('button')
+      .find((item) => item.text().trim() === '重试删除')
+    expect(retryDelete, '未提交的删除失败应给出「重试删除」').toBeTruthy()
+
+    // Retry must not silently re-issue DELETE: it opens the confirmation again.
+    const deletesBefore = fetchMock.mock.calls.filter(
+      ([, opts]) => (opts as { method?: string } | undefined)?.method === 'DELETE',
+    ).length
+    await retryDelete!.trigger('click')
+    await flushPromises()
+    expect(body().text()).toContain('删除这一页的识别结果？')
+    await body()
+      .findAll('button')
+      .find((item) => item.text().trim() === '取消')!
+      .trigger('click')
+    await flushPromises()
+    expect(
+      fetchMock.mock.calls.filter(
+        ([, opts]) => (opts as { method?: string } | undefined)?.method === 'DELETE',
+      ).length,
+    ).toBe(deletesBefore)
+
+    // Committed DELETE whose readback failed: the retry is read-only.
+    failDelete = false
+    failCommittedRead = true
+    await button(wrapper, '重试删除').trigger('click')
+    await flushPromises()
+    await body()
+      .findAll('button')
+      .find((item) => item.text().trim() === '确认删除')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('删除已提交,但读回失败')
+    const deleteCount = fetchMock.mock.calls.filter(
+      ([, opts]) => (opts as { method?: string } | undefined)?.method === 'DELETE',
+    ).length
+    await button(wrapper, '重试读取').trigger('click')
+    await flushPromises()
+    harness!.ocr.get(FILE_A.relPath)!.resolve({ count: 0, pages: [] })
+    harness!.pdf.get(FILE_A.relPath)!.resolve(pagesState(FILE_A.relPath, 4))
+    await flushPromises()
+    expect(
+      fetchMock.mock.calls.filter(
+        ([, opts]) => (opts as { method?: string } | undefined)?.method === 'DELETE',
+      ).length,
+    ).toBe(deleteCount)
+    expect(rows(wrapper)[0]!.text()).toContain('未识别')
+  })
+
+  it('主区与同页对照共用安全表格与精确源码复制，显示操作不写入', async () => {
+    const source =
+      '# 原始名单\r\n\r\n<table><tr><td rowspan="2">宁波甲公司</td><td>2026</td></tr><tr><td>合并名单</td></tr></table>\r\n\r\n- 原始条目\r\n'
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    harness = await mountPage()
+    const { wrapper, pdf, ocr, fetchMock } = harness
+    await selectFile(wrapper, 'A-慢')
+    const response = ocrList(FILE_A.relPath, source)
+    ocr.get(FILE_A.relPath)!.resolve(response)
+    pdf
+      .get(FILE_A.relPath)!
+      .resolve({
+        ...pagesState(FILE_A.relPath),
+        pages: [{ page: 1, url: '/api/files/synthetic/page-1.png' }],
+      })
+    await flushPromises()
+
+    expect(rows(wrapper)[0]!.get('h1').text()).toBe('原始名单')
+    expect(rows(wrapper)[0]!.get('td[rowspan="2"]').text()).toBe('宁波甲公司')
+
+    await button(wrapper, '源码').trigger('click')
+    await flushPromises()
+    expect(
+      rows(wrapper)[0]!.get('pre').element.textContent!.replace(/\r\n/g, '\n'),
+    ).toBe(source.replace(/\r\n/g, '\n'))
+    await wrapper.get('button[aria-label="复制原文"]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenLastCalledWith(source)
+
+    await wrapper.get('[aria-label="放大看第 1 页"]').trigger('click')
+    await flushPromises()
+    const dialog = body().get('[data-slot="dialog-content"]')
+    expect(dialog.get('td[rowspan="2"]').text()).toBe('宁波甲公司')
+    await dialog
+      .findAll('button')
+      .find((item) => item.text().trim() === '源码')!
+      .trigger('click')
+    await flushPromises()
+    expect(
+      dialog.get('pre').element.textContent!.replace(/\r\n/g, '\n'),
+    ).toBe(source.replace(/\r\n/g, '\n'))
+    await dialog.get('[aria-label="复制对照原文"]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenLastCalledWith(source)
+
+    expect(
+      fetchMock.mock.calls.filter(
+        ([, options]) =>
+          (options as { method?: string } | undefined)?.method &&
+          (options as { method?: string }).method !== 'GET',
+      ),
+    ).toEqual([])
+    expect(response.pages[0]!.markdown).toBe(source)
+  })
+
+  it('渲染结果清除行内事件属性，编辑仍取原始 Markdown', async () => {
+    const source =
+      '# 标题\n\n<table><tr><td onclick="alert(1)">企业甲</td></tr></table>\n'
+    const { wrapper, fetchMock } = await loadA(4, source)
+    expect(rows(wrapper)[0]!.find('[onclick]').exists()).toBe(false)
+    expect(rows(wrapper)[0]!.get('td').text()).toBe('企业甲')
+
+    await button(wrapper, '编辑').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('textarea').element).toHaveProperty('value', source)
+    expect(
+      fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST'),
+    ).toEqual([])
+  })
+
+  it('OCR 主区跟随应用主题，换文件重置源码视图与复制提示', async () => {
+    const ThemeToggle = (await import('../components/ThemeToggle.vue')).default
+    const toggle = mount(ThemeToggle)
+    try {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: vi.fn().mockResolvedValue(undefined) },
+        configurable: true,
+      })
+      const { wrapper, pdf, ocr } = await loadA(1, '# 甲文件正文')
+      const themeBefore = rows(wrapper)[0]!
+        .get('[data-theme]')
+        .attributes('data-theme')
+      await toggle.get('button').trigger('click')
+      await flushPromises()
+      expect(
+        rows(wrapper)[0]!.get('[data-theme]').attributes('data-theme'),
+      ).toBe(themeBefore === 'dark' ? 'light' : 'dark')
+
+      await button(wrapper, '源码').trigger('click')
+      await wrapper.get('button[aria-label="复制原文"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('已复制原文')
+
+      await selectFile(wrapper, 'B-快')
+      pdf.get(FILE_B.relPath)!.resolve(pagesState(FILE_B.relPath, 1))
+      ocr.get(FILE_B.relPath)!.resolve(ocrList(FILE_B.relPath, '# B 的新正文'))
+      await flushPromises()
+      expect(rows(wrapper)[0]!.get('h1').text()).toBe('B 的新正文')
+      // New file ⇒ new page row ⇒ rendered view again, not the old source view.
+      expect(wrapper.find('pre').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('已复制原文')
+      expect(wrapper.text()).not.toContain('甲文件正文')
+    } finally {
+      await toggle.get('button').trigger('click')
+      toggle.unmount()
+    }
+  })
+
+  it('横向滚动内容可获得焦点并保留 ←/→，全局翻页只作用于非交互焦点', async () => {
+    const wideTable =
+      '# 长表\n\n<table><tr>' +
+      Array.from({ length: 18 }, (_, index) => `<th>字段${index}</th>`).join('') +
+      '</tr><tr>' +
+      Array.from({ length: 18 }, () => '<td>值</td>').join('') +
+      '</tr></table>\n'
+    const { wrapper } = await loadA(4, wideTable)
+    const scroller = wrapper.get('.safe-preview-html').element as HTMLElement
+    expect(scroller.getAttribute('tabindex')).toBe('0')
+    expect(scroller.getAttribute('role')).toBe('region')
+    expect(scroller.getAttribute('aria-label')).toContain('横向滚动')
+    Object.defineProperty(scroller, 'scrollWidth', { value: 1200, configurable: true })
+    Object.defineProperty(scroller, 'clientWidth', { value: 300, configurable: true })
+    scroller.focus()
+    const key = new KeyboardEvent('keydown', {
+      key: 'ArrowRight',
+      bubbles: true,
+      cancelable: true,
+    })
+    scroller.dispatchEvent(key)
+    await flushPromises()
+    expect(key.defaultPrevented).toBe(false)
+    expect(pageText(wrapper)).toContain('第 1 / 4 页')
+
+    // A non-interactive target still pages.
+    document.body.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }),
+    )
+    await flushPromises()
+    expect(pageText(wrapper)).toContain('第 2 / 4 页')
+  })
+
+  it('有改动时取消/Esc 先确认；未改动直接退出；拒绝放弃保留草稿与焦点', async () => {
+    const { wrapper } = await loadA()
+    await button(wrapper, '编辑').trigger('click')
+    await flushPromises()
+    await wrapper.get('textarea').setValue('未保存修订')
+    ;(wrapper.get('textarea').element as HTMLTextAreaElement).focus()
+
+    await wrapper
+      .get('.ocr-workbench')
+      .trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+    let dialog = body().get('[data-slot="dialog-content"]')
+    expect(dialog.text()).toContain('放弃未保存的校对')
+    await dialog
+      .findAll('button')
+      .find((item) => item.text().trim() === '继续编辑')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.get('textarea').element).toHaveProperty('value', '未保存修订')
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(wrapper.get('textarea').element),
+    )
+
+    await button(wrapper, '取消').trigger('click')
+    await flushPromises()
+    dialog = body().get('[data-slot="dialog-content"]')
+    await dialog
+      .findAll('button')
+      .find((item) => item.text().trim() === '放弃草稿')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.find('textarea').exists()).toBe(false)
+    expect(
+      (document.activeElement as HTMLElement | null)?.closest(
+        '[aria-label="翻页与页操作"]',
+      ),
+    ).not.toBeNull()
+
+    // A clean edit exits without any dialog.
+    await button(wrapper, '编辑').trigger('click')
+    await flushPromises()
+    await button(wrapper, '取消').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('textarea').exists()).toBe(false)
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('文件 Sheet 被草稿守卫拒绝时保持打开并说明原因', async () => {
+    const { wrapper } = await loadA()
+    await button(wrapper, '编辑').trigger('click')
+    await flushPromises()
+    await wrapper.get('textarea').setValue('未保存修订')
+    const sheet = await openFileSheet(wrapper)
+    expect(sheet.text()).toContain('有未保存的草稿')
+    const row = sheet
+      .findAll('[data-slot="sheet-content"] li button')
+      .find((item) => item.text().includes('B-快'))!
+    expect(row.attributes('disabled')).toBeDefined()
+    await row.trigger('click')
+    await flushPromises()
+    expect(document.querySelector('[data-slot="sheet-content"]')).not.toBeNull()
+    expect(wrapper.get('textarea').element).toHaveProperty('value', '未保存修订')
+    expect(pageText(wrapper)).toContain('A-慢.pdf')
   })
 })

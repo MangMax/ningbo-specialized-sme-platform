@@ -41,5 +41,6 @@ const colorMode = useAppColorMode()
     :wrap="wrap"
     :hide-toolbar="hideToolbar"
     :content-class="contentClass"
+    focusable-content
   />
 </template>

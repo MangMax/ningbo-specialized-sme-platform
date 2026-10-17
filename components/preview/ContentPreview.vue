@@ -22,7 +22,13 @@ const props = withDefaults(defineProps<{
   wrap?: boolean
   /** Extra class for the scrollable content area, used by the OCR panes. */
   contentClass?: string
-}>(), { format: 'markdown', language: '', name: '正文.md', theme: 'light', mode: 'rendered', readonly: true, hideToolbar: false, wrap: false, contentClass: '' })
+  /**
+   * Make the horizontal scroll surface keyboard reachable (tabindex + region
+   * name + visible focus). Opt-in: the OCR workbench needs it, other previews
+   * keep their existing tab order.
+   */
+  focusableContent?: boolean
+}>(), { format: 'markdown', language: '', name: '正文.md', theme: 'light', mode: 'rendered', readonly: true, hideToolbar: false, wrap: false, contentClass: '', focusableContent: false })
 const emit = defineEmits<{ 'update:mode': [mode: 'rendered' | 'source']; copy: [source: string]; error: [message: string] }>()
 const mounted = ref(false)
 onMounted(() => { mounted.value = true })
@@ -95,11 +101,22 @@ function download() {
     </div>
     <p v-if="message" role="status" class="border-b px-4 py-2 text-xs text-muted-foreground">{{ message }}</p>
     <p v-if="tooLarge" role="status" class="px-4 py-2 text-xs text-muted-foreground">正文较大，已显示源码，可复制或下载完整原文。</p>
-    <div class="preview-content min-h-0 min-w-0 flex-1 overflow-auto p-4" :class="contentClass">
+    <div
+      class="preview-content min-h-0 min-w-0 flex-1 overflow-auto p-4"
+      :class="[
+        contentClass,
+        focusableContent
+          ? 'scroll-focus-ring'
+          : '',
+      ]"
+      :tabindex="focusableContent ? 0 : undefined"
+      :role="focusableContent ? 'region' : undefined"
+      :aria-label="focusableContent ? `${name}（可横向滚动）` : undefined"
+    >
       <p v-if="!source" class="text-muted-foreground text-sm">正文为空</p>
-      <MarkdownPreview v-else-if="rendered" :source="source" :theme="localTheme" :wrap="wrap" :resources="resources" />
+      <MarkdownPreview v-else-if="rendered" :source="source" :theme="localTheme" :wrap="wrap" :resources="resources" :focusable="focusableContent" />
       <pre v-else-if="!mounted" class="overflow-auto whitespace-pre-wrap">{{ source }}</pre>
-      <CodePreview v-else :source="source" :language="language" :theme="localTheme" :wrap="wrap" @error="emit('error', $event)" />
+      <CodePreview v-else :source="source" :language="language" :theme="localTheme" :wrap="wrap" :focusable="focusableContent" @error="emit('error', $event)" />
     </div>
   </section>
 </template>
@@ -114,4 +131,5 @@ function download() {
 .preview-content :deep(h1), .preview-content :deep(h2), .preview-content :deep(h3) { font-weight: 600; margin-block: 1em .5em; }
 .preview-content :deep(ul) { list-style: disc; padding-left: 1.5em; }
 .preview-content :deep(ol) { list-style: decimal; padding-left: 1.5em; }
+.preview-content.scroll-focus-ring:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 </style>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
 import {
   Check,
   Copy,
@@ -14,6 +15,8 @@ import {
   Trash2,
   WrapText,
   X,
+  ZoomIn,
+  ZoomOut,
 } from '@lucide/vue'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -37,7 +40,8 @@ import { Textarea } from '@/components/ui/textarea'
 import type { WorkbenchRow } from '~~/lib/ocr-workbench'
 import { pageReviewState, STATE_WORD } from '~~/lib/ocr-workbench'
 import { OCR_CHANNELS } from '~~/lib/labels'
-import { pageLabel } from '~~/lib/page-gallery'
+import { PAGE_IMAGE_ZOOM_MIN, pageLabel } from '~~/lib/page-gallery'
+import ImagePreview from '@/components/preview/ImagePreview.vue'
 import OcrPageBody from './OcrPageBody.vue'
 
 const props = defineProps<{
@@ -51,6 +55,11 @@ const props = defineProps<{
   pending?: boolean
   /** 最近一次写入/删除失败的说明。 */
   failure?: string
+  /**
+   * 这次失败该由哪种动作重试：`save` 重新提交、`read` 只重读、
+   * `delete` 先重新确认删除。空串表示没有失败。
+   */
+  failureAction?: 'save' | 'delete' | 'read' | ''
   /** 刷新/错误快照仍可读，但不能写。 */
   disabled?: boolean
   /** 写入成功读回后的一次高亮。 */
@@ -68,6 +77,22 @@ const emit = defineEmits<{
   render: []
 }>()
 
+/** 窄屏用真实查看器（fit-width + 平移/缩放/全屏），不再把整页 contain 成缩略图。 */
+const isNarrow = useMediaQuery('(max-width: 1023px)')
+
+/** A failed DELETE is re-attempted only through the explicit confirmation. */
+function retryFailure() {
+  if (props.failureAction === 'delete') askDelete()
+  else emit('retry')
+}
+
+function failureRetryLabel() {
+  if (props.failureAction === 'delete') return '重试删除'
+  if (props.failureAction === 'read') return '重试读取'
+  if (props.failureAction === 'save') return '重试保存'
+  return '重试'
+}
+
 /** Keep the actual trigger so Esc can return focus even after a programmatic click. */
 function openPreview(event: MouseEvent) {
   emit('preview', props.row.page, event.currentTarget as HTMLElement)
@@ -79,6 +104,10 @@ const deleteOpen = ref(false)
 const copyMessage = ref('')
 const overflowTrigger = ref<{ $el?: HTMLButtonElement } | null>(null)
 const editor = ref<{ $el?: HTMLTextAreaElement } | null>(null)
+const imageViewer = ref<{
+  zoomBy: (factor: number) => void
+  fit: () => void
+} | null>(null)
 const textPaneBody = ref<HTMLElement | null>(null)
 const hasHorizontalOverflow = ref(false)
 
@@ -134,7 +163,11 @@ function focusEditor() {
     const el = editor.value?.$el
     if (!(el instanceof HTMLTextAreaElement)) return
     // Entering edit should start at the document head, not wherever the
-    // browser's default caret-at-end put the scroll position.
+    // browser's default caret-at-end put the scroll position. On a short
+    // viewport the browser's focus scroll can also leave the first line half
+    // clipped; align the editor top with its scroller explicitly.
+    if (typeof el.scrollIntoView === 'function')
+      el.scrollIntoView({ block: 'start', inline: 'nearest' })
     el.setSelectionRange(0, 0)
     el.scrollTop = 0
   })
@@ -271,23 +304,51 @@ onBeforeUnmount(() => {
   >
     <div
       class="grid h-full min-h-0 grid-cols-1 gap-3"
+      :data-ocr-compare-row="view === 'compare' ? '' : undefined"
       :class="
         view === 'compare'
-          ? 'grid-rows-[minmax(0,45fr)_minmax(0,55fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-rows-1'
+          ? 'grid-rows-[minmax(0,55fr)_minmax(0,45fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:grid-rows-1'
           : 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
       "
     >
       <!-- 页图：真值。桌面与文本并排；窄屏是独立 tab / 对照上半屏。 -->
       <section
         aria-label="当前页页图"
-        class="bg-card flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border"
-        :class="view === 'text' ? 'hidden lg:flex' : 'flex'"
+        class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md"
+        :class="[
+          view === 'text' ? 'hidden lg:flex' : 'flex',
+          // The narrow viewer is its own card; avoid card-in-card chrome.
+          isNarrow && image ? 'border-0 bg-transparent' : 'bg-card border',
+        ]"
       >
         <header
+          data-ocr-pane-header
           class="flex h-10 shrink-0 items-center gap-2 border-b px-2.5"
         >
           <span class="text-xs font-medium">页图</span>
           <div class="ml-auto flex items-center gap-1">
+            <template v-if="isNarrow && image">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="size-8"
+                aria-label="缩小页图"
+                title="缩小页图"
+                @click="imageViewer?.zoomBy(1 / 1.25)"
+              >
+                <ZoomOut />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                class="size-8"
+                aria-label="放大页图"
+                title="放大页图"
+                @click="imageViewer?.zoomBy(1.25)"
+              >
+                <ZoomIn />
+              </Button>
+            </template>
             <Button
               v-if="image"
               variant="ghost"
@@ -314,10 +375,23 @@ onBeforeUnmount(() => {
           :key="`${filePath}:${row.page}:image`"
           class="flex min-h-0 flex-1 items-center justify-center overflow-auto p-2 lg:p-3"
         >
+          <!-- Narrow screens get a real viewer: page width fills the pane and the
+               user can pan/zoom/fullscreen. A contain-only thumbnail is not a
+               comparison surface. -->
+          <ImagePreview
+            v-if="image && isNarrow"
+            ref="imageViewer"
+            class="h-full w-full min-h-0"
+            :src="imageSrc"
+            name="页图"
+            hide-kind-label
+            fit-mode="width"
+            :zoom-min="PAGE_IMAGE_ZOOM_MIN"
+          />
           <button
-            v-if="image"
+            v-else-if="image"
             type="button"
-            class="group focus-visible:border-ring focus-visible:ring-ring/50 relative flex h-full w-full items-center justify-center rounded-sm focus-visible:ring-3 focus-visible:outline-none"
+            class="group focus-visible:border-ring focus-visible:ring-ring/50 relative flex h-full w-full items-center justify-center rounded-sm transition-shadow hover:ring-2 hover:ring-primary/20 focus-visible:ring-3 focus-visible:outline-none motion-reduce:transition-none"
             :aria-label="`放大看${pageLabel(row.page)}`"
             @click="openPreview"
           >
@@ -329,10 +403,14 @@ onBeforeUnmount(() => {
               class="h-full w-full object-contain"
               draggable="false"
             />
+            <!-- A corner affordance instead of a 35% black wash: the page image is
+                 the evidence being proofread and must keep its contrast on hover. -->
             <span
-              class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+              data-ocr-zoom-hint
+              class="bg-background/95 pointer-events-none absolute top-2 right-2 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
             >
-              <Expand class="size-5 text-white" />
+              <Expand class="size-3.5" />
+              放大
             </span>
           </button>
           <div
@@ -360,13 +438,13 @@ onBeforeUnmount(() => {
         class="bg-card ocr-text-pane flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border"
         :class="view === 'image' ? 'hidden lg:flex' : 'flex'"
       >
-        <header class="flex h-10 shrink-0 items-center gap-1.5 border-b px-2">
+        <header
+          data-ocr-pane-header
+          class="flex h-10 shrink-0 items-center gap-1.5 border-b px-2"
+        >
           <template v-if="editing">
             <span class="text-xs font-medium">原始 Markdown</span>
             <Badge v-if="dirty" variant="dashed" class="shrink-0">未保存</Badge>
-            <span class="text-muted-foreground hidden truncate text-[11px] sm:inline">
-              保存写入原始文本，不取渲染结果
-            </span>
           </template>
           <template v-else>
             <div
@@ -471,8 +549,8 @@ onBeforeUnmount(() => {
         <Alert v-if="failure" variant="destructive" class="rounded-none border-x-0 border-t-0">
           <AlertDescription class="text-destructive! flex flex-wrap items-center gap-2 font-medium">
             <span>{{ failure }}</span>
-            <Button variant="outline" size="sm" @click="emit('retry')">
-              重试</Button
+            <Button variant="outline" size="sm" @click="retryFailure">
+              {{ failureRetryLabel() }}</Button
             >
           </AlertDescription>
         </Alert>
@@ -487,7 +565,6 @@ onBeforeUnmount(() => {
             ref="editor"
             :model-value="draft"
             :readonly="pending"
-            :disabled="disabled"
             :aria-label="`${pageLabel(row.page)}的 OCR 文本`"
             spellcheck="false"
             class="h-full min-h-0 w-full resize-none rounded-none border-0 bg-transparent p-4 font-mono text-[length:var(--ocr-code-size)] leading-relaxed shadow-none transition-none focus-visible:ring-0 motion-reduce:transition-none"
@@ -532,6 +609,7 @@ onBeforeUnmount(() => {
         </div>
 
         <footer
+          data-ocr-pane-footer
           class="text-muted-foreground flex h-7 shrink-0 items-center gap-2 border-t px-2.5 text-[11px]"
         >
           <template v-if="editing">

@@ -159,15 +159,20 @@ export function useOcrNavigation(options: {
     }
     return false
   }
-  function selectFile(path: string) {
-    if (path === selectedPath.value) return
+  /**
+   * Returns whether the navigation was accepted, so the caller (the file sheet)
+   * can keep its own surface open instead of closing over a blocked action.
+   */
+  function selectFile(path: string): boolean {
+    if (path === selectedPath.value) return false
     if (blocked() || !options.files.value.some((f) => f.relPath === path))
-      return
+      return false
     selectedPath.value = path
     currentPage.value = null
     filters.value = { states: [], range: '', text: '' }
     notice.value = ''
     sync(true)
+    return true
   }
   function navigate(page: number) {
     if (blocked() || !filteredRows.value.some((row) => row.page === page))

@@ -10,11 +10,11 @@ import SafeHtmlPreview from './SafeHtmlPreview.vue'
 import CodePreview from './CodePreview.vue'
 import { previewLink } from '~~/lib/content-preview-security'
 
-const props = defineProps<{ source: string; theme: 'light' | 'dark'; wrap: boolean; resources?: Readonly<Record<string, string>> }>()
+const props = defineProps<{ source: string; theme: 'light' | 'dark'; wrap: boolean; resources?: Readonly<Record<string, string>>; focusable?: boolean }>()
 const id = `content-preview-${useId()}-${++previewSequence}`
 // The public custom-id registry scopes overrides to this renderer only, including nested blocks.
-const HtmlNode = defineComponent({ props: ['node'], setup: p => () => h(SafeHtmlPreview, { source: p.node.content ?? p.node.raw ?? '', resources: props.resources }) })
-const CodeNode = defineComponent({ props: ['node'], setup: p => () => h(CodePreview, { source: p.node.code ?? p.node.raw ?? '', language: p.node.language, theme: props.theme, wrap: props.wrap, copyable: true }) })
+const HtmlNode = defineComponent({ props: ['node'], setup: p => () => h(SafeHtmlPreview, { source: p.node.content ?? p.node.raw ?? '', resources: props.resources, focusable: props.focusable }) })
+const CodeNode = defineComponent({ props: ['node'], setup: p => () => h(CodePreview, { source: p.node.code ?? p.node.raw ?? '', language: p.node.language, theme: props.theme, wrap: props.wrap, copyable: true, focusable: props.focusable }) })
 const LinkNode = defineComponent({ props: ['node'], setup: p => () => {
   const href = previewLink(p.node.href ?? '', props.resources)
   const text = p.node.text ?? p.node.raw ?? ''

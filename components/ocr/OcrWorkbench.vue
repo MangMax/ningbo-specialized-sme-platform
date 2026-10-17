@@ -114,6 +114,7 @@ const {
   justSaved,
   savePage,
   removePage,
+  confirmPageSaved,
   importOpen,
   importPending,
   importFailure,
@@ -142,6 +143,13 @@ const jumpError = ref('')
 
 const editing = ref(false)
 const draft = ref('')
+/**
+ * Discard confirmation. A long proofreading session must not lose its page to a
+ * stray Esc or a mis-clicked 取消; the dialog is the only path that clears a dirty
+ * draft. Esc inside this dialog closes the dialog (reka) and must not then also
+ * exit editing — the root Esc handler bails while it is open.
+ */
+const discardOpen = ref(false)
 
 /**
  * 草稿脏状态直接写回 navigation 的 `dirty`：它同时负责阻断换文件/换页/筛选、
@@ -216,6 +224,9 @@ const editLabel = computed(() =>
 const rowFailureMessage = computed(() =>
   rowFailure.value?.page === currentPage.value ? rowFailure.value.message : '',
 )
+const rowFailureAction = computed(() =>
+  rowFailure.value?.page === currentPage.value ? rowFailure.value.action : '',
+)
 const currentImageSrc = computed(() => {
   const url = currentRow.value?.image?.url
   if (!url) return ''
@@ -232,8 +243,8 @@ const compareMeta = computed(() => {
 })
 const compareDescription = computed(() =>
   isNarrow.value
-    ? '上方是页图，下方是识别文本（只读）。Esc 关闭后回到原来的页。'
-    : '左侧是页图，右侧是识别文本（只读）。Esc 关闭后回到原来的页。',
+    ? '上方是页图，下方是识别文本（只读）。关闭后停留当前对照页。'
+    : '左侧是页图，右侧是识别文本（只读）。关闭后停留当前对照页。',
 )
 const compareCanPrev = computed(
   () => !dirty.value && !writeBusy.value && pageIndex.value > 0,
@@ -280,9 +291,6 @@ const filterChips = computed<FilterChip[]>(() => {
     })
   return chips
 })
-const filterSummary = computed(() =>
-  filterChips.value.map((chip) => chip.label).join(' · '),
-)
 const displayName = computed(
   () => selected.value?.displayName || selected.value?.filename || selectedPath.value,
 )
@@ -310,9 +318,37 @@ function startEdit() {
 }
 
 function cancelEdit() {
+  // Unchanged draft: leaving costs nothing, so don't interrupt.
+  if (!dirty.value) {
+    leaveEdit()
+    return
+  }
+  discardOpen.value = true
+}
+
+/** The confirmed (or no-op) exit from editing. */
+function leaveEdit() {
+  discardOpen.value = false
   editing.value = false
   draft.value = ''
   void bottomBar.value?.focusEdit()
+}
+
+/** Keep the draft and put the caret back where the user was working. */
+function keepEditing() {
+  discardOpen.value = false
+  void nextTick(() => pageRow.value?.focusEditor())
+}
+
+/**
+ * Esc inside the discard dialog closes only the dialog. When the user is still
+ * editing afterwards, focus goes back to the editor (not to the body).
+ */
+function onDiscardOpen(value: boolean) {
+  discardOpen.value = value
+  if (!value && editing.value) {
+    void nextTick(() => pageRow.value?.focusEditor())
+  }
 }
 
 function saveDraft() {
@@ -320,7 +356,32 @@ function saveDraft() {
   void savePage(currentRow.value.page, draft.value)
 }
 
-function retry() {
+/**
+ * Inline retry is dispatched by the **failure origin**, not by whether the editor
+ * happens to be open. A committed write whose readback was missing must only GET;
+ * re-POSTing here would silently turn "readback missing" into a second write.
+ */
+async function retry() {
+  const failure = rowFailure.value
+  if (failure?.action === 'read') {
+    if (!selectedPath.value) return
+    await loadDetail(selectedPath.value)
+    if (detailError.value || failure.page !== currentPage.value) return
+    // The retried read succeeded: verify the original draft against what the
+    // server actually returns before leaving edit mode.
+    if (
+      editing.value &&
+      currentRow.value &&
+      confirmPageSaved(currentRow.value.page, draft.value)
+    ) {
+      discardOpen.value = false
+      editing.value = false
+      draft.value = ''
+      if (currentRow.value) void bottomBar.value?.focusEdit()
+      else void bottomBar.value?.focusBar()
+    }
+    return
+  }
   if (editing.value && currentRow.value) saveDraft()
   else if (selectedPath.value) void loadDetail(selectedPath.value)
 }
@@ -386,10 +447,11 @@ function onCompareOpen(value: boolean) {
       return
     }
     // In-dialog paging remounts the keyed page row, so the original click target
-    // can be gone. Fall back to the current page's own compare entry.
+    // can be gone. Fall back to the current page's own compare entry (the pane
+    // header control exists at every width, including the mobile image viewer).
     if (currentPage.value === null) return
     const current = document.querySelector(
-      `[aria-label="放大看${pageLabel(currentPage.value)}"]`,
+      '[aria-label="打开当前页对照"]',
     )
     if (current instanceof HTMLElement) current.focus()
   })
@@ -413,15 +475,32 @@ async function copyCompare() {
   }
 }
 
-function isTypingTarget(target: EventTarget | null) {
+/**
+ * Controls that own their own arrow-key behavior (inputs, menus, tabs, buttons,
+ * links…). The global pager must never `preventDefault()` on those.
+ */
+function isInteractiveTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false
   return !!target.closest(
-    'input, textarea, select, [contenteditable="true"], [role="textbox"], [role="menu"], [data-slot="dialog-content"], [data-slot="sheet-content"], [data-slot="popover-content"]',
+    'input, textarea, select, button, a[href], summary, [contenteditable="true"], [role="textbox"], [role="menu"], [role="menuitem"], [role="tab"], [role="switch"], [role="checkbox"], [role="button"], [data-slot="dialog-content"], [data-slot="sheet-content"], [data-slot="popover-content"]',
+  )
+}
+
+/**
+ * Content that scrolls on its own (wide tables, source blocks, the rendered
+ * preview). ←/→ belongs to that scroller; if it were intercepted the keyboard
+ * user could never reach columns 8–17 of a long table.
+ */
+function isScrollableContent(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false
+  return !!target.closest(
+    '.preview-content, .safe-preview-html, pre, [data-ocr-scroll-region]',
   )
 }
 
 function onRootEscape(event: KeyboardEvent) {
   if (
+    discardOpen.value ||
     compareOpen.value ||
     fileOpen.value ||
     filterOpen.value ||
@@ -430,6 +509,7 @@ function onRootEscape(event: KeyboardEvent) {
     return
   if (!editing.value || pendingPage.value !== null) return
   event.preventDefault()
+  // Dirty drafts get an explicit discard confirmation; a clean edit exits at once.
   cancelEdit()
 }
 
@@ -443,6 +523,7 @@ function onKeydown(event: KeyboardEvent) {
   )
     return
   if (
+    discardOpen.value ||
     editing.value ||
     compareOpen.value ||
     fileOpen.value ||
@@ -450,7 +531,8 @@ function onKeydown(event: KeyboardEvent) {
     jumpOpen.value
   )
     return
-  if (isTypingTarget(event.target)) return
+  if (isInteractiveTarget(event.target) || isScrollableContent(event.target))
+    return
   if (event.key === 'ArrowLeft') {
     event.preventDefault()
     goPrev()
@@ -464,8 +546,20 @@ onMounted(() => window.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 function selectAndClose(path: string) {
-  selectFile(path)
+  // The sheet owns no close policy: only an accepted selection closes it.
+  // A dirty draft leaves the sheet open with the reason visible instead of
+  // swallowing the click.
+  if (selectFile(path)) fileOpen.value = false
 }
+
+/** Why the file rows are not switchable right now (shown inside the sheet). */
+const fileSheetBlockedReason = computed(() =>
+  dirty.value
+    ? '有未保存的草稿，请先保存或取消编辑，再切换文件。'
+    : writeBusy.value
+      ? '写入处理中，请完成后再切换文件。'
+      : '',
+)
 </script>
 
 <template>
@@ -475,7 +569,7 @@ function selectAndClose(path: string) {
     @keydown.esc="onRootEscape"
   >
     <header class="bg-card shrink-0 border-b">
-      <div class="flex h-14 min-w-0 items-center gap-2 px-2.5 sm:px-3">
+      <div class="ocr-topbar flex h-14 min-w-0 items-center gap-2 px-2.5 sm:px-3">
         <span class="hidden shrink-0 text-sm font-semibold md:inline">识别校对</span>
 
         <div
@@ -492,7 +586,9 @@ function selectAndClose(path: string) {
             @click="fileOpen = true"
           >
             <FileText class="shrink-0" />
-            <span class="truncate">{{ displayName || '选择 PDF' }}</span>
+            <span class="truncate" :title="displayName || '选择 PDF'">{{
+              displayName || '选择 PDF'
+            }}</span>
             <ChevronDown class="shrink-0 opacity-60" />
           </Button>
 
@@ -532,8 +628,10 @@ function selectAndClose(path: string) {
                 <p v-if="jumpError" role="alert" class="text-destructive text-xs">
                   {{ jumpError }}
                 </p>
-                <p v-else class="text-muted-foreground text-[11px]">
-                  当前命中 {{ pages.length }} 页
+                <p v-else class="text-muted-foreground text-[11px] leading-relaxed">
+                  当前命中 {{ pages.length }} 页 · 全文件 {{ rows.length }} 页 ·
+                  有文本 {{ counts.text }} · 空结果 {{ counts.empty }} · 未识别
+                  {{ counts.none }}
                 </p>
               </form>
             </PopoverContent>
@@ -541,6 +639,21 @@ function selectAndClose(path: string) {
         </div>
 
         <div class="ml-auto flex shrink-0 items-center gap-1">
+          <!-- Short viewports hide the metadata row to give the document height;
+               the filter entry and its active count move up here. -->
+          <Button
+            variant="ghost"
+            size="sm"
+            class="ocr-short-filter hidden h-8 gap-1 px-2"
+            :disabled="!ready || !!detailError"
+            aria-label="筛选当前文件"
+            @click="filterOpen = true"
+          >
+            <Filter />
+            <span v-if="activeFilterCount" class="tabular-nums">{{
+              activeFilterCount
+            }}</span>
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
               <Button
@@ -587,9 +700,8 @@ function selectAndClose(path: string) {
       <!-- 文件级身份只在这里出现一次：计数、筛选入口与活跃条件、状态行。 -->
       <div
         v-if="selectedPath"
-        class="flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 border-t px-2.5 py-1.5 text-xs sm:px-3"
+        class="ocr-meta-row flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 border-t px-2.5 py-1.5 text-xs sm:px-3"
       >
-        <span class="shrink-0 tabular-nums">共 {{ rows.length }} 页</span>
         <span class="text-muted-foreground shrink-0 tabular-nums">
           有文本 {{ counts.text }} · 空结果 {{ counts.empty }} · 未识别
           {{ counts.none }}
@@ -619,41 +731,38 @@ function selectAndClose(path: string) {
           >
         </Button>
 
-        <!-- 桌面：逐条 chip；移动：一条截断摘要，避免多行 chips 把首屏挤掉。 -->
-        <span class="hidden min-w-0 flex-wrap items-center gap-1 sm:flex">
+        <!-- Chips stay removable at every width (390 included): one horizontally
+             scrollable row on narrow screens, wrapped from sm up. -->
+        <span
+          class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto sm:flex-wrap sm:overflow-visible"
+        >
           <Badge
             v-for="chip in filterChips"
             :key="chip.key"
             variant="quiet"
-            class="max-w-52 gap-1"
+            class="max-w-44 shrink-0 gap-1 sm:max-w-52"
           >
             <span class="truncate">{{ chip.label }}</span>
             <button
               type="button"
-              class="hover:text-foreground focus-visible:ring-ring rounded-xs focus-visible:ring-2 focus-visible:outline-none"
+              class="hover:bg-foreground/10 focus-visible:ring-ring -mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded-sm focus-visible:ring-2 focus-visible:outline-none"
               :aria-label="`移除筛选：${chip.label}`"
               :disabled="dirty"
               @click="chip.remove"
             >
-              <X class="size-3" />
+              <X class="size-3.5" />
             </button>
           </Badge>
           <Button
             v-if="activeFilterCount && visibleRows.length"
             variant="ghost"
             size="sm"
-            class="h-7 px-1.5 text-xs"
+            class="h-7 shrink-0 px-1.5 text-xs"
             :disabled="dirty"
             @click="clearFilters"
             >清除条件</Button
           >
         </span>
-        <span
-          v-if="activeFilterCount"
-          class="text-muted-foreground min-w-0 flex-1 truncate text-[11px] sm:hidden"
-          :title="filterSummary"
-          >{{ filterSummary }}</span
-        >
 
         <span class="ml-auto flex min-w-0 items-center gap-2">
           <span
@@ -697,7 +806,10 @@ function selectAndClose(path: string) {
       </div>
     </header>
 
-    <main class="relative min-h-0 flex-1 overflow-hidden" aria-label="校对内容">
+    <main
+      class="ocr-workspace-scroll relative min-h-0 flex-1 overflow-hidden"
+      aria-label="校对内容"
+    >
       <div
         v-if="!selectedPath"
         class="flex h-full items-center justify-center p-6"
@@ -784,7 +896,7 @@ function selectAndClose(path: string) {
       <div v-else class="flex h-full min-h-0 flex-col">
         <Tabs
           :model-value="view"
-          class="shrink-0 gap-0 border-b px-2 py-1.5 lg:hidden"
+          class="ocr-view-tabs shrink-0 gap-0 border-b px-2 py-1.5 lg:hidden"
           @update:model-value="(value) => setView(String(value) as OcrView)"
         >
           <TabsList class="grid w-full grid-cols-3" aria-label="校对视图">
@@ -805,13 +917,13 @@ function selectAndClose(path: string) {
               variant="outline"
               size="sm"
               class="ml-2"
-              @click="selectedPath && loadDetail(selectedPath)"
+              @click="retry"
               >重试读取</Button
             >
           </AlertDescription>
         </Alert>
 
-        <ul role="list" class="min-h-0 flex-1 p-2 sm:p-3">
+        <ul role="list" class="ocr-workspace-list min-h-0 flex-1 p-2 sm:p-3">
           <Transition
             enter-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
             enter-from-class="translate-y-1 opacity-0"
@@ -828,6 +940,7 @@ function selectAndClose(path: string) {
               :draft="draft"
               :pending="pendingPage === currentRow.page"
               :failure="rowFailureMessage"
+              :failure-action="rowFailureAction"
               :disabled="detailLoading || !!detailError"
               :highlight="justSaved === currentRow.page"
               :view="view"
@@ -876,6 +989,7 @@ function selectAndClose(path: string) {
       :files-loading="filesLoading"
       :files-error="filesError"
       :disabled="writeBusy"
+      :blocked-reason="fileSheetBlockedReason"
       @filter="setFileFilter"
       @select="selectAndClose"
       @retry="loadFiles"
@@ -948,7 +1062,7 @@ function selectAndClose(path: string) {
         </div>
 
         <div
-          class="grid min-h-0 flex-1 grid-cols-1 grid-rows-2 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)] lg:grid-rows-1"
+          class="ocr-compare-grid grid min-h-0 flex-1 grid-cols-1 grid-rows-2 gap-3"
         >
           <div class="flex h-full min-h-0 flex-col">
             <ImagePreview
@@ -958,6 +1072,7 @@ function selectAndClose(path: string) {
               :src="currentImageSrc"
               name="页图"
               hide-kind-label
+              :fit-mode="isNarrow ? 'width' : 'contain'"
               :zoom-min="PAGE_IMAGE_ZOOM_MIN"
             />
             <div
@@ -1057,12 +1172,30 @@ function selectAndClose(path: string) {
               <p class="text-xs">关掉对照后可以在底部手工录入。</p>
             </div>
             <footer
+              data-ocr-pane-footer
               class="text-muted-foreground flex h-7 shrink-0 items-center border-t px-2.5 text-[11px]"
             >
               <span class="truncate">{{ compareMeta || '没有识别结果' }}</span>
               <span class="ml-auto shrink-0">{{ STATE_WORD[currentState] }}</span>
             </footer>
           </section>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    <!-- Discarding a dirty draft is the only destructive exit from editing:
+         without this dialog both 取消 and Esc used to drop the page silently. -->
+    <Dialog :open="discardOpen" @update:open="onDiscardOpen">
+      <DialogContent class="sm:max-w-md" @close-auto-focus="preventAutoFocus">
+        <div class="flex flex-col gap-1.5">
+          <DialogTitle>放弃未保存的校对？</DialogTitle>
+          <DialogDescription class="text-[13px] leading-relaxed">
+            第 {{ currentPage ?? 1 }} 页还有未保存的修改。放弃后这次编辑的内容会被丢弃，且无法撤销。
+          </DialogDescription>
+        </div>
+        <div class="mt-4 flex justify-end gap-2">
+          <Button variant="outline" @click="keepEditing">继续编辑</Button>
+          <Button variant="destructive" @click="leaveEdit">放弃草稿</Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -1095,6 +1228,103 @@ function selectAndClose(path: string) {
  * native scrollbar and the table itself remain available. */
 @media (max-height: 560px) {
   .ocr-workbench :deep([data-ocr-horizontal-hint]) {
+    display: none;
+  }
+}
+
+/*
+ * Wide compare dialog: the image is height-limited, so giving it ≈950px only
+ * creates dead space beside it. Size the image column from the available height
+ * (A4 aspect), let the text column take the rest, and keep the text scrollable.
+ */
+.ocr-compare-grid {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+@media (min-width: 1024px) {
+  .ocr-compare-grid {
+    grid-template-columns:
+      minmax(0, min(46%, calc((92vh - 10rem) * 0.72)))
+      minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+}
+
+/*
+ * Short-height compare dialog: squeezing two panes into ~160px each turns the
+ * page image into a thumbnail. Stack one column and let the dialog body scroll,
+ * giving both panes a real reading height.
+ */
+@media (max-width: 1023.98px) and (max-height: 560px) {
+  .ocr-compare-grid {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .ocr-compare-grid > * {
+    flex: 0 0 auto;
+    min-height: 300px;
+  }
+}
+
+/*
+ * Short viewports and narrow screens: keep the workspace at a readable minimum
+ * and let it scroll inside `main`. The fixed bottom bar stays reachable, the
+ * document itself still does not scroll, and the text/editor never collapse to
+ * a two-line strip.
+ */
+@media (max-height: 640px) {
+  .ocr-workspace-scroll {
+    overflow-y: auto;
+  }
+  .ocr-workspace-list {
+    min-height: 340px;
+  }
+  .ocr-workbench :deep([data-ocr-page-row]) {
+    min-height: 340px;
+  }
+  /* Stacked compare on a short screen: give both panes a real reading height
+     and let the workspace scroll between them (single-column fallback). */
+  .ocr-workbench :deep(li:has(> div[data-ocr-compare-row])) {
+    min-height: 520px;
+  }
+}
+/*
+ * Very short viewports (e.g. 720x450 ≈ 200% reflow): keep 8+ lines reachable by
+ * collapsing secondary chrome. Counts stay available in the page-jump popover;
+ * the filter entry moves into the top row.
+ */
+@media (max-height: 560px) {
+  .ocr-meta-row {
+    display: none;
+  }
+  .ocr-short-filter {
+    display: inline-flex;
+  }
+  .ocr-topbar {
+    height: 2.5rem;
+  }
+  .ocr-view-tabs {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  .ocr-view-tabs :deep([data-slot='tabs-list']) {
+    height: 1.75rem;
+  }
+  .ocr-workspace-list {
+    padding: 0;
+  }
+  .ocr-workbench :deep([data-ocr-pane-header]) {
+    height: 2rem;
+  }
+  .ocr-workbench :deep([data-ocr-pane-footer]) {
+    display: none;
+  }
+  .ocr-bottombar {
+    height: 2.5rem;
+  }
+}
+@media (max-height: 520px) {
+  .ocr-workbench :deep([data-ocr-pane-footer]) {
     display: none;
   }
 }
