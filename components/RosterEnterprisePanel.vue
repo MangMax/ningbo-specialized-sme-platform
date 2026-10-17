@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { ExternalLink, Eye, FileText } from '@lucide/vue'
 import {
@@ -24,6 +24,8 @@ import {
 } from '~~/lib/labels'
 import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
 import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
+import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
+import { evidencePointerText } from '~~/lib/roster/first-recognition'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import EventChip from '@/components/EventChip.vue'
 import SourceChip from '@/components/SourceChip.vue'
@@ -165,6 +167,8 @@ const props = defineProps<{
   backQuery?: string
 }>()
 
+const emit = defineEmits<{ detailSettled: [enterpriseId: number] }>()
+
 const fullPageTo = computed(
   () =>
     `/enterprises/${props.enterpriseId}${props.backQuery ? `?back=${encodeURIComponent(props.backQuery)}` : ''}`,
@@ -175,6 +179,16 @@ const { data, isLoading, error } = useQuery({
   key: () => ['roster-enterprise', props.enterpriseId],
   query: () => apiGet<Detail>(`/api/roster/enterprises/${props.enterpriseId}`),
 })
+
+watch(
+  [isLoading, data, error],
+  () => {
+    if (!isLoading.value && (data.value != null || error.value != null)) {
+      emit('detailSettled', props.enterpriseId)
+    }
+  },
+  { immediate: true, flush: 'post' },
+)
 
 const detail = computed(() => data.value ?? null)
 const eventsByRecord = computed(() => {
@@ -304,8 +318,20 @@ function openPreview(e: Evidence) {
  */
 const previewBack = computed(() => (props.backQuery ? `/?${props.backQuery}` : '/'))
 
+function rememberFullDetailReturn(event: MouseEvent): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  rememberEvidencePreviewReturn(previewBack.value, event.currentTarget)
+}
+
 function pageHref(v: Evidence): string {
   return evidencePreviewHref({ sourceFile: v.sourceFile, page: v.page, back: previewBack.value })
+}
+
+function rememberPreviewReturn(event: MouseEvent) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return
+  }
+  rememberEvidencePreviewReturn(previewBack.value, event.currentTarget)
 }
 
 /** 三态里有页码的那种才可点;另两种只写字,不给链接(没有页码就没有可跳的页)。 */
@@ -323,7 +349,9 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
       <!-- 展开已经装下称号历史与证据;要更深的（文件出处、拆分记录）去完整企业页。 -->
       <div class="flex justify-end">
         <Button as-child variant="ghost" size="sm" class="h-6 gap-1 px-1.5 text-[11px]">
-          <NuxtLink :to="fullPageTo">完整企业页 <ExternalLink class="size-3" /></NuxtLink>
+          <NuxtLink :to="fullPageTo" @click="rememberFullDetailReturn">
+            完整企业页 <ExternalLink class="size-3" />
+          </NuxtLink>
         </Button>
       </div>
 
@@ -378,7 +406,7 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
                   {{
                     recognitionByTitle
                       .get(group.titleCode)!
-                      .evidence.map((v) => `${v.sourceFile}${v.attachment ? ` ${v.attachment}` : ''}${v.listNo != null ? ` 序号 ${v.listNo}` : ''}${v.page != null ? ` 第 ${v.page} 页` : ''}`)
+                      .evidence.map((v) => evidencePointerText(v))
                       .join(' ; ')
                   }}
                 </template>
@@ -451,6 +479,7 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
                   <NuxtLink
                     v-if="pageStateOf(v) === 'assigned'"
                     :to="pageHref(v)"
+                    @click="rememberPreviewReturn"
                     class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
                   >
                     第 {{ v.page }} 页

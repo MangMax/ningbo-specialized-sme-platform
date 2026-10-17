@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ChevronLeft, FileDown } from '@lucide/vue'
 import { describeUnsupported, fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
 import {
@@ -32,11 +32,13 @@ import type { PdfPagesState } from '~~/server/utils/pdf-pages'
  * 在「序号各自从 1 起算」的分节名单里会指向完全不同的企业。
  *
  * 页图**要先渲染**才取得到。没渲染时页图库会照常铺出网格并给出渲染入口(那是它本来的
- * 空态),本页在上面补一句说明,让「为什么没定位到第 N 页」当场有答案,而不是静默降级。
+ * 空态),本页在上面补一句说明,让「为什么没定位到第 N 页」当场有答案,而不是静默降级；
+ * 如果目标页超过 PDF 实际页数,则明确提示页码不存在。
  */
 const route = useRoute()
+const applicationOrigin = useRequestURL().origin
 
-const parsed = computed(() => parseEvidencePreviewQuery(route.query))
+const parsed = computed(() => parseEvidencePreviewQuery(route.query, applicationOrigin))
 const file = computed(() => parsed.value.file)
 const page = computed(() => parsed.value.page)
 /** 返回目标:台账(或企业详情)。没有 / 不合法就回台账首页 —— 绝不把来路不明的串当路径用。 */
@@ -61,9 +63,34 @@ const { data: pagesState } = useQuery({
   enabled: () => pdf.value,
 })
 
+/** 页图库已读到的现状；同一份状态同时决定页图定位和页数提示。 */
+const galleryPageState = ref<PdfPagesState | null>(null)
+watch(file, () => {
+  galleryPageState.value = null
+})
+
+function onPagesState(state: PdfPagesState) {
+  if (state.file !== file.value) return
+  galleryPageState.value = state
+}
+
+const currentPdfPageState = computed(() => {
+  const galleryState = galleryPageState.value
+  if (galleryState?.file === file.value) return galleryState
+  const queryState = pagesState.value
+  return queryState?.file === file.value ? queryState : null
+})
+
+const currentPdfPageCount = computed(() => currentPdfPageState.value?.pageCount ?? null)
+
+const requestedPageOutOfRange = computed(
+  () =>
+    page.value !== null && currentPdfPageCount.value !== null && page.value > currentPdfPageCount.value,
+)
+
 const requestedPageRendered = computed(() => {
   if (page.value === null) return false
-  return (pagesState.value?.pages ?? []).some((p) => p.page === page.value)
+  return currentPdfPageState.value?.pages.some((p) => p.page === page.value) ?? false
 })
 
 useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : '来源预览')) })
@@ -120,12 +147,27 @@ useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : 
 
     <template v-else>
       <!-- 要定位的那一页还没渲染:**说清为什么**,再让页图库给出渲染入口。不静默降级成「打开就是第一页」。 -->
-      <Alert v-if="page !== null && !requestedPageRendered && pagesState">
-        <AlertTitle>第 {{ page }} 页的页图还没有渲染</AlertTitle>
-        <AlertDescription>先渲染页图,再回到这一页。</AlertDescription>
+      <Alert v-if="page !== null && !requestedPageRendered && currentPdfPageState">
+        <AlertTitle v-if="requestedPageOutOfRange">第 {{ page }} 页不存在</AlertTitle>
+        <AlertTitle v-else>第 {{ page }} 页的页图还没有渲染</AlertTitle>
+        <AlertDescription v-if="requestedPageOutOfRange">
+          该 PDF 共 {{ currentPdfPageCount }} 页，请检查来源页码。
+        </AlertDescription>
+        <AlertDescription v-else-if="currentPdfPageCount === null">
+          无法确认 PDF 的实际页数，不能验证目标页；不会静默打开其他页，请检查源文件后重试。
+        </AlertDescription>
+        <AlertDescription v-else>
+          正在尝试生成目标页；成功后会自动定位。若失败会显示原因，不会打开其他页。
+        </AlertDescription>
       </Alert>
 
-      <PageImageGallery v-if="pdf" class="min-h-[60vh]" :file="file" :page="page" />
+      <PageImageGallery
+        v-if="pdf"
+        class="min-h-[60vh]"
+        :file="file"
+        :page="page"
+        @pages-state="onPagesState"
+      />
       <FilePreview v-else class="min-h-[60vh]" :src="fileUrl(file)" :name="name" />
     </template>
   </div>

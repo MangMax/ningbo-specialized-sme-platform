@@ -6,7 +6,7 @@ import {
   isPageCapable,
   isSafeBackPath,
   parseEvidencePreviewQuery,
-  planEvidencePages,
+  planEvidencePages as planEvidencePagesWithCount,
   type EvidencePageCandidate,
   type EvidencePageEntry,
 } from '../lib/roster/evidence-page'
@@ -24,6 +24,11 @@ import {
  */
 
 const F145 = 'jxj/announcement/2022/甬经信中小〔2022〕145号关于公布宁波市“专精特新”中小企业名单的通知.pdf'
+
+/** This focused pure-rule fixture uses the source notice's known 23-page count. */
+function planEvidencePages(entries: readonly EvidencePageEntry[], rows: readonly EvidencePageCandidate[]) {
+  return planEvidencePagesWithCount(entries, rows, new Map([[F145, 23]]))
+}
 
 /** 真库里 145号 的三条「序号 6」—— 三条都是海曙区,分属三张分节名单。 */
 function candidates(): EvidencePageCandidate[] {
@@ -164,6 +169,17 @@ describe('planEvidencePages —— 分节定位(裸序号一律拒收)', () => {
     }
   })
 
+  it('源 PDF 实际页数未知时保留 page_count_unknown,没有页数证据就不分配', () => {
+    const plan = planEvidencePagesWithCount(
+      [{ sourceFile: F145, listNo: 6, page: 8, enterpriseName: '宁波开诚生态技术有限公司' }],
+      candidates(),
+      new Map([[F145, null]]),
+    )
+
+    expect(plan.assignments).toEqual([])
+    expect(plan.pending[0]!.reason).toBe('page_count_unknown')
+  })
+
   it('非 PDF(Word / Excel)拒绝写页码 —— 这类来源没有可复核的「第 N 页」', () => {
     const rows: EvidencePageCandidate[] = [
       {
@@ -285,6 +301,29 @@ describe('跳转链接 —— 出处 → 预览页', () => {
     }
     expect(isSafeBackPath('/')).toBe(true)
     expect(isSafeBackPath('/?view=title')).toBe(true)
+  })
+
+  it('返回目标拒绝控制字符和解析后跨源的 URL,并保留合法站内路径', () => {
+    const appOrigin = 'https://app.example'
+    const unsafe = [
+      '/\t/other.example/path',
+      '/\u0000?view=enterprise',
+      '/\u007f/path',
+      '/\u0085/path',
+      '//other.example/path',
+      '/\\other.example/path',
+      'https://other.example/path',
+    ]
+
+    for (const back of unsafe) {
+      expect(isSafeBackPath(back, appOrigin), JSON.stringify(back)).toBe(false)
+      expect(parseEvidencePreviewQuery({ file: F145, back }).back, JSON.stringify(back)).toBe('')
+      expect(evidencePreviewHref({ sourceFile: F145, page: 8, back })).not.toContain('back=')
+    }
+
+    const valid = '/?view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91'
+    expect(isSafeBackPath(valid, appOrigin)).toBe(true)
+    expect(parseEvidencePreviewQuery({ back: valid }).back).toBe(valid)
   })
 
   it('解析端:坏 page 丢掉而不是夹到边界(不把坏参数变成「第 1 页」)', () => {

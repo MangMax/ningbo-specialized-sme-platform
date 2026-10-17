@@ -94,11 +94,9 @@ export function ledgerStateFromQuery(query: Record<string, unknown>): LedgerStat
 /**
  * **每个视图认哪些筛选项** —— 取数、回写地址、切换视图时清理,都只认这一张表。
  *
- * 为什么必须是一张表:这三件事以前各写一遍 `if (view === 'enterprise')` 分支,
- * 结果「切走时该清哪些」与「这一视图实际用哪些」必然漂移 —— 实测就漏了一项:
- * 切到「按企业×称号」时清了 `rosterState`,却把**该视图根本不发**的 `district` 留在
- * state 里,于是它是**看不见的**:地址栏里没有它、重置也清不掉,但切回「按企业」时
- * 会突然生效。
+ * 为什么必须是一张表:取数、回写地址与切换视图清理以前各写一遍 `if (view === 'enterprise')`,
+ * 条件容易漂移。两个读模型都接受 `district`,但各自按自己的记录/企业属地口径筛选;
+ * 差异视图不接受它。
  *
  * 记录侧判据(`source` / `eventType` / `year`)在两种分组下**逐字一致** ——
  * 这是「切换分组不换人」的那一半,所以两个视图都列上,谁也不许只改一边。
@@ -118,7 +116,7 @@ export const LEDGER_VIEW_FILTERS: Record<LedgerView, readonly (keyof LedgerState
     'district',
     'rosterState',
   ],
-  title: ['q', 'title', 'source', 'eventType', 'year'],
+  title: ['q', 'title', 'source', 'eventType', 'year', 'district'],
   difference: ['q', 'title', 'direction', 'status', 'reason'],
 }
 

@@ -131,8 +131,10 @@ export interface EvidencePageCandidate {
 export type EvidencePagePendingReason =
   /** 输入缺东西(没有 sourceFile / listNo 不是正整数 / 没有定位信息)。 */
   | 'entry_incomplete'
-  /** `page` 不是 ≥1 的整数 —— **不静默取整**,也不当成「没有页码」。 */
+  /** `page` 不是正整数,或已知超出源 PDF 页数 —— **不取整、不夹值**。 */
   | 'page_invalid'
+  /** 源 PDF 实际页数无法可靠读取,因此不能证明请求页码在有效范围内。 */
+  | 'page_count_unknown'
   /** 非 PDF:这份来源给不出可靠的页。 */
   | 'not_page_capable'
   /** 按 `(文件, 序号)` + 定位找不到候选。 */
@@ -182,17 +184,19 @@ function positiveInt(raw: unknown): number | null {
  * 判据(按顺序,任何一条不过就**留空待核**,绝不猜):
  *  1. `sourceFile` 非空、`listNo` 是正整数;**必须**带 `enterpriseId` 或 `enterpriseName`
  *     (裸序号一律拒收 —— 见文件头)。输入不合这三条 → `entry_incomplete`。
- *  2. `page` 是 ≥1 的整数 → 否则 `page_invalid`。
+ *  2. `page` 是正整数 → 否则 `page_invalid`。
  *  3. 来源是 PDF → 否则 `not_page_capable`。
- *  4. 候选 = 同 `sourceFile` 且同 `listNo` 的出处行。
- *  5. 用 `enterpriseId` / `enterpriseName`(逐字归一)/ `district` **收窄**候选。
- *  6. 收窄后**恰好一条**才写;0 条 → `no_match`;≥2 条 → `ambiguous`。
- *  7. 两条入参**抢同一行且页码不同** → 两条都留空(`ambiguous`),不写任何一条 ——
+ *  4. 源 PDF 页数可读取且请求页未越界；未知 → `page_count_unknown`，越界 → `page_invalid`。
+ *  5. 候选 = 同 `sourceFile` 且同 `listNo` 的出处行。
+ *  6. 用 `enterpriseId` / `enterpriseName`(逐字归一)/ `district` **收窄**候选。
+ *  7. 收窄后**恰好一条**才写;0 条 → `no_match`;≥2 条 → `ambiguous`。
+ *  8. 两条入参**抢同一行且页码不同** → 两条都留空(`ambiguous`),不写任何一条 ——
  *     宁可都不写,也不要让「后一条覆盖前一条」把一条没有依据的页码留在库里。
  */
 export function planEvidencePages(
   entries: readonly EvidencePageEntry[],
   candidates: readonly EvidencePageCandidate[],
+  pageCounts: ReadonlyMap<string, number | null> = new Map(),
 ): EvidencePagePlan {
   const assignments: EvidencePageAssignment[] = []
   const pending: EvidencePagePending[] = []
@@ -243,6 +247,30 @@ export function planEvidencePages(
         entry,
         reason: 'not_page_capable',
         detail: `${sourceFile} 不是 PDF —— Word / Excel 的分页由打开它的程序决定,给不出可复核的「第 N 页」。这一类来源一律不写页码。`,
+        candidateIds: [],
+        sameListNo: 0,
+      })
+      return
+    }
+
+    const pageCount = pageCounts.get(sourceFile)
+    if (pageCount === null || pageCount === undefined || !Number.isInteger(pageCount) || pageCount < 1) {
+      pending.push({
+        index,
+        entry,
+        reason: 'page_count_unknown',
+        detail: `无法从源 PDF 可靠读取实际页数(${sourceFile})，保留待核；不会用已渲染页图数量代替 PDF 页数。`,
+        candidateIds: [],
+        sameListNo: 0,
+      })
+      return
+    }
+    if (page > pageCount) {
+      pending.push({
+        index,
+        entry,
+        reason: 'page_invalid',
+        detail: `第 ${page} 页超出源 PDF 实际页数(共 ${pageCount} 页)，保留待核。`,
         candidateIds: [],
         sameListNo: 0,
       })
@@ -310,7 +338,7 @@ export function planEvidencePages(
   })
 
   // 同一条出处行被两条入参指向、且页码**不同** ⇒ 两条都留空。同页码是同一个事实的
-  // 重复表达(批处理重跑常见),照着写即可,不算冲突。
+  // 重复表达(批处理重跑常见),保留各自的输入下标;写入侧只执行一次,重复项计入 unchanged。
   const conflicted = new Set<number>()
   for (const [evidenceId, claims] of claimed) {
     if (new Set(claims.map((c) => c.page)).size > 1) conflicted.add(evidenceId)
@@ -348,8 +376,25 @@ export function planEvidencePages(
 export const EVIDENCE_PREVIEW_PATH = '/preview'
 
 /** 只认**站内相对路径**:`/` 开头、但不是 `//host`(协议相对)也不是 `/\`。 */
-export function isSafeBackPath(raw: unknown): raw is string {
-  return typeof raw === 'string' && /^\/(?!\/|\\)/.test(raw)
+export function isSafeBackPath(
+  raw: unknown,
+  applicationOrigin: string =
+    typeof globalThis.location === 'undefined' ? 'http://app.invalid' : globalThis.location.origin,
+): raw is string {
+  if (
+    typeof raw !== 'string' ||
+    !/^\/(?!\/|\\)/.test(raw) ||
+    /[\u0000-\u001f\u007f-\u009f]/.test(raw)
+  ) {
+    return false
+  }
+
+  try {
+    const base = new URL(applicationOrigin)
+    return new URL(raw, base).origin === base.origin
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -369,12 +414,13 @@ export function evidencePreviewHref(input: {
   sourceFile: string
   page?: number | null
   back?: string | null
+  applicationOrigin?: string
 }): string {
   const params = new URLSearchParams()
   params.set('file', input.sourceFile)
   const page = isPageCapable(input.sourceFile) ? positiveInt(input.page ?? null) : null
   if (page !== null) params.set('page', String(page))
-  if (isSafeBackPath(input.back)) params.set('back', input.back)
+  if (isSafeBackPath(input.back, input.applicationOrigin)) params.set('back', input.back)
   return `${EVIDENCE_PREVIEW_PATH}?${params.toString()}`
 }
 
@@ -394,7 +440,10 @@ export interface EvidencePreviewQuery {
  * 只可能是手改或拼接出错,这时最安全的动作是「打开这份文件但不定位」——
  * 硬凑成第 1 页会把一个坏参数变成一条看起来正常的定位。
  */
-export function parseEvidencePreviewQuery(query: Record<string, unknown> | undefined): EvidencePreviewQuery {
+export function parseEvidencePreviewQuery(
+  query: Record<string, unknown> | undefined,
+  applicationOrigin?: string,
+): EvidencePreviewQuery {
   const pick = (raw: unknown): string => {
     const v = Array.isArray(raw) ? raw[0] : raw
     return typeof v === 'string' ? v : ''
@@ -403,6 +452,6 @@ export function parseEvidencePreviewQuery(query: Record<string, unknown> | undef
   return {
     file: pick(query?.file).trim(),
     page: positiveInt(pick(query?.page)),
-    back: isSafeBackPath(back) ? back : '',
+    back: isSafeBackPath(back, applicationOrigin) ? back : '',
   }
 }

@@ -97,5 +97,5 @@ export function normalizeName(
  */
 export function normalizeUscc(raw: unknown): string {
   if (typeof raw !== 'string' && typeof raw !== 'number') return ''
-  return String(raw).replace(/\s+/gu, '').toUpperCase()
+  return String(raw).replace(/[\s\u00A0\u200B-\u200D\uFEFF\u3000]+/gu, '').toUpperCase()
 }

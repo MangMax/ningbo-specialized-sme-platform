@@ -26,6 +26,7 @@
  * 把两件事并成一个标,读的人就分不清「这个年份存疑」还是「下次到期存疑」。
  */
 import type { TitleLifecycle } from './lifecycle'
+import { isPageCapable } from './evidence-page'
 
 /**
  * 首次认定的两态。
@@ -214,7 +215,7 @@ export function evidencePointerText(v: FirstRecognitionEvidence): string {
     v.sourceFile,
     v.attachment,
     v.listNo == null ? null : `序号 ${v.listNo}`,
-    v.page == null ? null : `第 ${v.page} 页`,
+    !isPageCapable(v.sourceFile) || v.page == null ? null : `第 ${v.page} 页`,
   ]
     .filter((part): part is string => !!part)
     .join(' · ')

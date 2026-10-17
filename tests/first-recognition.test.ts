@@ -304,6 +304,12 @@ describe('展示用的两句话也只有一处(导出 / 台账表 / 展开面板
     expect(evidencePointerText({ sourceFile: 'a.pdf', attachment: '附件三', listNo: 1, page: 88 })).toBe(
       'a.pdf · 附件三 · 序号 1 · 第 88 页',
     )
+    expect(evidencePointerText({ sourceFile: 'a.docx', attachment: '正文', listNo: 2, page: 12 })).toBe(
+      'a.docx · 正文 · 序号 2',
+    )
+    expect(evidencePointerText({ sourceFile: 'a.xlsx', attachment: 'Sheet1', listNo: 3, page: 12 })).toBe(
+      'a.xlsx · Sheet1 · 序号 3',
+    )
   })
 })
 

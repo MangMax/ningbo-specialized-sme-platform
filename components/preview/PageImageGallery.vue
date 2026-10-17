@@ -55,10 +55,13 @@ const props = defineProps<{
    *
    * 落点是**单页视图**(`viewing`),不是自动滚到网格里的某一张 —— 深链的用途是
    * 「看这一页」,让人从一堆缩略图里自己找第 8 张不叫定位。该页还没渲染时,
-   * 网格视图会照常铺出来并给出渲染入口(`viewing` 会被底下那条 watch 收回),
+   * 网格视图会照常铺出来并给出渲染入口(`viewing` 暂时回到 null;目标页号会保留,待渲染后恢复),
    * 不会停在一个空白的单页上。
    */
   page?: number | null
+}>()
+const emit = defineEmits<{
+  'pages-state': [state: PdfPagesState]
 }>()
 
 /** 入参 `page` 折成「该看第几页」;不是 ≥1 的整数就没有落点(**不取整、不回落成第 1 页**)。 */
@@ -91,6 +94,10 @@ const rendering = ref(false)
 const renderFailure = ref('')
 /** 渲染失败过。与 `renderFailure` 分开:网络失败时说明是空串,但状态仍然是「失败」。 */
 const renderFailed = ref(false)
+/** 深链不能可靠定位时单独报告,不能退回显示另一页。 */
+const targetPageIssue = ref('')
+/** 每份文件的每个深链目标只自动尝试渲染一次。 */
+const autoRenderKey = ref('')
 /** 上一次渲染的一句话交代(写了几页、跳了几页、多久)。 */
 const summary = ref('')
 /** 当前选的分辨率。取到现状后跟磁盘上的一致 —— 打开就该显示「现在是什么」,不是「默认是什么」。 */
@@ -99,6 +106,8 @@ const dpi = ref<number>(DEFAULT_DPI)
 const dpiTouched = ref(false)
 /** 正在看的那一页;null = 网格。 */
 const viewing = ref<number | null>(null)
+/** 深链目标还没在页图中出现时暂存;渲染成功后用它恢复定位。 */
+const pendingPage = ref<number | null>(null)
 /**
  * 单页视图里那个 `ImagePreview` 的实例 —— 窄屏工具栏上那组缩放按钮靠它驱动
  * (`ImagePreview` 用 `defineExpose` 露出 `zoomBy` / `fit`)。用结构类型而不是
@@ -182,6 +191,44 @@ const viewingPage = computed<PageImageRef | null>(
   () => state.value?.pages.find((p) => p.page === viewing.value) ?? null,
 )
 
+async function resolveRequestedPage(): Promise<void> {
+  const target = requestedPage()
+  const current = state.value
+  if (target === null || !current || loading.value) return
+
+  targetPageIssue.value = ''
+  const currentIsFresh = current.upToDate && !loadUnconfirmed.value
+  if (currentIsFresh && current.pages.some((page) => page.page === target)) {
+    pendingPage.value = null
+    viewing.value = target
+    return
+  }
+  // A stale manifest does not establish the current PDF page count. Let the render endpoint
+  // inspect the source before deciding whether the target is out of range.
+  if (currentIsFresh && current.pageCount === null) {
+    pendingPage.value = null
+    viewing.value = null
+    targetPageIssue.value = `无法确认 PDF 页数，不能定位到第 ${target} 页。`
+    return
+  }
+  if (currentIsFresh && current.pageCount !== null && target > current.pageCount) {
+    pendingPage.value = null
+    viewing.value = null
+    return
+  }
+
+  pendingPage.value = target
+  viewing.value = null
+  const key = `${props.file}:${target}`
+  if (autoRenderKey.value === key) return
+  autoRenderKey.value = key
+  await renderPages()
+  if (!renderFailed.value && !state.value?.pages.some((page) => page.page === target)) {
+    pendingPage.value = null
+    targetPageIssue.value = `页图渲染完成，但结果中没有第 ${target} 页；未打开其他页面。`
+  }
+}
+
 /** 网格里给 `<img>` 的地址(带渲染版本号,免得换了 DPI 还显示浏览器缓存里的旧图)。 */
 function srcOf(page: PageImageRef): string {
   return state.value ? pageImageSrc(state.value, page) : page.url
@@ -197,6 +244,7 @@ async function load() {
     )
     // 二次核对失败也算拿到了结果(第一次的清单仍有效)—— 照常铺出来,只标记未核对。
     state.value = loaded.state
+    emit('pages-state', loaded.state)
     loadUnconfirmed.value = !loaded.dpiConfirmed
     if (!dpiTouched.value) dpi.value = loaded.state.dpi
   } catch (error) {
@@ -204,6 +252,7 @@ async function load() {
   } finally {
     loading.value = false
   }
+  await resolveRequestedPage()
 }
 
 /**
@@ -226,6 +275,7 @@ async function renderPages() {
     dpiTouched.value = false
     loadUnconfirmed.value = false
     summary.value = renderSummary(out)
+    emit('pages-state', out)
   } catch (error) {
     // 空串兜底,**不垫一句中文** —— describeRenderFailure 是唯一产出最终句子的一层,
     // 垫一句会被再包装一遍(独立审查 F1 报的重复标点就是这个)。
@@ -280,10 +330,13 @@ watch(
   () => props.file,
   () => {
     // 换文件 = 换一切,但**落点照旧按入参给**(深链打开时 `page` 就是它要的那一页)。
-    viewing.value = requestedPage()
+    pendingPage.value = requestedPage()
+    viewing.value = pendingPage.value
     summary.value = ''
     renderFailure.value = ''
     renderFailed.value = false
+    targetPageIssue.value = ''
+    autoRenderKey.value = ''
     loadError.value = ''
     loadUnconfirmed.value = false
     dpiTouched.value = false
@@ -294,23 +347,39 @@ watch(
   { immediate: true },
 )
 
-/** 重渲染之后页图可能变少,正在看的那页就没了 —— 别停在一个空视图上。 */
+/** 清单变化后恢复尚未渲染的深链目标,或在当前页消失时退回网格。 */
 watch(
-  () => state.value?.pages.length,
+  () => state.value?.pages,
   () => {
+    const pending = pendingPage.value
+    if (pending !== null && state.value?.pages.some((page) => page.page === pending)) {
+      viewing.value = pending
+      pendingPage.value = null
+      return
+    }
     if (viewing.value !== null && !viewingPage.value) viewing.value = null
   },
 )
 
 /**
- * 深链的页码**变了**(同一个组件实例换 `?page=`):换到新落点。
+ * 深链的页码**变了**(同一个组件实例换 `?page=`):换到新落点,未渲染时先停在网格。
  * `file` 那条 watch 只在换文件时跑,地址栏里只改 `page` 时它不动 —— 少了这一条,
  * 「第 8 页 → 第 14 页」的第二次跳转会停在原地。
  */
 watch(
   () => props.page,
   () => {
-    viewing.value = requestedPage()
+    const requested = requestedPage()
+    targetPageIssue.value = ''
+    autoRenderKey.value = ''
+    pendingPage.value = requested
+    if (requested !== null && state.value?.pages.some((page) => page.page === requested)) {
+      viewing.value = requested
+      pendingPage.value = null
+    } else {
+      viewing.value = null
+      void resolveRequestedPage()
+    }
   },
 )
 </script>
@@ -423,7 +492,12 @@ watch(
     </div>
 
     <!-- 失败 / 上一次的小结。放在工具栏下面、内容上面:两种视图下都看得见。 -->
-    <div v-if="renderFailed || summary" class="flex shrink-0 flex-col gap-2 border-b px-3 py-2">
+    <div v-if="renderFailed || summary || targetPageIssue" class="flex shrink-0 flex-col gap-2 border-b px-3 py-2">
+      <Alert v-if="targetPageIssue" role="alert" variant="destructive">
+        <AlertDescription class="text-destructive! font-medium">
+          {{ targetPageIssue }}
+        </AlertDescription>
+      </Alert>
       <Alert v-if="renderFailed" variant="destructive">
         <!-- `!` 是必须的:`alertVariants` 的 destructive 给说明文字加了 90% 透明,
              深色下只剩 4.25:1(低于 4.5:1);那条规则同权重、位置更靠后,

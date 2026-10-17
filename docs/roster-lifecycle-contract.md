@@ -1137,6 +1137,14 @@ REST 与 MCP `query_records` 共用同一参数解析和 `listRecords` 读模型
 }
 ```
 
+公告记录中的 `enterprise.uscc` 缺席、`null` 或空白表示未提供身份代码；非空值必须通过既有
+USCC 格式与校验位验证，否则该记录以 `uscc_format_invalid` 逐项报错并使整批不写。事件出处的
+`page` 缺席或 `null` 保持为 `null`；PDF 提供页码时必须是精确的正整数，否则报 `page_invalid`；
+Word / Excel 等非 PDF 出处若提供非 `null` 页码，报 `not_page_capable`。这些校验发生在身份规划与提交前。
+预检和提交还会从配置的文件库根读取源 PDF 页数(PDFium):超出实际页数以 `page_invalid` 拒绝，源 PDF
+缺失、不可读或路径无法安全解析以 `page_count_unknown` 拒绝；拒绝时业务记录不部分写入。页图可能尚未全部
+渲染，不能用页图数量替代源 PDF 页数。
+
 > **`year` / `collectedOn` 由调用方给出**(RL-05 的解析器**不从文件内容或文件名推断**年度：
 > 导出表里那列「维护批次」是平台口径的维护批次，不是快照年度)。`exportSnapshot.rows[].rawFields`
 > 的键是 **1-based 列号字符串**、只留**非空**值(契约 §1.7)；单张导出表实测 6273 行、数十列，
@@ -1428,10 +1436,14 @@ REST 与 MCP `query_records` 共用同一参数解析和 `listRecords` 读模型
 **收敛规则**(`server/utils/roster-import.ts` 的 `repointTargets`):
 
 - 事件坐标(eventType / year / batchSeq / reviewOutcome / decidedYear)**逐字相同**才进入这条路径;
-- 只在出处的 **(attachment, listNo, page) 逐字相同**时才改,且**只改 `source_file` 一列**;
-- **不新增、不删除、不合并**任何行(不变量:企业 / 记录 / 事件 / 出处计数不变);
-- 命中的出处行数逐项报在 `items[].detail.evidenceRepointed`(RL-16 新增字段,**不**计入 `summary.written`);
-- 同一幂等键重放仍是**彻底的空操作**(批次已 `committed` ⇒ 直接返回既有摘要,不重跑计划)。
+- 出处的 `attachment` 与 `listNo` 逐字匹配。目标 `sourceFile` 为 PDF 时,`page` 也逐字匹配(含 `null`);目标为 DOCX / Excel 等无稳定分页格式时,请求页码与已有页码都归一为 `null`,不参与匹配,且事件内必须只有一条相同附件与序号的候选行才收敛,多条候选按歧义跳过;
+- 收敛前必须验证旧路径和目标路径各自唯一的内容 SHA-256 相同。路径哈希来自 `stored_file.sha256`,或来自 `sourceIdentity` 与该路径逐字相同时的当前请求 / 已提交公告批次 `sourceSha256`;只接受 64 位十六进制 SHA。逻辑来源标识不能替其他证据路径背书。任一哈希缺失 / 冲突或两端不同,预检与写入返回出处冲突并保持旧出处;不得按坐标覆盖权威来源。需要保存不同内容的正式来源时,由调用方单独处理为独立出处;
+- 同一既有事件坐标在载荷中重复出现时,先合并全部出处目标再判定:与现有 `sourceFile` 相同的 no-op 不认领出处行;同一行出现多个不同有效目标路径时按歧义跳过,不按载荷顺序猜配。计划期冻结具体出处行、旧路径和目标路径;预检数出的行由普通 commit 按此计划最多更新一次。目标快照与对象键及数组顺序规范化后的完整公告载荷 SHA-256 指纹（包括 `sourceDocument.source` 等记录默认值上下文）只作为服务端 replay 记账持久化,不属于 API `items[].detail`。显式 replay 仅在原批次来源标识与规范化公告载荷指纹都一致时复用快照;仅当行仍指向记录的旧路径时更新,已到目标或已指向第三条路径则跳过,不会因重算而反向切换;
+- 普通 commit 中同一批载荷里尚不存在的记录/事件坐标重复出现时,先合并所有出处关系再写新事件。既有企业按唯一解析到的 `enterprise.id` 归组:给了 USCC 按精确 USCC 定位;未给 USCC 时,只有同名候选恰为一家才与其归组。若无 USCC 的名称命中多家既有企业,无论该记录是否与其他记录重复、事件坐标是否相同,预检与 commit 都返回现有 `enterprise_ambiguous` 逐项错误并整批不写;不得因名称查询首条或与另一条 USCC 记录分组结果不同而猜配。对于库内没有同名企业的新身份,计划先按整份公告的规范化名称汇总显式 USCC 候选:恰有一个不同 USCC 时,name-only 项在预检、commit 中都映射到该 USCC 身份,同称号/来源/事件坐标的出处合并后只写一个事件;有多个不同 USCC 时,name-only 项返回 `enterprise_ambiguous` 并使整批不写,显式 USCC 项仍各按自己的统代定位;没有显式 USCC 候选时,单独的 name-only 项仍按名称新建无统代企业。此映射按整批候选决定,不按输入先后推断,也不只凭名称把不同统代合并。明确 USCC 仍按精确企业定位,不同 USCC 不因名称相同而合并。不同 `sourceFile` 保留为不同出处行;完全相同的 `(sourceFile, attachment, listNo, page)`(非 PDF 页码归一为 `null` 后)只写一次,并按规范化坐标稳定排序后由首次出现项插入。后续重复事件只跳过,不重新收敛来源,所以输入顺序、普通 commit 重试和显式 replay 都不会丢来源或改变来源集合;
+- 目标格式为非 PDF 时,命中的历史 `page` 清为 `null`(§8.11);PDF 的既有实际页码原样保留,不推断页码。格式按目标 `sourceFile` 的扩展名判定;
+- 收敛既有事件时**不新增、不删除、不合并**任何行(不变量:企业 / 记录 / 事件 / 出处计数不变);
+- 命中的出处行数逐项报在 `items[].detail.evidenceRepointed`(RL-16 新增字段,**不**计入 `summary.written`);内部目标快照供显式 replay 复用,但不返回给调用方;
+- 同一幂等键的普通 `commit` 仍是**彻底的空操作**(批次已 `committed` ⇒ 直接返回既有摘要,不重跑计划)。补收敛走独立的 `POST …/replay`(§8.9.3),其结果按原提交快照保持幂等。
 
 **为什么可以改历史批次的行**:变的不是历史事实,是**同一份文档在库里的位置**。收敛只在
 「同一份来源内容(同 `sha256`)且坐标逐字相同」时发生,故不会把一条出处挪到另一条上;
@@ -1519,7 +1531,7 @@ POST /api/roster/import/replay
 
 **语义(逐条都是硬约束)**:
 
-- **只改** `record_evidence.source_file`:不新建企业 / 记录 / 事件 / 出处,不归并,不删行;
+- 收敛 `record_evidence.source_file`;目标来源为非 PDF 时同时清理 `page`,PDF 页码原样保留:不新建企业 / 记录 / 事件 / 出处,不归并,不删行;
 - **只认既有**:库里没有的记录 / 事件一律跳过 —— 收敛**不补历史**(补历史走 `commit`);
 - 载荷里那些**会写新行**的类别(平台查询 / 别名 / 差异 / 快照 / 归并)**根本不进计划**,
   故没有可执行的东西(与 `commit` 共用 `planRosterImport`,靠 `convergeOnly` 收窄);
@@ -1682,7 +1694,8 @@ POST /api/roster/evidence/pages
 | 判据 | 不过时 |
 |---|---|
 | `sourceFile` 非空;`listNo` 是正整数;**且必须带 `enterpriseId` 或 `enterpriseName`** | `entry_incomplete` |
-| `page` 是 ≥1 的整数(**不取整、不夹到边界、不当成「没有页码」**) | `page_invalid` |
+| `page` 是正整数(**不取整、不夹到边界、不当成「没有页码」**),且未超出可读取的源 PDF 实际页数 | `page_invalid` |
+| 源 PDF 页数无法可靠读取 | `page_count_unknown` |
 | 来源是 **PDF**(Word / Excel 没有可复核的页) | `not_page_capable` |
 | 按 `(sourceFile, listNo)` + 定位能命中**恰好一条**出处行 | `no_match` / `ambiguous` |
 
@@ -1696,6 +1709,8 @@ POST /api/roster/evidence/pages
   那是「分节陷阱」的可观察探针 —— 报告要能区分「库里没有」与「同序号分属别的分节」。
 - **定不下来的条目一行不改**,逐条带 `reason` 回报;写入是**逐条尽力**而不是整批事务 ——
   一批里混着「已核对好」与「还没核对」,后者的正确处置是**留空待核**,不是把前者一起回滚。
+- **页数取自源 PDF 本身**(PDFium);不会用已渲染页图数量代替总页数。请求页超过已知总页数返回
+  `page_invalid`;源文件缺失或打不开时返回 `page_count_unknown` 并留空待核,不猜边界。
 - **同一条出处行被两条入参指向、且页码不同** ⇒ 两条都不写(`ambiguous`)。
   同页码是同一个事实的重复表达(批处理重跑常见),照写并计入 `unchanged`。
 - **幂等**:重跑同一批 `written: 0` / `unchanged` 全中。
