@@ -214,6 +214,8 @@ async function verifyPlatformRecordTables(cdp) {
       const { targetId, sessionId } = await openSession(cdp, BASE + encodeURI(path), viewport);
       try {
         if (kind === 'comparison') {
+          await setInputValue(cdp, sessionId, 'input[aria-label*="搜索企业名称"]', '宁波开诚');
+          await waitUntil(cdp, sessionId, `document.querySelector('tbody a[href="/enterprises/3449"]')`);
           const point = await evaluate(cdp, sessionId, `(() => { const button = [...document.querySelectorAll('[data-testid="platform-evidence-details-toggle"]')].find(el => el.getBoundingClientRect().width > 0); const r = button?.getBoundingClientRect(); return r && {x:r.left+r.width/2,y:r.top+r.height/2};})()`);
           await clickPoint(cdp, sessionId, point, '查看平台记录');
         }
@@ -226,6 +228,12 @@ async function verifyPlatformRecordTables(cdp) {
         })()`);
         if (!ready || !state.tables || !state.rows || /business_list|apply_list|businessList|applyList|rdjb|tyshxydm/.test(state.text ?? '') || state.overflow > 1 || (kind === 'comparison' && state.width > state.viewport) || state.original) bad(`平台记录表 · ${kind} ${viewport.name}:记录表不可读 ${JSON.stringify(state)}`);
         else ok(`平台记录表 · ${kind} ${viewport.name}:${state.groups} 次查询/${state.rows} 条原始记录以中文表格显示，页面无溢出`);
+        if (kind === 'comparison') {
+          await clickSelector(cdp,sessionId,'[data-testid="platform-records-dialog"] [data-slot="dialog-close"]');
+          const restored = await waitUntil(cdp,sessionId,`!document.querySelector('[data-testid="platform-records-dialog"]') && document.activeElement?.getAttribute('data-testid') === 'platform-evidence-details-toggle'`);
+          if (!restored) bad('平台记录表:关闭后焦点未回到查看平台记录按钮');
+          else ok('平台记录表:关闭后焦点返回原按钮');
+        }
         if (kind === 'ledger') {
           const expected = await evaluate(cdp,sessionId,`fetch('/api/roster/enterprises/3449').then(r=>r.json()).then(d=>d.platform.relations.length)`);
           if (state.rows !== expected) bad(`平台记录表:抽屉漏记录 ${state.rows}/${expected}`);

@@ -20,6 +20,12 @@ describe('面向用户的平台记录表',()=>{
   expect(view.text()).toContain('尚未查询')
   view.unmount()
  })
+ it('失败原因保留业务含义并隐藏开发错误细节',()=>{
+  const view=mount(PlatformRecords,{props:{queries:[{...query,status:'failed',failureReason:'HTTP 401 session expired business_list rdjb=2',relationCount:0}],relations:[]}})
+  expect(view.get('[data-testid="platform-query-failure"]').text()).toContain('平台登录已失效')
+  expect(view.text()).not.toMatch(/HTTP|session|business_list|rdjb/)
+  view.unmount()
+ })
  it('缺少查询记录时显示未查询，不编造平台空记录',()=>{
   const view=mount(PlatformRecords,{props:{queries:[],relations:[]}})
   expect(view.text()).toContain('尚无平台查询记录')

@@ -4,7 +4,7 @@ import type { ComparisonPlatformEvidence } from '~~/lib/comparison-platform'
 import { PLATFORM_QUERY_STATUSES, PLATFORM_QUERY_STATUS_ORDER } from '~~/lib/labels'
 import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import PlatformRecords from '@/components/PlatformRecords.vue'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 
 /** 比对页只展示简短摘要；平台原始记录在宽面板中逐条列表。 */
@@ -57,8 +57,10 @@ const compactSummary = computed(() => {
 <template>
   <div v-if="hasEvidence" class="flex min-w-0 flex-col items-start gap-0.5" data-testid="comparison-platform-evidence">
     <p class="max-w-full break-words text-[13px] font-medium leading-5" data-testid="platform-evidence-summary">{{ compactSummary }}</p>
-    <button type="button" data-testid="platform-evidence-details-toggle" class="text-primary text-[13px] leading-5 hover:underline" :aria-expanded="showDetails" @click="showDetails = true">查看平台记录</button>
     <Dialog v-model:open="showDetails">
+      <DialogTrigger as-child>
+        <button type="button" data-testid="platform-evidence-details-toggle" class="text-primary text-[13px] leading-5 hover:underline">查看平台记录</button>
+      </DialogTrigger>
       <DialogContent v-if="showDetails" class="max-h-[90dvh] w-[calc(100%-2rem)] max-w-[calc(100%-2rem)] flex flex-col overflow-hidden p-4 shadow-none sm:max-w-6xl" data-testid="platform-records-dialog">
         <DialogHeader>
           <DialogTitle class="pr-6">平台记录</DialogTitle>

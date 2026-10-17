@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_DECLARE_KINDS, RELATION_MATCH_BASES, VERIFICATION_STATUSES } from '~~/lib/labels'
+import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_DECLARE_KINDS, RELATION_MATCH_BASES, VERIFICATION_STATUSES } from '~~/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
+import { platformFailureForDisplay } from '~~/lib/roster/platform-records'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 
 const props = defineProps<{ queries: PlatformRecordQuery[]; relations: PlatformRecord[] }>()
@@ -9,7 +10,7 @@ const groups = computed(() => props.queries.map((query) => ({
   query,
   records: props.relations.filter((record) => record.queryId === query.id),
 })))
-const source = (value: string) => value === 'business_list' ? '称号查询记录' : value === 'apply_list' ? '申报办理记录' : '平台记录'
+const source = (value: string) => PLATFORM_INTERFACES[value] ?? '平台记录'
 const title = (value: string) => value === '' ? '全部称号' : PLATFORM_RDJBS[value] ?? '称号待核'
 const time = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : formatFetchTime(value) ?? '时间未提供'
 </script>
@@ -30,6 +31,7 @@ const time = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : form
           <span class="break-all">查询企业 {{ query.queryKey.startsWith('name:') ? query.queryKey.slice(5) : query.queryKey }}</span>
         </div>
       </div>
+      <p v-if="query.status === 'failed' && query.failureReason" class="text-destructive px-3 py-2 text-[13px] leading-5" data-testid="platform-query-failure">{{ platformFailureForDisplay(query.failureReason) }}</p>
       <div v-if="records.length" class="min-w-0 overflow-x-auto">
         <table class="w-full table-fixed text-left text-[13px] leading-5" aria-label="平台返回记录">
           <thead class="bg-muted/20 text-muted-foreground">
@@ -38,7 +40,7 @@ const time = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : form
           <tbody>
             <tr v-for="record in records" :key="record.id" class="border-t align-top" data-testid="platform-relation">
               <td class="space-y-1 px-2 py-2 break-words [overflow-wrap:anywhere]">
-                <div class="font-medium">{{ record.nameRaw ?? '企业名称未提供' }}</div>
+                <div class="font-medium"><span class="text-muted-foreground">{{ record.sequenceNo }}. </span>{{ record.nameRaw ?? '企业名称未提供' }}</div>
                 <div class="text-muted-foreground break-all">{{ record.usccRaw ?? '统一社会信用代码未提供' }}</div>
                 <div v-if="record.province" class="text-muted-foreground">{{ record.province }}</div>
                 <div v-if="record.aliasNameRaw" class="text-muted-foreground">曾用名 {{ record.aliasNameRaw }}</div>
