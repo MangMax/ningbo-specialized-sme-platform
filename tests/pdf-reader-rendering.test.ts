@@ -104,16 +104,25 @@ it('navigates native destination and goto bookmarks to their page coordinates', 
   await wrapper.get('button[aria-label="阅读工具"]').trigger('click')
   await wrapper.findAll('button').find(b => b.text() === '导航')!.trigger('click')
   await flushPromises()
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  await flushPromises()
+  control.move.mockClear()
   // Tabs use their visible accessible labels, never library-owned layout selectors.
   const tab = wrapper.findAll('[role="tab"]').find(t => t.text() === '目录')!
   await tab.trigger('mousedown', { button: 0, ctrlKey: false }); await tab.trigger('click'); await flushPromises()
-  for (const title of ['Lower chapter', 'Goto chapter', 'Horizontal chapter', 'Page only']) { await wrapper.findAll('button').find(b => b.text().startsWith(title))!.trigger('click'); await flushPromises() }
-  expect(control.move.mock.calls.map(([target]) => target)).toEqual([
-    { pageNumber: 3, pageCoordinates: { x: 40, y: 550 }, behavior: 'instant' },
-    { pageNumber: 4, pageCoordinates: { x: 25, y: 900 }, behavior: 'instant' },
-    { pageNumber: 3, pageCoordinates: { x: 0, y: 1200 }, behavior: 'instant' },
-    { pageNumber: 5, pageCoordinates: undefined, behavior: 'instant' },
-  ])
+  const cases = [
+    ['Lower chapter', { pageNumber: 3, pageCoordinates: { x: 40, y: 550 }, behavior: 'instant' }],
+    ['Goto chapter', { pageNumber: 4, pageCoordinates: { x: 25, y: 900 }, behavior: 'instant' }],
+    ['Horizontal chapter', { pageNumber: 3, pageCoordinates: { x: 0, y: 1200 }, behavior: 'instant' }],
+    ['Page only', { pageNumber: 5, pageCoordinates: undefined, behavior: 'instant' }],
+  ] as const
+  for (const [title, target] of cases) {
+    await wrapper.findAll('button').find(b => b.text().startsWith(title))!.trigger('click')
+    await flushPromises()
+    // A closing overlay may restore the same target after its final layout.
+    // Verify the requested coordinates survive that correction.
+    expect(control.move).toHaveBeenLastCalledWith(target)
+  }
   wrapper.unmount()
 })
 
@@ -226,5 +235,16 @@ it('finishes an instant layout correction without inheriting a superseded smooth
   await flushPromises()
   expect(wrapper.get('output').text()).toBe('4 / 12')
   expect(wrapper.find('[aria-busy="true"]').exists()).toBe(false)
+  wrapper.unmount()
+})
+
+it('keeps the confirmed page while panel resizing changes the dominant visible page', async () => {
+  const wrapper = await reader()
+  await wrapper.get('button[aria-label="阅读工具"]').trigger('click')
+  control.metrics = { scrollOffset: { x: 0, y: 900 }, currentPage: 4, pageVisibilityMetrics: [{ pageNumber: 4, visiblePercentage: 100, original: { pageX: 0, pageY: 20 } }] }
+  wrapper.findAllComponents(Layer)[1]!.vm.$emit('load')
+  await flushPromises()
+  expect(wrapper.get('output').text()).toBe('3 / 12')
+  await vi.waitFor(() => expect(control.move).toHaveBeenLastCalledWith({ pageNumber: 3, pageCoordinates: { x: 0, y: 240 }, behavior: 'instant' }))
   wrapper.unmount()
 })
