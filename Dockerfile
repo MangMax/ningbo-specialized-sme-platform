@@ -25,7 +25,7 @@ ENV NODE_ENV=production \
   HOST=0.0.0.0 \
   PORT=3000
 
-ARG SOURCE_REVISION=3a7d896d8c5d76647e94c94f2a843fe35a0c12fc
+ARG SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.source="https://github.com/MangMax/ningbo-specialized-sme-platform" \
   org.opencontainers.image.revision="${SOURCE_REVISION}"
 

@@ -1,17 +1,18 @@
 # 本机 Docker Compose 部署
 
-镜像运行源代码固定为 `3a7d896d8c5d76647e94c94f2a843fe35a0c12fc`，Node 基础镜像固定到官方 `node:22-bookworm-slim` 多架构摘要，依赖按 `pnpm-lock.yaml` 和 pnpm `12.11.2` 安装。Nuxt 使用 Node server 产物启动。数据库迁移从 `/app/db/migrations` 加载。运行层只复制 `.output` 与迁移文件，不复制根 `node_modules`；构建阶段不执行 `pnpm prune`，避免它再次触发项目的 `postinstall`（`nuxt prepare`）。
+Compose 镜像标签使用短 `CONFIG_SHA`，镜像 revision 标签由完整 `SOURCE_SHA` 标记实际 Git 提交。Node 基础镜像固定到官方 `node:22-bookworm-slim` 多架构摘要，依赖按 `pnpm-lock.yaml` 和 pnpm `12.11.2` 安装。Nuxt 使用 Node server 产物启动。数据库迁移从 `/app/db/migrations` 加载。运行层只复制 `.output` 与迁移文件，不复制根 `node_modules`；构建阶段不执行 `pnpm prune`，避免它再次触发项目的 `postinstall`（`nuxt prepare`）。
 
 ## 从 Git 跟踪快照构建
 
 在包含部署配置提交的仓库副本中运行。临时构建目录只含 Git 跟踪的文件，不会带入工作区里的文件库、数据库或其他未跟踪内容。
 
 ```sh
+SOURCE_SHA="$(git rev-parse HEAD)"
 CONFIG_SHA="$(git rev-parse --short=12 HEAD)"
 BUILD_CONTEXT="$(mktemp -d /tmp/spztx-roster-build.XXXXXX)"
-git archive "$CONFIG_SHA" | tar -xf - -C "$BUILD_CONTEXT"
+git archive "$SOURCE_SHA" | tar -xf - -C "$BUILD_CONTEXT"
 
-export CONFIG_SHA
+export SOURCE_SHA CONFIG_SHA
 export ROSTER_STATE_DIR="/absolute/path/outside/repository/roster-state"
 export ROSTER_ENV_FILE="/absolute/path/outside/repository/roster-secrets.env" # 可选；不使用密钥时可省略
 export ROSTER_PORT=3480

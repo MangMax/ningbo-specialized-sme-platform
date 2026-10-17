@@ -720,6 +720,32 @@ describe('E · 补录经统一写入 API 落库（真实 HTTP）', () => {
     expect(db.select().from(schema.enterprise).all().find((e) => e.id === free)!.usccNorm).toBeNull()
   })
 
+  it('★ backfill 的 enterpriseId 与 enterpriseName 冲突时拒绝，不给 ID 主体补错代码', async () => {
+    const targetName = '宁波ID指定补码主体有限公司'
+    const conflictingName = '宁波名称指定补码主体有限公司'
+    const target = seedEnterprise({ name: targetName })
+    const other = seedEnterprise({ name: conflictingName })
+    const result = await client().commit({
+      idempotencyKey: 'rl06/backfill/selector-conflict#sha256:b8',
+      sourceKind: 'alias_evidence',
+      sourceIdentity: 'roster/uscc-research',
+      payload: {
+        usccBackfills: [{
+          enterpriseId: target,
+          enterpriseName: conflictingName,
+          uscc: '91330212MA2CL6FP2J',
+          source: { ...claimFor().source, name: targetName },
+        }],
+      },
+    })
+
+    expect(result.status).toBe('failed')
+    expect(result.summary.written).toBe(0)
+    expect(result.items.find((item) => item.kind === 'uscc_backfill')!.error!.code).toBe('enterprise_selector_conflict')
+    expect(db.select().from(schema.enterprise).all().find((row) => row.id === target)!.usccNorm).toBeNull()
+    expect(db.select().from(schema.enterprise).all().find((row) => row.id === other)!.usccNorm).toBeNull()
+  })
+
   it('★ 代码格式/校验位不合法 ⇒ `uscc_format_invalid`；来源证据不齐 ⇒ `source_evidence_incomplete`', async () => {
     const free = seedEnterprise({ name: '宁波格式待查企业有限公司' })
     const bad = await client().commit({

@@ -543,6 +543,14 @@ interface PendingPlatformRef {
   sequenceNos: number[]
   /** 本批将写入的那些关系的 `relationKey`（权威锚点，见 `NormalizedRef.relationKey`）。 */
   relationKeys: string[]
+  /** 预检用的平台原始身份事实；只用于校验平台别名已有证据是否支持目标 qymc。 */
+  relations: Array<{
+    sequenceNo: number
+    relationKey: string | null
+    enterpriseId: number | null
+    usccRaw: string | null
+    nameRaw: string | null
+  }>
 }
 
 type PendingPlatformRefs = PendingPlatformRef[]
@@ -570,6 +578,15 @@ function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatfo
       relationKeys: (Array.isArray(relations) ? relations : [])
         .map((relation) => optionalString((relation as { relationKey?: unknown })?.relationKey))
         .filter((k): k is string => !!k),
+      relations: (Array.isArray(relations) ? relations : [])
+        .map((relation) => ({
+          sequenceNo: optionalInt((relation as { sequenceNo?: unknown })?.sequenceNo),
+          relationKey: optionalString((relation as { relationKey?: unknown })?.relationKey),
+          enterpriseId: optionalInt((relation as { enterpriseId?: unknown })?.enterpriseId),
+          usccRaw: optionalString((relation as { usccRaw?: unknown })?.usccRaw),
+          nameRaw: optionalString((relation as { nameRaw?: unknown })?.nameRaw),
+        }))
+        .filter((relation): relation is PendingPlatformRef['relations'][number] => relation.sequenceNo != null),
     })
   }
   return out
@@ -765,6 +782,83 @@ function resolveRelationIdAt(source: Executor, ref: NormalizedRef): number | nul
   const queryId = resolveQueryIdAt(source, ref)
   if (queryId == null) return null
   return findRelationRow(source, { queryId, sequenceNo: ref.sequenceNo })?.id ?? null}
+
+interface PlatformAliasRelationEvidence {
+  interface: string
+  enterpriseId: number | null
+  usccRaw: string | null
+  nameRaw: string | null
+}
+
+/** Load the actual platform row facts used to validate a platform-sourced alias. */
+function findPlatformAliasRelationEvidence(source: Executor, relationId: number): PlatformAliasRelationEvidence | null {
+  return source
+    .select({
+      interface: schema.platformQuery.interface,
+      enterpriseId: schema.platformRelation.enterpriseId,
+      usccRaw: schema.platformRelation.usccRaw,
+      nameRaw: schema.platformRelation.nameRaw,
+    })
+    .from(schema.platformRelation)
+    .innerJoin(schema.platformQuery, eq(schema.platformQuery.id, schema.platformRelation.queryId))
+    .where(eq(schema.platformRelation.id, relationId))
+    .get() ?? null
+}
+
+/** Get the asserted row facts for a relation that will be inserted by this request. */
+function findPendingPlatformAliasRelationEvidence(
+  pending: PendingPlatformRefs,
+  ref: NormalizedRef,
+): PlatformAliasRelationEvidence | null {
+  const matches = pending
+    .filter((query) =>
+      query.interface === ref.interface &&
+      query.queryKey === ref.queryKey &&
+      query.rdjb === ref.rdjb &&
+      (ref.queriedAt ? query.queriedAt === ref.queriedAt : true),
+    )
+    .flatMap((query) =>
+      query.relations
+        .filter((relation) =>
+          relation.sequenceNo === ref.sequenceNo &&
+          (!ref.relationKey || relation.relationKey === ref.relationKey),
+        )
+        .map((relation) => ({
+          interface: query.interface,
+          enterpriseId: relation.enterpriseId,
+          usccRaw: relation.usccRaw,
+          nameRaw: relation.nameRaw,
+        })),
+    )
+  return matches.length === 1 ? matches[0]! : null
+}
+
+/** Validate the existing row facts; never infer a missing USCC or qymc from a name. */
+function platformAliasEvidenceMismatch(
+  source: Executor,
+  sourceKind: string,
+  aliasName: string,
+  targetUscc: string | null,
+  targetEnterpriseId: number | null,
+  evidence: PlatformAliasRelationEvidence,
+): string | null {
+  const expectedInterface = sourceKind === 'platform_business' ? 'business_list' : 'apply_list'
+  if (
+    evidence.interface !== expectedInterface ||
+    !targetUscc ||
+    usccOrNull(evidence.usccRaw) !== targetUscc ||
+    evidence.nameRaw !== aliasName
+  ) {
+    return '平台关系的接口、统一社会信用代码或 qymc 与该别名不一致'
+  }
+  if (evidence.enterpriseId != null) {
+    const owner = findEnterpriseById(source, evidence.enterpriseId)
+    if (!owner || (targetEnterpriseId != null ? owner.id !== targetEnterpriseId : owner.usccNorm !== targetUscc)) {
+      return '平台关系已归属的企业与该别名归属企业不一致'
+    }
+  }
+  return null
+}
 
 // ---------------------------------------------------------------------------
 // 计划（预检与提交共用）
@@ -1059,6 +1153,8 @@ export function planRosterImport(
     : new Map<string, Set<string>>()
   /** 本批将新建的企业键（供别名 / 差异 / 归并在预检时解析到同批企业）。 */
   const pending: PendingEnterprises = new Set()
+  /** 本批新建主体的名称与统代（用于确认平台别名/按名归并是否只有一个真实候选）。 */
+  const pendingEnterpriseCreates: PendingEnterpriseCreate[] = []
   /** 本批将写入的平台查询自然键（供别名 / 差异 / 归并在预检时解析到同批关系行）。 */
   const pendingRefs: PendingPlatformRefs = collectPendingPlatformRefs(payload)
   /** 先看整份载荷，标出同一出处行被指向多个不同目标路径的冲突。 */
@@ -1119,7 +1215,10 @@ export function planRosterImport(
       // 写入侧**另起一行**（事故根因），本批的引用解析也跟着算错。**同一套规则只此一份**。
       const creates = planEnterpriseCreates(db, records, announcementIdentityPlan)
       for (const create of creates) {
-        if (create) for (const key of pendingKeys(create)) pending.add(key)
+        if (create) {
+          pendingEnterpriseCreates.push(create)
+          for (const key of pendingKeys(create)) pending.add(key)
+        }
       }
       // 本批**已计划**的两张索引（都只装「本批会新建」的那些记录）：
       //  - 「身份键 → 已计划过的 (称号, 来源) 坐标」：同一批里两条记录同身份又同坐标时，
@@ -1163,7 +1262,7 @@ export function planRosterImport(
 
   // ---- 曾用名 / 别名 -------------------------------------------------------
   const aliases = Array.isArray(payload.aliases) ? payload.aliases : []
-  aliases.forEach((alias, index) => planAlias(db, pending, pendingRefs, alias, index, push))
+  aliases.forEach((alias, index) => planAlias(db, pending, pendingEnterpriseCreates, pendingRefs, alias, index, push))
 
   // ---- 差异原因与措施 ------------------------------------------------------
   const differences = Array.isArray(payload.differences) ? payload.differences : []
@@ -1182,7 +1281,7 @@ export function planRosterImport(
 
   // ---- 归并与回填（最后做，才能把本批新建的记录一并折进规范行）--------------
   const merges = Array.isArray(payload.merges) ? payload.merges : []
-  merges.forEach((merge, index) => planMerge(db, pending, pendingRefs, merge, index, push))
+  merges.forEach((merge, index) => planMerge(db, pending, pendingEnterpriseCreates, pendingRefs, merge, index, push))
 
   return { items, conflicts }
 }
@@ -2214,11 +2313,70 @@ function findDifferenceRow(
     .get()
 }
 
+type DifferenceRow = typeof schema.differenceReason.$inferSelect
+
+function findDifferenceContentRow(
+  db: Executor,
+  spec: { enterpriseId: number; titleCode: string; direction: string; recordedAt: string },
+): DifferenceRow | undefined {
+  return db
+    .select()
+    .from(schema.differenceReason)
+    .where(
+      and(
+        eq(schema.differenceReason.enterpriseId, spec.enterpriseId),
+        eq(schema.differenceReason.titleCode, spec.titleCode),
+        eq(schema.differenceReason.direction, spec.direction as typeof schema.differenceReason.$inferSelect.direction),
+        eq(schema.differenceReason.recordedAt, spec.recordedAt),
+      ),
+    )
+    .get()
+}
+
+/** Identity and createdAt are metadata; every other stored semantic field must agree to dedupe. */
+function sameDifferenceContent(left: DifferenceRow, right: DifferenceRow): boolean {
+  return left.status === right.status &&
+    left.reasonCode === right.reasonCode &&
+    left.reasonNote === right.reasonNote &&
+    left.measureCode === right.measureCode &&
+    left.measureNote === right.measureNote &&
+    left.evidenceQueryId === right.evidenceQueryId &&
+    left.evidenceRelationId === right.evidenceRelationId &&
+    left.movedInCity === right.movedInCity &&
+    left.movedInTitleCode === right.movedInTitleCode &&
+    left.movedInYear === right.movedInYear &&
+    left.movedInBatch === right.movedInBatch &&
+    left.verificationStatus === right.verificationStatus
+}
+
+function findMergeDifferenceConflict(
+  db: Executor,
+  fromEnterpriseId: number,
+  intoEnterpriseId: number,
+): DifferenceRow | null {
+  const sourceRows = db
+    .select()
+    .from(schema.differenceReason)
+    .where(eq(schema.differenceReason.enterpriseId, fromEnterpriseId))
+    .all()
+  for (const sourceRow of sourceRows) {
+    const targetRow = findDifferenceContentRow(db, {
+      enterpriseId: intoEnterpriseId,
+      titleCode: sourceRow.titleCode,
+      direction: sourceRow.direction,
+      recordedAt: sourceRow.recordedAt,
+    })
+    if (targetRow && !sameDifferenceContent(sourceRow, targetRow)) return sourceRow
+  }
+  return null
+}
+
 // --- 别名 ------------------------------------------------------------------
 
 function planAlias(
   db: Executor,
   pending: PendingEnterprises,
+  pendingEnterpriseCreates: PendingEnterpriseCreate[],
   pendingRefs: PendingPlatformRefs,
   alias: RosterImportAlias,
   index: number,
@@ -2265,9 +2423,61 @@ function planAlias(
     return
   }
   const nameNorm = normalizeName(name)
-  // 裸 id 就用给的；自然键要到执行阶段才解析出真 id（0 只表示「本就没给来源行」）。
   const literalSourceRefId = optionalInt(alias.sourceRefId)
-  const plannedEnterpriseId = locateEnterprise(db, spec)?.id
+  const platformSource = alias.sourceKind === 'platform_business' || alias.sourceKind === 'platform_apply'
+  const explicitUscc = usccOrNull(alias.uscc)
+  const enterpriseName = optionalString(alias.enterpriseName)
+  const existingByName = enterpriseName ? findEnterprisesByNorm(db, normalizeName(enterpriseName)) : []
+  const pendingByName = enterpriseName
+    ? pendingEnterpriseCreates.filter((create) => create.nameNorm === normalizeName(enterpriseName))
+    : []
+  if (platformSource && !explicitUscc && existingByName.length + pendingByName.length > 1) {
+    push({
+      item: failure('alias', ref, 'enterprise_ambiguous', `同名归属企业有 ${existingByName.length + pendingByName.length} 个候选 ⇒ 不猜是哪一家`, 'enterpriseName'),
+      action: 'skip',
+      review: false,
+    })
+    return
+  }
+  const target = explicitUscc
+    ? findEnterpriseByUscc(db, explicitUscc)
+    : existingByName[0] ?? null
+  if (platformSource && explicitUscc && !target && !pending.has(usccKey(explicitUscc))) {
+    push({ item: failure('alias', ref, 'enterprise_not_found', `统代 ${explicitUscc} 不存在且本批不创建该企业`, 'uscc'), action: 'skip', review: false })
+    return
+  }
+  const targetUscc = explicitUscc ?? target?.usccNorm ?? pendingByName[0]?.uscc ?? null
+  const plannedEnterpriseId = target?.id ?? (platformSource ? null : locateEnterprise(db, spec)?.id)
+  let sourceEvidence: PlatformAliasRelationEvidence | null = null
+  if (platformSource) {
+    const verificationStatus = alias.verificationStatus ?? 'pending'
+    if (literalSourceRefId != null && literalSourceRefId !== 0) {
+      sourceEvidence = findPlatformAliasRelationEvidence(db, literalSourceRefId)
+      if (!sourceEvidence) {
+        push({ item: failure('alias', ref, 'alias_source_evidence_mismatch', `平台关系 id=${literalSourceRefId} 不存在`, 'sourceRefId'), action: 'skip', review: false })
+        return
+      }
+    } else if (relationRef) {
+      const relationId = resolveRelationIdAt(db, relationRef)
+      sourceEvidence = relationId != null
+        ? findPlatformAliasRelationEvidence(db, relationId)
+        : findPendingPlatformAliasRelationEvidence(pendingRefs, relationRef)
+      if (!sourceEvidence) {
+        push({ item: failure('alias', ref, 'alias_source_evidence_mismatch', `自然键未能解析出唯一的平台关系事实：${describeRef(relationRef)}`, 'sourceRelationRef'), action: 'skip', review: false })
+        return
+      }
+    } else if (verificationStatus === 'confirmed') {
+      push({ item: failure('alias', ref, 'alias_source_evidence_required', 'confirmed 平台别名必须引用支持该统一社会信用代码与 qymc 的平台关系', 'sourceRefId'), action: 'skip', review: false })
+      return
+    }
+    if (sourceEvidence) {
+      const mismatch = platformAliasEvidenceMismatch(db, alias.sourceKind, name, targetUscc, target?.id ?? null, sourceEvidence)
+      if (mismatch) {
+        push({ item: failure('alias', ref, 'alias_source_evidence_mismatch', mismatch, relationRef ? 'sourceRelationRef' : 'sourceRefId'), action: 'skip', review: false })
+        return
+      }
+    }
+  }
   const existing =
     literalSourceRefId == null || plannedEnterpriseId == null
       ? undefined
@@ -2293,6 +2503,23 @@ function planAlias(
           return failure('alias', ref, 'relation_ref_not_found', `执行阶段解析不到平台关系：${describeRef(relationRef)}`, 'sourceRelationRef')
         }
         sourceRefId = resolved
+      }
+      if (platformSource) {
+        const verificationStatus = alias.verificationStatus ?? 'pending'
+        const hasSourceReference = sourceRefId !== 0
+        const evidence = hasSourceReference ? findPlatformAliasRelationEvidence(tx, sourceRefId) : null
+        if (hasSourceReference && !evidence) {
+          return failure('alias', ref, 'alias_source_evidence_mismatch', `平台关系 id=${sourceRefId} 不存在`, relationRef ? 'sourceRelationRef' : 'sourceRefId')
+        }
+        if (!evidence && verificationStatus === 'confirmed') {
+          return failure('alias', ref, 'alias_source_evidence_required', 'confirmed 平台别名必须引用支持该统一社会信用代码与 qymc 的平台关系', 'sourceRefId')
+        }
+        if (evidence) {
+          const mismatch = platformAliasEvidenceMismatch(tx, alias.sourceKind, name, enterprise.usccNorm, enterprise.id, evidence)
+          if (mismatch) {
+            return failure('alias', ref, 'alias_source_evidence_mismatch', mismatch, relationRef ? 'sourceRelationRef' : 'sourceRefId')
+          }
+        }
       }
       const already = findAliasRow(tx, {
         enterpriseId: enterprise.id,
@@ -2805,6 +3032,8 @@ export interface MergeLineage {
 
 interface MergePlan {
   merge: RosterImportMerge
+  /** 当时能唯一定位的来源主体；本批新建且唯一时保留 null，写入阶段再按名唯一解析。 */
+  sourceEnterpriseId: number | null
   /** 曾用名来源关系的自然键（执行阶段解析成真 id）。 */
   sourceRelationRef: NormalizedRef | null
   /** 支撑归并的查询证据的自然键（执行阶段解析成真 id，只进血缘）。 */
@@ -2814,6 +3043,7 @@ interface MergePlan {
 function planMerge(
   db: Executor,
   pending: PendingEnterprises,
+  pendingEnterpriseCreates: PendingEnterpriseCreate[],
   pendingRefs: PendingPlatformRefs,
   merge: RosterImportMerge,
   index: number,
@@ -2877,14 +3107,32 @@ function planMerge(
     push({ item: failure('merge', ref, 'merge_source_required', '归并缺少 fromEnterpriseId 或 fromEnterpriseName', 'fromEnterpriseId'), action: 'skip', review: false })
     return
   }
-  const fromSpec = { name: fromName, uscc: null }
-  const fromKnown =
-    fromRaw != null
-      ? findEnterpriseById(db, fromRaw) != null
-      : enterpriseKnown(db, pending, fromSpec)
-  if (!fromKnown) {
-    push({ item: failure('merge', ref, 'merge_source_not_found', `被并企业不存在：${fromRaw ?? fromName}`, 'fromEnterpriseId'), action: 'skip', review: false })
-    return
+  let sourceEnterpriseId: number | null = null
+  if (fromRaw != null) {
+    const byId = findEnterpriseById(db, fromRaw)
+    if (!byId) {
+      push({ item: failure('merge', ref, 'merge_source_not_found', `被并企业不存在：${fromRaw}`, 'fromEnterpriseId'), action: 'skip', review: false })
+      return
+    }
+    if (fromName && normalizeName(fromName) !== byId.nameNorm) {
+      push({ item: failure('merge', ref, 'enterprise_selector_conflict', `enterpriseId=${fromRaw} 的名称与给定 fromEnterpriseName 不一致`, 'fromEnterpriseName'), action: 'skip', review: false })
+      return
+    }
+    sourceEnterpriseId = byId.id
+  } else {
+    const nameNorm = normalizeName(fromName!)
+    const databaseMatches = findEnterprisesByNorm(db, nameNorm)
+    const pendingMatches = pendingEnterpriseCreates.filter((create) => create.nameNorm === nameNorm)
+    const candidateCount = databaseMatches.length + pendingMatches.length
+    if (candidateCount > 1) {
+      push({ item: failure('merge', ref, 'enterprise_ambiguous', `同名企业有 ${candidateCount} 个候选 ⇒ 不猜是哪一家`, 'fromEnterpriseName'), action: 'skip', review: false })
+      return
+    }
+    if (candidateCount === 1) sourceEnterpriseId = databaseMatches[0]?.id ?? null
+    if (candidateCount === 0 && !pending.has(nameKey(nameNorm))) {
+      push({ item: failure('merge', ref, 'merge_source_not_found', `被并企业不存在：${fromName}`, 'fromEnterpriseName'), action: 'skip', review: false })
+      return
+    }
   }
   // 规范行可以已存在，也可以是**本批刚写进去**的企业（执行时解析）。
   if (!findEnterpriseByUscc(db, intoUscc) && !pending.has(`uscc:${intoUscc}`)) {
@@ -2892,7 +3140,26 @@ function planMerge(
     return
   }
 
-  const plan: MergePlan = { merge, sourceRelationRef, evidenceQueryRef }
+  const targetEnterprise = findEnterpriseByUscc(db, intoUscc)
+  if (sourceEnterpriseId != null && targetEnterprise) {
+    const conflictingDifference = findMergeDifferenceConflict(db, sourceEnterpriseId, targetEnterprise.id)
+    if (conflictingDifference) {
+      push({
+        item: failure(
+          'merge',
+          ref,
+          'merge_difference_conflict',
+          `差异唯一键已存在但内容不同：${conflictingDifference.titleCode}/${conflictingDifference.direction}/${conflictingDifference.recordedAt}`,
+          'merges',
+        ),
+        action: 'skip',
+        review: false,
+      })
+      return
+    }
+  }
+
+  const plan: MergePlan = { merge, sourceEnterpriseId, sourceRelationRef, evidenceQueryRef }
   push({
     item: success('merge', `merge:${fromRaw ?? fromName}->${intoUscc}`, {
       intoUscc,
@@ -2992,6 +3259,14 @@ function planUsccBackfill(
   let target: ResolvedEnterprise | null = null
   if (idRaw != null) {
     target = findEnterpriseById(db, idRaw)
+    if (target && name && normalizeName(name) !== target.nameNorm) {
+      push({
+        item: failure('uscc_backfill', ref, 'enterprise_selector_conflict', `enterpriseId=${idRaw} 的名称与给定 enterpriseName 不一致`, 'enterpriseName'),
+        action: 'skip',
+        review: false,
+      })
+      return
+    }
   } else {
     // **按名定位必须唯一**：同名多主体时软件不猜是哪一家（票面第 4 条）。
     const sameName = findEnterprisesByNorm(db, normalizeName(name!))
@@ -3162,19 +3437,32 @@ function ensureEnterpriseAlias(
  * 出处挂在事件上随之归入规范行；最后删除被并的空企业行。
  */
 function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
-  const { merge, sourceRelationRef, evidenceQueryRef } = plan
+  const { merge, sourceEnterpriseId, sourceRelationRef, evidenceQueryRef } = plan
   const ref0 = `merge:${optionalInt(merge.fromEnterpriseId) ?? optionalString(merge.fromEnterpriseName)}`
 
   const intoUscc = usccOrNull(merge.intoUscc)!
   const into = findEnterpriseByUscc(tx, intoUscc)
-  const fromRaw = optionalInt(merge.fromEnterpriseId)
-  const from = fromRaw != null
-    ? findEnterpriseById(tx, fromRaw)
-    : findEnterpriseByNorm(tx, normalizeName(optionalString(merge.fromEnterpriseName)!))
+  const fromName = optionalString(merge.fromEnterpriseName)
+  let from = sourceEnterpriseId != null ? findEnterpriseById(tx, sourceEnterpriseId) : null
+  if (sourceEnterpriseId == null && fromName) {
+    const matches = findEnterprisesByNorm(tx, normalizeName(fromName))
+    if (matches.length > 1) return failure('merge', ref0, 'enterprise_ambiguous', `同名企业有 ${matches.length} 个候选 ⇒ 不猜是哪一家`, 'fromEnterpriseName')
+    from = matches[0] ?? null
+  }
   if (!from) return failure('merge', ref0, 'merge_source_not_found', '被并企业在写入阶段不存在', 'fromEnterpriseId')
   if (!into) return failure('merge', ref0, 'merge_target_not_found', '规范行在写入阶段不存在', 'intoUscc')
   if (from.id === into.id) return failure('merge', ref0, 'merge_same_enterprise', '被并企业与规范行是同一行', 'fromEnterpriseId')
   const ref = `merge:${from.id}->${into.id}`
+  const conflictingDifference = findMergeDifferenceConflict(tx, from.id, into.id)
+  if (conflictingDifference) {
+    return failure(
+      'merge',
+      ref,
+      'merge_difference_conflict',
+      `差异唯一键已存在但内容不同：${conflictingDifference.titleCode}/${conflictingDifference.direction}/${conflictingDifference.recordedAt}`,
+      'merges',
+    )
+  }
 
   // 2. 主名称与曾用名（§5.3）。证据指针：给了自然键就**必须**解析到真 id（解析不到 ⇒ 报错）。
   const sourceKind = merge.sourceKind ?? 'manual'
@@ -3274,6 +3562,21 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
       recordedAt: difference.recordedAt,
     })
     if (clash) {
+      const targetDifference = findDifferenceContentRow(tx, {
+        enterpriseId: into.id,
+        titleCode: difference.titleCode,
+        direction: difference.direction,
+        recordedAt: difference.recordedAt,
+      })
+      if (targetDifference && !sameDifferenceContent(difference, targetDifference)) {
+        return failure(
+          'merge',
+          ref,
+          'merge_difference_conflict',
+          `差异唯一键已存在但内容不同：${difference.titleCode}/${difference.direction}/${difference.recordedAt}`,
+          'merges',
+        )
+      }
       tx.delete(schema.differenceReason).where(eq(schema.differenceReason.id, difference.id)).run()
     } else {
       tx.update(schema.differenceReason).set({ enterpriseId: into.id }).where(eq(schema.differenceReason.id, difference.id)).run()

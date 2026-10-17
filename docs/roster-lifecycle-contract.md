@@ -722,10 +722,10 @@
 
 ### 7.4 `GET /api/records` — 通用企业×称号记录查询(RL-09)
 
-查询参数:`title`、`source`、`district`、`eventType`、`year`、`dueYear`、`q`、`flags`、`page`、`pageSize`。
-多值参数可用逗号分隔或重复传入。`year` 过滤事件的**所涉年份**，不改变其含义；`dueYear` 是独立的
-生命周期到期年份筛选，单值精确匹配。两者同时传入时，先按事件条件选出企业×称号组合，再对每组
-完整历史调用 §6 的共享生命周期算法并按 `dueYear` 筛选；分页和 total 基于筛选后的组合。
+查询参数:`title`、`source`、`district`、`eventType`、`year`、`firstYear`、`firstStatus`、`dueYear`、`q`、`flags`、`page`、`pageSize`。
+多值参数可用逗号分隔或重复传入。`year` 过滤事件的**所涉年份**；`firstYear` 过滤首次正式认定年份
+(`decidedYear ?? year`)，与事件年份不同；`firstStatus` 取 `confirmed` / `pending` 并使用 §7.5 的首次认定判据；
+`dueYear` 是生命周期到期年份筛选，单值精确匹配。派生筛选先读取完整事件历史，再于分页前过滤；分页和 total 基于筛选后的组合。
 
 `q` 搜当前企业名、`confirmed` 曾用名和归一化统一社会信用代码。`pending` 别名不参与搜索。
 事件筛选只决定哪些企业×称号行出现；返回行保留该组**全部来源、全部事件和全部事件出处**，避免筛选
@@ -736,6 +736,7 @@
 - `events[]`:事件 id、所属记录 id、事件类型、事件所涉年份 `year`、结论年份 `decidedYear`、复核结论、批次序号、来源及 `evidence[]`。出处逐条给出 `{ sourceFile, attachment, listNo, page }`。
 - `lifecycle`:调用 §6 的 `computeTitleLifecycle` 得到的首次认定年份/事件、当前锚点年份/事件、到期年份、资格状态和 `needsReview`；`status` 明确区分 `active` / `needs_review` / `terminated` / `undatable` / `not_applicable`。
   `anchorEventId`、`firstRecognitionEventId` 可直接关联回 `events[]`。
+- `firstYear` 只匹配 `lifecycle.firstRecognitionYear`;无法确定首次年份的行不匹配具体年份。它不改变 `year` 对事件年份的筛选语义。
 - `lifecycle.flags[]`: `{ code, reason }` 待核提示。缺结论年份、复核结论未知、缺批次、缺出处或无法确定锚点只增加提示，**不会把行从未筛选结果中隔离**。
   对未知复核结论不猜成通过或未通过；已明确未通过且后续没有重新认定时，按 §6 标记为资格终止，`dueYear` 为空。
 - `flags[]`:企业数据质量标记，含义与现有记录查询一致。
@@ -1744,9 +1745,9 @@ POST /api/roster/evidence/pages
 |---|---|---|---|
 | `save_roster_batch` | **写**(需 `NUXT_MCP_TOKEN`) | `{ idempotencyKey, sourceKind, sourceIdentity, sourceSha256?, payload }` | 等价 `POST /api/roster/import/commit`;返回 `{ batchId, status, summary, items }` |
 | `preflight_roster_batch` | 读(只读预检) | 同上 | 等价 `POST …/preflight` |
-| `list_enterprises` | 读 | `{ q?, title?, page?, pageSize? }` | 等价 `GET /api/roster/enterprises` |
+| `list_enterprises` | 读 | `{ q?, title?: string \| string[], firstYear?, firstStatus?, page?, pageSize? }` | 等价 `GET /api/roster/enterprises`；`title` 接受单个称号或称号数组；首次认定筛选按同一个企业×称号匹配 |
 | `list_differences` | 读 | `{ title?, direction?, status?, page?, pageSize? }` | 等价 `GET /api/roster/differences` |
-| `query_records` | 读 | `{ title?, source?, district?, eventType?, year?, dueYear?, q?, flags?, page?, pageSize? }` | 与 `GET /api/records` 共用参数解析和企业×称号读模型；`year` 是事件年份，`dueYear` 是到期年份 |
+| `query_records` | 读 | `{ title?, source?, district?, eventType?, year?, firstYear?, firstStatus?, dueYear?, q?, flags?, page?, pageSize? }` | 与 `GET /api/records` 共用参数解析和企业×称号读模型；`year` 是事件年份，`firstYear` 是首次认定年份，`firstStatus` 与 §7.5 判据一致，`dueYear` 是到期年份 |
 | `get_enterprise_detail` | 读 | `{ enterpriseId }` | 与 `GET /api/roster/enterprises/:id` 共用详情读模型 |
 
 「只读不鉴权,写入必带 token」沿用既有分法;token 只从 `NUXT_MCP_TOKEN` 读。

@@ -2,12 +2,12 @@ name: spztx-roster
 
 services:
   app:
-    image: spztx-roster:3a7d896-${CONFIG_SHA:?Set CONFIG_SHA to the deployment configuration commit SHA}
+    image: spztx-roster:${CONFIG_SHA:?Set CONFIG_SHA to the deployment configuration commit SHA}
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        SOURCE_REVISION: 3a7d896d8c5d76647e94c94f2a843fe35a0c12fc
+        SOURCE_REVISION: ${SOURCE_SHA:?Set SOURCE_SHA to the full deployment configuration commit SHA}
     env_file:
       - ${ROSTER_ENV_FILE:-/dev/null}
     environment:
