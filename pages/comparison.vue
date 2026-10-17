@@ -255,7 +255,7 @@ const exportUrl = computed(() => {
     <div class="flex min-w-0 flex-col gap-2">
       <div class="flex min-w-0 flex-col gap-2" data-testid="comparison-results">
             <div class="relative h-5 shrink-0" aria-live="polite" data-testid="comparison-loading-status">
-              <span v-if="isLoading" class="text-muted-foreground absolute top-0.5 left-0 text-[13px]">正在搜索与加载比对结果…</span>
+              <span v-if="isLoading" class="bg-card text-muted-foreground fixed right-4 bottom-4 z-50 rounded-sm border px-3 py-2 text-[13px]">正在搜索与加载比对结果…</span>
               <span v-else class="text-muted-foreground absolute top-0.5 left-0 text-[13px] tabular-nums">共 {{ data?.total ?? 0 }} 条</span>
               <span v-if="isLoading" class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
                 <span class="comparison-progress bg-primary block h-0.5 w-1/3 rounded-full" />
