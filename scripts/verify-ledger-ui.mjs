@@ -1453,10 +1453,10 @@ async function verifyKaichengExample(cdp) {
     const expectedEvents = [
       '专精特新中小企业认定',
       '创新型中小企业认定',
-      '专精特新中小企业维持',
-      '创新型中小企业维持',
+      '专精特新中小企业复核',
+      '创新型中小企业复核',
       '专精特新“小巨人”认定',
-      '专精特新“小巨人”维持',
+      '专精特新“小巨人”复核',
     ]
     const valueStarts = example.chainLayout.map((item) => item.valueLeft)
     const connectorGaps = example.chainLayout.map((item) => item.valueLeft - item.connectorCenter)
@@ -1476,6 +1476,37 @@ async function verifyKaichengExample(cdp) {
     }
   } finally {
     await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+  }
+}
+
+function timelineConnectionViolation(rows) {
+  if (rows.length < 2 || rows.some(row => !row.line || !row.node)) return '缺少可测量的节点或连接线'
+  if (Math.abs(rows[0].line.top - rows[0].node.centerY) > 1 || Math.abs(rows.at(-1).line.bottom - rows.at(-1).node.centerY) > 1) return '首尾连接线未止于圆点中心'
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index]
+    if (Math.abs(row.line.centerX - row.node.centerX) > 1 || row.line.top > row.node.centerY + 1 || row.line.bottom < row.node.centerY - 1) return '连接线未穿过圆点中心'
+    if (index && Math.abs(rows[index - 1].line.bottom - row.line.top) > 1) return '相邻连接线存在断口'
+  }
+  return null
+}
+
+async function verifyTimelineConnections(cdp) {
+  const measure = `(() => [...document.querySelectorAll('[data-testid="timeline-event"]')].map(row => {
+    const rect = element => { const r=element?.getBoundingClientRect();return r ? {top:r.top,bottom:r.bottom,centerX:r.left+r.width/2,centerY:r.top+r.height/2} : null; };
+    return {text:row.textContent.trim(),line:rect(row.querySelector('[data-testid="timeline-connector"]')),node:rect(row.querySelector('[data-testid="timeline-node"]'))};
+  }))()`;
+  for (const viewport of VIEWPORTS.slice(0, 2)) {
+    const {targetId, sessionId} = await openSession(cdp, `${BASE}/?q=${encodeURIComponent('宁波开诚')}&expand=3449`, viewport, `document.querySelectorAll('[data-testid="timeline-event"]').length === 6`);
+    try {
+      const rows = await evaluate(cdp,sessionId,measure);
+      const violation = timelineConnectionViolation(rows);
+      if (violation || rows.some(row => row.text.includes('维持'))) bad(`称号时间线 · ${viewport.name}:${violation ?? '仍显示维持'} ${JSON.stringify(rows)}`);
+      else ok(`称号时间线 · ${viewport.name}:6个节点连线连续，首尾止于圆心，maintain显示复核`);
+      await evaluate(cdp,sessionId,`(() => {const line=[...document.querySelectorAll('[data-testid="timeline-connector"]')].at(-1);line.style.setProperty('top','9px','important');line.style.setProperty('height','12px','important');})()`);
+      const broken = timelineConnectionViolation(await evaluate(cdp,sessionId,measure));
+      if (!broken) bad(`称号时间线 · ${viewport.name}:恢复末端断口后断言未变红`);
+      else ok(`称号时间线 · ${viewport.name}:恢复末端断口后按预期变红(${broken})`);
+    } finally { await cdp.send('Target.closeTarget',{targetId}).catch(()=>{}); }
   }
 }
 
@@ -2625,6 +2656,7 @@ async function main() {
     await verifyComparisonExportFilters(cdp)
     await verifyNextReviewFlagBinding(cdp)
     await verifyKaichengExample(cdp)
+    await verifyTimelineConnections(cdp)
     await verifyUnknownReviewOutcomeExample(cdp)
     await verifyLedgerLoadingAndDrawer(cdp)
     await verifyComparisonSearchAndMotion(cdp)

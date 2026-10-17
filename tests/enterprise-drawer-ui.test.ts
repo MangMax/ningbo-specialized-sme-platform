@@ -299,3 +299,47 @@ describe('企业详情抽屉的曾用名', () => {
     expect(aliasValue.text()).toBe('宁波上航测绘有限公司')
   })
 })
+
+
+describe('企业详情抽屉的称号时间线', () => {
+  function timelineDetail(types: string[]) {
+    return {
+      ...detailWithDifference(),
+      records: [{id:1,titleCode:'little_giant',source:'jxj',district:null,lifecycle:{firstRecognitionYear:2020,dueYear:null,needsReview:false,state:'active'}}],
+      events: types.map((eventType,index)=>({id:index+1,recordId:1,eventType,year:2020+index,decidedYear:null,batchSeq:1,reviewOutcome:null})),
+    }
+  }
+
+  it('maintain在抽屉及出处展示为复核，原始事件类型保持不变',()=>{
+    const detail=timelineDetail(['award','maintain'])
+    queryData.value={...detail,evidence:[{eventId:2,sourceFile:'名单.pdf',attachment:null,listNo:1,page:null}]}
+    queryLoading.value=false
+    const wrapper=mountDrawer()
+    const events=wrapper.findAll('[data-testid="timeline-event"]')
+    expect(events[0]!.text()).toContain('认定')
+    expect(events[1]!.text()).toContain('复核')
+    expect(wrapper.get('[data-testid="enterprise-evidence"] li p').text()).toBe('2021 · 专精特新“小巨人” · 复核')
+    expect(wrapper.text()).not.toContain('维持')
+    expect(detail.events.map(event=>event.eventType)).toEqual(['award','maintain'])
+  })
+
+  it('首尾连接线止于圆点中心，中间事件贯穿整行',()=>{
+    queryData.value=timelineDetail(['award','maintain','maintain'])
+    queryLoading.value=false
+    const wrapper=mountDrawer()
+    const connectors=wrapper.findAll('[data-testid="timeline-connector"]')
+    expect(connectors).toHaveLength(3)
+    expect(connectors[0]!.classes()).toEqual(expect.arrayContaining(['top-[9.5px]','bottom-0']))
+    expect(connectors[1]!.classes()).toContain('inset-y-0')
+    expect(connectors[2]!.classes()).toEqual(expect.arrayContaining(['top-0','h-[9.5px]']))
+    expect(wrapper.findAll('[data-testid="timeline-node"]')).toHaveLength(3)
+  })
+
+  it('单个事件只展示圆点，不画悬空连接线',()=>{
+    queryData.value=timelineDetail(['award'])
+    queryLoading.value=false
+    const wrapper=mountDrawer()
+    expect(wrapper.findAll('[data-testid="timeline-node"]')).toHaveLength(1)
+    expect(wrapper.findAll('[data-testid="timeline-connector"]')).toHaveLength(0)
+  })
+})

@@ -285,8 +285,8 @@ const statusTextClass = (code: string) => {
   }
 }
 const eventLabel = (type: string) => {
-  // 抽屉复用方向卡的事件词:认定 / 复核 / 维持。
-  if (type === 'maintain') return '维持'
+  // 用户指定抽屉将 maintain 展示为“复核”；只改文案，不改变原始事件类型。
+  if (type === 'maintain') return '复核'
   return EVENTS[type] ?? type
 }
 
@@ -362,8 +362,9 @@ function eventSuffix(item: TimelineItem): string {
           <h3 class="text-muted-foreground mt-5 border-t pt-4 text-xs font-medium">称号历史</h3>
           <ol class="mt-3 flex flex-col">
             <li
-              v-for="item in timeline"
+              v-for="(item, index) in timeline"
               :key="item.key"
+              data-testid="timeline-event"
               class="grid grid-cols-[38px_16px_1fr] items-start"
               :class="item.year == null ? 'min-h-0' : 'min-h-10'"
             >
@@ -375,12 +376,15 @@ function eventSuffix(item: TimelineItem): string {
                 {{ item.yearUnknown || item.year == null ? '待核' : item.year }}
               </span>
               <!-- 轴线:除最后一条外都往下接;点亮的圆点 = 该企业等级最高称号的首次认定。 -->
-              <span class="relative self-stretch">
+              <span class="relative self-stretch" aria-hidden="true">
                 <span
+                  v-if="timeline.length > 1"
+                  data-testid="timeline-connector"
                   class="bg-border absolute left-[6px] w-px"
-                  :class="item === timeline[timeline.length - 1] ? 'top-[9px] h-3' : 'inset-y-0'"
+                  :class="index === timeline.length - 1 ? 'top-0 h-[9.5px]' : index === 0 ? 'top-[9.5px] bottom-0' : 'inset-y-0'"
                 />
                 <span
+                  data-testid="timeline-node"
                   class="absolute top-[5px] left-[2px] size-[9px] rounded-full border-[1.5px] bg-card"
                   :class="item.highlight ? 'border-primary bg-primary' : 'border-input'"
                 />
