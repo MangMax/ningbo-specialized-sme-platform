@@ -65,7 +65,7 @@ defineRouteMeta({
         name: 'diffStatus',
         in: 'query',
         schema: { type: 'string' },
-        description: `差异状态,多值(RL-20):\`not_queried\` / \`query_failed\` / \`no_record\` / \`needs_review\` / \`confirmed_no_diff\` / \`confirmed_reason\`,或伪状态 \`${DIFF_STATUS_NONE}\`(**一条差异记录都没有**)。命中「该企业存在一条该状态的差异记录」;一家企业有多条时,表里显示的是状态机顺序最靠后的那一条。`,
+        description: `差异状态,多值(RL-20):\`not_queried\` / \`query_failed\` / \`no_record\` / \`needs_review\` / \`confirmed_no_diff\` / \`confirmed_reason\`,或伪状态 \`${DIFF_STATUS_NONE}\`(**一条差异记录都没有**)。也可选择原因代码 moved_out / deregistered / renamed / platform_stale / moved_in / other，按表格当前可见摘要原因匹配。状态仍命中企业任一差异记录；同参数多值取或。`,
       },
       {
         name: 'sort',

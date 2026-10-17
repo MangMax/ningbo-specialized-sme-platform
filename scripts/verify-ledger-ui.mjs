@@ -1572,6 +1572,66 @@ async function verifyUnknownReviewOutcomeExample(cdp) {
   }
 }
 
+async function verifyLedgerReasonFilter(cdp) {
+  for (const viewport of [VIEWPORTS[0], VIEWPORTS.find(view => view.width === 390)]) {
+    const page = await openSession(cdp, `${BASE}/`, viewport, READY, { openDrawer: false })
+    const { targetId, sessionId } = page
+    const label = `企业列表 · ${viewport.width}px其他筛选`
+    try {
+      await clickElementContaining(cdp, sessionId, 'button', '全部差异状态')
+      const optionReady = await waitUntil(cdp, sessionId, `(() => [...document.querySelectorAll('[role="menuitemcheckbox"]')].some(el => el.textContent.trim() === '其他'))()`)
+      if (!optionReady) { bad(`${label}:菜单缺少其他`); continue }
+      ok(`${label}:菜单提供其他`)
+      // 恢复缺陷：移除菜单里的其他，确认同一个断言能命中，再重新打开真实菜单。
+      const missingDetected = await evaluate(cdp, sessionId, `(() => {
+        [...document.querySelectorAll('[role="menuitemcheckbox"]')].find(el => el.textContent.trim() === '其他')?.remove();
+        return ![...document.querySelectorAll('[role="menuitemcheckbox"]')].some(el => el.textContent.trim() === '其他');
+      })()`)
+      if (!missingDetected) bad(`${label}:移除选项后断言未命中`)
+      else ok(`${label}:菜单缺项自检按预期变红`)
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId)
+      await waitUntil(cdp, sessionId, `!document.querySelector('[role="menu"]')`)
+      await clickElementContaining(cdp, sessionId, 'button', '全部差异状态')
+      const restored = await waitUntil(cdp, sessionId, `(() => [...document.querySelectorAll('[role="menuitemcheckbox"]')].some(el => el.textContent.trim() === '其他'))()`)
+      if (!restored) { bad(`${label}:重新打开菜单后其他未恢复`); continue }
+      await installMotionAndFetchGate(cdp, sessionId)
+      await startFetchGate(cdp, sessionId, '/api/roster/enterprises?')
+      await clickElementContaining(cdp, sessionId, '[role="menuitemcheckbox"]', '其他')
+      const loading = await waitForLoadingEvidence(cdp, sessionId, 'ledger')
+      if (!loading) bad(`${label}:勾选后请求期间无加载提示`)
+      else ok(`${label}:勾选后请求期间有加载提示`)
+      await finishFetchGate(cdp, sessionId)
+      await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId)
+      const settled = await waitUntil(cdp, sessionId, `(() => {
+        const cells = [...document.querySelectorAll('[data-testid="enterprise-difference-cell"]')];
+        return new URL(location.href).searchParams.get('diffStatus') === 'other' &&
+          !document.querySelector('[data-slot="skeleton"]') && cells.length > 0 &&
+          cells.every(el => el.textContent.trim() === '其他') &&
+          document.querySelector('tbody')?.dataset.loading !== 'true';
+      })()`)
+      if (!settled) bad(`${label}:URL或可见结果不匹配其他`)
+      else ok(`${label}:URL已更新且全部可见行均为其他`)
+      const state = await evaluate(cdp, sessionId, `(() => ({
+        chip: document.body.textContent.includes('差异状态 · 其他'),
+        exportReason: new URL(document.querySelector('a[href^="/api/roster/export"]').href).searchParams.get('diffStatus'),
+        overflow: document.documentElement.scrollWidth - innerWidth,
+      }))()`)
+      if (!state.chip || state.exportReason !== 'other' || state.overflow > 1) bad(`${label}:筛选chip、导出或页面溢出错误 ${JSON.stringify(state)}`)
+      else ok(`${label}:中文chip、导出参数一致，页面溢出${state.overflow}px`)
+      await cdp.send('Page.reload', {}, sessionId)
+      const reloaded = await waitUntil(cdp, sessionId, `(() => {
+        const cells = [...document.querySelectorAll('[data-testid="enterprise-difference-cell"]')];
+        return !document.querySelector('[data-slot="skeleton"]') && cells.length > 0 && cells.every(el => el.textContent.trim() === '其他') && document.body.textContent.includes('差异状态 · 其他');
+      })()`)
+      if (!reloaded) bad(`${label}:刷新后未保留筛选结果`)
+      else ok(`${label}:刷新保留其他筛选与结果`)
+    } finally {
+      await finishFetchGate(cdp, sessionId).catch(() => {})
+      await cdp.send('Target.closeTarget', { targetId }).catch(() => {})
+    }
+  }
+}
+
 async function verifyLedgerLoadingAndDrawer(cdp) {
   // 加宽后的抽屉覆盖筛选区域；按真实操作先在关闭状态验证排序。
   const page = await openSession(cdp, `${BASE}/`, VIEWPORTS[0], READY, { openDrawer: false })
@@ -2690,6 +2750,7 @@ async function main() {
     await verifyKaichengExample(cdp)
     await verifyTimelineConnections(cdp)
     await verifyUnknownReviewOutcomeExample(cdp)
+    await verifyLedgerReasonFilter(cdp)
     await verifyLedgerLoadingAndDrawer(cdp)
     await verifyComparisonSearchAndMotion(cdp)
     await verifyCustomPageSizeInputShadow(cdp)

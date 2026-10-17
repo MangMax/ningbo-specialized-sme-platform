@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { DIFFERENCE_REASONS } from '../lib/labels'
+import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '../lib/roster/ledger-contract'
 import {
   DEFAULT_SORT,
   EMPTY_LEDGER_STATE,
@@ -59,5 +61,23 @@ describe('企业列表状态与 URL 映射', () => {
     expect(params.get('sort')).toBe(FILTERED.sort)
     expect(params.has('page')).toBe(false)
     expect(ledgerExportUrl(EMPTY_LEDGER_STATE)).toBe('/api/roster/export')
+  })
+})
+
+
+describe('企业差异状态菜单与原因筛选',()=>{
+  it('菜单覆盖每一种可见原因，其他在按钮和筛选chip中使用中文',()=>{
+    for(const [value,label] of Object.entries(DIFFERENCE_REASONS)) {
+      expect(ROSTER_DIFFERENCE_FILTER_OPTIONS).toContainEqual({value,label})
+      expect(rosterDifferenceFilterLabel(value)).toBe(label)
+    }
+    expect(rosterDifferenceFilterLabel('other')).toBe('其他')
+  })
+  it('其他与现有状态的多选经过URL、刷新及导出保持同一值',()=>{
+    const state={...EMPTY_LEDGER_STATE,diffStatus:['other','query_failed']}
+    const query=ledgerListQuery(state)
+    expect(query.diffStatus).toBe('other,query_failed')
+    expect(ledgerStateFromQuery(query).diffStatus).toEqual(['other','query_failed'])
+    expect(new URL(ledgerExportUrl(state),'http://local').searchParams.get('diffStatus')).toBe(query.diffStatus)
   })
 })

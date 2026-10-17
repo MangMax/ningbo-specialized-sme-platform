@@ -641,7 +641,7 @@
 > `diffStatus` / `sort` 与下方差异摘要字段是 RL-20 的只读列表页扩展,不改变记录、差异或写入语义。
 > `diffStatus` 命中「该企业存在一条该状态的差异记录」;取值为
 > `not_queried` / `query_failed` / `no_record` / `needs_review` / `confirmed_no_diff` /
-> `confirmed_reason`,另有 `none` 表示该企业没有差异记录。`sort` 支持 `recognition`
+> `confirmed_reason`；也接受原因 `moved_out` / `deregistered` / `renamed` / `platform_stale` / `moved_in` / `other`，按企业当前展示摘要的原因匹配，确保筛选与可见列一致。同参数多值取或；`none` 表示该企业没有差异记录。列表与导出共用解析、筛选、计数口径，先筛后分页。`sort` 支持 `recognition`
 > (最早首次认定年,新到旧,默认)、`name` 与 `title`;各顺序以名称和企业 id 稳定收尾。
 
 响应(字段级):

@@ -11,9 +11,6 @@ import {
   Search,
 } from '@lucide/vue'
 import {
-  DIFFERENCE_STATUSES,
-  DIFFERENCE_STATUS_ORDER,
-  DIFF_STATUS_NONE_LABEL,
   ENTERPRISE_LIST_TITLE,
   ENTERPRISE_SORT_HINTS,
   ENTERPRISE_SORT_LABELS,
@@ -34,6 +31,7 @@ import {
   ledgerStateFromQuery,
   type LedgerState,
 } from '~~/lib/roster/ledger-view'
+import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '~~/lib/roster/ledger-contract'
 import EnterpriseDrawer from '@/components/EnterpriseDrawer.vue'
 import EnterpriseListTable, {
   type EnterpriseListRow,
@@ -252,10 +250,7 @@ function selectRow(id: number, trigger: HTMLButtonElement | null) {
 const titleOptions = computed(() =>
   TITLE_ORDER.map((code) => ({ value: code, label: TITLES[code] ?? code, short: TITLE_SHORT[code] })),
 )
-const statusOptions = computed(() => [
-  ...DIFFERENCE_STATUS_ORDER.map((code) => ({ value: code, label: DIFFERENCE_STATUSES[code] ?? code })),
-  { value: 'none', label: DIFF_STATUS_NONE_LABEL },
-])
+const statusOptions = ROSTER_DIFFERENCE_FILTER_OPTIONS
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 
 /**
@@ -319,7 +314,7 @@ const activeFilters = computed<ActiveFilter[]>(() => {
       : []),
     ...s.diffStatus.map((v) => ({
       key: `diffStatus:${v}`,
-      label: `差异状态 · ${v === 'none' ? DIFF_STATUS_NONE_LABEL : (DIFFERENCE_STATUSES[v] ?? v)}`,
+      label: `差异状态 · ${rosterDifferenceFilterLabel(v)}`,
       clear: () => without('diffStatus', v),
     })),
     ...s.source.map((v) => ({

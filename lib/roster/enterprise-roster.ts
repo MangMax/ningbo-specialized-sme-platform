@@ -200,7 +200,7 @@ export interface RosterEnterpriseFilter {
   /** 事件年份(多值,命中任一):该企业**存在**一条该年份的事件。 */
   year?: number[]
   /**
-   * 差异状态(多值,命中任一)—— RL-20 增量。取值 = 六个差异状态 **∪** `none`。
+   * 差异状态(多值,命中任一)—— RL-20 增量。取值 = 六个差异状态、可见差异原因及 `none`。原因按当前展示摘要匹配。
    *
    * `none` 是**伪状态**,不是 `difference_reason.status` 的取值:它表示「该企业
    * **一条差异记录都没有**」(设计稿表里的「无差异」那一档)。用户要找干净的企业时,
@@ -626,16 +626,16 @@ function selectRosterEnterprises(
     differenceStatuses: differenceStatusesByEnterprise.get(profile.enterprise.id) ?? new Set<string>(),
   }))
   const rows = candidates
-    .filter(({ profile, aliasNames, state, differenceStatuses }) => {
+    .filter(({ profile, aliasNames, state, difference, differenceStatuses }) => {
       if (filter.rosterState && state !== filter.rosterState) return false
       if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return false
       if (filter.district && effectiveDistrict(profile) !== filter.district) return false
       if (diffStatuses) {
         // `none` 是伪状态(**没有差异**),不是 `difference_reason.status` 的取值。
-        // 状态筛选按企业的全部差异行判断;表格摘要优先级只负责决定显示哪一条。
+        // 状态按企业的全部差异行判断；原因匹配当前可见摘要，确保选“其他”时该列也显示“其他”。
         const hit =
           (diffStatuses.includes(DIFF_STATUS_NONE) && differenceStatuses.size === 0) ||
-          diffStatuses.some((status) => status !== DIFF_STATUS_NONE && differenceStatuses.has(status))
+          diffStatuses.some((value) => value !== DIFF_STATUS_NONE && (differenceStatuses.has(value) || difference.reasonCode === value))
         if (!hit) return false
       }
       if (!matchesRecordFilters(profile, filter)) return false
