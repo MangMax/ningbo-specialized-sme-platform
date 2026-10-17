@@ -233,3 +233,19 @@ describe('ocrImageFile 单张 PNG 重试', () => {
     expect(api.stats.submits).toBe(0)
   }, 10_000)
 })
+it('redacts a long credential before truncating a plain-text upstream error', async () => {
+  const token = 'synthetic-' + 'z'.repeat(400) + '-tail'
+  let message = ''
+  try {
+    await ocrImageFile({ token, filePath: imagePath, fetchImpl: async () => new Response(token, { status: 403 }) })
+  } catch (error) { message = (error as Error).message }
+  expect(message.includes(token.slice(0, 100))).toBe(false)
+  expect(message).toContain('[REDACTED]')
+})
+it('removes credential echoes from successful OCR markdown and nested raw results', async () => {
+  const token = 'synthetic-success-secret'
+  api = await startMiniOcrApi({ pages: [`text ${token} end`] })
+  const result = await ocrImageFile({ token, baseUrl: api.origin, filePath: imagePath })
+  expect(JSON.stringify(result).includes(token)).toBe(false)
+  expect(JSON.stringify(result).includes('[REDACTED]')).toBe(true)
+})

@@ -73,6 +73,8 @@ export default defineNuxtConfig({
      * 想让两边共用一个值,把两个变量设成一样即可 —— 那是配置时的选择。
      */
     apiToken: '',
+    // Explicit external persistent directory; empty disables page writes.
+    credentialsStateDir: '',
     /**
      * **通路 a(在线 PaddleOCR API)的凭证**(票 14)。
      *
