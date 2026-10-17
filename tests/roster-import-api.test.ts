@@ -179,6 +179,69 @@ function seedStoredFileHash(db: ReturnType<typeof makeDb>, relPath: string, sha2
     .run()
 }
 
+async function withRosterHttp<T>(
+  db: ReturnType<typeof makeDb>,
+  run: (client: ReturnType<typeof createRosterImportClient>) => Promise<T>,
+): Promise<T> {
+  const server = await startRosterApi({ db, apiToken: TOKEN })
+  try {
+    return await run(createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN }))
+  } finally {
+    await server.close()
+  }
+}
+
+function boundaryRequest(
+  idempotencyKey: string,
+  payload: RosterImportRequest['payload'],
+): RosterImportRequest {
+  return {
+    idempotencyKey,
+    sourceKind: 'alias_evidence',
+    sourceIdentity: 'tests/roster-write-boundaries',
+    payload,
+  }
+}
+
+function seedPlatformRelation(
+  db: ReturnType<typeof makeDb>,
+  input: {
+    queryKey: string
+    usccRaw: string
+    nameRaw: string
+    queriedAt?: string
+    interface?: 'business_list' | 'apply_list'
+    rdjb?: string
+    enterpriseId?: number | null
+  },
+) {
+  const queryId = db
+    .insert(schema.platformQuery)
+    .values({
+      interface: input.interface ?? 'business_list',
+      queryKey: input.queryKey,
+      rdjb: input.rdjb ?? '3',
+      queriedAt: input.queriedAt ?? '2026-10-17T01:00:00.000Z',
+      status: 'success',
+    })
+    .returning({ id: schema.platformQuery.id })
+    .get().id
+  return db
+    .insert(schema.platformRelation)
+    .values({
+      queryId,
+      sequenceNo: 1,
+      relationKey: `SQ-${queryId}`,
+      enterpriseId: input.enterpriseId ?? null,
+      usccRaw: input.usccRaw,
+      nameRaw: input.nameRaw,
+      matchBasis: 'uscc',
+      verificationStatus: 'confirmed',
+    })
+    .returning({ id: schema.platformRelation.id })
+    .get().id
+}
+
 // ---------------------------------------------------------------------------
 // 1. 请求校验 + 预检不写业务数据
 // ---------------------------------------------------------------------------
@@ -251,7 +314,19 @@ describe('提交：一次写入企业/事件/出处/别名/平台证据/快照/�
         ],
       },
       aliases: [
-        { enterpriseName: '甲企业有限公司', name: '甲企业旧名有限公司', sourceKind: 'platform_business', sourceRefId: 7, verificationStatus: 'confirmed' },
+        {
+          enterpriseName: '甲企业有限公司',
+          name: '甲企业旧名有限公司',
+          sourceKind: 'platform_business',
+          sourceRelationRef: {
+            interface: 'business_list',
+            queryKey: '913302017133602847',
+            rdjb: '3',
+            queriedAt: '2026-10-16T03:00:00.000Z',
+            sequenceNo: 2,
+          },
+          verificationStatus: 'confirmed',
+        },
         { enterpriseName: '甲企业有限公司', name: '疑似同名待核有限公司', sourceKind: 'platform_apply', verificationStatus: 'pending' },
       ],
       platformQueries: [
@@ -811,6 +886,347 @@ describe('归并与回填：血缘在 item_results 中可查询', () => {
     expect(result.status).toBe('failed')
     expect(result.items[0]!.error!.code).toBe('merge_source_not_found')
     expect(rosterRowCounts(db)).toEqual(before)
+  })
+})
+
+describe('API 写入边界：归并选择器与差异冲突', () => {
+  const TARGET_USCC = '91330211255994457P'
+
+  it('按名定位到多家企业时拒绝归并，不选择首条同名行', async () => {
+    const db = makeDb()
+    const duplicateName = '宁波同名归并边界企业有限公司'
+    const first = seedEnterprise(db, { name: duplicateName })
+    const second = seedEnterprise(db, { name: duplicateName })
+    seedEnterprise(db, { name: '宁波统代规范行有限公司', uscc: TARGET_USCC })
+    const before = rosterRowCounts(db)
+    const request = boundaryRequest('write-boundary/merge-ambiguous', {
+      merges: [{ fromEnterpriseName: duplicateName, intoUscc: TARGET_USCC, sourceKind: 'manual' }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.summary.written).toBe(0)
+    expect(result.items.find((item) => item.kind === 'merge')!.error!.code).toBe('enterprise_ambiguous')
+    expect(enterpriseExists(db, first)).toBe(true)
+    expect(enterpriseExists(db, second)).toBe(true)
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it('归并同时给出的 ID 与名称冲突时拒绝，不按 ID 静默删除另一主体', async () => {
+    const db = makeDb()
+    const fromId = seedEnterprise(db, { name: '宁波归并ID主体有限公司' })
+    seedEnterprise(db, { name: '宁波归并名称主体有限公司' })
+    seedEnterprise(db, { name: '宁波归并规范行有限公司', uscc: TARGET_USCC })
+    const before = rosterRowCounts(db)
+    const request = boundaryRequest('write-boundary/merge-selector-conflict', {
+      merges: [{
+        fromEnterpriseId: fromId,
+        fromEnterpriseName: '宁波归并名称主体有限公司',
+        intoUscc: TARGET_USCC,
+        sourceKind: 'manual',
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.items.find((item) => item.kind === 'merge')!.error!.code).toBe('enterprise_selector_conflict')
+    expect(enterpriseExists(db, fromId)).toBe(true)
+    expect(rosterRowCounts(db)).toEqual(before)
+  })
+
+  it.each([
+    { label: 'omitted sourceRefId', source: {}, expectedCode: 'alias_source_evidence_required' },
+    { label: 'unknown sourceRefId', source: { sourceRefId: 999999 }, expectedCode: 'alias_source_evidence_mismatch' },
+  ])('confirmed platform alias rejects $label', async ({ label, source, expectedCode }) => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
+    const request = boundaryRequest(`write-boundary/alias-${label}`, {
+      aliases: [{
+        uscc: TARGET_USCC,
+        name: '宁波未经平台支持的曾用名有限公司',
+        sourceKind: 'platform_business',
+        verificationStatus: 'confirmed',
+        ...source,
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.items.find((item) => item.kind === 'alias')!.error!.code).toBe(expectedCode)
+    expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
+    expect(searchEnterpriseIdsByName(db, '宁波未经平台支持的曾用名有限公司')).toEqual([])
+    expect(enterpriseExists(db, enterpriseId)).toBe(true)
+  })
+
+  it('裸关系 ID 指向其他统代时拒绝 confirmed 平台别名', async () => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
+    const relationId = seedPlatformRelation(db, {
+      queryKey: '91330206793007818K',
+      usccRaw: '91330206793007818K',
+      nameRaw: '宁波待核旧名有限公司',
+    })
+    const request = boundaryRequest('write-boundary/alias-wrong-uscc-id', {
+      aliases: [{
+        uscc: TARGET_USCC,
+        name: '宁波待核旧名有限公司',
+        sourceKind: 'platform_business',
+        sourceRefId: relationId,
+        verificationStatus: 'confirmed',
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.items.find((item) => item.kind === 'alias')!.error!.code).toBe('alias_source_evidence_mismatch')
+    expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
+    expect(enterpriseExists(db, enterpriseId)).toBe(true)
+  })
+
+  it('裸关系 ID 已归属另一企业时拒绝 confirmed 平台别名', async () => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
+    const otherEnterpriseId = seedEnterprise(db, { name: '宁波关系归属企业有限公司', uscc: '91330206793007818K' })
+    const relationId = seedPlatformRelation(db, {
+      queryKey: TARGET_USCC,
+      usccRaw: TARGET_USCC,
+      nameRaw: '宁波关系归属冲突旧名有限公司',
+      enterpriseId: otherEnterpriseId,
+    })
+    const request = boundaryRequest('write-boundary/alias-wrong-owner-id', {
+      aliases: [{
+        uscc: TARGET_USCC,
+        name: '宁波关系归属冲突旧名有限公司',
+        sourceKind: 'platform_business',
+        sourceRefId: relationId,
+        verificationStatus: 'confirmed',
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.items.find((item) => item.kind === 'alias')!.error!.code).toBe('alias_source_evidence_mismatch')
+    expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
+    expect(enterpriseExists(db, enterpriseId)).toBe(true)
+    expect(enterpriseExists(db, otherEnterpriseId)).toBe(true)
+  })
+
+  it('批内自然键关系的 qymc 不等于别名时拒绝 confirmed 平台别名', async () => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
+    const request = boundaryRequest('write-boundary/alias-wrong-qymc-ref', {
+      platformQueries: [{
+        interface: 'business_list',
+        queryKey: TARGET_USCC,
+        rdjb: '3',
+        queriedAt: '2026-10-17T02:00:00.000Z',
+        status: 'success',
+        relations: [{
+          sequenceNo: 1,
+          relationKey: 'SQ-wrong-qymc',
+          usccRaw: TARGET_USCC,
+          nameRaw: '宁波平台实际返回名称有限公司',
+          matchBasis: 'uscc',
+          verificationStatus: 'confirmed',
+        }],
+      }],
+      aliases: [{
+        uscc: TARGET_USCC,
+        name: '宁波未经返回的曾用名有限公司',
+        sourceKind: 'platform_business',
+        verificationStatus: 'confirmed',
+        sourceRelationRef: {
+          interface: 'business_list',
+          queryKey: TARGET_USCC,
+          rdjb: '3',
+          queriedAt: '2026-10-17T02:00:00.000Z',
+          sequenceNo: 1,
+        },
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('failed')
+    expect(result.items.find((item) => item.kind === 'alias')!.error!.code).toBe('alias_source_evidence_mismatch')
+    expect(db.select().from(schema.platformQuery).all()).toHaveLength(0)
+    expect(db.select().from(schema.platformRelation).all()).toHaveLength(0)
+    expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
+    expect(enterpriseExists(db, enterpriseId)).toBe(true)
+  })
+
+  it('同統代且 qymc 逐字匹配的批内关系可确认平台别名', async () => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波平台别名目标有限公司', uscc: TARGET_USCC })
+    const aliasName = '宁波平台已返回的历史名称有限公司'
+    const request = boundaryRequest('write-boundary/alias-valid-qymc-ref', {
+      platformQueries: [{
+        interface: 'business_list',
+        queryKey: TARGET_USCC,
+        rdjb: '3',
+        queriedAt: '2026-10-17T03:00:00.000Z',
+        status: 'success',
+        relations: [{
+          sequenceNo: 1,
+          relationKey: 'SQ-valid-qymc',
+          usccRaw: TARGET_USCC,
+          nameRaw: aliasName,
+          matchBasis: 'uscc',
+          verificationStatus: 'confirmed',
+        }],
+      }],
+      aliases: [{
+        uscc: TARGET_USCC,
+        name: aliasName,
+        sourceKind: 'platform_business',
+        verificationStatus: 'confirmed',
+        sourceRelationRef: {
+          interface: 'business_list',
+          queryKey: TARGET_USCC,
+          rdjb: '3',
+          queriedAt: '2026-10-17T03:00:00.000Z',
+          sequenceNo: 1,
+        },
+      }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('committed')
+    const relation = db.select().from(schema.platformRelation).all()[0]!
+    expect(db.select().from(schema.enterpriseAlias).all()).toMatchObject([{
+      enterpriseId,
+      name: aliasName,
+      sourceKind: 'platform_business',
+      sourceRefId: relation.id,
+      verificationStatus: 'confirmed',
+    }])
+  })
+
+  it('pending 平台别名仍不可搜索，announcement/manual confirmed 别名可无平台关系', async () => {
+    const db = makeDb()
+    const enterpriseId = seedEnterprise(db, { name: '宁波本地来源别名目标有限公司', uscc: TARGET_USCC })
+    const pendingName = '宁波待核平台名称有限公司'
+    const announcementName = '宁波公告来源历史名称有限公司'
+    const manualName = '宁波人工登记历史名称有限公司'
+    const request = boundaryRequest('write-boundary/alias-pending-and-local', {
+      aliases: [
+        { uscc: TARGET_USCC, name: pendingName, sourceKind: 'platform_business', verificationStatus: 'pending' },
+        { uscc: TARGET_USCC, name: announcementName, sourceKind: 'announcement', verificationStatus: 'confirmed' },
+        { uscc: TARGET_USCC, name: manualName, sourceKind: 'manual', verificationStatus: 'confirmed' },
+      ],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('committed')
+    expect(searchEnterpriseIdsByName(db, pendingName)).toEqual([])
+    expect(searchEnterpriseIdsByName(db, announcementName)).toEqual([enterpriseId])
+    expect(searchEnterpriseIdsByName(db, manualName)).toEqual([enterpriseId])
+    expect(db.select().from(schema.enterpriseAlias).all().map((alias) => alias.verificationStatus)).toEqual([
+      'pending', 'confirmed', 'confirmed',
+    ])
+  })
+
+  it('归并时同唯一键但内容不同的差异行预检拒绝，提交整批不写', async () => {
+    const db = makeDb()
+    const name = '宁波差异冲突归并企业有限公司'
+    const from = seedEnterprise(db, { name })
+    const into = seedEnterprise(db, { name, uscc: TARGET_USCC })
+    const sourceEvidenceId = db.insert(schema.platformQuery).values({
+      interface: 'business_list', queryKey: TARGET_USCC, rdjb: '3',
+      queriedAt: '2026-10-17T04:00:00.000Z', status: 'success',
+    }).returning({ id: schema.platformQuery.id }).get().id
+    const targetEvidenceId = db.insert(schema.platformQuery).values({
+      interface: 'business_list', queryKey: TARGET_USCC, rdjb: '3',
+      queriedAt: '2026-10-17T04:01:00.000Z', status: 'success',
+    }).returning({ id: schema.platformQuery.id }).get().id
+    const recordedAt = '2026-10-17T04:02:00.000Z'
+    const sourceDifferenceId = db.insert(schema.differenceReason).values({
+      enterpriseId: from,
+      titleCode: 'specialized_sme',
+      direction: 'missing_in_miit',
+      status: 'confirmed_reason',
+      reasonCode: 'renamed',
+      reasonNote: '来源行记录了更名',
+      measureCode: 'update_current_name',
+      evidenceQueryId: sourceEvidenceId,
+      verificationStatus: 'confirmed',
+      recordedAt,
+    }).returning({ id: schema.differenceReason.id }).get().id
+    const targetDifferenceId = db.insert(schema.differenceReason).values({
+      enterpriseId: into,
+      titleCode: 'specialized_sme',
+      direction: 'missing_in_miit',
+      status: 'needs_review',
+      reasonCode: null,
+      measureCode: 'manual_review',
+      evidenceQueryId: targetEvidenceId,
+      verificationStatus: 'pending',
+      recordedAt,
+    }).returning({ id: schema.differenceReason.id }).get().id
+    const beforeEnterprises = db.select().from(schema.enterprise).all()
+    const beforeDifferences = db.select().from(schema.differenceReason).all()
+    const request = boundaryRequest('write-boundary/merge-difference-conflict', {
+      merges: [{ fromEnterpriseId: from, intoUscc: TARGET_USCC, sourceKind: 'manual' }],
+    })
+
+    const result = await withRosterHttp(db, async (client) => {
+      const preflight = await client.preflight(request)
+      expect(preflight.preflight.conflicts.find((item) => item.kind === 'merge')!.error!.code)
+        .toBe('merge_difference_conflict')
+      return client.commit(request)
+    })
+
+    expect(result.status).toBe('failed')
+    expect(result.summary.written).toBe(0)
+    expect(enterpriseExists(db, from)).toBe(true)
+    expect(db.select().from(schema.enterprise).all()).toEqual(beforeEnterprises)
+    expect(db.select().from(schema.differenceReason).all()).toEqual(beforeDifferences)
+    expect(db.select().from(schema.differenceReason).all().map((row) => row.id)).toEqual([
+      sourceDifferenceId, targetDifferenceId,
+    ])
+  })
+
+  it('归并时同唯一键且内容等价的差异行仍按原规则保留一条', async () => {
+    const db = makeDb()
+    const name = '宁波差异等价归并企业有限公司'
+    const from = seedEnterprise(db, { name })
+    const into = seedEnterprise(db, { name, uscc: TARGET_USCC })
+    const evidenceQueryId = db.insert(schema.platformQuery).values({
+      interface: 'business_list', queryKey: TARGET_USCC, rdjb: '3',
+      queriedAt: '2026-10-17T05:00:00.000Z', status: 'success',
+    }).returning({ id: schema.platformQuery.id }).get().id
+    const recordedAt = '2026-10-17T05:01:00.000Z'
+    const difference = {
+      titleCode: 'specialized_sme' as const,
+      direction: 'missing_in_miit' as const,
+      status: 'confirmed_reason' as const,
+      reasonCode: 'platform_stale' as const,
+      reasonNote: '平台快照仍未同步',
+      measureCode: 'mark_platform_snapshot' as const,
+      evidenceQueryId,
+      verificationStatus: 'confirmed' as const,
+      recordedAt,
+    }
+    db.insert(schema.differenceReason).values({ enterpriseId: from, ...difference }).run()
+    db.insert(schema.differenceReason).values({ enterpriseId: into, ...difference }).run()
+    const request = boundaryRequest('write-boundary/merge-difference-equivalent', {
+      merges: [{ fromEnterpriseId: from, intoUscc: TARGET_USCC, sourceKind: 'manual' }],
+    })
+
+    const result = await withRosterHttp(db, (client) => client.commit(request))
+
+    expect(result.status).toBe('committed')
+    expect(enterpriseExists(db, from)).toBe(false)
+    const kept = db.select().from(schema.differenceReason).all().filter((row) => row.enterpriseId === into)
+    expect(kept).toHaveLength(1)
+    expect(kept[0]).toMatchObject(difference)
   })
 })
 
@@ -2664,9 +3080,14 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
     expect(rosterRowCounts(db)).toEqual(before)
   })
 
-  it('兼容：显式裸 id 继续可用（指向**已存在**的行），不被自然键逻辑覆盖', () => {
+  it('兼容：显式裸 id 继续可用（指向支持该统代与 qymc 的**已存在**行）', () => {
     const db = makeDb()
     const canonical = seedEnterprise(db, { name: '宁波显式企业有限公司', uscc: '9133021100000000E1' })
+    const relationId = seedPlatformRelation(db, {
+      queryKey: '9133021100000000E1',
+      usccRaw: '9133021100000000E1',
+      nameRaw: '宁波显式旧名有限公司',
+    })
     const result = commitRosterImport(db, {
       idempotencyKey: 'literal-id#sha256:x8',
       sourceKind: 'alias_evidence',
@@ -2677,7 +3098,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
             uscc: '9133021100000000E1',
             name: '宁波显式旧名有限公司',
             sourceKind: 'platform_business',
-            sourceRefId: 12345,
+            sourceRefId: relationId,
             verificationStatus: 'confirmed',
           },
           // 不给来源 ⇒ 契约 §1.2 的 0 哨兵（「无具体来源行引用」）。
@@ -2687,7 +3108,7 @@ describe('批内自然键引用：一批写完「查询 → 关系 → 别名 / 
     })
     expect(result.status).toBe('committed')
     const rows = db.select().from(schema.enterpriseAlias).all().filter((a) => a.enterpriseId === canonical)
-    expect(rows.find((a) => a.name === '宁波显式旧名有限公司')!.sourceRefId).toBe(12345)
+    expect(rows.find((a) => a.name === '宁波显式旧名有限公司')!.sourceRefId).toBe(relationId)
     expect(rows.find((a) => a.name === '宁波无来源旧名')!.sourceRefId).toBe(0)
   })
 })
@@ -2715,9 +3136,36 @@ describe('读面：list_enterprises / list_differences', () => {
             ],
           },
           aliases: [
-            { enterpriseName: '宁波读面企业有限公司', name: '宁波读面旧名', sourceKind: 'platform_business', verificationStatus: 'confirmed' },
+            {
+              enterpriseName: '宁波读面企业有限公司',
+              name: '宁波读面旧名',
+              sourceKind: 'platform_business',
+              verificationStatus: 'confirmed',
+              sourceRelationRef: {
+                interface: 'business_list',
+                queryKey: '913302110000000098',
+                rdjb: '3',
+                queriedAt: '2026-10-17T06:00:00.000Z',
+                sequenceNo: 1,
+              },
+            },
             { enterpriseName: '宁波读面企业有限公司', name: '宁波读面未核别名', sourceKind: 'platform_apply', verificationStatus: 'pending' },
           ],
+          platformQueries: [{
+            interface: 'business_list',
+            queryKey: '913302110000000098',
+            rdjb: '3',
+            queriedAt: '2026-10-17T06:00:00.000Z',
+            status: 'success',
+            relations: [{
+              sequenceNo: 1,
+              relationKey: 'SQ-read-alias',
+              usccRaw: '913302110000000098',
+              nameRaw: '宁波读面旧名',
+              matchBasis: 'uscc',
+              verificationStatus: 'confirmed',
+            }],
+          }],
         },
       })
 
