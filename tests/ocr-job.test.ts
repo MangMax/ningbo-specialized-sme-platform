@@ -757,3 +757,32 @@ it('fails closed with a sanitized error when persisted credential state is malfo
     expect(message.includes('synthetic-corrupt-secret')).toBe(false)
   } finally { delete process.env.NUXT_CREDENTIALS_STATE_DIR }
 })
+
+it('queued OCR retains its submission credential for submit and poll without persisting it in job history', async () => {
+  const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../server/utils/job-runner')
+  const { ocrSpec } = await import('../server/utils/jobs/ocr')
+  const { getJob } = await import('../server/utils/job-store')
+  const { updateCredential } = await import('../server/utils/credential-state')
+  const stateDir = join(dir, 'ocr-queue-state')
+  process.env.NUXT_CREDENTIALS_STATE_DIR = stateDir
+  let release: (() => void) | undefined
+  try {
+    const file = 'queued-credential.pdf'
+    await seedPdf(file, 1); await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
+    api = await startMiniOcrApi({ pages: ['# queued synthetic result'] })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    updateCredential('ocrToken', 'synthetic-queued-ocr-A', { stateDir, env: {} })
+    clearJobSpecs(); registerJob(ocrSpec)
+    registerJob({ kind: 'hold', status: 'ready', summary: 'synthetic gate', parse: () => ({ ok: true, params: {} }), run: async () => { await new Promise<void>(r => { release = r }); return { result: {} } } })
+    submitJob(db, { kind: 'hold', params: {}, filesDir })
+    const row = submitJob(db, { kind: 'ocr', params: { files: [file], model: null }, filesDir })
+    updateCredential('ocrToken', 'synthetic-queued-ocr-B', { stateDir, env: {} })
+    release!(); release = undefined; await whenIdle()
+    expect(getJob(db, row.id)?.state).toBe('done')
+    expect(api.stats.submits).toBe(1)
+    expect(api.stats.polls).toBeGreaterThan(0)
+    expect(api.authSeen.filter(Boolean).every(value => value === 'Bearer synthetic-queued-ocr-A')).toBe(true)
+    const text = JSON.stringify(getJob(db, row.id))
+    expect(text.includes('synthetic-queued-ocr-A') || text.includes('synthetic-queued-ocr-B')).toBe(false)
+  } finally { release?.(); await whenIdle(); delete process.env.NUXT_CREDENTIALS_STATE_DIR; clearJobSpecs() }
+})

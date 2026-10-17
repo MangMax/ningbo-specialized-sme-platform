@@ -37,7 +37,7 @@ import type { PlatformInterface } from '../../lib/labels'
 import {
   type PlatformFetch,
   type PlatformQueryOutcome,
-  hasPlatformCredential,
+  resolveCookie,
   queryPlatformSlots,
 } from '../../lib/platform/client'
 import type { PlatformRdjb, PlatformRow } from '../../lib/platform/adapter'
@@ -597,7 +597,8 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
   // 凭据:拿不到就**不发请求、不写半截结果**,直接以明确原因失败 —— 绝不产出
   // 「一片未查询」的假证据(pipeline 的同一条纪律)。判据用**有效凭据**:调用方显式给的
   // 优先,其次是 MIIT_COOKIE / MIIT_COOKIE_FILE。
-  if (missingSlots > 0 && !hasPlatformCredential(options.cookie)) {
+  const cookie = missingSlots > 0 ? resolveCookie(options.cookie) : ''
+  if (missingSlots > 0 && !cookie) {
     throw new Error(
       '未配置平台会话凭据:请设 MIIT_COOKIE(整条 Cookie 值)或 MIIT_COOKIE_FILE(文件路径)。' +
         '凭据不入库、不进日志、不进仓库;本次不写任何结果。',
@@ -630,7 +631,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
         {
           uscc,
           fetchImpl: options.fetchImpl,
-          cookie: options.cookie,
+          cookie: () => cookie,
           retries: options.retries,
           sleep: options.sleep,
           // `queried_at` 用**请求前的真实时点**(注入时钟时用注入的,便于固定断言)。

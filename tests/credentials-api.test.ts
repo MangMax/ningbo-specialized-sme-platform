@@ -13,6 +13,7 @@ async function start(apiToken = admin) {
   server = await startHttpFixture({ routes: {
     '/api/settings/credentials': request => handleCredentialsRequest('state', request, { apiToken, stateDir: dir, env: {} }),
     '/api/settings/credentials/ocrToken/reveal': request => handleCredentialsRequest('reveal', request, { apiToken, stateDir: dir, env: {} }),
+    '/api/settings/credentials/miitCookie/reveal': request => handleCredentialsRequest('reveal', request, { apiToken, stateDir: dir, env: {} }, 'miitCookie'),
   } })
 }
 async function request(method = 'GET', body?: unknown, authorized = true, suffix = '') {
@@ -117,8 +118,11 @@ it('configuration-only requests leave an isolated business SQLite byte-for-byte 
   const { useDb } = await import('../db/client')
   const db = useDb({ dbPath: join(dir, 'synthetic.sqlite') })
   const before = db.$client.serialize()
-  await request('PATCH', { ocrToken: 'synthetic-no-business-write' })
+  await request('PATCH', { ocrToken: 'synthetic-no-business-write', miitCookie: 'session=synthetic-no-business-write' })
   await request('POST', {}, true, '/ocrToken/reveal')
+  expect((await request('PATCH', { miitCookie: 'session=synthetic-db-unchanged' })).status).toBe(200)
+  expect((await request('POST', {}, true, '/miitCookie/reveal')).status).toBe(200)
+  expect((await request('DELETE', { key: 'miitCookie' })).status).toBe(200)
   await request('DELETE', { key: 'ocrToken' })
   expect(db.$client.serialize().equals(before)).toBe(true)
   db.$client.close()
@@ -134,7 +138,37 @@ it.each([
 })
 it('rejects non-object payloads, unsupported future fields, and has no implicit filesystem target', async () => {
   await start()
-  for (const body of [null, [], 2, { miitCookie: 'synthetic-out-of-scope' }]) expect((await request('PATCH', body)).status).toBe(400)
+  for (const body of [null, [], 2, { unsupported: 'synthetic-out-of-scope' }]) expect((await request('PATCH', body)).status).toBe(400)
   const response = handleCredentialsRequest('state', { method: 'PATCH', headers: { 'x-api-token': admin }, body: { ocrToken: 'synthetic' } }, { apiToken: admin, env: {} })
   expect(response.status).toBe(503)
+})
+
+it('updates Cookie and OCR independently under concurrent HTTP requests and reveals Cookie only with authorization', async () => {
+  await start()
+  await server.close()
+  server = await startHttpFixture({ routes: {
+    '/api/settings/credentials': req => handleCredentialsRequest('state', req, { apiToken: admin, stateDir: dir, env: {} }),
+    '/api/settings/credentials/miitCookie/reveal': req => handleCredentialsRequest('reveal', req, { apiToken: admin, stateDir: dir, env: {} }, 'miitCookie'),
+  } })
+  const responses = await Promise.all([request('PATCH', { ocrToken: 'synthetic-ocr-kept' }), request('PATCH', { miitCookie: 'session=synthetic-cookie' })])
+  expect(responses.map(r => r.status)).toEqual([200, 200])
+  const state = await (await request()).json()
+  expect(state).toMatchObject({ ocrToken: { masked: 'syn********ept' }, miitCookie: { masked: 'ses********kie', source: 'saved' } })
+  const denied = await request('POST', {}, false, '/miitCookie/reveal')
+  expect(denied.status).toBe(401)
+  expect(denied.headers.get('cache-control')).toBe('no-store')
+  const revealed = await request('POST', {}, true, '/miitCookie/reveal')
+  expect(revealed.headers.get('cache-control')).toBe('no-store')
+  expect((await revealed.json()).value === 'session=synthetic-cookie').toBe(true)
+  await request('DELETE', { key: 'miitCookie' })
+  expect((await (await request()).json()).ocrToken.masked).toBe('syn********ept')
+})
+it('masks short Cookie values completely while preserving the separate OCR field', async () => {
+  await start()
+  for (const value of ['a', '12345678']) {
+    const response = await request('PATCH', { miitCookie: value })
+    expect(response.status).toBe(200)
+    expect((await response.json()).miitCookie.masked).toBe('********')
+    expect((await (await request('POST', {}, true, '/miitCookie/reveal')).json()).value === value).toBe(true)
+  }
 })

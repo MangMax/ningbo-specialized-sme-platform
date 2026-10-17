@@ -59,7 +59,7 @@ defineRouteMeta({
                   '`reconcile`:`{ titles?: string[](称号代号), directions?: ("missing_in_miit"|"extra_in_miit")[], ' +
                   'usccs?: string[](只查这几个统一社会信用代码), limit?: number(最多处理多少个差异目标), ' +
                   'concurrency?: 1–12(默认 4), freshnessHours?: number(复用新鲜查询与判定的窗口,默认 24), write?: boolean(默认 true;false = 只判定不回写) }` ' +
-                  '—— 需要服务端配好 `MIIT_COOKIE` / `MIIT_COOKIE_FILE`,未配时任务**明确失败且一行不写**(不产出一片「未查询」的假证据)。',
+                  '—— 需要配置页保存 Cookie 或服务端配好 `MIIT_COOKIE` / `MIIT_COOKIE_FILE`,未配时任务**明确失败且一行不写**(不产出一片「未查询」的假证据)。',
               },
             },
           },

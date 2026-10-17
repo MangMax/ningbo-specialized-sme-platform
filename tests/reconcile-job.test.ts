@@ -172,3 +172,65 @@ describe('任务执行:进度、报告与取消', () => {
     expect(db.select().from(schema.platformQuery).all()).toHaveLength(0)
   })
 })
+
+it('queued reconcile uses its submission Cookie while subsequent jobs use the replacement and no secrets enter SQLite', async () => {
+  const { registerJob, submitJob, whenIdle } = await import('../server/utils/job-runner')
+  const { getJob } = await import('../server/utils/job-store')
+  const { updateCredential } = await import('../server/utils/credential-state')
+  clearEvidence(); clearJobSpecs(); registerJobSpecs()
+  const stateDir = join(dir, 'queue-state')
+  vi.stubEnv('NUXT_CREDENTIALS_STATE_DIR', stateDir)
+  updateCredential('miitCookie', 'session=synthetic-queued-A', { stateDir, env: {} })
+  let release!: () => void
+  registerJob({ kind: 'holder', status: 'ready', summary: 'synthetic gate', parse: () => ({ ok: true, params: {} }), run: async () => { await new Promise<void>(r => { release = r }); return { result: {} } } })
+  submitJob(db, { kind: 'holder', params: {}, filesDir: dir })
+  const seen: boolean[] = []
+  let expected = 'session=synthetic-queued-A'
+  vi.stubGlobal('fetch', async (url: string, init: { headers: Record<string, string> }) => {
+    seen.push(init.headers.Cookie === expected)
+    updateCredential('miitCookie', 'session=synthetic-new-B', { stateDir, env: {} })
+    return { ok: true, status: 200, text: async () => url.includes('businessList') ? fixture('business-list-rdjb1-empty.html') : EMPTY_APPLY_RESPONSE }
+  })
+  const queued = submitJob(db, { kind: 'reconcile', params: { write: false }, filesDir: dir })
+  updateCredential('miitCookie', 'session=synthetic-new-B', { stateDir, env: {} })
+  release(); await whenIdle()
+  expect(getJob(db, queued.id)?.state).toBe('done')
+  expect(seen).toEqual([true, true, true, true])
+  expected = 'session=synthetic-new-B'
+  submitJob(db, { kind: 'reconcile', params: { write: false }, filesDir: dir }); await whenIdle()
+  expect(seen).toEqual(Array(8).fill(true))
+  const serialized = db.$client.serialize().toString('utf8')
+  expect(serialized.includes('synthetic-queued-A') || serialized.includes('synthetic-new-B')).toBe(false)
+})
+it('persists only sanitized platform failure evidence and never turns expired sessions into no_record', async () => {
+  const { updateCredential } = await import('../server/utils/credential-state')
+  clearEvidence(); clearJobSpecs(); registerJobSpecs()
+  const stateDir = join(dir, 'failure-state')
+  vi.stubEnv('NUXT_CREDENTIALS_STATE_DIR', stateDir)
+  const secret = 'session=synthetic-persisted-failure'
+  updateCredential('miitCookie', secret, { stateDir, env: {} })
+  vi.stubGlobal('fetch', async () => ({ ok: false, status: 403, text: async () => `${secret} not authorized` }))
+  const ctx: JobContext = { db, filesDir: dir, jobId: 'synthetic-failure', progress: () => {}, cancelled: () => false }
+  const failed = await getJobSpec('reconcile')!.run!(ctx, { write: true })
+  expect((failed.result as { counts: { queryFailed: number; noRecord: number } }).counts).toMatchObject({ queryFailed: 1, noRecord: 0 })
+  expect(db.select().from(schema.platformQuery).all()).toHaveLength(4)
+  expect(db.$client.serialize().toString('utf8').includes(secret)).toBe(false)
+  clearEvidence()
+  vi.stubGlobal('fetch', async () => ({ ok: true, status: 200, text: async () => '<html><form id="loginForm"><input name="j_password" type="password"></form></html>' }))
+  const expired = await getJobSpec('reconcile')!.run!(ctx, { write: true })
+  expect((expired.result as { counts: { queryFailed: number; noRecord: number } }).counts).toMatchObject({ queryFailed: 1, noRecord: 0 })
+  expect(db.select().from(schema.platformQuery).all().every(row => row.status === 'failed')).toBe(true)
+})
+it('persists sanitized successful raw platform responses without credential echoes', async () => {
+  const { updateCredential } = await import('../server/utils/credential-state')
+  clearEvidence(); clearJobSpecs(); registerJobSpecs()
+  const stateDir = join(dir, 'success-state')
+  vi.stubEnv('NUXT_CREDENTIALS_STATE_DIR', stateDir)
+  const secret = 'session=synthetic-success-evidence'
+  updateCredential('miitCookie', secret, { stateDir, env: {} })
+  vi.stubGlobal('fetch', async (url: string) => ({ ok: true, status: 200, text: async () => url.includes('businessList') ? fixture('business-list-rdjb1-empty.html') + `<!--${secret}-->` : EMPTY_APPLY_RESPONSE }))
+  const result = await getJobSpec('reconcile')!.run!({ db, filesDir: dir, jobId: 'synthetic-success', progress: () => {}, cancelled: () => false }, { write: true })
+  expect((result.result as { counts: { noRecord: number } }).counts.noRecord).toBe(1)
+  expect(db.select().from(schema.platformQuery).all()).toHaveLength(4)
+  expect(db.$client.serialize().toString('utf8').includes(secret)).toBe(false)
+})

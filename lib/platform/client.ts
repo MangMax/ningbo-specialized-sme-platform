@@ -83,7 +83,7 @@ export function hasPlatformCredential(option: PlatformQueryOptions['cookie'] = n
   return resolveCookie(option).length > 0
 }
 
-function resolveCookie(option: PlatformQueryOptions['cookie']): string {
+export function resolveCookie(option: PlatformQueryOptions['cookie']): string {
   if (typeof option === 'function') return option().trim()
   if (option) return option.trim()
   const inline = process.env[COOKIE_ENV]?.trim()
@@ -119,6 +119,24 @@ export function classifyRawQuery(
     queriedAt: input.queriedAt ?? '',
     raw,
   }
+}
+
+/** Scrub complete headers, session/auth components, and long component values,
+ * including escaped wire forms. Avoid replacing unrelated short routing identifiers. */
+function cookieRedactor(cookie: string): (text: string) => string {
+  const values = [cookie, ...cookie.split(';').flatMap(part => {
+    const index = part.indexOf('=')
+    const value = index < 0 ? '' : part.slice(index + 1).trim()
+    const sensitive = /session|token|auth|sid|ticket/i.test(part.slice(0, index))
+    return value && (sensitive || value.length >= 8) ? [value] : []
+  })].filter(Boolean)
+  const forms = [...new Set(values.flatMap(value => [value, JSON.stringify(value).slice(1, -1), encodeURIComponent(value)]))].sort((a, b) => b.length - a.length)
+  return text => forms.reduce((result, value) => {
+    if (value.length >= 8) return result.split(value).join('[REDACTED]')
+    // A short component can also be an ordinary substring of a field name or identifier.
+    const escaped = value.replace(/[^a-zA-Z0-9_]/g, '\\$&')
+    return result.replace(new RegExp(`(?<![a-zA-Z0-9_])${escaped}(?![a-zA-Z0-9_])`, 'g'), '[REDACTED]')
+  }, text)
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -167,9 +185,9 @@ async function post(
       }
       // 4xx 是请求本身的问题(参数/权限),重试没有意义;5xx 才退避重试。
       if (response.status < 500) {
-        throw new PlatformResponseError(`平台返回 HTTP ${response.status}:${text.slice(0, 200)}`)
+        throw new PlatformResponseError(`平台返回 HTTP ${response.status}:${cookieRedactor(cookie)(text).slice(0, 200)}`)
       }
-      lastError = new PlatformResponseError(`平台返回 HTTP ${response.status}:${text.slice(0, 200)}`)
+      lastError = new PlatformResponseError(`平台返回 HTTP ${response.status}:${cookieRedactor(cookie)(text).slice(0, 200)}`)
     } catch (error) {
       // 已定性的错误直接抛出,不参与重试。
       if (
@@ -207,6 +225,18 @@ export async function queryPlatformSlots(
   slots: PlatformSlot[],
 ): Promise<PlatformQueryOutcome[]> {
   const { uscc } = options
+  // One query operation owns one in-memory credential snapshot (including all retries/slots).
+  let cookie = ''
+  let credentialError = false
+  try { cookie = resolveCookie(options.cookie) } catch { credentialError = true }
+  const fixed = { ...options, cookie: () => cookie }
+  const redact = cookieRedactor(cookie)
+  const sanitize = (value: unknown): unknown => {
+    if (typeof value === 'string') return redact(value)
+    if (Array.isArray(value)) return value.map(sanitize)
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, entry]) => [redact(key), sanitize(entry)]))
+    return value
+  }
   const outcomes: PlatformQueryOutcome[] = []
   for (const slot of slots) {
     const base = { interface: slot.interface, rdjb: slot.rdjb ?? '', queryKey: uscc }
@@ -215,8 +245,15 @@ export async function queryPlatformSlots(
     try {
       const path = slot.interface === 'business_list' ? BUSINESS_LIST_PATH : APPLY_LIST_PATH
       const body = slot.interface === 'business_list' ? queryBody(uscc, { rdjb: slot.rdjb! }) : queryBody(uscc)
-      const raw = await post(options, path, body)
-      outcomes.push(classifyRawQuery(raw, { ...base, queriedAt }))
+      if (credentialError) throw new Error('平台凭据文件不可用，请检查权限。')
+      const raw = await post(fixed, path, body)
+      const outcome = classifyRawQuery(raw, { ...base, queriedAt })
+      const rows = sanitize(outcome.rows) as PlatformRow[]
+      // Never turn a redaction placeholder into an enterprise name, alias or relation.
+      const containsCredential = JSON.stringify(rows) !== JSON.stringify(outcome.rows)
+      outcomes.push(containsCredential
+        ? { ...outcome, status: 'failed', maxCount: 0, rows: [], raw: redact(raw), failureReason: '平台业务响应含敏感凭据，已阻止作为业务证据使用。' }
+        : { ...outcome, raw: redact(raw), rows, failureReason: outcome.failureReason ? redact(outcome.failureReason) : outcome.failureReason })
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       outcomes.push({
@@ -226,7 +263,7 @@ export async function queryPlatformSlots(
         rows: [],
         maxCount: 0,
         source: null,
-        failureReason: reason,
+        failureReason: redact(reason),
         raw: '',
       })
     }

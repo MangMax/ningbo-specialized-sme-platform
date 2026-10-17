@@ -1,6 +1,6 @@
 import { createCoreRouteHandler } from './core-route'
-import { credentialContext } from './credential-state'
+import { credentialContext, type CredentialKey } from './credential-state'
 import { handleCredentialsRequest } from './credentials-http'
-export function createCredentialsHandler(action: 'state' | 'reveal') {
-  return createCoreRouteHandler((request, ctx) => handleCredentialsRequest(action, request, ctx), () => ({ ...credentialContext(), apiToken: useRuntimeConfig().apiToken }))
+export function createCredentialsHandler(action: 'state' | 'reveal', key: CredentialKey = 'ocrToken') {
+  return createCoreRouteHandler((request, ctx) => handleCredentialsRequest(action, request, ctx, key), () => ({ ...credentialContext(), apiToken: useRuntimeConfig().apiToken }))
 }
