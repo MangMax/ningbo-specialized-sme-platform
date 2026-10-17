@@ -36,6 +36,12 @@ Confirm the intended app/database target and its current baseline or recoverable
 - Store public-source and platform evidence only in payload shapes the current contract accepts. The supported public-source backfill and merge shapes are described in contract §§8.4 and 8.10. Follow the stricter `cross_source` gate in [`uscc-recovery.md`](./uscc-recovery.md).
 - One batch is atomic: a failed commit writes no business rows. Do not substitute direct SQLite writes or a one-off importer. If a result is uncertain, follow the same-key recovery in [`orchestration.md`](./orchestration.md).
 
+### Correcting existing events and evidence (#34)
+
+The current unified import is not a correction API for stored `record_event` fields or existing evidence coordinates. For a confirmed error in event year, `decidedYear`, `reviewOutcome`, batch, `attachment` or `listNo`, first record the applicable `eventId`, `evidenceId` and `enterpriseId`; source file ID and content hash; exact expected old value and proposed value; original source-page evidence; and the confirmation basis. Track unsupported corrections in #34 and keep them pending. Do not change the idempotency key and reimport to create a replacement event, and do not bypass the contract with SQLite or direct SQL.
+
+The existing `POST /api/roster/evidence/pages` endpoint (contract §8.11) applies only to a verified PDF actual-page correction on an existing evidence row. It updates `page` only; it cannot change event metadata, `attachment` or `listNo`. The request locates a unique row by file-store-relative `sourceFile`, `listNo`, and `enterpriseId` or `enterpriseName`; include `basis`. First submit the exact entry with `dryRun: true`, then compare the returned `evidenceId` and `previous` value with the correction record and confirm the single assignment against the source page. Apply only the same confirmed entry with `dryRun: false`, then verify the response. The route does not accept an expected-old-value precondition, so if the target or current value may have changed since preview, rerun the dry run; if uniqueness or the confirmed page cannot be established, leave it pending. Do not treat this page-only route as a general correction API.
+
 After an import, read the duplicate-name candidate report at `GET /api/roster/import/duplicate-candidates?batchKey=…` (contract §7.8). Candidates without supported platform relation evidence remain pending; do not merge by name.
 
 ## Completion report
