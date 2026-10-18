@@ -20,9 +20,9 @@ Record `reasonCode=pending_review`, `status=confirmed_reason`, `verificationStat
 
 Retain the official event, original workflow number/type/submission time/status, all three interface references and the user decision. Append a new temporal explanation with a new `recordedAt`; keep prior audit records. Preflight/commit/readback through the unified API. If the deployed contract lacks `pending_review`, prepare the request and report it blocked on deployment; use the supported independent classification once deployed.
 
-Positive example: enterprise 1395, 宁波东海仪表水道有限公司, specialized SME formally awarded in 2023; same-title historical terminal pass, latest businessList `SQ332025061924614`, 更新/待审核 at `2025-06-19 09:29:17`, absent from current export → 待审核 for the user-authorized batch.
+Synthetic positive example (合成示例): 甲企业 has a formal award and a historical terminal pass for the same title; its latest process is 更新/待审核 and it is absent from the current export → 待审核 within the user-authorized scope.
 
-Conflict example: enterprise 7389, 宁波先锋新材料股份有限公司, little giant: 2020 application passed; review `SQ332023040761899` failed on `2023-04-07 18:19:00`; update `SQ332023041083202` pending on 2023-04-10. Keep the review failure and pending update together; exclude from this write and await the parent/user decision. The 2026-10-18 batch therefore has 176 candidates, 175 ready decisions and this one conflict.
+Synthetic conflict example (合成示例): 乙企业 has a historical application terminal pass for a title, followed by 复核/终审不通过 and then 更新/待审核 for that same title. Keep the review failure and pending update together; exclude it from the pending-review write batch and await the parent/user decision.
 
 Counterexamples requiring their own adjudication: review terminal rejection (even before a newer pending update); historical pass without a later pending update; a pass belonging only to another title; three complete interfaces returning zero rows. None satisfies this branch. Do not extend a batch to other statuses or enterprises without explicit scope.
 
