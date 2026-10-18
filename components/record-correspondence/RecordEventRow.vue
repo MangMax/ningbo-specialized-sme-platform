@@ -101,7 +101,7 @@ const interfaceSummary = computed(() => {
                 <span v-for="(item, index) in interfaceSummary" :key="item.interfaceName" class="inline-flex flex-wrap items-center gap-1">
                   <span>{{ item.interfaceName }}</span>
                   <span v-if="item.status" class="text-muted-foreground">· {{ item.status }}</span>
-                  <span class="text-muted-foreground tabular-nums">×{{ item.count }}</span>
+                  <span class="text-muted-foreground tabular-nums">原行 {{ item.count }} 条</span>
                   <span v-if="index < interfaceSummary.length - 1">、</span>
                 </span>
               </template>

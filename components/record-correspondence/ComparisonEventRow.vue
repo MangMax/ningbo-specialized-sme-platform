@@ -96,7 +96,7 @@ const classificationVariant = computed(() => props.row.classification === 'histo
         </ul>
         <p v-else class="text-muted-foreground text-[13px]">尚未匹配到这条记录的接口出处。</p>
         <details v-if="otherEdges.length" class="mt-2 text-[13px]">
-          <summary class="text-muted-foreground cursor-pointer">其他登记关系 · {{ otherEdges.length }} 条</summary>
+          <summary class="text-muted-foreground cursor-pointer">{{ otherEdges.some(edge => edge.exportRowId != null) ? '当前导出快照（非历史出处）' : '其他来源匹配' }} · {{ otherEdges.length }} 条</summary>
           <ul class="mt-1 flex flex-col gap-1.5">
             <li v-for="edge in otherEdges" :key="edge.id" class="flex flex-wrap items-center gap-1.5">
               <span class="text-muted-foreground">{{ edge.exportRowId != null ? '当前导出快照（非历史出处）' : '其他来源匹配' }}</span>

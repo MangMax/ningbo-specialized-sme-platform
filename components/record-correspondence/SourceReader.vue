@@ -43,11 +43,11 @@ const eventSections = computed(() => {
     <template v-if="current || displayed">
       <template v-if="event">
         <p class="text-sm font-medium">{{ TITLES[event.record.titleCode] ?? event.record.titleCode }} · {{ eventDecisionText(event) }}</p>
-        <p v-if="!event.evidence.length" class="text-muted-foreground text-[13px]">此事件未记录正式文件出处。</p>
-        <section aria-label="事件对应平台行">
-          <h4 class="mb-2 text-sm font-medium">事件对应关系（含候选）</h4>
+        <p v-if="!event.evidence.length" class="text-muted-foreground text-[13px]">本记录未记录正式文件出处。</p>
+        <section aria-label="本记录的平台来源">
+          <h4 class="mb-2 text-sm font-medium">本记录的平台来源（含未确认）</h4>
           <ul v-if="eventSections.sources.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in eventSections.sources" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul>
-          <p v-else class="text-muted-foreground text-[13px]">尚无已登记的事件对应关系。候选需另行核验，不能把企业级查询视为本事件出处。</p>
+          <p v-else class="text-muted-foreground text-[13px]">尚无匹配来源。候选需核验后才能作为本记录的出处。</p>
         </section>
         <section v-if="eventSections.current.length" aria-label="当前导出快照">
           <h4 class="mb-2 text-sm font-medium">当前导出快照（非历史出处）</h4>
@@ -58,8 +58,8 @@ const eventSections = computed(() => {
       <template v-else>
         <SourceRowDetail v-if="relation" :relation="relation" />
         <SourceRowDetail v-if="exportRow" :export-row="exportRow" />
-        <section aria-label="来源行对应事件">
-          <h4 class="mb-2 text-sm font-medium">对应事件</h4>
+        <section aria-label="相关认定与复核记录">
+          <h4 class="mb-2 text-sm font-medium">相关认定与复核记录</h4>
           <ul v-if="visible?.correspondences.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in visible.correspondences" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul>
           <p v-else class="text-muted-foreground text-[13px]">此原行尚无登记的对应关系；原查询行仍保留。</p>
         </section>

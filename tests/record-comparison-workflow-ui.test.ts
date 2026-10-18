@@ -63,6 +63,7 @@ it('enables comparison only after choosing a document and query through the real
   await wrapper.get('[aria-label="选择称号查询 · 恒川制造"]').trigger('click')
   await flushPromises()
   expect(runButton().attributes('disabled')).toBeUndefined()
+  expect(wrapper.text()).not.toContain('上次结果')
   await runButton().trigger('click')
   await flushPromises()
   expect(compareRequests()).toHaveLength(1)
@@ -111,6 +112,9 @@ it('disables repeat submission while a comparison is pending and explains an emp
   const busy = wrapper.findAll('button').find(button => button.attributes('aria-busy') === 'true')!
   expect(busy.exists()).toBe(true)
   expect(busy.attributes('disabled')).toBeDefined()
+  expect(wrapper.get('[role="status"]').text()).toContain('正在对比')
+  expect(wrapper.get('[role="status"]').element.closest('[inert]')).toBeNull()
+  expect(wrapper.get('[aria-label="对比结果"]').attributes('aria-busy')).toBe('true')
   expect(compareRequests()).toHaveLength(1)
   expect(wrapper.text()).not.toContain('所选范围内没有可见正式事件')
   complete(result)

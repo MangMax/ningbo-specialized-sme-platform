@@ -40,7 +40,7 @@ describe('record source reader public interaction', () => {
     vi.stubGlobal('$fetch', fetch)
     const wrapper = render('relation', 30)
     await flushPromises()
-    expect(wrapper.get('[aria-label="来源行对应事件"]').text()).toContain('已确认')
+    expect(wrapper.get('[aria-label="相关认定与复核记录"]').text()).toContain('已确认')
     await wrapper.setProps({ id: 31 })
     await flushPromises()
     expect(wrapper.text()).toContain('未能读取来源行出处')
@@ -49,7 +49,7 @@ describe('record source reader public interaction', () => {
     await wrapper.get('button').trigger('click')
     await flushPromises()
     expect(fetch).toHaveBeenLastCalledWith('/api/roster/correspondences/relations/31')
-    expect(wrapper.get('[aria-label="来源行对应事件"]').text()).toContain('尚无登记的对应关系')
+    expect(wrapper.get('[aria-label="相关认定与复核记录"]').text()).toContain('尚无登记的对应关系')
   })
 
   it.each([
@@ -63,7 +63,9 @@ describe('record source reader public interaction', () => {
     await flushPromises()
     const link = wrapper.get('a')
     expect(link.text()).toContain(expected)
-    expect(link.text()).toContain('事件 #9')
+    expect(link.text()).not.toContain('事件 #')
+    expect(link.attributes('href')).toBe('/enterprises/42')
+    expect(wrapper.text()).not.toContain('同批次流程背景')
     expect(link.text()).not.toContain('复核 2021')
     expect(link.text()).not.toContain('failed')
   })

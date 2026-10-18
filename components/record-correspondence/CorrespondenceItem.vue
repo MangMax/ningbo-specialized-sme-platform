@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CORRESPONDENCE_ROLES, correspondenceStatusText, eventDecisionText, type CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
+import { correspondenceStatusText, eventDecisionText, type CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
 import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
 import { humanRecordTime } from '~~/lib/roster/record-ledger'
 import { Badge } from '@/components/ui/badge'
@@ -18,16 +18,6 @@ const targetEvent = computed(() => props.edge.event ?? props.edge.predecessorEve
 const eventTo = computed(() => targetEvent.value
   ? { path: `/enterprises/${targetEvent.value.record.enterpriseId}`, query: { eventId: String(targetEvent.value.id), ...(props.returnTo ? { returnTo: props.returnTo } : {}) } }
   : '/comparison')
-
-const TYPE_LABELS: Record<string, string> = {
-  event_process: '记录对应',
-  event_recognized: '认定对应',
-  later_process: '后续记录',
-  event_export_context: '事件快照背景',
-  process_export_context: '流程快照背景',
-  recognized_export: '现状对应',
-}
-const typeLabel = computed(() => TYPE_LABELS[props.edge.type] ?? '对应关系')
 
 const locator = computed(() => {
   const relation = props.edge.relation
@@ -51,16 +41,15 @@ function onEventClick(event: MouseEvent) {
 </script>
 
 <template>
-  <li class="min-w-0 rounded-sm border p-3" :data-correspondence-id="edge.id">
+  <li class="min-w-0 border-t py-2" :data-correspondence-id="edge.id">
     <div class="flex flex-wrap items-center gap-2 text-sm">
-      <strong class="font-medium">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }}</strong>
+      <span class="text-muted-foreground">匹配</span>
       <Badge :variant="edge.status === 'confirmed' && !edge.requiresRevalidation ? 'secondary' : 'outline'">{{ correspondenceStatusText(edge) }}</Badge>
-      <span class="text-muted-foreground text-[13px]">{{ typeLabel }}</span>
     </div>
     <p v-if="targetEvent" class="mt-1 text-[13px]">
-      <NuxtLink :to="eventTo" class="text-primary underline underline-offset-2 hover:no-underline" @click="onEventClick">查看{{ TITLES[targetEvent.record.titleCode] ?? '称号' }} · {{ eventDecisionText(targetEvent) }} · 事件 #{{ targetEvent.id }}</NuxtLink>
+      <NuxtLink :to="eventTo" class="text-primary underline underline-offset-2 hover:no-underline" @click="onEventClick">查看{{ TITLES[targetEvent.record.titleCode] ?? '称号' }} · {{ eventDecisionText(targetEvent) }}</NuxtLink>
     </p>
-    <p class="text-muted-foreground mt-1 text-[13px]">{{ locator }}</p>
+    <details class="text-muted-foreground mt-1 text-[13px]"><summary class="cursor-pointer">来源定位</summary><p>{{ locator }}</p></details>
     <p v-if="edge.requiresRevalidation" class="text-warning mt-1 text-[13px]">出处变更后需重新核验；当前不按已确认出处计。</p>
   </li>
 </template>

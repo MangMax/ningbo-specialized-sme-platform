@@ -110,6 +110,7 @@ useEvidencePreviewScrollRestore(restoreReady, (anchor) => {
 
 /** 一次 200ms 的落点：更新后结果标题轻微变色，告诉用户列表已经换成新结果。 */
 const resultPulse = ref(false)
+const resultVersion = ref(0)
 let pulseTimer: ReturnType<typeof setTimeout> | null = null
 function pulseResult() {
   resultPulse.value = true
@@ -117,9 +118,9 @@ function pulseResult() {
   pulseTimer = setTimeout(() => { resultPulse.value = false }, 700)
 }
 onBeforeUnmount(() => { if (pulseTimer) clearTimeout(pulseTimer) })
-function scrollToResults() {
+function scrollToResults(instant = false) {
   const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-  resultsHeader.value?.scrollIntoView?.({ block: 'start', behavior: reduced ? 'auto' : 'smooth' })
+  resultsHeader.value?.scrollIntoView?.({ block: 'start', behavior: instant || reduced ? 'auto' : 'smooth' })
 }
 
 async function load() {
@@ -142,6 +143,7 @@ async function load() {
     if (current !== requestId) return
     displayed.value = result
     displayedScope.value = { ...target, selection: copySelection(target.selection) }
+    resultVersion.value++
     if (shouldReveal) pulseResult()
   } catch {
     if (current === requestId) error.value = true
@@ -175,15 +177,23 @@ async function navigate(next: ComparisonRouteState, replace = false) {
 function setSelection(value: ComparisonSelection) { selection.value = value }
 function setProofIds(value: number[]) { selection.value = { ...selection.value, proofIds: value } }
 async function run() {
-  if (!canCompare.value) return
+  if (!canCompare.value || loading.value) return
   skipPanelTransition.value = true
   sourcesExpanded.value = false
   revealResults = true
   const next: ComparisonRouteState = { ...committed.value, selection: copySelection(selection.value), asOf: asOfIso.value, page: 1 }
   const sameScope = comparisonRouteKey(next) === comparisonRouteKey(committed.value)
   await navigate(next, sameScope)
-  if (comparisonRouteKey(committed.value) !== comparisonRouteKey(next)) revealResults = false
-  if (sameScope) await load()
+  if (comparisonRouteKey(committed.value) !== comparisonRouteKey(next)) {
+    revealResults = false
+    skipPanelTransition.value = false
+    return
+  }
+  const pending = sameScope ? load() : undefined
+  await nextTick()
+  // 来源表单收起后立刻把进行中反馈带入视野，不等慢请求完成。
+  scrollToResults(true)
+  await pending
 }
 function setClassification(value: unknown) {
   if (typeof value !== 'string' || value !== 'all' && !Object.hasOwn(COMPARISON_CLASSES, value)) return
@@ -272,8 +282,9 @@ const classificationEntries = computed(() => {
       </div>
       <!-- 折叠只收高度，不卸载表单：显式选择、目录 hydration 与返回滚动都依赖这些实例。 -->
       <div
-        class="grid"
-        :class="[!submitted || sourcesExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]', !skipPanelTransition && 'transition-[grid-template-rows] duration-200 ease-snap motion-reduce:transition-none']"
+        class="source-disclosure grid"
+        :class="skipPanelTransition && 'source-disclosure-instant'"
+        :style="{ gridTemplateRows: !submitted || sourcesExpanded ? '1fr' : '0fr' }"
         :inert="!!submitted && !sourcesExpanded"
       >
         <div class="min-h-0 overflow-hidden">
@@ -344,7 +355,8 @@ const classificationEntries = computed(() => {
               <p v-if="!asOfValid" class="text-destructive text-[13px]">请填写有效的截止时点。</p>
               <p v-else-if="!canCompare" class="text-muted-foreground text-[13px]">{{ disabledReason }}</p>
               <p v-else-if="loading" class="text-muted-foreground text-[13px]">正在读取对比结果，完成后会在下方更新。</p>
-              <p v-else-if="selectionChanged" class="text-muted-foreground text-[13px]">来源或截止时点已改，下方仍是上次结果；点「开始对比」更新。</p>
+              <p v-else-if="selectionChanged && displayed" class="text-muted-foreground text-[13px]">来源或截止时点已改，下方仍是上次结果；点「开始对比」更新。</p>
+              <p v-else-if="!displayed" class="text-muted-foreground text-[13px]">已选择来源，点「开始对比」。</p>
               <p v-else-if="displayed" class="text-muted-foreground text-[13px]">结果已更新。</p>
             </div>
           </CardContent>
@@ -358,27 +370,20 @@ const classificationEntries = computed(() => {
         <strong class="text-foreground font-medium">当前目标范围：</strong>{{ targetScopeText }}。下方继续显示上次成功结果；目标加载成功后才替换。
       </p>
 
-      <div class="flex min-w-0 flex-col gap-2">
+      <div class="flex min-w-0 flex-col gap-2" :aria-busy="loading" aria-label="对比结果">
         <h2
           ref="resultsHeader"
           class="scroll-mt-20 text-sm font-medium transition-colors duration-200 ease-snap motion-reduce:transition-none"
           :class="resultPulse && 'text-primary'"
         >{{ resultTitle }}</h2>
-        <TableLoadingStatus kind="comparison" :loading="loading" label="正在读取记录级结果…" />
+        <p v-if="loading" role="status" class="text-muted-foreground flex items-center gap-2 text-sm"><RefreshCw class="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />正在对比，请稍候…</p>
         <TableFailureState v-if="error" title="记录级对比读取失败" :compact="!!displayed" :pending="loading" :description="displayed ? '本次目标未加载，下方保留上次成功的结果；范围见上方。' : '请核对所选来源是否仍可用，然后重试。'" @retry="load" />
-        <TransitionGroup
-          v-if="displayed?.rows.length"
-          tag="div"
-          class="flex min-w-0 flex-col gap-2"
-          enter-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
-          enter-from-class="translate-y-1 opacity-0"
-          leave-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
-          leave-to-class="opacity-0"
-          move-class="transition duration-150 ease-snap motion-reduce:transition-none"
-        >
-          <ComparisonEventRow v-for="row in displayed.rows" :key="row.event.id" :row="row" :return-to="returnTo" />
-        </TransitionGroup>
-        <Empty v-else-if="!loading && !error">
+        <Transition name="comparison-result" appear>
+          <div v-if="displayed?.rows.length" :key="resultVersion" class="flex min-w-0 flex-col gap-2">
+            <ComparisonEventRow v-for="row in displayed.rows" :key="row.event.id" :row="row" :return-to="returnTo" />
+          </div>
+        </Transition>
+        <Empty v-if="!displayed?.rows.length && !loading && !error">
           <EmptyHeader>
             <EmptyMedia variant="icon"><GitCompareArrows /></EmptyMedia>
             <EmptyTitle>所选范围内没有可见正式事件</EmptyTitle>
@@ -397,3 +402,17 @@ const classificationEntries = computed(() => {
     </template>
   </div>
 </template>
+
+<style scoped>
+.source-disclosure { transition: grid-template-rows 180ms var(--ease-snap); }
+.source-disclosure-instant { transition: none; }
+.comparison-result-enter-active { animation: comparison-arrive 180ms ease-out; }
+@keyframes comparison-arrive {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .source-disclosure { transition: none; }
+  .comparison-result-enter-active { animation: none; }
+}
+</style>

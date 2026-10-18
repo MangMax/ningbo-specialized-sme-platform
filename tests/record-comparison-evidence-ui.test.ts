@@ -96,6 +96,7 @@ it('opens an event current snapshot through its export row without presenting it
   mounted.push(wrapper)
   const snapshot = wrapper.findAll('details').find(item => item.text().includes('当前导出快照'))!
   expect(snapshot.text()).toContain('非历史出处')
+  expect(snapshot.get('summary').text()).toContain('当前导出快照（非历史出处）')
   await snapshot.get('button').trigger('click')
   await flushPromises()
   expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/roster/correspondences/export-rows/8')
