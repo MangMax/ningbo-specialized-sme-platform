@@ -39,9 +39,11 @@
 | `event_process` | 正式 `eventId` | `business_list` 或 `apply_list` 的 `relationId` | `supports_award`、`supports_review` 或 `context_only`；写明原流程状态与所支持的具体事实。`context_only` 不足以宣称结论一致。 |
 | `event_recognized` | 正式 `eventId` | `recognized_list` 的 `relationId` | `recognized_corrob`：仅佐证平台在该次查询中的认定行与该正式事件可对应；若该行只证明当前在册，标 `current_context`，不回填历史认定年。 |
 | `later_process` | `enterpriseId`＋`titleCode`，可选 `predecessorEventId` | `business_list` 或 `apply_list` 的 `relationId` | `followup_apply`、`followup_update`、`followup_review`；可独立于任何正式事件存在，关联前驱时也**不自动成为前驱结果**。 |
-| `recognized_export` | `recognized_list` 的 `relationId` | 指定版本的 `platform_export_row.id` | `same_current_row`／`candidate_same_current_row`，只用于同范围现状一致性；永不作为正式事件的直接出处。 |
+| `event_export_context` | 正式 `eventId` | 指定版本的 `platform_export_row.id` | `current_snapshot_context`：该行是事件详情可追溯的当前快照出处，不证明历史事件结论，也不改写正式出处。可无认定接口行。 |
+| `process_export_context` | `business_list` 或 `apply_list` 的 `relationId` | 指定版本的 `platform_export_row.id` | `current_snapshot_context`：该行是流程详情可追溯的当前快照出处，不代表流程已获正式认定。可无认定接口行。 |
+| `recognized_export` | `recognized_list` 的 `relationId` | 指定版本的 `platform_export_row.id` | `same_current_row`／`candidate_same_current_row`，只用于同范围现状一致性；认定行可作中介，但不是事件/流程关联导出行的必经端点。 |
 
-同一事件可连多条流程/认定行，同一平台行可因不同正式附件或复核事项连接多个事件，但每条边必须逐事件说明支持的事实；同一对端点、角色和有效版本只计一次。后续流程与旧事件可能并行展示；其状态不会覆盖已确认的历史事件结果。导出行可与多条平台已认定行候选相连，但未消解重复行之前不宣布一对一事实。物理记录应有独立 `correspondenceId`、边类型/角色、目标自然身份、状态、规则版本、依据、创建/决定/失效时间和 `revision`；审计独立追加，不以删除表示解除。
+同一事件可连多条流程/认定行，同一平台行可因不同正式附件或复核事项连接多个事件，但每条边必须逐事件说明支持的事实；同一对端点、角色和有效版本只计一次。已确认的 `event_process` `context_only` 可以表示**同批次流程确实对应此事件**，即使原状态与正式结论相冲突；对应事实与结论一致性分别判断。后续流程与旧事件可能并行展示；其状态不会覆盖已确认的历史事件结果。导出行可与多条事件、流程或平台已认定行候选相连，但未消解重复行之前不宣布一对一事实。事件/流程与导出行须核验主体、称号、版本、原行及采集范围；这种边只说明快照观察与该记录的上下文关系，不作为历史结论、平台已认定或缺失的证据。不存在匹配导出行时仅记录导出批次的范围、版本与覆盖完整性；只有已证实覆盖目标范围才可作为**负向覆盖证据**，否则标覆盖未知，不创建空端点、零行或“缺失行”的正向对应。物理记录应有独立 `correspondenceId`、边类型/角色、目标自然身份、状态、规则版本、依据、创建/决定/失效时间和 `revision`；审计独立追加，不以删除表示解除。
 
 ### 候选与身份门槛
 
@@ -61,13 +63,14 @@
 | 维度 | 判定与主计数粒度 |
 |---|---|
 | `historical_aligned` | 正式事件有足以支持**该事件所述事实**的已确认对应，且无已核实冲突；`distinct eventId`。可同时带 `has_later_process` 旗标，不再另加为“另一条历史事件”。 |
+| `historical_conflict` | 已确认对应定位到**同一正式事件/批次**的具体平台行，身份、称号、流程类型和时序已核实；其原状态（如正式获批后同批申报仍待审核/退回）与正式结论相抵触；`distinct eventId`。报告双方原值、出处及查询时间。此为来源陈述冲突，不自动推断未认定、平台未更新或任何业务原因；缺已认定行须另按覆盖资格陈述。 |
 | `historical_corresponded_later_process` | 历史已对应，另有独立后续申请/更新/复核在途、退回或不通过；主计数 `distinct enterpriseId,titleCode,relationId`，并单报涉及的事件数。后续状态不冲销历史一致。 |
-| `official_without_correspondence` | 正式事件缺足够已确认平台对应；`distinct eventId`，但只有覆盖该事件所需来源与范围的完整查询才可进一步叫“平台未见对应”。覆盖不足时归 `unresolved`，不作业务缺失断言。 |
+| `official_without_correspondence` | 正式事件没有已确认的 `event_process`／`event_recognized` 对应；导出快照上下文边不算历史平台对应；`distinct eventId`，且只有覆盖该事件所需来源与范围的完整查询才可进一步叫“平台未见对应”。已有流程/认定对应但尚不能判断一致/冲突时归 `unresolved`，不算缺对应；覆盖不足也归 `unresolved`，不作业务缺失断言。 |
 | `platform_without_official` | 已核主体与称号的具体平台流程/认定行，未连正式事件，且同范围的正式来源覆盖已确认；`distinct (interface,queryId,sequenceNo)`。独立后续流程不自动算作正式公告缺失。 |
-| `unresolved` | 候选歧义、身份/称号冲突、缺业务字段或查询 incomplete / 未查询；按 `distinct eventId`、`distinct relationId` 和查询覆盖单元**分别**报，不把不同粒度相加。 |
+| `unresolved` | 候选歧义、身份/称号冲突、缺业务字段、已有对应但事实/时序仍不足以判一致或冲突，或查询 incomplete / 未查询；按 `distinct eventId`、`distinct relationId` 和查询覆盖单元**分别**报，不把不同粒度相加。已核实的同批次状态冲突不因缺已认定行降为此类。 |
 | `current_source_consistency` | 符合下节资格的已认定行和导出行，同一现状范围内已匹配／接口独有／导出独有／字段冲突；按 `distinct recognized relationId` 与 `distinct (batchId,sourceRowNo)` 分开计。无资格显示 `not_comparable`，不算“不一致”。 |
 
-历史事件的主分类每事件至多一个，优先 `unresolved`（证据不足时）→ 已确认一致或已核实冲突 → 完整覆盖下仍无对应；后续流程和当前一致性是**独立维度**。需同时返回原始行数、去重事件数、去重平台行数、去重企业×称号数与各自分母，分页前计数；同一行有多条边仍只按稳定行 ID 计一次。筛选/分页改变可见列表，不改全范围计数，另可返回筛选后计数且明示口径。不能把六类数字相加为“企业总数”，也不能只取最新接口行/最新历史事件。
+历史事件主分类以 `distinct eventId` 每事件恰落一类：先核验身份/称号/批次/时序；已确认同事件流程/认定行且结论相抵触为 `historical_conflict`（即使另有支持行），无冲突且有足够支持为 `historical_aligned`；有已确认流程/认定对应但事实尚不足则为 `unresolved`；无此类已确认对应时，完整覆盖为 `official_without_correspondence`，否则为 `unresolved`。身份或对应范围未核实时也为 `unresolved`，不能凭原状态直接报冲突；导出快照上下文不改变历史主分类。后续流程和当前一致性是**独立维度**。需同时返回原始行数、去重事件数、去重平台行数、去重企业×称号数与各自分母，分页前计数；同一行有多条边仍只按稳定行 ID 计一次。筛选/分页改变可见列表，不改全范围计数，另可返回筛选后计数且明示口径。不能把不同粒度的数字相加为“企业总数”，也不能只取最新接口行/最新历史事件。
 
 ### 已认定接口与导出的可比较资格
 
@@ -86,7 +89,7 @@
 
 | 目的 | 拟议 REST | 拟议 MCP | 契约要点 |
 |---|---|---|---|
-| 发现与读取 | `GET /api/roster/correspondences`；`GET /api/roster/correspondences/:id/audit` | `list_record_correspondences`、`get_record_correspondence_audit` | 按 eventId、relationId、exportRowId、enterpriseId、titleCode、类型、角色、状态、规则版本过滤；返回两端原行/正式出处定位、历史决定、分页与总数。审计按 ID 有序。 |
+| 发现与读取 | `GET /api/roster/correspondences`；`GET /api/roster/correspondences/:id/audit` | `list_record_correspondences`、`get_record_correspondence_audit` | 按 eventId、relationId、exportRowId、enterpriseId、titleCode、类型、角色、状态、规则版本过滤；返回两端原行/正式出处定位、历史决定、分页与总数。事件/流程→导出行及导出行→事件/流程均可逐边读取，包含批次版本、源行号、采集范围/时间与快照角色；无匹配行时返回覆盖状态，不伪造行。审计按 ID 有序。 |
 | 候选生成 | `POST /api/roster/correspondences/candidates` | `find_record_correspondence_candidates` | **只读**计算，指定事件/企业称号、允许的已归档查询 ID、导出批次 ID 和 `ruleVersion`；返回候选、身份/称号/事实字段逐项证据、冲突、覆盖及目标 revision；不抓平台、不写业务数据。 |
 | 记录级对比 | `GET /api/roster/record-comparison` | `list_record_comparison` | 要求明确来源/正式覆盖范围、导出 batch ID 与接口查询集或 `asOf` 策略；返回 §4 各维度/粒度、资格及不完整原因，事件和行的正反向引用。默认只读。 |
 | 预检决定 | `POST /api/roster/correspondences/preflight` | `preflight_record_correspondences` | 封套 `idempotencyKey`、`sourceKind`、`sourceIdentity`、`expectedRevision`/对象版本、`operations[]`；只生成固定目标与影响计划，逐项列 old/new、冲突、预期新增/解除/更正/审计数、受影响旧结论 ID，不改对应业务行。若沿用现有 import_batch 预检记账，须明确其“只读业务、可写记账”事实。 |
@@ -94,7 +97,7 @@
 
 这是一组**拟议能力**，不表示现有 `payload` 已支持对应边。现有 `sourceKind` 只有 `announcement` / `platform_export` / `alias_evidence`；拟议新增明确的 `correspondence_decision`（或经评审确认的等义类型），不能把对应决定伪装成“别名证据”。后续实现应优先将操作纳入 RL-11 的统一导入事务/幂等机制（可用新增受控操作类型或共用同一写入模块），而不是第二条无审计数据库写路；具体路由是否折叠到 `/api/roster/import/{preflight,commit}` 可在接口评审中确定，但以上原子性与客户端语义不变。预检结果需绑定具体目标、原值、输入哈希和数据库 revision；提交不重新以名称搜索替换目标。相同幂等键＋同请求指纹返回原回执，不重复审计；同键不同载荷冲突。提交响应丢失时以**原键**查询回执并读回，不换键再试。错误至少区分 `invalid_endpoint_type`、`identity_conflict`、`title_conflict`、`ambiguous_candidate`、`incomplete_coverage`、`stale_revision`、`plan_mismatch`、`idempotency_conflict`；409 用于并发/幂等冲突，422 用于确定性语义拒绝。预检与提交影响须一致，漂移则拒绝并重新预检，不“尽量提交”。
 
-企业完整页拟按事件展开文件出处及对应三接口**具体行**，每行显示来源、原查询/条件、原时间、原状态、业务号、对应角色与确认状态；独立后续流程另列。平台行反向显示其关联事件/流程；认定与导出一致性另列。中文业务名称与原文优先，内部 ID 在证据详情中；既有文件预览、PDF 实际页码、返回位置保持。后续 UI 票须在桌面和 390px 真实交互验收。
+企业完整页拟按事件展开正式文件、三接口**具体行**及有对应时的导出原行；流程详情也展示其对应导出原行。每项显示来源、查询/导出版本与范围、原时间、原状态、业务号或源行号、对应角色与确认状态；快照上下文与正式事实分开标识。独立后续流程另列；接口行及导出行可反向查看关联事件/流程，认定与导出一致性另列。无导出行时显示覆盖状态及其条件，不显示虚构行。中文业务名称与原文优先，内部 ID 在证据详情中；既有文件预览、PDF 实际页码、返回位置保持。后续 UI 票须在桌面和 390px 真实交互验收。
 
 ## 6. 既有结论、#14/#34 与迁移
 
@@ -113,13 +116,13 @@
 | # | 输入与操作 | 必须观察到 |
 |---|---|---|
 | 1 | 企业 A 2021 正式认定，2021 平台同称号通过行确认对应；2025 更新退回，2025 无新公布，当前导出缺行。 | 2021 事件 `historical_aligned`；退回是独立 `later_process`；当前缺行仅在可比资格成立时单列，不撤销历史。 |
-| 2 | 企业 B 新批次正式获批，匹配申报行仍待审核/退回且无已认定行。 | 正式事实保留；申报对应可确认其流程身份但不能当作平台已认定；充分覆盖后由代理确认“平台未更新”等原因，不能自动判。 |
+| 2 | 企业 B 新批次正式获批后，同批次申报行在随后查询中仍待审核/退回；主体、称号、批次与时序核实并确认 `event_process` 对应，无已认定行。 | 正式事实保留；该事件报 `historical_conflict`、按 `distinct eventId` 计一次，展示平台流程原状态与正式结论；既非缺对应也非证据不足。未查到已认定行仅按实际查询覆盖陈述，不生成正面行；“平台未更新”等原因留待代理/用户取证，不自动判。 |
 | 3 | 企业 C 2024 复核终审不通过，2025 新申请/更新；同称号多行，时间最新的是新申请。 | 复核结果和新流程分别可查，新申请不覆盖失败复核，也不自动恢复资格；首次认定仍按最早正式 award。 |
 | 4 | 同一企业有两称号、同称号两批正式事件；一次 `business_list` 六行和一次 `apply_list` 两行，查询含重复平台业务号。 | 多对多对应逐行定位、原行全数保留；不能跨称号/年份；未对应行仍计未对应，不能把查询整体当成匹配。 |
 | 5 | 同码的已认定接口行与指定导出行存在，随后再构造同范围同版本条件下字段矛盾。 | 有资格时先判已匹配，矛盾给 `field_conflict` 与两方行/版本/条件；只给同日但版本未知时 `not_comparable`，不误报导出缺失或猜同步延迟。 |
 | 6 | 三称号查询只完成一个称号、另一个 auth_failed；另有单称号完整零行。 | 已取得行可作正面候选；未覆盖称号不报缺失；完整零行仅为该称号/AND 条件的负向覆盖，无正面事件出处。 |
 | 7 | 缺正式年度/批次、同名两主体、异常名称、平台 USCC 冲突与不确定流程类型。 | 候选列原值/冲突，API/MCP 均阻止自动猜身份或跨称号确认；代理可确认有充分依据的唯一行或拒绝候选，其他留空待核。 |
-| 8 | 从企业页的一个事件打开三接口行与正式文件页，再从接口行返回事件；390px 与桌面分别操作。 | 正反向到具体行；独立后续流程有独立区块；文件/页/返回上下文不退化；来源角色、采集时间、确认状态可读。 |
+| 8 | 从企业页的一个事件与一条流程分别打开导出原行、三接口行和正式文件页，再从导出/接口行返回事件或流程；另取没有认定接口行但有导出行、以及没有匹配导出行的样本；390px 与桌面分别操作。 | 无认定行时仍能直接正反向到导出具体版本和行；无导出行时仅见覆盖状态而无伪造行；独立后续流程有独立区块；文件/页/返回上下文不退化；来源角色、采集时间、确认状态可读。 |
 | 9 | 预检同时确认、拒绝、解除、更正多条边；提交前更改一条 revision，重放原键再用同键异载荷。 | 漂移整批拒绝且无半写；重新预检后影响与提交/审计数一致；原键同指纹重放无新增，同键异载荷冲突；旧结论归档/待核可读，无 SQL 回写或凭据泄露。 |
 
 以上为**合成验收设计**，本次文档提交未运行这些场景、未运行测试、未接触真实平台或业务数据库。
