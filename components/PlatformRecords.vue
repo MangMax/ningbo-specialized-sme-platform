@@ -5,6 +5,8 @@ import { PLATFORM_QUERY_STATUSES, PLATFORM_QUERY_STATUS_ORDER, PLATFORM_RDJBS, R
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import PlatformQueryProvenance from './PlatformQueryProvenance.vue'
 import PlatformRecordDetails from './PlatformRecordDetails.vue'
+import RecordSourceReader from './record-correspondence/SourceReader.vue'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { platformFailureForDisplay, recognizedField } from '~~/lib/roster/platform-records'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,7 +14,8 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
-const props = defineProps<{ queries: PlatformRecordQuery[]; relations: PlatformRecord[] }>()
+const props = defineProps<{ queries: PlatformRecordQuery[]; relations: PlatformRecord[]; returnTo?: string | null }>()
+const selectedRelationId = ref<number | null>(null)
 const selectedTitle = ref('all')
 const selectedSource = ref('all')
 const collapsedGroups = ref(new Set<string>())
@@ -166,7 +169,7 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                     <td class="px-3 py-1.5">{{ record.batch ?? '未提供' }}</td>
                     </template>
                     <td v-if="table.hasAliases" class="px-3 py-1.5">{{ record.aliasNameRaw ?? '—' }}</td>
-                    <td class="px-3 py-1.5"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /></td>
+                    <td class="px-3 py-1.5"><div class="flex flex-wrap items-center gap-1"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /><Button variant="ghost" size="sm" @click="selectedRelationId = record.id">对应事件/出处</Button></div></td>
                   </tr>
                 </template>
               </tbody>
@@ -175,5 +178,11 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
         </section>
       </TabsContent>
     </Tabs>
+    <Dialog :open="selectedRelationId !== null" @update:open="!$event && (selectedRelationId = null)">
+      <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl" data-testid="platform-correspondence-dialog">
+        <DialogHeader><DialogTitle>平台原行对应事件/出处</DialogTitle><DialogDescription>按具体原行核对对应状态与正式事件；查询成功不等于对应已确认。</DialogDescription></DialogHeader>
+        <RecordSourceReader v-if="selectedRelationId !== null" kind="relation" :id="selectedRelationId" :return-to="returnTo" />
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
