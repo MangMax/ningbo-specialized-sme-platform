@@ -174,3 +174,27 @@ describe('candidate coverage boundaries', () => {
     expect(listRecordCorrespondences(db)).toEqual([])
   })
 })
+
+describe('reconfirmation through public adapters', () => {
+  it('reconfirms a corrected same edge atomically with old and new official evidence audited', () => {
+    const { db, event, relation } = fixture()
+    const original = { ...decision(event.id, relation.id), operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' } }] }
+    const firstPlan = dispatchRecordCorrespondenceMcp('preflight', original, { db, authorized: true }) as any
+    const firstReceipt = handleRecordCorrespondenceRequest({ action: 'commit', method: 'POST', body: { request: original, planHash: firstPlan.planHash }, headers: { authorization: 'Bearer synthetic-token' } }, { db, apiToken: 'synthetic-token' }).body as any
+    const id = firstReceipt.correspondenceIds[0]
+    const evidence = db.select().from(schema.recordEvidence).get()!
+    db.update(schema.recordEvidence).set({ page: 4 }).where(eq(schema.recordEvidence.id, evidence.id)).run()
+    const correction = { ...original, idempotencyKey: 'synthetic-correct', sourceIdentity: 'synthetic/correct', operations: [{ action: 'correct', correspondenceId: id, expectedRevision: 2, edge: original.operations[0]!.edge }] }
+    const plan = handleRecordCorrespondenceRequest({ action: 'preflight', method: 'POST', body: correction, headers: { authorization: 'Bearer synthetic-token' } }, { db, apiToken: 'synthetic-token' }).body as any
+    expect(plan.impact).toEqual({ created: 0, unlinked: 1, audit: 2 })
+    const receipt = dispatchRecordCorrespondenceMcp('commit', { request: correction, planHash: plan.planHash }, { db, authorized: true }) as any
+    expect(receipt.correspondenceIds).toEqual([id])
+    expect(dispatchRecordCorrespondenceMcp('batch', { idempotencyKey: correction.idempotencyKey }, { db, authorized: true })).toEqual(receipt)
+    expect(listRecordCorrespondences(db)[0]).toMatchObject({ status: 'confirmed', revision: 4, requiresRevalidation: false })
+    const audit = dispatchRecordCorrespondenceMcp('audit', { id }, { db }) as any
+    expect(audit.rows.map((row: any) => row.toStatus)).toEqual(['candidate', 'confirmed', 'unlinked', 'confirmed'])
+    expect(audit.rows[2].evidence.officialEvidence[0].evidence.page).toBe(3)
+    expect(audit.rows[3].evidence.officialEvidence[0].evidence.page).toBe(4)
+    expect(JSON.stringify(audit)).not.toContain('SECRET-RAW')
+  })
+})
