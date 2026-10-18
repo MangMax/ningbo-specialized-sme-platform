@@ -25,7 +25,7 @@ defineRouteMeta({
     tags: ['比对'],
     summary: '查比对结果',
     description:
-      '按称号 / 方向过滤,分页返回;含人工标注(`curated`)、库内平台原因与证据(`platform`)与旧解释缓存对照(`reconcile`)。',
+      '按称号 / 方向过滤,分页返回;含人工标注(`curated`)、库内平台原因与证据(`platform`)与旧解释缓存对照(`reconcile`)。已认定查询保留全部原始行，行 enterpriseId 为 number 或 null（未匹配主体）；platform.relationCount 为展示查询的来源行总数，不代表确认归属。',
     parameters: [
       {
         name: 'title',

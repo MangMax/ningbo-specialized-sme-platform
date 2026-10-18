@@ -42,6 +42,10 @@ partial/失败/未查询必须保留每个未完成称号的实际 next/failed p
 
 `query.collectionEvidence` 旧记录为 null；关系新增可空 `sourceRdjb`、`sourcePage`，由原页行计数映射。`GET /api/roster/enterprises/:id` / `get_enterprise_detail` 的 `platform.queries` 同样带 collectionEvidence/titleCode，`platform.relations` 带 rawFields 和页/称号。#60 应展示实际条件、原时间、历史与状态，按 sourceRdjb 显示各称号原字段，不把维护年当认定年。
 
+企业详情与对比页对纳入的已认定查询读取全部原始来源行，包括先归档、后建主档时仍未匹配的行。新来源行额外返回 `enterpriseId: number | null`（旧来源可不带该字段）；null 明确表示未匹配主体，查询键覆盖不代表主体确认。读取不重匹配、不回填归属。查询的 `relationCount` 与实际返回行一致，对比页 `platform.relationCount` 为所展示查询的来源行总数；不纳入查询键和已有关系归属均无关的其他查询。
+
+显式差异决定引用已认定查询或行时，非空 supplied USCC 必须与解析到的企业代码一致；名称回退不能覆盖矛盾代码。查询/行 ID 与自然键引用适用同一校验；未提供代码时保留既有有效名称定位行为，证据仍必须满足精确主体与称号约束。
+
 `differences[].evidenceQueryRef/evidenceRelationRef` 可用新来源同批自然键；裸查询/关系 ID 也可引用已存行。省略 queriedAt 仍要求唯一；错误来源、跨查询混指、其他企业/称号的关系拒绝。query-only 引用需查询键精确指向目标代码。显式差异决定仍由代理给出，软件不自动判断原因。
 
 ## 验收边界

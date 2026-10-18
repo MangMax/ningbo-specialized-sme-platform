@@ -92,3 +92,17 @@ it('原认定字段逐项保持原值，不把不同字段合成一项', () => {
  expect(details.findAll('dd').slice(-3).map(d=>d.text())).toEqual(['原认定说明','2022-01-01','2022-01-02'])
  view.unmount()
 })
+
+it('归档未匹配主体行保留引用和全部称号，切换后仍明确身份待核', async () => {
+ const unmatched = rows.map(row => ({...row, enterpriseId:null, matchBasis:'none', verificationStatus:'pending'}))
+ const view=mount(PlatformRecords,{props:{queries:[query],relations:unmatched}})
+ await view.get('select[aria-label="记录来源"]').setValue('recognized_list')
+ expect(view.findAll('[data-testid="platform-relation"]')).toHaveLength(4)
+ for(const row of view.findAll('[data-testid="platform-relation"]')) expect(row.text()).toContain('未匹配主体')
+ expect(view.text()).toContain('已认定企业列表 4 条')
+ await view.get('[data-title-value="1"]').trigger('keydown',{key:'Enter'})
+ expect(view.findAll('[data-testid="platform-relation"]').map(row=>row.attributes('data-record-id'))).toEqual(['100','101'])
+ expect(view.get('[data-testid="platform-row-details"]').text()).toContain('主体归属未匹配主体')
+ expect(view.get('[data-testid="platform-row-details"]').text()).toContain('查询引用#60')
+ view.unmount()
+})
