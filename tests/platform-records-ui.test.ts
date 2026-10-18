@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { mount } from '@vue/test-utils'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import PlatformRecords from '../components/PlatformRecords.vue'
 import { platformFailureForDisplay } from '../lib/roster/platform-records'
 
@@ -92,6 +92,34 @@ describe('面向用户的平台记录表',()=>{
   ['cookie parser error', '平台查询未完成，请稍后重试。'],
  ])('失败原因 %s 不猜测为登录过期', (raw, expected)=>{
   expect(platformFailureForDisplay(raw)).toBe(expected)
+ })
+ it.each(['business_list', 'recognized_list'])('每行操作保持 %s 的原行详情与反向来源身份', async (source)=>{
+  const records=[{...record,id:101,aliasNameRaw:'原曾用名',rawFields:{customBusiness:'第一行原值'}},{...record,id:102,aliasNameRaw:null,rawFields:{customBusiness:'第二行原值'}}]
+  const fetch=vi.fn(async()=>({source:{...records[1],query},correspondences:[]}))
+  vi.stubGlobal('$fetch',fetch)
+  const view=mount(PlatformRecords,{attachTo:document.body,props:{queries:[{...query,interface:source}],relations:records}})
+  try {
+   const table=view.get('table')
+   const rows=table.findAll('[data-testid="platform-relation"]')
+   expect(rows).toHaveLength(2)
+   expect(table.get('thead').text()).toContain('曾用名')
+   expect(rows[0]!.text()).toContain('原曾用名')
+   for(let index=0;index<rows.length;index++) {
+    const row=rows[index]!
+    await row.get('[data-testid="platform-row-details-toggle"]').trigger('click')
+    await flushPromises()
+    const dialog=new DOMWrapper(document.querySelector('[data-testid="platform-row-details"]')!)
+    expect(dialog.text()).toContain(`行 #${101+index} · 原始记录`)
+    expect(dialog.text()).toContain(index===0?'第一行原值':'第二行原值')
+    await dialog.get('[data-slot="dialog-close"]').trigger('click')
+    await flushPromises()
+   }
+   await rows[1]!.findAll('button').find(button=>button.text()==='对应事件/出处')!.trigger('click')
+   await flushPromises()
+   expect(fetch).toHaveBeenLastCalledWith('/api/roster/correspondences/relations/102')
+   expect(document.querySelector('[data-testid="platform-correspondence-dialog"]')?.textContent).toContain('第二行原值')
+   expect(table.findAll('[data-testid="platform-relation"]')).toHaveLength(2)
+  } finally { view.unmount(); vi.unstubAllGlobals() }
  })
  it('缺少查询记录时显示未查询，不编造平台空记录',()=>{
   const view=mount(PlatformRecords,{props:{queries:[],relations:[]}})

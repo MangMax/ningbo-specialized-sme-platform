@@ -49,6 +49,22 @@ describe('record source reader public interaction', () => {
     expect(wrapper.get('[aria-label="来源行反向对应"]').text()).toContain('尚无登记的对应关系')
   })
 
+  it.each([
+    { name: 'direct review event', type: 'event_process', year: 2021, decidedYear: 2024, expected: '原认定 2021 年 · 复核结论 2024 年 · 复核不通过' },
+    { name: 'predecessor review with unknown years', type: 'later_process', year: null, decidedYear: null, expected: '原认定 年份待核 · 复核结论年份待核 · 复核不通过' },
+  ])('uses explicit business years in the link for $name', async ({ type, year, decidedYear, expected }) => {
+    const review = { ...event, eventType: 'review', year, decidedYear, reviewOutcome: 'failed' }
+    const correspondence = { ...edge(1, type, 'confirmed'), event: type === 'later_process' ? null : review, predecessorEvent: type === 'later_process' ? review : null }
+    vi.stubGlobal('$fetch', vi.fn(async () => ({ source: relation, correspondences: [correspondence] })))
+    const wrapper = render('relation', 30)
+    await flushPromises()
+    const link = wrapper.get('a')
+    expect(link.text()).toContain(expected)
+    expect(link.text()).toContain('事件 #9')
+    expect(link.text()).not.toContain('复核 2021')
+    expect(link.text()).not.toContain('failed')
+  })
+
   it('labels a review by its original award year and later conclusion year', async () => {
     const review = { ...event, eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed' }
     vi.stubGlobal('$fetch', vi.fn(async () => ({ source: review, correspondences: [] })))
