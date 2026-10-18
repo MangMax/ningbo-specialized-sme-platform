@@ -170,7 +170,8 @@ defineRouteMeta({
           "fetchedCount": {
             "type": "integer"
           },
-          "declaredTotal": {
+          "maxPage": { "type": "integer", "nullable": true, "minimum": 1 },
+        "declaredTotal": {
             "type": "integer",
             "nullable": true
           },

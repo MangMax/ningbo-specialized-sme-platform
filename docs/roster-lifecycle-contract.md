@@ -93,7 +93,7 @@
 | 列 | 类型 | 空 | 枚举 / 默认 | 说明 |
 |---|---|---|---|---|
 | `id` | integer | | PK | |
-| `interface` | text | | `business_list` \| `apply_list` | 两个接口 |
+| `interface` | text | | `business_list` \| `apply_list` \| `recognized_list` | 三个独立来源（新来源见 #59 扩展） |
 | `query_key` | text | | | 查询键:统一社会信用代码 或 `name:<nameNorm>`(与 `lib/reconcile.ts` 同构) |
 | `rdjb` | text | | 默认 `''` | `businessList` 的 `rdjb`(认定级别):`1` 创新型 / `2` 专精特新中小企业 / `3` 小巨人;`''` = 该接口不用此参数 |
 | `title_code` | text | ✅ | FK→`title.code` | 本次查询针对的称号;不按称号查时留空 |
@@ -1786,3 +1786,10 @@ POST /api/roster/evidence/pages
 实时平台批次查询（不写业务数据）：见 [platform-batch-query.md](platform-batch-query.md)。
 REST `/api/platform/batches` 与 MCP `submit_platform_batch` 提交后按稳定 batchId/itemId
 取状态/逐项结果；仅对 unfinished 显式重试。调查与统一名录 preflight/commit 保持独立。
+
+
+### #59 兼容扩展：已认定企业证据
+
+`platform_query.interface` 新增 `recognized_list`，只对应实时 `queryBusList`；旧来源不重分类。status 增加 `partial`；新增可空 JSON `collection_evidence`，原时间/条件/称号范围/页/计数/末页/未完成/原行逐项保存。旧载荷和旧记录均兼容。
+
+[完整转存与读契约](platform-recognized-evidence.md) 规定新来源必填字段、预检拒绝规则、原始批量 segments 转存、幂等冲突、REST/MCP 历史筛选和同批差异引用。查询与批量入口仍不写业务证据；所有转存经统一写入。企业详情带原字段与页行映射，#60 单独交付界面。

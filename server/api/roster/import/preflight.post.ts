@@ -37,7 +37,389 @@ defineRouteMeta({
               },
               sourceIdentity: { type: 'string', description: '来源身份：文件相对路径 / 逻辑标识（不含凭证）。' },
               sourceSha256: { type: 'string', nullable: true },
-              payload: { type: 'object', description: '写入载荷（契约 §8.3 / §8.4）。' },
+              payload: {
+  "type": "object",
+  "description": "统一写入载荷；recognized_list 的 collectionEvidence 必填，见 docs/platform-recognized-evidence.md。",
+  "properties": {
+    "platformQueries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "interface",
+          "queryKey",
+          "queriedAt"
+        ],
+        "properties": {
+          "interface": {
+            "type": "string",
+            "enum": [
+              "business_list",
+              "apply_list",
+              "recognized_list"
+            ]
+          },
+          "queryKey": {
+            "type": "string"
+          },
+          "rdjb": {
+            "type": "string",
+            "description": "recognized_list: original titleScope.rdjb joined with commas, preserving order"
+          },
+          "titleCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "queriedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "success",
+              "no_record",
+              "failed",
+              "not_queried",
+              "partial"
+            ]
+          },
+          "collectionEvidence": {
+            "type": "object",
+            "required": [
+              "source",
+              "status",
+              "effectiveConditions",
+              "titleScope",
+              "queriedAt",
+              "completedAt",
+              "rows",
+              "pages",
+              "fetchedCount",
+              "declaredTotal",
+              "completeness",
+              "fullRange",
+              "unfinished",
+              "error",
+              "limits"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "queryList",
+                  "businessList",
+                  "queryBusList"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "success",
+                  "no_record",
+                  "auth_failed",
+                  "failed",
+                  "partial",
+                  "not_queried"
+                ]
+              },
+              "effectiveConditions": {
+                "type": "object",
+                "required": [
+                  "combination"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "uscc": {
+                    "type": "string"
+                  },
+                  "sqsj": {
+                    "type": "string"
+                  },
+                  "rddqrq": {
+                    "type": "string"
+                  },
+                  "whpcyear": {
+                    "type": "string"
+                  },
+                  "whpc": {
+                    "type": "string"
+                  },
+                  "szq": {
+                    "type": "string"
+                  },
+                  "orderField": {
+                    "type": "string"
+                  },
+                  "orderDirection": {
+                    "type": "string"
+                  },
+                  "combination": {
+                    "type": "string",
+                    "enum": [
+                      "and"
+                    ]
+                  }
+                }
+              },
+              "titleScope": {
+                "type": "object",
+                "required": [
+                  "mode",
+                  "rdjb"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "source_default",
+                      "selected"
+                    ]
+                  },
+                  "rdjb": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "queriedAt": {
+                "type": "string"
+              },
+              "completedAt": {
+                "type": "string"
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "pages": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "source",
+                    "rdjb",
+                    "page",
+                    "status",
+                    "fetchedCount",
+                    "declaredTotal",
+                    "error"
+                  ],
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "queryList",
+                        "businessList",
+                        "queryBusList"
+                      ]
+                    },
+                    "rdjb": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "auth_failed",
+                        "failed"
+                      ]
+                    },
+                    "fetchedCount": {
+                      "type": "integer"
+                    },
+                    "maxPage": {
+                      "type": "integer",
+                      "nullable": true,
+                      "minimum": 1
+                    },
+                    "declaredTotal": {
+                      "type": "integer",
+                      "nullable": true
+                    },
+                    "error": {
+                      "type": "object",
+                      "nullable": true,
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "enum": [
+                            "invalid_input",
+                            "unsupported_source",
+                            "credential_unavailable",
+                            "auth_failed",
+                            "upstream_failed",
+                            "timeout",
+                            "rate_limited",
+                            "safety_limit",
+                            "invalid_response",
+                            "sensitive_response"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "fetchedCount": {
+                "type": "integer"
+              },
+              "declaredTotal": {
+                "type": "integer",
+                "nullable": true
+              },
+              "completeness": {
+                "type": "string",
+                "enum": [
+                  "complete",
+                  "partial",
+                  "not_queried"
+                ]
+              },
+              "fullRange": {
+                "type": "boolean"
+              },
+              "unfinished": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "source",
+                    "rdjb",
+                    "page"
+                  ],
+                  "properties": {
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "queryList",
+                        "businessList",
+                        "queryBusList"
+                      ]
+                    },
+                    "rdjb": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "page": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "error": {
+                "type": "object",
+                "nullable": true,
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "invalid_input",
+                      "unsupported_source",
+                      "credential_unavailable",
+                      "auth_failed",
+                      "upstream_failed",
+                      "timeout",
+                      "rate_limited",
+                      "safety_limit",
+                      "invalid_response",
+                      "sensitive_response"
+                    ]
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              },
+              "limits": {
+                "type": "object",
+                "required": [
+                  "maxRequests",
+                  "maxRows",
+                  "maxDurationMs",
+                  "pageSize"
+                ],
+                "properties": {
+                  "maxRequests": {
+                    "type": "integer"
+                  },
+                  "maxRows": {
+                    "type": "integer"
+                  },
+                  "maxDurationMs": {
+                    "type": "integer"
+                  },
+                  "pageSize": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "description": "Required for recognized_list only: original source=queryBusList result, with validated original times, conditions and page/row coverage. See docs/platform-recognized-evidence.md."
+          },
+          "relations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "sequenceNo"
+              ],
+              "properties": {
+                "sequenceNo": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "relationKey": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "enterpriseId": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "usccRaw": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "nameRaw": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "rawFields": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+},
             },
           },
         },

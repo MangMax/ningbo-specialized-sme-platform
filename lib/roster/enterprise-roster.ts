@@ -1,3 +1,4 @@
+import { sourcePositionForSequence } from '../platform/recognized-evidence'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
  *
@@ -916,9 +917,14 @@ export interface RosterPlatformQueryRow {
   status: string
   failureReason: string | null
   relationCount: number
+  collectionEvidence?: import('../platform/live-query').PlatformLiveQueryResult | null
+  titleCode?: string | null
 }
 
 export interface RosterPlatformRelationRow {
+  rawFields?: Record<string, unknown> | null
+  sourceRdjb?: string | null
+  sourcePage?: number | null
   id: number
   queryId: number
   sequenceNo: number
@@ -1110,6 +1116,8 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
       queryKey: q.queryKey,
       rdjb: q.rdjb,
       queriedAt: q.queriedAt,
+      collectionEvidence: q.collectionEvidence,
+      titleCode: q.titleCode,
       status: q.status,
       failureReason: q.failureReason,
       relationCount: relations.filter((r) => r.queryId === q.id).length,
@@ -1172,6 +1180,8 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
         queryId: r.queryId,
         sequenceNo: r.sequenceNo,
         relationKey: r.relationKey,
+        rawFields: r.rawFields,
+        ...sourcePositionForSequence(snap.queries.find(q => q.id === r.queryId)?.collectionEvidence, r.sequenceNo),
         usccRaw: r.usccRaw,
         nameRaw: r.nameRaw,
         province: r.province,

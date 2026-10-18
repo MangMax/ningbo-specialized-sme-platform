@@ -90,8 +90,13 @@ All platform traffic shares the app's single-process max2, including single,
 legacy and backoff. Do not start per-worker direct request pools. Multi-instance
 coordination is not provided by this in-memory limiter.
 
-Stored evidence still only accepts business_list/apply_list. Keep queryBusList
-provenance pending where storage cannot represent it; never relabel. See
+Stored evidence supports business_list, apply_list and independent recognized_list
+(queryBusList only). Explicitly transfer each complete original result/each batch
+segment through unified preflight/commit using recognizedResultToImport; preserve
+original times, conditions, pages and raw rows. Missing metadata or terminal proof
+remains pending; never relabel or invent completeness. Read back history with
+GET /api/platform/queries or list_platform_queries and reconcile every query/row ID.
+See [archival transfer](../../../../docs/platform-recognized-evidence.md). See
 [`uscc-recovery.md`](./uscc-recovery.md) for independent public supplements and the
 current cross_source gate. Run credential-free examples and behavioral verification
 from [`../examples/README.md`](../examples/README.md). Full API details:

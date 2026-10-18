@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util'
+import { recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 /**
  * 名录统一导入的**核心实现**（RL-11）—— 预检与单批事务提交（契约 §8）。
  *
@@ -536,6 +538,7 @@ function enterpriseKnown(db: Executor, pending: PendingEnterprises, spec: Enterp
 
 /** 本批将写入的平台查询（自然键 + 它声明的关系序号）。 */
 interface PendingPlatformRef {
+  collectionEvidence: RosterImportPlatformQuery['collectionEvidence']
   interface: string
   queryKey: string
   rdjb: string
@@ -566,6 +569,7 @@ function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatfo
     if (!iface || !queryKey || !queriedAt) continue
     const relations = (query as { relations?: unknown }).relations
     out.push({
+      collectionEvidence: query.collectionEvidence,
       interface: iface,
       queryKey,
       rdjb: optionalString((query as { rdjb?: unknown }).rdjb) ?? '',
@@ -1258,7 +1262,18 @@ export function planRosterImport(
   // **必须排在 aliases / differences / merges 之前**:那三项的自然键引用可能指向本批
   // 新建的查询/关系行,执行阶段要按「关系已插入」的顺序落真实 id（见本节顶部说明）。
   const queries = Array.isArray(payload.platformQueries) ? payload.platformQueries : []
-  queries.forEach((query, index) => planPlatformQuery(db, query, index, push))
+  const recognizedKeys = new Set<string>()
+  queries.forEach((query, index) => {
+    if (query?.interface === 'recognized_list') {
+      const key = JSON.stringify([query.interface, query.queryKey, query.rdjb, query.queriedAt])
+      if (recognizedKeys.has(key)) {
+        push({ item: failure('platform_query', `query:${index}`, 'query_identity_duplicate', 'One original query identity may appear only once per batch', 'platformQueries'), action: 'skip', review: false })
+        return
+      }
+      recognizedKeys.add(key)
+    }
+    planPlatformQuery(db, query, index, push)
+  })
 
   // ---- 曾用名 / 别名 -------------------------------------------------------
   const aliases = Array.isArray(payload.aliases) ? payload.aliases : []
@@ -2558,8 +2573,36 @@ function planPlatformQuery(
 ): void {
   const ref = `query:${index}`
   if (!PLATFORM_INTERFACE_SET.has(String(query?.interface))) {
-    push({ item: failure('platform_query', ref, 'interface_unknown', `interface 必须是 business_list / apply_list`, 'interface'), action: 'skip', review: false })
+    push({ item: failure('platform_query', ref, 'interface_unknown', `interface 必须是 business_list / apply_list / recognized_list`, 'interface'), action: 'skip', review: false })
     return
+  }
+  if (query.interface === 'recognized_list' || query.collectionEvidence != null) {
+    const evidence = query.collectionEvidence
+    let message = recognizedEvidenceError(evidence)
+    if (query.interface !== 'recognized_list') message = 'collectionEvidence=queryBusList cannot be relabeled as a legacy source'
+    if (!message && evidence) {
+      const key = evidence.effectiveConditions.uscc ?? `name:${evidence.effectiveConditions.name}`
+      const expectedTitle = evidence.titleScope.rdjb.length === 1 ? RDJB_TITLE_CODES[evidence.titleScope.rdjb[0]!] : null
+      if (query.queryKey !== key || query.queriedAt !== evidence.queriedAt || (query.rdjb ?? '') !== evidence.titleScope.rdjb.join(',') || (query.titleCode ?? null) !== expectedTitle || query.status !== recognizedStoredStatus(evidence)) message = 'Query identity/status/title must match original collectionEvidence'
+      const relations = Array.isArray(query.relations) ? query.relations : []
+      if (query.relations != null && !Array.isArray(query.relations)) message = 'relations must be an array preserving original rows'
+      if (relations.length !== evidence.rows.length) message = 'Every original source row must have exactly one relation'
+      for (const [i, relation] of relations.entries()) {
+        const raw = evidence.rows[i]
+        if (['aliasNameRaw', 'province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'].some(field => relation[field as keyof typeof relation] != null)) message = 'Recognized maintenance/recognition/region fields must retain their original meanings in rawFields, not legacy normalized columns'
+        if (!raw || relation.sequenceNo !== i + 1 || !isDeepStrictEqual(relation.rawFields, raw) || (relation.relationKey ?? null) !== (raw.id ?? null) || (relation.nameRaw ?? null) !== (raw.qymc ?? null) || (relation.usccRaw ?? null) !== (raw.tyshxydm ?? null)) message = 'Relation sequence/raw fields/identity must match original page row'
+        if (relation.enterpriseId != null) {
+          const owner = findEnterpriseById(db, relation.enterpriseId)
+          if (!owner || !usccOrNull(raw?.tyshxydm) || owner.usccNorm !== usccOrNull(raw?.tyshxydm)) message = 'Explicit enterprise must match the original row USCC; names alone cannot confirm identity'
+        }
+        if (relation.matchBasis && !['uscc', 'none'].includes(relation.matchBasis)) message = 'Recognized-list identity requires exact USCC; other identity decisions use a separate explicit workflow'
+        if (relation.verificationStatus === 'confirmed' && !enterpriseByExactUscc(db, relation.usccRaw)) message = 'Confirmed relation requires an existing exact-USCC enterprise'
+      }
+    }
+    if (message) {
+      push({ item: failure('platform_query', ref, 'collection_evidence_invalid', message, 'collectionEvidence'), action: 'skip', review: false })
+      return
+    }
   }
   const queryKey = optionalString(query.queryKey)
   if (!queryKey) {
@@ -2593,6 +2636,10 @@ function planPlatformQuery(
   }
 
   const existing = findQueryRow(db, { interface: query.interface, queryKey, rdjb, queriedAt })
+  if (existing && query.interface === 'recognized_list' && !isDeepStrictEqual(db.select({ evidence: schema.platformQuery.collectionEvidence }).from(schema.platformQuery).where(eq(schema.platformQuery.id, existing.id)).get()?.evidence, query.collectionEvidence)) {
+    push({ item: failure('platform_query', ref, 'collection_evidence_conflict', 'Existing query identity has different archived evidence; preserve history with its actual original time', 'collectionEvidence'), action: 'skip', review: false })
+    return
+  }
   const newRelationCount = existing
     ? (query.relations ?? []).filter(
         (r) => findRelationRow(db, { queryId: existing.id, sequenceNo: optionalInt(r.sequenceNo)! }) == null,
@@ -2632,6 +2679,7 @@ function writePlatformQuery(
             status: query.status ?? 'not_queried',
             failureReason: optionalString(query.failureReason),
             rawResponse: optionalString(query.rawResponse),
+            collectionEvidence: query.collectionEvidence ?? null,
           })
           .returning({ id: schema.platformQuery.id })
           .get().id,
@@ -2897,6 +2945,37 @@ function collectEvidenceRefs(
   return { queryIdLiteral, queryRef, relationIdLiteral, relationRef }
 }
 
+/** Validate new-source evidence against its actual subject/title and query identity. */
+function recognizedDifferenceEvidenceError(db: Executor, pending: PendingPlatformRefs, refs: EvidenceRefs, difference: RosterImportDifference): string | null {
+  const queryAt = (id: number | null, ref: NormalizedRef | null) => {
+    const resolved = id ?? (ref ? resolveQueryIdAt(db, ref) : null)
+    if (resolved != null) return db.select().from(schema.platformQuery).where(eq(schema.platformQuery.id, resolved)).get()
+    return ref ? pending.find(q => q.interface === ref.interface && q.queryKey === ref.queryKey && q.rdjb === ref.rdjb && (!ref.queriedAt || q.queriedAt === ref.queriedAt)) : undefined
+  }
+  const query = queryAt(refs.queryIdLiteral, refs.queryRef)
+  const relationId = refs.relationIdLiteral ?? (refs.relationRef ? resolveRelationIdAt(db, refs.relationRef) : null)
+  const relationQuery = relationId != null
+    ? queryAt(db.select({ id: schema.platformRelation.queryId }).from(schema.platformRelation).where(eq(schema.platformRelation.id, relationId)).get()?.id ?? null, null)
+    : queryAt(null, refs.relationRef)
+  if (query?.interface !== 'recognized_list' && relationQuery?.interface !== 'recognized_list') return null
+  const identity = (q: NonNullable<typeof query>) => JSON.stringify([q.interface, q.queryKey, q.rdjb, q.queriedAt])
+  if (query && relationQuery && identity(query) !== identity(relationQuery)) return 'Query and relation evidence must identify the same source query'
+  const source = relationQuery ?? query
+  if (!source || source.interface !== 'recognized_list') return 'Wrong source for recognized evidence'
+  const target = locateEnterprise(db, { name: difference.enterpriseName, uscc: difference.uscc })
+  const targetUscc = target?.usccNorm ?? usccOrNull(difference.uscc)
+  if (!targetUscc) return 'Recognized evidence cannot confirm subject by name alone'
+  if (!source.rdjb.split(',').some(rdjb => RDJB_TITLE_CODES[rdjb] === difference.titleCode)) return 'Evidence title scope does not include decision title'
+  if (refs.relationRef || refs.relationIdLiteral) {
+    const relation = relationId != null
+      ? db.select().from(schema.platformRelation).where(eq(schema.platformRelation.id, relationId)).get()
+      : ('relations' in source ? source.relations : []).find(r => r.sequenceNo === refs.relationRef?.sequenceNo && (!refs.relationRef?.relationKey || r.relationKey === refs.relationRef.relationKey))
+    if (!relation || usccOrNull(relation.usccRaw) !== targetUscc || (relation.enterpriseId != null && target && relation.enterpriseId !== target.id)) return 'Evidence relation belongs to another or unknown enterprise'
+    if (RDJB_TITLE_CODES[sourcePositionForSequence(source.collectionEvidence, relation.sequenceNo).sourceRdjb ?? ''] !== difference.titleCode) return 'Evidence row belongs to another title'
+  } else if (source.queryKey !== targetUscc) return 'Query-only evidence requires an exact subject USCC query'
+  return null
+}
+
 function planDifference(
   db: Executor,
   pending: PendingEnterprises,
@@ -2938,6 +3017,11 @@ function planDifference(
   const spec = { name: difference.enterpriseName, uscc: difference.uscc }
   if (!enterpriseKnown(db, pending, spec)) {
     push({ item: failure('difference', ref, 'enterprise_not_found', `差异找不到归属企业：${optionalString(difference.enterpriseName) ?? usccOrNull(difference.uscc) ?? '(空)'}`, 'enterpriseName'), action: 'skip', review: false })
+    return
+  }
+  const evidenceMismatch = recognizedDifferenceEvidenceError(db, pendingRefs, refs, difference)
+  if (evidenceMismatch) {
+    push({ item: failure('difference', ref, 'evidence_subject_mismatch', evidenceMismatch, 'evidenceRelationRef'), action: 'skip', review: false })
     return
   }
   const current = locateEnterprise(db, spec)
