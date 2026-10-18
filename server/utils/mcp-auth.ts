@@ -46,6 +46,9 @@ export const MCP_WRITE_TOOLS = [
   'preflight_record_correspondences',
   'save_record_correspondences',
   'get_record_correspondence_batch',
+  'preflight_comparison_scope_proofs',
+  'commit_comparison_scope_proofs',
+  'get_comparison_scope_proof_batch',
 ] as const
 
 /** 写入 tool 名(字面量联合)。 */

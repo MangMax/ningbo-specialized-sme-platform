@@ -470,7 +470,7 @@ export const importBatch = sqliteTable(
     idempotencyKey: text('idempotency_key').notNull(),
     /** 来源类别:公布文件 / 平台导出 / 别名证据。 */
     sourceKind: text('source_kind', {
-      enum: ['announcement', 'platform_export', 'alias_evidence', 'correspondence_decision'],
+      enum: ['announcement', 'platform_export', 'alias_evidence', 'correspondence_decision', 'comparison_scope_proof'],
     }).notNull(),
     /** 来源身份:文件库内相对路径或逻辑标识(不含凭证)。 */
     sourceIdentity: text('source_identity').notNull(),
@@ -943,3 +943,30 @@ export const recordCorrespondenceAudit = sqliteTable(
   },
   (t) => [index('record_correspondence_audit_edge_idx').on(t.correspondenceId, t.id)],
 )
+
+/** #72: immutable source-bound attestation. State is derived from append-only audit. */
+export const comparisonScopeProof = sqliteTable('comparison_scope_proof', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  kind: text('kind', { enum: ['official_coverage', 'current_source_equivalence'] }).notNull(),
+  evidence: text('evidence', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  sourceFingerprint: text('source_fingerprint').notNull(),
+  createdAt: text('created_at').notNull(),
+}, t => [index('comparison_scope_proof_kind_idx').on(t.kind)])
+
+/** Candidate, confirmation and revocation are immutable revisions. */
+export const comparisonScopeProofAudit = sqliteTable('comparison_scope_proof_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  proofId: integer('proof_id').notNull().references(() => comparisonScopeProof.id),
+  batchId: integer('batch_id').notNull().references(() => importBatch.id),
+  idempotencyKey: text('idempotency_key').notNull(),
+  fromStatus: text('from_status', { enum: ['candidate', 'confirmed', 'revoked'] }),
+  toStatus: text('to_status', { enum: ['candidate', 'confirmed', 'revoked'] }).notNull(),
+  expectedRevision: integer('expected_revision').notNull(),
+  resultingRevision: integer('resulting_revision').notNull(),
+  actorType: text('actor_type', { enum: ['user', 'agent'] }).notNull(),
+  actorId: text('actor_id').notNull(),
+  basis: text('basis').notNull(),
+  ruleId: text('rule_id').notNull(),
+  ruleVersion: text('rule_version').notNull(),
+  decidedAt: text('decided_at').notNull(),
+}, t => [index('comparison_scope_proof_audit_proof_idx').on(t.proofId, t.id)])
