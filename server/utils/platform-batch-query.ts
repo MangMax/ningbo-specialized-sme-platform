@@ -62,12 +62,23 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
         persist()
       }
       const declaredTotals = new Map<string | null, number>()
+      const acceptedPages = new Map<string | null, Map<number, number>>()
       for (const prior of item.segments) {
         for (const page of prior.pages) {
-          if (page.status === 'success' && page.declaredTotal !== null) declaredTotals.set(page.rdjb, page.declaredTotal)
+          if (page.status !== 'success') continue
+          if (page.declaredTotal !== null) declaredTotals.set(page.rdjb, page.declaredTotal)
+          if (!acceptedPages.has(page.rdjb)) acceptedPages.set(page.rdjb, new Map())
+          acceptedPages.get(page.rdjb)!.set(page.page, page.fetchedCount)
         }
       }
-      const segment = await runPlatformLiveQuery(query, { cookie, declaredTotals, maxResultBytes: available, onProgress: admit })
+      const priorFetchedCounts = new Map<string | null, number>()
+      for (const title of position ? [position.rdjb] : platformQueryTitles(original)) {
+        let count = 0
+        let page = 1
+        for (; page < query.startPage && acceptedPages.get(title)?.has(page); page++) count += acceptedPages.get(title)!.get(page)!
+        if (page === query.startPage) priorFetchedCounts.set(title, count)
+      }
+      const segment = await runPlatformLiveQuery(query, { cookie, declaredTotals, priorFetchedCounts, maxResultBytes: available, onProgress: admit })
       admit(segment)
       // Authentication is not automatically retried. Other independent items still
       // receive their own outcome using the same immutable submission snapshot.
