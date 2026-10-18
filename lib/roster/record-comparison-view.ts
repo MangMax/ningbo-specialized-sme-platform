@@ -30,6 +30,8 @@ export const COMPARISON_REASONS: Record<string, string> = {
   query_conditions_or_completeness_not_comparable: '查询条件或完整性不足以比较',
   row_identity_or_title_unknown: '原行主体或称号未确定',
   official_source_completeness_not_persisted: '正式文件完整覆盖证明尚未入库',
+  row_identity_unverified: '接口原行主体身份尚未核实',
+  post_cutoff_decision_state_unavailable: '截止时点后的对应决定状态不可还原',
 }
 export function comparisonReasonText(reason: string): string { return COMPARISON_REASONS[reason] ?? '待核原因（详见来源）' }
 

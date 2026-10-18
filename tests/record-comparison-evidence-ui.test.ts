@@ -19,6 +19,8 @@ const result = { rows: [row], total: 1, page: 1, pageSize: 25,
   officialCoverage: { qualification: 'unknown', reasons: ['official_source_completeness_not_persisted'] },
   currentSourceConsistency: { qualification: 'not_comparable', reasons: ['version_equivalence_unknown'], recognizedObservations: [{ recognized: relation, exportRows: [exportRow], observation: 'same_uscc_title_observed', qualification: 'not_comparable' }], exportObservations: [{ exportRow, recognizedRelationIds: [30], qualification: 'not_comparable' }] },
   platformWithoutOfficial: { rows: [{ relation, qualification: 'unresolved' }], total: 1 },
+  historicalDecisionUnavailable: [{ id: 99, eventId: 9, relationId: 30, reason: 'post_cutoff_decision_state_unavailable' }],
+  laterProcessPlatformRows: [{ relation: { ...relation, id: 44, status: '退回' }, correspondences: [{ id: 5, role: 'followup_update', status: 'confirmed' }] }],
 } as unknown as RecordComparisonResult
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount() })
@@ -31,6 +33,10 @@ it('keeps positive same-subject rows visible while qualification stays unknown',
   expect(wrapper.get('[data-testid="record-current-consistency"]').text()).toContain('源行 12')
   expect(wrapper.get('[data-testid="record-comparison-coverage"]').text()).toContain('部分')
   expect(wrapper.get('[data-testid="record-platform-unlinked"]').text()).toContain('正式来源覆盖待核')
+  expect(wrapper.get('[data-testid="record-independent-later"]').text()).toContain('退回')
+  expect(wrapper.get('[data-testid="record-independent-later"]').text()).toContain('查看原行与反向对应')
+  expect(wrapper.text()).toContain('对应 #99 · 事件 #9 · 接口原行 #30')
+  expect(wrapper.text()).not.toContain('post_cutoff_decision_state_unavailable')
 })
 
 it('links the actual stored PDF page and event return context', () => {
