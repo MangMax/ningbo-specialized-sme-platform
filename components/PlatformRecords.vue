@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ChevronDown } from '@lucide/vue'
-import { PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
+import { PLATFORM_QUERY_STATUSES, PLATFORM_QUERY_STATUS_ORDER, PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import PlatformQueryProvenance from './PlatformQueryProvenance.vue'
 import PlatformRecordDetails from './PlatformRecordDetails.vue'
 import { platformFailureForDisplay, recognizedField } from '~~/lib/roster/platform-records'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 
 const props = defineProps<{ queries: PlatformRecordQuery[]; relations: PlatformRecord[] }>()
 const selectedTitle = ref('all')
@@ -42,11 +45,19 @@ const titles = computed(() => {
 })
 const activeTitle = computed(() => titles.value.some(title => title.value === selectedTitle.value) ? selectedTitle.value : 'all')
 const querySummary = (queries: PlatformRecordQuery[]) => {
-  if (!queries.length) return ''
-  const latest = [...queries].sort((a, b) => b.queriedAt.localeCompare(a.queriedAt))[0]!
-  const statuses = [...new Set(queries.map(query => PLATFORM_QUERY_STATUSES[query.status] ?? '状态待核'))]
-  return `${time(latest.queriedAt)} · ${statuses.join(' / ')}`
+  const latest = [...queries].sort((a, b) => b.queriedAt.localeCompare(a.queriedAt))[0]
+  const statuses = new Set(queries.map(query => query.status))
+  return {
+    time: latest ? time(latest.queriedAt) : '',
+    statuses: [...PLATFORM_QUERY_STATUS_ORDER, ...statuses].filter((status, index, all) => all.indexOf(status) === index && statuses.has(status))
+      .map(status => PLATFORM_QUERY_STATUSES[status] ?? '状态待核'),
+  }
 }
+const emptyMessage = (queries: PlatformRecordQuery[]) => !queries.length ? '尚未查询此来源 / 称号'
+  : queries.some(query => query.status === 'partial') ? '仅有部分查询证据，不能判断完整有无记录'
+  : queries.some(query => query.status === 'failed') ? '本次查询未完成'
+  : queries.some(query => query.status === 'not_queried') ? '尚未查询'
+  : queries.some(query => query.status === 'no_record') ? '平台未返回记录' : '暂无记录'
 const sources = [
   { source: 'business_list', label: '关联记录' },
   { source: 'apply_list', label: '申报记录' },
@@ -80,27 +91,35 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
 <template>
   <div class="min-w-0" data-testid="platform-records">
     <p v-if="!queries.length" class="text-muted-foreground text-[13px] leading-5">尚无平台查询记录</p>
-    <Tabs :model-value="activeTitle" class="min-w-0 gap-3" @update:model-value="selectedTitle = String($event)">
-      <label class="flex flex-wrap items-center gap-2 text-[13px]">记录来源
-        <select v-model="selectedSource" aria-label="记录来源" class="bg-background h-9 min-w-0 rounded-md border px-3 focus-visible:outline-2 focus-visible:outline-ring">
-          <option value="all">全部来源</option>
-          <option v-for="source in sources" :key="source.source" :value="source.source">{{ source.label }}</option>
-        </select>
-      </label>
-      <div class="min-w-0 overflow-x-auto">
-        <TabsList class="h-9" aria-label="平台记录称号">
-          <TabsTrigger v-for="title in titles" :key="title.value" :value="title.value" :data-title-value="title.value" class="text-[13px]">{{ title.label }}</TabsTrigger>
-        </TabsList>
+    <Tabs v-else :model-value="activeTitle" class="min-w-0 gap-3" @update:model-value="selectedTitle = String($event)">
+      <div class="flex flex-wrap items-center gap-2 text-[13px]">
+        <span>记录来源</span>
+        <Select v-model="selectedSource">
+          <SelectTrigger aria-label="记录来源" class="w-52 max-w-full"><SelectValue /></SelectTrigger>
+          <SelectContent @escape-key-down.stop>
+            <SelectGroup>
+              <SelectItem value="all">全部来源</SelectItem>
+              <SelectItem v-for="source in sources" :key="source.source" :value="source.source">{{ source.label }}</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
       </div>
-      <TabsContent :value="activeTitle" class="min-w-0 space-y-5">
+      <TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="平台记录称号">
+        <TabsTrigger v-for="title in titles" :key="title.value" :value="title.value" :data-title-value="title.value" class="h-8 flex-none text-[13px]">{{ title.label }}</TabsTrigger>
+      </TabsList>
+      <TabsContent :value="activeTitle" class="flex min-w-0 flex-col gap-5">
         <section v-for="table in tables" :key="table.source" class="min-w-0" :data-record-kind="table.source">
           <div class="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <h4 class="text-sm font-medium">{{ table.label }} <span class="text-muted-foreground font-normal">{{ table.rows.length }} 条</span></h4>
-            <span v-if="table.queries.length" class="text-muted-foreground text-[13px]" data-testid="platform-query-summary">{{ querySummary(table.queries) }}</span>
+            <div v-if="table.queries.length" class="flex flex-wrap items-center gap-1.5 text-[13px]" data-testid="platform-query-summary">
+              <span class="text-muted-foreground whitespace-nowrap">{{ querySummary(table.queries).time }}</span>
+              <Badge v-for="status in querySummary(table.queries).statuses" :key="status" variant="outline" class="whitespace-nowrap">{{ status }}</Badge>
+            </div>
           </div>
           <PlatformQueryProvenance :queries="table.queries" :source-label="table.label" />
           <p v-for="query in table.queries.filter(query => query.status === 'failed')" :key="query.id" class="text-destructive mb-2 text-[13px] leading-5" data-testid="platform-query-failure">查询 #{{ query.id }}：{{ platformFailureForDisplay(query.failureReason) ?? '本次查询未完成，不能据此判断平台有无记录。' }}</p>
-          <div class="min-w-0 overflow-x-auto rounded-sm border" tabindex="0" :aria-label="`${table.label}表格，可横向滚动`">
+          <p v-if="!table.rows.length && emptyMessage(table.queries) !== '本次查询未完成'" class="text-muted-foreground text-[13px] leading-5" data-testid="platform-source-empty">{{ emptyMessage(table.queries) }}</p>
+          <div v-if="table.rows.length" class="min-w-0 overflow-x-auto rounded-sm border" tabindex="0" :aria-label="`${table.label}表格，可横向滚动`">
             <table class="w-full text-left text-[13px] leading-5 whitespace-nowrap" :aria-label="table.label">
               <thead class="bg-muted/40 text-muted-foreground">
                 <tr>
@@ -108,7 +127,7 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                   <th class="min-w-52 px-3 py-2 font-medium">企业名称</th>
                   <th class="px-3 py-2 font-medium">信用代码</th>
                   <template v-if="table.recognized">
-                  <th v-for="label in ['平台属地', '平台认定信息', '有效期（原值）', '维护年份', '维护批次']" :key="label" class="px-3 py-2 font-medium">{{ label }}</th>
+                  <th v-for="label in ['平台属地（原值/代码）', '平台认定信息', '有效期（原值）', '维护年份', '维护批次']" :key="label" class="px-3 py-2 font-medium">{{ label }}</th>
                   </template>
                   <template v-else>
                   <th class="px-3 py-2 font-medium">省份</th>
@@ -124,11 +143,11 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
               <tbody v-for="group in table.groups" :key="group.title" :data-record-title="group.title">
                 <tr v-if="activeTitle === 'all'" class="bg-accent/40 border-t" data-testid="platform-title-group">
                   <th :colspan="table.columns" class="p-0 text-left font-medium" scope="rowgroup">
-                    <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring" :aria-expanded="!group.collapsed" :aria-label="`${group.label}，${group.rows.length}条${table.label}`" @click="toggleGroup(table.source, group.title)">
-                      <ChevronDown class="size-3.5 shrink-0" :class="{ '-rotate-90': group.collapsed }" />
+                    <Button type="button" variant="ghost" size="sm" class="sticky left-0 h-auto justify-start gap-2 px-3 py-2" :aria-expanded="!group.collapsed" :aria-label="`${group.label}，${group.rows.length}条${table.label}`" @click="toggleGroup(table.source, group.title)">
+                      <ChevronDown data-icon="inline-start" class="transition-transform duration-150 motion-reduce:transition-none" :class="{ '-rotate-90': group.collapsed }" />
                       <span>{{ group.label }}</span>
                       <span class="text-muted-foreground font-normal">{{ group.rows.length }} 条</span>
-                    </button>
+                    </Button>
                   </th>
                 </tr>
                 <template v-if="!group.collapsed">
@@ -150,9 +169,6 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                     <td class="px-3 py-1.5"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /></td>
                   </tr>
                 </template>
-              </tbody>
-              <tbody v-if="!table.rows.length">
-                <tr><td :colspan="table.columns" class="text-muted-foreground px-3 py-3">{{ !table.queries.length ? '尚未查询此来源 / 称号' : table.queries.some(query => query.status === 'partial') ? '仅有部分查询证据，不能判断完整有无记录' : table.queries.some(query => query.status === 'failed') ? '本次查询未完成' : table.queries.some(query => query.status === 'not_queried') ? '尚未查询' : table.queries.some(query => query.status === 'no_record') ? '平台未返回记录' : '暂无记录' }}</td></tr>
               </tbody>
             </table>
           </div>

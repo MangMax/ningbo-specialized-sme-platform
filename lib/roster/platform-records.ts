@@ -33,7 +33,7 @@ export function platformFailureForDisplay(reason: string | null | undefined): st
 /** Business labels preserve source meanings; unknown scalar fields keep their original keys. */
 export const PLATFORM_BUSINESS_FIELDS: Record<string, string> = {
   id: '平台行标识', qymc: '企业名称', tyshxydm: '统一社会信用代码', rdjb: '平台称号原值',
-  szq: '平台属地', szsfmc: '平台省市', szsf: '省份代码', szs: '城市代码',
+  szq: '平台属地（原值/代码）', szsfmc: '平台省市', szsf: '省份代码', szs: '城市代码',
   rdxx: '平台认定信息', rdsj: '平台认定时间（原值）', rdrq: '平台认定日期（原值）',
   rddqrq: '有效期（原值）', whpcyear: '维护年份', whpc: '维护批次',
   year: '平台年份（原值）', sqsj: '申报时间', sblx: '申报类型', cszt: '办理状态',

@@ -31,7 +31,7 @@ describe('面向用户的平台记录表',()=>{
  })
  it('保留关联和申报两张表字段并独立显示未查询的第三来源',()=>{
   const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,interface:'apply_list',rdjb:''}],relations:[record,{...record,id:2,queryId:2}]}})
-  expect(view.findAll('table').map(table=>table.attributes('aria-label'))).toEqual(['关联记录','申报记录','已认定企业列表'])
+  expect(view.findAll('table').map(table=>table.attributes('aria-label'))).toEqual(['关联记录','申报记录'])
   for(const table of view.findAll('table').slice(0,2)) {
    expect(table.findAll('thead th').map(th=>th.text())).toEqual(['序号','企业名称','信用代码','省份','申报类型','办理状态','申报时间','维护批次','出处 / 原字段'])
    expect(table.findAll('[data-testid="platform-relation"]')).toHaveLength(1)
@@ -68,7 +68,7 @@ describe('面向用户的平台记录表',()=>{
   const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,rdjb:'1'},{...query,id:3,interface:'apply_list',rdjb:''}],relations:[record,{...record,id:2,queryId:2,relationKey:'OTHER'},{...record,id:3,queryId:3}]}})
   await view.findAll('[role="tab"]').find(tab=>tab.text()==='专精特新中小企业')!.trigger('keydown', {key:'Enter'})
   expect(view.findAll('[data-testid="platform-relation"]').map(row=>row.attributes('data-record-id'))).toEqual(['1','3'])
-  expect(view.findAll('table')).toHaveLength(3)
+  expect(view.findAll('table')).toHaveLength(2)
   await view.findAll('[role="tab"]').find(tab=>tab.text()==='创新型中小企业')!.trigger('keydown', {key:'Enter'})
   expect(view.findAll('[data-testid="platform-relation"]').map(row=>row.attributes('data-record-id'))).toEqual(['2'])
   view.unmount()
@@ -97,6 +97,9 @@ describe('面向用户的平台记录表',()=>{
   const view=mount(PlatformRecords,{props:{queries:[],relations:[]}})
   expect(view.text()).toContain('尚无平台查询记录')
   expect(view.text()).not.toContain('平台未返回记录')
+  expect(view.find('[data-slot="select-trigger"]').exists()).toBe(false)
+  expect(view.find('[role="tablist"]').exists()).toBe(false)
+  expect(view.findAll('table')).toHaveLength(0)
   view.unmount()
  })
 })
