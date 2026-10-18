@@ -47,7 +47,7 @@ defineRouteMeta({
                 enum: ['render-pages', 'ocr', 'reconcile'],
                 description:
                   '任务种类。`render-pages`(默认 300 DPI 渲染页图)、`ocr`(并发逐张 PNG 调 PaddleOCR,按页码入库)与 ' +
-                  '`reconcile`(批量平台核查:实查工信部 businessList / applyList → 落关系证据 → 判差异原因与后置动作 → ' +
+                  '`reconcile`(批量平台核查:实查工信部 businessList / applyList → 落关系证据 → 标记查询状态、交代理核实 → ' +
                   '经统一导入 API 一个批次写回)均已接入。' +
                   '`GET /api/jobs/kinds` 报的是实时状态与各 kind 的 `paramsHint`。',
               },
@@ -58,7 +58,7 @@ defineRouteMeta({
                   '`ocr`:`{ files: string[](同上), model?: string }` —— 须先生成完整页图，不支持 pageRanges；需要配置页保存 OCR token 或服务端配好 `NUXT_OCR_TOKEN`。' +
                   '`reconcile`:`{ titles?: string[](称号代号), directions?: ("missing_in_miit"|"extra_in_miit")[], ' +
                   'usccs?: string[](只查这几个统一社会信用代码), limit?: number(最多处理多少个差异目标), ' +
-                  'concurrency?: 1–12(默认 4), freshnessHours?: number(复用新鲜查询与判定的窗口,默认 24), write?: boolean(默认 true;false = 只判定不回写) }` ' +
+                  'concurrency?: 1–12(默认 4), freshnessHours?: number(复用新鲜查询与判定的窗口,默认 24), write?: boolean(默认 true;false = 只采集预览不回写) }` ' +
                   '—— 需要配置页保存 Cookie 或服务端配好 `MIIT_COOKIE`,未配时任务**明确失败且一行不写**(不产出一片「未查询」的假证据)。',
               },
             },

@@ -1,11 +1,11 @@
 ---
 name: roster-ingestion-pipeline
-description: 'Use for cleaning and importing Ningbo SME designation rosters in this app: classify source files, render PDFs to page images, run OCR, verify and correct all roster rows, enrich identity evidence, and write results through the app API/MCP workflow.'
+description: 'Use for cleaning and importing Ningbo SME designation rosters in this app: classify source files, render PDFs to page images, run OCR, verify and correct all roster rows, enrich identity evidence, investigate designation differences, and submit agent-confirmed causes through the app API/MCP workflow.'
 ---
 
 # Roster ingestion pipeline
 
-Use this skill when a user supplies roster files or asks to clean files already uploaded to the app. It is a repeated, evidence-backed workflow: preserve every row in an in-scope official roster, keep identity research separate from roster completeness, and write through the app's current contract.
+Use this skill when a user supplies roster files, asks to clean uploaded files, or asks to investigate a designation difference, name or jurisdiction discrepancy. It is a repeated, evidence-backed workflow: preserve every row in an in-scope official roster, keep identity research separate from roster completeness, and write through the app's current contract.
 
 Read [`references/workflow.md`](references/workflow.md) for the file-to-record sequence; [`references/orchestration.md`](references/orchestration.md) for shared agent limits, handoffs and retry rules; [`references/decisions.md`](references/decisions.md) for source and event semantics; and [`references/uscc-recovery.md`](references/uscc-recovery.md) for identity research and missing codes.
 
@@ -18,7 +18,8 @@ Before each new write workflow, inspect the running app's OpenAPI document or MC
 3. Correct every formal roster row against its source page. Matching helps locate candidates; it never filters rows out or replaces visual source review.
 4. Research missing identity fields with [`references/uscc-recovery.md`](references/uscc-recovery.md). Search results and names create candidates; evidence, not name similarity, closes identity.
 5. Import supported file, event, identity and platform evidence through the current REST/MCP contract. Missing codes do not block importing official roster rows.
-6. Reconcile and report file metadata, pages, OCR, official rows/events, identity and write outcomes as separate states. Use [`references/orchestration.md`](references/orchestration.md) for completion and failure handling.
+6. Investigate each difference using [`references/difference-investigation.md`](references/difference-investigation.md). The agent confirms the cause and measure; query jobs only collect evidence and processing states.
+7. Reconcile and report file metadata, pages, OCR, official rows/events, identity and write outcomes as separate states. Use [`references/orchestration.md`](references/orchestration.md) for completion and failure handling.
 
 ## Guardrails
 

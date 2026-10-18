@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * **平台比对与原因回写 —— 无头长跑入口**(RL-03 实施切片 ③)。
+ * **平台证据采集与待核写回 —— 无头长跑入口**(RL-03 实施切片 ③)。
  *
  * ── 它是什么、不是什么 ────────────────────────────────────────────────────
  * 这是 `kind: 'reconcile'` 那个异步任务的**第二个入口**,不是第二份逻辑:
  * 两者都调用 `server/utils/platform-reconcile.ts` 的 `runPlatformReconcile`,
  * 而它就是那条链的唯一一份实现
- * (取差异集合 → 实查两接口 → 落证据 → 判原因与措施 → 经统一 API 写回)。
+ * (取差异集合 → 实查两接口 → 落证据 → 交代理查证原因与措施 → 经统一 API 写回)。
  * 之所以另开一个脚本入口:一次全量实查是分钟到小时级(平台实测 0.3–1.1 秒/次),
  * 长跑要能脱离 HTTP 请求/服务器进程,也要能把 JSON 报告落到文件。
  *
@@ -33,7 +33,7 @@
  *   --offset N             跳过前 N 个差异目标(分页的第二片起)
  *   --concurrency N        并发上限,1–12(默认 4)
  *   --freshness-hours N    复用新鲜查询与判定的窗口(默认 24)
- *   --dry-run              只判定、不回写
+ *   --dry-run              只采集预览、不回写
  *   --out <路径>           把报告 JSON 写到文件
  *   --base-url <url>       提交 job 给正在运行的 app 并轮询(需要 NUXT_API_TOKEN)
  *   --poll-seconds N       轮询间隔(默认 3)
@@ -76,7 +76,7 @@ const list = (name) => {
   return value ? value.split(',').map((item) => item.trim()).filter(Boolean) : undefined
 }
 
-const HELP = `平台比对与原因回写 —— 无头长跑入口(RL-03)
+const HELP = `平台证据采集与待核写回 —— 无头长跑入口(RL-03)
 
 用法: node scripts/reconcile-live.mjs [选项]
 
@@ -88,7 +88,7 @@ const HELP = `平台比对与原因回写 —— 无头长跑入口(RL-03)
   --offset N             跳过前 N 个差异目标
   --concurrency N        并发上限,1–12(默认 4)
   --freshness-hours N    复用新鲜查询与判定的窗口(默认 24)
-  --dry-run              只判定、不回写
+  --dry-run              只采集预览、不回写
   --out <路径>           把报告 JSON 写到文件
   --base-url <url>       提交 job 给正在运行的 app 并轮询(需要 NUXT_API_TOKEN)
   --poll-seconds N       轮询间隔(默认 3)
@@ -254,7 +254,7 @@ function printReport(report) {
   process.stdout.write(
     [
       '',
-      '平台比对与原因回写 —— 完成',
+      '平台证据采集与待核写回 —— 完成',
       `  差异目标 ${counts.total}(可直查 ${report.targetCount - counts.notQueried},无统代无法直查 ${counts.notQueried})`,
       `  实查 USCC ${report.usccCount}:网络请求 ${queries.network} 次(业务 ${queries.byInterface.business_list ?? 0} / 申报 ${queries.byInterface.apply_list ?? 0}),复用新鲜查询 ${queries.reused} 槽位`,
       `  平台关系 ${report.relations} 条`,
@@ -263,7 +263,7 @@ function printReport(report) {
       `  待人工 ${counts.needsReview}`,
       `  查询失败 ${counts.queryFailed}`,
       `  无法直查(无统代) ${counts.notQueried}`,
-      `  复用既有判定(新鲜) ${counts.reusedFresh}`,
+      `  复用处理状态/保留已确认结论 ${counts.reusedFresh}`,
       `  曾用名 ${report.aliases} 条`,
       report.mergeCandidates.length
         ? `  可能是一次归并(仅提示,未自动做)${report.mergeCandidates.length} 处:${report.mergeCandidates
@@ -272,7 +272,7 @@ function printReport(report) {
         : '  可能是一次归并(仅提示,未自动做)0 处',
       report.write
         ? `  写回:批次 ${report.write.batchId} ${report.write.status}(written ${report.write.written} / skipped ${report.write.skipped})`
-        : '  写回:未执行(试跑或没有需要写回的判定)',
+        : '  写回:未执行(试跑或没有需要写回的证据/状态)',
       '',
     ].join('\n'),
   )

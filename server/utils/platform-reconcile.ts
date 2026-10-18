@@ -1,30 +1,7 @@
 /**
- * **可运行的平台比对与原因回写**(RL-03 实施切片 ③「证据写回」的未完部分)。
- *
- * ── 这个模块补的是什么 ────────────────────────────────────────────────────
- * RL-03 已交付两接口适配器、§8.3 载荷构造、统一写入客户端与读接口,但**没有一个可运行的
- * 入口**把「实查工信部两接口 → 落库关系证据 → 逐条判定差异原因与后置动作 → 经统一 API
- * 写回」串起来:项目外 `pipeline` 的 `pnpm reconcile` 只写 JSON 缓存、不写库。
- * 这里就是那条链的**唯一一份核心逻辑**;`kind: 'reconcile'` 的异步任务与
- * `scripts/reconcile-live.mjs` 都只是它的入口(不各自再实现一遍)。
- *
- * ── 已实测的事实(不按推测设计)────────────────────────────────────────────
- *  - 平台真实延迟 **0.3–1.1 秒/次**;
- *  - **两接口只认 `tyshxydm`**(`businessList` 要 `rdjb` + `tyshxydm`;`applyList` 只要
- *    `tyshxydm`)——**不支持按名称查**。所以公布侧无统代的差异条目**查不了**,
- *    一律留 `needs_review` 并说明「缺什么证据」,**不为它们编造查询键**;
- *  - **必须 `rdjb=1/2/3` 全查再合并**:同一 USCC 在不同 `rdjb` 下返回**不同集合**,
- *    旧 pipeline 只查本地称号映射出的那一个 ⇒ 整条曾用名证据被漏掉
- *    (实测 `91330211255994457P` 的 rdjb=1/2 各 0 行、rdjb=3 有 6 行);
- *  - 会话过期是 **HTTP 200 + `{"statusCode":"301",...}`** ⇒ `failed`,不是 `no_record`。
- *
- * ── 凭据 ──────────────────────────────────────────────────────────────────
- * 应用传入数据库凭据快照；独立 CLI 从 `MIIT_COOKIE` 读取。原值不进入查询证据或日志。
- * 拿不到凭据时**不发请求、也不写「一片未查询」的假结果**:直接以明确原因失败。
- *
- * ── 不建模糊推断引擎 ─────────────────────────────────────────────────────
- * 原因与措施的判定全部落在 `lib/platform/reconcile.ts` 的纯函数里,每一类都必须指回
- * 一条可读的来源字段(`qymc` / `szsfmc` / `cszt` / `sqsj`),否则 `needs_review`。
+ * 批量采集平台查询与关系，经统一导入路径保存证据和待核处理状态。
+ * 原因、迁移方向、曾用名和归并由代理/用户查证后显式提交。
+ * 本任务按USCC查询四个槽位；缺码目标交给名称搜索流程，不代表平台不支持名称查询。
  */
 
 import { createHash } from 'node:crypto'
@@ -43,8 +20,6 @@ import {
 import type { PlatformRdjb, PlatformRow } from '../../lib/platform/adapter'
 import { type PlatformRelationRecord, relationFromRow } from '../../lib/platform/identity'
 import {
-  type AliasDecision,
-  type BuildPayloadInput,
   type DifferenceDecision,
   type KnownEnterprise,
   type PlatformQueryInput,
@@ -161,7 +136,7 @@ export interface ReconcileRunOptions {
   /** 网络错误与 5xx 的退避重试次数(默认 2);4xx 与会话过期不重试。 */
   retries?: number
   sleep?: (ms: number) => Promise<void>
-  /** `false` = 只判定不回写(试跑)。默认回写。 */
+  /** `false` = 只采集预览不回写(试跑)。默认回写。 */
   write?: boolean
   writer?: ReconcileWriter
   now?: () => Date
@@ -180,7 +155,7 @@ export interface ReconcileReportCounts {
   queryFailed: number
   /** 未查询:无统代 ⇒ 平台按统代查,查不了。 */
   notQueried: number
-  /** 本次判定被「新鲜」规则跳过、直接复用既有结论的目标数。 */
+  /** 复用新鲜处理状态或保留已有已确认结论的目标数（兼容字段名）。 */
   reusedFresh: number
   total: number
 }
@@ -212,7 +187,7 @@ export interface ReconcileReport {
   counts: ReconcileReportCounts
   /** 无统代、平台查不了的差异(逐条列出,供人工接手)。 */
   unqueryable: Array<{ enterpriseId: number; name: string; titleCode: string; direction: string }>
-  /** 证据显示「同一 USCC 的旧名 = 库里另一家无统代企业的现名」——**仅提示,不自动归并**。 */
+  /** 兼容旧报告字段；自动采集不生成身份归并候选，始终为空。 */
   mergeCandidates: Array<{
     fromEnterpriseId: number
     fromName: string
@@ -221,7 +196,7 @@ export interface ReconcileReport {
     uscc: string
     aliasName: string
   }>
-  /** 本次写出的曾用名条数。 */
+  /** 兼容旧报告字段；自动采集不写曾用名，始终为0。 */
   aliases: number
   write: { batchId: number; status: string; written: number; skipped: number } | null
   cancelled: boolean
@@ -346,7 +321,7 @@ function freshStoredSlots(db: Db, queryKey: string, cutoffIso: string): Map<stri
   return out
 }
 
-/** 一个槽位的证据:判定引擎用 `evidence`,载荷构造用 `rawRows`。 */
+/** 一个槽位的证据:查询状态分类用 `evidence`,载荷构造用 `rawRows`。 */
 interface StoredSlot {
   evidence: ReconcileQueryEvidence
   rawRows: PlatformRow[]
@@ -541,7 +516,7 @@ export function reconcileIdempotencyKey(input: {
   return `platform_reconcile:${createHash('sha256').update(JSON.stringify({ queries, differences, aliases })).digest('hex').slice(0, 32)}`
 }
 
-/** 该目标是否已有**新鲜且有效**的最新差异判定(失败不复用,也不被旧结论遮盖)。 */
+/** 已确认结论由代理维护；采集只复用处理状态，不用新查询覆盖确认。失败仍可重试。 */
 function hasFreshDecision(db: Db, target: ReconcileTarget, cutoffIso: string): boolean {
   const matching = db
     .select()
@@ -554,7 +529,7 @@ function hasFreshDecision(db: Db, target: ReconcileTarget, cutoffIso: string): b
 
   return (
     latest !== undefined &&
-    latest.recordedAt >= cutoffIso &&
+    (latest.verificationStatus === 'confirmed' || latest.recordedAt >= cutoffIso) &&
     // A failed attempt is not a reusable conclusion. Checking only the latest row also prevents
     // an older successful explanation from hiding a newer failure for the same target.
     latest.status !== 'query_failed'
@@ -650,7 +625,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
     options.onProgress?.(index + 1, total)
   })
 
-  // 判定(纯函数 `decideDifference`;编排层只负责把证据递给它)。
+  // 只分类查询处理状态。confirmed_* 与业务原因仅由显式确认写入。
   const counts: ReconcileReportCounts = {
     confirmed: 0,
     byReason: {},
@@ -667,10 +642,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
   }
 
   const differenceDecisions: DifferenceDecision[] = []
-  const aliasDecisions: AliasDecision[] = []
-  const aliasSeen = new Set<string>()
   const mergeCandidates: ReconcileReport['mergeCandidates'] = []
-  const enterpriseByName = new Map(collected.enterprises.map((enterprise) => [enterprise.nameNorm, enterprise]))
 
   // 无统代的目标:平台按统代查,查不了 ⇒ 直接落 `not_queried` + 转人工。
   // 「新鲜」规则对它们同样适用 —— 否则每次重跑都会给同一批查不了的差异再堆一行。
@@ -694,34 +666,6 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
       const verdict = decideDifference(target, evidence)
       tally(counts, verdict)
       differenceDecisions.push(toDifferenceDecision(target, verdict, startedAt))
-
-      for (const alias of verdict.aliases) {
-        const signature = `${target.enterpriseId}|${alias.name}|${alias.sourceRelation.interface}|${alias.sourceRelation.sequenceNo}`
-        if (aliasSeen.has(signature)) continue
-        aliasSeen.add(signature)
-        aliasDecisions.push({
-          enterpriseId: target.enterpriseId,
-          name: alias.name,
-          sourceKind: alias.sourceKind,
-          sourceRelation: alias.sourceRelation as RelationRef,
-          validFrom: alias.validFrom,
-          note: alias.note,
-          verificationStatus: alias.verificationStatus,
-        })
-        // 旧名恰好等于库里另一家企业的现名 ⇒ 只**提示**「这里可能是一次归并」。
-        // 归并会删行、会改归属,不自动做(契约 §5.2 由人确认)。
-        const counterpart = enterpriseByName.get(normalizeName(alias.name))
-        if (counterpart && counterpart.id !== target.enterpriseId && counterpart.uscc == null) {
-          mergeCandidates.push({
-            fromEnterpriseId: counterpart.id,
-            fromName: counterpart.name,
-            intoEnterpriseId: target.enterpriseId,
-            intoName: target.enterpriseName,
-            uscc,
-            aliasName: alias.name,
-          })
-        }
-      }
     }
   }
 
@@ -749,18 +693,17 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
       direction: target.direction,
     })),
     mergeCandidates,
-    aliases: aliasDecisions.length,
+    aliases: 0,
     write: null,
     cancelled,
   }
 
-  if (cancelled || options.write === false || differenceDecisions.length === 0) {
+  if (cancelled || options.write === false || (differenceDecisions.length === 0 && networkCount === 0)) {
     report.finishedAt = now().toISOString()
     return report
   }
 
-  // 写回:**一份载荷、一个批次**。§8.7 的自然键让证据指针在批内指到本批新建的查询/关系,
-  // 不必拆成「先写查询、读回 id、再写别名」两批。
+  // 一批保存原始查询/关系及未确认处理状态；已有确认可只刷新证据。
   const queries: PlatformQueryInput[] = []
   for (const [uscc, slots] of slotsByUscc) {
     for (const slot of slots) queries.push(toQueryInput(slot, uscc))
@@ -777,11 +720,10 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
         status: decision.status,
         reasonCode: decision.reasonCode ?? null,
       })),
-      aliases: aliasDecisions.map((alias) => ({ enterpriseId: alias.enterpriseId!, name: alias.name })),
+      aliases: [],
     }),
     queries,
     enterprises: collected.enterprises,
-    aliases: aliasDecisions,
     differences: differenceDecisions,
   })
 
