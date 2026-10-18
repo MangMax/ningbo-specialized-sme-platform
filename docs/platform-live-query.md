@@ -24,6 +24,8 @@
 
 实际每页大小为 `min(pageSize,maxRows)`，见结果 `limits.pageSize`。本次单项入口不自动重试；失败直接给未完成页，认证失效不重试。每请求超时最多15秒，受操作剩余时间进一步限制；总时间包含全局预算排队等待。进程内所有平台消费者（包括旧 reconcile）共享最多2个请求槽位；响应正文读取和旧客户端退避期间也占用槽位。多进程部署需要外部共享限流器，本实现按现有单进程 Nitro 运行边界提供预算。
 
+queryList/businessList 返回的 `pageSize` 可以缺失；缺失不代表已验证平台实际页大小。若显式返回，必须是可靠整数且与请求的实际大小一致，否则该页不纳入结果并保留为 unfinished，防止续查偏移跳过记录。queryBusList 继续要求实际页号与页大小，并校验 maxPage。live parser 只接受非负安全整数或纯十进制整数字符串作为可靠数量/分页元数据，布尔、数组和纯空白不转换为数字；旧历史解析及存储契约不变。
+
 
 ### queryBusList 已验证筛选
 
@@ -55,6 +57,7 @@ queryBusList **不使用 nextPage**：实测中间页仍返回1。按请求页�
 - `rows`：全部逐条原字段（沿用适配器的标量字符串化），不压缩同码多关系/曾用名，不返回原始页面或无关账号信封。
 - `pages`：逐页来源、rdjb（queryList为null，businessList/queryBusList为实际称号）、page、status、fetchedCount、declaredTotal、error。
 - `declaredTotal`：可靠的上游声明数量；缺失/无法可靠解释时为null，不能用0代替未知。businessList/queryBusList仅在所有要求称号均取得可靠总数时返回其总和，否则为null；各称号声明总数见对应pages。
+- 已观察到的称号总数在后页缺失/非法总数时仍约束本次查询；逐页 `declaredTotal` 保留该页实际声明，缺失为null。批次显式重试从既有成功页恢复该约束，矛盾空页不能清除 unfinished；单独发起的 REST/MCP 续查只拥有该次观察，调用者仍需保留先前结果。
 - `fetchedCount`：返回记录数；`completeness` 为 complete / partial / not_queried；`fullRange` 为是否从第一页开始。
 - `unfinished`：可继续的 `{source,rdjb,page}` 位置。续查保留相同条件和结果中 `limits.pageSize`，设 `startPage`；queryBusList 应逐个 unfinished 位置设置单称号 `rdjb:[该位置rdjb]`，不要把某称号的续页应用于全部称号；各次结果按页保留，不按USCC去重。续查完成仅表示所请求的剩余范围完成，`fullRange:false` 不能声称从头穷尽。
 - `error`：固定code与安全文案，不包含上游原文、Cookie、异常原文或凭据存储细节；成功为null。

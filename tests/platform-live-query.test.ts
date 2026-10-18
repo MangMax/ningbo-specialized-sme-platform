@@ -14,7 +14,9 @@ let tool: { handler: (input: any) => Promise<any> }
 const nativeFetch = globalThis.fetch
 const fetcher = vi.fn()
 function page(rows: Record<string, string>[], total = rows.length, number = 1) {
-  return JSON.stringify({ zrarData: { grid: { applyGrid: { pageSet: rows, maxCount: total, page: number, pageSize: 1 } } } })
+  // These cases do not model returned size metadata. Explicit sizes are covered
+  // by the pagination regression suite and must match the actual request.
+  return JSON.stringify({ zrarData: { grid: { applyGrid: { pageSet: rows, maxCount: total, page: number } } } })
 }
 const response = (text: string, status = 200) => ({ ok: status === 200, status, text: async () => text })
 async function query(input: unknown) { body = input; return rest({}) }

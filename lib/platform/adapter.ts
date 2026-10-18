@@ -347,7 +347,14 @@ export function parsePlatformPage(raw: string, gridName: string) {
   if (grid && (!Array.isArray(grid.pageSet) || grid.pageSet.some(row => !row || typeof row !== 'object' || Array.isArray(row)))) {
     throw new PlatformResponseError('Invalid platform rows')
   }
-  const total = grid?.maxCount
-  const declaredTotal = total !== null && total !== undefined && total !== '' && Number.isSafeInteger(Number(total)) && Number(total) >= 0 ? Number(total) : null
-  return { ...parsed, declaredTotal, responsePage: grid?.page == null ? null : Number(grid.page), responseMaxPage: grid?.maxPage == null ? null : Number(grid.maxPage), responsePageSize: grid?.pageSize == null ? null : Number(grid.pageSize) }
+  const integer = (value: unknown): number | null => {
+    if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+$/.test(value.trim()))) return null
+    const number = Number(value)
+    return Number.isSafeInteger(number) && number >= 0 ? number : null
+  }
+  // Missing optional metadata stays absent; malformed supplied metadata must fail
+  // the live caller's consistency checks, never become a valid page/count via coercion.
+  const metadataInteger = (value: unknown) => value == null ? null : integer(value) ?? NaN
+  const declaredTotal = integer(grid?.maxCount)
+  return { ...parsed, declaredTotal, responsePage: metadataInteger(grid?.page), responseMaxPage: metadataInteger(grid?.maxPage), responsePageSize: metadataInteger(grid?.pageSize) }
 }
