@@ -99,7 +99,7 @@ describe('record correspondence source, candidate and MCP contracts', () => {
     const { db, event, relation, query } = fixture()
     const secret = 'SYNTHETIC_SECRET'
     const configuredCookie = 'SYNTHETIC_COOKIE_VALUE'
-    const configuredMcpToken = 'SYNTHETIC_MCP_TOKEN'
+    const configuredMcpToken = 'Q7m4N8p2R5v1'
     vi.stubGlobal('useRuntimeConfig', () => ({ mcpToken: configuredMcpToken }))
     db.insert(schema.serviceCredential).values({ key: 'miitCookie', value: `session=${configuredCookie}`, updatedAt: '2026-10-18T00:00:00.000Z' }).run()
     db.update(schema.platformRelation).set({ rawFields: {
@@ -109,16 +109,26 @@ describe('record correspondence source, candidate and MCP contracts', () => {
         `seen {\\"authorization\\":\\"${secret}\\"}; status=待审核`,
         `seen token%3D${secret}; status=待审核`,
         `seen %7B%22accessToken%22%3A%22${secret}%22%7D; status=待审核`,
+        `seen ${encodeURIComponent(`{"token": "${secret}"}`)}; status=待审核`,
+        `seen ${encodeURIComponent(`{"token" :\n\t"${secret}"}`)}; status=待审核`,
+        `seen ${encodeURIComponent(encodeURIComponent(`{"nested":{"token":"${secret}"}}`))}; status=待审核`,
+        `seen ${encodeURIComponent(`{"token": "${secret}"}`)} and ${encodeURIComponent(encodeURIComponent(`{"token": "${secret}"}`))}; status=待审核`,
+        `100% complete; seen ${encodeURIComponent(`{"token": "${secret}"}`)}; status=待审核`,
+        `seen ${JSON.stringify(JSON.stringify({ nested: { token: secret } }))}; status=待审核`,
+        'seen {"token": "q"}; quality=q; status=待审核',
         `seen {"rawResponse":"${secret}"}; status=待审核`,
         `session=${secret}; api_key=${secret}; status=待审核`,
         `provider echo ${configuredCookie}; status=待审核`,
         `provider echo ${encodeURIComponent(`session=${configuredCookie}`)}; status=待审核`,
         `provider echo ${configuredMcpToken}; status=待审核`,
       ],
+      [configuredMcpToken]: 'business value',
+      [`code_${configuredMcpToken}_suffix`]: 'other business value',
       nested: [{ cookie: secret, businessCode: 'B-1' }],
     } }).where(eq(schema.platformRelation.id, relation.id)).run()
     db.update(schema.platformQuery).set({ failureReason: `upstream timeout; apiKey%3A${secret}; retry pending` }).where(eq(schema.platformQuery.id, query.id)).run()
     const req = decision(event.id, relation.id)
+    req.basis = `review ${encodeURIComponent(`{"token": "${secret}"}`)}; status=待审核`
     const plan = dispatchRecordCorrespondenceMcp('preflight', req, { db, authorized: true }) as any
     const receipt = dispatchRecordCorrespondenceMcp('commit', { request: req, planHash: plan.planHash }, { db, authorized: true }) as any
     const id = receipt.correspondenceIds[0]
@@ -141,11 +151,22 @@ describe('record correspondence source, candidate and MCP contracts', () => {
         expect(response.headers.get('cache-control')).toBe('no-store')
         expect(rest).toEqual(mcp)
         const publicJson = JSON.stringify(rest)
-        expect(publicJson).not.toContain(secret)
+        let recoverable = publicJson
+        for (let pass = 0; pass < 3; pass++) recoverable = recoverable.replace(/(?:%[0-9a-f]{2})+/gi, encoded => {
+          try { return decodeURIComponent(encoded) } catch { return encoded }
+        })
+        expect(recoverable).not.toContain(secret)
         expect(publicJson).not.toContain(configuredCookie)
         expect(publicJson).not.toContain(configuredMcpToken)
         expect(publicJson).toContain('status=待审核')
         expect(publicJson).toContain('B-1')
+        if (action === 'source') {
+          expect(rest.source.rawFields['[REDACTED]']).toBe('business value')
+          expect(rest.source.rawFields['code_[REDACTED]_suffix']).toBe('other business value')
+          expect(rest.source.rawFields.notes[8]).toContain('100% complete;')
+          expect(rest.source.rawFields.notes[10]).toContain('"token": "[REDACTED]"')
+          expect(rest.source.rawFields.notes[10]).toContain('quality=q; status=待审核')
+        }
       }
     } finally { await app.close(); vi.unstubAllGlobals() }
     const source = dispatchRecordCorrespondenceMcp('source', { kind: 'relation', id: relation.id }, { db }) as any
@@ -154,6 +175,8 @@ describe('record correspondence source, candidate and MCP contracts', () => {
     expect(source.source.query.failureReason).toContain('upstream timeout;')
     expect(source.source.query.failureReason).toContain('retry pending')
     expect((db.select().from(schema.platformRelation).where(eq(schema.platformRelation.id, relation.id)).get()!.rawFields as any).notes[0]).toContain(secret)
+    expect((db.select().from(schema.platformRelation).where(eq(schema.platformRelation.id, relation.id)).get()!.rawFields as any).notes[4]).toContain(secret)
+    expect((db.select().from(schema.platformRelation).where(eq(schema.platformRelation.id, relation.id)).get()!.rawFields as any)[configuredMcpToken]).toBe('business value')
   })
 
   it('generates read-only candidates from named archived rows and keeps missing year and batch ambiguity', async () => {
