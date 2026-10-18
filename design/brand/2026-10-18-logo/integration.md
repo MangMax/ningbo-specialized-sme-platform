@@ -42,6 +42,8 @@
 
 实际测得展开图形为 24×24、名称 14px 字号/20px 行高，组合可见宽度约 88px；原版为 32px 底座加约 26px 字高的展示字标。1280px 明暗主题、折叠状态和 390px 移动菜单均查看；品牌链接从文件管理返回首页通过；pnpm typecheck 通过。
 
-本轮独立评审已交给 Magpie / DeepSeek OpenDesign，按 Oil UI【存量已有界面润色评审】执行，不打分。范围是尺寸、布局、对齐与主题使用，不重新设计已认可的标识；记录见 `sidebar-layout-review.md`。
+本轮独立评审由 Magpie / DeepSeek OpenDesign 完成，按 Oil UI【存量已有界面润色评审】执行，不打分，结论为 0 项必要修改、“太大、撑满”已明显改善。范围是尺寸、布局、对齐与主题使用，不重新设计已认可的标识；记录见 `sidebar-layout-review.md`。
 
 本地证据：`.scratch/brand/integration/evidence/sidebar-before-desktop-dark.png`，以及 `sidebar-after-desktop-light.png`、`sidebar-after-desktop-dark.png`、`sidebar-after-collapsed-dark.png`、`sidebar-after-mobile-light.png`。本轮未添加动效，未删产品文案，去掉展示底板及重复排版容器；保留导航和可访问名称。
+
+布局评审的唯一非阻塞观察为折叠时品牌中心上移约 8px；保留组件现有行为，本轮不改共享侧栏尺寸规则。评审者只检查静态截图，未验证动效；主 Agent 的实际操作记录独立保留。
