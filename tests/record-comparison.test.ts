@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
 import { getRecordComparison, previewRecordCorrespondenceImpact, queryProofFingerprint } from '../server/utils/record-comparison'
@@ -42,6 +43,17 @@ describe('record comparison public read service', () => {
     const other = f.makeEnterprise('Other', '91330211255994471Y'), otherEvent = f.makeEvent(other.id, 'award', 2024, 1)
     const scoped = getRecordComparison(f.db, f.input([query.id]))
     expect(scoped.rows.find(row => row.event.id === otherEvent.id)?.classification).toBe('unresolved')
+  })
+  it('export snapshot context does not turn complete historical absence into unresolved', () => {
+    const f = fixture(), e = f.makeEnterprise('Context', '91330211255994477E'), event = f.makeEvent(e.id, 'award', 2024, 1)
+    const evidence = { source: 'queryBusList', status: 'no_record', effectiveConditions: { uscc: e.usccNorm!, combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-18T00:00:00Z', completedAt: '2026-10-18T00:00:01Z', rows: [], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, maxPage: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null }], fetchedCount: 0, declaredTotal: 0, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } } as typeof schema.platformQuery.$inferInsert.collectionEvidence
+    const q = f.makeQuery('business_list', e.usccNorm!, 'specialized_sme', 'no_record', evidence)
+    const batch = f.db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'context.xlsx', sha256: 'e'.repeat(64), importStatus: 'imported' }).returning().get()
+    const exportRow = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 1, usccRaw: e.usccNorm }).returning().get()
+    f.save('export-context', [{ action: 'create', status: 'confirmed', edge: { type: 'event_export_context', eventId: event.id, exportRowId: exportRow.id, role: 'current_snapshot_context' } }])
+    const row = getRecordComparison(f.db, f.input([q.id], [batch.id])).rows[0]!
+    expect(row.classification).toBe('official_without_correspondence')
+    expect(row.correspondences).toMatchObject([{ type: 'event_export_context', exportRowId: exportRow.id }])
   })
   it('trusted source-bound scope proof reaches platform_without_official and same-version field conflict', () => {
     const f = fixture(), e = f.makeEnterprise('Old name', '91330211255994472Z')
@@ -104,13 +116,55 @@ describe('record comparison public read service', () => {
   })
   it('case 3 keeps failed review and later new application separate even when application is newest', () => {
     const f = fixture(), e = f.makeEnterprise('C', '91330211255994459R'), review = f.makeEvent(e.id, 'review', 2021, 1, 'failed')
-    const q = f.makeQuery('business_list', e.usccNorm!), reviewed = f.makeRelation(q.id, e.id, e.usccNorm, 1, '未通过', 'review', 2021), next = f.makeRelation(q.id, e.id, e.usccNorm, 2, '待审核', 'apply', 2025)
+    const q = f.makeQuery('business_list', e.usccNorm!), reviewed = f.makeRelation(q.id, e.id, e.usccNorm, 1, '未通过', 'review', 2024), next = f.makeRelation(q.id, e.id, e.usccNorm, 2, '待审核', 'apply', 2025)
     f.save('case3-review', [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: review.id, relationId: reviewed.id, role: 'supports_review' } }])
     f.save('case3-followup', [{ action: 'create', status: 'confirmed', edge: { type: 'later_process', enterpriseId: e.id, titleCode: 'specialized_sme', predecessorEventId: review.id, relationId: next.id, role: 'followup_apply' } }])
     const row = getRecordComparison(f.db, f.input([q.id])).rows[0]!
     expect(row.classification).toBe('historical_aligned')
+    expect(row.event).toMatchObject({ year: 2021, decidedYear: 2024 })
+    expect(row.platformRows[0]).toMatchObject({ id: reviewed.id, year: 2024, declareKind: 'review' })
     expect(row.event.reviewOutcome).toBe('failed')
     expect(row.laterProcesses[0]?.relation.id).toBe(next.id)
+    expect(getRecordComparison(f.db, f.input([q.id])).laterProcessPlatformRows).toMatchObject([{ relation: { id: next.id }, correspondences: [{ type: 'later_process' }] }])
+    expect(previewRecordCorrespondenceImpact(f.db, f.input([q.id])).proposedCandidates.some(item => item.relationId === next.id)).toBe(false)
+  })
+  it('independent later process remains visible without a predecessor event', () => {
+    const f = fixture(), e = f.makeEnterprise('Standalone', '91330211255994479G')
+    const q = f.makeQuery('apply_list', e.usccNorm!), later = f.makeRelation(q.id, e.id, e.usccNorm, 1, '待审核', 'apply', 2025)
+    f.save('standalone-later', [{ action: 'create', status: 'confirmed', edge: { type: 'later_process', enterpriseId: e.id, titleCode: 'specialized_sme', relationId: later.id, role: 'followup_apply' } }])
+    const out = getRecordComparison(f.db, f.input([q.id]))
+    expect(out.counts).toMatchObject({ distinctPlatformRows: 1, laterProcessRows: 1, platformWithoutOfficialRows: 0, unresolvedPlatformRows: 0 })
+    expect(out.laterProcessPlatformRows).toMatchObject([{ relation: { id: later.id }, correspondences: [{ type: 'later_process' }] }])
+  })
+  it('review process uses decision year; original award year and unknown timing cannot decide a review', () => {
+    const f = fixture(), e = f.makeEnterprise('Review', '91330211255994475C')
+    const review = f.makeEvent(e.id, 'review', 2021, 1, 'passed')
+    const q = f.makeQuery('business_list', e.usccNorm!)
+    const oldYear = f.makeRelation(q.id, e.id, e.usccNorm, 1, '终审通过', 'review', 2021)
+    const decided = f.makeRelation(q.id, e.id, e.usccNorm, 2, '未通过', 'review', 2024)
+    const unknown = f.makeRelation(q.id, e.id, e.usccNorm, 3, '未通过', 'review', null)
+    f.save('review-timing', [
+      { action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: review.id, relationId: oldYear.id, role: 'supports_review' } },
+      { action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: review.id, relationId: decided.id, role: 'supports_review' } },
+      { action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: review.id, relationId: unknown.id, role: 'supports_review' } },
+    ])
+    const row = getRecordComparison(f.db, f.input([q.id])).rows[0]!
+    expect(row.classification).toBe('historical_conflict')
+    expect(row.platformRows.map(item => item.id)).toEqual([oldYear.id, decided.id, unknown.id])
+    f.db.update(schema.recordEvent).set({ decidedYear: null }).run()
+    expect(getRecordComparison(f.db, f.input([q.id])).rows[0]).toMatchObject({ classification: 'unresolved', event: { decidedYear: null } })
+  })
+  it('review preview proposes the review process year, never the original award year or later application', () => {
+    const f = fixture(), e = f.makeEnterprise('Preview review', '91330211255994476D'), review = f.makeEvent(e.id, 'review', 2021, 1, 'failed')
+    const q = f.makeQuery('business_list', e.usccNorm!)
+    const originalYear = f.makeRelation(q.id, e.id, e.usccNorm, 1, '未通过', 'review', 2021)
+    const decisionYear = f.makeRelation(q.id, e.id, e.usccNorm, 2, '未通过', 'review', 2024)
+    const laterApply = f.makeRelation(q.id, e.id, e.usccNorm, 3, '待审核', 'apply', 2025)
+    expect(previewRecordCorrespondenceImpact(f.db, f.input([q.id])).proposedCandidates.map(item => item.relationId)).toEqual([decisionYear.id])
+    f.db.update(schema.recordEvent).set({ decidedYear: null }).run()
+    expect(previewRecordCorrespondenceImpact(f.db, f.input([q.id])).proposedCandidates).toEqual([])
+    expect([originalYear.id, laterApply.id]).toHaveLength(2)
+    expect(review.year).toBe(2021)
   })
   it('case 4 preserves two titles, two batches, duplicate business keys, and unlinked rows at original grain before pagination', () => {
     const f = fixture(), e = f.makeEnterprise('D', '91330211255994460S')
@@ -154,9 +208,49 @@ describe('record comparison public read service', () => {
     const out = getRecordComparison(f.db, f.input([q.id]))
     expect(out.rows[0]).toMatchObject({ event: { id: event.id, year: null }, classification: 'unresolved' })
     expect(out.rows[0]?.reasons).toContain('official_event_year_unknown')
-    expect(out.platformWithoutOfficial.rows).toEqual([])
+    expect(out.counts).toMatchObject({ distinctPlatformRows: 1, unresolvedPlatformRows: 1, platformWithoutOfficialRows: 0 })
+    expect(out.platformWithoutOfficial).toMatchObject({ total: 1, rows: [{ relation: { id: candidate.id, enterpriseId: null, verificationStatus: 'pending' }, qualification: 'unresolved' }] })
     expect(previewRecordCorrespondenceImpact(f.db, f.input([q.id])).dataIssues).toContainEqual(expect.objectContaining({ eventId: event.id, reasons: expect.arrayContaining(['official_event_year_unknown']) }))
     expect(candidate.enterpriseId).toBeNull()
+  })
+  it('pending business and apply rows remain visible at their original relation grain', () => {
+    const f = fixture()
+    const business = f.makeQuery('business_list', 'unidentified'), apply = f.makeQuery('apply_list', 'unidentified')
+    const first = f.makeRelation(business.id, null, null, 1, '终审通过', 'apply', 2024)
+    const second = f.makeRelation(apply.id, null, 'bad-uscc', 1, '待审核', 'apply', 2025)
+    const out = getRecordComparison(f.db, f.input([business.id, apply.id]))
+    expect(out.counts).toMatchObject({ distinctPlatformRows: 2, unresolvedPlatformRows: 2, platformWithoutOfficialRows: 0 })
+    expect(out.platformWithoutOfficial.rows.map(item => item.relation.id)).toEqual([first.id, second.id])
+    expect(out.platformWithoutOfficial.rows.map(item => item.reasons)).toEqual([['row_identity_unverified'], ['row_identity_unverified']])
+  })
+  it('asOf compares offset instants and hides decisions revised after the cutoff', () => {
+    const f = fixture(), e = f.makeEnterprise('As of', '91330211255994478F'), event = f.makeEvent(e.id, 'award', 2024, 1)
+    f.db.update(schema.sourceDocument).set({ issueDate: '2024-01-01' }).run()
+    const evidence = { source: 'queryBusList', status: 'success', effectiveConditions: { uscc: e.usccNorm!, combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-18T01:00:00Z', completedAt: '2026-10-18T01:00:00Z', rows: [{ tyshxydm: e.usccNorm! }], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, maxPage: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } } as typeof schema.platformQuery.$inferInsert.collectionEvidence
+    const q = f.makeQuery('business_list', e.usccNorm!, 'specialized_sme', 'success', evidence)
+    f.db.update(schema.platformQuery).set({ queriedAt: '2026-10-18T01:00:00Z' }).run()
+    expect(() => getRecordComparison(f.db, { ...f.input([q.id]), asOf: '2026-10-18T08:00:00+08:00' })).toThrow('source_set_missing_or_out_of_scope')
+    const atSameInstant = getRecordComparison(f.db, { ...f.input([q.id]), asOf: '2026-10-18T09:00:00+08:00' })
+    expect(atSameInstant.coverage).toHaveLength(1)
+
+    const relation = f.makeRelation(q.id, e.id, e.usccNorm, 1, '终审通过', 'apply', 2024)
+    const receipt = f.save('asof-candidate', [{ action: 'create', status: 'candidate', edge: { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'supports_award' } }])
+    const edgeId = receipt.correspondenceIds[0]!
+    f.db.update(schema.recordCorrespondence).set({ createdAt: '2026-10-18T00:30:00Z', status: 'rejected', revision: 2, decidedAt: '2026-10-18T02:00:00Z' }).run()
+    const another = f.makeRelation(q.id, e.id, e.usccNorm, 2, '终审通过', 'apply', 2024)
+    const confirmed = f.save('asof-confirmed', [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: event.id, relationId: another.id, role: 'supports_award' } }])
+    const confirmedId = confirmed.correspondenceIds[0]!
+    f.db.update(schema.recordCorrespondence).set({ createdAt: '2026-10-18T00:30:00Z', status: 'unlinked', revision: 3, decidedAt: '2026-10-18T02:00:00Z', endedAt: '2026-10-18T02:00:00Z' }).where(eq(schema.recordCorrespondence.id, confirmedId)).run()
+    const asOf = getRecordComparison(f.db, { ...f.input([q.id]), asOf: '2026-10-18T09:00:00+08:00' }, { officialScopes: [{ proofId: 'future-proof', sourceDocumentIds: [f.doc.id], titleCode: 'specialized_sme', fromYear: 2020, throughYear: 2026, enterpriseIds: [e.id], verifiedAt: '2026-10-18T02:00:00Z' }], currentScopes: [] })
+    expect(asOf.rows[0]).toMatchObject({ classification: 'unresolved', correspondences: [] })
+    expect(asOf.historicalDecisionUnavailable).toMatchObject([{ id: edgeId, eventId: event.id, relationId: relation.id, reason: 'post_cutoff_decision_state_unavailable' }, { id: confirmedId, eventId: event.id, relationId: another.id, reason: 'post_cutoff_decision_state_unavailable' }])
+    expect(asOf.platformWithoutOfficial.rows).toMatchObject([{ relation: { id: relation.id }, qualification: 'unresolved' }, { relation: { id: another.id }, qualification: 'unresolved' }])
+    expect(asOf.officialCoverage.proofIds).toEqual([])
+    expect(JSON.stringify(asOf)).not.toContain('2026-10-18T02:00:00Z')
+    expect(JSON.stringify(asOf)).not.toContain('"status":"rejected"')
+    expect(JSON.stringify(asOf)).not.toContain('"status":"unlinked"')
+    expect(JSON.stringify(asOf)).not.toContain('future-proof')
+    expect(previewRecordCorrespondenceImpact(f.db, { ...f.input([q.id]), asOf: '2026-10-18T09:00:00+08:00' }).proposedCandidates).toEqual([])
   })
   it('legacy preview preserves originals and global counts across pages without writing', () => {
     const f = fixture(), e = f.makeEnterprise('L', '91330211255994464W'), event = f.makeEvent(e.id, 'award', 2024, 1), q = f.makeQuery('business_list', e.usccNorm!)
