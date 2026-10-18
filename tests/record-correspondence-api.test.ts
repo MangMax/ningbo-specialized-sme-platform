@@ -1,7 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { createApp, defineEventHandler, toNodeListener } from 'h3'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { useDb, schema } from '../db/client'
 import { handleRecordCorrespondenceRequest } from '../server/utils/record-correspondence-api'
@@ -12,7 +15,8 @@ import { startHttpFixture } from './helpers/http-fixture'
 const dirs: string[] = []
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'spztx-api-66-')); dirs.push(dir)
-  const db = useDb({ dbPath: join(dir, 'isolated.db') })
+  const dbPath = join(dir, 'isolated.db')
+  const db = useDb({ dbPath })
   const enterprise = db.insert(schema.enterprise).values({ name: '合成甲', nameNorm: '合成甲', usccNorm: '91330211255994457P' }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2022, batchSeq: 1 }).returning().get()
@@ -21,7 +25,7 @@ function fixture() {
   const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, nameRaw: '合成甲', relationKey: 'B-1', status: '待审核', rawFields: { original: '原值', cookie: 'SECRET-COOKIE' }, matchBasis: 'uscc', verificationStatus: 'confirmed' }).returning().get()
   const batch = db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'synthetic.xlsx', sha256: 'synthetic-sha', importStatus: 'imported' }).returning().get()
   const exportRow = db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 7, usccRaw: enterprise.usccNorm, rawFields: { source: '原值', password: 'SECRET-PASSWORD' } }).returning().get()
-  return { db, enterprise, event, query, relation, batch, exportRow }
+  return { db, dbPath, enterprise, event, query, relation, batch, exportRow }
 }
 afterAll(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }) })
 async function server(db: ReturnType<typeof useDb>, apiToken: string | null = 'synthetic-token') {
@@ -31,6 +35,35 @@ function decision(eventId: number, relationId: number) { return { idempotencyKey
 async function json(response: Response) { return response.json() as Promise<any> }
 
 describe('record correspondence HTTP adapter with isolated SQLite', () => {
+  it('returns a fixed typed 400 with no-store and no writes for malformed JSON through the real h3 route', async () => {
+    const { db, dbPath } = fixture()
+    const oldPath = process.env.NUXT_DB_PATH
+    process.env.NUXT_DB_PATH = dbPath
+    vi.stubGlobal('defineEventHandler', defineEventHandler)
+    vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-token' }))
+    const { correspondenceRoute } = await import('../server/utils/record-correspondence-route')
+    const app = createApp()
+    app.use('/api/roster/correspondences/preflight', correspondenceRoute('preflight'))
+    const listener = createServer(toNodeListener(app))
+    try {
+      await new Promise<void>(resolve => listener.listen(0, '127.0.0.1', resolve))
+      const port = (listener.address() as AddressInfo).port
+      const response = await fetch(`http://127.0.0.1:${port}/api/roster/correspondences/preflight`, {
+        method: 'POST', headers: { authorization: 'Bearer synthetic-token', 'content-type': 'application/json' }, body: '{"basis":"SYNTHETIC_SECRET",',
+      })
+      expect(response.status).toBe(400)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(await json(response)).toEqual({ error: { code: 'invalid_request', message: 'Malformed JSON request body' } })
+      expect(db.select().from(schema.importBatch).all()).toEqual([])
+      expect(listRecordCorrespondences(db)).toEqual([])
+    } finally {
+      await new Promise<void>(resolve => listener.close(() => resolve()))
+      if (oldPath === undefined) delete process.env.NUXT_DB_PATH
+      else process.env.NUXT_DB_PATH = oldPath
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('lists empty state and rejects unauthenticated preflight when token is unconfigured', async () => {
     const { db, event, relation } = fixture(); const app = await server(db, null)
     try {
@@ -62,6 +95,67 @@ describe('record correspondence HTTP adapter with isolated SQLite', () => {
 
 
 describe('record correspondence source, candidate and MCP contracts', () => {
+  it('redacts credential echoes in public source, list, audit, and query failure responses without changing business evidence', async () => {
+    const { db, event, relation, query } = fixture()
+    const secret = 'SYNTHETIC_SECRET'
+    const configuredCookie = 'SYNTHETIC_COOKIE_VALUE'
+    const configuredMcpToken = 'SYNTHETIC_MCP_TOKEN'
+    vi.stubGlobal('useRuntimeConfig', () => ({ mcpToken: configuredMcpToken }))
+    db.insert(schema.serviceCredential).values({ key: 'miitCookie', value: `session=${configuredCookie}`, updatedAt: '2026-10-18T00:00:00.000Z' }).run()
+    db.update(schema.platformRelation).set({ rawFields: {
+      original: '原值',
+      notes: [
+        `seen {"token":"${secret}"}; status=待审核`,
+        `seen {\\"authorization\\":\\"${secret}\\"}; status=待审核`,
+        `seen token%3D${secret}; status=待审核`,
+        `seen %7B%22accessToken%22%3A%22${secret}%22%7D; status=待审核`,
+        `seen {"rawResponse":"${secret}"}; status=待审核`,
+        `session=${secret}; api_key=${secret}; status=待审核`,
+        `provider echo ${configuredCookie}; status=待审核`,
+        `provider echo ${encodeURIComponent(`session=${configuredCookie}`)}; status=待审核`,
+        `provider echo ${configuredMcpToken}; status=待审核`,
+      ],
+      nested: [{ cookie: secret, businessCode: 'B-1' }],
+    } }).where(eq(schema.platformRelation.id, relation.id)).run()
+    db.update(schema.platformQuery).set({ failureReason: `upstream timeout; apiKey%3A${secret}; retry pending` }).where(eq(schema.platformQuery.id, query.id)).run()
+    const req = decision(event.id, relation.id)
+    const plan = dispatchRecordCorrespondenceMcp('preflight', req, { db, authorized: true }) as any
+    const receipt = dispatchRecordCorrespondenceMcp('commit', { request: req, planHash: plan.planHash }, { db, authorized: true }) as any
+    const id = receipt.correspondenceIds[0]
+    const app = await startHttpFixture({ getRoutes: {
+      '/api/roster/correspondences': r => handleRecordCorrespondenceRequest({ ...r, action: 'list' }, { db }),
+      [`/api/roster/correspondences/relations/${relation.id}`]: r => handleRecordCorrespondenceRequest({ ...r, action: 'source', kind: 'relation', id: relation.id }, { db }),
+      [`/api/roster/correspondences/${id}/audit`]: r => handleRecordCorrespondenceRequest({ ...r, action: 'audit', id }, { db }),
+    } })
+    try {
+      const cases = [
+        ['source', { kind: 'relation', id: relation.id }, `/api/roster/correspondences/relations/${relation.id}`],
+        ['list', { eventId: event.id }, `/api/roster/correspondences?eventId=${event.id}`],
+        ['audit', { id }, `/api/roster/correspondences/${id}/audit`],
+      ] as const
+      for (const [action, args, path] of cases) {
+        const response = await fetch(app.baseUrl + path)
+        const rest = await json(response)
+        const mcp = dispatchRecordCorrespondenceMcp(action, args, { db })
+        expect(response.status).toBe(200)
+        expect(response.headers.get('cache-control')).toBe('no-store')
+        expect(rest).toEqual(mcp)
+        const publicJson = JSON.stringify(rest)
+        expect(publicJson).not.toContain(secret)
+        expect(publicJson).not.toContain(configuredCookie)
+        expect(publicJson).not.toContain(configuredMcpToken)
+        expect(publicJson).toContain('status=待审核')
+        expect(publicJson).toContain('B-1')
+      }
+    } finally { await app.close(); vi.unstubAllGlobals() }
+    const source = dispatchRecordCorrespondenceMcp('source', { kind: 'relation', id: relation.id }, { db }) as any
+    expect(source.source.rawFields).toMatchObject({ original: '原值', nested: [{ businessCode: 'B-1' }] })
+    expect(source.source.rawFields.notes[2]).toBe('seen token%3D[REDACTED]; status=待审核')
+    expect(source.source.query.failureReason).toContain('upstream timeout;')
+    expect(source.source.query.failureReason).toContain('retry pending')
+    expect((db.select().from(schema.platformRelation).where(eq(schema.platformRelation.id, relation.id)).get()!.rawFields as any).notes[0]).toContain(secret)
+  })
+
   it('generates read-only candidates from named archived rows and keeps missing year and batch ambiguity', async () => {
     const { db, event, relation, query, batch } = fixture(); const app = await server(db)
     try {
