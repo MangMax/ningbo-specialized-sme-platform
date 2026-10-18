@@ -1,7 +1,7 @@
 interface:
-  display_name: "Roster Ingestion Pipeline"
-  short_description: "Import rosters, collect platform evidence and investigate designation differences through app API/MCP."
-  default_prompt: "Use $roster-ingestion-pipeline to clean or import roster files, collect platform evidence or investigate designation differences."
+  display_name: "名录清洗与入库"
+  short_description: "通过应用 API/MCP 清洗入库名录、采集平台证据并判断称号差异。"
+  default_prompt: "使用 $roster-ingestion-pipeline 清洗或入库名录文件、采集平台证据，或查证并判断称号差异。"
 compatibility:
   canonical_format: "agent-skills"
   adapter_targets:
@@ -14,6 +14,6 @@ compatibility:
   trust:
     source_tier: "local"
     remote_inline_execution: "forbid"
-    remote_metadata_policy: "Do not place credentials, business databases, or source files in Git."
+    remote_metadata_policy: "凭据、业务数据库和源文件不得进入 Git。"
   degradation:
-    openai: "Follow SKILL.md; keep unsupported cases pending."
+    openai: "遵循 SKILL.md；当前不支持的情况保留待处理。"

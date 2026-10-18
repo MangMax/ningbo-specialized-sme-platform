@@ -1,49 +1,49 @@
-# Identity research and missing unified social credit codes
+# 信用代码补全与身份查证
 
-A row in a published roster is valid evidence of a designation even when its unified social credit code is missing. Import the complete official roster independently from identity enrichment. Keep an unresolved code empty and pending; never drop its row to make matching easier.
+正式名单行即使缺统一社会信用代码，仍是有效称号依据。完整名单入库与身份补全分别推进；代码未确认就留空待核，不为便于匹配而丢弃正式行。
 
-## Search record
+## 查证记录
 
-For every investigation, keep a record outside Git of:
+每次调查在 Git 外保存：
 
-- the official name and source file/page;
-- each exact query string, source/interface, retrieval time and candidate returned;
-- filters and title levels; page number, page size, reported total and whether all pages were reached;
-- the original source URL or supported platform response reference, plus any failure or incomplete state.
+- 公布原名、源文件和页码；
+- 每个准确查询词、来源/接口、查询时间及返回候选；
+- 筛选条件、称号级别、页号/页大小、声明总量、分页是否完整；
+- 原始来源网址或支持的平台响应引用，以及失败或未完成状态。
 
-An absent query, failed page, expired session, HTTP 200 login page or incomplete pagination is not a measured zero. Do not put cookies, account details or passwords in the record.
+未查询、页失败、会话过期、HTTP 200 登录页、分页未完成，都不等于测得零记录。记录中不得放 Cookie、账号明细或密码。
 
-## Candidate discovery
+## 发现候选
 
-Search across sources without making external research depend on an empty local result. A name or code found by any route is a candidate until independent evidence closes the identity chain.
+跨来源搜索，不把“本地查不到”设为公开搜索的前置条件。任何途径发现的名称/代码，在独立证据链闭合前都只是候选。
 
-1. **Local candidates.** Search current enterprise names and confirmed aliases by the complete published name, punctuation/parenthesis variants and progressively shorter distinctive terms. Include any candidate's current name and code in the investigation log. Pending aliases are not confirmed identity evidence.
-2. **queryList — application records.** Use app `query_platform` or `POST /api/platform/query` with `source:"queryList"`, `name` (platform keyword) and/or `uscc` (AND when combined). Search published name variants then candidates/codes; inspect completeness and all requested pages. It is not a name-to-code identity decision.
-3. **queryBusList — current recognized enterprises.** Use the same app query with `source:"queryBusList"`; `rdjb` is an array of `"1"|"2"|"3"`, default all three. Name/code AND supported. Keep dates and region blank unless intentionally restricted. Verified filters, formats and unknown date-boundary semantics are in [`platform-query.md`](./platform-query.md). Retain each title/page and all relationships.
-4. **businessList — platform relation rows.** Use app `source:"businessList",uscc,rdjb:"all"` or explicit string `"1"|"2"|"3"`. This source rejects name searches and recognized-list filters. All three title levels and all pages are needed for an all-relation search. Ordinary title failure continues other titles; auth stops. No title's valid zero hides another's unfinished range.
-5. **Public-source research.** Search exact official names, punctuation variants, progressively shorter distinctive phrases, candidate current names and confirmed codes. Prefer primary public subject or registry pages that state the name/code relationship. A search-results page or a plausible name match is only a lead, not evidence.
+1. **本地候选**：用公布全名、标点/括号变体、逐步缩短的特征词搜索现名及已确认别名。查证日志带上候选现名与代码；待核别名不算已确认身份依据。
+2. **申报记录 queryList**：通过应用 `query_platform` 或 `POST /api/platform/query`，传 `source:"queryList"`、`name`（平台关键词）和/或 `uscc`，同时传入时为 AND。先查公布名变体，再查候选名/代码；核对全部页与完整性。搜索命中不等于名称到代码的身份确认。
+3. **已认定企业 queryBusList**：使用相同应用入口，传 `source:"queryBusList"`；`rdjb` 为 `"1"|"2"|"3"` 数组，默认三个称号。名称与代码可按 AND 组合；无意限定时日期、地区留空。已验证的筛选格式及未核实的日期边界见[平台查询说明](./platform-query.md)。保留每个称号、分页及全部关系。
+4. **关联记录 businessList**：通过应用传 `source:"businessList",uscc,rdjb:"all"` 或字符串 `"1"|"2"|"3"`。此来源不支持名称和认定列表专用筛选。查全关系时覆盖三个称号及全部页；普通失败可继续其他称号，鉴权失败停止。某称号零记录不能掩盖其他称号尚未完成。
+5. **公开来源**：搜索准确公布名、标点变体、逐步缩短的特征词、候选现名和已确认代码。优先直接记载名称/代码关系的企业或登记主体页面。搜索摘要或看似相同的名称只是线索。
 
-Use app APIs/MCP for every routine platform query, including batch submit/status/individual results/retry. Follow [`platform-query.md`](./platform-query.md); the server resolves credentials, so the investigator never reads/reveals Cookie or sends direct platform HTTP requests. Stored history at `GET /api/platform/queries` is not a fresh live query. Its stored enum is `business_list` / `apply_list` / `recognized_list`; queryBusList maps only to recognized_list. Explicit unified transfer preserves original time and page proof; missing metadata remains pending. See [archival transfer](../../../../docs/platform-recognized-evidence.md).
+平台单查、批量提交、进度、单项结果和重试均通过应用 API/MCP，遵循[平台查询说明](./platform-query.md)。服务端解析凭据，代理不读/展示 Cookie、不直发平台 HTTP。`GET /api/platform/queries` 是存储历史，不是新的实时查询。存储类型为 `business_list` / `apply_list` / `recognized_list`，queryBusList 只能对应 recognized_list。统一转存须保留原时间与页证明；元数据不足继续待处理，见[归档转存契约](../../../../docs/platform-recognized-evidence.md)。
 
-## Close the identity chain
+## 闭合身份链
 
-- A library hit, shared name, matching locality or search-engine result only proposes a candidate. Do not pick the most similar name or treat a candidate alias as confirmed.
-- For a platform-name match, compare the platform's original qymc with the published name using only a rule accepted by the current contract. Keep any normalized or typographic match labeled as such.
-- For a renamed subject, require public evidence that links the published old name to the code, then query the platform by that exact code and preserve the platform's current qymc. A different current name is not itself proof of the old-name relationship.
-- Keep public-source evidence and platform-by-code evidence as separate provenance. Record the source URL, check time and the basis that connects the published name to the code. The current unified import can save supported public-source backfills and merge lineage; use `usccBackfills` only when no other enterprise row holds the code and `merges` only for an explicit, evidenced merge into the existing holder. Never overwrite a code or merge on name alone.
-- If multiple codes or subjects remain plausible, the code is invalid, a required page is missing, or the source does not establish the link, leave identity pending. Continue the official-row import.
+- 本地命中、同名、属地相同或搜索结果只产生候选。不挑“最相似”的主体，不把待核别名当已确认别名。
+- 平台名称匹配时，只按当前契约允许的规则比较原始 `qymc` 与公布名。归一化或字形匹配须如实注明。
+- 更名主体须有公开依据把公布旧名与代码连接，再按准确代码查询平台，保留当前 `qymc`。现名不同本身不是旧名关系的证明。
+- 公开来源与平台按码查询分别保留出处，记录网址、查证时间及旧名与代码相连的依据。当前统一导入支持规定的公开补码和合并沿革：仅在无其他企业行占用该代码时使用 `usccBackfills`；向现有代码持有者合并须用有明确证据的 `merges`。不得覆盖代码或仅按同名合并。
+- 多代码/主体候选、代码无效、必要页缺失或来源未建立联系时，身份继续待核，正式名单行继续入库。
 
-## Current cross-source gate and issue #6
+## 跨来源合并限制与 issue #6
 
-The current `cross_source` merge path is narrower than the proposed identity rule. It requires a public source URL/date/basis, a non-empty platform-by-code result with qymc, and `nameQueryRowCount = 0` for the published name. The query must have actually been run and fully paginated. A real count above zero does not satisfy this path; use only a platform-name evidence path accepted by the current contract, or leave the case pending for #6.
+当前 `cross_source` 合并路径比拟议的身份规则更窄：必须有公开来源网址/日期/依据、按代码查得的非空平台结果及 `qymc`，且公布名的 `nameQueryRowCount = 0`。查询必须实际执行并查完全部页；实测大于零不满足此路径。应选当前契约支持的平台名称证据路径，或留待 #6 处理。
 
-There is a known parser hazard: `server/utils/uscc-verdicts.ts` currently converts an omitted `queryListByName.rowCount` to 0. That default is not a platform observation. Always supply the count measured from the actual completed query; never omit it, type a guessed zero, claim a failed/partial search as zero, or bypass the check. Changing this rule belongs to issue #6. If a required query or accepted write path is unavailable, retain the evidence as pending and describe the exact contract gap.
+已知解析风险：`server/utils/uscc-verdicts.ts` 会把缺失的 `queryListByName.rowCount` 转成 0；默认值不是平台观察。始终传实际完整查询测得的数量，不省略、不猜零、不把失败/部分结果当零，也不绕过校验。调整规则归 #6；缺少必要查询或合法写入路径时保留证据并说明具体契约缺口。
 
-The current gate checks field presence and counts; it does not independently prove that a public page semantically links the published name to the code. The researcher must verify that relationship from the source page. A cross-source result must not be described as a platform name match or as a conclusion derived from name similarity.
+当前校验只检查字段和计数，不独立证明公开页面在语义上连接了公布名与代码；调查者必须核实页面中的实际关系。跨来源证据不能描述成平台名称直接命中或名称相似推断。
 
-## Write and status boundaries
+## 写入与状态边界
 
-- Preserve every official roster row when the code is unresolved. Identity pending is not roster-import failure.
-- Save platform queries and relations using current supported `business_list` / `apply_list` or validated `recognized_list` archive payload shapes; collection is never an implicit write. Save public-source evidence only through a currently supported backfill or merge shape. Refer to [`docs/roster-lifecycle-contract.md`](../../../../docs/roster-lifecycle-contract.md) §§8.3, 8.4 and 8.10.
-- Keep query status, pagination completeness, page/OCR status, event metadata and identity status separate. `failed`, `no_record`, `not_queried` and `pending` are not interchangeable.
-- The names 海尔施、众鑫、华盛、展慈 are leads supplied in issue #35. They are not verified old names, aliases, current names or identities by virtue of appearing in a task. Only record a lineage after independent public evidence and platform-by-code evidence support it.
+- 代码未确认时，全部正式行继续保留；身份待核不等于名录入库失败。
+- 平台查询/关系以当前支持的 `business_list` / `apply_list` 或已校验的 `recognized_list` 归档载荷保存；采集不自动入库。公开证据只用支持的补码/合并结构，见[契约](../../../../docs/roster-lifecycle-contract.md) §§8.3、8.4、8.10。
+- 查询状态、分页完整性、页图/OCR、事件元数据和身份状态分别保存。`failed`、`no_record`、`not_queried`、`pending` 不能互换。
+- issue #35 中海尔施、众鑫、华盛、展慈只是用户线索，不能因任务中提到就视为已确认旧名、别名或主体。须有独立公开证据与平台按码证据支持，才能记录沿革。
