@@ -98,7 +98,6 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
             <h4 class="text-sm font-medium">{{ table.label }} <span class="text-muted-foreground font-normal">{{ table.rows.length }} 条</span></h4>
             <span v-if="table.queries.length" class="text-muted-foreground text-[13px]" data-testid="platform-query-summary">{{ querySummary(table.queries) }}</span>
           </div>
-          <p v-if="table.recognized" class="text-muted-foreground mb-2 text-[13px] leading-5">按原查询时点保留的证据，含历史记录；不代表当前正式名单。维护年份与批次不作为正式认定事件。</p>
           <PlatformQueryProvenance :queries="table.queries" :source-label="table.label" />
           <p v-for="query in table.queries.filter(query => query.status === 'failed')" :key="query.id" class="text-destructive mb-2 text-[13px] leading-5" data-testid="platform-query-failure">查询 #{{ query.id }}：{{ platformFailureForDisplay(query.failureReason) ?? '本次查询未完成，不能据此判断平台有无记录。' }}</p>
           <div class="min-w-0 overflow-x-auto rounded-sm border" tabindex="0" :aria-label="`${table.label}表格，可横向滚动`">

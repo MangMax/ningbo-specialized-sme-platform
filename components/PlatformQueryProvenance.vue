@@ -12,6 +12,7 @@ const conditionValue = (key: string, value: string) => key === 'orderField' && v
 <template>
   <details v-if="queries.length" class="mb-2 rounded-sm border px-3 py-2 text-[13px] leading-5" data-testid="platform-query-history">
     <summary class="cursor-pointer text-primary focus-visible:outline-2 focus-visible:outline-ring">查询出处与历史 · {{ queries.length }} 次</summary>
+    <p v-if="queries.some(query => query.interface === 'recognized_list')" class="text-muted-foreground mt-3">按原查询时点保留的证据，含历史记录；不代表当前正式名单。维护年份与批次不作为正式认定事件。</p>
     <article v-for="query in [...queries].sort((a,b) => b.queriedAt.localeCompare(a.queriedAt))" :key="query.id" class="mt-3 border-t pt-3 break-words [overflow-wrap:anywhere]" data-testid="platform-query-provenance">
       <p class="font-medium">查询 #{{ query.id }} · {{ sourceLabel }} · {{ PLATFORM_QUERY_STATUSES[query.status] ?? '状态待核' }} · {{ query.relationCount }} 条来源行</p>
       <p>原查询时点：{{ time(query.queriedAt) }}</p>

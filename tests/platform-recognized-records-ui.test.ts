@@ -35,7 +35,9 @@ it('业务列保留维护与有效期原值，逐行详情可引用且不渲染�
  const details=table.get('[data-testid="platform-row-details"]')
  for(const text of ['行 #100','查询引用#60','原行序号1','来源页1','whpcyear','2024']) expect(details.text()).toContain(text)
  expect(view.text()).not.toMatch(/synthetic-secret|hidden|internal-only|cookie|session|debug/)
- expect(view.text()).toContain('维护年份与批次不作为正式认定事件')
+ const history=view.get('[data-record-kind="recognized_list"] [data-testid="platform-query-history"]')
+ expect(history.text()).toContain('维护年份与批次不作为正式认定事件')
+ expect(view.get('[data-record-kind="recognized_list"]').findAll(':scope > p')).toHaveLength(0)
  view.unmount()
 })
 it('出处保留每次历史查询、实际条件、页范围和未知总数', () => {
