@@ -16,6 +16,7 @@ const displayed = ref<ComparisonSourceCatalog | null>(null)
 const displayedKind = ref<ComparisonSourceKind | null>(null)
 const loading = ref(false)
 const error = ref(false)
+const selectedError = ref(false)
 const cache = ref<Record<string, ComparisonSource>>({})
 let requestId = 0
 const keyOf = (source: Pick<ComparisonSource, 'kind' | 'id'>) => `${source.kind}:${source.id}`
@@ -60,6 +61,7 @@ watch(kind, () => { page.value = 1 })
 
 /** Restored comparison URLs still show business labels rather than bare source IDs. */
 async function hydrateSelectedLabels() {
+  selectedError.value = false
   for (const group of groups) {
     const missing = new Set(props.selection[sourceSelectionKey(group.kind)].filter(id => !cache.value[`${group.kind}:${id}`]))
     if (!missing.size) continue
@@ -71,7 +73,8 @@ async function hydrateSelectedLabels() {
         if (current * result.pageSize >= result.total) break
         current++
       }
-    } catch { /* The selected IDs remain intact; compare API validates the source set. */ }
+    } catch { selectedError.value = true /* The selected IDs remain intact; compare API validates the source set. */ }
+    if (missing.size) selectedError.value = true
   }
 }
 onMounted(() => { void hydrateSelectedLabels() })
@@ -100,7 +103,8 @@ watch(() => props.selection, () => { void hydrateSelectedLabels() }, { deep: tru
     <p v-else-if="!loading && !error" class="text-muted-foreground text-[13px]">此类别尚无可选来源。</p>
     <TablePagination v-if="displayed" :page="displayed.page" :page-size="displayed.pageSize" :total="displayed.total" unit="项来源" :loading="loading || error" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
     <div v-if="selectedItems.length" class="flex flex-wrap gap-1.5" aria-label="已选来源">
-      <Button v-for="item in selectedItems" :key="`${item.kind}:${item.id}`" variant="secondary" size="sm" class="h-auto max-w-full whitespace-normal text-left text-xs" :aria-label="`移除${item.source?.label ?? '已选来源'}`" @click="item.source ? toggle(item.source, false) : emit('change', { ...selection, [sourceSelectionKey(item.kind)]: selection[sourceSelectionKey(item.kind)].filter(id => id !== item.id) })">{{ item.source?.label ?? '正在读取来源名称…' }} · 移除</Button>
+      <Button v-for="item in selectedItems" :key="`${item.kind}:${item.id}`" variant="secondary" size="sm" class="h-auto max-w-full whitespace-normal text-left text-xs" :aria-label="`移除${item.source?.label ?? '已选来源'}`" @click="item.source ? toggle(item.source, false) : emit('change', { ...selection, [sourceSelectionKey(item.kind)]: selection[sourceSelectionKey(item.kind)].filter(id => id !== item.id) })">{{ item.source?.label ?? (selectedError ? '来源名称暂不可读' : '正在读取来源名称…') }} · 移除</Button>
     </div>
+    <Button v-if="selectedError" variant="outline" size="sm" class="self-start" @click="hydrateSelectedLabels">重试读取已选来源名称</Button>
   </section>
 </template>

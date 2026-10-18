@@ -30,3 +30,20 @@ it('shows human source names and times, permits partial queries, and blocks fail
   await flushPromises()
   expect(wrapper.get('[aria-label="选择专精特新中小企业 · 2025 · export.xlsx"]').attributes('disabled')).toBeDefined()
 })
+
+it('keeps bookmarked selection after name hydration fails and offers a retry', async () => {
+  let failSelected = true
+  vi.stubGlobal('$fetch', vi.fn(async (_url: string, options: { query: { kind: keyof typeof rows; pageSize: number; page: number } }) => {
+    if (options.query.kind === 'query' && options.query.pageSize === 200 && failSelected) throw new Error('offline')
+    return { rows: rows[options.query.kind], total: 1, page: options.query.page, pageSize: options.query.pageSize, counts: { official_document: 1, query: 1, export_batch: 1 }, selection: 'explicit', completeness: 'not_implied_by_catalog' }
+  }))
+  const wrapper = mount(ComparisonSourcePicker, { props: { selection: { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [], proofIds: [] } }, global: { stubs: { TableLoadingStatus: true, TableFailureState: true, TablePagination: true } } })
+  wrapperList.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('来源名称暂不可读')
+  expect(wrapper.text()).toContain('重试读取已选来源名称')
+  failSelected = false
+  await wrapper.findAll('button').find(button => button.text() === '重试读取已选来源名称')!.trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('申报流程 · 专精特新中小企业 · 合成企业')
+})
