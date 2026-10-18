@@ -1,0 +1,40 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, describe, expect, it } from 'vitest'
+import { useDb, schema } from '../db/client'
+import { handleComparisonScopeProofRequest } from '../server/utils/comparison-scope-proof-api'
+
+const dirs: string[] = []
+function fixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'spec63-proof-'))
+  dirs.push(dir)
+  const db = useDb({ dbPath: join(dir, 'synthetic.db') })
+  const file = db.insert(schema.storedFile).values({ relPath: 'synthetic/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 8, sha256: 'a'.repeat(64), source: 'jxj', kind: 'announcement' }).returning().get()
+  const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Synthetic notice', path: file.relPath }).returning().get()
+  const enterprise = db.insert(schema.enterprise).values({ name: 'Synthetic', nameNorm: 'Synthetic', usccNorm: '91330211255994475A' }).returning().get()
+  const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
+  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
+  db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, page: 3, listNo: 2 }).run()
+  return { db, file, doc, enterprise, event }
+}
+afterAll(() => dirs.forEach(dir => rmSync(dir, { recursive: true, force: true })))
+const auth = { authorization: 'Bearer synthetic-token' }
+function request(input: ReturnType<typeof fixture>, action: 'preflight' | 'commit' | 'list' | 'get' | 'audit' | 'batch', body?: unknown, id?: number) {
+  return handleComparisonScopeProofRequest({ action, method: ['preflight', 'commit'].includes(action) ? 'POST' : 'GET', body, id, headers: auth }, { db: input.db, apiToken: 'synthetic-token' })
+}
+function official(input: ReturnType<typeof fixture>) { return { idempotencyKey: 'proof-one', sourceIdentity: 'synthetic/notice.pdf', actor: { type: 'agent', id: 'test-agent' }, basis: 'Reviewed full synthetic 2024 announcement and its scoped roster', ruleId: 'manual-scope', ruleVersion: '1', operations: [{ action: 'create', kind: 'official_coverage', status: 'confirmed', evidence: { titleCode: 'specialized_sme', fromYear: 2024, throughYear: 2024, enterpriseIds: null, fullRange: true, sourceDocuments: [{ id: input.doc.id, fileId: input.file.id, sha256: input.file.sha256, reference: { field: 'record_evidence.source_file', page: 3, listNo: 2 } }] } }] } }
+
+describe('comparison scope proof service', () => {
+  it('registers confirmed official scope with immutable audit and idempotent receipt', () => {
+    const input = fixture(); const req = official(input)
+    const plan = request(input, 'preflight', req).body as any
+    expect(plan).toMatchObject({ batchStatus: 'preflight', impact: { created: 1, audit: 2 } })
+    const receipt = request(input, 'commit', { request: req, planHash: plan.planHash }).body as any
+    expect(receipt.proofIds).toHaveLength(1)
+    expect(request(input, 'commit', { request: req, planHash: plan.planHash }).body).toEqual(receipt)
+    const proof = request(input, 'get', undefined, receipt.proofIds[0]).body as any
+    expect(proof).toMatchObject({ id: receipt.proofIds[0], kind: 'official_coverage', status: 'confirmed', revision: 2, valid: true })
+    expect((request(input, 'audit', undefined, proof.id).body as any).rows.map((row: any) => row.toStatus)).toEqual(['candidate', 'confirmed'])
+  })
+})
