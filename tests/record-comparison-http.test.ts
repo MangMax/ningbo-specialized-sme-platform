@@ -52,6 +52,8 @@ describe('record comparison true HTTP adapters on isolated SQLite', () => {
     expect(body.rows).toMatchObject([{ id: reason.id, disposition: 'legacy_pending_review', possibleEventIds: [event.id] }])
     const invalid = await fetch(`${service.baseUrl}/api/roster/record-comparison?exportBatchIds=&officialSourceDocumentIds=${doc.id}`)
     expect(invalid.status).toBe(400)
+    const unsupported = await fetch(`${service.baseUrl}/api/roster/record-comparison/legacy-impact?${sourceQuery}&proofIds=1`)
+    expect(unsupported.status).toBe(400)
   })
   it('discovers both read-only MCP tools and returns the same comparison data through MCP', async () => {
     const rpc = async (method: string, params?: Record<string, unknown>) => {

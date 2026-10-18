@@ -52,6 +52,9 @@ describe('mcp-auth 鉴权判据', () => {
       'preflight_record_correspondences',
       'save_record_correspondences',
       'get_record_correspondence_batch',
+      'preflight_comparison_scope_proofs',
+      'commit_comparison_scope_proofs',
+      'get_comparison_scope_proof_batch',
     ])
   })
 
@@ -63,6 +66,9 @@ describe('mcp-auth 鉴权判据', () => {
       params: { name, arguments: {} },
     })
     expect(writeToolCallIn(call('save_roster_batch'))).toBe('save_roster_batch')
+    expect(writeToolCallIn(call('preflight_comparison_scope_proofs'))).toBe('preflight_comparison_scope_proofs')
+    expect(writeToolCallIn(call('commit_comparison_scope_proofs'))).toBe('commit_comparison_scope_proofs')
+    expect(writeToolCallIn(call('get_comparison_scope_proof_batch'))).toBe('get_comparison_scope_proof_batch')
     // 只读预检按契约 §9 归为读 tool —— 不在此列(但仍不改业务数据)。
     expect(writeToolCallIn(call('preflight_roster_batch'))).toBeNull()
     expect(writeToolCallIn(call('list_enterprises'))).toBeNull()
