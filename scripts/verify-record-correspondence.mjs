@@ -31,7 +31,12 @@ const apiToken = randomBytes(32).toString('hex')
 const mcpToken = randomBytes(32).toString('hex')
 const nonce = randomBytes(8).toString('hex')
 const sourceFile = `jxj/announcement/2024/1/spec63-${nonce}.pdf`
-const report = { mode, sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: resolve(import.meta.dirname, '..'), encoding: 'utf8' }).trim(), fixture: root, checks: [], pending: [] }
+const report = { mode, sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: resolve(import.meta.dirname, '..'), encoding: 'utf8' }).trim(),
+  fixture: root, checks: [], pending: [], lanes: {
+    api: { status: 'running', checks: 0, blockers: [] },
+    browser: { status: 'not_run', owner: 'parent', scope: 'desktop, 390px, URL/back/scroll, PDF arrival, focus, and UI review' },
+    production: { status: 'not_run', reason: 'synthetic isolated fixture only' },
+  } }
 let service
 let base
 let fixture
@@ -169,6 +174,8 @@ async function seed() {
       { sequenceNo: 1, relationKey: 'S63-G-unknown', usccRaw: null, nameRaw: person.G.name, matchBasis: 'none', verificationStatus: 'pending', status: '待审核', year: null },
       { sequenceNo: 2, relationKey: 'S63-G-conflict', usccRaw: person.H.uscc, nameRaw: person.G.name, matchBasis: 'none', verificationStatus: 'pending', status: '待审核', year: null },
     ] },
+    { interface: 'business_list', queryKey: person.H.uscc, rdjb: '2', titleCode: T.specialized, queriedAt: timestamp(26), status: 'success',
+      relations: Array.from({ length: 7 }, (_, index) => businessRow('H', index + 1)) },
   ]
   const imported = await importBatch('platform-rows', 'alias_evidence', `synthetic/platform/${nonce}`, { platformQueries: queries })
   const queryIds = queries.map((_, index) => queryId(imported, index))
@@ -359,15 +366,16 @@ async function verifyAvailable() {
     assert.equal(none.correspondences.length, 0)
   })
   await checked('scenario 9: stale plan rejects whole batch, replay is stable, audit is append-only', async () => {
-    const first = await decide('audit-candidate', [create({ type: 'event_process', eventId: f.events.D2022[0], relationId: f.relations[5][0], role: 'context_only' }, 'candidate')])
+    const first = await decide('audit-candidate', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][0], role: 'context_only' }, 'candidate')])
     const id = first.committed.correspondenceIds[0]
-    const stale = decision('stale-plan', [{ action: 'decide', correspondenceId: id, expectedRevision: 1, status: 'confirmed' }, create({ type: 'event_export_context', eventId: f.events.E[0], exportRowId: f.exportRows[0], role: 'current_snapshot_context' })])
+    const stale = decision('stale-plan', [{ action: 'decide', correspondenceId: id, expectedRevision: 1, status: 'confirmed' },
+      create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][6], role: 'context_only' }, 'candidate')])
     const stalePlan = await post('/api/roster/correspondences/preflight', stale)
     await decide('revision-winner', [{ action: 'decide', correspondenceId: id, expectedRevision: 1, status: 'rejected' }])
     const rejected = await request('POST', '/api/roster/correspondences/commit', { request: stale, planHash: stalePlan.planHash }, { auth: true, allow: [409] })
     assert.ok(['stale_revision', 'plan_mismatch'].includes(rejected.value.error.code))
     const before = await get('/api/roster/correspondences')
-    assert.equal(before.rows.filter(item => item.exportRowId === f.exportRows[0]).length, 0)
+    assert.equal(before.rows.filter(item => item.relationId === f.relations[12][6]).length, 0)
     const replay = await post('/api/roster/correspondences/commit', { request: first.input, planHash: first.planned.planHash })
     assert.deepEqual(replay, first.committed)
     const changed = await request('POST', '/api/roster/correspondences/preflight', { ...first.input, basis: 'different evidence' }, { auth: true, allow: [409] })
@@ -384,30 +392,34 @@ async function verifyAvailable() {
     const authenticated = await mcpRpc('tools/list', {}, true)
     assert.ok(authenticated.tools.some(item => item.name === 'preflight_record_correspondences'))
     assert.ok(authenticated.tools.some(item => item.name === 'save_record_correspondences'))
-    const written = await decide('mcp-parity', [create({ type: 'event_process', eventId: f.events.D2022[1], relationId: f.relations[5][3], role: 'context_only' }, 'candidate')], 'mcp')
+    const written = await decide('mcp-parity', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][1], role: 'context_only' }, 'candidate')], 'mcp')
     f.edgeIds.mcpCandidate = written.committed.correspondenceIds[0]
     const rest = await get(`/api/roster/correspondences/${written.committed.correspondenceIds[0]}`)
     const mcp = await mcpCall('get_record_correspondence', { id: rest.id })
     assert.deepEqual(mcp, rest)
   })
   await checked('scenario 9 mixed decision: confirm, reject, unlink, and correct share one impact and audit', async () => {
-    const rejectedCandidate = await decide('mixed-reject-seed', [create({ type: 'event_process', eventId: f.events.D2022[1], relationId: f.relations[5][4], role: 'context_only' }, 'candidate')])
+    const rejectedCandidate = await decide('mixed-reject-seed', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][2], role: 'context_only' }, 'candidate')])
     const toReject = rejectedCandidate.committed.correspondenceIds[0]
+    const unlinkSeed = await decide('mixed-unlink-seed', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][3], role: 'context_only' })])
+    const toUnlink = unlinkSeed.committed.correspondenceIds[0]
+    const correctSeed = await decide('mixed-correct-seed', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][4], role: 'context_only' })])
+    const toCorrect = correctSeed.committed.correspondenceIds[0]
     const mixed = await decide('mixed-four-transitions', [
       { action: 'decide', correspondenceId: f.edgeIds.mcpCandidate, expectedRevision: 1, status: 'confirmed' },
       { action: 'decide', correspondenceId: toReject, expectedRevision: 1, status: 'rejected' },
-      { action: 'decide', correspondenceId: f.edgeIds.awardA, expectedRevision: 2, status: 'unlinked' },
-      { action: 'correct', correspondenceId: f.edgeIds.exportE, expectedRevision: 2,
-        edge: { type: 'event_export_context', eventId: f.events.E[0], exportRowId: f.exportRows[0], role: 'current_snapshot_context' } },
+      { action: 'decide', correspondenceId: toUnlink, expectedRevision: 2, status: 'unlinked' },
+      { action: 'correct', correspondenceId: toCorrect, expectedRevision: 2,
+        edge: { type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][5], role: 'context_only' } },
     ])
     assert.equal(mixed.committed.impact.audit, mixed.planned.impact.audit)
     const list = await get('/api/roster/correspondences')
     assert.equal(list.rows.find(row => row.id === f.edgeIds.mcpCandidate).status, 'confirmed')
     assert.equal(list.rows.find(row => row.id === toReject).status, 'rejected')
-    assert.equal(list.rows.find(row => row.id === f.edgeIds.awardA).status, 'unlinked')
-    assert.equal(list.rows.find(row => row.id === f.edgeIds.exportE).status, 'unlinked')
-    assert.ok(list.rows.some(row => row.eventId === f.events.E[0] && row.exportRowId === f.exportRows[0] && row.status === 'confirmed'))
-    for (const id of [f.edgeIds.mcpCandidate, toReject, f.edgeIds.awardA, f.edgeIds.exportE]) {
+    assert.equal(list.rows.find(row => row.id === toUnlink).status, 'unlinked')
+    assert.equal(list.rows.find(row => row.id === toCorrect).status, 'unlinked')
+    assert.ok(list.rows.some(row => row.eventId === f.events.H[0] && row.relationId === f.relations[12][5] && row.status === 'confirmed'))
+    for (const id of [f.edgeIds.mcpCandidate, toReject, toUnlink, toCorrect]) {
       const audit = await get(`/api/roster/correspondences/${id}/audit`)
       assert.ok(audit.rows.some(row => row.idempotencyKey === mixed.input.idempotencyKey))
     }
@@ -589,6 +601,65 @@ async function verifyProof() {
   return ids
 }
 
+async function verifyFinalDisplay() {
+  const f = fixture
+  const result = await get(compareQuery())
+  const row = (eventId) => {
+    const found = result.rows.find(item => item.event.id === eventId)
+    assert.ok(found, `final comparison missing event ${eventId}`)
+    return found
+  }
+  await checked('final scenario 1: A remains aligned with confirmed award and returned 2025 update', async () => {
+    const award = row(f.events.A[0])
+    assert.equal(award.classification, 'historical_aligned')
+    assert.equal(award.event.year, 2021)
+    assert.ok(award.platformRows.some(item => item.id === f.relations[0][0] && item.status === '已通过'))
+    assert.ok(award.laterProcesses.some(item => item.relation.id === f.relations[1][0] && item.relation.year === 2025 && item.relation.status === '退回'))
+    assert.equal((await get(`/api/roster/correspondences/${f.edgeIds.awardA}`)).status, 'confirmed')
+  })
+  await checked('final scenario 2: B remains same-batch pending conflict', async () => {
+    const award = row(f.events.B[0])
+    assert.equal(award.classification, 'historical_conflict')
+    assert.ok(award.platformRows.some(item => item.id === f.relations[2][0] && item.status === '待审核'))
+  })
+  await checked('final scenario 3: C review keeps 2021 original, 2024 decision, and separate 2025 application', async () => {
+    const review = row(f.events.C[1])
+    assert.equal(review.event.year, 2021)
+    assert.equal(review.event.decidedYear, 2024)
+    assert.equal(review.classification, 'historical_aligned')
+    assert.ok(review.platformRows.some(item => item.id === f.relations[3][0] && item.status === '终审不通过'))
+    assert.ok(review.laterProcesses.some(item => item.relation.id === f.relations[4][0] && item.relation.year === 2025 && item.relation.status === '待审核'))
+  })
+  await checked('final scenario 4: D retains both titles and all eight original rows', async () => {
+    assert.equal(row(f.events.D2022[0]).event.year, 2022)
+    assert.equal(row(f.events.Dinnovative[0]).event.year, 2023)
+    const source = await get(`/api/platform/queries?queryKey=${queryKey(person.D.uscc)}&pageSize=50`)
+    assert.equal(source.rows.find(item => item.query.id === f.queryIds[5]).relations.length, 6)
+    assert.equal(source.rows.find(item => item.query.id === f.queryIds[6]).relations.length, 2)
+  })
+  await checked('final scenario 5: E retains recognized row and both export versions without current proof qualification', async () => {
+    assert.equal(row(f.events.E[0]).event.year, 2024)
+    assert.equal(result.currentSourceConsistency.qualification, 'not_comparable')
+    assert.ok(result.currentSourceConsistency.recognizedObservations.some(item => item.recognized.id === f.relations[7][0]
+      && f.exportRows.every(id => item.exportRows.some(exportRow => exportRow.id === id))))
+  })
+  await checked('final scenario 6: F partial, complete zero, and failure remain distinct', async () => {
+    const statuses = new Map(result.coverage.map(item => [item.queryId, item.status]))
+    assert.equal(statuses.get(f.queryIds[8]), 'partial')
+    assert.equal(statuses.get(f.queryIds[9]), 'no_record')
+    assert.equal(statuses.get(f.queryIds[10]), 'failed')
+    assert.equal(row(f.events.F[0]).classification, 'official_without_correspondence')
+  })
+  await checked('final scenario 7: G nullable identity and conflicting raw identity stay pending', async () => {
+    const uncertain = result.platformWithoutOfficial.rows.find(item => item.relation.id === f.relations[11][0])
+    const conflicting = result.platformWithoutOfficial.rows.find(item => item.relation.id === f.relations[11][1])
+    assert.equal(uncertain?.relation.enterpriseId, null)
+    assert.equal(uncertain?.relation.verificationStatus, 'pending')
+    assert.equal(conflicting?.relation.verificationStatus, 'pending')
+    assert.equal(row(f.events.G[0]).classification, 'unresolved')
+  })
+}
+
 async function main() {
   try {
     service = await startIsolatedNuxt({ cwd: resolve(import.meta.dirname, '..'),
@@ -619,13 +690,16 @@ async function main() {
     if (mode !== 'fixture-only') {
       await verifyAvailable()
       const proofs = await verifyProof()
+      await verifyFinalDisplay()
       if (proofs) {
         manifest.proofIds = proofs
         manifest.comparisonWithOfficialProofUrl = base + comparisonPath(fixture.queryIds, fixture.exportBatches, [proofs.confirmedOfficial])
         writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), { mode: 0o600 })
       }
-      if (mode !== 'acceptance') report.pending.push('#68 integrated desktop and 390px browser, URL, PDF jump, focus, and Magpie/oil-ui acceptance are parent-owned and unrun')
     }
+    report.lanes.api = { status: report.pending.length ? 'blocked' : 'passed', checks: report.checks.length,
+      blockers: [...report.pending] }
+    if (mode === 'acceptance') assert.equal(report.pending.length, 0, 'final API acceptance has unresolved blockers')
     console.log(JSON.stringify(report, null, 2))
     if (mode === 'serve') {
       console.log(`Owned synthetic Nuxt serving ${base}; press Ctrl-C to stop`)
