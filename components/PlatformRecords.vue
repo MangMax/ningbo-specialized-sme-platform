@@ -15,6 +15,19 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
 const props = defineProps<{ queries: PlatformRecordQuery[]; relations: PlatformRecord[]; returnTo?: string | null }>()
+const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
+const navigatingEventId = ref<number | null>(null)
+function closeForEvent(eventId: number) {
+  navigatingEventId.value = eventId
+  selectedRelationId.value = null
+}
+function onSourceCloseAutoFocus(event: Event) {
+  if (navigatingEventId.value === null) return
+  // Finish arrival after the modal releases focus, without returning to its table button.
+  event.preventDefault()
+  emit('event-navigate', navigatingEventId.value)
+  navigatingEventId.value = null
+}
 const selectedRelationId = ref<number | null>(null)
 const selectedTitle = ref('all')
 const selectedSource = ref('all')
@@ -179,9 +192,9 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
       </TabsContent>
     </Tabs>
     <Dialog :open="selectedRelationId !== null" @update:open="!$event && (selectedRelationId = null)">
-      <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl" data-testid="platform-correspondence-dialog">
+      <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl" data-testid="platform-correspondence-dialog" @close-auto-focus="onSourceCloseAutoFocus">
         <DialogHeader><DialogTitle>平台原行对应事件/出处</DialogTitle><DialogDescription>按具体原行核对对应状态与正式事件；查询成功不等于对应已确认。</DialogDescription></DialogHeader>
-        <RecordSourceReader v-if="selectedRelationId !== null" kind="relation" :id="selectedRelationId" :return-to="returnTo" />
+        <RecordSourceReader v-if="selectedRelationId !== null" kind="relation" :id="selectedRelationId" :return-to="returnTo" @event-navigate="closeForEvent" />
       </DialogContent>
     </Dialog>
   </div>

@@ -12,10 +12,12 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 const props = defineProps<{ row: RecordComparisonResult['rows'][number]; returnTo: string }>()
+const navigatingToEvent = ref(false)
+function closeForEvent() { navigatingToEvent.value = true; sourceId.value = null }
 const sourceId = ref<number | null>(null)
 const sourceKind = ref<'relation' | 'export_row'>('relation')
 const enterpriseTo = computed(() => ({ path: `/enterprises/${props.row.record.enterpriseId}`, query: { eventId: String(props.row.event.id), returnTo: props.returnTo } }))
-function openSource(kind: 'relation' | 'export_row', id: number) { sourceKind.value = kind; sourceId.value = id }
+function openSource(kind: 'relation' | 'export_row', id: number) { navigatingToEvent.value = false; sourceKind.value = kind; sourceId.value = id }
 function rememberReturn(event: MouseEvent) {
   if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) rememberEvidencePreviewReturn(props.returnTo, event.currentTarget)
 }
@@ -45,6 +47,6 @@ function rememberReturn(event: MouseEvent) {
       </section>
     </div>
     <section v-if="row.laterProcesses.length" class="mt-3 border-t pt-3"><h4 class="text-sm font-medium">独立后续流程</h4><ul class="mt-1 flex flex-col gap-1 text-[13px]"><li v-for="process in row.laterProcesses" :key="process.correspondence.id" class="flex flex-wrap items-center gap-1.5"><span>{{ PLATFORM_INTERFACES[process.relation.interface] ?? '平台接口' }} · {{ process.relation.status ?? '状态未提供' }} · {{ process.relation.appliedAt ?? '申报时间未知' }}</span><Badge variant="outline">{{ CORRESPONDENCE_ROLES[process.correspondence.role] ?? '后续流程' }}</Badge><Button variant="ghost" size="sm" class="h-6 px-1.5" @click="openSource('relation', process.relation.id)">查看原行</Button></li></ul></section>
-    <Dialog :open="sourceId !== null" @update:open="!$event && (sourceId = null)"><DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>来源原行与反向对应</DialogTitle><DialogDescription>查看具体行的原查询条件、状态和事件关系。</DialogDescription></DialogHeader><SourceReader v-if="sourceId !== null" :kind="sourceKind" :id="sourceId" :return-to="returnTo" /></DialogContent></Dialog>
+    <Dialog :open="sourceId !== null" @update:open="!$event && (sourceId = null)"><DialogContent @close-auto-focus="navigatingToEvent && $event.preventDefault()" class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>来源原行与反向对应</DialogTitle><DialogDescription>查看具体行的原查询条件、状态和事件关系。</DialogDescription></DialogHeader><SourceReader v-if="sourceId !== null" :kind="sourceKind" :id="sourceId" :return-to="returnTo" @event-navigate="closeForEvent" /></DialogContent></Dialog>
   </article>
 </template>

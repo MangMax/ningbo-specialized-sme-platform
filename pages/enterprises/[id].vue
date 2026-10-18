@@ -159,13 +159,16 @@ onMounted(() => {
 })
 
 const focusedEventId = computed(() => typeof route.query.eventId === 'string' && /^\d+$/.test(route.query.eventId) ? Number(route.query.eventId) : null)
-watch([detail, focusedEventId], async ([loaded, eventId]) => {
+async function arriveAtEvent(eventId: number | null) {
   if (typeof document === 'undefined') return
-  if (!loaded || eventId == null || !loaded.records.some(record => record.events.some(event => event.id === eventId))) return
+  if (!detail.value || eventId == null || !detail.value.records.some(record => record.events.some(event => event.id === eventId))) return
+  const enterpriseId = id.value
   setEvidenceDisclosureOpen(evidenceDisclosureKey(eventId), true)
   await nextTick()
+  if (id.value !== enterpriseId || focusedEventId.value !== eventId) return
   document.getElementById(`record-event-${eventId}`)?.scrollIntoView({ block: 'center' })
-}, { immediate: true })
+}
+watch([detail, focusedEventId], ([, eventId]) => arriveAtEvent(eventId), { immediate: true })
 
 /**
  * 页面标题(RL-17 收尾):企业名 + 页面名。详情是异步取的,所以先给一个不含名字的兜底,
@@ -436,7 +439,7 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
       <EnterpriseLaterProcesses :enterprise-id="detail.id" :return-to="sourceReturnTarget(route.query.returnTo)" />
       <Card class="gap-0 py-0">
         <CardHeader class="border-b px-5 py-4"><h2 class="text-sm font-medium">平台接口原行与反向对应</h2></CardHeader>
-        <CardContent class="min-w-0 p-5"><PlatformRecords :queries="data?.platform.queries ?? []" :relations="data?.platform.relations ?? []" :return-to="sourceReturnTarget(route.query.returnTo)" /></CardContent>
+        <CardContent class="min-w-0 p-5"><PlatformRecords :queries="data?.platform.queries ?? []" :relations="data?.platform.relations ?? []" :return-to="sourceReturnTarget(route.query.returnTo)" @event-navigate="arriveAtEvent" /></CardContent>
       </Card>
     </template>
 

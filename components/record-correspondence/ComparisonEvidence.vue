@@ -10,13 +10,15 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 defineProps<{ result: RecordComparisonResult; returnTo: string }>()
+const navigatingToEvent = ref(false)
+function closeForEvent() { navigatingToEvent.value = true; sourceId.value = null }
 const sourceId = ref<number | null>(null)
 const sourceKind = ref<'relation' | 'export_row'>('relation')
 const observationLimit = ref(20)
 const exportLimit = ref(20)
 const unlinkedLimit = ref(20)
 const laterLimit = ref(20)
-function openSource(kind: 'relation' | 'export_row', id: number) { sourceKind.value = kind; sourceId.value = id }
+function openSource(kind: 'relation' | 'export_row', id: number) { navigatingToEvent.value = false; sourceKind.value = kind; sourceId.value = id }
 const qualificationText = (value: string) => ({ matched: '同范围同版本一致', interface_only: '接口原行独有', export_only: '导出原行独有', field_conflict: '同范围同版本字段冲突', not_comparable: '范围或版本待核，暂不可比较' }[value] ?? '待核')
 const coverageTitle = (parts: { titleCode: string | null }[]) => parts.map(part => TITLES[part.titleCode ?? ''] ?? '未标注').join('、') || '未标注'
 const conditionNames: Record<string, string> = { name: '企业名称', uscc: '信用代码', sqsj: '申报时间', rddqrq: '有效年份', whpcyear: '维护年份', whpc: '维护批次', szq: '属地代码', combination: '条件关系' }
@@ -57,6 +59,6 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
     </details>
     <details class="min-w-0 rounded-sm border bg-card p-3 text-[13px]" data-testid="record-platform-unlinked"><summary class="cursor-pointer font-medium">未对应正式事件的接口原行 · {{ result.platformWithoutOfficial.total }} 条</summary><p class="text-muted-foreground mt-2">无正式对应需要完整范围证明；资格未知的原行保持待核，不能直接称为正式文件遗漏。</p><ul class="mt-2 flex flex-col gap-1.5"><li v-for="item in result.platformWithoutOfficial.rows.slice(0, unlinkedLimit)" :key="item.relation.id" class="flex flex-wrap items-center gap-1.5 border-t pt-1.5"><span>{{ PLATFORM_INTERFACES[item.relation.interface] ?? '平台接口' }} · {{ item.relation.nameRaw ?? '原名未提供' }} · {{ item.relation.status ?? '状态未提供' }}</span><Badge variant="outline">{{ item.qualification === 'platform_without_official' ? '已证明范围无正式对应' : item.reasons.includes('row_identity_unverified') ? '主体身份待核' : '正式来源覆盖待核' }}</Badge><Button variant="link" size="sm" @click="openSource('relation', item.relation.id)">查看原行与反向对应</Button></li></ul><Button v-if="result.platformWithoutOfficial.rows.length > unlinkedLimit" variant="outline" size="sm" class="mt-2" @click="unlinkedLimit += 20">继续显示接口原行</Button></details>
     <details class="min-w-0 rounded-sm border bg-card p-3 text-[13px]" data-testid="record-independent-later"><summary class="cursor-pointer font-medium">独立后续流程原行 · {{ result.laterProcessPlatformRows.length }} 条</summary><p class="text-muted-foreground mt-2">这些流程独立于历史主分类；没有前序事件的流程也保留原行。</p><ul class="mt-2 flex flex-col gap-1.5"><li v-for="item in result.laterProcessPlatformRows.slice(0, laterLimit)" :key="item.relation.id" class="flex flex-wrap items-center gap-1.5 border-t pt-1.5"><span>{{ PLATFORM_INTERFACES[item.relation.interface] ?? '平台接口' }} · {{ item.relation.nameRaw ?? '原名未提供' }} · {{ item.relation.status ?? '状态未提供' }} · {{ item.relation.appliedAt ?? '时间未提供' }}</span><Badge v-for="edge in item.correspondences" :key="edge.id" variant="outline">{{ CORRESPONDENCE_ROLES[edge.role] ?? '后续流程' }} · {{ edge.status === 'confirmed' ? '已确认' : '待核' }}</Badge><Button variant="link" size="sm" @click="openSource('relation', item.relation.id)">查看原行与反向对应</Button></li></ul><Button v-if="result.laterProcessPlatformRows.length > laterLimit" variant="outline" size="sm" class="mt-2" @click="laterLimit += 20">继续显示后续流程</Button></details>
-    <Dialog :open="sourceId !== null" @update:open="!$event && (sourceId = null)"><DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>现状来源原行</DialogTitle><DialogDescription>保留原查询条件和导出批次版本；范围/版本资格单独判断。</DialogDescription></DialogHeader><SourceReader v-if="sourceId !== null" :kind="sourceKind" :id="sourceId" :return-to="returnTo" /></DialogContent></Dialog>
+    <Dialog :open="sourceId !== null" @update:open="!$event && (sourceId = null)"><DialogContent @close-auto-focus="navigatingToEvent && $event.preventDefault()" class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>现状来源原行</DialogTitle><DialogDescription>保留原查询条件和导出批次版本；范围/版本资格单独判断。</DialogDescription></DialogHeader><SourceReader v-if="sourceId !== null" :kind="sourceKind" :id="sourceId" :return-to="returnTo" @event-navigate="closeForEvent" /></DialogContent></Dialog>
   </div>
 </template>

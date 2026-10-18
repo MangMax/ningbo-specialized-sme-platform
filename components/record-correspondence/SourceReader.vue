@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
 const props = defineProps<{ kind: SourceKind; id: number; returnTo?: string | null }>()
+const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
 const { displayed, displayedKey, requestedKey, loading, error, retry } = useRecordSource(() => props.kind, () => props.id)
 const current = computed(() => displayedKey.value === requestedKey() ? displayed.value : null)
 const visible = computed(() => current.value ?? displayed.value)
@@ -31,13 +32,13 @@ const groups = computed(() => event.value ? classifyEventLinks(event.value.id, v
       <template v-if="event">
         <p class="text-sm font-medium">{{ TITLES[event.record.titleCode] ?? event.record.titleCode }} · {{ eventDecisionText(event) }}</p>
         <p v-if="!event.evidence.length" class="text-muted-foreground text-[13px]">此事件未记录正式文件出处。</p>
-        <section aria-label="事件对应平台行"><h4 class="mb-2 text-sm font-medium">事件对应出处</h4><ul v-if="groups?.event.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in groups.event" :key="edge.id" :edge="edge" :return-to="returnTo" /></ul><p v-else class="text-muted-foreground text-[13px]">尚无已登记的事件对应关系。候选需另行核验，不能把企业级查询视为本事件出处。</p></section>
-        <section aria-label="独立后续流程"><h4 class="mb-2 text-sm font-medium">独立后续流程</h4><ul v-if="groups?.later.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in groups.later" :key="edge.id" :edge="edge" :return-to="returnTo" /></ul><p v-else class="text-muted-foreground text-[13px]">此事件没有已登记的后续流程；不据此判断平台是否存在流程。</p></section>
+        <section aria-label="事件对应平台行"><h4 class="mb-2 text-sm font-medium">事件对应出处</h4><ul v-if="groups?.event.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in groups.event" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul><p v-else class="text-muted-foreground text-[13px]">尚无已登记的事件对应关系。候选需另行核验，不能把企业级查询视为本事件出处。</p></section>
+        <section aria-label="独立后续流程"><h4 class="mb-2 text-sm font-medium">独立后续流程</h4><ul v-if="groups?.later.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in groups.later" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul><p v-else class="text-muted-foreground text-[13px]">此事件没有已登记的后续流程；不据此判断平台是否存在流程。</p></section>
       </template>
       <template v-else>
         <SourceRowDetail v-if="relation" :relation="relation" />
         <SourceRowDetail v-if="exportRow" :export-row="exportRow" />
-        <section aria-label="来源行反向对应"><h4 class="mb-2 text-sm font-medium">对应事件与流程</h4><ul v-if="visible?.correspondences.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in visible.correspondences" :key="edge.id" :edge="edge" :return-to="returnTo" /></ul><p v-else class="text-muted-foreground text-[13px]">此原行尚无登记的对应关系；原查询行仍保留。</p></section>
+        <section aria-label="来源行反向对应"><h4 class="mb-2 text-sm font-medium">对应事件与流程</h4><ul v-if="visible?.correspondences.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in visible.correspondences" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul><p v-else class="text-muted-foreground text-[13px]">此原行尚无登记的对应关系；原查询行仍保留。</p></section>
       </template>
     </template>
   </div>
