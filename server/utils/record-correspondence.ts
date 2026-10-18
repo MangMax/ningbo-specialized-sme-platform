@@ -250,6 +250,9 @@ function validatedRequest(request: CorrespondenceRequest) {
     fail('invalid_endpoint_type', 'Complete actor, basis, rule, source and at least one operation required')
   }
 }
+function effectiveProofIds(request: CorrespondenceRequest, row: StoredCorrespondence): number[] {
+  return request.proofIds ?? (row.provenance.comparisonProofIds as number[] | undefined) ?? []
+}
 function buildPlan(db: Executor, request: CorrespondenceRequest) {
   validatedRequest(request)
   const requestHash = hash(request)
@@ -292,11 +295,13 @@ function buildPlan(db: Executor, request: CorrespondenceRequest) {
       if (row.revision !== op.expectedRevision) fail('stale_revision', 'Correspondence revision changed')
       const next = op.action === 'correct' ? 'unlinked' : op.status
       if (!(row.status === 'candidate' && ['confirmed', 'rejected'].includes(next)) && !(row.status === 'confirmed' && next === 'unlinked')) fail('invalid_endpoint_type', 'Invalid decision transition')
+      const proofIds = effectiveProofIds(request, row)
       const observedSourceFingerprint = next === 'unlinked'
         ? hash(sourceProvenance(db, storedEdge(row)))
-        : sourceForEdge(db, storedEdge(row), next === 'confirmed', request.proofIds ?? (row.provenance.comparisonProofIds as number[] | undefined) ?? []).sourceFingerprint
+        : sourceForEdge(db, storedEdge(row), next === 'confirmed', proofIds).sourceFingerprint
       if (next !== 'unlinked' && observedSourceFingerprint !== row.sourceFingerprint) fail('plan_mismatch', 'Source row changed since correspondence decision')
-      targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint })
+      targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint,
+        ...(next === 'confirmed' && row.type === 'recognized_export' ? { comparisonProofIds: proofIds } : {}) })
       impact.audit++
       if (next === 'unlinked') impact.unlinked++
     }
@@ -396,10 +401,13 @@ export function commitRecordCorrespondences(db: Db, request: CorrespondenceReque
           continue
         }
         const next = op.action === 'correct' ? 'unlinked' : op.status
+        const provenance = next === 'confirmed' && row.type === 'recognized_export'
+          ? { ...row.provenance, comparisonProofIds: effectiveProofIds(request, row) }
+          : row.provenance
         tx.update(schema.recordCorrespondence).set({ status: next, revision: row.revision + 1, decidedAt: at, endedAt: next === 'unlinked' ? at : null, ruleId: request.ruleId, ruleVersion: request.ruleVersion,
-          provenance: next === 'confirmed' && row.type === 'recognized_export' ? { ...row.provenance, comparisonProofIds: request.proofIds ?? [] } : row.provenance })
+          provenance })
           .where(and(eq(schema.recordCorrespondence.id, row.id), eq(schema.recordCorrespondence.revision, row.revision))).run()
-        addAudit(tx, { ...row, provenance: next === 'confirmed' && row.type === 'recognized_export' ? { ...row.provenance, comparisonProofIds: request.proofIds ?? [] } : row.provenance }, batch.id, request, row.status, next, row.revision, at)
+        addAudit(tx, { ...row, provenance }, batch.id, request, row.status, next, row.revision, at)
         correspondenceIds.push(row.id)
         if (op.action === 'correct') correspondenceIds.push(insertEdge(tx, op.edge, request, batch.id, 'confirmed', at))
       }
