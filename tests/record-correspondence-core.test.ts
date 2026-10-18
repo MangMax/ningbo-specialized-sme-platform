@@ -26,7 +26,7 @@ function fixture() {
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2022, batchSeq: 2 }).returning().get()
   const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00.000Z', status: 'success', rawResponse: '<tr>original</tr>' }).returning().get()
   const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, nameRaw: '甲公司', relationKey: 'B-1', rawFields: { original: '原文' }, matchBasis: 'uscc', verificationStatus: 'confirmed' }).returning().get()
-  return { db, enterprise, event, query, relation }
+  return { db, enterprise, record, event, query, relation, dbPath: join(dir, 'test.db') }
 }
 afterAll(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }) })
 function request(key: string, operations: CorrespondenceOperation[]): CorrespondenceRequest {
@@ -237,6 +237,112 @@ describe('record correspondence core', () => {
     db.update(schema.platformRelation).set({ rawFields: { original: 'corrected source' } }).where(eq(schema.platformRelation.id, relation.id)).run()
     expect(listRecordCorrespondences(db, { eventId: event.id })[0]).toMatchObject({ id, status: 'confirmed', requiresRevalidation: true, provenance: { relation: { rawFields: { original: '原文' } } } })
     expect(getRecordCorrespondenceAudit(db, id)[1]?.evidence).toMatchObject({ relation: { rawFields: { original: '原文' } } })
+  })
+
+  it.each([
+    ['unknown title', ({ db, query }: ReturnType<typeof fixture>) => db.update(schema.platformQuery).set({ titleCode: null, rdjb: '' }).where(eq(schema.platformQuery.id, query.id)).run(), 'context_only', 'incomplete_coverage'],
+    ['pending ownership', ({ db, relation }: ReturnType<typeof fixture>) => db.update(schema.platformRelation).set({ usccRaw: null, verificationStatus: 'pending' }).where(eq(schema.platformRelation.id, relation.id)).run(), 'context_only', 'ambiguous_candidate'],
+    ['incompatible process', ({ db, relation }: ReturnType<typeof fixture>) => db.update(schema.platformRelation).set({ declareKind: 'review' }).where(eq(schema.platformRelation.id, relation.id)).run(), 'supports_award', 'invalid_endpoint_type'],
+    ['later application', ({ db, relation }: ReturnType<typeof fixture>) => db.update(schema.platformRelation).set({ appliedAt: '2025-01-01' }).where(eq(schema.platformRelation.id, relation.id)).run(), 'supports_award', 'invalid_endpoint_type'],
+  ] as const)('rejects candidate promotion with %s', (label, arrange, role, code) => {
+    const ctx = fixture()
+    arrange(ctx)
+    const id = save(ctx.db, request(`promotion-${label}`, [{ action: 'create', status: 'candidate', edge: { type: 'event_process', eventId: ctx.event.id, relationId: ctx.relation.id, role } }])).correspondenceIds[0]!
+    expect(() => preflightRecordCorrespondences(ctx.db, request(`confirm-${label}`, [{ action: 'decide', correspondenceId: id, expectedRevision: 1, status: 'confirmed' }]))).toThrowError(expect.objectContaining({ code }))
+    expect(listRecordCorrespondences(ctx.db, { eventId: ctx.event.id })[0]).toMatchObject({ status: 'candidate', revision: 1 })
+  })
+
+  it('rejects candidate recognized/export equivalence at promotion', () => {
+    const { db, enterprise } = fixture()
+    const query = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T04:00:00.000Z', status: 'success' }).returning().get()
+    const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed' }).returning().get()
+    const batch = db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'synthetic.xlsx', sha256: 'promotion-sha', importStatus: 'imported' }).returning().get()
+    const row = db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 1, usccRaw: enterprise.usccNorm }).returning().get()
+    const id = save(db, request('recognized-candidate', [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: relation.id, exportRowId: row.id, role: 'same_current_row' } }])).correspondenceIds[0]!
+    expect(() => preflightRecordCorrespondences(db, request('recognized-confirm', [{ action: 'decide', correspondenceId: id, expectedRevision: 1, status: 'confirmed' }]))).toThrowError(expect.objectContaining({ code: 'incomplete_coverage' }))
+    expect(listRecordCorrespondences(db, { relationId: relation.id })[0]?.status).toBe('candidate')
+  })
+
+  it('retires a drifted confirmation with a fresh revision-bound plan and retains original audit evidence', () => {
+    const { db, event, relation } = fixture()
+    const id = save(db, request('retire-source', [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' } }])).correspondenceIds[0]!
+    db.update(schema.platformRelation).set({ usccRaw: '91330211255994458Q', rawFields: { original: 'changed' } }).where(eq(schema.platformRelation.id, relation.id)).run()
+    const req = request('retire-drift', [{ action: 'decide', correspondenceId: id, expectedRevision: 2, status: 'unlinked' }])
+    const plan = preflightRecordCorrespondences(db, req)
+    db.update(schema.platformRelation).set({ rawFields: { original: 'changed again' } }).where(eq(schema.platformRelation.id, relation.id)).run()
+    expect(() => commitRecordCorrespondences(db, req, plan.planHash)).toThrowError(expect.objectContaining({ code: 'plan_mismatch' }))
+    const refreshed = preflightRecordCorrespondences(db, req)
+    expect(commitRecordCorrespondences(db, req, refreshed.planHash).impact.unlinked).toBe(1)
+    expect(listRecordCorrespondences(db, { eventId: event.id })[0]).toMatchObject({ status: 'unlinked', revision: 3, provenance: { relation: { rawFields: { original: '原文' } } } })
+    expect(getRecordCorrespondenceAudit(db, id)[2]?.evidence).toMatchObject({ relation: { rawFields: { original: '原文' } } })
+  })
+
+  it('atomically corrects a drifted confirmation using only valid replacement evidence', () => {
+    const { db, event, relation, enterprise, query } = fixture()
+    const replacement = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 2, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed' }).returning().get()
+    const id = save(db, request('correct-source', [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' } }])).correspondenceIds[0]!
+    db.update(schema.platformRelation).set({ usccRaw: '91330211255994458Q' }).where(eq(schema.platformRelation.id, relation.id)).run()
+    const receipt = save(db, request('correct-drift', [{ action: 'correct', correspondenceId: id, expectedRevision: 2, edge: { type: 'event_process', eventId: event.id, relationId: replacement.id, role: 'context_only' } }]))
+    expect(receipt.impact).toEqual({ created: 1, unlinked: 1, audit: 3 })
+    expect(listRecordCorrespondences(db, { eventId: event.id }).map((row) => row.status)).toEqual(['unlinked', 'confirmed'])
+    expect(getRecordCorrespondenceAudit(db, id)[2]?.evidence).toMatchObject({ relation: { usccRaw: enterprise.usccNorm } })
+  })
+
+  it('binds official evidence coordinates and stored file hash into provenance and preflight', () => {
+    const { db, event, relation } = fixture()
+    const file = db.insert(schema.storedFile).values({ relPath: 'jxj/announcement/synthetic.pdf', filename: 'synthetic.pdf', ext: 'pdf', bytes: 10, sha256: 'first-hash' }).returning().get()
+    const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: file.relPath, attachment: '附件1', listNo: 7, page: 2 }).returning().get()
+    const edge = { type: 'event_process' as const, eventId: event.id, relationId: relation.id, role: 'context_only' as const }
+    const req = request('official-preflight', [{ action: 'create', status: 'confirmed', edge }])
+    const plan = preflightRecordCorrespondences(db, req)
+    db.update(schema.recordEvidence).set({ page: 3 }).where(eq(schema.recordEvidence.id, evidence.id)).run()
+    expect(() => commitRecordCorrespondences(db, req, plan.planHash)).toThrowError(expect.objectContaining({ code: 'plan_mismatch' }))
+    const receipt = commitRecordCorrespondences(db, req, preflightRecordCorrespondences(db, req).planHash)
+    const id = receipt.correspondenceIds[0]!
+    expect(listRecordCorrespondences(db, { eventId: event.id })[0]?.provenance).toMatchObject({ officialEvidence: [{ evidence: { id: evidence.id, page: 3, attachment: '附件1', listNo: 7 }, storedFile: { id: file.id, sha256: 'first-hash' } }] })
+    expect(listRecordCorrespondences(db, { eventId: event.id })[0]?.targetIdentity).toMatchObject({ officialEvidence: [{ evidenceId: evidence.id, sourceFile: file.relPath, page: 3, storedFileId: file.id, storedFileSha256: 'first-hash' }] })
+    db.update(schema.recordEvidence).set({ attachment: '附件2', listNo: 8 }).where(eq(schema.recordEvidence.id, evidence.id)).run()
+    expect(listRecordCorrespondences(db, { eventId: event.id })[0]?.requiresRevalidation).toBe(true)
+    db.update(schema.recordEvidence).set({ attachment: '附件1', listNo: 7 }).where(eq(schema.recordEvidence.id, evidence.id)).run()
+    expect(listRecordCorrespondences(db, { eventId: event.id })[0]?.requiresRevalidation).toBe(false)
+    db.update(schema.storedFile).set({ sha256: 'second-hash' }).where(eq(schema.storedFile.id, file.id)).run()
+    expect(listRecordCorrespondences(db, { eventId: event.id })[0]?.requiresRevalidation).toBe(true)
+    expect(getRecordCorrespondenceAudit(db, id)[1]?.evidence).toMatchObject({ officialEvidence: [{ evidence: { page: 3 }, storedFile: { sha256: 'first-hash' } }] })
+  })
+
+  it('invalidates a predecessor-only change and flags a confirmed later process', () => {
+    const { db, enterprise, event, relation } = fixture()
+    const edge = { type: 'later_process' as const, enterpriseId: enterprise.id, titleCode: 'specialized_sme', predecessorEventId: event.id, relationId: relation.id, role: 'followup_apply' as const }
+    const req = request('predecessor-preflight', [{ action: 'create', status: 'confirmed', edge }])
+    const plan = preflightRecordCorrespondences(db, req)
+    db.update(schema.recordEvent).set({ batchSeq: 3 }).where(eq(schema.recordEvent.id, event.id)).run()
+    expect(() => commitRecordCorrespondences(db, req, plan.planHash)).toThrowError(expect.objectContaining({ code: 'plan_mismatch' }))
+    const id = commitRecordCorrespondences(db, req, preflightRecordCorrespondences(db, req).planHash).correspondenceIds[0]!
+    expect(listRecordCorrespondences(db, { relationId: relation.id })[0]?.provenance).toMatchObject({ predecessor: { event: { batchSeq: 3 } } })
+    db.update(schema.recordEvent).set({ batchSeq: 4 }).where(eq(schema.recordEvent.id, event.id)).run()
+    expect(listRecordCorrespondences(db, { relationId: relation.id })[0]?.requiresRevalidation).toBe(true)
+    expect(getRecordCorrespondenceAudit(db, id)[1]?.evidence).toMatchObject({ predecessor: { event: { batchSeq: 3 } } })
+  })
+
+  it('preserves a committed receipt when another connection commits during preflight planning', () => {
+    const ctx = fixture()
+    const second = useDb({ dbPath: ctx.dbPath })
+    const committedRequest = request('preflight-race', [{ action: 'create', status: 'candidate', edge: { type: 'event_process', eventId: ctx.event.id, relationId: ctx.relation.id, role: 'context_only' } }])
+    const original = preflightRecordCorrespondences(ctx.db, committedRequest)
+    let reads = 0
+    let winningReceipt: ReturnType<typeof commitRecordCorrespondences> | null = null
+    const interleaved = { ...committedRequest }
+    // The second connection commits after this preflight has planned but before it binds the batch.
+    Object.defineProperty(interleaved, 'idempotencyKey', { enumerable: true, get() {
+      reads++
+      if (reads === 6) winningReceipt = commitRecordCorrespondences(second, committedRequest, original.planHash)
+      return committedRequest.idempotencyKey
+    } })
+    const result = preflightRecordCorrespondences(ctx.db, interleaved)
+    expect(winningReceipt).not.toBeNull()
+    expect(result).toMatchObject({ batchStatus: 'committed', batchId: winningReceipt!.batchId, planHash: winningReceipt!.planHash })
+    expect(readRecordCorrespondenceBatch(ctx.db, committedRequest.idempotencyKey)).toEqual(winningReceipt)
+    expect(commitRecordCorrespondences(ctx.db, committedRequest, original.planHash)).toEqual(winningReceipt)
   })
 
   it('deduplicates the same typed endpoints and role regardless of JSON property order', () => {

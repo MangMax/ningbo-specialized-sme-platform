@@ -84,6 +84,40 @@ function exportSource(db: Executor, id: number) {
   if (!row || row.exportBatch.importStatus !== 'imported') fail('invalid_endpoint_type', 'Persisted imported export row not found')
   return row
 }
+function officialEvidence(db: Executor, eventId: number) {
+  const rows = db.select().from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, eventId)).all()
+    .sort((a, b) => a.id - b.id)
+  return rows.map((evidence) => ({
+    evidence,
+    storedFile: db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt })
+      .from(schema.storedFile).where(eq(schema.storedFile.relPath, evidence.sourceFile)).get() ?? null,
+  }))
+}
+/** Observe persisted source rows without asserting that a retired decision is still valid. */
+function sourceProvenance(db: Executor, edge: CorrespondenceEdge) {
+  const event = 'eventId' in edge ? db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise })
+    .from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id))
+    .innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id))
+    .where(eq(schema.recordEvent.id, edge.eventId)).get() : null
+  const relation = 'relationId' in edge ? db.select({ relation: schema.platformRelation, query: schema.platformQuery })
+    .from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id))
+    .where(eq(schema.platformRelation.id, edge.relationId)).get() : null
+  const exported = 'exportRowId' in edge ? db.select({ exportRow: schema.platformExportRow, exportBatch: schema.platformExportBatch })
+    .from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id))
+    .where(eq(schema.platformExportRow.id, edge.exportRowId)).get() : null
+  const predecessor = edge.type === 'later_process' && edge.predecessorEventId != null
+    ? db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise })
+      .from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id))
+      .innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id))
+      .where(eq(schema.recordEvent.id, edge.predecessorEventId)).get() : null
+  return {
+    event: event?.event ?? null, record: event?.record ?? null, officialEnterprise: event?.enterprise ?? null,
+    officialEvidence: event ? officialEvidence(db, event.event.id) : [],
+    predecessor: predecessor ? { ...predecessor, officialEvidence: officialEvidence(db, predecessor.event.id) } : null,
+    relation: relation?.relation ?? null, query: relation?.query ?? null,
+    exportRow: exported?.exportRow ?? null, exportBatch: exported?.exportBatch ?? null,
+  }
+}
 function relationTitle(source: ReturnType<typeof relationSource>): string | null {
   const { query, relation } = source
   const fromPosition = query.interface === 'recognized_list'
@@ -189,8 +223,12 @@ function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolea
   if (edge.type === 'later_process' && confirmed && relation?.relation.declareKind && relation.relation.declareKind !== edge.role.replace('followup_', '')) fail('invalid_endpoint_type', 'Follow-up role conflicts with original process type')
   if (edge.type === 'recognized_export' && confirmed && edge.role === 'same_current_row') fail('incomplete_coverage', 'Interface/export version and scope equivalence is not proven by source rows')
   if (edge.type === 'recognized_export' && confirmed && edge.role === 'candidate_same_current_row') fail('incomplete_coverage', 'Candidate role cannot be confirmed as current equivalence')
-  const provenance = { event: event?.event ?? null, record: event?.record ?? null, officialEnterprise: event?.enterprise ?? null, relation: relation?.relation ?? null, query: relation?.query ?? null, exportRow: exported?.exportRow ?? null, exportBatch: exported?.exportBatch ?? null }
-  const targetIdentity = { eventId: event?.event.id ?? null, recordId: event?.record.id ?? null, relationId: relation?.relation.id ?? null, queryId: relation?.query.id ?? null, queryNaturalKey: relation ? [relation.query.interface, relation.query.queryKey, relation.query.rdjb, relation.query.queriedAt, relation.relation.sequenceNo] : null, exportRowId: exported?.exportRow.id ?? null, exportNaturalKey: exported ? [exported.exportBatch.titleCode, exported.exportBatch.year, exported.exportBatch.sha256, exported.exportRow.sourceRowNo] : null }
+  const provenance = sourceProvenance(db, edge)
+  const targetIdentity = { eventId: event?.event.id ?? null, recordId: event?.record.id ?? null,
+    officialEvidence: provenance.officialEvidence.map(({ evidence, storedFile }) => ({ evidenceId: evidence.id, sourceFile: evidence.sourceFile, attachment: evidence.attachment, listNo: evidence.listNo, page: evidence.page, storedFileId: storedFile?.id ?? null, storedFileSha256: storedFile?.sha256 ?? null })),
+    predecessorEventId: edge.type === 'later_process' ? edge.predecessorEventId ?? null : null,
+    predecessorEvidence: provenance.predecessor?.officialEvidence.map(({ evidence, storedFile }) => ({ evidenceId: evidence.id, sourceFile: evidence.sourceFile, attachment: evidence.attachment, listNo: evidence.listNo, page: evidence.page, storedFileId: storedFile?.id ?? null, storedFileSha256: storedFile?.sha256 ?? null })) ?? [],
+    relationId: relation?.relation.id ?? null, queryId: relation?.query.id ?? null, queryNaturalKey: relation ? [relation.query.interface, relation.query.queryKey, relation.query.rdjb, relation.query.queriedAt, relation.relation.sequenceNo] : null, exportRowId: exported?.exportRow.id ?? null, exportNaturalKey: exported ? [exported.exportBatch.titleCode, exported.exportBatch.year, exported.exportBatch.sha256, exported.exportRow.sourceRowNo] : null }
   return { enterpriseId, titleCode, provenance, targetIdentity, sourceFingerprint: hash(provenance) }
 }
 function storedEdge(row: StoredCorrespondence): CorrespondenceEdge {
@@ -246,9 +284,11 @@ function buildPlan(db: Executor, request: CorrespondenceRequest) {
       if (row.revision !== op.expectedRevision) fail('stale_revision', 'Correspondence revision changed')
       const next = op.action === 'correct' ? 'unlinked' : op.status
       if (!(row.status === 'candidate' && ['confirmed', 'rejected'].includes(next)) && !(row.status === 'confirmed' && next === 'unlinked')) fail('invalid_endpoint_type', 'Invalid decision transition')
-      const currentSource = sourceForEdge(db, storedEdge(row), row.status === 'confirmed')
-      if (currentSource.sourceFingerprint !== row.sourceFingerprint) fail('plan_mismatch', 'Source row changed since correspondence decision')
-      targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint })
+      const observedSourceFingerprint = next === 'unlinked'
+        ? hash(sourceProvenance(db, storedEdge(row)))
+        : sourceForEdge(db, storedEdge(row), next === 'confirmed').sourceFingerprint
+      if (next !== 'unlinked' && observedSourceFingerprint !== row.sourceFingerprint) fail('plan_mismatch', 'Source row changed since correspondence decision')
+      targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint })
       impact.audit++
       if (next === 'unlinked') impact.unlinked++
     }
@@ -265,7 +305,16 @@ export function preflightRecordCorrespondences(db: Db, request: CorrespondenceRe
   const plan = buildPlan(db, request)
   const batch = ensureBatchRow(db, { idempotencyKey: request.idempotencyKey, sourceKind: 'correspondence_decision', sourceIdentity: request.sourceIdentity })
   const result = { batchId: batch.id, batchStatus: 'preflight' as const, ...plan }
-  db.update(schema.importBatch).set({ status: 'preflight', preflightResult: result, error: null }).where(eq(schema.importBatch.id, batch.id)).run()
+  const updated = db.update(schema.importBatch).set({ preflightResult: result, error: null })
+    .where(and(eq(schema.importBatch.id, batch.id), eq(schema.importBatch.status, 'preflight'))).run()
+  if (updated.changes === 0) {
+    const current = findBatchByKey(db, request.idempotencyKey)
+    const bound = current?.preflightResult as (CorrespondencePlan & { requestHash: string }) | null
+    if (current?.status === 'committed' && bound?.requestHash === hash(request)) {
+      return { batchId: current.id, batchStatus: 'committed', planHash: bound.planHash, impact: bound.impact, targets: bound.targets }
+    }
+    fail('idempotency_conflict', 'Batch changed during preflight')
+  }
   return { batchId: batch.id, batchStatus: 'preflight', planHash: plan.planHash, impact: plan.impact, targets: plan.targets }
 }
 function addAudit(tx: Tx, row: StoredCorrespondence, batchId: number, request: CorrespondenceRequest, fromStatus: string | null, toStatus: string, expectedRevision: number, decidedAt: string) {
