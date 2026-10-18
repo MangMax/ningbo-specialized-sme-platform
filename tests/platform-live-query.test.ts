@@ -13,10 +13,10 @@ let rest: (event: any) => Promise<any>
 let tool: { handler: (input: any) => Promise<any> }
 const nativeFetch = globalThis.fetch
 const fetcher = vi.fn()
-function page(rows: Record<string, string>[], total = rows.length, number = 1) {
+function page(rows: Record<string, string>[], total = rows.length, number = 1, pageSize?: number) {
   // These cases do not model returned size metadata. Explicit sizes are covered
   // by the pagination regression suite and must match the actual request.
-  return JSON.stringify({ zrarData: { grid: { applyGrid: { pageSet: rows, maxCount: total, page: number } } } })
+  return JSON.stringify({ zrarData: { grid: { applyGrid: { pageSet: rows, maxCount: total, page: number, ...(pageSize === undefined ? {} : { pageSize }) } } } })
 }
 const response = (text: string, status = 200) => ({ ok: status === 200, status, text: async () => text })
 async function query(input: unknown) { body = input; return rest({}) }
@@ -92,7 +92,7 @@ it('keeps page one and identifies failed page two for a continuation', async () 
   fetcher.mockResolvedValueOnce(response(page([{ qymc: '第一页' }], 2))).mockResolvedValueOnce(response(cookie, 503))
   const result = await query({ source: 'queryList', name: '合成' })
   expect(result).toMatchObject({ status: 'partial', rows: [{ qymc: '第一页' }], declaredTotal: 2, unfinished: [{ source: 'queryList', rdjb: null, page: 2 }], error: { code: 'upstream_failed' } })
-  fetcher.mockResolvedValue(response(page([{ qymc: '第二页' }], 2, 2)))
+  fetcher.mockResolvedValue(response(page([{ qymc: '第二页' }], 2, 2, 1)))
   const resumed = await query({ source: 'queryList', name: '合成', startPage: 2, pageSize: 1 })
   expect(resumed).toMatchObject({ status: 'success', completeness: 'complete', fullRange: false, rows: [{ qymc: '第二页' }] })
 })

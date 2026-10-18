@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { useDb } from '../db/client'
@@ -268,4 +268,133 @@ it.each(['queryList', 'businessList'])('REST and MCP keep known %s totals as con
       expect(result.pages.map((p: any) => p.status)).toEqual(['success', 'failed'])
     }
   }
+})
+
+it.each([
+  ['queryList', false], ['businessList', false], ['queryList', true], ['businessList', true],
+] as const)('batch %s preserves actual short-page consumption across retries with restart=%s', async (source, restart) => {
+  let mode = 'initial'
+  let release!: () => void
+  let entered!: () => void
+  const blocked = new Promise<void>(resolve => { entered = resolve })
+  const seen: number[] = []
+  upstream.mockImplementation(async (_url: string, init: any) => {
+    const p = new URLSearchParams(init.body), page = Number(p.get('pageNum')); seen.push(page)
+    expect(p.get('numPerPage')).toBe('50')
+    if (mode === 'initial' && page === 2) { entered(); await new Promise<void>(resolve => { release = resolve }) }
+    if (mode === 'partly-repaired' && page === 3) return { ok: false, status: 503, text: async () => '' }
+    return response(source, page === 1 || mode.includes('repaired') ? [{ relation: String(page) }] : [], { page, ...(page === 1 ? { maxCount: 3 } : {}) })
+  })
+  const receipt = (await batch('submit', { items: [{ query: { ...inputFor(source), pageSize: 50 } }] })).body as any
+  await blocked
+  let restarted: typeof db | undefined
+  let checkpoint: any
+  try {
+    checkpoint = (await batch('status', undefined, receipt.batchId)).body as any
+    expect(checkpoint).toMatchObject({ state: 'running', completeness: 'partial' })
+    expect(checkpoint.items[0]).toMatchObject({ unfinished: [{ page: 2 }], segments: [{ rows: [{ relation: '1' }], declaredTotal: 3 }] })
+    if (restart) {
+      const path = join(dir, `short-page-${source}.sqlite`)
+      writeFileSync(path, db.$client.serialize())
+      restarted = useDb({ dbPath: path })
+    }
+  } finally { release(); await whenIdle() }
+  const invoke = (action: 'status' | 'retry', value?: unknown) => handlePlatformBatchRequest(action, { batchId: receipt.batchId, body: value, headers: { authorization: 'Bearer synthetic-task' } }, { db: restarted ?? db, apiToken: 'synthetic-task', filesDir: dir })
+  try {
+    const first = (await invoke('status')).body as any
+    expect(first).toMatchObject({ state: 'failed', completeness: 'partial' })
+    expect(first.items[0].segments[0].rows).toEqual(checkpoint.items[0].segments[0].rows)
+    if (restart) {
+      expect(first.error).toContain('重启')
+      expect(first.items[0]).toEqual(checkpoint.items[0])
+    }
+    mode = 'contradictory'; seen.length = 0
+    expect((await invoke('retry', { itemIds: receipt.itemIds })).status).toBe(202); await whenIdle()
+    const second = (await invoke('status')).body as any
+    expect(second).toMatchObject({ state: 'failed', completeness: 'partial', attempt: 2 })
+    expect(second.items[0]).toMatchObject({ unfinished: [{ page: 2 }], segments: [first.items[0].segments[0], { rows: [], declaredTotal: 3, error: { code: 'invalid_response' } }] })
+    expect(seen).toEqual([2])
+    mode = 'partly-repaired'; seen.length = 0
+    await invoke('retry', { itemIds: receipt.itemIds }); await whenIdle()
+    const third = (await invoke('status')).body as any
+    expect(third).toMatchObject({ state: 'failed', completeness: 'partial', attempt: 3 })
+    expect(third.items[0].unfinished.map((p: any) => p.page)).toEqual([3])
+    expect(third.items[0].segments.slice(0, 2)).toEqual(second.items[0].segments)
+    expect(third.items[0].segments.flatMap((s: any) => s.rows).map((r: any) => r.relation)).toEqual(['1', '2'])
+    expect(seen).toEqual([2, 3])
+    mode = 'repaired'; seen.length = 0
+    await invoke('retry', { itemIds: receipt.itemIds }); await whenIdle()
+    const final = (await invoke('status')).body as any
+    expect(final).toMatchObject({ batchId: receipt.batchId, itemIds: receipt.itemIds, state: 'done', completeness: 'complete', attempt: 4 })
+    expect(final.items[0].segments.slice(0, 3)).toEqual(third.items[0].segments)
+    expect(final.items[0].segments.flatMap((s: any) => s.rows).map((r: any) => r.relation)).toEqual(['1', '2', '3'])
+    expect(final.items[0].segments.at(-1)).toMatchObject({ fullRange: false, fetchedCount: 1 })
+    expect(seen).toEqual([3])
+  } finally { await whenIdle(); restarted?.$client.close() }
+})
+
+it.each([
+  ['queryList', 'REST'], ['queryList', 'MCP'], ['businessList', 'REST'], ['businessList', 'MCP'],
+])('%s %s manual continuation cannot infer prior coverage from requested size', async (source, entry) => {
+  upstream.mockImplementation(async () => response(source!, [], { page: 2, maxCount: 3 }))
+  const result = await (entry === 'REST' ? query : mcp)({ ...inputFor(source!), startPage: 2, pageSize: 50 })
+  expect(result).toMatchObject({ status: 'failed', completeness: 'partial', fullRange: false, rows: [], declaredTotal: null, unfinished: [{ page: 2 }], error: { code: 'invalid_response' } })
+})
+
+it.each(['queryList', 'businessList'])('batch %s with an unobserved initial prefix stays unfinished on repeated empty continuation', async source => {
+  upstream.mockImplementation(async () => response(source, [], { page: 2, maxCount: 3 }))
+  const receipt = (await batch('submit', { items: [{ query: { ...inputFor(source), startPage: 2, pageSize: 50 } }] })).body as any
+  await whenIdle()
+  const first = (await batch('status', undefined, receipt.batchId)).body as any
+  expect(first).toMatchObject({ state: 'failed', completeness: 'partial' })
+  expect(first.items[0]).toMatchObject({ unfinished: [{ page: 2 }], segments: [{ fullRange: false, rows: [], error: { code: 'invalid_response' } }] })
+  await batch('retry', { itemIds: receipt.itemIds }, receipt.batchId); await whenIdle()
+  const final = (await batch('status', undefined, receipt.batchId)).body as any
+  expect(final).toMatchObject({ state: 'failed', completeness: 'partial', attempt: 2 })
+  expect(final.items[0].unfinished).toEqual(first.items[0].unfinished)
+  expect(final.items[0].segments[0]).toEqual(first.items[0].segments[0])
+  expect(final.items[0].segments[1]).toMatchObject({ fullRange: false, rows: [], error: { code: 'invalid_response' } })
+})
+
+it.each(['queryList', 'businessList', 'queryBusList'])('REST and MCP preserve a verified remaining-page continuation for %s', async source => {
+  upstream.mockImplementation(async () => response(source, [{ relation: '2' }], { page: 2, pageSize: 1, maxCount: 2, maxPage: 2 }))
+  for (const invoke of [query, mcp]) {
+    const result = await invoke({ ...inputFor(source), startPage: 2 })
+    expect(result).toMatchObject({ status: 'success', completeness: 'complete', fullRange: false, declaredTotal: 2, rows: [{ relation: '2' }], unfinished: [] })
+  }
+})
+
+it.each(['queryList', 'businessList'])('REST and MCP preserve unknown-total and zero-total remaining ranges for %s', async source => {
+  for (const maxCount of [undefined, 0]) {
+    upstream.mockImplementation(async (_url: string, init: any) => {
+      const page = Number(new URLSearchParams(init.body).get('pageNum'))
+      return response(source, maxCount === undefined && page === 2 ? [{ relation: 'tail' }] : [], { page, maxCount })
+    })
+    for (const invoke of [query, mcp]) {
+      const result = await invoke({ ...inputFor(source), startPage: 2, pageSize: 50 })
+      expect(result).toMatchObject({ status: maxCount === 0 ? 'no_record' : 'success', completeness: 'complete', fullRange: false, declaredTotal: maxCount === 0 ? 0 : null, rows: maxCount === 0 ? [] : [{ relation: 'tail' }], unfinished: [] })
+    }
+  }
+})
+
+it('business retry counts only accepted pages of the unfinished title', async () => {
+  const seen: string[] = []
+  upstream.mockImplementation(async (_url: string, init: any) => {
+    const p = new URLSearchParams(init.body), title = p.get('rdjb'), page = Number(p.get('pageNum')); seen.push(`${title}:${page}`)
+    const rows = title === '1' ? [{ relation: 'other:1' }, { relation: 'other:2' }] : title === '3' && page === 1 ? [{ relation: 'target:1' }] : []
+    return response('businessList', rows, { page, ...(page === 1 ? { maxCount: title === '1' ? 2 : title === '2' ? 0 : 3 } : {}) })
+  })
+  const receipt = (await batch('submit', { items: [{ query: { source: 'businessList', uscc, rdjb: 'all', pageSize: 50 } }] })).body as any
+  await whenIdle()
+  const first = (await batch('status', undefined, receipt.batchId)).body as any
+  expect(first).toMatchObject({ completeness: 'partial' })
+  expect(first.items[0].unfinished).toEqual([{ source: 'businessList', rdjb: '3', page: 2 }])
+  seen.length = 0
+  await batch('retry', { itemIds: receipt.itemIds }, receipt.batchId); await whenIdle()
+  const final = (await batch('status', undefined, receipt.batchId)).body as any
+  expect(final).toMatchObject({ state: 'failed', completeness: 'partial' })
+  expect(final.items[0].unfinished).toEqual(first.items[0].unfinished)
+  expect(final.items[0].segments[0]).toEqual(first.items[0].segments[0])
+  expect(final.items[0].segments.flatMap((s: any) => s.rows).map((r: any) => r.relation)).toEqual(['other:1', 'other:2', 'target:1'])
+  expect(seen).toEqual(['3:2'])
 })

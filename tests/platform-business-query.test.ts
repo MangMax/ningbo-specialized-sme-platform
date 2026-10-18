@@ -14,8 +14,8 @@ let body: unknown
 let rest: (event: any) => Promise<any>
 let tool: (input: any) => Promise<any>
 const response = (text: string, status = 200) => ({ ok: status === 200, status, text: async () => text })
-function page(rows: Record<string, string>[], total: number | null = rows.length, n = 1) {
-  return `<html><tbody></tbody><footer>共 0 条</footer><script>(function(data){} )(${JSON.stringify({ zrarData: { grid: { businessListGrid: { pageSet: rows, ...(total === null ? {} : { maxCount: total }), page: n } } } })});</script></html>`
+function page(rows: Record<string, string>[], total: number | null = rows.length, n = 1, pageSize?: number) {
+  return `<html><tbody></tbody><footer>共 0 条</footer><script>(function(data){} )(${JSON.stringify({ zrarData: { grid: { businessListGrid: { pageSet: rows, ...(total === null ? {} : { maxCount: total }), page: n, ...(pageSize === undefined ? {} : { pageSize }) } } } })});</script></html>`
 }
 async function query(input: unknown) { body = input; return rest({}) }
 const input = { source: 'businessList', uscc, rdjb: 'all' }
@@ -80,7 +80,7 @@ it('a failed title page retains prior rows and still queries the Little Giant ti
     expect(r.pages.map((p: any) => [p.rdjb, p.page, p.status])).toEqual([['1', 1, 'success'], ['2', 1, 'success'], ['2', 2, 'failed'], ['3', 1, 'success']])
     expect(JSON.stringify(r)).not.toContain('synthetic-business-secret')
   }
-  fetcher.mockResolvedValue(response(page([{ qymc: '续页' }], 2, 2)))
+  fetcher.mockResolvedValue(response(page([{ qymc: '续页' }], 2, 2, 1)))
   expect(await query({ ...input, rdjb: '2', startPage: 2, pageSize: 1 })).toMatchObject({ status: 'success', fullRange: false, completeness: 'complete', rows: [{ qymc: '续页' }], unfinished: [] })
 })
 it.each([

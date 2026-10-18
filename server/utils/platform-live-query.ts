@@ -11,6 +11,8 @@ export interface PlatformLiveQueryContext {
   cookie?: string
   /** Previously observed per-title totals constrain explicit batch continuations. */
   declaredTotals?: ReadonlyMap<string | null, number>
+  /** Actual accepted rows covering every page before startPage, by title. */
+  priorFetchedCounts?: ReadonlyMap<string | null, number>
   transport?: Pick<PlatformQueryOptions, 'fetchImpl' | 'baseUrl' | 'timeoutMs'>
 }
 const error = (code: PlatformQueryError['code'], message: string): PlatformQueryError => ({ code, message })
@@ -65,6 +67,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
   }
   outer: for (const [index, title] of titles.entries()) {
     let fetchedForTitle = 0
+    const priorFetched = q.startPage === 1 ? 0 : ctx.priorFetchedCounts?.get(title) ?? null
     let maxPageForTitle: number | null = null
     for (let page = q.startPage; ; page++) {
       const pos = position(page, title)
@@ -107,14 +110,17 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
           result.pages.push({ ...pos, status: 'failed', fetchedCount: 0, declaredTotal: parsedPage.declaredTotal, error: result.error })
           result.unfinished.push(...remaining(index, page)); break outer
         }
-        if (!parsedPage.rows.length && total !== null && (q.startPage - 1) * result.limits.pageSize + fetchedForTitle < total) throw error('invalid_response', '平台返回空页但声明仍有记录。')
+        // A standalone continuation can use a returned, verified page partition.
+        // Requested size alone cannot establish rows accepted before this attempt.
+        const priorCoverage = priorFetched ?? (parsedPage.responsePage === page && parsedPage.responsePageSize === result.limits.pageSize ? (q.startPage - 1) * result.limits.pageSize : null)
+        if (!parsedPage.rows.length && total !== null && total > 0 && (priorCoverage === null || priorCoverage + fetchedForTitle < total)) throw error('invalid_response', '平台返回空页但无法确认已取全声明记录。')
         result.pages.push({ ...pos, status: 'success', fetchedCount: parsedPage.rows.length, declaredTotal: parsedPage.declaredTotal, error: null })
         totals.set(title, total)
         result.declaredTotal = declaredTotal()
         result.rows.push(...parsedPage.rows)
         fetchedForTitle += parsedPage.rows.length
-        const consumed = (q.startPage - 1) * Math.min(q.pageSize, q.maxRows) + fetchedForTitle
-        const titleComplete = total !== null ? consumed >= total : (q.source === 'queryBusList' && maxPageForTitle !== null ? page === maxPageForTitle : parsedPage.rows.length === 0)
+        const consumed = priorCoverage === null ? null : priorCoverage + fetchedForTitle
+        const titleComplete = total !== null ? total === 0 || (consumed !== null && consumed >= total) : (q.source === 'queryBusList' && maxPageForTitle !== null ? page === maxPageForTitle : parsedPage.rows.length === 0)
         if (ctx.onProgress) {
           const unfinished = [...result.unfinished, ...(titleComplete ? titles.slice(index + 1).map(t => position(q.startPage, t)) : remaining(index, page + 1))]
           const snapshot = structuredClone({ ...result, fetchedCount: result.rows.length, completedAt: new Date().toISOString(), unfinished, status: unfinished.length ? 'partial' : result.rows.length ? 'success' : 'no_record', completeness: unfinished.length ? 'partial' : 'complete' } as PlatformLiveQueryResult)
