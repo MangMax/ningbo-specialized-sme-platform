@@ -323,6 +323,23 @@ describe('出处预览返回滚动恢复', () => {
     detailPage.unmount()
   })
 
+  it('企业事件把原认定年与复核结论年分开显示，并翻译复核结果', async () => {
+    mocks.detail = {
+      ...fullDetail,
+      events: [{ id: 11, recordId: 1, eventType: 'review', year: 2021, batchSeq: 2, decidedYear: 2024, reviewOutcome: 'failed' }],
+      evidence: [],
+    }
+    const page = mount(EnterprisePage, {
+      attachTo: document.body,
+      global: { stubs: globalStubs },
+    })
+    await flushPromises()
+    expect(page.text()).toContain('原认定 2021 年 · 复核结论 2024 年 · 复核不通过')
+    expect(page.text()).not.toContain('failed')
+    expect(page.getComponent({ name: 'EventChip' }).attributes('hide-batch')).toBe('true')
+    page.unmount()
+  })
+
   it('浏览器 Back 的默认企业 URL 匹配显式 view=enterprise 回链状态', async () => {
     const historyPath = '/?page=2&pageSize=100&expand=91'
     const savedBack = '/?view=enterprise&page=2&pageSize=100&expand=91'

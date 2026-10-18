@@ -39,7 +39,10 @@ it('keeps positive same-subject rows visible while qualification stays unknown',
   expect(wrapper.text()).not.toContain('post_cutoff_decision_state_unavailable')
 })
 
-it('links the actual stored PDF page and event return context', () => {
+it('links the actual stored PDF page and saves comparison scroll before detail navigation', async () => {
+  sessionStorage.clear()
+  history.replaceState(null, '', '/comparison?mode=record&queryIds=7')
+  Object.defineProperty(window, 'scrollY', { configurable: true, value: 380 })
   const wrapper = mount(ComparisonEventRow, { props: { row, returnTo: '/comparison?mode=record&queryIds=7' }, global: { stubs: { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' }, SourceReader: true } } })
   mounted.push(wrapper)
   const pageLink = wrapper.findAll('a').find(link => link.text() === '第 3 页')
@@ -48,4 +51,22 @@ it('links the actual stored PDF page and event return context', () => {
   expect(target).toContain('/preview')
   expect(decodeURIComponent(target)).toContain('back=/comparison?mode=record&queryIds=7')
   expect(target).toContain('page=3')
+  const detailLink = wrapper.findAll('a').find(link => link.text() === '合成企业')
+  expect(detailLink).toBeDefined()
+  await detailLink!.trigger('click', { button: 0 })
+  expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain('"scrollY":380')
+  expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain('/comparison?mode=record&queryIds=7')
+})
+
+it('shows review business years and readable count grains without internal enum or ID vocabulary', () => {
+  const review = { ...row, event: { ...row.event, eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed' } } as RecordComparisonResult['rows'][number]
+  const item = mount(ComparisonEventRow, { props: { row: review, returnTo: '/comparison?mode=record' }, global: { stubs: { NuxtLink: true, SourceReader: true } } })
+  mounted.push(item)
+  expect(item.text()).toContain('原认定 2021 年 · 复核结论 2024 年 · 复核不通过')
+  expect(item.text()).not.toContain('failed')
+  const summary = mount(ComparisonEvidence, { props: { result, returnTo: '/comparison?mode=record' }, global: { stubs: { SourceReader: true } } })
+  mounted.push(summary)
+  expect(summary.get('[aria-label="记录级计数"]').text()).toContain('正式事件（按事件去重）')
+  expect(summary.get('[aria-label="记录级计数"]').text()).toContain('接口原行（按原行去重）')
+  expect(summary.get('[aria-label="记录级计数"]').text()).not.toContain('ID')
 })

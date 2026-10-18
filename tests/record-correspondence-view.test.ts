@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyEventLinks, correspondenceStatusText, sourceReturnTarget, type CorrespondenceRef } from '../lib/roster/correspondence-view'
+import { classifyEventLinks, correspondenceStatusText, eventDecisionText, sourceReturnTarget, type CorrespondenceRef } from '../lib/roster/correspondence-view'
 
 describe('record correspondence view contracts', () => {
   it('keeps later workflows independent from the event evidence and export context', () => {
@@ -24,5 +24,11 @@ describe('record correspondence view contracts', () => {
     expect(sourceReturnTarget('https://other.test/comparison')).toBeNull()
     expect(sourceReturnTarget('//other.test/comparison')).toBeNull()
     expect(sourceReturnTarget('/comparison/../admin')).toBeNull()
+  })
+
+  it('names original award year and review decision year separately with a Chinese conclusion', () => {
+    expect(eventDecisionText({ eventType: 'award', year: 2021, decidedYear: 2021, reviewOutcome: null })).toBe('认定 2021 年')
+    expect(eventDecisionText({ eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed' })).toBe('原认定 2021 年 · 复核结论 2024 年 · 复核不通过')
+    expect(eventDecisionText({ eventType: 'review', year: 2021, decidedYear: null, reviewOutcome: null })).toBe('原认定 2021 年 · 复核结论年份待核 · 复核结果待核')
   })
 })

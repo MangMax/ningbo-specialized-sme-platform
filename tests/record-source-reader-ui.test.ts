@@ -48,4 +48,13 @@ describe('record source reader public interaction', () => {
     expect(fetch).toHaveBeenLastCalledWith('/api/roster/correspondences/relations/31')
     expect(wrapper.get('[aria-label="来源行反向对应"]').text()).toContain('尚无登记的对应关系')
   })
+
+  it('labels a review by its original award year and later conclusion year', async () => {
+    const review = { ...event, eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed' }
+    vi.stubGlobal('$fetch', vi.fn(async () => ({ source: review, correspondences: [] })))
+    const wrapper = render('event', 9)
+    await flushPromises()
+    expect(wrapper.text()).toContain('原认定 2021 年 · 复核结论 2024 年 · 复核不通过')
+    expect(wrapper.text()).not.toContain('failed')
+  })
 })

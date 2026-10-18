@@ -27,8 +27,8 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
 <template>
   <div class="flex min-w-0 flex-col gap-3" data-testid="record-comparison-evidence">
     <section class="grid grid-cols-2 gap-2 rounded-sm border bg-card p-3 text-[13px] sm:grid-cols-4" aria-label="记录级计数">
-      <p><strong class="block text-lg tabular-nums">{{ result.counts.distinctEvents }}</strong>正式事件（去重事件 ID）</p>
-      <p><strong class="block text-lg tabular-nums">{{ result.counts.distinctPlatformRows }}</strong>接口原行（去重原行 ID）</p>
+      <p><strong class="block text-lg tabular-nums">{{ result.counts.distinctEvents }}</strong>正式事件（按事件去重）</p>
+      <p><strong class="block text-lg tabular-nums">{{ result.counts.distinctPlatformRows }}</strong>接口原行（按原行去重）</p>
       <p><strong class="block text-lg tabular-nums">{{ result.counts.distinctEnterpriseTitles }}</strong>企业×称号</p>
       <p><strong class="block text-lg tabular-nums">{{ result.counts.laterProcessRows }}</strong>独立后续流程原行</p>
       <p>历史相符 <strong>{{ result.counts.historical_aligned }}</strong> 个事件</p>
