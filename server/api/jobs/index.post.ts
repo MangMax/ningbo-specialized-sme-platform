@@ -44,7 +44,7 @@ defineRouteMeta({
             properties: {
               kind: {
                 type: 'string',
-                enum: ['render-pages', 'ocr', 'reconcile'],
+                enum: ['render-pages', 'ocr', 'reconcile', 'platform-query-batch'],
                 description:
                   '任务种类。`render-pages`(默认 300 DPI 渲染页图)、`ocr`(并发逐张 PNG 调 PaddleOCR,按页码入库)与 ' +
                   '`reconcile`(批量平台核查:实查工信部 businessList / applyList → 落关系证据 → 标记查询状态、交代理核实 → ' +
@@ -54,7 +54,7 @@ defineRouteMeta({
               params: {
                 type: 'object',
                 description:
-                  'kind 自己的参数。`render-pages`:`{ files: string[](相对文件库根的 PDF 路径), dpi?: 72–600(默认 300), force?: boolean }`。' +
+                  'platform-query-batch 使用 /api/platform/batches 的 items/limits，推荐专用接口（支持稳定 itemId 和局部重试）。kind 自己的参数。`render-pages`:`{ files: string[](相对文件库根的 PDF 路径), dpi?: 72–600(默认 300), force?: boolean }`。' +
                   '`ocr`:`{ files: string[](同上), model?: string }` —— 须先生成完整页图，不支持 pageRanges；需要配置页保存 OCR token 或服务端配好 `NUXT_OCR_TOKEN`。' +
                   '`reconcile`:`{ titles?: string[](称号代号), directions?: ("missing_in_miit"|"extra_in_miit")[], ' +
                   'usccs?: string[](只查这几个统一社会信用代码), limit?: number(最多处理多少个差异目标), ' +

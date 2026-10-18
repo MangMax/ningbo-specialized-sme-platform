@@ -27,6 +27,9 @@ export const BUSINESS_LIST_PATH = 'ZjtxxjrBusInfoManageBLH/businessList'
 export const APPLY_LIST_PATH = 'YzzxqyApplayBLH/queryList'
 export const BUSINESS_GRID = 'businessListGrid'
 export const APPLY_GRID = 'applyGrid'
+/** Independently validated recognized-enterprise source; never alias businessList. */
+export const RECOGNIZED_LIST_PATH = 'ZjtxxjrBusInfoManageBLH/queryBusList'
+export const RECOGNIZED_GRID = 'businessGrid'
 
 /**
  * `businessList` 的 `rdjb`(认定级别)**取值集**:1 创新型 / 2 专精特新中小企业 / 3 小巨人。
@@ -331,4 +334,27 @@ export function classifyPlatformResponse(
       failureReason: `${describe(meta)}:${reason}`,
     }
   }
+}
+
+/** Live callers need a reliable total: legacy maxCount=0 fallback is not proof of zero.
+ * Keep the historic parser and stored evidence contracts unchanged.
+ */
+export function parsePlatformPage(raw: string, gridName: string) {
+  const parsed = parsePlatformList(raw, gridName)
+  const text = raw.trim()
+  const envelope = tryJson(text) ?? extractEmbeddedZrar(text)
+  const grid = gridOf(envelope, gridName)
+  if (grid && (!Array.isArray(grid.pageSet) || grid.pageSet.some(row => !row || typeof row !== 'object' || Array.isArray(row)))) {
+    throw new PlatformResponseError('Invalid platform rows')
+  }
+  const integer = (value: unknown): number | null => {
+    if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+$/.test(value.trim()))) return null
+    const number = Number(value)
+    return Number.isSafeInteger(number) && number >= 0 ? number : null
+  }
+  // Missing optional metadata stays absent; malformed supplied metadata must fail
+  // the live caller's consistency checks, never become a valid page/count via coercion.
+  const metadataInteger = (value: unknown) => value == null ? null : integer(value) ?? NaN
+  const declaredTotal = integer(grid?.maxCount)
+  return { ...parsed, declaredTotal, responsePage: metadataInteger(grid?.page), responseMaxPage: metadataInteger(grid?.maxPage), responsePageSize: metadataInteger(grid?.pageSize) }
 }

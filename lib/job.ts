@@ -16,7 +16,7 @@
 
 /**
  * 任务的五个状态。**顺序即生命周期**:`queued → running → done|failed|cancelled`。
- * 只前进一步,不回退(markRunning / finish 都只从非终态出发)。
+ * 常规执行只前进一步(markRunning / finish 都只从非终态出发)。平台批次专用的显式重试可重开同一任务,由独立的有界重试入口校验。
  */
 export const JOB_STATES = ['queued', 'running', 'done', 'failed', 'cancelled'] as const
 

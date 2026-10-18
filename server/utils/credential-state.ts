@@ -1,3 +1,4 @@
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../db/client'
 import { serviceCredential } from '../../db/schema'
@@ -6,7 +7,7 @@ export type CredentialKey = 'ocrToken' | 'miitCookie'
 export interface CredentialValue { value: string; updatedAt: string }
 type State = Partial<Record<CredentialKey, CredentialValue>>
 export interface CredentialContext {
-  db?: ReturnType<typeof useDb>
+  db?: BetterSQLite3Database<typeof import('../../db/schema')>
   ocrToken?: string
   env?: Record<string, string | undefined>
 }

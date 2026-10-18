@@ -1774,3 +1774,15 @@ POST /api/roster/evidence/pages
   以及 MCP 的 `save_ocr_result` / `set_file_category` / `save_parse_result`。
 - **本契约不重造上面任何一条**;RL-11 只补「名单实体/事件/快照/解释」的写入路径,并复用既有传输/OCR。
 - `record_evidence.page`(PDF 实际页序,给不出页码则 NULL)是 RL-10 的跳转依据,本契约沿用。
+
+### 平台实时只读查询（#51）
+
+新增 `POST /api/platform/query` / MCP `query_platform` 与能力发现
+`GET /api/platform/capabilities` / `get_platform_capabilities`。
+统一输入、结果、错误、完整性、安全上限和调用示例见
+[平台实时查询契约](platform-live-query.md)。本入口不写历史平台证据，不改变 §7.6
+`GET /api/platform/queries`；平台业务请求和既有 reconcile 共用进程内最多2请求预算。
+
+实时平台批次查询（不写业务数据）：见 [platform-batch-query.md](platform-batch-query.md)。
+REST `/api/platform/batches` 与 MCP `submit_platform_batch` 提交后按稳定 batchId/itemId
+取状态/逐项结果；仅对 unfinished 显式重试。调查与统一名录 preflight/commit 保持独立。
