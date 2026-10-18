@@ -301,7 +301,7 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
     expect(document.querySelector('[data-testid="platform-pending-aliases"]')?.textContent).not.toContain('宁波创涵自动化设备有限公司')
   })
 
-  it('平台记录详情以两张表保留时间与原始字段', async () => {
+  it('平台记录详情保留双来源字段并区分未查询的第三来源', async () => {
     const wrapper = mountIn(ComparisonPlatformEvidence, {
       props: {
         enterpriseId: 7289,
@@ -350,7 +350,8 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
     // 关系原文默认收起(表窄),点开后逐条可见。
     expect(wrapper.find('[data-testid="platform-relation"]').exists()).toBe(false)
     await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
-    expect([...document.querySelectorAll('[data-testid="platform-records"] table')].map(table=>table.getAttribute('aria-label'))).toEqual(['关联记录','申报记录'])
+    expect([...document.querySelectorAll('[data-testid="platform-records"] table')].map(table=>table.getAttribute('aria-label'))).toEqual(['关联记录','申报记录','已认定企业列表'])
+    expect(document.querySelector('[data-record-kind="recognized_list"]')?.textContent).toContain('尚未查询此来源 / 称号')
     expect(document.querySelector('[data-testid="platform-query-summary"]')?.textContent).toContain('2026-10-16')
     const relation = { text: () => document.querySelector('[data-testid="platform-relation"]')?.textContent ?? '' }
     expect(relation.text()).toContain('宁波平台滞后企业')
