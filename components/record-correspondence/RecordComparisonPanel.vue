@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, useTemplateRef, watch } from 'vue'
 import { GitCompareArrows } from '@lucide/vue'
 import { COMPARISON_CLASSES, comparisonRequest, comparisonRouteFromQuery, comparisonRouteKey, comparisonRouteQuery, comparisonSelectionQuery, instantFromLocalDateTime, localDateTimeForInstant, type ComparisonRouteState, type ComparisonSelection, type RecordComparisonResult } from '~~/lib/roster/record-comparison-view'
 import { useEvidencePreviewScrollRestore } from '~~/lib/roster/evidence-preview-return'
@@ -55,8 +55,20 @@ const returnTo = computed(() => {
 const scopeText = (scope: ComparisonRouteState) => `${scope.selection.officialSourceDocumentIds.length} 份正式文件 · ${scope.selection.queryIds.length} 次归档查询 · ${scope.selection.exportBatchIds.length} 个导出版本 · ${scope.selection.proofIds.length} 项范围依据 · ${scope.classification === 'all' ? '全部分类' : COMPARISON_CLASSES[scope.classification]} · 截止 ${scope.asOf || '未设置'} · 第 ${scope.page} 页 · 每页 ${scope.pageSize} 条`
 const displayedScopeText = computed(() => displayedScope.value && displayed.value ? scopeText({ ...displayedScope.value, page: displayed.value.page, pageSize: displayed.value.pageSize }) : '')
 const targetScopeText = computed(() => scopeText(committed.value))
-const restoreReady = computed(() => displayedIsTarget.value && !loading.value && !error.value)
-useEvidencePreviewScrollRestore(restoreReady)
+// Each picker reports the input it has settled, so an older report cannot release a new scope.
+const sourceReadyKey = ref<string | null>(null)
+const proofReadyKey = ref<string | null>(null)
+const sourceLayoutKey = computed(() => JSON.stringify(selection.value))
+const proofLayoutKey = computed(() => JSON.stringify([selection.value, asOfIso.value]))
+const restoreScopeKey = comparisonRouteKey(committed.value)
+const panel = useTemplateRef<HTMLElement>('panel')
+const restoreReady = computed(() => displayedIsTarget.value && !loading.value && !error.value
+  && comparisonRouteKey(committed.value) === restoreScopeKey
+  && sourceReadyKey.value === sourceLayoutKey.value && proofReadyKey.value === proofLayoutKey.value)
+useEvidencePreviewScrollRestore(restoreReady, (anchor) => {
+  const event = [...(panel.value?.querySelectorAll<HTMLElement>('[data-event-id]') ?? [])].find(element => element.dataset.eventId === anchor.eventId)
+  return event ? window.scrollY + event.getBoundingClientRect().top - anchor.viewportTop : undefined
+})
 
 async function load() {
   const current = ++requestId
@@ -116,10 +128,10 @@ const shownPage = computed(() => displayed.value?.page ?? committed.value.page)
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-3" data-testid="record-comparison-panel">
+  <div ref="panel" class="flex min-w-0 flex-col gap-3" data-testid="record-comparison-panel">
     <Card class="min-w-0 gap-0 py-0"><CardHeader class="border-b px-5 py-4"><h2 class="text-sm font-medium">选择记录级对比来源</h2></CardHeader><CardContent class="flex min-w-0 flex-col gap-3 p-5">
-      <ComparisonSourcePicker :selection="selection" @change="setSelection" />
-      <ComparisonProofPicker :selection="selection" :as-of="asOfIso" @change="setProofIds" />
+      <ComparisonSourcePicker :selection="selection" @change="setSelection" @settled="(key, ready) => { sourceReadyKey = ready ? key : null }" />
+      <ComparisonProofPicker :selection="selection" :as-of="asOfIso" @change="setProofIds" @settled="(key, ready) => { proofReadyKey = ready ? key : null }" />
       <div class="flex flex-wrap items-end gap-3"><div class="flex flex-col gap-1"><Label for="record-as-of">截止时点（可选）</Label><Input id="record-as-of" v-model="asOfLocal" type="datetime-local" step="0.001" class="w-64 max-w-full" :aria-invalid="!asOfValid" /></div><Button :disabled="!canCompare || loading" @click="run">按所选来源对比</Button><span v-if="!asOfValid" class="text-destructive text-[13px]">请填写有效的截止时点。</span><span v-else-if="!canCompare" class="text-muted-foreground text-[13px]">至少选一份正式文件和一次归档查询；导出版本可不选。</span><span v-else-if="selectionChanged" class="text-muted-foreground text-[13px]">来源或截止时点已改，点击按钮重新对比；下方仍是上次结果。</span></div>
     </CardContent></Card>
     <template v-if="submitted">

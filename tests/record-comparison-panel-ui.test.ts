@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
-import { reactive } from 'vue'
+import { defineComponent, reactive } from 'vue'
+import ComparisonSourcePicker from '../components/record-correspondence/ComparisonSourcePicker.vue'
+import ComparisonProofPicker from '../components/record-correspondence/ComparisonProofPicker.vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RecordComparisonPanel from '../components/record-correspondence/RecordComparisonPanel.vue'
 import { Select } from '../components/ui/select'
@@ -9,8 +11,8 @@ import { rememberEvidencePreviewReturn } from '../lib/roster/evidence-preview-re
 const calls = vi.hoisted(() => ({ query: [] as Record<string, unknown>[] }))
 const result = (page = 1, pageSize = 25) => ({ rows: [], total: 75, page, pageSize, counts: { distinctEvents: 0 }, coverage: [], currentSourceConsistency: { recognizedObservations: [] } })
 const stubs = {
-  ComparisonSourcePicker: { props: ['selection'], emits: ['change'], template: '<button data-testid="select-sources" @click="$emit(\'change\', { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] })">选定来源</button>' },
-  ComparisonProofPicker: { props: ['selection', 'asOf'], emits: ['change'], template: '<div data-testid="proof-cutoff">{{ asOf }}<button data-testid="select-proof" @click="$emit(\'change\', [12])">选定依据</button></div>' },
+  ComparisonSourcePicker: defineComponent({ props: ['selection'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler(value: unknown) { this.$emit('settled', JSON.stringify(value), true) } } }, template: '<button data-testid="select-sources" @click="$emit(\'change\', { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] })">选定来源</button>' }),
+  ComparisonProofPicker: defineComponent({ props: ['selection', 'asOf'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } }, asOf() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } }, template: '<div data-testid="proof-cutoff">{{ asOf }}<button data-testid="select-proof" @click="$emit(\'change\', [12])">选定依据</button></div>' }),
   ComparisonEvidence: { template: '<div data-testid="shown-result">已读取结果</div>' },
   ComparisonEventRow: true,
   TableLoadingStatus: true,
@@ -169,4 +171,120 @@ describe('record comparison public interaction', () => {
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: 480, behavior: 'instant' })
   })
+})
+
+
+it.each(['result-first', 'pickers-first'])('waits for catalog, selected labels, selected proof and audit layout before return restore: %s', async (order) => {
+  startWith({ queryIds: '7', officialSourceDocumentIds: '3', proofIds: '12' })
+  Object.defineProperty(window, 'scrollY', { configurable: true, value: 1400 })
+  rememberEvidencePreviewReturn(route.fullPath)
+  const pending = new Map<string, (value: unknown) => void>()
+  vi.stubGlobal('$fetch', vi.fn((url: string, options?: { query?: { kind?: string; pageSize?: number } }) => new Promise(resolve => {
+    const key = url.endsWith('/sources') ? `${options?.query?.kind}:${options?.query?.pageSize}` : url
+    pending.set(key, resolve)
+  })))
+  const frames: FrameRequestCallback[] = []
+  const scrollTo = vi.fn()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
+  vi.stubGlobal('scrollTo', scrollTo)
+  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, ComparisonSourcePicker: false, ComparisonProofPicker: false } } })
+  await flushPromises()
+  const finishResult = async () => { pending.get('/api/roster/record-comparison')!(result()); await flushPromises() }
+  if (order === 'result-first') await finishResult()
+  expect(frames).toHaveLength(0)
+  pending.get('official_document:25')!({ rows: Array.from({ length: 25 }, (_, index) => ({ kind: 'official_document', id: index + 1, label: `公布名单 ${index + 1}`, selectable: true })), total: 25, page: 1, pageSize: 25 })
+  pending.get('/api/roster/comparison-scope-proofs')!({ rows: [{ id: 11, kind: 'official_coverage', status: 'confirmed', valid: true, evidence: { titleCode: 'specialized_sme', sourceDocuments: [{ id: 3 }] } }], total: 1, page: 1, pageSize: 25 })
+  await flushPromises()
+  expect(wrapper.findComponent(ComparisonSourcePicker).findAll('li')).toHaveLength(25)
+  expect(frames).toHaveLength(0)
+  pending.get('official_document:200')!({ rows: [{ kind: 'official_document', id: 3, label: '正式文件名称', selectable: true }], total: 1, page: 1, pageSize: 200 })
+  await flushPromises()
+  pending.get('query:200')!({ rows: [{ kind: 'query', id: 7, label: '归档查询名称', selectable: true }], total: 1, page: 1, pageSize: 200 })
+  pending.get('/api/roster/comparison-scope-proofs/12')!({ id: 12, kind: 'official_coverage', status: 'confirmed', valid: true, evidence: { titleCode: 'specialized_sme', sourceDocuments: [{ id: 3 }] } })
+  await flushPromises()
+  expect(frames).toHaveLength(0)
+  pending.get('/api/roster/comparison-scope-proofs/12/audit')!({ rows: [{ basis: '延迟的多行登记依据' }], total: 1, page: 1, pageSize: 200 })
+  await flushPromises()
+  expect(frames).toHaveLength(0)
+  pending.get('/api/roster/comparison-scope-proofs/11/audit')!({ rows: [{ basis: '尚未完整的登记历史' }], total: 201, page: 1, pageSize: 200 })
+  await flushPromises()
+  expect(frames).toHaveLength(0)
+  pending.get('/api/roster/comparison-scope-proofs/11/audit')!({ rows: [{ basis: '最终登记依据会在目录中换行' }], total: 201, page: 2, pageSize: 200 })
+  await flushPromises()
+  expect(wrapper.findComponent(ComparisonProofPicker).text()).toContain('最终登记依据会在目录中换行')
+  if (order === 'pickers-first') { expect(frames).toHaveLength(0); await finishResult() }
+  expect(frames).toHaveLength(1)
+  frames[0]!(0)
+  expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 1400, behavior: 'instant' })
+})
+
+it('returns the owned event to its viewport offset after an expanded evidence section remounts collapsed', async () => {
+  startWith({ queryIds: '7', officialSourceDocumentIds: '3' })
+  Object.defineProperty(window, 'scrollY', { configurable: true, value: 1400 })
+  const origin = document.createElement('article')
+  origin.dataset.eventId = '42'
+  const link = document.createElement('a')
+  origin.append(link)
+  vi.spyOn(origin, 'getBoundingClientRect').mockReturnValue({ top: 160 } as DOMRect)
+  rememberEvidencePreviewReturn(route.fullPath, link)
+  const frames: FrameRequestCallback[] = []
+  const scrollTo = vi.fn()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
+  vi.stubGlobal('scrollTo', scrollTo)
+  vi.stubGlobal('$fetch', vi.fn(async () => ({ ...result(), rows: [{ event: { id: 42 } }] })))
+  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, ComparisonEventRow: { template: '<article data-event-id="42" />' } } } })
+  await flushPromises()
+  vi.spyOn(wrapper.get('[data-event-id="42"]').element, 'getBoundingClientRect').mockReturnValue({ top: 600 } as DOMRect)
+  frames[0]!(0)
+  expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 1840, behavior: 'instant' })
+})
+
+
+it.each(['unmount', 'route-change', 'picker-pending'])('does not let a queued return frame outlive its owner: %s', async (change) => {
+  startWith({ queryIds: '7', officialSourceDocumentIds: '3' })
+  Object.defineProperty(window, 'scrollY', { configurable: true, value: 500 })
+  rememberEvidencePreviewReturn(route.fullPath)
+  const frames: FrameRequestCallback[] = []
+  const scrollTo = vi.fn()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
+  vi.stubGlobal('scrollTo', scrollTo)
+  vi.stubGlobal('$fetch', vi.fn(async () => result()))
+  wrapper = mount(RecordComparisonPanel, { global: { stubs } })
+  await flushPromises()
+  expect(frames).toHaveLength(1)
+  if (change === 'unmount') { wrapper.unmount(); wrapper = null }
+  else if (change === 'route-change') startWith({ queryIds: '7', officialSourceDocumentIds: '3', page: '2' })
+  else wrapper.findComponent(ComparisonSourcePicker).vm.$emit('settled', JSON.stringify({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] }), false)
+  await flushPromises()
+  frames[0]!(0)
+  expect(scrollTo).not.toHaveBeenCalled()
+  if (change === 'picker-pending') {
+    wrapper!.findComponent(ComparisonSourcePicker).vm.$emit('settled', JSON.stringify({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] }), true)
+    await flushPromises()
+    expect(frames).toHaveLength(2)
+    frames[1]!(0)
+    expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 500, behavior: 'instant' })
+  }
+})
+
+it('settles failed picker reads with their visible fallback layout before numeric return restoration', async () => {
+  startWith({ queryIds: '7', officialSourceDocumentIds: '3', proofIds: '12' })
+  Object.defineProperty(window, 'scrollY', { configurable: true, value: 730 })
+  rememberEvidencePreviewReturn(route.fullPath)
+  const frames: FrameRequestCallback[] = []
+  const scrollTo = vi.fn()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
+  vi.stubGlobal('scrollTo', scrollTo)
+  vi.stubGlobal('$fetch', vi.fn(async (url: string) => {
+    if (url === '/api/roster/record-comparison') return result()
+    throw new Error('offline')
+  }))
+  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, ComparisonSourcePicker: false, ComparisonProofPicker: false } } })
+  await flushPromises()
+  expect(wrapper.text()).toContain('来源目录读取失败')
+  expect(wrapper.text()).toContain('范围依据目录读取失败')
+  expect(wrapper.text()).toContain('部分已选依据暂不可读')
+  expect(frames).toHaveLength(1)
+  frames[0]!(0)
+  expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 730, behavior: 'instant' })
 })
