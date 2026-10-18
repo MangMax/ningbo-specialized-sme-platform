@@ -118,3 +118,11 @@ businessList 全三称号示例（只读）：
 #52 的 `tests/platform-business-query.test.ts` 独立覆盖公开 REST/MCP 的 USCC/单称号/全三称号、多页六关系与原始曾用名、逐称号失败后补查、认证失效停止、未知总数、安全上限、原始RPC严格验证、合成凭据保密与真实临时SQLite不变。样本均为受控合成/脱敏数据，无真实认证或业务写入；不宣称实平台账号验收。
 
 `tests/platform-recognized-query.test.ts` 补充已认定来源的三页/三称号、全部筛选与原始RPC严格校验、独立来源和原字段、失败/上限/单称号续查、能力/OpenAPI及REST/MCP对等。queryBusList 的上游能力依据维护者提供的 2026-10-18 浏览器实测：三个称号、名称/代码、日期范围、年份、维护年+批次、账号区域码、qymc双向排序，以及20/20/10的完整三页（total50）。实测没有验证日期边界是否包含、平台时区、全局区域字典或其他排序字段。本实现的 REST/MCP 验收使用合成/脱敏样本，不能把上游浏览器观察当作应用入口的实平台验收。queryList 的上游组合语义仍需维护者受控验收。
+
+## Async batches
+
+Use [platform-batch-query.md](./platform-batch-query.md) for authenticated batch
+submission/retry, read-only status/progress/individual results, stable IDs,
+unfinished-only retries, bounded retained results and restart policy. Batches
+reuse this single-query contract and the same global request budget. Agent
+investigation uses these app APIs/MCP and never needs a Cookie read/reveal.

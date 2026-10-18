@@ -47,6 +47,8 @@ describe('mcp-auth 鉴权判据', () => {
       'set_file_category',
       'save_parse_result',
       'save_roster_batch',
+      'submit_platform_batch',
+      'retry_platform_batch',
     ])
   })
 

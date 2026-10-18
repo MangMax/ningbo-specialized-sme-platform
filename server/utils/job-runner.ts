@@ -7,6 +7,7 @@ import {
   getJob,
   markJobRunning,
   reconcileInterruptedJobs,
+  reopenJob,
   setJobProgress,
   type JobRow,
 } from './job-store'
@@ -89,6 +90,8 @@ export type JobParseResult =
 export interface JobCompletion {
   /** 产出。哪怕是空对象也要给 —— 它表示「跑完了,没有产出」。 */
   result: unknown
+  /** Optional truthful progress for partial-result jobs. */
+  progress?: { done: number; total: number }
   /** 给了就是部分失败:状态记 `failed`,但 `result` 照样保留。 */
   error?: string
   /**
@@ -122,7 +125,7 @@ export interface JobSpec {
   total?: (params: Record<string, unknown>) => number
   /** Capture submission-time dependencies in a closure, retained only in the process queue.
    * Never put credentials in params, progress or the business database. */
-  prepare?: () => NonNullable<JobSpec['run']>
+  prepare?: (params: Record<string, unknown>, db: Db) => NonNullable<JobSpec['run']>
   run?: (ctx: JobContext, params: Record<string, unknown>) => Promise<JobCompletion>
 }
 
@@ -221,7 +224,7 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
   if (!spec) throw new Error(`任务种类未登记:${input.kind}`)
   if (spec.status !== 'ready' || !spec.run) throw new Error(`任务种类尚未接入:${input.kind}`)
 
-  const run = spec.prepare?.() ?? spec.run
+  const run = spec.prepare?.(input.params, db) ?? spec.run
   const total = spec.total?.(input.params) ?? 1
   const row = createJob(db, {
     id: input.id ?? newJobId(),
@@ -233,6 +236,19 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
   queue.push({ run, jobId: row.id, kind: input.kind, db, filesDir: input.filesDir })
   drainQueue()
   return row
+}
+
+/** Explicit retry reuses the existing scheduler and ID; captures fresh dependencies
+ * before reopening. Callers validate bounded retry policy before reaching this seam. */
+export function requeueFinishedJob(db: Db, input: { id: string; kind: string; params: Record<string, unknown>; filesDir: string }): boolean {
+  const spec = getJobSpec(input.kind)
+  if (!spec?.run) return false
+  const run = spec.prepare?.(input.params, db) ?? spec.run
+  const row = reopenJob(db, input.id, input.kind, input.params)
+  if (!row) return false
+  queue.push({ run, jobId: row.id, kind: row.kind, db, filesDir: input.filesDir })
+  drainQueue()
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -300,10 +316,10 @@ async function runOne(entry: QueueEntry): Promise<void> {
     }
 
     const completion = await entry.run(ctx, running.params)
-    // 收尾时把进度顶到分母 —— handler 可能把自己的循环跑完了却没报最后一格。
+    // 默认收尾把进度顶到分母;部分结果任务可显式提供真实完成数。
     // 被取消时不顶:停在 1/4 才是**它真实的进度**,顶成 4/4 就是在说谎。
     if (!completion.cancelled) {
-      setJobProgress(db, jobId, { done: running.progress.total, total: running.progress.total })
+      setJobProgress(db, jobId, completion.progress ?? { done: running.progress.total, total: running.progress.total })
     }
     finishJob(db, jobId, {
       state: completion.cancelled ? 'cancelled' : completion.error ? 'failed' : 'done',

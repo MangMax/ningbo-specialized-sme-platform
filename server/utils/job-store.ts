@@ -230,3 +230,17 @@ export function reconcileInterruptedJobs(db: Db): number {
     .run()
   return stuck
 }
+
+/** Checkpoint safe partial results without changing lifecycle. */
+export function setJobResult(db: Db, id: string, result: unknown): void {
+  db.update(schema.job).set({ result }).where(and(eq(schema.job.id, id), inArray(schema.job.state, [...ACTIVE_JOB_STATES]))).run()
+}
+
+/** Explicit bounded retry only: preserve checkpointed result, reopen a terminal job.
+ * Normal runner transitions and startup reconciliation never auto-requeue jobs. */
+export function reopenJob(db: Db, id: string, kind: string, params: Record<string, unknown>): JobRow | null {
+  const changed = db.update(schema.job).set({ state: 'queued', params, error: null, startedAt: null, finishedAt: null })
+    .where(and(eq(schema.job.id, id), eq(schema.job.kind, kind), inArray(schema.job.state, ['done', 'failed', 'cancelled'])))
+    .run()
+  return changed.changes ? getJob(db, id) : null
+}

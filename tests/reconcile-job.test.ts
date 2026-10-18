@@ -77,7 +77,7 @@ describe('参数校验:错参数在**提交那一刻**就被挡住', () => {
     expect(spec.run).toBeTypeOf('function')
     expect(spec.paramsHint).toContain('titles')
     expect(spec.paramsHint).toContain('concurrency')
-    expect(jobSpecs().map((entry) => entry.kind)).toEqual(['ocr', 'reconcile', 'render-pages'])
+    expect(jobSpecs().map((entry) => entry.kind)).toEqual(['ocr', 'platform-query-batch', 'reconcile', 'render-pages'])
   })
 
   it('空参数合法(全量),comma 字符串也认', () => {

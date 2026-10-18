@@ -1,9 +1,11 @@
 import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, parsePlatformPage } from '../../lib/platform/adapter'
 import { cookieRedactor, PlatformHttpError, postPlatformRequest, type PlatformQueryOptions } from '../../lib/platform/client'
-import { platformQueryInputSchema, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryError } from '../../lib/platform/live-query'
+import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryError } from '../../lib/platform/live-query'
 import { resolvePlatformCookie, type CredentialContext } from './credential-state'
 
 export interface PlatformLiveQueryContext {
+  onProgress?: (result: PlatformLiveQueryResult) => void
+  maxResultBytes?: number
   credentials?: CredentialContext
   /** In-memory snapshot for batch consumers; never put this context in persistent job params. */
   cookie?: string
@@ -16,7 +18,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
   if (!parsed.success) throw Object.assign(new Error('Invalid platform query parameters'), { statusCode: 400, code: 'invalid_input' })
   const q = parsed.data
   if (!q.name && !q.uscc) throw Object.assign(new Error('Provide name or uscc'), { statusCode: 400, code: 'invalid_input' })
-  const titles: (string | null)[] = q.source === 'businessList' ? q.rdjb === 'all' ? ['1', '2', '3'] : [q.rdjb as string] : q.source === 'queryBusList' ? (q.rdjb as string[] | undefined) ?? ['1', '2', '3'] : [null]
+  const titles = platformQueryTitles(q)
   const totals = new Map<string | null, number | null>()
   const started = Date.now()
   const result: PlatformLiveQueryResult = {
@@ -94,7 +96,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
           }
           maxPageForTitle = maxPage
         }
-        if (result.rows.length + parsedPage.rows.length > q.maxRows) {
+        if (result.rows.length + parsedPage.rows.length > q.maxRows || (ctx.maxResultBytes !== undefined && Buffer.byteLength(JSON.stringify({ ...result, rows: [...result.rows, ...parsedPage.rows] }), 'utf8') + 2048 > ctx.maxResultBytes)) {
           result.status = 'partial'; result.completeness = 'partial'
           result.error = error('safety_limit', '记录数量达到安全上限，此页未纳入结果。')
           result.pages.push({ ...pos, status: 'failed', fetchedCount: 0, declaredTotal: parsedPage.declaredTotal, error: result.error })
@@ -108,7 +110,18 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         result.rows.push(...parsedPage.rows)
         fetchedForTitle += parsedPage.rows.length
         const consumed = (q.startPage - 1) * Math.min(q.pageSize, q.maxRows) + fetchedForTitle
-        if (parsedPage.declaredTotal !== null ? consumed >= parsedPage.declaredTotal : (q.source === 'queryBusList' && maxPageForTitle !== null ? page === maxPageForTitle : parsedPage.rows.length === 0)) {
+        const titleComplete = parsedPage.declaredTotal !== null ? consumed >= parsedPage.declaredTotal : (q.source === 'queryBusList' && maxPageForTitle !== null ? page === maxPageForTitle : parsedPage.rows.length === 0)
+        if (ctx.onProgress) {
+          const unfinished = [...result.unfinished, ...(titleComplete ? titles.slice(index + 1).map(t => position(q.startPage, t)) : remaining(index, page + 1))]
+          const snapshot = structuredClone({ ...result, fetchedCount: result.rows.length, completedAt: new Date().toISOString(), unfinished, status: unfinished.length ? 'partial' : result.rows.length ? 'success' : 'no_record', completeness: unfinished.length ? 'partial' : 'complete' } as PlatformLiveQueryResult)
+          // Checkpoint echoes use the same redaction as final responses.
+          for (const key of ['name', 'uscc', ...Object.keys(recognizedConditionShape)]) {
+            const conditions = snapshot.effectiveConditions as Record<string, string>
+            if (conditions[key]) conditions[key] = redactString(conditions[key]!)
+          }
+          ctx.onProgress(snapshot)
+        }
+        if (titleComplete) {
           result.status = result.rows.length ? 'success' : 'no_record'; result.completeness = 'complete'; break
         }
         if (!parsedPage.rows.length) throw error('invalid_response', '平台返回空页但声明仍有记录。')

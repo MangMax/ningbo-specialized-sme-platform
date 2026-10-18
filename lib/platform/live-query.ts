@@ -44,6 +44,13 @@ export function validPlatformQueryConditions(q: z.infer<typeof queryInputObject>
 }
 export const platformQueryInputSchema = queryInputObject.refine(validPlatformQueryConditions, { message: 'Invalid conditions for platform source' })
 export type PlatformLiveQueryInput = z.infer<typeof platformQueryInputSchema>
+/** One source of truth for selected title traversal, including unqueried batches. */
+export function platformQueryTitles(q: PlatformLiveQueryInput): (string | null)[] {
+  if (q.source === 'businessList') return q.rdjb === 'all' ? ['1', '2', '3'] : [q.rdjb as string]
+  if (q.source === 'queryBusList') return (q.rdjb as string[] | undefined) ?? ['1', '2', '3']
+  return [null]
+}
+
 export type PlatformQueryStatus = 'success' | 'no_record' | 'auth_failed' | 'failed' | 'partial' | 'not_queried'
 export interface PlatformQueryError {
   code: 'invalid_input' | 'unsupported_source' | 'credential_unavailable' | 'auth_failed' | 'upstream_failed' | 'timeout' | 'rate_limited' | 'safety_limit' | 'invalid_response' | 'sensitive_response'
@@ -75,7 +82,8 @@ export interface PlatformLiveQueryResult {
   limits: { maxRequests: number; maxRows: number; maxDurationMs: number; pageSize: number }
 }
 export const platformQueryCapabilities = {
-  version: 1,
+  version: 2,
+  batch: { available: true, submit: '/api/platform/batches', status: '/api/platform/batches/{batchId}', item: '/api/platform/batches/{batchId}/items/{itemId}', retry: '/api/platform/batches/{batchId}/retry', maxItems: 50, maxAttempts: 10, maxRequests: 200, maxRows: 5000, maxDurationMs: 120000, maxResultBytes: 8388608, defaultResultBytes: 2097152, submissionAuth: 'task_token', restart: 'failed_no_auto_resume', cache: 'no-store' },
   sources: {
     queryList: { available: true, meaning: '申报记录', conditions: ['name', 'uscc'], combination: 'and', nameMatch: 'platform_keyword', titleSelection: false, defaultRestrictions: [], pagination: true },
     businessList: { available: true, meaning: '关联记录', conditions: ['uscc'], titleSelection: true, rdjb: ['1', '2', '3', 'all'], titleMeaning: { '1': '创新型中小企业', '2': '专精特新中小企业', '3': '小巨人' }, defaultRestrictions: [], pagination: true },
