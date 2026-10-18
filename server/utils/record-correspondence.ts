@@ -5,6 +5,7 @@ import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
+import { currentProofCoversRows } from './comparison-scope-proof'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -27,6 +28,7 @@ export interface CorrespondenceRequest {
   basis: string
   ruleId: string
   ruleVersion: string
+  proofIds?: number[]
   operations: CorrespondenceOperation[]
 }
 export interface CorrespondenceImpact { created: number; unlinked: number; audit: number }
@@ -145,7 +147,7 @@ function sameTitle(a: string | null, b: string | null, confirmed: boolean) {
   if (a && b && a !== b) fail('title_conflict', 'Source title codes conflict')
   if (confirmed && (!a || !b)) fail('incomplete_coverage', 'Row title is not explicit')
 }
-function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolean) {
+function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolean, proofIds: number[] = []) {
   if (!edge || typeof edge !== 'object') fail('invalid_endpoint_type', 'Typed edge required')
   const shapes: Record<CorrespondenceEdge['type'], readonly string[]> = {
     event_process: ['type', 'eventId', 'relationId', 'role'],
@@ -221,15 +223,15 @@ function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolea
   if (relation) sameTitle(titleCode, relationTitle(relation), confirmed)
   if (exported) sameTitle(titleCode, exported.exportBatch.titleCode, confirmed)
   if (edge.type === 'later_process' && confirmed && relation?.relation.declareKind && relation.relation.declareKind !== edge.role.replace('followup_', '')) fail('invalid_endpoint_type', 'Follow-up role conflicts with original process type')
-  if (edge.type === 'recognized_export' && confirmed && edge.role === 'same_current_row') fail('incomplete_coverage', 'Interface/export version and scope equivalence is not proven by source rows')
+  if (edge.type === 'recognized_export' && confirmed && edge.role === 'same_current_row' && !currentProofCoversRows(db, proofIds, edge.relationId, edge.exportRowId)) fail('incomplete_coverage', 'Confirmed current-source equivalence proof required')
   if (edge.type === 'recognized_export' && confirmed && edge.role === 'candidate_same_current_row') fail('incomplete_coverage', 'Candidate role cannot be confirmed as current equivalence')
-  const provenance = sourceProvenance(db, edge)
+  const provenance = { ...sourceProvenance(db, edge), comparisonProofIds: edge.type === 'recognized_export' ? proofIds : [] }
   const targetIdentity = { eventId: event?.event.id ?? null, recordId: event?.record.id ?? null,
     officialEvidence: provenance.officialEvidence.map(({ evidence, storedFile }) => ({ evidenceId: evidence.id, sourceFile: evidence.sourceFile, attachment: evidence.attachment, listNo: evidence.listNo, page: evidence.page, storedFileId: storedFile?.id ?? null, storedFileSha256: storedFile?.sha256 ?? null })),
     predecessorEventId: edge.type === 'later_process' ? edge.predecessorEventId ?? null : null,
     predecessorEvidence: provenance.predecessor?.officialEvidence.map(({ evidence, storedFile }) => ({ evidenceId: evidence.id, sourceFile: evidence.sourceFile, attachment: evidence.attachment, listNo: evidence.listNo, page: evidence.page, storedFileId: storedFile?.id ?? null, storedFileSha256: storedFile?.sha256 ?? null })) ?? [],
     relationId: relation?.relation.id ?? null, queryId: relation?.query.id ?? null, queryNaturalKey: relation ? [relation.query.interface, relation.query.queryKey, relation.query.rdjb, relation.query.queriedAt, relation.relation.sequenceNo] : null, exportRowId: exported?.exportRow.id ?? null, exportNaturalKey: exported ? [exported.exportBatch.titleCode, exported.exportBatch.year, exported.exportBatch.sha256, exported.exportRow.sourceRowNo] : null }
-  return { enterpriseId, titleCode, provenance, targetIdentity, sourceFingerprint: hash(provenance) }
+  return { enterpriseId, titleCode, provenance, targetIdentity, sourceFingerprint: hash(sourceProvenance(db, edge)) }
 }
 function storedEdge(row: StoredCorrespondence): CorrespondenceEdge {
   const base = { relationId: row.relationId!, exportRowId: row.exportRowId!, eventId: row.eventId!, role: row.role }
@@ -257,7 +259,7 @@ function buildPlan(db: Executor, request: CorrespondenceRequest) {
   const created = new Set<string>()
   for (const op of request.operations) {
     if (op.action === 'create' || op.action === 'correct') {
-      const source = sourceForEdge(db, op.edge, op.action === 'correct' || op.status === 'confirmed')
+      const source = sourceForEdge(db, op.edge, op.action === 'correct' || op.status === 'confirmed', request.proofIds)
       const key = edgeKey(op.edge)
       if (created.has(key)) fail('ambiguous_candidate', 'Duplicate edge in one plan')
       created.add(key)
@@ -292,7 +294,7 @@ function buildPlan(db: Executor, request: CorrespondenceRequest) {
       if (!(row.status === 'candidate' && ['confirmed', 'rejected'].includes(next)) && !(row.status === 'confirmed' && next === 'unlinked')) fail('invalid_endpoint_type', 'Invalid decision transition')
       const observedSourceFingerprint = next === 'unlinked'
         ? hash(sourceProvenance(db, storedEdge(row)))
-        : sourceForEdge(db, storedEdge(row), next === 'confirmed').sourceFingerprint
+        : sourceForEdge(db, storedEdge(row), next === 'confirmed', request.proofIds ?? (row.provenance.comparisonProofIds as number[] | undefined) ?? []).sourceFingerprint
       if (next !== 'unlinked' && observedSourceFingerprint !== row.sourceFingerprint) fail('plan_mismatch', 'Source row changed since correspondence decision')
       targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint })
       impact.audit++
@@ -327,7 +329,7 @@ function addAudit(tx: Tx, row: StoredCorrespondence, batchId: number, request: C
   tx.insert(schema.recordCorrespondenceAudit).values({ correspondenceId: row.id, batchId, idempotencyKey: request.idempotencyKey, fromStatus, toStatus, expectedRevision, resultingRevision: expectedRevision + 1, actorType: request.actor.type, actorId: request.actor.id, basis: request.basis, ruleId: request.ruleId, ruleVersion: request.ruleVersion, evidence: row.provenance, decidedAt }).run()
 }
 function insertEdge(tx: Tx, edge: CorrespondenceEdge, request: CorrespondenceRequest, batchId: number, status: 'candidate' | 'confirmed', at: string) {
-  const source = sourceForEdge(tx, edge, status === 'confirmed')
+  const source = sourceForEdge(tx, edge, status === 'confirmed', request.proofIds)
   const row = tx.insert(schema.recordCorrespondence).values({
     edgeKey: edgeKey(edge), type: edge.type, role: edge.role,
     eventId: 'eventId' in edge ? edge.eventId : null,
@@ -345,7 +347,7 @@ function insertEdge(tx: Tx, edge: CorrespondenceEdge, request: CorrespondenceReq
 }
 function reproposeEdge(tx: Tx, edge: CorrespondenceEdge, request: CorrespondenceRequest, batchId: number, at: string) {
   const existing = tx.select().from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.edgeKey, edgeKey(edge))).get()!
-  const source = sourceForEdge(tx, edge, false)
+  const source = sourceForEdge(tx, edge, false, request.proofIds)
   tx.update(schema.recordCorrespondence).set({
     status: 'candidate', revision: existing.revision + 1, targetIdentity: source.targetIdentity,
     provenance: source.provenance, sourceFingerprint: source.sourceFingerprint,
@@ -355,7 +357,7 @@ function reproposeEdge(tx: Tx, edge: CorrespondenceEdge, request: Correspondence
   return existing.id
 }
 function reconfirmEdge(tx: Tx, row: StoredCorrespondence, edge: CorrespondenceEdge, request: CorrespondenceRequest, batchId: number, at: string) {
-  const source = sourceForEdge(tx, edge, true)
+  const source = sourceForEdge(tx, edge, true, request.proofIds)
   addAudit(tx, row, batchId, request, 'confirmed', 'unlinked', row.revision, at)
   const nextRevision = row.revision + 2
   const updated = tx.update(schema.recordCorrespondence).set({
@@ -394,9 +396,10 @@ export function commitRecordCorrespondences(db: Db, request: CorrespondenceReque
           continue
         }
         const next = op.action === 'correct' ? 'unlinked' : op.status
-        tx.update(schema.recordCorrespondence).set({ status: next, revision: row.revision + 1, decidedAt: at, endedAt: next === 'unlinked' ? at : null, ruleId: request.ruleId, ruleVersion: request.ruleVersion })
+        tx.update(schema.recordCorrespondence).set({ status: next, revision: row.revision + 1, decidedAt: at, endedAt: next === 'unlinked' ? at : null, ruleId: request.ruleId, ruleVersion: request.ruleVersion,
+          provenance: next === 'confirmed' && row.type === 'recognized_export' ? { ...row.provenance, comparisonProofIds: request.proofIds ?? [] } : row.provenance })
           .where(and(eq(schema.recordCorrespondence.id, row.id), eq(schema.recordCorrespondence.revision, row.revision))).run()
-        addAudit(tx, row, batch.id, request, row.status, next, row.revision, at)
+        addAudit(tx, { ...row, provenance: next === 'confirmed' && row.type === 'recognized_export' ? { ...row.provenance, comparisonProofIds: request.proofIds ?? [] } : row.provenance }, batch.id, request, row.status, next, row.revision, at)
         correspondenceIds.push(row.id)
         if (op.action === 'correct') correspondenceIds.push(insertEdge(tx, op.edge, request, batch.id, 'confirmed', at))
       }
@@ -415,7 +418,7 @@ export function listRecordCorrespondences(db: Db, filter: CorrespondenceFilter =
   return db.select().from(schema.recordCorrespondence).all().filter((row) => entries.every(([key, value]) => row[key] === value)).sort((a, b) => a.id - b.id).map((row) => {
     let requiresRevalidation = false
     if (row.status === 'confirmed') {
-      try { requiresRevalidation = sourceForEdge(db, storedEdge(row), true).sourceFingerprint !== row.sourceFingerprint }
+      try { requiresRevalidation = sourceForEdge(db, storedEdge(row), true, (row.provenance.comparisonProofIds as number[] | undefined) ?? []).sourceFingerprint !== row.sourceFingerprint }
       catch { requiresRevalidation = true }
     }
     return { ...row, requiresRevalidation }
