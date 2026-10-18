@@ -110,7 +110,7 @@ function selected(db: Db, input: RecordComparisonInput) {
   const parsed = recordComparisonInput.parse(input)
   for (const key of ['queryIds', 'exportBatchIds', 'officialSourceDocumentIds'] as const) if (unique(parsed[key]).length !== parsed[key].length) throw new Error(`duplicate_${key}`)
   const queries = db.select().from(schema.platformQuery).all().filter(row => parsed.queryIds.includes(row.id) && before(row.queriedAt, parsed.asOf))
-  const batches = db.select().from(schema.platformExportBatch).all().filter(row => parsed.exportBatchIds.includes(row.id) && row.importStatus === 'imported' && (!parsed.asOf || row.collectedOn <= parsed.asOf.slice(0, 10)))
+  const batches = db.select().from(schema.platformExportBatch).all().filter(row => parsed.exportBatchIds.includes(row.id) && row.importStatus === 'imported' && before(row.collectedOn, parsed.asOf))
   const documents = db.select().from(schema.sourceDocument).all().filter(row => parsed.officialSourceDocumentIds.includes(row.id) && row.source === 'jxj' && (!parsed.asOf || before(row.issueDate, parsed.asOf)))
   if (queries.length !== parsed.queryIds.length || batches.length !== parsed.exportBatchIds.length || documents.length !== parsed.officialSourceDocumentIds.length) throw new Error('source_set_missing_or_out_of_scope')
   const queryMap = new Map(queries.map(row => [row.id, row]))
