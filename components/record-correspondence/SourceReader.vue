@@ -26,7 +26,7 @@ const groups = computed(() => event.value ? classifyEventLinks(event.value.id, v
       <AlertTitle>未能读取{{ kind === 'event' ? '事件' : '来源行' }}出处</AlertTitle>
       <AlertDescription class="flex flex-wrap items-center gap-2">当前来源未更新；{{ displayed ? '上次成功读取的出处保留在下方。' : '请重试。' }}<Button variant="outline" size="sm" :disabled="loading" @click="retry">重试读取</Button></AlertDescription>
     </Alert>
-    <p v-if="displayed && !current" class="text-muted-foreground text-sm">正在读取目标来源；下方保留上次成功的来源 #{{ displayedKey }}。</p>
+    <p v-if="displayed && !current" class="text-muted-foreground text-sm">正在读取目标来源；下方保留上次成功的出处。</p>
     <template v-if="current || displayed">
       <template v-if="event">
         <p class="text-sm font-medium">{{ TITLES[event.record.titleCode] ?? event.record.titleCode }} · {{ EVENTS[event.eventType] ?? event.eventType }} · {{ event.year ?? '年份待核' }}<span v-if="event.decidedYear != null"> · 结论 {{ event.decidedYear }} 年</span></p>
