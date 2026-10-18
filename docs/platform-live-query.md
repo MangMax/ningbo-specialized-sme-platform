@@ -1,4 +1,4 @@
-# 平台实时只读查询（#51，共享契约 v1）
+# 平台实时只读查询（#51/#52，共享契约 v1）
 
 `POST /api/platform/query` 与 MCP `query_platform` 使用同一服务。入口不要求本库存在企业，不创建企业、别名、事件、证据、任务或快照。历史读取 `GET /api/platform/queries` 与 reconcile 保持原有接口和语义。
 
@@ -6,9 +6,11 @@
 
 ## 来源与参数
 
-本次仅启用 `source: "queryList"`（申报记录，原适配来源 `apply_list`）。`businessList`（关联记录）和 `queryBusList`（已认定企业列表）有独立来源身份，当前明确拒绝，后续 #52/#53 接入。能力表中的未启用来源信息不是已验证能力承诺。
+已启用 `source: "queryList"`（申报记录，原适配来源 `apply_list`）和 `businessList`（关联记录）。`queryBusList`（已认定企业列表）仍未启用，由 #53 独立接入；各来源不能互相替代。
 
-`name` 是平台 `qymc` 关键词（全称也可），`uscc` 是 `tyshxydm`（18位大写字母/数字）；至少一个必填。同时提供时两个字段同时传给平台，按 AND 组合；名称结果仅为候选，不能据此自动确认身份。未添加日期、区域或称号过滤。当前不接受 `rdjb`、日期、区域、排序或其他未知字段，REST 和原始 MCP RPC 均明确拒绝，不能静默忽略。不接受 Cookie、凭据或账号参数，不能先调用 reveal。
+`businessList` **只支持 USCC**，必须显式提供 `rdjb:"1"`（创新型中小企业）、`"2"`（专精特新中小企业）、`"3"`（小巨人）或 `"all"`（依次全查三称号）。拒绝 `name`、`qymc` 等不支持条件，不提供隐式名称发现或切换来源。`all` 要求 `startPage=1`；续查按 `unfinished` 中每个单称号与页号分别查询。单称号零条仅表示该称号的指定范围无记录，不能推论三称号无记录。例如回归代码 `91330211255994457P` 的受控样本在1/2零条、3有六条关系；不按USCC去重，也不推断企业身份、原因或措施。
+
+`queryList` 的 `name` 是平台 `qymc` 关键词（全称也可），`uscc` 是 `tyshxydm`（18位大写字母/数字）；至少一个必填。同时提供时两个字段同时传给平台，按 AND 组合；名称结果仅为候选，不能据此自动确认身份。未添加日期、区域或称号过滤。`queryList` 不接受 `rdjb`；两来源均不接受日期、区域、排序或其他未知字段，REST 和原始 MCP RPC 均明确拒绝，不能静默忽略。不接受 Cookie、凭据或账号参数，不能先调用 reveal。
 
 | 参数 | 默认 | 允许范围 |
 | --- | --- | --- |
@@ -25,11 +27,11 @@
 共享类型、输入/输出 schema 在 `lib/platform/live-query.ts`，服务在 `server/utils/platform-live-query.ts`；静态 OpenAPI schema 在 `server/api/platform/query.post.ts`。后续来源沿用结果和页位置类型，不能把关系按代码去重。
 
 - `source`：实际平台来源；`effectiveConditions`：实际条件和 `combination:"and"`。
-- `titleScope`：当前为 `{mode:"source_default",rdjb:[]}`，表示未施加称号过滤，不表示逐称号已查证。
+- `titleScope`：`queryList` 为 `{mode:"source_default",rdjb:[]}`，表示未施加称号过滤，不表示逐称号已查证。`businessList` 为 `{mode:"selected",rdjb:[所查称号]}`；all为 `["1","2","3"]`。
 - `queriedAt` / `completedAt`：本次开始/完成时间（ISO）；无缓存。
 - `rows`：全部逐条原字段（沿用适配器的标量字符串化），不压缩同码多关系/曾用名，不返回原始页面或无关账号信封。
-- `pages`：逐页来源、rdjb（当前null）、page、status、fetchedCount、declaredTotal、error。
-- `declaredTotal`：可靠的上游声明数量；缺失/无法可靠解释时为null，不能用0代替未知。
+- `pages`：逐页来源、rdjb（queryList为null，businessList为实际称号）、page、status、fetchedCount、declaredTotal、error。
+- `declaredTotal`：可靠的上游声明数量；缺失/无法可靠解释时为null，不能用0代替未知。businessList仅在所有要求称号均取得可靠总数时返回其总和，否则为null；各称号声明总数见对应pages。
 - `fetchedCount`：返回记录数；`completeness` 为 complete / partial / not_queried；`fullRange` 为是否从第一页开始。
 - `unfinished`：可继续的 `{source,rdjb,page}` 位置。续查保留相同条件和结果中 `limits.pageSize`，设 `startPage`；各次结果按页保留，不按USCC去重。续查完成仅表示所请求的剩余范围完成，`fullRange:false` 不能声称从头穷尽。
 - `error`：固定code与安全文案，不包含上游原文、Cookie、异常原文或凭据存储细节；成功为null。
@@ -38,12 +40,14 @@
 | --- | --- |
 | success | 请求范围完整且非空 |
 | no_record | 请求范围完整且有效零条，仍需检查fullRange及条件 |
-| auth_failed | 第一页认证失效（包括HTTP200登录页） |
-| failed | 第一页上游、限流、超时或响应错误 |
+| auth_failed | 尚无成功页时认证失效（包括HTTP200登录页） |
+| failed | 尚无成功页时上游、限流、超时或响应错误 |
 | partial | 已完成部分页后失败，或安全上限中断；unfinished定位未完成页 |
 | not_queried | 凭据不可用，未请求平台，绝非零条 |
 
 错误code包括 `invalid_input`、`unsupported_source`、`credential_unavailable`、`auth_failed`、`upstream_failed`、`timeout`、`rate_limited`、`safety_limit`、`invalid_response`、`sensitive_response`。REST非法输入为HTTP400 `{error:{code,message}}`；MCP原始RPC非法输入为HTTP400 / JSON-RPC -32602。有效查询中的业务失败/partial保留统一结果（REST HTTP200）。只有成功完成且零条才返回no_record。未知总数继续请求至结构有效的空页；空页与已声明总数矛盾、页号不一致或总数变化时不能声称完整。
+
+businessList 的 `pages` 按称号、页顺序排列，`rows` 按成功页顺序连接；每个成功页的 `fetchedCount` 给出其在rows中的连续段，失败页为0。这样保留每条原始关系的来源/称号/页位置，不向原字段中注入或覆盖rdjb。每个所选称号没有unfinished位置且其pages成功完成才算该称号完整；未请求称号没有page且保留unfinished。单个称号/页上游失败继续其他称号，认证失效停止后续称号；整体只要有unfinished就不能报告no_record。凭据不可用时全部范围not_queried。三称号共用一次maxRequests/maxRows/maxDurationMs预算，不是每称号重新计数。
 
 达到行数上限时保留已完成整页，不截断单页。若下一页无法整页纳入，则该页不进入rows，unfinished仍指该页；调用者可提高上限后补查。请求/时间上限同样返回partial及位置。
 
@@ -70,12 +74,22 @@ MCP业务参数（由客户端包装tools/call）：
 
 只有完整收到所有要求的页、确认条件和称号范围后，才评估证据是否穷尽。平台当前申报事实不能替代公布文件的历史认定事件；身份确认和预检/写入仍走独立流程。
 
+businessList 全三称号示例（只读）：
+
+```json
+{"name":"query_platform","arguments":{"source":"businessList","uscc":"91330211255994457P","rdjb":"all"}}
+```
+
+若返回 `unfinished:[{source:"businessList",rdjb:"2",page:2}]`，则用相同USCC、`rdjb:"2",startPage:2` 和结果的 `limits.pageSize` 补查；保留原查询和本次范围，不能把续查的零条提升为全三称号无记录。
+
 ## 凭据与后续接入
 
 凭据使用现有 `resolvePlatformCookie`（保存值优先、否则环境）；服务仅在操作开始解析一次，固定在内存中。#54 批次可通过 `PlatformLiveQueryContext.cookie` 提供提交时内存快照，严禁把context序列化到任务参数。没有新增持久化结果/缓存/数据库表。敏感业务字段或凭据回显会阻止该页返回，原始信封不输出。查询响应设no-store。
 
-新增来源必须复用 `postPlatformRequest`（`lib/platform/client.ts`）或 `withPlatformRequestBudget`，不能绕开全局预算，也不要在已持有槽位时再次获取槽位。能力表仅启用已实现且验证的参数。#52需要逐称号位置，#53不能按名称猜测筛选语义；#54需独立定义批次总量/体量及重启策略。
+新增来源必须复用 `postPlatformRequest`（`lib/platform/client.ts`）或 `withPlatformRequestBudget`，不能绕开全局预算，也不要在已持有槽位时再次获取槽位。能力表仅启用已实现且验证的参数。businessList已提供逐称号位置；#53不能按名称猜测筛选语义；#54需独立定义批次总量/体量及重启策略。
 
 ## 验证边界
 
 `tests/platform-live-query.test.ts` 经实际REST handler与MCP handler覆盖分页、关系保留、失败、续查、严格参数、合成凭据安全、SQLite不变、快照及共享限流，并包含真实本地HTTP调用。上游为受控脱敏样本；没有使用真实Cookie、调用实平台或写入业务数据。公开能力的上游名称搜索/组合过滤语义仍应由维护者在受控账号下补充实平台验收，本次不能把模拟验收提升为实平台证据。
+
+#52 的 `tests/platform-business-query.test.ts` 独立覆盖公开 REST/MCP 的 USCC/单称号/全三称号、多页六关系与原始曾用名、逐称号失败后补查、认证失效停止、未知总数、安全上限、原始RPC严格验证、合成凭据保密与真实临时SQLite不变。样本均为受控合成/脱敏数据，无真实认证或业务写入；不宣称实平台账号验收。
