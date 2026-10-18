@@ -6,7 +6,8 @@ import RecordComparisonPanel from '../components/record-correspondence/RecordCom
 const calls = vi.hoisted(() => ({ query: [] as Record<string, unknown>[] }))
 const result = { rows: [], total: 0, page: 1, pageSize: 25, counts: { distinctEvents: 0 }, coverage: [], currentSourceConsistency: { recognizedObservations: [] } }
 const stubs = {
-  ComparisonSourcePicker: { props: ['selection'], emits: ['change'], template: '<button data-testid="select-sources" @click="$emit(\'change\', { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3] })">选定来源</button>' },
+  ComparisonSourcePicker: { props: ['selection'], emits: ['change'], template: '<button data-testid="select-sources" @click="$emit(\'change\', { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] })">选定来源</button>' },
+  ComparisonProofPicker: { props: ['selection'], emits: ['change'], template: '<button data-testid="select-proof" @click="$emit(\'change\', [12])">选定依据</button>' },
   ComparisonEvidence: { template: '<div data-testid="shown-result">已读取结果</div>' },
   ComparisonEventRow: true,
   TableLoadingStatus: true,
@@ -51,5 +52,15 @@ describe('record comparison public interaction', () => {
     await wrapper.get('[data-testid="fetch-error"] button').trigger('click')
     await flushPromises()
     expect(fetch).toHaveBeenLastCalledWith('/api/roster/record-comparison', expect.objectContaining({ query: expect.objectContaining({ page: 2 }) }))
+  })
+
+  it('passes only explicitly selected proof IDs alongside the source set', async () => {
+    vi.stubGlobal('$fetch', vi.fn(async (_url: string, options: { query: Record<string, unknown> }) => { calls.query.push(options.query); return result }))
+    wrapper = mount(RecordComparisonPanel, { global: { stubs } })
+    await wrapper.get('[data-testid="select-sources"]').trigger('click')
+    await wrapper.get('[data-testid="select-proof"]').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '按所选来源对比')!.trigger('click')
+    await flushPromises()
+    expect(calls.query[0]).toMatchObject({ queryIds: '7', officialSourceDocumentIds: '3', proofIds: '12' })
   })
 })

@@ -18,7 +18,7 @@ const result = { rows: [row], total: 1, page: 1, pageSize: 25,
   coverage: [{ queryId: 7, interface: 'recognized_list', status: 'partial', queriedAt: '2025-01-01', titleCoverage: [{ titleCode: 'specialized_sme' }], effectiveConditions: { combination: 'and', uscc: '913300000000000004' }, completeness: 'partial', fullRange: false, reasons: ['incomplete_or_continuation'] }],
   officialCoverage: { qualification: 'unknown', reasons: ['official_source_completeness_not_persisted'] },
   currentSourceConsistency: { qualification: 'not_comparable', reasons: ['version_equivalence_unknown'], recognizedObservations: [{ recognized: relation, exportRows: [exportRow], observation: 'same_uscc_title_observed', qualification: 'not_comparable' }], exportObservations: [{ exportRow, recognizedRelationIds: [30], qualification: 'not_comparable' }] },
-  platformWithoutOfficial: { rows: [{ relation, qualification: 'unresolved' }], total: 1 },
+  platformWithoutOfficial: { rows: [{ relation, qualification: 'unresolved', reasons: ['official_source_completeness_not_persisted'] }], total: 1 },
   historicalDecisionUnavailable: [{ id: 99, eventId: 9, relationId: 30, reason: 'post_cutoff_decision_state_unavailable' }],
   laterProcessPlatformRows: [{ relation: { ...relation, id: 44, status: '退回' }, correspondences: [{ id: 5, role: 'followup_update', status: 'confirmed' }] }],
 } as unknown as RecordComparisonResult

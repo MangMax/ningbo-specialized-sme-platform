@@ -5,7 +5,29 @@ export type RecordComparisonResult = ReturnType<typeof getRecordComparison>
 export type ComparisonSourceCatalog = ReturnType<typeof listRecordComparisonSources>
 export type ComparisonSource = ComparisonSourceCatalog['rows'][number]
 export type ComparisonSourceKind = ComparisonSource['kind']
-export interface ComparisonSelection { queryIds: number[]; exportBatchIds: number[]; officialSourceDocumentIds: number[] }
+export interface ComparisonSelection { queryIds: number[]; exportBatchIds: number[]; officialSourceDocumentIds: number[]; proofIds: number[] }
+
+/** Public #72 list row; source scope is evidence, while decision basis comes from the audit read. */
+export interface ComparisonProof {
+  id: number
+  kind: 'official_coverage' | 'current_source_equivalence'
+  status: 'candidate' | 'confirmed' | 'revoked'
+  valid: boolean
+  decidedAt: string | null
+  evidence: {
+    titleCode: string
+    fromYear?: number
+    throughYear?: number
+    enterpriseIds?: number[] | null
+    sourceDocuments?: Array<{ id: number }>
+    queryId?: number
+    exportBatchId?: number
+    scope?: { windowStart: string; windowEnd: string; platformVersion: string }
+  }
+  sourceSummary: unknown
+}
+export interface ComparisonProofCatalog { rows: ComparisonProof[]; total: number; page: number; pageSize: number }
+export interface ComparisonProofAudit { rows: Array<{ basis: string; decidedAt: string }>; total: number; page: number; pageSize: number }
 
 export const COMPARISON_CLASSES: Record<string, string> = {
   historical_aligned: '历史事件与对应原行相符',
@@ -42,10 +64,10 @@ function ids(value: unknown): number[] {
   return [...new Set(parts.map(Number))]
 }
 export function comparisonSelectionFromQuery(query: Record<string, unknown>): ComparisonSelection {
-  return { queryIds: ids(query.queryIds), exportBatchIds: ids(query.exportBatchIds), officialSourceDocumentIds: ids(query.officialSourceDocumentIds) }
+  return { queryIds: ids(query.queryIds), exportBatchIds: ids(query.exportBatchIds), officialSourceDocumentIds: ids(query.officialSourceDocumentIds), proofIds: ids(query.proofIds) }
 }
 export function comparisonSelectionQuery(selection: ComparisonSelection): Record<string, string> {
-  return { queryIds: selection.queryIds.join(','), exportBatchIds: selection.exportBatchIds.join(','), officialSourceDocumentIds: selection.officialSourceDocumentIds.join(',') }
+  return { queryIds: selection.queryIds.join(','), exportBatchIds: selection.exportBatchIds.join(','), officialSourceDocumentIds: selection.officialSourceDocumentIds.join(','), ...(selection.proofIds.length ? { proofIds: selection.proofIds.join(',') } : {}) }
 }
 export function comparisonRequest(selection: ComparisonSelection, page: number, pageSize: number, classification?: RecordComparisonInput['classification']): RecordComparisonInput {
   return { ...selection, page, pageSize, ...(classification ? { classification } : {}) }
