@@ -25,6 +25,14 @@ Use a lower cap when the provider or app limit is lower. Keep a single shared qu
 - A same-name result without a confirmed ID remains a candidate. Keep separate candidate subjects separate; do not share an identity decision or merge based on name alone.
 - One writer owns each import batch. Serialize changes to the same enterprise even when evidence came from different files. The independent acceptance reader receives the finished evidence pack and does not edit the batch.
 
+## Judgement before writing
+
+- Keep the user-selected judging runtime explicit. When Magpie + DeepSeek Open Design is requested, use that combination for business adjudication; an implementation or operational agent may organize facts, prepare API payloads, deploy and write confirmed decisions. Scripts index, compare raw facts and count; they do not replace the judge with reason-mapping rules.
+- Hand the judge the user's current interpretation, relevant formal events, all three archived interface sources, exact export version and prior confirmed identity/migration evidence. Reuse complete evidence; do not add public/PDF research or repeat all queries when the user requested an existing-evidence judgement.
+- Obtain the judge's case-level decisions before the writer submits the batch. Keep approved, unresolved and excluded cases separate; code acceptance or a successful preflight is not business confirmation. Reporting-only authorization never becomes a commit authorization.
+- If a write happened before the required judgement, disclose the actual sequence and arrange post-write confirmation; do not present that confirmation as pre-write approval. Any correction still goes through the authorized API with prior audit preserved.
+- Merge owner reports by stable enterprise/title/event scope, not by their private label names. Reconcile differing interpretations before publishing totals, and check that excluded conflict cases are not silently lost or counted as completed writes. Follow the [decision and reporting rules](difference-investigation.md).
+
 ## Handoff packages and completion criteria
 
 | Stage | Handoff package | Complete when |
