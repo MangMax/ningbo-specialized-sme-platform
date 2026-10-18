@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { correspondenceStatusText, eventDecisionText, type CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
 import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
-import { humanRecordTime } from '~~/lib/roster/record-ledger'
+import { humanRecordTime, isCurrentContextEdge } from '~~/lib/roster/record-ledger'
 import { Badge } from '@/components/ui/badge'
 
 /**
@@ -43,7 +43,7 @@ function onEventClick(event: MouseEvent) {
 <template>
   <li class="min-w-0 border-t py-2" :data-correspondence-id="edge.id">
     <div class="flex flex-wrap items-center gap-2 text-sm">
-      <span class="text-muted-foreground">匹配</span>
+      <span class="text-muted-foreground">{{ isCurrentContextEdge(edge) ? '快照与本记录的关联' : '匹配' }}</span>
       <Badge :variant="edge.status === 'confirmed' && !edge.requiresRevalidation ? 'secondary' : 'outline'">{{ correspondenceStatusText(edge) }}</Badge>
     </div>
     <p v-if="targetEvent" class="mt-1 text-[13px]">

@@ -91,12 +91,20 @@ const repeatedRelations = [
 it('opens an event current snapshot through its export row without presenting it as historical evidence', async () => {
   const fetch = vi.fn().mockRejectedValue(new Error('synthetic source unavailable'))
   vi.stubGlobal('$fetch', fetch)
-  const currentRow = { ...row, correspondences: [{ id: 71, relationId: null, exportRowId: 8, type: 'event_export_context', status: 'confirmed', role: 'context_only' }] } as unknown as RecordComparisonResult['rows'][number]
+  const currentRow = { ...row, classification: 'unresolved', reasons: ['process_status_or_role_not_decisive'], platformRows: [relation], correspondences: [
+    { id: 70, relationId: 30, exportRowId: null, type: 'event_recognized', status: 'candidate', role: 'context_only' },
+    { id: 71, relationId: null, exportRowId: 8, type: 'event_export_context', status: 'confirmed', role: 'context_only' },
+  ] } as unknown as RecordComparisonResult['rows'][number]
   const wrapper = mount(ComparisonEventRow, { props: { row: currentRow, returnTo: '/comparison?mode=record' }, global: { stubs: sourceDialogStubs } })
   mounted.push(wrapper)
   const snapshot = wrapper.findAll('details').find(item => item.text().includes('当前导出快照'))!
   expect(snapshot.text()).toContain('非历史出处')
   expect(snapshot.get('summary').text()).toContain('当前导出快照（非历史出处）')
+  expect(snapshot.text()).toContain('快照与本记录的关联：已确认')
+  expect(snapshot.text()).not.toContain('匹配 已确认')
+  expect(wrapper.get('[data-relation-id="30"]').text()).toContain('待确认')
+  expect(wrapper.text()).toContain('现有平台记录不足以确认这条认定或复核记录')
+  expect(wrapper.text()).not.toMatch(/流程状态|对应角色/)
   await snapshot.get('button').trigger('click')
   await flushPromises()
   expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/roster/correspondences/export-rows/8')
