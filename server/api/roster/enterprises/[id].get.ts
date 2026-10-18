@@ -22,7 +22,7 @@ defineRouteMeta({
     description:
       '含 aliases / records / events / evidence / recognitions / differences / platform。`recognitions` 按企业 × 称号返回最早正式 `award`、年份(`decidedYear ?? year`)、出处与状态(`confirmed` / `pending`)；`platform.relations` 保留该企业的**全部**平台关联(不按统代折叠)。',
     responses: {
-      200: { description: '企业详情。' },
+      200: { description: '企业详情。已认定查询保留全部原始行，行 enterpriseId 为 number 或 null；null 表示未匹配主体，查询键覆盖不确认归属。relationCount 与返回行一致。' },
       400: { description: 'id 不是数字。' },
       404: { description: '没有这个企业。' },
     },

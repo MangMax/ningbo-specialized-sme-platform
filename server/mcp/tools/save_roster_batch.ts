@@ -33,6 +33,7 @@ export default defineMcpTool({
   },
   enabled: writeGuard,
   description: [
+    'queryBusList 仅作为 recognized_list 显式转存；collectionEvidence 必须保留原结果/时点/页行与完整性，见 docs/platform-recognized-evidence.md。读回使用 list_platform_queries。',
     '把一批名单数据（企业 / 别名 / 称号事件 / 出处 / 平台查询与关系 / 导出快照 / 差异原因与措施 / 归并）',
     '经**统一写入路径**落库。等价 `POST /api/roster/import/commit`。',
     '**幂等**：同一 `idempotencyKey`（同一来源）重复调用不会重复写企业或事件，返回既有批次摘要。',

@@ -16,6 +16,7 @@ export default defineMcpTool({
   description: [
     '按企业 id 查询企业身份、已确认/待核曾用名、各称号记录、生命周期、事件、出处、差异和平台证据。',
     '返回与 `GET /api/roster/enterprises/:id` 相同的详情读模型。只读，不需要 token。',
+    '已认定查询保留全部原始行；行 enterpriseId 为 null 表示未匹配主体，查询键覆盖不确认归属。',
   ].join('\n'),
   inputSchema: {
     enterpriseId: z.number().int().positive().describe('企业 id'),

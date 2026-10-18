@@ -41,3 +41,19 @@ API/MCP calls, never a credential read/reveal or direct platform request from th
 agent. This proves the workflow against synthetic upstream samples, not live
 platform acceptance. Public research and independent preflight/write remain
 separate steps after candidate evidence has been reviewed.
+
+Explicit evidence transfer is a separate authorized step. For queryBusList,
+convert each original result/each batch `segments[]` with
+`recognizedResultToImport` from `lib/platform/recognized-evidence.ts`, then use
+unified preflight/commit with the same idempotency key and read back all query/row
+IDs through REST history or `list_platform_queries`. Do not replay live queries
+to fill missing archival timestamps or terminal-page proof. See
+[transfer contract](../../../../docs/platform-recognized-evidence.md).
+
+Synthetic write/read/rollback verification (temporary SQLite, no real account):
+
+```sh
+MIIT_COOKIE='' MIIT_COOKIE_FILE='' pnpm test tests/platform-recognized-evidence.test.ts --no-file-parallelism
+```
+
+This verifies synthetic transfer, not production archival backfill or UI acceptance.

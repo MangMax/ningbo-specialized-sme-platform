@@ -1,13 +1,18 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
 import EnterpriseListTable from '../components/EnterpriseListTable.vue'
 import EnterpriseDrawer from '../components/EnterpriseDrawer.vue'
 import type { RosterEventRow } from '../lib/roster/enterprise-roster'
 
 vi.mock('@pinia/colada', () => ({ useQuery: vi.fn() }))
+
+const nativeAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+beforeAll(() => { Reflect.deleteProperty(Element.prototype, 'animate') })
+afterAll(() => { if (nativeAnimate) Object.defineProperty(Element.prototype, 'animate', nativeAnimate) })
+const refetch = vi.fn()
 
 const mounted: ReturnType<typeof mount>[] = []
 let queryData: ReturnType<typeof ref>
@@ -76,6 +81,7 @@ beforeEach(() => {
     data: queryData,
     isLoading: queryLoading,
     error: queryError,
+    refetch,
   } as never)
 })
 
@@ -431,4 +437,14 @@ it('saves the filtered expanded ledger and both scroll layers when opening the c
   await wrapper.findAll('a').find(a => a.text().includes('完整企业页'))!.trigger('click', { button: 0, metaKey: true })
   expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
   table.unmount()
+})
+
+it('企业详情读取失败可重试，不把失败当作平台零记录', async () => {
+ queryLoading.value = false
+ queryError.value = new Error('synthetic failed read')
+ const wrapper = mountDrawer()
+ expect(wrapper.text()).toContain('未能加载该企业详情')
+ expect(wrapper.text()).not.toContain('平台未返回记录')
+ await wrapper.get('[data-testid="table-retry"]').trigger('click')
+ expect(refetch).toHaveBeenCalledTimes(1)
 })

@@ -1,3 +1,4 @@
+import { sourcePositionForSequence } from './platform/recognized-evidence'
 /**
  * 比对行 × 平台证据的**接缝**(RL-03 交付物 3;RL-15 收口为**以库内为准**)。
  *
@@ -24,7 +25,7 @@
  *
  * 取数一次读完(与 `enterprise-roster.ts` 同一取舍:台账是几千级,拼 join 不如内存组织)。
  */
-import { inArray, sql } from 'drizzle-orm'
+import { inArray, or, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import type { ComparisonDirection } from './comparison'
@@ -62,6 +63,10 @@ export interface ComparisonDisposition {
 
 /** 一条**平台原始关系**(`platform_relation`)—— 可展开的接口证据原文。 */
 export interface ComparisonRelation {
+  enterpriseId?: number | null
+  rawFields?: Record<string, unknown> | null
+  sourceRdjb?: string | null
+  sourcePage?: number | null
   id: number
   queryId: number
   sequenceNo: number
@@ -81,6 +86,8 @@ export interface ComparisonRelation {
 }
 
 export interface ComparisonQuerySummary {
+  collectionEvidence?: import('./platform/live-query').PlatformLiveQueryResult | null
+  titleCode?: string | null
   id: number
   interface: string
   queryKey: string
@@ -101,7 +108,7 @@ export interface ComparisonPlatformEvidence {
    */
   disposition: ComparisonDisposition
   queries: ComparisonQuerySummary[]
-  /** 归到该企业的关系总条数。 */
+  /** Included queries' original source-row count, independent of confirmed ownership. */
   relationCount: number
 }
 
@@ -174,17 +181,6 @@ export function attachPlatformEvidence<T extends RowKey>(
     }
   }
 
-  // 关系:**归到该企业的** ∪ **属于该企业查询的**。后者是必须的 —— 一条关系可能
-  // 没归到任何企业(`enterprise_id` 为空),但它仍然是「这个统代查出来的原文」。
-  const relationRows = db
-    .select()
-    .from(schema.platformRelation)
-    .where(
-      sql`${schema.platformRelation.enterpriseId} in ${enterpriseIds} or ${schema.platformRelation.queryId} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds})`,
-    )
-    .orderBy(schema.platformRelation.queryId, schema.platformRelation.sequenceNo)
-    .all()
-
   // 查询 = **按关系归属的** ∪ **查询键就是它的**。后者是必须的:`no_record` / `failed`
   // 这类查询**一条关系都不返回**,只看关系就把它们整条丢掉了 —— 而「查过、接口确无记录」
   // 与「查询没成功执行」正是要看得见的四态里的两态(契约 §3.1)。
@@ -199,6 +195,16 @@ export function attachPlatformEvidence<T extends RowKey>(
         : sql`${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds})`,
     )
     .all()
+
+  // Read original rows for the selected queries, including archives saved before a master existed.
+  // Query inclusion above remains scoped to this enterprise set; no identity is inferred here.
+  const recognizedQueryIds = queries.filter(query => query.interface === 'recognized_list').map(query => query.id)
+  const relationRows = db.select().from(schema.platformRelation)
+    .where(or(
+      sql`${schema.platformRelation.enterpriseId} in ${enterpriseIds} or ${schema.platformRelation.queryId} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} in ${enterpriseIds})`,
+      recognizedQueryIds.length ? inArray(schema.platformRelation.queryId, recognizedQueryIds) : undefined,
+    ))
+    .orderBy(schema.platformRelation.queryId, schema.platformRelation.sequenceNo).all()
 
   const aliasesByEnterprise = new Map<number, ComparisonAlias[]>()
   for (const alias of aliases) {
@@ -218,10 +224,13 @@ export function attachPlatformEvidence<T extends RowKey>(
   }
 
   const toRelation = (row: typeof schema.platformRelation.$inferSelect): ComparisonRelation => ({
+    ...(queries.find(q => q.id === row.queryId)?.interface === 'recognized_list' ? { enterpriseId: row.enterpriseId } : {}),
     id: row.id,
     queryId: row.queryId,
     sequenceNo: row.sequenceNo,
     relationKey: row.relationKey,
+    rawFields: row.rawFields,
+    ...sourcePositionForSequence(queries.find(q => q.id === row.queryId)?.collectionEvidence, row.sequenceNo),
     usccRaw: row.usccRaw,
     nameRaw: row.nameRaw,
     aliasNameRaw: row.aliasNameRaw,
@@ -237,7 +246,6 @@ export function attachPlatformEvidence<T extends RowKey>(
   })
 
   const relationsByQuery = new Map<number, ComparisonRelation[]>()
-  const relationsByEnterprise = new Map<number, number>()
   /** 查询 → 有关系归到它的企业集合(用于把查询摘要挂到每个相关企业上)。 */
   const enterprisesByQuery = new Map<number, Set<number>>()
   for (const row of relationRows) {
@@ -245,7 +253,6 @@ export function attachPlatformEvidence<T extends RowKey>(
     if (list) list.push(toRelation(row))
     else relationsByQuery.set(row.queryId, [toRelation(row)])
     if (row.enterpriseId != null) {
-      relationsByEnterprise.set(row.enterpriseId, (relationsByEnterprise.get(row.enterpriseId) ?? 0) + 1)
       const bucket = enterprisesByQuery.get(row.queryId)
       if (bucket) bucket.add(row.enterpriseId)
       else enterprisesByQuery.set(row.queryId, new Set([row.enterpriseId]))
@@ -261,6 +268,8 @@ export function attachPlatformEvidence<T extends RowKey>(
       queryKey: query.queryKey,
       rdjb: query.rdjb,
       queriedAt: query.queriedAt,
+      collectionEvidence: query.collectionEvidence,
+      titleCode: query.titleCode,
       status: query.status,
       failureReason: query.failureReason,
       relationCount: relations.length,
@@ -269,7 +278,7 @@ export function attachPlatformEvidence<T extends RowKey>(
     // 一个查询可能同时有关系归到多个企业;按关系归属逐个企业挂。
     const owners = new Set<number>(enterprisesByQuery.get(query.id) ?? [])
     // 再加上「查询键就是它」的企业 —— 没有关系的那种查询靠这一条才挂得上。
-    for (const enterpriseId of queriedEnterpriseByKey.get(normUscc(query.queryKey) ?? query.queryKey) ?? []) {
+    for (const enterpriseId of queriedEnterpriseByKey.get(query.queryKey) ?? queriedEnterpriseByKey.get(normUscc(query.queryKey) ?? query.queryKey) ?? []) {
       owners.add(enterpriseId)
     }
     for (const enterpriseId of owners) {
@@ -327,7 +336,7 @@ export function attachPlatformEvidence<T extends RowKey>(
     const rowQueries = queriesByEnterprise.get(row.enterpriseId) ?? []
     const disposition =
       latestDisposition.get(`${row.enterpriseId}|${row.titleCode}|${row.direction}`) ?? defaultDisposition
-    const relationCount = relationsByEnterprise.get(row.enterpriseId) ?? 0
+    const relationCount = rowQueries.reduce((count, query) => count + query.relations.length, 0)
     return {
       ...row,
       platform: { aliases: rowAliases, disposition, queries: rowQueries, relationCount },

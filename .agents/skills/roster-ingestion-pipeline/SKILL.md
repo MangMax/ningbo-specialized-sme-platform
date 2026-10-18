@@ -18,7 +18,7 @@ Use for roster-file intake, platform evidence collection and enterprise identity
 
 Use [`orchestration.md`](references/orchestration.md) for handoffs, completion and retries: one owner per enterprise across files/titles, at most two investigators and two process-global platform requests, one writer. Workers do not delegate. Reuse completed evidence and retry only gaps.
 
-Before writes, inspect current OpenAPI or MCP tools/list. Preflight, commit and read back through the unified app API/MCP; never direct-write SQLite. Preserve idempotency on retries. Unsupported writes remain pending; do not fabricate source types to pass validation.
+Before writes, inspect current OpenAPI or MCP tools/list. Preflight, commit and read back through the unified app API/MCP; never direct-write SQLite. Preserve idempotency on retries. Explicitly import `queryBusList` as `recognized_list`; preserve segments/times/pages and reconcile IDs per [`platform-query.md`](references/platform-query.md). Unsupported writes remain pending; do not fabricate source types to pass validation.
 
 See [`decisions.md`](references/decisions.md) for event/source semantics and `docs/roster-lifecycle-contract.md` in the repository for payload rules. Announcements establish designation history; exports represent platform snapshots. Preserve unmatched official rows and nullable unknowns. Names in issue #35 are research leads, not confirmed identity evidence.
 

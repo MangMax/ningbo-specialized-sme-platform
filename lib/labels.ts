@@ -188,13 +188,14 @@ export const LIFECYCLE_FLAG_ORDER: string[] = [
  * 或重列一遍数组:每多一处就多一个和 `db/schema.ts` 的 `platformQuery.interface`
  * 漂移的机会(该列枚举与本数组由 `tests/labels-enums.test.ts` 对齐钉死)。
  */
-export const PLATFORM_INTERFACE_VALUES = ['business_list', 'apply_list'] as const
+export const PLATFORM_INTERFACE_VALUES = ['business_list', 'apply_list', 'recognized_list'] as const
 export type PlatformInterface = (typeof PLATFORM_INTERFACE_VALUES)[number]
 
 /** 平台接口(`platform_query.interface`)→ 中文名。 */
 export const PLATFORM_INTERFACES: Record<string, string> = {
   business_list: '称号查询记录',
   apply_list: '申报办理记录',
+  recognized_list: '已认定企业列表',
 }
 
 /** 平台接口展示顺序(即取值顺序)。 */
@@ -205,6 +206,7 @@ export const PLATFORM_INTERFACE_ORDER: string[] = [...PLATFORM_INTERFACE_VALUES]
  * **失败 ≠ 无记录** —— 四态必须彼此可区分,这正是这组文案存在的理由。
  */
 export const PLATFORM_QUERY_STATUSES: Record<string, string> = {
+  partial: '部分结果',
   success: '查询成功',
   failed: '查询失败',
   no_record: '无记录',

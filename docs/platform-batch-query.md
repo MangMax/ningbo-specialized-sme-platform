@@ -119,8 +119,7 @@ The ingestion skill's [app-only workflow](../.agents/skills/roster-ingestion-pip
 and [runnable examples](../.agents/skills/roster-ingestion-pipeline/examples/README.md)
 retain official rows, evidence-based identities, independent public supplements,
 independent preflight/write, unique enterprise ownership and max2 investigators.
-Live queryBusList is still distinct from the stored business_list/apply_list enum;
-its unsupported persistence remains pending, never relabeled.
+Live queryBusList maps only to stored recognized_list through explicit unified preflight/commit; see [archival transfer](platform-recognized-evidence.md). Keep every segment and its original times. Collection itself remains read-only.
 
 ## Verification boundary
 

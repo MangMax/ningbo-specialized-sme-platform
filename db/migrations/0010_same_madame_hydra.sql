@@ -1,0 +1,1 @@
+ALTER TABLE `platform_query` ADD `collection_evidence` text;

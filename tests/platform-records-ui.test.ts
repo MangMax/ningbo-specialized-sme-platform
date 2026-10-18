@@ -29,16 +29,16 @@ describe('面向用户的平台记录表',()=>{
   if(status === 'failed') expect(view.text()).not.toContain('平台未返回记录')
   view.unmount()
  })
- it('仅展示关联和申报两张表，字段各占一列且没有重复查询企业',()=>{
+ it('保留关联和申报两张表字段并独立显示未查询的第三来源',()=>{
   const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,interface:'apply_list',rdjb:''}],relations:[record,{...record,id:2,queryId:2}]}})
   expect(view.findAll('table').map(table=>table.attributes('aria-label'))).toEqual(['关联记录','申报记录'])
-  for(const table of view.findAll('table')) {
-   expect(table.findAll('thead th').map(th=>th.text())).toEqual(['序号','企业名称','信用代码','省份','申报类型','办理状态','申报时间','维护批次'])
+  for(const table of view.findAll('table').slice(0,2)) {
+   expect(table.findAll('thead th').map(th=>th.text())).toEqual(['序号','企业名称','信用代码','省份','申报类型','办理状态','申报时间','维护批次','出处 / 原字段'])
    expect(table.findAll('[data-testid="platform-relation"]')).toHaveLength(1)
-   expect(table.findAll('tbody td').slice(1).map(td=>td.text())).toEqual(['平台原名','9133021274738281XA','宁波市','更新','待审核','2025-03-01','2025-1'])
+   expect(table.findAll('tbody td').slice(1,8).map(td=>td.text())).toEqual(['平台原名','9133021274738281XA','宁波市','更新','待审核','2025-03-01','2025-1'])
   }
   expect(view.text()).not.toContain('查询企业')
-  expect(view.text()).not.toMatch(/认定批次|核实状态|年份|平台编号|匹配依据|2022年第一批|SQ001/)
+  expect(view.text()).not.toMatch(/认定批次|核实状态|平台编号|匹配依据|2022年第一批|SQ001/)
   view.unmount()
  })
  it('全部Tab按称号树形分组，分组可折叠且每组序号从1开始',async()=>{
@@ -97,6 +97,9 @@ describe('面向用户的平台记录表',()=>{
   const view=mount(PlatformRecords,{props:{queries:[],relations:[]}})
   expect(view.text()).toContain('尚无平台查询记录')
   expect(view.text()).not.toContain('平台未返回记录')
+  expect(view.find('[data-slot="select-trigger"]').exists()).toBe(false)
+  expect(view.find('[role="tablist"]').exists()).toBe(false)
+  expect(view.findAll('table')).toHaveLength(0)
   view.unmount()
  })
 })

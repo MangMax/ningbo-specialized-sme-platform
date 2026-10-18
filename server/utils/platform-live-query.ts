@@ -114,7 +114,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         // Requested size alone cannot establish rows accepted before this attempt.
         const priorCoverage = priorFetched ?? (parsedPage.responsePage === page && parsedPage.responsePageSize === result.limits.pageSize ? (q.startPage - 1) * result.limits.pageSize : null)
         if (!parsedPage.rows.length && total !== null && total > 0 && (priorCoverage === null || priorCoverage + fetchedForTitle < total)) throw error('invalid_response', '平台返回空页但无法确认已取全声明记录。')
-        result.pages.push({ ...pos, status: 'success', fetchedCount: parsedPage.rows.length, declaredTotal: parsedPage.declaredTotal, error: null })
+        result.pages.push({ ...pos, ...(q.source === 'queryBusList' ? { maxPage: parsedPage.responseMaxPage } : {}), status: 'success', fetchedCount: parsedPage.rows.length, declaredTotal: parsedPage.declaredTotal, error: null })
         totals.set(title, total)
         result.declaredTotal = declaredTotal()
         result.rows.push(...parsedPage.rows)

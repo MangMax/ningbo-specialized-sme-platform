@@ -1,3 +1,4 @@
+import { sourcePositionForSequence } from '../platform/recognized-evidence'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
  *
@@ -916,9 +917,16 @@ export interface RosterPlatformQueryRow {
   status: string
   failureReason: string | null
   relationCount: number
+  collectionEvidence?: import('../platform/live-query').PlatformLiveQueryResult | null
+  titleCode?: string | null
 }
 
 export interface RosterPlatformRelationRow {
+  /** Recognized source row's persisted owner; null remains unmatched even under an exact query key. */
+  enterpriseId?: number | null
+  rawFields?: Record<string, unknown> | null
+  sourceRdjb?: string | null
+  sourcePage?: number | null
   id: number
   queryId: number
   sequenceNo: number
@@ -1091,9 +1099,8 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
   const eventIds = new Set(events.map((e) => e.id))
 
-  const relations = snap.relations
+  const ownedRelations = snap.relations
     .filter((r) => r.enterpriseId === id)
-    .sort((a, b) => a.queryId - b.queryId || a.sequenceNo - b.sequenceNo)
   // 该企业的平台查询 = 「有关系归到它」**∪**「查询键就是它」。
   // 后者是必须的:`no_record` / `failed` 这类查询**一条关系都不返回**,
   // 只看关系就会把它们整条丢掉 —— 而「查过、且平台没有」正是要看得见的四态之一。
@@ -1101,8 +1108,14 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
   const uscc = normUscc(enterprise.usccNorm)
   if (uscc) ownKeys.add(uscc)
   ownKeys.add(`name:${enterprise.nameNorm}`)
-  const queries = snap.queries
-    .filter((q) => ownKeys.has(normUscc(q.queryKey) ?? q.queryKey) || relations.some((r) => r.queryId === q.id))
+  const includedQueries = snap.queries
+    .filter((q) => ownKeys.has(q.queryKey) || ownKeys.has(normUscc(q.queryKey) ?? q.queryKey) || ownedRelations.some((r) => r.queryId === q.id))
+  // Query coverage is evidence, not ownership: retain the original recognized rows without rematching them.
+  const recognizedQueryIds = new Set(includedQueries.filter(q => q.interface === 'recognized_list').map(q => q.id))
+  const relations = snap.relations
+    .filter(r => r.enterpriseId === id || recognizedQueryIds.has(r.queryId))
+    .sort((a, b) => a.queryId - b.queryId || a.sequenceNo - b.sequenceNo)
+  const queries = includedQueries
     .sort((a, b) => (a.queriedAt < b.queriedAt ? -1 : a.queriedAt > b.queriedAt ? 1 : 0) || a.id - b.id)
     .map((q): RosterPlatformQueryRow => ({
       id: q.id,
@@ -1110,6 +1123,8 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
       queryKey: q.queryKey,
       rdjb: q.rdjb,
       queriedAt: q.queriedAt,
+      collectionEvidence: q.collectionEvidence,
+      titleCode: q.titleCode,
       status: q.status,
       failureReason: q.failureReason,
       relationCount: relations.filter((r) => r.queryId === q.id).length,
@@ -1168,10 +1183,13 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
     platform: {
       queries,
       relations: relations.map((r): RosterPlatformRelationRow => ({
+        ...(recognizedQueryIds.has(r.queryId) ? { enterpriseId: r.enterpriseId } : {}),
         id: r.id,
         queryId: r.queryId,
         sequenceNo: r.sequenceNo,
         relationKey: r.relationKey,
+        rawFields: r.rawFields,
+        ...sourcePositionForSequence(snap.queries.find(q => q.id === r.queryId)?.collectionEvidence, r.sequenceNo),
         usccRaw: r.usccRaw,
         nameRaw: r.nameRaw,
         province: r.province,
