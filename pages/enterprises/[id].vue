@@ -116,8 +116,6 @@ const detail = computed<EnterpriseDetail | null>(() => {
     })),
   }
 })
-const detailRendered = computed(() => detail.value !== null || error.value != null)
-useEvidencePreviewScrollRestore(detailRendered)
 
 const EVENT_TYPE_ORDER: Record<string, number> = { award: 0, review: 1, maintain: 2, nurture: 3 }
 
@@ -144,6 +142,10 @@ const {
   error: correspondenceError,
   reload: reloadCorrespondences,
 } = useEnterpriseCorrespondences(computed(() => detail.value?.id ?? null))
+
+// 原行摘要与展开的出处会改变页面高度，等它们成功或失败后再恢复预览前位置。
+const detailRendered = computed(() => (detail.value !== null || error.value != null) && !correspondenceLoading.value)
+useEvidencePreviewScrollRestore(detailRendered)
 
 function edgesFor(eventId: number) {
   return correspondenceRows.value.filter(edge => edge.eventId === eventId && edge.type !== 'later_process')
@@ -282,7 +284,7 @@ function openPreview(e: Evidence) {
         <template #description>
           <span class="font-mono">{{ detail.uscc ?? '无统一社会信用代码' }}</span>
           <span class="mx-1.5">·</span>{{ detail.district ?? '属地未知' }}
-          <span class="mx-1.5">·</span>共 {{ recordCount }} 条记录 / {{ eventCount }} 条认定与复核记录
+          <span class="mx-1.5">·</span>{{ eventCount }} 条认定与复核记录
         </template>
         <template #actions>
           <Badge v-for="f in otherFlags" :key="f" variant="destructive">{{ flagLabel(f) }}</Badge>

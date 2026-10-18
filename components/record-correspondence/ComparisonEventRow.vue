@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { FileText } from '@lucide/vue'
 import type { RecordComparisonResult } from '~~/lib/roster/record-comparison-view'
 import { COMPARISON_CLASSES, comparisonReasonText } from '~~/lib/roster/record-comparison-view'
-import { correspondenceStatusText, CORRESPONDENCE_ROLES, eventDecisionText } from '~~/lib/roster/correspondence-view'
+import { correspondenceStatusText, eventDecisionText } from '~~/lib/roster/correspondence-view'
 import { humanRecordTime } from '~~/lib/roster/record-ledger'
 import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
 import { fileNameOf } from '~~/lib/preview'
@@ -25,6 +25,11 @@ const relationRows = computed(() => props.row.platformRows.map(relation => ({
   edges: props.row.correspondences.filter(edge => edge.relationId === relation.id),
 })))
 const otherEdges = computed(() => props.row.correspondences.filter(edge => !props.row.platformRows.some(relation => relation.id === edge.relationId)))
+/** 冲突分类徽标已经给出结论，不再重复同义解释；其余分类保留一句白话说明。 */
+const plainReason = computed(() => props.row.reasons
+  .filter(reason => reason !== 'confirmed_same_event_status_conflict')
+  .map(comparisonReasonText)
+  .find(Boolean) ?? '')
 function openSource(kind: 'relation' | 'export_row', id: number) { navigatingToEvent.value = false; sourceKind.value = kind; sourceId.value = id }
 function rememberReturn(event: MouseEvent) {
   if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) rememberEvidencePreviewReturn(props.returnTo, event.currentTarget)
@@ -44,7 +49,7 @@ const classificationVariant = computed(() => props.row.classification === 'histo
           <span class="mx-1.5 text-muted-foreground">·</span>
           {{ eventDecisionText(row.event) }}
         </p>
-        <p v-if="row.reasons.length" class="text-muted-foreground mt-1 text-[13px]">{{ row.reasons.map(comparisonReasonText).join('；') }}</p>
+        <p v-if="plainReason" class="text-muted-foreground mt-1 text-[13px]">{{ plainReason }}</p>
       </div>
       <Badge :variant="classificationVariant">{{ COMPARISON_CLASSES[row.classification] ?? '待核' }}</Badge>
     </header>
@@ -75,27 +80,38 @@ const classificationVariant = computed(() => props.row.classification === 'histo
         <h4 class="text-muted-foreground mb-1.5 text-xs font-medium">平台接口原行</h4>
         <ul v-if="row.platformRows.length" class="flex flex-col gap-1.5 text-[13px]">
           <li v-for="{ relation, edges } in relationRows" :key="relation.id" class="min-w-0 border-t pt-1.5" :data-relation-id="relation.id">
-            <p class="break-words">{{ PLATFORM_INTERFACES[relation.interface] ?? '平台接口' }} · {{ relation.status ?? '状态未提供' }}</p>
-            <div class="mt-0.5 flex flex-wrap items-center gap-1.5">
-              <Badge v-for="edge in edges" :key="edge.id" variant="outline">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应' }} · {{ correspondenceStatusText(edge) }}</Badge>
+            <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span class="break-words font-medium">{{ PLATFORM_INTERFACES[relation.interface] ?? '平台接口' }}</span>
+              <span class="text-muted-foreground">平台办理状态</span>
+              <span>{{ relation.status ?? '未提供' }}</span>
             </div>
-            <details class="text-muted-foreground mt-1"><summary class="cursor-pointer">查询信息</summary><p>查询 #{{ relation.queryId }} · 原行 {{ relation.sequenceNo }} · 记录 #{{ relation.id }}</p><p>{{ relation.nameRaw ?? '原名未知' }} · {{ humanRecordTime(relation.queriedAt) }}</p></details>
-            <Button variant="ghost" size="sm" class="mt-1 h-7 px-1.5 text-[13px]" @click="openSource('relation', relation.id)">查看原行与查询范围</Button>
+            <div class="mt-1 flex flex-wrap items-center gap-1.5">
+              <span class="text-muted-foreground">匹配</span>
+              <Badge v-for="edge in edges" :key="edge.id" variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
+              <span v-if="!edges.length" class="text-muted-foreground">尚未登记对应</span>
+            </div>
+            <details class="text-muted-foreground mt-1"><summary class="cursor-pointer">原行字段与查询条件</summary><p>查询 #{{ relation.queryId }} · 原行 {{ relation.sequenceNo }} · 记录 #{{ relation.id }}</p><p>{{ relation.nameRaw ?? '原名未知' }} · {{ humanRecordTime(relation.queriedAt) }}</p></details>
+            <Button variant="ghost" size="sm" class="mt-1 h-7 px-1.5 text-[13px]" @click="openSource('relation', relation.id)">查看原始记录</Button>
           </li>
         </ul>
         <p v-else class="text-muted-foreground text-[13px]">尚未匹配到这条记录的接口出处。</p>
-        <ul v-if="otherEdges.length" class="mt-2 flex flex-col gap-1.5 text-[13px]">
-          <li v-for="edge in otherEdges" :key="edge.id" class="flex flex-wrap items-center gap-1.5">
-            <span class="text-muted-foreground">对应 #{{ edge.id }} · 接口原行 {{ edge.relationId == null ? '未提供' : `#${edge.relationId}` }}</span>
-            <Badge variant="outline">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应' }} · {{ correspondenceStatusText(edge) }}</Badge>
-          </li>
-        </ul>
+        <details v-if="otherEdges.length" class="mt-2 text-[13px]">
+          <summary class="text-muted-foreground cursor-pointer">其他登记关系 · {{ otherEdges.length }} 条</summary>
+          <ul class="mt-1 flex flex-col gap-1.5">
+            <li v-for="edge in otherEdges" :key="edge.id" class="flex flex-wrap items-center gap-1.5">
+              <span class="text-muted-foreground">{{ edge.exportRowId != null ? '当前导出快照（非历史出处）' : '其他来源匹配' }}</span>
+              <Badge variant="outline">匹配 {{ correspondenceStatusText(edge) }}</Badge>
+              <Button v-if="edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-1.5 text-[13px]" @click="openSource('export_row', edge.exportRowId)">查看原始记录</Button>
+              <Button v-else-if="edge.relationId != null" variant="ghost" size="sm" class="h-7 px-1.5 text-[13px]" @click="openSource('relation', edge.relationId)">查看原始记录</Button>
+            </li>
+          </ul>
+        </details>
       </section>
     </div>
 
     <Dialog :open="sourceId !== null" @update:open="!$event && (sourceId = null)">
       <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl" @close-auto-focus="navigatingToEvent && $event.preventDefault()">
-        <DialogHeader><DialogTitle>来源原行与反向对应</DialogTitle><DialogDescription>查看具体行的原查询条件、状态和事件关系。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>来源原始记录</DialogTitle><DialogDescription>查看具体原行的查询条件、状态和事件关系。</DialogDescription></DialogHeader>
         <SourceReader v-if="sourceId !== null" :kind="sourceKind" :id="sourceId" :return-to="returnTo" @event-navigate="closeForEvent" />
       </DialogContent>
     </Dialog>

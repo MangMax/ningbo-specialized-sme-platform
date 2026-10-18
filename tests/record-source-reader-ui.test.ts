@@ -40,7 +40,7 @@ describe('record source reader public interaction', () => {
     vi.stubGlobal('$fetch', fetch)
     const wrapper = render('relation', 30)
     await flushPromises()
-    expect(wrapper.get('[aria-label="来源行反向对应"]').text()).toContain('已确认')
+    expect(wrapper.get('[aria-label="来源行对应事件"]').text()).toContain('已确认')
     await wrapper.setProps({ id: 31 })
     await flushPromises()
     expect(wrapper.text()).toContain('未能读取来源行出处')
@@ -49,7 +49,7 @@ describe('record source reader public interaction', () => {
     await wrapper.get('button').trigger('click')
     await flushPromises()
     expect(fetch).toHaveBeenLastCalledWith('/api/roster/correspondences/relations/31')
-    expect(wrapper.get('[aria-label="来源行反向对应"]').text()).toContain('尚无登记的对应关系')
+    expect(wrapper.get('[aria-label="来源行对应事件"]').text()).toContain('尚无登记的对应关系')
   })
 
   it.each([

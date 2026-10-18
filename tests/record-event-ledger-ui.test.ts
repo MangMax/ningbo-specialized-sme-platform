@@ -45,7 +45,7 @@ it('closes the source dialog before returning to the same event and preserves th
     SourceReader: { name: 'SourceReader', props: ['returnTo'], emits: ['event-navigate'], template: '<button data-testid="return-event" @click="$emit(\'event-navigate\', 9)">跳到该记录</button>' },
   } } })
   mounted.push(wrapper)
-  await wrapper.findAll('button').find(button => button.text() === '原行字段与查询条件')!.trigger('click')
+  await wrapper.findAll('button').find(button => button.text() === '查看原始记录')!.trigger('click')
   expect(wrapper.findComponent({ name: 'SourceReader' }).props('returnTo')).toBe(returnTo)
   await wrapper.get('[data-testid="return-event"]').trigger('click')
   await flushPromises()

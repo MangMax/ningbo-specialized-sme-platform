@@ -26,6 +26,23 @@ const loading = ref(false)
 const error = ref(false)
 const selectedError = ref(false)
 const cache = ref<Record<string, ComparisonSource>>({})
+/** 目录默认只铺开少量行，给出一级「查看全部」入口；列表本身不在卡片内滚动。 */
+const COLLAPSED_ROWS = 4
+const showAll = ref(false)
+const rows = computed(() => displayed.value?.rows ?? [])
+/** 平台查询通常有十几条，默认只铺开前几条并给出「查看全部」入口；其他类别数量少，直接全列。 */
+const collapsible = computed(() => activeKind.value === 'query')
+const shownRows = computed(() => {
+  if (!collapsible.value || showAll.value) return rows.value
+  return rows.value.slice(0, COLLAPSED_ROWS)
+})
+const remainingCount = computed(() => Math.max(0, rows.value.length - shownRows.value.length))
+const allLabel = computed(() => {
+  const group = groups.find(item => item.kind === activeKind.value)?.shortLabel ?? '来源'
+  return displayed.value && displayed.value.total > displayed.value.pageSize
+    ? `展开本页全部 ${rows.value.length} 项${group}`
+    : `查看全部 ${displayed.value?.total ?? 0} 个${group}`
+})
 let requestId = 0
 let hydrationId = 0
 const selectionKey = computed(() => JSON.stringify(props.selection))
@@ -35,10 +52,10 @@ const visibleGroups = computed(() => props.kind ? groups.filter(group => group.k
 const layoutReady = computed(() => !loading.value && hydratedKey.value === selectionKey.value)
 watch([selectionKey, layoutReady], ([key, ready]) => emit('settled', key, ready), { immediate: true, flush: 'post' })
 const keyOf = (source: Pick<ComparisonSource, 'kind' | 'id'>) => `${source.kind}:${source.id}`
-const groups: { kind: ComparisonSourceKind; label: string }[] = [
-  { kind: 'official_document', label: '正式公布文件' },
-  { kind: 'query', label: '平台查询' },
-  { kind: 'export_batch', label: '平台导出版本' },
+const groups: { kind: ComparisonSourceKind; label: string; shortLabel: string }[] = [
+  { kind: 'official_document', label: '正式公布文件', shortLabel: '正式文件' },
+  { kind: 'query', label: '平台查询', shortLabel: '平台查询' },
+  { kind: 'export_batch', label: '平台导出版本', shortLabel: '导出版本' },
 ]
 const selectedItems = computed(() => visibleGroups.value.flatMap(group => props.selection[sourceSelectionKey(group.kind)].map(id => ({ kind: group.kind, id, source: cache.value[`${group.kind}:${id}`] }))))
 const sourceStatus = (source: ComparisonSource) => source.kind === 'query'
@@ -78,12 +95,14 @@ async function load() {
   }
 }
 watch([activeKind, page, pageSize], () => { void load() }, { immediate: true })
-watch(activeKind, () => { page.value = 1 })
+watch(activeKind, () => { page.value = 1; showAll.value = false })
 watch(() => props.kind, (kind) => {
   if (!kind) return
   activeKind.value = kind
   page.value = 1
+  showAll.value = false
 })
+watch([page, pageSize], () => { showAll.value = false })
 
 /** Restored comparison URLs still show business labels rather than bare source IDs. */
 async function hydrateSelectedLabels() {
@@ -122,9 +141,9 @@ watch(selectionKey, () => { void hydrateSelectedLabels() }, { immediate: true, f
     <TableLoadingStatus kind="comparison" :loading="loading" label="正在读取可选来源…" />
     <TableFailureState v-if="error" title="来源目录读取失败" :compact="!!displayed" :pending="loading" :description="displayed ? '仍显示上次成功的目录页，请重试当前目标。' : '请重试读取来源目录。'" @retry="load" />
     <p v-if="displayed && (displayedKind !== activeKind || displayed.page !== page)" class="text-muted-foreground text-[13px]">目标目录尚未加载，下面保留上次成功的来源页。</p>
-    <div v-if="displayed?.rows.length" class="min-w-0 max-h-48 overflow-y-auto overscroll-contain rounded-sm border" data-testid="source-catalog">
+    <div v-if="shownRows.length" class="min-w-0 rounded-sm border" data-testid="source-catalog">
       <ul class="flex min-w-0 flex-col divide-y">
-        <li v-for="source in displayed.rows" :key="keyOf(source)" class="flex min-w-0 items-start gap-3 p-2.5" :data-source-kind="source.kind" :data-source-id="source.id">
+        <li v-for="source in shownRows" :key="keyOf(source)" class="flex min-w-0 items-start gap-3 p-2.5" :data-source-kind="source.kind" :data-source-id="source.id">
           <Checkbox :id="`source-${source.kind}-${source.id}`" :model-value="selected(source)" :disabled="!source.selectable" class="mt-0.5" :aria-label="`选择${source.label}`" @update:model-value="toggle(source, $event === true)" />
           <label :for="`source-${source.kind}-${source.id}`" class="min-w-0 flex-1 cursor-pointer break-words [overflow-wrap:anywhere]">
             <span class="block text-[13px] font-medium">{{ source.label }}</span>
@@ -135,7 +154,9 @@ watch(selectionKey, () => { void hydrateSelectedLabels() }, { immediate: true, f
       </ul>
     </div>
     <p v-else-if="!loading && !error" class="text-muted-foreground text-[13px]">此类别尚无可选来源。</p>
-    <!-- 只有超过一页时才出现分页；少量来源用滚动目录即可，不额外占高度。 -->
+    <Button v-if="remainingCount > 0 && !showAll" variant="link" size="sm" class="h-7 self-start px-1 text-[13px]" @click="showAll = true">{{ allLabel }}<span aria-hidden="true">（还有 {{ remainingCount }} 项）</span></Button>
+    <Button v-else-if="showAll && rows.length > COLLAPSED_ROWS" variant="link" size="sm" class="h-7 self-start px-1 text-[13px]" @click="showAll = false">收起，只看前 {{ COLLAPSED_ROWS }} 项</Button>
+    <!-- 只有超过一页时才出现分页；目录本身不再使用内层滚动。 -->
     <TablePagination v-if="displayed && displayed.total > displayed.pageSize" :page="displayed.page" :page-size="displayed.pageSize" :total="displayed.total" unit="项来源" :loading="loading || error" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
     <details v-if="selectedItems.length" aria-label="已选来源"><summary class="text-muted-foreground cursor-pointer text-[13px]">管理已选来源（{{ selectedItems.length }}）</summary><div class="mt-2 flex flex-wrap gap-1.5">
       <Button v-for="item in selectedItems" :key="`${item.kind}:${item.id}`" variant="secondary" size="sm" class="h-auto max-w-full whitespace-normal text-left text-xs" :aria-label="`移除${item.source?.label ?? '已选来源'}`" @click="item.source ? toggle(item.source, false) : emit('change', { ...selection, [sourceSelectionKey(item.kind)]: selection[sourceSelectionKey(item.kind)].filter(id => id !== item.id) })">{{ item.source?.label ?? (selectedError ? '来源名称暂不可读' : '正在读取来源名称…') }} · 移除</Button>

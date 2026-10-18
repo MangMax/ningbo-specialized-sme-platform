@@ -12,8 +12,8 @@ defineProps<{
 <template>
   <details class="min-w-0 text-[13px]">
     <summary class="cursor-pointer py-2 font-medium">
-      {{ current ? '本次对比结果' : '上次结果' }} · {{ scope.selection.officialSourceDocumentIds.length }} 份文件与 {{ scope.selection.queryIds.length }} 次平台查询
-      <span class="text-muted-foreground ml-2 font-normal">查看所用来源</span>
+      {{ current ? '本次结果所用来源' : '上次结果所用来源' }}
+      <span class="text-muted-foreground ml-2 font-normal">查看明细</span>
     </summary>
     <div class="flex min-w-0 flex-col gap-3 border-l pl-3 pb-2">
       <div class="grid min-w-0 gap-3 sm:grid-cols-2">

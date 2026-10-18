@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { ChevronDown } from '@lucide/vue'
 import type { CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
 import { eventDecisionText } from '~~/lib/roster/correspondence-view'
-import { eventSourceState, groupEventEdges } from '~~/lib/roster/record-ledger'
+import { groupEventEdges } from '~~/lib/roster/record-ledger'
 import { PLATFORM_INTERFACES } from '~~/lib/labels'
 import { fileNameOf } from '~~/lib/preview'
 import { evidencePageState } from '~~/lib/roster/evidence-page'
@@ -46,8 +46,6 @@ const emit = defineEmits<{
 }>()
 
 const groups = computed(() => groupEventEdges(props.edges.filter(edge => edge.type !== 'later_process')))
-const hasOfficialFile = computed(() => props.evidence.length > 0)
-const sourceState = computed(() => eventSourceState(groups.value, hasOfficialFile.value))
 const businessYear = computed(() => props.event.type === 'review' ? props.event.decidedYear : props.event.year)
 
 const fileLines = computed(() => props.evidence.map(item => {
@@ -87,21 +85,18 @@ const interfaceSummary = computed(() => {
             <SourceChip :code="event.source" />
             <span v-if="event.district" class="text-muted-foreground text-[13px]">属地 {{ event.district }}</span>
           </div>
-          <p class="mt-1 text-[15px] leading-6 font-medium">{{ eventDecisionText({ eventType: event.type, year: event.year, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }) }}</p>
-          <p class="text-muted-foreground mt-0.5 text-[13px]">{{ sourceState }}</p>
+          <p v-if="event.type === 'review'" class="mt-1 text-[15px] leading-6 font-medium">{{ eventDecisionText({ eventType: event.type, year: event.year, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }) }}</p>
         </div>
 
         <div class="flex min-w-0 flex-col gap-1.5 text-[13px] sm:max-w-80">
-          <div class="flex min-w-0 flex-wrap items-start gap-x-2">
-            <span class="text-muted-foreground w-14 shrink-0">公布文件</span>
-            <span class="min-w-0 flex-1 break-words">
+          <div class="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-start gap-x-2 gap-y-1">
+            <span class="text-muted-foreground">公布文件</span>
+            <span class="min-w-0 break-words">
               <template v-if="fileLines.length"><span v-for="(line, index) in fileLines" :key="line" class="inline">{{ line }}<span v-if="index < fileLines.length - 1">；</span></span></template>
               <span v-else class="text-muted-foreground">未记录</span>
             </span>
-          </div>
-          <div class="flex min-w-0 flex-wrap items-start gap-x-2">
-            <span class="text-muted-foreground w-14 shrink-0">平台接口</span>
-            <span class="min-w-0 flex-1 break-words">
+            <span class="text-muted-foreground">平台接口</span>
+            <span class="min-w-0 break-words">
               <template v-if="interfaceSummary.length">
                 <span v-for="(item, index) in interfaceSummary" :key="item.interfaceName" class="inline-flex flex-wrap items-center gap-1">
                   <span>{{ item.interfaceName }}</span>
@@ -112,31 +107,31 @@ const interfaceSummary = computed(() => {
               </template>
               <span v-else class="text-muted-foreground">尚无已确认接口出处</span>
             </span>
-          </div>
-          <div v-if="groups.candidates.length" class="flex min-w-0 items-start gap-2 text-warning">
-            <span class="flex w-14 shrink-0 items-center pt-1.5" aria-hidden="true"><span class="bg-warning size-1.5 rounded-full"></span></span>
-            <span>候选 {{ groups.candidates.length }} 条 · 待确认</span>
-          </div>
-          <div v-if="groups.revalidation.length" class="flex min-w-0 items-start gap-2 text-warning">
-            <span class="flex w-14 shrink-0 items-center pt-1.5" aria-hidden="true"><span class="bg-warning size-1.5 rounded-full"></span></span>
-            <span>待重新核验 {{ groups.revalidation.length }} 条，暂不计为已确认出处</span>
-          </div>
-          <div v-if="groups.currentContext.length" class="flex min-w-0 items-start gap-2 text-muted-foreground">
-            <span class="flex w-14 shrink-0 items-center pt-1.5" aria-hidden="true"><span class="bg-muted-foreground/50 size-1.5 rounded-full"></span></span>
-            <span>当前参考 {{ groups.currentContext.length }} 条</span>
+            <template v-if="groups.candidates.length">
+              <span class="text-warning">候选（未确认）</span>
+              <span class="text-warning tabular-nums">{{ groups.candidates.length }} 条 · 待确认</span>
+            </template>
+            <template v-if="groups.revalidation.length">
+              <span class="text-warning">待重新核验</span>
+              <span class="text-warning tabular-nums">{{ groups.revalidation.length }} 条 · 暂不计为已确认出处</span>
+            </template>
+            <template v-if="groups.currentContext.length">
+              <span class="text-muted-foreground">当前导出快照</span>
+              <span class="text-muted-foreground tabular-nums">{{ groups.currentContext.length }} 条 · 仅核对当前名称/代码，非历史出处</span>
+            </template>
           </div>
         </div>
 
         <div class="flex justify-end sm:col-span-3">
           <CollapsibleTrigger as-child>
             <Button variant="ghost" size="sm" class="h-8 gap-1 px-2 text-[13px]">
-              <ChevronDown class="size-4 transition-transform duration-150" :class="!open && '-rotate-90'" />
-              {{ open ? '收起出处' : '查看出处' }}
+              <ChevronDown class="size-4 transition-transform duration-150 ease-snap motion-reduce:transition-none" :class="!open && '-rotate-90'" />
+              {{ open ? '收起来源记录' : '查看来源记录' }}
             </Button>
           </CollapsibleTrigger>
         </div>
       </div>
-      <CollapsibleContent>
+      <CollapsibleContent class="duration-150 ease-snap data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-1 motion-reduce:animate-none">
         <RecordEventSource :event="event" :evidence="evidence" :edges="edges" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" />
       </CollapsibleContent>
     </Collapsible>

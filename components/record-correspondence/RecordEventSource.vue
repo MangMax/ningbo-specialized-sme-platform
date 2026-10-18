@@ -137,12 +137,13 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
           <li v-for="edge in groups.sources" :key="edge.id" class="min-w-0 border-t pt-2 first:border-t-0 first:pt-0">
             <div class="flex flex-wrap items-center gap-2">
               <span class="font-medium">{{ relationLabel(edge) }}</span>
+              <span class="text-muted-foreground">匹配</span>
               <Badge variant="secondary">{{ correspondenceStatusText(edge) }}</Badge>
-              <span class="text-muted-foreground">{{ relationStatus(edge) }}</span>
             </div>
-            <p class="text-muted-foreground mt-0.5">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p>
-            <p v-if="edge.relation?.nameRaw" class="mt-0.5 break-words">原行名称：{{ edge.relation.nameRaw }}<span v-if="edge.relation.status"> · {{ edge.relation.status }}</span></p>
-            <Button variant="ghost" size="sm" class="mt-1 h-7 px-2 text-[13px]" @click="openSource(edge)">原行字段与查询条件</Button>
+            <p class="text-muted-foreground mt-0.5">平台查询状态 {{ relationStatus(edge) }} · 原办理状态 {{ edge.relation?.status ?? '未提供' }}</p>
+            <p v-if="edge.relation?.nameRaw" class="mt-0.5 break-words">原行名称：{{ edge.relation.nameRaw }}</p>
+            <details class="text-muted-foreground mt-0.5"><summary class="cursor-pointer">原行字段与查询条件</summary><p>{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p></details>
+            <Button variant="ghost" size="sm" class="mt-1 h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
           </li>
         </ul>
       </section>
@@ -150,13 +151,12 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
 
     <div v-if="groups.candidates.length" class="border-t pt-3" data-testid="event-candidates">
       <p class="font-medium">候选记录 · 待确认（{{ groups.candidates.length }} 条）</p>
-      <p class="text-muted-foreground mt-0.5">待确认，未计入已确认出处。</p>
       <ul class="mt-2 flex flex-col gap-1.5">
         <li v-for="edge in groups.candidates" :key="edge.id" class="flex flex-wrap items-center gap-2">
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
-          <span class="text-muted-foreground">{{ relationMeta(edge) }}</span>
-          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原行</Button>
+          <details class="text-muted-foreground"><summary class="cursor-pointer">原行字段与查询条件</summary><p>{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p></details>
+          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
         </li>
       </ul>
     </div>
@@ -168,20 +168,21 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
         <li v-for="edge in groups.revalidation" :key="edge.id" class="flex flex-wrap items-center gap-2">
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
-          <span class="text-muted-foreground">{{ relationMeta(edge) }}</span>
-          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原行</Button>
+          <details class="text-muted-foreground"><summary class="cursor-pointer">原行字段与查询条件</summary><p>{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p></details>
+          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
         </li>
       </ul>
     </div>
 
     <div v-if="groups.currentContext.length" class="border-t pt-3" data-testid="event-current-reference">
-      <p class="font-medium">当前参考（{{ groups.currentContext.length }} 条）</p>
-      <p class="text-muted-foreground mt-0.5">当前导出快照只用于核对当前名称与代码，不作为历史认定证据。</p>
+      <p class="font-medium">当前导出快照（非历史出处，{{ groups.currentContext.length }} 条）</p>
+      <p class="text-muted-foreground mt-0.5">仅核对当前名称与代码，不作历史认定证据。</p>
       <ul class="mt-2 flex flex-col gap-1.5">
-        <li v-for="edge in groups.currentContext" :key="edge.id">
+        <li v-for="edge in groups.currentContext" :key="edge.id" class="flex flex-wrap items-center gap-2">
           <span>{{ relationLabel(edge) }}</span>
-          <span class="text-muted-foreground"> · {{ relationMeta(edge) }}</span>
-          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" @click="openSource(edge)">查看来源记录</Button>
+          <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
+          <details class="text-muted-foreground"><summary class="cursor-pointer">原行字段与查询条件</summary><p>{{ relationMeta(edge) }}</p></details>
+          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" @click="openSource(edge)">查看原始记录</Button>
         </li>
       </ul>
     </div>
@@ -193,7 +194,7 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
           <span class="text-muted-foreground">{{ relationMeta(edge) }}</span>
-          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原行</Button>
+          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
         </li>
       </ul>
     </details>

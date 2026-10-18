@@ -22,7 +22,7 @@ const eventTo = computed(() => targetEvent.value
 const TYPE_LABELS: Record<string, string> = {
   event_process: '记录对应',
   event_recognized: '认定对应',
-  later_process: '后续流程',
+  later_process: '后续记录',
   event_export_context: '事件快照背景',
   process_export_context: '流程快照背景',
   recognized_export: '现状对应',

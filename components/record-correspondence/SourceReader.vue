@@ -21,7 +21,7 @@ const exportRow = computed(() => displayedKey.value.startsWith('export_row:') ? 
 
 /**
  * 事件视图只列**这条事件自己的**对应：已确认与候选都保留，候选不并进已确认；
- * 导出快照单独标「当前参考」，后续流程不在这里冒充本事件出处。
+ * 导出快照单独标「当前导出快照（非历史出处）」。
  */
 const eventSections = computed(() => {
   const links = (visible.value?.correspondences ?? []).filter(link => link.eventId === event.value?.id)
@@ -49,17 +49,17 @@ const eventSections = computed(() => {
           <ul v-if="eventSections.sources.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in eventSections.sources" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul>
           <p v-else class="text-muted-foreground text-[13px]">尚无已登记的事件对应关系。候选需另行核验，不能把企业级查询视为本事件出处。</p>
         </section>
-        <section v-if="eventSections.current.length" aria-label="当前参考">
-          <h4 class="mb-2 text-sm font-medium">当前参考</h4>
-          <p class="text-muted-foreground mb-2 text-[13px]">这些是当前导出快照背景，只用于核对当前名称与代码，不作为历史认定证据。</p>
+        <section v-if="eventSections.current.length" aria-label="当前导出快照">
+          <h4 class="mb-2 text-sm font-medium">当前导出快照（非历史出处）</h4>
+          <p class="text-muted-foreground mb-2 text-[13px]">仅核对当前名称与代码，不作历史认定证据。</p>
           <ul class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in eventSections.current" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul>
         </section>
       </template>
       <template v-else>
         <SourceRowDetail v-if="relation" :relation="relation" />
         <SourceRowDetail v-if="exportRow" :export-row="exportRow" />
-        <section aria-label="来源行反向对应">
-          <h4 class="mb-2 text-sm font-medium">对应事件与流程</h4>
+        <section aria-label="来源行对应事件">
+          <h4 class="mb-2 text-sm font-medium">对应事件</h4>
           <ul v-if="visible?.correspondences.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in visible.correspondences" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul>
           <p v-else class="text-muted-foreground text-[13px]">此原行尚无登记的对应关系；原查询行仍保留。</p>
         </section>
