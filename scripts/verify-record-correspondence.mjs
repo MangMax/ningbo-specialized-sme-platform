@@ -24,7 +24,8 @@ const mode = process.argv.includes('--serve') ? 'serve'
     : process.argv.includes('--setup') ? 'setup' : 'acceptance'
 const root = mkdtempSync(join(tmpdir(), 'spec63-acceptance-'))
 const files = join(root, 'files')
-const manifestPath = process.env.SPEC63_FIXTURE_MANIFEST ?? '/tmp/spec63-acceptance-fixture.json'
+const manifestPath = process.env.SPEC63_FIXTURE_MANIFEST ?? (mode === 'serve' || mode === 'fixture-only'
+  ? '/tmp/spec63-acceptance-fixture.json' : join(root, 'fixture.json'))
 const privatePath = join(root, 'owned-session.json')
 const apiToken = randomBytes(32).toString('hex')
 const mcpToken = randomBytes(32).toString('hex')
@@ -172,22 +173,23 @@ async function seed() {
   const imported = await importBatch('platform-rows', 'alias_evidence', `synthetic/platform/${nonce}`, { platformQueries: queries })
   const queryIds = queries.map((_, index) => queryId(imported, index))
   const relations = queries.map((_, index) => detail(imported, 'platform_query', index).relations)
-  async function registeredExport(label, rowNo) {
+  async function registeredExport(label, rowNo, name) {
     const path = `miit/export/2026/1/spec63-${label}-${nonce}.xlsx`
     mkdirSync(dirname(join(files, path)), { recursive: true })
     const workbook = new ExcelJS.Workbook()
     const sheet = workbook.addWorksheet('synthetic')
     sheet.addRow(['source_row_no', 'uscc', 'name', 'status'])
-    sheet.addRow([rowNo, person.E.uscc, person.E.name, label])
+    sheet.addRow([rowNo, person.E.uscc, name, label])
     writeFileSync(join(files, path), Buffer.from(await workbook.xlsx.writeBuffer()))
     const stored = await post('/api/files/register', { relPath: path, source: 'miit', kind: 'export', year: '2026', batch: '1' }, { allow: [200, 201] })
     assert.equal(stored.sha256, sha256(Buffer.from(await (await fetch(`${base}/api/files/${path}`)).arrayBuffer())))
     return { path, ...stored }
   }
-  const exportFiles = [await registeredExport('v1', 7), await registeredExport('v2', 9)]
+  const conflictingName = '宁波六三合成E旧名企业有限公司'
+  const exportFiles = [await registeredExport('v1', 7, conflictingName), await registeredExport('v2', 9, person.E.name)]
   const exportOld = await importBatch('export-v1', 'platform_export', exportFiles[0].path, { exportSnapshot: {
     titleCode: T.specialized, year: 2026, collectedOn: '2026-10-18', originalFilename: `synthetic-v1-${nonce}.xlsx`,
-    sha256: exportFiles[0].sha256, rows: [{ sourceRowNo: 7, usccRaw: person.E.uscc, nameRaw: person.E.name, rawFields: { synthetic: true, status: '在册' } }],
+    sha256: exportFiles[0].sha256, rows: [{ sourceRowNo: 7, usccRaw: person.E.uscc, nameRaw: conflictingName, rawFields: { synthetic: true, status: '在册' } }],
   } }, exportFiles[0].sha256)
   const exportNew = await importBatch('export-v2', 'platform_export', exportFiles[1].path, { exportSnapshot: {
     titleCode: T.specialized, year: 2026, collectedOn: '2026-10-18', originalFilename: `synthetic-v2-${nonce}.xlsx`,
@@ -224,11 +226,12 @@ function comparisonPath(ids = fixture.queryIds, batches = fixture.exportBatches,
   return `/comparison?${params}`
 }
 function compareQuery(proofs = []) { return comparisonPath(fixture.queryIds, fixture.exportBatches, proofs).replace('/comparison?mode=record', '/api/roster/record-comparison?') }
-function decision(label, operations) { return { idempotencyKey: `spec63-${nonce}-edge-${label}`, sourceIdentity: fixture.sourceFile,
-  actor: { type: 'agent', id: 'synthetic-acceptance' }, basis: `Synthetic row evidence for ${label}`, ruleId: 'manual-row-review', ruleVersion: '1', operations } }
+function decision(label, operations, proofIds) { return { idempotencyKey: `spec63-${nonce}-edge-${label}`, sourceIdentity: fixture.sourceFile,
+  actor: { type: 'agent', id: 'synthetic-acceptance' }, basis: `Synthetic row evidence for ${label}`, ruleId: 'manual-row-review', ruleVersion: '1',
+  ...(proofIds ? { proofIds } : {}), operations } }
 function create(edge, status = 'confirmed') { return { action: 'create', status, edge } }
-async function decide(label, operations, transport = 'rest') {
-  const input = decision(label, operations)
+async function decide(label, operations, transport = 'rest', proofIds) {
+  const input = decision(label, operations, proofIds)
   const planned = transport === 'mcp' ? await mcpCall('preflight_record_correspondences', input, true) : await post('/api/roster/correspondences/preflight', input)
   assert.match(planned.planHash, /^[0-9a-f]{64}$/)
   const committed = transport === 'mcp' ? await mcpCall('save_record_correspondences', { request: input, planHash: planned.planHash }, true)
@@ -428,7 +431,7 @@ async function verifyProof() {
   assert.ok(Array.isArray(discover.value.rows), 'final acceptance requires a proof list JSON response, not Nuxt HTML fallback')
   const f = fixture
   const evidence = (enterpriseId, year = 2024) => {
-    const listNo = enterpriseId === f.enterprises.E ? 8 : enterpriseId === f.enterprises.F ? 9 : 10
+    const listNo = enterpriseId === f.enterprises.E ? 8 : enterpriseId === f.enterprises.F ? 9 : enterpriseId === f.enterprises.H ? 11 : 10
     return { titleCode: T.specialized, fromYear: year, throughYear: year,
     enterpriseIds: [enterpriseId], fullRange: true, sourceDocuments: [{ id: f.officialDocumentId, fileId: f.file.id,
       sha256: f.file.sha256, reference: { field: 'record_evidence.source_file', page: listNo % 3 + 1, listNo } }] }
@@ -479,7 +482,7 @@ async function verifyProof() {
       status: 'candidate', evidence: evidence(f.enterprises.F) }], 'mcp')
     ids.candidateOfficial = candidate.committed.proofIds[0]
     const revoked = await proofWrite('official-revoked-seed', [{ action: 'create', kind: 'official_coverage',
-      status: 'confirmed', evidence: evidence(f.enterprises.G) }])
+      status: 'confirmed', evidence: evidence(f.enterprises.F) }])
     ids.revokedOfficial = revoked.committed.proofIds[0]
     await proofWrite('official-revoke', [{ action: 'decide', proofId: ids.revokedOfficial, expectedRevision: 2, status: 'revoked' }])
     const listed = await get('/api/roster/comparison-scope-proofs')
@@ -489,6 +492,25 @@ async function verifyProof() {
     assert.equal(selected.officialCoverage.qualification, 'unknown')
     const mcp = await mcpCall('get_comparison_scope_proof', { id: ids.candidateOfficial })
     assert.deepEqual(mcp, listed.rows.find(row => row.id === ids.candidateOfficial))
+  })
+  await checked('public scope proof: changed scoped official rows invalidate a confirmed proof without deleting audit', async () => {
+    const written = await proofWrite('official-stale-seed', [{ action: 'create', kind: 'official_coverage',
+      status: 'confirmed', evidence: evidence(f.enterprises.H) }])
+    ids.staleOfficial = written.committed.proofIds[0]
+    assert.equal((await get(`/api/roster/comparison-scope-proofs/${ids.staleOfficial}`)).valid, true)
+    await importBatch('official-stale-new-event', 'announcement', f.sourceFile, { announcement: {
+      sourceDocument: { source: 'jxj', title: '六三号合成验收三页公告', docNumber: `S63-${nonce}`, issueDate: '2024-10-18' },
+      records: [{ enterprise: person.H, titleCode: T.specialized, events: [{ eventType: 'award', year: 2024,
+        batchSeq: 2, evidence: [{ sourceFile: f.sourceFile, attachment: '合成附件一', listNo: 12, page: 1 }] }] }],
+    } }, f.file.sha256)
+    const proof = await get(`/api/roster/comparison-scope-proofs/${ids.staleOfficial}`)
+    assert.equal(proof.status, 'confirmed')
+    assert.equal(proof.valid, false)
+    assert.equal(proof.invalidReason, 'source_drift_or_missing')
+    const selected = await get(compareQuery([ids.staleOfficial]))
+    assert.equal(selected.officialCoverage.qualification, 'unknown')
+    const audit = await get(`/api/roster/comparison-scope-proofs/${ids.staleOfficial}/audit`)
+    assert.deepEqual(audit.rows.map(row => row.toStatus), ['candidate', 'confirmed'])
   })
   await checked('public scope proof: archived freeze file/hash is real; narrowed query cannot attest current equivalence', async () => {
     const freeze = f.exportFiles[1]
@@ -515,11 +537,55 @@ async function verifyProof() {
     const first = f.broadArchive.conflicts[0]
     report.pending.push(`Public import preflight rejects synthetic unnarrowed recognized archive: ${first.error.code}: ${first.error.message}`)
   }
-  if (mode === 'acceptance') {
-    assert.ok(f.broadArchive.queryId, 'final qualified current-source assertions require a public archived unnarrowed recognized query')
-    throw new Error('Final qualified current-source matched/field_conflict and recognized_export proof binding need completion after public broad-query import is available')
+  if (!f.broadArchive.queryId) {
+    if (mode === 'acceptance') assert.fail('final qualified current-source assertions require a public archived unnarrowed recognized query')
+    report.pending.push('Qualified current-source matched/field_conflict and confirmed recognized_export remain unrun; public broad recognized archive is required')
+    return ids
   }
-  report.pending.push('Qualified current-source matched/field_conflict and confirmed recognized_export remain unrun; public broad recognized archive is required')
+  const selectedComparison = (batchId, proofIds = []) => comparisonPath([f.broadArchive.queryId], [batchId], proofIds)
+    .replace('/comparison?mode=record', '/api/roster/record-comparison?')
+  const currentEvidence = (index) => {
+    const freeze = f.exportFiles[index]
+    const filters = { combination: 'and' }
+    return { queryId: f.broadArchive.queryId, exportBatchId: f.exportBatches[index], titleCode: T.specialized,
+      queryReference: 'platform_query.collectionEvidence', exportReference: 'platform_export_batch.sha256',
+      scope: { queryAccount: 'synthetic-account', exportAccount: 'synthetic-account',
+        queryRegion: 'synthetic-region', exportRegion: 'synthetic-region', queryFilters: filters,
+        exportFilters: filters, windowStart: '2026-10-18T00:00:00.000Z',
+        windowEnd: '2026-10-18T23:59:59.000Z', platformVersion: `synthetic-freeze-${nonce}-${index}`,
+        freezeReference: freeze.path, freezeFileId: freeze.id, freezeSha256: freeze.sha256 } }
+  }
+  await checked('scenario 5 qualified: persisted current proof changes unknown to matched and field conflict by version', async () => {
+    const baseline = await get(selectedComparison(f.exportBatches[1]))
+    assert.equal(baseline.currentSourceConsistency.recognizedObservations[0].qualification, 'not_comparable')
+    const matched = await proofWrite('current-matched-v2', [{ action: 'create', kind: 'current_source_equivalence',
+      status: 'confirmed', evidence: currentEvidence(1) }])
+    ids.currentMatched = matched.committed.proofIds[0]
+    const qualified = await get(selectedComparison(f.exportBatches[1], [ids.currentMatched]))
+    assert.equal(qualified.currentSourceConsistency.recognizedObservations[0].qualification, 'matched')
+    assert.equal(qualified.currentSourceConsistency.recognizedObservations[0].proofId, String(ids.currentMatched))
+    const conflict = await proofWrite('current-conflict-v1', [{ action: 'create', kind: 'current_source_equivalence',
+      status: 'confirmed', evidence: currentEvidence(0) }])
+    ids.currentConflict = conflict.committed.proofIds[0]
+    const conflicting = await get(selectedComparison(f.exportBatches[0], [ids.currentConflict]))
+    assert.equal(conflicting.currentSourceConsistency.recognizedObservations[0].qualification, 'field_conflict')
+    assert.equal(conflicting.currentSourceConsistency.recognizedObservations[0].recognized.id, f.broadArchive.relationId)
+    assert.equal(conflicting.currentSourceConsistency.recognizedObservations[0].exportRows[0].id, f.exportRows[0])
+  })
+  await checked('scenario 5 qualified: recognized/export confirmation binds persisted proof and preserves omitted-proof decision', async () => {
+    const first = await decide('broad-recognized-export-candidate', [create({ type: 'recognized_export',
+      relationId: f.broadArchive.relationId, exportRowId: f.exportRows[1], role: 'same_current_row' }, 'candidate')])
+    const firstId = first.committed.correspondenceIds[0]
+    await decide('broad-recognized-export-confirm', [{ action: 'decide', correspondenceId: firstId,
+      expectedRevision: 1, status: 'confirmed' }], 'rest', [ids.currentMatched])
+    assert.equal((await get(`/api/roster/correspondences/${firstId}`)).status, 'confirmed')
+    const second = await decide('broad-recognized-export-stored-proof', [create({ type: 'recognized_export',
+      relationId: f.broadArchive.relationId, exportRowId: f.exportRows[0], role: 'same_current_row' }, 'candidate')], 'rest', [ids.currentConflict])
+    const secondId = second.committed.correspondenceIds[0]
+    await decide('broad-recognized-export-confirm-omitted-proof', [{ action: 'decide', correspondenceId: secondId,
+      expectedRevision: 1, status: 'confirmed' }])
+    assert.equal((await get(`/api/roster/correspondences/${secondId}`)).status, 'confirmed')
+  })
   return ids
 }
 
@@ -529,11 +595,12 @@ async function main() {
       portHint: Number(process.env.SPEC63_PORT ?? 0), env: {
         NUXT_DB_PATH: join(root, 'roster.db'), NUXT_FILES_DIR: files,
         NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_API_TOKEN: apiToken,
-        NUXT_MCP_TOKEN: mcpToken, NUXT_MIIT_COOKIE: '', MIIT_COOKIE: '',
+        NUXT_MCP_TOKEN: mcpToken, NUXT_MIIT_COOKIE: '', MIIT_COOKIE: '', NUXT_IGNORE_LOCK: '1',
       } })
     base = service.baseUrl
     fixture = await seed()
-    const manifest = { synthetic: true, sourceHead: report.sourceHead, root, baseUrl: base, sourceFile: fixture.sourceFile,
+    const manifest = { synthetic: true, sourceHead: report.sourceHead, root, baseUrl: base,
+      ownerPid: process.pid, serverPid: service.child.pid, sourceFile: fixture.sourceFile,
       storedFile: fixture.file, officialSourceDocumentId: fixture.officialDocumentId,
       enterprises: fixture.enterprises, events: fixture.events,
       queryIds: fixture.queryIds, relations: fixture.relations,
