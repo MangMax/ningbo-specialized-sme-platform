@@ -741,9 +741,33 @@ describe('出处预览返回滚动恢复', () => {
     expect(frames).toHaveLength(1)
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: windowTop, behavior: 'instant' })
-    expect(returned.findAll('button').some((button) => button.text().includes('收起出处'))).toBe(true)
+    expect(returned.findAll('button').some((button) => button.text().includes('收起来源记录'))).toBe(true)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
     expect(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)).toBeNull()
     returned.unmount()
+  })
+
+  it('waits for event source rows to settle before restoring an enterprise preview return', async () => {
+    history.replaceState(null, '', '/enterprises/91')
+    currentRoute = { params: { id: '91' }, query: {}, fullPath: '/enterprises/91' }
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 420 })
+    rememberEvidencePreviewReturn(currentRoute.fullPath)
+    mocks.detail = fullDetail
+    const frames: FrameRequestCallback[] = []
+    const scrollTo = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
+    vi.stubGlobal('scrollTo', scrollTo)
+    let settle!: (value: unknown) => void
+    vi.stubGlobal('$fetch', vi.fn((url: string) => url === '/api/roster/correspondences'
+      ? new Promise(resolve => { settle = resolve }) : Promise.resolve({})))
+    const page = mount(EnterprisePage, { attachTo: document.body, global: { stubs: globalStubs } })
+    await flushPromises()
+    expect(frames).toHaveLength(0)
+    settle({ rows: [], total: 0, page: 1, pageSize: 200 })
+    await flushPromises()
+    expect(frames).toHaveLength(1)
+    frames[0]!(0)
+    expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 420, behavior: 'instant' })
+    page.unmount()
   })
 })

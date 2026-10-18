@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { TITLES } from '~~/lib/labels'
 import type { ComparisonProof, ComparisonProofAudit, ComparisonProofCatalog, ComparisonSelection } from '~~/lib/roster/record-comparison-view'
+import { humanRecordTime } from '~~/lib/roster/record-ledger'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -36,7 +37,7 @@ const kindText = (proof: ComparisonProof) => proof.kind === 'official_coverage' 
 function scopeText(proof: ComparisonProof): string {
   if (proof.kind === 'official_coverage') return `${proof.evidence.fromYear ?? '年份待核'}–${proof.evidence.throughYear ?? '年份待核'} · ${proof.evidence.sourceDocuments?.length ?? 0} 份正式文件${proof.evidence.enterpriseIds ? ` · ${proof.evidence.enterpriseIds.length} 家企业范围` : ' · 称号全年范围'}`
   const scope = proof.evidence.scope
-  return `${scope?.windowStart ?? '起点未记录'} 至 ${scope?.windowEnd ?? '终点未记录'} · ${scope?.platformVersion ?? '版本未记录'}`
+  return `${humanRecordTime(scope?.windowStart)} 至 ${humanRecordTime(scope?.windowEnd)} · ${scope?.platformVersion ?? '版本未记录'}`
 }
 function toggle(proof: ComparisonProof, checked: boolean) {
   if (!eligible(proof)) return
@@ -118,7 +119,7 @@ watch([scopeKey, layoutReady], ([key, ready]) => emit('settled', key, ready), { 
     <ul v-if="choices.length" class="flex min-w-0 flex-col gap-1.5">
       <li v-for="proof in choices" :key="proof.id" class="flex min-w-0 items-start gap-3 rounded-sm border p-2.5">
         <Checkbox :id="`proof-${proof.id}`" :model-value="selection.proofIds.includes(proof.id)" class="mt-0.5" :aria-label="`选择${title(proof)} · ${scopeText(proof)} · ${kindText(proof)}`" @update:model-value="toggle(proof, $event === true)" />
-        <label :for="`proof-${proof.id}`" class="min-w-0 flex-1 cursor-pointer break-words [overflow-wrap:anywhere]"><span class="block text-[13px] font-medium">{{ title(proof) }} · {{ kindText(proof) }}</span><span class="text-muted-foreground block text-xs">{{ scopeText(proof) }} · 确认于 {{ proof.decidedAt ?? '时间未记录' }}</span><span class="text-muted-foreground block text-xs">登记依据：{{ basis[proof.id] ?? '正在读取…' }}</span></label>
+        <label :for="`proof-${proof.id}`" class="min-w-0 flex-1 cursor-pointer break-words [overflow-wrap:anywhere]"><span class="block text-[13px] font-medium">{{ title(proof) }} · {{ kindText(proof) }}</span><span class="text-muted-foreground block text-xs">{{ scopeText(proof) }} · 确认于 {{ humanRecordTime(proof.decidedAt) }}</span><span class="text-muted-foreground block text-xs">登记依据：{{ basis[proof.id] ?? '正在读取…' }}</span></label>
         <Badge variant="outline">已确认有效</Badge>
       </li>
     </ul>

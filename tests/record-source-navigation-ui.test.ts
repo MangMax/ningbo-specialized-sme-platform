@@ -122,7 +122,7 @@ describe('source modal reverse event navigation', () => {
     wrapper = owner === 'event row'
       ? mount(ComparisonEventRow, { props: { row, returnTo }, attachTo: document.body, global: { plugins: [router], stubs } })
       : mount(ComparisonEvidence, { props: { result, returnTo }, attachTo: document.body, global: { plugins: [router], stubs } })
-    await wrapper.findAll('button').find(button => button.text().includes('查看原行'))!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text().includes('查看原始记录'))!.trigger('click')
     await flushPromises()
     const link = document.querySelector('[role="dialog"] a') as HTMLAnchorElement
     expect(link).not.toBeNull()

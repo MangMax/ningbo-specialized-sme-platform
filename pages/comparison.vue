@@ -48,7 +48,13 @@ import { Skeleton } from '@/components/ui/skeleton'
 import RecordComparisonPanel from '@/components/record-correspondence/RecordComparisonPanel.vue'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
+definePageMeta({
+  // 同一页内的分类 / 翻页是「换结果」而不是「换页面」：保留滚动位置，
+  // 由记录级面板把视口落到结果标题，筛选后不会被重置到页顶。
+  scrollToTop: (to, from) => to.path === '/comparison' && from.path === '/comparison'
+    ? false
+    : shouldNuxtScrollToTop(to.fullPath, from.path),
+})
 
 const route = useRoute()
 const router = useRouter()

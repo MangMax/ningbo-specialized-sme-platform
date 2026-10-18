@@ -33,9 +33,9 @@ it('keeps positive same-subject rows visible while qualification stays unknown',
   expect(wrapper.get('[data-testid="record-current-consistency"]').text()).toContain('源行 12')
   expect(wrapper.get('[data-testid="record-comparison-coverage"]').text()).toContain('部分')
   expect(wrapper.get('[data-testid="record-platform-unlinked"]').text()).toContain('正式来源覆盖待核')
-  expect(wrapper.get('[data-testid="record-independent-later"]').text()).toContain('退回')
-  expect(wrapper.get('[data-testid="record-independent-later"]').text()).toContain('查看原行与反向对应')
-  expect(wrapper.text()).toContain('对应 #99 · 事件 #9 · 接口原行 #30')
+  expect(wrapper.find('[data-testid="record-independent-later"]').exists()).toBe(false)
+  expect(wrapper.text()).not.toContain('后续流程')
+  expect(wrapper.text()).not.toContain('反向对应')
   expect(wrapper.text()).not.toContain('post_cutoff_decision_state_unavailable')
 })
 
@@ -58,7 +58,7 @@ it('links the actual stored PDF page and saves comparison scroll before detail n
   expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain('/comparison?mode=record&queryIds=7')
 })
 
-it('shows review business years and readable count grains without internal enum or ID vocabulary', () => {
+it('shows the review conclusion and original award years without exposing aggregate implementation metrics', () => {
   const review = { ...row, event: { ...row.event, eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed' } } as RecordComparisonResult['rows'][number]
   const item = mount(ComparisonEventRow, { props: { row: review, returnTo: '/comparison?mode=record' }, global: { stubs: { NuxtLink: true, SourceReader: true } } })
   mounted.push(item)
@@ -66,9 +66,9 @@ it('shows review business years and readable count grains without internal enum 
   expect(item.text()).not.toContain('failed')
   const summary = mount(ComparisonEvidence, { props: { result, returnTo: '/comparison?mode=record' }, global: { stubs: { SourceReader: true } } })
   mounted.push(summary)
-  expect(summary.get('[aria-label="记录级计数"]').text()).toContain('正式事件（按事件去重）')
-  expect(summary.get('[aria-label="记录级计数"]').text()).toContain('接口原行（按原行去重）')
-  expect(summary.get('[aria-label="记录级计数"]').text()).not.toContain('ID')
+  expect(summary.find('[aria-label="记录级计数"]').exists()).toBe(false)
+  expect(summary.text()).not.toContain('以上数字各有自己的记录粒度')
+  expect(summary.get('[data-testid="record-current-consistency"]').text()).toContain('合成企业')
 })
 
 
@@ -88,6 +88,20 @@ const repeatedRelations = [
   { ...relation, id: 106, queryId: 9, sequenceNo: 2 },
 ]
 
+it('opens an event current snapshot through its export row without presenting it as historical evidence', async () => {
+  const fetch = vi.fn().mockRejectedValue(new Error('synthetic source unavailable'))
+  vi.stubGlobal('$fetch', fetch)
+  const currentRow = { ...row, correspondences: [{ id: 71, relationId: null, exportRowId: 8, type: 'event_export_context', status: 'confirmed', role: 'context_only' }] } as unknown as RecordComparisonResult['rows'][number]
+  const wrapper = mount(ComparisonEventRow, { props: { row: currentRow, returnTo: '/comparison?mode=record' }, global: { stubs: sourceDialogStubs } })
+  mounted.push(wrapper)
+  const snapshot = wrapper.findAll('details').find(item => item.text().includes('当前导出快照'))!
+  expect(snapshot.text()).toContain('非历史出处')
+  expect(snapshot.get('summary').text()).toContain('当前导出快照（非历史出处）')
+  await snapshot.get('button').trigger('click')
+  await flushPromises()
+  expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/roster/correspondences/export-rows/8')
+})
+
 it('keeps six identical-content original rows distinct with their own edge statuses and source endpoints', async () => {
   const fetch = vi.fn().mockRejectedValue(new Error('synthetic source unavailable'))
   vi.stubGlobal('$fetch', fetch)
@@ -103,17 +117,10 @@ it('keeps six identical-content original rows distinct with their own edge statu
   mounted.push(wrapper)
   const items = wrapper.findAll('li[data-relation-id]')
   expect(items).toHaveLength(6)
-  const expected = [
-    ['查询 #7 · 原行 1 · 记录 #101', '同批次流程背景 · 已拒绝', 101],
-    ['查询 #7 · 原行 2 · 记录 #102', '同批次流程背景 · 已确认', 102],
-    ['查询 #8 · 原行 1 · 记录 #103', '同批次流程背景 · 已拒绝', 103],
-    ['查询 #8 · 原行 2 · 记录 #104', '同批次流程背景 · 已解除', 104],
-    ['查询 #9 · 原行 1 · 记录 #105', '同批次流程背景 · 已解除', 105],
-    ['查询 #9 · 原行 2 · 记录 #106', '支持认定事件 · 已确认', 106],
-  ] as const
-  for (const [index, [locator, status, id]] of expected.entries()) {
-    expect(items[index]!.text()).toContain(locator)
-    expect(items[index]!.findAll('[data-slot="badge"]').map(badge => badge.text())).toEqual([status])
+  const expected = [[101, '拒绝'], [102, '确认'], [103, '拒绝'], [104, '解除'], [105, '解除'], [106, '确认']] as const
+  for (const [index, [id, status]] of expected.entries()) {
+    expect(items[index]!.attributes('data-relation-id')).toBe(String(id))
+    expect(items[index]!.text()).toContain(status)
     await items[index]!.get('button').trigger('click')
     await flushPromises()
     expect(fetch).toHaveBeenLastCalledWith(`/api/roster/correspondences/relations/${id}`)
@@ -130,7 +137,7 @@ it('keeps duplicate unlinked evidence rows separately located and opens every or
   const items = wrapper.findAll('[data-testid="record-platform-unlinked"] li')
   expect(items).toHaveLength(6)
   for (const [index, id] of [101, 102, 103, 104, 105, 106].entries()) {
-    expect(items[index]!.text()).toContain(`查询 #${[7, 7, 8, 8, 9, 9][index]} · 原行 ${index % 2 + 1} · 记录 #${id}`)
+    expect(items[index]!.text()).toContain('合成企业')
     await items[index]!.get('button').trigger('click')
     await flushPromises()
     expect(fetch).toHaveBeenLastCalledWith(`/api/roster/correspondences/relations/${id}`)
@@ -138,9 +145,10 @@ it('keeps duplicate unlinked evidence rows separately located and opens every or
   expect(fetch).toHaveBeenCalledTimes(6)
 })
 
-it('explains source-wide count totals stay unchanged by classification filters and pagination', () => {
+it('keeps useful source rows when aggregate counts differ from the filtered result', () => {
   const wrapper = mount(ComparisonEvidence, { props: { result: { ...result, total: 1, counts: { ...result.counts, distinctEvents: 12 } }, returnTo: '/comparison?mode=record&classification=historical_conflict' }, global: { stubs: { SourceReader: true } } })
   mounted.push(wrapper)
-  expect(wrapper.get('[aria-label="记录级计数"] strong').text()).toBe('12')
-  expect(wrapper.text()).toContain('均按所选来源全集计数，不随事件分类筛选或分页变化')
+  expect(wrapper.find('[aria-label="记录级计数"]').exists()).toBe(false)
+  expect(wrapper.get('[data-testid="record-platform-unlinked"] li').text()).toContain('合成企业')
+  expect(wrapper.get('[data-testid="record-current-consistency"]').text()).toContain('2025-02-01')
 })
