@@ -25,7 +25,7 @@ const historicalAliases = computed(() => {
 const confirmedAliases = computed(() => historicalAliases.value.filter((a) => a.verificationStatus === 'confirmed'))
 const pendingAliases = computed(() => historicalAliases.value.filter((a) => a.verificationStatus !== 'confirmed'))
 const queries = computed(() => props.evidence.queries)
-const relationCount = computed(() => props.evidence.relationCount)
+const relationCount = computed(() => queries.value.reduce((count, query) => count + query.relations.length, 0))
 const hasEvidence = computed(() => historicalAliases.value.length > 0 || queries.value.length > 0)
 
 const showDetails = shallowRef(false)

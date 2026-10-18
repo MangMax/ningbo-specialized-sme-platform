@@ -86,3 +86,13 @@ describe('比对行平台证据的可见状态与展开交互', () => {
     expect(document.body.textContent).not.toMatch(/business_list|rdjb|businessList/)
   })
 })
+
+it('已采集第三来源无需差异原因即可打开，摘要按实际来源行计数', async () => {
+ const query = { id:60,interface:'recognized_list',queryKey:'913300000000000004',rdjb:'1,2,3',queriedAt:'2025-02-03T01:02:03Z',status:'partial',failureReason:null,relationCount:2,
+ relations:[1,2].map(id=>({id,queryId:60,sequenceNo:id,relationKey:'same',nameRaw:'合成三来源企业',usccRaw:'913300000000000004',sourceRdjb:'1',sourcePage:id,province:null,status:null,batch:null,declareKind:null,appliedAt:null,awardBatchLabel:null,year:null,matchBasis:'uscc',verificationStatus:'pending',aliasNameRaw:null,rawFields:{whpcyear:'2024'}})) }
+ const wrapper=mountEvidence({aliases:[],disposition:{...disposition(),explanationId:null,evidenceQueryId:null},relationCount:1,queries:[query]})
+ expect(wrapper.get('[data-testid="platform-evidence-summary"]').text()).toContain('平台记录 2 条')
+ await wrapper.get('[data-testid="platform-evidence-details-toggle"]').trigger('click')
+ expect(document.querySelectorAll('[data-record-kind="recognized_list"] [data-testid="platform-relation"]')).toHaveLength(2)
+ expect(document.querySelector('[data-record-kind="recognized_list"]')?.textContent).toContain('部分结果')
+})

@@ -17,6 +17,7 @@ import {
 import { reviewEventSuffix, timelineEventIdentity } from '~~/lib/roster/enterprise-timeline'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
+import TableFailureState from './TableFailureState.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
 import type { PlatformRecordQuery, PlatformRecord } from '~~/lib/roster/platform-records'
 import { Button } from '@/components/ui/button'
@@ -138,7 +139,7 @@ function onCloseAutoFocus(event: Event) {
 }
 
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
-const { data, isLoading, error } = useQuery({
+const { data, isLoading, error, refetch } = useQuery({
   key: () => ['ledger-drawer', props.enterpriseId],
   query: () => apiGet<Detail>(`/api/roster/enterprises/${props.enterpriseId}`),
   enabled: () => props.enterpriseId != null,
@@ -505,6 +506,7 @@ function eventSuffix(item: TimelineItem): string {
             </div>
           </template>
         <section class="mt-4 border-t pt-4" data-testid="drawer-platform-records">
+          <TableFailureState v-if="error" title="企业详情更新失败" compact :pending="isLoading" @retry="refetch()" />
           <h3 class="mb-3 text-sm font-medium">平台记录</h3>
           <PlatformRecords :queries="detail.platform?.queries ?? []" :relations="detail.platform?.relations ?? []" />
         </section>
@@ -527,7 +529,7 @@ function eventSuffix(item: TimelineItem): string {
           </Button>
         </header>
         <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4">
-          <p v-if="error" class="text-destructive text-[13px] leading-5">未能加载该企业详情。</p>
+          <TableFailureState v-if="error" title="未能加载该企业详情。" :pending="isLoading" description="尚未读取平台证据，可以重新加载。" @retry="refetch()" />
           <template v-else>
             <Skeleton class="h-4 w-56" />
             <Skeleton class="h-3 w-36" />
