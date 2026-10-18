@@ -252,6 +252,33 @@ describe('record comparison public read service', () => {
     expect(JSON.stringify(asOf)).not.toContain('future-proof')
     expect(previewRecordCorrespondenceImpact(f.db, { ...f.input([q.id]), asOf: '2026-10-18T09:00:00+08:00' }).proposedCandidates).toEqual([])
   })
+  it('equivalent asOf instants both reject a next-UTC-day export source', () => {
+    const f = fixture(), e = f.makeEnterprise('Export cutoff', '91330211255994480H')
+    f.db.update(schema.sourceDocument).set({ issueDate: '2024-01-01' }).run()
+    const q = f.makeQuery('business_list', e.usccNorm!)
+    f.db.update(schema.platformQuery).set({ queriedAt: '2026-10-18T00:00:00Z' }).run()
+    const batch = f.db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-19', originalFilename: 'future.xlsx', sha256: 'f'.repeat(64), importStatus: 'imported' }).returning().get()
+    const input = f.input([q.id], [batch.id])
+    expect(() => getRecordComparison(f.db, { ...input, asOf: '2026-10-19T00:30:00+08:00' })).toThrow('source_set_missing_or_out_of_scope')
+    expect(() => getRecordComparison(f.db, { ...input, asOf: '2026-10-18T16:30:00Z' })).toThrow('source_set_missing_or_out_of_scope')
+  })
+  it('equivalent asOf instants select identical prior-UTC-day export rows and read model', () => {
+    const f = fixture(), e = f.makeEnterprise('Export included', '91330211255994481J')
+    f.db.update(schema.sourceDocument).set({ issueDate: '2024-01-01' }).run()
+    const q = f.makeQuery('business_list', e.usccNorm!)
+    f.db.update(schema.platformQuery).set({ queriedAt: '2026-10-18T00:00:00Z' }).run()
+    const batch = f.db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'included.xlsx', sha256: '1'.repeat(64), importStatus: 'imported' }).returning().get()
+    const exported = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 7, usccRaw: e.usccNorm, nameRaw: 'Export included' }).returning().get()
+    const input = f.input([q.id], [batch.id])
+    const offset = getRecordComparison(f.db, { ...input, asOf: '2026-10-19T00:30:00+08:00' })
+    const utc = getRecordComparison(f.db, { ...input, asOf: '2026-10-18T16:30:00Z' })
+    const { sourceSet: offsetSourceSet, ...offsetResult } = offset
+    const { sourceSet: utcSourceSet, ...utcResult } = utc
+    expect(offsetResult).toEqual(utcResult)
+    expect(offsetSourceSet.exportBatchIds).toEqual(utcSourceSet.exportBatchIds)
+    expect(offset.exportBatches).toMatchObject([{ id: batch.id, collectedOn: '2026-10-18' }])
+    expect(offset.currentSourceConsistency.exportObservations).toMatchObject([{ exportRow: { id: exported.id, batchId: batch.id } }])
+  })
   it('legacy preview preserves originals and global counts across pages without writing', () => {
     const f = fixture(), e = f.makeEnterprise('L', '91330211255994464W'), event = f.makeEvent(e.id, 'award', 2024, 1), q = f.makeQuery('business_list', e.usccNorm!)
     const relation = f.makeRelation(q.id, e.id, e.usccNorm, 1, '终审通过', 'apply', 2024)
