@@ -2,12 +2,20 @@ import { runPlatformLiveQuery } from '../../utils/platform-live-query'
 
 defineRouteMeta({
   openAPI: {
-    tags: ['平台实时查询'], summary: '实时查询平台申报记录（只读）',
-    description: '独立于本库企业。name 为平台名称关键词，uscc 为18位代码；同时提供按 AND 生效。无默认日期/区域限制。凭据仅由服务端解析，未知参数拒绝。只读沿用无 token 策略。完整契约及示例见 docs/platform-live-query.md。',
+    tags: ['平台实时查询'], summary: '实时查询平台申报/已认定企业记录（只读）',
+    description: '独立于本库企业。name 为平台名称关键词，uscc 为18位代码；同时提供按 AND 生效。无默认日期/区域限制。凭据仅由服务端解析，未知参数拒绝。queryBusList支持单/全三称号、认定日期范围、有效年份、维护年份及依赖年份的批次、账号区域码和qymc排序；仅明确提供时生效。只读沿用无 token 策略。完整契约及示例见 docs/platform-live-query.md。',
     requestBody: { required: true, content: { 'application/json': { schema: {
       type: 'object', additionalProperties: false, required: ['source'], properties: {
-        source: { type: 'string', enum: ['queryList', 'businessList', 'queryBusList'], description: '当前仅 queryList 可用；其余明确拒绝，见 capabilities。' },
+        source: { type: 'string', enum: ['queryList', 'businessList', 'queryBusList'], description: 'queryList 与 queryBusList 可用；businessList 后续独立接入。' },
         name: { type: 'string', description: '非空，最多200字符' }, uscc: { type: 'string', description: '18位大写字母/数字信用代码' },
+        rdjb: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', enum: ['1', '2', '3'] }, description: '仅queryBusList；默认三称号逐一查询；数组不可重复。1创新型/2专精特新中小企业/3小巨人。' },
+        sqsj: { type: 'string', description: '仅queryBusList；认定时间范围 YYYY/MM/DD - YYYY/MM/DD；真实日期且起始不晚于结束，边界是否包含及平台时区未验证。' },
+        rddqrq: { type: 'string', description: '仅queryBusList；有效年份，不是精确到期日期。' },
+        whpcyear: { type: 'string', description: '仅queryBusList；维护年份，不等于认定年份。' },
+        whpc: { type: 'string', description: '仅queryBusList；维护批次1–15；必须同时提供whpcyear，否则拒绝。不是YYYY-N。' },
+        szq: { type: 'string', description: '仅queryBusList；账号可见范围的8位筛选码，与结果行szq不同，不提供通用字典。' },
+        orderField: { type: 'string', enum: ['qymc'], description: '仅queryBusList；须同时提供orderDirection，只有企业名称排序已实证。' },
+        orderDirection: { type: 'string', enum: ['asc', 'desc'], description: '仅queryBusList；须同时提供orderField。' },
         pageSize: { type: 'integer', minimum: 1, maximum: 50, default: 50 }, startPage: { type: 'integer', minimum: 1, maximum: 100000, default: 1 },
         maxRequests: { type: 'integer', minimum: 1, maximum: 100, default: 100 }, maxRows: { type: 'integer', minimum: 1, maximum: 5000, default: 5000 }, maxDurationMs: { type: 'integer', minimum: 1, maximum: 60000, default: 60000 },
       },
@@ -63,6 +71,13 @@ defineRouteMeta({
         "uscc": {
           "type": "string"
         },
+        "sqsj": { "type": "string" },
+        "rddqrq": { "type": "string" },
+        "whpcyear": { "type": "string" },
+        "whpc": { "type": "string" },
+        "szq": { "type": "string" },
+        "orderField": { "type": "string" },
+        "orderDirection": { "type": "string" },
         "combination": {
           "type": "string",
           "enum": [

@@ -27,6 +27,9 @@ export const BUSINESS_LIST_PATH = 'ZjtxxjrBusInfoManageBLH/businessList'
 export const APPLY_LIST_PATH = 'YzzxqyApplayBLH/queryList'
 export const BUSINESS_GRID = 'businessListGrid'
 export const APPLY_GRID = 'applyGrid'
+/** Independently validated recognized-enterprise source; never alias businessList. */
+export const RECOGNIZED_LIST_PATH = 'ZjtxxjrBusInfoManageBLH/queryBusList'
+export const RECOGNIZED_GRID = 'businessGrid'
 
 /**
  * `businessList` 的 `rdjb`(认定级别)**取值集**:1 创新型 / 2 专精特新中小企业 / 3 小巨人。
@@ -346,5 +349,5 @@ export function parsePlatformPage(raw: string, gridName: string) {
   }
   const total = grid?.maxCount
   const declaredTotal = total !== null && total !== undefined && total !== '' && Number.isSafeInteger(Number(total)) && Number(total) >= 0 ? Number(total) : null
-  return { ...parsed, declaredTotal, responsePage: grid?.page == null ? null : Number(grid.page) }
+  return { ...parsed, declaredTotal, responsePage: grid?.page == null ? null : Number(grid.page), responseMaxPage: grid?.maxPage == null ? null : Number(grid.maxPage), responsePageSize: grid?.pageSize == null ? null : Number(grid.pageSize) }
 }

@@ -109,7 +109,7 @@ it.each([
   {}, { source: 'queryList' }, { source: 'queryList', name: ' ' }, { source: 'queryList', uscc: 'bad' },
   { source: 'queryList', name: '合成', cookie }, { source: 'queryList', name: '合成', rdjb: '1' },
   { source: 'queryList', name: '合成', maxRequests: 101 }, { source: 'queryList', name: '合成', sqsj: '2025' },
-  { source: 'businessList', name: '合成' }, { source: 'queryBusList', name: '合成' },
+  { source: 'businessList', name: '合成' }, { source: 'queryBusList' },
 ])('rejects unsupported or invalid input without an upstream call (case %#)', async input => {
   expect(await query(input)).toMatchObject({ error: { code: expect.stringMatching(/invalid_input|unsupported_source/) } })
   await expect(tool.handler(input)).rejects.toMatchObject({ statusCode: 400 })
