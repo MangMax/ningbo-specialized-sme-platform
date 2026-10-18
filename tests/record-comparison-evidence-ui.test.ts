@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { mount } from '@vue/test-utils'
-import { afterEach, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, expect, it, vi } from 'vitest'
 import ComparisonEvidence from '../components/record-correspondence/ComparisonEvidence.vue'
 import ComparisonEventRow from '../components/record-correspondence/ComparisonEventRow.vue'
 import type { RecordComparisonResult } from '../lib/roster/record-comparison-view'
@@ -23,7 +23,7 @@ const result = { rows: [row], total: 1, page: 1, pageSize: 25,
   laterProcessPlatformRows: [{ relation: { ...relation, id: 44, status: '退回' }, correspondences: [{ id: 5, role: 'followup_update', status: 'confirmed' }] }],
 } as unknown as RecordComparisonResult
 const mounted: ReturnType<typeof mount>[] = []
-afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount() })
+afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount(); vi.unstubAllGlobals() })
 
 it('keeps positive same-subject rows visible while qualification stays unknown', async () => {
   const wrapper = mount(ComparisonEvidence, { props: { result, returnTo: '/comparison?mode=record' }, global: { stubs: { SourceReader: true } } })
@@ -69,4 +69,78 @@ it('shows review business years and readable count grains without internal enum 
   expect(summary.get('[aria-label="记录级计数"]').text()).toContain('正式事件（按事件去重）')
   expect(summary.get('[aria-label="记录级计数"]').text()).toContain('接口原行（按原行去重）')
   expect(summary.get('[aria-label="记录级计数"]').text()).not.toContain('ID')
+})
+
+
+const sourceDialogStubs = {
+  NuxtLink: true,
+  Dialog: { props: ['open'], template: '<div v-if="open"><slot /></div>' },
+  DialogContent: { template: '<div><slot /></div>' },
+  DialogTitle: { template: '<h3><slot /></h3>' },
+  DialogDescription: { template: '<p><slot /></p>' },
+}
+const repeatedRelations = [
+  { ...relation, id: 101, queryId: 7, sequenceNo: 1 },
+  { ...relation, id: 102, queryId: 7, sequenceNo: 2 },
+  { ...relation, id: 103, queryId: 8, sequenceNo: 1 },
+  { ...relation, id: 104, queryId: 8, sequenceNo: 2 },
+  { ...relation, id: 105, queryId: 9, sequenceNo: 1 },
+  { ...relation, id: 106, queryId: 9, sequenceNo: 2 },
+]
+
+it('keeps six identical-content original rows distinct with their own edge statuses and source endpoints', async () => {
+  const fetch = vi.fn().mockRejectedValue(new Error('synthetic source unavailable'))
+  vi.stubGlobal('$fetch', fetch)
+  const repeated = { ...row, platformRows: repeatedRelations, correspondences: [
+    { id: 6, relationId: 106, role: 'supports_award', status: 'confirmed' },
+    { id: 2, relationId: 102, role: 'context_only', status: 'confirmed' },
+    { id: 1, relationId: 101, role: 'context_only', status: 'rejected' },
+    { id: 4, relationId: 104, role: 'context_only', status: 'unlinked' },
+    { id: 5, relationId: 105, role: 'context_only', status: 'unlinked' },
+    { id: 3, relationId: 103, role: 'context_only', status: 'rejected' },
+  ] } as unknown as RecordComparisonResult['rows'][number]
+  const wrapper = mount(ComparisonEventRow, { props: { row: repeated, returnTo: '/comparison?mode=record' }, global: { stubs: sourceDialogStubs } })
+  mounted.push(wrapper)
+  const items = wrapper.findAll('li[data-relation-id]')
+  expect(items).toHaveLength(6)
+  const expected = [
+    ['查询 #7 · 原行 1 · 记录 #101', '同批次流程背景 · 已拒绝', 101],
+    ['查询 #7 · 原行 2 · 记录 #102', '同批次流程背景 · 已确认', 102],
+    ['查询 #8 · 原行 1 · 记录 #103', '同批次流程背景 · 已拒绝', 103],
+    ['查询 #8 · 原行 2 · 记录 #104', '同批次流程背景 · 已解除', 104],
+    ['查询 #9 · 原行 1 · 记录 #105', '同批次流程背景 · 已解除', 105],
+    ['查询 #9 · 原行 2 · 记录 #106', '支持认定事件 · 已确认', 106],
+  ] as const
+  for (const [index, [locator, status, id]] of expected.entries()) {
+    expect(items[index]!.text()).toContain(locator)
+    expect(items[index]!.findAll('[data-slot="badge"]').map(badge => badge.text())).toEqual([status])
+    await items[index]!.get('button').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(`/api/roster/correspondences/relations/${id}`)
+  }
+  expect(fetch).toHaveBeenCalledTimes(6)
+})
+
+it('keeps duplicate unlinked evidence rows separately located and opens every original source endpoint', async () => {
+  const fetch = vi.fn().mockRejectedValue(new Error('synthetic source unavailable'))
+  vi.stubGlobal('$fetch', fetch)
+  const repeated = { ...result, platformWithoutOfficial: { total: 6, rows: repeatedRelations.map(relation => ({ relation, qualification: 'unresolved', reasons: [] })) } } as unknown as RecordComparisonResult
+  const wrapper = mount(ComparisonEvidence, { props: { result: repeated, returnTo: '/comparison?mode=record' }, global: { stubs: sourceDialogStubs } })
+  mounted.push(wrapper)
+  const items = wrapper.findAll('[data-testid="record-platform-unlinked"] li')
+  expect(items).toHaveLength(6)
+  for (const [index, id] of [101, 102, 103, 104, 105, 106].entries()) {
+    expect(items[index]!.text()).toContain(`查询 #${[7, 7, 8, 8, 9, 9][index]} · 原行 ${index % 2 + 1} · 记录 #${id}`)
+    await items[index]!.get('button').trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenLastCalledWith(`/api/roster/correspondences/relations/${id}`)
+  }
+  expect(fetch).toHaveBeenCalledTimes(6)
+})
+
+it('explains source-wide count totals stay unchanged by classification filters and pagination', () => {
+  const wrapper = mount(ComparisonEvidence, { props: { result: { ...result, total: 1, counts: { ...result.counts, distinctEvents: 12 } }, returnTo: '/comparison?mode=record&classification=historical_conflict' }, global: { stubs: { SourceReader: true } } })
+  mounted.push(wrapper)
+  expect(wrapper.get('[aria-label="记录级计数"] strong').text()).toBe('12')
+  expect(wrapper.text()).toContain('均按所选来源全集计数，不随事件分类筛选或分页变化')
 })
