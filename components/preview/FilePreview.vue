@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import TextFilePreview from '@/components/preview/TextFilePreview.vue'
 import ImagePreview from '@/components/preview/ImagePreview.vue'
 import OfficePreview from '@/components/preview/OfficePreview.vue'
 import PdfPreview from '@/components/preview/PdfPreview.vue'
@@ -27,18 +28,29 @@ const props = withDefaults(
     name?: string
     /** 图片的替代文本。 */
     alt?: string
+    /** Standalone text pages already show the filename in their page heading. */
+    hideTextName?: boolean
   }>(),
   { name: '', alt: '' },
 )
 
 const emit = defineEmits<{ error: [message: string] }>()
 
-const info = computed(() => resolvePreviewKind(props.src))
+const info = computed(() => resolvePreviewKind(props.src) ?? (props.src.startsWith('blob:') ? resolvePreviewKind(props.name) : null))
 </script>
 
 <template>
+  <TextFilePreview
+    v-if="info && (info.kind === 'markdown' || info.kind === 'text')"
+    :src="src"
+    :name="name"
+    :hide-name="hideTextName"
+    :format="info.kind"
+    :language="info.language"
+    @error="emit('error', $event)"
+  />
   <OfficePreview
-    v-if="info && info.kind !== 'pdf' && info.kind !== 'image'"
+    v-else-if="info && ['docx', 'xlsx', 'pptx'].includes(info.kind)"
     :src="src"
     :name="name"
     :kind="info.kind"

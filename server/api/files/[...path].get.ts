@@ -1,5 +1,6 @@
 import { createReadStream, statSync } from 'node:fs'
 import { extname, join, normalize, resolve, sep } from 'node:path'
+import { resolvePreviewKind } from '../../../lib/preview'
 import { resolveInsideRoot } from '../../utils/stored-files'
 
 /**
@@ -28,23 +29,6 @@ import { resolveInsideRoot } from '../../utils/stored-files'
 function filesRoot(): string {
   return resolve(useRuntimeConfig().filesDir)
 }
-
-/** 预览支持的扩展名,与 lib/preview.ts 的 BY_EXTENSION 保持一致。 */
-const ALLOWED = new Set([
-  '.docx',
-  '.xlsx',
-  '.xlsm',
-  '.pptx',
-  '.pdf',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.webp',
-  '.gif',
-  '.avif',
-  '.bmp',
-  '.svg',
-])
 
 const MIME: Record<string, string> = {
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -87,7 +71,7 @@ defineRouteMeta({
 })
 
 export default defineEventHandler((event) => {
-  const raw = getRouterParam(event, 'path')
+  const raw = getRouterParam(event, 'path') ?? getRouterParam(event, 'id')
   if (!raw) {
     throw createError({ statusCode: 400, statusMessage: '缺少文件路径' })
   }
@@ -106,7 +90,8 @@ export default defineEventHandler((event) => {
   }
 
   const ext = extname(abs).toLowerCase()
-  if (!ALLOWED.has(ext)) {
+  const info = resolvePreviewKind(decoded)
+  if (!info) {
     throw createError({
       statusCode: 415,
       statusMessage: `不支持的文件类型 ${ext || '(无扩展名)'}`,
@@ -123,7 +108,13 @@ export default defineEventHandler((event) => {
     throw createError({ statusCode: 404, statusMessage: '不是一个文件' })
   }
 
-  setHeader(event, 'content-type', MIME[ext] ?? 'application/octet-stream')
+  const text = info.kind === 'markdown' || info.kind === 'text'
+  // HTML and scripts are downloadable source, never executable same-origin documents.
+  setHeader(event, 'content-type', text ? 'text/plain; charset=utf-8' : MIME[ext] ?? 'application/octet-stream')
+  if (text) {
+    setHeader(event, 'x-content-type-options', 'nosniff')
+    setHeader(event, 'content-security-policy', "default-src 'none'; sandbox")
+  }
   // 来源文件不会变,可以放心长缓存;预览器重复打开时不必再走一次磁盘。
   setHeader(event, 'cache-control', 'private, max-age=3600')
   // 文件名里常有中文与书名号,统一按 UTF-8 编码。

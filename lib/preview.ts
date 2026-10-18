@@ -4,16 +4,26 @@
  * 与台账「出处」里出现的文件一致:经信局公布文件是 docx/doc/pdf,
  * 工信部名单是三份导出 Excel,项目自带的汇报材料有 pptx。
  */
-export type PreviewKind = 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'image'
+export type PreviewKind = 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'image' | 'markdown' | 'text'
 
 export interface PreviewKindInfo {
   kind: PreviewKind
+  language?: string
   /** 面向使用者的类型名,用于工具栏与错误提示。 */
   label: string
 }
 
 /** 扩展名 → 类型。键一律小写,不含点。 */
 const BY_EXTENSION: Record<string, PreviewKindInfo> = {
+  md: { kind: 'markdown', label: 'Markdown 文档', language: 'markdown' },
+  markdown: { kind: 'markdown', label: 'Markdown 文档', language: 'markdown' },
+  ...Object.fromEntries(Object.entries({
+    txt: ['text', '纯文本'], json: ['json', 'JSON'], jsonl: ['jsonl', 'JSON Lines'],
+    js: ['javascript', 'JavaScript'], mjs: ['javascript', 'JavaScript'], cjs: ['javascript', 'JavaScript'],
+    ts: ['typescript', 'TypeScript'], jsx: ['jsx', 'JSX'], tsx: ['tsx', 'TSX'],
+    py: ['python', 'Python'], sql: ['sql', 'SQL'], yaml: ['yaml', 'YAML'], yml: ['yaml', 'YAML'],
+    html: ['html', 'HTML 源码'], htm: ['html', 'HTML 源码'], css: ['css', 'CSS'],
+  }).map(([extension, [language, label]]) => [extension, { kind: 'text' as const, label: `${label}文本`, language }])),
   docx: { kind: 'docx', label: 'Word 文档' },
   xlsx: { kind: 'xlsx', label: 'Excel 工作簿' },
   xlsm: { kind: 'xlsx', label: 'Excel 工作簿' },
@@ -60,8 +70,7 @@ export function fileNameOf(path: string): string {
 
 /** 能否预览这个路径。 */
 export function isPreviewable(path: string): boolean {
-  const ext = extensionOf(path)
-  return ext in BY_EXTENSION
+  return resolvePreviewKind(path) !== null
 }
 
 /** 文件读取接口的前缀(见 `server/api/files/[...path].get.ts`)。 */
@@ -137,7 +146,19 @@ export function retrySrc(src: string, attempt: number): string {
  * 需要先把文件读进来,反而会在「明明打不开」的文件上多花一次网络往返。
  */
 export function resolvePreviewKind(path: string): PreviewKindInfo | null {
-  const ext = extensionOf(path)
+  let clean: string
+  try { clean = decodeURIComponent(path.split(/[?#]/, 1)[0] ?? '') } catch { return null }
+  const segments = clean.split('/')
+  if (segments.some(segment => segment.startsWith('.'))) {
+    // OCR page images predate text previews and live in a hidden derived directory.
+    // Keep that exact PNG convention readable, without admitting hidden text/cache files.
+    const pageImage = /^\.[^.][^/]*\.pdf\.pages$/i.test(segments.at(-2) ?? '')
+      && /^p\d{3,}\.png$/.test(segments.at(-1) ?? '')
+      && Number((segments.at(-1) ?? '').slice(1, -4)) > 0
+      && segments.slice(0, -2).every(segment => !segment.startsWith('.'))
+    if (!pageImage) return null
+  }
+  const ext = extensionOf(clean)
   return BY_EXTENSION[ext] ?? null
 }
 

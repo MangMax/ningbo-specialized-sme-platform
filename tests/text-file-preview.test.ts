@@ -1,0 +1,68 @@
+// @vitest-environment happy-dom
+import { mount, flushPromises } from '@vue/test-utils'
+import { afterEach, expect, it, vi } from 'vitest'
+import TextFilePreview from '../components/preview/TextFilePreview.vue'
+afterEach(() => vi.unstubAllGlobals())
+it('isolates late old responses, aborts the old request and retries the failed target', async () => {
+  let resolveOld!: (value: Response) => void
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { resolveOld = resolve })).mockResolvedValueOnce(new Response('missing', { status: 404 })).mockResolvedValueOnce(new Response('# 新名单'))
+  vi.stubGlobal('fetch', fetcher)
+  const wrapper = mount(TextFilePreview, { props: { src: '/api/files/old.md', name: 'old.md', format: 'markdown' } })
+  await flushPromises()
+  const signal = fetcher.mock.calls[0]![1].signal as AbortSignal
+  await wrapper.setProps({ src: '/api/files/new.md', name: 'new.md' })
+  await flushPromises()
+  expect(signal.aborted).toBe(true)
+  expect(wrapper.text()).toContain('文件不存在')
+  resolveOld(new Response('# 旧名单'))
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('旧名单')
+  await wrapper.findAll('button').find(b => b.text() === '重试')!.trigger('click')
+  await flushPromises()
+  expect(wrapper.find('h1').text()).toBe('新名单')
+  expect(fetcher.mock.calls[2]![0]).toContain('/api/files/new.md?retry=1')
+  wrapper.unmount()
+})
+it('rejects cross-origin URLs before fetching', async () => {
+  const fetcher = vi.fn()
+  vi.stubGlobal('fetch', fetcher)
+  const wrapper = mount(TextFilePreview, { props: { src: 'https://evil.test/data.md', format: 'markdown' } })
+  await flushPromises()
+  expect(fetcher).not.toHaveBeenCalled()
+  expect(wrapper.text()).toContain('同源')
+})
+
+it('retains a successful result with its own filename when the next target fails', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response('# 旧正文')).mockRejectedValueOnce(new Error('Failed to fetch'))
+  vi.stubGlobal('fetch', fetcher)
+  const wrapper = mount(TextFilePreview, { props: { src: '/api/files/old.md', name: '旧文件.md', format: 'markdown' } })
+  await flushPromises()
+  expect(wrapper.find('h1').text()).toBe('旧正文')
+  await wrapper.setProps({ src: '/api/files/new.md', name: '新文件.md' })
+  await flushPromises()
+  expect(wrapper.find('h1').text()).toBe('旧正文')
+  expect(wrapper.text()).toContain('仍显示上次读取的 旧文件.md')
+  expect(wrapper.text()).toContain('目标文件：新文件.md')
+  wrapper.unmount()
+})
+
+it('accepts same-origin blobs and rejects binary text payloads', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response('blob 正文')).mockResolvedValueOnce(new Response('binary\0data'))
+  vi.stubGlobal('fetch', fetcher)
+  const wrapper = mount(TextFilePreview, { props: { src: `blob:${location.origin}/fixture`, format: 'text' } })
+  await flushPromises()
+  expect(wrapper.find('pre').element.textContent).toBe('blob 正文')
+  await wrapper.setProps({ src: '/api/files/binary.txt' })
+  await flushPromises()
+  expect(wrapper.text()).toContain('二进制内容')
+  wrapper.unmount()
+})
+
+it('bounds text downloads even without content length and exposes failure without truncating success', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('a'.repeat(5_000_001))))
+  const wrapper = mount(TextFilePreview, { props: { src: '/api/files/large.txt', format: 'text' } })
+  await flushPromises()
+  expect(wrapper.text()).toContain('超过 5 MB')
+  expect(wrapper.find('pre').exists()).toBe(false)
+  wrapper.unmount()
+})

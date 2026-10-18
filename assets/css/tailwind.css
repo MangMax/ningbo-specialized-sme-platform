@@ -20,6 +20,12 @@
 :root {
   --radius: 0.375rem;
 
+  /* 识别校对工作台的阅读/代码字号。只被 OCR 工作台显式引用，
+   * 普通预览仍用组件自己的字号；两处都 >=14px，窄屏不再掉到 12/13px。 */
+  --ocr-prose-size: 0.9375rem; /* 15px */
+  --ocr-prose-leading: 1.65;
+  --ocr-code-size: 0.875rem; /* 14px */
+
   /* 页面底(下沉面)与抬起面分成两个 token。
    * shadcn 的组件把 `bg-background` 当作**抬起的表面**用(Tabs 选中态、Dialog/Sheet、
    * outline 按钮、Switch 滑块),而 `bg-page` 才是页面底。若把 --background 直接设成
@@ -245,6 +251,12 @@
   /* 表格外壳:吸顶表头 + 正交分隔线。列多时线是唯一的分组手段。 */
   .data-table {
     --table-line: var(--border);
+  }
+
+  /* 识别校对工作台的顶栏只保留导航与主题;台账规模与这一页的任务无关。
+   * 用页面自身的根节点做条件，其他页面的顶栏完全不变。 */
+  body:has(.ocr-workbench) [data-global-stats] {
+    display: none;
   }
 }
 

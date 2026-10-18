@@ -38,7 +38,7 @@ const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString('zh-CN'))
         <div class="flex w-full items-center gap-3 px-4">
           <SidebarTrigger class="-ml-1" />
           <Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
-          <span class="text-muted-foreground text-xs tabular-nums">
+          <span data-global-stats class="text-muted-foreground text-xs tabular-nums">
             共 <span class="text-foreground font-medium">{{ fmt(stats?.totalRecords) }}</span> 个企业×称号
             · <span class="text-foreground font-medium">{{ fmt(stats?.totalEnterprises) }}</span> 家企业
           </span>

@@ -49,7 +49,7 @@ describe('preview 文件类型解析', () => {
   })
 
   it('未知扩展名与无扩展名都不可预览', () => {
-    expect(isPreviewable('a.txt')).toBe(false)
+    expect(isPreviewable('a.bin')).toBe(false)
     expect(isPreviewable('README')).toBe(false)
     expect(resolvePreviewKind('a.zip')).toBeNull()
   })
