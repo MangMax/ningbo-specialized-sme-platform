@@ -12,6 +12,23 @@ const rows = {
 const wrapperList: ReturnType<typeof mount>[] = []
 afterEach(() => { for (const wrapper of wrapperList.splice(0)) wrapper.unmount(); vi.unstubAllGlobals() })
 
+it('offers an explicit route to every query and preserves selection when the catalog is collapsed', async () => {
+  const queries = Array.from({ length: 14 }, (_, index) => ({ ...rows.query[0], id: index + 1, label: `平台查询 ${index + 1}` }))
+  vi.stubGlobal('$fetch', vi.fn(async () => ({ rows: queries, total: 14, page: 1, pageSize: 25 })))
+  const wrapper = mount(ComparisonSourcePicker, { props: { kind: 'query', selection: { queryIds: [], exportBatchIds: [], officialSourceDocumentIds: [], proofIds: [] } }, global: { stubs: { TableLoadingStatus: true, TableFailureState: true, TablePagination: true } } })
+  wrapperList.push(wrapper)
+  await flushPromises()
+  expect(wrapper.find('[aria-label="选择平台查询 14"]').exists()).toBe(false)
+  await wrapper.findAll('button').find(button => button.text().includes('查看全部 14'))!.trigger('click')
+  await wrapper.get('[aria-label="选择平台查询 14"]').trigger('click')
+  expect(wrapper.emitted('change')?.at(-1)?.[0]).toMatchObject({ queryIds: [14] })
+  await wrapper.setProps({ selection: { queryIds: [14], exportBatchIds: [], officialSourceDocumentIds: [], proofIds: [] } })
+  await flushPromises()
+  await wrapper.findAll('button').find(button => button.text().includes('收起，只看前'))!.trigger('click')
+  expect(wrapper.get('[aria-label="已选来源"]').text()).toContain('平台查询 14')
+  expect(wrapper.emitted('change')).toHaveLength(1)
+})
+
 it('shows human source names and times, permits partial queries, and blocks failed export batches', async () => {
   vi.stubGlobal('$fetch', vi.fn(async (_url: string, options: { query: { kind: keyof typeof rows; page: number; pageSize: number } }) => ({ rows: rows[options.query.kind], total: 1, page: options.query.page, pageSize: options.query.pageSize, counts: { official_document: 1, query: 1, export_batch: 1 }, selection: 'explicit', completeness: 'not_implied_by_catalog' })))
   const wrapper = mount(ComparisonSourcePicker, { props: { selection: { queryIds: [], exportBatchIds: [], officialSourceDocumentIds: [], proofIds: [] } }, global: { stubs: { TableLoadingStatus: true, TableFailureState: true, TablePagination: true } } })
