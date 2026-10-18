@@ -99,7 +99,7 @@ export function comparisonRouteKey(state: ComparisonRouteState): string {
   const selection = state.selection
   return JSON.stringify([selection.queryIds.toSorted((a, b) => a - b), selection.exportBatchIds.toSorted((a, b) => a - b), selection.officialSourceDocumentIds.toSorted((a, b) => a - b), selection.proofIds.toSorted((a, b) => a - b), state.page, state.pageSize, state.classification, state.asOf])
 }
-/** HTML datetime-local is a local wall time; the URL/API cutoff is an instant. */
+/** The picker uses local wall time; the URL/API cutoff is an instant. */
 export function localDateTimeForInstant(instant: string): string {
   if (!instant || !Number.isFinite(Date.parse(instant))) return ''
   const date = new Date(instant)
