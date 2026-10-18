@@ -717,7 +717,7 @@ export const platformRelation = sqliteTable(
  *
  * ── 已知原因 ──────────────────────────────────────────────────────────────
  * `moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 / `platform_stale` 平台未更新 /
- * `moved_in` 迁入 / `other` 其他(可凭证据扩展 —— `reasonNote` 记新原因的说明)。
+ * `pending_review` 待审核 / `moved_in` 迁入 / `other` 其他(可凭证据扩展 —— `reasonNote` 记新原因的说明)。
  * 迁入另承载 `movedInCity` / `movedInTitleCode` / `movedInYear` / `movedInBatch`
  * (缺项**留空待核,不猜填**)。
  *
@@ -753,7 +753,7 @@ export const differenceReason = sqliteTable(
       .default('not_queried'),
     /** 已知原因;`needs_review` / `confirmed_no_diff` 时可为空。 */
     reasonCode: text('reason_code', {
-      enum: ['moved_out', 'deregistered', 'renamed', 'platform_stale', 'moved_in', 'other'],
+      enum: ['moved_out', 'deregistered', 'renamed', 'platform_stale', 'pending_review', 'moved_in', 'other'],
     }),
     /** 原因的说明(新原因在这里写清,并配 `other`)。 */
     reasonNote: text('reason_note'),
@@ -762,6 +762,7 @@ export const differenceReason = sqliteTable(
       enum: [
         'keep_history',
         'mark_platform_snapshot',
+        'follow_review',
         'mark_moved_out',
         'mark_deregistered',
         'update_current_name',

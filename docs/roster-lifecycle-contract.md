@@ -158,9 +158,9 @@
 | `title_code` | text | | FK→`title.code` | |
 | `direction` | text | | `missing_in_miit` \| `extra_in_miit` | 与 `lib/comparison.ts` 同值 |
 | `status` | text | | §3 的六个取值;默认 `not_queried` | 状态机 |
-| `reason_code` | text | ✅ | `moved_out` \| `deregistered` \| `renamed` \| `platform_stale` \| `moved_in` \| `other` | 已知原因;`confirmed_no_diff` / `needs_review` 时可为空 |
+| `reason_code` | text | ✅ | `moved_out` \| `deregistered` \| `renamed` \| `platform_stale` \| `pending_review` \| `moved_in` \| `other` | 已知原因;`confirmed_no_diff` / `needs_review` 时可为空 |
 | `reason_note` | text | ✅ | | 原因说明;新原因写这里(配 `other`) |
-| `measure_code` | text | ✅ | §2.8 的八个取值 | **与原因成对**的后续措施 |
+| `measure_code` | text | ✅ | §2.9 的措施取值 | **与原因成对**的后续措施 |
 | `measure_note` | text | ✅ | | 措施说明 |
 | `evidence_query_id` | integer | ✅ | FK→`platform_query.id` | 证据:平台查询 |
 | `evidence_relation_id` | integer | ✅ | FK→`platform_relation.id` | 证据:平台关系 |
@@ -257,7 +257,7 @@
 | 2.5 | 平台查询状态 | `success` 查询成功 / `failed` 查询失败 / `no_record` 无记录 / `not_queried` 未查询 | `PLATFORM_QUERY_STATUSES` |
 | 2.6 | 关系匹配依据 | `uscc` 按统一社会信用代码 / `alias` 按曾用名 / `manual` 人工确认 / `none` 未匹配 | `RELATION_MATCH_BASES` |
 | 2.7 | 差异状态 | 见 §3 | `DIFFERENCE_STATUSES` |
-| 2.8 | 差异原因 | `moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 / `platform_stale` 平台未更新 / `moved_in` 迁入 / `other` 其他 | `DIFFERENCE_REASONS` |
+| 2.8 | 差异原因 | `moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 / `platform_stale` 平台未更新 / `pending_review` 待审核 / `moved_in` 迁入 / `other` 其他 | `DIFFERENCE_REASONS` |
 
 > **原因由代理逐案确认（2026-10-18 用户裁定）**：上述枚举用于表达经核实的结论，不是自动判断规则。
 > `platform_stale` 可表达正式公告与平台审核/在册信息尚未同步，但不能仅凭“有接口记录”就当作原因兜底。
@@ -271,7 +271,7 @@
 >
 > 查询事实和业务原因分开：完整零记录见 §3.2；`confirmed_no_diff` 需要明确两侧已对齐的证据，不能从一次请求成功推出。实际提交仍走统一导入 API。
 
-| 2.9 | 后续措施 | `keep_history` 保留正式公布历史 / `mark_platform_snapshot` 标明平台时点,不覆盖历史 / `mark_moved_out` 记录迁出状态 / `mark_deregistered` 记录注销主体状态 / `update_current_name` 更新当前名并保留旧名为曾用名 / `record_moved_in` 记录迁入来源(城市/称号/年份/批次) / `manual_review` 转人工核实 / `none` 无需措施 | `DIFFERENCE_MEASURES` |
+| 2.9 | 后续措施 | `keep_history` 保留正式公布历史 / `mark_platform_snapshot` 标明平台时点,不覆盖历史 / `mark_moved_out` 记录迁出状态 / `mark_deregistered` 记录注销主体状态 / `update_current_name` 更新当前名并保留旧名为曾用名 / `record_moved_in` 记录迁入来源(城市/称号/年份/批次) / `follow_review` 保留正式公布历史并跟进审核 / `manual_review` 转人工核实 / `none` 无需措施 | `DIFFERENCE_MEASURES` |
 | 2.10 | 导出批次导入状态 | `pending` 待导入 / `imported` 已导入 / `failed` 导入失败 | `EXPORT_IMPORT_STATUSES` |
 | 2.11 | 统一批次状态 | `preflight` 预检 / `committed` 已提交 / `failed` 提交失败 | `IMPORT_BATCH_STATUSES` |
 | 2.12 | 导入来源类别 | `announcement` 公布文件 / `platform_export` 平台导出 / `alias_evidence` 别名证据 | `IMPORT_SOURCE_KINDS` |
@@ -286,6 +286,7 @@
 | `deregistered` 注销 | `mark_deregistered` |
 | `renamed` 更名 | `update_current_name` |
 | `platform_stale` 平台未更新 | `mark_platform_snapshot` |
+| `pending_review` 待审核 | `follow_review` |
 | `moved_in` 迁入 | `record_moved_in` |
 | 证据不足(任何原因) | `manual_review` |
 | `confirmed_no_diff` 无差异 | `none` |
@@ -1793,3 +1794,9 @@ REST `/api/platform/batches` 与 MCP `submit_platform_batch` 提交后按稳定 
 `platform_query.interface` 新增 `recognized_list`，只对应实时 `queryBusList`；旧来源不重分类。status 增加 `partial`；新增可空 JSON `collection_evidence`，原时间/条件/称号范围/页/计数/末页/未完成/原行逐项保存。旧载荷和旧记录均兼容。
 
 [完整转存与读契约](platform-recognized-evidence.md) 规定新来源必填字段、预检拒绝规则、原始批量 segments 转存、幂等冲突、REST/MCP 历史筛选和同批差异引用。查询与批量入口仍不写业务证据；所有转存经统一写入。企业详情带原字段与页行映射，#60 单独交付界面。
+
+### 用户明确裁决的待审核
+
+`pending_review` 是独立差异原因，配 `confirmed_reason` + `verificationStatus=confirmed` + `follow_review`。确认的是当前分类，后续审核结果尚未产生；与 `needs_review`（原因待核实）、复核失败、失效分开。统一 API/MCP 共用校验此组合。保留正式事件，以新 `recordedAt` 追加解释并保留旧 audit。筛选及页面沿用共享原因/措施字典。
+
+仅在用户明确范围的批次，代理核对同企业同称号历史终审通过、按 `sqsj` 最新更新/待审核、当前导出缺失及无更新相反记录后提交。软件不自动推断，也不要求额外外部证明。证据说明保留流程号、类型、时间、状态及三接口引用，未知字段空。数据库列为 SQLite TEXT，无 DDL/迁移；旧版本应用不识别新增原因，因此回滚前需保留新解释并升级兼容读写端。

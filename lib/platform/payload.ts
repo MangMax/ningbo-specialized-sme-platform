@@ -118,12 +118,14 @@ export type DifferenceReasonCode =
   | 'deregistered'
   | 'renamed'
   | 'platform_stale'
+  | 'pending_review'
   | 'moved_in'
   | 'other'
 
 export type DifferenceMeasureCode =
   | 'keep_history'
   | 'mark_platform_snapshot'
+  | 'follow_review'
   | 'mark_moved_out'
   | 'mark_deregistered'
   | 'update_current_name'

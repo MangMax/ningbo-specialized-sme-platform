@@ -16,6 +16,7 @@ defineRouteMeta({
     tags: ['名录'],
     summary: '名录导入提交（单批事务、幂等重放）',
     description:
+      'pending_review（待审核）须显式提交 confirmed_reason + confirmed + follow_review；保留正式历史并跟进审核，区别于 needs_review。' +
       '按 body 的 `idempotencyKey` 幂等提交：同键重复调用返回既有批次摘要，不重复写企业/事件。' +
       '单批事务：要么整批 committed，要么 failed（`error` 说明原因）—— 绝不部分提交。' +
       '载荷见 `docs/roster-lifecycle-contract.md` §8.3，归并项见 §8.4（血缘落 `item_results`）。' +
@@ -40,6 +41,20 @@ defineRouteMeta({
   "type": "object",
   "description": "统一写入载荷；recognized_list 的 collectionEvidence 必填，见 docs/platform-recognized-evidence.md。",
   "properties": {
+    "differences": {
+      "type": "array",
+      "description": "代理/用户明确裁决；不自动推断。完整字段见名录契约 §8.3。",
+      "items": {
+        "type": "object",
+        "required": ["titleCode", "direction", "recordedAt"],
+        "properties": {
+          "reasonCode": { "type": "string", "nullable": true, "enum": ["moved_out", "deregistered", "renamed", "platform_stale", "pending_review", "moved_in", "other"] },
+          "measureCode": { "type": "string", "nullable": true, "enum": ["keep_history", "mark_platform_snapshot", "follow_review", "mark_moved_out", "mark_deregistered", "update_current_name", "record_moved_in", "manual_review", "none"] },
+          "status": { "type": "string", "enum": ["not_queried", "query_failed", "no_record", "confirmed_no_diff", "confirmed_reason", "needs_review"] },
+          "verificationStatus": { "type": "string", "enum": ["confirmed", "pending"] }
+        }
+      }
+    },
     "platformQueries": {
       "type": "array",
       "items": {

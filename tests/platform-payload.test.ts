@@ -316,12 +316,13 @@ describe('buildPlatformWritePayload:差异原因与后续措施成对(§2.8 / §
     expect((row as unknown as Record<string, unknown>).enterpriseId).toBeUndefined()
   })
 
-  it('五类已知原因各带配对的措施', () => {
+  it('已知原因各带配对的措施', () => {
     const reasons = [
       ['moved_out', 'mark_moved_out'],
       ['deregistered', 'mark_deregistered'],
       ['renamed', 'update_current_name'],
       ['platform_stale', 'mark_platform_snapshot'],
+      ['pending_review', 'follow_review'],
       ['moved_in', 'record_moved_in'],
     ] as const
     const request = buildPlatformWritePayload({

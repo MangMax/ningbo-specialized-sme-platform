@@ -398,14 +398,15 @@ export const DIFFERENCE_LEGEND_NOTE =
 
 /**
  * 差异原因(`difference_reason.reason_code`)→ 中文名。
- * 已知五类必须覆盖:`moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 /
- * `platform_stale` 平台未更新 / `moved_in` 迁入;`other` 供**凭证据扩展**的新原因。
+ * 已知原因覆盖:`moved_out` 外迁 / `deregistered` 注销 / `renamed` 更名 /
+ * `platform_stale` 平台未更新 / `pending_review` 待审核 / `moved_in` 迁入;`other` 供**凭证据扩展**的新原因。
  */
 export const DIFFERENCE_REASONS: Record<string, string> = {
   moved_out: '外迁',
   deregistered: '注销',
   renamed: '已更名',
   platform_stale: '平台未更新',
+  pending_review: '待审核',
   moved_in: '迁入',
   other: '其他',
 }
@@ -416,6 +417,7 @@ export const DIFFERENCE_REASON_ORDER: string[] = [
   'deregistered',
   'renamed',
   'platform_stale',
+  'pending_review',
   'moved_in',
   'other',
 ]
@@ -424,6 +426,7 @@ export const DIFFERENCE_REASON_ORDER: string[] = [
 export const DIFFERENCE_MEASURES: Record<string, string> = {
   keep_history: '保留正式公布历史',
   mark_platform_snapshot: '标明平台时点,不覆盖历史',
+  follow_review: '保留正式公布历史并跟进审核',
   mark_moved_out: '记录迁出状态',
   mark_deregistered: '记录注销主体状态',
   update_current_name: '更新当前名并保留旧名为曾用名',
@@ -436,6 +439,7 @@ export const DIFFERENCE_MEASURES: Record<string, string> = {
 export const DIFFERENCE_MEASURE_ORDER: string[] = [
   'keep_history',
   'mark_platform_snapshot',
+  'follow_review',
   'mark_moved_out',
   'mark_deregistered',
   'update_current_name',
