@@ -368,3 +368,12 @@ describe('比对行「平台证据」列:库内查询与原始关系原文', () 
     expect(wrapper.text().trim()).toBe('—')
   })
 })
+
+
+it('待审核以独立原因展示，展开保留历史并跟进审核措施，不冒充待核实', async () => {
+  const wrapper = mountIn(ComparisonReconcile, { props: { explanation: null, disposition: disposition({ status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed' }) } })
+  expect(wrapper.get('[data-testid="reconcile-status-trigger"]').text()).toContain('待审核')
+  const text = await openAndReadText(wrapper)
+  expect(text).toContain('保留正式公布历史并跟进审核')
+  expect(text).not.toContain('待核实')
+})

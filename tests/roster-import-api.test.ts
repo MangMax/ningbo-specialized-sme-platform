@@ -3229,3 +3229,46 @@ describe('读面：list_enterprises / list_differences', () => {
     }
   })
 })
+
+
+describe('用户明确裁决的待审核', () => {
+  it('HTTP预检提交重放后MCP读回待审核，保留历史和旧解释且可独立筛选', async () => {
+    const db = makeDb()
+    const request = announcementRequest({ idempotencyKey: 'synthetic/pending-review/history' })
+    const history = request.payload.announcement!.records[0]!
+    history.events = [{ eventType: 'award', year: 2023, batchSeq: 2, evidence: history.events![0]!.evidence }]
+    await withRosterHttp(db, client => client.commit(request))
+    const name = request.payload.announcement!.records[0]!.enterprise.name
+    const uscc = request.payload.announcement!.records[0]!.enterprise.uscc
+    const old = boundaryRequest('synthetic/pending-review/old', { differences: [{ enterpriseName: name, uscc, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', reasonCode: null, measureCode: 'manual_review', verificationStatus: 'pending', recordedAt: '2026-10-17T00:00:00.000Z' }] })
+    await withRosterHttp(db, client => client.commit(old))
+    const events = db.select().from(schema.recordEvent).all()
+    const current = boundaryRequest('synthetic/pending-review/confirmed', { differences: [{ ...old.payload.differences![0]!, status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed', reasonNote: '用户确认：同称号历史终审通过，最新更新待审核，当前导出缺失；原三接口引用保留。', recordedAt: '2026-10-18T00:00:00.000Z' }] })
+    await withRosterHttp(db, async client => {
+      const preflight = await client.preflight(current)
+      expect(preflight.preflight.conflicts).toEqual([])
+      expect(db.select().from(schema.differenceReason).all()).toHaveLength(1)
+      expect((await client.commit(current)).status).toBe('committed')
+      expect((await client.commit(current)).status).toBe('committed')
+    })
+    expect(db.select().from(schema.recordEvent).all()).toEqual(events)
+    expect(db.select().from(schema.differenceReason).all()).toHaveLength(2)
+    const readback = listDifferences(db, { status: 'confirmed_reason' })
+    expect(readback.rows).toHaveLength(1)
+    expect(readback.rows[0]).toMatchObject({ status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed' })
+    expect(listDifferences(db, { status: 'needs_review' }).rows).toHaveLength(0)
+  })
+
+  it.each([
+    { status: 'needs_review', verificationStatus: 'confirmed', measureCode: 'follow_review' },
+    { status: 'confirmed_reason', verificationStatus: 'pending', measureCode: 'follow_review' },
+    { status: 'confirmed_reason', verificationStatus: 'confirmed', measureCode: 'manual_review' },
+  ] as const)('拒绝不完整待审核裁决 $status/$verificationStatus/$measureCode', async patch => {
+    const db = makeDb()
+    seedEnterprise(db, { name: '合成待审核校验企业' })
+    const request = boundaryRequest('synthetic/pending-review/invalid', { differences: [{ enterpriseName: '合成待审核校验企业', titleCode: 'specialized_sme', direction: 'missing_in_miit', reasonCode: 'pending_review', recordedAt: '2026-10-18T00:00:00.000Z', ...patch }] })
+    const result = await withRosterHttp(db, client => client.commit(request))
+    expect(result.status).toBe('failed')
+    expect(db.select().from(schema.differenceReason).all()).toEqual([])
+  })
+})

@@ -33,6 +33,7 @@ export default defineMcpTool({
   },
   enabled: writeGuard,
   description: [
+    '差异原因 pending_review（待审核）须由代理/用户明确裁决：status=confirmed_reason、verificationStatus=confirmed、measureCode=follow_review；保留正式历史并跟进审核，区别于 needs_review 待核实。',
     'queryBusList 仅作为 recognized_list 显式转存；collectionEvidence 必须保留原结果/时点/页行与完整性，见 docs/platform-recognized-evidence.md。读回使用 list_platform_queries。',
     '把一批名单数据（企业 / 别名 / 称号事件 / 出处 / 平台查询与关系 / 导出快照 / 差异原因与措施 / 归并）',
     '经**统一写入路径**落库。等价 `POST /api/roster/import/commit`。',

@@ -3007,6 +3007,14 @@ function planDifference(
     push({ item: failure('difference', ref, 'measure_unknown', `measureCode 不在字典内：${String(difference.measureCode)}`, 'measureCode'), action: 'skip', review: false })
     return
   }
+  // 这里校验明确裁决的形状，不从平台行自动推断业务原因。
+  if (difference.reasonCode === 'pending_review' && (
+    difference.status !== 'confirmed_reason' || difference.verificationStatus !== 'confirmed' ||
+    difference.measureCode !== 'follow_review'
+  )) {
+    push({ item: failure('difference', ref, 'pending_review_decision_invalid', '待审核须为 confirmed_reason + confirmed，并配 follow_review 保留历史及跟进审核', 'reasonCode'), action: 'skip', review: false })
+    return
+  }
   // 契约 §1.5：`recorded_at` 不默认（时态化的排序键），必须由来源给出。
   const recordedAt = optionalString(difference.recordedAt)
   if (!recordedAt) {

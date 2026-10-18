@@ -14,7 +14,7 @@ function company(key:string) {
   ids[key]=db.insert(schema.enterprise).values({name,nameNorm:name}).returning({id:schema.enterprise.id}).get().id
   return ids[key]!
 }
-function reason(enterpriseId:number,titleCode:'specialized_sme'|'little_giant',reasonCode:'other'|'platform_stale') {
+function reason(enterpriseId:number,titleCode:'specialized_sme'|'little_giant',reasonCode:'other'|'platform_stale'|'pending_review') {
   const record=db.insert(schema.record).values({enterpriseId,titleCode,source:'miit'}).returning({id:schema.record.id}).get()
   db.insert(schema.recordEvent).values({recordId:record.id,eventType:'maintain',year:2025}).run()
   db.insert(schema.differenceReason).values({enterpriseId,titleCode,direction:'extra_in_miit',status:'confirmed_reason',reasonCode,verificationStatus:'confirmed',recordedAt:'2026-10-17'}).run()
@@ -26,11 +26,17 @@ beforeAll(()=>{
   const hidden=company('隐藏其他')
   reason(hidden,'specialized_sme','other')
   reason(hidden,'little_giant','platform_stale')
+  reason(company('待审核'),'specialized_sme','pending_review')
   company('无差异')
 })
 afterAll(()=>{vi.unstubAllGlobals();db.$client.close();rmSync(directory,{recursive:true,force:true})})
 
 describe('企业列表差异原因筛选',()=>{
+  it('待审核可按独立原因筛选，解析器接受',()=>{
+    const query=parseRosterEnterpriseQuery({diffStatus:'pending_review'})
+    expect(query.diffStatus).toEqual(['pending_review'])
+    expect(listRosterEnterprises(db,query).rows.map(row=>row.enterpriseId)).toEqual([ids['待审核']])
+  })
   it('其他按当前可见摘要筛选，隐藏的低优先原因不误入',()=>{
     const result=listRosterEnterprises(db,{diffStatus:['other']})
     expect(result.rows.map(row=>row.enterpriseId)).toEqual([ids['其他']])

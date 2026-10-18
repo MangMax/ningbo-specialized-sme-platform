@@ -17,6 +17,7 @@ defineRouteMeta({
     tags: ['名录'],
     summary: '名录导入预检（只读，不写业务数据）',
     description:
+      'pending_review（待审核）须显式提交 confirmed_reason + confirmed + follow_review；保留正式历史并跟进审核，区别于 needs_review。' +
       '算「这次提交会发生什么」并落一条 `status=preflight` 的批次，**不改任何业务数据**。' +
       '幂等键是 body 的 `idempotencyKey`：同键重复调用返回/刷新同一批次。' +
       '需要 token：`Authorization: Bearer <NUXT_API_TOKEN>`（或 `X-API-Token`）；未配 token 时本接口整体关闭。' +
@@ -41,6 +42,20 @@ defineRouteMeta({
   "type": "object",
   "description": "统一写入载荷；recognized_list 的 collectionEvidence 必填，见 docs/platform-recognized-evidence.md。",
   "properties": {
+    "differences": {
+      "type": "array",
+      "description": "代理/用户明确裁决；不自动推断。完整字段见名录契约 §8.3。",
+      "items": {
+        "type": "object",
+        "required": ["titleCode", "direction", "recordedAt"],
+        "properties": {
+          "reasonCode": { "type": "string", "nullable": true, "enum": ["moved_out", "deregistered", "renamed", "platform_stale", "pending_review", "moved_in", "other"] },
+          "measureCode": { "type": "string", "nullable": true, "enum": ["keep_history", "mark_platform_snapshot", "follow_review", "mark_moved_out", "mark_deregistered", "update_current_name", "record_moved_in", "manual_review", "none"] },
+          "status": { "type": "string", "enum": ["not_queried", "query_failed", "no_record", "confirmed_no_diff", "confirmed_reason", "needs_review"] },
+          "verificationStatus": { "type": "string", "enum": ["confirmed", "pending"] }
+        }
+      }
+    },
     "platformQueries": {
       "type": "array",
       "items": {
