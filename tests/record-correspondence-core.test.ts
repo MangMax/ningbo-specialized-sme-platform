@@ -1,7 +1,9 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import Database from 'better-sqlite3'
 import { eq } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterAll, describe, expect, it } from 'vitest'
 import { useDb, schema } from '../db/client'
 import {
@@ -310,6 +312,39 @@ describe('record correspondence core', () => {
     expect(getRecordCorrespondenceAudit(db, id)[1]?.evidence).toMatchObject({ officialEvidence: [{ evidence: { page: 3 }, storedFile: { sha256: 'first-hash' } }] })
   })
 
+  it('reconfirms the same edge after formal source correction with old and new evidence audited', () => {
+    const { db, event, relation } = fixture()
+    const file = db.insert(schema.storedFile).values({ relPath: 'jxj/reconfirm.pdf', filename: 'reconfirm.pdf', ext: 'pdf', bytes: 10, sha256: 'original-hash' }).returning().get()
+    const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: file.relPath, attachment: '附件1', listNo: 7, page: 2 }).returning().get()
+    const edge = { type: 'event_process' as const, eventId: event.id, relationId: relation.id, role: 'context_only' as const }
+    const id = save(db, request('reconfirm-original', [{ action: 'create', status: 'confirmed', edge }])).correspondenceIds[0]!
+    db.update(schema.recordEvidence).set({ page: 3 }).where(eq(schema.recordEvidence.id, evidence.id)).run()
+    db.update(schema.storedFile).set({ sha256: 'corrected-hash' }).where(eq(schema.storedFile.id, file.id)).run()
+    expect(listRecordCorrespondences(db, { eventId: event.id })[0]?.requiresRevalidation).toBe(true)
+
+    const correction = request('reconfirm-corrected', [{ action: 'correct', correspondenceId: id, expectedRevision: 2, edge }])
+    correction.basis = 'reviewed corrected announcement page and file hash'
+    const stalePlan = preflightRecordCorrespondences(db, correction)
+    expect(stalePlan.impact).toEqual({ created: 0, unlinked: 1, audit: 2 })
+    db.update(schema.recordEvidence).set({ page: 4 }).where(eq(schema.recordEvidence.id, evidence.id)).run()
+    expect(() => commitRecordCorrespondences(db, correction, stalePlan.planHash)).toThrowError(expect.objectContaining({ code: 'plan_mismatch' }))
+    const currentPlan = preflightRecordCorrespondences(db, correction)
+    const receipt = commitRecordCorrespondences(db, correction, currentPlan.planHash)
+    expect(receipt.correspondenceIds).toEqual([id])
+    expect(commitRecordCorrespondences(db, correction, currentPlan.planHash)).toEqual(receipt)
+    expect(listRecordCorrespondences(db, { eventId: event.id })).toMatchObject([{ id, status: 'confirmed', revision: 4, requiresRevalidation: false,
+      provenance: { officialEvidence: [{ evidence: { page: 4 }, storedFile: { sha256: 'corrected-hash' } }] } }])
+    expect(getRecordCorrespondenceAudit(db, id)).toMatchObject([
+      { toStatus: 'candidate', evidence: { officialEvidence: [{ evidence: { page: 2 }, storedFile: { sha256: 'original-hash' } }] } },
+      { toStatus: 'confirmed', evidence: { officialEvidence: [{ evidence: { page: 2 }, storedFile: { sha256: 'original-hash' } }] } },
+      { fromStatus: 'confirmed', toStatus: 'unlinked', expectedRevision: 2, resultingRevision: 3, evidence: { officialEvidence: [{ evidence: { page: 2 }, storedFile: { sha256: 'original-hash' } }] } },
+      { fromStatus: 'unlinked', toStatus: 'confirmed', expectedRevision: 3, resultingRevision: 4, basis: correction.basis, evidence: { officialEvidence: [{ evidence: { page: 4 }, storedFile: { sha256: 'corrected-hash' } }] } },
+    ])
+    expect(() => preflightRecordCorrespondences(db, request('reconfirm-stale-revision', [{ action: 'correct', correspondenceId: id, expectedRevision: 2, edge }]))).toThrowError(expect.objectContaining({ code: 'stale_revision' }))
+    expect(() => preflightRecordCorrespondences(db, request('reconfirm-unchanged', [{ action: 'correct', correspondenceId: id, expectedRevision: 4, edge }]))).toThrowError(expect.objectContaining({ code: 'ambiguous_candidate' }))
+    expect(() => preflightRecordCorrespondences(db, request('reconfirm-create', [{ action: 'create', status: 'confirmed', edge }]))).toThrowError(expect.objectContaining({ code: 'ambiguous_candidate' }))
+  })
+
   it('invalidates a predecessor-only change and flags a confirmed later process', () => {
     const { db, enterprise, event, relation } = fixture()
     const edge = { type: 'later_process' as const, enterpriseId: enterprise.id, titleCode: 'specialized_sme', predecessorEventId: event.id, relationId: relation.id, role: 'followup_apply' as const }
@@ -326,7 +361,9 @@ describe('record correspondence core', () => {
 
   it('preserves a committed receipt when another connection commits during preflight planning', () => {
     const ctx = fixture()
-    const second = useDb({ dbPath: ctx.dbPath })
+    const connection = new Database(ctx.dbPath)
+    connection.pragma('foreign_keys = ON')
+    const second = drizzle(connection, { schema })
     const committedRequest = request('preflight-race', [{ action: 'create', status: 'candidate', edge: { type: 'event_process', eventId: ctx.event.id, relationId: ctx.relation.id, role: 'context_only' } }])
     const original = preflightRecordCorrespondences(ctx.db, committedRequest)
     let reads = 0
@@ -338,11 +375,16 @@ describe('record correspondence core', () => {
       if (reads === 6) winningReceipt = commitRecordCorrespondences(second, committedRequest, original.planHash)
       return committedRequest.idempotencyKey
     } })
-    const result = preflightRecordCorrespondences(ctx.db, interleaved)
-    expect(winningReceipt).not.toBeNull()
-    expect(result).toMatchObject({ batchStatus: 'committed', batchId: winningReceipt!.batchId, planHash: winningReceipt!.planHash })
-    expect(readRecordCorrespondenceBatch(ctx.db, committedRequest.idempotencyKey)).toEqual(winningReceipt)
-    expect(commitRecordCorrespondences(ctx.db, committedRequest, original.planHash)).toEqual(winningReceipt)
+    try {
+      expect(second.$client).not.toBe(ctx.db.$client)
+      const result = preflightRecordCorrespondences(ctx.db, interleaved)
+      expect(winningReceipt).not.toBeNull()
+      expect(result).toMatchObject({ batchStatus: 'committed', batchId: winningReceipt!.batchId, planHash: winningReceipt!.planHash })
+      expect(readRecordCorrespondenceBatch(ctx.db, committedRequest.idempotencyKey)).toEqual(winningReceipt)
+      expect(commitRecordCorrespondences(ctx.db, committedRequest, original.planHash)).toEqual(winningReceipt)
+    } finally {
+      connection.close()
+    }
   })
 
   it('deduplicates the same typed endpoints and role regardless of JSON property order', () => {
