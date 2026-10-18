@@ -8,6 +8,9 @@ export default defineNuxtConfig({
   ssr: false,
   devtools: { enabled: true },
   app: {
+    head: {
+      link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
+    },
     pageTransition: { name: 'page', mode: 'out-in', appear: true },
   },
 
