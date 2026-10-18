@@ -31,7 +31,7 @@ function setRoute(query: Record<string, string>) {
 function startWith(query: Record<string, string>) { setRoute({ mode: 'record', ...query }) }
 async function chooseSources() {
   await wrapper!.get('[data-testid="select-sources"]').trigger('click')
-  await wrapper!.findAll('button').find(button => button.text() === '按所选来源对比')!.trigger('click')
+  await wrapper!.findAll('button').find(button => button.text() === '开始对比')!.trigger('click')
   await flushPromises()
 }
 beforeEach(() => {
@@ -51,7 +51,7 @@ describe('record comparison public interaction', () => {
     wrapper = mount(RecordComparisonPanel, { global: { stubs } })
     await flushPromises()
     expect(calls.query).toHaveLength(0)
-    expect(wrapper.get('button:disabled').text()).toContain('按所选来源对比')
+    expect(wrapper.get('button:disabled').text()).toContain('开始对比')
     await chooseSources()
     expect(calls.query).toHaveLength(1)
     expect(calls.query[0]).toMatchObject({ queryIds: '7', exportBatchIds: '', officialSourceDocumentIds: '3', page: 1, pageSize: 25 })
@@ -81,7 +81,7 @@ describe('record comparison public interaction', () => {
     wrapper = mount(RecordComparisonPanel, { global: { stubs } })
     await wrapper.get('[data-testid="select-sources"]').trigger('click')
     await wrapper.get('[data-testid="select-proof"]').trigger('click')
-    await wrapper.findAll('button').find(button => button.text() === '按所选来源对比')!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '开始对比')!.trigger('click')
     await flushPromises()
     expect(calls.query[0]).toMatchObject({ queryIds: '7', officialSourceDocumentIds: '3', proofIds: '12' })
   })
@@ -95,7 +95,7 @@ describe('record comparison public interaction', () => {
     expect(wrapper.findComponent(ComparisonDateTimePicker).props('modelValue')).toBe('2026-10-18T18:00:00.000')
     expect(wrapper.get('#record-as-of').text()).toContain('18:00:00')
     expect(wrapper.get('[data-testid="proof-cutoff"]').text()).toContain('2026-10-18T10:00:00.000Z')
-    await wrapper.findAll('button').find(button => button.text() === '按所选来源对比')!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '开始对比')!.trigger('click')
     await flushPromises()
     expect(calls.query.at(-1)).toMatchObject({ asOf: '2026-10-18T10:00:00.000Z' })
   })
@@ -148,10 +148,10 @@ describe('record comparison public interaction', () => {
     expect(wrapper.get('[aria-label="已加载结果范围"]').text()).toContain('全部分类')
     expect(wrapper.get('[aria-label="目标结果范围"]').text()).toContain('证据不足 · 待核')
     wrapper.findComponent(ComparisonDateTimePicker).vm.$emit('update:modelValue', '2026-10-18T19:00:00.000')
-    await wrapper.findAll('button').find(button => button.text() === '按所选来源对比')!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '开始对比')!.trigger('click')
     await flushPromises()
-    expect(wrapper.get('[aria-label="已加载结果范围"]').text()).toContain('2026-10-18T10:00:00.000Z')
-    expect(wrapper.get('[aria-label="目标结果范围"]').text()).toContain('2026-10-18T11:00:00.000Z')
+    expect(wrapper.get('[aria-label="已加载结果范围"]').text()).toContain('2026-10-18 18:00')
+    expect(wrapper.get('[aria-label="目标结果范围"]').text()).toContain('2026-10-18 19:00')
     expect(wrapper.find('[data-testid="shown-result"]').exists()).toBe(true)
   })
 
@@ -162,7 +162,7 @@ describe('record comparison public interaction', () => {
     await flushPromises()
     wrapper.findComponent(ComparisonDateTimePicker).vm.$emit('validity-change', false)
     await flushPromises()
-    const run = wrapper.findAll('button').find(button => button.text() === '按所选来源对比')!
+    const run = wrapper.findAll('button').find(button => button.text() === '开始对比')!
     expect(run.attributes('disabled')).toBeDefined()
     expect(route.query.asOf).toBe('2026-10-18T10:00:00.123Z')
   })
@@ -227,6 +227,9 @@ it.each(['result-first', 'pickers-first'])('waits for catalog, selected labels, 
   pending.get('/api/roster/comparison-scope-proofs/11/audit')!({ rows: [{ basis: '最终登记依据会在目录中换行' }], total: 201, page: 2, pageSize: 200 })
   await flushPromises()
   expect(wrapper.findComponent(ComparisonProofPicker).text()).toContain('最终登记依据会在目录中换行')
+  expect(frames).toHaveLength(0)
+  pending.get('query:25')!({ rows: [{ kind: 'query', id: 7, label: '归档查询名称', selectable: true }], total: 1, page: 1, pageSize: 25 })
+  await flushPromises()
   if (order === 'pickers-first') { expect(frames).toHaveLength(0); await finishResult() }
   expect(frames).toHaveLength(1)
   frames[0]!(0)

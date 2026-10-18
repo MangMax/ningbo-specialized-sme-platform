@@ -19,15 +19,18 @@ function render(kind: 'event' | 'relation', id: number) {
 afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount(); vi.unstubAllGlobals() })
 
 describe('record source reader public interaction', () => {
-  it('separates a confirmed event row from a candidate later workflow', async () => {
-    vi.stubGlobal('$fetch', vi.fn(async () => ({ source: event, correspondences: [edge(1, 'event_process', 'confirmed'), edge(2, 'later_process', 'candidate')] })))
+  it('shows only sources matched to this event and marks candidates without exposing internal audit copy', async () => {
+    vi.stubGlobal('$fetch', vi.fn(async () => ({ source: event, correspondences: [edge(1, 'event_process', 'confirmed'), edge(2, 'later_process', 'candidate'), edge(3, 'event_recognized', 'candidate')] })))
     const wrapper = render('event', 9)
     await flushPromises()
-    expect(wrapper.get('[aria-label="事件对应平台行"]').text()).toContain('已确认')
-    expect(wrapper.get('[aria-label="事件对应平台行"]').text()).not.toContain('后续更新')
-    expect(wrapper.get('[aria-label="独立后续流程"]').text()).toContain('候选 · 待确认')
-    expect(wrapper.get('[aria-label="独立后续流程"]').text()).toContain('退回')
-    expect(wrapper.findAll('a').some(link => link.attributes('href') === '/enterprises/42')).toBe(true)
+    expect(wrapper.text()).toContain('已确认')
+    expect(wrapper.text()).toContain('待确认')
+    expect(wrapper.find('[data-correspondence-id="1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-correspondence-id="3"]').exists()).toBe(true)
+    expect(wrapper.find('[data-correspondence-id="2"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('后续流程')
+    expect(wrapper.text()).not.toContain('规则 fixture')
+    expect(wrapper.text()).not.toContain('决定于')
   })
 
   it('keeps a successful source on failure and retries the same original row', async () => {
