@@ -14,7 +14,7 @@ One agent owns an enterprise across files and titles. Software collects queries 
 
 ## User-confirmed pending review (待审核)
 
-Apply this classification only to a batch whose scope and business interpretation the user explicitly confirmed. Check the same enterprise and same title against all three archived interface results: a current `missing_in_miit` difference, historical `终审通过`, and the latest process row by `sqsj` is `sblx=更新` + `cszt=待审核`. Check all same-title rows for a newer contrary record; preserve conflicting evidence for separate adjudication. Software records this explicit decision; it does not infer the cause automatically.
+Apply this classification only to a batch whose scope and business interpretation the user explicitly confirmed. Check the same enterprise and same title against all three archived interface results: a current `missing_in_miit` difference, historical `终审通过`, and the latest process row by `sqsj` is `sblx=更新` + `cszt=待审核`. Check all same-title rows for contrary terminal results, including an earlier review rejection followed by a later update. Different business types do not override each other merely by timestamp: 更新/待审核 cannot reverse 复核/终审不通过. Preserve such conflicts for explicit user adjudication and exclude them from the pending-review write batch. Software records this explicit decision; it does not infer the cause automatically.
 
 Record `reasonCode=pending_review`, `status=confirmed_reason`, `verificationStatus=confirmed`, and `measureCode=follow_review` (保留正式公布历史并跟进审核). “Confirmed” describes the classification; it does not mean the ongoing application passed. This is separate from `needs_review` (待核实), review failure, designation expiry and platform staleness. An unknown internal root cause does not undo the user's confirmed classification. No additional official/PDF/web proof is required for this authorized branch. Unknown dates or fields stay null.
 
@@ -22,7 +22,9 @@ Retain the official event, original workflow number/type/submission time/status,
 
 Positive example: enterprise 1395, 宁波东海仪表水道有限公司, specialized SME formally awarded in 2023; same-title historical terminal pass, latest businessList `SQ332025061924614`, 更新/待审核 at `2025-06-19 09:29:17`, absent from current export → 待审核 for the user-authorized batch.
 
-Counterexamples requiring their own adjudication: latest review terminal rejection; historical pass without a later pending update; a pass belonging only to another title; three complete interfaces returning zero rows. None satisfies this branch. Do not extend a batch to other statuses or enterprises without explicit scope.
+Conflict example: enterprise 7389, 宁波先锋新材料股份有限公司, little giant: 2020 application passed; review `SQ332023040761899` failed on `2023-04-07 18:19:00`; update `SQ332023041083202` pending on 2023-04-10. Keep the review failure and pending update together; exclude from this write and await the parent/user decision. The 2026-10-18 batch therefore has 176 candidates, 175 ready decisions and this one conflict.
+
+Counterexamples requiring their own adjudication: review terminal rejection (even before a newer pending update); historical pass without a later pending update; a pass belonging only to another title; three complete interfaces returning zero rows. None satisfies this branch. Do not extend a batch to other statuses or enterprises without explicit scope.
 
 ## Full collection and investigation queues
 
