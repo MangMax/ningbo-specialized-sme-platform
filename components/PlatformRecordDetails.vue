@@ -11,6 +11,7 @@ const fields = computed(() => platformBusinessFields(props.record.rawFields))
     <summary class="cursor-pointer whitespace-nowrap text-primary focus-visible:outline-2 focus-visible:outline-ring">行 #{{ record.id }} · 查看详情</summary>
     <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 break-words [overflow-wrap:anywhere]">
       <dt class="text-muted-foreground">查询引用</dt><dd>#{{ record.queryId }}</dd>
+      <template v-if="record.enterpriseId !== undefined"><dt class="text-muted-foreground">主体归属</dt><dd>{{ record.enterpriseId === null ? '未匹配主体' : `已关联主档 #${record.enterpriseId}` }}</dd></template>
       <dt class="text-muted-foreground">原行序号</dt><dd>{{ record.sequenceNo }}</dd>
       <dt class="text-muted-foreground">来源页</dt><dd>{{ record.sourcePage ?? '未提供' }}</dd>
       <dt class="text-muted-foreground">来源称号</dt><dd>{{ PLATFORM_RDJBS[record.sourceRdjb ?? query?.rdjb ?? ''] ?? '未标注' }}</dd>

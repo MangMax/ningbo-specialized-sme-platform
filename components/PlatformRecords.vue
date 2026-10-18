@@ -135,7 +135,7 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                 <template v-if="!group.collapsed">
                   <tr v-for="({record}, index) in group.rows" :key="record.id" class="border-t" data-testid="platform-relation" :data-record-id="record.id">
                     <td class="px-3 py-1.5 tabular-nums" :class="{ 'pl-9': activeTitle === 'all' }">{{ index + 1 }}</td>
-                    <td class="px-3 py-1.5">{{ record.nameRaw ?? '未提供' }}</td>
+                    <td class="px-3 py-1.5">{{ record.nameRaw ?? '未提供' }}<span v-if="table.recognized && record.enterpriseId === null" class="text-muted-foreground block text-xs">未匹配主体</span></td>
                     <td class="px-3 py-1.5 tabular-nums">{{ record.usccRaw ?? '未提供' }}</td>
                     <template v-if="table.recognized">
                     <td v-for="field in ['szq', 'rdxx', 'rddqrq', 'whpcyear', 'whpc']" :key="field" class="px-3 py-1.5">{{ recognizedField(record.rawFields, field) }}</td>

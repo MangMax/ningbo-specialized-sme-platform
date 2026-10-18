@@ -2963,7 +2963,9 @@ function recognizedDifferenceEvidenceError(db: Executor, pending: PendingPlatfor
   const source = relationQuery ?? query
   if (!source || source.interface !== 'recognized_list') return 'Wrong source for recognized evidence'
   const target = locateEnterprise(db, { name: difference.enterpriseName, uscc: difference.uscc })
-  const targetUscc = target?.usccNorm ?? usccOrNull(difference.uscc)
+  const suppliedUscc = usccOrNull(difference.uscc)
+  if (suppliedUscc && target && suppliedUscc !== target.usccNorm) return 'Supplied USCC conflicts with the resolved enterprise'
+  const targetUscc = suppliedUscc ?? target?.usccNorm
   if (!targetUscc) return 'Recognized evidence cannot confirm subject by name alone'
   if (!source.rdjb.split(',').some(rdjb => RDJB_TITLE_CODES[rdjb] === difference.titleCode)) return 'Evidence title scope does not include decision title'
   if (refs.relationRef || refs.relationIdLiteral) {

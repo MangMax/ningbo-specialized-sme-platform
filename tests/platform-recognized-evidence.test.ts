@@ -185,7 +185,8 @@ it('MCP history and enterprise detail match REST, preserve cross-source identica
   const detailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as any
   const after = await detailTool.handler({ enterpriseId })
   expect(after.platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt).collectionEvidence).toEqual(evidence)
-  expect(after.platform.relations).toHaveLength(4)
+  const allHistory = await (await fetch(`${api.baseUrl}/api/platform/queries?queryKey=${USCC}&pageSize=100`)).json()
+  expect(after.platform.relations.map((r: any) => r.id).sort((a: number, b: number) => a-b)).toEqual(allHistory.rows.flatMap((q: any) => q.relations.map((r: any) => r.id)).sort((a: number, b: number) => a-b))
   expect(after.platform.relations[0]).toMatchObject({ sourceRdjb: '1', sourcePage: 1, rawFields: evidence.rows[0] })
   for (const key of ['enterprise', 'aliases', 'records', 'events', 'evidence', 'differences'] as const) expect(after[key]).toEqual(before[key])
   const comparison = await (await fetch(`${api.baseUrl}/api/comparison?title=innovative_sme&direction=missing_in_miit`)).json()
@@ -262,4 +263,85 @@ it('single-title name candidates remain unmatched and a completed continuation s
   expect((await client.commit(next)).status).toBe('committed')
   const history = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&status=partial`)).json()
   expect(history.rows.find((r: any) => r.query.queriedAt === continuation.queriedAt).query.collectionEvidence).toEqual(continuation)
+})
+
+it.each(['query-ref', 'row-ref', 'query-id', 'row-id'] as const)('rejects contradictory supplied USCC through REST and MCP for recognized %s without losing valid name fallback', async (kind) => {
+  const seed = await client.commit({ idempotencyKey: `subject-seed-${kind}`, sourceKind: 'announcement', sourceIdentity: 'synthetic-subject-seed', payload: { announcement: {
+    sourceDocument: { source: 'jxj', title: '主体冲突合成种子' }, records: [{ enterprise: { name: '合成主档', uscc: USCC }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2023 }] }],
+  } } })
+  expect(seed.status).toBe('committed')
+  const { recognizedResultToImport } = await import('../lib/platform/recognized-evidence')
+  const evidence = archive()
+  evidence.queriedAt = `2025-10-0${['query-ref', 'row-ref', 'query-id', 'row-id'].indexOf(kind) + 1}T00:00:00Z`
+  evidence.completedAt = evidence.queriedAt.replace('00:00:00', '00:01:00')
+  const query = recognizedResultToImport(evidence)
+  const ref = { interface: 'recognized_list' as const, queryKey: USCC, rdjb: '1,2,3', queriedAt: evidence.queriedAt }
+  let refs: Record<string, unknown> = kind === 'query-ref' ? { evidenceQueryRef: ref } : { evidenceRelationRef: { ...ref, sequenceNo: 4 } }
+  if (kind.endsWith('-id')) {
+    expect((await client.commit({ ...request(evidence, `subject-archive-${kind}`), payload: { platformQueries: [query] } })).status).toBe('committed')
+    const history = await (await fetch(`${api.baseUrl}/api/platform/queries?queryKey=${USCC}&pageSize=100`)).json()
+    const stored = history.rows.find((row: any) => row.query.queriedAt === evidence.queriedAt)
+    refs = kind === 'query-id' ? { evidenceQueryId: stored.query.id } : { evidenceRelationId: stored.relations[3].id }
+  }
+  const req = { ...request(evidence, `contradictory-subject-${kind}`), payload: { platformQueries: kind.endsWith('-id') ? [] : [query], differences: [{
+    enterpriseName: '合成主档', uscc: '91330200000000001H', titleCode: 'little_giant', direction: 'missing_in_miit' as const,
+    status: 'needs_review' as const, recordedAt: evidence.completedAt, ...refs,
+  }] } }
+  const preflight = (await import('../server/mcp/tools/preflight_roster_batch')).default as any
+  const save = (await import('../server/mcp/tools/save_roster_batch')).default as any
+  const beforeFailure = await (await fetch(`${api.baseUrl}/api/platform/queries?queryKey=${USCC}&pageSize=100`)).json()
+  const restPreflight = await client.preflight(req as never)
+  expect(restPreflight.preflight.conflicts).toContainEqual(expect.objectContaining({ error: expect.objectContaining({ code: 'evidence_subject_mismatch' }) }))
+  expect(await preflight.handler(req)).toEqual(restPreflight)
+  expect((await client.commit(req as never)).status).toBe('failed')
+  expect((await save.handler(req)).status).toBe('failed')
+  expect(await (await fetch(`${api.baseUrl}/api/platform/queries?queryKey=${USCC}&pageSize=100`)).json()).toEqual(beforeFailure)
+  // A missing code is different from a contradictory one: the existing exact-name master may still resolve valid evidence.
+  delete (req.payload.differences[0] as any).uscc
+  req.idempotencyKey = `valid-name-fallback-${kind}`
+  expect((await client.preflight(req as never)).preflight.conflicts).toEqual([])
+  expect((await client.commit(req as never)).status).toBe('committed')
+})
+
+it.each(['uscc', 'name'] as const)('archive-before-master %s query preserves every recognized source row in REST/MCP detail and comparison without confirming identity or exposing unrelated queries', async (subject) => {
+  const { recognizedResultToImport } = await import('../lib/platform/recognized-evidence')
+  const code = subject === 'uscc' ? '91330200000000001H' : '91330211255994457P'
+  const name = subject === 'uscc' ? '合成代码归档先于主档企业' : '合成名称归档先于主档企业'
+  const queryKey = subject === 'uscc' ? code : `name:${name}`
+  const evidence = archive()
+  evidence.effectiveConditions = subject === 'uscc' ? {uscc: code, combination: 'and'} : {name, combination: 'and'}
+  evidence.rows = evidence.rows.map(row => ({ ...row, tyshxydm: subject === 'uscc' ? code : '', qymc: name }))
+  const imported = await client.commit({ ...request(evidence, `before-master-archive-${subject}`), payload: { platformQueries: [recognizedResultToImport(evidence)] } })
+  expect(imported.status).toBe('committed')
+  const readHistory = async () => (await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${encodeURIComponent(queryKey)}`)).json()).rows[0]
+  const archived = await readHistory()
+  expect(archived.relations).toHaveLength(4)
+  for (const row of archived.relations) expect(row).toMatchObject({ enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending' })
+  const seed = await client.commit({ idempotencyKey: `after-archive-master-${subject}`, sourceKind: 'announcement', sourceIdentity: 'synthetic-after-archive', payload: { announcement: {
+    sourceDocument: { source: 'jxj', title: '归档后创建主档' }, records: [{ enterprise: { name, uscc: code }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2023 }] }],
+  } } })
+  expect(seed.status).toBe('committed')
+  const enterpriseId = seed.items.find(i => i.kind === 'record_event')!.detail!.enterpriseId as number
+  vi.stubGlobal('getRouterParam', (event: any) => event.id)
+  const detailRoute = (await import('../server/api/roster/enterprises/[id].get')).default
+  const restApi = await startEvidenceServer({ db, apiToken: token, getRoutes: { [`/api/roster/enterprises/${enterpriseId}`]: () => detailRoute({ id: enterpriseId } as never) } })
+  try {
+    const detail = await (await fetch(`${restApi.baseUrl}/api/roster/enterprises/${enterpriseId}`)).json()
+    const detailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as any
+    expect(await detailTool.handler({ enterpriseId })).toEqual(detail)
+    expect(detail.platform.queries.map((q: any) => q.id)).toEqual([archived.query.id])
+    expect(detail.platform.queries[0]).toMatchObject({ relationCount: 4, collectionEvidence: evidence })
+    expect(detail.platform.relations.map((r: any) => r.id)).toEqual(archived.relations.map((r: any) => r.id))
+    for (const row of detail.platform.relations) expect(row).toMatchObject({ enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending' })
+    expect(detail.platform.relations.map((r: any) => [r.rawFields, r.sourceRdjb, r.sourcePage])).toEqual(archived.relations.map((r: any) => [r.rawFields, r.sourceRdjb, r.sourcePage]))
+    const comparison = await (await fetch(`${api.baseUrl}/api/comparison?title=innovative_sme&direction=missing_in_miit`)).json()
+    const platform = comparison.rows.find((r: any) => r.enterpriseId === enterpriseId).platform
+    expect(platform.relationCount).toBe(4)
+    expect(platform.queries.map((q: any) => q.id)).toEqual([archived.query.id])
+    expect(platform.queries[0].relationCount).toBe(4)
+    expect(platform.queries[0].relations.map((r: any) => r.id)).toEqual(archived.relations.map((r: any) => r.id))
+    for (const row of platform.queries[0].relations) expect(row).toMatchObject({ enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending' })
+    expect(await readHistory()).toEqual(archived)
+    expect(detail.differences).toEqual([expect.objectContaining({ explanationId: null, status: 'not_queried', reasonCode: null })])
+  } finally { await restApi.close() }
 })
