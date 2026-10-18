@@ -99,6 +99,8 @@ describe('record correspondence source, candidate and MCP contracts', () => {
     const { db, event, relation, query } = fixture()
     const secret = 'SYNTHETIC_SECRET'
     const configuredCookie = 'SYNTHETIC_COOKIE_VALUE'
+    const configuredMcpToken = 'SYNTHETIC_MCP_TOKEN'
+    vi.stubGlobal('useRuntimeConfig', () => ({ mcpToken: configuredMcpToken }))
     db.insert(schema.serviceCredential).values({ key: 'miitCookie', value: `session=${configuredCookie}`, updatedAt: '2026-10-18T00:00:00.000Z' }).run()
     db.update(schema.platformRelation).set({ rawFields: {
       original: '原值',
@@ -111,6 +113,7 @@ describe('record correspondence source, candidate and MCP contracts', () => {
         `session=${secret}; api_key=${secret}; status=待审核`,
         `provider echo ${configuredCookie}; status=待审核`,
         `provider echo ${encodeURIComponent(`session=${configuredCookie}`)}; status=待审核`,
+        `provider echo ${configuredMcpToken}; status=待审核`,
       ],
       nested: [{ cookie: secret, businessCode: 'B-1' }],
     } }).where(eq(schema.platformRelation.id, relation.id)).run()
@@ -140,10 +143,11 @@ describe('record correspondence source, candidate and MCP contracts', () => {
         const publicJson = JSON.stringify(rest)
         expect(publicJson).not.toContain(secret)
         expect(publicJson).not.toContain(configuredCookie)
+        expect(publicJson).not.toContain(configuredMcpToken)
         expect(publicJson).toContain('status=待审核')
         expect(publicJson).toContain('B-1')
       }
-    } finally { await app.close() }
+    } finally { await app.close(); vi.unstubAllGlobals() }
     const source = dispatchRecordCorrespondenceMcp('source', { kind: 'relation', id: relation.id }, { db }) as any
     expect(source.source.rawFields).toMatchObject({ original: '原值', nested: [{ businessCode: 'B-1' }] })
     expect(source.source.rawFields.notes[2]).toBe('seen token%3D[REDACTED]; status=待审核')
