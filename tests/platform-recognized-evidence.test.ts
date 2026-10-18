@@ -1,0 +1,265 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { useDb } from '../db'
+import { createRosterImportClient } from '../lib/roster-import-client'
+import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
+import { runPlatformLiveQuery } from '../server/utils/platform-live-query'
+import { startEvidenceServer } from './helpers/platform-evidence-server'
+import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
+
+const dir = mkdtempSync(join(tmpdir(), 'recognized-evidence-'))
+const db = useDb({ dbPath: join(dir, 'test.sqlite') })
+const USCC = '913300000000000004'
+const time = '2025-02-03T01:02:03.000Z'
+const token = 'synthetic-recognized-import-token'
+let api: Awaited<ReturnType<typeof startEvidenceServer>>
+let client: ReturnType<typeof createRosterImportClient>
+beforeAll(async () => {
+  vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
+  vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
+  vi.stubGlobal('getQuery', (event: any) => event.query)
+  vi.stubGlobal('createError', (opts: any) => Object.assign(new Error(opts.statusMessage), opts))
+  vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir, curatedPath: join(dir, 'absent-curated.json'), reconcilePath: join(dir, 'absent-reconcile.json') }))
+  const queriesRoute = (await import('../server/api/platform/queries.get')).default
+  const comparisonRoute = (await import('../server/api/comparison.get')).default
+  api = await startEvidenceServer({ db, apiToken: token, routes: {
+    '/api/platform/query': async req => ({ status: 200, body: await runPlatformLiveQuery(req.body, {
+      cookie: 'session=synthetic-recognized-session', transport: { fetchImpl: async (_url, init) => {
+        const form = new URLSearchParams(init.body)
+        const page = Number(form.get('pageNum')); const rdjb = form.get('rdjb')
+        const count = rdjb === '1' ? 2 : 1
+        return { ok: true, status: 200, text: async () => JSON.stringify({ zrarData: { grid: { businessGrid: { page, pageSize: 1, maxCount: count, maxPage: count, pageSet: [{ id: 'shared-live-id', tyshxydm: USCC, qymc: '合成实时企业', whpcyear: '2024', whpc: '2', rddqrq: '2027', szq: '原始属地' }] } } } }) }
+      } },
+    }) }),
+  }, getRoutes: {
+    '/api/comparison': url => comparisonRoute({ query: Object.fromEntries(url.searchParams) } as never),
+    '/api/platform/queries': url => queriesRoute({ query: Object.fromEntries(url.searchParams) } as never),
+  } })
+  client = createRosterImportClient({ baseUrl: api.baseUrl, token })
+})
+afterAll(async () => { await api?.close(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+function archive(): PlatformLiveQueryResult {
+  return {
+    source: 'queryBusList', status: 'success',
+    effectiveConditions: { uscc: USCC, combination: 'and', whpcyear: '2024', whpc: '2' },
+    titleScope: { mode: 'selected', rdjb: ['1', '2', '3'] }, queriedAt: time, completedAt: '2025-02-03T01:03:00.000Z',
+    rows: [1, 2, 3, 4].map(n => ({ id: `same-${n % 2}`, qymc: '合成企业', tyshxydm: USCC, whpcyear: '2024', whpc: '2', rddqrq: '2027', szq: '原始属地' })),
+    pages: [['1', 1, 1], ['1', 2, 1], ['2', 1, 1], ['3', 1, 1]].map(([rdjb, page, fetchedCount]) => ({ source: 'queryBusList', rdjb: String(rdjb), page: Number(page), fetchedCount: Number(fetchedCount), status: 'success', declaredTotal: null, maxPage: String(rdjb) === '1' ? 2 : 1, error: null })),
+    fetchedCount: 4, declaredTotal: null, completeness: 'complete', fullRange: true, unfinished: [], error: null,
+    limits: { pageSize: 1, maxRequests: 100, maxRows: 5000, maxDurationMs: 60000 },
+  }
+}
+function request(result = archive(), key = 'archive-complete') {
+  return {
+    idempotencyKey: key, sourceKind: 'alias_evidence' as const, sourceIdentity: 'synthetic-archive',
+    payload: { platformQueries: [{ interface: 'recognized_list', queryKey: USCC, rdjb: '1,2,3', queriedAt: result.queriedAt, status: result.status, collectionEvidence: result,
+      relations: result.rows.map((rawFields, i) => ({ sequenceNo: i + 1, relationKey: rawFields.id, usccRaw: rawFields.tyshxydm, nameRaw: rawFields.qymc, rawFields })),
+    }] },
+  }
+}
+it('authenticated archive import preserves three-title pages, every same-code row, source identity and original time through public history', async () => {
+  const req = request()
+  const unauthorized = await fetch(`${api.baseUrl}/api/roster/import/commit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) })
+  expect(unauthorized.status).toBe(401)
+  const preflight = await client.preflight(req as never)
+  expect(preflight.preflight.conflicts).toEqual([])
+  expect((await fetch(`${api.baseUrl}/api/platform/queries`)).ok).toBe(true)
+  expect((await (await fetch(`${api.baseUrl}/api/platform/queries`)).json()).total).toBe(0)
+  const saved = await client.commit(req as never)
+  expect(saved.status).toBe('committed')
+  const read = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${USCC}`)).json()
+  expect(read.total).toBe(1)
+  expect(read.rows[0].query).toMatchObject({ interface: 'recognized_list', queriedAt: time, relationCount: 4, collectionEvidence: archive() })
+  expect(read.rows[0].relations.map((r: any) => [r.sequenceNo, r.sourceRdjb, r.sourcePage])).toEqual([[1, '1', 1], [2, '1', 2], [3, '2', 1], [4, '3', 1]])
+  expect(read.rows[0].relations.map((r: any) => r.rawFields)).toEqual(archive().rows)
+  const detail = saved.items.find((i: any) => i.kind === 'platform_query')!.detail!
+  expect(detail.relations).toEqual(read.rows[0].relations.map((r: any) => r.id))
+})
+
+it('rejects missing provenance, false complete/zero claims, wrong source, row mapping and original time without any business writes', async () => {
+  const invalid: Array<(r: any) => void> = [
+    r => { delete r.payload.platformQueries[0].collectionEvidence },
+    r => { r.payload.platformQueries[0].collectionEvidence.source = 'businessList' },
+    r => { r.payload.platformQueries[0].collectionEvidence.completedAt = '' },
+    r => { r.payload.platformQueries[0].interface = 'business_list' },
+    r => { r.payload.platformQueries[0].relations[0].year = 2024 },
+    r => { r.payload.platformQueries[0].collectionEvidence.unfinished = [{ source: 'queryBusList', rdjb: '3', page: 2 }] },
+    r => { r.payload.platformQueries[0].collectionEvidence.pages.pop() },
+    r => { for (const p of r.payload.platformQueries[0].collectionEvidence.pages) delete p.maxPage },
+    r => { r.payload.platformQueries[0].relations[0].rawFields = { qymc: '伪造' } },
+    r => { r.payload.platformQueries[0].status = 'no_record' },
+    r => { r.payload.platformQueries[0].queriedAt = '2026-01-01T00:00:00Z' },
+  ]
+  for (const [i, mutate] of invalid.entries()) {
+    const evidence = archive(); evidence.queriedAt = `2023-01-${String(i + 1).padStart(2, '0')}T00:00:00Z`; evidence.completedAt = `2023-01-${String(i + 1).padStart(2, '0')}T00:01:00Z`
+    const req = request(evidence, `invalid-${i}`); mutate(req)
+    const result = await client.preflight(req as never)
+    expect(result.preflight.conflicts.length, `case ${i}`).toBeGreaterThan(0)
+    const committed = await client.commit(req as never)
+    expect(committed.status).toBe('failed')
+  }
+  const read = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list`)).json()
+  expect(read.total).toBe(1)
+})
+
+it('archives complete zero, partial, login failure and not queried separately, with title filtering and historical pagination', async () => {
+  const { recognizedResultToImport } = await import('../lib/platform/recognized-evidence')
+  const zero = archive()
+  zero.queriedAt = '2024-01-01T00:00:00Z'; zero.completedAt = '2024-01-01T00:01:00Z'
+  zero.status = 'no_record'; zero.rows = []; zero.fetchedCount = 0; zero.declaredTotal = 0
+  zero.pages = ['1', '2', '3'].map(rdjb => ({ source: 'queryBusList', rdjb, page: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null }))
+  const partial = archive()
+  partial.queriedAt = '2024-02-01T00:00:00Z'; partial.completedAt = '2024-02-01T00:01:00Z'
+  partial.status = 'partial'; partial.completeness = 'partial'; partial.rows = partial.rows.slice(0, 1); partial.pages = partial.pages.slice(0, 1); partial.fetchedCount = 1
+  partial.unfinished = [{ source: 'queryBusList', rdjb: '1', page: 2 }, { source: 'queryBusList', rdjb: '2', page: 1 }, { source: 'queryBusList', rdjb: '3', page: 1 }]
+  const failed = structuredClone(partial)
+  failed.queriedAt = '2024-03-01T00:00:00Z'; failed.completedAt = '2024-03-01T00:01:00Z'
+  failed.status = 'auth_failed'; failed.rows = []; failed.fetchedCount = 0
+  failed.error = { code: 'auth_failed', message: '合成登录页失效' }
+  failed.pages = [{ source: 'queryBusList', rdjb: '1', page: 1, status: 'auth_failed', fetchedCount: 0, declaredTotal: null, error: failed.error }]
+  failed.unfinished[0]!.page = 1
+  const notQueried = structuredClone(failed)
+  notQueried.queriedAt = '2024-04-01T00:00:00Z'; notQueried.completedAt = '2024-04-01T00:01:00Z'
+  notQueried.status = 'not_queried'; notQueried.completeness = 'not_queried'; notQueried.pages = []; notQueried.error = null
+  for (const [index, evidence] of [zero, partial, failed, notQueried].entries()) {
+    const req = { ...request(evidence, `state-${index}`), payload: { platformQueries: [recognizedResultToImport(evidence)] } }
+    expect((await client.preflight(req)).preflight.conflicts).toEqual([])
+    expect((await client.commit(req)).status).toBe('committed')
+  }
+  const read = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&titleCode=little_giant&uscc=${USCC}&pageSize=2`)).json()
+  expect(read.total).toBe(5)
+  expect(read.rows).toHaveLength(2)
+  expect(read.counts).toEqual({ success: 1, no_record: 1, partial: 1, failed: 1, not_queried: 1 })
+  const zeroRead = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&status=no_record`)).json()
+  expect(zeroRead.rows[0].query.collectionEvidence).toEqual(zero)
+  expect(zeroRead.rows[0].relations).toEqual([])
+  const bad = request(structuredClone(partial), 'partial-as-zero')
+  bad.payload.platformQueries[0]!.status = 'no_record'
+  expect((await client.preflight(bad as never)).preflight.conflicts.length).toBeGreaterThan(0)
+})
+
+it('same natural identity replays idempotently, conflicting archive cannot mutate history, and a transaction failure rolls back all query rows', async () => {
+  const req = request()
+  const original = await client.commit(req as never)
+  expect(await client.commit(req as never)).toEqual(original)
+  const otherKey = request(archive(), 'same-archive-new-key')
+  expect((await client.commit(otherKey as never)).status).toBe('committed')
+  const before = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list`)).json()
+  const conflicting = request(archive(), 'changed-archive')
+  conflicting.payload.platformQueries[0]!.collectionEvidence.effectiveConditions.whpc = '3'
+  expect((await client.preflight(conflicting as never)).preflight.conflicts.length).toBeGreaterThan(0)
+  expect((await client.commit(conflicting as never)).status).toBe('failed')
+  const failed = archive(); failed.queriedAt = '2025-06-01T00:00:00Z'; failed.completedAt = '2025-06-01T00:01:00Z'
+  // Synthetic storage failure at the write boundary; outcome is checked through public reads.
+  db.$client.exec("CREATE TRIGGER synthetic_import_failure BEFORE INSERT ON platform_relation BEGIN SELECT RAISE(ABORT, 'synthetic transaction failure'); END")
+  try { expect((await client.commit(request(failed, 'rollback') as never)).status).toBe('failed') }
+  finally { db.$client.exec('DROP TRIGGER synthetic_import_failure') }
+  const after = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list`)).json()
+  expect(after).toEqual(before)
+})
+
+it('MCP history and enterprise detail match REST, preserve cross-source identical IDs, and evidence never changes enterprise records or decisions implicitly', async () => {
+  const { recognizedResultToImport } = await import('../lib/platform/recognized-evidence')
+  const seed = await client.commit({ idempotencyKey: 'seed-enterprise', sourceKind: 'announcement', sourceIdentity: 'synthetic-seed', payload: { announcement: {
+    sourceDocument: { source: 'jxj', title: '合成种子' }, records: [{ enterprise: { name: '合成主档', uscc: USCC }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2023 }] }],
+  } } })
+  expect(seed.status, JSON.stringify(seed)).toBe('committed')
+  const enterpriseId = seed.items.find(i => i.kind === 'record_event')!.detail!.enterpriseId as number
+  const before = getRosterEnterpriseDetail(db, enterpriseId)!
+  const evidence = archive(); evidence.queriedAt = '2025-07-01T00:00:00Z'; evidence.completedAt = '2025-07-01T00:01:00Z'
+  const req = { ...request(evidence, 'mcp-archive'), payload: { platformQueries: [recognizedResultToImport(evidence)] } }
+  vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
+  const save = (await import('../server/mcp/tools/save_roster_batch')).default as any
+  const preflight = (await import('../server/mcp/tools/preflight_roster_batch')).default as any
+  expect(save.enabled({ context: { mcpAuth: { writeAuthorized: false } } })).toBe(false)
+  expect(save.enabled({ context: { mcpAuth: { writeAuthorized: true } } })).toBe(true)
+  expect((await preflight.handler(req)).preflight.conflicts).toEqual([])
+  const committed = await save.handler(req)
+  expect(committed.status).toBe('committed')
+  const history = (await import('../server/mcp/tools/list_platform_queries')).default as any
+  const input = { interface: 'recognized_list', uscc: USCC, titleCode: 'little_giant', page: 1, pageSize: 10 }
+  const rest = await (await fetch(`${api.baseUrl}/api/platform/queries?${new URLSearchParams(Object.entries(input).map(([k,v]) => [k,String(v)]))}`)).json()
+  expect(await history.handler(input)).toEqual(rest)
+  const detailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as any
+  const after = await detailTool.handler({ enterpriseId })
+  expect(after.platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt).collectionEvidence).toEqual(evidence)
+  expect(after.platform.relations).toHaveLength(4)
+  expect(after.platform.relations[0]).toMatchObject({ sourceRdjb: '1', sourcePage: 1, rawFields: evidence.rows[0] })
+  for (const key of ['enterprise', 'aliases', 'records', 'events', 'evidence', 'differences'] as const) expect(after[key]).toEqual(before[key])
+  const comparison = await (await fetch(`${api.baseUrl}/api/comparison?title=innovative_sme&direction=missing_in_miit`)).json()
+  const comparisonQuery = comparison.rows.find((r: any) => r.enterpriseId === enterpriseId).platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt)
+  expect(comparisonQuery.collectionEvidence).toEqual(evidence)
+  expect(comparisonQuery.relations[0]).toMatchObject({ rawFields: evidence.rows[0], sourceRdjb: '1', sourcePage: 1 })
+  const legacy = { ...request(evidence, 'legacy-same-id'), payload: { platformQueries: [{ interface: 'business_list' as const, queryKey: USCC, rdjb: '1', queriedAt: evidence.queriedAt, status: 'success' as const, relations: [{ sequenceNo: 1, relationKey: evidence.rows[0]!.id, usccRaw: USCC, nameRaw: '合成企业' }] }] } }
+  expect((await client.commit(legacy)).status).toBe('committed')
+  const read = await (await fetch(`${api.baseUrl}/api/platform/queries?enterpriseId=${enterpriseId}`)).json()
+  expect(read.rows.flatMap((q: any) => q.relations).filter((r: any) => r.relationKey === 'same-1')).toHaveLength(3)
+  expect(new Set(read.rows.map((q: any) => q.query.interface))).toEqual(new Set(['business_list', 'recognized_list']))
+})
+
+it('explicit same-batch difference references resolve real query and row IDs while wrong source, title and subject references are rejected', async () => {
+  const { recognizedResultToImport } = await import('../lib/platform/recognized-evidence')
+  const evidence = archive(); evidence.queriedAt = '2025-08-01T00:00:00Z'; evidence.completedAt = '2025-08-01T00:01:00Z'
+  const query = recognizedResultToImport(evidence)
+  const ref = { interface: 'recognized_list' as const, queryKey: USCC, rdjb: '1,2,3', queriedAt: evidence.queriedAt }
+  const diff = { uscc: USCC, titleCode: 'little_giant', direction: 'missing_in_miit' as const, status: 'needs_review' as const, recordedAt: '2025-08-02T00:00:00Z', evidenceQueryRef: ref, evidenceRelationRef: { ...ref, sequenceNo: 4, relationKey: 'same-0' } }
+  const req = { ...request(evidence, 'explicit-difference'), payload: { platformQueries: [query], differences: [diff] } }
+  expect((await client.preflight(req)).preflight.conflicts).toEqual([])
+  const commit = await client.commit(req)
+  expect(commit.status).toBe('committed')
+  const read = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${USCC}&pageSize=50`)).json()
+  const row = read.rows.find((r: any) => r.query.queriedAt === evidence.queriedAt)
+  const decision = commit.items.find(i => i.kind === 'difference')!.detail!
+  expect(decision).toMatchObject({ evidenceQueryId: row.query.id, evidenceRelationId: row.relations[3].id })
+  const wrongTitle = structuredClone(req); wrongTitle.idempotencyKey = 'wrong-title'; wrongTitle.payload.differences[0]!.evidenceRelationRef.sequenceNo = 1; wrongTitle.payload.differences[0]!.evidenceRelationRef.relationKey = 'same-1'
+  expect((await client.preflight(wrongTitle)).preflight.conflicts.length).toBeGreaterThan(0)
+  const wrongSource = structuredClone(req); wrongSource.idempotencyKey = 'wrong-source'; (wrongSource.payload.differences[0]!.evidenceQueryRef as any) = { interface: 'business_list', queryKey: USCC, rdjb: '1', queriedAt: '2025-07-01T00:00:00Z' }
+  expect((await client.preflight(wrongSource)).preflight.conflicts.length).toBeGreaterThan(0)
+  const wrongSubject = structuredClone(req); wrongSubject.idempotencyKey = 'wrong-subject'; wrongSubject.payload.platformQueries[0]!.relations![0]!.enterpriseId = 999999
+  expect((await client.preflight(wrongSubject)).preflight.conflicts.length).toBeGreaterThan(0)
+  const ambiguous = structuredClone(req); ambiguous.idempotencyKey = 'ambiguous'; delete (ambiguous.payload.differences[0]!.evidenceQueryRef as any).queriedAt
+  expect((await client.preflight(ambiguous)).preflight.conflicts.length).toBeGreaterThan(0)
+})
+
+it('synthetic paginated public live result transfers explicitly to SQLite without a second upstream query', async () => {
+  const liveResponse = await fetch(`${api.baseUrl}/api/platform/query`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source: 'queryBusList', uscc: USCC, pageSize: 1 }) })
+  const result = await liveResponse.json() as PlatformLiveQueryResult
+  expect(result).toMatchObject({ status: 'success', completeness: 'complete', fetchedCount: 4, declaredTotal: 4 })
+  expect(result.pages.map(p => [p.rdjb, p.page, p.maxPage])).toEqual([['1', 1, 2], ['1', 2, 2], ['2', 1, 1], ['3', 1, 1]])
+  const { recognizedResultToImport } = await import('../lib/platform/recognized-evidence')
+  const req = { ...request(result, 'live-transfer'), payload: { platformQueries: [recognizedResultToImport(result)] } }
+  expect((await client.preflight(req)).preflight.conflicts).toEqual([])
+  expect((await client.commit(req)).status).toBe('committed')
+  const read = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&pageSize=1`)).json()
+  expect(read.rows[0].query.collectionEvidence).toEqual(result)
+  expect(read.rows[0].relations).toHaveLength(4)
+  expect(new Set(read.rows[0].relations.map((r: any) => r.relationKey))).toEqual(new Set(['shared-live-id']))
+})
+
+it('single-title name candidates remain unmatched and a completed continuation stays partial rather than whole-range no-record', async () => {
+  const { recognizedResultToImport } = await import('../lib/platform/recognized-evidence')
+  const candidate = archive()
+  candidate.queriedAt = '2025-09-01T00:00:00Z'; candidate.completedAt = '2025-09-01T00:01:00Z'
+  candidate.titleScope.rdjb = ['2']; candidate.effectiveConditions = { name: '合成主档', combination: 'and' }
+  candidate.rows = [{ id: 'name-candidate', qymc: '合成主档', whpcyear: '2024' }]; candidate.fetchedCount = 1; candidate.declaredTotal = 1
+  candidate.pages = [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, maxPage: 1, error: null }]
+  const req = { ...request(candidate, 'single-name-candidate'), payload: { platformQueries: [recognizedResultToImport(candidate)] } }
+  expect((await client.preflight(req)).preflight.conflicts).toEqual([])
+  expect((await client.commit(req)).status).toBe('committed')
+  const read = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&titleCode=specialized_sme&queryKey=${encodeURIComponent('name:合成主档')}`)).json()
+  expect(read.total).toBe(1)
+  expect(read.rows[0].query).toMatchObject({ titleCode: 'specialized_sme', rdjb: '2' })
+  expect(read.rows[0].relations[0]).toMatchObject({ enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending' })
+  expect((await (await fetch(`${api.baseUrl}/api/platform/queries?queryKey=${encodeURIComponent('name:合成主档')}&titleCode=little_giant`)).json()).total).toBe(0)
+  const continuation = archive()
+  continuation.queriedAt = '2025-09-02T00:00:00Z'; continuation.completedAt = '2025-09-02T00:01:00Z'
+  continuation.titleScope.rdjb = ['1']; continuation.rows = [continuation.rows[0]!]; continuation.fetchedCount = 1; continuation.declaredTotal = 2; continuation.fullRange = false
+  continuation.pages = [{ source: 'queryBusList', rdjb: '1', page: 2, maxPage: 2, status: 'success', fetchedCount: 1, declaredTotal: 2, error: null }]
+  const next = { ...request(continuation, 'continuation'), payload: { platformQueries: [recognizedResultToImport(continuation)] } }
+  expect(next.payload.platformQueries[0]!.status).toBe('partial')
+  expect((await client.commit(next)).status).toBe('committed')
+  const history = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&status=partial`)).json()
+  expect(history.rows.find((r: any) => r.query.queriedAt === continuation.queriedAt).query.collectionEvidence).toEqual(continuation)
+})

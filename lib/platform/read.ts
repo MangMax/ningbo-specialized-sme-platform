@@ -14,6 +14,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { MAX_PAGE_SIZE } from '../query'
+import { sourcePositionForSequence, RDJB_TITLE_CODES } from './recognized-evidence'
 import type { PlatformInterface } from '../labels'
 
 export interface PlatformQueryFilter {
@@ -21,7 +22,9 @@ export interface PlatformQueryFilter {
   queryKey?: string
   /** 只看「有关系归到该企业」的查询。 */
   enterpriseId?: number
-  status?: 'success' | 'failed' | 'no_record' | 'not_queried'
+  status?: 'success' | 'failed' | 'no_record' | 'not_queried' | 'partial'
+  titleCode?: string
+  uscc?: string
   page?: number
   pageSize?: number
   /** 是否带出原始响应原文(§1.3 的 `raw_response`);缺省 false(列表体量控制)。 */
@@ -29,6 +32,8 @@ export interface PlatformQueryFilter {
 }
 
 export interface PlatformRelationRow {
+  sourceRdjb?: string | null
+  sourcePage?: number | null
   id: number
   queryId: number
   sequenceNo: number
@@ -63,6 +68,7 @@ export interface PlatformQueryRow {
     status: string
     failureReason: string | null
     rawResponse?: string | null
+    collectionEvidence?: import('./live-query').PlatformLiveQueryResult | null
     createdAt: string
     relationCount: number
   }
@@ -95,6 +101,11 @@ export function listPlatformQueries(
 ): PlatformQueriesResult {
   const conditions = []
   if (filter.interface) conditions.push(eq(schema.platformQuery.interface, filter.interface))
+  if (filter.uscc) conditions.push(sql`(${schema.platformQuery.queryKey} = ${filter.uscc} OR ${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.usccRaw} = ${filter.uscc}))`)
+  if (filter.titleCode) {
+    const rdjb = Object.keys(RDJB_TITLE_CODES).find(key => RDJB_TITLE_CODES[key] === filter.titleCode) ?? ''
+    conditions.push(sql`(${schema.platformQuery.titleCode} = ${filter.titleCode} OR EXISTS (SELECT 1 FROM json_each(json_extract(${schema.platformQuery.collectionEvidence}, '$.titleScope.rdjb')) WHERE value = ${rdjb}))`)
+  }
   if (filter.queryKey) conditions.push(eq(schema.platformQuery.queryKey, filter.queryKey))
   if (filter.status) conditions.push(eq(schema.platformQuery.status, filter.status))
   if (filter.enterpriseId != null) {
@@ -135,6 +146,7 @@ export function listPlatformQueries(
   const byQuery = new Map<number, PlatformRelationRow[]>()
   for (const { relation, matchedName } of relations) {
     const row: PlatformRelationRow = {
+      ...sourcePositionForSequence(pageQueries.find(q => q.id === relation.queryId)?.collectionEvidence, relation.sequenceNo),
       id: relation.id,
       queryId: relation.queryId,
       sequenceNo: relation.sequenceNo,

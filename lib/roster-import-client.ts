@@ -168,7 +168,9 @@ export interface RosterImportPlatformQuery {
   rdjb?: string
   titleCode?: string | null
   queriedAt: string
-  status?: 'success' | 'failed' | 'no_record' | 'not_queried'
+  status?: 'success' | 'failed' | 'no_record' | 'not_queried' | 'partial'
+  /** recognized_list 必填：原始 queryBusList 结果，不补造时间/完整性。 */
+  collectionEvidence?: import('./platform/live-query').PlatformLiveQueryResult | null
   failureReason?: string | null
   rawResponse?: string | null
   relations?: RosterImportRelation[]

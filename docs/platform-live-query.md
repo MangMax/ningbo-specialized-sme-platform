@@ -130,3 +130,6 @@ submission/retry, read-only status/progress/individual results, stable IDs,
 unfinished-only retries, bounded retained results and restart policy. Batches
 reuse this single-query contract and the same global request budget. Agent
 investigation uses these app APIs/MCP and never needs a Cookie read/reveal.
+
+
+#59 新增逐页可空 `maxPage`（queryBusList 原响应末页），供独立显式转存核验。查询本身仍只读；[归档转存契约](platform-recognized-evidence.md) 说明 recognized_list、旧归档元数据缺失的拒绝规则及批量 segments 转存。

@@ -316,6 +316,7 @@
       ],
       "platformQuery": [
         {
+          "collectionEvidence": null,
           "failureReason": null,
           "id": 1,
           "interface": "business_list",
@@ -327,6 +328,7 @@
           "titleCode": null
         },
         {
+          "collectionEvidence": null,
           "failureReason": null,
           "id": 2,
           "interface": "apply_list",

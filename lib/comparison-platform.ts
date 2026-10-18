@@ -1,3 +1,4 @@
+import { sourcePositionForSequence } from './platform/recognized-evidence'
 /**
  * 比对行 × 平台证据的**接缝**(RL-03 交付物 3;RL-15 收口为**以库内为准**)。
  *
@@ -62,6 +63,9 @@ export interface ComparisonDisposition {
 
 /** 一条**平台原始关系**(`platform_relation`)—— 可展开的接口证据原文。 */
 export interface ComparisonRelation {
+  rawFields?: Record<string, unknown> | null
+  sourceRdjb?: string | null
+  sourcePage?: number | null
   id: number
   queryId: number
   sequenceNo: number
@@ -81,6 +85,8 @@ export interface ComparisonRelation {
 }
 
 export interface ComparisonQuerySummary {
+  collectionEvidence?: import('./platform/live-query').PlatformLiveQueryResult | null
+  titleCode?: string | null
   id: number
   interface: string
   queryKey: string
@@ -222,6 +228,8 @@ export function attachPlatformEvidence<T extends RowKey>(
     queryId: row.queryId,
     sequenceNo: row.sequenceNo,
     relationKey: row.relationKey,
+    rawFields: row.rawFields,
+    ...sourcePositionForSequence(queries.find(q => q.id === row.queryId)?.collectionEvidence, row.sequenceNo),
     usccRaw: row.usccRaw,
     nameRaw: row.nameRaw,
     aliasNameRaw: row.aliasNameRaw,
@@ -261,6 +269,8 @@ export function attachPlatformEvidence<T extends RowKey>(
       queryKey: query.queryKey,
       rdjb: query.rdjb,
       queriedAt: query.queriedAt,
+      collectionEvidence: query.collectionEvidence,
+      titleCode: query.titleCode,
       status: query.status,
       failureReason: query.failureReason,
       relationCount: relations.length,

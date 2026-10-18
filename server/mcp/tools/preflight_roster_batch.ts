@@ -24,6 +24,7 @@ export default defineMcpTool({
     openWorldHint: false,
   },
   description: [
+    'queryBusList 仅作为 recognized_list 显式转存；collectionEvidence 必须保留原结果/时点/页行与完整性，见 docs/platform-recognized-evidence.md。读回使用 list_platform_queries。',
     '只算「这次提交会发生什么」，**不写业务数据**：返回 `{ add, update, remove, review, conflicts }`。',
     '等价 `POST /api/roster/import/preflight`。参数与 `save_roster_batch` 相同；',
     '`conflicts` 列出每一项不合法的原因（不静默丢行）。确认无误后再用 `save_roster_batch` 提交。',

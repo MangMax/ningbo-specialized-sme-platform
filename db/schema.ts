@@ -577,8 +577,8 @@ export const platformQuery = sqliteTable(
   'platform_query',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    /** 两个接口之一:`business_list`(businessList)/ `apply_list`(applyList)。 */
-    interface: text('interface', { enum: ['business_list', 'apply_list'] }).notNull(),
+    /** 独立来源：business_list / apply_list / recognized_list(queryBusList)。 */
+    interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
     /** 查询键:统一社会信用代码,或 `name:<nameNorm>`(与 `lib/reconcile.ts` 同构)。 */
     queryKey: text('query_key').notNull(),
     /**
@@ -595,7 +595,7 @@ export const platformQuery = sqliteTable(
     queriedAt: text('queried_at').notNull(),
     /** 四态见上;默认 `not_queried`(「还没查」而不是「没有」)。 */
     status: text('status', {
-      enum: ['success', 'failed', 'no_record', 'not_queried'],
+      enum: ['success', 'failed', 'no_record', 'not_queried', 'partial'],
     })
       .notNull()
       .default('not_queried'),
@@ -603,6 +603,8 @@ export const platformQuery = sqliteTable(
     failureReason: text('failure_reason'),
     /** 原始响应 / HTML 原文,供回溯。 */
     rawResponse: text('raw_response'),
+    /** 原始逐来源采集结果，旧查询留 null；含原时间、页、条件及原行。 */
+    collectionEvidence: text('collection_evidence', { mode: 'json' }).$type<import('../lib/platform/live-query').PlatformLiveQueryResult>(),
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
