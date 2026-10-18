@@ -64,6 +64,21 @@ describe('record comparison public read service', () => {
     const stale = getRecordComparison(f.db, input, { ...proof, currentScopes: [{ ...proof.currentScopes[0]!, querySourceFingerprint: 'stale' }] })
     expect(stale.currentSourceConsistency.recognizedObservations[0]?.qualification).toBe('not_comparable')
   })
+  it('trusted equal-version proof distinguishes matched and export-only original rows', () => {
+    const f = fixture(), e = f.makeEnterprise('Paired', '91330211255994473A')
+    const evidence = { source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-18T00:00:00Z', completedAt: '2026-10-18T00:00:01Z', rows: [{ tyshxydm: e.usccNorm!, qymc: 'Paired' }], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, maxPage: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } } as typeof schema.platformQuery.$inferInsert.collectionEvidence
+    const q = f.makeQuery('recognized_list', e.usccNorm!, 'specialized_sme', 'success', evidence)
+    const recognized = f.makeRelation(q.id, e.id, e.usccNorm, 1, '在册', null, 2024)
+    f.db.update(schema.platformRelation).set({ nameRaw: 'Paired' }).run()
+    const batch = f.db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'same-version.xlsx', sha256: 'd'.repeat(64), importStatus: 'imported' }).returning().get()
+    const matching = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 1, usccRaw: e.usccNorm, nameRaw: 'Paired' }).returning().get()
+    const extra = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 2, usccRaw: '91330211255994474B', nameRaw: 'Only export' }).returning().get()
+    const proof = { officialScopes: [], currentScopes: [{ proofId: 'same-version-2', queryId: q.id, exportBatchId: batch.id, titleCode: 'specialized_sme', querySourceFingerprint: queryProofFingerprint(q), exportSha256: batch.sha256, scopeEquivalent: true as const, versionEquivalent: true as const, verifiedAt: '2026-10-18T01:00:00Z' }] }
+    const out = getRecordComparison(f.db, f.input([q.id], [batch.id]), proof)
+    expect(out.currentSourceConsistency.recognizedObservations).toMatchObject([{ recognized: { id: recognized.id }, exportRows: [{ id: matching.id }], qualification: 'matched' }])
+    expect(out.currentSourceConsistency.exportObservations).toMatchObject([{ exportRow: { id: matching.id }, qualification: 'matched' }, { exportRow: { id: extra.id }, qualification: 'export_only' }])
+    expect(out.currentSourceConsistency.qualification).toBe('comparable')
+  })
   it('case 1 preserves aligned 2021 award and independent rejected 2025 update with current export scope unknown', () => {
     const f = fixture(), enterprise = f.makeEnterprise('A', '91330211255994457P')
     const event = f.makeEvent(enterprise.id, 'award', 2021, 1)
