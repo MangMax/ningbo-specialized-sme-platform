@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import { BookOpenCheck, ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound } from '@lucide/vue'
+import { ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound } from '@lucide/vue'
 import { ENTERPRISE_LIST_TITLE } from '~~/lib/labels'
 import NavMain from '@/components/NavMain.vue'
 import {
@@ -16,6 +16,8 @@ import {
 const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: 'icon',
 })
+
+const colorMode = useAppColorMode()
 
 // 「企业列表」(RL-20 起用名;旧名「名录台账」):一行一家企业,称号历史与差异原因在右侧抽屉。
 // 侧边栏入口、页面标题、`document.title` 三处都取 `ENTERPRISE_LIST_TITLE` 一个常量。
@@ -40,16 +42,23 @@ const adminNav = [
     <SidebarHeader>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton size="lg" as-child tooltip="专精特新企业称号台账">
-            <NuxtLink to="/">
-              <div
-                class="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg"
-              >
-                <BookOpenCheck class="size-4" />
-              </div>
-              <div class="grid flex-1 text-left text-sm leading-tight">
-                <span class="truncate font-medium">专精特新企业称号台账</span>
-              </div>
+          <SidebarMenuButton
+            size="lg"
+            as-child
+            tooltip="专精特新企业称号台账"
+            class="group-data-[collapsible=icon]:justify-center"
+          >
+            <NuxtLink to="/" aria-label="专精特新企业称号台账，返回企业列表">
+              <img
+                :src="colorMode === 'dark' ? '/brand/symbol-small-white.svg' : '/brand/symbol-small.svg'"
+                alt=""
+                width="24"
+                height="24"
+                class="size-6 shrink-0"
+              />
+              <span class="truncate text-sm font-medium group-data-[collapsible=icon]:hidden">
+                专精特新
+              </span>
             </NuxtLink>
           </SidebarMenuButton>
         </SidebarMenuItem>

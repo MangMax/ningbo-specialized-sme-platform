@@ -1,5 +1,9 @@
 # `public/` — 静态资源
 
+## 品牌标识
+
+`brand/` 包含图形标、文字标、图文组合及单色/反白版本；`favicon.svg` 使用 16px 专用轮廓并随系统明暗模式调整颜色。侧栏和 README 复用这些资源。生成与使用规则见 [brand/README.md](brand/README.md)。
+
 ## `pdfium.wasm`
 
 PDF 预览用的 pdfium 引擎,由 EmbedPDF 加载。

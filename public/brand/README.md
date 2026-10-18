@@ -1,0 +1,31 @@
+# 专精特新品牌资源
+
+三种形态均为透明背景、文字转路径的 SVG，无运行时字体或网络依赖。
+
+| 形态 | 主版 | 单色 | 深底反白 |
+| --- | --- | --- | --- |
+| 图形 | symbol.svg | symbol-mono.svg | symbol-white.svg |
+| 文字 | wordmark.svg | wordmark-mono.svg | wordmark-white.svg |
+| 组合 | lockup.svg | lockup-mono.svg | lockup-white.svg |
+| 24px 图形 | symbol-small.svg | symbol-small-mono.svg | symbol-small-white.svg |
+| 16px 图形 | symbol-compact.svg | symbol-compact-mono.svg | symbol-compact-white.svg |
+
+图形由四块切面围出聚焦的负形，右上块旋转为独立菱形，表达专注、精度和突破。名称为“专精特新”。
+
+主版图形和文字统一为 `#14417E`；单色为 `#172B45`；深底用白色。标准图形用于 32px 及以上；24px 使用 small 版；16px 使用 compact 版。文字标最小宽度 112px，图文组合建议至少 176px，等比缩放。
+
+应用侧栏：24px `symbol-small` 图形配 14px、medium 字重的界面文字，去掉色块底座，与侧栏导航保持相近视觉重量。浅色用蓝色图形，深色用反白图形；界面文字沿用主题语义色。折叠时隐藏文字、居中图形；保留 48px 品牌点击行与完整无障碍名称。完整转曲字标不缩到其 112px 使用下限以下，继续用于 README 等展示场景。
+
+浏览器图标：`/favicon.svg` 由四块切面的 compact 版派生，用系统 `prefers-color-scheme` 选择深蓝或白色，独立于页面内主题切换。
+
+README：使用图文组合，并提供深色模式反白版。
+
+复现并同步公共资源：
+
+```sh
+uv run design/brand/2026-10-18-logo/generate.py --publish
+```
+
+源字形子集、字体许可和设计/评审记录位于 [design/brand/2026-10-18-logo](../../design/brand/2026-10-18-logo/README.md)。`generate.py` 通过 PEP 723 固定 fonttools 版本；`--publish` 同步 15 个品牌 SVG 和 favicon。修改时更新生成器后重新生成，避免仅修改公共副本。
+
+文字标以 Noto Sans SC SemiBold 为基础，对“新”字右侧横笔末端做斜切处理，呼应抽象标识的切面。16px/24px 允许简化切角比例，保留三块围合加独立菱形的关系；favicon 作为品牌身份独立显示，不与 Lucide 导航图标同排。
