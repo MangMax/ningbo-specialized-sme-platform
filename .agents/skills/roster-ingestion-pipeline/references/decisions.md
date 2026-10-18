@@ -22,6 +22,10 @@
 - Separate page evidence, event metadata and enterprise identity. An OCR correction changes the transcription only when the source page supports it; it does not establish a new enterprise identity.
 - Use [`uscc-recovery.md`](./uscc-recovery.md) for candidate discovery, current interface limits and the exact `cross_source` boundary.
 
+## Difference investigations
+
+Use [`difference-investigation.md`](difference-investigation.md) whenever a source comparison disagrees, a location/name changes, or a platform workflow status is returned. Query outcomes are processing facts; only an evidence-backed agent/user decision confirms a business cause.
+
 ## File handling
 
 - File-store membership follows the one executable rule in `lib/file-store-scope.ts`, with its prose counterpart in `files/README.md`. Evidence file paths must resolve inside the file store.

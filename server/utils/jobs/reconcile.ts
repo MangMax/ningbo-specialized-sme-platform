@@ -15,7 +15,7 @@ import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-
  *
  * ── 它做的事 ──────────────────────────────────────────────────────────────
  * 取比对口径的差异集合 → 对有统代的目标实查两接口(`rdjb=1/2/3` 全查 + 申报接口)→
- * 逐条落查询与关系证据 → 依显式证据判差异原因与后置动作 → **一个批次**经统一导入 API
+ * 逐条落查询与关系证据 → 依显式证据标记查询状态、交代理核实 → **一个批次**经统一导入 API
  * 写回(`/api/roster/import/{preflight,commit}` 的核心函数;§8.7 自然键让证据指针在同批内
  * 指到本批新建的查询与关系)。
  *
@@ -127,13 +127,13 @@ function numberParam(params: Record<string, unknown>, key: string): number | und
 export const reconcileSpec: JobSpec = {
   kind: 'reconcile',
   status: 'ready',
-  summary: '批量平台核查(工信部 businessList / applyList),判定差异原因并写回',
+  summary: '批量平台核查(工信部 businessList / applyList),保存查询证据，原因由代理核实',
   paramsHint:
     '可选:{ titles?: string[](称号代号,如 specialized_sme/innovative_sme/little_giant);' +
     ' directions?: ("missing_in_miit"|"extra_in_miit")[]; usccs?: string[](只查这几个统一社会信用代码,小样本实查用);' +
     ' limit?: number(最多处理多少个差异目标,分批长跑用);offset?: number(跳过前 N 个,与 limit 配成分页);' +
     ' concurrency?: 1–12(默认 4);freshnessHours?: number(复用新鲜查询/判定的窗口,默认 24);' +
-    ' write?: boolean(默认 true;false = 只判定不回写) }',
+    ' write?: boolean(默认 true;false = 只采集预览不回写) }',
   note: '需要配置页 Cookie 或 MIIT_COOKIE(提交时内存快照，不进入任务历史);无统代的差异查不了,会单独计入报告。',
   parse: parseReconcileParams,
   prepare: () => {

@@ -115,16 +115,16 @@ describe('退避重试:5xx 重试,4xx 与会话过期不重试', () => {
     expect(failed.status).toBe('failed')
     expect(failed.failureReason).toContain('HTTP 400')
 
-    // 另外三档成功且返空 ⇒ 契约上仍是 `no_record`(`query_failed` 要求「没有成功的查询」),
-    // 但**必须标待核**并在说明里点明哪一档没查到 —— 不假装证据完整。
+    // 三档成功零条不覆盖失败的第四档，整体不能记完整无记录。
+    // 一档失败即不能把其它成功零条称作完整无记录。
     const difference = db.select().from(schema.differenceReason).all()[0]!
-    expect(difference.status).toBe('no_record')
+    expect(difference.status).toBe('query_failed')
     expect(difference.verificationStatus).toBe('pending')
     expect(difference.measureCode).toBe('manual_review')
     expect(difference.reasonNote).toContain('rdjb=3')
-    expect(difference.reasonNote).toContain('未成功执行')
-    expect(report.counts.noRecord).toBe(1)
-    expect(report.counts.queryFailed).toBe(0)
+    expect(difference.reasonNote).toContain('范围不完整')
+    expect(report.counts.noRecord).toBe(0)
+    expect(report.counts.queryFailed).toBe(1)
     expect(target).toBeGreaterThan(0)
   })
 })
@@ -256,7 +256,7 @@ describe('实测案例 `91330206793007818K`:旧名要真的落进 enterprise_ali
     }
   }
 
-  it('4 条关系(3 现名 + 1 旧名)⇒ 判 renamed,并把旧名写成 confirmed 别名(来源指向真关系行)', async () => {
+  it('4 条关系(3 现名 + 1 旧名)⇒ 原始关系完整保留，原因与曾用名交代理确认', async () => {
     const db = freshDb()
     const enterpriseId = seedTarget(db, NOW, USCC)
     db.delete(schema.record).run()
@@ -281,28 +281,20 @@ describe('实测案例 `91330206793007818K`:旧名要真的落进 enterprise_ali
     const difference = db.select().from(schema.differenceReason).all().find((row) => row.enterpriseId === enterpriseId)!
     expect(difference.titleCode).toBe('little_giant')
     expect(difference.direction).toBe('extra_in_miit')
-    expect(difference.reasonCode).toBe('renamed')
-    expect(difference.measureCode).toBe('update_current_name')
+    expect(difference.status).toBe('needs_review')
+    expect(difference.reasonCode).toBeNull()
+    expect(difference.measureCode).toBe('manual_review')
 
     const alias = db.select().from(schema.enterpriseAlias).all()
-    expect(alias).toHaveLength(1)
-    expect(alias[0]!.enterpriseId).toBe(enterpriseId)
-    expect(alias[0]!.name).toBe(OLD)
-    expect(alias[0]!.nameNorm).toBe(OLD)
-    expect(alias[0]!.verificationStatus).toBe('confirmed')
-    expect(alias[0]!.sourceKind).toBe('platform_business')
-    // 自然键在**同一批**内解析:来源指向 rdjb=3 的那条旧名关系。
-    const source = relations.find((row) => row.id === alias[0]!.sourceRefId)!
-    expect(source.relationKey).toBe('SQ-Y-2022')
-    const sourceQuery = db.select().from(schema.platformQuery).all().find((row) => row.id === source.queryId)!
-    expect(`${sourceQuery.interface}|${sourceQuery.rdjb}`).toBe('business_list|3')
-    expect(report.counts.byReason).toEqual({ renamed: 1 })
+    expect(alias).toHaveLength(0)
+    expect(relations.find(row => row.relationKey === 'SQ-Y-2022')).toBeDefined()
+    expect(report.counts.byReason).toEqual({})
   })
 })
 
 describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', () => {
 
-  it('rdjb=3 已有新鲜成功查询(含两个名字)⇒ 复用该证据判出更名,只补另外三个槽位', async () => {
+  it('rdjb=3 已有新鲜成功查询(含两个名字)⇒ 复用原始证据但不自动确认更名,只补另外三个槽位', async () => {
     const db = freshDb()
     const USCC = '91330211000000088V'
     const enterpriseId = seedTarget(db, '宁波上航测绘股份有限公司', USCC)
@@ -361,15 +353,14 @@ describe('新鲜复用:库里的旧证据直接参与判定,不再打平台', ()
     expect(report.queries.reused).toBe(1)
     expect(report.queries.network).toBe(3)
 
-    // 判定用的是**库里的**关系行:更名照样判得出来。
+    // 复用关系仍可查，但不会自动产出更名结论。
     const difference = db.select().from(schema.differenceReason).all()[0]!
-    expect(difference.reasonCode).toBe('renamed')
-    const alias = db.select().from(schema.enterpriseAlias).all()[0]!
-    expect(alias.name).toBe('宁波上航测绘有限公司')
-    // 自然键指回**已存在的**那一行(不是 0 哨兵,也不是新建的)。
-    const relation = db.select().from(schema.platformRelation).all().find((row) => row.id === alias.sourceRefId)!
-    expect(relation.relationKey).toBe('SQ-OLD')
+    expect(difference.status).toBe('needs_review')
+    expect(difference.reasonCode).toBeNull()
+    expect(db.select().from(schema.enterpriseAlias).all()).toHaveLength(0)
+    const relation = db.select().from(schema.platformRelation).all().find(row => row.relationKey === 'SQ-OLD')!
     expect(relation.queryId).toBe(stored)
+
   })
 
   it('不新鲜的既有查询要重查(过了窗口就该再打一次)', async () => {

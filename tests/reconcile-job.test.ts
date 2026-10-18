@@ -151,7 +151,7 @@ describe('任务执行:进度、报告与取消', () => {
     expect(completion.error).toBeUndefined()
     const report = completion.result as Awaited<ReturnType<typeof runPlatformReconcile>>
     expect(report.usccCount).toBe(1)
-    expect(report.counts.confirmed).toBe(1)
+    expect(report.counts.confirmed).toBe(0)
     expect(report.write!.status).toBe('committed')
     const recorded = (ctx as unknown as { recorded: [number, number][] }).recorded
     expect(recorded[0]).toEqual([0, 1])

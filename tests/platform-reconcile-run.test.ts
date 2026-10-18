@@ -194,7 +194,7 @@ describe('目标收集:只取比对口径的差异集合,并把「无统代」�
 // 端到端:实查 → 落证据 → 判定 → 写回 → 读回
 // ---------------------------------------------------------------------------
 
-describe('端到端:一次运行把证据、原因与措施经统一 API 写回', () => {
+describe('端到端:一次运行经统一 API 保存证据和未确认处理状态', () => {
   let report: ReconcileReport
 
   beforeAll(async () => {
@@ -270,11 +270,11 @@ describe('端到端:一次运行把证据、原因与措施经统一 API 写回'
     const renamed = rows.find((row) => row.enterpriseId === canonical)!
     expect(renamed.titleCode).toBe('specialized_sme')
     expect(renamed.direction).toBe('extra_in_miit')
-    expect(renamed.status).toBe('confirmed_reason')
-    expect(renamed.reasonCode).toBe('renamed')
-    expect(renamed.measureCode).toBe('update_current_name')
-    expect(renamed.measureNote).toContain('曾用名')
-    expect(renamed.verificationStatus).toBe('confirmed')
+    expect(renamed.status).toBe('needs_review')
+    expect(renamed.reasonCode).toBeNull()
+    expect(renamed.measureCode).toBe('manual_review')
+    expect(renamed.measureNote).toContain('代理')
+    expect(renamed.verificationStatus).toBe('pending')
 
     const unresolvable = rows.find((row) => row.enterpriseId === legacy)!
     expect(unresolvable.status).toBe('not_queried')
@@ -287,33 +287,18 @@ describe('端到端:一次运行把证据、原因与措施经统一 API 写回'
     expect(thirdRow.measureCode).toBe('manual_review')
   })
 
-  it('曾用名写成 confirmed 别名,来源指向**本批新建**的关系行(§8.7 自然键解析到真 id)', () => {
-    const rows = aliases()
-    expect(rows).toHaveLength(1)
-    const alias = rows[0]!
-    expect(alias.enterpriseId).toBe(canonical)
-    expect(alias.name).toBe(OLD_NAME)
-    expect(alias.nameNorm).toBe(OLD_NAME)
-    expect(alias.sourceKind).toBe('platform_business')
-    expect(alias.verificationStatus).toBe('confirmed')
-    expect(alias.validFrom).toBe('2022-06-22 17:17:52')
-    // **不是 0 哨兵**:整批写完就指到了真实的 platform_relation 行。
-    expect(alias.sourceRefId).not.toBe(0)
-    const relation = platformRelations().find((row) => row.id === alias.sourceRefId)!
-    expect(relation.sequenceNo).toBe(1)
-    expect(relation.nameRaw).toBe(OLD_NAME)
+  it('multiple qymc values remain raw relationships and do not write aliases', () => {
+    expect(aliases()).toHaveLength(0)
+    expect(platformRelations().filter(row => row.nameRaw === OLD_NAME).length).toBeGreaterThan(0)
   })
 
-  it('差异证据指针在**同一批内**解析:evidence_query_id / evidence_relation_id 指向真实行', () => {
-    const renamed = differences().find((row) => row.enterpriseId === canonical)!
-    const business3 = platformQueries().find((row) => row.queryKey === USCC && row.rdjb === '3')!
-    expect(renamed.evidenceQueryId).toBe(business3.id)
-    const relation = platformRelations().find((row) => row.id === renamed.evidenceRelationId)!
-    expect(relation.queryId).toBe(business3.id)
-    expect(relation.nameRaw).toBe(OLD_NAME)
+  it('pending case points to a real collected query, without inventing a decisive relation', () => {
+    const pending = differences().find(row => row.enterpriseId === canonical)!
+    expect(platformQueries().some(q => q.id === pending.evidenceQueryId)).toBe(true)
+    expect(pending.evidenceRelationId).toBeNull()
   })
 
-  it('只发一个批次(preflight + commit 同键),不是「先写查询、再写别名」两批', async () => {
+  it('查询与待核状态通过同一批次写入', async () => {
     const batches = db.select().from(schema.importBatch).all()
     expect(batches).toHaveLength(1)
     expect(batches[0]!.sourceKind).toBe('alias_evidence')
@@ -321,30 +306,21 @@ describe('端到端:一次运行把证据、原因与措施经统一 API 写回'
     expect(batches[0]!.idempotencyKey).toMatch(/^platform_reconcile:[0-9a-f]{32}$/)
   })
 
-  it('报告分项:已确认按原因分类、无记录、待人工、无法直查各归各桶', () => {
+  it('报告分项:不产出已确认原因；待核、无记录、未查询分别计数', () => {
     expect(report.counts.total).toBe(3)
-    expect(report.counts.confirmed).toBe(1)
-    expect(report.counts.byReason).toEqual({ renamed: 1 })
+    expect(report.counts.confirmed).toBe(0)
+    expect(report.counts.byReason).toEqual({})
     expect(report.counts.noRecord).toBe(1)
-    expect(report.counts.needsReview).toBe(0)
+    expect(report.counts.needsReview).toBe(1)
     expect(report.counts.queryFailed).toBe(0)
     expect(report.counts.notQueried).toBe(1)
     expect(report.relations).toBe(8)
-    expect(report.aliases).toBe(1)
+    expect(report.aliases).toBe(0)
     expect(report.write).toEqual({ batchId: expect.any(Number), status: 'committed', written: expect.any(Number), skipped: expect.any(Number) })
   })
 
-  it('提示但不自动归并:旧名 = 库里另一家无统代企业的现名', () => {
-    expect(report.mergeCandidates).toEqual([
-      {
-        fromEnterpriseId: legacy,
-        fromName: OLD_NAME,
-        intoEnterpriseId: canonical,
-        intoName: NEW_NAME,
-        uscc: USCC,
-        aliasName: OLD_NAME,
-      },
-    ])
+  it('采集不生成归并决策，原始名称留在关系中', () => {
+    expect(report.mergeCandidates).toEqual([])
     // **没有**做归并:两家企业都还在。
     const names = db.select().from(schema.enterprise).all().filter((row) => row.name === OLD_NAME || row.name === NEW_NAME)
     expect(names).toHaveLength(2)
@@ -443,14 +419,14 @@ describe('可续跑:重跑复用新鲜证据,不重复打平台、不重复堆�
     expect(retried.queries.network).toBe(4)
     expect(retried.counts.reusedFresh).toBe(0)
     expect(retried.counts.queryFailed).toBe(0)
-    expect(retried.counts.confirmed).toBe(1)
+    expect(retried.counts.confirmed).toBe(0)
     expect(retried.write?.status).toBe('committed')
 
     const history = differences().sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
     expect(history.map((row) => [row.recordedAt, row.status])).toEqual([
       ['2026-10-16T01:59:00.000Z', 'confirmed_reason'],
       ['2026-10-16T02:00:00.000Z', 'query_failed'],
-      ['2026-10-16T02:01:00.000Z', 'confirmed_reason'],
+      ['2026-10-16T02:01:00.000Z', 'needs_review'],
     ])
     const queries = platformQueries()
     expect(queries).toHaveLength(8)
@@ -495,7 +471,7 @@ describe('试跑与取消', () => {
       titles: ['specialized_sme'],
       write: false,
     })
-    expect(report.counts.confirmed).toBe(1)
+    expect(report.counts.confirmed).toBe(0)
     expect(report.write).toBeNull()
     expect(platformQueries()).toHaveLength(0)
     expect(differences()).toHaveLength(0)
@@ -520,5 +496,33 @@ describe('试跑与取消', () => {
     expect(differences()).toHaveLength(0)
     expect(progress[0]).toEqual([0, 2])
     expect(cancelling.calls.length).toBeLessThanOrEqual(4)
+  })
+})
+
+
+describe('agent-confirmed conclusions are separate from collection', () => {
+  it('preserves an old confirmed decision while persisting newly collected evidence', async () => {
+    clearEvidence()
+    db.insert(schema.differenceReason).values({
+      enterpriseId: canonical, titleCode: 'specialized_sme', direction: 'extra_in_miit',
+      status: 'confirmed_reason', reasonCode: 'renamed', reasonNote: 'explicit agent decision',
+      measureCode: 'update_current_name', measureNote: 'explicit agent measure',
+      verificationStatus: 'confirmed', recordedAt: '2026-09-01T00:00:00.000Z',
+    }).run()
+    const before = differences()
+    const replay = platformReplay(defaultReply)
+    const first = await runPlatformReconcile({ ...baseOptions(), fetchImpl: replay.fetchImpl, titles: ['specialized_sme'], usccs: [USCC] })
+    expect(replay.calls).toHaveLength(4)
+    expect(platformQueries()).toHaveLength(4)
+    expect(platformRelations()).toHaveLength(8)
+    expect(differences()).toEqual(before)
+    expect(aliases()).toEqual([])
+    expect(first.write?.status).toBe('committed')
+    expect(first.counts.confirmed).toBe(0)
+    const again = platformReplay(defaultReply)
+    const second = await runPlatformReconcile({ ...baseOptions(), fetchImpl: again.fetchImpl, titles: ['specialized_sme'], usccs: [USCC] })
+    expect(again.calls).toHaveLength(0)
+    expect(second.write).toBeNull()
+    expect(differences()).toEqual(before)
   })
 })

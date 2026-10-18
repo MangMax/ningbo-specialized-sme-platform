@@ -1,7 +1,7 @@
 interface:
   display_name: "Roster Ingestion Pipeline"
-  short_description: "Clean and import Ningbo SME designation rosters with the current app API/MCP workflow."
-  default_prompt: "Use $roster-ingestion-pipeline to clean or import these roster files."
+  short_description: "Import rosters, collect platform evidence and investigate designation differences through app API/MCP."
+  default_prompt: "Use $roster-ingestion-pipeline to clean or import roster files, collect platform evidence or investigate designation differences."
 compatibility:
   canonical_format: "agent-skills"
   adapter_targets:
