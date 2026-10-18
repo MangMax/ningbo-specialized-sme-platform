@@ -7,8 +7,8 @@ import ComparisonSourcePicker from './ComparisonSourcePicker.vue'
 import ComparisonProofPicker from './ComparisonProofPicker.vue'
 import ComparisonEventRow from './ComparisonEventRow.vue'
 import ComparisonEvidence from './ComparisonEvidence.vue'
+import ComparisonDateTimePicker from './ComparisonDateTimePicker.vue'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -20,6 +20,7 @@ const committed = ref<ComparisonRouteState>(comparisonRouteFromQuery(route.query
 const copySelection = (value: ComparisonSelection): ComparisonSelection => ({ queryIds: [...value.queryIds], exportBatchIds: [...value.exportBatchIds], officialSourceDocumentIds: [...value.officialSourceDocumentIds], proofIds: [...value.proofIds] })
 const selection = ref<ComparisonSelection>(copySelection(committed.value.selection))
 const asOfLocal = ref(localDateTimeForInstant(committed.value.asOf))
+const pickerValid = ref(true)
 const displayed = ref<RecordComparisonResult | null>(null)
 const displayedScope = ref<ComparisonRouteState | null>(null)
 const loading = ref(false)
@@ -41,7 +42,7 @@ watch(() => route.query, (query) => {
 
 const submitted = computed(() => committed.value.selection.queryIds.length && committed.value.selection.officialSourceDocumentIds.length ? committed.value.selection : null)
 const asOfIso = computed(() => instantFromLocalDateTime(asOfLocal.value, committed.value.asOf))
-const asOfValid = computed(() => !asOfLocal.value || !!asOfIso.value)
+const asOfValid = computed(() => pickerValid.value && (!asOfLocal.value || !!asOfIso.value))
 const canCompare = computed(() => selection.value.queryIds.length > 0 && selection.value.officialSourceDocumentIds.length > 0 && asOfValid.value)
 const sourceKey = (value: ComparisonSelection) => JSON.stringify([value.queryIds, value.exportBatchIds, value.officialSourceDocumentIds, value.proofIds])
 const selectionChanged = computed(() => sourceKey(selection.value) !== sourceKey(committed.value.selection) || asOfIso.value !== committed.value.asOf)
@@ -135,7 +136,7 @@ const shownPage = computed(() => displayed.value?.page ?? committed.value.page)
     <Card class="min-w-0 gap-0 py-0"><CardHeader class="border-b px-5 py-4"><h2 class="text-sm font-medium">选择记录级对比来源</h2></CardHeader><CardContent class="flex min-w-0 flex-col gap-3 p-5">
       <ComparisonSourcePicker :selection="selection" @change="setSelection" @settled="(key, ready) => { sourceReadyKey = ready ? key : null }" />
       <ComparisonProofPicker :selection="selection" :as-of="asOfIso" @change="setProofIds" @settled="(key, ready) => { proofReadyKey = ready ? key : null }" />
-      <div class="flex flex-wrap items-end gap-3"><div class="flex flex-col gap-1"><Label for="record-as-of">截止时点（可选）</Label><Input id="record-as-of" v-model="asOfLocal" type="datetime-local" step="0.001" class="w-64 max-w-full" :aria-invalid="!asOfValid" /></div><Button :disabled="!canCompare || loading" @click="run">按所选来源对比</Button><span v-if="!asOfValid" class="text-destructive text-[13px]">请填写有效的截止时点。</span><span v-else-if="!canCompare" class="text-muted-foreground text-[13px]">至少选一份正式文件和一次归档查询；导出版本可不选。</span><span v-else-if="selectionChanged" class="text-muted-foreground text-[13px]">来源或截止时点已改，点击按钮重新对比；下方仍是上次结果。</span></div>
+      <div class="flex flex-wrap items-end gap-3"><div class="flex max-w-full flex-col gap-1"><Label for="record-as-of">截止时点（可选）</Label><ComparisonDateTimePicker id="record-as-of" v-model="asOfLocal" @validity-change="pickerValid = $event" /></div><Button :disabled="!canCompare || loading" @click="run">按所选来源对比</Button><span v-if="!asOfValid" class="text-destructive text-[13px]">请填写有效的截止时点。</span><span v-else-if="!canCompare" class="text-muted-foreground text-[13px]">至少选一份正式文件和一次归档查询；导出版本可不选。</span><span v-else-if="selectionChanged" class="text-muted-foreground text-[13px]">来源或截止时点已改，点击按钮重新对比；下方仍是上次结果。</span></div>
     </CardContent></Card>
     <template v-if="submitted">
       <p v-if="displayed" class="text-muted-foreground rounded-sm border p-3 text-[13px]" aria-label="已加载结果范围"><strong class="text-foreground font-medium">已加载结果范围：</strong>{{ displayedScopeText }}</p>
