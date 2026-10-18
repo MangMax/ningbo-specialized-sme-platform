@@ -15,7 +15,8 @@ const upstream = vi.fn()
 const uscc = '91330211255994457P'
 const invoke = (action: 'submit' | 'status' | 'item' | 'retry', body?: unknown, batchId?: string, itemId?: string, authorized = true) => handlePlatformBatchRequest(action, { body, batchId, itemId, headers: authorized ? { authorization: `Bearer ${token}` } : {} }, { db, apiToken: token, filesDir: dir })
 function response(grid: string, rows: Record<string, string>[], page = 1, total = rows.length) {
-  return { ok: true, status: 200, text: async () => JSON.stringify({ zrarData: { grid: { [grid]: { pageSet: rows, page, pageSize: 1, maxCount: total, maxPage: Math.max(1, total) } } } }) }
+  // Recognized queries require size metadata; legacy fixtures leave it optional.
+  return { ok: true, status: 200, text: async () => JSON.stringify({ zrarData: { grid: { [grid]: { pageSet: rows, page, ...(grid === 'businessGrid' ? { pageSize: 1 } : {}), maxCount: total, maxPage: Math.max(1, total) } } } }) }
 }
 beforeAll(() => { vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite')); vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '') })
 beforeEach(() => { updateCredential('miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })

@@ -61,7 +61,13 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
         item.status = item.completeness === 'complete' ? item.segments.some(s => s.rows.length) ? 'success' : 'no_record' : item.segments.some(s => s.pages.some(p => p.status === 'success')) ? 'partial' : segment.status
         persist()
       }
-      const segment = await runPlatformLiveQuery(query, { cookie, maxResultBytes: available, onProgress: admit })
+      const declaredTotals = new Map<string | null, number>()
+      for (const prior of item.segments) {
+        for (const page of prior.pages) {
+          if (page.status === 'success' && page.declaredTotal !== null) declaredTotals.set(page.rdjb, page.declaredTotal)
+        }
+      }
+      const segment = await runPlatformLiveQuery(query, { cookie, declaredTotals, maxResultBytes: available, onProgress: admit })
       admit(segment)
       // Authentication is not automatically retried. Other independent items still
       // receive their own outcome using the same immutable submission snapshot.

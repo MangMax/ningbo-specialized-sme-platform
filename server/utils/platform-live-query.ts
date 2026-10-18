@@ -9,6 +9,8 @@ export interface PlatformLiveQueryContext {
   credentials?: CredentialContext
   /** In-memory snapshot for batch consumers; never put this context in persistent job params. */
   cookie?: string
+  /** Previously observed per-title totals constrain explicit batch continuations. */
+  declaredTotals?: ReadonlyMap<string | null, number>
   transport?: Pick<PlatformQueryOptions, 'fetchImpl' | 'baseUrl' | 'timeoutMs'>
 }
 const error = (code: PlatformQueryError['code'], message: string): PlatformQueryError => ({ code, message })
@@ -19,11 +21,12 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
   const q = parsed.data
   if (!q.name && !q.uscc) throw Object.assign(new Error('Provide name or uscc'), { statusCode: 400, code: 'invalid_input' })
   const titles = platformQueryTitles(q)
-  const totals = new Map<string | null, number | null>()
+  const totals = new Map<string | null, number | null>(titles.filter(title => ctx.declaredTotals?.has(title)).map(title => [title, ctx.declaredTotals!.get(title)!]))
+  const declaredTotal = () => titles.every(t => totals.has(t) && totals.get(t) !== null) ? [...totals.values()].reduce<number>((sum, n) => sum + n!, 0) : null
   const started = Date.now()
   const result: PlatformLiveQueryResult = {
     source: q.source, status: 'not_queried', effectiveConditions: { ...(q.name ? { name: q.name } : {}), ...(q.uscc ? { uscc: q.uscc } : {}), combination: 'and', ...Object.fromEntries(Object.keys(recognizedConditionShape).filter(key => q[key as keyof typeof q] !== undefined).map(key => [key, q[key as keyof typeof q]])) },
-    titleScope: q.source !== 'queryList' ? { mode: 'selected', rdjb: titles as string[] } : { mode: 'source_default', rdjb: [] }, queriedAt: new Date(started).toISOString(), completedAt: '', rows: [], pages: [], fetchedCount: 0, declaredTotal: null,
+    titleScope: q.source !== 'queryList' ? { mode: 'selected', rdjb: titles as string[] } : { mode: 'source_default', rdjb: [] }, queriedAt: new Date(started).toISOString(), completedAt: '', rows: [], pages: [], fetchedCount: 0, declaredTotal: declaredTotal(),
     completeness: 'not_queried', fullRange: q.startPage === 1, unfinished: [], error: null,
     limits: { maxRequests: q.maxRequests, maxRows: q.maxRows, maxDurationMs: q.maxDurationMs, pageSize: Math.min(q.pageSize, q.maxRows) },
   }
@@ -79,10 +82,12 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
           throw error('sensitive_response', '平台响应含敏感资料，已阻止返回。')
         }
         if ((parsedPage.responsePage !== null && parsedPage.responsePage !== page) || (parsedPage.declaredTotal !== null && parsedPage.rows.length > parsedPage.declaredTotal)) throw error('invalid_response', '平台分页信息不一致。')
+        if (parsedPage.responsePageSize !== null && parsedPage.responsePageSize !== result.limits.pageSize) throw error('invalid_response', '平台分页大小与请求不一致。')
+        const total = parsedPage.declaredTotal ?? totals.get(title) ?? null
+        if (totals.get(title) != null && parsedPage.declaredTotal !== null && totals.get(title) !== parsedPage.declaredTotal) throw error('invalid_response', '平台声明总数在查询中发生变化。')
         if (q.source === 'queryBusList') {
           const size = result.limits.pageSize
           const maxPage = parsedPage.responseMaxPage
-          const total = parsedPage.declaredTotal
           // nextPage is demonstrably unreliable even on intermediate pages. Validate
           // actual page/count/maxPage and advance by one within the operation bounds.
           if (parsedPage.responsePage !== page || parsedPage.responsePageSize !== size
@@ -102,15 +107,14 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
           result.pages.push({ ...pos, status: 'failed', fetchedCount: 0, declaredTotal: parsedPage.declaredTotal, error: result.error })
           result.unfinished.push(...remaining(index, page)); break outer
         }
-        if (!parsedPage.rows.length && parsedPage.declaredTotal !== null && (page - 1) * Math.min(q.pageSize, q.maxRows) < parsedPage.declaredTotal) throw error('invalid_response', '平台返回空页但声明仍有记录。')
-        if (totals.has(title) && totals.get(title) !== null && parsedPage.declaredTotal !== null && totals.get(title) !== parsedPage.declaredTotal) throw error('invalid_response', '平台声明总数在查询中发生变化。')
+        if (!parsedPage.rows.length && total !== null && (q.startPage - 1) * result.limits.pageSize + fetchedForTitle < total) throw error('invalid_response', '平台返回空页但声明仍有记录。')
         result.pages.push({ ...pos, status: 'success', fetchedCount: parsedPage.rows.length, declaredTotal: parsedPage.declaredTotal, error: null })
-        totals.set(title, parsedPage.declaredTotal)
-        result.declaredTotal = titles.every(t => totals.has(t) && totals.get(t) !== null) ? [...totals.values()].reduce<number>((sum, n) => sum + n!, 0) : null
+        totals.set(title, total)
+        result.declaredTotal = declaredTotal()
         result.rows.push(...parsedPage.rows)
         fetchedForTitle += parsedPage.rows.length
         const consumed = (q.startPage - 1) * Math.min(q.pageSize, q.maxRows) + fetchedForTitle
-        const titleComplete = parsedPage.declaredTotal !== null ? consumed >= parsedPage.declaredTotal : (q.source === 'queryBusList' && maxPageForTitle !== null ? page === maxPageForTitle : parsedPage.rows.length === 0)
+        const titleComplete = total !== null ? consumed >= total : (q.source === 'queryBusList' && maxPageForTitle !== null ? page === maxPageForTitle : parsedPage.rows.length === 0)
         if (ctx.onProgress) {
           const unfinished = [...result.unfinished, ...(titleComplete ? titles.slice(index + 1).map(t => position(q.startPage, t)) : remaining(index, page + 1))]
           const snapshot = structuredClone({ ...result, fetchedCount: result.rows.length, completedAt: new Date().toISOString(), unfinished, status: unfinished.length ? 'partial' : result.rows.length ? 'success' : 'no_record', completeness: unfinished.length ? 'partial' : 'complete' } as PlatformLiveQueryResult)
