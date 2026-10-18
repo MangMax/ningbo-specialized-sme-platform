@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { groupBy, orderBy, uniq } from 'es-toolkit'
 import { ChevronRight, Eye } from '@lucide/vue'
+import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
+import { sourceReturnTarget } from '~~/lib/roster/correspondence-view'
+import RecordSourceReader from '@/components/record-correspondence/SourceReader.vue'
+import EnterpriseLaterProcesses from '@/components/record-correspondence/EnterpriseLaterProcesses.vue'
+import PlatformRecords from '@/components/PlatformRecords.vue'
 import { TITLES, TITLE_ORDER, SOURCE_ORDER, QUALITY_FLAGS } from '~~/lib/labels'
 import { fileUrl, fileNameOf, isPreviewable } from '~~/lib/preview'
 import {
@@ -33,12 +38,16 @@ interface Evidence {
   page: number | null
 }
 interface DetailEvent {
+  id: number
   type: string
   year: number | null
   seq: number | null
+  decidedYear: number | null
+  reviewOutcome: string | null
   evidence: Evidence[]
 }
 interface DetailRecord {
+  id: number
   titleCode: string
   source: string
   district: string | null
@@ -67,6 +76,8 @@ const id = computed(() => String(route.params.id ?? ''))
  * 免得把一个来路不明的字符串当路径用。
  */
 const backTo = computed(() => {
+  const comparison = sourceReturnTarget(route.query.returnTo)
+  if (comparison) return comparison
   const raw = typeof route.query.back === 'string' ? route.query.back : ''
   if (!raw) return '/'
   const query: Record<string, string> = {}
@@ -76,19 +87,44 @@ const backTo = computed(() => {
 
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading, error } = useQuery({
-  key: () => ['enterprise', id.value],
-  query: () => apiGet<EnterpriseDetail>(`/api/enterprises/${id.value}`),
+  key: () => ['roster-enterprise', id.value],
+  query: () => apiGet<RosterEnterpriseDetail>(`/api/roster/enterprises/${id.value}`),
 })
 
-const detail = computed(() => data.value ?? null)
+const detail = computed<EnterpriseDetail | null>(() => {
+  const source = data.value
+  if (!source) return null
+  return {
+    id: source.enterprise.enterpriseId,
+    name: source.enterprise.name,
+    uscc: source.enterprise.uscc,
+    district: source.enterprise.district,
+    qualityFlags: source.enterprise.uscc ? [] : ['uscc_missing'],
+    records: source.records.map(record => ({
+      id: record.id,
+      titleCode: record.titleCode,
+      source: record.source,
+      district: record.district,
+      events: source.events.filter(event => event.recordId === record.id).map(event => ({
+        id: event.id,
+        type: event.eventType,
+        year: event.year,
+        seq: event.batchSeq,
+        decidedYear: event.decidedYear,
+        reviewOutcome: event.reviewOutcome,
+        evidence: source.evidence.filter(item => item.eventId === event.id),
+      })),
+    })),
+  }
+})
 const detailRendered = computed(() => detail.value !== null || error.value != null)
 useEvidencePreviewScrollRestore(detailRendered)
 
 const EVIDENCE_DISCLOSURE_RETURN_KEY = 'roster:enterprise-detail-open-evidence'
 const openEvidenceKeys = ref<string[]>([])
 
-function evidenceDisclosureKey(titleCode: string, source: string, eventIndex: number): string {
-  return JSON.stringify([id.value, titleCode, source, eventIndex])
+function evidenceDisclosureKey(eventId: number): string {
+  return JSON.stringify([id.value, eventId])
 }
 
 function evidenceDisclosureOpen(key: string): boolean {
@@ -121,6 +157,15 @@ onMounted(() => {
     // Storage may be unavailable; the page remains usable without disclosure restoration.
   }
 })
+
+const focusedEventId = computed(() => typeof route.query.eventId === 'string' && /^\d+$/.test(route.query.eventId) ? Number(route.query.eventId) : null)
+watch([detail, focusedEventId], async ([loaded, eventId]) => {
+  if (typeof document === 'undefined') return
+  if (!loaded || eventId == null || !loaded.records.some(record => record.events.some(event => event.id === eventId))) return
+  setEvidenceDisclosureOpen(evidenceDisclosureKey(eventId), true)
+  await nextTick()
+  document.getElementById(`record-event-${eventId}`)?.scrollIntoView({ block: 'center' })
+}, { immediate: true })
 
 /**
  * 页面标题(RL-17 收尾):企业名 + 页面名。详情是异步取的,所以先给一个不含名字的兜底,
@@ -239,7 +284,7 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
     <template v-else-if="detail">
       <PageHeader :title="detail.name">
         <template #breadcrumb>
-          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">企业列表</NuxtLink>
+          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">{{ sourceReturnTarget(route.query.returnTo) ? '记录级对比' : '企业列表' }}</NuxtLink>
           <span class="mx-1.5">/</span>
           <span>企业详情</span>
         </template>
@@ -306,15 +351,17 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
             </header>
 
             <ul v-if="rec.events.length" class="mt-3 flex flex-col gap-2">
-              <li v-for="(ev, i) in rec.events" :key="i">
+              <li v-for="ev in rec.events" :id="`record-event-${ev.id}`" :key="ev.id" class="scroll-mt-20">
                 <Collapsible
-                  :open="evidenceDisclosureOpen(evidenceDisclosureKey(g.titleCode, rec.source, i))"
-                  @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(g.titleCode, rec.source, i), $event)"
+                  :open="evidenceDisclosureOpen(evidenceDisclosureKey(ev.id))"
+                  @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(ev.id), $event)"
                   v-slot="{ open }"
                 >
                   <div class="flex flex-wrap items-center gap-2">
                     <EventChip :type="ev.type" :year="ev.year" :seq="ev.seq" />
-                    <CollapsibleTrigger v-if="ev.evidence.length" as-child>
+                    <span v-if="ev.decidedYear != null" class="text-muted-foreground text-xs">结论 {{ ev.decidedYear }} 年</span>
+                    <span v-if="ev.reviewOutcome" class="text-muted-foreground text-xs">{{ ev.reviewOutcome }}</span>
+                    <CollapsibleTrigger as-child>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -324,12 +371,13 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
                           class="size-3.5 transition-transform duration-150"
                           :class="open && 'rotate-90'"
                         />
-                        {{ open ? '收起出处' : `出处 ${ev.evidence.length}` }}
+                        {{ open ? '收起出处' : `对应事件/出处 · 文件 ${ev.evidence.length}` }}
                       </Button>
                     </CollapsibleTrigger>
-                    <span v-else class="text-muted-foreground text-xs">暂无出处</span>
                   </div>
                   <CollapsibleContent class="mt-2 flex flex-col gap-1.5">
+                    <h4 class="text-muted-foreground text-xs font-medium">正式公布文件</h4>
+                    <p v-if="!ev.evidence.length" class="text-muted-foreground text-xs">此事件未记录文件出处。</p>
                     <div
                       v-for="(e, j) in ev.evidence"
                       :key="j"
@@ -369,13 +417,14 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
                           v-if="pageStateOf(e) === 'assigned'"
                           :to="pageHref(e)"
                           class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
-                          @click="rememberPagePreviewReturn($event, evidenceDisclosureKey(g.titleCode, rec.source, i))"
+                          @click="rememberPagePreviewReturn($event, evidenceDisclosureKey(ev.id))"
                         >
                           第 {{ e.page }} 页
                         </NuxtLink>
                         <span v-else class="text-muted-foreground/70">{{ pageWordOf(e) }}</span>
                       </div>
                     </div>
+                    <RecordSourceReader :kind="'event'" :id="ev.id" :return-to="sourceReturnTarget(route.query.returnTo)" />
                   </CollapsibleContent>
                 </Collapsible>
               </li>
@@ -384,6 +433,11 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
           </section>
           </div>
         </CardContent>
+      </Card>
+      <EnterpriseLaterProcesses :enterprise-id="detail.id" :return-to="sourceReturnTarget(route.query.returnTo)" />
+      <Card class="gap-0 py-0">
+        <CardHeader class="border-b px-5 py-4"><h2 class="text-sm font-medium">平台接口原行与反向对应</h2></CardHeader>
+        <CardContent class="min-w-0 p-5"><PlatformRecords :queries="data?.platform.queries ?? []" :relations="data?.platform.relations ?? []" :return-to="sourceReturnTarget(route.query.returnTo)" /></CardContent>
       </Card>
     </template>
 

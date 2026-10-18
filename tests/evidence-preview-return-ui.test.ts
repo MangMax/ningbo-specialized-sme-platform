@@ -81,28 +81,18 @@ const row: EnterpriseRow = {
 }
 
 const fullDetail = {
-  id: 91,
-  name: '宁波开诚生态技术有限公司',
-  uscc: null,
-  district: '海曙区',
-  qualityFlags: [],
+  enterprise: { enterpriseId: 91, name: '宁波开诚生态技术有限公司', uscc: null, district: '海曙区' },
   records: [
     {
+      id: 1,
       titleCode: 'specialized_sme',
       source: 'jxj',
       district: '海曙区',
-      events: [
-        {
-          type: 'award',
-          year: 2022,
-          seq: 1,
-          evidence: [
-            { sourceFile: 'jxj/announcement/test.pdf', attachment: '附件二', listNo: 6, page: 8 },
-          ],
-        },
-      ],
     },
   ],
+  events: [{ id: 10, recordId: 1, eventType: 'award', year: 2022, batchSeq: 1, decidedYear: null, reviewOutcome: null }],
+  evidence: [{ eventId: 10, sourceFile: 'jxj/announcement/test.pdf', attachment: '附件二', listNo: 6, page: 8 }],
+  platform: { queries: [], relations: [] },
 }
 
 const titleRow: TitleRow = {
@@ -144,6 +134,9 @@ const globalStubs = {
       '<header><h1>{{ title }}</h1><slot name="breadcrumb"/><slot name="description"/><slot name="actions"/></header>',
   },
   FilePreviewDialog: true,
+  RecordSourceReader: true,
+  EnterpriseLaterProcesses: true,
+  PlatformRecords: true,
   EventChip: true,
   SourceChip: true,
   TitleBadge: true,
@@ -704,7 +697,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"scrollY":${windowTop}`)
     expect(JSON.parse(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)!)).toEqual({
       back: detailPath,
-      keys: [JSON.stringify(['91', 'specialized_sme', 'jxj', 0])],
+      keys: [JSON.stringify(['91', 10])],
     })
     source.unmount()
 

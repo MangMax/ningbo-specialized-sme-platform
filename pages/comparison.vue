@@ -44,6 +44,13 @@ import {
   EmptyDescription,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import RecordComparisonPanel from '@/components/record-correspondence/RecordComparisonPanel.vue'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+
+const route = useRoute()
+const router = useRouter()
+const mode = computed(() => route.query.mode === 'legacy' ? 'legacy' : 'record')
+function setMode(value: string) { void router.push({ path: '/comparison', query: { ...route.query, mode: value } }) }
 
 const COMPARISON_DIRECTIONS = Object.keys(
   COMPARISON_LABELS,
@@ -101,12 +108,13 @@ const activeRequest = computed(() => captureQueryRequest('comparison', params.va
 useHead({
   title: computed(
     () =>
-      `两侧名录比对 · ${TITLES[title.value] ?? title.value} · ${
+      mode.value === 'record' ? '记录级对比 · 正式事件与平台原行' : `兼容旧结果 · ${TITLES[title.value] ?? title.value} · ${
         COMPARISON_LABELS[direction.value] ?? direction.value
       }`,
   ),
 })
 const { data, isLoading, error, refetch } = useQuery<ComparisonQueryResult>({
+  enabled: () => mode.value === 'legacy',
   key: () => ['comparison', params.value],
   query: async ({ entry }) => {
     const request = captureQueryRequest('comparison', entry.key[1] as typeof params.value)
@@ -186,10 +194,14 @@ const exportUrl = computed(() => {
 </script>
 
 <template>
-  <div class="comparison-page flex min-w-0 flex-col gap-2 sm:gap-3">
+  <div class="flex min-w-0 flex-col gap-3">
+    <Tabs :model-value="mode" @update:model-value="setMode(String($event))"><TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="比对口径"><TabsTrigger value="record">记录级对比</TabsTrigger><TabsTrigger value="legacy">兼容旧结果</TabsTrigger></TabsList></Tabs>
+    <RecordComparisonPanel v-if="mode === 'record'" />
+  <div v-else class="comparison-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader
-      title="两侧名录比对"
+      title="兼容旧结果 · 两侧名录比对"
     >
+      <template #description>旧结果按企业×称号集合差展示，保留原核实与备注；不作为记录级事件结论。</template>
       <template #actions>
         <div class="flex items-center gap-2">
           <Switch id="show-curated" v-model="showCurated" class="shadow-none" />
@@ -424,6 +436,7 @@ const exportUrl = computed(() => {
 
       </div>
     </div>
+  </div>
   </div>
 </template>
 
