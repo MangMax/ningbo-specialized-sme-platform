@@ -10,8 +10,8 @@
 
 - `pnpm install --frozen-lockfile` 完成，没有修改 lockfile。
 - `pnpm typecheck` 通过。
-- `uv run design/brand/2026-10-18-logo/generate.py --publish` 后检查 12 个 SVG 的公共副本与源输出一致、重复生成哈希一致；favicon 是 compact 派生。
-- 13 个公共 SVG 通过实际 HTTP 读取，状态 200、`image/svg+xml`，XML 可解析，无文字元素、位图、脚本和外链。
+- `uv run design/brand/2026-10-18-logo/generate.py --publish` 后检查 15 个 SVG 的公共副本与源输出一致、重复生成哈希一致；favicon 是 compact 派生。
+- 16 个公共 SVG 通过实际 HTTP 读取，状态 200、`image/svg+xml`，XML 可解析，无文字元素、位图、脚本和外链。
 - 在 1280×800 实际展开/收起侧栏，切换浅色/深色主题，图形和文字均成功载入。
 - 在 390×844 打开移动菜单，浅色/深色均无品牌裁切；从文件管理点击品牌链接回到 `/`。
 - `favicon.svg` 已进入页面 `link[rel=icon]`。未做跨浏览器 favicon 缓存/标签栏原生图标的人工检查。
@@ -27,6 +27,10 @@
 
 ## 抽象方向修订
 
-用户要求名称简化为“专精特新”，图形需要抽象表达专精特新。已替换 N 为四块切面向心围合、右上块外移的形态，文字标缩为四字，侧栏宽度 112px；README 标题、品牌链接无障碍名称、SVG aria-label 与 favicon 同步更新。业务地域仍是宁波，未改动业务文案和数据范围。新一轮设计评审由同一指定 provider/model 执行，结果单独记录。
+用户要求名称简化为“专精特新”，图形需要抽象表达专精特新。已替换 N 为四块切面向心围合、右上块为独立菱形的形态，文字标缩为四字，侧栏宽度 112px；README 标题、品牌链接无障碍名称、SVG aria-label 与 favicon 同步更新。业务地域仍是宁波，未改动业务文案和数据范围。新一轮设计评审由同一指定 provider/model 完成，初稿 7/10；响应见 review.md。
 
-抽象方向复验：`pnpm typecheck` 通过；13 个公共 SVG HTTP 200/MIME/XML 及重复生成、源/公共副本一致性检查通过。实际查看 1280×800 浅/深主题与 390×844 深色菜单，文字标实际宽度 112px、四字完整。新截图为本地证据目录的 `abstract-desktop-light.png`、`abstract-desktop-dark.png`、`abstract-mobile-dark.png`。
+抽象方向复验：`pnpm typecheck` 通过；16 个公共 SVG HTTP 200/MIME/XML 及重复生成、源/公共副本一致性检查通过。实际查看 1280×800 浅/深主题与 390×844 深色菜单，文字标实际宽度 112px、四字完整。新截图为本地证据目录的 `abstract-desktop-light.png`、`abstract-desktop-dark.png`、`abstract-mobile-dark.png`。
+
+抽象评审后修订：增加原生 24px 光学版，16px 保留独立菱形；“新”字末端斜切。SVG 总数为 15 个品牌资源加 1 个 favicon。修订稿的实际渲染截图为本地 `abstract-revised-728.png`、`abstract-revised-390.png`。
+
+最终修订复验：15 个品牌 SVG 加 favicon 的 HTTP/XML/哈希一致性检查、定制“新”字斜切路径检查均通过；`pnpm typecheck` 通过。桌面 1280px、移动 390px 实际重新载入资源并查看，无品牌裁切；移动截图另存为 `.scratch/brand/integration/evidence/abstract-revised-mobile-dark.png`。

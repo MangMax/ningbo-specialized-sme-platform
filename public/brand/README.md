@@ -7,11 +7,12 @@
 | 图形 | symbol.svg | symbol-mono.svg | symbol-white.svg |
 | 文字 | wordmark.svg | wordmark-mono.svg | wordmark-white.svg |
 | 组合 | lockup.svg | lockup-mono.svg | lockup-white.svg |
+| 24px 图形 | symbol-small.svg | symbol-small-mono.svg | symbol-small-white.svg |
 | 16px 图形 | symbol-compact.svg | symbol-compact-mono.svg | symbol-compact-white.svg |
 
-图形由四块切面围出聚焦的负形，右上块向外错位，表达专注、精度和突破。名称为“专精特新”。
+图形由四块切面围出聚焦的负形，右上块旋转为独立菱形，表达专注、精度和突破。名称为“专精特新”。
 
-主版图形和文字统一为 `#14417E`；单色为 `#172B45`；深底用白色。标准图形用于 24px 及以上；16px 使用 compact 版。文字标最小宽度 112px，图文组合建议至少 176px，等比缩放。
+主版图形和文字统一为 `#14417E`；单色为 `#172B45`；深底用白色。标准图形用于 32px 及以上；24px 使用 small 版；16px 使用 compact 版。文字标最小宽度 112px，图文组合建议至少 176px，等比缩放。
 
 应用侧栏：32px 图形标；浅色主题用蓝底白标，深色主题用浅蓝底墨标；文字标随应用主题切换为蓝/白。保留完整的品牌链接无障碍名称。
 
@@ -25,4 +26,6 @@ README：使用图文组合，并提供深色模式反白版。
 uv run design/brand/2026-10-18-logo/generate.py --publish
 ```
 
-源字形子集、字体许可和设计/评审记录位于 [design/brand/2026-10-18-logo](../../design/brand/2026-10-18-logo/README.md)。`generate.py` 通过 PEP 723 固定 fonttools 版本；`--publish` 同步 12 个品牌 SVG 和 favicon。修改时更新生成器后重新生成，避免仅修改公共副本。
+源字形子集、字体许可和设计/评审记录位于 [design/brand/2026-10-18-logo](../../design/brand/2026-10-18-logo/README.md)。`generate.py` 通过 PEP 723 固定 fonttools 版本；`--publish` 同步 15 个品牌 SVG 和 favicon。修改时更新生成器后重新生成，避免仅修改公共副本。
+
+文字标以 Noto Sans SC SemiBold 为基础，对“新”字右侧横笔末端做斜切处理，呼应抽象标识的切面。16px/24px 允许简化切角比例，保留三块围合加独立菱形的关系；favicon 作为品牌身份独立显示，不与 Lucide 导航图标同排。

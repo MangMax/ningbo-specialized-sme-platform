@@ -1,0 +1,5 @@
+PASS: 15 brand SVGs + favicon HTTP 200 / SVG MIME / valid XML / no external dependencies.
+PASS: 15 master/public copies match and regeneration preserves hashes.
+PASS: four-character custom wordmark contains the slanted terminal; native 16px and 24px optical variants present.
+PASS: pnpm typecheck; desktop 1280px and mobile 390px images loaded and inspected.
+Independent review: abstract initial version 7/10; post-review revision self-checked, not independently re-scored.
