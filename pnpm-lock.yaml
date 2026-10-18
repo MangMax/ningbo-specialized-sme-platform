@@ -314,6 +314,9 @@ importers:
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
+      h3:
+        specifier: 1.15.11
+        version: 1.15.11
       happy-dom:
         specifier: ^21.0.1
         version: 21.0.1
