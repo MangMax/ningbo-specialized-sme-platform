@@ -138,7 +138,9 @@ describe('record comparison public read service', () => {
     const q = f.makeQuery('apply_list', e.usccNorm!), candidate = f.makeRelation(q.id, null, null, 1, '终审通过', null, 2024)
     const out = getRecordComparison(f.db, f.input([q.id]))
     expect(out.rows[0]).toMatchObject({ event: { id: event.id, year: null }, classification: 'unresolved' })
+    expect(out.rows[0]?.reasons).toContain('official_event_year_unknown')
     expect(out.platformWithoutOfficial.rows).toEqual([])
+    expect(previewRecordCorrespondenceImpact(f.db, f.input([q.id])).dataIssues).toContainEqual(expect.objectContaining({ eventId: event.id, reasons: expect.arrayContaining(['official_event_year_unknown']) }))
     expect(candidate.enterpriseId).toBeNull()
   })
   it('legacy preview preserves originals and global counts across pages without writing', () => {
