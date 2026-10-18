@@ -1,11 +1,30 @@
 /** Explicit archival conversion only: never fetches, invents timestamps or infers identity. */
 import { z } from 'zod'
-import { platformQueryInputSchema, platformQueryResultShape, type PlatformLiveQueryResult } from './live-query'
+import { platformQueryInputShape, platformQueryResultShape, recognizedConditionShape, validRecognizedConditionPairing, type PlatformLiveQueryResult } from './live-query'
 import type { RosterImportPlatformQuery } from '../roster-import-client'
 
 export const RDJB_TITLE_CODES: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
 export const PLATFORM_PERSISTED_SOURCE = { queryList: 'apply_list', businessList: 'business_list', queryBusList: 'recognized_list' } as const
-const resultSchema = z.object(platformQueryResultShape)
+const resultSchema = z.object({ ...platformQueryResultShape, effectiveConditions: z.strictObject(platformQueryResultShape.effectiveConditions.shape) })
+/** Saved source conditions have the same fields as a live request, but no live subject requirement. */
+const archivedConditionsSchema = z.strictObject({
+  source: z.literal('queryBusList'),
+  ...recognizedConditionShape,
+  name: platformQueryInputShape.name,
+  uscc: platformQueryInputShape.uscc,
+  rdjb: z.array(z.enum(['1', '2', '3'])).min(1).max(3).refine(values => new Set(values).size === values.length),
+})
+function subjectQueryKey(result: PlatformLiveQueryResult): string | null {
+  return result.effectiveConditions.uscc ?? (result.effectiveConditions.name ? `name:${result.effectiveConditions.name}` : null)
+}
+function archiveQueryKey(result: PlatformLiveQueryResult): string {
+  const subject = subjectQueryKey(result)
+  if (subject !== null) return subject
+  const filters = Object.entries(result.effectiveConditions)
+    .filter(([key]) => key !== 'combination')
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+  return `scope:queryBusList:${result.titleScope.rdjb.join(',')}:${encodeURIComponent(JSON.stringify(filters))}`
+}
 export function recognizedStoredStatus(result: PlatformLiveQueryResult): NonNullable<RosterImportPlatformQuery['status']> {
   if (result.status === 'not_queried') return 'not_queried'
   if (['failed', 'auth_failed'].includes(result.status) && !result.rows.length) return 'failed'
@@ -29,7 +48,8 @@ export function recognizedEvidenceError(value: unknown): string | null {
   if (r.source !== 'queryBusList') return 'recognized_list only accepts source=queryBusList'
   if (![r.queriedAt, r.completedAt].every(t => z.iso.datetime({ offset: true }).safeParse(t).success) || Date.parse(r.completedAt) < Date.parse(r.queriedAt)) return 'Original queriedAt/completedAt are required in order'
   const { combination, ...conditions } = r.effectiveConditions
-  if (combination !== 'and' || !platformQueryInputSchema.safeParse({ source: r.source, ...conditions, rdjb: r.titleScope.rdjb }).success) return 'Invalid original source conditions or title scope'
+  if (combination !== 'and' || !archivedConditionsSchema.safeParse({ source: r.source, ...conditions, rdjb: r.titleScope.rdjb }).success ||
+    !validRecognizedConditionPairing(conditions)) return 'Invalid original source conditions or title scope'
   if (r.titleScope.mode !== 'selected') return 'queryBusList requires selected title scope'
   if (!Number.isInteger(r.limits.pageSize) || r.limits.pageSize < 1 || r.limits.pageSize > 50) return 'Invalid original page size'
   const titleSet = new Set(r.titleScope.rdjb)
@@ -85,7 +105,7 @@ export function recognizedResultToImport(result: PlatformLiveQueryResult): Roste
   if (error) throw new Error(error)
   return {
     interface: PLATFORM_PERSISTED_SOURCE.queryBusList,
-    queryKey: result.effectiveConditions.uscc ?? `name:${result.effectiveConditions.name}`,
+    queryKey: archiveQueryKey(result),
     rdjb: result.titleScope.rdjb.join(','),
     titleCode: result.titleScope.rdjb.length === 1 ? RDJB_TITLE_CODES[result.titleScope.rdjb[0]!] : null,
     queriedAt: result.queriedAt, status: recognizedStoredStatus(result),
