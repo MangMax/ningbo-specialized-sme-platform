@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterAll, describe, expect, it } from 'vitest'
 import { useDb, schema } from '../db/client'
+import { commitComparisonScopeProofs, preflightComparisonScopeProofs, type ProofRequest } from '../server/utils/comparison-scope-proof'
 import {
   commitRecordCorrespondences,
   CorrespondenceError,
@@ -38,8 +39,66 @@ function save(db: ReturnType<typeof useDb>, req: CorrespondenceRequest) {
   const plan = preflightRecordCorrespondences(db, req)
   return commitRecordCorrespondences(db, req, plan.planHash)
 }
+function recognizedProofFixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'spztx-correspondence-proof-'))
+  dirs.push(dir)
+  const db = useDb({ dbPath: join(dir, 'synthetic.db') })
+  const enterprise = db.insert(schema.enterprise).values({ name: '合成甲', nameNorm: '合成甲', usccNorm: '91330211255994475A' }).returning().get()
+  const conditions = { combination: 'and' }
+  const collection = { source: 'queryBusList', status: 'success', effectiveConditions: conditions, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-18T00:00:00Z', completedAt: '2026-10-18T00:01:00Z', rows: [], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, maxPage: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } } as typeof schema.platformQuery.$inferInsert.collectionEvidence
+  const query = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'all', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'success', collectionEvidence: collection }).returning().get()
+  const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, nameRaw: '合成甲', verificationStatus: 'confirmed' }).returning().get()
+  const batch = db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'synthetic.xlsx', sha256: 'b'.repeat(64), importStatus: 'imported' }).returning().get()
+  const exportRow = db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 1, usccRaw: enterprise.usccNorm, nameRaw: '合成甲' }).returning().get()
+  const freeze = db.insert(schema.storedFile).values({ relPath: 'synthetic/freeze-v1', filename: 'freeze-v1.txt', ext: 'txt', bytes: 24, sha256: 'c'.repeat(64), source: 'miit', kind: 'export' }).returning().get()
+  const proofRequest: ProofRequest = { idempotencyKey: 'valid-current-proof', sourceIdentity: 'synthetic/current-snapshot', actor: { type: 'agent', id: 'proof-reviewer' }, basis: 'Archived query and export cover the same synthetic freeze', ruleId: 'manual-scope', ruleVersion: '1', operations: [{ action: 'create', kind: 'current_source_equivalence', status: 'confirmed', evidence: { queryId: query.id, exportBatchId: batch.id, titleCode: 'specialized_sme', queryReference: 'platform_query.collectionEvidence', exportReference: 'platform_export_batch.sha256', scope: { queryAccount: 'synthetic-account', exportAccount: 'synthetic-account', queryRegion: 'synthetic-region', exportRegion: 'synthetic-region', queryFilters: conditions, exportFilters: conditions, windowStart: '2026-10-18T00:00:00Z', windowEnd: '2026-10-18T23:59:59Z', platformVersion: 'freeze-v1', freezeReference: freeze.relPath, freezeFileId: freeze.id, freezeSha256: freeze.sha256! } } }] }
+  const proofPlan = preflightComparisonScopeProofs(db, proofRequest)
+  const proofId = commitComparisonScopeProofs(db, proofRequest, proofPlan.planHash).proofIds[0]!
+  const edge: CorrespondenceEdge = { type: 'recognized_export', relationId: relation.id, exportRowId: exportRow.id, role: 'same_current_row' }
+  return { db, proofId, proofRequest, exportRow, edge }
+}
 
 describe('record correspondence core', () => {
+  it('confirms a proof-backed recognized-export candidate with omitted IDs and retains its provenance and audit', () => {
+    const { db, proofId, exportRow, edge } = recognizedProofFixture()
+    const candidate = { ...request('proof-candidate', [{ action: 'create', status: 'candidate', edge }]), proofIds: [proofId] }
+    const id = save(db, candidate).correspondenceIds[0]!
+    const confirm = request('proof-confirm-omitted', [{ action: 'decide', correspondenceId: id, expectedRevision: 1, status: 'confirmed' }])
+    expect(() => preflightRecordCorrespondences(db, { ...confirm, proofIds: [] })).toThrowError(expect.objectContaining({ code: 'incomplete_coverage' }))
+    expect(() => preflightRecordCorrespondences(db, { ...confirm, proofIds: [proofId + 999] })).toThrowError(expect.objectContaining({ code: 'incomplete_coverage' }))
+    const plan = preflightRecordCorrespondences(db, confirm)
+    db.update(schema.platformExportRow).set({ nameRaw: 'changed after preflight' }).where(eq(schema.platformExportRow.id, exportRow.id)).run()
+    expect(() => commitRecordCorrespondences(db, confirm, plan.planHash)).toThrowError(expect.objectContaining({ code: 'incomplete_coverage' }))
+    expect(listRecordCorrespondences(db)[0]).toMatchObject({ status: 'candidate', revision: 1, provenance: { comparisonProofIds: [proofId] } })
+    expect(getRecordCorrespondenceAudit(db, id)).toHaveLength(1)
+    db.update(schema.platformExportRow).set({ nameRaw: '合成甲' }).where(eq(schema.platformExportRow.id, exportRow.id)).run()
+    const refreshed = preflightRecordCorrespondences(db, confirm)
+    commitRecordCorrespondences(db, confirm, refreshed.planHash)
+    expect(listRecordCorrespondences(db)[0]).toMatchObject({ status: 'confirmed', revision: 2, requiresRevalidation: false, provenance: { comparisonProofIds: [proofId] } })
+    expect(getRecordCorrespondenceAudit(db, id).at(-1)?.evidence).toMatchObject({ comparisonProofIds: [proofId] })
+  })
+
+  it('confirms a proof-backed recognized-export candidate with explicit IDs through the service', () => {
+    const { db, proofId, edge } = recognizedProofFixture()
+    const id = save(db, { ...request('explicit-proof-candidate', [{ action: 'create', status: 'candidate', edge }]), proofIds: [proofId] }).correspondenceIds[0]!
+    const confirm = { ...request('explicit-proof-confirm', [{ action: 'decide', correspondenceId: id, expectedRevision: 1, status: 'confirmed' }]), proofIds: [proofId] }
+    save(db, confirm)
+    expect(listRecordCorrespondences(db)[0]).toMatchObject({ status: 'confirmed', requiresRevalidation: false, provenance: { comparisonProofIds: [proofId] } })
+    expect(getRecordCorrespondenceAudit(db, id).at(-1)?.evidence).toMatchObject({ comparisonProofIds: [proofId] })
+  })
+
+  it('rejects omitted and explicit revoked proof IDs without changing the candidate', () => {
+    const { db, proofId, proofRequest, edge } = recognizedProofFixture()
+    const id = save(db, { ...request('revoked-proof-candidate', [{ action: 'create', status: 'candidate', edge }]), proofIds: [proofId] }).correspondenceIds[0]!
+    const revoke: ProofRequest = { ...proofRequest, idempotencyKey: 'revoke-current-proof', sourceIdentity: 'synthetic/revoke-current-snapshot', operations: [{ action: 'decide', proofId, expectedRevision: 2, status: 'revoked' }] }
+    const revokePlan = preflightComparisonScopeProofs(db, revoke)
+    commitComparisonScopeProofs(db, revoke, revokePlan.planHash)
+    const confirm = request('revoked-proof-confirm', [{ action: 'decide', correspondenceId: id, expectedRevision: 1, status: 'confirmed' }])
+    expect(() => preflightRecordCorrespondences(db, confirm)).toThrowError(expect.objectContaining({ code: 'incomplete_coverage' }))
+    expect(() => preflightRecordCorrespondences(db, { ...confirm, proofIds: [proofId] })).toThrowError(expect.objectContaining({ code: 'incomplete_coverage' }))
+    expect(listRecordCorrespondences(db)[0]).toMatchObject({ status: 'candidate', revision: 1, provenance: { comparisonProofIds: [proofId] } })
+    expect(getRecordCorrespondenceAudit(db, id)).toHaveLength(1)
+  })
   it('preflights and commits a row-level candidate with audit and original source readback', () => {
     const { db, event, relation } = fixture()
     const request = {
