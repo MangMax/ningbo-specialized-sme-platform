@@ -1,5 +1,10 @@
 # 宁波专精特新企业数据平台
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="public/brand/lockup-white.svg">
+  <img src="public/brand/lockup.svg" alt="宁波专精特新" width="332" height="64">
+</picture>
+
 面向宁波市专精特新企业名录的可扩展数据平台。当前包含跨称号名录查看、工信部平台导出对比、来源文件与页码证据、PDF 页图和 OCR 工作台；后续模块按业务需要逐步加入。
 
 技术栈：Nuxt 4 SPA（关闭 SSR）、Vue 3、Drizzle ORM、SQLite、shadcn-vue、Pinia Colada、VueUse、pnpm。
@@ -37,6 +42,7 @@ SQLite 数据库默认位于 `data/roster.db`，可用 `NUXT_DB_PATH` 覆盖；�
 
 ## 交接入口
 
+- SVG 品牌资源与复现方法：[品牌资源说明](public/brand/README.md)
 - 代理清理与入库流程：[仓库自有技能](.agents/skills/roster-ingestion-pipeline/SKILL.md)
 - 名录生命周期、对比及用户功能路线图：[路线图与票据](.scratch/roster-lifecycle/SPEC.md)
 - 文件/OCR 工作台已交付范围与验收记录：[入库管线规格](.scratch/ingest-pipeline/SPEC.md)

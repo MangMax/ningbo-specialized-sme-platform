@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import { BookOpenCheck, ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound } from '@lucide/vue'
+import { ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound } from '@lucide/vue'
 import { ENTERPRISE_LIST_TITLE } from '~~/lib/labels'
 import NavMain from '@/components/NavMain.vue'
 import {
@@ -16,6 +16,8 @@ import {
 const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: 'icon',
 })
+
+const colorMode = useAppColorMode()
 
 // 「企业列表」(RL-20 起用名;旧名「名录台账」):一行一家企业,称号历史与差异原因在右侧抽屉。
 // 侧边栏入口、页面标题、`document.title` 三处都取 `ENTERPRISE_LIST_TITLE` 一个常量。
@@ -40,15 +42,27 @@ const adminNav = [
     <SidebarHeader>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton size="lg" as-child tooltip="专精特新企业称号台账">
-            <NuxtLink to="/">
+          <SidebarMenuButton size="lg" as-child tooltip="宁波专精特新企业称号台账">
+            <NuxtLink to="/" aria-label="宁波专精特新企业称号台账，返回企业列表">
               <div
                 class="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg"
               >
-                <BookOpenCheck class="size-4" />
+                <img
+                  :src="colorMode === 'dark' ? '/brand/symbol-mono.svg' : '/brand/symbol-white.svg'"
+                  alt=""
+                  width="32"
+                  height="32"
+                  class="size-8 shrink-0"
+                />
               </div>
               <div class="grid flex-1 text-left text-sm leading-tight">
-                <span class="truncate font-medium">专精特新企业称号台账</span>
+                <img
+                  :src="colorMode === 'dark' ? '/brand/wordmark-white.svg' : '/brand/wordmark.svg'"
+                  alt="宁波专精特新"
+                  width="168"
+                  height="35"
+                  class="w-[168px] max-w-none"
+                />
               </div>
             </NuxtLink>
           </SidebarMenuButton>
