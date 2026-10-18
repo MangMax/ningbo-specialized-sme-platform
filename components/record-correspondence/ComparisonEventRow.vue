@@ -2,8 +2,8 @@
 import { computed, ref } from 'vue'
 import type { RecordComparisonResult } from '~~/lib/roster/record-comparison-view'
 import { COMPARISON_CLASSES, comparisonReasonText } from '~~/lib/roster/record-comparison-view'
-import { correspondenceStatusText, CORRESPONDENCE_ROLES } from '~~/lib/roster/correspondence-view'
-import { EVENTS, PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
+import { correspondenceStatusText, CORRESPONDENCE_ROLES, eventDecisionText } from '~~/lib/roster/correspondence-view'
+import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
 import { evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import SourceReader from './SourceReader.vue'
@@ -25,8 +25,8 @@ function rememberReturn(event: MouseEvent) {
   <article class="min-w-0 rounded-sm border bg-card p-4" :data-event-id="row.event.id" data-testid="record-comparison-event">
     <header class="flex flex-wrap items-start justify-between gap-2">
       <div class="min-w-0">
-        <NuxtLink :to="enterpriseTo" class="font-medium text-primary underline-offset-2 hover:underline">{{ row.record.nameRaw ?? '企业名称未提供' }}</NuxtLink>
-        <p class="text-muted-foreground mt-1 text-[13px]">{{ TITLES[row.record.titleCode] ?? row.record.titleCode }} · {{ EVENTS[row.event.eventType] ?? row.event.eventType }} · 事项 {{ row.event.year ?? '年份待核' }}<span v-if="row.event.decidedYear != null"> · 结论 {{ row.event.decidedYear }} 年</span><span v-if="row.event.reviewOutcome"> · {{ row.event.reviewOutcome }}</span></p>
+        <NuxtLink :to="enterpriseTo" class="font-medium text-primary underline-offset-2 hover:underline" @click="rememberReturn">{{ row.record.nameRaw ?? '企业名称未提供' }}</NuxtLink>
+        <p class="text-muted-foreground mt-1 text-[13px]">{{ TITLES[row.record.titleCode] ?? row.record.titleCode }} · {{ eventDecisionText(row.event) }}</p>
       </div>
       <Badge :variant="row.classification === 'historical_conflict' ? 'destructive' : row.classification === 'historical_aligned' ? 'secondary' : 'outline'">{{ COMPARISON_CLASSES[row.classification] ?? '待核' }}</Badge>
     </header>

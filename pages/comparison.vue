@@ -12,6 +12,7 @@ import type { ReconcileEntry } from '~~/lib/reconcile'
 import { useScrollEdges } from '~~/lib/scroll-edges'
 import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
+import { shouldNuxtScrollToTop } from '~~/lib/roster/evidence-preview-return'
 import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
 import { Input } from '@/components/ui/input'
@@ -46,6 +47,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import RecordComparisonPanel from '@/components/record-correspondence/RecordComparisonPanel.vue'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+
+definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
 
 const route = useRoute()
 const router = useRouter()

@@ -1,14 +1,20 @@
-import { nextTick, onMounted, watch, type Ref } from 'vue'
+import { nextTick, onMounted, onScopeDispose, watch, type Ref } from 'vue'
 import { isSafeBackPath } from './evidence-page'
 
 const RETURN_STATE_KEY = 'roster:evidence-preview-return'
 const HISTORY_RETURN_PATH_KEY = '__rosterEvidencePreviewReturnPath'
+
+export interface EvidencePreviewReturnAnchor {
+  eventId: string
+  viewportTop: number
+}
 
 interface EvidencePreviewReturnState {
   back: string
   scrollY: number
   scrollTop: number | null
   scrollLeft: number | null
+  anchor?: EvidencePreviewReturnAnchor
 }
 
 function validState(value: unknown): value is EvidencePreviewReturnState {
@@ -148,8 +154,13 @@ export function rememberEvidencePreviewReturn(back: unknown, source?: EventTarge
     (scrollLeft !== null && (!Number.isFinite(scrollLeft) || scrollLeft < 0))
   ) return
 
+  // The comparison opts into this anchor; numeric-only consumers retain their existing offsets.
+  const eventElement = sourceElement?.closest<HTMLElement>('[data-event-id]')
+  const eventId = eventElement?.dataset.eventId
+  const viewportTop = eventElement?.getBoundingClientRect().top
+  const anchor = eventId && viewportTop !== undefined && Number.isFinite(viewportTop) ? { eventId, viewportTop } : undefined
   try {
-    const state: EvidencePreviewReturnState = { back, scrollY, scrollTop, scrollLeft }
+    const state: EvidencePreviewReturnState = { back, scrollY, scrollTop, scrollLeft, ...(anchor ? { anchor } : {}) }
     const saved = readSavedReturns().filter((entry) => entry.back !== back)
     saved.push(state)
     writeSavedReturns(saved)
@@ -175,27 +186,38 @@ function takeEvidencePreviewScroll(currentPath: string): EvidencePreviewReturnSt
         scrollY: state.scrollY,
         scrollTop: state.scrollTop ?? null,
         scrollLeft: state.scrollLeft ?? null,
+        ...(state.anchor && typeof state.anchor.eventId === 'string' && Number.isFinite(state.anchor.viewportTop) ? { anchor: state.anchor } : {}),
       }
     : null
 }
 
 /**
  * Restore the saved offset after the destination view has received data and rendered it.
- * `ready` belongs to the caller so the ledger can wait for its active filtered query.
+ * `ready` belongs to the caller so the view can wait for all layout-changing reads.
+ * An optional event resolver preserves viewport position even when disclosures remount closed.
  */
-export function useEvidencePreviewScrollRestore(ready: Readonly<Ref<boolean>>): void {
+export function useEvidencePreviewScrollRestore(
+  ready: Readonly<Ref<boolean>>,
+  resolveAnchor?: (anchor: EvidencePreviewReturnAnchor) => number | undefined,
+): void {
+  let active = true
+  onScopeDispose(() => { active = false })
   onMounted(() => {
-    const state = takeEvidencePreviewScroll(`${window.location.pathname}${window.location.search}`)
+    const path = `${window.location.pathname}${window.location.search}`
+    const state = takeEvidencePreviewScroll(path)
     if (state === null) return
 
     let restored = false
+    let scheduled = false
     let stop = () => {}
+    const ownsRestore = () => active && ready.value && returnPathKey(`${window.location.pathname}${window.location.search}`) === returnPathKey(path)
     const restore = async () => {
-      if (restored || !ready.value) return
-      restored = true
-      stop()
+      if (restored || scheduled || !ownsRestore()) return
+      scheduled = true
       await nextTick()
       window.requestAnimationFrame(() => {
+        scheduled = false
+        if (!ownsRestore()) return
         if (state.scrollTop !== null) {
           const tableScroller = document.querySelector<HTMLElement>('[data-evidence-return-scroll-container]')
           if (tableScroller) {
@@ -203,13 +225,15 @@ export function useEvidencePreviewScrollRestore(ready: Readonly<Ref<boolean>>): 
             if (state.scrollLeft !== null) tableScroller.scrollLeft = state.scrollLeft
           }
         }
-        window.scrollTo({ top: state.scrollY, behavior: 'instant' })
+        const anchoredY = state.anchor ? resolveAnchor?.(state.anchor) : undefined
+        const top = anchoredY !== undefined && Number.isFinite(anchoredY) ? Math.max(0, anchoredY) : state.scrollY
+        window.scrollTo({ top, behavior: 'instant' })
+        restored = true
+        stop()
       })
     }
 
-    stop = watch(ready, () => {
-      void restore()
-    })
+    stop = watch(ready, () => { void restore() })
     if (ready.value) void restore()
   })
 }

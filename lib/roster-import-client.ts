@@ -96,7 +96,7 @@ export interface RosterImportAnnouncement {
  */
 export interface RosterPlatformRef {
   interface: PlatformInterface
-  /** 查询键：统一社会信用代码，或 `name:<nameNorm>`。 */
+  /** 查询键：统一社会信用代码、`name:<nameNorm>`，或已认定无主体归档的稳定键。 */
   queryKey: string
   /** `business_list` 的认定级别（`1`/`2`/`3`）；默认 `''`。 */
   rdjb?: string
@@ -162,7 +162,7 @@ export interface RosterImportRelation {
 /** 一次平台查询及其返回的全部关系。 */
 export interface RosterImportPlatformQuery {
   interface: PlatformInterface
-  /** 统一社会信用代码，或 `name:<nameNorm>`。 */
+  /** 统一社会信用代码、`name:<nameNorm>`，或已认定无主体归档的稳定键。 */
   queryKey: string
   /** `businessList` 的认定级别；进唯一键（同键不同 rdjb 是不同查询）。 */
   rdjb?: string

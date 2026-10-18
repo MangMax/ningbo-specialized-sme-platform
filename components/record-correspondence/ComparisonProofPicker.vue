@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { TITLES } from '~~/lib/labels'
 import type { ComparisonProof, ComparisonProofAudit, ComparisonProofCatalog, ComparisonSelection } from '~~/lib/roster/record-comparison-view'
 import { Badge } from '@/components/ui/badge'
@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 
 const props = defineProps<{ selection: ComparisonSelection; asOf: string }>()
-const emit = defineEmits<{ change: [proofIds: number[]] }>()
+const emit = defineEmits<{ change: [proofIds: number[]]; settled: [scopeKey: string, ready: boolean] }>()
 const page = ref(1)
 const pageSize = ref(25)
 const displayed = ref<ComparisonProofCatalog | null>(null)
@@ -17,6 +17,10 @@ const cache = ref<Record<number, ComparisonProof>>({})
 const basis = ref<Record<number, string>>({})
 const selectedReadFailed = ref(false)
 let requestId = 0
+let hydrationId = 0
+const scopeKey = computed(() => JSON.stringify([props.selection, props.asOf]))
+const hydratedKey = ref<string | null>(null)
+const pendingBasis = new Map<number, Promise<void>>()
 
 function sourceMatches(proof: ComparisonProof): boolean {
   if (proof.kind === 'official_coverage') return !!proof.evidence.sourceDocuments?.length && proof.evidence.sourceDocuments.every(row => props.selection.officialSourceDocumentIds.includes(row.id))
@@ -41,8 +45,15 @@ function toggle(proof: ComparisonProof, checked: boolean) {
   else next.delete(proof.id)
   emit('change', [...next].sort((a, b) => a - b))
 }
-async function readBasis(proof: ComparisonProof) {
-  if (basis.value[proof.id]) return
+function readBasis(proof: ComparisonProof): Promise<void> {
+  if (basis.value[proof.id]) return Promise.resolve()
+  const pending = pendingBasis.get(proof.id)
+  if (pending) return pending
+  const request = fetchBasis(proof).finally(() => pendingBasis.delete(proof.id))
+  pendingBasis.set(proof.id, request)
+  return request
+}
+async function fetchBasis(proof: ComparisonProof) {
   try {
     const first = await $fetch<ComparisonProofAudit>(`/api/roster/comparison-scope-proofs/${proof.id}/audit`, { query: { page: 1, pageSize: 200 } })
     const lastPage = Math.ceil(first.total / first.pageSize)
@@ -67,23 +78,33 @@ async function load() {
   }
 }
 async function hydrateSelected() {
-  if (!props.selection.proofIds.length) return
+  const current = ++hydrationId
+  const key = scopeKey.value
+  const ids = [...props.selection.proofIds]
+  hydratedKey.value = null
   selectedReadFailed.value = false
-  for (const id of props.selection.proofIds) {
+  for (const id of ids) {
     if (cache.value[id]) continue
-    try { cache.value[id] = await $fetch<ComparisonProof>(`/api/roster/comparison-scope-proofs/${id}`) }
-    catch { selectedReadFailed.value = true }
+    try {
+      const proof = await $fetch<ComparisonProof>(`/api/roster/comparison-scope-proofs/${id}`)
+      if (current !== hydrationId) return
+      cache.value[id] = proof
+    } catch {
+      if (current !== hydrationId) return
+      selectedReadFailed.value = true
+    }
   }
-  const usable = props.selection.proofIds.filter(id => !cache.value[id] || eligible(cache.value[id]!))
-  if (usable.length !== props.selection.proofIds.length) emit('change', usable)
-  void Promise.allSettled(usable.map(id => readBasis(cache.value[id]!)))
+  if (current !== hydrationId) return
+  const usable = ids.filter(id => !cache.value[id] || eligible(cache.value[id]!))
+  if (usable.length !== ids.length) emit('change', usable)
+  await Promise.allSettled(usable.flatMap(id => cache.value[id] ? [readBasis(cache.value[id]!)] : []))
+  if (current === hydrationId) hydratedKey.value = key
 }
 watch([page, pageSize], () => { void load() }, { immediate: true })
-watch(() => [props.selection.queryIds, props.selection.exportBatchIds, props.selection.officialSourceDocumentIds, props.selection.proofIds, props.asOf], () => {
-  void hydrateSelected()
-  void Promise.allSettled(choices.value.map(readBasis))
-}, { deep: true })
-onMounted(() => { void hydrateSelected() })
+watch(scopeKey, () => { void hydrateSelected() }, { immediate: true, flush: 'sync' })
+watch(choices, (proofs) => { void Promise.allSettled(proofs.map(readBasis)) })
+const layoutReady = computed(() => !loading.value && hydratedKey.value === scopeKey.value && choices.value.every(proof => basis.value[proof.id] !== undefined))
+watch([scopeKey, layoutReady], ([key, ready]) => emit('settled', key, ready), { immediate: true, flush: 'post' })
 </script>
 
 <template>

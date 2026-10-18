@@ -543,7 +543,7 @@ async function verifyProof() {
     assert.equal(rejected.value.error.code, 'insufficient_evidence')
     const recognized = await get(compareQuery([ids.confirmedOfficial]))
     assert.equal(recognized.currentSourceConsistency.qualification, 'not_comparable')
-    report.pending.push(`Current-source proof preflight rejects archived subject-narrowed query ${f.queryIds[7]}: HTTP ${rejected.status} ${rejected.value.error.code}: ${rejected.value.error.message}`)
+    // The asserted rejection is expected negative evidence, not an API blocker.
   })
   if (f.broadArchive.conflicts.length) {
     const first = f.broadArchive.conflicts[0]
@@ -694,6 +694,14 @@ async function main() {
       if (proofs) {
         manifest.proofIds = proofs
         manifest.comparisonWithOfficialProofUrl = base + comparisonPath(fixture.queryIds, fixture.exportBatches, [proofs.confirmedOfficial])
+        if (proofs.currentMatched) {
+          manifest.comparisonWithCurrentMatchedProofUrl = base + comparisonPath(
+            [fixture.broadArchive.queryId], [fixture.exportBatches[1]], [proofs.currentMatched])
+        }
+        if (proofs.currentConflict) {
+          manifest.comparisonWithCurrentConflictProofUrl = base + comparisonPath(
+            [fixture.broadArchive.queryId], [fixture.exportBatches[0]], [proofs.currentConflict])
+        }
         writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), { mode: 0o600 })
       }
     }

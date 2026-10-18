@@ -76,3 +76,31 @@ it('keeps the prior proof catalog on a failed target page and retries it', async
   await flushPromises()
   expect(wrapper.text()).toContain('v1')
 })
+
+
+it('ignores superseded selected proof hydration and settles the current scope after a read failure', async () => {
+  let resolveOld!: (value: unknown) => void
+  let rejectCurrent!: (reason: unknown) => void
+  vi.stubGlobal('$fetch', vi.fn((url: string) => {
+    if (url === '/api/roster/comparison-scope-proofs') return Promise.resolve({ rows: [], total: 0, page: 1, pageSize: 25 })
+    if (url.endsWith('/13')) return new Promise(resolve => { resolveOld = resolve })
+    if (url.endsWith('/12')) return new Promise((_resolve, reject) => { rejectCurrent = reject })
+    throw new Error(`Unexpected ${url}`)
+  }))
+  const selection = { queryIds: [], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [13] }
+  const wrapper = mount(ComparisonProofPicker, { props: { selection, asOf: '' }, global: { stubs: { TableLoadingStatus: true, TableFailureState: true, TablePagination: true } } })
+  mounted.push(wrapper)
+  await flushPromises()
+  expect(wrapper.emitted('settled')?.at(-1)?.[1]).toBe(false)
+  const next = { ...selection, proofIds: [12] }
+  await wrapper.setProps({ selection: next })
+  resolveOld(stale)
+  await flushPromises()
+  expect(wrapper.emitted('change')).toBeUndefined()
+  expect(wrapper.emitted('settled')?.at(-1)).toEqual([JSON.stringify([next, '']), false])
+  rejectCurrent(new Error('offline'))
+  await flushPromises()
+  expect(wrapper.text()).toContain('部分已选依据暂不可读')
+  expect(wrapper.emitted('settled')?.at(-1)).toEqual([JSON.stringify([next, '']), true])
+  expect(wrapper.emitted('change')).toBeUndefined()
+})

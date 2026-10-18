@@ -18,7 +18,7 @@ const payload = { platformQueries: [recognizedResultToImport(originalResult)] }
 
 每个 `platformQueries[]` 新来源项：
 
-- `interface:"recognized_list"`，`queryKey` 等于原条件中的 `uscc`，没有代码时为 `name:<原查询名>`；名称查询命中只是候选。
+- `interface:"recognized_list"`，有原条件 `uscc` 时 `queryKey` 等于该代码；否则有 `name` 时为 `name:<原查询名>`，名称命中只是候选。无主体条件的已采集归档须由提交方提供非空、稳定的归档键；纯转换函数生成 `scope:queryBusList:<称号范围>:<规范化条件>`。该键只用于存储定位，不声称原查询带有主体条件。
 - `rdjb` 是原 `titleScope.rdjb` 按原顺序用逗号连接，例如 `"1,2,3"` 或 `"3"`；单称号 `titleCode` 必须对应其称号，多称号留 null。1 创新型、2 专精特新中小企业、3 小巨人。
 - `queriedAt` 必须与原结果一致，`collectionEvidence` 必填，保存完整原 `PlatformLiveQueryResult`：`source`、实际条件、称号范围、原查询和完成时间、页状态/计数/末页、可靠总数或 null、完整性、fullRange、unfinished、原始行及限制。
 - `relations` 与 `collectionEvidence.rows` 按顺序一一对应，`sequenceNo` 从 1 连续编号；`relationKey`/`usccRaw`/`nameRaw` 分别取原行 `id`/`tyshxydm`/`qymc`，没有就 null；`rawFields` 原样保留。相同平台 id 或代码出现多次仍逐条落库。
@@ -29,6 +29,8 @@ const payload = { platformQueries: [recognizedResultToImport(originalResult)] }
 ## 完整性与归档限制
 
 `status` 扩为 `success | no_record | partial | failed | not_queried`。原始 `auth_failed` 在未取得行时保存为 failed，原状态/error 仍在 collectionEvidence；取得部分行后保存 partial。续页结果 `fullRange:false` 即使所请求范围完成也只登记 partial，不能代表从头穷尽。
+
+归档校验核对原始 AND 条件的字段格式、维护批次与年份、排序字段与方向配对，以及显式称号范围；已采集的 `queryBusList` 允许原条件没有 `name`/`uscc`。实时 REST/MCP 查询仍要求主体条件，并维持原资源限制。归档转存只验证和保存现有证据，不触发实时采集。
 
 完整状态要求所有请求称号的页连续、无失败和 unfinished，行数与页数对账，并有每称号终止证明：可靠总数全部覆盖、原响应 `maxPage` 到达末页，或有效零行尾页。实时结果新增可空 `pages[].maxPage`，旧结果缺该字段仍可读取；旧归档若总数未知且非空尾页又无末页证明，明确报 `collection_evidence_invalid`，不能补造末页或时点。单称号零条仅证明该称号和实际筛选条件，不能冒充三称号全范围无记录。HTTP 200 登录页在查询层为 auth_failed，不能转成成功空结果。
 
