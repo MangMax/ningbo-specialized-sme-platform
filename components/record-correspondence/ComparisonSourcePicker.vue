@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { PLATFORM_QUERY_STATUSES } from '~~/lib/labels'
 import { sourceSelectionKey, type ComparisonSelection, type ComparisonSource, type ComparisonSourceCatalog, type ComparisonSourceKind } from '~~/lib/roster/record-comparison-view'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 const props = defineProps<{ selection: ComparisonSelection }>()
-const emit = defineEmits<{ change: [selection: ComparisonSelection] }>()
+const emit = defineEmits<{ change: [selection: ComparisonSelection]; settled: [selectionKey: string, ready: boolean] }>()
 const kind = ref<ComparisonSourceKind>('official_document')
 const page = ref(1)
 const pageSize = ref(25)
@@ -19,6 +19,11 @@ const error = ref(false)
 const selectedError = ref(false)
 const cache = ref<Record<string, ComparisonSource>>({})
 let requestId = 0
+let hydrationId = 0
+const selectionKey = computed(() => JSON.stringify(props.selection))
+const hydratedKey = ref<string | null>(null)
+const layoutReady = computed(() => !loading.value && hydratedKey.value === selectionKey.value)
+watch([selectionKey, layoutReady], ([key, ready]) => emit('settled', key, ready), { immediate: true, flush: 'post' })
 const keyOf = (source: Pick<ComparisonSource, 'kind' | 'id'>) => `${source.kind}:${source.id}`
 const groups: { kind: ComparisonSourceKind; label: string }[] = [
   { kind: 'official_document', label: '正式公布文件' },
@@ -61,24 +66,29 @@ watch(kind, () => { page.value = 1 })
 
 /** Restored comparison URLs still show business labels rather than bare source IDs. */
 async function hydrateSelectedLabels() {
+  const current = ++hydrationId
+  const key = selectionKey.value
+  const selection = props.selection
+  hydratedKey.value = null
   selectedError.value = false
   for (const group of groups) {
-    const missing = new Set(props.selection[sourceSelectionKey(group.kind)].filter(id => !cache.value[`${group.kind}:${id}`]))
+    const missing = new Set(selection[sourceSelectionKey(group.kind)].filter(id => !cache.value[`${group.kind}:${id}`]))
     if (!missing.size) continue
-    let current = 1
+    let catalogPage = 1
     try {
       while (missing.size) {
-        const result = await $fetch<ComparisonSourceCatalog>('/api/roster/record-comparison/sources', { query: { kind: group.kind, page: current, pageSize: 200 } })
+        const result = await $fetch<ComparisonSourceCatalog>('/api/roster/record-comparison/sources', { query: { kind: group.kind, page: catalogPage, pageSize: 200 } })
+        if (current !== hydrationId) return
         for (const item of result.rows) { cache.value[keyOf(item)] = item; missing.delete(item.id) }
-        if (current * result.pageSize >= result.total) break
-        current++
+        if (catalogPage * result.pageSize >= result.total) break
+        catalogPage++
       }
-    } catch { selectedError.value = true /* The selected IDs remain intact; compare API validates the source set. */ }
+    } catch { if (current !== hydrationId) return; selectedError.value = true /* The selected IDs remain intact; compare API validates the source set. */ }
     if (missing.size) selectedError.value = true
   }
+  if (current === hydrationId) hydratedKey.value = key
 }
-onMounted(() => { void hydrateSelectedLabels() })
-watch(() => props.selection, () => { void hydrateSelectedLabels() }, { deep: true })
+watch(selectionKey, () => { void hydrateSelectedLabels() }, { immediate: true, flush: 'sync' })
 </script>
 
 <template>

@@ -4,7 +4,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { groupBy, orderBy, uniq } from 'es-toolkit'
 import { ChevronRight, Eye } from '@lucide/vue'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
-import { sourceReturnTarget } from '~~/lib/roster/correspondence-view'
+import { eventDecisionText, sourceReturnTarget } from '~~/lib/roster/correspondence-view'
 import RecordSourceReader from '@/components/record-correspondence/SourceReader.vue'
 import EnterpriseLaterProcesses from '@/components/record-correspondence/EnterpriseLaterProcesses.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
@@ -358,9 +358,8 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
                   v-slot="{ open }"
                 >
                   <div class="flex flex-wrap items-center gap-2">
-                    <EventChip :type="ev.type" :year="ev.year" :seq="ev.seq" />
-                    <span v-if="ev.decidedYear != null" class="text-muted-foreground text-xs">结论 {{ ev.decidedYear }} 年</span>
-                    <span v-if="ev.reviewOutcome" class="text-muted-foreground text-xs">{{ ev.reviewOutcome }}</span>
+                    <EventChip :type="ev.type" :year="ev.year" :seq="ev.seq" :hide-batch="ev.type === 'review'" />
+                    <span class="text-muted-foreground text-xs">{{ eventDecisionText({ eventType: ev.type, year: ev.year, decidedYear: ev.decidedYear, reviewOutcome: ev.reviewOutcome }) }}</span>
                     <CollapsibleTrigger as-child>
                       <Button
                         variant="ghost"

@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
-import { comparisonRequest, comparisonSelectionFromQuery, comparisonSelectionQuery, sourceSelectionKey } from '../lib/roster/record-comparison-view'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { comparisonRequest, comparisonRouteFromQuery, comparisonRouteKey, comparisonRouteQuery, comparisonSelectionFromQuery, comparisonSelectionQuery, instantFromLocalDateTime, localDateTimeForInstant, sourceSelectionKey } from '../lib/roster/record-comparison-view'
+
+afterEach(() => vi.unstubAllEnvs())
 
 describe('record comparison client request', () => {
   it('requires the explicit source set and retains independent source kinds', () => {
@@ -13,5 +15,21 @@ describe('record comparison client request', () => {
 
   it('rejects malformed URL identities rather than forwarding guesses', () => {
     expect(comparisonSelectionFromQuery({ queryIds: '3,not-an-id', exportBatchIds: '0', officialSourceDocumentIds: '2,2', proofIds: '9,bad' })).toEqual({ queryIds: [], exportBatchIds: [], officialSourceDocumentIds: [2], proofIds: [] })
+  })
+
+  it('roundtrips a URL instant through a Shanghai datetime-local input without changing its instant', () => {
+    vi.stubEnv('TZ', 'Asia/Shanghai')
+    const original = '2026-10-18T10:00:00.000Z'
+    const local = localDateTimeForInstant(original)
+    expect(local).toBe('2026-10-18T18:00:00.000')
+    expect(instantFromLocalDateTime(local, original)).toBe(original)
+    expect(instantFromLocalDateTime('2026-10-18T19:00:00.000', original)).toBe('2026-10-18T11:00:00.000Z')
+  })
+
+  it('keeps source set, proof, classification, page and page size in a canonical return URL', () => {
+    const state = comparisonRouteFromQuery({ queryIds: '7', exportBatchIds: '8', officialSourceDocumentIds: '3', proofIds: '12', classification: 'unresolved', asOf: '2026-10-18T18:00:00+08:00', page: '2', pageSize: '50' })
+    expect(state).toMatchObject({ selection: { queryIds: [7], exportBatchIds: [8], officialSourceDocumentIds: [3], proofIds: [12] }, classification: 'unresolved', asOf: '2026-10-18T10:00:00.000Z', page: 2, pageSize: 50 })
+    expect(comparisonRouteQuery(state)).toMatchObject({ mode: 'record', queryIds: '7', exportBatchIds: '8', officialSourceDocumentIds: '3', proofIds: '12', classification: 'unresolved', asOf: '2026-10-18T10:00:00.000Z', page: '2', pageSize: '50' })
+    expect(comparisonRouteKey(comparisonRouteFromQuery(comparisonRouteQuery(state)))).toBe(comparisonRouteKey(state))
   })
 })

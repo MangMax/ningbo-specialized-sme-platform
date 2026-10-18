@@ -47,3 +47,28 @@ it('keeps bookmarked selection after name hydration fails and offers a retry', a
   await flushPromises()
   expect(wrapper.text()).toContain('申报流程 · 专精特新中小企业 · 合成企业')
 })
+
+
+it('does not let an older selected label response settle or replace the current selection layout', async () => {
+  const pending: ((value: unknown) => void)[] = []
+  vi.stubGlobal('$fetch', vi.fn((_url: string, options: { query: { pageSize: number } }) => {
+    if (options.query.pageSize === 25) return Promise.resolve({ rows: [], total: 0, page: 1, pageSize: 25 })
+    return new Promise(resolve => { pending.push(resolve) })
+  }))
+  const selection = { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [], proofIds: [] }
+  const wrapper = mount(ComparisonSourcePicker, { props: { selection }, global: { stubs: { TableLoadingStatus: true, TableFailureState: true, TablePagination: true } } })
+  wrapperList.push(wrapper)
+  await flushPromises()
+  expect(wrapper.emitted('settled')?.at(-1)?.[1]).toBe(false)
+  const next = { ...selection, queryIds: [9] }
+  await wrapper.setProps({ selection: next })
+  pending[0]!({ rows: rows.query, total: 1, page: 1, pageSize: 200 })
+  await flushPromises()
+  expect(wrapper.emitted('settled')?.at(-1)).toEqual([JSON.stringify(next), false])
+  expect(wrapper.get('[aria-label="已选来源"]').text()).toContain('正在读取来源名称')
+  pending[1]!({ rows: [{ ...rows.query[0], id: 9, label: '当前查询名称' }], total: 1, page: 1, pageSize: 200 })
+  await flushPromises()
+  expect(wrapper.emitted('settled')?.at(-1)).toEqual([JSON.stringify(next), true])
+  expect(wrapper.get('[aria-label="已选来源"]').text()).toContain('当前查询名称')
+  expect(wrapper.get('[aria-label="已选来源"]').text()).not.toContain('合成企业')
+})

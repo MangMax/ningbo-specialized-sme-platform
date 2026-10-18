@@ -7,6 +7,13 @@ export type ComparisonSourceCatalog = ReturnType<typeof listRecordComparisonSour
 export type ComparisonSource = ComparisonSourceCatalog['rows'][number]
 export type ComparisonSourceKind = ComparisonSource['kind']
 export interface ComparisonSelection { queryIds: number[]; exportBatchIds: number[]; officialSourceDocumentIds: number[]; proofIds: number[] }
+export interface ComparisonRouteState {
+  selection: ComparisonSelection
+  page: number
+  pageSize: number
+  classification: NonNullable<RecordComparisonInput['classification']> | 'all'
+  asOf: string
+}
 
 /** Public #72 read row; decision basis is read from its audit endpoint. */
 interface ComparisonProofBase {
@@ -67,6 +74,46 @@ export function comparisonSelectionQuery(selection: ComparisonSelection): Record
 }
 export function comparisonRequest(selection: ComparisonSelection, page: number, pageSize: number, classification?: RecordComparisonInput['classification']): RecordComparisonInput {
   return { ...selection, page, pageSize, ...(classification ? { classification } : {}) }
+}
+function positivePage(value: unknown, fallback: number, maximum = Number.MAX_SAFE_INTEGER): number {
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return fallback
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed <= maximum ? parsed : fallback
+}
+export function comparisonRouteFromQuery(query: Record<string, unknown>): ComparisonRouteState {
+  const cutoff = typeof query.asOf === 'string' && /T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(query.asOf) && Number.isFinite(Date.parse(query.asOf))
+    ? new Date(query.asOf).toISOString() : ''
+  return {
+    selection: comparisonSelectionFromQuery(query),
+    page: positivePage(query.page, 1),
+    pageSize: positivePage(query.pageSize, 25, 200),
+    classification: typeof query.classification === 'string' && Object.hasOwn(COMPARISON_CLASSES, query.classification)
+      ? query.classification as NonNullable<RecordComparisonInput['classification']> : 'all',
+    asOf: cutoff,
+  }
+}
+export function comparisonRouteQuery(state: ComparisonRouteState): Record<string, string> {
+  return { mode: 'record', ...comparisonSelectionQuery(state.selection), page: String(state.page), pageSize: String(state.pageSize), ...(state.classification === 'all' ? {} : { classification: state.classification }), ...(state.asOf ? { asOf: state.asOf } : {}) }
+}
+export function comparisonRouteKey(state: ComparisonRouteState): string {
+  const selection = state.selection
+  return JSON.stringify([selection.queryIds.toSorted((a, b) => a - b), selection.exportBatchIds.toSorted((a, b) => a - b), selection.officialSourceDocumentIds.toSorted((a, b) => a - b), selection.proofIds.toSorted((a, b) => a - b), state.page, state.pageSize, state.classification, state.asOf])
+}
+/** HTML datetime-local is a local wall time; the URL/API cutoff is an instant. */
+export function localDateTimeForInstant(instant: string): string {
+  if (!instant || !Number.isFinite(Date.parse(instant))) return ''
+  const date = new Date(instant)
+  const pad = (value: number, width = 2) => String(value).padStart(width, '0')
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`
+}
+export function instantFromLocalDateTime(local: string, unchangedInstant = ''): string {
+  if (!local) return ''
+  if (unchangedInstant) {
+    const originalLocal = localDateTimeForInstant(unchangedInstant)
+    if (local === originalLocal || local === originalLocal.slice(0, 19) && originalLocal.endsWith('.000') || local === originalLocal.slice(0, 16) && originalLocal.endsWith(':00.000')) return unchangedInstant
+  }
+  const parsed = new Date(local)
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : ''
 }
 export function sourceSelectionKey(kind: ComparisonSourceKind): keyof ComparisonSelection {
   const keys: Record<ComparisonSourceKind, keyof ComparisonSelection> = { query: 'queryIds', export_batch: 'exportBatchIds', official_document: 'officialSourceDocumentIds' }
