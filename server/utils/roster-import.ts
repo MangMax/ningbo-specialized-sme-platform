@@ -46,6 +46,7 @@ import type {
   RosterImportSummary,
   RosterImportUsccBackfill,
 } from '../../lib/roster-import-client'
+import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
 
 type Db = BetterSQLite3Database<typeof schema>
 /** 事务内外都能用的执行器（`tx` 与本连接在 select/insert/update/delete 上同形）。 */
@@ -82,7 +83,8 @@ const DIRECTIONS = enumSet(schema.differenceReason.direction.enumValues)
 const DIFFERENCE_STATUSES = enumSet(schema.differenceReason.status.enumValues)
 const DIFFERENCE_REASONS = enumSet(schema.differenceReason.reasonCode.enumValues)
 const DIFFERENCE_MEASURES = enumSet(schema.differenceReason.measureCode.enumValues)
-const IMPORT_SOURCE_KINDS = enumSet(schema.importBatch.sourceKind.enumValues)
+// Correspondence decisions share the batch ledger, but are never a roster-import payload.
+const IMPORT_SOURCE_KINDS = new Set<string>(['announcement', 'platform_export', 'alias_evidence'])
 /** `sblx` 的字典取值；之外的**原样入库 + 标待核**（不因未知取值崩溃）。 */
 const DECLARE_KINDS = enumSet(schema.platformRelation.declareKind.enumValues)
 
@@ -3752,34 +3754,6 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
 // ---------------------------------------------------------------------------
 // 批次行（记账，独立于业务事务）
 // ---------------------------------------------------------------------------
-
-function findBatchByKey(db: Db, idempotencyKey: string) {
-  return db.select().from(schema.importBatch).all().find((b) => b.idempotencyKey === idempotencyKey)
-}
-
-/** 取或建批次行（幂等键唯一；竞态下重查）。 */
-function ensureBatchRow(db: Db, request: RosterImportRequest) {
-  const existing = findBatchByKey(db, request.idempotencyKey)
-  if (existing) return existing
-  try {
-    return db
-      .insert(schema.importBatch)
-      .values({
-        idempotencyKey: request.idempotencyKey,
-        sourceKind: request.sourceKind,
-        sourceIdentity: request.sourceIdentity,
-        sourceSha256: request.sourceSha256 ?? null,
-        status: 'preflight',
-      })
-      .returning()
-      .get()
-  } catch {
-    // 唯一键竞态：另一个请求先插入了 —— 重查即可。
-    const raced = findBatchByKey(db, request.idempotencyKey)
-    if (raced) return raced
-    throw new Error('import_batch 幂等键写入失败')
-  }
-}
 
 // ---------------------------------------------------------------------------
 // 预检

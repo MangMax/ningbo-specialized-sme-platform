@@ -470,7 +470,7 @@ export const importBatch = sqliteTable(
     idempotencyKey: text('idempotency_key').notNull(),
     /** 来源类别:公布文件 / 平台导出 / 别名证据。 */
     sourceKind: text('source_kind', {
-      enum: ['announcement', 'platform_export', 'alias_evidence'],
+      enum: ['announcement', 'platform_export', 'alias_evidence', 'correspondence_decision'],
     }).notNull(),
     /** 来源身份:文件库内相对路径或逻辑标识(不含凭证)。 */
     sourceIdentity: text('source_identity').notNull(),
@@ -885,4 +885,61 @@ export const platformExportRow = sqliteTable(
     uniqueIndex('platform_export_row_identity_uq').on(t.batchId, t.sourceRowNo),
     index('platform_export_row_batch_idx').on(t.batchId),
   ],
+)
+
+/** #65: a typed decision between specific immutable source rows. No query-wide or empty-row endpoint. */
+export const recordCorrespondence = sqliteTable(
+  'record_correspondence',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    edgeKey: text('edge_key').notNull(),
+    type: text('type', { enum: ['event_process', 'event_recognized', 'later_process', 'event_export_context', 'process_export_context', 'recognized_export'] }).notNull(),
+    role: text('role').notNull(),
+    eventId: integer('event_id').references(() => recordEvent.id),
+    predecessorEventId: integer('predecessor_event_id').references(() => recordEvent.id),
+    relationId: integer('relation_id').references(() => platformRelation.id),
+    exportRowId: integer('export_row_id').references(() => platformExportRow.id),
+    enterpriseId: integer('enterprise_id').references(() => enterprise.id),
+    titleCode: text('title_code').notNull().references(() => title.code),
+    status: text('status', { enum: ['candidate', 'confirmed', 'rejected', 'unlinked'] }).notNull(),
+    revision: integer('revision').notNull(),
+    targetIdentity: text('target_identity', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    provenance: text('provenance', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    sourceFingerprint: text('source_fingerprint').notNull(),
+    ruleId: text('rule_id').notNull(),
+    ruleVersion: text('rule_version').notNull(),
+    createdAt: text('created_at').notNull(),
+    decidedAt: text('decided_at'),
+    endedAt: text('ended_at'),
+  },
+  (t) => [
+    uniqueIndex('record_correspondence_edge_uq').on(t.edgeKey),
+    index('record_correspondence_event_idx').on(t.eventId),
+    index('record_correspondence_relation_idx').on(t.relationId),
+    index('record_correspondence_export_idx').on(t.exportRowId),
+    index('record_correspondence_enterprise_idx').on(t.enterpriseId, t.titleCode),
+  ],
+)
+
+/** Append-only decisions; import_batch supplies the shared transaction/idempotency ledger. */
+export const recordCorrespondenceAudit = sqliteTable(
+  'record_correspondence_audit',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    correspondenceId: integer('correspondence_id').notNull().references(() => recordCorrespondence.id),
+    batchId: integer('batch_id').notNull().references(() => importBatch.id),
+    idempotencyKey: text('idempotency_key').notNull(),
+    fromStatus: text('from_status'),
+    toStatus: text('to_status').notNull(),
+    expectedRevision: integer('expected_revision').notNull(),
+    resultingRevision: integer('resulting_revision').notNull(),
+    actorType: text('actor_type', { enum: ['user', 'agent'] }).notNull(),
+    actorId: text('actor_id').notNull(),
+    basis: text('basis').notNull(),
+    ruleId: text('rule_id').notNull(),
+    ruleVersion: text('rule_version').notNull(),
+    evidence: text('evidence', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    decidedAt: text('decided_at').notNull(),
+  },
+  (t) => [index('record_correspondence_audit_edge_idx').on(t.correspondenceId, t.id)],
 )
