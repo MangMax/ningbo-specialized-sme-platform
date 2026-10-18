@@ -5,6 +5,7 @@ import ComparisonSourcePicker from '../components/record-correspondence/Comparis
 import ComparisonProofPicker from '../components/record-correspondence/ComparisonProofPicker.vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RecordComparisonPanel from '../components/record-correspondence/RecordComparisonPanel.vue'
+import ComparisonDateTimePicker from '../components/record-correspondence/ComparisonDateTimePicker.vue'
 import { Select } from '../components/ui/select'
 import { rememberEvidencePreviewReturn } from '../lib/roster/evidence-preview-return'
 
@@ -91,7 +92,8 @@ describe('record comparison public interaction', () => {
     vi.stubGlobal('$fetch', vi.fn(async (_url: string, options: { query: Record<string, unknown> }) => { calls.query.push(options.query); return result() }))
     wrapper = mount(RecordComparisonPanel, { global: { stubs } })
     await flushPromises()
-    expect((wrapper.get('#record-as-of').element as HTMLInputElement).value).toBe('2026-10-18T18:00')
+    expect(wrapper.findComponent(ComparisonDateTimePicker).props('modelValue')).toBe('2026-10-18T18:00:00.000')
+    expect(wrapper.get('#record-as-of').text()).toContain('18:00:00')
     expect(wrapper.get('[data-testid="proof-cutoff"]').text()).toContain('2026-10-18T10:00:00.000Z')
     await wrapper.findAll('button').find(button => button.text() === '按所选来源对比')!.trigger('click')
     await flushPromises()
@@ -145,12 +147,24 @@ describe('record comparison public interaction', () => {
     await flushPromises()
     expect(wrapper.get('[aria-label="已加载结果范围"]').text()).toContain('全部分类')
     expect(wrapper.get('[aria-label="目标结果范围"]').text()).toContain('证据不足 · 待核')
-    await wrapper.get('#record-as-of').setValue('2026-10-18T19:00:00.000')
+    wrapper.findComponent(ComparisonDateTimePicker).vm.$emit('update:modelValue', '2026-10-18T19:00:00.000')
     await wrapper.findAll('button').find(button => button.text() === '按所选来源对比')!.trigger('click')
     await flushPromises()
     expect(wrapper.get('[aria-label="已加载结果范围"]').text()).toContain('2026-10-18T10:00:00.000Z')
     expect(wrapper.get('[aria-label="目标结果范围"]').text()).toContain('2026-10-18T11:00:00.000Z')
     expect(wrapper.find('[data-testid="shown-result"]').exists()).toBe(true)
+  })
+
+  it('blocks comparing an incomplete segmented time without clearing the last cutoff', async () => {
+    startWith({ queryIds: '7', officialSourceDocumentIds: '3', asOf: '2026-10-18T10:00:00.123Z' })
+    vi.stubGlobal('$fetch', vi.fn(async () => result()))
+    wrapper = mount(RecordComparisonPanel, { global: { stubs } })
+    await flushPromises()
+    wrapper.findComponent(ComparisonDateTimePicker).vm.$emit('validity-change', false)
+    await flushPromises()
+    const run = wrapper.findAll('button').find(button => button.text() === '按所选来源对比')!
+    expect(run.attributes('disabled')).toBeDefined()
+    expect(route.query.asOf).toBe('2026-10-18T10:00:00.123Z')
   })
 
   it('restores comparison scroll only after the matching URL result has rendered', async () => {
