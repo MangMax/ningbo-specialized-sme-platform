@@ -33,8 +33,9 @@ const sourceKinds = ['event', 'relation', 'export_row'] as const
 function fail(status: number, code: string, message: string): CorrespondenceApiOutput { return { status, headers, body: { error: { code, message } } } }
 function knownRedactors(context: { db: Db; apiToken?: string | null }) {
   const credentials = { ...credentialContext(), db: context.db }
-  const knownValues = [context.apiToken, resolveCredential('miitCookie', credentials).value, resolveCredential('ocrToken', credentials).value]
-  return knownValues.filter((value): value is string => !!value).map(cookieRedactor)
+  const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : null
+  const knownValues = [context.apiToken, runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('miitCookie', credentials).value, resolveCredential('ocrToken', credentials).value]
+  return [...new Set(knownValues.filter((value): value is string => !!value))].map(cookieRedactor)
 }
 function ok(body: unknown, redactors: ReadonlyArray<(text: string) => string>): CorrespondenceApiOutput { return { status: 200, headers, body: sanitizeEvidence(body, redactors) } }
 function int(value: unknown) { const n = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN; return Number.isSafeInteger(n) && n > 0 ? n : null }
