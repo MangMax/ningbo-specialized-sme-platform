@@ -166,7 +166,7 @@ async function arriveAtEvent(eventId: number | null) {
   setEvidenceDisclosureOpen(evidenceDisclosureKey(eventId), true)
   await nextTick()
   if (id.value !== enterpriseId || focusedEventId.value !== eventId) return
-  document.getElementById(`record-event-${eventId}`)?.scrollIntoView({ block: 'center' })
+  document.getElementById(`record-event-${eventId}`)?.scrollIntoView({ block: 'start' })
 }
 watch([detail, focusedEventId], ([, eventId]) => arriveAtEvent(eventId), { immediate: true })
 

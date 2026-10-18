@@ -81,7 +81,8 @@ describe('source modal reverse event navigation', () => {
     expect(wrapper!.findComponent(EnterprisePage).vm.$.uid).toBe(page)
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(collapsible.props('open')).toBe(true)
-    expect(scroll).toHaveBeenLastCalledWith({ block: 'center' })
+    // Expanded evidence can be taller than the viewport: keep the event heading in view.
+    expect(scroll).toHaveBeenLastCalledWith({ block: 'start' })
     expect(router.currentRoute.value.query.returnTo).toBe(withReturn ? returnTo : undefined)
   })
 
