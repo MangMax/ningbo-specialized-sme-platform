@@ -8,6 +8,7 @@ export const platformQueryInputShape = {
   source: z.enum(PLATFORM_QUERY_SOURCES),
   name: z.string().trim().min(1).max(200).optional(),
   uscc: z.string().trim().regex(/^[0-9A-Z]{18}$/).optional(),
+  rdjb: z.enum(['1', '2', '3', 'all']).optional(),
   pageSize: z.number().int().min(1).max(50).default(50),
   startPage: z.number().int().min(1).max(100000).default(1),
   maxRequests: z.number().int().min(1).max(100).default(100),
@@ -15,6 +16,11 @@ export const platformQueryInputShape = {
   maxDurationMs: z.number().int().min(1).max(60000).default(60000),
 }
 export const platformQueryInputSchema = z.strictObject(platformQueryInputShape)
+/** Validate source capabilities before SDK field stripping or credential resolution. */
+export function validPlatformQueryConditions(q: z.infer<typeof platformQueryInputSchema>): boolean {
+  if (q.source === 'businessList') return !!q.uscc && q.name === undefined && q.rdjb !== undefined && (q.rdjb !== 'all' || q.startPage === 1)
+  return q.source === 'queryList' && q.rdjb === undefined && !!(q.name || q.uscc)
+}
 export type PlatformLiveQueryInput = z.infer<typeof platformQueryInputSchema>
 export type PlatformQueryStatus = 'success' | 'no_record' | 'auth_failed' | 'failed' | 'partial' | 'not_queried'
 export interface PlatformQueryError {
@@ -50,7 +56,7 @@ export const platformQueryCapabilities = {
   version: 1,
   sources: {
     queryList: { available: true, meaning: '申报记录', conditions: ['name', 'uscc'], combination: 'and', nameMatch: 'platform_keyword', titleSelection: false, defaultRestrictions: [], pagination: true },
-    businessList: { available: false, meaning: '关联记录', conditions: ['uscc'], titleSelection: true },
+    businessList: { available: true, meaning: '关联记录', conditions: ['uscc'], titleSelection: true, rdjb: ['1', '2', '3', 'all'], titleMeaning: { '1': '创新型中小企业', '2': '专精特新中小企业', '3': '小巨人' }, defaultRestrictions: [], pagination: true },
     queryBusList: { available: false, meaning: '已认定企业列表', conditions: [], titleSelection: false },
   },
   limits: { maxConcurrentRequests: 2, maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, maxPageSize: 50 },

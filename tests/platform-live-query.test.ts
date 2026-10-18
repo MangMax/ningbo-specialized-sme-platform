@@ -187,7 +187,7 @@ it('public capabilities describe source differences and strict RPC validation re
   const capabilities = (await import('../server/mcp/tools/get_platform_capabilities')).default as any
   const cap = await capabilities.handler()
   expect(cap.sources.queryList).toMatchObject({ available: true, conditions: ['name', 'uscc'], titleSelection: false })
-  expect(cap.sources.businessList).toMatchObject({ available: false, conditions: ['uscc'] })
+  expect(cap.sources.businessList).toMatchObject({ available: true, conditions: ['uscc'] })
   expect(cap.limits.maxConcurrentRequests).toBe(2)
   const route = (await import('../server/api/platform/capabilities.get')).default as any
   expect(route({})).toEqual(cap)
