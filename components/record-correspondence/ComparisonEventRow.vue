@@ -100,7 +100,7 @@ const classificationVariant = computed(() => props.row.classification === 'histo
           <ul class="mt-1 flex flex-col gap-1.5">
             <li v-for="edge in otherEdges" :key="edge.id" class="flex flex-wrap items-center gap-1.5">
               <span class="text-muted-foreground">{{ edge.exportRowId != null ? '当前导出快照（非历史出处）' : '其他来源匹配' }}</span>
-              <Badge variant="outline">匹配 {{ correspondenceStatusText(edge) }}</Badge>
+              <Badge variant="outline">{{ edge.exportRowId != null ? '快照与本记录的关联：' : '来源匹配：' }}{{ correspondenceStatusText(edge) }}</Badge>
               <Button v-if="edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-1.5 text-[13px]" @click="openSource('export_row', edge.exportRowId)">查看原始记录</Button>
               <Button v-else-if="edge.relationId != null" variant="ghost" size="sm" class="h-7 px-1.5 text-[13px]" @click="openSource('relation', edge.relationId)">查看原始记录</Button>
             </li>

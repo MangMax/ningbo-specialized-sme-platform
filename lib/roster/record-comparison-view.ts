@@ -46,7 +46,7 @@ export const COMPARISON_REASONS: Record<string, string> = {
   recognized_row_has_no_verified_event_version: '平台认定行与事件版本尚未核实',
   selected_process_row_missing: '所选归档查询中没有对应流程原行',
   event_process_fact_or_timing_unknown: '流程类型、年份或时序不足以判断',
-  process_status_or_role_not_decisive: '流程状态或对应角色不足以判断',
+  process_status_or_role_not_decisive: '现有平台记录不足以确认这条认定或复核记录',
   official_review_outcome_unknown: '正式复核结论未知',
   complete_selected_interface_scope_no_confirmed_edge: '所选完整接口查询范围内未登记已确认对应',
   collection_evidence_missing: '旧查询未保留采集范围证据', query_partial: '查询仅有部分结果',
