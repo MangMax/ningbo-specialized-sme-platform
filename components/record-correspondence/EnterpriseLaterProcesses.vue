@@ -39,7 +39,7 @@ function setPageSize(value: number) { pageSize.value = value; page.value = 1 }
       <p v-if="displayed && (displayed.page !== page || displayed.pageSize !== pageSize)" class="text-muted-foreground mb-2 text-[13px]">仍显示第 {{ displayed.page }} 页的已读取结果。</p>
       <ul v-if="displayed?.rows.length" class="flex min-w-0 flex-col gap-2"><CorrespondenceItem v-for="edge in displayed.rows" :key="edge.id" :edge="edge" :return-to="returnTo" /></ul>
       <p v-else-if="!loading && !error" class="text-muted-foreground text-[13px]">尚无已登记的后续流程。此处不推断平台没有原行。</p>
+      <TablePagination v-if="displayed" class="mt-4" :page="displayed.page" :page-size="displayed.pageSize" :total="displayed.total" unit="条流程" :loading="loading || error" @update:page="setPage" @update:page-size="setPageSize" />
     </CardContent>
-    <TablePagination v-if="displayed" :page="displayed.page" :page-size="displayed.pageSize" :total="displayed.total" unit="条流程" :loading="loading || error" @update:page="setPage" @update:page-size="setPageSize" />
   </Card>
 </template>
