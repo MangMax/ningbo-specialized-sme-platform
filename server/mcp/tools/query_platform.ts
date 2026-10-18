@@ -3,7 +3,7 @@ import { platformQueryInputShape, platformQueryResultShape } from '../../../lib/
 import { runPlatformLiveQuery } from '../../utils/platform-live-query'
 export default defineMcpTool({
   name: 'query_platform', title: '实时查询平台记录',
-  description: '与 POST /api/platform/query 同义的只读查询，无需本库企业或 Cookie。name 关键词与 uscc 按 AND 组合。先用 get_platform_capabilities 查看来源能力；queryList支持name/uscc；businessList只支持uscc，必填rdjb=1/2/3/all（创新型/专精特新中小企业/小巨人/全三称号），拒绝名称。all从第一页查询，补查选unfinished的单称号。失败与 partial 不能当无记录；unfinished 给出补查页。',
+  description: '与 POST /api/platform/query 同义的只读查询，无需本库企业或 Cookie。name 关键词与 uscc 按 AND 组合。先用 get_platform_capabilities 查看来源能力；当前支持 queryList、businessList、queryBusList。businessList只接受uscc和必填字符串rdjb=1/2/3/all，禁止name及已认定来源筛选；all从第一页开始，续查用unfinished的单称号字符串。queryBusList 的 rdjb 为1/2/3数组（默认全三称号）；sqsj=YYYY/MM/DD - YYYY/MM/DD，rddqrq为有效年份，whpcyear为维护年份，whpc=1–15且必须带whpcyear；szq是账号范围8位筛选码（不同于行szq）。仅qymc+asc/desc排序已验证；日期边界和时区未知。失败与 partial 不能当无记录；unfinished 给出补查页。',
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   inputSchema: platformQueryInputShape,
   outputSchema: platformQueryResultShape,

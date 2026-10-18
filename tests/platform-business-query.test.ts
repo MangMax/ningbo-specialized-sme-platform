@@ -109,6 +109,9 @@ it.each([
   { ...input, name: '合成' }, { ...input, qymc: '合成' }, { ...input, cookie }, { ...input, rdjb: 1 },
   { ...input, rdjb: '4' }, { ...input, rdjb: ['1', '2', '3'] }, { ...input, sqsj: '2026' },
   { ...input, startPage: 2 }, { source: 'queryList', uscc, rdjb: '3' },
+  { ...input, sqsj: '2024/02/01 - 2024/02/29' }, { ...input, rddqrq: '2027' },
+  { ...input, whpcyear: '2023', whpc: '2' }, { ...input, szq: '33028100' },
+  { ...input, orderField: 'qymc', orderDirection: 'asc' },
 ])('REST MCP and raw RPC reject unsupported conditions before upstream access (case %#)', async args => {
   expect(await query(args)).toMatchObject({ error: { code: 'invalid_input' } })
   await expect(tool(args)).rejects.toMatchObject({ statusCode: 400 })
@@ -207,4 +210,18 @@ it('a contradictory title page is incomplete even when other titles are valid ze
     return response(page([], p.get('rdjb') === '2' ? 3 : 0))
   })
   expect(await query(input)).toMatchObject({ status: 'partial', completeness: 'partial', declaredTotal: null, rows: [], error: { code: 'invalid_response' }, unfinished: [{ rdjb: '2', page: 1 }] })
+})
+it('an ordinary business failure remains unfinished when a later title reaches the shared request cap', async () => {
+  fetcher.mockImplementation(async (_url: string, init: any) => {
+    const title = new URLSearchParams(init.body).get('rdjb')
+    return title === '1' ? response(cookie, 503) : response(page([{ qymc: '后续称号关系' }], 2))
+  })
+  for (const invoke of [query, tool]) {
+    const result = await invoke({ ...input, pageSize: 1, maxRequests: 2 })
+    expect(result).toMatchObject({ status: 'partial', completeness: 'partial', fetchedCount: 1,
+      rows: [{ qymc: '后续称号关系' }], error: { code: 'safety_limit' },
+      unfinished: [{ source: 'businessList', rdjb: '1', page: 1 }, { source: 'businessList', rdjb: '2', page: 2 }, { source: 'businessList', rdjb: '3', page: 1 }],
+    })
+    expect(result.pages.map((p: any) => [p.rdjb, p.page, p.status])).toEqual([['1', 1, 'failed'], ['2', 1, 'success']])
+  }
 })

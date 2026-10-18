@@ -4,23 +4,45 @@ import type { PlatformRow } from './adapter'
 
 export const PLATFORM_QUERY_SOURCES = ['queryList', 'businessList', 'queryBusList'] as const
 export type PlatformQuerySource = typeof PLATFORM_QUERY_SOURCES[number]
+const year = z.string().regex(/^\d{4}$/)
+const dateRange = z.string().regex(/^\d{4}\/\d{2}\/\d{2} - \d{4}\/\d{2}\/\d{2}$/).refine(value => {
+  const dates = value.split(' - ')
+  return dates.length === 2 && dates.every(date => {
+    const [y, m, d] = date.split('/').map(Number)
+    const parsed = new Date(0)
+    parsed.setUTCFullYear(y!, m! - 1, d!)
+    return parsed.getUTCFullYear() === y && parsed.getUTCMonth() === m! - 1 && parsed.getUTCDate() === d
+  }) && dates[0]! <= dates[1]!
+})
+export const recognizedConditionShape = {
+  sqsj: dateRange.optional(), rddqrq: year.optional(), whpcyear: year.optional(),
+  whpc: z.string().regex(/^(?:[1-9]|1[0-5])$/).optional(),
+  // Filter codes are distinct from returned row szq values. No global dictionary implied.
+  szq: z.string().regex(/^\d{8}$/).optional(),
+  orderField: z.literal('qymc').optional(), orderDirection: z.enum(['asc', 'desc']).optional(),
+}
 export const platformQueryInputShape = {
   source: z.enum(PLATFORM_QUERY_SOURCES),
+  ...recognizedConditionShape,
   name: z.string().trim().min(1).max(200).optional(),
   uscc: z.string().trim().regex(/^[0-9A-Z]{18}$/).optional(),
-  rdjb: z.enum(['1', '2', '3', 'all']).optional(),
+  rdjb: z.union([z.enum(['1', '2', '3', 'all']), z.array(z.enum(['1', '2', '3'])).min(1).max(3).refine(values => new Set(values).size === values.length)]).optional(),
   pageSize: z.number().int().min(1).max(50).default(50),
   startPage: z.number().int().min(1).max(100000).default(1),
   maxRequests: z.number().int().min(1).max(100).default(100),
   maxRows: z.number().int().min(1).max(5000).default(5000),
   maxDurationMs: z.number().int().min(1).max(60000).default(60000),
 }
-export const platformQueryInputSchema = z.strictObject(platformQueryInputShape)
-/** Validate source capabilities before SDK field stripping or credential resolution. */
-export function validPlatformQueryConditions(q: z.infer<typeof platformQueryInputSchema>): boolean {
-  if (q.source === 'businessList') return !!q.uscc && q.name === undefined && q.rdjb !== undefined && (q.rdjb !== 'all' || q.startPage === 1)
-  return q.source === 'queryList' && q.rdjb === undefined && !!(q.name || q.uscc)
+/** Source conditions are checked both here and on original MCP arguments before SDK stripping. */
+const queryInputObject = z.strictObject(platformQueryInputShape)
+export function validPlatformQueryConditions(q: z.infer<typeof queryInputObject>): boolean {
+  const hasRecognizedConditions = Object.keys(recognizedConditionShape).some(key => q[key as keyof typeof q] !== undefined)
+  if (q.source === 'businessList') return !!q.uscc && q.name === undefined && typeof q.rdjb === 'string' && !hasRecognizedConditions && (q.rdjb !== 'all' || q.startPage === 1)
+  if (!q.name && !q.uscc) return false
+  if (q.source === 'queryList') return q.rdjb === undefined && !hasRecognizedConditions
+  return (q.rdjb === undefined || Array.isArray(q.rdjb)) && (!q.whpc || !!q.whpcyear) && Boolean(q.orderField) === Boolean(q.orderDirection)
 }
+export const platformQueryInputSchema = queryInputObject.refine(validPlatformQueryConditions, { message: 'Invalid conditions for platform source' })
 export type PlatformLiveQueryInput = z.infer<typeof platformQueryInputSchema>
 export type PlatformQueryStatus = 'success' | 'no_record' | 'auth_failed' | 'failed' | 'partial' | 'not_queried'
 export interface PlatformQueryError {
@@ -37,7 +59,7 @@ export interface PlatformQueryPage extends PlatformQueryPosition {
 export interface PlatformLiveQueryResult {
   source: PlatformQuerySource
   status: PlatformQueryStatus
-  effectiveConditions: { name?: string; uscc?: string; combination: 'and' }
+  effectiveConditions: { name?: string; uscc?: string; combination: 'and' } & Partial<Record<keyof typeof recognizedConditionShape, string>>
   titleScope: { mode: 'source_default' | 'selected'; rdjb: string[] }
   queriedAt: string
   completedAt: string
@@ -57,7 +79,7 @@ export const platformQueryCapabilities = {
   sources: {
     queryList: { available: true, meaning: '申报记录', conditions: ['name', 'uscc'], combination: 'and', nameMatch: 'platform_keyword', titleSelection: false, defaultRestrictions: [], pagination: true },
     businessList: { available: true, meaning: '关联记录', conditions: ['uscc'], titleSelection: true, rdjb: ['1', '2', '3', 'all'], titleMeaning: { '1': '创新型中小企业', '2': '专精特新中小企业', '3': '小巨人' }, defaultRestrictions: [], pagination: true },
-    queryBusList: { available: false, meaning: '已认定企业列表', conditions: [], titleSelection: false },
+    queryBusList: { available: true, meaning: '已认定企业列表', conditions: ['name', 'uscc', 'rdjb', 'sqsj', 'rddqrq', 'whpcyear', 'whpc', 'szq', 'orderField', 'orderDirection'], combination: 'and', nameMatch: 'platform_keyword', titleSelection: true, titles: ['1', '2', '3'], defaultTitles: ['1', '2', '3'], filters: { sqsj: 'YYYY/MM/DD - YYYY/MM/DD; boundary inclusion and timezone unverified', rddqrq: 'effective year YYYY', whpcyear: 'maintenance year YYYY', whpc: '1-15; requires whpcyear', szq: 'account-scoped 8-digit filter code; differs from row szq' }, sorts: { qymc: ['asc', 'desc'] }, visibility: 'server_session_scope', defaultRestrictions: [], pagination: true },
   },
   limits: { maxConcurrentRequests: 2, maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, maxPageSize: 50 },
   cache: 'disabled',
@@ -72,7 +94,7 @@ const positionShape = { source: z.enum(PLATFORM_QUERY_SOURCES), rdjb: z.string()
 /** Toolkit output schema is discoverable in tools/list; REST mirrors this in static route metadata. */
 export const platformQueryResultShape = {
   source: z.enum(PLATFORM_QUERY_SOURCES), status: z.enum(['success', 'no_record', 'auth_failed', 'failed', 'partial', 'not_queried']),
-  effectiveConditions: z.object({ name: z.string().optional(), uscc: z.string().optional(), combination: z.literal('and') }),
+  effectiveConditions: z.object({ name: z.string().optional(), uscc: z.string().optional(), combination: z.literal('and'), sqsj: z.string().optional(), rddqrq: z.string().optional(), whpcyear: z.string().optional(), whpc: z.string().optional(), szq: z.string().optional(), orderField: z.string().optional(), orderDirection: z.string().optional() }),
   titleScope: z.object({ mode: z.enum(['source_default', 'selected']), rdjb: z.array(z.string()) }),
   queriedAt: z.string(), completedAt: z.string(), rows: z.array(z.record(z.string(), z.string())),
   pages: z.array(z.object({ ...positionShape, status: z.enum(['success', 'auth_failed', 'failed']), fetchedCount: z.number().int().nonnegative(), declaredTotal: z.number().int().nonnegative().nullable(), error: queryErrorSchema })),
