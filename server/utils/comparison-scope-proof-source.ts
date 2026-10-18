@@ -72,7 +72,7 @@ export function currentSource(db: ProofExecutor, evidence: CurrentEvidence) {
   const query = db.select().from(schema.platformQuery).all().find(row => row.id === evidence.queryId)
   const batch = db.select().from(schema.platformExportBatch).all().find(row => row.id === evidence.exportBatchId)
   if (!query || !batch) fail('source_missing', 'Archived query or export batch missing')
-  if (batch.importStatus !== 'imported' || batch.titleCode !== evidence.titleCode || !completeTitle(query, evidence.titleCode)) fail('insufficient_evidence', 'Complete recognized query and imported same-title export required')
+  if (batch.importStatus !== 'imported' || batch.titleCode !== evidence.titleCode || !/^[0-9a-f]{64}$/.test(batch.sha256) || !completeTitle(query, evidence.titleCode)) fail('insufficient_evidence', 'Complete recognized query and imported hashed same-title export required')
   const actual = query.collectionEvidence!
   const conditions = actual.effectiveConditions as unknown as Record<string, unknown>
   const narrowed = ['name', 'uscc', 'sqsj', 'rddqrq', 'whpcyear', 'whpc', 'szq'].some(key => Boolean(conditions[key]))
