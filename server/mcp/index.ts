@@ -139,6 +139,7 @@ function unauthorizedResponse(tool: McpWriteTool, reason: McpAuthReason): Respon
       headers: {
         'content-type': 'application/json',
         'www-authenticate': 'Bearer realm="mcp-write"',
+        'cache-control': 'no-store',
       },
     },
   )
