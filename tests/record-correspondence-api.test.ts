@@ -126,3 +126,51 @@ describe('record correspondence source, candidate and MCP contracts', () => {
     expect(getRecordCorrespondenceAudit(db, id)).toHaveLength(1)
   })
 })
+
+describe('core guards remain authoritative through both adapters', () => {
+  it('rejects candidate confirmation with a mismatched original process role via REST and MCP', () => {
+    const { db, event, relation } = fixture()
+    db.update(schema.platformRelation).set({ declareKind: 'update' }).where(eq(schema.platformRelation.id, relation.id)).run()
+    const auth = { authorization: 'Bearer synthetic-token' }
+    const call = (action: 'preflight' | 'commit', body: unknown) => handleRecordCorrespondenceRequest({ action, method: 'POST', body, headers: auth }, { db, apiToken: 'synthetic-token' })
+    const first = decision(event.id, relation.id) as any
+    first.operations[0].edge.role = 'supports_award'
+    const plan = call('preflight', first).body as any
+    expect(plan.batchStatus).toBe('preflight')
+    const receipt = call('commit', { request: first, planHash: plan.planHash }).body as any
+    const second = { ...first, idempotencyKey: 'confirm-mismatch', sourceIdentity: 'synthetic/confirm-mismatch', operations: [{ action: 'decide', correspondenceId: receipt.correspondenceIds[0], expectedRevision: 1, status: 'confirmed' }] }
+    expect(call('preflight', second)).toMatchObject({ status: 422, body: { error: { code: 'invalid_endpoint_type' } } })
+    expect(() => dispatchRecordCorrespondenceMcp('preflight', second, { db, authorized: true })).toThrowError(expect.objectContaining({ code: 'invalid_endpoint_type' }))
+    expect(listRecordCorrespondences(db)[0]).toMatchObject({ status: 'candidate', revision: 1 })
+    const auditRead = handleRecordCorrespondenceRequest({ action: 'audit', method: 'GET', id: receipt.correspondenceIds[0] }, { db }).body as any
+    expect(JSON.stringify(auditRead)).not.toContain('SECRET-RAW')
+    expect(auditRead.rows[0].evidence.officialEvidence).toMatchObject([{ evidence: { page: 3, listNo: 9 } }])
+  })
+
+  it('includes a predecessor event as a reverse link with formal evidence', () => {
+    const { db, enterprise, event, relation } = fixture()
+    db.update(schema.platformRelation).set({ declareKind: 'update', appliedAt: '2025-01-01' }).where(eq(schema.platformRelation.id, relation.id)).run()
+    const req = { ...decision(event.id, relation.id), operations: [{ action: 'create', status: 'candidate', edge: { type: 'later_process', enterpriseId: enterprise.id, titleCode: 'specialized_sme', predecessorEventId: event.id, relationId: relation.id, role: 'followup_update' } }] }
+    const pre = dispatchRecordCorrespondenceMcp('preflight', req, { db, authorized: true }) as any
+    const receipt = dispatchRecordCorrespondenceMcp('commit', { request: req, planHash: pre.planHash }, { db, authorized: true }) as any
+    const source = dispatchRecordCorrespondenceMcp('source', { kind: 'event', id: event.id }, { db }) as any
+    expect(source).toMatchObject({ source: { officialEvidence: [{ evidence: { page: 3 }, storedFile: null }], correspondences: [{ id: receipt.correspondenceIds[0], type: 'later_process' }] }, correspondences: [{ predecessorEvent: { id: event.id } }] })
+    expect(JSON.stringify(source)).not.toContain('SECRET-RAW')
+  })
+})
+
+describe('candidate coverage boundaries', () => {
+  it('keeps every ambiguous row, shows zero and partial coverage, and omits archived response arrays', () => {
+    const { db, enterprise, event, query, relation } = fixture()
+    db.update(schema.platformQuery).set({ collectionEvidence: { effectiveConditions: { uscc: enterprise.usccNorm, combination: 'and' }, queriedAt: '2026-10-18T00:00:00.000Z', completedAt: '2026-10-18T00:01:00.000Z', rows: [{ token: 'SECRET-ROW-TOKEN' }], completeness: 'partial', fullRange: false } as any }).where(eq(schema.platformQuery.id, query.id)).run()
+    const second = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 2, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, nameRaw: '合成甲', relationKey: 'B-2', matchBasis: 'uscc', verificationStatus: 'confirmed' }).returning().get()
+    const zero = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T02:00:00.000Z', status: 'no_record' }).returning().get()
+    const result = dispatchRecordCorrespondenceMcp('candidates', { eventId: event.id, queryIds: [query.id, zero.id], ruleVersion: '2' }, { db }) as any
+    expect(result.total).toBe(2)
+    expect(result.rows.map((row: any) => row.edge.relationId)).toEqual([relation.id, second.id])
+    expect(result.rows.every((row: any) => row.conflicts.includes('multiple_candidate_rows'))).toBe(true)
+    expect(result.coverage.map((item: any) => item.status)).toEqual(['partial', 'no_record'])
+    expect(JSON.stringify(result)).not.toContain('SECRET-ROW-TOKEN')
+    expect(listRecordCorrespondences(db)).toEqual([])
+  })
+})

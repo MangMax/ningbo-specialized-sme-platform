@@ -3,7 +3,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { commitRecordCorrespondences, CorrespondenceError, listRecordCorrespondences, preflightRecordCorrespondences, readRecordCorrespondenceBatch, type CorrespondenceFilter } from './record-correspondence'
-import { audit, detail, readSource, type SourceKind } from './record-correspondence-read'
+import { audit, detail, readSource, sanitizeEvidence, type SourceKind } from './record-correspondence-read'
 import { generateCandidates } from './record-correspondence-candidates'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -26,10 +26,10 @@ const operation = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('correct'), correspondenceId: positive, expectedRevision: positive, edge }),
 ])
 const decision = z.strictObject({ idempotencyKey: z.string().trim().min(1), sourceIdentity: z.string().trim().min(1), actor: z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1) }), basis: z.string().trim().min(1), ruleId: z.string().trim().min(1), ruleVersion: z.string().trim().min(1), operations: z.array(operation).min(1) })
-const candidate = z.strictObject({ eventId: positive.optional(), enterpriseId: positive.optional(), titleCode: z.string().min(1).optional(), queryIds: z.array(positive).default([]), exportBatchIds: z.array(positive).default([]), ruleVersion: z.string().trim().min(1), page: positive.default(1), pageSize: positive.max(200).default(50) }).refine(v => !!v.eventId !== !!(v.enterpriseId && v.titleCode), 'Provide eventId or enterpriseId and titleCode').refine(v => v.queryIds.length + v.exportBatchIds.length > 0, 'Specify archived query or export batch IDs')
+const candidate = z.strictObject({ eventId: positive.optional(), enterpriseId: positive.optional(), titleCode: z.string().min(1).optional(), queryIds: z.array(positive).default([]), exportBatchIds: z.array(positive).default([]), ruleVersion: z.string().trim().min(1), page: positive.default(1), pageSize: positive.max(200).default(50) }).refine(v => v.eventId ? !v.enterpriseId && !v.titleCode : !!v.enterpriseId && !!v.titleCode, 'Provide eventId or enterpriseId and titleCode').refine(v => v.queryIds.length + v.exportBatchIds.length > 0, 'Specify archived query or export batch IDs')
 const sourceKinds = ['event', 'relation', 'export_row'] as const
 function fail(status: number, code: string, message: string): CorrespondenceApiOutput { return { status, headers, body: { error: { code, message } } } }
-function ok(body: unknown): CorrespondenceApiOutput { return { status: 200, headers, body } }
+function ok(body: unknown): CorrespondenceApiOutput { return { status: 200, headers, body: sanitizeEvidence(body) } }
 function int(value: unknown) { const n = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN; return Number.isSafeInteger(n) && n > 0 ? n : null }
 function page(query: Record<string, unknown>) { const p = query.page == null ? 1 : int(query.page); const s = query.pageSize == null ? 50 : int(query.pageSize); return p && s && s <= 200 ? { page: p, pageSize: s } : null }
 function scalar(value: unknown) { return typeof value === 'string' && value.length > 0 ? value : null }

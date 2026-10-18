@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
+import { sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { getRecordCorrespondenceAudit, listRecordCorrespondences, type CorrespondenceRead } from './record-correspondence'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -11,6 +12,11 @@ export function sanitizeEvidence(value: unknown): unknown {
   if (typeof value === 'string') return value.replace(/\b(cookie|token|password|secret|authorization|api[_-]?key)\s*[:=]\s*[^\s;,]+/gi, '$1=[REDACTED]')
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([key]) => !secretKey.test(key)).map(([key, item]) => [key, sanitizeEvidence(item)]))
   return value
+}
+export function safeCollectionEvidence(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const { rows: _rows, ...metadata } = value as Record<string, unknown>
+  return sanitizeEvidence(metadata)
 }
 function refs(db: Db, filter: Parameters<typeof listRecordCorrespondences>[1]) {
   return listRecordCorrespondences(db, filter).map(({ id, type, role, status, eventId, predecessorEventId, relationId, exportRowId, enterpriseId, titleCode, revision, requiresRevalidation }) => ({ id, type, role, status, eventId, predecessorEventId, relationId, exportRowId, enterpriseId, titleCode, revision, requiresRevalidation }))
@@ -27,7 +33,8 @@ export function relationSource(db: Db, id: number) {
   const joined = db.select({ relation: schema.platformRelation, query: schema.platformQuery }).from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id)).where(eq(schema.platformRelation.id, id)).get()
   if (!joined) return null
   const { rawResponse: _rawResponse, ...query } = joined.query
-  return { ...joined.relation, rawFields: sanitizeEvidence(joined.relation.rawFields), query: { ...query, failureReason: sanitizeEvidence(query.failureReason), collectionEvidence: sanitizeEvidence(query.collectionEvidence) }, correspondences: refs(db, { relationId: id }) }
+  const position = sourcePositionForSequence(query.collectionEvidence, joined.relation.sequenceNo)
+  return { ...joined.relation, sourceRdjb: position.sourceRdjb, sourcePage: position.sourcePage, rawFields: sanitizeEvidence(joined.relation.rawFields), query: { ...query, failureReason: sanitizeEvidence(query.failureReason), collectionEvidence: safeCollectionEvidence(query.collectionEvidence) }, correspondences: refs(db, { relationId: id }) }
 }
 export function exportRowSource(db: Db, id: number) {
   const joined = db.select({ row: schema.platformExportRow, batch: schema.platformExportBatch }).from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id)).where(eq(schema.platformExportRow.id, id)).get()
