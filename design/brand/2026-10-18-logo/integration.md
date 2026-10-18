@@ -2,7 +2,7 @@
 
 ## 范围
 
-资源进入 `public/brand/`；侧栏用 32px 图形标加 168px 文字标；favicon 用 16px 专用版，并随系统明暗模式适配；README 用带深色模式备选的图文组合。保留品牌返回首页链接、折叠行为和页面内主题切换。
+资源进入 `public/brand/`；侧栏用 32px 图形标加 112px 文字标；favicon 用 16px 专用版，并随系统明暗模式适配；README 用带深色模式备选的图文组合。保留品牌返回首页链接、折叠行为和页面内主题切换。
 
 设计生成器加 `--publish` 同步资源，字体子集和 OFL 许可入仓。SVG 及展示页为生成产物。PNG 截图、下载 ZIP 是本地证据，不入 Git；设计评审原文中的截图引用也属于本地证据。
 
@@ -23,4 +23,10 @@
 
 本地截图位于 `.scratch/brand/integration/evidence/`：`desktop-light.png`、`desktop-dark.png`、`desktop-dark-collapsed.png`、`mobile-light.png`、`mobile-dark.png`。页面业务内容为空库状态，仅作为品牌与导航验收，不作为真实名录业务验收。
 
-独立视觉评审：原始设计完成一轮 Magpie + DeepSeek OpenDesign 评审，初版 7/10，修订与处理见 `review.md`。本轮是已确认设计的资源接入，由主 Agent 进行实际界面验证，未另开独立代码/视觉复审。
+旧方向的独立视觉评审：原始 N 设计完成一轮 Magpie + DeepSeek OpenDesign 评审，初版 7/10，修订与处理见 `review.md`。本轮是已确认设计的资源接入，由主 Agent 进行实际界面验证，未另开独立代码/视觉复审。
+
+## 抽象方向修订
+
+用户要求名称简化为“专精特新”，图形需要抽象表达专精特新。已替换 N 为四块切面向心围合、右上块外移的形态，文字标缩为四字，侧栏宽度 112px；README 标题、品牌链接无障碍名称、SVG aria-label 与 favicon 同步更新。业务地域仍是宁波，未改动业务文案和数据范围。新一轮设计评审由同一指定 provider/model 执行，结果单独记录。
+
+抽象方向复验：`pnpm typecheck` 通过；13 个公共 SVG HTTP 200/MIME/XML 及重复生成、源/公共副本一致性检查通过。实际查看 1280×800 浅/深主题与 390×844 深色菜单，文字标实际宽度 112px、四字完整。新截图为本地证据目录的 `abstract-desktop-light.png`、`abstract-desktop-dark.png`、`abstract-mobile-dark.png`。

@@ -42,8 +42,8 @@ const adminNav = [
     <SidebarHeader>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton size="lg" as-child tooltip="宁波专精特新企业称号台账">
-            <NuxtLink to="/" aria-label="宁波专精特新企业称号台账，返回企业列表">
+          <SidebarMenuButton size="lg" as-child tooltip="专精特新企业称号台账">
+            <NuxtLink to="/" aria-label="专精特新企业称号台账，返回企业列表">
               <div
                 class="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg"
               >
@@ -58,10 +58,10 @@ const adminNav = [
               <div class="grid flex-1 text-left text-sm leading-tight">
                 <img
                   :src="colorMode === 'dark' ? '/brand/wordmark-white.svg' : '/brand/wordmark.svg'"
-                  alt="宁波专精特新"
-                  width="168"
-                  height="35"
-                  class="w-[168px] max-w-none"
+                  alt="专精特新"
+                  width="112"
+                  height="34"
+                  class="w-[112px] max-w-none"
                 />
               </div>
             </NuxtLink>

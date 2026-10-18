@@ -1,8 +1,8 @@
-# 宁波专精特新企业数据平台
+# 专精特新
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="public/brand/lockup-white.svg">
-  <img src="public/brand/lockup.svg" alt="宁波专精特新" width="332" height="64">
+  <img src="public/brand/lockup.svg" alt="专精特新" width="252" height="64">
 </picture>
 
 面向宁波市专精特新企业名录的可扩展数据平台。当前包含跨称号名录查看、工信部平台导出对比、来源文件与页码证据、PDF 页图和 OCR 工作台；后续模块按业务需要逐步加入。
