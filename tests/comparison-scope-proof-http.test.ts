@@ -18,17 +18,21 @@ const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, ti
 const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
 db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, page: 3, listNo: 2 }).run()
 const conditions = { combination: 'and' }
-const collection = { source: 'queryBusList', status: 'success', effectiveConditions: conditions, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-18T00:00:00Z', completedAt: '2026-10-18T00:01:00Z', rows: [], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, maxPage: 1, status: 'success', fetchedCount: 3, declaredTotal: 3, error: null }], fetchedCount: 3, declaredTotal: 3, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } } as typeof schema.platformQuery.$inferInsert.collectionEvidence
+const collection = { source: 'queryBusList', status: 'success', effectiveConditions: conditions, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-18T00:00:00Z', completedAt: '2026-10-18T00:01:00Z', rows: [], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, maxPage: 1, status: 'success', fetchedCount: 5, declaredTotal: 5, error: null }], fetchedCount: 5, declaredTotal: 5, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } } as typeof schema.platformQuery.$inferInsert.collectionEvidence
 const query = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'all', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'success', collectionEvidence: collection }).returning().get()
 const addRelation = (sequenceNo: number, uscc: string, name: string, enterpriseId: number | null = null) => db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo, enterpriseId, usccRaw: uscc, nameRaw: name, year: 2024, status: '已认定', verificationStatus: 'confirmed', matchBasis: 'uscc' }).returning().get()
 const matchedRelation = addRelation(1, enterprise.usccNorm!, '甲企业', enterprise.id)
 addRelation(2, '91330211255994476B', '接口独有')
-addRelation(3, '91330211255994477C', '接口名称')
+const otherRelation = addRelation(3, '91330211255994477C', '接口名称')
+const restExplicitRelation = addRelation(4, '91330211255994479E', 'REST 显式证明')
+const mcpOmittedRelation = addRelation(5, '91330211255994480F', 'MCP 省略证明')
 const batch = db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'synthetic.xlsx', sha256: 'b'.repeat(64), importStatus: 'imported' }).returning().get()
 const addExport = (sourceRowNo: number, uscc: string, name: string) => db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo, usccRaw: uscc, nameRaw: name }).returning().get()
 const matchedExport = addExport(2, enterprise.usccNorm!, '甲企业')
-addExport(3, '91330211255994477C', '导出名称')
+const otherExport = addExport(3, '91330211255994477C', '导出名称')
 addExport(4, '91330211255994478D', '导出独有')
+const restExplicitExport = addExport(5, '91330211255994479E', 'REST 显式证明')
+const mcpOmittedExport = addExport(6, '91330211255994480F', 'MCP 省略证明')
 let service: { baseUrl: string; stop: () => Promise<void> }
 const sourceQuery = `queryIds=${query.id}&exportBatchIds=${batch.id}&officialSourceDocumentIds=${doc.id}`
 const api = (path: string, token = true) => `${service.baseUrl}/api/roster/${path}`
@@ -80,6 +84,12 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
     const proof = await json(await fetch(api(`comparison-scope-proofs/${officialProofId}`)))
     expect(proof).toMatchObject({ status: 'confirmed', valid: true, revision: 2 })
     expect((await json(await fetch(api(`comparison-scope-proofs/${officialProofId}/audit`)))).rows.map((row: any) => row.toStatus)).toEqual(['candidate', 'confirmed'])
+    expect(mcpValue(await rpc('tools/call', { name: 'get_comparison_scope_proof_audit', arguments: { id: officialProofId } })))
+      .toEqual(await json(await fetch(api(`comparison-scope-proofs/${officialProofId}/audit`))))
+    const restAuditPage = await json(await fetch(api(`comparison-scope-proofs/${officialProofId}/audit?page=2&pageSize=1`)))
+    const mcpAuditPage = mcpValue(await rpc('tools/call', { name: 'get_comparison_scope_proof_audit', arguments: { id: officialProofId, page: 2, pageSize: 1 } }))
+    expect(mcpAuditPage).toEqual(restAuditPage)
+    expect(mcpAuditPage).toMatchObject({ total: 2, page: 2, pageSize: 1, rows: [{ toStatus: 'confirmed' }] })
     const listed = await rpc('tools/list', {}, true)
     expect(listed.body.result.tools.map((tool: any) => tool.name)).toContain('preflight_comparison_scope_proofs')
     const badCurrent = structuredClone(currentRequest) as any
@@ -105,19 +115,54 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
     const beforeDecision = await json(await fetch(api(`record-comparison?${sourceQuery}&proofIds=${currentProofId}&asOf=2026-10-18T00%3A00%3A00Z`)))
     expect(beforeDecision.currentSourceConsistency.recognizedObservations.every((row: any) => row.qualification === 'not_comparable')).toBe(true)
   })
-  it('keeps recognized-export candidate without proof then confirms it with public proof ID', async () => {
-    const candidate = { ...baseDecision('edge-candidate'), operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: matchedRelation.id, exportRowId: matchedExport.id, role: 'same_current_row' } }] }
+  it('retains candidate proof when REST confirmation omits IDs and rejects explicit empty IDs', async () => {
+    const candidate = { ...baseDecision('edge-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: matchedRelation.id, exportRowId: matchedExport.id, role: 'same_current_row' } }] }
     const plan = await json(await post('correspondences/preflight', candidate))
     const receipt = await json(await post('correspondences/commit', { request: candidate, planHash: plan.planHash }))
     const edgeId = receipt.correspondenceIds[0]
-    const noProof = { ...baseDecision('edge-confirm-no-proof'), operations: [{ action: 'decide', correspondenceId: edgeId, expectedRevision: 1, status: 'confirmed' }] }
+    const noProof = { ...baseDecision('edge-confirm-no-proof'), proofIds: [], operations: [{ action: 'decide', correspondenceId: edgeId, expectedRevision: 1, status: 'confirmed' }] }
     const denied = await post('correspondences/preflight', noProof)
     expect(denied.status).toBe(422)
-    const confirmed = { ...baseDecision('edge-confirm-proof'), proofIds: [currentProofId], operations: noProof.operations }
+    expect((await json(denied)).error.code).toBe('incomplete_coverage')
+    const confirmed = { ...baseDecision('edge-confirm-proof'), operations: noProof.operations }
     const confirmedPlan = await json(await post('correspondences/preflight', confirmed))
     expect(confirmedPlan.planHash).toMatch(/^[a-f0-9]{64}$/)
     expect((await post('correspondences/commit', { request: confirmed, planHash: confirmedPlan.planHash })).status).toBe(200)
-    expect((await json(await fetch(api(`correspondences/${edgeId}`)))).requiresRevalidation).toBe(false)
+    expect(await json(await fetch(api(`correspondences/${edgeId}`)))).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
+    expect((await json(await fetch(api(`correspondences/${edgeId}/audit`)))).rows.at(-1).evidence.comparisonProofIds).toEqual([currentProofId])
+  })
+  it('confirms another proof-backed candidate with explicit IDs over MCP', async () => {
+    const candidate = { ...baseDecision('mcp-edge-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: otherRelation.id, exportRowId: otherExport.id, role: 'same_current_row' } }] }
+    const candidatePlan = mcpValue(await rpc('tools/call', { name: 'preflight_record_correspondences', arguments: candidate }, true))
+    const edgeId = mcpValue(await rpc('tools/call', { name: 'save_record_correspondences', arguments: { request: candidate, planHash: candidatePlan.planHash } }, true)).correspondenceIds[0]
+    const confirm = { ...baseDecision('mcp-edge-confirm'), proofIds: [currentProofId], operations: [{ action: 'decide', correspondenceId: edgeId, expectedRevision: 1, status: 'confirmed' }] }
+    const plan = mcpValue(await rpc('tools/call', { name: 'preflight_record_correspondences', arguments: confirm }, true))
+    mcpValue(await rpc('tools/call', { name: 'save_record_correspondences', arguments: { request: confirm, planHash: plan.planHash } }, true))
+    expect(await json(await fetch(api(`correspondences/${edgeId}`)))).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
+    expect((await json(await fetch(api(`correspondences/${edgeId}/audit`)))).rows.at(-1).evidence.comparisonProofIds).toEqual([currentProofId])
+  })
+  it('confirms a proof-backed candidate with explicit IDs over REST', async () => {
+    const candidate = { ...baseDecision('rest-explicit-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: restExplicitRelation.id, exportRowId: restExplicitExport.id, role: 'same_current_row' } }] }
+    const candidatePlan = await json(await post('correspondences/preflight', candidate))
+    const edgeId = (await json(await post('correspondences/commit', { request: candidate, planHash: candidatePlan.planHash }))).correspondenceIds[0]
+    const confirm = { ...baseDecision('rest-explicit-confirm'), proofIds: [currentProofId], operations: [{ action: 'decide', correspondenceId: edgeId, expectedRevision: 1, status: 'confirmed' }] }
+    const plan = await json(await post('correspondences/preflight', confirm))
+    expect((await post('correspondences/commit', { request: confirm, planHash: plan.planHash })).status).toBe(200)
+    expect(await json(await fetch(api(`correspondences/${edgeId}`)))).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
+    expect((await json(await fetch(api(`correspondences/${edgeId}/audit`)))).rows.at(-1).evidence.comparisonProofIds).toEqual([currentProofId])
+  })
+  it('confirms a proof-backed candidate with omitted IDs over MCP', async () => {
+    const candidate = { ...baseDecision('mcp-omitted-candidate'), proofIds: [currentProofId], operations: [{ action: 'create', status: 'candidate', edge: { type: 'recognized_export', relationId: mcpOmittedRelation.id, exportRowId: mcpOmittedExport.id, role: 'same_current_row' } }] }
+    const candidatePlan = mcpValue(await rpc('tools/call', { name: 'preflight_record_correspondences', arguments: candidate }, true))
+    const edgeId = mcpValue(await rpc('tools/call', { name: 'save_record_correspondences', arguments: { request: candidate, planHash: candidatePlan.planHash } }, true)).correspondenceIds[0]
+    const confirm = { ...baseDecision('mcp-omitted-confirm'), operations: [{ action: 'decide', correspondenceId: edgeId, expectedRevision: 1, status: 'confirmed' }] }
+    const empty = await rpc('tools/call', { name: 'preflight_record_correspondences', arguments: { ...baseDecision('mcp-empty-confirm'), proofIds: [], operations: confirm.operations } }, true)
+    expect(empty.body.result.isError).toBe(true)
+    expect(empty.body.result.content[0].text).toContain('Confirmed current-source equivalence proof required')
+    const plan = mcpValue(await rpc('tools/call', { name: 'preflight_record_correspondences', arguments: confirm }, true))
+    mcpValue(await rpc('tools/call', { name: 'save_record_correspondences', arguments: { request: confirm, planHash: plan.planHash } }, true))
+    expect(await json(await fetch(api(`correspondences/${edgeId}`)))).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
+    expect((await json(await fetch(api(`correspondences/${edgeId}/audit`)))).rows.at(-1).evidence.comparisonProofIds).toEqual([currentProofId])
   })
   it('invalidates source-bound proof after original row drift while retaining audit', async () => {
     db.update(schema.platformExportRow).set({ nameRaw: 'changed after confirmation' }).where(eq(schema.platformExportRow.id, matchedExport.id)).run()
