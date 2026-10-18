@@ -41,6 +41,8 @@ export const MCP_WRITE_TOOLS = [
   'set_file_category',
   'save_parse_result',
   'save_roster_batch',
+  'submit_platform_batch',
+  'retry_platform_batch',
 ] as const
 
 /** 写入 tool 名(字面量联合)。 */

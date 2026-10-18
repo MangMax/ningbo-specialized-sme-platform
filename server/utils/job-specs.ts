@@ -1,3 +1,4 @@
+import { registerPlatformBatchJob } from './platform-batch-query'
 import { getJobSpec, registerJob } from './job-runner'
 import { ocrSpec } from './jobs/ocr'
 import { reconcileSpec } from './jobs/reconcile'
@@ -28,6 +29,7 @@ import { renderPagesSpec } from './jobs/render-pages'
  * `clearJobSpecs()` 之后的重新登记被静默跳过),可以被多个路由重复调用。
  */
 export function registerJobSpecs(): void {
+  registerPlatformBatchJob()
   if (getJobSpec(renderPagesSpec.kind)) return
   registerJob(renderPagesSpec)
   registerJob(ocrSpec)
