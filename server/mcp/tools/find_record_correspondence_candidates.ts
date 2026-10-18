@@ -1,0 +1,5 @@
+import { z } from 'zod'
+import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
+import { useDb } from '@db'
+import { dispatchRecordCorrespondenceMcp } from '../../utils/mcp-record-correspondence'
+export default defineMcpTool({ name: 'find_record_correspondence_candidates', title: '从指定归档原行只读生成对应候选', description: '等价 POST /api/roster/correspondences/candidates。精确身份、称号；保留缺年/批次歧义，绝不自动确认或入库。', annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }, inputSchema: { eventId: z.number().int().positive().optional(), enterpriseId: z.number().int().positive().optional(), titleCode: z.string().optional(), queryIds: z.array(z.number().int().positive()).optional(), exportBatchIds: z.array(z.number().int().positive()).optional(), ruleVersion: z.string().min(1), page: z.number().int().positive().optional(), pageSize: z.number().int().min(1).max(200).optional() }, handler: async input => dispatchRecordCorrespondenceMcp('candidates', input, { db: useDb() }) })
