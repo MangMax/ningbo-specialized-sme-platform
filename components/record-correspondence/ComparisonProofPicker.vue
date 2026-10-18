@@ -79,7 +79,10 @@ async function hydrateSelected() {
   void Promise.allSettled(usable.map(id => readBasis(cache.value[id]!)))
 }
 watch([page, pageSize], () => { void load() }, { immediate: true })
-watch(() => [props.selection.queryIds, props.selection.exportBatchIds, props.selection.officialSourceDocumentIds, props.selection.proofIds, props.asOf], () => { void hydrateSelected() }, { deep: true })
+watch(() => [props.selection.queryIds, props.selection.exportBatchIds, props.selection.officialSourceDocumentIds, props.selection.proofIds, props.asOf], () => {
+  void hydrateSelected()
+  void Promise.allSettled(choices.value.map(readBasis))
+}, { deep: true })
 onMounted(() => { void hydrateSelected() })
 </script>
 

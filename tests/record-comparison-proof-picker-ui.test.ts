@@ -2,11 +2,12 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import ComparisonProofPicker from '../components/record-correspondence/ComparisonProofPicker.vue'
+import type { ComparisonProof } from '../lib/roster/record-comparison-view'
 
-const official = { id: 12, kind: 'official_coverage', status: 'confirmed', valid: true, decidedAt: '2026-10-18T01:00:00Z', evidence: { titleCode: 'specialized_sme', fromYear: 2023, throughYear: 2025, sourceDocuments: [{ id: 3 }], enterpriseIds: null }, sourceSummary: { documents: [{ path: 'jxj/notice.pdf' }] } }
-const stale = { ...official, id: 13, valid: false }
-const candidate = { ...official, id: 14, status: 'candidate' }
-const current = { id: 15, kind: 'current_source_equivalence', status: 'confirmed', valid: true, decidedAt: '2026-10-18T02:00:00Z', evidence: { titleCode: 'specialized_sme', queryId: 7, exportBatchId: 8, scope: { windowStart: '2025-01-01T00:00:00Z', windowEnd: '2025-01-31T00:00:00Z', platformVersion: 'v1' } }, sourceSummary: {} }
+const official = { id: 12, kind: 'official_coverage', status: 'confirmed', valid: true, createdAt: '2026-10-18T00:00:00Z', revision: 2, decidedAt: '2026-10-18T01:00:00Z', invalidReason: null, evidence: { titleCode: 'specialized_sme', fromYear: 2023, throughYear: 2025, fullRange: true, sourceDocuments: [{ id: 3, fileId: 90, sha256: 'a'.repeat(64), reference: { field: 'source_document.path' as const } }], enterpriseIds: null }, sourceSummary: { documents: [{ path: 'jxj/notice.pdf' }] } } satisfies ComparisonProof
+const stale = { ...official, id: 13, valid: false, invalidReason: 'source_drift_or_missing' as const } satisfies ComparisonProof
+const candidate = { ...official, id: 14, status: 'candidate' as const, valid: false } satisfies ComparisonProof
+const current = { id: 15, kind: 'current_source_equivalence', status: 'confirmed', valid: true, createdAt: '2026-10-18T00:00:00Z', revision: 2, decidedAt: '2026-10-18T02:00:00Z', invalidReason: null, evidence: { titleCode: 'specialized_sme', queryId: 7, exportBatchId: 8, queryReference: 'platform_query.collectionEvidence' as const, exportReference: 'platform_export_batch.sha256' as const, scope: { queryAccount: 'account', exportAccount: 'account', queryRegion: 'ningbo', exportRegion: 'ningbo', queryFilters: {}, exportFilters: {}, windowStart: '2025-01-01T00:00:00Z', windowEnd: '2025-01-31T00:00:00Z', platformVersion: 'v1', freezeReference: 'frozen collection', freezeFileId: 91, freezeSha256: 'b'.repeat(64) } }, sourceSummary: {} } satisfies ComparisonProof
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount(); vi.unstubAllGlobals() })
 
@@ -42,6 +43,23 @@ it('drops a bookmarked proof that became invalid before a new compare', async ()
   await flushPromises()
   expect(wrapper.emitted('change')?.at(-1)?.[0]).toEqual([])
   expect(wrapper.text()).not.toContain('已确认有效')
+})
+
+it('offers a current version proof only with both archived sources and a compatible cutoff', async () => {
+  vi.stubGlobal('$fetch', vi.fn(async (url: string) => {
+    if (url === '/api/roster/comparison-scope-proofs') return { rows: [current], total: 1, page: 1, pageSize: 25 }
+    if (url === '/api/roster/comparison-scope-proofs/15/audit') return { rows: [{ basis: '同版本冻结材料', decidedAt: current.decidedAt }], total: 1, page: 1, pageSize: 200 }
+    throw new Error(`Unexpected ${url}`)
+  }))
+  const wrapper = mount(ComparisonProofPicker, { props: { selection: { queryIds: [7], exportBatchIds: [8], officialSourceDocumentIds: [], proofIds: [] }, asOf: '2026-10-18T01:30:00Z' }, global: { stubs: { TableLoadingStatus: true, TableFailureState: true, TablePagination: true } } })
+  mounted.push(wrapper)
+  await flushPromises()
+  expect(wrapper.find('[id="proof-15"]').exists()).toBe(false)
+  await wrapper.setProps({ asOf: '' })
+  await flushPromises()
+  expect(wrapper.text()).toContain('同版本冻结材料')
+  await wrapper.get('[id="proof-15"]').trigger('click')
+  expect(wrapper.emitted('change')?.at(-1)?.[0]).toEqual([15])
 })
 
 it('keeps the prior proof catalog on a failed target page and retries it', async () => {

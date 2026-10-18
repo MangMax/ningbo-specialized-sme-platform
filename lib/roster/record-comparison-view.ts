@@ -1,4 +1,5 @@
 import type { getRecordComparison, listRecordComparisonSources } from '../../server/utils/record-comparison'
+import type { OfficialEvidence, CurrentEvidence } from '../../server/utils/comparison-scope-proof-source'
 import type { RecordComparisonInput } from './record-comparison'
 
 export type RecordComparisonResult = ReturnType<typeof getRecordComparison>
@@ -7,25 +8,20 @@ export type ComparisonSource = ComparisonSourceCatalog['rows'][number]
 export type ComparisonSourceKind = ComparisonSource['kind']
 export interface ComparisonSelection { queryIds: number[]; exportBatchIds: number[]; officialSourceDocumentIds: number[]; proofIds: number[] }
 
-/** Public #72 list row; source scope is evidence, while decision basis comes from the audit read. */
-export interface ComparisonProof {
+/** Public #72 read row; decision basis is read from its audit endpoint. */
+interface ComparisonProofBase {
   id: number
-  kind: 'official_coverage' | 'current_source_equivalence'
   status: 'candidate' | 'confirmed' | 'revoked'
   valid: boolean
+  createdAt: string
+  revision: number
   decidedAt: string | null
-  evidence: {
-    titleCode: string
-    fromYear?: number
-    throughYear?: number
-    enterpriseIds?: number[] | null
-    sourceDocuments?: Array<{ id: number }>
-    queryId?: number
-    exportBatchId?: number
-    scope?: { windowStart: string; windowEnd: string; platformVersion: string }
-  }
+  invalidReason: 'source_drift_or_missing' | null
   sourceSummary: unknown
 }
+export type ComparisonProof =
+  | ComparisonProofBase & { kind: 'official_coverage'; evidence: OfficialEvidence }
+  | ComparisonProofBase & { kind: 'current_source_equivalence'; evidence: CurrentEvidence }
 export interface ComparisonProofCatalog { rows: ComparisonProof[]; total: number; page: number; pageSize: number }
 export interface ComparisonProofAudit { rows: Array<{ basis: string; decidedAt: string }>; total: number; page: number; pageSize: number }
 
