@@ -93,7 +93,7 @@ onMounted(() => { void hydrateSelected() })
     <p v-if="displayed && displayed.page !== page" class="text-muted-foreground text-[13px]">目标目录尚未加载，下面保留上次成功的范围依据页。</p>
     <ul v-if="choices.length" class="flex min-w-0 flex-col gap-1.5">
       <li v-for="proof in choices" :key="proof.id" class="flex min-w-0 items-start gap-3 rounded-sm border p-2.5">
-        <Checkbox :id="`proof-${proof.id}`" :model-value="selection.proofIds.includes(proof.id)" class="mt-0.5" :aria-label="`选择${kindText(proof)}`" @update:model-value="toggle(proof, $event === true)" />
+        <Checkbox :id="`proof-${proof.id}`" :model-value="selection.proofIds.includes(proof.id)" class="mt-0.5" :aria-label="`选择${title(proof)} · ${scopeText(proof)} · ${kindText(proof)}`" @update:model-value="toggle(proof, $event === true)" />
         <label :for="`proof-${proof.id}`" class="min-w-0 flex-1 cursor-pointer break-words [overflow-wrap:anywhere]"><span class="block text-[13px] font-medium">{{ title(proof) }} · {{ kindText(proof) }}</span><span class="text-muted-foreground block text-xs">{{ scopeText(proof) }} · 确认于 {{ proof.decidedAt ?? '时间未记录' }}</span><span class="text-muted-foreground block text-xs">登记依据：{{ basis[proof.id] ?? '正在读取…' }}</span></label>
         <Badge variant="outline">已确认有效</Badge>
       </li>

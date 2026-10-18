@@ -26,8 +26,8 @@ it('offers only current confirmed proofs for the selected business sources and e
   expect(wrapper.text()).toContain('2023–2025')
   expect(wrapper.text()).toContain('正式公告覆盖核对')
   expect(wrapper.text()).not.toContain('冻结文件和查询窗口核对')
-  expect(wrapper.findAll('[aria-label="选择正式覆盖范围依据"]')).toHaveLength(1)
-  await wrapper.get('[aria-label="选择正式覆盖范围依据"]').trigger('click')
+  expect(wrapper.findAll('[id="proof-12"]')).toHaveLength(1)
+  await wrapper.get('[id="proof-12"]').trigger('click')
   expect(wrapper.emitted('change')?.[0]?.[0]).toEqual([12])
 })
 
