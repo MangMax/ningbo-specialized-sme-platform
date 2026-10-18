@@ -1,0 +1,11 @@
+{
+  "single": { "source": "queryList", "name": "合成企业", "pageSize": 1 },
+  "batch": [
+    { "source": "queryList", "name": "合成企业", "pageSize": 1 },
+    { "source": "businessList", "uscc": "91330000TEST000001", "rdjb": "all", "pageSize": 1 },
+    { "source": "queryBusList", "name": "合成企业", "rdjb": ["1", "2", "3"], "pageSize": 1 }
+  ],
+  "expired": { "source": "queryList", "name": "合成会话过期", "pageSize": 1 },
+  "secondPageFailure": { "source": "queryList", "name": "合成第二页失败", "pageSize": 1 },
+  "multipleRelations": { "source": "queryList", "uscc": "91330000TEST000001", "pageSize": 1 }
+}

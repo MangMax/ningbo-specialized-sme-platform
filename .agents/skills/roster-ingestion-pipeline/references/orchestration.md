@@ -21,7 +21,7 @@ Use a lower cap when the provider or app limit is lower. Keep a single shared qu
 
 - Assign one owner to each source file. When that file's OCR output is ready, hand it to correction immediately; other files can keep rendering or using the shared OCR queue.
 - An OCR-ready handoff includes every page result or an explicit per-page failure. Label a file partial when any page failed; do not call missing pages complete.
-- Group identity investigations by enterprise ID, then by confirmed unified social credit code when no ID is available. Share one evidence log across every file row in that group.
+- Assign exactly one investigator per enterprise and share the same batchId/itemId with every file owner. Group identity investigations by enterprise ID, then by confirmed unified social credit code when no ID is available. Share one evidence log across every file row in that group.
 - A same-name result without a confirmed ID remains a candidate. Keep separate candidate subjects separate; do not share an identity decision or merge based on name alone.
 - One writer owns each import batch. Serialize changes to the same enterprise even when evidence came from different files. The independent acceptance reader receives the finished evidence pack and does not edit the batch.
 
@@ -41,11 +41,14 @@ Keep metadata/file-store state, page/render/OCR state, event metadata and enterp
 ## Retry and recovery
 
 - Retry only the failed unit. For a transient OCR failure, retry that page image and retain successful page outputs. Do not repeat every page because one request failed.
+- For live platform work use [`platform-query.md`](./platform-query.md). Submit multiple independent queries through app REST/MCP; route results by stable itemId, not name/code or array order. Explicitly retry only unfinished itemIds/pages after reviewing failures; preserve completed segments/rows/times. The app enforces a global max2 across batches, singles, legacy calls and backoff. The identity-investigator cap remains2, independent of batch item count.
 - A platform timeout, expired session, HTTP 200 login page or incomplete pagination is failed/partial evidence, not a zero-row result. Preserve the exact query and page boundary.
 - The unified import is all-or-nothing. On a rejected batch, preserve completed OCR, correction and research artifacts, fix the reported item, and retry the same source with the same idempotency key; the current commit contract permits a failed batch to retry with that key.
 - If a commit response is lost, first look up the receipt by its exact idempotency key where the live contract exposes a read. The current public REST/MCP surface has no standalone batch-lookup route; repeating the same key through commit returns the prior committed receipt or safely retries a failed batch. Never mint a new key to resolve an unknown result.
 - A required identity or source-evidence field that cannot be supported by the current contract stays pending and becomes a scoped issue. Do not bypass validation, fabricate a count, or mark a real business error accepted.
 - One failed acceptance dimension does not abandon the run. Keep successful outputs, retry or correct only the affected unit, then rerun the relevant acceptance check. Record non-blocking gaps separately; unresolved business errors block acceptance.
+
+For credential-free single, batch, expired-session, second-page-failure and same-code multi-relationship walkthroughs, run the behavioral examples in [`../examples/README.md`](../examples/README.md). Check observed app routes and results, not source text alone.
 
 ## Required scenario walkthroughs
 
