@@ -332,3 +332,19 @@ export function classifyPlatformResponse(
     }
   }
 }
+
+/** Live callers need a reliable total: legacy maxCount=0 fallback is not proof of zero.
+ * Keep the historic parser and stored evidence contracts unchanged.
+ */
+export function parsePlatformPage(raw: string, gridName: string) {
+  const parsed = parsePlatformList(raw, gridName)
+  const text = raw.trim()
+  const envelope = tryJson(text) ?? extractEmbeddedZrar(text)
+  const grid = gridOf(envelope, gridName)
+  if (grid && (!Array.isArray(grid.pageSet) || grid.pageSet.some(row => !row || typeof row !== 'object' || Array.isArray(row)))) {
+    throw new PlatformResponseError('Invalid platform rows')
+  }
+  const total = grid?.maxCount
+  const declaredTotal = total !== null && total !== undefined && total !== '' && Number.isSafeInteger(Number(total)) && Number(total) >= 0 ? Number(total) : null
+  return { ...parsed, declaredTotal, responsePage: grid?.page == null ? null : Number(grid.page) }
+}
