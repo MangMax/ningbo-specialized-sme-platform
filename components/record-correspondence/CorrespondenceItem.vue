@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CORRESPONDENCE_ROLES, correspondenceStatusText, type CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
-import { EVENTS, TITLES } from '~~/lib/labels'
+import { CORRESPONDENCE_ROLES, correspondenceStatusText, eventDecisionText, type CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
+import { TITLES } from '~~/lib/labels'
 import SourceRowDetail from './SourceRowDetail.vue'
 import { Badge } from '@/components/ui/badge'
 
@@ -25,7 +25,7 @@ function onEventClick(event: MouseEvent) {
       <span class="text-muted-foreground">{{ edge.type === 'later_process' ? '独立后续流程' : edge.type === 'event_export_context' || edge.type === 'process_export_context' ? '快照背景' : '记录对应' }}</span>
     </div>
     <p v-if="targetEvent" class="mt-1 text-[13px]">
-      <NuxtLink :to="eventTo" @click="onEventClick" class="text-primary underline underline-offset-2 hover:no-underline">查看{{ TITLES[targetEvent.record.titleCode] ?? '称号' }} {{ EVENTS[targetEvent.eventType] ?? '事件' }} {{ targetEvent.year ?? '年份待核' }} · 事件 #{{ targetEvent.id }}</NuxtLink>
+      <NuxtLink :to="eventTo" @click="onEventClick" class="text-primary underline underline-offset-2 hover:no-underline">查看{{ TITLES[targetEvent.record.titleCode] ?? '称号' }} · {{ eventDecisionText(targetEvent) }} · 事件 #{{ targetEvent.id }}</NuxtLink>
     </p>
     <p class="text-muted-foreground mt-1 text-xs">规则 {{ edge.ruleId }} / {{ edge.ruleVersion }} · {{ edge.decidedAt ? `决定于 ${edge.decidedAt}` : '尚无决定时间' }}<span v-if="edge.requiresRevalidation"> · 出处变更后需重新核验</span></p>
     <div class="mt-2 flex min-w-0 flex-col gap-2">

@@ -153,7 +153,7 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                   <th class="px-3 py-2 font-medium">维护批次</th>
                   </template>
                   <th v-if="table.hasAliases" class="px-3 py-2 font-medium">曾用名</th>
-                <th class="px-3 py-2 font-medium">出处 / 原字段</th>
+                <th class="sticky right-0 z-10 border-l bg-muted px-3 py-2 font-medium">出处 / 原字段</th>
                 </tr>
               </thead>
               <tbody v-for="group in table.groups" :key="group.title" :data-record-title="group.title">
@@ -182,7 +182,7 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                     <td class="px-3 py-1.5">{{ record.batch ?? '未提供' }}</td>
                     </template>
                     <td v-if="table.hasAliases" class="px-3 py-1.5">{{ record.aliasNameRaw ?? '—' }}</td>
-                    <td class="px-3 py-1.5"><div class="flex flex-wrap items-center gap-1"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /><Button variant="ghost" size="sm" @click="selectedRelationId = record.id">对应事件/出处</Button></div></td>
+                    <td class="sticky right-0 z-10 border-l bg-card px-3 py-1.5"><div class="flex flex-col items-start gap-1"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /><Button variant="ghost" size="sm" @click="selectedRelationId = record.id">对应事件/出处</Button></div></td>
                   </tr>
                 </template>
               </tbody>
