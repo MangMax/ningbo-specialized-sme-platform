@@ -80,9 +80,10 @@ describe('比对行平台证据的可见状态与展开交互', () => {
 
     expect(toggle.text()).toBe('查看平台记录')
     expect(toggle.attributes('aria-expanded')).toBe('true')
-    expect(document.querySelector('table[aria-label="关联记录"]')).not.toBeNull()
+    expect(document.querySelector('table[aria-label="关联记录"]')).toBeNull()
+    expect(document.querySelector('[data-record-kind="business_list"]')?.textContent).toContain('平台服务暂不可用')
     expect(document.querySelector('[data-testid="platform-query-summary"]')?.textContent).toContain('2026-10-16')
-    expect(document.body.textContent).toContain('本次查询未完成')
+    expect(document.body.textContent).toContain('平台服务暂不可用')
     expect(document.body.textContent).not.toMatch(/business_list|rdjb|businessList/)
   })
 })
