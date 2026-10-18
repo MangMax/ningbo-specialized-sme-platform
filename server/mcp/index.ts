@@ -1,3 +1,4 @@
+import { platformQueryRpcError } from '../utils/mcp-platform-query'
 import { getHeader, getMethod, readBody } from 'h3'
 import { defineMcpHandler } from '@nuxtjs/mcp-toolkit/server'
 import {
@@ -55,6 +56,7 @@ export default defineMcpHandler({
     '   确认无误再用 `save_roster_batch` **提交**(单批事务 + 幂等键);',
     '   写完之后用 `list_enterprises` / `query_records` / `get_enterprise_detail` /',
     '   `list_differences` 核对企业、称号事件、出处与解释。',
+    '- `get_platform_capabilities` 查看实时来源能力；`query_platform` 查询平台申报记录（不写库，不接收Cookie）。失败/partial须补查unfinished，不能当无记录。',
     '- `query_records` 是通用企业×称号记录查询；`year` 筛事件年份，`dueYear` 筛生命周期到期年份。',
     '  详情请用 `get_enterprise_detail`，它与 REST 企业详情共用读模型。',
     '',
@@ -82,6 +84,10 @@ export default defineMcpHandler({
     })
     event.context.mcpAuth = auth
 
+    if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
+      const invalidQuery = platformQueryRpcError(await readBody(event, { strict: false }).catch(() => undefined))
+      if (invalidQuery) return invalidQuery
+    }
     if (auth.writeAuthorized) return
     const called = await writeToolCalledIn(event)
     if (called) return unauthorizedResponse(called, auth.reason)

@@ -26,6 +26,7 @@ import {
   classifyPlatformResponse,
 } from './adapter'
 import type { PlatformInterface } from '../labels'
+import { withPlatformRequestBudget } from './request-budget'
 
 export type PlatformFetch = (
   input: string,
@@ -64,6 +65,8 @@ export interface PlatformQueryOptions {
   timeoutMs?: number
   /** **网络错误与 5xx** 的退避重试次数(默认 2)。4xx 与会话过期**一律不重试**。 */
   retries?: number
+  /** Absolute operation deadline, including queue wait; used by bounded live queries. */
+  deadlineMs?: number
   /** 退避等待;测试注入以减少空等。默认 `1000 * 3^(n-1)` 毫秒。 */
   sleep?: (ms: number) => Promise<void>
   /** 查询时点取值;默认当前时间。测试注入以固定 `queried_at`。 */
@@ -117,7 +120,7 @@ export function classifyRawQuery(
 
 /** Scrub complete headers, session/auth components, and long component values,
  * including escaped wire forms. Avoid replacing unrelated short routing identifiers. */
-function cookieRedactor(cookie: string): (text: string) => string {
+export function cookieRedactor(cookie: string): (text: string) => string {
   const values = [cookie, ...cookie.split(';').flatMap(part => {
     const index = part.indexOf('=')
     const value = index < 0 ? '' : part.slice(index + 1).trim()
@@ -133,10 +136,15 @@ function cookieRedactor(cookie: string): (text: string) => string {
   }, text)
 }
 
+/** Safe status discriminator for new consumers; remains a legacy response error. */
+export class PlatformHttpError extends PlatformResponseError {
+  constructor(public readonly status: number, message: string) { super(message); this.name = 'PlatformHttpError' }
+}
+
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 /** 一次 POST 的原始取回。**网络错误与 5xx 退避重试**;4xx / 会话过期不重试。 */
-async function post(
+async function postWithoutBudget(
   options: PlatformQueryOptions,
   path: string,
   body: Record<string, string>,
@@ -168,7 +176,7 @@ async function post(
           Cookie: cookie,
         },
         body: new URLSearchParams(body).toString(),
-        signal: AbortSignal.timeout(options.timeoutMs ?? 60_000),
+        signal: AbortSignal.timeout(Math.max(1, Math.min(options.timeoutMs ?? 60_000, options.deadlineMs == null ? Infinity : options.deadlineMs - Date.now()))),
       })
       const text = await response.text()
       // 会话过期是 **HTTP 200**:不重试(重试也不会变好),但要立刻分清
@@ -179,9 +187,9 @@ async function post(
       }
       // 4xx 是请求本身的问题(参数/权限),重试没有意义;5xx 才退避重试。
       if (response.status < 500) {
-        throw new PlatformResponseError(`平台返回 HTTP ${response.status}:${cookieRedactor(cookie)(text).slice(0, 200)}`)
+        throw new PlatformHttpError(response.status, `平台返回 HTTP ${response.status}:${cookieRedactor(cookie)(text).slice(0, 200)}`)
       }
-      lastError = new PlatformResponseError(`平台返回 HTTP ${response.status}:${cookieRedactor(cookie)(text).slice(0, 200)}`)
+      lastError = new PlatformHttpError(response.status, `平台返回 HTTP ${response.status}:${cookieRedactor(cookie)(text).slice(0, 200)}`)
     } catch (error) {
       // 已定性的错误直接抛出,不参与重试。
       if (
@@ -195,6 +203,15 @@ async function post(
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError))
+}
+
+/** Shared transport: all platform requests, retries and backoff own one global slot. */
+export function postPlatformRequest(options: PlatformQueryOptions, path: string, body: Record<string, string>): Promise<string> {
+  const signal = options.deadlineMs == null ? undefined : AbortSignal.timeout(Math.max(1, options.deadlineMs - Date.now()))
+  return withPlatformRequestBudget(() => {
+    signal?.throwIfAborted()
+    return postWithoutBudget(options, path, body)
+  }, signal)
 }
 
 function queryBody(queryKey: string, extra: Record<string, string> = {}): Record<string, string> {
@@ -240,7 +257,7 @@ export async function queryPlatformSlots(
       const path = slot.interface === 'business_list' ? BUSINESS_LIST_PATH : APPLY_LIST_PATH
       const body = slot.interface === 'business_list' ? queryBody(uscc, { rdjb: slot.rdjb! }) : queryBody(uscc)
       if (credentialError) throw new Error('平台凭据不可用，请检查凭据来源。')
-      const raw = await post(fixed, path, body)
+      const raw = await postPlatformRequest(fixed, path, body)
       const outcome = classifyRawQuery(raw, { ...base, queriedAt })
       const rows = sanitize(outcome.rows) as PlatformRow[]
       // Never turn a redaction placeholder into an enterprise name, alias or relation.
