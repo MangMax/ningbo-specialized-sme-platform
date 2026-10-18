@@ -42,28 +42,23 @@ const adminNav = [
     <SidebarHeader>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton size="lg" as-child tooltip="专精特新企业称号台账">
+          <SidebarMenuButton
+            size="lg"
+            as-child
+            tooltip="专精特新企业称号台账"
+            class="group-data-[collapsible=icon]:justify-center"
+          >
             <NuxtLink to="/" aria-label="专精特新企业称号台账，返回企业列表">
-              <div
-                class="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg"
-              >
-                <img
-                  :src="colorMode === 'dark' ? '/brand/symbol-mono.svg' : '/brand/symbol-white.svg'"
-                  alt=""
-                  width="32"
-                  height="32"
-                  class="size-8 shrink-0"
-                />
-              </div>
-              <div class="grid flex-1 text-left text-sm leading-tight">
-                <img
-                  :src="colorMode === 'dark' ? '/brand/wordmark-white.svg' : '/brand/wordmark.svg'"
-                  alt="专精特新"
-                  width="112"
-                  height="34"
-                  class="w-[112px] max-w-none"
-                />
-              </div>
+              <img
+                :src="colorMode === 'dark' ? '/brand/symbol-small-white.svg' : '/brand/symbol-small.svg'"
+                alt=""
+                width="24"
+                height="24"
+                class="size-6 shrink-0"
+              />
+              <span class="truncate text-sm font-medium group-data-[collapsible=icon]:hidden">
+                专精特新
+              </span>
             </NuxtLink>
           </SidebarMenuButton>
         </SidebarMenuItem>

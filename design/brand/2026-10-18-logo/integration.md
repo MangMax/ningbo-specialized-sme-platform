@@ -2,7 +2,7 @@
 
 ## 范围
 
-资源进入 `public/brand/`；侧栏用 32px 图形标加 112px 文字标；favicon 用 16px 专用版，并随系统明暗模式适配；README 用带深色模式备选的图文组合。保留品牌返回首页链接、折叠行为和页面内主题切换。
+资源进入 `public/brand/`；侧栏用 24px 图形配 14px 界面文字；favicon 用 16px 专用版，并随系统明暗模式适配；README 用带深色模式备选的图文组合。保留品牌返回首页链接、折叠行为和页面内主题切换。
 
 设计生成器加 `--publish` 同步资源，字体子集和 OFL 许可入仓。SVG 及展示页为生成产物。PNG 截图、下载 ZIP 是本地证据，不入 Git；设计评审原文中的截图引用也属于本地证据。
 
@@ -34,3 +34,14 @@
 抽象评审后修订：增加原生 24px 光学版，16px 保留独立菱形；“新”字末端斜切。SVG 总数为 15 个品牌资源加 1 个 favicon。修订稿的实际渲染截图为本地 `abstract-revised-728.png`、`abstract-revised-390.png`。
 
 最终修订复验：15 个品牌 SVG 加 favicon 的 HTTP/XML/哈希一致性检查、定制“新”字斜切路径检查均通过；`pnpm typecheck` 通过。桌面 1280px、移动 390px 实际重新载入资源并查看，无品牌裁切；移动截图另存为 `.scratch/brand/integration/evidence/abstract-revised-mobile-dark.png`。
+
+
+## 侧栏使用方式修订
+
+用户认可标识后指出侧栏过大、过满，要求使用技能评审实际布局。按 Oil UI 存量界面润色流程处理：图形从 32px 色块底座改为 24px 无底板 small 版；112px 展示字标改为与导航同档的 14px / medium 界面文字；48px 品牌点击行与现有留白保留。桌面折叠时隐藏文字、图形居中。
+
+实际测得展开图形为 24×24、名称 14px 字号/20px 行高，组合可见宽度约 88px；原版为 32px 底座加约 26px 字高的展示字标。1280px 明暗主题、折叠状态和 390px 移动菜单均查看；品牌链接从文件管理返回首页通过；pnpm typecheck 通过。
+
+本轮独立评审已交给 Magpie / DeepSeek OpenDesign，按 Oil UI【存量已有界面润色评审】执行，不打分。范围是尺寸、布局、对齐与主题使用，不重新设计已认可的标识；记录见 `sidebar-layout-review.md`。
+
+本地证据：`.scratch/brand/integration/evidence/sidebar-before-desktop-dark.png`，以及 `sidebar-after-desktop-light.png`、`sidebar-after-desktop-dark.png`、`sidebar-after-collapsed-dark.png`、`sidebar-after-mobile-light.png`。本轮未添加动效，未删产品文案，去掉展示底板及重复排版容器；保留导航和可访问名称。
