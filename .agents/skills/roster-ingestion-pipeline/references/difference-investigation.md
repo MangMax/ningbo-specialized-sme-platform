@@ -12,6 +12,18 @@ One agent owns an enterprise across files and titles. Software collects queries 
 6. Write a case decision: observed facts and source references; the agent's interpretation; remaining uncertainty; proposed reason and measure; current-name/alias or migration fields that the evidence actually establishes. Confirm only the supported facts. `other` requires a specific established cause outside the existing vocabulary; an unfinished investigation uses `needs_review` with a null reason.
 7. Preflight and commit explicit decisions through the unified import API/MCP. Confirm changes by reading the case back. Names/aliases, difference reasons and official events are separate writes with separate evidence. Never use the collecting job's output as a confirmed cause or merge instruction.
 
+## Full collection and investigation queues
+
+For a full refresh, the coordinator first verifies the deployed API revision, creates a consistent backup and records the actual enterprise inventory through the app query API. Use stable enterprise IDs and confirmed codes in a run manifest outside Git. Query all in-scope enterprises, including those with no current discrepancy; assignment to the investigation queue is a separate step.
+
+Check source capabilities before choosing whole-list pagination or per-enterprise batches. Do not assume an empty filter is allowed. Preserve each batchId/itemId, effective conditions, title/page range, original timestamps, segments and unfinished positions. Follow `platform-query.md` limits and retry only gaps. One writer preflights, commits and reads back each supported evidence batch before marking its rows imported.
+
+After collection, use the app's actual comparison result at the recorded snapshot version to partition enterprise × title cases. No-difference cases need no cause investigation and must not receive invented reasons. A failed/partial query or an old machine-confirmed reason cannot make a case no-difference. Investigate unresolved discrepancies with one enterprise owner across titles; reuse shared evidence rather than repeat completed requests.
+
+`queryBusList` results currently lack a supported stored-evidence interface. Retain their original provenance outside Git and report them as collected but not imported; never relabel them as `business_list` or `apply_list`. Track the missing write capability separately. Collection, evidence import and agent adjudication each have their own completion counts and blockers.
+
+Each investigator returns enterprise ID, title/direction, evidence references, observations, proposed conclusion/measure, unknown fields and verification status. The coordinator alone commits decisions. If the requested Harness/model cannot start, report the launch failure; do not describe the case as reviewed or silently substitute a different runtime.
+
 ## Interpret each field in context
 
 - `cszt` such as “已退回待审核”, “撤回” or “终审不通过” describes that application/workflow record. It does not alone establish loss of a formally announced designation, business deregistration or the cause of an export discrepancy.
