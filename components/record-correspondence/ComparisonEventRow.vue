@@ -17,6 +17,11 @@ function closeForEvent() { navigatingToEvent.value = true; sourceId.value = null
 const sourceId = ref<number | null>(null)
 const sourceKind = ref<'relation' | 'export_row'>('relation')
 const enterpriseTo = computed(() => ({ path: `/enterprises/${props.row.record.enterpriseId}`, query: { eventId: String(props.row.event.id), returnTo: props.returnTo } }))
+const relationRows = computed(() => props.row.platformRows.map(relation => ({
+  relation,
+  edges: props.row.correspondences.filter(edge => edge.relationId === relation.id),
+})))
+const otherEdges = computed(() => props.row.correspondences.filter(edge => !props.row.platformRows.some(relation => relation.id === edge.relationId)))
 function openSource(kind: 'relation' | 'export_row', id: number) { navigatingToEvent.value = false; sourceKind.value = kind; sourceId.value = id }
 function rememberReturn(event: MouseEvent) {
   if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) rememberEvidencePreviewReturn(props.returnTo, event.currentTarget)
@@ -41,12 +46,16 @@ function rememberReturn(event: MouseEvent) {
       </section>
       <section class="min-w-0"><h4 class="text-sm font-medium">已登记关系的接口原行</h4>
         <ul v-if="row.platformRows.length" class="mt-1 flex flex-col gap-1.5 text-[13px]">
-          <li v-for="relation in row.platformRows" :key="relation.id" class="flex flex-wrap items-center gap-1.5"><span>{{ PLATFORM_INTERFACES[relation.interface] ?? '平台接口' }} · {{ relation.nameRaw ?? '原名未知' }} · {{ relation.status ?? '状态未提供' }}</span><span class="text-muted-foreground">{{ relation.queriedAt }}</span><Button variant="ghost" size="sm" class="h-6 px-1.5" @click="openSource('relation', relation.id)">查看原行与查询范围</Button></li>
+          <li v-for="{ relation, edges } in relationRows" :key="relation.id" class="flex min-w-0 flex-col gap-1.5 border-t pt-1.5" :data-relation-id="relation.id">
+            <p class="text-muted-foreground break-words">查询 #{{ relation.queryId }} · 原行 {{ relation.sequenceNo }} · 记录 #{{ relation.id }}</p>
+            <p class="break-words">{{ PLATFORM_INTERFACES[relation.interface] ?? '平台接口' }} · {{ relation.nameRaw ?? '原名未知' }} · {{ relation.status ?? '状态未提供' }}</p>
+            <div class="flex flex-wrap items-center gap-1.5"><span class="text-muted-foreground break-all">{{ relation.queriedAt }}</span><Badge v-for="edge in edges" :key="edge.id" variant="outline">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应' }} · {{ correspondenceStatusText(edge) }}</Badge><Button variant="ghost" size="sm" class="h-6 px-1.5" @click="openSource('relation', relation.id)">查看原行与查询范围</Button></div>
+          </li>
         </ul><p v-else class="text-muted-foreground mt-1 text-[13px]">所选来源中无已登记的事件对应原行；覆盖与候选状态见下方。</p>
-        <ul v-if="row.correspondences.length" class="mt-2 flex flex-wrap gap-1.5"><li v-for="edge in row.correspondences" :key="edge.id"><Badge variant="outline">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应' }} · {{ correspondenceStatusText(edge) }}</Badge></li></ul>
+        <ul v-if="otherEdges.length" class="mt-2 flex flex-col gap-1.5 text-[13px]"><li v-for="edge in otherEdges" :key="edge.id">对应 #{{ edge.id }} · 接口原行 {{ edge.relationId == null ? '未提供' : `#${edge.relationId}` }}<Badge variant="outline">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应' }} · {{ correspondenceStatusText(edge) }}</Badge></li></ul>
       </section>
     </div>
-    <section v-if="row.laterProcesses.length" class="mt-3 border-t pt-3"><h4 class="text-sm font-medium">独立后续流程</h4><ul class="mt-1 flex flex-col gap-1 text-[13px]"><li v-for="process in row.laterProcesses" :key="process.correspondence.id" class="flex flex-wrap items-center gap-1.5"><span>{{ PLATFORM_INTERFACES[process.relation.interface] ?? '平台接口' }} · {{ process.relation.status ?? '状态未提供' }} · {{ process.relation.appliedAt ?? '申报时间未知' }}</span><Badge variant="outline">{{ CORRESPONDENCE_ROLES[process.correspondence.role] ?? '后续流程' }}</Badge><Button variant="ghost" size="sm" class="h-6 px-1.5" @click="openSource('relation', process.relation.id)">查看原行</Button></li></ul></section>
+    <section v-if="row.laterProcesses.length" class="mt-3 border-t pt-3"><h4 class="text-sm font-medium">独立后续流程</h4><ul class="mt-1 flex flex-col gap-1 text-[13px]"><li v-for="process in row.laterProcesses" :key="process.correspondence.id" class="flex flex-wrap items-center gap-1.5"><span class="text-muted-foreground">查询 #{{ process.relation.queryId }} · 原行 {{ process.relation.sequenceNo }} · 记录 #{{ process.relation.id }}</span><span>{{ PLATFORM_INTERFACES[process.relation.interface] ?? '平台接口' }} · {{ process.relation.status ?? '状态未提供' }} · {{ process.relation.appliedAt ?? '申报时间未知' }}</span><Badge variant="outline">{{ CORRESPONDENCE_ROLES[process.correspondence.role] ?? '后续流程' }}</Badge><Button variant="ghost" size="sm" class="h-6 px-1.5" @click="openSource('relation', process.relation.id)">查看原行</Button></li></ul></section>
     <Dialog :open="sourceId !== null" @update:open="!$event && (sourceId = null)"><DialogContent @close-auto-focus="navigatingToEvent && $event.preventDefault()" class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>来源原行与反向对应</DialogTitle><DialogDescription>查看具体行的原查询条件、状态和事件关系。</DialogDescription></DialogHeader><SourceReader v-if="sourceId !== null" :kind="sourceKind" :id="sourceId" :return-to="returnTo" @event-navigate="closeForEvent" /></DialogContent></Dialog>
   </article>
 </template>

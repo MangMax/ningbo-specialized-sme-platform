@@ -124,6 +124,9 @@ function setClassification(value: unknown) {
 function setPage(value: number) { if (Number.isSafeInteger(value) && value > 0) void navigate({ ...committed.value, page: value }) }
 function setPageSize(value: number) { if (Number.isSafeInteger(value) && value > 0 && value <= 200) void navigate({ ...committed.value, page: 1, pageSize: value }) }
 const total = computed(() => displayed.value?.total ?? 0)
+const resultTitle = computed(() => displayed.value
+  ? `正式事件逐条对照 · 筛选后 ${total.value} 条可见事件`
+  : loading.value ? '正式事件逐条对照 · 正在读取对照结果' : '正式事件逐条对照 · 对照结果暂不可用')
 const shownPage = computed(() => displayed.value?.page ?? committed.value.page)
 </script>
 
@@ -138,7 +141,7 @@ const shownPage = computed(() => displayed.value?.page ?? committed.value.page)
       <p v-if="displayed" class="text-muted-foreground rounded-sm border p-3 text-[13px]" aria-label="已加载结果范围"><strong class="text-foreground font-medium">已加载结果范围：</strong>{{ displayedScopeText }}</p>
       <p v-if="displayed && !displayedIsTarget" class="text-muted-foreground rounded-sm border p-3 text-[13px]" aria-label="目标结果范围"><strong class="text-foreground font-medium">当前目标范围：</strong>{{ targetScopeText }}。下方继续显示上次成功结果；目标加载成功后才会替换。</p>
       <ComparisonEvidence v-if="displayed" :result="displayed" :return-to="returnTo" />
-      <div class="flex min-w-0 flex-col gap-2"><div class="flex flex-wrap items-center justify-between gap-2"><h2 class="text-sm font-medium">正式事件逐条对照 · {{ total }} 条可见事件</h2><Select :model-value="committed.classification" @update:model-value="setClassification"><SelectTrigger size="sm" class="w-56 max-w-full" aria-label="按事件分类筛选"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部分类</SelectItem><SelectItem v-for="(label, code) in COMPARISON_CLASSES" :key="code" :value="code">{{ label }}</SelectItem></SelectGroup></SelectContent></Select></div>
+      <div class="flex min-w-0 flex-col gap-2"><div class="flex flex-wrap items-center justify-between gap-2"><h2 class="text-sm font-medium">{{ resultTitle }}</h2><Select :model-value="committed.classification" @update:model-value="setClassification"><SelectTrigger size="sm" class="w-56 max-w-full" aria-label="按事件分类筛选"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部分类</SelectItem><SelectItem v-for="(label, code) in COMPARISON_CLASSES" :key="code" :value="code">{{ label }}</SelectItem></SelectGroup></SelectContent></Select></div>
         <TableLoadingStatus kind="comparison" :loading="loading" label="正在读取记录级结果…" />
         <TableFailureState v-if="error" title="记录级对比读取失败" :compact="!!displayed" :pending="loading" :description="displayed ? '本次目标未加载，下方保留上次成功的结果；范围见上方。' : '请核对所选来源是否仍可用，然后重试。'" @retry="load" />
         <div v-if="displayed?.rows.length" class="flex min-w-0 flex-col gap-2"><ComparisonEventRow v-for="row in displayed.rows" :key="row.event.id" :row="row" :return-to="returnTo" /></div>
