@@ -22,7 +22,7 @@ export type CurrentEvidence = {
   scope: {
     queryAccount: string; exportAccount: string; queryRegion: string; exportRegion: string
     queryFilters: Record<string, unknown>; exportFilters: Record<string, unknown>
-    windowStart: string; windowEnd: string; platformVersion: string; freezeReference: string
+    windowStart: string; windowEnd: string; platformVersion: string; freezeReference: string; freezeFileId: number; freezeSha256: string
   }
 }
 
@@ -78,10 +78,14 @@ export function currentSource(db: ProofExecutor, evidence: CurrentEvidence) {
   const narrowed = ['name', 'uscc', 'sqsj', 'rddqrq', 'whpcyear', 'whpc', 'szq'].some(key => Boolean(conditions[key]))
   if (narrowed) fail('insufficient_evidence', 'Current equivalence requires full title scope without narrowing conditions')
   const scope = evidence.scope
-  if (!scope.queryAccount || !scope.exportAccount || scope.queryAccount !== scope.exportAccount || !scope.queryRegion || scope.queryRegion !== scope.exportRegion || !scope.platformVersion || !scope.freezeReference || !scope.windowStart || !scope.windowEnd || scope.windowStart > scope.windowEnd || !same(scope.queryFilters, conditions) || !same(scope.exportFilters, conditions)) fail('insufficient_evidence', 'Explicit equal account, region, filters, window, version and freeze evidence required')
-  if (Date.parse(actual.queriedAt) < Date.parse(scope.windowStart) || Date.parse(actual.completedAt) > Date.parse(scope.windowEnd) || !Number.isFinite(Date.parse(actual.completedAt)) || !Number.isFinite(Date.parse(scope.windowStart)) || !Number.isFinite(Date.parse(scope.windowEnd)) || batch.collectedOn < scope.windowStart.slice(0, 10) || batch.collectedOn > scope.windowEnd.slice(0, 10)) fail('source_mismatch', 'Attested window excludes archived collection evidence')
+  const freezeFile = db.select().from(schema.storedFile).all().find(row => row.id === scope.freezeFileId)
+  if (!freezeFile || freezeFile.source !== 'miit' || freezeFile.removedAt || freezeFile.sha256 !== scope.freezeSha256 || freezeFile.relPath !== scope.freezeReference || !scope.freezeSha256) fail('source_mismatch', 'Archived platform freeze file reference/hash required')
+  const start = Date.parse(scope.windowStart); const end = Date.parse(scope.windowEnd)
+  const queried = Date.parse(actual.queriedAt); const completed = Date.parse(actual.completedAt)
+  if (!scope.queryAccount || !scope.exportAccount || scope.queryAccount !== scope.exportAccount || !scope.queryRegion || scope.queryRegion !== scope.exportRegion || !scope.platformVersion || !scope.freezeReference || !Number.isFinite(start) || !Number.isFinite(end) || start > end || !same(scope.queryFilters, conditions) || !same(scope.exportFilters, conditions)) fail('insufficient_evidence', 'Explicit equal account, region, filters, window, version and freeze evidence required')
+  if (!Number.isFinite(queried) || !Number.isFinite(completed) || queried < start || completed > end || completed < queried || batch.collectedOn < scope.windowStart.slice(0, 10) || batch.collectedOn > scope.windowEnd.slice(0, 10)) fail('source_mismatch', 'Attested window excludes archived collection evidence')
   if (evidence.queryReference !== 'platform_query.collectionEvidence' || evidence.exportReference !== 'platform_export_batch.sha256' || !batch.sha256) fail('insufficient_evidence', 'Traceable original query and export field references required')
   const queryRows = db.select().from(schema.platformRelation).all().filter(row => row.queryId === query.id)
   const exportRows = db.select().from(schema.platformExportRow).all().filter(row => row.batchId === batch.id)
-  return { sourceFingerprint: fingerprint({ kind: 'current_source_equivalence', query, queryRows, batch, exportRows, scope }), querySourceFingerprint: comparisonQueryFingerprint(query), exportSha256: batch.sha256, sourceSummary: { queryId: query.id, queryRowCount: queryRows.length, exportBatchId: batch.id, exportRowCount: exportRows.length, queryReference: evidence.queryReference, exportReference: evidence.exportReference } }
+  return { sourceFingerprint: fingerprint({ kind: 'current_source_equivalence', query, queryRows, batch, exportRows, scope, freezeFile: { id: freezeFile.id, relPath: freezeFile.relPath, sha256: freezeFile.sha256, bytes: freezeFile.bytes } }), querySourceFingerprint: comparisonQueryFingerprint(query), exportSha256: batch.sha256, sourceSummary: { queryId: query.id, queryRowCount: queryRows.length, exportBatchId: batch.id, exportRowCount: exportRows.length, queryReference: evidence.queryReference, exportReference: evidence.exportReference, freezeFileId: freezeFile.id, freezeSha256: freezeFile.sha256 } }
 }

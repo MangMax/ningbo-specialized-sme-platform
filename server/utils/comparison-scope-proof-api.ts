@@ -1,7 +1,10 @@
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
+import { cookieRedactor } from '../../lib/platform/client'
 import { readApiToken, resolveApiAuth } from './api-auth'
+import { credentialContext, resolveCredential } from './credential-state'
+import { sanitizeEvidence } from './record-correspondence-read'
 import { commitComparisonScopeProofs, listComparisonScopeProofs, preflightComparisonScopeProofs, proofRequest, ProofError, readComparisonScopeProof, readComparisonScopeProofAudit, readComparisonScopeProofBatch } from './comparison-scope-proof'
 import { ProofSourceError } from './comparison-scope-proof-source'
 
@@ -10,23 +13,31 @@ export type ProofAction = 'preflight' | 'commit' | 'list' | 'get' | 'audit' | 'b
 export interface ProofApiInput { action: ProofAction; method: string; body?: unknown; query?: Record<string, unknown>; id?: unknown; key?: unknown; headers?: Record<string, string | undefined> }
 const headers = { 'cache-control': 'no-store' }
 const fail = (status: number, code: string, message: string) => ({ status, headers, body: { error: { code, message } } })
-const ok = (body: unknown) => ({ status: 200, headers, body })
+function knownRedactors(context: { db: Db; apiToken?: string | null }) {
+  const credentials = { ...credentialContext(), db: context.db }
+  const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : null
+  const values = [context.apiToken, runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('miitCookie', credentials).value, resolveCredential('ocrToken', credentials).value]
+  return [...new Set(values.filter((value): value is string => !!value))].map(cookieRedactor)
+}
 const integer = (value: unknown) => { const n = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value; return Number.isSafeInteger(n) && (n as number) > 0 ? n as number : null }
 const page = (query: Record<string, unknown>) => { const p = query.page == null ? 1 : integer(query.page); const s = query.pageSize == null ? 50 : integer(query.pageSize); return p && s && s <= 200 ? { page: p, pageSize: s } : null }
 const paginate = <T>(rows: T[], paging: { page: number; pageSize: number }) => ({ rows: rows.slice((paging.page - 1) * paging.pageSize, paging.page * paging.pageSize), total: rows.length, ...paging })
 
 export function handleComparisonScopeProofRequest(input: ProofApiInput, context: { db: Db; apiToken?: string | null }) {
   try {
+    const ok = (body: unknown) => ({ status: 200, headers, body: sanitizeEvidence(body, knownRedactors(context)) })
     const write = ['preflight', 'commit', 'batch'].includes(input.action)
     if (write && !resolveApiAuth({ given: readApiToken(input.headers), configured: context.apiToken }).writeAuthorized) return fail(401, 'unauthorized', 'Configured API token required')
     const method = ['preflight', 'commit'].includes(input.action) ? 'POST' : 'GET'
     if (input.method !== method) return fail(405, 'method_not_allowed', `${method} required`)
     if (input.action === 'preflight') {
       const parsed = proofRequest.safeParse(input.body)
+      if (parsed.success && JSON.stringify(sanitizeEvidence(parsed.data, knownRedactors(context))) !== JSON.stringify(parsed.data)) return fail(400, 'credential_in_evidence', 'Credential-like data cannot be stored in a proof decision')
       return parsed.success ? ok(preflightComparisonScopeProofs(context.db, parsed.data)) : fail(400, 'invalid_request', z.prettifyError(parsed.error))
     }
     if (input.action === 'commit') {
       const parsed = z.strictObject({ request: proofRequest, planHash: z.string().regex(/^[0-9a-f]{64}$/) }).safeParse(input.body)
+      if (parsed.success && JSON.stringify(sanitizeEvidence(parsed.data.request, knownRedactors(context))) !== JSON.stringify(parsed.data.request)) return fail(400, 'credential_in_evidence', 'Credential-like data cannot be stored in a proof decision')
       return parsed.success ? ok(commitComparisonScopeProofs(context.db, parsed.data.request, parsed.data.planHash)) : fail(400, 'invalid_request', z.prettifyError(parsed.error))
     }
     if (input.action === 'batch') {

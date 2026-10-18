@@ -10,7 +10,7 @@ const positive = z.number().int().positive()
 const filled = z.string().trim().min(1)
 const coordinate = z.strictObject({ field: z.enum(['source_document.path', 'record_evidence.source_file']), page: positive.optional(), attachment: filled.optional(), listNo: positive.optional() })
 const official = z.strictObject({ titleCode: filled, fromYear: z.number().int().min(1900).max(3000), throughYear: z.number().int().min(1900).max(3000), enterpriseIds: z.array(positive).min(1).nullable(), fullRange: z.literal(true), sourceDocuments: z.array(z.strictObject({ id: positive, fileId: positive, sha256: filled, reference: coordinate })).min(1) })
-const current = z.strictObject({ queryId: positive, exportBatchId: positive, titleCode: filled, queryReference: z.literal('platform_query.collectionEvidence'), exportReference: z.literal('platform_export_batch.sha256'), scope: z.strictObject({ queryAccount: filled, exportAccount: filled, queryRegion: filled, exportRegion: filled, queryFilters: z.record(z.string(), z.unknown()), exportFilters: z.record(z.string(), z.unknown()), windowStart: z.iso.datetime({ offset: true }), windowEnd: z.iso.datetime({ offset: true }), platformVersion: filled, freezeReference: filled }) })
+const current = z.strictObject({ queryId: positive, exportBatchId: positive, titleCode: filled, queryReference: z.literal('platform_query.collectionEvidence'), exportReference: z.literal('platform_export_batch.sha256'), scope: z.strictObject({ queryAccount: filled, exportAccount: filled, queryRegion: filled, exportRegion: filled, queryFilters: z.record(z.string(), z.unknown()), exportFilters: z.record(z.string(), z.unknown()), windowStart: z.iso.datetime({ offset: true }), windowEnd: z.iso.datetime({ offset: true }), platformVersion: filled, freezeReference: filled, freezeFileId: positive, freezeSha256: filled }) })
 export const proofOperation = z.union([
   z.strictObject({ action: z.literal('create'), kind: z.literal('official_coverage'), status: z.enum(['candidate', 'confirmed']), evidence: official }),
   z.strictObject({ action: z.literal('create'), kind: z.literal('current_source_equivalence'), status: z.enum(['candidate', 'confirmed']), evidence: current }),
@@ -51,9 +51,11 @@ function plan(db: ProofExecutor, request: ProofRequest) {
       const old = state(db, op.proofId)
       if (!old || old.revision !== op.expectedRevision) fail('stale_revision', 'Proof revision changed')
       if (!(old.status === 'candidate' && ['confirmed', 'revoked'].includes(op.status)) && !(old.status === 'confirmed' && op.status === 'revoked')) fail('invalid_transition', 'Invalid proof transition')
-      const observed = source(db, row.kind, row.evidence as OfficialEvidence | CurrentEvidence)
-      if (op.status === 'confirmed' && observed.sourceFingerprint !== row.sourceFingerprint) fail('plan_mismatch', 'Archived source drifted before confirmation')
-      targets.push({ proofId: row.id, revision: old.revision, fromStatus: old.status, sourceFingerprint: row.sourceFingerprint, observedFingerprint: observed.sourceFingerprint, status: op.status })
+      let observedFingerprint: string | null = null
+      try { observedFingerprint = source(db, row.kind, row.evidence as OfficialEvidence | CurrentEvidence).sourceFingerprint }
+      catch (error) { if (!(error instanceof ProofSourceError) || op.status !== 'revoked') throw error }
+      if (op.status === 'confirmed' && observedFingerprint !== row.sourceFingerprint) fail('plan_mismatch', 'Archived source drifted before confirmation')
+      targets.push({ proofId: row.id, revision: old.revision, fromStatus: old.status, sourceFingerprint: row.sourceFingerprint, observedFingerprint, status: op.status })
       audit++
     }
   }
@@ -130,17 +132,19 @@ export function readComparisonScopeProofBatch(db: Db, key: string) {
 }
 
 /** Only stored, confirmed and source-current rows may reach VerifiedComparisonEvidence. */
-export function resolveVerifiedComparisonEvidence(db: ProofExecutor, proofIds: number[]) {
+export function resolveVerifiedComparisonEvidence(db: ProofExecutor, proofIds: number[], selected?: { queryIds: number[]; exportBatchIds: number[]; officialSourceDocumentIds: number[]; asOf?: string }) {
   const officialScopes: Array<{ proofId: string; sourceDocumentIds: number[]; titleCode: string; fromYear: number; throughYear: number; enterpriseIds: number[] | null; verifiedAt: string }> = []
   const currentScopes: Array<{ proofId: string; queryId: number; exportBatchId: number; titleCode: string; querySourceFingerprint: string; exportSha256: string; scopeEquivalent: true; versionEquivalent: true; verifiedAt: string }> = []
   for (const id of [...new Set(proofIds)]) {
     const row = readComparisonScopeProof(db, id)
-    if (!row || !row.valid || row.status !== 'confirmed') continue
+    if (!row || !row.valid || row.status !== 'confirmed' || selected?.asOf && row.decidedAt && Date.parse(row.decidedAt) > Date.parse(selected.asOf)) continue
     if (row.kind === 'official_coverage') {
       const evidence = row.evidence as OfficialEvidence
+      if (selected && !evidence.sourceDocuments.every(ref => selected.officialSourceDocumentIds.includes(ref.id))) continue
       officialScopes.push({ proofId: String(id), sourceDocumentIds: evidence.sourceDocuments.map(ref => ref.id), titleCode: evidence.titleCode, fromYear: evidence.fromYear, throughYear: evidence.throughYear, enterpriseIds: evidence.enterpriseIds, verifiedAt: row.decidedAt! })
     } else {
       const evidence = row.evidence as CurrentEvidence
+      if (selected && (!selected.queryIds.includes(evidence.queryId) || !selected.exportBatchIds.includes(evidence.exportBatchId))) continue
       const observed = currentSource(db, evidence)
       currentScopes.push({ proofId: String(id), queryId: evidence.queryId, exportBatchId: evidence.exportBatchId, titleCode: evidence.titleCode, querySourceFingerprint: observed.querySourceFingerprint, exportSha256: observed.exportSha256, scopeEquivalent: true, versionEquivalent: true, verifiedAt: row.decidedAt! })
     }

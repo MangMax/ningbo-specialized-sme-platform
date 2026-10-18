@@ -15,6 +15,6 @@ defineRouteMeta({ openAPI: { tags: ['名录'], summary: '记录级对比（只�
 ], responses: { 200: { description: '逐事件行、全范围分类与各粒度计数、逐查询覆盖和逐原行现状观察。' }, 400: { description: '来源 ID、时点或筛选非法，或指定来源不存在。' } } } })
 export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
-  try { const db = useDb(); const input = parseRecordComparisonQuery(getQuery(event)); return getRecordComparison(db, input, resolveVerifiedComparisonEvidence(db, input.proofIds ?? [])) }
+  try { const db = useDb(); const input = parseRecordComparisonQuery(getQuery(event)); return getRecordComparison(db, input, resolveVerifiedComparisonEvidence(db, input.proofIds ?? [], input)) }
   catch (error) { if (error instanceof ZodError || error instanceof Error && (error.message.startsWith('source_set_') || error.message.startsWith('duplicate_'))) throw createError({ statusCode: 400, statusMessage: error.message }); throw error }
 })
