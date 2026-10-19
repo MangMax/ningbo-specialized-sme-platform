@@ -4,7 +4,10 @@ import {
   decisionVersionActionLabel,
   directionLabel,
   headerCheckLabel,
+  impactDecisionCoordinate,
+  impactDecisionRoleLabel,
   impactOldDecisionText,
+  impactReviewFormTitle,
   officialTitlesLabel,
 } from '../lib/roster/review-display'
 
@@ -86,6 +89,74 @@ describe('reviewed decision summaries distinguish append corrections from mainta
       decisionId: 82, latestRevisionId: 9, reviewedRevisionId: null, classification: 'evidence_changed',
       pending: true, lineage: 'current', oldDecision: { id: 82, status: 'not_queried', reasonCode: null, measureCode: 'none' },
     } as any
-    expect(impactOldDecisionText(row)).toContain('原决定 #82')
+    expect(impactOldDecisionText(row)).toContain('待复核的当前决定 #82')
+  })
+})
+
+describe('impact decision coordinates follow lineage instead of the affected decision id alone', () => {
+  const row = (patch: Record<string, unknown> = {}) => ({
+    id: 10, enterpriseId: 9, titleCode: 'specialized_sme', direction: 'missing_in_miit',
+    decisionId: 8, latestRevisionId: 10, reviewedRevisionId: 10, classification: 'evidence_changed',
+    pending: false, lineage: 'historical',
+    oldDecision: { id: 8, isCurrent: false, lifecycleAction: null, previousId: null, status: 'confirmed_no_diff', reasonCode: null, measureCode: 'none' },
+    ...patch,
+  }) as any
+
+  it('never calls a historical, withdrawn or merged coordinate the current decision', () => {
+    for (const lineage of ['historical', 'withdrawn', 'merged']) {
+      const text = impactOldDecisionText(row({ lineage }))
+      expect(text).not.toContain('当前决定')
+      expect(text).toContain('#8')
+    }
+    expect(impactDecisionRoleLabel(row({ lineage: 'historical' }))).toBe('历史决定')
+    expect(impactDecisionRoleLabel(row({ lineage: 'withdrawn' }))).toBe('已撤回决定')
+    expect(impactDecisionRoleLabel(row({ lineage: 'merged' }))).toBe('归并前决定')
+  })
+
+  it('treats an explicitly non-current oldDecision as historical even if lineage says current', () => {
+    const text = impactOldDecisionText(row({ lineage: 'current', pending: false }))
+    expect(text).toContain('历史决定 #8')
+    expect(text).not.toContain('当前决定 #8')
+  })
+
+  it('keeps a pending current decision as the decision under review', () => {
+    const pending = row({
+      lineage: 'current',
+      pending: true,
+      oldDecision: { id: 8, isCurrent: true, lifecycleAction: null, previousId: null, status: 'confirmed_no_diff', reasonCode: null, measureCode: 'none' },
+    })
+    expect(impactDecisionRoleLabel(pending)).toBe('待复核的当前决定')
+    expect(impactOldDecisionText(pending)).toContain('待复核的当前决定 #8')
+  })
+
+  it('reports replace lineage only from the API previousId and never fabricates one', () => {
+    const replace = row({
+      lineage: 'current', pending: false, decisionId: 34,
+      oldDecision: { id: 34, isCurrent: true, lifecycleAction: 'replace', previousId: 8, status: 'confirmed_reason', reasonCode: 'other', measureCode: 'none' },
+    })
+    expect(impactDecisionCoordinate(replace)).toBe('当前决定 #34（追加更正）· 复核前决定 #8 保留')
+    const first = row({
+      lineage: 'current', pending: false, decisionId: 34,
+      oldDecision: { id: 34, isCurrent: true, lifecycleAction: 'replace', previousId: null, status: 'confirmed_reason', reasonCode: 'other', measureCode: 'none' },
+    })
+    expect(impactDecisionCoordinate(first)).toBe('当前决定 #34（首次决定）')
+    expect(impactDecisionCoordinate(first)).not.toContain('复核前决定')
+  })
+
+  it('uses the same role wording for the review form title', () => {
+    expect(impactReviewFormTitle(row({
+      lineage: 'current',
+      pending: true,
+      oldDecision: { id: 8, isCurrent: true, lifecycleAction: null, previousId: null },
+    }))).toBe('待复核的当前决定 #8')
+    expect(impactReviewFormTitle(row({ lineage: 'historical' }))).toBe('历史决定 #8')
+  })
+
+  it('does not invent a current decision when the original text is unavailable', () => {
+    const merged = row({ lineage: 'merged', oldDecision: null })
+    const text = impactOldDecisionText(merged)
+    expect(text).toContain('归并前决定 #8')
+    expect(text).toContain('历史决定原文不可用')
+    expect(text).not.toContain('当前决定')
   })
 })

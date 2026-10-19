@@ -156,6 +156,12 @@ export function decisionVersionActionLabel(row: {
   return lifecycleActionLabel(row.lifecycleAction)
 }
 
+/** 矩阵/详情摘要：先给当前决定坐标，再给原因；不把历史版本写成当前。 */
+export function decisionReasonWithCoordinate(assessment: ReviewAssessment): string {
+  const coordinate = currentDecisionCoordinateLabel(assessment)
+  return coordinate ? `${coordinate} · ${decisionReasonLabel(assessment)}` : decisionReasonLabel(assessment)
+}
+
 export function decisionReasonLabel(assessment: ReviewAssessment): string {
   const decision = assessment.currentDecision.current
   if (!decision) return '尚无业务决定'
@@ -247,24 +253,68 @@ export function impactTone(row: ImpactRow): CaseTone {
 }
 
 /**
- * 队列行的决定坐标。
+ * 一个影响行所指向决定的角色。
  *
- * 复核前：`decisionId` 是待复核的原决定。
- * 复核后：replace 会生成新的当前决定，此时 `decisionId` 已是新决定；
- * 原决定是 `previousId`。不能继续把当前决定叫作“原决定”。
+ * `decisionId` 是被这条影响坐标引用的决定，不恒等于“当前决定”：
+ * 历史、撤回、归并行即使 `oldDecision.isCurrent` 缺失也不能写成当前。
+ * 只有 `lineage=current` 且没有被显式标为非当前时才用当前措辞。
  */
-function impactDecisionCoordinate(row: ImpactRow): string {
-  const decision = row.oldDecision
-  if (row.pending || !decision) return `原决定 #${row.decisionId}`
-  if (decision.lifecycleAction === 'replace') {
-    return decision.previousId != null
-      ? `当前决定 #${decision.id}（追加更正）· 复核前决定 #${decision.previousId} 保留`
-      : `当前决定 #${decision.id}（首次决定）`
-  }
-  return `当前决定 #${decision.id}`
+export interface ImpactDecisionRef {
+  decisionId: number
+  lineage: string
+  pending: boolean
+  oldDecision?: {
+    id: number
+    isCurrent?: boolean
+    lifecycleAction?: string | null
+    previousId?: number | null
+  } | null
 }
 
-/** 待复核清单里原决定的业务摘要；原文不可用时把“不可用”本身说清楚。 */
+export function impactEffectiveLineage(row: ImpactDecisionRef): string {
+  return row.lineage === 'current' && row.oldDecision?.isCurrent === false ? 'historical' : row.lineage
+}
+
+export function impactDecisionRoleLabel(row: ImpactDecisionRef): string {
+  const lineage = impactEffectiveLineage(row)
+  if (lineage === 'merged') return '归并前决定'
+  if (lineage === 'withdrawn') return '已撤回决定'
+  if (lineage === 'historical') return '历史决定'
+  if (lineage === 'current') return row.pending ? '待复核的当前决定' : '当前决定'
+  return '历史决定'
+}
+
+/**
+ * 队列行/详情卡的决定坐标。
+ *
+ * replace 的 `previousId` 只来自 API；API 没给前版时写“首次决定”，
+ * 不从 `oldDecision.id` 反推一个源决定。
+ */
+export function impactDecisionCoordinate(row: ImpactDecisionRef): string {
+  const decision = row.oldDecision
+  const role = impactDecisionRoleLabel(row)
+  const base = `${role} #${row.decisionId}`
+  if (role !== '当前决定' && role !== '待复核的当前决定') return base
+  if (decision?.lifecycleAction === 'replace') {
+    return decision.previousId != null
+      ? `${base}（追加更正）· 复核前决定 #${decision.previousId} 保留`
+      : `${base}（首次决定）`
+  }
+  return base
+}
+
+/** 表单标题描述“正在复核哪一条决定”，不把当前决定固定叫作原决定。 */
+export function impactReviewFormTitle(row: ImpactDecisionRef): string {
+  return impactDecisionCoordinate(row)
+}
+
+/** 矩阵里原因/措施属于哪一条当前决定；与队列和详情使用同一坐标措辞。 */
+export function currentDecisionCoordinateLabel(assessment: ReviewAssessment): string {
+  const decision = assessment.currentDecision.current
+  return decision ? `当前决定 #${decision.id}` : ''
+}
+
+/** 待复核清单里被影响决定的业务摘要；原文不可用时把“不可用”本身说清楚。 */
 export function impactOldDecisionText(row: ImpactRow): string {
   const decision = row.oldDecision
   const coordinate = impactDecisionCoordinate(row)

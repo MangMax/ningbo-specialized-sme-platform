@@ -11,9 +11,9 @@ import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
 const props = defineProps<{ impactId: number; enterpriseId: number }>()
 type Source = { revisionId: number; sourceKind: string; sourceKey: string; sourceVersion: string; classification: string; eventId: number | null; coverageChanged: boolean; factChanged: boolean; recordedAt?: string | null }
-const { displayed, cursorExpired, loading, error, reload, restart, next, previous, canNext, canPrevious } = useBoundedReviewPage<Source>('evidence-impact-sources', () => `/api/roster/evidence-impacts/${props.impactId}/sources`, () => ({}))
+const { displayed, targetPage, cursorExpired, loading, error, reload, restart, next, previous, canNext, canPrevious } = useBoundedReviewPage<Source>('evidence-impact-sources', () => `/api/roster/evidence-impacts/${props.impactId}/sources`, () => ({}))
 const selectedRevision = shallowRef<number | null>(null)
-const failureTarget = computed(() => `复核项 #${props.impactId} · 来源第 ${displayed.value?.pageNumber ?? 1} 页`)
+const failureTarget = computed(() => `复核项 #${props.impactId} · 来源第 ${targetPage.value} 页`)
 /**
  * 只有“成功读到第一页、没有 nextCursor、也没有可返回页”时才隐藏分页。
  * 不能用 rows.length < 25 推断末页：服务端可能返回更少但仍给出下一页游标，
@@ -43,7 +43,7 @@ const singlePage = computed(() => !!displayed.value
     <TableFailureState
       v-if="error"
       title="证据变化来源读取失败"
-      :description="`读取目标：${failureTarget}。上次成功的来源页仍保留；重试只读取当前目标页。`"
+      :description="`读取目标：${failureTarget}。上次成功的来源页（第 ${displayed?.pageNumber ?? 1} 页）仍保留；重试只读取当前目标页，上一页来源可回到上次成功页。`"
       :pending="loading"
       @retry="reload()"
     />

@@ -62,9 +62,13 @@ it('shows the pager when nextCursor exists even though the current page has fewe
   view.unmount()
 })
 
-it('retains retry and the source-page context when a cursor read fails', async () => {
+it('retains the failed target, lets previous return to the last success page and next retry that target', async () => {
+  let failTarget = true
   const fetcher = vi.fn(async (_url: string, options?: any) => {
-    if (options?.query?.cursor === 'bad-page') throw new Error('private upstream detail')
+    if (options?.query?.cursor === 'bad-page') {
+      if (failTarget) throw new Error('private upstream detail')
+      return { rows: [source(10)], nextCursor: null, asOf: {} }
+    }
     return { rows: [source(9)], nextCursor: 'bad-page', asOf: {} }
   })
   const view = render(fetcher)
@@ -72,10 +76,29 @@ it('retains retry and the source-page context when a cursor read fails', async (
   await view.findAll('button').find(button => button.text().includes('下一页来源'))!.trigger('click')
   await flushPromises()
   expect(view.text()).toContain('证据变化来源读取失败')
-  expect(view.text()).toContain('复核项 #4 · 来源第 1 页')
+  expect(view.text()).toContain('读取目标：复核项 #4 · 来源第 2 页')
+  expect(view.text()).toContain('上次成功的来源页（第 1 页）')
   expect(view.text()).toContain('来源第 1 页 · 每页最多 25 项')
   expect(view.text()).not.toContain('private upstream detail')
   expect(view.find('[data-testid="table-retry"]').exists()).toBe(true)
-  expect(view.findAll('button').some(button => button.text().includes('上一页来源'))).toBe(true)
+  expect(view.findAll('button').find(button => button.text().includes('上一页来源'))!.attributes('disabled')).toBeUndefined()
+  expect(view.findAll('button').find(button => button.text().includes('下一页来源'))!.attributes('disabled')).toBeUndefined()
+
+  await view.findAll('button').find(button => button.text().includes('上一页来源'))!.trigger('click')
+  await flushPromises()
+  expect(view.text()).toContain('来源第 1 页')
+  expect(view.text()).not.toContain('证据变化来源读取失败')
+  expect(view.text()).toContain('query-9')
+
+  await view.findAll('button').find(button => button.text().includes('下一页来源'))!.trigger('click')
+  await flushPromises()
+  expect(view.text()).toContain('读取目标：复核项 #4 · 来源第 2 页')
+  failTarget = false
+  await view.findAll('button').find(button => button.text().includes('下一页来源'))!.trigger('click')
+  await flushPromises()
+  expect(fetcher).toHaveBeenLastCalledWith('/api/roster/evidence-impacts/4/sources', { query: { limit: 25, cursor: 'bad-page' } })
+  expect(view.text()).toContain('来源第 2 页')
+  expect(view.text()).toContain('query-10')
+  expect(view.text()).not.toContain('证据变化来源读取失败')
   view.unmount()
 })
