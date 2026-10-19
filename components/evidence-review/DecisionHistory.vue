@@ -99,7 +99,7 @@ function decisionSummary(row: HistoryRow): string {
           size="sm"
           variant="ghost"
           class="shrink-0"
-          :aria-label="`查看历史决定 ${row.id}`"
+          :aria-label="`查看决定 ${row.id} 原文`"
           @click="selected = row.id"
         >
           查看原文

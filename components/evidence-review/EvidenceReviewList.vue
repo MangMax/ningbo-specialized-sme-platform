@@ -26,6 +26,7 @@ const props = defineProps<{
   defaultState?: 'pending' | 'reviewed' | 'all'
   defaultView?: 'current' | 'historical' | 'all'
 }>()
+const emit = defineEmits<{ 'guard-open': [open: boolean] }>()
 
 /**
  * 草稿由最近一层宿主（企业详情页 / 全部复核记录父级 / 本清单）持有。
@@ -268,16 +269,22 @@ function chooseEnterprise(row: { enterpriseId: number; name: string }) {
   lookupResults.value = []
 }
 
-function guardPage(run: () => void, discardLabel: string) {
-  withDraftGuard(run, {
-    title: '翻页会丢弃未提交内容',
-    description: '当前复核项还有未提交的凭证、依据或更正内容；翻页后这些内容会丢失。',
-    discardLabel,
-  })
+function guardPage(run: () => void, discardLabel: string, action: 'turn' | 'restart') {
+  withDraftGuard(run, action === 'restart'
+    ? {
+        title: '重新读取会丢弃未提交内容',
+        description: '当前复核项还有未提交的凭证、依据或更正内容；重新读取清单后这些内容会丢失。',
+        discardLabel,
+      }
+    : {
+        title: '翻页会丢弃未提交内容',
+        description: '当前复核项还有未提交的凭证、依据或更正内容；翻页后这些内容会丢失。',
+        discardLabel,
+      })
 }
-function next() { guardPage(nextPage, '下一页并丢弃') }
-function previous() { guardPage(previousPage, '上一页并丢弃') }
-function restart() { guardPage(restartPage, '重新读取并丢弃') }
+function next() { guardPage(nextPage, '下一页并丢弃', 'turn') }
+function previous() { guardPage(previousPage, '上一页并丢弃', 'turn') }
+function restart() { guardPage(restartPage, '重新读取并丢弃', 'restart') }
 
 function enterpriseLink(row: ImpactRow) {
   const query = new URLSearchParams({ tab: 'review', titleCode: row.titleCode, direction: row.direction, impactId: String(row.id) })
@@ -315,6 +322,8 @@ function rowAriaLabel(row: ImpactRow): string {
 /** 收起/重选/筛选/翻页都先确认；继续填写保持原条目、原筛选、原页。 */
 type DraftGuard = { title: string; description: string; discardLabel: string; run: () => void }
 const pendingGuard = shallowRef<DraftGuard | null>(null)
+/** 父级（route 组件）的路由离开守卫据此避让，不同时叠两个确认框。 */
+watch(pendingGuard, guard => emit('guard-open', guard !== null), { immediate: true })
 function withDraftGuard(run: () => void, copy: Omit<DraftGuard, 'run'>) {
   if (draftStore.hasDirty.value) {
     pendingGuard.value = { ...copy, run }

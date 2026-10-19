@@ -18,7 +18,7 @@ it('retains immutable text ID and audit after same-version background failure an
   const pinia = createPinia(), view = mount(DecisionHistory, { props: { scope }, global: { plugins: [pinia, PiniaColada] } })
   const cache = useQueryCache(pinia)
   await flushPromises()
-  await view.get('[aria-label="查看历史决定 82"]').trigger('click'); await flushPromises()
+  await view.get('[aria-label="查看决定 82 原文"]').trigger('click'); await flushPromises()
   expect(view.text()).toContain('已读出的原原因')
   fail = true
   await cache.invalidateQueries({ key: ['decision-version', 82] }).catch(() => undefined); await flushPromises()
@@ -50,8 +50,8 @@ it('labels the retained successful source separately from a changed failed targe
     return url.endsWith('/82') ? original : { ...original, id: 90, reasonNote: '另一个版本原文' }
   }))
   const view = mount(DecisionHistory, { props: { scope }, global: { plugins: [createPinia(), PiniaColada] } }); await flushPromises()
-  await view.get('[aria-label="查看历史决定 82"]').trigger('click'); await flushPromises()
-  await view.get('[aria-label="查看历史决定 90"]').trigger('click'); await flushPromises()
+  await view.get('[aria-label="查看决定 82 原文"]').trigger('click'); await flushPromises()
+  await view.get('[aria-label="查看决定 90 原文"]').trigger('click'); await flushPromises()
   expect(view.text()).toContain('读取目标：历史决定 #90')
   expect(view.text()).toContain('显示来源：历史决定 #82')
   expect(view.text()).toContain('已读出的原原因')

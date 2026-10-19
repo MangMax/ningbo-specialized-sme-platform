@@ -127,7 +127,7 @@ it('reads immutable decision history and full old audit details without a write 
   const view = render(); await flushPromises()
   await view.get('[aria-label="处理这一项 4"]').trigger('click'); await flushPromises()
   expect(view.text()).toContain('新决定仍保留')
-  await view.get('[aria-label="查看历史决定 82"]').trigger('click'); await flushPromises()
+  await view.get('[aria-label="查看决定 82 原文"]').trigger('click'); await flushPromises()
   expect(fetcher).toHaveBeenCalledWith('/api/roster/decision-lifecycle/history', { query: { enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', page: 1, pageSize: 25 } })
   expect(view.text()).toContain('历史人工依据')
   expect(view.text()).toContain('reviewer-original')
@@ -570,7 +570,8 @@ it('guards an explicit restart and clears the visible draft only after discard',
   const view = render(); await flushPromises()
   await openAndFill(view)
   await clickText(view, '重新读取清单').trigger('click'); await flushPromises()
-  expect(view.text()).toContain('翻页会丢弃未提交内容')
+  expect(view.text()).toContain('重新读取会丢弃未提交内容')
+  expect(view.text()).not.toContain('翻页会丢弃未提交内容')
   await clickText(view, '继续填写').trigger('click'); await flushPromises()
   expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toContain('核对新查询')
   const before = fetcher.mock.calls.filter(call => call[0] === '/api/roster/evidence-impacts').length
