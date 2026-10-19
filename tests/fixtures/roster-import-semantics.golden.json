@@ -266,6 +266,7 @@
           "id": 1,
           "recordId": 1,
           "reviewOutcome": null,
+          "revision": 1,
           "sortKey": 2022,
           "year": 2022
         },
@@ -276,6 +277,7 @@
           "id": 2,
           "recordId": 1,
           "reviewOutcome": "passed",
+          "revision": 1,
           "sortKey": 2022,
           "year": 2022
         },
@@ -286,6 +288,7 @@
           "id": 3,
           "recordId": 2,
           "reviewOutcome": null,
+          "revision": 1,
           "sortKey": 2021,
           "year": 2021
         }
@@ -307,11 +310,15 @@
           "name": "宁波上航测绘有限公司",
           "nameNorm": "宁波上航测绘有限公司",
           "note": null,
+          "originalName": null,
+          "originalSourceKind": null,
+          "originalSourceRefId": null,
           "sourceKind": "platform_business",
           "sourceRefId": 2,
           "validFrom": null,
           "validTo": null,
-          "verificationStatus": "confirmed"
+          "verificationStatus": "confirmed",
+          "version": 1
         }
       ],
       "platformQuery": [
