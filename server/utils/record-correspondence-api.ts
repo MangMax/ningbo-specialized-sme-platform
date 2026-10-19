@@ -1,11 +1,12 @@
+import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { cookieRedactor } from '../../lib/platform/client'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { credentialContext, resolveCredential } from './credential-state'
-import { commitRecordCorrespondences, CorrespondenceError, listRecordCorrespondences, preflightRecordCorrespondences, readRecordCorrespondenceBatch, type CorrespondenceFilter } from './record-correspondence'
-import { audit, detail, readSource, sanitizeEvidence, type SourceKind } from './record-correspondence-read'
+import { commitRecordCorrespondences, CorrespondenceError, getRecordCorrespondence, listRecordCorrespondences, pageRecordCorrespondences, pageRecordCorrespondenceAudit, preflightRecordCorrespondences, readRecordCorrespondenceBatch, type CorrespondenceFilter } from './record-correspondence'
+import { detail, details, sourceReader, sanitizeEvidence, type SourceKind } from './record-correspondence-read'
 import { generateCandidates } from './record-correspondence-candidates'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -43,9 +44,13 @@ function page(query: Record<string, unknown>) { const p = query.page == null ? 1
 function scalar(value: unknown) { return typeof value === 'string' && value.length > 0 ? value : null }
 function ids(input: Record<string, unknown>, keys: string[]) { const result: Record<string, number> = {}; for (const key of keys) if (input[key] != null) { const value = int(input[key]); if (!value) return null; result[key] = value } return result }
 function permitted(input: Record<string, unknown>, keys: string[]) { return Object.keys(input).every(key => keys.includes(key)) }
-function paginate<T>(rows: T[], { page, pageSize }: { page: number; pageSize: number }) { return { rows: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize } }
 function auth(input: CorrespondenceApiInput, configured: string | null | undefined) { return resolveApiAuth({ given: readApiToken(input.headers), configured }).writeAuthorized }
 export function handleRecordCorrespondenceRequest(input: CorrespondenceApiInput, context: { db: Db; apiToken?: string | null }): CorrespondenceApiOutput {
+  return ['list', 'get', 'audit', 'source', 'candidates'].includes(input.action)
+    ? context.db.transaction(() => correspondenceSnapshot(input, context))
+    : correspondenceSnapshot(input, context)
+}
+function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db; apiToken?: string | null }): CorrespondenceApiOutput {
   try {
     const { db } = context
     const write = ['preflight', 'commit', 'batch'].includes(input.action)
@@ -64,10 +69,9 @@ export function handleRecordCorrespondenceRequest(input: CorrespondenceApiInput,
       const statuses = ['candidate', 'confirmed', 'rejected', 'unlinked']
       if (query.type != null && !types.includes(query.type as string) || query.status != null && !statuses.includes(query.status as string)) return fail(400, 'invalid_request', 'Invalid type or status')
       for (const key of ['titleCode', 'role', 'ruleVersion']) if (query[key] != null && !scalar(query[key])) return fail(400, 'invalid_request', `Invalid ${key}`)
-      const filter = { ...numeric, ...(query.titleCode ? { titleCode: query.titleCode as string } : {}), ...(query.type ? { type: query.type as typeof types[number] } : {}), ...(query.status ? { status: query.status as typeof statuses[number] } : {}) }
-      const rows = listRecordCorrespondences(db, filter as CorrespondenceFilter).filter(r => (!query.role || r.role === query.role) && (!query.ruleVersion || r.ruleVersion === query.ruleVersion))
-      const result = paginate(rows, paging)
-      return ok({ ...result, rows: result.rows.map(r => detail(db, r)) }, redactors)
+      const filter = { ...numeric, ...(query.titleCode ? { titleCode: query.titleCode as string } : {}), ...(query.type ? { type: query.type as typeof types[number] } : {}), ...(query.status ? { status: query.status as typeof statuses[number] } : {}), ...(query.role ? { role: query.role as string } : {}), ...(query.ruleVersion ? { ruleVersion: query.ruleVersion as string } : {}) }
+      const result = pageRecordCorrespondences(db, filter as CorrespondenceFilter, paging)
+      return ok({ ...result, rows: details(db, result.rows) }, redactors)
     }
     if (input.action === 'candidates') {
       const parsed = candidate.safeParse(input.body)
@@ -91,14 +95,19 @@ export function handleRecordCorrespondenceRequest(input: CorrespondenceApiInput,
     const id = int(input.id); if (!id) return fail(400, 'invalid_request', 'Positive ID required')
     if (input.action === 'source') {
       if (!sourceKinds.includes(input.kind as SourceKind)) return fail(400, 'invalid_request', 'Invalid source kind')
-      const source = readSource(db, input.kind as SourceKind, id)
-      return source ? ok({ source, correspondences: listRecordCorrespondences(db, input.kind === 'event' ? {} : input.kind === 'relation' ? { relationId: id } : { exportRowId: id }).filter(r => input.kind !== 'event' || r.eventId === id || r.predecessorEventId === id).map(r => detail(db, r)) }, redactors) : fail(404, 'not_found', 'Source row not found')
+      const rows = listRecordCorrespondences(db, input.kind === 'event' ? { anyEventId: id } : input.kind === 'relation' ? { relationId: id } : { exportRowId: id })
+      const reader = sourceReader(db, rows, { kind: input.kind as SourceKind, id })
+      const source = reader.read(input.kind as SourceKind, id)
+      return source ? ok({ source, correspondences: rows.map(reader.detail) }, redactors) : fail(404, 'not_found', 'Source row not found')
     }
-    const row = listRecordCorrespondences(db).find(r => r.id === id)
-    if (!row) return fail(404, 'not_found', 'Correspondence not found')
-    if (input.action === 'get') return ok(detail(db, row), redactors)
+    if (input.action === 'get') {
+      const row = getRecordCorrespondence(db, id)
+      return row ? ok(detail(db, row), redactors) : fail(404, 'not_found', 'Correspondence not found')
+    }
+    if (!db.select({ id: schema.recordCorrespondence.id }).from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.id, id)).get()) return fail(404, 'not_found', 'Correspondence not found')
     const paging = page(input.query ?? {}); if (!paging || !permitted(input.query ?? {}, ['page', 'pageSize'])) return fail(400, 'invalid_request', 'Invalid audit query')
-    return ok(paginate(audit(db, id), paging), redactors)
+    const result = pageRecordCorrespondenceAudit(db, id, paging)
+    return ok({ ...result, rows: result.rows.map(({ evidence, ...row }) => ({ ...row, evidence: sanitizeEvidence(evidence) })) }, redactors)
   } catch (error) {
     if (error instanceof CorrespondenceError) return fail(error.status, error.code, error.message)
     throw error
