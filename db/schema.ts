@@ -564,6 +564,24 @@ export const enterpriseAlias = sqliteTable(
   ],
 )
 
+/** #96 append-only profile corrections; independent of alias lifecycle (#99). */
+export const enterpriseProfileAudit = sqliteTable('enterprise_profile_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  // Immutable historical target; dedicated identity merge may remove its live row.
+  enterpriseId: integer('enterprise_id').notNull(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  requestHash: text('request_hash').notNull(),
+  beforeVersion: text('before_version').notNull(),
+  afterVersion: text('after_version').notNull(),
+  before: text('before', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null }>().notNull(),
+  after: text('after', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null }>().notNull(),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(),
+  basis: text('basis').notNull(),
+  retainedAliasId: integer('retained_alias_id'),
+  aliasCreated: integer('alias_created', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, t => [uniqueIndex('enterprise_profile_audit_key_uq').on(t.idempotencyKey), index('enterprise_profile_audit_enterprise_idx').on(t.enterpriseId, t.id)])
+
 /**
  * **平台查询记录**(契约 3)。一次「查了工信部哪个接口、用什么键、什么时候查、结果如何」。
  *
