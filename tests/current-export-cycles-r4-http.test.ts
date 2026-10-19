@@ -40,12 +40,12 @@ async function assertCases(cases: QualificationCase[], key: string, permute = fa
     expect(response.headers.get('location')).toBe('/api/jobs/'+accepted.jobId)
     const job=await f.terminal(accepted.jobId)
     expect(job.state,JSON.stringify(job)).toBe('done')
-    expect(job.result.ruleVersion).toBe('current-roster-116-v5')
+    expect(job.result.ruleVersion).toBe('current-roster-116-v6')
     const {wb}=await f.download(job)
     const explanation=Object.fromEntries(rows(wb,'口径说明').map(row=>[row[1],row[2]]))
-    expect(explanation['规则版本']).toBe('current-roster-116-v5')
+    expect(explanation['规则版本']).toBe('current-roster-116-v6')
     const summary=await (await fetch(f.url('/api/task-center/'+accepted.jobId),{headers:f.headers})).json()
-    expect(summary.export.ruleVersion).toBe('current-roster-116-v5')
+    expect(summary.export.ruleVersion).toBe('current-roster-116-v6')
     const observations=[]
     for (const c of entries) {
       const actual=wb.worksheets.slice(0,3).flatMap(sheet=>rows(wb,sheet.name).filter(row=>row[2]===String(c.enterprise.id)).map(row=>({sheet:sheet.name,row})))

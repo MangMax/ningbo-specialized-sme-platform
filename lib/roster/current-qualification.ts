@@ -6,7 +6,7 @@ import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
 
-export const CURRENT_RULE_VERSION = 'current-roster-116-v5'
+export const CURRENT_RULE_VERSION = 'current-roster-116-v6'
 export const CURRENT_TITLES = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 export type CurrentTitle = typeof CURRENT_TITLES[number]
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
@@ -39,6 +39,7 @@ interface CycleFacts {
   passed: QualificationEvent[]
   failed: QualificationEvent[]
   gaps: QualificationEvent[]
+  failureYears: number[]
   lastAward: number
   lastPassed: number
   lastFailure: number
@@ -52,16 +53,18 @@ function hasUsableTime(event: QualificationEvent, originYear: number, year: numb
 /** Separate known facts from uncertain facts before deciding whether a gap matters. */
 function cycleFacts(events: QualificationEvent[], ambiguous: QualificationEvent[], originYear: number, year: number): CycleFacts {
   const awards: QualificationEvent[] = [], passed: QualificationEvent[] = [], failed: QualificationEvent[] = [], gaps = [...ambiguous]
-  const hasReviews = [...events,...ambiguous].some(e => e.eventType === 'review')
   for (const event of events) {
-    const batchKnown = event.batchSeq != null || event.eventType === 'award' && !hasReviews
+    const batchKnown = event.batchSeq != null || event.eventType === 'award'
     if (!hasUsableTime(event,originYear,year) || !batchKnown) gaps.push(event)
     else if (event.eventType === 'award') awards.push(event)
     else if (event.reviewOutcome === 'passed') passed.push(event)
     else if (event.reviewOutcome === 'failed') failed.push(event)
     else gaps.push(event)
   }
-  return {awards,passed,failed,gaps,lastAward:latestFact(awards),lastPassed:latestFact(passed),lastFailure:latestFact(failed)}
+  // A known failure date survives uncertain batch applicability. It is still a
+  // temporal witness for cross-cycle recovery, even when this cycle has a gap.
+  const failureYears = [...events,...ambiguous].filter(e => e.eventType === 'review' && e.reviewOutcome === 'failed' && hasUsableTime(e,originYear,year)).map(e => e.decidedYear!)
+  return {awards,passed,failed,gaps,failureYears,lastAward:latestFact(awards),lastPassed:latestFact(passed),lastFailure:latestFact(failed)}
 }
 
 /** A gap only yields to a later fact that neutralizes every possible effect.
@@ -81,7 +84,7 @@ function gapResolvedBy(gap: QualificationEvent, facts: CycleFacts, originYear: n
 /** Adjudicate an originating cycle using only applicable, unresolved evidence. */
 function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = []): CycleJudgment {
   const facts = cycleFacts(events,ambiguous,originYear,year)
-  const result: CycleJudgment = {originYear,batch,lastAwardYear:facts.lastAward,failureYears:facts.failed.map(e => e.decidedYear!),group:'pending',notes:[]}
+  const result: CycleJudgment = {originYear,batch,lastAwardYear:facts.lastAward,failureYears:facts.failureYears,group:'pending',notes:[]}
   const unresolved: QualificationEvent[] = []
   for (const gap of facts.gaps) {
     const resolved = gapResolvedBy(gap,facts,originYear,year)
@@ -129,12 +132,21 @@ function adjudicateCurrentCycles(formal: QualificationEvent[], year: number): { 
   }
   const judgments = [...byYear].flatMap(([origin,batches]) => {
     const known = [...batches].filter(([batch]) => batch != null)
-    const ambiguous = batches.get(null) ?? []
-    // An unknown batch is an applicability gap for this year, not an invented
-    // extra batch. Keep its possible effects until a decisive fact resolves it.
-    return known.length
-      ? known.map(([batch,events]) => adjudicateCycle(events,origin,batch,year,ambiguous))
-      : [adjudicateCycle(ambiguous,origin,null,year)]
+    const unassigned = batches.get(null) ?? []
+    const grants = unassigned.filter(e => e.eventType === 'award')
+    const reviews = unassigned.filter(e => e.eventType === 'review')
+    // Retain the possibility that each unassigned grant is a separate batch;
+    // do not borrow it to repair a known batch. Each possible batch must also
+    // withstand the unassigned reviews. If all are eligible, merging any subset
+    // of these grants into an eligible batch cannot invalidate it. This proves
+    // eligibility without choosing a batch or enumerating partitions. An expired
+    // or unresolved separate grant keeps its effect instead of vanishing in the
+    // latest known grant. Unknown reviews remain applicability gaps.
+    const possible = [
+      ...known.map(([batch,events]) => adjudicateCycle(events,origin,batch,year,reviews)),
+      ...grants.map(grant => adjudicateCycle([grant],origin,null,year,reviews)),
+    ]
+    return possible.length ? possible : [adjudicateCycle(reviews,origin,null,year)]
   })
   // Selection follows adjudication, retains *every* batch of the current year,
   // and never uses the latest passed event to erase another batch or a failure.
