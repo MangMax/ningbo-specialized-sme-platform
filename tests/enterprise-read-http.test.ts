@@ -107,6 +107,25 @@ it('HTTP detail keeps embedded-null Unicode identity normalization', async () =>
     db.$client.prepare('DELETE FROM enterprise WHERE id = ?').run(identity.id)
   }
 })
+it('HTTP name-only detail skips impossible normalized-name matches in unrelated query keys', async () => {
+  const identity = db.insert(schema.enterprise).values({ name: '纯名称主体', nameNorm: '纯名称主体' }).returning().get()
+  const exact = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: 'name:纯名称主体', queriedAt: '2026-10-19', status: 'failed' }).returning().get()
+  const ids: number[] = []
+  db.$client.transaction(() => {
+    const insert = db.$client.prepare("INSERT INTO platform_query(interface,query_key,queried_at,status,created_at) VALUES('apply_list',?,'2026-10-19','failed','2026-10-19')")
+    for (let i = 0; i < 1000; i++) ids.push(Number(insert.run(`\u200B 无关键${i} `).lastInsertRowid))
+  })()
+  normalizationCalls = 0
+  try {
+    const response = await fetch(`${base}/api/roster/enterprises/${identity.id}`)
+    expect(response.status).toBe(200)
+    expect((await response.json()).platform.queries.map((q: any) => q.id)).toEqual([exact.id])
+    expect(normalizationCalls).toBeLessThan(30)
+  } finally {
+    db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${[exact.id, ...ids].map(() => '?').join(',')})`).run(exact.id, ...ids)
+    db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(identity.id)
+  }
+})
 it('HTTP SQL selection preserves first-award ties, pending years, same-event filters and terminated lifecycle', async () => {
   const identities = ['A', 'B', 'C'].map(label => db.insert(schema.enterprise).values({ name: `汇总边界${label}`, nameNorm: `汇总边界${label}`, usccNorm: `BOUND84${label}` }).returning().get().id)
   const [a, b, c] = identities as [number, number, number]
