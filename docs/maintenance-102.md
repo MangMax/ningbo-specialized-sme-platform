@@ -84,3 +84,19 @@ actor 必须给 type=user/agent 和非空 id；沿用单机 token 授权模型�
 新当前/精确读取按键；历史在 SQL 中 count/limit/offset；命令幂等按唯一索引；已接管判断使用部分索引；预览只在文件上限内解析键，对页内候选逐个精确查找。旧 MCP list_differences 改为 SQL 最新版本/分页和查询元数据投影，保留原 rows/counts 形状，消除其先前全量读取平台原档的路径。深页 OFFSET 仍随范围页深增加 SQL 扫描，未宣称常数耗时。
 
 共享改动仅为 db/schema.ts、迁移 journal、server/utils/roster-import.ts 的接管守卫、mcp-auth 写名单、mcp-roster 差异摘要读取、MCP 中间件/说明，以及停用旧 PATCH；对应回归测试同步调整。迁移按预留 0018，未生成无关 snapshot；父集成合并其他预留迁移时需整理 journal 顺序。没有修改共享 GLOSSARY 或其他票据文档。
+
+## 最终交接记录（2026-10-19）
+
+工作树 `/Users/mang/.t3/worktrees/app/t3-b4b2e1a9`；分支 `t3/ticket-102-decision-lifecycle`。实现提交 `1e591d9`；已依次合入集成 tip `92f694e`（#100）、`f31f57b5a097223f15e7d596961af9d4ea8c6693`（#96/#99），合并提交 `755c345b05b3711a182abf45b2d5d23fa7403b13`。
+
+最终合并候选执行：
+
+```sh
+pnpm exec vitest run tests/decision-lifecycle-102-http.test.ts tests/curation.test.ts tests/mcp-surface.test.ts tests/roster-import-api.test.ts tests/comparison-platform.test.ts tests/roster-enterprises.test.ts tests/roster-difference-filter.test.ts tests/roster-event-correction.test.ts tests/enterprise-profile-96.test.ts tests/alias-maintenance-http.test.ts --maxWorkers=1
+pnpm typecheck
+git diff --cached --check
+```
+
+结果：10 文件 **270/270 通过**、typecheck 退出 0、diff check 退出 0。日志为 `/tmp/ningbo-spec98/ticket-102/merged-latest-tests.log` 和 `merged-latest-typecheck.log`。测试时为待提交的合并结果，其 staged tree `5a89ed2556f77e8aa49f18c7301d99f3a872ea4d` 与上述 `755c345` 提交 tree 完全相同；没有把先前 212/223 项旧候选结果冒充本次合并验证。本段后继提交只更新本票文档，不修改执行代码或测试。
+
+共享冲突处理保留了 #96/#99/#100 的所有工具鉴权项、MCP 说明/校验器，以及迁移 0014/0015/0016；#102 的 0018 在 journal 中按顺序跟随。未创建 PR（由父集成负责），没有生产写入、生产资料迁移、部署、main 合并、CI、浏览器 UI 或完整规格最终验收声明。实时读取 #102 确认仍 OPEN、无新增评论；票据状态由父代理统一处理。
