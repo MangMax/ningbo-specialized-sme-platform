@@ -119,7 +119,7 @@ const activeRequest = computed(() => captureQueryRequest('comparison', params.va
 useHead({
   title: computed(
     () =>
-      mode.value === 'review' ? '解释待复核' : mode.value === 'record' ? '记录级对比 · 正式事件与平台原行' : `兼容旧结果 · ${TITLES[title.value] ?? title.value} · ${
+      mode.value === 'review' ? '待复核队列' : mode.value === 'record' ? '记录级对比 · 正式事件与平台原行' : `旧版比对 · ${TITLES[title.value] ?? title.value} · ${
         COMPARISON_LABELS[direction.value] ?? direction.value
       }`,
   ),
@@ -206,14 +206,14 @@ const exportUrl = computed(() => {
 
 <template>
   <div class="flex min-w-0 flex-col gap-3">
-    <Tabs :model-value="mode" @update:model-value="setMode(String($event))"><TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="比对口径"><TabsTrigger value="record">记录级对比</TabsTrigger><TabsTrigger value="legacy">兼容旧结果</TabsTrigger><TabsTrigger value="review">解释待复核</TabsTrigger></TabsList></Tabs>
+    <Tabs :model-value="mode" @update:model-value="setMode(String($event))"><TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="比对口径"><TabsTrigger value="record">记录级对比</TabsTrigger><TabsTrigger value="legacy">旧版比对</TabsTrigger><TabsTrigger value="review">待复核队列</TabsTrigger></TabsList></Tabs>
     <RecordComparisonPanel v-if="mode === 'record'" />
     <EvidenceReviewList v-else-if="mode === 'review'" />
   <div v-else class="comparison-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader
-      title="兼容旧结果 · 两侧名录比对"
+      title="旧版比对 · 两侧名录对照"
     >
-      <template #description>旧结果按企业×称号集合差展示，保留原核实与备注；不作为记录级事件结论。</template>
+      <template #description>按企业 × 称号对照公布文件与平台导出；保留原核实与备注，不作为记录级事件结论。</template>
       <template #actions>
         <div class="flex items-center gap-2">
           <Switch id="show-curated" v-model="showCurated" class="shadow-none" />

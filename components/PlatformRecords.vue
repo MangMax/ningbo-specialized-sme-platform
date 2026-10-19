@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ChevronDown } from '@lucide/vue'
-import { PLATFORM_QUERY_STATUSES, PLATFORM_QUERY_STATUS_ORDER, PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
+import { PLATFORM_QUERY_STATUS_ORDER, PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
+import AssessmentStatusBadge from '@/components/evidence-review/AssessmentStatusBadge.vue'
 import PlatformQueryProvenance from './PlatformQueryProvenance.vue'
 import PlatformRecordDetails from './PlatformRecordDetails.vue'
 import RecordSourceReader from './record-correspondence/SourceReader.vue'
@@ -12,7 +13,6 @@ import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 
 const props = defineProps<{ queries: PlatformRecordQuery[]; relations: PlatformRecord[]; returnTo?: string | null }>()
 const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
@@ -65,8 +65,7 @@ const querySummary = (queries: PlatformRecordQuery[]) => {
   const statuses = new Set(queries.map(query => query.status))
   return {
     time: latest ? time(latest.queriedAt) : '',
-    statuses: [...PLATFORM_QUERY_STATUS_ORDER, ...statuses].filter((status, index, all) => all.indexOf(status) === index && statuses.has(status))
-      .map(status => PLATFORM_QUERY_STATUSES[status] ?? '状态待核'),
+    statuses: [...PLATFORM_QUERY_STATUS_ORDER, ...statuses].filter((status, index, all) => all.indexOf(status) === index && statuses.has(status)),
   }
 }
 const emptyMessage = (queries: PlatformRecordQuery[]) => !queries.length ? '尚未查询此来源 / 称号'
@@ -129,14 +128,19 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
             <h4 class="text-sm font-medium">{{ table.label }} <span class="text-muted-foreground font-normal">{{ table.rows.length }} 条</span></h4>
             <div v-if="table.queries.length" class="flex flex-wrap items-center gap-1.5 text-[13px]" data-testid="platform-query-summary">
               <span class="text-muted-foreground whitespace-nowrap">{{ querySummary(table.queries).time }}</span>
-              <Badge v-for="status in querySummary(table.queries).statuses" :key="status" variant="outline" class="whitespace-nowrap">{{ status }}</Badge>
+              <AssessmentStatusBadge v-for="status in querySummary(table.queries).statuses" :key="status" kind="query" :value="status" />
             </div>
           </div>
           <PlatformQueryProvenance :queries="table.queries" :source-label="table.label" />
           <p v-for="query in table.queries.filter(query => query.status === 'failed')" :key="query.id" class="text-destructive mb-2 text-[13px] leading-5" data-testid="platform-query-failure">查询 #{{ query.id }}：{{ platformFailureForDisplay(query.failureReason) ?? '本次查询未完成，不能据此判断平台有无记录。' }}</p>
           <p v-if="!table.rows.length && emptyMessage(table.queries) !== '本次查询未完成'" class="text-muted-foreground text-[13px] leading-5" data-testid="platform-source-empty">{{ emptyMessage(table.queries) }}</p>
+          <div v-if="table.rows.length" class="mb-1 sm:hidden">
+            <p class="text-muted-foreground text-[13px] leading-5" data-testid="platform-table-scroll-hint">
+              左右滑动查看全部字段（共 {{ table.columns }} 列）；企业名称在起始侧，不会被末列遮挡。
+            </p>
+          </div>
           <div v-if="table.rows.length" class="min-w-0 overflow-x-auto rounded-sm border" tabindex="0" :aria-label="`${table.label}表格，可横向滚动`">
-            <table class="w-full text-left text-[13px] leading-5 whitespace-nowrap" :aria-label="table.label">
+            <table class="w-full min-w-[960px] text-left text-[13px] leading-5" :aria-label="table.label">
               <thead class="bg-muted/40 text-muted-foreground">
                 <tr>
                   <th class="px-3 py-2 font-medium">序号</th>
@@ -153,7 +157,7 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                   <th class="px-3 py-2 font-medium">维护批次</th>
                   </template>
                   <th v-if="table.hasAliases" class="px-3 py-2 font-medium">曾用名</th>
-                <th class="sticky right-0 z-10 border-l bg-muted px-3 py-2 font-medium">出处 / 原字段</th>
+                <th class="bg-muted border-l px-3 py-2 font-medium">出处 / 原字段</th>
                 </tr>
               </thead>
               <tbody v-for="group in table.groups" :key="group.title" :data-record-title="group.title">
@@ -182,7 +186,7 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                     <td class="px-3 py-1.5">{{ record.batch ?? '未提供' }}</td>
                     </template>
                     <td v-if="table.hasAliases" class="px-3 py-1.5">{{ record.aliasNameRaw ?? '—' }}</td>
-                    <td class="sticky right-0 z-10 border-l bg-card px-3 py-1.5"><div class="flex flex-col items-start gap-1"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /><Button variant="ghost" size="sm" @click="selectedRelationId = record.id">对应事件/出处</Button></div></td>
+                    <td class="bg-card border-l px-3 py-1.5"><div class="flex flex-col items-start gap-1"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /><Button variant="ghost" size="sm" @click="selectedRelationId = record.id">对应事件/出处</Button></div></td>
                   </tr>
                 </template>
               </tbody>
