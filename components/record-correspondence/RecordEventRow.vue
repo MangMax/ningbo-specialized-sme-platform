@@ -70,7 +70,7 @@ const interfaceSummary = computed(() => {
 
 <template>
   <section :id="`record-event-${event.id}`" class="scroll-mt-20">
-    <DisclosurePanel :open="open" compact @update:open="emit('update:open', $event)">
+    <DisclosurePanel :open="open" compact trigger-class="px-4 sm:px-5" @update:open="emit('update:open', $event)">
       <template #header>
         <div class="grid min-w-0 gap-x-4 gap-y-2 px-4 pt-4 sm:grid-cols-[6.5rem_minmax(0,1fr)_auto] sm:items-start sm:px-5">
           <div class="flex items-center gap-2 sm:flex-col sm:items-start sm:gap-1">
@@ -123,7 +123,7 @@ const interfaceSummary = computed(() => {
         </div>
       </template>
       <template #trigger>
-        <span class="w-full px-4 text-right text-[13px] sm:px-5">来源记录</span>
+        <span class="w-full text-right text-[13px]">来源记录</span>
       </template>
       <RecordEventSource :event="event" :evidence="evidence" :edges="edges" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" />
     </DisclosurePanel>
