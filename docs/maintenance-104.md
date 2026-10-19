@@ -46,7 +46,7 @@ REST PATCH 在同一对象附上元数据字段；MCP `update_file` 把字段放
 
 ## 验证与证据
 
-测试文件：`tests/file-maintenance-104-http.test.ts`。真实 Nuxt HTTP、MCP `tools/call`、独立 SQLite 和临时文件库；夹具先应用当前 integration 已有迁移（包括0021、排除本票0020），再由真实应用启动执行本票迁移，覆盖已有集成库升级；另有既有文件测试覆盖空库完整迁移；随机独占端口、独立 Nuxt buildDir，`maxWorkers=1`。仅夹具准备及故障注入使用直接数据库操作，业务结果经公开读取验证。
+测试文件：`tests/file-maintenance-104-http.test.ts`。真实 Nuxt HTTP、MCP `tools/call`、独立 SQLite 和临时文件库；夹具先应用当前journal在0020之前的真实前缀（包括0021/0022及先合入的0017，不能提前纳入0020之后的0018/0019），再由真实应用启动执行本票及后续迁移，覆盖已有集成库升级；另有既有文件测试覆盖空库完整迁移；随机独占端口、独立 Nuxt buildDir，`maxWorkers=1`。仅夹具准备及故障注入使用直接数据库操作，业务结果经公开读取验证。
 
 | 验收 | 精确测试名 |
 | --- | --- |

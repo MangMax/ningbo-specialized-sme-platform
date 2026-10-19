@@ -504,6 +504,21 @@ export const importBatch = sqliteTable(
   ],
 )
 
+/** #103: retained import attempts; terminal receipts are never rewritten by reads/retries. */
+export const importReceipt = sqliteTable('import_receipt', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  batchId: integer('batch_id').notNull().references(() => importBatch.id),
+  operation: text('operation', { enum: ['preflight', 'commit', 'replay'] }).notNull(),
+  requestHash: text('request_hash').notNull(),
+  /** Canonical validated original-body protocol, with credentials removed before storage. */
+  requestBody: text('request_body').notNull(),
+  status: text('status', { enum: ['processing', 'preflight', 'committed', 'failed'] }).notNull(),
+  summary: text('summary', { mode: 'json' }).$type<unknown>(),
+  itemResults: text('item_results', { mode: 'json' }).$type<unknown>(),
+  createdAt: text('created_at').notNull(),
+  completedAt: text('completed_at'),
+}, t => [index('import_receipt_batch_id_idx').on(t.batchId, t.id)])
+
 /**
  * **企业曾用名 / 别名**(契约 1)。企业身份的**历史记录**,不是另一家企业。
  *

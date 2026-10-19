@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
 import { relative, isAbsolute } from 'node:path'
-import { and, asc, count, desc, eq, ne, or } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, ne, or } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import * as schema from '../../db/schema'
@@ -10,6 +10,7 @@ import { normalizeAttachment } from '../../lib/attachment'
 import { evidencePreviewHref, isPageCapable } from '../../lib/roster/evidence-page'
 import { readPdfPageCount, resolveWithinRoot } from './pdf-pages'
 import { advanceOfficialEventRevision } from './roster-event-version'
+import { refreshDerivedFileParts } from './file-parts'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -78,7 +79,7 @@ function validateDestination(db: Executor, row: ReturnType<typeof readExactEvide
   if (strictFile && (!file || file.removedAt || file.source !== 'jxj' || file.kind !== 'announcement' || file.titleCode && file.titleCode !== row.titleCode)) fail('file_identity_conflict', 'An active official announcement file of the same title is required')
   if (file && (file.removedAt || file.sha256 !== inspection.sha256 || file.bytes !== inspection.bytes)) fail('file_changed', 'Original file differs from registered identity', 409)
   // A supplied attachment must belong to the explicitly declared segment, when present.
-  const parts = strictFile && file ? db.select({ titleCode: schema.storedFilePart.titleCode, eventKind: schema.storedFilePart.eventKind, year: schema.storedFilePart.year, batch: schema.storedFilePart.batch, attachment: schema.storedFilePart.attachment, hasConflict: schema.storedFilePart.hasConflict }).from(schema.storedFilePart).where(eq(schema.storedFilePart.fileId, file.id)).limit(1001).all() : []
+  const parts = strictFile && file ? db.select({ titleCode: schema.storedFilePart.titleCode, eventKind: schema.storedFilePart.eventKind, year: schema.storedFilePart.year, batch: schema.storedFilePart.batch, attachment: schema.storedFilePart.attachment, hasConflict: schema.storedFilePart.hasConflict }).from(schema.storedFilePart).where(and(eq(schema.storedFilePart.fileId, file.id), inArray(schema.storedFilePart.origin, ['agent', 'legacy']))).limit(1001).all() : []
   if (parts.length > 1000) fail('ambiguous_attachment', 'Too many declared segments; narrow source before correction')
   if (strictFile && parts.length) {
     const matches = parts.filter(p => p.titleCode === row.titleCode && p.eventKind === row.event.eventType && p.year === row.event.year && p.batch === row.event.batchSeq && normalizeAttachment(p.attachment) === normalizeAttachment(coordinate.attachment))
@@ -165,11 +166,17 @@ export async function commitEvidenceCorrection(db: Db, request: EvidenceCorrecti
     const receipt = { status: 'committed', idempotencyKey: request.idempotencyKey, planHash, impact: plan.impact, evidenceIds: plan.targets.map(t => t.evidenceId), committedAt: new Date().toISOString() }
     tx.insert(schema.evidenceCorrectionBatch).values({ idempotencyKey: request.idempotencyKey, requestHash: hash(request), planHash, receipt, createdAt: receipt.committedAt }).run()
     const changedEvents = new Map<number, number>()
+    const changedFiles = new Set<string>()
     for (const target of plan.targets) {
       const changed = writeEvidenceCoordinate(tx, readExactEvidence(tx, target.evidenceId), target.after, { actor: request.actor, basis: request.basis, entryPoint: 'correction', batchKey: request.idempotencyKey }, target.file, false)
-      if (changed) changedEvents.set(target.eventId, target.event.revision)
+      if (changed) {
+        changedEvents.set(target.eventId, target.event.revision)
+        changedFiles.add(target.before.sourceFile)
+        changedFiles.add(target.after.sourceFile)
+      }
     }
     for (const [eventId, revision] of changedEvents) advanceOfficialEventRevision(tx, eventId, revision)
+    refreshDerivedFileParts(tx, changedFiles)
     return receipt
   }, { behavior: 'immediate' })
 }
@@ -197,7 +204,9 @@ export function createLegacyEvidencePageAdapter(db: Db, filesDir?: string) {
     return db.transaction(tx => {
       const file = validateDestination(tx, row, coordinate, inspection, false)
       if (input.dryRun) return false
-      return writeEvidenceCoordinate(tx, row, coordinate, { actor: { type: 'legacy', id: 'evidence-pages-adapter' }, basis: input.basis ?? 'Legacy page entry; basis not supplied', entryPoint: 'legacy_pages', batchKey: null }, file)
+      const changed = writeEvidenceCoordinate(tx, row, coordinate, { actor: { type: 'legacy', id: 'evidence-pages-adapter' }, basis: input.basis ?? 'Legacy page entry; basis not supplied', entryPoint: 'legacy_pages', batchKey: null }, file)
+      if (changed) refreshDerivedFileParts(tx, [row.coordinate.sourceFile, coordinate.sourceFile])
+      return changed
     }, { behavior: 'immediate' })
   }
 }

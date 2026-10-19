@@ -82,6 +82,14 @@
  * 本轮只重生新增的最后一步：其 name-only 项与两个不同 USCC 候选同名，现须按 §8.9
  * 返回 `enterprise_ambiguous` 并使整批失败。此前黄金记录了“取第一行”并成功写入，已不再
  * 符合合同；前七步及其可观察结果仍必须逐字不变。
+ *
+ * ── #99/#100 schema 默认字段（2026-10-19，#103 同步集成 tip）──────────
+ * 父 tip f31f57b 在隔离 checkout 上同样失败；逐字段核对后仅新增 7 个默认值：
+ * 三条事件 revision=1，一条别名 version=1 及三个 original* 字段为 null。
+ * 既有 outcome、行计数、所有原值和 JSON 摘要逐字未变；不将 #103 回执表加入旧快照。
+ * 最终合入 #102 后，仅给原差异行追加 8 个 nullable 生命周期字段（均 null）。
+ * 集成字段级证明：/tmp/ningbo-spec98/merge-101-104/golden-delta-proof-102.json。
+ * 未创建生命周期决定，原字段、结果、行数及摘要不变。
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

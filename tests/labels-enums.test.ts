@@ -15,6 +15,7 @@ import {
   FIRST_RECOGNITION_STATUSES,
   FIRST_RECOGNITION_STATUS_ORDER,
   IMPORT_BATCH_STATUSES,
+  IMPORT_SOURCE_KIND_ORDER,
   IMPORT_SOURCE_KINDS,
   PLATFORM_INTERFACES,
   PLATFORM_INTERFACE_ORDER,
@@ -25,6 +26,7 @@ import {
   REVIEW_OUTCOMES,
   SOURCES,
   VERIFICATION_STATUSES,
+  VERIFICATION_STATUS_ORDER,
 } from '../lib/labels'
 import {
   FIRST_RECOGNITION_PENDING_REASON_VALUES,
@@ -71,6 +73,24 @@ describe('冻结取值集:db/schema.ts 的列枚举 ↔ lib/labels.ts 的标签�
       expect(IDENTITY(Object.keys(table))).toEqual(IDENTITY(values))
     })
   }
+})
+
+describe('维护状态的中文标签与展示顺序', () => {
+  it('别名撤回显示为已撤回并排在待核实之后，平台关系与差异原因仍只允许两态', () => {
+    expect(VERIFICATION_STATUSES.withdrawn).toBe('已撤回')
+    expect(VERIFICATION_STATUS_ORDER).toEqual(['confirmed', 'pending', 'withdrawn'])
+    expect(schema.platformRelation.verificationStatus.enumValues).toEqual(['confirmed', 'pending'])
+    expect(schema.differenceReason.verificationStatus.enumValues).toEqual(['confirmed', 'pending'])
+  })
+
+  it('正式事件更正具有中文来源标签并追加到原有来源展示顺序', () => {
+    expect(IMPORT_SOURCE_KINDS.event_correction).toBe('正式事件更正')
+    expect(IMPORT_SOURCE_KIND_ORDER).toEqual([
+      'announcement', 'platform_export', 'alias_evidence',
+      'correspondence_decision', 'comparison_scope_proof', 'event_correction',
+    ])
+    expect(IDENTITY(IMPORT_SOURCE_KIND_ORDER)).toEqual(IDENTITY(schema.importBatch.sourceKind.enumValues))
+  })
 })
 
 describe('差异状态的标签 / 徽章色 / 展示顺序同键集合(RL-15)', () => {
