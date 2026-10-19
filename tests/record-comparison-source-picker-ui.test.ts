@@ -6,7 +6,7 @@ import { Tabs } from '../components/ui/tabs'
 
 const rows = {
   official_document: [{ kind: 'official_document', id: 3, label: '2024 年专精特新公布名单', subtitle: '甬经信〔2024〕1号', titleCode: null, titleName: null, observedAt: '2024-10-01', status: 'available', selectable: true, path: 'jxj/a.pdf' }],
-  query: [{ kind: 'query', id: 7, label: '申报流程 · 专精特新中小企业 · 合成企业', subtitle: 'apply_list', titleCode: 'specialized_sme', titleName: '专精特新中小企业', observedAt: '2025-01-02T00:00:00Z', status: 'partial', selectable: true, rdjb: '2', completeness: 'partial', fullRange: false, conditions: { combination: 'and', uscc: '913300000000000004' } }],
+  query: [{ kind: 'query', id: 7, label: '申报流程 · 专精特新中小企业 · 合成企业', subtitle: 'apply_list', titleCode: 'specialized_sme', titleName: '专精特新中小企业', observedAt: '2025-01-02T00:00:00Z', status: 'partial', selectable: true, rdjb: '2', completeness: 'partial', fullRange: false, conditions: { combination: 'and', uscc: '913300000000000004' }, confirmedEnterprises: [{ relationId: 21, sequenceNo: 1, enterpriseId: 7, enterpriseName: '合成111-归并', nameRaw: '合成111-归并旧主体', matchBasis: 'manual', aliasConfirmed: true, mergedFromEnterpriseId: 8 }], recordNames: [] }],
   export_batch: [{ kind: 'export_batch', id: 8, label: '专精特新中小企业 · 2025 · export.xlsx', subtitle: 'export.xlsx', titleCode: 'specialized_sme', titleName: '专精特新中小企业', observedAt: '2025-02-01', status: 'failed', selectable: false, sha256: 'a'.repeat(64), rowCount: 0, replacedBatchId: null }],
 }
 const queryTitle = (name: string) => `申报办理记录 · ${name} · 按统一社会信用代码查询 · 条件同时满足`
@@ -45,12 +45,47 @@ it('shows human source names and times, permits partial queries, and blocks fail
   await flushPromises()
   expect(wrapper.text()).toContain('部分采集')
   expect(wrapper.text()).toContain('2025-01-02')
+  expect(wrapper.get('[data-testid="source-enterprise-identity"]').text()).toBe('已确认主体 1 家：合成111-归并（#7）')
+  expect(wrapper.get('[data-testid="source-raw-name"]').text()).toContain('平台原行名称：合成111-归并旧主体 → 合成111-归并（#7）')
+  expect(wrapper.get('[data-testid="source-raw-name"]').text()).toContain('归并自 #8')
+  expect(wrapper.text()).not.toContain('未关联企业名称')
   expect(wrapper.get(`[aria-label="选择${queryTitle('专精特新中小企业')}"]`).attributes('disabled')).toBeUndefined()
   wrapper.findComponent(Tabs).vm.$emit('update:modelValue', 'export_batch')
   await flushPromises()
   expect(wrapper.get('[aria-label="选择专精特新中小企业 · 2025 · export.xlsx"]').attributes('disabled')).toBeDefined()
 })
 
+it('marks unconfirmed platform names and keeps large confirmed lists out of the row until expanded', async () => {
+  const confirmedEnterprises = Array.from({ length: 5 }, (_, index) => ({
+    relationId: 100 + index,
+    sequenceNo: index + 1,
+    enterpriseId: index + 1,
+    enterpriseName: `企业${index + 1}`,
+    nameRaw: `原行${index + 1}`,
+    matchBasis: 'uscc',
+    aliasConfirmed: false,
+    mergedFromEnterpriseId: null,
+  }))
+  const queryRows = [
+    { ...rows.query[0], id: 9, confirmedEnterprises: [], recordNames: ['平台原行待关联'] },
+    { ...rows.query[0], id: 10, confirmedEnterprises, recordNames: ['另一个未确认名称'] },
+  ]
+  vi.stubGlobal('$fetch', vi.fn(async () => ({ rows: queryRows, total: 2, page: 1, pageSize: 25 })))
+  const wrapper = mount(ComparisonSourcePicker, { props: { kind: 'query', selection: { queryIds: [], exportBatchIds: [], officialSourceDocumentIds: [], proofIds: [] } }, global: { stubs: { TableLoadingStatus: true, TableFailureState: true, TablePagination: true } } })
+  wrapperList.push(wrapper)
+  await flushPromises()
+  const identities = wrapper.findAll('[data-testid="source-enterprise-identity"]').map(node => node.text())
+  const unconfirmed = wrapper.findAll('[data-testid="source-unconfirmed-name"]').map(node => node.text())
+  expect(unconfirmed).toContain('平台记录名称（未确认主体）：平台原行待关联')
+  expect(unconfirmed).toContain('平台记录名称（未确认主体）：另一个未确认名称')
+  expect(identities).toContain('已确认主体 5 家：企业1（#1）、企业2（#2）、企业3（#3） 等')
+  expect(wrapper.find('[data-testid="source-enterprise-details"]').exists()).toBe(false)
+  await wrapper.findAll('button').find(button => button.text().includes('查看全部 6 条主体信息'))!.trigger('click')
+  const details = wrapper.get('[data-testid="source-enterprise-details"]').findAll('li').map(node => node.text())
+  expect(details).toHaveLength(6)
+  expect(details[0]).toContain('平台原行名称：原行1')
+  expect(details.at(-1)).toBe('平台记录名称（未确认主体）：另一个未确认名称')
+})
 it('keeps bookmarked selection after name hydration fails and offers a retry', async () => {
   let failSelected = true
   vi.stubGlobal('$fetch', vi.fn(async (_url: string, options: { query: { kind: keyof typeof rows; pageSize: number; page: number } }) => {

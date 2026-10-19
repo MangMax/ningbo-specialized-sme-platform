@@ -122,8 +122,13 @@ function decisionSummary(row: HistoryRow): string {
       <DecisionVersionDetails :decision="displayedVersion" label="历史决定" />
     </div>
 
+    <p v-if="displayed && displayed.total > 0 && displayed.total <= displayed.pageSize" class="text-muted-foreground text-[13px] leading-5">
+      共 {{ displayed.total }} 个版本
+    </p>
+
+    <!-- 只有真正多页时才出现完整分页器；单个版本不再占一整排控件。 -->
     <TablePagination
-      v-if="displayed"
+      v-if="displayed && displayed.total > displayed.pageSize"
       :page="displayed.page"
       :page-size="displayed.pageSize"
       :total="displayed.total"

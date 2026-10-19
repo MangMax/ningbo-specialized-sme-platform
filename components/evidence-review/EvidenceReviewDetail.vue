@@ -15,7 +15,7 @@ import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
 const emit = defineEmits<{ saved: [] }>()
 const refreshAffected = useEvidenceReviewRefresh()
-const props = defineProps<{ impactId: number; enterpriseId?: number }>()
+const props = defineProps<{ impactId: number; enterpriseId?: number; formFooter?: boolean }>()
 const { data, isLoading, error, refetch } = useQuery({ key: () => ['evidence-impact', props.impactId], query: () => $fetch<ImpactDetail>(`/api/roster/evidence-impacts/${props.impactId}`) })
 async function reloadCurrent() {
   await refreshAffected()
@@ -95,6 +95,12 @@ async function reloadCurrent() {
         </span>
       </div>
 
+      <!--
+        主操作放在决定摘要之后、技术细节/来源/历史之前：390 的 Sheet 里
+        复核表单不再落到首屏 1000px 以下；详情仍可继续向下读。
+      -->
+      <EvidenceReviewForm :detail="data" :refreshing="isLoading || !!error" :footer="formFooter" @reload="reloadCurrent" @saved="emit('saved')" />
+
       <DisclosurePanel compact keep-mounted content-class="pb-0" class="text-muted-foreground">
         <template #trigger><span>技术详情</span></template>
         <p class="mt-1 break-words">
@@ -135,8 +141,6 @@ async function reloadCurrent() {
         v-if="data.oldDecision && !data.gaps.decisionUnavailable && data.lineage !== 'merged'"
         :scope="{ enterpriseId: data.enterpriseId, titleCode: data.titleCode, direction: data.direction }"
       />
-
-      <EvidenceReviewForm :detail="data" :refreshing="isLoading || !!error" @reload="reloadCurrent" @saved="emit('saved')" />
     </template>
 
     <button v-else-if="!isLoading && !error" type="button" class="text-primary self-start text-[13px] hover:underline" @click="refetch()">

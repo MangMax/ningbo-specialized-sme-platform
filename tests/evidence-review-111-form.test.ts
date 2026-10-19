@@ -2,6 +2,7 @@
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
+import { defineComponent, nextTick } from 'vue'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import EvidenceReviewForm from '../components/evidence-review/EvidenceReviewForm.vue'
 import { Select } from '../components/ui/select'
@@ -25,6 +26,22 @@ async function fill(view: ReturnType<typeof render>) {
   await view.get('[aria-label="复核依据"]').setValue('核对新查询并保留原业务判断')
   await view.get('[aria-label="规则版本"]').setValue('manual-2026')
 }
+it('keeps the sheet primary action outside the scroll body and bound to the same form', async () => {
+  const Host = defineComponent({
+    components: { EvidenceReviewForm },
+    setup: () => ({ detail }),
+    template: '<div><div id="review-sheet-footer" /><EvidenceReviewForm :detail="detail" footer /></div>',
+  })
+  const view = mount(Host, { attachTo: document.body, global: { plugins: [createPinia(), PiniaColada] } })
+  await flushPromises()
+  await nextTick()
+  const form = view.get('form')
+  const submit = view.find('#review-sheet-footer button[type="submit"]')
+  expect(submit.exists()).toBe(true)
+  expect(submit.attributes('form')).toBe(form.attributes('id'))
+  expect(view.findAll('button[type="submit"]')).toHaveLength(1)
+  view.unmount()
+})
 it('keeps public review unsubmittable until a write credential and explicit review inputs exist', async () => {
   const view = render()
   expect(view.text()).toContain('当前不可提交')

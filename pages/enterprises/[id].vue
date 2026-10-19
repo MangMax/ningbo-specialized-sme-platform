@@ -2,7 +2,7 @@
 import { useQuery } from '@pinia/colada'
 import { computed, nextTick, onMounted, provide, ref, shallowRef, watch } from 'vue'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
-import type { CursorPage, ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
+import type { ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import {
   headerCheckLabel,
   impactOldDecisionText,
@@ -26,6 +26,7 @@ import {
   useEvidencePreviewScrollRestore,
 } from '~~/lib/roster/evidence-preview-return'
 import { useEnterpriseCorrespondences } from '~/composables/useEnterpriseCorrespondences'
+import { useEnterprisePendingImpacts } from '~/composables/useEnterprisePendingImpacts'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -118,17 +119,12 @@ const { data, isLoading, error, refetch } = useQuery({
  * 待复核清单只用来回答“现在有没有要处理的事”和给出第一项的入口。
  * 读取失败时保持未知，不把 0 当作结论。
  */
-const pendingParams = computed(() => ({ enterpriseId: Number(id.value), view: 'current', state: 'pending', limit: 25 }))
 const {
   data: pendingData,
   isLoading: pendingLoading,
   error: pendingError,
   refetch: refetchPending,
-} = useQuery({
-  key: () => ['evidence-impacts', pendingParams.value],
-  query: ({ entry }) => $fetch<CursorPage<ImpactRow>>('/api/roster/evidence-impacts', { query: entry.key[1] as Record<string, string | number> }),
-  placeholderData: previous => previous,
-})
+} = useEnterprisePendingImpacts(id)
 
 const assessments = computed<(ReviewAssessment & ReviewScope)[]>(() => (data.value?.titleAssessments ?? []) as unknown as (ReviewAssessment & ReviewScope)[])
 const pendingRows = computed(() => pendingData.value?.rows ?? [])
@@ -334,6 +330,14 @@ function applyTab(next: DetailTab) {
   void router.replace({ path: route.path, query })
 }
 
+/**
+ * eventId 深链要落在具体那一行：多个事件同在记录页时，仅展开来源不足以说明
+ * “到了哪里”。滚动后短暂高亮目标行，再自行褪去。
+ */
+const highlightedEventId = ref<number | null>(null)
+function highlightEvent(eventId: number) {
+  highlightedEventId.value = eventId
+}
 async function arriveAtEvent(eventId: number | null) {
   if (typeof document === 'undefined') return
   if (!detail.value || eventId == null || !detail.value.records.some(record => record.events.some(event => event.id === eventId))) return
@@ -341,8 +345,14 @@ async function arriveAtEvent(eventId: number | null) {
   tab.value = 'records'
   setEvidenceDisclosureOpen(evidenceDisclosureKey(eventId), true)
   await nextTick()
+  // Nuxt may still be restoring the page scroll after the route settles; wait two
+  // frames and a short delay so the locate is the last scroll, not the first.
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  await new Promise<void>(resolve => setTimeout(resolve, 50))
   if (id.value !== enterpriseId || focusedEventId.value !== eventId) return
-  document.getElementById(`record-event-${eventId}`)?.scrollIntoView({ block: 'start' })
+  const target = document.getElementById(`record-event-${eventId}`)
+  target?.scrollIntoView({ block: 'start' })
+  if (target) highlightEvent(eventId)
 }
 watch([detail, focusedEventId], ([, eventId]) => arriveAtEvent(eventId), { immediate: true })
 
@@ -521,6 +531,7 @@ function openPreview(e: Evidence) {
                     :back="route.fullPath"
                     :return-to="sourceReturnTarget(route.query.returnTo)"
                     :open="evidenceDisclosureOpen(evidenceDisclosureKey(event.id))"
+                    :highlighted="highlightedEventId === event.id"
                     @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(event.id), $event)"
                     @preview="openPreview"
                     @event-navigate="arriveAtEvent"
@@ -541,7 +552,8 @@ function openPreview(e: Evidence) {
           </Alert>
 
           <!-- 平台原行是辅助区，默认收起；它不参与上面的出处判定。 -->
-          <DisclosurePanel keep-mounted content-class="pb-0" trigger-class="px-4" class="bg-card overflow-hidden rounded-lg border">
+          <p v-if="platformRowCount === 0" class="text-muted-foreground px-1 text-[13px] leading-5">平台记录 0 条</p>
+          <DisclosurePanel v-else keep-mounted content-class="pb-0" trigger-class="px-4" class="bg-card overflow-hidden rounded-lg border">
             <template #trigger>
               <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <span class="text-sm font-medium">平台记录</span>

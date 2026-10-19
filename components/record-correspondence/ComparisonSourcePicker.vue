@@ -3,8 +3,12 @@ import { computed, ref, watch } from 'vue'
 import { PLATFORM_QUERY_STATUSES } from '~~/lib/labels'
 import { humanRecordTime } from '~~/lib/roster/record-ledger'
 import {
+  comparisonSourceEnterpriseDetails,
+  comparisonSourceEnterpriseLine,
+  comparisonSourceRawNameLine,
   comparisonSourceSecondaryIds,
   comparisonSourceTitle,
+  comparisonSourceUnconfirmedLine,
 } from '~~/lib/roster/record-comparison-display'
 import { sourceSelectionKey, type ComparisonSelection, type ComparisonSource, type ComparisonSourceCatalog, type ComparisonSourceKind } from '~~/lib/roster/record-comparison-view'
 import { Button } from '@/components/ui/button'
@@ -75,6 +79,17 @@ const observedAt = (source: ComparisonSource) => humanRecordTime(source.observed
 /** 平台查询用接口 + 称号 + 查询范围作主标题；SYN 查询键 / 信用代码退为次要信息。 */
 const sourceTitle = (source: ComparisonSource) => comparisonSourceTitle(source)
 const sourceSecondaryIds = (source: ComparisonSource) => comparisonSourceSecondaryIds(source)
+const sourceEnterpriseLine = (source: ComparisonSource) => comparisonSourceEnterpriseLine(source)
+const sourceRawNameLine = (source: ComparisonSource) => comparisonSourceRawNameLine(source)
+const sourceUnconfirmedLine = (source: ComparisonSource) => comparisonSourceUnconfirmedLine(source)
+const enterpriseDetails = (source: ComparisonSource) => comparisonSourceEnterpriseDetails(source)
+/** 一对多可能很多：行内只给摘要，完整清单按需展开。 */
+const expandedIdentities = ref<Record<string, boolean>>({})
+const identityExpanded = (source: ComparisonSource) => expandedIdentities.value[keyOf(source)] === true
+function toggleIdentity(source: ComparisonSource) {
+  const key = keyOf(source)
+  expandedIdentities.value = { ...expandedIdentities.value, [key]: !expandedIdentities.value[key] }
+}
 function selected(source: ComparisonSource) { return props.selection[sourceSelectionKey(source.kind)].includes(source.id) }
 function toggle(source: ComparisonSource, checked: boolean) {
   if (!source.selectable) return
@@ -154,13 +169,28 @@ watch(selectionKey, () => { void hydrateSelectedLabels() }, { immediate: true, f
       <ul class="flex min-w-0 flex-col divide-y">
         <li v-for="source in shownRows" :key="keyOf(source)" class="flex min-w-0 items-start gap-3 p-2.5" :data-source-kind="source.kind" :data-source-id="source.id">
           <Checkbox :id="`source-${source.kind}-${source.id}`" :model-value="selected(source)" :disabled="!source.selectable" class="mt-0.5" :aria-label="`选择${sourceTitle(source)}`" @update:model-value="toggle(source, $event === true)" />
-          <label :for="`source-${source.kind}-${source.id}`" class="min-w-0 flex-1 cursor-pointer break-words [overflow-wrap:anywhere]">
-            <span class="block text-[13px] font-medium">{{ sourceTitle(source) }}</span>
-            <span class="text-muted-foreground block text-[13px]" :title="sourceNote(source)">{{ observedAt(source) }}<span v-if="source.kind === 'query' && source.completeness === 'partial'"> · 部分采集</span><span v-else-if="source.kind === 'official_document' && source.subtitle"> · {{ source.subtitle }}</span></span>
-            <span v-if="sourceSecondaryIds(source).length" class="text-muted-foreground block font-mono text-xs">
-              {{ sourceSecondaryIds(source).join(' · ') }}
-            </span>
-          </label>
+          <div class="min-w-0 flex-1">
+            <label :for="`source-${source.kind}-${source.id}`" class="min-w-0 cursor-pointer break-words [overflow-wrap:anywhere]">
+              <span class="block text-[13px] font-medium">{{ sourceTitle(source) }}</span>
+              <span class="text-muted-foreground block text-[13px]" :title="sourceNote(source)">{{ observedAt(source) }}<span v-if="source.kind === 'query' && source.completeness === 'partial'"> · 部分采集</span><span v-else-if="source.kind === 'official_document' && source.subtitle"> · {{ source.subtitle }}</span></span>
+              <template v-if="source.kind === 'query'">
+                <span v-if="sourceEnterpriseLine(source)" class="block text-[13px]" data-testid="source-enterprise-identity">{{ sourceEnterpriseLine(source) }}</span>
+                <span v-if="sourceUnconfirmedLine(source)" class="text-muted-foreground block text-[13px]" data-testid="source-unconfirmed-name">{{ sourceUnconfirmedLine(source) }}</span>
+                <span v-if="sourceRawNameLine(source)" class="text-muted-foreground block text-[13px]" data-testid="source-raw-name">{{ sourceRawNameLine(source) }}</span>
+              </template>
+              <span v-if="sourceSecondaryIds(source).length" class="text-muted-foreground block font-mono text-xs">
+                {{ sourceSecondaryIds(source).join(' · ') }}
+              </span>
+            </label>
+            <template v-if="source.kind === 'query' && enterpriseDetails(source).length > 3">
+              <Button variant="link" size="sm" class="h-6 self-start px-1 text-[13px]" :aria-expanded="identityExpanded(source)" @click="toggleIdentity(source)">
+                {{ identityExpanded(source) ? '收起主体清单' : `查看全部 ${enterpriseDetails(source).length} 条主体信息` }}
+              </Button>
+              <ul v-if="identityExpanded(source)" class="text-muted-foreground mt-1 flex flex-col gap-0.5 text-[13px] leading-5" data-testid="source-enterprise-details">
+                <li v-for="detail in enterpriseDetails(source)" :key="detail" class="break-words [overflow-wrap:anywhere]">{{ detail }}</li>
+              </ul>
+            </template>
+          </div>
           <Badge variant="outline" class="shrink-0">{{ sourceStatus(source) }}</Badge>
         </li>
       </ul>

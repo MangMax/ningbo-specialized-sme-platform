@@ -31,6 +31,17 @@ it('retains immutable text ID and audit after same-version background failure an
   expect(fetcher).toHaveBeenLastCalledWith('/api/roster/decision-lifecycle/82')
   view.unmount()
 })
+it('hides the full pager when a scope has only one history page', async () => {
+  vi.stubGlobal('$fetch', vi.fn(async (url: string) => {
+    if (url.endsWith('/history')) return { rows: [{ id: 82, recordedAt: '2026-10-01', lifecycleAction: null }], total: 1, page: 1, pageSize: 25 }
+    throw new Error('Unexpected request: ' + url)
+  }))
+  const view = mount(DecisionHistory, { props: { scope }, global: { plugins: [createPinia(), PiniaColada] } })
+  await flushPromises()
+  expect(view.text()).toContain('共 1 个版本')
+  expect(view.find('[data-testid="table-pagination"]').exists()).toBe(false)
+  view.unmount()
+})
 it('labels the retained successful source separately from a changed failed target and clears it on scope navigation', async () => {
   let fail = true
   vi.stubGlobal('$fetch', vi.fn(async (url: string) => {

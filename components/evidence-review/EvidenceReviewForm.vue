@@ -9,7 +9,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import ReplacementDecisionFields from './ReplacementDecisionFields.vue'
 
-const props = defineProps<{ detail: ImpactDetail; refreshing?: boolean }>()
+const props = defineProps<{ detail: ImpactDetail; refreshing?: boolean; footer?: boolean }>()
 const emit = defineEmits<{ saved: []; reload: [] }>()
 const refreshAffected = useEvidenceReviewRefresh()
 const token = shallowRef('')
@@ -20,6 +20,8 @@ const pending = shallowRef(false)
 const failure = shallowRef('')
 const mode = shallowRef<'maintain' | 'replace'>('maintain')
 const choiceId = useId()
+/** Sheet 模式把主操作放进独立 footer；button[form] 仍提交同一张表单。 */
+const formId = useId()
 const conflict = shallowRef(false)
 watch(() => props.detail, () => { if (conflict.value) failure.value = ''; conflict.value = false })
 
@@ -106,7 +108,7 @@ async function save() {
 </script>
 
 <template>
-  <form class="flex min-w-0 flex-col gap-3" @submit.prevent="save">
+  <form :id="formId" class="flex min-w-0 flex-col gap-3" @submit.prevent="save">
     <div class="bg-card flex min-w-0 flex-col gap-3 rounded-lg border p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h3 class="text-sm font-semibold">复核原决定 #{{ detail.decisionId }}</h3>
@@ -185,7 +187,19 @@ async function save() {
         {{ blockedReason }}
       </p>
 
-      <div class="flex flex-wrap gap-2">
+      <!--
+        Sheet 里主操作放在滚动区外的 footer（由宿主的 #review-sheet-footer 承载），
+        不压住正文或输入框；内联展开时保持普通文档流。
+      -->
+      <Teleport v-if="footer" to="#review-sheet-footer" defer>
+        <div class="bg-card flex flex-wrap gap-2">
+          <Button type="submit" :form="formId" :disabled="!canSubmit" :aria-describedby="blockedReason ? 'review-submit-blocked-reason' : undefined">
+            {{ pending ? '保存中…' : mode === 'maintain' ? '维持原决定并完成复核' : '追加更正并完成复核' }}
+          </Button>
+          <Button type="button" variant="outline" :disabled="pending || refreshing" @click="emit('reload')">重新读取当前状态</Button>
+        </div>
+      </Teleport>
+      <div v-else class="bg-card flex flex-wrap gap-2">
         <Button type="submit" :disabled="!canSubmit" :aria-describedby="blockedReason ? 'review-submit-blocked-reason' : undefined">
           {{ pending ? '保存中…' : mode === 'maintain' ? '维持原决定并完成复核' : '追加更正并完成复核' }}
         </Button>

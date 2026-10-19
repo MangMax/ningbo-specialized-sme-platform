@@ -155,11 +155,6 @@ watch(() => props.impactId, impactId => {
 <template>
   <section class="flex min-w-0 flex-col gap-3" aria-label="称号核对">
     <header class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-      <div class="min-w-0">
-        <p class="text-muted-foreground max-w-[46ch] text-[13px] leading-5">
-          徽标深浅 = 称号等级（高 → 低）；两方向分开判断。
-        </p>
-      </div>
       <span class="text-muted-foreground text-[13px]">共 {{ assessments.length }} 个判断范围</span>
     </header>
 
@@ -196,12 +191,7 @@ watch(() => props.impactId, impactId => {
                   390 / 720 下两方向上下堆叠，列头消失；每个方向块必须自己带可见方向标签，
                   不能只靠 aria-label，否则两块卡片视觉同构。
                 -->
-                <span class="flex items-center gap-1.5 text-[13px] leading-5 font-medium md:hidden" data-testid="direction-label">
-                  <span
-                    class="size-1.5 shrink-0 rounded-full"
-                    :class="direction === 'missing_in_miit' ? 'bg-warning' : 'bg-primary'"
-                    aria-hidden="true"
-                  />
+                <span class="text-[13px] leading-5 font-medium md:hidden" data-testid="direction-label">
                   {{ directionLabel(direction) }}
                 </span>
                 <span class="flex min-w-0 items-start justify-between gap-2">
@@ -225,7 +215,14 @@ watch(() => props.impactId, impactId => {
                 <span class="text-foreground text-sm leading-5 font-medium">
                   {{ assessmentHeadline(group.byDirection[direction]!).label }}
                 </span>
-                <span class="text-muted-foreground text-[13px] leading-5">
+                <!--
+                  “未查询”“查询完成不等于一致”的免责声明由矩阵页脚集中说明一次；
+                  每格只保留状态和该格特有的业务事实，避免同一句重复四遍。
+                -->
+                <span
+                  v-if="!['not_queried', 'queried_unjudged'].includes(group.byDirection[direction]!.assessment)"
+                  class="text-muted-foreground text-[13px] leading-5"
+                >
                   {{ assessmentHeadline(group.byDirection[direction]!).detail }}
                 </span>
 
@@ -266,8 +263,8 @@ watch(() => props.impactId, impactId => {
       {{ showQuiet ? '收起尚未核对的方向' : `展开其余 ${hiddenQuietCount} 个尚未核对的方向` }}
     </Button>
 
-    <p class="text-muted-foreground max-w-[46ch] text-[13px] leading-5">
-      三轴独立保留；覆盖完整或未发现差异都不自动等于“一致 / 无需处理”。
+    <p class="text-muted-foreground max-w-[52ch] text-[13px] leading-5">
+      三轴独立保留；未查询不等于无记录，查询完成或覆盖完整也不自动等于“一致 / 无需处理”。
     </p>
 
     <DisclosurePanel compact content-class="pb-0" class="bg-card overflow-hidden rounded-lg border">

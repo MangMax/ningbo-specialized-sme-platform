@@ -208,7 +208,7 @@ const exportUrl = computed(() => {
   <div class="flex min-w-0 flex-col gap-3">
     <Tabs :model-value="mode" @update:model-value="setMode(String($event))"><TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="比对口径"><TabsTrigger value="record">记录级对比</TabsTrigger><TabsTrigger value="legacy">旧版比对</TabsTrigger><TabsTrigger value="review">待复核队列</TabsTrigger></TabsList></Tabs>
     <RecordComparisonPanel v-if="mode === 'record'" />
-    <EvidenceReviewList v-else-if="mode === 'review'" />
+    <EvidenceReviewList v-else-if="mode === 'review'" sync-query />
   <div v-else class="comparison-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader
       title="旧版比对 · 两侧名录对照"

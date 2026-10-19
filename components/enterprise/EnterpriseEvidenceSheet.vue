@@ -70,6 +70,7 @@ function discardAndClose() {
             :key="resolvedImpactId"
             :impact-id="resolvedImpactId"
             :enterprise-id="enterpriseId"
+            form-footer
             @saved="emit('saved')"
           />
         </template>
@@ -85,6 +86,9 @@ function discardAndClose() {
           </p>
         </template>
       </div>
+
+      <!-- 主操作固定在滚动区外，390 全宽 Sheet 也不会压住表单或键盘。 -->
+      <div v-if="resolvedImpactId" id="review-sheet-footer" class="bg-card shrink-0 border-t px-5 py-3" />
     </SheetContent>
   </Sheet>
 

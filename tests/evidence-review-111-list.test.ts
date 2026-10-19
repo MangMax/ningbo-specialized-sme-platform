@@ -46,6 +46,23 @@ it('filters the bounded review view by exact enterprise title direction and even
   expect(view.get('[data-testid="review-enterprise-link"]').attributes('href')).toContain('eventId=33')
   view.unmount()
 })
+it('keeps queue filters in the URL and returns detail links to the same filtered queue', async () => {
+  const replace = vi.fn()
+  vi.stubGlobal('useRoute', () => ({ query: { mode: 'review', reviewState: 'reviewed' }, path: '/comparison' }))
+  vi.stubGlobal('useRouter', () => ({ replace }))
+  const view = mount(EvidenceReviewList, { props: { syncQuery: true }, global: { plugins: [createPinia(), PiniaColada], stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } } })
+  await flushPromises()
+  expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts', { query: { view: 'current', state: 'reviewed', limit: 25 } })
+  const href = decodeURIComponent(view.get('[data-testid="review-enterprise-link"]').attributes('href')!)
+  expect(href).toContain('returnTo=/comparison?mode=review&reviewState=reviewed')
+  choose(view, '复核状态', 'all')
+  await view.get('form').trigger('submit'); await flushPromises()
+  const target = replace.mock.calls.at(-1)![0]
+  expect(target).toMatchObject({ path: '/comparison', query: { mode: 'review', reviewState: 'all' } })
+  const updated = decodeURIComponent(view.get('[data-testid="review-enterprise-link"]').attributes('href')!)
+  expect(updated).toContain('returnTo=/comparison?mode=review&reviewState=all')
+  view.unmount()
+})
 it('follows opaque cursor pages and retains the previous page with explicit retry on failure', async () => {
   const view = render(); await flushPromises()
   fetcher.mockRejectedValueOnce(new Error('private response must not be displayed'))
@@ -199,6 +216,25 @@ it('retains a source page and explains an invalid source cursor until the user r
   await view.findAll('button').find(b => b.text() === '重新读取来源')!.trigger('click'); await flushPromises()
   expect(view.text()).not.toContain('分页快照已过期或失效')
   expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts/4/sources', { query: { limit: 25 } })
+  view.unmount()
+})
+it('distinguishes the reviewed-before decision from the current append correction in a reviewed queue row', async () => {
+  mockRoutes(() => ({
+    rows: [{
+      ...row,
+      pending: false,
+      decisionId: 35,
+      oldDecision: { ...row.oldDecision, id: 35, lifecycleAction: 'replace', previousId: 10, status: 'confirmed_reason', reasonCode: 'other', measureCode: 'none' },
+    }],
+    nextCursor: null,
+    asOf: {},
+    projectionReady: true,
+  }))
+  const view = render(); await flushPromises()
+  const item = view.get('[data-testid="review-queue-item"]')
+  expect(item.text()).toContain('当前决定 #35（追加更正）')
+  expect(item.text()).toContain('复核前决定 #10 保留')
+  expect(item.text()).not.toContain('原决定 #35')
   view.unmount()
 })
 it('labels reviewed historical impacts as reviewed while preserving their original change classification', async () => {

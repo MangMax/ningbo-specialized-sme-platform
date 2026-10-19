@@ -15,22 +15,52 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/ui/empty'
 
-const props = defineProps<{ enterpriseId?: number; titleCode?: string; direction?: string }>()
+const props = defineProps<{ enterpriseId?: number; titleCode?: string; direction?: string; syncQuery?: boolean }>()
+
+/**
+ * 比对页的「待复核队列」把筛选写回地址栏：进入企业详情后，`returnTo`
+ * 才能回到同一组筛选，而不是一个被重置的队列。
+ */
+const QUEUE_KEYS = {
+  title: 'reviewTitle',
+  direction: 'reviewDirection',
+  state: 'reviewState',
+  view: 'reviewView',
+  enterprise: 'reviewEnterprise',
+  event: 'reviewEvent',
+} as const
+const syncQuery = props.syncQuery === true
+const route = syncQuery ? useRoute() : null
+const router = syncQuery ? useRouter() : null
+function queryValue(key: keyof typeof QUEUE_KEYS): string | undefined {
+  const value = route?.query[QUEUE_KEYS[key]]
+  return typeof value === 'string' ? value : undefined
+}
+function positiveId(value: string | undefined): number | undefined {
+  return value && /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : undefined
+}
+const initialEnterprise = props.enterpriseId ?? positiveId(queryValue('enterprise'))
+const initialTitle = props.titleCode ?? (queryValue('title') && queryValue('title') !== 'all' && Object.hasOwn(TITLES, queryValue('title')!) ? queryValue('title') : undefined)
+const initialDirection = props.direction ?? (['missing_in_miit', 'extra_in_miit'].includes(queryValue('direction') ?? '') ? queryValue('direction') : undefined)
+const initialEvent = positiveId(queryValue('event'))
+const initialState = ['pending', 'reviewed', 'all'].includes(queryValue('state') ?? '') ? queryValue('state')! : 'pending'
+const initialView = ['current', 'historical', 'all'].includes(queryValue('view') ?? '') ? queryValue('view')! : 'current'
 
 const draft = reactive({
-  enterprise: props.enterpriseId ? String(props.enterpriseId) : '',
-  title: props.titleCode ?? 'all',
-  direction: props.direction ?? 'all',
-  event: '',
-  view: 'current',
-  state: 'pending',
+  enterprise: initialEnterprise ? String(initialEnterprise) : '',
+  title: initialTitle ?? 'all',
+  direction: initialDirection ?? 'all',
+  event: initialEvent ? String(initialEvent) : '',
+  view: initialView,
+  state: initialState,
 })
 const filters = shallowRef<Record<string, string | number>>({
-  ...(props.enterpriseId ? { enterpriseId: props.enterpriseId } : {}),
-  ...(props.titleCode ? { titleCode: props.titleCode } : {}),
-  ...(props.direction ? { direction: props.direction } : {}),
-  view: 'current',
-  state: 'pending',
+  ...(initialEnterprise ? { enterpriseId: initialEnterprise } : {}),
+  ...(initialTitle ? { titleCode: initialTitle } : {}),
+  ...(initialDirection ? { direction: initialDirection } : {}),
+  ...(initialEvent ? { eventId: initialEvent } : {}),
+  view: initialView,
+  state: initialState,
   limit: 25,
 })
 const cursor = shallowRef<string | undefined>()
@@ -59,8 +89,10 @@ const { data, isLoading, error, refetch } = useQuery({
 const lastSuccess = shallowRef<typeof data.value>()
 watch(data, value => { if (value) lastSuccess.value = value }, { immediate: true, flush: 'sync' })
 const displayed = computed(() => data.value ?? lastSuccess.value)
+/** 共享缓存键的页面预取也写 request；仍对旧缓存形状做只读回退，避免整块清单空白。 */
+const pageRequest = computed<Record<string, string | number>>(() => displayed.value?.request ?? filters.value)
 const cursorExpired = computed(() => (error.value as { data?: { error?: { code?: string } } })?.data?.error?.code === 'invalid_cursor')
-const current = computed(() => !!data.value && JSON.stringify(data.value.request) === JSON.stringify(params.value) && !error.value && !isLoading.value)
+const current = computed(() => !!data.value?.request && JSON.stringify(data.value.request) === JSON.stringify(params.value) && !error.value && !isLoading.value)
 
 /**
  * 名称补全只覆盖当前显示页：去重、每页最多 25 个、并发有界，
@@ -76,7 +108,7 @@ const {
 const hasUnavailableNames = computed(() =>
   queueRows.value.some(row => row.lineage !== 'merged' && unavailableFor(row.enterpriseId)))
 
-const reviewState = computed(() => String(displayed.value?.request.state ?? filters.value.state ?? 'pending'))
+const reviewState = computed(() => String(pageRequest.value.state ?? 'pending'))
 const queueTitle = computed(() => reviewState.value === 'reviewed'
   ? '已复核记录'
   : reviewState.value === 'all' ? '全部复核记录' : '待复核队列')
@@ -87,15 +119,44 @@ const queueDescription = computed(() => reviewState.value === 'reviewed'
     : '按证据变化逐项核对。清单不代替查询覆盖和业务判断；未完成影响检查的变更可能尚未进入清单。')
 
 const sourceEnterprise = computed(() => {
-  const id = displayed.value?.request.enterpriseId
+  const id = pageRequest.value.enterpriseId
   if (id == null) return '全部'
   return enterpriseName.value && enterpriseName.value === nameFor(Number(id))
     ? `${enterpriseName.value}（#${id}）`
     : `企业 #${id}`
 })
 const sourceLabel = computed(() => displayed.value
-  ? `第 ${displayed.value.pageNumber} 页 · 企业 ${sourceEnterprise.value} · ${TITLES[String(displayed.value.request.titleCode)] ?? '全部称号'} · ${displayed.value.request.direction ? directionLabel(String(displayed.value.request.direction)) : '全部方向'} · 事件 ${displayed.value.request.eventId ?? '全部'}`
+  ? `第 ${displayed.value.pageNumber ?? 1} 页 · 企业 ${sourceEnterprise.value} · ${TITLES[String(pageRequest.value.titleCode)] ?? '全部称号'} · ${pageRequest.value.direction ? directionLabel(String(pageRequest.value.direction)) : '全部方向'} · 事件 ${pageRequest.value.eventId ?? '全部'}`
   : '')
+
+/** 当前已应用筛选的队列地址；只有队列上下文（syncQuery）才生成。 */
+function queueReturnLink(): string | null {
+  if (!syncQuery) return null
+  const params = new URLSearchParams({ mode: 'review' })
+  const current = filters.value
+  if (current.titleCode) params.set(QUEUE_KEYS.title, String(current.titleCode))
+  if (current.direction) params.set(QUEUE_KEYS.direction, String(current.direction))
+  if (current.state && current.state !== 'pending') params.set(QUEUE_KEYS.state, String(current.state))
+  if (current.view && current.view !== 'current') params.set(QUEUE_KEYS.view, String(current.view))
+  if (current.enterpriseId != null) params.set(QUEUE_KEYS.enterprise, String(current.enterpriseId))
+  if (current.eventId != null) params.set(QUEUE_KEYS.event, String(current.eventId))
+  return `/comparison?${params}`
+}
+
+/** 应用筛选时把同一组筛选写回核对页地址栏，刷新与返回都能复原。 */
+function syncQueueQuery() {
+  if (!syncQuery || !route || !router) return
+  const link = queueReturnLink()
+  if (!link) return
+  const parsed = new URL(link, 'https://local.invalid')
+  const query: Record<string, string> = {}
+  for (const [key, value] of Object.entries(route.query)) {
+    if (typeof value !== 'string' || key === 'mode' || (Object.values(QUEUE_KEYS) as string[]).includes(key)) continue
+    query[key] = value
+  }
+  for (const [key, value] of parsed.searchParams) query[key] = value
+  void router.replace({ path: route.path, query })
+}
 
 function apply() {
   if ([draft.enterprise, draft.event].some(value => value && (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))))) {
@@ -115,6 +176,7 @@ function apply() {
     state: draft.state,
     limit: 25,
   }
+  syncQueueQuery()
 }
 
 watch(() => [props.enterpriseId, props.titleCode, props.direction], () => {
@@ -155,7 +217,10 @@ function restart() { cursor.value = undefined; cursors.value = []; void refetch(
 
 function enterpriseLink(row: ImpactRow) {
   const query = new URLSearchParams({ tab: 'review', titleCode: row.titleCode, direction: row.direction, impactId: String(row.id) })
-  if (displayed.value?.request.eventId) query.set('eventId', String(displayed.value.request.eventId))
+  const returnTo = queueReturnLink()
+  if (returnTo) query.set('returnTo', returnTo)
+  const eventId = pageRequest.value.eventId
+  if (eventId != null) query.set('eventId', String(eventId))
   return `/enterprises/${row.enterpriseId}?${query}`
 }
 

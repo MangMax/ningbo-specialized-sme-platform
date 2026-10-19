@@ -196,7 +196,15 @@ export function assessmentHeadline(assessment: ReviewAssessment): CaseHeadline {
       return { tone: 'action', label: '原决定保留 · 待复核', detail: '原原因与措施未被改写；请核对后明确维持或更正。', action: '核对证据' }
     }
     if (assessment.explanationValidity.status === 'valid') {
-      return { tone: 'done', label: '当前决定已复核', detail: '原因与措施保持原样，最近证据已登记复核。', action: '查看复核记录' }
+      const decision = assessment.currentDecision.current
+      // “已复核”只说明证据基线覆盖到最近修订，不能据此断言维持：
+      // 当前决定若由 replace 生成，原决定是 previousId，原因/措施可能已经改变。
+      if (decision?.lifecycleAction === 'replace') {
+        return decision.previousId != null
+          ? { tone: 'done', label: '当前决定已复核', detail: `已追加更正为新决定 #${decision.id}；原决定 #${decision.previousId} 保留。`, action: '查看复核记录' }
+          : { tone: 'done', label: '当前决定已复核', detail: `当前决定 #${decision.id} 为首次决定，已登记证据复核。`, action: '查看复核记录' }
+      }
+      return { tone: 'done', label: '当前决定已复核', detail: '最近证据已登记复核；决定内容仍以当前版本为准。', action: '查看复核记录' }
     }
     return { tone: 'waiting', label: '已有业务决定', detail: '解释有效性未确认：尚无已登记的可核验证据基线。', action: '查看决定' }
   }
@@ -238,10 +246,29 @@ export function impactTone(row: ImpactRow): CaseTone {
   return 'done'
 }
 
+/**
+ * 队列行的决定坐标。
+ *
+ * 复核前：`decisionId` 是待复核的原决定。
+ * 复核后：replace 会生成新的当前决定，此时 `decisionId` 已是新决定；
+ * 原决定是 `previousId`。不能继续把当前决定叫作“原决定”。
+ */
+function impactDecisionCoordinate(row: ImpactRow): string {
+  const decision = row.oldDecision
+  if (row.pending || !decision) return `原决定 #${row.decisionId}`
+  if (decision.lifecycleAction === 'replace') {
+    return decision.previousId != null
+      ? `当前决定 #${decision.id}（追加更正）· 复核前决定 #${decision.previousId} 保留`
+      : `当前决定 #${decision.id}（首次决定）`
+  }
+  return `当前决定 #${decision.id}`
+}
+
 /** 待复核清单里原决定的业务摘要；原文不可用时把“不可用”本身说清楚。 */
 export function impactOldDecisionText(row: ImpactRow): string {
   const decision = row.oldDecision
-  if (!decision) return `原决定 #${row.decisionId}：历史决定原文不可用；原坐标与来源仍保留。`
+  const coordinate = impactDecisionCoordinate(row)
+  if (!decision) return `${coordinate}：历史决定原文不可用；原坐标与来源仍保留。`
   const status = DIFFERENCE_STATUSES[decision.status] ?? '状态待核'
   const reason = decision.reasonCode
     ? DIFFERENCE_REASONS[decision.reasonCode] ?? decision.reasonCode
@@ -250,7 +277,7 @@ export function impactOldDecisionText(row: ImpactRow): string {
     ? DIFFERENCE_MEASURES[decision.measureCode] ?? decision.measureCode
     : '措施未填写'
   const note = decision.reasonNote ? ` · ${decision.reasonNote}` : ''
-  return `原决定 #${row.decisionId}：${status} · ${reason}${note} · ${measure}`
+  return `${coordinate}：${status} · ${reason}${note} · ${measure}`
 }
 
 /** 待复核清单的标题（不含内部 ID 时也能读）。 */

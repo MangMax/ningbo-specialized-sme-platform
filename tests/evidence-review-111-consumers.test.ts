@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import { PiniaColada } from '@pinia/colada'
+import { PiniaColada, useQuery } from '@pinia/colada'
+import { defineComponent, h } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import ComparisonExplanation from '../components/evidence-review/ComparisonExplanation.vue'
 import EnterpriseExplanations from '../components/evidence-review/EnterpriseExplanations.vue'
+import { useEnterprisePendingImpacts } from '../composables/useEnterprisePendingImpacts'
 const assessment = { enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', queryCoverage: { status: 'complete', sources: [], truncated: false }, currentDecision: { enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', versionId: null, current: null }, explanationValidity: { status: 'not_applicable' }, assessment: 'queried_unjudged' }
 const global = () => ({ plugins: [createPinia(), PiniaColada], stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } })
 afterEach(() => vi.unstubAllGlobals())
@@ -38,6 +40,40 @@ it('gives each stacked direction a visible label instead of relying on aria-labe
     .toEqual(['应纳未纳', '平台多出'])
   expect(view.get('[data-testid="assessment-scope"] button').attributes('aria-label'))
     .toContain('应纳未纳')
+  view.unmount()
+})
+const embeddedRow = { id: 4, enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', decisionId: 82, latestRevisionId: 9, reviewedRevisionId: null, classification: 'premise_invalid', pending: true, lineage: 'current', oldDecision: { id: 82, status: 'not_queried', reasonCode: 'other', measureCode: 'none' } }
+it.each([
+  { rows: [embeddedRow], expected: '原决定 #82' },
+  { rows: [], expected: '本页没有复核项' },
+])('renders the embedded all-records list from the same pending cache entry the page prefetches ($expected)', async ({ rows, expected }) => {
+  const page = { rows, nextCursor: null, asOf: { revision: 9 }, projectionReady: true }
+  const fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith('/profile')) return { profile: { enterpriseId: 7, name: '合成企业7' } }
+    if (url === '/api/roster/evidence-impacts') return page
+    throw new Error('Unexpected request: ' + url)
+  })
+  vi.stubGlobal('$fetch', fetcher)
+  // The same composable the page uses: it prefetches the key EvidenceReviewList
+  // resolves to when no title/direction deep-link is set.
+  const PendingQueuePrefetch = defineComponent({
+    setup() {
+      useEnterprisePendingImpacts(7)
+      return () => h('div')
+    },
+  })
+  const view = mount(defineComponent({
+    setup: () => () => h('div', [
+      h(PendingQueuePrefetch),
+      h(EnterpriseExplanations, { enterpriseId: 7, assessments: [assessment] as any }),
+    ]),
+  }), { global: global() })
+  await flushPromises()
+  const trigger = view.findAll('button').find(button => button.text().includes('企业全部复核记录'))
+  expect(trigger).toBeTruthy()
+  await trigger!.trigger('click')
+  await flushPromises()
+  expect(view.text()).toContain(expected)
   view.unmount()
 })
 it('locates the focused explanation only after the surrounding detail is ready', async () => {
