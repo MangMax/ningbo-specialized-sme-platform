@@ -28,7 +28,7 @@ const telemetry = join(output, 'telemetry.mjs')
 writeFileSync(telemetry, `import dc from 'node:diagnostics_channel';import {monitorEventLoopDelay,performance} from 'node:perf_hooks';import {getHeapStatistics} from 'node:v8';import {createRequire} from 'node:module';
 const lag=monitorEventLoopDelay({resolution:10});lag.enable();let peakHeap=0,peakRss=0,sqlMs=0,sqlRows=0,sqlTextBytes=0,parseMs=0,stringifyMs=0,baseHeap=0;
 const sampleHeap=()=>{peakHeap=Math.max(peakHeap,getHeapStatistics().used_heap_size)};const sample=()=>{sampleHeap();peakRss=Math.max(peakRss,process.memoryUsage.rss())};
-const req=createRequire(import.meta.url);const Database=req(${JSON.stringify(createRequire(import.meta.url).resolve('better-sqlite3'))});const probe=new Database(':memory:');const proto=Object.getPrototypeOf(probe.prepare('select 1'));probe.close();
+const req=createRequire(import.meta.url);const Database=req(${JSON.stringify(createRequire(resolve('.output/server/index.mjs')).resolve('better-sqlite3'))});const probe=new Database(':memory:');const proto=Object.getPrototypeOf(probe.prepare('select 1'));probe.close();
 for(const key of ['all','get','run']){const original=proto[key];proto[key]=function(...args){const t=performance.now();try{const out=original.apply(this,args);if(key!=='run'){const rows=key==='all'?out:out?[out]:[];sqlRows+=rows.length;for(const row of rows)for(const value of Object.values(row))if(typeof value==='string')sqlTextBytes+=Buffer.byteLength(value)}return out}finally{sqlMs+=performance.now()-t;sampleHeap()}}}
 const parse=JSON.parse,stringify=JSON.stringify;JSON.parse=function(...a){const t=performance.now();try{return parse.apply(this,a)}finally{parseMs+=performance.now()-t;sampleHeap()}};JSON.stringify=function(...a){const t=performance.now();try{return stringify.apply(this,a)}finally{stringifyMs+=performance.now()-t;sampleHeap()}};
 setInterval(sample,5).unref();process.on('message',m=>{if(m==='reset'){peakHeap=peakRss=sqlMs=sqlRows=sqlTextBytes=parseMs=stringifyMs=0;baseHeap=getHeapStatistics().used_heap_size;lag.reset();process.send?.({reset:true})}if(m==='metrics'){sample();process.send?.({baseHeap,peakHeap,heapDelta:peakHeap-baseHeap,peakRss,osPeakRss:process.resourceUsage().maxRSS*1024,sqlMs,sqlRows,sqlTextBytes,parseMs,stringifyMs,loopP95Ms:lag.percentile(95)/1e6,loopMaxMs:lag.max/1e6})}});
@@ -118,11 +118,14 @@ for (const scale of scales) {
       phase='catalog'
       const catalog=await rpc('tools/list',{});for(const tool of ['preflight_roster_batch','save_roster_batch','get_record_correspondence_source'])assert.ok(catalog.body.tools.some(t=>t.name===tool))
       await message('reset');const cold=await round(0);const coldMetrics=await message('metrics')
+      assert.ok(coldMetrics.sqlRows>0,'SQL telemetry must use the built artifact driver')
+      writeFileSync(join(output,`${name}-cold.json`),JSON.stringify({sha,scale,transport,readers,cold,coldMetrics},null,2))
       await round(1);await message('reset')
       const hot=[];for(let i=2;i<22;i++)hot.push(await round(i))
       await sleep(20);const metrics=await message('metrics')
       const item={sha,scale,transport,readers,writers:1,samples:20,coldLabel:'fresh server process; OS cache not purged; authenticated tools/list before first business request',counts,cold,coldMetrics,hot:{preflight:quantiles(hot.map(x=>x.preflightMs)),commit:quantiles(hot.map(x=>x.commitMs)),read:quantiles(hot.flatMap(x=>x.reads.map(r=>r.ms)))},inputBytes:hot[0].inputBytes,responseBytes:{preflight:hot[0].preflightBytes,commit:hot[0].commitBytes,read:hot[0].reads[0].bytes},metrics,dbBytesBefore:beforeBytes,dbBytesAfter:size(dbPath),walBytes:size(`${dbPath}-wal`),semantics:'300 input;150 existing+150 new; exact raw/sourceRowNo readback; same-key receipt identical'}
       writeFileSync(join(output,`${name}.json`),JSON.stringify(item,null,2));results.push(item)
+      writeFileSync(join(output,'partial-results.json'),JSON.stringify({sha,completedAll:false,results},null,2))
       console.log(JSON.stringify({sha,scale,transport,readers,hot:item.hot,heapDelta:metrics.heapDelta,loopMaxMs:metrics.loopMaxMs}))
     } catch(error) {
       writeFileSync(join(output,`${name}-failure.json`),JSON.stringify({phase,childExitCode:server.exitCode,childSignal:server.signalCode,error:String(error).slice(0,300)}))
