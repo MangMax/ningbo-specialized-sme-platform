@@ -6,6 +6,7 @@ import { normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
 import { versionedOfficialEvent } from './roster-event-version'
+import { correspondenceRefValidity } from './record-correspondence-ref-validity'
 import { currentProofCoversRows } from './comparison-scope-proof'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -499,8 +500,7 @@ export function listRecordCorrespondenceRefs(db: Db, filter: CorrespondenceFilte
   const t = schema.recordCorrespondence
   const refs = db.select({ id: t.id, type: t.type, role: t.role, status: t.status, eventId: t.eventId, predecessorEventId: t.predecessorEventId, relationId: t.relationId, exportRowId: t.exportRowId, enterpriseId: t.enterpriseId, titleCode: t.titleCode, revision: t.revision })
     .from(t).where(sources ? or(inArray(t.eventId, sources.eventIds), inArray(t.predecessorEventId, sources.eventIds), inArray(t.relationId, sources.relationIds), inArray(t.exportRowId, sources.exportRowIds)) : correspondenceWhere(filter)).orderBy(asc(t.id)).all()
-  const confirmed = idChunks(refs.filter(r => r.status === 'confirmed').map(r => r.id)).flatMap(ids => db.select().from(t).where(inArray(t.id, ids)).all())
-  const validity = new Map(readCorrespondences(db, confirmed).map(row => [row.id, row.requiresRevalidation]))
+  const validity = new Map(idChunks(refs.filter(r => r.status === 'confirmed').map(r => r.id)).flatMap(ids => [...correspondenceRefValidity(db, ids)]))
   return refs.map(row => ({ ...row, requiresRevalidation: validity.get(row.id) ?? false }))
 }
 export function getRecordCorrespondenceAudit(db: Db, correspondenceId: number): CorrespondenceAudit[] {
