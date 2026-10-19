@@ -2,9 +2,10 @@
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
-import { defineComponent, nextTick, ref } from 'vue'
+import { computed, defineComponent, nextTick, provide, ref } from 'vue'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import EvidenceReviewForm from '../components/evidence-review/EvidenceReviewForm.vue'
+import { REVIEW_DRAFTS_KEY, useReviewDrafts } from '../composables/useReviewDrafts'
 import { Select } from '../components/ui/select'
 const detail = { id: 4, enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', decisionId: 82, lineage: 'current', pending: true, oldDecision: { id: 82, reasonNote: '原决定' }, currentDecision: { versionId: 82, current: { id: 82 } }, evidenceToken: { latestRevisionId: 9, decisionId: 82, projectionReady: true }, gaps: {} }
 enableAutoUnmount(afterEach)
@@ -172,4 +173,72 @@ it('removes the teleported footer action and resets the draft flag when the form
   expect(footer.childElementCount).toBe(0)
   expect(draft.value).toBe(false)
   footer.remove()
+})
+
+
+function mountStored() {
+  const show = ref(true)
+  let store: ReturnType<typeof useReviewDrafts>
+  const Host = defineComponent({
+    components: { EvidenceReviewForm },
+    setup() {
+      store = useReviewDrafts()
+      provide(REVIEW_DRAFTS_KEY, store)
+      const dirty = computed(() => store.hasDirty.value)
+      return { detail, show, dirty }
+    },
+    template: '<div><button id="toggle" @click="show = !show">toggle</button><span id="dirty">{{ dirty }}</span><EvidenceReviewForm v-if="show" :detail="detail" /></div>',
+  })
+  const view = mount(Host, { global: { plugins: [createPinia(), PiniaColada] } })
+  return { view, store: () => store, show }
+}
+
+it('keeps an in-memory draft across structural unmount and clears only its token on pagehide', async () => {
+  const { view, store, show } = mountStored()
+  await fill(view)
+  expect(view.get('#dirty').text()).toBe('true')
+  show.value = false
+  await nextTick()
+  show.value = true
+  await nextTick(); await flushPromises()
+  expect((view.get('[aria-label="写入凭证"]').element as HTMLInputElement).value).toBe('synthetic-token')
+  expect((view.get('[aria-label="复核人"]').element as HTMLInputElement).value).toBe('reviewer-7')
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toContain('核对新查询')
+  expect((view.get('[aria-label="规则版本"]').element as HTMLInputElement).value).toBe('manual-2026')
+
+  window.dispatchEvent(new Event('pagehide'))
+  await flushPromises()
+  expect((view.get('[aria-label="写入凭证"]').element as HTMLInputElement).value).toBe('')
+  expect((view.get('[aria-label="复核人"]').element as HTMLInputElement).value).toBe('reviewer-7')
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toContain('核对新查询')
+  expect((view.get('[aria-label="规则版本"]').element as HTMLInputElement).value).toBe('manual-2026')
+  expect(store().hasDraft(4)).toBe(true)
+
+  store().discard(4)
+  await flushPromises()
+  show.value = false
+  await nextTick()
+  show.value = true
+  await nextTick(); await flushPromises()
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toBe('')
+  expect((view.get('[aria-label="复核人"]').element as HTMLInputElement).value).toBe('')
+  view.unmount()
+})
+
+it('shows the decision-under-review role in the form heading instead of a fixed original-decision label', async () => {
+  const view = render()
+  expect(view.text()).toContain('待复核的当前决定 #82')
+  expect(view.text()).not.toContain('复核原决定')
+})
+
+it('keeps the inline 401 reason and retry action in the same form without a footer', async () => {
+  fetcher.mockRejectedValueOnce({ data: { error: { code: 'unauthorized' } } })
+  const view = render(); await fill(view)
+  await view.get('form').trigger('submit'); await flushPromises()
+  const error = view.get('[data-testid="review-save-error"]')
+  expect(error.text()).toContain('没有改判权限')
+  expect(error.classes()).toContain('scroll-mt-14')
+  expect(view.find('button[type="submit"]').exists()).toBe(true)
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toContain('核对新查询')
+  view.unmount()
 })

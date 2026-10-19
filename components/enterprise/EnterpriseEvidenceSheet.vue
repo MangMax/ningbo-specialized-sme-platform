@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { REVIEW_DRAFTS_KEY, type ReviewDraftStore } from '~/composables/useReviewDrafts'
 
 const open = defineModel<boolean>('open', { required: true })
 
@@ -35,13 +36,17 @@ const resolvedImpactId = computed(() => props.impact?.id ?? props.impactId)
  * `enterprise-review-draft` 由企业详情页提供；没有宿主时按无草稿处理。
  */
 const draftState = inject<Ref<boolean> | null>('enterprise-review-draft', null)
+const draftStore = inject<ReviewDraftStore | null>(REVIEW_DRAFTS_KEY, null)
+const hasDirtyDraft = computed(() => resolvedImpactId.value == null
+  ? false
+  : draftStore ? draftStore.hasDraft(resolvedImpactId.value) : !!draftState?.value)
 const confirmClose = ref(false)
 function requestOpen(next: boolean) {
   if (next) {
     open.value = true
     return
   }
-  if (draftState?.value) {
+  if (hasDirtyDraft.value || draftState?.value) {
     confirmClose.value = true
     return
   }
@@ -49,6 +54,7 @@ function requestOpen(next: boolean) {
 }
 function discardAndClose() {
   confirmClose.value = false
+  if (resolvedImpactId.value != null) draftStore?.discard(resolvedImpactId.value)
   if (draftState) draftState.value = false
   open.value = false
 }

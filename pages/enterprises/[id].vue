@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed, nextTick, onMounted, provide, ref, shallowRef, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import type { ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import {
@@ -27,6 +28,7 @@ import {
 } from '~~/lib/roster/evidence-preview-return'
 import { useEnterpriseCorrespondences } from '~/composables/useEnterpriseCorrespondences'
 import { useEnterprisePendingImpacts } from '~/composables/useEnterprisePendingImpacts'
+import { REVIEW_DRAFTS_KEY, useReviewDrafts } from '~/composables/useReviewDrafts'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -303,18 +305,49 @@ function rememberPagePreviewReturn(eventId: number, event: MouseEvent) {
 }
 
 
-/** 核对面板内的未提交草稿由 EvidenceReviewForm 写入；切页前先确认，不静默丢弃。 */
-const reviewDraft = shallowRef(false)
-provide('enterprise-review-draft', reviewDraft)
+/**
+ * 核对草稿由本页持有：切 tab、路由离开都只确认一次；继续填写留在原条目，
+ * 明确丢弃才执行原动作。结构性收起/重选由子级自己的仓库处理。
+ */
+const reviewDrafts = useReviewDrafts()
+provide(REVIEW_DRAFTS_KEY, reviewDrafts)
+// 旧的布尔契约仍保留给没有仓库的宿主组件。
+provide('enterprise-review-draft', computed(() => reviewDrafts.hasDirty.value))
 const pendingTab = ref<DetailTab | null>(null)
+const pendingLeave = ref<string | null>(null)
+const bypassLeaveGuard = ref(false)
 
 function requestTab(next: DetailTab) {
   if (next === tab.value) return
-  if (tab.value === 'review' && reviewDraft.value) {
+  if (tab.value === 'review' && reviewDrafts.hasDirty.value) {
     pendingTab.value = next
     return
   }
   applyTab(next)
+}
+
+function discardAndSwitchTab() {
+  const next = pendingTab.value
+  pendingTab.value = null
+  reviewDrafts.discardAll()
+  if (next) applyTab(next)
+}
+
+onBeforeRouteLeave((to) => {
+  if (bypassLeaveGuard.value || !reviewDrafts.hasDirty.value) return true
+  // 已有 tab 确认框时不再叠第二个；先让用户处理当前确认。
+  if (pendingTab.value != null) return false
+  pendingLeave.value = to.fullPath
+  return false
+})
+
+function discardAndLeave() {
+  const target = pendingLeave.value
+  pendingLeave.value = null
+  if (!target) return
+  reviewDrafts.discardAll()
+  bypassLeaveGuard.value = true
+  void router.push(target).finally(() => { bypassLeaveGuard.value = false })
 }
 
 function applyTab(next: DetailTab) {
@@ -639,8 +672,23 @@ function openPreview(e: Evidence) {
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" @click="pendingTab = null">留在此页</Button>
-          <Button @click="pendingTab && applyTab(pendingTab)">仍然切换</Button>
+          <Button variant="outline" @click="pendingTab = null">继续填写</Button>
+          <Button @click="discardAndSwitchTab">切换并丢弃</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog :open="pendingLeave !== null" @update:open="value => { if (!value) pendingLeave = null }">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>离开会丢弃未提交内容</DialogTitle>
+          <DialogDescription>
+            复核人填写的凭证、依据、规则版本或更正内容尚未提交；离开本页后这些内容会丢失。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" @click="pendingLeave = null">继续填写</Button>
+          <Button @click="discardAndLeave">离开并丢弃</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

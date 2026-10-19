@@ -2,7 +2,9 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch, type Ref } from 'vue'
 import type { ImpactDetail } from '~~/lib/roster/evidence-review-ui'
 import { reviewEligibility } from '~~/lib/roster/review-eligibility'
+import { impactReviewFormTitle } from '~~/lib/roster/review-display'
 import { useEvidenceReviewRefresh } from '~/composables/useEvidenceReviewRefresh'
+import { REVIEW_DRAFTS_KEY, emptyReviewDraftDecision, type ReviewDraftStore } from '~/composables/useReviewDrafts'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
@@ -11,16 +13,22 @@ import { Badge } from '@/components/ui/badge'
 import ReplacementDecisionFields from './ReplacementDecisionFields.vue'
 
 const props = defineProps<{ detail: ImpactDetail; refreshing?: boolean; footer?: boolean }>()
-const emit = defineEmits<{ saved: []; reload: [] }>()
+const emit = defineEmits<{ saved: [{ action?: string; versionId?: number }?]; reload: [] }>()
 const refreshAffected = useEvidenceReviewRefresh()
-const token = shallowRef('')
-const actor = shallowRef('')
-const basis = shallowRef('')
-const ruleVersion = shallowRef('')
+/**
+ * 草稿仓库由宿主提供（企业详情页/清单/抽屉）。没有宿主时组件自己保留到卸载，
+ * 让单组件测试和独立使用仍能在同一挂载周期内保存草稿。
+ */
+const draftStore = inject<ReviewDraftStore | null>(REVIEW_DRAFTS_KEY, null)
+const storedDraft = draftStore?.draftFor(props.detail.id)
+const token = shallowRef(storedDraft?.token ?? '')
+const actor = shallowRef(storedDraft?.actor ?? '')
+const basis = shallowRef(storedDraft?.basis ?? '')
+const ruleVersion = shallowRef(storedDraft?.ruleVersion ?? '')
 const pending = shallowRef(false)
 const failure = shallowRef('')
 const failureEl = shallowRef<HTMLElement | { $el?: HTMLElement } | null>(null)
-const mode = shallowRef<'maintain' | 'replace'>('maintain')
+const mode = shallowRef<'maintain' | 'replace'>(storedDraft?.mode ?? 'maintain')
 const choiceId = useId()
 /** Sheet 模式把主操作放进独立 footer；button[form] 仍提交同一张表单。 */
 const formId = useId()
@@ -29,7 +37,16 @@ const conflict = shallowRef(false)
 const committed = shallowRef(false)
 watch(() => props.detail, () => { if (conflict.value) failure.value = ''; conflict.value = false })
 
-const draft = ref({ status: 'confirmed_reason', reasonCode: '', reasonNote: '', measureCode: '', measureNote: '', evidenceQueryId: '', evidenceRelationId: '' })
+const draft = ref({ ...emptyReviewDraftDecision(), ...(storedDraft?.decision ?? {}) })
+watch([token, actor, basis, ruleVersion, mode, draft], () => {
+  if (!storedDraft) return
+  storedDraft.token = token.value
+  storedDraft.actor = actor.value
+  storedDraft.basis = basis.value
+  storedDraft.ruleVersion = ruleVersion.value
+  storedDraft.mode = mode.value
+  storedDraft.decision = { ...draft.value }
+}, { deep: true, immediate: true, flush: 'sync' })
 
 /**
  * 页面可能用标签页承载核对；切页会卸载本表单。
@@ -44,7 +61,7 @@ const isDirty = computed(() =>
   || mode.value !== 'maintain'
   || Object.entries(draft.value).some(([key, value]) => key !== 'status' && String(value).trim() !== ''),
 )
-watch(isDirty, value => { if (externalDraft) externalDraft.value = value }, { immediate: true })
+watch(isDirty, value => { if (externalDraft && !draftStore) externalDraft.value = value }, { immediate: true })
 const validId = (id: string) => !id || (/^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id)))
 const replacementReady = computed(() => !!draft.value.measureCode && (draft.value.status === 'confirmed_no_diff' ? draft.value.measureCode === 'none' : !!draft.value.reasonCode && (draft.value.reasonCode !== 'pending_review' || draft.value.measureCode === 'follow_review')) && validId(draft.value.evidenceQueryId) && validId(draft.value.evidenceRelationId))
 const eligibility = computed(() => reviewEligibility(props.detail))
@@ -89,10 +106,18 @@ async function revealFailure() {
     ? (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement ? value : (value as { $el?: HTMLElement }).$el ?? null)
     : null
   target?.focus({ preventScroll: true })
-  target?.scrollIntoView?.({ block: 'nearest' })
+  // 内联：把错误和紧随其后的提交动作一起放进当前屏；Sheet 的 footer 已在滚动区外。
+  if (!props.footer) target?.scrollIntoView?.({ block: 'center' })
 }
-onMounted(() => window.addEventListener('pagehide', clearToken))
-onBeforeUnmount(() => { window.removeEventListener('pagehide', clearToken); clearToken(); retry = null; if (externalDraft) externalDraft.value = false })
+function onPageHide() { clearToken() }
+onMounted(() => window.addEventListener('pagehide', onPageHide))
+onBeforeUnmount(() => {
+  window.removeEventListener('pagehide', onPageHide)
+  // 有宿主草稿仓库时，结构性卸载（收起/切换/翻页）不能清草稿；仓库自己处理 pagehide/unmount。
+  if (!draftStore) clearToken()
+  retry = null
+  if (externalDraft && !draftStore) externalDraft.value = false
+})
 
 async function save() {
   if (!canSubmit.value) return
@@ -109,11 +134,14 @@ async function save() {
   const body = retry?.signature === signature ? retry.body : { ...content, effectiveAt: new Date().toISOString(), idempotencyKey: crypto.randomUUID() }
   retry = { signature, body }
   try {
-    await $fetch('/api/roster/decision-lifecycle/commands', { method: 'POST', headers: { authorization: `Bearer ${token.value.trim()}` }, body })
+    const saved = await $fetch<{ action?: string; versionId?: number }>('/api/roster/decision-lifecycle/commands', { method: 'POST', headers: { authorization: `Bearer ${token.value.trim()}` }, body })
     retry = null
     committed.value = true
+    // 写请求已成功：草稿不再是未提交内容；凭证不留在仓库内存里。
+    draftStore?.discard(props.detail.id)
+    token.value = ''
     // 先让宿主开始读回；写请求已成功时，刷新失败不能反报成保存失败。
-    emit('saved')
+    emit('saved', { action: saved?.action, versionId: saved?.versionId })
     try { await refreshAffected() } catch { /* 宿主详情仍会显式读回并说明状态 */ }
   } catch (error) {
     const code = (error as { data?: { error?: { code?: string } } })?.data?.error?.code
@@ -134,7 +162,7 @@ async function save() {
   <form :id="formId" class="flex min-w-0 flex-col gap-3" @submit.prevent="save">
     <div class="bg-card flex min-w-0 flex-col gap-3 rounded-lg border p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <h3 class="text-sm font-semibold">复核原决定 #{{ detail.decisionId }}</h3>
+        <h3 class="text-sm font-semibold">{{ impactReviewFormTitle(detail) }}</h3>
         <Badge variant="outline" class="font-normal">
           {{ mode === 'maintain' ? '维持原决定' : '追加更正' }}
         </Badge>
@@ -209,7 +237,7 @@ async function save() {
         variant="destructive"
         tabindex="-1"
         data-testid="review-save-error"
-        class="focus-visible:ring-ring/50 focus-visible:ring-3 focus-visible:outline-none"
+        class="scroll-mt-14 focus-visible:ring-ring/50 focus-visible:ring-3 focus-visible:outline-none"
       >
         <AlertDescription>{{ failure }}</AlertDescription>
       </Alert>
