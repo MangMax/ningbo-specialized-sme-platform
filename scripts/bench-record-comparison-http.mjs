@@ -20,7 +20,8 @@ const dir=mkdtempSync(join(tmpdir(),'comparison-telemetry-')),telemetry=join(dir
 writeFileSync(telemetry, `import dc from 'node:diagnostics_channel';import {monitorEventLoopDelay} from 'node:perf_hooks';import {getHeapStatistics} from 'node:v8';
 const lag=monitorEventLoopDelay({resolution:10});lag.enable();let heap=0,rss=0;
 const sample=()=>{const m=process.memoryUsage();heap=Math.max(heap,m.heapUsed);rss=Math.max(rss,m.rss)};setInterval(sample,5).unref();
-process.on('message',message=>{if(message==='reset'){lag.reset();heap=0;rss=0;process.send?.('reset')}});
+const report=()=>({heap,rss,maxRss:process.resourceUsage().maxRSS*1024,heapLimit:getHeapStatistics().heap_size_limit,lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6,lagSamples:lag.count});
+process.on('message',message=>{if(message==='reset'){lag.reset();heap=0;rss=0;process.send?.('reset')}if(message==='sample'){sample();process.send?.(report())}});
 dc.channel('http.server.response.finish').subscribe(({request})=>{sample();if(request.url.startsWith('/api/roster/record-comparison')||request.url==='/mcp')process.send?.({heap,rss,maxRss:process.resourceUsage().maxRSS*1024,heapLimit:getHeapStatistics().heap_size_limit,lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6})});`)
 const port=await reserveLoopbackPort(),base=`http://127.0.0.1:${port}`,metrics=[]
 const server=fork('.output/server/index.mjs',[],{execArgv:['--max-old-space-size=2048','--import',telemetry],env:{...process.env,PORT:String(port),HOST:'127.0.0.1',NUXT_DB_PATH:dbPath,NUXT_DB_READONLY:'1',NUXT_FILES_DIR:dir,MIIT_COOKIE:'',MIIT_COOKIE_FILE:''},stdio:['ignore','pipe','pipe','ipc']})
@@ -40,9 +41,13 @@ try{
  let ready=false;for(let i=0;i<120;i++){if(server.exitCode!==null)throw Error(output);try{ready=(await fetch(`${base}/api/health`)).ok}catch{}if(ready)break;await sleep(100)}assert.ok(ready,'compiled artifact readiness')
  server.send('reset');for(let i=0;i<100&&!reset;i++)await sleep(10);assert.ok(reset)
  const cold=await request(),hot=[]
+ await sleep(20);let count=metrics.length;server.send('sample');for(let i=0;i<100&&metrics.length===count;i++)await sleep(10)
+ const coldMetrics=metrics.at(-1)
+ reset=false;server.send('reset');for(let i=0;i<100&&!reset;i++)await sleep(10);assert.ok(reset)
+ metrics.length=0
  for(let n=0;n<20;n+=concurrency)hot.push(...await Promise.all(Array.from({length:concurrency},request)))
- await sleep(30);assert.ok(metrics.length)
+ await sleep(30);count=metrics.length;server.send('sample');for(let i=0;i<100&&metrics.length===count;i++)await sleep(10);assert.ok(metrics.length)
  assert.ok(hot.every(x=>x.resultSha256===cold.resultSha256),'stable complete result across concurrency')
  const sorted=hot.map(x=>x.ms).sort((a,b)=>a-b),pct=p=>sorted[Math.ceil(p*sorted.length)-1]
- console.log(JSON.stringify({transport,mode,concurrency,node:process.version,cold,hotSamples:hot.length,hot:{p50:pct(.5),p95:pct(.95),p99:pct(.99)},responseBytes:hot[0].responseBytes,resultSha256:cold.resultSha256,peakHeap:Math.max(...metrics.map(x=>x.heap)),peakRss:Math.max(...metrics.map(x=>x.rss)),osPeakRss:Math.max(...metrics.map(x=>x.maxRss)),heapLimit:metrics[0].heapLimit,eventLoopP95Ms:Math.max(...metrics.map(x=>x.lagP95Ms)),eventLoopMaxMs:Math.max(...metrics.map(x=>x.lagMaxMs)),containerLimited:false}))
+ console.log(JSON.stringify({transport,mode,concurrency,node:process.version,cold:{...cold,eventLoopP95Ms:coldMetrics.lagP95Ms,eventLoopMaxMs:coldMetrics.lagMaxMs},hotSamples:hot.length,hot:{p50:pct(.5),p95:pct(.95),p99:pct(.99)},responseBytes:hot[0].responseBytes,resultSha256:cold.resultSha256,peakHeap:Math.max(...metrics.map(x=>x.heap)),peakRss:Math.max(...metrics.map(x=>x.rss)),osPeakRss:Math.max(...metrics.map(x=>x.maxRss)),heapLimit:metrics[0].heapLimit,eventLoopP95Ms:metrics.at(-1).lagP95Ms,eventLoopMaxMs:metrics.at(-1).lagMaxMs,eventLoopSamples:metrics.at(-1).lagSamples,containerLimited:false}))
 }finally{await stopOwnedChild(server);rmSync(dir,{recursive:true,force:true})}

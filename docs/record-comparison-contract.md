@@ -69,3 +69,12 @@ should introduce an opt-in contract before claiming broad-scope SLO compliance:
 These routes/statuses are a proposed contract, not shipped endpoints or passed
 acceptance. Full title-wide proof fingerprinting and very large selected sources
 still need their own measured budget; a source-ID count is not a record limit.
+
+HTTP/MCP comparisons use a dedicated read-only connection and one read transaction
+per request. Proof resolution, selected source rows and streamed formal facts share
+that snapshot. The computation yields between setup and bounded groups of 128
+formal events, allowing other requests to run while counts are computed. A later
+commit is visible to the next comparison, not mixed into an in-flight result.
+The connection and any suspended SQLite iterator are released in `finally`.
+Synchronous service callers and legacy preview drain the same computation without
+changing their existing return type. No shared result cache is introduced.

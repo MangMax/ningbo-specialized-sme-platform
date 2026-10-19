@@ -142,9 +142,16 @@ function selected(db: Db, input: RecordComparisonInput) {
   return { input: parsed, queries, batches, documents, relations, exports, edges, unavailableEdges }
 }
 export function getRecordComparison(db: Db, input: RecordComparisonInput, verifiedEvidence?: VerifiedComparisonEvidence) {
-  return compareRecords(db, selected(db, input), verifiedEvidence)
+  return consumeComparison(iterateRecordComparison(db, input, verifiedEvidence))
 }
-function compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEvidence?: VerifiedComparisonEvidence, paginate = true) {
+/** Same comparison computation, with cooperative boundaries for HTTP/MCP reads. */
+export function* iterateRecordComparison(db: Db, input: RecordComparisonInput, verifiedEvidence?: VerifiedComparisonEvidence) {
+  return yield* compareRecords(db, selected(db, input), verifiedEvidence)
+}
+function consumeComparison<T>(steps: Generator<void, T>) {
+  while (true) { const step = steps.next(); if (step.done) return step.value }
+}
+function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEvidence?: VerifiedComparisonEvidence, paginate = true) {
   if (source.input.asOf && verifiedEvidence) verifiedEvidence = {
     officialScopes: verifiedEvidence.officialScopes.filter(proof => before(proof.verifiedAt, source.input.asOf)),
     currentScopes: verifiedEvidence.currentScopes.filter(proof => before(proof.verifiedAt, source.input.asOf)),
@@ -154,6 +161,7 @@ function compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEvi
   const exportMap = new Map(exports.map(item => [item.row.id, item]))
   const documentPaths = new Set(documents.map(row => row.path))
   const evidence = db.select().from(schema.recordEvidence).where(inArray(schema.recordEvidence.recordEventId, db.select({ id: schema.recordEvent.id }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).where(and(eq(schema.record.source, 'jxj'), inArray(schema.recordEvent.eventType, ['award', 'review']))))).orderBy(schema.recordEvidence.id).all()
+  yield
   const selectedEdges = edges.filter(edge => (edge.relationId == null || relationMap.has(edge.relationId)) && (edge.exportRowId == null || exportMap.has(edge.exportRowId)))
   const unavailableEdges = source.unavailableEdges.filter(edge => (edge.relationId == null || relationMap.has(edge.relationId)) && (edge.exportRowId == null || exportMap.has(edge.exportRowId)))
   const later = selectedEdges.filter(edge => edge.type === 'later_process' && edge.status === 'confirmed' && !edge.requiresRevalidation && edge.relationId != null && relationMap.has(edge.relationId))
@@ -195,6 +203,7 @@ function compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEvi
   const enterpriseTitles = new Set<string>()
   for (const formal of iterateComparisonFormalEvents(db)) {
     officialEventRows++
+    if (officialEventRows % 128 === 0) yield
     enterpriseTitles.add(`${formal.record.enterpriseId}:${formal.record.titleCode}`)
     const row = analyzeEvent(formal)
     classificationCounts[row.decision.classification]++
@@ -248,7 +257,7 @@ function compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEvi
 }
 export function previewRecordCorrespondenceImpact(db: Db, input: RecordComparisonInput) {
   const source = selected(db, input)
-  const comparison = compareRecords(db, source, undefined, false)
+  const comparison = consumeComparison(compareRecords(db, source, undefined, false))
   const all = db.select().from(schema.differenceReason).all().filter(reason => (!input.asOf || before(reason.recordedAt, input.asOf)))
   const owners = new Map(db.selectDistinct({ id: schema.enterprise.id, uscc: schema.enterprise.usccNorm }).from(schema.enterprise).innerJoin(schema.record, eq(schema.record.enterpriseId, schema.enterprise.id)).where(and(eq(schema.record.source, 'jxj'), input.enterpriseId == null ? undefined : eq(schema.enterprise.id, input.enterpriseId), input.titleCode ? eq(schema.record.titleCode, input.titleCode) : undefined)).all().map(row => [row.id, row.uscc]))
   const relationsByOwner = groupBy(source.relations, item => `${item.relation.enterpriseId}:${relationTitle(item.relation, item.query)}`)
