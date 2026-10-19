@@ -146,9 +146,7 @@ export const recordEvidence = sqliteTable(
      */
     page: integer('page'),
   },
-  (t) => [index('record_evidence_event_idx').on(t.recordEventId), index('record_evidence_source_file_105_idx').on(t.sourceFile)],
-
-  (t) => [index('record_evidence_event_idx').on(t.recordEventId), index('record_evidence_coordinate_idx').on(t.sourceFile, t.listNo, t.attachment)],
+  (t) => [index('record_evidence_event_idx').on(t.recordEventId), index('record_evidence_source_file_105_idx').on(t.sourceFile), index('record_evidence_coordinate_idx').on(t.sourceFile, t.listNo, t.attachment)],
 )
 
 /**
