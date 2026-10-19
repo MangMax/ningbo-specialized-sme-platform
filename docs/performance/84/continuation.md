@@ -188,8 +188,8 @@ Driver各一次首请求+5个热样本，插桩有开销。表中堆为观察到
 
 ## R2 execution boundary repair
 
-Measured source `00dc715c2f6997a0f02c8f584de3280dd6a1707d`, integration base
-`69b8e54adb7c8026ba2b016e00e9affebc637540`. The previous R1 Worker128 claim
+Measured source `d68497ae92e26dc746f199c4849ba6595c1bfeed`, latest integrated parent
+`e895aabd3686b9b632982ed7ead2f9f4852fb3a4`. The previous R1 Worker128 claim
 is historical configuration, not an effective limit under the 2048 launch.
 R2 replaces that worker thread with one serial native child process and bounded
 JSON IPC chunks; [the frozen design](r2-worker-design.md) records ownership and
@@ -205,12 +205,12 @@ are measured against the unchanged frozen budgets.
 
 Both launches pass the same36-cell enterprise matrix:72cells/1512responses total,
 all canonical hashes equal to retained R1 same-input results. Each cell has1cold
-and20hot responses; OS cache is not purged. Max hot p95 is472.89ms (2048) and
-496.30ms (default), with limited margin and small tail samples. A96MiB synthetic
+and20hot responses; OS cache is not purged. Max hot p95 is474.06ms (2048) and
+479.07ms (default), with limited margin and small tail samples. A96MiB synthetic
 complete detail passes the actual default command from another cwd with exact
 hash and subsequent health/list; instrumented default/2048 heap increments are
-219,005,040B/171,593,424B, below268,435,456B. The retained17.6MB Unicode raw
-HTTP/MCP fixture also passes its102,308,894B cap (conservative52,517,504B).
+119,968,936B/121,361,384B, below268,435,456B. The retained17.6MB Unicode raw
+HTTP/MCP fixture also passes its102,308,894B cap (conservative52,026,864B).
 See [safe aggregate measurements](r2-measurements.json); raw evidence remains
 outside Git under `/tmp/ningbo-perf-81-89/review-fixes-r2/`.
 
@@ -221,12 +221,13 @@ child, a retryable503, and a successful subsequent read; the service stays alive
 Terminal signal checks and idempotent response release preserve normal slow-client
 finish/disconnect backpressure.
 
-At measured source:148test files passed/2skipped,2126tests passed/12skipped;
+At measured source:148test files passed/2skipped,2129tests passed/12skipped;
 typecheck,build,production OpenAPI and compiled protocols pass. A parallel
 build/typecheck generated-types failure and a wrong-checkout correspondence
 verification attempt are retained and excluded; sequential typecheck and corrected
-current-artifact correspondence27checks pass. Initial one-scale2048 cells briefly
-overlap provenance hashing/integrity work; benchmarks themselves run serially.
+current-artifact correspondence27checks pass. Postmerge benchmarks run serially without other owned heavy work. Earlier00dc
+measurements (including their one-scale hashing overlap) remain outside Git and
+in the preceding documentation commit; they are not substituted for this head.
 These are local finite tests, not controlled container, Linux/Node22,CI,
-production,long-duration load or parent acceptance. Existing #86/#91 shared
-comparison limitations remain outside this repair and its modules/tests are untouched.
+production,long-duration load or parent acceptance. The parent-owned #86 update is included through the integration merge; its own
+comparison acceptance remains separate. This repair does not edit its modules/tests.
