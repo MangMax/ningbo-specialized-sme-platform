@@ -17,7 +17,9 @@ function identityFunctions(db: Db) {
   client.function('roster84_name', { deterministic: true }, (value: unknown) => normalizeName(value as string | null))
   registered.add(client)
 }
-const uscc = (value: ReturnType<typeof sql>) => sql`roster84_uscc(${value})`
+// Most stored keys are canonical ASCII USCCs. Bypass the JS callback for
+// those keys; all legacy/Unicode/name keys still use the exact shared rule.
+const uscc = (value: ReturnType<typeof sql>) => sql`case when ${value} glob '*[^A-Z0-9]*' then roster84_uscc(${value}) else nullif(${value}, '') end`
 const name = (value: ReturnType<typeof sql>) => sql`roster84_name(${value})`
 
 export function readEnterpriseHistories(db: Db, ids?: number[]) {
