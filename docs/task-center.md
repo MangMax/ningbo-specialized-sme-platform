@@ -28,10 +28,12 @@
 
 ## #121 导出
 
-- `TASK_GROUPS.export=['current-roster-export']`。`exportReady` 反映已登记 kind 是否 ready；页面同时读取 `/api/jobs/kinds` 和 `/_openapi.json`，只启用真实公开的称号专用 POST 路由。通用 kind 支持三称号不代表三条专用路由均已上线。
+- `TASK_GROUPS.export=['current-roster-export']`。`exportReady` 反映已登记 kind 是否 ready；页面同时读取 `/api/jobs/kinds` 和 `/api/roster/exports/current/capabilities`，只启用真实公开的称号专用 POST 路由。通用 kind 支持三称号不代表三条专用路由均已上线。
 - 三个独立入口按[导出共享契约](current-roster-export-contract.md)提交，收到 202 和 jobId 即返回页面操作。仅将请求身份（clientRequestId/已受理 jobId）放入 sessionStorage，断线、刷新和页内返回继续使用同一请求标识；不存 token、任务状态或产物内容。已受理入口显示“找回本次导出”；显式新导出由原任务详情“重新生成”提交新标识及 regenerateOf。
 - `TaskSummary.export` 为有界白名单投影，包含称号、阶段、生成/快照时间、规则/数据版本、计数、原任务关联和受控产物摘要。产物 filename/downloadUrl 从称号/ULID 构建；每次列表/详情复用共享产物服务重查 available/expired/missing。历史 done 与当前可下载分别表示。
 - `canDownload`/`canRegenerate` 按 API 授权及公开状态给出。取消仍走公共详情的真实请求/终态；导出不使用平台“重试未完成项”。失败和取消仅能显式新建关联导出。
 - `TaskDetail` 默认插槽提供 `{task,current,refresh}`，页面通过插槽渲染产物，不另建详情轮询或取消状态。下载请求携带页面内存授权，校验 HTTP、MIME、Content-Disposition、字节数和 SHA-256 后才触发保存；失败、取消、未完成、过期、缺失不启用下载。
 
 保留期、重启和资源预算沿用 #117；未上线专用接口显示未上线，待 #118/#119 合入后按真实路由发现启用。三称号母规格验收须在三条接口全部交付后复验，不由小巨人单片结果替代。
+
+生产导出能力发现使用公开只读的小清单，与生产 OpenAPI 默认关闭独立。清单来自实际构建路由，只启用存在且 kind 就绪的称号；缺项和发现失败均不可提交，不通过 POST 探测能力。

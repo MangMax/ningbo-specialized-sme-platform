@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import { defineNuxtConfig } from 'nuxt/config'
 import tailwindcss from '@tailwindcss/vite'
+import { TASK_EXPORTS } from './lib/task-center'
 
 // SPA only — no SSR. Everything runs in the browser against Nitro server routes.
 export default defineNuxtConfig({
@@ -120,6 +121,18 @@ export default defineNuxtConfig({
    * 两个 UI 是同一份 spec 的两种渲染,留一个就够,少一条开发期路由。
    * (两者的 UI 都从公共 CDN 拉前端脚本,只在开发期、由人主动打开时才发生。)
    */
+  hooks: {
+    'nitro:init'(nitro) {
+      // Register the lazy virtual source before Rollup constructs its plugins;
+      // evaluate after handler scanning, when this build's route set is known.
+      nitro.options.virtual['#current-export-routes'] = () => {
+        const handlers = [...nitro.scannedHandlers, ...nitro.options.handlers]
+        const routes = TASK_EXPORTS.filter(entry => handlers.some(h => h.route === entry.path && h.method === 'post'))
+          .map(({ titleCode, path }) => ({ titleCode, path }))
+        return `export default ${JSON.stringify(routes)}`
+      }
+    },
+  },
   nitro: {
     hooks: {
       'rollup:before'(nitro, config) {

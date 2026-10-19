@@ -43,12 +43,8 @@ const discovering = ref(false), discoveryFailed = ref(false)
 async function discoverExports() {
   discovering.value = true; discoveryFailed.value = false; exportRoutes.value = {}
   try {
-    const [kinds, spec] = await Promise.all([
-      $fetch<{ kinds: { kind: string; status: string }[] }>('/api/jobs/kinds'),
-      $fetch<{ paths: Record<string, { post?: unknown }> }>('/_openapi.json'),
-    ])
-    const ready = kinds.kinds.some(k => k.kind === 'current-roster-export' && k.status === 'ready')
-    exportRoutes.value = Object.fromEntries(TASK_EXPORTS.map(t => [t.titleCode, ready && !!spec.paths[t.path]?.post]))
+    const capabilities = await $fetch<{ exports: { titleCode: string; path: string; ready: boolean }[] }>('/api/roster/exports/current/capabilities')
+    exportRoutes.value = Object.fromEntries(TASK_EXPORTS.map(t => [t.titleCode, capabilities.exports.some(entry => entry.titleCode === t.titleCode && entry.path === t.path && entry.ready === true)]))
   } catch { discoveryFailed.value = true }
   finally { discovering.value = false }
 }

@@ -111,7 +111,8 @@ it('称号隔离同名不同主体及多称号独立重复纳入', async () => {
   const onlyInnovative = f.candidate('仅创新型',undefined,'innovative_sme')
   const crossFailure = f.candidate('他称号失败不影响本称号')
   f.addRecord(crossFailure.enterprise.id,crossFailure.enterprise.name,[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'failed'}],'little_giant')
-  f.decision(crossFailure.enterprise.id,'moved_out',{titleCode:'innovative_sme'})
+  // Qualification failure is title-scoped; cross-title subject termination is
+  // covered separately by current-export-review-fixes-http.
   const reverse = f.candidate('本称号失败不借他称号恢复',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'failed'}])
   f.addRecord(reverse.enterprise.id,reverse.enterprise.name,undefined,'innovative_sme')
   const {wb,job} = await f.workbook('118-isolation')
@@ -124,7 +125,7 @@ it('称号隔离同名不同主体及多称号独立重复纳入', async () => {
   // Other titles use the very same public kind. Their independent sets must also retain multi.
   for (const [title,label,eligible,excluded] of [
     ['little_giant','专精特新“小巨人”',[multi,onlyLittle],[crossFailure]],
-    ['innovative_sme','创新型中小企业',[multi,onlyInnovative,reverse],[crossFailure]],
+    ['innovative_sme','创新型中小企业',[multi,onlyInnovative,reverse],[]],
   ] as const) {
     const response = await fetch(f.url('/api/jobs'),{method:'POST',headers:f.headers,body:JSON.stringify({kind:'current-roster-export',params:{titleCode:title,clientRequestId:'118-multi-' + title}})})
     expect(response.status).toBe(202)
@@ -262,7 +263,7 @@ it('本称号生成失败无半成品且可显式重新生成', async () => {
   const accepted = await f.json(response), failed = await f.terminal(accepted.jobId)
   expect(failed.state).toBe('failed'); expect(failed.error).toContain('Excel')
   expect(failed.params.titleCode).toBe('specialized_sme')
-  expect(failed.result.ruleVersion).toBe('current-roster-116-v1')
+  expect(failed.result.ruleVersion).toBe('current-roster-116-v2')
   expect(failed.result.artifact).toBeUndefined()
   expect(JSON.stringify(failed)).not.toContain(f.dir)
   expect((await fetch(f.url('/api/job-artifacts/' + failed.id),{headers:f.headers})).status).toBe(404)

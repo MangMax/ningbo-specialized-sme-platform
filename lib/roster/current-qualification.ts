@@ -6,7 +6,7 @@ import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
 
-export const CURRENT_RULE_VERSION = 'current-roster-116-v1'
+export const CURRENT_RULE_VERSION = 'current-roster-116-v2'
 export const CURRENT_TITLES = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 export type CurrentTitle = typeof CURRENT_TITLES[number]
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
@@ -32,15 +32,21 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
   const row: CurrentRow = { enterpriseId, name: enterprise.name, uscc: enterprise.uscc_norm, district: enterprise.district, publishedNames: [...new Set(formal.map(e => e.nameRaw).filter((n): n is string => !!n))], aliases: [], firstYear: lifecycle.firstRecognitionYear, basis: formal.map(e => `event:${e.id}@${e.revision} ${e.eventType} ${e.year ?? ''}/${e.batchSeq ?? ''} 结论年:${e.decidedYear ?? ''}`).join('\n'), reviews: formal.filter(e => e.eventType === 'review').map(e => `${e.year ?? '?'}年原认定批次；结论年${e.decidedYear ?? '?'}；${e.reviewOutcome ?? '未知'}`).join('\n'), publication: formal.length ? '已见本称号宁波公布记录' : '尚未完成公布匹配核实', notes: [], references: evidence.map(v => `evidence:${v.id} ${v.sourceFile} ${v.attachment ?? ''} 序号:${v.listNo ?? ''}`), group: 'pending' }
   const awards = formal.filter(e => e.eventType === 'award')
   const awardYear = (e: typeof awards[number]) => e.decidedYear ?? e.year
-  const datedAwards = awards.filter(e => awardYear(e) != null && awardYear(e)! <= year)
+  // A formal, dated renewal can confirm a cycle even when its original award
+  // row is absent. It must not manufacture a first-recognition year.
+  const seeds = awards.length ? awards : formal.filter(e => e.eventType === 'review' && e.reviewOutcome === 'passed' && e.year != null && e.decidedYear != null && e.decidedYear >= e.year && e.batchSeq != null)
+  const datedAwards = seeds.filter(e => awardYear(e) != null && awardYear(e)! <= year)
   const newestYear = Math.max(...datedAwards.map(e => awardYear(e)!))
   const cycles = datedAwards.filter(e => awardYear(e) === newestYear)
-  if (!awards.length) {
+  const unknownCycleReviews = formal.filter(e => e.eventType === 'review' && e.year == null)
+  const relevantUnknownReviews = unknownCycleReviews.filter(e => !awards.length || e.decidedYear == null || e.decidedYear >= newestYear)
+  if (unknownCycleReviews.length > relevantUnknownReviews.length) row.notes.push('较早复核原周期未知；后续明确新认定恢复，旧缺口及出处保留')
+  if (!seeds.length) {
     if (events.length && events.every(e => e.eventType === 'nurture')) { row.group='excluded'; row.notes.push('纯入库培育，不构成称号') }
     else row.notes.push('缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格')
-  } else if (formal.some(e => e.eventType === 'review' && e.year == null)) row.notes.push('复核对应原认定周期未知，待确认')
+  } else if (relevantUnknownReviews.length) row.notes.push('复核对应原认定周期未知，待确认')
   else if (formal.some(e => e.eventType === 'review' && e.reviewOutcome === 'failed' && e.decidedYear === newestYear)) row.notes.push('同年认定恢复与失败结论顺序冲突，待确认')
-  else if (awards.some(e => awardYear(e) == null || awardYear(e)! > year)) row.notes.push('认定日期缺失或尚未生效，当前周期待确认')
+  else if (seeds.some(e => awardYear(e) == null || awardYear(e)! > year)) row.notes.push('认定日期缺失或尚未生效，当前周期待确认')
   else {
     // Reviews refer to the original award year/batch. Old-cycle failures cannot
     // terminate a newer award, even when the review was published later.
@@ -79,19 +85,27 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
   const platformRefs=db.prepare('select r.id,r.query_id as queryId from platform_relation r join platform_query q on q.id=r.query_id where r.enterprise_id=? and (q.title_code=? or q.rdjb=?) order by r.id').all(enterpriseId,title,rdjb) as {id:number;queryId:number}[]
   row.references.push(...platformRefs.map(r => 'platform-relation:' + r.id + ' query:' + r.queryId))
   const reader=domainReader(db)
-  const heads = (['missing_in_miit','extra_in_miit'] as const).map(direction => latestDecision102(reader,{enterpriseId,titleCode:title,direction})).filter((d): d is NonNullable<typeof d> => !!d).map(d => ({...d,queryId:d.evidenceQueryId,relationId:d.evidenceRelationId,movedTitle:d.movedInTitleCode,movedCity:d.movedInCity,movedYear:d.movedInYear,movedBatch:d.movedInBatch}))
+  const heads = CURRENT_TITLES.flatMap(titleCode => (['missing_in_miit','extra_in_miit'] as const).map(direction => latestDecision102(reader,{enterpriseId,titleCode,direction}))).filter((d): d is NonNullable<typeof d> => !!d).map(d => ({...d,queryId:d.evidenceQueryId,relationId:d.evidenceRelationId,movedTitle:d.movedInTitleCode,movedCity:d.movedInCity,movedYear:d.movedInYear,movedBatch:d.movedInBatch}))
   const correspondences=listRecordCorrespondenceRefs(reader,{enterpriseId,titleCode:title})
-  row.references.push(...correspondences.map(c => 'correspondence:' + c.id + '@' + c.revision + ' ' + c.status + (c.requiresRevalidation ? ' 来源已变化待重新核实' : '')))
+  row.references.push(...correspondences.map(c => 'correspondence:' + c.id + '@' + c.revision + ' ' + c.status + (c.requiresRevalidation ? ' 来源需重新核实' : '')))
   if (!formal.length && correspondences.length) row.notes.push('对应边不是已确认当前资格；需核实具体资格与公布匹配范围')
   const subjectFacts: any[] = []
+  let subjectGap = false
   for (const d of heads) {
+    const subjectFact = ['moved_out','deregistered','moved_in'].includes(d.reasonCode ?? '')
+    // Qualification explanations remain title-scoped. Legal-entity facts do not.
+    if (d.titleCode !== title && !subjectFact && d.lifecycleAction !== 'withdraw') continue
     row.references.push('decision:' + d.id)
     if (d.lifecycleAction === 'withdraw') { row.notes.push('旧决定已撤回，不作为当前排除依据'); continue }
-    if (d.verificationStatus !== 'confirmed' || d.status !== 'confirmed_reason' || ['pending_review','platform_stale','renamed'].includes(d.reasonCode ?? '')) continue
+    if (d.verificationStatus !== 'confirmed' || d.status !== 'confirmed_reason') {
+      if (subjectFact) { subjectGap=true; row.notes.push('主体事实尚未确认（decision:' + d.id + '）') }
+      continue
+    }
+    if (['pending_review','platform_stale','renamed'].includes(d.reasonCode ?? '')) continue
     let gap = !d.lifecycleAction || !d.basis || !d.effectiveAt || !Number.isFinite(Date.parse(d.effectiveAt)) || Date.parse(d.effectiveAt) > executionTime
     if (d.queryId) {
       const q = db.prepare('select query_key as key,rdjb,title_code as title from platform_query where id=?').get(d.queryId) as any
-      if (!q || q.title && q.title !== title || q.key !== enterprise.uscc_norm && q.key !== 'name:' + enterprise.name_norm || q.key?.startsWith('name:') && enterprise.uscc_norm) gap=true
+      if (!q || q.title && q.title !== d.titleCode || q.rdjb && !q.rdjb.split(',').includes(({little_giant:'3',specialized_sme:'2',innovative_sme:'1'} as Record<string,string>)[d.titleCode]) || q.key !== enterprise.uscc_norm && q.key !== 'name:' + enterprise.name_norm || q.key?.startsWith('name:') && enterprise.uscc_norm) gap=true
     }
     if (d.relationId) {
       const r = db.prepare('select enterprise_id as enterpriseId,uscc_raw as uscc,verification_status as status from platform_relation where id=?').get(d.relationId) as any
@@ -99,7 +113,7 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
     }
     const corrected = db.prepare('select id from enterprise_profile_audit where enterprise_id=? and created_at>? limit 1').get(enterpriseId,d.recordedAt)
     if (corrected) gap=true
-    if (gap || d.reasonCode === 'other') { row.group='pending'; row.notes.push('旧决定适用前提需重新核实；#108适用性/终止资格能力未交付（decision:' + d.id + '）'); continue }
+    if (gap || d.reasonCode === 'other') { if (subjectFact) subjectGap=true; row.group='pending'; row.notes.push('旧决定适用前提需重新核实；#108适用性/终止资格能力未交付（decision:' + d.id + '）'); continue }
     if (['moved_out','deregistered','moved_in'].includes(d.reasonCode ?? '')) subjectFacts.push(d)
   }
   const latestTime = Math.max(...subjectFacts.map(d => Date.parse(d.effectiveAt)))
@@ -110,13 +124,14 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
     if (d.reasonCode === 'moved_out' || d.reasonCode === 'deregistered') { row.group='excluded'; row.notes.push(d.reasonCode === 'moved_out' ? '已确认外迁' : '已确认注销/主体终止') }
     else {
       row.notes.push('已确认迁入宁波' + (d.movedCity ? '；原城市：' + d.movedCity : ''))
-      if (d.movedTitle && d.movedTitle !== title) { row.group='pending'; row.notes.push('迁入资格依据不属于本称号') }
+      if (d.titleCode === title && d.movedTitle && d.movedTitle !== title) { row.group='pending'; row.notes.push('迁入资格依据不属于本称号') }
       if (!formal.length) {
         row.group='pending'; row.publication='尚未完成公布匹配核实'
         row.notes.push('#108尚无已确认本称号当前资格及宁波公布核对范围；迁入事实不能代替资格依据')
       }
     }
   }
+  if (subjectGap) { row.group='pending'; row.notes.push('相关主体事实适用性未确认，不能确认为当前有效主体') }
   const incomplete = events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType) && !formal.some(f => f.id === e.id))
   const allHistory=computeTitleLifecycle(events.filter(e => e.source === 'jxj'))
   const first=events.find(e => e.id === allHistory.firstRecognitionEventId)
