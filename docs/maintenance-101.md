@@ -58,7 +58,7 @@
 - 非唯一 `record_evidence_coordinate_idx(source_file,list_no,attachment)`：缩窄冲突候选，不改变旧数据唯一性。EXPLAIN 证明命中覆盖索引。
 - 前序影响计数复用 #100 迁移0016已有的 `record_correspondence_predecessor_idx(predecessor_event_id)`，与原 event 索引组成 OR 范围计数；#101不重复创建索引，不物化 provenance。
 
-不生成无关 migration snapshot，不修改已有文件/业务数据。集成 merger 需按编号合并 journal 并保留有序 timestamp。两个读入口在只读事务快照内组合坐标、修订和分页总数；提交不使用共享缓存；成功写后旧动态指纹读取立即可见。
+不生成无关 migration snapshot，迁移不回填或改写既有业务事实和源文件。集成 merger 需按编号合并 journal 并保留有序 timestamp。两个读入口在只读事务快照内组合坐标、修订和分页总数；提交不使用共享缓存；成功写后旧动态指纹读取立即可见。
 
 `tests/evidence-correction-101-bounded.test.ts` 在真实 HTTP 适配器和隔离 SQLite 下观察真实驱动 `get/all` 返回值，不替换结果。固定目标、210 条历史，第5页/pageSize50。无关数据按 0/200/1000 个事件+出处+平台查询+关系+对应逐步增加；每个增量行有 raw_response=12288B、raw_fields=12306B、provenance=12306B，总原文字段 36900B。1000 行总 36,900,000B 原文字段。每级每入口 1 次，仅验证物化不随无关数据增长，不推算可靠尾分位。
 
@@ -97,4 +97,12 @@
 | OpenAPI、异常JSON、限额、401/no-store | `publishes actionable OpenAPI coordinates and rejects unauthenticated or malformed requests` |
 | 无关数据增长、SQL行/字节与原文排除 | `bounds fixed evidence preflight and history materialization across unrelated source growth` |
 
-最终集成候选的实际 SHA、测试命令/计数、typecheck/build 和测量 JSON 在提交后验证记录补齐；不把早期小切片结果升级成后来代码的证明。
+最终执行代码和公开契约验证 SHA：`dd6e3e2282a27d8a39ee4eb3ac722ace94041454`，已合入集成 `f31f57b5a097223f15e7d596961af9d4ea8c6693`（含 #96/#99/#100），后继提交仅补本票验证文档。分支 `t3/ticket-101-evidence-legacy-compat`，worktree `/Users/mang/.t3/worktrees/app/t3-e3bb583b`。
+
+- `verification-dd6e3e2.log`：`pnpm test` 显式运行本票2文件、旧页码API/页码规则/出处收敛、MCP面、对应API/core/bounded及#100事件更正，共10文件/150测试通过，无跳过。所有测试 `--maxWorkers=1`，Nuxt独立构建目录/随机保留端口。
+- `typecheck-dd6e3e2.log`：`pnpm typecheck` 退出0；`build-dd6e3e2.log`：`pnpm build` 退出0。
+- `materialization-dd6e3e2.json`：内嵌测量来源完整SHA；0/200/1000分布的SQL行/字节、响应字节、原文字段投影及两个EXPLAIN计划。与上文报告一致，未运行重型容量基准。
+- 本票最终15个真实Nuxt HTTP/MCP用例、1个有界HTTP/驱动物化用例；原17个旧页码HTTP用例也包含在最终150测试中。原9用例历史绿日志 `validation-initial.log`，原17用例早期证据 `green-legacy.log`（该次同跑4个本票用例，共21）；另保留最终独跑 `legacy-17-dd6e3e2.log`。
+- `verification-4cb3440.log` / `build-4cb3440.log` 是合入#100前的旧候选证据，只代表当时136测试/构建，不是ABA修复后证明；`verification-4adb6f7.log` / `typecheck-4adb6f7.log` / `build-4adb6f7.log` 为代理说明补齐前的后ABA候选。保留各自SHA边界。
+
+没有创建PR、部署、生产数据变更、main合并或关闭母票。父代理负责集成审查和全量/容量验收。
