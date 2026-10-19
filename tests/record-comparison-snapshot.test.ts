@@ -7,6 +7,30 @@ import { useDb, schema } from '../db/client'
 import { getRecordComparison } from '../server/utils/record-comparison'
 import { readRecordComparison } from '../server/utils/record-comparison-read'
 
+it('cancels a suspended comparison and releases its readonly snapshot before the next read', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'comparison-cancel-'))
+  const db = useDb({ dbPath: join(dir, 'test.db') })
+  try {
+    const owner = db.insert(schema.enterprise).values({ name: 'Cancel', nameNorm: 'Cancel' }).returning().get()
+    const record = db.insert(schema.record).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
+    const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Cancel', path: 'cancel.pdf' }).returning().get()
+    const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'cancel', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z', status: 'partial' }).returning().get()
+    db.transaction(tx => { for (let n = 0; n < 512; n++) tx.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).run() })
+    const input = { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id], page: 1, pageSize: 1 }
+    const controller = new AbortController()
+    const reading = readRecordComparison(db, input, controller.signal)
+    const rejected = expect(reading).rejects.toMatchObject({ name: 'AbortError' })
+    await setImmediate() // suspend with an active native formal cursor
+    controller.abort()
+    await rejected
+    // A leaked cursor/read transaction would pin the pre-commit WAL snapshot.
+    db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2025 }).run()
+    expect(db.$client.pragma('wal_checkpoint(TRUNCATE)')).toMatchObject([{ busy: 0, log: 0, checkpointed: 0 }])
+    expect((await readRecordComparison(db, input)).total).toBe(513)
+    await expect(readRecordComparison(db, input, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+  } finally { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
 it('yields to concurrent work while keeping counts and rows in one readonly SQLite snapshot', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'comparison-snapshot-'))
   const db = useDb({ dbPath: join(dir, 'test.db') })

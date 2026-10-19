@@ -14,6 +14,11 @@ defineRouteMeta({ openAPI: { tags: ['名录'], summary: '记录级对比（只�
 ], responses: { 200: { description: '逐事件行、全范围分类与各粒度计数、逐查询覆盖和逐原行现状观察。' }, 400: { description: '来源 ID、时点或筛选非法，或指定来源不存在。' } } } })
 export default defineEventHandler(async event => {
   setHeader(event, 'cache-control', 'no-store')
-  try { const db = useDb(); const input = parseRecordComparisonQuery(getQuery(event)); return await readRecordComparison(db, input) }
+  const controller = new AbortController()
+  const abort = () => { if (!event.node.res.writableEnded) controller.abort() }
+  event.node.req.once('aborted', abort)
+  event.node.res.once('close', abort)
+  try { const db = useDb(); const input = parseRecordComparisonQuery(getQuery(event)); return await readRecordComparison(db, input, controller.signal) }
   catch (error) { if (error instanceof ZodError || error instanceof Error && (error.message.startsWith('source_set_') || error.message.startsWith('duplicate_'))) throw createError({ statusCode: 400, statusMessage: error.message }); throw error }
+  finally { event.node.req.off('aborted', abort); event.node.res.off('close', abort) }
 })

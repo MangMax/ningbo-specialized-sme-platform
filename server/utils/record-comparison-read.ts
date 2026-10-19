@@ -9,7 +9,8 @@ import { resolveVerifiedComparisonEvidence } from './comparison-scope-proof'
 
 /** An independent readonly connection keeps a single SQLite snapshot across yields.
  * It never shares an async transaction with the app's cached writer connection. */
-export async function readRecordComparison(owner: ReturnType<typeof useDb>, input: RecordComparisonInput) {
+export async function readRecordComparison(owner: ReturnType<typeof useDb>, input: RecordComparisonInput, signal?: AbortSignal) {
+  signal?.throwIfAborted()
   const connection = new Database(owner.$client.name, { readonly: true, fileMustExist: true })
   const db = drizzle(connection, { schema })
   let steps: ReturnType<typeof iterateRecordComparison> | undefined
@@ -18,6 +19,7 @@ export async function readRecordComparison(owner: ReturnType<typeof useDb>, inpu
     const evidence = resolveVerifiedComparisonEvidence(db, input.proofIds ?? [], input)
     steps = iterateRecordComparison(db, input, evidence)
     while (true) {
+      signal?.throwIfAborted()
       const step = steps.next()
       if (step.done) return step.value
       await setImmediate()
