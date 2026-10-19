@@ -116,7 +116,9 @@ it('reads immutable decision history and full old audit details without a write 
   expect(view.text()).toContain('历史人工依据')
   expect(view.text()).toContain('reviewer-original')
   expect(view.text()).toContain('original-rule')
-  expect(view.findAll('button[type="submit"]').at(-1)!.attributes('disabled')).toBeDefined()
+  expect(view.get('[data-testid="review-readonly"]').text()).toContain('历史、撤回或归并')
+  const readonlyForm = view.findAll('form').find(form => form.text().includes('当前只读'))!
+  expect(readonlyForm.find('button[type="submit"]').attributes('disabled')).toBeDefined()
   view.unmount()
 })
 it('restarts the frozen list cursor after successful review so completed items disappear from the fresh pending view', async () => {
@@ -176,7 +178,9 @@ it('keeps merged historical coordinates readable when the legacy decision is una
   expect(view.text()).toContain('merge-7')
   expect(view.text()).toContain('企业 #7')
   expect(view.text()).not.toContain('历史决定读取失败')
-  expect(view.findAll('button[type="submit"]').at(-1)!.attributes('disabled')).toBeDefined()
+  expect(view.get('[data-testid="review-readonly"]').text()).toContain('历史、撤回或归并')
+  const readonlyForm = view.findAll('form').find(form => form.text().includes('当前只读'))!
+  expect(readonlyForm.find('button[type="submit"]').attributes('disabled')).toBeDefined()
   expect(fetcher.mock.calls.some(c => c[0].endsWith('/history'))).toBe(false)
   view.unmount()
 })

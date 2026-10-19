@@ -277,6 +277,8 @@ watch(() => props.impactId, impactId => {
           :enterprise-id="enterpriseId"
           :title-code="titleCode"
           :direction="direction"
+          default-state="all"
+          default-view="all"
         />
       </div>
     </DisclosurePanel>

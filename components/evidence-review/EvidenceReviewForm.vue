@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch, type Ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch, type Ref } from 'vue'
 import type { ImpactDetail } from '~~/lib/roster/evidence-review-ui'
+import { reviewEligibility } from '~~/lib/roster/review-eligibility'
 import { useEvidenceReviewRefresh } from '~/composables/useEvidenceReviewRefresh'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -18,11 +19,14 @@ const basis = shallowRef('')
 const ruleVersion = shallowRef('')
 const pending = shallowRef(false)
 const failure = shallowRef('')
+const failureEl = shallowRef<HTMLElement | { $el?: HTMLElement } | null>(null)
 const mode = shallowRef<'maintain' | 'replace'>('maintain')
 const choiceId = useId()
 /** Sheet 模式把主操作放进独立 footer；button[form] 仍提交同一张表单。 */
 const formId = useId()
 const conflict = shallowRef(false)
+/** 写请求已成功返回，读回尚未完成时也不能再生成新的提交标识。 */
+const committed = shallowRef(false)
 watch(() => props.detail, () => { if (conflict.value) failure.value = ''; conflict.value = false })
 
 const draft = ref({ status: 'confirmed_reason', reasonCode: '', reasonNote: '', measureCode: '', measureNote: '', evidenceQueryId: '', evidenceRelationId: '' })
@@ -43,8 +47,9 @@ const isDirty = computed(() =>
 watch(isDirty, value => { if (externalDraft) externalDraft.value = value }, { immediate: true })
 const validId = (id: string) => !id || (/^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id)))
 const replacementReady = computed(() => !!draft.value.measureCode && (draft.value.status === 'confirmed_no_diff' ? draft.value.measureCode === 'none' : !!draft.value.reasonCode && (draft.value.reasonCode !== 'pending_review' || draft.value.measureCode === 'follow_review')) && validId(draft.value.evidenceQueryId) && validId(draft.value.evidenceRelationId))
-const eligible = computed(() => props.detail.pending && props.detail.oldDecision != null && !props.detail.gaps.decisionUnavailable && props.detail.lineage === 'current' && props.detail.currentDecision?.current != null && props.detail.currentDecision.versionId === props.detail.decisionId && props.detail.evidenceToken.decisionId === props.detail.decisionId && props.detail.evidenceToken.projectionReady)
-const canSubmit = computed(() => eligible.value && !conflict.value && (mode.value === 'maintain' || replacementReady.value) && !pending.value && !props.refreshing && !!token.value.trim() && !!actor.value.trim() && !!basis.value.trim() && !!ruleVersion.value.trim())
+const eligibility = computed(() => reviewEligibility(props.detail))
+const eligible = computed(() => eligibility.value.eligible)
+const canSubmit = computed(() => eligible.value && !conflict.value && !committed.value && (mode.value === 'maintain' || replacementReady.value) && !pending.value && !props.refreshing && !!token.value.trim() && !!actor.value.trim() && !!basis.value.trim() && !!ruleVersion.value.trim())
 
 /** 禁用主按钮时把缺项说出来；不在界面上留一个没有原因的灰按钮。 */
 const missingFields = computed(() => {
@@ -64,6 +69,7 @@ const missingFields = computed(() => {
 const blockedReason = computed(() => {
   if (!eligible.value) return '该项当前不可完成复核：历史、撤回、归并或尚未完成影响检查。请重新读取当前状态。'
   if (conflict.value) return '当前决定或证据版本已变化。请先重新读取当前状态，再提交。'
+  if (committed.value) return '复核已提交，正在等待读回当前状态；请重新读取确认。'
   if (pending.value || props.refreshing) return '正在读取或保存，请稍候。'
   if (!missingFields.value.length) return ''
   return `提交前还需填写：${missingFields.value.join('、')}。`
@@ -71,6 +77,20 @@ const blockedReason = computed(() => {
 
 let retry: { signature: string; body: Record<string, unknown> } | null = null
 function clearToken() { token.value = '' }
+/**
+ * 失败原因必须出现在当前屏：Sheet 的主操作在滚动区外，滚动正文里的旧错误
+ * 用户看不到。focus 到 footer 内的错误本身，读屏和键盘用户也能立即知道结果。
+ */
+async function revealFailure() {
+  await nextTick()
+  await nextTick()
+  const value = failureEl.value
+  const target = value
+    ? (typeof HTMLElement !== 'undefined' && value instanceof HTMLElement ? value : (value as { $el?: HTMLElement }).$el ?? null)
+    : null
+  target?.focus({ preventScroll: true })
+  target?.scrollIntoView?.({ block: 'nearest' })
+}
 onMounted(() => window.addEventListener('pagehide', clearToken))
 onBeforeUnmount(() => { window.removeEventListener('pagehide', clearToken); clearToken(); retry = null; if (externalDraft) externalDraft.value = false })
 
@@ -91,18 +111,21 @@ async function save() {
   try {
     await $fetch('/api/roster/decision-lifecycle/commands', { method: 'POST', headers: { authorization: `Bearer ${token.value.trim()}` }, body })
     retry = null
-    await refreshAffected()
+    committed.value = true
+    // 先让宿主开始读回；写请求已成功时，刷新失败不能反报成保存失败。
     emit('saved')
+    try { await refreshAffected() } catch { /* 宿主详情仍会显式读回并说明状态 */ }
   } catch (error) {
     const code = (error as { data?: { error?: { code?: string } } })?.data?.error?.code
     // Only translate known codes. Raw responses can contain credentials and are never rendered.
     failure.value = code === 'stale_version' ? '决定版本冲突。请重新读取当前决定，核对后再提交。'
       : code === 'stale_evidence' ? '证据版本冲突或影响检查尚未完成。请重新读取后复核。'
-      : code === 'unauthorized' ? '没有改判权限或写入凭证已失效。已读取的结果仍可查看，填写内容会保留。'
+      : code === 'unauthorized' ? '没有改判权限或写入凭证已失效。凭证已清空；复核人、依据与更正草稿会保留。'
       : code === 'idempotency_conflict' ? '提交标识冲突。请重新读取并核对当前决定。'
       : '复核保存失败，待复核状态保留。请重试；同一请求会复用提交标识。'
     if (['stale_version', 'stale_evidence', 'idempotency_conflict'].includes(code ?? '')) conflict.value = true
     if (code === 'unauthorized') token.value = ''
+    await revealFailure()
   } finally { pending.value = false }
 }
 </script>
@@ -117,9 +140,15 @@ async function save() {
         </Badge>
       </div>
 
-      <p v-if="!eligible" class="text-muted-foreground text-[13px] leading-5">
-        {{ !detail.pending ? '该项已登记复核；若有后续证据变化，请重新读取。' : '该项当前不可完成复核：历史、撤回、归并或尚未完成影响检查。请重新读取当前状态。' }}
-      </p>
+      <div
+        v-if="!eligible"
+        data-testid="review-readonly"
+        role="status"
+        class="bg-muted/20 flex min-w-0 flex-col gap-0.5 rounded-md border px-3 py-2 text-[13px] leading-5"
+      >
+        <p class="text-foreground font-medium">当前只读</p>
+        <p class="text-muted-foreground">{{ eligibility.reason }}</p>
+      </div>
       <p class="text-muted-foreground text-[13px] leading-5">
         {{ token ? '写入凭证仅在本面板内存中使用，权限由服务端验证。' : '可填写复核信息，但当前不可提交：提交需要可用的写入凭证。' }}
       </p>
@@ -174,7 +203,14 @@ async function save() {
         </p>
       </fieldset>
 
-      <Alert v-if="failure" variant="destructive" role="alert">
+      <Alert
+        v-if="failure && !footer"
+        ref="failureEl"
+        variant="destructive"
+        tabindex="-1"
+        data-testid="review-save-error"
+        class="focus-visible:ring-ring/50 focus-visible:ring-3 focus-visible:outline-none"
+      >
         <AlertDescription>{{ failure }}</AlertDescription>
       </Alert>
 
@@ -192,11 +228,24 @@ async function save() {
         不压住正文或输入框；内联展开时保持普通文档流。
       -->
       <Teleport v-if="footer" to="#review-sheet-footer" defer>
-        <div class="bg-card flex flex-wrap gap-2">
-          <Button type="submit" :form="formId" :disabled="!canSubmit" :aria-describedby="blockedReason ? 'review-submit-blocked-reason' : undefined">
-            {{ pending ? '保存中…' : mode === 'maintain' ? '维持原决定并完成复核' : '追加更正并完成复核' }}
-          </Button>
-          <Button type="button" variant="outline" :disabled="pending || refreshing" @click="emit('reload')">重新读取当前状态</Button>
+        <div class="bg-card flex flex-col gap-2">
+          <!-- 失败原因和主操作同处 footer，390 当前屏就能看到；正文里不再重复第二处。 -->
+          <Alert
+            v-if="failure"
+            ref="failureEl"
+            variant="destructive"
+            tabindex="-1"
+            data-testid="review-save-error"
+            class="focus-visible:ring-ring/50 focus-visible:ring-3 focus-visible:outline-none"
+          >
+            <AlertDescription>{{ failure }}</AlertDescription>
+          </Alert>
+          <div class="flex flex-wrap gap-2">
+            <Button type="submit" :form="formId" :disabled="!canSubmit" :aria-describedby="blockedReason ? 'review-submit-blocked-reason' : undefined">
+              {{ pending ? '保存中…' : mode === 'maintain' ? '维持原决定并完成复核' : '追加更正并完成复核' }}
+            </Button>
+            <Button type="button" variant="outline" :disabled="pending || refreshing" @click="emit('reload')">重新读取当前状态</Button>
+          </div>
         </div>
       </Teleport>
       <div v-else class="bg-card flex flex-wrap gap-2">

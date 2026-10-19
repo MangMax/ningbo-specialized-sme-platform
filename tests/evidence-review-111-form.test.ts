@@ -2,7 +2,7 @@
 import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
-import { defineComponent, nextTick } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import EvidenceReviewForm from '../components/evidence-review/EvidenceReviewForm.vue'
 import { Select } from '../components/ui/select'
@@ -20,7 +20,7 @@ function selectByLabel(view: ReturnType<typeof render>, label: string) {
   if (!select) throw new Error(`Select not found: ${label}`)
   return select
 }
-async function fill(view: ReturnType<typeof render>) {
+async function fill(view: ReturnType<typeof mount>) {
   await view.get('[aria-label="写入凭证"]').setValue('synthetic-token')
   await view.get('[aria-label="复核人"]').setValue('reviewer-7')
   await view.get('[aria-label="复核依据"]').setValue('核对新查询并保留原业务判断')
@@ -42,6 +42,35 @@ it('keeps the sheet primary action outside the scroll body and bound to the same
   expect(view.findAll('button[type="submit"]')).toHaveLength(1)
   view.unmount()
 })
+it('keeps a failed 401 reason visible and focused inside the sheet footer while clearing only the credential', async () => {
+  fetcher.mockRejectedValueOnce({ data: { error: { code: 'unauthorized', message: 'Bearer synthetic-token' } } })
+  const Host = defineComponent({
+    components: { EvidenceReviewForm },
+    setup: () => ({ detail }),
+    template: '<div><div id="review-sheet-footer" /><EvidenceReviewForm :detail="detail" footer /></div>',
+  })
+  const view = mount(Host, { attachTo: document.body, global: { plugins: [createPinia(), PiniaColada] } })
+  await fill(view)
+  await view.get('form').trigger('submit')
+  await flushPromises()
+  const errors = view.findAll('[data-testid="review-save-error"]')
+  expect(errors).toHaveLength(1)
+  expect(view.get('#review-sheet-footer [data-testid="review-save-error"]').text()).toContain('没有改判权限')
+  expect(view.get('#review-sheet-footer [data-testid="review-save-error"]').text()).toContain('凭证已清空')
+  expect(document.activeElement).toBe(errors[0]!.element)
+  expect((view.get('[aria-label="写入凭证"]').element as HTMLInputElement).value).toBe('')
+  expect((view.get('[aria-label="复核人"]').element as HTMLInputElement).value).toBe('reviewer-7')
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toContain('核对新查询')
+  expect((view.get('[aria-label="规则版本"]').element as HTMLInputElement).value).toBe('manual-2026')
+  const first = fetcher.mock.calls[0]![1].body
+  await view.get('[aria-label="写入凭证"]').setValue('synthetic-token-2')
+  await view.get('form').trigger('submit')
+  await flushPromises()
+  expect(fetcher.mock.calls[1]![1].body).toEqual(first)
+  expect(fetcher.mock.calls[1]![1].body.idempotencyKey).toBe(first.idempotencyKey)
+  view.unmount()
+})
+
 it('keeps public review unsubmittable until a write credential and explicit review inputs exist', async () => {
   const view = render()
   expect(view.text()).toContain('当前不可提交')
@@ -123,4 +152,24 @@ it('keeps unprocessed evidence read-only even when a write credential is supplie
   expect(fetcher).not.toHaveBeenCalled()
   expect(view.text()).toContain('尚未完成影响检查')
   expect(view.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+})
+
+it('removes the teleported footer action and resets the draft flag when the form unmounts', async () => {
+  const footer = document.createElement('div')
+  footer.id = 'review-sheet-footer'
+  document.body.appendChild(footer)
+  const draft = ref(true)
+  const view = mount(EvidenceReviewForm, {
+    props: { detail: detail as any, footer: true },
+    attachTo: document.body,
+    global: { plugins: [createPinia(), PiniaColada], provide: { 'enterprise-review-draft': draft } },
+  })
+  await flushPromises()
+  await nextTick()
+  expect(footer.querySelector('button[type="submit"]')).toBeTruthy()
+  view.unmount()
+  await nextTick()
+  expect(footer.childElementCount).toBe(0)
+  expect(draft.value).toBe(false)
+  footer.remove()
 })

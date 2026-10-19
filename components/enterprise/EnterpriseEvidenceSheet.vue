@@ -87,8 +87,8 @@ function discardAndClose() {
         </template>
       </div>
 
-      <!-- 主操作固定在滚动区外，390 全宽 Sheet 也不会压住表单或键盘。 -->
-      <div v-if="resolvedImpactId" id="review-sheet-footer" class="bg-card shrink-0 border-t px-5 py-3" />
+      <!-- 主操作固定在滚动区外，390 全宽 Sheet 也不会压住表单或键盘。已复核/只读详情没有表单时，空 footer 不占位。 -->
+      <div v-if="resolvedImpactId" id="review-sheet-footer" class="bg-card shrink-0 border-t px-5 py-3 [&:empty]:hidden" />
     </SheetContent>
   </Sheet>
 

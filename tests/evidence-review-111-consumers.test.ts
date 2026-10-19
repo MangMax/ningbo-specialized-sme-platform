@@ -42,24 +42,32 @@ it('gives each stacked direction a visible label instead of relying on aria-labe
     .toContain('应纳未纳')
   view.unmount()
 })
-const embeddedRow = { id: 4, enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', decisionId: 82, latestRevisionId: 9, reviewedRevisionId: null, classification: 'premise_invalid', pending: true, lineage: 'current', oldDecision: { id: 82, status: 'not_queried', reasonCode: 'other', measureCode: 'none' } }
+const embeddedRow = { id: 4, enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', decisionId: 82, latestRevisionId: 9, reviewedRevisionId: null, classification: 'premise_invalid', pending: true, lineage: 'current', oldDecision: { id: 82, status: 'not_queried', reasonCode: 'other', measureCode: 'none', reasonNote: '页面预取待复核项' } }
+const reviewedRow = { ...embeddedRow, id: 34, decisionId: 34, pending: false, reviewedRevisionId: 9, oldDecision: { ...embeddedRow.oldDecision, id: 34, reasonNote: '已复核记录 #34' } }
+const historicalRow = { ...reviewedRow, id: 35, decisionId: 35, lineage: 'historical', oldDecision: { ...reviewedRow.oldDecision, id: 35, reasonNote: '历史决定 #35' } }
 it.each([
-  { rows: [embeddedRow], expected: '原决定 #82' },
-  { rows: [], expected: '本页没有复核项' },
-])('renders the embedded all-records list from the same pending cache entry the page prefetches ($expected)', async ({ rows, expected }) => {
-  const page = { rows, nextCursor: null, asOf: { revision: 9 }, projectionReady: true }
-  const fetcher = vi.fn(async (url: string) => {
+  { name: 'reviewed', allRows: [reviewedRow], expected: '已复核记录 #34', absent: '页面预取待复核项' },
+  { name: 'historical-only', allRows: [historicalRow], expected: '历史决定 #35', absent: '页面预取待复核项' },
+  { name: 'empty', allRows: [], expected: '该企业没有复核记录', absent: '页面预取待复核项' },
+])('expands the embedded all-records list with all/all while the page pending prefetch stays cached ($name)', async ({ allRows, expected, absent }) => {
+  const pendingPage = { rows: [embeddedRow], nextCursor: null, asOf: { revision: 9 }, projectionReady: true }
+  const allPage = { rows: allRows, nextCursor: null, asOf: { revision: 9 }, projectionReady: true }
+  const fetcher = vi.fn(async (url: string, options?: any) => {
     if (url.endsWith('/profile')) return { profile: { enterpriseId: 7, name: '合成企业7' } }
-    if (url === '/api/roster/evidence-impacts') return page
+    if (url === '/api/roster/evidence-impacts') {
+      if (options?.query?.state === 'all' && options?.query?.view === 'all') return allPage
+      if (options?.query?.state === 'pending' && options?.query?.view === 'current') return pendingPage
+      throw new Error('Unexpected queue query: ' + JSON.stringify(options?.query))
+    }
     throw new Error('Unexpected request: ' + url)
   })
   vi.stubGlobal('$fetch', fetcher)
-  // The same composable the page uses: it prefetches the key EvidenceReviewList
-  // resolves to when no title/direction deep-link is set.
+  // The page prefetch keeps its own pending/current key; the expanded enterprise
+  // list must fetch all/all and must not overwrite that cache entry.
   const PendingQueuePrefetch = defineComponent({
     setup() {
-      useEnterprisePendingImpacts(7)
-      return () => h('div')
+      const { data } = useEnterprisePendingImpacts(7)
+      return () => h('div', { 'data-testid': 'pending-prefetch', 'data-rows': data.value?.rows.length ?? -1 })
     },
   })
   const view = mount(defineComponent({
@@ -69,11 +77,18 @@ it.each([
     ]),
   }), { global: global() })
   await flushPromises()
+  expect(view.get('[data-testid="pending-prefetch"]').attributes('data-rows')).toBe('1')
   const trigger = view.findAll('button').find(button => button.text().includes('企业全部复核记录'))
   expect(trigger).toBeTruthy()
   await trigger!.trigger('click')
   await flushPromises()
+  await flushPromises()
+  expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts', { query: expect.objectContaining({ enterpriseId: 7, state: 'all', view: 'all', limit: 25 }) })
+  expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts', { query: expect.objectContaining({ enterpriseId: 7, state: 'pending', view: 'current', limit: 25 }) })
+  expect(view.get('[data-testid="pending-prefetch"]').attributes('data-rows')).toBe('1')
+  expect(view.text()).toContain('全部复核记录')
   expect(view.text()).toContain(expected)
+  expect(view.text()).not.toContain(absent)
   view.unmount()
 })
 it('locates the focused explanation only after the surrounding detail is ready', async () => {

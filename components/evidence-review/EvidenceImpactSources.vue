@@ -14,6 +14,16 @@ type Source = { revisionId: number; sourceKind: string; sourceKey: string; sourc
 const { displayed, cursorExpired, loading, error, reload, restart, next, previous, canNext, canPrevious } = useBoundedReviewPage<Source>('evidence-impact-sources', () => `/api/roster/evidence-impacts/${props.impactId}/sources`, () => ({}))
 const selectedRevision = shallowRef<number | null>(null)
 const failureTarget = computed(() => `复核项 #${props.impactId} · 来源第 ${displayed.value?.pageNumber ?? 1} 页`)
+/**
+ * 只有“成功读到第一页、没有 nextCursor、也没有可返回页”时才隐藏分页。
+ * 不能用 rows.length < 25 推断末页：服务端可能返回更少但仍给出下一页游标，
+ * 失败时也要保留目标页和重试上下文。
+ */
+const singlePage = computed(() => !!displayed.value
+  && displayed.value.pageNumber === 1
+  && !displayed.value.nextCursor
+  && !error.value
+  && !cursorExpired.value)
 </script>
 
 <template>
@@ -21,7 +31,8 @@ const failureTarget = computed(() => `复核项 #${props.impactId} · 来源第 
     <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
       <h4 class="text-sm font-medium">证据变化来源</h4>
       <span class="text-muted-foreground text-[13px]">
-        复核项 #{{ impactId }} · 来源第 {{ displayed?.pageNumber ?? 1 }} 页 · 每页最多 25 项
+        <template v-if="singlePage">复核项 #{{ impactId }}</template>
+        <template v-else>复核项 #{{ impactId }} · 来源第 {{ displayed?.pageNumber ?? 1 }} 页 · 每页最多 25 项</template>
       </span>
     </div>
 
@@ -101,7 +112,7 @@ const failureTarget = computed(() => `复核项 #${props.impactId} · 来源第 
       </li>
     </ul>
 
-    <div class="flex flex-wrap items-center gap-2">
+    <div v-if="!singlePage" class="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="outline" :disabled="!canPrevious" @click="previous">上一页来源</Button>
       <Button size="sm" variant="outline" :disabled="!canNext" @click="next">下一页来源</Button>
       <Button size="sm" variant="ghost" :disabled="loading" @click="restart">重新读取来源</Button>

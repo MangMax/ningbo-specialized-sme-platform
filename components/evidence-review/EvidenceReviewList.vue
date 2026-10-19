@@ -15,7 +15,15 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/ui/empty'
 
-const props = defineProps<{ enterpriseId?: number; titleCode?: string; direction?: string; syncQuery?: boolean }>()
+const props = defineProps<{
+  enterpriseId?: number
+  titleCode?: string
+  direction?: string
+  syncQuery?: boolean
+  /** 企业详情内嵌清单默认列出全部记录；比对页队列仍由调用方/地址栏决定。 */
+  defaultState?: 'pending' | 'reviewed' | 'all'
+  defaultView?: 'current' | 'historical' | 'all'
+}>()
 
 /**
  * 比对页的「待复核队列」把筛选写回地址栏：进入企业详情后，`returnTo`
@@ -43,8 +51,15 @@ const initialEnterprise = props.enterpriseId ?? positiveId(queryValue('enterpris
 const initialTitle = props.titleCode ?? (queryValue('title') && queryValue('title') !== 'all' && Object.hasOwn(TITLES, queryValue('title')!) ? queryValue('title') : undefined)
 const initialDirection = props.direction ?? (['missing_in_miit', 'extra_in_miit'].includes(queryValue('direction') ?? '') ? queryValue('direction') : undefined)
 const initialEvent = positiveId(queryValue('event'))
-const initialState = ['pending', 'reviewed', 'all'].includes(queryValue('state') ?? '') ? queryValue('state')! : 'pending'
-const initialView = ['current', 'historical', 'all'].includes(queryValue('view') ?? '') ? queryValue('view')! : 'current'
+/**
+ * 企业详情里的「企业全部复核记录」必须一展开就看到当前、历史、撤回与归并；
+ * 比对页的全局队列仍默认待复核 / 当前决定。两者用不同筛选查询，不能共用
+ * 页面 pending 预取的缓存键，也不能把「全部」退回成只查待复核。
+ */
+const defaultState = props.defaultState ?? (props.enterpriseId != null ? 'all' : 'pending')
+const defaultView = props.defaultView ?? (props.enterpriseId != null ? 'all' : 'current')
+const initialState = ['pending', 'reviewed', 'all'].includes(queryValue('state') ?? '') ? queryValue('state')! : defaultState
+const initialView = ['current', 'historical', 'all'].includes(queryValue('view') ?? '') ? queryValue('view')! : defaultView
 
 const draft = reactive({
   enterprise: initialEnterprise ? String(initialEnterprise) : '',
@@ -117,6 +132,13 @@ const queueDescription = computed(() => reviewState.value === 'reviewed'
   : reviewState.value === 'all'
     ? '当前、历史、撤回与归并的复核项；复核状态与原始变更分类分别显示。'
     : '按证据变化逐项核对。清单不代替查询覆盖和业务判断；未完成影响检查的变更可能尚未进入清单。')
+const embeddedAllRecords = computed(() => reviewState.value === 'all'
+  && pageRequest.value.view === 'all'
+  && pageRequest.value.enterpriseId != null)
+const emptyTitle = computed(() => embeddedAllRecords.value ? '该企业没有复核记录' : '本页没有复核项')
+const emptyDescription = computed(() => embeddedAllRecords.value
+  ? '当前、历史、撤回与归并均未返回记录；未完成影响检查的变更可能尚未进入清单。'
+  : '清单不代替查询覆盖和业务判断；未完成影响检查的变更可能尚未进入清单。')
 
 const sourceEnterprise = computed(() => {
   const id = pageRequest.value.enterpriseId
@@ -385,10 +407,10 @@ function queueActionLabel(row: ImpactRow): string {
       影响检查尚未完成，清单不能代表全部待复核项。
     </p>
 
-    <Empty v-if="displayed && !displayed.rows.length">
+    <Empty v-if="displayed && !displayed.rows.length" data-testid="review-empty">
       <EmptyHeader>
-        <EmptyTitle>本页没有复核项</EmptyTitle>
-        <EmptyDescription>清单不代替查询覆盖和业务判断；未完成影响检查的变更可能尚未进入清单。</EmptyDescription>
+        <EmptyTitle>{{ emptyTitle }}</EmptyTitle>
+        <EmptyDescription>{{ emptyDescription }}</EmptyDescription>
       </EmptyHeader>
     </Empty>
 
