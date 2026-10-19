@@ -5,7 +5,7 @@
 ## URL 与生命周期
 
 - `tab=all|ocr|platform|export`；`state=all|queued|running|done|failed|cancelled`。
-- `page` 默认 1；`pageSize` 默认 25，最多 200；`job` 是服务端 ULID，独立读取详情，不要求任务在当前页。
+- `page` 默认 1；`pageSize` 默认 25，最多 200；`job` 是服务端 ULID，独立读取详情，不要求任务在当前页。全部/导出 Tab 支持 `titleCode=little_giant|specialized_sme|innovative_sme` 称号筛选。
 - 分类/状态切换回到第一页并关闭详情。刷新、浏览器返回、从结果入口返回均按 URL 重新读取。
 - 前端每 3 秒读取；失败后 2/4/8/16/30 秒退避，保留最后成功结果及来源筛选/页码。离页只中止读取，不发送任务取消。
 - 管理 API 密钥由操作者输入，限当前页面内存及请求头；不进入 URL、存储或构建产物。离页/刷新清除。服务端密钥不下发。
@@ -26,8 +26,12 @@
 - 未知类型仅出现在全部任务，以文本类型名称兜底；未知进度总量不造百分比。每种已知类型仅归一组。
 - 首版 OCR/转图/核查不提供通用重提；提示到原业务入口核对后提交。只有公开能力为 true 的管理动作可用。
 
-## #121 导出适配点
+## #121 导出
 
-目前 `TASK_GROUPS.export=[]`，`TaskList.exportReady=false`，导出 Tab 准确显示尚未就绪，无提交表单/下载承诺。#117 的 kind 在显式适配前仍可在全部任务看到，不会丢失。
+- `TASK_GROUPS.export=['current-roster-export']`。`exportReady` 反映已登记 kind 是否 ready；页面同时读取 `/api/jobs/kinds` 和 `/_openapi.json`，只启用真实公开的称号专用 POST 路由。通用 kind 支持三称号不代表三条专用路由均已上线。
+- 三个独立入口按[导出共享契约](current-roster-export-contract.md)提交，收到 202 和 jobId 即返回页面操作。仅将请求身份（clientRequestId/已受理 jobId）放入 sessionStorage，断线、刷新和页内返回继续使用同一请求标识；不存 token、任务状态或产物内容。已受理入口显示“找回本次导出”；显式新导出由原任务详情“重新生成”提交新标识及 regenerateOf。
+- `TaskSummary.export` 为有界白名单投影，包含称号、阶段、生成/快照时间、规则/数据版本、计数、原任务关联和受控产物摘要。产物 filename/downloadUrl 从称号/ULID 构建；每次列表/详情复用共享产物服务重查 available/expired/missing。历史 done 与当前可下载分别表示。
+- `canDownload`/`canRegenerate` 按 API 授权及公开状态给出。取消仍走公共详情的真实请求/终态；导出不使用平台“重试未完成项”。失败和取消仅能显式新建关联导出。
+- `TaskDetail` 默认插槽提供 `{task,current,refresh}`，页面通过插槽渲染产物，不另建详情轮询或取消状态。下载请求携带页面内存授权，校验 HTTP、MIME、Content-Disposition、字节数和 SHA-256 后才触发保存；失败、取消、未完成、过期、缺失不启用下载。
 
-#121 在 `pages/tasks.vue` 的 export 提示处接入提交表单；在 `lib/task-center.ts` 登记 #117 实际公开 kind，在 `server/utils/task-center-http.ts` 增加白名单产物摘要及其公开操作能力，替换 exportReady。产物 ID/可用性/下载、重新生成与权限须采用 #117 的实际契约，不按 done 或通用 params 推断。不要修改本票之外的 runner/specs 来伪造能力。
+保留期、重启和资源预算沿用 #117；未上线专用接口显示未上线，待 #118/#119 合入后按真实路由发现启用。三称号母规格验收须在三条接口全部交付后复验，不由小巨人单片结果替代。
