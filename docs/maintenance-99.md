@@ -76,3 +76,21 @@ MCP 另带 `enterpriseId`、`aliasId`，其余载荷一致。成功返回 `{alia
 ### 性能证据边界
 
 合成缩放测试增加 100/200/500 个无关别名、同数量审计和原始平台查询，原文为固定重复载荷；目标企业页和目标历史页逐字一致、不含无关原文。每级 5 次本机真实 HTTP 列表+历史顺序读取，仅观察耗时和响应字节；不能据此推断完整业务分布的 2x/5x 容量、尾分位、内存/事件循环 SLO 或生产性能。没有在并行工作期间运行大规模基准。最终实际命令、执行源码 SHA 和测量文件见后续交付记录。
+
+### 本票交付验证
+
+执行源码 `0b5b0da635e8afbaa347330606fc8790720c0785`（实现提交 `9519851` 加集成 tip `142c15a`）。后续本票证据文档提交不改变执行源码。
+
+- `ALIAS99_MEASUREMENTS=/tmp/ningbo-spec98/ticket-99/measurements-0b5b0da.json pnpm test tests/alias-maintenance-http.test.ts tests/mcp-surface.test.ts tests/roster-import-api.test.ts tests/roster-duplicate-merge.test.ts tests/enterprise-read-http.test.ts tests/uscc-research.test.ts --maxWorkers=1`：6 文件、244 测试通过，其中本票真实 HTTP/MCP 15 测试；退出 0，日志 `verification-0b5b0da.log`。
+- `pnpm typecheck`：退出 0，日志 `typecheck-0b5b0da.log`。
+- `git diff --check` 通过。未运行本票 head 的生产构建、全仓测试、浏览器 UI、生产请求或受控资源/完整业务分布压测；最终集成由父线程验证。这些未运行 lane 不借用历史通过结果。
+
+以上原始日志和测量 JSON 都在 Git 外 `/tmp/ningbo-spec98/ticket-99/`。本机 Node24.18.0（Vitest 运行时）、macOS，其他工作者并行运行；没有容器资源约束。每个样本是目标列表页 + 精确历史页顺序真实 HTTP 完整读取的合计耗时：
+
+| 无关合成规模 | 别名/审计/查询各增至 | 平台原文总字节 | 样本数 | 中位 ms | 范围 ms | 列表/历史响应字节 |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1x | 100 | 1000000 | 5 | 5.527 | 4.925–6.560 | 1061 / 1083 |
+| 2x | 200 | 2000000 | 5 | 9.472 | 5.439–12.183 | 1061 / 1083 |
+| 5x | 500 | 5000000 | 5 | 7.482 | 5.461–12.110 | 1061 / 1083 |
+
+这是小型合成无关数据增长的可观察证据，不是“性能提升倍率”或可靠尾延迟。查询使用企业/状态/别名 ID 索引、历史 aliasId 索引和幂等唯一索引；归并审计只按受影响 ID 检查或更新。只证明这些固定页和原文隔离行为，没有证明部署容量或全部性能预算。
