@@ -26,7 +26,7 @@ it.each(['fresh', 'upgrade'])('adds empty durable impact storage and preserves e
   if (mode === 'upgrade') {
     const baseline = join(dir, 'baseline'); mkdirSync(join(baseline, 'meta'), { recursive: true })
     const journal = JSON.parse(readFileSync(join(migrationsFolder, 'meta/_journal.json'), 'utf8'))
-    journal.entries = journal.entries.filter((e: { tag: string }) => e.tag !== '0023_evidence_impact_113')
+    journal.entries = journal.entries.slice(0, journal.entries.findIndex((e: { tag: string }) => e.tag === '0023_evidence_impact_113'))
     for (const e of journal.entries) cpSync(join(migrationsFolder, e.tag + '.sql'), join(baseline, e.tag + '.sql'))
     writeFileSync(join(baseline, 'meta/_journal.json'), JSON.stringify(journal)); migrate(db, { migrationsFolder: baseline }); seed()
     oldLedger = sqlite.prepare('select * from __drizzle_migrations order by id').all()

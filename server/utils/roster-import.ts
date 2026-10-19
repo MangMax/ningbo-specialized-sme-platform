@@ -1,3 +1,4 @@
+import { managedDecision102 } from './decision-lifecycle-102'
 import { isDeepStrictEqual } from 'node:util'
 import { recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 /**
@@ -2385,13 +2386,13 @@ function findMergeDifferenceLifecycleConflict(db: Executor, fromEnterpriseId: nu
   const source = db.select({ id: schema.differenceReason.id, enterpriseId: schema.differenceReason.enterpriseId,
     titleCode: schema.differenceReason.titleCode, direction: schema.differenceReason.direction })
     .from(schema.differenceReason).where(and(eq(schema.differenceReason.enterpriseId, fromEnterpriseId),
-      sql`${schema.differenceReason.lifecycleAction} is not null`)).limit(1).get()
+      managedDecision102())).limit(1).get()
   // Even a non-colliding legacy row must not enter an explicitly adopted target coordinate.
   const affected = source ?? (intoEnterpriseId == null ? undefined : db.get<{
     id: number; enterpriseId: number; titleCode: string; direction: string
   }>(sql`select managed.id, managed.enterprise_id as enterpriseId, managed.title_code as titleCode, managed.direction
     from difference_reason managed
-    where managed.enterprise_id=${intoEnterpriseId} and managed.lifecycle_action is not null
+    where managed.enterprise_id=${intoEnterpriseId} and ${managedDecision102(sql`managed.id`, sql`managed.lifecycle_action`)}
       and exists(select 1 from difference_reason source where source.enterprise_id=${fromEnterpriseId}
         and source.title_code=managed.title_code and source.direction=managed.direction)
     limit 1`))
@@ -3058,7 +3059,7 @@ function lifecycleOwnsDifference102(db: Executor, enterpriseId: number, titleCod
   return !!db.select({ id: schema.differenceReason.id }).from(schema.differenceReason).where(and(
     eq(schema.differenceReason.enterpriseId, enterpriseId), eq(schema.differenceReason.titleCode, titleCode),
     eq(schema.differenceReason.direction, direction as typeof schema.differenceReason.$inferSelect.direction),
-    sql`${schema.differenceReason.lifecycleAction} is not null`,
+    managedDecision102(),
   )).limit(1).get()
 }
 
