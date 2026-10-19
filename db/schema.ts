@@ -146,7 +146,7 @@ export const recordEvidence = sqliteTable(
      */
     page: integer('page'),
   },
-  (t) => [index('record_evidence_event_idx').on(t.recordEventId)],
+  (t) => [index('record_evidence_event_idx').on(t.recordEventId), index('record_evidence_source_file_105_idx').on(t.sourceFile)],
 )
 
 /**
@@ -1018,6 +1018,19 @@ export const comparisonScopeProofAudit = sqliteTable('comparison_scope_proof_aud
   decidedAt: text('decided_at').notNull(),
 }, t => [index('comparison_scope_proof_audit_proof_idx').on(t.proofId, t.id)])
 
+/** #105: parse-only immutable receipts. List projections omit before/after snapshots. */
+export const fileParseAudit105 = sqliteTable('file_parse_audit_105', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fileId: integer('file_id').notNull().references(() => storedFile.id),
+  idempotencyKey: text('idempotency_key').notNull(),
+  requestHash: text('request_hash').notNull(),
+  operation: text('operation', { enum: ['replace', 'status'] }).notNull(),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(),
+  reason: text('reason').notNull(),
+  before: text('before', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  after: text('after', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  createdAt: text('created_at').notNull(),
+}, t => [uniqueIndex('file_parse_105_key_uq').on(t.fileId, t.idempotencyKey), index('file_parse_105_history_idx').on(t.fileId, t.id)])
 /** #100: append-only in-place event correction history, no source/evidence overwrite. */
 export const eventCorrectionAudit = sqliteTable('event_correction_audit', {
   id: integer('id').primaryKey({ autoIncrement: true }),
