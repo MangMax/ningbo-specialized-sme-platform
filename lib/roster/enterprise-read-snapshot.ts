@@ -10,17 +10,24 @@ type Db = BetterSQLite3Database<typeof s>
 // Connection-local deterministic normalizers preserve the shared JS contract,
 // including Unicode casing and legacy whitespace. No schema/cache is created.
 const registered = new WeakSet<object>()
-function identityFunctions(db: Db) {
+export function identityFunctions(db: Db) {
   const client = (db as Db & { $client: Database }).$client
   if (registered.has(client)) return
   client.function('roster84_uscc', { deterministic: true }, (value: unknown) => normalizeUscc(value as string | null) || null)
   client.function('roster84_name', { deterministic: true }, (value: unknown) => normalizeName(value as string | null))
+  client.function('roster84_upper', { deterministic: true }, (value: string | null) => value?.toUpperCase() ?? '')
   registered.add(client)
 }
-// Most stored keys are canonical ASCII USCCs. Bypass the JS callback for
-// those keys; all legacy/Unicode/name keys still use the exact shared rule.
-const uscc = (value: ReturnType<typeof sql>) => sql`case when ${value} glob '*[^A-Z0-9]*' then roster84_uscc(${value}) else nullif(${value}, '') end`
-const name = (value: ReturnType<typeof sql>) => sql`roster84_name(${value})`
+// Punctuation and lowercase ASCII (including name:/synthetic keys) are valid
+// inputs too. SQLite upper is identical to JS only in this ASCII fast path.
+// Whitespace/Unicode keep the shared normalizer; never approximate their casing.
+export const identityUsccSql = (value: ReturnType<typeof sql>) => sql`case when instr(${value},char(0))>0 or ${value} glob '*[^!-~]*' then roster84_uscc(${value}) else nullif(upper(${value}), '') end`
+const uscc = identityUsccSql
+// normalizeName without evidence only removes these characters. Plain Chinese
+// names can stay native; legacy whitespace/parentheses/punctuation use JS.
+const nameSpecial = '*[\t\n\v\f\r \u00a0\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u3000\ufeff（）()√✓、,，.。;；]*'
+export const identityNameSql = (value: ReturnType<typeof sql>) => sql`case when instr(${value},char(0))>0 or ${value} glob ${nameSpecial} then roster84_name(${value}) else coalesce(${value}, '') end`
+const name = identityNameSql
 
 export function readEnterpriseHistories(db: Db, ids?: number[]) {
   const scope = (column: typeof s.enterprise.id | typeof s.record.enterpriseId | typeof s.enterpriseAlias.enterpriseId | typeof s.differenceReason.enterpriseId) => ids == null ? undefined : inArray(column, ids)

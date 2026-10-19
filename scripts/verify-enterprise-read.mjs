@@ -42,6 +42,22 @@ for (let i = 0; i < 2; i++) {
 }
 const oldBatch = db.select().from(s.platformExportBatch).all().find(batch => batch.year === 2023)
 db.insert(s.platformExportRow).values({ batchId: oldBatch.id, sourceRowNo: 3, usccRaw: 'UNMATCHED', nameRaw: ' 合成（同名）企业，' }).run()
+// Characterize SQL selection against the original business calculations:
+// first-year ties across sources, undated awards, review-only histories,
+// termination/re-award and null-USCC two-direction differences.
+const edges = []
+for (let i = 0; i < 6; i++) {
+ const enterpriseId = db.insert(s.enterprise).values({ name: `汇总边界企业${i}`, nameNorm: `汇总边界企业${i}`, usccNorm: i === 5 ? null : `EDGE84${i}` }).returning().get().id
+ edges.push(enterpriseId)
+ for (const source of ['jxj', 'miit']) {
+  const recordId = db.insert(s.record).values({ enterpriseId, titleCode: 'specialized_sme', source, district: '北仑区' }).returning().get().id
+  const events = i === 0 ? [['award', 2021, null], ['award', 2021, null]] : i === 1 ? [['award', null, null], ['award', 2022, null]] : i === 2 ? [['award', null, null]] : i === 3 ? [['review', 2024, 'passed']] : i === 4 ? [['award', 2020, null], ['review', 2023, 'passed'], ['review', 2024, 'failed'], ['award', 2025, null]] : [['nurture', 2020, null]]
+  for (const [n, [eventType, year, reviewOutcome]] of events.entries()) {
+   const eventId = db.insert(s.recordEvent).values({ recordId, eventType, year, decidedYear: year, reviewOutcome }).returning().get().id
+   if (!(i === 0 && source === 'jxj' && n === 0)) db.insert(s.recordEvidence).values({ recordEventId: eventId, sourceFile: 'boundary.pdf', page: 1 }).run()
+  }
+ }
+}
 // The old source is used only for small-fixture semantic equivalence; no large legacy load.
 const baselinePath = join(dir, 'baseline.ts')
 const source = execFileSync('git', ['show', 'd198a09:lib/roster/enterprise-roster.ts'], { encoding: 'utf8' }).replace(/from '([.][^']+)'/g, (_, path) => `from '${resolve('lib/roster', path)}'`)
@@ -65,13 +81,16 @@ try {
  const { body: tools } = await rpc('tools/list', {})
  for (const name of ['list_enterprises', 'get_enterprise_detail']) assert.ok(tools.result.tools.some(tool => tool.name === name))
  const filters = [{}, { q: '已确认旧名' }, { q: '待核旧名' }, { q: 'synthetic84' }, { title: ['little_giant'], firstYear: [2022] }, { title: ['innovative_sme'], firstYear: [2022] }, { firstStatus: ['confirmed'] }, { rosterState: 'removed_platform_only' }, { district: '海曙区', page: 2, pageSize: 10 }, { page: 100, pageSize: 10 }, { source: ['jxj'], eventType: ['award'], year: [2025] }, { sort: 'name' }, { sort: 'title' }, { diffStatus: ['not_queried'] }, { diffStatus: ['none'] }]
+ for (const sort of ['recognition', 'name', 'title']) for (const page of [1, 2, 100]) for (const firstStatus of [undefined, ['confirmed'], ['pending']]) filters.push({ q: '汇总（边界）', sort, page, pageSize: 2, firstStatus })
+ filters.push({ q: '汇总边界', title: ['specialized_sme'], firstYear: [2021, 2022], firstStatus: ['pending'] }, { q: '汇总边界', source: ['miit'], eventType: ['review'], year: [2023, 2024] }, { q: '汇总边界', diffStatus: ['none', 'not_queried'] }, { district: '北仑区', firstStatus: ['pending'] })
+ const mcpKeys = new Set(['q', 'title', 'district', 'rosterState', 'firstYear', 'firstStatus', 'page', 'pageSize'])
  for (const filter of filters) {
-  const params = new URLSearchParams(Object.entries(filter).map(([key, value]) => [key, Array.isArray(value) ? value.join(',') : String(value)]))
+  const params = new URLSearchParams(Object.entries(filter).filter(([, value]) => value !== undefined).map(([key, value]) => [key, Array.isArray(value) ? value.join(',') : String(value)]))
   const response = await fetch(`${base}/api/roster/enterprises?${params}`); assert.equal(response.status, 200)
   const result = await response.json(); assert.deepEqual(result, baseline.listRosterEnterprises(db, filter))
-  if (!filter.source && !filter.sort && !filter.diffStatus) assert.deepEqual(await call('list_enterprises', filter), result)
+  if (Object.keys(filter).every(key => mcpKeys.has(key))) assert.deepEqual(await call('list_enterprises', filter), result)
  }
- for (const enterpriseId of [fixed, fixed + 1, fixed + 2, fixed + 124, ...duplicates]) {
+ for (const enterpriseId of [fixed, fixed + 1, fixed + 2, fixed + 124, ...duplicates, ...edges]) {
   const response = await fetch(`${base}/api/roster/enterprises/${enterpriseId}`); assert.equal(response.status, 200)
   const result = await response.json(); assert.deepEqual(result, baseline.getRosterEnterpriseDetail(db, enterpriseId)); assert.deepEqual(await call('get_enterprise_detail', { enterpriseId }), result)
  }
@@ -83,5 +102,5 @@ try {
  assert.equal((await fetch(`${base}/api/roster/enterprises/invalid`)).status, 400)
  assert.equal((await fetch(`${base}/api/roster/enterprises/999999`)).status, 404)
  const missing = await rpc('tools/call', { name: 'get_enterprise_detail', arguments: { enterpriseId: 999999 } }); assert.ok(missing.body.error || missing.body.result?.isError)
- console.log(JSON.stringify({ passed: true, lane: 'production artifact HTTP + real MCP', baseline: 'd198a09', filterCases: filters.length, detailCases: 6, synthetic: true, productionChanged: false }))
+ console.log(JSON.stringify({ passed: true, lane: 'production artifact HTTP + real MCP', baseline: 'd198a09', filterCases: filters.length, detailCases: 6 + edges.length, synthetic: true, productionChanged: false }))
 } finally { await stopOwnedChild(server); db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
