@@ -137,6 +137,31 @@ it('MCP search keeps malformed UTF-16 distinct from stored replacement character
     expect(listEnterprises(db, { q: '\uFFFD' }).rows.map(row => row.enterpriseId)).toEqual([identity.id])
   } finally { db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(identity.id) }
 })
+it('MCP search matches either UTF-16 half in supplementary names, confirmed aliases and USCC without replacement false positives', () => {
+  const identities = [
+    { name: '正名𠀀企业', nameNorm: '正名𠀀企业' },
+    { name: '别名匹配企业', nameNorm: '别名匹配企业' },
+    { name: '统代匹配企业', nameNorm: '统代匹配企业', usccNorm: 'SYN𠀀84' },
+    { name: '待核别名企业', nameNorm: '待核别名企业' },
+    { name: '替换\uFFFD对照', nameNorm: '替换\uFFFD对照' },
+  ].map(value => db.insert(schema.enterprise).values(value).returning().get().id)
+  for (const [index, verificationStatus] of [[1, 'confirmed'], [3, 'pending']] as const) db.insert(schema.enterpriseAlias).values({ enterpriseId: identities[index]!, name: '旧名𠀀', nameNorm: '旧名𠀀', sourceKind: 'manual', sourceRefId: 0, verificationStatus }).run()
+  try {
+    for (const q of ['𠀀', '\uD840', '\uDC00']) {
+      const result = listEnterprises(db, JSON.parse(JSON.stringify({ q })))
+      expect(result.counts.total).toBe(3)
+      expect(result.rows.map(row => row.enterpriseId).sort((a, b) => a - b)).toEqual(identities.slice(0, 3))
+    }
+    expect(listEnterprises(db, { q: '\uD841' }).rows).toEqual([])
+    expect(listEnterprises(db, { q: '\uDC01' }).rows).toEqual([])
+    expect(listEnterprises(db, { q: '\uFFFD' }).rows.map(row => row.enterpriseId)).toEqual([identities[4]])
+  } finally {
+    for (const id of identities) {
+      db.$client.prepare('DELETE FROM enterprise_alias WHERE enterprise_id=?').run(id)
+      db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(id)
+    }
+  }
+})
 it('HTTP SQL selection preserves first-award ties, pending years, same-event filters and terminated lifecycle', async () => {
   const identities = ['A', 'B', 'C'].map(label => db.insert(schema.enterprise).values({ name: `汇总边界${label}`, nameNorm: `汇总边界${label}`, usccNorm: `BOUND84${label}` }).returning().get().id)
   const [a, b, c] = identities as [number, number, number]

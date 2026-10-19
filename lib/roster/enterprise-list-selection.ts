@@ -47,13 +47,15 @@ export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilt
   identityFunctions(db)
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
   const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
-  // Stored SQLite UTF-8 text cannot contain isolated UTF-16 surrogates. Binding
-  // those inputs would substitute U+FFFD and create matches the JS filter never
-  // made. Valid Unicode, including supplementary characters, is unchanged.
-  const validText = (filter.q ?? '').isWellFormed() && (filter.district ?? '').isWellFormed()
-  const search = needle != null || usccNeedle != null ? sql`(instr(${identityNameSql(sql`e.name`)},${needle})>0 or
-    exists(select 1 from enterprise_alias a where a.enterprise_id=e.id and a.verification_status='confirmed' and instr(${identityNameSql(sql`a.name`)},${needle})>0) or
-    instr(case when instr(e.uscc_norm,char(0))>0 or e.uscc_norm glob '*[^ -~]*' then roster84_upper(e.uscc_norm) else upper(coalesce(e.uscc_norm,'')) end,${usccNeedle})>0)` : sql`1`
+  // Exact district equality cannot match a lone surrogate in stored UTF-8;
+  // substring search can match one UTF-16 half of a supplementary character.
+  const validText = (filter.district ?? '').isWellFormed()
+  const includes = (value: SQL, text: string | null) => (text ?? '').isWellFormed()
+    ? sql`instr(${value},${text})>0`
+    : sql`roster84_includes_utf16(${value},${JSON.stringify(text)})`
+  const search = needle != null || usccNeedle != null ? sql`(${includes(identityNameSql(sql`e.name`), needle)} or
+    exists(select 1 from enterprise_alias a where a.enterprise_id=e.id and a.verification_status='confirmed' and ${includes(identityNameSql(sql`a.name`), needle)}) or
+    ${includes(sql`case when instr(e.uscc_norm,char(0))>0 or e.uscc_norm glob '*[^ -~]*' then roster84_upper(e.uscc_norm) else upper(coalesce(e.uscc_norm,'')) end`, usccNeedle)})` : sql`1`
   const recognitionMatch = and(selected(sql`f.title_code`, filter.title), selected(sql`f.first_year`, filter.firstYear), selected(sql`f.status`, filter.firstStatus))!
   const recordMatch = and(selected(sql`r.source`, filter.source), filter.eventType?.length || filter.year?.length
     ? sql`exists(select 1 from record_event v where v.record_id=r.id and ${selected(sql`v.event_type`, filter.eventType)} and ${selected(sql`v.year`, filter.year)})` : sql`1`)!

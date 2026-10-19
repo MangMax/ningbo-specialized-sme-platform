@@ -188,10 +188,23 @@ it('reads atomic pages and append audit during public commits on a separate SQLi
       db.$client.close(); parentPort.postMessage({ done: true });
     })().catch(error => { throw error });
   `, { eval: true, workerData: { jitiPath, root: process.cwd(), dbPath: f.dbPath, events, relationId: f.relation.id } })
-  const waitMessage = () => new Promise<any>((resolve, reject) => { worker.once('message', resolve); worker.once('error', reject) })
-  const app = await server(f.db)
+  const waitMessage = () => {
+    const message = new Promise<any>((resolve, reject) => {
+      const onMessage = (value: unknown) => { worker.off('error', onError); resolve(value) }
+      const onError = (error: Error) => { worker.off('message', onMessage); reject(error) }
+      worker.once('message', onMessage); worker.once('error', onError)
+    })
+    // Startup may reject before this message is awaited; retain the rejection.
+    void message.catch(() => {})
+    return message
+  }
+  const ready = waitMessage()
+  // Force the real worker to win startup, rather than relying on scheduler luck.
+  const readyDelivered = new Promise<void>(resolve => worker.once('message', () => resolve()))
+  let app: Awaited<ReturnType<typeof server>> | undefined
   try {
-    expect(await waitMessage()).toEqual({ ready: true })
+    app = await (async () => { await Promise.race([readyDelivered, ready]); return server(f.db) })()
+    expect(await ready).toEqual({ ready: true })
     const first = waitMessage()
     worker.postMessage('start')
     expect(await first).toEqual({ firstCommitted: true })
@@ -213,7 +226,9 @@ it('reads atomic pages and append audit during public commits on a separate SQLi
     const final = dispatchRecordCorrespondenceMcp('list', { pageSize: 50 }, { db: f.db }) as any
     expect(final.total).toBe(25)
     for (const row of final.rows) expect(dispatchRecordCorrespondenceMcp('audit', { id: row.id }, { db: f.db })).toMatchObject({ total: 1, rows: [{ fromStatus: null, toStatus: 'candidate', resultingRevision: 1 }] })
-  } finally { await worker.terminate(); await app.close() }
+  } finally {
+    try { await worker.terminate() } finally { await app?.close() }
+  }
 }, 30000)
 
 it('preserves all typed roles, four statuses, conjunctive filters and public errors on REST and MCP', async () => {

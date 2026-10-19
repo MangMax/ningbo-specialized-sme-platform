@@ -1,0 +1,66 @@
+# Enterprise asynchronous execution design — R1 freeze
+
+Frozen before worker/query implementation, base `8bb163fe63d1e2a6615fb04d7731502c863b7f78`.
+Owns R1 F2 only: enterprise list/detail public HTTP and MCP, same business readers.
+F1 exceptional UTF-16 fix and STD-01/02 are separate changes. No schema/migration,
+result cache, heap increase, timeout increase, production access or adjacent job work.
+
+## Interface and ownership
+
+A single enterprise read executor per application process accepts a database path,
+list filter or detail ID, and optional AbortSignal. HTTP and MCP call this same
+asynchronous seam. Exactly **one native SQLite worker** executes one job at a time;
+a bounded FIFO admits at most 16 pending jobs and 64KiB of encoded request metadata.
+Overflow returns a retryable 503; aborted queued work is removed. Running abort
+terminates the owned worker, rejects only that request, then restarts lazily for the
+remaining queue. Errors/exits reject the active request, release ownership and allow
+later requests to recover; no automatic replay of a failed read. Shutdown rejects
+queued/active work and awaits termination. Readiness and error listeners precede
+all awaits. Idle worker must not keep a closed server alive.
+
+The worker opens a **new readonly fileMustExist connection for every execution**,
+never the app writer or a path-cached async transaction. The existing list/detail
+read transaction covers selection/counts/page/hydration/evidence; its first read
+pins the committed snapshot. Rollback and close run in finally. Requests executing
+after a completed commit see that commit; queued requests have no prematurely
+pinned snapshot. File replacement does not reuse a stale handle. No credentials,
+raw bodies, result graphs or SQLite handles travel in request metadata.
+
+## Packaging and resource evidence
+
+Nuxt 4 / Nitro 2 (installed versions are authoritative) emits the worker as an
+explicit Rollup entry alongside the server, with common chunks and native package
+externals packaged by Nitro. Development/tests resolve the same worker source via
+Node's TypeScript support or a documented source loader; production never depends
+on source checkout/jiti. Compiled verifier must run from a different cwd.
+
+Responses cross the seam in a transferable serialized buffer; measure its exact
+byte length, serialization/deserialization time and process-wide RSS plus the sum
+of worker and application V8 heaps. One worker has a bounded V8 old-generation
+limit; it does not add parallel throughput or justify a higher total memory budget.
+Queue metadata, in-flight response transfer and transport serialization count toward
+incremental heap. The fixed-page/ID 64MiB and full-body **2× body bytes +64MiB**
+budgets remain unchanged. Measurements must disclose sampling gaps and native/external
+buffers; they are not hidden behind an application-only heap metric.
+
+## Throughput implementation and acceptance
+
+Move the **whole native aggregate block**, lifecycle projection and sorting off the
+request event loop. Reduce repeated CTE materialization/grouping and unnecessary
+coordinates/JSON decoding using existing indexes, preserving exact independent
+filters/counts, first-award ties/uncertainty, differences, lifecycle, aliases and
+JS localeCompare name ordering. One worker alone cannot fix serial c5 latency:
+profile actual readonly clones and optimize per-request work before acceptance.
+Any essential index proposal stays separate in index-request.md; no DDL here.
+
+Test first at the authorized real SQLite/public HTTP/MCP seams. Preserve R1 and
+all old failed samples. Prove responsiveness while native SQLite is blocked, queue
+backpressure/abort/error/restart, coherent snapshots during commits, next-read
+visibility and byte-exact full detail. Rebuild at a committed SHA, rerun 756 same-input
+responses over 1x/2x/5x × HTTP/MCP × list/detail × c1/2/5 (20 hot +1 cold), compare
+canonical result hashes to the historical same-input baseline, and report throughput,
+combined memory, payload copies and loop delay. Keep frozen #82 budgets and describe
+the synthetic-growth and uncontrolled-host/container limits. Full suite, typecheck,
+build, production OpenAPI, shared cache/comparison/correspondence/import regressions
+and desktop/390px interaction complete the handoff; no claim of production or parent
+acceptance follows from local measurements.

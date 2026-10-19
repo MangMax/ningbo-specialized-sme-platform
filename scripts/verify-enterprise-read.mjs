@@ -47,6 +47,10 @@ db.insert(s.platformExportRow).values({ batchId: oldBatch.id, sourceRowNo: 3, us
 // termination/re-award and null-USCC two-direction differences.
 const edges = []
 db.insert(s.enterprise).values({ name: '替换\uFFFD企业', nameNorm: '替换\uFFFD企业', district: '替换\uFFFD属地' }).run()
+for (const [index, name] of ['正名𠀀企业', '别名匹配企业', '统代匹配企业', '待核别名企业'].entries()) {
+ const id = db.insert(s.enterprise).values({ name, nameNorm: name, ...(index === 2 ? { usccNorm: 'SYN𠀀84' } : {}) }).returning().get().id
+ if (index === 1 || index === 3) db.insert(s.enterpriseAlias).values({ enterpriseId: id, name: '旧名𠀀', nameNorm: '旧名𠀀', sourceKind: 'manual', sourceRefId: 0, verificationStatus: index === 1 ? 'confirmed' : 'pending' }).run()
+}
 for (let i = 0; i < 6; i++) {
  const enterpriseId = db.insert(s.enterprise).values({ name: `汇总边界企业${i}`, nameNorm: `汇总边界企业${i}`, usccNorm: i === 5 ? null : `EDGE84${i}` }).returning().get().id
  edges.push(enterpriseId)
@@ -84,6 +88,7 @@ try {
  const filters = [{}, { q: '已确认旧名' }, { q: '待核旧名' }, { q: 'synthetic84' }, { title: ['little_giant'], firstYear: [2022] }, { title: ['innovative_sme'], firstYear: [2022] }, { firstStatus: ['confirmed'] }, { rosterState: 'removed_platform_only' }, { district: '海曙区', page: 2, pageSize: 10 }, { page: 100, pageSize: 10 }, { source: ['jxj'], eventType: ['award'], year: [2025] }, { sort: 'name' }, { sort: 'title' }, { diffStatus: ['not_queried'] }, { diffStatus: ['none'] }]
  for (const sort of ['recognition', 'name', 'title']) for (const page of [1, 2, 100]) for (const firstStatus of [undefined, ['confirmed'], ['pending']]) filters.push({ q: '汇总（边界）', sort, page, pageSize: 2, firstStatus })
  filters.push({ q: '汇总边界', title: ['specialized_sme'], firstYear: [2021, 2022], firstStatus: ['pending'] }, { q: '汇总边界', source: ['miit'], eventType: ['review'], year: [2023, 2024] }, { q: '汇总边界', diffStatus: ['none', 'not_queried'] }, { district: '北仑区', firstStatus: ['pending'] }, { q: '\uD800' }, { district: '替换\uD800属地' })
+ filters.push(...['𠀀', '\uD840', '\uDC00', '\uD841', '\uDC01', '\uFFFD'].map(q => ({ q })))
  const mcpKeys = new Set(['q', 'title', 'district', 'rosterState', 'firstYear', 'firstStatus', 'page', 'pageSize'])
  for (const filter of filters) {
   // JSON/MCP preserves isolated UTF-16; URLSearchParams substitutes U+FFFD.
