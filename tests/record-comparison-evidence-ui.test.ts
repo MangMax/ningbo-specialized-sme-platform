@@ -28,7 +28,10 @@ afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount(); vi
 it('keeps positive same-subject rows visible while qualification stays unknown', async () => {
   const wrapper = mount(ComparisonEvidence, { props: { result, returnTo: '/comparison?mode=record' }, global: { stubs: { SourceReader: true } } })
   mounted.push(wrapper)
-  await wrapper.get('[data-testid="record-current-consistency"] summary').trigger('click')
+  for (const name of ['record-current-consistency', 'record-comparison-coverage', 'record-platform-unlinked']) {
+    await wrapper.get(`[data-testid="${name}"] [data-slot="accordion-trigger"]`).trigger('click')
+  }
+  await flushPromises()
   expect(wrapper.get('[data-testid="record-current-consistency"]').text()).toContain('暂不可比较')
   expect(wrapper.get('[data-testid="record-current-consistency"]').text()).toContain('源行 12')
   expect(wrapper.get('[data-testid="record-comparison-coverage"]').text()).toContain('部分')
@@ -58,7 +61,7 @@ it('links the actual stored PDF page and saves comparison scroll before detail n
   expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain('/comparison?mode=record&queryIds=7')
 })
 
-it('shows the review conclusion and original award years without exposing aggregate implementation metrics', () => {
+it('shows the review conclusion and original award years without exposing aggregate implementation metrics', async () => {
   const review = { ...row, event: { ...row.event, eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed' } } as RecordComparisonResult['rows'][number]
   const item = mount(ComparisonEventRow, { props: { row: review, returnTo: '/comparison?mode=record' }, global: { stubs: { NuxtLink: true, SourceReader: true } } })
   mounted.push(item)
@@ -66,6 +69,8 @@ it('shows the review conclusion and original award years without exposing aggreg
   expect(item.text()).not.toContain('failed')
   const summary = mount(ComparisonEvidence, { props: { result, returnTo: '/comparison?mode=record' }, global: { stubs: { SourceReader: true } } })
   mounted.push(summary)
+  await summary.get('[data-testid="record-current-consistency"] [data-slot="accordion-trigger"]').trigger('click')
+  await flushPromises()
   expect(summary.find('[aria-label="记录级计数"]').exists()).toBe(false)
   expect(summary.text()).not.toContain('以上数字各有自己的记录粒度')
   expect(summary.get('[data-testid="record-current-consistency"]').text()).toContain('合成企业')
@@ -97,15 +102,17 @@ it('opens an event current snapshot through its export row without presenting it
   ] } as unknown as RecordComparisonResult['rows'][number]
   const wrapper = mount(ComparisonEventRow, { props: { row: currentRow, returnTo: '/comparison?mode=record' }, global: { stubs: sourceDialogStubs } })
   mounted.push(wrapper)
-  const snapshot = wrapper.findAll('details').find(item => item.text().includes('当前导出快照'))!
+  const snapshot = wrapper.findAll('[data-slot="accordion"]').find(item => item.text().includes('当前导出快照'))!
+  await snapshot.get('[data-slot="accordion-trigger"]').trigger('click')
+  await flushPromises()
   expect(snapshot.text()).toContain('非历史出处')
-  expect(snapshot.get('summary').text()).toContain('当前导出快照（非历史出处）')
+  expect(snapshot.get('[data-slot="accordion-trigger"]').text()).toContain('当前导出快照（非历史出处）')
   expect(snapshot.text()).toContain('快照与本记录的关联：已确认')
   expect(snapshot.text()).not.toContain('匹配 已确认')
   expect(wrapper.get('[data-relation-id="30"]').text()).toContain('待确认')
   expect(wrapper.text()).toContain('现有平台记录不足以确认这条认定或复核记录')
   expect(wrapper.text()).not.toMatch(/流程状态|对应角色/)
-  await snapshot.get('button').trigger('click')
+  await snapshot.findAll('button').find(button => button.text() === '查看原始记录')!.trigger('click')
   await flushPromises()
   expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/roster/correspondences/export-rows/8')
 })
@@ -129,7 +136,7 @@ it('keeps six identical-content original rows distinct with their own edge statu
   for (const [index, [id, status]] of expected.entries()) {
     expect(items[index]!.attributes('data-relation-id')).toBe(String(id))
     expect(items[index]!.text()).toContain(status)
-    await items[index]!.get('button').trigger('click')
+    await items[index]!.findAll('button').find(button => button.text() === '查看原始记录')!.trigger('click')
     await flushPromises()
     expect(fetch).toHaveBeenLastCalledWith(`/api/roster/correspondences/relations/${id}`)
   }
@@ -142,20 +149,26 @@ it('keeps duplicate unlinked evidence rows separately located and opens every or
   const repeated = { ...result, platformWithoutOfficial: { total: 6, rows: repeatedRelations.map(relation => ({ relation, qualification: 'unresolved', reasons: [] })) } } as unknown as RecordComparisonResult
   const wrapper = mount(ComparisonEvidence, { props: { result: repeated, returnTo: '/comparison?mode=record' }, global: { stubs: sourceDialogStubs } })
   mounted.push(wrapper)
+  await wrapper.get('[data-testid="record-platform-unlinked"] [data-slot="accordion-trigger"]').trigger('click')
+  await flushPromises()
   const items = wrapper.findAll('[data-testid="record-platform-unlinked"] li')
   expect(items).toHaveLength(6)
   for (const [index, id] of [101, 102, 103, 104, 105, 106].entries()) {
     expect(items[index]!.text()).toContain('合成企业')
-    await items[index]!.get('button').trigger('click')
+    await items[index]!.findAll('button').find(button => button.text() === '查看原始记录')!.trigger('click')
     await flushPromises()
     expect(fetch).toHaveBeenLastCalledWith(`/api/roster/correspondences/relations/${id}`)
   }
   expect(fetch).toHaveBeenCalledTimes(6)
 })
 
-it('keeps useful source rows when aggregate counts differ from the filtered result', () => {
+it('keeps useful source rows when aggregate counts differ from the filtered result', async () => {
   const wrapper = mount(ComparisonEvidence, { props: { result: { ...result, total: 1, counts: { ...result.counts, distinctEvents: 12 } }, returnTo: '/comparison?mode=record&classification=historical_conflict' }, global: { stubs: { SourceReader: true } } })
   mounted.push(wrapper)
+  for (const name of ['record-platform-unlinked', 'record-current-consistency']) {
+    await wrapper.get(`[data-testid="${name}"] [data-slot="accordion-trigger"]`).trigger('click')
+  }
+  await flushPromises()
   expect(wrapper.find('[aria-label="记录级计数"]').exists()).toBe(false)
   expect(wrapper.get('[data-testid="record-platform-unlinked"] li').text()).toContain('合成企业')
   expect(wrapper.get('[data-testid="record-current-consistency"]').text()).toContain('2025-02-01')

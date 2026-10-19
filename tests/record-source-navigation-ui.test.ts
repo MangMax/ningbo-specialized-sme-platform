@@ -68,7 +68,7 @@ describe('source modal reverse event navigation', () => {
     const router = await enterprise(initial, withReturn)
     const page = wrapper!.findComponent(EnterprisePage).vm.$.uid
     const target = wrapper!.get('#record-event-10')
-    const collapsible = target.findComponent({ name: 'Collapsible' })
+    const collapsible = target.findComponent({ name: 'DisclosurePanel' })
     // Same-URL navigation must also reopen an event the user has collapsed.
     collapsible.vm.$emit('update:open', false)
     await nextTick()
@@ -122,6 +122,10 @@ describe('source modal reverse event navigation', () => {
     wrapper = owner === 'event row'
       ? mount(ComparisonEventRow, { props: { row, returnTo }, attachTo: document.body, global: { plugins: [router], stubs } })
       : mount(ComparisonEvidence, { props: { result, returnTo }, attachTo: document.body, global: { plugins: [router], stubs } })
+    if (owner === 'comparison evidence') {
+      await wrapper.get('[data-testid="record-platform-unlinked"] [data-slot="accordion-trigger"]').trigger('click')
+      await flushPromises()
+    }
     await wrapper.findAll('button').find(button => button.text().includes('查看原始记录'))!.trigger('click')
     await flushPromises()
     const link = document.querySelector('[role="dialog"] a') as HTMLAnchorElement

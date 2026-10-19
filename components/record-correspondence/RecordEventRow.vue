@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ChevronDown } from '@lucide/vue'
 import type { CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
 import { eventDecisionText } from '~~/lib/roster/correspondence-view'
 import { groupEventEdges } from '~~/lib/roster/record-ledger'
@@ -8,8 +7,7 @@ import { PLATFORM_INTERFACES } from '~~/lib/labels'
 import { fileNameOf } from '~~/lib/preview'
 import { evidencePageState } from '~~/lib/roster/evidence-page'
 import RecordEventSource from './RecordEventSource.vue'
-import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
 interface OfficialEvidence {
   sourceFile: string
@@ -72,68 +70,62 @@ const interfaceSummary = computed(() => {
 
 <template>
   <section :id="`record-event-${event.id}`" class="scroll-mt-20">
-    <Collapsible :open="open" @update:open="emit('update:open', $event)">
-      <div class="grid min-w-0 gap-x-4 gap-y-2 px-4 py-4 sm:grid-cols-[6.5rem_minmax(0,1fr)_auto] sm:items-start sm:px-5">
-        <div class="flex items-center gap-2 sm:flex-col sm:items-start sm:gap-1">
-          <span class="text-lg leading-none font-semibold tabular-nums">{{ businessYear ?? '待核' }}</span>
-          <EventChip :type="event.type" :hide-batch="true" />
-        </div>
-
-        <div class="min-w-0">
-          <div class="flex flex-wrap items-center gap-2">
-            <TitleBadge :code="event.titleCode" />
-            <SourceChip :code="event.source" />
-            <span v-if="event.district" class="text-muted-foreground text-[13px]">属地 {{ event.district }}</span>
+    <DisclosurePanel :open="open" compact @update:open="emit('update:open', $event)">
+      <template #header>
+        <div class="grid min-w-0 gap-x-4 gap-y-2 px-4 pt-4 sm:grid-cols-[6.5rem_minmax(0,1fr)_auto] sm:items-start sm:px-5">
+          <div class="flex items-center gap-2 sm:flex-col sm:items-start sm:gap-1">
+            <span class="text-lg leading-none font-semibold tabular-nums">{{ businessYear ?? '待核' }}</span>
+            <EventChip :type="event.type" :hide-batch="true" />
           </div>
-          <p v-if="event.type === 'review'" class="mt-1 text-[15px] leading-6 font-medium">{{ eventDecisionText({ eventType: event.type, year: event.year, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }) }}</p>
-        </div>
 
-        <div class="flex min-w-0 flex-col gap-1.5 text-[13px] sm:max-w-80">
-          <div class="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-start gap-x-2 gap-y-1">
-            <span class="text-muted-foreground">公布文件</span>
-            <span class="min-w-0 break-words">
-              <template v-if="fileLines.length"><span v-for="(line, index) in fileLines" :key="line" class="inline">{{ line }}<span v-if="index < fileLines.length - 1">；</span></span></template>
-              <span v-else class="text-muted-foreground">未记录</span>
-            </span>
-            <span class="text-muted-foreground">平台接口</span>
-            <span class="min-w-0 break-words">
-              <template v-if="interfaceSummary.length">
-                <span v-for="(item, index) in interfaceSummary" :key="item.interfaceName" class="inline-flex flex-wrap items-center gap-1">
-                  <span>{{ item.interfaceName }}</span>
-                  <span v-if="item.status" class="text-muted-foreground">· {{ item.status }}</span>
-                  <span class="text-muted-foreground tabular-nums">原行 {{ item.count }} 条</span>
-                  <span v-if="index < interfaceSummary.length - 1">、</span>
-                </span>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <TitleBadge :code="event.titleCode" />
+              <SourceChip :code="event.source" />
+              <span v-if="event.district" class="text-muted-foreground text-[13px]">属地 {{ event.district }}</span>
+            </div>
+            <p v-if="event.type === 'review'" class="mt-1 text-[15px] leading-6 font-medium">{{ eventDecisionText({ eventType: event.type, year: event.year, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }) }}</p>
+          </div>
+
+          <div class="flex min-w-0 flex-col gap-1.5 text-[13px] sm:max-w-80">
+            <div class="grid min-w-0 grid-cols-[6.5rem_minmax(0,1fr)] items-start gap-x-2 gap-y-1">
+              <span class="text-muted-foreground">公布文件</span>
+              <span class="min-w-0 break-words">
+                <template v-if="fileLines.length"><span v-for="(line, index) in fileLines" :key="line" class="inline">{{ line }}<span v-if="index < fileLines.length - 1">；</span></span></template>
+                <span v-else class="text-muted-foreground">未记录</span>
+              </span>
+              <span class="text-muted-foreground">平台接口</span>
+              <span class="min-w-0 break-words">
+                <template v-if="interfaceSummary.length">
+                  <span v-for="(item, index) in interfaceSummary" :key="item.interfaceName" class="inline-flex flex-wrap items-center gap-1">
+                    <span>{{ item.interfaceName }}</span>
+                    <span v-if="item.status" class="text-muted-foreground">· {{ item.status }}</span>
+                    <span class="text-muted-foreground tabular-nums">原行 {{ item.count }} 条</span>
+                    <span v-if="index < interfaceSummary.length - 1">、</span>
+                  </span>
+                </template>
+                <span v-else class="text-muted-foreground">尚无已确认接口出处</span>
+              </span>
+              <template v-if="groups.candidates.length">
+                <span class="text-warning">候选（未确认）</span>
+                <span class="text-warning tabular-nums">{{ groups.candidates.length }} 条 · 待确认</span>
               </template>
-              <span v-else class="text-muted-foreground">尚无已确认接口出处</span>
-            </span>
-            <template v-if="groups.candidates.length">
-              <span class="text-warning">候选（未确认）</span>
-              <span class="text-warning tabular-nums">{{ groups.candidates.length }} 条 · 待确认</span>
-            </template>
-            <template v-if="groups.revalidation.length">
-              <span class="text-warning">待重新核验</span>
-              <span class="text-warning tabular-nums">{{ groups.revalidation.length }} 条 · 暂不计为已确认出处</span>
-            </template>
-            <template v-if="groups.currentContext.length">
-              <span class="text-muted-foreground">当前导出快照</span>
-              <span class="text-muted-foreground tabular-nums">{{ groups.currentContext.length }} 条 · 仅核对当前名称/代码，非历史出处</span>
-            </template>
+              <template v-if="groups.revalidation.length">
+                <span class="text-warning">待重新核验</span>
+                <span class="text-warning tabular-nums">{{ groups.revalidation.length }} 条 · 暂不计为已确认出处</span>
+              </template>
+              <template v-if="groups.currentContext.length">
+                <span class="text-muted-foreground">当前导出快照</span>
+                <span class="text-muted-foreground tabular-nums">{{ groups.currentContext.length }} 条 · 仅核对当前名称/代码，非历史出处</span>
+              </template>
+            </div>
           </div>
         </div>
-
-        <div class="flex justify-end sm:col-span-3">
-          <CollapsibleTrigger as-child>
-            <Button variant="ghost" size="sm" class="h-8 gap-1 px-2 text-[13px]">
-              <ChevronDown class="size-4 transition-transform duration-150 ease-snap motion-reduce:transition-none" :class="!open && '-rotate-90'" />
-              {{ open ? '收起来源记录' : '查看来源记录' }}
-            </Button>
-          </CollapsibleTrigger>
-        </div>
-      </div>
-      <CollapsibleContent class="duration-150 ease-snap data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-top-1 motion-reduce:animate-none">
-        <RecordEventSource :event="event" :evidence="evidence" :edges="edges" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" />
-      </CollapsibleContent>
-    </Collapsible>
+      </template>
+      <template #trigger>
+        <span class="w-full px-4 text-right text-[13px] sm:px-5">来源记录</span>
+      </template>
+      <RecordEventSource :event="event" :evidence="evidence" :edges="edges" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" />
+    </DisclosurePanel>
   </section>
 </template>

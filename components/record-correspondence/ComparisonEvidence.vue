@@ -5,6 +5,7 @@ import { comparisonReasonText } from '~~/lib/roster/record-comparison-view'
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, TITLES } from '~~/lib/labels'
 import { humanRecordTime } from '~~/lib/roster/record-ledger'
 import SourceReader from './SourceReader.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -28,21 +29,85 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
 <template>
   <div class="flex min-w-0 flex-col gap-3" data-testid="record-comparison-evidence">
     <p v-if="result.historicalDecisionUnavailable.length" class="text-muted-foreground border-t pt-2 text-[13px]">截止时点后有对应关系发生决定或修订，历史决定态无法从当前行还原；受影响事件与接口原行保持待核。</p>
-    <details class="min-w-0 border-t pt-2 text-[13px]" data-testid="record-comparison-coverage"><summary class="cursor-pointer font-medium">所选来源的查询覆盖 · {{ result.coverage.length }} 次</summary>
+
+    <DisclosurePanel
+      compact
+      content-class="pb-0"
+      class="min-w-0 border-t pt-2 text-[13px]"
+      data-testid="record-comparison-coverage"
+      :title="`所选来源的查询覆盖 · ${result.coverage.length} 次`"
+    >
       <p class="text-muted-foreground mt-2">正式文件覆盖资格：{{ result.officialCoverage.qualification === 'verified' ? '已验证' : '未知' }}。{{ result.officialCoverage.reasons.map(comparisonReasonText).join('；') }}</p>
-      <ul class="mt-2 flex flex-col gap-2"><li v-for="item in result.coverage" :key="item.queryId" class="border-t pt-2"><strong>{{ PLATFORM_INTERFACES[item.interface] ?? '平台接口' }} · {{ PLATFORM_QUERY_STATUSES[item.status] ?? '状态待核' }}</strong><p>查询时点 {{ humanRecordTime(item.queriedAt) }} · 称号 {{ coverageTitle(item.titleCoverage) }}</p><p>原条件：{{ coverageConditions(item.effectiveConditions) }}</p><p>完整性 {{ completenessText(item.completeness) }} · {{ item.fullRange ? '从首页查询' : '非全范围或未知' }}<span v-if="item.reasons.length"> · {{ item.reasons.map(comparisonReasonText).join('；') }}</span></p></li></ul>
-    </details>
-    <details class="min-w-0 border-t pt-2 text-[13px]" data-testid="record-current-consistency"><summary class="cursor-pointer font-medium">已认定接口与导出版本</summary>
+      <ul class="mt-2 flex flex-col gap-2">
+        <li v-for="item in result.coverage" :key="item.queryId" class="border-t pt-2">
+          <strong>{{ PLATFORM_INTERFACES[item.interface] ?? '平台接口' }} · {{ PLATFORM_QUERY_STATUSES[item.status] ?? '状态待核' }}</strong>
+          <p>查询时点 {{ humanRecordTime(item.queriedAt) }} · 称号 {{ coverageTitle(item.titleCoverage) }}</p>
+          <p>原条件：{{ coverageConditions(item.effectiveConditions) }}</p>
+          <p>完整性 {{ completenessText(item.completeness) }} · {{ item.fullRange ? '从首页查询' : '非全范围或未知' }}<span v-if="item.reasons.length"> · {{ item.reasons.map(comparisonReasonText).join('；') }}</span></p>
+        </li>
+      </ul>
+    </DisclosurePanel>
+
+    <DisclosurePanel
+      compact
+      content-class="pb-0"
+      class="min-w-0 border-t pt-2 text-[13px]"
+      data-testid="record-current-consistency"
+      title="已认定接口与导出版本"
+    >
       <p class="text-muted-foreground mt-2">比较资格：{{ result.currentSourceConsistency.qualification === 'comparable' ? '已验证同范围同版本' : '范围/版本未获证明，暂不可比较' }}。{{ result.currentSourceConsistency.reasons.map(comparisonReasonText).join('；') }}</p>
       <h4 class="mt-3 font-medium">已认定接口原始行 · {{ result.currentSourceConsistency.recognizedObservations.length }} 条</h4>
-      <ul v-if="result.currentSourceConsistency.recognizedObservations.length" class="mt-1 flex flex-col gap-2"><li v-for="observation in result.currentSourceConsistency.recognizedObservations.slice(0, observationLimit)" :key="observation.recognized.id" class="border-t pt-2"><div class="flex flex-wrap items-center gap-2"><strong>{{ observation.recognized.nameRaw ?? '企业原名未提供' }}</strong><Badge variant="outline">{{ qualificationText(observation.qualification) }}</Badge></div><p class="text-muted-foreground">原状态 {{ observation.recognized.status ?? '未提供' }} · 查询时点 {{ humanRecordTime(observation.recognized.queriedAt) }}</p><p v-if="observation.exportRows.length">同主体称号的导出版本原行：<Button v-for="exportRow in observation.exportRows" :key="exportRow.id" variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('export_row', exportRow.id)">{{ exportRow.collectedOn }} · 源行 {{ exportRow.sourceRowNo }}</Button></p><p v-else class="text-muted-foreground">所选导出版本无同主体称号的正向行观察；{{ qualificationText(observation.qualification) }}。</p><details class="text-muted-foreground"><summary class="cursor-pointer">原行字段与查询条件</summary><p>查询 #{{ observation.recognized.queryId }} · 原行 {{ observation.recognized.sequenceNo }} · 记录 #{{ observation.recognized.id }}</p></details><Button variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('relation', observation.recognized.id)">查看原始记录</Button></li></ul>
+      <ul v-if="result.currentSourceConsistency.recognizedObservations.length" class="mt-1 flex flex-col gap-2">
+        <li v-for="observation in result.currentSourceConsistency.recognizedObservations.slice(0, observationLimit)" :key="observation.recognized.id" class="border-t pt-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <strong>{{ observation.recognized.nameRaw ?? '企业原名未提供' }}</strong>
+            <Badge variant="outline">{{ qualificationText(observation.qualification) }}</Badge>
+          </div>
+          <p class="text-muted-foreground">原状态 {{ observation.recognized.status ?? '未提供' }} · 查询时点 {{ humanRecordTime(observation.recognized.queriedAt) }}</p>
+          <p v-if="observation.exportRows.length">同主体称号的导出版本原行：<Button v-for="exportRow in observation.exportRows" :key="exportRow.id" variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('export_row', exportRow.id)">{{ exportRow.collectedOn }} · 源行 {{ exportRow.sourceRowNo }}</Button></p>
+          <p v-else class="text-muted-foreground">所选导出版本无同主体称号的正向行观察；{{ qualificationText(observation.qualification) }}。</p>
+          <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground">
+            <template #trigger><span>原行字段与查询条件</span></template>
+            <p>查询 #{{ observation.recognized.queryId }} · 原行 {{ observation.recognized.sequenceNo }} · 记录 #{{ observation.recognized.id }}</p>
+          </DisclosurePanel>
+          <Button variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('relation', observation.recognized.id)">查看原始记录</Button>
+        </li>
+      </ul>
       <Button v-if="result.currentSourceConsistency.recognizedObservations.length > observationLimit" variant="outline" size="sm" class="mt-2" @click="observationLimit += 20">继续显示已认定接口原行</Button>
       <p v-if="!result.currentSourceConsistency.recognizedObservations.length" class="text-muted-foreground mt-2">所选来源没有已认定接口原行观察；不据此认定导出或正式事件缺失。</p>
       <h4 class="mt-3 font-medium">所选导出版本原行 · {{ result.currentSourceConsistency.exportObservations.length }} 条</h4>
-      <ul class="mt-1 flex flex-col gap-1.5"><li v-for="item in result.currentSourceConsistency.exportObservations.slice(0, exportLimit)" :key="item.exportRow.id" class="flex flex-wrap items-center gap-1.5 border-t pt-1.5"><span>{{ item.exportRow.nameRaw ?? '企业原名未提供' }} · {{ TITLES[item.exportRow.titleCode] ?? item.exportRow.titleCode }} · {{ item.exportRow.collectedOn }} · 源行 {{ item.exportRow.sourceRowNo }}</span><Badge variant="outline">{{ qualificationText(item.qualification) }}</Badge><Button variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('export_row', item.exportRow.id)">查看原始记录</Button></li></ul>
+      <ul class="mt-1 flex flex-col gap-1.5">
+        <li v-for="item in result.currentSourceConsistency.exportObservations.slice(0, exportLimit)" :key="item.exportRow.id" class="flex flex-wrap items-center gap-1.5 border-t pt-1.5">
+          <span>{{ item.exportRow.nameRaw ?? '企业原名未提供' }} · {{ TITLES[item.exportRow.titleCode] ?? item.exportRow.titleCode }} · {{ item.exportRow.collectedOn }} · 源行 {{ item.exportRow.sourceRowNo }}</span>
+          <Badge variant="outline">{{ qualificationText(item.qualification) }}</Badge>
+          <Button variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('export_row', item.exportRow.id)">查看原始记录</Button>
+        </li>
+      </ul>
       <Button v-if="result.currentSourceConsistency.exportObservations.length > exportLimit" variant="outline" size="sm" class="mt-2" @click="exportLimit += 20">继续显示导出原行</Button>
-    </details>
-    <details class="min-w-0 border-t pt-2 text-[13px]" data-testid="record-platform-unlinked"><summary class="cursor-pointer font-medium">未对应正式事件的接口原行 · {{ result.platformWithoutOfficial.total }} 条</summary><p class="text-muted-foreground mt-2">无正式对应需要完整范围证明；资格未知的原行保持待核，不能直接称为正式文件遗漏。</p><ul class="mt-2 flex flex-col gap-1.5"><li v-for="item in result.platformWithoutOfficial.rows.slice(0, unlinkedLimit)" :key="item.relation.id" class="flex flex-wrap items-center gap-1.5 border-t pt-1.5"><span>{{ item.relation.nameRaw ?? '原名未提供' }} · {{ PLATFORM_INTERFACES[item.relation.interface] ?? '平台接口' }} · 原状态 {{ item.relation.status ?? '未提供' }}</span><Badge variant="outline">{{ item.qualification === 'platform_without_official' ? '已证明范围无正式对应' : item.reasons.includes('row_identity_unverified') ? '主体身份待核' : '正式来源覆盖待核' }}</Badge><details class="text-muted-foreground"><summary class="cursor-pointer">原行字段与查询条件</summary><p>查询 #{{ item.relation.queryId }} · 原行 {{ item.relation.sequenceNo }} · 记录 #{{ item.relation.id }}</p></details><Button variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('relation', item.relation.id)">查看原始记录</Button></li></ul><Button v-if="result.platformWithoutOfficial.rows.length > unlinkedLimit" variant="outline" size="sm" class="mt-2" @click="unlinkedLimit += 20">继续显示接口原行</Button></details>
+    </DisclosurePanel>
+
+    <DisclosurePanel
+      compact
+      content-class="pb-0"
+      class="min-w-0 border-t pt-2 text-[13px]"
+      data-testid="record-platform-unlinked"
+      :title="`未对应正式事件的接口原行 · ${result.platformWithoutOfficial.total} 条`"
+    >
+      <p class="text-muted-foreground mt-2">无正式对应需要完整范围证明；资格未知的原行保持待核，不能直接称为正式文件遗漏。</p>
+      <ul class="mt-2 flex flex-col gap-1.5">
+        <li v-for="item in result.platformWithoutOfficial.rows.slice(0, unlinkedLimit)" :key="item.relation.id" class="flex flex-wrap items-center gap-1.5 border-t pt-1.5">
+          <span>{{ item.relation.nameRaw ?? '原名未提供' }} · {{ PLATFORM_INTERFACES[item.relation.interface] ?? '平台接口' }} · 原状态 {{ item.relation.status ?? '未提供' }}</span>
+          <Badge variant="outline">{{ item.qualification === 'platform_without_official' ? '已证明范围无正式对应' : item.reasons.includes('row_identity_unverified') ? '主体身份待核' : '正式来源覆盖待核' }}</Badge>
+          <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground">
+            <template #trigger><span>原行字段与查询条件</span></template>
+            <p>查询 #{{ item.relation.queryId }} · 原行 {{ item.relation.sequenceNo }} · 记录 #{{ item.relation.id }}</p>
+          </DisclosurePanel>
+          <Button variant="link" size="sm" class="h-auto px-1 text-[13px]" @click="openSource('relation', item.relation.id)">查看原始记录</Button>
+        </li>
+      </ul>
+      <Button v-if="result.platformWithoutOfficial.rows.length > unlinkedLimit" variant="outline" size="sm" class="mt-2" @click="unlinkedLimit += 20">继续显示接口原行</Button>
+    </DisclosurePanel>
+
     <Dialog :open="sourceId !== null" @update:open="!$event && (sourceId = null)"><DialogContent @close-auto-focus="navigatingToEvent && $event.preventDefault()" class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>来源原始记录</DialogTitle><DialogDescription>保留原查询条件和导出批次版本；范围/版本资格单独判断。</DialogDescription></DialogHeader><SourceReader v-if="sourceId !== null" :kind="sourceKind" :id="sourceId" :return-to="returnTo" @event-navigate="closeForEvent" /></DialogContent></Dialog>
   </div>
 </template>

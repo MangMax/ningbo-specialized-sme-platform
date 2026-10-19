@@ -12,6 +12,9 @@ import { rememberEvidencePreviewReturn } from '../lib/roster/evidence-preview-re
 const calls = vi.hoisted(() => ({ query: [] as Record<string, unknown>[] }))
 const result = (page = 1, pageSize = 25) => ({ rows: [], total: 75, page, pageSize, counts: { distinctEvents: 0 }, coverage: [], currentSourceConsistency: { recognizedObservations: [] } })
 const stubs = {
+  // These tests own request/readiness/return scheduling. Accordion uses its own RAF
+  // to measure height; exercise that real component separately in disclosure/workflow tests.
+  DisclosurePanel: { template: '<section><slot name="header" /><slot name="trigger" /><slot name="title" /><slot /></section>' },
   ComparisonSourcePicker: defineComponent({ props: ['selection'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler(value: unknown) { this.$emit('settled', JSON.stringify(value), true) } } }, template: '<button data-testid="select-sources" @click="$emit(\'change\', { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] })">选定来源</button>' }),
   ComparisonProofPicker: defineComponent({ props: ['selection', 'asOf'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } }, asOf() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } }, template: '<div data-testid="proof-cutoff">{{ asOf }}<button data-testid="select-proof" @click="$emit(\'change\', [12])">选定依据</button></div>' }),
   ComparisonEvidence: { template: '<div data-testid="shown-result">已读取结果</div>' },
