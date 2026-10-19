@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import TableFailureState from '@/components/TableFailureState.vue'
 const props = defineProps<{ impactId: number; enterpriseId: number }>()
 type Source = { revisionId: number; sourceKind: string; sourceKey: string; sourceVersion: string; classification: string; eventId: number | null; coverageChanged: boolean; factChanged: boolean }
-const { displayed, loading, error, reload, restart, next, previous, canNext, canPrevious } = useBoundedReviewPage<Source>('evidence-impact-sources', () => `/api/roster/evidence-impacts/${props.impactId}/sources`, () => ({}))
+const { displayed, cursorExpired, loading, error, reload, restart, next, previous, canNext, canPrevious } = useBoundedReviewPage<Source>('evidence-impact-sources', () => `/api/roster/evidence-impacts/${props.impactId}/sources`, () => ({}))
 const selectedRevision = shallowRef<number | null>(null)
 </script>
 <template>
@@ -15,6 +15,7 @@ const selectedRevision = shallowRef<number | null>(null)
     <h4 class="text-sm font-medium">证据变化来源</h4>
     <p v-if="loading" role="status">正在读取变化来源…</p>
     <TableFailureState v-if="error" title="变化来源读取失败" :pending="loading" @retry="reload()" />
+    <p v-if="cursorExpired" role="alert">分页快照已过期或失效。上次成功页仍保留；请点击重新读取获取当前结果。</p>
     <p v-if="displayed" class="text-muted-foreground">复核项 #{{ displayed.request.url.split('/').at(-2) }} · 来源第 {{ displayed.pageNumber }} 页 · 每页最多25项</p>
     <p v-if="displayed && !displayed.rows.length">本页没有可列出的来源。</p>
     <ul class="flex flex-col gap-2"><li v-for="source in displayed?.rows ?? []" :key="source.revisionId" class="min-w-0 break-words border-l pl-2">

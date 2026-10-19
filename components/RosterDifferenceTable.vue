@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import QueryAssessmentSummary from '@/components/evidence-review/QueryAssessmentSummary.vue'
+import type { ReviewAssessment } from '~~/lib/roster/evidence-review-ui'
 import {
   comparisonDirectionLabel,
   DIFFERENCE_MEASURES,
@@ -27,14 +29,14 @@ import { GitCompareArrows } from '@lucide/vue'
  * **差异与原因**(RL-04 §7.3)。一行 = 一个(企业 × 称号 × 方向)的**当前**解释。
  *
  * 四种展示态**互不冒充**:状态只从 `difference_reason.status` 取;没有解释记录的坐标
- * 显示状态机的默认态「未查询」,并用 `explanationId === null` 说明「确实没有存下来的解释」。
+ * 由 queryCoverage / currentDecision / explanationValidity / assessment 分别展示；无决定是尚未判断。
  * 原因与后续措施**成对**显示;迁入缺项显示**待补证**,不猜填。
  *
  * 迁入来源是「企业名 / 称号 / 年份 / 批次」四项拼串 —— 单独抽出来是为了让它在单元格里
  * 与证据列共用同一段拼接,不至于两处各写一遍。
  */
 
-export interface DifferenceRow {
+export interface DifferenceRow extends Partial<ReviewAssessment> {
   explanationId: number | null
   enterpriseId: number
   name: string
@@ -124,7 +126,8 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
           <TableCell><TitleBadge :code="row.titleCode" /></TableCell>
           <TableCell class="text-xs">{{ comparisonDirectionLabel(row.direction) }}</TableCell>
           <TableCell>
-            <Badge :variant="statusVariant(row.status)">
+            <QueryAssessmentSummary v-if="row.queryCoverage && row.currentDecision && row.explanationValidity && row.assessment" :assessment="row as ReviewAssessment" />
+            <Badge v-else :variant="statusVariant(row.status)">
               {{ DIFFERENCE_STATUSES[row.status] ?? row.status }}
             </Badge>
           </TableCell>

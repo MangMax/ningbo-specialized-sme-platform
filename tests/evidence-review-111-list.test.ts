@@ -55,6 +55,8 @@ it('opens the exact impact and its separate committed source and event pages', a
   await view.get('[aria-label="查看修订 9 关联事件"]').trigger('click'); await flushPromises()
   expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts/revisions/9/events', { query: { enterpriseId: 7, limit: 25 } })
   expect(view.get('[data-testid="revision-event-link"]').attributes('href')).toBe('/enterprises/7?eventId=33&titleCode=specialized_sme')
+  await view.findAll('button').find(b => b.text() === '下一页来源')!.trigger('click'); await flushPromises()
+  expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts/4/sources', { query: { limit: 25, cursor: 'sources-next' } })
   view.unmount()
 })
 it('reads immutable decision history and full old audit details without a write token', async () => {
@@ -75,5 +77,104 @@ it('reads immutable decision history and full old audit details without a write 
   expect(view.text()).toContain('reviewer-original')
   expect(view.text()).toContain('original-rule')
   expect(view.findAll('button[type="submit"]').at(-1)!.attributes('disabled')).toBeDefined()
+  view.unmount()
+})
+it('restarts the frozen list cursor after successful review so completed items disappear from the fresh pending view', async () => {
+  let committed = false
+  fetcher.mockImplementation(async (url: string, options?: any) => {
+    if (options?.method === 'POST') { committed = true; return { reviewedRevisionId: 9 } }
+    if (url === '/api/roster/evidence-impacts') return { rows: committed && !options.query.cursor ? [] : [row], nextCursor: 'frozen-old-page', asOf: {}, projectionReady: true }
+    if (url === '/api/roster/evidence-impacts/4') return { ...row, pending: !committed, currentDecision: { versionId: 82, current: row.oldDecision }, evidenceToken: { decisionId: 82, latestRevisionId: 9, projectionReady: true }, queryCoverage: null, gaps: {} }
+    if (url.endsWith('/sources')) return { rows: [], nextCursor: null, asOf: {} }
+    if (url.endsWith('/history')) return { rows: [], total: 0, page: 1, pageSize: 25 }
+    throw new Error('Unexpected request')
+  })
+  const view = render(); await flushPromises()
+  await view.get('[aria-label="下一页复核项"]').trigger('click'); await flushPromises()
+  expect(view.text()).toContain('第 2 页')
+  await view.get('[aria-label="查看复核项 4"]').trigger('click'); await flushPromises()
+  for (const [label, value] of [['写入凭证', 'synthetic'], ['复核人', 'tester'], ['复核依据', 'explicit review'], ['规则版本', 'manual-v1']]) await view.get(`[aria-label="${label}"]`).setValue(value)
+  await view.findAll('form').at(-1)!.trigger('submit'); await flushPromises()
+  expect(view.text()).toContain('显示来源：第 1 页')
+  expect(view.text()).toContain('本页没有复核项')
+  expect(view.text()).not.toContain('原依据缺代码')
+  view.unmount()
+})
+it('shows the committed review baseline audit separately from the preserved original decision audit', async () => {
+  fetcher.mockImplementation(async (url: string) => {
+    if (url === '/api/roster/evidence-impacts') return { rows: [row], nextCursor: null, asOf: {}, projectionReady: true }
+    if (url === '/api/roster/evidence-impacts/4') return { ...row, pending: false, oldDecision: { ...row.oldDecision, actor: { type: 'user', id: 'original-author' }, basis: '原决定依据' }, currentDecision: { versionId: 82, current: row.oldDecision }, evidenceToken: { decisionId: 82, latestRevisionId: 9, projectionReady: true }, queryCoverage: null, gaps: {}, reviewedBaseline: { reviewedRevisionId: 9, actor: { type: 'user', id: 'baseline-reviewer' }, basis: '已核验新证据，维持原决定', ruleVersion: 'review-rule-2026', effectiveAt: '2026-10-19T09:00:00Z', recordedAt: '2026-10-19T09:01:00Z' } }
+    if (url.endsWith('/sources')) return { rows: [], nextCursor: null, asOf: {} }
+    if (url.endsWith('/history')) return { rows: [], total: 0, page: 1, pageSize: 25 }
+    throw new Error('Unexpected request')
+  })
+  const view = render(); await flushPromises()
+  await view.get('[aria-label="查看复核项 4"]').trigger('click'); await flushPromises()
+  const audit = view.get('[data-testid="reviewed-baseline"]')
+  expect(audit.text()).toContain('baseline-reviewer')
+  expect(audit.text()).toContain('已核验新证据，维持原决定')
+  expect(audit.text()).toContain('review-rule-2026')
+  expect(audit.text()).toContain('2026-10-19T09:01:00Z')
+  expect(view.text()).toContain('original-author')
+  expect(view.text()).toContain('原决定依据')
+  view.unmount()
+})
+it('keeps merged historical coordinates readable when the legacy decision is unavailable and never substitutes or completes another decision', async () => {
+  const missing = { ...row, lineage: 'merged', oldDecision: null }
+  fetcher.mockImplementation(async (url: string) => {
+    if (url === '/api/roster/evidence-impacts') return { rows: [missing], nextCursor: null, asOf: {}, projectionReady: true }
+    if (url === '/api/roster/evidence-impacts/4') return { ...missing, currentDecision: null, evidenceToken: { decisionId: null, latestRevisionId: 9, projectionReady: true }, queryCoverage: null, gaps: { decisionUnavailable: true, subjectUnknown: true, projectionReady: true }, reviewedBaseline: null }
+    if (url.endsWith('/sources')) return { rows: [{ revisionId: 9, sourceKind: 'identity', sourceKey: 'merge-7', sourceVersion: 'v2', classification: 'evidence_changed' }], nextCursor: null, asOf: {} }
+    if (url.endsWith('/history')) throw new Error('Deleted owner history must not be requested')
+    throw new Error('Unexpected request')
+  })
+  const view = render(); await flushPromises()
+  expect(view.text()).toContain('历史决定原文不可用')
+  expect(view.text()).toContain('原决定 #82')
+  await view.get('[aria-label="查看复核项 4"]').trigger('click'); await flushPromises()
+  expect(view.text()).toContain('历史决定原文不可用')
+  expect(view.text()).toContain('merge-7')
+  expect(view.text()).toContain('企业 #7')
+  expect(view.text()).not.toContain('历史决定读取失败')
+  expect(view.findAll('button[type="submit"]').at(-1)!.attributes('disabled')).toBeDefined()
+  expect(fetcher.mock.calls.some(c => c[0].endsWith('/history'))).toBe(false)
+  view.unmount()
+})
+it('explains expired snapshots while retaining their source page until an explicit fresh-list restart', async () => {
+  const view = render(); await flushPromises()
+  fetcher.mockRejectedValueOnce({ data: { error: { code: 'invalid_cursor' } } })
+  await view.get('[aria-label="下一页复核项"]').trigger('click'); await flushPromises()
+  expect(view.text()).toContain('分页快照已过期或失效')
+  expect(view.text()).toContain('显示来源：第 1 页')
+  expect(view.text()).toContain('原依据缺代码')
+  fetcher.mockRejectedValueOnce({ data: { error: { code: 'invalid_cursor' } } })
+  await view.get('[data-testid="retry-review-page"]').trigger('click'); await flushPromises()
+  expect(fetcher).toHaveBeenLastCalledWith('/api/roster/evidence-impacts', { query: { view: 'current', state: 'pending', limit: 25, cursor: 'signed-page-2' } })
+  await view.findAll('button').find(b => b.text() === '从第一页重新读取')!.trigger('click'); await flushPromises()
+  expect(fetcher).toHaveBeenLastCalledWith('/api/roster/evidence-impacts', { query: { view: 'current', state: 'pending', limit: 25 } })
+  expect(view.text()).not.toContain('分页快照已过期或失效')
+  view.unmount()
+})
+it('retains a source page and explains an invalid source cursor until the user restarts that source read', async () => {
+  let expireSource = false
+  fetcher.mockImplementation(async (url: string, options?: any) => {
+    if (url === '/api/roster/evidence-impacts') return { rows: [row], nextCursor: null, asOf: {}, projectionReady: true }
+    if (url === '/api/roster/evidence-impacts/4') return { ...row, currentDecision: null, evidenceToken: { decisionId: null, latestRevisionId: 9, projectionReady: true }, queryCoverage: null, gaps: {}, lineage: 'merged' }
+    if (url.endsWith('/sources')) {
+      if (expireSource && options.query.cursor) throw { data: { error: { code: 'invalid_cursor' } } }
+      return { rows: [{ revisionId: 9, sourceKind: 'identity', sourceKey: 'retained-source', sourceVersion: 'v2', classification: 'evidence_changed' }], nextCursor: 'opaque-source-cursor', asOf: {} }
+    }
+    throw new Error('Unexpected request')
+  })
+  const view = render(); await flushPromises()
+  await view.get('[aria-label="查看复核项 4"]').trigger('click'); await flushPromises()
+  expireSource = true
+  await view.findAll('button').find(b => b.text() === '下一页来源')!.trigger('click'); await flushPromises()
+  expect(view.text()).toContain('分页快照已过期或失效')
+  expect(view.text()).toContain('来源第 1 页')
+  expect(view.text()).toContain('retained-source')
+  await view.findAll('button').find(b => b.text() === '重新读取来源')!.trigger('click'); await flushPromises()
+  expect(view.text()).not.toContain('分页快照已过期或失效')
+  expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts/4/sources', { query: { limit: 25 } })
   view.unmount()
 })

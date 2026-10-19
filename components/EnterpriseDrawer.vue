@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EnterpriseExplanations from '@/components/evidence-review/EnterpriseExplanations.vue'
+import type { ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { computed, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { DialogClose, DialogContent, DialogRoot, DialogTitle } from 'reka-ui'
@@ -93,6 +95,7 @@ interface Detail {
   events: EventRow[]
   evidence: { eventId: number; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
   differences: Difference[]
+  titleAssessments?: (ReviewAssessment & ReviewScope)[]
   platform?: { queries: PlatformRecordQuery[]; relations: PlatformRecord[] }
 }
 
@@ -505,6 +508,7 @@ function eventSuffix(item: TimelineItem): string {
 
             </div>
           </template>
+        <EnterpriseExplanations v-if="detail.titleAssessments" :key="detail.enterprise.enterpriseId" class="mt-4 border-t pt-4" :enterprise-id="detail.enterprise.enterpriseId" :assessments="detail.titleAssessments" />
         <section class="mt-4 border-t pt-4" data-testid="drawer-platform-records">
           <TableFailureState v-if="error" title="企业详情更新失败" compact :pending="isLoading" @retry="refetch()" />
           <h3 class="mb-3 text-sm font-medium">平台记录</h3>

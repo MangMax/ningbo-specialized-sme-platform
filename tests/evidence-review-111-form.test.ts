@@ -1,16 +1,16 @@
 // @vitest-environment happy-dom
-import { mount, flushPromises } from '@vue/test-utils'
-import { createApp } from 'vue'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import EvidenceReviewForm from '../components/evidence-review/EvidenceReviewForm.vue'
 const detail = { id: 4, enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', decisionId: 82, lineage: 'current', pending: true, oldDecision: { id: 82, reasonNote: '原决定' }, currentDecision: { versionId: 82, current: { id: 82 } }, evidenceToken: { latestRevisionId: 9, decisionId: 82, projectionReady: true }, gaps: {} }
+enableAutoUnmount(afterEach)
 let fetcher: ReturnType<typeof vi.fn>
 beforeEach(() => { fetcher = vi.fn().mockResolvedValue({ reviewedRevisionId: 9 }); vi.stubGlobal('$fetch', fetcher) })
 afterEach(() => vi.unstubAllGlobals())
 function render(patch = {}) {
-  const pinia = createPinia(); const app = createApp({}); app.use(pinia); app.use(PiniaColada)
+  const pinia = createPinia()
   return mount(EvidenceReviewForm, { props: { detail: { ...detail, ...patch } as any }, global: { plugins: [pinia, PiniaColada] } })
 }
 async function fill(view: ReturnType<typeof render>) {
@@ -78,7 +78,23 @@ it('clears rejected credentials and leaves public reads intact', async () => {
   expect((view.get('[aria-label="写入凭证"]').element as HTMLInputElement).value).toBe('')
   expect(view.emitted('saved')).toBeUndefined()
 })
-it.each(['historical','withdrawn','merged'])('does not submit a $0 owner even with a credential', async lineage => {
+it.each([{ lineage: 'historical' }, { lineage: 'withdrawn' }, { lineage: 'merged' }])('does not submit a $lineage owner even with a credential', async ({ lineage }) => {
   const view = render({ lineage }); await fill(view); await view.get('form').trigger('submit')
   expect(fetcher).not.toHaveBeenCalled()
+})
+it('drops the in-memory credential when the page is hidden for navigation or browser cache', async () => {
+  const view = render(); await fill(view)
+  window.dispatchEvent(new Event('pagehide'))
+  await flushPromises()
+  expect((view.get('[aria-label="写入凭证"]').element as HTMLInputElement).value).toBe('')
+  await view.get('form').trigger('submit')
+  expect(fetcher).not.toHaveBeenCalled()
+  view.unmount()
+})
+it('keeps unprocessed evidence read-only even when a write credential is supplied', async () => {
+  const view = render({ evidenceToken: { ...detail.evidenceToken, projectionReady: false } }); await fill(view)
+  await view.get('form').trigger('submit')
+  expect(fetcher).not.toHaveBeenCalled()
+  expect(view.text()).toContain('尚未完成影响检查')
+  expect(view.get('button[type="submit"]').attributes('disabled')).toBeDefined()
 })

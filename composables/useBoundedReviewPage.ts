@@ -22,5 +22,5 @@ export function useBoundedReviewPage<T>(namespace: string, url: () => string, sc
   const next = () => { if (isCurrent.value && displayed.value?.nextCursor) { history.value = [...history.value, cursor.value]; cursor.value = displayed.value.nextCursor } }
   const previous = () => { if (isCurrent.value && history.value.length) { cursor.value = history.value.at(-1); history.value = history.value.slice(0, -1) } }
   const restart = () => { cursor.value = undefined; history.value = []; void query.refetch() }
-  return { displayed, loading: query.isLoading, error: query.error, reload: query.refetch, restart, next, previous, canNext: computed(() => isCurrent.value && !!displayed.value?.nextCursor), canPrevious: computed(() => isCurrent.value && history.value.length > 0) }
+  return { displayed, cursorExpired: computed(() => (query.error.value as { data?: { error?: { code?: string } } })?.data?.error?.code === 'invalid_cursor'), loading: query.isLoading, error: query.error, reload: query.refetch, restart, next, previous, canNext: computed(() => isCurrent.value && !!displayed.value?.nextCursor), canPrevious: computed(() => isCurrent.value && history.value.length > 0) }
 }
