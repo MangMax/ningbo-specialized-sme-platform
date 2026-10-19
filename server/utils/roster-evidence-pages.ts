@@ -36,6 +36,7 @@ import {
 } from '../../lib/roster/evidence-page'
 import { authorizeRosterWrite } from './roster-import-http'
 import { readPdfPageCount } from './pdf-pages'
+import { createLegacyEvidencePageAdapter, EvidenceCorrectionError } from './roster-evidence-correction'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -53,7 +54,7 @@ export interface EvidencePagesHttpResponse {
   body: unknown
 }
 
-const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' }
+const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
 
 /**
  * 读出**候选出处行** —— 只取判定用得上的那几列,顺带把企业名与属地 join 进来。
@@ -164,20 +165,23 @@ export async function handleEvidencePagesRequest(
   const plan = planEvidencePages(parsed.entries, candidates, pageCounts)
 
   let written = 0
-  if (!parsed.dryRun) {
-    const writtenEvidence = new Set<number>()
-    for (const a of plan.assignments) {
-      if (a.previous === a.page || writtenEvidence.has(a.evidenceId)) continue
-      ctx.db
-        .update(schema.recordEvidence)
-        .set({ page: a.page })
-        .where(eq(schema.recordEvidence.id, a.evidenceId))
-        .run()
+  const failed = new Set<number>()
+  const applyPage = createLegacyEvidencePageAdapter(ctx.db, ctx.filesDir)
+  const writtenEvidence = new Set<number>()
+  for (const a of plan.assignments) {
+    if (a.previous === a.page || writtenEvidence.has(a.evidenceId)) continue
+    try {
+      const changed = await applyPage({ evidenceId: a.evidenceId, previous: a.previous, page: a.page, basis: a.entry.basis, dryRun: parsed.dryRun })
       writtenEvidence.add(a.evidenceId)
-      written += 1
+      if (changed) written += 1
+    } catch (error) {
+      const detail = error instanceof EvidenceCorrectionError ? error.message : '出处写入失败，本条未应用'
+      plan.pending.push({ index: a.index, entry: a.entry, reason: 'ambiguous', detail, candidateIds: [a.evidenceId], sameListNo: candidates.filter(c => c.sourceFile === a.entry.sourceFile && c.listNo === a.entry.listNo).length })
+      failed.add(a.evidenceId)
     }
   }
 
+  plan.assignments = plan.assignments.filter(a => !failed.has(a.evidenceId))
   const summary = summarize(plan, written, parsed.entries.length)
   return {
     status: 200,

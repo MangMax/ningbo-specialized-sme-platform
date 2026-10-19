@@ -146,7 +146,7 @@ export const recordEvidence = sqliteTable(
      */
     page: integer('page'),
   },
-  (t) => [index('record_evidence_event_idx').on(t.recordEventId), index('record_evidence_source_file_105_idx').on(t.sourceFile)],
+  (t) => [index('record_evidence_event_idx').on(t.recordEventId), index('record_evidence_source_file_105_idx').on(t.sourceFile), index('record_evidence_coordinate_idx').on(t.sourceFile, t.listNo, t.attachment)],
 )
 
 /**
@@ -1052,3 +1052,24 @@ export const enterpriseAliasAudit = sqliteTable('enterprise_alias_audit', {
   uniqueIndex('enterprise_alias_audit_request_uq').on(t.aliasId, t.idempotencyKey),
   index('enterprise_alias_audit_page_idx').on(t.aliasId, t.id),
 ])
+
+/** #101: immutable evidence correction receipts and append-only coordinate history. */
+export const evidenceCorrectionBatch = sqliteTable('evidence_correction_batch', {
+  idempotencyKey: text('idempotency_key').primaryKey(),
+  requestHash: text('request_hash').notNull(),
+  planHash: text('plan_hash').notNull(),
+  receipt: text('receipt', { mode: 'json' }).$type<unknown>().notNull(),
+  createdAt: text('created_at').notNull(),
+})
+export const evidenceCorrectionAudit = sqliteTable('evidence_correction_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  evidenceId: integer('evidence_id').notNull().references(() => recordEvidence.id),
+  eventId: integer('event_id').notNull().references(() => recordEvent.id),
+  batchKey: text('batch_key').references(() => evidenceCorrectionBatch.idempotencyKey),
+  entryPoint: text('entry_point', { enum: ['correction', 'legacy_pages'] }).notNull(),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent' | 'legacy'; id: string }>().notNull(),
+  basis: text('basis').notNull(),
+  before: text('before', { mode: 'json' }).$type<unknown>().notNull(),
+  after: text('after', { mode: 'json' }).$type<unknown>().notNull(),
+  createdAt: text('created_at').notNull(),
+}, t => [index('evidence_correction_audit_evidence_idx').on(t.evidenceId, t.id)])
