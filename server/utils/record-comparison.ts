@@ -281,13 +281,24 @@ export function previewRecordCorrespondenceImpact(db: Db, input: RecordCompariso
 
 /** Picker data only. Stable ID order; selecting a source always requires an explicit UI action. */
 export function listRecordComparisonSources(db: Db, input: ComparisonSourceCatalogInput) {
+  return consumeComparison(iterateRecordComparisonSources(db, input))
+}
+export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceCatalogInput) {
   const filter = comparisonSourceCatalogInput.parse(input)
   const qids = filter.ids === undefined ? undefined : inArray(schema.platformQuery.id, filter.ids)
   const dids = and(eq(schema.sourceDocument.source, 'jxj'), filter.ids === undefined ? undefined : inArray(schema.sourceDocument.id, filter.ids))
   const bids = filter.ids === undefined ? undefined : inArray(schema.platformExportBatch.id, filter.ids)
+  // SQLite's native whole-index Count can block the first request while leaf
+  // pages enter its pager. Stream scalar IDs from the existing covering index
+  // so a cold count also cooperates, without decoding query/archive objects.
+  let queryCount = 0
+  if (filter.ids === undefined) {
+    const ids = db.$client.prepare('select id from platform_query indexed by platform_query_key_idx').pluck().iterate()
+    for (const _id of ids) { if (++queryCount % 256 === 0) yield }
+  } else queryCount = db.select({ n: sql<number>`count(*)` }).from(schema.platformQuery).where(qids).get()!.n
   const counts = {
     official_document: db.select({ n: sql<number>`count(*)` }).from(schema.sourceDocument).where(dids).get()!.n,
-    query: db.select({ n: sql<number>`count(*)` }).from(schema.platformQuery).where(qids).get()!.n,
+    query: queryCount,
     export_batch: db.select({ n: sql<number>`count(*)` }).from(schema.platformExportBatch).where(bids).get()!.n,
   }
   // The unfiltered catalog keeps its original document/query/export concatenation.
