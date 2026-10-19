@@ -118,3 +118,20 @@ making that initialization part of the first read. Use a synchronous plugin and
 an awaited request hook for code readiness. This performs no enterprise query;
 startup heap/loop and the sum of both initialized heaps remain reported. Retain
 the original raw failure, all copy-profile metrics, and both failed dev gates.
+
+Final telemetry observes worker heap at native get/all boundaries and every256
+cursor rows, plus projection/encoding boundaries; the main thread samples heap/RSS
+while native work runs. Report sum-of-isolates heap and OS maximum process RSS
+(RSS is process-wide, not added twice). The conservative fixed-page increment is
+application peak growth after health + maximum positive per-job worker peak/start
+delta + positive retained worker-baseline growth over its initialized baseline.
+This avoids subtracting a later GC minimum from an earlier startup heap and falsely
+calling initialization garbage a request allocation. Raw-profile diagnostics also
+retain the stricter sum-of-component maxima/minima result. Neither method is a
+continuous allocation trace; native/external/transfer bytes are separately reported.
+
+The remaining concurrent-dev gate was reproduced with captured child output:
+Nuxt CLI refused a second server sharing its generated directory/lock (exit1).
+`NUXT_BUILD_DIR` now selects an owned private directory for each of the two HTTP
+fixtures. No lock bypass or timeout increase. Child-aware readiness exposes the
+actual exit/output rather than waiting60s. Both12 public tests then passed atc2.

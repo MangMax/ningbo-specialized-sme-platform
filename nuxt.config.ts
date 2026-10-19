@@ -4,6 +4,8 @@ import tailwindcss from '@tailwindcss/vite'
 
 // SPA only — no SSR. Everything runs in the browser against Nitro server routes.
 export default defineNuxtConfig({
+  // Concurrent owned dev fixtures must not share generated files or Nuxt's lock.
+  buildDir: process.env.NUXT_BUILD_DIR || '.nuxt',
   compatibilityDate: '2026-10-13',
   ssr: false,
   devtools: { enabled: true },
