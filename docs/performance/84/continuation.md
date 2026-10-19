@@ -122,7 +122,7 @@ Driver各一次首请求+5个热样本，插桩有开销。表中堆为观察到
 
 固定详情三种规模均为43行/68045B/12语句；详情最大观察增量heap 2.967MiB。列表最大观察增量heap 45.149MiB。所有已完成请求未OOM；公开响应与本次观察到的heap/RSS低于硬界限，但这不构成整票通过。
 
-**冻结性能验收仍未通过**：22/36个组合至少有一项观察时延/loop超预算，具体失败项逐行写在JSON的observedFailures。重点仍是2x/5x列表c5和同步事件循环阻塞。不得以这些小样本中的成功组合保证可靠p99，也不将本机结果冒充受控容器。最小下一步及#87独立实验边界见上文。
+**冻结性能验收仍未通过**：22/36个组合至少有一项观察时延/loop超预算，具体失败项逐行写在JSON的observedFailures。5x列表c5热p95约1017/1018ms（HTTP/MCP），仍超过500ms；1x/2x c5热p95虽低于500ms，loop p95约175–337ms，仍超过100ms。不得以这些小样本中的成功组合保证可靠p99，也不将本机结果冒充受控容器。最小下一步及#87独立实验边界见上文。
 
 ## 同输入 Driver 补充对照
 
@@ -136,3 +136,13 @@ Driver各一次首请求+5个热样本，插桩有开销。表中堆为观察到
 |two/detail|43/68045/12|43/68045/12|26.497→2.966|
 |five/list|239133/23063699/12|36683/5073035/7|151.483→45.149|
 |five/detail|43/68045/12|43/68045/12|64.055→2.967|
+
+## 交付前的集成刷新
+
+交付前再合入集成 `1f23d0ed4504e66ae4472cfa2b5479e0cd391d2a`（#86），得到 `63be43903e57ae703cbeb7130c128f0b5d0bdcf7`。企业读模块、REST/MCP入口、mcp-roster、db/client、domain、comparison及生命周期/首次认定模块相对测量源码2e2c22c的diff为0字节（`final-owned-paths.diff`）。上面的性能和浏览器证据仍绑定2e2c22c，不冒充63be439重新测量。
+
+63be439的typecheck/build、本地生产OpenAPI检查和48列表/12详情原始实现公开协议对照退出0。首轮全仓测试有1个setup失败：#86的 `record-comparison-http.test.ts` 等待Nuxt dev启动60秒超时，2111测试通过/16跳过（包括该套件4项未执行），日志保留为 `tests-merged-final.log`。此轮测试和Nuxt构建曾并行，尚未证明因果；构建停止后单独重跑该套件4项通过（4.32秒，`test-merged-http-isolated.log`），没有改代码或上调超时。
+
+停止构建后再以 `--maxWorkers=2` 全仓重跑，仍是相同setup超时（`tests-merged-sequential.log`），因此不能归因于构建并行。代码检索发现 `comparison-scope-proof-http.test.ts` 也会从同一cwd起Nuxt dev；共享 `.nuxt` 生成目录是待验证的并发隔离风险，不据此声称已证明根因。本票没有修改#86测试、加超时、跳过失败项或改其业务代码。
+
+同一63be439串行测试worker核对：`pnpm test --maxWorkers=1` 为146 passed /2 skipped files、2115 passed /12 skipped tests，退出0（`tests-merged-one-worker.log`）。这是测试调度核对，不是改变应用worker、堆或c1/2/5性能输入。不能据串行通过宣布 `--maxWorkers=2` 门禁通过。并发启动隔离需由#86进一步验证：两套件使用独立生成目录或复用受控生产产物，并捕获子进程启动输出/退出状态；不以增加60秒等待解决。

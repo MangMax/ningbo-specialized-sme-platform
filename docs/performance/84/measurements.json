@@ -2527,5 +2527,43 @@
       "sqlQueries": 12,
       "maxIncrementalHeapMiB": 64.0547103881836
     }
-  ]
+  ],
+  "finalIntegration": {
+    "source": "63be43903e57ae703cbeb7130c128f0b5d0bdcf7",
+    "integrationTip": "1f23d0ed4504e66ae4472cfa2b5479e0cd391d2a",
+    "ownedPathsDiffBytes": 0,
+    "performanceRerun": false,
+    "fullTests": {
+      "maxWorkers1": {
+        "passed": 2115,
+        "skipped": 12,
+        "failed": 0,
+        "exitCode": 0
+      },
+      "maxWorkers2": {
+        "passed": 2111,
+        "skipped": 16,
+        "failedSuites": 1,
+        "exitCode": 1,
+        "repeated": true,
+        "unexecutedSuiteTests": 4,
+        "suite": "record-comparison-http.test.ts",
+        "error": "Nuxt dev readiness timeout60s"
+      }
+    },
+    "isolatedHttpSuite": {
+      "passed": 4,
+      "failed": 0,
+      "exitCode": 0
+    },
+    "typecheck": "exit0",
+    "build": "exit0",
+    "publicOriginalCharacterization": {
+      "listCases": 48,
+      "detailCases": 12,
+      "exitCode": 0
+    },
+    "openApi": "exit0",
+    "parallelCause": "not proven; two HTTP suites start Nuxt dev from same cwd"
+  }
 }
