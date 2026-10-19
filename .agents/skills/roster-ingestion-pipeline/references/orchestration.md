@@ -1,66 +1,72 @@
-# Multi-agent orchestration
+# 多代理编排
 
-Use one coordinator for the run. The coordinator owns the shared queue and limits; worker agents do not create more agents.
+每轮设一名协调者，统一管理队列和并发限制；工作代理不继续拆派。
 
-## Shared concurrency limits
+## 共享并发限制
 
-These are global limits for the whole run, not per agent:
+以下是整轮全局上限，不是每名代理各自的额度：
 
-| Work | Default in flight |
+| 工作 | 默认并发数 |
 |---|---:|
-| Independent source files | 3 |
-| OCR page-image requests | 4–6 |
-| Identity investigations | 2 |
-| Platform requests | 2 |
-| App writer | 1 |
-| Independent acceptance reader | 1 |
+| 独立源文件 | 3 |
+| OCR 页图请求 | 4–6 |
+| 身份调查 | 2 |
+| 平台请求 | 2 |
+| 应用业务写入者 | 1 |
+| 独立验收读取者 | 1 |
 
-Use a lower cap when the provider or app limit is lower. Keep a single shared queue for OCR and platform calls so parallel workers cannot multiply the request rate. A file owner may start independent page requests within that queue.
+平台或应用上限更低时采用较低值。OCR 和平台调用各自共享统一队列，避免并行工作者成倍增加请求量。文件负责人可在共享队列额度内并发提交独立页图。
 
-## Partition work and reuse evidence
+## 分工与复用证据
 
-- Assign one owner to each source file. When that file's OCR output is ready, hand it to correction immediately; other files can keep rendering or using the shared OCR queue.
-- An OCR-ready handoff includes every page result or an explicit per-page failure. Label a file partial when any page failed; do not call missing pages complete.
-- Assign exactly one investigator per enterprise and share the same batchId/itemId with every file owner. Group identity investigations by enterprise ID, then by confirmed unified social credit code when no ID is available. Share one evidence log across every file row in that group.
-- A same-name result without a confirmed ID remains a candidate. Keep separate candidate subjects separate; do not share an identity decision or merge based on name alone.
-- One writer owns each import batch. Serialize changes to the same enterprise even when evidence came from different files. The independent acceptance reader receives the finished evidence pack and does not edit the batch.
+- 每份源文件一名负责人。该文件 OCR 就绪即交纠偏；其他文件可继续转图或使用共享 OCR 队列。
+- OCR 就绪交接须有每页结果或明确失败；缺任一页即标部分完成，不把缺页算已完成。
+- 每家企业跨文件、跨称号只设一名调查者，并向文件负责人共享相同 batchId/itemId。按企业 ID 分组；尚无 ID 时按已确认信用代码分组。同一企业各文件行共用一份证据日志。
+- 同名但未确认 ID 的结果仍为候选。不同候选主体分开保存，不能只因名称相同共享身份决定或合并。
+- 每批一名写入者，同一企业变更串行执行，即使证据来自不同文件。独立验收者接收完整证据包，不编辑该批载荷。
 
-## Handoff packages and completion criteria
+## 先判断，后写入
 
-| Stage | Handoff package | Complete when |
+- 明确用户指定的判断组合。要求 Magpie + DeepSeek Open Design 时，业务判断使用该组合；实施/运维代理整理事实、准备 API 载荷、部署并执行确认后的写入。脚本只索引、比对原始事实和统计，不用原因映射规则替代代理。
+- 交给判断代理的材料包含用户当前口径、相关正式事件、三个归档接口、准确导出版本及既有确认身份/迁入证据。复用完整证据；用户限定已有证据时，不扩大到公开/PDF 查证或重查全量。
+- 判断代理逐案给出决定后，写入者才提交批次。已批准、未解决、排除项分别保存；代码验收或预检成功不等于业务确认。只做报告的授权不变成提交授权。
+- 若先写入后判断，如实说明顺序并安排事后确认，不能把事后确认说成写前批准；更正仍走授权 API，并保留旧审计。
+- 按稳定企业/称号/事件范围合并报告，不按代理私有标签直接拼接。先统一不同解释，再发布总数；排除冲突不能丢失或被算成已写。见[判断与报告规则](difference-investigation.md)。
+
+## 交接材料与完成条件
+
+| 阶段 | 交接材料 | 完成条件 |
 |---|---|---|
-| Intake | Source identity and hash; original filename and file-store ID/path; source type and purpose; notice/attachment; page count; duplicate and scope decision. | Every supplied file is classified and every in-scope official attachment is identified. |
-| OCR | File ID; page-image references and exact page numbers; OCR text per page; failed page requests and retry count; likely row ranges; current file status. | Every page is successful or explicitly failed. Send the file to correction as soon as this boundary is reached. |
-| Correction | Every official row with source file/page, source transcription, corrected text, visual-check result, export match candidates and unresolved fields. | Every formal row was checked against its source page. Unreadable or ambiguous text remains explicit; no official row is dropped. |
-| Identity | Enterprise ID or confirmed code when known; published row/page; separate candidate names/codes; exact local, platform and public queries; source URLs and check times; filters, page counts/totals and completion state; supported evidence references. | Candidate discovery is distinguishable from confirmation. Each resolved decision has a closed evidence chain; other cases remain pending. |
-| Write | Source identity/hash; one idempotency key; exact contract version and supported payload; preflight response; commit receipt and item results. | The entire atomic batch is committed, or its rollback and per-item errors are recorded. |
-| Acceptance | Source-to-output counts; every official row and source page; event fields; identity state; page/OCR state; batch receipt and duplicate-candidate result. | A separate reader confirms the evidence for each acceptance dimension. Any unresolved business error blocks acceptance. |
+| 文件接收 | 来源身份/哈希、原名、文件库 ID/路径、来源类型/用途、通知/附件、页数、重复和范围决定。 | 所有提供文件已分类，范围内正式附件均已识别。 |
+| OCR | 文件 ID、页图及准确页号、每页文字、失败页/重试数、预计名单行范围、文件状态。 | 每页均成功或明确失败；达到此边界立即交纠偏。 |
+| 纠偏 | 每条正式行的源文件/页码、原转录、纠正文字、视觉核验结果、导出候选和未定字段。 | 全部正式行已对照来源页检查；不可读/有歧义内容明确保留，不丢正式行。 |
+| 身份 | 企业 ID/已确认代码、公布行/页、分开的候选名/码、准确本地/平台/公开查询、网址与时间、条件/分页/总量/完成状态、证据引用。 | 候选发现与确认分开；已解决项身份链闭合，其余待核。 |
+| 写入 | 来源身份/哈希、唯一幂等键、准确契约版本及支持载荷、预检响应、提交回执、逐项结果。 | 整批原子提交，或已记录回滚及逐项错误。 |
+| 验收 | 来源到结果的数量、全部正式行与来源页、事件字段、身份、页图/OCR、回执及重复候选结果。 | 独立读取者逐维确认；未解决业务错误阻止验收完成。 |
 
-Keep metadata/file-store state, page/render/OCR state, event metadata and enterprise identity as separate fields in each handoff. A file can be stored while its pages are incomplete; an official row can be imported while its code remains pending.
+每次交接分别列文件元数据/入库、页图/转图/OCR、事件元数据、企业身份状态。文件已存储不代表页完整；正式行已入库也可仍缺信用代码。
 
-## Retry and recovery
+## 重试与恢复
 
-- Retry only the failed unit. For a transient OCR failure, retry that page image and retain successful page outputs. Do not repeat every page because one request failed.
-- For live platform work use [`platform-query.md`](./platform-query.md). Submit multiple independent queries through app REST/MCP; route results by stable itemId, not name/code or array order. Explicitly retry only unfinished itemIds/pages after reviewing failures; preserve completed segments/rows/times. The app enforces a global max2 across batches, singles, legacy calls and backoff. The identity-investigator cap remains2, independent of batch item count.
-- A platform timeout, expired session, HTTP 200 login page or incomplete pagination is failed/partial evidence, not a zero-row result. Preserve the exact query and page boundary.
-- The unified import is all-or-nothing. On a rejected batch, preserve completed OCR, correction and research artifacts, fix the reported item, and retry the same source with the same idempotency key; the current commit contract permits a failed batch to retry with that key.
-- If a commit response is lost, first look up the receipt by its exact idempotency key where the live contract exposes a read. The current public REST/MCP surface has no standalone batch-lookup route; repeating the same key through commit returns the prior committed receipt or safely retries a failed batch. Never mint a new key to resolve an unknown result.
-- A required identity or source-evidence field that cannot be supported by the current contract stays pending and becomes a scoped issue. Do not bypass validation, fabricate a count, or mark a real business error accepted.
-- One failed acceptance dimension does not abandon the run. Keep successful outputs, retry or correct only the affected unit, then rerun the relevant acceptance check. Record non-blocking gaps separately; unresolved business errors block acceptance.
+- 只重试失败单元。临时 OCR 故障重试对应页图，保留成功页，不因一页失败重跑全部。
+- 实时平台操作遵循[平台查询说明](./platform-query.md)。独立查询通过应用 REST/MCP 单查或批量提交，按稳定 itemId 路由，不用名称/代码或数组顺序代替。检查失败后只重试未完成 itemId/页，保留已完成分段、行与时间。应用在批量、单查、旧入口和退避中全局最多并发两个请求；身份调查者仍最多两名，与批量条目数无关。
+- 超时、会话过期、HTTP 200 登录页、分页不全属于失败/部分证据，不是零记录。保留准确查询及分页边界。
+- 统一导入整批全成或全败。被拒绝后保留 OCR、纠偏、查证产物，修复报错项，再用相同来源、相同幂等键重试；当前提交契约允许失败批次同键重试。
+- 提交响应丢失时，若当前契约提供回执查询，先按原幂等键查询。当前公开 REST/MCP 无独立批次查询路由；再次同键提交可返回既有已提交回执，或安全重试失败批次。不得为消除结果不确定而换新键。
+- 必需身份/来源字段无法由当前契约支持时保留待处理并开边界明确的票，不绕过校验、不编造计数、不接受真实业务错误。
+- 单一验收维度失败不放弃整轮；保留成功结果，只重试/修复失败单元，再核验受影响维度。非阻塞缺口单列；未解决业务错误仍阻止验收完成。
 
-For credential-free single, batch, expired-session, second-page-failure and same-code multi-relationship walkthroughs, run the behavioral examples in [`../examples/README.md`](../examples/README.md). Check observed app routes and results, not source text alone.
+无凭据单查、批量、会话过期、第二页失败、同代码多关系的流程见[示例](../examples/README.md)。检查真实应用路由与响应，不能只读源码判通过。
 
-## Required scenario walkthroughs
+## 必须覆盖的交接情形
 
-Use these paths to check that the handoffs preserve evidence and recover locally:
-
-| Scenario | Expected handling |
+| 情形 | 处理要求 |
 |---|---|
-| Multi-page PDF while other files are still running | Use the shared OCR cap; hand off that file once each page is successful or explicitly failed. Keep successful pages and verify every official row against its page. |
-| One enterprise appears in several files | Reuse the investigation by enterprise ID or confirmed code; keep each file's own row and page evidence. A matching name alone only links candidates. |
-| Publicly evidenced old name and a platform current name | Search the old name and variants in public sources, capture the old-name-to-code evidence, then query the platform by code for the current name. Apply the current `cross_source` requirements in [`uscc-recovery.md`](./uscc-recovery.md); if the full name-query count is unavailable or the current validator rejects the case, leave it pending and track #6. |
-| Current payload is rejected | Record the preflight/commit error and the atomic rollback. Preserve prior stage outputs, correct only the rejected evidence or field, and retry the same-source batch with its original key. If the rule itself is unsupported, open or update the relevant issue instead of bypassing it. |
-| Commit response is lost | Resolve the result using the original idempotency key and current receipt behavior. Confirm committed/failed before starting any new batch; do not make a new key. |
-| Existing event or evidence coordinate is wrong | Follow the existing-record correction boundary in [`workflow.md`](./workflow.md). Track unsupported event, attachment or list-number corrections in #34 as pending; use the page-only endpoint only for a confirmed PDF page correction. Preserve completed files, OCR, research and imports while the correction is tracked. |
+| 多页 PDF 与其他文件同时处理 | 使用共享 OCR 上限，每页均有成功/明确失败后即交该文件；保留成功页并逐行对照来源页。 |
+| 同企业出现于多个文件 | 按企业 ID/已确认代码复用调查；每文件保留自己的行/页依据。同名只连接候选。 |
+| 公开依据证明旧名，平台返回现名 | 查旧名及变体并取得旧名到代码证据，再按码查询现名。遵循[身份说明](./uscc-recovery.md)的 `cross_source` 条件；缺完整名称查询量或被当前校验拒绝时待核并记 #6。 |
+| 当前载荷被拒绝 | 保存预检/提交错误及原子回滚结果，保留已完成产物；修正报错字段后同来源、同键重试。规则不支持时开/更新票，不绕过。 |
+| 提交回执丢失 | 用原幂等键及当前回执行为确认已提交或失败后，才开始新批次；不换新键。 |
+| 既有事件或出处坐标错误 | 按[既有记录更正边界](./workflow.md)处理；不支持的事件、附件、名单序号更正跟踪 #34，页码专用接口只改已核实 PDF 页码。保留已完成结果等待更正。 |
 
-Names called out as examples in issue #35 (海尔施、众鑫、华盛、展慈) are walkthrough leads only. Do not write a name history, alias or identity conclusion for them without independent evidence.
+issue #35 中海尔施、众鑫、华盛、展慈只是演练线索；无独立证据时不写入名称历史、别名或身份决定。

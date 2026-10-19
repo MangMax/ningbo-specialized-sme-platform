@@ -1,32 +1,43 @@
-# Business rules for roster cleanup
+# 名录清洗业务规则
 
-## Source authority
+## 来源权威性
 
-- The published announcement body and its attachments establish the designation, title, event type, year and batch. A notice file name or current platform state does not establish those facts.
-- The three MIIT exports are comparison snapshots for their stated collection period. They do not replace official roster history.
-- Every row in an in-scope official roster remains in the import, including rows unmatched to exports or missing an identity code. Comparison is a review aid, not an inclusion filter.
-- Keep repeated designation events. Deduplicate enterprises across titles, but retain each award and review event with its own source.
+- 正式公布正文及附件确立称号、事件类型、年度与批次。通知文件名或平台当前状态不能单独确立这些事实。
+- 三张工信部导出表是其采集时点的平台对照快照，不替代正式名录历史。
+- 范围内正式名单的每一行均须入库，包括未匹配导出或缺信用代码的行。对比用于核查，不是筛掉正式行的条件。
+- 保留重复获批等历次称号事件。企业跨称号去重，各次认定和复核及其出处分别保留。
 
-## Event and lifecycle rules
+## 统一术语
 
-- The earliest formal award for an enterprise and title is its first recognition. A review is not a new first recognition. Reapproval after a failed review does not reset first recognition.
-- Review due dates follow the user-confirmed three-year rule from the latest effective award or passed review. A failed review leaves the active cohort; later reapproval changes the next due year, not the first-recognition history.
-- Platform application and maintenance fields are not formal announcement events. In particular, `sqsj`, `whpc`, `whpcyear`, and maintenance labels must not be converted into an official award year or batch. Interpret a field in the context of its interface; see [`uscc-recovery.md`](./uscc-recovery.md).
-- RL-07 does not use automatic incremental rechecks. For a requested year, use the existing query API to review that year; do not create a separate review interface.
-- An enterprise absent from an export may still be a valid official roster row. A platform-only row may be current, stale or moved; do not infer its cause without evidence.
+| 术语 | 本技能含义 |
+|---|---|
+| 正式公布事件 | 公布文件记载的某企业、某称号的一次认定或复核等事实。 |
+| 平台流程记录 | 申报、关联接口返回的具体申请、复核、更新等记录；其状态不等同整家企业的称号结论。 |
+| 对应记录 | 已按主体、称号、年度批次及业务类型核对，可用于比较同一事实的记录。 |
+| 待审核 | 平台流程原文状态；仅在用户明确批准相应差异分类时，才另作为差异原因记录。 |
+| 待人工审查 | 尚有具体公布依据、身份、属地或记录对应问题需要裁决；报告须列出具体问题。 |
+| 待核实 | `pending` 等接口字段表达的技术核验状态，不能直接替代对用户说明具体业务问题。 |
 
-## Identity and evidence
+## 事件与生命周期
 
-- Names, aliases, locality and search results produce candidates. They do not confirm identity or authorize a merge by themselves. A confirmed alias needs its source evidence and explicit confirmation under the current contract.
-- Keep a missing code empty when sources do not close the identity chain. Invalid codes, multiple plausible subjects, partial searches and unresolved conflicts stay pending.
-- Separate page evidence, event metadata and enterprise identity. An OCR correction changes the transcription only when the source page supports it; it does not establish a new enterprise identity.
-- Use [`uscc-recovery.md`](./uscc-recovery.md) for candidate discovery, current interface limits and the exact `cross_source` boundary.
+- 企业×称号最早的正式认定是首次认定。复核不算新首次认定；复核失败后再次获批不重置首次认定。
+- 下次复核按用户确认的三年规则，从最近有效认定或复核通过起算。复核失败退出当前有效批次；再次获批改变下次复核年，不改首次认定历史。
+- 平台申请、维护字段不是正式公布事件，尤其不能把 `sqsj`、`whpc`、`whpcyear` 或维护标签直接转成正式认定年、批次。字段须结合其接口解释，参见[身份查证说明](./uscc-recovery.md)。
+- RL-07 不采用自动增量复查。用户指定年份时使用已有通用查询 API，不另建专用复核接口。
+- 企业不在导出中，仍可能是有效正式名单行；平台独有记录可能是当前、旧记录或迁移结果，原因须有证据。
 
-## Difference investigations
+## 身份与证据
 
-Use [`difference-investigation.md`](difference-investigation.md) whenever a source comparison disagrees, a location/name changes, or a platform workflow status is returned. Query outcomes are processing facts; only an evidence-backed agent/user decision confirms a business cause.
+- 名称、别名、属地和搜索命中只产生候选，不能独自确认主体或授权合并。确认别名须有来源依据，并满足当前契约的明确确认要求。
+- 证据链不能闭合时信用代码留空。代码无效、多主体候选、查询未完成或来源冲突均须保留待核状态。
+- 页码证据、事件元数据和企业身份分别处理。OCR 纠偏只依据来源页改转录内容，不凭纠偏结果确立新企业身份。
+- 候选发现、接口限制及 `cross_source` 准入条件见[信用代码补全与身份查证](./uscc-recovery.md)。
 
-## File handling
+## 差异调查
 
-- File-store membership follows the one executable rule in `lib/file-store-scope.ts`, with its prose counterpart in `files/README.md`. Evidence file paths must resolve inside the file store.
-- Keep credentials in runtime secret storage. Keep business databases, source documents and uploaded files outside Git.
+来源对比不一致、名称/属地变化或平台返回流程状态时，使用[差异调查与判断](difference-investigation.md)。查询结果是处理事实；有证据的代理或用户决定才可确认业务原因。
+
+## 文件与凭据
+
+- 文件范围以 `lib/file-store-scope.ts` 为唯一可执行规则，文字对照见 `files/README.md`。证据路径必须指向文件库内文件。
+- 凭据保存在运行时密钥存储。业务数据库、源文档、上传文件保存在 Git 外。
