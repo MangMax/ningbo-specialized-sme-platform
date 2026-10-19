@@ -473,6 +473,8 @@ export const IMPORT_SOURCE_KINDS: Record<string, string> = {
   announcement: '公布文件',
   platform_export: '平台导出',
   alias_evidence: '别名证据',
+  correspondence_decision: '记录对应确认',
+  comparison_scope_proof: '对比范围依据',
 }
 
 /** 导入来源类别展示顺序。 */
@@ -480,6 +482,8 @@ export const IMPORT_SOURCE_KIND_ORDER: string[] = [
   'announcement',
   'platform_export',
   'alias_evidence',
+  'correspondence_decision',
+  'comparison_scope_proof',
 ]
 
 /** 两侧名录比对方向,页面与导出共用。 */
