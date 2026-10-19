@@ -21,10 +21,11 @@ const pageSize=Number(process.env.PERF_PAGE_SIZE??25),catalogKind=process.env.PE
 assert.ok(Number.isSafeInteger(queryId)&&queryId>0&&Number.isSafeInteger(pageSize)&&pageSize>0&&pageSize<=50)
 const dir=mkdtempSync(join(tmpdir(),'comparison-telemetry-')),telemetry=join(dir,'telemetry.mjs')
 writeFileSync(telemetry, `import dc from 'node:diagnostics_channel';import {monitorEventLoopDelay} from 'node:perf_hooks';import {getHeapStatistics} from 'node:v8';
-const lag=monitorEventLoopDelay({resolution:10});lag.enable();let heap=0,rss=0,heapStart=0;
-const sample=()=>{const m=process.memoryUsage();heap=Math.max(heap,m.heapUsed);rss=Math.max(rss,m.rss)};setInterval(sample,5).unref();
-const report=()=>({heap,rss,heapStart,maxRss:process.resourceUsage().maxRSS*1024,heapLimit:getHeapStatistics().heap_size_limit,lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6,lagSamples:lag.count});
-process.on('message',message=>{if(message==='reset'){lag.reset();heap=0;rss=0;heapStart=process.memoryUsage().heapUsed;process.send?.('reset')}if(message==='sample'){sample();process.send?.(report())}});
+const lag=monitorEventLoopDelay({resolution:10});lag.enable();let heap=0,rss=0,heapStart=0,workerHeap=0,combinedHeap=0,combinedHeapStart=0;
+dc.channel('ningbo.enterprise-read').subscribe(metric=>{workerHeap=metric.workerHeap??workerHeap;sample()});
+const sample=()=>{const m=process.memoryUsage();heap=Math.max(heap,m.heapUsed);rss=Math.max(rss,m.rss);combinedHeap=Math.max(combinedHeap,m.heapUsed+workerHeap)};setInterval(sample,5).unref();
+const report=()=>({heap,rss,heapStart,workerHeap,combinedHeap,combinedHeapStart,maxRss:process.resourceUsage().maxRSS*1024,heapLimit:getHeapStatistics().heap_size_limit,lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6,lagSamples:lag.count});
+process.on('message',message=>{if(message==='reset'){lag.reset();heap=0;rss=0;heapStart=process.memoryUsage().heapUsed;combinedHeap=0;combinedHeapStart=heapStart+workerHeap;process.send?.('reset')}if(message==='sample'){sample();process.send?.(report())}});
 dc.channel('http.server.response.finish').subscribe(({request})=>{sample();if(request.url.startsWith('/api/roster/record-comparison')||request.url==='/mcp')process.send?.({heap,rss,maxRss:process.resourceUsage().maxRSS*1024,heapLimit:getHeapStatistics().heap_size_limit,lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6})});`)
 const port=await reserveLoopbackPort(),base=`http://127.0.0.1:${port}`,metrics=[]
 const server=fork('.output/server/index.mjs',[],{execArgv:['--max-old-space-size=2048','--import',telemetry],env:{...process.env,PORT:String(port),HOST:'127.0.0.1',NUXT_DB_PATH:dbPath,NUXT_DB_READONLY:'1',NUXT_FILES_DIR:dir,MIIT_COOKIE:'',MIIT_COOKIE_FILE:''},stdio:['ignore','pipe','pipe','ipc']})
@@ -48,9 +49,11 @@ try{
  const coldMetrics=metrics.at(-1)
  reset=false;server.send('reset');for(let i=0;i<100&&!reset;i++)await sleep(10);assert.ok(reset)
  metrics.length=0
+ const hotStarted=performance.now();
  for(let n=0;n<20;n+=concurrency)hot.push(...await Promise.all(Array.from({length:concurrency},request)))
+ const hotWallMs=performance.now()-hotStarted;
  await sleep(30);count=metrics.length;server.send('sample');for(let i=0;i<100&&metrics.length===count;i++)await sleep(10);assert.ok(metrics.length)
  assert.ok(hot.every(x=>x.resultSha256===cold.resultSha256),'stable complete result across concurrency')
  const sorted=hot.map(x=>x.ms).sort((a,b)=>a-b),pct=p=>sorted[Math.ceil(p*sorted.length)-1]
- console.log(JSON.stringify({transport,mode,concurrency,catalogPage,node:process.version,cold:{...cold,eventLoopP95Ms:coldMetrics.lagP95Ms,eventLoopMaxMs:coldMetrics.lagMaxMs,incrementalHeap:coldMetrics.heap-coldMetrics.heapStart},hotSamples:hot.length,hot:{p50:pct(.5),p95:pct(.95),p99:pct(.99)},responseBytes:hot[0].responseBytes,resultSha256:cold.resultSha256,peakHeap:Math.max(...metrics.map(x=>x.heap)),incrementalHeap:Math.max(...metrics.map(x=>x.heap))-metrics.at(-1).heapStart,peakRss:Math.max(...metrics.map(x=>x.rss)),osPeakRss:Math.max(...metrics.map(x=>x.maxRss)),heapLimit:metrics[0].heapLimit,eventLoopP95Ms:metrics.at(-1).lagP95Ms,eventLoopMaxMs:metrics.at(-1).lagMaxMs,eventLoopSamples:metrics.at(-1).lagSamples,containerLimited:false}))
+ console.log(JSON.stringify({transport,mode,concurrency,catalogPage,node:process.version,cold:{...cold,eventLoopP95Ms:coldMetrics.lagP95Ms,eventLoopMaxMs:coldMetrics.lagMaxMs,incrementalHeap:coldMetrics.heap-coldMetrics.heapStart,combinedHeap:coldMetrics.combinedHeap,combinedIncrementalHeap:coldMetrics.combinedHeap-coldMetrics.combinedHeapStart,workerHeap:coldMetrics.workerHeap},hotSamples:hot.length,hotWallMs,throughputPerSecond:hot.length/(hotWallMs/1000),hot:{p50:pct(.5),p95:pct(.95),p99:pct(.99)},responseBytes:hot[0].responseBytes,resultSha256:cold.resultSha256,peakHeap:Math.max(...metrics.map(x=>x.heap)),incrementalHeap:Math.max(...metrics.map(x=>x.heap))-metrics.at(-1).heapStart,workerHeap:metrics.at(-1).workerHeap,combinedPeakHeap:Math.max(...metrics.filter(x=>x.combinedHeap!==undefined).map(x=>x.combinedHeap)),combinedIncrementalHeap:Math.max(...metrics.filter(x=>x.combinedHeap!==undefined).map(x=>x.combinedHeap))-metrics.at(-1).combinedHeapStart,peakRss:Math.max(...metrics.map(x=>x.rss)),osPeakRss:Math.max(...metrics.map(x=>x.maxRss)),heapLimit:metrics[0].heapLimit,eventLoopP95Ms:metrics.at(-1).lagP95Ms,eventLoopMaxMs:metrics.at(-1).lagMaxMs,eventLoopSamples:metrics.at(-1).lagSamples,containerLimited:false}))
 }finally{await stopOwnedChild(server);rmSync(dir,{recursive:true,force:true})}

@@ -74,6 +74,31 @@ it('comparison preserves all selected relations and formal event uncertainty as 
   expect(bytes()).toBeLessThan(65536)
 })
 
+it('streams global formal classifications without hydrating history evidence outside the displayed page', () => {
+  const db = fixture()
+  const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Selected', path: 'selected.pdf' }).returning().get()
+  const owner = db.insert(schema.enterprise).values({ name: 'Same name', nameNorm: 'Same name' }).returning().get()
+  const other = db.insert(schema.enterprise).values({ name: 'Same name', nameNorm: 'Same name' }).returning().get()
+  const records = [owner, other].map(e => db.insert(schema.record).values({ enterpriseId: e.id, source: 'jxj', titleCode: 'specialized_sme', nameRaw: 'Same name' }).returning().get())
+  const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'selected', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z', status: 'partial' }).returning().get()
+  let first = 0
+  db.transaction(tx => {
+    for (let n = 0; n < 1024; n++) {
+      const event = tx.insert(schema.recordEvent).values({ recordId: records[n ? 1 : 0]!.id, eventType: 'award', year: 2024 }).returning().get()
+      if (!n) first = event.id
+      tx.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: n ? 'unselected.pdf' : doc.path, attachment: 'Full original attachment '.repeat(16), page: n + 1 }).run()
+    }
+  })
+  const bytes = returnedBytes(db)
+  const result = getRecordComparison(db, { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id], enterpriseId: owner.id, page: 1, pageSize: 1 })
+  expect(result.total).toBe(1)
+  expect(result.counts).toMatchObject({ officialEventRows: 1024, distinctEnterpriseTitles: 2, unresolved: 1024 })
+  expect(result.rows).toMatchObject([{ event: { id: first }, record: { id: records[0]!.id, enterpriseId: owner.id }, reasons: ['official_coverage_unproved'], evidence: [{ sourceFile: doc.path, page: 1, attachment: 'Full original attachment '.repeat(16), inSelectedSource: true }] }])
+  // Supplemental resource assertion at the native boundary, alongside the public
+  // counts/rows above. Full evidence for 1024 unrendered events is not required.
+  expect(bytes()).toBeLessThan(65536)
+})
+
 it('stored current proof revalidation reads its original sources without unrelated raw bodies', async () => {
   const { readComparisonScopeProof } = await import('../server/utils/comparison-scope-proof')
   const db = fixture()
