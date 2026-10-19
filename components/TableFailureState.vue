@@ -18,12 +18,13 @@ defineEmits<{ retry: [] }>()
     aria-live="polite"
     :aria-busy="pending"
     :data-compact="compact"
-    :class="compact ? 'border-b bg-muted/20 px-4 py-3' : 'flex min-h-52 items-center justify-center px-4 py-8 sm:min-h-60'"
+    :class="compact ? 'border-b bg-muted/20 px-4 py-3' : 'px-4 py-6 sm:px-6 sm:py-8'"
   >
-    <div class="grid w-full min-w-0 grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-3" :class="compact ? '' : 'max-w-lg'">
-      <CircleAlert class="text-muted-foreground size-5" aria-hidden="true" />
-      <div class="min-w-0">
-        <p class="text-foreground text-sm font-medium leading-5" data-testid="table-failure-title">{{ title }}</p>
+    <!-- 失败目标、原因和重试在同一组靠左阅读，不再把重试推到整行最右端。 -->
+    <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:gap-3">
+      <CircleAlert class="text-muted-foreground mt-0.5 size-5 shrink-0" aria-hidden="true" />
+      <div class="min-w-0 flex-1">
+        <p class="text-foreground text-sm leading-5 font-medium" data-testid="table-failure-title">{{ title }}</p>
         <p class="text-muted-foreground mt-1 text-[13px] leading-5">
           {{ description ?? (compact ? '显示的是上次加载的结果。' : '筛选条件已保留，可以重新加载。') }}
         </p>
@@ -31,7 +32,7 @@ defineEmits<{ retry: [] }>()
       <Button
         variant="outline"
         size="sm"
-        class="bg-card min-w-24 shrink-0 whitespace-nowrap text-[13px] shadow-none"
+        class="bg-card min-w-24 shrink-0 self-start whitespace-nowrap text-[13px] shadow-none"
         :disabled="pending"
         data-testid="table-retry"
         @click="$emit('retry')"

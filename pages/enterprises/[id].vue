@@ -2,12 +2,15 @@
 import { useQuery } from '@pinia/colada'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
+import type { CursorPage, ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
+import { latestQueryTime, reviewDateLabel, titleLabel } from '~~/lib/roster/review-display'
 import { sourceReturnTarget } from '~~/lib/roster/correspondence-view'
 import RecordEventRow from '@/components/record-correspondence/RecordEventRow.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import EnterpriseExplanations from '@/components/evidence-review/EnterpriseExplanations.vue'
+import EnterpriseCaseSummary from '@/components/enterprise/EnterpriseCaseSummary.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
-import { QUALITY_FLAGS } from '~~/lib/labels'
+import { QUALITY_FLAGS, TITLE_ORDER } from '~~/lib/labels'
 import { fileUrl, fileNameOf } from '~~/lib/preview'
 import {
   rememberEvidencePreviewReturn,
@@ -20,7 +23,6 @@ import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 
 definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
@@ -52,6 +54,7 @@ interface EnterpriseDetail {
   name: string
   uscc: string | null
   district: string | null
+  titles: string[]
   qualityFlags: string[]
   records: DetailRecord[]
 }
@@ -95,6 +98,35 @@ const { data, isLoading, error, refetch } = useQuery({
   query: () => apiGet<RosterEnterpriseDetail>(`/api/roster/enterprises/${id.value}`),
 })
 
+/**
+ * 待复核清单只用来回答“现在有没有要处理的事”和给出第一项的入口。
+ * 读取失败时保持未知，不把 0 当作结论。
+ */
+const pendingParams = computed(() => ({ enterpriseId: Number(id.value), view: 'current', state: 'pending', limit: 25 }))
+const {
+  data: pendingData,
+  isLoading: pendingLoading,
+  error: pendingError,
+  refetch: refetchPending,
+} = useQuery({
+  key: () => ['evidence-impacts', pendingParams.value],
+  query: ({ entry }) => $fetch<CursorPage<ImpactRow>>('/api/roster/evidence-impacts', { query: entry.key[1] as Record<string, string | number> }),
+  placeholderData: previous => previous,
+})
+
+const assessments = computed<(ReviewAssessment & ReviewScope)[]>(() => (data.value?.titleAssessments ?? []) as unknown as (ReviewAssessment & ReviewScope)[])
+const pendingRows = computed(() => pendingData.value?.rows ?? [])
+const pendingHasMore = computed(() => !!pendingData.value?.nextCursor)
+const focusedImpactId = ref<number | undefined>()
+const openScopeRequest = ref<{ titleCode: string; direction: string } | null>(null)
+
+function onOpenImpact(row: ImpactRow) {
+  focusedImpactId.value = row.id
+}
+function onOpenScope(assessment: ReviewAssessment & ReviewScope) {
+  openScopeRequest.value = { titleCode: assessment.titleCode, direction: assessment.direction }
+}
+
 const detail = computed<EnterpriseDetail | null>(() => {
   const source = data.value
   if (!source) return null
@@ -103,6 +135,7 @@ const detail = computed<EnterpriseDetail | null>(() => {
     name: source.enterprise.name,
     uscc: source.enterprise.uscc,
     district: source.enterprise.district,
+    titles: source.enterprise.titles ?? [],
     qualityFlags: source.enterprise.uscc ? [] : ['uscc_missing'],
     records: source.records.map(record => ({
       id: record.id,
@@ -158,6 +191,7 @@ function edgesFor(eventId: number) {
 
 const EVIDENCE_DISCLOSURE_RETURN_KEY = 'roster:enterprise-detail-open-evidence'
 const openEvidenceKeys = ref<string[]>([])
+const recordsOpen = ref(false)
 
 function evidenceDisclosureKey(eventId: number): string {
   return JSON.stringify([id.value, eventId])
@@ -188,6 +222,7 @@ onMounted(() => {
       candidate.keys.every((key) => typeof key === 'string')
     ) {
       openEvidenceKeys.value = candidate.keys
+      recordsOpen.value = candidate.keys.length > 0
     }
   } catch {
     // Storage may be unavailable; the page remains usable without disclosure restoration.
@@ -215,6 +250,7 @@ async function arriveAtEvent(eventId: number | null) {
   if (typeof document === 'undefined') return
   if (!detail.value || eventId == null || !detail.value.records.some(record => record.events.some(event => event.id === eventId))) return
   const enterpriseId = id.value
+  recordsOpen.value = true
   setEvidenceDisclosureOpen(evidenceDisclosureKey(eventId), true)
   await nextTick()
   if (id.value !== enterpriseId || focusedEventId.value !== eventId) return
@@ -222,10 +258,6 @@ async function arriveAtEvent(eventId: number | null) {
 }
 watch([detail, focusedEventId], ([, eventId]) => arriveAtEvent(eventId), { immediate: true })
 
-/**
- * 页面标题(RL-17 收尾):企业名 + 页面名。详情是异步取的,所以先给一个不含名字的兜底,
- * 拿到之后自动换成企业名 —— 空白标题在历史记录里完全认不出是哪个企业。
- */
 useHead({
   title: computed(() => (detail.value ? `${detail.value.name} · 企业详情` : '企业详情')),
 })
@@ -234,6 +266,18 @@ const otherFlags = computed(() => (detail.value?.qualityFlags ?? []).filter((f) 
 const recordCount = computed(() => detail.value?.records.length ?? 0)
 const eventCount = computed(() => ledgerEvents.value.length)
 const platformRowCount = computed(() => data.value?.platform.relations.length ?? 0)
+
+const titleNames = computed(() => {
+  const present = new Set(detail.value?.titles ?? [])
+  const ordered = TITLE_ORDER.filter(code => present.has(code))
+  return (ordered.length ? ordered : [...present]).map(titleLabel)
+})
+const lastChecked = computed(() => latestQueryTime(assessments.value))
+const lastCheckedLabel = computed(() => lastChecked.value ? `上次核对 ${reviewDateLabel(lastChecked.value)}` : '尚未核对')
+
+async function onReviewSaved() {
+  await Promise.all([refetch(), refetchPending()])
+}
 
 function flagLabel(f: string) {
   return QUALITY_FLAGS[f] ?? f
@@ -265,22 +309,28 @@ function openPreview(e: Evidence) {
         <Skeleton class="h-7 w-72" />
         <Skeleton class="h-4 w-96" />
       </div>
-      <Card v-for="i in 2" :key="i" class="gap-0 py-0">
-        <CardContent class="flex flex-col gap-3 p-5">
-          <Skeleton class="h-5 w-48" />
-          <Skeleton class="h-24 w-full" />
-        </CardContent>
-      </Card>
+      <div class="bg-card rounded-lg border p-5">
+        <Skeleton class="h-6 w-56" />
+        <Skeleton class="mt-3 h-4 w-full max-w-xl" />
+      </div>
+      <div class="bg-card rounded-lg border p-5">
+        <Skeleton class="h-5 w-40" />
+        <Skeleton class="mt-4 h-24 w-full" />
+      </div>
     </template>
 
     <!-- 加载失败 -->
     <Alert v-else-if="error && !detail" variant="destructive">
       <AlertTitle>未能加载企业详情</AlertTitle>
-      <AlertDescription class="flex flex-wrap items-center gap-2">请重试读取，或返回台账重新选择。<Button variant="outline" size="sm" @click="refetch()">重新读取企业详情</Button></AlertDescription>
+      <AlertDescription class="flex flex-wrap items-center gap-2">
+        请重试读取，或返回台账重新选择。
+        <Button variant="outline" size="sm" @click="refetch()">重新读取企业详情</Button>
+      </AlertDescription>
     </Alert>
 
     <template v-else-if="detail">
       <TableFailureState v-if="error" title="企业详情更新失败" description="保留上次成功的企业详情和决定，请重试读取当前状态。" :pending="isLoading" @retry="refetch()" />
+
       <PageHeader :title="detail.name">
         <template #breadcrumb>
           <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">{{ sourceReturnTarget(route.query.returnTo) ? '记录级对比' : '企业列表' }}</NuxtLink>
@@ -288,9 +338,10 @@ function openPreview(e: Evidence) {
           <span>企业详情</span>
         </template>
         <template #description>
-          <span class="font-mono">{{ detail.uscc ?? '无统一社会信用代码' }}</span>
-          <span class="mx-1.5">·</span>{{ detail.district ?? '属地未知' }}
-          <span class="mx-1.5">·</span>{{ eventCount }} 条认定与复核记录
+          <span>{{ detail.district ?? '属地未知' }}</span>
+          <span class="mx-1.5">·</span><span>{{ titleNames.join(' / ') || '暂无称号' }}</span>
+          <span class="mx-1.5">·</span><span>{{ lastCheckedLabel }}</span>
+          <span class="mx-1.5">·</span><span class="font-mono text-xs">{{ detail.uscc ?? '无统一社会信用代码' }}</span>
         </template>
         <template #actions>
           <Badge v-for="f in otherFlags" :key="f" variant="destructive">{{ flagLabel(f) }}</Badge>
@@ -305,40 +356,74 @@ function openPreview(e: Evidence) {
         </AlertDescription>
       </Alert>
 
-      <Card v-if="recordCount === 0" class="gap-0 py-0">
-        <CardContent class="text-muted-foreground py-12 text-center text-sm">
-          该企业暂无记录。
-        </CardContent>
-      </Card>
+      <EnterpriseCaseSummary
+        :assessments="assessments"
+        :pending="pendingRows"
+        :pending-has-more="pendingHasMore"
+        :pending-loading="pendingLoading"
+        :pending-error="!!pendingError"
+        @open-impact="onOpenImpact"
+        @open-scope="onOpenScope"
+        @retry-pending="refetchPending()"
+      />
 
-      <!--
-        记录台账：每条认定 / 复核一行，出处就在同一行右列。
-        点击「查看出处」才展开文件与接口的原始出处，不再套多层卡片。
-      -->
-      <section v-else aria-label="记录台账" class="overflow-hidden rounded-lg border bg-card">
-        <header class="hidden border-b bg-muted/40 px-5 py-2 text-xs text-muted-foreground sm:grid sm:grid-cols-[6.5rem_minmax(0,1fr)_18rem_auto] sm:gap-4">
-          <span>年度 / 事项</span>
-          <span>结论</span>
-          <span>出处</span>
-          <span class="sr-only">展开</span>
-        </header>
-        <ul class="divide-y">
-          <li v-for="event in ledgerEvents" :key="event.id">
-            <RecordEventRow
-              :event="event"
-              :evidence="event.evidence"
-              :edges="edgesFor(event.id)"
-              :back="route.fullPath"
-              :return-to="sourceReturnTarget(route.query.returnTo)"
-              :open="evidenceDisclosureOpen(evidenceDisclosureKey(event.id))"
-              @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(event.id), $event)"
-              @preview="openPreview"
-              @event-navigate="arriveAtEvent"
-              @page-open="rememberPagePreviewReturn"
-            />
-          </li>
-        </ul>
-      </section>
+      <EnterpriseExplanations
+        :key="detail.id"
+        :enterprise-id="detail.id"
+        :assessments="assessments"
+        :title-code="explanationTitle"
+        :direction="explanationDirection"
+        :impact-id="focusedImpactId ?? impactId"
+        :open-scope-request="openScopeRequest"
+        :pending="pendingRows"
+        :locate="focusedEventId == null && !correspondenceLoading"
+        @saved="onReviewSaved"
+      />
+
+      <DisclosurePanel
+        v-model:open="recordsOpen"
+        keep-mounted
+        content-class="pb-0"
+        trigger-class="px-4"
+        class="bg-card overflow-hidden rounded-lg border"
+      >
+        <template #trigger>
+          <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span class="text-sm font-medium">认定与复核记录</span>
+            <span class="text-muted-foreground text-[13px]">{{ eventCount }} 条</span>
+            <span class="text-muted-foreground text-[13px]">正式公布文件与复核结论</span>
+          </span>
+        </template>
+        <div class="border-t">
+          <div v-if="recordCount === 0" class="text-muted-foreground py-12 text-center text-sm">
+            该企业暂无记录。
+          </div>
+          <section v-else aria-label="记录台账">
+            <header class="bg-muted/40 text-muted-foreground hidden border-b px-5 py-2 text-xs sm:grid sm:grid-cols-[6.5rem_minmax(0,1fr)_18rem_auto] sm:gap-4">
+              <span>年度 / 事项</span>
+              <span>结论</span>
+              <span>出处</span>
+              <span class="sr-only">展开</span>
+            </header>
+            <ul class="divide-y">
+              <li v-for="event in ledgerEvents" :key="event.id">
+                <RecordEventRow
+                  :event="event"
+                  :evidence="event.evidence"
+                  :edges="edgesFor(event.id)"
+                  :back="route.fullPath"
+                  :return-to="sourceReturnTarget(route.query.returnTo)"
+                  :open="evidenceDisclosureOpen(evidenceDisclosureKey(event.id))"
+                  @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(event.id), $event)"
+                  @preview="openPreview"
+                  @event-navigate="arriveAtEvent"
+                  @page-open="rememberPagePreviewReturn"
+                />
+              </li>
+            </ul>
+          </section>
+        </div>
+      </DisclosurePanel>
 
       <p v-if="correspondenceLoading" class="text-muted-foreground text-[13px]">正在读取每条记录的平台接口出处…</p>
       <Alert v-else-if="correspondenceError" variant="destructive">
@@ -349,12 +434,10 @@ function openPreview(e: Evidence) {
         </AlertDescription>
       </Alert>
 
-      <EnterpriseExplanations :key="detail.id" :enterprise-id="detail.id" :assessments="data?.titleAssessments ?? []" :title-code="explanationTitle" :direction="explanationDirection" :impact-id="impactId" :locate="focusedEventId == null && !correspondenceLoading" />
-
       <!--
         平台原行是辅助区：默认折叠，保留全部查询记录可查；它不参与上面的出处判定。
       -->
-      <DisclosurePanel keep-mounted content-class="pb-0" trigger-class="px-4" class="overflow-hidden rounded-lg border bg-card">
+      <DisclosurePanel keep-mounted content-class="pb-0" trigger-class="px-4" class="bg-card overflow-hidden rounded-lg border">
         <template #trigger>
           <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
             <span class="text-sm font-medium">全部平台记录</span>
