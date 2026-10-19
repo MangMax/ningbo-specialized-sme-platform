@@ -1,3 +1,4 @@
+import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
 import { fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
 import { ocrMarkdown } from '../../utils/ocr-result'
 
@@ -26,7 +27,7 @@ defineRouteMeta({
     parameters: [
       { name: 'file', in: 'query', schema: { type: 'string' } },
       { name: 'fileId', in: 'query', schema: { type: 'integer' } },
-      { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 } },
+      { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, maximum: MAX_PAGE_NO } },
     ],
     responses: {
       200: {
@@ -48,7 +49,7 @@ export default defineEventHandler(async (event) => {
   let page: number | null = null
   if (pageRaw !== undefined && pageRaw !== null && pageRaw !== '') {
     page = Number(pageRaw)
-    if (!Number.isInteger(page) || page < 1) {
+    if ((typeof pageRaw !== 'string' && typeof pageRaw !== 'number') || !Number.isInteger(page) || page < 1 || page > MAX_PAGE_NO) {
       throw createError({ statusCode: 400, message: `page 必须是正整数:${String(pageRaw)}` })
     }
   }

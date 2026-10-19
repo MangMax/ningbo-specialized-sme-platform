@@ -242,6 +242,7 @@ describe('ocr_result 表(迁移 0005)', () => {
         'page_no',
         'page_rel_path',
         'raw',
+        'revision',
       ].sort(),
     )
   })
