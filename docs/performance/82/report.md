@@ -126,3 +126,9 @@ F82-04现有量测进一步确认：legacy comparison先补全全范围证据再
 原始命令和输出在 `/tmp/ningbo-perf-81-89/evidence82/`：`tests.log`首次失败、`failed-files-rerun.log`70项复跑、`tests-rerun.log`全套最终通过、`scale-tests.log`、`typecheck.log`、`build.log`、`public.jsonl`及各baseline JSONL。可分享聚合数据已入仓库，私有路径可能随临时清理失效。原始商业资料、数据库、凭据、selector及stderr没有提交Git。
 
 尚未完成/不可宣称通过的验收项：5x完整副本和全矩阵；严格总堆2GiB/1vCPU/4GiB容器；可靠人口p95/p99长样本与长期内存；真实多进程SQLite并发锁/WAL恢复；全量大HTML+多关系写入及中断重试；有实质命中/长历史的对应/proof/候选；缺失4个源文件、PDFium/native OCR与外部OCR/平台服务、上传及取消/重启、磁盘缓存增长；全部MCP tool语义及桌面/390px交互。它们作为#88/#90/#91及独立F82后续切片的明确输入；本调查不完成母票或部署验收。
+
+## 集成同步说明
+
+独立调查提交 `0bb678dae601e3c7f8cc1c84927a9f16a4e6ce2a` 的应用源码仍为d198a09；随后在本分支合入父集成tip `8b3a495e36c5bc17806c4ca86993b603555abe5a`，生成merge `ec3cbbfb52238a145081f7f34d5d74a977553362`。父分支带来#83平台分页/精确取证、#85对应读取、#87索引迁移0013和#89缓存决策文档；这些生产文件属于父分支合入，不是#82实施。旧副本没有运行新增迁移，因此不能把其49索引或70 REST/37 MCP清单当作合并HEAD现状。#83新增 `/api/platform/queries/:queryId/evidence` 与 `get_platform_query_evidence`，由#83/#91负责新接缝验收；当前旧热点标签不可直接复用于已优化实现。合入后的兼容smoke/测试/构建独立存放 `integration-*` 日志，不进入本基线矩阵。
+
+合入后在 `ec3cbbfb52238a145081f7f34d5d74a977553362` 的应用源码上又执行：兼容smoke12请求全部200；全套 **141文件通过、2跳过，2083测试通过、11跳过（89.65s）**；typecheck退出0；build退出0（11.0s）；重新编译的真实HTTP/MCP另外96请求/36批全部成功，跨协议解析结果一致。仅研究文档和inventory防旧标签保护在检查期间有工作区变更，没有生产源码差异。[verification.json](verification.json)保存两个源码阶段的准确边界。该公开读使用旧只读快照、未执行0013，故不构成新增索引性能验收；基线数据没有被优化后读数覆盖。

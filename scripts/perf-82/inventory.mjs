@@ -3,6 +3,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 const files = execFileSync('git', ['ls-files', 'db', 'lib', 'server', 'scripts', 'composables', 'pages'], { encoding: 'utf8' }).trim().split('\n').filter(p => /\.(ts|mjs|vue)$/.test(p) && !p.includes('/perf-82/'))
+const changedSinceBaseline = new Set(execFileSync('git', ['diff', '--name-only', 'd198a09f5a6fab2d5358d442d1b6ce47670c7506', '--', 'db', 'lib', 'server', 'scripts', 'composables', 'pages'], { encoding: 'utf8' }).trim().split('\n'))
 const result = { sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   limits: 'Lexical coverage candidates, including comments. No dynamic completeness claim. Dispositions are conservative and backed by the human report; MCP shared-core inference is not transport measurement.', files: [] }
 function ownership(path) {
@@ -20,6 +21,7 @@ function ownership(path) {
   return '#88 (triage; select narrow slice before implementation)'
 }
 function disposition(path) {
+  if (changedSinceBaseline.has(path)) return 'changed/new since d198a09 baseline; current implementation requires remeasurement, do not reuse baseline hotspot label'
   if (['server/api/stats.get.ts', 'server/api/roster/recognitions.get.ts', 'server/api/roster/differences.get.ts', 'server/api/roster/export.get.ts', 'lib/roster/recognitions.ts'].includes(path)) return 'confirmed full-distribution OOM through shared roster snapshot; see report'
   if (path === 'server/api/export.get.ts') return 'confirmed concurrent workbook heap budget excess; F82-05'
   if (['server/api/comparison.get.ts', 'lib/comparison-platform.ts', 'lib/curation.ts'].includes(path)) return 'confirmed legacy payload amplification; F82-04; already partly enterprise-scoped'

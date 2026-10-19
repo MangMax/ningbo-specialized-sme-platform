@@ -64,3 +64,5 @@ node scripts/perf-82/run.mjs --db=/tmp/perf82-private/write.db --work=/tmp/perf8
 copy_files只读隔离DB和原始文件，核对复制前后mtime/size及数据库保存的sha256，不输出私有文件名；缺失数量明确记录。file_stream诊断适配器调用同一个文件正文route，通过私有路径参数转发，仍不是对Nitro路由匹配/Range契约的完整验收。外部OCR API、PDFium渲染、上传、取消/重启恢复仍需#88/#91。
 
 建议第一次在1x上增加 `--selectors=/tmp/perf82-private/selectors.private.json`，把固定企业/event/relation/query ID、精确查询键与文件路径冻结在私有0600文件；后续2x/5x/写入复用同一参数。初次找最大原文会扫描种子，这属于夹具准备，不计HTTP时延，并会预热OS缓存。公共传输脚本可把同一selector路径作为第四个参数，避免每次另扫最大原文。私有selector含企业查询键/文件名，绝不提交Git。空库负例可以使用相同固定ID并记录404/400的预期边界。
+
+精确重现本轮旧实现：检出调查提交 `0bb678dae601e3c7f8cc1c84927a9f16a4e6ce2a`（应用源码仍等于d198a09，只新增研究材料），再准备自己的授权副本运行以上命令。之后合入的集成分支含#83/#85/#87等改动；在合并HEAD重跑属于优化后量测，必须另存输出，不混入d198a09基线。inventory脚本会把相对d198a09已变更/新增的源码标为需重新量测；入仓的inventory/结构/measurements均为冻结的旧实现证据。
