@@ -1,18 +1,26 @@
 /** Dedicated native SQLite executor. This entry has no Nitro runtime dependency. */
-import { parentPort } from 'node:worker_threads'
+import { getHeapStatistics } from 'node:v8'
 import { realpathSync, statSync } from 'node:fs'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { listRosterEnterprises, getRosterEnterpriseDetail, type RosterEnterpriseFilter } from './enterprise-roster'
+import { enterpriseJsonChunks } from './enterprise-read-json'
 
 export type EnterpriseReadRequest = { id: number; dbPath: string } & (
   { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number }
 )
-const port = parentPort!
+const send = (message: object) => new Promise<void>((resolve, reject) => {
+  process.send!(message, error => error ? reject(error) : resolve())
+})
 let connection: Database.Database | undefined, identity: string | undefined
-let readPeakHeap = 0
-const observeHeap = () => { readPeakHeap = Math.max(readPeakHeap,process.memoryUsage().heapUsed) }
+let readPeakHeap = 0, readPeakRss = 0, readPeakExternal = 0
+const observeHeap = () => {
+  const memory = process.memoryUsage()
+  readPeakHeap = Math.max(readPeakHeap, memory.heapUsed)
+  readPeakRss = Math.max(readPeakRss, memory.rss)
+  readPeakExternal = Math.max(readPeakExternal, memory.external)
+}
 function observeConnection(client: Database.Database) {
   const prepare = client.prepare.bind(client)
   client.prepare = ((...args: Parameters<typeof prepare>) => {
@@ -31,10 +39,11 @@ function observeConnection(client: Database.Database) {
   }) as typeof prepare
 }
 function closeConnection() { connection?.close(); connection=undefined; identity=undefined }
-port.on('close', closeConnection)
-port.on('message', (request: EnterpriseReadRequest) => {
+process.on('disconnect', () => { closeConnection(); process.exit(0) })
+process.on('message', async (request: EnterpriseReadRequest) => {
   const beforeHeap = process.memoryUsage().heapUsed
   readPeakHeap = beforeHeap
+  readPeakRss = readPeakExternal = 0
   const started = performance.now()
   try {
     const path = realpathSync(request.dbPath), stat = statSync(path)
@@ -51,16 +60,19 @@ port.on('message', (request: EnterpriseReadRequest) => {
     const result = request.operation === 'list' ? listRosterEnterprises(db, request.filter) : getRosterEnterpriseDetail(db, request.enterpriseId)
     const projectedHeap = process.memoryUsage().heapUsed
     const serializationStarted = performance.now()
-    const text = JSON.stringify(result)
-    const payload = Buffer.allocUnsafeSlow(Buffer.byteLength(text))
-    payload.write(text)
-    const metrics = { beforeHeap, heap: Math.max(readPeakHeap, projectedHeap, process.memoryUsage().heapUsed), external: process.memoryUsage().external, bytes: payload.byteLength, transferredBytes: payload.buffer.byteLength, readMs: serializationStarted - started, serializeMs: performance.now() - serializationStarted }
-    port.postMessage({ type: 'result', id: request.id, found: result != null, payload, metrics }, [payload.buffer as ArrayBuffer])
+    let bytes = 0
+    for (const payload of enterpriseJsonChunks(result)) {
+      bytes += payload.byteLength
+      observeHeap()
+      await send({ type: 'chunk', id: request.id, payload })
+    }
+    const metrics = { beforeHeap, heap: Math.max(readPeakHeap, projectedHeap), external: readPeakExternal, rss: readPeakRss, maxRss: process.resourceUsage().maxRSS * 1024, bytes, transferredBytes: bytes, chunkBytes: 65536, readMs: serializationStarted - started, serializeMs: performance.now() - serializationStarted }
+    await send({ type: 'result', id: request.id, found: result != null, metrics })
   } catch (error) {
     closeConnection()
-    port.postMessage({ type: 'failure', id: request.id, code: (error as { code?: string }).code ?? 'enterprise_read_failed' })
+    if (process.connected) await send({ type: 'failure', id: request.id, code: (error as { code?: string }).code ?? 'enterprise_read_failed' })
   } finally {
     if (connection?.inTransaction) connection.exec('ROLLBACK')
   }
 })
-port.postMessage({ type: 'ready', heap: process.memoryUsage().heapUsed })
+void send({ type: 'ready', heap: process.memoryUsage().heapUsed, rss: process.memoryUsage().rss, heapLimit: getHeapStatistics().heap_size_limit, execArgv: process.execArgv, pid: process.pid })

@@ -172,3 +172,14 @@ it('isolates different source files and reopens a replaced file after all writer
   renameSync(other.path, f.path)
   expect(await f.reads.list(f.path)).toMatchObject({ counts: { total: 1 }, rows: [{ name: '另一数据库' }] })
 })
+
+it('preserves raw strings across JSON and IPC chunk boundaries including escapes and lone surrogates', async () => {
+  const f = fixture()
+  const original = 'x'.repeat(16383) + '𠀀' + '\\"\n\t\u0000' + '\ud840' + '末尾' + '\udc00' + '🙂'.repeat(40000)
+  const query = f.db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'name:合成企业', queriedAt: '2026-10-19', status: 'partial' }).returning().get()
+  f.db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: null, rawFields: { original, empty: '', values: [null, true, 0] } }).run()
+  const result = await f.reads.json(f.path, { operation: 'detail', enterpriseId: f.enterprise.id })
+  expect(result.found).toBe(true)
+  expect(JSON.parse(result.body.toString()).platform.relations[0]).toMatchObject({ enterpriseId: null, rawFields: { original, empty: '', values: [null, true, 0] } })
+  expect(await f.reads.list(f.path)).toMatchObject({ counts: { total: 1 } })
+})

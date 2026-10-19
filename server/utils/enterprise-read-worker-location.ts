@@ -1,17 +1,14 @@
-import { Worker } from 'node:worker_threads'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { createEnterpriseReadProcess } from './enterprise-read-process'
 
-/** Source-only launcher for Vitest. Nitro replaces this module with a bundled
- * entry URL, so production has no loader or checkout dependency. */
-export function createEnterpriseWorker(): Worker {
+/** Source-only launcher. Nitro replaces the entry with a relocatable bundled URL. */
+export function createEnterpriseWorker() {
   const jitiPath = createRequire(import.meta.resolve('nuxt/package.json')).resolve('jiti')
-  return new Worker(`
-    const {workerData}=require('node:worker_threads');
-    const {createJiti}=require(workerData.jitiPath);
-    createJiti(workerData.entry).import(workerData.entry).catch(error=>{throw error});
-  `, {
-    eval: true, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 128 },
-    workerData: { jitiPath, entry: fileURLToPath(new URL('../../lib/roster/enterprise-read-worker.ts', import.meta.url)) },
-  })
+  const entry = new URL('../../lib/roster/enterprise-read-worker.ts', import.meta.url)
+  return createEnterpriseReadProcess(entry, `
+    import {createRequire} from 'node:module';
+    const {createJiti}=createRequire(import.meta.url)(${JSON.stringify(jitiPath)});
+    await createJiti(${JSON.stringify(fileURLToPath(entry))}).import(${JSON.stringify(fileURLToPath(entry))});
+  `)
 }

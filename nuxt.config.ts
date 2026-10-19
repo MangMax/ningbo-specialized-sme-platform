@@ -141,11 +141,9 @@ export default defineNuxtConfig({
             order: 'post' as const,
             handler(_code: string, id: string) {
               if (id !== location) return
-              return { code: `import { Worker } from 'node:worker_threads';
+              return { code: `import { createEnterpriseReadProcess } from ${JSON.stringify(fileURLToPath(new URL('./server/utils/enterprise-read-process.ts', import.meta.url)))};
                 export function createEnterpriseWorker() {
-                  return new Worker(new URL(import.meta.ROLLUP_FILE_URL_${reference}), {
-                    execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 128 }
-                  });
+                  return createEnterpriseReadProcess(new URL(import.meta.ROLLUP_FILE_URL_${reference}));
                 }`, map: null }
             },
           },
