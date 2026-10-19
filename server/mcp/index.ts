@@ -1,5 +1,6 @@
 import { decisionRpcError102 } from '../utils/decision-lifecycle-102-mcp'
 import { admitEnterpriseResponse } from '../utils/enterprise-read-response'
+import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
 import { platformQueryRpcError } from '../utils/mcp-platform-query'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler } from '@nuxtjs/mcp-toolkit/server'
@@ -64,6 +65,7 @@ export default defineMcpHandler({
     '   `list_differences` 核对企业、称号事件、出处与解释。',
     '- `get_platform_capabilities` 查看实时来源能力；`query_platform` 查询三来源记录（不写库，不接收Cookie）。失败/partial须补查unfinished，不能当无记录。',
     '- 批量查询用 `submit_platform_batch`，然后 `get_platform_batch` / `get_platform_batch_item`；只对unfinished显式 `retry_platform_batch`。提交/重试需MCP token；凭据仅服务端快照。',
+    '- 正式事件更正先 `get_official_event`，再 `preflight_event_corrections` / `commit_event_corrections`；需独立 MCP token，传原 request+planHash；原出处保留，关联对应需显式重核。审计用 `get_event_correction_audit` 分页。',
     '- `query_records` 是通用企业×称号记录查询；`year` 筛事件年份，`dueYear` 筛生命周期到期年份。',
     '  详情请用 `get_enterprise_detail`，它与 REST 企业详情共用读模型。',
     '',
@@ -72,7 +74,7 @@ export default defineMcpHandler({
     '  `save_roster_batch` / `submit_platform_batch` / `retry_platform_batch` 需要 `Authorization: Bearer <NUXT_MCP_TOKEN>`,未带时这几个 tool',
     '  不会出现在 `tools/list` 里,强行调用会得到 HTTP 401。只读 tool(含只读预检',
     '  `preflight_roster_batch`)不需要。',
-    '- 名录来源导入经 `save_roster_batch`；已接管的差异决定使用 `save_difference_decision`，旧导入不能覆盖。',
+    '- 名录来源导入经 `save_roster_batch`；已存在资源经明确领域维护命令。已接管的差异决定使用 `save_difference_decision`，旧导入不能覆盖。',
     '  不要绕过应用服务直写库。导入载荷见',
     '  `docs/roster-lifecycle-contract.md` §8.3(归并项 §8.4);证据不足一律**留空并标待核**,',
     '  不要猜填、不要为填满字段而复制来源里没有的值。',
@@ -97,6 +99,8 @@ export default defineMcpHandler({
       if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail'].includes(body?.params?.name)) admitEnterpriseResponse(event)
       const invalidDecision = decisionRpcError102(body)
       if (invalidDecision) return invalidDecision
+      const invalidEventCorrection = eventCorrectionRpcError(body)
+      if (invalidEventCorrection) return invalidEventCorrection
       const invalidQuery = platformQueryRpcError(body)
       if (invalidQuery) return invalidQuery
     }
