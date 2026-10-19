@@ -119,3 +119,17 @@ git diff --cached --check
 - 大字段哨兵用例增加了无关平台原文/无效原文 JSON 存在时旧 PATCH 仍能按精确键完成的断言。该验证仅证明读取路径与边界，仍不声明容量或尾延迟验收。
 
 红绿日志：`/tmp/ningbo-spec98/ticket-102/compat-red-1.log` 记录无条件 410 下 **16 失败 / 10 通过**；`compat-green-1.log` 为修复后 **26/26 通过**。`compat-red-adoption-mutant.log` 临时移除接管守卫，仅跑上述接管范围用例，明确以 **200 应为 409** 失败；正确守卫已恢复，最终干净结果见本次交接记录。没有以 helper 替代公开入口验收。
+
+### 兼容修复最终交接（2026-10-19）
+
+修复提交 `cccbed1`；已合入当前集成 tip `4586bf09db80320855bf5f2c4fb8597b8b55364a`，合并提交 `b3a45a9e715d81defdaef89ff85971c3666c6a4b`。合并候选 staged tree `dd341975f9681d8fc2075e80551a9dbb06d6e422` 与该提交 tree 一致。
+
+```sh
+pnpm exec vitest run tests/curation.test.ts tests/decision-lifecycle-102-http.test.ts tests/mcp-surface.test.ts tests/comparison-export.test.ts tests/comparison-platform.test.ts tests/parse-maintenance-105-http.test.ts tests/ocr-page-lifecycle-106.test.ts --maxWorkers=1
+pnpm typecheck
+git diff --cached --check
+```
+
+结果为 **7 文件 101/101 通过**，typecheck 退出 0，diff check 退出 0；最终干净日志为 `/tmp/ningbo-spec98/ticket-102/compat-merged-tests.log` 和 `compat-merged-typecheck.log`。`compat-green-2.log` 单独记录本票两个文件 **27/27 通过**；合并候选保留相同用例并增加未接管正式旧解释可继续标注、且其旧原因不被修改的断言。没有以旧候选或变异实现的结果冒充最终通过。
+
+共享冲突处理同时保留 decisionRpcError102 与 parseRpcError105、全部工具鉴权名单及测试。journal 保留集成 tip 已有条目的 idx/when，将本票原有 0018 条目追加为 idx=19，when=1792390000018 保持时间单调，避免漏掉已合入的 0021/0022；未改迁移 SQL 或生成无关 snapshot，后续各票 journal 仍由父集成统一整理。本次新增服务只负责旧 PATCH 的索引身份解析与接管检查；lib/curation.ts 原解析和写入语义未修改，UI 未修改，新决定服务的严格要求未修改。最终文档后继提交只更新本票说明；未创建 PR、部署、写生产资料或合并 main。
