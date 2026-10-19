@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import { ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound } from '@lucide/vue'
+import { ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound, ListTodo } from '@lucide/vue'
 import { ENTERPRISE_LIST_TITLE } from '~~/lib/labels'
 import NavMain from '@/components/NavMain.vue'
 import {
@@ -33,6 +33,7 @@ const nav = [
 ]
 
 const adminNav = [
+  { title: '后台任务', url: '/tasks', icon: ListTodo },
   { title: '密钥配置', url: '/settings', icon: KeyRound },
 ]
 </script>
