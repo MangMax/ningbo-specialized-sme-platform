@@ -123,7 +123,10 @@ export function readQueryAssessment(db: DecisionDb, scope: AssessmentScope) {
   const impact = readEvidenceImpact113(db, { ...scope, direction: scope.direction }, current?.id ?? null)
   const reviewed = impact.state?.reviewedRevisionId
   const pending = !!impact.state && impact.state.latestRevisionId > (reviewed ?? -1)
-  const changed = reviewed != null && (!impact.token.projectionReady || impact.token.latestRevisionId !== reviewed)
+  // The scope token also advances for coverage-only and disjoint partitions.
+  // Until processing finishes stay conservative; once ready, the per-decision
+  // pending state carries substantive changes without rewriting the review audit.
+  const changed = reviewed != null && !impact.token.projectionReady
   const invalid = current?.status === 'not_queried' && executed.length > 0 && reviewed == null
   const validity = !current ? 'not_applicable' : pending ? impact.state!.classification : changed ? 'evidence_changed' : reviewed != null ? 'valid' : invalid ? 'premise_invalid' : 'unknown'
   const reasons = validity === 'premise_invalid' ? ['query_executed'] : validity === 'evidence_changed' ? ['committed_evidence_changed'] : validity === 'unknown' ? ['no_evidence_baseline'] : []
