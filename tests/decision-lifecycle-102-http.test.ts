@@ -82,10 +82,12 @@ describe('ticket 102 public decision lifecycle', () => {
 
   it('blocks only the explicitly adopted legacy coordinate even after withdrawal and preserves both stores on conflict', async () => {
     const target = db.insert(schema.enterprise).values({ name: '标注接管边界企业', nameNorm: '标注接管边界企业', usccNorm: 'ADOPT-COMPAT-102' }).returning().get()
+    const historical = db.insert(schema.differenceReason).values({ enterpriseId: target.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', reasonNote: '未接管的正式旧解释', recordedAt: '2026-10-01T00:00:00Z' }).returning().get()
     const legacy = { uscc: target.usccNorm, nameNorm: target.nameNorm, titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true, note: '原标注保留' }
     const patch = (body: unknown) => fetch(service.baseUrl + '/api/comparison/curated', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(await json(await patch(legacy))).toEqual({ curated: true })
-    const adoptedResponse = await post({ ...request('compat-explicit-adopt'), enterpriseId: target.id, decision: { status: 'needs_review', measureCode: 'manual_review', verificationStatus: 'pending' } })
+    expect((await json(await fetch(api(String(historical.id))))).reasonNote).toBe('未接管的正式旧解释')
+    const adoptedResponse = await post({ ...request('compat-explicit-adopt', historical.id), enterpriseId: target.id, decision: { status: 'needs_review', measureCode: 'manual_review', verificationStatus: 'pending' } })
     expect(adoptedResponse.status).toBe(200)
     const adopted = await json(adoptedResponse)
     const currentUrl = api('current?enterpriseId=' + target.id + '&titleCode=specialized_sme&direction=missing_in_miit')

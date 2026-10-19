@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import {
@@ -42,6 +42,7 @@ export interface OcrWriteInput {
   pages: readonly OcrPageWrite[]
   /** 为完整 PDF OCR 使用:在同一事务内删旧页并完整替换,清掉旧结果的多余页。 */
   replaceExistingPages?: boolean
+  expectedVersion?: string | null
   channel: OcrChannel
   engine?: string
   model?: string | null
@@ -60,7 +61,7 @@ export interface OcrWriteInput {
  */
 export type OcrWriteResult =
   | { ok: true; written: number; pages: number[] }
-  | { ok: false; message: string }
+  | { ok: false; message: string; statusCode?: number }
 
 /** 一页页图路径:只有 PDF 推得出(票 13 的规则按「相对 PDF 路径」派生)。 */
 function pageRelPathOf(sourceRelPath: string | null | undefined, pageNo: number): string | null {
@@ -163,6 +164,7 @@ export function pagesFromInput(
  * 给了 `raw` 时仍然覆盖(那才是「最后写者胜」的本意)。
  */
 export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
+  if (!validOcrExpectedVersion(input.expectedVersion)) return { ok: false, statusCode: 400, message: 'expectedVersion 非法' }
   const checked = validateOcrPages(input.pages)
   if (!checked.ok) return checked
 
@@ -170,7 +172,12 @@ export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
   const model = input.model ?? null
   const createdAt = new Date().toISOString()
 
-  db.transaction((tx) => {
+  return db.transaction((tx) => {
+    if (input.expectedVersion !== undefined) {
+      if (input.pages.length !== 1 || input.replaceExistingPages) return { ok: false as const, statusCode: 400, message: 'expectedVersion 只用于显式单页写入' }
+      const conflict = checkOcrPageVersion(tx, input.fileId, input.pages[0]!.page, input.expectedVersion)
+      if (conflict) return conflict
+    }
     if (input.replaceExistingPages) {
       tx.delete(schema.ocrResult).where(eq(schema.ocrResult.fileId, input.fileId)).run()
     }
@@ -198,6 +205,7 @@ export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
           // 就**保留**上一次那份。理由写在这个函数的说明里 —— 常规重传会把
           // 通路 a 花过钱的原始响应抹掉,而它的用途之一正是「不必再花一次」。
           set: {
+            revision: sql`${schema.ocrResult.revision} + 1`,
             pageRelPath: values.pageRelPath,
             markdown: values.markdown,
             ...(hasRaw ? { raw: values.raw } : {}),
@@ -209,13 +217,14 @@ export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
         })
         .run()
     }
-  })
-
-  return { ok: true, written: input.pages.length, pages: checked.pages }
+    return { ok: true as const, written: input.pages.length, pages: checked.pages }
+  }, { behavior: 'immediate' })
 }
 
 /** 一行结果(投影成给人看/给 tool 用的形状)。 */
 export interface OcrResultRow {
+  /** 旧客户端可在本地构造无版本的临时行;所有服务端读回均带版本。 */
+  version?: string
   page: number
   markdown: string
   pageRelPath: string | null
@@ -226,13 +235,14 @@ export interface OcrResultRow {
 }
 
 /** 取某文件的 OCR 结果;**给了 `pageNo` 就只取那一页**。按页号升序。 */
-export function listOcrResults(db: Db, fileId: number, pageNo?: number | null): OcrResultRow[] {
+export function listOcrResults(db: Db, fileId: number, pageNo?: number | null): (OcrResultRow & { version: string })[] {
   const where =
     pageNo === undefined || pageNo === null
       ? eq(schema.ocrResult.fileId, fileId)
       : and(eq(schema.ocrResult.fileId, fileId), eq(schema.ocrResult.pageNo, pageNo))
   return db
     .select({
+      version: sql<string>`${schema.ocrResult.id} || ':' || ${schema.ocrResult.revision}`,
       page: schema.ocrResult.pageNo,
       markdown: schema.ocrResult.markdown,
       pageRelPath: schema.ocrResult.pageRelPath,
@@ -310,4 +320,32 @@ export function ocrMarkdown(
   }
   const pages: OcrPage[] = rows.map((r) => ({ page: r.page, markdown: r.markdown }))
   return { ok: true, markdown: assembleMarkdown(pages), pages: pages.map((p) => p.page) }
+}
+
+/** 版本核对仅取两列,不加载 markdown/raw;调用者必须在写事务内核对。 */
+function checkOcrPageVersion(db: Db, fileId: number, page: number, expected: string | null) {
+  const row = db.select({ id: schema.ocrResult.id, revision: schema.ocrResult.revision }).from(schema.ocrResult)
+    .where(and(eq(schema.ocrResult.fileId, fileId), eq(schema.ocrResult.pageNo, page))).get()
+  const current = row ? `${row.id}:${row.revision}` : null
+  return current === expected ? null : { ok: false as const, statusCode: 409, message: `OCR 第 ${page} 页版本冲突;请重新读取后再提交` }
+}
+
+export function validOcrExpectedVersion(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || (typeof value === 'string' && /^[1-9]\d*:[1-9]\d*$/.test(value) && value.length <= 64)
+}
+
+/** 外部单页删除与覆盖使用同一版本规则;只变更 OCR,不触碰任何来源/正式事实。 */
+export function deleteOcrPage(db: Db, fileId: number, page: number, expectedVersion?: string | null) {
+  if (!Number.isInteger(page) || page < 1 || page > MAX_PAGE_NO || !validOcrExpectedVersion(expectedVersion)) {
+    return { ok: false as const, statusCode: 400, message: 'page 或 expectedVersion 非法' }
+  }
+  return db.transaction(tx => {
+    if (expectedVersion !== undefined) {
+      const conflict = checkOcrPageVersion(tx, fileId, page, expectedVersion)
+      if (conflict) return conflict
+    }
+    const deleted = removeOcrPage(tx, fileId, page)
+    const remaining = tx.select({ n: sql<number>`count(*)` }).from(schema.ocrResult).where(eq(schema.ocrResult.fileId, fileId)).get()!.n
+    return { ok: true as const, page, deleted, remaining }
+  }, { behavior: 'immediate' })
 }
