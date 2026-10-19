@@ -18,6 +18,7 @@ import { reviewEventSuffix, timelineEventIdentity } from '~~/lib/roster/enterpri
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import TableFailureState from './TableFailureState.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
 import type { PlatformRecordQuery, PlatformRecord } from '~~/lib/roster/platform-records'
 import { Button } from '@/components/ui/button'
@@ -430,8 +431,7 @@ function eventSuffix(item: TimelineItem): string {
             </li>
           </ol>
 
-          <details v-if="evidenceItems.length" class="mt-5 border-t pt-4" data-testid="enterprise-evidence">
-            <summary class="cursor-pointer text-[13px] font-medium">出处 · {{ evidenceItems.length }}</summary>
+          <DisclosurePanel v-if="evidenceItems.length" compact content-class="pb-0" class="mt-5 border-t pt-4" data-testid="enterprise-evidence" :title="`出处 · ${evidenceItems.length}`">
             <ul class="mt-2 flex flex-col gap-2">
               <li v-for="(item, index) in evidenceItems" :key="`${item.eventId}-${item.sourceFile}-${index}`" class="border-l pl-2">
                 <p class="text-muted-foreground text-[13px] leading-5">
@@ -447,7 +447,7 @@ function eventSuffix(item: TimelineItem): string {
                 </p>
               </li>
             </ul>
-          </details>
+          </DisclosurePanel>
 
           <!-- 差异块:方向 · 原因 → 措施 的可视化链 + 依据原文 -->
           <template v-if="differences.length">

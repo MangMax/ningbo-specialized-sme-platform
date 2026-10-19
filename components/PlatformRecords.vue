@@ -5,6 +5,8 @@ import { PLATFORM_QUERY_STATUSES, PLATFORM_QUERY_STATUS_ORDER, PLATFORM_RDJBS, R
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import PlatformQueryProvenance from './PlatformQueryProvenance.vue'
 import PlatformRecordDetails from './PlatformRecordDetails.vue'
+import RecordSourceReader from './record-correspondence/SourceReader.vue'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { platformFailureForDisplay, recognizedField } from '~~/lib/roster/platform-records'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,7 +14,21 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
-const props = defineProps<{ queries: PlatformRecordQuery[]; relations: PlatformRecord[] }>()
+const props = defineProps<{ queries: PlatformRecordQuery[]; relations: PlatformRecord[]; returnTo?: string | null }>()
+const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
+const navigatingEventId = ref<number | null>(null)
+function closeForEvent(eventId: number) {
+  navigatingEventId.value = eventId
+  selectedRelationId.value = null
+}
+function onSourceCloseAutoFocus(event: Event) {
+  if (navigatingEventId.value === null) return
+  // Finish arrival after the modal releases focus, without returning to its table button.
+  event.preventDefault()
+  emit('event-navigate', navigatingEventId.value)
+  navigatingEventId.value = null
+}
+const selectedRelationId = ref<number | null>(null)
 const selectedTitle = ref('all')
 const selectedSource = ref('all')
 const collapsedGroups = ref(new Set<string>())
@@ -137,13 +153,13 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                   <th class="px-3 py-2 font-medium">维护批次</th>
                   </template>
                   <th v-if="table.hasAliases" class="px-3 py-2 font-medium">曾用名</th>
-                <th class="px-3 py-2 font-medium">出处 / 原字段</th>
+                <th class="sticky right-0 z-10 border-l bg-muted px-3 py-2 font-medium">出处 / 原字段</th>
                 </tr>
               </thead>
               <tbody v-for="group in table.groups" :key="group.title" :data-record-title="group.title">
                 <tr v-if="activeTitle === 'all'" class="bg-accent/40 border-t" data-testid="platform-title-group">
                   <th :colspan="table.columns" class="p-0 text-left font-medium" scope="rowgroup">
-                    <Button type="button" variant="ghost" size="sm" class="sticky left-0 h-auto justify-start gap-2 px-3 py-2" :aria-expanded="!group.collapsed" :aria-label="`${group.label}，${group.rows.length}条${table.label}`" @click="toggleGroup(table.source, group.title)">
+                    <Button type="button" variant="link" size="sm" class="sticky left-0 h-auto justify-start gap-2 rounded-none px-3 py-2 text-foreground active:scale-100" :aria-expanded="!group.collapsed" :aria-label="`${group.label}，${group.rows.length}条${table.label}`" @click="toggleGroup(table.source, group.title)">
                       <ChevronDown data-icon="inline-start" class="transition-transform duration-150 motion-reduce:transition-none" :class="{ '-rotate-90': group.collapsed }" />
                       <span>{{ group.label }}</span>
                       <span class="text-muted-foreground font-normal">{{ group.rows.length }} 条</span>
@@ -166,7 +182,7 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                     <td class="px-3 py-1.5">{{ record.batch ?? '未提供' }}</td>
                     </template>
                     <td v-if="table.hasAliases" class="px-3 py-1.5">{{ record.aliasNameRaw ?? '—' }}</td>
-                    <td class="px-3 py-1.5"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /></td>
+                    <td class="sticky right-0 z-10 border-l bg-card px-3 py-1.5"><div class="flex flex-col items-start gap-1"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /><Button variant="ghost" size="sm" @click="selectedRelationId = record.id">对应事件/出处</Button></div></td>
                   </tr>
                 </template>
               </tbody>
@@ -175,5 +191,11 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
         </section>
       </TabsContent>
     </Tabs>
+    <Dialog :open="selectedRelationId !== null" @update:open="!$event && (selectedRelationId = null)">
+      <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl" data-testid="platform-correspondence-dialog" @close-auto-focus="onSourceCloseAutoFocus">
+        <DialogHeader><DialogTitle>平台原行对应事件/出处</DialogTitle><DialogDescription>按具体原行核对对应状态与正式事件；查询成功不等于对应已确认。</DialogDescription></DialogHeader>
+        <RecordSourceReader v-if="selectedRelationId !== null" kind="relation" :id="selectedRelationId" :return-to="returnTo" @event-navigate="closeForEvent" />
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

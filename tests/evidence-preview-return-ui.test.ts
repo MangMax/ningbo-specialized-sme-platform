@@ -81,28 +81,18 @@ const row: EnterpriseRow = {
 }
 
 const fullDetail = {
-  id: 91,
-  name: '宁波开诚生态技术有限公司',
-  uscc: null,
-  district: '海曙区',
-  qualityFlags: [],
+  enterprise: { enterpriseId: 91, name: '宁波开诚生态技术有限公司', uscc: null, district: '海曙区' },
   records: [
     {
+      id: 1,
       titleCode: 'specialized_sme',
       source: 'jxj',
       district: '海曙区',
-      events: [
-        {
-          type: 'award',
-          year: 2022,
-          seq: 1,
-          evidence: [
-            { sourceFile: 'jxj/announcement/test.pdf', attachment: '附件二', listNo: 6, page: 8 },
-          ],
-        },
-      ],
     },
   ],
+  events: [{ id: 10, recordId: 1, eventType: 'award', year: 2022, batchSeq: 1, decidedYear: null, reviewOutcome: null }],
+  evidence: [{ eventId: 10, sourceFile: 'jxj/announcement/test.pdf', attachment: '附件二', listNo: 6, page: 8 }],
+  platform: { queries: [], relations: [] },
 }
 
 const titleRow: TitleRow = {
@@ -144,6 +134,9 @@ const globalStubs = {
       '<header><h1>{{ title }}</h1><slot name="breadcrumb"/><slot name="description"/><slot name="actions"/></header>',
   },
   FilePreviewDialog: true,
+  RecordSourceReader: true,
+  EnterpriseLaterProcesses: true,
+  PlatformRecords: true,
   EventChip: true,
   SourceChip: true,
   TitleBadge: true,
@@ -328,6 +321,23 @@ describe('出处预览返回滚动恢复', () => {
     )
     expect(scrollToTop({ fullPath: '/enterprises/91' }, { path: '/' })).toBe(false)
     detailPage.unmount()
+  })
+
+  it('企业事件把原认定年与复核结论年分开显示，并翻译复核结果', async () => {
+    mocks.detail = {
+      ...fullDetail,
+      events: [{ id: 11, recordId: 1, eventType: 'review', year: 2021, batchSeq: 2, decidedYear: 2024, reviewOutcome: 'failed' }],
+      evidence: [],
+    }
+    const page = mount(EnterprisePage, {
+      attachTo: document.body,
+      global: { stubs: globalStubs },
+    })
+    await flushPromises()
+    expect(page.text()).toContain('原认定 2021 年 · 复核结论 2024 年 · 复核不通过')
+    expect(page.text()).not.toContain('failed')
+    expect(page.getComponent({ name: 'EventChip' }).attributes('hide-batch')).toBe('true')
+    page.unmount()
   })
 
   it('浏览器 Back 的默认企业 URL 匹配显式 view=enterprise 回链状态', async () => {
@@ -704,7 +714,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"scrollY":${windowTop}`)
     expect(JSON.parse(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)!)).toEqual({
       back: detailPath,
-      keys: [JSON.stringify(['91', 'specialized_sme', 'jxj', 0])],
+      keys: [JSON.stringify(['91', 10])],
     })
     source.unmount()
 
@@ -731,9 +741,33 @@ describe('出处预览返回滚动恢复', () => {
     expect(frames).toHaveLength(1)
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: windowTop, behavior: 'instant' })
-    expect(returned.findAll('button').some((button) => button.text().includes('收起出处'))).toBe(true)
+    expect(returned.findAll('button').some((button) => button.text().includes('来源记录'))).toBe(true)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
     expect(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)).toBeNull()
     returned.unmount()
+  })
+
+  it('waits for event source rows to settle before restoring an enterprise preview return', async () => {
+    history.replaceState(null, '', '/enterprises/91')
+    currentRoute = { params: { id: '91' }, query: {}, fullPath: '/enterprises/91' }
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 420 })
+    rememberEvidencePreviewReturn(currentRoute.fullPath)
+    mocks.detail = fullDetail
+    const frames: FrameRequestCallback[] = []
+    const scrollTo = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
+    vi.stubGlobal('scrollTo', scrollTo)
+    let settle!: (value: unknown) => void
+    vi.stubGlobal('$fetch', vi.fn((url: string) => url === '/api/roster/correspondences'
+      ? new Promise(resolve => { settle = resolve }) : Promise.resolve({})))
+    const page = mount(EnterprisePage, { attachTo: document.body, global: { stubs: globalStubs } })
+    await flushPromises()
+    expect(frames).toHaveLength(0)
+    settle({ rows: [], total: 0, page: 1, pageSize: 200 })
+    await flushPromises()
+    expect(frames).toHaveLength(1)
+    frames[0]!(0)
+    expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 420, behavior: 'instant' })
+    page.unmount()
   })
 })

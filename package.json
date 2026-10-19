@@ -38,6 +38,7 @@
     "@embedpdf/plugin-viewport": "2.15.1",
     "@embedpdf/plugin-zoom": "2.15.1",
     "@hyzyla/pdfium": "^3.0.0",
+    "@internationalized/date": "^3.12.4",
     "@lucide/vue": "^1.55.0",
     "@nuxtjs/mcp-toolkit": "^0.24.2",
     "@pinia/colada": "^1.4.8",

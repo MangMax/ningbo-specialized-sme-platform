@@ -75,7 +75,7 @@ const compactSummary = computed(() => {
           <span class="text-muted-foreground">待核别名</span>
           <Badge v-for="alias in pendingAliases" :key="alias.id" variant="quiet" class="text-[13px] font-normal">{{ alias.name }}</Badge>
         </div>
-        <PlatformRecords :queries="queries" :relations="queries.flatMap(query => query.relations)" />
+        <PlatformRecords :queries="queries" :relations="queries.flatMap(query => query.relations)" return-to="/comparison?mode=legacy" />
 
         </div>
       </DialogContent>

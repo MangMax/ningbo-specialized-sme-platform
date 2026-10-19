@@ -1,27 +1,24 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import { computed, onMounted, ref } from 'vue'
-import { groupBy, orderBy, uniq } from 'es-toolkit'
-import { ChevronRight, Eye } from '@lucide/vue'
-import { TITLES, TITLE_ORDER, SOURCE_ORDER, QUALITY_FLAGS } from '~~/lib/labels'
-import { fileUrl, fileNameOf, isPreviewable } from '~~/lib/preview'
-import {
-  EVIDENCE_PAGE_WORDS,
-  evidencePageState,
-  evidencePreviewHref,
-  type EvidencePageState,
-} from '~~/lib/roster/evidence-page'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
+import { sourceReturnTarget } from '~~/lib/roster/correspondence-view'
+import RecordEventRow from '@/components/record-correspondence/RecordEventRow.vue'
+import PlatformRecords from '@/components/PlatformRecords.vue'
+import { QUALITY_FLAGS } from '~~/lib/labels'
+import { fileUrl, fileNameOf } from '~~/lib/preview'
 import {
   rememberEvidencePreviewReturn,
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
 } from '~~/lib/roster/evidence-preview-return'
+import { useEnterpriseCorrespondences } from '~/composables/useEnterpriseCorrespondences'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 
 definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
@@ -33,12 +30,16 @@ interface Evidence {
   page: number | null
 }
 interface DetailEvent {
+  id: number
   type: string
   year: number | null
   seq: number | null
+  decidedYear: number | null
+  reviewOutcome: string | null
   evidence: Evidence[]
 }
 interface DetailRecord {
+  id: number
   titleCode: string
   source: string
   district: string | null
@@ -51,6 +52,12 @@ interface EnterpriseDetail {
   district: string | null
   qualityFlags: string[]
   records: DetailRecord[]
+}
+interface LedgerEvent extends DetailEvent {
+  recordId: number
+  titleCode: string
+  source: string
+  district: string | null
 }
 
 const route = useRoute()
@@ -67,6 +74,8 @@ const id = computed(() => String(route.params.id ?? ''))
  * 免得把一个来路不明的字符串当路径用。
  */
 const backTo = computed(() => {
+  const comparison = sourceReturnTarget(route.query.returnTo)
+  if (comparison) return comparison
   const raw = typeof route.query.back === 'string' ? route.query.back : ''
   if (!raw) return '/'
   const query: Record<string, string> = {}
@@ -76,19 +85,76 @@ const backTo = computed(() => {
 
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
 const { data, isLoading, error } = useQuery({
-  key: () => ['enterprise', id.value],
-  query: () => apiGet<EnterpriseDetail>(`/api/enterprises/${id.value}`),
+  key: () => ['roster-enterprise', id.value],
+  query: () => apiGet<RosterEnterpriseDetail>(`/api/roster/enterprises/${id.value}`),
 })
 
-const detail = computed(() => data.value ?? null)
-const detailRendered = computed(() => detail.value !== null || error.value != null)
+const detail = computed<EnterpriseDetail | null>(() => {
+  const source = data.value
+  if (!source) return null
+  return {
+    id: source.enterprise.enterpriseId,
+    name: source.enterprise.name,
+    uscc: source.enterprise.uscc,
+    district: source.enterprise.district,
+    qualityFlags: source.enterprise.uscc ? [] : ['uscc_missing'],
+    records: source.records.map(record => ({
+      id: record.id,
+      titleCode: record.titleCode,
+      source: record.source,
+      district: record.district,
+      events: source.events.filter(event => event.recordId === record.id).map(event => ({
+        id: event.id,
+        type: event.eventType,
+        year: event.year,
+        seq: event.batchSeq,
+        decidedYear: event.decidedYear,
+        reviewOutcome: event.reviewOutcome,
+        evidence: source.evidence.filter(item => item.eventId === event.id),
+      })),
+    })),
+  }
+})
+
+const EVENT_TYPE_ORDER: Record<string, number> = { award: 0, review: 1, maintain: 2, nurture: 3 }
+
+/** 全部认定 / 复核记录摊平成同一张台账：年份是主序，称号与来源只是行内标签。 */
+const ledgerEvents = computed<LedgerEvent[]>(() => {
+  const source = detail.value
+  if (!source) return []
+  return source.records
+    .flatMap(record => record.events.map(event => ({
+      ...event,
+      recordId: record.id,
+      titleCode: record.titleCode,
+      source: record.source,
+      district: record.district,
+    })))
+    .sort((a, b) => ((a.type === 'review' ? a.decidedYear : a.year) ?? 9999) - ((b.type === 'review' ? b.decidedYear : b.year) ?? 9999)
+      || (EVENT_TYPE_ORDER[a.type] ?? 9) - (EVENT_TYPE_ORDER[b.type] ?? 9)
+      || a.id - b.id)
+})
+
+const {
+  rows: correspondenceRows,
+  loading: correspondenceLoading,
+  error: correspondenceError,
+  reload: reloadCorrespondences,
+} = useEnterpriseCorrespondences(computed(() => detail.value?.id ?? null))
+
+// 原行摘要与展开的出处会改变页面高度，等它们成功或失败后再恢复预览前位置。
+const detailRendered = computed(() => (detail.value !== null || error.value != null) && !correspondenceLoading.value)
 useEvidencePreviewScrollRestore(detailRendered)
+
+function edgesFor(eventId: number) {
+  return correspondenceRows.value.filter(edge => edge.eventId === eventId && edge.type !== 'later_process')
+}
 
 const EVIDENCE_DISCLOSURE_RETURN_KEY = 'roster:enterprise-detail-open-evidence'
 const openEvidenceKeys = ref<string[]>([])
 
-function evidenceDisclosureKey(titleCode: string, source: string, eventIndex: number): string {
-  return JSON.stringify([id.value, titleCode, source, eventIndex])
+function evidenceDisclosureKey(eventId: number): string {
+  return JSON.stringify([id.value, eventId])
 }
 
 function evidenceDisclosureOpen(key: string): boolean {
@@ -123,6 +189,34 @@ onMounted(() => {
 })
 
 /**
+ * 出处页链接要记住「这次是从哪条事件打开的」。回到详情页时据此重新展开同一条出处，
+ * 再把页面滚动恢复到原来的位置。
+ */
+function rememberPagePreviewReturn(eventId: number, event: MouseEvent) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  const keys = new Set(openEvidenceKeys.value)
+  keys.add(evidenceDisclosureKey(eventId))
+  try {
+    window.sessionStorage.setItem(EVIDENCE_DISCLOSURE_RETURN_KEY, JSON.stringify({ back: route.fullPath, keys: [...keys] }))
+  } catch {
+    // Storage may be unavailable; ordinary preview navigation still works.
+  }
+  rememberEvidencePreviewReturn(route.fullPath, event.currentTarget)
+}
+
+const focusedEventId = computed(() => typeof route.query.eventId === 'string' && /^\d+$/.test(route.query.eventId) ? Number(route.query.eventId) : null)
+async function arriveAtEvent(eventId: number | null) {
+  if (typeof document === 'undefined') return
+  if (!detail.value || eventId == null || !detail.value.records.some(record => record.events.some(event => event.id === eventId))) return
+  const enterpriseId = id.value
+  setEvidenceDisclosureOpen(evidenceDisclosureKey(eventId), true)
+  await nextTick()
+  if (id.value !== enterpriseId || focusedEventId.value !== eventId) return
+  document.getElementById(`record-event-${eventId}`)?.scrollIntoView({ block: 'start' })
+}
+watch([detail, focusedEventId], ([, eventId]) => arriveAtEvent(eventId), { immediate: true })
+
+/**
  * 页面标题(RL-17 收尾):企业名 + 页面名。详情是异步取的,所以先给一个不含名字的兜底,
  * 拿到之后自动换成企业名 —— 空白标题在历史记录里完全认不出是哪个企业。
  */
@@ -132,40 +226,9 @@ useHead({
 const usccMissing = computed(() => detail.value?.qualityFlags?.includes('uscc_missing') ?? false)
 const otherFlags = computed(() => (detail.value?.qualityFlags ?? []).filter((f) => f !== 'uscc_missing'))
 const recordCount = computed(() => detail.value?.records.length ?? 0)
+const eventCount = computed(() => ledgerEvents.value.length)
+const platformRowCount = computed(() => data.value?.platform.relations.length ?? 0)
 
-interface TitleGroup {
-  titleCode: string
-  titleName: string
-  records: DetailRecord[]
-  /** 两个来源都有这个称号 —— 页面据此标「并列来源」并排成两列。 */
-  dual: boolean
-}
-
-/** 按称号分组,组内按来源固定顺序:同一条记录的两种来源并排可比。 */
-const groups = computed<TitleGroup[]>(() => {
-  const records = detail.value?.records ?? []
-  const byTitle = groupBy(records, (r) => r.titleCode)
-  return orderBy(Object.entries(byTitle), [([code]) => rankOf(code)], ['asc']).map(
-    ([titleCode, recs]) => {
-      const sorted = orderBy(recs, [(r) => sourceRank(r.source)], ['asc'])
-      return {
-        titleCode,
-        titleName: TITLES[titleCode] ?? titleCode,
-        records: sorted,
-        dual: uniq(sorted.map((r) => r.source)).length > 1,
-      }
-    },
-  )
-})
-
-function rankOf(code: string) {
-  const i = TITLE_ORDER.indexOf(code)
-  return i === -1 ? 99 : i
-}
-function sourceRank(code: string) {
-  const i = SOURCE_ORDER.indexOf(code)
-  return i === -1 ? 99 : i
-}
 function flagLabel(f: string) {
   return QUALITY_FLAGS[f] ?? f
 }
@@ -184,32 +247,6 @@ function openPreview(e: Evidence) {
   previewSrc.value = fileUrl(e.sourceFile)
   previewName.value = fileNameOf(e.sourceFile)
   previewOpen.value = true
-}
-
-const pageStateOf = (e: Evidence): EvidencePageState => evidencePageState(e.sourceFile, e.page)
-
-function pageWordOf(e: Evidence): string {
-  const state = pageStateOf(e)
-  return state === 'assigned' ? '' : EVIDENCE_PAGE_WORDS[state]
-}
-
-function pageHref(e: Evidence): string {
-  return evidencePreviewHref({ sourceFile: e.sourceFile, page: e.page, back: route.fullPath })
-}
-
-function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
-  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-  const keys = new Set(openEvidenceKeys.value)
-  keys.add(key)
-  try {
-    window.sessionStorage.setItem(
-      EVIDENCE_DISCLOSURE_RETURN_KEY,
-      JSON.stringify({ back: route.fullPath, keys: [...keys] }),
-    )
-  } catch {
-    // Storage may be unavailable; ordinary preview navigation still works.
-  }
-  rememberEvidencePreviewReturn(route.fullPath, event.currentTarget)
 }
 </script>
 
@@ -239,14 +276,14 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
     <template v-else-if="detail">
       <PageHeader :title="detail.name">
         <template #breadcrumb>
-          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">企业列表</NuxtLink>
+          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">{{ sourceReturnTarget(route.query.returnTo) ? '记录级对比' : '企业列表' }}</NuxtLink>
           <span class="mx-1.5">/</span>
           <span>企业详情</span>
         </template>
         <template #description>
           <span class="font-mono">{{ detail.uscc ?? '无统一社会信用代码' }}</span>
           <span class="mx-1.5">·</span>{{ detail.district ?? '属地未知' }}
-          <span class="mx-1.5">·</span>共 {{ recordCount }} 条记录
+          <span class="mx-1.5">·</span>{{ eventCount }} 条认定与复核记录
         </template>
         <template #actions>
           <Badge v-for="f in otherFlags" :key="f" variant="destructive">{{ flagLabel(f) }}</Badge>
@@ -267,124 +304,63 @@ function rememberPagePreviewReturn(event: MouseEvent, key: string): void {
         </CardContent>
       </Card>
 
-      <!-- 称号 × 来源 -->
-      <Card
-        v-for="g in groups"
-        :key="g.titleCode"
-        class="gap-0 overflow-hidden py-0"
-      >
-        <CardHeader class="gap-1.5 border-b px-5 py-4">
-          <!-- 来源不再写成一行文字:下面每个来源自己带方标,写两遍是重复。 -->
-          <div class="flex flex-wrap items-center gap-2">
-            <TitleBadge :code="g.titleCode" class="text-sm" />
-            <Badge v-if="g.dual" variant="quiet">并列来源</Badge>
-          </div>
-        </CardHeader>
-        <CardContent class="p-0">
-          <!--
-            并列来源要并排看:同一称号的经信局记录和工信部记录放在同一行两列,
-            一眼比得出两边的事件和年份对不对得上。只有一条时占满整宽。
-            两列之间只画一条竖线 —— 每个来源下面再套一层带边框的面板,
-            就变成用户抱怨的「卡片套卡片」了。
-          -->
-          <div :class="g.records.length > 1 ? 'grid lg:grid-cols-2' : 'grid'">
-            <section
-              v-for="(rec, ri) in g.records"
-              :key="rec.source"
-              class="flex flex-col px-5 py-4"
-              :class="[
-                ri > 0 && 'border-t',
-                ri > 0 && g.records.length > 1 && 'lg:border-t-0 lg:border-l',
-              ]"
-            >
-            <header class="flex flex-wrap items-center gap-x-3 gap-y-2">
-              <SourceChip :code="rec.source" />
-              <span class="text-muted-foreground text-xs">属地 {{ rec.district ?? '—' }}</span>
-              <span class="text-muted-foreground ml-auto text-xs tabular-nums">
-                {{ rec.events.length }} 个事件
-              </span>
-            </header>
+      <!--
+        记录台账：每条认定 / 复核一行，出处就在同一行右列。
+        点击「查看出处」才展开文件与接口的原始出处，不再套多层卡片。
+      -->
+      <section v-else aria-label="记录台账" class="overflow-hidden rounded-lg border bg-card">
+        <header class="hidden border-b bg-muted/40 px-5 py-2 text-xs text-muted-foreground sm:grid sm:grid-cols-[6.5rem_minmax(0,1fr)_18rem_auto] sm:gap-4">
+          <span>年度 / 事项</span>
+          <span>结论</span>
+          <span>出处</span>
+          <span class="sr-only">展开</span>
+        </header>
+        <ul class="divide-y">
+          <li v-for="event in ledgerEvents" :key="event.id">
+            <RecordEventRow
+              :event="event"
+              :evidence="event.evidence"
+              :edges="edgesFor(event.id)"
+              :back="route.fullPath"
+              :return-to="sourceReturnTarget(route.query.returnTo)"
+              :open="evidenceDisclosureOpen(evidenceDisclosureKey(event.id))"
+              @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(event.id), $event)"
+              @preview="openPreview"
+              @event-navigate="arriveAtEvent"
+              @page-open="rememberPagePreviewReturn"
+            />
+          </li>
+        </ul>
+      </section>
 
-            <ul v-if="rec.events.length" class="mt-3 flex flex-col gap-2">
-              <li v-for="(ev, i) in rec.events" :key="i">
-                <Collapsible
-                  :open="evidenceDisclosureOpen(evidenceDisclosureKey(g.titleCode, rec.source, i))"
-                  @update:open="setEvidenceDisclosureOpen(evidenceDisclosureKey(g.titleCode, rec.source, i), $event)"
-                  v-slot="{ open }"
-                >
-                  <div class="flex flex-wrap items-center gap-2">
-                    <EventChip :type="ev.type" :year="ev.year" :seq="ev.seq" />
-                    <CollapsibleTrigger v-if="ev.evidence.length" as-child>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        class="text-muted-foreground h-6 gap-1 px-1.5 text-xs"
-                      >
-                        <ChevronRight
-                          class="size-3.5 transition-transform duration-150"
-                          :class="open && 'rotate-90'"
-                        />
-                        {{ open ? '收起出处' : `出处 ${ev.evidence.length}` }}
-                      </Button>
-                    </CollapsibleTrigger>
-                    <span v-else class="text-muted-foreground text-xs">暂无出处</span>
-                  </div>
-                  <CollapsibleContent class="mt-2 flex flex-col gap-1.5">
-                    <div
-                      v-for="(e, j) in ev.evidence"
-                      :key="j"
-                      class="bg-muted/60 flex flex-col gap-0.5 rounded-sm p-2 text-xs"
-                    >
-                      <div class="flex items-start justify-between gap-3">
-                        <div class="flex min-w-0 gap-2">
-                          <span class="text-muted-foreground w-14 shrink-0">公布文件</span>
-                          <span class="font-mono break-all">{{ e.sourceFile }}</span>
-                        </div>
-                        <!--
-                          能预览的才给按钮。旧版 .doc 之类读不到,硬放一个按钮
-                          点开只会看到「格式打不开」,不如不给。
-                        -->
-                        <Button
-                          v-if="isPreviewable(e.sourceFile)"
-                          variant="outline"
-                          size="sm"
-                          class="h-6 shrink-0 gap-1 px-1.5 text-xs"
-                          @click="openPreview(e)"
-                        >
-                          <Eye class="size-3.5" />
-                          预览
-                        </Button>
-                      </div>
-                      <div v-if="e.attachment" class="flex gap-2">
-                        <span class="text-muted-foreground w-14 shrink-0">附件</span>
-                        <span>{{ e.attachment }}</span>
-                      </div>
-                      <div v-if="e.listNo != null" class="flex gap-2">
-                        <span class="text-muted-foreground w-14 shrink-0">序号</span>
-                        <span class="tabular-nums">{{ e.listNo }}</span>
-                      </div>
-                      <div class="flex gap-2">
-                        <span class="text-muted-foreground w-14 shrink-0">页码</span>
-                        <NuxtLink
-                          v-if="pageStateOf(e) === 'assigned'"
-                          :to="pageHref(e)"
-                          class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
-                          @click="rememberPagePreviewReturn($event, evidenceDisclosureKey(g.titleCode, rec.source, i))"
-                        >
-                          第 {{ e.page }} 页
-                        </NuxtLink>
-                        <span v-else class="text-muted-foreground/70">{{ pageWordOf(e) }}</span>
-                      </div>
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              </li>
-            </ul>
-            <p v-else class="text-muted-foreground mt-3 text-xs">这条记录下没有事件。</p>
-          </section>
-          </div>
-        </CardContent>
-      </Card>
+      <p v-if="correspondenceLoading" class="text-muted-foreground text-[13px]">正在读取每条记录的平台接口出处…</p>
+      <Alert v-else-if="correspondenceError" variant="destructive">
+        <AlertTitle>平台接口出处暂未读取</AlertTitle>
+        <AlertDescription class="flex flex-wrap items-center gap-2">
+          上方公布文件仍保留；已登记的接口对应暂时无法显示。
+          <Button variant="outline" size="sm" :disabled="correspondenceLoading" @click="reloadCorrespondences">重试读取</Button>
+        </AlertDescription>
+      </Alert>
+
+      <!--
+        平台原行是辅助区：默认折叠，保留全部查询记录可查；它不参与上面的出处判定。
+      -->
+      <DisclosurePanel keep-mounted content-class="pb-0" trigger-class="px-4" class="overflow-hidden rounded-lg border bg-card">
+        <template #trigger>
+          <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span class="text-sm font-medium">全部平台记录</span>
+            <span class="text-muted-foreground text-[13px]">{{ platformRowCount }} 条</span>
+          </span>
+        </template>
+        <div class="min-w-0 border-t p-4">
+          <PlatformRecords
+            :queries="data?.platform.queries ?? []"
+            :relations="data?.platform.relations ?? []"
+            :return-to="sourceReturnTarget(route.query.returnTo)"
+            @event-navigate="arriveAtEvent"
+          />
+        </div>
+      </DisclosurePanel>
     </template>
 
     <!--
