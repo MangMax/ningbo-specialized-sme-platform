@@ -2,19 +2,45 @@
 
 Implementation commits: `d6b9ef9` (scoped reads), `9cf1635` (cooperative snapshot
 reads), `86a6e71` (deep catalog ID pagination). The measured code head is
-`c57048932fa2fec4c227bc511baef0ffc331d6d1`. Integration #82/#83/#84/#85/#87/#89
-was merged into this branch; #86 introduces no schema/migration of its own.
+`c57048932fa2fec4c227bc511baef0ffc331d6d1` for the first matrix. The final integrated
+code head is `92030496b9e44eeabf362d92a85b3dfd37335016`, including
+#82/#83/#84/#85/#87/#88/#89; #86 introduces no schema/migration of its own.
 
-## Closeout acceptance gap
+## Final integrated observation and retained failure
 
-The final repeat at `d5da316a0a450aa8b84b7db7d8429c148c9fd2b0` completed all
+At the final integrated code head, 36 compiled HTTP/MCP configurations / 756
+requests met the checked local gates using new private copies with all 14
+migrations, including #87's existing indexes. Worst cold latency was 157.9 ms,
+hot p95/p99 196.1/197.1 ms, hot loop p95/max 91.8/94.5 ms and cold loop max
+160.4 ms. Maximum concurrent process heap delta was 113,248,280 bytes and RSS
+424,099,840 bytes. Fixed-page catalog delta stayed below 11 MiB; the separate
+fixed-scope direct-service replay remains below 64 MiB. No OOM
+occurred. `integrated-schema.json`, `integrated-public-*.json` and
+`integrated-gates.json` retain the schema, individual samples and checked gates.
+
+The migrations were applied only to newly cloned private DBs, before readonly
+service startup. Migration execution warmed OS caches; fresh-process cold does
+not mean cold disk, and the index change alone is not established as the cause
+of the improvement. The original measurement copies retain 13 migrations.
+The old-schema cold failure below is preserved and is not reclassified as passed.
+The current migrated-schema local lane passed its observed gates; controlled
+deployment and broader data-growth acceptance remain unrun.
+
+The final code head passed 146 test files / 2 skipped, 2,109 tests / 12 skipped,
+typecheck, production build and OpenAPI isolation verification. Thirty readonly
+equivalence checks passed against the frozen implementation. Both browser widths
+were exercised on this compiled artifact, including actual PDF page 3/3 and
+return URLs retaining document/query/export selections. Later reporting edits
+change this document only; their head and source-identity check are in handoff.
+
+The old-schema repeat at `d5da316a0a450aa8b84b7db7d8429c148c9fd2b0` completed all
 36 configurations. One 5x catalog cold request took 603.1 ms with a 604.5 ms
 cold event-loop maximum, exceeding the frozen 500 ms boundary. The other
 35 configurations met the checked gates; all hot latency/heap/loop gates passed.
 The worst hot p95/p99 was 330.6/332.1 ms, hot loop p95/max 92.6/151.4 ms,
 and concurrent process heap delta 114,111,432 bytes. The cause of this cold
-outlier has not been isolated. This is an unresolved acceptance gap, not a
-passed cold lane. The earlier 36-case measurements below remain historical
+outlier has not been isolated. This old-schema cold lane failed. The earlier
+36-case measurements below remain historical
 observations at their stated code head; they do not replace this failed sample.
 
 Full suite at that closeout head: 145 passed files / 2 skipped; 2,106 passed
@@ -58,7 +84,7 @@ then seeking metadata reduced direct cold observations to 44.5/418.2 ms at
 1x/5x; the complete response hashes stayed unchanged. Explicit ID hydration uses
 primary-key seeks. No evidence field is truncated or deleted from storage.
 
-## Current public HTTP/MCP matrix
+## First public HTTP/MCP matrix (historical code head)
 
 Actual compiled Nitro, Node 24.22.0, `--max-old-space-size=2048`, one app process,
 Apple M4 / 24 GiB; no cgroup or 1-vCPU deployment equivalence is claimed. Each
