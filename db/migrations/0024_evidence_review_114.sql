@@ -11,6 +11,8 @@ CREATE TABLE evidence_review_receipt_114 (
  reviewed_revision_id INTEGER,
  actor TEXT NOT NULL,
  basis TEXT NOT NULL,
+ rule_version TEXT,
+ effective_at TEXT,
  response TEXT NOT NULL,
  recorded_at TEXT NOT NULL
 );
@@ -27,6 +29,12 @@ CREATE TABLE evidence_rule_release_114 (
  previous_digest TEXT NOT NULL,
  evaluation_digest TEXT NOT NULL,
  revision_id INTEGER,
- receipt_key TEXT NOT NULL,
- UNIQUE(rule_id,version,enterprise_id,title_code,direction)
+ receipt_key TEXT NOT NULL
 );
+
+--> statement-breakpoint
+CREATE UNIQUE INDEX evidence_rule_release_scope_114_uq ON evidence_rule_release_114(rule_id,version,enterprise_id,title_code,direction);
+--> statement-breakpoint
+CREATE INDEX evidence_review_decision_114_idx ON evidence_review_receipt_114(decision_id,id);
+--> statement-breakpoint
+CREATE INDEX evidence_review_source_decision_114_idx ON evidence_review_receipt_114(source_decision_id,id);

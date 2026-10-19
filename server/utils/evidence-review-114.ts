@@ -1,5 +1,8 @@
+import Database from 'better-sqlite3'
+import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { setTimeout as scheduleExpiry, clearTimeout as cancelExpiry } from 'node:timers'
 /** Bounded public review view over committed #113 evidence; business writes stay in #102. */
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { and, eq, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import * as s from '../../db/schema'
@@ -20,7 +23,37 @@ const digest = z.string().regex(/^[a-f0-9]{64}$/)
 export const ruleCommand114 = envelope.extend({ action: z.literal('release_rule'), ruleId: z.string().trim().min(1).max(200), version: z.string().trim().min(1).max(200), scopes: z.array(decisionScope102.extend({ previousEvaluationDigest: digest, evaluationDigest: digest })).min(1).max(50) }).superRefine((v,c) => { if(new Set(v.scopes.map(x=>JSON.stringify([x.enterpriseId,x.titleCode,x.direction]))).size !== v.scopes.length) c.addIssue({code:'custom',message:'Duplicate rule scopes'}) })
 export const workCommand114 = z.discriminatedUnion('action',[processCommand114,ruleCommand114])
 const secret = randomBytes(32)
-type Anchor = { revision: number; impact: number; decision: number; receipt: number }
+// File-backed WAL read snapshots freeze both immutable links and inherited mutable
+// legacy ownership across pages. Reads never write a cache table or copy archives.
+// Bound held readers/time so anonymous cursors cannot retain unlimited WAL history.
+const snapshots = new Map<string, { db: DecisionDb; client: InstanceType<typeof Database>; timer: ReturnType<typeof scheduleExpiry> }>()
+function closeSnapshot(id: string) {
+  const snapshot = snapshots.get(id)
+  if (!snapshot) return
+  snapshots.delete(id)
+  cancelExpiry(snapshot.timer)
+  try { snapshot.client.exec('ROLLBACK') } finally { snapshot.client.close() }
+}
+/** Existing Nitro close hook owns shutdown; timers are unref'ed and also clear here. */
+export function closeReviewSnapshots114() {
+  const failures: unknown[] = []
+  for (const id of snapshots.keys()) {
+    try { closeSnapshot(id) } catch (error) { failures.push(error) }
+  }
+  if (failures.length) throw new AggregateError(failures, 'Failed to close review read snapshots')
+}
+function openSnapshot(db: DecisionDb) {
+  while (snapshots.size >= 64) closeSnapshot(snapshots.keys().next().value!)
+  const path = (db as DecisionDb & { $client: { name: string } }).$client.name
+  const client = new Database(path, { readonly: true, fileMustExist: true })
+  try { client.exec('BEGIN') } catch (error) { client.close(); throw error }
+  const id = randomUUID(), timer = scheduleExpiry(() => closeSnapshot(id), 120000)
+  timer.unref()
+  const snapshot = { db: drizzle(client, { schema: s }), client, timer }
+  snapshots.set(id, snapshot)
+  return { id, ...snapshot }
+}
+type Anchor = { revision: number; impact: number; decision: number; receipt: number; snapshotId?: string }
 function anchor(db: DecisionDb): Anchor {
   return db.get<Anchor>(sql`select coalesce((select min(revision_id)-1 from evidence_impact_progress_113 where done=0),(select max(id) from evidence_revision_113),0) revision,
     coalesce((select max(id) from explanation_impact_113),0) impact, coalesce((select max(id) from difference_reason),0) decision,coalesce((select max(id) from evidence_review_receipt_114),0) receipt`)!
@@ -29,14 +62,21 @@ function signature(body: string) { return createHmac('sha256',secret).update(bod
 function encode(operation: string, filter: unknown, asOf: Anchor, after: number) { const body = Buffer.from(JSON.stringify({operation,filter:evidenceDigest113(filter),asOf,after})).toString('base64url'); return body+'.'+signature(body).toString('base64url') }
 function pageContext(db: DecisionDb, operation: string, input: {cursor?:string}) {
   const {cursor: token,...filter}=input
-  if(!token) return {asOf:anchor(db),after:0,filter}
+  if(!token) {
+    if (operation !== 'list') return {asOf:anchor(db),after:0,filter,db}
+    const snapshot = openSnapshot(db)
+    try { return {asOf:{...anchor(snapshot.db),snapshotId:snapshot.id},after:0,filter,db:snapshot.db} }
+    catch (error) { closeSnapshot(snapshot.id); throw error }
+  }
   try {
     const [body,mac,...extra]=token.split('.'); if(!body || !mac || extra.length) throw 0
     const expected=signature(body),given=Buffer.from(mac,'base64url');if(given.length!==expected.length || !timingSafeEqual(expected,given))throw 0
     const v=JSON.parse(Buffer.from(body,'base64url').toString())
     if(v.operation!==operation || v.filter!==evidenceDigest113(filter) || !Number.isSafeInteger(v.after) || v.after<0 || !v.asOf || !['revision','impact','decision','receipt'].every(k=>Number.isSafeInteger(v.asOf[k])&&v.asOf[k]>=0))throw 0
-    return {asOf:v.asOf as Anchor,after:v.after as number,filter}
-  }catch{throw new DecisionError102(400,'invalid_cursor','Cursor is invalid or belongs to different filters; restart the read')}
+    const snapshot = operation === 'list' ? snapshots.get(v.asOf.snapshotId) : null
+    if (operation === 'list' && !snapshot) throw 0
+    return {asOf:v.asOf as Anchor,after:v.after as number,filter,db:snapshot?.db ?? db}
+  }catch{throw new DecisionError102(400,'invalid_cursor','Cursor is invalid, expired, evicted or belongs to different filters; restart the read')}
 }
 function paged<T>(rows: T[], max: number, operation: string, context: ReturnType<typeof pageContext>, key: (v:T)=>number) {
   const more=rows.length>max, selected=rows.slice(0,max)
@@ -44,7 +84,7 @@ function paged<T>(rows: T[], max: number, operation: string, context: ReturnType
 }
 function scoped(input: z.infer<typeof filters>, alias: 'i'|'d') {
   const fragments: SQL[]=[]
-  if(input.enterpriseId!=null)fragments.push(sql.raw(alias+'.enterprise_id = '+input.enterpriseId))
+  if(input.enterpriseId!=null)fragments.push(sql`${sql.raw(alias+'.enterprise_id')}=${input.enterpriseId}`)
   if(input.titleCode!=null)fragments.push(sql`${sql.raw(alias+'.title_code')}=${input.titleCode}`)
   if(input.direction!=null)fragments.push(sql`${sql.raw(alias+'.direction')}=${input.direction}`)
   if(input.decisionId!=null)fragments.push(sql`${sql.raw(alias==='i'?'i.decision_id':'d.id')}=${input.decisionId}`)
@@ -69,11 +109,22 @@ function impactRows(db:DecisionDb,input:z.infer<typeof impactList114>,a:Anchor,a
     where ${input.view==='all'?sql`1`:input.view==='current'?sql`lineage='current'`:sql`lineage!='current'`}
     and ${input.state==='all'?sql`1`:input.state==='pending'?sql`pending=1`:sql`pending=0`} order by id limit ${input.limit+1}`)
 }
-function hydrate(db:DecisionDb,row:any) { return {...row,pending:!!row.pending,oldDecision:{...readDecision102(db,row.decisionId),isCurrent:row.lineage==='current'}} }
+function hydrate(db:DecisionDb,row:any) {
+  const exists = db.get(sql`select 1 from difference_reason where id=${row.decisionId}`)
+  // Unmanaged legacy duplicate merges may predate/precede review adoption. Keep the
+  // original impact/decision IDs and disclose the missing version; never substitute
+  // a survivor's decision or fabricate its historical reason.
+  return {...row,pending:!!row.pending,oldDecision:exists ? {...readDecision102(db,row.decisionId),isCurrent:row.lineage==='current'} : null}
+}
 export function listImpacts114(db:DecisionDb,input:z.infer<typeof impactList114>) {
-  const c=pageContext(db,'list',input), rows=impactRows(db,input,c.asOf,c.after).map(r=>hydrate(db,r))
-  const readiness=input.enterpriseId && input.titleCode && input.direction ? readEvidenceToken113(db,{enterpriseId:input.enterpriseId,titleCode:input.titleCode,direction:input.direction}).projectionReady : !db.get(sql`select 1 from evidence_impact_progress_113 where done=0 limit 1`)
-  return {...paged(rows,input.limit,'list',c,r=>r.id),projectionReady:readiness}
+  const c=pageContext(db,'list',input)
+  try {
+    const rows=impactRows(c.db,input,c.asOf,c.after).map(r=>hydrate(c.db,r))
+    const readiness=input.enterpriseId && input.titleCode && input.direction ? readEvidenceToken113(c.db,{enterpriseId:input.enterpriseId,titleCode:input.titleCode,direction:input.direction}).projectionReady : !c.db.get(sql`select 1 from evidence_impact_progress_113 where done=0 limit 1`)
+    const result={...paged(rows,input.limit,'list',c,r=>r.id),projectionReady:readiness}
+    if (!result.nextCursor && c.after === 0 && c.asOf.snapshotId) closeSnapshot(c.asOf.snapshotId)
+    return result
+  } catch (error) { if (c.asOf.snapshotId) closeSnapshot(c.asOf.snapshotId); throw error }
 }
 export function getImpact114(db:DecisionDb,id:number) {
   // Detail includes partially projected committed work and always returns a live token.
@@ -83,7 +134,11 @@ export function getImpact114(db:DecisionDb,id:number) {
   const scope={enterpriseId:row.enterpriseId,titleCode:row.titleCode,direction:row.direction}
   const present=!!db.get(sql`select 1 from enterprise where id=${row.enterpriseId}`)
   const queryCoverage=present?readQueryCoverage(db,scope):null
-  return {...hydrate(db,row),currentDecision:present?currentDecision102(db,scope):null,evidenceToken:readEvidenceToken113(db,scope),queryCoverage,gaps:{coverageStatus:queryCoverage?.status??'unknown',truncated:queryCoverage?.truncated??false,subjectUnknown:!present || !queryCoverage?.sources.some(s=>['exact_uscc','matched_relation'].includes(s.subjectMatch)),projectionReady:readEvidenceToken113(db,scope).projectionReady}}
+  const decisionUnavailable=!db.get(sql`select 1 from difference_reason where id=${row.decisionId}`)
+  const review = db.get<{ reviewedRevisionId: number; actor: string; basis: string; ruleVersion: string; effectiveAt: string; recordedAt: string }>(sql`select reviewed_revision_id reviewedRevisionId,actor,basis,rule_version ruleVersion,effective_at effectiveAt,recorded_at recordedAt from evidence_review_receipt_114
+    where enterprise_id=${row.enterpriseId} and title_code=${row.titleCode} and direction=${row.direction} and (decision_id=${row.decisionId} or source_decision_id=${row.decisionId}) and reviewed_revision_id is not null order by id desc limit 1`)
+  const reviewedBaseline = review ? {...review,actor:JSON.parse(review.actor)} : null
+  return {...hydrate(db,row),reviewedBaseline,currentDecision:present?currentDecision102(db,scope):null,evidenceToken:readEvidenceToken113(db,scope),queryCoverage,gaps:{decisionUnavailable,coverageStatus:queryCoverage?.status??'unknown',truncated:queryCoverage?.truncated??false,subjectUnknown:!present || !queryCoverage?.sources.some(s=>['exact_uscc','matched_relation'].includes(s.subjectMatch)),projectionReady:readEvidenceToken113(db,scope).projectionReady}}
 }
 export function previewImpacts114(db:DecisionDb,input:z.infer<typeof impactPreview114>) {
   const revision=readEvidenceRevision113(db,input.revisionId);if(!revision)throw new DecisionError102(404,'not_found','Committed evidence revision not found')

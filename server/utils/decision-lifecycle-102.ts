@@ -2,7 +2,7 @@ import { readEvidenceToken113 } from './evidence-impact-113'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { normalizeUscc } from '../../lib/domain'
 import { createHash } from 'node:crypto'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql, type SQL, type AnyColumn } from 'drizzle-orm'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
@@ -51,6 +51,10 @@ export function parse102<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data
 }
 const whereScope = (scope: Scope) => and(eq(s.differenceReason.enterpriseId, scope.enterpriseId), eq(s.differenceReason.titleCode, scope.titleCode), eq(s.differenceReason.direction, scope.direction))
+/** Explicit review of a legacy version adopts its existing scope without rewriting that version. */
+export function managedDecision102(id: AnyColumn | SQL = s.differenceReason.id, action: AnyColumn | SQL = s.differenceReason.lifecycleAction) {
+  return sql`(${action} is not null or exists(select 1 from evidence_review_receipt_114 r where (r.decision_id=${id} or r.source_decision_id=${id}) and r.reviewed_revision_id is not null))`
+}
 export function latestDecision102(db: DecisionDb, scope: Scope) {
   return db.select().from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get()
 }
@@ -110,7 +114,7 @@ export function saveDecision102(db: DecisionDb, command: Command) {
         .onConflictDoUpdate({ target: [impact.enterpriseId, impact.titleCode, impact.direction, impact.decisionId], set: { reviewedRevisionId: revisionId } }).run()
       if (previous && previous.id !== decisionId) tx.update(impact).set({ reviewedRevisionId: revisionId }).where(and(eq(impact.decisionId, previous.id), eq(impact.enterpriseId, command.enterpriseId), eq(impact.titleCode, command.titleCode), eq(impact.direction, command.direction))).run()
       const response = { ...result, reviewedRevisionId: revisionId }
-      tx.insert(s.evidenceReviewReceipt114).values({ idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action, enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction, decisionId, sourceDecisionId: previous?.id ?? null, reviewedRevisionId: revisionId, actor: command.actor, basis: command.basis, response, recordedAt: new Date().toISOString() }).run()
+      tx.insert(s.evidenceReviewReceipt114).values({ idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action, enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction, decisionId, sourceDecisionId: previous?.id ?? null, reviewedRevisionId: revisionId, actor: command.actor, basis: command.basis, ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, response, recordedAt: new Date().toISOString() }).run()
       return response
     }
     if (command.action === 'maintain') {
