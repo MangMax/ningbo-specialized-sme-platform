@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { and, desc, eq, gt } from 'drizzle-orm'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -6,6 +6,7 @@ import * as schema from '../../db/schema'
 import { EVENT_ORDER, TITLE_ORDER } from '../../lib/labels'
 import { derivedPartsForFile, listFileParts } from './file-parts'
 import { applyParseResult, normalizeParseParts } from './parse-result'
+import { getStoredFile } from './stored-files'
 
 type Db = BetterSQLite3Database<typeof schema>
 export const parsePart105 = z.strictObject({
@@ -24,9 +25,17 @@ export const parseWrite105 = z.strictObject({
   actor: z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1).max(200) }),
   reason: z.string().trim().min(1).max(2000),
 }).refine(v => v.parts !== undefined || v.parseState !== undefined, '至少给 parts 或 parseState')
-export const parseSave105 = z.strictObject({ fileId: z.number().int().positive().optional(), relPath: z.string().trim().min(1).optional(), ...parseWrite105.shape })
+const modernEnvelope105 = ['expectedVersion', 'idempotencyKey', 'actor', 'reason'] as const
+export const parseSave105 = z.strictObject({
+  ...parseWrite105.shape,
+  fileId: z.number().int().positive().optional(), relPath: z.string().trim().min(1).optional(),
+  expectedVersion: parseWrite105.shape.expectedVersion.optional(),
+  idempotencyKey: parseWrite105.shape.idempotencyKey.optional(),
+  actor: parseWrite105.shape.actor.optional(), reason: parseWrite105.shape.reason.optional(),
+})
   .refine(v => (v.fileId !== undefined) !== (v.relPath !== undefined), 'fileId 与 relPath 恰给一个')
   .refine(v => v.parts !== undefined || v.parseState !== undefined, '至少给 parts 或 parseState')
+  .refine(v => !modernEnvelope105.some(key => v[key] !== undefined) || modernEnvelope105.every(key => v[key] !== undefined), '现代封套必须完整提供 expectedVersion/idempotencyKey/actor/reason,不得降级为旧盲写')
 export const parseRead105 = z.strictObject({ fileId: z.number().int().positive() })
 export const parseHistory105 = z.strictObject({
   fileId: z.number().int().positive(),
@@ -120,5 +129,28 @@ export function saveParseMcp105(db: Db, raw: unknown) {
   const id = fileId ?? db.select({ id: schema.storedFile.id }).from(schema.storedFile)
     .where(eq(schema.storedFile.relPath, relPath!)).get()?.id
   if (id === undefined) return fail(404, '文件不存在')
-  return saveParse105(db, id, input)
+  if (modernEnvelope105.some(key => input[key] !== undefined)) return saveParse105(db, id, input)
+  return saveLegacyParseMcp105(db, id, input)
+}
+
+/** Explicit baseline adapter: a serialized blind write, with adapter-attributed audit.
+ * The generated envelope is internal bookkeeping, never caller confirmation or caller CAS.
+ */
+function saveLegacyParseMcp105(db: Db, fileId: number, input: { parts?: z.infer<typeof parsePart105>[]; parseState?: string }) {
+  const normalized = input.parts === undefined ? undefined : normalizeParseParts(input.parts)
+  if (normalized && !normalized.ok) return fail(400, normalized.message)
+  return db.transaction(tx => {
+    const scoped = tx as Db
+    const current = readParse105(scoped, fileId)
+    saveParse105(scoped, fileId, {
+      parts: input.parts, parseState: input.parseState,
+      expectedVersion: current.version,
+      idempotencyKey: `legacy-save-parse:${randomUUID()}`,
+      actor: { type: 'agent', id: 'legacy-adapter:save_parse_result' },
+      reason: '兼容旧 save_parse_result 盲写；客户端未提供版本、幂等键、操作者或确认依据',
+    })
+    // Preserve baseline semantics: top-level parts is the submitted normalized agent
+    // collection (or [] for status-only); file.parts is the effective stored collection.
+    return { file: getStoredFile(scoped, fileId)!, parts: normalized?.ok ? normalized.parts : [], parseState: input.parseState ?? 'parsed' }
+  }, { behavior: 'immediate' })
 }

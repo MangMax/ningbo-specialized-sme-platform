@@ -19,10 +19,10 @@
 3. 只改状态用 `PATCH /api/files/{id}/parse-result`，必须提供 `parseState`，禁止
    `parts`。MCP 省略 `parts`、提供 `parseState` 对等；全部已有段逐项保留，
    包括 origin/conflict。省略不等于 null：`parts:null`、`parseState:null` 均拒绝。
-4. 每次写入必须有 `expectedVersion`、`idempotencyKey`、`actor:{type,id}`、`reason`。
+4. 每次现代写入必须有 `expectedVersion`、`idempotencyKey`、`actor:{type,id}`、`reason`。
    REST 写入使用 `NUXT_API_TOKEN`，MCP 使用 `NUXT_MCP_TOKEN`；Bearer 或已有对应
    token header。未配置 token 时写入关闭。读入口不需要 token，所有响应 `no-store`。
-5. 响应为 `{receiptId,replayed,state}`。首次写入 `replayed=false`；超时/断线后以
+5. 现代响应为 `{receiptId,replayed,state}`。首次写入 `replayed=false`；超时/断线后以
    同键、同规范载荷重试，返回原始回执及当时的 `state`，`replayed=true`。
    这可能与当前状态不同；用 GET 确认当前状态，切勿把历史回执视为当前状态。
 
@@ -43,14 +43,31 @@
 
 MCP `save_parse_result` 在上述对象中加 `fileId`。既有精确 `relPath` 别名保留，
 与 `fileId` 恰给一个；解析路径后仍绑定稳定 ID、版本及同一文件的幂等键。
-新读取/历史工具按稳定 ID 使用。旧无版本写客户端须先调用 `get_file_parse_result`，
-增加版本、幂等键和审计说明。文件元数据继续使用既有入口，本能力不接收元数据字段。
+新读取/历史工具按稳定 ID 使用。旧载荷 `{fileId|relPath,parts?,parseState?}` 由显式
+legacy adapter继续接受并返回原 `{file,parts,parseState}`。顶层 `parts` 为本次提交的
+归一代理段，省略 `parts` 只改状态时为 `[]`；`file.parts` 才是最终有效段（包含派生段、
+origin/conflict），`file` 沿用既有完整文件读投影，不额外嵌入现代回执字段。
+旧调用仍需MCP鉴权。不提供任何现代封套字段才走legacy；只要提供其中一个，就必须
+完整提供 `expectedVersion/idempotencyKey/actor/reason`，任何部分混用/非法值均拒绝，
+不得在toolkit清除字段后静默降级。REST始终要求完整现代封套。
+
+legacy调用保留旧**盲写**语义，旧客户端没有预期版本检查、可重放客户端幂等键或
+用户确认依据。适配器在immediate事务内读取最新版本并调用同一写服务；这是内部原子
+记账，不构成客户端并发保护，也不会假称旧客户端确认过当前版本。每次成功调用（包括
+重复同内容）都追加新回执，使用随机内部键 `legacy-save-parse:<UUID>`、
+`actor={type:agent,id:legacy-adapter:save_parse_result}` 和固定原因
+`兼容旧 save_parse_result 盲写；客户端未提供版本、幂等键、操作者或确认依据`。
+该actor只指适配器，不推断实际用户身份；原因不是用户确认/业务裁决。
+每次旧写也推进维护修订，使之前的现代版本失效。旧客户端丢失响应后重试可能新增审计
+并覆盖期间其他修改；升级时先 `get_file_parse_result` 再完整提供现代封套即可获得
+预期版本及客户端幂等恢复。文件元数据继续使用既有入口，本能力不接收元数据字段。
 
 ## 验证、并发与恢复
 
 - 段称号/事件使用已有白名单。year 为1900–2100整数或null，batch 为正安全整数或null，
   attachment 为不超过500字符的字符串或null，rowCount 为非负安全整数、默认0。
-  可空段字段省略归为null。最多1000段；不截断。
+  可空段字段省略归为null。新旧两种载荷均最多1000段、附件最多500字符；
+  超限明确返回容量校验错误（消息含上限），整批不写入、不追加成功审计、不截断。
 - 附件归一后，同称号/事件/年份/批次/附件重复整批拒绝，不求和。任何非法字段、
   未知字段（包括嵌套字段）、非法类型或空操作整批拒绝。MCP 在 toolkit 清除未知键
   之前检查原始 tools/call 参数，保持与 REST 相同的拒绝语义。
@@ -102,6 +119,9 @@ MCP `save_parse_result` 在上述对象中加 `fileId`。既有精确 `relPath` 
 | 来源变化使旧版本失效并刷新冲突 | `invalidates an edit version when source-derived coordinates change and refreshes the visible conflict` |
 | 1000段完整写入、1001段拒绝且不截断 | `accepts the complete segment limit and rejects over-limit replacements without truncation` |
 | 同键并发重试仅一个回执 | `coalesces simultaneous same-key retries into one durable parse receipt` |
+| 原样基线ID/路径载荷及旧输出、空数组/状态单独更新、adapter审计、旧写失效现代版本 | `accepts exact baseline MCP payloads and returns the exact legacy envelope for ID path empty and status-only writes` |
+| 旧调用鉴权、现代封套部分混用拒绝、现代成功输出不变 | `protects exact baseline MCP calls with auth and rejects partial modern envelopes without legacy downgrade` |
+| 旧载荷超容量明确拒绝不截断、重复段原子拒绝 | `rejects legacy capacity overflow explicitly without truncation or adapter audit and retains duplicate atomicity` |
 | 无关数据增长下固定ID/固定页不变 | `keeps fixed-ID reads and history pages unchanged as unrelated evidence OCR and receipts grow` |
 
 红绿日志在Git外 `/tmp/ningbo-spec98/ticket-105/`：
@@ -141,7 +161,17 @@ Node24.22.0/macOS27.0.1/Apple M4，无容器限额、存在其他并行工作。
 1000条无关出处档，5组HTTP状态+历史页合计耗时中位数13.658ms，范围8.969–32.761ms；
 5000条档，中位数20.333ms，范围9.168–24.985ms。每组含两次请求和测试断言，
 不是纯服务耗时；不计算或宣称可靠p95/p99、不推导倍数提速。原始样本为
-`boundedness.jsonl` 最后一行，独立于此前未提交工作区的探索样本。
+`boundedness-6714827.json`（从追加日志提取的该次原始样本），独立于此前未提交工作区的探索样本。
 计划明确显示出处按 `record_evidence_source_file_105_idx (source_file=?)` SEARCH，
 历史按 `file_parse_105_history_idx (file_id=? AND id>?)` SEARCH，事件/记录使用主键点读。
 新增出处索引有迁移建索引锁和持续写放大成本，本票未在完整业务分布上量化这些成本。
+
+## 原票兼容修复（story16）
+
+父代理核对基线 `4f910f6` 后发现初版强制旧客户端提交现代封套并改变返回信封，
+因此初版不能作为旧客户端兼容验收。本节修复继续属于#105原实施，不是独立审核轮次。
+`compat-red.log`：两条真实tools/call回归在适配前失败（旧载荷400、旧鉴权调用400而非401）；
+`compat-green.log`：接入显式adapter后两条通过。
+`compat-capacity-red.log`：超容量原先只有泛化错误、缺上限数字；补充明确参数错误后验证。
+新增legacy adapter复用原服务和事务，未变更schema/迁移、REST现代封套或文件/OCR写入口。
+后续最终验证及源码SHA另列；上文6714827证据仍仅代表初版，不能冒充兼容修复结果。

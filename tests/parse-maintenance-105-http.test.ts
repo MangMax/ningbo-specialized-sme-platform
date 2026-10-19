@@ -195,6 +195,8 @@ it('rolls back segment and status writes when audit persistence fails and permit
   const body = write(before.version, 'retry-after-fault', { parts: [{ ...part, year: 2023, rowCount: 9 }], parseState: 'failed' })
   try {
     expect((await http(f.id, 'PUT', body)).status).toBe(500)
+    const legacyFailure = await rpc('tools/call', { name: 'save_parse_result', arguments: { relPath: f.relPath, parts: [{ ...part, year: 2023 }], parseState: 'failed' } })
+    expect(legacyFailure.body.result.isError).toBe(true)
     expect(await state(f.id)).toEqual(before)
     expect(await call('get_file_parse_history', { fileId: f.id })).toEqual(historyBefore)
   } finally { db.$client.exec('DROP TRIGGER fail_parse_105') }
@@ -262,7 +264,7 @@ it('enforces authentication stable IDs and removed-file writes while exposing di
   const tools = (await rpc('tools/list', {})).body.result.tools
   for (const name of ['get_file_parse_result', 'get_file_parse_history']) expect(tools.find((t: any) => t.name === name)).toMatchObject({ annotations: { readOnlyHint: true } })
   const saveTool = tools.find((t: any) => t.name === 'save_parse_result')
-  expect(saveTool.inputSchema.required).toEqual(expect.arrayContaining(['expectedVersion','idempotencyKey','actor','reason']))
+  for (const field of ['expectedVersion','idempotencyKey','actor','reason']) expect(saveTool.inputSchema.properties).toHaveProperty(field)
   const anonymous = (await rpc('tools/list', {}, false)).body.result.tools
   expect(anonymous.some((t: any) => t.name === 'save_parse_result')).toBe(false)
   const specResponse = await fetch(`${service.baseUrl}/_openapi.json`)
@@ -406,4 +408,71 @@ it('coalesces simultaneous same-key retries into one durable parse receipt', asy
   expect(results[0].state).toEqual(results[1].state)
   const history = await call('get_file_parse_history', { fileId: f.id })
   expect(history.rows.map((r: any) => r.receiptId)).toEqual([results[0].receiptId])
+})
+
+it('accepts exact baseline MCP payloads and returns the exact legacy envelope for ID path empty and status-only writes', async () => {
+  const f = file()
+  const initial = await state(f.id)
+  const normalized = { ...part, attachment: '附件1' }
+  const expectedFile = { ...f, displayName: f.filename, referenceCount: 0, parseState: 'parsed', parts: [{ ...normalized, origin: 'agent', hasConflict: false }] }
+  // Exact baseline payload: no new envelope fields, and no modern response keys.
+  const first = await call('save_parse_result', { fileId: f.id, parts: [part] })
+  expect(first).toEqual({ file: expectedFile, parts: [normalized], parseState: 'parsed' })
+  const afterFirst = await state(f.id)
+  expect(afterFirst.version).not.toBe(initial.version)
+  const statusOnly = await call('save_parse_result', { relPath: f.relPath, parseState: 'failed' })
+  // Baseline top-level parts was the normalized submitted collection, hence [] on status-only.
+  expect(statusOnly).toEqual({ file: { ...expectedFile, parseState: 'failed' }, parts: [], parseState: 'failed' })
+  expect((await state(f.id)).version).not.toBe(afterFirst.version)
+  expect((await http(f.id, 'PATCH', write(afterFirst.version, 'stale-after-legacy', { parseState: 'unparsed' }))).status).toBe(409)
+  const cleared = await call('save_parse_result', { relPath: f.relPath, parts: [] })
+  expect(cleared).toEqual({ file: { ...expectedFile, parts: [] }, parts: [], parseState: 'parsed' })
+  const sameState = await state(f.id)
+  await call('save_parse_result', { fileId: f.id, parts: [], parseState: 'parsed' })
+  expect((await state(f.id)).version).not.toBe(sameState.version)
+  const history = await call('get_file_parse_history', { fileId: f.id })
+  expect(history.rows).toHaveLength(4)
+  for (const row of history.rows) {
+    expect(row.actor).toEqual({ type: 'agent', id: 'legacy-adapter:save_parse_result' })
+    expect(row.reason).toBe('兼容旧 save_parse_result 盲写；客户端未提供版本、幂等键、操作者或确认依据')
+    expect(row.idempotencyKey).toMatch(/^legacy-save-parse:/)
+  }
+})
+
+it('protects exact baseline MCP calls with auth and rejects partial modern envelopes without legacy downgrade', async () => {
+  const f = file()
+  const before = await state(f.id)
+  const baseline = { relPath: f.relPath, parts: [part] }
+  expect((await rpc('tools/call', { name: 'save_parse_result', arguments: baseline }, false)).status).toBe(401)
+  const complete = write(before.version, 'complete-modern-envelope', { parts: [part] })
+  const names = ['expectedVersion', 'idempotencyKey', 'actor', 'reason'] as const
+  for (const name of names) {
+    const one = { ...baseline, [name]: complete[name] }
+    expect((await rpc('tools/call', { name: 'save_parse_result', arguments: one })).status, `only ${name}`).toBe(400)
+    const missing: Record<string, unknown> = { fileId: f.id, ...complete }
+    delete missing[name]
+    expect((await rpc('tools/call', { name: 'save_parse_result', arguments: missing })).status, `missing ${name}`).toBe(400)
+  }
+  expect(await state(f.id)).toEqual(before)
+  expect(await call('get_file_parse_history', { fileId: f.id })).toEqual({ fileId: f.id, rows: [], nextAfterId: null })
+  const modern = await call('save_parse_result', { fileId: f.id, ...complete })
+  expect(Object.keys(modern).sort()).toEqual(['receiptId', 'replayed', 'state'])
+  expect(modern.state).toEqual(await state(f.id))
+})
+
+it('rejects legacy capacity overflow explicitly without truncation or adapter audit and retains duplicate atomicity', async () => {
+  const f = file()
+  const before = await state(f.id)
+  const tooMany = { fileId: f.id, parts: Array.from({ length: 1001 }, (_, i) => ({ ...part, batch: i + 1 })) }
+  const longAttachment = { relPath: f.relPath, parts: [{ ...part, attachment: 'X'.repeat(501) }] }
+  for (const [input, maximum] of [[tooMany, '1000'], [longAttachment, '500']] as const) {
+    const rejected = await rpc('tools/call', { name: 'save_parse_result', arguments: input })
+    expect(rejected.status).toBe(400)
+    expect(rejected.body.error.message).toContain(maximum)
+  }
+  const duplicate = await rpc('tools/call', { name: 'save_parse_result', arguments: { fileId: f.id, parts: [part, { ...part, attachment: '附件1' }] } })
+  expect(duplicate.body.result.isError).toBe(true)
+  expect(JSON.stringify(duplicate.body)).toContain('重复')
+  expect(await state(f.id)).toEqual(before)
+  expect(await call('get_file_parse_history', { fileId: f.id })).toEqual({ fileId: f.id, rows: [], nextAfterId: null })
 })
