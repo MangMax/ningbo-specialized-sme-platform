@@ -1,7 +1,9 @@
+import { impactList114, impactGet114, impactSources114, impactEvents114, impactPreview114, processCommand114, ruleCommand114 } from './evidence-review-114'
 import { legacyPreviewInput102 } from './decision-legacy-preview-102'
 import { z } from 'zod'
 import { decisionCommand102, decisionHistory102, decisionScope102 } from './decision-lifecycle-102'
 const contracts = {
+  list_evidence_impacts: impactList114, get_evidence_impact: impactGet114, list_evidence_impact_sources: impactSources114, list_evidence_revision_events: impactEvents114, preview_evidence_impacts: impactPreview114, process_evidence_impacts: processCommand114, release_evidence_rule: ruleCommand114,
   preview_legacy_difference_decisions: legacyPreviewInput102,
   save_difference_decision: decisionCommand102,
   get_difference_decision: z.strictObject({ id: z.number().int().positive() }),
