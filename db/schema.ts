@@ -525,7 +525,12 @@ export const enterpriseAlias = sqliteTable(
     enterpriseId: integer('enterprise_id')
       .notNull()
       .references(() => enterprise.id, { onDelete: 'cascade' }),
-    /** 别名**原值**(来源里的写法,留档)。 */
+    version: integer('version').notNull().default(1),
+    /** 首次维护前的原名称/来源；迁移回填，旧插入路径保持可空。 */
+    originalName: text('original_name'),
+    originalSourceKind: text('original_source_kind'),
+    originalSourceRefId: integer('original_source_ref_id'),
+    /** 当前别名解释；初始原值和来源单独冻结，历次变动追加审计。 */
     name: text('name').notNull(),
     /** 归一化别名(与 `lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
     nameNorm: text('name_norm').notNull(),
@@ -539,8 +544,8 @@ export const enterpriseAlias = sqliteTable(
     validFrom: text('valid_from'),
     /** 来源给出的失效时间。未给出留空。 */
     validTo: text('valid_to'),
-    /** 核验状态:`confirmed` 已确认(参与搜索/归并)/ `pending` 待核实(不参与)。 */
-    verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] })
+    /** 只有confirmed参与有效搜索/匹配；pending待核和withdrawn已撤回均不参与。 */
+    verificationStatus: text('verification_status', { enum: ['confirmed', 'pending', 'withdrawn'] })
       .notNull()
       .default('pending'),
     /** 备注(如「平台记录明确写出的经信局侧曾用名」原文摘录)。 */
@@ -561,6 +566,7 @@ export const enterpriseAlias = sqliteTable(
     ),
     index('enterprise_alias_name_norm_idx').on(t.nameNorm),
     index('enterprise_alias_enterprise_idx').on(t.enterpriseId),
+    index('enterprise_alias_status_page_idx').on(t.enterpriseId, t.verificationStatus, t.id),
   ],
 )
 
@@ -1015,3 +1021,21 @@ export const eventCorrectionAudit = sqliteTable('event_correction_audit', {
   basis: text('basis').notNull(),
   correctedAt: text('corrected_at').notNull(),
 }, t => [index('event_correction_audit_event_idx').on(t.eventId, t.id)])
+
+/** #99 explicit lifecycle decisions; append only, keyed history and replay. */
+export const enterpriseAliasAudit = sqliteTable('enterprise_alias_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  aliasId: integer('alias_id').notNull().references(() => enterpriseAlias.id),
+  enterpriseId: integer('enterprise_id').notNull(),
+  action: text('action', { enum: ['confirm', 'correct', 'withdraw'] }).notNull(),
+  actor: text('actor').notNull(),
+  basis: text('basis').notNull(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  requestHash: text('request_hash').notNull(),
+  before: text('before', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  after: text('after', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  createdAt: text('created_at').notNull(),
+}, t => [
+  uniqueIndex('enterprise_alias_audit_request_uq').on(t.aliasId, t.idempotencyKey),
+  index('enterprise_alias_audit_page_idx').on(t.aliasId, t.id),
+])
