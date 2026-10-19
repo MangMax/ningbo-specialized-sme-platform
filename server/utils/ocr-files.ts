@@ -40,6 +40,11 @@ export async function resolveOcrFileTarget(
   input: FileRefInput,
   options: { allowRemoved?: boolean } = {},
 ): Promise<OcrFileTargetResult> {
+  const hasId = input.fileId !== undefined && input.fileId !== null
+  const hasPath = typeof input.relPath === 'string' && input.relPath.trim() !== ''
+  if (hasId === hasPath || (hasId && (!Number.isSafeInteger(input.fileId) || input.fileId! <= 0))) {
+    return { ok: false, statusCode: 400, message: '文件引用非法:fileId 与路径恰给其一,ID 必须是正整数' }
+  }
   const db = useDb()
   const root = useRuntimeConfig().filesDir
   await ensureFileStoreReady(db, root)
@@ -64,6 +69,9 @@ export function fileRefFromQuery(
   | { ok: true; ref: FileRefInput }
   | { ok: false; statusCode: 400; message: string } {
   const rawId = q.fileId
+  if ((rawId !== undefined && typeof rawId !== 'string' && typeof rawId !== 'number') || (q.file !== undefined && typeof q.file !== 'string')) {
+    return { ok: false, statusCode: 400, message: '文件引用必须是单值' }
+  }
   const relPath = typeof q.file === 'string' && q.file.trim() ? q.file.trim() : null
 
   if (rawId === undefined || rawId === null || rawId === '') {
@@ -77,7 +85,7 @@ export function fileRefFromQuery(
     return { ok: true, ref: { relPath } }
   }
   const fileId = Number(rawId)
-  if (!Number.isInteger(fileId) || fileId <= 0) {
+  if (!Number.isSafeInteger(fileId) || fileId <= 0) {
     return { ok: false, statusCode: 400, message: `fileId 必须是正整数:${String(rawId)}` }
   }
   return { ok: true, ref: { fileId, relPath } }
