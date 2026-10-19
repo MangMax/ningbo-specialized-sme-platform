@@ -12,6 +12,8 @@ import {
 } from '../../lib/file-parts'
 
 type Db = BetterSQLite3Database<typeof schema>
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
+type Executor = Db | Tx
 
 /** 回填统计(用于接口回报与验收核对)。 */
 export interface PartsBackfillStats {
@@ -34,7 +36,7 @@ interface EvidencePartRow extends PartEvidence {
  * 一次 join 出全部坐标(约两万行,SQLite 上毫秒级),聚合与排序交给纯函数
  * `lib/file-parts.ts` 的 `aggregateParts` —— 口径可单测,不埋在 SQL 里。
  */
-export function readEvidencePartRows(db: Db, relPath?: string): EvidencePartRow[] {
+export function readEvidencePartRows(db: Executor, relPath?: string): EvidencePartRow[] {
   const query = db
     .select({
       relPath: schema.recordEvidence.sourceFile,
@@ -53,7 +55,7 @@ export function readEvidencePartRows(db: Db, relPath?: string): EvidencePartRow[
 }
 
 /** 按文件读取并聚合 evidence,供代理全量替换时恢复被旧代理结果覆盖的派生坐标。 */
-export function derivedPartsForFile(db: Db, fileId: number): FilePart[] {
+export function derivedPartsForFile(db: Executor, fileId: number): FilePart[] {
   const file = db
     .select({ relPath: schema.storedFile.relPath })
     .from(schema.storedFile)
@@ -70,6 +72,31 @@ export function derivedPartsForFile(db: Db, fileId: number): FilePart[] {
       attachment: normalizeAttachment(row.attachment),
     })),
   )
+}
+
+/** Refresh only affected files inside the caller's mutation transaction; declarations retain IDs/origins. */
+export function refreshDerivedFileParts(db: Executor, sourceFiles: Iterable<string>): void {
+  const paths = [...new Set(sourceFiles)]
+  if (!paths.length) return
+  const files = db.select({ id: schema.storedFile.id }).from(schema.storedFile)
+    .where(inArray(schema.storedFile.relPath, paths)).all()
+  for (const file of files) {
+    const parts = derivedPartsForFile(db, file.id)
+    const preserved = db.select().from(schema.storedFilePart)
+      .where(and(eq(schema.storedFilePart.fileId, file.id), inArray(schema.storedFilePart.origin, ['agent', 'legacy']))).all()
+    const byKey = new Map(preserved.map(row => [partKey(row), row]))
+    const derivedByKey = new Map(parts.map(part => [partKey(part), part]))
+    for (const row of preserved) {
+      const derived = derivedByKey.get(partKey(row))
+      // An independent declaration without ledger references is still a declaration, not a conflict.
+      db.update(schema.storedFilePart).set({ hasConflict: !!derived && row.rowCount !== derived.rowCount })
+        .where(eq(schema.storedFilePart.id, row.id)).run()
+    }
+    db.delete(schema.storedFilePart).where(and(eq(schema.storedFilePart.fileId, file.id), eq(schema.storedFilePart.origin, 'derived'))).run()
+    for (const part of parts) {
+      if (!byKey.has(partKey(part))) db.insert(schema.storedFilePart).values({ fileId: file.id, ...part, origin: 'derived', hasConflict: false }).run()
+    }
+  }
 }
 
 /**

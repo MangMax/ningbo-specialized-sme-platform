@@ -9,11 +9,14 @@ import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib
 const dir = mkdtempSync(join(tmpdir(), 'file-maintenance-104-'))
 const root = join(dir, 'files')
 const dbPath = join(dir, 'synthetic.db')
-// Start with the integrated schema except #104, including #105. The app must apply #104 after that existing migration tip.
+// Start at the actual journal prefix before #104, including #105/#106/#101.
+// Later appended migrations must not be applied before #104 in this upgrade fixture.
 const baselineMigrations = join(dir, 'baseline-migrations')
 mkdirSync(join(baselineMigrations, 'meta'), { recursive: true })
 const baselineJournal = JSON.parse(readFileSync(join(process.cwd(), 'db/migrations/meta/_journal.json'), 'utf8'))
-baselineJournal.entries = baselineJournal.entries.filter((entry: { tag: string }) => entry.tag !== '0020_file_maintenance')
+const maintenanceIndex = baselineJournal.entries.findIndex((entry: { tag: string }) => entry.tag === '0020_file_maintenance')
+if (maintenanceIndex < 0) throw new Error('File maintenance migration is missing from the journal')
+baselineJournal.entries = baselineJournal.entries.slice(0, maintenanceIndex)
 for (const entry of baselineJournal.entries) copyFileSync(join(process.cwd(), `db/migrations/${entry.tag}.sql`), join(baselineMigrations, `${entry.tag}.sql`))
 writeFileSync(join(baselineMigrations, 'meta/_journal.json'), JSON.stringify(baselineJournal))
 const db = useDb({ dbPath, migrationsFolder: baselineMigrations })
