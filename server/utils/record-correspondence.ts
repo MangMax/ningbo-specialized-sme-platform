@@ -8,6 +8,7 @@ import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
 import { versionedOfficialEvent } from './roster-event-version'
 import { correspondenceRefValidity } from './record-correspondence-ref-validity'
 import { currentProofCoversRows } from './comparison-scope-proof'
+import { correspondenceIdentityProblem } from './record-correspondence-identity'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -135,16 +136,8 @@ function relationTitle(source: ReturnType<typeof relationSource>): string | null
   return fromPosition ?? query.titleCode ?? fromScope ?? null
 }
 function sameIdentity(left: { enterpriseId?: number | null; uscc: string | null }, right: { enterpriseId?: number | null; uscc: string | null }, confirmed: boolean) {
-  const a = normalizeUscc(left.uscc)
-  const b = normalizeUscc(right.uscc)
-  if (a && b && a !== b) fail('identity_conflict', 'Source USCC values conflict')
-  if (left.enterpriseId && right.enterpriseId && left.enterpriseId !== right.enterpriseId) fail('identity_conflict', 'Source enterprise IDs conflict')
-  if (confirmed && (!a || !b) && !(left.enterpriseId && right.enterpriseId && left.enterpriseId === right.enterpriseId)) {
-    fail('ambiguous_candidate', 'No verified row-level enterprise identity')
-  }
-  if (!a && !b && !(left.enterpriseId && right.enterpriseId && left.enterpriseId === right.enterpriseId)) {
-    fail('ambiguous_candidate', 'Candidate has no enterprise identity anchor')
-  }
+  const problem = correspondenceIdentityProblem(left, right, confirmed)
+  if (problem) fail(problem.code, problem.message)
 }
 function sameTitle(a: string | null, b: string | null, confirmed: boolean) {
   if (a && b && a !== b) fail('title_conflict', 'Source title codes conflict')
