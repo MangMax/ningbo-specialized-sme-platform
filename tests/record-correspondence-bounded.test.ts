@@ -243,6 +243,8 @@ it('preserves all typed roles, four statuses, conjunctive filters and public err
   const app = await startHttpFixture({ routes: {
     '/api/roster/correspondences': r => handleRecordCorrespondenceRequest({ ...r, action: 'list' }, { db: f.db }),
     '/api/roster/correspondences/999999': r => handleRecordCorrespondenceRequest({ ...r, action: 'get', id: 999999 }, { db: f.db }),
+    '/api/roster/correspondences/candidates': r => handleRecordCorrespondenceRequest({ ...r, action: 'candidates' }, { db: f.db }),
+    ...Object.fromEntries((['event', 'relation', 'export_row'] as const).map(kind => [`/api/roster/correspondences/${kind === 'event' ? 'events' : kind === 'relation' ? 'relations' : 'export-rows'}/999999`, (r: Parameters<typeof handleRecordCorrespondenceRequest>[0]) => handleRecordCorrespondenceRequest({ ...r, action: 'source', kind, id: 999999 }, { db: f.db })])),
   } })
   try {
     const all = await (await fetch(app.baseUrl + '/api/roster/correspondences')).json() as any
@@ -268,6 +270,20 @@ it('preserves all typed roles, four statuses, conjunctive filters and public err
     }
     expect((await fetch(app.baseUrl + '/api/roster/correspondences/999999')).status).toBe(404)
     expect(() => dispatchRecordCorrespondenceMcp('get', { id: 999999 }, { db: f.db })).toThrowError(expect.objectContaining({ code: 'not_found', statusCode: 404 }))
+    for (const [kind, path] of [['event', 'events'], ['relation', 'relations'], ['export_row', 'export-rows']] as const) {
+      const response = await fetch(app.baseUrl + `/api/roster/correspondences/${path}/999999`)
+      expect(response.status).toBe(404)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(await response.json()).toMatchObject({ error: { code: 'not_found' } })
+      expect(() => dispatchRecordCorrespondenceMcp('source', { kind, id: 999999 }, { db: f.db })).toThrowError(expect.objectContaining({ code: 'not_found', statusCode: 404 }))
+    }
+    for (const [body, status, code] of [[{ eventId: 999999, queryIds: [f.query.id], ruleVersion: 'missing' }, 404, 'not_found'], [{ eventId: event.id, queryIds: [-1], ruleVersion: 'invalid' }, 400, 'invalid_request']] as const) {
+      const response = await fetch(app.baseUrl + '/api/roster/correspondences/candidates', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      expect(response.status).toBe(status)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(await response.json()).toMatchObject({ error: { code } })
+      expect(() => dispatchRecordCorrespondenceMcp('candidates', body, { db: f.db })).toThrowError(expect.objectContaining({ code, statusCode: status }))
+    }
   } finally { await app.close() }
 })
 
