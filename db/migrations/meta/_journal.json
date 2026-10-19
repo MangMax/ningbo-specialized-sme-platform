@@ -99,6 +99,13 @@
       "when": 1792379842240,
       "tag": "0013_nappy_dreadnoughts",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1792380442240,
+      "tag": "0019_import_receipts",
+      "breakpoints": true
     }
   ]
 }
