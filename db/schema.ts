@@ -1140,3 +1140,18 @@ export const evidenceRevisionEvent113 = sqliteTable('evidence_revision_event_113
 export const evidenceScopeVersion113 = sqliteTable('evidence_scope_version_113', {
   scopeKey: text('scope_key').primaryKey(), latestRevisionId: integer('latest_revision_id').notNull(), pendingCount: integer('pending_count').notNull(),
 })
+
+/** #114 immutable review/explicit-work receipts, never a second decision writer. */
+export const evidenceReviewReceipt114 = sqliteTable('evidence_review_receipt_114', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  idempotencyKey: text('idempotency_key').notNull().unique(), requestHash: text('request_hash').notNull(), kind: text('kind').notNull(),
+  enterpriseId: integer('enterprise_id'), titleCode: text('title_code'), direction: text('direction'), decisionId: integer('decision_id'), sourceDecisionId: integer('source_decision_id'), reviewedRevisionId: integer('reviewed_revision_id'),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(), basis: text('basis').notNull(),
+  response: text('response', { mode: 'json' }).$type<Record<string, unknown>>().notNull(), recordedAt: text('recorded_at').notNull(),
+}, t => [index('evidence_review_scope_114_idx').on(t.enterpriseId, t.titleCode, t.direction, t.decisionId, t.id)])
+/** Pins even unchanged explicit rule evaluations, so versions cannot be silently redefined. */
+export const evidenceRuleRelease114 = sqliteTable('evidence_rule_release_114', {
+  id: integer('id').primaryKey({ autoIncrement: true }), ruleId: text('rule_id').notNull(), version: text('version').notNull(),
+  enterpriseId: integer('enterprise_id').notNull(), titleCode: text('title_code').notNull(), direction: text('direction').notNull(),
+  previousDigest: text('previous_digest').notNull(), evaluationDigest: text('evaluation_digest').notNull(), revisionId: integer('revision_id'), receiptKey: text('receipt_key').notNull(),
+}, t => [uniqueIndex('evidence_rule_release_scope_114_uq').on(t.ruleId,t.version,t.enterpriseId,t.titleCode,t.direction)])

@@ -1,3 +1,4 @@
+import { readEvidenceToken113 } from './evidence-impact-113'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { normalizeUscc } from '../../lib/domain'
 import { createHash } from 'node:crypto'
@@ -23,15 +24,17 @@ const content = z.strictObject({
   movedIn: z.strictObject({ city: note.nullish(), titleCode: title.nullish(), year: z.number().int().min(1900).max(2200).nullish(), batch: positive.nullish() }).optional(),
 })
 export const decisionCommand102 = decisionScope102.extend({
-  action: z.enum(['replace', 'withdraw']), expectedCurrentId: positive.nullable(),
+  action: z.enum(['replace', 'withdraw', 'maintain']), expectedCurrentId: positive.nullable(),
   idempotencyKey: z.string().trim().min(1).max(200),
   actor: z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1).max(200) }),
   basis: note, ruleVersion: z.string().trim().min(1).max(200),
   effectiveAt: z.string().datetime({ offset: true }), decision: content.optional(),
+  reviewedEvidence: z.strictObject({ latestRevisionId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), projectionReady: z.literal(true) }).optional(),
 }).superRefine((c, ctx) => {
   const d = c.decision
   const invalid = (message: string) => ctx.addIssue({ code: 'custom', message })
-  if ((c.action === 'replace') !== !!d) invalid('Replace requires decision; withdraw must omit it')
+  if ((c.action === 'replace') !== !!d) invalid('Replace requires decision; withdraw/maintain must omit it')
+  if (c.action === 'maintain' && !c.reviewedEvidence || c.action === 'withdraw' && c.reviewedEvidence) invalid('Maintain requires reviewed evidence; withdraw must omit it')
   if (!d) return
   if (d.status === 'confirmed_no_diff' && (d.reasonCode != null || d.measureCode !== 'none' || d.verificationStatus !== 'confirmed')) invalid('confirmed_no_diff requires no reason, none measure, confirmed verification')
   if (d.status === 'confirmed_reason' && (!d.reasonCode || d.verificationStatus !== 'confirmed')) invalid('confirmed_reason requires reason and confirmed verification')
@@ -59,7 +62,7 @@ function publicVersion(row: typeof s.differenceReason.$inferSelect, currentId: n
   return { ...version, origin: row.lifecycleAction ? 'lifecycle' : 'legacy_import', isCurrent: row.id === currentId }
 }
 function receipt(row: typeof s.differenceReason.$inferSelect) {
-  return { versionId: row.id, currentId: row.lifecycleAction === 'withdraw' ? null : row.id, previousId: row.previousId, action: row.lifecycleAction, recordedAt: row.recordedAt }
+  return { versionId: row.id, currentId: row.lifecycleAction === 'withdraw' ? null : row.id, previousId: row.previousId, action: row.lifecycleAction as string | null, recordedAt: row.recordedAt }
 }
 function requireEnterprise(db: DecisionDb, enterpriseId: number) {
   const enterprise = db.select({ id: s.enterprise.id, usccNorm: s.enterprise.usccNorm, nameNorm: s.enterprise.nameNorm }).from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get()
@@ -77,8 +80,14 @@ export function currentDecision102(db: DecisionDb, scope: Scope) {
   return { ...scope, versionId: row?.id ?? null, current: row && row.lifecycleAction !== 'withdraw' ? publicVersion(row, row.id) : null }
 }
 export function saveDecision102(db: DecisionDb, command: Command) {
+  command = parse102(decisionCommand102, command)
   const hash = createHash('sha256').update(JSON.stringify(command)).digest('hex')
   return db.transaction(tx => {
+    const review = tx.select().from(s.evidenceReviewReceipt114).where(eq(s.evidenceReviewReceipt114.idempotencyKey, command.idempotencyKey)).get()
+    if (review) {
+      if (review.requestHash !== hash) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key already has a different request')
+      return review.response
+    }
     const prior = tx.select().from(s.differenceReason).where(eq(s.differenceReason.idempotencyKey, command.idempotencyKey)).get()
     if (prior) {
       if (prior.requestHash !== hash) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key already has a different request')
@@ -87,6 +96,27 @@ export function saveDecision102(db: DecisionDb, command: Command) {
     const enterprise = requireEnterprise(tx, command.enterpriseId)
     const previous = latestDecisionHead102(tx, command)
     if ((previous?.id ?? null) !== command.expectedCurrentId) throw new DecisionError102(409, 'stale_version', 'Expected current version no longer matches')
+    if (command.reviewedEvidence) {
+      const token = readEvidenceToken113(tx, command)
+      if (!token.projectionReady || token.latestRevisionId !== command.reviewedEvidence.latestRevisionId) throw new DecisionError102(409, 'stale_evidence', 'Relevant committed evidence changed or its projection is unfinished')
+      if (!previous || previous.lifecycleAction === 'withdraw') throw new DecisionError102(409, 'no_current_decision', 'Review requires an active current decision')
+    }
+    const finishReview = (result: ReturnType<typeof receipt>, decisionId: number) => {
+      if (!command.reviewedEvidence) return result
+      const revisionId = command.reviewedEvidence.latestRevisionId
+      // Establish the baseline for the resulting version; replacement never invents content.
+      const impact = s.explanationImpact113
+      tx.insert(impact).values({ enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction, decisionId, latestRevisionId: revisionId, pendingSinceRevisionId: revisionId, reviewedRevisionId: revisionId, classification: 'evidence_changed' })
+        .onConflictDoUpdate({ target: [impact.enterpriseId, impact.titleCode, impact.direction, impact.decisionId], set: { reviewedRevisionId: revisionId } }).run()
+      if (previous && previous.id !== decisionId) tx.update(impact).set({ reviewedRevisionId: revisionId }).where(and(eq(impact.decisionId, previous.id), eq(impact.enterpriseId, command.enterpriseId), eq(impact.titleCode, command.titleCode), eq(impact.direction, command.direction))).run()
+      const response = { ...result, reviewedRevisionId: revisionId }
+      tx.insert(s.evidenceReviewReceipt114).values({ idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action, enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction, decisionId, sourceDecisionId: previous?.id ?? null, reviewedRevisionId: revisionId, actor: command.actor, basis: command.basis, response, recordedAt: new Date().toISOString() }).run()
+      return response
+    }
+    if (command.action === 'maintain') {
+      const row = latestDecision102(tx, command)!
+      return finishReview({ ...receipt(row), action: 'maintain', recordedAt: new Date().toISOString() }, row.id)
+    }
     if ((command.action === 'replace') !== !!command.decision) throw new DecisionError102(400, 'invalid_request', 'Replacement requires decision; withdrawal must omit decision')
     if (command.action === 'withdraw' && (!previous || previous.lifecycleAction === 'withdraw')) throw new DecisionError102(409, 'no_current_decision', 'No active decision to withdraw')
     const d = command.decision ?? { status: 'not_queried' as const, measureCode: 'none' as const, verificationStatus: 'pending' as const }
@@ -126,7 +156,7 @@ export function saveDecision102(db: DecisionDb, command: Command) {
       lifecycleAction: command.action, previousId: previous?.id ?? null, actor: command.actor, basis: command.basis,
       ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, idempotencyKey: command.idempotencyKey, requestHash: hash, recordedAt,
     }).returning().get()
-    return receipt(row)
+    return finishReview(receipt(row), row.id)
   }, { behavior: 'immediate' })
 }
 

@@ -38,6 +38,8 @@ import { createHash, timingSafeEqual } from 'node:crypto'
  */
 export const MCP_WRITE_TOOLS = [
   'save_difference_decision',
+  'process_evidence_impacts',
+  'release_evidence_rule',
   'maintain_enterprise_alias',
   'save_ocr_result',
   'delete_ocr_result',
