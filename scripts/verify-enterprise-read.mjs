@@ -46,6 +46,7 @@ db.insert(s.platformExportRow).values({ batchId: oldBatch.id, sourceRowNo: 3, us
 // first-year ties across sources, undated awards, review-only histories,
 // termination/re-award and null-USCC two-direction differences.
 const edges = []
+db.insert(s.enterprise).values({ name: '替换\uFFFD企业', nameNorm: '替换\uFFFD企业', district: '替换\uFFFD属地' }).run()
 for (let i = 0; i < 6; i++) {
  const enterpriseId = db.insert(s.enterprise).values({ name: `汇总边界企业${i}`, nameNorm: `汇总边界企业${i}`, usccNorm: i === 5 ? null : `EDGE84${i}` }).returning().get().id
  edges.push(enterpriseId)
@@ -82,9 +83,15 @@ try {
  for (const name of ['list_enterprises', 'get_enterprise_detail']) assert.ok(tools.result.tools.some(tool => tool.name === name))
  const filters = [{}, { q: '已确认旧名' }, { q: '待核旧名' }, { q: 'synthetic84' }, { title: ['little_giant'], firstYear: [2022] }, { title: ['innovative_sme'], firstYear: [2022] }, { firstStatus: ['confirmed'] }, { rosterState: 'removed_platform_only' }, { district: '海曙区', page: 2, pageSize: 10 }, { page: 100, pageSize: 10 }, { source: ['jxj'], eventType: ['award'], year: [2025] }, { sort: 'name' }, { sort: 'title' }, { diffStatus: ['not_queried'] }, { diffStatus: ['none'] }]
  for (const sort of ['recognition', 'name', 'title']) for (const page of [1, 2, 100]) for (const firstStatus of [undefined, ['confirmed'], ['pending']]) filters.push({ q: '汇总（边界）', sort, page, pageSize: 2, firstStatus })
- filters.push({ q: '汇总边界', title: ['specialized_sme'], firstYear: [2021, 2022], firstStatus: ['pending'] }, { q: '汇总边界', source: ['miit'], eventType: ['review'], year: [2023, 2024] }, { q: '汇总边界', diffStatus: ['none', 'not_queried'] }, { district: '北仑区', firstStatus: ['pending'] })
+ filters.push({ q: '汇总边界', title: ['specialized_sme'], firstYear: [2021, 2022], firstStatus: ['pending'] }, { q: '汇总边界', source: ['miit'], eventType: ['review'], year: [2023, 2024] }, { q: '汇总边界', diffStatus: ['none', 'not_queried'] }, { district: '北仑区', firstStatus: ['pending'] }, { q: '\uD800' }, { district: '替换\uD800属地' })
  const mcpKeys = new Set(['q', 'title', 'district', 'rosterState', 'firstYear', 'firstStatus', 'page', 'pageSize'])
  for (const filter of filters) {
+  // JSON/MCP preserves isolated UTF-16; URLSearchParams substitutes U+FFFD.
+  // Compare the actual MCP input with the original JS filter at that seam.
+  if (Object.values(filter).some(value => typeof value === 'string' && !value.isWellFormed())) {
+   assert.deepEqual(await call('list_enterprises', filter), baseline.listRosterEnterprises(db, filter))
+   continue
+  }
   const params = new URLSearchParams(Object.entries(filter).filter(([, value]) => value !== undefined).map(([key, value]) => [key, Array.isArray(value) ? value.join(',') : String(value)]))
   const response = await fetch(`${base}/api/roster/enterprises?${params}`); assert.equal(response.status, 200)
   const result = await response.json(); assert.deepEqual(result, baseline.listRosterEnterprises(db, filter))

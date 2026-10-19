@@ -15,6 +15,10 @@ const [lane, dbPath, mode = 'list', concurrencyText = '1', countText = '20'] = p
 const concurrency = Number(concurrencyText), count = Number(countText)
 assert.ok(['driver', 'http', 'mcp'].includes(lane) && dbPath?.startsWith('/') && ['list', 'deep', 'search', 'detail'].includes(mode) && [1, 2, 5].includes(concurrency))
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+// JSON object key order is not response semantics. Preserve array order while
+// normalizing object keys before comparing HTTP/MCP results across versions.
+const canonical = value => value && typeof value === 'object' ? Array.isArray(value)
+  ? value.map(canonical) : Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value
 const jiti = createJiti(import.meta.url)
 const { useDb } = await jiti.import('../db/client.ts')
 const db = useDb({ dbPath, readOnly: true })
@@ -66,7 +70,7 @@ if (lane === 'driver') {
     const result = lane === 'http' ? body : JSON.parse(body.result.content[0].text)
     if (mode === 'detail') assert.equal(result.enterprise.enterpriseId, fixed.id)
     else assert.ok(result.rows.length > 0 && result.rows.length <= 25)
-    return { ms, responseBytes: Buffer.byteLength(text), resultSha256: createHash('sha256').update(JSON.stringify(result)).digest('hex') }
+    return { ms, responseBytes: Buffer.byteLength(text), resultSha256: createHash('sha256').update(JSON.stringify(canonical(result))).digest('hex') }
   }
   try {
     let ready = false

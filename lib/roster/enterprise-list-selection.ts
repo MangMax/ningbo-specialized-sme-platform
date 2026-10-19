@@ -47,6 +47,10 @@ export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilt
   identityFunctions(db)
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
   const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
+  // Stored SQLite UTF-8 text cannot contain isolated UTF-16 surrogates. Binding
+  // those inputs would substitute U+FFFD and create matches the JS filter never
+  // made. Valid Unicode, including supplementary characters, is unchanged.
+  const validText = (filter.q ?? '').isWellFormed() && (filter.district ?? '').isWellFormed()
   const search = needle != null || usccNeedle != null ? sql`(instr(${identityNameSql(sql`e.name`)},${needle})>0 or
     exists(select 1 from enterprise_alias a where a.enterprise_id=e.id and a.verification_status='confirmed' and instr(${identityNameSql(sql`a.name`)},${needle})>0) or
     instr(case when instr(e.uscc_norm,char(0))>0 or e.uscc_norm glob '*[^ -~]*' then roster84_upper(e.uscc_norm) else upper(coalesce(e.uscc_norm,'')) end,${usccNeedle})>0)` : sql`1`
@@ -62,7 +66,7 @@ export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilt
       ${filter.diffStatus.every(x => x === 'none') ? sql`and 0` : sql``}) or ${inArray(sql`d.reason`, filter.diffStatus.filter(x => x !== 'none'))})` : sql`1`
   const query = sql`
     with scope as materialized (
-      select e.id from enterprise e where ${search}
+      select e.id from enterprise e where ${validText ? search : sql`0`}
         and ${filter.district ? sql`coalesce(nullif(e.district,''),(select district from record r where r.enterprise_id=e.id and r.district is not null and r.district!='' order by r.id limit 1))=${filter.district}` : sql`1`}
     ), fact_base as materialized (
       select r.enterprise_id,r.title_code,e.uscc_norm,

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db'
+import { listEnterprises } from '../server/utils/mcp-roster'
 
 const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-http-'))
 const db = useDb({ dbPath: join(dir, 'test.sqlite') })
@@ -125,6 +126,16 @@ it('HTTP name-only detail skips impossible normalized-name matches in unrelated 
     db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${[exact.id, ...ids].map(() => '?').join(',')})`).run(exact.id, ...ids)
     db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(identity.id)
   }
+})
+it('MCP search keeps malformed UTF-16 distinct from stored replacement characters', () => {
+  const identity = db.insert(schema.enterprise).values({ name: '替换\uFFFD企业', nameNorm: '替换\uFFFD企业', district: '替换\uFFFD属地' }).returning().get()
+  try {
+    // SQLite UTF-8 binding substitutes U+FFFD for an isolated surrogate. The
+    // original JS predicates did not equate these distinct inputs.
+    expect(listEnterprises(db, { q: '\uD800' }).rows).toEqual([])
+    expect(listEnterprises(db, { district: '替换\uD800属地' }).rows).toEqual([])
+    expect(listEnterprises(db, { q: '\uFFFD' }).rows.map(row => row.enterpriseId)).toEqual([identity.id])
+  } finally { db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(identity.id) }
 })
 it('HTTP SQL selection preserves first-award ties, pending years, same-event filters and terminated lifecycle', async () => {
   const identities = ['A', 'B', 'C'].map(label => db.insert(schema.enterprise).values({ name: `汇总边界${label}`, nameNorm: `汇总边界${label}`, usccNorm: `BOUND84${label}` }).returning().get().id)
