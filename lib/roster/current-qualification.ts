@@ -6,7 +6,7 @@ import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
 
-export const CURRENT_RULE_VERSION = 'current-roster-116-v3'
+export const CURRENT_RULE_VERSION = 'current-roster-116-v4'
 export const CURRENT_TITLES = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 export type CurrentTitle = typeof CURRENT_TITLES[number]
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
@@ -22,6 +22,84 @@ function domainReader(db: Database.Database) {
   if (!reader) { reader=drizzle(db,{schema}); readers.set(db,reader) }
   return reader
 }
+type QualificationEvent = LifecycleEvent & { batchSeq: number | null }
+interface CycleJudgment {
+  originYear: number
+  batch: number | null
+  events: QualificationEvent[]
+  awardYears: number[]
+  failureYears: number[]
+  group: CurrentGroup
+  notes: string[]
+}
+const awardTime = (e: QualificationEvent) => e.decidedYear ?? e.year
+const originTime = (e: QualificationEvent) => e.year ?? (e.eventType === 'award' ? awardTime(e) : null)
+
+/** Adjudicate the complete originating year/batch before comparing cycles. */
+function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number): CycleJudgment {
+  const awards = events.filter(e => e.eventType === 'award')
+  const reviews = events.filter(e => e.eventType === 'review')
+  const awardYears = awards.map(e => awardTime(e)!).filter(y => y <= year)
+  const failureYears = reviews.filter(e => e.reviewOutcome === 'failed' && e.decidedYear != null && e.decidedYear <= year && e.decidedYear >= originYear).map(e => e.decidedYear!)
+  const result: CycleJudgment = { originYear, batch, events, awardYears, failureYears, group:'pending', notes:[] }
+  if (originYear > year || awards.some(e => awardTime(e) == null || awardTime(e)! > year || awardTime(e)! < originYear)) {
+    result.notes.push('认定日期缺失或尚未生效，当前周期待确认')
+  } else if (reviews.some(e => e.batchSeq == null || e.decidedYear == null || e.decidedYear > year || e.decidedYear < originYear || !['passed','failed'].includes(e.reviewOutcome ?? '')) || reviews.length > 0 && awards.some(e => e.batchSeq == null)) {
+    result.notes.push('对应周期复核结论/结论年份/批次不完整，待确认')
+  } else {
+    const lastAward = Math.max(...awardYears)
+    const unresolvedFailures = failureYears.filter(y => y >= lastAward)
+    const lastFailure = Math.max(...unresolvedFailures)
+    const lastPassed = Math.max(...reviews.filter(e => e.reviewOutcome === 'passed').map(e => e.decidedYear!))
+    if (unresolvedFailures.length) {
+      if (lastFailure === lastAward || lastPassed >= lastFailure) result.notes.push('对应周期失败与通过/认定恢复冲突；未确认重新认定恢复，待确认')
+      else { result.group='excluded'; result.notes.push('对应认定周期复核明确不通过，未见后续重新认定恢复') }
+    } else {
+      // Only now use the shared three-year calculation. Its active label alone
+      // cannot resolve a failed -> passed sequence or a batch ambiguity.
+      const current = computeTitleLifecycle(events)
+      if (current.dueYear != null && current.dueYear > year) result.group='eligible'
+      else result.notes.push('已到复核年份，未见明确延续结果，待确认')
+    }
+  }
+  return result
+}
+
+function adjudicateCurrentCycles(formal: QualificationEvent[], year: number): { group: CurrentGroup; notes: string[]; originYear: number } {
+  const byYear = new Map<number, Map<number | null, QualificationEvent[]>>()
+  const unknown: QualificationEvent[] = []
+  for (const event of formal) {
+    const origin = originTime(event)
+    if (origin == null) { unknown.push(event); continue }
+    let batches = byYear.get(origin)
+    if (!batches) { batches = new Map(); byYear.set(origin,batches) }
+    const events = batches.get(event.batchSeq) ?? []
+    events.push(event); batches.set(event.batchSeq,events)
+  }
+  const judgments = [...byYear].flatMap(([origin,batches]) => [...batches].map(([batch,events]) => adjudicateCycle(events,origin,batch,year)))
+  // Selection follows adjudication, retains *every* batch of the current year,
+  // and never uses the latest passed event to erase another batch or a failure.
+  const originYear = Math.max(...judgments.map(c => c.originYear))
+  const current = judgments.filter(c => c.originYear === originYear)
+  const notes = current.flatMap(c => c.notes.map(note => `${c.originYear}年/批次${c.batch ?? '?'}：${note}`))
+  let group: CurrentGroup = current[0]?.group ?? 'pending'
+  if (!current.length) notes.push('缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格')
+  if (current.length > 1) { group='pending'; notes.push('同年多批次对应/结论冲突；不能按事件ID猜顺序或丢弃批次') }
+  // A new award may resolve old unknown-origin history. A renewal never supplies
+  // this recovery boundary, even if its conclusion is more recent.
+  const latestAward = Math.max(...judgments.flatMap(c => c.awardYears))
+  const unknownReviews = unknown.filter(e => e.eventType === 'review')
+  const relevantUnknown = unknownReviews.filter(e => e.decidedYear == null || e.decidedYear >= latestAward)
+  if (unknownReviews.length > relevantUnknown.length) notes.push('较早复核原周期未知；后续明确新认定恢复，旧缺口及出处保留')
+  if (relevantUnknown.length) { group='pending'; notes.push('复核对应原认定周期未知，待确认') }
+  if (unknown.some(e => e.eventType === 'award')) { group='pending'; notes.push('认定日期缺失，当前周期待确认') }
+  // Preserve #116's same-year re-award ordering boundary, using actual award
+  // dates and already partitioned older cycles, never a renewal's anchor year.
+  const recoveryConflict = current.some(c => c.awardYears.some(awarded => judgments.some(old => old.originYear < c.originYear && old.failureYears.includes(awarded))))
+  if (recoveryConflict) { group='pending'; notes.push('同年认定恢复与旧周期失败结论顺序冲突，待确认') }
+  return { group, notes, originYear }
+}
+
 /** A bounded enterprise × title projection; source blobs never enter this reader. */
 export function readCurrentCandidate(db: Database.Database, enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now()): CurrentRow {
   const enterprise = db.prepare('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
@@ -30,51 +108,11 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
   const formal = events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType) && evidence.some(v => v.eventId === e.id))
   const lifecycle = computeTitleLifecycle(formal)
   const row: CurrentRow = { enterpriseId, name: enterprise.name, uscc: enterprise.uscc_norm, district: enterprise.district, publishedNames: [...new Set(formal.map(e => e.nameRaw).filter((n): n is string => !!n))], aliases: [], firstYear: lifecycle.firstRecognitionYear, basis: formal.map(e => `event:${e.id}@${e.revision} ${e.eventType} ${e.year ?? ''}/${e.batchSeq ?? ''} 结论年:${e.decidedYear ?? ''}`).join('\n'), reviews: formal.filter(e => e.eventType === 'review').map(e => `${e.year ?? '?'}年原认定批次；结论年${e.decidedYear ?? '?'}；${e.reviewOutcome ?? '未知'}`).join('\n'), publication: formal.length ? '已见本称号宁波公布记录' : '尚未完成公布匹配核实', notes: [], references: evidence.map(v => `evidence:${v.id} ${v.sourceFile} ${v.attachment ?? ''} 序号:${v.listNo ?? ''}`), group: 'pending' }
-  const awards = formal.filter(e => e.eventType === 'award')
-  const awardYear = (e: typeof awards[number]) => e.decidedYear ?? e.year
-  // A formal, dated renewal can confirm a cycle even when its original award
-  // row is absent. It must not manufacture a first-recognition year.
-  const renewals = formal.filter(e => e.eventType === 'review' && e.reviewOutcome === 'passed' && e.year != null && e.decidedYear != null && e.decidedYear >= e.year && e.batchSeq != null)
-  const seeds = [...awards, ...renewals]
-  const datedSeeds = seeds.filter(e => awardYear(e) != null && awardYear(e)! <= year)
-  // Select the originating cycle before its renewal anchor. A late renewal of
-  // an older cycle cannot hide a failure of a newer cycle. Batch ambiguity is
-  // retained below; event IDs never break business-time ties.
-  const cycleYear = (e: typeof seeds[number]) => e.year ?? awardYear(e)!
-  const newestCycleYear = Math.max(...datedSeeds.map(cycleYear))
-  const currentSeeds = datedSeeds.filter(e => cycleYear(e) === newestCycleYear)
-  const newestYear = Math.max(...currentSeeds.map(e => awardYear(e)!))
-  const cycles = currentSeeds.filter(e => awardYear(e) === newestYear)
-  const newestAwardYear = Math.max(...awards.filter(e => awardYear(e) != null && awardYear(e)! <= year).map(e => awardYear(e)!))
-  const unknownCycleReviews = formal.filter(e => e.eventType === 'review' && e.year == null)
-  const relevantUnknownReviews = unknownCycleReviews.filter(e => e.decidedYear == null || e.decidedYear >= newestAwardYear)
-  if (unknownCycleReviews.length > relevantUnknownReviews.length) row.notes.push('较早复核原周期未知；后续明确新认定恢复，旧缺口及出处保留')
-  if (!seeds.length) {
-    if (events.length && events.every(e => e.eventType === 'nurture')) { row.group='excluded'; row.notes.push('纯入库培育，不构成称号') }
-    else row.notes.push('缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格')
-  } else if (relevantUnknownReviews.length) row.notes.push('复核对应原认定周期未知，待确认')
-  else if (formal.some(e => e.eventType === 'review' && e.reviewOutcome === 'failed' && e.decidedYear === newestYear)) row.notes.push('同年认定恢复与失败结论顺序冲突，待确认')
-  else if (seeds.some(e => awardYear(e) == null || awardYear(e)! > year)) row.notes.push('认定日期缺失或尚未生效，当前周期待确认')
-  else {
-    // Reviews refer to the original award year/batch. Old-cycle failures cannot
-    // terminate a newer award, even when the review was published later.
-    const reviews = formal.filter(e => e.eventType === 'review' && cycles.some(a => e.year === a.year && (e.batchSeq == null || a.batchSeq == null || e.batchSeq === a.batchSeq)))
-    const ambiguousBatch = reviews.some(e => cycles.some(a => e.year === a.year && e.batchSeq !== a.batchSeq && (e.batchSeq == null || a.batchSeq == null)))
-    if (reviews.some(e => e.decidedYear == null || e.reviewOutcome == null || e.decidedYear > year) || ambiguousBatch) row.notes.push('对应周期复核结论/结论年份/批次不完整，待确认')
-    else {
-      const latestYear = Math.max(newestYear,...reviews.map(e => e.decidedYear!))
-      const latestReviews = reviews.filter(e => e.decidedYear === latestYear)
-      const outcomes = new Set(latestReviews.map(e => e.reviewOutcome))
-      if (outcomes.size > 1 || outcomes.has('failed') && latestYear === newestYear || cycles.length > 1 && new Set(cycles.map(e => e.batchSeq)).size > 1) row.notes.push('同年或多批次结论冲突；不能按事件ID猜顺序')
-      else if (outcomes.has('failed')) { row.group='excluded'; row.notes.push('对应认定周期复核明确不通过，未见后续重新认定恢复') }
-      else {
-        // Reuse the shared three-year lifecycle only after selecting the
-        // unambiguous corresponding cycle (its general active label is insufficient).
-        const current = computeTitleLifecycle([...cycles,...reviews])
-        if (current.dueYear != null && current.dueYear > year) row.group='eligible'
-        else row.notes.push('已到复核年份，未见明确延续结果，待确认')
-      }
-    }
+  const qualification = adjudicateCurrentCycles(formal, year)
+  row.group = qualification.group
+  row.notes.push(...qualification.notes)
+  if (!formal.length && events.length && events.every(e => e.eventType === 'nurture')) {
+    row.group='excluded'; row.notes.push('纯入库培育，不构成称号')
   }
   const aliases = db.prepare("select id,name,version from enterprise_alias where enterprise_id=? and verification_status='confirmed' order by id").all(enterpriseId) as {id:number;name:string;version:number}[]
   row.aliases = [...new Set(aliases.map(a => a.name))]
@@ -152,7 +190,7 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
     row.firstYear=null; row.notes.push('首次认定补充依据不完整，年份留空；不据此丢弃已确认当前资格')
   }
   row.references.push(...incomplete.map(e => 'event:' + e.id + ' 正式出处待补'))
-  if (incomplete.some(e => e.eventType === 'award' ? (e.decidedYear ?? e.year) == null || (e.decidedYear ?? e.year)! >= newestYear : e.year == null || cycles.some(a => a.year === e.year))) {
+  if (incomplete.some(e => e.eventType === 'award' ? (e.decidedYear ?? e.year) == null || (e.decidedYear ?? e.year)! >= qualification.originYear : e.year == null || e.year >= qualification.originYear)) {
     row.group='pending'; row.notes.push('存在影响当前周期的无正式出处/未确认认定或复核，当前资格待确认')
   }
   return row

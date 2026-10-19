@@ -72,7 +72,7 @@ async function download(job: any) {
     expect(rows(wb, sheet)).toHaveLength(job.result.counts[key])
     expect(explanation[sheet]).toBe(String(job.result.counts[key]))
   }
-  expect(explanation['规则版本']).toBe('current-roster-116-v3')
+  expect(explanation['规则版本']).toBe('current-roster-116-v4')
   expect(explanation['数据版本']).toBe(job.result.dataVersion)
   expect(explanation['范围']).toContain('未实时采集，不证明全市完整')
   return { wb, bytes }
@@ -404,7 +404,7 @@ it('创新型失败无半成品并支持修正后重生成', async () => {
   const job = await terminal((await json(response)).jobId)
   expect(job.state).toBe('failed')
   expect(job.error).toContain('Excel')
-  expect(job.result.ruleVersion).toBe('current-roster-116-v3')
+  expect(job.result.ruleVersion).toBe('current-roster-116-v4')
   expect(job.result.artifact).toBeUndefined()
   expect((await fetch(url('/api/job-artifacts/' + job.id), { headers })).status).toBe(404)
   for (const extension of ['.part', '.xlsx']) expect(existsSync(join(dbPath + '.exports', job.id + extension))).toBe(false)
