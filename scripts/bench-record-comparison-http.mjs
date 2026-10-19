@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Local compiled Nitro HTTP/MCP benchmark. Only open an isolated SQLite copy.
-// node scripts/bench-record-comparison-http.mjs /absolute/copy.db http|mcp sources|comparison 1|2|5
+// node scripts/bench-record-comparison-http.mjs /absolute/copy.db http|mcp sources|comparison 1|2|5 [catalogPage=1]
 import assert from 'node:assert/strict'
 import { fork } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -11,8 +11,8 @@ import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
-const [dbPath,transport='http',mode='comparison',c='1']=process.argv.slice(2),concurrency=Number(c)
-assert.ok(dbPath?.startsWith('/') && !dbPath.includes('/full-snapshot/') && ['http','mcp'].includes(transport) && ['sources','comparison'].includes(mode) && [1,2,5].includes(concurrency) && (mode!=='sources'||transport==='http'))
+const [dbPath,transport='http',mode='comparison',c='1',pageText='1']=process.argv.slice(2),concurrency=Number(c),catalogPage=Number(pageText)
+assert.ok(Number.isSafeInteger(catalogPage)&&catalogPage>0&&dbPath?.startsWith('/') && !dbPath.includes('/full-snapshot/') && ['http','mcp'].includes(transport) && ['sources','comparison'].includes(mode) && [1,2,5].includes(concurrency) && (mode!=='sources'||transport==='http'))
 const require=createRequire(import.meta.url),Database=require('better-sqlite3'),db=new Database(dbPath,{readonly:true})
 const queryId=db.prepare('select id from platform_query order by id limit 1').get().id,docId=db.prepare("select id from source_document where source='jxj' order by id limit 1").get().id,enterpriseId=db.prepare('select id from enterprise order by id limit 1').get().id
 db.close()
@@ -30,7 +30,7 @@ for(const stream of [server.stdout,server.stderr])stream.on('data',b=>{output=(o
 server.on('message',message=>{if(message==='reset')reset=true;else metrics.push(message)})
 const input={queryIds:[queryId],exportBatchIds:[],officialSourceDocumentIds:[docId],enterpriseId,page:1,pageSize:25}
 async function request(){
- const start=performance.now(),query=mode==='sources'?{kind:'query',page:1,pageSize:25}:input
+ const start=performance.now(),query=mode==='sources'?{kind:'query',page:catalogPage,pageSize:25}:input
  const response=transport==='http'?await fetch(`${base}/api/roster/record-comparison${mode==='sources'?'/sources':''}?${new URLSearchParams(Object.entries(query).map(([k,v])=>[k,String(v)]))}`):await fetch(`${base}/mcp`,{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18'},body:JSON.stringify({jsonrpc:'2.0',id:++id,method:'tools/call',params:{name:'list_record_comparison',arguments:input}})})
  const text=await response.text(),ms=performance.now()-start;assert.equal(response.status,200)
  const body=JSON.parse(text.split('\n').find(s=>s.startsWith('data: '))?.slice(6)??text),result=transport==='http'?body:JSON.parse(body.result.content[0].text)
@@ -49,5 +49,5 @@ try{
  await sleep(30);count=metrics.length;server.send('sample');for(let i=0;i<100&&metrics.length===count;i++)await sleep(10);assert.ok(metrics.length)
  assert.ok(hot.every(x=>x.resultSha256===cold.resultSha256),'stable complete result across concurrency')
  const sorted=hot.map(x=>x.ms).sort((a,b)=>a-b),pct=p=>sorted[Math.ceil(p*sorted.length)-1]
- console.log(JSON.stringify({transport,mode,concurrency,node:process.version,cold:{...cold,eventLoopP95Ms:coldMetrics.lagP95Ms,eventLoopMaxMs:coldMetrics.lagMaxMs,incrementalHeap:coldMetrics.heap-coldMetrics.heapStart},hotSamples:hot.length,hot:{p50:pct(.5),p95:pct(.95),p99:pct(.99)},responseBytes:hot[0].responseBytes,resultSha256:cold.resultSha256,peakHeap:Math.max(...metrics.map(x=>x.heap)),incrementalHeap:Math.max(...metrics.map(x=>x.heap))-metrics.at(-1).heapStart,peakRss:Math.max(...metrics.map(x=>x.rss)),osPeakRss:Math.max(...metrics.map(x=>x.maxRss)),heapLimit:metrics[0].heapLimit,eventLoopP95Ms:metrics.at(-1).lagP95Ms,eventLoopMaxMs:metrics.at(-1).lagMaxMs,eventLoopSamples:metrics.at(-1).lagSamples,containerLimited:false}))
+ console.log(JSON.stringify({transport,mode,concurrency,catalogPage,node:process.version,cold:{...cold,eventLoopP95Ms:coldMetrics.lagP95Ms,eventLoopMaxMs:coldMetrics.lagMaxMs,incrementalHeap:coldMetrics.heap-coldMetrics.heapStart},hotSamples:hot.length,hot:{p50:pct(.5),p95:pct(.95),p99:pct(.99)},responseBytes:hot[0].responseBytes,resultSha256:cold.resultSha256,peakHeap:Math.max(...metrics.map(x=>x.heap)),incrementalHeap:Math.max(...metrics.map(x=>x.heap))-metrics.at(-1).heapStart,peakRss:Math.max(...metrics.map(x=>x.rss)),osPeakRss:Math.max(...metrics.map(x=>x.maxRss)),heapLimit:metrics[0].heapLimit,eventLoopP95Ms:metrics.at(-1).lagP95Ms,eventLoopMaxMs:metrics.at(-1).lagMaxMs,eventLoopSamples:metrics.at(-1).lagSamples,containerLimited:false}))
 }finally{await stopOwnedChild(server);rmSync(dir,{recursive:true,force:true})}
