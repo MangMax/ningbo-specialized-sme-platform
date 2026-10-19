@@ -1,3 +1,4 @@
+import { decisionRpcError102 } from '../utils/decision-lifecycle-102-mcp'
 import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
 import { admitEnterpriseResponse } from '../utils/enterprise-read-response'
 import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
@@ -49,6 +50,10 @@ export default defineMcpHandler({
     '这个 server 暴露两层能力:**文件库**(上传文件 → 页图 → OCR → 解析段)与' +
     '**名录**(企业 / 曾用名 / 称号事件 / 出处 / 平台证据 / 导出快照 / 差异解释)。',
     '',
+    '差异决定维护：save_difference_decision 显式替代/撤回，必填 expectedCurrentId、actor、basis、ruleVersion、effectiveAt 与幂等键。',
+    'get_current_difference_decision / get_difference_decision / list_difference_decision_history 读当前及稳定 ID 历史；preview_legacy_difference_decisions 只读映射/冲突，旧标注不等于 confirmed_no_diff。',
+    '差异决定契约见 docs/maintenance-102.md；旧 comparison/curated PATCH 对未接管坐标保持兼容；已接管坐标返回409 decision_lifecycle_required；旧标注不等同正式决定，生产迁移需另授权。',
+    '',
     '典型流程:',
     '1. `list_files` 找到目标文件(拿 `id` 或 `relPath`);',
     '2. `get_file` / `list_file_parts` 看它的元数据与**段**(一份公布文件常含多年份、多事件);',
@@ -77,8 +82,8 @@ export default defineMcpHandler({
     '  `save_roster_batch` / `submit_platform_batch` / `retry_platform_batch` 需要 `Authorization: Bearer <NUXT_MCP_TOKEN>`,未带时这几个 tool',
     '  不会出现在 `tools/list` 里,强行调用会得到 HTTP 401。只读 tool(含只读预检',
     '  `preflight_roster_batch`)不需要。',
-    '- 名录实体(企业 / 曾用名 / 称号事件 / 出处 / 平台快照 / 差异解释)**只能经',
-    '  `save_roster_batch` 导入与明确领域维护命令**落库；既有普通企业资料更正用 `patch_enterprise_profile`，不要绕过应用服务直写库。载荷见',
+    '- 名录来源导入经 `save_roster_batch`；既有资源经明确领域维护命令：普通企业资料用 `patch_enterprise_profile`，已接管的差异决定用 `save_difference_decision`，旧导入不能覆盖。',
+    '  不要绕过应用服务直写库。导入载荷见',
     '  `docs/roster-lifecycle-contract.md` §8.3(归并项 §8.4);证据不足一律**留空并标待核**,',
     '  不要猜填、不要为填满字段而复制来源里没有的值。',
     '- `year` / `batch` 在文件级是**公布**年份/批次(目录给的、单值);文件**内容**里的年份/批次',
@@ -100,6 +105,8 @@ export default defineMcpHandler({
     if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
       const body = await readBody(event, { strict: false }).catch(() => undefined)
       if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail'].includes(body?.params?.name)) admitEnterpriseResponse(event)
+      const invalidDecision = decisionRpcError102(body)
+      if (invalidDecision) return invalidDecision
       const invalidParse = parseRpcError105(body)
       if (invalidParse) return invalidParse
       const invalidEventCorrection = eventCorrectionRpcError(body)

@@ -819,6 +819,15 @@ export const differenceReason = sqliteTable(
       .default('pending'),
     /** 该解释的登记时点(时态化的排序键)。 */
     recordedAt: text('recorded_at').notNull(),
+    /** #102: explicit lifecycle metadata; null denotes a historical import, never an inferred decision. */
+    lifecycleAction: text('lifecycle_action', { enum: ['replace', 'withdraw'] }),
+    previousId: integer('previous_id').references((): AnySQLiteColumn => differenceReason.id),
+    actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>(),
+    basis: text('basis'),
+    ruleVersion: text('rule_version'),
+    effectiveAt: text('effective_at'),
+    idempotencyKey: text('idempotency_key'),
+    requestHash: text('request_hash'),
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -831,6 +840,8 @@ export const differenceReason = sqliteTable(
       t.direction,
       t.recordedAt,
     ),
+    uniqueIndex('difference_reason_command_uq').on(t.idempotencyKey),
+    index('difference_reason_managed_idx').on(t.enterpriseId, t.titleCode, t.direction).where(sql`${t.lifecycleAction} is not null`),
     index('difference_reason_lookup_idx').on(t.enterpriseId, t.titleCode, t.direction),
   ],
 )

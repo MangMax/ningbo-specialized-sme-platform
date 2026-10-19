@@ -3015,6 +3015,14 @@ function recognizedDifferenceEvidenceError(db: Executor, pending: PendingPlatfor
   return null
 }
 
+function lifecycleOwnsDifference102(db: Executor, enterpriseId: number, titleCode: string, direction: string): boolean {
+  return !!db.select({ id: schema.differenceReason.id }).from(schema.differenceReason).where(and(
+    eq(schema.differenceReason.enterpriseId, enterpriseId), eq(schema.differenceReason.titleCode, titleCode),
+    eq(schema.differenceReason.direction, direction as typeof schema.differenceReason.$inferSelect.direction),
+    sql`${schema.differenceReason.lifecycleAction} is not null`,
+  )).limit(1).get()
+}
+
 function planDifference(
   db: Executor,
   pending: PendingEnterprises,
@@ -3075,6 +3083,12 @@ function planDifference(
   const existing = current
     ? findDifferenceRow(db, { enterpriseId: current.id, titleCode: difference.titleCode, direction: difference.direction, recordedAt })
     : undefined
+  // Historical import remains compatible until the coordinate is explicitly adopted.
+  // Once lifecycle metadata exists, this old path must never override its expected-version guard.
+  if (current && lifecycleOwnsDifference102(db, current.id, difference.titleCode, difference.direction)) {
+    push({ item: failure('difference', ref, 'decision_lifecycle_required', '该企业称号方向已采用差异决定生命周期；请用 /api/roster/decision-lifecycle/commands 或 save_difference_decision', 'differences'), action: 'skip', review: false })
+    return
+  }
   const status = difference.status ?? 'not_queried'
   push({
     item: success('difference', existing ? `difference:${existing.id}` : ref, { enterpriseId: current?.id ?? null }),
@@ -3083,6 +3097,7 @@ function planDifference(
     run: (tx) => {
       const enterprise = locateEnterprise(tx, spec)
       if (!enterprise) return failure('difference', ref, 'enterprise_not_found', '差异归属企业在写入阶段不存在', 'enterpriseName')
+      if (lifecycleOwnsDifference102(tx, enterprise.id, difference.titleCode, difference.direction)) return failure('difference', ref, 'decision_lifecycle_required', '差异决定已由生命周期命令接管；旧导入不能覆盖当前版本', 'differences')
       // 执行阶段解析真 id（本批新建的查询/关系此刻已插入）。
       let evidenceQueryId = refs.queryIdLiteral
       if (refs.queryRef) {
