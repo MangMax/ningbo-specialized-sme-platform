@@ -1,3 +1,4 @@
+import { and, asc, eq, sql } from 'drizzle-orm'
 /**
  * RL-11 名录只读工具的投影（契约 §9）。
  *
@@ -100,65 +101,32 @@ export interface ListDifferencesResult {
  * 差异与解释。**当前解释 = `recordedAt` 最新那条**（旧解释不丢，只是不再出现在这里）。
  */
 export function listDifferences(db: Db, input: ListDifferencesInput = {}): ListDifferencesResult {
-  const enterprises = db.select().from(schema.enterprise).all()
-  const nameById = new Map(enterprises.map((e) => [e.id, e.name]))
-  const queries = db.select().from(schema.platformQuery).all()
-  const queryById = new Map(queries.map((q) => [q.id, q]))
-
-  // 每 (企业, 称号, 方向) 取最新时点的那条 —— 时态化的「当前解释」。
-  const current = new Map<string, (typeof schema.differenceReason)['$inferSelect']>()
-  for (const difference of db.select().from(schema.differenceReason).all()) {
-    const key = `${difference.enterpriseId}|${difference.titleCode}|${difference.direction}`
-    const kept = current.get(key)
-    if (!kept || difference.recordedAt > kept.recordedAt) current.set(key, difference)
-  }
-
-  const all = [...current.values()].map((difference): ListDifferenceRow => {
-    const query = difference.evidenceQueryId != null ? queryById.get(difference.evidenceQueryId) : undefined
-    const hasMovedIn =
-      difference.movedInCity != null ||
-      difference.movedInTitleCode != null ||
-      difference.movedInYear != null ||
-      difference.movedInBatch != null
-    return {
-      enterpriseId: difference.enterpriseId,
-      name: nameById.get(difference.enterpriseId) ?? '',
-      titleCode: difference.titleCode,
-      direction: difference.direction,
-      status: difference.status,
-      reasonCode: difference.reasonCode,
-      measureCode: difference.measureCode,
-      movedIn: hasMovedIn
-        ? {
-            city: difference.movedInCity,
-            titleCode: difference.movedInTitleCode,
-            year: difference.movedInYear,
-            batch: difference.movedInBatch,
-          }
-        : null,
-      verificationStatus: difference.verificationStatus,
-      recordedAt: difference.recordedAt,
-      evidence: query
-        ? { queryId: query.id, queriedAt: query.queriedAt, interface: query.interface, status: query.status }
-        : null,
+  // Latest-version and evidence summary projection happen in SQL, before pagination.
+  // This never materializes unrelated raw_response/collection_evidence or historical notes.
+  return db.transaction(tx => {
+    const d = schema.differenceReason
+    const where = and(
+      sql`not exists (select 1 from difference_reason newer where newer.enterprise_id=${d.enterpriseId} and newer.title_code=${d.titleCode} and newer.direction=${d.direction} and (newer.recorded_at > ${d.recordedAt} or (newer.recorded_at = ${d.recordedAt} and newer.id > ${d.id})))`,
+      input.title ? eq(d.titleCode, input.title) : undefined,
+      input.direction ? eq(d.direction, input.direction) : undefined,
+      input.status ? eq(d.status, input.status as typeof schema.differenceReason.$inferSelect.status) : undefined,
+    )
+    const counts: Record<string, Record<string, number>> = {}
+    for (const group of tx.select({ titleCode: d.titleCode, direction: d.direction, n: sql<number>`count(*)` }).from(d).where(where).groupBy(d.titleCode,d.direction).all()) {
+      counts[group.titleCode] ??= {}
+      counts[group.titleCode]![group.direction] = group.n
     }
+    const { page,pageSize } = pageOf(input)
+    const rows = tx.select({ enterpriseId: d.enterpriseId, name: schema.enterprise.name, titleCode: d.titleCode, direction: d.direction, status: d.status, reasonCode: d.reasonCode,
+      measureCode: d.measureCode, verificationStatus: d.verificationStatus, recordedAt: d.recordedAt,
+      movedInCity: d.movedInCity, movedInTitleCode: d.movedInTitleCode, movedInYear: d.movedInYear, movedInBatch: d.movedInBatch,
+      queryId: schema.platformQuery.id, queriedAt: schema.platformQuery.queriedAt, queryInterface: schema.platformQuery.interface, queryStatus: schema.platformQuery.status,
+    }).from(d).innerJoin(schema.enterprise,eq(schema.enterprise.id,d.enterpriseId)).leftJoin(schema.platformQuery,eq(schema.platformQuery.id,d.evidenceQueryId)).where(where)
+      .orderBy(asc(d.enterpriseId),asc(d.titleCode),asc(d.direction)).limit(pageSize).offset((page-1)*pageSize).all().map(row => {
+        const { movedInCity,movedInTitleCode,movedInYear,movedInBatch,queryId,queriedAt,queryInterface,queryStatus,...summary } = row
+        return { ...summary, movedIn: [movedInCity,movedInTitleCode,movedInYear,movedInBatch].some(v => v != null) ? { city: movedInCity,titleCode: movedInTitleCode,year: movedInYear,batch: movedInBatch } : null,
+          evidence: queryId != null ? { queryId, queriedAt: queriedAt!, interface: queryInterface!, status: queryStatus! } : null }
+      })
+    return { rows,counts }
   })
-
-  const filtered = all
-    .filter((row) => {
-      if (input.title && row.titleCode !== input.title) return false
-      if (input.direction && row.direction !== input.direction) return false
-      if (input.status && row.status !== input.status) return false
-      return true
-    })
-    .sort((a, b) => (a.enterpriseId - b.enterpriseId) || a.titleCode.localeCompare(b.titleCode))
-
-  const counts: Record<string, Record<string, number>> = {}
-  for (const row of filtered) {
-    counts[row.titleCode] ??= {}
-    counts[row.titleCode]![row.direction] = (counts[row.titleCode]![row.direction] ?? 0) + 1
-  }
-
-  const { page, pageSize } = pageOf(input)
-  return { rows: filtered.slice((page - 1) * pageSize, page * pageSize), counts }
 }

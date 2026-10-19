@@ -1,41 +1,7 @@
-import { parseCurationPatch, patchCuration } from '~~/lib/curation'
-
-/**
- * 人工标注:把一条比对结果标为「已看过 / 不算差异」,或者取消标注。
- * `PATCH /api/comparison/curated`
- *
- * 写的是 `data/reconciliation-curated.json`(本地人工标注文件),**不碰台账**
- * (记录与身份归并只能由 pipeline 写,见 data-integrity 的安全阀)。
- */
-defineRouteMeta({
-  openAPI: {
-    tags: ['比对'],
-    summary: '人工标注一条比对结果',
-    requestBody: {
-      required: true,
-      content: {
-        'application/json': {
-          schema: {
-            type: 'object',
-            description: '标注内容(键的形状见 `lib/curation.ts` 的 `parseCurationPatch`)。',
-          },
-        },
-      },
-    },
-    responses: {
-      200: { description: '标注后的状态。' },
-      400: { description: '请求体不合法。' },
-    },
-  },
-})
-
-export default defineEventHandler(async (event) => {
-  let patch
-  try {
-    patch = parseCurationPatch(await readBody(event))
-  } catch (error) {
-    throw createError({ statusCode: 400, statusMessage: (error as Error).message })
-  }
-  patchCuration(useRuntimeConfig(event).curatedPath, patch)
-  return { curated: patch.curated }
+/** Historical JSON annotations are frozen. They never become formal decisions implicitly. */
+defineRouteMeta({ openAPI: { tags: ['比对'], summary: '旧人工标注写入口（已停用）', deprecated: true, description: '旧 JSON 保留只读；先 GET /api/roster/decision-lifecycle/legacy-preview 核对映射与冲突，再显式提交差异决定。生产迁移另授权。', responses: { 410: { description: 'legacy_write_retired，提供替代入口；不改旧 JSON 或正式决定' } } } })
+export default defineEventHandler((event) => {
+  setHeader(event, 'cache-control', 'no-store')
+  setResponseStatus(event, 410)
+  return { error: { code: 'legacy_write_retired', message: '旧标注写入口已停用；先预览映射/冲突，再显式提交决定。生产迁移须另授权。' }, replacement: '/api/roster/decision-lifecycle/commands', preview: '/api/roster/decision-lifecycle/legacy-preview' }
 })
