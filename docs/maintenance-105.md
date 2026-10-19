@@ -108,7 +108,20 @@ MCP `save_parse_result` 在上述对象中加 `fileId`。既有精确 `relPath` 
 `red-1.log` 为未接入路由前415；`red-path.log` 为恢复旧MCP路径支持前400；
 `red-version-mutation.log` 为临时移除版本保护后并发结果[200,200]使预期[200,409]失败。
 错误实现已恢复，不保留mutation。首次完整通过记录见`green-complete.log`。
-类型验证与最终集成tip验证记录在下节补充。
+集成tip `142c15a096513012e8b9f424e2cba70af82d3cc3` 已合入本分支，
+验证源码提交为 `6714827799d31e23701b6bbb7908289253e44133`（实现提交 `bc9aa99`）。
+该提交上顺序完成的最终门禁全部退出0：
+
+- `pnpm test tests/parse-maintenance-105-http.test.ts tests/mcp-surface.test.ts tests/file-parts.test.ts tests/stored-file.test.ts tests/files-openapi-contract.test.ts --maxWorkers=1`：
+  5文件通过、106测试通过、2跳过；其中本票13测试全部通过。两条跳过来自既有
+  `stored-file.test.ts` 的真实files库缺失分支，不是本票测试跳过。
+- `pnpm typecheck`：通过。
+- `pnpm build`：通过。
+- `git diff 4f910f6..HEAD --check`：通过。
+
+最终日志为`final-tests.log`、`final-typecheck.log`、`final-build.log`，
+源码SHA独立记录在`final-source-sha.txt`。后续仅补本文验收记录，不改变已测执行源码。
+本次没有运行全仓套件；集成父代理负责全规格门禁与审核。
 
 ## 性能敏感路径与限制
 
@@ -122,3 +135,13 @@ OCR读取或全库回填。历史列表为(file_id,id)索引游标及显式轻�
 小于256KiB且不含无关原文；SQL计划单独记录在`boundedness.jsonl`，不是私有函数断言。
 这是定向合成样本，不是完整业务分布1x/2x/5x、容量验收或受控1vCPU/4GiB保证。
 未运行生产写入、部署、全规模性能对照、浏览器/UI或长时间混合负载；本票不改UI。
+
+最终源码提交 `6714827799d31e23701b6bbb7908289253e44133` 的同一用例观测：
+Node24.22.0/macOS27.0.1/Apple M4，无容器限额、存在其他并行工作。
+1000条无关出处档，5组HTTP状态+历史页合计耗时中位数13.658ms，范围8.969–32.761ms；
+5000条档，中位数20.333ms，范围9.168–24.985ms。每组含两次请求和测试断言，
+不是纯服务耗时；不计算或宣称可靠p95/p99、不推导倍数提速。原始样本为
+`boundedness.jsonl` 最后一行，独立于此前未提交工作区的探索样本。
+计划明确显示出处按 `record_evidence_source_file_105_idx (source_file=?)` SEARCH，
+历史按 `file_parse_105_history_idx (file_id=? AND id>?)` SEARCH，事件/记录使用主键点读。
+新增出处索引有迁移建索引锁和持续写放大成本，本票未在完整业务分布上量化这些成本。
