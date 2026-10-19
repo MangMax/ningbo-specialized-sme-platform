@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { schema, useDb } from '../db'
 import { createRosterImportClient, type RosterImportRequest } from '../lib/roster-import-client'
 import {
@@ -366,6 +367,15 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
       expect(consumed.summary.evidenceRepointed).toBe(0)
       expect(consumed.summary.skipped).toBe(evidenceCount + recordCount)
       expect(sourceFiles(evidenceRows(db))).toEqual([LEGACY_SOURCE_FILE])
+
+      // #103 retains new request hashes: a different request on a consumed key is
+      // explicitly rejected. The historical RL-19 accident predates receipt retention.
+      for (const submit of [() => client.preflight(request), () => client.commit(request)]) {
+        await expect(submit()).rejects.toMatchObject({ status: 409, body: { error: { code: 'idempotency_conflict' } } })
+      }
+      // Synthetic pre-#103 fixture: retain the original batch and every business row,
+      // but remove its newly generated recovery receipt to model a real old ledger.
+      db.delete(schema.importReceipt).where(eq(schema.importReceipt.batchId, consumed.batchId)).run()
 
       // 3) 键被消费之后的**如实**预检:同键提交不会再改任何行 —— 不再报一份做不到的计划。
       const after = await client.preflight(request)
