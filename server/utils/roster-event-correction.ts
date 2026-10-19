@@ -6,6 +6,7 @@ import * as schema from '../../db/schema'
 import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
 import { advanceOfficialEventRevision } from './roster-event-version'
 import { ensureBatchRow } from './roster-batch-ledger'
+import { refreshDerivedFileParts } from './file-parts'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -120,6 +121,7 @@ export function commitEventCorrections(db: Db, request: EventCorrectionRequest, 
       tx.update(schema.recordEvent).set(fields).where(eq(schema.recordEvent.id, id)).run()
       tx.insert(schema.eventCorrectionAudit).values({ eventId: id, recordId, enterpriseId: target.enterpriseId, batchId: batch.id, before: target.before, after: target.after, evidence: target.evidence, sourceIdentity: request.sourceIdentity, actorType: request.actor.type, actorId: request.actor.id, basis: request.basis, correctedAt }).run()
     }
+    refreshDerivedFileParts(tx, plan.targets.flatMap(target => target.evidence.map(row => row.sourceFile)))
     const receipt = { batchId: batch.id, planHash, eventIds: plan.targets.map(t => t.eventId), impact: plan.impact, committedAt: correctedAt }
     tx.update(schema.importBatch).set({ status: 'committed', summary: receipt, itemResults: plan.targets.map(t => ({ eventId: t.eventId, revision: t.after.revision })), committedAt: correctedAt, error: null }).where(eq(schema.importBatch.id, batch.id)).run()
     return receipt

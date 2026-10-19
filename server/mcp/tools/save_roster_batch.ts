@@ -1,3 +1,4 @@
+import { importReceiptMcpResult } from '../../utils/import-receipts'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
@@ -65,6 +66,6 @@ export default defineMcpTool({
     })
     if (!validated.ok) throw createError({ statusCode: validated.status, message: validated.message })
     const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
-    return commitRosterImport(useDb(), validated.value, pageCountErrors)
+    return importReceiptMcpResult(() => commitRosterImport(useDb(), validated.value, pageCountErrors))
   },
 })

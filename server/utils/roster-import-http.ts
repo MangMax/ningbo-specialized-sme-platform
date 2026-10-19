@@ -24,6 +24,7 @@ import {
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
+import { ImportReceiptError } from './import-receipts'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -91,16 +92,21 @@ export async function handleRosterImportRequest(
       ? await validateRosterImportPageCounts(validated.value, deps.filesDir)
       : []
 
-  if (action === 'preflight') {
-    const result = preflightRosterImport(deps.db, validated.value, pageCountErrors)
+  try {
+    if (action === 'preflight') {
+      const result = preflightRosterImport(deps.db, validated.value, pageCountErrors)
+      return json(200, result)
+    }
+    if (action === 'replay') {
+      const result = replayRosterImport(deps.db, validated.value)
+      return json(200, result)
+    }
+    const result = commitRosterImport(deps.db, validated.value, pageCountErrors)
     return json(200, result)
+  } catch (error) {
+    if (!(error instanceof ImportReceiptError)) throw error
+    return { ...json(error.statusCode, { error: { code: error.code, message: error.message } }), headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } }
   }
-  if (action === 'replay') {
-    const result = replayRosterImport(deps.db, validated.value)
-    return json(200, result)
-  }
-  const result = commitRosterImport(deps.db, validated.value, pageCountErrors)
-  return json(200, result)
 }
 
 function json(status: number, body: unknown): RosterHttpResponse {
