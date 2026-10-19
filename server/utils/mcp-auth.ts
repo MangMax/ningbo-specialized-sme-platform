@@ -49,6 +49,7 @@ export const MCP_WRITE_TOOLS = [
   'preflight_comparison_scope_proofs',
   'commit_comparison_scope_proofs',
   'get_comparison_scope_proof_batch',
+  'patch_enterprise_profile',
 ] as const
 
 /** 写入 tool 名(字面量联合)。 */
