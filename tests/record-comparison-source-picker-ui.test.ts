@@ -95,3 +95,19 @@ it('does not let an older selected label response settle or replace the current 
   expect(wrapper.get('[aria-label="已选来源"]').text()).toContain('当前查询名称')
   expect(wrapper.get('[aria-label="已选来源"]').text()).not.toContain('合成企业')
 })
+
+it('hydrates a bookmarked source by its explicit ID without walking unrelated catalog pages', async () => {
+  const calls: any[] = []
+  vi.stubGlobal('$fetch', vi.fn(async (_url: string, options: any) => {
+    calls.push(options.query)
+    if (options.query.ids) return { rows: [{ ...rows.query[0], id: 39000, label: '精确所选查询' }], total: 1, page: 1, pageSize: 200 }
+    return { rows: [], total: 39303, page: 1, pageSize: options.query.pageSize }
+  }))
+  const wrapper = mount(ComparisonSourcePicker, { props: { kind: 'query', selection: { queryIds: [39000], exportBatchIds: [], officialSourceDocumentIds: [], proofIds: [] } }, global: { stubs: { TableLoadingStatus: true, TableFailureState: true, TablePagination: true } } })
+  wrapperList.push(wrapper)
+  await flushPromises()
+  await wrapper.get('[aria-label="已选来源"] [data-slot="accordion-trigger"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.get('[aria-label="已选来源"]').text()).toContain('精确所选查询')
+  expect(calls.filter(query => query.pageSize === 200)).toEqual([{ kind: 'query', page: 1, pageSize: 200, ids: '39000' }])
+})
