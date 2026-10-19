@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
@@ -318,7 +318,7 @@ describe('企业详情抽屉的称号时间线', () => {
     }
   }
 
-  it('维护与复核按原始事件类型区分，时间线和出处显示一致',()=>{
+  it('维护与复核按原始事件类型区分，时间线和出处显示一致',async()=>{
     const detail=timelineDetail(['award','maintain','review'])
     queryData.value={...detail,evidence:[{eventId:2,sourceFile:'名单.pdf',attachment:null,listNo:1,page:null}]}
     queryLoading.value=false
@@ -328,6 +328,8 @@ describe('企业详情抽屉的称号时间线', () => {
     expect(events[1]!.text()).toContain('维护')
     expect(events[1]!.text()).not.toContain('复核')
     expect(events[2]!.text()).toContain('复核')
+    await wrapper.get('[data-testid="enterprise-evidence"] [data-slot="accordion-trigger"]').trigger('click')
+    await flushPromises()
     expect(wrapper.get('[data-testid="enterprise-evidence"] li p').text()).toBe('2021 · 专精特新“小巨人” · 维护')
     expect(wrapper.text()).not.toContain('维持')
     expect(detail.events.map(event=>event.eventType)).toEqual(['award','maintain','review'])

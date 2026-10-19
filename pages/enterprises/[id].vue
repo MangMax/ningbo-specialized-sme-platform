@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { ChevronDown } from '@lucide/vue'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import { sourceReturnTarget } from '~~/lib/roster/correspondence-view'
 import RecordEventRow from '@/components/record-correspondence/RecordEventRow.vue'
@@ -15,11 +14,11 @@ import {
 } from '~~/lib/roster/evidence-preview-return'
 import { useEnterpriseCorrespondences } from '~/composables/useEnterpriseCorrespondences'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 
 definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
@@ -346,27 +345,22 @@ function openPreview(e: Evidence) {
       <!--
         平台原行是辅助区：默认折叠，保留全部查询记录可查；它不参与上面的出处判定。
       -->
-      <Collapsible v-slot="{ open }" class="overflow-hidden rounded-lg border bg-card">
-        <CollapsibleTrigger as-child>
-          <Button variant="ghost" class="h-auto w-full justify-between gap-3 px-4 py-3 text-left">
-            <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span class="text-sm font-medium">全部平台记录</span>
-              <span class="text-muted-foreground text-[13px]">{{ platformRowCount }} 条</span>
-            </span>
-            <ChevronDown class="size-4 shrink-0 transition-transform duration-150" :class="!open && '-rotate-90'" />
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent force-mount :class="!open && 'hidden'">
-          <div class="min-w-0 border-t p-4">
-            <PlatformRecords
-              :queries="data?.platform.queries ?? []"
-              :relations="data?.platform.relations ?? []"
-              :return-to="sourceReturnTarget(route.query.returnTo)"
-              @event-navigate="arriveAtEvent"
-            />
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
+      <DisclosurePanel keep-mounted content-class="pb-0" trigger-class="px-4" class="overflow-hidden rounded-lg border bg-card">
+        <template #trigger>
+          <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span class="text-sm font-medium">全部平台记录</span>
+            <span class="text-muted-foreground text-[13px]">{{ platformRowCount }} 条</span>
+          </span>
+        </template>
+        <div class="min-w-0 border-t p-4">
+          <PlatformRecords
+            :queries="data?.platform.queries ?? []"
+            :relations="data?.platform.relations ?? []"
+            :return-to="sourceReturnTarget(route.query.returnTo)"
+            @event-navigate="arriveAtEvent"
+          />
+        </div>
+      </DisclosurePanel>
     </template>
 
     <!--

@@ -13,7 +13,7 @@ async function openDetails(view: ReturnType<typeof mount>) {
  return new DOMWrapper(document.querySelector('[data-testid="platform-row-details"]')!)
 }
 async function openHistory(view: ReturnType<typeof mount>) {
- await view.get('[data-record-kind="recognized_list"] [data-slot="collapsible-trigger"]').trigger('click')
+ await view.get('[data-record-kind="recognized_list"] [data-slot="accordion-trigger"]').trigger('click')
  await flushPromises()
  return view.get('[data-record-kind="recognized_list"] [data-testid="platform-query-history"]')
 }

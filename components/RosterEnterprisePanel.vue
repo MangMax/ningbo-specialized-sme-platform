@@ -32,11 +32,7 @@ import SourceChip from '@/components/SourceChip.vue'
 import TitleBadge from '@/components/TitleBadge.vue'
 import { Badge, type BadgeVariants } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Skeleton } from '@/components/ui/skeleton'
 
 /**
@@ -562,14 +558,7 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
       </section>
 
       <!-- 平台证据:查询四态 + 该企业的**全部**关系(不按统代折叠) -->
-      <Collapsible v-slot="{ open }">
-        <CollapsibleTrigger as-child>
-          <Button variant="outline" size="sm" class="h-7 w-fit gap-1.5 text-xs">
-            <ExternalLink class="size-3.5" />
-            {{ open ? '收起平台证据' : `平台证据(查询 ${detail.platform.queries.length} 次 · 关联 ${relationCount} 条)` }}
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent class="mt-2 flex flex-col gap-3">
+      <DisclosurePanel compact content-class="flex flex-col gap-3 pt-2 pb-0" class="text-xs" :title="`平台证据(查询 ${detail.platform.queries.length} 次 · 关联 ${relationCount} 条)`">
           <div v-if="!detail.platform.queries.length" class="text-muted-foreground text-xs">
             该企业还没有平台查询记录(未查询 ≠ 无记录)。
           </div>
@@ -635,8 +624,7 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
               </table>
             </div>
           </div>
-        </CollapsibleContent>
-      </Collapsible>
+      </DisclosurePanel>
     </div>
 
     <div v-else class="flex flex-col gap-1">

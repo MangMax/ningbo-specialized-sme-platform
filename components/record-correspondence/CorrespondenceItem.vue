@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { correspondenceStatusText, eventDecisionText, type CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
 import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
 import { humanRecordTime, isCurrentContextEdge } from '~~/lib/roster/record-ledger'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Badge } from '@/components/ui/badge'
 
 /**
@@ -49,7 +50,10 @@ function onEventClick(event: MouseEvent) {
     <p v-if="targetEvent" class="mt-1 text-[13px]">
       <NuxtLink :to="eventTo" class="text-primary underline underline-offset-2 hover:no-underline" @click="onEventClick">查看{{ TITLES[targetEvent.record.titleCode] ?? '称号' }} · {{ eventDecisionText(targetEvent) }}</NuxtLink>
     </p>
-    <details class="text-muted-foreground mt-1 text-[13px]"><summary class="cursor-pointer">来源定位</summary><p>{{ locator }}</p></details>
+    <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground mt-1 text-[13px]">
+      <template #trigger><span>来源定位</span></template>
+      <p>{{ locator }}</p>
+    </DisclosurePanel>
     <p v-if="edge.requiresRevalidation" class="text-warning mt-1 text-[13px]">出处变更后需重新核验；当前不按已确认出处计。</p>
   </li>
 </template>
