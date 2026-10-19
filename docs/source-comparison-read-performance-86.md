@@ -5,6 +5,24 @@ reads), `86a6e71` (deep catalog ID pagination). The measured code head is
 `c57048932fa2fec4c227bc511baef0ffc331d6d1`. Integration #82/#83/#84/#85/#87/#89
 was merged into this branch; #86 introduces no schema/migration of its own.
 
+## Closeout acceptance gap
+
+The final repeat at `d5da316a0a450aa8b84b7db7d8429c148c9fd2b0` completed all
+36 configurations. One 5x catalog cold request took 603.1 ms with a 604.5 ms
+cold event-loop maximum, exceeding the frozen 500 ms boundary. The other
+35 configurations met the checked gates; all hot latency/heap/loop gates passed.
+The worst hot p95/p99 was 330.6/332.1 ms, hot loop p95/max 92.6/151.4 ms,
+and concurrent process heap delta 114,111,432 bytes. The cause of this cold
+outlier has not been isolated. This is an unresolved acceptance gap, not a
+passed cold lane. The earlier 36-case measurements below remain historical
+observations at their stated code head; they do not replace this failed sample.
+
+Full suite at that closeout head: 145 passed files / 2 skipped; 2,106 passed
+tests / 11 skipped. Typecheck and the production build/OpenAPI isolation verifier
+passed. The reporting follow-up changes this document only. Raw closeout files
+are `closeout-public-*.json`, `closeout-gates.json` and the corresponding head
+and artifact SHA-256 records in the private evidence directory.
+
 ## Frozen baseline and result equivalence
 
 Targets remain [SLO v1](performance/82/budgets.md), frozen at
