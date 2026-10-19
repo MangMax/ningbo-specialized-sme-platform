@@ -168,3 +168,65 @@ it('跨称号主体事实遵守当前替代撤回生效身份及迁回而不传�
   }
   expect(rows(wb,'有效企业').some(r => r[2] === String(unrelated.enterprise.id))).toBe(true)
 },60000)
+
+it('旧认定与独立正式复核按周期组合并保留历史及失败冲突边界', async () => {
+  const old = {eventType:'award',year:year-8,batchSeq:1} as const
+  const renewal = {eventType:'review',year:year-4,decidedYear:year-1,reviewOutcome:'passed',batchSeq:1} as const
+  const cases: Array<{name:string;events: import('./helpers/current-export-118').Event[];sheet:string}> = [
+    {name:'旧认定加新周期正式延续',events:[old,renewal],sheet:'有效企业'},
+    {name:'独立延续后本周期失败',events:[old,renewal,{...renewal,decidedYear:year,reviewOutcome:'failed'}],sheet:'排除明细'},
+    {name:'独立延续同年冲突',events:[old,renewal,{...renewal,reviewOutcome:'failed'}],sheet:'待确认'},
+    {name:'未知周期失败不能借旧认定让位给复核',events:[old,{eventType:'review',year:null,decidedYear:year-2,reviewOutcome:'failed'},renewal],sheet:'待确认'},
+    {name:'独立延续缺批次',events:[old,{...renewal,batchSeq:null}],sheet:'待确认'},
+    {name:'独立延续批次不明失败',events:[old,renewal,{...renewal,batchSeq:null,decidedYear:year,reviewOutcome:'failed'}],sheet:'待确认'},
+    {name:'旧周期晚通过不能掩盖新周期失败',events:[old,renewal,{eventType:'award',year:year-2,batchSeq:2},{eventType:'review',year:year-2,batchSeq:2,decidedYear:year,reviewOutcome:'failed'}],sheet:'排除明细'},
+    {name:'旧周期失败不终止独立延续',events:[old,{eventType:'review',year:old.year,batchSeq:1,decidedYear:year,reviewOutcome:'failed'},renewal],sheet:'有效企业'},
+    {name:'失败后新认定恢复',events:[old,renewal,{...renewal,decidedYear:year-1,reviewOutcome:'failed'},{eventType:'award',year,batchSeq:2}],sheet:'有效企业'},
+  ]
+  const entries = cases.map(c => ({...c,...f.candidate(c.name,c.events)}))
+  const {wb} = await f.workbook('mixed-cycle-r2')
+  for (const c of entries) {
+    const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => r[2] === String(c.enterprise.id)).map(r => ({sheet:s.name,row:r})))
+    expect.soft(actual.map(r => r.sheet),c.name).toEqual([c.sheet])
+    expect(actual[0]!.row[9]).toBe(String(year-8))
+    expect(actual[0]!.row[10]).toContain(String(year-8))
+    expect(actual[0]!.row[11]).toContain('passed')
+    expect(actual[0]!.row[14]).toContain('evidence:')
+  }
+},60000)
+
+it('注销与地理事实独立核验且仅明确撤回替代恢复主体', async () => {
+  const entries: Array<{id:number;sheet:string;refs:number[];note?:string}> = []
+  const add = (name:string) => f.candidate(name).enterprise
+  for (const [label,inboundTime] of [['随后迁入','2026-01-01T00:00:00Z'],['同时迁入','2025-01-01T00:00:00Z'],['早先迁入','2024-01-01T00:00:00Z']] as const) {
+    const e=add('注销加独立'+label)
+    const terminated=f.decision(e.id,'deregistered',{titleCode:'innovative_sme',recordedAt:'2025-01-01T00:00:00Z'})
+    const inbound=f.decision(e.id,'moved_in',{titleCode:'little_giant',effectiveAt:inboundTime,movedInTitleCode:'little_giant'})
+    entries.push({id:e.id,sheet:'排除明细',refs:[terminated.id,inbound.id],note:'注销/主体终止'})
+  }
+  for (const action of ['withdraw','replace'] as const) {
+    const e=add('注销被明确'+action)
+    const terminated=f.decision(e.id,'deregistered',{titleCode:'innovative_sme',recordedAt:'2025-01-01T00:00:00Z'})
+    const corrected=f.decision(e.id,'moved_in',{titleCode:'innovative_sme',previousId:terminated.id,lifecycleAction:action,effectiveAt:'2026-01-01T00:00:00Z'})
+    entries.push({id:e.id,sheet:'有效企业',refs:[corrected.id]})
+  }
+  const e=add('迁出后独立迁回不串称号')
+  const out=f.decision(e.id,'moved_out',{titleCode:'innovative_sme'})
+  const returned=f.decision(e.id,'moved_in',{titleCode:'little_giant',effectiveAt:'2026-01-01T00:00:00Z',movedInTitleCode:'little_giant'})
+  entries.push({id:e.id,sheet:'有效企业',refs:[out.id,returned.id],note:'迁入宁波'})
+  const unknown=add('注销适用性待核后迁入')
+  const ud=f.decision(unknown.id,'deregistered',{titleCode:'innovative_sme',basis:null})
+  const ui=f.decision(unknown.id,'moved_in',{titleCode:'little_giant',effectiveAt:'2026-01-01T00:00:00Z'})
+  entries.push({id:unknown.id,sheet:'待确认',refs:[ud.id,ui.id],note:'适用性未确认'})
+  const gap=f.candidate('只有别称号迁入不造当前资格',[])
+  const gi=f.decision(gap.enterprise.id,'moved_in',{titleCode:'little_giant',effectiveAt:'2026-01-01T00:00:00Z',movedInTitleCode:'little_giant'})
+  entries.push({id:gap.enterprise.id,sheet:'待确认',refs:[gi.id],note:'不能代替资格依据'})
+  const {wb}=await f.workbook('subject-dimensions-r2')
+  for (const c of entries) {
+    const actual=wb.worksheets.slice(0,3).flatMap(s=>rows(wb,s.name).filter(r=>r[2]===String(c.id)).map(r=>({sheet:s.name,row:r})))
+    expect(actual.map(r=>r.sheet),String(c.id)).toEqual([c.sheet])
+    for (const id of c.refs) expect(actual[0]!.row[14]).toContain('decision:'+id)
+    if (c.note) expect(actual[0]!.row[13]).toContain(c.note)
+    if (c.sheet==='有效企业') expect(actual[0]!.row[13]??'').not.toContain('不属于本称号')
+  }
+},60000)
