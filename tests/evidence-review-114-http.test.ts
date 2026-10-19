@@ -7,6 +7,8 @@ import { spawn } from 'node:child_process'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { useDb, schema } from '../db/client'
+import { recognizedResultToImport } from '../lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 import { createRosterImportClient } from '../lib/roster-import-client'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 const dir = mkdtempSync(join(tmpdir(), 'review-114-')), dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })
@@ -85,6 +87,74 @@ describe('ticket 114 public evidence review',()=>{
     expect((await get('/api/roster/enterprises/'+e.id)).body.titleAssessments.find((a:any)=>a.titleCode===scope.titleCode&&a.direction===scope.direction).explanationValidity.status).toBe('evidence_changed')
     const conflict=await post(decisionPath,{...input,basis:'相同键不同请求'})
     expect(conflict.status).toBe(409);expect(conflict.body.error.code).toBe('idempotency_conflict')
+  })
+
+  it.each(['failed', 'partial', 'disjoint-condition', 'disjoint-page'] as const)('keeps reviewed validity after ready no_review %s without advancing audit and preserves unprocessed and substantive work', async kind => {
+    const e=seed('语义有效性-'+kind,'9133000000000000'+(['failed','partial','disjoint-condition','disjoint-page'].indexOf(kind)+10)),scope=coord(e.id)
+    let time=0
+    const saveArchive=async(key:string, status:'success'|'failed'|'partial', year='2024', page=1, fact='原事实')=>{
+      const rows=status!=='failed'?[{id:status==='partial'?'核验事实':fact,tyshxydm:e.usccNorm!,qymc:e.name,whpcyear:year}]:[]
+      const at=new Date(Date.UTC(2026,9,19,10,++time)).toISOString()
+      const result:PlatformLiveQueryResult={source:'queryBusList',status,effectiveConditions:{uscc:e.usccNorm!,combination:'and',whpcyear:year},titleScope:{mode:'selected',rdjb:['2']},queriedAt:at,completedAt:at,rows,
+        pages:[{source:'queryBusList',rdjb:'2',page,status:status==='failed'?'failed':'success',fetchedCount:rows.length,declaredTotal:status==='success'?(page-1)*50+1:null,error:null}],fetchedCount:rows.length,declaredTotal:status==='success'?(page-1)*50+1:null,
+        completeness:status==='success'?'complete':'partial',fullRange:false,unfinished:status==='success'?[]:[{source:'queryBusList',rdjb:'2',page:status==='failed'?page:page+1}],error:null,limits:{pageSize:50,maxRequests:100,maxRows:5000,maxDurationMs:60000}}
+      const r=await client.commit({idempotencyKey:key,sourceKind:'alias_evidence',sourceIdentity:'synthetic/'+key,payload:{platformQueries:[recognizedResultToImport(result)]}})
+      expect(r.status,JSON.stringify(r)).toBe('committed')
+      return Number(r.items.find(i=>i.kind==='platform_query')!.ref.split(':')[1])
+    }
+    const prefix='semantic-'+kind,queryId=await saveArchive(prefix+'-original','success')
+    await drain(prefix+'-initial-drain')
+    const d=await post(decisionPath,{...scope,...cmd(prefix+'-d'),action:'replace',expectedCurrentId:null,ruleVersion:'original-rule',effectiveAt:'2026-10-19T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'other',reasonNote:'不可改写的原原因',measureCode:'keep_history',verificationStatus:'confirmed',...(kind==='failed'?{}:{evidenceQueryId:queryId})}})
+    expect(d.status).toBe(200)
+    await saveArchive(prefix+'-relevant','success','2024',1,'核验事实');await drain(prefix+'-relevant-drain')
+    const item=(await get(listPath,{enterpriseId:e.id})).body.rows[0],initial=(await get(listPath+'/'+item.id)).body
+    const maintain={...scope,...cmd(prefix+'-maintain'),action:'maintain',expectedCurrentId:d.body.versionId,reviewedEvidence:{latestRevisionId:initial.evidenceToken.latestRevisionId,projectionReady:true},ruleVersion:'review-rule',effectiveAt:'2026-10-19T00:00:00Z'}
+    const receipt=await post(decisionPath,maintain);expect(receipt.status).toBe(200)
+    const baseline=(await get(listPath+'/'+item.id)).body.reviewedBaseline
+    const original=(await get('/api/roster/decision-lifecycle/'+d.body.versionId)).body
+    const assess=(b:any)=>b.titleAssessments.find((a:any)=>a.titleCode===scope.titleCode&&a.direction===scope.direction)
+    expect(assess((await get('/api/roster/enterprises/'+e.id)).body).explanationValidity.status).toBe('valid')
+    const changedQuery=await saveArchive(prefix+'-no-review',kind==='failed'?'failed':kind==='partial'?'partial':'success',kind==='disjoint-condition'?'2025':'2024',kind==='disjoint-page'?2:1,'无关分区事实')
+    const unprocessed=(await get(listPath+'/'+item.id)).body
+    expect(unprocessed.evidenceToken).toMatchObject({projectionReady:false})
+    expect((await rpc('get_evidence_impact',{id:item.id})).value).toEqual(unprocessed)
+    expect((await get(listPath,{enterpriseId:e.id})).body).toMatchObject({rows:[],projectionReady:false})
+    expect((await rpc('list_evidence_impacts',{enterpriseId:e.id})).value).toMatchObject({rows:[],projectionReady:false})
+    expect(unprocessed.evidenceToken.latestRevisionId).toBeGreaterThan(baseline.reviewedRevisionId)
+    expect(assess((await get('/api/roster/enterprises/'+e.id)).body).explanationValidity.status).toBe('evidence_changed')
+    const stale=await post(decisionPath,{...maintain,...cmd(prefix+'-stale')});expect(stale.status).toBe(409);expect(stale.body.error.code).toBe('stale_evidence')
+    await drain(prefix+'-no-review-drain')
+    const detail=(await get(listPath+'/'+item.id)).body
+    expect(detail).toMatchObject({pending:false,evidenceToken:{projectionReady:true},reviewedBaseline:baseline,oldDecision:{id:d.body.versionId,reasonNote:'不可改写的原原因'}})
+    expect(detail.latestRevisionId).toBe(baseline.reviewedRevisionId)
+    expect((await rpc('get_evidence_impact',{id:item.id})).value).toEqual(detail)
+    const list=(await get(listPath,{enterpriseId:e.id})).body
+    expect(list).toMatchObject({rows:[],projectionReady:true});expect((await rpc('list_evidence_impacts',{enterpriseId:e.id})).value.rows).toEqual([])
+    const params={enterpriseId:e.id,revisionId:detail.evidenceToken.latestRevisionId}
+    const preview=(await get(listPath+'/preview',params)).body
+    expect(preview.rows).toEqual([expect.objectContaining({id:d.body.versionId,classification:'no_review'})])
+    expect((await rpc('preview_evidence_impacts',params)).value.rows).toEqual(preview.rows)
+    const enterprise=(await get('/api/roster/enterprises/'+e.id)).body
+    expect(assess(enterprise)).toMatchObject({assessment:'decided',explanationValidity:{status:'valid',reasons:[],explanationId:d.body.versionId}})
+    if(kind==='failed'||kind==='partial') expect(assess(enterprise).queryCoverage.sources).toContainEqual(expect.objectContaining({queryId:changedQuery,status:kind,outcome:'unknown'}))
+    expect((await rpc('get_enterprise_detail',{enterpriseId:e.id})).value).toEqual(enterprise)
+    expect((await get('/api/roster/decision-lifecycle/'+d.body.versionId)).body).toEqual(original)
+    expect((await get('/api/roster/decision-lifecycle/history',scope)).body.total).toBe(1)
+    expect((await rpc('save_difference_decision',maintain,'synthetic-mcp')).value).toEqual(receipt.body)
+    // A no-review evaluation must not clear earlier substantive work or manufacture a new baseline.
+    await saveArchive(prefix+'-substantive','success','2024',1,'真实新事实');await drain(prefix+'-substantive-drain')
+    const substantive=(await get(listPath+'/'+item.id)).body
+    const substantiveParams={enterpriseId:e.id,revisionId:substantive.latestRevisionId}
+    const substantivePreview=(await get(listPath+'/preview',substantiveParams)).body
+    expect(substantivePreview.rows).toEqual([expect.objectContaining({id:d.body.versionId,classification:'evidence_changed'})])
+    expect((await rpc('preview_evidence_impacts',substantiveParams)).value.rows).toEqual(substantivePreview.rows)
+    await saveArchive(prefix+'-later-coverage','failed');await drain(prefix+'-later-drain')
+    const pending=(await get(listPath+'/'+item.id)).body
+    expect(pending).toMatchObject({pending:true,classification:'evidence_changed',reviewedBaseline:baseline,evidenceToken:{projectionReady:true}})
+    expect((await rpc('get_evidence_impact',{id:item.id})).value).toEqual(pending)
+    expect((await get(listPath,{enterpriseId:e.id})).body.rows).toEqual([expect.objectContaining({id:item.id,pending:true})])
+    expect(assess((await get('/api/roster/enterprises/'+e.id)).body).explanationValidity.status).toBe('evidence_changed')
+    expect((await rpc('save_difference_decision',maintain,'synthetic-mcp')).value).toEqual(receipt.body)
   })
 
   it('freezes filter-bound list pages across completion replacement and later evidence and rejects forged cursors',async()=>{
