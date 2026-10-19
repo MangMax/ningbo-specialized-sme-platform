@@ -1,3 +1,4 @@
+import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
 import { admitEnterpriseResponse } from '../utils/enterprise-read-response'
 import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
 import { platformQueryRpcError } from '../utils/mcp-platform-query'
@@ -53,7 +54,7 @@ export default defineMcpHandler({
     '2. `get_file` / `list_file_parts` 看它的元数据与**段**(一份公布文件常含多年份、多事件);',
     '3. `list_page_images` 拿 PDF 每页的 PNG(已渲染时直接给 URL,未渲染时 `rendered: 0`);',
     '4. 识别之后用 `save_ocr_result` **按页**写回结果、`set_file_category` 回写分类、',
-    '   `save_parse_result` 写回解析出的段;要回看识别结果用 `get_ocr_result`;',
+    '   `get_file_parse_result` 先读version,再用 `save_parse_result` 带expectedVersion/幂等键/actor/reason写回段或状态;审计用 `get_file_parse_history`。识别结果用 `get_ocr_result`;',
     '5. 名单纠偏完成后,用 `preflight_roster_batch` **先预检**(只算影响、不写业务数据),',
     '   确认无误再用 `save_roster_batch` **提交**(单批事务 + 幂等键);',
     '   写完之后用 `list_enterprises` / `query_records` / `get_enterprise_detail` /',
@@ -96,6 +97,8 @@ export default defineMcpHandler({
     if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
       const body = await readBody(event, { strict: false }).catch(() => undefined)
       if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail'].includes(body?.params?.name)) admitEnterpriseResponse(event)
+      const invalidParse = parseRpcError105(body)
+      if (invalidParse) return invalidParse
       const invalidEventCorrection = eventCorrectionRpcError(body)
       if (invalidEventCorrection) return invalidEventCorrection
       const invalidQuery = platformQueryRpcError(body)

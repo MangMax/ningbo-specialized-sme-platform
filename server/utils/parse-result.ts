@@ -159,9 +159,8 @@ export function applyParseResult(
     if (!normalized.ok) return { ok: false, message: normalized.message }
     parts = normalized.parts
   }
-  const derivedParts = hasParts ? derivedPartsForFile(db, fileId) : []
-
   db.transaction((tx) => {
+    const derivedParts = hasParts ? derivedPartsForFile(tx as Db, fileId) : []
     if (hasParts) {
       tx.delete(schema.storedFilePart)
         .where(eq(schema.storedFilePart.fileId, fileId))

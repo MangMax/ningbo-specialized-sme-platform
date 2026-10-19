@@ -146,7 +146,7 @@ export const recordEvidence = sqliteTable(
      */
     page: integer('page'),
   },
-  (t) => [index('record_evidence_event_idx').on(t.recordEventId)],
+  (t) => [index('record_evidence_event_idx').on(t.recordEventId), index('record_evidence_source_file_105_idx').on(t.sourceFile)],
 )
 
 /**
@@ -435,8 +435,7 @@ export const job = sqliteTable(
   ],
 )
 
-// ===========================================================================
-// 名录生命周期契约(RL-01)—— 冻结的领域对象。
+// ====================================================================// 名录生命周期契约(RL-01)—— 冻结的领域对象。
 //
 // 契约原文见 `docs/roster-lifecycle-contract.md`,决策见
 // `docs/adr/2026-10-16-roster-lifecycle-model.md`。本段是**全仓共享基线**:
@@ -449,8 +448,7 @@ export const job = sqliteTable(
 //     的快照,与公布事件**分开存储、分开查询**。
 //  3. **接口记录 = 证据** —— `platform_query` / `platform_relation` 存原始关系与查询时点;
 //     软件只提供**证据查看、确认、回填、查询**,不建设模糊推断 / 原因自动猜测引擎。
-// ===========================================================================
-
+// ====================================================================
 /**
  * **统一导入批次**(契约 6)。一次写入的**来源身份 + 幂等键 + 预检/提交结果**。
  *
@@ -1019,6 +1017,19 @@ export const fileMaintenanceAudit = sqliteTable('file_maintenance_audit', {
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 }, t => [uniqueIndex('file_maintenance_revision_uq').on(t.fileId, t.revision), uniqueIndex('file_maintenance_key_uq').on(t.idempotencyKey)])
 
+/** #105: parse-only immutable receipts. List projections omit before/after snapshots. */
+export const fileParseAudit105 = sqliteTable('file_parse_audit_105', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fileId: integer('file_id').notNull().references(() => storedFile.id),
+  idempotencyKey: text('idempotency_key').notNull(),
+  requestHash: text('request_hash').notNull(),
+  operation: text('operation', { enum: ['replace', 'status'] }).notNull(),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(),
+  reason: text('reason').notNull(),
+  before: text('before', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  after: text('after', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  createdAt: text('created_at').notNull(),
+}, t => [uniqueIndex('file_parse_105_key_uq').on(t.fileId, t.idempotencyKey), index('file_parse_105_history_idx').on(t.fileId, t.id)])
 /** #100: append-only in-place event correction history, no source/evidence overwrite. */
 export const eventCorrectionAudit = sqliteTable('event_correction_audit', {
   id: integer('id').primaryKey({ autoIncrement: true }),
