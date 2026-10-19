@@ -22,5 +22,3 @@ CREATE TABLE `evidence_correction_audit` (
 CREATE INDEX `evidence_correction_audit_evidence_idx` ON `evidence_correction_audit` (`evidence_id`, `id`);
 --> statement-breakpoint
 CREATE INDEX `record_evidence_coordinate_idx` ON `record_evidence` (`source_file`, `list_no`, `attachment`);
---> statement-breakpoint
-CREATE INDEX `record_correspondence_predecessor_event_idx` ON `record_correspondence` (`predecessor_event_id`);

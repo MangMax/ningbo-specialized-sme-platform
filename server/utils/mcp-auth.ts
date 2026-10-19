@@ -45,6 +45,8 @@ export const MCP_WRITE_TOOLS = [
   'retry_platform_batch',
   'preflight_record_correspondences',
   'save_record_correspondences',
+  'preflight_event_corrections',
+  'commit_event_corrections',
   'get_record_correspondence_batch',
   'preflight_comparison_scope_proofs',
   'commit_comparison_scope_proofs',
