@@ -1,4 +1,5 @@
 import { admitEnterpriseResponse } from '../utils/enterprise-read-response'
+import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
 import { platformQueryRpcError } from '../utils/mcp-platform-query'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler } from '@nuxtjs/mcp-toolkit/server'
@@ -59,8 +60,11 @@ export default defineMcpHandler({
     '   `list_differences` 核对企业、称号事件、出处与解释。',
     '- `get_platform_capabilities` 查看实时来源能力；`query_platform` 查询三来源记录（不写库，不接收Cookie）。失败/partial须补查unfinished，不能当无记录。',
     '- 批量查询用 `submit_platform_batch`，然后 `get_platform_batch` / `get_platform_batch_item`；只对unfinished显式 `retry_platform_batch`。提交/重试需MCP token；凭据仅服务端快照。',
+    '- 正式事件更正先 `get_official_event`，再 `preflight_event_corrections` / `commit_event_corrections`；需独立 MCP token，传原 request+planHash；原出处保留，关联对应需显式重核。审计用 `get_event_correction_audit` 分页。',
     '- `query_records` 是通用企业×称号记录查询；`year` 筛事件年份，`dueYear` 筛生命周期到期年份。',
     '  详情请用 `get_enterprise_detail`，它与 REST 企业详情共用读模型。',
+    '- 企业普通资料更正：`get_enterprise_profile` 取版本，再用需 token 的 `patch_enterprise_profile`；历史用 `get_enterprise_profile_history` 分页核对。仅 name/city/district；更名明确确认旧名，同事务保留旧名与审计，不补统代或归并。详见 docs/maintenance-96.md。',
+    '- 企业别名维护：`list_enterprise_aliases` / `get_enterprise_alias` 读取版本，再用需 token 的 `maintain_enterprise_alias` 显式确认、更正、撤回或恢复；历史用 `get_enterprise_alias_history` 分页核对。保留原名与原来源，withdrawn 不自动恢复。详见 docs/maintenance-99.md。',
     '',
     '- `get_file_maintenance` 读维护修订和有界历史；`update_file` 更新分类或显示名，`remove_file` 软移出，`restore_file` 核验原字节后恢复。',
     '  三个新增维护写工具需要 MCP token，必须同时提供 expectedRevision/idempotencyKey/actor/basis。原 set_file_category 载荷保留 legacy 适配。没有磁盘删除能力；详见 docs/maintenance-104.md。',
@@ -70,7 +74,7 @@ export default defineMcpHandler({
     '  不会出现在 `tools/list` 里,强行调用会得到 HTTP 401。只读 tool(含只读预检',
     '  `preflight_roster_batch`)不需要。',
     '- 名录实体(企业 / 曾用名 / 称号事件 / 出处 / 平台快照 / 差异解释)**只能经',
-    '  `save_roster_batch` 这一条统一写入路径**落库,不要绕过它直写库。载荷见',
+    '  `save_roster_batch` 导入与明确领域维护命令**落库；既有普通企业资料更正用 `patch_enterprise_profile`，不要绕过应用服务直写库。载荷见',
     '  `docs/roster-lifecycle-contract.md` §8.3(归并项 §8.4);证据不足一律**留空并标待核**,',
     '  不要猜填、不要为填满字段而复制来源里没有的值。',
     '- `year` / `batch` 在文件级是**公布**年份/批次(目录给的、单值);文件**内容**里的年份/批次',
@@ -92,6 +96,8 @@ export default defineMcpHandler({
     if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
       const body = await readBody(event, { strict: false }).catch(() => undefined)
       if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail'].includes(body?.params?.name)) admitEnterpriseResponse(event)
+      const invalidEventCorrection = eventCorrectionRpcError(body)
+      if (invalidEventCorrection) return invalidEventCorrection
       const invalidQuery = platformQueryRpcError(body)
       if (invalidQuery) return invalidQuery
     }

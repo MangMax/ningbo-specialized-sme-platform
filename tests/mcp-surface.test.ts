@@ -43,6 +43,7 @@ describe('mcp-auth 鉴权判据', () => {
     // 悄悄加一个写入 tool 而不改它,就是开了一条绕过鉴权的写路。
     // 票 18 的三个 + RL-11 的名录统一写入(`save_roster_batch`)。
     expect([...MCP_WRITE_TOOLS]).toEqual([
+      'maintain_enterprise_alias',
       'save_ocr_result',
       'set_file_category',
       'update_file',
@@ -54,10 +55,13 @@ describe('mcp-auth 鉴权判据', () => {
       'retry_platform_batch',
       'preflight_record_correspondences',
       'save_record_correspondences',
+      'preflight_event_corrections',
+      'commit_event_corrections',
       'get_record_correspondence_batch',
       'preflight_comparison_scope_proofs',
       'commit_comparison_scope_proofs',
       'get_comparison_scope_proof_batch',
+      'patch_enterprise_profile',
     ])
   })
 

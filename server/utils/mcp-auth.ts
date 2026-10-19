@@ -37,6 +37,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
  * 同批注册的 `preflight_roster_batch` 是**只读预检**(契约 §9 如此归类),不在此列。
  */
 export const MCP_WRITE_TOOLS = [
+  'maintain_enterprise_alias',
   'save_ocr_result',
   'set_file_category',
   'update_file',
@@ -48,10 +49,13 @@ export const MCP_WRITE_TOOLS = [
   'retry_platform_batch',
   'preflight_record_correspondences',
   'save_record_correspondences',
+  'preflight_event_corrections',
+  'commit_event_corrections',
   'get_record_correspondence_batch',
   'preflight_comparison_scope_proofs',
   'commit_comparison_scope_proofs',
   'get_comparison_scope_proof_batch',
+  'patch_enterprise_profile',
 ] as const
 
 /** 写入 tool 名(字面量联合)。 */

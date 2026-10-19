@@ -6,7 +6,7 @@ type Event = typeof schema.recordEvent.$inferSelect
 type RecordRow = Pick<typeof schema.record.$inferSelect, 'id' | 'enterpriseId' | 'titleCode' | 'source' | 'usccRaw' | 'nameRaw'>
 interface FormalRow {
   eventId: number; recordId: number; eventType: Event['eventType']; year: number | null; batchSeq: number | null
-  sortKey: number; reviewOutcome: Event['reviewOutcome']; decidedYear: number | null
+  sortKey: number; revision: number; reviewOutcome: Event['reviewOutcome']; decidedYear: number | null
   enterpriseId: number; titleCode: string; source: RecordRow['source']; usccRaw: string | null; nameRaw: string | null; uscc: string | null
   inSelectedSource: number
 }
@@ -50,7 +50,7 @@ export function* iterateComparisonFormalEvents(db: ReturnType<typeof useDb>, doc
     )
     select e.id as eventId, e.record_id as recordId, e.event_type as eventType,
       e.year, e.batch_seq as batchSeq, e.sort_key as sortKey,
-      e.review_outcome as reviewOutcome, e.decided_year as decidedYear,
+      e.review_outcome as reviewOutcome, e.decided_year as decidedYear, e.revision,
       r.enterprise_id as enterpriseId, r.title_code as titleCode, r.source,
       r.uscc_raw as usccRaw, r.name_raw as nameRaw, owner.uscc_norm as uscc,
       e.id in (select id from selected_events) as inSelectedSource
@@ -60,7 +60,7 @@ export function* iterateComparisonFormalEvents(db: ReturnType<typeof useDb>, doc
     order by e.id
   `).iterate(...params) as Iterable<FormalRow>
   for (const row of rows) yield {
-    event: { id: row.eventId, recordId: row.recordId, eventType: row.eventType, year: row.year, batchSeq: row.batchSeq, sortKey: row.sortKey, reviewOutcome: row.reviewOutcome, decidedYear: row.decidedYear } satisfies Event,
+    event: { id: row.eventId, recordId: row.recordId, eventType: row.eventType, year: row.year, batchSeq: row.batchSeq, sortKey: row.sortKey, reviewOutcome: row.reviewOutcome, decidedYear: row.decidedYear, revision: row.revision } satisfies Event,
     record: { id: row.recordId, enterpriseId: row.enterpriseId, titleCode: row.titleCode, source: row.source, usccRaw: row.usccRaw, nameRaw: row.nameRaw } satisfies RecordRow,
     uscc: row.uscc,
     inSelectedSource: Boolean(row.inSelectedSource),

@@ -2,6 +2,7 @@ import { and, eq, inArray, or, between } from 'drizzle-orm'
 import { createHash } from 'node:crypto'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
+import { versionedOfficialEvent } from './roster-event-version'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -57,7 +58,7 @@ export function officialSource(db: ProofExecutor, evidence: OfficialEvidence) {
   const records = db.select().from(schema.record).where(recordScope).orderBy(schema.record.id).all()
   const events = db.select().from(schema.recordEvent).where(eventScope).orderBy(schema.recordEvent.id).all()
   const eventEvidence = db.select().from(schema.recordEvidence).where(inArray(schema.recordEvidence.recordEventId, eventIds)).orderBy(schema.recordEvidence.id).all()
-  return { sourceFingerprint: fingerprint({ kind: 'official_coverage', scope: { titleCode: evidence.titleCode, fromYear: evidence.fromYear, throughYear: evidence.throughYear, enterpriseIds: evidence.enterpriseIds, fullRange: evidence.fullRange }, refs, records, events, eventEvidence }), sourceSummary: { documents: refs.map(row => ({ id: row.document.id, path: row.document.path, sha256: row.file.sha256, reference: row.reference })), recordCount: records.length, eventCount: events.length } }
+  return { sourceFingerprint: fingerprint({ kind: 'official_coverage', scope: { titleCode: evidence.titleCode, fromYear: evidence.fromYear, throughYear: evidence.throughYear, enterpriseIds: evidence.enterpriseIds, fullRange: evidence.fullRange }, refs, records, events: events.map(versionedOfficialEvent), eventEvidence }), sourceSummary: { documents: refs.map(row => ({ id: row.document.id, path: row.document.path, sha256: row.file.sha256, reference: row.reference })), recordCount: records.length, eventCount: events.length } }
 }
 
 function completeTitle(query: typeof schema.platformQuery.$inferSelect, titleCode: string) {
