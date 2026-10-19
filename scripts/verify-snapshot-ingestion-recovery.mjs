@@ -43,8 +43,8 @@ const input = {
     rows: Array.from({ length: 300 }, (_, i) => ({ sourceRowNo: i + 3, rawFields: { original: `  原文🙂\n${i}  ` } })),
   } },
 }
-async function post(action) {
-  const response = await fetch(`${base}/api/roster/import/${action}`, { method: 'POST', signal: AbortSignal.timeout(20_000), headers: { connection: 'close', authorization: 'Bearer synthetic-only', 'content-type': 'application/json' }, body: JSON.stringify(input) })
+async function post(action, payload = input) {
+  const response = await fetch(`${base}/api/roster/import/${action}`, { method: 'POST', signal: AbortSignal.timeout(20_000), headers: { connection: 'close', authorization: 'Bearer synthetic-only', 'content-type': 'application/json' }, body: JSON.stringify(payload) })
   assert.equal(response.status, 200)
   return response.json()
 }
@@ -87,7 +87,23 @@ try {
   await stopOwnedChild(owned)
   await start()
   assert.deepEqual(await post('commit'), committed, 'restart after success keeps the original idempotency receipt')
-  console.log(JSON.stringify({ passed: true, lane: 'built Nitro HTTP + real MCP; private synthetic SQLite', checks: ['SIGKILL inside transaction after first chunk', 'no partial business rows after restart', 'same-key preflight/commit recovery across HTTP and MCP', 'exact raw/source order at chunk boundary', 'original receipt survives second restart'], productionChanged: false }))
+  const large = structuredClone(input)
+  large.idempotencyKey = 'synthetic:mcp-size-fallback'
+  large.payload.exportSnapshot.sha256 = 'synthetic-large'
+  large.payload.exportSnapshot.rows.forEach((row, index) => { row.rawFields = { original: 'x'.repeat(index === 150 ? 1_200_000 : 14_753) } })
+  const rejected = await fetch(`${base}/mcp`, { method: 'POST', headers: { connection: 'close', authorization: 'Bearer synthetic-only', 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/call', params: { name: 'preflight_roster_batch', arguments: large } }) })
+  assert.equal(rejected.status, 413, 'existing SDK request capacity remains explicit')
+  await rejected.text()
+  assert.equal((await fetch(`${base}/api/roster/correspondences/export-rows/301`, { headers: { connection: 'close' } })).status, 404)
+  const largePreflight = await post('preflight', large)
+  assert.equal(largePreflight.preflight.add, 1)
+  const delivered = await post('commit', large)
+  assert.equal(delivered.status, 'committed')
+  assert.equal(delivered.summary.written, 301, '413 does not consume the same key as a committed receipt')
+  const { source } = await rpc('get_record_correspondence_source', { kind: 'export_row', id: delivered.items[0].detail.rows[150] })
+  assert.deepEqual(source.rawFields, large.payload.exportSnapshot.rows[150].rawFields)
+  assert.deepEqual(await post('commit', large), delivered)
+  console.log(JSON.stringify({ passed: true, lane: 'built Nitro HTTP + real MCP; private synthetic SQLite', checks: ['SIGKILL inside transaction after first chunk', 'no partial business rows after restart', 'same-key preflight/commit recovery across HTTP and MCP', 'exact raw/source order at chunk boundary', 'original receipt survives second restart', 'MCP 413 followed by same-key complete HTTP delivery and original receipt replay', 'oversize single item exact MCP readback'], productionChanged: false }))
 } finally {
   await stopOwnedChild(owned)
   rmSync(dir, { recursive: true, force: true })
