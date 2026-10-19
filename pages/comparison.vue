@@ -340,10 +340,10 @@ const exportUrl = computed(() => {
                         <TableHead :class="[TH_CLASS, 'hidden w-[108px] sm:table-cell']"
                           >另一侧状态</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'hidden w-[140px] sm:table-cell']">
+                        <TableHead :class="[TH_CLASS, 'hidden w-[200px] sm:table-cell']">
                           平台解释
                         </TableHead>
-                        <TableHead :class="[TH_CLASS, 'hidden w-[250px] sm:table-cell']">
+                        <TableHead :class="[TH_CLASS, 'hidden w-[230px] sm:table-cell']">
                           平台记录
                         </TableHead>
                         <TableHead :class="[TH_CLASS, 'hidden w-[190px] sm:table-cell']">核实与备注</TableHead>
@@ -413,9 +413,8 @@ const exportUrl = computed(() => {
                         </TableCell>
                         <TableCell colspan="6" class="whitespace-normal sm:hidden">
                           <div class="flex min-w-0 flex-col gap-1" data-testid="comparison-mobile-details">
-                            <div class="border-b border-border/50 pb-1 text-[13px] leading-5" data-testid="comparison-mobile-status-divider">
+                            <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-border/50 pb-1 text-[13px] leading-5" data-testid="comparison-mobile-status-divider">
                               <span class="text-muted-foreground">{{ COMPARISON_OTHER_SIDE[row.direction] }}</span>
-                              <span class="text-muted-foreground px-1">·</span>
                               <ComparisonExplanation :enterprise-id="row.enterpriseId" :title-code="row.titleCode" :direction="row.direction" />
                             </div>
                             <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />

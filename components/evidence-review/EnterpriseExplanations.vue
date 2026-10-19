@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, shallowRef, watch } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
 import type { ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { impactClassificationLabels } from '~~/lib/roster/evidence-review-ui'
 import { TITLE_ORDER, comparisonDirectionLabel } from '~~/lib/labels'
@@ -64,6 +65,28 @@ const groups = computed(() => orderedTitles.value.map(titleCode => ({
     props.assessments.find(item => item.titleCode === titleCode && item.direction === direction),
   ])) as Record<(typeof DIRECTIONS)[number], (ReviewAssessment & ReviewScope) | undefined>,
 })))
+
+/**
+ * 390 只先摊开需要看的方向；“尚未核对”的其余方向折成一条。
+ * 桌面不受影响，六个判断范围仍然全部可扫描。
+ */
+const isNarrow = useMediaQuery('(max-width: 767px)')
+const showQuiet = shallowRef(false)
+const isQuiet = (assessment: ReviewAssessment & ReviewScope) =>
+  assessment.assessment === 'not_queried' && !pendingByScope.value.get(keyOf(assessment))
+const hiddenQuietCount = computed(() => isNarrow.value
+  ? props.assessments.filter(item => isQuiet(item)).length
+  : 0)
+const visibleDirections = (group: (typeof groups.value)[number]) => {
+  if (!isNarrow.value || showQuiet.value) return DIRECTIONS
+  return DIRECTIONS.filter(direction => {
+    const assessment = group.byDirection[direction]
+    return assessment != null && !isQuiet(assessment)
+  })
+}
+const visibleGroups = computed(() => isNarrow.value && !showQuiet.value
+  ? groups.value.filter(group => visibleDirections(group).length > 0)
+  : groups.value)
 
 const sheetOpen = shallowRef(false)
 const selectedAssessment = shallowRef<(ReviewAssessment & ReviewScope) | undefined>()
@@ -159,7 +182,7 @@ watch(() => props.impactId, impactId => {
         <span>平台多出</span>
       </div>
 
-      <div v-for="group in groups" :key="group.titleCode" class="border-b last:border-b-0">
+      <div v-for="group in visibleGroups" :key="group.titleCode" class="border-b last:border-b-0">
         <div class="grid grid-cols-1 md:grid-cols-[12rem_minmax(0,1fr)_minmax(0,1fr)]">
           <div class="bg-muted/20 flex flex-wrap items-center gap-2 border-b px-4 py-3 md:border-r md:border-b-0">
             <TitleBadge :code="group.titleCode" />
@@ -168,7 +191,7 @@ watch(() => props.impactId, impactId => {
             </span>
           </div>
 
-          <template v-for="direction in DIRECTIONS" :key="`${group.titleCode}-${direction}`">
+          <template v-for="direction in visibleDirections(group)" :key="`${group.titleCode}-${direction}`">
             <article
               v-if="group.byDirection[direction]"
               :id="`explanation-${group.titleCode}-${direction}`"
@@ -251,6 +274,21 @@ watch(() => props.impactId, impactId => {
         </div>
       </div>
     </div>
+
+    <div v-if="!visibleGroups.length" class="bg-card text-muted-foreground rounded-lg border px-4 py-4 text-[13px] leading-5">
+      {{ isNarrow ? '其余方向尚未核对；展开后可逐项查看范围。' : '没有可显示的核对范围。' }}
+    </div>
+
+    <Button
+      v-if="isNarrow && hiddenQuietCount"
+      variant="ghost"
+      size="sm"
+      class="self-start"
+      :aria-expanded="showQuiet"
+      @click="showQuiet = !showQuiet"
+    >
+      {{ showQuiet ? '收起尚未核对的方向' : `展开其余 ${hiddenQuietCount} 个尚未核对的方向` }}
+    </Button>
 
     <p class="text-muted-foreground text-[13px] leading-5">
       查询覆盖、业务决定和解释有效性分别保留；待复核不会撤回原决定。

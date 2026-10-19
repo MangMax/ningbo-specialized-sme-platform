@@ -59,14 +59,23 @@ function primaryAction() {
     emit('retry-pending')
     return
   }
-  const ordered = [
-    ...props.assessments.filter(item => item.queryCoverage.status === 'failed' || item.queryCoverage.status === 'partial'),
-    ...props.assessments.filter(item => item.assessment === 'queried_unjudged'),
-    ...props.assessments.filter(item => item.assessment === 'decided'),
-    ...props.assessments.filter(item => item.assessment === 'unknown'),
-    ...props.assessments.filter(item => item.assessment === 'withdrawn'),
-    ...props.assessments,
-  ]
+  // 动作必须和首屏结论说同一件事：说“查看当前决定”就先打开有决定的范围。
+  const failed = props.assessments.filter(item => item.queryCoverage.status === 'failed')
+  const partial = props.assessments.filter(item => item.queryCoverage.status === 'partial')
+  const decided = props.assessments.filter(item => item.assessment === 'decided')
+  const unjudged = props.assessments.filter(item => item.assessment === 'queried_unjudged')
+  const notQueried = props.assessments.filter(item => item.assessment === 'not_queried')
+  const ordered = headline.value.label.includes('查询失败')
+    ? [...failed, ...partial, ...decided, ...unjudged]
+    : headline.value.label.includes('覆盖不完整')
+      ? [...partial, ...failed, ...decided, ...unjudged]
+      : headline.value.label.includes('已有业务决定')
+        ? [...decided, ...unjudged, ...partial, ...failed]
+        : headline.value.label.includes('已查询')
+          ? [...unjudged, ...decided, ...partial, ...failed]
+          : headline.value.label.includes('尚未核对')
+            ? [...notQueried, ...decided, ...unjudged]
+            : [...decided, ...unjudged, ...partial, ...failed, ...notQueried, ...props.assessments]
   if (ordered[0]) emit('open-scope', ordered[0])
 }
 

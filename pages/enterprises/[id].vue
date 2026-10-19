@@ -340,8 +340,8 @@ function openPreview(e: Evidence) {
         <template #description>
           <span>{{ detail.district ?? '属地未知' }}</span>
           <span class="mx-1.5">·</span><span>{{ titleNames.join(' / ') || '暂无称号' }}</span>
-          <span class="mx-1.5">·</span><span>{{ lastCheckedLabel }}</span>
-          <span class="mx-1.5">·</span><span class="font-mono text-xs">{{ detail.uscc ?? '无统一社会信用代码' }}</span>
+          <span class="mx-1.5">·</span><span class="whitespace-nowrap">{{ lastCheckedLabel }}</span>
+          <span class="mx-1.5">·</span><span class="font-mono text-xs whitespace-nowrap">{{ detail.uscc ?? '无统一社会信用代码' }}</span>
         </template>
         <template #actions>
           <Badge v-for="f in otherFlags" :key="f" variant="destructive">{{ flagLabel(f) }}</Badge>

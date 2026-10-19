@@ -147,14 +147,14 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                   <th class="min-w-52 px-3 py-2 font-medium">企业名称</th>
                   <th class="px-3 py-2 font-medium">信用代码</th>
                   <template v-if="table.recognized">
-                  <th v-for="label in ['平台属地（原值/代码）', '平台认定信息', '有效期（原值）', '维护年份', '维护批次']" :key="label" class="px-3 py-2 font-medium">{{ label }}</th>
+                  <th v-for="label in ['平台属地（原值/代码）', '平台认定信息', '有效期（原值）', '维护年份', '维护批次']" :key="label" class="px-3 py-2 font-medium" :class="{ 'min-w-[4.5rem] whitespace-nowrap': label === '维护年份' || label === '维护批次' }">{{ label }}</th>
                   </template>
                   <template v-else>
                   <th class="px-3 py-2 font-medium">省份</th>
                   <th class="px-3 py-2 font-medium">申报类型</th>
                   <th class="px-3 py-2 font-medium">办理状态</th>
                   <th class="px-3 py-2 font-medium">申报时间</th>
-                  <th class="px-3 py-2 font-medium">维护批次</th>
+                  <th class="min-w-[4.5rem] px-3 py-2 font-medium whitespace-nowrap">维护批次</th>
                   </template>
                   <th v-if="table.hasAliases" class="px-3 py-2 font-medium">曾用名</th>
                 <th class="bg-muted border-l px-3 py-2 font-medium">出处 / 原字段</th>

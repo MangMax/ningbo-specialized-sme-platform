@@ -47,15 +47,14 @@ const validity = computed(() => props.assessment.explanationValidity.status)
 
     <div
       v-if="decision"
-      class="border-primary/35 bg-muted/30 min-w-0 rounded-sm border-l-2 px-2.5 py-2"
+      class="min-w-0"
+      :class="compact ? 'text-[13px] leading-5' : 'border-primary/35 bg-muted/30 rounded-sm border-l-2 px-2.5 py-2 text-[13px] leading-5'"
       data-testid="current-decision"
     >
-      <p class="text-[13px] leading-5 font-medium">
-        当前决定 #{{ decision.id }} · {{ decisionStatusLabel(assessment) }}
-      </p>
-      <p class="text-[13px] leading-5">{{ decisionReasonLabel(assessment) }}</p>
-      <p v-if="decisionMeasureLabel(assessment)" class="text-[13px] leading-5">
-        {{ decisionMeasureLabel(assessment) }}
+      <p class="font-medium">当前决定 #{{ decision.id }} · {{ decisionStatusLabel(assessment) }}</p>
+      <p>
+        {{ decisionReasonLabel(assessment) }}
+        <template v-if="decisionMeasureLabel(assessment)"> · {{ decisionMeasureLabel(assessment) }}</template>
       </p>
     </div>
     <p v-else class="text-muted-foreground text-[13px] leading-5">

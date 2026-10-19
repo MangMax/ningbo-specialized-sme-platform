@@ -139,15 +139,15 @@ export function assessmentHeadline(assessment: ReviewAssessment): CaseHeadline {
       return { tone: 'action', label: '证据已变化 · 原决定保留待复核', detail: '原原因与措施未被改写；请核对新证据后明确维持或更正。', action: '核对证据' }
     }
     if (assessment.explanationValidity.status === 'valid') {
-      return { tone: 'done', label: '已复核', detail: '当前决定与最近证据已登记复核。', action: '查看复核记录' }
+      return { tone: 'done', label: '当前决定已复核', detail: '原因与措施保持原样，最近证据已登记复核。', action: '查看复核记录' }
     }
     return { tone: 'waiting', label: '已有业务决定 · 解释有效性未确认', detail: '决定可读，但尚无已登记的可核验证据基线。', action: '查看决定' }
   }
   if (assessment.assessment === 'queried_unjudged') {
-    return { tone: 'waiting', label: '已查询 · 尚未判断', detail: '查询完成不等于一致或无需处理；尚没有业务决定。', action: '查看查询范围' }
+    return { tone: 'waiting', label: '等待业务判断', detail: '查询完成不等于一致或无需处理；尚没有业务决定。', action: '查看查询范围' }
   }
   if (assessment.assessment === 'not_queried') {
-    return { tone: 'muted', label: '尚未核对', detail: '还没有执行过平台查询；未查询不等于无记录。', action: '查看范围' }
+    return { tone: 'muted', label: '还没有开始核对', detail: '未查询不等于无记录；需要先取得平台查询范围。', action: '查看范围' }
   }
   if (coverage === 'failed') {
     return { tone: 'failed', label: '无法判断 · 查询失败', detail: '失败或授权失败不等于零记录；保留上次结果与查询范围。', action: '查看失败记录' }
@@ -248,6 +248,7 @@ export function impactTone(row: ImpactRow): CaseTone {
 export function impactOldDecisionText(row: ImpactRow): string {
   const decision = row.oldDecision
   if (!decision) return `原决定 #${row.decisionId}：历史决定原文不可用；原坐标与来源仍保留。`
+  const status = DIFFERENCE_STATUSES[decision.status] ?? '状态待核'
   const reason = decision.reasonCode
     ? DIFFERENCE_REASONS[decision.reasonCode] ?? decision.reasonCode
     : '原因未填写'
@@ -255,7 +256,7 @@ export function impactOldDecisionText(row: ImpactRow): string {
     ? DIFFERENCE_MEASURES[decision.measureCode] ?? decision.measureCode
     : '措施未填写'
   const note = decision.reasonNote ? ` · ${decision.reasonNote}` : ''
-  return `原决定 #${row.decisionId}：${reason}${note} · ${measure}`
+  return `原决定 #${row.decisionId}：${status} · ${reason}${note} · ${measure}`
 }
 
 /** 待复核清单的标题（不含内部 ID 时也能读）。 */

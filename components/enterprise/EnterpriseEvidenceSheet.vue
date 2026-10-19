@@ -1,12 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ImpactRow, ReviewAssessment } from '~~/lib/roster/evidence-review-ui'
-import {
-  assessmentHeadline,
-  directionLabel,
-  titleLabel,
-} from '~~/lib/roster/review-display'
-import AssessmentStatusBadge from '@/components/evidence-review/AssessmentStatusBadge.vue'
+import { directionLabel, titleLabel } from '~~/lib/roster/review-display'
 import QueryAssessmentSummary from '@/components/evidence-review/QueryAssessmentSummary.vue'
 import DecisionHistory from '@/components/evidence-review/DecisionHistory.vue'
 import EvidenceReviewDetail from '@/components/evidence-review/EvidenceReviewDetail.vue'
@@ -31,7 +26,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{ saved: [] }>()
 
-const headline = computed(() => props.assessment ? assessmentHeadline(props.assessment) : null)
 const resolvedImpactId = computed(() => props.impact?.id ?? props.impactId)
 </script>
 
@@ -43,30 +37,10 @@ const resolvedImpactId = computed(() => props.impact?.id ?? props.impactId)
         <SheetDescription class="text-[13px] leading-5">
           核对依据、当前决定与证据复核。查询覆盖、业务决定和解释有效性分别保留。
         </SheetDescription>
-        <div class="flex flex-wrap items-center gap-1.5 pt-1">
-          <AssessmentStatusBadge
-            v-if="impact"
-            kind="impact"
-            :value="impact.classification"
-          />
-          <template v-else-if="assessment">
-            <AssessmentStatusBadge kind="coverage" :value="assessment.queryCoverage.status" />
-            <AssessmentStatusBadge kind="assessment" :value="assessment.assessment" />
-            <AssessmentStatusBadge
-              v-if="assessment.explanationValidity.status !== 'not_applicable'"
-              kind="validity"
-              :value="assessment.explanationValidity.status"
-            />
-          </template>
-          <span v-if="headline" class="text-muted-foreground text-[13px] leading-5">{{ headline.label }}</span>
-        </div>
       </SheetHeader>
 
       <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         <template v-if="resolvedImpactId">
-          <p class="text-muted-foreground mb-3 text-[13px] leading-5">
-            该复核项{{ impact?.pending === false ? '已登记复核' : '待处理' }}；原决定保留在历史中，维持不会改写原原因或措施。
-          </p>
           <EvidenceReviewDetail
             :key="resolvedImpactId"
             :impact-id="resolvedImpactId"

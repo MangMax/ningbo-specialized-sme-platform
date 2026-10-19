@@ -111,22 +111,22 @@ async function save() {
 
         <div class="grid min-w-0 gap-3 sm:grid-cols-2">
           <label class="flex min-w-0 flex-col gap-1 text-[13px]">
-            写入凭证 <span class="text-destructive" aria-hidden="true">*</span>
+            <span>写入凭证 <span class="text-destructive" aria-hidden="true">*</span></span>
             <Input v-model="token" aria-label="写入凭证" type="password" autocomplete="off" required />
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-[13px]">
-            复核人 <span class="text-destructive" aria-hidden="true">*</span>
+            <span>复核人 <span class="text-destructive" aria-hidden="true">*</span></span>
             <Input v-model="actor" aria-label="复核人" maxlength="200" autocomplete="off" required />
           </label>
         </div>
 
         <label class="flex min-w-0 flex-col gap-1 text-[13px]">
-          复核依据 <span class="text-destructive" aria-hidden="true">*</span>
+          <span>复核依据 <span class="text-destructive" aria-hidden="true">*</span></span>
           <Textarea v-model="basis" aria-label="复核依据" maxlength="4000" :rows="3" required />
         </label>
 
         <label class="flex min-w-0 flex-col gap-1 text-[13px] sm:max-w-sm">
-          规则版本 <span class="text-destructive" aria-hidden="true">*</span>
+          <span>规则版本 <span class="text-destructive" aria-hidden="true">*</span></span>
           <Input v-model="ruleVersion" aria-label="规则版本" maxlength="200" required />
         </label>
 
