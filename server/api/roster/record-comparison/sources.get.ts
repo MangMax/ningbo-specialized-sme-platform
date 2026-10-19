@@ -13,9 +13,10 @@ export default defineEventHandler(async event => {
   setHeader(event, 'cache-control', 'no-store')
   const query = getQuery(event)
   const controller = new AbortController()
-  const abort = () => { if (!event.node.res.writableEnded) controller.abort() }
+  const abort = () => { if (!event.node.res.writableFinished) controller.abort() }
   event.node.req.once('aborted', abort)
   event.node.res.once('close', abort)
+  if (event.node.req.aborted || event.node.res.destroyed || event.node.res.closed || event.node.res.writableFinished) controller.abort()
   try {
     return await readRecordComparisonSources(useDb(), comparisonSourceCatalogInput.parse({ kind: query.kind, ids: query.ids === undefined ? undefined : (Array.isArray(query.ids) ? query.ids : [query.ids]).flatMap(value => String(value).split(',')).map(value => /^\d+$/.test(value.trim()) ? Number(value.trim()) : NaN), page: query.page === undefined ? undefined : Number(query.page), pageSize: query.pageSize === undefined ? undefined : Number(query.pageSize) }), controller.signal)
   } catch (error) {

@@ -15,9 +15,10 @@ defineRouteMeta({ openAPI: { tags: ['名录'], summary: '记录级对比（只�
 export default defineEventHandler(async event => {
   setHeader(event, 'cache-control', 'no-store')
   const controller = new AbortController()
-  const abort = () => { if (!event.node.res.writableEnded) controller.abort() }
+  const abort = () => { if (!event.node.res.writableFinished) controller.abort() }
   event.node.req.once('aborted', abort)
   event.node.res.once('close', abort)
+  if (event.node.req.aborted || event.node.res.destroyed || event.node.res.closed || event.node.res.writableFinished) controller.abort()
   try { const db = useDb(); const input = parseRecordComparisonQuery(getQuery(event)); return await readRecordComparison(db, input, controller.signal) }
   catch (error) { if (error instanceof ZodError || error instanceof Error && (error.message.startsWith('source_set_') || error.message.startsWith('duplicate_'))) throw createError({ statusCode: 400, statusMessage: error.message }); throw error }
   finally { event.node.req.off('aborted', abort); event.node.res.off('close', abort) }
