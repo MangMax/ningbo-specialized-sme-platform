@@ -159,7 +159,7 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
               <tbody v-for="group in table.groups" :key="group.title" :data-record-title="group.title">
                 <tr v-if="activeTitle === 'all'" class="bg-accent/40 border-t" data-testid="platform-title-group">
                   <th :colspan="table.columns" class="p-0 text-left font-medium" scope="rowgroup">
-                    <Button type="button" variant="ghost" size="sm" class="sticky left-0 h-auto justify-start gap-2 px-3 py-2" :aria-expanded="!group.collapsed" :aria-label="`${group.label}，${group.rows.length}条${table.label}`" @click="toggleGroup(table.source, group.title)">
+                    <Button type="button" variant="link" size="sm" class="sticky left-0 h-auto justify-start gap-2 rounded-none px-3 py-2 text-foreground active:scale-100" :aria-expanded="!group.collapsed" :aria-label="`${group.label}，${group.rows.length}条${table.label}`" @click="toggleGroup(table.source, group.title)">
                       <ChevronDown data-icon="inline-start" class="transition-transform duration-150 motion-reduce:transition-none" :class="{ '-rotate-90': group.collapsed }" />
                       <span>{{ group.label }}</span>
                       <span class="text-muted-foreground font-normal">{{ group.rows.length }} 条</span>
