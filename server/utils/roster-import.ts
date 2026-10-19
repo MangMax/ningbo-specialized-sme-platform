@@ -46,7 +46,9 @@ import type {
   RosterImportSummary,
   RosterImportUsccBackfill,
 } from '../../lib/roster-import-client'
+import { advanceOfficialEventRevision } from './roster-event-version'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
+import { captureIdentityRevision113, captureQueryRevision113, identityMaterial113, selectedSnapshot113, captureSnapshotRevision113, captureOfficialEventRevision113 } from './evidence-impact-113'
 
 type Db = BetterSQLite3Database<typeof schema>
 /** 事务内外都能用的执行器（`tx` 与本连接在 select/insert/update/delete 上同形）。 */
@@ -1668,6 +1670,7 @@ function writeAnnouncementRecord(
         .get().id
       writtenEvidence.push(evidenceId)
     }
+    if (source === 'jxj') captureOfficialEventRevision113(tx, eventId, 0, 1)
   }
 
   return success('record_event', `record:${recordId}`, {
@@ -2098,7 +2101,10 @@ function groupEventEvidenceById(
 /** 执行计划期冻结的收敛目标；路径或事件已被别的操作改变时安全跳过。 */
 function applyEvidenceRepointTargets(tx: Executor, targets: readonly EvidenceRepointTarget[]): number {
   let repointed = 0
+  const changedEvents = new Map<number, number>()
   for (const target of targets) {
+    const before = !isPageCapable(target.sourceFile) ? tx.select({ page: schema.recordEvidence.page, revision: schema.recordEvent.revision }).from(schema.recordEvidence)
+      .innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId)).where(eq(schema.recordEvidence.id, target.id)).get() : null
     const result = tx
       .update(schema.recordEvidence)
       .set(
@@ -2114,8 +2120,14 @@ function applyEvidenceRepointTargets(tx: Executor, targets: readonly EvidenceRep
         ),
       )
       .run()
-    if (result.changes > 0) repointed += 1
+    if (result.changes > 0) {
+      repointed += 1
+      // Path convergence is prevalidated equal SHA content. Only a lost page coordinate
+      // changes usable evidence; pure same-content path moves are semantic no-ops.
+      if (before?.page != null) changedEvents.set(target.recordEventId, before.revision)
+    }
   }
+  for (const [eventId, revision] of changedEvents) advanceOfficialEventRevision(tx, eventId, revision)
   return repointed
 }
 
@@ -2571,6 +2583,7 @@ function planAlias(
         sourceRefId,
       })
       if (already) return success('alias', `alias:${already.id}`, { enterpriseId: enterprise.id, rowsWritten: 0 })
+      const identityBefore = identityMaterial113(tx, enterprise.id)
       const id = tx
         .insert(schema.enterpriseAlias)
         .values({
@@ -2586,6 +2599,7 @@ function planAlias(
         })
         .returning({ id: schema.enterpriseAlias.id })
         .get().id
+      captureIdentityRevision113(tx, { enterpriseId: enterprise.id, sourceKey: `enterprise:${enterprise.id}`, sourceVersion: `alias-import:${id}`, before: identityBefore, after: identityMaterial113(tx, enterprise.id) })
       return success('alias', `alias:${id}`, { enterpriseId: enterprise.id, sourceRefId, rowsWritten: 1 })
     },
   })
@@ -2763,6 +2777,7 @@ function writePlatformQuery(
       .get().id
     relations.push(id)
   }
+  if (queryRow.created || relations.length) captureQueryRevision113(tx, queryId)
   return success('platform_query', `query:${queryId}`, {
     relations,
     skipped,
@@ -2852,6 +2867,7 @@ function writeExportSnapshot(
   snapshot: RosterImportExportSnapshot,
   context: { batchId?: number },
 ): RosterImportItemResult {
+  const beforeSelection113 = selectedSnapshot113(tx, snapshot.titleCode)
   const rows = snapshot.rows ?? []
   let batch = findExportBatch(tx, snapshot)
   const batchCreated = !batch
@@ -2922,6 +2938,7 @@ function writeExportSnapshot(
   // 只报**本次真正插入**的源行（重放同一份快照时为空）—— 「本批写了哪些行」必须可查回，
   // 而不是把批次里已有的行也算成本次新增。
   written.sort((left, right) => left - right)
+  captureSnapshotRevision113(tx, snapshot.titleCode, beforeSelection113)
   return success('export_batch', `export:${batch.id}`, {
     rows: written,
     skipped: rows.length - pendingCount,
@@ -3480,7 +3497,7 @@ function planUsccBackfill(
  * 抛 `ExecStageFailure` 让整批回滚，**绝不**写出一个自相矛盾的状态。
  */
 function executeUsccBackfill(tx: Executor, plan: UsccBackfillPlan): RosterImportItemResult {
-  const row = tx.select().from(schema.enterprise).all().find((e) => e.id === plan.enterpriseId)
+  const row = tx.select().from(schema.enterprise).where(eq(schema.enterprise.id, plan.enterpriseId)).get()
   if (!row) {
     return failure('uscc_backfill', plan.ref, 'enterprise_not_found', `写入阶段找不到企业 ${plan.enterpriseId}`, 'enterpriseId')
   }
@@ -3491,11 +3508,13 @@ function executeUsccBackfill(tx: Executor, plan: UsccBackfillPlan): RosterImport
   if (holder && holder.id !== row.id) {
     return failure('uscc_backfill', plan.ref, 'uscc_taken', `统代 ${plan.uscc} 在写入阶段已被企业 ${holder.id} 占用`, 'uscc')
   }
+  const identityBefore = identityMaterial113(tx, row.id)
   const qualityFlags = (row.qualityFlags ?? []).filter((flag) => flag !== 'uscc_missing')
   tx.update(schema.enterprise)
     .set({ usccNorm: plan.uscc, qualityFlags })
     .where(eq(schema.enterprise.id, row.id))
     .run()
+  captureIdentityRevision113(tx, { enterpriseId: row.id, sourceKey: `enterprise:${row.id}`, sourceVersion: `uscc:${plan.uscc}`, before: identityBefore, after: identityMaterial113(tx, row.id) })
   const lineage: UsccBackfillLineage = {
     enterpriseId: row.id,
     enterpriseName: row.name,
@@ -3603,6 +3622,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   if (!from) return failure('merge', ref0, 'merge_source_not_found', '被并企业在写入阶段不存在', 'fromEnterpriseId')
   if (!into) return failure('merge', ref0, 'merge_target_not_found', '规范行在写入阶段不存在', 'intoUscc')
   if (from.id === into.id) return failure('merge', ref0, 'merge_same_enterprise', '被并企业与规范行是同一行', 'fromEnterpriseId')
+  const identityBefore = identityMaterial113(tx, into.id)
   const ref = `merge:${from.id}->${into.id}`
   const aliasConflict = findMergeAliasLifecycleConflict(tx, from.id, into.id)
   if (aliasConflict) return failure('merge', ref, aliasConflict.code, aliasConflict.message, 'merges')
@@ -3743,7 +3763,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   }
 
   const fromRelations = tx
-    .select()
+    .select({ id: schema.platformRelation.id })
     .from(schema.platformRelation)
     .where(eq(schema.platformRelation.enterpriseId, from.id))
     .all()
@@ -3756,19 +3776,19 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   const recordsFolded: Array<{ fromRecordId: number; intoRecordId: number }> = []
   const eventsMoved: number[] = []
   const evidenceMoved: number[] = []
-  for (const record of tx.select().from(schema.record).all().filter((r) => r.enterpriseId === from.id)) {
-    const events = tx.select().from(schema.recordEvent).all().filter((e) => e.recordId === record.id)
+  for (const record of tx.select().from(schema.record).where(eq(schema.record.enterpriseId, from.id)).all()) {
+    const events = tx.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId, record.id)).all()
     for (const event of events) {
       eventsMoved.push(event.id)
-      for (const evidence of tx.select().from(schema.recordEvidence).all().filter((v) => v.recordEventId === event.id)) {
+      for (const evidence of tx.select().from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, event.id)).all()) {
         evidenceMoved.push(evidence.id)
       }
     }
     const existing = tx
       .select()
       .from(schema.record)
-      .all()
-      .find((r) => r.enterpriseId === into.id && r.titleCode === record.titleCode && r.source === record.source)
+      .where(and(eq(schema.record.enterpriseId, into.id), eq(schema.record.titleCode, record.titleCode), eq(schema.record.source, record.source)))
+      .get()
     if (existing) {
       // 事件**改指**规范行记录（一条不丢、不折叠）；出处挂在事件上随之归入。
       for (const event of events) {
@@ -3782,6 +3802,10 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     }
   }
 
+  // The stable event/relation references survive; the lookup owner follows the identity merge.
+  // Keep confirmation/provenance/fingerprint untouched so readers still require revalidation.
+  tx.update(schema.recordCorrespondence).set({ enterpriseId: into.id }).where(eq(schema.recordCorrespondence.enterpriseId, from.id)).run()
+  captureIdentityRevision113(tx, { enterpriseId: into.id, sourceKey: `merge:${from.id}:${into.id}`, sourceVersion: '1', before: { identity: identityBefore, from: from.id }, after: { identity: identityMaterial113(tx, into.id), merged: from.id }, fromEnterpriseId: from.id })
   // 5. 删除被并企业行（子行已全部迁走）。
   tx.delete(schema.enterprise).where(eq(schema.enterprise.id, from.id)).run()
 

@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import * as s from '../../db/schema'
+import { captureIdentityRevision113, identityMaterial113 } from './evidence-impact-113'
 import { normalizeName } from '../../lib/domain'
 
 type Db = BetterSQLite3Database<typeof s>
@@ -49,6 +50,7 @@ export function patchEnterpriseProfile(db: Db, enterpriseId: number, body: unkno
       if (prior.requestHash !== requestHash) throw new EnterpriseProfileError(409, 'idempotency_conflict', 'Key already used for a different profile request')
       return receipt(prior)
     }
+    const identityBefore = identityMaterial113(tx, enterpriseId)
     const current = state(tx, enterpriseId), beforeVersion = version(current)
     if (input.expectedVersion !== beforeVersion) throw new EnterpriseProfileError(409, 'version_conflict', 'Enterprise profile changed; read it again')
     for (const [key, value] of Object.entries(input.expectedValues ?? {})) {
@@ -75,6 +77,7 @@ export function patchEnterpriseProfile(db: Db, enterpriseId: number, body: unkno
     tx.update(s.enterprise).set({ ...input.changes, ...(renamed ? { nameNorm: normalizeName(after.name) } : {}) }).where(eq(s.enterprise.id, enterpriseId)).run()
     const afterVersion = version({ ...current, profile: after, row: { ...current.row, nameNorm: renamed ? normalizeName(after.name) : current.row.nameNorm }, key: input.idempotencyKey })
     const audit = tx.insert(s.enterpriseProfileAudit).values({ enterpriseId, idempotencyKey: input.idempotencyKey, requestHash, beforeVersion, afterVersion, before: current.profile, after, actor: input.actor, basis: input.basis, retainedAliasId, aliasCreated }).returning().get()
+    if (renamed) captureIdentityRevision113(tx, { enterpriseId, sourceKey: `enterprise:${enterpriseId}`, sourceVersion: `profile:${audit.id}`, before: identityBefore, after: identityMaterial113(tx, enterpriseId) })
     return receipt(audit)
   }, { behavior: 'immediate' })
 }
