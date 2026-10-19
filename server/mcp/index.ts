@@ -51,7 +51,7 @@ export default defineMcpHandler({
     '',
     '差异决定维护：save_difference_decision 显式替代/撤回，必填 expectedCurrentId、actor、basis、ruleVersion、effectiveAt 与幂等键。',
     'get_current_difference_decision / get_difference_decision / list_difference_decision_history 读当前及稳定 ID 历史；preview_legacy_difference_decisions 只读映射/冲突，旧标注不等于 confirmed_no_diff。',
-    '差异决定契约见 docs/maintenance-102.md；旧 comparison/curated PATCH 已停用；生产旧资料迁移需另授权。',
+    '差异决定契约见 docs/maintenance-102.md；旧 comparison/curated PATCH 对未接管坐标保持兼容；已接管坐标返回409 decision_lifecycle_required；旧标注不等同正式决定，生产迁移需另授权。',
     '',
     '典型流程:',
     '1. `list_files` 找到目标文件(拿 `id` 或 `relPath`);',

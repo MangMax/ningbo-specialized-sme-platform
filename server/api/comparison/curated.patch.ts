@@ -1,7 +1,38 @@
-/** Historical JSON annotations are frozen. They never become formal decisions implicitly. */
-defineRouteMeta({ openAPI: { tags: ['比对'], summary: '旧人工标注写入口（已停用）', deprecated: true, description: '旧 JSON 保留只读；先 GET /api/roster/decision-lifecycle/legacy-preview 核对映射与冲突，再显式提交差异决定。生产迁移另授权。', responses: { 410: { description: 'legacy_write_retired，提供替代入口；不改旧 JSON 或正式决定' } } } })
-export default defineEventHandler((event) => {
+import { useDb } from '@db'
+import { parseCurationPatch } from '~~/lib/curation'
+import { DecisionError102 } from '../../utils/decision-lifecycle-102'
+import { patchLegacyCuration102 } from '../../utils/legacy-curation-102'
+
+/** Legacy annotations remain separate from formal difference decisions. */
+defineRouteMeta({
+  openAPI: {
+    tags: ['比对'],
+    summary: '人工标注一条比对结果（兼容入口）',
+    description: '保留原载荷及 {curated:boolean} 返回值、备注省略与取消语义。只写旧 JSON，不生成 confirmed_no_diff。按精确统代/name_norm 有界查询；歧义返回409 ambiguous_enterprise。显式生命周期接管后返回409 decision_lifecycle_required，含 replacement/preview。',
+    requestBody: {
+      required: true,
+      content: { 'application/json': { schema: { type: 'object', description: '原 CurationPatch：uscc 或 nameNorm、titleCode、direction、curated:boolean，以及可选 note:string；note省略保留旧值、空串清空。' } } },
+    },
+    responses: {
+      200: { description: '原返回值 {curated:boolean}；仅更新未接管坐标的旧标注。' },
+      400: { description: '请求体不合法。' },
+      409: { description: 'decision_lifecycle_required 或 ambiguous_enterprise；JSON文件和正式决定均不变，提供 replacement/preview。' },
+    },
+  },
+})
+export default defineEventHandler(async (event) => {
   setHeader(event, 'cache-control', 'no-store')
-  setResponseStatus(event, 410)
-  return { error: { code: 'legacy_write_retired', message: '旧标注写入口已停用；先预览映射/冲突，再显式提交决定。生产迁移须另授权。' }, replacement: '/api/roster/decision-lifecycle/commands', preview: '/api/roster/decision-lifecycle/legacy-preview' }
+  let patch
+  try {
+    patch = parseCurationPatch(await readBody(event))
+  } catch (error) {
+    throw createError({ statusCode: 400, statusMessage: (error as Error).message })
+  }
+  try {
+    return patchLegacyCuration102(useDb(), useRuntimeConfig(event).curatedPath, patch)
+  } catch (error) {
+    if (!(error instanceof DecisionError102)) throw error
+    setResponseStatus(event, error.statusCode)
+    return { error: { code: error.code, message: error.message }, replacement: '/api/roster/decision-lifecycle/commands', preview: '/api/roster/decision-lifecycle/legacy-preview' }
+  }
 })

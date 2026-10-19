@@ -56,7 +56,7 @@ actor 必须给 type=user/agent 和非空 id；沿用单机 token 授权模型�
 
 - 已有正式旧导入行读为 origin=legacy_import，原 ID 和原说明保留，不伪造操作者/规则。新命令经 expectedCurrentId 显式接管坐标。
 - 接管前，旧统一导入 payload.differences 保持历史兼容；接管后，旧导入 preflight/commit 的该项返回 decision_lifecycle_required，并让整批业务写入失败。计划和事务执行阶段各复核一次，避免计划后被接管的竞态。已提交旧导入回执仍可重放，不重复写入。
-- `PATCH /api/comparison/curated` 已停用，返回 410 legacy_write_retired、replacement 和 preview 路径；不改 JSON 或正式决定。旧比较 GET/导出仍可只读展示历史标注，不能把 curated=true 当成 confirmed_no_diff。历史 helper 仅保留格式/读取回归用途，应用没有继续写旧 JSON 的公开入口。
+- `PATCH /api/comparison/curated` 保留旧客户端兼容：未显式接管的坐标仍按原载荷写 JSON，成功只返回 `{curated:boolean}`；note 省略保留旧值，空串清空，curated=false 取消。标注不生成正式决定，不等同 confirmed_no_diff；无匹配的精确键保留原 JSON-only 语义。显式接管后（包括撤回后）返回 409 decision_lifecycle_required、replacement 和 preview，文件字节及正式决定均不变。精确 name_norm 有多个企业时返回 409 ambiguous_enterprise，不猜选、不接管。原比较 GET/导出继续展示旧标注。
 - 预览按 JSON 元组中的精确统代或 `name:` 后的 name_norm 查索引，最多两个候选；同名歧义不选企业。始终返回 equivalentToConfirmedNoDiff=false、migrationApplied=false 和 legacy_not_equivalent；标明未匹配、歧义、坏键、坏标注、已有正式决定/撤回。没有映射自动应用操作。
 - 旧文件实际读取上限 2 MiB/10000 键；摘要说明每字段最多 4000 字符，发生截取会显式标 legacy_summary_truncated。预览响应超过 256 KiB 返回 413，要求更小页或精确键；不以截断整个清单假装完整。坏 JSON 返回 422。生产旧资料迁移必须另行授权。
 
@@ -68,7 +68,7 @@ actor 必须给 type=user/agent 和非空 id；沿用单机 token 授权模型�
 2. 替代、撤回、保留旧原因、分页、跨传输幂等及旧回执不会复活结论：`replaces then withdraws without resurfacing old reasons and pages immutable history across transports`。
 3. 缺鉴权、独立凭据、非法字段/状态、精确不存在/非法分页：`rejects absent or wrong transport auth and malformed decisions without changing current state`。
 4. 并发预期版本、同键异请求、插入后故障回滚/恢复、热读后的当前/列表/详情更新及原始平台响应不变：`serializes competing expected versions, rejects key reuse, and rolls back an injected post-insert failure`。
-5. 可核对旧映射、歧义和冲突，不自动升级/迁移，旧 PATCH 410 且旧文件字节不变：`previews exact legacy mappings and conflicts without promoting reviewed annotations or modifying either store`。
+5. 可核对旧映射、歧义和冲突，不自动升级/迁移，已接管坐标的旧 PATCH 返回 409 且旧文件字节不变：`previews exact legacy mappings and conflicts without promoting reviewed annotations or modifying either store`。
 6. 旧正式决定可查、无毫秒未来时点可接管、接管后旧导入不能覆盖：`keeps legacy imports readable but requires lifecycle commands after explicit adoption`。
 7. 证据企业/称号错误拒绝、严格 RPC 参数、MCP stale/rollback 错误不泄漏 SQL：`rejects mismatched evidence and gives typed MCP failures without leaking internal SQL`。
 8. OpenAPI 必填/动作、MCP 只读发现、单独无 token 进程关闭两种写入口：`discovers full HTTP and MCP contracts and disables writes when tokens are unconfigured`。
@@ -83,7 +83,7 @@ actor 必须给 type=user/agent 和非空 id；沿用单机 token 授权模型�
 
 新当前/精确读取按键；历史在 SQL 中 count/limit/offset；命令幂等按唯一索引；已接管判断使用部分索引；预览只在文件上限内解析键，对页内候选逐个精确查找。旧 MCP list_differences 改为 SQL 最新版本/分页和查询元数据投影，保留原 rows/counts 形状，消除其先前全量读取平台原档的路径。深页 OFFSET 仍随范围页深增加 SQL 扫描，未宣称常数耗时。
 
-共享改动仅为 db/schema.ts、迁移 journal、server/utils/roster-import.ts 的接管守卫、mcp-auth 写名单、mcp-roster 差异摘要读取、MCP 中间件/说明，以及停用旧 PATCH；对应回归测试同步调整。迁移按预留 0018，未生成无关 snapshot；父集成合并其他预留迁移时需整理 journal 顺序。没有修改共享 GLOSSARY 或其他票据文档。
+共享改动仅为 db/schema.ts、迁移 journal、server/utils/roster-import.ts 的接管守卫、mcp-auth 写名单、mcp-roster 差异摘要读取、MCP 中间件/说明，以及旧 PATCH 接管守卫；对应回归测试同步调整。迁移按预留 0018，未生成无关 snapshot；父集成合并其他预留迁移时需整理 journal 顺序。没有修改共享 GLOSSARY 或其他票据文档。
 
 ## 最终交接记录（2026-10-19）
 
@@ -97,6 +97,25 @@ pnpm typecheck
 git diff --cached --check
 ```
 
-结果：10 文件 **270/270 通过**、typecheck 退出 0、diff check 退出 0。日志为 `/tmp/ningbo-spec98/ticket-102/merged-latest-tests.log` 和 `merged-latest-typecheck.log`。测试时为待提交的合并结果，其 staged tree `5a89ed2556f77e8aa49f18c7301d99f3a872ea4d` 与上述 `755c345` 提交 tree 完全相同；没有把先前 212/223 项旧候选结果冒充本次合并验证。本段后继提交只更新本票文档，不修改执行代码或测试。
+结果：10 文件 **270/270 通过**、typecheck 退出 0、diff check 退出 0。日志为 `/tmp/ningbo-spec98/ticket-102/merged-latest-tests.log` 和 `merged-latest-typecheck.log`。测试时为待提交的合并结果，其 staged tree `5a89ed2556f77e8aa49f18c7301d99f3a872ea4d` 与上述 `755c345` 提交 tree 完全相同；没有把先前 212/223 项旧候选结果冒充本次合并验证。紧随本段记录的 `1a77026` 只更新本票文档；后续旧客户端兼容修复见下方。
 
 共享冲突处理保留了 #96/#99/#100 的所有工具鉴权项、MCP 说明/校验器，以及迁移 0014/0015/0016；#102 的 0018 在 journal 中按顺序跟随。未创建 PR（由父集成负责），没有生产写入、生产资料迁移、部署、main 合并、CI、浏览器 UI 或完整规格最终验收声明。实时读取 #102 确认仍 OPEN、无新增评论；票据状态由父代理统一处理。
+
+
+## 原实现兼容性修复
+
+首次交付将旧 PATCH 无条件返回 410，实际仍在调用它的 `ComparisonCuration.vue` 因而失效；将原路由测试改成 helper 调用未覆盖这个回归。已恢复 `tests/curation.test.ts` 的原公开路由调用及原断言，不能把前述旧候选的测试通过当成旧客户端兼容验收。
+
+当前过渡契约：保留 baseline 旧载荷校验、成功返回体及未接管坐标的全部标注语义，也保持旧入口原有鉴权行为供现有 UI 调用；新正式命令的 token、操作者、依据、规则、业务时点和 expectedCurrentId 要求不变。旧标注始终是独立 annotation，不自动迁移/升级成 confirmed_no_diff，不新增 UI 或设计工作。
+
+旧 PATCH 在同步 JSON 写入前只查最多两个企业 ID：有 uscc 时按既有规范化统代精确查唯一索引（保留原 JSON key 写法），不按名称兜底；否则按调用方 nameNorm 精确查名称索引，不搜别名、不模糊匹配。多个候选返回 409 ambiguous_enterprise；零匹配保留原 JSON-only 写法。唯一匹配后，按企业×称号×方向及 lifecycle_action 非空的现有部分索引检查是否已显式接管；已接管无论当前解释有效或撤回，任何旧标注操作均返回 409 decision_lifecycle_required，含 replacement/preview，且先拒绝再读改写 JSON。其他称号或方向仍兼容。检查与同步原文件写入共用 SQLite immediate 事务锁，与新命令串行，避免检查后被另一连接接管再继续写。没有新增迁移或全库/原始平台字段读取，旧 JSON 自身的原有读改写方式保留。
+
+真实 Nuxt HTTP + 隔离 SQLite 验收名称：
+
+- `preserves the public legacy PATCH payload output and note omission semantics without creating a decision`：无新增 token/元数据要求、原返回体、比较 GET 读回、重复/省略 note 保持原文件字节、空串清空、取消、非法载荷 400、精确未匹配键兼容；current/history 证明没有自动创建正式决定。
+- `rejects ambiguous legacy identities without selecting or adopting an enterprise`：同 name_norm 两企业返回 409，文件原字节不变、两企业 versionId 仍 null；显式 uscc 可精确区分。
+- `blocks only the explicitly adopted legacy coordinate even after withdrawal and preserves both stores on conflict`：接管后 true/false/备注修改、规范化统代与精确 name_norm 均 409；文件字节和正式决定不变；撤回后仍保护；同企业其他称号/方向仍按原返回体成功。
+- 既有 `previews exact legacy mappings and conflicts without promoting reviewed annotations or modifying either store` 已将被测公开冲突更新为指定的 409 decision_lifecycle_required；预览无自动迁移的不变量保留。
+- 大字段哨兵用例增加了无关平台原文/无效原文 JSON 存在时旧 PATCH 仍能按精确键完成的断言。该验证仅证明读取路径与边界，仍不声明容量或尾延迟验收。
+
+红绿日志：`/tmp/ningbo-spec98/ticket-102/compat-red-1.log` 记录无条件 410 下 **16 失败 / 10 通过**；`compat-green-1.log` 为修复后 **26/26 通过**。`compat-red-adoption-mutant.log` 临时移除接管守卫，仅跑上述接管范围用例，明确以 **200 应为 409** 失败；正确守卫已恢复，最终干净结果见本次交接记录。没有以 helper 替代公开入口验收。
