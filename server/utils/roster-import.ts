@@ -2351,7 +2351,7 @@ function findDifferenceContentRow(
     .get()
 }
 
-/** Identity and createdAt are metadata; every other stored semantic field must agree to dedupe. */
+/** Legacy-only deduplication; lifecycle-managed histories are rejected before reaching this path. */
 function sameDifferenceContent(left: DifferenceRow, right: DifferenceRow): boolean {
   return left.status === right.status &&
     left.reasonCode === right.reasonCode &&
@@ -2365,6 +2365,27 @@ function sameDifferenceContent(left: DifferenceRow, right: DifferenceRow): boole
     left.movedInYear === right.movedInYear &&
     left.movedInBatch === right.movedInBatch &&
     left.verificationStatus === right.verificationStatus
+}
+
+/** Identity reassignment cannot preserve a managed command's original scope/hash/replay. */
+function findMergeDifferenceLifecycleConflict(db: Executor, fromEnterpriseId: number, intoEnterpriseId: number | null) {
+  if (fromEnterpriseId === intoEnterpriseId) return null
+  const source = db.select({ id: schema.differenceReason.id, enterpriseId: schema.differenceReason.enterpriseId,
+    titleCode: schema.differenceReason.titleCode, direction: schema.differenceReason.direction })
+    .from(schema.differenceReason).where(and(eq(schema.differenceReason.enterpriseId, fromEnterpriseId),
+      sql`${schema.differenceReason.lifecycleAction} is not null`)).limit(1).get()
+  // Even a non-colliding legacy row must not enter an explicitly adopted target coordinate.
+  const affected = source ?? (intoEnterpriseId == null ? undefined : db.get<{
+    id: number; enterpriseId: number; titleCode: string; direction: string
+  }>(sql`select managed.id, managed.enterprise_id as enterpriseId, managed.title_code as titleCode, managed.direction
+    from difference_reason managed
+    where managed.enterprise_id=${intoEnterpriseId} and managed.lifecycle_action is not null
+      and exists(select 1 from difference_reason source where source.enterprise_id=${fromEnterpriseId}
+        and source.title_code=managed.title_code and source.direction=managed.direction)
+    limit 1`))
+  if (!affected) return null
+  return { code: 'merge_difference_lifecycle_conflict',
+    message: `差异决定版本 ${affected.id}（企业 ${affected.enterpriseId}/${affected.titleCode}/${affected.direction}）已接管；归并将改变历史归属或写入旧解释，当前入口不支持保留原范围重放的归并，原 ID、历史和接管状态须保留` }
 }
 
 /** #99: inspect only affected alias IDs; never materialize audit payloads. */
@@ -3288,6 +3309,13 @@ function planMerge(
   }
 
   const targetEnterprise = findEnterpriseByUscc(db, intoUscc)
+  if (sourceEnterpriseId != null) {
+    const lifecycleConflict = findMergeDifferenceLifecycleConflict(db, sourceEnterpriseId, targetEnterprise?.id ?? null)
+    if (lifecycleConflict) {
+      push({ item: failure('merge', ref, lifecycleConflict.code, lifecycleConflict.message, 'merges'), action: 'skip', review: false })
+      return
+    }
+  }
   if (sourceEnterpriseId != null && targetEnterprise) {
     const aliasConflict = findMergeAliasLifecycleConflict(db, sourceEnterpriseId, targetEnterprise.id)
     if (aliasConflict) {
@@ -3605,6 +3633,8 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   if (!into) return failure('merge', ref0, 'merge_target_not_found', '规范行在写入阶段不存在', 'intoUscc')
   if (from.id === into.id) return failure('merge', ref0, 'merge_same_enterprise', '被并企业与规范行是同一行', 'fromEnterpriseId')
   const ref = `merge:${from.id}->${into.id}`
+  const lifecycleConflict = findMergeDifferenceLifecycleConflict(tx, from.id, into.id)
+  if (lifecycleConflict) return failure('merge', ref, lifecycleConflict.code, lifecycleConflict.message, 'merges')
   const aliasConflict = findMergeAliasLifecycleConflict(tx, from.id, into.id)
   if (aliasConflict) return failure('merge', ref, aliasConflict.code, aliasConflict.message, 'merges')
   const conflictingDifference = findMergeDifferenceConflict(tx, from.id, into.id)
