@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { and, eq } from 'drizzle-orm'
+import { and, asc, count, eq, inArray, or } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
@@ -37,7 +37,7 @@ export interface CorrespondenceReceipt { batchId: number; planHash: string; impa
 type StoredCorrespondence = typeof schema.recordCorrespondence.$inferSelect
 export type CorrespondenceRead = StoredCorrespondence & { requiresRevalidation: boolean }
 export type CorrespondenceAudit = typeof schema.recordCorrespondenceAudit.$inferSelect
-export type CorrespondenceFilter = Partial<Pick<CorrespondenceRead, 'eventId' | 'relationId' | 'exportRowId' | 'enterpriseId' | 'titleCode' | 'status' | 'type'>>
+export type CorrespondenceFilter = Partial<Pick<CorrespondenceRead, 'id' | 'eventId' | 'relationId' | 'exportRowId' | 'enterpriseId' | 'titleCode' | 'status' | 'type' | 'role' | 'ruleVersion'>> & { anyEventId?: number }
 
 export class CorrespondenceError extends Error {
   constructor(readonly code: 'invalid_endpoint_type' | 'identity_conflict' | 'title_conflict' | 'ambiguous_candidate' | 'incomplete_coverage' | 'stale_revision' | 'plan_mismatch' | 'idempotency_conflict', message: string) {
@@ -61,32 +61,33 @@ function edgeKey(edge: CorrespondenceEdge) {
   }
 }
 
-function eventSource(db: Executor, id: number) {
+function eventSource(db: Executor, id: number, observed?: ReadSources) {
   if (!positive(id)) fail('invalid_endpoint_type', 'eventId must be a positive integer')
-  const row = db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise })
+  const row = observed ? observed.events.get(id) : db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise })
     .from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id))
     .innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id))
     .where(eq(schema.recordEvent.id, id)).get()
   if (!row || row.record.source !== 'jxj') fail('invalid_endpoint_type', 'Official jxj event not found')
   return row
 }
-function relationSource(db: Executor, id: number) {
+function relationSource(db: Executor, id: number, observed?: ReadSources) {
   if (!positive(id)) fail('invalid_endpoint_type', 'relationId must be a positive integer')
-  const row = db.select({ relation: schema.platformRelation, query: schema.platformQuery })
+  const row = observed ? observed.relations.get(id) : db.select({ relation: schema.platformRelation, query: schema.platformQuery })
     .from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id))
     .where(eq(schema.platformRelation.id, id)).get()
   if (!row || !['success', 'partial'].includes(row.query.status)) fail('invalid_endpoint_type', 'Persisted positive interface row not found')
   return row
 }
-function exportSource(db: Executor, id: number) {
+function exportSource(db: Executor, id: number, observed?: ReadSources) {
   if (!positive(id)) fail('invalid_endpoint_type', 'exportRowId must be a positive integer')
-  const row = db.select({ exportRow: schema.platformExportRow, exportBatch: schema.platformExportBatch })
+  const row = observed ? observed.exports.get(id) : db.select({ exportRow: schema.platformExportRow, exportBatch: schema.platformExportBatch })
     .from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id))
     .where(eq(schema.platformExportRow.id, id)).get()
   if (!row || row.exportBatch.importStatus !== 'imported') fail('invalid_endpoint_type', 'Persisted imported export row not found')
   return row
 }
-function officialEvidence(db: Executor, eventId: number) {
+function officialEvidence(db: Executor, eventId: number, observed?: ReadSources) {
+  if (observed) return observed.evidence.get(eventId) ?? []
   const rows = db.select().from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, eventId)).all()
     .sort((a, b) => a.id - b.id)
   return rows.map((evidence) => ({
@@ -96,26 +97,26 @@ function officialEvidence(db: Executor, eventId: number) {
   }))
 }
 /** Observe persisted source rows without asserting that a retired decision is still valid. */
-function sourceProvenance(db: Executor, edge: CorrespondenceEdge) {
-  const event = 'eventId' in edge ? db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise })
+function sourceProvenance(db: Executor, edge: CorrespondenceEdge, observed?: ReadSources) {
+  const event = 'eventId' in edge ? observed ? observed.events.get(edge.eventId) : db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise })
     .from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id))
     .innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id))
     .where(eq(schema.recordEvent.id, edge.eventId)).get() : null
-  const relation = 'relationId' in edge ? db.select({ relation: schema.platformRelation, query: schema.platformQuery })
+  const relation = 'relationId' in edge ? observed ? observed.relations.get(edge.relationId) : db.select({ relation: schema.platformRelation, query: schema.platformQuery })
     .from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id))
     .where(eq(schema.platformRelation.id, edge.relationId)).get() : null
-  const exported = 'exportRowId' in edge ? db.select({ exportRow: schema.platformExportRow, exportBatch: schema.platformExportBatch })
+  const exported = 'exportRowId' in edge ? observed ? observed.exports.get(edge.exportRowId) : db.select({ exportRow: schema.platformExportRow, exportBatch: schema.platformExportBatch })
     .from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id))
     .where(eq(schema.platformExportRow.id, edge.exportRowId)).get() : null
   const predecessor = edge.type === 'later_process' && edge.predecessorEventId != null
-    ? db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise })
+    ? observed ? observed.events.get(edge.predecessorEventId) : db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise })
       .from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id))
       .innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id))
       .where(eq(schema.recordEvent.id, edge.predecessorEventId)).get() : null
   return {
     event: event?.event ?? null, record: event?.record ?? null, officialEnterprise: event?.enterprise ?? null,
-    officialEvidence: event ? officialEvidence(db, event.event.id) : [],
-    predecessor: predecessor ? { ...predecessor, officialEvidence: officialEvidence(db, predecessor.event.id) } : null,
+    officialEvidence: event ? officialEvidence(db, event.event.id, observed) : [],
+    predecessor: predecessor ? { ...predecessor, officialEvidence: officialEvidence(db, predecessor.event.id, observed) } : null,
     relation: relation?.relation ?? null, query: relation?.query ?? null,
     exportRow: exported?.exportRow ?? null, exportBatch: exported?.exportBatch ?? null,
   }
@@ -147,7 +148,7 @@ function sameTitle(a: string | null, b: string | null, confirmed: boolean) {
   if (a && b && a !== b) fail('title_conflict', 'Source title codes conflict')
   if (confirmed && (!a || !b)) fail('incomplete_coverage', 'Row title is not explicit')
 }
-function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolean, proofIds: number[] = []) {
+function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolean, proofIds: number[] = [], observed?: ReadSources) {
   if (!edge || typeof edge !== 'object') fail('invalid_endpoint_type', 'Typed edge required')
   const shapes: Record<CorrespondenceEdge['type'], readonly string[]> = {
     event_process: ['type', 'eventId', 'relationId', 'role'],
@@ -158,12 +159,12 @@ function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolea
     recognized_export: ['type', 'relationId', 'exportRowId', 'role'],
   }
   if (!Object.hasOwn(shapes, edge.type) || Object.keys(edge).some((key) => !shapes[edge.type].includes(key))) fail('invalid_endpoint_type', 'Edge shape does not match its discriminator')
-  const event = 'eventId' in edge ? eventSource(db, edge.eventId) : null
-  const relation = 'relationId' in edge ? relationSource(db, edge.relationId) : null
-  const exported = 'exportRowId' in edge ? exportSource(db, edge.exportRowId) : null
+  const event = 'eventId' in edge ? eventSource(db, edge.eventId, observed) : null
+  const relation = 'relationId' in edge ? relationSource(db, edge.relationId, observed) : null
+  const exported = 'exportRowId' in edge ? exportSource(db, edge.exportRowId, observed) : null
   if (event && event.record.usccRaw && event.enterprise.usccNorm && normalizeUscc(event.record.usccRaw) !== normalizeUscc(event.enterprise.usccNorm)) fail('identity_conflict', 'Official record USCC differs from its enterprise')
   if (relation?.relation.enterpriseId && relation.relation.usccRaw) {
-    const owner = db.select().from(schema.enterprise).where(eq(schema.enterprise.id, relation.relation.enterpriseId)).get()
+    const owner = observed ? observed.enterprises.get(relation.relation.enterpriseId) : db.select().from(schema.enterprise).where(eq(schema.enterprise.id, relation.relation.enterpriseId)).get()
     if (!owner || (owner.usccNorm && normalizeUscc(owner.usccNorm) !== normalizeUscc(relation.relation.usccRaw))) fail('identity_conflict', 'Interface row USCC differs from its assigned enterprise')
   }
   if (!['event_process', 'event_recognized', 'later_process', 'event_export_context', 'process_export_context', 'recognized_export'].includes(edge.type)) fail('invalid_endpoint_type', 'Unknown edge type')
@@ -197,10 +198,10 @@ function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolea
     if (decisionYear && Number.isInteger(applicationYear) && applicationYear > decisionYear) fail('invalid_endpoint_type', 'Later application cannot support an earlier official decision')
   }
   if (edge.type === 'later_process') {
-    const e = db.select().from(schema.enterprise).where(eq(schema.enterprise.id, edge.enterpriseId)).get()
-    if (!e || !db.select().from(schema.title).where(eq(schema.title.code, edge.titleCode)).get()) fail('invalid_endpoint_type', 'Enterprise/title not found')
+    const e = observed ? observed.enterprises.get(edge.enterpriseId) : db.select().from(schema.enterprise).where(eq(schema.enterprise.id, edge.enterpriseId)).get()
+    if (!e || !(observed ? observed.titles.has(edge.titleCode) : db.select().from(schema.title).where(eq(schema.title.code, edge.titleCode)).get())) fail('invalid_endpoint_type', 'Enterprise/title not found')
     if (edge.predecessorEventId != null) {
-      const preceding = eventSource(db, edge.predecessorEventId)
+      const preceding = eventSource(db, edge.predecessorEventId, observed)
       if (preceding.record.enterpriseId !== edge.enterpriseId) fail('identity_conflict', 'Predecessor belongs to another enterprise')
       sameTitle(edge.titleCode, preceding.record.titleCode, true)
       const decidedYear = preceding.event.decidedYear ?? (preceding.event.eventType === 'award' ? preceding.event.year : null)
@@ -212,7 +213,7 @@ function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolea
   const titleCode = event?.record.titleCode ?? (edge.type === 'later_process' ? edge.titleCode : relation ? relationTitle(relation) : null) ?? exported?.exportBatch.titleCode ?? null
   if (!titleCode || ((event || edge.type === 'later_process') && !enterpriseId)) fail('ambiguous_candidate', 'No anchored enterprise/title for edge')
   const left = event ? { enterpriseId: event.record.enterpriseId, uscc: event.record.usccRaw ?? event.enterprise.usccNorm } :
-    edge.type === 'later_process' ? { enterpriseId: edge.enterpriseId, uscc: db.select().from(schema.enterprise).where(eq(schema.enterprise.id, edge.enterpriseId)).get()?.usccNorm ?? null } :
+    edge.type === 'later_process' ? { enterpriseId: edge.enterpriseId, uscc: (observed ? observed.enterprises.get(edge.enterpriseId) : db.select().from(schema.enterprise).where(eq(schema.enterprise.id, edge.enterpriseId)).get())?.usccNorm ?? null } :
     relation ? { enterpriseId: relation.relation.enterpriseId, uscc: relation.relation.usccRaw } : null
   if (relation && left && (event || edge.type === 'later_process')) {
     sameIdentity(left, { enterpriseId: relation.relation.enterpriseId, uscc: relation.relation.usccRaw }, confirmed)
@@ -225,13 +226,13 @@ function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolea
   if (edge.type === 'later_process' && confirmed && relation?.relation.declareKind && relation.relation.declareKind !== edge.role.replace('followup_', '')) fail('invalid_endpoint_type', 'Follow-up role conflicts with original process type')
   if (edge.type === 'recognized_export' && confirmed && edge.role === 'same_current_row' && !currentProofCoversRows(db, proofIds, edge.relationId, edge.exportRowId)) fail('incomplete_coverage', 'Confirmed current-source equivalence proof required')
   if (edge.type === 'recognized_export' && confirmed && edge.role === 'candidate_same_current_row') fail('incomplete_coverage', 'Candidate role cannot be confirmed as current equivalence')
-  const provenance = { ...sourceProvenance(db, edge), comparisonProofIds: edge.type === 'recognized_export' ? proofIds : [] }
+  const provenance = { ...sourceProvenance(db, edge, observed), comparisonProofIds: edge.type === 'recognized_export' ? proofIds : [] }
   const targetIdentity = { eventId: event?.event.id ?? null, recordId: event?.record.id ?? null,
     officialEvidence: provenance.officialEvidence.map(({ evidence, storedFile }) => ({ evidenceId: evidence.id, sourceFile: evidence.sourceFile, attachment: evidence.attachment, listNo: evidence.listNo, page: evidence.page, storedFileId: storedFile?.id ?? null, storedFileSha256: storedFile?.sha256 ?? null })),
     predecessorEventId: edge.type === 'later_process' ? edge.predecessorEventId ?? null : null,
     predecessorEvidence: provenance.predecessor?.officialEvidence.map(({ evidence, storedFile }) => ({ evidenceId: evidence.id, sourceFile: evidence.sourceFile, attachment: evidence.attachment, listNo: evidence.listNo, page: evidence.page, storedFileId: storedFile?.id ?? null, storedFileSha256: storedFile?.sha256 ?? null })) ?? [],
     relationId: relation?.relation.id ?? null, queryId: relation?.query.id ?? null, queryNaturalKey: relation ? [relation.query.interface, relation.query.queryKey, relation.query.rdjb, relation.query.queriedAt, relation.relation.sequenceNo] : null, exportRowId: exported?.exportRow.id ?? null, exportNaturalKey: exported ? [exported.exportBatch.titleCode, exported.exportBatch.year, exported.exportBatch.sha256, exported.exportRow.sourceRowNo] : null }
-  return { enterpriseId, titleCode, provenance, targetIdentity, sourceFingerprint: hash(sourceProvenance(db, edge)) }
+  return { enterpriseId, titleCode, provenance, targetIdentity, sourceFingerprint: hash(sourceProvenance(db, edge, observed)) }
 }
 function storedEdge(row: StoredCorrespondence): CorrespondenceEdge {
   const base = { relationId: row.relationId!, exportRowId: row.exportRowId!, eventId: row.eventId!, role: row.role }
@@ -421,17 +422,85 @@ export function readRecordCorrespondenceBatch(db: Db, idempotencyKey: string): C
   const batch = findBatchByKey(db, idempotencyKey)
   return batch?.sourceKind === 'correspondence_decision' && batch.status === 'committed' ? batch.summary as CorrespondenceReceipt : null
 }
+function correspondenceWhere(filter: CorrespondenceFilter) {
+  const { anyEventId, ...exact } = filter
+  const entries = Object.entries(exact).filter(([, value]) => value != null) as [keyof typeof exact, string | number][]
+  return and(...entries.map(([key, value]) => eq(schema.recordCorrespondence[key], value)),
+    anyEventId == null ? undefined : or(eq(schema.recordCorrespondence.eventId, anyEventId), eq(schema.recordCorrespondence.predecessorEventId, anyEventId)))
+}
+type EventRows = { event: typeof schema.recordEvent.$inferSelect; record: typeof schema.record.$inferSelect; enterprise: typeof schema.enterprise.$inferSelect }
+type RelationRows = { relation: typeof schema.platformRelation.$inferSelect; query: typeof schema.platformQuery.$inferSelect }
+type ExportRows = { exportRow: typeof schema.platformExportRow.$inferSelect; exportBatch: typeof schema.platformExportBatch.$inferSelect }
+interface ReadSources {
+  events: Map<number, EventRows>
+  relations: Map<number, RelationRows>
+  exports: Map<number, ExportRows>
+  enterprises: Map<number, typeof schema.enterprise.$inferSelect>
+  titles: Set<string>
+  evidence: Map<number, Array<{ evidence: typeof schema.recordEvidence.$inferSelect; storedFile: { id: number; relPath: string; bytes: number; sha256: string | null; removedAt: string | null } | null }>>
+}
+function idChunks(values: Array<number | null>) {
+  const ids = [...new Set(values.filter((id): id is number => id != null))]
+  return Array.from({ length: Math.ceil(ids.length / 400) }, (_, i) => ids.slice(i * 400, (i + 1) * 400))
+}
+function observeReadSources(db: Db, rows: StoredCorrespondence[]): ReadSources {
+  const confirmed = rows.filter(row => row.status === 'confirmed')
+  const events = idChunks(confirmed.flatMap(r => [r.eventId, r.predecessorEventId])).flatMap(ids => db.select({ event: schema.recordEvent, record: schema.record, enterprise: schema.enterprise }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id)).where(inArray(schema.recordEvent.id, ids)).all())
+  const relations = idChunks(confirmed.map(r => r.relationId)).flatMap(ids => db.select().from(schema.platformRelation).where(inArray(schema.platformRelation.id, ids)).all())
+  const queries = idChunks(relations.map(r => r.queryId)).flatMap(ids => db.select().from(schema.platformQuery).where(inArray(schema.platformQuery.id, ids)).all())
+  const queriesById = new Map(queries.map(r => [r.id, r]))
+  const exports = idChunks(confirmed.map(r => r.exportRowId)).flatMap(ids => db.select({ exportRow: schema.platformExportRow, exportBatch: schema.platformExportBatch }).from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id)).where(inArray(schema.platformExportRow.id, ids)).all())
+  const enterprises = idChunks([...confirmed.map(r => r.enterpriseId), ...relations.map(r => r.enterpriseId)]).flatMap(ids => db.select().from(schema.enterprise).where(inArray(schema.enterprise.id, ids)).all())
+  const titles = [...new Set(confirmed.map(r => r.titleCode))]
+  const storedTitles = titles.length ? db.select({ code: schema.title.code }).from(schema.title).where(inArray(schema.title.code, titles)).all() : []
+  const evidence = idChunks(events.map(r => r.event.id)).flatMap(ids => db.select().from(schema.recordEvidence).where(inArray(schema.recordEvidence.recordEventId, ids)).orderBy(asc(schema.recordEvidence.id)).all())
+  const paths = [...new Set(evidence.map(r => r.sourceFile))]
+  const files = Array.from({ length: Math.ceil(paths.length / 400) }, (_, i) => paths.slice(i * 400, (i + 1) * 400)).flatMap(paths => db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt }).from(schema.storedFile).where(inArray(schema.storedFile.relPath, paths)).all())
+  const filesByPath = new Map(files.map(r => [r.relPath, r]))
+  return { events: new Map(events.map(r => [r.event.id, r])), relations: new Map(relations.flatMap(relation => { const query = queriesById.get(relation.queryId); return query ? [[relation.id, { relation, query }] as const] : [] })), exports: new Map(exports.map(r => [r.exportRow.id, r])), enterprises: new Map(enterprises.map(r => [r.id, r])), titles: new Set(storedTitles.map(r => r.code)), evidence: Map.groupBy(evidence.map(evidence => ({ evidence, storedFile: filesByPath.get(evidence.sourceFile) ?? null })), r => r.evidence.recordEventId) }
+}
+function readCorrespondences(db: Db, rows: StoredCorrespondence[]) {
+  const observed = observeReadSources(db, rows)
+  return rows.map(row => readCorrespondence(db, row, observed))
+}
+function readCorrespondence(db: Db, row: StoredCorrespondence, observed: ReadSources): CorrespondenceRead {
+  let requiresRevalidation = false
+  if (row.status === 'confirmed') {
+    try { requiresRevalidation = sourceForEdge(db, storedEdge(row), true, (row.provenance.comparisonProofIds as number[] | undefined) ?? [], observed).sourceFingerprint !== row.sourceFingerprint }
+    catch { requiresRevalidation = true }
+  }
+  return { ...row, requiresRevalidation }
+}
 export function listRecordCorrespondences(db: Db, filter: CorrespondenceFilter = {}): CorrespondenceRead[] {
-  const entries = Object.entries(filter).filter(([, value]) => value != null) as [keyof CorrespondenceFilter, string | number][]
-  return db.select().from(schema.recordCorrespondence).all().filter((row) => entries.every(([key, value]) => row[key] === value)).sort((a, b) => a.id - b.id).map((row) => {
-    let requiresRevalidation = false
-    if (row.status === 'confirmed') {
-      try { requiresRevalidation = sourceForEdge(db, storedEdge(row), true, (row.provenance.comparisonProofIds as number[] | undefined) ?? []).sourceFingerprint !== row.sourceFingerprint }
-      catch { requiresRevalidation = true }
-    }
-    return { ...row, requiresRevalidation }
-  })
+  return readCorrespondences(db, db.select().from(schema.recordCorrespondence).where(correspondenceWhere(filter)).orderBy(asc(schema.recordCorrespondence.id)).all())
+}
+export function getRecordCorrespondence(db: Db, id: number): CorrespondenceRead | null {
+  const row = db.select().from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.id, id)).get()
+  return row ? readCorrespondences(db, [row])[0]! : null
+}
+export interface CorrespondencePaging { page: number; pageSize: number }
+export function pageRecordCorrespondences(db: Db, filter: CorrespondenceFilter, paging: CorrespondencePaging) {
+  const where = correspondenceWhere(filter)
+  const total = db.select({ total: count() }).from(schema.recordCorrespondence).where(where).get()!.total
+  const rows = readCorrespondences(db, db.select().from(schema.recordCorrespondence).where(where).orderBy(asc(schema.recordCorrespondence.id))
+    .limit(paging.pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (paging.page - 1) * paging.pageSize)).all())
+  return { rows, total, ...paging }
+}
+/** Reverse links expose only these columns; candidate provenance is never needed. */
+export function listRecordCorrespondenceRefs(db: Db, filter: CorrespondenceFilter, sources?: { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }) {
+  const t = schema.recordCorrespondence
+  const refs = db.select({ id: t.id, type: t.type, role: t.role, status: t.status, eventId: t.eventId, predecessorEventId: t.predecessorEventId, relationId: t.relationId, exportRowId: t.exportRowId, enterpriseId: t.enterpriseId, titleCode: t.titleCode, revision: t.revision })
+    .from(t).where(sources ? or(inArray(t.eventId, sources.eventIds), inArray(t.predecessorEventId, sources.eventIds), inArray(t.relationId, sources.relationIds), inArray(t.exportRowId, sources.exportRowIds)) : correspondenceWhere(filter)).orderBy(asc(t.id)).all()
+  const confirmed = idChunks(refs.filter(r => r.status === 'confirmed').map(r => r.id)).flatMap(ids => db.select().from(t).where(inArray(t.id, ids)).all())
+  const validity = new Map(readCorrespondences(db, confirmed).map(row => [row.id, row.requiresRevalidation]))
+  return refs.map(row => ({ ...row, requiresRevalidation: validity.get(row.id) ?? false }))
 }
 export function getRecordCorrespondenceAudit(db: Db, correspondenceId: number): CorrespondenceAudit[] {
-  return db.select().from(schema.recordCorrespondenceAudit).where(eq(schema.recordCorrespondenceAudit.correspondenceId, correspondenceId)).all().sort((a, b) => a.id - b.id)
+  return db.select().from(schema.recordCorrespondenceAudit).where(eq(schema.recordCorrespondenceAudit.correspondenceId, correspondenceId)).orderBy(asc(schema.recordCorrespondenceAudit.id)).all()
+}
+export function pageRecordCorrespondenceAudit(db: Db, correspondenceId: number, paging: CorrespondencePaging) {
+  const t = schema.recordCorrespondenceAudit, where = eq(t.correspondenceId, correspondenceId)
+  const total = db.select({ total: count() }).from(t).where(where).get()!.total
+  const rows = db.select().from(t).where(where).orderBy(asc(t.id)).limit(paging.pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (paging.page - 1) * paging.pageSize)).all()
+  return { rows, total, ...paging }
 }
