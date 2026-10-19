@@ -474,7 +474,9 @@ function statusRank(code: string): number {
   return i === -1 ? DIFFERENCE_STATUS_ORDER.length : i
 }
 
-function compareDifferencePriority(a: RosterDifferenceRow, b: RosterDifferenceRow): number {
+type DifferenceSummaryInput = Pick<RosterDifferenceRow, 'enterpriseId' | 'titleCode' | 'direction' | 'status' | 'reasonCode' | 'inCurrentDifference'>
+
+function compareDifferencePriority(a: DifferenceSummaryInput, b: DifferenceSummaryInput): number {
   return (
     statusRank(b.status) - statusRank(a.status) ||
     titleRank(a.titleCode) - titleRank(b.titleCode) ||
@@ -482,9 +484,9 @@ function compareDifferencePriority(a: RosterDifferenceRow, b: RosterDifferenceRo
   )
 }
 
-function enterpriseDifferenceSummaries(rows: RosterDifferenceRow[]): Map<number, RosterEnterpriseDifference> {
+function enterpriseDifferenceSummaries(rows: DifferenceSummaryInput[]): Map<number, RosterEnterpriseDifference> {
   const summaries = new Map<number, RosterEnterpriseDifference>()
-  const bestRows = new Map<number, RosterDifferenceRow>()
+  const bestRows = new Map<number, DifferenceSummaryInput>()
   for (const row of rows) {
     const summary = summaries.get(row.enterpriseId)
     if (!summary) {
@@ -731,7 +733,20 @@ function selectRosterEnterprises(
 ): { rows: RosterEnterpriseRow[]; counts: RosterCounts } {
   const snap = readEnterpriseSnapshot(db)
   const index = indexSnapshots(snap)
-  const differenceRows = differenceUniverse(db, snap, enterpriseComparisonCoordinates(db))
+  // List filters and counts need six lightweight difference fields, not the
+  // complete evidence/explanation projection for every enterprise.
+  const explanations = currentExplanations(snap)
+  const derived = enterpriseComparisonCoordinates(db)
+  const seen = new Set<string>()
+  const differenceRows: DifferenceSummaryInput[] = derived.map(coordinate => {
+    const key = differenceKey(coordinate.enterpriseId, coordinate.titleCode, coordinate.direction)
+    seen.add(key)
+    const explanation = explanations.get(key)
+    return { ...coordinate, status: explanation?.status ?? 'not_queried', reasonCode: explanation?.reasonCode ?? null, inCurrentDifference: true }
+  })
+  for (const [key, explanation] of explanations) {
+    if (!seen.has(key)) differenceRows.push({ enterpriseId: explanation.enterpriseId, titleCode: explanation.titleCode, direction: explanation.direction, status: explanation.status, reasonCode: explanation.reasonCode, inCurrentDifference: false })
+  }
   const differenceStatusesByEnterprise = new Map<number, Set<string>>()
   for (const row of differenceRows) {
     const statuses = differenceStatusesByEnterprise.get(row.enterpriseId) ?? new Set<string>()
