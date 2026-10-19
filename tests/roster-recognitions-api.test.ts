@@ -365,6 +365,24 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
     }
   })
 
+  it('首页统计年份不读取无关平台原文，保留结论年份口径', () => {
+    const previousDb = db
+    try {
+      db = useDb({ dbPath: join(dir, 'stats-scoped.db') })
+      seed('统计范围合成企业', '91330211STATS00001X', null, 'specialized_sme', [
+        { eventType: 'award', year: 2022, decidedYear: 2024 },
+        { eventType: 'review', year: 2022, decidedYear: 2025 },
+      ])
+      const archived = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'unrelated-stats', queriedAt: '2026-10-19', status: 'success', rawResponse: 'unrelated'.repeat(1000) }).returning().get()
+      db.$client.prepare('UPDATE platform_query SET collection_evidence = ? WHERE id = ?').run('{unrelated-invalid-json', archived.id)
+      query = {}
+      expect(handlerStats({}).byFirstRecognitionYear).toEqual([{ key: '2024', n: 1 }])
+    } finally {
+      db = previousDb
+      query = {}
+    }
+  })
+
   it('空库返回空的首次认定、企业列表、统计桶和导出', async () => {
     const previousDb = db
     try {

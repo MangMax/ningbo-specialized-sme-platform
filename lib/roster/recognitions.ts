@@ -15,11 +15,13 @@
  * 两处各算一次迟早会漂移 —— 到那时总表说 2021、首次认定清单说 2022,谁也说不清哪个对。
  */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import * as schema from '../../db/schema'
 import { TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import { effectiveDistrict, readRosterProfiles } from './enterprise-roster'
 import { matchesRecognitionQuery, type RecognitionEntry } from './first-recognition'
+import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -148,26 +150,49 @@ export function getFirstRecognitionYearBuckets(
   db: Db,
   filter: FirstRecognitionYearFilter = {},
 ): { key: string; n: number }[] {
-  const { profiles } = readRosterProfiles(db)
   const counts = new Map<number, number>()
-
-  for (const profile of profiles) {
-    const matchingTitles = new Set(
-      profile.records
-        .filter(
-          (record) =>
-            (!filter.title || record.titleCode === filter.title) &&
-            (!filter.district || record.district === filter.district) &&
-            (!filter.source || record.source === filter.source),
-        )
-        .map((record) => record.titleCode),
-    )
-
-    for (const entry of profile.recognitions) {
-      if (entry.firstYear == null || !matchingTitles.has(entry.titleCode)) continue
-      counts.set(entry.firstYear, (counts.get(entry.firstYear) ?? 0) + 1)
-    }
+  // Only lifecycle scalars are required. Never load platform archives or source
+  // evidence just to populate the global header and homepage year picker.
+  // A matching record admits the pair, while its earliest award still considers
+  // every source for that same enterprise/title, as in the original profiles.
+  const rows = db.select({
+    enterpriseId: schema.record.enterpriseId,
+    titleCode: schema.record.titleCode,
+    id: schema.recordEvent.id,
+    eventType: schema.recordEvent.eventType,
+    year: schema.recordEvent.year,
+    decidedYear: schema.recordEvent.decidedYear,
+    reviewOutcome: schema.recordEvent.reviewOutcome,
+  }).from(schema.record)
+    .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+    .innerJoin(schema.recordEvent, eq(schema.recordEvent.recordId, schema.record.id))
+    .where(and(
+      filter.title ? eq(schema.record.titleCode, filter.title) : undefined,
+      filter.district || filter.source ? sql`exists (
+        select 1 from record matching where matching.enterprise_id=${schema.record.enterpriseId}
+        and matching.title_code=${schema.record.titleCode}
+        and ${filter.district ? sql`matching.district=${filter.district}` : sql`1`}
+        and ${filter.source ? sql`matching.source=${filter.source}` : sql`1`}
+      )` : undefined,
+    ))
+    .orderBy(asc(schema.record.enterpriseId), asc(schema.record.titleCode), asc(schema.recordEvent.id))
+    .all()
+  let key: string | null = null
+  let events: LifecycleEvent[] = []
+  const finish = () => {
+    const year = computeTitleLifecycle(events).firstRecognitionYear
+    if (year != null) counts.set(year, (counts.get(year) ?? 0) + 1)
   }
+  for (const row of rows) {
+    const next = `${row.enterpriseId}/${row.titleCode}`
+    if (key !== next) {
+      if (key != null) finish()
+      events = []
+      key = next
+    }
+    events.push(row)
+  }
+  if (key != null) finish()
 
   return [...counts]
     .sort(([a], [b]) => a - b)
