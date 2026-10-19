@@ -65,6 +65,7 @@ async function act(action: 'cancel' | 'retry') {
           </li>
         </ul>
         <p class="text-muted-foreground text-sm">{{ data.capabilities.reason }}</p>
+        <slot :task="data" :current="current" :refresh="refresh" />
         <div class="flex flex-wrap gap-2">
           <Button variant="outline" :disabled="!current || pending || !data.capabilities.cancel || (cancelRequested && ['queued','running'].includes(data.state))" @click="act('cancel')">{{ cancelRequested && ['queued','running'].includes(data.state) ? '已请求取消' : '请求取消' }}</Button>
           <Button variant="outline" :disabled="!current || pending || !data.capabilities.retry" @click="act('retry')">重试未完成项</Button>
