@@ -50,7 +50,9 @@ it('entry eviction uses least recently read order and evicted requests safely re
 
 it('byte and per-entry limits count encoded data and admit only at the exact budget', () => {
   const db = fixture(), args = { view: 'summary' as const, pageSize: 5 }
+  db.$client.prepare('UPDATE platform_query SET query_key=? WHERE id=5').run('界🙂'.repeat(400))
   const probe = cache(); const expected = probe.read(db, args)
+  expect(Buffer.byteLength(JSON.stringify(expected))).toBeGreaterThan(JSON.stringify(expected).length)
   const charge = probe.stats().bytes
   expect(charge).toBeGreaterThan(Buffer.byteLength(JSON.stringify(expected)))
   const exact = cache({ maxBytes: charge, maxEntryBytes: charge })
@@ -125,6 +127,9 @@ it('external commits, pending writes, rollback and restart preserve committed pu
   const before = a.read(db, args); b.read(db, args)
   writer.exec("BEGIN; UPDATE platform_query SET status='partial' WHERE id=5")
   expect(a.read(db, args)).toEqual(before); expect(b.read(db, args)).toEqual(before)
+  const cold = cache()
+  expect(cold.read(db, args)).toEqual(before)
+  expect(cold.stats()).toMatchObject({ hits: 0, misses: 1, entries: 1 })
   writer.exec('ROLLBACK')
   expect(a.read(db, args)).toEqual(before)
   expect(a.stats()).toMatchObject({ misses: 1, hits: 2 })

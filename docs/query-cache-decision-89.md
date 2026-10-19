@@ -208,3 +208,21 @@
 第二轮第一轮全仓回归 `tests-all-candidate.log` 为退出1：4文件/18失败，138文件/2069测试通过、20跳过。根因是adapter对默认full读取也执行新增HTTP头检查，旧的直接路由调用夹具没有原生H3 event；独立复现 `getHeader({})` 抛 `Cannot read properties of undefined (reading 'req')`。将策略检查限定到显式summary后，未修改旧夹具/断言/超时，受影响6文件/80测试通过（`green-default-boundary.log`）。最终全仓重跑另记，不把这轮红结果抹掉。
 
 提交前集成源码 `5c9ab8e` 加本轮候选：`pnpm exec vitest run --maxWorkers=2` 退出0，143文件通过/2跳过、2099测试通过/11跳过（`tests-all-integration.log`）；`pnpm typecheck`、`pnpm build`、新缓存verifier、原完整平台HTTP/MCP契约verifier、`verify-prod-openapi --skip-build` 均退出0。`tests-all-fixed.log` 的2文件失败/1测试失败（HTTP就绪、旧比较用例5秒超时）保留；该轮跨集成源码合入且使用较早构建，不绑定为最终exact-head。未修改这些相邻测试或timeout，重建后整套回归通过。
+
+### 已提交实现的串行最终对照
+
+运行源码与生产构建均为 **`c8e3fc66d93bbfd1d365340efbce95023be7e7a2`**，`benchmark-exact-c8e3fc6.json` 和 `protocol-exact-c8e3fc6.log` 的 Git diff hash 均为空diff的 `e3b0c442…b855`。这轮没有并行启动本地测试/typecheck；主机仍不独占。SQLite3.53.4，副本1347248128B、cache_size=-16000KiB/page_size4096/mmap0/WAL；没有更改配置或堆/timeout来过关。共享快照前后SHA256仍为 `19c25412…df1f`，本轮副本因仅应用#87索引而变为 `ae748f5b…293e`，不能要求迁移后与迁移前DB文件hash相等。
+
+| REST并发 | 缓存关闭首请求ms | 缓存开启首个miss ms | 关闭热p50/p95/p99 ms | 开启热p50/p95/p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 15.65 | 12.05 | 1.69/2.84/4.19 | 0.28/0.79/1.08 |
+| 2 | 9.55 | 8.96 | 2.70/4.32/6.86 | 0.42/0.88/1.20 |
+| 5 | 9.82 | 8.21 | 6.29/8.23/9.65 | 0.62/1.23/1.62 |
+
+每格100热请求；开启时恰好1miss/100hit，关闭时0miss/0hit且全部bypass（这里miss专指缓存填充，不是原函数执行计数）。REST p95减少约72%/80%/85%，绝对节约约2.05/3.44/7.00ms；这是已经很快的首屏摘要重复计算收益，不是全站用户体验或#87索引收益，也不是冷读加速保证。12格全部成功，HTTP7344B/MCP12373B，完整外部结果SHA256均为 `11fbe01c66a00b29ad0923625420003b8b927ce289f3442bf7cc1219be590966`。MCP缓存开关两组始终没有缓存调用；其热p95关闭8.22/8.07/14.76ms、开启6.26/7.29/14.69ms，只是非独占主机上的无缓存对照波动。
+
+12格就绪后（含首个列表miss）交互事件循环p95最大17.40ms、max最大20.84ms；本次启动窗口max232.39ms，不能据此删除第一轮/前测或#87保留的启动/其他查询窗口超预算。整个基准及churn采样heap峰88.15MiB、OS/采样RSS峰271.84MiB；首屏窗口相对health采样heap最大增量20.11MiB。V8实际heap limit2348810240B（old-space2048MiB加young等区域），没有容器资源等价声明；采样增量不等同于逐分配捕获的瞬时峰值证明。
+
+TTL后真实REST重填充16.53ms，完整结果hash不变，miss计数从1增至2。随后4组×2000次、pageSize1..50轮转，强制GC后的heap29.02–29.25MiB，最终50条/408309计账B/1source；期间TTL使累计miss从51增到101，保留量不随请求总数线性增长。这是有限8000请求证据；该基准没有因容量触顶淘汰，容量淘汰由真实SQLite服务测试单独验证，不能混称生产REST容量淘汰压测。计账上限不是RSS上限。
+
+最终测试质量补充：字节边界夹具增加400组Unicode字符，区分UTF-8字节和UTF-16字符数；临时变异为字符数计账时 `byte and per-entry limits count encoded data and admit only at the exact budget` 真实失败（`mutation-utf8-byte-budget.log`），恢复实现后通过。外部writer持有未提交事务时也增加一个全新reader的cold miss，断言只能得到旧committed结果。这两项只加强合成测试，不改变c8e3fc6的应用源码/构建/测量。交付HEAD与该实现的应用代码差异须为空，最终验证SHA/命令/未运行lane集中在 Git 外 handoff。
