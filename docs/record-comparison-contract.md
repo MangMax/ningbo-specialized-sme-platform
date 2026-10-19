@@ -78,3 +78,9 @@ commit is visible to the next comparison, not mixed into an in-flight result.
 The connection and any suspended SQLite iterator are released in `finally`.
 Synchronous service callers and legacy preview drain the same computation without
 changing their existing return type. No shared result cache is introduced.
+
+Catalog query pages first select IDs from the existing
+`platform_query_key_idx` covering index and sort those IDs, then seek only the
+requested metadata rows. This avoids walking archive-bearing table leaf pages
+for a deep OFFSET. Explicit-ID label hydration uses primary-key seeks. The index
+name is an existing schema dependency; #86 adds no schema or migration.
