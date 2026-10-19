@@ -71,6 +71,7 @@ it('snapshot HTTP import bounds encoded statements and preserves oversized raw i
   try {
     const input = request(9)
     const rows = input.payload.exportSnapshot!.rows
+    rows[0]!.sourceRowNo = 99 // Receipt order follows insertion, not a sort by source row number.
     for (const row of rows) row.rawFields = { original: '  原文🙂\n'.repeat(30_000), empty: '', nested: { value: null } }
     rows[4]!.rawFields = { original: '🙂'.repeat(300_000), whitespace: ' \n\t ' }
     const preflight = await server.post('preflight', input)
@@ -83,7 +84,7 @@ it('snapshot HTTP import bounds encoded statements and preserves oversized raw i
     const ids: number[] = committed.items[0].detail.rows
     expect(ids).toHaveLength(9)
     for (const [index, id] of ids.entries()) {
-      expect(await server.source(id)).toMatchObject({ sourceRowNo: index + 3, rawFields: rows[index]!.rawFields })
+      expect(await server.source(id)).toMatchObject({ sourceRowNo: index === 0 ? 99 : index + 3, rawFields: rows[index]!.rawFields })
     }
     expect(await server.post('commit', input)).toEqual(committed)
     const otherKey = { ...input, idempotencyKey: 'snapshot:other-key' }
