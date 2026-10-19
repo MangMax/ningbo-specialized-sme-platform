@@ -42,6 +42,8 @@ partial/失败/未查询必须保留每个未完成称号的实际 next/failed p
 
 `GET /api/platform/queries` 与 MCP `list_platform_queries` 支持 `interface`、`queryKey`、`uscc`、`enterpriseId`、`titleCode`、`status`、`page`、`pageSize`、`includeRawResponse`。返回 `rows[{query,relations}]`、total、分页和状态 counts；计数在分页前计算，每个查询仍返回全部关系。`enterpriseId` 的历史过滤语义沿用旧接口：匹配关系归属；无行查询可用 queryKey/uscc 查询。企业详情同时按企业查询键补出零记录/失败证据。
 
+#83 兼容扩展：可用 `queryId` 精确定位，或显式 `view=summary` 只取元数据与完整关系数（`relationsIncluded:false`，不把空数组当无关系）。默认完整读取新增单查询4MiB/单页8MiB原档预算，超限明确413；用 `GET /api/platform/queries/{queryId}/evidence` / `get_platform_query_evidence` 分页发现所有关系ID并按UTF-8字节块精确取回原文、采集结果和原始关系，不截断。参数、边界和实测见[平台查询读取](platform-query-read-performance.md)。下文的完整关系/原文描述适用于默认完整模式。
+
 `query.collectionEvidence` 旧记录为 null；关系新增可空 `sourceRdjb`、`sourcePage`，由原页行计数映射。`GET /api/roster/enterprises/:id` / `get_enterprise_detail` 的 `platform.queries` 同样带 collectionEvidence/titleCode，`platform.relations` 带 rawFields 和页/称号。#60 应展示实际条件、原时间、历史与状态，按 sourceRdjb 显示各称号原字段，不把维护年当认定年。
 
 企业详情与对比页对纳入的已认定查询读取全部原始来源行，包括先归档、后建主档时仍未匹配的行。新来源行额外返回 `enterpriseId: number | null`（旧来源可不带该字段）；null 明确表示未匹配主体，查询键覆盖不代表主体确认。读取不重匹配、不回填归属。查询的 `relationCount` 与实际返回行一致，对比页 `platform.relationCount` 为所展示查询的来源行总数；不纳入查询键和已有关系归属均无关的其他查询。

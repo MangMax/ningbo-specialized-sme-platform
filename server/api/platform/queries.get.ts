@@ -14,7 +14,7 @@ defineRouteMeta({
     tags: ['比对'],
     summary: '查平台查询证据',
     description:
-      '按接口 / 查询键 / 企业 / 状态过滤,分页返回;每个查询带它的**全部**关系(逐条保留)。',
+      '按接口 / 查询键 / 企业 / 状态过滤，SQL分页及同范围计数。默认完整关系；view=summary 显式省略关系/采集原文，仅带 relationCount 和 relationsIncluded:false。完整原档单查询4MiB/单页8MiB预算，超限413；按ID分段取证见 /api/platform/queries/{queryId}/evidence。',
     parameters: [
       {
         name: 'interface',
@@ -25,6 +25,8 @@ defineRouteMeta({
       { name: 'titleCode', in: 'query', schema: { type: 'string', enum: ['innovative_sme', 'specialized_sme', 'little_giant'] } },
       { name: 'uscc', in: 'query', schema: { type: 'string' } },
       { name: 'queryKey', in: 'query', schema: { type: 'string' }, description: '查询键(统一社会信用代码或 `name:<nameNorm>`)。' },
+      { name: 'queryId', in: 'query', schema: { type: 'integer', minimum: 1 }, description: '精确查询ID，与其他过滤取交集。' },
+      { name: 'view', in: 'query', schema: { type: 'string', enum: ['full', 'summary'], default: 'full' }, description: 'summary 仅元数据与完整关系数，不加载关系或原始采集结果。不能同时 includeRawResponse=true。' },
       { name: 'enterpriseId', in: 'query', schema: { type: 'integer' }, description: '只看有关系归到该企业的查询。' },
       {
         name: 'status',
@@ -39,6 +41,7 @@ defineRouteMeta({
     responses: {
       200: { description: '分页查询与全部关系(rows[{query,relations}]/total/page/pageSize/counts)。query.collectionEvidence 为原采集结果（旧记录 null）；relations 含原 rawFields、sourceRdjb/sourcePage 及真实查询/关系 id。完整转存/读回契约见 docs/platform-recognized-evidence.md。' },
       400: { description: 'interface / status 取值非法。' },
+      413: { description: '完整证据超出单查询4MiB或单页8MiB原档字节预算；使用 summary 和按ID分段取证，不会静默截断。' },
     },
   },
 })
@@ -72,8 +75,14 @@ export default defineEventHandler((event) => {
   if (enterpriseId != null && !Number.isFinite(enterpriseId)) {
     throw createError({ statusCode: 400, statusMessage: 'enterpriseId must be a number' })
   }
+  const queryId = q.queryId != null ? Number(q.queryId) : undefined
+  if (queryId != null && (!Number.isSafeInteger(queryId) || queryId < 1)) throw createError({ statusCode: 400, statusMessage: 'queryId must be a positive integer' })
+  const view = str(q.view)
+  if ((view && view !== 'full' && view !== 'summary') || (view === 'summary' && q.includeRawResponse === 'true')) throw createError({ statusCode: 400, statusMessage: 'Invalid view or includeRawResponse combination' })
 
   return listPlatformQueries(useDb(), {
+    queryId,
+    view: view as 'full' | 'summary' | undefined,
     interface: iface as (typeof INTERFACES)[number] | undefined,
     queryKey: str(q.queryKey),
     titleCode,

@@ -1,0 +1,10 @@
+import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
+import { useDb } from '@db'
+import { readPlatformQueryEvidence, platformEvidenceInputSchema } from '../../../lib/platform/evidence-read'
+export default defineMcpTool({
+  name: 'get_platform_query_evidence', title: '按ID精确分段读取平台原档',
+  description: '等价 GET /api/platform/queries/{queryId}/evidence。rawResponse/collectionEvidence/relation按UTF-8字节返回最多65536字节的base64块；拼接全部字节再解码，依据hasMore继续。relations按原序分页发现全部关系ID，再用relation+relationId读取所有持久化字段JSON（camelCase，含rawFields）。null和空值可区分；不截断原文、不查询外部平台。',
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  inputSchema: platformEvidenceInputSchema.shape,
+  handler: async input => ({ ...readPlatformQueryEvidence(useDb(), input) }),
+})
