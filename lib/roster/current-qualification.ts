@@ -6,7 +6,7 @@ import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
 
-export const CURRENT_RULE_VERSION = 'current-roster-116-v4'
+export const CURRENT_RULE_VERSION = 'current-roster-116-v5'
 export const CURRENT_TITLES = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 export type CurrentTitle = typeof CURRENT_TITLES[number]
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
@@ -26,43 +26,94 @@ type QualificationEvent = LifecycleEvent & { batchSeq: number | null }
 interface CycleJudgment {
   originYear: number
   batch: number | null
-  events: QualificationEvent[]
-  awardYears: number[]
+  lastAwardYear: number
   failureYears: number[]
   group: CurrentGroup
   notes: string[]
 }
 const awardTime = (e: QualificationEvent) => e.decidedYear ?? e.year
 const originTime = (e: QualificationEvent) => e.year ?? (e.eventType === 'award' ? awardTime(e) : null)
+const factTime = (e: QualificationEvent) => e.eventType === 'award' ? awardTime(e) : e.decidedYear
+interface CycleFacts {
+  awards: QualificationEvent[]
+  passed: QualificationEvent[]
+  failed: QualificationEvent[]
+  gaps: QualificationEvent[]
+  lastAward: number
+  lastPassed: number
+  lastFailure: number
+}
+const latestFact = (events: QualificationEvent[]) => Math.max(...events.map(e => factTime(e)!))
+function hasUsableTime(event: QualificationEvent, originYear: number, year: number) {
+  const time = factTime(event)
+  return time != null && originYear <= time && time <= year
+}
 
-/** Adjudicate the complete originating year/batch before comparing cycles. */
-function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number): CycleJudgment {
-  const awards = events.filter(e => e.eventType === 'award')
-  const reviews = events.filter(e => e.eventType === 'review')
-  const awardYears = awards.map(e => awardTime(e)!).filter(y => y <= year)
-  const failureYears = reviews.filter(e => e.reviewOutcome === 'failed' && e.decidedYear != null && e.decidedYear <= year && e.decidedYear >= originYear).map(e => e.decidedYear!)
-  const result: CycleJudgment = { originYear, batch, events, awardYears, failureYears, group:'pending', notes:[] }
-  if (originYear > year || awards.some(e => awardTime(e) == null || awardTime(e)! > year || awardTime(e)! < originYear)) {
-    result.notes.push('认定日期缺失或尚未生效，当前周期待确认')
-  } else if (reviews.some(e => e.batchSeq == null || e.decidedYear == null || e.decidedYear > year || e.decidedYear < originYear || !['passed','failed'].includes(e.reviewOutcome ?? '')) || reviews.length > 0 && awards.some(e => e.batchSeq == null)) {
-    result.notes.push('对应周期复核结论/结论年份/批次不完整，待确认')
+/** Separate known facts from uncertain facts before deciding whether a gap matters. */
+function cycleFacts(events: QualificationEvent[], ambiguous: QualificationEvent[], originYear: number, year: number): CycleFacts {
+  const awards: QualificationEvent[] = [], passed: QualificationEvent[] = [], failed: QualificationEvent[] = [], gaps = [...ambiguous]
+  const hasReviews = [...events,...ambiguous].some(e => e.eventType === 'review')
+  for (const event of events) {
+    const batchKnown = event.batchSeq != null || event.eventType === 'award' && !hasReviews
+    if (!hasUsableTime(event,originYear,year) || !batchKnown) gaps.push(event)
+    else if (event.eventType === 'award') awards.push(event)
+    else if (event.reviewOutcome === 'passed') passed.push(event)
+    else if (event.reviewOutcome === 'failed') failed.push(event)
+    else gaps.push(event)
+  }
+  return {awards,passed,failed,gaps,lastAward:latestFact(awards),lastPassed:latestFact(passed),lastFailure:latestFact(failed)}
+}
+
+/** A gap only yields to a later fact that neutralizes every possible effect.
+ * A grant restores, a final failure terminates, and a pass only extends: it
+ * cannot neutralize an earlier possible failure. Equal years prove no order.
+ */
+function gapResolvedBy(gap: QualificationEvent, facts: CycleFacts, originYear: number, year: number): string | null {
+  if (!hasUsableTime(gap,originYear,year)) return null
+  const time = factTime(gap)!
+  if (time < facts.lastAward) return '后续明确重新认定'
+  // A termination/renewal only settles its own known batch. An ambiguous batch
+  // might refer to a different batch with a different validity window.
+  if (gap.batchSeq != null && time < facts.lastFailure && facts.lastFailure > facts.lastAward && facts.lastFailure > facts.lastPassed) return '较晚明确终止'
+  return null
+}
+
+/** Adjudicate an originating cycle using only applicable, unresolved evidence. */
+function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = []): CycleJudgment {
+  const facts = cycleFacts(events,ambiguous,originYear,year)
+  const result: CycleJudgment = {originYear,batch,lastAwardYear:facts.lastAward,failureYears:facts.failed.map(e => e.decidedYear!),group:'pending',notes:[]}
+  const unresolved: QualificationEvent[] = []
+  for (const gap of facts.gaps) {
+    const resolved = gapResolvedBy(gap,facts,originYear,year)
+    if (resolved) result.notes.push(`旧缺口 event:${gap.id}（日期/批次/结论）由${resolved}消解，历史及出处保留`)
+    else unresolved.push(gap)
+  }
+  if (originYear > year) result.notes.push('原认定年份尚未生效，当前周期待确认')
+  else if (unresolved.length) {
+    for (const event of unresolved) result.notes.push(`event:${event.id} ${event.eventType === 'award' ? '认定日期/批次' : '复核结论/结论年份/批次'}不完整或无法证明被后续事实消解，当前周期待确认`)
+  } else if (facts.lastFailure >= facts.lastAward && facts.failed.length) {
+    if (facts.lastFailure === facts.lastAward || facts.lastPassed >= facts.lastFailure) result.notes.push('对应周期失败与通过/认定恢复冲突；未确认重新认定恢复，待确认')
+    else { result.group='excluded'; result.notes.push('对应认定周期复核明确不通过，未见后续重新认定恢复') }
   } else {
-    const lastAward = Math.max(...awardYears)
-    const unresolvedFailures = failureYears.filter(y => y >= lastAward)
-    const lastFailure = Math.max(...unresolvedFailures)
-    const lastPassed = Math.max(...reviews.filter(e => e.reviewOutcome === 'passed').map(e => e.decidedYear!))
-    if (unresolvedFailures.length) {
-      if (lastFailure === lastAward || lastPassed >= lastFailure) result.notes.push('对应周期失败与通过/认定恢复冲突；未确认重新认定恢复，待确认')
-      else { result.group='excluded'; result.notes.push('对应认定周期复核明确不通过，未见后续重新认定恢复') }
-    } else {
-      // Only now use the shared three-year calculation. Its active label alone
-      // cannot resolve a failed -> passed sequence or a batch ambiguity.
-      const current = computeTitleLifecycle(events)
-      if (current.dueYear != null && current.dueYear > year) result.group='eligible'
-      else result.notes.push('已到复核年份，未见明确延续结果，待确认')
-    }
+    // Failure/recovery and gap applicability are settled first. The shared
+    // lifecycle supplies the unchanged three-year calculation for known anchors.
+    const current = computeTitleLifecycle([...facts.awards,...facts.passed])
+    if (current.dueYear != null && current.dueYear > year) result.group='eligible'
+    else result.notes.push('已到复核年份，未见明确延续结果，待确认')
   }
   return result
+}
+
+function hasUnresolvedRecovery(current: CycleJudgment[], history: CycleJudgment[]) {
+  for (const cycle of current) {
+    // A definite final termination no longer depends on whether the earlier
+    // grant restored eligibility. Otherwise only the last grant is applicable.
+    if (cycle.group === 'excluded') continue
+    for (const older of history) {
+      if (older.originYear < cycle.originYear && older.failureYears.includes(cycle.lastAwardYear)) return true
+    }
+  }
+  return false
 }
 
 function adjudicateCurrentCycles(formal: QualificationEvent[], year: number): { group: CurrentGroup; notes: string[]; originYear: number } {
@@ -76,7 +127,15 @@ function adjudicateCurrentCycles(formal: QualificationEvent[], year: number): { 
     const events = batches.get(event.batchSeq) ?? []
     events.push(event); batches.set(event.batchSeq,events)
   }
-  const judgments = [...byYear].flatMap(([origin,batches]) => [...batches].map(([batch,events]) => adjudicateCycle(events,origin,batch,year)))
+  const judgments = [...byYear].flatMap(([origin,batches]) => {
+    const known = [...batches].filter(([batch]) => batch != null)
+    const ambiguous = batches.get(null) ?? []
+    // An unknown batch is an applicability gap for this year, not an invented
+    // extra batch. Keep its possible effects until a decisive fact resolves it.
+    return known.length
+      ? known.map(([batch,events]) => adjudicateCycle(events,origin,batch,year,ambiguous))
+      : [adjudicateCycle(ambiguous,origin,null,year)]
+  })
   // Selection follows adjudication, retains *every* batch of the current year,
   // and never uses the latest passed event to erase another batch or a failure.
   const originYear = Math.max(...judgments.map(c => c.originYear))
@@ -84,10 +143,10 @@ function adjudicateCurrentCycles(formal: QualificationEvent[], year: number): { 
   const notes = current.flatMap(c => c.notes.map(note => `${c.originYear}年/批次${c.batch ?? '?'}：${note}`))
   let group: CurrentGroup = current[0]?.group ?? 'pending'
   if (!current.length) notes.push('缺少已确认认定及资格依据；平台状态或候选对应不能单独证明资格')
-  if (current.length > 1) { group='pending'; notes.push('同年多批次对应/结论冲突；不能按事件ID猜顺序或丢弃批次') }
+  if (new Set(current.map(c => c.group)).size > 1) { group='pending'; notes.push('同年各批次裁定不一致，保留全部批次的结论及未决缺口') }
   // A new award may resolve old unknown-origin history. A renewal never supplies
   // this recovery boundary, even if its conclusion is more recent.
-  const latestAward = Math.max(...judgments.flatMap(c => c.awardYears))
+  const latestAward = Math.max(...judgments.map(c => c.lastAwardYear))
   const unknownReviews = unknown.filter(e => e.eventType === 'review')
   const relevantUnknown = unknownReviews.filter(e => e.decidedYear == null || e.decidedYear >= latestAward)
   if (unknownReviews.length > relevantUnknown.length) notes.push('较早复核原周期未知；后续明确新认定恢复，旧缺口及出处保留')
@@ -95,8 +154,7 @@ function adjudicateCurrentCycles(formal: QualificationEvent[], year: number): { 
   if (unknown.some(e => e.eventType === 'award')) { group='pending'; notes.push('认定日期缺失，当前周期待确认') }
   // Preserve #116's same-year re-award ordering boundary, using actual award
   // dates and already partitioned older cycles, never a renewal's anchor year.
-  const recoveryConflict = current.some(c => c.awardYears.some(awarded => judgments.some(old => old.originYear < c.originYear && old.failureYears.includes(awarded))))
-  if (recoveryConflict) { group='pending'; notes.push('同年认定恢复与旧周期失败结论顺序冲突，待确认') }
+  if (hasUnresolvedRecovery(current,judgments)) { group='pending'; notes.push('同年认定恢复与旧周期失败结论顺序冲突，待确认') }
   return { group, notes, originYear }
 }
 
@@ -190,7 +248,9 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
     row.firstYear=null; row.notes.push('首次认定补充依据不完整，年份留空；不据此丢弃已确认当前资格')
   }
   row.references.push(...incomplete.map(e => 'event:' + e.id + ' 正式出处待补'))
-  if (incomplete.some(e => e.eventType === 'award' ? (e.decidedYear ?? e.year) == null || (e.decidedYear ?? e.year)! >= qualification.originYear : e.year == null || e.year >= qualification.originYear)) {
+  // Applicability compares originating cycles. A late decision date on an old
+  // award does not associate it with an independent, formally renewed cycle.
+  if (incomplete.some(e => originTime(e) == null || originTime(e)! >= qualification.originYear)) {
     row.group='pending'; row.notes.push('存在影响当前周期的无正式出处/未确认认定或复核，当前资格待确认')
   }
   return row

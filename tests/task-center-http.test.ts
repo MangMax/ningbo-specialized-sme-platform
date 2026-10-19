@@ -131,8 +131,8 @@ it('reports queued cancellation as cancelled rather than failed and keeps export
   expect(new Set([...page1.rows, ...page2.rows].map(row => row.id)).size).toBe(4)
 })
 
-it('导出任务摘要兼容历史v1及v2及v3并识别当前v4规则而拒绝未知版本',async()=>{
-  const versions=['current-roster-116-v1','current-roster-116-v2','current-roster-116-v3','current-roster-116-v4','unknown-rule']
+it('导出任务摘要兼容历史v1至v4并识别当前v5规则而拒绝未知版本',async()=>{
+  const versions=['current-roster-116-v1','current-roster-116-v2','current-roster-116-v3','current-roster-116-v4','current-roster-116-v5','unknown-rule']
   const exportIds=versions.map(ruleVersion=>{
     const id=newJobId()
     db.insert(schema.job).values({id,kind:'current-roster-export',state:'failed',params:{titleCode:'specialized_sme'},progress:{done:0,total:0},result:{ruleVersion,phase:'starting'},createdAt:'2026-10-19T00:00:00Z'}).run()
@@ -141,6 +141,6 @@ it('导出任务摘要兼容历史v1及v2及v3并识别当前v4规则而拒绝�
   const response=await fetch(`${api.baseUrl}/api/task-center?tab=export`)
   expect(response.status).toBe(200)
   const body=await response.json()
-  expect(body.total).toBe(5)
-  for(let i=0;i<versions.length;i++) expect(body.rows.find((r:any)=>r.id===exportIds[i]).export.ruleVersion).toBe(i===4?null:versions[i])
+  expect(body.total).toBe(6)
+  for(let i=0;i<versions.length;i++) expect(body.rows.find((r:any)=>r.id===exportIds[i]).export.ruleVersion).toBe(i===versions.length-1?null:versions[i])
 })
