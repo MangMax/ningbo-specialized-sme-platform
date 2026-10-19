@@ -146,3 +146,42 @@ Driver各一次首请求+5个热样本，插桩有开销。表中堆为观察到
 停止构建后再以 `--maxWorkers=2` 全仓重跑，仍是相同setup超时（`tests-merged-sequential.log`），因此不能归因于构建并行。代码检索发现 `comparison-scope-proof-http.test.ts` 也会从同一cwd起Nuxt dev；共享 `.nuxt` 生成目录是待验证的并发隔离风险，不据此声称已证明根因。本票没有修改#86测试、加超时、跳过失败项或改其业务代码。
 
 同一63be439串行测试worker核对：`pnpm test --maxWorkers=1` 为146 passed /2 skipped files、2115 passed /12 skipped tests，退出0（`tests-merged-one-worker.log`）。这是测试调度核对，不是改变应用worker、堆或c1/2/5性能输入。不能据串行通过宣布 `--maxWorkers=2` 门禁通过。并发启动隔离需由#86进一步验证：两套件使用独立生成目录或复用受控生产产物，并捕获子进程启动输出/退出状态；不以增加60秒等待解决。
+
+## R1 修复交接（本节为当前状态，保留上述历史失败）
+
+实现基于集成 `8bb163fe63d1e2a6615fb04d7731502c863b7f78`。本节所有新性能、完整门禁和编译协议证据绑定干净源码 **`8953ea8538e5bb6d9585895cdc60dd2f4ddb70bd`**；随后仅整理文档/聚合测量文件，不将旧结果改标为文档提交的重测。窄设计先冻结于 [async-read-design.md](async-read-design.md)，运行证据根目录为 `/tmp/ningbo-perf-81-89/review-fixes-r1/`，聚合数值见 [r1-measurements.json](r1-measurements.json)。没有修改冻结的 #82 budgets、schema 或 migration。
+
+### 修复及可证伪回归
+
+- F1：异常 q 先 JSON 编码再绑定，由确定性 SQLite 函数执行原始 JS `includes`，避免 SQLite 绑定将孤立 UTF-16 半代理替换为 U+FFFD。真实 SQLite/公开 MCP 覆盖补充区汉字名称、已确认曾用名、USCC 的高/低半代理，以及替换字符和未确认别名反例。`f1-red.log` 为修复前 0 对期望 3，修复后通过；普通输入仍走原查询选择路径。
+- F2：企业 HTTP/MCP 共用真正的 native worker；聚合/游标/业务投影/JSON 编码都离开主事件循环。每应用进程 1 worker、最多 16 排队且元数据最多 64KiB；第 18 个未完成传输拒绝为 503。传输名额持有至响应 finish/close。队列不缓存结果；取消排队移除，取消执行终止并恢复后续队列，启动/退出/关闭错误明确拒绝，连接只读且独立于写连接。可复用 readonly pager，但每次请求独立事务快照；文件身份变化重开。仅复用连接，不复用读事务/业务结果。
+- 常用三称号字典以紧凑 source/recognition 位掩码减少重复聚合；已解释差异仅取稀疏坐标。未知称号和复杂过滤保留通用路径，完整计数、生命周期、空 USCC 差异及中文顺序保留。无新增索引；独立废弃副本索引探针边界见 [index-request.md](index-request.md)。当前实际查询和 EXPLAIN 保存在本地 `mask-query.sql` / `mask-plan.json`，覆盖计划并不等于 HTTP SLO。
+- 真正的 native 等待反例：独立连接持排他锁，错误的同步/await 包装令 health 约 715ms，300ms 断言变红；worker 版本通过。移除事务的 mutation 出现 count=5149/名称=5153；去掉启动失败拒绝的 mutation 将应拒绝请求解析成功；去掉响应背压的 mutation 不再拒绝第 18 个请求。上述失败样本均保留，没有通过放宽超时/堆解决。
+- STD-01/F3：ready/error 监听及拒绝 promise 在首次 await 前建立，server/worker 启动和结束均归 try/finally 所有。强制 worker 先于 HTTP 启动完成时原测试超时 30 秒，修复后原并发提交/页/审计断言继续通过。STD-02/F4：精确检索只有声明的 `iterateEnterpriseHistories` 已删除，不为死代码增加测试。
+
+### 企业矩阵与完整 raw 预算
+
+同一批自有克隆 1x/2x/5x、HTTP/MCP、list/detail、c1/2/5，共 **36 格 ×（1 冷 +20 热）=756 响应，0/36 冻结预算失败**。每格新进程；冷样本不清 OS cache；热吞吐以实际热阶段墙钟计时。旧实现 `5c9ab8e482b28b47dbeb7f947f450f40336c86ce` 归档产物在完全相同的自有输入上运行，12 组深相等且 756 个响应摘要逐一一致；仅对象键规范化，数组顺序保持。`final-equivalence.json` 是本轮对照，不将历史原始 d198 OOM 冒充完成的大数据对照。另有编译公开协议的小型合成 fixture 对 d198 原始实现的 54 列表输入/12 详情对照；输入按各协议 schema 适用范围运行。
+
+|5x 列表 c5|冷 ms|热 p50/p95/p99 ms|热 req/s|loop p95/max ms|合计 heap / RSS B|保守增量 B|
+|---|---:|---:|---:|---:|---:|---:|
+|HTTP|106.84|279.77 / 474.53 / 483.10|10.65|11.32 / 11.44|189379808 / 416219136|20917040|
+|MCP|115.55|277.97 / 484.29 / 487.21|10.52|12.93 / 12.93|184750568 / 416563200|28564616|
+
+36 格最大热 p95 484.29ms，最大交互 loop 14.45ms；最大保守增量 28799344B，最大合计 V8 heap 190480456B，最大进程 RSS 417873920B。最大冷样本 722.36ms（详情），不把启动阶段列为热样本。应用保持 `--max-old-space-size=2048`，native worker old generation 上限 128MiB；这是实际合计观测符合 1.8GiB 限制，不声称两个配置上限相加仍是 2048MiB。主 heap 每 5ms 采样，并加 worker 驱动物化/每 256 行/投影和编码边界的峰值、每任务峰值相对起点及保留增长；JSON 单独拥有的 backing ArrayBuffer 转移，HTTP 返回 Buffer、MCP 返回完整 JSON 文本，避免主线程重建完整 raw 对象。记录 exact transfer bytes、编码/解码耗时、external 和进程 RSS；采样不是连续分配追踪，未观测峰值仍可能存在。
+
+合成完整 raw **17600015B**：HTTP 17601012B/166.47ms，MCP 18401221B/235.09ms；raw 字段摘要完整、未匹配 enterpriseId=null 不变。采用更保守的组件增量 **89916064B <= 102308894B（2×body+64MiB）**，不选用 GC 导致的较小健康基线差值 4807856B。external 峰值 75502740B、进程 RSS 峰值 534249472B 一并披露。编译 worker 从独立 cwd 启动，验证无源码/Jiti 运行依赖。旧对象 clone 约 187MB、早期未等 Nitro readiness 的约 155MB 失败样本保留，最终不能仅凭 worker 存在宣称内存通过。
+
+自有输入来自历史 1x/2x continuation 与 5x scale5 的文件克隆，不打开共享 frozen DB；主文件/WAL 独立 inode，矩阵只读。1x/2x 有 14 migrations，5x 有 13，后者没有三个 #87 索引；每规模 before/after 使用同一 schema，未在矩阵输入执行 DDL。合成增长包括无关 raw 与正式历史，不代表全部真实业务分布（export/alias 等并未同比增长）。私有路径、文件 SHA/inode、完整计数、integrity/FK 与产物 SHA 在本地 `fixture-artifact-binding.json`。Git 仅保存聚合数值，不保存企业、raw、DB、文件或凭据。
+
+### 共享模块、完整门禁与剩余边界
+
+额外 source catalog 浅页/深页、HTTP/MCP scoped comparison 的相同 c1/2/5 × 三规模为另 **36 格/756 响应**。企业 SLO 通过不能覆盖该结果：**5x 正式历史比较 6 格 loop 仍超限**，最大 p95 150.47ms、max 608.70ms；比较请求 p95 最大 1447.52ms（仍低于其 2s）。内存口径也不能遗漏：上述 6 格增量 heap 超过 128MiB，另 2x HTTP c1/c2/c5、MCP c2 共 4 格也超过该预算（最大 603204304B）。因此共享矩阵完整预算为 **10/36 格失败**，其余 26 格本次检查通过。此套继承旧脚本的 application heap 口径，不冒充新增 worker+app 的企业合计口径。新归档构建集成 8bb，在同一 5x c5 输入复核：HTTP loop max 598.74ms，MCP 686.29ms，结果摘要与新代码相同。这支持其为既有 #86/#91 范围剩余问题；不是全部 6 格逐一 before/after 性能结论。本次未改其业务模块，不以扩大 R1 变更来掩盖该风险。
+
+最终干净 8953 门禁：`pnpm test --maxWorkers=2` 为 **148 passed /2 skipped files、2124 passed /12 skipped tests**；typecheck、build 退出 0；编译 HTTP/MCP 企业、raw 预算、双实例缓存隔离/提交/回滚、snapshot/import SIGKILL 恢复、生产 OpenAPI 全部退出 0。编译 correspondence 27 项通过；其第一次仅本地启动适配器 hashbang 解析错误退出 1，修复私有适配器后重跑退出 0，保留原日志。comparison 原/新源码及已存 proof 的 30 项 readonly 合成等价通过。import 的大 MCP 413→同 key HTTP 完整交付及原 receipt 重放通过，不将 413 说成大请求 MCP 接受；未覆盖 COMMIT 后至 receipt 返回前的崩溃窗口。
+
+原全仓并发 Nuxt dev setup 失败的当前可复现实因是 CLI 共享 buildDir 锁：输出 `Another Nuxt dev server already running` 后子进程退出。两 HTTP 套件使用各自临时 NUXT_BUILD_DIR，保留启动输出/退出观测；没有绕过锁、提高 60 秒超时或改为串行掩盖。开发/生产双入口 Rollup 包装均修复，最终完整 c2 门禁通过，旧失败日志保留。
+
+桌面 1280×800 和 390×844 的真实浏览器操作已验证：搜索合成翻页、25 行分页、抽屉、完整详情和面包屑返回/Escape，保留 q/page 和首行；390px document.scrollWidth=390。仅合成 DB，无 UI 代码修改、无真实附件/外部平台验证。详细动作和截图路径见本地 `browser.md`。
+
+本轮没有生产、CI、受控 1vCPU/4GiB 容器、长期背压压力或父级验收证据；复杂过滤的语义回归不等于所有过滤组合的性能 SLO。本地单机 20 热样本的尾延迟、5x c5 约 16ms 的 p95 余量不能推广为部署保证。原失败与剩余 #86/#91 loop/heap 风险均保留，未新建 PR、push、合 main 或关闭 issue。
