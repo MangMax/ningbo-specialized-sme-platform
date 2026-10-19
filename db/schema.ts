@@ -144,7 +144,7 @@ export const recordEvidence = sqliteTable(
      */
     page: integer('page'),
   },
-  (t) => [index('record_evidence_event_idx').on(t.recordEventId)],
+  (t) => [index('record_evidence_event_idx').on(t.recordEventId), index('record_evidence_coordinate_idx').on(t.sourceFile, t.listNo, t.attachment)],
 )
 
 /**
@@ -920,6 +920,7 @@ export const recordCorrespondence = sqliteTable(
   (t) => [
     uniqueIndex('record_correspondence_edge_uq').on(t.edgeKey),
     index('record_correspondence_event_idx').on(t.eventId),
+    index('record_correspondence_predecessor_event_idx').on(t.predecessorEventId),
     index('record_correspondence_relation_idx').on(t.relationId),
     index('record_correspondence_export_idx').on(t.exportRowId),
     index('record_correspondence_enterprise_idx').on(t.enterpriseId, t.titleCode),
@@ -975,3 +976,24 @@ export const comparisonScopeProofAudit = sqliteTable('comparison_scope_proof_aud
   ruleVersion: text('rule_version').notNull(),
   decidedAt: text('decided_at').notNull(),
 }, t => [index('comparison_scope_proof_audit_proof_idx').on(t.proofId, t.id)])
+
+/** #101: immutable evidence correction receipts and append-only coordinate history. */
+export const evidenceCorrectionBatch = sqliteTable('evidence_correction_batch', {
+  idempotencyKey: text('idempotency_key').primaryKey(),
+  requestHash: text('request_hash').notNull(),
+  planHash: text('plan_hash').notNull(),
+  receipt: text('receipt', { mode: 'json' }).$type<unknown>().notNull(),
+  createdAt: text('created_at').notNull(),
+})
+export const evidenceCorrectionAudit = sqliteTable('evidence_correction_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  evidenceId: integer('evidence_id').notNull().references(() => recordEvidence.id),
+  eventId: integer('event_id').notNull().references(() => recordEvent.id),
+  batchKey: text('batch_key').references(() => evidenceCorrectionBatch.idempotencyKey),
+  entryPoint: text('entry_point', { enum: ['correction', 'legacy_pages'] }).notNull(),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent' | 'legacy'; id: string }>().notNull(),
+  basis: text('basis').notNull(),
+  before: text('before', { mode: 'json' }).$type<unknown>().notNull(),
+  after: text('after', { mode: 'json' }).$type<unknown>().notNull(),
+  createdAt: text('created_at').notNull(),
+}, t => [index('evidence_correction_audit_evidence_idx').on(t.evidenceId, t.id)])

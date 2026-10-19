@@ -55,6 +55,9 @@ describe('mcp-auth 鉴权判据', () => {
       'preflight_comparison_scope_proofs',
       'commit_comparison_scope_proofs',
       'get_comparison_scope_proof_batch',
+  'preflight_roster_evidence_corrections',
+  'commit_roster_evidence_corrections',
+  'get_roster_evidence_correction_batch',
     ])
   })
 
