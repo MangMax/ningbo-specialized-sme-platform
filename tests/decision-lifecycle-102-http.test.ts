@@ -293,19 +293,119 @@ describe('ticket 102 public decision lifecycle', () => {
     } finally { await stopOwnedChild(child) }
   }, 90000)
 
-  it('rechecks lifecycle ownership inside legacy import execution and rolls back the whole batch', async () => {
+  it('rechecks lifecycle ownership inside legacy import execution and preserves failed receipts across atomic rollback and retry', async () => {
     const target = db.insert(schema.enterprise).values({ name: '执行期接管企业', nameNorm: '执行期接管企业', usccNorm: 'RACE102' }).returning().get()
     db.run(sql`CREATE TRIGGER decision102_import_race AFTER INSERT ON platform_query WHEN NEW.query_key='import-race-102' BEGIN INSERT INTO difference_reason(enterprise_id,title_code,direction,status,recorded_at,created_at,lifecycle_action) VALUES(${sql.raw(String(target.id))},'specialized_sme','missing_in_miit','needs_review','2099-01-01T00:00:00.000Z','2026-10-19','replace'); END`)
     const body = { idempotencyKey: 'legacy-execution-race', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/race', payload: { platformQueries: [{ interface: 'apply_list', queryKey: 'import-race-102', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'no_record' }], differences: [{ enterpriseName: target.name, uscc: target.usccNorm, titleCode: 'specialized_sme', direction: 'missing_in_miit', recordedAt: '2199-01-01T00:00:00Z', status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed' }] } }
+    const submit = () => fetch(service.baseUrl + '/api/roster/import/commit', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-token' }, body: JSON.stringify(body) })
+    const receipt = async (suffix: string) => json(await fetch(service.baseUrl + '/api/roster/import/receipts' + suffix, { headers: { authorization: 'Bearer synthetic-api-token' } }))
+    let failed: any
     try {
-      const response = await fetch(service.baseUrl + '/api/roster/import/commit', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-token' }, body: JSON.stringify(body) })
+      const response = await submit()
       const result = await json(response)
       expect(result.status).toBe('failed')
       expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'decision_lifecycle_required' }) })]))
       expect((await json(await fetch(api('history?enterpriseId=' + target.id + '&titleCode=specialized_sme&direction=missing_in_miit')))).total).toBe(0)
       expect(db.get(sql`select count(*) as n from platform_query where query_key='import-race-102'`)).toEqual({ n: 0 })
+      failed = await receipt('?idempotencyKey=' + body.idempotencyKey)
+      expect(failed).toMatchObject({ status: 'failed', receiptId: expect.any(Number) })
+      expect((await receipt('/items?receiptId=' + failed.receiptId)).rows).toEqual(expect.arrayContaining([expect.objectContaining({ ok: false, errorCode: 'decision_lifecycle_required' })]))
+      expect(value(await rpc('get_roster_import_receipt', { receiptId: failed.receiptId }, 'synthetic-mcp-token'))).toEqual(failed)
     } finally { db.run(sql`DROP TRIGGER decision102_import_race`) }
+    expect(await json(await submit())).toMatchObject({ status: 'committed', batchId: failed.batchId })
+    expect((await json(await fetch(api('current?enterpriseId=' + target.id + '&titleCode=specialized_sme&direction=missing_in_miit')))).current.status).toBe('confirmed_no_diff')
+    const committed = await receipt('?batchId=' + failed.batchId)
+    expect(committed).toMatchObject({ status: 'committed', receiptId: expect.any(Number) })
+    expect(committed.receiptId).not.toBe(failed.receiptId)
+    expect(await receipt('?receiptId=' + failed.receiptId)).toEqual(failed)
+    expect(await receipt('/history?batchId=' + failed.batchId)).toMatchObject({ total: 2, rows: [{ status: 'failed' }, { status: 'committed' }] })
+    expect(await json(await submit())).toMatchObject({ status: 'committed', batchId: failed.batchId })
+    expect(await receipt('/history?batchId=' + failed.batchId)).toMatchObject({ total: 2 })
   })
+  it.each([
+    { case: 'managed-source-collision', side: 'source', clash: true },
+    { case: 'managed-target-collision', side: 'target', clash: true },
+    { case: 'managed-source-reassignment', side: 'source', clash: false },
+    { case: 'adopted-target-coordinate', side: 'target', clash: false },
+  ])('rejects identity merges affecting lifecycle history: $case', async ({ case: caseId, side, clash }) => {
+    const source = db.insert(schema.enterprise).values({ name: caseId + '源', nameNorm: caseId + '源' }).returning().get()
+    const target = db.insert(schema.enterprise).values({ name: caseId + '目标', nameNorm: caseId + '目标', usccNorm: 'MERGE-' + caseId.toUpperCase() }).returning().get()
+    const managed = side === 'source' ? source : target
+    const legacy = side === 'source' ? target : source
+    const command = { ...request(caseId), enterpriseId: managed.id, decision: { status: 'needs_review', measureCode: 'manual_review', verificationStatus: 'pending' } }
+    const saved = await post(command)
+    expect(saved.status).toBe(200)
+    const originalReceipt = await json(saved)
+    const historical = db.insert(schema.differenceReason).values({ enterpriseId: legacy.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', measureCode: 'manual_review', verificationStatus: 'pending', recordedAt: clash ? originalReceipt.recordedAt : '2199-01-01T00:00:00Z' }).returning().get()
+    const readScope = async (id: number, path: string) => json(await fetch(api(path + '?enterpriseId=' + id + '&titleCode=specialized_sme&direction=missing_in_miit')))
+    const originals = await Promise.all([json(await fetch(api(String(originalReceipt.versionId)))), json(await fetch(api(String(historical.id))))])
+    const histories = await Promise.all([readScope(source.id, 'history'), readScope(target.id, 'history')])
+    const merge = { idempotencyKey: 'merge-' + caseId, sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/merge-history', payload: { merges: [{ fromEnterpriseId: source.id, intoUscc: target.usccNorm, sourceKind: 'manual' }] } }
+    const submit = (action: string, body: unknown = merge) => fetch(service.baseUrl + '/api/roster/import/' + action, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-token' }, body: JSON.stringify(body) })
+    const preflight = await json(await submit('preflight'))
+    expect(preflight.preflight.conflicts).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'merge_difference_lifecycle_conflict', message: expect.stringContaining(String(originalReceipt.versionId)) }) })]))
+    const result = await json(await submit('commit'))
+    expect(result).toMatchObject({ status: 'failed', summary: { written: 0 } })
+    expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'merge_difference_lifecycle_conflict' }) })]))
+    expect(await json(await fetch(api(String(originalReceipt.versionId))))).toEqual(originals[0])
+    expect(await json(await fetch(api(String(historical.id))))).toEqual(originals[1])
+    expect(await Promise.all([readScope(source.id, 'history'), readScope(target.id, 'history')])).toEqual(histories)
+    const replay = await post(command)
+    expect(replay.status).toBe(200)
+    expect(await json(replay)).toEqual(originalReceipt)
+    const legacyWrite = { ...merge, idempotencyKey: 'legacy-after-' + caseId, payload: { differences: [{ enterpriseName: managed.name, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2299-01-01T00:00:00Z' }] } }
+    expect((await json(await submit('commit', legacyWrite))).items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'decision_lifecycle_required' }) })]))
+  })
+
+  it('rolls back an execution-time managed merge collision and retains the failed receipt after safe retry', async () => {
+    const source = db.insert(schema.enterprise).values({ name: '归并执行竞态源', nameNorm: '归并执行竞态源' }).returning().get()
+    const target = db.insert(schema.enterprise).values({ name: '归并执行竞态目标', nameNorm: '归并执行竞态目标', usccNorm: 'MERGE-RACE-102' }).returning().get()
+    const legacy = db.insert(schema.differenceReason).values({ enterpriseId: source.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2099-01-01T00:00:00Z' }).returning().get()
+    const original = await json(await fetch(api(String(legacy.id))))
+    const body = { idempotencyKey: 'merge-execution-race-102', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/merge-race', payload: { platformQueries: [{ interface: 'apply_list', queryKey: 'merge-race-102', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'no_record' }], merges: [{ fromEnterpriseId: source.id, intoUscc: target.usccNorm, sourceKind: 'manual' }] } }
+    const submit = (action: string) => fetch(service.baseUrl + '/api/roster/import/' + action, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-token' }, body: JSON.stringify(body) })
+    const receipt = async (suffix: string) => json(await fetch(service.baseUrl + '/api/roster/import/receipts' + suffix, { headers: { authorization: 'Bearer synthetic-api-token' } }))
+    expect((await json(await submit('preflight'))).preflight.conflicts).toEqual([])
+    db.run(sql`CREATE TRIGGER decision102_merge_race AFTER INSERT ON platform_query WHEN NEW.query_key='merge-race-102' BEGIN INSERT INTO difference_reason(enterprise_id,title_code,direction,status,recorded_at,created_at,lifecycle_action) VALUES(${sql.raw(String(target.id))},'specialized_sme','missing_in_miit','needs_review','2099-01-01T00:00:00Z','2026-10-19','replace'); END`)
+    let failed: any
+    try {
+      const result = await json(await submit('commit'))
+      expect(result).toMatchObject({ status: 'failed', summary: { written: 0 } })
+      expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'merge_difference_lifecycle_conflict' }) })]))
+      expect(await json(await fetch(api(String(legacy.id))))).toEqual(original)
+      expect(await json(await fetch(api('history?enterpriseId=' + target.id + '&titleCode=specialized_sme&direction=missing_in_miit')))).toMatchObject({ total: 0, rows: [] })
+      expect(await json(await fetch(service.baseUrl + '/api/platform/queries?queryKey=merge-race-102'))).toMatchObject({ total: 0, rows: [] })
+      failed = await receipt('?idempotencyKey=' + body.idempotencyKey)
+      expect(failed).toMatchObject({ status: 'failed', receiptId: expect.any(Number) })
+      expect((await receipt('/items?receiptId=' + failed.receiptId)).rows).toEqual(expect.arrayContaining([expect.objectContaining({ errorCode: 'merge_difference_lifecycle_conflict' })]))
+    } finally { db.run(sql`DROP TRIGGER decision102_merge_race`) }
+    expect(await json(await submit('commit'))).toMatchObject({ status: 'committed', batchId: failed.batchId })
+    expect(await json(await fetch(api(String(legacy.id))))).toMatchObject({ id: legacy.id, enterpriseId: target.id, origin: 'legacy_import' })
+    expect(await receipt('?receiptId=' + failed.receiptId)).toEqual(failed)
+    expect(await receipt('/history?batchId=' + failed.batchId)).toMatchObject({ rows: [{ status: 'preflight' }, { status: 'failed' }, { status: 'committed' }] })
+  })
+
+  it('keeps legacy merge deduplication and reassignment compatible outside the adopted target coordinate', async () => {
+    const source = db.insert(schema.enterprise).values({ name: '兼容归并源', nameNorm: '兼容归并源' }).returning().get()
+    const target = db.insert(schema.enterprise).values({ name: '兼容归并目标', nameNorm: '兼容归并目标', usccNorm: 'MERGE-COMPAT-102' }).returning().get()
+    const command = { ...request('merge-unrelated-managed'), enterpriseId: target.id, titleCode: 'little_giant', direction: 'extra_in_miit', decision: { status: 'needs_review', measureCode: 'manual_review', verificationStatus: 'pending' } }
+    const originalReceipt = await json(await post(command))
+    expect(originalReceipt.versionId).toEqual(expect.any(Number))
+    const original = await json(await fetch(api(String(originalReceipt.versionId))))
+    const content = { titleCode: 'specialized_sme', direction: 'missing_in_miit' as const, status: 'needs_review' as const, recordedAt: '2026-01-01T00:00:00Z' }
+    const duplicate = db.insert(schema.differenceReason).values({ ...content, enterpriseId: source.id }).returning().get()
+    const survivor = db.insert(schema.differenceReason).values({ ...content, enterpriseId: target.id }).returning().get()
+    const moved = db.insert(schema.differenceReason).values({ ...content, enterpriseId: source.id, titleCode: 'innovative_sme' }).returning().get()
+    const body = { idempotencyKey: 'merge-legacy-compatible-102', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/compatible', payload: { merges: [{ fromEnterpriseId: source.id, intoUscc: target.usccNorm, sourceKind: 'manual' }] } }
+    const response = await fetch(service.baseUrl + '/api/roster/import/commit', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-token' }, body: JSON.stringify(body) })
+    expect(await json(response)).toMatchObject({ status: 'committed', summary: { written: 1 } })
+    expect((await fetch(api(String(duplicate.id)))).status).toBe(404)
+    expect(await json(await fetch(api(String(survivor.id))))).toMatchObject({ id: survivor.id, enterpriseId: target.id, origin: 'legacy_import' })
+    expect(await json(await fetch(api(String(moved.id))))).toMatchObject({ id: moved.id, enterpriseId: target.id, origin: 'legacy_import' })
+    expect(await json(await fetch(api(String(originalReceipt.versionId))))).toEqual(original)
+    expect(await json(await post(command))).toEqual(originalReceipt)
+  })
+
   it('bounds scoped history and legacy preview while unrelated large raw evidence is never materialized', async () => {
     const other = db.insert(schema.enterprise).values({ name: '性能夹具企业', nameNorm: '性能夹具企业' }).returning().get()
     const hugeReason = '原始历史长说明'.repeat(2000)

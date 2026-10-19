@@ -1,5 +1,11 @@
 # #102 差异决定生命周期、历史与旧标注预览
 
+## R1：身份归并与生命周期历史
+
+旧归并的内容去重仅适用于未纳管解释。源企业已有任何生命周期版本（含撤回）时，当前入口不支持保持原企业范围、命令哈希与原回执的迁移，预检和事务内执行均返回逐项 `merge_difference_lifecycle_conflict`，列明版本 ID、企业、称号及方向。目标已接管的同称号×方向也不能接收源企业旧解释，即使登记时点不同。不会隐式转换、重挂或删除任何已纳管历史。
+
+目标其他坐标已接管不阻止未纳管坐标的原有去重/迁移；旧版未纳管归并行为保留。执行期新增接管会令整批回滚，失败导入回执在消除竞态后重试成功仍按原 ID 可查。真实 HTTP 验证见 `tests/decision-lifecycle-102-http.test.ts` 中 `rejects identity merges affecting lifecycle history`、`rolls back an execution-time managed merge collision and retains the failed receipt after safe retry`、`keeps legacy merge deduplication and reassignment compatible outside the adopted target coordinate`。R1 日志在 `/tmp/ningbo-spec98/fix-r1/merge-lifecycle-red-confirmed.log`（5 项业务红测）与 `merge-compat-green.log`（3 文件 148 项通过）；最终提交与验证边界见同目录 handoff。
+
 范围：差异决定的显式替代/撤回、精确读回及有界历史；旧人工标注只读映射/冲突预览。没有生产资料迁移、自动判因、改名、部署、main 合并或 UI 重建。本票不提供删除来源/旧决定的接口。
 
 ## 公开契约

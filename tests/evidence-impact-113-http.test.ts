@@ -166,7 +166,7 @@ describe('ticket 113 committed evidence impact substrate', () => {
     expect(token).toMatchObject({ decisionId: a.id, latestRevisionId: rows[0]!.latestRevisionId, projectionReady: true })
   })
 
-  it('rolls back evidence work with fact failure and preserves committed work before a failed import receipt update', async () => {
+  it('rolls back evidence work with fact and projection failures and keeps committed replay stable', async () => {
     const e = seed('事务回滚主体', 'TX-113'); decision(e.id)
     const q = { interface: 'business_list', queryKey: e.usccNorm, titleCode: 'specialized_sme', rdjb: '2', queriedAt: '2026-10-19T05:00:00Z', status: 'success', relations: [{ sequenceNo: 1, enterpriseId: e.id, nameRaw: e.name }] }
     const scope = { enterpriseId: e.id, titleCode: 'specialized_sme', direction: 'missing_in_miit' as const }
@@ -190,13 +190,46 @@ describe('ticket 113 committed evidence impact substrate', () => {
     expect(state).toHaveLength(1)
     const replay = await rpc('save_roster_batch', request); expect(replay.status).toBe('committed'); drain()
     expect(listEvidenceImpacts113(db, { enterpriseId: e.id })).toEqual(state)
-    // Receipt status is outside the fact transaction in the existing importer.
-    db.run(sql`create trigger fail_receipt_113 before update of status on import_batch when new.status='committed' and new.idempotency_key='receipt-gap-113' begin select raise(abort,'synthetic receipt failure'); end`)
-    const response = await fetch(baseUrl + '/api/roster/import/commit', { method: 'POST', headers: { authorization: 'Bearer synthetic-api', 'content-type': 'application/json' }, body: JSON.stringify(batch('receipt-gap-113', { platformQueries: [{ ...q, queriedAt: '2026-10-19T06:00:00Z', relations: [{ sequenceNo: 1, enterpriseId: e.id, status: '新的实质事实' }] }] })) })
-    expect(response.status).toBe(500)
-    db.run(sql`drop trigger fail_receipt_113`)
+  })
+
+  it.each(['import_batch', 'import_receipt'] as const)('atomically rolls back facts and revisions on %s finalization failure and retries across HTTP and MCP', async table => {
+    const e = seed(`收据回滚主体-${table}`, `RECEIPT-113-${table}`), d = decision(e.id)
+    const scope = { enterpriseId: e.id, titleCode: 'specialized_sme', direction: 'missing_in_miit' as const }
+    const query = { interface: 'business_list', queryKey: e.usccNorm, titleCode: 'specialized_sme', rdjb: '2', queriedAt: '2026-10-19T06:00:00Z', status: 'success', relations: [{ sequenceNo: 1, enterpriseId: e.id, status: '新的实质事实' }] }
+    const request = batch(`receipt-atomic-113-${table}`, { platformQueries: [query] })
+    const before = readEvidenceToken113(db, scope)
+    const revisionCount = db.select().from(schema.evidenceRevision113).all().length
+    const facts = () => db.get<{ n: number }>(sql`select count(*) n from platform_query where query_key=${e.usccNorm}`)!.n
+    const getReceipt = async (selector: string) => {
+      const response = await fetch(baseUrl + '/api/roster/import/receipts?' + selector, { headers: { authorization: 'Bearer synthetic-api' } })
+      expect(response.status).toBe(200)
+      return response.json()
+    }
+    // The integrated #103 wrapper encloses the fact hooks and both terminal status writes.
+    db.run(sql`create trigger fail_receipt_113 before update of status on ${sql.raw(table)} when new.status='committed' begin select raise(abort,'synthetic receipt failure'); end`)
+    try {
+      const response = await fetch(baseUrl + '/api/roster/import/commit', { method: 'POST', headers: { authorization: 'Bearer synthetic-api', 'content-type': 'application/json' }, body: JSON.stringify(request) })
+      expect(response.status).toBe(500)
+    } finally { db.run(sql`drop trigger fail_receipt_113`) }
+    expect(facts()).toBe(0)
+    expect(db.select().from(schema.evidenceRevision113).all()).toHaveLength(revisionCount)
+    expect(readEvidenceToken113(db, scope)).toEqual(before)
+    drain(); expect(listEvidenceImpacts113(db, { enterpriseId: e.id })).toEqual([])
+    const failed = await getReceipt('idempotencyKey=' + request.idempotencyKey)
+    expect(failed).toMatchObject({ status: 'failed', receiptId: expect.any(Number) })
+
+    expect(await rpc('save_roster_batch', request)).toMatchObject({ status: 'committed', batchId: failed.batchId })
+    expect(facts()).toBe(1)
+    expect(readEvidenceToken113(db, scope).projectionReady).toBe(false)
     drain()
-    expect(listEvidenceImpacts113(db, { enterpriseId: e.id })[0]!.latestRevisionId).toBeGreaterThan(state[0]!.latestRevisionId)
+    const state = listEvidenceImpacts113(db, { enterpriseId: e.id })
+    expect(state).toEqual([expect.objectContaining({ decisionId: d.id, classification: 'premise_invalid' })])
+    expect(state[0]!.latestRevisionId).toBeGreaterThan(before.latestRevisionId)
+    expect(await getReceipt('receiptId=' + failed.receiptId)).toEqual(failed)
+    expect(await getReceipt('idempotencyKey=' + request.idempotencyKey)).toMatchObject({ status: 'committed' })
+    expect((await client.commit(request)).status).toBe('committed'); drain()
+    expect(facts()).toBe(1)
+    expect(listEvidenceImpacts113(db, { enterpriseId: e.id })).toEqual(state)
   })
 
   it('captures merge survivor coordinates from both owners and keeps historical evidence identity', async () => {

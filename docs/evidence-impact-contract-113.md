@@ -7,9 +7,11 @@ backfill. Production migration and backlog assessment need separate authority.
 
 ## Persistence and transaction boundary
 
-Migration `0023_evidence_impact_113` follows journal entry 21
-`0018_decision_lifecycle_102` (not numeric filename order). It adds empty tables
-and indexes only. Existing decisions and source bodies are preserved.
+Migration `0023_evidence_impact_113` is journal entry 23, timestamp
+`1792400021004`, after entry 22 `0019_import_receipts` at `1792400021003`
+and entry 21 `0018_decision_lifecycle_102` (not numeric filename order).
+The upstream entries are unchanged. It adds empty tables and indexes only.
+Existing decisions and source bodies are preserved.
 
 - `evidence_revision_113`: immutable committed source version, exact enterprise,
   title, optional direction/event scope, independent coverage/fact digests,
@@ -28,8 +30,11 @@ Hooks run inside existing successful fact transactions: USCC supplementation,
 identity merge, confirmed alias import/maintenance, profile rename, platform
 archive, selected export snapshot and official event/evidence revisions. Pending
 aliases, note/location-only changes and semantic duplicates create no work.
-The importer updates its receipt after the fact transaction; capture deliberately
-precedes that update, so committed work survives a failed receipt update.
+The integrated #103 importer wraps the fact transaction, batch status and terminal
+receipt update in one outer transaction. Capture runs inside that boundary: a
+failure in either terminal status update rolls back facts and evidence revisions
+together. The separately reserved attempt is retained as failed; a same-key retry
+can commit the facts and their revision hooks together without duplicating work.
 
 Snapshot selection matches the current reader: highest year then highest ID per
 title. Older unselected imports are inactive. Revisions freeze old/new batch
@@ -41,6 +46,10 @@ The merge transaction transfers `record_correspondence.enterprise_id` to the
 survivor along with other child lookup owners. Stable source IDs, confirmation
 status, original identity/provenance/fingerprint and audit remain unchanged;
 the change requires review rather than automatic re-confirmation.
+The upstream #102 lifecycle guards run during planning and execution: managed
+source histories and legacy rows entering an adopted target coordinate reject
+the merge before identity reassignment. #113 captures only permitted merges and
+does not bypass these guards or change managed command scope/hash/replay.
 
 ## Internal domain interfaces
 

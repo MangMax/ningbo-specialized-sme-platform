@@ -153,16 +153,18 @@ export const ALIAS_SOURCE_KIND_ORDER: string[] = [
 ]
 
 /**
- * 核验状态(`enterprise_alias` / `platform_relation` / `difference_reason` 共用)→ 中文名。
+ * 核验状态展示标签(`enterprise_alias` / `platform_relation` / `difference_reason` 共用)。
+ * `withdrawn` 仅用于别名；各业务允许的取值以对应 schema 列枚举为准。
  * `pending` 待核实是**不参与自动归并/搜索**的一侧 —— 证据不足宁可待核。
  */
 export const VERIFICATION_STATUSES: Record<string, string> = {
   confirmed: '已确认',
   pending: '待核实',
+  withdrawn: '已撤回',
 }
 
 /** 核验状态展示顺序。 */
-export const VERIFICATION_STATUS_ORDER: string[] = ['confirmed', 'pending']
+export const VERIFICATION_STATUS_ORDER: string[] = ['confirmed', 'pending', 'withdrawn']
 
 /** 生命周期读模型中的待核原因。 */
 export const LIFECYCLE_FLAGS: Record<string, string> = {
@@ -475,6 +477,7 @@ export const IMPORT_SOURCE_KINDS: Record<string, string> = {
   alias_evidence: '别名证据',
   correspondence_decision: '记录对应确认',
   comparison_scope_proof: '对比范围依据',
+  event_correction: '正式事件更正',
 }
 
 /** 导入来源类别展示顺序。 */
@@ -484,6 +487,7 @@ export const IMPORT_SOURCE_KIND_ORDER: string[] = [
   'alias_evidence',
   'correspondence_decision',
   'comparison_scope_proof',
+  'event_correction',
 ]
 
 /** 两侧名录比对方向,页面与导出共用。 */
