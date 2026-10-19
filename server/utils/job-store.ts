@@ -29,7 +29,7 @@ export interface JobDto {
   kind: string
   state: JobState
   progress: JobProgress
-  percent: number
+  percent: number | null
   params: Record<string, unknown>
   result: unknown
   error: string | null
@@ -44,7 +44,7 @@ export function toJobDto(row: JobRow): JobDto {
     kind: row.kind,
     state: row.state,
     progress: row.progress,
-    percent: progressPercent(row.progress),
+    percent: row.kind === 'current-roster-export' && row.state === 'done' ? 100 : row.kind === 'current-roster-export' && (row.state === 'queued' || row.state === 'running' && (row.result as {phase?:string}|null)?.phase !== 'workbook') ? null : progressPercent(row.progress),
     params: row.params,
     result: row.result ?? null,
     error: row.error ?? null,
@@ -168,7 +168,7 @@ export function markJobRunning(db: Db, id: string): JobRow | null {
 /** 写进度。终态的任务不再改 —— 否则取消之后进度还会往回跳。 */
 export function setJobProgress(db: Db, id: string, progress: JobProgress): void {
   db.update(schema.job)
-    .set({ progress: makeProgress(progress.done, progress.total) })
+    .set({ progress: progress.done === 0 && progress.total === 0 ? {done:0,total:0} : makeProgress(progress.done, progress.total) })
     .where(and(eq(schema.job.id, id), inArray(schema.job.state, [...ACTIVE_JOB_STATES])))
     .run()
 }
