@@ -185,3 +185,48 @@ Driver各一次首请求+5个热样本，插桩有开销。表中堆为观察到
 桌面 1280×800 和 390×844 的真实浏览器操作已验证：搜索合成翻页、25 行分页、抽屉、完整详情和面包屑返回/Escape，保留 q/page 和首行；390px document.scrollWidth=390。仅合成 DB，无 UI 代码修改、无真实附件/外部平台验证。详细动作和截图路径见本地 `browser.md`。
 
 本轮没有生产、CI、受控 1vCPU/4GiB 容器、长期背压压力或父级验收证据；复杂过滤的语义回归不等于所有过滤组合的性能 SLO。本地单机 20 热样本的尾延迟、5x c5 约 16ms 的 p95 余量不能推广为部署保证。原失败与剩余 #86/#91 loop/heap 风险均保留，未新建 PR、push、合 main 或关闭 issue。
+
+## R2 execution boundary repair
+
+Measured source `00dc715c2f6997a0f02c8f584de3280dd6a1707d`, integration base
+`69b8e54adb7c8026ba2b016e00e9affebc637540`. The previous R1 Worker128 claim
+is historical configuration, not an effective limit under the 2048 launch.
+R2 replaces that worker thread with one serial native child process and bounded
+JSON IPC chunks; [the frozen design](r2-worker-design.md) records ownership and
+copy behavior. No business reader/comparison, schema, migration, cache or global
+application heap/timeout change accompanies this repair.
+
+On supported local Node24.22.0/macOS arm64, the native child's actual V8 limit is
+335,544,320B under both default and 2048 application launches (old128MiB,
+semi-space64MiB). The application reports 4,496,293,888B under this host's default
+and 2,348,810,240B with old-space2048. These are separate engine limits, not a
+combined2GiB guarantee or native/external-memory cap. Actual combined heaps/RSS
+are measured against the unchanged frozen budgets.
+
+Both launches pass the same36-cell enterprise matrix:72cells/1512responses total,
+all canonical hashes equal to retained R1 same-input results. Each cell has1cold
+and20hot responses; OS cache is not purged. Max hot p95 is472.89ms (2048) and
+496.30ms (default), with limited margin and small tail samples. A96MiB synthetic
+complete detail passes the actual default command from another cwd with exact
+hash and subsequent health/list; instrumented default/2048 heap increments are
+219,005,040B/171,593,424B, below268,435,456B. The retained17.6MB Unicode raw
+HTTP/MCP fixture also passes its102,308,894B cap (conservative52,517,504B).
+See [safe aggregate measurements](r2-measurements.json); raw evidence remains
+outside Git under `/tmp/ningbo-perf-81-89/review-fixes-r2/`.
+
+The new compiled verifier delays the actual emitted executor module import1s,
+asserts17response closes before readiness, then recovers HTTP list/detail and both
+enterprise MCP tools. Real injected child V8 OOM produces SIGABRT only in that
+child, a retryable503, and a successful subsequent read; the service stays alive.
+Terminal signal checks and idempotent response release preserve normal slow-client
+finish/disconnect backpressure.
+
+At measured source:148test files passed/2skipped,2126tests passed/12skipped;
+typecheck,build,production OpenAPI and compiled protocols pass. A parallel
+build/typecheck generated-types failure and a wrong-checkout correspondence
+verification attempt are retained and excluded; sequential typecheck and corrected
+current-artifact correspondence27checks pass. Initial one-scale2048 cells briefly
+overlap provenance hashing/integrity work; benchmarks themselves run serially.
+These are local finite tests, not controlled container, Linux/Node22,CI,
+production,long-duration load or parent acceptance. Existing #86/#91 shared
+comparison limitations remain outside this repair and its modules/tests are untouched.
