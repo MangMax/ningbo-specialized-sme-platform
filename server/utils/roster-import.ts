@@ -47,6 +47,7 @@ import type {
   RosterImportUsccBackfill,
 } from '../../lib/roster-import-client'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
+import { recordImportReceipt } from './import-receipt-ledger'
 
 type Db = BetterSQLite3Database<typeof schema>
 /** 事务内外都能用的执行器（`tx` 与本连接在 select/insert/update/delete 上同形）。 */
@@ -797,7 +798,7 @@ interface PlatformAliasRelationEvidence {
 }
 
 /** Load the actual platform row facts used to validate a platform-sourced alias. */
-function findPlatformAliasRelationEvidence(source: Executor, relationId: number): PlatformAliasRelationEvidence | null {
+export function findPlatformAliasRelationEvidence(source: Executor, relationId: number): PlatformAliasRelationEvidence | null {
   return source
     .select({
       interface: schema.platformQuery.interface,
@@ -840,7 +841,7 @@ function findPendingPlatformAliasRelationEvidence(
 }
 
 /** Validate the existing row facts; never infer a missing USCC or qymc from a name. */
-function platformAliasEvidenceMismatch(
+export function platformAliasEvidenceMismatch(
   source: Executor,
   sourceKind: string,
   aliasName: string,
@@ -2350,7 +2351,7 @@ function findDifferenceContentRow(
     .get()
 }
 
-/** Identity and createdAt are metadata; every other stored semantic field must agree to dedupe. */
+/** Legacy-only deduplication; lifecycle-managed histories are rejected before reaching this path. */
 function sameDifferenceContent(left: DifferenceRow, right: DifferenceRow): boolean {
   return left.status === right.status &&
     left.reasonCode === right.reasonCode &&
@@ -2364,6 +2365,53 @@ function sameDifferenceContent(left: DifferenceRow, right: DifferenceRow): boole
     left.movedInYear === right.movedInYear &&
     left.movedInBatch === right.movedInBatch &&
     left.verificationStatus === right.verificationStatus
+}
+
+/** Identity reassignment cannot preserve a managed command's original scope/hash/replay. */
+function findMergeDifferenceLifecycleConflict(db: Executor, fromEnterpriseId: number, intoEnterpriseId: number | null) {
+  if (fromEnterpriseId === intoEnterpriseId) return null
+  const source = db.select({ id: schema.differenceReason.id, enterpriseId: schema.differenceReason.enterpriseId,
+    titleCode: schema.differenceReason.titleCode, direction: schema.differenceReason.direction })
+    .from(schema.differenceReason).where(and(eq(schema.differenceReason.enterpriseId, fromEnterpriseId),
+      sql`${schema.differenceReason.lifecycleAction} is not null`)).limit(1).get()
+  // Even a non-colliding legacy row must not enter an explicitly adopted target coordinate.
+  const affected = source ?? (intoEnterpriseId == null ? undefined : db.get<{
+    id: number; enterpriseId: number; titleCode: string; direction: string
+  }>(sql`select managed.id, managed.enterprise_id as enterpriseId, managed.title_code as titleCode, managed.direction
+    from difference_reason managed
+    where managed.enterprise_id=${intoEnterpriseId} and managed.lifecycle_action is not null
+      and exists(select 1 from difference_reason source where source.enterprise_id=${fromEnterpriseId}
+        and source.title_code=managed.title_code and source.direction=managed.direction)
+    limit 1`))
+  if (!affected) return null
+  return { code: 'merge_difference_lifecycle_conflict',
+    message: `差异决定版本 ${affected.id}（企业 ${affected.enterpriseId}/${affected.titleCode}/${affected.direction}）已接管；归并将改变历史归属或写入旧解释，当前入口不支持保留原范围重放的归并，原 ID、历史和接管状态须保留` }
+}
+
+/** #99: inspect only affected alias IDs; never materialize audit payloads. */
+function aliasMergeLifecycleConflict(db: Executor, sourceAlias: Pick<typeof schema.enterpriseAlias.$inferSelect, 'id' | 'verificationStatus'>, survivor: { id: number }): { code: string; message: string } | null {
+  const survivorState = db.select({ verificationStatus: schema.enterpriseAlias.verificationStatus }).from(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.id, survivor.id)).get()!
+  const hasAudit = db.select({ id: schema.enterpriseAliasAudit.id }).from(schema.enterpriseAliasAudit)
+    .where(inArray(schema.enterpriseAliasAudit.aliasId, [sourceAlias.id, survivor.id])).limit(1).get()
+  if (sourceAlias.verificationStatus !== survivorState.verificationStatus &&
+      (hasAudit || sourceAlias.verificationStatus === 'withdrawn' || survivorState.verificationStatus === 'withdrawn')) {
+    return { code: 'merge_alias_lifecycle_conflict', message: `别名 ${sourceAlias.id}/${survivor.id} 核验状态不同，须显式处理后再归并` }
+  }
+  const sharedKey = db.get(sql`select a.id from enterprise_alias_audit a
+    inner join enterprise_alias_audit b on b.alias_id=${survivor.id} and b.idempotency_key=a.idempotency_key
+    where a.alias_id=${sourceAlias.id} limit 1`)
+  if (sharedKey) return { code: 'merge_alias_audit_key_conflict', message: `别名 ${sourceAlias.id}/${survivor.id} 存在同幂等键审计，不能丢弃任何一条历史` }
+  return null
+}
+function findMergeAliasLifecycleConflict(db: Executor, fromEnterpriseId: number, intoEnterpriseId: number) {
+  if (fromEnterpriseId === intoEnterpriseId) return null
+  for (const alias of db.select({ id: schema.enterpriseAlias.id, nameNorm: schema.enterpriseAlias.nameNorm, sourceKind: schema.enterpriseAlias.sourceKind, sourceRefId: schema.enterpriseAlias.sourceRefId, verificationStatus: schema.enterpriseAlias.verificationStatus }).from(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.enterpriseId, fromEnterpriseId)).all()) {
+    const survivor = findAliasRow(db, { enterpriseId: intoEnterpriseId, nameNorm: alias.nameNorm, sourceKind: alias.sourceKind, sourceRefId: alias.sourceRefId })
+    if (!survivor) continue
+    const conflict = aliasMergeLifecycleConflict(db, alias, survivor)
+    if (conflict) return conflict
+  }
+  return null
 }
 
 function findMergeDifferenceConflict(
@@ -2989,6 +3037,14 @@ function recognizedDifferenceEvidenceError(db: Executor, pending: PendingPlatfor
   return null
 }
 
+function lifecycleOwnsDifference102(db: Executor, enterpriseId: number, titleCode: string, direction: string): boolean {
+  return !!db.select({ id: schema.differenceReason.id }).from(schema.differenceReason).where(and(
+    eq(schema.differenceReason.enterpriseId, enterpriseId), eq(schema.differenceReason.titleCode, titleCode),
+    eq(schema.differenceReason.direction, direction as typeof schema.differenceReason.$inferSelect.direction),
+    sql`${schema.differenceReason.lifecycleAction} is not null`,
+  )).limit(1).get()
+}
+
 function planDifference(
   db: Executor,
   pending: PendingEnterprises,
@@ -3049,6 +3105,12 @@ function planDifference(
   const existing = current
     ? findDifferenceRow(db, { enterpriseId: current.id, titleCode: difference.titleCode, direction: difference.direction, recordedAt })
     : undefined
+  // Historical import remains compatible until the coordinate is explicitly adopted.
+  // Once lifecycle metadata exists, this old path must never override its expected-version guard.
+  if (current && lifecycleOwnsDifference102(db, current.id, difference.titleCode, difference.direction)) {
+    push({ item: failure('difference', ref, 'decision_lifecycle_required', '该企业称号方向已采用差异决定生命周期；请用 /api/roster/decision-lifecycle/commands 或 save_difference_decision', 'differences'), action: 'skip', review: false })
+    return
+  }
   const status = difference.status ?? 'not_queried'
   push({
     item: success('difference', existing ? `difference:${existing.id}` : ref, { enterpriseId: current?.id ?? null }),
@@ -3057,6 +3119,7 @@ function planDifference(
     run: (tx) => {
       const enterprise = locateEnterprise(tx, spec)
       if (!enterprise) return failure('difference', ref, 'enterprise_not_found', '差异归属企业在写入阶段不存在', 'enterpriseName')
+      if (lifecycleOwnsDifference102(tx, enterprise.id, difference.titleCode, difference.direction)) return failure('difference', ref, 'decision_lifecycle_required', '差异决定已由生命周期命令接管；旧导入不能覆盖当前版本', 'differences')
       // 执行阶段解析真 id（本批新建的查询/关系此刻已插入）。
       let evidenceQueryId = refs.queryIdLiteral
       if (refs.queryRef) {
@@ -3246,7 +3309,19 @@ function planMerge(
   }
 
   const targetEnterprise = findEnterpriseByUscc(db, intoUscc)
+  if (sourceEnterpriseId != null) {
+    const lifecycleConflict = findMergeDifferenceLifecycleConflict(db, sourceEnterpriseId, targetEnterprise?.id ?? null)
+    if (lifecycleConflict) {
+      push({ item: failure('merge', ref, lifecycleConflict.code, lifecycleConflict.message, 'merges'), action: 'skip', review: false })
+      return
+    }
+  }
   if (sourceEnterpriseId != null && targetEnterprise) {
+    const aliasConflict = findMergeAliasLifecycleConflict(db, sourceEnterpriseId, targetEnterprise.id)
+    if (aliasConflict) {
+      push({ item: failure('merge', ref, aliasConflict.code, aliasConflict.message, 'merges'), action: 'skip', review: false })
+      return
+    }
     const conflictingDifference = findMergeDifferenceConflict(db, sourceEnterpriseId, targetEnterprise.id)
     if (conflictingDifference) {
       push({
@@ -3558,6 +3633,10 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
   if (!into) return failure('merge', ref0, 'merge_target_not_found', '规范行在写入阶段不存在', 'intoUscc')
   if (from.id === into.id) return failure('merge', ref0, 'merge_same_enterprise', '被并企业与规范行是同一行', 'fromEnterpriseId')
   const ref = `merge:${from.id}->${into.id}`
+  const lifecycleConflict = findMergeDifferenceLifecycleConflict(tx, from.id, into.id)
+  if (lifecycleConflict) return failure('merge', ref, lifecycleConflict.code, lifecycleConflict.message, 'merges')
+  const aliasConflict = findMergeAliasLifecycleConflict(tx, from.id, into.id)
+  if (aliasConflict) return failure('merge', ref, aliasConflict.code, aliasConflict.message, 'merges')
   const conflictingDifference = findMergeDifferenceConflict(tx, from.id, into.id)
   if (conflictingDifference) {
     return failure(
@@ -3647,6 +3726,11 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
       sourceRefId: alias.sourceRefId,
     })
     if (clash) {
+      const conflict = aliasMergeLifecycleConflict(tx, alias, clash)
+      if (conflict) return failure('merge', ref, conflict.code, conflict.message, 'merges')
+      // #99: keep immutable decision provenance; only its lookup target follows the survivor.
+      tx.update(schema.enterpriseAliasAudit).set({ aliasId: clash.id })
+        .where(eq(schema.enterpriseAliasAudit.aliasId, alias.id)).run()
       tx.delete(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.id, alias.id)).run()
     } else {
       tx.update(schema.enterpriseAlias).set({ enterpriseId: into.id }).where(eq(schema.enterpriseAlias.id, alias.id)).run()
@@ -3787,7 +3871,7 @@ class ExecStageFailure extends Error {
  * 这里如实报「同键提交什么都不会发生」并把 `batchStatus: 'committed'` 带出去；
  * 真要补收敛就用 `POST /api/roster/import/replay`（§8.9.3）。
  */
-export function preflightRosterImport(
+function preflightRosterImportCore(
   db: Db,
   request: RosterImportRequest,
   pageCountErrors: readonly RosterImportItemResult[] = [],
@@ -3831,7 +3915,7 @@ export function preflightRosterImport(
  *   修好载荷后再以同一键调用即可重试；
  * - **单批事务**：任何一项不合法 ⇒ 整批 `failed`，业务数据一行不落，逐项错误照实回报。
  */
-export function commitRosterImport(
+function commitRosterImportCore(
   db: Db,
   request: RosterImportRequest,
   pageCountErrors: readonly RosterImportItemResult[] = [],
@@ -4016,7 +4100,7 @@ function evidenceRepointPlanFromItems(items: unknown, fingerprint: string): Evid
  * 计划与执行在同一次调用里先后发生、且之间没有别的写入 ⇒ 预算与实改必然一致
  * （`update` / `evidenceRepointed` 与预检的 `update` / `evidenceRepoints` 同口径）。
  */
-export function replayRosterImport(db: Db, request: RosterImportRequest): RosterImportReplayResponse {
+function replayRosterImportCore(db: Db, request: RosterImportRequest): RosterImportReplayResponse {
   const originalBatch = findBatchByKey(db, request.idempotencyKey)
   const sameCommittedSourceIdentity =
     originalBatch?.status === 'committed' &&
@@ -4071,6 +4155,16 @@ export function replayRosterImport(db: Db, request: RosterImportRequest): Roster
     .run()
 
   return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items: publicRosterImportItems(items), error: null }
+}
+
+export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = []) {
+  return recordImportReceipt(db, 'preflight', request, () => preflightRosterImportCore(db, request, pageCountErrors))
+}
+export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = []) {
+  return recordImportReceipt(db, 'commit', request, () => commitRosterImportCore(db, request, pageCountErrors))
+}
+export function replayRosterImport(db: Db, request: RosterImportRequest) {
+  return recordImportReceipt(db, 'replay', request, () => replayRosterImportCore(db, request))
 }
 
 /**

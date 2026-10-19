@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
  * MCP 面的**鉴权判据**(票 18)。
  *
  * ── 口径 ────────────────────────────────────────────────────────────────
- * **只读 tool 不鉴权,写入 tool 必须带 token。** 依据是票 18 的边界:
+ * 常规只读 tool 不鉴权,写入 tool 必须带 token；提交回执等敏感只读工具也复用此凭据门禁。
  * 「MCP 是**代理的入口**,不是第二个写库通道」—— 只读是查询,写入是改库,
  * 两者的风险不对称,所以开关也不该是同一个。
  *
@@ -23,7 +23,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
  */
 
 /**
- * 写入 tool 的名单 —— **单一来源**。三个作用:
+ * 受保护 tool 的名单（保留历史导出名 MCP_WRITE_TOOLS）—— **单一来源**。三个作用:
  *  1. 未带合法 token 时,中间件据此拒掉对应的 `tools/call`(HTTP 401);
  *  2. 各写入 tool 的 `enabled` 守卫据此决定要不要出现在 `tools/list` 里;
  *  3. 测试据此断言「名单恰好是这几个」。
@@ -37,18 +37,36 @@ import { createHash, timingSafeEqual } from 'node:crypto'
  * 同批注册的 `preflight_roster_batch` 是**只读预检**(契约 §9 如此归类),不在此列。
  */
 export const MCP_WRITE_TOOLS = [
+  'save_difference_decision',
+  'maintain_enterprise_alias',
   'save_ocr_result',
+  'delete_ocr_result',
   'set_file_category',
+  'update_file',
+  'remove_file',
+  'restore_file',
   'save_parse_result',
   'save_roster_batch',
   'submit_platform_batch',
   'retry_platform_batch',
   'preflight_record_correspondences',
   'save_record_correspondences',
+  'preflight_event_corrections',
+  'commit_event_corrections',
   'get_record_correspondence_batch',
   'preflight_comparison_scope_proofs',
   'commit_comparison_scope_proofs',
   'get_comparison_scope_proof_batch',
+  // Protected read-only receipts share the existing credential gate.
+  'get_roster_import_receipt',
+  'list_roster_import_receipts',
+  'list_roster_import_items',
+  'get_roster_import_request',
+  'patch_enterprise_profile',
+
+  'preflight_roster_evidence_corrections',
+  'commit_roster_evidence_corrections',
+  'get_roster_evidence_correction_batch',
 ] as const
 
 /** 写入 tool 名(字面量联合)。 */

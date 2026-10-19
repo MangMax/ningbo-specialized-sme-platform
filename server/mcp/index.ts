@@ -1,4 +1,7 @@
+import { decisionRpcError102 } from '../utils/decision-lifecycle-102-mcp'
+import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
 import { admitEnterpriseResponse } from '../utils/enterprise-read-response'
+import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
 import { platformQueryRpcError } from '../utils/mcp-platform-query'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler } from '@nuxtjs/mcp-toolkit/server'
@@ -47,28 +50,41 @@ export default defineMcpHandler({
     '这个 server 暴露两层能力:**文件库**(上传文件 → 页图 → OCR → 解析段)与' +
     '**名录**(企业 / 曾用名 / 称号事件 / 出处 / 平台证据 / 导出快照 / 差异解释)。',
     '',
+    '差异决定维护：save_difference_decision 显式替代/撤回，必填 expectedCurrentId、actor、basis、ruleVersion、effectiveAt 与幂等键。',
+    'get_current_difference_decision / get_difference_decision / list_difference_decision_history 读当前及稳定 ID 历史；preview_legacy_difference_decisions 只读映射/冲突，旧标注不等于 confirmed_no_diff。',
+    '差异决定契约见 docs/maintenance-102.md；旧 comparison/curated PATCH 对未接管坐标保持兼容；已接管坐标返回409 decision_lifecycle_required；旧标注不等同正式决定，生产迁移需另授权。',
+    '',
     '典型流程:',
     '1. `list_files` 找到目标文件(拿 `id` 或 `relPath`);',
     '2. `get_file` / `list_file_parts` 看它的元数据与**段**(一份公布文件常含多年份、多事件);',
     '3. `list_page_images` 拿 PDF 每页的 PNG(已渲染时直接给 URL,未渲染时 `rendered: 0`);',
     '4. 识别之后用 `save_ocr_result` **按页**写回结果、`set_file_category` 回写分类、',
-    '   `save_parse_result` 写回解析出的段;要回看识别结果用 `get_ocr_result`;',
+    '   `get_file_parse_result` 先读version,再用 `save_parse_result` 带expectedVersion/幂等键/actor/reason写回段或状态;审计用 `get_file_parse_history`。识别结果用 `get_ocr_result`;',
+    '   OCR 单页重做:读页图→save_ocr_result {fileId,page,markdown,expectedVersion};delete_ocr_result 只删一页派生结果,保留来源与台账。',
+    '   expectedVersion 取 get_ocr_result {includeVersion:true} 的 results[].version;冲突409须重新读。代理 REST 对等入口 /api/files/{id}/ocr-pages/{page},写入用独立 API token。见 docs/maintenance-106.md。',
     '5. 名单纠偏完成后,用 `preflight_roster_batch` **先预检**(只算影响、不写业务数据),',
     '   确认无误再用 `save_roster_batch` **提交**(单批事务 + 幂等键);',
     '   写完之后用 `list_enterprises` / `query_records` / `get_enterprise_detail` /',
     '   `list_differences` 核对企业、称号事件、出处与解释。',
+    '- 导入断线后用 `get_roster_import_receipt` 按 batchId/原幂等键恢复状态；`list_roster_import_items` 分页核对逐项结果，`list_roster_import_receipts` 读历史，`get_roster_import_request` 按需读取脱敏原文块。这四个工具均只读且需要 MCP token，不会重新提交。',
     '- `get_platform_capabilities` 查看实时来源能力；`query_platform` 查询三来源记录（不写库，不接收Cookie）。失败/partial须补查unfinished，不能当无记录。',
     '- 批量查询用 `submit_platform_batch`，然后 `get_platform_batch` / `get_platform_batch_item`；只对unfinished显式 `retry_platform_batch`。提交/重试需MCP token；凭据仅服务端快照。',
+    '- 正式事件更正先 `get_official_event`，再 `preflight_event_corrections` / `commit_event_corrections`；需独立 MCP token，传原 request+planHash；原出处保留，关联对应需显式重核。审计用 `get_event_correction_audit` 分页。',
+    '- 正式出处更正先 `get_roster_evidence`，再 `preflight_roster_evidence_corrections` / `commit_roster_evidence_corrections`；需 MCP token，按证据/事件/记录/企业ID和version定位，不能用裸名单序号。审计用 `get_roster_evidence_audit`；回执用 `get_roster_evidence_correction_batch`。坐标改回原值仍须显式重核关联对应。',
     '- `query_records` 是通用企业×称号记录查询；`year` 筛事件年份，`dueYear` 筛生命周期到期年份。',
     '  详情请用 `get_enterprise_detail`，它与 REST 企业详情共用读模型。',
+    '- 企业普通资料更正：`get_enterprise_profile` 取版本，再用需 token 的 `patch_enterprise_profile`；历史用 `get_enterprise_profile_history` 分页核对。仅 name/city/district；更名明确确认旧名，同事务保留旧名与审计，不补统代或归并。详见 docs/maintenance-96.md。',
+    '- 企业别名维护：`list_enterprise_aliases` / `get_enterprise_alias` 读取版本，再用需 token 的 `maintain_enterprise_alias` 显式确认、更正、撤回或恢复；历史用 `get_enterprise_alias_history` 分页核对。保留原名与原来源，withdrawn 不自动恢复。详见 docs/maintenance-99.md。',
     '',
+    '- `get_file_maintenance` 读维护修订和有界历史；`update_file` 更新分类或显示名，`remove_file` 软移出，`restore_file` 核验原字节后恢复。',
+    '  三个新增维护写工具需要 MCP token，必须同时提供 expectedRevision/idempotencyKey/actor/basis。原 set_file_category 载荷保留 legacy 适配。没有磁盘删除能力；详见 docs/maintenance-104.md。',
     '边界(重要):',
-    '- **写入前需要 token**:`save_ocr_result` / `set_file_category` / `save_parse_result` /',
+    '- **写入前需要 token**:`save_ocr_result` / `delete_ocr_result` / `set_file_category` / `save_parse_result` /',
     '  `save_roster_batch` / `submit_platform_batch` / `retry_platform_batch` 需要 `Authorization: Bearer <NUXT_MCP_TOKEN>`,未带时这几个 tool',
     '  不会出现在 `tools/list` 里,强行调用会得到 HTTP 401。只读 tool(含只读预检',
-    '  `preflight_roster_batch`)不需要。',
-    '- 名录实体(企业 / 曾用名 / 称号事件 / 出处 / 平台快照 / 差异解释)**只能经',
-    '  `save_roster_batch` 这一条统一写入路径**落库,不要绕过它直写库。载荷见',
+    '  `preflight_roster_batch`)不需要；导入回执四工具含提交证据，仍需 MCP token，且保持 readOnlyHint=true。',
+    '- 名录来源导入经 `save_roster_batch`；既有资源经明确领域维护命令：普通企业资料用 `patch_enterprise_profile`，已接管的差异决定用 `save_difference_decision`，旧导入不能覆盖。',
+    '  不要绕过应用服务直写库。导入载荷见',
     '  `docs/roster-lifecycle-contract.md` §8.3(归并项 §8.4);证据不足一律**留空并标待核**,',
     '  不要猜填、不要为填满字段而复制来源里没有的值。',
     '- `year` / `batch` 在文件级是**公布**年份/批次(目录给的、单值);文件**内容**里的年份/批次',
@@ -90,6 +106,12 @@ export default defineMcpHandler({
     if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
       const body = await readBody(event, { strict: false }).catch(() => undefined)
       if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail'].includes(body?.params?.name)) admitEnterpriseResponse(event)
+      const invalidDecision = decisionRpcError102(body)
+      if (invalidDecision) return invalidDecision
+      const invalidParse = parseRpcError105(body)
+      if (invalidParse) return invalidParse
+      const invalidEventCorrection = eventCorrectionRpcError(body)
+      if (invalidEventCorrection) return invalidEventCorrection
       const invalidQuery = platformQueryRpcError(body)
       if (invalidQuery) return invalidQuery
     }

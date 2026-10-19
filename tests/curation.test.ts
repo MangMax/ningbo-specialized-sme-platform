@@ -17,6 +17,8 @@ const identity = { uscc: 'CODE', nameNorm: 'ignored', titleCode: 'specialized_sm
 
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
+  vi.stubGlobal('setHeader', () => {})
+  vi.stubGlobal('setResponseStatus', () => {})
   vi.stubGlobal('getQuery', () => query)
   vi.stubGlobal('readBody', async () => body)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: path }))

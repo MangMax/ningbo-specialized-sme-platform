@@ -9,6 +9,7 @@ import {
   type FileSource,
 } from '../../lib/stored-file'
 import { getStoredFile, resolveInsideRoot, sha256Of, type StoredFileRow } from './stored-files'
+import { recordLegacyFileMaintenanceWrite } from './file-maintenance'
 import { landingSegments } from './tus'
 
 /**
@@ -192,11 +193,16 @@ export async function registerStoredFile(
     // 已有的行(同一路径重新登记,或回填先插过):刷新磁盘事实与分类。
     // `parse_state` 不重置 —— 已解析的文件不该因为重传一次变回未解析。
     // `removed_at` 清空:用户主动把这份文件重新传了进来,就该在列表里。
-    db.update(schema.storedFile)
-      .set({ ...facts, source, kind, year, batch, categoryState, removedAt: null })
-      .where(eq(schema.storedFile.id, existing.id))
-      .run()
-    return { row: getStoredFile(db, existing.id)!, created: false }
+    return db.transaction((tx) => {
+      const before = getStoredFile(tx, existing.id)!
+      tx.update(schema.storedFile)
+        .set({ ...facts, source, kind, year, batch, categoryState, removedAt: null })
+        .where(eq(schema.storedFile.id, existing.id))
+        .run()
+      const row = getStoredFile(tx, existing.id)!
+      recordLegacyFileMaintenanceWrite(tx, before, row)
+      return { row, created: false }
+    }, { behavior: 'immediate' })
   }
 
   const inserted = db
