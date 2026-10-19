@@ -61,6 +61,7 @@ export default defineMcpHandler({
     '- `get_platform_capabilities` 查看实时来源能力；`query_platform` 查询三来源记录（不写库，不接收Cookie）。失败/partial须补查unfinished，不能当无记录。',
     '- 批量查询用 `submit_platform_batch`，然后 `get_platform_batch` / `get_platform_batch_item`；只对unfinished显式 `retry_platform_batch`。提交/重试需MCP token；凭据仅服务端快照。',
     '- 正式事件更正先 `get_official_event`，再 `preflight_event_corrections` / `commit_event_corrections`；需独立 MCP token，传原 request+planHash；原出处保留，关联对应需显式重核。审计用 `get_event_correction_audit` 分页。',
+    '- 正式出处更正先 `get_roster_evidence`，再 `preflight_roster_evidence_corrections` / `commit_roster_evidence_corrections`；需 MCP token，按证据/事件/记录/企业ID和version定位，不能用裸名单序号。审计用 `get_roster_evidence_audit`；回执用 `get_roster_evidence_correction_batch`。坐标改回原值仍须显式重核关联对应。',
     '- `query_records` 是通用企业×称号记录查询；`year` 筛事件年份，`dueYear` 筛生命周期到期年份。',
     '  详情请用 `get_enterprise_detail`，它与 REST 企业详情共用读模型。',
     '- 企业普通资料更正：`get_enterprise_profile` 取版本，再用需 token 的 `patch_enterprise_profile`；历史用 `get_enterprise_profile_history` 分页核对。仅 name/city/district；更名明确确认旧名，同事务保留旧名与审计，不补统代或归并。详见 docs/maintenance-96.md。',
