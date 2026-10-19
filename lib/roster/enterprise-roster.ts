@@ -1,4 +1,5 @@
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
+import { readEnterpriseSnapshot, readEnterpriseHistories, iterateEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
  *
@@ -473,7 +474,9 @@ function statusRank(code: string): number {
   return i === -1 ? DIFFERENCE_STATUS_ORDER.length : i
 }
 
-function compareDifferencePriority(a: RosterDifferenceRow, b: RosterDifferenceRow): number {
+type DifferenceSummaryInput = Pick<RosterDifferenceRow, 'enterpriseId' | 'titleCode' | 'direction' | 'status' | 'reasonCode' | 'inCurrentDifference'>
+
+function compareDifferencePriority(a: DifferenceSummaryInput, b: DifferenceSummaryInput): number {
   return (
     statusRank(b.status) - statusRank(a.status) ||
     titleRank(a.titleCode) - titleRank(b.titleCode) ||
@@ -481,9 +484,9 @@ function compareDifferencePriority(a: RosterDifferenceRow, b: RosterDifferenceRo
   )
 }
 
-function enterpriseDifferenceSummaries(rows: RosterDifferenceRow[]): Map<number, RosterEnterpriseDifference> {
+function enterpriseDifferenceSummaries(rows: DifferenceSummaryInput[]): Map<number, RosterEnterpriseDifference> {
   const summaries = new Map<number, RosterEnterpriseDifference>()
-  const bestRows = new Map<number, RosterDifferenceRow>()
+  const bestRows = new Map<number, DifferenceSummaryInput>()
   for (const row of rows) {
     const summary = summaries.get(row.enterpriseId)
     if (!summary) {
@@ -567,10 +570,10 @@ function indexSnapshots(snap: Snapshot): SnapshotIndex {
  * 总表:一行 = 一家企业。筛选作用于企业;`counts` 与筛选**同口径**、且**先于分页**。
  */
 export function listRosterEnterprises(db: Db, filter: RosterEnterpriseFilter = {}): RosterEnterprisesResult {
-  const { rows, counts } = selectRosterEnterprises(db, filter)
+  const { rows, counts } = db.transaction(() => selectRosterEnterprises(db, filter, true))
   const { page, pageSize } = pageOf(filter)
   return {
-    rows: rows.slice((page - 1) * pageSize, page * pageSize),
+    rows,
     counts,
     page,
     pageSize,
@@ -585,7 +588,7 @@ export function allRosterEnterprises(
   db: Db,
   filter: Omit<RosterEnterpriseFilter, 'page' | 'pageSize'> = {},
 ): { rows: RosterEnterpriseRow[]; counts: RosterCounts } {
-  return selectRosterEnterprises(db, filter)
+  return db.transaction(() => selectRosterEnterprises(db, filter))
 }
 
 /**
@@ -660,8 +663,7 @@ interface RosterContext {
  * (实测:整表建画像 ≈ 3s,只建一家 ≈ 0.2s)。
  * 两条路共用同一份索引与同一个 `buildProfile`,只是**建几家的差别**。
  */
-function readRosterContext(db: Db): RosterContext {
-  const snap = readSnapshot(db)
+function readRosterContext(db: Db, snap: Snapshot = readSnapshot(db)): RosterContext {
   const evidence = indexEvidence(snap)
   const confirmedAliases = new Map<number, string[]>()
   for (const alias of snap.aliases) {
@@ -727,9 +729,24 @@ function matchesFirstRecognition(profile: Profile, filter: RosterEnterpriseFilte
 function selectRosterEnterprises(
   db: Db,
   filter: RosterEnterpriseFilter,
+  paginate = false,
 ): { rows: RosterEnterpriseRow[]; counts: RosterCounts } {
-  const { profiles, index, confirmedAliases, snap } = readRosterProfiles(db)
-  const differenceRows = differenceUniverse(db, snap)
+  const snap = readEnterpriseSnapshot(db)
+  const index = indexSnapshots(snap)
+  // List filters and counts need six lightweight difference fields, not the
+  // complete evidence/explanation projection for every enterprise.
+  const explanations = currentExplanations(snap)
+  const derived = enterpriseComparisonCoordinates(db)
+  const seen = new Set<string>()
+  const differenceRows: DifferenceSummaryInput[] = derived.map(coordinate => {
+    const key = differenceKey(coordinate.enterpriseId, coordinate.titleCode, coordinate.direction)
+    seen.add(key)
+    const explanation = explanations.get(key)
+    return { ...coordinate, status: explanation?.status ?? 'not_queried', reasonCode: explanation?.reasonCode ?? null, inCurrentDifference: true }
+  })
+  for (const [key, explanation] of explanations) {
+    if (!seen.has(key)) differenceRows.push({ enterpriseId: explanation.enterpriseId, titleCode: explanation.titleCode, direction: explanation.direction, status: explanation.status, reasonCode: explanation.reasonCode, inCurrentDifference: false })
+  }
   const differenceStatusesByEnterprise = new Map<number, Set<string>>()
   for (const row of differenceRows) {
     const statuses = differenceStatusesByEnterprise.get(row.enterpriseId) ?? new Set<string>()
@@ -747,18 +764,30 @@ function selectRosterEnterprises(
    */
   const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
   const diffStatuses = filter.diffStatus?.length ? filter.diffStatus : null
-  const candidates = profiles.map((profile) => ({
-    profile,
-    aliasNames: [...(confirmedAliases.get(profile.enterprise.id) ?? [])].sort(),
-    state: deriveRosterState(profile, index),
-    difference: differenceSummaries.get(profile.enterprise.id) ?? NO_DIFFERENCE,
-    differenceStatuses: differenceStatusesByEnterprise.get(profile.enterprise.id) ?? new Set<string>(),
-  }))
-  const matched = candidates
-    .filter(({ profile, aliasNames, state, difference, differenceStatuses }) => {
-      if (filter.rosterState && state !== filter.rosterState) return false
-      if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return false
-      if (filter.district && effectiveDistrict(profile) !== filter.district) return false
+  // Build and discard one profile at a time. Retaining every lifecycle map and
+  // candidate profile until pagination made even lightweight scans exceed 64MiB.
+  const matched: Array<{ row: RosterEnterpriseRow; recognitionPairs: number }> = []
+  const aliases = new Map<number, Set<string>>()
+  for (const alias of db.select().from(schema.enterpriseAlias).all()) {
+    if (alias.verificationStatus !== 'confirmed') continue
+    const names = aliases.get(alias.enterpriseId) ?? new Set<string>()
+    names.add(alias.name); aliases.set(alias.enterpriseId, names)
+  }
+  const histories = iterateEnterpriseHistories(db)
+  let next = histories.next()
+  for (const enterprise of snap.enterprises) {
+    const history = !next.done && next.value.enterpriseId === enterprise.id ? next.value : null
+    const batch = history ? { ...snap, ...history } : snap
+    const evidence = indexEvidence(batch)
+    const candidate = (() => {
+      const profile = buildProfile(enterprise, batch, evidence)
+      const aliasNames = [...(aliases.get(enterprise.id) ?? [])].sort()
+      const state = deriveRosterState(profile, index)
+      const difference = differenceSummaries.get(enterprise.id) ?? NO_DIFFERENCE
+      const differenceStatuses = differenceStatusesByEnterprise.get(enterprise.id) ?? new Set<string>()
+      if (filter.rosterState && state !== filter.rosterState) return []
+      if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return []
+      if (filter.district && effectiveDistrict(profile) !== filter.district) return []
       if (diffStatuses) {
         const hit =
           (diffStatuses.includes(DIFF_STATUS_NONE) && differenceStatuses.size === 0) ||
@@ -766,25 +795,30 @@ function selectRosterEnterprises(
             value !== DIFF_STATUS_NONE &&
             (differenceStatuses.has(value) || difference.reasonCode === value),
           )
-        if (!hit) return false
+        if (!hit) return []
       }
-      if (!matchesRecordFilters(profile, filter)) return false
-      if (!matchesFirstRecognition(profile, filter)) return false
+      if (!matchesRecordFilters(profile, filter)) return []
+      if (!matchesFirstRecognition(profile, filter)) return []
       if (needle || usccNeedle) {
         const hit =
           (needle != null && normalizeName(profile.enterprise.name).includes(needle)) ||
           (needle != null && aliasNames.some((alias) => normalizeName(alias).includes(needle))) ||
           (usccNeedle != null &&
             (profile.enterprise.usccNorm ?? '').toUpperCase().includes(usccNeedle))
-        if (!hit) return false
+        if (!hit) return []
       }
-      return true
-    })
-    // 命中的首次认定在**同一处**算出来:计数与筛选判据由此不可能各说各的。
-    .map(({ profile, aliasNames, state, difference }) => ({
-      row: toRow(profile, aliasNames, state, difference),
-      recognitionPairs: recognitionEntriesMatching(profile, filter).length,
-    }))
+      const row = toRow(profile, aliasNames, state, difference)
+      // Sorting/counting needs no evidence payload or award/alias arrays. Hydrate
+      // only the requested page after the exact same comparator has selected IDs.
+      if (paginate) {
+        row.firstRecognition = row.firstRecognition.map(first => ({ ...first, evidence: [], undatedAwardIds: [] }))
+        row.awards = []; row.aliasNames = []
+      }
+      return [{ row, recognitionPairs: recognitionEntriesMatching(profile, filter).length }]
+    })()
+    matched.push(...candidate)
+    if (history) next = histories.next()
+  }
   const rows = matched.map((m) => m.row).sort(enterpriseComparator(filter.sort ?? DEFAULT_ROSTER_ENTERPRISE_SORT))
 
   const titles: Record<string, number> = Object.fromEntries(TITLE_ORDER.map((code) => [code, 0]))
@@ -799,7 +833,14 @@ function selectRosterEnterprises(
     differences: rows.reduce((sum, row) => sum + row.difference.count, 0),
   }
 
-  return { rows, counts }
+  if (!paginate) return { rows, counts }
+  const { page, pageSize } = pageOf(filter)
+  const selected = rows.slice((page - 1) * pageSize, page * pageSize)
+  const history = readEnterpriseHistories(db, selected.map(row => row.enterpriseId))
+  const batch = { ...snap, ...history }
+  const evidence = indexEvidence(batch)
+  const byId = new Map(snap.enterprises.map(enterprise => [enterprise.id, enterprise]))
+  return { counts, rows: selected.map(row => toRow(buildProfile(byId.get(row.enterpriseId)!, batch, evidence), [...(aliases.get(row.enterpriseId) ?? [])].sort(), row.rosterState, row.difference)) }
 }
 
 function earliestRecognition(row: RosterEnterpriseRow): number | null {
@@ -999,9 +1040,8 @@ function differenceKey(enterpriseId: number, titleCode: string, direction: strin
  * (例如两侧后来对齐了)。`confirmed_no_diff` 这类状态必须看得见(否则按 `status` 筛
  * 永远筛不到它)。两边的来源由 `explanationId` 与 `inCurrentDifference` 分别说清。
  */
-function differenceUniverse(db: Db, snap: Snapshot): RosterDifferenceRow[] {
+function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseId: number; titleCode: string; direction: ComparisonDirection }> = getComparison(db).rows): RosterDifferenceRow[] {
   const current = currentExplanations(snap)
-  const derived = getComparison(db).rows
   const names = new Map(snap.enterprises.map((e) => [e.id, e]))
   const recordDistrict = new Map<number, string | null>()
   for (const record of [...snap.records].sort((a, b) => a.id - b.id)) {
@@ -1081,8 +1121,12 @@ function differenceUniverse(db: Db, snap: Snapshot): RosterDifferenceRow[] {
 }
 
 export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
+  return db.transaction(() => enterpriseDetail(db, id))
+}
+
+function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
   // 只建**这一家**的画像:详情页开一行,不该把整库 7352 家全算一遍。
-  const { snap, index, profileOf } = readRosterContext(db)
+  const { snap, index, profileOf } = readRosterContext(db, readEnterpriseSnapshot(db, id))
   const enterprise = snap.enterprises.find((e) => e.id === id)
   if (!enterprise) return null
 
@@ -1093,7 +1137,7 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
     .filter((name, index, list) => list.indexOf(name) === index)
     .sort()
 
-  const differenceRows = differenceUniverse(db, snap)
+  const differenceRows = differenceUniverse(db, snap, enterpriseComparisonCoordinates(db, id))
   const difference = enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE
   const row = toRow(profile, aliasNames, deriveRosterState(profile, index), difference)
   const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
@@ -1108,13 +1152,17 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
   const uscc = normUscc(enterprise.usccNorm)
   if (uscc) ownKeys.add(uscc)
   ownKeys.add(`name:${enterprise.nameNorm}`)
+  const ownedQueryIds = new Set(ownedRelations.map(r => r.queryId))
   const includedQueries = snap.queries
-    .filter((q) => ownKeys.has(q.queryKey) || ownKeys.has(normUscc(q.queryKey) ?? q.queryKey) || ownedRelations.some((r) => r.queryId === q.id))
+    .filter((q) => ownKeys.has(q.queryKey) || ownKeys.has(normUscc(q.queryKey) ?? q.queryKey) || ownedQueryIds.has(q.id))
   // Query coverage is evidence, not ownership: retain the original recognized rows without rematching them.
   const recognizedQueryIds = new Set(includedQueries.filter(q => q.interface === 'recognized_list').map(q => q.id))
   const relations = snap.relations
     .filter(r => r.enterpriseId === id || recognizedQueryIds.has(r.queryId))
     .sort((a, b) => a.queryId - b.queryId || a.sequenceNo - b.sequenceNo)
+  const relationCounts = new Map<number, number>()
+  for (const relation of relations) relationCounts.set(relation.queryId, (relationCounts.get(relation.queryId) ?? 0) + 1)
+  const queriesById = new Map(includedQueries.map(q => [q.id, q]))
   const queries = includedQueries
     .sort((a, b) => (a.queriedAt < b.queriedAt ? -1 : a.queriedAt > b.queriedAt ? 1 : 0) || a.id - b.id)
     .map((q): RosterPlatformQueryRow => ({
@@ -1127,7 +1175,7 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
       titleCode: q.titleCode,
       status: q.status,
       failureReason: q.failureReason,
-      relationCount: relations.filter((r) => r.queryId === q.id).length,
+      relationCount: relationCounts.get(q.id) ?? 0,
     }))
 
   return {
@@ -1189,7 +1237,7 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
         sequenceNo: r.sequenceNo,
         relationKey: r.relationKey,
         rawFields: r.rawFields,
-        ...sourcePositionForSequence(snap.queries.find(q => q.id === r.queryId)?.collectionEvidence, r.sequenceNo),
+        ...sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence, r.sequenceNo),
         usccRaw: r.usccRaw,
         nameRaw: r.nameRaw,
         province: r.province,

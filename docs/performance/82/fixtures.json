@@ -1,0 +1,86 @@
+{
+  "sourceHead": "d198a09f5a6fab2d5358d442d1b6ce47670c7506",
+  "snapshotSha256": "19c25412a7a57d5387eaad471dccc66e4b41b516731f9921d2150924f020df1f",
+  "scales": [
+    {
+      "factor": 0,
+      "bytes": 335872,
+      "integrity": "ok",
+      "foreignKeyViolations": 0,
+      "counts": {
+        "enterprise": 0,
+        "record_event": 0,
+        "record_evidence": 0,
+        "reconciliation_result": 0,
+        "record": 0,
+        "source_document": 0,
+        "stored_file": 0,
+        "stored_file_part": 0,
+        "job": 0,
+        "ocr_result": 0,
+        "difference_reason": 0,
+        "enterprise_alias": 0,
+        "import_batch": 0,
+        "platform_export_batch": 0,
+        "platform_export_row": 0,
+        "platform_query": 0,
+        "platform_relation": 0,
+        "stored_file_audit": 0,
+        "record_correspondence": 0,
+        "record_correspondence_audit": 0,
+        "comparison_scope_proof": 0,
+        "comparison_scope_proof_audit": 0
+      },
+      "limits": "Workload only: raw bytes unchanged, new uniqueness coordinates; embedded JSON identities not remapped; not semantic equivalence data"
+    },
+    {
+      "factor": 2,
+      "bytes": 2685665280,
+      "integrity": "ok",
+      "foreignKeyViolations": 0,
+      "counts": {
+        "enterprise": 14594,
+        "record_event": 43400,
+        "record_evidence": 43400,
+        "reconciliation_result": 0,
+        "record": 40946,
+        "source_document": 6,
+        "stored_file": 56,
+        "stored_file_part": 126,
+        "job": 42,
+        "ocr_result": 816,
+        "difference_reason": 2504,
+        "enterprise_alias": 180,
+        "import_batch": 1568,
+        "platform_export_batch": 6,
+        "platform_export_row": 20042,
+        "platform_query": 78606,
+        "platform_relation": 116620,
+        "stored_file_audit": 0,
+        "record_correspondence": 0,
+        "record_correspondence_audit": 0,
+        "comparison_scope_proof": 0,
+        "comparison_scope_proof_audit": 0
+      },
+      "limits": "Workload only: raw bytes unchanged, new uniqueness coordinates; embedded JSON identities not remapped; not semantic equivalence data",
+      "rawBytes": {
+        "platform_query.raw_response": 1804673384,
+        "platform_relation.raw_fields": 531902306
+      }
+    },
+    {
+      "status": "not_run",
+      "reason": "Disk reserve beyond estimated output not available; reclaim owned replicas first",
+      "freeBytes": 6867189760,
+      "estimatedIncrementalBytes": 5369413632,
+      "requiredReserveBytes": 4294967296
+    }
+  ],
+  "files": {
+    "registered": 28,
+    "copied": 24,
+    "missing": 4,
+    "bytes": 113002515,
+    "verified_hashes": 24
+  }
+}
