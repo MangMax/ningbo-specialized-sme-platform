@@ -23,11 +23,13 @@ beforeAll(async () => {
   const port = await reserveLoopbackPort()
   const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], {
     cwd, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, NUXT_DB_PATH: path, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') },
+    env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: path, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') },
   })
+  let startupOutput = ''
+  for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { startupOutput = (startupOutput+data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
-  try { await waitForHttp(`${service.baseUrl}/api/roster/record-comparison?queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}`, { timeoutMs: 60000 }) }
-  catch (error) { await service.stop(); throw error }
+  try { await waitForHttp(`${service.baseUrl}/api/roster/record-comparison?queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}`, { timeoutMs: 60000, child }) }
+  catch (error) { await service.stop(); throw new Error(`${String(error)}\n${startupOutput}`) }
 }, 90000)
 afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
 const sourceQuery = `queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}`
@@ -84,5 +86,10 @@ describe('record comparison true HTTP adapters on isolated SQLite', () => {
     const second = await fetch(`${url}?kind=query&page=1&pageSize=1`)
     expect((await second.json()).rows).toMatchObject([{ id: query.id, kind: 'query', selectable: true }])
     expect((await fetch(`${url}?kind=unknown`)).status).toBe(400)
+    const selected = await fetch(`${url}?kind=query&ids=${query.id}`)
+    expect(await selected.json()).toMatchObject({ total: 1, rows: [{ id: query.id, kind: 'query', status: 'partial' }] })
+    expect(await (await fetch(`${url}?kind=query&ids=999999`)).json()).toMatchObject({ total: 0, rows: [] })
+    expect((await fetch(`${url}?ids=${query.id}`)).status).toBe(400)
+    expect((await fetch(`${url}?kind=query&ids=1x`)).status).toBe(400)
   })
 })

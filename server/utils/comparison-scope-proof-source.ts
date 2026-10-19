@@ -1,3 +1,4 @@
+import { and, eq, inArray, or, between } from 'drizzle-orm'
 import { createHash } from 'node:crypto'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
@@ -36,24 +37,26 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 export function officialSource(db: ProofExecutor, evidence: OfficialEvidence) {
   if (!evidence.fullRange || evidence.fromYear > evidence.throughYear || !evidence.sourceDocuments.length || evidence.enterpriseIds?.length === 0) fail('insufficient_evidence', 'Full official title/year/enterprise scope and source documents required')
   if (new Set(evidence.sourceDocuments.map(ref => ref.id)).size !== evidence.sourceDocuments.length) fail('insufficient_evidence', 'Duplicate source document')
-  const documents = db.select().from(schema.sourceDocument).all()
-  const files = db.select().from(schema.storedFile).all()
+  const documents = db.select().from(schema.sourceDocument).where(inArray(schema.sourceDocument.id, evidence.sourceDocuments.map(ref => ref.id))).all()
+  const files = db.select().from(schema.storedFile).where(inArray(schema.storedFile.id, evidence.sourceDocuments.map(ref => ref.fileId))).all()
   const refs = evidence.sourceDocuments.map(ref => {
     const document = documents.find(row => row.id === ref.id)
     const file = files.find(row => row.id === ref.fileId)
     if (!document || !file) fail('source_missing', 'Archived official document or file missing')
     if (document.source !== 'jxj' || file.source !== 'jxj' || file.removedAt || file.relPath !== document.path || file.sha256 !== ref.sha256 || !ref.sha256) fail('source_mismatch', 'Official document/file/hash does not match')
     if (ref.reference.field === 'record_evidence.source_file') {
-      const coordinates = db.select().from(schema.recordEvidence).all().some(row => row.sourceFile === document.path && (ref.reference.page == null || row.page === ref.reference.page) && (ref.reference.attachment == null || row.attachment === ref.reference.attachment) && (ref.reference.listNo == null || row.listNo === ref.reference.listNo))
+      const coordinates = db.select({ id: schema.recordEvidence.id }).from(schema.recordEvidence).where(and(eq(schema.recordEvidence.sourceFile, document.path), ref.reference.page == null ? undefined : eq(schema.recordEvidence.page, ref.reference.page), ref.reference.attachment == null ? undefined : eq(schema.recordEvidence.attachment, ref.reference.attachment), ref.reference.listNo == null ? undefined : eq(schema.recordEvidence.listNo, ref.reference.listNo))).limit(1).get()
       if (!coordinates) fail('source_mismatch', 'Official source coordinates do not exist')
     }
     return { document, file: { id: file.id, relPath: file.relPath, sha256: file.sha256, bytes: file.bytes, removedAt: file.removedAt }, reference: ref.reference }
   })
-  const records = db.select().from(schema.record).all().filter(row => row.source === 'jxj' && row.titleCode === evidence.titleCode && (evidence.enterpriseIds === null || evidence.enterpriseIds.includes(row.enterpriseId)))
-  const recordIds = new Set(records.map(row => row.id))
-  const events = db.select().from(schema.recordEvent).all().filter(row => recordIds.has(row.recordId) && ((row.year != null && row.year >= evidence.fromYear && row.year <= evidence.throughYear) || (row.decidedYear != null && row.decidedYear >= evidence.fromYear && row.decidedYear <= evidence.throughYear)))
-  const eventIds = new Set(events.map(row => row.id))
-  const eventEvidence = db.select().from(schema.recordEvidence).all().filter(row => eventIds.has(row.recordEventId))
+  const recordScope = and(eq(schema.record.source, 'jxj'), eq(schema.record.titleCode, evidence.titleCode), evidence.enterpriseIds === null ? undefined : inArray(schema.record.enterpriseId, evidence.enterpriseIds))
+  const recordIds = db.select({ id: schema.record.id }).from(schema.record).where(recordScope)
+  const eventScope = and(inArray(schema.recordEvent.recordId, recordIds), or(between(schema.recordEvent.year, evidence.fromYear, evidence.throughYear), between(schema.recordEvent.decidedYear, evidence.fromYear, evidence.throughYear)))
+  const eventIds = db.select({ id: schema.recordEvent.id }).from(schema.recordEvent).where(eventScope)
+  const records = db.select().from(schema.record).where(recordScope).orderBy(schema.record.id).all()
+  const events = db.select().from(schema.recordEvent).where(eventScope).orderBy(schema.recordEvent.id).all()
+  const eventEvidence = db.select().from(schema.recordEvidence).where(inArray(schema.recordEvidence.recordEventId, eventIds)).orderBy(schema.recordEvidence.id).all()
   return { sourceFingerprint: fingerprint({ kind: 'official_coverage', scope: { titleCode: evidence.titleCode, fromYear: evidence.fromYear, throughYear: evidence.throughYear, enterpriseIds: evidence.enterpriseIds, fullRange: evidence.fullRange }, refs, records, events, eventEvidence }), sourceSummary: { documents: refs.map(row => ({ id: row.document.id, path: row.document.path, sha256: row.file.sha256, reference: row.reference })), recordCount: records.length, eventCount: events.length } }
 }
 
@@ -69,8 +72,8 @@ function completeTitle(query: typeof schema.platformQuery.$inferSelect, titleCod
 }
 
 export function currentSource(db: ProofExecutor, evidence: CurrentEvidence) {
-  const query = db.select().from(schema.platformQuery).all().find(row => row.id === evidence.queryId)
-  const batch = db.select().from(schema.platformExportBatch).all().find(row => row.id === evidence.exportBatchId)
+  const query = db.select().from(schema.platformQuery).where(eq(schema.platformQuery.id, evidence.queryId)).get()
+  const batch = db.select().from(schema.platformExportBatch).where(eq(schema.platformExportBatch.id, evidence.exportBatchId)).get()
   if (!query || !batch) fail('source_missing', 'Archived query or export batch missing')
   if (batch.importStatus !== 'imported' || batch.titleCode !== evidence.titleCode || !/^[0-9a-f]{64}$/.test(batch.sha256) || !completeTitle(query, evidence.titleCode)) fail('insufficient_evidence', 'Complete recognized query and imported hashed same-title export required')
   const actual = query.collectionEvidence!
@@ -78,14 +81,14 @@ export function currentSource(db: ProofExecutor, evidence: CurrentEvidence) {
   const narrowed = ['name', 'uscc', 'sqsj', 'rddqrq', 'whpcyear', 'whpc', 'szq'].some(key => Boolean(conditions[key]))
   if (narrowed) fail('insufficient_evidence', 'Current equivalence requires full title scope without narrowing conditions')
   const scope = evidence.scope
-  const freezeFile = db.select().from(schema.storedFile).all().find(row => row.id === scope.freezeFileId)
+  const freezeFile = db.select().from(schema.storedFile).where(eq(schema.storedFile.id, scope.freezeFileId)).get()
   if (!freezeFile || freezeFile.source !== 'miit' || freezeFile.removedAt || freezeFile.sha256 !== scope.freezeSha256 || freezeFile.relPath !== scope.freezeReference || !scope.freezeSha256) fail('source_mismatch', 'Archived platform freeze file reference/hash required')
   const start = Date.parse(scope.windowStart); const end = Date.parse(scope.windowEnd)
   const queried = Date.parse(actual.queriedAt); const completed = Date.parse(actual.completedAt)
   if (!scope.queryAccount || !scope.exportAccount || scope.queryAccount !== scope.exportAccount || !scope.queryRegion || scope.queryRegion !== scope.exportRegion || !scope.platformVersion || !scope.freezeReference || !Number.isFinite(start) || !Number.isFinite(end) || start > end || !same(scope.queryFilters, conditions) || !same(scope.exportFilters, conditions)) fail('insufficient_evidence', 'Explicit equal account, region, filters, window, version and freeze evidence required')
   if (!Number.isFinite(queried) || !Number.isFinite(completed) || queried < start || completed > end || completed < queried || batch.collectedOn < scope.windowStart.slice(0, 10) || batch.collectedOn > scope.windowEnd.slice(0, 10)) fail('source_mismatch', 'Attested window excludes archived collection evidence')
   if (evidence.queryReference !== 'platform_query.collectionEvidence' || evidence.exportReference !== 'platform_export_batch.sha256' || !batch.sha256) fail('insufficient_evidence', 'Traceable original query and export field references required')
-  const queryRows = db.select().from(schema.platformRelation).all().filter(row => row.queryId === query.id)
-  const exportRows = db.select().from(schema.platformExportRow).all().filter(row => row.batchId === batch.id)
+  const queryRows = db.select().from(schema.platformRelation).where(eq(schema.platformRelation.queryId, query.id)).orderBy(schema.platformRelation.id).all()
+  const exportRows = db.select().from(schema.platformExportRow).where(eq(schema.platformExportRow.batchId, batch.id)).orderBy(schema.platformExportRow.id).all()
   return { sourceFingerprint: fingerprint({ kind: 'current_source_equivalence', query, queryRows, batch, exportRows, scope, freezeFile: { id: freezeFile.id, relPath: freezeFile.relPath, sha256: freezeFile.sha256, bytes: freezeFile.bytes } }), querySourceFingerprint: comparisonQueryFingerprint(query), exportSha256: batch.sha256, sourceSummary: { queryId: query.id, queryRowCount: queryRows.length, exportBatchId: batch.id, exportRowCount: exportRows.length, queryReference: evidence.queryReference, exportReference: evidence.exportReference, freezeFileId: freezeFile.id, freezeSha256: freezeFile.sha256 } }
 }

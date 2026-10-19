@@ -1,11 +1,13 @@
+import { admitEnterpriseResponse } from '../../utils/enterprise-read-response'
 import { useDb } from '@db'
 import {
   DIFF_STATUS_NONE,
   ROSTER_ENTERPRISE_SORTS,
   ROSTER_STATES,
-  listRosterEnterprises,
 } from '~~/lib/roster/enterprise-roster'
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
+import { enterpriseReads } from '../../utils/enterprise-read'
+import { withEnterpriseReadSignal } from '../../utils/enterprise-read-signal'
 
 /**
  * **跨称号去重的企业总表**(契约 §7.1,RL-04)。
@@ -100,11 +102,18 @@ defineRouteMeta({
     ],
     responses: {
       200: { description: '企业总表(`rows` / `counts` / `page` / `pageSize`)。' },
+      503: { description: '企业读取队列或响应并发已满，或执行器暂时不可用；可重试，不表示无记录。' },
       400: { description: '`title` / `rosterState` / `source` / `eventType` / `firstStatus` / `diffStatus` / `sort` 取值非法。' },
     },
   },
 })
 
 export default defineEventHandler((event) => {
-  return listRosterEnterprises(useDb(), parseRosterEnterpriseQuery(getQuery(event)))
+  const filter = parseRosterEnterpriseQuery(getQuery(event))
+  admitEnterpriseResponse(event)
+  return withEnterpriseReadSignal(event, async signal => {
+    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter }, signal)
+    setHeader(event, 'content-type', 'application/json; charset=utf-8')
+    return result.body
+  })
 })

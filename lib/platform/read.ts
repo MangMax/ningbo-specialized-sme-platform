@@ -10,7 +10,7 @@
  * `enterprise_alias` 与 `difference_reason`,由 RL-04 的读接口与比对页接缝消费。
  * 本模型只多带一个 `matchedName`(关系匹配到的企业名),方便展示「这条归到哪家」。
  */
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { MAX_PAGE_SIZE } from '../query'
@@ -18,6 +18,9 @@ import { sourcePositionForSequence, RDJB_TITLE_CODES } from './recognized-eviden
 import type { PlatformInterface } from '../labels'
 
 export interface PlatformQueryFilter {
+  queryId?: number
+  /** Explicit opt-in: metadata/counts only; use exact evidence reads for payloads. */
+  view?: 'full' | 'summary'
   interface?: PlatformInterface
   queryKey?: string
   /** 只看「有关系归到该企业」的查询。 */
@@ -58,6 +61,8 @@ export interface PlatformRelationRow {
 }
 
 export interface PlatformQueryRow {
+  /** false only in the explicitly requested summary view; [] does not mean no relations. */
+  relationsIncluded?: false
   query: {
     id: number
     interface: string
@@ -84,6 +89,9 @@ export interface PlatformQueriesResult {
 }
 
 const DEFAULT_PAGE_SIZE = 25
+/** Full reads fail explicitly above these archive-byte budgets; chunk reads never truncate. */
+export const MAX_FULL_QUERY_BYTES = 4 * 1024 * 1024
+export const MAX_FULL_PAGE_BYTES = 8 * 1024 * 1024
 
 function clamp(value: number | undefined, fallback: number, max = Number.MAX_SAFE_INTEGER): number {
   const n = Number(value)
@@ -99,7 +107,16 @@ export function listPlatformQueries(
   db: BetterSQLite3Database<typeof schema>,
   filter: PlatformQueryFilter = {},
 ): PlatformQueriesResult {
+  return db.transaction(tx => listPlatformQueriesSnapshot(tx, filter))
+}
+
+function listPlatformQueriesSnapshot(
+  db: Pick<BetterSQLite3Database<typeof schema>, 'select'>,
+  filter: PlatformQueryFilter,
+): PlatformQueriesResult {
+  if (filter.view === 'summary' && filter.includeRawResponse) throw Object.assign(new Error('Invalid view or includeRawResponse combination'), { statusCode: 400 })
   const conditions = []
+  if (filter.queryId != null) conditions.push(eq(schema.platformQuery.id, filter.queryId))
   if (filter.interface) conditions.push(eq(schema.platformQuery.interface, filter.interface))
   if (filter.uscc) conditions.push(sql`(${schema.platformQuery.queryKey} = ${filter.uscc} OR ${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.usccRaw} = ${filter.uscc}))`)
   if (filter.titleCode) {
@@ -115,22 +132,55 @@ export function listPlatformQueries(
   }
   const where = conditions.length ? and(...conditions) : undefined
 
-  const all = db
-    .select()
+  const counts: Record<string, number> = Object.fromEntries(db
+    .select({ status: schema.platformQuery.status, count: sql<number>`count(*)` })
     .from(schema.platformQuery)
     .where(where)
-    .orderBy(sql`${schema.platformQuery.queriedAt} desc`, sql`${schema.platformQuery.id} desc`)
-    .all()
-
-  const counts: Record<string, number> = {}
-  for (const query of all) counts[query.status] = (counts[query.status] ?? 0) + 1
+    .groupBy(schema.platformQuery.status)
+    .all().map(row => [row.status, row.count]))
 
   const page = clamp(filter.page, 1)
   const pageSize = clamp(filter.pageSize, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
-  const pageQueries = all.slice((page - 1) * pageSize, page * pageSize)
+  const summary = filter.view === 'summary'
+  // Establish the page before evaluating any archive lengths or relation projections.
+  const ids = db.select({ id: schema.platformQuery.id }).from(schema.platformQuery).where(where)
+    .orderBy(sql`${schema.platformQuery.queriedAt} desc`, sql`${schema.platformQuery.id} desc`)
+    .limit(pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (page - 1) * pageSize)).all().map(q => q.id)
+  const { rawResponse: _rawResponse, collectionEvidence: _collectionEvidence, ...columns } = getTableColumns(schema.platformQuery)
+  const selectedMeta = ids.length ? db
+    .select({
+      ...columns,
+      // Keep the outer qualifier: Drizzle unqualifies interpolated columns in a single-table projection.
+      relationCount: sql<number>`(select count(*) from platform_relation r where r.query_id = platform_query.id)`,
+      ...(!summary ? { evidenceBytes: sql<number>`
+        coalesce(length(cast(collection_evidence as blob)), 0) +
+        ${filter.includeRawResponse ? sql`coalesce(length(cast(raw_response as blob)), 0)` : sql`0`} +
+        coalesce((select sum(1024 + coalesce(length(cast(raw_fields as blob)), 0) +
+          coalesce(length(cast(source_text as blob)), 0) + coalesce(length(cast(name_raw as blob)), 0) +
+          coalesce(length(cast(alias_name_raw as blob)), 0) + coalesce(length(cast(uscc_raw as blob)), 0) +
+          coalesce(length(cast(relation_key as blob)), 0) + coalesce(length(cast(province as blob)), 0) +
+          coalesce(length(cast(r.status as blob)), 0) + coalesce(length(cast(batch as blob)), 0) +
+          coalesce(length(cast(declare_kind as blob)), 0) + coalesce(length(cast(applied_at as blob)), 0) +
+          coalesce(length(cast(award_batch_label as blob)), 0) + coalesce(length(cast(e.name as blob)), 0))
+          from platform_relation r left join enterprise e on e.id = r.enterprise_id where r.query_id = platform_query.id), 0)` } : {}),
+    })
+    .from(schema.platformQuery)
+    .where(inArray(schema.platformQuery.id, ids))
+    .all() : []
+  const metaById = new Map(selectedMeta.map(q => [q.id, q]))
+  const pageMeta = ids.map(id => metaById.get(id)!)
 
-  const ids = pageQueries.map((q) => q.id)
-  const relations = ids.length
+  if (!summary && (pageMeta.some(q => (q.evidenceBytes ?? 0) > MAX_FULL_QUERY_BYTES) || pageMeta.reduce((n, q) => n + (q.evidenceBytes ?? 0), 0) > MAX_FULL_PAGE_BYTES)) {
+    const message = 'Platform evidence exceeds full-read budget; use view=summary and /api/platform/queries/{queryId}/evidence (get_platform_query_evidence)'
+    throw Object.assign(new Error(message), { statusCode: 413, statusMessage: message })
+  }
+  const evidenceById = new Map(!summary && ids.length ? db.select({
+    id: schema.platformQuery.id,
+    collectionEvidence: schema.platformQuery.collectionEvidence,
+    ...(filter.includeRawResponse ? { rawResponse: schema.platformQuery.rawResponse } : {}),
+  }).from(schema.platformQuery).where(inArray(schema.platformQuery.id, ids)).all().map(q => [q.id, q]) : [])
+  const pageQueries = pageMeta.map(({ evidenceBytes: _bytes, ...q }) => ({ ...q, ...evidenceById.get(q.id) }))
+  const relations = ids.length && !summary
     ? db
         .select({
           relation: schema.platformRelation,
@@ -177,15 +227,16 @@ export function listPlatformQueries(
     rows: pageQueries.map((query) => {
       const { rawResponse, ...rest } = query
       return {
+        ...(summary ? { relationsIncluded: false as const } : {}),
         query: {
           ...rest,
           ...(filter.includeRawResponse ? { rawResponse } : {}),
-          relationCount: (byQuery.get(query.id) ?? []).length,
+          relationCount: query.relationCount,
         },
         relations: byQuery.get(query.id) ?? [],
       }
     }),
-    total: all.length,
+    total: Object.values(counts).reduce((sum, n) => sum + n, 0),
     page,
     pageSize,
     counts,

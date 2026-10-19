@@ -1,0 +1,2569 @@
+{
+  "beforeSource": "5c9ab8e482b28b47dbeb7f947f450f40336c86ce",
+  "afterSource": "2e2c22caed154fc1595c35540e4b8bbd7e442474",
+  "environment": {
+    "node": "v24.22.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M4",
+    "cpus": 10,
+    "memoryGiB": 24,
+    "containerLimited": false,
+    "exclusiveHost": false,
+    "appWorkers": 1,
+    "oldSpaceMiB": 2048
+  },
+  "sampleCaveat": "20 hot observations do not establish reliable p99; shared host; not 1vCPU/4GiB limited",
+  "hashEquivalentCases": 36,
+  "matrix": [
+    {
+      "scale": "one",
+      "lane": "http",
+      "mode": "list",
+      "concurrency": 1,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "ba2f17ee884c1962408b5688bd8ac00d3c45cc4b1557583f07bfef34fbb44548",
+      "before": {
+        "coldMs": 647.7303749999999,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 183.8242919999998,
+          "p95": 246.12866600000052,
+          "p99": 251.27795800000013
+        },
+        "responseBytes": 24126,
+        "peakHeapMiB": 212.8877944946289,
+        "peakRssMiB": 417.125,
+        "loopP95Ms": 650.117119,
+        "loopMaxMs": 650.117119
+      },
+      "after": {
+        "coldMs": 97.97508300000004,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 43.58091599999989,
+          "p95": 45.63945899999999,
+          "p99": 45.82787499999995
+        },
+        "responseBytes": 24126,
+        "peakHeapMiB": 107.30491638183594,
+        "peakRssMiB": 276.328125,
+        "loopP95Ms": 98.893823,
+        "loopMaxMs": 98.893823
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "one",
+      "lane": "http",
+      "mode": "list",
+      "concurrency": 2,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "ba2f17ee884c1962408b5688bd8ac00d3c45cc4b1557583f07bfef34fbb44548",
+      "before": {
+        "coldMs": 240.914625,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 341.7852079999998,
+          "p95": 415.57262500000024,
+          "p99": 416.82329200000004
+        },
+        "responseBytes": 24126,
+        "peakHeapMiB": 232.1540756225586,
+        "peakRssMiB": 427.5,
+        "loopP95Ms": 217.710591,
+        "loopMaxMs": 240.779263
+      },
+      "after": {
+        "coldMs": 52.07983300000001,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 83.31449999999995,
+          "p95": 89.16220799999996,
+          "p99": 89.21691699999997
+        },
+        "responseBytes": 24126,
+        "peakHeapMiB": 106.99339294433594,
+        "peakRssMiB": 277.6875,
+        "loopP95Ms": 84.606975,
+        "loopMaxMs": 85.786623
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "one",
+      "lane": "http",
+      "mode": "list",
+      "concurrency": 5,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "ba2f17ee884c1962408b5688bd8ac00d3c45cc4b1557583f07bfef34fbb44548",
+      "before": {
+        "coldMs": 511.05391699999996,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 1139.9124170000005,
+          "p95": 1620.6224999999995,
+          "p99": 1620.758417
+        },
+        "responseBytes": 24126,
+        "peakHeapMiB": 205.59422302246094,
+        "peakRssMiB": 383.09375,
+        "loopP95Ms": 894.959615,
+        "loopMaxMs": 1335.885823
+      },
+      "after": {
+        "coldMs": 52.135625000000005,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 173.82679099999996,
+          "p95": 228.99262499999986,
+          "p99": 229.2576250000002
+        },
+        "responseBytes": 24126,
+        "peakHeapMiB": 110.13233184814453,
+        "peakRssMiB": 286.25,
+        "loopP95Ms": 174.981119,
+        "loopMaxMs": 174.981119
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "one",
+      "lane": "http",
+      "mode": "detail",
+      "concurrency": 1,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 136.22287500000004,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 44.22733399999993,
+          "p95": 53.497499999999945,
+          "p99": 104.01591700000006
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 111.65657043457031,
+        "peakRssMiB": 293.828125,
+        "loopP95Ms": 140.247039,
+        "loopMaxMs": 140.247039
+      },
+      "after": {
+        "coldMs": 224.72525000000007,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 28.901499999999942,
+          "p95": 30.314125000000104,
+          "p99": 31.223749999999995
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 88.87142944335938,
+        "peakRssMiB": 284.421875,
+        "loopP95Ms": 225.837055,
+        "loopMaxMs": 225.837055
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "one",
+      "lane": "http",
+      "mode": "detail",
+      "concurrency": 2,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 56.589292,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 90.73145799999998,
+          "p95": 101.56033400000013,
+          "p99": 104.01341700000012
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 109.84886169433594,
+        "peakRssMiB": 292.96875,
+        "loopP95Ms": 103.546879,
+        "loopMaxMs": 103.546879
+      },
+      "after": {
+        "coldMs": 37.17537499999992,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 56.69937500000003,
+          "p95": 59.32204100000001,
+          "p99": 59.362542000000076
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 88.4598388671875,
+        "peakRssMiB": 284.671875,
+        "loopP95Ms": 60.653567,
+        "loopMaxMs": 60.653567
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "one",
+      "lane": "http",
+      "mode": "detail",
+      "concurrency": 5,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 51.65816600000005,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 217.83612500000004,
+          "p95": 248.50912500000004,
+          "p99": 249.69279200000005
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 104.85569763183594,
+        "peakRssMiB": 294.234375,
+        "loopP95Ms": 107.085823,
+        "loopMaxMs": 218.759167
+      },
+      "after": {
+        "coldMs": 36.71079199999997,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 120.50766699999997,
+          "p95": 151.901208,
+          "p99": 153.0123749999999
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 93.24919128417969,
+        "peakRssMiB": 289.96875,
+        "loopP95Ms": 113.377279,
+        "loopMaxMs": 113.377279
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "one",
+      "lane": "mcp",
+      "mode": "list",
+      "concurrency": 1,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "ba2f17ee884c1962408b5688bd8ac00d3c45cc4b1557583f07bfef34fbb44548",
+      "before": {
+        "coldMs": 321.859833,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 162.61974999999984,
+          "p95": 199.13091699999995,
+          "p99": 287.97725000000014
+        },
+        "responseBytes": 41629,
+        "peakHeapMiB": 203.0602035522461,
+        "peakRssMiB": 396.6875,
+        "loopP95Ms": 323.485695,
+        "loopMaxMs": 323.485695
+      },
+      "after": {
+        "coldMs": 62.79620799999998,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 43.37358300000005,
+          "p95": 46.232374999999934,
+          "p99": 46.555875000000015
+        },
+        "responseBytes": 41629,
+        "peakHeapMiB": 105.70498657226562,
+        "peakRssMiB": 278.65625,
+        "loopP95Ms": 47.251455,
+        "loopMaxMs": 64.159743
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "one",
+      "lane": "mcp",
+      "mode": "list",
+      "concurrency": 2,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "ba2f17ee884c1962408b5688bd8ac00d3c45cc4b1557583f07bfef34fbb44548",
+      "before": {
+        "coldMs": 210.60137499999996,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 220.38595799999985,
+          "p95": 382.07033299999966,
+          "p99": 387.91499999999996
+        },
+        "responseBytes": 41629,
+        "peakHeapMiB": 241.76170349121094,
+        "peakRssMiB": 450.859375,
+        "loopP95Ms": 211.812351,
+        "loopMaxMs": 220.594175
+      },
+      "after": {
+        "coldMs": 67.40050000000008,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 50.70391600000005,
+          "p95": 93.40712499999984,
+          "p99": 99.79279200000008
+        },
+        "responseBytes": 41629,
+        "peakHeapMiB": 111.77371978759766,
+        "peakRssMiB": 279.265625,
+        "loopP95Ms": 68.878335,
+        "loopMaxMs": 91.291647
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "one",
+      "lane": "mcp",
+      "mode": "list",
+      "concurrency": 5,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "ba2f17ee884c1962408b5688bd8ac00d3c45cc4b1557583f07bfef34fbb44548",
+      "before": {
+        "coldMs": 237.02125,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 574.538583,
+          "p95": 991.7466670000001,
+          "p99": 1030.7740409999997
+        },
+        "responseBytes": 41629,
+        "peakHeapMiB": 190.66191864013672,
+        "peakRssMiB": 407.03125,
+        "loopP95Ms": 789.053439,
+        "loopMaxMs": 789.053439
+      },
+      "after": {
+        "coldMs": 61.084833,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 130.74116600000002,
+          "p95": 222.83333300000004,
+          "p99": 224.257292
+        },
+        "responseBytes": 41629,
+        "peakHeapMiB": 114.62370300292969,
+        "peakRssMiB": 286.140625,
+        "loopP95Ms": 179.306495,
+        "loopMaxMs": 179.306495
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "one",
+      "lane": "mcp",
+      "mode": "detail",
+      "concurrency": 1,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 62.715584000000035,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 40.736458000000084,
+          "p95": 45.634166999999934,
+          "p99": 49.66979200000003
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 112.08702087402344,
+        "peakRssMiB": 294.25,
+        "loopP95Ms": 64.880639,
+        "loopMaxMs": 64.880639
+      },
+      "after": {
+        "coldMs": 45.75833299999999,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 32.313040999999885,
+          "p95": 34.08958299999995,
+          "p99": 34.67183399999999
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 94.64300537109375,
+        "peakRssMiB": 292.296875,
+        "loopP95Ms": 46.759935,
+        "loopMaxMs": 46.759935
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "one",
+      "lane": "mcp",
+      "mode": "detail",
+      "concurrency": 2,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 64.76666699999998,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 53.687832999999955,
+          "p95": 87.07129200000008,
+          "p99": 96.02470800000003
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 115.07617950439453,
+        "peakRssMiB": 295.125,
+        "loopP95Ms": 62.488575,
+        "loopMaxMs": 62.488575
+      },
+      "after": {
+        "coldMs": 45.26270899999997,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 32.34733399999993,
+          "p95": 61.7355409999999,
+          "p99": 62.097083
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 91.64423370361328,
+        "peakRssMiB": 289.71875,
+        "loopP95Ms": 63.864831,
+        "loopMaxMs": 63.864831
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "one",
+      "lane": "mcp",
+      "mode": "detail",
+      "concurrency": 5,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 112.09024999999997,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 135.87683299999992,
+          "p95": 304.6845420000001,
+          "p99": 357.89933399999995
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 117.7625503540039,
+        "peakRssMiB": 295.109375,
+        "loopP95Ms": 129.040383,
+        "loopMaxMs": 149.946367
+      },
+      "after": {
+        "coldMs": 47.05670799999996,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 89.17483300000004,
+          "p95": 150.24583400000006,
+          "p99": 153.364959
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 98.90560913085938,
+        "peakRssMiB": 296.90625,
+        "loopP95Ms": 117.309439,
+        "loopMaxMs": 117.309439
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "two",
+      "lane": "http",
+      "mode": "list",
+      "concurrency": 1,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "35b81ccea966188076dccb0bca4a485fb8a18008f3732c3fa3dd38ba29cf5770",
+      "before": {
+        "coldMs": 554.9765000000001,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 263.3389580000003,
+          "p95": 285.070792,
+          "p99": 295.2037500000006
+        },
+        "responseBytes": 24132,
+        "peakHeapMiB": 248.96533966064453,
+        "peakRssMiB": 471.53125,
+        "loopP95Ms": 295.436287,
+        "loopMaxMs": 556.269567
+      },
+      "after": {
+        "coldMs": 189.05708300000003,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 82.176917,
+          "p95": 84.21683299999995,
+          "p99": 85.103208
+        },
+        "responseBytes": 24132,
+        "peakHeapMiB": 106.50963592529297,
+        "peakRssMiB": 288.59375,
+        "loopP95Ms": 189.792255,
+        "loopMaxMs": 189.792255
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "two",
+      "lane": "http",
+      "mode": "list",
+      "concurrency": 2,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "35b81ccea966188076dccb0bca4a485fb8a18008f3732c3fa3dd38ba29cf5770",
+      "before": {
+        "coldMs": 303.173041,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 500.87241599999993,
+          "p95": 855.5657920000003,
+          "p99": 856.0884169999999
+        },
+        "responseBytes": 24132,
+        "peakHeapMiB": 248.94174194335938,
+        "peakRssMiB": 464.953125,
+        "loopP95Ms": 532.938751,
+        "loopMaxMs": 655.884287
+      },
+      "after": {
+        "coldMs": 93.25324999999998,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 86.61004099999991,
+          "p95": 171.67491700000005,
+          "p99": 175.8249169999999
+        },
+        "responseBytes": 24132,
+        "peakHeapMiB": 110.0462646484375,
+        "peakRssMiB": 293.09375,
+        "loopP95Ms": 93.650943,
+        "loopMaxMs": 93.650943
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "two",
+      "lane": "http",
+      "mode": "list",
+      "concurrency": 5,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "35b81ccea966188076dccb0bca4a485fb8a18008f3732c3fa3dd38ba29cf5770",
+      "before": {
+        "coldMs": 1018.8398750000001,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 1748.3153330000005,
+          "p95": 2475.6974999999993,
+          "p99": 2504.8745
+        },
+        "responseBytes": 24132,
+        "peakHeapMiB": 221.23294830322266,
+        "peakRssMiB": 406.578125,
+        "loopP95Ms": 1466.957823,
+        "loopMaxMs": 1967.128575
+      },
+      "after": {
+        "coldMs": 94.82991699999991,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 347.6292920000001,
+          "p95": 417.94270800000004,
+          "p99": 432.43274999999994
+        },
+        "responseBytes": 24132,
+        "peakHeapMiB": 116.98582458496094,
+        "peakRssMiB": 289.609375,
+        "loopP95Ms": 335.544319,
+        "loopMaxMs": 335.544319
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "two",
+      "lane": "http",
+      "mode": "detail",
+      "concurrency": 1,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 181.36470800000006,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 94.90487499999972,
+          "p95": 131.7872910000001,
+          "p99": 197.755541
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 112.74552917480469,
+        "peakRssMiB": 292.296875,
+        "loopP95Ms": 181.927935,
+        "loopMaxMs": 199.753727
+      },
+      "after": {
+        "coldMs": 278.492041,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 36.74479199999996,
+          "p95": 37.857208000000014,
+          "p99": 38.67041699999993
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 89.44463348388672,
+        "peakRssMiB": 285.71875,
+        "loopP95Ms": 279.183359,
+        "loopMaxMs": 279.183359
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "two",
+      "lane": "http",
+      "mode": "detail",
+      "concurrency": 2,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 153.33174999999983,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 152.9907079999998,
+          "p95": 304.52866599999993,
+          "p99": 328.0926669999999
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 105.58142852783203,
+        "peakRssMiB": 290.21875,
+        "loopP95Ms": 303.038463,
+        "loopMaxMs": 303.038463
+      },
+      "after": {
+        "coldMs": 48.925457999999935,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 73.26716600000009,
+          "p95": 76.36512500000003,
+          "p99": 77.76099999999997
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 89.06352233886719,
+        "peakRssMiB": 285.8125,
+        "loopP95Ms": 75.235327,
+        "loopMaxMs": 76.218367
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "two",
+      "lane": "http",
+      "mode": "detail",
+      "concurrency": 5,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 117.40033400000004,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 509.6579999999999,
+          "p95": 724.3728749999996,
+          "p99": 726.1084999999998
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 111.17761993408203,
+        "peakRssMiB": 293.109375,
+        "loopP95Ms": 319.291391,
+        "loopMaxMs": 512.491519
+      },
+      "after": {
+        "coldMs": 44.15158299999996,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 149.566333,
+          "p95": 185.5508329999999,
+          "p99": 186.59562499999993
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 89.36621856689453,
+        "peakRssMiB": 286.078125,
+        "loopP95Ms": 146.538495,
+        "loopMaxMs": 146.538495
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "two",
+      "lane": "mcp",
+      "mode": "list",
+      "concurrency": 1,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "35b81ccea966188076dccb0bca4a485fb8a18008f3732c3fa3dd38ba29cf5770",
+      "before": {
+        "coldMs": 953.7768329999999,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 532.0768749999997,
+          "p95": 828.6485419999999,
+          "p99": 1083.371209
+        },
+        "responseBytes": 41635,
+        "peakHeapMiB": 228.3429183959961,
+        "peakRssMiB": 418.40625,
+        "loopP95Ms": 951.582719,
+        "loopMaxMs": 1088.421887
+      },
+      "after": {
+        "coldMs": 101.37479200000007,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 85.1406669999999,
+          "p95": 88.91141700000003,
+          "p99": 92.23658299999988
+        },
+        "responseBytes": 41635,
+        "peakHeapMiB": 108.66631317138672,
+        "peakRssMiB": 289.015625,
+        "loopP95Ms": 102.432767,
+        "loopMaxMs": 102.432767
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "two",
+      "lane": "mcp",
+      "mode": "list",
+      "concurrency": 2,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "35b81ccea966188076dccb0bca4a485fb8a18008f3732c3fa3dd38ba29cf5770",
+      "before": {
+        "coldMs": 480.32724999999994,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 718.0877500000001,
+          "p95": 1405.4304579999998,
+          "p99": 1868.217958000001
+        },
+        "responseBytes": 41635,
+        "peakHeapMiB": 248.70195770263672,
+        "peakRssMiB": 464.296875,
+        "loopP95Ms": 988.282879,
+        "loopMaxMs": 1071.644671
+      },
+      "after": {
+        "coldMs": 102.49541699999997,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 94.5630000000001,
+          "p95": 193.4112500000001,
+          "p99": 194.7964589999999
+        },
+        "responseBytes": 41635,
+        "peakHeapMiB": 111.06604766845703,
+        "peakRssMiB": 296.515625,
+        "loopP95Ms": 100.597759,
+        "loopMaxMs": 103.546879
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "two",
+      "lane": "mcp",
+      "mode": "list",
+      "concurrency": 5,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "35b81ccea966188076dccb0bca4a485fb8a18008f3732c3fa3dd38ba29cf5770",
+      "before": {
+        "coldMs": 539.187208,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 1277.2501249999998,
+          "p95": 2349.871666,
+          "p99": 2471.5204169999997
+        },
+        "responseBytes": 41635,
+        "peakHeapMiB": 251.01658630371094,
+        "peakRssMiB": 443.453125,
+        "loopP95Ms": 1910.505471,
+        "loopMaxMs": 2353.004543
+      },
+      "after": {
+        "coldMs": 102.22641599999997,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 248.32020899999998,
+          "p95": 419.354458,
+          "p99": 422.7331670000001
+        },
+        "responseBytes": 41635,
+        "peakHeapMiB": 114.57550811767578,
+        "peakRssMiB": 293.984375,
+        "loopP95Ms": 336.592895,
+        "loopMaxMs": 336.592895
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "two",
+      "lane": "mcp",
+      "mode": "detail",
+      "concurrency": 1,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 204.96720800000014,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 97.86408300000016,
+          "p95": 118.034042,
+          "p99": 119.2539999999999
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 102.80607604980469,
+        "peakRssMiB": 293.015625,
+        "loopP95Ms": 204.734463,
+        "loopMaxMs": 204.734463
+      },
+      "after": {
+        "coldMs": 59.02516600000001,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 38.53329099999996,
+          "p95": 39.645084,
+          "p99": 42.51216699999998
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 93.2466049194336,
+        "peakRssMiB": 291.53125,
+        "loopP95Ms": 45.088767,
+        "loopMaxMs": 59.998207
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "two",
+      "lane": "mcp",
+      "mode": "detail",
+      "concurrency": 2,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 107.05712500000004,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 134.16120899999987,
+          "p95": 208.58120800000006,
+          "p99": 234.87770899999987
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 106.35948181152344,
+        "peakRssMiB": 291.875,
+        "loopP95Ms": 202.899455,
+        "loopMaxMs": 214.171647
+      },
+      "after": {
+        "coldMs": 52.77495799999997,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 41.09212500000001,
+          "p95": 78.51304199999993,
+          "p99": 79.36287499999992
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 97.77333068847656,
+        "peakRssMiB": 295.40625,
+        "loopP95Ms": 81.854463,
+        "loopMaxMs": 81.854463
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "two",
+      "lane": "mcp",
+      "mode": "detail",
+      "concurrency": 5,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 220.01641600000016,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 275.89262499999995,
+          "p95": 482.5911249999997,
+          "p99": 544.1253330000002
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 112.51449584960938,
+        "peakRssMiB": 294.796875,
+        "loopP95Ms": 484.442111,
+        "loopMaxMs": 484.442111
+      },
+      "after": {
+        "coldMs": 52.65083299999992,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 114.08641699999998,
+          "p95": 189.56679099999997,
+          "p99": 191.190833
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 99.12093353271484,
+        "peakRssMiB": 296.734375,
+        "loopP95Ms": 191.758335,
+        "loopMaxMs": 191.758335
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "five",
+      "lane": "http",
+      "mode": "list",
+      "concurrency": 1,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "3b7ab948e9e3ac163c620d9e257211d7aea5b0c944b43e48911fea3df7f4bc67",
+      "before": {
+        "coldMs": 1295.2855829999999,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 641.8634170000005,
+          "p95": 690.6630829999995,
+          "p99": 734.5515
+        },
+        "responseBytes": 24133,
+        "peakHeapMiB": 427.2167739868164,
+        "peakRssMiB": 781.296875,
+        "loopP95Ms": 1296.039935,
+        "loopMaxMs": 1296.039935
+      },
+      "after": {
+        "coldMs": 434.1727920000001,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 200.71337500000004,
+          "p95": 206.17104199999994,
+          "p99": 215.58491700000013
+        },
+        "responseBytes": 24133,
+        "peakHeapMiB": 105.89820098876953,
+        "peakRssMiB": 495.578125,
+        "loopP95Ms": 435.159039,
+        "loopMaxMs": 435.159039
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "five",
+      "lane": "http",
+      "mode": "list",
+      "concurrency": 2,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "3b7ab948e9e3ac163c620d9e257211d7aea5b0c944b43e48911fea3df7f4bc67",
+      "before": {
+        "coldMs": 662.896708,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 1173.7115000000003,
+          "p95": 1249.1411669999998,
+          "p99": 1347.2868330000001
+        },
+        "responseBytes": 24133,
+        "peakHeapMiB": 529.0575866699219,
+        "peakRssMiB": 853.109375,
+        "loopP95Ms": 703.594495,
+        "loopMaxMs": 1249.902591
+      },
+      "after": {
+        "coldMs": 224.76883299999997,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 397.43966700000055,
+          "p95": 404.7156660000003,
+          "p99": 414.9384580000001
+        },
+        "responseBytes": 24133,
+        "peakHeapMiB": 114.90767669677734,
+        "peakRssMiB": 502.0625,
+        "loopP95Ms": 225.837055,
+        "loopMaxMs": 225.837055
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "five",
+      "lane": "http",
+      "mode": "list",
+      "concurrency": 5,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "3b7ab948e9e3ac163c620d9e257211d7aea5b0c944b43e48911fea3df7f4bc67",
+      "before": {
+        "coldMs": 700.2620830000001,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 2696.7557500000003,
+          "p95": 3755.977584,
+          "p99": 4064.5736670000006
+        },
+        "responseBytes": 24133,
+        "peakHeapMiB": 439.74267578125,
+        "peakRssMiB": 854.78125,
+        "loopP95Ms": 2699.034623,
+        "loopMaxMs": 3097.493503
+      },
+      "after": {
+        "coldMs": 216.72400000000005,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 810.003,
+          "p95": 1017.0082079999997,
+          "p99": 1017.2707920000003
+        },
+        "responseBytes": 24133,
+        "peakHeapMiB": 114.89287567138672,
+        "peakRssMiB": 501.90625,
+        "loopP95Ms": 814.219263,
+        "loopMaxMs": 814.219263
+      },
+      "observedFailures": [
+        "hot p95",
+        "hot p99 observed max",
+        "loop p95",
+        "loop max"
+      ]
+    },
+    {
+      "scale": "five",
+      "lane": "http",
+      "mode": "detail",
+      "concurrency": 1,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 1117.0074160000001,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 198.79549999999927,
+          "p95": 261.6764579999999,
+          "p99": 267.64424999999983
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 115.27855682373047,
+        "peakRssMiB": 294.75,
+        "loopP95Ms": 1117.782015,
+        "loopMaxMs": 1117.782015
+      },
+      "after": {
+        "coldMs": 614.01375,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 59.715541999999914,
+          "p95": 61.23216600000001,
+          "p99": 61.62783300000001
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 86.82284545898438,
+        "peakRssMiB": 262.5,
+        "loopP95Ms": 615.514111,
+        "loopMaxMs": 615.514111
+      },
+      "observedFailures": [
+        "loop p95",
+        "loop max"
+      ]
+    },
+    {
+      "scale": "five",
+      "lane": "http",
+      "mode": "detail",
+      "concurrency": 2,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 193.51383299999998,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 312.04895799999986,
+          "p95": 327.55391599999984,
+          "p99": 334.008875
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 117.52110290527344,
+        "peakRssMiB": 292.359375,
+        "loopP95Ms": 312.737791,
+        "loopMaxMs": 330.301439
+      },
+      "after": {
+        "coldMs": 67.65391599999998,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 118.16666699999996,
+          "p95": 123.36745799999994,
+          "p99": 125.45183399999996
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 89.60974884033203,
+        "peakRssMiB": 285.796875,
+        "loopP95Ms": 68.419583,
+        "loopMaxMs": 68.419583
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "five",
+      "lane": "http",
+      "mode": "detail",
+      "concurrency": 5,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 175.49366699999996,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 647.8092080000001,
+          "p95": 883.1912080000002,
+          "p99": 1018.2920829999998
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 119.09656524658203,
+        "peakRssMiB": 293.8125,
+        "loopP95Ms": 474.742783,
+        "loopMaxMs": 490.733567
+      },
+      "after": {
+        "coldMs": 68.71183299999996,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 297.0665409999999,
+          "p95": 304.67154199999993,
+          "p99": 305.88474999999994
+        },
+        "responseBytes": 74655,
+        "peakHeapMiB": 91.2066879272461,
+        "peakRssMiB": 287.6875,
+        "loopP95Ms": 238.813183,
+        "loopMaxMs": 238.813183
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "five",
+      "lane": "mcp",
+      "mode": "list",
+      "concurrency": 1,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "3b7ab948e9e3ac163c620d9e257211d7aea5b0c944b43e48911fea3df7f4bc67",
+      "before": {
+        "coldMs": 782.5375829999999,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 637.785167,
+          "p95": 723.8142919999991,
+          "p99": 728.0520830000005
+        },
+        "responseBytes": 41636,
+        "peakHeapMiB": 534.6998977661133,
+        "peakRssMiB": 817.03125,
+        "loopP95Ms": 783.810559,
+        "loopMaxMs": 783.810559
+      },
+      "after": {
+        "coldMs": 226.03620899999999,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 203.9917919999998,
+          "p95": 207.67162499999995,
+          "p99": 209.89987499999995
+        },
+        "responseBytes": 41636,
+        "peakHeapMiB": 107.07140350341797,
+        "peakRssMiB": 494.265625,
+        "loopP95Ms": 227.147775,
+        "loopMaxMs": 227.147775
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "five",
+      "lane": "mcp",
+      "mode": "list",
+      "concurrency": 2,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "3b7ab948e9e3ac163c620d9e257211d7aea5b0c944b43e48911fea3df7f4bc67",
+      "before": {
+        "coldMs": 753.5989999999999,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 681.8406249999998,
+          "p95": 1315.8505830000001,
+          "p99": 1417.9703750000003
+        },
+        "responseBytes": 41636,
+        "peakHeapMiB": 496.94681549072266,
+        "peakRssMiB": 858.28125,
+        "loopP95Ms": 754.974719,
+        "loopMaxMs": 754.974719
+      },
+      "after": {
+        "coldMs": 222.46920899999998,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 206.78608400000007,
+          "p95": 411.5407500000001,
+          "p99": 434.00841599999967
+        },
+        "responseBytes": 41636,
+        "peakHeapMiB": 111.34098052978516,
+        "peakRssMiB": 503.171875,
+        "loopP95Ms": 223.608831,
+        "loopMaxMs": 232.652799
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    },
+    {
+      "scale": "five",
+      "lane": "mcp",
+      "mode": "list",
+      "concurrency": 5,
+      "input": {
+        "page": 1,
+        "pageSize": 25
+      },
+      "resultSha256": "3b7ab948e9e3ac163c620d9e257211d7aea5b0c944b43e48911fea3df7f4bc67",
+      "before": {
+        "coldMs": 709.19175,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 1801.2576659999995,
+          "p95": 3009.9245839999994,
+          "p99": 3148.281958
+        },
+        "responseBytes": 41636,
+        "peakHeapMiB": 491.07003021240234,
+        "peakRssMiB": 848.765625,
+        "loopP95Ms": 1780.482047,
+        "loopMaxMs": 2403.336191
+      },
+      "after": {
+        "coldMs": 224.1248750000001,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 604.2310420000001,
+          "p95": 1018.3038329999999,
+          "p99": 1037.6559170000005
+        },
+        "responseBytes": 41636,
+        "peakHeapMiB": 117.12545013427734,
+        "peakRssMiB": 503.21875,
+        "loopP95Ms": 817.889279,
+        "loopMaxMs": 817.889279
+      },
+      "observedFailures": [
+        "hot p95",
+        "hot p99 observed max",
+        "loop p95",
+        "loop max"
+      ]
+    },
+    {
+      "scale": "five",
+      "lane": "mcp",
+      "mode": "detail",
+      "concurrency": 1,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 223.731542,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 186.37504199999967,
+          "p95": 213.20295799999985,
+          "p99": 213.79412500000035
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 116.04405212402344,
+        "peakRssMiB": 294.328125,
+        "loopP95Ms": 215.482367,
+        "loopMaxMs": 225.050623
+      },
+      "after": {
+        "coldMs": 77.93716700000004,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 63.563083000000006,
+          "p95": 64.58024999999998,
+          "p99": 65.25566600000013
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 94.30467224121094,
+        "peakRssMiB": 291.140625,
+        "loopP95Ms": 78.774271,
+        "loopMaxMs": 78.774271
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "five",
+      "lane": "mcp",
+      "mode": "detail",
+      "concurrency": 2,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 252.55112499999996,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 350.6881669999998,
+          "p95": 420.6452919999997,
+          "p99": 636.6336249999999
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 119.88700866699219,
+        "peakRssMiB": 285.421875,
+        "loopP95Ms": 400.031743,
+        "loopMaxMs": 423.100415
+      },
+      "after": {
+        "coldMs": 77.64191699999992,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 64.97537499999999,
+          "p95": 127.88804199999993,
+          "p99": 128.35516600000005
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 96.20219421386719,
+        "peakRssMiB": 294.75,
+        "loopP95Ms": 78.512127,
+        "loopMaxMs": 127.467519
+      },
+      "observedFailures": []
+    },
+    {
+      "scale": "five",
+      "lane": "mcp",
+      "mode": "detail",
+      "concurrency": 5,
+      "input": {
+        "enterpriseId": 1
+      },
+      "resultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+      "before": {
+        "coldMs": 242.27487499999995,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 619.343375,
+          "p95": 1308.6972500000002,
+          "p99": 1556.2987910000002
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 114.03942108154297,
+        "peakRssMiB": 280.609375,
+        "loopP95Ms": 1043.857407,
+        "loopMaxMs": 1304.428543
+      },
+      "after": {
+        "coldMs": 78.25425000000007,
+        "hotSamples": 20,
+        "hot": {
+          "p50": 188.296375,
+          "p95": 313.3335830000001,
+          "p99": 320.95733399999995
+        },
+        "responseBytes": 150897,
+        "peakHeapMiB": 99.6996078491211,
+        "peakRssMiB": 298.203125,
+        "loopP95Ms": 249.430015,
+        "loopMaxMs": 250.216447
+      },
+      "observedFailures": [
+        "loop p95"
+      ]
+    }
+  ],
+  "drivers": [
+    {
+      "scale": "one",
+      "mode": "list",
+      "coldMs": 54.87995799999999,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 46.75158399999998,
+        "p95": 47.75508300000001,
+        "p99": 47.75508300000001
+      },
+      "sqlRows": 7495,
+      "sqlBytes": 910714,
+      "sqlQueries": 7,
+      "responseBytes": 24126,
+      "maxIncrementalHeapMiB": 13.318962097167969,
+      "maxHeapMiB": 36.97698974609375,
+      "samples": [
+        {
+          "ms": 54.87995799999999,
+          "sqlMs": 42.03684000000163,
+          "serializationMs": 0.04083400000001802,
+          "sqlRows": 7495,
+          "sqlBytes": 910714,
+          "incrementalHeapMiB": 13.318962097167969
+        },
+        {
+          "ms": 46.76208299999996,
+          "sqlMs": 40.545456000000456,
+          "serializationMs": 0.03908299999994824,
+          "sqlRows": 7495,
+          "sqlBytes": 910714,
+          "incrementalHeapMiB": 12.772315979003906
+        },
+        {
+          "ms": 46.37575000000004,
+          "sqlMs": 40.37897199999941,
+          "serializationMs": 0.039540999999985615,
+          "sqlRows": 7495,
+          "sqlBytes": 910714,
+          "incrementalHeapMiB": 12.490966796875
+        },
+        {
+          "ms": 46.68637499999994,
+          "sqlMs": 40.82862899999748,
+          "serializationMs": 0.040124999999989086,
+          "sqlRows": 7495,
+          "sqlBytes": 910714,
+          "incrementalHeapMiB": 12.442001342773438
+        },
+        {
+          "ms": 46.75158399999998,
+          "sqlMs": 40.91516600000159,
+          "serializationMs": 0.040124999999989086,
+          "sqlRows": 7495,
+          "sqlBytes": 910714,
+          "incrementalHeapMiB": 12.448898315429688
+        },
+        {
+          "ms": 47.75508300000001,
+          "sqlMs": 41.89960699999847,
+          "serializationMs": 0.03995800000006966,
+          "sqlRows": 7495,
+          "sqlBytes": 910714,
+          "incrementalHeapMiB": 12.449508666992188
+        }
+      ]
+    },
+    {
+      "scale": "one",
+      "mode": "deep",
+      "coldMs": 60.48154199999999,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 50.32441699999998,
+        "p95": 51.452,
+        "p99": 51.452
+      },
+      "sqlRows": 7508,
+      "sqlBytes": 887437,
+      "sqlQueries": 7,
+      "responseBytes": 22849,
+      "maxIncrementalHeapMiB": 14.53131103515625,
+      "maxHeapMiB": 28.700828552246094,
+      "samples": [
+        {
+          "ms": 60.48154199999999,
+          "sqlMs": 43.410025999997856,
+          "serializationMs": 0.04429100000004382,
+          "sqlRows": 7508,
+          "sqlBytes": 887437,
+          "incrementalHeapMiB": 14.53131103515625
+        },
+        {
+          "ms": 51.081458999999995,
+          "sqlMs": 41.452279000000715,
+          "serializationMs": 0.043500000000051386,
+          "sqlRows": 7508,
+          "sqlBytes": 887437,
+          "incrementalHeapMiB": 11.850303649902344
+        },
+        {
+          "ms": 50.32441699999998,
+          "sqlMs": 41.194059000001346,
+          "serializationMs": 0.04050000000000864,
+          "sqlRows": 7508,
+          "sqlBytes": 887437,
+          "incrementalHeapMiB": 11.545822143554688
+        },
+        {
+          "ms": 50.06233299999997,
+          "sqlMs": 40.993893000002686,
+          "serializationMs": 0.050749999999993634,
+          "sqlRows": 7508,
+          "sqlBytes": 887437,
+          "incrementalHeapMiB": 11.495895385742188
+        },
+        {
+          "ms": 50.30599999999998,
+          "sqlMs": 41.37171799999595,
+          "serializationMs": 0.04058399999996709,
+          "sqlRows": 7508,
+          "sqlBytes": 887437,
+          "incrementalHeapMiB": 11.681755065917969
+        },
+        {
+          "ms": 51.452,
+          "sqlMs": 42.502667999999744,
+          "serializationMs": 0.039375000000063665,
+          "sqlRows": 7508,
+          "sqlBytes": 887437,
+          "incrementalHeapMiB": 11.497276306152344
+        }
+      ]
+    },
+    {
+      "scale": "one",
+      "mode": "search",
+      "coldMs": 12.522583000000026,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 8.31820799999997,
+        "p95": 8.545999999999992,
+        "p99": 8.545999999999992
+      },
+      "sqlRows": 16,
+      "sqlBytes": 1307,
+      "sqlQueries": 7,
+      "responseBytes": 1354,
+      "maxIncrementalHeapMiB": 1.6793365478515625,
+      "maxHeapMiB": 16.099960327148438,
+      "samples": [
+        {
+          "ms": 12.522583000000026,
+          "sqlMs": 8.561500000000052,
+          "serializationMs": 0.011167000000000371,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.626861572265625
+        },
+        {
+          "ms": 8.545999999999992,
+          "sqlMs": 6.969459000000086,
+          "serializationMs": 0.008874999999989086,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.6793365478515625
+        },
+        {
+          "ms": 8.227542000000028,
+          "sqlMs": 6.744793999999899,
+          "serializationMs": 0.009042000000022199,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.397064208984375
+        },
+        {
+          "ms": 8.234250000000031,
+          "sqlMs": 6.876083999999878,
+          "serializationMs": 0.007584000000008473,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.3440780639648438
+        },
+        {
+          "ms": 8.45454099999995,
+          "sqlMs": 6.917958999999939,
+          "serializationMs": 0.00866600000000517,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.3797073364257812
+        },
+        {
+          "ms": 8.31820799999997,
+          "sqlMs": 6.832789999999989,
+          "serializationMs": 0.007375000000024556,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.36944580078125
+        }
+      ]
+    },
+    {
+      "scale": "one",
+      "mode": "detail",
+      "coldMs": 33.412709000000035,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 29.375625000000014,
+        "p95": 29.38704199999995,
+        "p99": 29.38704199999995
+      },
+      "sqlRows": 43,
+      "sqlBytes": 68045,
+      "sqlQueries": 12,
+      "responseBytes": 74655,
+      "maxIncrementalHeapMiB": 2.9654464721679688,
+      "maxHeapMiB": 17.643089294433594,
+      "samples": [
+        {
+          "ms": 33.412709000000035,
+          "sqlMs": 28.55721099999988,
+          "serializationMs": 0.2883330000000228,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.9654464721679688
+        },
+        {
+          "ms": 29.384582999999964,
+          "sqlMs": 26.950917999999888,
+          "serializationMs": 0.28233299999999417,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.6602935791015625
+        },
+        {
+          "ms": 29.115917000000024,
+          "sqlMs": 26.819163999999887,
+          "serializationMs": 0.2648339999999507,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.6107406616210938
+        },
+        {
+          "ms": 29.04037500000004,
+          "sqlMs": 26.884126000000037,
+          "serializationMs": 0.2903329999999755,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.6266098022460938
+        },
+        {
+          "ms": 29.375625000000014,
+          "sqlMs": 27.130749999999978,
+          "serializationMs": 0.25970799999998917,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.5988845825195312
+        },
+        {
+          "ms": 29.38704199999995,
+          "sqlMs": 27.12583400000011,
+          "serializationMs": 0.2826660000000061,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.5740585327148438
+        }
+      ]
+    },
+    {
+      "scale": "two",
+      "mode": "list",
+      "coldMs": 98.63737500000002,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 90.07291699999996,
+        "p95": 91.77470800000003,
+        "p99": 91.77470800000003
+      },
+      "sqlRows": 14792,
+      "sqlBytes": 1949267,
+      "sqlQueries": 7,
+      "responseBytes": 24132,
+      "maxIncrementalHeapMiB": 21.810279846191406,
+      "maxHeapMiB": 35.99839782714844,
+      "samples": [
+        {
+          "ms": 98.63737500000002,
+          "sqlMs": 82.5289889999961,
+          "serializationMs": 0.04574999999999818,
+          "sqlRows": 14792,
+          "sqlBytes": 1949267,
+          "incrementalHeapMiB": 21.810279846191406
+        },
+        {
+          "ms": 90.32295799999997,
+          "sqlMs": 80.9084920000015,
+          "serializationMs": 0.040875000000028194,
+          "sqlRows": 14792,
+          "sqlBytes": 1949267,
+          "incrementalHeapMiB": 21.247718811035156
+        },
+        {
+          "ms": 89.83662500000003,
+          "sqlMs": 80.78575600000318,
+          "serializationMs": 0.0430829999999105,
+          "sqlRows": 14792,
+          "sqlBytes": 1949267,
+          "incrementalHeapMiB": 20.90935516357422
+        },
+        {
+          "ms": 90.07291699999996,
+          "sqlMs": 80.9529480000009,
+          "serializationMs": 0.0418329999999969,
+          "sqlRows": 14792,
+          "sqlBytes": 1949267,
+          "incrementalHeapMiB": 20.91431427001953
+        },
+        {
+          "ms": 89.44187499999998,
+          "sqlMs": 80.35110799999643,
+          "serializationMs": 0.04141600000002654,
+          "sqlRows": 14792,
+          "sqlBytes": 1949267,
+          "incrementalHeapMiB": 20.95136260986328
+        },
+        {
+          "ms": 91.77470800000003,
+          "sqlMs": 82.90634000000443,
+          "serializationMs": 0.04083300000002055,
+          "sqlRows": 14792,
+          "sqlBytes": 1949267,
+          "incrementalHeapMiB": 20.916397094726562
+        }
+      ]
+    },
+    {
+      "scale": "two",
+      "mode": "deep",
+      "coldMs": 104.63370799999998,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 93.580084,
+        "p95": 95.23966700000005,
+        "p99": 95.23966700000005
+      },
+      "sqlRows": 14805,
+      "sqlBytes": 1925990,
+      "sqlQueries": 7,
+      "responseBytes": 22855,
+      "maxIncrementalHeapMiB": 23.03234100341797,
+      "maxHeapMiB": 37.20185852050781,
+      "samples": [
+        {
+          "ms": 104.63370799999998,
+          "sqlMs": 84.02305700000113,
+          "serializationMs": 0.04399999999998272,
+          "sqlRows": 14805,
+          "sqlBytes": 1925990,
+          "incrementalHeapMiB": 23.03234100341797
+        },
+        {
+          "ms": 93.580084,
+          "sqlMs": 80.88154800000405,
+          "serializationMs": 0.03979199999997718,
+          "sqlRows": 14805,
+          "sqlBytes": 1925990,
+          "incrementalHeapMiB": 20.401954650878906
+        },
+        {
+          "ms": 93.66279099999997,
+          "sqlMs": 81.29974500000054,
+          "serializationMs": 0.03879099999994651,
+          "sqlRows": 14805,
+          "sqlBytes": 1925990,
+          "incrementalHeapMiB": 20.180938720703125
+        },
+        {
+          "ms": 93.46287499999994,
+          "sqlMs": 81.21691200000089,
+          "serializationMs": 0.03854100000000926,
+          "sqlRows": 14805,
+          "sqlBytes": 1925990,
+          "incrementalHeapMiB": 20.29511260986328
+        },
+        {
+          "ms": 92.94204200000001,
+          "sqlMs": 80.60021200001154,
+          "serializationMs": 0.0418329999999969,
+          "sqlRows": 14805,
+          "sqlBytes": 1925990,
+          "incrementalHeapMiB": 20.055824279785156
+        },
+        {
+          "ms": 95.23966700000005,
+          "sqlMs": 83.01817399999766,
+          "serializationMs": 0.03966600000001108,
+          "sqlRows": 14805,
+          "sqlBytes": 1925990,
+          "incrementalHeapMiB": 19.989654541015625
+        }
+      ]
+    },
+    {
+      "scale": "two",
+      "mode": "search",
+      "coldMs": 18.901166999999987,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 14.428207999999984,
+        "p95": 14.60412500000001,
+        "p99": 14.60412500000001
+      },
+      "sqlRows": 16,
+      "sqlBytes": 1307,
+      "sqlQueries": 7,
+      "responseBytes": 1354,
+      "maxIncrementalHeapMiB": 1.626861572265625,
+      "maxHeapMiB": 16.04297637939453,
+      "samples": [
+        {
+          "ms": 18.901166999999987,
+          "sqlMs": 14.885956999999962,
+          "serializationMs": 0.01104099999997743,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.626861572265625
+        },
+        {
+          "ms": 14.428207999999984,
+          "sqlMs": 12.76745799999992,
+          "serializationMs": 0.008874999999989086,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.6225967407226562
+        },
+        {
+          "ms": 14.60412500000001,
+          "sqlMs": 13.097332000000051,
+          "serializationMs": 0.008624999999994998,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.4002227783203125
+        },
+        {
+          "ms": 14.188458999999966,
+          "sqlMs": 12.601583000000005,
+          "serializationMs": 0.0105829999999969,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.3452682495117188
+        },
+        {
+          "ms": 14.516083000000037,
+          "sqlMs": 13.001832999999976,
+          "serializationMs": 0.008334000000047581,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.38018798828125
+        },
+        {
+          "ms": 14.249124999999992,
+          "sqlMs": 12.779292999999882,
+          "serializationMs": 0.008542000000034022,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.3694992065429688
+        }
+      ]
+    },
+    {
+      "scale": "two",
+      "mode": "detail",
+      "coldMs": 40.934124999999995,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 36.79495800000001,
+        "p95": 37.55570800000004,
+        "p99": 37.55570800000004
+      },
+      "sqlRows": 43,
+      "sqlBytes": 68045,
+      "sqlQueries": 12,
+      "responseBytes": 74655,
+      "maxIncrementalHeapMiB": 2.9657669067382812,
+      "maxHeapMiB": 17.625816345214844,
+      "samples": [
+        {
+          "ms": 40.934124999999995,
+          "sqlMs": 36.024418000000054,
+          "serializationMs": 0.29404199999999037,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.9657669067382812
+        },
+        {
+          "ms": 37.55570800000004,
+          "sqlMs": 35.00045699999998,
+          "serializationMs": 0.26679200000000947,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.6602935791015625
+        },
+        {
+          "ms": 36.76866700000005,
+          "sqlMs": 34.327293999999995,
+          "serializationMs": 0.2932910000000106,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.6107406616210938
+        },
+        {
+          "ms": 36.79495800000001,
+          "sqlMs": 34.56954200000007,
+          "serializationMs": 0.26958300000001145,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.6266098022460938
+        },
+        {
+          "ms": 36.68475000000001,
+          "sqlMs": 34.36008200000015,
+          "serializationMs": 0.2915840000000003,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.5988845825195312
+        },
+        {
+          "ms": 36.958500000000015,
+          "sqlMs": 34.81970800000005,
+          "serializationMs": 0.2833329999999705,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.5740585327148438
+        }
+      ]
+    },
+    {
+      "scale": "five",
+      "mode": "list",
+      "coldMs": 233.36658299999996,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 224.94316600000002,
+        "p95": 288.3380830000001,
+        "p99": 288.3380830000001
+      },
+      "sqlRows": 36683,
+      "sqlBytes": 5073035,
+      "sqlQueries": 7,
+      "responseBytes": 24133,
+      "maxIncrementalHeapMiB": 45.148712158203125,
+      "maxHeapMiB": 59.31829833984375,
+      "samples": [
+        {
+          "ms": 233.36658299999996,
+          "sqlMs": 206.8204919999958,
+          "serializationMs": 0.04433299999999463,
+          "sqlRows": 36683,
+          "sqlBytes": 5073035,
+          "incrementalHeapMiB": 45.148712158203125
+        },
+        {
+          "ms": 216.85854099999995,
+          "sqlMs": 198.25653400001147,
+          "serializationMs": 0.04025000000001455,
+          "sqlRows": 36683,
+          "sqlBytes": 5073035,
+          "incrementalHeapMiB": 44.66032409667969
+        },
+        {
+          "ms": 283.274458,
+          "sqlMs": 264.54224700000043,
+          "serializationMs": 0.04487499999993361,
+          "sqlRows": 36683,
+          "sqlBytes": 5073035,
+          "incrementalHeapMiB": 44.33368682861328
+        },
+        {
+          "ms": 218.536791,
+          "sqlMs": 200.1688579999901,
+          "serializationMs": 0.04033300000014606,
+          "sqlRows": 36683,
+          "sqlBytes": 5073035,
+          "incrementalHeapMiB": 44.315093994140625
+        },
+        {
+          "ms": 288.3380830000001,
+          "sqlMs": 261.3868669999897,
+          "serializationMs": 0.04404199999999037,
+          "sqlRows": 36683,
+          "sqlBytes": 5073035,
+          "incrementalHeapMiB": 44.57477569580078
+        },
+        {
+          "ms": 224.94316600000002,
+          "sqlMs": 206.6856020000148,
+          "serializationMs": 0.04454099999998107,
+          "sqlRows": 36683,
+          "sqlBytes": 5073035,
+          "incrementalHeapMiB": 44.24272918701172
+        }
+      ]
+    },
+    {
+      "scale": "five",
+      "mode": "deep",
+      "coldMs": 235.402292,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 220.96416699999997,
+        "p95": 227.3745409999999,
+        "p99": 227.3745409999999
+      },
+      "sqlRows": 36696,
+      "sqlBytes": 5049758,
+      "sqlQueries": 7,
+      "responseBytes": 22856,
+      "maxIncrementalHeapMiB": 46.44855499267578,
+      "maxHeapMiB": 60.618316650390625,
+      "samples": [
+        {
+          "ms": 235.402292,
+          "sqlMs": 205.92898800000523,
+          "serializationMs": 0.04416600000001836,
+          "sqlRows": 36696,
+          "sqlBytes": 5049758,
+          "incrementalHeapMiB": 46.44855499267578
+        },
+        {
+          "ms": 220.30712499999998,
+          "sqlMs": 198.1908900000002,
+          "serializationMs": 0.041333000000008724,
+          "sqlRows": 36696,
+          "sqlBytes": 5049758,
+          "incrementalHeapMiB": 43.80311584472656
+        },
+        {
+          "ms": 221.68295799999999,
+          "sqlMs": 199.7377540000124,
+          "serializationMs": 0.04216699999994944,
+          "sqlRows": 36696,
+          "sqlBytes": 5049758,
+          "incrementalHeapMiB": 43.415443420410156
+        },
+        {
+          "ms": 220.96416699999997,
+          "sqlMs": 199.65508999996905,
+          "serializationMs": 0.0415419999999358,
+          "sqlRows": 36696,
+          "sqlBytes": 5049758,
+          "incrementalHeapMiB": 43.39398193359375
+        },
+        {
+          "ms": 220.56066699999997,
+          "sqlMs": 198.83906199999115,
+          "serializationMs": 0.040124999999989086,
+          "sqlRows": 36696,
+          "sqlBytes": 5049758,
+          "incrementalHeapMiB": 43.568084716796875
+        },
+        {
+          "ms": 227.3745409999999,
+          "sqlMs": 205.83874799998625,
+          "serializationMs": 0.042874999999867214,
+          "sqlRows": 36696,
+          "sqlBytes": 5049758,
+          "incrementalHeapMiB": 43.383644104003906
+        }
+      ]
+    },
+    {
+      "scale": "five",
+      "mode": "search",
+      "coldMs": 38.93412500000002,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 33.428875000000005,
+        "p95": 126.21912500000002,
+        "p99": 126.21912500000002
+      },
+      "sqlRows": 16,
+      "sqlBytes": 1307,
+      "sqlQueries": 7,
+      "responseBytes": 1354,
+      "maxIncrementalHeapMiB": 1.626861572265625,
+      "maxHeapMiB": 15.917343139648438,
+      "samples": [
+        {
+          "ms": 38.93412500000002,
+          "sqlMs": 34.92004199999997,
+          "serializationMs": 0.011083999999982552,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.626861572265625
+        },
+        {
+          "ms": 33.321500000000015,
+          "sqlMs": 31.523667000000046,
+          "serializationMs": 0.010207999999977346,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.4690170288085938
+        },
+        {
+          "ms": 33.48783300000002,
+          "sqlMs": 31.67958199999987,
+          "serializationMs": 0.01066600000001472,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.3980484008789062
+        },
+        {
+          "ms": 33.428875000000005,
+          "sqlMs": 31.743540999999993,
+          "serializationMs": 0.010207999999977346,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.3544464111328125
+        },
+        {
+          "ms": 33.333083999999985,
+          "sqlMs": 31.660417999999993,
+          "serializationMs": 0.008125000000006821,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.38018798828125
+        },
+        {
+          "ms": 126.21912500000002,
+          "sqlMs": 124.45125099999984,
+          "serializationMs": 0.011333000000036009,
+          "sqlRows": 16,
+          "sqlBytes": 1307,
+          "incrementalHeapMiB": 1.36944580078125
+        }
+      ]
+    },
+    {
+      "scale": "five",
+      "mode": "detail",
+      "coldMs": 83.53191699999996,
+      "hotSamples": 5,
+      "hot": {
+        "p50": 61.30004200000002,
+        "p95": 61.76195800000005,
+        "p99": 61.76195800000005
+      },
+      "sqlRows": 43,
+      "sqlBytes": 68045,
+      "sqlQueries": 12,
+      "responseBytes": 74655,
+      "maxIncrementalHeapMiB": 2.9665145874023438,
+      "maxHeapMiB": 17.643157958984375,
+      "samples": [
+        {
+          "ms": 83.53191699999996,
+          "sqlMs": 78.09537500000002,
+          "serializationMs": 0.2892500000000382,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.9665145874023438
+        },
+        {
+          "ms": 60.68758300000002,
+          "sqlMs": 57.97983399999998,
+          "serializationMs": 0.27991700000001174,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.6602935791015625
+        },
+        {
+          "ms": 60.69725,
+          "sqlMs": 58.20620799999995,
+          "serializationMs": 0.29374999999998863,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.6107406616210938
+        },
+        {
+          "ms": 61.30004200000002,
+          "sqlMs": 58.801706999999965,
+          "serializationMs": 0.28766699999994216,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.6266098022460938
+        },
+        {
+          "ms": 61.76195800000005,
+          "sqlMs": 59.20458299999996,
+          "serializationMs": 0.27979099999993196,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.5988845825195312
+        },
+        {
+          "ms": 61.68866700000001,
+          "sqlMs": 59.43595700000003,
+          "serializationMs": 0.27279199999998127,
+          "sqlRows": 43,
+          "sqlBytes": 68045,
+          "incrementalHeapMiB": 2.5740585327148438
+        }
+      ]
+    }
+  ],
+  "equivalence": {
+    "beforeSource": "5c9ab8e482b28b47dbeb7f947f450f40336c86ce",
+    "afterSource": "2e2c22caed154fc1595c35540e4b8bbd7e442474",
+    "pairs": [
+      {
+        "scale": "one",
+        "lane": "http",
+        "mode": "list",
+        "beforeRawSha256": "ff7cc6b91a0024d095308830698bd91ba88b4802519ceb77823b1f4acd0091a3",
+        "afterRawSha256": "ff05ecd706f4cedd6cb4c157b24592afc228cc09a87759d9f902cca2cf164cb3",
+        "canonicalResultSha256": "ba2f17ee884c1962408b5688bd8ac00d3c45cc4b1557583f07bfef34fbb44548",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "one",
+        "lane": "http",
+        "mode": "detail",
+        "beforeRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "afterRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "canonicalResultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "one",
+        "lane": "mcp",
+        "mode": "list",
+        "beforeRawSha256": "ff7cc6b91a0024d095308830698bd91ba88b4802519ceb77823b1f4acd0091a3",
+        "afterRawSha256": "ff05ecd706f4cedd6cb4c157b24592afc228cc09a87759d9f902cca2cf164cb3",
+        "canonicalResultSha256": "ba2f17ee884c1962408b5688bd8ac00d3c45cc4b1557583f07bfef34fbb44548",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "one",
+        "lane": "mcp",
+        "mode": "detail",
+        "beforeRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "afterRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "canonicalResultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "two",
+        "lane": "http",
+        "mode": "list",
+        "beforeRawSha256": "5af35cd459bdfce8d60f9bc80bdc88f5d9acc63d4964f52d87322edfbb1ee028",
+        "afterRawSha256": "18e6a48c96f1027f4de97339f5f0944366cda81b480fb60e5c529f779b68b45a",
+        "canonicalResultSha256": "35b81ccea966188076dccb0bca4a485fb8a18008f3732c3fa3dd38ba29cf5770",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "two",
+        "lane": "http",
+        "mode": "detail",
+        "beforeRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "afterRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "canonicalResultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "two",
+        "lane": "mcp",
+        "mode": "list",
+        "beforeRawSha256": "5af35cd459bdfce8d60f9bc80bdc88f5d9acc63d4964f52d87322edfbb1ee028",
+        "afterRawSha256": "18e6a48c96f1027f4de97339f5f0944366cda81b480fb60e5c529f779b68b45a",
+        "canonicalResultSha256": "35b81ccea966188076dccb0bca4a485fb8a18008f3732c3fa3dd38ba29cf5770",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "two",
+        "lane": "mcp",
+        "mode": "detail",
+        "beforeRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "afterRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "canonicalResultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "five",
+        "lane": "http",
+        "mode": "list",
+        "beforeRawSha256": "4fcbf60ab23dd1cbb6cc143fb60468a4cf56dc817ce430b86514a65cd6622ec0",
+        "afterRawSha256": "937f6f22fc51ed29f3f60051ad8c9461b51500e8667f0bf5da2c58af56724908",
+        "canonicalResultSha256": "3b7ab948e9e3ac163c620d9e257211d7aea5b0c944b43e48911fea3df7f4bc67",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "five",
+        "lane": "http",
+        "mode": "detail",
+        "beforeRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "afterRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "canonicalResultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "five",
+        "lane": "mcp",
+        "mode": "list",
+        "beforeRawSha256": "4fcbf60ab23dd1cbb6cc143fb60468a4cf56dc817ce430b86514a65cd6622ec0",
+        "afterRawSha256": "937f6f22fc51ed29f3f60051ad8c9461b51500e8667f0bf5da2c58af56724908",
+        "canonicalResultSha256": "3b7ab948e9e3ac163c620d9e257211d7aea5b0c944b43e48911fea3df7f4bc67",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      },
+      {
+        "scale": "five",
+        "lane": "mcp",
+        "mode": "detail",
+        "beforeRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "afterRawSha256": "14aa915f2bf5ca1a6b26de6726b3ac9152eb19ddf79da40167696e62dfe7015c",
+        "canonicalResultSha256": "b3fe77bb396186899f7c824727803087d7a74bee41d1a89dacc507478cbddebd",
+        "deepStrictEqual": true,
+        "samplesVerified": 63
+      }
+    ]
+  },
+  "fixtureIndexDifference": {
+    "oneAndTwoAdditionalToFive": [
+      "platform_query_status_time_idx",
+      "platform_query_time_idx",
+      "platform_relation_uscc_query_idx"
+    ],
+    "comparison": "before/after per scale uses same file and schema; cross-scale schemas differ as documented"
+  },
+  "beforeDrivers": [
+    {
+      "scale": "one",
+      "mode": "list",
+      "source": "5c9ab8e482b28b47dbeb7f947f450f40336c86ce",
+      "coldMs": 568.242042,
+      "hot": {
+        "p50": 200.07804099999976,
+        "p95": 227.22537499999999,
+        "p99": 227.22537499999999
+      },
+      "hotSamples": 5,
+      "sqlRows": 41253,
+      "sqlBytes": 6776724,
+      "sqlQueries": 12,
+      "maxIncrementalHeapMiB": 74.91734313964844
+    },
+    {
+      "scale": "one",
+      "mode": "detail",
+      "source": "5c9ab8e482b28b47dbeb7f947f450f40336c86ce",
+      "coldMs": 76.32325000000003,
+      "hot": {
+        "p50": 35.16429199999999,
+        "p95": 36.513666,
+        "p99": 36.513666
+      },
+      "hotSamples": 5,
+      "sqlRows": 43,
+      "sqlBytes": 68045,
+      "sqlQueries": 12,
+      "maxIncrementalHeapMiB": 15.014091491699219
+    },
+    {
+      "scale": "two",
+      "mode": "list",
+      "source": "5c9ab8e482b28b47dbeb7f947f450f40336c86ce",
+      "coldMs": 606.406125,
+      "hot": {
+        "p50": 320.3739999999999,
+        "p95": 383.3190420000001,
+        "p99": 383.3190420000001
+      },
+      "hotSamples": 5,
+      "sqlRows": 90723,
+      "sqlBytes": 10842386,
+      "sqlQueries": 12,
+      "maxIncrementalHeapMiB": 92.30440521240234
+    },
+    {
+      "scale": "two",
+      "mode": "detail",
+      "source": "5c9ab8e482b28b47dbeb7f947f450f40336c86ce",
+      "coldMs": 159.32291700000002,
+      "hot": {
+        "p50": 65.311375,
+        "p95": 68.33037499999995,
+        "p99": 68.33037499999995
+      },
+      "hotSamples": 5,
+      "sqlRows": 43,
+      "sqlBytes": 68045,
+      "sqlQueries": 12,
+      "maxIncrementalHeapMiB": 26.49730682373047
+    },
+    {
+      "scale": "five",
+      "mode": "list",
+      "source": "5c9ab8e482b28b47dbeb7f947f450f40336c86ce",
+      "coldMs": 1137.217709,
+      "hot": {
+        "p50": 751.8797079999999,
+        "p95": 794.3867500000001,
+        "p99": 794.3867500000001
+      },
+      "hotSamples": 5,
+      "sqlRows": 239133,
+      "sqlBytes": 23063699,
+      "sqlQueries": 12,
+      "maxIncrementalHeapMiB": 151.48294067382812
+    },
+    {
+      "scale": "five",
+      "mode": "detail",
+      "source": "5c9ab8e482b28b47dbeb7f947f450f40336c86ce",
+      "coldMs": 561.8449580000001,
+      "hot": {
+        "p50": 167.80925000000002,
+        "p95": 172.83891599999993,
+        "p99": 172.83891599999993
+      },
+      "hotSamples": 5,
+      "sqlRows": 43,
+      "sqlBytes": 68045,
+      "sqlQueries": 12,
+      "maxIncrementalHeapMiB": 64.0547103881836
+    }
+  ],
+  "finalIntegration": {
+    "source": "63be43903e57ae703cbeb7130c128f0b5d0bdcf7",
+    "integrationTip": "1f23d0ed4504e66ae4472cfa2b5479e0cd391d2a",
+    "ownedPathsDiffBytes": 0,
+    "performanceRerun": false,
+    "fullTests": {
+      "maxWorkers1": {
+        "passed": 2115,
+        "skipped": 12,
+        "failed": 0,
+        "exitCode": 0
+      },
+      "maxWorkers2": {
+        "passed": 2111,
+        "skipped": 16,
+        "failedSuites": 1,
+        "exitCode": 1,
+        "repeated": true,
+        "unexecutedSuiteTests": 4,
+        "suite": "record-comparison-http.test.ts",
+        "error": "Nuxt dev readiness timeout60s"
+      }
+    },
+    "isolatedHttpSuite": {
+      "passed": 4,
+      "failed": 0,
+      "exitCode": 0
+    },
+    "typecheck": "exit0",
+    "build": "exit0",
+    "publicOriginalCharacterization": {
+      "listCases": 48,
+      "detailCases": 12,
+      "exitCode": 0
+    },
+    "openApi": "exit0",
+    "parallelCause": "not proven; two HTTP suites start Nuxt dev from same cwd"
+  }
+}

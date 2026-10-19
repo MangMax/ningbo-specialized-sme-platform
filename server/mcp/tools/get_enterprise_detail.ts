@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { getRosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
+import { enterpriseReads } from '../../utils/enterprise-read'
 
 /** 与 `GET /api/roster/enterprises/:id` 共用企业详情读模型。 */
 export default defineMcpTool({
@@ -21,9 +21,9 @@ export default defineMcpTool({
   inputSchema: {
     enterpriseId: z.number().int().positive().describe('企业 id'),
   },
-  handler: async ({ enterpriseId }) => {
-    const detail = getRosterEnterpriseDetail(useDb(), enterpriseId)
-    if (!detail) throw createError({ statusCode: 404, statusMessage: 'not found' })
-    return { ...detail }
+  handler: async ({ enterpriseId }, extra) => {
+    const detail = await enterpriseReads.json(useDb().$client.name, { operation: 'detail',enterpriseId }, extra?.signal)
+    if (!detail.found) throw createError({ statusCode: 404, statusMessage: 'not found' })
+    return detail.body.toString('utf8')
   },
 })

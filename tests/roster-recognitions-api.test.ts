@@ -1,3 +1,4 @@
+import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -97,10 +98,10 @@ let handlerRecognitions: (event: unknown) => {
   page: number
   pageSize: number
 }
-let handlerEnterprises: (event: unknown) => {
+let handlerEnterprises: (event: unknown) => Promise<{
   rows: { enterpriseId: number; name: string; firstRecognition: { titleCode: string; year: number | null; status: string }[] }[]
   counts: { total: number; titlePairs: number; recognitionPairs: number }
-}
+}>
 let handlerExport: (event: unknown) => Promise<Uint8Array>
 let handlerStats: (event: unknown) => {
   byYear: { key: string; n: number }[]
@@ -131,7 +132,7 @@ beforeAll(async () => {
   ])
 
   handlerRecognitions = (await import('../server/api/roster/recognitions.get')).default as unknown as typeof handlerRecognitions
-  handlerEnterprises = (await import('../server/api/roster/enterprises.get')).default as unknown as typeof handlerEnterprises
+  handlerEnterprises = decodeJsonRead((await import('../server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
   handlerExport = (await import('../server/api/roster/export.get')).default as unknown as typeof handlerExport
   handlerStats = (await import('../server/api/stats.get')).default as unknown as typeof handlerStats
 })
@@ -251,14 +252,14 @@ describe('GET /api/roster/recognitions(契约 §7.5)', () => {
 })
 
 describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也被导出继承)', () => {
-  it('总表认 firstYear / firstStatus,并在 counts 里给出「企业 × 称号」计数', () => {
+  it('总表认 firstYear / firstStatus,并在 counts 里给出「企业 × 称号」计数', async () => {
     query = { firstYear: '2021' }
-    const out = handlerEnterprises({})
+    const out = (await handlerEnterprises({}))
     expect(out.rows.map((r) => r.enterpriseId).sort()).toEqual([yiId, jiaId].sort())
     query = { firstStatus: 'pending' }
-    expect(handlerEnterprises({}).rows.map((r) => r.enterpriseId)).toEqual([yiId])
+    expect((await handlerEnterprises({})).rows.map((r) => r.enterpriseId)).toEqual([yiId])
     query = {}
-    expect(handlerEnterprises({}).counts.recognitionPairs).toBe(2)
+    expect((await handlerEnterprises({})).counts.recognitionPairs).toBe(2)
   })
 
   it('firstStatus 取值非法 ⇒ 400', () => {
@@ -343,7 +344,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
       expect(stats.byFirstRecognitionYear).toEqual([{ key: '2024', n: 1 }])
 
       query = { firstYear: '2024' }
-      expect(handlerEnterprises({}).rows.map((row) => row.enterpriseId)).toEqual([decidedYearOnlyId])
+      expect((await handlerEnterprises({})).rows.map((row) => row.enterpriseId)).toEqual([decidedYearOnlyId])
 
       const bytes = await handlerExport({})
       const workbook = new ExcelJS.Workbook()
@@ -364,6 +365,24 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
     }
   })
 
+  it('首页统计年份不读取无关平台原文，保留结论年份口径', () => {
+    const previousDb = db
+    try {
+      db = useDb({ dbPath: join(dir, 'stats-scoped.db') })
+      seed('统计范围合成企业', '91330211STATS00001X', null, 'specialized_sme', [
+        { eventType: 'award', year: 2022, decidedYear: 2024 },
+        { eventType: 'review', year: 2022, decidedYear: 2025 },
+      ])
+      const archived = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'unrelated-stats', queriedAt: '2026-10-19', status: 'success', rawResponse: 'unrelated'.repeat(1000) }).returning().get()
+      db.$client.prepare('UPDATE platform_query SET collection_evidence = ? WHERE id = ?').run('{unrelated-invalid-json', archived.id)
+      query = {}
+      expect(handlerStats({}).byFirstRecognitionYear).toEqual([{ key: '2024', n: 1 }])
+    } finally {
+      db = previousDb
+      query = {}
+    }
+  })
+
   it('空库返回空的首次认定、企业列表、统计桶和导出', async () => {
     const previousDb = db
     try {
@@ -374,7 +393,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
       expect(recognitions.rows).toEqual([])
       expect(recognitions.counts).toMatchObject({ titlePairs: 0, enterprises: 0 })
 
-      const enterprises = handlerEnterprises({})
+      const enterprises = (await handlerEnterprises({}))
       expect(enterprises.rows).toEqual([])
       expect(enterprises.counts).toMatchObject({ total: 0, titlePairs: 0, recognitionPairs: 0 })
 

@@ -1,5 +1,7 @@
+import { admitEnterpriseResponse } from '../../../utils/enterprise-read-response'
 import { useDb } from '@db'
-import { getRosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
+import { enterpriseReads } from '../../../utils/enterprise-read'
+import { withEnterpriseReadSignal } from '../../../utils/enterprise-read-signal'
 
 /**
  * **企业详情**(契约 §7.2,RL-04):一家企业的全部称号历史与证据。
@@ -23,6 +25,7 @@ defineRouteMeta({
       '含 aliases / records / events / evidence / recognitions / differences / platform。`recognitions` 按企业 × 称号返回最早正式 `award`、年份(`decidedYear ?? year`)、出处与状态(`confirmed` / `pending`)；`platform.relations` 保留该企业的**全部**平台关联(不按统代折叠)。',
     responses: {
       200: { description: '企业详情。已认定查询保留全部原始行，行 enterpriseId 为 number 或 null；null 表示未匹配主体，查询键覆盖不确认归属。relationCount 与返回行一致。' },
+      503: { description: '企业读取队列或响应并发已满，或执行器暂时不可用；可重试，不表示无记录。' },
       400: { description: 'id 不是数字。' },
       404: { description: '没有这个企业。' },
     },
@@ -32,7 +35,11 @@ defineRouteMeta({
 export default defineEventHandler((event) => {
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid id' })
-  const detail = getRosterEnterpriseDetail(useDb(), id)
-  if (!detail) throw createError({ statusCode: 404, statusMessage: 'not found' })
-  return detail
+  admitEnterpriseResponse(event)
+  return withEnterpriseReadSignal(event, async signal => {
+    const detail = await enterpriseReads.json(useDb().$client.name, { operation: 'detail',enterpriseId: id }, signal)
+    if (!detail.found) throw createError({ statusCode: 404, statusMessage: 'not found' })
+    setHeader(event, 'content-type', 'application/json; charset=utf-8')
+    return detail.body
+  })
 })

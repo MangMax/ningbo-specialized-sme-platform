@@ -1,8 +1,8 @@
-import { eq } from 'drizzle-orm'
+import { asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
-import { getRecordCorrespondenceAudit, listRecordCorrespondences, type CorrespondenceRead } from './record-correspondence'
+import { getRecordCorrespondenceAudit, listRecordCorrespondenceRefs, type CorrespondenceRead } from './record-correspondence'
 
 type Db = BetterSQLite3Database<typeof schema>
 export type SourceKind = 'event' | 'relation' | 'export_row'
@@ -49,38 +49,61 @@ export function safeCollectionEvidence(value: unknown) {
   const { rows: _rows, ...metadata } = value as Record<string, unknown>
   return sanitizeEvidence(metadata)
 }
-function refs(db: Db, filter: Parameters<typeof listRecordCorrespondences>[1]) {
-  return listRecordCorrespondences(db, filter).map(({ id, type, role, status, eventId, predecessorEventId, relationId, exportRowId, enterpriseId, titleCode, revision, requiresRevalidation }) => ({ id, type, role, status, eventId, predecessorEventId, relationId, exportRowId, enterpriseId, titleCode, revision, requiresRevalidation }))
+function chunks<T>(values: T[]) {
+  const unique = [...new Set(values)]
+  return Array.from({ length: Math.ceil(unique.length / 400) }, (_, i) => unique.slice(i * 400, (i + 1) * 400))
 }
-export function eventSource(db: Db, id: number) {
-  const joined = db.select({ event: schema.recordEvent, record: schema.record }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).where(eq(schema.recordEvent.id, id)).get()
-  if (!joined) return null
-  const evidence = db.select().from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, id)).all().sort((a, b) => a.id - b.id)
-  const officialEvidence = evidence.map(item => ({ evidence: sanitizeEvidence(item), storedFile: db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt }).from(schema.storedFile).where(eq(schema.storedFile.relPath, item.sourceFile)).get() ?? null }))
-  const eventLinks = listRecordCorrespondences(db).filter(row => row.eventId === id || row.predecessorEventId === id)
-  return { ...joined.event, record: { id: joined.record.id, enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, source: joined.record.source, usccRaw: joined.record.usccRaw }, evidence: sanitizeEvidence(evidence), officialEvidence: sanitizeEvidence(officialEvidence), correspondences: eventLinks.map(({ id, type, role, status, eventId, predecessorEventId, relationId, exportRowId, enterpriseId, titleCode, revision, requiresRevalidation }) => ({ id, type, role, status, eventId, predecessorEventId, relationId, exportRowId, enterpriseId, titleCode, revision, requiresRevalidation })) }
+/** Request-local hydration only. Never retained across a write or shared with another request. */
+export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind: SourceKind; id: number }) {
+  const eventIds = [...new Set(rows.flatMap(row => [row.eventId, row.predecessorEventId]).filter((id): id is number => id != null).concat(extra?.kind === 'event' ? [extra.id] : []))]
+  const relationIds = [...new Set(rows.flatMap(row => row.relationId == null ? [] : [row.relationId]).concat(extra?.kind === 'relation' ? [extra.id] : []))]
+  const exportRowIds = [...new Set(rows.flatMap(row => row.exportRowId == null ? [] : [row.exportRowId]).concat(extra?.kind === 'export_row' ? [extra.id] : []))]
+  const events = chunks(eventIds).flatMap(ids => db.select({ event: schema.recordEvent, record: schema.record }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).where(inArray(schema.recordEvent.id, ids)).all())
+  const evidenceRows = chunks(eventIds).flatMap(ids => db.select().from(schema.recordEvidence).where(inArray(schema.recordEvidence.recordEventId, ids)).orderBy(asc(schema.recordEvidence.id)).all())
+  const files = chunks(evidenceRows.map(e => e.sourceFile)).flatMap(paths => db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt }).from(schema.storedFile).where(inArray(schema.storedFile.relPath, paths)).all())
+  const filesByPath = new Map(files.map(f => [f.relPath, f]))
+  const evidenceByEvent = Map.groupBy(evidenceRows, e => e.recordEventId)
+  const { rawResponse: _rawResponse, collectionEvidence, ...queryColumns } = getTableColumns(schema.platformQuery)
+  const relations = chunks(relationIds).flatMap(ids => db.select({ relation: schema.platformRelation, query: { ...queryColumns, collectionEvidence: sql`json_remove(${collectionEvidence}, '$.rows')`.mapWith(collectionEvidence) } }).from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id)).where(inArray(schema.platformRelation.id, ids)).all())
+  const exports = chunks(exportRowIds).flatMap(ids => db.select({ row: schema.platformExportRow, batch: schema.platformExportBatch }).from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id)).where(inArray(schema.platformExportRow.id, ids)).all())
+  // Three source sets together stay below SQLite's parameter budget, including the repeated event predicate.
+  const links = new Map<number, ReturnType<typeof listRecordCorrespondenceRefs>[number]>()
+  const eventChunks = chunks(eventIds), relationChunks = chunks(relationIds), exportChunks = chunks(exportRowIds)
+  for (let i = 0; i < Math.max(eventChunks.length, relationChunks.length, exportChunks.length); i++) {
+    for (const link of listRecordCorrespondenceRefs(db, {}, { eventIds: eventChunks[i] ?? [], relationIds: relationChunks[i] ?? [], exportRowIds: exportChunks[i] ?? [] })) links.set(link.id, link)
+  }
+  const sortedLinks = [...links.values()].sort((a, b) => a.id - b.id)
+  const byEvent = Map.groupBy(sortedLinks.filter(r => r.eventId != null), r => r.eventId)
+  const byPredecessor = Map.groupBy(sortedLinks.filter(r => r.predecessorEventId != null), r => r.predecessorEventId)
+  const byRelation = Map.groupBy(sortedLinks.filter(r => r.relationId != null), r => r.relationId)
+  const byExport = Map.groupBy(sortedLinks.filter(r => r.exportRowId != null), r => r.exportRowId)
+  const eventSources = new Map(events.map(joined => {
+    const id = joined.event.id, evidence = evidenceByEvent.get(id) ?? []
+    const officialEvidence = evidence.map(item => ({ evidence: sanitizeEvidence(item), storedFile: filesByPath.get(item.sourceFile) ?? null }))
+    const eventLinks = [...new Map([...(byEvent.get(id) ?? []), ...(byPredecessor.get(id) ?? [])].map(r => [r.id, r])).values()].sort((a, b) => a.id - b.id)
+    return [id, { ...joined.event, record: { id: joined.record.id, enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, source: joined.record.source, usccRaw: joined.record.usccRaw }, evidence: sanitizeEvidence(evidence), officialEvidence: sanitizeEvidence(officialEvidence), correspondences: eventLinks }] as const
+  }))
+  const relationSources = new Map(relations.map(({ relation, query }) => {
+    const position = sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo)
+    return [relation.id, { ...relation, sourceRdjb: position.sourceRdjb, sourcePage: position.sourcePage, rawFields: sanitizeEvidence(relation.rawFields), query: { ...query, failureReason: sanitizeEvidence(query.failureReason), collectionEvidence: safeCollectionEvidence(query.collectionEvidence) }, correspondences: byRelation.get(relation.id) ?? [] }] as const
+  }))
+  const exportSources = new Map(exports.map(({ row, batch }) => [row.id, { ...row, rawFields: sanitizeEvidence(row.rawFields), batch: sanitizeEvidence(batch), correspondences: byExport.get(row.id) ?? [] }] as const))
+  const read = (kind: SourceKind, id: number) => kind === 'event' ? eventSources.get(id) ?? null : kind === 'relation' ? relationSources.get(id) ?? null : exportSources.get(id) ?? null
+  const detailRow = (row: CorrespondenceRead) => {
+    const { edgeKey: _edgeKey, targetIdentity: _targetIdentity, provenance: _provenance, sourceFingerprint: _sourceFingerprint, ...publicRow } = row
+    return { ...publicRow, event: row.eventId ? read('event', row.eventId) : null, predecessorEvent: row.predecessorEventId ? read('event', row.predecessorEventId) : null, relation: row.relationId ? read('relation', row.relationId) : null, exportRow: row.exportRowId ? read('export_row', row.exportRowId) : null }
+  }
+  return { read, detail: detailRow }
 }
-export function relationSource(db: Db, id: number) {
-  const joined = db.select({ relation: schema.platformRelation, query: schema.platformQuery }).from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id)).where(eq(schema.platformRelation.id, id)).get()
-  if (!joined) return null
-  const { rawResponse: _rawResponse, ...query } = joined.query
-  const position = sourcePositionForSequence(query.collectionEvidence, joined.relation.sequenceNo)
-  return { ...joined.relation, sourceRdjb: position.sourceRdjb, sourcePage: position.sourcePage, rawFields: sanitizeEvidence(joined.relation.rawFields), query: { ...query, failureReason: sanitizeEvidence(query.failureReason), collectionEvidence: safeCollectionEvidence(query.collectionEvidence) }, correspondences: refs(db, { relationId: id }) }
+export function readSource(db: Db, kind: SourceKind, id: number) { return sourceReader(db, [], { kind, id }).read(kind, id) }
+export function eventSource(db: Db, id: number) { return readSource(db, 'event', id) }
+export function relationSource(db: Db, id: number) { return readSource(db, 'relation', id) }
+export function exportRowSource(db: Db, id: number) { return readSource(db, 'export_row', id) }
+export function details(db: Db, rows: CorrespondenceRead[]) {
+  const reader = sourceReader(db, rows)
+  return rows.map(reader.detail)
 }
-export function exportRowSource(db: Db, id: number) {
-  const joined = db.select({ row: schema.platformExportRow, batch: schema.platformExportBatch }).from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id)).where(eq(schema.platformExportRow.id, id)).get()
-  if (!joined) return null
-  return { ...joined.row, rawFields: sanitizeEvidence(joined.row.rawFields), batch: sanitizeEvidence(joined.batch), correspondences: refs(db, { exportRowId: id }) }
-}
-export function readSource(db: Db, kind: SourceKind, id: number) {
-  if (kind === 'event') return eventSource(db, id)
-  if (kind === 'relation') return relationSource(db, id)
-  return exportRowSource(db, id)
-}
-export function detail(db: Db, row: CorrespondenceRead) {
-  const { edgeKey: _edgeKey, targetIdentity: _targetIdentity, provenance: _provenance, sourceFingerprint: _sourceFingerprint, ...publicRow } = row
-  return { ...publicRow, event: row.eventId ? eventSource(db, row.eventId) : null, predecessorEvent: row.predecessorEventId ? eventSource(db, row.predecessorEventId) : null, relation: row.relationId ? relationSource(db, row.relationId) : null, exportRow: row.exportRowId ? exportRowSource(db, row.exportRowId) : null }
-}
+export function detail(db: Db, row: CorrespondenceRead) { return details(db, [row])[0]! }
 export function audit(db: Db, correspondenceId: number) {
   return getRecordCorrespondenceAudit(db, correspondenceId).map(({ evidence, ...row }) => ({ ...row, evidence: sanitizeEvidence(evidence) }))
 }
