@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Local isolated SQLite copy only; no raw values/credentials are logged.
 // node --expose-gc --max-old-space-size=2048 scripts/bench-record-comparison.mjs /absolute/copy.db sources|comparison [rounds=20] [catalogPage=1]
+// PERF_QUERY_ID, PERF_PAGE_SIZE=50 and PERF_CATALOG_KIND=all reproduce the frozen #82 inputs.
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { performance } from 'node:perf_hooks'
@@ -12,10 +13,12 @@ const [path, mode='comparison', roundsText='20', pageText='1']=process.argv.slic
 if(!path?.startsWith('/') || !['sources','comparison'].includes(mode) || path.includes('/full-snapshot/')) throw Error('Use an isolated copy and sources|comparison')
 const db=useDb({dbPath:path,readOnly:true}), rounds=Number(roundsText), catalogPage=Number(pageText)
 if(!Number.isSafeInteger(catalogPage)||catalogPage<1)throw Error('invalid catalog page')
-const q=db.$client.prepare('select id from platform_query order by id limit 1').get().id
+const q=Number(process.env.PERF_QUERY_ID ?? db.$client.prepare('select id from platform_query order by id limit 1').get().id)
 const d=db.$client.prepare("select id from source_document where source='jxj' order by id limit 1").get().id
 const e=db.$client.prepare('select id from enterprise order by id limit 1').get().id
-const input={queryIds:[q],exportBatchIds:[],officialSourceDocumentIds:[d],enterpriseId:e,page:1,pageSize:25}
+const pageSize=Number(process.env.PERF_PAGE_SIZE??25),catalogKind=process.env.PERF_CATALOG_KIND==='all'?undefined:'query'
+if(!Number.isSafeInteger(q)||q<1||!Number.isSafeInteger(pageSize)||pageSize<1||pageSize>50)throw Error('invalid fixed query or page size')
+const input={queryIds:[q],exportBatchIds:[],officialSourceDocumentIds:[d],enterpriseId:e,page:1,pageSize}
 let sqlBytes=0,sqlRows=0,sqlCalls=0,sqlMs=0,peakHeap=0,peakRss=0
 const sample=()=>{const m=process.memoryUsage();peakHeap=Math.max(peakHeap,m.heapUsed);peakRss=Math.max(peakRss,m.rss)}
 const observe=value=>{if(Array.isArray(value)){for(const item of value)observe(item)}else if(value&&typeof value==='object'){for(const item of Object.values(value))observe(item)}else sqlBytes+=typeof value==='string'?Buffer.byteLength(value):typeof value==='number'?8:0}
@@ -25,10 +28,10 @@ const samples=[]
 for(let i=0;i<=rounds;i++){
  global.gc?.(); sqlBytes=0;sqlRows=0;sqlCalls=0;sqlMs=0;peakHeap=0;peakRss=0
  const heapStart=process.memoryUsage().heapUsed,start=performance.now()
- const result=mode==='sources'?listRecordComparisonSources(db,{kind:'query',page:catalogPage,pageSize:25}):getRecordComparison(db,input)
+ const result=mode==='sources'?listRecordComparisonSources(db,{kind:catalogKind,page:catalogPage,pageSize}):getRecordComparison(db,input)
  const serializeStart=performance.now(),body=JSON.stringify(result),serializationMs=performance.now()-serializeStart
  sample();samples.push({phase:i?'hot':'cold-process',ms:performance.now()-start,sqlMs,serializationMs,sqlBytes,sqlRows,sqlCalls,responseBytes:Buffer.byteLength(body),sha256:createHash('sha256').update(body).digest('hex'),heapStart,peakHeap,incrementalHeap:peakHeap-heapStart,peakRss})
 }
 const hot=samples.slice(1).map(x=>x.ms).sort((a,b)=>a-b),pct=p=>hot[Math.ceil(hot.length*p)-1]
-console.log(JSON.stringify({mode,node:process.version,head:(await import('node:child_process')).execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),dirty:(await import('node:child_process')).execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim()!=='',input:mode==='comparison'?input:{kind:'query',page:catalogPage,pageSize:25},samples,hot:{p50:pct(.5),p95:pct(.95),p99:pct(.99)},maxRss:process.resourceUsage().maxRSS*1024,containerLimited:false}))
+console.log(JSON.stringify({mode,node:process.version,head:(await import('node:child_process')).execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),dirty:(await import('node:child_process')).execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim()!=='',input:mode==='comparison'?input:{kind:catalogKind,page:catalogPage,pageSize},samples,hot:{p50:pct(.5),p95:pct(.95),p99:pct(.99)},maxRss:process.resourceUsage().maxRSS*1024,containerLimited:false}))
 db.$client.close()

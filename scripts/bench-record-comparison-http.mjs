@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Local compiled Nitro HTTP/MCP benchmark. Only open an isolated SQLite copy.
 // node scripts/bench-record-comparison-http.mjs /absolute/copy.db http|mcp sources|comparison 1|2|5 [catalogPage=1]
+// PERF_QUERY_ID, PERF_PAGE_SIZE=50 and PERF_CATALOG_KIND=all reproduce the frozen #82 inputs.
 import assert from 'node:assert/strict'
 import { fork } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -14,8 +15,10 @@ import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-servic
 const [dbPath,transport='http',mode='comparison',c='1',pageText='1']=process.argv.slice(2),concurrency=Number(c),catalogPage=Number(pageText)
 assert.ok(Number.isSafeInteger(catalogPage)&&catalogPage>0&&dbPath?.startsWith('/') && !dbPath.includes('/full-snapshot/') && ['http','mcp'].includes(transport) && ['sources','comparison'].includes(mode) && [1,2,5].includes(concurrency) && (mode!=='sources'||transport==='http'))
 const require=createRequire(import.meta.url),Database=require('better-sqlite3'),db=new Database(dbPath,{readonly:true})
-const queryId=db.prepare('select id from platform_query order by id limit 1').get().id,docId=db.prepare("select id from source_document where source='jxj' order by id limit 1").get().id,enterpriseId=db.prepare('select id from enterprise order by id limit 1').get().id
+const queryId=Number(process.env.PERF_QUERY_ID??db.prepare('select id from platform_query order by id limit 1').get().id),docId=db.prepare("select id from source_document where source='jxj' order by id limit 1").get().id,enterpriseId=db.prepare('select id from enterprise order by id limit 1').get().id
 db.close()
+const pageSize=Number(process.env.PERF_PAGE_SIZE??25),catalogKind=process.env.PERF_CATALOG_KIND==='all'?undefined:'query'
+assert.ok(Number.isSafeInteger(queryId)&&queryId>0&&Number.isSafeInteger(pageSize)&&pageSize>0&&pageSize<=50)
 const dir=mkdtempSync(join(tmpdir(),'comparison-telemetry-')),telemetry=join(dir,'telemetry.mjs')
 writeFileSync(telemetry, `import dc from 'node:diagnostics_channel';import {monitorEventLoopDelay} from 'node:perf_hooks';import {getHeapStatistics} from 'node:v8';
 const lag=monitorEventLoopDelay({resolution:10});lag.enable();let heap=0,rss=0,heapStart=0;
@@ -28,9 +31,9 @@ const server=fork('.output/server/index.mjs',[],{execArgv:['--max-old-space-size
 let output='',reset=false,id=0
 for(const stream of [server.stdout,server.stderr])stream.on('data',b=>{output=(output+b).slice(-2000)})
 server.on('message',message=>{if(message==='reset')reset=true;else metrics.push(message)})
-const input={queryIds:[queryId],exportBatchIds:[],officialSourceDocumentIds:[docId],enterpriseId,page:1,pageSize:25}
+const input={queryIds:[queryId],exportBatchIds:[],officialSourceDocumentIds:[docId],enterpriseId,page:1,pageSize}
 async function request(){
- const start=performance.now(),query=mode==='sources'?{kind:'query',page:catalogPage,pageSize:25}:input
+ const start=performance.now(),query=mode==='sources'?{...(catalogKind?{kind:catalogKind}:{}),page:catalogPage,pageSize}:input
  const response=transport==='http'?await fetch(`${base}/api/roster/record-comparison${mode==='sources'?'/sources':''}?${new URLSearchParams(Object.entries(query).map(([k,v])=>[k,String(v)]))}`):await fetch(`${base}/mcp`,{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18'},body:JSON.stringify({jsonrpc:'2.0',id:++id,method:'tools/call',params:{name:'list_record_comparison',arguments:input}})})
  const text=await response.text(),ms=performance.now()-start;assert.equal(response.status,200)
  const body=JSON.parse(text.split('\n').find(s=>s.startsWith('data: '))?.slice(6)??text),result=transport==='http'?body:JSON.parse(body.result.content[0].text)
