@@ -1,3 +1,5 @@
+import { cleanupCurrentExports } from './current-export-artifact'
+import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { isTerminalJobState, newJobId, type JobState } from '../../lib/job'
@@ -113,6 +115,9 @@ export interface JobCompletion {
  */
 export interface JobSpec {
   kind: string
+  /** Optional admission policy for resource-heavy persisted export jobs. */
+  maxPending?: number
+  deduplicateRequest?: boolean
   /** `ready` = 有 `run` 可跑;`todo` = 已登记、尚未接入(提交时明确报 501)。 */
   status: 'ready' | 'todo'
   summary: string
@@ -224,6 +229,21 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
   if (!spec) throw new Error(`任务种类未登记:${input.kind}`)
   if (spec.status !== 'ready' || !spec.run) throw new Error(`任务种类尚未接入:${input.kind}`)
 
+  if (spec.deduplicateRequest) {
+    const existing = db.select().from(schema.job).where(and(eq(schema.job.kind,input.kind),sql`json_extract(${schema.job.params}, '$.clientRequestId') = ${input.params.clientRequestId}`)).get()
+    if (existing) {
+      if (JSON.stringify(existing.params) !== JSON.stringify(input.params)) throw Object.assign(new Error('请求标识已用于不同参数'),{statusCode:409})
+      return existing
+    }
+    if (input.params.regenerateOf) {
+      const previous = getJob(db,String(input.params.regenerateOf))
+      if (!previous || previous.kind !== input.kind || previous.params.titleCode !== input.params.titleCode || !isTerminalJobState(previous.state)) throw Object.assign(new Error('重新生成需要同称号已结束任务'),{statusCode:409})
+    }
+  }
+  if (spec.maxPending) {
+    const n = db.select({n:sql<number>`count(*)`}).from(schema.job).where(and(eq(schema.job.kind,input.kind),sql`${schema.job.state} in ('queued','running')`)).get()!.n
+    if (n >= spec.maxPending) throw Object.assign(new Error('导出执行/排队容量已满，请稍后重试'),{statusCode:429})
+  }
   const run = spec.prepare?.(input.params, db) ?? spec.run
   const total = spec.total?.(input.params) ?? 1
   const row = createJob(db, {
@@ -414,5 +434,7 @@ const reconciledDbs = new WeakSet<object>()
 export function ensureJobRunnerReady(db: Db): number {
   if (reconciledDbs.has(db)) return 0
   reconciledDbs.add(db)
-  return reconcileInterruptedJobs(db)
+  const interrupted = reconcileInterruptedJobs(db)
+  void cleanupCurrentExports(db).catch(() => {})
+  return interrupted
 }

@@ -1,8 +1,9 @@
+import { currentJobDto } from '../../utils/current-export-artifact'
 import { useDb } from '@db'
 import { parseCsvQuery } from '~~/lib/csv'
 import { JOB_STATES, type JobState } from '~~/lib/job'
 import { ensureJobRunnerReady } from '../../utils/job-runner'
-import { DEFAULT_JOB_LIMIT, listJobs, MAX_JOB_LIMIT, toJobDto } from '../../utils/job-store'
+import { DEFAULT_JOB_LIMIT, listJobs, MAX_JOB_LIMIT } from '../../utils/job-store'
 import { registerJobSpecs } from '../../utils/job-specs'
 
 /**
@@ -61,7 +62,7 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   registerJobSpecs()
   const db = useDb()
   ensureJobRunnerReady(db)
@@ -81,5 +82,5 @@ export default defineEventHandler((event) => {
     limit,
   })
 
-  return { rows: rows.map(toJobDto), total }
+  return { rows: await Promise.all(rows.map(row => currentJobDto(row,db.$client.name))), total }
 })

@@ -1,7 +1,8 @@
+import { currentJobDto } from '../../utils/current-export-artifact'
 import { useDb } from '@db'
 import { isJobId } from '~~/lib/job'
 import { ensureJobRunnerReady } from '../../utils/job-runner'
-import { getJob, toJobDto } from '../../utils/job-store'
+import { getJob } from '../../utils/job-store'
 import { registerJobSpecs } from '../../utils/job-specs'
 
 /**
@@ -37,7 +38,7 @@ defineRouteMeta({
                   type: 'object',
                   properties: { done: { type: 'integer' }, total: { type: 'integer' } },
                 },
-                percent: { type: 'integer', description: '派生量(0–100,向下取整)。' },
+                percent: { type: 'integer', nullable: true, description: '派生量(0–100)，当前名录导出未知总数时null。' },
                 params: { type: 'object' },
                 result: {
                   type: 'object',
@@ -59,7 +60,7 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   registerJobSpecs()
   const id = getRouterParam(event, 'id')
   // 形状先判:把「id 写错了」(400)与「查无此任务」(404)分开,
@@ -71,5 +72,5 @@ export default defineEventHandler((event) => {
 
   const row = getJob(db, id)
   if (!row) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
-  return toJobDto(row)
+  return currentJobDto(row,db.$client.name)
 })
