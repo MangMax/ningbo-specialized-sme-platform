@@ -975,3 +975,19 @@ export const comparisonScopeProofAudit = sqliteTable('comparison_scope_proof_aud
   ruleVersion: text('rule_version').notNull(),
   decidedAt: text('decided_at').notNull(),
 }, t => [index('comparison_scope_proof_audit_proof_idx').on(t.proofId, t.id)])
+
+/** File metadata/lifecycle receipts; no OCR, parsing or source content in these snapshots. */
+export const fileMaintenanceAudit = sqliteTable('file_maintenance_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fileId: integer('file_id').notNull().references(() => storedFile.id),
+  revision: integer('revision').notNull(),
+  action: text('action', { enum: ['update', 'remove', 'restore'] }).notNull(),
+  idempotencyKey: text('idempotency_key'),
+  requestHash: text('request_hash').notNull(),
+  mode: text('mode', { enum: ['legacy', 'versioned'] }).notNull(),
+  actor: text('actor'),
+  basis: text('basis'),
+  before: text('before_json', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  after: text('after_json', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, t => [uniqueIndex('file_maintenance_revision_uq').on(t.fileId, t.revision), uniqueIndex('file_maintenance_key_uq').on(t.idempotencyKey)])

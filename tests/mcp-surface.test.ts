@@ -45,6 +45,9 @@ describe('mcp-auth 鉴权判据', () => {
     expect([...MCP_WRITE_TOOLS]).toEqual([
       'save_ocr_result',
       'set_file_category',
+      'update_file',
+      'remove_file',
+      'restore_file',
       'save_parse_result',
       'save_roster_batch',
       'submit_platform_batch',

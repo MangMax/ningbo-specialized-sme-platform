@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { lstat, readdir, rm, stat } from 'node:fs/promises'
+import { createReadStream, lstatSync, realpathSync, rmSync } from 'node:fs'
+import { lstat, readdir, realpath, stat } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import { and, desc, eq, inArray, isNull, like, or, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -480,6 +480,7 @@ export function parseMetadataPatch(body: unknown): FileMetadataPatch {
   const year = tri<number>(b.year)
   if (year.provided) {
     if (year.value !== null) {
+      if (typeof year.value !== 'string' && typeof year.value !== 'number') throw new Error('年份必须是四位数字')
       const n = Number(year.value)
       if (!Number.isInteger(n) || n < 1900 || n > 2100) throw new Error('年份必须是四位数字')
       patch.year = n
@@ -489,6 +490,7 @@ export function parseMetadataPatch(body: unknown): FileMetadataPatch {
   const batch = tri<number>(b.batch)
   if (batch.provided) {
     if (batch.value !== null) {
+      if (typeof batch.value !== 'string' && typeof batch.value !== 'number') throw new Error('批次必须是正整数')
       const n = Number(batch.value)
       if (!Number.isInteger(n) || n <= 0) throw new Error('批次必须是正整数')
       patch.batch = n
@@ -629,7 +631,7 @@ export interface RemoveResult {
  * 把一个文件**移出库与索引**。默认**不删磁盘**:只打 `removed_at` 标(软删除)。
  * `deleteDisk: true` 时才真的 unlink —— 调用方(路由)必须先做二次确认。
  *
- * 被记录引用时也允许移出(用户可能确实要清理),但把引用数回报出去,让界面能提示。
+ * 被记录引用时允许软移出并回报引用数；磁盘删除在同一个写锁内拒绝仍被引用的文件。
  */
 export async function removeStoredFile(
   db: Db,
@@ -637,31 +639,95 @@ export async function removeStoredFile(
   id: number,
   options: { deleteDisk?: boolean } = {},
 ): Promise<RemoveResult | null> {
-  const current = db.select().from(schema.storedFile).where(eq(schema.storedFile.id, id)).get()
-  if (!current) return null
+  return removeStoredFileSync(db, filesRoot, id, options)
+}
 
-  const refs = getStoredFile(db, id)?.referenceCount ?? 0
+/** Short filesystem metadata operation under the SQLite write lock protects references. */
+export function removeStoredFileSync(
+  db: Db,
+  filesRoot: string,
+  id: number,
+  options: { deleteDisk?: boolean } = {},
+): RemoveResult | null {
+  return db.transaction((tx) => {
+    const current = tx.select().from(schema.storedFile).where(eq(schema.storedFile.id, id)).get()
+    if (!current) return null
 
-  let diskDeleted = false
-  if (options.deleteDisk) {
-    // 锁根:路径解析后必须仍在文件库内,不能删到库外。
-    const abs = resolveInsideRoot(filesRoot, current.relPath)
-    if (!abs) throw new Error('路径越界')
-    try {
-      const info = await lstat(abs)
-      if (info.isFile()) {
-        await rm(abs, { force: true })
-        diskDeleted = true
+    const refs = getStoredFile(tx, id)?.referenceCount ?? 0
+
+    let diskDeleted = false
+    if (options.deleteDisk) {
+      if (refs > 0) throw new FileMaintenanceError(409, '文件仍被正式出处引用,禁止删除磁盘文件')
+      // 锁根:路径解析后必须仍在文件库内,不能删到库外。
+      const abs = resolveInsideRoot(filesRoot, current.relPath)
+      if (!abs) throw new FileMaintenanceError(400, '路径越界')
+      try {
+        const info = lstatSync(abs)
+        if (info.isFile()) {
+          const physical = realpathSync(abs)
+          if (!physical.startsWith(realpathSync(filesRoot) + sep)) {
+            throw new FileMaintenanceError(409, '磁盘文件路径越界')
+          }
+          rmSync(abs, { force: true })
+          diskDeleted = true
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        // 磁盘上已经不在了 —— 移出库照样完成,不因为文件缺失而失败。
       }
-    } catch {
-      // 磁盘上已经不在了 —— 移出库照样完成,不因为文件缺失而失败。
     }
+
+    softRemoveStoredFile(tx, id)
+
+    return { row: getStoredFile(tx, id)!, diskDeleted, referenceCount: refs }
+  }, { behavior: 'immediate' })
+}
+
+export class FileMaintenanceError extends Error {
+  constructor(public statusCode: number, message: string) { super(message) }
+}
+
+/** Restore only the original registered bytes. Never reimport events or refresh disk facts. */
+export async function verifyStoredFileRestoration(db: Db, root: string, id: number): Promise<StoredFileRow> {
+  const current = getStoredFile(db, id)
+  if (!current) throw new FileMaintenanceError(404, '文件不存在')
+  const abs = resolveInsideRoot(root, current.relPath)
+  if (!abs) throw new FileMaintenanceError(409, '文件路径越界')
+  try {
+    const physicalRoot = await realpath(root)
+    const physical = await realpath(abs)
+    if (!physical.startsWith(physicalRoot + sep) || !(await lstat(abs)).isFile()) {
+      throw new FileMaintenanceError(409, '恢复必须指向库内原始普通文件')
+    }
+    const before = await stat(abs)
+    const hash = await sha256Of(abs)
+    const after = await stat(abs)
+    if (before.size !== current.bytes || hash !== current.sha256 || before.ino !== after.ino || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) {
+      throw new FileMaintenanceError(409, '文件字节数或哈希不匹配,不能恢复')
+    }
+  } catch (error) {
+    if (error instanceof FileMaintenanceError) throw error
+    throw new FileMaintenanceError(409, '恢复文件不存在或不可读取')
   }
+  return current
+}
 
-  db.update(schema.storedFile)
-    .set({ removedAt: new Date().toISOString() })
-    .where(eq(schema.storedFile.id, id))
-    .run()
+export function restoreVerifiedStoredFile(db: Db, current: StoredFileRow): StoredFileRow {
+  const id = current.id
+  return db.transaction((tx) => {
+    const latest = getStoredFile(tx, id)!
+    if (latest.sha256 !== current.sha256 || latest.bytes !== current.bytes || latest.removedAt !== current.removedAt) {
+      throw new FileMaintenanceError(409, '文件状态已变化,请重新读取')
+    }
+    tx.update(schema.storedFile).set({ removedAt: null }).where(eq(schema.storedFile.id, id)).run()
+    return getStoredFile(tx, id)!
+  })
+}
 
-  return { row: getStoredFile(db, id)!, diskDeleted, referenceCount: refs }
+/** Synchronous soft removal participates in the caller's audit transaction. */
+export function softRemoveStoredFile(db: Db, id: number): StoredFileRow | null {
+  const current = getStoredFile(db, id)
+  if (!current || current.removedAt) return current
+  db.update(schema.storedFile).set({ removedAt: new Date().toISOString() }).where(eq(schema.storedFile.id, id)).run()
+  return getStoredFile(db, id)
 }

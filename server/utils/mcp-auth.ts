@@ -39,6 +39,9 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 export const MCP_WRITE_TOOLS = [
   'save_ocr_result',
   'set_file_category',
+  'update_file',
+  'remove_file',
+  'restore_file',
   'save_parse_result',
   'save_roster_batch',
   'submit_platform_batch',
