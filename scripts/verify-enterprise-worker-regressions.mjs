@@ -90,16 +90,19 @@ async function run(testName, heap) {
       assert.match(output, /FATAL ERROR:.*heap/)
       assert.equal((await fetch(base + '/api/health')).status, 200)
     }
-    const response = await fetch(base + detailPath)
-    assert.equal(response.status, 200, output)
-    const value = await response.json(), raw = value.platform.relations[0].rawFields.original
-    assert.equal(value.platform.relations.length, 1)
-    assert.equal(value.platform.relations[0].id, relation.id)
-    assert.equal(value.platform.relations[0].enterpriseId, null)
-    assert.equal(raw.length, rawSize)
-    assert.equal(createHash('sha256').update(raw).digest('hex'), expectedHash)
-    assert.equal((await fetch(base + '/api/health')).status, 200)
-    assert.equal((await fetch(base + '/api/roster/enterprises')).status, 200)
+    const reads = testName === 'large raw' ? 3 : 1
+    for (let round = 0; round < reads; round++) {
+      const response = await fetch(base + detailPath)
+      assert.equal(response.status, 200, output)
+      const value = await response.json(), raw = value.platform.relations[0].rawFields.original
+      assert.equal(value.platform.relations.length, 1)
+      assert.equal(value.platform.relations[0].id, relation.id)
+      assert.equal(value.platform.relations[0].enterpriseId, null)
+      assert.equal(raw.length, rawSize)
+      assert.equal(createHash('sha256').update(raw).digest('hex'), expectedHash)
+      assert.equal((await fetch(base + '/api/health')).status, 200)
+      assert.equal((await fetch(base + '/api/roster/enterprises')).status, 200)
+    }
     if (testName !== 'large raw') {
       assert.equal((await rpc('list_enterprises', {})).counts.total, 1)
       assert.equal((await rpc('get_enterprise_detail', { enterpriseId: id })).enterprise.enterpriseId, id)
@@ -107,9 +110,10 @@ async function run(testName, heap) {
     await pause(20)
     const ready = events.filter(e => e.kind === 'ready')
     assert.ok(ready.length >= 1)
-    assert.ok(ready.every(e => e.heapLimit === 335544320), JSON.stringify(ready))
+    assert.ok(ready.every(e => e.heapLimit === 318767104), JSON.stringify(ready))
+    if (testName === 'large raw') assert.equal(ready.length, 1, 'repeated reads must reuse the same healthy executor')
     const memories = events.filter(e => e.kind === 'memory')
-    const result = { testName, heap, rawBytes: rawSize, rawHash: expectedHash, cwdIndependent: true, ready,
+    const result = { testName, heap, reads, rawBytes: rawSize, rawHash: expectedHash, cwdIndependent: true, ready,
       peakCombinedHeap: Math.max(...memories.map(e => e.peakHeap)), increment: Math.max(...memories.map(e => e.increment)), conservativeComponentDelta: Math.max(...memories.map(e => e.conservativeComponentDelta)), peakCombinedRss: Math.max(...memories.map(e => e.peakRss)), peakCombinedExternal: Math.max(...memories.map(e => e.peakExternal)), ...(testName === 'fatal allocation' ? { fatalOutput: output } : {}), events }
     if (testName === 'large raw') assert.ok(Math.max(result.increment, result.conservativeComponentDelta) <= 2 * rawSize + 64 * 1024 * 1024, `raw heap budget: ${result.increment}/${result.conservativeComponentDelta}`)
     assert.ok(result.peakCombinedHeap < 1.8 * 1024 ** 3)
