@@ -17,9 +17,10 @@ export type RecordComparisonInput = z.infer<typeof recordComparisonInput>
 export type HistoricalClassification = NonNullable<RecordComparisonInput['classification']>
 export const comparisonSourceCatalogInput = z.object({
   kind: z.enum(['query', 'export_batch', 'official_document']).optional(),
+  ids: z.array(z.number().int().positive()).max(500).optional(),
   page: z.number().int().positive().default(1),
   pageSize: z.number().int().min(1).max(200).default(50),
-}).strict()
+}).strict().refine(input => input.ids === undefined || input.kind !== undefined, { message: 'kind is required for explicit source IDs' })
 export type ComparisonSourceCatalogInput = z.infer<typeof comparisonSourceCatalogInput>
 
 /** Query parameters are repeated or CSV IDs; never silently select every persisted source. */

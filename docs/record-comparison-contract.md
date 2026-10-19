@@ -19,3 +19,53 @@ The `recognized_export` correspondence guard accepts valid current-equivalence `
 ## UI source picker
 
 `GET /api/roster/record-comparison/sources?kind=query|export_batch|official_document&page=1&pageSize=50` returns `{rows,total,page,pageSize,counts,selection:'explicit',completeness:'not_implied_by_catalog'}`. Each row has `kind,id,label,subtitle,titleCode,titleName,observedAt,status,selectable`; query rows also show `rdjb`, archived completeness/fullRange and effective AND conditions; export rows show SHA-256, row count, and replacement ID; official rows show document title, number, date, and path. A failed export batch is visible but not selectable. Query rows, including partial/failed, remain selectable so users can inspect actual coverage. IDs map directly to `queryIds`, `exportBatchIds`, and `officialSourceDocumentIds`. The catalog is paginated in stable ID order and does not preselect a version or imply that listed documents cover a title/year completely.
+
+## Scoped reads (#86)
+
+The source catalog additionally accepts `ids` (repeated/CSV positive IDs, at most
+500), together with a required `kind`. Pagination, `total` and per-kind `counts`
+refer to that ID filter when supplied. Existing calls without `ids` are unchanged.
+Bookmarked selections hydrate their labels through this filter rather than walking
+the entire catalog. Missing IDs leave the selection intact and the existing name
+retry available; the comparison endpoint still validates every selected source.
+
+Comparison reads locate selected query IDs, export batch IDs and document IDs
+before reading their rows. They omit unused raw response/relation/export bodies.
+`asOf` still compares actual timestamp instants and UTC days for date-only sources;
+selected sources outside the cutoff are rejected, never replaced with newer ones.
+Stored proof validation retains its full original fingerprint inputs, including
+selected raw fields, and its source drift rules. Removing an unused field from a
+comparison projection does not remove it from source-bound proof validation.
+
+Global formal event counts and the unresolved events whose official file was not
+selected remain part of the existing response. Their small facts are streamed in
+stable event-ID order. Only visible rows are constructed; all counts precede page
+and classification filters. Selected relation and export observations remain
+complete and unpaginated at their original ID grain. Grouped identity lookups
+preserve duplicate positive observations and never qualify a match without proof.
+
+### Broad comparison follow-up contract (design only)
+
+The frozen synchronous budget covers at most 100 compared records. Existing
+larger requests are neither truncated nor silently changed to a latest source.
+No background-job API is implemented in #86. A separate implementation ticket
+should introduce an opt-in contract before claiming broad-scope SLO compliance:
+
+- `POST /api/roster/record-comparison/jobs` takes the same explicit source set,
+  filters, asOf and proof IDs, plus an idempotency key. Return `202` with a job ID
+  and the frozen input hash; never switch an existing GET into a job implicitly.
+- `GET /.../jobs/:id` reports `queued|running|completed|failed|cancel_requested|cancelled`,
+  phase, completed/total source rows, counters, and a result revision. A result is
+  available only after all selected rows and global counts finish. Result pages
+  retain original IDs/order/qualifications and share one frozen source revision.
+- `POST /.../jobs/:id/cancel` is idempotent. Workers check cancellation between
+  bounded chunks, release the read snapshot and temporary output, and never expose
+  a partial comparison as a complete result. The UI shows progress and a cancel
+  control while retaining the last completed comparison.
+- Proof revocation/source drift before publication makes the job stale or failed;
+  it cannot publish a definitive match from an obsolete source revision. Define
+  snapshot retention, authorization, disk limits and cleanup in that follow-up.
+
+These routes/statuses are a proposed contract, not shipped endpoints or passed
+acceptance. Full title-wide proof fingerprinting and very large selected sources
+still need their own measured budget; a source-ID count is not a record limit.

@@ -423,7 +423,11 @@ export function readRecordCorrespondenceBatch(db: Db, idempotencyKey: string): C
 }
 export function listRecordCorrespondences(db: Db, filter: CorrespondenceFilter = {}): CorrespondenceRead[] {
   const entries = Object.entries(filter).filter(([, value]) => value != null) as [keyof CorrespondenceFilter, string | number][]
-  return db.select().from(schema.recordCorrespondence).all().filter((row) => entries.every(([key, value]) => row[key] === value)).sort((a, b) => a.id - b.id).map((row) => {
+  return readScopedRecordCorrespondences(db, db.select().from(schema.recordCorrespondence).all().filter((row) => entries.every(([key, value]) => row[key] === value)).sort((a, b) => a.id - b.id))
+}
+/** Reuse the existing fingerprint validity rules for a caller's SQL-scoped rows. */
+export function readScopedRecordCorrespondences(db: Db, rows: StoredCorrespondence[]): CorrespondenceRead[] {
+  return rows.map((row) => {
     let requiresRevalidation = false
     if (row.status === 'confirmed') {
       try { requiresRevalidation = sourceForEdge(db, storedEdge(row), true, (row.provenance.comparisonProofIds as number[] | undefined) ?? []).sourceFingerprint !== row.sourceFingerprint }
