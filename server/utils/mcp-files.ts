@@ -8,12 +8,12 @@ import {
   backfillFileParts,
   type PartsBackfillStats,
 } from './file-parts'
+import { maintainStoredFileSync, type FileMaintenanceOptions } from './file-maintenance'
 import { listPdfPages, resolveWithinRoot, type PdfPagesState } from './pdf-pages'
 import {
   backfillFromDisk,
   getStoredFile,
   parseMetadataPatch,
-  updateStoredFile,
   type BackfillExclusion,
   type BackfillReport,
   type FileMetadataPatch,
@@ -321,6 +321,7 @@ export function setFileCategoryForAgent(
   ref: FileRefInput,
   meta: Record<string, unknown>,
   options: FileRefOptions = { allowRemoved: false },
+  maintenanceOptions: FileMaintenanceOptions = {},
 ): { ok: true; row: StoredFileRow } | AgentFailure {
   const found = resolveFileRef(db, ref, options)
   if (!found.ok) return { ok: false, statusCode: 404, message: found.message }
@@ -340,7 +341,9 @@ export function setFileCategoryForAgent(
     return { ok: false, statusCode: 400, message: (error as Error).message }
   }
 
-  const row = updateStoredFile(db, found.row.id, patch)
-  if (!row) return { ok: false, statusCode: 404, message: `文件不存在:id=${found.row.id}` }
-  return { ok: true, row }
+  try {
+    return { ok: true, row: maintainStoredFileSync(db, found.row.id, 'update', patch, maintenanceOptions) }
+  } catch (error) {
+    return { ok: false, statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message }
+  }
 }

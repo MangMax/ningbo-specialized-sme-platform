@@ -1,3 +1,5 @@
+import { legacyFileMaintenanceControlShape } from '../../utils/file-maintenance-contract'
+import { parseFileMaintenanceOptions } from '../../utils/file-maintenance'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
@@ -36,10 +38,12 @@ export default defineMcpTool({
     '`year` / `batch` 是**公布**年份/批次(目录口径、单值),不是文件内容里的年份/批次(那看 `parts`,用 `save_parse_result` 写)。',
     '分类补齐后 `categoryState` 会自动从 `unset` 升为 `set`;清空则会退回 `unset`。返回改后的整行,可直接核对结果。',
     '改不到:`relPath` / `bytes` / `sha256` 等磁盘事实,以及台账记录 —— 那些不在本 tool 的范围内。',
+    '原载荷保留 legacy blind-write 适配：不要求控制字段，不推断操作者或确认依据；实际写入推进维护修订。若提供现代控制字段，四项必须齐全。',
     '**需要鉴权**(Authorization: Bearer <NUXT_MCP_TOKEN>)。',
   ].join('\n'),
   inputSchema: {
     ...fileRefShape,
+    ...legacyFileMaintenanceControlShape,
     source: z.enum(['jxj', 'miit']).nullish().describe('来源;jxj 经信局 / miit 工信部;null 清空'),
     kind: z
       .enum(['announcement', 'export'])
@@ -68,7 +72,7 @@ export default defineMcpTool({
     }
 
     // 写入不接受已移出库的文件(resolveFileRef 的 allowRemoved 默认 false)。
-    const result = setFileCategoryForAgent(db, input, meta)
+    const result = setFileCategoryForAgent(db, input, meta, undefined, parseFileMaintenanceOptions(input))
     if (!result.ok) throw createError({ statusCode: result.statusCode, message: result.message })
     return { file: { ...result.row } }
   },
