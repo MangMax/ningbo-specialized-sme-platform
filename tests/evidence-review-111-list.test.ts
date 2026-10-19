@@ -558,3 +558,25 @@ it('hides the whole pager on a successful single page but keeps it for multiple 
   expect(failed.find('[aria-label="下一页复核项"]').exists()).toBe(true)
   failed.unmount()
 })
+
+it('guards an explicit restart and clears the visible draft only after discard', async () => {
+  mockRoutes(async (url: string) => {
+    if (url === '/api/roster/evidence-impacts') return { rows: [row], nextCursor: null, asOf: {}, projectionReady: true }
+    if (url === '/api/roster/evidence-impacts/4') return detailFor(row)
+    if (url.endsWith('/sources')) return { rows: [], nextCursor: null, asOf: {} }
+    if (url.endsWith('/history')) return { rows: [], total: 0, page: 1, pageSize: 25 }
+    throw new Error('Unexpected request: ' + url)
+  })
+  const view = render(); await flushPromises()
+  await openAndFill(view)
+  await clickText(view, '重新读取清单').trigger('click'); await flushPromises()
+  expect(view.text()).toContain('翻页会丢弃未提交内容')
+  await clickText(view, '继续填写').trigger('click'); await flushPromises()
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toContain('核对新查询')
+  const before = fetcher.mock.calls.filter(call => call[0] === '/api/roster/evidence-impacts').length
+  await clickText(view, '重新读取清单').trigger('click'); await flushPromises()
+  await clickText(view, '重新读取并丢弃').trigger('click'); await flushPromises()
+  expect(view.find('[aria-label="复核依据"]').exists()).toBe(false)
+  expect(fetcher.mock.calls.filter(call => call[0] === '/api/roster/evidence-impacts').length).toBeGreaterThan(before)
+  view.unmount()
+})

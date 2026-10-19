@@ -383,6 +383,8 @@ function previousPage() {
 function restartPage() {
   cursor.value = undefined
   cursors.value = []
+  // 重新读取第一页会重建清单；先收起当前详情，避免丢弃后旧表单值还留在屏上。
+  selected.value = null
   void refetch()
 }
 </script>
