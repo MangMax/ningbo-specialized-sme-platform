@@ -35,12 +35,15 @@ export const platformQueryInputShape = {
 }
 /** Source conditions are checked both here and on original MCP arguments before SDK stripping. */
 const queryInputObject = z.strictObject(platformQueryInputShape)
+export function validRecognizedConditionPairing(q: { whpc?: string; whpcyear?: string; orderField?: string; orderDirection?: string }): boolean {
+  return (!q.whpc || !!q.whpcyear) && Boolean(q.orderField) === Boolean(q.orderDirection)
+}
 export function validPlatformQueryConditions(q: z.infer<typeof queryInputObject>): boolean {
   const hasRecognizedConditions = Object.keys(recognizedConditionShape).some(key => q[key as keyof typeof q] !== undefined)
   if (q.source === 'businessList') return !!q.uscc && q.name === undefined && typeof q.rdjb === 'string' && !hasRecognizedConditions && (q.rdjb !== 'all' || q.startPage === 1)
   if (!q.name && !q.uscc) return false
   if (q.source === 'queryList') return q.rdjb === undefined && !hasRecognizedConditions
-  return (q.rdjb === undefined || Array.isArray(q.rdjb)) && (!q.whpc || !!q.whpcyear) && Boolean(q.orderField) === Boolean(q.orderDirection)
+  return (q.rdjb === undefined || Array.isArray(q.rdjb)) && validRecognizedConditionPairing(q)
 }
 export const platformQueryInputSchema = queryInputObject.refine(validPlatformQueryConditions, { message: 'Invalid conditions for platform source' })
 export type PlatformLiveQueryInput = z.infer<typeof platformQueryInputSchema>

@@ -2583,9 +2583,9 @@ function planPlatformQuery(
     let message = recognizedEvidenceError(evidence)
     if (query.interface !== 'recognized_list') message = 'collectionEvidence=queryBusList cannot be relabeled as a legacy source'
     if (!message && evidence) {
-      const key = evidence.effectiveConditions.uscc ?? `name:${evidence.effectiveConditions.name}`
+      const key = evidence.effectiveConditions.uscc ?? (evidence.effectiveConditions.name ? `name:${evidence.effectiveConditions.name}` : null)
       const expectedTitle = evidence.titleScope.rdjb.length === 1 ? RDJB_TITLE_CODES[evidence.titleScope.rdjb[0]!] : null
-      if (query.queryKey !== key || query.queriedAt !== evidence.queriedAt || (query.rdjb ?? '') !== evidence.titleScope.rdjb.join(',') || (query.titleCode ?? null) !== expectedTitle || query.status !== recognizedStoredStatus(evidence)) message = 'Query identity/status/title must match original collectionEvidence'
+      if ((key !== null && query.queryKey !== key) || query.queriedAt !== evidence.queriedAt || (query.rdjb ?? '') !== evidence.titleScope.rdjb.join(',') || (query.titleCode ?? null) !== expectedTitle || query.status !== recognizedStoredStatus(evidence)) message = 'Query identity/status/title must match original collectionEvidence'
       const relations = Array.isArray(query.relations) ? query.relations : []
       if (query.relations != null && !Array.isArray(query.relations)) message = 'relations must be an array preserving original rows'
       if (relations.length !== evidence.rows.length) message = 'Every original source row must have exactly one relation'

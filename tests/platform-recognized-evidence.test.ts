@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { useDb } from '../db'
+import { schema, useDb } from '../db'
 import { createRosterImportClient } from '../lib/roster-import-client'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 import { runPlatformLiveQuery } from '../server/utils/platform-live-query'
@@ -24,7 +24,15 @@ beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir, curatedPath: join(dir, 'absent-curated.json'), reconcilePath: join(dir, 'absent-reconcile.json') }))
   const queriesRoute = (await import('../server/api/platform/queries.get')).default
   const comparisonRoute = (await import('../server/api/comparison.get')).default
+  const { handleComparisonScopeProofRequest } = await import('../server/utils/comparison-scope-proof-api')
+  const { parseUploadDeclaration, registerStoredFile } = await import('../server/utils/stored-files-upload')
+  const { parseRecordComparisonQuery } = await import('../lib/roster/record-comparison')
+  const { getRecordComparison } = await import('../server/utils/record-comparison')
+  const { resolveVerifiedComparisonEvidence } = await import('../server/utils/comparison-scope-proof')
   api = await startEvidenceServer({ db, apiToken: token, routes: {
+    '/api/files/register': async req => { const registered = await registerStoredFile(db, dir, parseUploadDeclaration(req.body)); return { status: registered.created ? 201 : 200, body: registered.row } },
+    '/api/roster/comparison-scope-proofs/preflight': req => handleComparisonScopeProofRequest({ action: 'preflight', method: req.method, body: req.body, headers: req.headers }, { db, apiToken: token }),
+    '/api/roster/comparison-scope-proofs/commit': req => handleComparisonScopeProofRequest({ action: 'commit', method: req.method, body: req.body, headers: req.headers }, { db, apiToken: token }),
     '/api/platform/query': async req => ({ status: 200, body: await runPlatformLiveQuery(req.body, {
       cookie: 'session=synthetic-recognized-session', transport: { fetchImpl: async (_url, init) => {
         const form = new URLSearchParams(init.body)
@@ -36,6 +44,7 @@ beforeAll(async () => {
   }, getRoutes: {
     '/api/comparison': url => comparisonRoute({ query: Object.fromEntries(url.searchParams) } as never),
     '/api/platform/queries': url => queriesRoute({ query: Object.fromEntries(url.searchParams) } as never),
+    '/api/roster/record-comparison': url => { const input = parseRecordComparisonQuery(Object.fromEntries(url.searchParams)); return getRecordComparison(db, input, resolveVerifiedComparisonEvidence(db, input.proofIds ?? [], input)) },
   } })
   client = createRosterImportClient({ baseUrl: api.baseUrl, token })
 })
@@ -51,10 +60,22 @@ function archive(): PlatformLiveQueryResult {
     limits: { pageSize: 1, maxRequests: 100, maxRows: 5000, maxDurationMs: 60000 },
   }
 }
+function titleWideArchive(): PlatformLiveQueryResult {
+  const evidence = archive()
+  evidence.effectiveConditions = { combination: 'and' }
+  evidence.titleScope = { mode: 'selected', rdjb: ['2'] }
+  evidence.pages = [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, maxPage: 1, error: null }]
+  evidence.rows = evidence.rows.slice(0, 1)
+  evidence.fetchedCount = 1
+  evidence.declaredTotal = 1
+  evidence.queriedAt = '2026-10-18T02:24:00.000Z'
+  evidence.completedAt = '2026-10-18T02:25:00.000Z'
+  return evidence
+}
 function request(result = archive(), key = 'archive-complete') {
   return {
     idempotencyKey: key, sourceKind: 'alias_evidence' as const, sourceIdentity: 'synthetic-archive',
-    payload: { platformQueries: [{ interface: 'recognized_list', queryKey: USCC, rdjb: '1,2,3', queriedAt: result.queriedAt, status: result.status, collectionEvidence: result,
+    payload: { platformQueries: [{ interface: 'recognized_list', queryKey: USCC, rdjb: result.titleScope.rdjb.join(','), titleCode: result.titleScope.rdjb.length === 1 ? { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }[result.titleScope.rdjb[0]!] : null, queriedAt: result.queriedAt, status: result.status, collectionEvidence: result,
       relations: result.rows.map((rawFields, i) => ({ sequenceNo: i + 1, relationKey: rawFields.id, usccRaw: rawFields.tyshxydm, nameRaw: rawFields.qymc, rawFields })),
     }] },
   }
@@ -344,4 +365,105 @@ it.each(['uscc', 'name'] as const)('archive-before-master %s query preserves eve
     expect(await readHistory()).toEqual(archived)
     expect(detail.differences).toEqual([expect.objectContaining({ explanationId: null, status: 'not_queried', reasonCode: null })])
   } finally { await restApi.close() }
+})
+
+it('imports a complete title-wide recognized archive through public preflight and commit', async () => {
+  const evidence = titleWideArchive()
+  const req = request(evidence, 'title-wide-complete')
+  req.payload.platformQueries[0]!.queryKey = 'synthetic-title-wide-archive'
+  const preflight = await client.preflight(req as never)
+  expect(preflight.preflight.conflicts).toEqual([])
+  expect((await client.commit(req as never)).status).toBe('committed')
+  const read = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&queryKey=synthetic-title-wide-archive`)).json()
+  expect(read.total).toBe(1)
+  expect(read.rows[0].query.collectionEvidence).toEqual(evidence)
+  expect(read.rows[0].relations[0]).toMatchObject({ sequenceNo: 1, sourceRdjb: '2', sourcePage: 1, rawFields: evidence.rows[0] })
+})
+it('preserves title-wide zero and partial archives through public import', async () => {
+  const { recognizedResultToImport } = await import('../lib/platform/recognized-evidence')
+  const zero = titleWideArchive()
+  zero.queriedAt = '2026-10-18T03:00:00.000Z'; zero.completedAt = '2026-10-18T03:01:00.000Z'
+  zero.status = 'no_record'; zero.rows = []; zero.fetchedCount = 0; zero.declaredTotal = 0
+  zero.pages = [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, maxPage: 1, error: null }]
+  const partial = titleWideArchive()
+  partial.queriedAt = '2026-10-18T04:00:00.000Z'; partial.completedAt = '2026-10-18T04:01:00.000Z'
+  partial.effectiveConditions = { combination: 'and', whpcyear: '2024', whpc: '2', sqsj: '2024/02/01 - 2024/02/29', orderField: 'qymc', orderDirection: 'asc' }
+  partial.status = 'partial'; partial.completeness = 'partial'; partial.declaredTotal = 2
+  partial.pages = [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 2, maxPage: 2, error: null }]
+  partial.unfinished = [{ source: 'queryBusList', rdjb: '2', page: 2 }]
+  for (const [index, evidence] of [zero, partial].entries()) {
+    const item = recognizedResultToImport(evidence)
+    expect(item.queryKey).toMatch(/^scope:queryBusList:2:/)
+    expect(item.queryKey).not.toContain('undefined')
+    const req = { ...request(evidence, `title-wide-state-${index}`), payload: { platformQueries: [item] } }
+    expect((await client.preflight(req)).preflight.conflicts).toEqual([])
+    expect((await client.commit(req)).status).toBe('committed')
+    const read = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${encodeURIComponent(item.queryKey)}`)).json()
+    expect(read.rows.find((row: any) => row.query.queriedAt === evidence.queriedAt).query.collectionEvidence).toEqual(evidence)
+  }
+})
+it('rejects malformed title-wide conditions, title scope and page proof through public preflight and commit', async () => {
+  const invalid: Array<(evidence: PlatformLiveQueryResult) => void> = [
+    evidence => { (evidence.effectiveConditions as any).unexpectedFilter = '1' },
+    evidence => { evidence.effectiveConditions.sqsj = '2026/02/30 - 2026/03/01' },
+    evidence => { evidence.effectiveConditions.whpc = '2' },
+    evidence => { evidence.effectiveConditions.orderField = 'qymc' },
+    evidence => { evidence.titleScope.rdjb = ['2', '2'] },
+    evidence => { evidence.pages[0]!.page = 2 },
+    evidence => { evidence.pages[0]!.fetchedCount = 2 },
+  ]
+  for (const [index, mutate] of invalid.entries()) {
+    const evidence = titleWideArchive()
+    evidence.queriedAt = `2026-10-19T${String(index).padStart(2, '0')}:00:00.000Z`
+    evidence.completedAt = `2026-10-19T${String(index).padStart(2, '0')}:01:00.000Z`
+    mutate(evidence)
+    const req = request(evidence, `title-wide-invalid-${index}`)
+    req.payload.platformQueries[0]!.queryKey = `synthetic-title-wide-invalid-${index}`
+    const plan = await client.preflight(req as never)
+    expect(plan.preflight.conflicts.length, `case ${index}`).toBeGreaterThan(0)
+    expect((await client.commit(req as never)).status, `case ${index}`).toBe('failed')
+  }
+})
+it('a publicly saved title-wide archive can register current equivalence and qualify public comparison', async () => {
+  const evidence = titleWideArchive()
+  evidence.queriedAt = '2026-10-18T05:00:00.000Z'; evidence.completedAt = '2026-10-18T05:01:00.000Z'
+  const item = (await import('../lib/platform/recognized-evidence')).recognizedResultToImport(evidence)
+  expect((await client.commit({ idempotencyKey: 'proof-title-wide-query', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/proof/query', payload: { platformQueries: [item] } })).status).toBe('committed')
+  const queryRead = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${encodeURIComponent(item.queryKey)}`)).json()
+  const queryId = queryRead.rows.find((row: any) => row.query.queriedAt === evidence.queriedAt).query.id as number
+
+  const official = await client.commit({ idempotencyKey: 'proof-title-wide-official', sourceKind: 'announcement', sourceIdentity: 'synthetic/proof/official', payload: { announcement: {
+    sourceDocument: { source: 'jxj', title: '合成公布文件' }, records: [{ enterprise: { name: '合成企业', uscc: USCC }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2024 }] }],
+  } } })
+  expect(official.status).toBe('committed')
+  const documentId = db.select().from(schema.sourceDocument).all().find(row => row.path === 'synthetic/proof/official')!.id
+  const exported = await client.commit({ idempotencyKey: 'proof-title-wide-export', sourceKind: 'platform_export', sourceIdentity: 'synthetic/proof/export', payload: { exportSnapshot: {
+    titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'synthetic-proof-export.xlsx', sha256: 'b'.repeat(64),
+    rows: [{ sourceRowNo: 3, usccRaw: USCC, nameRaw: '合成企业' }],
+  } } })
+  expect(exported.status).toBe('committed')
+  const exportBatchId = db.select().from(schema.platformExportBatch).all().find(row => row.originalFilename === 'synthetic-proof-export.xlsx')!.id
+
+  mkdirSync(join(dir, 'miit', 'export'), { recursive: true })
+  writeFileSync(join(dir, 'miit', 'export', 'synthetic-proof-freeze.txt'), 'synthetic archived freeze')
+  const registered = await fetch(`${api.baseUrl}/api/files/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relPath: 'miit/export/synthetic-proof-freeze.txt', source: 'miit', kind: 'export' }) })
+  expect(registered.status).toBe(201)
+  const freeze = await registered.json()
+  const proofRequest = { idempotencyKey: 'proof-title-wide-equivalence', sourceIdentity: 'synthetic/proof/equivalence', actor: { type: 'agent', id: 'synthetic-agent' }, basis: 'Synthetic archived query and export share an attested account, region and collection window', ruleId: 'manual-review', ruleVersion: '1', operations: [{ action: 'create', kind: 'current_source_equivalence', status: 'confirmed', evidence: {
+    queryId, exportBatchId, titleCode: 'specialized_sme', queryReference: 'platform_query.collectionEvidence', exportReference: 'platform_export_batch.sha256',
+    scope: { queryAccount: 'synthetic-account', exportAccount: 'synthetic-account', queryRegion: 'synthetic-region', exportRegion: 'synthetic-region', queryFilters: { combination: 'and' }, exportFilters: { combination: 'and' }, windowStart: '2026-10-18T00:00:00.000Z', windowEnd: '2026-10-18T23:59:59.000Z', platformVersion: 'synthetic-v1', freezeReference: freeze.relPath, freezeFileId: freeze.id, freezeSha256: freeze.sha256 },
+  } }] }
+  const proofPost = (action: string, body: unknown) => fetch(`${api.baseUrl}/api/roster/comparison-scope-proofs/${action}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) })
+  const preflight = await proofPost('preflight', proofRequest)
+  expect(preflight.status).toBe(200)
+  const plan = await preflight.json()
+  expect(plan.planHash).toMatch(/^[a-f0-9]{64}$/)
+  const committed = await proofPost('commit', { request: proofRequest, planHash: plan.planHash })
+  expect(committed.status).toBe(200)
+  const proofId = (await committed.json()).proofIds[0] as number
+  const sources = `queryIds=${queryId}&exportBatchIds=${exportBatchId}&officialSourceDocumentIds=${documentId}`
+  const before = await (await fetch(`${api.baseUrl}/api/roster/record-comparison?${sources}`)).json()
+  expect(before.currentSourceConsistency.recognizedObservations[0].qualification).toBe('not_comparable')
+  const qualified = await (await fetch(`${api.baseUrl}/api/roster/record-comparison?${sources}&proofIds=${proofId}`)).json()
+  expect(qualified.currentSourceConsistency.recognizedObservations[0].qualification).toBe('matched')
 })
