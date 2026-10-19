@@ -29,7 +29,7 @@ const source = (db: ProofExecutor, kind: 'official_coverage' | 'current_source_e
 const requestHash = (request: ProofRequest) => fingerprint(request)
 
 function auditRows(db: ProofExecutor, proofId: number) {
-  return db.select().from(schema.comparisonScopeProofAudit).all().filter(row => row.proofId === proofId).sort((a, b) => a.id - b.id)
+  return db.select().from(schema.comparisonScopeProofAudit).where(eq(schema.comparisonScopeProofAudit.proofId, proofId)).orderBy(schema.comparisonScopeProofAudit.id).all()
 }
 function state(db: ProofExecutor, proofId: number) {
   const latest = auditRows(db, proofId).at(-1)
@@ -114,14 +114,27 @@ export function commitComparisonScopeProofs(db: Db, request: ProofRequest, planH
   })
 }
 
-export function readComparisonScopeProof(db: ProofExecutor, proofId: number) {
+function observeComparisonScopeProof(db: ProofExecutor, proofId: number, selected?: { queryIds: number[]; exportBatchIds: number[]; officialSourceDocumentIds: number[]; asOf?: string }) {
   const row = db.select().from(schema.comparisonScopeProof).where(eq(schema.comparisonScopeProof.id, proofId)).get()
   if (!row) return null
   const last = state(db, proofId)
+  // A non-qualifying or unselected proof must not cause another archive to load.
+  if (selected) {
+    if (last?.status !== 'confirmed' || selected.asOf && last.decidedAt && Date.parse(last.decidedAt) > Date.parse(selected.asOf)) return null
+    if (row.kind === 'official_coverage') {
+      if (!(row.evidence as OfficialEvidence).sourceDocuments.every(ref => selected.officialSourceDocumentIds.includes(ref.id))) return null
+    } else {
+      const evidence = row.evidence as CurrentEvidence
+      if (!selected.queryIds.includes(evidence.queryId) || !selected.exportBatchIds.includes(evidence.exportBatchId)) return null
+    }
+  }
   let observed: ReturnType<typeof source> | null = null
   try { observed = source(db, row.kind, row.evidence as OfficialEvidence | CurrentEvidence) } catch (error) { if (!(error instanceof ProofSourceError)) throw error }
   const valid = last?.status === 'confirmed' && observed?.sourceFingerprint === row.sourceFingerprint
-  return { id: row.id, kind: row.kind, evidence: row.evidence, sourceFingerprint: row.sourceFingerprint, sourceSummary: observed?.sourceSummary ?? null, createdAt: row.createdAt, status: last?.status ?? 'candidate', revision: last?.revision ?? 0, decidedAt: last?.decidedAt ?? null, valid: Boolean(valid), invalidReason: !observed || observed.sourceFingerprint !== row.sourceFingerprint ? 'source_drift_or_missing' : null }
+  return { observed, row: { id: row.id, kind: row.kind, evidence: row.evidence, sourceFingerprint: row.sourceFingerprint, sourceSummary: observed?.sourceSummary ?? null, createdAt: row.createdAt, status: last?.status ?? 'candidate', revision: last?.revision ?? 0, decidedAt: last?.decidedAt ?? null, valid: Boolean(valid), invalidReason: !observed || observed.sourceFingerprint !== row.sourceFingerprint ? 'source_drift_or_missing' : null } }
+}
+export function readComparisonScopeProof(db: ProofExecutor, proofId: number) {
+  return observeComparisonScopeProof(db, proofId)?.row ?? null
 }
 export function listComparisonScopeProofs(db: ProofExecutor, filter: { kind?: 'official_coverage' | 'current_source_equivalence'; status?: ProofStatus } = {}) {
   return db.select().from(schema.comparisonScopeProof).all().filter(row => !filter.kind || row.kind === filter.kind).map(row => readComparisonScopeProof(db, row.id)!).filter(row => !filter.status || row.status === filter.status)
@@ -137,7 +150,8 @@ export function resolveVerifiedComparisonEvidence(db: ProofExecutor, proofIds: n
   const officialScopes: Array<{ proofId: string; sourceDocumentIds: number[]; titleCode: string; fromYear: number; throughYear: number; enterpriseIds: number[] | null; verifiedAt: string }> = []
   const currentScopes: Array<{ proofId: string; queryId: number; exportBatchId: number; titleCode: string; querySourceFingerprint: string; exportSha256: string; scopeEquivalent: true; versionEquivalent: true; verifiedAt: string }> = []
   for (const id of [...new Set(proofIds)]) {
-    const row = readComparisonScopeProof(db, id)
+    const observation = observeComparisonScopeProof(db, id, selected)
+    const row = observation?.row
     if (!row || !row.valid || row.status !== 'confirmed' || selected?.asOf && row.decidedAt && Date.parse(row.decidedAt) > Date.parse(selected.asOf)) continue
     if (row.kind === 'official_coverage') {
       const evidence = row.evidence as OfficialEvidence
@@ -146,7 +160,8 @@ export function resolveVerifiedComparisonEvidence(db: ProofExecutor, proofIds: n
     } else {
       const evidence = row.evidence as CurrentEvidence
       if (selected && (!selected.queryIds.includes(evidence.queryId) || !selected.exportBatchIds.includes(evidence.exportBatchId))) continue
-      const observed = currentSource(db, evidence)
+      const observed = observation?.observed
+      if (!observed || !('querySourceFingerprint' in observed)) continue
       currentScopes.push({ proofId: String(id), queryId: evidence.queryId, exportBatchId: evidence.exportBatchId, titleCode: evidence.titleCode, querySourceFingerprint: observed.querySourceFingerprint, exportSha256: observed.exportSha256, scopeEquivalent: true, versionEquivalent: true, verifiedAt: row.decidedAt! })
     }
   }

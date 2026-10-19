@@ -83,6 +83,36 @@ beforeAll(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('listPlatformQueries:逐条保留 + 四态可分', () => {
+  it('summary identifies omitted evidence explicitly and an exact query ID retains every relation', () => {
+    const id = query({ queryKey: 'summary-only', rawResponse: '完整原文🙂' })
+    relation(id, 2, { rawFields: { original: '第二条🙂' } })
+    relation(id, 1, { rawFields: { original: '第一条' } })
+    const result = listPlatformQueries(db, { queryId: id, view: 'summary' })
+    expect(result.total).toBe(1)
+    expect(result.rows[0]).toMatchObject({ relationsIncluded: false, relations: [], query: { id, relationCount: 2 } })
+    expect(result.rows[0]!.query).not.toHaveProperty('collectionEvidence')
+    expect(result.rows[0]!.query).not.toHaveProperty('rawResponse')
+    const full = listPlatformQueries(db, { queryId: id, includeRawResponse: true })
+    expect(full.rows[0]!.query.rawResponse).toBe('完整原文🙂')
+    expect(full.rows[0]!.relations.map(r => r.rawFields)).toEqual([{ original: '第一条' }, { original: '第二条🙂' }])
+    expect(listPlatformQueries(db, { queryId: id, status: 'failed' }).total).toBe(0)
+    db.$client.prepare('delete from platform_query where id = ?').run(id)
+  })
+  it('a fixed page never parses unrelated collection evidence and counts keep the filtered scope', () => {
+    const old = query({ queryKey: 'bounded-page', queriedAt: '2000-01-01', status: 'partial' })
+    // An unrelated historic payload must not enter the JSON decoder for this page.
+    db.$client.prepare('update platform_query set collection_evidence = ? where id = ?').run('{unreadable historic archive', old)
+    const first = query({ queryKey: 'bounded-page', queriedAt: '2030-01-01', status: 'success' })
+    const second = query({ queryKey: 'bounded-page', rdjb: '2', queriedAt: '2030-01-01', status: 'failed' })
+    const result = listPlatformQueries(db, { queryKey: 'bounded-page', pageSize: 1 })
+    expect(result.rows.map(row => row.query.id)).toEqual([second])
+    expect(result.counts).toEqual({ partial: 1, success: 1, failed: 1 })
+    expect(result.total).toBe(3)
+    expect(listPlatformQueries(db, { queryKey: 'bounded-page', pageSize: 1, page: 2 }).rows[0]!.query.id).toBe(first)
+    expect(listPlatformQueries(db, { queryKey: 'bounded-page', status: 'failed' }).counts).toEqual({ failed: 1 })
+    expect(listPlatformQueries(db, { queryKey: 'bounded-page', page: 10 }).rows).toEqual([])
+    db.$client.prepare('delete from platform_query where query_key = ?').run('bounded-page')
+  })
   it('一个 USCC 的查询各自成行,rdjb=3 的 6 条关系逐条在、按 sequenceNo 排', () => {
     const result = listPlatformQueries(db, { queryKey: USCC })
     const rdjb3 = result.rows.find((row) => row.query.interface === 'business_list' && row.query.rdjb === '3' && row.query.status === 'success')!

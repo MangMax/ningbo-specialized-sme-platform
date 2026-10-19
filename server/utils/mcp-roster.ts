@@ -53,7 +53,11 @@ function pageOf(input: { page?: number; pageSize?: number }): { page: number; pa
  * 所有筛选、首次认定字段和计数都由 REST 共用读模型计算，避免 MCP 与 UI/HTTP 结果分叉。
  */
 export function listEnterprises(db: Db, input: ListEnterprisesInput = {}): ListEnterprisesResult {
-  return listRosterEnterprises(db, {
+  return listRosterEnterprises(db, enterpriseListFilter(input))
+}
+
+export function enterpriseListFilter(input: ListEnterprisesInput = {}) {
+  return {
     q: input.q,
     title: input.title == null ? undefined : Array.isArray(input.title) ? input.title : [input.title],
     district: input.district,
@@ -62,7 +66,7 @@ export function listEnterprises(db: Db, input: ListEnterprisesInput = {}): ListE
     firstStatus: input.firstStatus,
     page: input.page,
     pageSize: input.pageSize,
-  })
+  }
 }
 
 export interface ListDifferencesInput {

@@ -55,7 +55,7 @@ export async function startEvidenceServer(options: EvidenceServerOptions): Promi
   // 读侧的处理器直接返回响应体;抛异常由底座翻成对应状态码(与旧夹具同口径)。
   const getRoutes: Record<string, FixtureHandler> = {}
   for (const [path, handler] of Object.entries(options.getRoutes)) {
-    getRoutes[path] = (request) => ({ status: 200, body: handler(request.url) })
+    getRoutes[path] = async (request) => ({ status: 200, body: await handler(request.url) })
   }
 
   return startHttpFixture({

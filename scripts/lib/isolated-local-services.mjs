@@ -35,6 +35,10 @@ export async function reserveLoopbackPort(requestedPort = 0) {
   return port
 }
 
+/**
+ * @param {string} url
+ * @param {{ timeoutMs?: number, child?: import('node:child_process').ChildProcess }} [options]
+ */
 export async function waitForHttp(url, { timeoutMs = 60_000, child } = {}) {
   const deadline = Date.now() + timeoutMs
   let lastError

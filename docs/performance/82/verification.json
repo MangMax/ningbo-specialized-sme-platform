@@ -1,0 +1,71 @@
+{
+  "baselineApplicationHead": "d198a09f5a6fab2d5358d442d1b6ce47670c7506",
+  "investigationCommit": "0bb678dae601e3c7f8cc1c84927a9f16a4e6ce2a",
+  "mergedParentTip": "8b3a495e36c5bc17806c4ca86993b603555abe5a",
+  "checkedMergeHead": "ec3cbbfb52238a145081f7f34d5d74a977553362",
+  "researchOnlyWorkingChangesDuringChecks": [
+    "docs/performance/82/README.md",
+    "docs/performance/82/report.md",
+    "scripts/perf-82/inventory.mjs"
+  ],
+  "checks": [
+    {
+      "command": "pnpm test --maxWorkers=2",
+      "phase": "baseline application",
+      "passedFiles": 137,
+      "skippedFiles": 2,
+      "passedTests": 2063,
+      "skippedTests": 11,
+      "exit": 0
+    },
+    {
+      "command": "ROSTER_IMPORT_SCALE=1 pnpm vitest run tests/roster-import-scale.test.ts --maxWorkers=1",
+      "phase": "baseline application",
+      "passedTests": 4,
+      "exit": 0
+    },
+    {
+      "command": "pnpm test --maxWorkers=2",
+      "phase": "merged application",
+      "passedFiles": 141,
+      "skippedFiles": 2,
+      "passedTests": 2083,
+      "skippedTests": 11,
+      "durationSeconds": 89.65,
+      "exit": 0
+    },
+    {
+      "command": "pnpm typecheck",
+      "phase": "baseline and merged application",
+      "exit": 0
+    },
+    {
+      "command": "NODE_OPTIONS=--max-old-space-size=2048 pnpm build",
+      "phase": "baseline and merged application",
+      "mergedBuildSeconds": 11,
+      "exit": 0
+    },
+    {
+      "command": "node scripts/perf-82/public.mjs PRIVATE_DB NEW_OUTPUT PRIVATE_DIR PRIVATE_SELECTORS",
+      "phase": "baseline and merged application, separate outputs",
+      "requestsEach": 96,
+      "batchesEach": 36,
+      "httpMcpParsedResultEquality": true,
+      "exit": 0
+    },
+    {
+      "command": "node scripts/perf-82/run.mjs --scenarios=platform_page,platform_key,event_id,relation_id,candidates,correspondence_page --concurrency=1 --rounds=1 (private paths)",
+      "phase": "merged application compatibility only",
+      "requests": 12,
+      "exit": 0
+    }
+  ],
+  "limits": [
+    "Baseline JSON artifacts remain bound to d198a09, not merged optimizations.",
+    "Merged read-only HTTP/MCP used the old schema snapshot without migration0013; not an optimized-index resource acceptance.",
+    "5x full dataset/matrix not run: explicit disk-capacity refusal retained in fixtures.json.",
+    "Initial full test attempt had timeouts and was interrupted; failed files and complete suite later passed without test changes.",
+    "External OCR/platform jobs, desktop/390px, strict container/long-run/multiprocess recovery and 4 missing source files remain unverified."
+  ],
+  "privateEvidenceRoot": "/tmp/ningbo-perf-81-89/evidence82"
+}

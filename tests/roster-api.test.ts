@@ -1,3 +1,4 @@
+import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,13 +41,13 @@ function seed(name: string, uscc: string | null, district: string | null, titleC
   return id
 }
 
-let handlerEnterprises: (event: unknown) => {
+let handlerEnterprises: (event: unknown) => Promise<{
   rows: { enterpriseId: number; name: string; titles: string[]; aliasNames: string[] }[]
   counts: { total: number; titlePairs: number; titles: Record<string, number> }
   page: number
   pageSize: number
-}
-let handlerDetail: (event: unknown) => unknown
+}>
+let handlerDetail: (event: unknown) => Promise<unknown>
 let handlerDifferences: (event: unknown) => {
   rows: {
     enterpriseId: number
@@ -129,8 +130,8 @@ beforeAll(async () => {
     })
     .run()
 
-  handlerEnterprises = (await import('../server/api/roster/enterprises.get')).default as unknown as typeof handlerEnterprises
-  handlerDetail = (await import('../server/api/roster/enterprises/[id].get')).default as unknown as typeof handlerDetail
+  handlerEnterprises = decodeJsonRead((await import('../server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
+  handlerDetail = decodeJsonRead((await import('../server/api/roster/enterprises/[id].get')).default) as unknown as typeof handlerDetail
   handlerDifferences = (await import('../server/api/roster/differences.get')).default as unknown as typeof handlerDifferences
   handlerExport = (await import('../server/api/roster/export.get')).default as unknown as typeof handlerExport
 })
@@ -138,9 +139,9 @@ beforeAll(async () => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('GET /api/roster/enterprises(契约 §7.1)', () => {
-  it('不筛 = 全部;响应信封是 rows / counts / page / pageSize', () => {
+  it('不筛 = 全部;响应信封是 rows / counts / page / pageSize', async () => {
     query = {}
-    const out = handlerEnterprises({})
+    const out = (await handlerEnterprises({}))
     expect(out.rows.length).toBe(3)
     expect(Object.keys(out).sort()).toEqual(['counts', 'page', 'pageSize', 'rows'])
     expect(out.page).toBe(1)
@@ -151,35 +152,35 @@ describe('GET /api/roster/enterprises(契约 §7.1)', () => {
     expect(out.counts.titles).toMatchObject({ specialized_sme: 2, innovative_sme: 1 })
   })
 
-  it('q 命中现名或**已确认**曾用名', () => {
+  it('q 命中现名或**已确认**曾用名', async () => {
     query = { q: '宁波接口测试厂' }
-    expect(handlerEnterprises({}).rows.map((r) => r.enterpriseId)).toEqual([enterpriseId])
+    expect((await handlerEnterprises({})).rows.map((r) => r.enterpriseId)).toEqual([enterpriseId])
     query = { q: '接口测试股份有限公司' }
-    expect(handlerEnterprises({}).rows.map((r) => r.enterpriseId)).toEqual([enterpriseId])
+    expect((await handlerEnterprises({})).rows.map((r) => r.enterpriseId)).toEqual([enterpriseId])
     query = {}
   })
 
-  it('title / district / rosterState 均可筛,title 认逗号分隔与重复参数', () => {
+  it('title / district / rosterState 均可筛,title 认逗号分隔与重复参数', async () => {
     query = { title: 'specialized_sme' }
-    expect(handlerEnterprises({}).rows.map((r) => r.enterpriseId).sort()).toEqual([enterpriseId, sideOnlyId].sort())
+    expect((await handlerEnterprises({})).rows.map((r) => r.enterpriseId).sort()).toEqual([enterpriseId, sideOnlyId].sort())
     query = { title: 'specialized_sme,innovative_sme' }
-    expect(handlerEnterprises({}).rows).toHaveLength(3)
+    expect((await handlerEnterprises({})).rows).toHaveLength(3)
     query = { title: ['specialized_sme', 'innovative_sme'] }
-    expect(handlerEnterprises({}).rows).toHaveLength(3)
+    expect((await handlerEnterprises({})).rows).toHaveLength(3)
     query = { district: '鄞州区' }
-    expect(handlerEnterprises({}).rows.map((r) => r.enterpriseId)).toEqual([enterpriseId])
+    expect((await handlerEnterprises({})).rows.map((r) => r.enterpriseId)).toEqual([enterpriseId])
     query = { rosterState: 'removed_platform_only' }
-    expect(handlerEnterprises({}).rows).toEqual([])
+    expect((await handlerEnterprises({})).rows).toEqual([])
     query = {}
   })
 
-  it('分页参数生效,非法值退回默认而不是报错', () => {
+  it('分页参数生效,非法值退回默认而不是报错', async () => {
     query = { pageSize: '1' }
-    expect(handlerEnterprises({}).rows).toHaveLength(1)
+    expect((await handlerEnterprises({})).rows).toHaveLength(1)
     query = { pageSize: '1', page: '3' }
-    expect(handlerEnterprises({}).rows).toHaveLength(1)
+    expect((await handlerEnterprises({})).rows).toHaveLength(1)
     query = { pageSize: 'abc', page: '0' }
-    const fallback = handlerEnterprises({})
+    const fallback = (await handlerEnterprises({}))
     expect(fallback.page).toBe(1)
     expect(fallback.pageSize).toBe(50)
     query = {}
@@ -195,9 +196,9 @@ describe('GET /api/roster/enterprises(契约 §7.1)', () => {
 })
 
 describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
-  it('返回 detail 的七段(enterprise / aliases / records / events / evidence / recognitions / differences / platform)', () => {
+  it('返回 detail 的七段(enterprise / aliases / records / events / evidence / recognitions / differences / platform)', async () => {
     routerParam = String(enterpriseId)
-    const out = handlerDetail({}) as Record<string, unknown>
+    const out = (await handlerDetail({})) as Record<string, unknown>
     expect(Object.keys(out).sort()).toEqual([
       'aliases',
       'differences',
@@ -213,9 +214,9 @@ describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
     expect((out.records as unknown[]).length).toBe(2)
   })
 
-  it('没有这个企业 ⇒ 404;id 不是数字 ⇒ 400', () => {
+  it('没有这个企业 ⇒ 404;id 不是数字 ⇒ 400', async () => {
     routerParam = '999999'
-    expect(() => handlerDetail({})).toThrowError(/not found/)
+    await expect(handlerDetail({})).rejects.toThrowError(/not found/)
     routerParam = 'abc'
     expect(() => handlerDetail({})).toThrowError(/invalid id/)
     routerParam = undefined

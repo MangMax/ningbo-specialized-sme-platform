@@ -613,6 +613,9 @@ export const platformQuery = sqliteTable(
     // 同接口 + 同查询键 + 同 rdjb + 同一时点 = 同一次查询(重放幂等);不同时点各自留档。
     uniqueIndex('platform_query_identity_uq').on(t.interface, t.queryKey, t.rdjb, t.queriedAt),
     index('platform_query_key_idx').on(t.queryKey),
+    // #87: narrow covering scans for counts and stable latest/deep pages.
+    index('platform_query_status_time_idx').on(t.status, t.queriedAt, t.id),
+    index('platform_query_time_idx').on(t.queriedAt, t.id),
   ],
 )
 
@@ -696,6 +699,8 @@ export const platformRelation = sqliteTable(
     uniqueIndex('platform_relation_query_seq_uq').on(t.queryId, t.sequenceNo),
     index('platform_relation_enterprise_idx').on(t.enterpriseId),
     index('platform_relation_relation_key_idx').on(t.relationKey),
+    // #83 USCC filtering discovers query IDs without scanning original relation bodies.
+    index('platform_relation_uscc_query_idx').on(t.usccRaw, t.queryId),
   ],
 )
 
