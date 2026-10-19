@@ -140,7 +140,7 @@ legacy调用保留旧**盲写**语义，旧客户端没有预期版本检查、�
 - `git diff 4f910f6..HEAD --check`：通过。
 
 最终日志为`final-tests.log`、`final-typecheck.log`、`final-build.log`，
-源码SHA独立记录在`final-source-sha.txt`。后续仅补本文验收记录，不改变已测执行源码。
+源码SHA独立记录在`final-source-sha.txt`。该次验收记录提交只修改文档；后续兼容修复的执行源码及验证见末节。
 本次没有运行全仓套件；集成父代理负责全规格门禁与审核。
 
 ## 性能敏感路径与限制
@@ -156,7 +156,7 @@ OCR读取或全库回填。历史列表为(file_id,id)索引游标及显式轻�
 这是定向合成样本，不是完整业务分布1x/2x/5x、容量验收或受控1vCPU/4GiB保证。
 未运行生产写入、部署、全规模性能对照、浏览器/UI或长时间混合负载；本票不改UI。
 
-最终源码提交 `6714827799d31e23701b6bbb7908289253e44133` 的同一用例观测：
+初版已测源码提交 `6714827799d31e23701b6bbb7908289253e44133` 的同一用例观测：
 Node24.22.0/macOS27.0.1/Apple M4，无容器限额、存在其他并行工作。
 1000条无关出处档，5组HTTP状态+历史页合计耗时中位数13.658ms，范围8.969–32.761ms；
 5000条档，中位数20.333ms，范围9.168–24.985ms。每组含两次请求和测试断言，
@@ -175,3 +175,31 @@ Node24.22.0/macOS27.0.1/Apple M4，无容器限额、存在其他并行工作。
 `compat-capacity-red.log`：超容量原先只有泛化错误、缺上限数字；补充明确参数错误后验证。
 新增legacy adapter复用原服务和事务，未变更schema/迁移、REST现代封套或文件/OCR写入口。
 后续最终验证及源码SHA另列；上文6714827证据仍仅代表初版，不能冒充兼容修复结果。
+
+兼容修复实现提交：`523586b7bddfe53dd0909556bfff6ac844e4af89`。
+依次合入integration `92f694e`（#100）、`7950c6f`（#96）、`f31f57b`（#99）。
+首次共享冲突只合并两套MCP原参数校验器、两套审计表及按编号/时间递增的迁移journal，
+不改其他票的领域实现；最后两次合入无冲突。
+
+最新已测执行源码：`02439c494b8b4cc661160bcb59f0c942f0639810`，包含integration
+`f31f57b5a097223f15e7d596961af9d4ea8c6693`。该提交上：
+
+- `pnpm test tests/parse-maintenance-105-http.test.ts tests/mcp-surface.test.ts --maxWorkers=1`
+  退出0：2文件、44测试全部通过，无跳过；本票16测试全部通过。
+  日志 `compat-handoff-tests.log`。
+- `pnpm typecheck` 退出0，日志 `compat-handoff-typecheck.log`。
+- 源码记录 `compat-handoff-source-sha.txt`；有界读取合成原始样本另存
+  `boundedness-02439c4.json`，不将初版样本升级成新head性能证明。
+- `git diff f31f57b..HEAD --check` 和integration祖先检查通过。
+
+此前合入#96/#100后的源码 `f739241163c7d9b8f35e19fd3f71d375d758c92c` 上：
+7个相关测试文件152通过、2个既有真实files库用例跳过，包含本票16测试、#96、#100；
+类型检查及构建全部退出0。日志分别为 `compat-tip-tests.log`、
+`compat-tip-typecheck.log`、`compat-tip-build.log`，源码记录 `compat-tip-source-sha.txt`。
+合入#99后仅重跑上述受影响接缝及类型检查，没有再跑构建或全仓套件；
+不能把f739241的构建结果称为02439c4的构建结果。最终交接文档提交只补记录。
+
+旧载荷审计失败的实际tools/call也纳入
+`rolls back segment and status writes when audit persistence fails and permits a clean retry`：
+与现代写共同触发SQLite回执存储故障，段、状态和既有审计均读回原样，清除故障后重试成功。
+全部原始日志与JSON样本仍位于Git外 `/tmp/ningbo-spec98/ticket-105/`。
