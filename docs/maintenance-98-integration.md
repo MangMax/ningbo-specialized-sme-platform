@@ -1,6 +1,6 @@
 # Spec #98：九个切片的本地集成交接
 
-本轮共享 checkout `/Users/mang/.t3/worktrees/app/t3-c2a8481c`，分支 `t3/implement-spec-98-perf`。最终功能合并提交 `a9409cb9a3676aa92b37078c13313587dbee1bb0`；其后本文件为文档提交。原始日志、最终 gate 的准确源码 SHA/tree/状态和外部交接报告保存在 Git 外 `/tmp/ningbo-spec98/merge-101-104/`（目录名沿用最初队列，现包含102/103）。以 `source-sha.txt`、`gate-results.json`、`handoff.md` 为最终运行结果，不把早期候选日志提升为最终验收。
+本轮共享 checkout `/Users/mang/.t3/worktrees/app/t3-c2a8481c`，分支 `t3/implement-spec-98-perf`。最终功能合并提交 `a9409cb9a3676aa92b37078c13313587dbee1bb0`；其后为文档及集成测试夹具修正，产品代码未再改动。原始日志、最终 gate 的准确源码 SHA/tree/状态和外部交接报告保存在 Git 外 `/tmp/ningbo-spec98/merge-101-104/`（目录名沿用最初队列，现包含102/103）。以 `source-sha.txt`、`gate-results.json`、`handoff.md` 为最终运行结果，不把早期候选日志提升为最终验收。
 
 ## 保留的叶提交与顺序
 
@@ -51,3 +51,5 @@ SQL编号不是执行顺序。以后新迁移同样追加到当前末尾，并�
 最终joint命令记在 `commands.json`，限定event/evidence/legacy-pages/file-maintenance/parse/OCR/lifecycle/curation/receipts/import/alias/MCP相关文件，始终 `--maxWorkers=1`；不是全套测试。typecheck优先正常命令；若出现已有VueRouter插件解析警告，追加 `NODE_PATH=$PWD/node_modules/.pnpm/node_modules pnpm typecheck`，使用现有插件，不改依赖。准确SHA、命令、退出码和统计以Git外gate-results/handoff为准。
 
 未运行本轮fullsuite、build、重型性能、浏览器、生产、部署、push、PR操作、main合并或额外委派。PR107仍由父线程负责。冷enterprise样本1120ms的归因仍未完成；本轮未调性能或预算，不把小夹具有界性当容量/SLO验收。最终全套、构建、review与串行性能测量由父线程继续。
+
+最终27文件联合运行首次在a0c0e90得到550通过/13失败/6跳过；13项失败已定位为两个夹具边界：104旧库曾排除0020却提前应用其后新增0018/0019，改为真实journal前缀；旧RL-19重放事故夹具原先用现代API提交后仍当迁移前批次，现先断言现代留存请求的异请求preflight/commit均409，再仅在合成夹具移除该批次新增receipt，保留原batch和所有业务行以表示真实pre-103状态，随后原预检/空提交/显式replay/计数与幂等断言全部保留。原失败日志 `joint-tests-a0c0e90-failed.log`，修复后两文件19/19通过见 `green-integration-fixtures.log`。未修改产品代码或放宽新协议冲突检查。最终SHA联合结果仍以gate-results/handoff为准。
