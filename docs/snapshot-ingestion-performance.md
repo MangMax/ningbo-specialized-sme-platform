@@ -397,3 +397,57 @@ are regression-tested; that is not a claim about their performance budgets.
 The crash test covers interruption inside the business transaction and restart after
 success; a kill between business COMMIT and ledger persistence is not simulated.
 All full snapshots and generated DBs remain private; no production writes/load.
+
+## Final refresh with #89 cache (supersedes earlier local qualifications)
+
+At the final integration check, `a291fc9901e2f17c56f0244ff6e4247ab69c9ffd`
+introduced #89's public summary cache. Merged as `f5ffcbc33539d180887c92e719acac84b077399c`.
+Because the changed REST route is the actual mixed-read route, the artifact was
+rebuilt and all18 representative cases plus the large HTTP case rerun. Earlier
+proof stays bound to its named source; the old final-verification manifest is
+preserved as `final-verification-010f845.json`.
+
+| Export scale | Transport | Readers (+1 writer) | Preflight p50/p95/p99 ms | Commit p50/p95/p99 ms | Read p50/p95/p99 ms | Mixed heap delta MiB | Loop p95/max ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1x | HTTP | 1 | 4.9/7.0/8.2 | 8.2/10.5/16.9 | 2.9/4.0/5.5 | 16.7 | 13.5/14.1 |
+| 1x | HTTP | 2 | 5.3/7.1/8.8 | 8.8/12.6/18.2 | 3.0/6.4/17.6 | 13.5 | 12.4/13.4 |
+| 1x | HTTP | 5 | 7.0/10.1/22.6 | 11.2/19.2/22.9 | 4.5/9.2/21.1 | 13.8 | 17.5/24.2 |
+| 1x | MCP | 1 | 6.4/10.3/10.5 | 9.9/12.3/22.1 | 3.3/6.2/9.8 | 42.5 | 15.1/22.4 |
+| 1x | MCP | 2 | 6.3/8.1/9.3 | 11.1/17.0/22.7 | 3.2/7.6/11.3 | 48.6 | 16.9/19.1 |
+| 1x | MCP | 5 | 7.1/10.2/13.7 | 10.4/16.2/23.1 | 4.0/10.7/16.0 | 37.9 | 14.4/19.0 |
+| 2x | HTTP | 1 | 4.8/6.8/7.5 | 8.9/11.8/25.0 | 2.9/4.4/6.2 | 16.6 | 13.9/22.0 |
+| 2x | HTTP | 2 | 4.9/7.4/9.6 | 8.8/11.5/23.3 | 3.2/5.8/10.5 | 16.9 | 13.4/27.4 |
+| 2x | HTTP | 5 | 4.8/6.2/7.2 | 8.0/9.9/18.1 | 2.8/4.9/7.9 | 18.6 | 12.5/20.0 |
+| 2x | MCP | 1 | 4.9/5.8/6.1 | 7.8/15.3/23.0 | 2.4/3.6/7.6 | 46.8 | 12.3/22.9 |
+| 2x | MCP | 2 | 5.1/6.4/6.5 | 8.0/15.1/20.9 | 2.4/4.5/9.4 | 48.3 | 13.9/23.1 |
+| 2x | MCP | 5 | 5.9/8.2/11.0 | 8.7/14.5/15.2 | 2.9/6.4/7.2 | 37.8 | 13.2/14.7 |
+| 5x | HTTP | 1 | 4.0/5.4/5.7 | 6.8/9.1/16.8 | 2.3/3.6/3.9 | 11.2 | 15.9/23.4 |
+| 5x | HTTP | 2 | 4.2/5.4/5.6 | 7.0/8.6/12.5 | 2.4/3.8/7.7 | 12.0 | 13.3/14.0 |
+| 5x | HTTP | 5 | 4.8/6.4/6.7 | 7.8/10.3/13.0 | 2.8/4.3/8.3 | 13.0 | 12.8/14.7 |
+| 5x | MCP | 1 | 4.6/5.4/5.5 | 8.2/13.2/13.3 | 2.2/3.2/5.8 | 46.8 | 13.2/15.3 |
+| 5x | MCP | 2 | 5.2/6.2/6.5 | 7.9/13.6/14.5 | 2.4/5.8/9.2 | 48.3 | 13.2/14.5 |
+| 5x | MCP | 5 | 5.7/6.4/6.6 | 8.6/14.9/21.4 | 2.8/4.0/7.3 | 44.2 | 14.8/21.8 |
+
+Observed normal scenarios:18; frozen-threshold failures:0.
+Hot heap increments11.2–48.6MiB;
+maximum process heap127.27MiB, OS RSS343.09MiB.
+Worst hot p95: preflight10.34ms,
+commit19.20ms, read10.66ms;
+loop p95/max17.53/27.39ms. No OOM.
+The same1x/HTTP/readers1 case has heap increment17490496B,
+preflight=4.9/7.0/8.2ms and commit=8.2/10.5/16.9ms.
+
+Large HTTP (same300-row5,621,522B input,1.2MB singleton,5 readers+1 writer):
+preflight=13.8/15.7/15.8ms, commit=24.9/54.4/55.4ms,
+read=3.4/4.3/4.8ms, heap increment48987576B,
+loop p95/max39.62/50.40ms.
+The large MCP batch capacity remains unsupported413 and is tracked by#95;
+the complete same-key HTTP recovery remains the explicit policy, not a silent split.
+
+Current authoritative performance files: `delivery-cache-public/results.json`,
+`delivery-cache-large-http/results.json`, `delivery-cache-summary.json`,
+`delivery-cache-build.log`. The final SHA/gates will again be bound in
+`final-verification.json`; prior gate logs and the old manifest are retained.
+This run includes the inherited cache; it is not a claim about #94 alone or a
+measurement of cache hit rate. The container/production/CI/parent and other
+unrun boundaries listed above still apply without relaxation.
