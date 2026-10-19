@@ -97,7 +97,7 @@ const gaps: Case[] = [
   {id:'unknown-origin-same-year-new-award',events:[review(null,y-1,'failed'),award(y-1)],sheet:'待确认',first:y-1,note:'周期未知'},
   {id:'unknown-origin-future-failure',events:[review(null,y+1,'failed'),award(y-1)],sheet:'待确认',first:y-1,note:'周期未知'},
   {id:'unknown-origin-undated-failure',events:[review(null,null,'failed'),award(y-1)],sheet:'待确认',first:y-1,note:'周期未知'},
-  {id:'same-year-both-batches-passed',events:[award(y-4),award(y-4,2),review(y-4,y-1),review(y-4,y-1,'passed',2)],sheet:'待确认',first:y-4,note:'批次'},
+  {id:'same-year-both-batches-passed',events:[award(y-4),award(y-4,2),review(y-4,y-1),review(y-4,y-1,'passed',2)],sheet:'有效企业',first:y-4},
   {id:'same-year-review-only-other-batch-failed',events:[award(y-4),review(y-4,y-1),review(y-4,y,'failed',2)],sheet:'待确认',first:y-4,note:'批次'},
 ]
 async function assertMatrix(cases: Case[], key: string, transform: (events: Event[]) => Event[] = events=>events) {
