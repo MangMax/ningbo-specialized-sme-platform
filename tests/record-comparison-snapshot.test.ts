@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setImmediate } from 'node:timers/promises'
+import { eq } from 'drizzle-orm'
 import { expect, it } from 'vitest'
 import { useDb, schema } from '../db/client'
 import { getRecordComparison } from '../server/utils/record-comparison'
@@ -18,9 +19,12 @@ it('yields during cold source counting and keeps the catalog page in its origina
     void reading.then(() => { settled = true })
     await Promise.resolve()
     expect(settled).toBe(false)
-    db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'next-commit', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z' }).run()
+    db.transaction(tx => {
+      tx.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'next-commit', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z' }).run()
+      tx.update(schema.platformQuery).set({ queryKey: 'changed-generation' }).where(eq(schema.platformQuery.id, 1)).run()
+    })
     expect(await reading).toMatchObject({ total: 512, counts: { query: 512 }, rows: [{ id: 1, label: expect.stringContaining('catalog:0') }] })
-    expect((await readRecordComparisonSources(db, input)).total).toBe(513)
+    expect(await readRecordComparisonSources(db, input)).toMatchObject({ total: 513, rows: [{ id: 1, label: expect.stringContaining('changed-generation') }] })
     const controller = new AbortController()
     const cancelled = readRecordComparisonSources(db, input, controller.signal)
     const rejected = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
