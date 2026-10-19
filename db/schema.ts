@@ -118,6 +118,8 @@ export const recordEvent = sqliteTable(
      * 2027(= 2024 + 3)。可空;缺失时锚点退回 `year` 并把该企业标为待核 —— **不猜**。
      */
     decidedYear: integer('decided_year'),
+    /** Monotonic formal-source revision; event/evidence corrections advance it atomically. */
+    revision: integer('revision').notNull().default(1),
   },
   (t) => [index('record_event_record_idx').on(t.recordId)],
 )
@@ -144,7 +146,7 @@ export const recordEvidence = sqliteTable(
      */
     page: integer('page'),
   },
-  (t) => [index('record_evidence_event_idx').on(t.recordEventId)],
+  (t) => [index('record_evidence_event_idx').on(t.recordEventId), index('record_evidence_source_file_105_idx').on(t.sourceFile), index('record_evidence_coordinate_idx').on(t.sourceFile, t.listNo, t.attachment)],
 )
 
 /**
@@ -332,6 +334,8 @@ export const ocrResult = sqliteTable(
       .references(() => storedFile.id, { onDelete: 'cascade' }),
     /** 页码,从 1 起。与票 13 的页图页号、`.pages.json` 的 `page` **同一个号**。 */
     pageNo: integer('page_no').notNull(),
+    /** 同一行每次写入递增;与 AUTOINCREMENT id 合成不复用的页版本。 */
+    revision: integer('revision').notNull().default(1),
     /** 该页页图在文件库内的相对路径(`lib/pdf-page.ts` 的 `pageImageRelPath`)。可空。 */
     pageRelPath: text('page_rel_path'),
     /** 该页的 markdown(带标题、表格的标准 markdown)。**空页也占一行**(`''`)——
@@ -470,7 +474,7 @@ export const importBatch = sqliteTable(
     idempotencyKey: text('idempotency_key').notNull(),
     /** 来源类别:公布文件 / 平台导出 / 别名证据。 */
     sourceKind: text('source_kind', {
-      enum: ['announcement', 'platform_export', 'alias_evidence', 'correspondence_decision', 'comparison_scope_proof'],
+      enum: ['announcement', 'platform_export', 'alias_evidence', 'correspondence_decision', 'comparison_scope_proof', 'event_correction'],
     }).notNull(),
     /** 来源身份:文件库内相对路径或逻辑标识(不含凭证)。 */
     sourceIdentity: text('source_identity').notNull(),
@@ -521,7 +525,12 @@ export const enterpriseAlias = sqliteTable(
     enterpriseId: integer('enterprise_id')
       .notNull()
       .references(() => enterprise.id, { onDelete: 'cascade' }),
-    /** 别名**原值**(来源里的写法,留档)。 */
+    version: integer('version').notNull().default(1),
+    /** 首次维护前的原名称/来源；迁移回填，旧插入路径保持可空。 */
+    originalName: text('original_name'),
+    originalSourceKind: text('original_source_kind'),
+    originalSourceRefId: integer('original_source_ref_id'),
+    /** 当前别名解释；初始原值和来源单独冻结，历次变动追加审计。 */
     name: text('name').notNull(),
     /** 归一化别名(与 `lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
     nameNorm: text('name_norm').notNull(),
@@ -535,8 +544,8 @@ export const enterpriseAlias = sqliteTable(
     validFrom: text('valid_from'),
     /** 来源给出的失效时间。未给出留空。 */
     validTo: text('valid_to'),
-    /** 核验状态:`confirmed` 已确认(参与搜索/归并)/ `pending` 待核实(不参与)。 */
-    verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] })
+    /** 只有confirmed参与有效搜索/匹配；pending待核和withdrawn已撤回均不参与。 */
+    verificationStatus: text('verification_status', { enum: ['confirmed', 'pending', 'withdrawn'] })
       .notNull()
       .default('pending'),
     /** 备注(如「平台记录明确写出的经信局侧曾用名」原文摘录)。 */
@@ -557,8 +566,27 @@ export const enterpriseAlias = sqliteTable(
     ),
     index('enterprise_alias_name_norm_idx').on(t.nameNorm),
     index('enterprise_alias_enterprise_idx').on(t.enterpriseId),
+    index('enterprise_alias_status_page_idx').on(t.enterpriseId, t.verificationStatus, t.id),
   ],
 )
+
+/** #96 append-only profile corrections; independent of alias lifecycle (#99). */
+export const enterpriseProfileAudit = sqliteTable('enterprise_profile_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  // Immutable historical target; dedicated identity merge may remove its live row.
+  enterpriseId: integer('enterprise_id').notNull(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  requestHash: text('request_hash').notNull(),
+  beforeVersion: text('before_version').notNull(),
+  afterVersion: text('after_version').notNull(),
+  before: text('before', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null }>().notNull(),
+  after: text('after', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null }>().notNull(),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(),
+  basis: text('basis').notNull(),
+  retainedAliasId: integer('retained_alias_id'),
+  aliasCreated: integer('alias_created', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, t => [uniqueIndex('enterprise_profile_audit_key_uq').on(t.idempotencyKey), index('enterprise_profile_audit_enterprise_idx').on(t.enterpriseId, t.id)])
 
 /**
  * **平台查询记录**(契约 3)。一次「查了工信部哪个接口、用什么键、什么时候查、结果如何」。
@@ -791,6 +819,15 @@ export const differenceReason = sqliteTable(
       .default('pending'),
     /** 该解释的登记时点(时态化的排序键)。 */
     recordedAt: text('recorded_at').notNull(),
+    /** #102: explicit lifecycle metadata; null denotes a historical import, never an inferred decision. */
+    lifecycleAction: text('lifecycle_action', { enum: ['replace', 'withdraw'] }),
+    previousId: integer('previous_id').references((): AnySQLiteColumn => differenceReason.id),
+    actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>(),
+    basis: text('basis'),
+    ruleVersion: text('rule_version'),
+    effectiveAt: text('effective_at'),
+    idempotencyKey: text('idempotency_key'),
+    requestHash: text('request_hash'),
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -803,6 +840,8 @@ export const differenceReason = sqliteTable(
       t.direction,
       t.recordedAt,
     ),
+    uniqueIndex('difference_reason_command_uq').on(t.idempotencyKey),
+    index('difference_reason_managed_idx').on(t.enterpriseId, t.titleCode, t.direction).where(sql`${t.lifecycleAction} is not null`),
     index('difference_reason_lookup_idx').on(t.enterpriseId, t.titleCode, t.direction),
   ],
 )
@@ -920,6 +959,7 @@ export const recordCorrespondence = sqliteTable(
   (t) => [
     uniqueIndex('record_correspondence_edge_uq').on(t.edgeKey),
     index('record_correspondence_event_idx').on(t.eventId),
+    index('record_correspondence_predecessor_idx').on(t.predecessorEventId),
     index('record_correspondence_relation_idx').on(t.relationId),
     index('record_correspondence_export_idx').on(t.exportRowId),
     index('record_correspondence_enterprise_idx').on(t.enterpriseId, t.titleCode),
@@ -975,3 +1015,88 @@ export const comparisonScopeProofAudit = sqliteTable('comparison_scope_proof_aud
   ruleVersion: text('rule_version').notNull(),
   decidedAt: text('decided_at').notNull(),
 }, t => [index('comparison_scope_proof_audit_proof_idx').on(t.proofId, t.id)])
+
+/** File metadata/lifecycle receipts; no OCR, parsing or source content in these snapshots. */
+export const fileMaintenanceAudit = sqliteTable('file_maintenance_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fileId: integer('file_id').notNull().references(() => storedFile.id),
+  revision: integer('revision').notNull(),
+  action: text('action', { enum: ['update', 'remove', 'restore'] }).notNull(),
+  idempotencyKey: text('idempotency_key'),
+  requestHash: text('request_hash').notNull(),
+  mode: text('mode', { enum: ['legacy', 'versioned'] }).notNull(),
+  actor: text('actor'),
+  basis: text('basis'),
+  before: text('before_json', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  after: text('after_json', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, t => [uniqueIndex('file_maintenance_revision_uq').on(t.fileId, t.revision), uniqueIndex('file_maintenance_key_uq').on(t.idempotencyKey)])
+
+/** #105: parse-only immutable receipts. List projections omit before/after snapshots. */
+export const fileParseAudit105 = sqliteTable('file_parse_audit_105', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fileId: integer('file_id').notNull().references(() => storedFile.id),
+  idempotencyKey: text('idempotency_key').notNull(),
+  requestHash: text('request_hash').notNull(),
+  operation: text('operation', { enum: ['replace', 'status'] }).notNull(),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(),
+  reason: text('reason').notNull(),
+  before: text('before', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  after: text('after', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  createdAt: text('created_at').notNull(),
+}, t => [uniqueIndex('file_parse_105_key_uq').on(t.fileId, t.idempotencyKey), index('file_parse_105_history_idx').on(t.fileId, t.id)])
+/** #100: append-only in-place event correction history, no source/evidence overwrite. */
+export const eventCorrectionAudit = sqliteTable('event_correction_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  eventId: integer('event_id').notNull().references(() => recordEvent.id),
+  batchId: integer('batch_id').notNull().references(() => importBatch.id),
+  recordId: integer('record_id').notNull(),
+  enterpriseId: integer('enterprise_id').notNull(),
+  before: text('before', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  after: text('after', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  evidence: text('evidence', { mode: 'json' }).$type<unknown[]>().notNull(),
+  sourceIdentity: text('source_identity').notNull(),
+  actorType: text('actor_type').notNull(),
+  actorId: text('actor_id').notNull(),
+  basis: text('basis').notNull(),
+  correctedAt: text('corrected_at').notNull(),
+}, t => [index('event_correction_audit_event_idx').on(t.eventId, t.id)])
+
+/** #99 explicit lifecycle decisions; append only, keyed history and replay. */
+export const enterpriseAliasAudit = sqliteTable('enterprise_alias_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  aliasId: integer('alias_id').notNull().references(() => enterpriseAlias.id),
+  enterpriseId: integer('enterprise_id').notNull(),
+  action: text('action', { enum: ['confirm', 'correct', 'withdraw'] }).notNull(),
+  actor: text('actor').notNull(),
+  basis: text('basis').notNull(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  requestHash: text('request_hash').notNull(),
+  before: text('before', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  after: text('after', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  createdAt: text('created_at').notNull(),
+}, t => [
+  uniqueIndex('enterprise_alias_audit_request_uq').on(t.aliasId, t.idempotencyKey),
+  index('enterprise_alias_audit_page_idx').on(t.aliasId, t.id),
+])
+
+/** #101: immutable evidence correction receipts and append-only coordinate history. */
+export const evidenceCorrectionBatch = sqliteTable('evidence_correction_batch', {
+  idempotencyKey: text('idempotency_key').primaryKey(),
+  requestHash: text('request_hash').notNull(),
+  planHash: text('plan_hash').notNull(),
+  receipt: text('receipt', { mode: 'json' }).$type<unknown>().notNull(),
+  createdAt: text('created_at').notNull(),
+})
+export const evidenceCorrectionAudit = sqliteTable('evidence_correction_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  evidenceId: integer('evidence_id').notNull().references(() => recordEvidence.id),
+  eventId: integer('event_id').notNull().references(() => recordEvent.id),
+  batchKey: text('batch_key').references(() => evidenceCorrectionBatch.idempotencyKey),
+  entryPoint: text('entry_point', { enum: ['correction', 'legacy_pages'] }).notNull(),
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent' | 'legacy'; id: string }>().notNull(),
+  basis: text('basis').notNull(),
+  before: text('before', { mode: 'json' }).$type<unknown>().notNull(),
+  after: text('after', { mode: 'json' }).$type<unknown>().notNull(),
+  createdAt: text('created_at').notNull(),
+}, t => [index('evidence_correction_audit_evidence_idx').on(t.evidenceId, t.id)])

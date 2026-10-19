@@ -1,0 +1,3 @@
+import { evidenceCorrectionRoute } from '~~/server/utils/roster-evidence-correction-route'
+defineRouteMeta({ openAPI: { tags: ['名录出处'], summary: '按证据 ID 分页读取追加更正审计', description: '按id升序，默认50、最大200；before/after包含坐标和文件身份。', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }, { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 1000000 } }, { name: 'pageSize', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200 } }], responses: { 200: { description: 'rows,total,page,pageSize' }, 400: { description: 'Invalid pagination' }, 404: { description: 'Evidence not found' } } } })
+export default evidenceCorrectionRoute('audit')
