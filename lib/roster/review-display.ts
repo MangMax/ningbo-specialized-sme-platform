@@ -247,7 +247,7 @@ export function impactTone(row: ImpactRow): CaseTone {
 /** 待复核清单里原决定的业务摘要；原文不可用时把“不可用”本身说清楚。 */
 export function impactOldDecisionText(row: ImpactRow): string {
   const decision = row.oldDecision
-  if (!decision) return '历史决定原文不可用；原坐标与来源仍保留。'
+  if (!decision) return `原决定 #${row.decisionId}：历史决定原文不可用；原坐标与来源仍保留。`
   const reason = decision.reasonCode
     ? DIFFERENCE_REASONS[decision.reasonCode] ?? decision.reasonCode
     : '原因未填写'

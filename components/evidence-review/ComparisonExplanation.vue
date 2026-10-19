@@ -14,9 +14,16 @@ const link = computed(() => `/enterprises/${props.enterpriseId}?titleCode=${prop
 </script>
 <template>
   <div class="flex min-w-0 flex-col gap-1">
-    <QueryAssessmentSummary v-if="assessment" :assessment="assessment" />
+    <QueryAssessmentSummary v-if="assessment" :assessment="assessment" compact />
     <p v-else class="text-muted-foreground text-[13px]">{{ isLoading ? '正在读取查询覆盖与决定…' : '查询覆盖与决定尚未读取' }}</p>
-    <TableFailureState v-if="error" title="解释状态读取失败" compact :pending="isLoading" @retry="refetch()" />
+    <TableFailureState
+      v-if="error"
+      title="解释状态读取失败"
+      :description="`读取目标：企业 #${enterpriseId} · ${titleCode} · ${direction}。上次结果仍保留。`"
+      compact
+      :pending="isLoading"
+      @retry="refetch()"
+    />
     <NuxtLink :to="link" class="text-primary text-[13px] hover:underline">查看决定历史与复核</NuxtLink>
   </div>
 </template>
