@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
 const props = defineProps<{ selection: ComparisonSelection; kind?: ComparisonSourceKind }>()
 const emit = defineEmits<{
@@ -158,9 +159,14 @@ watch(selectionKey, () => { void hydrateSelectedLabels() }, { immediate: true, f
     <Button v-else-if="showAll && rows.length > COLLAPSED_ROWS" variant="link" size="sm" class="h-7 self-start px-1 text-[13px]" @click="showAll = false">收起，只看前 {{ COLLAPSED_ROWS }} 项</Button>
     <!-- 只有超过一页时才出现分页；目录本身不再使用内层滚动。 -->
     <TablePagination v-if="displayed && displayed.total > displayed.pageSize" :page="displayed.page" :page-size="displayed.pageSize" :total="displayed.total" unit="项来源" :loading="loading || error" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
-    <details v-if="selectedItems.length" aria-label="已选来源"><summary class="text-muted-foreground cursor-pointer text-[13px]">管理已选来源（{{ selectedItems.length }}）</summary><div class="mt-2 flex flex-wrap gap-1.5">
-      <Button v-for="item in selectedItems" :key="`${item.kind}:${item.id}`" variant="secondary" size="sm" class="h-auto max-w-full whitespace-normal text-left text-xs" :aria-label="`移除${item.source?.label ?? '已选来源'}`" @click="item.source ? toggle(item.source, false) : emit('change', { ...selection, [sourceSelectionKey(item.kind)]: selection[sourceSelectionKey(item.kind)].filter(id => id !== item.id) })">{{ item.source?.label ?? (selectedError ? '来源名称暂不可读' : '正在读取来源名称…') }} · 移除</Button>
-    </div></details>
+    <DisclosurePanel v-if="selectedItems.length" compact content-class="pb-0" aria-label="已选来源" class="text-[13px]">
+      <template #trigger>
+        <span class="text-muted-foreground text-[13px]">管理已选来源（{{ selectedItems.length }}）</span>
+      </template>
+      <div class="mt-2 flex flex-wrap gap-1.5">
+        <Button v-for="item in selectedItems" :key="`${item.kind}:${item.id}`" variant="secondary" size="sm" class="h-auto max-w-full whitespace-normal text-left text-xs" :aria-label="`移除${item.source?.label ?? '已选来源'}`" @click="item.source ? toggle(item.source, false) : emit('change', { ...selection, [sourceSelectionKey(item.kind)]: selection[sourceSelectionKey(item.kind)].filter(id => id !== item.id) })">{{ item.source?.label ?? (selectedError ? '来源名称暂不可读' : '正在读取来源名称…') }} · 移除</Button>
+      </div>
+    </DisclosurePanel>
     <Button v-if="selectedError" variant="outline" size="sm" class="self-start" @click="hydrateSelectedLabels">重试读取已选来源名称</Button>
   </section>
 </template>

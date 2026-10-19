@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
-import { ChevronDown, GitCompareArrows, RefreshCw } from '@lucide/vue'
+import { GitCompareArrows, RefreshCw } from '@lucide/vue'
 import { COMPARISON_CLASSES, comparisonRequest, comparisonRouteFromQuery, comparisonRouteKey, comparisonRouteQuery, comparisonSelectionQuery, instantFromLocalDateTime, localDateTimeForInstant, type ComparisonRouteState, type ComparisonSelection, type ComparisonSource, type RecordComparisonResult } from '~~/lib/roster/record-comparison-view'
 import { useEvidencePreviewScrollRestore } from '~~/lib/roster/evidence-preview-return'
 import { humanRecordTime } from '~~/lib/roster/record-ledger'
@@ -10,6 +10,7 @@ import ComparisonEventRow from './ComparisonEventRow.vue'
 import ComparisonEvidence from './ComparisonEvidence.vue'
 import ComparisonDateTimePicker from './ComparisonDateTimePicker.vue'
 import ComparisonResultScope from './ComparisonResultScope.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -176,6 +177,11 @@ async function navigate(next: ComparisonRouteState, replace = false) {
 }
 function setSelection(value: ComparisonSelection) { selection.value = value }
 function setProofIds(value: number[]) { selection.value = { ...selection.value, proofIds: value } }
+/** 用户手动开合时恢复完整动画；`instant` 只属于「开始对比」的程序化收起。 */
+function setSourcesExpanded(open: boolean) {
+  skipPanelTransition.value = false
+  sourcesExpanded.value = open
+}
 async function run() {
   if (!canCompare.value || loading.value) return
   skipPanelTransition.value = true
@@ -259,36 +265,29 @@ const classificationEntries = computed(() => {
         <Button v-if="committed.classification !== 'all'" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="setClassification('all')">查看全部</Button>
       </div>
     <Card class="min-w-0 gap-0 py-0">
-      <div v-if="submitted" class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 sm:px-5" :class="sourcesExpanded && 'border-b'">
-        <h2 class="shrink-0 text-sm font-medium">来源</h2>
-        <p class="text-muted-foreground min-w-0 flex-1 text-[13px] leading-5">
-          <span class="tabular-nums">{{ summaryCounts.official }} 份文件 · {{ summaryCounts.query }} 次查询</span>
-          <span v-if="committed.asOf"> · 截止 {{ humanRecordTime(committed.asOf) }}</span>
-          <span v-if="selectionChanged" class="text-warning"> · 选择已改，展开后重新对比</span>
-        </p>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-7 shrink-0 gap-1 px-2 text-[13px]"
-          :aria-expanded="sourcesExpanded"
-          @click="sourcesExpanded = !sourcesExpanded"
-        >
-          {{ sourcesExpanded ? '收起' : '展开修改' }}
-          <ChevronDown class="size-4 transition-transform duration-150 ease-snap motion-reduce:transition-none" :class="!sourcesExpanded && '-rotate-90'" />
-        </Button>
-      </div>
-      <div v-else class="flex items-center px-4 py-3 sm:px-5">
-        <h2 class="text-sm font-medium">选择两侧来源</h2>
-      </div>
       <!-- 折叠只收高度，不卸载表单：显式选择、目录 hydration 与返回滚动都依赖这些实例。 -->
-      <div
-        class="source-disclosure grid"
-        :class="skipPanelTransition && 'source-disclosure-instant'"
-        :style="{ gridTemplateRows: !submitted || sourcesExpanded ? '1fr' : '0fr' }"
-        :inert="!!submitted && !sourcesExpanded"
+      <DisclosurePanel
+        :open="submitted ? sourcesExpanded : true"
+        :collapsible="!!submitted"
+        :show-icon="!!submitted"
+        keep-mounted
+        :instant="skipPanelTransition"
+        content-class="border-t pb-0"
+        trigger-class="px-4 sm:px-5"
+        @update:open="setSourcesExpanded"
       >
-        <div class="min-h-0 overflow-hidden">
-          <CardContent class="flex min-w-0 flex-col gap-4 p-4 sm:p-5">
+        <template #trigger>
+          <template v-if="submitted">
+            <span class="shrink-0 text-sm font-medium">来源</span>
+            <span class="text-muted-foreground min-w-0 flex-1 text-[13px] leading-5">
+              <span class="tabular-nums">{{ summaryCounts.official }} 份文件 · {{ summaryCounts.query }} 次查询</span>
+              <span v-if="committed.asOf"> · 截止 {{ humanRecordTime(committed.asOf) }}</span>
+              <span v-if="selectionChanged" class="text-warning"> · 选择已改，展开后重新对比</span>
+            </span>
+          </template>
+          <span v-else class="text-sm font-medium">选择两侧来源</span>
+        </template>
+        <CardContent class="flex min-w-0 flex-col gap-4 p-4 sm:p-5">
             <div class="flex min-w-0 flex-col gap-3">
               <section class="flex min-w-0 flex-col gap-2" aria-label="左侧正式文件">
                 <header class="flex flex-wrap items-baseline justify-between gap-2">
@@ -307,14 +306,14 @@ const classificationEntries = computed(() => {
               </section>
 
               <!--
-                用原生 details：折叠时内容仍在 DOM 中，书签里的范围依据选择照常初始化、
-                校验并参与滚动恢复；也不引入额外的展开动画帧。
+                折叠时内容仍在 DOM 中（unmount-on-hide=false）：书签里的范围依据选择照常
+                初始化、校验并参与滚动恢复。
               -->
-              <details class="min-w-0 rounded-sm border">
-                <summary class="flex cursor-pointer flex-wrap items-baseline gap-x-2 gap-y-1 px-3 py-2.5">
+              <DisclosurePanel compact keep-mounted padded content-class="pb-0" class="min-w-0 rounded-sm border">
+                <template #trigger>
                   <span class="text-[13px] font-medium">更多选项</span>
-                  <span class="text-muted-foreground text-xs">截止时点 · 范围依据 · 导出版本 · 分类筛选</span>
-                </summary>
+                  <span class="text-muted-foreground text-xs font-normal">截止时点 · 范围依据 · 导出版本 · 分类筛选</span>
+                </template>
                 <div class="flex min-w-0 flex-col gap-3 border-t p-3">
                   <div class="flex max-w-full flex-col gap-1">
                     <Label for="record-as-of">截止时点（可选）</Label>
@@ -344,7 +343,7 @@ const classificationEntries = computed(() => {
                     <p class="text-muted-foreground text-xs">结果上方的结论胶囊是主入口；这里用于精确选择同一分类。</p>
                   </div>
                 </div>
-              </details>
+              </DisclosurePanel>
             </div>
 
             <div class="flex flex-wrap items-start gap-x-3 gap-y-2">
@@ -359,9 +358,8 @@ const classificationEntries = computed(() => {
               <p v-else-if="!displayed" class="text-muted-foreground text-[13px]">已选择来源，点「开始对比」。</p>
               <p v-else-if="displayed" class="text-muted-foreground text-[13px]">结果已更新。</p>
             </div>
-          </CardContent>
-        </div>
-      </div>
+        </CardContent>
+      </DisclosurePanel>
     </Card>
 
     <template v-if="submitted">
@@ -393,26 +391,25 @@ const classificationEntries = computed(() => {
         <TablePagination v-if="displayed" :page="shownPage" :page-size="displayed.pageSize" :total="displayed.total" unit="条事件" :loading="loading || error" @update:page="setPage" @update:page-size="setPageSize" />
       </div>
 
-      <details v-if="displayed" class="min-w-0 rounded-sm border bg-card" data-testid="comparison-details">
-        <summary class="cursor-pointer px-3 py-2.5 text-[13px] font-medium">其他来源记录</summary>
+      <DisclosurePanel v-if="displayed" compact padded content-class="pb-0" class="min-w-0 rounded-sm border bg-card" data-testid="comparison-details">
+        <template #trigger>
+          <span class="text-[13px] font-medium">其他来源记录</span>
+        </template>
         <div class="min-w-0 border-t p-3">
           <ComparisonEvidence :result="displayed" :return-to="returnTo" />
         </div>
-      </details>
+      </DisclosurePanel>
     </template>
   </div>
 </template>
 
 <style scoped>
-.source-disclosure { transition: grid-template-rows 180ms var(--ease-snap); }
-.source-disclosure-instant { transition: none; }
 .comparison-result-enter-active { animation: comparison-arrive 180ms ease-out; }
 @keyframes comparison-arrive {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .source-disclosure { transition: none; }
   .comparison-result-enter-active { animation: none; }
 }
 </style>

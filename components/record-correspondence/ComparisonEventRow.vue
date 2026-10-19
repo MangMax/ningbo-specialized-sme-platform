@@ -10,6 +10,7 @@ import { fileNameOf } from '~~/lib/preview'
 import { evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import SourceReader from './SourceReader.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -90,13 +91,19 @@ const classificationVariant = computed(() => props.row.classification === 'histo
               <Badge v-for="edge in edges" :key="edge.id" variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
               <span v-if="!edges.length" class="text-muted-foreground">尚未登记对应</span>
             </div>
-            <details class="text-muted-foreground mt-1"><summary class="cursor-pointer">原行字段与查询条件</summary><p>查询 #{{ relation.queryId }} · 原行 {{ relation.sequenceNo }} · 记录 #{{ relation.id }}</p><p>{{ relation.nameRaw ?? '原名未知' }} · {{ humanRecordTime(relation.queriedAt) }}</p></details>
+            <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground mt-1">
+              <template #trigger><span>原行字段与查询条件</span></template>
+              <p>查询 #{{ relation.queryId }} · 原行 {{ relation.sequenceNo }} · 记录 #{{ relation.id }}</p>
+              <p>{{ relation.nameRaw ?? '原名未知' }} · {{ humanRecordTime(relation.queriedAt) }}</p>
+            </DisclosurePanel>
             <Button variant="ghost" size="sm" class="mt-1 h-7 px-1.5 text-[13px]" @click="openSource('relation', relation.id)">查看原始记录</Button>
           </li>
         </ul>
         <p v-else class="text-muted-foreground text-[13px]">尚未匹配到这条记录的接口出处。</p>
-        <details v-if="otherEdges.length" class="mt-2 text-[13px]">
-          <summary class="text-muted-foreground cursor-pointer">{{ otherEdges.some(edge => edge.exportRowId != null) ? '当前导出快照（非历史出处）' : '其他来源匹配' }} · {{ otherEdges.length }} 条</summary>
+        <DisclosurePanel v-if="otherEdges.length" compact content-class="pb-0" class="mt-2 text-[13px]">
+          <template #trigger>
+            <span class="text-muted-foreground">{{ otherEdges.some(edge => edge.exportRowId != null) ? '当前导出快照（非历史出处）' : '其他来源匹配' }} · {{ otherEdges.length }} 条</span>
+          </template>
           <ul class="mt-1 flex flex-col gap-1.5">
             <li v-for="edge in otherEdges" :key="edge.id" class="flex flex-wrap items-center gap-1.5">
               <span class="text-muted-foreground">{{ edge.exportRowId != null ? '当前导出快照（非历史出处）' : '其他来源匹配' }}</span>
@@ -105,7 +112,7 @@ const classificationVariant = computed(() => props.row.classification === 'histo
               <Button v-else-if="edge.relationId != null" variant="ghost" size="sm" class="h-7 px-1.5 text-[13px]" @click="openSource('relation', edge.relationId)">查看原始记录</Button>
             </li>
           </ul>
-        </details>
+        </DisclosurePanel>
       </section>
     </div>
 

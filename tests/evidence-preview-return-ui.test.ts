@@ -741,7 +741,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(frames).toHaveLength(1)
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: windowTop, behavior: 'instant' })
-    expect(returned.findAll('button').some((button) => button.text().includes('收起来源记录'))).toBe(true)
+    expect(returned.findAll('button').some((button) => button.text().includes('来源记录'))).toBe(true)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toBeNull()
     expect(sessionStorage.getItem(DETAIL_OPEN_EVIDENCE_STATE_KEY)).toBeNull()
     returned.unmount()
