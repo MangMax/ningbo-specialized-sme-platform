@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { and, asc, count, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, count, eq, getTableColumns, inArray, or, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
@@ -480,9 +480,12 @@ export function getRecordCorrespondence(db: Db, id: number): CorrespondenceRead 
 }
 export interface CorrespondencePaging { page: number; pageSize: number }
 export function pageRecordCorrespondences(db: Db, filter: CorrespondenceFilter, paging: CorrespondencePaging) {
+  const t = schema.recordCorrespondence
+  // Public pages omit these private fields; only confirmed rows need provenance for revalidation.
+  const columns = { ...getTableColumns(t), targetIdentity: sql`'{}'`.mapWith(t.targetIdentity), provenance: sql`case when ${t.status} = 'confirmed' then ${t.provenance} else '{}' end`.mapWith(t.provenance) }
   const where = correspondenceWhere(filter)
   const total = db.select({ total: count() }).from(schema.recordCorrespondence).where(where).get()!.total
-  const rows = readCorrespondences(db, db.select().from(schema.recordCorrespondence).where(where).orderBy(asc(schema.recordCorrespondence.id))
+  const rows = readCorrespondences(db, db.select(columns).from(schema.recordCorrespondence).where(where).orderBy(asc(schema.recordCorrespondence.id))
     .limit(paging.pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (paging.page - 1) * paging.pageSize)).all())
   return { rows, total, ...paging }
 }
