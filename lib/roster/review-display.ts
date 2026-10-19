@@ -153,7 +153,7 @@ export function assessmentHeadline(assessment: ReviewAssessment): CaseHeadline {
     return { tone: 'failed', label: '无法判断 · 查询失败', detail: '失败或授权失败不等于零记录；保留上次结果与查询范围。', action: '查看失败记录' }
   }
   if (coverage === 'partial') {
-    return { tone: 'failed', label: '无法判断 · 覆盖不完整', detail: '平台数据只覆盖部分页，不能据此判断一致或无需处理。', action: '查看已查范围' }
+    return { tone: 'waiting', label: '无法判断 · 覆盖不完整', detail: '平台数据只覆盖部分页，不能据此判断一致或无需处理。', action: '查看已查范围' }
   }
   if (coverage === 'complete') {
     return { tone: 'waiting', label: '已查询 · 判断待核', detail: '查询已完成，但尚没有明确业务决定。', action: '查看查询范围' }
@@ -198,7 +198,7 @@ export function enterpriseHeadline(
   }
   const partial = assessments.filter(item => item.queryCoverage.status === 'partial')
   if (partial.length) {
-    return headline('failed', `无法判断 · ${partial.length} 个范围覆盖不完整`, '覆盖不完整不能得出“一致”或“无需处理”。', '查看已查范围')
+    return headline('waiting', `无法判断 · ${partial.length} 个范围覆盖不完整`, '覆盖不完整不能得出“一致”或“无需处理”。', '查看已查范围')
   }
   const decided = assessments.filter(item => item.assessment === 'decided')
   if (decided.some(hasPendingValidity)) {
