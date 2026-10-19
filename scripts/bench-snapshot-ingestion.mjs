@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Local built Nitro HTTP/MCP only. The snapshot is copied as a file, never opened by SQLite.
-// node scripts/bench-snapshot-ingestion.mjs <snapshot> <private-output-dir> <source-sha> [scales=1,2,5] [transports=http,mcp] [readers=1,2,5]
+// node scripts/bench-snapshot-ingestion.mjs <snapshot> <private-output-dir> <source-sha> [scales=1,2,5] [transports=http,mcp] [readers=1,2,5] [representative|large]
 import assert from 'node:assert/strict'
 import { fork } from 'node:child_process'
 import { constants, copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -11,8 +11,9 @@ import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
-const [sourceArg, outputArg, sha, scaleArg = '1,2,5', transportArg = 'http,mcp', readerArg = '1,2,5'] = process.argv.slice(2)
+const [sourceArg, outputArg, sha, scaleArg = '1,2,5', transportArg = 'http,mcp', readerArg = '1,2,5', inputMode = 'representative'] = process.argv.slice(2)
 assert.ok(sourceArg && outputArg && /^[a-f0-9]{7,40}$/.test(sha ?? ''))
+assert.ok(['representative', 'large'].includes(inputMode))
 const source = resolve(sourceArg), output = resolve(outputArg)
 assert.ok(output.startsWith('/tmp/'), 'private output must be under /tmp')
 assert.ok(!existsSync(output), 'use a new output directory; never overwrite evidence')
@@ -93,7 +94,7 @@ for (const scale of scales) {
       return {ms:performance.now()-start,bytes:Buffer.byteLength(text)}
     }
     const round=async index=>{
-      const input={idempotencyKey:`synthetic:bench:${index}`,sourceKind:'platform_export',sourceIdentity:'synthetic.xlsx',payload:{exportSnapshot:{titleCode:'specialized_sme',year:2094,collectedOn:'2026-10-19',originalFilename:'synthetic.xlsx',sha256:'synthetic-benchmark',rows:Array.from({length:300},(_,i)=>({sourceRowNo:i<150?i+3:10000+index*150+i,rawFields:rawForBytes(lengths[i%lengths.length])}))}}}
+      const input={idempotencyKey:`synthetic:bench:${index}`,sourceKind:'platform_export',sourceIdentity:'synthetic.xlsx',payload:{exportSnapshot:{titleCode:'specialized_sme',year:2094,collectedOn:'2026-10-19',originalFilename:'synthetic.xlsx',sha256:'synthetic-benchmark',rows:Array.from({length:300},(_,i)=>({sourceRowNo:i<150?i+3:10000+index*150+i,rawFields:rawForBytes(inputMode==='large'?(i===150?1_200_000:14753):lengths[i%lengths.length])}))}}}
       const inputBytes=Buffer.byteLength(JSON.stringify(input))
       phase=`round-${index}-preflight`
       const [preflight,preReads]=await Promise.all([invoke('preflight',input),Promise.all(Array.from({length:readers},read))])
@@ -123,7 +124,7 @@ for (const scale of scales) {
       await round(1);await message('reset')
       const hot=[];for(let i=2;i<22;i++)hot.push(await round(i))
       await sleep(20);const metrics=await message('metrics')
-      const item={sha,scale,transport,readers,writers:1,samples:20,coldLabel:'fresh server process; OS cache not purged; authenticated tools/list before first business request',counts,cold,coldMetrics,hot:{preflight:quantiles(hot.map(x=>x.preflightMs)),commit:quantiles(hot.map(x=>x.commitMs)),read:quantiles(hot.flatMap(x=>x.reads.map(r=>r.ms)))},inputBytes:hot[0].inputBytes,responseBytes:{preflight:hot[0].preflightBytes,commit:hot[0].commitBytes,read:hot[0].reads[0].bytes},metrics,dbBytesBefore:beforeBytes,dbBytesAfter:size(dbPath),walBytes:size(`${dbPath}-wal`),semantics:'300 input;150 existing+150 new; exact raw/sourceRowNo readback; same-key receipt identical'}
+      const item={sha,scale,transport,readers,inputMode,writers:1,samples:20,coldLabel:'fresh server process; OS cache not purged; authenticated tools/list before first business request',counts,cold,coldMetrics,hot:{preflight:quantiles(hot.map(x=>x.preflightMs)),commit:quantiles(hot.map(x=>x.commitMs)),read:quantiles(hot.flatMap(x=>x.reads.map(r=>r.ms)))},inputBytes:hot[0].inputBytes,responseBytes:{preflight:hot[0].preflightBytes,commit:hot[0].commitBytes,read:hot[0].reads[0].bytes},metrics,dbBytesBefore:beforeBytes,dbBytesAfter:size(dbPath),walBytes:size(`${dbPath}-wal`),semantics:'300 input;150 existing+150 new; exact raw/sourceRowNo readback; same-key receipt identical'}
       writeFileSync(join(output,`${name}.json`),JSON.stringify(item,null,2));results.push(item)
       writeFileSync(join(output,'partial-results.json'),JSON.stringify({sha,completedAll:false,results},null,2))
       console.log(JSON.stringify({sha,scale,transport,readers,hot:item.hot,heapDelta:metrics.heapDelta,loopMaxMs:metrics.loopMaxMs}))
