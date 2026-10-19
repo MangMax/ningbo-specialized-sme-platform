@@ -258,4 +258,60 @@ describe('ticket 101 exact evidence correction through HTTP and MCP', () => {
     } finally { db.$client.prepare('UPDATE stored_file SET sha256 = ? WHERE id = ?').run(sha256, file.id) }
   })
 
+  it.each(['atomic', 'legacy'])('keeps direct and predecessor confirmations stale after %s coordinate ABA', async mode => {
+    const target = seedEvidence(mode === 'atomic' ? 30 : 31)
+    const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'aba-' + mode, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success' }).returning().get()
+    const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }).returning().get()
+    const edges = [
+      { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' },
+      { type: 'later_process', enterpriseId: enterprise.id, titleCode: 'specialized_sme', predecessorEventId: event.id, relationId: relation.id, role: 'followup_apply' },
+    ]
+    const decision = { idempotencyKey: 'aba-edges-' + mode, sourceIdentity: 'synthetic-aba-' + mode, actor: { type: 'agent', id: 'test' }, basis: 'explicit source and predecessor context review', ruleId: 'manual', ruleVersion: '1', operations: edges.map(edge => ({ action: 'create', status: 'confirmed', edge })) }
+    const edgePlan = await json(await post('correspondences/preflight', decision))
+    const edgeReceipt = await json(await post('correspondences/commit', { request: decision, planHash: edgePlan.planHash }))
+    const ids: number[] = edgeReceipt.correspondenceIds
+    const edgeRead = (id: number) => fetch(api('correspondences/' + id)).then(json)
+    for (const id of ids) expect((await edgeRead(id)).requiresRevalidation).toBe(false)
+    for (const page of [2, 1]) {
+      const row = await read(target.id)
+      if (mode === 'atomic') {
+        const req = request('aba-' + mode + '-' + page, row, page)
+        const plan = await json(await post('evidence/corrections/preflight', req))
+        expect((await post('evidence/corrections/commit', { request: req, planHash: plan.planHash })).status).toBe(200)
+      } else {
+        const response = await post('evidence/pages', { entries: [{ sourceFile: 'notice.pdf', listNo: row.coordinate.listNo, page, enterpriseId: enterprise.id, basis: 'explicit original page review' }] })
+        expect(await json(response)).toMatchObject({ summary: { written: 1 } })
+      }
+      for (const id of ids) expect((await edgeRead(id)).requiresRevalidation).toBe(true)
+    }
+    expect((await read(target.id)).coordinate.page).toBe(1)
+    const reconfirm = { ...decision, idempotencyKey: 'aba-reconfirm-' + mode, operations: await Promise.all(ids.map(async (id, index) => ({ action: 'correct', correspondenceId: id, expectedRevision: (await edgeRead(id)).revision, edge: edges[index] }))) }
+    const replan = await json(await post('correspondences/preflight', reconfirm))
+    expect((await post('correspondences/commit', { request: reconfirm, planHash: replan.planHash })).status).toBe(200)
+    for (const id of ids) expect((await edgeRead(id)).requiresRevalidation).toBe(false)
+  })
+  it('advances one event revision per changed atomic batch and never for noops replay or dry runs', async () => {
+    const a = seedEvidence(32), b = seedEvidence(33)
+    const ar = await read(a.id), br = await read(b.id), revision = ar.event.revision
+    const req = { ...request('one-event-many-evidence', ar, 2), operations: [...request('a', ar, 2).operations, ...request('b', br, 2).operations] }
+    const plan = await json(await post('evidence/corrections/preflight', req))
+    expect((await read(a.id)).event.revision).toBe(revision)
+    const receipt = await json(await post('evidence/corrections/commit', { request: req, planHash: plan.planHash }))
+    expect((await read(a.id)).event.revision).toBe(revision + 1)
+    expect((await read(b.id)).event.revision).toBe(revision + 1)
+    expect(await json(await post('evidence/corrections/commit', { request: req, planHash: plan.planHash }))).toEqual(receipt)
+    const current = await read(a.id), noop = request('noop-does-not-revise', current, 2)
+    const noopPlan = await json(await post('evidence/corrections/preflight', noop))
+    expect(noopPlan.impact.updated).toBe(0)
+    expect((await post('evidence/corrections/commit', { request: noop, planHash: noopPlan.planHash })).status).toBe(200)
+    expect((await read(a.id)).event.revision).toBe(revision + 1)
+    const entries = [{ sourceFile: 'notice.pdf', listNo: 32, page: 3, enterpriseId: enterprise.id }]
+    expect((await post('evidence/pages', { entries, dryRun: true })).status).toBe(200)
+    expect((await read(a.id)).event.revision).toBe(revision + 1)
+    expect((await post('evidence/pages', { entries })).status).toBe(200)
+    expect((await read(a.id)).event.revision).toBe(revision + 2)
+    expect((await post('evidence/pages', { entries })).status).toBe(200)
+    expect((await read(a.id)).event.revision).toBe(revision + 2)
+  })
+
 })

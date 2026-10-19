@@ -9,6 +9,7 @@ import * as schema from '../../db/schema'
 import { normalizeAttachment } from '../../lib/attachment'
 import { evidencePreviewHref, isPageCapable } from '../../lib/roster/evidence-page'
 import { readPdfPageCount, resolveWithinRoot } from './pdf-pages'
+import { advanceOfficialEventRevision } from './roster-event-version'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -137,12 +138,13 @@ export async function preflightEvidenceCorrection(db: Db, request: EvidenceCorre
 }
 
 /** The only coordinate writer for exact corrections and the compatibility adapter. */
-function writeEvidenceCoordinate(db: Executor, row: ReturnType<typeof readExactEvidence>, coordinate: EvidenceCoordinate, audit: { actor: { type: 'user' | 'agent' | 'legacy'; id: string }; basis: string; entryPoint: 'correction' | 'legacy_pages'; batchKey: string | null }, file: unknown) {
+function writeEvidenceCoordinate(db: Executor, row: ReturnType<typeof readExactEvidence>, coordinate: EvidenceCoordinate, audit: { actor: { type: 'user' | 'agent' | 'legacy'; id: string }; basis: string; entryPoint: 'correction' | 'legacy_pages'; batchKey: string | null }, file: unknown, advanceRevision = true) {
   if (hash(row.coordinate) === hash(coordinate)) return false
   const current = readExactEvidence(db, row.evidenceId)
   if (current.version !== row.version) fail('stale_version', 'Evidence changed before write', 409)
   db.update(schema.recordEvidence).set(coordinate).where(eq(schema.recordEvidence.id, row.evidenceId)).run()
-  db.insert(schema.evidenceCorrectionAudit).values({ evidenceId: row.evidenceId, eventId: row.eventId, ...audit, before: { coordinate: row.coordinate, file: row.file, version: row.version }, after: { coordinate, file }, createdAt: new Date().toISOString() }).run()
+  if (advanceRevision) advanceOfficialEventRevision(db, row.eventId, row.event.revision)
+  db.insert(schema.evidenceCorrectionAudit).values({ evidenceId: row.evidenceId, eventId: row.eventId, ...audit, before: { coordinate: row.coordinate, file: row.file, version: row.version, eventRevision: row.event.revision }, after: { coordinate, file, eventRevision: row.event.revision + 1 }, createdAt: new Date().toISOString() }).run()
   return true
 }
 function replay(db: Executor, request: EvidenceCorrectionRequest, planHash: string) {
@@ -162,7 +164,12 @@ export async function commitEvidenceCorrection(db: Db, request: EvidenceCorrecti
     if (plan.planHash !== planHash) fail('plan_mismatch', 'Preflight impact or source changed; preflight again', 409)
     const receipt = { status: 'committed', idempotencyKey: request.idempotencyKey, planHash, impact: plan.impact, evidenceIds: plan.targets.map(t => t.evidenceId), committedAt: new Date().toISOString() }
     tx.insert(schema.evidenceCorrectionBatch).values({ idempotencyKey: request.idempotencyKey, requestHash: hash(request), planHash, receipt, createdAt: receipt.committedAt }).run()
-    for (const target of plan.targets) writeEvidenceCoordinate(tx, readExactEvidence(tx, target.evidenceId), target.after, { actor: request.actor, basis: request.basis, entryPoint: 'correction', batchKey: request.idempotencyKey }, target.file)
+    const changedEvents = new Map<number, number>()
+    for (const target of plan.targets) {
+      const changed = writeEvidenceCoordinate(tx, readExactEvidence(tx, target.evidenceId), target.after, { actor: request.actor, basis: request.basis, entryPoint: 'correction', batchKey: request.idempotencyKey }, target.file, false)
+      if (changed) changedEvents.set(target.eventId, target.event.revision)
+    }
+    for (const [eventId, revision] of changedEvents) advanceOfficialEventRevision(tx, eventId, revision)
     return receipt
   }, { behavior: 'immediate' })
 }

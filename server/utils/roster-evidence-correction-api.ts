@@ -37,6 +37,7 @@ export async function handleEvidenceCorrectionRequest(input: { action: EvidenceC
     if (input.action === 'get') return ok(context.db.transaction(tx => readExactEvidence(tx, id.data)))
     return error(404, 'not_found', 'Operation unavailable')
   } catch (caught) {
+    if (caught instanceof Error && (caught as { code?: string }).code === 'stale_revision') return error(409, 'stale_revision', 'Official event revision changed')
     if (caught instanceof EvidenceCorrectionError) return error(caught.status, caught.code, caught.message)
     return error(500, 'internal_error', 'Evidence correction failed')
   }
