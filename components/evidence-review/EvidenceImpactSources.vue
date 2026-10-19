@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef } from 'vue'
 import { useBoundedReviewPage } from '~/composables/useBoundedReviewPage'
-import { validityLabels } from '~~/lib/roster/evidence-review-ui'
+import { impactClassificationLabels } from '~~/lib/roster/evidence-review-ui'
 import EvidenceRevisionEvents from './EvidenceRevisionEvents.vue'
 import { Button } from '@/components/ui/button'
 import TableFailureState from '@/components/TableFailureState.vue'
@@ -20,7 +20,7 @@ const selectedRevision = shallowRef<number | null>(null)
     <p v-if="displayed && !displayed.rows.length">本页没有可列出的来源。</p>
     <ul class="flex flex-col gap-2"><li v-for="source in displayed?.rows ?? []" :key="source.revisionId" class="min-w-0 break-words border-l pl-2">
       <p>修订 #{{ source.revisionId }} · {{ source.sourceKind }} · {{ source.sourceKey }} · {{ source.sourceVersion }}</p>
-      <p>{{ validityLabels[source.classification] ?? source.classification }} · {{ source.coverageChanged ? '查询覆盖变化' : '查询覆盖未变' }} · {{ source.factChanged ? '平台事实变化' : '平台事实未变' }}</p>
+      <p>{{ impactClassificationLabels[source.classification] ?? source.classification }} · {{ source.coverageChanged ? '查询覆盖变化' : '查询覆盖未变' }} · {{ source.factChanged ? '平台事实变化' : '平台事实未变' }}</p>
       <NuxtLink v-if="source.eventId" :to="`/enterprises/${enterpriseId}?eventId=${source.eventId}`" class="text-primary hover:underline">定位事件 #{{ source.eventId }}</NuxtLink>
       <Button size="sm" variant="ghost" :aria-label="`查看修订 ${source.revisionId} 关联事件`" @click="selectedRevision = selectedRevision === source.revisionId ? null : source.revisionId">查看关联事件</Button>
       <EvidenceRevisionEvents v-if="selectedRevision === source.revisionId" :key="source.revisionId" :revision-id="source.revisionId" :enterprise-id="enterpriseId" />

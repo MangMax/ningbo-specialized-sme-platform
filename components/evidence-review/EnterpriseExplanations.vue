@@ -13,7 +13,7 @@ const showReviews = shallowRef(false)
 const reviewGeneration = shallowRef(0)
 const ordered = computed(() => [...props.assessments].sort((a, b) => Number(b.titleCode === props.titleCode && b.direction === props.direction) - Number(a.titleCode === props.titleCode && a.direction === props.direction)))
 const key = (a: ReviewScope) => `${a.titleCode}-${a.direction}`
-watch(() => [props.enterpriseId, props.titleCode, props.direction, props.assessments], async () => {
+watch(() => [props.enterpriseId, props.titleCode, props.direction, props.assessments, props.locate], async () => {
   if (props.locate === false) return
   if (!props.titleCode || !props.direction) return
   await nextTick()
@@ -25,7 +25,7 @@ watch(() => [props.enterpriseId, props.titleCode, props.direction, props.assessm
     <h2 class="text-sm font-medium">查询覆盖与解释</h2>
     <p class="text-muted-foreground text-[13px]">查询执行范围、业务决定和解释有效性分别保留。待复核不会撤回原决定。</p>
     <ul class="flex flex-col gap-3">
-      <li v-for="assessment in ordered" :id="`explanation-${key(assessment)}`" :key="key(assessment)" data-testid="assessment-scope" class="flex min-w-0 scroll-mt-4 flex-col gap-2 border-t pt-3">
+      <li v-for="assessment in ordered" :id="`explanation-${key(assessment)}`" :key="key(assessment)" data-testid="assessment-scope" class="flex min-w-0 scroll-mt-20 flex-col gap-2 border-t pt-3">
         <h3 class="text-[13px] font-medium">{{ TITLES[assessment.titleCode] ?? assessment.titleCode }} · {{ comparisonDirectionLabel(assessment.direction) }}</h3>
         <QueryAssessmentSummary :assessment="assessment" />
         <Button variant="ghost" size="sm" class="self-start" @click="historyScope = historyScope === key(assessment) ? null : key(assessment)">查看决定历史</Button>

@@ -47,6 +47,11 @@ version and effective time. An unchanged failed request retries its original
 envelope/key. Decision/evidence conflicts require a live reread before resubmission;
 drafts survive. Historical/withdrawn/merged owners and unready projections are read
 only. No credential means no submission; a rejected credential is cleared.
+Explicit reread refreshes the assessment, list and history caches as well as the
+impact detail, so a concurrent replacement cannot leave an old summary beside a
+new current decision. Reviewed source rows keep their original change classification
+without relabelling the completed item as pending. A focused explanation waits for
+surrounding detail loading to settle and clears the sticky header when located.
 
 After committed success, `useEvidenceReviewRefresh` invalidates all affected active
 and inactive Colada list/detail/history prefixes. A frozen pending-list cursor must

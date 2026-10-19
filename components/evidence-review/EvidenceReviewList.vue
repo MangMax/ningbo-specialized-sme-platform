@@ -2,7 +2,7 @@
 import { computed, reactive, shallowRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import type { CursorPage, ImpactRow } from '~~/lib/roster/evidence-review-ui'
-import { validityLabels, lineageLabels } from '~~/lib/roster/evidence-review-ui'
+import { impactClassificationLabels, lineageLabels } from '~~/lib/roster/evidence-review-ui'
 import { TITLES, comparisonDirectionLabel } from '~~/lib/labels'
 import EvidenceReviewDetail from './EvidenceReviewDetail.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
@@ -75,7 +75,7 @@ function enterpriseLink(row: ImpactRow) {
       <li v-for="row in displayed?.rows ?? []" :key="row.id" class="flex min-w-0 flex-col gap-1 rounded-md border p-3 text-[13px]">
         <p v-if="row.lineage === 'merged'" class="break-words">原企业 #{{ row.enterpriseId }} · {{ TITLES[row.titleCode] ?? row.titleCode }} · {{ comparisonDirectionLabel(row.direction) }}（归并前坐标）</p>
         <NuxtLink v-else :to="enterpriseLink(row)" data-testid="review-enterprise-link" class="break-words text-primary hover:underline">企业 #{{ row.enterpriseId }} · {{ TITLES[row.titleCode] ?? row.titleCode }} · {{ comparisonDirectionLabel(row.direction) }}</NuxtLink>
-        <p>{{ row.pending ? '待复核' : '已复核' }} · {{ validityLabels[row.classification] ?? row.classification }} · {{ lineageLabels[row.lineage] ?? row.lineage }} · 原决定 #{{ row.decisionId }}</p>
+        <p>{{ row.pending ? '待复核' : '已复核' }} · {{ impactClassificationLabels[row.classification] ?? row.classification }} · {{ lineageLabels[row.lineage] ?? row.lineage }} · 原决定 #{{ row.decisionId }}</p>
         <p v-if="row.oldDecision?.reasonNote" class="break-words">原决定依据：{{ row.oldDecision.reasonNote }}</p>
         <p v-if="!row.oldDecision">历史决定原文不可用；原坐标和来源仍保留。</p>
         <Button variant="outline" size="sm" class="self-start" :aria-label="`查看复核项 ${row.id}`" @click="selected = selected === row.id ? null : row.id">{{ selected === row.id ? '收起复核项' : '查看决定、来源与复核' }}</Button>

@@ -19,7 +19,7 @@ const failure = shallowRef('')
 const mode = shallowRef('maintain')
 const choiceId = useId()
 const conflict = shallowRef(false)
-watch(() => props.detail, () => { conflict.value = false })
+watch(() => props.detail, () => { if (conflict.value) failure.value = ''; conflict.value = false })
 const draft = ref({ status: 'confirmed_reason', reasonCode: '', reasonNote: '', measureCode: '', measureNote: '', evidenceQueryId: '', evidenceRelationId: '' })
 const validId = (id: string) => !id || (/^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id)))
 const replacementReady = computed(() => !!draft.value.measureCode && (draft.value.status === 'confirmed_no_diff' ? draft.value.measureCode === 'none' : !!draft.value.reasonCode && (draft.value.reasonCode !== 'pending_review' || draft.value.measureCode === 'follow_review')) && validId(draft.value.evidenceQueryId) && validId(draft.value.evidenceRelationId))
@@ -66,7 +66,7 @@ async function save() {
     <p v-if="!eligible" class="text-muted-foreground text-[13px]">{{ !detail.pending ? '该项已登记复核；若有后续证据变化，请重新读取。' : '该项当前不可完成复核：历史、撤回、归并或尚未完成影响检查。请重新读取当前状态。' }}</p>
     <p class="text-muted-foreground text-[13px]">{{ token ? '写入凭证仅在本面板内存中使用，权限由服务端验证。' : '只读：可查看旧决定和缺口；提交需要配置的写入凭证。' }}</p>
     <fieldset class="flex flex-col gap-3" :disabled="pending || refreshing || !eligible">
-      <legend class="mb-2 text-sm font-medium">复核当前决定 #{{ detail.decisionId }}</legend>
+      <legend class="mb-2 text-sm font-medium">复核原决定 #{{ detail.decisionId }}</legend>
       <label class="flex flex-col gap-1 text-[13px]">写入凭证<Input v-model="token" aria-label="写入凭证" type="password" autocomplete="off" /></label>
       <label class="flex flex-col gap-1 text-[13px]">复核人<Input v-model="actor" aria-label="复核人" maxlength="200" autocomplete="off" /></label>
       <label class="flex flex-col gap-1 text-[13px]">复核依据<Textarea v-model="basis" aria-label="复核依据" maxlength="4000" :rows="3" /></label>

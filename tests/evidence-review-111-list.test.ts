@@ -178,3 +178,12 @@ it('retains a source page and explains an invalid source cursor until the user r
   expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts/4/sources', { query: { limit: 25 } })
   view.unmount()
 })
+it('labels reviewed historical impacts as reviewed while preserving their original change classification', async () => {
+  fetcher.mockResolvedValue({ rows: [{ ...row, pending: false, lineage: 'historical', classification: 'evidence_changed' }], nextCursor: null, asOf: {}, projectionReady: true })
+  const view = render(); await flushPromises()
+  const item = view.get('[aria-label="解释复核清单"] > ul > li')
+  expect(item.text()).toContain('已复核')
+  expect(item.text()).toContain('证据变化')
+  expect(item.text()).not.toContain('待复核')
+  view.unmount()
+})

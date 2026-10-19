@@ -349,7 +349,7 @@ function openPreview(e: Evidence) {
         </AlertDescription>
       </Alert>
 
-      <EnterpriseExplanations :key="detail.id" :enterprise-id="detail.id" :assessments="data?.titleAssessments ?? []" :title-code="explanationTitle" :direction="explanationDirection" :impact-id="impactId" :locate="focusedEventId == null" />
+      <EnterpriseExplanations :key="detail.id" :enterprise-id="detail.id" :assessments="data?.titleAssessments ?? []" :title-code="explanationTitle" :direction="explanationDirection" :impact-id="impactId" :locate="focusedEventId == null && !correspondenceLoading" />
 
       <!--
         平台原行是辅助区：默认折叠，保留全部查询记录可查；它不参与上面的出处判定。

@@ -37,3 +37,27 @@ it('refreshes every affected active list detail and history cache only after a c
   for (const prefix of prefixes) expect(view.get(`[data-cache="${prefix}"]`).text()).toBe('reviewed')
   view.unmount()
 })
+it('explicit conflict reread refreshes the current assessment and history while keeping the review draft', async () => {
+  const { default: ComparisonExplanation } = await import('../components/evidence-review/ComparisonExplanation.vue')
+  const { default: EvidenceReviewDetail } = await import('../components/evidence-review/EvidenceReviewDetail.vue')
+  let currentId = 82
+  const decision = () => ({ id: currentId, status: 'confirmed_reason', reasonCode: 'other', reasonNote: currentId === 82 ? '原决定' : '并发更正', measureCode: 'none' })
+  vi.stubGlobal('$fetch', vi.fn(async (url: string, options?: any) => {
+    if (options?.method === 'POST') { currentId = 90; throw { data: { error: { code: 'stale_version' } } } }
+    if (url === '/api/roster/enterprises/7') return { titleAssessments: [{ titleCode: 'specialized_sme', direction: 'missing_in_miit', assessment: 'decided', queryCoverage: { status: 'complete', sources: [], truncated: false }, currentDecision: { versionId: currentId, current: decision() }, explanationValidity: { status: 'evidence_changed' } }] }
+    if (url === '/api/roster/evidence-impacts/4') return { ...detail, oldDecision: { id: 82, reasonNote: '原决定' }, currentDecision: { versionId: currentId, current: decision() }, queryCoverage: null, gaps: {}, lineage: currentId === 82 ? 'current' : 'historical', evidenceToken: { ...detail.evidenceToken, decisionId: currentId } }
+    if (url.endsWith('/sources')) return { rows: [], nextCursor: null, asOf: {} }
+    if (url.endsWith('/history')) return { rows: [{ id: currentId, recordedAt: '2026-10-19' }], total: 1, page: 1, pageSize: 25 }
+    throw new Error('Unexpected public read')
+  }))
+  const Harness = defineComponent({ setup: () => () => h('div', [h(ComparisonExplanation, { enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit' }), h(EvidenceReviewDetail, { impactId: 4 })]) })
+  const view = mount(Harness, { global: { plugins: [createPinia(), PiniaColada], stubs: { NuxtLink: { template: '<a><slot /></a>' } } } }); await flushPromises()
+  for (const [label, value] of [['写入凭证', 'synthetic'], ['复核人', 'tester'], ['复核依据', '保留的草稿'], ['规则版本', 'manual-v1']]) await view.get(`[aria-label="${label}"]`).setValue(value)
+  await view.get('form').trigger('submit'); await flushPromises()
+  expect(view.text()).toContain('决定版本冲突')
+  await view.findAll('button').find(b => b.text() === '重新读取当前状态')!.trigger('click'); await flushPromises()
+  expect(view.get('[data-testid="query-assessment"]').text()).toContain('当前决定 #90')
+  expect(view.get('[aria-label="决定历史"]').text()).toContain('决定 #90')
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toBe('保留的草稿')
+  view.unmount()
+})

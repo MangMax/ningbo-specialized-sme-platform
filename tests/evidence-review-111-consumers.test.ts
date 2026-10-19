@@ -27,3 +27,15 @@ it('enterprise keeps old current decision and pending validity visible at the fo
   expect(view.get('[data-testid="assessment-scope"]').attributes('id')).toBe('explanation-specialized_sme-missing_in_miit')
   view.unmount()
 })
+it('locates the focused explanation only after the surrounding detail is ready', async () => {
+  const scroll = vi.fn()
+  const previous = HTMLElement.prototype.scrollIntoView
+  HTMLElement.prototype.scrollIntoView = scroll
+  const view = mount(EnterpriseExplanations, { attachTo: document.body, props: { enterpriseId: 7, assessments: [assessment] as any, titleCode: 'specialized_sme', direction: 'missing_in_miit', locate: false }, global: global() })
+  try {
+    await flushPromises(); expect(scroll).not.toHaveBeenCalled()
+    await view.setProps({ locate: true }); await flushPromises()
+    expect(scroll).toHaveBeenCalledWith({ block: 'start' })
+    expect(view.get('[data-testid="assessment-scope"]').attributes('id')).toBe('explanation-specialized_sme-missing_in_miit')
+  } finally { view.unmount(); HTMLElement.prototype.scrollIntoView = previous }
+})
