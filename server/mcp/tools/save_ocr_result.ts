@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape, openFileStore, requireFileRef } from '../../utils/mcp-files'
+import { fileRefShape, openFileStore } from '../../utils/mcp-files'
 import { writeGuard } from '../../utils/mcp-guard'
-import { pagesFromInput, writeOcrResult } from '../../utils/ocr-result'
+import { saveOcrImport, requireOcrFileRef, ocrExpectedVersionSchema, ocrPageSchema } from '../../utils/ocr-page-lifecycle'
 
 /**
  * `save_ocr_result` —— **通路 c**:代理经 MCP 把识别结果写回。
@@ -35,44 +35,22 @@ export default defineMcpTool({
   description: [
     '按 `fileId` 或 `relPath`(恰给其一)写回 OCR 结果。',
     '给 `page` ⇒ 这段 markdown 就是**那一页**的内容;不给 ⇒ markdown 必须自带 `<!-- page: N -->` 页标记(整份结果)。',
+    'expectedVersion 可取 get_ocr_result.results[].version;null 表示预期不存在。版本不符为 409,且需要显式 page。省略保持兼容覆盖;只覆盖列出的页。',
     '**幂等**:同一页重写是覆盖,不会堆重复行。',
     '**是写入 tool**,需要鉴权(Authorization: Bearer <NUXT_MCP_TOKEN>)。',
     '只写 OCR 结果;**不改**台账记录与企业身份(pipeline 的事)。',
   ].join('\n'),
   inputSchema: {
     ...fileRefShape,
-    page: z
-      .number()
-      .int()
-      .min(1)
-      .optional()
-      .describe('页号;给了就表示 markdown 是这一页的内容,不给则要求 markdown 自带页标记'),
+    page: ocrPageSchema.optional().describe('显式页号;省略须 markdown 自带页标记'),
+    expectedVersion: ocrExpectedVersionSchema,
     markdown: z.string().describe('OCR 结果 markdown(带页码更能对上出处的页码)'),
     engine: z.string().optional().describe('识别引擎;默认 paddleocr'),
-    model: z.string().optional().describe('模型名(可空)'),
+    model: z.string().nullable().optional().describe('模型名(可空)'),
   },
   handler: async (input) => {
-    const { db } = await openFileStore()
-    const row = requireFileRef(db, input)
-
-    const parsed = pagesFromInput(input.markdown, input.page ?? null)
-    if (!parsed.ok) throw createError({ statusCode: 400, message: parsed.message })
-
-    const written = writeOcrResult(db, {
-      fileId: row.id,
-      pages: parsed.pages.map((p) => ({ page: p.page, markdown: p.markdown })),
-      channel: 'mcp',
-      ...(input.engine?.trim() ? { engine: input.engine.trim() } : {}),
-      model: input.model?.trim() ? input.model.trim() : null,
-      sourceRelPath: row.relPath,
-    })
-    if (!written.ok) throw createError({ statusCode: 400, message: written.message })
-
-    return {
-      file: { id: row.id, relPath: row.relPath, filename: row.filename },
-      channel: 'mcp',
-      written: written.written,
-      pages: written.pages,
-    }
+    const { db, root } = await openFileStore()
+    const row = requireOcrFileRef(db, input)
+    return saveOcrImport({ ok: true, db, root, row }, input, 'mcp')
   },
 })

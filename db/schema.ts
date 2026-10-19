@@ -332,6 +332,8 @@ export const ocrResult = sqliteTable(
       .references(() => storedFile.id, { onDelete: 'cascade' }),
     /** 页码,从 1 起。与票 13 的页图页号、`.pages.json` 的 `page` **同一个号**。 */
     pageNo: integer('page_no').notNull(),
+    /** 同一行每次写入递增;与 AUTOINCREMENT id 合成不复用的页版本。 */
+    revision: integer('revision').notNull().default(1),
     /** 该页页图在文件库内的相对路径(`lib/pdf-page.ts` 的 `pageImageRelPath`)。可空。 */
     pageRelPath: text('page_rel_path'),
     /** 该页的 markdown(带标题、表格的标准 markdown)。**空页也占一行**(`''`)——

@@ -1,7 +1,6 @@
-import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape, openFileStore, requireFileRef } from '../../utils/mcp-files'
-import { listOcrResults, ocrMarkdown } from '../../utils/ocr-result'
+import { fileRefShape, openFileStore } from '../../utils/mcp-files'
+import { getOcrResultForFile, requireOcrFileRef, ocrPageSchema } from '../../utils/ocr-page-lifecycle'
 
 /**
  * `get_ocr_result` —— 取某文件/某页的 OCR 结果(markdown,带页码)。
@@ -24,40 +23,18 @@ export default defineMcpTool({
   annotations: { readOnlyHint: true, openWorldHint: false },
   description: [
     '按 `fileId` 或 `relPath`(恰给其一)取某文件(或某页)的 OCR 结果 markdown。',
-    '返回 `markdown`(带 `<!-- page: N -->` 页标记)与 `results`(逐页元数据:page / engine / model / channel / createdAt / pageRelPath / url)。',
+    '返回 `markdown`(带 `<!-- page: N -->` 页标记)与 `results`(逐页元数据:page / version / engine / model / channel / createdAt / pageRelPath / url)。',
     '给 `page` 只取那一页。**文件还没识别过**时返回 404 并说明可以走哪条通路。',
+    'results[].version 是不透明页版本,可用于 save_ocr_result/delete_ocr_result 的 expectedVersion。删除后重做同页须重新读取,不能复用旧版本。',
     '这是**只读** tool;写入用 `save_ocr_result`(需鉴权)。',
   ].join('\n'),
   inputSchema: {
     ...fileRefShape,
-    page: z.number().int().min(1).optional().describe('页号;省略则要整份文件的 OCR 结果'),
+    page: ocrPageSchema.optional().describe('页号;省略则要整份文件的 OCR 结果'),
   },
   handler: async (input) => {
     const { db } = await openFileStore()
-    const row = requireFileRef(db, input, { allowRemoved: true })
-
-    const out = ocrMarkdown(db, row.id, input.page ?? null)
-    if (!out.ok) throw createError({ statusCode: 404, message: out.message })
-
-    const results = listOcrResults(db, row.id, input.page ?? null).map((r) => ({
-      page: r.page,
-      engine: r.engine,
-      model: r.model,
-      channel: r.channel,
-      createdAt: r.createdAt,
-      chars: r.markdown.length,
-      pageRelPath: r.pageRelPath,
-      url: r.pageRelPath
-        ? `/api/files/${r.pageRelPath.split('/').map(encodeURIComponent).join('/')}`
-        : null,
-    }))
-
-    return {
-      file: { id: row.id, relPath: row.relPath, filename: row.filename },
-      page: input.page ?? null,
-      pages: out.pages,
-      markdown: out.markdown,
-      results,
-    }
+    const row = requireOcrFileRef(db, input, true)
+    return getOcrResultForFile(db, row, input.page)
   },
 })

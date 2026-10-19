@@ -1,5 +1,6 @@
+import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
 import { fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
-import { ocrPageNumbers, removeOcrPage } from '../../utils/ocr-result'
+import { deleteOcrPage } from '../../utils/ocr-result'
 
 /**
  * **删掉某一页的 OCR 结果**。`DELETE /api/ocr-results?file=…|fileId=…&page=3`
@@ -38,7 +39,8 @@ defineRouteMeta({
         description: '相对文件库根的路径(与 `fileId` 恰给其一)。',
       },
       { name: 'fileId', in: 'query', schema: { type: 'integer' }, description: '文件 id(与 `file` 恰给其一)。' },
-      { name: 'page', in: 'query', required: true, schema: { type: 'integer', minimum: 1 } },
+      { name: 'expectedVersion', in: 'query', schema: { type: 'string' }, description: '预期页版本;省略=无条件。版本不符拒绝删除。' },
+      { name: 'page', in: 'query', required: true, schema: { type: 'integer', minimum: 1, maximum: MAX_PAGE_NO } },
     ],
     responses: {
       200: {
@@ -58,6 +60,7 @@ defineRouteMeta({
         },
       },
       400: { description: '缺文件引用 / 缺 `page` / `page` 非法。' },
+      409: { description: '预期页版本不符;重新读取后再提交。' },
       404: { description: '文件不存在 / 已移出库。' },
     },
   },
@@ -82,20 +85,21 @@ export default defineEventHandler(async (event) => {
     })
   }
   const page = Number(rawPage)
-  if (!Number.isInteger(page) || page < 1) {
+  if ((typeof rawPage !== 'string' && typeof rawPage !== 'number') || !Number.isInteger(page) || page < 1 || page > MAX_PAGE_NO) {
     throw createError({ statusCode: 400, message: `page 必须是正整数:${String(rawPage)}` })
   }
 
   const target = await resolveOcrFileTarget(ref.ref)
   if (!target.ok) throw createError({ statusCode: target.statusCode, message: target.message })
 
-  const deleted = removeOcrPage(target.db, target.row.id, page)
+  const out = deleteOcrPage(target.db, target.row.id, page, q.expectedVersion as string | undefined)
+  if (!out.ok) throw createError({ statusCode: out.statusCode, message: out.message })
 
   return {
     file: { id: target.row.id, relPath: target.row.relPath, filename: target.row.filename },
     page,
-    deleted,
+    deleted: out.deleted,
     // 删完之后还剩几页结果 —— 界面用它更新覆盖率,不必再发一次清单请求。
-    remaining: ocrPageNumbers(target.db, target.row.id).length,
+    remaining: out.remaining,
   }
 })

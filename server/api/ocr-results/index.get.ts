@@ -1,3 +1,4 @@
+import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
 import { fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
 import { listOcrResults } from '../../utils/ocr-result'
 
@@ -35,7 +36,7 @@ defineRouteMeta({
         description: '相对文件库根的文件路径(与 `record_evidence.source_file` 同口径)。',
       },
       { name: 'fileId', in: 'query', schema: { type: 'integer' }, description: '文件 id(与 `file` 恰给其一)。' },
-      { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1 }, description: '只报这一页。' },
+      { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, maximum: MAX_PAGE_NO }, description: '只报这一页。' },
       {
         name: 'markdown',
         in: 'query',
@@ -58,6 +59,7 @@ defineRouteMeta({
                   items: {
                     type: 'object',
                     properties: {
+                      version: { type: 'string', description: '不透明页版本;用于 expectedVersion' },
                       page: { type: 'integer' },
                       engine: { type: 'string' },
                       model: { type: 'string', nullable: true },
@@ -91,7 +93,7 @@ export default defineEventHandler(async (event) => {
   let page: number | null = null
   if (pageRaw !== undefined && pageRaw !== null && pageRaw !== '') {
     page = Number(pageRaw)
-    if (!Number.isInteger(page) || page < 1) {
+    if ((typeof pageRaw !== 'string' && typeof pageRaw !== 'number') || !Number.isInteger(page) || page < 1 || page > MAX_PAGE_NO) {
       throw createError({ statusCode: 400, message: `page 必须是正整数:${String(pageRaw)}` })
     }
   }
@@ -114,6 +116,7 @@ export default defineEventHandler(async (event) => {
     channels: [...new Set(rows.map((r) => r.channel))].sort(),
     pages: rows.map((r) => ({
       page: r.page,
+      version: r.version,
       engine: r.engine,
       model: r.model,
       channel: r.channel,
