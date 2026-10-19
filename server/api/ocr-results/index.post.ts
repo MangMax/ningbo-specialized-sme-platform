@@ -65,6 +65,7 @@ defineRouteMeta({
                 minimum: 1,
                 description: '页号;给了就表示 `markdown` 是**这一页**的内容(此时正文不该再带页标记)。',
               },
+              mode: { type: 'string', enum: ['versioned'], description: '现代命令须同时提供 expectedVersion,否则400。' },
               expectedVersion: { type: 'string', nullable: true, description: '显式 page 的预期版本;null=预期不存在;省略=兼容无条件覆盖。读回见 pages[].version。' },
               engine: { type: 'string', description: `识别引擎;默认 \`${DEFAULT_OCR_ENGINE}\`。` },
               model: { type: 'string', description: '模型名(可空)。' },

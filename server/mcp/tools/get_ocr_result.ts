@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { fileRefShape, openFileStore } from '../../utils/mcp-files'
 import { getOcrResultForFile, requireOcrFileRef, ocrPageSchema } from '../../utils/ocr-page-lifecycle'
@@ -23,18 +24,19 @@ export default defineMcpTool({
   annotations: { readOnlyHint: true, openWorldHint: false },
   description: [
     '按 `fileId` 或 `relPath`(恰给其一)取某文件(或某页)的 OCR 结果 markdown。',
-    '返回 `markdown`(带 `<!-- page: N -->` 页标记)与 `results`(逐页元数据:page / version / engine / model / channel / createdAt / pageRelPath / url)。',
+    '返回 `markdown`(带 `<!-- page: N -->` 页标记)与 `results`(逐页元数据:page / engine / model / channel / createdAt / pageRelPath / url)。显式 includeVersion:true 才附 version,保留旧默认响应。',
     '给 `page` 只取那一页。**文件还没识别过**时返回 404 并说明可以走哪条通路。',
-    'results[].version 是不透明页版本,可用于 save_ocr_result/delete_ocr_result 的 expectedVersion。删除后重做同页须重新读取,不能复用旧版本。',
+    'includeVersion:true 时 results[].version 是不透明页版本,可用于 save_ocr_result/delete_ocr_result 的 expectedVersion。删除后重做同页须重新读取,不能复用旧版本。',
     '这是**只读** tool;写入用 `save_ocr_result`(需鉴权)。',
   ].join('\n'),
   inputSchema: {
     ...fileRefShape,
+    includeVersion: z.boolean().optional().describe('显式请求现代页版本;省略保留旧 results 元数据形状'),
     page: ocrPageSchema.optional().describe('页号;省略则要整份文件的 OCR 结果'),
   },
   handler: async (input) => {
     const { db } = await openFileStore()
     const row = requireOcrFileRef(db, input, true)
-    return getOcrResultForFile(db, row, input.page)
+    return getOcrResultForFile(db, row, input.page, input.includeVersion ?? false)
   },
 })

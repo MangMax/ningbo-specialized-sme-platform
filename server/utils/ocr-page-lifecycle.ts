@@ -21,6 +21,9 @@ export async function saveOcrImport(
   body: Record<string, unknown>,
   channel: OcrChannel,
 ) {
+  if (body.mode !== undefined && (body.mode !== 'versioned' || body.expectedVersion === undefined)) {
+    throw createError({ statusCode: 400, message: '现代版本命令不完整:mode=versioned 必须提供 expectedVersion' })
+  }
   if (!validOcrExpectedVersion(body.expectedVersion)) throw createError({ statusCode: 400, message: 'expectedVersion 非法' })
   if (body.expectedVersion !== undefined && (typeof body.page !== 'number' || !Number.isInteger(body.page))) {
     throw createError({ statusCode: 400, message: 'expectedVersion 需要显式 page;不能作用于隐式整份范围' })
@@ -119,7 +122,7 @@ export function requireOcrFileRef(db: Db, input: FileRefInput, allowRemoved = fa
 }
 
 /** 一次按文件/页定位的显式投影;从不读取 raw,不重复加载正文。 */
-export function getOcrResultForFile(db: Db, row: StoredFileRow, page?: number) {
+export function getOcrResultForFile(db: Db, row: StoredFileRow, page?: number, includeVersion = true) {
   const results = listOcrResults(db, row.id, page)
   if (!results.length) throw createError({ statusCode: 404, message: page === undefined ? '这个文件还没有 OCR 结果' : `第 ${page} 页还没有 OCR 结果` })
   return {
@@ -127,6 +130,6 @@ export function getOcrResultForFile(db: Db, row: StoredFileRow, page?: number) {
     page: page ?? null,
     pages: results.map(result => result.page),
     markdown: assembleMarkdown(results),
-    results: results.map(r => ({ page: r.page, version: r.version, engine: r.engine, model: r.model, channel: r.channel, createdAt: r.createdAt, chars: r.markdown.length, pageRelPath: r.pageRelPath, url: r.pageRelPath ? `/api/files/${r.pageRelPath.split('/').map(encodeURIComponent).join('/')}` : null })),
+    results: results.map(r => ({ page: r.page, ...(includeVersion ? { version: r.version } : {}), engine: r.engine, model: r.model, channel: r.channel, createdAt: r.createdAt, chars: r.markdown.length, pageRelPath: r.pageRelPath, url: r.pageRelPath ? `/api/files/${r.pageRelPath.split('/').map(encodeURIComponent).join('/')}` : null })),
   }
 }

@@ -39,6 +39,7 @@ defineRouteMeta({
         description: '相对文件库根的路径(与 `fileId` 恰给其一)。',
       },
       { name: 'fileId', in: 'query', schema: { type: 'integer' }, description: '文件 id(与 `file` 恰给其一)。' },
+      { name: 'mode', in: 'query', schema: { type: 'string', enum: ['versioned'] }, description: '显式现代命令模式;须同时给 expectedVersion。' },
       { name: 'expectedVersion', in: 'query', schema: { type: 'string' }, description: '预期页版本;省略=无条件。版本不符拒绝删除。' },
       { name: 'page', in: 'query', required: true, schema: { type: 'integer', minimum: 1, maximum: MAX_PAGE_NO } },
     ],
@@ -77,6 +78,9 @@ export default defineEventHandler(async (event) => {
    * 是「给我整份」,写/删的时候省略必须是「说清你要动哪一页」,否则就是范围失控。
    * 这里的 400 消息要说得像一个**缺失的参数**,不是「页号非法」—— 前者用户知道去补。
    */
+  if (q.mode !== undefined && (q.mode !== 'versioned' || q.expectedVersion === undefined)) {
+    throw createError({ statusCode: 400, message: '现代版本命令不完整:mode=versioned 必须提供 expectedVersion' })
+  }
   const rawPage = q.page
   if (rawPage === undefined || rawPage === null || rawPage === '') {
     throw createError({

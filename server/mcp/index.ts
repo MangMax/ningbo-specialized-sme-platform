@@ -54,7 +54,7 @@ export default defineMcpHandler({
     '4. 识别之后用 `save_ocr_result` **按页**写回结果、`set_file_category` 回写分类、',
     '   `save_parse_result` 写回解析出的段;要回看识别结果用 `get_ocr_result`;',
     '   OCR 单页重做:读页图→save_ocr_result {fileId,page,markdown,expectedVersion};delete_ocr_result 只删一页派生结果,保留来源与台账。',
-    '   expectedVersion 取 get_ocr_result.results[].version;冲突409须重新读。代理 REST 对等入口 /api/files/{id}/ocr-pages/{page},写入用独立 API token。见 docs/maintenance-106.md。',
+    '   expectedVersion 取 get_ocr_result {includeVersion:true} 的 results[].version;冲突409须重新读。代理 REST 对等入口 /api/files/{id}/ocr-pages/{page},写入用独立 API token。见 docs/maintenance-106.md。',
     '5. 名单纠偏完成后,用 `preflight_roster_batch` **先预检**(只算影响、不写业务数据),',
     '   确认无误再用 `save_roster_batch` **提交**(单批事务 + 幂等键);',
     '   写完之后用 `list_enterprises` / `query_records` / `get_enterprise_detail` /',

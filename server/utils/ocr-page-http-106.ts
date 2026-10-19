@@ -6,8 +6,8 @@ import { ensureFileStoreReady } from './mcp-files'
 import { deleteOcrPage } from './ocr-result'
 import { getOcrResultForFile, ocrExpectedVersionSchema, ocrPageSchema, requireOcrFileRef, saveOcrImport } from './ocr-page-lifecycle'
 
-const writeBody = z.object({ markdown: z.string(), engine: z.string().optional(), model: z.string().nullable().optional(), expectedVersion: ocrExpectedVersionSchema }).strict()
-const deleteBody = z.object({ expectedVersion: ocrExpectedVersionSchema }).strict()
+const writeBody = z.object({ markdown: z.string(), engine: z.string().optional(), model: z.string().nullable().optional(), expectedVersion: ocrExpectedVersionSchema.nonoptional() }).strict()
+const deleteBody = z.object({ expectedVersion: ocrExpectedVersionSchema.nonoptional() }).strict()
 
 /** Authenticated agent HTTP adapter; legacy local UI routes retain their documented policy. */
 export async function ocrPageHttp106(event: H3Event, action: 'get' | 'save' | 'delete') {

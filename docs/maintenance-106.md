@@ -6,15 +6,15 @@
 
 代理 REST 入口：`/api/files/{id}/ocr-pages/{page}`，`id` 为 `stored_file.id`，`page` 为 1–2000 的整数。
 
-- `GET`：无需 token，返回与 MCP `get_ocr_result {fileId,page}` 相同的 `file/page/pages/markdown/results`。`results[].version` 为不透明页版本，`markdown` 是规范页标记导出；不存在结果为 404。
-- `PUT`：需要 `Authorization: Bearer <NUXT_API_TOKEN>`（或 `X-API-Token`），请求 `{markdown, expectedVersion?, engine?, model?}`。只覆盖路径指定的一页；拒绝额外字段/查询参数；页体不能再含整行页标记。返回实际写入页、源 PDF 页数/页图探测与 warning。
-- `DELETE`：同上鉴权，可无请求体，也可给 `{expectedVersion?}`。返回 `{file,page,deleted,remaining}`；`remaining` 是本文件剩余 OCR 页数。不存在页无条件删除为 200 / `deleted:0`。
+- `GET`：无需 token，返回与 MCP `get_ocr_result {fileId,page,includeVersion:true}` 相同的 `file/page/pages/markdown/results`。`results[].version` 为不透明页版本，`markdown` 是规范页标记导出；不存在结果为 404。
+- `PUT`：需要 `Authorization: Bearer <NUXT_API_TOKEN>`（或 `X-API-Token`），请求 `{markdown, expectedVersion, engine?, model?}`（版本必填）。只覆盖路径指定的一页；拒绝额外字段/查询参数；页体不能再含整行页标记。返回实际写入页、源 PDF 页数/页图探测与 warning。
+- `DELETE`：同上鉴权，请求体 `{expectedVersion}` 必填。返回 `{file,page,deleted,remaining}`；`remaining` 是本文件剩余 OCR 页数。不存在页用 `expectedVersion:null` 删除为 200 / `deleted:0`。
 
-MCP 复用 `get_ocr_result` / `save_ocr_result`，新增 `delete_ocr_result`。写入和删除需要 **MCP** token (`NUXT_MCP_TOKEN`)，未鉴权在 `tools/list` 中隐藏，强行 `tools/call` 为 HTTP 401；API/MCP token 独立。两种引用 `fileId` 与兼容 `relPath` 恰给其一。删除 `page` 必填；写入省略 `page` 时必须在 markdown 中显式列出页标记，且只覆盖列出的页。覆盖率可读既有 `GET /api/ocr-results?fileId=ID` 的 `count/pages`；精确读回给 `page`，不会读取其他页正文或 raw。
+MCP 复用 `get_ocr_result` / `save_ocr_result`，新增 `delete_ocr_result`（必填 `expectedVersion`）。现代读取显式给 `includeVersion:true`；旧 get 默认保留原元数据形状，不自动新增版本字段。写入和删除需要 **MCP** token (`NUXT_MCP_TOKEN`)，未鉴权在 `tools/list` 中隐藏，强行 `tools/call` 为 HTTP 401；API/MCP token 独立。两种引用 `fileId` 与兼容 `relPath` 恰给其一。删除 `page` 必填；写入省略 `page` 时必须在 markdown 中显式列出页标记，且只覆盖列出的页。覆盖率可读既有 `GET /api/ocr-results?fileId=ID` 的 `count/pages`；精确读回给 `page`，不会读取其他页正文或 raw。
 
 调用顺序示例：
 
-1. `get_ocr_result {fileId:7,page:3}`，取得 `results[0].version`；页不存在时先核对页图。
+1. `get_ocr_result {fileId:7,page:3,includeVersion:true}`，取得 `results[0].version`；页不存在时先核对页图。
 2. `save_ocr_result {fileId:7,page:3,markdown:"校对正文",expectedVersion:"读回版本"}`；需重识别时仍只提交这一页。
 3. 删除用 `delete_ocr_result {fileId:7,page:3,expectedVersion:"最新读回版本"}`；删除不触发任何台账撤回或文件操作。
 4. REST 代理可使用相同页号与版本向上述 PUT/DELETE 提交；写入通路分别记录 `upload` / `mcp`，正文与护栏相同。
@@ -23,13 +23,13 @@ OpenAPI 的新路径声明请求白名单、独立 token、安全响应及版本
 
 ## 并发、幂等与错误
 
-`expectedVersion` 省略保留旧调用方的无条件覆盖/删除；字符串必须使用读回值。显式 `null` 表示“预期这一页不存在”，可用于防覆盖创建。带预期版本的写入必须显式给 `page`，不能把它作用到整份 markdown/JSONL。版本不符（包括带旧版本访问已删除页）为 409，整次请求不变更；重新读取后决定是否重试。无条件删除不存在页幂等返回 0；无条件重传同页不新增重复行。成功覆盖会推进版本，因此带旧版本重放不会静默覆盖后来结果。
+新 REST PUT/DELETE 与新 MCP `delete_ocr_result` 必须提供 `expectedVersion`，缺失即拒绝。仅既有 REST POST/DELETE 与 MCP `save_ocr_result` 的旧载荷适配允许省略，保留原来的较弱盲写语义；字符串必须使用读回值。显式 `null` 表示“预期这一页不存在”，可用于防覆盖创建。带预期版本的写入必须显式给 `page`，不能把它作用到整份 markdown/JSONL。版本不符（包括带旧版本访问已删除页）为 409，整次请求不变更；重新读取后决定是否重试。现代删除以 `null` 表示预期不存在，可重复返回 0；旧入口无条件删除不存在页也返回 0。旧入口无条件重传同页不新增重复行，并会推进修订，使此前读回的现代编辑版本失效。成功覆盖会推进版本，因此带旧版本重放不会静默覆盖后来结果。
 
 迁移 `0022_ocr_page_revision.sql` 仅为 `ocr_result` 添加 `revision INTEGER NOT NULL DEFAULT 1`，保留已有行、ID、正文、raw、约束和索引。版本由自增行 ID 与递增修订构成，调用方须当作不透明字符串。所有既有写入（包括完整在线 OCR 成功替换）沿用同一写服务，更新推进修订；删除重建产生新 ID，防止同页重建后旧版本重新命中。版本核对和修改在同一个 `BEGIN IMMEDIATE` 事务；多页替换失败整体回滚，覆盖时未提供 raw 保留原值。
 
 错误分类：400 为字段/引用/页号/版本形状错误或越出已知 PDF 页数，401 为写入未鉴权，404 为目标文件不存在/已移出（读取已移出文件仍允许）或精确读的 OCR 页不存在，409 为版本冲突，415 为写入非 PDF。MCP 业务错误通过 `isError` 文案保留同一状态分类，传输级未授权为 HTTP 401；MCP schema 校验使用框架标准参数错误。源页数探测失败时沿用原服务 warning/null 规则，不虚构页数。
 
-兼容入口：`GET/POST/DELETE /api/ocr-results` 与 markdown 导出保留，读回增加 `version`，POST 单页支持 `expectedVersion`，DELETE 在 query 支持版本字符串。页面原有 HTTP 写口按既有 ADR 保持本机页面直调政策；这不是新代理 REST 入口的鉴权策略。需要受 token 保护的程序使用新稳定 ID 页路径。文件路径别名歧义与非法页号统一为 400。没有新增物理删除文件或整份清空能力。
+兼容入口：`GET/POST/DELETE /api/ocr-results` 与 markdown 导出保留；默认请求/响应键保持基线，REST GET 仅显式 `includeVersion=1` 才增加 `version`，MCP get 仅显式 `includeVersion:true` 才增加版本。旧 MCP save 通过适配器严格返回原 `file/channel/written/pages` 四个键，不附上传通路的 source/页数探测字段。POST 单页支持可选 `expectedVersion`，DELETE 在 query 支持版本字符串。既有写入口也可显式 `mode:"versioned"` 请求现代保护（REST POST/MCP save；旧 REST DELETE 的 query 也支持该模式），此时预期版本与显式页号必须齐备；字段形状非法、缺版本或仅有现代模式标记均拒绝，不回退盲写。没有新增必填幂等键、审计字段，亦不编造“用户已确认”的依据。页面原有 HTTP 写口按既有 ADR 保持本机页面直调政策；这不是新代理 REST 入口的鉴权策略。需要受 token 保护的程序使用新稳定 ID 页路径。文件路径别名歧义与非法页号统一为 400。没有新增物理删除文件或整份清空能力。
 
 ## 验收证据
 
@@ -48,8 +48,12 @@ OpenAPI 的新路径声明请求白名单、独立 token、安全响应及版本
 | OpenAPI/MCP 实际 schema 可发现 | `public OpenAPI and MCP schemas discover page lifecycle and expected versions` |
 | 兼容引用/页号错误分类 | `legacy OCR aliases distinguish malformed references and invalid pages from missing targets` |
 | 已移出文件可读，禁止写/删 | `removed files remain readable while both write transports reject them` |
+| 原始基线 REST/MCP 载荷与默认响应完全兼容，旧写使新版本失效 | `exact baseline REST and MCP payloads retain legacy response shapes and invalidate modern versions` |
+| 新命令必填版本，现代载荷不完整时拒绝降级 | `new commands require versions and partial versioned legacy envelopes never downgrade to blind writes` |
 
 红绿原始日志在 Git 外 `/tmp/ningbo-spec98/ticket-106/`：`red-delete.log` 缺 MCP 删除工具、`green-delete.log` 通过；`red-version.log` 缺版本、`green-version.log` 通过；`red-auth-route.log` 缺新鉴权路径、后续公开入口通过；`red-reference.log` 错误将歧义引用归为 404、`green-reference.log` 校正后通过。早期夹具字段/启动输出格式修正和规范 markdown 预期修正不作为业务 red 证据。
+
+兼容红绿：`red-legacy-compat.log` 真实基线载荷发现 MCP 旧响应多余字段，且新命令无版本仍成功；`green-legacy-compat.log` 恢复旧响应适配与严格新命令后 13 项公开测试通过。此兼容修正是当前实现的一部分，首次候选的 310 测试不充当修正后的验证。
 
 最终验证命令、来源提交与日志见本页收尾记录。所有数据均为合成，未读写生产数据、部署、创建 PR 或合并 main。
 
@@ -63,4 +67,6 @@ OpenAPI 的新路径声明请求白名单、独立 token、安全响应及版本
 
 ## 收尾记录
 
-首次完整票级回归：`pnpm test tests/ocr-*.test.ts tests/mcp-surface.test.ts tests/files-openapi-contract.test.ts tests/agent-http.test.ts --maxWorkers=1`，10 文件 / 310 测试通过（其中本票公开接缝 11 项），退出 0，日志 `final-precommit.log`。`pnpm typecheck` 与 `pnpm build` 均退出 0，日志分别 `typecheck.log` / `build.log`。上述运行只验证本地代码与合成资料，不升级为生产或父级集成验收。
+首次候选（兼容修正前）的完整票级回归：`pnpm test tests/ocr-*.test.ts tests/mcp-surface.test.ts tests/files-openapi-contract.test.ts tests/agent-http.test.ts --maxWorkers=1`，10 文件 / 310 测试通过（其中本票公开接缝 11 项），退出 0，日志 `final-precommit.log`。`pnpm typecheck` 与 `pnpm build` 均退出 0，日志分别 `typecheck.log` / `build.log`。上述运行只验证本地代码与合成资料，不升级为生产或父级集成验收。
+
+兼容修正后：相同回归命令 10 文件 / 312 测试通过（公开接缝 13 项），退出 0，日志 `compat-final-regression.log`；`pnpm typecheck` 与 `pnpm build` 退出 0，日志 `compat-final-typecheck.log` / `compat-final-build.log`。新命令严格版本、旧载荷适配与部分现代载荷拒绝均在本轮公开调用中验证。

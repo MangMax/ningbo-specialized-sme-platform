@@ -35,7 +35,7 @@ export default defineMcpTool({
   description: [
     '按 `fileId` 或 `relPath`(恰给其一)写回 OCR 结果。',
     '给 `page` ⇒ 这段 markdown 就是**那一页**的内容;不给 ⇒ markdown 必须自带 `<!-- page: N -->` 页标记(整份结果)。',
-    'expectedVersion 可取 get_ocr_result.results[].version;null 表示预期不存在。版本不符为 409,且需要显式 page。省略保持兼容覆盖;只覆盖列出的页。',
+    'expectedVersion 可取 get_ocr_result {includeVersion:true} 的 results[].version;null 表示预期不存在。版本不符为 409,且需要显式 page。省略保持兼容覆盖;只覆盖列出的页。',
     '**幂等**:同一页重写是覆盖,不会堆重复行。',
     '**是写入 tool**,需要鉴权(Authorization: Bearer <NUXT_MCP_TOKEN>)。',
     '只写 OCR 结果;**不改**台账记录与企业身份(pipeline 的事)。',
@@ -44,6 +44,7 @@ export default defineMcpTool({
     ...fileRefShape,
     page: ocrPageSchema.optional().describe('显式页号;省略须 markdown 自带页标记'),
     expectedVersion: ocrExpectedVersionSchema,
+    mode: z.enum(['versioned']).optional().describe('显式现代命令模式;必须同时提供 expectedVersion,不能降级为盲写'),
     markdown: z.string().describe('OCR 结果 markdown(带页码更能对上出处的页码)'),
     engine: z.string().optional().describe('识别引擎;默认 paddleocr'),
     model: z.string().nullable().optional().describe('模型名(可空)'),
@@ -51,6 +52,8 @@ export default defineMcpTool({
   handler: async (input) => {
     const { db, root } = await openFileStore()
     const row = requireOcrFileRef(db, input)
-    return saveOcrImport({ ok: true, db, root, row }, input, 'mcp')
+    const out = await saveOcrImport({ ok: true, db, root, row }, input, 'mcp')
+    // 旧 MCP 载荷/响应适配:保留最初的四个键,不暴露上传通路的额外探测字段。
+    return { file: out.file, channel: 'mcp', written: out.written, pages: out.pages }
   },
 })

@@ -22,14 +22,14 @@ async function rpc(method: string, params: unknown, token: string | null = 'synt
   return { status: response.status, body: JSON.parse(text.split('\n').find(line => line.startsWith('data: '))?.slice(6) ?? text) }
 }
 async function call(name: string, args: unknown) {
-  const response = await rpc('tools/call', { name, arguments: args })
+  const response = await rpc('tools/call', { name, arguments: name === 'get_ocr_result' ? { ...(args as object), includeVersion: true } : args })
   expect(response.status).toBe(200)
   expect(response.body.error).toBeUndefined()
   expect(response.body.result.isError).not.toBe(true)
   return JSON.parse(response.body.result.content[0].text)
 }
 async function rest(method: string, page?: number, body?: unknown) {
-  return fetch(`${app.baseUrl}/api/ocr-results?fileId=${file.id}${page === undefined ? '' : `&page=${page}`}`, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+  return fetch(`${app.baseUrl}/api/ocr-results?includeVersion=1&fileId=${file.id}${page === undefined ? '' : `&page=${page}`}`, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
 }
 beforeAll(async () => {
   const port = await reserveLoopbackPort()
@@ -49,9 +49,9 @@ beforeEach(async () => {
 
 it('MCP single-page deletion matches REST and missing-page deletion is idempotent', async () => {
   await call('save_ocr_result', { fileId: file.id, markdown: '<!-- page: 1 -->\none\n<!-- page: 2 -->\ntwo\n<!-- page: 3 -->\nthree' })
-  const mcp = await call('delete_ocr_result', { fileId: file.id, page: 2 })
+  const mcp = await call('delete_ocr_result', { fileId: file.id, page: 2, expectedVersion: (await call('get_ocr_result', { fileId: file.id, page: 2 })).results[0].version })
   expect(mcp).toMatchObject({ file: { id: file.id }, page: 2, deleted: 1, remaining: 2 })
-  expect(await call('delete_ocr_result', { fileId: file.id, page: 2 })).toEqual({ ...mcp, deleted: 0 })
+  expect(await call('delete_ocr_result', { fileId: file.id, page: 2, expectedVersion: null })).toEqual({ ...mcp, deleted: 0 })
   expect(await (await rest('DELETE', 3)).json()).toMatchObject({ page: 3, deleted: 1, remaining: 1 })
   expect(await (await rest('GET')).json()).toMatchObject({ count: 1, pages: [{ page: 1 }] })
 })
@@ -95,7 +95,7 @@ it('authenticated stable-ID REST pages share MCP write validation and exact read
   const current = await call('get_ocr_result', { fileId: file.id, page: 4 })
   expect(current.markdown).toBe('<!-- page: 4 -->\n\nfour')
   expect((await pageRequest('DELETE', 4, { expectedVersion: current.results[0].version })).status).toBe(200)
-  expect(await (await pageRequest('DELETE', 4)).json()).toMatchObject({ deleted: 0 })
+  expect(await (await pageRequest('DELETE', 4, { expectedVersion: null })).json()).toMatchObject({ deleted: 0 })
   expect((await pageRequest('GET', 4, undefined, null)).status).toBe(404)
   const unauthorizedMcp = await rpc('tools/call', { name: 'delete_ocr_result', arguments: { fileId: file.id, page: 1 } }, null)
   expect(unauthorizedMcp.status).toBe(401)
@@ -113,19 +113,19 @@ it('explicit page scope and invalid fields cannot widen OCR writes or deletions'
     expect((await pageRequest('PUT', page, { markdown: 'bad' })).status).toBe(400)
   }
   for (const body of [{ markdown: 'bad', page: 2 }, { markdown: 'bad', replaceExistingPages: true }, { markdown: 'bad', expectedVersion: 'bogus' }, { markdown: 7 }, null]) {
-    expect((await pageRequest('PUT', 1, body)).status).toBe(400)
+    expect((await pageRequest('PUT', 1, body && typeof body === 'object' ? { expectedVersion: (await call('get_ocr_result', { fileId: file.id, page: 1 })).results[0].version, ...body } : body)).status).toBe(400)
   }
   expect((await pageRequest('DELETE', 1, { all: true })).status).toBe(400)
   expect((await rest('POST', undefined, { fileId: file.id, markdown: '<!-- page: 1 -->\nunsafe', expectedVersion: null })).status).toBe(400)
   const mixed = await rpc('tools/call', { name: 'save_ocr_result', arguments: { fileId: file.id, relPath: file.relPath, page: 1, markdown: 'ambiguous' } })
   expect(JSON.stringify(mixed.body)).toContain('400')
   expect((await pageRequest('GET', 1, undefined, null, 999999)).status).toBe(404)
-  expect((await pageRequest('PUT', 7, { markdown: 'out of PDF' })).status).toBe(400)
+  expect((await pageRequest('PUT', 7, { markdown: 'out of PDF', expectedVersion: null })).status).toBe(400)
   const outOfBounds = await rpc('tools/call', { name: 'save_ocr_result', arguments: { fileId: file.id, page: 7, markdown: 'out of PDF' } })
   expect(JSON.stringify(outOfBounds.body)).toContain('400')
   const nonPdf = db.insert(schema.storedFile).values({ relPath: 'synthetic.docx', filename: 'synthetic.docx', ext: 'docx', bytes: 5, sha256: 'synthetic' }).returning().get()
   writeFileSync(join(root, 'synthetic.docx'), 'dummy')
-  expect((await pageRequest('PUT', 1, { markdown: 'wrong source' }, 'synthetic-api-106', nonPdf.id)).status).toBe(415)
+  expect((await pageRequest('PUT', 1, { markdown: 'wrong source', expectedVersion: null }, 'synthetic-api-106', nonPdf.id)).status).toBe(415)
   const wrongSource = await rpc('tools/call', { name: 'save_ocr_result', arguments: { fileId: nonPdf.id, page: 1, markdown: 'wrong source' } })
   expect(JSON.stringify(wrongSource.body)).toContain('415')
   expect((await call('get_ocr_result', { fileId: file.id, page: 1 })).markdown).toContain('baseline one')
@@ -172,7 +172,7 @@ it('page redo and deletion preserve source bytes, images, file parts, formal eve
   expect(before.events).toEqual(expect.arrayContaining([expect.objectContaining({ id: event.id })]))
   expect(before.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ page: 1, listNo: 9 })]))
   const other = await call('get_ocr_result', { fileId: file.id, page: 2 })
-  await pageRequest('PUT', 1, { markdown: 'redo exactly one' })
+  expect((await pageRequest('PUT', 1, { markdown: 'redo exactly one', expectedVersion: (await call('get_ocr_result', { fileId: file.id, page: 1 })).results[0].version })).status).toBe(200)
   const afterRedo = await call('get_ocr_result', { fileId: file.id, page: 1 })
   const deleted = await call('delete_ocr_result', { fileId: file.id, page: 1, expectedVersion: afterRedo.results[0].version })
   expect(deleted).toMatchObject({ deleted: 1, remaining: 1 })
@@ -200,7 +200,7 @@ it('exact page reads and deletes exclude unrelated text and raw while coverage s
   expect(text).not.toContain('UNRELATED')
   expect(text).not.toContain('raw')
   expect((await call('get_ocr_result', { fileId: file.id, page: 1 })).markdown).toContain('target 🙂')
-  expect(await (await pageRequest('DELETE', 1)).json()).toMatchObject({ deleted: 1, remaining: 1 })
+  expect(await (await pageRequest('DELETE', 1, { expectedVersion: (await call('get_ocr_result', { fileId: file.id, page: 1 })).results[0].version })).json()).toMatchObject({ deleted: 1, remaining: 1 })
   expect((await call('get_ocr_result', { fileId: other.id, page: 128 })).markdown).toContain('UNRELATED')
   expect((await (await rest('GET')).json()).pages.map((p: any) => p.page)).toEqual([2])
 })
@@ -215,7 +215,7 @@ it('public OpenAPI and MCP schemas discover page lifecycle and expected versions
   expect(route.delete.requestBody.content['application/json'].schema.properties.expectedVersion).toMatchObject({ type: 'string', nullable: true })
   expect(route.put.responses['409']).toBeDefined()
   const tools = (await rpc('tools/list', {})).body.result.tools
-  expect(tools.find((tool: any) => tool.name === 'delete_ocr_result').inputSchema.required).toContain('page')
+  expect(tools.find((tool: any) => tool.name === 'delete_ocr_result').inputSchema.required).toEqual(expect.arrayContaining(['page', 'expectedVersion']))
   expect(tools.find((tool: any) => tool.name === 'save_ocr_result').inputSchema.properties.expectedVersion).toBeDefined()
 })
 
@@ -235,12 +235,51 @@ it('removed files remain readable while both write transports reject them', asyn
   db.$client.prepare('UPDATE stored_file SET removed_at=? WHERE id=?').run('2026-10-19T00:00:00.000Z', file.id)
   try {
     expect(await (await pageRequest('GET', 1, undefined, null)).json()).toEqual(before)
-    expect((await pageRequest('PUT', 1, { markdown: 'removed write' })).status).toBe(404)
-    expect((await pageRequest('DELETE', 1)).status).toBe(404)
+    expect((await pageRequest('PUT', 1, { markdown: 'removed write', expectedVersion: before.results[0].version })).status).toBe(404)
+    expect((await pageRequest('DELETE', 1, { expectedVersion: before.results[0].version })).status).toBe(404)
     for (const name of ['save_ocr_result', 'delete_ocr_result']) {
-      const denied = await rpc('tools/call', { name, arguments: { fileId: file.id, page: 1, ...(name === 'save_ocr_result' ? { markdown: 'removed write' } : {}) } })
+      const denied = await rpc('tools/call', { name, arguments: { fileId: file.id, page: 1, expectedVersion: before.results[0].version, ...(name === 'save_ocr_result' ? { markdown: 'removed write' } : {}) } })
       expect(JSON.stringify(denied.body)).toContain('404')
     }
     expect(await call('get_ocr_result', { fileId: file.id, page: 1 })).toEqual(before)
   } finally { db.$client.prepare('UPDATE stored_file SET removed_at=NULL WHERE id=?').run(file.id) }
+})
+
+it('exact baseline REST and MCP payloads retain legacy response shapes and invalidate modern versions', async () => {
+  const before = await call('get_ocr_result', { fileId: file.id, page: 1 })
+  const saved = await rpc('tools/call', { name: 'save_ocr_result', arguments: { fileId: file.id, page: 1, markdown: 'legacy MCP' } })
+  expect(saved.body.result.isError).not.toBe(true)
+  expect(JSON.parse(saved.body.result.content[0].text)).toEqual({ file: { id: file.id, relPath: file.relPath, filename: file.filename }, channel: 'mcp', written: 1, pages: [1] })
+  const oldRead = await rpc('tools/call', { name: 'get_ocr_result', arguments: { fileId: file.id, page: 1 } })
+  const legacy = JSON.parse(oldRead.body.result.content[0].text)
+  expect(Object.keys(legacy).sort()).toEqual(['file', 'markdown', 'page', 'pages', 'results'])
+  expect(Object.keys(legacy.results[0]).sort()).toEqual(['channel', 'chars', 'createdAt', 'engine', 'model', 'page', 'pageRelPath', 'url'])
+  expect(legacy.markdown).toBe('<!-- page: 1 -->\n\nlegacy MCP')
+  const modern = await call('get_ocr_result', { fileId: file.id, page: 1 })
+  expect(modern.results[0].version).not.toBe(before.results[0].version)
+  expect((await pageRequest('PUT', 1, { markdown: 'stale before legacy MCP', expectedVersion: before.results[0].version })).status).toBe(409)
+  const legacyPost = await fetch(`${app.baseUrl}/api/ocr-results`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fileId: file.id, page: 1, markdown: 'legacy REST' }) })
+  expect(legacyPost.status).toBe(200)
+  expect(Object.keys(await legacyPost.json()).sort()).toEqual(['channel', 'file', 'pageCount', 'pages', 'renderedPageImages', 'source', 'warning', 'written'])
+  const oldList = await (await fetch(`${app.baseUrl}/api/ocr-results?fileId=${file.id}&page=1&markdown=1`)).json()
+  expect(Object.keys(oldList).sort()).toEqual(['channels', 'count', 'file', 'pages'])
+  expect(Object.keys(oldList.pages[0]).sort()).toEqual(['channel', 'chars', 'createdAt', 'engine', 'markdown', 'model', 'page', 'pageRelPath', 'url'])
+  expect((await pageRequest('PUT', 1, { markdown: 'stale modern edit', expectedVersion: modern.results[0].version })).status).toBe(409)
+  expect((await call('get_ocr_result', { fileId: file.id, page: 1 })).markdown).toContain('legacy REST')
+  const legacyDelete = await fetch(`${app.baseUrl}/api/ocr-results?fileId=${file.id}&page=1`, { method: 'DELETE' })
+  expect(legacyDelete.status).toBe(200)
+  expect(await legacyDelete.json()).toEqual({ file: { id: file.id, relPath: file.relPath, filename: file.filename }, page: 1, deleted: 1, remaining: 1 })
+})
+
+it('new commands require versions and partial versioned legacy envelopes never downgrade to blind writes', async () => {
+  expect((await pageRequest('PUT', 1, { markdown: 'missing guard' })).status).toBe(400)
+  expect((await pageRequest('DELETE', 1)).status).toBe(400)
+  const missing = await rpc('tools/call', { name: 'delete_ocr_result', arguments: { fileId: file.id, page: 1 } })
+  expect(Boolean(missing.body.error || missing.body.result?.isError)).toBe(true)
+  const partial = { fileId: file.id, page: 1, markdown: 'partial versioned command', mode: 'versioned' }
+  expect((await rest('POST', undefined, partial)).status).toBe(400)
+  expect((await fetch(`${app.baseUrl}/api/ocr-results?fileId=${file.id}&page=1&mode=versioned`, { method: 'DELETE' })).status).toBe(400)
+  const partialMcp = await rpc('tools/call', { name: 'save_ocr_result', arguments: partial })
+  expect(JSON.stringify(partialMcp.body)).toContain('400')
+  expect((await call('get_ocr_result', { fileId: file.id, page: 1 })).markdown).toContain('baseline one')
 })

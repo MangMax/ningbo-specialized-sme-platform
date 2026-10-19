@@ -36,6 +36,7 @@ defineRouteMeta({
         description: '相对文件库根的文件路径(与 `record_evidence.source_file` 同口径)。',
       },
       { name: 'fileId', in: 'query', schema: { type: 'integer' }, description: '文件 id(与 `file` 恰给其一)。' },
+      { name: 'includeVersion', in: 'query', schema: { type: 'string', enum: ['1', 'true'] }, description: '显式请求页版本;省略保留原响应形状。' },
       { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, maximum: MAX_PAGE_NO }, description: '只报这一页。' },
       {
         name: 'markdown',
@@ -104,6 +105,7 @@ export default defineEventHandler(async (event) => {
   // `markdown=1` 才带正文 —— 轻的那个问题(识别了没、哪几页、哪条通路)不该拖几百 KB。
   const withMarkdown = q.markdown === '1' || q.markdown === 'true'
 
+  const withVersion = q.includeVersion === '1' || q.includeVersion === 'true'
   const rows = listOcrResults(target.db, target.row.id, page)
   return {
     file: {
@@ -116,7 +118,7 @@ export default defineEventHandler(async (event) => {
     channels: [...new Set(rows.map((r) => r.channel))].sort(),
     pages: rows.map((r) => ({
       page: r.page,
-      version: r.version,
+      ...(withVersion ? { version: r.version } : {}),
       engine: r.engine,
       model: r.model,
       channel: r.channel,
