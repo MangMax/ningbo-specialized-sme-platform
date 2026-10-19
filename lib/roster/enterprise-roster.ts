@@ -1,3 +1,4 @@
+import { readQueryAssessment, type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { readEnterpriseSnapshot, readEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 /**
@@ -24,7 +25,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../domain'
 import { selectEnterpriseCoordinates, removedEnterpriseIds } from './enterprise-list-selection'
-import { inArray } from 'drizzle-orm'
+import { and, inArray, getTableColumns, sql } from 'drizzle-orm'
 import { getComparison, type ComparisonDirection } from '../comparison'
 import { DIFFERENCE_STATUS_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
@@ -103,6 +104,25 @@ function readSnapshot(db: Db): Snapshot {
     differences: db.select().from(schema.differenceReason).all(),
     recordsByEnterprise,
     eventsByRecord,
+  }
+}
+
+/** Differences need coordinates and evidence pointers, never archive bodies. */
+function readDifferenceSnapshot(db: Db, ids?: number[]): Snapshot {
+  const d = schema.differenceReason
+  // Global counts/sort use only narrow current-coordinate metadata. Large notes,
+  // actors and evidence are hydrated for the selected page only.
+  const differences = db.select({ ...getTableColumns(d),
+    ...(ids == null ? { reasonNote: sql<null>`null`, measureNote: sql<null>`null`, movedInCity: sql<null>`null`, movedInTitleCode: sql<null>`null`, movedInYear: sql<null>`null`, movedInBatch: sql<null>`null`, basis: sql<null>`null`, actor: sql<null>`null`, requestHash: sql<null>`null`, idempotencyKey: sql<null>`null` } : {}),
+  }).from(d).where(and(ids == null ? undefined : inArray(d.enterpriseId, ids), sql`not exists (select 1 from difference_reason newer where newer.enterprise_id=${d.enterpriseId} and newer.title_code=${d.titleCode} and newer.direction=${d.direction} and (newer.recorded_at>${d.recordedAt} or (newer.recorded_at=${d.recordedAt} and newer.id>${d.id})))`)).all()
+  const queryIds = [...new Set(differences.flatMap(d => d.evidenceQueryId == null ? [] : [d.evidenceQueryId]))]
+  return {
+    enterprises: db.select().from(schema.enterprise).where(ids == null ? undefined : inArray(schema.enterprise.id, ids)).all(),
+    records: db.select().from(schema.record).where(ids == null ? undefined : inArray(schema.record.enterpriseId, ids)).all(),
+    aliases: ids == null ? db.select().from(schema.enterpriseAlias).all() : [], differences,
+    queries: ids == null ? [] : db.select({ ...getTableColumns(schema.platformQuery), rawResponse: sql<null>`null`, collectionEvidence: sql<null>`null` }).from(schema.platformQuery).where(inArray(schema.platformQuery.id, queryIds)).all(),
+    relations: ids == null ? [] : db.select({ ...getTableColumns(schema.platformRelation), rawFields: sql<null>`null`, sourceText: sql<null>`null` }).from(schema.platformRelation).where(inArray(schema.platformRelation.queryId, queryIds)).all(),
+    events: [], evidence: [], exportRows: [], exportBatches: [], recordsByEnterprise: new Map(), eventsByRecord: new Map(),
   }
 }
 
@@ -737,7 +757,9 @@ export interface MovedIn {
   complete: boolean
 }
 
-export interface RosterDifferenceRow {
+export interface RosterDifferenceRow extends LegacyRosterDifferenceRow, QueryAssessment {}
+
+interface LegacyRosterDifferenceRow {
   /** 存下来的解释行 id;**`null` = 还没有解释记录**(状态即状态机默认的 `not_queried`)。 */
   explanationId: number | null
   enterpriseId: number
@@ -816,6 +838,7 @@ export interface RosterEnterpriseDetail {
    */
   recognitions: RecognitionEntry[]
   differences: RosterDifferenceRow[]
+  titleAssessments: (QueryAssessment & { enterpriseId: number; titleCode: string; direction: ComparisonDirection })[]
   platform: {
     queries: RosterPlatformQueryRow[]
     relations: RosterPlatformRelationRow[]
@@ -858,7 +881,7 @@ function differenceKey(enterpriseId: number, titleCode: string, direction: strin
  * (例如两侧后来对齐了)。`confirmed_no_diff` 这类状态必须看得见(否则按 `status` 筛
  * 永远筛不到它)。两边的来源由 `explanationId` 与 `inCurrentDifference` 分别说清。
  */
-function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseId: number; titleCode: string; direction: ComparisonDirection }> = getComparison(db).rows): RosterDifferenceRow[] {
+function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseId: number; titleCode: string; direction: ComparisonDirection }> = getComparison(db).rows): LegacyRosterDifferenceRow[] {
   const current = currentExplanations(snap)
   const names = new Map(snap.enterprises.map((e) => [e.id, e]))
   const recordDistrict = new Map<number, string | null>()
@@ -896,7 +919,7 @@ function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseI
     relationsByQuery.set(relation.queryId, list)
   }
 
-  const rows: RosterDifferenceRow[] = coordinates.map(({ enterpriseId, titleCode, direction }) => {
+  const rows: LegacyRosterDifferenceRow[] = coordinates.map(({ enterpriseId, titleCode, direction }) => {
     const key = differenceKey(enterpriseId, titleCode, direction)
     const explanation = current.get(key) ?? null
     const enterprise = names.get(enterpriseId)
@@ -1045,7 +1068,11 @@ function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
     recognitions: profile.recognitions,
     differences: differenceRows
       .filter((r) => r.enterpriseId === id)
-      .sort((a, b) => titleRank(a.titleCode) - titleRank(b.titleCode) || a.direction.localeCompare(b.direction)),
+      .sort((a, b) => titleRank(a.titleCode) - titleRank(b.titleCode) || a.direction.localeCompare(b.direction))
+      .map(r => ({ ...r, ...readQueryAssessment(db, r) })),
+    titleAssessments: TITLE_ORDER.flatMap(titleCode => (['missing_in_miit', 'extra_in_miit'] as const).map(direction => {
+      const scope = { enterpriseId: id, titleCode, direction }; return { ...scope, ...readQueryAssessment(db, scope) }
+    })),
     platform: {
       queries,
       relations: relations.map((r): RosterPlatformRelationRow => ({
@@ -1109,7 +1136,11 @@ export interface RosterDifferencesResult {
  * `counts` 与筛选同口径、先于分页。
  */
 export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {}): RosterDifferencesResult {
-  const snap = readSnapshot(db)
+  return db.transaction(() => rosterDifferences(db, filter))
+}
+
+function rosterDifferences(db: Db, filter: RosterDifferenceFilter): RosterDifferencesResult {
+  const snap = readDifferenceSnapshot(db)
   const differenceRows = differenceUniverse(db, snap)
 
   // 别名:只带 `confirmed`(契约 §1.2),与总表的搜索口径同一处规则。
@@ -1158,8 +1189,10 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
   }
 
   const { page, pageSize } = pageOf(filter)
+  const selected = rows.slice((page - 1) * pageSize, page * pageSize)
+  const hydrated = new Map(differenceUniverse(db, readDifferenceSnapshot(db, [...new Set(selected.map(r => r.enterpriseId))]), selected).map(r => [differenceKey(r.enterpriseId, r.titleCode, r.direction), r]))
   return {
-    rows: rows.slice((page - 1) * pageSize, page * pageSize),
+    rows: selected.map(row => ({ ...hydrated.get(differenceKey(row.enterpriseId, row.titleCode, row.direction))!, inCurrentDifference: row.inCurrentDifference, ...readQueryAssessment(db, row) })),
     counts,
     total: rows.length,
     page,
