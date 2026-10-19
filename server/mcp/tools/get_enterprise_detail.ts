@@ -22,8 +22,8 @@ export default defineMcpTool({
     enterpriseId: z.number().int().positive().describe('企业 id'),
   },
   handler: async ({ enterpriseId }, extra) => {
-    const detail = await enterpriseReads.detail(useDb().$client.name, enterpriseId, extra?.signal)
-    if (!detail) throw createError({ statusCode: 404, statusMessage: 'not found' })
-    return { ...detail }
+    const detail = await enterpriseReads.json(useDb().$client.name, { operation: 'detail',enterpriseId }, extra?.signal)
+    if (!detail.found) throw createError({ statusCode: 404, statusMessage: 'not found' })
+    return detail.body.toString('utf8')
   },
 })

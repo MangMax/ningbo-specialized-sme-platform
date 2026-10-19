@@ -88,3 +88,33 @@ not execute an enterprise query, warm a business result, or retain a snapshot.
 Startup and post-health interactive delay windows are measured separately, with
 both retained. The worker's baseline heap is included in both total-memory accounting
 and the post-health baseline; it is not omitted because it runs in another isolate.
+
+## Raw-body copy correction (measured before adoption)
+
+A17,600,015B synthetic body through compiled HTTP then MCP exceeded the frozen
+102,308,894B heap-delta cap:186,939,608B observed combined delta. Do not relabel
+that transfer design as passed. Move JSON serialization into the native worker;
+it transfers an exclusively owned UTF-8 buffer. HTTP sends that JSON buffer with
+its content type. MCP returns its JSON text directly to the toolkit, avoiding a
+second decoded result graph and pretty-print serialization. The full field values
+and their byte-exact string contents are unchanged; wrapper whitespace is not a
+business field. Object-returning internal callers still decode explicitly via
+the same executor. Measure transferred backing-buffer bytes, V8 and external
+memory separately and rerun the exact same raw fixture without raising limits.
+
+Response admission also stays held through the Node response `finish`/`close`:
+HTTP routes and only the two enterprise MCP calls share17 transport slots.
+Slow consumers cannot admit indefinitely after the native job resolves. This
+holds no body/result cache and releases on error/finish/disconnect. A controlled
+real HTTP stream regression exercises full admission and release; the native
+executor retains its separate16-pending/64KiB metadata gate.
+
+The dev runtime reproduction found Nitro2's inline-dynamic-import default rejects
+a second worker entry. Dev output now explicitly emits separate entries while
+preserving Nitro runtime grouping; the standalone dev server then became ready
+in3.28s. Further raw-memory diagnostics showed the async plugin return was not
+awaited by Nitro2: health could precede worker module initialization, falsely
+making that initialization part of the first read. Use a synchronous plugin and
+an awaited request hook for code readiness. This performs no enterprise query;
+startup heap/loop and the sum of both initialized heaps remain reported. Retain
+the original raw failure, all copy-profile metrics, and both failed dev gates.

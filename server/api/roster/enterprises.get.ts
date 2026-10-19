@@ -1,3 +1,4 @@
+import { admitEnterpriseResponse } from '../../utils/enterprise-read-response'
 import { useDb } from '@db'
 import {
   DIFF_STATUS_NONE,
@@ -101,6 +102,7 @@ defineRouteMeta({
     ],
     responses: {
       200: { description: '企业总表(`rows` / `counts` / `page` / `pageSize`)。' },
+      503: { description: '企业读取队列或响应并发已满，或执行器暂时不可用；可重试，不表示无记录。' },
       400: { description: '`title` / `rosterState` / `source` / `eventType` / `firstStatus` / `diffStatus` / `sort` 取值非法。' },
     },
   },
@@ -108,5 +110,10 @@ defineRouteMeta({
 
 export default defineEventHandler((event) => {
   const filter = parseRosterEnterpriseQuery(getQuery(event))
-  return withEnterpriseReadSignal(event, signal => enterpriseReads.list(useDb().$client.name, filter, signal))
+  admitEnterpriseResponse(event)
+  return withEnterpriseReadSignal(event, async signal => {
+    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter }, signal)
+    setHeader(event, 'content-type', 'application/json; charset=utf-8')
+    return result.body
+  })
 })

@@ -57,12 +57,12 @@ if (lane === 'driver') {
 } else {
   const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-telemetry-')), telemetry = join(dir, 'telemetry.mjs')
   writeFileSync(telemetry, `import dc from 'node:diagnostics_channel';import {monitorEventLoopDelay} from 'node:perf_hooks';
-const lag=monitorEventLoopDelay({resolution:10});lag.enable();let heap=0,rss=0,workerHeap=0,combinedHeap=0,baseline=0,startup=null;
-const sample=()=>{const m=process.memoryUsage();heap=Math.max(heap,m.heapUsed);rss=Math.max(rss,m.rss);combinedHeap=Math.max(combinedHeap,m.heapUsed+workerHeap);return m};
+const lag=monitorEventLoopDelay({resolution:10});lag.enable();let heap=0,rss=0,workerHeap=0,combinedHeap=0,baseline=0,startup=null,appBase=0,appPeak=0,workerBase=Infinity,readPeak=0;
+const sample=()=>{const m=process.memoryUsage();heap=Math.max(heap,m.heapUsed);rss=Math.max(rss,m.rss);combinedHeap=Math.max(combinedHeap,m.heapUsed+workerHeap);appPeak=Math.max(appPeak,m.heapUsed);return m};
 setInterval(sample,5).unref();
-dc.channel('ningbo.enterprise-read').subscribe(s=>{workerHeap=s.workerHeap;sample();if(s.phase==='result')process.send?.({kind:'worker',...s,combinedHeap:s.applicationHeap+s.workerHeap})});
-dc.channel('http.server.response.finish').subscribe(({request})=>{const m=sample();if(request.url==='/api/health'){startup={lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6,heap,rss,workerHeap,combinedHeap};baseline=m.heapUsed+workerHeap;combinedHeap=baseline;lag.reset();process.send?.({kind:'baseline',baseline,startup});return}
-if(request.url.startsWith('/api/roster/enterprises')||request.url==='/mcp')process.send?.({kind:'response',heap,rss,workerHeap,combinedHeap,incrementalCombinedHeap:combinedHeap-baseline,external:m.external,arrayBuffers:m.arrayBuffers,maxRss:process.resourceUsage().maxRSS*1024,lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6})});`)
+dc.channel('ningbo.enterprise-read').subscribe(s=>{workerHeap=s.workerHeap;sample();if(s.phase==='result'){workerBase=Math.min(workerBase,s.beforeHeap);readPeak=Math.max(readPeak,s.heap);process.send?.({kind:'worker',...s,combinedHeap:s.applicationHeap+s.workerHeap})}});
+dc.channel('http.server.response.finish').subscribe(({request})=>{const m=sample();if(request.url==='/api/health'){startup={lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6,heap,rss,workerHeap,combinedHeap};appBase=m.heapUsed;appPeak=appBase;baseline=m.heapUsed+workerHeap;combinedHeap=baseline;lag.reset();process.send?.({kind:'baseline',baseline,startup});return}
+if(request.url.startsWith('/api/roster/enterprises')||request.url==='/mcp')process.send?.({kind:'response',heap,rss,workerHeap,combinedHeap,incrementalCombinedHeap:combinedHeap-baseline,conservativeComponentDelta:Math.max(0,appPeak-appBase)+Math.max(0,readPeak-workerBase),appBase,appPeak,workerBase,readPeak,external:m.external,arrayBuffers:m.arrayBuffers,maxRss:process.resourceUsage().maxRSS*1024,lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6})});`)
 
   const port = await reserveLoopbackPort(), base = `http://127.0.0.1:${port}`
   const server = fork(process.env.ENTERPRISE_BENCH_SERVER_ENTRY ?? '.output/server/index.mjs', [], { execArgv: ['--max-old-space-size=2048', '--import', telemetry], env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: dir, MIIT_COOKIE: '', MIIT_COOKIE_FILE: '' }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })

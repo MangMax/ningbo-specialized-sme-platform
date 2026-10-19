@@ -1,3 +1,4 @@
+import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,13 +41,13 @@ function seed(name: string, uscc: string | null, district: string | null, titleC
   return id
 }
 
-let handlerEnterprises: (event: unknown) => {
+let handlerEnterprises: (event: unknown) => Promise<{
   rows: { enterpriseId: number; name: string; titles: string[]; aliasNames: string[] }[]
   counts: { total: number; titlePairs: number; titles: Record<string, number> }
   page: number
   pageSize: number
-}
-let handlerDetail: (event: unknown) => unknown
+}>
+let handlerDetail: (event: unknown) => Promise<unknown>
 let handlerDifferences: (event: unknown) => {
   rows: {
     enterpriseId: number
@@ -129,8 +130,8 @@ beforeAll(async () => {
     })
     .run()
 
-  handlerEnterprises = (await import('../server/api/roster/enterprises.get')).default as unknown as typeof handlerEnterprises
-  handlerDetail = (await import('../server/api/roster/enterprises/[id].get')).default as unknown as typeof handlerDetail
+  handlerEnterprises = decodeJsonRead((await import('../server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
+  handlerDetail = decodeJsonRead((await import('../server/api/roster/enterprises/[id].get')).default) as unknown as typeof handlerDetail
   handlerDifferences = (await import('../server/api/roster/differences.get')).default as unknown as typeof handlerDifferences
   handlerExport = (await import('../server/api/roster/export.get')).default as unknown as typeof handlerExport
 })

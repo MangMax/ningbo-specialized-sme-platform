@@ -151,6 +151,9 @@ export default defineNuxtConfig({
         config.plugins = [config.plugins, plugin]
         for (const output of Array.isArray(config.output) ? config.output : [config.output]) {
           if (!output) continue
+          // Nitro dev normally inlines one entry. A native worker is a second
+          // entry and must keep its own module graph in dev as in production.
+          output.inlineDynamicImports = false
           const original = output.manualChunks
           const dependencies = new Set<string>()
           output.manualChunks = (id: string, api: { getModuleInfo(id: string): { isExternal: boolean; importedIds: string[] } | null }) => {
@@ -167,7 +170,8 @@ export default defineNuxtConfig({
             // Keep the worker's complete business graph independent of Nitro's
             // app initialization chunk, preserving Nitro's normal grouping.
             if (id !== entry && dependencies.has(id)) return 'enterprise-read-model'
-            return typeof original === 'function' ? original(id, api) : undefined
+            if (typeof original === 'function') return original(id, api)
+            if (id.includes('/nitropack/dist/runtime/') || id.includes('/nitropack/dist/presets/')) return 'nitro'
           }
         }
       },

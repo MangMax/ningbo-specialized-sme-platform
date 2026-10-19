@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError } from 'h3'
+import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError, setHeader } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db'
 import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
@@ -50,7 +50,7 @@ db.$client.function = ((name: string, options: unknown, callback: (...args: unkn
   registerFunction(name, { ...(options as object), varargs: true }, (...args: unknown[]) => { normalizationCalls++; return callback(...args) })) as typeof db.$client.function
 beforeAll(async () => {
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
-  for (const [name, value] of Object.entries({ defineEventHandler, getQuery, getRouterParam, createError })) vi.stubGlobal(name, value)
+  for (const [name, value] of Object.entries({ defineEventHandler, getQuery, getRouterParam, createError, setHeader })) vi.stubGlobal(name, value)
   const list = (await import('../server/api/roster/enterprises.get')).default
   const detail = (await import('../server/api/roster/enterprises/[id].get')).default
   server = createServer(toNodeListener(createApp({ debug: false }).use(createRouter().get('/api/roster/enterprises', list).get('/api/roster/enterprises/:id', detail))))

@@ -1,3 +1,4 @@
+import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -97,10 +98,10 @@ let handlerRecognitions: (event: unknown) => {
   page: number
   pageSize: number
 }
-let handlerEnterprises: (event: unknown) => {
+let handlerEnterprises: (event: unknown) => Promise<{
   rows: { enterpriseId: number; name: string; firstRecognition: { titleCode: string; year: number | null; status: string }[] }[]
   counts: { total: number; titlePairs: number; recognitionPairs: number }
-}
+}>
 let handlerExport: (event: unknown) => Promise<Uint8Array>
 let handlerStats: (event: unknown) => {
   byYear: { key: string; n: number }[]
@@ -131,7 +132,7 @@ beforeAll(async () => {
   ])
 
   handlerRecognitions = (await import('../server/api/roster/recognitions.get')).default as unknown as typeof handlerRecognitions
-  handlerEnterprises = (await import('../server/api/roster/enterprises.get')).default as unknown as typeof handlerEnterprises
+  handlerEnterprises = decodeJsonRead((await import('../server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
   handlerExport = (await import('../server/api/roster/export.get')).default as unknown as typeof handlerExport
   handlerStats = (await import('../server/api/stats.get')).default as unknown as typeof handlerStats
 })

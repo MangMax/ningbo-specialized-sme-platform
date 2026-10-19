@@ -1,4 +1,3 @@
-import { deserialize } from 'node:v8'
 import { channel } from 'node:diagnostics_channel'
 import type { Worker } from 'node:worker_threads'
 import type { RosterEnterpriseFilter, RosterEnterprisesResult } from '../../lib/roster/enterprise-roster'
@@ -8,7 +7,8 @@ import { createEnterpriseWorker } from './enterprise-read-worker-location'
 const diagnostic = channel('ningbo.enterprise-read')
 type Detail = ReturnType<typeof import('../../lib/roster/enterprise-roster').getRosterEnterpriseDetail>
 type Input = { dbPath: string } & ({ operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number })
-type Job = { input: Input; id: number; bytes: number; resolve(value: unknown): void; reject(error: Error): void; signal?: AbortSignal; abort(): void }
+type JsonRead = { body: Buffer; found: boolean }
+type Job = { input: Input; encoding: 'object' | 'json'; id: number; bytes: number; resolve(value: unknown): void; reject(error: Error): void; signal?: AbortSignal; abort(): void }
 const unavailable = (code: string) => Object.assign(new Error('Enterprise read temporarily unavailable'), { statusCode: 503, code })
 const aborted = () => Object.assign(new Error('Enterprise read aborted'), { name: 'AbortError', statusCode: 499 })
 
@@ -62,7 +62,10 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Wor
         else {
           workerHeap = message.metrics.heap
           const start = performance.now()
-          try { settle(job, undefined, deserialize(message.payload)) } catch { settle(job, unavailable('worker_decode_failed')) }
+          try {
+            const body = Buffer.from(message.payload.buffer, message.payload.byteOffset, message.payload.byteLength)
+            settle(job, undefined, job.encoding === 'json' ? { body,found: message.found } : JSON.parse(body.toString('utf8')))
+          } catch { settle(job, unavailable('worker_decode_failed')) }
           publish({ phase: 'result', ...message.metrics, deserializeMs: performance.now() - start })
         }
         pump()
@@ -77,14 +80,14 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Wor
     active = queue.shift()!
     try { worker.postMessage({ id: active.id, ...active.input } satisfies EnterpriseReadRequest); publish({ phase: 'start' }) } catch { retire(unavailable('worker_send_failed')) }
   }
-  function submit(input: Input, signal?: AbortSignal): Promise<unknown> {
+  function submit(input: Input, signal?: AbortSignal, encoding: 'object' | 'json' = 'object'): Promise<unknown> {
     if (closed) return Promise.reject(unavailable('executor_closed'))
     if (signal?.aborted) return Promise.reject(aborted())
     const encoded = JSON.stringify(input)
     const bytes = Buffer.byteLength(encoded)
     if (queue.length >= maxPending || bytes + metadataBytes > 65536) return Promise.reject(unavailable('enterprise_read_busy'))
     return new Promise((resolve, reject) => {
-      const job: Job = { input: JSON.parse(encoded) as Input, signal, bytes, id: ++nextId, resolve, reject, abort() {
+      const job: Job = { encoding, input: JSON.parse(encoded) as Input, signal, bytes, id: ++nextId, resolve, reject, abort() {
         if (active === job) retire(aborted())
         else {
           const index = queue.indexOf(job)
@@ -106,6 +109,7 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Wor
       starting={ promise,resolve,reject }; pump()
       return promise
     },
+    json(dbPath: string, request: { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number }, signal?: AbortSignal) { return submit({ ...request,dbPath } as Input, signal, 'json') as Promise<JsonRead> },
     list(dbPath: string, filter: RosterEnterpriseFilter = {}, signal?: AbortSignal) { return submit({ dbPath, operation: 'list', filter }, signal) as Promise<RosterEnterprisesResult> },
     detail(dbPath: string, enterpriseId: number, signal?: AbortSignal) { return submit({ dbPath, operation: 'detail', enterpriseId }, signal) as Promise<Detail> },
     async close() {

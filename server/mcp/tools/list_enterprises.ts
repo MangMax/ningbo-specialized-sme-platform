@@ -49,5 +49,8 @@ export default defineMcpTool({
     page: z.number().int().min(1).optional().describe('页码，默认 1'),
     pageSize: z.number().int().min(1).max(200).optional().describe('每页数量，默认 50，上限 200'),
   },
-  handler: async (input, extra) => ({ ...await enterpriseReads.list(useDb().$client.name, enterpriseListFilter(input), extra?.signal) }),
+  handler: async (input, extra) => {
+    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter: enterpriseListFilter(input) }, extra?.signal)
+    return result.body.toString('utf8')
+  },
 })

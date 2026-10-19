@@ -1,3 +1,4 @@
+import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -180,12 +181,12 @@ let rosterRecognitionsRouteMeta: typeof recordsRouteMeta
 let rosterExportRouteMeta: typeof recordsRouteMeta
 let enterpriseDetailHandler: (event: unknown) => unknown
 let queryRecordsTool: { handler: (input: Record<string, unknown>) => unknown }
-let rosterEnterprisesHandler: (event: unknown) => unknown
+let rosterEnterprisesHandler: (event: unknown) => Promise<unknown>
 let listEnterprisesTool: {
   handler: (input: Record<string, unknown>) => unknown
   inputSchema: Record<string, { safeParse(value: unknown): { success: boolean } }>
 }
-let enterpriseDetailTool: { handler: (input: { enterpriseId: number }) => unknown }
+let enterpriseDetailTool: { handler: (input: { enterpriseId: number }) => Promise<unknown> }
 
 beforeAll(async () => {
   vi.stubGlobal('defineRouteMeta', (meta: typeof recordsRouteMeta) => {
@@ -203,6 +204,7 @@ beforeAll(async () => {
     }
     return meta
   })
+  vi.stubGlobal('setHeader', () => {})
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('getQuery', () => routeQuery)
   vi.stubGlobal('getRouterParam', () => routeId)
@@ -215,11 +217,13 @@ beforeAll(async () => {
   enterpriseDetailHandler = (await import('../server/api/enterprises/[id].get')).default as unknown as typeof enterpriseDetailHandler
   queryRecordsTool = (await import('../server/mcp/tools/query_records')).default as unknown as typeof queryRecordsTool
   rosterEnterprisesHandler =
-    (await import('../server/api/roster/enterprises.get')).default as unknown as typeof rosterEnterprisesHandler
+    decodeJsonRead((await import('../server/api/roster/enterprises.get')).default) as unknown as typeof rosterEnterprisesHandler
   await import('../server/api/roster/recognitions.get')
   await import('../server/api/roster/export.get')
-  listEnterprisesTool = (await import('../server/mcp/tools/list_enterprises')).default as unknown as typeof listEnterprisesTool
-  enterpriseDetailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as unknown as typeof enterpriseDetailTool
+  const listTool = (await import('../server/mcp/tools/list_enterprises')).default
+  listEnterprisesTool = { ...listTool,handler: decodeJsonRead(listTool.handler as never) } as unknown as typeof listEnterprisesTool
+  const detailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default
+  enterpriseDetailTool = { ...detailTool,handler: decodeJsonRead(detailTool.handler as never) } as unknown as typeof enterpriseDetailTool
 })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
