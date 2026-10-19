@@ -5,9 +5,10 @@ import type { H3Event } from 'h3'
 export async function withEnterpriseReadSignal<T>(event: H3Event, read: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController()
   const req = event.node?.req, res = event.node?.res
-  const abort = () => { if (!res?.writableEnded) controller.abort() }
+  const abort = () => { if (!res?.writableFinished) controller.abort() }
   req?.once('aborted', abort)
   res?.once('close', abort)
+  if (req?.aborted || res?.destroyed || res?.closed || res?.writableFinished) controller.abort()
   try { return await read(controller.signal) } finally {
     req?.off('aborted', abort)
     res?.off('close', abort)
