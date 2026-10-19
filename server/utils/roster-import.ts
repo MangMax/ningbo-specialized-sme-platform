@@ -20,7 +20,7 @@ import { recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sour
  */
 
 import { createHash } from 'node:crypto'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { isPageCapable } from '../../lib/roster/evidence-page'
@@ -2747,6 +2747,31 @@ function writePlatformQuery(
 
 // --- 导出快照 --------------------------------------------------------------
 
+/** Only input row numbers are needed to decide add/skip. Never decode archived raw_fields. */
+function existingExportRowNos(db: Executor, batchId: number, rows: RosterImportExportSnapshot['rows']): Set<number> {
+  const found = new Set<number>()
+  for (let start = 0; start < rows.length; start += 200) {
+    const keys = rows.slice(start, start + 200).map(row => optionalInt(row.sourceRowNo)!)
+    for (const row of db.select({ sourceRowNo: schema.platformExportRow.sourceRowNo })
+      .from(schema.platformExportRow)
+      .where(and(eq(schema.platformExportRow.batchId, batchId), inArray(schema.platformExportRow.sourceRowNo, keys)))
+      .all()) found.add(row.sourceRowNo)
+  }
+  return found
+}
+
+function findExportBatch(db: Executor, snapshot: RosterImportExportSnapshot) {
+  return db.select({ id: schema.platformExportBatch.id }).from(schema.platformExportBatch)
+    .where(and(eq(schema.platformExportBatch.titleCode, snapshot.titleCode), eq(schema.platformExportBatch.year, snapshot.year), eq(schema.platformExportBatch.sha256, snapshot.sha256)))
+    .get()
+}
+
+function latestExportBatch(db: Executor, snapshot: RosterImportExportSnapshot, excludeSameSha = false) {
+  return db.select({ id: schema.platformExportBatch.id }).from(schema.platformExportBatch)
+    .where(and(eq(schema.platformExportBatch.titleCode, snapshot.titleCode), eq(schema.platformExportBatch.year, snapshot.year), excludeSameSha ? ne(schema.platformExportBatch.sha256, snapshot.sha256) : undefined))
+    .orderBy(desc(schema.platformExportBatch.id)).limit(1).get()
+}
+
 function planExportSnapshot(
   db: Executor,
   snapshot: RosterImportExportSnapshot,
@@ -2777,25 +2802,13 @@ function planExportSnapshot(
     seen.add(rowNo)
   }
 
-  const existing = db
-    .select()
-    .from(schema.platformExportBatch)
-    .all()
-    .find((b) => b.titleCode === snapshot.titleCode && b.year === snapshot.year && b.sha256 === snapshot.sha256)
+  const existing = findExportBatch(db, snapshot)
   // `replaced_batch_id` 的方向（父代理 2026-10-16 裁决 / 契约 §1.6「本批**替换**了哪一批」）：
   // **新批**记下它替换掉的那一批 = 同 (称号, 年度) 现有的**最新**批（不同 sha256）；
   // 首版为 null。同 sha256 重放会命中唯一键**不新建批**，两版并存。
-  const previousLatest = db
-    .select()
-    .from(schema.platformExportBatch)
-    .all()
-    .filter((b) => b.titleCode === snapshot.titleCode && b.year === snapshot.year && b.sha256 !== snapshot.sha256)
-    .reduce<(typeof schema.platformExportBatch)['$inferSelect'] | null>(
-      (latest, b) => (latest === null || b.id > latest.id ? b : latest),
-      null,
-    )
-  const existingRows = existing ? db.select().from(schema.platformExportRow).all().filter((r) => r.batchId === existing.id) : []
-  const newRows = rows.filter((r) => !existingRows.some((e) => e.sourceRowNo === optionalInt(r.sourceRowNo))).length
+  const previousLatest = latestExportBatch(db, snapshot, true)
+  const existingRowNos = existing ? existingExportRowNos(db, existing.id, rows) : new Set<number>()
+  const newRows = rows.filter(row => !existingRowNos.has(optionalInt(row.sourceRowNo)!)).length
 
   push({
     item: success('export_batch', existing ? `export:${existing.id}` : ref, {
@@ -2814,23 +2827,11 @@ function writeExportSnapshot(
   context: { batchId?: number },
 ): RosterImportItemResult {
   const rows = snapshot.rows ?? []
-  let batch = tx
-    .select()
-    .from(schema.platformExportBatch)
-    .all()
-    .find((b) => b.titleCode === snapshot.titleCode && b.year === snapshot.year && b.sha256 === snapshot.sha256)
+  let batch = findExportBatch(tx, snapshot)
   const batchCreated = !batch
   if (!batch) {
     // 换内容 ⇒ 新版本：本批记下它替换掉的**最新**旧版（两版并存，旧版不消失）。
-    const previousLatest = tx
-      .select()
-      .from(schema.platformExportBatch)
-      .all()
-      .filter((b) => b.titleCode === snapshot.titleCode && b.year === snapshot.year)
-      .reduce<(typeof schema.platformExportBatch)['$inferSelect'] | null>(
-        (latest, b) => (latest === null || b.id > latest.id ? b : latest),
-        null,
-      )
+    const previousLatest = latestExportBatch(tx, snapshot)
     batch = tx
       .insert(schema.platformExportBatch)
       .values({
@@ -2844,53 +2845,61 @@ function writeExportSnapshot(
         importBatchId: context.batchId ?? null,
         replacedBatchId: previousLatest?.id ?? null,
       })
-      .returning()
+      .returning({ id: schema.platformExportBatch.id })
       .get()
   }
-  // 已存在的源行号**一次性**取回（快照可能 6000+ 行，逐行全表扫描是 O(n²)）。
-  const existingRowNos = new Set(
-    tx
-      .select({ sourceRowNo: schema.platformExportRow.sourceRowNo })
-      .from(schema.platformExportRow)
-      .where(eq(schema.platformExportRow.batchId, batch.id))
-      .all()
-      .map((r) => r.sourceRowNo),
-  )
-  const pending = rows.filter((row) => !existingRowNos.has(optionalInt(row.sourceRowNo)!))
-  const pendingRowNos = new Set(pending.map((row) => optionalInt(row.sourceRowNo)!))
-  // 整批一次插入会撞 SQLite 的**参数上限**（6273 行 × 9 列 ≫ `SQLITE_MAX_VARIABLE_NUMBER`），
-  // 所以按行数分片；片与片之间仍在同一个事务里，语义不变。
+  const existingRowNos = existingExportRowNos(tx, batch.id, rows)
+  // Bound SQL parameters and encoded text together; every chunk stays in the same transaction.
   const INSERT_CHUNK = 200
-  for (let start = 0; start < pending.length; start += INSERT_CHUNK) {
-    tx.insert(schema.platformExportRow)
-      .values(
-        pending.slice(start, start + INSERT_CHUNK).map((row) => ({
-          batchId: batch!.id,
-          sourceRowNo: optionalInt(row.sourceRowNo)!,
-          usccRaw: optionalString(row.usccRaw),
-          nameRaw: optionalString(row.nameRaw),
-          district: optionalString(row.district),
-          province: optionalString(row.province),
-          city: optionalString(row.city),
-          regStatus: optionalString(row.regStatus),
-          rawFields: row.rawFields ?? null,
-        })),
-      )
-      .run()
+  const INSERT_BYTES = 1024 * 1024
+  type InsertRow = Omit<typeof schema.platformExportRow.$inferInsert, 'rawFields'> & { rawFields: SQL | null }
+  let chunk: InsertRow[] = []
+  let chunkBytes = 0
+  let pendingCount = 0
+  const written: number[] = []
+  const flush = () => {
+    if (!chunk.length) return
+    const inserted = tx.insert(schema.platformExportRow).values(chunk)
+      .returning({ id: schema.platformExportRow.id }).all()
+    written.push(...inserted.map(row => row.id))
+    chunk = []
+    chunkBytes = 0
   }
+  for (const row of rows) {
+    if (existingRowNos.has(optionalInt(row.sourceRowNo)!)) continue
+    if (chunk.length === INSERT_CHUNK) flush()
+    // Encode once and bind the JSON text directly: the JSON column encoder must not
+    // stringify it again. Only this chunk plus the next single row is retained.
+    const raw = row.rawFields == null ? null : JSON.stringify(row.rawFields)
+    const values = {
+      batchId: batch.id,
+      sourceRowNo: optionalInt(row.sourceRowNo)!,
+      usccRaw: optionalString(row.usccRaw),
+      nameRaw: optionalString(row.nameRaw),
+      district: optionalString(row.district),
+      province: optionalString(row.province),
+      city: optionalString(row.city),
+      regStatus: optionalString(row.regStatus),
+      rawFields: raw,
+      createdAt: new Date().toISOString(),
+    }
+    const bytes = Object.values(values).reduce<number>((total, value) => total + Buffer.byteLength(String(value ?? '')), 0)
+    if (chunk.length && chunkBytes + bytes > INSERT_BYTES) flush()
+    chunk.push({ ...values, rawFields: raw == null ? null : sql`${raw}` })
+    chunkBytes += bytes
+    pendingCount += 1
+    // An oversize single item is complete in its own statement, never truncated.
+    // Synchronous flush is backpressure; no next chunk is produced until it finishes.
+    if (chunkBytes >= INSERT_BYTES) flush()
+  }
+  flush()
   // 只报**本次真正插入**的源行（重放同一份快照时为空）—— 「本批写了哪些行」必须可查回，
   // 而不是把批次里已有的行也算成本次新增。
-  const written = tx
-    .select({ id: schema.platformExportRow.id, sourceRowNo: schema.platformExportRow.sourceRowNo })
-    .from(schema.platformExportRow)
-    .where(eq(schema.platformExportRow.batchId, batch.id))
-    .all()
-    .filter((r) => pendingRowNos.has(r.sourceRowNo))
-    .map((r) => r.id)
+  written.sort((left, right) => left - right)
   return success('export_batch', `export:${batch.id}`, {
     rows: written,
-    skipped: rows.length - pending.length,
-    rowsWritten: (batchCreated ? 1 : 0) + pending.length,
+    skipped: rows.length - pendingCount,
+    rowsWritten: (batchCreated ? 1 : 0) + pendingCount,
   })
 }
 
