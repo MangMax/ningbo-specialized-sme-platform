@@ -1,49 +1,49 @@
-# File-to-record workflow
+# 从文件到名录记录
 
-## Intake manifest
+## 文件清单
 
-For every supplied file, record its original name, type, hash, source, purpose, duplicate relationship and processing state. Classify published announcements and their roster attachments as designation evidence; classify the three MIIT spreadsheets as current-state comparison snapshots. Do not create roster rows from notice prose alone: inspect the attachments and include all in-scope official rows, including rows unmatched to exports.
+逐份记录原始文件名、类型、哈希、来源、用途、重复关系和处理状态。正式公布及名单附件是称号依据；三张工信部表是平台现状对照快照。不能仅从通知正文创建名单行，须检查附件并保留全部范围内正式行，包括未匹配导出的行。
 
-The file-store decision has one source of truth: [`lib/file-store-scope.ts`](../../../../lib/file-store-scope.ts), with its prose table in [`files/README.md`](../../../../files/README.md). Read both before deciding whether a file belongs in the store. Do not hand-place or hand-delete files around that rule.
+文件范围只有一个规则来源：[可执行文件范围规则](../../../../lib/file-store-scope.ts)，文字说明见[文件清单](../../../../files/README.md)。决定文件是否入库前先读两者，不通过手工放置或删除文件绕过规则。
 
-Before reprocessing an existing file or batch, inspect its current app state and reuse completed, verified outputs. Add or repair only missing items; do not restart a complete import without a specific gap.
+重新处理已有文件或批次前，查看应用当前状态并复用已完成、已核验的结果；只补齐或修复具体缺口，不无故重跑完整入库。
 
-## Extract and hand off
+## 提取与交接
 
-- Render every PDF page to a page-addressable image. Extract DOCX/XLSX text directly; do not OCR office documents.
-- Submit OCR page images through the shared limit in [`orchestration.md`](./orchestration.md). A successful page remains usable when another page fails.
-- Assign one owner per file. Hand a file to correction as soon as all page outcomes are known; list failed pages explicitly and keep the file partial until they are recovered or accepted as unresolved.
-- Include the source file ID/path, attachment, page count, page-image references, OCR text per page, failures, likely row ranges and current status in the handoff.
+- PDF 每页转为可按页定位的图片；DOCX/XLSX 直接解析文字，不对办公文档做 OCR。
+- 按[共享并发限制](./orchestration.md)提交页图 OCR。某页失败不影响保留其他成功页。
+- 每份文件一名负责人。所有页均有结果后立即交接纠偏；失败页明确列出，文件保持部分完成，直到恢复或明确接受其为未解决项。
+- 交接包含源文件 ID/路径、附件、总页数、页图引用、每页 OCR 文字、失败页、预计名单行范围及当前状态。
 
-## Correct and verify
+## 纠偏与核验
 
-1. Parse OCR text into enterprise rows and retain the exact source file and page for each row.
-2. Compare against all three current export snapshots. A valid code is a strong matching key; current names and confirmed aliases generate candidates. Keep matched, unmatched and ambiguous rows.
-3. Visually verify every official roster row against its cited source page, including OCR text, code, row boundary and page number. OCR narrows where to inspect; it does not replace source review.
-4. Correct transcription only to what the source page supports. Keep event metadata and enterprise identity separate from page-level correction.
-5. Determine title, event type, year and batch from the announcement body and attachment. Platform application/maintenance fields do not establish formal event year or batch; see [`decisions.md`](./decisions.md).
-6. For missing codes, follow [`uscc-recovery.md`](./uscc-recovery.md). A row with a missing code remains part of the official roster and can be imported with identity pending.
+1. 把 OCR 文字解析为企业行，每行保留准确源文件和页码。
+2. 匹配三张当前导出快照。有效信用代码是强匹配键；现名、已确认别名用于发现候选。保留已匹配、未匹配和有歧义的全部行。
+3. 每条正式名单行回到出处页视觉核验，包括文字、代码、行边界和页码。OCR 只缩小检查范围，不替代来源核验。
+4. 转录只能改成来源页支持的内容；事件元数据和企业身份不与页级纠偏混同。
+5. 称号、事件类型、年度和批次取自公布正文及附件。平台申请/维护字段不能确立正式事件年度或批次，参见[业务规则](./decisions.md)。
+6. 信用代码缺失时遵循[身份查证说明](./uscc-recovery.md)；缺代码的正式行仍可按身份待核入库。
 
-## Write through the current app contract
+## 按当前应用契约写入
 
-Before a write, inspect the running app's `/_openapi.json` or MCP `tools/list`; use the current schema and [`docs/roster-lifecycle-contract.md`](../../../../docs/roster-lifecycle-contract.md) as the payload reference.
+写入前查看运行中应用的 `/_openapi.json` 或 MCP `tools/list`；以当前结构和[名录生命周期契约](../../../../docs/roster-lifecycle-contract.md)为载荷依据。
 
-Confirm the intended app/database target and its current baseline or recoverable backup before the first mutation. Keep backups outside Git. If the target or recovery point cannot be verified, stop before writing.
+首次变更前确认目标应用/数据库及其基线或可恢复备份，备份放在 Git 外。目标或恢复点无法确认时，停在写入之前。
 
-- Use TUS for file transfer, then the app's file registration, page-image, OCR and parse interfaces. `record_evidence.source_file` must be a file-store-relative path to a file that is already in the store.
-- Write roster entities and supported platform evidence through the unified import: HTTP `POST /api/roster/import/preflight` then `/commit`, or MCP `preflight_roster_batch` then `save_roster_batch`. Preserve one source identity, hash and idempotency key for the batch.
-- Investigate all three live sources through the app REST/MCP surface in [`platform-query.md`](./platform-query.md). Query results are read-only evidence candidates, not writes. Only complete requested ranges can establish a measured zero; retain every relationship and original query time. Stored evidence supports `business_list` (businessList), `apply_list` (queryList) and independent `recognized_list` (queryBusList). Transfer original results/each batch segment only via unified preflight/commit and read back all query/row IDs; follow [archival transfer](../../../../docs/platform-recognized-evidence.md). Insufficient original times/page proof stays pending; never relabel.
-- Store public-source and platform evidence only in payload shapes the current contract accepts. The supported public-source backfill and merge shapes are described in contract §§8.4 and 8.10. Follow the stricter `cross_source` gate in [`uscc-recovery.md`](./uscc-recovery.md).
-- One batch is atomic: a failed commit writes no business rows. Do not substitute direct SQLite writes or a one-off importer. If a result is uncertain, follow the same-key recovery in [`orchestration.md`](./orchestration.md).
+- TUS 负责传输，再调用应用文件注册、页图、OCR 和解析接口。`record_evidence.source_file` 必须是已入文件库文件的相对路径。
+- 企业名录和支持的平台证据通过统一导入写入：HTTP `POST /api/roster/import/preflight` 后 `/commit`，或 MCP `preflight_roster_batch` 后 `save_roster_batch`。同批保留一个来源身份、哈希和幂等键。
+- 按[平台查询说明](./platform-query.md)通过应用 REST/MCP 查证三类平台来源。查询结果是只读证据候选，不自动写入。完整范围查询才可证明零记录；全部关系和原查询时间均保留。存储支持 `business_list`（businessList）、`apply_list`（queryList）及独立的 `recognized_list`（queryBusList）。原结果/每个批量分段只通过统一预检、提交转存，随后读回全部查询/行 ID，遵循[归档转存契约](../../../../docs/platform-recognized-evidence.md)。缺原始时间或分页证明时留待处理，不改标来源。
+- 公开来源和平台证据只使用当前契约支持的载荷。公开来源补码、合并结构见契约 §§8.4、8.10；遵循[身份查证说明](./uscc-recovery.md)中更严格的 `cross_source` 准入条件。
+- 同批提交具有原子性：失败不写业务行。不得改用直接 SQLite 写入或临时导入器。结果不确定时按[同键恢复流程](./orchestration.md)处理。
 
-### Correcting existing events and evidence (#34)
+### 更正既有事件与出处（#34）
 
-The current unified import is not a correction API for stored `record_event` fields or existing evidence coordinates. For a confirmed error in event year, `decidedYear`, `reviewOutcome`, batch, `attachment` or `listNo`, first record the applicable `eventId`, `evidenceId` and `enterpriseId`; source file ID and content hash; exact expected old value and proposed value; original source-page evidence; and the confirmation basis. Track unsupported corrections in #34 and keep them pending. Do not change the idempotency key and reimport to create a replacement event, and do not bypass the contract with SQLite or direct SQL.
+当前统一导入并非既有 `record_event` 字段或出处坐标的通用更正 API。发现事件年、`decidedYear`、`reviewOutcome`、批次、`attachment`、`listNo` 错误时，先记录对应 `eventId`、`evidenceId`、`enterpriseId`、源文件 ID/内容哈希、预期旧值和新值、原来源页依据及确认理由。不支持的更正记入 #34 并保留待处理；不得换幂等键重导创建替代事件，不得直接 SQL 修改。
 
-The existing `POST /api/roster/evidence/pages` endpoint (contract §8.11) applies only to a verified PDF actual-page correction on an existing evidence row. It updates `page` only; it cannot change event metadata, `attachment` or `listNo`. The request locates a unique row by file-store-relative `sourceFile`, `listNo`, and `enterpriseId` or `enterpriseName`; include `basis`. First submit the exact entry with `dryRun: true`, then compare the returned `evidenceId` and `previous` value with the correction record and confirm the single assignment against the source page. Apply only the same confirmed entry with `dryRun: false`, then verify the response. The route does not accept an expected-old-value precondition, so if the target or current value may have changed since preview, rerun the dry run; if uniqueness or the confirmed page cannot be established, leave it pending. Do not treat this page-only route as a general correction API.
+既有 `POST /api/roster/evidence/pages`（契约 §8.11）仅用于已核实的 PDF 实际页码更正，只改 `page`，不能改事件元数据、`attachment`、`listNo`。请求按文件库相对 `sourceFile`、`listNo` 及 `enterpriseId` 或 `enterpriseName` 唯一定位，并带 `basis`。先用 `dryRun: true` 提交原条目，核对返回 `evidenceId`、`previous` 和来源页，再对同一已确认条目以 `dryRun: false` 应用并核验响应。接口不支持预期旧值前置条件，目标或当前值可能变化时须重做预演；定位不唯一或页码无法确认时保留待核。页码接口不能当通用更正 API。
 
-After an import, read the duplicate-name candidate report at `GET /api/roster/import/duplicate-candidates?batchKey=…` (contract §7.8). Candidates without supported platform relation evidence remain pending; do not merge by name.
+入库后查询 `GET /api/roster/import/duplicate-candidates?batchKey=…`（契约 §7.8）。没有当前契约支持的平台关系证据的同名候选继续待核，不按名称直接合并。
 
-## Completion report
+## 完成报告
 
-Report counts and status separately for input/in-scope files, duplicate files, rendered pages, OCR success/failure, parsed official rows, visual verification, export matches, events, identity research, written batches and API errors. Distinguish file/metadata state, page/OCR state, event metadata, identity and write state. Never describe OCR completion as import completion or a missing code as a missing roster row.
+分别报告输入/应入库文件、重复文件、转图页、OCR 成败、正式名单行、视觉核验、导出匹配、事件、身份查证、提交批次和 API 错误的数量与状态。文件/元数据、页图/OCR、事件元数据、身份和写入状态分开。OCR 完成不等于入库完成，缺代码不等于缺正式名单行。
