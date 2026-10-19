@@ -47,6 +47,7 @@ import type {
   RosterImportUsccBackfill,
 } from '../../lib/roster-import-client'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
+import { recordImportReceipt } from './import-receipt-ledger'
 
 type Db = BetterSQLite3Database<typeof schema>
 /** 事务内外都能用的执行器（`tx` 与本连接在 select/insert/update/delete 上同形）。 */
@@ -3840,7 +3841,7 @@ class ExecStageFailure extends Error {
  * 这里如实报「同键提交什么都不会发生」并把 `batchStatus: 'committed'` 带出去；
  * 真要补收敛就用 `POST /api/roster/import/replay`（§8.9.3）。
  */
-export function preflightRosterImport(
+function preflightRosterImportCore(
   db: Db,
   request: RosterImportRequest,
   pageCountErrors: readonly RosterImportItemResult[] = [],
@@ -3884,7 +3885,7 @@ export function preflightRosterImport(
  *   修好载荷后再以同一键调用即可重试；
  * - **单批事务**：任何一项不合法 ⇒ 整批 `failed`，业务数据一行不落，逐项错误照实回报。
  */
-export function commitRosterImport(
+function commitRosterImportCore(
   db: Db,
   request: RosterImportRequest,
   pageCountErrors: readonly RosterImportItemResult[] = [],
@@ -4069,7 +4070,7 @@ function evidenceRepointPlanFromItems(items: unknown, fingerprint: string): Evid
  * 计划与执行在同一次调用里先后发生、且之间没有别的写入 ⇒ 预算与实改必然一致
  * （`update` / `evidenceRepointed` 与预检的 `update` / `evidenceRepoints` 同口径）。
  */
-export function replayRosterImport(db: Db, request: RosterImportRequest): RosterImportReplayResponse {
+function replayRosterImportCore(db: Db, request: RosterImportRequest): RosterImportReplayResponse {
   const originalBatch = findBatchByKey(db, request.idempotencyKey)
   const sameCommittedSourceIdentity =
     originalBatch?.status === 'committed' &&
@@ -4124,6 +4125,16 @@ export function replayRosterImport(db: Db, request: RosterImportRequest): Roster
     .run()
 
   return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items: publicRosterImportItems(items), error: null }
+}
+
+export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = []) {
+  return recordImportReceipt(db, 'preflight', request, () => preflightRosterImportCore(db, request, pageCountErrors))
+}
+export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = []) {
+  return recordImportReceipt(db, 'commit', request, () => commitRosterImportCore(db, request, pageCountErrors))
+}
+export function replayRosterImport(db: Db, request: RosterImportRequest) {
+  return recordImportReceipt(db, 'replay', request, () => replayRosterImportCore(db, request))
 }
 
 /**

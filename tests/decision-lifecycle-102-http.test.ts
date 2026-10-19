@@ -293,18 +293,34 @@ describe('ticket 102 public decision lifecycle', () => {
     } finally { await stopOwnedChild(child) }
   }, 90000)
 
-  it('rechecks lifecycle ownership inside legacy import execution and rolls back the whole batch', async () => {
+  it('rechecks lifecycle ownership inside legacy import execution and preserves failed receipts across atomic rollback and retry', async () => {
     const target = db.insert(schema.enterprise).values({ name: '执行期接管企业', nameNorm: '执行期接管企业', usccNorm: 'RACE102' }).returning().get()
     db.run(sql`CREATE TRIGGER decision102_import_race AFTER INSERT ON platform_query WHEN NEW.query_key='import-race-102' BEGIN INSERT INTO difference_reason(enterprise_id,title_code,direction,status,recorded_at,created_at,lifecycle_action) VALUES(${sql.raw(String(target.id))},'specialized_sme','missing_in_miit','needs_review','2099-01-01T00:00:00.000Z','2026-10-19','replace'); END`)
     const body = { idempotencyKey: 'legacy-execution-race', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/race', payload: { platformQueries: [{ interface: 'apply_list', queryKey: 'import-race-102', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'no_record' }], differences: [{ enterpriseName: target.name, uscc: target.usccNorm, titleCode: 'specialized_sme', direction: 'missing_in_miit', recordedAt: '2199-01-01T00:00:00Z', status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed' }] } }
+    const submit = () => fetch(service.baseUrl + '/api/roster/import/commit', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-token' }, body: JSON.stringify(body) })
+    const receipt = async (suffix: string) => json(await fetch(service.baseUrl + '/api/roster/import/receipts' + suffix, { headers: { authorization: 'Bearer synthetic-api-token' } }))
+    let failed: any
     try {
-      const response = await fetch(service.baseUrl + '/api/roster/import/commit', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-token' }, body: JSON.stringify(body) })
+      const response = await submit()
       const result = await json(response)
       expect(result.status).toBe('failed')
       expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'decision_lifecycle_required' }) })]))
       expect((await json(await fetch(api('history?enterpriseId=' + target.id + '&titleCode=specialized_sme&direction=missing_in_miit')))).total).toBe(0)
       expect(db.get(sql`select count(*) as n from platform_query where query_key='import-race-102'`)).toEqual({ n: 0 })
+      failed = await receipt('?idempotencyKey=' + body.idempotencyKey)
+      expect(failed).toMatchObject({ status: 'failed', receiptId: expect.any(Number) })
+      expect((await receipt('/items?receiptId=' + failed.receiptId)).rows).toEqual(expect.arrayContaining([expect.objectContaining({ ok: false, errorCode: 'decision_lifecycle_required' })]))
+      expect(value(await rpc('get_roster_import_receipt', { receiptId: failed.receiptId }, 'synthetic-mcp-token'))).toEqual(failed)
     } finally { db.run(sql`DROP TRIGGER decision102_import_race`) }
+    expect(await json(await submit())).toMatchObject({ status: 'committed', batchId: failed.batchId })
+    expect((await json(await fetch(api('current?enterpriseId=' + target.id + '&titleCode=specialized_sme&direction=missing_in_miit')))).current.status).toBe('confirmed_no_diff')
+    const committed = await receipt('?batchId=' + failed.batchId)
+    expect(committed).toMatchObject({ status: 'committed', receiptId: expect.any(Number) })
+    expect(committed.receiptId).not.toBe(failed.receiptId)
+    expect(await receipt('?receiptId=' + failed.receiptId)).toEqual(failed)
+    expect(await receipt('/history?batchId=' + failed.batchId)).toMatchObject({ total: 2, rows: [{ status: 'failed' }, { status: 'committed' }] })
+    expect(await json(await submit())).toMatchObject({ status: 'committed', batchId: failed.batchId })
+    expect(await receipt('/history?batchId=' + failed.batchId)).toMatchObject({ total: 2 })
   })
   it('bounds scoped history and legacy preview while unrelated large raw evidence is never materialized', async () => {
     const other = db.insert(schema.enterprise).values({ name: '性能夹具企业', nameNorm: '性能夹具企业' }).returning().get()
