@@ -38,15 +38,15 @@ REST PATCH 在同一对象附上元数据字段；MCP `update_file` 把字段放
 
 ## 恢复和磁盘删除
 
-恢复流式计算原路径 SHA-256，并核对字节数、普通文件、根内真实路径及哈希期间 inode/mtime/ctime；缺失、目录、符号链接、内容变更均拒绝。提交事务再次核对维护修订、已移出状态和登记磁盘事实。原文件已处于有效状态时仍核验磁盘事实；相同状态重试不重导事件。恢复不刷新登记哈希来迁就不匹配的磁盘文件，也不重建解析或 OCR。
+恢复流式计算原路径 SHA-256，并核对字节数、普通文件、根内真实路径及哈希期间 inode/mtime/ctime；缺失、目录、目标文件为符号链接、内容变更均拒绝。提交事务再次核对维护修订、已移出状态和登记磁盘事实。原文件已处于有效状态时仍核验磁盘事实；相同状态重试不重导事件。恢复不刷新登记哈希来迁就不匹配的磁盘文件，也不重建解析或 OCR。
 
 软移出仅标记 `removed_at`，磁盘字节及正式出处仍可读取，扫描不会自动复活。MCP `remove_file` 没有磁盘删除参数或能力。既有独立 `?deleteDisk=1|true` 仍须调用方明确请求；只在旧独立删除协议下支持，不接受现代维护幂等键，不与软移出键混用。正式出处引用数大于0时409拒绝。引用检查和短小的文件系统元数据删除在 SQLite 写锁内执行，避免数据库引用写入在检查后插入。磁盘物理删除不可撤销；文件系统删除和数据库最终提交无法构成跨介质原子事务，不把它描述为可恢复操作。
 
-迁移 `0020_file_maintenance` 增加独立、追加式维护审计/幂等回执；原 `stored_file_audit` 显示名历史保留。元数据、旧显示名审计与新维护审计在同一事务内提交，追加失败则全部回滚。新历史只保存有界元数据快照，不存 OCR、来源原文或凭据。
+迁移 `0020_file_maintenance` 增加独立、追加式维护审计/幂等回执；合入 #105 后，将本票 journal 条目追加到其0021之后（idx22、when1792400021001），不改已存在条目的时间戳，确保已应用0021的库也会执行0020。不能按文件名前缀把新条目重新排到已应用迁移之前；原 `stored_file_audit` 显示名历史保留。元数据、旧显示名审计与新维护审计在同一事务内提交，追加失败则全部回滚。新历史只保存有界元数据快照，不存 OCR、来源原文或凭据。
 
 ## 验证与证据
 
-测试文件：`tests/file-maintenance-104-http.test.ts`。真实 Nuxt HTTP、MCP `tools/call`、独立 SQLite 和临时文件库；夹具先应用基线0000–0013，再由真实应用启动执行新增迁移，覆盖已有库升级；随机独占端口、独立 Nuxt buildDir，`maxWorkers=1`。仅夹具准备及故障注入使用直接数据库操作，业务结果经公开读取验证。
+测试文件：`tests/file-maintenance-104-http.test.ts`。真实 Nuxt HTTP、MCP `tools/call`、独立 SQLite 和临时文件库；夹具先应用当前 integration 已有迁移（包括0021、排除本票0020），再由真实应用启动执行本票迁移，覆盖已有集成库升级；另有既有文件测试覆盖空库完整迁移；随机独占端口、独立 Nuxt buildDir，`maxWorkers=1`。仅夹具准备及故障注入使用直接数据库操作，业务结果经公开读取验证。
 
 | 验收 | 精确测试名 |
 | --- | --- |
@@ -64,7 +64,7 @@ REST PATCH 在同一对象附上元数据字段；MCP `update_file` 把字段放
 | 独立明确磁盘删除 | `requires explicit disk deletion, records the soft removal and refuses restoration once bytes are gone` |
 | 有界历史及无关数据增长 | `bounds history pages and preserves exact read size when unrelated audit and OCR data grow` |
 
-Git 外日志 `/tmp/ningbo-spec98/ticket-104/` 保存 red/green、回归、类型检查及最终源码 SHA。初始 restore 夹具有路径声明不符，修正后 `red-restore-valid.log`/`green-restore-valid.log` 才是有效红绿；不使用最初错误夹具证明功能缺失。移除“部分封套拒绝”校验的定向 mutation 在真实 HTTP 返回200，测试按预期转红（`red-partial-envelope-mutation.log`）；恢复校验后重新运行完整目标矩阵。兼容提醒后的最终契约以上述 legacy/versioned 区分为准，早期 `green-auth.log` 等仅为历史过程，不是最终鉴权验收。
+Git 外日志 `/tmp/ningbo-spec98/ticket-104/` 保存 red/green、回归、类型检查及最终源码 SHA。初始 restore 夹具有路径声明不符，修正后 `red-restore-valid.log`/`green-restore-valid.log` 才是有效红绿；不使用最初错误夹具证明功能缺失。移除“部分封套拒绝”校验的定向 mutation 在真实 HTTP 返回200，测试按预期转红（`red-partial-envelope-mutation.log`）；恢复校验后重新运行完整目标矩阵。另将0020时间戳回退到0021之前，真实应用在已有0021的库上跳过本票迁移，基线载荷回归按预期转红（`red-integration-tip-upgrade.log`）；保留追加顺序后转绿。兼容提醒后的最终契约以上述 legacy/versioned 区分为准，早期 `green-auth.log` 等仅为历史过程，不是最终鉴权验收。
 
 有界性样本：目标5条审计、页大小2；另加入500条无关审计（100万依据字符）和557056字符无关 OCR。10次目标读取与加入前内容完全相同，分页覆盖最后页和空页；记录真实响应字节与延时在 `boundedness.json`。使用 `(file_id,revision)` 唯一索引及幂等键唯一索引；无全表原文读取。此为小型隔离夹具的查询边界证明，不代表2x/5x完整业务分布、部署容器容量或性能 SLO 验收；重型基线/候选测量由集成线程串行负责。
 

@@ -9,11 +9,11 @@ import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib
 const dir = mkdtempSync(join(tmpdir(), 'file-maintenance-104-'))
 const root = join(dir, 'files')
 const dbPath = join(dir, 'synthetic.db')
-// Start with the exact 0000–0013 baseline schema. The real app must upgrade it before serving commands.
+// Start with the integrated schema except #104, including #105. The app must apply #104 after that existing migration tip.
 const baselineMigrations = join(dir, 'baseline-migrations')
 mkdirSync(join(baselineMigrations, 'meta'), { recursive: true })
 const baselineJournal = JSON.parse(readFileSync(join(process.cwd(), 'db/migrations/meta/_journal.json'), 'utf8'))
-baselineJournal.entries = baselineJournal.entries.filter((entry: { tag: string }) => Number(entry.tag.slice(0, 4)) <= 13)
+baselineJournal.entries = baselineJournal.entries.filter((entry: { tag: string }) => entry.tag !== '0020_file_maintenance')
 for (const entry of baselineJournal.entries) copyFileSync(join(process.cwd(), `db/migrations/${entry.tag}.sql`), join(baselineMigrations, `${entry.tag}.sql`))
 writeFileSync(join(baselineMigrations, 'meta/_journal.json'), JSON.stringify(baselineJournal))
 const db = useDb({ dbPath, migrationsFolder: baselineMigrations })
