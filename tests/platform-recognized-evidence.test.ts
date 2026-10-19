@@ -345,7 +345,7 @@ it.each(['uscc', 'name'] as const)('archive-before-master %s query preserves eve
   const enterpriseId = seed.items.find(i => i.kind === 'record_event')!.detail!.enterpriseId as number
   vi.stubGlobal('getRouterParam', (event: any) => event.id)
   const detailRoute = (await import('../server/api/roster/enterprises/[id].get')).default
-  const restApi = await startEvidenceServer({ db, apiToken: token, getRoutes: { [`/api/roster/enterprises/${enterpriseId}`]: () => detailRoute({ id: enterpriseId } as never) } })
+  const restApi = await startEvidenceServer({ db, apiToken: token, getRoutes: { [`/api/roster/enterprises/${enterpriseId}`]: async () => await detailRoute({ id: enterpriseId } as never) } })
   try {
     const detail = await (await fetch(`${restApi.baseUrl}/api/roster/enterprises/${enterpriseId}`)).json()
     const detailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as any

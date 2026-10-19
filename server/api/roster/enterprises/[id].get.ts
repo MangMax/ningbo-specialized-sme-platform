@@ -1,5 +1,6 @@
 import { useDb } from '@db'
-import { getRosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
+import { enterpriseReads } from '../../../utils/enterprise-read'
+import { withEnterpriseReadSignal } from '../../../utils/enterprise-read-signal'
 
 /**
  * **企业详情**(契约 §7.2,RL-04):一家企业的全部称号历史与证据。
@@ -32,7 +33,9 @@ defineRouteMeta({
 export default defineEventHandler((event) => {
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid id' })
-  const detail = getRosterEnterpriseDetail(useDb(), id)
-  if (!detail) throw createError({ statusCode: 404, statusMessage: 'not found' })
-  return detail
+  return withEnterpriseReadSignal(event, async signal => {
+    const detail = await enterpriseReads.detail(useDb().$client.name, id, signal)
+    if (!detail) throw createError({ statusCode: 404, statusMessage: 'not found' })
+    return detail
+  })
 })

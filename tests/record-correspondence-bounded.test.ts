@@ -188,13 +188,11 @@ it('reads atomic pages and append audit during public commits on a separate SQLi
       db.$client.close(); parentPort.postMessage({ done: true });
     })().catch(error => { throw error });
   `, { eval: true, workerData: { jitiPath, root: process.cwd(), dbPath: f.dbPath, events, relationId: f.relation.id } })
+  const workerFailure = new Promise<never>((_, reject) => worker.once('error', reject))
+  void workerFailure.catch(() => {})
   const waitMessage = () => {
-    const message = new Promise<any>((resolve, reject) => {
-      const onMessage = (value: unknown) => { worker.off('error', onError); resolve(value) }
-      const onError = (error: Error) => { worker.off('message', onMessage); reject(error) }
-      worker.once('message', onMessage); worker.once('error', onError)
-    })
-    // Startup may reject before this message is awaited; retain the rejection.
+    const message = Promise.race([new Promise<any>(resolve => worker.once('message', resolve)), workerFailure])
+    // Retain a failure if startup has not reached this await yet.
     void message.catch(() => {})
     return message
   }

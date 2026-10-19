@@ -64,3 +64,27 @@ the synthetic-growth and uncontrolled-host/container limits. Full suite, typeche
 build, production OpenAPI, shared cache/comparison/correspondence/import regressions
 and desktop/390px interaction complete the handoff; no claim of production or parent
 acceptance follows from local measurements.
+
+## Measured design amendment — sequential connection reuse
+
+Before this change, the one-worker 5x/c5 compiled probe still measured hot p95
+562.4/563.6ms (same inputs, 20 hot samples); a fresh connection per request also
+throws away the native page cache. A covering-index-only probe saved about13ms
+in the narrow aggregate, insufficient evidence for essential DDL.
+
+Revise **connection ownership only**: the single serial worker owns at most one
+readonly handle for its current realpath/device/inode. Each job still starts and
+finishes its own transaction; no read snapshot or business result survives a job.
+A later job starts a fresh committed snapshot on that never-writing connection.
+Changing source/file identity closes the old handle before opening another;
+read errors close it, cancellation terminates the worker, and shutdown releases
+it. This is native SQLite page/connection reuse, not a result cache. Record its
+native RSS cost in total process RSS. Parallel requests still queue rather than
+sharing an active transaction. Snapshot, external-commit, rollback, replacement,
+abort/error/restart and combined memory regressions remain required.
+
+The Nitro plugin loads worker code/readiness before accepting traffic. This does
+not execute an enterprise query, warm a business result, or retain a snapshot.
+Startup and post-health interactive delay windows are measured separately, with
+both retained. The worker's baseline heap is included in both total-memory accounting
+and the post-health baseline; it is not omitted because it runs in another isolate.

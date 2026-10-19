@@ -251,14 +251,14 @@ describe('GET /api/roster/recognitions(契约 §7.5)', () => {
 })
 
 describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也被导出继承)', () => {
-  it('总表认 firstYear / firstStatus,并在 counts 里给出「企业 × 称号」计数', () => {
+  it('总表认 firstYear / firstStatus,并在 counts 里给出「企业 × 称号」计数', async () => {
     query = { firstYear: '2021' }
-    const out = handlerEnterprises({})
+    const out = (await handlerEnterprises({}))
     expect(out.rows.map((r) => r.enterpriseId).sort()).toEqual([yiId, jiaId].sort())
     query = { firstStatus: 'pending' }
-    expect(handlerEnterprises({}).rows.map((r) => r.enterpriseId)).toEqual([yiId])
+    expect((await handlerEnterprises({})).rows.map((r) => r.enterpriseId)).toEqual([yiId])
     query = {}
-    expect(handlerEnterprises({}).counts.recognitionPairs).toBe(2)
+    expect((await handlerEnterprises({})).counts.recognitionPairs).toBe(2)
   })
 
   it('firstStatus 取值非法 ⇒ 400', () => {
@@ -343,7 +343,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
       expect(stats.byFirstRecognitionYear).toEqual([{ key: '2024', n: 1 }])
 
       query = { firstYear: '2024' }
-      expect(handlerEnterprises({}).rows.map((row) => row.enterpriseId)).toEqual([decidedYearOnlyId])
+      expect((await handlerEnterprises({})).rows.map((row) => row.enterpriseId)).toEqual([decidedYearOnlyId])
 
       const bytes = await handlerExport({})
       const workbook = new ExcelJS.Workbook()
@@ -374,7 +374,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
       expect(recognitions.rows).toEqual([])
       expect(recognitions.counts).toMatchObject({ titlePairs: 0, enterprises: 0 })
 
-      const enterprises = handlerEnterprises({})
+      const enterprises = (await handlerEnterprises({}))
       expect(enterprises.rows).toEqual([])
       expect(enterprises.counts).toMatchObject({ total: 0, titlePairs: 0, recognitionPairs: 0 })
 

@@ -3,7 +3,7 @@
 // node --max-old-space-size=2048 --expose-gc scripts/bench-enterprise-read.mjs <driver|http|mcp> /absolute/copy.sqlite <list|deep|search|detail> [concurrency=1] [hotSamples=20]
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { fork } from 'node:child_process'
+import { fork, execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,6 +25,7 @@ const db = useDb({ dbPath, readOnly: true })
 const fixed = db.$client.prepare('select id, name from enterprise order by id limit 1').get()
 const input = { page: mode === 'deep' ? 100 : 1, pageSize: 25, ...(mode === 'search' ? { q: fixed.name } : {}) }
 const metrics = [], samples = []
+let hotElapsedMs = 0
 let sqlBytes = 0, sqlRows = 0, sqlQueries = 0, sqlMs = 0, peakHeap = 0, peakRss = 0
 const memory = () => { const m = process.memoryUsage(); peakHeap = Math.max(peakHeap, m.heapUsed); peakRss = Math.max(peakRss, m.rss) }
 const observe = row => {
@@ -55,7 +56,14 @@ if (lane === 'driver') {
   }
 } else {
   const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-telemetry-')), telemetry = join(dir, 'telemetry.mjs')
-  writeFileSync(telemetry, `import dc from 'node:diagnostics_channel';import {monitorEventLoopDelay} from 'node:perf_hooks';const lag=monitorEventLoopDelay({resolution:10});lag.enable();let heap=0,rss=0;const sample=()=>{const m=process.memoryUsage();heap=Math.max(heap,m.heapUsed);rss=Math.max(rss,m.rss)};setInterval(sample,5).unref();dc.channel('http.server.response.finish').subscribe(({request})=>{sample();if(request.url.startsWith('/api/roster/enterprises')||request.url==='/mcp')process.send?.({heap,rss,maxRss:process.resourceUsage().maxRSS*1024,lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6})});`)
+  writeFileSync(telemetry, `import dc from 'node:diagnostics_channel';import {monitorEventLoopDelay} from 'node:perf_hooks';
+const lag=monitorEventLoopDelay({resolution:10});lag.enable();let heap=0,rss=0,workerHeap=0,combinedHeap=0,baseline=0,startup=null;
+const sample=()=>{const m=process.memoryUsage();heap=Math.max(heap,m.heapUsed);rss=Math.max(rss,m.rss);combinedHeap=Math.max(combinedHeap,m.heapUsed+workerHeap);return m};
+setInterval(sample,5).unref();
+dc.channel('ningbo.enterprise-read').subscribe(s=>{workerHeap=s.workerHeap;sample();if(s.phase==='result')process.send?.({kind:'worker',...s,combinedHeap:s.applicationHeap+s.workerHeap})});
+dc.channel('http.server.response.finish').subscribe(({request})=>{const m=sample();if(request.url==='/api/health'){startup={lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6,heap,rss,workerHeap,combinedHeap};baseline=m.heapUsed+workerHeap;combinedHeap=baseline;lag.reset();process.send?.({kind:'baseline',baseline,startup});return}
+if(request.url.startsWith('/api/roster/enterprises')||request.url==='/mcp')process.send?.({kind:'response',heap,rss,workerHeap,combinedHeap,incrementalCombinedHeap:combinedHeap-baseline,external:m.external,arrayBuffers:m.arrayBuffers,maxRss:process.resourceUsage().maxRSS*1024,lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6})});`)
+
   const port = await reserveLoopbackPort(), base = `http://127.0.0.1:${port}`
   const server = fork(process.env.ENTERPRISE_BENCH_SERVER_ENTRY ?? '.output/server/index.mjs', [], { execArgv: ['--max-old-space-size=2048', '--import', telemetry], env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: dir, MIIT_COOKIE: '', MIIT_COOKIE_FILE: '' }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
   let output = '', rpcId = 0
@@ -77,10 +85,12 @@ if (lane === 'driver') {
     for (let i = 0; i < 200; i++) { if (server.exitCode !== null) throw Error(output); try { ready = (await fetch(`${base}/api/health`)).ok } catch {} if (ready) break; await sleep(100) }
     assert.ok(ready, 'local artifact readiness')
     samples.push(await request())
+    const hotStart = performance.now()
     for (let i = 0; i < count; i += concurrency) samples.push(...await Promise.all(Array.from({ length: Math.min(concurrency, count - i) }, request)))
+    hotElapsedMs = performance.now() - hotStart
     await sleep(20)
   } finally { await stopOwnedChild(server); rmSync(dir, { recursive: true, force: true }) }
 }
 const sorted = samples.slice(1).map(x => x.ms).sort((a, b) => a - b), percentile = p => sorted[Math.ceil(sorted.length * p) - 1]
-console.log(JSON.stringify({ lane, mode, concurrency, input: mode === 'detail' ? { enterpriseId: fixed.id } : mode === 'search' ? { ...input, q: undefined, qSha256: createHash('sha256').update(input.q).digest('hex') } : input, coldLabel: 'fresh process; OS cache not purged', cold: samples[0], hotSamples: sorted.length, hot: { p50: percentile(.5), p95: percentile(.95), p99: percentile(.99) }, samples, metrics, heapOldSpaceMiB: 2048, containerLimited: false }))
+console.log(JSON.stringify({ gitHead: execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(), gitDiffSha256: createHash('sha256').update(execFileSync('git',['diff','HEAD'])).digest('hex'), lane, mode, concurrency, input: mode === 'detail' ? { enterpriseId: fixed.id } : mode === 'search' ? { ...input, q: undefined, qSha256: createHash('sha256').update(input.q).digest('hex') } : input, coldLabel: 'fresh process; OS cache not purged', cold: samples[0], hotSamples: sorted.length, hotElapsedMs, throughputPerSecond: hotElapsedMs ? sorted.length*1000/hotElapsedMs : null, hot: { p50: percentile(.5), p95: percentile(.95), p99: percentile(.99) }, samples, metrics, heapOldSpaceMiB: 2048, containerLimited: false }))
 db.$client.close()

@@ -87,8 +87,8 @@ afterAll(() => {
 })
 
 describe('legacy Word/Excel 出处页码 REST 读取', () => {
-  it('总表首次认定和企业详情两种出处投影都把 DOCX/XLSX page=12 序列化为 null', () => {
-    const list = listHandler({}) as {
+  it('总表首次认定和企业详情两种出处投影都把 DOCX/XLSX page=12 序列化为 null', async () => {
+    const list = (await listHandler({})) as {
       rows: Array<{ enterpriseId: number; firstRecognition: Array<{ evidence: Array<{ sourceFile: string; page: number | null }> }> }>
     }
     const row = list.rows.find((candidate) => candidate.enterpriseId === enterprise.id)!
@@ -97,7 +97,7 @@ describe('legacy Word/Excel 出处页码 REST 读取', () => {
       { sourceFile: 'synthetic/legacy/appendix.xlsx', page: null },
     ])
 
-    const detail = detailHandler({}) as {
+    const detail = (await detailHandler({})) as {
       evidence: Array<{ sourceFile: string; page: number | null }>
       recognitions: Array<{ evidence: Array<{ sourceFile: string; page: number | null }> }>
     }

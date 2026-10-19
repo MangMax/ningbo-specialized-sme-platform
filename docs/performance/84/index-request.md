@@ -8,3 +8,17 @@
 4. 不把本轮连接内 `roster84_*` 函数直接写进持久表达式索引：其他写连接不保证注册这些函数，且 JS/ICU 规则版本需要显式管理。不得靠仅当前连接能写的索引污染共享迁移。
 
 这些实验不能单独解除事件循环阻塞；同步计算的执行边界仍由#84负责。也没有证据允许先建整套派生查询结果缓存。本请求不是自动分派、issue修改或生产操作。
+
+## R1 implementation follow-up (no migration)
+
+A disposable **owned** 5x clone tested the proposed event covering index. A narrow
+native mask aggregate improved from roughly78–81ms to65–67ms; grouped facts improved
+from about88–99ms to77–79ms. These are small local native probes, not HTTP SLO or
+write-cost acceptance. The probe index was **not** applied to any 1x/2x/5x matrix
+input or schema/migration file. The R1 implementation instead reduces repeated
+CTE grouping, uses compact masks only for the known reference dictionary, computes
+sparse explanation coordinates separately, and preserves the generic path for
+complex filters/unknown titles. It also reuses one worker-owned readonly pager
+between completed independent transactions. No evidence currently justifies an
+essential DDL exception; original #87 write/WAL/plan qualification remains required
+before any such index is adopted.

@@ -439,7 +439,7 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
 
   it('list_enterprises MCP 按同一个企业×称号应用首次认定筛选', async () => {
     routeQuery = { title: 'innovative_sme', firstYear: '2021', firstStatus: 'confirmed' }
-    const restMiss = rosterEnterprisesHandler({}) as { rows: { enterpriseId: number }[] }
+    const restMiss = (await rosterEnterprisesHandler({})) as { rows: { enterpriseId: number }[] }
     const mcpMiss = await listEnterprisesTool.handler({
       title: 'innovative_sme',
       firstYear: [2021],
@@ -449,7 +449,7 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
     expect(mcpMiss.rows).toEqual([])
 
     routeQuery = { title: 'innovative_sme', firstYear: '2022', firstStatus: 'confirmed' }
-    const restHit = rosterEnterprisesHandler({}) as { rows: { enterpriseId: number }[]; counts: { total: number } }
+    const restHit = (await rosterEnterprisesHandler({})) as { rows: { enterpriseId: number }[]; counts: { total: number } }
     const mcpHit = await listEnterprisesTool.handler({
       title: 'innovative_sme',
       firstYear: [2022],
@@ -471,7 +471,7 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
       firstStatus: 'confirmed',
       pageSize: '1',
     }
-    const rest = rosterEnterprisesHandler({})
+    const rest = (await rosterEnterprisesHandler({}))
     const mcp = await listEnterprisesTool.handler({
       q: '宁波重授旧名有限公司',
       title: ['specialized_sme', 'innovative_sme'],

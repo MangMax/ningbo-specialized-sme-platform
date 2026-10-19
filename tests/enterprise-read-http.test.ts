@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db'
+import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 import { listEnterprises } from '../server/utils/mcp-roster'
 
 const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-http-'))
@@ -77,6 +78,11 @@ it('HTTP detail preserves legacy Unicode keys without allocating normalization c
     expect(response.status).toBe(200)
     const detail = await response.json()
     expect(detail.platform.queries.map((q: any) => q.id)).toEqual([failed, recognized, ids.at(-1)])
+    // Observe the same reader on this instrumented connection, then compare to
+    // the worker/HTTP result. A worker has its own driver, so a zero reading on
+    // the writer connection alone would prove nothing about its allocations.
+    expect(getRosterEnterpriseDetail(db, owner)).toEqual(detail)
+    expect(normalizationCalls).toBeGreaterThan(0)
     // Supplementary allocation observation at the real SQLite/HTTP seam.
     // Unrelated ASCII punctuation/lowercase keys must stay inside native SQL.
     expect(normalizationCalls).toBeLessThan(30)
@@ -93,6 +99,7 @@ it('HTTP filtered list counts titles without materializing unrelated evidence po
     const response = await fetch(`${base}/api/roster/enterprises?q=已确认旧名&pageSize=1`)
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2, differences: 2 }, rows: [{ enterpriseId: owner, nextReviewYear: 2028 }] })
+    listEnterprises(db, { q: '已确认旧名', pageSize: 1 })
     expect(unrelatedPointerBytes).toBe(0)
   } finally { db.$client.prepare('DELETE FROM record WHERE id = ?').run(record.id) }
 })
@@ -120,7 +127,9 @@ it('HTTP name-only detail skips impossible normalized-name matches in unrelated 
   try {
     const response = await fetch(`${base}/api/roster/enterprises/${identity.id}`)
     expect(response.status).toBe(200)
-    expect((await response.json()).platform.queries.map((q: any) => q.id)).toEqual([exact.id])
+    const detail = await response.json()
+    expect(detail.platform.queries.map((q: any) => q.id)).toEqual([exact.id])
+    expect(getRosterEnterpriseDetail(db, identity.id)).toEqual(detail)
     expect(normalizationCalls).toBeLessThan(30)
   } finally {
     db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${[exact.id, ...ids].map(() => '?').join(',')})`).run(exact.id, ...ids)
@@ -212,4 +221,20 @@ it('HTTP detail scopes identity and record evidence but preserves recognized unm
   } finally { db.$client.prepare('UPDATE enterprise SET quality_flags = NULL WHERE id = ?').run(unrelated) }
   expect((await fetch(`${base}/api/roster/enterprises/999999`)).status).toBe(404)
   expect((await fetch(`${base}/api/roster/enterprises/invalid`)).status).toBe(400)
+})
+it('keeps unknown reference titles through the generic aggregate instead of dropping them from compact counts', async () => {
+  db.insert(schema.title).values({ code: 'synthetic_extra', nameZh: '合成额外称号', level: 'municipal', rank: 99 }).run()
+  const enterprise = db.insert(schema.enterprise).values({ name: '额外称号企业', nameNorm: '额外称号企业' }).returning().get()
+  const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'synthetic_extra', source: 'jxj' }).returning().get()
+  db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).run()
+  try {
+    const response = await fetch(`${base}/api/roster/enterprises?q=额外称号企业`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 1, recognitionPairs: 1, differences: 0, titles: { synthetic_extra: 1 } }, rows: [{ titles: ['synthetic_extra'] }] })
+  } finally {
+    db.$client.prepare('delete from record_event where record_id=?').run(record.id)
+    db.$client.prepare('delete from record where id=?').run(record.id)
+    db.$client.prepare('delete from enterprise where id=?').run(enterprise.id)
+    db.$client.prepare("delete from title where code='synthetic_extra'").run()
+  }
 })
