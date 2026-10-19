@@ -18,14 +18,15 @@ import { parseRosterDifferenceQuery } from '../../utils/roster-read-query'
  * 一行 = 一个 (企业 × 称号 × 方向) 的**当前**解释(时态化:`recordedAt` 最新那条);
  * 旧解释不丢,只是不再出现在这里(契约 §1.5)。
  *
- * 读接口不鉴权。
+ * queryCoverage / currentDecision / explanationValidity / assessment 是独立增量字段，
+ * 不再从旧 status 判断实际查询覆盖。读接口不鉴权，no-store。
  */
 defineRouteMeta({
   openAPI: {
     tags: ['名录'],
     summary: '差异与解释',
     description:
-      '每 (企业 × 称号 × 方向) 一条当前解释;`status` 是契约 §3.2 的六态,`reasonCode` 与 `measureCode` **成对**;`movedIn` 承载迁入的原城市/称号/年份/批次(缺项留空待核)。',
+      '增量返回 queryCoverage/currentDecision/explanationValidity/assessment（docs/query-coverage-contract-108.md）；当前决定复用 #102，撤回后 current=null 且保留 versionId；旧 status 保持原义。每 (企业 × 称号 × 方向) 一条当前解释;`status` 是契约 §3.2 的六态,`reasonCode` 与 `measureCode` **成对**;`movedIn` 承载迁入的原城市/称号/年份/批次(缺项留空待核)。',
     parameters: [
       {
         name: 'q',
@@ -68,5 +69,6 @@ defineRouteMeta({
 })
 
 export default defineEventHandler((event) => {
+  setHeader(event, 'cache-control', 'no-store')
   return listRosterDifferences(useDb(), parseRosterDifferenceQuery(getQuery(event)))
 })

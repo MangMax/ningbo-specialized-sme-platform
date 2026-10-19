@@ -1,3 +1,4 @@
+import { readQueryAssessment, type QueryAssessment } from '../../lib/roster/query-assessment'
 import { and, asc, eq, sql } from 'drizzle-orm'
 /**
  * RL-11 名录只读工具的投影（契约 §9）。
@@ -78,7 +79,7 @@ export interface ListDifferencesInput {
   pageSize?: number
 }
 
-export interface ListDifferenceRow {
+export interface ListDifferenceRow extends QueryAssessment {
   enterpriseId: number
   name: string
   titleCode: string
@@ -124,7 +125,7 @@ export function listDifferences(db: Db, input: ListDifferencesInput = {}): ListD
     }).from(d).innerJoin(schema.enterprise,eq(schema.enterprise.id,d.enterpriseId)).leftJoin(schema.platformQuery,eq(schema.platformQuery.id,d.evidenceQueryId)).where(where)
       .orderBy(asc(d.enterpriseId),asc(d.titleCode),asc(d.direction)).limit(pageSize).offset((page-1)*pageSize).all().map(row => {
         const { movedInCity,movedInTitleCode,movedInYear,movedInBatch,queryId,queriedAt,queryInterface,queryStatus,...summary } = row
-        return { ...summary, movedIn: [movedInCity,movedInTitleCode,movedInYear,movedInBatch].some(v => v != null) ? { city: movedInCity,titleCode: movedInTitleCode,year: movedInYear,batch: movedInBatch } : null,
+        return { ...summary, ...readQueryAssessment(db, { enterpriseId: summary.enterpriseId, titleCode: summary.titleCode, direction: summary.direction }), movedIn: [movedInCity,movedInTitleCode,movedInYear,movedInBatch].some(v => v != null) ? { city: movedInCity,titleCode: movedInTitleCode,year: movedInYear,batch: movedInBatch } : null,
           evidence: queryId != null ? { queryId, queriedAt: queriedAt!, interface: queryInterface!, status: queryStatus! } : null }
       })
     return { rows,counts }

@@ -24,6 +24,7 @@ export default defineMcpTool({
     '名录与平台的差异及其**当前解释**（每 企业×称号×方向 取 `recordedAt` 最新那条）。',
     '`status` 是契约 §3.2 的六态（未查询 / 查询失败 / 无记录 / 已确认无差异 / 已确认原因 / 待核实 —— 彼此可区分）；',
     '`reasonCode` 与 `measureCode` **成对**；`movedIn` 承载迁入的原城市/称号/年份/批次（缺项留空待核）。',
+    '增量 queryCoverage/currentDecision/explanationValidity/assessment 与 REST/企业详情同源；旧 status 保留原义。当前决定复用 #102，撤回保留 versionId 且 current=null。契约 docs/query-coverage-contract-108.md。',
     '`evidence` 指向支撑该解释的平台查询。只读 tool，不需要 token。',
   ].join('\n'),
   inputSchema: {
