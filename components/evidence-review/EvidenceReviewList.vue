@@ -2,8 +2,10 @@
 import { computed, reactive, shallowRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import type { CursorPage, ImpactRow } from '~~/lib/roster/evidence-review-ui'
+import { lineageLabels } from '~~/lib/roster/evidence-review-ui'
 import { TITLES } from '~~/lib/labels'
 import { directionLabel, impactOldDecisionText, titleLabel } from '~~/lib/roster/review-display'
+import { useEnterpriseNames } from '~/composables/useEnterpriseNames'
 import EvidenceReviewDetail from './EvidenceReviewDetail.vue'
 import AssessmentStatusBadge from './AssessmentStatusBadge.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
@@ -59,8 +61,40 @@ watch(data, value => { if (value) lastSuccess.value = value }, { immediate: true
 const displayed = computed(() => data.value ?? lastSuccess.value)
 const cursorExpired = computed(() => (error.value as { data?: { error?: { code?: string } } })?.data?.error?.code === 'invalid_cursor')
 const current = computed(() => !!data.value && JSON.stringify(data.value.request) === JSON.stringify(params.value) && !error.value && !isLoading.value)
+
+/**
+ * 名称补全只覆盖当前显示页：去重、每页最多 25 个、并发有界，
+ * 翻页时旧页的异步结果会被 generation 丢弃。
+ */
+const queueRows = computed(() => displayed.value?.rows ?? [])
+const {
+  loading: namesLoading,
+  nameFor,
+  unavailableFor,
+  retry: retryNames,
+} = useEnterpriseNames(queueRows)
+const hasUnavailableNames = computed(() =>
+  queueRows.value.some(row => row.lineage !== 'merged' && unavailableFor(row.enterpriseId)))
+
+const reviewState = computed(() => String(displayed.value?.request.state ?? filters.value.state ?? 'pending'))
+const queueTitle = computed(() => reviewState.value === 'reviewed'
+  ? '已复核记录'
+  : reviewState.value === 'all' ? '全部复核记录' : '待复核队列')
+const queueDescription = computed(() => reviewState.value === 'reviewed'
+  ? '已登记复核的证据变化；保留原始变更分类，不重新标为待复核。'
+  : reviewState.value === 'all'
+    ? '当前、历史、撤回与归并的复核项；复核状态与原始变更分类分别显示。'
+    : '按证据变化逐项核对。清单不代替查询覆盖和业务判断；未完成影响检查的变更可能尚未进入清单。')
+
+const sourceEnterprise = computed(() => {
+  const id = displayed.value?.request.enterpriseId
+  if (id == null) return '全部'
+  return enterpriseName.value && enterpriseName.value === nameFor(Number(id))
+    ? `${enterpriseName.value}（#${id}）`
+    : `企业 #${id}`
+})
 const sourceLabel = computed(() => displayed.value
-  ? `第 ${displayed.value.pageNumber} 页 · 企业 ${displayed.value.request.enterpriseId ?? '全部'} · ${TITLES[String(displayed.value.request.titleCode)] ?? '全部称号'} · ${displayed.value.request.direction ? directionLabel(String(displayed.value.request.direction)) : '全部方向'} · 事件 ${displayed.value.request.eventId ?? '全部'}`
+  ? `第 ${displayed.value.pageNumber} 页 · 企业 ${sourceEnterprise.value} · ${TITLES[String(displayed.value.request.titleCode)] ?? '全部称号'} · ${displayed.value.request.direction ? directionLabel(String(displayed.value.request.direction)) : '全部方向'} · 事件 ${displayed.value.request.eventId ?? '全部'}`
   : '')
 
 function apply() {
@@ -126,8 +160,19 @@ function enterpriseLink(row: ImpactRow) {
 }
 
 function queueEnterpriseLabel(row: ImpactRow): string {
-  if (enterpriseName.value && displayed.value?.request.enterpriseId === row.enterpriseId) return enterpriseName.value
-  return `企业 #${row.enterpriseId}`
+  if (row.lineage === 'merged') return `原企业 #${row.enterpriseId}（归并前坐标）`
+  return nameFor(row.enterpriseId) ?? `企业 #${row.enterpriseId}`
+}
+
+/** 名称读取中 / 失败的明确状态；不把 ID 冒充成企业名称。 */
+function queueNameStatus(row: ImpactRow): string {
+  if (row.lineage === 'merged' || nameFor(row.enterpriseId)) return ''
+  return unavailableFor(row.enterpriseId) ? '名称未读取' : '名称读取中…'
+}
+
+function queueActionLabel(row: ImpactRow): string {
+  if (row.lineage !== 'current') return '查看历史项'
+  return row.pending ? '处理这一项' : '查看复核项'
 }
 </script>
 
@@ -135,9 +180,9 @@ function queueEnterpriseLabel(row: ImpactRow): string {
   <section class="relative flex min-w-0 flex-col gap-3" aria-label="解释复核清单">
     <header class="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
       <div class="min-w-0">
-        <h3 class="text-base font-semibold">待复核队列</h3>
+        <h3 class="text-base font-semibold">{{ queueTitle }}</h3>
         <p class="text-muted-foreground text-[13px] leading-5">
-          按证据变化逐项核对。清单不代替查询覆盖和业务判断；未完成影响检查的变更可能尚未进入清单。
+          {{ queueDescription }}
         </p>
       </div>
       <span class="text-muted-foreground text-[13px]">每页最多 25 项</span>
@@ -247,6 +292,10 @@ function queueEnterpriseLabel(row: ImpactRow): string {
     <p v-if="displayed" class="text-muted-foreground text-[13px] leading-5 break-words">
       显示来源：{{ sourceLabel }}
     </p>
+    <div v-if="hasUnavailableNames" class="flex flex-wrap items-center gap-2">
+      <p class="text-muted-foreground text-[13px] leading-5">部分企业名称未能读取；企业 ID 仍保留。</p>
+      <Button variant="outline" size="sm" :disabled="namesLoading" @click="retryNames">重试读取企业名称</Button>
+    </div>
     <p v-if="displayed?.projectionReady === false" role="status" class="text-warning text-[13px] leading-5">
       影响检查尚未完成，清单不能代表全部待复核项。
     </p>
@@ -262,8 +311,7 @@ function queueEnterpriseLabel(row: ImpactRow): string {
       <li
         v-for="row in displayed?.rows ?? []"
         :key="row.id"
-        class="bg-card min-w-0 overflow-hidden rounded-lg border border-l-4"
-        :class="row.pending ? 'border-l-warning' : 'border-l-border'"
+        class="bg-card min-w-0 overflow-hidden rounded-lg border"
         data-testid="review-queue-item"
       >
         <div class="flex min-w-0 flex-col gap-2 p-3 sm:flex-row sm:items-start sm:justify-between">
@@ -277,10 +325,18 @@ function queueEnterpriseLabel(row: ImpactRow): string {
               >
                 {{ queueEnterpriseLabel(row) }}
               </NuxtLink>
-              <span v-else class="text-sm leading-5 font-semibold">原企业 #{{ row.enterpriseId }}（归并前坐标）</span>
+              <span v-else class="text-sm leading-5 font-semibold">{{ queueEnterpriseLabel(row) }}</span>
+              <!-- ID 是次要标识：名称读取成功时跟在名称后面，不替代名称。 -->
+              <span
+                v-if="row.lineage !== 'merged' && nameFor(row.enterpriseId)"
+                class="text-muted-foreground text-[13px] font-normal"
+              >#{{ row.enterpriseId }}</span>
+              <!-- 复核状态是主状态；证据变化是事件类型，作为次 chip。 -->
+              <AssessmentStatusBadge kind="review" :value="row.pending ? 'pending' : 'reviewed'" />
               <AssessmentStatusBadge kind="impact" :value="row.classification" />
-              <span class="text-muted-foreground text-[13px]">{{ row.pending ? '待复核' : '已复核' }}</span>
-              <AssessmentStatusBadge kind="lineage" :value="row.lineage" />
+              <span v-if="queueNameStatus(row)" class="text-muted-foreground text-[13px]">{{ queueNameStatus(row) }}</span>
+              <AssessmentStatusBadge v-if="row.lineage !== 'current'" kind="lineage" :value="row.lineage" />
+              <span v-else class="text-muted-foreground text-[13px]">当前决定</span>
             </div>
             <p class="mt-1 text-sm leading-5 font-medium">
               {{ titleLabel(row.titleCode) }} · {{ directionLabel(row.direction) }}
@@ -290,7 +346,7 @@ function queueEnterpriseLabel(row: ImpactRow): string {
               <summary class="cursor-pointer select-none">技术详情</summary>
               <p class="break-words">
                 复核项 #{{ row.id }} · 决定 #{{ row.decisionId }} · 证据修订 #{{ row.latestRevisionId }} ·
-                已复核修订 {{ row.reviewedRevisionId ?? '无' }} · 来源 {{ row.lineage }}
+                已复核修订 {{ row.reviewedRevisionId ?? '无' }} · 来源 {{ lineageLabels[row.lineage] ?? row.lineage }}
               </p>
             </details>
           </div>
@@ -301,7 +357,7 @@ function queueEnterpriseLabel(row: ImpactRow): string {
             :aria-label="`查看复核项 ${row.id}`"
             @click="selected = selected === row.id ? null : row.id"
           >
-            {{ selected === row.id ? '收起复核项' : '处理这一项' }}
+            {{ selected === row.id ? '收起复核项' : queueActionLabel(row) }}
           </Button>
         </div>
         <EvidenceReviewDetail v-if="selected === row.id" :key="row.id" :impact-id="row.id" @saved="restart" />

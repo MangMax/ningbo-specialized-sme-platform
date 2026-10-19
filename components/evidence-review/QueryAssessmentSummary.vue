@@ -14,16 +14,6 @@ const props = withDefaults(defineProps<{ assessment: ReviewAssessment; compact?:
 })
 
 const decision = computed(() => props.assessment.currentDecision.current)
-
-const assessmentSentence: Record<string, string> = {
-  queried_unjudged: '已查询，尚未判断',
-  not_queried: '尚未查询，尚未判断',
-  decided: '已有业务决定',
-  withdrawn: '决定已撤回',
-  unknown: '尚未判断，查询范围待核',
-}
-
-const sentence = computed(() => assessmentSentence[props.assessment.assessment] ?? '尚未判断，查询范围待核')
 const validity = computed(() => props.assessment.explanationValidity.status)
 </script>
 
@@ -42,8 +32,6 @@ const validity = computed(() => props.assessment.explanationValidity.status)
         :value="validity"
       />
     </div>
-
-    <p class="text-foreground text-[13px] leading-5">{{ sentence }}</p>
 
     <div
       v-if="decision"

@@ -3,11 +3,12 @@ import { computed, nextTick, shallowRef, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import type { ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { impactClassificationLabels } from '~~/lib/roster/evidence-review-ui'
-import { TITLE_ORDER, comparisonDirectionLabel } from '~~/lib/labels'
+import { TITLE_ORDER } from '~~/lib/labels'
 import {
   assessmentHeadline,
   decisionMeasureLabel,
   decisionReasonLabel,
+  directionLabel,
   titleLabel,
 } from '~~/lib/roster/review-display'
 import QueryAssessmentSummary from './QueryAssessmentSummary.vue'
@@ -201,9 +202,21 @@ watch(() => props.impactId, impactId => {
               <button
                 type="button"
                 class="hover:bg-accent/50 focus-visible:ring-ring/50 -m-1 flex w-[calc(100%+0.5rem)] min-w-0 flex-col gap-1.5 rounded-sm p-1 text-left transition-colors focus-visible:ring-3 focus-visible:outline-none"
-                :aria-label="`查看${titleLabel(group.titleCode)} · ${comparisonDirectionLabel(direction)}的核对依据`"
+                :aria-label="`查看${titleLabel(group.titleCode)} · ${directionLabel(direction)}的核对依据`"
                 @click="openScope(group.byDirection[direction]!)"
               >
+                <!--
+                  390 / 720 下两方向上下堆叠，列头消失；每个方向块必须自己带可见方向标签，
+                  不能只靠 aria-label，否则两块卡片视觉同构。
+                -->
+                <span class="flex items-center gap-1.5 text-[13px] leading-5 font-medium md:hidden" data-testid="direction-label">
+                  <span
+                    class="size-1.5 shrink-0 rounded-full"
+                    :class="direction === 'missing_in_miit' ? 'bg-warning' : 'bg-primary'"
+                    aria-hidden="true"
+                  />
+                  {{ directionLabel(direction) }}
+                </span>
                 <span class="flex min-w-0 items-start justify-between gap-2">
                   <span class="flex flex-wrap items-center gap-1.5">
                     <AssessmentStatusBadge kind="coverage" :value="group.byDirection[direction]!.queryCoverage.status" />
@@ -290,7 +303,7 @@ watch(() => props.impactId, impactId => {
       {{ showQuiet ? '收起尚未核对的方向' : `展开其余 ${hiddenQuietCount} 个尚未核对的方向` }}
     </Button>
 
-    <p class="text-muted-foreground text-[13px] leading-5">
+    <p class="text-muted-foreground max-w-[62ch] text-[13px] leading-5">
       查询覆盖、业务决定和解释有效性分别保留；待复核不会撤回原决定。
       查询完成、覆盖完整或未发现差异，都不自动等于“一致 / 无需处理”。
     </p>

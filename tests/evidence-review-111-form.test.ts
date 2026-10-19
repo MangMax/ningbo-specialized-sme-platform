@@ -19,9 +19,9 @@ async function fill(view: ReturnType<typeof render>) {
   await view.get('[aria-label="复核依据"]').setValue('核对新查询并保留原业务判断')
   await view.get('[aria-label="规则版本"]').setValue('manual-2026')
 }
-it('keeps public review read-only until a write credential and explicit review inputs exist', async () => {
+it('keeps public review unsubmittable until a write credential and explicit review inputs exist', async () => {
   const view = render()
-  expect(view.text()).toContain('只读')
+  expect(view.text()).toContain('当前不可提交')
   await view.get('form').trigger('submit')
   expect(fetcher).not.toHaveBeenCalled()
   expect(view.get('button[type="submit"]').attributes('disabled')).toBeDefined()

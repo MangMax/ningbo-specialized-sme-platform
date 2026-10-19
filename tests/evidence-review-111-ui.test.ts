@@ -12,7 +12,7 @@ const assessment = (patch: Record<string, unknown> = {}) => ({
 describe('explanation assessment public UI', () => {
   it('shows collected without a decision as unjudged rather than unqueried', () => {
     const view = mount(QueryAssessmentSummary, { props: { assessment: assessment() as any } })
-    expect(view.text()).toContain('已查询，尚未判断')
+    expect(view.text()).toContain('已查询 · 尚未判断')
     expect(view.text()).toContain('覆盖完整')
     expect(view.text()).not.toContain('未查询')
     expect(view.text()).toContain('尚无业务决定')

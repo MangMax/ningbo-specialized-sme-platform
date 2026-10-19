@@ -2,11 +2,25 @@
 import { computed, shallowRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import type { DecisionVersion, ReviewScope } from '~~/lib/roster/evidence-review-ui'
+import { DIFFERENCE_MEASURES, DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '~~/lib/labels'
 import DecisionVersionDetails from './DecisionVersionDetails.vue'
 import TablePagination from '@/components/TablePagination.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import { Button } from '@/components/ui/button'
-import { reviewTimeLabel, titleLabel, directionLabel } from '~~/lib/roster/review-display'
+import {
+  decisionVersionActionLabel,
+  directionLabel,
+  reviewTimeLabel,
+  titleLabel,
+} from '~~/lib/roster/review-display'
+
+/**
+ * #102 历史行实际返回的字段（`server/utils/decision-lifecycle-102.ts`）。
+ * 动作摘要只能基于这些字段；`maintain` 不新增版本，不能伪造维持行。
+ */
+type HistoryRow = Pick<DecisionVersion, 'id' | 'recordedAt' | 'status' | 'reasonCode' | 'measureCode'>
+  & Pick<DecisionVersion, 'previousId' | 'lifecycleAction'>
+  & { isCurrent: boolean; origin: string }
 
 const props = defineProps<{ scope: ReviewScope }>()
 const page = shallowRef(1), pageSize = shallowRef(25), selected = shallowRef<number | null>(null)
@@ -16,7 +30,7 @@ const { data, isLoading, error, refetch } = useQuery({
   key: () => ['decision-history', props.scope, page.value, pageSize.value],
   query: async ({ entry }) => {
     const query = { ...entry.key[1] as ReviewScope, page: entry.key[2] as number, pageSize: entry.key[3] as number }
-    return { ...await $fetch<{ rows: Pick<DecisionVersion, 'id' | 'recordedAt' | 'status'>[]; total: number; page: number; pageSize: number }>('/api/roster/decision-lifecycle/history', { query }), scope: query }
+    return { ...await $fetch<{ rows: HistoryRow[]; total: number; page: number; pageSize: number }>('/api/roster/decision-lifecycle/history', { query }), scope: query }
   },
 })
 const previous = shallowRef<typeof data.value>()
@@ -29,6 +43,18 @@ const { data: version, isLoading: versionLoading, error: versionError, refetch: 
 watch(version, v => { if (v && selected.value != null) previousVersion.value = v }, { immediate: true, flush: 'sync' })
 const displayedVersion = computed(() => selected.value == null ? undefined : version.value ?? previousVersion.value)
 const empty = computed(() => displayed.value != null && !isLoading.value && !error.value && displayed.value.total === 0)
+
+/** 列表摘要只用历史 API 已返回的原因/措施/状态，不猜、不补写。 */
+function decisionSummary(row: HistoryRow): string {
+  const status = DIFFERENCE_STATUSES[row.status] ?? '状态待核'
+  const reason = row.reasonCode
+    ? DIFFERENCE_REASONS[row.reasonCode] ?? row.reasonCode
+    : '原因未填写'
+  const measure = row.measureCode
+    ? DIFFERENCE_MEASURES[row.measureCode] ?? row.measureCode
+    : '措施未填写'
+  return `${status} · ${reason} · ${measure}`
+}
 </script>
 
 <template>
@@ -39,6 +65,9 @@ const empty = computed(() => displayed.value != null && !isLoading.value && !err
         {{ titleLabel(scope.titleCode) }} · {{ directionLabel(scope.direction) }}
       </span>
     </div>
+    <p class="text-muted-foreground text-[13px] leading-5">
+      维持原决定只登记复核，不新增决定版本；本列表只列决定版本。
+    </p>
 
     <div v-if="isLoading" class="flex flex-col gap-1.5" role="status" aria-label="正在读取决定历史">
       <span class="bg-muted h-4 w-48 animate-pulse rounded-sm" />
@@ -55,14 +84,21 @@ const empty = computed(() => displayed.value != null && !isLoading.value && !err
     <p v-if="empty" class="text-muted-foreground text-[13px] leading-5">暂无决定历史。</p>
 
     <ul v-if="displayed?.rows.length" class="flex flex-col divide-y rounded-md border">
-      <li v-for="row in displayed.rows" :key="row.id" class="flex min-w-0 items-center justify-between gap-2 px-3 py-2">
-        <span class="min-w-0 text-[13px] leading-5">
-          决定 #{{ row.id }}
-          <span class="text-muted-foreground"> · {{ reviewTimeLabel(row.recordedAt) }}</span>
-        </span>
+      <li v-for="row in displayed.rows" :key="row.id" class="flex min-w-0 items-start justify-between gap-2 px-3 py-2">
+        <div class="flex min-w-0 flex-col gap-0.5">
+          <span class="min-w-0 text-[13px] leading-5">
+            <span class="font-medium">决定 #{{ row.id }}</span>
+            <span v-if="row.isCurrent" class="text-primary"> · 当前</span>
+            <span class="text-muted-foreground"> · {{ reviewTimeLabel(row.recordedAt) }}</span>
+          </span>
+          <!-- 动作、原因、措施都在列表里可读；不点“查看原文”也能区分维持/追加更正。 -->
+          <span class="text-[13px] leading-5">{{ decisionVersionActionLabel(row) }}</span>
+          <span class="text-muted-foreground text-[13px] leading-5">{{ decisionSummary(row) }}</span>
+        </div>
         <Button
           size="sm"
           variant="ghost"
+          class="shrink-0"
           :aria-label="`查看历史决定 ${row.id}`"
           @click="selected = row.id"
         >

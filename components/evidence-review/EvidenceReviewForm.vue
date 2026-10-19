@@ -80,7 +80,7 @@ async function save() {
     // Only translate known codes. Raw responses can contain credentials and are never rendered.
     failure.value = code === 'stale_version' ? '决定版本冲突。请重新读取当前决定，核对后再提交。'
       : code === 'stale_evidence' ? '证据版本冲突或影响检查尚未完成。请重新读取后复核。'
-      : code === 'unauthorized' ? '没有改判权限或写入凭证已失效。仍可只读查看。'
+      : code === 'unauthorized' ? '没有改判权限或写入凭证已失效。已读取的结果仍可查看，填写内容会保留。'
       : code === 'idempotency_conflict' ? '提交标识冲突。请重新读取并核对当前决定。'
       : '复核保存失败，待复核状态保留。请重试；同一请求会复用提交标识。'
     if (['stale_version', 'stale_evidence', 'idempotency_conflict'].includes(code ?? '')) conflict.value = true
@@ -103,7 +103,7 @@ async function save() {
         {{ !detail.pending ? '该项已登记复核；若有后续证据变化，请重新读取。' : '该项当前不可完成复核：历史、撤回、归并或尚未完成影响检查。请重新读取当前状态。' }}
       </p>
       <p class="text-muted-foreground text-[13px] leading-5">
-        {{ token ? '写入凭证仅在本面板内存中使用，权限由服务端验证。' : '只读：可查看旧决定和缺口；提交需要配置的写入凭证。' }}
+        {{ token ? '写入凭证仅在本面板内存中使用，权限由服务端验证。' : '可填写复核信息，但当前不可提交：提交需要可用的写入凭证。' }}
       </p>
 
       <fieldset class="flex flex-col gap-3" :disabled="pending || refreshing || !eligible">

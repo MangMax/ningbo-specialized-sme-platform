@@ -26,8 +26,8 @@ import {
 } from '~~/lib/roster/evidence-review-ui'
 import { PLATFORM_QUERY_STATUSES } from '~~/lib/labels'
 
-type Kind = 'coverage' | 'validity' | 'assessment' | 'impact' | 'lineage' | 'query'
-type Tone = 'primary' | 'warning' | 'warning-solid' | 'destructive' | 'muted'
+type Kind = 'coverage' | 'validity' | 'assessment' | 'impact' | 'lineage' | 'query' | 'review'
+type Tone = 'primary' | 'primary-solid' | 'warning' | 'warning-solid' | 'destructive' | 'muted'
 
 const props = defineProps<{ kind: Kind; value: string; label?: string }>()
 
@@ -39,6 +39,11 @@ const assessmentLabels: Record<string, string> = {
   unknown: '尚未判断 · 查询范围待核',
 }
 
+const reviewLabels: Record<string, string> = {
+  pending: '待复核',
+  reviewed: '已复核',
+}
+
 const text = computed(() => {
   if (props.label) return props.label
   switch (props.kind) {
@@ -48,6 +53,7 @@ const text = computed(() => {
     case 'impact': return impactClassificationLabels[props.value] ?? '证据变化'
     case 'lineage': return lineageLabels[props.value] ?? '决定状态待核'
     case 'query': return PLATFORM_QUERY_STATUSES[props.value] ?? '查询状态待核'
+    case 'review': return reviewLabels[props.value] ?? '复核状态待核'
   }
 })
 
@@ -77,6 +83,12 @@ const tone = computed<Tone>(() => {
     if (props.value === 'failed') return 'destructive'
     return 'muted'
   }
+  if (props.kind === 'review') {
+    // 复核状态是队列的主状态：待复核用实心藏青，已复核保留浅色描边。
+    if (props.value === 'pending') return 'primary-solid'
+    if (props.value === 'reviewed') return 'primary'
+    return 'muted'
+  }
   if (props.value === 'decided') return 'primary'
   if (props.value === 'queried_unjudged') return 'warning'
   if (props.value === 'withdrawn') return 'muted'
@@ -85,6 +97,7 @@ const tone = computed<Tone>(() => {
 
 const classes = computed(() => ({
   primary: 'border-primary/35 bg-primary/5 text-primary',
+  'primary-solid': 'border-transparent bg-primary text-primary-foreground',
   warning: 'border-warning/50 bg-warning/10 text-warning',
   'warning-solid': 'border-transparent bg-warning/15 text-warning',
   destructive: 'border-destructive/45 bg-destructive/10 text-destructive',
@@ -101,6 +114,11 @@ const icon = computed(() => {
     return CircleAlert
   }
   if (props.kind === 'impact') return AlertTriangle
+  if (props.kind === 'review') {
+    if (props.value === 'reviewed') return Check
+    if (props.value === 'pending') return Clock3
+    return null
+  }
   return null
 })
 </script>

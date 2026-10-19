@@ -94,9 +94,74 @@ export function titleLabel(titleCode: string | null | undefined): string {
   return TITLES[titleCode] ?? '称号待核'
 }
 
+/**
+ * 核对界面的方向用词。
+ *
+ * 旧版比对沿用 `COMPARISON_LABELS`（应出未出），核对台两方向矩阵与队列统一用
+ * 「应纳未纳 / 平台多出」；不能一边写列头、一边在 aria 与筛选里换另一个词。
+ */
 export function directionLabel(direction: string | null | undefined): string {
   if (!direction) return '方向待核'
+  if (direction === 'extra_in_miit') return '平台多出'
   return comparisonDirectionLabel(direction)
+}
+
+/** 企业头部只陈述正式称号这一条业务轴；与平台核对范围分开。 */
+export function officialTitlesLabel(titleNames: string[]): string {
+  return titleNames.length ? `正式称号：${titleNames.join(' / ')}` : '正式称号：暂无'
+}
+
+/**
+ * 头部“上次核对”只回答平台查询时间。
+ *
+ * 已有业务决定 / 已查询 / 待复核时，即使合成或历史数据里没有查询来源，
+ * 也不能写“尚未核对”与正文互相否定；此时明确写成“平台查询时间未记录”。
+ */
+export function headerCheckLabel(
+  latestQueryAt: string | null,
+  assessments: ReviewAssessment[],
+  pendingCount: number,
+): string {
+  if (latestQueryAt) return `上次核对 ${reviewDateLabel(latestQueryAt)}`
+  const hasCheckHistory = pendingCount > 0 || assessments.some(item =>
+    item.assessment !== 'not_queried' || item.currentDecision.current != null,
+  )
+  return hasCheckHistory ? '平台查询时间未记录' : '尚未核对'
+}
+
+const LIFECYCLE_ACTION_LABELS: Record<string, string> = {
+  replace: '追加更正',
+  withdraw: '撤回',
+}
+
+/** #102 生命周期动作的业务名。`null` 是历史导入，不是受管版本。 */
+export function lifecycleActionLabel(action: string | null | undefined): string {
+  if (!action) return '历史导入'
+  return LIFECYCLE_ACTION_LABELS[action] ?? '生命周期更新'
+}
+
+export function decisionOriginLabel(origin: string | null | undefined): string {
+  if (origin === 'lifecycle') return '受管决定'
+  if (origin === 'legacy_import') return '历史导入'
+  return origin ?? '未记录'
+}
+
+/**
+ * 历史版本行只依据实际 API 字段说明它如何形成。
+ *
+ * `maintain` 不新增 `difference_reason` 版本，因此这里不会出现“维持”版本；
+ * replace + previousId 才是追加更正，replace + 无前版是首次受管决定。
+ */
+export function decisionVersionActionLabel(row: {
+  lifecycleAction: string | null | undefined
+  previousId: number | null | undefined
+}): string {
+  if (!row.lifecycleAction) return '历史导入 · 未纳入受管生命周期'
+  if (row.lifecycleAction === 'replace') {
+    return row.previousId == null ? '首次决定' : `追加更正 · 原决定 #${row.previousId} 保留`
+  }
+  if (row.lifecycleAction === 'withdraw') return '撤回 · 当前决定已置空'
+  return lifecycleActionLabel(row.lifecycleAction)
 }
 
 export function decisionReasonLabel(assessment: ReviewAssessment): string {

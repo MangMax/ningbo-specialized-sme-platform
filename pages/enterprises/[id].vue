@@ -3,7 +3,12 @@ import { useQuery } from '@pinia/colada'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import type { CursorPage, ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
-import { latestQueryTime, reviewDateLabel, titleLabel } from '~~/lib/roster/review-display'
+import {
+  headerCheckLabel,
+  latestQueryTime,
+  officialTitlesLabel,
+  titleLabel,
+} from '~~/lib/roster/review-display'
 import { sourceReturnTarget } from '~~/lib/roster/correspondence-view'
 import RecordEventRow from '@/components/record-correspondence/RecordEventRow.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
@@ -273,7 +278,14 @@ const titleNames = computed(() => {
   return (ordered.length ? ordered : [...present]).map(titleLabel)
 })
 const lastChecked = computed(() => latestQueryTime(assessments.value))
-const lastCheckedLabel = computed(() => lastChecked.value ? `上次核对 ${reviewDateLabel(lastChecked.value)}` : '尚未核对')
+/**
+ * 头部摘要与正文必须来自同一状态事实：
+ * - 称号只陈述“正式称号”这一轴；
+ * - “上次核对”只陈述平台查询时间；已有决定/已查询/待复核但没有查询来源时，
+ *   写“平台查询时间未记录”，不能写“尚未核对”与正文互相否定。
+ */
+const lastCheckedLabel = computed(() => headerCheckLabel(lastChecked.value, assessments.value, pendingRows.value.length))
+const titlesLabel = computed(() => officialTitlesLabel(titleNames.value))
 
 async function onReviewSaved() {
   await Promise.all([refetch(), refetchPending()])
@@ -339,7 +351,7 @@ function openPreview(e: Evidence) {
         </template>
         <template #description>
           <span>{{ detail.district ?? '属地未知' }}</span>
-          <span class="mx-1.5">·</span><span>{{ titleNames.join(' / ') || '暂无称号' }}</span>
+          <span class="mx-1.5">·</span><span>{{ titlesLabel }}</span>
           <span class="mx-1.5">·</span><span class="whitespace-nowrap">{{ lastCheckedLabel }}</span>
           <span class="mx-1.5">·</span><span class="font-mono text-xs whitespace-nowrap">{{ detail.uscc ?? '无统一社会信用代码' }}</span>
         </template>

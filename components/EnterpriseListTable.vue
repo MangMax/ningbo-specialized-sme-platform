@@ -76,7 +76,11 @@ const visibleAliasesByEnterpriseId = computed(() => new Map(
 function differenceStatusText(row: EnterpriseListRow): string {
   const d = row.difference
   if (!d.count || d.status == null) return DIFF_STATUS_NONE_LABEL
-  return differenceReason(row) || DIFFERENCE_STATUSES[d.status] || d.status
+  const status = DIFFERENCE_STATUSES[d.status] ?? d.status
+  const reason = differenceReason(row)
+  if (!reason) return status
+  // “其他”单看没有信息；补回差异状态，避免整格只剩一个无法扫读的标签。
+  return d.reasonCode === 'other' ? `${status} · 其他原因` : reason
 }
 
 /** 差异原因的单独一段(好把它画成次要色,与设计稿一致)。 */

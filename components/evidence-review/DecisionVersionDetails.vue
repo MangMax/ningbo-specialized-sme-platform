@@ -6,7 +6,7 @@ import {
   DIFFERENCE_STATUSES,
   TITLES,
 } from '~~/lib/labels'
-import { reviewTimeLabel } from '~~/lib/roster/review-display'
+import { decisionOriginLabel, decisionVersionActionLabel, reviewTimeLabel } from '~~/lib/roster/review-display'
 import { Badge } from '@/components/ui/badge'
 
 defineProps<{ decision: DecisionVersion; label?: string }>()
@@ -64,9 +64,9 @@ defineProps<{ decision: DecisionVersion; label?: string }>()
       <dl class="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 break-words">
         <dt>生效时间（原始）</dt><dd>{{ decision.effectiveAt ?? '未记录' }}</dd>
         <dt>登记时间（原始）</dt><dd>{{ decision.recordedAt }}</dd>
-        <dt>生命周期动作</dt><dd>{{ decision.lifecycleAction ?? '未记录' }}</dd>
+        <dt>生命周期动作</dt><dd>{{ decisionVersionActionLabel(decision) }}</dd>
         <dt>前一版本</dt><dd>{{ decision.previousId == null ? '无' : `#${decision.previousId}` }}</dd>
-        <dt>来源</dt><dd>{{ decision.origin ?? '未记录' }}</dd>
+        <dt>来源</dt><dd>{{ decisionOriginLabel(decision.origin) }}</dd>
       </dl>
     </details>
   </article>

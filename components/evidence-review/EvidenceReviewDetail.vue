@@ -46,9 +46,10 @@ async function reloadCurrent() {
       <header class="flex min-w-0 flex-col gap-1.5">
         <div class="flex flex-wrap items-center gap-1.5">
           <h3 class="text-sm font-semibold">复核项 #{{ data.id }}</h3>
+          <AssessmentStatusBadge kind="review" :value="data.pending ? 'pending' : 'reviewed'" />
           <AssessmentStatusBadge kind="impact" :value="data.classification" />
-          <AssessmentStatusBadge kind="lineage" :value="data.lineage" />
-          <span class="text-muted-foreground text-[13px]">{{ data.pending ? '待复核' : '已登记复核' }}</span>
+          <AssessmentStatusBadge v-if="data.lineage !== 'current'" kind="lineage" :value="data.lineage" />
+          <span v-else class="text-muted-foreground text-[13px]">当前决定</span>
         </div>
         <p class="text-muted-foreground text-[13px] leading-5">
           {{ titleLabel(data.titleCode) }} · {{ directionLabel(data.direction) }} ·
@@ -75,8 +76,10 @@ async function reloadCurrent() {
       >
         <p class="text-foreground font-medium">历史决定原文不可用</p>
         <p class="text-muted-foreground mt-0.5">
-          原决定 #{{ data.decisionId }} · 企业 #{{ data.enterpriseId }} · {{ titleLabel(data.titleCode) }} ·
-          {{ directionLabel(data.direction) }} 的历史坐标和来源仍保留；不替代为其他企业或幸存者的决定。
+          原决定 #{{ data.decisionId }} ·
+          {{ data.lineage === 'merged' ? `原企业 #${data.enterpriseId}（归并前坐标）` : `企业 #${data.enterpriseId}` }} ·
+          {{ titleLabel(data.titleCode) }} · {{ directionLabel(data.direction) }}
+          的历史坐标和来源仍保留；不替代为其他企业或幸存者的决定。
         </p>
       </div>
 
@@ -89,8 +92,6 @@ async function reloadCurrent() {
           当前决定：
           <strong>{{ data.currentDecision?.versionId != null ? `#${data.currentDecision.versionId}` : '无' }}</strong>
         </span>
-        <span class="text-muted-foreground">本复核项{{ data.pending ? '待复核' : '已复核' }}</span>
-        <span class="text-muted-foreground">证据版本已更新</span>
       </div>
 
       <details class="text-muted-foreground text-[13px] leading-5">
@@ -99,7 +100,7 @@ async function reloadCurrent() {
           复核项 #{{ data.id }} · 决定 #{{ data.decisionId }} · 当前版本 #{{ data.currentDecision?.versionId ?? '无' }} ·
           证据修订 #{{ data.evidenceToken.latestRevisionId }} · 投影
           {{ data.evidenceToken.projectionReady ? '就绪' : '未就绪' }} · 来源
-          {{ data.lineage }}
+          {{ lineageLabels[data.lineage] ?? data.lineage }}
         </p>
       </details>
 

@@ -2,6 +2,10 @@
 import { computed, ref, watch } from 'vue'
 import { PLATFORM_QUERY_STATUSES } from '~~/lib/labels'
 import { humanRecordTime } from '~~/lib/roster/record-ledger'
+import {
+  comparisonSourceSecondaryIds,
+  comparisonSourceTitle,
+} from '~~/lib/roster/record-comparison-display'
 import { sourceSelectionKey, type ComparisonSelection, type ComparisonSource, type ComparisonSourceCatalog, type ComparisonSourceKind } from '~~/lib/roster/record-comparison-view'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -68,6 +72,9 @@ const sourceNote = (source: ComparisonSource) => source.kind === 'query'
   : source.kind === 'export_batch' ? `原行 ${source.rowCount} 条${source.replacedBatchId ? ' · 替换既有批次' : ''}`
   : source.subtitle ?? '未记录文号'
 const observedAt = (source: ComparisonSource) => humanRecordTime(source.observedAt)
+/** 平台查询用接口 + 称号 + 查询范围作主标题；SYN 查询键 / 信用代码退为次要信息。 */
+const sourceTitle = (source: ComparisonSource) => comparisonSourceTitle(source)
+const sourceSecondaryIds = (source: ComparisonSource) => comparisonSourceSecondaryIds(source)
 function selected(source: ComparisonSource) { return props.selection[sourceSelectionKey(source.kind)].includes(source.id) }
 function toggle(source: ComparisonSource, checked: boolean) {
   if (!source.selectable) return
@@ -146,10 +153,13 @@ watch(selectionKey, () => { void hydrateSelectedLabels() }, { immediate: true, f
     <div v-if="shownRows.length" class="min-w-0 rounded-sm border" data-testid="source-catalog">
       <ul class="flex min-w-0 flex-col divide-y">
         <li v-for="source in shownRows" :key="keyOf(source)" class="flex min-w-0 items-start gap-3 p-2.5" :data-source-kind="source.kind" :data-source-id="source.id">
-          <Checkbox :id="`source-${source.kind}-${source.id}`" :model-value="selected(source)" :disabled="!source.selectable" class="mt-0.5" :aria-label="`选择${source.label}`" @update:model-value="toggle(source, $event === true)" />
+          <Checkbox :id="`source-${source.kind}-${source.id}`" :model-value="selected(source)" :disabled="!source.selectable" class="mt-0.5" :aria-label="`选择${sourceTitle(source)}`" @update:model-value="toggle(source, $event === true)" />
           <label :for="`source-${source.kind}-${source.id}`" class="min-w-0 flex-1 cursor-pointer break-words [overflow-wrap:anywhere]">
-            <span class="block text-[13px] font-medium">{{ source.label }}</span>
+            <span class="block text-[13px] font-medium">{{ sourceTitle(source) }}</span>
             <span class="text-muted-foreground block text-[13px]" :title="sourceNote(source)">{{ observedAt(source) }}<span v-if="source.kind === 'query' && source.completeness === 'partial'"> · 部分采集</span><span v-else-if="source.kind === 'official_document' && source.subtitle"> · {{ source.subtitle }}</span></span>
+            <span v-if="sourceSecondaryIds(source).length" class="text-muted-foreground block font-mono text-xs">
+              {{ sourceSecondaryIds(source).join(' · ') }}
+            </span>
           </label>
           <Badge variant="outline" class="shrink-0">{{ sourceStatus(source) }}</Badge>
         </li>
@@ -165,7 +175,7 @@ watch(selectionKey, () => { void hydrateSelectedLabels() }, { immediate: true, f
         <span class="text-muted-foreground text-[13px]">管理已选来源（{{ selectedItems.length }}）</span>
       </template>
       <div class="mt-2 flex flex-wrap gap-1.5">
-        <Button v-for="item in selectedItems" :key="`${item.kind}:${item.id}`" variant="secondary" size="sm" class="h-auto max-w-full whitespace-normal text-left text-xs" :aria-label="`移除${item.source?.label ?? '已选来源'}`" @click="item.source ? toggle(item.source, false) : emit('change', { ...selection, [sourceSelectionKey(item.kind)]: selection[sourceSelectionKey(item.kind)].filter(id => id !== item.id) })">{{ item.source?.label ?? (selectedError ? '来源名称暂不可读' : '正在读取来源名称…') }} · 移除</Button>
+        <Button v-for="item in selectedItems" :key="`${item.kind}:${item.id}`" variant="secondary" size="sm" class="h-auto max-w-full whitespace-normal text-left text-xs" :aria-label="`移除${item.source ? sourceTitle(item.source) : '已选来源'}`" @click="item.source ? toggle(item.source, false) : emit('change', { ...selection, [sourceSelectionKey(item.kind)]: selection[sourceSelectionKey(item.kind)].filter(id => id !== item.id) })">{{ item.source ? sourceTitle(item.source) : (selectedError ? '来源名称暂不可读' : '正在读取来源名称…') }} · 移除</Button>
       </div>
     </DisclosurePanel>
     <Button v-if="selectedError" variant="outline" size="sm" class="self-start" @click="hydrateSelectedLabels">重试读取已选来源名称</Button>

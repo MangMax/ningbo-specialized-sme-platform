@@ -4,9 +4,24 @@ import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import EvidenceReviewList from '../components/evidence-review/EvidenceReviewList.vue'
+import { resetEnterpriseNameCache } from '../composables/useEnterpriseNames'
 const row = { id: 4, enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', decisionId: 82, latestRevisionId: 9, reviewedRevisionId: null, classification: 'premise_invalid', pending: true, lineage: 'current', oldDecision: { id: 82, status: 'not_queried', reasonNote: '原依据缺代码' } }
 let fetcher: ReturnType<typeof vi.fn>
-beforeEach(() => { fetcher = vi.fn().mockResolvedValue({ rows: [row], nextCursor: 'signed-page-2', asOf: { revision: 9 }, projectionReady: true }); vi.stubGlobal('$fetch', fetcher) })
+const nameOf = (id: number) => `合成企业${id}`
+function profileFor(url: string) {
+  const match = /\/api\/roster\/enterprises\/(\d+)\/profile$/.exec(url)
+  return match ? { profile: { enterpriseId: Number(match[1]), name: nameOf(Number(match[1])) } } : null
+}
+/** Route profile reads separately so queue-page assertions stay about the queue call. */
+function mockRoutes(routes: (url: string, options?: any) => unknown) {
+  fetcher.mockImplementation(async (url: string, options?: any) => profileFor(url) ?? routes(url, options))
+}
+beforeEach(() => {
+  resetEnterpriseNameCache()
+  fetcher = vi.fn()
+  mockRoutes(() => ({ rows: [row], nextCursor: 'signed-page-2', asOf: { revision: 9 }, projectionReady: true }))
+  vi.stubGlobal('$fetch', fetcher)
+})
 afterEach(() => vi.unstubAllGlobals())
 const render = () => mount(EvidenceReviewList, { global: { plugins: [createPinia(), PiniaColada], stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } } })
 it('filters the bounded review view by exact enterprise title direction and event', async () => {
@@ -38,7 +53,7 @@ it('follows opaque cursor pages and retains the previous page with explicit retr
   view.unmount()
 })
 it('opens the exact impact and its separate committed source and event pages', async () => {
-  fetcher.mockImplementation(async (url: string) => {
+  mockRoutes(async (url: string) => {
     if (url === '/api/roster/evidence-impacts') return { rows: [row], nextCursor: null, asOf: {}, projectionReady: true }
     if (url === '/api/roster/evidence-impacts/4') return { ...row, currentDecision: { versionId: 82, current: row.oldDecision }, evidenceToken: { decisionId: 82, latestRevisionId: 9, projectionReady: true }, queryCoverage: { status: 'partial', sources: [], truncated: false }, gaps: { subjectUnknown: true, projectionReady: true } }
     if (url === '/api/roster/evidence-impacts/4/sources') return { rows: [{ revisionId: 9, sourceKind: 'platform_query', sourceKey: 'query-9', sourceVersion: 'v2', eventId: null, classification: 'premise_invalid', coverageChanged: true, factChanged: false }], nextCursor: 'sources-next', asOf: {} }
@@ -60,7 +75,7 @@ it('opens the exact impact and its separate committed source and event pages', a
   view.unmount()
 })
 it('reads immutable decision history and full old audit details without a write token', async () => {
-  fetcher.mockImplementation(async (url: string) => {
+  mockRoutes(async (url: string) => {
     if (url === '/api/roster/evidence-impacts') return { rows: [row], nextCursor: null, asOf: {}, projectionReady: true }
     if (url === '/api/roster/evidence-impacts/4') return { ...row, lineage: 'historical', currentDecision: { versionId: 90, current: { id: 90, reasonNote: '新决定仍保留' } }, evidenceToken: { decisionId: 90, latestRevisionId: 9, projectionReady: true }, queryCoverage: null, gaps: { subjectUnknown: false, projectionReady: true } }
     if (url === '/api/roster/decision-lifecycle/history') return { rows: [{ id: 82, status: 'not_queried', recordedAt: '2026-10-01', lifecycleAction: null, isCurrent: false }], total: 1, page: 1, pageSize: 25 }
@@ -81,7 +96,7 @@ it('reads immutable decision history and full old audit details without a write 
 })
 it('restarts the frozen list cursor after successful review so completed items disappear from the fresh pending view', async () => {
   let committed = false
-  fetcher.mockImplementation(async (url: string, options?: any) => {
+  mockRoutes(async (url: string, options?: any) => {
     if (options?.method === 'POST') { committed = true; return { reviewedRevisionId: 9 } }
     if (url === '/api/roster/evidence-impacts') return { rows: committed && !options.query.cursor ? [] : [row], nextCursor: 'frozen-old-page', asOf: {}, projectionReady: true }
     if (url === '/api/roster/evidence-impacts/4') return { ...row, pending: !committed, currentDecision: { versionId: 82, current: row.oldDecision }, evidenceToken: { decisionId: 82, latestRevisionId: 9, projectionReady: true }, queryCoverage: null, gaps: {} }
@@ -101,7 +116,7 @@ it('restarts the frozen list cursor after successful review so completed items d
   view.unmount()
 })
 it('shows the committed review baseline audit separately from the preserved original decision audit', async () => {
-  fetcher.mockImplementation(async (url: string) => {
+  mockRoutes(async (url: string) => {
     if (url === '/api/roster/evidence-impacts') return { rows: [row], nextCursor: null, asOf: {}, projectionReady: true }
     if (url === '/api/roster/evidence-impacts/4') return { ...row, pending: false, oldDecision: { ...row.oldDecision, actor: { type: 'user', id: 'original-author' }, basis: '原决定依据' }, currentDecision: { versionId: 82, current: row.oldDecision }, evidenceToken: { decisionId: 82, latestRevisionId: 9, projectionReady: true }, queryCoverage: null, gaps: {}, reviewedBaseline: { reviewedRevisionId: 9, actor: { type: 'user', id: 'baseline-reviewer' }, basis: '已核验新证据，维持原决定', ruleVersion: 'review-rule-2026', effectiveAt: '2026-10-19T09:00:00Z', recordedAt: '2026-10-19T09:01:00Z' } }
     if (url.endsWith('/sources')) return { rows: [], nextCursor: null, asOf: {} }
@@ -121,7 +136,7 @@ it('shows the committed review baseline audit separately from the preserved orig
 })
 it('keeps merged historical coordinates readable when the legacy decision is unavailable and never substitutes or completes another decision', async () => {
   const missing = { ...row, lineage: 'merged', oldDecision: null }
-  fetcher.mockImplementation(async (url: string) => {
+  mockRoutes(async (url: string) => {
     if (url === '/api/roster/evidence-impacts') return { rows: [missing], nextCursor: null, asOf: {}, projectionReady: true }
     if (url === '/api/roster/evidence-impacts/4') return { ...missing, currentDecision: null, evidenceToken: { decisionId: null, latestRevisionId: 9, projectionReady: true }, queryCoverage: null, gaps: { decisionUnavailable: true, subjectUnknown: true, projectionReady: true }, reviewedBaseline: null }
     if (url.endsWith('/sources')) return { rows: [{ revisionId: 9, sourceKind: 'identity', sourceKey: 'merge-7', sourceVersion: 'v2', classification: 'evidence_changed' }], nextCursor: null, asOf: {} }
@@ -157,7 +172,7 @@ it('explains expired snapshots while retaining their source page until an explic
 })
 it('retains a source page and explains an invalid source cursor until the user restarts that source read', async () => {
   let expireSource = false
-  fetcher.mockImplementation(async (url: string, options?: any) => {
+  mockRoutes(async (url: string, options?: any) => {
     if (url === '/api/roster/evidence-impacts') return { rows: [row], nextCursor: null, asOf: {}, projectionReady: true }
     if (url === '/api/roster/evidence-impacts/4') return { ...row, currentDecision: null, evidenceToken: { decisionId: null, latestRevisionId: 9, projectionReady: true }, queryCoverage: null, gaps: {}, lineage: 'merged' }
     if (url.endsWith('/sources')) {
@@ -179,11 +194,82 @@ it('retains a source page and explains an invalid source cursor until the user r
   view.unmount()
 })
 it('labels reviewed historical impacts as reviewed while preserving their original change classification', async () => {
-  fetcher.mockResolvedValue({ rows: [{ ...row, pending: false, lineage: 'historical', classification: 'evidence_changed' }], nextCursor: null, asOf: {}, projectionReady: true })
+  mockRoutes(() => ({ rows: [{ ...row, pending: false, lineage: 'historical', classification: 'evidence_changed' }], nextCursor: null, asOf: {}, projectionReady: true }))
   const view = render(); await flushPromises()
   const item = view.get('[aria-label="解释复核清单"] > ul > li')
   expect(item.text()).toContain('已复核')
   expect(item.text()).toContain('证据变化')
   expect(item.text()).not.toContain('待复核')
+  view.unmount()
+})
+it('resolves bounded names for the current queue page and never borrows a merged survivor name', async () => {
+  mockRoutes(() => ({
+    rows: [
+      { ...row, id: 4, enterpriseId: 7 },
+      { ...row, id: 5, enterpriseId: 7 },
+      { ...row, id: 6, enterpriseId: 9, lineage: 'merged', oldDecision: null },
+      { ...row, id: 7, enterpriseId: 10 },
+    ],
+    nextCursor: null,
+    asOf: {},
+    projectionReady: true,
+  }))
+  const view = render(); await flushPromises()
+  const items = view.findAll('[data-testid="review-queue-item"]')
+  expect(items[0]!.text()).toContain(nameOf(7))
+  expect(items[0]!.text()).toContain('#7')
+  expect(items[2]!.text()).toContain('原企业 #9（归并前坐标）')
+  const profileCalls = fetcher.mock.calls
+    .map(call => String(call[0]))
+    .filter(url => url.endsWith('/profile'))
+  expect(profileCalls).toEqual([
+    '/api/roster/enterprises/7/profile',
+    '/api/roster/enterprises/10/profile',
+  ])
+  view.unmount()
+})
+it('states that a queue enterprise name could not be read instead of presenting the ID as a name', async () => {
+  fetcher.mockImplementation(async (url: string) => {
+    if (url.endsWith('/profile')) throw new Error('profile endpoint unavailable')
+    return { rows: [{ ...row, enterpriseId: 12 }], nextCursor: null, asOf: {}, projectionReady: true }
+  })
+  const view = render(); await flushPromises()
+  const item = view.get('[data-testid="review-queue-item"]')
+  expect(item.text()).toContain('企业 #12')
+  expect(item.text()).toContain('名称未读取')
+  expect(item.text()).not.toContain('profile endpoint unavailable')
+  view.unmount()
+})
+it('calls the applied reviewed filter reviewed records rather than a pending queue', async () => {
+  const view = render(); await flushPromises()
+  await view.get('[aria-label="复核状态"]').setValue('reviewed')
+  await view.get('form').trigger('submit'); await flushPromises()
+  expect(view.text()).toContain('已复核记录')
+  expect(view.text()).not.toContain('待复核队列')
+  view.unmount()
+})
+it('labels a merged historical row as a history item', async () => {
+  mockRoutes(() => ({ rows: [{ ...row, lineage: 'merged', oldDecision: null }], nextCursor: null, asOf: {}, projectionReady: true }))
+  const view = render(); await flushPromises()
+  expect(view.get('[aria-label="查看复核项 4"]').text()).toContain('查看历史项')
+  view.unmount()
+})
+it('retries a failed name read without refetching the queue', async () => {
+  let fail = true
+  fetcher.mockImplementation(async (url: string) => {
+    if (url.endsWith('/profile')) {
+      if (fail) throw new Error('profile endpoint unavailable')
+      return { profile: { enterpriseId: 12, name: '恢复企业' } }
+    }
+    return { rows: [{ ...row, enterpriseId: 12 }], nextCursor: null, asOf: {}, projectionReady: true }
+  })
+  const view = render(); await flushPromises()
+  expect(view.text()).toContain('名称未读取')
+  fail = false
+  await view.findAll('button').find(button => button.text() === '重试读取企业名称')!.trigger('click')
+  await flushPromises()
+  expect(view.text()).toContain('恢复企业')
+  expect(view.text()).not.toContain('名称未读取')
+  expect(fetcher.mock.calls.filter(call => call[0] === '/api/roster/evidence-impacts')).toHaveLength(1)
   view.unmount()
 })

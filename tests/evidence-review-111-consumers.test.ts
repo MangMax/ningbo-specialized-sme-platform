@@ -13,11 +13,11 @@ it('comparison reads the frozen enterprise assessment for the exact title and di
   vi.stubGlobal('$fetch', fetcher)
   const view = mount(ComparisonExplanation, { props: { enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit' }, global: global() }); await flushPromises()
   expect(fetcher).toHaveBeenCalledWith('/api/roster/enterprises/7')
-  expect(view.text()).toContain('已查询，尚未判断')
+  expect(view.text()).toContain('已查询 · 尚未判断')
   expect(view.text()).not.toContain('未查询')
   expect(view.get('a').attributes('href')).toBe('/enterprises/7?titleCode=specialized_sme&direction=missing_in_miit')
   await view.setProps({ titleCode: 'little_giant' })
-  expect(view.text()).toContain('尚未查询，尚未判断')
+  expect(view.text()).toContain('尚未查询 · 尚未判断')
   view.unmount()
 })
 it('enterprise keeps old current decision and pending validity visible at the focused scope', () => {
@@ -25,6 +25,19 @@ it('enterprise keeps old current decision and pending validity visible at the fo
   expect(view.text()).toContain('用户确认的原决定')
   expect(view.text()).toContain('证据已变化 · 待复核')
   expect(view.get('[data-testid="assessment-scope"]').attributes('id')).toBe('explanation-specialized_sme-missing_in_miit')
+  view.unmount()
+})
+it('gives each stacked direction a visible label instead of relying on aria-label', () => {
+  const missing = { ...assessment, assessment: 'queried_unjudged' }
+  const extra = { ...assessment, direction: 'extra_in_miit', assessment: 'queried_unjudged' }
+  const view = mount(EnterpriseExplanations, {
+    props: { enterpriseId: 7, assessments: [missing, extra] as any },
+    global: global(),
+  })
+  expect(view.findAll('[data-testid="direction-label"]').map(label => label.text()))
+    .toEqual(['应纳未纳', '平台多出'])
+  expect(view.get('[data-testid="assessment-scope"] button').attributes('aria-label'))
+    .toContain('应纳未纳')
   view.unmount()
 })
 it('locates the focused explanation only after the surrounding detail is ready', async () => {

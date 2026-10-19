@@ -44,8 +44,8 @@ const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString('zh-CN'))
           <SidebarTrigger class="-ml-1" />
           <Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
           <span v-if="showGlobalStats" data-global-stats class="text-muted-foreground text-xs tabular-nums">
-            共 <span class="text-foreground font-medium">{{ fmt(stats?.totalRecords) }}</span> 个企业×称号
-            · <span class="text-foreground font-medium">{{ fmt(stats?.totalEnterprises) }}</span> 家企业
+            名录记录 <span class="text-foreground font-medium">{{ fmt(stats?.totalRecords) }}</span> 个企业×称号
+            · <span class="text-foreground font-medium">{{ fmt(stats?.totalEnterprises) }}</span> 家有称号企业
           </span>
           <ThemeToggle class="ml-auto" />
         </div>

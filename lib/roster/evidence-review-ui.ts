@@ -18,7 +18,7 @@ export interface ImpactDetail extends ImpactRow {
 }
 export interface CursorPage<T> { rows: T[]; nextCursor: string | null; asOf: unknown; projectionReady?: boolean }
 export const coverageLabels: Record<string, string> = { complete: '覆盖完整', partial: '覆盖不完整', failed: '查询失败', unknown: '覆盖未知', not_queried: '未查询' }
-export const validityLabels: Record<string, string> = { premise_invalid: '前提已失效 · 待复核', evidence_changed: '证据已变化 · 待复核', unknown: '解释有效性未知', valid: '已复核', not_applicable: '暂无解释需复核' }
+export const validityLabels: Record<string, string> = { premise_invalid: '前提已失效 · 待复核', evidence_changed: '证据已变化 · 待复核', unknown: '解释有效性未确认', valid: '已复核', not_applicable: '暂无解释需复核' }
 
 export const lineageLabels: Record<string, string> = { current: '当前决定', historical: '历史决定', withdrawn: '决定已撤回', merged: '原企业已归并' }
 
