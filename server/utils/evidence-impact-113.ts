@@ -84,10 +84,8 @@ export function processEvidenceImpacts113(db: Db, input: { limit?: number } = {}
         and not exists (select 1 from difference_reason n where n.enterprise_id=d.enterprise_id and n.title_code=d.title_code and n.direction=d.direction and (n.recorded_at>d.recorded_at or (n.recorded_at=d.recorded_at and n.id>d.id)))
         order by d.id limit ${remaining}`)
       for (const d of candidates) {
-        if (revision.sourceKind === 'query_archive' && !queryChangeRelevant113(tx, revision, d)) continue
-        if (revision.sourceKind === 'selected_snapshot' && snapshotDigest(tx, revision.metadata.before as Snapshot113 | null, d.enterpriseId) === snapshotDigest(tx, revision.metadata.after as Snapshot113, d.enterpriseId)) continue
-        const classification = revision.queryExecuted && d.status === 'not_queried' ? 'premise_invalid' : revision.factChanged ? 'evidence_changed' : null
-        if (classification) {
+        const classification = evaluateEvidenceImpact113(tx, revision, d)
+        if (classification !== 'no_review') {
           const t = s.explanationImpact113
           const state = tx.insert(t).values({ enterpriseId: d.enterpriseId, titleCode: d.titleCode, direction: d.direction, decisionId: d.id, latestRevisionId: revision.id, pendingSinceRevisionId: revision.id, classification })
             .onConflictDoUpdate({ target: [t.enterpriseId, t.titleCode, t.direction, t.decisionId], set: { latestRevisionId: revision.id,
@@ -294,4 +292,16 @@ function queryChangeRelevant113(db: EvidenceExecutor113, revision: typeof s.evid
     if (pages.length && positions.length && !pages.some(p => positions.includes(p.page))) return false
   }
   return true
+}
+
+export type ImpactDecision113 = { id: number; enterpriseId: number; titleCode: string; direction: string; status: string; evidenceQueryId: number | null; lifecycleAction?: string | null }
+/** Same evaluator for #114 previews and the durable working view; no reason/decision writes. */
+export function evaluateEvidenceImpact113(db: EvidenceExecutor113, revision: typeof s.evidenceRevision113.$inferSelect, decision: ImpactDecision113): 'premise_invalid' | 'evidence_changed' | 'no_review' {
+  if (decision.id > revision.maxDecisionId || decision.lifecycleAction === 'withdraw' || revision.enterpriseId != null && decision.enterpriseId !== revision.enterpriseId || revision.titleCode != null && decision.titleCode !== revision.titleCode || revision.direction != null && decision.direction !== revision.direction) return 'no_review'
+  if (revision.sourceKind === 'query_archive' && !queryChangeRelevant113(db, revision, decision)) return 'no_review'
+  if (revision.sourceKind === 'selected_snapshot' && snapshotDigest(db, revision.metadata.before as Snapshot113 | null, decision.enterpriseId) === snapshotDigest(db, revision.metadata.after as Snapshot113, decision.enterpriseId)) return 'no_review'
+  return revision.queryExecuted && decision.status === 'not_queried' ? 'premise_invalid' : revision.factChanged ? 'evidence_changed' : 'no_review'
+}
+export function readEvidenceRevision113(db: EvidenceExecutor113, revisionId: number) {
+  return db.select().from(s.evidenceRevision113).where(eq(s.evidenceRevision113.id, revisionId)).get() ?? null
 }

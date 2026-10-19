@@ -46,6 +46,10 @@ the change requires review rather than automatic re-confirmation.
 
 `server/utils/evidence-impact-113.ts` exposes:
 
+- `readEvidenceRevision113(db, revisionId)` and
+  `evaluateEvidenceImpact113(db, revision, decision)`: bounded source metadata and
+  the shared preview/working-view evaluator, returning premise_invalid,
+  evidence_changed or no_review without writing business reasons.
 - `processEvidenceImpacts113(db, {limit})`: explicit immediate transaction;
   `limit` is 1..100 candidate evaluations/progress steps. Returns processed,
   unfinished and contiguous revision watermark. Repeated drains are safe.
