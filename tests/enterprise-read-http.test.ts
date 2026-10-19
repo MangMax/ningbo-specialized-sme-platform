@@ -2,9 +2,10 @@ import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError } from 'h3'
+import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError, setHeader } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db'
+import { getRosterEnterpriseDetail } from '../lib/roster/enterprise-roster'
 import { listEnterprises } from '../server/utils/mcp-roster'
 
 const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-http-'))
@@ -49,7 +50,7 @@ db.$client.function = ((name: string, options: unknown, callback: (...args: unkn
   registerFunction(name, { ...(options as object), varargs: true }, (...args: unknown[]) => { normalizationCalls++; return callback(...args) })) as typeof db.$client.function
 beforeAll(async () => {
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
-  for (const [name, value] of Object.entries({ defineEventHandler, getQuery, getRouterParam, createError })) vi.stubGlobal(name, value)
+  for (const [name, value] of Object.entries({ defineEventHandler, getQuery, getRouterParam, createError, setHeader })) vi.stubGlobal(name, value)
   const list = (await import('../server/api/roster/enterprises.get')).default
   const detail = (await import('../server/api/roster/enterprises/[id].get')).default
   server = createServer(toNodeListener(createApp({ debug: false }).use(createRouter().get('/api/roster/enterprises', list).get('/api/roster/enterprises/:id', detail))))
@@ -77,6 +78,11 @@ it('HTTP detail preserves legacy Unicode keys without allocating normalization c
     expect(response.status).toBe(200)
     const detail = await response.json()
     expect(detail.platform.queries.map((q: any) => q.id)).toEqual([failed, recognized, ids.at(-1)])
+    // Observe the same reader on this instrumented connection, then compare to
+    // the worker/HTTP result. A worker has its own driver, so a zero reading on
+    // the writer connection alone would prove nothing about its allocations.
+    expect(getRosterEnterpriseDetail(db, owner)).toEqual(detail)
+    expect(normalizationCalls).toBeGreaterThan(0)
     // Supplementary allocation observation at the real SQLite/HTTP seam.
     // Unrelated ASCII punctuation/lowercase keys must stay inside native SQL.
     expect(normalizationCalls).toBeLessThan(30)
@@ -93,6 +99,7 @@ it('HTTP filtered list counts titles without materializing unrelated evidence po
     const response = await fetch(`${base}/api/roster/enterprises?q=已确认旧名&pageSize=1`)
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2, differences: 2 }, rows: [{ enterpriseId: owner, nextReviewYear: 2028 }] })
+    listEnterprises(db, { q: '已确认旧名', pageSize: 1 })
     expect(unrelatedPointerBytes).toBe(0)
   } finally { db.$client.prepare('DELETE FROM record WHERE id = ?').run(record.id) }
 })
@@ -120,7 +127,9 @@ it('HTTP name-only detail skips impossible normalized-name matches in unrelated 
   try {
     const response = await fetch(`${base}/api/roster/enterprises/${identity.id}`)
     expect(response.status).toBe(200)
-    expect((await response.json()).platform.queries.map((q: any) => q.id)).toEqual([exact.id])
+    const detail = await response.json()
+    expect(detail.platform.queries.map((q: any) => q.id)).toEqual([exact.id])
+    expect(getRosterEnterpriseDetail(db, identity.id)).toEqual(detail)
     expect(normalizationCalls).toBeLessThan(30)
   } finally {
     db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${[exact.id, ...ids].map(() => '?').join(',')})`).run(exact.id, ...ids)
@@ -136,6 +145,31 @@ it('MCP search keeps malformed UTF-16 distinct from stored replacement character
     expect(listEnterprises(db, { district: '替换\uD800属地' }).rows).toEqual([])
     expect(listEnterprises(db, { q: '\uFFFD' }).rows.map(row => row.enterpriseId)).toEqual([identity.id])
   } finally { db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(identity.id) }
+})
+it('MCP search matches either UTF-16 half in supplementary names, confirmed aliases and USCC without replacement false positives', () => {
+  const identities = [
+    { name: '正名𠀀企业', nameNorm: '正名𠀀企业' },
+    { name: '别名匹配企业', nameNorm: '别名匹配企业' },
+    { name: '统代匹配企业', nameNorm: '统代匹配企业', usccNorm: 'SYN𠀀84' },
+    { name: '待核别名企业', nameNorm: '待核别名企业' },
+    { name: '替换\uFFFD对照', nameNorm: '替换\uFFFD对照' },
+  ].map(value => db.insert(schema.enterprise).values(value).returning().get().id)
+  for (const [index, verificationStatus] of [[1, 'confirmed'], [3, 'pending']] as const) db.insert(schema.enterpriseAlias).values({ enterpriseId: identities[index]!, name: '旧名𠀀', nameNorm: '旧名𠀀', sourceKind: 'manual', sourceRefId: 0, verificationStatus }).run()
+  try {
+    for (const q of ['𠀀', '\uD840', '\uDC00']) {
+      const result = listEnterprises(db, JSON.parse(JSON.stringify({ q })))
+      expect(result.counts.total).toBe(3)
+      expect(result.rows.map(row => row.enterpriseId).sort((a, b) => a - b)).toEqual(identities.slice(0, 3))
+    }
+    expect(listEnterprises(db, { q: '\uD841' }).rows).toEqual([])
+    expect(listEnterprises(db, { q: '\uDC01' }).rows).toEqual([])
+    expect(listEnterprises(db, { q: '\uFFFD' }).rows.map(row => row.enterpriseId)).toEqual([identities[4]])
+  } finally {
+    for (const id of identities) {
+      db.$client.prepare('DELETE FROM enterprise_alias WHERE enterprise_id=?').run(id)
+      db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(id)
+    }
+  }
 })
 it('HTTP SQL selection preserves first-award ties, pending years, same-event filters and terminated lifecycle', async () => {
   const identities = ['A', 'B', 'C'].map(label => db.insert(schema.enterprise).values({ name: `汇总边界${label}`, nameNorm: `汇总边界${label}`, usccNorm: `BOUND84${label}` }).returning().get().id)
@@ -187,4 +221,20 @@ it('HTTP detail scopes identity and record evidence but preserves recognized unm
   } finally { db.$client.prepare('UPDATE enterprise SET quality_flags = NULL WHERE id = ?').run(unrelated) }
   expect((await fetch(`${base}/api/roster/enterprises/999999`)).status).toBe(404)
   expect((await fetch(`${base}/api/roster/enterprises/invalid`)).status).toBe(400)
+})
+it('keeps unknown reference titles through the generic aggregate instead of dropping them from compact counts', async () => {
+  db.insert(schema.title).values({ code: 'synthetic_extra', nameZh: '合成额外称号', level: 'municipal', rank: 99 }).run()
+  const enterprise = db.insert(schema.enterprise).values({ name: '额外称号企业', nameNorm: '额外称号企业' }).returning().get()
+  const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'synthetic_extra', source: 'jxj' }).returning().get()
+  db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).run()
+  try {
+    const response = await fetch(`${base}/api/roster/enterprises?q=额外称号企业`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 1, recognitionPairs: 1, differences: 0, titles: { synthetic_extra: 1 } }, rows: [{ titles: ['synthetic_extra'] }] })
+  } finally {
+    db.$client.prepare('delete from record_event where record_id=?').run(record.id)
+    db.$client.prepare('delete from record where id=?').run(record.id)
+    db.$client.prepare('delete from enterprise where id=?').run(enterprise.id)
+    db.$client.prepare("delete from title where code='synthetic_extra'").run()
+  }
 })

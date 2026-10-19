@@ -1,3 +1,4 @@
+import { decodeJsonRead } from './helpers/json-read-adapter'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -58,8 +59,8 @@ const legacyEvidence = [
   },
 ]
 
-let listHandler: (event: unknown) => unknown
-let detailHandler: (event: unknown) => unknown
+let listHandler: (event: unknown) => Promise<unknown>
+let detailHandler: (event: unknown) => Promise<unknown>
 let db: ReturnType<typeof useDb>
 const tempDir = mkdtempSync(join(tmpdir(), 'roster-enterprise-legacy-api-'))
 
@@ -70,14 +71,15 @@ beforeAll(async () => {
   db.insert(schema.recordEvent).values(event).run()
   db.insert(schema.recordEvidence).values(legacyEvidence).run()
 
+  vi.stubGlobal('setHeader', () => {})
   vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
   vi.stubGlobal('defineRouteMeta', vi.fn())
   vi.stubGlobal('getQuery', () => ({}))
   vi.stubGlobal('getRouterParam', () => String(enterprise.id))
   vi.doMock('@db', () => ({ useDb: () => db }))
 
-  listHandler = (await import('../server/api/roster/enterprises.get')).default as unknown as typeof listHandler
-  detailHandler = (await import('../server/api/roster/enterprises/[id].get')).default as unknown as typeof detailHandler
+  listHandler = decodeJsonRead((await import('../server/api/roster/enterprises.get')).default) as unknown as typeof listHandler
+  detailHandler = decodeJsonRead((await import('../server/api/roster/enterprises/[id].get')).default) as unknown as typeof detailHandler
 })
 
 afterAll(() => {
@@ -87,8 +89,8 @@ afterAll(() => {
 })
 
 describe('legacy Word/Excel 出处页码 REST 读取', () => {
-  it('总表首次认定和企业详情两种出处投影都把 DOCX/XLSX page=12 序列化为 null', () => {
-    const list = listHandler({}) as {
+  it('总表首次认定和企业详情两种出处投影都把 DOCX/XLSX page=12 序列化为 null', async () => {
+    const list = (await listHandler({})) as {
       rows: Array<{ enterpriseId: number; firstRecognition: Array<{ evidence: Array<{ sourceFile: string; page: number | null }> }> }>
     }
     const row = list.rows.find((candidate) => candidate.enterpriseId === enterprise.id)!
@@ -97,7 +99,7 @@ describe('legacy Word/Excel 出处页码 REST 读取', () => {
       { sourceFile: 'synthetic/legacy/appendix.xlsx', page: null },
     ])
 
-    const detail = detailHandler({}) as {
+    const detail = (await detailHandler({})) as {
       evidence: Array<{ sourceFile: string; page: number | null }>
       recognitions: Array<{ evidence: Array<{ sourceFile: string; page: number | null }> }>
     }

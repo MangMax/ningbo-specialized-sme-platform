@@ -18,6 +18,7 @@ let api: Awaited<ReturnType<typeof startEvidenceServer>>
 let client: ReturnType<typeof createRosterImportClient>
 beforeAll(async () => {
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
+  vi.stubGlobal('setHeader', () => {})
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('getQuery', (event: any) => event.query)
   vi.stubGlobal('createError', (opts: any) => Object.assign(new Error(opts.statusMessage), opts))
@@ -204,7 +205,7 @@ it('MCP history and enterprise detail match REST, preserve cross-source identica
   const rest = await (await fetch(`${api.baseUrl}/api/platform/queries?${new URLSearchParams(Object.entries(input).map(([k,v]) => [k,String(v)]))}`)).json()
   expect(await history.handler(input)).toEqual(rest)
   const detailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as any
-  const after = await detailTool.handler({ enterpriseId })
+  const after = JSON.parse(await detailTool.handler({ enterpriseId }))
   expect(after.platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt).collectionEvidence).toEqual(evidence)
   const allHistory = await (await fetch(`${api.baseUrl}/api/platform/queries?queryKey=${USCC}&pageSize=100`)).json()
   expect(after.platform.relations.map((r: any) => r.id).sort((a: number, b: number) => a-b)).toEqual(allHistory.rows.flatMap((q: any) => q.relations.map((r: any) => r.id)).sort((a: number, b: number) => a-b))
@@ -345,11 +346,11 @@ it.each(['uscc', 'name'] as const)('archive-before-master %s query preserves eve
   const enterpriseId = seed.items.find(i => i.kind === 'record_event')!.detail!.enterpriseId as number
   vi.stubGlobal('getRouterParam', (event: any) => event.id)
   const detailRoute = (await import('../server/api/roster/enterprises/[id].get')).default
-  const restApi = await startEvidenceServer({ db, apiToken: token, getRoutes: { [`/api/roster/enterprises/${enterpriseId}`]: () => detailRoute({ id: enterpriseId } as never) } })
+  const restApi = await startEvidenceServer({ db, apiToken: token, getRoutes: { [`/api/roster/enterprises/${enterpriseId}`]: async () => JSON.parse((await detailRoute({ id: enterpriseId } as never)).toString('utf8')) } })
   try {
     const detail = await (await fetch(`${restApi.baseUrl}/api/roster/enterprises/${enterpriseId}`)).json()
     const detailTool = (await import('../server/mcp/tools/get_enterprise_detail')).default as any
-    expect(await detailTool.handler({ enterpriseId })).toEqual(detail)
+    expect(JSON.parse(await detailTool.handler({ enterpriseId }))).toEqual(detail)
     expect(detail.platform.queries.map((q: any) => q.id)).toEqual([archived.query.id])
     expect(detail.platform.queries[0]).toMatchObject({ relationCount: 4, collectionEvidence: evidence })
     expect(detail.platform.relations.map((r: any) => r.id)).toEqual(archived.relations.map((r: any) => r.id))

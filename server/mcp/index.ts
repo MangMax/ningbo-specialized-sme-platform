@@ -1,3 +1,4 @@
+import { admitEnterpriseResponse } from '../utils/enterprise-read-response'
 import { platformQueryRpcError } from '../utils/mcp-platform-query'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler } from '@nuxtjs/mcp-toolkit/server'
@@ -87,7 +88,9 @@ export default defineMcpHandler({
     event.context.mcpAuth = auth
 
     if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
-      const invalidQuery = platformQueryRpcError(await readBody(event, { strict: false }).catch(() => undefined))
+      const body = await readBody(event, { strict: false }).catch(() => undefined)
+      if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail'].includes(body?.params?.name)) admitEnterpriseResponse(event)
+      const invalidQuery = platformQueryRpcError(body)
       if (invalidQuery) return invalidQuery
     }
     if (auth.writeAuthorized) return

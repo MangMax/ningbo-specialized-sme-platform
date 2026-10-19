@@ -16,6 +16,9 @@ export function identityFunctions(db: Db) {
   client.function('roster84_uscc', { deterministic: true }, (value: unknown) => normalizeUscc(value as string | null) || null)
   client.function('roster84_name', { deterministic: true }, (value: unknown) => normalizeName(value as string | null))
   client.function('roster84_upper', { deterministic: true }, (value: string | null) => value?.toUpperCase() ?? '')
+  // JSON transports lone UTF-16 code units without SQLite replacing them with
+  // U+FFFD. JS includes can match a half inside a valid supplementary character.
+  client.function('roster84_includes_utf16', { deterministic: true }, (value: string | null, encoded: string) => Number((value ?? '').includes(JSON.parse(encoded))))
   registered.add(client)
 }
 // Punctuation and lowercase ASCII (including name:/synthetic keys) are valid
@@ -125,46 +128,4 @@ export function enterpriseComparisonCoordinates(db: Db, id?: number) {
         select 1 from record other join enterprise oe on oe.id = other.enterprise_id
         where oe.uscc_norm = e.uscc_norm and other.title_code = r.title_code and (other.source = 'jxj') != (r.source = 'jxj') and oe.uscc_norm = e.uscc_norm))
     order by r.id`)
-}
-
-/** One ordered cursor over light history columns, releasing each enterprise's
- * records/events/evidence before advancing. No per-enterprise database requests. */
-export function* iterateEnterpriseHistories(db: Db) {
-  const query = db.select({
-    record: { ...getTableColumns(s.record), nameRaw: sql<null>`null`, usccRaw: sql<null>`null`, qualityFlags: sql<null>`null` },
-    event: getTableColumns(s.recordEvent),
-    evidence: getTableColumns(s.recordEvidence),
-  }).from(s.record).leftJoin(s.recordEvent, eq(s.recordEvent.recordId, s.record.id))
-    .leftJoin(s.recordEvidence, eq(s.recordEvidence.recordEventId, s.recordEvent.id))
-    .orderBy(asc(s.record.enterpriseId), asc(s.record.id), asc(s.recordEvent.id), asc(s.recordEvidence.id)).toSQL()
-  const cursor = (db as Db & { $client: Database }).$client.prepare(query.sql).raw().iterate(...query.params) as Iterable<unknown[]>
-  const recordKeys = Object.keys(getTableColumns(s.record)), eventKeys = Object.keys(getTableColumns(s.recordEvent)), evidenceKeys = Object.keys(getTableColumns(s.recordEvidence))
-  const unpack = (keys: string[], row: unknown[], start: number) => Object.fromEntries(keys.map((key, index) => [key, row[start + index]]))
-  let enterpriseId: number | undefined
-  let records: typeof s.record.$inferSelect[] = [], events: typeof s.recordEvent.$inferSelect[] = [], evidence: typeof s.recordEvidence.$inferSelect[] = []
-  const group = () => {
-    const recordsByEnterprise = new Map([[enterpriseId!, records]])
-    const eventsByRecord = new Map<number, typeof events>()
-    for (const event of events) {
-      const list = eventsByRecord.get(event.recordId) ?? []
-      list.push(event); eventsByRecord.set(event.recordId, list)
-    }
-    return { enterpriseId: enterpriseId!, records, events, evidence, recordsByEnterprise, eventsByRecord }
-  }
-  for (const values of cursor) {
-    const row = {
-      record: unpack(recordKeys, values, 0) as typeof s.record.$inferSelect,
-      event: values[recordKeys.length] == null ? null : unpack(eventKeys, values, recordKeys.length) as typeof s.recordEvent.$inferSelect,
-      evidence: values[recordKeys.length + eventKeys.length] == null ? null : unpack(evidenceKeys, values, recordKeys.length + eventKeys.length) as typeof s.recordEvidence.$inferSelect,
-    }
-    if (enterpriseId !== undefined && enterpriseId !== row.record.enterpriseId) {
-      yield group()
-      records = []; events = []; evidence = []
-    }
-    enterpriseId = row.record.enterpriseId
-    if (records.at(-1)?.id !== row.record.id) records.push(row.record)
-    if (row.event && events.at(-1)?.id !== row.event.id) events.push(row.event)
-    if (row.evidence) evidence.push(isPageCapable(row.evidence.sourceFile) ? row.evidence : { ...row.evidence, page: null })
-  }
-  if (enterpriseId !== undefined) yield group()
 }
