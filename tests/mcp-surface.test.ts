@@ -44,6 +44,7 @@ describe('mcp-auth 鉴权判据', () => {
     // 票 18 的三个 + RL-11 的名录统一写入(`save_roster_batch`)。
     expect([...MCP_WRITE_TOOLS]).toEqual([
       'save_difference_decision',
+      'maintain_enterprise_alias',
       'save_ocr_result',
       'set_file_category',
       'save_parse_result',
@@ -58,6 +59,7 @@ describe('mcp-auth 鉴权判据', () => {
       'preflight_comparison_scope_proofs',
       'commit_comparison_scope_proofs',
       'get_comparison_scope_proof_batch',
+      'patch_enterprise_profile',
     ])
   })
 

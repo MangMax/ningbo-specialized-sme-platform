@@ -38,6 +38,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
  */
 export const MCP_WRITE_TOOLS = [
   'save_difference_decision',
+  'maintain_enterprise_alias',
   'save_ocr_result',
   'set_file_category',
   'save_parse_result',
@@ -52,6 +53,7 @@ export const MCP_WRITE_TOOLS = [
   'preflight_comparison_scope_proofs',
   'commit_comparison_scope_proofs',
   'get_comparison_scope_proof_batch',
+  'patch_enterprise_profile',
 ] as const
 
 /** 写入 tool 名(字面量联合)。 */
