@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ComparisonExplanation from '@/components/evidence-review/ComparisonExplanation.vue'
+import EvidenceReviewList from '@/components/evidence-review/EvidenceReviewList.vue'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { computed, nextTick, shallowRef, watch } from 'vue'
 import { GitCompareArrows, Search } from '@lucide/vue'
@@ -58,7 +60,7 @@ definePageMeta({
 
 const route = useRoute()
 const router = useRouter()
-const mode = computed(() => route.query.mode === 'legacy' ? 'legacy' : 'record')
+const mode = computed(() => route.query.mode === 'review' ? 'review' : route.query.mode === 'legacy' ? 'legacy' : 'record')
 function setMode(value: string) { void router.push({ path: '/comparison', query: { ...route.query, mode: value } }) }
 
 const COMPARISON_DIRECTIONS = Object.keys(
@@ -117,7 +119,7 @@ const activeRequest = computed(() => captureQueryRequest('comparison', params.va
 useHead({
   title: computed(
     () =>
-      mode.value === 'record' ? '记录级对比 · 正式事件与平台原行' : `兼容旧结果 · ${TITLES[title.value] ?? title.value} · ${
+      mode.value === 'review' ? '解释待复核' : mode.value === 'record' ? '记录级对比 · 正式事件与平台原行' : `兼容旧结果 · ${TITLES[title.value] ?? title.value} · ${
         COMPARISON_LABELS[direction.value] ?? direction.value
       }`,
   ),
@@ -204,8 +206,9 @@ const exportUrl = computed(() => {
 
 <template>
   <div class="flex min-w-0 flex-col gap-3">
-    <Tabs :model-value="mode" @update:model-value="setMode(String($event))"><TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="比对口径"><TabsTrigger value="record">记录级对比</TabsTrigger><TabsTrigger value="legacy">兼容旧结果</TabsTrigger></TabsList></Tabs>
+    <Tabs :model-value="mode" @update:model-value="setMode(String($event))"><TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="比对口径"><TabsTrigger value="record">记录级对比</TabsTrigger><TabsTrigger value="legacy">兼容旧结果</TabsTrigger><TabsTrigger value="review">解释待复核</TabsTrigger></TabsList></Tabs>
     <RecordComparisonPanel v-if="mode === 'record'" />
+    <EvidenceReviewList v-else-if="mode === 'review'" />
   <div v-else class="comparison-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader
       title="兼容旧结果 · 两侧名录比对"
@@ -400,7 +403,7 @@ const exportUrl = computed(() => {
                           COMPARISON_OTHER_SIDE[row.direction]
                         }}</TableCell>
                         <TableCell class="hidden sm:table-cell">
-                          <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
+                          <ComparisonExplanation :enterprise-id="row.enterpriseId" :title-code="row.titleCode" :direction="row.direction" />
                         </TableCell>
                         <TableCell class="hidden sm:table-cell">
                           <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />
@@ -413,7 +416,7 @@ const exportUrl = computed(() => {
                             <div class="border-b border-border/50 pb-1 text-[13px] leading-5" data-testid="comparison-mobile-status-divider">
                               <span class="text-muted-foreground">{{ COMPARISON_OTHER_SIDE[row.direction] }}</span>
                               <span class="text-muted-foreground px-1">·</span>
-                              <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
+                              <ComparisonExplanation :enterprise-id="row.enterpriseId" :title-code="row.titleCode" :direction="row.direction" />
                             </div>
                             <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />
                             <ComparisonCuration :row="row" :compact="true" @saved="refreshCuration" />

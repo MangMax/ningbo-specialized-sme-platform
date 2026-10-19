@@ -4,6 +4,8 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import { sourceReturnTarget } from '~~/lib/roster/correspondence-view'
 import RecordEventRow from '@/components/record-correspondence/RecordEventRow.vue'
+import TableFailureState from '@/components/TableFailureState.vue'
+import EnterpriseExplanations from '@/components/evidence-review/EnterpriseExplanations.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
 import { QUALITY_FLAGS } from '~~/lib/labels'
 import { fileUrl, fileNameOf } from '~~/lib/preview'
@@ -83,8 +85,12 @@ const backTo = computed(() => {
   return { path: '/', query }
 })
 
+const explanationTitle = computed(() => typeof route.query.titleCode === 'string' ? route.query.titleCode : undefined)
+const explanationDirection = computed(() => typeof route.query.direction === 'string' ? route.query.direction : undefined)
+const impactId = computed(() => typeof route.query.impactId === 'string' && /^[1-9]\d*$/.test(route.query.impactId) && Number.isSafeInteger(Number(route.query.impactId)) ? Number(route.query.impactId) : undefined)
+
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>
-const { data, isLoading, error } = useQuery({
+const { data, isLoading, error, refetch } = useQuery({
   key: () => ['roster-enterprise', id.value],
   query: () => apiGet<RosterEnterpriseDetail>(`/api/roster/enterprises/${id.value}`),
 })
@@ -253,7 +259,7 @@ function openPreview(e: Evidence) {
 <template>
   <div class="flex flex-col gap-5">
     <!-- 加载中 -->
-    <template v-if="isLoading">
+    <template v-if="isLoading && !detail">
       <div class="flex flex-col gap-2">
         <Skeleton class="h-3 w-24" />
         <Skeleton class="h-7 w-72" />
@@ -268,12 +274,13 @@ function openPreview(e: Evidence) {
     </template>
 
     <!-- 加载失败 -->
-    <Alert v-else-if="error" variant="destructive">
+    <Alert v-else-if="error && !detail" variant="destructive">
       <AlertTitle>未能加载企业详情</AlertTitle>
-      <AlertDescription>该企业不存在或已被移除。请返回台账重新选择。</AlertDescription>
+      <AlertDescription class="flex flex-wrap items-center gap-2">请重试读取，或返回台账重新选择。<Button variant="outline" size="sm" @click="refetch()">重新读取企业详情</Button></AlertDescription>
     </Alert>
 
     <template v-else-if="detail">
+      <TableFailureState v-if="error" title="企业详情更新失败" description="保留上次成功的企业详情和决定，请重试读取当前状态。" :pending="isLoading" @retry="refetch()" />
       <PageHeader :title="detail.name">
         <template #breadcrumb>
           <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">{{ sourceReturnTarget(route.query.returnTo) ? '记录级对比' : '企业列表' }}</NuxtLink>
@@ -341,6 +348,8 @@ function openPreview(e: Evidence) {
           <Button variant="outline" size="sm" :disabled="correspondenceLoading" @click="reloadCorrespondences">重试读取</Button>
         </AlertDescription>
       </Alert>
+
+      <EnterpriseExplanations :key="detail.id" :enterprise-id="detail.id" :assessments="data?.titleAssessments ?? []" :title-code="explanationTitle" :direction="explanationDirection" :impact-id="impactId" :locate="focusedEventId == null && !correspondenceLoading" />
 
       <!--
         平台原行是辅助区：默认折叠，保留全部查询记录可查；它不参与上面的出处判定。
