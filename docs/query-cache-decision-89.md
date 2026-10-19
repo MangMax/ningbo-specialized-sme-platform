@@ -1,5 +1,7 @@
 # #89 缓存矩阵与准入决策
 
+**第二轮状态：#87 索引之后，已实现一个有限场景的缓存候选。** 仅公开 REST 的无筛选摘要第一页（pageSize<=50）。MCP/no-store、凭据、原文、筛选与深页全部绕过；不扩大到相邻票。下方第一轮矩阵、no-cache 决定和失败样本保留为历史证据；第二轮实现与实测见文末，不把 #87 的索引收益算作缓存收益。#89 保持未关闭。
+
 ## 测量前冻结（2026-10-19）
 
 冻结源码：集成 `39fb7bad30b3c1cefe48c9af249334c689128a4f`，含 #83 `57cc58ac9a410a4e7f3f973982a9b069bb284832`。已读 #81–89 规格及实时 issue comments（均为空）。#82 的 `/tmp/ningbo-perf-81-89/baseline.md` 是冻结预算，本票不改变它。只测独立 SQLite 副本或合成库；不连接生产、不访问外部平台、不改 schema/migrations（#87 所有）。本文件先冻结矩阵和准入条件，再补充结果。
@@ -143,3 +145,84 @@
 - `git diff --check`、`node --check scripts/verify-platform-cache-safety.mjs`：退出0。提交前再次 `git merge t3/implement-spec-81-89` 返回 Already up to date，集成仍为 `39fb7ba`。
 
 本票交付为调查决策及复现脚本，未创建PR、未推main、未关闭任何issue、未委派。提交后的 exact-head verifier 证据另存 `/tmp/ningbo-perf-81-89/89/`，由交接消息给出提交SHA；不在文档内伪造自引用SHA。
+
+## 第二轮：#87 之后的单场景实现（2026-10-19）
+
+起点 `71cc7bf351523c3ac5b9a4eb892cc362dcf0d189`，包含 #87 的索引和第一轮 `aa1ef84`。冻结预算仍为原 `/tmp/ningbo-perf-81-89/baseline.md`。本轮只选择 **公开 REST `/api/platform/queries?view=summary&page=1&pageSize=1..50`，无其他筛选**。这与真实生产构建上的重复首屏读取对应；不改变默认 full，不将界面迁移到 summary。MCP 的 no-store 入口维持每请求读取，也作为结果等价对照。其余企业/对应/来源/对比缓存容量仍为0，#85 后来的读取修复不自动准入缓存。
+
+### 键、资源与准入
+
+- `server/utils/platform-summary-cache.ts` 为此场景提供独立只读 reader。键包含 `platform-summary-v1`、真实绝对路径+设备/inode、该 observer 生命周期内的 generation、固定权限 `public-rest-v1`、固定排序/投影版本，以及全部已归一化的 queryId/interface/queryKey/titleCode/uscc/enterpriseId/status/view/page/pageSize/includeRawResponse。当前不支持 asOf/显式来源列表/proof 参数；相关场景从未准入此缓存。新增影响结果的输入/规则必须升级键和准入设计。
+- 8MiB 总计账、128条、单条64KiB、5秒 TTL、LRU；最多4个 source reader，淘汰 source 时关闭连接并删除其全部条目。预算可在测试中降低，不可超过这些上限。条目保存 UTF-8 Buffer，计账为 payload字节+2×UTF-8键字节+256B保守开销；不保留调用方对象图。命中重新解析，调用方修改不能污染后续响应。这是应用计账上限，不是精确的 V8/native RSS 估算；SQLite pager/连接独立计量。
+- TTL 从填充完成起计算，命中不续命；到期在下一次准入读取时清除，不在空闲时启动 timer。即使空闲，应用保留量仍受硬容量限制。source reader 最多4个并保持到 source 淘汰/进程结束；已有 `useDb` 连接缓存的历史缺口不在本次扩大修复。
+- 有筛选、page>1、pageSize>50、full/raw、原连接事务内、内存库、显式关闭开关均直接调用原读函数。REST 带 Authorization/Cookie、请求或已有响应 no-store/no-cache 时也绕过；不保存这些 header 的值、不修改响应缓存头。MCP 不调用 reader。原文分段、reveal、实时平台、proof 等 no-store 接口不变。
+- 读取异常直接抛出，没有失败/empty/no_record负缓存；带非空 failureReason 的成功摘要也不存，以免保留敏感错误文本。成功摘要仍逐项保留 failed/partial/no_record/not_queried/success 的真实档案状态和同范围 counts，不把档案里的 failed 状态当作“请求失败”或“无记录”。
+- 同步 SQLite 填充在一个请求调用内完成；Node 同一进程不会出现跨 await 的并行 miss，不需要保留 promise/single-flight 队列。不同进程各自承担一次安全 miss，不声称跨进程合并请求。
+
+### 提交、回滚与多实例
+
+每个 reader 使用它自己从不写入的长期只读 SQLite 连接，比较 **该连接自身** `PRAGMA data_version` 的前后变化。它是变更观察值，不是全局提交 ID；generation 仅为本 reader 内部键版本，绝不跨连接比较数值。观察到变化便清除此源的全部条目，因而应用原连接、其他实例和外部 SQLite writer 的所有提交都会失效，不依赖逐条改写 import/merge/alias/event/archive/export/correspondence/proof writer，也不加版本表、trigger 或 migration。对本场景无影响的提交同样粗粒度失效。
+
+原连接已有事务时不消费/填充共享条目；事务调用者仍经原函数读取自己的写入。独立 reader 只见 committed snapshot。外部未提交写入/rollback 不改变 observer 可见版本或发布条目。填充后再次检查该连接版本及文件身份；填充期间发生提交/换库时可以返回本次已提交快照，但不发布为可复用条目；下一次请求重算。命中的线性化点是本次版本检查，已开始请求与并发提交可交错，提交完成后开始的读取必先验证版本。
+
+真实路径或设备/inode变化时关闭旧 observer、丢弃条目并打开当前文件；另一个库同 ID 不共享。普通进程重启没有持久条目，必冷读。**这不授权在线替换仍有 writer 的 SQLite/WAL 文件**；部署仍需停写、checkpoint、备份和重开连接。原有 full/其他业务的 `useDb` 换库生命周期问题不因摘要 reader 的替换检测而自动解决。
+
+### 第二轮 TDD 与公开接缝
+
+先以原读实现作为 reader scaffold，记录 `red-01-behavior.log` 的真实行为失败，再逐片实现；初始缺模块失败单独保留，不拿 import error 冒充行为红。随后容量、TTL、事务隔离、绕过、源淘汰/替换、配置边界都有对应 red/green 日志。公开 REST 接入先失败于未命中计数，再加入 adapter。两次新测试夹具类型错误及第一次归一化键顺序失败均保留，未改业务断言或预算规避。测试均用合成临时 SQLite，不接触共享快照/生产。
+
+| Requirement | Evidence |
+| --- | --- |
+| 归一化命中、五态/顺序/投影、可变对象隔离 | `normalized repeated summaries hit without retaining mutable results or original evidence` |
+| LRU条目数/淘汰后安全miss | `entry eviction uses least recently read order and evicted requests safely refill` |
+| 总字节/单条字节的恰好/差1边界与字节淘汰 | `byte and per-entry limits count encoded data and admit only at the exact budget` |
+| TTL前/恰好/之后、命中不续期 | `TTL expires at the boundary and hits do not extend the committed value lifetime` |
+| 本连接事务读取不发布、rollback、commit后两reader更新 | `same-connection commits invalidate both independent readers while rollback never publishes` |
+| 外部writer未提交/rollback/commit与新实例 | `external commits, pending writes, rollback and restart preserve committed public results` |
+| 数据源隔离、source淘汰、相同路径新inode、关闭释放 | `source eviction and same-path replacement isolate identical IDs and close old readers` |
+| 筛选/原文/no-store/敏感错误不进入缓存 | `unsafe filters, raw reads, no-store and sensitive failures bypass result storage` |
+| SQL异常不会变空结果、恢复后可填充 | `read errors are not cached as empty and recovered schema reads refill normally` |
+| 冷突发只有一次同步填充、1000次容量churn | `synchronous burst has one miss and bounded churn releases every retained entry` |
+| 预算拒绝0/负/无穷/超上限及undefined默认 | `invalid or increased capacity options fail before any database opens`; `explicit undefined limits use the bounded defaults` |
+| 真实REST接线、响应头、Cookie/Authorization/no-store/no-cache绕过 | `public REST opts into summary storage while credentials and no-store bypass it`; `an existing response no-store policy prevents summary storage` |
+| 编译后REST命中与MCP不进入缓存 | `rest_repeats_hit_and_mcp_no_store_does_not_touch_cache`，`scripts/verify-platform-cache-safety.mjs` 的 IPC 聚合计数与完整结果断言 |
+| 两个生产构建进程+真实HTTP/MCP的事务、重启、数据源隔离 | 同 verifier 的 `uncommitted_and_rolled_back_changes_are_never_published`、`commit_is_immediately_visible_in_both_instances_and_transports`、`restarted_instance_reads_current_committed_result`、`same_ids_and_parameters_in_another_database_do_not_share_results` |
+| 编译后冷突发/错误/凭据/no-store/原文 | `cold_rest_burst_has_one_synchronous_fill`、`credential_no_store_and_invalid_requests_do_not_populate_cache`、`raw_no_store_and_synthetic_credential_isolation_are_preserved` |
+
+变异验证 `mutation-stale-version.log`：临时把 observer 的每次真实版本检测替换为复用旧值，本连接提交/外部提交/错误恢复三用例均变红（退出1），随后恢复源码。没有保留变异、没有扩大超时。未提供 code-testing-extensions 目录，测试约定取自当前仓库的真实 SQLite/Vitest 接缝；按用户要求全部 inline，不委派、不增加独立审核轮。
+
+### 第二轮规模证据与限制
+
+私有产物统一在 `/tmp/ningbo-perf-81-89/89-r2/`。从冻结 #82 文件 clone 到本轮独立 `private/roster.db`，只在该副本执行现有 #87 migration；完整性ok、FK0、39303query/58310relation。共享快照只做文件clone/hash，没有 SQLite 连接。原始字段、DB、凭据和响应不入 Git；基准只保存完整响应hash和聚合度量。
+
+候选前测 `before-http-c{1,2,5}.json`：新服务首请求17.50/24.35/25.28ms；20热请求 p95=5.99/10.88/25.81ms，无OOM。但c1包含启动的loop p95/max=247.99ms，p95超过100ms目标，保留为未通过样本。不能从请求时延反推事件循环通过。
+
+`scripts/bench-platform-summary-cache.mjs` 在相同构建、同一私有只读副本、相同输入下切 `NUXT_PLATFORM_SUMMARY_CACHE=0/1`，每格新服务进程，1首请求+100热请求，HTTP/MCP×c1/2/5；逐一比较完整响应hash、响应头和缓存计数。统计 **启动至health窗口** 和 **health之后包含首个列表miss的交互窗口**，不将二者相减，也不删除历史全窗口失败。每个实例 old-space2048MiB、单worker、OS页缓存不清、主机不独占；未施加1vCPU/4GiB容器限额。MCP为无缓存对照，差异不能归为缓存收益。
+
+首轮 candidate-v1 同时有本地 typecheck，保留其12格及8000次churn全部样本；不是最终exact-head证据。最终结果与精确SHA由本轮 handoff 及后续验证日志给出。500ms/1s/256KiB/64MiB增量与全局硬预算未改变；没有测量物理读取字节，不把成功hit计数说成零磁盘IO，版本检查仍访问SQLite。
+
+开关 `NUXT_PLATFORM_SUMMARY_CACHE=0` 使REST立即走原读取；回退代码不涉及schema/业务数据恢复。没有新增可缓存响应头、凭据日志或公开诊断端点；diagnostics_channel `ningbo.platform-summary-cache` 只有计数/容量，默认无人订阅不输出。缓存不能解决 interface/title 扫描、启动期/其他请求事件循环阻塞、默认full过大响应或相邻业务热点。
+
+尚未验收：受控容器、清空OS页缓存、完整分布2x/5x及无关raw增长斜率、小时级内存/混合业务写压、全部业务写API/浏览器失效、生产与UI桌面/390px（无UI变化）、#81/#91母票验收。8千次有限churn和合成事务测试不替代这些lane。保留此前 #89/#87 的所有失败样本；#89不关闭，也没有PR/main/生产操作。
+
+第二轮第一轮全仓回归 `tests-all-candidate.log` 为退出1：4文件/18失败，138文件/2069测试通过、20跳过。根因是adapter对默认full读取也执行新增HTTP头检查，旧的直接路由调用夹具没有原生H3 event；独立复现 `getHeader({})` 抛 `Cannot read properties of undefined (reading 'req')`。将策略检查限定到显式summary后，未修改旧夹具/断言/超时，受影响6文件/80测试通过（`green-default-boundary.log`）。最终全仓重跑另记，不把这轮红结果抹掉。
+
+提交前集成源码 `5c9ab8e` 加本轮候选：`pnpm exec vitest run --maxWorkers=2` 退出0，143文件通过/2跳过、2099测试通过/11跳过（`tests-all-integration.log`）；`pnpm typecheck`、`pnpm build`、新缓存verifier、原完整平台HTTP/MCP契约verifier、`verify-prod-openapi --skip-build` 均退出0。`tests-all-fixed.log` 的2文件失败/1测试失败（HTTP就绪、旧比较用例5秒超时）保留；该轮跨集成源码合入且使用较早构建，不绑定为最终exact-head。未修改这些相邻测试或timeout，重建后整套回归通过。
+
+### 已提交实现的串行最终对照
+
+运行源码与生产构建均为 **`c8e3fc66d93bbfd1d365340efbce95023be7e7a2`**，`benchmark-exact-c8e3fc6.json` 和 `protocol-exact-c8e3fc6.log` 的 Git diff hash 均为空diff的 `e3b0c442…b855`。这轮没有并行启动本地测试/typecheck；主机仍不独占。SQLite3.53.4，副本1347248128B、cache_size=-16000KiB/page_size4096/mmap0/WAL；没有更改配置或堆/timeout来过关。共享快照前后SHA256仍为 `19c25412…df1f`，本轮副本因仅应用#87索引而变为 `ae748f5b…293e`，不能要求迁移后与迁移前DB文件hash相等。
+
+| REST并发 | 缓存关闭首请求ms | 缓存开启首个miss ms | 关闭热p50/p95/p99 ms | 开启热p50/p95/p99 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 15.65 | 12.05 | 1.69/2.84/4.19 | 0.28/0.79/1.08 |
+| 2 | 9.55 | 8.96 | 2.70/4.32/6.86 | 0.42/0.88/1.20 |
+| 5 | 9.82 | 8.21 | 6.29/8.23/9.65 | 0.62/1.23/1.62 |
+
+每格100热请求；开启时恰好1miss/100hit，关闭时0miss/0hit且全部bypass（这里miss专指缓存填充，不是原函数执行计数）。REST p95减少约72%/80%/85%，绝对节约约2.05/3.44/7.00ms；这是已经很快的首屏摘要重复计算收益，不是全站用户体验或#87索引收益，也不是冷读加速保证。12格全部成功，HTTP7344B/MCP12373B，完整外部结果SHA256均为 `11fbe01c66a00b29ad0923625420003b8b927ce289f3442bf7cc1219be590966`。MCP缓存开关两组始终没有缓存调用；其热p95关闭8.22/8.07/14.76ms、开启6.26/7.29/14.69ms，只是非独占主机上的无缓存对照波动。
+
+12格就绪后（含首个列表miss）交互事件循环p95最大17.40ms、max最大20.84ms；本次启动窗口max232.39ms，不能据此删除第一轮/前测或#87保留的启动/其他查询窗口超预算。整个基准及churn采样heap峰88.15MiB、OS/采样RSS峰271.84MiB；首屏窗口相对health采样heap最大增量20.11MiB。V8实际heap limit2348810240B（old-space2048MiB加young等区域），没有容器资源等价声明；采样增量不等同于逐分配捕获的瞬时峰值证明。
+
+TTL后真实REST重填充16.53ms，完整结果hash不变，miss计数从1增至2。随后4组×2000次、pageSize1..50轮转，强制GC后的heap29.02–29.25MiB，最终50条/408309计账B/1source；期间TTL使累计miss从51增到101，保留量不随请求总数线性增长。这是有限8000请求证据；该基准没有因容量触顶淘汰，容量淘汰由真实SQLite服务测试单独验证，不能混称生产REST容量淘汰压测。计账上限不是RSS上限。
+
+最终测试质量补充：字节边界夹具增加400组Unicode字符，区分UTF-8字节和UTF-16字符数；临时变异为字符数计账时 `byte and per-entry limits count encoded data and admit only at the exact budget` 真实失败（`mutation-utf8-byte-budget.log`），恢复实现后通过。外部writer持有未提交事务时也增加一个全新reader的cold miss，断言只能得到旧committed结果。这两项只加强合成测试，不改变c8e3fc6的应用源码/构建/测量。交付HEAD与该实现的应用代码差异须为空，最终验证SHA/命令/未运行lane集中在 Git 外 handoff。
