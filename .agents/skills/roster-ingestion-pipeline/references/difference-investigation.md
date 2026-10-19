@@ -1,52 +1,74 @@
-# Investigate a difference
+# 差异调查与判断
 
-One agent owns an enterprise across files and titles. Software collects queries and preserves relations; the agent decides the cause and follow-up measure after checking the evidence. Use the orchestration reference for shared concurrency limits and single-writer handoffs.
+同一企业跨文件、跨称号由一名代理负责。软件采集查询并保留关系；代理先判断记录是否不一致，再判断原因与后续措施。负责人及交接见[多代理编排](orchestration.md)。用户指定 Magpie + DeepSeek Open Design 时，业务判断使用该组合；代码、部署和写入代理执行已确认的决定，不替代判断代理。
 
-## Work one case
+## 单个企业的处理步骤
 
-1. Fix the identity and scope: enterprise ID/code, title, comparison direction, official file/page/row, and the actual latest export version and collection date. Check both old and current names. Keep every official row.
-2. Read the announcement's source page. Separate a formal award/review result from an application, draft publication, maintenance record or export snapshot.
-3. Query all relevant platform sources and pages through available application API/MCP capabilities. `queryList` is applications, `businessList` is relations, and `queryBusList` is recognized enterprises. Return every relationship. Inspect `GET /api/platform/capabilities` / `get_platform_capabilities`, then use `POST /api/platform/query` / `query_platform` or the batch workflow in [`platform-query.md`](platform-query.md). Routine agents never reveal/read Cookie values or call platform URLs directly. Check completeness and unfinished ranges before using zero-row results.
-4. Keep query failure, completed zero rows, partial coverage and business reasons separate. A failed or unparsed response is not zero. A zero at one title/source is not zero across all sources.
-5. Research the discrepancy, not just the enterprise name. Open supporting public/company/registry pages where necessary; search snippets propose leads. Record actual fields, their interface semantics and timestamps. When sources conflict, preserve both and explain what remains unknown.
-6. Write a case decision: observed facts and source references; the agent's interpretation; remaining uncertainty; proposed reason and measure; current-name/alias or migration fields that the evidence actually establishes. Confirm only the supported facts. `other` requires a specific established cause outside the existing vocabulary; an unfinished investigation uses `needs_review` with a null reason.
-7. Preflight and commit explicit decisions through the unified import API/MCP. Confirm changes by reading the case back. Names/aliases, difference reasons and official events are separate writes with separate evidence. Never use the collecting job's output as a confirmed cause or merge instruction.
+1. 固定主体、称号和本批范围，记录真实导出版本/日期、查询范围/时间，以及每个相关正式事件的源文件、附件、名单序号。完整保留正式行和原始名称。
+2. 复用已有查询、完整归档、确认别名及已核验来源。区分正式认定/复核结果与申请、公示草案、维护记录。文件入库仍按 `workflow.md` 做逐页核验；后续判断不必重复已完成核验。用户限定已有证据或三接口时，按该范围处理；剩余缺口写清，不自动增加 PDF/网络查证或新平台查询。
+3. 仅在授权范围内，通过应用 REST/MCP 补缺失证据。`queryList` 是申报，`businessList` 是关联，`queryBusList` 是已认定企业。先看能力，再按[平台查询说明](platform-query.md)执行。保留全部关系、原时间与页码；不读 Cookie、不直调平台。完整零行与失败/部分完成/未解析分别记录。
+4. 按下节对应正式事件与平台记录。即使产品尚未持久化对应关系，也要先在个案报告中完成对应判断；产品改造由 issue #63 跟踪，不阻塞人工判断。
+5. 先确认是否真正存在差异，再按判断表分类。历史一致性与后续流程状态分别保留；主体、称号、年度批次、业务类型有歧义时具体说明，不能只取最新一行代替。
+6. 写清观察事实、对应记录、判断及出处，只列真正缺失的事实。`other` 必须是已经确立的具体原因，不能装入尚未完成的调查。记录主体、公布依据、属地或对应关系未明确时，面向用户统一列为“待人工审查”，并写具体问题。
+7. 仅在用户写入授权范围内交接已确认结论。只要求报告时，完成报告即停止。单一写入者核对在线契约，通过统一 REST/MCP 预检、提交和读回。名称/别名、原因与正式事件分别有依据、分别写入。采集输出或脚本字段映射不能冒充代理决定。
 
-## User-confirmed pending review (待审核)
+## 对应具体记录
 
-Apply this classification only to a batch whose scope and business interpretation the user explicitly confirmed. Check the same enterprise and same title against all three archived interface results: a current `missing_in_miit` difference, historical `终审通过`, and the latest process row by `sqsj` is `sblx=更新` + `cszt=待审核`. Check all same-title rows for contrary terminal results, including an earlier review rejection followed by a later update. Different business types do not override each other merely by timestamp: 更新/待审核 cannot reverse 复核/终审不通过. Preserve such conflicts for explicit user adjudication and exclude them from the pending-review write batch. Software records this explicit decision; it does not infer the cause automatically.
+比较单位是一次正式事件及其对应的平台业务记录，不能把企业历次称号历史直接与最新导出成员集合比较。
 
-Record `reasonCode=pending_review`, `status=confirmed_reason`, `verificationStatus=confirmed`, and `measureCode=follow_review` (保留正式公布历史并跟进审核). “Confirmed” describes the classification; it does not mean the ongoing application passed. This is separate from `needs_review` (待核实), review failure, designation expiry and platform staleness. An unknown internal root cause does not undo the user's confirmed classification. No additional official/PDF/web proof is required for this authorized branch. Unknown dates or fields stay null.
+- 先确认主体和称号，辨明原认定年/批次、认定或复核结果、结论年度。按有依据的业务单号/认定标识、称号、年度批次和流程类型对应。提交时间、原认定年和复核结论年是不同事实。
+- 查看全部申报及关联记录，不只看 `queryBusList` 或最新时间。认定、复核失败、重新申报、更新可分别是真实事实，须完整保留；不同称号互不抵消。
+- 每条对应明确标“已确立”“候选”或“无依据”，并带实际行引用。查询成功不代表返回的每一行都能证明该事件；元数据缺失留空，不猜填年度批次等价关系。
+- 导出表代表导出时间及查询范围内的已认定企业列表，须与后续接口查询的时间、范围一起记录。先核对原始行、称号、条件和版本，再解释不一致；导出不是独立于认定接口、另有一套业务历史的权威来源。
+- 按 Excel 表头找信用代码，不能假设三张表列位相同。有的工作表错误声明范围为 `A1`，须确保全表读取，例如 openpyxl 只读模式重置工作表范围。按已确认代码匹配同称号并核实有证据的名称；另一称号的命中不解决本称号对比。保留实际 Excel 行号，不记录无关联系人字段。
 
-Retain the official event, original workflow number/type/submission time/status, all three interface references and the user decision. Append a new temporal explanation with a new `recordedAt`; keep prior audit records. Preflight/commit/readback through the unified API. If the deployed contract lacks `pending_review`, prepare the request and report it blocked on deployment; use the supported independent classification once deployed.
+## 对应后的业务判断
 
-Synthetic positive example (合成示例): 甲企业 has a formal award and a historical terminal pass for the same title; its latest process is 更新/待审核 and it is absent from the current export → 待审核 within the user-authorized scope.
+| 记录事实 | 判断与边界 |
+|---|---|
+| 历史正式认定与平台记录对应一致，后续待审/退回/复核流程能对应，未发现相反正式结果。 | **无差异**。历史认定与后续流程原文分别保留；当前导出缺失或没有某年新公布，不独自构成差异，也不证明称号到期。 |
+| 正式认定/复核结果已公布，对应同称号、年度批次的平台流程尚未体现。 | **平台未更新**。写明实际滞后的流程，不要求查明平台内部机制。历史事件已由历史通过记录对应时，不能自动归入此类。 |
+| 对应正式结果与较新的认定/流程均存在，记录的导出尚未体现，且用户确认按未更新处理。 | 按已确认口径记 **平台未更新**。保留流程原文、认定行、快照/查询时间，不编造同步机制，不将所有接口/导出不一致一律如此分类；若原始表实际已有同称号行，应纠正“导出缺失”的错误观察。 |
+| 所要求的接口、称号和分页范围全部完成且均为零行。 | **无记录**。注明整户零还是仅同称号零。保留正式历史；零行不证明注销、迁移或失效。失败及未完成范围属于查询缺口。 |
+| 同一主体的旧名/现名或迁移起点/终点已有证据。 | 按证据判断 **更名、迁入或迁出**。复用已确认依据，不因旧报告漏列就要求重搜公开来源。迁移日期、原称号/年度/批次等补充字段未知时留空，不阻塞已确立的事实。 |
+| 平台复核通过，但检查过的来源中未找到对应正式复核公布。 | **待人工审查**：写复核年度批次、已查新旧名及缺少的来源。不能仅因旧认定已公布就判无差异；更名已确认与复核公布缺口可同时成立。 |
+| 平台认定存在，对应正式来源缺失，或主体、属地、记录对应确有冲突。 | **待人工审查**：写明确切缺失或冲突。旧报告所谓“事实不足”“数据匹配需核对”统一用此顶层分类，解释中保留具体子类。 |
 
-Synthetic conflict example (合成示例): 乙企业 has a historical application terminal pass for a title, followed by 复核/终审不通过 and then 更新/待审核 for that same title. Keep the review failure and pending update together; exclude it from the pending-review write batch and await the parent/user decision.
+流程状态本身不等于差异原因。待审、退回、不通过记录先放回对应历史中解释。复核失败与后续重报分别保留；不只凭退回、当前无行或无新公布推断撤销、失效。
 
-Counterexamples requiring their own adjudication: review terminal rejection (even before a newer pending update); historical pass without a later pending update; a pass belonging only to another title; three complete interfaces returning zero rows. None satisfies this branch. Do not extend a batch to other statuses or enterprises without explicit scope.
+## 用户明确确认的“待审核”分类
 
-## Full collection and investigation queues
+只有在对应记录后，用户明确确认某批范围和解释时，才把“待审核”作为差异分类。“历史终审通过＋最新 `sblx=更新` / `cszt=待审核`＋当前导出缺失”只描述流程，不能自动变成判因规则。按用户确认的记录对比口径，历史与后续流程一致时判无差异，待审核保留为流程状态。口径变化不自动改写旧的授权批次；先逐案预览影响并保留审计。
 
-For a full refresh, the coordinator first verifies the deployed API revision, creates a consistent backup and records the actual enterprise inventory through the app query API. Use stable enterprise IDs and confirmed codes in a run manifest outside Git. Query all in-scope enterprises, including those with no current discrepancy; assignment to the investigation queue is a separate step.
+明确按待审核处理时，检查全部同称号相反终审，包括复核不通过后又更新的记录。业务类型不同，不能只按时间覆盖：“更新/待审核”不能反转“复核/终审不通过”。先保留完整过程交代理/用户判断，不自动纳入待审核写入批次。
 
-Check source capabilities before choosing whole-list pagination or per-enterprise batches. Do not assume an empty filter is allowed. Preserve each batchId/itemId, effective conditions, title/page range, original timestamps, segments and unfinished positions. Follow `platform-query.md` limits and retry only gaps. One writer preflights, commits and reads back each supported evidence batch before marking its rows imported.
+明确确认后记录 `reasonCode=pending_review`、`status=confirmed_reason`、`verificationStatus=confirmed`、`measureCode=follow_review`（保留正式公布历史并跟进审核）。这里 confirmed 表示分类已确认，不表示正在审核的申请已通过；它与 `needs_review`（待核实）、复核失败、称号到期、平台未更新分别处理。用户已确认的分类，不因未知内部根因而撤回；该授权分支无需额外正式文件/PDF/网络证明。未知时间或字段为 null。
 
-After collection, use the app's actual comparison result at the recorded snapshot version to partition enterprise × title cases. No-difference cases need no cause investigation and must not receive invented reasons. A failed/partial query or an old machine-confirmed reason cannot make a case no-difference. Investigate unresolved discrepancies with one enterprise owner across titles; reuse shared evidence rather than repeat completed requests.
+保留正式事件、原流程号/类型/提交时间/状态、三个接口引用和用户决定；使用新 `recordedAt` 追加时态解释并保留旧审计。通过统一 API 预检、提交和读回。线上契约尚不支持 `pending_review` 时准备请求并说明部署阻塞，上线后用独立分类写入。
 
-`queryBusList` results can be explicitly transferred as independent `recognized_list` through unified preflight/commit, retaining each original batch segment/time and page/row mapping. Read back query/row IDs before declaring import complete. Missing source/conditions/time/terminal proof remains pending; never relabel as `business_list`/`apply_list`. Follow [archival transfer](../../../../docs/platform-recognized-evidence.md). Collection, evidence import and agent adjudication each have their own completion counts and blockers.
+[合成判断示例](adjudication-examples.md)覆盖无差异、待审核、失败流程和来源缺口。不得擅自把授权批次扩大到其他企业或状态。
 
-Each investigator returns enterprise ID, title/direction, evidence references, observations, proposed conclusion/measure, unknown fields and verification status. The coordinator alone commits decisions. If the requested Harness/model cannot start, report the launch failure; do not describe the case as reviewed or silently substitute a different runtime.
+## 全量采集与判断队列
 
-## Interpret each field in context
+全量刷新前，协调者核对部署版本、创建一致备份，并通过应用查询 API 取得实际企业清单。在 Git 外用稳定企业 ID、已确认代码建立清单。采集范围可含当前无差异企业；是否进入原因调查队列另行决定。
 
-- `cszt` such as “已退回待审核”, “撤回” or “终审不通过” describes that application/workflow record. It does not alone establish loss of a formally announced designation, business deregistration or the cause of an export discrepancy.
-- When the formal award exists and the recognized list/export does not, investigate synchronization or an incomplete platform workflow. “平台未更新” can be an agent's supported decision; it is not the default for every unexplained mismatch. A formal withdrawal or contrary official evidence must also be checked when present.
-- Compare province with province, city with city and district with district. `szsfmc=浙江省` cannot establish an enterprise is outside Ningbo. A unified code prefix or a city in the company name is not a current location.
-- Export registration address, communication address and the recognized list's administrative jurisdiction are distinct facts and may be from different times. Label each source; do not overwrite current jurisdiction with an older registration field.
-- Migration direction needs an evidenced origin and destination relative to Ningbo. If the evidence establishes Hangzhou in an older source and Ningbo/Beilun in a current source for the same confirmed subject, investigate moved-in, not moved-out. Retain known origin/title/year/batch; absent fields stay null. Query submission timestamps are not migration dates.
-- Multiple `qymc` values are evidence to inspect for a rename. Only an agent/user-confirmed identity chain authorizes a confirmed alias or merge. Preserve all original names even while identity is pending.
+选择全表分页或逐企批量前先看能力，不假设允许空筛选。保留每个 batchId/itemId、实际条件、称号/页范围、原始时间、分段和未完成位置。按 `platform-query.md` 限制只补缺口。单一写入者对支持的证据逐批预检、提交、读回，之后才能称该行已入库。
 
-## Correct historical machine conclusions
+采集后固定应用实际对比结果及快照版本作为候选队列。记录级对比尚未实现时，历史成员差集不是已判断的业务差异。先对应事件与平台行，再分无差异和需调查记录。无差异不编原因；失败/部分证据、旧机器原因不能作为已确认结论。同企业跨称号一名负责人，复用证据。
 
-List affected case IDs and the original evidence/rule outside Git. Revisit each case independently; an old automatic `confirmed_reason` is not new confirmation. Append a corrected decision with actual evidence and a new `recordedAt`, retaining the original audit trail. Explain user confirmation when that is the basis. Do not bulk reclassify all “other” entries as stale, all outside addresses as migrations, or all name changes as aliases. This code change does not itself alter existing production decisions.
+`queryBusList` 可作为独立 `recognized_list` 通过统一预检/提交转存，保留每个原批次分段、时间及分页/行对应。核对读回查询/行 ID 后才算入库完成。来源、条件、时间或结束证明缺失继续待处理，不能改标 `business_list` / `apply_list`。见[归档转存](../../../../docs/platform-recognized-evidence.md)。采集、证据入库、代理判断分别统计完成量和阻塞。
+
+每位调查者交接企业 ID、称号、已对应事件/流程引用、原文状态、结论/措施建议、未知字段及核验状态。用户报告使用中文业务分类和原文，不用内部枚举解释业务。企业数与称号/事件项数分开，说明重叠，分组边界保持稳定。待人工审查统一分类并列具体问题，不拆散成含糊私有标签。只有协调者提交结论。指定 Harness/模型无法启动时如实报告，不把未执行描述为已审，也不悄悄更换运行组合。
+
+## 按接口解释字段
+
+- `cszt` 的“已退回待审核”“撤回”“终审不通过”等描述该申请/流程，不独自证明正式称号丧失、工商注销或导出差异原因。
+- 先对应记录，再用判断表。正式公布确立称号事件；查询证明接口当时返回什么。当前缺失或流程待审都不能独自决定整段称号历史。
+- 省对省、市对市、区县对区县。`szsfmc=浙江省` 不能证明企业不在宁波；信用代码前缀或名称中城市不等于当前属地。
+- 导出注册地址、通讯地址、认定接口行政属地是不同事实，也可能处于不同时间。逐个标来源，不能用旧注册地址覆盖当前属地。
+- 相对宁波判断迁入/迁出，须有起点与终点证据。同一已确认主体旧来源在杭州、现来源在宁波/北仑时，应查证迁入，而非迁出。原城市/称号/年度/批次能确认则保留，未知留空；查询提交时间不是搬迁日期。
+- 多个 `qymc` 是更名查证线索。只有代理/用户确认的身份链可授权确认别名或合并；即使身份待核，也保留全部原始名称。
+
+## 修正历史机器结论
+
+在 Git 外列出涉及个案及原证据/规则，逐案重新判断；旧自动 `confirmed_reason` 不算新确认。用真实依据和新 `recordedAt` 追加更正，保留原审计；以用户确认为依据时明确说明。不得把全部“其他”一键改未更新、全部外地地址改迁移或全部名称差异改别名。技能改动本身不修改既有生产决定。
