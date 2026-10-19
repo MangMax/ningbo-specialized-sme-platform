@@ -5,6 +5,7 @@ import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
+import { versionedOfficialEvent } from './roster-event-version'
 import { currentProofCoversRows } from './comparison-scope-proof'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -114,9 +115,9 @@ function sourceProvenance(db: Executor, edge: CorrespondenceEdge, observed?: Rea
       .innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id))
       .where(eq(schema.recordEvent.id, edge.predecessorEventId)).get() : null
   return {
-    event: event?.event ?? null, record: event?.record ?? null, officialEnterprise: event?.enterprise ?? null,
+    event: event ? versionedOfficialEvent(event.event) : null, record: event?.record ?? null, officialEnterprise: event?.enterprise ?? null,
     officialEvidence: event ? officialEvidence(db, event.event.id, observed) : [],
-    predecessor: predecessor ? { ...predecessor, officialEvidence: officialEvidence(db, predecessor.event.id, observed) } : null,
+    predecessor: predecessor ? { ...predecessor, event: versionedOfficialEvent(predecessor.event), officialEvidence: officialEvidence(db, predecessor.event.id, observed) } : null,
     relation: relation?.relation ?? null, query: relation?.query ?? null,
     exportRow: exported?.exportRow ?? null, exportBatch: exported?.exportBatch ?? null,
   }
