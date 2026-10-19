@@ -95,9 +95,10 @@
 | 坐标ABA后直接和前序确认不得复活 | `keeps direct and predecessor confirmations stale after atomic coordinate ABA`；`keeps direct and predecessor confirmations stale after legacy coordinate ABA` |
 | 每事件一次修订；空操作/重放/dry-run不变 | `advances one event revision per changed atomic batch and never for noops replay or dry runs` |
 | OpenAPI、异常JSON、限额、401/no-store | `publishes actionable OpenAPI coordinates and rejects unauthenticated or malformed requests` |
+| 全新库与从0013升级后公开读写、ID/修订/索引保留 | `executes evidence correction migration and public writes on fresh SQLite`；`executes evidence correction migration and public writes on upgrade SQLite` |
 | 无关数据增长、SQL行/字节与原文排除 | `bounds fixed evidence preflight and history materialization across unrelated source growth` |
 
-最终执行代码和公开契约验证 SHA：`dd6e3e2282a27d8a39ee4eb3ac722ace94041454`，已合入集成 `f31f57b5a097223f15e7d596961af9d4ea8c6693`（含 #96/#99/#100），后继提交仅补本票验证文档。分支 `t3/ticket-101-evidence-legacy-compat`，worktree `/Users/mang/.t3/worktrees/app/t3-e3bb583b`。
+合入 #105/#106 前的执行代码和公开契约验证 SHA：`dd6e3e2282a27d8a39ee4eb3ac722ace94041454`，已合入集成 `f31f57b5a097223f15e7d596961af9d4ea8c6693`（含 #96/#99/#100），该来源只证明当时集成状态，不升级为后续合并证明。分支 `t3/ticket-101-evidence-legacy-compat`，worktree `/Users/mang/.t3/worktrees/app/t3-e3bb583b`。
 
 - `verification-dd6e3e2.log`：`pnpm test` 显式运行本票2文件、旧页码API/页码规则/出处收敛、MCP面、对应API/core/bounded及#100事件更正，共10文件/150测试通过，无跳过。所有测试 `--maxWorkers=1`，Nuxt独立构建目录/随机保留端口。
 - `typecheck-dd6e3e2.log`：`pnpm typecheck` 退出0；`build-dd6e3e2.log`：`pnpm build` 退出0。
@@ -106,3 +107,12 @@
 - `verification-4cb3440.log` / `build-4cb3440.log` 是合入#100前的旧候选证据，只代表当时136测试/构建，不是ABA修复后证明；`verification-4adb6f7.log` / `typecheck-4adb6f7.log` / `build-4adb6f7.log` 为代理说明补齐前的后ABA候选。保留各自SHA边界。
 
 没有创建PR、部署、生产数据变更、main合并或关闭母票。父代理负责集成审查和全量/容量验收。
+
+
+## 冻结集成交接补充
+
+按父代理明确要求，停止追逐验证期间继续前进的集成分支。实际 `includedIntegrationTip=4586bf09db80320855bf5f2c4fb8597b8b55364a`（含请求的3bdc7a4/#105及调用合并时已纳入的#106），执行候选 `a2d50dbf02027a8f6163ec8e056ff79abb3f9986`。交接后继提交只补本文档；未来交叉冲突由合入代理负责。
+
+合并时将record_evidence的事件索引、#105来源索引和#101坐标索引保留在同一个schema回调；0017 timestamp仍1792380000017，journal按tag去重和timestamp排序，idx保留17/21/22并允许间隔，18/19继续保留给#102/#103；pre0014不变。验证从0013既有业务行升级及全新库，均实际执行全部迁移并通过HTTP完成精确读回、预检、更正、修订+1、稳定ID和外键/三索引检查。不声称可把较早timestamp的0017补跑进已经执行0021/0022的实验库；新迁移尚未部署，最终timestamp编排由父集成merger统一。
+
+聚焦命令为 `pnpm test tests/evidence-correction-101-migration.test.ts tests/evidence-correction-101-http.test.ts tests/evidence-correction-101-bounded.test.ts tests/roster-event-correction.test.ts tests/roster-evidence-pages-api.test.ts tests/mcp-surface.test.ts --maxWorkers=1`。6文件覆盖15个本票Nuxt公开用例、2个fresh/upgrade、1个有界读取、11个#100、17个旧页码、28个MCP面用例；MCP真实tools/call穿过合并后的parse/OCR/鉴权联合校验器。本次不重复全150测试或构建，保留dd6e3e2的原始证明边界。最终原始日志 `focused-a2d50db.log`、`typecheck-a2d50db.log`，物化结果 `materialization-a2d50db.json`（嵌入完整源SHA），均在 `/tmp/ningbo-spec98/ticket-101/`。通过结果见该SHA对应的原始日志；未将历史dd6e3e2的150测试/typecheck/build/物化升级为本次merge证明。
