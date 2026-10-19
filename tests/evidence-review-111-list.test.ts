@@ -24,7 +24,23 @@ beforeEach(() => {
   vi.stubGlobal('$fetch', fetcher)
 })
 afterEach(() => vi.unstubAllGlobals())
-const render = () => mount(EvidenceReviewList, { global: { plugins: [createPinia(), PiniaColada], stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } } })
+const dialogStubs = {
+  Dialog: { props: ['open'], template: '<div v-if="open"><slot /></div>' },
+  DialogContent: { template: '<div data-testid="dialog-content"><slot /></div>' },
+  DialogHeader: { template: '<div><slot /></div>' },
+  DialogTitle: { template: '<h2><slot /></h2>' },
+  DialogDescription: { template: '<p><slot /></p>' },
+  DialogFooter: { template: '<div><slot /></div>' },
+}
+const stubs = {
+  NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
+  ...dialogStubs,
+}
+const render = () => mount(EvidenceReviewList, { global: { plugins: [createPinia(), PiniaColada], stubs } })
+const renderEnterprise = () => mount(EvidenceReviewList, {
+  props: { enterpriseId: 7, defaultState: 'all', defaultView: 'all' },
+  global: { plugins: [createPinia(), PiniaColada], stubs },
+})
 function choose(view: ReturnType<typeof render>, label: string, value: string) {
   const select = view.findAllComponents(Select).find(candidate => candidate.find(`[aria-label="${label}"]`).exists())
   if (!select) throw new Error(`Select not found: ${label}`)
@@ -50,7 +66,7 @@ it('keeps queue filters in the URL and returns detail links to the same filtered
   const replace = vi.fn()
   vi.stubGlobal('useRoute', () => ({ query: { mode: 'review', reviewState: 'reviewed' }, path: '/comparison' }))
   vi.stubGlobal('useRouter', () => ({ replace }))
-  const view = mount(EvidenceReviewList, { props: { syncQuery: true }, global: { plugins: [createPinia(), PiniaColada], stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } } })
+  const view = mount(EvidenceReviewList, { props: { syncQuery: true }, global: { plugins: [createPinia(), PiniaColada], stubs } })
   await flushPromises()
   expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts', { query: { view: 'current', state: 'reviewed', limit: 25 } })
   const href = decodeURIComponent(view.get('[data-testid="review-enterprise-link"]').attributes('href')!)
@@ -87,9 +103,9 @@ it('opens the exact impact and its separate committed source and event pages', a
     throw new Error('Unexpected request: ' + url)
   })
   const view = render(); await flushPromises()
-  await view.get('[aria-label="查看复核项 4"]').trigger('click'); await flushPromises()
+  await view.get('[aria-label="处理这一项 4"]').trigger('click'); await flushPromises()
   expect(view.text()).toContain('主体未确认，不能推断为零记录')
-  expect(view.text()).toContain('原决定 #82')
+  expect(view.text()).toContain('待复核的当前决定 #82')
   expect(view.text()).toContain('query-9')
   expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts/4/sources', { query: { limit: 25 } })
   await view.get('[aria-label="查看修订 9 关联事件"]').trigger('click'); await flushPromises()
@@ -109,7 +125,7 @@ it('reads immutable decision history and full old audit details without a write 
     throw new Error('Unexpected request: ' + url)
   })
   const view = render(); await flushPromises()
-  await view.get('[aria-label="查看复核项 4"]').trigger('click'); await flushPromises()
+  await view.get('[aria-label="处理这一项 4"]').trigger('click'); await flushPromises()
   expect(view.text()).toContain('新决定仍保留')
   await view.get('[aria-label="查看历史决定 82"]').trigger('click'); await flushPromises()
   expect(fetcher).toHaveBeenCalledWith('/api/roster/decision-lifecycle/history', { query: { enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', page: 1, pageSize: 25 } })
@@ -134,7 +150,7 @@ it('restarts the frozen list cursor after successful review so completed items d
   const view = render(); await flushPromises()
   await view.get('[aria-label="下一页复核项"]').trigger('click'); await flushPromises()
   expect(view.text()).toContain('第 2 页')
-  await view.get('[aria-label="查看复核项 4"]').trigger('click'); await flushPromises()
+  await view.get('[aria-label="处理这一项 4"]').trigger('click'); await flushPromises()
   for (const [label, value] of [['写入凭证', 'synthetic'], ['复核人', 'tester'], ['复核依据', 'explicit review'], ['规则版本', 'manual-v1']]) await view.get(`[aria-label="${label}"]`).setValue(value)
   await view.findAll('form').at(-1)!.trigger('submit'); await flushPromises()
   expect(view.text()).toContain('显示来源：第 1 页')
@@ -151,7 +167,7 @@ it('shows the committed review baseline audit separately from the preserved orig
     throw new Error('Unexpected request')
   })
   const view = render(); await flushPromises()
-  await view.get('[aria-label="查看复核项 4"]').trigger('click'); await flushPromises()
+  await view.get('[aria-label="处理这一项 4"]').trigger('click'); await flushPromises()
   const audit = view.get('[data-testid="reviewed-baseline"]')
   expect(audit.text()).toContain('baseline-reviewer')
   expect(audit.text()).toContain('已核验新证据，维持原决定')
@@ -172,8 +188,8 @@ it('keeps merged historical coordinates readable when the legacy decision is una
   })
   const view = render(); await flushPromises()
   expect(view.text()).toContain('历史决定原文不可用')
-  expect(view.text()).toContain('原决定 #82')
-  await view.get('[aria-label="查看复核项 4"]').trigger('click'); await flushPromises()
+  expect(view.text()).toContain('归并前决定 #82')
+  await view.get('[aria-label="查看历史项 4"]').trigger('click'); await flushPromises()
   expect(view.text()).toContain('历史决定原文不可用')
   expect(view.text()).toContain('merge-7')
   expect(view.text()).toContain('企业 #7')
@@ -211,7 +227,7 @@ it('retains a source page and explains an invalid source cursor until the user r
     throw new Error('Unexpected request')
   })
   const view = render(); await flushPromises()
-  await view.get('[aria-label="查看复核项 4"]').trigger('click'); await flushPromises()
+  await view.get('[aria-label="处理这一项 4"]').trigger('click'); await flushPromises()
   expireSource = true
   await view.findAll('button').find(b => b.text() === '下一页来源')!.trigger('click'); await flushPromises()
   expect(view.text()).toContain('分页快照已过期或失效')
@@ -299,7 +315,7 @@ it('calls the applied reviewed filter reviewed records rather than a pending que
 it('labels a merged historical row as a history item', async () => {
   mockRoutes(() => ({ rows: [{ ...row, lineage: 'merged', oldDecision: null }], nextCursor: null, asOf: {}, projectionReady: true }))
   const view = render(); await flushPromises()
-  expect(view.get('[aria-label="查看复核项 4"]').text()).toContain('查看历史项')
+  expect(view.get('[aria-label="查看历史项 4"]').text()).toContain('查看历史项')
   view.unmount()
 })
 it('retries a failed name read without refetching the queue', async () => {
@@ -320,4 +336,225 @@ it('retries a failed name read without refetching the queue', async () => {
   expect(view.text()).not.toContain('名称未读取')
   expect(fetcher.mock.calls.filter(call => call[0] === '/api/roster/evidence-impacts')).toHaveLength(1)
   view.unmount()
+})
+
+const detailFor = (impact: typeof row, patch: Record<string, unknown> = {}) => ({
+  ...impact,
+  currentDecision: { versionId: impact.decisionId, current: impact.oldDecision },
+  evidenceToken: { decisionId: impact.decisionId, latestRevisionId: impact.latestRevisionId, projectionReady: true },
+  queryCoverage: null,
+  gaps: {},
+  reviewedBaseline: null,
+  ...patch,
+})
+
+async function openAndFill(view: ReturnType<typeof render>, impactId = 4) {
+  await view.get('[aria-label="处理这一项 ' + impactId + '"]').trigger('click')
+  await flushPromises()
+  for (const [label, value] of [['写入凭证', 'synthetic-token'], ['复核人', 'reviewer-7'], ['复核依据', '核对新查询并保留原业务判断'], ['规则版本', 'manual-2026']]) {
+    await view.get(`[aria-label="${label}"]`).setValue(value)
+  }
+  await flushPromises()
+}
+
+function clickText(view: ReturnType<typeof render>, text: string) {
+  const button = view.findAll('button').find(candidate => candidate.text() === text)
+  if (!button) throw new Error(`Button not found: ${text}`)
+  return button
+}
+
+it('states only the actual query scope for enterprise, filtered, page and unconfirmed empty results', async () => {
+  mockRoutes(() => ({ rows: [], nextCursor: null, asOf: {}, projectionReady: true }))
+  const enterprise = renderEnterprise(); await flushPromises()
+  expect(enterprise.get('[data-testid="review-empty"]').text()).toContain('该企业没有复核记录')
+  enterprise.unmount()
+
+  mockRoutes(() => ({ rows: [], nextCursor: null, asOf: {}, projectionReady: true }))
+  const filtered = renderEnterprise(); await flushPromises()
+  choose(filtered, '称号筛选', 'specialized_sme')
+  await filtered.get('form').trigger('submit'); await flushPromises()
+  expect(filtered.get('[data-testid="review-empty"]').text()).toContain('当前筛选下没有复核项')
+  expect(filtered.get('[data-testid="review-empty"]').text()).not.toContain('该企业没有复核记录')
+  filtered.unmount()
+
+  mockRoutes((_url, options) => options?.query?.cursor
+    ? { rows: [], nextCursor: null, asOf: {}, projectionReady: true }
+    : { rows: [row], nextCursor: 'page-2', asOf: {}, projectionReady: true })
+  const paged = renderEnterprise(); await flushPromises()
+  await paged.get('[aria-label="下一页复核项"]').trigger('click'); await flushPromises()
+  expect(paged.get('[data-testid="review-empty"]').text()).toContain('本页没有复核项')
+  expect(paged.get('[data-testid="review-empty"]').text()).not.toMatch(/^该企业没有复核记录/)
+  expect(paged.text()).toContain('显示来源：第 2 页')
+  paged.unmount()
+
+  mockRoutes(() => ({ rows: [], nextCursor: null, asOf: {}, projectionReady: false }))
+  const pendingProjection = renderEnterprise(); await flushPromises()
+  expect(pendingProjection.get('[data-testid="review-empty"]').text()).toContain('复核记录尚不能确认')
+  pendingProjection.unmount()
+
+  mockRoutes((_url, options) => options?.query?.cursor
+    ? { rows: [], nextCursor: null, asOf: {}, projectionReady: true }
+    : { rows: [], nextCursor: 'page-2', asOf: {}, projectionReady: true })
+  const failed = renderEnterprise(); await flushPromises()
+  fetcher.mockRejectedValueOnce(new Error('private upstream failure'))
+  await failed.get('[aria-label="下一页复核项"]').trigger('click'); await flushPromises()
+  expect(failed.get('[data-testid="review-empty"]').text()).toContain('复核记录尚不能确认')
+  expect(failed.get('[data-testid="review-empty"]').text()).not.toMatch(/^该企业没有复核记录/)
+  expect(failed.text()).toContain('显示来源：第 1 页')
+  expect(failed.text()).not.toContain('private upstream failure')
+  expect(failed.find('[data-testid="retry-review-page"]').exists()).toBe(true)
+  failed.unmount()
+})
+
+it('lets an empty page with nextCursor continue instead of treating rows.length as the end', async () => {
+  mockRoutes((_url, options) => options?.query?.cursor
+    ? { rows: [row], nextCursor: null, asOf: {}, projectionReady: true }
+    : { rows: [], nextCursor: 'page-2', asOf: {}, projectionReady: true })
+  const view = renderEnterprise(); await flushPromises()
+  expect(view.get('[data-testid="review-empty"]').text()).toContain('本页没有复核项')
+  const next = view.get('[aria-label="下一页复核项"]')
+  expect(next.attributes('disabled')).toBeUndefined()
+  await next.trigger('click'); await flushPromises()
+  expect(view.text()).toContain('显示来源：第 2 页')
+  expect(view.text()).toContain('原依据缺代码')
+  view.unmount()
+})
+
+it('syncs button aria-label with the visible history/view/collapse action and expanded state', async () => {
+  mockRoutes(async (url: string) => {
+    if (url === '/api/roster/evidence-impacts') return { rows: [row], nextCursor: null, asOf: {}, projectionReady: true }
+    if (url === '/api/roster/evidence-impacts/4') return detailFor(row)
+    if (url.endsWith('/sources')) return { rows: [], nextCursor: null, asOf: {} }
+    if (url.endsWith('/history')) return { rows: [], total: 0, page: 1, pageSize: 25 }
+    throw new Error('Unexpected request')
+  })
+  const view = renderEnterprise(); await flushPromises()
+  const action = view.get('[aria-label="处理这一项 4"]')
+  expect(action.attributes('aria-expanded')).toBe('false')
+  expect(action.attributes('aria-controls')).toBeUndefined()
+  await action.trigger('click'); await flushPromises()
+  const collapse = view.get('[aria-label="收起复核项 4"]')
+  expect(collapse.text()).toBe('收起复核项')
+  expect(collapse.attributes('aria-expanded')).toBe('true')
+  expect(collapse.attributes('aria-controls')).toBe('review-detail-4')
+  view.unmount()
+
+  mockRoutes(() => ({ rows: [{ ...row, lineage: 'historical', oldDecision: { ...row.oldDecision, isCurrent: false } }], nextCursor: null, asOf: {}, projectionReady: true }))
+  const history = renderEnterprise(); await flushPromises()
+  expect(history.get('[aria-label="查看历史项 4"]').text()).toBe('查看历史项')
+  history.unmount()
+})
+
+it('offers continue/discard before collapsing or reselecting an inline draft and keeps the original item on continue', async () => {
+  mockRoutes(async (url: string) => {
+    if (url === '/api/roster/evidence-impacts') return { rows: [row, { ...row, id: 5, decisionId: 83, oldDecision: { ...row.oldDecision, id: 83, reasonNote: '第二项原依据' } }], nextCursor: null, asOf: {}, projectionReady: true }
+    if (url === '/api/roster/evidence-impacts/4') return detailFor(row)
+    if (url === '/api/roster/evidence-impacts/5') return detailFor({ ...row, id: 5, decisionId: 83, oldDecision: { ...row.oldDecision, id: 83 } })
+    if (url.endsWith('/sources')) return { rows: [], nextCursor: null, asOf: {} }
+    if (url.endsWith('/history')) return { rows: [], total: 0, page: 1, pageSize: 25 }
+    throw new Error('Unexpected request: ' + url)
+  })
+  const view = renderEnterprise(); await flushPromises()
+  await openAndFill(view)
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toContain('核对新查询')
+
+  await view.get('[aria-label="收起复核项 4"]').trigger('click'); await flushPromises()
+  expect(view.text()).toContain('收起会丢弃未提交内容')
+  await clickText(view, '继续填写').trigger('click'); await flushPromises()
+  expect(view.get('[aria-label="收起复核项 4"]').attributes('aria-expanded')).toBe('true')
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toContain('核对新查询')
+
+  await view.get('[aria-label="处理这一项 5"]').trigger('click'); await flushPromises()
+  expect(view.text()).toContain('切换复核项会丢弃未提交内容')
+  await clickText(view, '继续填写').trigger('click'); await flushPromises()
+  expect(view.get('[aria-label="收起复核项 4"]').attributes('aria-expanded')).toBe('true')
+  expect(view.get('[aria-label="处理这一项 5"]').attributes('aria-expanded')).toBe('false')
+
+  await view.get('[aria-label="处理这一项 5"]').trigger('click'); await flushPromises()
+  await clickText(view, '切换并丢弃').trigger('click'); await flushPromises()
+  expect(view.get('[aria-label="收起复核项 5"]').attributes('aria-expanded')).toBe('true')
+  expect(view.get('[aria-label="处理这一项 4"]').attributes('aria-expanded')).toBe('false')
+
+  await view.get('[aria-label="复核依据"]').setValue('第五项未提交草稿')
+  await flushPromises()
+  await view.get('[aria-label="收起复核项 5"]').trigger('click'); await flushPromises()
+  await clickText(view, '收起并丢弃').trigger('click'); await flushPromises()
+  expect(view.find('[aria-label="收起复核项 5"]').exists()).toBe(false)
+  await view.get('[aria-label="处理这一项 5"]').trigger('click'); await flushPromises()
+  expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toBe('')
+  view.unmount()
+})
+
+it('guards filter and page changes, keeping the original query when the user continues editing', async () => {
+  mockRoutes(async (url: string, options: any) => {
+    if (url === '/api/roster/evidence-impacts') {
+      if (options.query.state === 'reviewed') return { rows: [], nextCursor: null, asOf: {}, projectionReady: true }
+      if (options.query.cursor === 'page-2') return { rows: [], nextCursor: null, asOf: {}, projectionReady: true }
+      return { rows: [row], nextCursor: 'page-2', asOf: {}, projectionReady: true }
+    }
+    if (url === '/api/roster/evidence-impacts/4') return detailFor(row)
+    if (url.endsWith('/sources')) return { rows: [], nextCursor: null, asOf: {} }
+    if (url.endsWith('/history')) return { rows: [], total: 0, page: 1, pageSize: 25 }
+    throw new Error('Unexpected request: ' + url)
+  })
+  const view = renderEnterprise(); await flushPromises()
+  await openAndFill(view)
+  choose(view, '复核状态', 'reviewed')
+  await view.get('form').trigger('submit'); await flushPromises()
+  expect(view.text()).toContain('更改筛选会丢弃未提交内容')
+  await clickText(view, '继续填写').trigger('click'); await flushPromises()
+  expect(view.text()).toContain('显示来源：第 1 页 · 企业 #7 · 全部称号 · 全部方向 · 事件 全部')
+  expect(view.find('[aria-label="收起复核项 4"]').exists()).toBe(true)
+  expect(fetcher.mock.calls.some(call => call[1]?.query?.state === 'reviewed')).toBe(false)
+
+  await view.get('form').trigger('submit'); await flushPromises()
+  await clickText(view, '应用筛选并丢弃').trigger('click'); await flushPromises()
+  expect(fetcher.mock.calls.some(call => call[1]?.query?.state === 'reviewed')).toBe(true)
+  expect(view.get('[data-testid="review-empty"]').text()).toContain('当前筛选下没有复核项')
+  view.unmount()
+
+  mockRoutes(async (url: string, options: any) => {
+    if (url === '/api/roster/evidence-impacts') {
+      if (options.query.cursor === 'page-2') return { rows: [], nextCursor: null, asOf: {}, projectionReady: true }
+      return { rows: [row], nextCursor: 'page-2', asOf: {}, projectionReady: true }
+    }
+    if (url === '/api/roster/evidence-impacts/4') return detailFor(row)
+    if (url.endsWith('/sources')) return { rows: [], nextCursor: null, asOf: {} }
+    if (url.endsWith('/history')) return { rows: [], total: 0, page: 1, pageSize: 25 }
+    throw new Error('Unexpected request: ' + url)
+  })
+  const paged = renderEnterprise(); await flushPromises()
+  await openAndFill(paged)
+  await paged.get('[aria-label="下一页复核项"]').trigger('click'); await flushPromises()
+  expect(paged.text()).toContain('翻页会丢弃未提交内容')
+  await clickText(paged, '继续填写').trigger('click'); await flushPromises()
+  expect(paged.text()).toContain('显示来源：第 1 页')
+  await paged.get('[aria-label="下一页复核项"]').trigger('click'); await flushPromises()
+  await clickText(paged, '下一页并丢弃').trigger('click'); await flushPromises()
+  expect(paged.text()).toContain('显示来源：第 2 页')
+  expect(paged.get('[data-testid="review-empty"]').text()).toContain('本页没有复核项')
+  paged.unmount()
+})
+
+it('hides the whole pager on a successful single page but keeps it for multiple pages and failures', async () => {
+  mockRoutes(() => ({ rows: [row], nextCursor: null, asOf: {}, projectionReady: true }))
+  const single = renderEnterprise(); await flushPromises()
+  expect(single.text()).not.toContain('每页最多 25 项')
+  expect(single.findAll('button').some(button => button.text() === '上一页')).toBe(false)
+  expect(single.findAll('button').some(button => button.text() === '下一页')).toBe(false)
+  expect(single.findAll('button').some(button => button.text() === '重新读取清单')).toBe(true)
+  single.unmount()
+
+  mockRoutes(() => ({ rows: [row], nextCursor: 'page-2', asOf: {}, projectionReady: true }))
+  const multi = renderEnterprise(); await flushPromises()
+  expect(multi.text().split('每页最多 25 项')).toHaveLength(2)
+  expect(multi.find('[aria-label="下一页复核项"]').exists()).toBe(true)
+  multi.unmount()
+
+  mockRoutes(() => { throw new Error('private failure') })
+  const failed = renderEnterprise(); await flushPromises()
+  expect(failed.find('[data-testid="retry-review-page"]').exists()).toBe(true)
+  expect(failed.text()).toContain('每页最多 25 项')
+  expect(failed.find('[aria-label="下一页复核项"]').exists()).toBe(true)
+  failed.unmount()
 })

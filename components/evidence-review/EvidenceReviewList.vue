@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, shallowRef, watch } from 'vue'
+import { computed, inject, provide, reactive, shallowRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import type { CursorPage, ImpactRow } from '~~/lib/roster/evidence-review-ui'
 import { TITLES } from '~~/lib/labels'
-import { directionLabel, impactOldDecisionText, titleLabel } from '~~/lib/roster/review-display'
+import { directionLabel, impactEffectiveLineage, impactOldDecisionText, titleLabel } from '~~/lib/roster/review-display'
+import { REVIEW_DRAFTS_KEY, useReviewDrafts, type ReviewDraftStore } from '~/composables/useReviewDrafts'
 import { useEnterpriseNames } from '~/composables/useEnterpriseNames'
 import EvidenceReviewDetail from './EvidenceReviewDetail.vue'
 import AssessmentStatusBadge from './AssessmentStatusBadge.vue'
@@ -14,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/ui/empty'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 const props = defineProps<{
   enterpriseId?: number
@@ -24,6 +26,14 @@ const props = defineProps<{
   defaultState?: 'pending' | 'reviewed' | 'all'
   defaultView?: 'current' | 'historical' | 'all'
 }>()
+
+/**
+ * 草稿由最近一层宿主（企业详情页 / 全部复核记录父级 / 本清单）持有。
+ * 结构性卸载只断开视图；明确的丢弃才清空。
+ */
+const injectedDrafts = inject<ReviewDraftStore | null>(REVIEW_DRAFTS_KEY, null)
+const draftStore = injectedDrafts ?? useReviewDrafts()
+provide(REVIEW_DRAFTS_KEY, draftStore)
 
 /**
  * 比对页的「待复核队列」把筛选写回地址栏：进入企业详情后，`returnTo`
@@ -132,23 +142,56 @@ const queueDescription = computed(() => reviewState.value === 'reviewed'
   : reviewState.value === 'all'
     ? '当前、历史、撤回与归并的复核项；复核状态与原始变更分类分别显示。'
     : '按证据变化逐项核对。清单不代替查询覆盖和业务判断；未完成影响检查的变更可能尚未进入清单。')
-const embeddedAllRecords = computed(() => reviewState.value === 'all'
-  && pageRequest.value.view === 'all'
-  && pageRequest.value.enterpriseId != null)
-const emptyTitle = computed(() => embeddedAllRecords.value ? '该企业没有复核记录' : '本页没有复核项')
-const emptyDescription = computed(() => embeddedAllRecords.value
-  ? '当前、历史、撤回与归并均未返回记录；未完成影响检查的变更可能尚未进入清单。'
-  : '清单不代替查询覆盖和业务判断；未完成影响检查的变更可能尚未进入清单。')
+/**
+ * 空态只说当前实际查询范围：
+ * - 企业 all/all、无称号/方向/事件筛选、第 1 页、无 nextCursor、成功且投影就绪，
+ *   才能说“该企业没有复核记录”；
+ * - 有筛选 -> 当前筛选空；
+ * - 非第 1 页 / 有 nextCursor / 保留旧页 -> 本页空；
+ * - 读取失败、仍是旧页或投影未就绪 -> 尚不能确认。
+ * 不用 rows.length<25 推断末页；nextCursor 才是继续翻页的依据。
+ */
+type ReviewEmptyScope = 'enterprise' | 'filtered' | 'page' | 'uncertain'
+const hasExplicitFilter = computed(() => pageRequest.value.titleCode != null
+  || pageRequest.value.direction != null
+  || pageRequest.value.eventId != null)
+const defaultAllScope = computed(() => pageRequest.value.state === 'all' && pageRequest.value.view === 'all')
+const emptyScope = computed<ReviewEmptyScope>(() => {
+  if (!current.value || error.value) return 'uncertain'
+  if (displayed.value?.projectionReady === false) return 'uncertain'
+  if ((displayed.value?.pageNumber ?? 1) > 1 || cursors.value.length > 0 || displayed.value?.nextCursor) return 'page'
+  if (hasExplicitFilter.value || !defaultAllScope.value) return 'filtered'
+  return 'enterprise'
+})
+const emptyTitle = computed(() => ({
+  enterprise: '该企业没有复核记录',
+  filtered: '当前筛选下没有复核项',
+  page: '本页没有复核项',
+  uncertain: '复核记录尚不能确认',
+})[emptyScope.value])
+const emptyDescription = computed(() => ({
+  enterprise: '当前、历史、撤回与归并均未返回记录；未完成影响检查的变更可能尚未进入清单。',
+  filtered: '当前称号、方向、复核状态或事件范围内没有记录；这不代表该企业没有其他复核历史。',
+  page: '当前页没有返回记录；这不代表全企业都没有复核历史。可返回上一页或继续下一页。',
+  uncertain: '当前筛选或分页尚未成功读取，或仍显示上次成功的页；不能据此判断企业的完整复核历史。',
+})[emptyScope.value])
+
+const showPager = computed(() => !!error.value
+  || cursorExpired.value
+  || isLoading.value
+  || (displayed.value?.pageNumber ?? 1) > 1
+  || cursors.value.length > 0
+  || !!displayed.value?.nextCursor)
 
 const sourceEnterprise = computed(() => {
   const id = pageRequest.value.enterpriseId
-  if (id == null) return '全部'
+  if (id == null) return '全部企业'
   return enterpriseName.value && enterpriseName.value === nameFor(Number(id))
     ? `${enterpriseName.value}（#${id}）`
     : `企业 #${id}`
 })
 const sourceLabel = computed(() => displayed.value
-  ? `第 ${displayed.value.pageNumber ?? 1} 页 · 企业 ${sourceEnterprise.value} · ${TITLES[String(pageRequest.value.titleCode)] ?? '全部称号'} · ${pageRequest.value.direction ? directionLabel(String(pageRequest.value.direction)) : '全部方向'} · 事件 ${pageRequest.value.eventId ?? '全部'}`
+  ? `第 ${displayed.value.pageNumber ?? 1} 页 · ${sourceEnterprise.value} · ${TITLES[String(pageRequest.value.titleCode)] ?? '全部称号'} · ${pageRequest.value.direction ? directionLabel(String(pageRequest.value.direction)) : '全部方向'} · 事件 ${pageRequest.value.eventId ?? '全部'}`
   : '')
 
 /** 当前已应用筛选的队列地址；只有队列上下文（syncQuery）才生成。 */
@@ -186,19 +229,11 @@ function apply() {
     return
   }
   invalid.value = ''
-  cursor.value = undefined
-  cursors.value = []
-  selected.value = null
-  filters.value = {
-    ...(draft.enterprise ? { enterpriseId: Number(draft.enterprise) } : {}),
-    ...(draft.title !== 'all' ? { titleCode: draft.title } : {}),
-    ...(draft.direction !== 'all' ? { direction: draft.direction } : {}),
-    ...(draft.event ? { eventId: Number(draft.event) } : {}),
-    view: draft.view,
-    state: draft.state,
-    limit: 25,
-  }
-  syncQueueQuery()
+  withDraftGuard(applyFilters, {
+    title: '更改筛选会丢弃未提交内容',
+    description: '当前复核项还有未提交的凭证、依据或更正内容；应用筛选后这些内容会丢失。',
+    discardLabel: '应用筛选并丢弃',
+  })
 }
 
 watch(() => [props.enterpriseId, props.titleCode, props.direction], () => {
@@ -233,9 +268,16 @@ function chooseEnterprise(row: { enterpriseId: number; name: string }) {
   lookupResults.value = []
 }
 
-function next() { if (current.value && data.value?.nextCursor) { cursors.value = [...cursors.value, cursor.value]; cursor.value = data.value.nextCursor } }
-function previous() { if (current.value && cursors.value.length) { cursor.value = cursors.value.at(-1); cursors.value = cursors.value.slice(0, -1) } }
-function restart() { cursor.value = undefined; cursors.value = []; void refetch() }
+function guardPage(run: () => void, discardLabel: string) {
+  withDraftGuard(run, {
+    title: '翻页会丢弃未提交内容',
+    description: '当前复核项还有未提交的凭证、依据或更正内容；翻页后这些内容会丢失。',
+    discardLabel,
+  })
+}
+function next() { guardPage(nextPage, '下一页并丢弃') }
+function previous() { guardPage(previousPage, '上一页并丢弃') }
+function restart() { guardPage(restartPage, '重新读取并丢弃') }
 
 function enterpriseLink(row: ImpactRow) {
   const query = new URLSearchParams({ tab: 'review', titleCode: row.titleCode, direction: row.direction, impactId: String(row.id) })
@@ -258,8 +300,90 @@ function queueNameStatus(row: ImpactRow): string {
 }
 
 function queueActionLabel(row: ImpactRow): string {
-  if (row.lineage !== 'current') return '查看历史项'
+  if (impactEffectiveLineage(row) !== 'current') return '查看历史项'
   return row.pending ? '处理这一项' : '查看复核项'
+}
+
+function rowActionLabel(row: ImpactRow): string {
+  return selected.value === row.id ? '收起复核项' : queueActionLabel(row)
+}
+
+function rowAriaLabel(row: ImpactRow): string {
+  return `${rowActionLabel(row)} ${row.id}`
+}
+
+/** 收起/重选/筛选/翻页都先确认；继续填写保持原条目、原筛选、原页。 */
+type DraftGuard = { title: string; description: string; discardLabel: string; run: () => void }
+const pendingGuard = shallowRef<DraftGuard | null>(null)
+function withDraftGuard(run: () => void, copy: Omit<DraftGuard, 'run'>) {
+  if (draftStore.hasDirty.value) {
+    pendingGuard.value = { ...copy, run }
+    return
+  }
+  run()
+}
+function continueDraft() { pendingGuard.value = null }
+function discardDraftAndRun() {
+  const guard = pendingGuard.value
+  pendingGuard.value = null
+  draftStore.discardAll()
+  guard?.run()
+}
+
+function toggleRow(row: ImpactRow) {
+  if (selected.value === row.id) {
+    withDraftGuard(() => {
+      selected.value = null
+      draftStore.discard(row.id)
+    }, {
+      title: '收起会丢弃未提交内容',
+      description: '复核人填写的凭证、依据、规则版本或更正内容尚未提交；收起后这些内容会丢失。',
+      discardLabel: '收起并丢弃',
+    })
+    return
+  }
+  withDraftGuard(() => {
+    if (selected.value != null) draftStore.discard(selected.value)
+    selected.value = row.id
+  }, {
+    title: '切换复核项会丢弃未提交内容',
+    description: '当前复核项还有未提交的凭证、依据或更正内容；切换后这些内容会丢失。',
+    discardLabel: '切换并丢弃',
+  })
+}
+
+function applyFilters() {
+  cursor.value = undefined
+  cursors.value = []
+  selected.value = null
+  filters.value = {
+    ...(draft.enterprise ? { enterpriseId: Number(draft.enterprise) } : {}),
+    ...(draft.title !== 'all' ? { titleCode: draft.title } : {}),
+    ...(draft.direction !== 'all' ? { direction: draft.direction } : {}),
+    ...(draft.event ? { eventId: Number(draft.event) } : {}),
+    view: draft.view,
+    state: draft.state,
+    limit: 25,
+  }
+  syncQueueQuery()
+}
+
+function nextPage() {
+  if (current.value && data.value?.nextCursor) {
+    cursors.value = [...cursors.value, cursor.value]
+    cursor.value = data.value.nextCursor
+  }
+}
+function previousPage() {
+  if (current.value && cursors.value.length) {
+    cursor.value = cursors.value.at(-1)
+    cursors.value = cursors.value.slice(0, -1)
+  }
+}
+function restartPage() {
+  cursor.value = undefined
+  cursors.value = []
+  void refetch()
 }
 </script>
 
@@ -272,7 +396,6 @@ function queueActionLabel(row: ImpactRow): string {
           {{ queueDescription }}
         </p>
       </div>
-      <span class="text-muted-foreground text-[13px]">每页最多 25 项</span>
     </header>
 
     <form class="bg-card flex min-w-0 flex-col gap-3 rounded-lg border p-3 [&_[data-slot=native-select-wrapper]]:max-w-full" @submit.prevent="apply">
@@ -442,7 +565,7 @@ function queueActionLabel(row: ImpactRow): string {
               <AssessmentStatusBadge kind="review" :value="row.pending ? 'pending' : 'reviewed'" />
               <AssessmentStatusBadge kind="impact" :value="row.classification" />
               <span v-if="queueNameStatus(row)" class="text-muted-foreground text-[13px]">{{ queueNameStatus(row) }}</span>
-              <AssessmentStatusBadge v-if="row.lineage !== 'current'" kind="lineage" :value="row.lineage" />
+              <AssessmentStatusBadge v-if="impactEffectiveLineage(row) !== 'current'" kind="lineage" :value="impactEffectiveLineage(row)" />
               <span v-else class="text-muted-foreground text-[13px]">当前决定</span>
             </div>
             <p class="mt-1 text-sm leading-5 font-medium">
@@ -454,21 +577,49 @@ function queueActionLabel(row: ImpactRow): string {
             variant="outline"
             size="sm"
             class="shrink-0 self-start"
-            :aria-label="`查看复核项 ${row.id}`"
-            @click="selected = selected === row.id ? null : row.id"
+            :aria-label="rowAriaLabel(row)"
+            :aria-expanded="selected === row.id"
+            :aria-controls="selected === row.id ? `review-detail-${row.id}` : undefined"
+            @click="toggleRow(row)"
           >
-            {{ selected === row.id ? '收起复核项' : queueActionLabel(row) }}
+            {{ rowActionLabel(row) }}
           </Button>
         </div>
-        <EvidenceReviewDetail v-if="selected === row.id" :key="row.id" :impact-id="row.id" @saved="restart" />
+        <EvidenceReviewDetail
+          v-if="selected === row.id"
+          :id="`review-detail-${row.id}`"
+          :key="row.id"
+          :impact-id="row.id"
+          @saved="restart"
+        />
       </li>
     </ul>
 
-    <footer class="flex flex-wrap items-center gap-2">
+    <!--
+      单页、无前后页且读取成功时不再占一排翻页控件；失败、真多页或非首页
+      才保留完整的上一页/下一页/重新读取。页大小说明只在这里出现一次。
+    -->
+    <footer v-if="showPager" class="flex flex-wrap items-center gap-2">
       <span class="text-muted-foreground text-[13px]">每页最多 25 项</span>
-      <Button variant="outline" :disabled="!current || !cursors.length" @click="previous">上一页</Button>
+      <Button variant="outline" aria-label="上一页复核项" :disabled="!current || !cursors.length" @click="previous">上一页</Button>
       <Button variant="outline" aria-label="下一页复核项" :disabled="!current || !displayed?.nextCursor" @click="next">下一页</Button>
       <Button variant="ghost" :disabled="isLoading" @click="restart">从第一页重新读取</Button>
     </footer>
+    <div v-else-if="displayed" class="flex">
+      <Button variant="ghost" size="sm" :disabled="isLoading" @click="restart">重新读取清单</Button>
+    </div>
+
+    <Dialog :open="pendingGuard !== null" @update:open="value => { if (!value) pendingGuard = null }">
+      <DialogContent data-testid="review-draft-dialog" class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ pendingGuard?.title }}</DialogTitle>
+          <DialogDescription>{{ pendingGuard?.description }}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" @click="continueDraft">继续填写</Button>
+          <Button @click="discardDraftAndRun">{{ pendingGuard?.discardLabel }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </section>
 </template>

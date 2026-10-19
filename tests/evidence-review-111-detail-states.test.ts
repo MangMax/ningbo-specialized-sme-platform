@@ -97,12 +97,18 @@ function resolve(source: DetailSource) {
   return typeof source === 'function' ? source() : source
 }
 
-function mountDetail(before: DetailSource, after: DetailSource = before, sources = [sourceRow]) {
+function mountDetail(
+  before: DetailSource,
+  after: DetailSource = before,
+  sources = [sourceRow],
+  postAction: string | null = 'maintain',
+  formFooter = true,
+) {
   let posted = false
   const fetcher = vi.fn(async (url: string, options?: any) => {
     if (options?.method === 'POST') {
       posted = true
-      return { reviewedRevisionId: 9 }
+      return { reviewedRevisionId: 9, ...(postAction ? { action: postAction } : {}) }
     }
     if (url === '/api/roster/evidence-impacts/4') return resolve(posted ? after : before)
     if (url === '/api/roster/evidence-impacts/4/sources') return { rows: sources, nextCursor: null, asOf: { revision: 9 } }
@@ -119,7 +125,9 @@ function mountDetail(before: DetailSource, after: DetailSource = before, sources
   vi.stubGlobal('$fetch', fetcher)
   const Host = defineComponent({
     components: { EvidenceReviewDetail },
-    template: '<div><div id="review-sheet-footer"></div><EvidenceReviewDetail :impact-id="4" form-footer /></div>',
+    template: formFooter
+      ? '<div><div id="review-sheet-footer"></div><EvidenceReviewDetail :impact-id="4" form-footer /></div>'
+      : '<div><EvidenceReviewDetail :impact-id="4" /></div>',
   })
   const view = mount(Host, { attachTo: document.body, global: { plugins: [createPinia(), PiniaColada], stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } } })
   return { view, fetcher }
@@ -195,14 +203,14 @@ it('reads maintain back and shows the receipt/current decision without claiming 
   const notice = view.get('#review-sheet-footer [data-testid="review-save-notice"]')
   expect(notice.text()).toContain('复核已登记')
   expect(notice.text()).toContain('复核至修订 #14')
+  expect(notice.text()).toContain('本次登记为维持原决定')
   expect(notice.text()).toContain('当前决定 #12 未变')
-  expect(notice.text()).toContain('原原因与措施保留')
   expect(document.activeElement).toBe(notice.element)
   expect(view.get('[data-testid="reviewed-baseline"]').text()).toContain('baseline-reviewer')
 })
 
 it('reads replace back with the new current decision and preserves the previous decision coordinates', async () => {
-  const { view } = mountDetail(baseDetail(), reviewedReplace)
+  const { view } = mountDetail(baseDetail(), reviewedReplace, [sourceRow], 'replace')
   await flushPromises()
   await fill(view)
   await submit(view)
@@ -230,4 +238,99 @@ it('does not call a successful write registered when the current state cannot be
   await view.get('form').trigger('submit')
   await flushPromises()
   expect(fetcher.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1)
+})
+
+
+it('does not infer a maintain action when the write receipt does not state one', async () => {
+  const { view } = mountDetail(baseDetail(), {
+    ...reviewedMaintain,
+    reviewedBaseline: {
+      reviewedRevisionId: 14,
+      actor: { type: 'user', id: 'baseline-reviewer' },
+      basis: '已核验新证据',
+      ruleVersion: 'review-rule-2026',
+      effectiveAt: '2026-10-19T09:00:00.000Z',
+      recordedAt: '2026-10-19T09:01:00.000Z',
+    },
+  }, [sourceRow], null)
+  await flushPromises()
+  await fill(view)
+  await submit(view)
+  const notice = view.get('[data-testid="review-save-notice"]')
+  expect(notice.text()).toContain('复核已登记')
+  expect(notice.text()).toContain('当前决定 #12。')
+  expect(notice.text()).not.toContain('本次登记为维持原决定')
+  expect(notice.text()).not.toContain('未变')
+})
+
+it('labels the decision under review by lineage instead of always calling it the original decision', async () => {
+  const current = mountDetail(baseDetail())
+  await flushPromises()
+  expect(current.view.text()).toContain('待复核的当前决定 #82')
+  expect(current.view.text()).not.toContain('原决定 #82')
+  current.view.unmount()
+
+  const historical = mountDetail(baseDetail({
+    decisionId: 8,
+    lineage: 'historical',
+    oldDecision: decision(8, { isCurrent: false }),
+    currentDecision: { versionId: 34, current: decision(34) },
+  }))
+  await flushPromises()
+  expect(historical.view.text()).toContain('历史决定 #8')
+  expect(historical.view.text()).toContain('当前决定 #34')
+  expect(historical.view.text()).not.toContain('原决定 #8')
+  historical.view.unmount()
+
+  const merged = mountDetail(baseDetail({
+    lineage: 'merged',
+    oldDecision: null,
+    currentDecision: null,
+    gaps: { decisionUnavailable: true, subjectUnknown: true, projectionReady: true },
+  }))
+  await flushPromises()
+  expect(merged.view.text()).toContain('归并前决定 #82')
+  expect(merged.view.text()).not.toContain('原决定 #82')
+  merged.view.unmount()
+})
+
+it('does not fabricate a previous decision when the current replace version has no previousId', async () => {
+  const { view } = mountDetail(baseDetail({
+    pending: false,
+    decisionId: 35,
+    oldDecision: decision(35, { lifecycleAction: 'replace', previousId: null }),
+    currentDecision: { versionId: 35, current: decision(35, { lifecycleAction: 'replace', previousId: null }) },
+  }))
+  await flushPromises()
+  expect(view.text()).toContain('当前决定 #35')
+  expect(view.text()).toContain('首次决定')
+  expect(view.text()).not.toContain('复核前决定')
+})
+
+it('scrolls an inline success notice below the sticky header and an inline failure to the error and action block', async () => {
+  const scroll = vi.fn()
+  const previous = HTMLElement.prototype.scrollIntoView
+  HTMLElement.prototype.scrollIntoView = scroll
+  try {
+    const success = mountDetail(baseDetail(), reviewedMaintain, [sourceRow], 'maintain', false)
+    await flushPromises()
+    await fill(success.view)
+    await submit(success.view)
+    expect(scroll).toHaveBeenCalledWith({ block: 'start' })
+    expect(success.view.get('[data-testid="review-save-notice"]').classes()).toContain('scroll-mt-14')
+    success.view.unmount()
+
+    scroll.mockClear()
+    const failed = mountDetail(baseDetail(), baseDetail(), [sourceRow], 'maintain', false)
+    await flushPromises()
+    await fill(failed.view)
+    failed.fetcher.mockRejectedValueOnce({ data: { error: { code: 'unauthorized' } } })
+    await submit(failed.view)
+    expect(scroll).toHaveBeenCalledWith({ block: 'center' })
+    expect(failed.view.get('[data-testid="review-save-error"]').classes()).toContain('scroll-mt-14')
+    expect(failed.view.find('button[type="submit"]').exists()).toBe(true)
+    failed.view.unmount()
+  } finally {
+    HTMLElement.prototype.scrollIntoView = previous
+  }
 })

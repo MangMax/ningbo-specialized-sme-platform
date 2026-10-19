@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, shallowRef, watch } from 'vue'
+import { computed, inject, nextTick, provide, shallowRef, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import type { ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { TITLE_ORDER } from '~~/lib/labels'
 import {
   assessmentHeadline,
   decisionMeasureLabel,
-  decisionReasonLabel,
   directionLabel,
   titleLabel,
+  decisionReasonWithCoordinate,
 } from '~~/lib/roster/review-display'
+import { REVIEW_DRAFTS_KEY, useReviewDrafts, type ReviewDraftStore } from '~/composables/useReviewDrafts'
 import EvidenceReviewList from './EvidenceReviewList.vue'
 import AssessmentStatusBadge from './AssessmentStatusBadge.vue'
 import EnterpriseEvidenceSheet from '@/components/enterprise/EnterpriseEvidenceSheet.vue'
@@ -33,6 +34,21 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{ saved: [] }>()
+
+/**
+ * 父级折叠会卸载整段“企业全部复核记录”。草稿仓库放在这一层，并在首次
+ * 展开后 keep-mounted：收起再开时保留原展开项、筛选、页和未提交草稿。
+ */
+const injectedDrafts = inject<ReviewDraftStore | null>(REVIEW_DRAFTS_KEY, null)
+const draftStore = injectedDrafts ?? useReviewDrafts()
+provide(REVIEW_DRAFTS_KEY, draftStore)
+const allRecordsOpen = shallowRef(false)
+/** 首次展开后才 keep-mounted：关闭企业全部复核记录不再卸载内联面板和草稿。 */
+const recordsEverOpened = shallowRef(false)
+function onAllRecordsOpen(open: boolean) {
+  if (open) recordsEverOpened.value = true
+  allRecordsOpen.value = open
+}
 
 const DIRECTIONS = ['missing_in_miit', 'extra_in_miit'] as const
 const reviewGeneration = shallowRef(0)
@@ -230,7 +246,7 @@ watch(() => props.impactId, impactId => {
                   v-if="group.byDirection[direction]!.currentDecision.current"
                   class="text-[13px] leading-5"
                 >
-                  {{ decisionReasonLabel(group.byDirection[direction]!) }}
+                  {{ decisionReasonWithCoordinate(group.byDirection[direction]!) }}
                 </span>
                 <span
                   v-if="decisionMeasureLabel(group.byDirection[direction]!)"
@@ -267,7 +283,14 @@ watch(() => props.impactId, impactId => {
       三轴独立保留；未查询不等于无记录，查询完成或覆盖完整也不自动等于“一致 / 无需处理”。
     </p>
 
-    <DisclosurePanel compact content-class="pb-0" class="bg-card overflow-hidden rounded-lg border">
+    <DisclosurePanel
+      compact
+      :open="allRecordsOpen"
+      :keep-mounted="recordsEverOpened"
+      content-class="pb-0"
+      class="bg-card overflow-hidden rounded-lg border"
+      @update:open="onAllRecordsOpen"
+    >
       <template #trigger>
         <span class="text-sm font-medium">企业全部复核记录</span>
       </template>
