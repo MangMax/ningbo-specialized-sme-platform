@@ -64,6 +64,7 @@ export default defineMcpHandler({
     '- `query_records` 是通用企业×称号记录查询；`year` 筛事件年份，`dueYear` 筛生命周期到期年份。',
     '  详情请用 `get_enterprise_detail`，它与 REST 企业详情共用读模型。',
     '- 企业普通资料更正：`get_enterprise_profile` 取版本，再用需 token 的 `patch_enterprise_profile`；历史用 `get_enterprise_profile_history` 分页核对。仅 name/city/district；更名明确确认旧名，同事务保留旧名与审计，不补统代或归并。详见 docs/maintenance-96.md。',
+    '- 企业别名维护：`list_enterprise_aliases` / `get_enterprise_alias` 读取版本，再用需 token 的 `maintain_enterprise_alias` 显式确认、更正、撤回或恢复；历史用 `get_enterprise_alias_history` 分页核对。保留原名与原来源，withdrawn 不自动恢复。详见 docs/maintenance-99.md。',
     '',
     '边界(重要):',
     '- **写入前需要 token**:`save_ocr_result` / `set_file_category` / `save_parse_result` /',
