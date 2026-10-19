@@ -659,8 +659,8 @@ function selectRosterEnterprises(
   filter: RosterEnterpriseFilter,
   paginate = false,
 ): { rows: RosterEnterpriseRow[]; counts: RosterCounts } {
-  const { candidates, counts } = selectEnterpriseCoordinates(db, filter)
   const { page, pageSize } = pageOf(filter)
+  const { candidates, counts } = selectEnterpriseCoordinates(db, filter, paginate ? page * pageSize : undefined)
   const selected = paginate ? candidates.slice((page - 1) * pageSize, page * pageSize) : candidates
   const ids = selected.map(row => row.id)
   const history = readEnterpriseHistories(db, ids)

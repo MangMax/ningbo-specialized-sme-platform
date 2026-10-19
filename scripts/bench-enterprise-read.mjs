@@ -78,5 +78,5 @@ if (lane === 'driver') {
   } finally { await stopOwnedChild(server); rmSync(dir, { recursive: true, force: true }) }
 }
 const sorted = samples.slice(1).map(x => x.ms).sort((a, b) => a - b), percentile = p => sorted[Math.ceil(sorted.length * p) - 1]
-console.log(JSON.stringify({ lane, mode, concurrency, input: mode === 'detail' ? { enterpriseId: fixed.id } : input, coldLabel: 'fresh process; OS cache not purged', cold: samples[0], hotSamples: sorted.length, hot: { p50: percentile(.5), p95: percentile(.95), p99: percentile(.99) }, samples, metrics, heapOldSpaceMiB: 2048, containerLimited: false }))
+console.log(JSON.stringify({ lane, mode, concurrency, input: mode === 'detail' ? { enterpriseId: fixed.id } : mode === 'search' ? { ...input, q: undefined, qSha256: createHash('sha256').update(input.q).digest('hex') } : input, coldLabel: 'fresh process; OS cache not purged', cold: samples[0], hotSamples: sorted.length, hot: { p50: percentile(.5), p95: percentile(.95), p99: percentile(.99) }, samples, metrics, heapOldSpaceMiB: 2048, containerLimited: false }))
 db.$client.close()

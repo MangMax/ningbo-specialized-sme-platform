@@ -43,7 +43,7 @@ export interface EnterpriseSelection {
   difference: RosterEnterpriseDifference
 }
 
-export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilter) {
+export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: number) {
   identityFunctions(db)
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
   const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
@@ -53,8 +53,11 @@ export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilt
   const recognitionMatch = and(selected(sql`f.title_code`, filter.title), selected(sql`f.first_year`, filter.firstYear), selected(sql`f.status`, filter.firstStatus))!
   const recordMatch = and(selected(sql`r.source`, filter.source), filter.eventType?.length || filter.year?.length
     ? sql`exists(select 1 from record_event v where v.record_id=r.id and ${selected(sql`v.event_type`, filter.eventType)} and ${selected(sql`v.year`, filter.year)})` : sql`1`)!
+  const defaultDifferenceCount = sql`case when title_code in ('little_giant','specialized_sme','innovative_sme') then
+    (official and (uscc_norm is null or not platform)) + (platform and (uscc_norm is null or not official)) else 0 end`
   const diffFilter = filter.diffStatus?.length ? sql`(
     ${filter.diffStatus.includes('none') ? sql`coalesce(d.count,0)=0` : sql`0`} or
+    ${inArray(sql`d.status`, filter.diffStatus.filter(x => x !== 'none'))} or
     exists(select 1 from coordinates c where c.enterprise_id=e.id and ${selected(sql`c.status`, filter.diffStatus.filter(x => x !== 'none'))} and c.status != 'none'
       ${filter.diffStatus.every(x => x === 'none') ? sql`and 0` : sql``}) or ${inArray(sql`d.reason`, filter.diffStatus.filter(x => x !== 'none'))})` : sql`1`
   const query = sql`
@@ -88,8 +91,10 @@ export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilt
       -- only refer to this enterprise. Null keys deliberately never match.
       select enterprise_id,title_code,'missing_in_miit' as direction from fact_base
         where title_code in ('little_giant','specialized_sme','innovative_sme') and official and (uscc_norm is null or not platform)
+          and enterprise_id in (select enterprise_id from explanations)
       union all select enterprise_id,title_code,'extra_in_miit' from fact_base
         where title_code in ('little_giant','specialized_sme','innovative_sme') and platform and (uscc_norm is null or not official)
+          and enterprise_id in (select enterprise_id from explanations)
     ), explanation_versions as (
       select enterprise_id,title_code,direction,status,reason_code,row_number() over(partition by enterprise_id,title_code,direction order by recorded_at desc,id) as n
       from difference_reason where enterprise_id in (select id from scope)
@@ -100,9 +105,16 @@ export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilt
         select 1 from derived d where d.enterprise_id=x.enterprise_id and d.title_code=x.title_code and d.direction=x.direction)
     ), ranked_differences as (
       select *,row_number() over(partition by enterprise_id order by ${rank(sql`status`, DIFFERENCE_STATUS_ORDER)} desc,${rank(sql`title_code`, TITLE_ORDER)},direction) as n from coordinates
-    ), differences as (
+    ), explained_differences as (
       select enterprise_id,count(*) as count,max(current) as current,max(case when n=1 then status end) as status,
         max(case when n=1 then reason_code end) as reason from ranked_differences group by enterprise_id
+    ), differences as (
+      -- No explanation means every derived coordinate has the same default
+      -- not_queried status/null reason. Count them without a coordinate window.
+      select enterprise_id,sum(${defaultDifferenceCount}) as count,sum(${defaultDifferenceCount})>0 as current,
+        case when sum(${defaultDifferenceCount})>0 then 'not_queried' end as status,null as reason
+      from fact_base where enterprise_id not in (select enterprise_id from explanations) group by enterprise_id
+      union all select * from explained_differences
     ), ${membershipCtes()}, candidates as (
       select e.id,e.name,h.titles,h.first_year,h.title_rank,h.recognition_pairs,
         ${filter.rosterState ? sql`case when h.official=0 and m.id is not null and not m.current then 'removed_platform_only' else 'current' end` : sql`'current'`} as state,
@@ -120,16 +132,26 @@ export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilt
   const rows = (db as Db & { $client: Database }).$client.prepare(bound.sql).raw().iterate(...bound.params) as Iterable<[number,string,string|null,number|null,number|null,number|null,RosterState,number,string|null,string|null,number]>
   const counts: RosterCounts = { total: 0, titlePairs: 0, recognitionPairs: 0, differences: 0, titles: Object.fromEntries(TITLE_ORDER.map(code => [code, 0])) }
   const candidates: EnterpriseSelection[] = []
+  const sort = filter.sort ?? 'recognition'
+  const compare = (a: EnterpriseSelection, b: EnterpriseSelection) => {
+    if (sort === 'title' && a.rank !== b.rank) return a.rank-b.rank
+    if (sort !== 'name' && sort !== 'title' && a.year !== b.year) return a.year == null ? 1 : b.year == null ? -1 : b.year-a.year
+    return a.name.localeCompare(b.name) || a.id-b.id
+  }
   for (const [id,name,titles,year,titleRank,recognitions,state,count,status,reasonCode,current] of rows) {
     counts.total++; counts.recognitionPairs += recognitions ?? 0; counts.differences += count
     for (const title of titles == null ? [] : JSON.parse(titles) as string[]) { counts.titlePairs++; counts.titles[title] = (counts.titles[title] ?? 0) + 1 }
-    candidates.push({ id,name,year,rank: titleRank ?? TITLE_ORDER.length,state,difference: { count,status,reasonCode,anyCurrent: !!current } })
+    const candidate = { id,name,year,rank: titleRank ?? TITLE_ORDER.length,state,difference: { count,status,reasonCode,anyCurrent: !!current } }
+    if (limit == null) candidates.push(candidate)
+    else if (candidates.length < limit || compare(candidate,candidates[candidates.length-1]!) < 0) {
+      // Exact bounded top-(page*size), using the original JS locale ordering.
+      // Counts include every row; off-page lifecycle/sort rows are not retained.
+      let lo=0, hi=candidates.length
+      while (lo<hi) { const mid=(lo+hi)>>>1; if (compare(candidate,candidates[mid]!)<0) hi=mid; else lo=mid+1 }
+      candidates.splice(lo,0,candidate)
+      if (candidates.length>limit) candidates.pop()
+    }
   }
-  const sort = filter.sort ?? 'recognition'
-  candidates.sort((a,b) => {
-    if (sort === 'title' && a.rank !== b.rank) return a.rank-b.rank
-    if (sort === 'recognition' && a.year !== b.year) return a.year == null ? 1 : b.year == null ? -1 : b.year-a.year
-    return a.name.localeCompare(b.name) || a.id-b.id
-  })
+  if (limit == null) candidates.sort(compare)
   return { candidates, counts }
 }
