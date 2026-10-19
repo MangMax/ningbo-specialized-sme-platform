@@ -118,6 +118,8 @@ export const recordEvent = sqliteTable(
      * 2027(= 2024 + 3)。可空;缺失时锚点退回 `year` 并把该企业标为待核 —— **不猜**。
      */
     decidedYear: integer('decided_year'),
+    /** Monotonic formal-source revision; event/evidence corrections advance it atomically. */
+    revision: integer('revision').notNull().default(1),
   },
   (t) => [index('record_event_record_idx').on(t.recordId)],
 )
@@ -470,7 +472,7 @@ export const importBatch = sqliteTable(
     idempotencyKey: text('idempotency_key').notNull(),
     /** 来源类别:公布文件 / 平台导出 / 别名证据。 */
     sourceKind: text('source_kind', {
-      enum: ['announcement', 'platform_export', 'alias_evidence', 'correspondence_decision', 'comparison_scope_proof'],
+      enum: ['announcement', 'platform_export', 'alias_evidence', 'correspondence_decision', 'comparison_scope_proof', 'event_correction'],
     }).notNull(),
     /** 来源身份:文件库内相对路径或逻辑标识(不含凭证)。 */
     sourceIdentity: text('source_identity').notNull(),
@@ -920,6 +922,7 @@ export const recordCorrespondence = sqliteTable(
   (t) => [
     uniqueIndex('record_correspondence_edge_uq').on(t.edgeKey),
     index('record_correspondence_event_idx').on(t.eventId),
+    index('record_correspondence_predecessor_idx').on(t.predecessorEventId),
     index('record_correspondence_relation_idx').on(t.relationId),
     index('record_correspondence_export_idx').on(t.exportRowId),
     index('record_correspondence_enterprise_idx').on(t.enterpriseId, t.titleCode),
@@ -989,3 +992,19 @@ export const fileParseAudit105 = sqliteTable('file_parse_audit_105', {
   after: text('after', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
   createdAt: text('created_at').notNull(),
 }, t => [uniqueIndex('file_parse_105_key_uq').on(t.fileId, t.idempotencyKey), index('file_parse_105_history_idx').on(t.fileId, t.id)])
+/** #100: append-only in-place event correction history, no source/evidence overwrite. */
+export const eventCorrectionAudit = sqliteTable('event_correction_audit', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  eventId: integer('event_id').notNull().references(() => recordEvent.id),
+  batchId: integer('batch_id').notNull().references(() => importBatch.id),
+  recordId: integer('record_id').notNull(),
+  enterpriseId: integer('enterprise_id').notNull(),
+  before: text('before', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  after: text('after', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  evidence: text('evidence', { mode: 'json' }).$type<unknown[]>().notNull(),
+  sourceIdentity: text('source_identity').notNull(),
+  actorType: text('actor_type').notNull(),
+  actorId: text('actor_id').notNull(),
+  basis: text('basis').notNull(),
+  correctedAt: text('corrected_at').notNull(),
+}, t => [index('event_correction_audit_event_idx').on(t.eventId, t.id)])
