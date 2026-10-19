@@ -311,8 +311,8 @@ const classificationEntries = computed(() => {
               -->
               <DisclosurePanel compact keep-mounted padded content-class="pb-0" class="min-w-0 rounded-sm border">
                 <template #trigger>
-                  <span class="text-[13px] font-medium">更多选项</span>
-                  <span class="text-muted-foreground text-xs font-normal">截止时点 · 范围依据 · 导出版本 · 分类筛选</span>
+                  <span class="shrink-0 whitespace-nowrap text-[13px] font-medium">更多选项</span>
+                  <span class="text-muted-foreground min-w-0 text-xs font-normal">截止时点 · 范围依据 · 导出版本 · 分类筛选</span>
                 </template>
                 <div class="flex min-w-0 flex-col gap-3 border-t p-3">
                   <div class="flex max-w-full flex-col gap-1">
