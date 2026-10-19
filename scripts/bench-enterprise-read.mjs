@@ -8,12 +8,17 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { createHash } from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const [lane, dbPath, mode = 'list', concurrencyText = '1', countText = '20'] = process.argv.slice(2)
 const concurrency = Number(concurrencyText), count = Number(countText)
 assert.ok(['driver', 'http', 'mcp'].includes(lane) && dbPath?.startsWith('/') && ['list', 'deep', 'search', 'detail'].includes(mode) && [1, 2, 5].includes(concurrency))
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
+// JSON object key order is not response semantics. Preserve array order while
+// normalizing object keys before comparing HTTP/MCP results across versions.
+const canonical = value => value && typeof value === 'object' ? Array.isArray(value)
+  ? value.map(canonical) : Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value
 const jiti = createJiti(import.meta.url)
 const { useDb } = await jiti.import('../db/client.ts')
 const db = useDb({ dbPath, readOnly: true })
@@ -52,7 +57,7 @@ if (lane === 'driver') {
   const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-telemetry-')), telemetry = join(dir, 'telemetry.mjs')
   writeFileSync(telemetry, `import dc from 'node:diagnostics_channel';import {monitorEventLoopDelay} from 'node:perf_hooks';const lag=monitorEventLoopDelay({resolution:10});lag.enable();let heap=0,rss=0;const sample=()=>{const m=process.memoryUsage();heap=Math.max(heap,m.heapUsed);rss=Math.max(rss,m.rss)};setInterval(sample,5).unref();dc.channel('http.server.response.finish').subscribe(({request})=>{sample();if(request.url.startsWith('/api/roster/enterprises')||request.url==='/mcp')process.send?.({heap,rss,maxRss:process.resourceUsage().maxRSS*1024,lagP95Ms:lag.percentile(95)/1e6,lagMaxMs:lag.max/1e6})});`)
   const port = await reserveLoopbackPort(), base = `http://127.0.0.1:${port}`
-  const server = fork('.output/server/index.mjs', [], { execArgv: ['--max-old-space-size=2048', '--import', telemetry], env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: dir, MIIT_COOKIE: '', MIIT_COOKIE_FILE: '' }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
+  const server = fork(process.env.ENTERPRISE_BENCH_SERVER_ENTRY ?? '.output/server/index.mjs', [], { execArgv: ['--max-old-space-size=2048', '--import', telemetry], env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: dir, MIIT_COOKIE: '', MIIT_COOKIE_FILE: '' }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
   let output = '', rpcId = 0
   for (const stream of [server.stdout, server.stderr]) stream.on('data', data => { output = (output + data).slice(-2000) })
   server.on('message', message => metrics.push(message))
@@ -65,7 +70,7 @@ if (lane === 'driver') {
     const result = lane === 'http' ? body : JSON.parse(body.result.content[0].text)
     if (mode === 'detail') assert.equal(result.enterprise.enterpriseId, fixed.id)
     else assert.ok(result.rows.length > 0 && result.rows.length <= 25)
-    return { ms, responseBytes: Buffer.byteLength(text) }
+    return { ms, responseBytes: Buffer.byteLength(text), resultSha256: createHash('sha256').update(JSON.stringify(canonical(result))).digest('hex') }
   }
   try {
     let ready = false
@@ -77,5 +82,5 @@ if (lane === 'driver') {
   } finally { await stopOwnedChild(server); rmSync(dir, { recursive: true, force: true }) }
 }
 const sorted = samples.slice(1).map(x => x.ms).sort((a, b) => a - b), percentile = p => sorted[Math.ceil(sorted.length * p) - 1]
-console.log(JSON.stringify({ lane, mode, concurrency, coldLabel: 'fresh process; OS cache not purged', cold: samples[0], hotSamples: sorted.length, hot: { p50: percentile(.5), p95: percentile(.95), p99: percentile(.99) }, samples, metrics, heapOldSpaceMiB: 2048, containerLimited: false }))
+console.log(JSON.stringify({ lane, mode, concurrency, input: mode === 'detail' ? { enterpriseId: fixed.id } : mode === 'search' ? { ...input, q: undefined, qSha256: createHash('sha256').update(input.q).digest('hex') } : input, coldLabel: 'fresh process; OS cache not purged', cold: samples[0], hotSamples: sorted.length, hot: { p50: percentile(.5), p95: percentile(.95), p99: percentile(.99) }, samples, metrics, heapOldSpaceMiB: 2048, containerLimited: false }))
 db.$client.close()

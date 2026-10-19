@@ -10,17 +10,24 @@ type Db = BetterSQLite3Database<typeof s>
 // Connection-local deterministic normalizers preserve the shared JS contract,
 // including Unicode casing and legacy whitespace. No schema/cache is created.
 const registered = new WeakSet<object>()
-function identityFunctions(db: Db) {
+export function identityFunctions(db: Db) {
   const client = (db as Db & { $client: Database }).$client
   if (registered.has(client)) return
   client.function('roster84_uscc', { deterministic: true }, (value: unknown) => normalizeUscc(value as string | null) || null)
   client.function('roster84_name', { deterministic: true }, (value: unknown) => normalizeName(value as string | null))
+  client.function('roster84_upper', { deterministic: true }, (value: string | null) => value?.toUpperCase() ?? '')
   registered.add(client)
 }
-// Most stored keys are canonical ASCII USCCs. Bypass the JS callback for
-// those keys; all legacy/Unicode/name keys still use the exact shared rule.
-const uscc = (value: ReturnType<typeof sql>) => sql`case when ${value} glob '*[^A-Z0-9]*' then roster84_uscc(${value}) else nullif(${value}, '') end`
-const name = (value: ReturnType<typeof sql>) => sql`roster84_name(${value})`
+// Punctuation and lowercase ASCII (including name:/synthetic keys) are valid
+// inputs too. SQLite upper is identical to JS only in this ASCII fast path.
+// Whitespace/Unicode keep the shared normalizer; never approximate their casing.
+export const identityUsccSql = (value: ReturnType<typeof sql>) => sql`case when instr(${value},char(0))>0 or ${value} glob '*[^!-~]*' then roster84_uscc(${value}) else nullif(upper(${value}), '') end`
+const uscc = identityUsccSql
+// normalizeName without evidence only removes these characters. Plain Chinese
+// names can stay native; legacy whitespace/parentheses/punctuation use JS.
+const nameSpecial = '*[\t\n\v\f\r \u00a0\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u3000\ufeff（）()√✓、,，.。;；]*'
+export const identityNameSql = (value: ReturnType<typeof sql>) => sql`case when instr(${value},char(0))>0 or ${value} glob ${nameSpecial} then roster84_name(${value}) else coalesce(${value}, '') end`
+const name = identityNameSql
 
 export function readEnterpriseHistories(db: Db, ids?: number[]) {
   const scope = (column: typeof s.enterprise.id | typeof s.record.enterpriseId | typeof s.enterpriseAlias.enterpriseId | typeof s.differenceReason.enterpriseId) => ids == null ? undefined : inArray(column, ids)
@@ -82,10 +89,18 @@ export function readEnterpriseSnapshot(db: Db, id?: number) {
       or ${inArray(s.platformExportBatch.id, [...new Set(exportRows.map(row => row.batchId))])}`).all()
     const enterprise = enterprises[0]
     if (enterprise) {
-      const ownQueries = sql`select q.id from platform_query q where
-        q.query_key = ${`name:${enterprise.nameNorm}`} or ${uscc(sql`q.query_key`)} = ${`name:${enterprise.nameNorm}`} or
-        (${normalizeUscc(enterprise.usccNorm) || null} is not null and ${uscc(sql`q.query_key`)} = ${normalizeUscc(enterprise.usccNorm) || null}) or
-        q.id in (select query_id from platform_relation where enterprise_id = ${id})`
+      const ownUscc = normalizeUscc(enterprise.usccNorm) || null
+      // normalizeUscc uppercases the ASCII prefix to NAME:, so it can never
+      // equal the literal lowercase name: key. Keep that original exact match
+      // indexed; name-only identities need no normalization scan at all.
+      // Likewise normalization never removes ':': reject impossible USCC keys
+      // natively before invoking any legacy Unicode callback.
+      const queryScope = or(
+        sql`q.query_key = ${`name:${enterprise.nameNorm}`}`,
+        ownUscc == null ? undefined : sql`${ownUscc.includes(':') ? sql`1` : sql`instr(q.query_key,':')=0`} and ${uscc(sql`q.query_key`)} = ${ownUscc}`,
+        sql`q.id in (select query_id from platform_relation where enterprise_id = ${id})`,
+      )!
+      const ownQueries = sql`select q.id from platform_query q where ${queryScope}`
       const ownIds = db.all<{ id: number }>(ownQueries).map(row => row.id)
       const evidenceIds = [...new Set(differences.map(row => row.evidenceQueryId).filter((id): id is number => id != null))]
       const queryIds = [...new Set([...ownIds, ...evidenceIds])]

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../db'
+import { listEnterprises } from '../server/utils/mcp-roster'
 
 const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-http-'))
 const db = useDb({ dbPath: join(dir, 'test.sqlite') })
@@ -26,6 +27,26 @@ db.$client.prepare('UPDATE platform_query SET collection_evidence = ? WHERE id =
 db.insert(schema.platformRelation).values({ queryId: otherQuery, sequenceNo: 1, enterpriseId: unrelated }).run()
 db.$client.prepare('UPDATE platform_relation SET raw_fields = ? WHERE query_id = ?').run('{unrelated invalid json', otherQuery)
 let server: ReturnType<typeof createServer>, base: string
+let normalizationCalls = 0
+let unrelatedPointerBytes = 0
+const prepare = db.$client.prepare.bind(db.$client)
+db.$client.prepare = ((...args: Parameters<typeof db.$client.prepare>) => {
+  const statement = prepare(...args)
+  const observe = (value: unknown) => {
+    if (typeof value === 'string' && value.startsWith('unrelated-pointer-')) unrelatedPointerBytes += Buffer.byteLength(value)
+    else if (value && typeof value === 'object') for (const child of Object.values(value)) observe(child)
+  }
+  for (const method of ['get', 'all'] as const) {
+    const run = statement[method].bind(statement)
+    statement[method] = ((...params: unknown[]) => { const out = run(...params); observe(out); return out }) as never
+  }
+  const iterate = statement.iterate.bind(statement)
+  statement.iterate = function* (...params: unknown[]) { for (const row of iterate(...params)) { observe(row); yield row } }
+  return statement
+}) as typeof db.$client.prepare
+const registerFunction = db.$client.function.bind(db.$client)
+db.$client.function = ((name: string, options: unknown, callback: (...args: unknown[]) => unknown) =>
+  registerFunction(name, { ...(options as object), varargs: true }, (...args: unknown[]) => { normalizationCalls++; return callback(...args) })) as typeof db.$client.function
 beforeAll(async () => {
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   for (const [name, value] of Object.entries({ defineEventHandler, getQuery, getRouterParam, createError })) vi.stubGlobal(name, value)
@@ -42,6 +63,113 @@ it('HTTP list keeps filters, same-title recognition, counts, stable deep pages a
   expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2, differences: 2 }, rows: [{ enterpriseId: owner, titles: ['little_giant', 'specialized_sme'], aliasNames: ['已确认旧名'], nextReviewYear: 2028 }] })
   for (const query of ['q=待核旧名', 'title=little_giant&firstYear=2022', 'source=jxj&eventType=award&year=2025']) expect(await (await fetch(`${base}/api/roster/enterprises?${query}`)).json()).toMatchObject({ counts: { total: 0 }, rows: [] })
   expect(await (await fetch(`${base}/api/roster/enterprises?q=合成&sort=name&page=2&pageSize=1`)).json()).toMatchObject({ counts: { total: 1 }, page: 2, rows: [] })
+})
+it('HTTP detail preserves legacy Unicode keys without allocating normalization callbacks for unrelated plain keys', async () => {
+  const ids: number[] = []
+  db.$client.transaction(() => {
+    const insert = db.$client.prepare("INSERT INTO platform_query(interface,query_key,queried_at,status,created_at) VALUES('apply_list',?,'2026-10-19','failed','2026-10-19')")
+    for (let i = 0; i < 1000; i++) ids.push(Number(insert.run(`synthetic84:unrelated:${i}`).lastInsertRowid))
+    ids.push(Number(insert.run('\u200B sYnThEtIc84\u3000').lastInsertRowid))
+  })()
+  normalizationCalls = 0
+  try {
+    const response = await fetch(`${base}/api/roster/enterprises/${owner}`)
+    expect(response.status).toBe(200)
+    const detail = await response.json()
+    expect(detail.platform.queries.map((q: any) => q.id)).toEqual([failed, recognized, ids.at(-1)])
+    // Supplementary allocation observation at the real SQLite/HTTP seam.
+    // Unrelated ASCII punctuation/lowercase keys must stay inside native SQL.
+    expect(normalizationCalls).toBeLessThan(30)
+  } finally {
+    db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids)
+  }
+})
+it('HTTP filtered list counts titles without materializing unrelated evidence pointers', async () => {
+  const record = db.insert(schema.record).values({ enterpriseId: unrelated, titleCode: 'innovative_sme', source: 'jxj' }).returning().get()
+  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2020 }).returning().get()
+  db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: `unrelated-pointer-${'x'.repeat(4096)}.pdf` }).run()
+  unrelatedPointerBytes = 0
+  try {
+    const response = await fetch(`${base}/api/roster/enterprises?q=已确认旧名&pageSize=1`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2, differences: 2 }, rows: [{ enterpriseId: owner, nextReviewYear: 2028 }] })
+    expect(unrelatedPointerBytes).toBe(0)
+  } finally { db.$client.prepare('DELETE FROM record WHERE id = ?').run(record.id) }
+})
+it('HTTP detail keeps embedded-null Unicode identity normalization', async () => {
+  const identity = db.insert(schema.enterprise).values({ name: '控制符测试企业', nameNorm: '控制符测试企业', usccNorm: 'X\u0000SS' }).returning().get()
+  const query = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: 'x\u0000ß', queriedAt: '2026-10-19', status: 'failed' }).returning().get()
+  try {
+    const response = await fetch(`${base}/api/roster/enterprises/${identity.id}`)
+    expect(response.status).toBe(200)
+    expect((await response.json()).platform.queries.map((q: any) => q.id)).toEqual([query.id])
+  } finally {
+    db.$client.prepare('DELETE FROM platform_query WHERE id = ?').run(query.id)
+    db.$client.prepare('DELETE FROM enterprise WHERE id = ?').run(identity.id)
+  }
+})
+it('HTTP name-only detail skips impossible normalized-name matches in unrelated query keys', async () => {
+  const identity = db.insert(schema.enterprise).values({ name: '纯名称主体', nameNorm: '纯名称主体' }).returning().get()
+  const exact = db.insert(schema.platformQuery).values({ interface: 'apply_list', queryKey: 'name:纯名称主体', queriedAt: '2026-10-19', status: 'failed' }).returning().get()
+  const ids: number[] = []
+  db.$client.transaction(() => {
+    const insert = db.$client.prepare("INSERT INTO platform_query(interface,query_key,queried_at,status,created_at) VALUES('apply_list',?,'2026-10-19','failed','2026-10-19')")
+    for (let i = 0; i < 1000; i++) ids.push(Number(insert.run(`\u200B 无关键${i} `).lastInsertRowid))
+  })()
+  normalizationCalls = 0
+  try {
+    const response = await fetch(`${base}/api/roster/enterprises/${identity.id}`)
+    expect(response.status).toBe(200)
+    expect((await response.json()).platform.queries.map((q: any) => q.id)).toEqual([exact.id])
+    expect(normalizationCalls).toBeLessThan(30)
+  } finally {
+    db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${[exact.id, ...ids].map(() => '?').join(',')})`).run(exact.id, ...ids)
+    db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(identity.id)
+  }
+})
+it('MCP search keeps malformed UTF-16 distinct from stored replacement characters', () => {
+  const identity = db.insert(schema.enterprise).values({ name: '替换\uFFFD企业', nameNorm: '替换\uFFFD企业', district: '替换\uFFFD属地' }).returning().get()
+  try {
+    // SQLite UTF-8 binding substitutes U+FFFD for an isolated surrogate. The
+    // original JS predicates did not equate these distinct inputs.
+    expect(listEnterprises(db, { q: '\uD800' }).rows).toEqual([])
+    expect(listEnterprises(db, { district: '替换\uD800属地' }).rows).toEqual([])
+    expect(listEnterprises(db, { q: '\uFFFD' }).rows.map(row => row.enterpriseId)).toEqual([identity.id])
+  } finally { db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(identity.id) }
+})
+it('HTTP SQL selection preserves first-award ties, pending years, same-event filters and terminated lifecycle', async () => {
+  const identities = ['A', 'B', 'C'].map(label => db.insert(schema.enterprise).values({ name: `汇总边界${label}`, nameNorm: `汇总边界${label}`, usccNorm: `BOUND84${label}` }).returning().get().id)
+  const [a, b, c] = identities as [number, number, number]
+  const record = (enterpriseId: number, titleCode: string, source: 'jxj' | 'miit' = 'jxj') => db.insert(schema.record).values({ enterpriseId, titleCode, source }).returning().get().id
+  const award = (recordId: number, year: number | null, evidence: boolean, decidedYear = year) => {
+    const id = db.insert(schema.recordEvent).values({ recordId, eventType: 'award', year, decidedYear }).returning().get().id
+    if (evidence) db.insert(schema.recordEvidence).values({ recordEventId: id, sourceFile: 'boundary.pdf', page: 1 }).run()
+    return id
+  }
+  const early = award(record(a, 'specialized_sme'), 2020, false, 2021)
+  const aPlatform = record(a, 'specialized_sme', 'miit')
+  award(aPlatform, 2021, true)
+  award(record(a, 'innovative_sme'), 2019, true)
+  db.insert(schema.recordEvent).values({ recordId: aPlatform, eventType: 'review', year: 2024, decidedYear: 2024, reviewOutcome: 'passed' }).run()
+  award(record(b, 'little_giant'), null, true)
+  const cRecord = record(c, 'specialized_sme')
+  award(cRecord, 2020, true, 2022)
+  db.insert(schema.recordEvent).values({ recordId: cRecord, eventType: 'review', year: 2025, decidedYear: 2025, reviewOutcome: 'failed' }).run()
+  const list = async (query: string) => (await fetch(`${base}/api/roster/enterprises?q=汇总边界&${query}`)).json()
+  try {
+    const result = await list('pageSize=10')
+    expect(result.rows.map((row: any) => row.enterpriseId)).toEqual([c, a, b])
+    expect(result.counts).toMatchObject({ total: 3, titlePairs: 4, recognitionPairs: 4, differences: 3 })
+    expect(result.rows[0]).toMatchObject({ nextReviewYear: null, firstRecognition: [{ year: 2022, status: 'confirmed' }] })
+    expect(result.rows[1].firstRecognition.find((entry: any) => entry.titleCode === 'specialized_sme')).toMatchObject({ year: 2021, firstEventId: early, status: 'pending', pendingReason: 'no_evidence' })
+    expect(await list('title=specialized_sme&firstYear=2021&firstStatus=pending')).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 1 }, rows: [{ enterpriseId: a }] })
+    expect(await list('title=little_giant&firstStatus=pending')).toMatchObject({ rows: [{ enterpriseId: b, firstRecognition: [{ year: null, pendingReason: 'no_dated_award' }] }] })
+    expect(await list('source=jxj&eventType=review&year=2024')).toMatchObject({ counts: { total: 0 }, rows: [] })
+    expect(await list('source=miit&eventType=review&year=2024')).toMatchObject({ counts: { total: 1 }, rows: [{ enterpriseId: a }] })
+  } finally {
+    db.$client.prepare(`DELETE FROM record WHERE enterprise_id IN (${identities.map(() => '?').join(',')})`).run(...identities)
+    db.$client.prepare(`DELETE FROM enterprise WHERE id IN (${identities.map(() => '?').join(',')})`).run(...identities)
+  }
 })
 it('HTTP detail scopes identity and record evidence but preserves recognized unmatched rows, failures, original JSON and source positions', async () => {
   // Unrelated identity JSON also cannot be loaded by the detail path.

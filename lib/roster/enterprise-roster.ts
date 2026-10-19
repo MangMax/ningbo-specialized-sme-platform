@@ -1,5 +1,5 @@
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
-import { readEnterpriseSnapshot, readEnterpriseHistories, iterateEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
+import { readEnterpriseSnapshot, readEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
  *
@@ -23,15 +23,15 @@ import { readEnterpriseSnapshot, readEnterpriseHistories, iterateEnterpriseHisto
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../domain'
+import { selectEnterpriseCoordinates, removedEnterpriseIds } from './enterprise-list-selection'
+import { inArray } from 'drizzle-orm'
 import { getComparison, type ComparisonDirection } from '../comparison'
 import { DIFFERENCE_STATUS_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import { isPageCapable } from './evidence-page'
-import { DEFAULT_ROSTER_ENTERPRISE_SORT, ROSTER_ENTERPRISE_SORTS } from './ledger-contract'
 import type { RosterEnterpriseSort } from './ledger-contract'
 import {
   judgeFirstRecognition,
-  matchesRecognitionQuery,
   type FirstRecognitionEvidence,
   type RecognitionEntry,
   type RecognitionEvent,
@@ -186,7 +186,7 @@ export interface RosterEnterpriseFilter {
    * 与上面的 `year` **不是一回事**,所以名字不能混:`year` 筛的是**事件**年份(任何类型的事件),
    * 这里筛的是该称号**首次认定**的年份。两者在同一条 URL 上必须能分开说。
    *
-   * 判据与 `title` / `firstStatus` **落在同一个称号上**(见 `matchesFirstRecognition`):
+   * 判据与 `title` / `firstStatus` **落在同一个称号上**(见 SQL 选择器 `enterprise-list-selection.ts`):
    * 「创新型 2022 首次认定」不会命中一个创新型 2021、专精特新 2022 的企业。
    */
   firstYear?: number[]
@@ -592,39 +592,6 @@ export function allRosterEnterprises(
 }
 
 /**
- * 记录侧的三个增量判据(RL-17)。**在 profile 上判**,不是在企业行上判 ——
- * `RosterEnterpriseRow` 是接口面,不该为了筛选多长出几个字段。
- *
- * 口径与 `/api/records` 的 `buildWhere` **同构**。那里把 `source` 落在 record 行上,
- * 把 `eventType` / `year` 落成一条 EXISTS —— 类型与年份必须在**同一条事件**上,而这条
- * EXISTS 又挂在**那条** record 上。抬到企业粒度就是:
- *
- * > **存在**一条该企业的记录,它满足来源判据,且它上面有一条事件同时满足类型与年份判据。
- *
- * 为什么非要「同一条」:合并后两种分组共用一个 URL,用户在 `按企业` 与 `按企业×称号`
- * 之间切换时,看到的必须是**同一批企业**。松成「各自存在」,企业粒度会命中更多
- * (企业有一条 2023 复核、另有一条 2021 认定,就会被 `eventType=award&year=2023` 判中),
- * 两个分组当场对不上。
- *
- * 缺省即不判:「没给这一项」与「给了个筛不中的值」必须分开(前者返回全部,后者返回 0 条)。
- */
-function matchesRecordFilters(profile: Profile, filter: RosterEnterpriseFilter): boolean {
-  const sources = filter.source?.length ? filter.source : null
-  const types = filter.eventType?.length ? filter.eventType : null
-  const years = filter.year?.length ? filter.year : null
-  if (!sources && !types && !years) return true
-  return profile.records.some((record) => {
-    if (sources && !sources.includes(record.source)) return false
-    if (!types && !years) return true
-    return (profile.eventsByRecord.get(record.id) ?? []).some(
-      (e) =>
-        (!types || types.includes(e.eventType)) &&
-        (!years || (e.year != null && years.includes(e.year))),
-    )
-  })
-}
-
-/**
  * 读一次快照、把全部企业建成 profile —— **三个读模型共用这一处组织方式**。
  *
  * 为什么要抽出来:§7.1(企业总表)、§7.2(企业详情)、§7.5(首次认定)看的都是同一种
@@ -687,180 +654,31 @@ function readRosterContext(db: Db, snap: Snapshot = readSnapshot(db)): RosterCon
   }
 }
 
-/**
- * 该企业上**符合本次筛选**的那些(企业 × 称号)首次认定(RL-08)。
- *
- * ── 为什么非要「同一个称号」──────────────────────────────────────────────
- * 首次认定本来就是**企业 × 称号**的量。若把 `title` 与 `firstYear` 各判各的,
- * `title=innovative_sme&firstYear=2022` 会命中一个「创新型 2021 认定、专精特新 2022 认定」
- * 的企业 —— 用户要的是「**创新的**首次认定在 2022」,拿到手的却是另一回事。
- * 这与 RL-17 那条「来源与事件必须落在同一条记录上」是同一类错误,判法也照抄:
- * **存在一个称号,几个判据都落在它身上**。
- *
- * 判据没给时不筛(返回该企业全部首次认定)⇒ 这一个函数同时给出两个答案:
- *  - **筛选** —— 结果非空即命中(见 `matchesFirstRecognition`);
- *  - **计数** —— `counts.recognitionPairs` 就是各企业这个数组的长度之和。
- *    两者由同一段代码算出,不会出现「筛出来 3 家、计数说 5 条」这种对不上的局面。
- *
- * 年份给不出(`firstYear == null`)时**命中不了任何年份**:留空是「未知」,
- * 不该被当成某个具体年份的匹配。
- */
-function recognitionEntriesMatching(
-  profile: Profile,
-  filter: RosterEnterpriseFilter,
-): RecognitionEntry[] {
-  // 判据本体在 `first-recognition.ts`(与 §7.5 的清单**同一处**);这里只负责把企业侧的
-  // 参数名(`firstYear` / `firstStatus`)转成判据的形状,一个字段对一处,不做别的判断。
-  const query = { title: filter.title, firstYear: filter.firstYear, firstStatus: filter.firstStatus }
-  return profile.recognitions.filter((entry) => matchesRecognitionQuery(entry, query))
-}
-
-/**
- * 首次认定的增量判据:该企业**有没有**符合上述判据的首次认定。
- *
- * 没给 `firstYear` / `firstStatus` 时返回 `true` —— 称号判据仍由调用方独立走一遍,
- * 语义一字不变(既有的 `?title=…` URL 行为不受影响)。
- */
-function matchesFirstRecognition(profile: Profile, filter: RosterEnterpriseFilter): boolean {
-  if (!filter.firstYear?.length && !filter.firstStatus?.length) return true
-  return recognitionEntriesMatching(profile, filter).length > 0
-}
-
 function selectRosterEnterprises(
   db: Db,
   filter: RosterEnterpriseFilter,
   paginate = false,
 ): { rows: RosterEnterpriseRow[]; counts: RosterCounts } {
-  const snap = readEnterpriseSnapshot(db)
-  const index = indexSnapshots(snap)
-  // List filters and counts need six lightweight difference fields, not the
-  // complete evidence/explanation projection for every enterprise.
-  const explanations = currentExplanations(snap)
-  const derived = enterpriseComparisonCoordinates(db)
-  const seen = new Set<string>()
-  const differenceRows: DifferenceSummaryInput[] = derived.map(coordinate => {
-    const key = differenceKey(coordinate.enterpriseId, coordinate.titleCode, coordinate.direction)
-    seen.add(key)
-    const explanation = explanations.get(key)
-    return { ...coordinate, status: explanation?.status ?? 'not_queried', reasonCode: explanation?.reasonCode ?? null, inCurrentDifference: true }
-  })
-  for (const [key, explanation] of explanations) {
-    if (!seen.has(key)) differenceRows.push({ enterpriseId: explanation.enterpriseId, titleCode: explanation.titleCode, direction: explanation.direction, status: explanation.status, reasonCode: explanation.reasonCode, inCurrentDifference: false })
-  }
-  const differenceStatusesByEnterprise = new Map<number, Set<string>>()
-  for (const row of differenceRows) {
-    const statuses = differenceStatusesByEnterprise.get(row.enterpriseId) ?? new Set<string>()
-    statuses.add(row.status)
-    differenceStatusesByEnterprise.set(row.enterpriseId, statuses)
-  }
-  const differenceSummaries = enterpriseDifferenceSummaries(differenceRows)
-
-  const needle = filter.q?.trim() ? normalizeName(filter.q) : null
-  /**
-   * 统代匹配(RL-17 增量)。合并后的台账三个视图共用一个搜索框,框上写着
-   * 「企业名 / 曾用名 / 统一社会信用代码」;`/api/records` 那一侧一直认统代,
-   * 企业粒度不认的话,粘贴一个统代进来会**静默返回 0 家**。
-   * 口径与 `lib/query.ts` 的 `q` 逐字一致:归一化大写后的子串匹配。
-   */
-  const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
-  const diffStatuses = filter.diffStatus?.length ? filter.diffStatus : null
-  // Build and discard one profile at a time. Retaining every lifecycle map and
-  // candidate profile until pagination made even lightweight scans exceed 64MiB.
-  const matched: Array<{ row: RosterEnterpriseRow; recognitionPairs: number }> = []
+  const { page, pageSize } = pageOf(filter)
+  const { candidates, counts } = selectEnterpriseCoordinates(db, filter, paginate ? page * pageSize : undefined)
+  const selected = paginate ? candidates.slice((page - 1) * pageSize, page * pageSize) : candidates
+  const ids = selected.map(row => row.id)
+  const history = readEnterpriseHistories(db, ids)
+  const snap: Snapshot = { ...history, enterprises: db.select().from(schema.enterprise).where(inArray(schema.enterprise.id, ids)).all(),
+    exportRows: [], exportBatches: [], queries: [], relations: [] }
+  const evidence = indexEvidence(snap)
+  const byId = new Map(snap.enterprises.map(enterprise => [enterprise.id, enterprise]))
+  const removed = filter.rosterState ? new Set<number>() : removedEnterpriseIds(db, ids.filter(id => {
+    const records = snap.recordsByEnterprise.get(id) ?? []
+    return records.length > 0 && !records.some(record => record.source === 'jxj')
+  }))
   const aliases = new Map<number, Set<string>>()
-  for (const alias of db.select().from(schema.enterpriseAlias).all()) {
+  for (const alias of snap.aliases) {
     if (alias.verificationStatus !== 'confirmed') continue
     const names = aliases.get(alias.enterpriseId) ?? new Set<string>()
     names.add(alias.name); aliases.set(alias.enterpriseId, names)
   }
-  const histories = iterateEnterpriseHistories(db)
-  let next = histories.next()
-  for (const enterprise of snap.enterprises) {
-    const history = !next.done && next.value.enterpriseId === enterprise.id ? next.value : null
-    const batch = history ? { ...snap, ...history } : snap
-    const evidence = indexEvidence(batch)
-    const candidate = (() => {
-      const profile = buildProfile(enterprise, batch, evidence)
-      const aliasNames = [...(aliases.get(enterprise.id) ?? [])].sort()
-      const state = deriveRosterState(profile, index)
-      const difference = differenceSummaries.get(enterprise.id) ?? NO_DIFFERENCE
-      const differenceStatuses = differenceStatusesByEnterprise.get(enterprise.id) ?? new Set<string>()
-      if (filter.rosterState && state !== filter.rosterState) return []
-      if (filter.title?.length && !profile.titles.some((t) => filter.title!.includes(t))) return []
-      if (filter.district && effectiveDistrict(profile) !== filter.district) return []
-      if (diffStatuses) {
-        const hit =
-          (diffStatuses.includes(DIFF_STATUS_NONE) && differenceStatuses.size === 0) ||
-          diffStatuses.some((value) =>
-            value !== DIFF_STATUS_NONE &&
-            (differenceStatuses.has(value) || difference.reasonCode === value),
-          )
-        if (!hit) return []
-      }
-      if (!matchesRecordFilters(profile, filter)) return []
-      if (!matchesFirstRecognition(profile, filter)) return []
-      if (needle || usccNeedle) {
-        const hit =
-          (needle != null && normalizeName(profile.enterprise.name).includes(needle)) ||
-          (needle != null && aliasNames.some((alias) => normalizeName(alias).includes(needle))) ||
-          (usccNeedle != null &&
-            (profile.enterprise.usccNorm ?? '').toUpperCase().includes(usccNeedle))
-        if (!hit) return []
-      }
-      const row = toRow(profile, aliasNames, state, difference)
-      // Sorting/counting needs no evidence payload or award/alias arrays. Hydrate
-      // only the requested page after the exact same comparator has selected IDs.
-      if (paginate) {
-        row.firstRecognition = row.firstRecognition.map(first => ({ ...first, evidence: [], undatedAwardIds: [] }))
-        row.awards = []; row.aliasNames = []
-      }
-      return [{ row, recognitionPairs: recognitionEntriesMatching(profile, filter).length }]
-    })()
-    matched.push(...candidate)
-    if (history) next = histories.next()
-  }
-  const rows = matched.map((m) => m.row).sort(enterpriseComparator(filter.sort ?? DEFAULT_ROSTER_ENTERPRISE_SORT))
-
-  const titles: Record<string, number> = Object.fromEntries(TITLE_ORDER.map((code) => [code, 0]))
-  for (const row of rows) for (const code of row.titles) titles[code] = (titles[code] ?? 0) + 1
-  const counts: RosterCounts = {
-    total: rows.length,
-    titlePairs: Object.values(titles).reduce((a, b) => a + b, 0),
-    titles,
-    // 「首次认定」自己的单位 —— 与 `titlePairs` 不同:后者数的是**全部**称号,
-    // 给了首次认定判据之后两者不再相等,不单列就会让人把前者当成命中数。
-    recognitionPairs: matched.reduce((n, m) => n + m.recognitionPairs, 0),
-    differences: rows.reduce((sum, row) => sum + row.difference.count, 0),
-  }
-
-  if (!paginate) return { rows, counts }
-  const { page, pageSize } = pageOf(filter)
-  const selected = rows.slice((page - 1) * pageSize, page * pageSize)
-  const history = readEnterpriseHistories(db, selected.map(row => row.enterpriseId))
-  const batch = { ...snap, ...history }
-  const evidence = indexEvidence(batch)
-  const byId = new Map(snap.enterprises.map(enterprise => [enterprise.id, enterprise]))
-  return { counts, rows: selected.map(row => toRow(buildProfile(byId.get(row.enterpriseId)!, batch, evidence), [...(aliases.get(row.enterpriseId) ?? [])].sort(), row.rosterState, row.difference)) }
-}
-
-function earliestRecognition(row: RosterEnterpriseRow): number | null {
-  const years = row.firstRecognition.map((first) => first.year).filter((year): year is number => year != null)
-  return years.length ? Math.min(...years) : null
-}
-
-function enterpriseComparator(sort: RosterEnterpriseSort): (a: RosterEnterpriseRow, b: RosterEnterpriseRow) => number {
-  const byName = (a: RosterEnterpriseRow, b: RosterEnterpriseRow) =>
-    a.name.localeCompare(b.name) || a.enterpriseId - b.enterpriseId
-  if (sort === 'name') return byName
-  if (sort === 'title') {
-    return (a, b) => titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') || byName(a, b)
-  }
-  return (a, b) => {
-    const ya = earliestRecognition(a)
-    const yb = earliestRecognition(b)
-    if (ya == null || yb == null) return ya === yb ? byName(a, b) : ya == null ? 1 : -1
-    return yb - ya || byName(a, b)
-  }
+  return { counts, rows: selected.map(row => toRow(buildProfile(byId.get(row.id)!, snap, evidence), [...(aliases.get(row.id) ?? [])].sort(), removed.has(row.id) ? 'removed_platform_only' : row.state, row.difference)) }
 }
 
 // ---------------------------------------------------------------------------
