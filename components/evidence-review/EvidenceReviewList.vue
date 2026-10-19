@@ -383,8 +383,14 @@ function previousPage() {
 function restartPage() {
   cursor.value = undefined
   cursors.value = []
-  // 重新读取第一页会重建清单；先收起当前详情，避免丢弃后旧表单值还留在屏上。
+  // 用户明确丢弃后重新读取：先收起当前详情，避免旧表单值还留在屏上。
   selected.value = null
+  void refetch()
+}
+/** 提交成功后的刷新只重建清单，不关闭当前详情，成功回执仍可见。 */
+function refreshAfterSave() {
+  cursor.value = undefined
+  cursors.value = []
   void refetch()
 }
 </script>
@@ -592,7 +598,7 @@ function restartPage() {
           :id="`review-detail-${row.id}`"
           :key="row.id"
           :impact-id="row.id"
-          @saved="restart"
+          @saved="refreshAfterSave"
         />
       </li>
     </ul>
