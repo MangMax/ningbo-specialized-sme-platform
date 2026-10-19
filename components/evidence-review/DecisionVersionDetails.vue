@@ -8,6 +8,7 @@ import {
 } from '~~/lib/labels'
 import { decisionOriginLabel, decisionVersionActionLabel, reviewTimeLabel } from '~~/lib/roster/review-display'
 import { Badge } from '@/components/ui/badge'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
 defineProps<{ decision: DecisionVersion; label?: string }>()
 </script>
@@ -59,8 +60,8 @@ defineProps<{ decision: DecisionVersion; label?: string }>()
       <dd>{{ reviewTimeLabel(decision.effectiveAt) }} / {{ reviewTimeLabel(decision.recordedAt) }}</dd>
     </dl>
 
-    <details class="text-muted-foreground">
-      <summary class="cursor-pointer select-none">技术详情</summary>
+    <DisclosurePanel compact keep-mounted content-class="pb-0" class="text-muted-foreground">
+      <template #trigger><span>技术详情</span></template>
       <dl class="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 break-words">
         <dt>生效时间（原始）</dt><dd>{{ decision.effectiveAt ?? '未记录' }}</dd>
         <dt>登记时间（原始）</dt><dd>{{ decision.recordedAt }}</dd>
@@ -68,6 +69,6 @@ defineProps<{ decision: DecisionVersion; label?: string }>()
         <dt>前一版本</dt><dd>{{ decision.previousId == null ? '无' : `#${decision.previousId}` }}</dd>
         <dt>来源</dt><dd>{{ decisionOriginLabel(decision.origin) }}</dd>
       </dl>
-    </details>
+    </DisclosurePanel>
   </article>
 </template>

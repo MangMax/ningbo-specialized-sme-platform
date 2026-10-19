@@ -41,21 +41,17 @@ describe('面向用户的平台记录表',()=>{
   expect(view.text()).not.toMatch(/认定批次|核实状态|平台编号|匹配依据|2022年第一批|SQ001/)
   view.unmount()
  })
- it('全部Tab按称号树形分组，分组可折叠且每组序号从1开始',async()=>{
+ it('全部Tab按称号树形分组，每组序号从1开始且不再嵌套折叠',async()=>{
   const view=mount(PlatformRecords,{props:{queries:[query,{...query,id:2,rdjb:'1'}],relations:[{...record,sequenceNo:4},{...record,id:2,sequenceNo:8},{...record,id:3,queryId:2,sequenceNo:7}]}})
   const table=view.get('table[aria-label="关联记录"]')
   expect(table.findAll('tbody[data-record-title]')).toHaveLength(2)
-  expect(table.findAll('[data-testid="platform-title-group"] button').map(button=>button.text())).toEqual(['创新型中小企业1 条','专精特新中小企业2 条'])
+  expect(table.findAll('[data-testid="platform-title-group"]').map(group=>group.text())).toEqual(['创新型中小企业 1 条','专精特新中小企业 2 条'])
+  expect(table.findAll('[data-testid="platform-title-group"] button')).toHaveLength(0)
   expect(table.findAll('tbody[data-record-title="2"] [data-testid="platform-relation"]').map(row=>row.find('td').text())).toEqual(['1','2'])
-  const toggle=table.get('tbody[data-record-title="2"] button')
-  await toggle.trigger('click')
-  expect(toggle.attributes('aria-expanded')).toBe('false')
-  expect(table.findAll('[data-testid="platform-relation"]').map(row=>row.attributes('data-record-id'))).toEqual(['3'])
-  await toggle.trigger('click')
   expect(table.findAll('[data-testid="platform-relation"]')).toHaveLength(3)
   view.unmount()
- })
- it('单称号Tab不显示树分组，序号从1连续排列且不改原始查询序号',async()=>{
+})
+it('单称号Tab不显示树分组，序号从1连续排列且不改原始查询序号',async()=>{
   const input=[{...record,sequenceNo:4},{...record,id:2,sequenceNo:9}]
   const view=mount(PlatformRecords,{props:{queries:[query],relations:input}})
   await view.findAll('[role="tab"]').find(tab=>tab.text()==='专精特新中小企业')!.trigger('keydown',{key:'Enter'})

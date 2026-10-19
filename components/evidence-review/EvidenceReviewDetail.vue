@@ -11,6 +11,7 @@ import DecisionVersionDetails from './DecisionVersionDetails.vue'
 import DecisionHistory from './DecisionHistory.vue'
 import AssessmentStatusBadge from './AssessmentStatusBadge.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
 const emit = defineEmits<{ saved: [] }>()
 const refreshAffected = useEvidenceReviewRefresh()
@@ -94,15 +95,15 @@ async function reloadCurrent() {
         </span>
       </div>
 
-      <details class="text-muted-foreground text-[13px] leading-5">
-        <summary class="cursor-pointer select-none">技术详情</summary>
+      <DisclosurePanel compact keep-mounted content-class="pb-0" class="text-muted-foreground">
+        <template #trigger><span>技术详情</span></template>
         <p class="mt-1 break-words">
           复核项 #{{ data.id }} · 决定 #{{ data.decisionId }} · 当前版本 #{{ data.currentDecision?.versionId ?? '无' }} ·
-          证据修订 #{{ data.evidenceToken.latestRevisionId }} · 投影
+          证据修订 #{{ data.latestRevisionId }} · 投影
           {{ data.evidenceToken.projectionReady ? '就绪' : '未就绪' }} · 来源
           {{ lineageLabels[data.lineage] ?? data.lineage }}
         </p>
-      </details>
+      </DisclosurePanel>
 
       <QueryCoverageDetails v-if="data.queryCoverage" :coverage="data.queryCoverage" />
 
@@ -119,13 +120,13 @@ async function reloadCurrent() {
           生效：{{ reviewTimeLabel(data.reviewedBaseline.effectiveAt) }} ·
           登记：{{ reviewTimeLabel(data.reviewedBaseline.recordedAt) }}
         </p>
-        <details class="text-muted-foreground">
-          <summary class="cursor-pointer select-none">技术详情</summary>
+        <DisclosurePanel compact keep-mounted content-class="pb-0" class="text-muted-foreground">
+          <template #trigger><span>技术详情</span></template>
           <p class="mt-1 break-words">
             生效时间（原始）：{{ data.reviewedBaseline.effectiveAt }} ·
             登记时间（原始）：{{ data.reviewedBaseline.recordedAt }}
           </p>
-        </details>
+        </DisclosurePanel>
       </section>
 
       <EvidenceImpactSources :impact-id="data.id" :enterprise-id="data.enterpriseId" />

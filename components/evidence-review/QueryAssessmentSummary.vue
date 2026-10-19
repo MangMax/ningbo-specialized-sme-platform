@@ -36,7 +36,7 @@ const validity = computed(() => props.assessment.explanationValidity.status)
     <div
       v-if="decision"
       class="min-w-0"
-      :class="compact ? 'text-[13px] leading-5' : 'border-primary/35 bg-muted/30 rounded-sm border-l-2 px-2.5 py-2 text-[13px] leading-5'"
+      :class="compact ? 'text-[13px] leading-5' : 'bg-muted/40 rounded-md px-3 py-2 text-[13px] leading-5'"
       data-testid="current-decision"
     >
       <p class="font-medium">当前决定 #{{ decision.id }} · {{ decisionStatusLabel(assessment) }}</p>

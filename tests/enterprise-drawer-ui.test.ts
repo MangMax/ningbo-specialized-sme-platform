@@ -335,24 +335,36 @@ describe('企业详情抽屉的称号时间线', () => {
     expect(detail.events.map(event=>event.eventType)).toEqual(['award','maintain','review'])
   })
 
-  it('首尾连接线止于圆点中心，中间事件贯穿整行',()=>{
+  it('称号历史用普通分隔行，不再绘制圆点或连接线',()=>{
     queryData.value=timelineDetail(['award','maintain','maintain'])
     queryLoading.value=false
     const wrapper=mountDrawer()
-    const connectors=wrapper.findAll('[data-testid="timeline-connector"]')
-    expect(connectors).toHaveLength(3)
-    expect(connectors[0]!.classes()).toEqual(expect.arrayContaining(['top-[9.5px]','bottom-0']))
-    expect(connectors[1]!.classes()).toContain('inset-y-0')
-    expect(connectors[2]!.classes()).toEqual(expect.arrayContaining(['top-0','h-[9.5px]']))
-    expect(wrapper.findAll('[data-testid="timeline-node"]')).toHaveLength(3)
+    expect(wrapper.findAll('[data-testid="timeline-event"]')).toHaveLength(3)
+    expect(wrapper.findAll('[data-testid="timeline-node"]')).toHaveLength(0)
+    expect(wrapper.findAll('[data-testid="timeline-connector"]')).toHaveLength(0)
+    expect(wrapper.get('[data-testid="drawer-timeline"]').classes()).toEqual(expect.arrayContaining(['divide-y']))
   })
 
-  it('单个事件只展示圆点，不画悬空连接线',()=>{
+  it('单个事件仍显示年份与事件，不需要装饰节点',()=>{
     queryData.value=timelineDetail(['award'])
     queryLoading.value=false
     const wrapper=mountDrawer()
-    expect(wrapper.findAll('[data-testid="timeline-node"]')).toHaveLength(1)
-    expect(wrapper.findAll('[data-testid="timeline-connector"]')).toHaveLength(0)
+    const events=wrapper.findAll('[data-testid="timeline-event"]')
+    expect(events).toHaveLength(1)
+    expect(events[0]!.text()).toContain('认定')
+    expect(wrapper.findAll('[data-testid="timeline-node"]')).toHaveLength(0)
+  })
+
+  it('抽屉只给核对摘要与入口，不重复企业详情矩阵',()=>{
+    const assessments=[{assessment:'decided'},{assessment:'decided'},{assessment:'queried_unjudged'},{assessment:'not_queried'},{assessment:'not_queried'},{assessment:'not_queried'}]
+    queryData.value={...detailWithDifference(),titleAssessments:assessments}
+    queryLoading.value=false
+    const wrapper=mountDrawer()
+    const summary=wrapper.get('[data-testid="drawer-review-summary"]')
+    expect(summary.text()).toContain('6 个判断范围')
+    expect(summary.text()).toContain('2 个已有决定')
+    expect(summary.text()).toContain('3 个尚未查询')
+    expect(wrapper.find('section[aria-label="称号核对"]').exists()).toBe(false)
   })
 })
 

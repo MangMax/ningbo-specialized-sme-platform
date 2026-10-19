@@ -16,10 +16,16 @@ const variant = computed<BadgeVariants['variant']>(() => {
   return rank != null && rank <= 3 ? (`tier-${rank}` as BadgeVariants['variant']) : 'quiet'
 })
 const national = computed(() => TITLE_LEVEL[props.code] === 'national')
+/** 徽标深浅对应称号等级；把来源字段（等级、rank）直接写进提示，不另造说法。 */
+const semantics = computed(() => {
+  const level = TITLE_LEVEL[props.code] === 'national' ? '国家级' : TITLE_LEVEL[props.code] === 'municipal' ? '市级' : '层级待核'
+  const rank = TITLE_RANK[props.code]
+  return `${label.value} · ${level}${rank != null ? ` · 等级 ${rank}` : ''}`
+})
 </script>
 
 <template>
-  <Badge :variant="variant" :class="national && 'gap-1.5 pl-1'">
+  <Badge :variant="variant" :class="national && 'gap-1.5 pl-1'" :title="semantics">
     <span
       v-if="national"
       aria-hidden="true"

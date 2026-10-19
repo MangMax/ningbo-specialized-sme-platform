@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ChevronDown } from '@lucide/vue'
 import { PLATFORM_QUERY_STATUS_ORDER, PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import AssessmentStatusBadge from '@/components/evidence-review/AssessmentStatusBadge.vue'
@@ -31,15 +30,6 @@ function onSourceCloseAutoFocus(event: Event) {
 const selectedRelationId = ref<number | null>(null)
 const selectedTitle = ref('all')
 const selectedSource = ref('all')
-const collapsedGroups = ref(new Set<string>())
-const groupKey = (source: string, title: string) => `${source}:${title}`
-const toggleGroup = (source: string, title: string) => {
-  const next = new Set(collapsedGroups.value)
-  const key = groupKey(source, title)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
-  collapsedGroups.value = next
-}
 const time = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : formatFetchTime(value) ?? '未提供'
 const queryById = computed(() => new Map(props.queries.map(query => [query.id, query])))
 // 申报记录未带称号时，只通过相同平台编号的唯一关联归属分组；不按年份、名称猜测。
@@ -97,7 +87,6 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
       title,
       label: PLATFORM_RDJBS[title] ?? '称号未标注',
       rows,
-      collapsed: activeTitle.value === 'all' && collapsedGroups.value.has(groupKey(table.source, title)),
     })),
   }
 }))
@@ -161,34 +150,29 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                 </tr>
               </thead>
               <tbody v-for="group in table.groups" :key="group.title" :data-record-title="group.title">
-                <tr v-if="activeTitle === 'all'" class="bg-accent/40 border-t" data-testid="platform-title-group">
-                  <th :colspan="table.columns" class="p-0 text-left font-medium" scope="rowgroup">
-                    <Button type="button" variant="link" size="sm" class="sticky left-0 h-auto justify-start gap-2 rounded-none px-3 py-2 text-foreground active:scale-100" :aria-expanded="!group.collapsed" :aria-label="`${group.label}，${group.rows.length}条${table.label}`" @click="toggleGroup(table.source, group.title)">
-                      <ChevronDown data-icon="inline-start" class="transition-transform duration-150 motion-reduce:transition-none" :class="{ '-rotate-90': group.collapsed }" />
-                      <span>{{ group.label }}</span>
-                      <span class="text-muted-foreground font-normal">{{ group.rows.length }} 条</span>
-                    </Button>
+                <tr v-if="activeTitle === 'all'" class="bg-muted/30 border-t" data-testid="platform-title-group">
+                  <th :colspan="table.columns" class="px-3 py-2 text-left font-medium" scope="rowgroup">
+                    {{ group.label }}
+                    <span class="text-muted-foreground font-normal">{{ group.rows.length }} 条</span>
                   </th>
                 </tr>
-                <template v-if="!group.collapsed">
-                  <tr v-for="({record}, index) in group.rows" :key="record.id" class="border-t" data-testid="platform-relation" :data-record-id="record.id">
-                    <td class="px-3 py-1.5 tabular-nums" :class="{ 'pl-9': activeTitle === 'all' }">{{ index + 1 }}</td>
-                    <td class="px-3 py-1.5">{{ record.nameRaw ?? '未提供' }}<span v-if="table.recognized && record.enterpriseId === null" class="text-muted-foreground block text-xs">未匹配主体</span></td>
-                    <td class="px-3 py-1.5 tabular-nums">{{ record.usccRaw ?? '未提供' }}</td>
-                    <template v-if="table.recognized">
-                    <td v-for="field in ['szq', 'rdxx', 'rddqrq', 'whpcyear', 'whpc']" :key="field" class="px-3 py-1.5">{{ recognizedField(record.rawFields, field) }}</td>
-                    </template>
-                    <template v-else>
-                    <td class="px-3 py-1.5">{{ record.province ?? '未提供' }}</td>
-                    <td class="px-3 py-1.5">{{ record.declareKind ? RELATION_DECLARE_KINDS[record.declareKind] ?? '类型待核' : '未提供' }}</td>
-                    <td class="px-3 py-1.5">{{ record.status ?? '未提供' }}</td>
-                    <td class="px-3 py-1.5 tabular-nums">{{ record.appliedAt ?? '未提供' }}</td>
-                    <td class="px-3 py-1.5">{{ record.batch ?? '未提供' }}</td>
-                    </template>
-                    <td v-if="table.hasAliases" class="px-3 py-1.5">{{ record.aliasNameRaw ?? '—' }}</td>
-                    <td class="bg-card border-l px-3 py-1.5"><div class="flex flex-col items-start gap-1"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /><Button variant="ghost" size="sm" @click="selectedRelationId = record.id">对应事件/出处</Button></div></td>
-                  </tr>
-                </template>
+                <tr v-for="({record}, index) in group.rows" :key="record.id" class="border-t" data-testid="platform-relation" :data-record-id="record.id">
+                  <td class="px-3 py-1.5 tabular-nums" :class="{ 'pl-9': activeTitle === 'all' }">{{ index + 1 }}</td>
+                  <td class="px-3 py-1.5">{{ record.nameRaw ?? '未提供' }}<span v-if="table.recognized && record.enterpriseId === null" class="text-muted-foreground block text-xs">未匹配主体</span></td>
+                  <td class="px-3 py-1.5 tabular-nums">{{ record.usccRaw ?? '未提供' }}</td>
+                  <template v-if="table.recognized">
+                  <td v-for="field in ['szq', 'rdxx', 'rddqrq', 'whpcyear', 'whpc']" :key="field" class="px-3 py-1.5">{{ recognizedField(record.rawFields, field) }}</td>
+                  </template>
+                  <template v-else>
+                  <td class="px-3 py-1.5">{{ record.province ?? '未提供' }}</td>
+                  <td class="px-3 py-1.5">{{ record.declareKind ? RELATION_DECLARE_KINDS[record.declareKind] ?? '类型待核' : '未提供' }}</td>
+                  <td class="px-3 py-1.5">{{ record.status ?? '未提供' }}</td>
+                  <td class="px-3 py-1.5 tabular-nums">{{ record.appliedAt ?? '未提供' }}</td>
+                  <td class="px-3 py-1.5">{{ record.batch ?? '未提供' }}</td>
+                  </template>
+                  <td v-if="table.hasAliases" class="px-3 py-1.5">{{ record.aliasNameRaw ?? '—' }}</td>
+                  <td class="bg-card border-l px-3 py-1.5"><div class="flex flex-col items-start gap-1"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /><Button variant="ghost" size="sm" @click="selectedRelationId = record.id">对应事件/出处</Button></div></td>
+                </tr>
               </tbody>
             </table>
           </div>

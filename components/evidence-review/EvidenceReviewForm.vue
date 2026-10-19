@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch, type Ref } from 'vue'
 import type { ImpactDetail } from '~~/lib/roster/evidence-review-ui'
 import { useEvidenceReviewRefresh } from '~/composables/useEvidenceReviewRefresh'
 import { Input } from '@/components/ui/input'
@@ -22,7 +22,23 @@ const mode = shallowRef<'maintain' | 'replace'>('maintain')
 const choiceId = useId()
 const conflict = shallowRef(false)
 watch(() => props.detail, () => { if (conflict.value) failure.value = ''; conflict.value = false })
+
 const draft = ref({ status: 'confirmed_reason', reasonCode: '', reasonNote: '', measureCode: '', measureNote: '', evidenceQueryId: '', evidenceRelationId: '' })
+
+/**
+ * 页面可能用标签页承载核对；切页会卸载本表单。
+ * 把“有未提交内容”上报给宿主，由宿主先确认再切，不静默丢掉草稿。
+ */
+const externalDraft = inject<Ref<boolean> | null>('enterprise-review-draft', null)
+const isDirty = computed(() =>
+  !!token.value.trim()
+  || !!actor.value.trim()
+  || !!basis.value.trim()
+  || !!ruleVersion.value.trim()
+  || mode.value !== 'maintain'
+  || Object.entries(draft.value).some(([key, value]) => key !== 'status' && String(value).trim() !== ''),
+)
+watch(isDirty, value => { if (externalDraft) externalDraft.value = value }, { immediate: true })
 const validId = (id: string) => !id || (/^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id)))
 const replacementReady = computed(() => !!draft.value.measureCode && (draft.value.status === 'confirmed_no_diff' ? draft.value.measureCode === 'none' : !!draft.value.reasonCode && (draft.value.reasonCode !== 'pending_review' || draft.value.measureCode === 'follow_review')) && validId(draft.value.evidenceQueryId) && validId(draft.value.evidenceRelationId))
 const eligible = computed(() => props.detail.pending && props.detail.oldDecision != null && !props.detail.gaps.decisionUnavailable && props.detail.lineage === 'current' && props.detail.currentDecision?.current != null && props.detail.currentDecision.versionId === props.detail.decisionId && props.detail.evidenceToken.decisionId === props.detail.decisionId && props.detail.evidenceToken.projectionReady)
@@ -54,7 +70,7 @@ const blockedReason = computed(() => {
 let retry: { signature: string; body: Record<string, unknown> } | null = null
 function clearToken() { token.value = '' }
 onMounted(() => window.addEventListener('pagehide', clearToken))
-onBeforeUnmount(() => { window.removeEventListener('pagehide', clearToken); clearToken(); retry = null })
+onBeforeUnmount(() => { window.removeEventListener('pagehide', clearToken); clearToken(); retry = null; if (externalDraft) externalDraft.value = false })
 
 async function save() {
   if (!canSubmit.value) return
@@ -90,7 +106,7 @@ async function save() {
 </script>
 
 <template>
-  <form class="flex min-w-0 flex-col gap-3 [&_[data-slot=native-select-wrapper]]:max-w-full" @submit.prevent="save">
+  <form class="flex min-w-0 flex-col gap-3" @submit.prevent="save">
     <div class="bg-card flex min-w-0 flex-col gap-3 rounded-lg border p-4">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h3 class="text-sm font-semibold">复核原决定 #{{ detail.decisionId }}</h3>

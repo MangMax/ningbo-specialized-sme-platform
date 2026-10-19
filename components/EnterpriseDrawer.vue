@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import EnterpriseExplanations from '@/components/evidence-review/EnterpriseExplanations.vue'
 import type { ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { computed, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { DialogClose, DialogContent, DialogRoot, DialogTitle } from 'reka-ui'
-import { ArrowDown, ExternalLink, X } from '@lucide/vue'
+import { ExternalLink, X } from '@lucide/vue'
 import {
   comparisonDirectionNote,
   DIFFERENCE_MEASURES,
@@ -21,8 +20,6 @@ import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-re
 import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import TableFailureState from './TableFailureState.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import PlatformRecords from '@/components/PlatformRecords.vue'
-import type { PlatformRecordQuery, PlatformRecord } from '~~/lib/roster/platform-records'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
@@ -96,7 +93,6 @@ interface Detail {
   evidence: { eventId: number; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
   differences: Difference[]
   titleAssessments?: (ReviewAssessment & ReviewScope)[]
-  platform?: { queries: PlatformRecordQuery[]; relations: PlatformRecord[] }
 }
 
 const props = defineProps<{
@@ -240,8 +236,6 @@ interface TimelineItem {
   reviewOutcome: string | null
   /** 结论年份缺失的复核事件 ⇒ 锚点待核(不猜填)。 */
   yearUnknown: boolean
-  /** 该企业**等级最高**的称号的首次认定 —— 时间轴上被点亮的那一枚。 */
-  highlight: boolean
 }
 
 /**
@@ -254,7 +248,7 @@ interface TimelineItem {
 const timeline = computed<TimelineItem[]>(() => {
   const events = detail.value?.events ?? []
   const seen = new Set<string>()
-  const items: Omit<TimelineItem, 'highlight'>[] = []
+  const items: TimelineItem[] = []
   for (const event of events) {
     const titleCode = titleOfRecord.value.get(event.recordId)
     if (!titleCode) continue
@@ -274,15 +268,6 @@ const timeline = computed<TimelineItem[]>(() => {
     })
   }
 
-  // 点亮的那个:等级最高的称号的**首次认定**(取最早一条,同年刚拿到就算)。
-  const awardTitles = items.filter((i) => i.eventType === 'award').map((i) => i.titleCode)
-  const topTitle = [...new Set(awardTitles)].sort(
-    (a, b) => TITLE_ORDER.indexOf(a) - TITLE_ORDER.indexOf(b),
-  )[0]
-  const highlightKey = items
-    .filter((i) => i.eventType === 'award' && i.titleCode === topTitle)
-    .sort((a, b) => (a.year ?? 0) - (b.year ?? 0))[0]?.key
-
   items.sort(
     (a, b) =>
       (a.year ?? Number.MAX_SAFE_INTEGER) - (b.year ?? Number.MAX_SAFE_INTEGER) ||
@@ -291,7 +276,7 @@ const timeline = computed<TimelineItem[]>(() => {
       a.key.localeCompare(b.key),
   )
 
-  return items.map((item) => ({ ...item, highlight: item.key === highlightKey }))
+  return items
 })
 
 /** 差异块:状态机顺序已经在读模型里排过(`§7.2` 的排序),这里原样用。 */
@@ -300,6 +285,25 @@ const differences = computed(() => detail.value?.differences ?? [])
 const fullPageTo = computed(() => {
   const q = props.backQuery ? `?back=${encodeURIComponent(props.backQuery)}` : ''
   return `/enterprises/${props.enterpriseId}${q}`
+})
+
+/**
+ * 抽屉只回答“有没有要核对的范围、去哪里核对”。
+ * 矩阵、证据和决定历史都在企业详情页，抽屉不重复铺开。
+ */
+const reviewSummary = computed(() => {
+  const list = detail.value?.titleAssessments ?? []
+  if (!list.length) return '尚未读取核对范围。'
+  const decided = list.filter(item => item.assessment === 'decided').length
+  const queried = list.filter(item => item.assessment === 'queried_unjudged').length
+  const notQueried = list.filter(item => item.assessment === 'not_queried').length
+  return `${list.length} 个判断范围 · ${decided} 个已有决定 · ${queried} 个已查询待判断 · ${notQueried} 个尚未查询`
+})
+const reviewPageTo = computed(() => {
+  const params = new URLSearchParams()
+  if (props.backQuery) params.set('back', props.backQuery)
+  params.set('tab', 'review')
+  return `/enterprises/${props.enterpriseId}?${params.toString()}`
 })
 
 function rememberLedger(event: MouseEvent) {
@@ -342,7 +346,7 @@ function eventSuffix(item: TimelineItem): string {
     <DialogContent
       data-testid="enterprise-drawer"
       :aria-describedby="undefined"
-      class="enterprise-drawer bg-card shadow-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right ease-snap fixed inset-y-0 right-0 z-40 flex w-full sm:w-[min(1280px,calc(100vw-2rem))] max-w-full flex-col border-l duration-200 outline-none motion-reduce:animate-none"
+      class="enterprise-drawer bg-card shadow-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right ease-snap fixed inset-y-0 right-0 z-40 flex w-full sm:w-[min(720px,calc(100vw-2rem))] max-w-full flex-col border-l duration-200 outline-none motion-reduce:animate-none"
       @interact-outside="onInteractOutside"
       @open-auto-focus="onOpenAutoFocus"
       @close-auto-focus="onCloseAutoFocus"
@@ -392,36 +396,21 @@ function eventSuffix(item: TimelineItem): string {
             </dd>
           </dl>
 
-          <!-- 竖向时间轴:称号历史 -->
+          <!-- 称号历史：年份 + 事件；普通分隔线，不做节点/连线装饰。 -->
           <h3 class="text-muted-foreground mt-5 border-t pt-4 text-xs font-medium">称号历史</h3>
-          <ol class="mt-3 flex flex-col">
+          <ol v-if="timeline.length" class="mt-3 divide-y rounded-lg border" data-testid="drawer-timeline">
             <li
-              v-for="(item, index) in timeline"
+              v-for="item in timeline"
               :key="item.key"
               data-testid="timeline-event"
-              class="grid grid-cols-[38px_16px_1fr] items-start"
-              :class="item.year == null ? 'min-h-0' : 'min-h-10'"
+              class="grid grid-cols-[3.5rem_minmax(0,1fr)] items-baseline gap-x-3 px-3 py-2"
             >
               <span
                 data-testid="timeline-event-year"
-                class="text-muted-foreground pr-2.5 text-right text-xs leading-5 tabular-nums"
+                class="text-muted-foreground text-xs leading-5 tabular-nums"
                 :aria-label="item.yearUnknown || item.year == null ? '结论年份待核' : `${item.year}年`"
               >
                 {{ item.yearUnknown || item.year == null ? '待核' : item.year }}
-              </span>
-              <!-- 轴线:除最后一条外都往下接;点亮的圆点 = 该企业等级最高称号的首次认定。 -->
-              <span class="relative self-stretch" aria-hidden="true">
-                <span
-                  v-if="timeline.length > 1"
-                  data-testid="timeline-connector"
-                  class="bg-border absolute left-[6px] w-px"
-                  :class="index === timeline.length - 1 ? 'top-0 h-[9.5px]' : index === 0 ? 'top-[9.5px] bottom-0' : 'inset-y-0'"
-                />
-                <span
-                  data-testid="timeline-node"
-                  class="absolute top-[5px] left-[2px] size-[9px] rounded-full border-[1.5px] bg-card"
-                  :class="item.highlight ? 'border-primary bg-primary' : 'border-input'"
-                />
               </span>
               <span class="text-[13px] leading-5">
                 <span>{{ TITLES[item.titleCode] ?? item.titleCode }}</span>
@@ -433,10 +422,20 @@ function eventSuffix(item: TimelineItem): string {
               </span>
             </li>
           </ol>
+          <p v-else class="text-muted-foreground mt-3 text-[13px]">尚无称号历史。</p>
+
+          <!-- 核对摘要：只给范围和入口，矩阵与证据留在企业详情页。 -->
+          <section class="mt-5 border-t pt-4" data-testid="drawer-review-summary">
+            <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <h3 class="text-sm font-medium">称号核对</h3>
+              <NuxtLink :to="reviewPageTo" class="text-primary text-[13px] hover:underline" @click="rememberLedger">在企业详情中核对</NuxtLink>
+            </div>
+            <p class="text-muted-foreground mt-1 max-w-[46ch] text-[13px] leading-5">{{ reviewSummary }}</p>
+          </section>
 
           <DisclosurePanel v-if="evidenceItems.length" compact content-class="pb-0" class="mt-5 border-t pt-4" data-testid="enterprise-evidence" :title="`出处 · ${evidenceItems.length}`">
             <ul class="mt-2 flex flex-col gap-2">
-              <li v-for="(item, index) in evidenceItems" :key="`${item.eventId}-${item.sourceFile}-${index}`" class="border-l pl-2">
+              <li v-for="(item, index) in evidenceItems" :key="`${item.eventId}-${item.sourceFile}-${index}`" class="py-2 first:pt-0">
                 <p class="text-muted-foreground text-[13px] leading-5">
                   <template v-if="item.year != null">{{ item.year }} · </template>
                   <template v-if="item.titleCode">{{ TITLES[item.titleCode] ?? item.titleCode }} · </template>
@@ -461,60 +460,23 @@ function eventSuffix(item: TimelineItem): string {
                 <span data-testid="enterprise-difference-status" :class="statusTextClass(d.status)">{{ DIFFERENCE_STATUSES[d.status] ?? d.status }}</span>
                 <span v-if="!d.inCurrentDifference" class="text-muted-foreground">历史差异</span>
               </div>
-              <!--
-                原因链:方向 → 原因 → 措施。三段之间用**连线**接起来(不是三个并排的 chip),
-                于是「为什么会这样、接下来做什么」是一眼看出来的一条链,而不是三句要自己拼的话。
-              -->
-              <ol class="mt-2 flex flex-col" data-testid="difference-reason-chain">
-                <li
-                  v-for="(step, i) in [
-                    { k: '方向', v: directionLabel(d.direction) },
-                    {
-                      k: '原因',
-                      v: d.reasonCode
-                        ? (DIFFERENCE_REASONS[d.reasonCode] ?? d.reasonCode)
-                        : d.status === 'confirmed_no_diff'
-                          ? '无需原因'
-                          : '待核实',
-                    },
-                    {
-                      k: '措施',
-                      v: d.measureCode ? measureLabel(d.measureCode) : '—',
-                    },
-                  ]"
-                  :key="step.k"
-                  class="grid min-h-8 grid-cols-[50px_26px_1fr] items-start"
-                >
-                  <span class="text-muted-foreground pr-2 text-right text-xs leading-5">{{ step.k }}</span>
-                  <span class="relative self-stretch">
-                    <span
-                      v-if="i < 2"
-                      class="bg-border absolute top-3 bottom-0 left-[12px] w-px"
-                    />
-                    <span
-                      class="absolute top-[6px] left-[8px] size-2 rounded-full"
-                      :class="i === 0 ? 'bg-muted-foreground' : 'bg-primary'"
-                    />
-                    <ArrowDown
-                      v-if="i < 2"
-                      aria-hidden="true"
-                      class="absolute bottom-[-2px] left-[6px] size-3"
-                      :class="i === 1 ? 'text-primary' : 'text-muted-foreground'"
-                    />
-                  </span>
-                  <span class="text-[13px] leading-5">{{ step.v }}</span>
-                </li>
-              </ol>
+              <dl class="mt-2 grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 border-t pt-2 text-[13px] leading-5" data-testid="difference-reason-chain">
+                <dt class="text-muted-foreground">方向</dt>
+                <dd>{{ directionLabel(d.direction) }}</dd>
+                <dt class="text-muted-foreground">原因</dt>
+                <dd>
+                  {{ d.reasonCode
+                    ? (DIFFERENCE_REASONS[d.reasonCode] ?? d.reasonCode)
+                    : d.status === 'confirmed_no_diff'
+                      ? '无需原因'
+                      : '待核实' }}
+                </dd>
+                <dt class="text-muted-foreground">措施</dt>
+                <dd>{{ d.measureCode ? measureLabel(d.measureCode) : '—' }}</dd>
+              </dl>
 
             </div>
           </template>
-        <EnterpriseExplanations v-if="detail.titleAssessments" :key="detail.enterprise.enterpriseId" class="mt-4 border-t pt-4" :enterprise-id="detail.enterprise.enterpriseId" :assessments="detail.titleAssessments" embedded />
-        <section class="mt-4 border-t pt-4" data-testid="drawer-platform-records">
-          <TableFailureState v-if="error" title="企业详情更新失败" compact :pending="isLoading" @retry="refetch()" />
-          <h3 class="mb-3 text-sm font-medium">平台记录</h3>
-          <PlatformRecords :queries="detail.platform?.queries ?? []" :relations="detail.platform?.relations ?? []" />
-        </section>
-
         </div>
 
         <footer class="border-t px-5 py-3">

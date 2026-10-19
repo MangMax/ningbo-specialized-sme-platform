@@ -112,21 +112,13 @@ export function officialTitlesLabel(titleNames: string[]): string {
 }
 
 /**
- * 头部“上次核对”只回答平台查询时间。
+ * 头部只回答平台查询时间，不推断“是否核对完成”。
  *
- * 已有业务决定 / 已查询 / 待复核时，即使合成或历史数据里没有查询来源，
- * 也不能写“尚未核对”与正文互相否定；此时明确写成“平台查询时间未记录”。
+ * 同一根时间轴只用一种说法：有查询记录写日期，没有写“未记录”。
+ * 已有决定 / 待复核但没有查询来源时，也不会与正文互相否定。
  */
-export function headerCheckLabel(
-  latestQueryAt: string | null,
-  assessments: ReviewAssessment[],
-  pendingCount: number,
-): string {
-  if (latestQueryAt) return `上次核对 ${reviewDateLabel(latestQueryAt)}`
-  const hasCheckHistory = pendingCount > 0 || assessments.some(item =>
-    item.assessment !== 'not_queried' || item.currentDecision.current != null,
-  )
-  return hasCheckHistory ? '平台查询时间未记录' : '尚未核对'
+export function headerCheckLabel(latestQueryAt: string | null | undefined): string {
+  return `平台查询时间：${latestQueryAt ? reviewDateLabel(latestQueryAt) : '未记录'}`
 }
 
 const LIFECYCLE_ACTION_LABELS: Record<string, string> = {
@@ -201,18 +193,18 @@ export function assessmentHeadline(assessment: ReviewAssessment): CaseHeadline {
   }
   if (assessment.assessment === 'decided') {
     if (hasPendingValidity(assessment)) {
-      return { tone: 'action', label: '证据已变化 · 原决定保留待复核', detail: '原原因与措施未被改写；请核对新证据后明确维持或更正。', action: '核对证据' }
+      return { tone: 'action', label: '原决定保留 · 待复核', detail: '原原因与措施未被改写；请核对后明确维持或更正。', action: '核对证据' }
     }
     if (assessment.explanationValidity.status === 'valid') {
       return { tone: 'done', label: '当前决定已复核', detail: '原因与措施保持原样，最近证据已登记复核。', action: '查看复核记录' }
     }
-    return { tone: 'waiting', label: '已有业务决定 · 解释有效性未确认', detail: '决定可读，但尚无已登记的可核验证据基线。', action: '查看决定' }
+    return { tone: 'waiting', label: '已有业务决定', detail: '解释有效性未确认：尚无已登记的可核验证据基线。', action: '查看决定' }
   }
   if (assessment.assessment === 'queried_unjudged') {
-    return { tone: 'waiting', label: '等待业务判断', detail: '查询完成不等于一致或无需处理；尚没有业务决定。', action: '查看查询范围' }
+    return { tone: 'waiting', label: '等待业务判断', detail: '查询完成不等于一致或无需处理。', action: '查看查询范围' }
   }
   if (assessment.assessment === 'not_queried') {
-    return { tone: 'muted', label: '还没有开始核对', detail: '未查询不等于无记录；需要先取得平台查询范围。', action: '查看范围' }
+    return { tone: 'muted', label: '尚未查询', detail: '未查询不等于无记录。', action: '查看范围' }
   }
   if (coverage === 'failed') {
     return { tone: 'failed', label: '无法判断 · 查询失败', detail: '失败或授权失败不等于零记录；保留上次结果与查询范围。', action: '查看失败记录' }
@@ -224,69 +216,6 @@ export function assessmentHeadline(assessment: ReviewAssessment): CaseHeadline {
     return { tone: 'waiting', label: '已查询 · 判断待核', detail: '查询已完成，但尚没有明确业务决定。', action: '查看查询范围' }
   }
   return { tone: 'waiting', label: '无法判断 · 查询范围待核', detail: '查询范围或主体尚未确认，不能推断为零记录。', action: '查看范围' }
-}
-
-export interface EnterpriseHeadline extends CaseHeadline {
-  pendingCount: number
-  pendingHasMore: boolean
-}
-
-/**
- * 企业级结论。待复核清单读取失败时明确“未读取”，不把未知写成 0 项。
- */
-export function enterpriseHeadline(
-  assessments: ReviewAssessment[],
-  pending: { rows: ImpactRow[]; hasMore: boolean; loading: boolean; error: boolean },
-): EnterpriseHeadline {
-  const count = pending.rows.length
-  const headline = (
-    tone: CaseTone,
-    label: string,
-    detail: string,
-    action: string,
-  ): EnterpriseHeadline => ({ tone, label, detail, action, pendingCount: count, pendingHasMore: pending.hasMore })
-
-  if (pending.loading && count === 0) {
-    return headline('waiting', '正在读取待复核清单', '企业状态先按已有查询与决定显示；待复核项到达后更新。', '查看核对范围')
-  }
-  if (pending.error && count === 0) {
-    return headline('failed', '待复核清单未读取', '不能确认是否存在待处理项；下方企业判断仍可查看。', '重试读取待复核清单')
-  }
-  if (count > 0) {
-    const suffix = pending.hasMore ? '以上' : ''
-    return headline('action', `待处理 · ${count}${suffix ? ` ${suffix}` : ''} 项证据变化`, '原决定保留；请先核对第一项，再决定维持或更正。', '处理第一项')
-  }
-
-  const failed = assessments.filter(item => item.queryCoverage.status === 'failed')
-  if (failed.length) {
-    return headline('failed', `无法判断 · ${failed.length} 个范围查询失败`, '失败不等于零记录；仍可查看已保留的查询范围与上次结果。', '查看失败范围')
-  }
-  const partial = assessments.filter(item => item.queryCoverage.status === 'partial')
-  if (partial.length) {
-    return headline('waiting', `无法判断 · ${partial.length} 个范围覆盖不完整`, '覆盖不完整不能得出“一致”或“无需处理”。', '查看已查范围')
-  }
-  const decided = assessments.filter(item => item.assessment === 'decided')
-  if (decided.some(hasPendingValidity)) {
-    return headline('action', '有待复核的证据变化', '复核清单没有返回可见项，但解释有效性标为待复核；请打开对应范围核对。', '查看待复核范围')
-  }
-  if (decided.length) {
-    const allValid = decided.every(item => item.explanationValidity.status === 'valid')
-    return headline(
-      allValid ? 'done' : 'waiting',
-      allValid ? '已有业务决定 · 已复核' : '已有业务决定 · 解释有效性未确认',
-      allValid ? '当前决定保留；没有可见的待复核变化。' : '决定可读；尚未建立已登记的证据复核基线。',
-      '查看当前决定',
-    )
-  }
-  const unjudged = assessments.filter(item => item.assessment === 'queried_unjudged')
-  if (unjudged.length) {
-    return headline('waiting', `已查询 · ${unjudged.length} 个范围尚未判断`, '查询完成不等于一致或无需处理；尚没有业务决定。', '查看尚未判断项')
-  }
-  const notQueried = assessments.filter(item => item.assessment === 'not_queried')
-  if (notQueried.length === assessments.length) {
-    return headline('muted', '尚未核对', '三个称号都还没有执行过平台查询；未查询不等于无记录。', '查看核对范围')
-  }
-  return headline('muted', '尚未判断', '当前没有足够的查询或人工判断；请打开称号范围查看。', '查看核对范围')
 }
 
 export function latestQueryTime(assessments: ReviewAssessment[]): string | null {

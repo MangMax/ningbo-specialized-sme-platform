@@ -2,7 +2,6 @@
 import { computed, reactive, shallowRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import type { CursorPage, ImpactRow } from '~~/lib/roster/evidence-review-ui'
-import { lineageLabels } from '~~/lib/roster/evidence-review-ui'
 import { TITLES } from '~~/lib/labels'
 import { directionLabel, impactOldDecisionText, titleLabel } from '~~/lib/roster/review-display'
 import { useEnterpriseNames } from '~/composables/useEnterpriseNames'
@@ -12,15 +11,16 @@ import TableFailureState from '@/components/TableFailureState.vue'
 import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/ui/empty'
 
 const props = defineProps<{ enterpriseId?: number; titleCode?: string; direction?: string }>()
 
 const draft = reactive({
   enterprise: props.enterpriseId ? String(props.enterpriseId) : '',
-  title: props.titleCode ?? '',
-  direction: props.direction ?? '',
+  title: props.titleCode ?? 'all',
+  direction: props.direction ?? 'all',
   event: '',
   view: 'current',
   state: 'pending',
@@ -108,8 +108,8 @@ function apply() {
   selected.value = null
   filters.value = {
     ...(draft.enterprise ? { enterpriseId: Number(draft.enterprise) } : {}),
-    ...(draft.title ? { titleCode: draft.title } : {}),
-    ...(draft.direction ? { direction: draft.direction } : {}),
+    ...(draft.title !== 'all' ? { titleCode: draft.title } : {}),
+    ...(draft.direction !== 'all' ? { direction: draft.direction } : {}),
     ...(draft.event ? { eventId: Number(draft.event) } : {}),
     view: draft.view,
     state: draft.state,
@@ -119,8 +119,8 @@ function apply() {
 
 watch(() => [props.enterpriseId, props.titleCode, props.direction], () => {
   draft.enterprise = props.enterpriseId ? String(props.enterpriseId) : ''
-  draft.title = props.titleCode ?? ''
-  draft.direction = props.direction ?? ''
+  draft.title = props.titleCode ?? 'all'
+  draft.direction = props.direction ?? 'all'
   apply()
 })
 
@@ -154,7 +154,7 @@ function previous() { if (current.value && cursors.value.length) { cursor.value 
 function restart() { cursor.value = undefined; cursors.value = []; void refetch() }
 
 function enterpriseLink(row: ImpactRow) {
-  const query = new URLSearchParams({ titleCode: row.titleCode, direction: row.direction, impactId: String(row.id) })
+  const query = new URLSearchParams({ tab: 'review', titleCode: row.titleCode, direction: row.direction, impactId: String(row.id) })
   if (displayed.value?.request.eventId) query.set('eventId', String(displayed.value.request.eventId))
   return `/enterprises/${row.enterpriseId}?${query}`
 }
@@ -192,34 +192,49 @@ function queueActionLabel(row: ImpactRow): string {
       <div class="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <label class="flex min-w-0 flex-col gap-1 text-[13px]">
           称号
-          <NativeSelect v-model="draft.title" aria-label="称号筛选">
-            <NativeSelectOption value="">全部称号</NativeSelectOption>
-            <NativeSelectOption v-for="(name, code) in TITLES" :key="code" :value="code">{{ name }}</NativeSelectOption>
-          </NativeSelect>
+          <Select v-model="draft.title">
+            <SelectTrigger class="w-full" aria-label="称号筛选"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">全部称号</SelectItem>
+                <SelectItem v-for="(name, code) in TITLES" :key="code" :value="code">{{ name }}</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </label>
         <label class="flex min-w-0 flex-col gap-1 text-[13px]">
           方向
-          <NativeSelect v-model="draft.direction" aria-label="方向筛选">
-            <NativeSelectOption value="">全部方向</NativeSelectOption>
-            <NativeSelectOption value="missing_in_miit">应纳未纳</NativeSelectOption>
-            <NativeSelectOption value="extra_in_miit">平台多出</NativeSelectOption>
-          </NativeSelect>
+          <Select v-model="draft.direction">
+            <SelectTrigger class="w-full" aria-label="方向筛选"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">全部方向</SelectItem>
+                <SelectItem value="missing_in_miit">应纳未纳</SelectItem>
+                <SelectItem value="extra_in_miit">平台多出</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </label>
         <label class="flex min-w-0 flex-col gap-1 text-[13px]">
           复核状态
-          <NativeSelect v-model="draft.state" aria-label="复核状态">
-            <NativeSelectOption value="pending">待复核</NativeSelectOption>
-            <NativeSelectOption value="reviewed">已复核</NativeSelectOption>
-            <NativeSelectOption value="all">全部</NativeSelectOption>
-          </NativeSelect>
+          <Select v-model="draft.state">
+            <SelectTrigger class="w-full" aria-label="复核状态"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="pending">待复核</SelectItem>
+                <SelectItem value="reviewed">已复核</SelectItem>
+                <SelectItem value="all">全部</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
         </label>
         <div class="flex min-w-0 items-end">
           <Button type="submit" variant="outline" class="w-full sm:w-auto">应用筛选</Button>
         </div>
       </div>
 
-      <details class="text-[13px]">
-        <summary class="text-muted-foreground cursor-pointer select-none">更多筛选与名称定位</summary>
+      <DisclosurePanel compact content-class="pb-0" class="text-[13px]">
+        <template #trigger><span class="text-muted-foreground">更多筛选与名称定位</span></template>
         <div class="mt-2 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <label class="flex min-w-0 flex-col gap-1 text-[13px]">
             企业 ID
@@ -231,11 +246,16 @@ function queueActionLabel(row: ImpactRow): string {
           </label>
           <label class="flex min-w-0 flex-col gap-1 text-[13px]">
             决定范围
-            <NativeSelect v-model="draft.view" aria-label="决定范围">
-              <NativeSelectOption value="current">当前决定</NativeSelectOption>
-              <NativeSelectOption value="historical">历史 / 撤回 / 归并</NativeSelectOption>
-              <NativeSelectOption value="all">全部决定</NativeSelectOption>
-            </NativeSelect>
+            <Select v-model="draft.view">
+              <SelectTrigger class="w-full" aria-label="决定范围"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="current">当前决定</SelectItem>
+                  <SelectItem value="historical">历史 / 撤回 / 归并</SelectItem>
+                  <SelectItem value="all">全部决定</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </label>
         </div>
 
@@ -270,7 +290,7 @@ function queueActionLabel(row: ImpactRow): string {
             当前企业：{{ enterpriseName }}（#{{ draft.enterprise }}）
           </p>
         </div>
-      </details>
+      </DisclosurePanel>
 
       <p v-if="invalid" role="alert" class="text-destructive text-[13px]">{{ invalid }}</p>
     </form>
@@ -342,13 +362,6 @@ function queueActionLabel(row: ImpactRow): string {
               {{ titleLabel(row.titleCode) }} · {{ directionLabel(row.direction) }}
             </p>
             <p class="text-muted-foreground mt-0.5 text-[13px] leading-5">{{ impactOldDecisionText(row) }}</p>
-            <details class="text-muted-foreground mt-1 text-[13px] leading-5">
-              <summary class="cursor-pointer select-none">技术详情</summary>
-              <p class="break-words">
-                复核项 #{{ row.id }} · 决定 #{{ row.decisionId }} · 证据修订 #{{ row.latestRevisionId }} ·
-                已复核修订 {{ row.reviewedRevisionId ?? '无' }} · 来源 {{ lineageLabels[row.lineage] ?? row.lineage }}
-              </p>
-            </details>
           </div>
           <Button
             variant="outline"

@@ -4,6 +4,7 @@ import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import EvidenceReviewList from '../components/evidence-review/EvidenceReviewList.vue'
+import { Select } from '../components/ui/select'
 import { resetEnterpriseNameCache } from '../composables/useEnterpriseNames'
 const row = { id: 4, enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', decisionId: 82, latestRevisionId: 9, reviewedRevisionId: null, classification: 'premise_invalid', pending: true, lineage: 'current', oldDecision: { id: 82, status: 'not_queried', reasonNote: '原依据缺代码' } }
 let fetcher: ReturnType<typeof vi.fn>
@@ -24,13 +25,20 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllGlobals())
 const render = () => mount(EvidenceReviewList, { global: { plugins: [createPinia(), PiniaColada], stubs: { NuxtLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } } })
+function choose(view: ReturnType<typeof render>, label: string, value: string) {
+  const select = view.findAllComponents(Select).find(candidate => candidate.find(`[aria-label="${label}"]`).exists())
+  if (!select) throw new Error(`Select not found: ${label}`)
+  select.vm.$emit('update:modelValue', value)
+}
 it('filters the bounded review view by exact enterprise title direction and event', async () => {
   const view = render(); await flushPromises()
   expect(view.text()).toContain('原依据缺代码')
   expect(view.text()).toContain('待复核')
+  await view.findAll('[data-slot="accordion-trigger"]').find(button => button.text().includes('更多筛选与名称定位'))!.trigger('click')
+  await flushPromises()
   await view.get('[aria-label="企业 ID"]').setValue('7')
-  await view.get('[aria-label="称号筛选"]').setValue('specialized_sme')
-  await view.get('[aria-label="方向筛选"]').setValue('missing_in_miit')
+  choose(view, '称号筛选', 'specialized_sme')
+  choose(view, '方向筛选', 'missing_in_miit')
   await view.get('[aria-label="事件 ID"]').setValue('33')
   await view.get('form').trigger('submit'); await flushPromises()
   expect(fetcher).toHaveBeenLastCalledWith('/api/roster/evidence-impacts', { query: { enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', eventId: 33, view: 'current', state: 'pending', limit: 25 } })
@@ -69,7 +77,7 @@ it('opens the exact impact and its separate committed source and event pages', a
   expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts/4/sources', { query: { limit: 25 } })
   await view.get('[aria-label="查看修订 9 关联事件"]').trigger('click'); await flushPromises()
   expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts/revisions/9/events', { query: { enterpriseId: 7, limit: 25 } })
-  expect(view.get('[data-testid="revision-event-link"]').attributes('href')).toBe('/enterprises/7?eventId=33&titleCode=specialized_sme')
+  expect(view.get('[data-testid="revision-event-link"]').attributes('href')).toBe('/enterprises/7?tab=records&eventId=33&titleCode=specialized_sme')
   await view.findAll('button').find(b => b.text() === '下一页来源')!.trigger('click'); await flushPromises()
   expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-impacts/4/sources', { query: { limit: 25, cursor: 'sources-next' } })
   view.unmount()
@@ -242,7 +250,7 @@ it('states that a queue enterprise name could not be read instead of presenting 
 })
 it('calls the applied reviewed filter reviewed records rather than a pending queue', async () => {
   const view = render(); await flushPromises()
-  await view.get('[aria-label="复核状态"]').setValue('reviewed')
+  choose(view, '复核状态', 'reviewed')
   await view.get('form').trigger('submit'); await flushPromises()
   expect(view.text()).toContain('已复核记录')
   expect(view.text()).not.toContain('待复核队列')

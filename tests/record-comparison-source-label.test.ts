@@ -27,6 +27,7 @@ describe('record comparison source labels', () => {
     expect(comparisonSourceSecondaryIds(querySource)).toEqual([
       '查询键 SYN111000000000001',
       '统一社会信用代码 91330200TEST0001',
+      '未关联企业名称',
     ])
   })
 

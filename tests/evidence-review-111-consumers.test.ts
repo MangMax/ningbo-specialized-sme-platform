@@ -15,7 +15,7 @@ it('comparison reads the frozen enterprise assessment for the exact title and di
   expect(fetcher).toHaveBeenCalledWith('/api/roster/enterprises/7')
   expect(view.text()).toContain('已查询 · 尚未判断')
   expect(view.text()).not.toContain('未查询')
-  expect(view.get('a').attributes('href')).toBe('/enterprises/7?titleCode=specialized_sme&direction=missing_in_miit')
+  expect(view.get('a').attributes('href')).toBe('/enterprises/7?tab=review&titleCode=specialized_sme&direction=missing_in_miit')
   await view.setProps({ titleCode: 'little_giant' })
   expect(view.text()).toContain('尚未查询 · 尚未判断')
   view.unmount()
@@ -23,7 +23,7 @@ it('comparison reads the frozen enterprise assessment for the exact title and di
 it('enterprise keeps old current decision and pending validity visible at the focused scope', () => {
   const view = mount(EnterpriseExplanations, { props: { enterpriseId: 7, assessments: [{ ...assessment, assessment: 'decided', currentDecision: { ...assessment.currentDecision, versionId: 82, current: { id: 82, status: 'confirmed_reason', reasonCode: 'other', reasonNote: '用户确认的原决定', measureCode: 'none' } }, explanationValidity: { status: 'evidence_changed' } }] as any, titleCode: 'specialized_sme', direction: 'missing_in_miit' }, global: global() })
   expect(view.text()).toContain('用户确认的原决定')
-  expect(view.text()).toContain('证据已变化 · 待复核')
+  expect(view.text()).toContain('原决定保留 · 待复核')
   expect(view.get('[data-testid="assessment-scope"]').attributes('id')).toBe('explanation-specialized_sme-missing_in_miit')
   view.unmount()
 })

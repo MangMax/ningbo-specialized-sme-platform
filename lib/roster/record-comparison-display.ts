@@ -42,7 +42,12 @@ export function comparisonSourceRawKey(source: ComparisonSourceLabelInput): stri
   return parts.length > 1 ? parts.at(-1) ?? '' : ''
 }
 
-/** 次要标识：查询键与信用代码。可见，但不是判断对象的主文案。 */
+/**
+ * 次要标识：查询键、信用代码，以及“是否已记录企业名称”。
+ *
+ * 现有来源契约只返回查询键和条件，没有可验证的企业关联；
+ * 这里把缺口直接写出来，不从 SYN 键或信用代码推断主体。
+ */
 export function comparisonSourceSecondaryIds(source: ComparisonSourceLabelInput): string[] {
   if (source.kind !== 'query') return []
   const ids: string[] = []
@@ -50,5 +55,7 @@ export function comparisonSourceSecondaryIds(source: ComparisonSourceLabelInput)
   if (rawKey) ids.push(`查询键 ${rawKey}`)
   const uscc = source.conditions?.uscc
   if (typeof uscc === 'string' && uscc) ids.push(`统一社会信用代码 ${uscc}`)
+  const name = source.conditions?.name
+  if (!(typeof name === 'string' && name.trim())) ids.push('未关联企业名称')
   return ids
 }

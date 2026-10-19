@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import QueryAssessmentSummary from '../components/evidence-review/QueryAssessmentSummary.vue'
 
@@ -34,7 +34,8 @@ describe('preserved decisions and gaps', () => {
     const view = mount(QueryAssessmentSummary, { props: { assessment: assessment({
       queryCoverage: { status: 'partial', truncated: true, sources: [{ queryId: 9, interface: 'recognized_list', status: 'partial', queriedAt: '2026-10-19', conditions: { uscc: 'TEST7', rddqrq: '2025' }, pages: [{ page: 1, status: 'success', fetchedCount: 20 }], unfinished: [{ rdjb: '2', page: 2, source: 'queryBusList' }], fullRange: false, subjectMatch: 'exact_uscc', outcome: 'unknown' }] }, assessment: 'unknown',
     }) as any } })
-    await view.get('summary').trigger('click')
+    await view.get('[data-testid="coverage-details"] [data-slot="accordion-trigger"]').trigger('click')
+    await flushPromises()
     expect(view.text()).toContain('覆盖不完整')
     expect(view.text()).toContain('仅展示最近50次相关查询')
     expect(view.text()).toContain('queryBusList')

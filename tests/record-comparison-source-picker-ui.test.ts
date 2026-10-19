@@ -9,18 +9,19 @@ const rows = {
   query: [{ kind: 'query', id: 7, label: '申报流程 · 专精特新中小企业 · 合成企业', subtitle: 'apply_list', titleCode: 'specialized_sme', titleName: '专精特新中小企业', observedAt: '2025-01-02T00:00:00Z', status: 'partial', selectable: true, rdjb: '2', completeness: 'partial', fullRange: false, conditions: { combination: 'and', uscc: '913300000000000004' } }],
   export_batch: [{ kind: 'export_batch', id: 8, label: '专精特新中小企业 · 2025 · export.xlsx', subtitle: 'export.xlsx', titleCode: 'specialized_sme', titleName: '专精特新中小企业', observedAt: '2025-02-01', status: 'failed', selectable: false, sha256: 'a'.repeat(64), rowCount: 0, replacedBatchId: null }],
 }
+const queryTitle = (name: string) => `申报办理记录 · ${name} · 按统一社会信用代码查询 · 条件同时满足`
 const wrapperList: ReturnType<typeof mount>[] = []
 afterEach(() => { for (const wrapper of wrapperList.splice(0)) wrapper.unmount(); vi.unstubAllGlobals() })
 
 it('offers an explicit route to every query and preserves selection when the catalog is collapsed', async () => {
-  const queries = Array.from({ length: 14 }, (_, index) => ({ ...rows.query[0], id: index + 1, label: `平台查询 ${index + 1}` }))
+  const queries = Array.from({ length: 14 }, (_, index) => ({ ...rows.query[0], id: index + 1, titleName: `平台查询 ${index + 1}` }))
   vi.stubGlobal('$fetch', vi.fn(async () => ({ rows: queries, total: 14, page: 1, pageSize: 25 })))
   const wrapper = mount(ComparisonSourcePicker, { props: { kind: 'query', selection: { queryIds: [], exportBatchIds: [], officialSourceDocumentIds: [], proofIds: [] } }, global: { stubs: { TableLoadingStatus: true, TableFailureState: true, TablePagination: true } } })
   wrapperList.push(wrapper)
   await flushPromises()
-  expect(wrapper.find('[aria-label="选择平台查询 14"]').exists()).toBe(false)
+  expect(wrapper.find(`[aria-label="选择${queryTitle('平台查询 14')}"]`).exists()).toBe(false)
   await wrapper.findAll('button').find(button => button.text().includes('查看全部 14'))!.trigger('click')
-  await wrapper.get('[aria-label="选择平台查询 14"]').trigger('click')
+  await wrapper.get(`[aria-label="选择${queryTitle('平台查询 14')}"]`).trigger('click')
   expect(wrapper.emitted('change')?.at(-1)?.[0]).toMatchObject({ queryIds: [14] })
   await wrapper.setProps({ selection: { queryIds: [14], exportBatchIds: [], officialSourceDocumentIds: [], proofIds: [] } })
   await flushPromises()
@@ -44,7 +45,7 @@ it('shows human source names and times, permits partial queries, and blocks fail
   await flushPromises()
   expect(wrapper.text()).toContain('部分采集')
   expect(wrapper.text()).toContain('2025-01-02')
-  expect(wrapper.get('[aria-label="选择申报流程 · 专精特新中小企业 · 合成企业"]').attributes('disabled')).toBeUndefined()
+  expect(wrapper.get(`[aria-label="选择${queryTitle('专精特新中小企业')}"]`).attributes('disabled')).toBeUndefined()
   wrapper.findComponent(Tabs).vm.$emit('update:modelValue', 'export_batch')
   await flushPromises()
   expect(wrapper.get('[aria-label="选择专精特新中小企业 · 2025 · export.xlsx"]').attributes('disabled')).toBeDefined()
@@ -66,7 +67,7 @@ it('keeps bookmarked selection after name hydration fails and offers a retry', a
   failSelected = false
   await wrapper.findAll('button').find(button => button.text() === '重试读取已选来源名称')!.trigger('click')
   await flushPromises()
-  expect(wrapper.text()).toContain('申报流程 · 专精特新中小企业 · 合成企业')
+  expect(wrapper.text()).toContain(queryTitle('专精特新中小企业'))
 })
 
 
@@ -89,7 +90,7 @@ it('does not let an older selected label response settle or replace the current 
   await wrapper.get('[aria-label="已选来源"] [data-slot="accordion-trigger"]').trigger('click')
   await flushPromises()
   expect(wrapper.get('[aria-label="已选来源"]').text()).toContain('正在读取来源名称')
-  pending[1]!({ rows: [{ ...rows.query[0], id: 9, label: '当前查询名称' }], total: 1, page: 1, pageSize: 200 })
+  pending[1]!({ rows: [{ ...rows.query[0], id: 9, titleName: '当前查询名称' }], total: 1, page: 1, pageSize: 200 })
   await flushPromises()
   expect(wrapper.emitted('settled')?.at(-1)).toEqual([JSON.stringify(next), true])
   expect(wrapper.get('[aria-label="已选来源"]').text()).toContain('当前查询名称')
@@ -100,7 +101,7 @@ it('hydrates a bookmarked source by its explicit ID without walking unrelated ca
   const calls: any[] = []
   vi.stubGlobal('$fetch', vi.fn(async (_url: string, options: any) => {
     calls.push(options.query)
-    if (options.query.ids) return { rows: [{ ...rows.query[0], id: 39000, label: '精确所选查询' }], total: 1, page: 1, pageSize: 200 }
+    if (options.query.ids) return { rows: [{ ...rows.query[0], id: 39000, titleName: '精确所选查询' }], total: 1, page: 1, pageSize: 200 }
     return { rows: [], total: 39303, page: 1, pageSize: options.query.pageSize }
   }))
   const wrapper = mount(ComparisonSourcePicker, { props: { kind: 'query', selection: { queryIds: [39000], exportBatchIds: [], officialSourceDocumentIds: [], proofIds: [] } }, global: { stubs: { TableLoadingStatus: true, TableFailureState: true, TablePagination: true } } })

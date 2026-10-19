@@ -4,6 +4,7 @@ import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import EvidenceReviewForm from '../components/evidence-review/EvidenceReviewForm.vue'
+import { Select } from '../components/ui/select'
 const detail = { id: 4, enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit', decisionId: 82, lineage: 'current', pending: true, oldDecision: { id: 82, reasonNote: '原决定' }, currentDecision: { versionId: 82, current: { id: 82 } }, evidenceToken: { latestRevisionId: 9, decisionId: 82, projectionReady: true }, gaps: {} }
 enableAutoUnmount(afterEach)
 let fetcher: ReturnType<typeof vi.fn>
@@ -12,6 +13,11 @@ afterEach(() => vi.unstubAllGlobals())
 function render(patch = {}) {
   const pinia = createPinia()
   return mount(EvidenceReviewForm, { props: { detail: { ...detail, ...patch } as any }, global: { plugins: [pinia, PiniaColada] } })
+}
+function selectByLabel(view: ReturnType<typeof render>, label: string) {
+  const select = view.findAllComponents(Select).find(candidate => candidate.find(`[aria-label="${label}"]`).exists())
+  if (!select) throw new Error(`Select not found: ${label}`)
+  return select
 }
 async function fill(view: ReturnType<typeof render>) {
   await view.get('[aria-label="写入凭证"]').setValue('synthetic-token')
@@ -63,10 +69,13 @@ it.each([{ code: 'stale_version', message: '决定版本冲突' }, { code: 'stal
 it('appends an explicit correction without selecting a reason automatically', async () => {
   const view = render(); await fill(view)
   await view.get('[value="replace"]').setValue(true)
-  expect((view.get('[aria-label="更正原因"]').element as HTMLSelectElement).value).toBe('')
+  expect(selectByLabel(view, '更正原因').props('modelValue')).toBe('__unset')
   expect(view.get('button[type="submit"]').attributes('disabled')).toBeDefined()
-  await view.get('[aria-label="更正原因"]').setValue('other')
-  await view.get('[aria-label="更正措施"]').setValue('none')
+  // 两个 Select 各自通过 defineModel 回写同一 draft；分两次刷新，避免后一次用旧对象覆盖前一次。
+  selectByLabel(view, '更正原因').vm.$emit('update:modelValue', 'other')
+  await flushPromises()
+  selectByLabel(view, '更正措施').vm.$emit('update:modelValue', 'none')
+  await flushPromises()
   await view.get('[aria-label="原因说明"]').setValue('人工核验后的更正')
   await view.get('form').trigger('submit'); await flushPromises()
   expect(fetcher.mock.calls[0]![1].body).toMatchObject({ action: 'replace', expectedCurrentId: 82, reviewedEvidence: { latestRevisionId: 9, projectionReady: true }, decision: { status: 'confirmed_reason', reasonCode: 'other', reasonNote: '人工核验后的更正', measureCode: 'none', verificationStatus: 'confirmed' } })

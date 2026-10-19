@@ -3,6 +3,7 @@ import { useBoundedReviewPage } from '~/composables/useBoundedReviewPage'
 import { Button } from '@/components/ui/button'
 import TableFailureState from '@/components/TableFailureState.vue'
 import { TITLES } from '~~/lib/labels'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
 const props = defineProps<{ revisionId: number; enterpriseId: number }>()
 type Event = { eventId: number; enterpriseId: number; titleCode: string }
@@ -32,16 +33,16 @@ const { displayed, cursorExpired, loading, error, reload, restart, next, previou
     <ul v-if="displayed?.rows.length" class="flex flex-col gap-1">
       <li v-for="event in displayed.rows" :key="event.eventId" class="min-w-0">
         <NuxtLink
-          :to="`/enterprises/${event.enterpriseId}?eventId=${event.eventId}&titleCode=${event.titleCode}`"
+          :to="`/enterprises/${event.enterpriseId}?tab=records&eventId=${event.eventId}&titleCode=${event.titleCode}`"
           data-testid="revision-event-link"
           class="text-primary text-[13px] leading-5 break-words hover:underline"
         >
           定位「{{ TITLES[event.titleCode] ?? '正式事件' }}」的正式事件
         </NuxtLink>
-        <details class="text-muted-foreground text-[13px] leading-5">
-          <summary class="cursor-pointer select-none">技术详情</summary>
+        <DisclosurePanel compact keep-mounted content-class="pb-0" class="text-muted-foreground text-[13px] leading-5">
+          <template #trigger><span>技术详情</span></template>
           <p>企业 #{{ event.enterpriseId }} · 事件 #{{ event.eventId }} · 称号键 {{ event.titleCode }}</p>
-        </details>
+        </DisclosurePanel>
       </li>
     </ul>
 

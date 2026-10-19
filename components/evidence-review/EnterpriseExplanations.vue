@@ -2,7 +2,6 @@
 import { computed, nextTick, shallowRef, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import type { ImpactRow, ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
-import { impactClassificationLabels } from '~~/lib/roster/evidence-review-ui'
 import { TITLE_ORDER } from '~~/lib/labels'
 import {
   assessmentHeadline,
@@ -11,11 +10,10 @@ import {
   directionLabel,
   titleLabel,
 } from '~~/lib/roster/review-display'
-import QueryAssessmentSummary from './QueryAssessmentSummary.vue'
-import DecisionHistory from './DecisionHistory.vue'
 import EvidenceReviewList from './EvidenceReviewList.vue'
 import AssessmentStatusBadge from './AssessmentStatusBadge.vue'
 import EnterpriseEvidenceSheet from '@/components/enterprise/EnterpriseEvidenceSheet.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import TitleBadge from '@/components/TitleBadge.vue'
 import { Button } from '@/components/ui/button'
 import { ChevronRight } from '@lucide/vue'
@@ -28,20 +26,15 @@ const props = withDefaults(defineProps<{
   impactId?: number
   locate?: boolean
   pending?: ImpactRow[]
-  embedded?: boolean
   openScopeRequest?: { titleCode: string; direction: string } | null
 }>(), {
   pending: () => [],
-  embedded: false,
   openScopeRequest: null,
 })
 
 const emit = defineEmits<{ saved: [] }>()
 
 const DIRECTIONS = ['missing_in_miit', 'extra_in_miit'] as const
-const historyScope = shallowRef<string | null>(null)
-const expandedKey = shallowRef<string | null>(null)
-const showReviews = shallowRef(false)
 const reviewGeneration = shallowRef(0)
 
 const keyOf = (scope: ReviewScope) => `${scope.titleCode}-${scope.direction}`
@@ -103,11 +96,6 @@ function openScope(assessment: ReviewAssessment & ReviewScope) {
   selectedImpactId.value = pending?.id
   selectedTitle.value = assessment.titleCode
   selectedDirection.value = assessment.direction
-  if (props.embedded) {
-    const key = keyOf(assessment)
-    expandedKey.value = expandedKey.value === key ? null : key
-    return
-  }
   sheetOpen.value = true
 }
 
@@ -136,7 +124,7 @@ watch(() => [props.enterpriseId, props.titleCode, props.direction, props.assessm
 
 /** 首屏“查看尚未判断项 / 查看范围”打开对应范围的证据抽屉。 */
 watch(() => props.openScopeRequest, request => {
-  if (!request || props.embedded) return
+  if (!request) return
   const assessment = props.assessments.find(item => item.titleCode === request.titleCode && item.direction === request.direction)
   if (!assessment) return
   const pending = pendingByScope.value.get(keyOf(assessment)) ?? null
@@ -150,7 +138,7 @@ watch(() => props.openScopeRequest, request => {
 
 /** 深链 impactId：即使它不在待复核清单里，也打开对应范围的证据详情。 */
 watch(() => props.impactId, impactId => {
-  if (!impactId || props.embedded) return
+  if (!impactId) return
   const row = props.pending.find(item => item.id === impactId) ?? null
   const titleCode = row?.titleCode ?? props.titleCode ?? ''
   const direction = row?.direction ?? props.direction ?? ''
@@ -168,9 +156,8 @@ watch(() => props.impactId, impactId => {
   <section class="flex min-w-0 flex-col gap-3" aria-label="称号核对">
     <header class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
       <div class="min-w-0">
-        <h2 class="text-sm font-semibold">称号核对</h2>
-        <p class="text-muted-foreground text-[13px] leading-5">
-          同一称号的两个方向分开判断；状态只反映查询事实与已有决定。
+        <p class="text-muted-foreground max-w-[46ch] text-[13px] leading-5">
+          徽标深浅 = 称号等级（高 → 低）；两方向分开判断。
         </p>
       </div>
       <span class="text-muted-foreground text-[13px]">共 {{ assessments.length }} 个判断范围</span>
@@ -220,16 +207,16 @@ watch(() => props.impactId, impactId => {
                 <span class="flex min-w-0 items-start justify-between gap-2">
                   <span class="flex flex-wrap items-center gap-1.5">
                     <AssessmentStatusBadge kind="coverage" :value="group.byDirection[direction]!.queryCoverage.status" />
-                    <AssessmentStatusBadge kind="assessment" :value="group.byDirection[direction]!.assessment" />
                     <AssessmentStatusBadge
                       v-if="group.byDirection[direction]!.explanationValidity.status !== 'not_applicable'"
                       kind="validity"
                       :value="group.byDirection[direction]!.explanationValidity.status"
                     />
+                    <!-- 「证据变化」已由解释有效性 chip 表达；这里只在前提失效时补充不同事实。 -->
                     <AssessmentStatusBadge
-                      v-if="pendingByScope.get(`${group.titleCode}-${direction}`)"
+                      v-if="pendingByScope.get(`${group.titleCode}-${direction}`)?.classification === 'premise_invalid'"
                       kind="impact"
-                      :value="pendingByScope.get(`${group.titleCode}-${direction}`)!.classification"
+                      :value="'premise_invalid'"
                     />
                   </span>
                   <ChevronRight class="text-muted-foreground mt-0.5 size-4 shrink-0" aria-hidden="true" />
@@ -254,31 +241,7 @@ watch(() => props.impactId, impactId => {
                 >
                   {{ decisionMeasureLabel(group.byDirection[direction]!) }}
                 </span>
-
-                <span
-                  v-if="pendingByScope.get(`${group.titleCode}-${direction}`)"
-                  class="text-warning text-[13px] leading-5"
-                >
-                  待处理 · {{ impactClassificationLabels[pendingByScope.get(`${group.titleCode}-${direction}`)!.classification] ?? '证据变化' }}
-                </span>
               </button>
-
-              <div v-if="embedded && expandedKey === `${group.titleCode}-${direction}`" class="mt-3 border-t pt-3">
-                <QueryAssessmentSummary :assessment="group.byDirection[direction]!" />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="mt-2 self-start"
-                  @click="historyScope = historyScope === `${group.titleCode}-${direction}` ? null : `${group.titleCode}-${direction}`"
-                >
-                  {{ historyScope === `${group.titleCode}-${direction}` ? '收起决定历史' : '查看决定历史' }}
-                </Button>
-                <DecisionHistory
-                  v-if="historyScope === `${group.titleCode}-${direction}`"
-                  :key="`${group.titleCode}-${direction}`"
-                  :scope="{ enterpriseId, titleCode: group.titleCode, direction }"
-                />
-              </div>
             </article>
             <div v-else class="text-muted-foreground border-b px-4 py-3 text-[13px] md:border-r md:border-b-0 md:last:border-r-0">
               此方向暂无核对范围
@@ -303,26 +266,25 @@ watch(() => props.impactId, impactId => {
       {{ showQuiet ? '收起尚未核对的方向' : `展开其余 ${hiddenQuietCount} 个尚未核对的方向` }}
     </Button>
 
-    <p class="text-muted-foreground max-w-[62ch] text-[13px] leading-5">
-      查询覆盖、业务决定和解释有效性分别保留；待复核不会撤回原决定。
-      查询完成、覆盖完整或未发现差异，都不自动等于“一致 / 无需处理”。
+    <p class="text-muted-foreground max-w-[46ch] text-[13px] leading-5">
+      三轴独立保留；覆盖完整或未发现差异都不自动等于“一致 / 无需处理”。
     </p>
 
-    <template v-if="!embedded">
-      <Button variant="ghost" size="sm" class="self-start" :aria-expanded="showReviews" @click="showReviews = !showReviews">
-        {{ showReviews ? '收起企业复核记录' : '查看企业全部复核记录' }}
-      </Button>
-      <EvidenceReviewList
-        v-if="showReviews"
-        :key="reviewGeneration"
-        :enterprise-id="enterpriseId"
-        :title-code="titleCode"
-        :direction="direction"
-      />
-    </template>
+    <DisclosurePanel compact content-class="pb-0" class="bg-card overflow-hidden rounded-lg border">
+      <template #trigger>
+        <span class="text-sm font-medium">企业全部复核记录</span>
+      </template>
+      <div class="border-t p-3">
+        <EvidenceReviewList
+          :key="reviewGeneration"
+          :enterprise-id="enterpriseId"
+          :title-code="titleCode"
+          :direction="direction"
+        />
+      </div>
+    </DisclosurePanel>
 
     <EnterpriseEvidenceSheet
-      v-if="!embedded"
       v-model:open="sheetOpen"
       :enterprise-id="enterpriseId"
       :title-code="selectedTitle"

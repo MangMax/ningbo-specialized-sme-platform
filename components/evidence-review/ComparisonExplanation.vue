@@ -10,7 +10,7 @@ const { data, error, isLoading, refetch } = useQuery({
   query: () => $fetch<RosterEnterpriseDetail>(`/api/roster/enterprises/${props.enterpriseId}`),
 })
 const assessment = computed(() => data.value?.titleAssessments.find(a => a.titleCode === props.titleCode && a.direction === props.direction))
-const link = computed(() => `/enterprises/${props.enterpriseId}?titleCode=${props.titleCode}&direction=${props.direction}`)
+const link = computed(() => `/enterprises/${props.enterpriseId}?tab=review&titleCode=${props.titleCode}&direction=${props.direction}`)
 </script>
 <template>
   <div class="flex min-w-0 flex-col gap-1">

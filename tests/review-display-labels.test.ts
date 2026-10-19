@@ -15,14 +15,11 @@ const assessment = (patch: Record<string, unknown> = {}) => ({
 }) as any
 
 describe('enterprise header identity and check time', () => {
-  it('labels official titles separately and never writes 尚未核对 beside a decision or query', () => {
+  it('labels official titles separately and keeps one platform-query time axis', () => {
     expect(officialTitlesLabel([])).toBe('正式称号：暂无')
     expect(officialTitlesLabel(['专精特新中小企业'])).toBe('正式称号：专精特新中小企业')
-    expect(headerCheckLabel(null, [assessment({ assessment: 'decided' })], 0)).toBe('平台查询时间未记录')
-    expect(headerCheckLabel(null, [assessment({ assessment: 'queried_unjudged' })], 0)).toBe('平台查询时间未记录')
-    expect(headerCheckLabel(null, [assessment({ assessment: 'not_queried' })], 1)).toBe('平台查询时间未记录')
-    expect(headerCheckLabel(null, [assessment({ assessment: 'not_queried' })], 0)).toBe('尚未核对')
-    expect(headerCheckLabel('2026-10-19T10:00:00Z', [assessment()], 0)).toBe('上次核对 2026-10-19')
+    expect(headerCheckLabel(null)).toBe('平台查询时间：未记录')
+    expect(headerCheckLabel('2026-10-19T10:00:00Z')).toBe('平台查询时间：2026-10-19')
   })
 })
 

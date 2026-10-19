@@ -8,6 +8,7 @@ import {
   reviewTimeLabel,
 } from '~~/lib/roster/review-display'
 import AssessmentStatusBadge from './AssessmentStatusBadge.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
 defineProps<{ coverage: ReviewAssessment['queryCoverage'] }>()
 
@@ -26,10 +27,10 @@ const pageStatus = (value: string) => PLATFORM_QUERY_STATUSES[value] ?? '状态�
 </script>
 
 <template>
-  <details class="min-w-0 text-[13px] leading-5" data-testid="coverage-details">
-    <summary class="text-primary cursor-pointer select-none">
-      核对范围与查询缺口 · {{ coverage.sources.length }} 次查询
-    </summary>
+  <DisclosurePanel compact content-class="pb-0" class="min-w-0 text-[13px] leading-5" data-testid="coverage-details">
+    <template #trigger>
+      <span class="font-medium">核对范围与查询缺口 · {{ coverage.sources.length }} 次查询</span>
+    </template>
     <p v-if="coverage.truncated" class="text-warning mt-2">
       仅展示最近50次相关查询，不能据此声明全部覆盖完整。
     </p>
@@ -40,7 +41,7 @@ const pageStatus = (value: string) => PLATFORM_QUERY_STATUSES[value] ?? '状态�
       <li
         v-for="source in coverage.sources"
         :key="source.queryId"
-        class="flex min-w-0 flex-col gap-1.5 border-l-2 border-border pl-3"
+        class="flex min-w-0 flex-col gap-1.5 border-t pt-3 first:border-t-0 first:pt-0"
       >
         <div class="flex flex-wrap items-center gap-1.5">
           <span class="text-foreground font-medium">{{ interfaceLabel(source.interface) }}</span>
@@ -63,8 +64,8 @@ const pageStatus = (value: string) => PLATFORM_QUERY_STATUSES[value] ?? '状态�
             未完成：{{ interfaceLabel(gap.source) }} · 称号 {{ gap.rdjb ?? '未知' }} · 下一页 {{ gap.page }}
           </li>
         </ul>
-        <details class="text-muted-foreground">
-          <summary class="cursor-pointer select-none">技术详情</summary>
+        <DisclosurePanel compact keep-mounted content-class="pb-0" class="text-muted-foreground">
+          <template #trigger><span>技术详情</span></template>
           <dl class="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 break-words">
             <dt>查询 ID</dt><dd>#{{ source.queryId }}</dd>
             <dt>接口键</dt><dd>{{ source.interface }}</dd>
@@ -75,8 +76,8 @@ const pageStatus = (value: string) => PLATFORM_QUERY_STATUSES[value] ?? '状态�
               <dt>未完成来源键</dt><dd>{{ gap.source }}</dd>
             </template>
           </dl>
-        </details>
+        </DisclosurePanel>
       </li>
     </ul>
-  </details>
+  </DisclosurePanel>
 </template>

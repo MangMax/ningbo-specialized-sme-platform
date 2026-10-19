@@ -7,6 +7,7 @@ import EvidenceRevisionEvents from './EvidenceRevisionEvents.vue'
 import AssessmentStatusBadge from './AssessmentStatusBadge.vue'
 import { Button } from '@/components/ui/button'
 import TableFailureState from '@/components/TableFailureState.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
 const props = defineProps<{ impactId: number; enterpriseId: number }>()
 type Source = { revisionId: number; sourceKind: string; sourceKey: string; sourceVersion: string; classification: string; eventId: number | null; coverageChanged: boolean; factChanged: boolean; recordedAt?: string | null }
@@ -66,7 +67,7 @@ const failureTarget = computed(() => `复核项 #${props.impactId} · 来源第 
         <div class="flex flex-wrap items-center gap-2">
           <NuxtLink
             v-if="source.eventId"
-            :to="`/enterprises/${enterpriseId}?eventId=${source.eventId}`"
+            :to="`/enterprises/${enterpriseId}?eventId=${source.eventId}&tab=records`"
             class="text-primary text-[13px] leading-5 hover:underline"
           >
             定位正式事件
@@ -81,15 +82,15 @@ const failureTarget = computed(() => `复核项 #${props.impactId} · 来源第 
           </Button>
         </div>
 
-        <details class="text-muted-foreground text-[13px] leading-5">
-          <summary class="cursor-pointer select-none">技术详情</summary>
+        <DisclosurePanel compact keep-mounted content-class="pb-0" class="text-muted-foreground text-[13px] leading-5">
+          <template #trigger><span>技术详情</span></template>
           <dl class="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 break-words">
             <dt>修订</dt><dd>#{{ source.revisionId }}</dd>
             <dt>来源键</dt><dd>{{ source.sourceKey }}</dd>
             <dt>来源版本</dt><dd>{{ source.sourceVersion }}</dd>
             <dt>事件</dt><dd>{{ source.eventId == null ? '无' : `#${source.eventId}` }}</dd>
           </dl>
-        </details>
+        </DisclosurePanel>
 
         <EvidenceRevisionEvents
           v-if="selectedRevision === source.revisionId"
