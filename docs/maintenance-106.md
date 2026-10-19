@@ -70,3 +70,14 @@ OpenAPI 的新路径声明请求白名单、独立 token、安全响应及版本
 首次候选（兼容修正前）的完整票级回归：`pnpm test tests/ocr-*.test.ts tests/mcp-surface.test.ts tests/files-openapi-contract.test.ts tests/agent-http.test.ts --maxWorkers=1`，10 文件 / 310 测试通过（其中本票公开接缝 11 项），退出 0，日志 `final-precommit.log`。`pnpm typecheck` 与 `pnpm build` 均退出 0，日志分别 `typecheck.log` / `build.log`。上述运行只验证本地代码与合成资料，不升级为生产或父级集成验收。
 
 兼容修正后：相同回归命令 10 文件 / 312 测试通过（公开接缝 13 项），退出 0，日志 `compat-final-regression.log`；`pnpm typecheck` 与 `pnpm build` 退出 0，日志 `compat-final-typecheck.log` / `compat-final-build.log`。新命令严格版本、旧载荷适配与部分现代载荷拒绝均在本轮公开调用中验证。
+
+源码与集成快照记录：
+
+- 实现提交 `315b63fe76e73ed488d9ea95050fb5c43c06dd4c`及兼容修正 `969e2543677b5bc68fe62266f19c8c5215ba07c6`；旧 payload 回归按功能基线 `4f910f612cfdf6915758f39522f0ff9874f96d7a` 的实际入口与响应字段编写，没有新必填字段。
+- 合入 #100 后源码 `e8706f9ed818bd52fd53f2351509abcabbac2cff`：11 文件 / 323 测试通过，`final-integrated.log`；typecheck 通过，`final-integrated-typecheck.log`。
+- 合入 #96 后源码 `f1c471cd9ab4f46644c741fd63b636abe109bdde`：OCR + MCP + 企业资料 3 文件 / 73 测试通过，`final-tip-focused.log`；typecheck/build 通过，`final-tip-typecheck.log` / `final-tip-build.log`。
+- 最后合入的集成快照 `f31f57b5a097223f15e7d596961af9d4ea8c6693`（含 #99/#96/#100），执行源码 `cff15c7f3270218da934253ceade6ffa86c9550f`：OCR + MCP + 别名 HTTP 3 文件 / 56 测试通过，`final-alias-tip-focused.log`；typecheck 通过，`final-alias-tip-typecheck.log`。最后的文档收尾提交不改执行源码。此前 323 测试绑定各自源码，不能转称最后快照跑了 323 项。
+
+迁移 journal 的合并保留 `0014/0015/0016/0022`，按 idx/when 递增；只在与 #100 交汇时手工保留双方追加项。没有重生成旧 snapshot。共享修改点为 schema/journal、MCP server instructions、写工具名单及其既有白名单断言；OCR 服务和旧适配入口属本票。下游集成迁移排序仍由父级 merger 统一，不在生产执行。
+
+`cff15c7f3270218da934253ceade6ffa86c9550f` 的 `pnpm build` 亦退出 0，日志 `final-alias-tip-build.log`。票级有界性样本与 13 项 OCR 公开测试已在该源码快照重新执行。另保留 `mutation-version-red.log`：在 `9d88c99` 源码临时移除版本核对时，真实并发测试从预期 `[200,409]` 变为 `[200,200]` 并退出 1；恢复后公开测试通过，变异未入 Git。
