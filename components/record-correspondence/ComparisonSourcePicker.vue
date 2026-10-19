@@ -115,10 +115,11 @@ async function hydrateSelectedLabels() {
   for (const group of visibleGroups.value) {
     const missing = new Set(selection[sourceSelectionKey(group.kind)].filter(id => !cache.value[`${group.kind}:${id}`]))
     if (!missing.size) continue
+    const selectedIds = [...missing].join(',')
     let catalogPage = 1
     try {
       while (missing.size) {
-        const result = await $fetch<ComparisonSourceCatalog>('/api/roster/record-comparison/sources', { query: { kind: group.kind, page: catalogPage, pageSize: 200 } })
+        const result = await $fetch<ComparisonSourceCatalog>('/api/roster/record-comparison/sources', { query: { kind: group.kind, page: catalogPage, pageSize: 200, ids: selectedIds } })
         if (current !== hydrationId) return
         for (const item of result.rows) { cache.value[keyOf(item)] = item; missing.delete(item.id) }
         emit('sources', result.rows)

@@ -471,6 +471,10 @@ function readCorrespondence(db: Db, row: StoredCorrespondence, observed: ReadSou
   }
   return { ...row, requiresRevalidation }
 }
+/** Scoped comparison adapter; use #85's batched source validity reader. */
+export function readScopedRecordCorrespondences(db: Db, rows: StoredCorrespondence[]): CorrespondenceRead[] {
+  return readCorrespondences(db, rows)
+}
 export function listRecordCorrespondences(db: Db, filter: CorrespondenceFilter = {}): CorrespondenceRead[] {
   return readCorrespondences(db, db.select().from(schema.recordCorrespondence).where(correspondenceWhere(filter)).orderBy(asc(schema.recordCorrespondence.id)).all())
 }
