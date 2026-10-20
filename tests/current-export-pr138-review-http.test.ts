@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema as s } from '../db/client'
-import { readCurrentCandidate } from '../lib/roster/current-qualification'
+import { CURRENT_TITLES, readCurrentCandidate } from '../lib/roster/current-qualification'
 import { currentExport118Fixture, rows, year } from './helpers/current-export-118'
 import { readEvidenceToken113 } from '../server/utils/evidence-impact-113'
 const f=currentExport118Fixture()
@@ -136,3 +136,37 @@ it('preserves a later definite formal qualification when the inbound interval be
   expect(actual[0]!.row[10]).toContain('independently verified external qualification')
   expect(actual[0]!.row[13]).not.toContain('顺序尚未消解')
 },60000)
+
+it.each(CURRENT_TITLES)('keeps a later formal failure excluded after an expired inbound assertion for %s',async titleCode=>{
+  const c=f.candidate('Expired inbound before failure '+titleCode,[
+    {eventType:'award',year:year-6,batchSeq:1},
+    {eventType:'review',year:year-6,decidedYear:year-2,reviewOutcome:'failed',batchSeq:1},
+  ],titleCode)
+  expect(readCurrentCandidate(f.db.$client,c.enterprise.id,titleCode,year).group).toBe('excluded')
+  const q=f.db.insert(s.platformQuery).values({interface:'business_list',queryKey:c.enterprise.usccNorm!,rdjb:{little_giant:'3',specialized_sme:'2',innovative_sme:'1'}[titleCode],titleCode,queriedAt:new Date().toISOString(),status:'success'}).returning().get()
+  const r=f.db.insert(s.platformRelation).values({queryId:q.id,enterpriseId:c.enterprise.id,sequenceNo:1,usccRaw:c.enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc'}).returning().get()
+  const sc=scope(c.enterprise.id,'extra_in_miit',titleCode)
+  const result=await api({...sc,action:'replace',expectedCurrentId:null,idempotencyKey:'pr138-expired-'+(++serial),actor,basis:'Synthetic verified historical migration and expired grant',ruleVersion:'synthetic-pr138',effectiveAt:`${year-1}-01-01T00:00:00Z`,decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:q.id,evidenceRelationId:r.id,currentQualification:{titleCode,awardYear:year-6,validFrom:`${year-6}-01-01T00:00:00Z`,validUntil:`${year-3}-01-01T00:00:00Z`,basis:'Synthetic expired external grant retained for audit',publicationCheck:{status:'not_found',scope:'Historical grant scope only'}}}})
+  expect(result.status,JSON.stringify(result.body)).toBe(200)
+  const token=readEvidenceToken113(f.db,sc as any)
+  const maintained=await api({...sc,action:'maintain',expectedCurrentId:result.body.versionId,idempotencyKey:'pr138-expired-review-'+(++serial),actor,basis:'Synthetic explicit review of historical evidence',ruleVersion:'synthetic-pr138',effectiveAt:`${year-1}-01-01T00:00:00Z`,reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
+  expect(maintained.status,JSON.stringify(maintained.body)).toBe(200)
+  const auditBefore=f.db.$client.prepare('select * from difference_reason where enterprise_id=? order by id').all(c.enterprise.id)
+  const eventsBefore=f.db.$client.prepare('select * from record_event where record_id=? order by id').all(c.record.id)
+  const path={little_giant:'little-giant',specialized_sme:'specialized-sme',innovative_sme:'innovative-sme'}[titleCode]
+  const accepted=await fetch(f.url('/api/roster/exports/current/'+path),{method:'POST',headers:f.headers,body:JSON.stringify({clientRequestId:'pr138-expired-export-'+titleCode})})
+  expect(accepted.status).toBe(202)
+  const job=await f.terminal((await accepted.json()).jobId)
+  expect(job.state,JSON.stringify(job)).toBe('done')
+  const {wb}=await f.download(job),actual=occurrences(wb,c.enterprise.id)
+  expect(actual.map(x=>x.sheet)).toEqual(['排除明细'])
+  expect(actual[0]!.row[10]).toContain('event:')
+  expect(actual[0]!.row[10]).toContain('Synthetic expired external grant retained for audit')
+  expect(actual[0]!.row[11]).toContain('failed')
+  expect(actual[0]!.row[13]).toContain('复核明确不通过')
+  expect(actual[0]!.row[13]).not.toContain('日期顺序尚未消解')
+  expect(actual[0]!.row[14]).toContain('decision:'+result.body.versionId)
+  expect(actual[0]!.row[14]).toContain('evidence:')
+  expect(f.db.$client.prepare('select * from difference_reason where enterprise_id=? order by id').all(c.enterprise.id)).toEqual(auditBefore)
+  expect(f.db.$client.prepare('select * from record_event where record_id=? order by id').all(c.record.id)).toEqual(eventsBefore)
+})

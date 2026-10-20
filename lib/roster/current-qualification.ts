@@ -262,9 +262,9 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
         })
         row.basis=[row.basis,...attested.map(a => `decision:${a.decision.id} ${a.qualification.basis} [${a.qualification.validFrom},${a.qualification.validUntil})${a.qualification.awardYear == null ? '' : ' 明确认定年:'+a.qualification.awardYear}`)].filter(Boolean).join('\n')
         row.notes.push(...attested.map(a => '迁入资格断言；公布核对范围：' + a.qualification.publicationCheck.scope))
-        const current = attested.filter(a => {
+        const applicable = attested.filter(({qualification:q}) => Date.parse(q.validFrom) <= executionTime && executionTime < Date.parse(q.validUntil) && q.publicationCheck.status === 'not_found')
+        const current = applicable.filter(a => {
           const q=a.qualification
-          if (!(Date.parse(q.validFrom) <= executionTime && executionTime < Date.parse(q.validUntil)) || q.publicationCheck.status !== 'not_found') return false
           if (!formal.length) return true
           // A current interval is not a re-award. It can supersede an expired,
           // otherwise settled history; failures/gaps need an explicit new grant.
@@ -282,7 +282,7 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
         } else if (!formal.length) {
           row.group='pending'; row.publication='尚未完成公布匹配核实'
           row.notes.push('缺少已复核本称号当前资格及宁波公布核对范围；迁入事实不能代替资格依据')
-        } else if (attested.length && row.group !== 'eligible') {
+        } else if (applicable.length && row.group !== 'eligible') {
           row.group='pending'; row.notes.push('迁入资格与正式周期/失败/日期顺序尚未消解，保留全部历史依据')
         }
       }
