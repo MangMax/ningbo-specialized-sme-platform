@@ -426,11 +426,31 @@ async function waitForKeyField(wrapper: Wrapper) {
   return wrapper.find('#task-key')
 }
 
-/** Record what the page scrolled into view (happy-dom has no layout). */
-function trackScrolledIntoView(): Element[] {
-  const scrolled: Element[] = []
-  HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) { scrolled.push(this) }
-  return scrolled
+/**
+ * Record what the page asked the window to scroll to.
+ *
+ * happy-dom has no layout, so the scroll is asserted through the call itself:
+ * the page must scroll by the key field's **own** box, not by the still-growing
+ * accordion container's.
+ */
+function trackWindowScrolls(): number[] {
+  const scrolls: number[] = []
+  window.scrollTo = ((options: ScrollToOptions | number) => {
+    scrolls.push(typeof options === 'number' ? options : (options.top ?? 0))
+  }) as typeof window.scrollTo
+  return scrolls
+}
+
+/** happy-dom lays nothing out: give the key field a box below the fold. */
+function layoutKeyFieldBelowFold(top: number, height: number): () => void {
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+    if (this.id === 'task-key') {
+      return { top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top, toJSON: () => ({}) } as DOMRect
+    }
+    return original.call(this)
+  }
+  return () => { HTMLElement.prototype.getBoundingClientRect = original }
 }
 
 /**
@@ -1195,7 +1215,8 @@ describe('移动端列表摘要', () => {
 
 describe('进入授权的键盘位置', () => {
   it('第一次点「进入授权」就把密钥框滚进视野并把焦点放进去', async () => {
-    const scrolled = trackScrolledIntoView()
+    const scrolls = trackWindowScrolls()
+    const restoreLayoutBox = layoutKeyFieldBelowFold(900, 36)
     installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
     state.query = { tab: 'export' }
     const wrapper = await mountPage({ attach: true })
@@ -1212,11 +1233,16 @@ describe('进入授权的键盘位置', () => {
     await flushPromises()
     expect(key.exists()).toBe(true)
     expect(document.activeElement).toBe(key.element)
-    expect(scrolled).toContain(key.element)
+    // The scroll is computed from the field's **own** box (the accordion
+    // container is still 0-height at that moment, and the browser would resolve
+    // the target against the container and leave the field below the fold).
+    expect(scrolls).toHaveLength(1)
+    expect(scrolls[0]).toBe(936 - window.innerHeight + 8)
+    restoreLayoutBox()
   })
 
   it('读者已经移开焦点时，迟到的挂载不抢焦点', async () => {
-    const scrolled = trackScrolledIntoView()
+    const scrolls = trackWindowScrolls()
     installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
     state.query = { tab: 'export' }
     const wrapper = await mountPage({ attach: true })
@@ -1236,12 +1262,12 @@ describe('进入授权的键盘位置', () => {
     await flushPromises()
     expect(key.exists()).toBe(true)
     expect(document.activeElement).toBe(reader)
-    expect(scrolled).not.toContain(key.element)
+    expect(scrolls).toHaveLength(0)
     reader.remove()
   })
 
   it('读者在挂载前收起面板时，迟到的挂载不抢焦点', async () => {
-    const scrolled = trackScrolledIntoView()
+    const scrolls = trackWindowScrolls()
     installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
     state.query = { tab: 'export' }
     const wrapper = await mountPage({ attach: true })
@@ -1262,12 +1288,12 @@ describe('进入授权的键盘位置', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(scrolled).toHaveLength(0)
+    expect(scrolls).toHaveLength(0)
     expect(document.activeElement).toBe(goAuthorize.element)
   })
 
   it('离页之后迟到的挂载不抢焦点', async () => {
-    const scrolled = trackScrolledIntoView()
+    const scrolls = trackWindowScrolls()
     installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
     state.query = { tab: 'export' }
     const wrapper = await mountPage({ attach: true })
@@ -1283,7 +1309,7 @@ describe('进入授权的键盘位置', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(scrolled).toHaveLength(0)
+    expect(scrolls).toHaveLength(0)
   })
 
   it('授权成功后焦点留在提交按钮上，不掉进 <body>', async () => {

@@ -118,6 +118,26 @@ function requestAuthorization() {
 }
 
 /**
+ * 把一个元素滚进视野。
+ *
+ * 不用 `scrollIntoView`：折叠内容此刻还是一个高度为 0 的 `overflow:hidden` 容器，
+ * 浏览器会拿**容器**的位置当目标，于是字段刚好停在折叠线以下（1280 实测 top 822
+ * > 视口 800）。这里按字段**自己**的盒子算目标，再滚窗口 —— 字段在文档里的位置
+ * 不随容器长高而变，所以这一次滚动落点就是展开之后读者看到的位置。
+ */
+function scrollElementIntoView(element: HTMLElement) {
+  const rect = element.getBoundingClientRect()
+  const viewport = window.innerHeight
+  if (rect.top >= 0 && rect.bottom <= viewport) return // 已经在视野里：不动
+  const margin = 8
+  const target = rect.top < 0
+    ? window.scrollY + rect.top - margin
+    : window.scrollY + rect.bottom - viewport + margin
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  window.scrollTo({ top: Math.max(0, target), behavior: reduce ? 'auto' : 'smooth' })
+}
+
+/**
  * 把焦点与滚动一次性交给密钥框。
  *
  * 密钥框还没挂上来（Reka 异步挂载）就留着请求，等它出现；面板已经收起、页面已经
@@ -133,8 +153,7 @@ function focusKeyField() {
   if (active && active !== document.body && active !== pending.origin) { pendingKeyFocus = null; return false }
   pendingKeyFocus = null
   input.focus({ preventScroll: true })
-  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-  input.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' })
+  scrollElementIntoView(input)
   return true
 }
 // 密钥框挂上来（Reka 异步挂载）的那一刻，这次请求就被兑现掉。
