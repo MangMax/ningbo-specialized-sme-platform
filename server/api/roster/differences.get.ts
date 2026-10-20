@@ -1,7 +1,7 @@
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS } from '~~/lib/comparison'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '~~/lib/labels'
-import { listRosterDifferences } from '~~/lib/roster/enterprise-roster'
+import { listRosterDifferences } from '~~/lib/roster/difference-list'
 import { parseRosterDifferenceQuery } from '../../utils/roster-read-query'
 
 /**
