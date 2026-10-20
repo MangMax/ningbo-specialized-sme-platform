@@ -288,6 +288,9 @@ const classificationEntries = computed(() => {
           <span v-else class="text-sm font-medium">选择两侧来源</span>
         </template>
         <CardContent class="flex min-w-0 flex-col gap-4 p-4 sm:p-5">
+            <p class="text-muted-foreground max-w-[70ch] text-[13px] leading-5">
+              按正式事件与平台原行做记录级对照；两侧来源只限定本次分析范围，不表示文件覆盖完整或两个版本相同。
+            </p>
             <div class="flex min-w-0 flex-col gap-3">
               <section class="flex min-w-0 flex-col gap-2" aria-label="左侧正式文件">
                 <header class="flex flex-wrap items-baseline justify-between gap-2">

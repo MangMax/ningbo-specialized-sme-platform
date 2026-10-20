@@ -80,6 +80,17 @@ export default defineNuxtConfig({
      */
     apiToken: '',
     /**
+     * **#108 页面复核写入口的显式部署开关**（server-only，默认 `false`）。
+     *
+     * `true` 且 `apiToken` 非空时，才允许同源页面通过
+     * `POST /api/roster/evidence-review/browser-commands` 提交 maintain/replace。
+     * 这是过渡的**部署能力**（“允许该应用的页面进行人工复核”），**不是登录鉴权**：
+     * 它不识别操作人、不建立会话，也不把同源本身当身份。默认关闭时，同源请求同样拒绝。
+     * token 仍只用于判断既有写能力是否配置，不返回浏览器、不写入 cookie/Web Storage。
+     * 真实权限体系与操作人来源见 #127；届时替换此开关。
+     */
+    browserReviewEnabled: false,
+    /**
      * **通路 a(在线 PaddleOCR API)的凭证**(票 14)。
      *
      * 只被 `server/utils/jobs/ocr.ts` 与 `server/api/...` 的 OCR 路径读;上传通路(b)

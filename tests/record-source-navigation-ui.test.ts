@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, nextTick, ref } from 'vue'
-import { createMemoryHistory, createRouter, RouterLink, RouterView, useRoute } from 'vue-router'
+import { createMemoryHistory, createRouter, RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import EnterprisePage from '../pages/enterprises/[id].vue'
 import SourceReader from '../components/record-correspondence/SourceReader.vue'
@@ -28,6 +28,7 @@ beforeEach(() => {
   document.addEventListener('click', preventNativeNavigation)
   sessionStorage.clear()
   vi.stubGlobal('useRoute', useRoute)
+  vi.stubGlobal('useRouter', useRouter)
   vi.stubGlobal('useHead', vi.fn())
   vi.stubGlobal('definePageMeta', vi.fn())
   vi.stubGlobal('$fetch', vi.fn(async (url: string) => ({ source: url.includes('/events/') ? event : relation, correspondences: [edge] })))
@@ -63,6 +64,17 @@ async function settleDialog() {
   await nextTick()
   await flushPromises()
 }
+describe('enterprise detail information architecture', () => {
+  it('defaults to records and keeps verification in a separate tab', async () => {
+    await enterprise(10, true)
+    const tabs = wrapper!.findAll('[aria-label="企业详情内容"] [role="tab"]')
+    expect(tabs.map(tab => tab.text())).toEqual(['认定信息与记录 2', '称号核对'])
+    expect(tabs.filter(tab => tab.attributes('aria-selected') === 'true').map(tab => tab.text()))
+      .toEqual(['认定信息与记录 2'])
+    expect(wrapper!.text()).toContain('称号与复核安排')
+  })
+})
+
 describe('source modal reverse event navigation', () => {
   it.each([{ name: 'same event URL without return target', initial: 10, withReturn: false }, { name: 'same event URL with source query', initial: 10, withReturn: true }, { name: 'different event route reuse', initial: 11, withReturn: true }])('closes and arrives at the event for $name', async ({ initial, withReturn }) => {
     const router = await enterprise(initial, withReturn)
@@ -82,7 +94,9 @@ describe('source modal reverse event navigation', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(collapsible.props('open')).toBe(true)
     // Expanded evidence can be taller than the viewport: keep the event heading in view.
-    expect(scroll).toHaveBeenLastCalledWith({ block: 'start' })
+    // Event arrival waits two animation frames and the page-scroll restoration
+    // delay. flushPromises alone does not complete those browser tasks.
+    await vi.waitFor(() => expect(scroll).toHaveBeenLastCalledWith({ block: 'start' }))
     expect(router.currentRoute.value.query.returnTo).toBe(withReturn ? returnTo : undefined)
   })
 

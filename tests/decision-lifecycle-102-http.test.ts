@@ -2,10 +2,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { useDb, schema } from '../db/client'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import historicalReceipts from './fixtures/decision-102-pre-browser-receipts.json'
 
 const dir = mkdtempSync(join(tmpdir(), 'decision-102-'))
 const dbPath = join(dir, 'synthetic.db')
@@ -39,6 +41,82 @@ beforeAll(async () => {
 afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
 
 describe('ticket 102 public decision lifecycle', () => {
+  it.each(historicalReceipts.fixtures)('replays pre-browser normalized receipts across HTTP and MCP: $name', async ({ name, command, hash }) => {
+    // These normalized commands/hashes were generated with the actual 0ceb918 schema,
+    // not the current parser. Include omitted optionals, explicit nulls and movedIn.
+    expect(createHash('sha256').update(JSON.stringify(command)).digest('hex')).toBe(hash)
+    db.insert(schema.enterprise).values({ id: command.enterpriseId, name, nameNorm: name }).run()
+    const review = 'reviewedEvidence' in command
+    const row = db.insert(schema.differenceReason).values({
+      enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: 'missing_in_miit',
+      status: 'needs_review', measureCode: 'manual_review', verificationStatus: 'pending',
+      lifecycleAction: command.action === 'withdraw' ? 'withdraw' : 'replace',
+      recordedAt: '2026-10-19T01:00:00.000Z',
+      ...(!review ? { idempotencyKey: command.idempotencyKey, requestHash: hash } : {}),
+    }).returning().get()
+    const receipt = { versionId: row.id, currentId: command.action === 'withdraw' ? null : row.id, previousId: null, action: command.action, recordedAt: row.recordedAt,
+      ...(review ? { reviewedRevisionId: 98765 } : {}) }
+    if (review) db.insert(schema.evidenceReviewReceipt114).values({
+      idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action,
+      enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
+      decisionId: row.id, reviewedRevisionId: 98765, actor: command.actor as { type: 'agent'; id: string }, basis: command.basis,
+      ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, response: receipt, recordedAt: row.recordedAt,
+    }).run()
+    const persisted = () => ({
+      decisions: db.all(sql`select * from difference_reason where enterprise_id=${command.enterpriseId}`),
+      reviews: db.all(sql`select * from evidence_review_receipt_114 where enterprise_id=${command.enterpriseId}`),
+    })
+    const before = persisted()
+    // Reorder every object and exercise trimming: wire order must not affect normalized replay.
+    const reverse = (value: unknown): unknown => value && typeof value === 'object'
+      ? Object.fromEntries(Object.entries(value).reverse().map(([key, item]) => [key, reverse(item)])) : value
+    const wire = reverse({ ...command, basis: '  ' + command.basis + '  ', actor: { ...command.actor, id: '  ' + command.actor.id + '  ' }, ruleVersion: '  ' + command.ruleVersion + '  ' }) as Record<string, unknown>
+    // expectedCurrentId=null is now stale, and review revision 98765 was never committed.
+    // Existing receipts must win over both version and evidence validation.
+    const replay = await post(wire)
+    expect(replay.status, await replay.clone().text()).toBe(200)
+    expect(await json(replay)).toEqual(receipt)
+    const mcp = await rpc('save_difference_decision', wire, 'synthetic-mcp-token')
+    expect(mcp.status).toBe(200)
+    expect(mcp.body.result.isError).not.toBe(true)
+    expect(value(mcp)).toEqual(receipt)
+    const changed = { ...wire, basis: 'different request' }
+    const conflict = await post(changed)
+    expect(conflict.status).toBe(409)
+    expect(await json(conflict)).toMatchObject({ error: { code: 'idempotency_conflict' } })
+    const mcpConflict = await rpc('save_difference_decision', changed, 'synthetic-mcp-token')
+    expect(mcpConflict.body.result.isError).toBe(true)
+    expect(value(mcpConflict)).toMatchObject({ error: { code: 'idempotency_conflict' } })
+    expect(persisted()).toEqual(before)
+  })
+
+  it.each([
+    { case: 'null-actor', metadata: { actor: null } },
+    { case: 'null-rule', metadata: { ruleVersion: null } },
+    { case: 'both-null', metadata: { actor: null, ruleVersion: null } },
+  ])('rejects null identity metadata on external transports: $case', async ({ case: key, metadata }) => {
+    const invalid = { ...request(key), ...metadata }
+    const http = await post(invalid)
+    expect(http.status).toBe(400)
+    expect(await json(http)).toMatchObject({ error: { code: 'invalid_request' } })
+    const mcp = await rpc('save_difference_decision', invalid, 'synthetic-mcp-token')
+    expect(mcp.status).toBe(400)
+    expect(mcp.body.error).toMatchObject({ code: -32602, data: { code: 'invalid_request' } })
+  })
+
+  it.each([
+    { case: 'maintain-without-reviewed-evidence', action: 'maintain', includeDecision: false },
+    { case: 'replace-without-decision', action: 'replace', includeDecision: false },
+    { case: 'withdraw-with-decision', action: 'withdraw', includeDecision: true },
+  ])('rejects semantic MCP requests before handler execution: $case', async ({ case: key, action, includeDecision }) => {
+    const original = request(key)
+    const { decision, ...base } = original
+    const invalid = { ...base, action, ...(includeDecision ? { decision } : {}) }
+    const response = await rpc('save_difference_decision', invalid, 'synthetic-mcp-token')
+    expect(response.status).toBe(400)
+    expect(response.body.error).toMatchObject({ code: -32602, data: { code: 'invalid_request' } })
+  })
+
   it('preserves the public legacy PATCH payload output and note omission semantics without creating a decision', async () => {
     const target = db.insert(schema.enterprise).values({ name: '旧标注兼容企业', nameNorm: '旧标注兼容企业', usccNorm: 'LEGACY-COMPAT-102' }).returning().get()
     db.insert(schema.record).values({ enterpriseId: target.id, titleCode: 'innovative_sme', source: 'jxj' }).run()
@@ -273,7 +351,8 @@ describe('ticket 102 public decision lifecycle', () => {
     const spec = await json(await fetch(service.baseUrl + '/_openapi.json'))
     const commandSchema = spec.paths['/api/roster/decision-lifecycle/commands'].post.requestBody.content['application/json'].schema
     expect(commandSchema.required).toEqual(expect.arrayContaining(['action','expectedCurrentId','actor','basis','ruleVersion','effectiveAt','idempotencyKey']))
-    expect(commandSchema.properties.action.enum).toEqual(['replace','withdraw'])
+    expect(commandSchema.properties.action.enum).toEqual(['replace','withdraw','maintain'])
+    expect(commandSchema.properties.reviewedEvidence).toMatchObject({ type: 'object', additionalProperties: false, required: ['latestRevisionId','projectionReady'], properties: { latestRevisionId: { type: 'integer', minimum: 0 }, projectionReady: { type: 'boolean', enum: [true] } } })
     for (const path of ['current','history','legacy-preview','{id}']) expect(spec.paths['/api/roster/decision-lifecycle/' + path].get).toBeTruthy()
     const listResponse = await fetch(service.baseUrl + '/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) })
     const listRaw = await listResponse.text()
@@ -281,6 +360,13 @@ describe('ticket 102 public decision lifecycle', () => {
     const names = list.result.tools.map((t: any) => t.name)
     expect(names).toEqual(expect.arrayContaining(['get_difference_decision','get_current_difference_decision','list_difference_decision_history','preview_legacy_difference_decisions']))
     expect(names).not.toContain('save_difference_decision')
+    expect(names).toEqual(expect.arrayContaining(['list_evidence_impacts','get_evidence_impact','preview_evidence_impacts','list_evidence_impact_sources','list_evidence_revision_events']))
+    expect(names).not.toContain('process_evidence_impacts')
+    expect(names).not.toContain('release_evidence_rule')
+    const review = spec.paths['/api/roster/evidence-impacts/commands'].post.requestBody.content['application/json'].schema
+    expect(review.oneOf[0].properties.limit).toMatchObject({ minimum: 1, maximum: 100 })
+    expect(review.oneOf[1].properties.scopes).toMatchObject({ minItems: 1, maxItems: 50 })
+    expect(spec.paths['/api/roster/evidence-impacts'].get.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'cursor' }),expect.objectContaining({ name: 'eventId' }),expect.objectContaining({ name: 'decisionId' })]))
     const cwd = resolve(import.meta.dirname, '..'); const port = await reserveLoopbackPort()
     const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'no-token-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: '', NUXT_MCP_TOKEN: '', NUXT_CURATED_PATH: curatedPath, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
     let output = ''; for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { output = (output + data).slice(-4000) })

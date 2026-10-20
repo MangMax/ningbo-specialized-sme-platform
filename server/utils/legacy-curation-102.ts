@@ -2,7 +2,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import * as s from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { patchCuration, type CurationPatch } from '../../lib/curation'
-import { DecisionError102, type DecisionDb } from './decision-lifecycle-102'
+import { DecisionError102, managedDecision102, type DecisionDb } from './decision-lifecycle-102'
 
 /** Keep legacy annotation semantics until explicit lifecycle adoption of this coordinate. */
 export function patchLegacyCuration102(db: DecisionDb, path: string, patch: CurationPatch) {
@@ -18,7 +18,7 @@ export function patchLegacyCuration102(db: DecisionDb, path: string, patch: Cura
     const enterpriseId = candidates[0]?.id
     if (enterpriseId != null && tx.select({ id: s.differenceReason.id }).from(s.differenceReason).where(and(
       eq(s.differenceReason.enterpriseId, enterpriseId), eq(s.differenceReason.titleCode, patch.titleCode),
-      eq(s.differenceReason.direction, patch.direction), sql`${s.differenceReason.lifecycleAction} is not null`,
+      eq(s.differenceReason.direction, patch.direction), managedDecision102(),
     )).limit(1).get()) throw new DecisionError102(409, 'decision_lifecycle_required', 'This coordinate is managed by decision lifecycle commands; legacy annotations cannot overwrite its state')
     // Zero exact matches remain JSON-only annotations, as in the original API.
     patchCuration(path, patch)

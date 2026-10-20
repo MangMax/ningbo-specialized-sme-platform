@@ -82,7 +82,13 @@ describe('record comparison true HTTP adapters on isolated SQLite', () => {
     const body = await response.json()
     expect(body.selection).toBe('explicit')
     expect(body.counts).toMatchObject({ official_document: 1, query: 1, export_batch: 0 })
-    expect(body.rows).toMatchObject([{ kind: 'official_document', id: doc.id, label: 'Synthetic' }, { kind: 'query', id: query.id, status: 'partial' }])
+    expect(body.rows).toMatchObject([{ kind: 'official_document', id: doc.id, label: 'Synthetic' }, {
+      kind: 'query',
+      id: query.id,
+      status: 'partial',
+      confirmedEnterprises: [{ enterpriseId: enterprise.id, enterpriseName: 'HTTP', nameRaw: null, aliasConfirmed: false, mergedFromEnterpriseId: null }],
+      recordNames: [],
+    }])
     const second = await fetch(`${url}?kind=query&page=1&pageSize=1`)
     expect((await second.json()).rows).toMatchObject([{ id: query.id, kind: 'query', selectable: true }])
     expect((await fetch(`${url}?kind=unknown`)).status).toBe(400)

@@ -1,9 +1,14 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useQuery } from '@pinia/colada'
 import AppSidebar from '@/components/AppSidebar.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { Separator } from '@/components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
+
+const route = useRoute()
+// 企业详情和比对页讨论的是当前对象，不是全库规模；全局计数留在列表语境。
+const showGlobalStats = computed(() => !route.path.startsWith('/enterprises/') && route.path !== '/comparison')
 
 interface Stats {
   totalRecords: number
@@ -38,9 +43,9 @@ const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString('zh-CN'))
         <div class="flex w-full items-center gap-3 px-4">
           <SidebarTrigger class="-ml-1" />
           <Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
-          <span data-global-stats class="text-muted-foreground text-xs tabular-nums">
-            共 <span class="text-foreground font-medium">{{ fmt(stats?.totalRecords) }}</span> 个企业×称号
-            · <span class="text-foreground font-medium">{{ fmt(stats?.totalEnterprises) }}</span> 家企业
+          <span v-if="showGlobalStats" data-global-stats class="text-muted-foreground text-xs tabular-nums">
+            名录记录 <span class="text-foreground font-medium">{{ fmt(stats?.totalRecords) }}</span> 个企业×称号
+            · <span class="text-foreground font-medium">{{ fmt(stats?.totalEnterprises) }}</span> 家有称号企业
           </span>
           <ThemeToggle class="ml-auto" />
         </div>

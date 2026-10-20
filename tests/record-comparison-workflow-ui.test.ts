@@ -6,7 +6,7 @@ import RecordComparisonPanel from '../components/record-correspondence/RecordCom
 
 const sources = {
   official_document: [{ kind: 'official_document', id: 3, label: '2024 年公布名单', subtitle: '甬经信〔2024〕1号', observedAt: '2024-10-01', status: 'available', selectable: true, path: 'jxj/a.pdf' }],
-  query: [{ kind: 'query', id: 7, label: '称号查询 · 恒川制造', observedAt: '2025-01-02T00:00:00Z', status: 'success', selectable: true, completeness: 'complete', fullRange: true, conditions: {} }],
+  query: [{ kind: 'query', id: 7, label: '称号查询 · 恒川制造', subtitle: 'business_list', titleName: '恒川制造', observedAt: '2025-01-02T00:00:00Z', status: 'success', selectable: true, completeness: 'complete', fullRange: true, conditions: {} }],
   export_batch: [],
 }
 const counts = { distinctEvents: 0, distinctPlatformRows: 0, distinctEnterpriseTitles: 0, laterProcessRows: 0, historical_aligned: 0, historical_conflict: 0, official_without_correspondence: 0, unresolved: 0, platformWithoutOfficialRows: 0, unresolvedPlatformRows: 0, recognizedRows: 0, exportRows: 0, observedRecognizedExportPairs: 0 }
@@ -45,7 +45,7 @@ const compareRequests = () => fetch.mock.calls.filter(([url]) => url === '/api/r
 const runButton = () => wrapper!.findAll('button').find(button => button.text() === '开始对比')!
 async function selectBoth() {
   await wrapper!.get('[aria-label="选择2024 年公布名单"]').trigger('click')
-  await wrapper!.get('[aria-label="选择称号查询 · 恒川制造"]').trigger('click')
+  await wrapper!.get('[aria-label="选择称号查询记录 · 恒川制造 · 未记录查询条件"]').trigger('click')
   await flushPromises()
 }
 
@@ -54,13 +54,13 @@ it('enables comparison only after choosing a document and query through the real
   await flushPromises()
   expect(compareRequests()).toHaveLength(0)
   expect(wrapper.get('[aria-label="选择2024 年公布名单"]').isVisible()).toBe(true)
-  expect(wrapper.get('[aria-label="选择称号查询 · 恒川制造"]').isVisible()).toBe(true)
+  expect(wrapper.get('[aria-label="选择称号查询记录 · 恒川制造 · 未记录查询条件"]').isVisible()).toBe(true)
   expect(runButton().attributes('disabled')).toBeDefined()
   await wrapper.get('[aria-label="选择2024 年公布名单"]').trigger('click')
   await flushPromises()
   expect(runButton().attributes('disabled')).toBeDefined()
   expect(wrapper.text()).toMatch(/请选择.*平台查询|还.*平台查询/)
-  await wrapper.get('[aria-label="选择称号查询 · 恒川制造"]').trigger('click')
+  await wrapper.get('[aria-label="选择称号查询记录 · 恒川制造 · 未记录查询条件"]').trigger('click')
   await flushPromises()
   expect(runButton().attributes('disabled')).toBeUndefined()
   expect(wrapper.text()).not.toContain('上次结果')
@@ -89,7 +89,7 @@ it('keeps last compared sources when the draft is cleared and does not send an i
   await flushPromises()
   await wrapper.findAll('[data-slot="accordion-trigger"]').find(button => button.text().startsWith('来源') && button.text().includes('份文件'))!.trigger('click')
   await wrapper.get('[aria-label="选择2024 年公布名单"]').trigger('click')
-  await wrapper.get('[aria-label="选择称号查询 · 恒川制造"]').trigger('click')
+  await wrapper.get('[aria-label="选择称号查询记录 · 恒川制造 · 未记录查询条件"]').trigger('click')
   await flushPromises()
   expect(runButton().attributes('disabled')).toBeDefined()
   expect(wrapper.text()).toContain('上次结果')

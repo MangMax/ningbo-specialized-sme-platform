@@ -196,7 +196,7 @@ describe('GET /api/roster/enterprises(契约 §7.1)', () => {
 })
 
 describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
-  it('返回 detail 的七段(enterprise / aliases / records / events / evidence / recognitions / differences / platform)', async () => {
+  it('保留原详情字段并独立返回六个称号方向的覆盖决定与有效性评估', async () => {
     routerParam = String(enterpriseId)
     const out = (await handlerDetail({})) as Record<string, unknown>
     expect(Object.keys(out).sort()).toEqual([
@@ -208,10 +208,22 @@ describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
       'platform',
       'recognitions',
       'records',
+      'titleAssessments',
     ])
     expect((out.enterprise as { enterpriseId: number }).enterpriseId).toBe(enterpriseId)
     expect((out.aliases as unknown[]).length).toBe(1)
     expect((out.records as unknown[]).length).toBe(2)
+    const assessments = out.titleAssessments as { enterpriseId: number; titleCode: string; direction: string; assessment: string; queryCoverage: unknown; currentDecision: unknown; explanationValidity: unknown }[]
+    expect(assessments).toHaveLength(6)
+    expect(assessments.map(a => `${a.titleCode}/${a.direction}`).sort()).toEqual([
+      'innovative_sme/extra_in_miit', 'innovative_sme/missing_in_miit', 'little_giant/extra_in_miit', 'little_giant/missing_in_miit', 'specialized_sme/extra_in_miit', 'specialized_sme/missing_in_miit',
+    ])
+    expect(assessments.find(a => a.titleCode === 'specialized_sme' && a.direction === 'extra_in_miit')).toMatchObject({
+      enterpriseId, assessment: 'decided', queryCoverage: { status: 'not_queried', sources: [] }, currentDecision: { current: { status: 'confirmed_reason', reasonCode: 'moved_out', measureCode: 'mark_moved_out' } }, explanationValidity: { status: 'unknown', reasons: ['no_evidence_baseline'] },
+    })
+    expect(assessments.find(a => a.titleCode === 'little_giant' && a.direction === 'missing_in_miit')).toMatchObject({
+      enterpriseId, assessment: 'not_queried', queryCoverage: { status: 'not_queried', sources: [] }, currentDecision: { versionId: null, current: null }, explanationValidity: { status: 'not_applicable', reasons: [] },
+    })
   })
 
   it('没有这个企业 ⇒ 404;id 不是数字 ⇒ 400', async () => {

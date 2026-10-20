@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { and, eq, getTableColumns, inArray, isNull, or, sql } from 'drizzle-orm'
 import type { useDb } from '../../db/client'
 import * as schema from '../../db/schema'
-import { normalizeUscc } from '../../lib/domain'
+import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { TITLES } from '../../lib/labels'
 import { comparisonSourceCatalogInput, recordComparisonInput, type ComparisonSourceCatalogInput, type RecordComparisonInput, type HistoricalClassification } from '../../lib/roster/record-comparison'
@@ -279,6 +279,85 @@ export function previewRecordCorrespondenceImpact(db: Db, input: RecordCompariso
   return { rows: filtered.slice((input.page - 1) * input.pageSize, input.page * input.pageSize), total: filtered.length, page: input.page, pageSize: input.pageSize, grain: 'difference_reason_id', counts: { legacyRows: legacy.length, possibleAlignedEvents: comparison.counts.historical_aligned, possibleConflictEvents: comparison.counts.historical_conflict, unresolvedEvents: comparison.counts.unresolved, proposedCandidateEdges: proposedCandidates.length, potentialCandidateAuditWrites: proposedCandidates.length, plannedAuditWrites: 0 }, proposedCandidates, unresolved: comparison.rows.filter(row => row.classification === 'unresolved').map(row => ({ eventId: row.event.id, reasons: row.reasons })), dataIssues: [...comparison.coverage.filter(item => item.reasons.length).map(item => ({ queryId: item.queryId, eventId: null, reasons: item.reasons })), ...comparison.rows.filter(row => row.classification === 'unresolved' && row.reasons.some(reason => reason !== 'official_coverage_unproved')).map(row => ({ queryId: null, eventId: row.event.id, reasons: row.reasons }))], modelIssues: [...comparison.officialCoverage.reasons, ...comparison.currentSourceConsistency.reasons], sourceSet: comparison.sourceSet, note: 'Read-only candidate and impact preview; no legacy decision or correspondence is changed.' }
 }
 
+function chunked<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size))
+  return chunks
+}
+
+interface SourceEnterpriseLink {
+  relationId: number
+  sequenceNo: number
+  enterpriseId: number
+  enterpriseName: string
+  nameRaw: string | null
+  matchBasis: string
+  /** 平台原行名与已确认曾用名一致时，才把它标成曾用名。 */
+  aliasConfirmed: boolean
+  /** 由归并审计备注解析出的原企业 ID；不是猜测。 */
+  mergedFromEnterpriseId: number | null
+}
+
+/**
+ * 只给本页 query IDs 补企业对象：
+ * - `confirmedEnterprises` 保留 relation 级一对多，同时带 `nameRaw`；
+ *   已确认主体与平台原行名并列返回，归并不替换原行名。
+ * - `recordNames` 只收未关联/未确认关系的原行名称，UI 标“未确认主体”。
+ * 两个查询都以本页查询 ID 为界，不扫描全库。
+ */
+function sourceEnterpriseLinks(db: Db, queryPageIds: number[]) {
+  if (!queryPageIds.length) return new Map<number, { confirmedEnterprises: SourceEnterpriseLink[]; recordNames: string[] }>()
+  const relationRows = db.select({
+    queryId: schema.platformRelation.queryId,
+    relationId: schema.platformRelation.id,
+    sequenceNo: schema.platformRelation.sequenceNo,
+    enterpriseId: schema.platformRelation.enterpriseId,
+    nameRaw: schema.platformRelation.nameRaw,
+    matchBasis: schema.platformRelation.matchBasis,
+    verificationStatus: schema.platformRelation.verificationStatus,
+    enterpriseName: schema.enterprise.name,
+  }).from(schema.platformRelation)
+    .leftJoin(schema.enterprise, eq(schema.enterprise.id, schema.platformRelation.enterpriseId))
+    .where(inArray(schema.platformRelation.queryId, queryPageIds))
+    .orderBy(schema.platformRelation.queryId, schema.platformRelation.id).all()
+  const confirmed = relationRows.filter(row => row.verificationStatus === 'confirmed' && row.enterpriseId != null && row.enterpriseName != null)
+  const enterpriseIds = [...new Set(confirmed.map(row => row.enterpriseId!))]
+  const nameNorms = new Set(confirmed.flatMap(row => row.nameRaw ? [normalizeName(row.nameRaw)] : []))
+  const aliases = new Map<string, { note: string | null }>()
+  for (const ids of chunked(enterpriseIds, 400)) {
+    const rows = db.select({
+      enterpriseId: schema.enterpriseAlias.enterpriseId,
+      nameNorm: schema.enterpriseAlias.nameNorm,
+      note: schema.enterpriseAlias.note,
+    }).from(schema.enterpriseAlias)
+      .where(and(inArray(schema.enterpriseAlias.enterpriseId, ids), eq(schema.enterpriseAlias.verificationStatus, 'confirmed'))).all()
+    for (const alias of rows) if (nameNorms.has(alias.nameNorm)) aliases.set(`${alias.enterpriseId}\u0000${alias.nameNorm}`, alias)
+  }
+  const links = new Map<number, { confirmedEnterprises: SourceEnterpriseLink[]; recordNames: string[] }>()
+  for (const row of relationRows) {
+    const entry = links.get(row.queryId) ?? { confirmedEnterprises: [], recordNames: [] }
+    if (row.verificationStatus === 'confirmed' && row.enterpriseId != null && row.enterpriseName != null) {
+      const nameNorm = row.nameRaw ? normalizeName(row.nameRaw) : ''
+      const alias = nameNorm ? aliases.get(`${row.enterpriseId}\u0000${nameNorm}`) : undefined
+      const merged = alias?.note ? /归并自\s*enterprise:(\d+)/.exec(alias.note) : null
+      entry.confirmedEnterprises.push({
+        relationId: row.relationId,
+        sequenceNo: row.sequenceNo,
+        enterpriseId: row.enterpriseId,
+        enterpriseName: row.enterpriseName,
+        nameRaw: row.nameRaw ?? null,
+        matchBasis: row.matchBasis,
+        aliasConfirmed: Boolean(alias),
+        mergedFromEnterpriseId: merged ? Number(merged[1]) : null,
+      })
+    } else if (row.nameRaw?.trim() && !entry.recordNames.includes(row.nameRaw)) {
+      entry.recordNames.push(row.nameRaw)
+    }
+    links.set(row.queryId, entry)
+  }
+  return links
+}
+
 /** Picker data only. Stable ID order; selecting a source always requires an explicit UI action. */
 export function listRecordComparisonSources(db: Db, input: ComparisonSourceCatalogInput) {
   return consumeComparison(iterateRecordComparisonSources(db, input))
@@ -319,11 +398,13 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
   // Explicit ID hydration already has bounded primary-key seeks.
   const queryPageIds = db.select({ id: sql<number>`${q.id}` }).from(filter.ids === undefined ? sql`${q} indexed by platform_query_key_idx` : q)
     .where(qids).orderBy(q.id).limit(qw.limit).offset(qw.offset)
+  const pageQueryIds = qw.limit ? db.select({ id: q.id }).from(q).where(inArray(q.id, queryPageIds)).orderBy(q.id).all().map(row => row.id) : []
+  const enterpriseLinks = sourceEnterpriseLinks(db, pageQueryIds)
   const queries = qw.limit ? db.select({ id: q.id, interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, titleCode: q.titleCode, queriedAt: q.queriedAt, status: q.status,
     completeness: sql<string | null>`json_extract(${q.collectionEvidence}, '$.completeness')`,
     fullRange: sql<number | null>`json_extract(${q.collectionEvidence}, '$.fullRange')`,
     conditions: sql<string | null>`json_extract(${q.collectionEvidence}, '$.effectiveConditions')`,
-  }).from(q).where(inArray(q.id, queryPageIds)).orderBy(q.id).all().map(row => ({ kind: 'query' as const, id: row.id, label: `${row.interface === 'business_list' ? '业务关联' : row.interface === 'apply_list' ? '申报流程' : '已认定名单'} · ${row.titleCode ? TITLES[row.titleCode] : row.rdjb || '多称号'} · ${row.queryKey}`, subtitle: row.interface, titleCode: row.titleCode, titleName: row.titleCode ? TITLES[row.titleCode] : null, observedAt: row.queriedAt, status: row.status, selectable: true, rdjb: row.rdjb, completeness: row.completeness ?? 'unknown', fullRange: Boolean(row.fullRange), conditions: row.conditions == null ? null : JSON.parse(row.conditions) })) : []
+  }).from(q).where(inArray(q.id, pageQueryIds)).orderBy(q.id).all().map(row => ({ kind: 'query' as const, id: row.id, label: `${row.interface === 'business_list' ? '业务关联' : row.interface === 'apply_list' ? '申报流程' : '已认定名单'} · ${row.titleCode ? TITLES[row.titleCode] : row.rdjb || '多称号'} · ${row.queryKey}`, subtitle: row.interface, titleCode: row.titleCode, titleName: row.titleCode ? TITLES[row.titleCode] : null, observedAt: row.queriedAt, status: row.status, selectable: true, rdjb: row.rdjb, completeness: row.completeness ?? 'unknown', fullRange: Boolean(row.fullRange), conditions: row.conditions == null ? null : JSON.parse(row.conditions), ...(enterpriseLinks.get(row.id) ?? { confirmedEnterprises: [], recordNames: [] }) })) : []
   const batches = bw.limit ? db.select().from(schema.platformExportBatch).where(bids).orderBy(schema.platformExportBatch.id).limit(bw.limit).offset(bw.offset).all().map(row => ({ kind: 'export_batch' as const, id: row.id, label: `${TITLES[row.titleCode]} · ${row.year} · ${row.originalFilename}`, subtitle: row.originalFilename, titleCode: row.titleCode, titleName: TITLES[row.titleCode], observedAt: row.collectedOn, status: row.importStatus, selectable: row.importStatus === 'imported', sha256: row.sha256, rowCount: row.rowCount, replacedBatchId: row.replacedBatchId })) : []
   return { rows: [...documents, ...queries, ...batches], total: filter.kind ? counts[filter.kind] : counts.official_document + counts.query + counts.export_batch, page: filter.page, pageSize: filter.pageSize, counts, selection: 'explicit', completeness: 'not_implied_by_catalog' }
 }

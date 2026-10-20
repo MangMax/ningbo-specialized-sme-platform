@@ -1,13 +1,21 @@
+import { readEvidenceToken113 } from './evidence-impact-113'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { normalizeUscc } from '../../lib/domain'
 import { createHash } from 'node:crypto'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql, type SQL, type AnyColumn } from 'drizzle-orm'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
 
 export type DecisionDb = BetterSQLite3Database<typeof s>
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+/**
+ * Drizzle deliberately passes JS `null` through as SQL NULL instead of json.dumps-ing it,
+ * so a typed `null` cannot satisfy the receipt's existing NOT NULL actor column. This
+ * expression writes the JSON text `null` (the honest "not recorded" value) without a
+ * migration and without inventing a placeholder actor. Reading it back yields JS null.
+ */
+const jsonNull = sql`'null'`
 const note = z.string().trim().min(1).max(4000)
 const title = z.enum(['little_giant', 'specialized_sme', 'innovative_sme'])
 const direction = z.enum(['missing_in_miit', 'extra_in_miit'])
@@ -22,23 +30,55 @@ const content = z.strictObject({
   verificationStatus: z.enum(['confirmed', 'pending']),
   movedIn: z.strictObject({ city: note.nullish(), titleCode: title.nullish(), year: z.number().int().min(1900).max(2200).nullish(), batch: positive.nullish() }).optional(),
 })
-export const decisionCommand102 = decisionScope102.extend({
-  action: z.enum(['replace', 'withdraw']), expectedCurrentId: positive.nullable(),
-  idempotencyKey: z.string().trim().min(1).max(200),
-  actor: z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1).max(200) }),
-  basis: note, ruleVersion: z.string().trim().min(1).max(200),
-  effectiveAt: z.string().datetime({ offset: true }), decision: content.optional(),
-}).superRefine((c, ctx) => {
+const actor102 = z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1).max(200) })
+const ruleVersion102 = z.string().trim().min(1).max(200)
+/** Business fields shared by every write transport; identity metadata stays transport-specific. */
+function decisionCommandFields() {
+  return {
+    expectedCurrentId: positive.nullable(),
+    idempotencyKey: z.string().trim().min(1).max(200),
+    basis: note,
+    effectiveAt: z.string().datetime({ offset: true }), decision: content.optional(),
+    reviewedEvidence: z.strictObject({ latestRevisionId: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), projectionReady: z.literal(true) }).optional(),
+  }
+}
+type ReviewedEvidence102 = { latestRevisionId: number; projectionReady: true }
+function refineDecisionCommand(c: { action: 'replace' | 'withdraw' | 'maintain'; decision?: z.infer<typeof content>; reviewedEvidence?: ReviewedEvidence102 }, ctx: z.RefinementCtx) {
   const d = c.decision
   const invalid = (message: string) => ctx.addIssue({ code: 'custom', message })
-  if ((c.action === 'replace') !== !!d) invalid('Replace requires decision; withdraw must omit it')
+  if ((c.action === 'replace') !== !!d) invalid('Replace requires decision; withdraw/maintain must omit it')
+  if (c.action === 'maintain' && !c.reviewedEvidence || c.action === 'withdraw' && c.reviewedEvidence) invalid('Maintain requires reviewed evidence; withdraw must omit it')
   if (!d) return
   if (d.status === 'confirmed_no_diff' && (d.reasonCode != null || d.measureCode !== 'none' || d.verificationStatus !== 'confirmed')) invalid('confirmed_no_diff requires no reason, none measure, confirmed verification')
   if (d.status === 'confirmed_reason' && (!d.reasonCode || d.verificationStatus !== 'confirmed')) invalid('confirmed_reason requires reason and confirmed verification')
   if (d.reasonCode === 'pending_review' && (d.status !== 'confirmed_reason' || d.verificationStatus !== 'confirmed' || d.measureCode !== 'follow_review')) invalid('pending_review requires confirmed_reason, confirmed, follow_review')
-})
+}
+/**
+ * External HTTP/MCP command: actor and ruleVersion remain required.
+ * The browser capability has its own schema that rejects those keys outright.
+ */
+export const decisionCommand102 = decisionScope102.extend({
+  action: z.enum(['replace', 'withdraw', 'maintain']),
+  actor: actor102, ruleVersion: ruleVersion102,
+  ...decisionCommandFields(),
+}).superRefine(refineDecisionCommand)
+/** Browser reviews carry business facts only; a supplied actor/ruleVersion is a strict-schema 400. */
+export const browserDecisionCommand102 = decisionScope102.extend({
+  action: z.enum(['replace', 'maintain']),
+  ...decisionCommandFields(),
+}).superRefine(refineDecisionCommand)
+/**
+ * Trusted internal envelope: the browser route fills actor/ruleVersion with real null.
+ * Keeping it separate from the public schemas is what stops a client from omitting metadata
+ * to bypass the identity requirement on HTTP/MCP.
+ */
+const internalDecisionCommand102 = decisionScope102.extend({
+  action: z.enum(['replace', 'withdraw', 'maintain']),
+  actor: actor102.nullable(), ruleVersion: ruleVersion102.nullable(),
+  ...decisionCommandFields(),
+}).superRefine(refineDecisionCommand)
 type Scope = Omit<z.infer<typeof decisionScope102>, 'titleCode'> & { titleCode: string }
-type Command = z.infer<typeof decisionCommand102>
+export type DecisionCommand102 = z.infer<typeof internalDecisionCommand102>
 export class DecisionError102 extends Error {
   constructor(public statusCode: number, public code: string, message: string) { super(message) }
 }
@@ -48,6 +88,10 @@ export function parse102<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data
 }
 const whereScope = (scope: Scope) => and(eq(s.differenceReason.enterpriseId, scope.enterpriseId), eq(s.differenceReason.titleCode, scope.titleCode), eq(s.differenceReason.direction, scope.direction))
+/** Explicit review of a legacy version adopts its existing scope without rewriting that version. */
+export function managedDecision102(id: AnyColumn | SQL = s.differenceReason.id, action: AnyColumn | SQL = s.differenceReason.lifecycleAction) {
+  return sql`(${action} is not null or exists(select 1 from evidence_review_receipt_114 r where (r.decision_id=${id} or r.source_decision_id=${id}) and r.reviewed_revision_id is not null))`
+}
 export function latestDecision102(db: DecisionDb, scope: Scope) {
   return db.select().from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get()
 }
@@ -59,7 +103,7 @@ function publicVersion(row: typeof s.differenceReason.$inferSelect, currentId: n
   return { ...version, origin: row.lifecycleAction ? 'lifecycle' : 'legacy_import', isCurrent: row.id === currentId }
 }
 function receipt(row: typeof s.differenceReason.$inferSelect) {
-  return { versionId: row.id, currentId: row.lifecycleAction === 'withdraw' ? null : row.id, previousId: row.previousId, action: row.lifecycleAction, recordedAt: row.recordedAt }
+  return { versionId: row.id, currentId: row.lifecycleAction === 'withdraw' ? null : row.id, previousId: row.previousId, action: row.lifecycleAction as string | null, recordedAt: row.recordedAt }
 }
 function requireEnterprise(db: DecisionDb, enterpriseId: number) {
   const enterprise = db.select({ id: s.enterprise.id, usccNorm: s.enterprise.usccNorm, nameNorm: s.enterprise.nameNorm }).from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get()
@@ -76,9 +120,26 @@ export function currentDecision102(db: DecisionDb, scope: Scope) {
   const row = latestDecision102(db, scope)
   return { ...scope, versionId: row?.id ?? null, current: row && row.lifecycleAction !== 'withdraw' ? publicVersion(row, row.id) : null }
 }
-export function saveDecision102(db: DecisionDb, command: Command) {
-  const hash = createHash('sha256').update(JSON.stringify(command)).digest('hex')
+export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
+  command = parse102(internalDecisionCommand102, command)
+  // External receipts predate the browser envelope. Preserve their normalized key
+  // order even when shared schema fields move; nested fields are ordered by content.
+  // Nullable internal metadata keeps its existing envelope and stored hashes;
+  // public HTTP/MCP schemas require both metadata fields to be non-null.
+  const normalized = command.actor !== null && command.ruleVersion !== null ? {
+    enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
+    action: command.action, expectedCurrentId: command.expectedCurrentId,
+    idempotencyKey: command.idempotencyKey, actor: command.actor,
+    basis: command.basis, ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt,
+    decision: command.decision, reviewedEvidence: command.reviewedEvidence,
+  } : command
+  const hash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex')
   return db.transaction(tx => {
+    const review = tx.select().from(s.evidenceReviewReceipt114).where(eq(s.evidenceReviewReceipt114.idempotencyKey, command.idempotencyKey)).get()
+    if (review) {
+      if (review.requestHash !== hash) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key already has a different request')
+      return review.response
+    }
     const prior = tx.select().from(s.differenceReason).where(eq(s.differenceReason.idempotencyKey, command.idempotencyKey)).get()
     if (prior) {
       if (prior.requestHash !== hash) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key already has a different request')
@@ -87,6 +148,27 @@ export function saveDecision102(db: DecisionDb, command: Command) {
     const enterprise = requireEnterprise(tx, command.enterpriseId)
     const previous = latestDecisionHead102(tx, command)
     if ((previous?.id ?? null) !== command.expectedCurrentId) throw new DecisionError102(409, 'stale_version', 'Expected current version no longer matches')
+    if (command.reviewedEvidence) {
+      const token = readEvidenceToken113(tx, command)
+      if (!token.projectionReady || token.latestRevisionId !== command.reviewedEvidence.latestRevisionId) throw new DecisionError102(409, 'stale_evidence', 'Relevant committed evidence changed or its projection is unfinished')
+      if (!previous || previous.lifecycleAction === 'withdraw') throw new DecisionError102(409, 'no_current_decision', 'Review requires an active current decision')
+    }
+    const finishReview = (result: ReturnType<typeof receipt>, decisionId: number) => {
+      if (!command.reviewedEvidence) return result
+      const revisionId = command.reviewedEvidence.latestRevisionId
+      // Establish the baseline for the resulting version; replacement never invents content.
+      const impact = s.explanationImpact113
+      tx.insert(impact).values({ enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction, decisionId, latestRevisionId: revisionId, pendingSinceRevisionId: revisionId, reviewedRevisionId: revisionId, classification: 'evidence_changed' })
+        .onConflictDoUpdate({ target: [impact.enterpriseId, impact.titleCode, impact.direction, impact.decisionId], set: { reviewedRevisionId: revisionId } }).run()
+      if (previous && previous.id !== decisionId) tx.update(impact).set({ reviewedRevisionId: revisionId }).where(and(eq(impact.decisionId, previous.id), eq(impact.enterpriseId, command.enterpriseId), eq(impact.titleCode, command.titleCode), eq(impact.direction, command.direction))).run()
+      const response = { ...result, reviewedRevisionId: revisionId }
+      tx.insert(s.evidenceReviewReceipt114).values({ idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action, enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction, decisionId, sourceDecisionId: previous?.id ?? null, reviewedRevisionId: revisionId, actor: command.actor === null ? jsonNull : command.actor, basis: command.basis, ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, response, recordedAt: new Date().toISOString() }).run()
+      return response
+    }
+    if (command.action === 'maintain') {
+      const row = latestDecision102(tx, command)!
+      return finishReview({ ...receipt(row), action: 'maintain', recordedAt: new Date().toISOString() }, row.id)
+    }
     if ((command.action === 'replace') !== !!command.decision) throw new DecisionError102(400, 'invalid_request', 'Replacement requires decision; withdrawal must omit decision')
     if (command.action === 'withdraw' && (!previous || previous.lifecycleAction === 'withdraw')) throw new DecisionError102(409, 'no_current_decision', 'No active decision to withdraw')
     const d = command.decision ?? { status: 'not_queried' as const, measureCode: 'none' as const, verificationStatus: 'pending' as const }
@@ -123,10 +205,10 @@ export function saveDecision102(db: DecisionDb, command: Command) {
       evidenceQueryId: d.evidenceQueryId ?? null, evidenceRelationId: d.evidenceRelationId ?? null,
       verificationStatus: d.verificationStatus, movedInCity: d.movedIn?.city ?? null, movedInTitleCode: d.movedIn?.titleCode ?? null,
       movedInYear: d.movedIn?.year ?? null, movedInBatch: d.movedIn?.batch ?? null,
-      lifecycleAction: command.action, previousId: previous?.id ?? null, actor: command.actor, basis: command.basis,
+      lifecycleAction: command.action, previousId: previous?.id ?? null, actor: command.actor === null ? jsonNull : command.actor, basis: command.basis,
       ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, idempotencyKey: command.idempotencyKey, requestHash: hash, recordedAt,
     }).returning().get()
-    return receipt(row)
+    return finishReview(receipt(row), row.id)
   }, { behavior: 'immediate' })
 }
 

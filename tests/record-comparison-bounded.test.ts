@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { useDb, schema } from '../db/client'
+import { normalizeName } from '../lib/domain'
 import { getRecordComparison, listRecordComparisonSources } from '../server/utils/record-comparison'
 
 const cleanup: Array<() => void> = []
@@ -50,6 +51,46 @@ it('catalog pages preserve scope metadata without materializing archive bodies',
   expect(listRecordComparisonSources(db, { page: 7, pageSize: 2 }).rows).toMatchObject([{ id: ids[11], kind: 'query' }, { id: batch.id, kind: 'export_batch', selectable: false }])
   expect(bytes()).toBeLessThan(65536)
 })
+it('attaches confirmed relation identities and raw platform names only to the displayed query page', () => {
+  const db = fixture()
+  const makeEnterprise = (name: string) => db.insert(schema.enterprise).values({ name, nameNorm: normalizeName(name) }).returning().get()
+  const makeQuery = (key: string) => db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: key, rdjb: '2', queriedAt: '2026-10-18T00:00:00Z', status: 'success' }).returning().get()
+  const survivor = makeEnterprise('合成111-归并')
+  const second = makeEnterprise('第二家')
+  const outside = makeEnterprise('页外企业')
+  const first = makeQuery('q:first')
+  const secondQuery = makeQuery('q:second')
+  const outsideQuery = makeQuery('q:outside')
+  const mergedRelation = db.insert(schema.platformRelation).values({ queryId: first.id, sequenceNo: 1, enterpriseId: survivor.id, nameRaw: '合成111-归并旧主体', verificationStatus: 'confirmed', matchBasis: 'manual' }).returning().get()
+  db.insert(schema.platformRelation).values({ queryId: first.id, sequenceNo: 2, enterpriseId: second.id, nameRaw: '第二家', verificationStatus: 'confirmed', matchBasis: 'uscc' }).run()
+  db.insert(schema.platformRelation).values({ queryId: secondQuery.id, sequenceNo: 1, enterpriseId: null, nameRaw: '待关联原行', verificationStatus: 'pending', matchBasis: 'none' }).run()
+  db.insert(schema.platformRelation).values({ queryId: outsideQuery.id, sequenceNo: 1, enterpriseId: outside.id, nameRaw: '页外原行', verificationStatus: 'confirmed', matchBasis: 'uscc' }).run()
+  db.insert(schema.enterpriseAlias).values({
+    enterpriseId: survivor.id,
+    name: '合成111-归并旧主体',
+    nameNorm: normalizeName('合成111-归并旧主体'),
+    sourceKind: 'platform_business',
+    sourceRefId: mergedRelation.id,
+    verificationStatus: 'confirmed',
+    note: '归并自 enterprise:8（合成111-归并旧主体）',
+  }).run()
+  const page = listRecordComparisonSources(db, { kind: 'query', page: 1, pageSize: 2 })
+  expect(page.rows.map(row => row.id)).toEqual([first.id, secondQuery.id])
+  expect(page.rows[0]).toMatchObject({
+    confirmedEnterprises: [
+      { relationId: mergedRelation.id, sequenceNo: 1, enterpriseId: survivor.id, enterpriseName: '合成111-归并', nameRaw: '合成111-归并旧主体', aliasConfirmed: true, mergedFromEnterpriseId: 8 },
+      { sequenceNo: 2, enterpriseId: second.id, enterpriseName: '第二家', nameRaw: '第二家', aliasConfirmed: false, mergedFromEnterpriseId: null },
+    ],
+    recordNames: [],
+  })
+  expect(page.rows[1]).toMatchObject({ confirmedEnterprises: [], recordNames: ['待关联原行'] })
+  expect(page.rows.flatMap(row => row.kind === 'query' ? row.confirmedEnterprises : []).some(row => row.enterpriseId === outside.id)).toBe(false)
+  expect(listRecordComparisonSources(db, { kind: 'query', page: 2, pageSize: 2 }).rows).toMatchObject([
+    { id: outsideQuery.id, confirmedEnterprises: [{ enterpriseId: outside.id, enterpriseName: '页外企业', nameRaw: '页外原行' }] },
+  ])
+  expect(listRecordComparisonSources(db, { kind: 'official_document', page: 1, pageSize: 10 }).rows).toEqual([])
+})
+
 it('comparison preserves all selected relations and formal event uncertainty as unrelated archives grow', () => {
   const db = fixture()
   const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Selected', path: 'selected.pdf' }).returning().get()
