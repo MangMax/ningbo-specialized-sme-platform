@@ -14,7 +14,7 @@
  *  1. **默认(进程内)**:直接开库、直接实查、直接走统一导入 API 的核心函数写回。
  *     无需 app 在跑。适合本机全量长跑。
  *  2. `--base-url <url>`:**把同一个 job 提交给正在运行的 app** 并轮询到结束
- *     (`POST /api/jobs` → `GET /api/jobs/:id`)。适合对着部署好的实例跑;
+ *     (`POST /api/jobs` → `GET /api/jobs/:id?view=summary` → 终态读取完整详情)。适合对着部署好的实例跑;
  *     token 从 `NUXT_API_TOKEN` 读(不进命令行,免得出现在 `ps` 里)。
  *
  * ── 凭据 ──────────────────────────────────────────────────────────────────
@@ -173,16 +173,28 @@ async function runRemote() {
   process.stdout.write(`▶ 已提交 job ${jobId}(轮询 ${base}/api/jobs/${jobId})\n`)
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, pollSeconds * 1000))
-    const response = await fetch(`${base}/api/jobs/${jobId}`, {
+    const response = await fetch(`${base}/api/jobs/${jobId}?view=summary`, {
       headers: { authorization: `Bearer ${token}` },
     })
-    const job = await response.json().catch(() => null)
+    let job = await response.json().catch(() => null)
     if (!response.ok || !job) {
       process.stderr.write(`✗ 读取任务失败(${response.status})\n`)
       process.exit(1)
     }
     process.stdout.write(`  ${job.state} ${job.progress?.done ?? 0}/${job.progress?.total ?? '?'}\n`)
     if (['done', 'failed', 'cancelled'].includes(job.state)) {
+      // A stored result may be only a checkpoint. Read the authoritative full
+      // receipt/error once at termination, never hydrate each progress poll.
+      const detail = await fetch(`${base}/api/jobs/${jobId}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      job = await detail.json().catch(() => null)
+      if (!detail.ok || !job) {
+        process.stderr.write(`✗ 读取任务详情失败(${detail.status})\n`)
+        process.exit(1)
+      }
+      // A domain retry can reopen the same job between the two reads.
+      if (!['done', 'failed', 'cancelled'].includes(job.state)) continue
       if (job.state !== 'done') {
         process.stderr.write(`✗ 任务 ${job.state}:${job.error ?? ''}\n`)
         if (job.result) writeReport(job.result)
