@@ -121,19 +121,29 @@ export interface JudgeFirstRecognitionInput {
 export function judgeFirstRecognition(
   input: JudgeFirstRecognitionInput,
 ): RecognitionEntry | null {
-  const { titleCode, lifecycle, events, evidenceByEvent } = input
+  const evidence = input.lifecycle.firstRecognitionEventId == null ? []
+    : [...(input.evidenceByEvent.get(input.lifecycle.firstRecognitionEventId) ?? [])]
+  const summary = summarizeFirstRecognition({ ...input, hasEvidence: evidence.length > 0 })
+  return summary ? { ...summary, evidence } : null
+}
+
+/** Same domain decision for bounded reads: evidence existence is enough to
+ * classify a pair; complete pointers are hydrated only for the requested page. */
+export function summarizeFirstRecognition(
+  input: Omit<JudgeFirstRecognitionInput, 'evidenceByEvent'> & { hasEvidence: boolean },
+): Omit<RecognitionEntry, 'evidence'> | null {
+  const { titleCode, lifecycle, events, hasEvidence } = input
   if (lifecycle.awardCount === 0) return null
 
   const firstEventId = lifecycle.firstRecognitionEventId
   const firstEvent = firstEventId == null ? null : events.find((e) => e.id === firstEventId) ?? null
-  const evidence = firstEventId == null ? [] : [...(evidenceByEvent.get(firstEventId) ?? [])]
 
   const pendingReason: FirstRecognitionPendingReason | null =
     lifecycle.firstRecognitionYear == null
       ? 'no_dated_award'
       : lifecycle.undatedAwardIds.length > 0
         ? 'undated_award'
-        : evidence.length === 0
+        : !hasEvidence
           ? 'no_evidence'
           : null
 
@@ -145,7 +155,6 @@ export function judgeFirstRecognition(
     source: lifecycle.firstRecognitionYear == null ? null : firstEvent?.source ?? null,
     status: pendingReason == null ? 'confirmed' : 'pending',
     pendingReason,
-    evidence,
     undatedAwardIds: [...lifecycle.undatedAwardIds],
   }
 }
@@ -177,7 +186,10 @@ export interface RecognitionQuery {
  * 年份给不出(`firstYear == null`)时**命中不了任何年份**:留空是「未知」,
  * 不该被当成某个具体年份的匹配。
  */
-export function matchesRecognitionQuery(entry: RecognitionEntry, query: RecognitionQuery): boolean {
+export function matchesRecognitionQuery(
+  entry: Pick<RecognitionEntry, 'titleCode' | 'firstYear' | 'status'>,
+  query: RecognitionQuery,
+): boolean {
   const titles = query.title?.length ? query.title : null
   const years = query.firstYear?.length ? query.firstYear : null
   const statuses = query.firstStatus?.length ? query.firstStatus : null
