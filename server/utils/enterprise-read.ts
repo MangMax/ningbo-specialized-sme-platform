@@ -2,11 +2,12 @@ import { channel } from 'node:diagnostics_channel'
 import type { RosterEnterpriseFilter, RosterEnterprisesResult } from '../../lib/roster/enterprise-roster'
 import type { EnterpriseReadRequest } from '../../lib/roster/enterprise-read-worker'
 import { createEnterpriseWorker } from './enterprise-read-worker-location'
-import type { RecognitionReadInput, RecognitionReadOutcome } from '../../lib/roster/offmain-read-protocol'
+import type { RecognitionReadInput, DifferenceReadInput, OffmainReadOutcome } from '../../lib/roster/offmain-read-protocol'
 
 const diagnostic = channel('ningbo.enterprise-read')
 type Detail = ReturnType<typeof import('../../lib/roster/enterprise-roster').getRosterEnterpriseDetail>
-type Input = { dbPath: string } & ({ operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | RecognitionReadInput)
+type Input = { dbPath: string } & ({ operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | RecognitionReadInput | DifferenceReadInput)
+const originalReaderPolicy = (input: Input) => input.operation === 'recognitions' || input.operation === 'differences'
 type JsonRead = { body: Buffer; found: boolean }
 type NativeWorker = {
   on(event: 'message' | 'error' | 'exit', listener: (message: any) => void): unknown
@@ -36,7 +37,7 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
     job.callerSettled = true
     job.chunks = []
     job.signal?.removeEventListener('abort', job.abort)
-    if (job.input.operation === 'recognitions' && error) job.resolve({ type: job.signal?.aborted ? 'cancelled' : 'fallback' } satisfies RecognitionReadOutcome)
+    if (originalReaderPolicy(job.input) && error) job.resolve({ type: job.signal?.aborted ? 'cancelled' : 'fallback' } satisfies OffmainReadOutcome)
     else if (error) job.reject(error); else job.resolve(value)
   }
   function settle(job: Job, error?: Error, value?: unknown) {
@@ -79,8 +80,8 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
         const job = active; active = undefined
         if (job.callerSettled) settle(job)
         else if (message.type === 'failure') settle(job, unavailable(message.code))
-        else if (message.type === 'reader-error' && job.input.operation === 'recognitions') {
-          settle(job, undefined, { type: 'reader-error', error: message.error } satisfies RecognitionReadOutcome)
+        else if (message.type === 'reader-error' && originalReaderPolicy(job.input)) {
+          settle(job, undefined, { type: 'reader-error', error: message.error } satisfies OffmainReadOutcome)
         }
         else if (message.type !== 'result' || !message.metrics) settle(job, unavailable('worker_decode_failed'))
         else {
@@ -89,9 +90,9 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
           const start = performance.now()
           try {
             const body = Buffer.concat(job.chunks)
-            if (job.input.operation === 'recognitions') {
+            if (originalReaderPolicy(job.input)) {
               if (message.metrics.bytes !== body.byteLength) throw new Error('Incomplete worker body')
-              settle(job, undefined, { type: 'complete', body } satisfies RecognitionReadOutcome)
+              settle(job, undefined, { type: 'complete', body } satisfies OffmainReadOutcome)
             } else settle(job, undefined, job.encoding === 'json' ? { body,found: message.found } : JSON.parse(body.toString('utf8')))
           } catch { settle(job, unavailable('worker_decode_failed')) }
           publish({ phase: 'result', ...message.metrics, deserializeMs: performance.now() - start })
@@ -109,8 +110,8 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
     try { worker.postMessage({ id: active.id, ...active.input } satisfies EnterpriseReadRequest); publish({ phase: 'start' }) } catch { retire(unavailable('worker_send_failed')) }
   }
   function submit(input: Input, signal?: AbortSignal, encoding: 'object' | 'json' = 'object'): Promise<unknown> {
-    const failure = (error: Error) => input.operation === 'recognitions'
-      ? Promise.resolve<RecognitionReadOutcome>({ type: signal?.aborted ? 'cancelled' : 'fallback' }) : Promise.reject(error)
+    const failure = (error: Error) => originalReaderPolicy(input)
+      ? Promise.resolve<OffmainReadOutcome>({ type: signal?.aborted ? 'cancelled' : 'fallback' }) : Promise.reject(error)
     if (closed) return failure(unavailable('executor_closed'))
     if (signal?.aborted) return failure(aborted())
     const encoded = JSON.stringify(input)
@@ -119,7 +120,7 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
     return new Promise((resolve, reject) => {
       const job: Job = { chunks: [], encoding, input: JSON.parse(encoded) as Input, signal, bytes, callerSettled: false, id: ++nextId, resolve, reject, abort() {
         if (active === job) {
-          if (job.input.operation === 'recognitions') settleCaller(job, undefined, { type: 'cancelled' } satisfies RecognitionReadOutcome)
+          if (originalReaderPolicy(job.input)) settleCaller(job, undefined, { type: 'cancelled' } satisfies OffmainReadOutcome)
           else retire(aborted())
         }
         else {
@@ -144,7 +145,8 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
       return promise
     },
     json(dbPath: string, request: { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number }, signal?: AbortSignal) { return submit({ ...request,dbPath } as Input, signal, 'json') as Promise<JsonRead> },
-    recognitions(input: RecognitionReadInput, signal?: AbortSignal) { return submit(input, signal, 'json') as Promise<RecognitionReadOutcome> },
+    recognitions(input: RecognitionReadInput, signal?: AbortSignal) { return submit(input, signal, 'json') as Promise<OffmainReadOutcome> },
+    differences(input: DifferenceReadInput, signal?: AbortSignal) { return submit(input, signal, 'json') as Promise<OffmainReadOutcome> },
     list(dbPath: string, filter: RosterEnterpriseFilter = {}, signal?: AbortSignal) { return submit({ dbPath, operation: 'list', filter }, signal) as Promise<RosterEnterprisesResult> },
     detail(dbPath: string, enterpriseId: number, signal?: AbortSignal) { return submit({ dbPath, operation: 'detail', enterpriseId }, signal) as Promise<Detail> },
     async close() {

@@ -1,4 +1,5 @@
 import { realpathSync, statSync } from 'node:fs'
+import type { RosterDifferenceFilter } from './enterprise-roster'
 import type { RosterRecognitionFilter } from './recognitions'
 
 /** Physical identity is conservative evidence, not an atomic ABA guarantee. */
@@ -14,10 +15,11 @@ export function sameReadOwner(a: ReadOwnerIdentity | undefined, b: ReadOwnerIden
   return !!a && !!b && a.realpath === b.realpath && a.dev === b.dev && a.ino === b.ino
 }
 export type RecognitionReadInput = { operation: 'recognitions'; dbPath: string; owner: ReadOwnerIdentity; filter: RosterRecognitionFilter }
+export type DifferenceReadInput = { operation: 'differences'; dbPath: string; owner: ReadOwnerIdentity; filter: RosterDifferenceFilter }
 type Json = null | string | number | boolean | Json[] | { [key: string]: Json }
 const fields = ['name', 'message', 'statusCode', 'status', 'statusMessage', 'statusText', 'code', 'fatal', 'unhandled', 'data'] as const
 export type ReaderError = { h3: boolean; fields: Partial<Record<typeof fields[number], Json | undefined>> }
-export type RecognitionReadOutcome = { type: 'complete'; body: Buffer } | { type: 'reader-error'; error?: ReaderError }
+export type OffmainReadOutcome = { type: 'complete'; body: Buffer } | { type: 'reader-error'; error?: ReaderError }
   | { type: 'fallback' } | { type: 'cancelled' }
 
 function jsonSafe(value: unknown, seen = new Set<object>()): value is Json {

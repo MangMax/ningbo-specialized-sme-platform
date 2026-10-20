@@ -1,5 +1,5 @@
 import { EventEmitter, getEventListeners } from 'node:events'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEnterpriseReadExecutor, enterpriseReads } from '../server/utils/enterprise-read'
 import { captureReaderError, restoreReaderError, type RecognitionReadInput } from '../lib/roster/offmain-read-protocol'
 import { createError, isError } from 'h3'
@@ -13,7 +13,7 @@ class Transport extends EventEmitter {
   chunk(payload: unknown, id = this.sent.at(-1).id) { this.emit('message', { type: 'chunk', id, payload }) }
   end(bytes = 2, id = this.sent.at(-1).id) { this.emit('message', { type: 'result', id, metrics: { bytes, heap: 1, rss: 1 } }) }
 }
-const input: RecognitionReadInput = { operation: 'recognitions', dbPath: '/synthetic/owner.db', owner: { dbPath: '/synthetic/owner.db', realpath: '/synthetic/owner.db', dev: 1, ino: 2 }, filter: {} }
+const recognitionInput: RecognitionReadInput = { operation: 'recognitions', dbPath: '/synthetic/owner.db', owner: { dbPath: '/synthetic/owner.db', realpath: '/synthetic/owner.db', dev: 1, ino: 2 }, filter: {} }
 const cleanup: Array<() => Promise<unknown>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close() })
 function setup(maxPending?: number) {
@@ -23,9 +23,15 @@ function setup(maxPending?: number) {
   return { worker, executor, createWorker }
 }
 
-it.each(['active','partial-chunk'])('recognition %s abort settles caller but holds the worker until its real terminal message', async stage => {
+describe.each(['recognitions', 'differences'] as const)('%s original-reader policy', operation => {
+const input = { ...recognitionInput, operation }
+const execute = (executor: ReturnType<typeof createEnterpriseReadExecutor>, value: typeof input, signal?: AbortSignal) => operation === 'recognitions'
+  ? executor.recognitions({ ...value, operation: 'recognitions' }, signal)
+  : executor.differences({ ...value, operation: 'differences' }, signal)
+
+it.each(['active','partial-chunk'])('new-consumer %s abort settles caller but holds the worker until its real terminal message', async stage => {
   const { worker, executor } = setup(), controller = new AbortController()
-  const cancelled = executor.recognitions(input, controller.signal)
+  const cancelled = execute(executor, input, controller.signal)
   worker.ready(); if(stage==='partial-chunk')worker.chunk(Buffer.from('partial'))
   const enterprise = executor.list('/synthetic/enterprise.db')
   controller.abort()
@@ -34,11 +40,11 @@ it.each(['active','partial-chunk'])('recognition %s abort settles caller but hol
   expect(worker.terminate).not.toHaveBeenCalled()
   expect(worker.sent).toHaveLength(1)
   worker.chunk(Buffer.from('ignored')); worker.end(999)
-  expect(worker.sent.map(x => x.operation)).toEqual(['recognitions', 'list'])
+  expect(worker.sent.map(x => x.operation)).toEqual([operation, 'list'])
   worker.chunk(Buffer.from('{"counts":{"total":7}}')); worker.end()
   expect(await enterprise).toEqual({ counts: { total: 7 } })
   // Late terminal messages cannot release the next active worker slot.
-  const next = executor.recognitions(input), queued = executor.recognitions(input)
+  const next = execute(executor, input), queued = execute(executor, input)
   worker.end(999, worker.sent[0].id)
   expect(worker.sent).toHaveLength(3)
   worker.chunk(Buffer.from('{}')); worker.end()
@@ -50,14 +56,14 @@ it.each(['active','partial-chunk'])('recognition %s abort settles caller but hol
 it('queued and pre-admission cancellation releases only its own metadata and never starts or rejects a new-consumer job', async () => {
   const { worker, executor } = setup(1), a = new AbortController(), b = new AbortController()
   a.abort()
-  expect(await executor.recognitions(input, a.signal)).toEqual({ type: 'cancelled' })
+  expect(await execute(executor, input, a.signal)).toEqual({ type: 'cancelled' })
   expect(worker.sent).toEqual([])
-  const first = executor.recognitions(input); worker.ready()
-  const queued = executor.recognitions(input, b.signal)
-  expect(await executor.recognitions(input)).toEqual({ type: 'fallback' })
+  const first = execute(executor, input); worker.ready()
+  const queued = execute(executor, input, b.signal)
+  expect(await execute(executor, input)).toEqual({ type: 'fallback' })
   b.abort(); expect(await queued).toEqual({ type: 'cancelled' })
   expect(getEventListeners(b.signal,'abort')).toHaveLength(0)
-  const retained = executor.recognitions(input)
+  const retained = execute(executor, input)
   worker.chunk(Buffer.from('{}')); worker.end(); await first
   worker.chunk(Buffer.from('{}')); worker.end(); await retained
   expect(worker.sent).toHaveLength(2)
@@ -67,7 +73,7 @@ it.each(['failure', 'exit', 'error', 'decode', 'truncated', 'send'] as const)('p
   const { worker, executor } = setup()
   const start=executor.start(); worker.ready(); await start
   if (fault === 'send') worker.postMessage = () => { throw new Error('synthetic send failure') }
-  const pending=executor.recognitions(input)
+  const pending=execute(executor, input)
   if (fault !== 'send') {
     worker.chunk(Buffer.from('partial'))
     if (fault === 'failure') worker.emit('message', { type: 'failure', id: worker.sent[0].id, code: 'open_failed' })
@@ -84,14 +90,14 @@ it('a child creation failure after successful readiness returns private fallback
   cleanup.push(()=>executor.close())
   const initial=executor.start();worker.ready();await initial
   worker.emit('exit',1);await Promise.resolve();await Promise.resolve()
-  expect(await executor.recognitions(input)).toEqual({type:'fallback'})
+  expect(await execute(executor, input)).toEqual({type:'fallback'})
   await expect(initial).resolves.toBeUndefined();expect(starts).toBe(2)
 })
 
 it('reader-boundary errors, including an unrepresentable error, are terminal and never infrastructure fallback', async () => {
   const { worker, executor } = setup()
   for (const error of [captureReaderError(Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' })), undefined]) {
-    const pending=executor.recognitions(input); worker.ready()
+    const pending=execute(executor, input); worker.ready()
     worker.emit('message', { type: 'reader-error', id: worker.sent.at(-1).id, error })
     expect(await pending).toEqual({ type: 'reader-error', error })
   }
@@ -102,25 +108,25 @@ it('reader-boundary errors, including an unrepresentable error, are terminal and
 
 it('abort wins failure and close races, close is irreversible, and live closed requests get fallback', async () => {
   const { worker, executor, createWorker } = setup(), controller=new AbortController()
-  const pending=executor.recognitions(input,controller.signal); worker.ready(); worker.chunk(Buffer.from('partial'))
+  const pending=execute(executor, input,controller.signal); worker.ready(); worker.chunk(Buffer.from('partial'))
   controller.abort(); worker.emit('exit', 1)
   expect(await pending).toEqual({ type: 'cancelled' })
   await executor.close()
-  expect(await executor.recognitions(input)).toEqual({ type: 'fallback' })
-  expect(await executor.recognitions(input,controller.signal)).toEqual({ type: 'cancelled' })
+  expect(await execute(executor, input)).toEqual({ type: 'fallback' })
+  expect(await execute(executor, input,controller.signal)).toEqual({ type: 'cancelled' })
   await expect(executor.list('/synthetic/owner.db')).rejects.toMatchObject({ statusCode:503,code:'executor_closed' })
   await expect(executor.list('/synthetic/owner.db',{},controller.signal)).rejects.toMatchObject({statusCode:503,code:'executor_closed'})
   expect(createWorker).toHaveBeenCalledTimes(1)
 })
 
-it('existing enterprise active abort still kills the child and preserves queued recognition order on restart', async () => {
+it('existing enterprise active abort still kills the child and preserves queued new-consumer order on restart', async () => {
   const workers=[new Transport(),new Transport()], worker=workers[0]!, replacement=workers[1]!
   const executor=createEnterpriseReadExecutor({createWorker:()=>workers.shift()!}), controller=new AbortController()
   cleanup.push(()=>executor.close())
   const enterprise=executor.list('/synthetic/owner.db',{},controller.signal)
   const rejected=expect(enterprise).rejects.toMatchObject({ name:'AbortError',statusCode:499 })
   worker.ready()
-  const recognition=executor.recognitions(input)
+  const recognition=execute(executor, input)
   controller.abort(); await rejected; await Promise.resolve(); await Promise.resolve()
   expect(worker.terminate).toHaveBeenCalledTimes(1)
   replacement.ready(); replacement.chunk(Buffer.from('{}')); replacement.end()
@@ -133,19 +139,19 @@ it('retained request metadata counts the active job and permits exactly the 64Ki
   const sized = (bytes: number) => ({ ...input, filter:{ title:['x'.repeat(bytes-overhead)] } })
   const admitted = sized(65536)
   expect(Buffer.byteLength(JSON.stringify(admitted))).toBe(65536)
-  const pending=executor.recognitions(admitted); worker.ready()
-  expect(await executor.recognitions(input)).toEqual({type:'fallback'})
+  const pending=execute(executor, admitted); worker.ready()
+  expect(await execute(executor, input)).toEqual({type:'fallback'})
   worker.chunk(Buffer.from('{}')); worker.end(); await pending
-  expect(await executor.recognitions(sized(65537))).toEqual({type:'fallback'})
-  const next=executor.recognitions(input); worker.chunk(Buffer.from('{}')); worker.end()
+  expect(await execute(executor, sized(65537))).toEqual({type:'fallback'})
+  const next=execute(executor, input); worker.chunk(Buffer.from('{}')); worker.end()
   expect(await next).toEqual({type:'complete',body:Buffer.from('{}')})
 })
 
-it('default shared child FIFO retains sixteen waiting jobs, enterprise busy stays 503 and recognition overflow is private fallback',async()=>{
-  const {worker,executor}=setup(), first=executor.recognitions(input)
+it('default shared child FIFO retains sixteen waiting jobs, enterprise busy stays 503 and new-consumer overflow is private fallback',async()=>{
+  const {worker,executor}=setup(), first=execute(executor, input)
   worker.ready()
-  const queued=Array.from({length:16},()=>executor.recognitions(input))
-  expect(await executor.recognitions(input)).toEqual({type:'fallback'})
+  const queued=Array.from({length:16},()=>execute(executor, input))
+  expect(await execute(executor, input)).toEqual({type:'fallback'})
   await expect(executor.list('/synthetic/owner.db')).rejects.toMatchObject({statusCode:503,code:'enterprise_read_busy'})
   for(let n=0;n<17;n++){worker.chunk(Buffer.from('{}'));worker.end()}
   expect((await Promise.all([first,...queued])).every(x=>x.type==='complete')).toBe(true)
@@ -154,8 +160,8 @@ it('default shared child FIFO retains sixteen waiting jobs, enterprise busy stay
 
 it('close settles live active and queued callers once, releases abort listeners, and never restarts cancelled draining work',async()=>{
   const {worker,executor,createWorker}=setup(),a=new AbortController(),b=new AbortController()
-  const active=executor.recognitions(input,a.signal);worker.ready();worker.chunk(Buffer.from('partial'))
-  const queued=executor.recognitions(input,b.signal)
+  const active=execute(executor, input,a.signal);worker.ready();worker.chunk(Buffer.from('partial'))
+  const queued=execute(executor, input,b.signal)
   await executor.close()
   expect(await active).toEqual({type:'fallback'});expect(await queued).toEqual({type:'fallback'})
   expect(getEventListeners(a.signal,'abort')).toHaveLength(0);expect(getEventListeners(b.signal,'abort')).toHaveLength(0)
@@ -189,4 +195,28 @@ it('initial global readiness rejection stays captured and prevents the recogniti
     await expect(hooks.request!({})).rejects.toBe(original)
     expect(start).toHaveBeenCalledTimes(1)
   } finally {start.mockRestore();vi.unstubAllGlobals()}
+})
+
+})
+
+it('cancelled REST partial output drains before recognition and enterprise work and queued REST cancellation cannot free the active slot',async()=>{
+  const {worker,executor}=setup(), active=new AbortController(), queued=new AbortController()
+  const rest=executor.differences({...recognitionInput,operation:'differences'},active.signal)
+  worker.ready();worker.chunk(Buffer.from('{"rows":['))
+  const recognition=executor.recognitions(recognitionInput)
+  const dropped=executor.differences({...recognitionInput,operation:'differences'},queued.signal)
+  const enterprise=executor.list('/synthetic/owner.db')
+  queued.abort();expect(await dropped).toEqual({type:'cancelled'})
+  active.abort();expect(await rest).toEqual({type:'cancelled'})
+  expect(worker.sent.map(x=>x.operation)).toEqual(['differences'])
+  expect(worker.terminate).not.toHaveBeenCalled()
+  worker.chunk(Buffer.from('discarded trailing output'));worker.end(999)
+  expect(worker.sent.map(x=>x.operation)).toEqual(['differences','recognitions'])
+  worker.chunk(Buffer.from('{}'));worker.end()
+  expect(await recognition).toEqual({type:'complete',body:Buffer.from('{}')})
+  expect(worker.sent.map(x=>x.operation)).toEqual(['differences','recognitions','list'])
+  worker.chunk(Buffer.from('{"rows":[],"counts":{"total":0}}'));worker.end()
+  expect(await enterprise).toEqual({rows:[],counts:{total:0}})
+  expect(getEventListeners(active.signal,'abort')).toHaveLength(0)
+  expect(getEventListeners(queued.signal,'abort')).toHaveLength(0)
 })
