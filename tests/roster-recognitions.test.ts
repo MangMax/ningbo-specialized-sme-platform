@@ -5,6 +5,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
 import { listRosterEnterprises } from '../lib/roster/enterprise-roster'
 import { listRosterRecognitions } from '../lib/roster/recognitions'
+import { handleRosterImportRequest } from '../server/utils/roster-import-http'
+
 
 /**
  * RL-08 —— **首次认定的读模型**(契约 §7.5;§7.1 的 `firstRecognition` 是同一处计算)。
@@ -309,4 +311,25 @@ describe('§7.1 总表的首次认定筛选取自**同一处计算**', () => {
     expect(withUndefined.rows).toEqual(base.rows)
     expect(withUndefined.counts).toEqual(base.counts)
   })
+})
+
+it('first recognition uses the earliest populated record district even on a different title without events', async () => {
+  const isolatedDir = mkdtempSync(join(tmpdir(), 'recognition-district-130-'))
+  const isolated = useDb({ dbPath: join(isolatedDir, 'fixture.sqlite') })
+  try {
+    const out = await handleRosterImportRequest('commit', { method: 'POST', headers: { authorization: 'Bearer synthetic-130' }, body: {
+      idempotencyKey: 'synthetic-district-130', sourceKind: 'announcement', sourceIdentity: 'synthetic/district-130', payload: {
+        announcement: { sourceDocument: { source: 'jxj', title: '合成属地回退' }, records: [
+          { enterprise: { name: '合成属地企业' }, titleCode: 'innovative_sme', events: [] },
+          { enterprise: { name: '合成属地企业', district: '余姚市' }, titleCode: 'specialized_sme', events: [] },
+          { enterprise: { name: '合成属地企业', district: '鄞州区' }, titleCode: 'little_giant', events: [{ eventType: 'award', year: 2021 }] },
+        ] },
+      },
+    } }, { db: isolated, apiToken: 'synthetic-130' })
+    expect(out.status).toBe(200)
+    expect(out.body).toMatchObject({ status: 'committed' })
+    const result = listRosterRecognitions(isolated, { title: ['little_giant'] })
+    expect(result.rows).toMatchObject([{ name: '合成属地企业', district: '余姚市', firstYear: 2021, pendingReason: 'no_evidence' }])
+    expect(result.counts).toMatchObject({ titlePairs: 1, enterprises: 1 })
+  } finally { isolated.$client.close(); rmSync(isolatedDir, { recursive: true, force: true }) }
 })
