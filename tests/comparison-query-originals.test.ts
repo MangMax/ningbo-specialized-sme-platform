@@ -75,3 +75,41 @@ it('keeps the last source page on failure, retries it explicitly, and ignores or
   expect(wrapper.text()).toContain('原档为空字符串')
   expect(wrapper.text()).not.toContain('原档未保存（null）')
 })
+
+
+it('retains the successful original on same-source refresh failure, retries the failed target and clears a changed source', async () => {
+  let fail = false
+  const fetch = vi.fn(async (_url: string, options: { query: any }) => {
+    if (options.query.field === 'relations') return { rows: [], total: 0, page: 1, pageSize: 200 }
+    if (fail) throw Error('synthetic offline')
+    const bytes = new TextEncoder().encode('已读取原文')
+    return { isNull: false, data: btoa(String.fromCharCode(...bytes)), hasMore: false, offset: 0, byteLength: bytes.length, totalBytes: bytes.length }
+  })
+  vi.stubGlobal('$fetch', fetch)
+  wrapper = mount(ComparisonQueryOriginals, { props: { queryId: 8 } })
+  await wrapper.get('[data-slot="accordion-trigger"]').trigger('click')
+  await flushPromises()
+  const read = () => wrapper!.findAll('button').find(button => button.text() === '查询响应原文')!.trigger('click')
+  await read()
+  await flushPromises()
+  expect(wrapper.get('pre').text()).toBe('已读取原文')
+  fail = true
+  await read()
+  await flushPromises()
+  expect(wrapper.get('pre').text()).toBe('已读取原文')
+  expect(wrapper.text()).toContain('保留上次成功原文：查询 #8 · 查询响应原文')
+  expect(wrapper.get('[role="alert"]').text()).toContain('读取目标：查询 #8 · 查询响应原文')
+  fail = false
+  await wrapper.findAll('button').find(button => button.text() === '重试读取原文')!.trigger('click')
+  await flushPromises()
+  expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  fail = true
+  await wrapper.findAll('button').find(button => button.text() === '采集证据原文')!.trigger('click')
+  await flushPromises()
+  expect(wrapper.find('pre').exists()).toBe(false)
+  expect(wrapper.get('[role="alert"]').text()).toContain('读取目标：查询 #8 · 采集证据原文')
+  await wrapper.setProps({ queryId: 9 })
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('已读取原文')
+  expect(wrapper.text()).not.toContain('读取目标：查询 #8')
+})

@@ -6,6 +6,8 @@ import { createApp, createRouter, createError, defineEventHandler, getQuery, rea
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { useDb } from '../db'
 import { handleRosterImportRequest } from '../server/utils/roster-import-http'
+import { eq } from 'drizzle-orm'
+import { enterprise } from '../db/schema'
 import { reconcileKey } from '../lib/reconcile'
 
 const dir = mkdtempSync(join(tmpdir(), 'comparison-summary-http-'))
@@ -211,4 +213,40 @@ describe('comparison lightweight list public HTTP seam', () => {
     expect(await response.json()).toMatchObject({ status: 'committed' })
     expect(await get('?view=summary&pageSize=50')).toEqual(before)
   })
+  it('matches full query membership for legacy stored USCC without normalizing archived query keys or inferring ownership', async () => {
+    const canonical = '91330201753252106U'
+    const response = await fetch(`${base}/api/roster/import/commit`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        idempotencyKey: 'comparison-summary-legacy-uscc', sourceKind: 'announcement', sourceIdentity: 'synthetic/legacy-uscc',
+        payload: {
+          announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic legacy compatibility' }, records: [
+            { enterprise: { name: 'Legacy统代企业', uscc: canonical }, titleCode: 'specialized_sme', events: [] },
+          ] },
+          platformQueries: [
+            { interface: 'apply_list', queryKey: canonical, queriedAt: '2026-10-20T00:00:00Z', status: 'failed', failureReason: 'synthetic failure' },
+            { interface: 'business_list', queryKey: canonical, rdjb: '2', queriedAt: '2026-10-20T00:00:01Z', status: 'no_record' },
+            { interface: 'business_list', queryKey: ' 91330201753252106u ', rdjb: '2', queriedAt: '2026-10-20T00:00:02Z', status: 'no_record' },
+          ],
+        },
+      }),
+    })
+    const receipt = await response.json()
+    expect(receipt, JSON.stringify(receipt)).toMatchObject({ status: 'committed' })
+    const initial = await get('?q=Legacy统代企业')
+    const enterpriseId = initial.rows[0].enterpriseId
+    // Exact test-only exception: current import always canonicalizes enterprise USCC.
+    // Reproduce a historical stored value only in this ephemeral API-created fixture;
+    // all query creation and both read paths remain public API behavior.
+    db.update(enterprise).set({ usccNorm: ' \t91330201\u200b753252106u\u3000' }).where(eq(enterprise.id, enterpriseId)).run()
+    const summary = await get('?view=summary&q=Legacy统代企业')
+    const full = await get('?view=full&q=Legacy统代企业')
+    expect(full.rows).toHaveLength(1)
+    expect(full.rows[0].platform.queries.map((query: { status: string }) => query.status).sort()).toEqual(['failed', 'no_record'])
+    expect(full.rows[0].platform.queries.every((query: { relations: unknown[] }) => query.relations.length === 0)).toBe(true)
+    expect(summary.rows[0].platform).toMatchObject({ queryCount: 2, sourceRelationCount: 0, disposition: { status: 'not_queried', explanationId: null } })
+    expect(summary.platform).toEqual(full.platform)
+    expect(summary.platform.withEvidence).toBe(1)
+  })
+
+
 })

@@ -1,3 +1,4 @@
+import { identityFunctions } from './roster/enterprise-read-snapshot'
 import { inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
@@ -62,12 +63,13 @@ export function readComparisonSummary(
 
   // Match the legacy inclusion union: related enterprise OR its own query key.
   // Neither a candidate relation nor an own-key match confirms identity.
+  if (ids.length) identityFunctions(db)
   const memberships = ids.length ? db.all<{ enterpriseId: number; queryId: number }>(sql`
     select distinct r.enterprise_id as enterpriseId, r.query_id as queryId
     from platform_relation r where r.enterprise_id in ${ids}
     union
     select e.id as enterpriseId, q.id as queryId from enterprise e
-    join platform_query q on q.query_key = e.uscc_norm or q.query_key = 'name:' || e.name_norm
+    join platform_query q on q.query_key = roster84_uscc(e.uscc_norm) or q.query_key = 'name:' || e.name_norm
     where e.id in ${ids}
   `) : []
   const queriesByEnterprise = new Map<number, number[]>()

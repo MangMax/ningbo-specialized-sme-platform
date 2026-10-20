@@ -103,3 +103,31 @@ it('restores legacy filters and page from the return URL and keeps them when ope
   expect(wrapper!.findComponent(TablePagination).props('page')).toBe(2)
   expect(fetch.mock.calls.filter(([url]) => url === '/api/comparison')).toHaveLength(1)
 })
+
+it.each(['查看认定信息与公布出处', '查看决定历史与复核'])('captures the actual list table and window offsets from portaled departure %s', async (label) => {
+  fetch = vi.fn(async (url: string) => url === '/api/comparison' ? envelope() : url.startsWith('/api/comparison?') ? { rows: [full()] } : { titleAssessments: [] })
+  const router = await start('/comparison?mode=legacy&page=2&q=合成')
+  const scroller = wrapper!.get('[data-evidence-return-scroll-container]').element as HTMLElement
+  scroller.scrollLeft = 173
+  scroller.scrollTop = 91
+  vi.stubGlobal('scrollY', 428)
+  const back = router.currentRoute.value.fullPath
+  await expand()
+  await flushPromises()
+  const link = Array.from(document.querySelectorAll('a')).find(anchor => anchor.textContent === label)!
+  expect(scroller.contains(link)).toBe(false)
+  link.addEventListener('click', event => event.preventDefault())
+  link.click()
+  await flushPromises()
+  const saved = JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)
+  expect(saved).toContainEqual({ back, scrollY: 428, scrollLeft: 173, scrollTop: 91 })
+})
+
+it('normalizes initial and restored legacy route filters with the same defaults and bounds', async () => {
+  fetch = vi.fn(async () => envelope())
+  const router = await start('/comparison?mode=legacy&direction=invalid&page=-5&pageSize=999&q=first&showCurated=true')
+  expect(fetch.mock.calls[0]![1].query).toEqual({ view: 'summary', title: 'specialized_sme', direction: 'missing_in_miit', page: 1, pageSize: 200, q: 'first', district: '', showCurated: true })
+  await router.push('/comparison?mode=legacy&title=innovative_sme&direction=extra_in_miit&page=3.8&pageSize=0&q=second&district=海曙区&showCurated=false')
+  await flushPromises()
+  expect(fetch.mock.calls.at(-1)![1].query).toEqual({ view: 'summary', title: 'innovative_sme', direction: 'extra_in_miit', page: 3, pageSize: 25, q: 'second', district: '海曙区', showCurated: false })
+})

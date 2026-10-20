@@ -41,8 +41,8 @@ async function read(value: Original) {
   readController?.abort()
   const signal = (readController = new AbortController()).signal
   const queryId = props.queryId
+  if (original.value?.field !== value.field || original.value?.relationId !== value.relationId) text.value = undefined
   original.value = value
-  text.value = undefined
   reading.value = true
   readFailed.value = false
   try {
@@ -68,6 +68,7 @@ async function read(value: Original) {
   } catch { if (own === readGeneration) readFailed.value = true }
   finally { if (own === readGeneration) reading.value = false }
 }
+const originalLabel = () => `查询 #${props.queryId} · ${original.value?.field === 'relation' ? `来源行 #${original.value.relationId}` : original.value?.field === 'collectionEvidence' ? '采集证据原文' : '查询响应原文'}`
 watch([open, page, pageSize], () => { void loadPage() })
 watch(() => props.queryId, () => {
   ++readGeneration
@@ -99,7 +100,8 @@ onScopeDispose(() => { ++listGeneration; ++readGeneration; listController?.abort
         <Button variant="outline" size="sm" @click="read({ field: 'collectionEvidence' })">采集证据原文</Button>
       </div>
       <p v-if="reading" role="status">正在读取完整原文…</p>
-      <div v-if="readFailed" role="alert"><p>原文读取失败，尚未取得完整内容。</p><Button variant="outline" size="sm" :disabled="reading" @click="original && read(original)">重试读取原文</Button></div>
+      <div v-if="readFailed" role="alert"><p>原文读取失败。读取目标：{{ originalLabel() }}。</p><Button variant="outline" size="sm" :disabled="reading" @click="original && read(original)">重试读取原文</Button></div>
+      <p v-if="text !== undefined" class="text-muted-foreground text-[13px]">保留上次成功原文：{{ originalLabel() }}。</p>
       <p v-if="text === null">原档未保存（null）</p>
       <p v-else-if="text === ''">原档为空字符串</p>
       <pre v-else-if="text !== undefined" class="max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs [overflow-wrap:anywhere]">{{ text }}</pre>
