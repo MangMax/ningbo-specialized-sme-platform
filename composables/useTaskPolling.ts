@@ -20,57 +20,31 @@ export function useTaskPolling<T>(key: Readonly<Ref<string>>, load: (signal: Abo
   /** Bumped by every explicit refresh/hide: a timer armed by an older cycle must
    *  not abort the read that replaced it. */
   let pollCycle = 0
-  /** The read carrying the latest generation, so a later caller can await the
-   *  same answer instead of superseding it. */
-  let inflight: { generation: number, promise: Promise<ReadOutcome> } | null = null
-  /** Data listeners are notified after Vue flushed, never synchronously, so a
-   *  handler that is itself running inside the render queue cannot deadlock. */
-  let lastSettled: ReadSettle | null = null
-  const waiters: Array<(value: ReadSettle) => void> = []
-  type ReadSettle = { generation: number, outcome: ReadOutcome }
 
-  function publish(value: ReadSettle) {
-    lastSettled = value
-    // Copy: a waiter may re-enter and register another wait.
-    for (const resolve of waiters.splice(0)) resolve(value)
-  }
+  /** Aborts the read in flight and forgets it. The signal aborted here is the one
+   *  this composable started, never one a newer trigger already owns. */
+  function stop() { generation++; pollCycle++; clearTimeout(timer); controller?.abort(); controller = undefined }
 
-  function nextSettle(after: number): Promise<ReadSettle> {
-    if (lastSettled && lastSettled.generation > after) return Promise.resolve(lastSettled)
-    return new Promise(resolve => waiters.push(resolve))
-  }
-
-  type ReadOutcome = 'ok' | 'failed' | 'skipped'
-
-  function stop() { generation++; pollCycle++; clearTimeout(timer); controller?.abort() }
-
-  /** Resolves with what this read did, so a caller can verify a credential
-   *  (authorized) or tell "server said no" from "server was unreachable". */
-  function refresh(): Promise<ReadOutcome> {
+  /** Reads again for the current key. Resolves when that read has landed. */
+  function refresh(): Promise<void> {
     stop()
-    if (!active || !key.value) return Promise.resolve('skipped')
-    const current = generation, requested = key.value
-    const running = run(current, requested)
-    inflight = { generation: current, promise: running }
-    // `void run(...)` callers never await; publishing keeps both paths equal.
-    void running.then(outcome => publish({ generation: current, outcome }))
-    return running
+    if (!active || !key.value) return Promise.resolve()
+    return run(generation, key.value)
   }
 
-  async function run(current: number, requested: string): Promise<ReadOutcome> {
-    controller = new AbortController()
+  async function run(current: number, requested: string) {
+    const own = new AbortController()
+    controller = own
     loading.value = true
     try {
-      const result = await load(controller.signal)
-      if (current !== generation) return 'skipped'
+      const result = await load(own.signal)
+      if (current !== generation) return
       // `shallowRef` compares by identity: wrap each answer so a refresh whose
       // payload is an equal-by-reference object still marks state as changed.
       data.value = { ...result }; sourceKey.value = requested; failed.value = false; failures = 0
-      return 'ok'
     } catch {
-      if (current !== generation) return 'skipped'
+      if (current !== generation) return
       failed.value = true; failures++
-      return 'failed'
     } finally {
       if (current === generation) {
         loading.value = false
@@ -81,25 +55,12 @@ export function useTaskPolling<T>(key: Readonly<Ref<string>>, load: (signal: Abo
     }
   }
 
-  /**
-   * Wait for the read of the current generation and report its outcome with the
-   * snapshot it stored. Used where a caller must know what a specific credential
-   * read answered (authorization verification).
-   */
-  async function settle(): Promise<{ ok: boolean, data: T | null }> {
-    // Wait for the *next* read that starts at or after this point, i.e. the one a
-    // just-changed key triggers; joining an older read would report the previous
-    // credential's answer.
-    const started = await nextSettle(generation)
-    return { ok: started.outcome === 'ok', data: data.value }
-  }
-
   function hide() { active = false; stop(); loading.value = false }
   function show() { active = true; void refresh() }
-  watch(key, () => { failures = 0; failed.value = false; inflight = null; void refresh() })
+  watch(key, () => { failures = 0; failed.value = false; void refresh() })
   // `show()` performs the first read, so a key that is already complete when the
   // component mounts (deep link, first render) still loads.
   onMounted(() => { window.addEventListener('pagehide', hide); window.addEventListener('pageshow', show); show() })
   onBeforeUnmount(() => { hide(); window.removeEventListener('pagehide', hide); window.removeEventListener('pageshow', show) })
-  return { data, sourceKey, loading, failed, retryIn, refresh, settle }
+  return { data, sourceKey, loading, failed, retryIn, refresh }
 }

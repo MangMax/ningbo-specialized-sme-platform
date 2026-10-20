@@ -6,6 +6,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
+import { AccordionHeader as AccordionHeaderAs } from 'reka-ui'
 
 /**
  * 全站唯一的折叠面板。
@@ -18,6 +19,10 @@ import {
  *   供需要保持表单实例/初始化回调的折叠使用。
  * - `instant`：仅供程序化收起（如点「开始对比」）跳过动画；手动开合仍有完整动画。
  * - `compact`：唯一的紧凑层级；两档之外不再有页面级折叠样式。
+ * - `headingLevel`：触发器所在的标题层级，默认 3（Accordion 官方默认，全站不变）。
+ *   页面**直接挂在 h1 下面**的折叠传 2：那时折叠标题就是该 h2 区块里的 h3，
+ *   而 Reka 的默认 h3 会与页面的 h2 同层，读屏按标题导航时看不出从属关系。
+ *   只扩这一层语义，不改 Reka 的键盘、`aria-expanded` 与高度动画。
  */
 
 const ITEM_VALUE = 'body'
@@ -39,6 +44,7 @@ const props = withDefaults(defineProps<{
   itemClass?: string
   triggerClass?: string
   contentClass?: string
+  headingLevel?: 2 | 3 | 4
 }>(), {
   open: null,
   keepMounted: false,
@@ -47,7 +53,11 @@ const props = withDefaults(defineProps<{
   collapsible: true,
   showIcon: true,
   padded: false,
+  headingLevel: 3,
 })
+
+/** Reka 的 AccordionHeader 接受 `as`，默认 h3。 */
+const headerAs = computed(() => `h${props.headingLevel}` as 'h2' | 'h3' | 'h4')
 
 const emit = defineEmits<{ 'update:open': [open: boolean] }>()
 
@@ -87,7 +97,8 @@ function onUpdate(value: string | string[] | undefined) {
         <span class="flex min-w-0 flex-1 items-center gap-2">
           <slot name="trigger">
             <slot name="title">
-              <span class="min-w-0 flex-1 text-left">{{ title }}</span>
+              <span v-if="headingLevel === 3" class="min-w-0 flex-1 text-left">{{ title }}</span>
+              <AccordionHeaderAs v-else :as="headerAs" class="min-w-0 flex-1 text-left">{{ title }}</AccordionHeaderAs>
             </slot>
             <span v-if="description" class="text-muted-foreground text-[13px] font-normal">{{ description }}</span>
           </slot>
