@@ -53,7 +53,7 @@ onMounted(() => { void discoverAuthorization() })
       <Button v-if="accepted" as-child size="sm" variant="ghost"><NuxtLink :to="taskLocation(accepted)">查看本次导出</NuxtLink></Button>
       <Button v-if="discoveryFailed || authorization === 'failed'" size="sm" variant="outline" :disabled="discovering || authorization === 'loading'" @click="retryCapabilities">重新发现导出能力</Button>
     </div>
-    <p id="current-export-scope" class="text-muted-foreground text-[13px] leading-5">全量四表，不受当前页、搜索和筛选条件影响。<br>后台任务查看、取消及下载，产物保留 7 天。</p>
+    <p id="current-export-scope" class="text-muted-foreground text-[13px] leading-5">导出该称号全部企业，忽略搜索、筛选及分页。<br>后台任务查看、取消及下载，产物保留 7 天。</p>
     <DisclosurePanel compact title="导出说明" :heading-level="2">
       <p class="text-muted-foreground text-[13px] leading-5">Excel 含有效企业、待确认、排除明细、口径说明四个工作表。任务按执行时的数据快照生成，与页面查询可能存在时间差；可离开页面后到后台任务处理。</p>
     </DisclosurePanel>

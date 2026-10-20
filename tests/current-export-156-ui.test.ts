@@ -80,7 +80,7 @@ for (const entry of TASK_EXPORTS) it(`${entry.titleCode}: filtered query submits
   const { wrapper, router, calls, submit } = await setup({ title: entry.titleCode })
   expect(submit()).toBeTruthy()
   expect(wrapper.text()).toContain(`导出范围：${entry.label}`)
-  expect(wrapper.text()).toContain('全量四表')
+  expect(wrapper.get('#current-export-scope').text()).toContain('导出该称号全部企业，忽略搜索、筛选及分页。')
   expect(wrapper.text()).toContain('后台任务查看、取消及下载，产物保留 7 天')
   const explanation = wrapper.findAll('button').find(button => button.text() === '导出说明')!
   expect(explanation.attributes('aria-expanded')).toBe('false')
@@ -88,7 +88,6 @@ for (const entry of TASK_EXPORTS) it(`${entry.titleCode}: filtered query submits
   expect(explanation.attributes('aria-expanded')).toBe('true')
   expect(wrapper.text()).toContain('有效企业、待确认、排除明细、口径说明')
   expect(wrapper.text()).toContain('与页面查询可能存在时间差')
-  expect(wrapper.text()).toContain('不受当前页、搜索和筛选条件影响')
   await submit().trigger('click'); await flushPromises()
   const posts = calls.filter(c => c.options.method === 'POST')
   expect(posts).toHaveLength(1)
