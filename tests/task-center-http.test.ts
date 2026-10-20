@@ -131,8 +131,8 @@ it('reports queued cancellation as cancelled rather than failed and keeps export
   expect(new Set([...page1.rows, ...page2.rows].map(row => row.id)).size).toBe(4)
 })
 
-it('导出任务摘要兼容历史v1至v6并识别当前v7规则而拒绝未知版本',async()=>{
-  const versions=['current-roster-116-v1','current-roster-116-v2','current-roster-116-v3','current-roster-116-v4','current-roster-116-v5','current-roster-116-v6','current-roster-116-v7','unknown-rule']
+it('导出任务摘要兼容历史v1至v7并识别当前v8规则而拒绝未知版本',async()=>{
+  const versions=['current-roster-116-v1','current-roster-116-v2','current-roster-116-v3','current-roster-116-v4','current-roster-116-v5','current-roster-116-v6','current-roster-116-v7', 'current-roster-116-v8','unknown-rule']
   const exportIds=versions.map(ruleVersion=>{
     const id=newJobId()
     db.insert(schema.job).values({id,kind:'current-roster-export',state:'failed',params:{titleCode:'specialized_sme'},progress:{done:0,total:0},result:{ruleVersion,phase:'starting'},createdAt:'2026-10-19T00:00:00Z'}).run()

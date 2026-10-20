@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { CURRENT_RULE_VERSION, prepareCurrentReader, readCurrentCandidate, type CurrentTitle } from './current-qualification'
 import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
 import { TITLES } from '../labels'
+import { readIdentityKeyVariants } from './current-identity-keys'
 
 export class CurrentWorkbookLimitError extends Error {}
 function textCell(value: unknown): string | null {
@@ -20,11 +21,13 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
   prepareCurrentReader(db)
   db.exec('BEGIN')
   try {
-    const predicate = `select enterprise_id as id from record where title_code=@title
+    const keys={queries:readIdentityKeyVariants(db,'queries'),relations:readIdentityKeyVariants(db,'unassignedRelations')}
+    const predicate = `with owners as materialized (select id,roster84_uscc(uscc_norm) as uscc from enterprise where uscc_norm is not null)
+      select enterprise_id as id from record where title_code=@title
       union select enterprise_id as id from difference_reason where title_code=@title
       union select enterprise_id as id from record_correspondence where title_code=@title and enterprise_id is not null
       union select coalesce(r.enterprise_id,e.id) as id from platform_relation r join platform_query q on q.id=r.query_id
-        left join enterprise e on r.enterprise_id is null and e.uscc_norm=r.uscc_raw
+        left join owners e on r.enterprise_id is null and e.uscc=roster84_uscc(r.uscc_raw)
         where coalesce(r.enterprise_id,e.id) is not null and ${relationScopeSql}`
     const bindings={title,rdjb:TITLE_RDJB_CODES[title]}
     const total = (db.prepare(`select count(*) as n from (${predicate})`).get(bindings) as {n:number}).n
@@ -36,7 +39,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     let done = 0
     progress(0,total,snapshotStartedAt)
     for (const {id} of db.prepare(`select id from (${predicate}) order by id`).iterate(bindings) as Iterable<{id:number}>) {
-      const row = readCurrentCandidate(db,id,title,year,Date.parse(generatedAt))
+      const row = readCurrentCandidate(db,id,title,year,Date.parse(generatedAt),keys)
       hash.update(JSON.stringify(row))
       if (counts[row.group] >= 1048575) throw new CurrentWorkbookLimitError('Excel 单表超过1048575条数据上限，未发布文件；请拆分数据范围')
       counts[row.group]++

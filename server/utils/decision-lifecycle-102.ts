@@ -24,9 +24,12 @@ export const currentQualification102 = z.strictObject({
   titleCode: title,
   validFrom: z.string().datetime({ offset: true }),
   validUntil: z.string().datetime({ offset: true }),
+  // Explicit new award, never inferred from an interval/renewal or free text.
+  awardYear: z.number().int().min(1900).max(2200).optional(),
   basis: note,
   publicationCheck: z.strictObject({ status: z.enum(['not_found', 'not_checked']), scope: note }),
 }).refine(q => Date.parse(q.validFrom) < Date.parse(q.validUntil), 'Qualification interval must be nonempty')
+  .refine(q => q.awardYear == null || q.awardYear <= new Date(q.validFrom).getUTCFullYear(), 'Award must precede or start the qualification interval')
 const content = z.strictObject({
   currentQualification: currentQualification102.optional(),
   status: z.enum(s.differenceReason.status.enumValues!),
@@ -185,7 +188,10 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
     const relation = d.evidenceRelationId ? tx.select({ queryId: s.platformRelation.queryId, enterpriseId: s.platformRelation.enterpriseId, uscc: s.platformRelation.usccRaw, verificationStatus: s.platformRelation.verificationStatus, sequenceNo: s.platformRelation.sequenceNo }).from(s.platformRelation).where(eq(s.platformRelation.id, d.evidenceRelationId)).get() : null
     if (d.currentQualification && (!relation || relation.verificationStatus !== 'confirmed')) throw new DecisionError102(422, 'qualification_evidence_unconfirmed', 'Current qualification requires an explicitly confirmed source row')
     if (d.evidenceRelationId && !relation) throw new DecisionError102(422, 'evidence_not_found', 'Relation evidence not found')
-    if (relation && (relation.enterpriseId != null ? relation.enterpriseId !== enterprise.id : !enterprise.usccNorm || normalizeUscc(relation.uscc) !== enterprise.usccNorm)) throw new DecisionError102(422, 'evidence_mismatch', 'Relation evidence belongs to another or unknown enterprise')
+    const enterpriseUscc=normalizeUscc(enterprise.usccNorm), relationUscc=normalizeUscc(relation?.uscc)
+    const ownerMismatch=relation && (relation.enterpriseId != null ? relation.enterpriseId !== enterprise.id : !enterpriseUscc || relationUscc !== enterpriseUscc)
+    const explicitConflict=relationUscc && enterpriseUscc && relationUscc !== enterpriseUscc
+    if (ownerMismatch || explicitConflict) throw new DecisionError102(422, 'evidence_mismatch', 'Relation evidence belongs to another or conflicting enterprise')
     if (relation && d.evidenceQueryId && relation.queryId !== d.evidenceQueryId) throw new DecisionError102(422, 'evidence_mismatch', 'Query and relation evidence must identify the same query')
     const queryId = d.evidenceQueryId ?? relation?.queryId
     if (queryId) {

@@ -7,9 +7,10 @@ import { identityFunctions } from './enterprise-read-snapshot'
 import { readQueryAssessment } from './query-assessment'
 import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
 import { normalizeName, normalizeUscc } from '../domain'
+import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
 
-export const CURRENT_RULE_VERSION = 'current-roster-116-v7'
+export const CURRENT_RULE_VERSION = 'current-roster-116-v8'
 export const CURRENT_TITLES = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 export type CurrentTitle = typeof CURRENT_TITLES[number]
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
@@ -175,7 +176,8 @@ function adjudicateCurrentCycles(formal: QualificationEvent[], year: number): { 
 }
 
 /** A bounded enterprise × title projection; source blobs never enter this reader. */
-export function readCurrentCandidate(db: Database.Database, enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now()): CurrentRow {
+export function readCurrentCandidate(db: Database.Database, enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(), keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants }): CurrentRow {
+  const reader=prepareCurrentReader(db)
   const enterprise = db.prepare('select id,name,name_norm,uscc_norm,district,city from enterprise where id=?').get(enterpriseId) as any
   const events = db.prepare(`select e.id,e.event_type as eventType,e.year,e.decided_year as decidedYear,e.batch_seq as batchSeq,e.review_outcome as reviewOutcome,e.revision,r.name_raw as nameRaw,r.uscc_raw as usccRaw,r.source from record r join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=?`).all(enterpriseId,title) as (LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number })[]
   const evidence = db.prepare(`select v.id,v.record_event_id as eventId,v.source_file as sourceFile,v.attachment,v.list_no as listNo,v.page from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=? order by v.id`).all(enterpriseId,title) as any[]
@@ -193,23 +195,26 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
   row.references.push(...aliases.map(a => 'alias:' + a.id + '@' + a.version))
   const knownNames = new Set([enterprise.name,...row.aliases].map(name => normalizeName(name)))
   const unverifiedName = row.publishedNames.some(name => !knownNames.has(normalizeName(name)) && !formal.some(e => e.nameRaw === name && !!enterprise.uscc_norm && normalizeUscc(e.usccRaw) === enterprise.uscc_norm))
-  if (unverifiedName || !row.publishedNames.length && formal.length && !enterprise.uscc_norm) {
+  let identityGap = unverifiedName || !row.publishedNames.length && !!formal.length && !enterprise.uscc_norm
+  if (identityGap) {
     row.group='pending'; row.publication='尚未完成公布匹配核实'; row.notes.push('公布名称与当前身份尚未完成确认对应')
   } else {
     if (!row.publishedNames.length && formal.length) row.notes.push('公布名未留档；正式出处按稳定企业标识关联，未将现名补作公布名')
     for (const name of row.publishedNames.filter(n => normalizeName(n) !== normalizeName(row.name))) row.notes.push('已公布，公布名称为' + name + '；现已更名为' + row.name)
   }
-  if (formal.some(e => e.usccRaw && enterprise.uscc_norm && normalizeUscc(e.usccRaw) !== enterprise.uscc_norm)) { row.group='pending'; row.notes.push('公布统代与当前主体存在身份冲突') }
+  if (formal.some(e => normalizeUscc(e.usccRaw) && enterprise.uscc_norm && normalizeUscc(e.usccRaw) !== normalizeUscc(enterprise.uscc_norm))) { identityGap=true; row.group='pending'; row.notes.push('公布统代与当前主体存在身份冲突') }
   // #102 owns the head; #108 owns evidence applicability, including legacy reviews.
   const rdjb=TITLE_RDJB_CODES[title]
-  const platformRefs=db.prepare(`select r.id,r.query_id as queryId from platform_relation r join platform_query q on q.id=r.query_id where (r.enterprise_id=@enterpriseId or r.enterprise_id is null and r.uscc_raw=@uscc) and ${relationScopeSql} order by r.id`).all({enterpriseId,uscc:enterprise.uscc_norm,title,rdjb}) as {id:number;queryId:number}[]
+  const relationKeys=keys ? identityKeys(keys.relations,enterprise.uscc_norm) : null
+  const unassigned=relationKeys ? 'r.uscc_raw in (select value from json_each(@relationKeys))' : 'roster84_uscc(r.uscc_raw)=@uscc'
+  const platformRefs=db.prepare(`select r.id,r.query_id as queryId from platform_relation r join platform_query q on q.id=r.query_id where r.id in (select id from platform_relation where enterprise_id=@enterpriseId union select r.id from platform_relation r ${relationKeys ? 'indexed by platform_relation_uscc_query_idx' : ''} where r.enterprise_id is null and ${unassigned}) and ${relationScopeSql} order by r.id`).all({enterpriseId,...(relationKeys ? {relationKeys:JSON.stringify(relationKeys)} : {uscc:normalizeUscc(enterprise.uscc_norm)||null}),title,rdjb}) as {id:number;queryId:number}[]
   row.references.push(...platformRefs.map(r => 'platform-relation:' + r.id + ' query:' + r.queryId))
-  const reader=prepareCurrentReader(db)
   const heads = CURRENT_TITLES.flatMap(titleCode => (['missing_in_miit','extra_in_miit'] as const).map(direction => latestDecision102(reader,{enterpriseId,titleCode,direction}))).filter((d): d is NonNullable<typeof d> => !!d).map(d => ({...d,queryId:d.evidenceQueryId,relationId:d.evidenceRelationId,movedTitle:d.movedInTitleCode,movedCity:d.movedInCity,movedYear:d.movedInYear,movedBatch:d.movedInBatch}))
   const correspondences=listRecordCorrespondenceRefs(reader,{enterpriseId,titleCode:title})
   row.references.push(...correspondences.map(c => 'correspondence:' + c.id + '@' + c.revision + ' ' + c.status + (c.requiresRevalidation ? ' 来源需重新核实' : '')))
   const subjectFacts: any[] = []
   let subjectGap = false
+  let qualificationGap = false
   for (const d of heads) {
     const subjectFact = ['moved_out','deregistered','moved_in'].includes(d.reasonCode ?? '')
     // Qualification explanations remain title-scoped. Legal-entity facts do not.
@@ -218,16 +223,22 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
     if (d.lifecycleAction === 'withdraw') { row.notes.push('旧决定已撤回，不作为当前排除依据'); continue }
     if (d.verificationStatus !== 'confirmed' || d.status !== 'confirmed_reason') {
       if (subjectFact) { subjectGap=true; row.notes.push('主体事实尚未确认（decision:' + d.id + '）') }
+      else if (d.titleCode === title && d.reasonCode && !['pending_review','platform_stale','renamed'].includes(d.reasonCode)) { qualificationGap=true; row.notes.push('本称号解释尚未确认（decision:' + d.id + '）') }
       continue
     }
     if (['pending_review','platform_stale','renamed'].includes(d.reasonCode ?? '')) continue
-    const assessment = readQueryAssessment(reader,{enterpriseId,titleCode:d.titleCode,direction:d.direction as 'missing_in_miit'|'extra_in_miit'})
+    const assessment = readQueryAssessment(reader,{enterpriseId,titleCode:d.titleCode,direction:d.direction as 'missing_in_miit'|'extra_in_miit'},keys?.queries)
     row.references.push(`decision:${d.id} explanationValidity:${assessment.explanationValidity.status} queryCoverage:${assessment.queryCoverage.status}`)
     // A maintain receipt can adopt legacy facts without rewriting their null metadata.
     const reviewed = db.prepare('select basis,effective_at as effectiveAt from evidence_review_receipt_114 where decision_id=? and reviewed_revision_id is not null order by id desc limit 1').get(d.id) as {basis:string;effectiveAt:string}|undefined
     const effectiveAt=d.effectiveAt ?? reviewed?.effectiveAt
     const gap = assessment.explanationValidity.status !== 'valid' || !(d.basis ?? reviewed?.basis) || !effectiveAt || !Number.isFinite(Date.parse(effectiveAt)) || Date.parse(effectiveAt) > executionTime
-    if (gap || d.reasonCode === 'other') { if (subjectFact) subjectGap=true; row.group='pending'; row.notes.push(`旧决定适用前提需重新核实（decision:${d.id}；explanationValidity:${assessment.explanationValidity.status}；queryCoverage:${assessment.queryCoverage.status}）`); continue }
+    const source=d.relationId ? db.prepare('select enterprise_id as enterpriseId,uscc_raw as uscc,verification_status as verificationStatus from platform_relation where id=?').get(d.relationId) as {enterpriseId:number|null;uscc:string|null;verificationStatus:string}|undefined : undefined
+    const ownUscc=normalizeUscc(enterprise.uscc_norm), sourceUscc=normalizeUscc(source?.uscc)
+    const sourceConflict=source && (source.enterpriseId != null && source.enterpriseId !== enterpriseId || sourceUscc && ownUscc && sourceUscc !== ownUscc)
+    const sourceGap=!!d.currentQualification && (!source || source.verificationStatus !== 'confirmed' || source.enterpriseId == null && (!ownUscc || sourceUscc !== ownUscc))
+    if (sourceConflict) { identityGap=true; row.notes.push('决定来源与当前主体存在身份冲突（decision:' + d.id + '）') }
+    if (gap || d.reasonCode === 'other' || sourceConflict || sourceGap) { if (subjectFact) subjectGap=true; else qualificationGap=true; row.group='pending'; row.notes.push(`旧决定适用前提需重新核实（decision:${d.id}；explanationValidity:${assessment.explanationValidity.status}；queryCoverage:${assessment.queryCoverage.status}）`); continue }
     d.effectiveAt=effectiveAt
     if (['moved_out','deregistered','moved_in'].includes(d.reasonCode ?? '')) subjectFacts.push(d)
   }
@@ -243,27 +254,43 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
     if (d.reasonCode === 'moved_out') { row.group='excluded'; row.notes.push('已确认外迁') }
     else {
       row.notes.push('已确认迁入宁波' + (d.movedCity ? '；原城市：' + d.movedCity : ''))
-      if (d.titleCode === title && d.movedTitle && d.movedTitle !== title) { row.group='pending'; row.notes.push('迁入资格依据不属于本称号') }
-      if (!formal.length) {
+      if (d.titleCode === title && d.movedTitle && d.movedTitle !== title) { qualificationGap=true; row.group='pending'; row.notes.push('迁入资格依据不属于本称号') }
+      {
         const attested = subjectFacts.filter(f => f.reasonCode === 'moved_in' && f.titleCode === title).flatMap(f => {
           const parsed=currentQualification102.safeParse(f.currentQualification)
           return parsed.success && parsed.data.titleCode === title ? [{decision:f,qualification:parsed.data}] : []
         })
-        const current = attested.filter(a => Date.parse(a.qualification.validFrom) <= executionTime && executionTime < Date.parse(a.qualification.validUntil) && a.qualification.publicationCheck.status === 'not_found')
+        row.basis=[row.basis,...attested.map(a => `decision:${a.decision.id} ${a.qualification.basis} [${a.qualification.validFrom},${a.qualification.validUntil})${a.qualification.awardYear == null ? '' : ' 明确认定年:'+a.qualification.awardYear}`)].filter(Boolean).join('\n')
+        row.notes.push(...attested.map(a => '迁入资格断言；公布核对范围：' + a.qualification.publicationCheck.scope))
+        const current = attested.filter(a => {
+          const q=a.qualification
+          if (!(Date.parse(q.validFrom) <= executionTime && executionTime < Date.parse(q.validUntil)) || q.publicationCheck.status !== 'not_found') return false
+          if (!formal.length) return true
+          // A current interval is not a re-award. It can supersede an expired,
+          // otherwise settled history; failures/gaps need an explicit new grant.
+          // Strict years preserve the existing same-year/unknown-order boundary.
+          const anchor=q.awardYear ?? new Date(q.validFrom).getUTCFullYear()
+          if (anchor > year || formal.some(e => factTime(e) == null || factTime(e)! >= anchor || originTime(e) != null && originTime(e)! >= anchor || originTime(e) == null && (e.eventType === 'award' || q.awardYear == null))) return false
+          if (q.awardYear == null && formal.some(e => e.eventType === 'review' && (e.reviewOutcome !== 'passed' || e.batchSeq == null))) return false
+          return true
+        })
         if (current.length) {
-          row.group='eligible'; row.publication='迁入；未见宁波该称号公布记录（限已核对范围）'
-          row.notes.push(...current.map(a => '迁入资格已确认；公布核对范围：' + a.qualification.publicationCheck.scope))
-          row.basis=current.map(a => `decision:${a.decision.id} ${a.qualification.basis} [${a.qualification.validFrom},${a.qualification.validUntil})`).join('\n')
+          row.group='eligible'; if (!formal.length) row.publication='迁入；未见宁波该称号公布记录（限已核对范围）'
+          row.notes=row.notes.filter(n => !qualification.notes.includes(n))
+          row.notes.push('迁入资格已确认')
           if (row.aliases.length) row.notes.push('已确认曾用名：' + row.aliases.join('、') + '；现名：' + row.name)
-        } else {
+        } else if (!formal.length) {
           row.group='pending'; row.publication='尚未完成公布匹配核实'
           row.notes.push('缺少已复核本称号当前资格及宁波公布核对范围；迁入事实不能代替资格依据')
+        } else if (attested.length) {
+          row.group='pending'; row.notes.push('迁入资格与正式周期/失败/日期顺序尚未消解，保留全部历史依据')
         }
       }
     }
   }
   if (terminations.length) { row.group='excluded'; row.notes.push('已确认注销/主体终止；独立迁入不构成主体状态更正') }
   if (subjectGap) { row.group='pending'; row.notes.push('相关主体事实适用性未确认，不能确认为当前有效主体') }
+  if (identityGap || qualificationGap) { row.group='pending'; row.notes.push('身份或本称号解释存在未决缺口，当前资格待确认') }
   const incomplete = events.filter(e => e.source === 'jxj' && ['award','review'].includes(e.eventType) && !formal.some(f => f.id === e.id))
   const allHistory=computeTitleLifecycle(events.filter(e => e.source === 'jxj'))
   const first=events.find(e => e.id === allHistory.firstRecognitionEventId)

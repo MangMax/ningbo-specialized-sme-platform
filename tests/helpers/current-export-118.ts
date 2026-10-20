@@ -113,7 +113,7 @@ export function expectCounts(wb: ExcelJS.Workbook, job: any, counts: {eligible:n
     expect(rows(wb,sheet)).toHaveLength(counts[key]); expect(notes[sheet]).toBe(String(counts[key]))
     expect(rows(wb,sheet).every(row => row[8] === '专精特新中小企业')).toBe(true)
   }
-  expect(notes['规则版本']).toBe('current-roster-116-v7')
+  expect(notes['规则版本']).toBe('current-roster-116-v8')
   expect(notes['数据版本']).toBe(job.result.dataVersion)
   expect(notes['范围']).toContain('未实时采集，不证明全市完整')
 }
