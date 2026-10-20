@@ -122,7 +122,18 @@ export function currentDecision102(db: DecisionDb, scope: Scope) {
 }
 export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
   command = parse102(internalDecisionCommand102, command)
-  const hash = createHash('sha256').update(JSON.stringify(command)).digest('hex')
+  // External receipts predate the browser envelope. Preserve their normalized key
+  // order even when shared schema fields move; nested fields are ordered by content.
+  // Nullable internal metadata keeps its existing envelope and stored hashes;
+  // public HTTP/MCP schemas require both metadata fields to be non-null.
+  const normalized = command.actor !== null && command.ruleVersion !== null ? {
+    enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
+    action: command.action, expectedCurrentId: command.expectedCurrentId,
+    idempotencyKey: command.idempotencyKey, actor: command.actor,
+    basis: command.basis, ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt,
+    decision: command.decision, reviewedEvidence: command.reviewedEvidence,
+  } : command
+  const hash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex')
   return db.transaction(tx => {
     const review = tx.select().from(s.evidenceReviewReceipt114).where(eq(s.evidenceReviewReceipt114.idempotencyKey, command.idempotencyKey)).get()
     if (review) {

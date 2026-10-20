@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { useDb, schema } from '../db/client'
@@ -90,6 +91,50 @@ afterEach(async () => {
 })
 
 describe('ticket 108 browser review capability', () => {
+  it.each(['replace', 'maintain'] as const)('replays original browser null-envelope receipts after supersession: %s', async action => {
+    const enterprise = db.insert(schema.enterprise).values({ name: '原浏览器回执-' + action, nameNorm: '原浏览器回执-' + action }).returning().get()
+    const key = 'original-browser-' + action
+    const row = db.insert(schema.differenceReason).values({
+      ...coordinate(enterprise.id), lifecycleAction: 'replace', status: 'needs_review',
+      measureCode: 'manual_review', verificationStatus: 'pending', actor: sql`'null'`,
+      recordedAt: '2026-10-19T00:00:00.000Z',
+    }).returning().get()
+    const body = action === 'replace' ? replace(enterprise.id, key, null) : maintain(enterprise.id, key, row.id)
+    // Frozen schema order from 4020270's internal browser envelope.
+    const normalized = {
+      ...coordinate(enterprise.id), action, actor: null, ruleVersion: null,
+      expectedCurrentId: body.expectedCurrentId, idempotencyKey: key, basis: body.basis,
+      effectiveAt: body.effectiveAt,
+      ...('decision' in body ? { decision: body.decision } : {}),
+      ...('reviewedEvidence' in body ? { reviewedEvidence: body.reviewedEvidence } : {}),
+    }
+    const hash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex')
+    const receipt = { versionId: row.id, currentId: row.id, previousId: null, action,
+      recordedAt: row.recordedAt, ...(action === 'maintain' ? { reviewedRevisionId: 0 } : {}) }
+    if (action === 'replace') {
+      db.run(sql`update difference_reason set idempotency_key=${key},request_hash=${hash} where id=${row.id}`)
+    } else {
+      db.insert(schema.evidenceReviewReceipt114).values({ ...coordinate(enterprise.id), idempotencyKey: key, requestHash: hash,
+        kind: action, decisionId: row.id, sourceDecisionId: row.id, reviewedRevisionId: 0,
+        actor: sql`'null'`, basis: body.basis, ruleVersion: null, effectiveAt: body.effectiveAt,
+        response: receipt, recordedAt: row.recordedAt }).run()
+    }
+    db.insert(schema.differenceReason).values({ ...coordinate(enterprise.id), lifecycleAction: 'replace', status: 'needs_review',
+      measureCode: 'manual_review', verificationStatus: 'pending', recordedAt: '2026-10-19T01:00:00.000Z' }).run()
+    const before = rowCount()
+    const replay = await browserPost(enabled, body)
+    expect(replay.status).toBe(200)
+    expect(await json(replay)).toEqual(receipt)
+    const conflict = await browserPost(enabled, { ...body, basis: 'different request' })
+    expect(conflict.status).toBe(409)
+    expect(await json(conflict)).toMatchObject({ error: { code: 'idempotency_conflict' } })
+    expect(rowCount()).toBe(before)
+    const stored = action === 'replace'
+      ? db.get(sql`select request_hash as hash from difference_reason where id=${row.id}`)
+      : db.get(sql`select request_hash as hash from evidence_review_receipt_114 where idempotency_key=${key}`)
+    expect(stored).toEqual({ hash })
+  })
+
   it('reports only the boolean capability with no store and no secret', async () => {
     const response = await fetch(enabled.baseUrl + contextPath)
     expect(response.status).toBe(200)
@@ -110,6 +155,18 @@ describe('ticket 108 browser review capability', () => {
     const rawDecision = db.get(sql`select actor, rule_version as ruleVersion from difference_reason where id=${replaced.versionId}`) as any
     expect(JSON.parse(rawDecision.actor)).toBeNull()
     expect(rawDecision.ruleVersion).toBeNull()
+    // Freeze the original browser null-envelope order independently of the writer.
+    // External historical compatibility must not invalidate browser receipts.
+    const browserEnvelope = {
+      ...coordinate(enterprise.id), action: 'replace', actor: null, ruleVersion: null,
+      expectedCurrentId: null, idempotencyKey: 'browser-replace-1',
+      basis: '这次证据没有改变原判断，维持并登记复核', effectiveAt: '2026-10-20T00:00:00Z', decision,
+    }
+    const originalHash = createHash('sha256').update(JSON.stringify(browserEnvelope)).digest('hex')
+    expect(db.get(sql`select request_hash as hash from difference_reason where id=${replaced.versionId}`)).toEqual({ hash: originalHash })
+    const replacementReplay = await browserPost(enabled, replace(enterprise.id, 'browser-replace-1', null))
+    expect(replacementReplay.status).toBe(200)
+    expect(await json(replacementReplay)).toEqual(replaced)
 
     const read = await json(await fetch(enabled.baseUrl + '/api/roster/decision-lifecycle/' + replaced.versionId))
     expect(read).toMatchObject({ id: replaced.versionId, actor: null, ruleVersion: null, reasonNote: '浏览器复核保留原业务判断' })
