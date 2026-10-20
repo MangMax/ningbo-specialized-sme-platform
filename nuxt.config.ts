@@ -90,6 +90,9 @@ export default defineNuxtConfig({
      * 真实权限体系与操作人来源见 #127；届时替换此开关。
      */
     browserReviewEnabled: false,
+    /** Same-origin task UI operations; server-only deployment opt-in, not login.
+     * Requires apiToken as well. External REST/MCP callers retain token auth. */
+    browserTasksEnabled: false,
     /**
      * **通路 a(在线 PaddleOCR API)的凭证**(票 14)。
      *

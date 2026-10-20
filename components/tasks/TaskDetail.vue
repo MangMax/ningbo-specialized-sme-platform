@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { TaskSummary } from '~~/lib/task-center'
 import { TASK_LABELS, TASK_STATES } from '~~/lib/task-center'
 import { useTaskPolling } from '~/composables/useTaskPolling'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import { Card, CardHeader, CardDescription, CardContent } from '@/components/ui/card'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 
@@ -23,16 +23,13 @@ import { Separator } from '@/components/ui/separator'
  */
 const props = defineProps<{
   id: string
-  token: string
-  /** 只读原因与进入授权的入口由页面决定（它拥有授权状态）。 */
-  authorizationReason?: string
   dated?: (iso: string | null | undefined) => string
 }>()
-const emit = defineEmits<{ close: []; changed: []; 'request-authorization': [] }>()
+const emit = defineEmits<{ close: []; changed: [] }>()
 
 const key = computed(() => props.id)
-const headers = () => props.token ? { authorization: `Bearer ${props.token}` } : undefined
-const { data, sourceKey, loading, failed, refresh: reload } = useTaskPolling(key, signal => $fetch<TaskSummary>(`/api/task-center/${encodeURIComponent(props.id)}`, { headers: headers(), signal }))
+const headers = { 'x-task-center-browser': '1' }
+const { data, sourceKey, loading, failed, refresh: reload } = useTaskPolling(key, signal => $fetch<TaskSummary>(`/api/task-center/${encodeURIComponent(props.id)}`, { headers, signal }))
 /** Event handlers and slot consumers get a plain void wrapper so Vue's handler
  *  typing stays simple; the polling promise is this component's business. */
 function refresh() { void reload() }
@@ -41,7 +38,6 @@ const pending = ref(false)
 const cancelRequested = ref(false)
 const notice = ref('')
 const showTechnical = ref(false)
-const panel = useTemplateRef<HTMLElement>('panel')
 
 // A cancel request is only a request: only the server can say whether the task
 // reached the cancelled terminal state. The card's report therefore follows the
@@ -56,27 +52,7 @@ const cancelReport = computed(() => {
   return '已请求取消，等待服务端检查点；任务尚未进入取消终态。'
 })
 
-// Reveal the detail once, when a person opens a task — never on a poll, never when
-// the credential changes (authorizing from the page keeps the card mounted), and
-// never by moving focus, so a person reading the page is not thrown around.
-function reveal() {
-  const element = panel.value
-  if (!element) return
-  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-  element.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' })
-}
-
-// A different task never inherits the previous task's notices; opening a task is
-// also the only moment that scrolls it into view.
-watch(key, () => {
-  notice.value = ''; cancelRequested.value = false; showTechnical.value = false
-  void nextTick(reveal)
-}, { flush: 'post', immediate: true })
-
-// A new credential changes what this task may be asked to do (cancel and retry
-// need write authorization), so the task is read again with it. The card stays
-// mounted and the reading position is kept: only the task id reveals the card.
-watch(() => props.token, () => { void reload() })
+watch(key, () => { notice.value = ''; cancelRequested.value = false; showTechnical.value = false })
 
 const displayKind = computed(() => {
   const kind = data.value?.kind
@@ -90,8 +66,7 @@ const inFlight = computed(() => !!data.value && (data.value.state === 'queued' |
 const capabilities = computed(() => data.value?.capabilities)
 const canCancel = computed(() => !!capabilities.value?.cancel && inFlight.value && current.value)
 const canRetry = computed(() => !!capabilities.value?.retry && !inFlight.value && current.value)
-const readOnly = computed(() => !!props.authorizationReason)
-const showActions = computed(() => canCancel.value || canRetry.value || readOnly.value)
+const showActions = computed(() => canCancel.value || canRetry.value)
 const cancellationPendingLabel = computed(() => cancelRequested.value && inFlight.value)
 const outcomeLabel = computed(() => {
   if (!data.value?.outcome) return null
@@ -118,7 +93,7 @@ async function act(action: 'cancel' | 'retry') {
   // report never speak at the same time.
   cancelRequested.value = false
   try {
-    const result = await $fetch<{ cancelRequested?: boolean }>(`/api/task-center/${props.id}/${action}`, { method: 'POST', headers: headers() })
+    const result = await $fetch<{ cancelRequested?: boolean }>(`/api/task-center/${props.id}/${action}`, { method: 'POST', headers, body: {} })
     // Only the server's own answer may claim that a cancellation is pending.
     cancelRequested.value = action === 'cancel' && !!result.cancelRequested
     if (!cancelRequested.value) {
@@ -127,19 +102,17 @@ async function act(action: 'cancel' | 'retry') {
         : '服务端已处理取消请求。'
     }
     await reload(); emit('changed')
-  } catch { notice.value = '操作未受理。请核对管理操作授权，或刷新后再试。' }
+  } catch { notice.value = '操作未受理。请刷新任务状态后再试。' }
   finally { pending.value = false }
 }
 </script>
 
 <template>
-  <section ref="panel" tabindex="-1" aria-labelledby="task-detail-title" class="outline-none scroll-mt-4">
-    <Card class="min-w-0 gap-0 py-0">
-      <CardHeader class="flex flex-col gap-2">
+  <section aria-label="任务执行详情" class="min-w-0">
+    <Card class="min-w-0 gap-0 border-0 bg-transparent py-0 shadow-none">
+      <CardHeader class="flex flex-col gap-2 px-0 pt-0 pb-4">
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="flex min-w-0 flex-col gap-1">
-            <!-- 这张卡的标题就是它所在区块的 h2（页面 h1 → 列表 h2 / 详情 h2 → 折叠 h3）。 -->
-            <CardTitle id="task-detail-title" as="h2">任务详情</CardTitle>
             <CardDescription v-if="data" class="flex flex-wrap items-center gap-2">
               <span class="text-foreground font-medium">{{ displayKind }}</span>
               <!-- The task's own name often restates its kind; show it only when it adds something. -->
@@ -153,7 +126,7 @@ async function act(action: 'cancel' | 'retry') {
           <Button variant="ghost" size="sm" @click="emit('close')">关闭详情</Button>
         </div>
       </CardHeader>
-      <CardContent class="flex min-w-0 flex-col gap-4">
+      <CardContent class="flex min-w-0 flex-col gap-4 px-0 pb-0">
         <TableFailureState v-if="failed" title="详情加载失败或任务不存在" :compact="!!data" :pending="loading" description="已保留请求的任务编号。可重试；旧详情不会用于当前任务的操作。" @retry="refresh" />
         <p v-else-if="loading && !data" role="status">正在读取任务详情…</p>
 
@@ -202,11 +175,7 @@ async function act(action: 'cancel' | 'retry') {
               <Button v-if="canRetry" variant="outline" :disabled="pending" @click="act('retry')">重试未完成项</Button>
               <slot name="actions" :task="data" :current="current" :refresh="refresh" />
             </div>
-            <p v-if="readOnly" class="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-              只读：{{ authorizationReason }}
-              <Button variant="link" size="sm" class="h-auto px-0" data-testid="go-authorize" @click="emit('request-authorization')">进入授权</Button>
-            </p>
-            <p v-else-if="data.capabilities?.reason" class="text-muted-foreground text-sm">{{ data.capabilities.reason }}</p>
+            <p v-if="data.capabilities?.reason" class="text-muted-foreground text-sm">{{ data.capabilities.reason }}</p>
           </div>
 
           <p v-if="cancelReport || notice" role="status" data-testid="task-notice" class="text-sm">{{ cancelReport || notice }}</p>

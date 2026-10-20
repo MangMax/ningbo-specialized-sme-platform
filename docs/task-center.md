@@ -8,7 +8,8 @@
 - `page` 默认 1；`pageSize` 默认 25，最多 200；`job` 是服务端 ULID，独立读取详情，不要求任务在当前页。全部/导出 Tab 支持 `titleCode=little_giant|specialized_sme|innovative_sme` 称号筛选。
 - 分类/状态切换回到第一页并关闭详情。刷新、浏览器返回、从结果入口返回均按 URL 重新读取。
 - 前端每 3 秒读取；失败后 2/4/8/16/30 秒退避，保留最后成功结果及来源筛选/页码。离页只中止读取，不发送任务取消。
-- 管理 API 密钥由操作者输入，限当前页面内存及请求头；不进入 URL、存储或构建产物。离页/刷新清除。服务端密钥不下发。
+- 任务详情以右侧 Sheet 抽屉展示，手机全宽；正文独立滚动，底部保留间距。关闭后回到列表原操作位置，深链不要求任务在当前筛选中。
+- 页面没有管理密钥表单，也不保存或发送 API 凭据。页面操作由服务端 `NUXT_BROWSER_TASKS_ENABLED=true` 且 `NUXT_API_TOKEN` 非空显式开启；关闭或无法确认时只读，不提供技术设置入口。该部署能力不是登录或用户授权，后续用户权限见 #127。
 
 ## HTTP 安全摘要
 
@@ -16,7 +17,7 @@
 - `GET /api/task-center/:id` → `TaskSummary`，增加有界 `items` 完整性/未完成位置，独立于原页面内存。
 - `POST /api/task-center/:id/cancel` → `{ task, cancelRequested }`。排队取消 200；运行中请求取消 202，仍显示真实 running，直到终态。
 - `POST /api/task-center/:id/retry` → 202。同平台批次 ID，仅委派原接口补查未完成项；保留其鉴权、终态校验及最多 10 次执行预算。无通用参数重放。重试若没有产出新结果（执行抛异常、排队时被取消、kind 未接入），摘要、逐项证据、未完成位置与执行计数都停留在最后一次检查点，只更新终态与错误；一次真正开始的执行会先落库递增后的 `attempt` 再发起平台请求，因此执行次数仍到达 10 次上限。依赖捕获（`prepare`）抛错时任务不重开：4xx 原样回 4xx，其余回 503 且原结果保留。注意平台 `prepare` 不会因凭据存储异常抛错（它降级为空 cookie，逐页记 `credential_unavailable`），那种情况仍是 202 的普通失败重试。
-- 所有响应 `Cache-Control: no-store`。无鉴权只能读；操作继续使用现有 `NUXT_API_TOKEN` Bearer/X-API-Token 边界，401 不绕过。
+- 所有响应 `Cache-Control: no-store`。外部 API 操作继续使用 `NUXT_API_TOKEN` Bearer/X-API-Token。显式开启页面操作时，仅任务中心、三种当前名录导出及其产物允许带 `X-Task-Center-Browser: 1` 的同源浏览器请求：要求 `Sec-Fetch-Site: same-origin`；GET 要求同源 Referer，POST 要求精确匹配 Origin 及 JSON。缺少开关或同源条件则回到原 token 门禁，不改变 MCP 或其他写接口。
 - SQLite 只投影元数据、标量和有界 ID/状态/位置；不把完整 params/result、OCR 文本、平台 segments/rows 取入列表 JS 内存。原始错误可能包含凭据或宿主路径，仅展示安全类别与操作建议。
 
 ## 分组与结果适配

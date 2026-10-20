@@ -1,31 +1,31 @@
 // @vitest-environment happy-dom
 // UI regressions for the task workbench (#116 / #120 / #121).
 //
-// Each test here pins a person's job, not the component's internals:
-//   1. a wrong admin key fails where it was typed and keeps the draft;
-//   2. the same key can be proven again after "clear" — clearing one attempt
-//      must not disable the next one;
-//   3. a check that never gets an answer says so within its bound and stops the
-//      read instead of hanging;
-//   4. a second press while checking starts no second verification;
-//   5. leaving the page drops the in-memory key and aborts what was in flight;
+// The workbench is **deployment-authorised** now: there is no admin key form,
+// no credential in the browser, and every task request carries the browser
+// marker header instead of a Bearer token. Each test here pins a person's job:
+//
+//   1. the page never asks for a key and never sends a credential;
+//   2. the server's own `authorized` flag decides whether an action is usable,
+//      and an unusable action says why next to it;
+//   3. a task opens in a real drawer (Reka Sheet) and the URL carries the job;
+//   4. closing the drawer takes the job out of the URL and gives the caret back
+//      to the row that opened it;
+//   5. a refresh never re-mounts the detail, never steals the caret and never
+//      moves the reading position;
 //   6. the accepted export can be found again after leaving (cross tab);
 //   7. a 202 whose receipt was lost is retried with the same request identity;
 //   8. a rejected export submission keeps its own readable reason;
 //   9. the accepted-export bar states the request, not a stale task state;
-//  10. opening a detail reveals it, while polling never steals focus or scroll;
-//  11. closing a detail returns to the row that opened it;
-//  12. detail shows only actions the task really supports;
-//  13. a button that is disabled always says why next to it.
+//  10. the detail shows only the actions the task really supports;
+//  11. a button that is disabled always says why next to it.
 //
-// The accessible-hiding behaviour of DisclosurePanel (KEYBOARD) is covered by
-// tests/disclosure-panel-ui.test.ts; this file only checks that the page really
-// uses that component instead of native <details>.
-import { readFile } from 'node:fs/promises'
+// The drawer is a **real** Reka Sheet: it teleports into document.body, so the
+// detail is read from `document`, not from the wrapper.
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
-import { defineComponent, h, reactive, ref } from 'vue'
+import { defineComponent, h, reactive } from 'vue'
 import type { TaskList, TaskSummary } from '~~/lib/task-center'
 
 // Nuxt injects these namespaced modules at build time; vitest runs on bare node
@@ -57,10 +57,10 @@ vi.mock('#app/composables/head', () => ({
 // `useHead` is also auto-imported unprefixed; tests/setup.ts shims it globally
 // the same way it shims nitro's defineRouteMeta.
 
-// Everything below is mounted with the repository's **real** components (Input's
-// passive `useVModel`, the Reka Tabs/Select, Button's `disabled`, DisclosurePanel's
-// accordion). Only the dev-only theme toggle and the icon-only sidebar are left out:
-// they have nothing to do with the task page's contracts.
+// Everything below is mounted with the repository's **real** components (the
+// Reka Tabs/Select/Sheet, Button's `disabled`, DisclosurePanel's accordion).
+// Only the dev-only theme toggle and the icon-only sidebar are left out: they
+// have nothing to do with the task page's contracts.
 
 const state: { query: Record<string, unknown>, pushes: Record<string, unknown>[], list: TaskList, detail: TaskSummary } = {
   query: {},
@@ -111,7 +111,7 @@ function exportTask(patch: Partial<TaskSummary> = {}, exportPatch: Partial<NonNu
       canRegenerate: true,
       ...exportPatch,
     },
-    capabilities: { cancel: false, retry: false, retryItemIds: [], reason: '管理操作需要 API 授权。' },
+    capabilities: { cancel: false, retry: false, retryItemIds: [], reason: '服务端未开放该任务的页面操作。' },
     links: [],
     ...patch,
   }
@@ -163,9 +163,6 @@ function listOf(rows: TaskSummary[], authorized = false): TaskList {
 }
 
 type FetchCall = { url: string, method: string, body?: unknown, headers?: Record<string, string>, query?: unknown, signal?: AbortSignal }
-/** The credential the most recent list read carried (what the server saw). */
-let lastListAuthorization = ''
-const lastAuthorization = () => lastListAuthorization
 
 // The page calls the Nuxt-injected `$fetch`; the repo's UI tests stub it the same
 // way. `$fetch.raw` is the 202 path (the page needs the real status code).
@@ -175,7 +172,6 @@ function installFetch(handler: (call: FetchCall) => Response | Promise<Response>
   // must still show up as an attempted request.
   const run = async (url: string, options: { method?: string, body?: unknown, headers?: Record<string, string>, query?: unknown, signal?: AbortSignal } = {}) => {
     const entry = { url, method: options.method ?? 'GET', body: options.body, headers: options.headers, query: options.query, signal: options.signal }
-    if (url === '/api/task-center') lastListAuthorization = options.headers?.authorization ?? ''
     calls.push(entry)
     const response = await handler(entry)
     if (!(response instanceof Response)) throw new Error(`handler did not return a Response for ${url}`)
@@ -203,10 +199,11 @@ function installFetch(handler: (call: FetchCall) => Response | Promise<Response>
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
 // Nuxt auto-registers these app components; vitest does not run the Nuxt build,
-// so the page test supplies the same components explicitly. Input, Select, Tabs,
-// Button, Label, DisclosurePanel and the UI primitives are deliberately **not**
-// stubbed: their real behaviour (passive v-model, disabled buttons that cannot be
-// clicked, Reka focus movement) is part of what these tests are about.
+// so the page test supplies the same components explicitly. Select, Tabs,
+// Button, Label, DisclosurePanel, Sheet and the UI primitives are deliberately
+// **not** stubbed: their real behaviour (Reka focus movement, a drawer that
+// teleports into document.body, disabled buttons that cannot be clicked) is part
+// of what these tests are about.
 async function autoRegisteredComponents() {
   const [PageHeader, NuxtLink, TablePagination, TableLoadingStatus, TableFailureState, TaskProgress, TaskDetail] = await Promise.all([
     import('../components/PageHeader.vue'),
@@ -267,6 +264,23 @@ function layout(mode: 'desktop' | 'mobile' | 'hidden') {
   return () => { HTMLElement.prototype.getClientRects = original }
 }
 
+/**
+ * The scroll the page asked for.
+ *
+ * happy-dom has no layout, so "did the page move the reading position" is
+ * answered through the call itself: the page must not scroll a detail that is
+ * merely being refreshed.
+ */
+const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+let scrollIntoViewCalls = 0
+function trackScrolls() {
+  scrollIntoViewCalls = 0
+  HTMLElement.prototype.scrollIntoView = function () { scrollIntoViewCalls++ }
+}
+function restoreScrolls() {
+  HTMLElement.prototype.scrollIntoView = originalScrollIntoView
+}
+
 let pageModule: { default: ReturnType<typeof defineComponent> } | null = null
 async function mountPage(options: { attach?: boolean, viewport?: 'desktop' | 'mobile' | 'hidden', freshPage?: boolean } = {}) {
   // Every page is attached while it is driven; a person leaves by unmounting it.
@@ -314,6 +328,9 @@ beforeEach(() => { pageModule = null })
 afterEach(() => {
   for (const restore of restoreLayout.splice(0)) restore()
   for (const wrapper of mounted.splice(0)) wrapper.unmount()
+  // A teleported drawer outlives an unmount if the page was torn down mid-open.
+  for (const node of Array.from(document.body.querySelectorAll('[data-slot="sheet-content"], [data-slot="sheet-overlay"]'))) node.remove()
+  restoreScrolls()
   vi.unstubAllGlobals()
   vi.useRealTimers()
   sessionStorage.clear()
@@ -330,8 +347,7 @@ beforeEach(() => {
 
 const EXPORT_KEY = 'task-center-export-requests-v1'
 
-/** Let pending reads and microtasks settle (an auth submit is async end-to-end:
- *  the read has to land and the page has to re-render the verdict). */
+/** Let pending reads and microtasks settle. */
 async function settle() {
   for (let i = 0; i < 40; i++) { await flushPromises(); await new Promise(resolve => setTimeout(resolve, 5)) }
   await flushPromises()
@@ -350,439 +366,127 @@ type Wrapper = Awaited<ReturnType<typeof mountPage>>
 type ButtonLike = { text: () => string, attributes: (name?: string) => unknown, element: Element, trigger: (event: string) => Promise<void> }
 
 function findButton(wrapper: Wrapper | ReturnType<Wrapper['get']>, name: RegExp | string): ButtonLike {
-  const all = 'findAll' in wrapper && typeof wrapper.findAll === 'function'
-    ? wrapper.findAll('button') as unknown as ButtonLike[]
-    : wrapper.findAll('button') as unknown as ButtonLike[]
+  const all = wrapper.findAll('button') as unknown as ButtonLike[]
   const match = all.find(b => (name instanceof RegExp ? name.test(b.text()) : b.text().includes(name)))
   if (!match) throw new Error(`button not found: ${name}. Buttons: ${all.map(b => b.text()).join(' | ')}`)
   return match
 }
 
-// A list read answers 200 whether or not the key is valid; only `authorized` says
-// so. Delay is expressed in macrotask ticks (5ms) so no fake timers are involved.
+// A list read answers 200 whether or not the deployment allows page actions;
+// only `authorized` says so.
 const listRead = (authorized: boolean) => json(listOf(state.list.rows, authorized))
 const capabilities = json({ exports: [{ titleCode: 'little_giant', path: '/api/roster/exports/current/little-giant', ready: true }] })
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-/** Everything a person could read at this instant, from the authorization form. */
-function authSnapshot(wrapper: Wrapper) {
-  const form = wrapper.get('form')
-  const feedback = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="task-auth-feedback"], [data-testid="task-auth-alert"], [data-testid="task-auth-checking"]'))
-    .filter(node => form.element.contains(node))
-    .map(node => node.textContent?.trim())
-    .filter(Boolean)
-  const badges = wrapper.findAll('[data-testid="auth-badge"], [data-testid="auth-badge-inline"]').map(badge => badge.text().trim())
-  const submit = wrapper.get<HTMLButtonElement>('form button[type="submit"]')
-  return {
-    feedback,
-    badge: badges.join(','),
-    draft: wrapper.get<HTMLInputElement>('#task-key').element.value,
-    submitLabel: submit.text().trim(),
-    submitDisabled: submit.element.disabled,
+/**
+ * The drawer is a real Reka Sheet: it teleports into document.body, so the
+ * detail is read from `document` — never from the wrapper.
+ */
+function sheetDialog(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[role="dialog"]')
+}
+
+/**
+ * Wait until the drawer really is mounted.
+ *
+ * Reka's portal + presence mount asynchronously: the URL already carries the
+ * job while the drawer is not in the DOM yet. Assertions about the drawer must
+ * wait for it instead of assuming it is there.
+ */
+async function waitForSheet(): Promise<HTMLElement> {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const dialog = sheetDialog()
+    if (dialog?.querySelector('[data-testid="task-detail-scroll"]')) return dialog
+    await flushPromises()
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  throw new Error('任务详情抽屉没有挂上来')
+}
+
+/** Wait until the drawer is gone from the document. */
+async function waitForSheetClosed(): Promise<void> {
+  for (let attempt = 0; attempt < 60 && sheetDialog(); attempt++) {
+    await flushPromises()
+    await new Promise(resolve => setTimeout(resolve, 5))
   }
 }
 
-/** Sample the form every ~100ms for `ms`, keeping only distinct readings. */
-async function sampleEvery(wrapper: Wrapper, ms: number, during: () => Promise<void>) {
-  const readings: ReturnType<typeof authSnapshot>[] = []
-  const finished = during()
-  let done = false
-  void finished.then(() => { done = true })
-  const started = Date.now()
-  while (!done || Date.now() - started < Math.min(150, ms)) {
-    const now = authSnapshot(wrapper)
-    const last = readings[readings.length - 1]
-    if (!last || JSON.stringify(last) !== JSON.stringify(now)) readings.push(now)
-    await sleep(100)
-  }
-  await finished
-  readings.push(authSnapshot(wrapper))
-  return readings
+/** A button inside the drawer. */
+function sheetButton(dialog: HTMLElement, name: RegExp): HTMLButtonElement {
+  const buttons = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button'))
+  const match = buttons.find(button => name.test(button.textContent ?? ''))
+  if (!match) throw new Error(`drawer button not found: ${name}. Buttons: ${buttons.map(b => b.textContent?.trim()).join(' | ')}`)
+  return match
 }
 
-/** Wait until the form stops saying "checking" and the verdict is on screen. */
-async function waitForVerdict(wrapper: Wrapper, timeoutMs = 1000) {
-  const started = Date.now()
-  await flushPromises()
-  while (authSnapshot(wrapper).submitDisabled && Date.now() - started < timeoutMs) { await flushPromises(); await sleep(10) }
-  // Bring the already-landed verdict into the page before anyone reads it.
-  await flushPromises()
-  await settle()
-}
-
-function checkingLabel(wrapper: Wrapper) {
-  return wrapper.get('form button[type="submit"]').text().trim()
-}
-
-/**
- * Wait until the key field is really in the DOM.
- *
- * Reka mounts an accordion's content on a later tick (`unmount-on-hide` + the
- * Presence render), so the field only exists from then on — a person pressing
- * "进入授权" must be answered after that, not one tick after the click.
- */
-async function waitForKeyField(wrapper: Wrapper) {
-  for (let attempt = 0; attempt < 20 && !wrapper.find('#task-key').exists(); attempt++) await flushPromises()
-  return wrapper.find('#task-key')
-}
-
-/**
- * Record what the page asked the window to scroll to.
- *
- * happy-dom has no layout, so the scroll is asserted through the call itself:
- * the page must scroll by the key field's **own** box, not by the still-growing
- * accordion container's.
- */
-function trackWindowScrolls(): number[] {
-  const scrolls: number[] = []
-  window.scrollTo = ((options: ScrollToOptions | number) => {
-    scrolls.push(typeof options === 'number' ? options : (options.top ?? 0))
-  }) as typeof window.scrollTo
-  return scrolls
-}
-
-/** happy-dom lays nothing out: give the key field a box below the fold. */
-function layoutKeyFieldBelowFold(top: number, height: number): () => void {
-  const original = HTMLElement.prototype.getBoundingClientRect
-  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
-    if (this.id === 'task-key') {
-      return { top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top, toJSON: () => ({}) } as DOMRect
-    }
-    return original.call(this)
-  }
-  return () => { HTMLElement.prototype.getBoundingClientRect = original }
-}
-
-/**
- * Press the form's submit button the way a person does.
- *
- * `element.click()` runs the button's activation behaviour, so the browser's own
- * implicit submission happens — and a disabled button does not submit, exactly as
- * in a browser. A dispatched `click` event would run neither.
- */
-function pressSubmit(wrapper: Wrapper) {
-  wrapper.get<HTMLButtonElement>('form button[type="submit"]').element.click()
-}
-
-/**
- * Deliver the form's submit event directly, bypassing the button.
- *
- * This is how the handler itself is put under test: a person cannot press a
- * disabled button, so the only way to reach the handler while it is disabled is
- * to submit the form without the button.
- */
-function submitForm(wrapper: Wrapper) {
-  wrapper.get('form').element.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-}
-
-async function submitWithKey(wrapper: Wrapper, key: string) {
-  await wrapper.get('#task-key').setValue(key)
-  await flushPromises()
-  expect(checkingLabel(wrapper)).toBe('应用授权')
-  pressSubmit(wrapper)
-}
-
-describe('管理操作授权', () => {
-  it('拒绝的密钥在原地说明原因、保留草稿，修正后才显示已授权', async () => {
-    let authorized = false
-    installFetch(({ url }) => {
+describe('没有管理操作授权', () => {
+  it('页面不收集密钥，也从不带 Bearer：任务请求只带浏览器标识头', async () => {
+    const calls = installFetch(({ url, method }) => {
       if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      // A read with a wrong key still answers 200; only the field says so.
-      return listRead(authorized)
+      if (url.startsWith('/api/task-center/')) return json(state.detail)
+      if (method === 'POST') return json({ jobId: jobId('RET') }, 202)
+      return json(listOf(state.list.rows, true))
     })
+    state.query = { tab: 'export', job: jobId('MW') }
     const wrapper = await mountPage({ attach: true })
-    expect(wrapper.text()).toContain('只读')
-
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'wrong-key-abc')
-    await waitForVerdict(wrapper)
-    // The typed key survives so a one-character typo can be fixed.
-    expect(wrapper.get<HTMLInputElement>('#task-key').element.value).toBe('wrong-key-abc')
-    expect(wrapper.get('[data-testid="task-auth-alert"]').text()).toMatch(/未通过校验|未授权/)
-    expect(wrapper.text()).not.toContain('已授权')
-    // ...and the retry carries the corrected draft, not a stale one.
-
-    authorized = true
-    // The corrected draft is re-submitted by pressing the form's own button again.
-    await submitWithKey(wrapper, 'right-key')
-    await waitForVerdict(wrapper)
-    expect(wrapper.text()).toContain('已授权')
-    // A proven key is no longer needed in the field.
-    expect(wrapper.get<HTMLInputElement>('#task-key').element.value).toBe('')
-  })
-
-  it('错→对的全程每 100ms 采样都不会出现“请输入”或“授权未通过”，只在最后确认一次成功', async () => {
-    installFetch(({ url }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      const authorization = lastAuthorization()
-      // The server answers after two ticks, like a real round trip.
-      return sleep(10).then(() => listRead(authorization === 'Bearer right-key'))
-    })
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-
-    await submitWithKey(wrapper, 'wrong-key')
     await settle()
-    expect(authSnapshot(wrapper).feedback.join(' ')).toMatch(/未通过校验/)
-
-    // Correct it in the same field and submit again; watch every 100ms.
-    const readings = await sampleEvery(wrapper, 1500, () => submitWithKey(wrapper, 'right-key'))
-    const spoken = readings.flatMap(reading => reading.feedback)
-    expect(spoken.filter(text => /请输入/.test(text))).toEqual([])
-    expect(readings.filter(reading => reading.feedback.some(text => /授权未通过/.test(text)))).toEqual([])
-    const final = readings[readings.length - 1]!
-    expect(final.badge).toBe('已授权,已授权')
-    // Exactly one confirmation, and it is the only line left on screen.
-    expect(final.feedback.filter(text => /已授权/.test(text))).toHaveLength(1)
-    // The verdict does not arrive as a remount of the form: the key field is the
-    // same element throughout (no focus steal on success).
-    expect(document.querySelector('#task-key')).toBeTruthy()
-  })
-
-  it('慢响应时稳定显示“正在验证”、拒收第二次提交，答案到达后才确认一次', async () => {
-    const release = { go: false }
-    const calls = installFetch(({ url }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      const answer = () => listRead(lastAuthorization() === 'Bearer right-key')
-      if (!release.go) return new Promise<Response>(resolve => { held.push(() => resolve(answer())) })
-      return sleep(10).then(answer)
-    })
-    const held: Array<() => void> = []
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'right-key')
-    // The check is in flight: it says so, and refuses a second submit.
-    expect(authSnapshot(wrapper).submitLabel).toBe('正在验证…')
-    expect(authSnapshot(wrapper).submitDisabled).toBe(true)
-    expect(authSnapshot(wrapper).feedback.join(' ')).not.toMatch(/未通过|请输入/)
-    // A second press while checking must not start a parallel verification. The
-    // disabled button already refuses the press; submitting the form without the
-    // button puts the handler itself under test, and still no second read goes out.
-    pressSubmit(wrapper)
-    submitForm(wrapper)
-    await flushPromises()
-    expect(authSnapshot(wrapper).submitLabel).toBe('正在验证…')
-    expect(calls.filter(call => call.headers?.authorization === 'Bearer right-key')).toHaveLength(1)
-    // The answer arrives; exactly one confirmation, and the key field is cleared.
-    release.go = true
-    for (const resolve of held) resolve()
-    await waitForVerdict(wrapper)
-    const after = authSnapshot(wrapper)
-    expect(after.badge).toBe('已授权,已授权')
-    expect(after.feedback).toEqual(['已授权，可以提交、下载或取消任务。'])
-    expect(after.draft).toBe('')
-  })
-
-  it('清除授权会作废在途的验证：它晚到的答案不会再让人“已授权”', async () => {
-    let release!: (response: Response) => void
-    let holdNext = true
-    installFetch(({ url }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      if (!holdNext) return listRead(true)
-      return new Promise<Response>(resolve => { release = resolve })
-    })
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'right-key')
-    await flushPromises()
-    expect(authSnapshot(wrapper).submitLabel).toBe('正在验证…')
-
-    await findButton(wrapper, /清除授权/).trigger('click')
-    await flushPromises()
-    // The abandoned check now answers "authorized" — for nobody.
-    holdNext = false
-    release(listRead(true))
-    await settle()
-
-    const after = authSnapshot(wrapper)
-    expect(after.badge).toBe('只读,只读')
-    expect(after.feedback.join(' ')).not.toMatch(/已授权/)
-    expect(after.draft).toBe('')
-    expect(after.submitLabel).toBe('应用授权')
-  })
-
-  it('清除授权后仍能再次用正确的密钥完成授权：清除只作废这一次，不能永久废掉下一次提交', async () => {
-    installFetch(({ url }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      return listRead(lastAuthorization() === 'Bearer right-key')
-    })
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'wrong-key')
-    await waitForVerdict(wrapper)
-    expect(wrapper.get('[data-testid="task-auth-alert"]').text()).toMatch(/未通过校验|未授权/)
-
-    // 清除：作废在途的校验、丢掉内存里的凭据。
-    await findButton(wrapper, /清除授权/).trigger('click')
-    await flushPromises()
-    expect(wrapper.findAll('[data-testid="auth-badge"], [data-testid="auth-badge-inline"]').map(badge => badge.text())).toEqual(['只读', '只读'])
-
-    // 再次提交正确密钥：必须能再次证明成功。
-    await submitWithKey(wrapper, 'right-key')
-    await waitForVerdict(wrapper)
-    expect(wrapper.get('[data-testid="task-auth-feedback"]').text()).toMatch(/已授权/)
-    expect(wrapper.findAll('[data-testid="auth-badge"], [data-testid="auth-badge-inline"]').map(badge => badge.text())).toEqual(['已授权', '已授权'])
-  })
-
-  it('离页后晚到的验证回应不授权、不覆写状态', async () => {
-    let release!: (response: Response) => void
-    let holdNext = true
-    installFetch(({ url }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      if (!holdNext) return listRead(true)
-      return new Promise<Response>(resolve => { release = resolve })
-    })
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'right-key')
-    await flushPromises()
-    expect(authSnapshot(wrapper).submitLabel).toBe('正在验证…')
-
-    // The person leaves the page: the route component unmounts and the page hides.
-    window.dispatchEvent(new Event('pagehide'))
-    mounted.splice(0).forEach(leaving => leaving.unmount())
-    wrapper.unmount()
-    holdNext = false
-    release(listRead(true))
-    await settle()
-
-    expect(document.querySelectorAll('[data-testid="auth-badge"]').length).toBe(0)
-    expect(document.body.textContent).not.toMatch(/已授权/)
-    // A new page opened afterwards (the credential lived only in the old page's
-    // memory) is read-only again, and gets its own badge pair.
-    sessionStorage.clear()
-    const fresh = await mountPage({ attach: true, freshPage: true })
-    expect(fresh.findAll('[data-testid="auth-badge"], [data-testid="auth-badge-inline"]').map(badge => badge.text())).toEqual(['只读', '只读'])
-    expect(fresh.findAll('[data-testid="auth-badge"]')).toHaveLength(1)
-  })
-
-  it('服务端一直不应答时，八秒后如实说“没拿到答案”，并把这次读取停掉', async () => {
-    // Only the clock is faked; the promise machinery stays real.
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const calls = installFetch(({ url }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      return new Promise<Response>(() => {}) // 接受请求，但永远不回应
-    })
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'right-key')
-    await flushPromises()
-
-    const pending = calls.find(call => call.headers?.authorization === 'Bearer right-key')
-    expect(pending).toBeTruthy()
-    expect(pending!.signal?.aborted).toBe(false)
-
-    await vi.advanceTimersByTimeAsync(8000)
-    await flushPromises()
-
-    // The read that never landed is stopped, and the verdict says "no answer".
-    expect(pending!.signal?.aborted).toBe(true)
-    expect(wrapper.get('[data-testid="task-auth-unreachable"]').text()).toMatch(/未在 8 秒内回应/)
-    // The key stays in the field so the person can try again; it is not proven.
-    expect(wrapper.get<HTMLInputElement>('#task-key').element.value).toBe('right-key')
-    expect(wrapper.findAll('[data-testid="auth-badge"]').map(badge => badge.text())).toEqual(['只读'])
-  })
-
-  it('卸载页面会中止在途的校验请求，密钥也不留在 URL 或浏览器存储里', async () => {
-    const calls = installFetch(({ url }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      return new Promise<Response>(() => {}) // 永远不回应
-    })
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'right-key')
-    await flushPromises()
-
-    const pending = calls.find(call => call.headers?.authorization === 'Bearer right-key')
-    expect(pending).toBeTruthy()
-    expect(pending!.signal?.aborted).toBe(false)
-    // 密钥只在页面内存里：URL、sessionStorage、localStorage 都不含它。
-    expect(location.href).not.toContain('right-key')
-    expect(JSON.stringify(sessionStorage)).not.toContain('right-key')
-    expect(JSON.stringify(localStorage)).not.toContain('right-key')
-
-    // 离页：路由组件卸载，页面的记忆到此为止。
-    mounted.splice(0).forEach(leaving => leaving.unmount())
-    wrapper.unmount()
-    await flushPromises()
-
-    // 还在路上的那次读取被停掉：它不能再回答出任何东西。
-    expect(pending!.signal?.aborted).toBe(true)
-  })
-
-  it('离开页面（pagehide）会丢掉内存里的凭据：回到页面后的读取不再带授权头', async () => {
-    const calls = installFetch(({ url }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      return listRead(lastAuthorization() === 'Bearer right-key')
-    })
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'right-key')
-    await waitForVerdict(wrapper)
-    expect(wrapper.text()).toContain('已授权')
-    expect(calls.some(call => call.headers?.authorization === 'Bearer right-key')).toBe(true)
-
-    // 离页即清除：凭据只在内存里，走了就不再拿着它读列表。服务端仍然会说这把
-    // 密钥有效，但页面已经不再持有它。
-    window.dispatchEvent(new Event('pagehide'))
-    await flushPromises()
-    expect(wrapper.findAll('[data-testid="auth-badge"], [data-testid="auth-badge-inline"]').map(badge => badge.text())).toEqual(['只读', '只读'])
-
-    // 回到页面：随后的读取不再带授权头。
-    window.dispatchEvent(new Event('pageshow'))
-    await settle()
-    expect(lastAuthorization()).toBe('')
-  })
-
-  it('校验期间切换筛选：判定仍按发起时的筛选走，列表按新筛选重读', async () => {
-    let release!: () => void
-    const held = new Promise<void>(resolve => { release = resolve })
-    const calls = installFetch(async ({ url }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      // The credential this very request carries, read at request time.
-      const authorization = lastAuthorization()
-      if (authorization === 'Bearer right-key') await held
-      return listRead(authorization === 'Bearer right-key')
-    })
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'right-key')
-    await flushPromises()
-    expect(authSnapshot(wrapper).submitLabel).toBe('正在验证…')
-
-    // 校验还在途中：切到别的分类（Reka 的 Tab 在按下时就切换）。
-    await findButton(wrapper, /^OCR/).trigger('mousedown')
-    await flushPromises()
-    expect(state.query.tab).toBe('ocr')
-
-    release()
-    await waitForVerdict(wrapper)
-    expect(wrapper.get('[data-testid="task-auth-feedback"]').text()).toMatch(/已授权/)
-
-    // 证明用的那次读取按**发起时**的筛选（导出）问出去。
-    const proof = calls.find(call => call.headers?.authorization === 'Bearer right-key')!
-    expect((proof.query as { tab: string }).tab).toBe('export')
-    // 凭据确认之后，列表按**新的**筛选重读。
-    const afterSwitch = calls.filter(call => call.headers?.authorization === 'Bearer right-key' && (call.query as { tab: string }).tab === 'ocr')
-    expect(afterSwitch.length).toBeGreaterThan(0)
-  })
-
-  it('只读时每个不可用操作旁都有可读原因与进入授权的路径', async () => {
-    installFetch(({ url }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      return listRead(false)
-    })
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage()
     await openPanel(wrapper, /发起新的名录导出/)
-    const submit = findButton(wrapper, /提交导出/)
+    await findButton(wrapper, /提交导出|找回本次导出/).trigger('click')
+    await settle()
+
+    // Every task request carries the browser marker — and no credential at all.
+    const taskCalls = calls.filter(call => call.url.startsWith('/api/task-center'))
+    expect(taskCalls.length).toBeGreaterThan(0)
+    for (const call of taskCalls) {
+      expect(call.headers?.['x-task-center-browser']).toBe('1')
+      expect(call.headers?.authorization).toBeUndefined()
+      expect(call.headers?.Authorization).toBeUndefined()
+    }
+    // The export submission travels the same way.
+    const post = calls.find(call => call.method === 'POST')
+    expect(post).toBeTruthy()
+    expect(post!.headers?.['x-task-center-browser']).toBe('1')
+    expect(post!.headers?.authorization).toBeUndefined()
+
+    // And there is no authorization form anywhere on the page.
+    expect(document.querySelector('form')).toBeNull()
+    expect(document.querySelector('#task-key')).toBeNull()
+    expect(document.body.textContent).not.toContain('管理操作授权')
+    expect(document.body.textContent).not.toContain('应用授权')
+    expect(document.body.textContent).not.toContain('清除授权')
+  })
+
+  it('服务端说未开放页面操作时，提交导出被禁用并在按钮旁说明原因', async () => {
+    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
+    state.query = { tab: 'export' }
+    const wrapper = await mountPage({ attach: true })
+    await settle()
+    await openPanel(wrapper, /发起新的名录导出/)
+
+    const submit = findButton(wrapper, /提交导出|找回本次导出/)
     expect(submit.attributes('disabled')).toBeDefined()
-    // The reason must be in the reading order next to the button, not only on hover.
+    // The reason sits next to the control, in the reading order — not on hover.
     const block = submit.element.closest('[data-testid="export-action"]') as HTMLElement
-    // A readable reason beside the control, plus the route into authorization.
-    expect(block.textContent).toMatch(/需要先完成管理操作授权/)
-    expect(block.querySelector('[data-testid="go-authorize"]')).not.toBeNull()
+    expect(block.textContent).toMatch(/当前部署未开放页面任务操作，仅可查看。/)
+    // And there is no route into a credential form any more.
+    expect(block.querySelector('[data-testid="go-authorize"]')).toBeNull()
+    // The panel says out loud that this deployment is read-only.
+    const trigger = wrapper.findAll('button').find(button => /发起新的名录导出/.test(button.text()))!
+    expect(trigger.text()).toContain('只读')
+  })
+
+  it('服务端说已开放时，提交导出可用且不再有只读徽标', async () => {
+    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(true))
+    state.query = { tab: 'export' }
+    const wrapper = await mountPage({ attach: true })
+    await settle()
+    await openPanel(wrapper, /发起新的名录导出/)
+
+    const submit = findButton(wrapper, /提交导出|找回本次导出/)
+    expect(submit.attributes('disabled')).toBeUndefined()
+    const block = submit.element.closest('[data-testid="export-action"]') as HTMLElement
+    expect(block.textContent).toContain('接口已上线')
+    const trigger = wrapper.findAll('button').find(button => /发起新的名录导出/.test(button.text()))!
+    expect(trigger.text()).not.toContain('只读')
   })
 })
 
@@ -810,7 +514,7 @@ describe('提交导出后的找回入口', () => {
   it('202 响应丢失后，同一请求标识重提，不新建第二个请求', async () => {
     let attempt = 0
     const calls = installFetch(({ url, method }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return json({ exports: [{ titleCode: 'little_giant', path: '/api/roster/exports/current/little-giant', ready: true }] })
+      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
       if (url === '/api/roster/exports/current/little-giant' && method === 'POST') {
         attempt++
         if (attempt === 1) throw new TypeError('network down before the receipt arrived')
@@ -819,21 +523,18 @@ describe('提交导出后的找回入口', () => {
       return json(listOf(state.list.rows, true))
     })
     state.query = { tab: 'export' }
-    const wrapper = await mountPage()
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'good-key')
-    await waitForVerdict(wrapper)
-    expect(authSnapshot(wrapper).badge).toBe('已授权,已授权')
-
+    const wrapper = await mountPage({ attach: true })
+    await settle()
     await openPanel(wrapper, /发起新的名录导出/)
+
     // The first attempt loses its receipt on the wire, so no job id is recorded.
-    await findButton(wrapper, /提交导出/).trigger('click')
+    await findButton(wrapper, /提交导出|找回本次导出/).trigger('click')
     await settle()
     const afterLoss = JSON.parse(sessionStorage.getItem(EXPORT_KEY) || '{}')['little_giant:initial']
     expect(afterLoss?.clientRequestId).toBeTruthy()
     expect(afterLoss.jobId).toBeUndefined()
     // Retrying reuses that identity instead of minting a new export.
-    await findButton(wrapper, /提交导出/).trigger('click')
+    await findButton(wrapper, /提交导出|找回本次导出/).trigger('click')
     await settle()
 
     const posts = calls.filter(call => call.url === '/api/roster/exports/current/little-giant' && call.method === 'POST')
@@ -843,116 +544,122 @@ describe('提交导出后的找回入口', () => {
 
   it('提交未确认时说明未确认，不谎报已受理', async () => {
     installFetch(({ url, method }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return json({ exports: [{ titleCode: 'little_giant', path: '/api/roster/exports/current/little-giant', ready: true }] })
+      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
       if (method === 'POST') return json({ message: '容量不足' }, 503)
       return json(listOf(state.list.rows, true))
     })
     state.query = { tab: 'export' }
-    const wrapper = await mountPage()
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'good-key')
-    await waitForVerdict(wrapper)
-    expect(authSnapshot(wrapper).badge).toBe('已授权,已授权')
+    const wrapper = await mountPage({ attach: true })
+    await settle()
     await openPanel(wrapper, /发起新的名录导出/)
-    await findButton(wrapper, /提交导出/).trigger('click')
+    await findButton(wrapper, /提交导出|找回本次导出/).trigger('click')
     await flushPromises()
-    const notice = wrapper.get('[data-testid="export-notice"]')
-    expect(notice.text()).toMatch(/未确认|尚未确认/)
-    expect(notice.attributes('role')).toBe('alert')
-    expect(wrapper.text()).not.toContain('导出已受理')
+
+    const notice = document.querySelector('[data-testid="export-notice"]')!
+    expect(notice.textContent).toMatch(/未确认|尚未确认/)
+    expect(notice.getAttribute('role')).toBe('alert')
+    expect(document.body.textContent).not.toContain('导出已受理')
   })
 })
 
-describe('任务详情', () => {
-  it('打开详情时把详情带入视野，轮询刷新与重新授权都不抢焦点、不重挂卡片、不移动阅读位置', async () => {
-    const scrollIntoView = vi.fn()
-    HTMLElement.prototype.scrollIntoView = scrollIntoView
-    let authorized = true
-    installFetch(({ url }) => {
-      if (url.startsWith('/api/task-center/')) return json(state.detail)
-      return json(listOf(state.list.rows, authorized))
-    })
+describe('任务详情抽屉', () => {
+  it('打开任务用真实抽屉：URL 带 job，抽屉里有详情标题、执行详情与滚动容器', async () => {
+    installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
     const wrapper = await mountPage({ attach: true })
-    scrollIntoView.mockClear()
+    await settle()
 
-    // A person opens a task: the card is revealed once.
     await findButton(wrapper, /^查看/).trigger('click')
-    await flushPromises()
-    expect(scrollIntoView).toHaveBeenCalledTimes(1)
-    const card = wrapper.get('section[aria-labelledby="task-detail-title"]').element
+    const dialog = await waitForSheet()
 
-    // ...then keeps reading while polling lands, and re-authorizes from the page.
-    const reader = document.createElement('button')
-    document.body.append(reader)
-    reader.focus()
-    scrollIntoView.mockClear()
+    // The URL is the shareable state of "which task is open".
+    expect(state.query.job).toBe(jobId('MW'))
+    // The drawer is a real layer on document.body, not markup inside the page.
+    expect(document.body.contains(dialog)).toBe(true)
+    expect(wrapper.element.contains(dialog)).toBe(false)
+    // It is named by its own title.
+    const title = dialog.querySelector('[data-slot="sheet-title"]')!
+    expect(title.textContent?.trim()).toBe('任务详情')
+    expect(dialog.getAttribute('aria-labelledby')).toBe(title.id)
+    // The detail section and its own scroll container are inside the drawer.
+    expect(dialog.querySelector('section[aria-label="任务执行详情"]')).not.toBeNull()
+    expect(dialog.querySelector('[data-testid="task-detail-scroll"]')).not.toBeNull()
+  })
+
+  it('关闭抽屉把 job 从 URL 去掉，抽屉也真的关掉', async () => {
+    installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
+    state.query = { job: jobId('MW') }
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    expect(dialog.isConnected).toBe(true)
+
+    await sheetButton(dialog, /关闭详情/).click()
+    await settle()
+
+    expect(state.query.job).toBeUndefined()
+    await waitForSheetClosed()
+    expect(sheetDialog()).toBeNull()
+  })
+
+  it('刷新不重挂详情、不抢焦点、不移动阅读位置', async () => {
+    trackScrolls()
+    installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
+    state.query = { job: jobId('MW') }
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    const detail = dialog.querySelector('section[aria-label="任务执行详情"]')
+    const scroll = dialog.querySelector('[data-testid="task-detail-scroll"]')
+    expect(detail).not.toBeNull()
+
+    // The reader is looking at the drawer; the caret sits on a control of theirs.
+    const anchor = sheetButton(dialog, /关闭详情/)
+    anchor.focus()
+    expect(document.activeElement).toBe(anchor)
+
+    // A manual refresh of the detail.
+    await sheetButton(dialog, /刷新详情/).click()
+    await settle()
+    expect(dialog.querySelector('section[aria-label="任务执行详情"]')).toBe(detail)
+    expect(dialog.querySelector('[data-testid="task-detail-scroll"]')).toBe(scroll)
+    expect(document.activeElement).toBe(anchor)
+    expect(scrollIntoViewCalls).toBe(0)
+
+    // A refresh of the list behind the drawer is just as quiet.
     await findButton(wrapper, /刷新列表/).trigger('click')
-    await flushPromises()
+    await settle()
+    expect(sheetDialog()).toBe(dialog)
+    expect(dialog.querySelector('section[aria-label="任务执行详情"]')).toBe(detail)
+    expect(document.activeElement).toBe(anchor)
+    expect(scrollIntoViewCalls).toBe(0)
+  })
+
+  it('轮询落地的详情更新不重挂抽屉，也不移动阅读位置', async () => {
+    trackScrolls()
+    installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
+    state.query = { job: jobId('MW') }
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    const detail = dialog.querySelector('section[aria-label="任务执行详情"]')
+    const anchor = sheetButton(dialog, /关闭详情/)
+    anchor.focus()
+
+    // The polling composable reads again every few seconds on its own.
     state.detail = exportTask({ state: 'running', progress: { done: 0, total: null, unit: '家企业', stage: '读取数据' } })
     await new Promise(resolve => setTimeout(resolve, 3100))
     await flushPromises()
 
-    // Authorizing again changes the credential, not the task: the same card stays
-    // mounted (no remount → no fresh reveal, no lost scroll position).
-    const authPanel = wrapper.findAll('button').find(button => /管理操作授权/.test(button.text()))!
-    await authPanel.trigger('click')
-    await flushPromises()
-    authorized = true
-    await wrapper.get('#task-key').setValue('second-key')
-    await wrapper.get('form').trigger('submit')
-    await settle()
-
-    expect(document.activeElement).toBe(reader)
-    expect(scrollIntoView).not.toHaveBeenCalled()
-    expect(wrapper.get('section[aria-labelledby="task-detail-title"]').element).toBe(card)
-    reader.remove()
-  })
-
-  it('重新授权后详情用新凭据重读一次：卡片不重挂、不滚动，操作随授权出现', async () => {
-    const scrollIntoView = vi.fn()
-    HTMLElement.prototype.scrollIntoView = scrollIntoView
-    // A running task: cancel is offered only to an authorized reader.
-    state.detail = exportTask({ state: 'running', progress: { done: 0, total: null, unit: '家企业', stage: '读取数据' } })
-    const calls = installFetch(({ url, headers }) => {
-      const permitted = headers?.authorization === 'Bearer right-key'
-      if (url.startsWith('/api/task-center/')) {
-        const detail = state.detail
-        return json({ ...detail, capabilities: { ...detail.capabilities, cancel: permitted, reason: permitted ? '可请求取消；实际状态以服务端终态为准。' : '管理操作需要 API 授权。' } })
-      }
-      return json(listOf(state.list.rows, permitted))
-    })
-    state.query = { job: jobId('MW') }
-    const wrapper = await mountPage({ attach: true })
-    await settle()
-    const card = wrapper.get('section[aria-labelledby="task-detail-title"]').element
-    // Not authorized yet: the detail says so and offers nothing.
-    expect(wrapper.text()).toContain('需要先完成管理操作授权')
-    expect(wrapper.findAll('button').some(b => /请求取消/.test(b.text()))).toBe(false)
-    scrollIntoView.mockClear()
-
-    // Authorize from the page.
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'right-key')
-    await waitForVerdict(wrapper)
-    await settle()
-
-    // The detail was read again with the new credential: cancel is now offered.
-    const detailReads = calls.filter(call => call.url.startsWith('/api/task-center/'))
-    expect(detailReads.length).toBeGreaterThan(1)
-    expect(detailReads.at(-1)!.headers?.authorization).toBe('Bearer right-key')
-    expect(wrapper.findAll('button').some(b => /请求取消/.test(b.text()))).toBe(true)
-    // The card was not re-created and nothing scrolled: the reader stays put.
-    expect(wrapper.get('section[aria-labelledby="task-detail-title"]').element).toBe(card)
-    expect(scrollIntoView).not.toHaveBeenCalled()
+    // The new snapshot really landed — in the very same drawer.
+    expect(dialog.textContent).toContain('运行中')
+    expect(dialog.querySelector('section[aria-label="任务执行详情"]')).toBe(detail)
+    expect(document.activeElement).toBe(anchor)
+    expect(scrollIntoViewCalls).toBe(0)
   })
 
   // Closing a detail must give the caret back to the task it came from. Both the
   // desktop <tr> and the narrow <li> carry the same `data-task-row`; exactly one of
   // them is on screen, and a hidden button cannot take focus.
   for (const viewport of ['desktop', 'mobile'] as const) {
-    it(`关闭详情把焦点还给该任务在${viewport === 'desktop' ? '桌面表格' : '窄屏卡片'}里那个看得见的查看按钮`, async () => {
-      const scrollIntoView = vi.fn()
-      HTMLElement.prototype.scrollIntoView = scrollIntoView
+    it(`关闭抽屉把焦点还给该任务在${viewport === 'desktop' ? '桌面表格' : '窄屏卡片'}里那个看得见的查看按钮`, async () => {
+      trackScrolls()
       installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
       const wrapper = await mountPage({ attach: true, viewport })
       await flushPromises()
@@ -966,13 +673,14 @@ describe('任务详情', () => {
       await view.click()
       await settle()
       expect(state.query.job).toBe(jobId('MW'))
+      const dialog = await waitForSheet()
 
-      scrollIntoView.mockClear()
-      await findButton(wrapper, /关闭详情/).trigger('click')
+      scrollIntoViewCalls = 0
+      await sheetButton(dialog, /关闭详情/).click()
       await settle()
 
       expect(state.query.job).toBeUndefined()
-      expect(scrollIntoView).toHaveBeenCalled()
+      expect(scrollIntoViewCalls).toBeGreaterThan(0)
       // Precisely the visible "查看" of this task — not the hidden twin, not <body>.
       expect(isRowActionFor(document.activeElement, jobId('MW'))).toBe(true)
       const focusedRows = Array.from(document.querySelectorAll<HTMLElement>(`[data-task-row="${jobId('MW')}"]`)).filter(row => row.contains(document.activeElement))
@@ -981,18 +689,17 @@ describe('任务详情', () => {
     })
   }
 
-  it('从常驻条或深链打开一个不属于当前筛选的任务后关闭详情，焦点落到当前选中的分类，而不是 body', async () => {
-    const scrollIntoView = vi.fn()
-    HTMLElement.prototype.scrollIntoView = scrollIntoView
+  it('从常驻条或深链打开一个不属于当前筛选的任务后关闭抽屉，焦点落到当前选中的分类，而不是 body', async () => {
+    trackScrolls()
     // The open task is not in the rows the current filter returned.
     state.detail = platformTask()
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf([exportTask()], true)))
     state.query = { tab: 'export', job: jobId('PLT') }
     const wrapper = await mountPage({ attach: true, viewport: 'desktop' })
-    await settle()
+    const dialog = await waitForSheet()
     expect(document.querySelector(`[data-task-row="${jobId('PLT')}"]`)).toBeNull()
 
-    await findButton(wrapper, /关闭详情/).trigger('click')
+    await sheetButton(dialog, /关闭详情/).click()
     await settle()
 
     expect(state.query.job).toBeUndefined()
@@ -1008,38 +715,112 @@ describe('任务详情', () => {
     state.detail = exportTask()
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
     state.query = { job: jobId('MW') }
-    const wrapper = await mountPage()
-    expect(wrapper.text()).not.toContain('请求取消')
-    expect(wrapper.text()).not.toContain('重试未完成项')
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    expect(dialog.textContent).not.toContain('请求取消')
+    expect(dialog.textContent).not.toContain('重试未完成项')
+  })
+
+  it('可取消的任务给出取消按钮，取消请求按服务端回答说话', async () => {
+    state.detail = exportTask({ state: 'running', progress: { done: 0, total: null, unit: '家企业', stage: '读取数据' }, capabilities: { cancel: true, retry: false, retryItemIds: [], reason: '可请求取消；实际状态以服务端终态为准。' } })
+    installFetch(({ url, method }) => {
+      if (method === 'POST') return json({ cancelRequested: true })
+      return url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true))
+    })
+    state.query = { job: jobId('MW') }
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    const cancel = sheetButton(dialog, /请求取消/)
+    expect(cancel.disabled).toBe(false)
+
+    await cancel.click()
+    await settle()
+
+    // The report follows the server's answer, not the moment of the request.
+    const notice = dialog.querySelector('[data-testid="task-notice"]')!
+    expect(notice.textContent).toMatch(/已请求取消/)
   })
 
   it('不可用的下载就地说明原因（过期/缺失），而不是只把按钮变灰', async () => {
     state.detail = exportTask({}, { canDownload: false, artifact: { ...exportTask().export!.artifact!, availability: 'expired' } })
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
     state.query = { job: jobId('MW') }
-    const wrapper = await mountPage()
-    const download = findButton(wrapper, /下载 Excel/)
-    expect(download.attributes('disabled')).toBeDefined()
-    const row = wrapper.get('[data-testid="export-artifact"]').element as HTMLElement
-    expect(row.textContent).toMatch(/下载 Excel：已过期，请重新生成/)
-    // Not just styled: the control itself is truly unavailable.
-    expect(download.attributes('disabled')).toBeDefined()
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+
+    const download = sheetButton(dialog, /下载 Excel/)
+    expect(download.disabled).toBe(true)
+    const artifact = dialog.querySelector('[data-testid="export-artifact"]')!
+    expect(artifact.textContent).toMatch(/下载 Excel：已过期，请重新生成/)
+  })
+
+  it('重新生成沿用该称号的导出接口，并带上被重新生成的任务编号', async () => {
+    const calls = installFetch(({ url, method }) => {
+      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
+      if (method === 'POST') return json({ jobId: jobId('RET') }, 202)
+      return url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true))
+    })
+    state.query = { job: jobId('MW') }
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+
+    const regenerate = sheetButton(dialog, /重新生成/)
+    expect(regenerate.disabled).toBe(false)
+    await regenerate.click()
+    await settle()
+
+    const post = calls.find(call => call.method === 'POST')!
+    expect(post.url).toBe('/api/roster/exports/current/little-giant')
+    expect((post.body as { regenerateOf?: string }).regenerateOf).toBe(jobId('MW'))
+  })
+
+  it('局部重试只补查未完成项：只发一次重试请求，并说清已完成结果保留', async () => {
+    state.detail = platformTask({ capabilities: { cancel: false, retry: true, retryItemIds: ['queryBusList'], reason: '仅补查本批次未完成项，保留已完成结果。' } })
+    const calls = installFetch(({ url, method }) => {
+      if (method === 'POST') return json({})
+      return url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true))
+    })
+    state.query = { job: jobId('PLT') }
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+
+    const retry = sheetButton(dialog, /重试未完成项/)
+    expect(retry.disabled).toBe(false)
+    await retry.click()
+    await settle()
+
+    const posts = calls.filter(call => call.method === 'POST')
+    expect(posts).toHaveLength(1)
+    expect(posts[0]!.url).toBe(`/api/task-center/${jobId('PLT')}/retry`)
+    expect(posts[0]!.headers?.['x-task-center-browser']).toBe('1')
+    expect(dialog.querySelector('[data-testid="task-notice"]')!.textContent).toMatch(/局部重试已受理/)
+    expect(dialog.querySelector('[data-testid="task-notice"]')!.textContent).toMatch(/已完成结果保留/)
   })
 
   it('业务结论先于技术标识：首屏有中文类型、计数与产物状态，原始编号默认折叠', async () => {
     state.detail = exportTask()
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
     state.query = { job: jobId('MW') }
-    const wrapper = await mountPage()
-    const visible = wrapper.text()
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    const visible = dialog.textContent ?? ''
     expect(visible).toContain('当前名录导出')
     expect(visible).not.toContain('current-roster-export')
     // Business counts answer "what is in this export" before any technical ID.
-    const counts = wrapper.get('[aria-label="导出口径计数"]')
-    expect(counts.text().replace(/\s+/g, '')).toBe('有效1待确认0排除0')
+    const counts = dialog.querySelector('[aria-label="导出口径计数"]')!
+    expect(counts.textContent!.replace(/\s+/g, '')).toBe('有效1待确认0排除0')
+    // The auditable identifiers stay folded away until asked for.
     expect(visible).not.toContain('sha256:db8b41')
+    expect(visible).not.toContain('current-roster-116-v6')
+    expect(visible).not.toContain('c22108b9')
     expect(visible).toContain('核对信息')
-    expect(wrapper.findAll('[data-slot="disclosure-content"]')).toHaveLength(0)
+    // The folded panel is really collapsed: its region is closed and hidden,
+    // and the technical identifiers are nowhere on screen.
+    const collapsed = dialog.querySelector('[data-slot="accordion-content"]')!
+    expect(collapsed.getAttribute('data-state')).toBe('closed')
+    expect(collapsed.hasAttribute('hidden')).toBe(true)
+    const trigger = dialog.querySelector('[data-slot="accordion-trigger"]')!
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
   })
 })
 
@@ -1048,25 +829,27 @@ describe('平台结果完整性与业务待核分开表述', () => {
     state.detail = platformTask()
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
     state.query = { job: jobId('PLT') }
-    const wrapper = await mountPage()
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
     // Retrieved completeness, stated as such — not an error summary.
-    const outcome = wrapper.get('[data-testid="task-outcome"]').text().replace(/\s+/g, '')
+    const outcome = dialog.querySelector('[data-testid="task-outcome"]')!.textContent!.replace(/\s+/g, '')
     expect(outcome).toContain('完整1')
     expect(outcome).toContain('部分1')
     expect(outcome).toContain('未查询1')
     // The platform caveat must keep completeness and business judgement apart.
-    expect(wrapper.text()).toMatch(/完整性/)
-    expect(wrapper.text()).toMatch(/不是业务判断结论|不代表正式入库/)
+    expect(dialog.textContent).toMatch(/完整性/)
+    expect(dialog.textContent).toMatch(/不是业务判断结论|不代表正式入库/)
     // Per-item scope keeps the unfinished position visible.
-    expect(wrapper.text()).toContain('queryBusList')
+    expect(dialog.textContent).toContain('queryBusList')
   })
 
   it('核查任务用待核实口径，不与取回完整性混为一谈', async () => {
     state.detail = platformTask({ kind: 'reconcile', label: '平台核查', outcome: { complete: 2, partial: 3, failed: 0, notQueried: 0, unfinished: 0, attempt: 1 } })
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
     state.query = { job: jobId('PLT') }
-    const wrapper = await mountPage()
-    const outcome = wrapper.get('[data-testid="task-outcome"]').text().replace(/\s+/g, '')
+    const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    const outcome = dialog.querySelector('[data-testid="task-outcome"]')!.textContent!.replace(/\s+/g, '')
     expect(outcome).toContain('报告目标2')
     expect(outcome).toContain('待核实3')
     expect(outcome).not.toContain('部分')
@@ -1103,11 +886,9 @@ describe('一次播报、一处确认', () => {
     })
     state.query = { tab: 'export' }
     const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await submitWithKey(wrapper, 'good-key')
-    await waitForVerdict(wrapper)
+    await settle()
     await openPanel(wrapper, /发起新的名录导出/)
-    await findButton(wrapper, /提交导出/).trigger('click')
+    await findButton(wrapper, /提交导出|找回本次导出/).trigger('click')
     await settle()
 
     // The standing bar states the same 202, so the filter has to look at **both**
@@ -1127,16 +908,17 @@ describe('一次播报、一处确认', () => {
     state.detail = platformTask()
     await wrapper.vm.$router.push({ path: '/tasks', query: state.query as Record<string, string> })
     await settle()
-    expect(wrapper.find('[data-testid="export-notice"]').exists()).toBe(false)
+    expect(document.querySelector('[data-testid="export-notice"]')).toBeNull()
   })
 })
 
 describe('标题层级', () => {
-  it('页面 h1 → 区块 h2 → 详情/折叠 h3，没有跳级，也不靠空的 h2 撑场面', async () => {
+  it('页面 h1 → 区块 h2 → 抽屉标题 h2 → 折叠 h3，没有跳级', async () => {
     state.detail = exportTask()
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
     state.query = { job: jobId('MW') }
     const wrapper = await mountPage({ attach: true })
+    const dialog = await waitForSheet()
     const headings = Array.from(document.querySelectorAll<HTMLElement>('h1, h2, h3, h4'))
       .filter(node => node.isConnected && (node.textContent ?? '').trim())
       .map(node => ({ level: Number(node.tagName.slice(1)), text: (node.textContent ?? '').trim() }))
@@ -1144,33 +926,24 @@ describe('标题层级', () => {
     for (let index = 1; index < headings.length; index++) {
       expect(headings[index]!.level).toBeLessThanOrEqual(headings[index - 1]!.level + 1)
     }
-    // Both page regions are named by a real h2; the list's one is for screen readers.
-    const regions = Array.from(document.querySelectorAll<HTMLElement>('section[aria-labelledby]'))
-      .map(section => document.getElementById(section.getAttribute('aria-labelledby')!))
-      .filter((node): node is HTMLElement => !!node)
-    // (Two of these name the same element, so compare the elements.)
-    expect(regions.map(node => node.tagName)).toEqual(['H2', 'H2', 'H2'])
-    expect(regions[0]!.textContent).toBe('任务列表')
-    expect(regions[1]).toBe(regions[2])
-    expect(regions[1]!.textContent).toBe('任务详情')
-    // The detail's own collapsible heading stays inside its card's h2 region.
+    // The list is named by a real h2.
+    expect(headings.some(heading => heading.level === 2 && heading.text === '任务列表')).toBe(true)
+    expect(document.getElementById('task-list-heading')!.closest('.hidden')).toBeNull()
+    // The drawer carries an h2 title of its own, and the drawer is named by it.
+    const title = dialog.querySelector('[data-slot="sheet-title"]')!
+    expect(title.tagName).toBe('H2')
+    expect(title.textContent?.trim()).toBe('任务详情')
+    expect(dialog.getAttribute('aria-labelledby')).toBe(title.id)
+    // The detail's own collapsible heading stays below the drawer's title.
     const technical = headings.find(heading => heading.text === '核对信息')
     expect(technical?.level).toBe(3)
-    expect(headings.some(heading => heading.level === 2 && heading.text === '任务详情')).toBe(true)
-    // The two page-level panels stand next to those h2 regions, not inside one:
-    // their heading is an h2 that **contains** the trigger — never a heading
-    // nested in the button.
-    for (const label of ['发起新的名录导出', '管理操作授权']) {
-      const panel = headings.find(heading => heading.text.startsWith(label))
-      expect(panel?.level).toBe(2)
-      const heading = Array.from(document.querySelectorAll<HTMLElement>('h2')).find(node => (node.textContent ?? '').trim().startsWith(label))!
-      expect(heading.querySelector('button')).toBeTruthy()
-      expect(heading.querySelector('button h1, button h2, button h3, button h4')).toBeNull()
-    }
-    // Nothing is hidden purely to satisfy a heading detector.
-    for (const id of ['task-list-heading', 'task-detail-title']) {
-      expect(document.getElementById(id)!.closest('[aria-hidden="true"], .hidden')).toBeNull()
-    }
+    // The page-level panel stands next to the h2 regions: its heading is an h2
+    // that **contains** the trigger — never a heading nested in the button.
+    const panel = headings.find(heading => heading.text.startsWith('发起新的名录导出'))
+    expect(panel?.level).toBe(2)
+    const heading = Array.from(document.querySelectorAll<HTMLElement>('h2')).find(node => (node.textContent ?? '').trim().startsWith('发起新的名录导出'))!
+    expect(heading.querySelector('button')).toBeTruthy()
+    expect(heading.querySelector('button h1, button h2, button h3, button h4')).toBeNull()
   })
 })
 
@@ -1190,14 +963,6 @@ describe('筛选分组', () => {
   })
 })
 
-describe('组件来源', () => {
-  it('页面不再使用原生 details/summary 折叠', async () => {
-    const source = await readFile('pages/tasks.vue', 'utf8')
-    expect(source).not.toMatch(/<details|<summary|<select|<dialog|role="dialog"/)
-    expect(source).toContain('DisclosurePanel')
-  })
-})
-
 describe('移动端列表摘要', () => {
   it('每一行在窄屏同时给出中文任务名、状态与可用性、进度摘要和查看', async () => {
     installFetch(() => json(listOf(state.list.rows, true)))
@@ -1210,145 +975,5 @@ describe('移动端列表摘要', () => {
     expect(first).toContain('可下载')
     expect(first).toContain('1 / 1')
     expect(cards[0]!.findAll('button').some(b => /查看/.test(b.text()))).toBe(true)
-  })
-})
-
-describe('进入授权的键盘位置', () => {
-  it('第一次点「进入授权」就把密钥框滚进视野并把焦点放进去', async () => {
-    const scrolls = trackWindowScrolls()
-    const restoreLayoutBox = layoutKeyFieldBelowFold(900, 36)
-    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage({ attach: true })
-    await settle()
-    await openPanel(wrapper, /发起新的名录导出/)
-
-    const goAuthorize = wrapper.get<HTMLButtonElement>('[data-testid="go-authorize"]')
-    goAuthorize.element.focus() // a real click leaves the caret on the button
-    await goAuthorize.trigger('click')
-
-    // The panel's content is mounted by Reka on a later tick; the field only
-    // exists from then on — the focus has to follow it there.
-    const key = await waitForKeyField(wrapper)
-    await flushPromises()
-    expect(key.exists()).toBe(true)
-    expect(document.activeElement).toBe(key.element)
-    // The scroll is computed from the field's **own** box (the accordion
-    // container is still 0-height at that moment, and the browser would resolve
-    // the target against the container and leave the field below the fold).
-    expect(scrolls).toHaveLength(1)
-    expect(scrolls[0]).toBe(936 - window.innerHeight + 8)
-    restoreLayoutBox()
-  })
-
-  it('读者已经移开焦点时，迟到的挂载不抢焦点', async () => {
-    const scrolls = trackWindowScrolls()
-    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage({ attach: true })
-    await settle()
-    await openPanel(wrapper, /发起新的名录导出/)
-
-    const goAuthorize = wrapper.get<HTMLButtonElement>('[data-testid="go-authorize"]')
-    goAuthorize.element.focus()
-    // The click is dispatched directly, so the reader can move on **before** the
-    // panel's content is mounted (Reka mounts it a tick later).
-    goAuthorize.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    const reader = document.createElement('button')
-    document.body.append(reader)
-    reader.focus()
-
-    const key = await waitForKeyField(wrapper)
-    await flushPromises()
-    expect(key.exists()).toBe(true)
-    expect(document.activeElement).toBe(reader)
-    expect(scrolls).toHaveLength(0)
-    reader.remove()
-  })
-
-  it('读者在挂载前收起面板时，迟到的挂载不抢焦点', async () => {
-    const scrolls = trackWindowScrolls()
-    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage({ attach: true })
-    await settle()
-    await openPanel(wrapper, /发起新的名录导出/)
-
-    const goAuthorize = wrapper.get<HTMLButtonElement>('[data-testid="go-authorize"]')
-    goAuthorize.element.focus()
-    goAuthorize.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    const authTrigger = wrapper.findAll('button').find(button => /管理操作授权/.test(button.text()))!
-    // The accordion is open now, but Reka has not mounted its content yet — that
-    // is the window in which a late mount could still steal the focus.
-    for (let hop = 0; hop < 6 && authTrigger.attributes('aria-expanded') !== 'true'; hop++) await Promise.resolve()
-    expect(authTrigger.attributes('aria-expanded')).toBe('true')
-    expect(wrapper.find('#task-key').exists()).toBe(false)
-    // The reader closes the authorization panel again before its content is mounted.
-    authTrigger.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    await flushPromises()
-    await flushPromises()
-
-    expect(scrolls).toHaveLength(0)
-    expect(document.activeElement).toBe(goAuthorize.element)
-  })
-
-  it('离页之后迟到的挂载不抢焦点', async () => {
-    const scrolls = trackWindowScrolls()
-    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage({ attach: true })
-    await settle()
-    await openPanel(wrapper, /发起新的名录导出/)
-
-    const goAuthorize = wrapper.get<HTMLButtonElement>('[data-testid="go-authorize"]')
-    goAuthorize.element.focus()
-    goAuthorize.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    // The person leaves the page before the panel's content is mounted.
-    mounted.splice(0).forEach(leaving => leaving.unmount())
-    wrapper.unmount()
-    await flushPromises()
-    await flushPromises()
-
-    expect(scrolls).toHaveLength(0)
-  })
-
-  it('授权成功后焦点留在提交按钮上，不掉进 <body>', async () => {
-    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(lastAuthorization() === 'Bearer right-key'))
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await wrapper.get('#task-key').setValue('right-key')
-
-    const submit = wrapper.get<HTMLButtonElement>('form button[type="submit"]').element
-    submit.focus()
-    pressSubmit(wrapper)
-    // The browser takes the caret away when the button becomes disabled while
-    // the key is being verified; the page has to put it back.
-    submit.blur()
-    expect(document.activeElement).toBe(document.body)
-
-    await waitForVerdict(wrapper)
-    await settle()
-    expect(wrapper.text()).toContain('已授权')
-    expect(document.activeElement).toBe(submit)
-  })
-
-  it('重新授权不抢走读者自己的焦点', async () => {
-    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(lastAuthorization() === 'Bearer right-key'))
-    const wrapper = await mountPage({ attach: true })
-    await openPanel(wrapper, /管理操作授权/)
-    await wrapper.get('#task-key').setValue('right-key')
-
-    const reader = document.createElement('button')
-    document.body.append(reader)
-    reader.focus()
-    // The reader submits from somewhere else entirely: the verdict must not
-    // move the caret.
-    await wrapper.get('form').trigger('submit')
-    await waitForVerdict(wrapper)
-    await settle()
-
-    expect(wrapper.text()).toContain('已授权')
-    expect(document.activeElement).toBe(reader)
-    reader.remove()
   })
 })

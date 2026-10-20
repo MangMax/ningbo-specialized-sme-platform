@@ -2,13 +2,13 @@ import { defineEventHandler, readBody, getQuery, createError, setResponseStatus,
 import { useRuntimeConfig } from '#imports'
 import { useDb } from '@db'
 import type { CurrentTitle } from '../../lib/roster/current-qualification'
-import { requireApiToken } from './api-guard'
+import { requireTaskCenterAccess } from './task-center-access'
 import { ensureJobRunnerReady, getJobSpec, submitJob } from './job-runner'
 import { registerJobSpecs } from './job-specs'
 /** Dedicated routes fix the title; only their OpenAPI descriptions differ. */
 export function currentExportRoute(titleCode: CurrentTitle) {
   return defineEventHandler(async event => {
-    requireApiToken(event)
+    requireTaskCenterAccess(event)
     registerJobSpecs()
     const db = useDb(); ensureJobRunnerReady(db)
     const body = await readBody(event).catch(() => null)

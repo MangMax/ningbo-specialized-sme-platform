@@ -83,13 +83,13 @@ async function summarize(row: ProjectedTask, authorized: boolean, db: Db, detail
     error: row.hasError && row.state === 'failed' ? row.restarted ? '服务重启，任务中断；请从业务入口重新提交。' : group === 'export' ? '导出失败；请检查数据与产物存储后显式重新生成。原始错误不展示。' : row.kind === 'platform-query-batch' ? '批次有失败或未完成范围；请查看摘要并显式重试。' : '任务失败；原始错误可能含敏感信息，摘要不展示。请核对业务入口与配置。' : null,
     ...(detail ? { items: items.map(i => ({ id: isJobId(i.id) ? i.id : '', status: ['success', 'no_record', 'auth_failed', 'failed', 'partial', 'not_queried'].includes(i.status) ? i.status : 'unknown', completeness: ['complete', 'partial', 'not_queried'].includes(i.completeness) ? i.completeness : 'unknown', positions: (i.positions ?? []).filter(p => ['queryList','businessList','queryBusList'].includes(p.source) && (p.rdjb === null || ['1','2','3'].includes(p.rdjb)) && Number.isSafeInteger(p.page) && p.page > 0) })) } : {}),
     outcome, capabilities: { cancel: authorized && active, retry: authorized && retry, retryItemIds: retry ? retryItemIds : [],
-      reason: !authorized ? '管理操作需要 API 授权。' : active ? '可请求取消；实际状态以服务端终态为准。' : retry ? '仅补查本批次未完成项，保留已完成结果。' : group === 'export' ? '导出不重放任务；请显式重新生成，新任务保留原任务关联。' : '此任务不支持安全重试，请从原业务入口核对后重新提交。' }, links,
+      reason: !authorized ? '当前请求仅可查看任务。' : active ? '可请求取消；实际状态以服务端终态为准。' : retry ? '仅补查本批次未完成项，保留已完成结果。' : group === 'export' ? '导出不重放任务；请显式重新生成，新任务保留原任务关联。' : '此任务不支持安全重试，请从原业务入口核对后重新提交。' }, links,
   }
 }
 
-export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cancel' | 'retry', req: Request, ctx: { db: Db; apiToken?: string; filesDir: string }) {
+export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cancel' | 'retry', req: Request, ctx: { db: Db; browserAuthorized?: boolean; apiToken?: string; filesDir: string }) {
   const headers = { 'cache-control': 'no-store' }
-  const authorized = resolveApiAuth({ given: readApiToken(req.headers), configured: ctx.apiToken }).writeAuthorized
+  const authorized = ctx.browserAuthorized === true || resolveApiAuth({ given: readApiToken(req.headers), configured: ctx.apiToken }).writeAuthorized
   const method = action === 'list' || action === 'detail' ? 'GET' : 'POST'
   if (req.method !== method) return error(405, 'Method not allowed')
   const q = req.query ?? {}

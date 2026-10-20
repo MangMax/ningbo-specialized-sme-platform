@@ -1,12 +1,12 @@
 import { sendStream } from 'h3'
 import { useDb } from '@db'
 import { isJobId } from '../../../lib/job'
-import { requireApiToken } from '../../utils/api-guard'
+import { requireTaskCenterAccess } from '../../utils/task-center-access'
 import { getJob } from '../../utils/job-store'
 import { artifactStream, currentArtifact, EXPORT_MIME } from '../../utils/current-export-artifact'
-defineRouteMeta({openAPI:{tags:['当前名录导出'],summary:'下载后台导出产物',security:[{bearerAuth:[]}],description:'与提交同一API token边界。只接受受控产物ULID；不接受文件路径。保留7天，过期410，缺失404，任务历史保留。',parameters:[{in:'path',name:'id',required:true,schema:{type:'string'}}],responses:{200:{description:'Excel字节',content:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':{schema:{type:'string',format:'binary'}}}},401:{description:'需要token'},404:{description:'无可用产物'},410:{description:'已过期，请重新导出'}}}})
+defineRouteMeta({openAPI:{tags:['当前名录导出'],summary:'下载后台导出产物',security:[{bearerAuth:[]}],description:'与提交同一API token边界。只接受受控产物ULID；不接受文件路径。保留7天，过期410，缺失404，任务历史保留。页面操作仅在 browserTasksEnabled 显式开启并通过同源浏览器检查时可免传凭据；此部署能力不识别用户。',parameters:[{in:'path',name:'id',required:true,schema:{type:'string'}}],responses:{200:{description:'Excel字节',content:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':{schema:{type:'string',format:'binary'}}}},401:{description:'需要token'},404:{description:'无可用产物'},410:{description:'已过期，请重新导出'}}}})
 export default defineEventHandler(async event => {
-  requireApiToken(event)
+  requireTaskCenterAccess(event)
   const id = getRouterParam(event,'id')
   if (!isJobId(id)) throw createError({statusCode:400,message:'产物ID非法'})
   const db = useDb(), job = getJob(db,id)
