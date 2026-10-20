@@ -81,13 +81,43 @@ to the `d198a09` whole-object shape. That historical verifier needs a separate
 additive-contract update; its failure is not reported as a new business
 regression or a passing equivalence gate here.
 
-The highest measured repeated work is in shared
-`lib/roster/query-assessment.ts`. This #84 leaf has no ownership of that module
-or record-comparison behavior. A change to share coverage across the two
-directions needs parent coordination and an independent semantic test for
-direction-specific decisions/impact. Eliminating the normalized scan for all
-legacy Unicode keys would need the separate persisted-key/schema design already
-recorded in [the #87 request](index-request.md); no index or migration is
-proposed here. An exclusive same-input 5x run should record the new worker
-phases, HTTP cold time, result hash, process memory and host/container state
-before any SLO conclusion. Preserve the 812.347458ms failure until then.
+## Fixed-ID coverage follow-up
+
+The parent assigned #84 the narrow shared evaluation helper after the probe.
+The enterprise snapshot already selects its owned query IDs once, including
+exact name keys, normalized USCC keys, and relations matched to the enterprise.
+Detail coverage now selects the newest 51 rows from that ID set instead of
+repeating the global normalized-key predicate. A request-local map evaluates
+coverage once per title and passes the same value to both directions; decision
+and evidence impact remain direction-specific. There is no cross-request cache,
+new schema, or changed response field. Evidence-only queries from difference
+history do not become owned coverage. The existing 50-source/truncated rule and
+metadata parsing still run in `query-assessment.ts`.
+
+The new test was red with **8 coverage SQL statements** for one detail; it is
+green at **3** after the change. At 200 and 1,000 unrelated exceptional Unicode
+keys, detail output stayed identical. The test bounds normalizer growth to one
+additional visit per added unrelated key plus a small constant, rather than a
+visit per title/direction. Its fixture also checks recognized partial
+`exact_uscc` and failed `name_only` sources; the #109 HTTP suite checks
+`complete`, `no_record`, `partial`, `failed`, source/subject identity,
+truncation, direction-specific decisions, and MCP readback. Focused suites:
+`enterprise-read-http`, `enterprise-read-async`, `query-coverage-109-http`,
+`platform-recognized-evidence`, and `roster-api` passed **74/74**; `pnpm
+typecheck` and `pnpm build` exited 0.
+
+On the same small synthetic SQLite fixture, the compiled HTTP detail result
+SHA256 stayed `c34878e87397604b0fdd1c6c5cf5b405108b9e8eb55cae8c08f7ff300e125e71`
+before and after the fix. Detail worker SQL calls fell from 60 to 50. The
+post-fix single HTTP and MCP cold responses were 33.522ms and 35.223ms,
+respectively; both returned that same canonical result hash. These are small
+fresh-process, warm-OS-cache samples, not 5x SLO evidence. The raw outputs are
+outside Git at `/tmp/ningbo-perf-83-90/84-fixed-{http,mcp}-detail.json`.
+
+One normalized pass over exceptional legacy keys still remains in the
+enterprise snapshot. Eliminating that scan requires the persisted-key/schema
+design recorded in [the #87 request](index-request.md). The historical
+**812.347458ms** default-heap 5x HTTP cold failure remains open; the original
+per-statement trace is unavailable. An exclusive same-input 5x run should
+record worker phases, HTTP cold time, result hash, process memory, and
+host/container state before any SLO conclusion.
