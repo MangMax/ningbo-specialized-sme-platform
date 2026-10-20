@@ -6,6 +6,7 @@ import { filterComparisonRows } from '~~/lib/comparison-filter'
 import { TITLE_ORDER } from '~~/lib/labels'
 import { MAX_PAGE_SIZE } from '~~/lib/query'
 import { attachReconcile, readReconcile } from '~~/lib/reconcile'
+import { readComparisonSummary } from '~~/lib/comparison-summary'
 
 /**
  * 两侧比对结果(已公布 vs 平台导出),带人工标注、**库内平台原因与证据**、旧解释缓存对照。
@@ -25,7 +26,7 @@ defineRouteMeta({
     tags: ['比对'],
     summary: '查比对结果',
     description:
-      '按称号 / 方向过滤,分页返回;含人工标注(`curated`)、库内平台原因与证据(`platform`)与旧解释缓存对照(`reconcile`)。已认定查询保留全部原始行，行 enterpriseId 为 number 或 null（未匹配主体）；platform.relationCount 为展示查询的来源行总数，不代表确认归属。',
+      '按称号 / 方向过滤,分页返回。默认/full 保留人工标注、platform 全部关系与旧 explanation 原文；view=summary 显式返回标量列表，不加载平台原档，字段见 docs/comparison-summary-contract.md。summary 行 evidenceIncluded:false，detailUrl 为精确企业×称号×方向完整读取；平台原档可用 /api/platform/queries/{queryId}/evidence 分段读取。summary 的 sourceRelationCount 是所含查询全部来源行数，不代表确认归属。已认定查询原始行 enterpriseId 可为 null。',
     parameters: [
       {
         name: 'title',
@@ -60,13 +61,15 @@ defineRouteMeta({
       },
       { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 25 } },
+      { name: 'view', in: 'query', schema: { type: 'string', enum: ['full', 'summary'], default: 'full' }, description: '显式 opt-in。summary 不含 notes / aliases / queries / relations / collectionEvidence / 旧缓存原文，不以空数组冒充完整证据。默认完整响应不变。' },
+      { name: 'enterpriseId', in: 'query', schema: { type: 'integer', minimum: 1 }, description: '精确企业过滤；与 title/direction 取交集。无匹配时 rows=[]，不回退全范围；counts/curatedCounts 仍为全局。' },
     ],
     responses: {
       200: {
         description:
-          '比对结果(`rows` / `total` / `counts` / `curatedCounts` / `platform` / `reconcile`)。`counts` 与 `curatedCounts` 是全局计数,不随可见行过滤和分页变化。',
+          '比对结果(`rows` / `total` / `counts` / `curatedCounts` / `platform` / `reconcile`)。summary 额外 view:"summary"；行 platform 含 aliasCount/confirmedAliasCount/queryCount/sourceRelationCount/disposition，explanation 为 {code} 或 null。全局 counts/curatedCounts 不随过滤和分页变化；platform/reconcile 为分页前同过滤范围计数。summary 不推断处置状态。',
       },
-      400: { description: 'title / direction / showCurated 取值非法。' },
+      400: { description: 'title / direction / showCurated / view / enterpriseId 取值非法。' },
     },
   },
 })
@@ -96,15 +99,34 @@ export default defineEventHandler((event) => {
   if (q.showCurated != null && !['true', 'false', ''].includes(String(q.showCurated))) {
     throw createError({ statusCode: 400, statusMessage: 'showCurated must be true or false' })
   }
+  if (q.view != null && q.view !== 'full' && q.view !== 'summary') {
+    throw createError({ statusCode: 400, statusMessage: 'view must be full or summary' })
+  }
+  const enterpriseId = q.enterpriseId == null ? undefined : Number(q.enterpriseId)
+  if (enterpriseId != null && (typeof q.enterpriseId !== 'string' || !Number.isSafeInteger(enterpriseId) || enterpriseId < 1)) {
+    throw createError({ statusCode: 400, statusMessage: 'enterpriseId must be a positive integer' })
+  }
   const config = useRuntimeConfig(event)
   const db = useDb()
   const result = getCuratedComparison(db, config.curatedPath)
   const { counts, curatedCounts } = result
+  // Additive exact-coordinate read; an absent enterprise returns zero rows.
+  const scopedResult = enterpriseId == null ? result : { ...result, rows: result.rows.filter(row => row.enterpriseId === enterpriseId) }
   // 旧解释缓存(`data/platform-reconcile.json`)是**对照**,缺失时 explanation 全为 null;
   // 原因与证据以库内为准(见下方 `platform` 段)。
   const reconcile = readReconcile(config.reconcilePath)
+  const page = Math.max(1, Math.floor(num(q.page, 1)))
+  const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25))))
+  if (q.view === 'summary') {
+    return readComparisonSummary(db, scopedResult, reconcile, {
+      title, direction: direction as ComparisonDirection | undefined,
+      district: typeof q.district === 'string' ? q.district : undefined,
+      q: typeof q.q === 'string' ? q.q : undefined,
+      showCurated: q.showCurated === 'true',
+    }, page, pageSize)
+  }
   // 库内平台原因与证据(RL-15 起的**主源**):每一行都带 platform。
-  const enriched = attachPlatformEvidence(attachReconcile(result.rows, reconcile), db)
+  const enriched = attachPlatformEvidence(attachReconcile(scopedResult.rows, reconcile), db)
   const rows = filterComparisonRows(enriched, {
     title,
     direction: direction as ComparisonDirection | undefined,
@@ -112,8 +134,6 @@ export default defineEventHandler((event) => {
     q: typeof q.q === 'string' ? q.q : undefined,
     showCurated: q.showCurated === 'true',
   })
-  const page = Math.max(1, Math.floor(num(q.page, 1)))
-  const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25))))
   const withExplanation = rows.filter((row) => row.platform.disposition.explanationId != null).length
   return {
     rows: rows.slice((page - 1) * pageSize, page * pageSize),
