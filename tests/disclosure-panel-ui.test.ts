@@ -57,3 +57,24 @@ it('initializes retained controls once and preserves unsaved input across closin
   expect(wrapper.get('input').element.value).toBe('2024')
   expect(initializations).toBe(1)
 })
+
+it('page-level panels can add their own heading level without losing the accessible trigger', async () => {
+  const open = ref(false)
+  const host = defineComponent({
+    components: { DisclosurePanel },
+    setup: () => ({ open }),
+    template: '<DisclosurePanel v-model:open="open" heading-level="2" title="管理操作授权"><p>正文</p></DisclosurePanel>',
+  })
+  const wrapper = mount(host)
+  mounted.push(wrapper)
+  const trigger = wrapper.get('button')
+  expect(trigger.text()).toContain('管理操作授权')
+  // Level 2 is rendered by the official AccordionHeader; the trigger keeps its
+  // own button semantics, aria-expanded and id/aria-controls wiring.
+  expect(wrapper.find('h2').text()).toBe('管理操作授权')
+  expect(trigger.attributes('aria-expanded')).toBe('false')
+  await trigger.trigger('click')
+  await flushPromises()
+  expect(trigger.attributes('aria-expanded')).toBe('true')
+  expect(wrapper.get(`[id="${trigger.attributes('aria-controls')}"]`).text()).toContain('正文')
+})
