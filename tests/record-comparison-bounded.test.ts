@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { useDb, schema } from '../db/client'
 import { normalizeName } from '../lib/domain'
-import { getRecordComparison, listRecordComparisonSources } from '../server/utils/record-comparison'
+import { getRecordComparison, listRecordComparisonSources, previewRecordCorrespondenceImpact } from '../server/utils/record-comparison'
 
 const cleanup: Array<() => void> = []
 afterEach(() => { cleanup.splice(0).forEach(fn => fn()) })
@@ -91,6 +91,19 @@ it('attaches confirmed relation identities and raw platform names only to the di
   expect(listRecordComparisonSources(db, { kind: 'official_document', page: 1, pageSize: 10 }).rows).toEqual([])
 })
 
+it('source catalog reads only matching confirmed alias notes for its query page', () => {
+  const db = fixture()
+  const owner = db.insert(schema.enterprise).values({ name: 'Current', nameNorm: 'Current' }).returning().get()
+  const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'selected', queriedAt: '2026-10-18T00:00:00Z' }).returning().get()
+  const relation = db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId: owner.id, nameRaw: 'Previous', verificationStatus: 'confirmed', matchBasis: 'manual' }).returning().get()
+  db.insert(schema.enterpriseAlias).values({ enterpriseId: owner.id, name: 'Previous', nameNorm: normalizeName('Previous'), sourceKind: 'manual', verificationStatus: 'confirmed', note: '归并自 enterprise:8' }).run()
+  db.insert(schema.enterpriseAlias).values({ enterpriseId: owner.id, name: 'Irrelevant', nameNorm: normalizeName('Irrelevant'), sourceKind: 'manual', verificationStatus: 'confirmed', note: 'UNRELATED'.repeat(131072) }).run()
+  const bytes = returnedBytes(db)
+  const page = listRecordComparisonSources(db, { kind: 'query', page: 1, pageSize: 1 })
+  expect(page.rows).toMatchObject([{ id: query.id, confirmedEnterprises: [{ relationId: relation.id, enterpriseId: owner.id, aliasConfirmed: true, mergedFromEnterpriseId: 8 }] }])
+  expect(bytes()).toBeLessThan(65536)
+})
+
 it('comparison preserves all selected relations and formal event uncertainty as unrelated archives grow', () => {
   const db = fixture()
   const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Selected', path: 'selected.pdf' }).returning().get()
@@ -170,5 +183,26 @@ it('rejects a post-cutoff query before decoding its selected archive body', () =
   const q = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: 'future', rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', collectionEvidence: { rows: [{ payload: 'FUTURE'.repeat(65536) }] } as never }).returning({ id: schema.platformQuery.id }).get()
   const bytes = returnedBytes(db)
   expect(() => getRecordComparison(db, { queryIds: [q.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id], asOf: '2026-10-18T16:30:00Z', page: 1, pageSize: 25 })).toThrow('source_set_missing_or_out_of_scope')
+  expect(bytes()).toBeLessThan(65536)
+})
+
+it('legacy impact pages visible decisions without reading unrelated reason notes', () => {
+  const db = fixture()
+  const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Selected', path: 'selected.pdf', issueDate: '2026-10-18' }).returning().get()
+  const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'selected', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z' }).returning().get()
+  const owner = db.insert(schema.enterprise).values({ name: 'Selected', nameNorm: 'Selected' }).returning().get()
+  const outside = db.insert(schema.enterprise).values({ name: 'Outside', nameNorm: 'Outside' }).returning().get()
+  const record = db.insert(schema.record).values({ enterpriseId: owner.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
+  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
+  db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, attachment: 'UNNEEDED_EVIDENCE'.repeat(65536), page: 1 }).run()
+  const included = db.insert(schema.differenceReason).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2026-10-18T01:00:00Z' }).returning().get()
+  db.insert(schema.differenceReason).values({ enterpriseId: outside.id, titleCode: 'specialized_sme', direction: 'extra_in_miit', status: 'needs_review', reasonNote: 'UNRELATED'.repeat(131072), recordedAt: '2026-10-18T01:00:00Z' }).run()
+  db.insert(schema.differenceReason).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2026-10-20T01:00:00Z' }).run()
+  const bytes = returnedBytes(db)
+  const result = previewRecordCorrespondenceImpact(db, { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id], enterpriseId: owner.id, asOf: '2026-10-19T00:00:00Z', page: 1, pageSize: 1 })
+  expect(result.counts.legacyRows).toBe(2)
+  expect(result.total).toBe(1)
+  expect(result.rows).toMatchObject([{ id: included.id, original: { enterpriseId: owner.id }, possibleEventIds: [event.id] }])
+  expect(result.unresolved).toMatchObject([{ eventId: event.id }])
   expect(bytes()).toBeLessThan(65536)
 })
