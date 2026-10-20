@@ -53,6 +53,11 @@ function chunks<T>(values: T[]) {
   const unique = [...new Set(values)]
   return Array.from({ length: Math.ceil(unique.length / 400) }, (_, i) => unique.slice(i * 400, (i + 1) * 400))
 }
+// Both summary and hydrated detail exclude the same private correspondence fields.
+function publicCorrespondence(row: CorrespondenceRead) {
+  const { edgeKey: _edgeKey, targetIdentity: _targetIdentity, provenance: _provenance, sourceFingerprint: _sourceFingerprint, ...publicRow } = row
+  return publicRow
+}
 /** Request-local hydration only. Never retained across a write or shared with another request. */
 export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind: SourceKind; id: number }) {
   const eventIds = [...new Set(rows.flatMap(row => [row.eventId, row.predecessorEventId]).filter((id): id is number => id != null).concat(extra?.kind === 'event' ? [extra.id] : []))]
@@ -90,8 +95,7 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
   const exportSources = new Map(exports.map(({ row, batch }) => [row.id, { ...row, rawFields: sanitizeEvidence(row.rawFields), batch: sanitizeEvidence(batch), correspondences: byExport.get(row.id) ?? [] }] as const))
   const read = (kind: SourceKind, id: number) => kind === 'event' ? eventSources.get(id) ?? null : kind === 'relation' ? relationSources.get(id) ?? null : exportSources.get(id) ?? null
   const detailRow = (row: CorrespondenceRead) => {
-    const { edgeKey: _edgeKey, targetIdentity: _targetIdentity, provenance: _provenance, sourceFingerprint: _sourceFingerprint, ...publicRow } = row
-    return { ...publicRow, event: row.eventId ? read('event', row.eventId) : null, predecessorEvent: row.predecessorEventId ? read('event', row.predecessorEventId) : null, relation: row.relationId ? read('relation', row.relationId) : null, exportRow: row.exportRowId ? read('export_row', row.exportRowId) : null }
+    return { ...publicCorrespondence(row), event: row.eventId ? read('event', row.eventId) : null, predecessorEvent: row.predecessorEventId ? read('event', row.predecessorEventId) : null, relation: row.relationId ? read('relation', row.relationId) : null, exportRow: row.exportRowId ? read('export_row', row.exportRowId) : null }
   }
   return { read, detail: detailRow }
 }
@@ -105,7 +109,7 @@ export function details(db: Db, rows: CorrespondenceRead[]) {
 }
 /** Opt-in list projection; source IDs resolve through the existing point/source routes. */
 export function summaries(rows: CorrespondenceRead[]) {
-  return rows.map(({ edgeKey: _edgeKey, targetIdentity: _targetIdentity, provenance: _provenance, sourceFingerprint: _sourceFingerprint, ...publicRow }) => publicRow)
+  return rows.map(publicCorrespondence)
 }
 export function detail(db: Db, row: CorrespondenceRead) { return details(db, [row])[0]! }
 export function audit(db: Db, correspondenceId: number) {

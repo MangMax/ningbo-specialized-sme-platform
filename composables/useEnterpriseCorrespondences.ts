@@ -48,6 +48,22 @@ export function useEnterpriseCorrespondences(enterpriseId: MaybeRefOrGetter<numb
   }
   async function loadEvent(eventId: number, force = false) {
     if (!ready.value || ownerId == null) return
+    if (force) {
+      // A point may have advanced since the list succeeded. One explicit retry
+      // reconciles the complete, paged summary first; never retry automatically.
+      const retryOwner = ownerId
+      const retryKey = eventKey(eventId)
+      const retryId = ++nextEventRequestId
+      const prior = eventDetails.value[eventId]
+      eventRequestIds.set(eventId, retryId)
+      eventDetails.value = { ...eventDetails.value, [eventId]: { key: retryKey, loading: true, error: false, rows: prior?.key === retryKey ? prior.rows : null } }
+      const refreshed = await load()
+      if (ownerId !== retryOwner || eventRequestIds.get(eventId) !== retryId) return
+      if (!refreshed) {
+        eventDetails.value = { ...eventDetails.value, [eventId]: { key: retryKey, loading: false, error: true, rows: prior?.key === retryKey ? prior.rows : null } }
+        return
+      }
+    }
     const selected = eventRows(eventId)
     if (!selected.length) return
     const key = eventKey(eventId)
@@ -88,7 +104,7 @@ export function useEnterpriseCorrespondences(enterpriseId: MaybeRefOrGetter<numb
     if (id == null) {
       loading.value = false
       error.value = false
-      return
+      return false
     }
     loading.value = true
     error.value = false
@@ -100,7 +116,7 @@ export function useEnterpriseCorrespondences(enterpriseId: MaybeRefOrGetter<numb
         const result = await $fetch<CorrespondencePage>('/api/roster/correspondences', {
           query: { enterpriseId: id, view: 'summary', page, pageSize: 200 },
         })
-        if (current !== requestId) return
+        if (current !== requestId) return false
         if (!Array.isArray(result?.rows) || result.page !== page || result.pageSize !== 200
           || !Number.isSafeInteger(result.total) || result.total < 0
           || (total !== undefined && total !== result.total)
@@ -118,12 +134,14 @@ export function useEnterpriseCorrespondences(enterpriseId: MaybeRefOrGetter<numb
       if (current === requestId) {
         rows.value = collected
         ready.value = true
+        return true
       }
     } catch {
       if (current === requestId) error.value = true
     } finally {
       if (current === requestId) loading.value = false
     }
+    return false
   }
 
   watch(() => toValue(enterpriseId), () => { void load() }, { immediate: true })
