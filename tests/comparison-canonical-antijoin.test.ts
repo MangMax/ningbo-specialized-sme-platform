@@ -6,43 +6,59 @@ import { getComparison } from '../lib/comparison'
 import { getComparisonB42 } from './helpers/comparison-b42-reference'
 import type { ComparisonRow } from '../lib/comparison'
 
-it('does not repeat matched correlated lookups as same-side historical sources grow', () => {
+it('canonical same-enterprise matches avoid USCC equality probes while unmatched rows preserve exact DTOs', () => {
   const sqlite = new Database(':memory:')
-  let reads = 0
+  const reads = new Map<number, number>()
   try {
-    // Real SQLite executes unmodified getComparison SQL. This transparent view
-    // returns stored USCC unchanged; the nondeterministic identity UDF counts
-    // evaluations, without substituting statements, plans or query results.
-    sqlite.function('observe_uscc', (value: unknown) => { reads++; return value as string | null })
+    // Current-schema constraints, canonical sources only. The transparent UDF
+    // counts real SQL evaluations but changes access to the USCC index; these
+    // numbers are not index seeks, CPU cost or a latency measurement.
+    sqlite.function('observe_uscc', (id: number, value: unknown) => {
+      reads.set(id, (reads.get(id) ?? 0) + 1)
+      return value as string | null
+    })
     sqlite.exec(`
-      create table enterprise_storage(id integer primary key, name text, uscc_norm text, city text, reg_status text);
-      insert into enterprise_storage values(1, 'Synthetic history', 'HISTORY', null, null);
-      create view enterprise as select id, name, observe_uscc(uscc_norm) as uscc_norm, city, reg_status from enterprise_storage;
-      create table record(id integer primary key, enterprise_id integer not null, title_code text not null, source text not null, district text);
+      create table enterprise_storage(id integer primary key, name text not null, uscc_norm text, city text, reg_status text);
+      create unique index enterprise_uscc_norm_uq on enterprise_storage(uscc_norm);
+      create view enterprise as select id, name, observe_uscc(id, uscc_norm) as uscc_norm, city, reg_status from enterprise_storage;
+      create table record(id integer primary key, enterprise_id integer not null, title_code text not null,
+        source text not null check(source in ('jxj', 'miit')), district text);
       create unique index record_identity_uq on record(enterprise_id, title_code, source);
-      insert into record values(1, 1, 'specialized_sme', 'miit', 'first district');
-      insert into record values(100, 1, 'specialized_sme', 'jxj', 'jxj district');
+      insert into enterprise_storage values(1, 'Canonical matched', 'MATCH', null, null);
+      insert into record values(1, 1, 'specialized_sme', 'miit', 'miit district');
+      insert into record values(2, 1, 'specialized_sme', 'jxj', 'jxj district');
     `)
     const db = drizzle(sqlite, { schema })
-    const expected = { rows: [], counts: {
-      little_giant: { missing_in_miit: 0, extra_in_miit: 0 },
-      specialized_sme: { missing_in_miit: 0, extra_in_miit: 0 },
-      innovative_sme: { missing_in_miit: 0, extra_in_miit: 0 },
-    } }
-    reads = 0
-    expect(getComparison(db)).toEqual(expected)
-    const single = reads
-    const insert = sqlite.prepare("insert into record values(?, 1, 'specialized_sme', ?, 'later district')")
-    for (let id = 2; id <= 32; id++) insert.run(id, `legacy-${id}`)
-    reads = 0
-    expect(getComparison(db)).toEqual(expected)
-    const history = reads
-    // No output rows: every observed evaluation belongs to the guard/actual
-    // matching anti-lookup. Each match reads the guard plus two equality keys.
-    // This is a mechanism bound on this synthetic view, never a latency SLO.
-    process.stdout.write(`comparison matched USCC evaluations ${JSON.stringify({ single, history })}\n`)
-    expect(single).toBe(6)
-    expect(history).toBe(single)
+    const zeroCounts = { little_giant: { missing_in_miit: 0, extra_in_miit: 0 },
+      specialized_sme: { missing_in_miit: 0, extra_in_miit: 0 }, innovative_sme: { missing_in_miit: 0, extra_in_miit: 0 } }
+    const measure = (read: typeof getComparison) => {
+      reads.clear()
+      const result = read(db)
+      return { result, calls: Object.fromEntries(reads) }
+    }
+    const frozen = measure(getComparisonB42), actual = measure(getComparison)
+    expect(frozen.result).toEqual({ rows: [], counts: zeroCounts })
+    expect(actual.result).toEqual(frozen.result)
+    expect(frozen.calls).toEqual({ 1: 6 })
+    // Add canonical misses on both sides, without changing any constraint.
+    sqlite.exec(`
+      insert into enterprise_storage values(2, 'J only', 'J-ONLY', '宁波市', '存续'), (3, 'M only', 'M-ONLY', null, null);
+      insert into record values(3, 2, 'specialized_sme', 'jxj', 'J district'), (4, 3, 'specialized_sme', 'miit', 'M district');
+    `)
+    const mixedFrozen = measure(getComparisonB42), mixedActual = measure(getComparison)
+    const expected = { rows: [
+      { enterpriseId: 2, name: 'J only', uscc: 'J-ONLY', district: 'J district', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: false,
+        evidence: { matchedBy: 'uscc', otherSideUscc: null, currentCity: '宁波市', regStatus: '存续' } },
+      { enterpriseId: 3, name: 'M only', uscc: 'M-ONLY', district: 'M district', titleCode: 'specialized_sme', direction: 'extra_in_miit', curated: false,
+        evidence: { matchedBy: 'uscc', otherSideUscc: null, currentCity: null, regStatus: null } },
+    ], counts: { ...zeroCounts, specialized_sme: { missing_in_miit: 1, extra_in_miit: 1 } } }
+    expect(mixedActual.result).toEqual(expected)
+    expect(JSON.stringify(mixedActual.result)).toBe(JSON.stringify(mixedFrozen.result))
+    process.stdout.write(`canonical comparison USCC evaluations ${JSON.stringify({ matchedFrozen: frozen.calls, matchedActual: actual.calls, mixedFrozen: mixedFrozen.calls, mixedActual: mixedActual.calls })}\n`)
+    // For the isolated matched pair only two NULL guards remain. Mixed-fixture
+    // calls also include cross-enterprise comparisons and output USCC reads.
+    expect(actual.calls).toEqual({ 1: 2 })
+    expect(mixedActual.calls).toEqual({ 1: 4, 2: 5, 3: 5 })
   } finally { sqlite.close() }
 })
 
@@ -111,5 +127,24 @@ it('preserves frozen bytes and literal DTOs for legacy binary identities, source
       expect(getComparison(db, options).counts).toEqual(expected.counts)
     }
     // Semantic checks run on ordinary tables, without the counter view/UDF.
+  } finally { sqlite.close() }
+})
+
+it('a same-enterprise miss still matches an opposite source on another enterprise with the same binary USCC', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    // Legacy distinct enterprise IDs with equal stored USCC; no local opposite
+    // exists on either ID. Today's canonical uniqueness is tested separately.
+    sqlite.exec(`
+      create table enterprise(id integer primary key, name text, uscc_norm text, city text, reg_status text);
+      create table record(id integer primary key, enterprise_id integer, title_code text, source text, district text);
+      insert into enterprise values(1, 'Cross J', 'SAME-BINARY', null, null), (2, 'Cross M', 'SAME-BINARY', null, null);
+      insert into record values(1, 1, 'specialized_sme', 'jxj', 'J district'), (2, 2, 'specialized_sme', 'miit', 'M district');
+    `)
+    const db = drizzle(sqlite, { schema })
+    expect(getComparison(db)).toEqual({ rows: [], counts: {
+      little_giant: { missing_in_miit: 0, extra_in_miit: 0 }, specialized_sme: { missing_in_miit: 0, extra_in_miit: 0 }, innovative_sme: { missing_in_miit: 0, extra_in_miit: 0 },
+    } })
+    expect(JSON.stringify(getComparison(db))).toBe(JSON.stringify(getComparisonB42(db)))
   } finally { sqlite.close() }
 })
