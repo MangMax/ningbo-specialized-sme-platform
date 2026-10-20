@@ -19,9 +19,10 @@ export interface CurrentQualificationWitness {
   cycle: { originYear: number; batchSeq: number | null }
   awardEventId: number | null
   recognition: { precision: 'year'; year: number }
-  validYear: number | null
-  maintenance: { year: number; batch: number | null } | null
+  matchedValidYear: number | null
+  matchedMaintenance: { year: number; batch: number | null } | null
   correspondenceId: number | null
+  conditionQueryId: number | null
 }
 export interface CurrentRow {
   enterpriseId: number; name: string; uscc: string | null; district: string | null
@@ -30,8 +31,8 @@ export interface CurrentRow {
   group: CurrentGroup
   qualificationWitnesses?: CurrentQualificationWitness[]
   recognition?: { precision: 'year'; year: number } | null
-  validYears?: number[]
-  maintenanceFacts?: { year: number; batch: number | null }[]
+  matchedValidYears?: number[]
+  matchedMaintenance?: { year: number; batch: number | null }[]
 }
 const readers = new WeakMap<Database.Database, ReturnType<typeof drizzle<typeof schema>>>()
 export function prepareCurrentReader(db: Database.Database) {
@@ -350,17 +351,17 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
     row.qualificationWitnesses = awards.flatMap<CurrentQualificationWitness>(({cycle,awardEventId}) => {
       const base = { cycle: { originYear: cycle.originYear, batchSeq: cycle.batch }, awardEventId, recognition: { precision: 'year' as const, year: cycle.originYear } }
       const matches = linked.filter(ref => ref.eventId === awardEventId).flatMap(ref => {
-        const fact = statement.get({relationId:ref.relationId,enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null,title,rdjb}) as {validYear:unknown;maintenanceYear:unknown;maintenanceBatch:unknown}|undefined
+        const fact = statement.get({relationId:ref.relationId,enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null,title,rdjb}) as {queryId:number;validYear:unknown;maintenanceYear:unknown;maintenanceBatch:unknown}|undefined
         if (!fact) return []
         const maintenanceYear=validYear(fact.maintenanceYear)
-        return [{...base,validYear:validYear(fact.validYear),maintenance:maintenanceYear == null ? null : {year:maintenanceYear,batch:validBatch(fact.maintenanceBatch)},correspondenceId:ref.id}]
+        return [{...base,matchedValidYear:validYear(fact.validYear),matchedMaintenance:maintenanceYear == null ? null : {year:maintenanceYear,batch:validBatch(fact.maintenanceBatch)},correspondenceId:ref.id,conditionQueryId:fact.queryId}]
       })
-      return matches.length ? matches : [{...base,validYear:null,maintenance:null,correspondenceId:null}]
+      return matches.length ? matches : [{...base,matchedValidYear:null,matchedMaintenance:null,correspondenceId:null,conditionQueryId:null}]
     })
-    if (qualificationSource === 'migration') row.qualificationWitnesses = migrationAwardYears.map(awardYear => ({cycle:{originYear:awardYear,batchSeq:null},awardEventId:null,recognition:{precision:'year',year:awardYear},validYear:null,maintenance:null,correspondenceId:null}))
+    if (qualificationSource === 'migration') row.qualificationWitnesses = migrationAwardYears.map(awardYear => ({cycle:{originYear:awardYear,batchSeq:null},awardEventId:null,recognition:{precision:'year',year:awardYear},matchedValidYear:null,matchedMaintenance:null,correspondenceId:null,conditionQueryId:null}))
     row.recognition = row.qualificationWitnesses[0]?.recognition ?? null
-    row.validYears = [...new Set(row.qualificationWitnesses.flatMap(witness => witness.validYear == null ? [] : [witness.validYear]))].sort((a,b) => a-b)
-    row.maintenanceFacts = row.qualificationWitnesses.flatMap(witness => witness.maintenance ? [witness.maintenance] : []).filter((fact,index,all) => all.findIndex(other => other.year === fact.year && other.batch === fact.batch) === index).sort((a,b) => a.year-b.year || (a.batch ?? 0)-(b.batch ?? 0))
+    row.matchedValidYears = [...new Set(row.qualificationWitnesses.flatMap(witness => witness.matchedValidYear == null ? [] : [witness.matchedValidYear]))].sort((a,b) => a-b)
+    row.matchedMaintenance = row.qualificationWitnesses.flatMap(witness => witness.matchedMaintenance ? [witness.matchedMaintenance] : []).filter((fact,index,all) => all.findIndex(other => other.year === fact.year && other.batch === fact.batch) === index).sort((a,b) => a.year-b.year || (a.batch ?? 0)-(b.batch ?? 0))
   }
   return row
 }

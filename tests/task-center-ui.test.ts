@@ -429,8 +429,8 @@ describe('没有管理操作授权', () => {
     state.query = { tab: 'export', job: jobId('MW') }
     const wrapper = await mountPage({ attach: true })
     await settle()
-    await openPanel(wrapper, /发起新的名录导出/)
-    await findButton(wrapper, /提交导出|找回本次导出/).trigger('click')
+    await waitForSheet()
+    sheetButton(sheetDialog()!, /重新生成/).click()
     await settle()
 
     // Every task request carries the browser marker — and no credential at all.
@@ -455,39 +455,15 @@ describe('没有管理操作授权', () => {
     expect(document.body.textContent).not.toContain('清除授权')
   })
 
-  it('服务端说未开放页面操作时，提交导出被禁用并在按钮旁说明原因', async () => {
-    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage({ attach: true })
+  it('任务页不再提供临时新建导出入口，历史导出 tab 仍保留', async () => {
+    installFetch(({ url }) => url.endsWith('/capabilities') ? capabilities : listRead(true))
+    const wrapper = await mountPage()
     await settle()
-    await openPanel(wrapper, /发起新的名录导出/)
-
-    const submit = findButton(wrapper, /提交导出|找回本次导出/)
-    expect(submit.attributes('disabled')).toBeDefined()
-    // The reason sits next to the control, in the reading order — not on hover.
-    const block = submit.element.closest('[data-testid="export-action"]') as HTMLElement
-    expect(block.textContent).toMatch(/当前部署未开放页面任务操作，仅可查看。/)
-    // And there is no route into a credential form any more.
-    expect(block.querySelector('[data-testid="go-authorize"]')).toBeNull()
-    // The panel says out loud that this deployment is read-only.
-    const trigger = wrapper.findAll('button').find(button => /发起新的名录导出/.test(button.text()))!
-    expect(trigger.text()).toContain('只读')
+    expect(wrapper.text()).not.toContain('发起新的名录导出')
+    expect(wrapper.find('[data-testid="export-action"]').exists()).toBe(false)
+    expect(wrapper.find('[data-task-tab="export"]').exists()).toBe(true)
   })
 
-  it('服务端说已开放时，提交导出可用且不再有只读徽标', async () => {
-    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(true))
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage({ attach: true })
-    await settle()
-    await openPanel(wrapper, /发起新的名录导出/)
-
-    const submit = findButton(wrapper, /提交导出|找回本次导出/)
-    expect(submit.attributes('disabled')).toBeUndefined()
-    const block = submit.element.closest('[data-testid="export-action"]') as HTMLElement
-    expect(block.textContent).toContain('接口已上线')
-    const trigger = wrapper.findAll('button').find(button => /发起新的名录导出/.test(button.text()))!
-    expect(trigger.text()).not.toContain('只读')
-  })
 })
 
 describe('提交导出后的找回入口', () => {
@@ -511,55 +487,7 @@ describe('提交导出后的找回入口', () => {
     expect(state.query.job).toBe(jobId('REC'))
   })
 
-  it('202 响应丢失后，同一请求标识重提，不新建第二个请求', async () => {
-    let attempt = 0
-    const calls = installFetch(({ url, method }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      if (url === '/api/roster/exports/current/little-giant' && method === 'POST') {
-        attempt++
-        if (attempt === 1) throw new TypeError('network down before the receipt arrived')
-        return json({ jobId: jobId('RET') }, 202)
-      }
-      return json(listOf(state.list.rows, true))
-    })
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage({ attach: true })
-    await settle()
-    await openPanel(wrapper, /发起新的名录导出/)
 
-    // The first attempt loses its receipt on the wire, so no job id is recorded.
-    await findButton(wrapper, /提交导出|找回本次导出/).trigger('click')
-    await settle()
-    const afterLoss = JSON.parse(sessionStorage.getItem(EXPORT_KEY) || '{}')['little_giant:initial']
-    expect(afterLoss?.clientRequestId).toBeTruthy()
-    expect(afterLoss.jobId).toBeUndefined()
-    // Retrying reuses that identity instead of minting a new export.
-    await findButton(wrapper, /提交导出|找回本次导出/).trigger('click')
-    await settle()
-
-    const posts = calls.filter(call => call.url === '/api/roster/exports/current/little-giant' && call.method === 'POST')
-    expect(posts).toHaveLength(2)
-    expect((posts[1]!.body as { clientRequestId: string }).clientRequestId).toBe((posts[0]!.body as { clientRequestId: string }).clientRequestId)
-  })
-
-  it('提交未确认时说明未确认，不谎报已受理', async () => {
-    installFetch(({ url, method }) => {
-      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
-      if (method === 'POST') return json({ message: '容量不足' }, 503)
-      return json(listOf(state.list.rows, true))
-    })
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage({ attach: true })
-    await settle()
-    await openPanel(wrapper, /发起新的名录导出/)
-    await findButton(wrapper, /提交导出|找回本次导出/).trigger('click')
-    await flushPromises()
-
-    const notice = document.querySelector('[data-testid="export-notice"]')!
-    expect(notice.textContent).toMatch(/未确认|尚未确认/)
-    expect(notice.getAttribute('role')).toBe('alert')
-    expect(document.body.textContent).not.toContain('导出已受理')
-  })
 })
 
 describe('任务详情抽屉', () => {
@@ -884,11 +812,12 @@ describe('一次播报、一处确认', () => {
       if (url.startsWith('/api/task-center/')) return json(state.detail)
       return json(listOf(state.list.rows, true))
     })
-    state.query = { tab: 'export' }
+    sessionStorage.setItem(EXPORT_KEY, JSON.stringify({ 'little_giant:initial': { clientRequestId: '7b7f0f2e-2a5c-4a33-9d8a-1c2b3d4e5f60', jobId: jobId('MW') } }))
+    state.query = { tab: 'export', job: jobId('MW') }
     const wrapper = await mountPage({ attach: true })
     await settle()
-    await openPanel(wrapper, /发起新的名录导出/)
-    await findButton(wrapper, /提交导出|找回本次导出/).trigger('click')
+    await waitForSheet()
+    sheetButton(sheetDialog()!, /重新生成/).click()
     await settle()
 
     // The standing bar states the same 202, so the filter has to look at **both**
@@ -937,13 +866,7 @@ describe('标题层级', () => {
     // The detail's own collapsible heading stays below the drawer's title.
     const technical = headings.find(heading => heading.text === '核对信息')
     expect(technical?.level).toBe(3)
-    // The page-level panel stands next to the h2 regions: its heading is an h2
-    // that **contains** the trigger — never a heading nested in the button.
-    const panel = headings.find(heading => heading.text.startsWith('发起新的名录导出'))
-    expect(panel?.level).toBe(2)
-    const heading = Array.from(document.querySelectorAll<HTMLElement>('h2')).find(node => (node.textContent ?? '').trim().startsWith('发起新的名录导出'))!
-    expect(heading.querySelector('button')).toBeTruthy()
-    expect(heading.querySelector('button h1, button h2, button h3, button h4')).toBeNull()
+    expect(wrapper.text()).not.toContain('发起新的名录导出')
   })
 })
 

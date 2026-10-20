@@ -52,12 +52,12 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
       if (row.group !== 'eligible') continue
       for (const witness of row.qualificationWitnesses ?? []) {
         recognitionYears.add(witness.recognition.year)
-        if (witness.validYear != null) validYears.add(witness.validYear)
-        if (witness.maintenance) {
-          maintenanceYears.add(witness.maintenance.year)
-          if (witness.maintenance.batch != null) {
-            const batches=maintenanceBatchesByYear.get(witness.maintenance.year) ?? new Set<number>()
-            batches.add(witness.maintenance.batch); maintenanceBatchesByYear.set(witness.maintenance.year,batches)
+        if (witness.matchedValidYear != null) validYears.add(witness.matchedValidYear)
+        if (witness.matchedMaintenance) {
+          maintenanceYears.add(witness.matchedMaintenance.year)
+          if (witness.matchedMaintenance.batch != null) {
+            const batches=maintenanceBatchesByYear.get(witness.matchedMaintenance.year) ?? new Set<number>()
+            batches.add(witness.matchedMaintenance.batch); maintenanceBatchesByYear.set(witness.matchedMaintenance.year,batches)
           }
         }
       }
@@ -65,10 +65,10 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
       if (filter.q && !(qName && [row.name, ...row.aliases].some(name => normalizeName(name).includes(qName)))
         && !(qUscc && normalizeUscc(row.uscc).includes(qUscc))) continue
       const related = (row.qualificationWitnesses ?? []).filter(witness =>
-        (filter.validYear == null || witness.validYear === filter.validYear)
-        && (filter.maintenanceYear == null || witness.maintenance?.year === filter.maintenanceYear)
-        && (filter.maintenanceBatch == null || witness.maintenance?.batch === filter.maintenanceBatch))
-      if (!related.length) {
+        (filter.validYear == null || witness.matchedValidYear === filter.validYear)
+        && (filter.maintenanceYear == null || witness.matchedMaintenance?.year === filter.maintenanceYear)
+        && (filter.maintenanceBatch == null || witness.matchedMaintenance?.batch === filter.maintenanceBatch))
+      if (!related.length && (filter.recognitionFrom || filter.validYear != null || filter.maintenanceYear != null)) {
         if (filter.recognitionFrom && filter.validYear == null && filter.maintenanceYear == null && !(row.qualificationWitnesses ?? []).length) uncertainTotal++
         continue
       }

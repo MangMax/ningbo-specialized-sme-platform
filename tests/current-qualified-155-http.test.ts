@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { schema as s } from '../db/client'
 import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../server/utils/record-correspondence'
+import { readEvidenceToken113 } from '../server/utils/evidence-impact-113'
 import { currentExport118Fixture, year } from './helpers/current-export-118'
 
 const f = currentExport118Fixture()
@@ -50,12 +51,14 @@ it('requires one current award and one confirmed recognized relation for valid a
   const current = f.candidate('当前周期', [{ eventType: 'award', year: year, batchSeq: 1 }])
   const old = f.candidate('旧周期借用', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'award', year, batchSeq: 1 }])
   const eventFor = (id: number, eventYear: number) => (f.db.$client.prepare('select e.id from record_event e join record r on r.id=e.record_id where r.enterprise_id=? and e.year=? and e.event_type=? order by e.id desc limit 1').get(id, eventYear, 'award') as { id: number }).id
-  linkRecognized(current.enterprise.id, eventFor(current.enterprise.id, year), { rddqrq: String(year + 2), whpcyear: String(year - 1), whpc: '2' })
+  const matchedRelation=linkRecognized(current.enterprise.id, eventFor(current.enterprise.id, year), { rddqrq: String(year + 2), whpcyear: String(year - 1), whpc: '2' })
   linkRecognized(old.enterprise.id, eventFor(old.enterprise.id, year - 4), { rddqrq: String(year + 2), whpcyear: String(year - 1), whpc: '2' })
   const params = { validYear: String(year + 2), maintenanceYear: String(year - 1), maintenanceBatch: '2' }
   const result = await query(params)
   expect(result.response.status).toBe(200)
   expect(result.body).toMatchObject({ total: 1, rows: [{ enterpriseId: current.enterprise.id }] })
+  expect(result.body.rows[0]).toMatchObject({matchedValidYears:[year+2],matchedMaintenance:[{year:year-1,batch:2}],qualificationWitnesses:[{matchedValidYear:year+2,matchedMaintenance:{year:year-1,batch:2},conditionQueryId:matchedRelation.queryId}]})
+  expect(result.body.rows[0]).not.toHaveProperty('validYears')
   expect((await mcp({ validYear: year + 2, maintenanceYear: year - 1, maintenanceBatch: 2 })).rows).toEqual(result.body.rows)
   expect(result.body.options).toMatchObject({ validYears: [year + 2], maintenanceYears: [year - 1] })
   expect((await query({ validYear: String(year + 3) })).body.total).toBe(0) // lifecycle dueYear is not source validYear
@@ -85,6 +88,26 @@ it('retains eligible rows with missing metadata until a related filter is reques
   expect(a.enterprise.id).toBeLessThan(b.enterprise.id)
 })
 
+it('retains a confirmed migrant with no asserted award year without fabricating recognition from its validity interval', async () => {
+  const candidate=f.candidate('迁入仅有有效区间',[])
+  const source=f.db.insert(s.platformQuery).values({interface:'business_list',queryKey:candidate.enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status:'success'}).returning().get()
+  const relation=f.db.insert(s.platformRelation).values({queryId:source.id,enterpriseId:candidate.enterprise.id,sequenceNo:1,usccRaw:candidate.enterprise.usccNorm,nameRaw:candidate.enterprise.name,verificationStatus:'confirmed',matchBasis:'uscc'}).returning().get()
+  const scope={enterpriseId:candidate.enterprise.id,titleCode:'specialized_sme',direction:'extra_in_miit'}
+  const api=async (body:unknown) => {
+    const response=await fetch(f.url('/api/roster/decision-lifecycle/commands'),{method:'POST',headers:f.headers,body:JSON.stringify(body)})
+    return {status:response.status,body:await response.json() as any}
+  }
+  const command=await api({...scope,action:'replace',expectedCurrentId:null,idempotencyKey:'filter155-migrant',actor:{type:'agent',id:'synthetic-155'},basis:'Synthetic independent external qualification and publication check',ruleVersion:'synthetic-155',effectiveAt:`${year-1}-01-01T00:00:00Z`,decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:source.id,evidenceRelationId:relation.id,currentQualification:{titleCode:'specialized_sme',validFrom:`${year-1}-01-01T00:00:00Z`,validUntil:`${year+2}-01-01T00:00:00Z`,basis:'Synthetic confirmed external qualification',publicationCheck:{status:'not_found',scope:'All ingested Ningbo specialized announcements'}}}})
+  expect(command.status,JSON.stringify(command.body)).toBe(200)
+  const token=readEvidenceToken113(f.db,scope as any)
+  const review=await api({...scope,action:'maintain',expectedCurrentId:command.body.versionId,idempotencyKey:'filter155-migrant-review',actor:{type:'agent',id:'synthetic-155'},basis:'Synthetic explicit review',ruleVersion:'synthetic-155',effectiveAt:`${year-1}-01-01T00:00:00Z`,reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
+  expect(review.status,JSON.stringify(review.body)).toBe(200)
+  const unfiltered=await query({})
+  expect(unfiltered.body).toMatchObject({total:1,rows:[{enterpriseId:candidate.enterprise.id,recognition:null,matchedValidYears:[],qualificationWitnesses:[]}]})
+  const dated=await query({recognitionFrom:`${year}-01-01`,recognitionTo:`${year}-12-31`})
+  expect(dated.body).toMatchObject({total:0,uncertainTotal:1,rows:[]})
+})
+
 it('rejects invalid dates and a maintenance batch without its year', async () => {
   expect((await query({ recognitionFrom: '2024-02-30', recognitionTo: '2024-12-31' })).response.status).toBe(400)
   expect((await query({ recognitionFrom: '2024-12-31', recognitionTo: '2024-01-01' })).response.status).toBe(400)
@@ -95,4 +118,13 @@ it('rejects invalid dates and a maintenance batch without its year', async () =>
   const leap = await query({ recognitionFrom: '2024-02-29', recognitionTo: '2024-02-29' })
   expect(leap.response.status).toBe(200)
   expect((await query({ recognitionFrom: '2025-02-29', recognitionTo: '2025-03-01' })).response.status).toBe(400)
+})
+
+it('rejects invalid new filters at original MCP JSON-RPC transport', async () => {
+  for (const arguments_ of [{maintenanceBatch:2},{recognitionFrom:'2024-01-01'},{validYear:2024,unknownFilter:'ignored'}]) {
+    const response=await fetch(f.url('/mcp'),{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18'},body:JSON.stringify({jsonrpc:'2.0',id:155,method:'tools/call',params:{name:'list_current_qualified_enterprises',arguments:{titleCode:'specialized_sme',...arguments_}}})})
+    expect(response.status).toBe(400)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.json()).toMatchObject({jsonrpc:'2.0',id:155,error:{code:-32602}})
+  }
 })
