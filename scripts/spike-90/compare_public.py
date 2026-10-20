@@ -40,7 +40,7 @@ def request(base, case, token):
         headers["Authorization"] = "Bearer " + token
     req = urllib.request.Request(base + case["path"], data=body, method=case["method"], headers=headers)
     start = time.perf_counter_ns()
-    status, data, error = None, b"", None
+    status, data, error, server_metrics = None, b"", None, {}
     try:
         try:
             response = urllib.request.build_opener(NoRedirect()).open(req, timeout=case.get("timeoutSeconds", 30))
@@ -48,6 +48,10 @@ def request(base, case, token):
             response = exc
         with response:
             status = response.status
+            for name in ('Read-Ms', 'Sql-Ms', 'Sql-Count', 'Sql-Returned-Bytes', 'Serialize-Ms', 'Maxrss'):
+                value = response.headers.get('X-Workload-' + name)
+                if value is not None:
+                    server_metrics[name] = float(value)
             data = response.read(16 * 1024 * 1024 + 1)
     except (OSError, urllib.error.URLError, http.client.HTTPException) as exc:
         error = type(exc).__name__  # Never include exception text, URLs or tokens.
@@ -62,7 +66,7 @@ def request(base, case, token):
         except (ValueError, UnicodeError):
             error = "invalid_json"
     return {"status": status, "bytes": len(data), "semantic_sha256": h,
-            "error": error, "elapsed_ms": round(elapsed_ms, 3)}
+            "error": error, "elapsed_ms": round(elapsed_ms, 3), "server_metrics": server_metrics}
 
 
 def pct(values, p):

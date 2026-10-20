@@ -30,6 +30,7 @@ class ComparatorCliTests(unittest.TestCase):
                     self.end_headers()
                     return
                 self.send_response(200)
+                self.send_header('X-Workload-Sql-Ms', '1.25')
                 self.end_headers()
                 self.wfile.write(b'not-json' if self.path == '/invalid-json' else b'{"ok":true}')
 
@@ -69,6 +70,7 @@ class ComparatorCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(report['cases']['fixture']['semantic_equivalent'])
         self.assertEqual(len(report['cases']['fixture']['sqlite']['hot']['1']['samples']), 2)
+        self.assertEqual(report['cases']['fixture']['sqlite']['first']['server_metrics']['Sql-Ms'], 1.25)
 
     def test_empty_manifest_is_rejected(self):
         result, report = self.run_cli([])
