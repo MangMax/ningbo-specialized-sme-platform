@@ -6,13 +6,18 @@ import { Button } from '@/components/ui/button'
 import { Alert } from '@/components/ui/alert'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { TITLES } from '~~/lib/labels'
+import { CURRENT_TITLES } from '~~/lib/roster/current-titles'
 
 const props = defineProps<{ titleCode: TaskExportTitle }>()
 const router = useRouter()
 let active = true, contextVersion = 0
 // Invalidate a pending navigation even if the user leaves and returns before
 // acceptance. Filter-only changes do not change the full-title export context.
-watch([() => props.titleCode, () => router.currentRoute.value.path, () => router.currentRoute.value.query.titleCode], () => { contextVersion++ }, { flush: 'sync' })
+// Match the page's effective title, including the default URL before filters
+// materialize titleCode. Read the route directly so prop rendering cannot hide
+// a title-away-and-back transition.
+const routeTitle = computed(() => CURRENT_TITLES.find(code => code === router.currentRoute.value.query.titleCode) ?? 'little_giant')
+watch([() => props.titleCode, () => router.currentRoute.value.path, routeTitle], () => { contextVersion++ }, { flush: 'sync' })
 onBeforeUnmount(() => { active = false })
 const authorization = ref<'loading' | 'allowed' | 'readonly' | 'failed'>('loading')
 const readOnlyReason = computed(() => authorization.value === 'allowed' ? '' : authorization.value === 'loading' ? '正在读取任务操作能力。' : authorization.value === 'failed' ? '任务操作能力未确认，请重试。' : '当前部署未开放页面任务操作，仅可查看。')

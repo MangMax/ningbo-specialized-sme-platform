@@ -75,13 +75,23 @@ it('delayed initial 202 preserves a newer mounted task regeneration identity thr
   expect(recovered.wrapper.get('[role="status"]').text()).toBe(SME_JOB)
 })
 
-it.each(['unmounted', 'left page', 'changed title', 'changed title and returned'] as const)('late query acceptance retains recovery without navigation after %s', async change => {
+it.each(['unmounted', 'left page', 'left page and returned', 'changed title', 'changed title and returned', 'route title changed and returned before prop render'] as const)('late query acceptance retains recovery without navigation after %s', async change => {
   const receipt = deferred()
   mockFetch(() => receipt.promise)
   const query = await queryEntry()
   await query.click()
   if (change === 'unmounted') query.wrapper.unmount()
-  if (change === 'left page') await query.router.push('/tasks?job=chosen')
+  if (change.startsWith('left page')) {
+    await query.router.push('/tasks?job=chosen')
+    if (change === 'left page and returned') await query.router.push('/current-enterprises?titleCode=little_giant')
+  }
+  if (change === 'route title changed and returned before prop render') {
+    // The mounted entry still has its original prop: route invalidation must
+    // independently remember the intervening effective title.
+    await query.router.push('/current-enterprises?titleCode=specialized_sme')
+    await query.router.push('/current-enterprises?titleCode=little_giant')
+    expect(query.wrapper.props('titleCode')).toBe('little_giant')
+  }
   if (change.startsWith('changed title')) {
     await query.wrapper.setProps({ titleCode: 'specialized_sme' })
     if (change === 'changed title and returned') await query.wrapper.setProps({ titleCode: 'little_giant' })
