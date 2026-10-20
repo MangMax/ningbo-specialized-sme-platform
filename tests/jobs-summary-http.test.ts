@@ -146,12 +146,13 @@ it('full reads redact credentials and host paths while preserving business field
   vi.stubEnv('NUXT_OCR_TOKEN', secrets[2]!)
   vi.stubEnv('MIIT_COOKIE', `sid=${secrets[3]}`)
   const jobId = newJobId()
-  const sensitiveResult = { reference: 'jxj/results/synthetic.json', batchId: 'synthetic-batch', receipt: { written: 3, replayed: true },
+  const references = ['省级/附件.pdf', './jxj/file.pdf', '../结果/文件.json', 'jxj/省级/附件.pdf', 'https://example.invalid/省级/附件.pdf', '/api/files/省级/附件.pdf']
+  const sensitiveResult = { references, reference: 'jxj/results/synthetic.json', batchId: 'synthetic-batch', receipt: { written: 3, replayed: true },
     cookie: 'archived-session', token: 'archived-token',
     files: [{ path: '/Users/synthetic/private/result.json', text: 'first page' }, { path: 'jxj/synthetic.pdf', text: 'second page' }],
     message: `echo ${secrets.join(' ')}; token=archived-token; path:/tmp/synthetic/private.png; file:///var/private/synthetic.sqlite; C:\\private\\result.json`,
     url: 'https://example.invalid/synthetic/result', detailUrl: `/api/jobs/${jobId}`, raw: '{ "synthetic": true }' }
-  createJob(db, { id: jobId, kind: 'summary-secrets', params: { file: 'jxj/synthetic.pdf', apiToken: 'archived-api-token' } })
+  createJob(db, { id: jobId, kind: 'summary-secrets', params: { references, file: 'jxj/synthetic.pdf', apiToken: 'archived-api-token' } })
   finishJob(db, jobId, { state: 'failed', result: sensitiveResult, error: `failure ${secrets.join(' ')}; /var/private/synthetic.sqlite` })
   for (const path of [`/api/jobs/${jobId}`, '/api/jobs?kind=summary-secrets', `/api/jobs/${jobId}?view=summary`, '/api/jobs?view=summary&kind=summary-secrets']) {
     const response = await fetch(`${base}${path}`)
@@ -161,7 +162,7 @@ it('full reads redact credentials and host paths while preserving business field
     if (!path.includes('view=summary')) {
       const body = JSON.parse(text)
       const job = body.rows?.[0] ?? body
-      expect(job).toMatchObject({ state: 'failed', params: { file: 'jxj/synthetic.pdf' }, result: {
+      expect(job).toMatchObject({ state: 'failed', params: { references, file: 'jxj/synthetic.pdf' }, result: { references,
         reference: 'jxj/results/synthetic.json', batchId: 'synthetic-batch', receipt: { written: 3, replayed: true },
         files: [{ path: '[REDACTED]', text: 'first page' }, { path: 'jxj/synthetic.pdf', text: 'second page' }],
         url: 'https://example.invalid/synthetic/result', detailUrl: `/api/jobs/${jobId}`, raw: '{ "synthetic": true }',

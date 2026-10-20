@@ -8,7 +8,7 @@ import { toJobDto, type JobDto, type JobRow } from './job-store'
 const sensitiveKey = /cookie|password|passwd|token|secret|credential|authorization|authentication|api.?key|session/i
 // Relative artifact references and HTTP URLs are public data; absolute host paths
 // are not. The API's own root-relative links remain usable.
-const hostPath = /\bfile:\/\/\/[^\s"'<>;,)}\]]+|(?<![\w/])\/(?!\/|api(?:\/|$))[^\s"'<>;,)}\]]+|\b[A-Za-z]:\\[^\s"'<>;,)}\]]+/g
+const hostPath = /\bfile:\/\/\/[^\s"'<>;,)}\]]+|(?<=^|[\s"'<>;,)}\]=:(\[{])\/(?!\/|api(?:\/|$))[^\s"'<>;,)}\]]+|\b[A-Za-z]:\\[^\s"'<>;,)}\]]+/gu
 
 /** One credential snapshot per full read, never per summary row. No persistence
  * changes: redact only the public copy, retaining complete non-sensitive data. */

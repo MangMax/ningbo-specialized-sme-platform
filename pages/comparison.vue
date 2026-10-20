@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { parseComparisonRouteFilters } from '~~/lib/comparison-route'
 import ComparisonRowDetails from '@/components/ComparisonRowDetails.vue'
 import type { ComparisonSummaryRow } from '~~/lib/comparison-summary'
 import EvidenceReviewList from '@/components/evidence-review/EvidenceReviewList.vue'
@@ -109,16 +110,15 @@ const COMPARISON_DIRECTIONS = Object.keys(
   COMPARISON_LABELS,
 ) as ComparisonDirection[]
 const titles = TITLE_ORDER
-const queryText = (key: string, fallback = '') => typeof route.query[key] === 'string' ? route.query[key] as string : fallback
-const queryPage = (key: string, fallback: number) => Math.max(1, Math.trunc(Number(queryText(key))) || fallback)
-const title = shallowRef(queryText('title', 'specialized_sme'))
-const direction = shallowRef<ComparisonDirection>(COMPARISON_DIRECTIONS.includes(queryText('direction') as ComparisonDirection) ? queryText('direction') as ComparisonDirection : 'missing_in_miit')
-const q = shallowRef(queryText('q'))
-const district = shallowRef(queryText('district'))
-const page = shallowRef(queryPage('page', 1))
-const showCurated = shallowRef(queryText('showCurated') === 'true')
+const initialFilters = parseComparisonRouteFilters(route.query)
+const title = shallowRef(initialFilters.title)
+const direction = shallowRef(initialFilters.direction)
+const q = shallowRef(initialFilters.q)
+const district = shallowRef(initialFilters.district)
+const page = shallowRef(initialFilters.page)
+const showCurated = shallowRef(initialFilters.showCurated)
 const queryCache = useQueryCache()
-const pageSize = shallowRef(Math.min(200, queryPage('pageSize', 25)))
+const pageSize = shallowRef(initialFilters.pageSize)
 const ALL_DISTRICTS = '__all__'
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 const districtModel = computed({
@@ -154,13 +154,14 @@ watch(params, (value) => {
 watch(() => route.query, () => {
   if (mode.value !== 'legacy') return
   restoringRoute = true
-  title.value = queryText('title', 'specialized_sme')
-  direction.value = COMPARISON_DIRECTIONS.includes(queryText('direction') as ComparisonDirection) ? queryText('direction') as ComparisonDirection : 'missing_in_miit'
-  q.value = queryText('q')
-  district.value = queryText('district')
-  showCurated.value = queryText('showCurated') === 'true'
-  pageSize.value = Math.min(200, queryPage('pageSize', 25))
-  page.value = queryPage('page', 1)
+  const filters = parseComparisonRouteFilters(route.query)
+  title.value = filters.title
+  direction.value = filters.direction
+  q.value = filters.q
+  district.value = filters.district
+  showCurated.value = filters.showCurated
+  pageSize.value = filters.pageSize
+  page.value = filters.page
   restoringRoute = false
 })
 type ComparisonQueryParams = typeof params.value
@@ -507,7 +508,7 @@ const exportUrl = computed(() => {
     </div>
   </div>
 
-  <ComparisonRowDetails :row="selectedRow" :return-to="route.fullPath" @close="selectedRow = null" @saved="refreshCuration" />
+  <ComparisonRowDetails @navigate="rememberEvidencePreviewReturn(route.fullPath, scroller)" :row="selectedRow" :return-to="route.fullPath" @close="selectedRow = null" @saved="refreshCuration" />
   <Dialog :open="pendingLeave !== null" @update:open="value => { if (!value) pendingLeave = null }">
     <DialogContent data-testid="comparison-draft-leave-dialog" class="sm:max-w-md">
       <DialogHeader>

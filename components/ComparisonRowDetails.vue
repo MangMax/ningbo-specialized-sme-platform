@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import type { ComparisonSummaryRow } from '~~/lib/comparison-summary'
 import type { ComparisonPlatformEvidence } from '~~/lib/comparison-platform'
@@ -14,7 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button'
 
 const props = defineProps<{ row: ComparisonSummaryRow | null; returnTo: string }>()
-const emit = defineEmits<{ close: []; saved: [] }>()
+const emit = defineEmits<{ close: []; saved: []; navigate: [] }>()
 type FullRow = CuratedRow & { explanation: ReconcileEntry | null; platform: ComparisonPlatformEvidence }
 const detail = shallowRef<FullRow | null>(null)
 const loading = shallowRef(false)
@@ -28,7 +27,6 @@ async function load() {
   controller?.abort()
   if (!row) return
   const signal = (controller = new AbortController()).signal
-  detail.value = null
   failure.value = ''
   loading.value = true
   try {
@@ -48,6 +46,7 @@ async function load() {
 }
 watch(coordinate, () => { detail.value = null; failure.value = ''; void load() }, { immediate: true })
 onScopeDispose(() => { ++generation; controller?.abort() })
+const coordinateLabel = computed(() => props.row ? `${props.row.name} · ${props.row.titleCode} · ${props.row.direction}` : '')
 const enterpriseLink = computed(() => props.row ? `/enterprises/${props.row.enterpriseId}?returnTo=${encodeURIComponent(props.returnTo)}` : '')
 async function saved() {
   emit('saved')
@@ -64,18 +63,19 @@ async function saved() {
       <div class="flex min-h-0 flex-col gap-3 overflow-y-auto" :aria-busy="loading">
         <p v-if="loading" role="status">正在读取完整原因与证据…</p>
         <div v-if="failure" role="alert" class="flex flex-col items-start gap-2">
-          <p>{{ failure }}</p>
+          <p>{{ failure }}读取目标：{{ coordinateLabel }}。</p>
           <Button variant="outline" size="sm" :disabled="loading" @click="load">重试读取详情</Button>
         </div>
         <template v-if="detail">
+          <p class="text-muted-foreground text-[13px]">保留上次成功详情：{{ coordinateLabel }}。</p>
           <p v-if="detail.evidence.currentCity || detail.evidence.regStatus" class="text-muted-foreground text-[13px]">{{ detail.evidence.currentCity }} · {{ detail.evidence.regStatus }}</p>
           <ComparisonReconcile :disposition="detail.platform.disposition" :explanation="detail.explanation" />
-          <ComparisonExplanation :enterprise-id="detail.enterpriseId" :title-code="detail.titleCode" :direction="detail.direction" :return-to="returnTo" />
+          <ComparisonExplanation :enterprise-id="detail.enterpriseId" :title-code="detail.titleCode" :direction="detail.direction" :return-to="returnTo" @navigate="emit('navigate')" />
           <ComparisonPlatformEvidenceView :evidence="detail.platform" :enterprise-id="detail.enterpriseId" :current-name="detail.name" :return-to="returnTo" />
           <ComparisonQueryOriginals v-for="query in detail.platform.queries" :key="query.id" :query-id="query.id" />
           <ComparisonCuration :row="detail" @saved="saved" />
         </template>
-        <NuxtLink :to="enterpriseLink" @click="rememberEvidencePreviewReturn(returnTo, $event.currentTarget)" class="text-primary text-[13px] hover:underline">查看认定信息与公布出处</NuxtLink>
+        <NuxtLink :to="enterpriseLink" @click="emit('navigate')" class="text-primary text-[13px] hover:underline">查看认定信息与公布出处</NuxtLink>
       </div>
     </DialogContent>
   </Dialog>
