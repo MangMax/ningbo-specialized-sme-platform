@@ -213,9 +213,11 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
     }
   }
   // Counts need light global facts, but only the emitted page needs complete
-  // evidence. Batch primary-key scope before creating any evidence objects.
+  // evidence. The legacy preview consumes classifications and identities only;
+  // its complete candidate scan must not hydrate unused attachment text.
   const rows: ReturnType<typeof buildRow>[] = []
-  for (let offset = 0; offset < pageEvents.length; offset += 128) {
+  if (!paginate) for (const row of pageEvents) rows.push(buildRow(row, []))
+  else for (let offset = 0; offset < pageEvents.length; offset += 128) {
     const page = pageEvents.slice(offset, offset + 128)
     const evidence = db.select().from(schema.recordEvidence).where(inArray(schema.recordEvidence.recordEventId, page.map(row => row.event.id))).orderBy(schema.recordEvidence.id).all()
     const byEvent = groupBy(evidence, item => item.recordEventId)
@@ -267,16 +269,24 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
 export function previewRecordCorrespondenceImpact(db: Db, input: RecordComparisonInput) {
   const source = selected(db, input)
   const comparison = consumeComparison(compareRecords(db, source, undefined, false))
-  const all = db.select().from(schema.differenceReason).all().filter(reason => (!input.asOf || before(reason.recordedAt, input.asOf)))
+  const reason = schema.differenceReason
+  const cutoff = input.asOf ? sql`julianday(${reason.recordedAt}) <= julianday(${input.asOf})` : undefined
+  const filtered = and(cutoff, input.enterpriseId == null ? undefined : eq(reason.enterpriseId, input.enterpriseId), input.titleCode ? eq(reason.titleCode, input.titleCode) : undefined)
+  const { legacyRows, total, pageReasons } = db.transaction(tx => ({
+    legacyRows: tx.select({ count: sql<number>`count(*)` }).from(reason).where(cutoff).get()!.count,
+    total: tx.select({ count: sql<number>`count(*)` }).from(reason).where(filtered).get()!.count,
+    pageReasons: tx.select({ id: reason.id, enterpriseId: reason.enterpriseId, titleCode: reason.titleCode, direction: reason.direction, status: reason.status, reasonCode: reason.reasonCode, measureCode: reason.measureCode, evidenceQueryId: reason.evidenceQueryId, evidenceRelationId: reason.evidenceRelationId, verificationStatus: reason.verificationStatus, recordedAt: reason.recordedAt })
+      .from(reason).where(filtered).orderBy(reason.id).limit(input.pageSize).offset((input.page - 1) * input.pageSize).all(),
+  }))
   const owners = new Map(db.selectDistinct({ id: schema.enterprise.id, uscc: schema.enterprise.usccNorm }).from(schema.enterprise).innerJoin(schema.record, eq(schema.record.enterpriseId, schema.enterprise.id)).where(and(eq(schema.record.source, 'jxj'), input.enterpriseId == null ? undefined : eq(schema.enterprise.id, input.enterpriseId), input.titleCode ? eq(schema.record.titleCode, input.titleCode) : undefined)).all().map(row => [row.id, row.uscc]))
   const relationsByOwner = groupBy(source.relations, item => `${item.relation.enterpriseId}:${relationTitle(item.relation, item.query)}`)
-  const legacy = all.map(reason => {
-    const related = comparison.rows.filter(row => row.record.enterpriseId === reason.enterpriseId && row.record.titleCode === reason.titleCode)
-    return { id: reason.id, original: { enterpriseId: reason.enterpriseId, titleCode: reason.titleCode, direction: reason.direction, status: reason.status, reasonCode: reason.reasonCode, measureCode: reason.measureCode, evidenceQueryId: reason.evidenceQueryId, evidenceRelationId: reason.evidenceRelationId, verificationStatus: reason.verificationStatus, recordedAt: reason.recordedAt }, disposition: 'legacy_pending_review' as const, possibleCategories: unique(related.map(row => row.classification)), possibleEventIds: related.map(row => row.event.id) }
+  const comparisonByOwner = groupBy(comparison.rows, row => `${row.record.enterpriseId}:${row.record.titleCode}`)
+  const legacy = pageReasons.map(item => {
+    const related = comparisonByOwner.get(`${item.enterpriseId}:${item.titleCode}`) ?? []
+    return { id: item.id, original: { enterpriseId: item.enterpriseId, titleCode: item.titleCode, direction: item.direction, status: item.status, reasonCode: item.reasonCode, measureCode: item.measureCode, evidenceQueryId: item.evidenceQueryId, evidenceRelationId: item.evidenceRelationId, verificationStatus: item.verificationStatus, recordedAt: item.recordedAt }, disposition: 'legacy_pending_review' as const, possibleCategories: unique(related.map(row => row.classification)), possibleEventIds: related.map(row => row.event.id) }
   })
   const proposedCandidates = comparison.rows.flatMap(row => (relationsByOwner.get(`${row.record.enterpriseId}:${row.record.titleCode}`) ?? []).filter(({ relation, query }) => normalizeUscc(relation.usccRaw) && normalizeUscc(relation.usccRaw) === normalizeUscc(row.record.usccRaw ?? owners.get(row.record.enterpriseId)) && relationTitle(relation, query) === row.record.titleCode && (query.interface === 'recognized_list' ? row.event.eventType === 'award' && row.event.year != null && relation.year === row.event.year : row.event.year != null && (row.event.eventType === 'review' ? row.event.decidedYear != null && relation.year === row.event.decidedYear && relation.declareKind === 'review' : relation.year === row.event.year && relation.declareKind === 'apply')) && !row.correspondences.some(edge => edge.relationId === relation.id) && !comparison.historicalDecisionUnavailable.some(edge => edge.eventId === row.event.id && edge.relationId === relation.id)).map(({ relation, query }) => ({ eventId: row.event.id, relationId: relation.id, queryId: query.id, type: query.interface === 'recognized_list' ? 'event_recognized' : 'event_process', status: 'candidate' as const, qualification: 'requires_explicit_review' as const, reasons: ['batch_and_fact_require_review'] })))
-  const filtered = legacy.filter(row => (input.enterpriseId == null || row.original.enterpriseId === input.enterpriseId) && (!input.titleCode || row.original.titleCode === input.titleCode))
-  return { rows: filtered.slice((input.page - 1) * input.pageSize, input.page * input.pageSize), total: filtered.length, page: input.page, pageSize: input.pageSize, grain: 'difference_reason_id', counts: { legacyRows: legacy.length, possibleAlignedEvents: comparison.counts.historical_aligned, possibleConflictEvents: comparison.counts.historical_conflict, unresolvedEvents: comparison.counts.unresolved, proposedCandidateEdges: proposedCandidates.length, potentialCandidateAuditWrites: proposedCandidates.length, plannedAuditWrites: 0 }, proposedCandidates, unresolved: comparison.rows.filter(row => row.classification === 'unresolved').map(row => ({ eventId: row.event.id, reasons: row.reasons })), dataIssues: [...comparison.coverage.filter(item => item.reasons.length).map(item => ({ queryId: item.queryId, eventId: null, reasons: item.reasons })), ...comparison.rows.filter(row => row.classification === 'unresolved' && row.reasons.some(reason => reason !== 'official_coverage_unproved')).map(row => ({ queryId: null, eventId: row.event.id, reasons: row.reasons }))], modelIssues: [...comparison.officialCoverage.reasons, ...comparison.currentSourceConsistency.reasons], sourceSet: comparison.sourceSet, note: 'Read-only candidate and impact preview; no legacy decision or correspondence is changed.' }
+  return { rows: legacy, total, page: input.page, pageSize: input.pageSize, grain: 'difference_reason_id', counts: { legacyRows, possibleAlignedEvents: comparison.counts.historical_aligned, possibleConflictEvents: comparison.counts.historical_conflict, unresolvedEvents: comparison.counts.unresolved, proposedCandidateEdges: proposedCandidates.length, potentialCandidateAuditWrites: proposedCandidates.length, plannedAuditWrites: 0 }, proposedCandidates, unresolved: comparison.rows.filter(row => row.classification === 'unresolved').map(row => ({ eventId: row.event.id, reasons: row.reasons })), dataIssues: [...comparison.coverage.filter(item => item.reasons.length).map(item => ({ queryId: item.queryId, eventId: null, reasons: item.reasons })), ...comparison.rows.filter(row => row.classification === 'unresolved' && row.reasons.some(reason => reason !== 'official_coverage_unproved')).map(row => ({ queryId: null, eventId: row.event.id, reasons: row.reasons }))], modelIssues: [...comparison.officialCoverage.reasons, ...comparison.currentSourceConsistency.reasons], sourceSet: comparison.sourceSet, note: 'Read-only candidate and impact preview; no legacy decision or correspondence is changed.' }
 }
 
 function chunked<T>(values: T[], size: number): T[][] {
@@ -325,13 +335,14 @@ function sourceEnterpriseLinks(db: Db, queryPageIds: number[]) {
   const nameNorms = new Set(confirmed.flatMap(row => row.nameRaw ? [normalizeName(row.nameRaw)] : []))
   const aliases = new Map<string, { note: string | null }>()
   for (const ids of chunked(enterpriseIds, 400)) {
+    if (!nameNorms.size) break
     const rows = db.select({
       enterpriseId: schema.enterpriseAlias.enterpriseId,
       nameNorm: schema.enterpriseAlias.nameNorm,
       note: schema.enterpriseAlias.note,
     }).from(schema.enterpriseAlias)
-      .where(and(inArray(schema.enterpriseAlias.enterpriseId, ids), eq(schema.enterpriseAlias.verificationStatus, 'confirmed'))).all()
-    for (const alias of rows) if (nameNorms.has(alias.nameNorm)) aliases.set(`${alias.enterpriseId}\u0000${alias.nameNorm}`, alias)
+      .where(and(inArray(schema.enterpriseAlias.enterpriseId, ids), eq(schema.enterpriseAlias.verificationStatus, 'confirmed'), sql`${schema.enterpriseAlias.nameNorm} in (select value from json_each(${JSON.stringify([...nameNorms])}))`)).all()
+    for (const alias of rows) aliases.set(`${alias.enterpriseId}\u0000${alias.nameNorm}`, alias)
   }
   const links = new Map<number, { confirmedEnterprises: SourceEnterpriseLink[]; recordNames: string[] }>()
   for (const row of relationRows) {

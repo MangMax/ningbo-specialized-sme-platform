@@ -1,5 +1,52 @@
 # Source catalog and record comparison performance (#86)
 
+## 2026-10-20 payload qualification and bounded-read continuation
+
+The read-bench payload observation at source SHA
+`fc37375eb35ecd175a5746d93dc22129d2a2ffe3` used the isolated read
+volume `spztx-benchmark-read-20261020` behind loopback port 3481. Its retained
+seed fixes query ID `2632`, export batch ID `1`, official document ID `1`,
+page `1`, size `20`; record comparison also filters enterprise ID `157`.
+Readonly SQL against that volume found **4 selected relations, 6,273 selected
+export rows and 0 events evidenced by document 1**. The comparison traverses
+11,932 formal events for global counts, emits one enterprise-filtered event,
+and observes zero recognized/export pairs; the legacy preview proposes zero
+candidate edges. Legacy impact has no enterprise
+filter, returns 20 of 1,445 old decisions, and reports 11,932 unresolved
+formal events. The 6,273 selected export rows alone disqualify the original
+request from the conditional `<=100`-record 2 MiB comparison budget;
+`pageSize=20` is not an input-scope bound.
+
+The original compiled service readback reproduced 3,211,648 B REST comparison,
+5,278,514 B MCP `list_record_comparison`, 1,621,106 B REST legacy impact, and
+3,046,651 B MCP `preview_record_correspondence_impact`. The REST comparison's
+`currentSourceConsistency` field accounts for 3,207,474 B, including 6,273
+complete export observations. Removing the export batch from the same explicit
+request gives 4 selected relations, zero selected document events, zero
+selected export rows and zero observed pairs: REST/MCP comparison bodies are
+4,078/6,982 B, below 2 MiB for this `<=100` source-selected input. Its
+global formal-count traversal still spans 11,932 events, so this small
+response does not qualify latency or heap for a `<=100` processed-event scope.
+REST/MCP legacy impact remains
+1,621,040/3,046,555 B because its response deliberately contains global
+formal-event issues; the 11,932-event processing scope also prevents claiming
+a qualified `<=100` comparison. MCP envelope bytes include its duplicated
+representation. These are single readbacks for scope and byte attribution,
+not latency/heap/tail acceptance. The historical larger-payload observations
+remain retained rather than reclassified as SLO failures or discarded.
+
+The continuation now counts and pages legacy decisions in SQL, projects only
+response fields, and skips unused evidence attachment hydration for impact
+preview. The catalog's confirmed alias lookup reads notes only for names on
+the displayed query page. Synthetic red/green tests prove both formerly read
+more than 1 MiB of irrelevant text and now read under 64 KiB while retaining
+the same counts, as-of filter, selected identity and decision output. No
+response field, proof qualification or raw evidence was removed. Large selected
+scopes still return complete observations; a smaller or asynchronous public
+contract for those scopes needs separate design. Controlled cold/heap/loop
+SLO, wider scale, production, and fresh browser lanes are unrun for this
+continuation.
+
 Implementation commits: `d6b9ef9` (scoped reads), `9cf1635` (cooperative snapshot
 reads), `86a6e71` (deep catalog ID pagination). The measured code head is
 `c57048932fa2fec4c227bc511baef0ffc331d6d1` for the first matrix. The final integrated
