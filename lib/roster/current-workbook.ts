@@ -3,7 +3,6 @@ import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { once } from 'node:events'
-import type { Writable } from 'node:stream'
 import { finished } from 'node:stream/promises'
 import { CURRENT_RULE_VERSION, prepareCurrentReader, readCurrentCandidate, type CurrentTitle } from './current-qualification'
 import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
@@ -19,12 +18,9 @@ function textCell(value: unknown): string | null {
 }
 export const CURRENT_HEADERS = ['序号','稳定企业标识','统一社会信用代码','现名','公布名','已确认曾用名','宁波区县','称号','首次认定','最近授予/延续资格依据','复核情况','公布对应情况','备注','可核对依据']
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
-export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, destination: string | Writable, progress: (done: number,total: number,snapshotStartedAt: string) => void) {
+export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void) {
   const generatedAt = new Date().toISOString(), year = new Date(generatedAt).getFullYear()
-  // SQLite functions must be registered before a streaming SELECT is active.
-  prepareCurrentReader(db)
-  db.exec('BEGIN')
-  const output = typeof destination === 'string' ? createWriteStream(destination) : destination
+  const output = createWriteStream(filename)
   const completed = finished(output, { cleanup: true })
   // Observe early open/write failures even before the final workbook commit.
   void completed.catch(() => {})
@@ -39,6 +35,9 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     if (output.destroyed && !output.writableFinished) await completed
   }
   try {
+    // SQLite functions must be registered before a streaming SELECT is active.
+    prepareCurrentReader(db)
+    db.exec('BEGIN')
     const keys={queries:readIdentityKeyVariants(db,'queries'),relations:readIdentityKeyVariants(db,'unassignedRelations')}
     const predicate = `with owners as materialized (select id,roster84_uscc(uscc_norm) as uscc from enterprise where uscc_norm is not null)
       select enterprise_id as id from record where title_code=@title

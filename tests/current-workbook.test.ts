@@ -4,13 +4,18 @@ import { tmpdir } from 'node:os'
 import { once } from 'node:events'
 import { Writable } from 'node:stream'
 import { randomBytes } from 'node:crypto'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, expectTypeOf, it, vi } from 'vitest'
 import ExcelJS from 'exceljs'
 import { useDb, schema as s } from '../db/client'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
 
+vi.mock('node:fs', async importOriginal => {
+  const filesystem = await importOriginal<typeof import('node:fs')>()
+  return { ...filesystem, createWriteStream: vi.fn(filesystem.createWriteStream) }
+})
+
 const fixtures: Array<() => void> = []
-afterEach(() => { for (const close of fixtures.splice(0)) close() })
+afterEach(() => { vi.mocked(createWriteStream).mockReset(); for (const close of fixtures.splice(0)) close() })
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'current-workbook-146-'))
   const db = useDb({ dbPath: join(dir, 'synthetic.db') })
@@ -25,13 +30,34 @@ function candidate(db: ReturnType<typeof useDb>, name: string, group: 'eligible'
   return enterprise.id
 }
 
-it('writes an empty four-sheet workbook to an explicit sink and waits for its finish', async () => {
+it.each([{ autoDestroy: false }, { emitClose: false }])('rejects non-filename destinations before opening a read transaction %j', async options => {
+  expectTypeOf<Parameters<typeof writeCurrentWorkbook>[2]>().toEqualTypeOf<string>()
+  const { db } = fixture()
+  const sink = new Writable({ ...options, write(_chunk, _encoding, callback) { callback() } })
+  const operation = writeCurrentWorkbook(db.$client, 'little_giant', sink as never, () => {}).then(result => ({ result }), error => ({ error }))
+  let timer: ReturnType<typeof setTimeout>
+  try {
+    const outcome = await Promise.race([operation, new Promise(resolve => { timer = setTimeout(() => resolve('pending after finish'), 200) })])
+    expect(outcome).toEqual({ error: expect.any(TypeError) })
+    expect(db.$client.inTransaction).toBe(false)
+  } finally {
+    clearTimeout(timer!)
+    // Release the old implementation after a failed regression assertion.
+    sink.emit('close')
+    await operation
+    sink.destroy()
+  }
+})
+
+it('writes an empty four-sheet workbook to an owned file and waits for its close', async () => {
   const { db, file } = fixture()
   const sink = createWriteStream(file, { highWaterMark: 1 })
   await once(sink, 'open')
   fixtures.unshift(() => sink.destroy())
-  const result = await writeCurrentWorkbook(db.$client, 'little_giant', sink, () => {})
+  vi.mocked(createWriteStream).mockReturnValueOnce(sink)
+  const result = await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
   expect(sink.writableFinished).toBe(true)
+  expect(sink.closed).toBe(true)
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.load(readFileSync(file) as any)
   expect(workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '待确认', '排除明细', '口径说明'])
@@ -79,25 +105,22 @@ it('preserves text identities, Chinese newlines, formula-looking strings and gro
   }
 })
 
-it('paces a slow sink across all three groups without collecting a worksheet behind another ZIP entry', async () => {
+it('paces slow filesystem writes across all three groups without collecting a worksheet behind another ZIP entry', async () => {
   const { db, file } = fixture()
   db.transaction(() => {
     for (let index = 0; index < 1200; index++) candidate(db, randomBytes(1536).toString('base64'), (['pending','eligible','excluded'] as const)[index % 3]!, 'SYNTHETIC-' + index)
   })
-  const target = createWriteStream(file)
-  await once(target, 'open')
   let peakQueued = 0, writes = 0
-  const sink = new Writable({
+  const sink = createWriteStream(file, {
     highWaterMark: 1024,
-    write(chunk, encoding, callback) {
-      peakQueued = Math.max(peakQueued, this.writableLength); writes++
-      setTimeout(() => target.write(chunk, encoding, callback), 2)
-    },
-    final(callback) { target.end(callback) },
-    destroy(error, callback) { target.destroy(); callback(error) },
+    fs: { open, close, write(fd, buffer, offset, length, position, callback) {
+      peakQueued = Math.max(peakQueued, sink.writableLength); writes++
+      setTimeout(() => write(fd, buffer, offset, length, position, callback), 2)
+    } },
   })
+  vi.mocked(createWriteStream).mockReturnValueOnce(sink)
   const progress: number[] = []
-  const result = await writeCurrentWorkbook(db.$client, 'little_giant', sink, done => progress.push(done))
+  const result = await writeCurrentWorkbook(db.$client, 'little_giant', file, done => progress.push(done))
   expect(sink.writableFinished).toBe(true)
   expect(writes).toBeGreaterThan(20)
   // One row may cross a compressor batch; a slow disk must not queue an entire sheet.
@@ -115,7 +138,7 @@ it('paces a slow sink across all three groups without collecting a worksheet beh
   }
 }, 30000)
 
-it('survives short filesystem writes and rejects final sink commit errors', async () => {
+it('survives short filesystem writes and rejects final file close errors', async () => {
   const { db, file } = fixture()
   candidate(db, '短写仍完整')
   let writes = 0
@@ -123,13 +146,17 @@ it('survives short filesystem writes and rejects final sink commit errors', asyn
     writes++
     write(fd, buffer, offset, Math.min(length, 17), position, callback)
   } } })
-  await writeCurrentWorkbook(db.$client, 'little_giant', sink, () => {})
+  vi.mocked(createWriteStream).mockReturnValueOnce(sink)
+  await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
   expect(workbook.getWorksheet('有效企业')!.getCell('D2').value).toBe('短写仍完整')
   expect(writes).toBeGreaterThan(100)
-  const broken = new Writable({ write(_chunk, _encoding, callback) { callback() }, final(callback) { callback(new Error('synthetic commit failure')) } })
-  await expect(writeCurrentWorkbook(db.$client, 'little_giant', broken, () => {})).rejects.toThrow('synthetic commit failure')
+  const broken = createWriteStream(file, { fs: { open, write, close(fd, callback) {
+    close(fd, error => callback(error ?? new Error('synthetic commit failure')))
+  } } })
+  vi.mocked(createWriteStream).mockReturnValueOnce(broken)
+  await expect(writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})).rejects.toThrow('synthetic commit failure')
   expect(broken.destroyed).toBe(true)
   expect(db.$client.inTransaction).toBe(false)
 })
@@ -147,15 +174,18 @@ it('accepts the cell character limit and rejects the next character without leav
   expect(db.$client.inTransaction).toBe(false)
 })
 
-it('rejects write errors and premature sink closure instead of reporting a workbook', async () => {
+it('rejects filesystem write errors and premature file closure instead of reporting a workbook', async () => {
   for (const mode of ['write-error', 'close'] as const) {
-    const { db } = fixture()
+    const { db, file } = fixture()
     candidate(db, '失败不能成功')
-    const sink = new Writable({ write(_chunk, _encoding, callback) {
-      if (mode === 'write-error') callback(new Error('synthetic disk full'))
-      else { this.destroy(); callback() }
-    } })
-    await expect(writeCurrentWorkbook(db.$client, 'little_giant', sink, () => {})).rejects.toThrow(mode === 'write-error' ? 'synthetic disk full' : /premature close/i)
+    const sink = createWriteStream(file, { fs: { open, close, write(_fd, buffer, _offset, length, _position, callback) {
+      if (mode === 'write-error') callback(new Error('synthetic disk full'), 0, buffer)
+      else { sink.destroy(); callback(null, length, buffer) }
+    } } })
+    vi.mocked(createWriteStream).mockReturnValueOnce(sink)
+    const operation = writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
+    if (mode === 'write-error') await expect(operation).rejects.toThrow('synthetic disk full')
+    else await expect(operation).rejects.toMatchObject({ code: 'ERR_STREAM_DESTROYED' })
     expect(sink.destroyed).toBe(true)
     expect(db.$client.inTransaction).toBe(false)
   }
