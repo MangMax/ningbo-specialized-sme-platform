@@ -2,7 +2,8 @@ import { useDb } from '@db'
 import { parseCsvQuery } from '~~/lib/csv'
 import { JOB_STATES, type JobState } from '~~/lib/job'
 import { ensureJobRunnerReady } from '../../utils/job-runner'
-import { DEFAULT_JOB_LIMIT, listJobs, MAX_JOB_LIMIT, toJobDto } from '../../utils/job-store'
+import { DEFAULT_JOB_LIMIT, listJobs, listJobSummaries, MAX_JOB_LIMIT } from '../../utils/job-store'
+import { jobReadProjector } from '../../utils/job-read'
 import { registerJobSpecs } from '../../utils/job-specs'
 
 /**
@@ -18,8 +19,14 @@ defineRouteMeta({
   openAPI: {
     tags: ['任务'],
     summary: '列出任务',
-    description: '按 kind / state 过滤,新的在前。只读,不需要 token。',
+    description: '按 kind / state 过滤,新的在前。不需要 token。默认 full 保留完整 params/result（凭据与宿主路径脱敏）；' +
+      'view=summary 只读取摘要列，正文按 detailUrl 获取。首次读取仍承担原有 runner 重启对账职责。',
     parameters: [
+      {
+        name: 'view', in: 'query', required: false,
+        schema: { type: 'string', enum: ['full', 'summary'], default: 'full' },
+        description: '显式 summary 不含 params/result；错误为固定提示，resultSummary.available 表示当前有可读结果（可为部分结果）。',
+      },
       {
         name: 'kind',
         in: 'query',
@@ -50,8 +57,46 @@ defineRouteMeta({
             schema: {
               type: 'object',
               properties: {
-                rows: { type: 'array', items: { type: 'object' } },
+                rows: { type: 'array', items: { type: 'object', anyOf: [
+                  { type: 'object', required: ['id', 'kind', 'state', 'params', 'result'] },
+                  { $ref: '#/components/schemas/JobSummary' },
+                ] } },
                 total: { type: 'integer', description: '过滤后的总数(不受 limit 影响)' },
+              },
+            },
+          },
+        },
+      },
+      400: { description: 'view 不是 full 或 summary，或重复指定。' },
+    },
+    $global: {
+      components: {
+        schemas: {
+          JobSummary: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['id', 'kind', 'state', 'progress', 'percent', 'error', 'createdAt', 'startedAt', 'finishedAt', 'resultSummary', 'detailUrl', 'capabilities'],
+            properties: {
+              id: { type: 'string' },
+              kind: { type: 'string' },
+              state: { type: 'string', enum: ['queued', 'running', 'done', 'failed', 'cancelled'] },
+              progress: {
+                type: 'object', required: ['done', 'total'],
+                properties: { done: { type: 'integer' }, total: { type: 'integer' } },
+              },
+              percent: { type: 'integer', minimum: 0, maximum: 100 },
+              error: { type: 'string', nullable: true, description: '有错误时固定为「任务有错误，请读取详情」；完整脱敏正文在 detailUrl。' },
+              createdAt: { type: 'string' },
+              startedAt: { type: 'string', nullable: true },
+              finishedAt: { type: 'string', nullable: true },
+              resultSummary: {
+                type: 'object', required: ['available'],
+                properties: { available: { type: 'boolean', description: '存在非 null 结果；不表示成功或完整，可能是部分结果。' } },
+              },
+              detailUrl: { type: 'string', description: 'GET 原有完整详情；无 view 或 view=full，正文不截断。' },
+              capabilities: {
+                type: 'object', required: ['cancel'],
+                properties: { cancel: { type: 'boolean', description: 'queued/running 时可请求取消；仍需原有写 token，运行中尽力而为。没有通用 retry 能力。' } },
               },
             },
           },
@@ -67,11 +112,14 @@ export default defineEventHandler((event) => {
   ensureJobRunnerReady(db)
 
   const q = getQuery(event)
+  if (q.view !== undefined && q.view !== 'full' && q.view !== 'summary') {
+    throw createError({ statusCode: 400, message: 'view 必须是 full 或 summary' })
+  }
 
   const limitRaw = Number(q.limit)
   const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? limitRaw : DEFAULT_JOB_LIMIT
 
-  const { rows, total } = listJobs(db, {
+  const query = {
     kind: parseCsvQuery(q.kind),
     // 状态不在白名单里的值**直接丢掉**(不报 400):列表是查询,拼错一个状态
     // 返回空列表比回一个 400 更符合「查询」的语义。全部丢掉时等同不筛。
@@ -79,7 +127,10 @@ export default defineEventHandler((event) => {
       (JOB_STATES as readonly string[]).includes(s),
     ),
     limit,
-  })
+  }
 
-  return { rows: rows.map(toJobDto), total }
+  if (q.view === 'summary') return listJobSummaries(db, query)
+  const { rows, total } = listJobs(db, query)
+
+  return { rows: rows.map(jobReadProjector(db)), total }
 })

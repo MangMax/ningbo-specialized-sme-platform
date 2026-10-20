@@ -43,6 +43,24 @@ export interface JobProgress {
   total: number
 }
 
+/** Explicit `view=summary` read contract. Bodies stay at the unqualified detail URL. */
+export interface JobSummaryDto {
+  id: string
+  kind: string
+  state: JobState
+  progress: JobProgress
+  percent: number
+  /** Fixed notice when an error exists; full sanitized error is in detail. */
+  error: string | null
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+  resultSummary: { available: boolean }
+  detailUrl: string
+  /** Eligibility only; cancellation still requires the existing write token. */
+  capabilities: { cancel: boolean }
+}
+
 /** 进度初值:`total` 未知或非法时按 1 算(通用任务就是 0% → 100% 两档)。 */
 export function makeProgress(done: number, total: number): JobProgress {
   const d = Number.isFinite(done) && done > 0 ? Math.floor(done) : 0
