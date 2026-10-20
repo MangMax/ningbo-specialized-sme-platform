@@ -218,21 +218,21 @@ onMounted(() => { void discoverExports() })
         </TabsList>
       </Tabs>
       <!-- 每个 Label+Select 自成一组：窄屏折行时标签不会留在上一行、控件掉到下一行 -->
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div data-testid="task-filters" class="flex flex-wrap items-center gap-2">
         <div class="flex items-center gap-2">
-          <Label for="task-state">状态</Label>
+          <Label for="task-state" class="sr-only">状态</Label>
           <Select :model-value="state" @update:model-value="navigate({ state: String($event), page: 1, job: undefined })">
-            <SelectTrigger id="task-state" class="w-36" aria-label="任务状态"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem v-for="s in JOB_STATES" :key="s" :value="s">{{ TASK_STATES[s] }}</SelectItem></SelectGroup></SelectContent>
+            <SelectTrigger id="task-state" size="sm" class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-32 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100" :data-active="state !== 'all'" aria-label="任务状态"><SelectValue /></SelectTrigger>
+            <SelectContent class="shadow-none"><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem v-for="s in JOB_STATES" :key="s" :value="s">{{ TASK_STATES[s] }}</SelectItem></SelectGroup></SelectContent>
           </Select>
         </div>
-        <NuxtLink v-if="tab === 'ocr'" to="/ocr" class="text-primary text-sm underline">识别校对入口</NuxtLink>
-        <NuxtLink v-if="tab === 'platform'" to="/comparison" class="text-primary text-sm underline">比对与核查入口</NuxtLink>
+        <Button v-if="tab === 'ocr'" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink to="/ocr">识别校对入口</NuxtLink></Button>
+        <Button v-if="tab === 'platform'" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink to="/comparison">比对与核查入口</NuxtLink></Button>
         <div v-if="tab === 'all' || tab === 'export'" class="flex min-w-0 items-center gap-2">
-          <Label for="export-title-filter" class="shrink-0">导出称号</Label>
+          <Label for="export-title-filter" class="sr-only">导出称号</Label>
           <Select :model-value="titleCode" @update:model-value="navigate({ titleCode: $event === 'all' ? undefined : String($event), page: 1, job: undefined })">
-            <SelectTrigger id="export-title-filter" class="w-full min-w-0 sm:w-56" aria-label="导出称号"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectGroup><SelectItem value="all">全部称号</SelectItem><SelectItem v-for="entry in TASK_EXPORTS" :key="entry.titleCode" :value="entry.titleCode">{{ entry.label }}</SelectItem></SelectGroup></SelectContent>
+            <SelectTrigger id="export-title-filter" size="sm" class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-48 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100" :data-active="titleCode !== 'all'" aria-label="导出称号"><SelectValue /></SelectTrigger>
+            <SelectContent class="shadow-none"><SelectGroup><SelectItem value="all">全部称号</SelectItem><SelectItem v-for="entry in TASK_EXPORTS" :key="entry.titleCode" :value="entry.titleCode">{{ entry.label }}</SelectItem></SelectGroup></SelectContent>
           </Select>
         </div>
       </div>
@@ -252,7 +252,7 @@ onMounted(() => { void discoverExports() })
       <!-- 全页唯一的 live region：受理/下载结果只在这里说一次 -->
       <p v-if="exportNotice && !job" :role="exportNotice.tone" :aria-live="exportNotice.tone === 'status' ? 'polite' : 'assertive'" data-testid="export-notice" class="text-sm break-words" :class="exportNotice.tone === 'alert' && 'text-destructive'">{{ exportNotice.text }}</p>
 
-      <Card class="min-w-0 gap-0 overflow-hidden py-0">
+      <Card class="min-w-0 gap-0 overflow-hidden py-0 shadow-none">
         <CardContent class="relative p-0">
         <TableLoadingStatus :loading="loading" kind="files" label="正在读取后台任务…" />
         <TableFailureState v-if="failed" title="任务列表加载失败" :compact="!!data" :pending="loading" :description="failureDescription" @retry="reload" />
