@@ -90,18 +90,58 @@ async function readAuthorization(candidate: string, requested: typeof params.val
     return { ok: false, answer: null }
   }
 }
+/**
+ * 一次「进入授权」的焦点请求。
+ *
+ * Reka 的折叠内容是**异步挂载**的（关闭时 `unmount-on-hide`，打开时 Presence 要
+ * 等一拍才渲染），所以「打开」之后的那一拍里模板引用还是空的 —— 焦点与滚动必须
+ * 等密钥框**真的挂上来**，而不是去猜一个延迟。这里等的就是它本身：它一出现，
+ * 这次请求就被兑现一次（聚焦 + 滚进视野）。
+ *
+ * 请求是一次性的，并且有明确的边界：
+ *  - 面板被收起 → 作废；
+ *  - 页面被卸载（离页）→ 作废；
+ *  - 读者已经把焦点移到别处 → 作废（迟到的挂载不许抢焦点）。
+ *
+ * 只有人点的入口会发起它：后台轮询永远不碰。
+ */
+let pendingKeyFocus: { origin: Element | null } | null = null
+
 // Opens the authorization form, brings it into view once and puts the cursor
 // where the key is typed. Only a person asks for this; polling never does.
 function requestAuthorization() {
+  // 记住发起时焦点在谁身上：读者若在挂载之前把焦点移走，这次请求就不该抢回来。
+  pendingKeyFocus = { origin: document.activeElement }
   authOpen.value = true
-  void nextTick(() => {
-    const input = keyField()
-    if (!input) return
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    input.focus({ preventScroll: true })
-    input.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' })
-  })
+  // 面板已经开着的时候内容早就在了：这一拍就能把焦点交出去。
+  void nextTick(() => { focusKeyField() })
 }
+
+/**
+ * 把焦点与滚动一次性交给密钥框。
+ *
+ * 密钥框还没挂上来（Reka 异步挂载）就留着请求，等它出现；面板已经收起、页面已经
+ * 卸载、或者读者已经把焦点移到别处，就作废这次请求 —— 迟到的挂载不许抢焦点。
+ */
+function focusKeyField() {
+  const pending = pendingKeyFocus
+  if (!pending) return false
+  if (!authOpen.value) { pendingKeyFocus = null; return false }
+  const input = keyField()
+  if (!input) return false // 还没挂上：等模板引用变化时再来一次
+  const active = document.activeElement
+  if (active && active !== document.body && active !== pending.origin) { pendingKeyFocus = null; return false }
+  pendingKeyFocus = null
+  input.focus({ preventScroll: true })
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  input.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' })
+  return true
+}
+// 密钥框挂上来（Reka 异步挂载）的那一刻，这次请求就被兑现掉。
+watch(keyInput, () => { focusKeyField() })
+// 面板被收起 → 这次请求作废，迟到的挂载不再抢焦点。
+watch(authOpen, (open) => { if (!open) pendingKeyFocus = null })
+
 async function submitAuthorization() {
   // 校验进行中不接受第二次提交：同一个按钮不能同时发起两把密钥的校验。
   if (checking.value) return
@@ -109,13 +149,24 @@ async function submitAuthorization() {
   // 都不得改写它们。
   const candidate = draft.value.trim()
   const requested = params.value
-  await verify(candidate, signal => readAuthorization(candidate, requested, signal))
-  // 判定只落一次；只有被拒绝才移动光标，密钥留在输入框里就地改。成功不需要移动
-  // 光标 —— 徽标与那一行状态说明了一切。
+  // 提交按钮在校验期间会被禁用，浏览器会把焦点从按钮上丢给 <body>。先记住按下
+  // 时焦点在谁身上，判定之后才知道该把它放回哪里。
+  const origin = document.activeElement as HTMLElement | null
+  const verified = await verify(candidate, signal => readAuthorization(candidate, requested, signal))
+  // 判定只落一次；只有被拒绝才移动光标，密钥留在输入框里就地改。
   if (phase.value === 'rejected' || phase.value === 'unreachable') {
     await nextTick()
     keyField()?.focus({ preventScroll: true })
+    return
   }
+  // 被作废的校验（清除，或被后一次校验顶替）没有判定可落。
+  if (!verified) return
+  // 成功：焦点没丢就保持原样；丢了（提交按钮刚才被禁用过）就放回按下时的那一个 ——
+  // 键盘位置不会凭空消失，也不会落到 <body> 上让人从头 Tab 一遍。
+  await nextTick()
+  const active = document.activeElement
+  if (active && active !== document.body) return
+  if (origin && origin !== document.body && origin.isConnected) origin.focus({ preventScroll: true })
 }
 
 const exportRoutes = ref<Partial<Record<TaskExportTitle, boolean>>>({})
@@ -263,7 +314,7 @@ onMounted(() => {
 // Leaving the page is the end of the credential, not just of the check: an
 // unmount drops the in-memory key, invalidates the pending verdict and aborts
 // the read that was still on the wire.
-onBeforeUnmount(() => { clear(); window.removeEventListener('pagehide', clear) })
+onBeforeUnmount(() => { clear(); window.removeEventListener('pagehide', clear); pendingKeyFocus = null })
 </script>
 <template>
   <div class="flex min-w-0 flex-col gap-4">
@@ -387,7 +438,9 @@ onBeforeUnmount(() => { clear(); window.removeEventListener('pagehide', clear) }
     <!-- 一次性说明与“开始新任务”的入口下沉到列表之后，且默认收起 -->
     <div class="flex flex-col gap-2">
       <p class="text-muted-foreground text-xs">OCR 包含识别与 PDF 转图；工信部平台包含批量查询与核查。每个类型仅归一组；其他类型保留在全部任务中。</p>
-      <DisclosurePanel v-if="tab === 'export' || tab === 'all'" v-model:open="exportOpen">
+      <!-- 这两块折叠是页面级区块，与「任务列表」「任务详情」那两个 h2 平级：
+           它们的标题也是 h2（h2 > button），不是默认的 h3。 -->
+      <DisclosurePanel v-if="tab === 'export' || tab === 'all'" v-model:open="exportOpen" :heading-level="2">
         <template #trigger><span class="text-sm">发起新的名录导出</span><Badge v-if="!authorized" variant="outline">只读</Badge></template>
         <section aria-label="提交名录导出" class="flex flex-col gap-3">
           <p class="text-muted-foreground text-sm">按执行时固定的数据快照生成，不发起平台采集。产物保留 7 天；重新生成请在原任务详情操作。</p>
@@ -403,7 +456,7 @@ onBeforeUnmount(() => { clear(); window.removeEventListener('pagehide', clear) }
           <Button v-if="discoveryFailed" variant="outline" class="self-start" :disabled="discovering" @click="discoverExports">重新发现导出能力</Button>
         </section>
       </DisclosurePanel>
-      <DisclosurePanel v-model:open="authOpen">
+      <DisclosurePanel v-model:open="authOpen" :heading-level="2">
         <template #trigger><span class="text-sm">管理操作授权</span><Badge :variant="authorized ? 'secondary' : 'outline'" data-testid="auth-badge-inline">{{ authorized ? '已授权' : '只读' }}</Badge></template>
         <form class="flex flex-col gap-3" @submit.prevent="submitAuthorization">
           <div class="flex flex-wrap items-end gap-2">

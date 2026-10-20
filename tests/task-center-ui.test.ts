@@ -415,6 +415,25 @@ function checkingLabel(wrapper: Wrapper) {
 }
 
 /**
+ * Wait until the key field is really in the DOM.
+ *
+ * Reka mounts an accordion's content on a later tick (`unmount-on-hide` + the
+ * Presence render), so the field only exists from then on — a person pressing
+ * "进入授权" must be answered after that, not one tick after the click.
+ */
+async function waitForKeyField(wrapper: Wrapper) {
+  for (let attempt = 0; attempt < 20 && !wrapper.find('#task-key').exists(); attempt++) await flushPromises()
+  return wrapper.find('#task-key')
+}
+
+/** Record what the page scrolled into view (happy-dom has no layout). */
+function trackScrolledIntoView(): Element[] {
+  const scrolled: Element[] = []
+  HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) { scrolled.push(this) }
+  return scrolled
+}
+
+/**
  * Press the form's submit button the way a person does.
  *
  * `element.click()` runs the button's activation behaviour, so the browser's own
@@ -1118,6 +1137,16 @@ describe('标题层级', () => {
     const technical = headings.find(heading => heading.text === '核对信息')
     expect(technical?.level).toBe(3)
     expect(headings.some(heading => heading.level === 2 && heading.text === '任务详情')).toBe(true)
+    // The two page-level panels stand next to those h2 regions, not inside one:
+    // their heading is an h2 that **contains** the trigger — never a heading
+    // nested in the button.
+    for (const label of ['发起新的名录导出', '管理操作授权']) {
+      const panel = headings.find(heading => heading.text.startsWith(label))
+      expect(panel?.level).toBe(2)
+      const heading = Array.from(document.querySelectorAll<HTMLElement>('h2')).find(node => (node.textContent ?? '').trim().startsWith(label))!
+      expect(heading.querySelector('button')).toBeTruthy()
+      expect(heading.querySelector('button h1, button h2, button h3, button h4')).toBeNull()
+    }
     // Nothing is hidden purely to satisfy a heading detector.
     for (const id of ['task-list-heading', 'task-detail-title']) {
       expect(document.getElementById(id)!.closest('[aria-hidden="true"], .hidden')).toBeNull()
@@ -1161,5 +1190,139 @@ describe('移动端列表摘要', () => {
     expect(first).toContain('可下载')
     expect(first).toContain('1 / 1')
     expect(cards[0]!.findAll('button').some(b => /查看/.test(b.text()))).toBe(true)
+  })
+})
+
+describe('进入授权的键盘位置', () => {
+  it('第一次点「进入授权」就把密钥框滚进视野并把焦点放进去', async () => {
+    const scrolled = trackScrolledIntoView()
+    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
+    state.query = { tab: 'export' }
+    const wrapper = await mountPage({ attach: true })
+    await settle()
+    await openPanel(wrapper, /发起新的名录导出/)
+
+    const goAuthorize = wrapper.get<HTMLButtonElement>('[data-testid="go-authorize"]')
+    goAuthorize.element.focus() // a real click leaves the caret on the button
+    await goAuthorize.trigger('click')
+
+    // The panel's content is mounted by Reka on a later tick; the field only
+    // exists from then on — the focus has to follow it there.
+    const key = await waitForKeyField(wrapper)
+    await flushPromises()
+    expect(key.exists()).toBe(true)
+    expect(document.activeElement).toBe(key.element)
+    expect(scrolled).toContain(key.element)
+  })
+
+  it('读者已经移开焦点时，迟到的挂载不抢焦点', async () => {
+    const scrolled = trackScrolledIntoView()
+    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
+    state.query = { tab: 'export' }
+    const wrapper = await mountPage({ attach: true })
+    await settle()
+    await openPanel(wrapper, /发起新的名录导出/)
+
+    const goAuthorize = wrapper.get<HTMLButtonElement>('[data-testid="go-authorize"]')
+    goAuthorize.element.focus()
+    // The click is dispatched directly, so the reader can move on **before** the
+    // panel's content is mounted (Reka mounts it a tick later).
+    goAuthorize.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    const reader = document.createElement('button')
+    document.body.append(reader)
+    reader.focus()
+
+    const key = await waitForKeyField(wrapper)
+    await flushPromises()
+    expect(key.exists()).toBe(true)
+    expect(document.activeElement).toBe(reader)
+    expect(scrolled).not.toContain(key.element)
+    reader.remove()
+  })
+
+  it('读者在挂载前收起面板时，迟到的挂载不抢焦点', async () => {
+    const scrolled = trackScrolledIntoView()
+    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
+    state.query = { tab: 'export' }
+    const wrapper = await mountPage({ attach: true })
+    await settle()
+    await openPanel(wrapper, /发起新的名录导出/)
+
+    const goAuthorize = wrapper.get<HTMLButtonElement>('[data-testid="go-authorize"]')
+    goAuthorize.element.focus()
+    goAuthorize.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    const authTrigger = wrapper.findAll('button').find(button => /管理操作授权/.test(button.text()))!
+    // The accordion is open now, but Reka has not mounted its content yet — that
+    // is the window in which a late mount could still steal the focus.
+    for (let hop = 0; hop < 6 && authTrigger.attributes('aria-expanded') !== 'true'; hop++) await Promise.resolve()
+    expect(authTrigger.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('#task-key').exists()).toBe(false)
+    // The reader closes the authorization panel again before its content is mounted.
+    authTrigger.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await flushPromises()
+
+    expect(scrolled).toHaveLength(0)
+    expect(document.activeElement).toBe(goAuthorize.element)
+  })
+
+  it('离页之后迟到的挂载不抢焦点', async () => {
+    const scrolled = trackScrolledIntoView()
+    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(false))
+    state.query = { tab: 'export' }
+    const wrapper = await mountPage({ attach: true })
+    await settle()
+    await openPanel(wrapper, /发起新的名录导出/)
+
+    const goAuthorize = wrapper.get<HTMLButtonElement>('[data-testid="go-authorize"]')
+    goAuthorize.element.focus()
+    goAuthorize.element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    // The person leaves the page before the panel's content is mounted.
+    mounted.splice(0).forEach(leaving => leaving.unmount())
+    wrapper.unmount()
+    await flushPromises()
+    await flushPromises()
+
+    expect(scrolled).toHaveLength(0)
+  })
+
+  it('授权成功后焦点留在提交按钮上，不掉进 <body>', async () => {
+    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(lastAuthorization() === 'Bearer right-key'))
+    const wrapper = await mountPage({ attach: true })
+    await openPanel(wrapper, /管理操作授权/)
+    await wrapper.get('#task-key').setValue('right-key')
+
+    const submit = wrapper.get<HTMLButtonElement>('form button[type="submit"]').element
+    submit.focus()
+    pressSubmit(wrapper)
+    // The browser takes the caret away when the button becomes disabled while
+    // the key is being verified; the page has to put it back.
+    submit.blur()
+    expect(document.activeElement).toBe(document.body)
+
+    await waitForVerdict(wrapper)
+    await settle()
+    expect(wrapper.text()).toContain('已授权')
+    expect(document.activeElement).toBe(submit)
+  })
+
+  it('重新授权不抢走读者自己的焦点', async () => {
+    installFetch(({ url }) => url.startsWith('/api/roster/exports/current/capabilities') ? capabilities : listRead(lastAuthorization() === 'Bearer right-key'))
+    const wrapper = await mountPage({ attach: true })
+    await openPanel(wrapper, /管理操作授权/)
+    await wrapper.get('#task-key').setValue('right-key')
+
+    const reader = document.createElement('button')
+    document.body.append(reader)
+    reader.focus()
+    // The reader submits from somewhere else entirely: the verdict must not
+    // move the caret.
+    await wrapper.get('form').trigger('submit')
+    await waitForVerdict(wrapper)
+    await settle()
+
+    expect(wrapper.text()).toContain('已授权')
+    expect(document.activeElement).toBe(reader)
+    reader.remove()
   })
 })
