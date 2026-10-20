@@ -115,6 +115,13 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => {
     headers[name] = value
   })
+  // Collect the real ZIP producer, as the HTTP response consumes sendStream.
+  // Existing workbook assertions below still parse every exported byte.
+  vi.stubGlobal('sendStream', async (_event: unknown, stream: AsyncIterable<Uint8Array>) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+    return Buffer.concat(chunks)
+  })
   vi.stubGlobal('createError', (opts: { statusMessage?: string; statusCode?: number }) =>
     Object.assign(new Error(opts.statusMessage ?? 'Bad request'), opts),
   )
