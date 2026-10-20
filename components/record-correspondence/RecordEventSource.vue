@@ -8,7 +8,6 @@ import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES } from '~~/lib/labels'
 import { evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import { fileUrl, fileNameOf, isPreviewable } from '~~/lib/preview'
 import SourceReader from './SourceReader.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -143,10 +142,7 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
             </div>
             <p class="text-muted-foreground mt-0.5">平台查询状态 {{ relationStatus(edge) }} · 原办理状态 {{ edge.relation?.status ?? '未提供' }}</p>
             <p v-if="edge.relation?.nameRaw" class="mt-0.5 break-words">原行名称：{{ edge.relation.nameRaw }}</p>
-            <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground mt-0.5">
-              <template #trigger><span>原行字段与查询条件</span></template>
-              <p>{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p>
-            </DisclosurePanel>
+            <p class="text-muted-foreground mt-0.5">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p>
             <Button variant="ghost" size="sm" class="mt-1 h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
           </li>
         </ul>
@@ -159,10 +155,7 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
         <li v-for="edge in groups.candidates" :key="edge.id" class="flex flex-wrap items-center gap-2">
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
-          <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground">
-            <template #trigger><span>原行字段与查询条件</span></template>
-            <p>{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p>
-          </DisclosurePanel>
+          <p class="text-muted-foreground">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p>
           <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
         </li>
       </ul>
@@ -175,10 +168,7 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
         <li v-for="edge in groups.revalidation" :key="edge.id" class="flex flex-wrap items-center gap-2">
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
-          <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground">
-            <template #trigger><span>原行字段与查询条件</span></template>
-            <p>{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p>
-          </DisclosurePanel>
+          <p class="text-muted-foreground">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p>
           <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
         </li>
       </ul>
@@ -191,35 +181,35 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
         <li v-for="edge in groups.currentContext" :key="edge.id" class="flex flex-wrap items-center gap-2">
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
-          <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground">
-            <template #trigger><span>原行字段与查询条件</span></template>
-            <p>{{ relationMeta(edge) }}</p>
-          </DisclosurePanel>
+          <p class="text-muted-foreground">{{ relationMeta(edge) }}</p>
           <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" @click="openSource(edge)">查看原始记录</Button>
         </li>
       </ul>
     </div>
 
-    <DisclosurePanel v-if="groups.history.length" compact content-class="pb-0" class="text-[13px]" data-testid="event-match-history" :title="`匹配历史 · ${groups.history.length} 条（已拒绝 / 已解除，不计为出处）`">
+    <section v-if="groups.history.length" class="border-t pt-3 text-[13px]" data-testid="event-match-history">
+      <h5 class="font-medium">匹配历史 · {{ groups.history.length }} 条</h5>
+      <p class="text-muted-foreground mt-0.5">已拒绝 / 已解除，不计为出处。</p>
       <ul class="mt-2 flex flex-col gap-1.5">
-        <li v-for="edge in groups.history" :key="edge.id" class="flex flex-wrap items-center gap-2 border-t pt-1.5">
+        <li v-for="edge in groups.history" :key="edge.id" class="flex flex-wrap items-center gap-2">
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
           <span class="text-muted-foreground">{{ relationMeta(edge) }}</span>
           <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
         </li>
       </ul>
-    </DisclosurePanel>
+    </section>
 
-    <DisclosurePanel v-if="otherEdges.length" compact content-class="pb-0" class="text-[13px]" :title="`其他登记关系 · ${otherEdges.length} 条`">
+    <section v-if="otherEdges.length" class="border-t pt-3 text-[13px]">
+      <h5 class="font-medium">其他登记关系 · {{ otherEdges.length }} 条</h5>
       <ul class="mt-2 flex flex-col gap-1.5">
-        <li v-for="edge in otherEdges" :key="edge.id" class="flex flex-wrap items-center gap-2 border-t pt-1.5">
+        <li v-for="edge in otherEdges" :key="edge.id" class="flex flex-wrap items-center gap-2">
           <span>{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
           <span class="text-muted-foreground">{{ relationMeta(edge) }}</span>
         </li>
       </ul>
-    </DisclosurePanel>
+    </section>
 
     <p v-if="!hasEitherSide" class="text-muted-foreground">这条事件目前没有已登记的两侧出处；这不表示公布文件或平台没有记录。</p>
 

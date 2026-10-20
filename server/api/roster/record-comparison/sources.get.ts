@@ -8,7 +8,7 @@ defineRouteMeta({ openAPI: { tags: ['名录'], summary: '记录级对比来源�
   { name: 'ids', in: 'query', schema: { type: 'array', maxItems: 500, items: { type: 'integer', minimum: 1 } }, description: '可选：同 kind 的显式来源 ID，供恢复所选名称；不扫描其他目录页。' },
   { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
   { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 50, maximum: 200 } },
-], responses: { 200: { description: 'rows[{kind,id,label,subtitle,titleCode,titleName,observedAt,status,selectable,...}]、total、counts、page、pageSize；ID 与对比接口入参直接对应。' }, 400: { description: '筛选或分页非法。' } } } })
+], responses: { 200: { description: 'rows[{kind,id,label,subtitle,titleCode,titleName,observedAt,status,selectable,...}]、total、counts、page、pageSize；ID 与对比接口入参直接对应。平台查询行增量返回 confirmedEnterprises[{relationId,sequenceNo,enterpriseId,enterpriseName,nameRaw,matchBasis,aliasConfirmed,mergedFromEnterpriseId}] 与 recordNames[]：仅取本页 query IDs 的已确认 platform_relation 企业，保留一对多与原行名称；recordNames 是未确认关系的平台原行名称，不冒充正式企业名。' }, 400: { description: '筛选或分页非法。' } } } })
 export default defineEventHandler(async event => {
   setHeader(event, 'cache-control', 'no-store')
   const query = getQuery(event)

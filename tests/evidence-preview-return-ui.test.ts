@@ -35,7 +35,10 @@ const DETAIL_OPEN_EVIDENCE_STATE_KEY = 'roster:enterprise-detail-open-evidence'
 vi.mock('@pinia/colada', async () => {
   const { ref } = await import('vue')
   return {
-    useQuery: () => {
+    useQuery: (options: { key: () => unknown[] }) => {
+      if (options.key()[0] !== 'roster-enterprise') {
+        return { data: ref({ rows: [], nextCursor: null }), isLoading: ref(false), error: ref(null), refetch: vi.fn() }
+      }
       const data = ref<unknown>(mocks.detail)
       const isLoading = ref(mocks.loading)
       mocks.setDetail = (value) => (data.value = value)
@@ -115,6 +118,15 @@ let currentRoute: Record<string, unknown>
 let capturedPageMeta: Record<string, unknown>
 let openedTitleRowPath = ''
 
+// The detail page imports router composables explicitly; keep the route fixture
+// shared with the roster harness instead of relying on Nuxt auto-import globals.
+vi.mock('vue-router', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-router')>(),
+  useRoute: () => currentRoute,
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  onBeforeRouteLeave: vi.fn(),
+}))
+
 const NuxtLinkStub = {
   props: ['to'],
   template:
@@ -146,6 +158,10 @@ const globalStubs = {
   CollapsibleContent: { template: '<div><slot /></div>' },
   CollapsibleTrigger: { template: '<button><slot /></button>' },
   Skeleton: true,
+  // This suite controls animation frames to assert scroll restoration. Tab
+  // entrance/indicator animations are unrelated and would consume those frames.
+  TabsContent: { template: '<div><slot /></div>' },
+  TabsTrigger: { template: '<button><slot /></button>' },
 }
 
 const passThrough = (tag: string) =>

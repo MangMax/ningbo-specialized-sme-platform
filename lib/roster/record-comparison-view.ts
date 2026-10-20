@@ -117,5 +117,5 @@ export function instantFromLocalDateTime(local: string, unchangedInstant = ''): 
 }
 export function sourceSelectionKey(kind: ComparisonSourceKind): keyof ComparisonSelection {
   const keys: Record<ComparisonSourceKind, keyof ComparisonSelection> = { query: 'queryIds', export_batch: 'exportBatchIds', official_document: 'officialSourceDocumentIds' }
-  return keys[kind]
+  return keys[kind]!
 }

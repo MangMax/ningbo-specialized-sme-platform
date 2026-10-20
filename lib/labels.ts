@@ -500,8 +500,8 @@ export const COMPARISON_HINTS = {
   extra_in_miit: `在${SOURCES.miit}、不在${SOURCES.jxj}`,
 } as const
 export const COMPARISON_OTHER_SIDE = {
-  missing_in_miit: `${SOURCES.miit}无匹配统代`,
-  extra_in_miit: `${SOURCES.jxj}无匹配统代`,
+  missing_in_miit: `${SOURCES.miit}无匹配统一社会信用代码`,
+  extra_in_miit: `${SOURCES.jxj}无匹配统一社会信用代码`,
 } as const
 export const COMPARISON_NO_USCC = '无统代,另一侧无可匹配身份'
 

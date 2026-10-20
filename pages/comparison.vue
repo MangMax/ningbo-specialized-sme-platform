@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import ComparisonExplanation from '@/components/evidence-review/ComparisonExplanation.vue'
+import EvidenceReviewList from '@/components/evidence-review/EvidenceReviewList.vue'
 import { useQuery, useQueryCache } from '@pinia/colada'
-import { computed, nextTick, shallowRef, watch } from 'vue'
+import { computed, nextTick, provide, shallowRef, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { GitCompareArrows, Search } from '@lucide/vue'
 import type {
   ComparisonCounts,
@@ -47,6 +50,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import RecordComparisonPanel from '@/components/record-correspondence/RecordComparisonPanel.vue'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { REVIEW_DRAFTS_KEY, useReviewDrafts } from '~/composables/useReviewDrafts'
 
 definePageMeta({
   // 同一页内的分类 / 翻页是「换结果」而不是「换页面」：保留滚动位置，
@@ -58,8 +63,47 @@ definePageMeta({
 
 const route = useRoute()
 const router = useRouter()
-const mode = computed(() => route.query.mode === 'legacy' ? 'legacy' : 'record')
+const mode = computed(() => route.query.mode === 'review' ? 'review' : route.query.mode === 'legacy' ? 'legacy' : 'record')
 function setMode(value: string) { void router.push({ path: '/comparison', query: { ...route.query, mode: value } }) }
+
+/**
+ * 待复核队列的未提交草稿由本页（route 组件）持有：队列卸载时草稿仍能按
+ * 条目保存；只有本页整体离开或同页切走 review 才需要确认。
+ *
+ * `onBeforeRouteLeave` 必须注册在 route 组件这一层：嵌套普通组件里的同名
+ * hook 依赖 RouterView 注入的 matched record，跨层时可能根本注册不上。
+ */
+const reviewDrafts = useReviewDrafts()
+provide(REVIEW_DRAFTS_KEY, reviewDrafts)
+const pendingLeave = shallowRef<string | null>(null)
+/** 子级（收起/换条目/筛选…）已有确认框时，路由守卫只取消导航，不再叠第二个 dialog。 */
+const childDraftGuardOpen = shallowRef(false)
+const bypassLeaveGuard = shallowRef(false)
+
+function requestReviewLeave(target: string): boolean {
+  if (bypassLeaveGuard.value || !reviewDrafts.hasDirty.value) return true
+  if (pendingLeave.value || childDraftGuardOpen.value) return false
+  pendingLeave.value = target
+  return false
+}
+onBeforeRouteLeave(to => requestReviewLeave(to.fullPath))
+onBeforeRouteUpdate((to) => {
+  // 同页筛选/翻页会写回 query，但 review 仍挂载，草稿不会丢：不拦。
+  if (mode.value !== 'review' || to.query.mode === 'review') return true
+  return requestReviewLeave(to.fullPath)
+})
+function continueReviewDraft() {
+  pendingLeave.value = null
+}
+function discardReviewDraftAndLeave() {
+  const target = pendingLeave.value
+  pendingLeave.value = null
+  if (!target) return
+  // 明确丢弃才执行原导航；业务草稿随内存删除，不写 Web Storage。
+  reviewDrafts.discardAll()
+  bypassLeaveGuard.value = true
+  void router.push(target).finally(() => { bypassLeaveGuard.value = false })
+}
 
 const COMPARISON_DIRECTIONS = Object.keys(
   COMPARISON_LABELS,
@@ -117,7 +161,7 @@ const activeRequest = computed(() => captureQueryRequest('comparison', params.va
 useHead({
   title: computed(
     () =>
-      mode.value === 'record' ? '记录级对比 · 正式事件与平台原行' : `兼容旧结果 · ${TITLES[title.value] ?? title.value} · ${
+      mode.value === 'review' ? '待复核队列' : mode.value === 'record' ? '记录级对比 · 正式事件与平台原行' : `旧版比对 · ${TITLES[title.value] ?? title.value} · ${
         COMPARISON_LABELS[direction.value] ?? direction.value
       }`,
   ),
@@ -204,13 +248,14 @@ const exportUrl = computed(() => {
 
 <template>
   <div class="flex min-w-0 flex-col gap-3">
-    <Tabs :model-value="mode" @update:model-value="setMode(String($event))"><TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="比对口径"><TabsTrigger value="record">记录级对比</TabsTrigger><TabsTrigger value="legacy">兼容旧结果</TabsTrigger></TabsList></Tabs>
+    <Tabs :model-value="mode" @update:model-value="setMode(String($event))"><TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="比对口径"><TabsTrigger value="record">记录级对比</TabsTrigger><TabsTrigger value="legacy">旧版比对</TabsTrigger><TabsTrigger value="review">待复核队列</TabsTrigger></TabsList></Tabs>
     <RecordComparisonPanel v-if="mode === 'record'" />
+    <EvidenceReviewList v-else-if="mode === 'review'" sync-query @guard-open="childDraftGuardOpen = $event" />
   <div v-else class="comparison-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader
-      title="兼容旧结果 · 两侧名录比对"
+      title="旧版比对 · 两侧名录对照"
     >
-      <template #description>旧结果按企业×称号集合差展示，保留原核实与备注；不作为记录级事件结论。</template>
+      <template #description>按企业 × 称号对照公布文件与平台导出；保留原核实与备注，不作为记录级事件结论。</template>
       <template #actions>
         <div class="flex items-center gap-2">
           <Switch id="show-curated" v-model="showCurated" class="shadow-none" />
@@ -337,10 +382,10 @@ const exportUrl = computed(() => {
                         <TableHead :class="[TH_CLASS, 'hidden w-[108px] sm:table-cell']"
                           >另一侧状态</TableHead
                         >
-                        <TableHead :class="[TH_CLASS, 'hidden w-[140px] sm:table-cell']">
+                        <TableHead :class="[TH_CLASS, 'hidden w-[200px] sm:table-cell']">
                           平台解释
                         </TableHead>
-                        <TableHead :class="[TH_CLASS, 'hidden w-[250px] sm:table-cell']">
+                        <TableHead :class="[TH_CLASS, 'hidden w-[230px] sm:table-cell']">
                           平台记录
                         </TableHead>
                         <TableHead :class="[TH_CLASS, 'hidden w-[190px] sm:table-cell']">核实与备注</TableHead>
@@ -400,7 +445,7 @@ const exportUrl = computed(() => {
                           COMPARISON_OTHER_SIDE[row.direction]
                         }}</TableCell>
                         <TableCell class="hidden sm:table-cell">
-                          <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
+                          <ComparisonExplanation :enterprise-id="row.enterpriseId" :title-code="row.titleCode" :direction="row.direction" />
                         </TableCell>
                         <TableCell class="hidden sm:table-cell">
                           <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />
@@ -410,10 +455,9 @@ const exportUrl = computed(() => {
                         </TableCell>
                         <TableCell colspan="6" class="whitespace-normal sm:hidden">
                           <div class="flex min-w-0 flex-col gap-1" data-testid="comparison-mobile-details">
-                            <div class="border-b border-border/50 pb-1 text-[13px] leading-5" data-testid="comparison-mobile-status-divider">
+                            <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-border/50 pb-1 text-[13px] leading-5" data-testid="comparison-mobile-status-divider">
                               <span class="text-muted-foreground">{{ COMPARISON_OTHER_SIDE[row.direction] }}</span>
-                              <span class="text-muted-foreground px-1">·</span>
-                              <ComparisonReconcile :disposition="row.platform.disposition" :explanation="row.explanation" />
+                              <ComparisonExplanation :enterprise-id="row.enterpriseId" :title-code="row.titleCode" :direction="row.direction" />
                             </div>
                             <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />
                             <ComparisonCuration :row="row" :compact="true" @saved="refreshCuration" />
@@ -446,6 +490,19 @@ const exportUrl = computed(() => {
       </div>
     </div>
   </div>
+
+  <Dialog :open="pendingLeave !== null" @update:open="value => { if (!value) pendingLeave = null }">
+    <DialogContent data-testid="comparison-draft-leave-dialog" class="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle>离开会丢弃未提交内容</DialogTitle>
+        <DialogDescription>复核依据或更正内容还没提交；离开这一页会丢失。</DialogDescription>
+      </DialogHeader>
+      <DialogFooter>
+        <Button variant="outline" @click="continueReviewDraft">继续填写</Button>
+        <Button @click="discardReviewDraftAndLeave">离开并丢弃</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
   </div>
 </template>
 

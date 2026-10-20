@@ -1,0 +1,134 @@
+{
+  "generatedFrom": "0ceb918:server/utils/decision-lifecycle-102.ts (schema lines 11-42)",
+  "fixtures": [
+    {
+      "name": "replace-minimal",
+      "command": {
+        "enterpriseId": 710001,
+        "titleCode": "specialized_sme",
+        "direction": "missing_in_miit",
+        "action": "replace",
+        "expectedCurrentId": null,
+        "idempotencyKey": "pre-browser-replace-minimal",
+        "actor": {
+          "type": "agent",
+          "id": "historical-agent"
+        },
+        "basis": "historical basis",
+        "ruleVersion": "historical-rule",
+        "effectiveAt": "2026-10-19T00:00:00Z",
+        "decision": {
+          "status": "needs_review",
+          "measureCode": "manual_review",
+          "verificationStatus": "pending"
+        }
+      },
+      "hash": "665ced0124d0ca4a0041fc039abb1539a17eeb7f8ea2da1e29501410f5cc2e46"
+    },
+    {
+      "name": "replace-nested-null",
+      "command": {
+        "enterpriseId": 710002,
+        "titleCode": "specialized_sme",
+        "direction": "missing_in_miit",
+        "action": "replace",
+        "expectedCurrentId": null,
+        "idempotencyKey": "pre-browser-replace-nested-null",
+        "actor": {
+          "type": "agent",
+          "id": "historical-agent"
+        },
+        "basis": "historical basis",
+        "ruleVersion": "historical-rule",
+        "effectiveAt": "2026-10-19T00:00:00Z",
+        "decision": {
+          "status": "needs_review",
+          "reasonCode": null,
+          "reasonNote": "historical note",
+          "measureCode": "manual_review",
+          "measureNote": null,
+          "evidenceQueryId": null,
+          "evidenceRelationId": null,
+          "verificationStatus": "pending",
+          "movedIn": {
+            "city": "Ningbo",
+            "titleCode": null,
+            "year": 2020,
+            "batch": null
+          }
+        }
+      },
+      "hash": "32caf296ca30dda35543b280d1612b520ce1df270d3a64260d1123ba1eb31665"
+    },
+    {
+      "name": "maintain",
+      "command": {
+        "enterpriseId": 710003,
+        "titleCode": "specialized_sme",
+        "direction": "missing_in_miit",
+        "action": "maintain",
+        "expectedCurrentId": null,
+        "idempotencyKey": "pre-browser-maintain",
+        "actor": {
+          "type": "agent",
+          "id": "historical-agent"
+        },
+        "basis": "historical basis",
+        "ruleVersion": "historical-rule",
+        "effectiveAt": "2026-10-19T00:00:00Z",
+        "reviewedEvidence": {
+          "latestRevisionId": 98765,
+          "projectionReady": true
+        }
+      },
+      "hash": "4d78814cacf1fda8e368cf99aaee7917ecaee3f61b6f2d79da92fe1f8023eb71"
+    },
+    {
+      "name": "review-replace",
+      "command": {
+        "enterpriseId": 710004,
+        "titleCode": "specialized_sme",
+        "direction": "missing_in_miit",
+        "action": "replace",
+        "expectedCurrentId": null,
+        "idempotencyKey": "pre-browser-review-replace",
+        "actor": {
+          "type": "agent",
+          "id": "historical-agent"
+        },
+        "basis": "historical basis",
+        "ruleVersion": "historical-rule",
+        "effectiveAt": "2026-10-19T00:00:00Z",
+        "decision": {
+          "status": "needs_review",
+          "measureCode": "manual_review",
+          "verificationStatus": "pending"
+        },
+        "reviewedEvidence": {
+          "latestRevisionId": 98765,
+          "projectionReady": true
+        }
+      },
+      "hash": "0d7907105e39fe6c78adf0db1d1c248d426319fd58e2df1dd19a9081acee438f"
+    },
+    {
+      "name": "withdraw",
+      "command": {
+        "enterpriseId": 710005,
+        "titleCode": "specialized_sme",
+        "direction": "missing_in_miit",
+        "action": "withdraw",
+        "expectedCurrentId": null,
+        "idempotencyKey": "pre-browser-withdraw",
+        "actor": {
+          "type": "agent",
+          "id": "historical-agent"
+        },
+        "basis": "historical basis",
+        "ruleVersion": "historical-rule",
+        "effectiveAt": "2026-10-19T00:00:00Z"
+      },
+      "hash": "24b3ed41efbb7f661dc69770bc275941ee6018f8f96675e4537c1abbcad07d51"
+    }
+  ]
+}

@@ -837,7 +837,8 @@ export const differenceReason = sqliteTable(
     /** #102: explicit lifecycle metadata; null denotes a historical import, never an inferred decision. */
     lifecycleAction: text('lifecycle_action', { enum: ['replace', 'withdraw'] }),
     previousId: integer('previous_id').references((): AnySQLiteColumn => differenceReason.id),
-    actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>(),
+    /** #108: a browser review genuinely has no recorded actor; null is not a placeholder identity. */
+    actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string } | null>(),
     basis: text('basis'),
     ruleVersion: text('rule_version'),
     effectiveAt: text('effective_at'),
@@ -1161,7 +1162,8 @@ export const evidenceReviewReceipt114 = sqliteTable('evidence_review_receipt_114
   id: integer('id').primaryKey({ autoIncrement: true }),
   idempotencyKey: text('idempotency_key').notNull().unique(), requestHash: text('request_hash').notNull(), kind: text('kind').notNull(),
   enterpriseId: integer('enterprise_id'), titleCode: text('title_code'), direction: text('direction'), decisionId: integer('decision_id'), sourceDecisionId: integer('source_decision_id'), reviewedRevisionId: integer('reviewed_revision_id'),
-  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(), basis: text('basis').notNull(), ruleVersion: text('rule_version'), effectiveAt: text('effective_at'),
+  // JSON null is stored as the non-NULL text 'null'; it means "not recorded", never a synthetic actor.
+  actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string } | null>().notNull(), basis: text('basis').notNull(), ruleVersion: text('rule_version'), effectiveAt: text('effective_at'),
   response: text('response', { mode: 'json' }).$type<Record<string, unknown>>().notNull(), recordedAt: text('recorded_at').notNull(),
 }, t => [index('evidence_review_scope_114_idx').on(t.enterpriseId, t.titleCode, t.direction, t.decisionId, t.id), index('evidence_review_decision_114_idx').on(t.decisionId,t.id), index('evidence_review_source_decision_114_idx').on(t.sourceDecisionId,t.id)])
 /** Pins even unchanged explicit rule evaluations, so versions cannot be silently redefined. */

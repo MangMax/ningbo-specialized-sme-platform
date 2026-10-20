@@ -76,7 +76,11 @@ const visibleAliasesByEnterpriseId = computed(() => new Map(
 function differenceStatusText(row: EnterpriseListRow): string {
   const d = row.difference
   if (!d.count || d.status == null) return DIFF_STATUS_NONE_LABEL
-  return differenceReason(row) || DIFFERENCE_STATUSES[d.status] || d.status
+  const status = DIFFERENCE_STATUSES[d.status] ?? d.status
+  const reason = differenceReason(row)
+  if (!reason) return status
+  // “其他”单看没有信息；补回差异状态，避免整格只剩一个无法扫读的标签。
+  return d.reasonCode === 'other' ? `${status} · 其他原因` : reason
 }
 
 /** 差异原因的单独一段(好把它画成次要色,与设计稿一致)。 */
@@ -98,22 +102,22 @@ function differenceReason(row: EnterpriseListRow): string {
     data-evidence-return-scroll-container
     class="data-table-scroll [&_[data-slot=table-container]]:overflow-visible"
   >
-    <Table class="data-table w-full min-w-0 table-fixed sm:min-w-[980px]">
+    <Table class="data-table w-full min-w-0 table-fixed lg:min-w-[980px]">
       <TableHeader class="sticky top-0 z-10">
         <TableRow class="hover:bg-transparent">
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[28%] text-xs font-semibold tracking-wide sm:w-[20rem]">
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[28%] text-xs font-semibold tracking-wide lg:w-[20rem]">
             企业名称
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[42%] text-xs font-semibold tracking-wide sm:w-[20rem]">
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[42%] text-xs font-semibold tracking-wide lg:w-[20rem]">
             称号 · 年份批次
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[11.5rem] text-xs font-semibold tracking-wide sm:table-cell">
+          <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[11.5rem] text-xs font-semibold tracking-wide lg:table-cell">
             统一社会信用代码
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[4.5rem] text-xs font-semibold tracking-wide sm:table-cell">
+          <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[4.5rem] text-xs font-semibold tracking-wide lg:table-cell">
             属地
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[30%] text-xs font-semibold tracking-wide sm:w-[12rem]">
+          <TableHead class="bg-muted text-muted-foreground h-9 w-[30%] text-xs font-semibold tracking-wide lg:w-[12rem]">
             差异状态
           </TableHead>
         </TableRow>
@@ -155,11 +159,11 @@ function differenceReason(row: EnterpriseListRow): string {
             <EnterpriseTitleSummary :titles="row.titles" :first-recognition="row.firstRecognition" :awards="row.awards" />
           </TableCell>
 
-          <TableCell class="text-muted-foreground hidden font-mono text-xs tabular-nums sm:table-cell">
+          <TableCell class="text-muted-foreground hidden font-mono text-xs tabular-nums lg:table-cell">
             {{ row.uscc ?? '无统一社会信用代码' }}
           </TableCell>
 
-          <TableCell class="hidden text-[13px] sm:table-cell">{{ row.district ?? '属地未知' }}</TableCell>
+          <TableCell class="hidden text-[13px] lg:table-cell">{{ row.district ?? '属地未知' }}</TableCell>
 
           <TableCell class="text-[13px] whitespace-normal break-words leading-4 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="enterprise-difference-cell">
             <span :class="row.difference.count ? '' : 'text-muted-foreground'">
@@ -179,8 +183,8 @@ function differenceReason(row: EnterpriseListRow): string {
             <Skeleton class="h-3 w-full max-w-28" />
             <Skeleton class="ml-2 hidden h-3 w-16 sm:inline-block" />
           </TableCell>
-          <TableCell class="hidden sm:table-cell"><Skeleton class="h-3 w-32" /></TableCell>
-          <TableCell class="hidden sm:table-cell"><Skeleton class="h-3 w-12" /></TableCell>
+          <TableCell class="hidden lg:table-cell"><Skeleton class="h-3 w-32" /></TableCell>
+          <TableCell class="hidden lg:table-cell"><Skeleton class="h-3 w-12" /></TableCell>
           <TableCell><Skeleton class="h-3 w-full max-w-24" /></TableCell>
         </TableRow>
 

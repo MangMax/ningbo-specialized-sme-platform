@@ -35,6 +35,8 @@ const props = defineProps<{
   back: string
   returnTo?: string | null
   open: boolean
+  /** 深链定位到的行短暂高亮；不是常驻装饰。 */
+  highlighted?: boolean
 }>()
 const emit = defineEmits<{
   'update:open': [open: boolean]
@@ -69,7 +71,12 @@ const interfaceSummary = computed(() => {
 </script>
 
 <template>
-  <section :id="`record-event-${event.id}`" class="scroll-mt-20">
+  <section
+    :id="`record-event-${event.id}`"
+    class="scroll-mt-20"
+    :class="highlighted ? 'locate-highlight' : ''"
+    :data-highlighted="highlighted ? 'true' : undefined"
+  >
     <DisclosurePanel :open="open" compact trigger-class="px-4 sm:px-5" @update:open="emit('update:open', $event)">
       <template #header>
         <div class="grid min-w-0 gap-x-4 gap-y-2 px-4 pt-4 sm:grid-cols-[6.5rem_minmax(0,1fr)_auto] sm:items-start sm:px-5">
@@ -129,3 +136,17 @@ const interfaceSummary = computed(() => {
     </DisclosurePanel>
   </section>
 </template>
+
+<style scoped>
+/* 深链定位：视觉上短暂浮现后自动褪去；data-highlighted 仍标记当前定位行。 */
+.locate-highlight {
+  animation: locate-highlight 2.6s ease-out;
+}
+@keyframes locate-highlight {
+  0%, 25% { background-color: var(--accent); }
+  100% { background-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .locate-highlight { animation: none; background-color: var(--accent); }
+}
+</style>
