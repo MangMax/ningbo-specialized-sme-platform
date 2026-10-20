@@ -602,13 +602,18 @@ function refreshAfterSave() {
             {{ rowActionLabel(row) }}
           </Button>
         </div>
-        <EvidenceReviewDetail
-          v-if="selected === row.id"
-          :id="`review-detail-${row.id}`"
-          :key="row.id"
-          :impact-id="row.id"
-          @saved="refreshAfterSave"
-        />
+        <!--
+          展开区与上方 summary 的 p-3 对齐；内边距放在嵌入侧而不是详情根节点，
+          Sheet 已有 px-5，避免同一组件在抽屉里被加两层。
+        -->
+        <div v-if="selected === row.id" class="px-3 pb-3">
+          <EvidenceReviewDetail
+            :id="`review-detail-${row.id}`"
+            :key="row.id"
+            :impact-id="row.id"
+            @saved="refreshAfterSave"
+          />
+        </div>
       </li>
     </ul>
 
