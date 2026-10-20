@@ -262,9 +262,10 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
         })
         row.basis=[row.basis,...attested.map(a => `decision:${a.decision.id} ${a.qualification.basis} [${a.qualification.validFrom},${a.qualification.validUntil})${a.qualification.awardYear == null ? '' : ' 明确认定年:'+a.qualification.awardYear}`)].filter(Boolean).join('\n')
         row.notes.push(...attested.map(a => '迁入资格断言；公布核对范围：' + a.qualification.publicationCheck.scope))
-        const applicable = attested.filter(({qualification:q}) => Date.parse(q.validFrom) <= executionTime && executionTime < Date.parse(q.validUntil) && q.publicationCheck.status === 'not_found')
+        const applicable = attested.filter(({qualification:q}) => Date.parse(q.validFrom) <= executionTime && executionTime < Date.parse(q.validUntil))
         const current = applicable.filter(a => {
           const q=a.qualification
+          if (q.publicationCheck.status !== 'not_found') return false
           if (!formal.length) return true
           // A current interval is not a re-award. It can supersede an expired,
           // otherwise settled history; failures/gaps need an explicit new grant.

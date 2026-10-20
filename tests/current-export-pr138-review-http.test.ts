@@ -170,3 +170,16 @@ it.each(CURRENT_TITLES)('keeps a later formal failure excluded after an expired 
   expect(f.db.$client.prepare('select * from difference_reason where enterprise_id=? order by id').all(c.enterprise.id)).toEqual(auditBefore)
   expect(f.db.$client.prepare('select * from record_event where record_id=? order by id').all(c.record.id)).toEqual(eventsBefore)
 })
+
+it.each(['not_found','not_checked'] as const)('keeps a current unresolved inbound assertion pending with publication status %s',async status=>{
+  const c=f.candidate('Current unresolved inbound '+status,[
+    {eventType:'award',year:year-6,batchSeq:1},
+    {eventType:'review',year:year-6,decidedYear:year-2,reviewOutcome:'failed',batchSeq:1},
+  ])
+  const {result}=await inbound(c.enterprise.id,{publicationCheck:{status,scope:'Synthetic current assertion; publication scope recorded explicitly'}})
+  expect(result.status,JSON.stringify(result.body)).toBe(200)
+  await review(c.enterprise.id,result.body.versionId)
+  const {wb}=await f.workbook('pr138-current-unresolved-'+status),actual=occurrences(wb,c.enterprise.id)
+  expect(actual.map(x=>x.sheet)).toEqual(['待确认'])
+  expect(actual[0]!.row[13]).toContain('日期顺序尚未消解')
+})
