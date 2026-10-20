@@ -99,7 +99,7 @@ function discardReviewDraftAndLeave() {
   const target = pendingLeave.value
   pendingLeave.value = null
   if (!target) return
-  // 明确丢弃才执行原导航；凭证随草稿一起从内存删除，不写 Web Storage。
+  // 明确丢弃才执行原导航；业务草稿随内存删除，不写 Web Storage。
   reviewDrafts.discardAll()
   bypassLeaveGuard.value = true
   void router.push(target).finally(() => { bypassLeaveGuard.value = false })
@@ -495,7 +495,7 @@ const exportUrl = computed(() => {
     <DialogContent data-testid="comparison-draft-leave-dialog" class="sm:max-w-md">
       <DialogHeader>
         <DialogTitle>离开会丢弃未提交内容</DialogTitle>
-        <DialogDescription>当前复核项还有未提交的凭证、依据或更正内容；离开后这些内容会丢失。</DialogDescription>
+        <DialogDescription>复核依据或更正内容还没提交；离开这一页会丢失。</DialogDescription>
       </DialogHeader>
       <DialogFooter>
         <Button variant="outline" @click="continueReviewDraft">继续填写</Button>

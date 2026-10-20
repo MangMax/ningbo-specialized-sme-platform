@@ -40,7 +40,8 @@ let committed = false
 function installApi() {
   committed = false
   fetcher = vi.fn(async (url: string, options?: any) => {
-    if (options?.method === 'POST' && url === '/api/roster/decision-lifecycle/commands') {
+    if (url === '/api/roster/evidence-review/browser-context') return { writeEnabled: true }
+    if (options?.method === 'POST' && url === '/api/roster/evidence-review/browser-commands') {
       committed = true
       return { action: 'maintain', reviewedRevisionId: 9 }
     }
@@ -104,14 +105,7 @@ async function openAndFill(view: ReturnType<typeof mount>) {
   await flushPromises()
   await view.get('[aria-label="处理这一项 4"]').trigger('click')
   await flushPromises()
-  for (const [label, value] of [
-    ['写入凭证', 'synthetic-token'],
-    ['复核人', 'route-reviewer'],
-    ['复核依据', '全局队列里未提交的依据'],
-    ['规则版本', 'route-rule'],
-  ] as const) {
-    await view.get(`[aria-label="${label}"]`).setValue(value)
-  }
+  await view.get('[aria-label="复核依据"]').setValue('全局队列里未提交的依据')
   await flushPromises()
 }
 
@@ -155,7 +149,7 @@ it('guards a sidebar route leave and keeps route, item and values on continue', 
   expect(hasLeaveDialog(view)).toBe(false)
   expect(view.find('[aria-label="复核依据"]').exists()).toBe(true)
   expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toBe('全局队列里未提交的依据')
-  expect((view.get('[aria-label="复核人"]').element as HTMLInputElement).value).toBe('route-reviewer')
+  expect(view.find('[aria-label="复核人"]').exists()).toBe(false)
 
   await router.push('/')
   await flushPromises()
@@ -163,8 +157,6 @@ it('guards a sidebar route leave and keeps route, item and values on continue', 
   await flushPromises()
   expect(router.currentRoute.value.fullPath).toBe('/')
   expect(view.find('[data-testid="home"]').exists()).toBe(true)
-  expect(JSON.stringify({ ...sessionStorage })).not.toContain('synthetic-token')
-  expect(JSON.stringify({ ...localStorage })).not.toContain('synthetic-token')
   view.unmount()
 })
 
@@ -253,7 +245,7 @@ it('does not guard after a successful submit already cleared the draft', async (
   await view.findAll('form').at(-1)!.trigger('submit')
   await flushPromises()
   await flushPromises()
-  expect(fetcher).toHaveBeenCalledWith('/api/roster/decision-lifecycle/commands', expect.objectContaining({ method: 'POST' }))
+  expect(fetcher).toHaveBeenCalledWith('/api/roster/evidence-review/browser-commands', expect.objectContaining({ method: 'POST' }))
   expect(view.text()).toContain('复核已登记')
 
   await router.push('/')

@@ -668,7 +668,7 @@ function openPreview(e: Evidence) {
         <DialogHeader>
           <DialogTitle>切换会关闭核对面板</DialogTitle>
           <DialogDescription>
-            已填写的复核信息尚未提交；切换后这些内容会丢失。
+            复核依据或更正内容还没提交；离开这一页会丢失。
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -683,7 +683,7 @@ function openPreview(e: Evidence) {
         <DialogHeader>
           <DialogTitle>离开会丢弃未提交内容</DialogTitle>
           <DialogDescription>
-            复核人填写的凭证、依据、规则版本或更正内容尚未提交；离开本页后这些内容会丢失。
+            复核依据或更正内容还没提交；离开这一页会丢失。
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

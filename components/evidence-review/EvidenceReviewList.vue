@@ -232,7 +232,7 @@ function apply() {
   invalid.value = ''
   withDraftGuard(applyFilters, {
     title: '更改筛选会丢弃未提交内容',
-    description: '当前复核项还有未提交的凭证、依据或更正内容；应用筛选后这些内容会丢失。',
+    description: '复核依据或更正内容还没提交；收起后会丢失。',
     discardLabel: '应用筛选并丢弃',
   })
 }
@@ -273,12 +273,12 @@ function guardPage(run: () => void, discardLabel: string, action: 'turn' | 'rest
   withDraftGuard(run, action === 'restart'
     ? {
         title: '重新读取会丢弃未提交内容',
-        description: '当前复核项还有未提交的凭证、依据或更正内容；重新读取清单后这些内容会丢失。',
+        description: '复核依据或更正内容还没提交；收起后会丢失。',
         discardLabel,
       }
     : {
         title: '翻页会丢弃未提交内容',
-        description: '当前复核项还有未提交的凭证、依据或更正内容；翻页后这些内容会丢失。',
+        description: '复核依据或更正内容还没提交；收起后会丢失。',
         discardLabel,
       })
 }
@@ -346,7 +346,7 @@ function toggleRow(row: ImpactRow) {
       draftStore.discard(row.id)
     }, {
       title: '收起会丢弃未提交内容',
-      description: '复核人填写的凭证、依据、规则版本或更正内容尚未提交；收起后这些内容会丢失。',
+      description: '复核依据或更正内容还没提交；收起后会丢失。',
       discardLabel: '收起并丢弃',
     })
     return
@@ -356,7 +356,7 @@ function toggleRow(row: ImpactRow) {
     selected.value = row.id
   }, {
     title: '切换复核项会丢弃未提交内容',
-    description: '当前复核项还有未提交的凭证、依据或更正内容；切换后这些内容会丢失。',
+    description: '复核依据或更正内容还没提交；收起后会丢失。',
     discardLabel: '切换并丢弃',
   })
 }

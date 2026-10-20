@@ -32,7 +32,7 @@ const emit = defineEmits<{ saved: [] }>()
 const resolvedImpactId = computed(() => props.impact?.id ?? props.impactId)
 
 /**
- * 面板内的提交草稿只存在内存里。关闭前先确认，避免一次误点丢掉复核人填写的依据。
+ * 面板内的提交草稿只存在内存里。关闭前先确认，避免一次误点丢掉复核依据或更正内容。
  * `enterprise-review-draft` 由企业详情页提供；没有宿主时按无草稿处理。
  */
 const draftState = inject<Ref<boolean> | null>('enterprise-review-draft', null)
@@ -103,7 +103,7 @@ function discardAndClose() {
       <DialogHeader>
         <DialogTitle>关闭会丢弃未提交内容</DialogTitle>
         <DialogDescription>
-          复核人填写的凭证、依据或更正内容尚未提交；关闭面板后这些内容会丢失。
+          复核依据或更正内容还没提交；收起后会丢失。
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>

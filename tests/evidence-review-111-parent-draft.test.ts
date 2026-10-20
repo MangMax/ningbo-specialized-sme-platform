@@ -41,6 +41,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 async function mountParent() {
   vi.stubGlobal('$fetch', vi.fn(async (url: string, options?: any) => {
+    if (url === '/api/roster/evidence-review/browser-context') return { writeEnabled: true }
     if (url.endsWith('/profile')) return { profile: { enterpriseId: 7, name: '合成企业7' } }
     if (url === '/api/roster/evidence-impacts') return { rows: [row], nextCursor: null, asOf: { revision: 9 }, projectionReady: true }
     if (url === '/api/roster/evidence-impacts/4') return detail
@@ -66,9 +67,7 @@ function clickText(view: ReturnType<typeof mount>, text: string) {
 it('keeps the inline draft mounted across parent collapse and clears it only on explicit discard', async () => {
   const { view, trigger } = await mountParent()
   await view.get('[aria-label="处理这一项 4"]').trigger('click'); await flushPromises()
-  for (const [label, value] of [['写入凭证', 'synthetic-token'], ['复核人', 'parent-reviewer'], ['复核依据', '父级折叠前填写的依据'], ['规则版本', 'parent-rule']]) {
-    await view.get(`[aria-label="${label}"]`).setValue(value)
-  }
+  await view.get('[aria-label="复核依据"]').setValue('父级折叠前填写的依据')
   await flushPromises()
 
   await trigger().trigger('click'); await flushPromises()
@@ -79,8 +78,8 @@ it('keeps the inline draft mounted across parent collapse and clears it only on 
   await trigger().trigger('click'); await flushPromises()
   expect(trigger().attributes('aria-expanded')).toBe('true')
   expect(view.get('[aria-label="收起复核项 4"]').attributes('aria-expanded')).toBe('true')
-  expect((view.get('[aria-label="复核人"]').element as HTMLInputElement).value).toBe('parent-reviewer')
-  expect((view.get('[aria-label="规则版本"]').element as HTMLInputElement).value).toBe('parent-rule')
+  expect(view.find('[aria-label="复核人"]').exists()).toBe(false)
+  expect(view.find('[aria-label="规则版本"]').exists()).toBe(false)
 
   await view.get('[aria-label="收起复核项 4"]').trigger('click'); await flushPromises()
   expect(view.text()).toContain('收起会丢弃未提交内容')
@@ -89,6 +88,5 @@ it('keeps the inline draft mounted across parent collapse and clears it only on 
 
   await view.get('[aria-label="处理这一项 4"]').trigger('click'); await flushPromises()
   expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toBe('')
-  expect((view.get('[aria-label="复核人"]').element as HTMLInputElement).value).toBe('')
   view.unmount()
 })

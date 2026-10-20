@@ -106,6 +106,7 @@ function mountDetail(
 ) {
   let posted = false
   const fetcher = vi.fn(async (url: string, options?: any) => {
+    if (url === '/api/roster/evidence-review/browser-context') return { writeEnabled: true }
     if (options?.method === 'POST') {
       posted = true
       return { reviewedRevisionId: 9, ...(postAction ? { action: postAction } : {}) }
@@ -134,10 +135,7 @@ function mountDetail(
 }
 
 async function fill(view: ReturnType<typeof mount>) {
-  await view.get('[aria-label="写入凭证"]').setValue('synthetic-token')
-  await view.get('[aria-label="复核人"]').setValue('reviewer-7')
   await view.get('[aria-label="复核依据"]').setValue('核对新查询并保留原业务判断')
-  await view.get('[aria-label="规则版本"]').setValue('manual-2026')
 }
 
 async function submit(view: ReturnType<typeof mount>) {
@@ -333,4 +331,40 @@ it('scrolls an inline success notice below the sticky header and an inline failu
   } finally {
     HTMLElement.prototype.scrollIntoView = previous
   }
+})
+
+it('renders a real null actor and business rule version as 未记录 without inventing a person or version', async () => {
+  const { view } = mountDetail({
+    ...reviewedMaintain,
+    oldDecision: decision(12, { actor: null, ruleVersion: null }),
+    currentDecision: { versionId: 12, current: decision(12, { actor: null, ruleVersion: null }) },
+    reviewedBaseline: {
+      reviewedRevisionId: 14,
+      actor: null,
+      basis: '页面复核只登记业务依据',
+      ruleVersion: null,
+      effectiveAt: '2026-10-19T09:00:00.000Z',
+      recordedAt: '2026-10-19T09:01:00.000Z',
+    },
+  })
+  await flushPromises()
+  const baseline = view.get('[data-testid="reviewed-baseline"]')
+  expect(baseline.text()).toContain('操作人：未记录')
+  expect(baseline.text()).toContain('业务规则版本：未记录')
+  expect(baseline.text()).not.toMatch(/unknown|system|admin|协议|schema/i)
+  expect(view.text()).not.toContain('baseline-reviewer')
+})
+
+it('shows an unrecorded decision-version operator instead of hiding the row', async () => {
+  const { view } = mountDetail({
+    ...baseDetail({ pending: false, decisionId: 35 }),
+    oldDecision: decision(35, { actor: null, ruleVersion: null }),
+    currentDecision: { versionId: 35, current: decision(35, { actor: null, ruleVersion: null }) },
+  })
+  await flushPromises()
+  const versions = view.findAll('[data-testid="decision-version"]')
+  expect(versions.length).toBeGreaterThan(0)
+  expect(versions[0]!.text()).toContain('操作人')
+  expect(versions[0]!.text()).toContain('未记录')
+  expect(versions[0]!.text()).toContain('业务规则版本')
 })

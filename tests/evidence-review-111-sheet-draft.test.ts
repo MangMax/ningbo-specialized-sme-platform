@@ -40,6 +40,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 function mountSheet() {
   vi.stubGlobal('$fetch', vi.fn(async (url: string) => {
+    if (url === '/api/roster/evidence-review/browser-context') return { writeEnabled: true }
     if (url === '/api/roster/evidence-impacts/4') return detail
     if (url.endsWith('/sources')) return { rows: [], nextCursor: null, asOf: {} }
     if (url.endsWith('/history')) return { rows: [], total: 0, page: 1, pageSize: 25 }
@@ -68,9 +69,7 @@ function clickText(view: ReturnType<typeof mount>, text: string) {
 it('keeps the Sheet open with the same in-memory draft on continue and clears it on explicit discard', async () => {
   const { view, store, open } = mountSheet()
   await flushPromises()
-  for (const [label, value] of [['写入凭证', 'synthetic-token'], ['复核人', 'sheet-reviewer'], ['复核依据', '抽屉里填写的依据'], ['规则版本', 'sheet-rule']]) {
-    await view.get(`[aria-label="${label}"]`).setValue(value)
-  }
+  await view.get('[aria-label="复核依据"]').setValue('抽屉里填写的依据')
   await flushPromises()
 
   const sheet = view.findComponent(Sheet)
@@ -80,7 +79,7 @@ it('keeps the Sheet open with the same in-memory draft on continue and clears it
   await clickText(view, '继续填写').trigger('click'); await flushPromises()
   expect(open.value).toBe(true)
   expect((view.get('[aria-label="复核依据"]').element as HTMLTextAreaElement).value).toBe('抽屉里填写的依据')
-  expect((view.get('[aria-label="复核人"]').element as HTMLInputElement).value).toBe('sheet-reviewer')
+  expect(view.find('[aria-label="复核人"]').exists()).toBe(false)
 
   sheet.vm.$emit('update:open', false)
   await flushPromises()

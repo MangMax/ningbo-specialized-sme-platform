@@ -15,7 +15,9 @@ function profileFor(url: string) {
 }
 /** Route profile reads separately so queue-page assertions stay about the queue call. */
 function mockRoutes(routes: (url: string, options?: any) => unknown) {
-  fetcher.mockImplementation(async (url: string, options?: any) => profileFor(url) ?? routes(url, options))
+  fetcher.mockImplementation(async (url: string, options?: any) => url === '/api/roster/evidence-review/browser-context'
+    ? { writeEnabled: true }
+    : profileFor(url) ?? routes(url, options))
 }
 beforeEach(() => {
   resetEnterpriseNameCache()
@@ -151,7 +153,7 @@ it('restarts the frozen list cursor after successful review so completed items d
   await view.get('[aria-label="下一页复核项"]').trigger('click'); await flushPromises()
   expect(view.text()).toContain('第 2 页')
   await view.get('[aria-label="处理这一项 4"]').trigger('click'); await flushPromises()
-  for (const [label, value] of [['写入凭证', 'synthetic'], ['复核人', 'tester'], ['复核依据', 'explicit review'], ['规则版本', 'manual-v1']]) await view.get(`[aria-label="${label}"]`).setValue(value)
+  await view.get('[aria-label="复核依据"]').setValue('explicit review')
   await view.findAll('form').at(-1)!.trigger('submit'); await flushPromises()
   expect(view.text()).toContain('显示来源：第 1 页')
   expect(view.text()).toContain('本页没有复核项')
@@ -351,9 +353,7 @@ const detailFor = (impact: typeof row, patch: Record<string, unknown> = {}) => (
 async function openAndFill(view: ReturnType<typeof render>, impactId = 4) {
   await view.get('[aria-label="处理这一项 ' + impactId + '"]').trigger('click')
   await flushPromises()
-  for (const [label, value] of [['写入凭证', 'synthetic-token'], ['复核人', 'reviewer-7'], ['复核依据', '核对新查询并保留原业务判断'], ['规则版本', 'manual-2026']]) {
-    await view.get(`[aria-label="${label}"]`).setValue(value)
-  }
+  await view.get('[aria-label="复核依据"]').setValue('核对新查询并保留原业务判断')
   await flushPromises()
 }
 
