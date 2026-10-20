@@ -60,6 +60,22 @@ async function request(port: number): Promise<{ res: IncomingMessage; client: Re
   })
 }
 
+async function waitForPausedRows(): Promise<number> {
+  const deadline = Date.now() + 8_000
+  let last = source.read
+  let stableSince = Date.now()
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 50))
+    if (source.read !== last) {
+      last = source.read
+      stableSince = Date.now()
+    } else if (Date.now() - stableSince >= 500) {
+      return last
+    }
+  }
+  throw new Error('XLSX row production did not pause behind the HTTP consumer')
+}
+
 describe('GET /api/export transport', () => {
   it('reads back apostrophes, XML metacharacters, Chinese, emoji, newlines, and formula-looking strings unchanged', async () => {
     const name = `O'Brien & <宁波> "企" 😀\n第二行\r\n第三行`
@@ -123,11 +139,9 @@ describe('GET /api/export transport', () => {
       const requested = await request(port)
       client = requested.client
       const { res } = requested
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      const pausedRows = source.read
+      const pausedRows = await waitForPausedRows()
+      expect(pausedRows).toBeGreaterThan(0)
       expect(pausedRows).toBeLessThan(source.rows.length)
-      await new Promise(resolve => setTimeout(resolve, 300))
-      expect(source.read).toBe(pausedRows)
       const chunks: Buffer[] = []
       res.on('data', chunk => chunks.push(Buffer.from(chunk)))
       res.resume()
