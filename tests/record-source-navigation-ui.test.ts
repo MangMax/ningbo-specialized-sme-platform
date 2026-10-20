@@ -94,7 +94,9 @@ describe('source modal reverse event navigation', () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(collapsible.props('open')).toBe(true)
     // Expanded evidence can be taller than the viewport: keep the event heading in view.
-    expect(scroll).toHaveBeenLastCalledWith({ block: 'start' })
+    // Event arrival waits two animation frames and the page-scroll restoration
+    // delay. flushPromises alone does not complete those browser tasks.
+    await vi.waitFor(() => expect(scroll).toHaveBeenLastCalledWith({ block: 'start' }))
     expect(router.currentRoute.value.query.returnTo).toBe(withReturn ? returnTo : undefined)
   })
 
