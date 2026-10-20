@@ -5,6 +5,7 @@ import { createError } from 'h3'
 import { z } from 'zod'
 import { normalizeName } from '../../lib/domain'
 import * as schema from '../../db/schema'
+import { captureIdentityRevision113, identityMaterial113 } from './evidence-impact-113'
 import { findPlatformAliasRelationEvidence, platformAliasEvidenceMismatch } from './roster-import'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -114,6 +115,7 @@ export function maintainEnterpriseAlias(db: Db, enterpriseId: unknown, aliasId: 
       const clash = tx.select({ id: schema.enterpriseAlias.id }).from(schema.enterpriseAlias).where(and(ne(schema.enterpriseAlias.id, before.id), eq(schema.enterpriseAlias.enterpriseId, before.enterpriseId), eq(schema.enterpriseAlias.nameNorm, next.nameNorm), eq(schema.enterpriseAlias.sourceKind, next.sourceKind), eq(schema.enterpriseAlias.sourceRefId, next.sourceRefId))).limit(1).get()
       if (clash) fail(409, 'alias_identity_conflict', '更正后的自然键已有别名，请维护其稳定ID')
     }
+    const identityBefore = identityMaterial113(tx, before.enterpriseId)
     const after = tx.update(schema.enterpriseAlias).set({ ...changes, nameNorm: next.nameNorm, verificationStatus: next.verificationStatus, version: before.version + 1,
       originalName: before.originalName, originalSourceKind: before.originalSourceKind, originalSourceRefId: before.originalSourceRefId,
     }).where(and(eq(schema.enterpriseAlias.id, before.id), eq(schema.enterpriseAlias.version, request.expectedVersion))).returning().get()
@@ -123,6 +125,7 @@ export function maintainEnterpriseAlias(db: Db, enterpriseId: unknown, aliasId: 
       actor: request.actor, basis: request.basis, idempotencyKey: request.idempotencyKey, requestHash,
       before, after: result, createdAt: new Date().toISOString(),
     }).run()
+    captureIdentityRevision113(tx, { enterpriseId: before.enterpriseId, sourceKey: `enterprise:${before.enterpriseId}`, sourceVersion: `alias:${before.id}:${after.version}`, before: identityBefore, after: identityMaterial113(tx, before.enterpriseId) })
     return { alias: result, replayed: false }
   }, { behavior: 'immediate' })
 }

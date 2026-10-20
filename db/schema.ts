@@ -858,6 +858,8 @@ export const differenceReason = sqliteTable(
     uniqueIndex('difference_reason_command_uq').on(t.idempotencyKey),
     index('difference_reason_managed_idx').on(t.enterpriseId, t.titleCode, t.direction).where(sql`${t.lifecycleAction} is not null`),
     index('difference_reason_lookup_idx').on(t.enterpriseId, t.titleCode, t.direction),
+    index('difference_reason_impact_head_113_idx').on(t.enterpriseId, t.titleCode, t.direction, t.recordedAt, t.id),
+    index('difference_reason_impact_title_113_idx').on(t.titleCode, t.id),
   ],
 )
 
@@ -943,6 +945,7 @@ export const platformExportRow = sqliteTable(
   (t) => [
     uniqueIndex('platform_export_row_identity_uq').on(t.batchId, t.sourceRowNo),
     index('platform_export_row_batch_idx').on(t.batchId),
+    index('platform_export_row_identity_113_idx').on(t.batchId, sql`upper(trim(${t.usccRaw}))`, t.nameRaw),
   ],
 )
 
@@ -1115,3 +1118,40 @@ export const evidenceCorrectionAudit = sqliteTable('evidence_correction_audit', 
   after: text('after', { mode: 'json' }).$type<unknown>().notNull(),
   createdAt: text('created_at').notNull(),
 }, t => [index('evidence_correction_audit_evidence_idx').on(t.evidenceId, t.id)])
+
+/** #113 committed evidence metadata only. No source bodies or business decisions. */
+export const evidenceRevision113 = sqliteTable('evidence_revision_113', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  sourceKind: text('source_kind').notNull(), sourceKey: text('source_key').notNull(), sourceVersion: text('source_version').notNull(),
+  enterpriseId: integer('enterprise_id'), titleCode: text('title_code'), direction: text('direction'), eventId: integer('event_id'),
+  coverageDigest: text('coverage_digest').notNull(), factDigest: text('fact_digest').notNull(),
+  coverageChanged: integer('coverage_changed', { mode: 'boolean' }).notNull(), factChanged: integer('fact_changed', { mode: 'boolean' }).notNull(),
+  queryExecuted: integer('query_executed', { mode: 'boolean' }).notNull().default(false),
+  metadata: text('metadata', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+  maxDecisionId: integer('max_decision_id').notNull(), createdAt: text('created_at').notNull(),
+}, t => [uniqueIndex('evidence_revision_source_113_uq').on(t.sourceKind, t.sourceKey, t.sourceVersion), index('evidence_revision_scope_113_idx').on(t.enterpriseId, t.titleCode, t.id)])
+export const evidenceSemanticHead113 = sqliteTable('evidence_semantic_head_113', {
+  sourceKey: text('source_key').primaryKey(), coverageDigest: text('coverage_digest').notNull(), factDigest: text('fact_digest').notNull(), latestRevisionId: integer('latest_revision_id').notNull(),
+})
+export const evidenceImpactProgress113 = sqliteTable('evidence_impact_progress_113', {
+  revisionId: integer('revision_id').primaryKey().references(() => evidenceRevision113.id), cursor: integer('cursor').notNull().default(0), done: integer('done', { mode: 'boolean' }).notNull().default(false),
+}, t => [index('evidence_impact_pending_113_idx').on(t.done, t.revisionId)])
+/** Working view keyed by the existing decision version. Retains historical identity across merges. */
+export const explanationImpact113 = sqliteTable('explanation_impact_113', {
+  id: integer('id').primaryKey({ autoIncrement: true }), enterpriseId: integer('enterprise_id').notNull(), titleCode: text('title_code').notNull(), direction: text('direction').notNull(), decisionId: integer('decision_id').notNull(),
+  latestRevisionId: integer('latest_revision_id').notNull(), pendingSinceRevisionId: integer('pending_since_revision_id').notNull(),
+  reviewedRevisionId: integer('reviewed_revision_id'), classification: text('classification', { enum: ['premise_invalid', 'evidence_changed'] }).notNull(),
+}, t => [uniqueIndex('explanation_impact_coordinate_113_uq').on(t.enterpriseId, t.titleCode, t.direction, t.decisionId), index('explanation_impact_enterprise_113_idx').on(t.enterpriseId, t.id), index('explanation_impact_decision_113_idx').on(t.decisionId)])
+export const evidenceImpactLink113 = sqliteTable('evidence_impact_link_113', {
+  revisionId: integer('revision_id').notNull().references(() => evidenceRevision113.id), impactId: integer('impact_id').notNull().references(() => explanationImpact113.id), classification: text('classification').notNull(),
+}, t => [uniqueIndex('evidence_impact_link_113_uq').on(t.revisionId, t.impactId), index('evidence_impact_link_state_113_idx').on(t.impactId, t.revisionId)])
+
+/** Exact event dependencies captured with the evidence transaction; bounded separate reads. */
+export const evidenceRevisionEvent113 = sqliteTable('evidence_revision_event_113', {
+  revisionId: integer('revision_id').notNull().references(() => evidenceRevision113.id), eventId: integer('event_id').notNull(), enterpriseId: integer('enterprise_id').notNull(), titleCode: text('title_code').notNull(),
+}, t => [uniqueIndex('evidence_revision_event_113_uq').on(t.revisionId, t.eventId), index('evidence_revision_event_scope_113_idx').on(t.revisionId, t.enterpriseId, t.titleCode, t.eventId)])
+
+/** Bounded exact-scope tokens: eight indexed keys per coordinate, no ledger-history scan. */
+export const evidenceScopeVersion113 = sqliteTable('evidence_scope_version_113', {
+  scopeKey: text('scope_key').primaryKey(), latestRevisionId: integer('latest_revision_id').notNull(), pendingCount: integer('pending_count').notNull(),
+})
