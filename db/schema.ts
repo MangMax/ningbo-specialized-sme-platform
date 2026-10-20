@@ -3,6 +3,7 @@ import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   uniqueIndex,
@@ -656,11 +657,30 @@ export const platformQuery = sqliteTable(
     // 同接口 + 同查询键 + 同 rdjb + 同一时点 = 同一次查询(重放幂等);不同时点各自留档。
     uniqueIndex('platform_query_identity_uq').on(t.interface, t.queryKey, t.rdjb, t.queriedAt),
     index('platform_query_key_idx').on(t.queryKey),
+    index('platform_query_title_code_idx').on(t.titleCode, t.id),
     // #87: narrow covering scans for counts and stable latest/deep pages.
     index('platform_query_status_time_idx').on(t.status, t.queriedAt, t.id),
     index('platform_query_time_idx').on(t.queriedAt, t.id),
   ],
 )
+
+/** Indexed title membership extracted from archived collection evidence; triggers keep it current. */
+export const platformQueryTitleScope = sqliteTable(
+  'platform_query_title_scope',
+  {
+    queryId: integer('query_id').notNull().references(() => platformQuery.id, { onDelete: 'cascade' }),
+    rdjb: text('rdjb').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.queryId, t.rdjb] }),
+    index('platform_query_title_scope_rdjb_query_idx').on(t.rdjb, t.queryId),
+  ],
+)
+
+/** Rows whose archived title JSON would make the legacy title predicate fail. */
+export const platformQueryTitleScopeError = sqliteTable('platform_query_title_scope_error', {
+  queryId: integer('query_id').primaryKey().references(() => platformQuery.id, { onDelete: 'cascade' }),
+})
 
 /**
  * **平台接口关系记录**(契约 2)。一次查询返回的**每一条关联关系**各占一行。
