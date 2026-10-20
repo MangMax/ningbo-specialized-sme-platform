@@ -126,3 +126,13 @@ it('keeps unconfirmed historical qualification sources pending even after a vali
   const {wb}=await f.workbook('pr138-source-confirmation-defense')
   expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['待确认'])
 },60000)
+it('preserves a later definite formal qualification when the inbound interval belongs to older history',async()=>{
+  const c=f.candidate('Later definite local award',[{eventType:'award',year,batchSeq:1}])
+  const {result}=await inbound(c.enterprise.id)
+  expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
+  const {wb}=await f.workbook('pr138-later-definite-local-control'),actual=occurrences(wb,c.enterprise.id)
+  expect(actual.map(x=>x.sheet)).toEqual(['有效企业'])
+  expect(actual[0]!.row[10]).toContain('event:')
+  expect(actual[0]!.row[10]).toContain('independently verified external qualification')
+  expect(actual[0]!.row[13]).not.toContain('顺序尚未消解')
+},60000)

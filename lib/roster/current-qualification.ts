@@ -282,7 +282,7 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
         } else if (!formal.length) {
           row.group='pending'; row.publication='尚未完成公布匹配核实'
           row.notes.push('缺少已复核本称号当前资格及宁波公布核对范围；迁入事实不能代替资格依据')
-        } else if (attested.length) {
+        } else if (attested.length && row.group !== 'eligible') {
           row.group='pending'; row.notes.push('迁入资格与正式周期/失败/日期顺序尚未消解，保留全部历史依据')
         }
       }
