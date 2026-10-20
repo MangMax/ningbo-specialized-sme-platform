@@ -15,7 +15,7 @@ Small synthetic verification before any full run: actual Node oracle and SQLite/
 
 ## Reproducible runbook
 
-Run from this worktree after merging final #83. Use a fresh private directory, and record the source commit and `sha256` of every runner/migration file. Do not regenerate credentials against initialized PGDATA. Commands below must not run concurrently with other benchmarks.
+Run from this worktree after merging final #83. Install its locked Node dependencies first: `migrate-copy` and `scale2x` use `prepare_sqlite.mjs` with the application’s `better-sqlite3`, including JSON5-aware triggers; Python SQLite is only a readonly fingerprint observer. The preparation report records the actual driver, SQLite/Node versions and helper SHA256. A migration change invalidates any previously prepared copy, import and oracle; prepare fresh artifacts before timing. Use a fresh private directory, and record the source commit and `sha256` of every runner/migration file. Do not regenerate credentials against initialized PGDATA. Commands below must not run concurrently with other benchmarks.
 
 ```sh
 export SPIKE90_DIR=/tmp/ningbo-perf-83-90/workload/full-1x

@@ -4,7 +4,6 @@ import hashlib
 import json
 import secrets
 import shutil
-import sqlite3
 import subprocess
 import threading
 import time
@@ -78,29 +77,12 @@ def derive(args):
     before={t:fingerprint_rows(old,t) for t in ('platform_query','platform_relation')}
     derived_before={t:old.execute('SELECT count(*) FROM '+t).fetchone()[0] for t in ('platform_query_title_scope','platform_query_title_scope_error')} if args.command=='scale2x' else {}
     old.close()
-    db=sqlite3.connect(target)
-    db.execute('PRAGMA foreign_keys=ON')
+    # Mutations (including final #83 triggers during scale2x) must use the exact
+    # application driver. Python remains a readonly byte/fingerprint observer.
+    command=['node',str(Path(__file__).with_name('prepare_sqlite.mjs')),args.command,str(target)]
     if args.command=='migrate-copy':
-        migration=Path(args.migration).read_text()
-        db.executescript('BEGIN;'+migration+'\nCOMMIT;')
-    else:
-        # Synthetic unrelated archive growth only. Embedded source identities stay as original bytes.
-        # Clone IDs/FKs and query identity keys are remapped; original rows remain untouched.
-        qmax=db.execute('SELECT max(id) FROM platform_query').fetchone()[0]
-        rmax=db.execute('SELECT max(id) FROM platform_relation').fetchone()[0]
-        db.execute('BEGIN IMMEDIATE')
-        for table in ('platform_query','platform_relation'):
-            columns=[r[1] for r in db.execute('PRAGMA table_info('+table+')')]
-            expressions=[]
-            for col in columns:
-                expression='"'+col+'"'
-                if col=='id': expression+='+'+str(qmax if table=='platform_query' else rmax)
-                elif col=='query_id': expression+='+'+str(qmax)
-                elif col=='query_key': expression="'spike90:synthetic-clone:'||query_key"
-                expressions.append(expression)
-            db.execute('INSERT INTO '+table+'('+','.join('"'+c+'"' for c in columns)+') SELECT '+','.join(expressions)+' FROM '+table)
-        db.commit()
-    db.close()
+        command.append(str(Path(args.migration).resolve()))
+    authority=json.loads(subprocess.check_output(command,text=True))
     target.chmod(0o400)
     current=readonly(target)
     after={t:fingerprint_rows(current,t) for t in ('platform_query','platform_relation')}
@@ -114,7 +96,7 @@ def derive(args):
     current.close()
     digest=hashlib.file_digest(open(target,'rb'),'sha256').hexdigest()
     report={'confirmedQuiescent':True,'sourcePath':'/private/'+target.name,'sourceSha256':digest,
-            'sourceOrigin':str(source),'transformation':args.command,'before':before,'after':after,'derived_before':derived_before,'derived_after':derived_after,
+            'sourceOrigin':str(source),'transformation':args.command,'preparationAuthority':authority,'before':before,'after':after,'derived_before':derived_before,'derived_after':derived_after,
             'limitations':['2x, if selected, is synthetic query/relation archive growth; other domains are not doubled; embedded evidence original IDs retained']}
     if args.command=='migrate-copy':
         report['migration_sha256']=hashlib.sha256(Path(args.migration).read_bytes()).hexdigest()
