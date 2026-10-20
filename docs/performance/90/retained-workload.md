@@ -1,4 +1,4 @@
-# #90 retained archive workload — source prepared, exclusive run pending
+# #90 retained archive workload — 1x preparation complete; exclusive timing pending
 
 This narrow comparison does **not** require porting the whole application to PostgreSQL. It compares the optimized #83 read algorithm for platform summaries/title filters and exact original evidence/relation discovery on the complete retained query/relation distribution. All original query/relation columns and text bytes are imported; the PostgreSQL side is a separate experimental schema, not an application migration. Other domains remain in the source SQLite copy but are not ported or benchmarked.
 
@@ -47,23 +47,39 @@ docker run --rm --network ningbo-spike90-workload-net --cpus .25 --memory 512m -
   --dsn-file /private/admin.dsn --database spike90_workload_1x --reader-dsn-file /private/app.dsn --output /private/import.json
 
 docker run --rm -d --name ningbo-spike90-workload-sqlite --network ningbo-spike90-workload-net \
-  --cpus 1 --memory 4096m --memory-swap 4096m -p 127.0.0.1:55493:8080 \
+  --cpus 1 --memory 4096m --memory-swap 4096m \
   --mount "type=bind,src=$SPIKE90_DIR,dst=/private,readonly" ningbo-spike90-workload-adapter:90 serve \
   --backend sqlite --sqlite /private/optimized.sqlite --host 0.0.0.0 --port 8080
 docker run --rm -d --name ningbo-spike90-workload-client --network ningbo-spike90-workload-net \
-  --cpus .25 --memory 512m --memory-swap 512m -p 127.0.0.1:55494:8080 \
+  --cpus .25 --memory 512m --memory-swap 512m \
   --mount "type=bind,src=$SPIKE90_DIR,dst=/private,readonly" ningbo-spike90-workload-adapter:90 serve \
   --backend postgres --dsn-file /private/app.dsn --host 0.0.0.0 --port 8080
+# Docker 29 internal-only bridges did not publish requested host ports in this run.
+# Keep the private internal network; use the same controlled observer for both services.
+docker run --rm -d --name ningbo-spike90-workload-sampler --network ningbo-spike90-workload-net \
+  --cpus 1 --memory 512m --memory-swap 512m \
+  --mount "type=bind,src=$PWD/scripts/spike-90,dst=/source,readonly" \
+  --entrypoint sleep ningbo-spike90-workload-adapter:90 infinity
 PYTHONUTF8=1 uv run python scripts/spike-90/workload_control.py measure \
   --manifest "$SPIKE90_DIR/manifest.json" --oracle "$SPIKE90_DIR/oracle.json" --output "$SPIKE90_DIR/comparison.json" \
   --sqlite-container ningbo-spike90-workload-sqlite --postgres-container ningbo-spike90-workload-client \
-  --pg-container ningbo-spike90-workload-pg --sqlite-url http://127.0.0.1:55493 --postgres-url http://127.0.0.1:55494 --samples 20
+  --pg-container ningbo-spike90-workload-pg --sampler-container ningbo-spike90-workload-sampler \
+  --sqlite-url http://ningbo-spike90-workload-sqlite:8080 --postgres-url http://ningbo-spike90-workload-client:8080 --samples 20
 ```
 
-The PG cluster receives no host port. Both HTTP adapters use the exact same built image. Actual inspect records must show SQLite CPU=1/RSS=4096MiB; PG client=.25/512MiB plus DB=.75/3584MiB, total=1 CPU/4096MiB. This is an equal **total envelope workload** comparison; component allocation, IPC, drivers/pooling and DB cache costs still differ. It cannot isolate pure-engine ranking. Report component RSS/CPU/IO and PG/SQLite/WAL/backup disk costs, not only Python RSS. `docker stats` is supplementary; peak usage must come from in-run samplers/cgroup peak files, not after-the-fact idle values.
+The PG cluster receives no host port. Both HTTP adapters and the observer use the exact same built image. The observer is a separate identical HTTP client for A/B, constrained to 1 CPU/512 MiB outside the total service envelopes; its actual limits and sampled CPU/RSS are retained. The client is part of throughput/HTTP observation overhead, not attributed to either database engine. Actual inspect records must show SQLite CPU=1/RSS=4096MiB; PG client=.25/512MiB plus DB=.75/3584MiB, total=1 CPU/4096MiB. This is an equal **total envelope workload** comparison; component allocation, IPC, drivers/pooling and DB cache costs still differ. It cannot isolate pure-engine ranking. Report component RSS/CPU/IO and PG/SQLite/WAL/backup disk costs, not only Python RSS. `docker stats` is supplementary; peak usage must come from in-run samplers/cgroup peak files, not after-the-fact idle values.
 
 Each case restarts its adapter process and alternates which backend runs first; `/health` does not perform the measured query. Database/OS caches are retained: “cold” means first measured request in a fresh process. Every c1/c2/c5 sample and failure is retained; percentiles include failed attempts and never stand alone as success SLOs. Response headers retain SQL driver+materialization time/count/returned bytes, total read/shaping time, serialization and process high-water RSS. The remaining difference to HTTP wall time is not silently called network time. There is no Node heap/event-loop observation in this Python experiment.
 
 For 2x, use `scale2x --source <optimized1x> --output <new2x.sqlite> --report <new2x-provenance.json>`, generate a new manifest/oracle on that exact copy, import to a NEW `spike90_workload_2x` database and repeat with the same actual limits. No raw output or embedded identity is rewritten to fake a second genuine domain history. Other-domain/mixed-write/long-duration/5x lanes remain separate if not executed.
 
-Stop only `ningbo-spike90-workload-sqlite`, `ningbo-spike90-workload-client`, `ningbo-spike90-workload-pg`, then remove only `ningbo-spike90-workload-net`. Retain all private source copies/PGDATA/provenance/output; never use broad Docker cleanup.
+Stop only `ningbo-spike90-workload-sqlite`, `ningbo-spike90-workload-client`, `ningbo-spike90-workload-pg`, and `ningbo-spike90-workload-sampler`, then remove only `ningbo-spike90-workload-net`. Retain all private source copies/PGDATA/provenance/output; never use broad Docker cleanup.
+
+
+## Qualified 1x preparation (shared host, not timing evidence)
+
+On runner source `8247cb4` plus the committed observer transport correction, the independent source copy matched the qualified hash. Applying final #83 migration `0025` left all original query/relation field/row hashes unchanged. The importer retained and verified complete rows of the two original and two derived tables, and confirmed its SQLite source hash remained unchanged. The final actual Node oracle has nine workload cases; single reads from each Docker backend must match all nine hashes before timing. Exact driver/runtime/configuration and image/source hashes are private `preparation-semantic.json`, and domain storage is `storage.json`.
+
+Retained setup failure: host `127.0.0.1:55493` refused connection even though Docker `HostConfig.PortBindings` contained the mapping; actual `NetworkSettings.Ports` was empty. The same running adapter answered `/health` inside its container. The source fix uses a same-image observer on the private internal bridge; it neither relaxes the bridge nor changes global Docker networking. This setup failure does not count as a workload latency sample or a successful availability result.
+
+`workload_ops.py storage` compares the same four tables/indexes via SQLite `dbstat` and PostgreSQL `pg_total_relation_size`, while separately retaining whole-file/database and cluster WAL allocation. These are private synthetic-domain/retained-domain costs; the complete SQLite file also contains unported domains. The `verify` action streams all four PostgreSQL table hashes after a separate restore and can compare them with `import.json`; it never aggregates raw archives into one SQL result.
