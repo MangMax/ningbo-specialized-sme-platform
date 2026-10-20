@@ -206,3 +206,51 @@ it('legacy impact pages visible decisions without reading unrelated reason notes
   expect(result.unresolved).toMatchObject([{ eventId: event.id }])
   expect(bytes()).toBeLessThan(65536)
 })
+
+
+it('keeps legacy JavaScript asOf semantics for fractional milliseconds, offsets and historical dates', () => {
+  const db = fixture()
+  const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Selected', path: 'selected.pdf', issueDate: '2026-10-18' }).returning().get()
+  const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'selected', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z' }).returning().get()
+  const owner = db.insert(schema.enterprise).values({ name: 'Selected', nameNorm: 'Selected' }).returning().get()
+  const times = [
+    '2026-10-20T00:00:00.001Z', // first real millisecond
+    '2026-10-20T00:00:00.0009Z', // JS truncates, SQLite rounds
+    '2026-10-20T08:00:00.000999999999999999999999999999+08:00',
+    '2026-10-20', // legacy whole-day inclusion
+    'invalid historical timestamp',
+    '2026-10-20T00:00:00.123999999999999999Z',
+    '2026-10-20T00:00:00.124Z',
+    '2026-10-20T00:00:00.000-01:00',
+    '0000badbad', // ten characters: legacy lexical day comparison
+    '2026-02-30T00:00:00Z', // Date.parse normalizes the historical day
+    '2026-10-20T25:00:00Z',
+    'Tue, 20 Oct 2026 00:00:00 GMT',
+  ]
+  const ids = times.map(recordedAt => db.insert(schema.differenceReason).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', reasonNote: 'UNREAD_NOTE'.repeat(10000), recordedAt }).returning({ id: schema.differenceReason.id }).get().id)
+  const bytes = returnedBytes(db)
+  const input = { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id], enterpriseId: owner.id, pageSize: 2 }
+  for (const [asOf, indexes] of [
+    ['2026-10-20T00:00:00.0009Z', [1, 3, 8, 9, 11]],
+    ['2026-10-20T08:00:00.001+08:00', [0, 1, 3, 8, 9, 11]],
+    ['2026-10-20T00:00:00.1234Z', [0, 1, 3, 5, 8, 9, 11]],
+    ['2026-10-20T00:00:00.124Z', [0, 1, 3, 5, 6, 8, 9, 11]],
+    ['2026-10-19T23:59:59.999999999Z', [8, 9]],
+    ['2026-10-20T01:00:00Z', [0, 1, 2, 3, 5, 6, 7, 8, 9, 11]],
+  ] as const) {
+    const expected = indexes.map(index => ids[index])
+    const found: number[] = []
+    for (let page = 1; page <= Math.ceil(expected.length / 2) + 1; page++) {
+      const result = previewRecordCorrespondenceImpact(db, { ...input, asOf, page })
+      expect(result.total, asOf).toBe(expected.length)
+      expect(result.counts.legacyRows, asOf).toBe(expected.length)
+      expect(result.rows.map(row => row.id), `${asOf} page ${page}`).toEqual(expected.slice((page - 1) * 2, page * 2))
+      found.push(...result.rows.map(row => row.id))
+    }
+    expect(found, asOf).toEqual(expected)
+  }
+  const unfiltered = previewRecordCorrespondenceImpact(db, { ...input, page: 1 })
+  expect(unfiltered.total).toBe(times.length)
+  expect(unfiltered.counts.legacyRows).toBe(times.length)
+  expect(bytes()).toBeLessThan(65536)
+})
