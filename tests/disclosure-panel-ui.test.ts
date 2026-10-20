@@ -69,12 +69,35 @@ it('page-level panels can add their own heading level without losing the accessi
   mounted.push(wrapper)
   const trigger = wrapper.get('button')
   expect(trigger.text()).toContain('管理操作授权')
-  // Level 2 is rendered by the official AccordionHeader; the trigger keeps its
-  // own button semantics, aria-expanded and id/aria-controls wiring.
-  expect(wrapper.find('h2').text()).toBe('管理操作授权')
+  // Level 2 is the heading that **contains** the trigger: the official
+  // AccordionHeader carries the level, and the trigger keeps its own button
+  // semantics, aria-expanded and id/aria-controls wiring.
+  const heading = wrapper.get('h2')
+  expect(heading.element.contains(trigger.element)).toBe(true)
+  expect(heading.text()).toBe('管理操作授权')
+  // A heading inside the button would nest one heading in another.
+  expect(trigger.findAll('h1, h2, h3, h4')).toHaveLength(0)
   expect(trigger.attributes('aria-expanded')).toBe('false')
   await trigger.trigger('click')
   await flushPromises()
   expect(trigger.attributes('aria-expanded')).toBe('true')
   expect(wrapper.get(`[id="${trigger.attributes('aria-controls')}"]`).text()).toContain('正文')
+})
+
+it('keeps the default heading level at h3, with the trigger inside it', () => {
+  const wrapper = mount(DisclosurePanel, { props: { title: '核对信息' }, slots: { default: () => h('p', '正文') } })
+  mounted.push(wrapper)
+  const trigger = wrapper.get('button')
+  const heading = wrapper.get('h3')
+  expect(heading.element.contains(trigger.element)).toBe(true)
+  expect(heading.text()).toBe('核对信息')
+  expect(trigger.findAll('h1, h2, h3, h4')).toHaveLength(0)
+})
+
+it('the heading level also applies when the trigger comes from the trigger slot', () => {
+  const wrapper = mount(DisclosurePanel, { props: { headingLevel: 2 }, slots: { trigger: () => h('span', '发起新的名录导出') } })
+  mounted.push(wrapper)
+  const trigger = wrapper.get('button')
+  expect(wrapper.get('h2').element.contains(trigger.element)).toBe(true)
+  expect(trigger.findAll('h1, h2, h3, h4')).toHaveLength(0)
 })
