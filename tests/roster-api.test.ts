@@ -3,6 +3,10 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ExcelJS from 'exceljs'
+import { readExportWorkbook } from './helpers/read-export-workbook'
+import { Readable } from 'node:stream'
+import { createServer, type Server } from 'node:http'
+import { createApp, toNodeListener, getQuery as h3Query, setHeader as h3Header, createError as h3Error } from 'h3'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
 
@@ -63,10 +67,12 @@ let handlerDifferences: (event: unknown) => {
   page: number
   pageSize: number
 }
+let server: Server
+let baseUrl: string
 let query: Record<string, unknown> = {}
 let routerParam: string | undefined
 let headers: Record<string, string> = {}
-let handlerExport: (event: unknown) => Promise<Uint8Array>
+let handlerExport: (event: unknown) => Promise<Uint8Array | Readable>
 
 /** 只有工信部一侧的企业 ⇒ 专精特新上「平台有而公布无」。 */
 let sideOnlyId = 0
@@ -74,14 +80,13 @@ let sideOnlyId = 0
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('defineRouteMeta', () => undefined)
-  vi.stubGlobal('getQuery', () => query)
+  vi.stubGlobal('getQuery', (event: Parameters<typeof h3Query>[0]) => event.node ? h3Query(event) : query)
   vi.stubGlobal('getRouterParam', () => routerParam)
   vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => {
     headers[name] = value
+    if ((_event as Parameters<typeof h3Header>[0]).node) h3Header(_event as Parameters<typeof h3Header>[0], name, value)
   })
-  vi.stubGlobal('createError', (opts: { statusMessage?: string; statusCode?: number }) =>
-    Object.assign(new Error(opts.statusMessage ?? 'Bad request'), opts),
-  )
+  vi.stubGlobal('createError', h3Error)
   vi.doMock('@db', () => ({ useDb: () => db }))
 
   enterpriseId = seed('宁波接口测试股份有限公司', USCC, '鄞州区', 'specialized_sme', 'jxj', 'award')
@@ -134,9 +139,18 @@ beforeAll(async () => {
   handlerDetail = decodeJsonRead((await import('../server/api/roster/enterprises/[id].get')).default) as unknown as typeof handlerDetail
   handlerDifferences = (await import('../server/api/roster/differences.get')).default as unknown as typeof handlerDifferences
   handlerExport = (await import('../server/api/roster/export.get')).default as unknown as typeof handlerExport
+  const app = createApp()
+  app.use('/api/roster/export', handlerExport as never)
+  server = createServer(toNodeListener(app))
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 })
 
-afterAll(() => rmSync(dir, { recursive: true, force: true }))
+afterAll(async () => {
+  if (server) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  vi.unstubAllGlobals()
+  rmSync(dir, { recursive: true, force: true })
+})
 
 describe('GET /api/roster/enterprises(契约 §7.1)', () => {
   it('不筛 = 全部;响应信封是 rows / counts / page / pageSize', async () => {
@@ -308,12 +322,52 @@ describe('GET /api/roster/differences(契约 §7.3)', () => {
 })
 
 describe('GET /api/roster/export(总表导出)', () => {
+  it('serves filtered and empty enterprise workbooks over HTTP without page truncation', async () => {
+    for (const [search, expectedRows, count] of [
+      ['title=innovative_sme&pageSize=1&page=9', 3, 1],
+      ['rosterState=removed_platform_only', 2, 0],
+      ['q=不存在的企业', 2, 0],
+    ] as const) {
+      const response = await fetch(`${baseUrl}/api/roster/export?${encodeURI(search)}`)
+      expect(response.status).toBe(200)
+      const sheet = (await readExportWorkbook(new Uint8Array(await response.arrayBuffer()))).worksheets[0]!
+      expect(sheet.rowCount).toBe(expectedRows)
+      expect(sheet.getCell('A1').text).toContain(`${count} 家企业`)
+      expect(sheet.getCell('A2').value).toBe('企业名称')
+    }
+  })
+  it('serves enterprise HTTP bytes with count grain text types recognition wrapping and validation intact', async () => {
+    const response = await fetch(`${baseUrl}/api/roster/export?page=9&pageSize=1`)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    expect(response.headers.get('content-disposition')).toBe(`attachment; filename="roster-enterprises.xlsx"; filename*=UTF-8''${encodeURIComponent('企业总表-3家.xlsx')}`)
+    const workbook = await readExportWorkbook(new Uint8Array(await response.arrayBuffer()))
+    const sheet = workbook.worksheets[0]!
+    expect(sheet.name).toBe('企业总表')
+    expect(sheet.rowCount).toBe(5)
+    expect(sheet.getCell('A1').text).toContain('3 家企业,合计 3 个「企业 × 称号」')
+    expect(sheet.getRow(2).values).toEqual([undefined, '企业名称', '统一社会信用代码', '区县', '城市', '登记状态', '当前总表状态', '称号(一行一家企业,多称号用、分隔)', '曾用名(已确认)', '首次认定', '首次认定出处', '下次复核'])
+    const row = [3, 4, 5].find((number) => sheet.getRow(number).getCell(2).value === USCC)!
+    expect(row).toBeDefined()
+    expect(sheet.getRow(row).getCell(2).type).toBe(ExcelJS.ValueType.String)
+    expect(sheet.getRow(row).getCell(9).text).toContain('2021')
+    expect(sheet.getRow(row).getCell(10).text).toContain('待确认')
+    for (const column of [9, 10]) {
+      expect(sheet.getColumn(column).alignment).toEqual({ wrapText: true, vertical: 'top' })
+      expect(sheet.getRow(row).getCell(column).alignment).toEqual({ wrapText: true, vertical: 'top' })
+    }
+    expect(sheet.getColumn(10).width).toBe(60)
+    const invalid = await fetch(`${baseUrl}/api/roster/export?title=nope`)
+    expect(invalid.status).toBe(400)
+    expect((await invalid.json()).statusMessage).toContain('Unknown title')
+    expect(invalid.headers.get('content-disposition')).toBeNull()
+  })
   async function exported(params: Record<string, unknown>) {
     query = params
     headers = {}
-    const bytes = await handlerExport({})
-    const wb = new ExcelJS.Workbook()
-    await wb.xlsx.load(Buffer.from(bytes) as never)
+    const result = await handlerExport({})
+    const bytes = result instanceof Readable ? await Array.fromAsync(result).then(Buffer.concat) : result
+    const wb = await readExportWorkbook(bytes)
     return wb.worksheets[0]!
   }
 
