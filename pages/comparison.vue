@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import ComparisonExplanation from '@/components/evidence-review/ComparisonExplanation.vue'
+import ComparisonRowDetails from '@/components/ComparisonRowDetails.vue'
+import type { ComparisonSummaryRow } from '~~/lib/comparison-summary'
 import EvidenceReviewList from '@/components/evidence-review/EvidenceReviewList.vue'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { computed, nextTick, provide, shallowRef, watch } from 'vue'
@@ -9,13 +10,9 @@ import type {
   ComparisonCounts,
   ComparisonDirection,
 } from '~~/lib/comparison'
-import type { CuratedRow } from '~~/lib/curation'
-import type { ComparisonPlatformEvidence } from '~~/lib/comparison-platform'
-import type { ReconcileEntry } from '~~/lib/reconcile'
 import { useScrollEdges } from '~~/lib/scroll-edges'
-import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
-import { shouldNuxtScrollToTop } from '~~/lib/roster/evidence-preview-return'
+import { rememberEvidencePreviewReturn, useEvidencePreviewScrollRestore, shouldNuxtScrollToTop } from '~~/lib/roster/evidence-preview-return'
 import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
 import { Input } from '@/components/ui/input'
@@ -23,6 +20,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import {
+  DIFFERENCE_STATUSES,
+  DIFFERENCE_REASONS,
+  DIFFERENCE_MEASURES,
   TITLES,
   TITLE_ORDER,
   COMPARISON_LABELS,
@@ -109,28 +109,32 @@ const COMPARISON_DIRECTIONS = Object.keys(
   COMPARISON_LABELS,
 ) as ComparisonDirection[]
 const titles = TITLE_ORDER
-const title = shallowRef('specialized_sme')
-const direction = shallowRef<ComparisonDirection>('missing_in_miit')
-const q = shallowRef('')
-const district = shallowRef('')
-const page = shallowRef(1)
-const showCurated = shallowRef(false)
+const queryText = (key: string, fallback = '') => typeof route.query[key] === 'string' ? route.query[key] as string : fallback
+const queryPage = (key: string, fallback: number) => Math.max(1, Math.trunc(Number(queryText(key))) || fallback)
+const title = shallowRef(queryText('title', 'specialized_sme'))
+const direction = shallowRef<ComparisonDirection>(COMPARISON_DIRECTIONS.includes(queryText('direction') as ComparisonDirection) ? queryText('direction') as ComparisonDirection : 'missing_in_miit')
+const q = shallowRef(queryText('q'))
+const district = shallowRef(queryText('district'))
+const page = shallowRef(queryPage('page', 1))
+const showCurated = shallowRef(queryText('showCurated') === 'true')
 const queryCache = useQueryCache()
-const pageSize = shallowRef(25)
+const pageSize = shallowRef(Math.min(200, queryPage('pageSize', 25)))
 const ALL_DISTRICTS = '__all__'
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 const districtModel = computed({
   get: () => district.value || ALL_DISTRICTS,
   set: (value: string) => { district.value = value === ALL_DISTRICTS ? '' : value },
 })
+let restoringRoute = false
 watch(
   [title, direction, q, district, showCurated],
   () => {
-    page.value = 1
+    if (!restoringRoute) page.value = 1
   },
   { flush: 'sync' },
 )
 const params = computed(() => ({
+  view: 'summary' as const,
   title: title.value,
   direction: direction.value,
   q: q.value,
@@ -139,9 +143,29 @@ const params = computed(() => ({
   pageSize: pageSize.value,
   showCurated: showCurated.value,
 }))
+// Persist the legacy result coordinate for enterprise/source return navigation.
+watch(params, (value) => {
+  if (mode.value !== 'legacy' || restoringRoute) return
+  const { view: _view, ...filters } = value
+  const query = { ...route.query, mode: 'legacy', ...Object.fromEntries(Object.entries(filters).map(([key, entry]) => [key, String(entry)])) }
+  if (Object.entries(query).every(([key, entry]) => route.query[key] === entry)) return
+  void router.replace({ path: '/comparison', query })
+})
+watch(() => route.query, () => {
+  if (mode.value !== 'legacy') return
+  restoringRoute = true
+  title.value = queryText('title', 'specialized_sme')
+  direction.value = COMPARISON_DIRECTIONS.includes(queryText('direction') as ComparisonDirection) ? queryText('direction') as ComparisonDirection : 'missing_in_miit'
+  q.value = queryText('q')
+  district.value = queryText('district')
+  showCurated.value = queryText('showCurated') === 'true'
+  pageSize.value = Math.min(200, queryPage('pageSize', 25))
+  page.value = queryPage('page', 1)
+  restoringRoute = false
+})
 type ComparisonQueryParams = typeof params.value
 type ComparisonApiResponse = {
-  rows: (CuratedRow & { explanation: ReconcileEntry | null; platform: ComparisonPlatformEvidence })[]
+  rows: ComparisonSummaryRow[]
   total: number
   counts: ComparisonCounts
   curatedCounts: ComparisonCounts
@@ -183,18 +207,19 @@ const {
   failureDescription,
 } = useRetainedQuerySnapshot<ComparisonQueryParams, ComparisonQueryResult>(data, isLoading, error, activeRequest)
 const rows = computed<ComparisonApiResponse['rows']>(() => displayedResult.value?.rows ?? [])
-/** 行上**已确认**的曾用名(待核实的不算 —— 契约 §1.2:`pending` 不参与搜索/归并)。 */
-function confirmedAliasNames(row: { name: string; platform: ComparisonPlatformEvidence }): string[] {
-  const aliases = row.platform.aliases.filter((alias) => alias.verificationStatus === 'confirmed')
-  const historicalNames = new Set(historicalAliasNamesForDisplay(
-    aliases.map((alias) => alias.name),
-    row.name,
-  ))
-  return aliases.filter((alias) => historicalNames.has(alias.name)).map((alias) => alias.name)
+const selectedRow = shallowRef<ComparisonSummaryRow | null>(null)
+function reasonLabel(row: ComparisonSummaryRow) {
+  const value = row.platform.disposition
+  return (value.reasonCode && DIFFERENCE_REASONS[value.reasonCode]) || DIFFERENCE_STATUSES[value.status] || value.status
+}
+function measureLabel(row: ComparisonSummaryRow) {
+  const code = row.platform.disposition.measureCode
+  return code ? DIFFERENCE_MEASURES[code] ?? code : '后续措施尚未记录'
 }
 // 宽表在窄屏下保留容器内横向滚动;边缘渐隐提示还有列可读。
 const scroller = shallowRef<HTMLElement | null>(null)
 const { edges, bars, measure } = useScrollEdges(scroller)
+useEvidencePreviewScrollRestore(computed(() => mode.value === 'legacy' && hasCurrentSnapshot.value && !isLoading.value))
 // 表体从骨架/空态换成真实表格时内容宽度会变,重算一次。
 watch([rows, isLoading], () => {
   void nextTick(measure)
@@ -355,6 +380,7 @@ const exportUrl = computed(() => {
                 <div v-if="!error || rows.length > 0" class="relative min-w-0">
                   <div
                     ref="scroller"
+                    data-evidence-return-scroll-container
                     tabindex="0"
                     role="region"
                     aria-label="比对结果表格(可横向滚动)"
@@ -413,26 +439,15 @@ const exportUrl = computed(() => {
                       >
                         <TableCell class="font-medium">
                           <NuxtLink
-                            :to="`/enterprises/${row.enterpriseId}`"
+                            :to="`/enterprises/${row.enterpriseId}?returnTo=${encodeURIComponent(route.fullPath)}`"
+                            @click="rememberEvidencePreviewReturn(route.fullPath, $event.currentTarget)"
                             :title="row.name"
                             data-testid="comparison-enterprise-name"
                             class="block whitespace-normal break-words text-[13px] leading-4 hover:text-primary hover:underline"
                             >{{ row.name }}</NuxtLink
                           >
-                          <!-- 已确认曾用名压成单行,避免别名把比对行撑高。 -->
-                          <div v-if="confirmedAliasNames(row).length" class="mt-1 hidden min-w-0 flex-nowrap gap-1 overflow-hidden sm:flex" data-testid="comparison-aliases">
-                            <Badge variant="quiet" class="max-w-full truncate font-normal" :title="confirmedAliasNames(row)[0]">
-                              曾用名 {{ confirmedAliasNames(row)[0] }}
-                            </Badge>
-                            <Badge v-if="confirmedAliasNames(row).length > 1" variant="quiet" class="shrink-0 font-normal">
-                              +{{ confirmedAliasNames(row).length - 1 }}
-                            </Badge>
-                          </div>
-                          <div v-if="(row.evidence.currentCity && row.evidence.currentCity !== '宁波市') || /注销|吊销/.test(row.evidence.regStatus ?? '') || !row.uscc" class="mt-1 flex flex-wrap gap-1">
-                            <span v-if="row.evidence.currentCity && row.evidence.currentCity !== '宁波市'" class="text-muted-foreground text-[13px]">{{ row.evidence.currentCity }}</span>
-                            <span v-if="/注销|吊销/.test(row.evidence.regStatus ?? '')" class="text-destructive text-[13px]">{{ row.evidence.regStatus }}</span>
-                            <span v-if="!row.uscc" class="text-muted-foreground text-[13px]">{{ COMPARISON_NO_USCC }}</span>
-                          </div>
+                          <Badge v-if="row.platform.confirmedAliasCount" variant="quiet" class="mt-1 max-w-full whitespace-normal font-normal">已确认曾用名 {{ row.platform.confirmedAliasCount }} 个 · 展开查看</Badge>
+                          <span v-if="!row.uscc" class="text-muted-foreground text-[13px]">{{ COMPARISON_NO_USCC }}</span>
                         </TableCell>
                         <TableCell
                           class="text-muted-foreground hidden font-mono text-xs sm:table-cell"
@@ -445,22 +460,22 @@ const exportUrl = computed(() => {
                           COMPARISON_OTHER_SIDE[row.direction]
                         }}</TableCell>
                         <TableCell class="hidden sm:table-cell">
-                          <ComparisonExplanation :enterprise-id="row.enterpriseId" :title-code="row.titleCode" :direction="row.direction" />
+                          <div class="text-[13px] leading-5"><p>{{ reasonLabel(row) }}</p><p class="text-muted-foreground">{{ measureLabel(row) }}</p></div>
                         </TableCell>
                         <TableCell class="hidden sm:table-cell">
-                          <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />
+                          <p class="text-muted-foreground text-[13px] leading-5">{{ row.platform.queryCount }} 次查询 · {{ row.platform.sourceRelationCount }} 条来源行</p>
                         </TableCell>
                         <TableCell class="hidden sm:table-cell">
-                          <ComparisonCuration :row="row" @saved="refreshCuration" />
+                          <div class="flex flex-col items-start gap-1"><span class="text-muted-foreground text-[13px]">{{ row.curated ? '已核实' : '待核实' }}</span><Button variant="link" size="sm" @click="selectedRow = row">展开原因、记录与备注</Button></div>
                         </TableCell>
                         <TableCell colspan="6" class="whitespace-normal sm:hidden">
                           <div class="flex min-w-0 flex-col gap-1" data-testid="comparison-mobile-details">
                             <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-border/50 pb-1 text-[13px] leading-5" data-testid="comparison-mobile-status-divider">
                               <span class="text-muted-foreground">{{ COMPARISON_OTHER_SIDE[row.direction] }}</span>
-                              <ComparisonExplanation :enterprise-id="row.enterpriseId" :title-code="row.titleCode" :direction="row.direction" />
+                              <div class="text-[13px] leading-5"><p>{{ reasonLabel(row) }}</p><p class="text-muted-foreground">{{ measureLabel(row) }}</p></div>
                             </div>
-                            <ComparisonPlatformEvidence :evidence="row.platform" :enterprise-id="row.enterpriseId" :current-name="row.name" />
-                            <ComparisonCuration :row="row" :compact="true" @saved="refreshCuration" />
+                            <p class="text-muted-foreground text-[13px] leading-5">{{ row.platform.queryCount }} 次查询 · {{ row.platform.sourceRelationCount }} 条来源行</p>
+                            <Button variant="link" size="sm" class="h-auto justify-start whitespace-normal p-0 text-left" @click="selectedRow = row">展开原因、记录与备注</Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -491,6 +506,7 @@ const exportUrl = computed(() => {
     </div>
   </div>
 
+  <ComparisonRowDetails :row="selectedRow" :return-to="route.fullPath" @close="selectedRow = null" @saved="refreshCuration" />
   <Dialog :open="pendingLeave !== null" @update:open="value => { if (!value) pendingLeave = null }">
     <DialogContent data-testid="comparison-draft-leave-dialog" class="sm:max-w-md">
       <DialogHeader>
