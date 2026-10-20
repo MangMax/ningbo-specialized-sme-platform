@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { groupBy, orderBy, partition, uniqBy } from 'es-toolkit'
+import { orderBy } from 'es-toolkit'
 import * as schema from '../db/schema'
 import type { TitleCode } from '../db/titles'
 import { TITLE_ORDER } from './labels'
@@ -45,26 +45,47 @@ export function getComparison(
   db: BetterSQLite3Database<typeof schema>,
   opts: ComparisonQuery = {},
 ): ComparisonResult {
-  const records = db
-    .select({
-      enterpriseId: schema.enterprise.id,
-      name: schema.enterprise.name,
-      uscc: schema.enterprise.usccNorm,
-      district: schema.record.district,
-      titleCode: schema.record.titleCode,
-      source: schema.record.source,
-      currentCity: schema.enterprise.city,
-      regStatus: schema.enterprise.regStatus,
-    })
-    .from(schema.record)
-    .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
-    .all()
-  const byTitle = groupBy(records, (r) => r.titleCode)
+  // Matched source rows stay inside SQLite. Keep the legacy jxj / everything-else
+  // partition and binary equality of stored USCC (including an empty string).
+  // The legacy record table scan kept its first row; MIN(id) retains that
+  // representative district for historical non-jxj sources sharing a side.
+  const records = db.all<{
+    enterpriseId: number
+    name: string
+    uscc: string | null
+    district: string | null
+    titleCode: TitleCode
+    direction: ComparisonDirection
+    currentCity: string | null
+    regStatus: string | null
+  }>(sql`
+    with differences as (
+      select min(r.id) as recordId
+      from record r
+      join enterprise e on e.id = r.enterprise_id
+      where r.title_code in ${TITLE_ORDER}
+        and (e.uscc_norm is null or not exists (
+          select 1 from enterprise other
+          join record opposite on opposite.enterprise_id = other.id
+          where other.uscc_norm = e.uscc_norm collate binary
+            and opposite.title_code = r.title_code
+            and (opposite.source = 'jxj') <> (r.source = 'jxj')
+        ))
+      group by r.enterprise_id, r.title_code, (r.source = 'jxj')
+    )
+    select e.id as enterpriseId, e.name, e.uscc_norm as uscc,
+      r.district, r.title_code as titleCode,
+      case when r.source = 'jxj' then 'missing_in_miit' else 'extra_in_miit' end as direction,
+      e.city as currentCity, e.reg_status as regStatus
+    from differences d
+    join record r on r.id = d.recordId
+    join enterprise e on e.id = r.enterprise_id
+  `)
   const counts = Object.fromEntries(
     TITLE_ORDER.map((code) => [code, { missing_in_miit: 0, extra_in_miit: 0 }]),
   ) as ComparisonCounts
 
-  const differences = TITLE_ORDER.flatMap((code): ComparisonRow[] => {
+  const differences = records.map((r): ComparisonRow => {
     // **小巨人双向对比已启用**(用户 2026-10-16 裁决,RL-04 落地)。
     //
     // 两侧 = 经信局**历年小巨人名单**(RL-02 导入,历史批次 2019–2025 的**权威来源**)
@@ -73,29 +94,22 @@ export function getComparison(
     // 故排除一并去掉(`tests/comparison.test.ts` 的旧期望随之更新,是有意变更)。
     //
     // 硬边界不变:平台导出**永不改写**公布历史;未匹配平台的公布条目**仍须保留**。
-    const titleCode = code as TitleCode
-    const [jxj, miit] = partition(byTitle[code] ?? [], (r) => r.source === 'jxj')
-    const sides = [jxj, miit].map((rows) => uniqBy(rows, (r) => r.enterpriseId))
-    return COMPARISON_DIRECTIONS.flatMap((direction, index) => {
-      const otherKeys = new Set(sides[1 - index]!.map((r) => r.uscc).filter((key) => key !== null))
-      const unmatched = sides[index]!.filter((r) => r.uscc === null || !otherKeys.has(r.uscc))
-      counts[titleCode][direction] = unmatched.length
-      return unmatched.map((r) => ({
-        enterpriseId: r.enterpriseId,
-        name: r.name,
-        uscc: r.uscc,
-        district: r.district,
-        titleCode,
-        direction,
-        curated: false,
-        evidence: {
-          matchedBy: 'uscc' as const,
-          otherSideUscc: null,
-          currentCity: r.currentCity,
-          regStatus: r.regStatus,
-        },
-      }))
-    })
+    counts[r.titleCode][r.direction]++
+    return {
+      enterpriseId: r.enterpriseId,
+      name: r.name,
+      uscc: r.uscc,
+      district: r.district,
+      titleCode: r.titleCode,
+      direction: r.direction,
+      curated: false,
+      evidence: {
+        matchedBy: 'uscc',
+        otherSideUscc: null,
+        currentCity: r.currentCity,
+        regStatus: r.regStatus,
+      },
+    }
   })
 
   const rows = orderBy(
