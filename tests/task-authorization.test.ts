@@ -15,7 +15,9 @@ afterEach(() => { vi.useRealTimers() })
 describe('管理操作授权（有界校验）', () => {
   it('服务端不应答：八秒后如实说“没拿到答案”，不停在验证中，也不把密钥判成错误', async () => {
     const auth = useAdminAuthorization()
-    const pending = auth.verify('hanging-key', never, new AbortController().signal)
+    auth.draft.value = 'hanging-key'
+    let signal: AbortSignal | undefined
+    const pending = auth.verify('hanging-key', (own) => { signal = own; return never() })
     await vi.advanceTimersByTimeAsync(0)
     expect(auth.phase.value).toBe('checking')
     expect(auth.checking.value).toBe(true)
@@ -29,33 +31,34 @@ describe('管理操作授权（有界校验）', () => {
     expect(auth.phase.value).toBe('unreachable')
     expect(auth.message.value).toMatch(/未在 8 秒内回应/)
     expect(auth.message.value).not.toMatch(/未通过校验|请输入/)
-    expect(auth.draft.value).toBe('')
-    expect(auth.verified.value).toBe('')
     // The key stays only in the field (the person can submit again); it is not
     // treated as a proven credential.
+    expect(auth.draft.value).toBe('hanging-key')
+    expect(auth.credential.value).toBe('')
     expect(auth.checking.value).toBe(false)
+    // The bound is not just a message: the read that never landed is aborted.
+    expect(signal?.aborted).toBe(true)
   })
 
   it('服务端说本次密钥未授权：就地拒绝并清掉凭据，但保留草稿', async () => {
     const auth = useAdminAuthorization()
     auth.draft.value = 'wrong-key'
-    expect(await auth.verify('wrong-key', read('wrong-key', false), new AbortController().signal)).toBe(false)
+    expect(await auth.verify('wrong-key', read('wrong-key', false))).toBe(false)
     expect(auth.phase.value).toBe('rejected')
     expect(auth.credential.value).toBe('')
-    expect(auth.verified.value).toBe('')
     expect(auth.draft.value).toBe('wrong-key')
   })
 
   it('别的密钥的答案不能被当成这次的结果（不拿“当前”凭据给旧读取贴标签）', async () => {
     const auth = useAdminAuthorization()
     // The read answers about an older key than the one this attempt submitted.
-    expect(await auth.verify('new-key', read('old-key', true), new AbortController().signal)).toBe(false)
-    expect(auth.verified.value).toBe('')
+    expect(await auth.verify('new-key', read('old-key', true))).toBe(false)
+    expect(auth.credential.value).toBe('')
     expect(auth.phase.value).toBe('unreachable')
 
     // The same read answering about the submitted key does prove it.
-    expect(await auth.verify('new-key', read('new-key', true), new AbortController().signal)).toBe(true)
-    expect(auth.verified.value).toBe('new-key')
+    expect(await auth.verify('new-key', read('new-key', true))).toBe(true)
+    expect(auth.credential.value).toBe('new-key')
     expect(auth.draft.value).toBe('')
   })
 
@@ -63,26 +66,52 @@ describe('管理操作授权（有界校验）', () => {
     const auth = useAdminAuthorization()
     let release!: () => void
     const held = new Promise<{ ok: boolean, answer: CredentialAnswer | null }>(resolve => { release = () => resolve({ ok: true, answer: { credential: 'right-key', authorized: true } }) })
-    const pending = auth.verify('right-key', () => held, new AbortController().signal)
+    const pending = auth.verify('right-key', () => held)
     await vi.advanceTimersByTimeAsync(0)
     expect(auth.phase.value).toBe('checking')
 
     auth.clear()
     release()
     expect(await pending).toBe(false)
-    expect(auth.verified.value).toBe('')
-    expect(auth.phase.value).toBe('idle')
     expect(auth.credential.value).toBe('')
+    expect(auth.phase.value).toBe('idle')
   })
 
-  it('离页放弃校验（clearChecking）只作废这一次，不清掉已确认的授权', async () => {
+  it('清除授权会中止在途的读取，并把已确认的凭据一起丢掉', async () => {
     const auth = useAdminAuthorization()
-    expect(await auth.verify('right-key', read('right-key', true), new AbortController().signal)).toBe(true)
-    const pending = auth.verify('second-key', never, new AbortController().signal)
+    expect(await auth.verify('right-key', read('right-key', true))).toBe(true)
+    expect(auth.credential.value).toBe('right-key')
+
+    let signal: AbortSignal | undefined
+    const pending = auth.verify('second-key', (own) => { signal = own; return never() })
     await vi.advanceTimersByTimeAsync(0)
-    auth.clearChecking()
+    expect(signal?.aborted).toBe(false)
+
+    auth.clear()
+    // The read on the wire is stopped, and the confirmed key is gone with it.
+    expect(signal?.aborted).toBe(true)
+    expect(auth.credential.value).toBe('')
+    expect(auth.draft.value).toBe('')
+    expect(auth.phase.value).toBe('idle')
     await vi.advanceTimersByTimeAsync(AUTHORIZATION_CHECK_TIMEOUT_MS)
     expect(await pending).toBe(false)
-    expect(auth.verified.value).toBe('right-key')
+  })
+
+  it('被作废的那次校验不会把凭据留在内存里：下一次提交用自己的读取', async () => {
+    const auth = useAdminAuthorization()
+    let firstSignal: AbortSignal | undefined
+    const first = auth.verify('first-key', (own) => { firstSignal = own; return never() })
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A second attempt supersedes the first: the first read is aborted and the
+    // first answer may not decide anything.
+    const second = auth.verify('second-key', read('second-key', true))
+    expect(await second).toBe(true)
+    expect(firstSignal?.aborted).toBe(true)
+    expect(auth.credential.value).toBe('second-key')
+    // The superseded attempt still ends on its own bound; it decides nothing.
+    await vi.advanceTimersByTimeAsync(AUTHORIZATION_CHECK_TIMEOUT_MS)
+    expect(await first).toBe(false)
+    expect(auth.credential.value).toBe('second-key')
   })
 })

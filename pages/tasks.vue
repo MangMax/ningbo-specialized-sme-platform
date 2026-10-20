@@ -27,39 +27,29 @@ const titleCode = computed(() => TASK_EXPORTS.some(t => t.titleCode === route.qu
 const tabLabels: Record<TaskTab, string> = { all: '全部任务', ocr: 'OCR', platform: '工信部平台', export: '导出' }
 
 const auth = useAdminAuthorization()
-const { draft, credential, version, phase, message, verify, isAuthorized, clear, checking, clearChecking } = auth
+const { draft, credential, version, phase, message, verify, isAuthorized, clear, checking } = auth
 const keyInput = useTemplateRef<{ $el?: HTMLInputElement }>('keyInput')
 // happy-dom does not give SFC template refs their instance `$el`; a browser always
 // does, so fall back to the ref'd element when the parent cannot unwrap it.
 const keyField = () => keyInput.value?.$el ?? (keyInput.value as unknown as HTMLInputElement | null) ?? null
 const params = computed(() => ({ tab: tab.value, state: state.value === 'all' ? undefined : state.value, titleCode: titleCode.value === 'all' ? undefined : titleCode.value, page: page.value, pageSize: pageSize.value }))
 const key = computed(() => JSON.stringify([params.value, version.value]))
-// Answer is captured with the request so a late reply can be matched to the
-// credential that produced it; a revoked key must not authorize anything.
-type ListRead = { list: TaskList, credential: string, key: string }
-const { data: read, sourceKey, loading, failed, retryIn, refresh, settle } = useTaskPolling<ListRead>(key, async (signal) => {
-  // The answer is captured with the request: a late reply is matched to the
-  // credential, filter and generation that produced it, never to "current".
-  const requested = { credential: credential.value, params: params.value, key: key.value }
-  try {
-    const list = await $fetch<TaskList>('/api/task-center', { query: requested.params, headers: requested.credential ? { authorization: `Bearer ${requested.credential}` } : undefined, signal })
-    return { list, credential: requested.credential, key: requested.key }
-  } catch (cause) {
-    throw cause
-  }
+// The credential travels with the request that carried it, so a late answer is
+// matched to the credential that produced it — never to "current". Which filter
+// the snapshot belongs to is the polling composable's own source key.
+type ListRead = { list: TaskList, credential: string }
+const { data: read, sourceKey, loading, failed, retryIn, refresh } = useTaskPolling<ListRead>(key, async (signal) => {
+  const requested = { credential: credential.value, params: params.value }
+  const list = await $fetch<TaskList>('/api/task-center', { query: requested.params, headers: requested.credential ? { authorization: `Bearer ${requested.credential}` } : undefined, signal })
+  return { list, credential: requested.credential }
 })
-/** The stored snapshot only counts as an answer about `askedFor` if it is that read's. */
-function snapshotFor(askedFor: string): ListRead | null {
-  return read.value && read.value.key === askedFor ? read.value : null
-}
 const data = computed(() => read.value?.list)
 // Only a list payload renders rows; anything partial shows as empty instead of
 // throwing mid-render.
 const rows = computed(() => Array.isArray(data.value?.rows) ? data.value.rows : [])
 const authorized = computed(() => isAuthorized(read.value && { credential: read.value.credential, authorized: read.value.list?.authorized === true }))
 const stale = computed(() => sourceKey.value !== key.value)
-// Template handlers must not hand Vue a promise result (Vue treats a resolved
-// promise as "component unmounted").
+// The template handler starts a read; it does not wait for it.
 function reload() { void refresh() }
 const readOnlyReason = computed(() => {
   if (stale.value) return '正在按新筛选读取授权状态，读完即可操作。'
@@ -83,54 +73,22 @@ function regenerate(task: TaskSummary) {
   const code = task.export?.titleCode
   if (code) void submitExport(code, task.id)
 }
-// One explicit action runs at a time: a second Enter while the first check is
-// still on the wire must not start a parallel verification (only `settle()` is
-// generation-guarded, the verdict is not).
-const authSubmitting = ref(false)
-const authCancel = new AbortController()
-function abortVerification() { clearChecking(); authCancel.abort('verification abandoned') }
 /**
- * 等“带着这把候选密钥”的那次读取落定，并交出它的结果。
+ * 一次只读取证。
  *
- * `askedFor` 是**发起时**就算好的读取键（筛选 + 这次凭据的版本），之后任何 await
- * 都不会把它换成“当前”的键：晚到的答案只回答它自己那次请求。
+ * 服务端的只读 GET 永远 200，只在 `authorized` 字段里说明**这次请求带的**密钥是否
+ * 有效。所以这一次读取自己带着候选密钥出去，回答里回报的也必须是**同一个**候选
+ * 密钥 —— 不用“此刻”的凭据去给答案贴标签，那会把上一把密钥的答案算到别人头上。
  *
- * 只等“从现在起新开始的读取”不够：提交时若正好有一次轮询在途，密钥变化只是让轮询
- * 重排下一次读取，`settle()` 等到的仍是那次在途的旧读取 —— 它的载荷里没有候选密钥。
- * 所以第一次落定之后，继续等**本次键自己的**快照；它还不存在，就按同一筛选、同一
- * 候选密钥**只读**再取一次（GET 无副作用，也不写回列表），用它作答。
+ * 这次读取不依赖轮询的落定，也不依赖 DOM：它就是一次带候选密钥的安全只读请求。
  */
-async function waitForCredentialRead(askedFor: string, signal: AbortSignal) {
-  // The read that carries this key may be the one already on the wire (re-armed by
-  // the credential bump) or a fresh one; either way wait until it has settled and
-  // its snapshot exists.
-  for (let attempt = 0; attempt < 4 && !signal.aborted && !snapshotFor(askedFor); attempt++) { void settle(signal); await flushPendingRow() }
-  await flushPendingRow()
-  if (signal.aborted) return { ok: false, answer: null }
-  let snapshot = snapshotFor(askedFor)
-  // A newer filter/credential read already replaced the stored snapshot: it is not
-  // this attempt's answer. Ask the same read-only endpoint once, for this filter
-  // and this candidate, instead of passing off "whatever is current".
-  if (!snapshot) {
-    const [query] = JSON.parse(askedFor) as [typeof params.value, number]
-    try {
-      const list = await $fetch<TaskList>('/api/task-center', { query, headers: credential.value ? { authorization: `Bearer ${credential.value}` } : undefined, signal })
-      snapshot = { list, credential: credential.value, key: askedFor }
-    } catch { return { ok: false, answer: null } }
+async function readAuthorization(candidate: string, requested: typeof params.value, signal: AbortSignal) {
+  try {
+    const list = await $fetch<TaskList>('/api/task-center', { query: requested, headers: { authorization: `Bearer ${candidate}` }, signal })
+    return { ok: true, answer: { credential: candidate, authorized: list?.authorized === true } }
+  } catch {
+    return { ok: false, answer: null }
   }
-  // Clearing authorization or leaving the page abandons the answer.
-  if (signal.aborted) return { ok: false, answer: null }
-  if (!snapshot) return { ok: false, answer: null }
-  return { ok: true, answer: { credential: snapshot.credential, authorized: snapshot.list?.authorized === true } }
-}
-/** Resolves after Vue flushed pending DOM work (a macrotask boundary is enough). */
-function flushPendingRow() {
-  return new Promise<void>((resolve) => {
-    const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => finish())
-    const finish = () => { observer?.disconnect(); clearTimeout(timer); resolve() }
-    const timer = setTimeout(finish, 0)
-    observer?.observe(document.documentElement, { subtree: true, childList: true, attributes: true })
-  })
 }
 // Opens the authorization form, brings it into view once and puts the cursor
 // where the key is typed. Only a person asks for this; polling never does.
@@ -145,33 +103,19 @@ function requestAuthorization() {
   })
 }
 async function submitAuthorization() {
-  if (authSubmitting.value || checking.value) return
-  authSubmitting.value = true
-  // Everything this attempt is judged by is taken **now**, before any request: the
-  // candidate in the field, and the read key that will carry it (`verify` bumps the
-  // credential version by one). Nothing after an await may relabel the attempt.
+  // 校验进行中不接受第二次提交：同一个按钮不能同时发起两把密钥的校验。
+  if (checking.value) return
+  // 这一次提交自己拥有的一切都在这里定下来：候选密钥与筛选参数。之后的任何等待
+  // 都不得改写它们。
   const candidate = draft.value.trim()
-  const askedFor = JSON.stringify([params.value, version.value + 1])
-  try {
-    await verify(candidate, () => waitForCredentialRead(askedFor, authCancel.signal), authCancel.signal)
-    // The verdict lands once, and only a refusal moves the cursor: the key stays
-    // where it was typed so it can be fixed in place. Success needs no focus
-    // move — the badge and the single `role=status` line below say what changed.
-    if (phase.value === 'rejected' || phase.value === 'unreachable') {
-      await nextTick()
-      const field = keyField()
-      field?.focus({ preventScroll: true })
-      // A field that is not on screen (closed/replaced form) cannot take the caret;
-      // say the verdict out loud instead of leaving it to whatever is still focused.
-      if (typeof document !== 'undefined' && field && document.activeElement !== field) announceAuth(field.closest('form'))
-    }
-  } finally { authSubmitting.value = false }
-}
-function clearAuthorization() { abortVerification(); clear() }
-/** Make sure the one verdict line is a live region even when focus cannot move. */
-function announceAuth(scope: Element | null) {
-  const line = scope?.querySelector<HTMLElement>('[data-testid="task-auth-alert"], [data-testid="task-auth-unreachable"]')
-  if (line) line.setAttribute('role', 'alert')
+  const requested = params.value
+  await verify(candidate, signal => readAuthorization(candidate, requested, signal))
+  // 判定只落一次；只有被拒绝才移动光标，密钥留在输入框里就地改。成功不需要移动
+  // 光标 —— 徽标与那一行状态说明了一切。
+  if (phase.value === 'rejected' || phase.value === 'unreachable') {
+    await nextTick()
+    keyField()?.focus({ preventScroll: true })
+  }
 }
 
 const exportRoutes = ref<Partial<Record<TaskExportTitle, boolean>>>({})
@@ -313,12 +257,13 @@ watch(job, (next) => { if (exportNotice.value && exportNotice.value.jobId && exp
 onMounted(() => {
   // Leaving the page clears the credential (required); the badge falls back to
   // 只读 and every disabled action then states "需要先完成管理操作授权".
-  window.addEventListener('pagehide', clearAuthorization)
+  window.addEventListener('pagehide', clear)
   void discoverExports()
 })
-// Unmounting ends the page, not the person's authorization intent: abort the
-// in-flight verification but do not touch `auth` (a parent route may keep it).
-onBeforeUnmount(() => { abortVerification(); window.removeEventListener('pagehide', clearAuthorization) })
+// Leaving the page is the end of the credential, not just of the check: an
+// unmount drops the in-memory key, invalidates the pending verdict and aborts
+// the read that was still on the wire.
+onBeforeUnmount(() => { clear(); window.removeEventListener('pagehide', clear) })
 </script>
 <template>
   <div class="flex min-w-0 flex-col gap-4">
@@ -465,7 +410,7 @@ onBeforeUnmount(() => { abortVerification(); window.removeEventListener('pagehid
               <Input id="task-key" ref="keyInput" v-model="draft" type="password" autocomplete="off" placeholder="由管理员提供" :aria-invalid="phase === 'rejected' || undefined" aria-describedby="task-key-help" />
             </div>
             <Button type="submit" variant="outline" class="min-h-11 sm:min-h-0" :disabled="checking" :aria-busy="checking || undefined">{{ checking ? '正在验证…' : '应用授权' }}</Button>
-            <Button type="button" variant="ghost" class="min-h-11 sm:min-h-0" @click="clearAuthorization">清除授权</Button>
+            <Button type="button" variant="ghost" class="min-h-11 sm:min-h-0" @click="clear">清除授权</Button>
           </div>
           <!-- One line, one live region: the verdict of the last attempt only. -->
           <p v-if="checking" role="status" data-testid="task-auth-checking" class="text-muted-foreground text-sm">正在验证密钥…</p>

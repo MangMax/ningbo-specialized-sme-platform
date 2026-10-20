@@ -3,15 +3,20 @@
 //
 // Each test here pins a person's job, not the component's internals:
 //   1. a wrong admin key fails where it was typed and keeps the draft;
-//   2. the accepted export can be found again after leaving (cross tab);
-//   3. a 202 whose receipt was lost is retried with the same request identity;
-//   4. a rejected export submission keeps its own readable reason;
-//   5. the accepted-export bar states the request, not a stale task state;
-//   6. opening a detail reveals it, while polling never steals focus or scroll;
-//   7. closing a detail returns to the row that opened it;
-//   8. detail shows only actions the task really supports;
-//   9. a refusal is not repeated per detail; it names recovery once;
-//  10. a button that is disabled always says why next to it.
+//   2. the same key can be proven again after "clear" — clearing one attempt
+//      must not disable the next one;
+//   3. a check that never gets an answer says so within its bound and stops the
+//      read instead of hanging;
+//   4. a second press while checking starts no second verification;
+//   5. leaving the page drops the in-memory key and aborts what was in flight;
+//   6. the accepted export can be found again after leaving (cross tab);
+//   7. a 202 whose receipt was lost is retried with the same request identity;
+//   8. a rejected export submission keeps its own readable reason;
+//   9. the accepted-export bar states the request, not a stale task state;
+//  10. opening a detail reveals it, while polling never steals focus or scroll;
+//  11. closing a detail returns to the row that opened it;
+//  12. detail shows only actions the task really supports;
+//  13. a button that is disabled always says why next to it.
 //
 // The accessible-hiding behaviour of DisclosurePanel (KEYBOARD) is covered by
 // tests/disclosure-panel-ui.test.ts; this file only checks that the page really
@@ -157,7 +162,7 @@ function listOf(rows: TaskSummary[], authorized = false): TaskList {
   }
 }
 
-type FetchCall = { url: string, method: string, body?: unknown, headers?: Record<string, string> }
+type FetchCall = { url: string, method: string, body?: unknown, headers?: Record<string, string>, query?: unknown, signal?: AbortSignal }
 /** The credential the most recent list read carried (what the server saw). */
 let lastListAuthorization = ''
 const lastAuthorization = () => lastListAuthorization
@@ -168,8 +173,8 @@ function installFetch(handler: (call: FetchCall) => Response | Promise<Response>
   const calls: FetchCall[] = []
   // Record first, then call the handler: a handler that throws (lost network)
   // must still show up as an attempted request.
-  const run = async (url: string, options: { method?: string, body?: unknown, headers?: Record<string, string> } = {}) => {
-    const entry = { url, method: options.method ?? 'GET', body: options.body, headers: options.headers }
+  const run = async (url: string, options: { method?: string, body?: unknown, headers?: Record<string, string>, query?: unknown, signal?: AbortSignal } = {}) => {
+    const entry = { url, method: options.method ?? 'GET', body: options.body, headers: options.headers, query: options.query, signal: options.signal }
     if (url === '/api/task-center') lastListAuthorization = options.headers?.authorization ?? ''
     calls.push(entry)
     const response = await handler(entry)
@@ -178,13 +183,13 @@ function installFetch(handler: (call: FetchCall) => Response | Promise<Response>
     return { response, data }
   }
   const impl = Object.assign(
-    async (url: string, options?: { method?: string, body?: unknown, headers?: Record<string, string> }) => {
+    async (url: string, options?: { method?: string, body?: unknown, headers?: Record<string, string>, query?: unknown, signal?: AbortSignal }) => {
       const { response, data } = await run(url, options)
       if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { statusCode: response.status, data })
       return data
     },
     {
-      raw: async (url: string, options: { method?: string, body?: unknown, headers?: Record<string, string> } = {}) => {
+      raw: async (url: string, options: { method?: string, body?: unknown, headers?: Record<string, string>, query?: unknown, signal?: AbortSignal } = {}) => {
         const { response, data } = await run(url, options)
         if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { statusCode: response.status, data })
         return { status: response.status, _data: data, headers: response.headers }
@@ -325,8 +330,8 @@ beforeEach(() => {
 
 const EXPORT_KEY = 'task-center-export-requests-v1'
 
-/** Let pending reads and microtasks settle (auth submits are async end-to-end,
- *  and a read the key change re-armed lands a tick after the in-flight one). */
+/** Let pending reads and microtasks settle (an auth submit is async end-to-end:
+ *  the read has to land and the page has to re-render the verdict). */
 async function settle() {
   for (let i = 0; i < 40; i++) { await flushPromises(); await new Promise(resolve => setTimeout(resolve, 5)) }
   await flushPromises()
@@ -395,15 +400,7 @@ async function sampleEvery(wrapper: Wrapper, ms: number, during: () => Promise<v
   return readings
 }
 
-/** The verdict is the first moment the form stops saying "checking" (real time). */
-async function waitingOn(wrapper: Wrapper, timeoutMs = 1000) {
-  // The verdict lands a tick or more after the submit handler starts (bounded settle,
-  // a fallback read, state flush), so wait for a change in what the form says.
-  const started = Date.now()
-  while (!authSnapshot(wrapper).submitLabel.startsWith('正在验证') && Date.now() - started < 500) { await flushPromises(); await sleep(5) }
-  await waitForVerdict(wrapper, timeoutMs)
-}
-
+/** Wait until the form stops saying "checking" and the verdict is on screen. */
 async function waitForVerdict(wrapper: Wrapper, timeoutMs = 1000) {
   const started = Date.now()
   await flushPromises()
@@ -417,15 +414,33 @@ function checkingLabel(wrapper: Wrapper) {
   return wrapper.get('form button[type="submit"]').text().trim()
 }
 
+/**
+ * Press the form's submit button the way a person does.
+ *
+ * `element.click()` runs the button's activation behaviour, so the browser's own
+ * implicit submission happens — and a disabled button does not submit, exactly as
+ * in a browser. A dispatched `click` event would run neither.
+ */
+function pressSubmit(wrapper: Wrapper) {
+  wrapper.get<HTMLButtonElement>('form button[type="submit"]').element.click()
+}
+
+/**
+ * Deliver the form's submit event directly, bypassing the button.
+ *
+ * This is how the handler itself is put under test: a person cannot press a
+ * disabled button, so the only way to reach the handler while it is disabled is
+ * to submit the form without the button.
+ */
+function submitForm(wrapper: Wrapper) {
+  wrapper.get('form').element.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+}
+
 async function submitWithKey(wrapper: Wrapper, key: string) {
   await wrapper.get('#task-key').setValue(key)
   await flushPromises()
-  // happy-dom implements neither `form.elements` nor implicit submission when a
-  // submit button is clicked (a detached button also keeps its old `disabled`
-  // attribute), so this stands in for the browser after a real press: while the
-  // control is enabled, deliver the form's submit event with the typed value.
   expect(checkingLabel(wrapper)).toBe('应用授权')
-  wrapper.get('form').element.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+  pressSubmit(wrapper)
 }
 
 describe('管理操作授权', () => {
@@ -487,7 +502,7 @@ describe('管理操作授权', () => {
 
   it('慢响应时稳定显示“正在验证”、拒收第二次提交，答案到达后才确认一次', async () => {
     const release = { go: false }
-    installFetch(({ url }) => {
+    const calls = installFetch(({ url }) => {
       if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
       const answer = () => listRead(lastAuthorization() === 'Bearer right-key')
       if (!release.go) return new Promise<Response>(resolve => { held.push(() => resolve(answer())) })
@@ -501,10 +516,14 @@ describe('管理操作授权', () => {
     expect(authSnapshot(wrapper).submitLabel).toBe('正在验证…')
     expect(authSnapshot(wrapper).submitDisabled).toBe(true)
     expect(authSnapshot(wrapper).feedback.join(' ')).not.toMatch(/未通过|请输入/)
-    // A second press while checking must not start a parallel verification.
-    await submitWithKey(wrapper, 'right-key').catch(() => {})
+    // A second press while checking must not start a parallel verification. The
+    // disabled button already refuses the press; submitting the form without the
+    // button puts the handler itself under test, and still no second read goes out.
+    pressSubmit(wrapper)
+    submitForm(wrapper)
     await flushPromises()
     expect(authSnapshot(wrapper).submitLabel).toBe('正在验证…')
+    expect(calls.filter(call => call.headers?.authorization === 'Bearer right-key')).toHaveLength(1)
     // The answer arrives; exactly one confirmation, and the key field is cleared.
     release.go = true
     for (const resolve of held) resolve()
@@ -543,6 +562,29 @@ describe('管理操作授权', () => {
     expect(after.submitLabel).toBe('应用授权')
   })
 
+  it('清除授权后仍能再次用正确的密钥完成授权：清除只作废这一次，不能永久废掉下一次提交', async () => {
+    installFetch(({ url }) => {
+      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
+      return listRead(lastAuthorization() === 'Bearer right-key')
+    })
+    const wrapper = await mountPage({ attach: true })
+    await openPanel(wrapper, /管理操作授权/)
+    await submitWithKey(wrapper, 'wrong-key')
+    await waitForVerdict(wrapper)
+    expect(wrapper.get('[data-testid="task-auth-alert"]').text()).toMatch(/未通过校验|未授权/)
+
+    // 清除：作废在途的校验、丢掉内存里的凭据。
+    await findButton(wrapper, /清除授权/).trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="auth-badge"], [data-testid="auth-badge-inline"]').map(badge => badge.text())).toEqual(['只读', '只读'])
+
+    // 再次提交正确密钥：必须能再次证明成功。
+    await submitWithKey(wrapper, 'right-key')
+    await waitForVerdict(wrapper)
+    expect(wrapper.get('[data-testid="task-auth-feedback"]').text()).toMatch(/已授权/)
+    expect(wrapper.findAll('[data-testid="auth-badge"], [data-testid="auth-badge-inline"]').map(badge => badge.text())).toEqual(['已授权', '已授权'])
+  })
+
   it('离页后晚到的验证回应不授权、不覆写状态', async () => {
     let release!: (response: Response) => void
     let holdNext = true
@@ -573,6 +615,118 @@ describe('管理操作授权', () => {
     const fresh = await mountPage({ attach: true, freshPage: true })
     expect(fresh.findAll('[data-testid="auth-badge"], [data-testid="auth-badge-inline"]').map(badge => badge.text())).toEqual(['只读', '只读'])
     expect(fresh.findAll('[data-testid="auth-badge"]')).toHaveLength(1)
+  })
+
+  it('服务端一直不应答时，八秒后如实说“没拿到答案”，并把这次读取停掉', async () => {
+    // Only the clock is faked; the promise machinery stays real.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const calls = installFetch(({ url }) => {
+      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
+      return new Promise<Response>(() => {}) // 接受请求，但永远不回应
+    })
+    const wrapper = await mountPage({ attach: true })
+    await openPanel(wrapper, /管理操作授权/)
+    await submitWithKey(wrapper, 'right-key')
+    await flushPromises()
+
+    const pending = calls.find(call => call.headers?.authorization === 'Bearer right-key')
+    expect(pending).toBeTruthy()
+    expect(pending!.signal?.aborted).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(8000)
+    await flushPromises()
+
+    // The read that never landed is stopped, and the verdict says "no answer".
+    expect(pending!.signal?.aborted).toBe(true)
+    expect(wrapper.get('[data-testid="task-auth-unreachable"]').text()).toMatch(/未在 8 秒内回应/)
+    // The key stays in the field so the person can try again; it is not proven.
+    expect(wrapper.get<HTMLInputElement>('#task-key').element.value).toBe('right-key')
+    expect(wrapper.findAll('[data-testid="auth-badge"]').map(badge => badge.text())).toEqual(['只读'])
+  })
+
+  it('卸载页面会中止在途的校验请求，密钥也不留在 URL 或浏览器存储里', async () => {
+    const calls = installFetch(({ url }) => {
+      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
+      return new Promise<Response>(() => {}) // 永远不回应
+    })
+    const wrapper = await mountPage({ attach: true })
+    await openPanel(wrapper, /管理操作授权/)
+    await submitWithKey(wrapper, 'right-key')
+    await flushPromises()
+
+    const pending = calls.find(call => call.headers?.authorization === 'Bearer right-key')
+    expect(pending).toBeTruthy()
+    expect(pending!.signal?.aborted).toBe(false)
+    // 密钥只在页面内存里：URL、sessionStorage、localStorage 都不含它。
+    expect(location.href).not.toContain('right-key')
+    expect(JSON.stringify(sessionStorage)).not.toContain('right-key')
+    expect(JSON.stringify(localStorage)).not.toContain('right-key')
+
+    // 离页：路由组件卸载，页面的记忆到此为止。
+    mounted.splice(0).forEach(leaving => leaving.unmount())
+    wrapper.unmount()
+    await flushPromises()
+
+    // 还在路上的那次读取被停掉：它不能再回答出任何东西。
+    expect(pending!.signal?.aborted).toBe(true)
+  })
+
+  it('离开页面（pagehide）会丢掉内存里的凭据：回到页面后的读取不再带授权头', async () => {
+    const calls = installFetch(({ url }) => {
+      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
+      return listRead(lastAuthorization() === 'Bearer right-key')
+    })
+    const wrapper = await mountPage({ attach: true })
+    await openPanel(wrapper, /管理操作授权/)
+    await submitWithKey(wrapper, 'right-key')
+    await waitForVerdict(wrapper)
+    expect(wrapper.text()).toContain('已授权')
+    expect(calls.some(call => call.headers?.authorization === 'Bearer right-key')).toBe(true)
+
+    // 离页即清除：凭据只在内存里，走了就不再拿着它读列表。服务端仍然会说这把
+    // 密钥有效，但页面已经不再持有它。
+    window.dispatchEvent(new Event('pagehide'))
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="auth-badge"], [data-testid="auth-badge-inline"]').map(badge => badge.text())).toEqual(['只读', '只读'])
+
+    // 回到页面：随后的读取不再带授权头。
+    window.dispatchEvent(new Event('pageshow'))
+    await settle()
+    expect(lastAuthorization()).toBe('')
+  })
+
+  it('校验期间切换筛选：判定仍按发起时的筛选走，列表按新筛选重读', async () => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const calls = installFetch(async ({ url }) => {
+      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
+      // The credential this very request carries, read at request time.
+      const authorization = lastAuthorization()
+      if (authorization === 'Bearer right-key') await held
+      return listRead(authorization === 'Bearer right-key')
+    })
+    state.query = { tab: 'export' }
+    const wrapper = await mountPage({ attach: true })
+    await openPanel(wrapper, /管理操作授权/)
+    await submitWithKey(wrapper, 'right-key')
+    await flushPromises()
+    expect(authSnapshot(wrapper).submitLabel).toBe('正在验证…')
+
+    // 校验还在途中：切到别的分类（Reka 的 Tab 在按下时就切换）。
+    await findButton(wrapper, /^OCR/).trigger('mousedown')
+    await flushPromises()
+    expect(state.query.tab).toBe('ocr')
+
+    release()
+    await waitForVerdict(wrapper)
+    expect(wrapper.get('[data-testid="task-auth-feedback"]').text()).toMatch(/已授权/)
+
+    // 证明用的那次读取按**发起时**的筛选（导出）问出去。
+    const proof = calls.find(call => call.headers?.authorization === 'Bearer right-key')!
+    expect((proof.query as { tab: string }).tab).toBe('export')
+    // 凭据确认之后，列表按**新的**筛选重读。
+    const afterSwitch = calls.filter(call => call.headers?.authorization === 'Bearer right-key' && (call.query as { tab: string }).tab === 'ocr')
+    expect(afterSwitch.length).toBeGreaterThan(0)
   })
 
   it('只读时每个不可用操作旁都有可读原因与进入授权的路径', async () => {
@@ -713,6 +867,44 @@ describe('任务详情', () => {
     expect(scrollIntoView).not.toHaveBeenCalled()
     expect(wrapper.get('section[aria-labelledby="task-detail-title"]').element).toBe(card)
     reader.remove()
+  })
+
+  it('重新授权后详情用新凭据重读一次：卡片不重挂、不滚动，操作随授权出现', async () => {
+    const scrollIntoView = vi.fn()
+    HTMLElement.prototype.scrollIntoView = scrollIntoView
+    // A running task: cancel is offered only to an authorized reader.
+    state.detail = exportTask({ state: 'running', progress: { done: 0, total: null, unit: '家企业', stage: '读取数据' } })
+    const calls = installFetch(({ url, headers }) => {
+      const permitted = headers?.authorization === 'Bearer right-key'
+      if (url.startsWith('/api/task-center/')) {
+        const detail = state.detail
+        return json({ ...detail, capabilities: { ...detail.capabilities, cancel: permitted, reason: permitted ? '可请求取消；实际状态以服务端终态为准。' : '管理操作需要 API 授权。' } })
+      }
+      return json(listOf(state.list.rows, permitted))
+    })
+    state.query = { job: jobId('MW') }
+    const wrapper = await mountPage({ attach: true })
+    await settle()
+    const card = wrapper.get('section[aria-labelledby="task-detail-title"]').element
+    // Not authorized yet: the detail says so and offers nothing.
+    expect(wrapper.text()).toContain('需要先完成管理操作授权')
+    expect(wrapper.findAll('button').some(b => /请求取消/.test(b.text()))).toBe(false)
+    scrollIntoView.mockClear()
+
+    // Authorize from the page.
+    await openPanel(wrapper, /管理操作授权/)
+    await submitWithKey(wrapper, 'right-key')
+    await waitForVerdict(wrapper)
+    await settle()
+
+    // The detail was read again with the new credential: cancel is now offered.
+    const detailReads = calls.filter(call => call.url.startsWith('/api/task-center/'))
+    expect(detailReads.length).toBeGreaterThan(1)
+    expect(detailReads.at(-1)!.headers?.authorization).toBe('Bearer right-key')
+    expect(wrapper.findAll('button').some(b => /请求取消/.test(b.text()))).toBe(true)
+    // The card was not re-created and nothing scrolled: the reader stays put.
+    expect(wrapper.get('section[aria-labelledby="task-detail-title"]').element).toBe(card)
+    expect(scrollIntoView).not.toHaveBeenCalled()
   })
 
   // Closing a detail must give the caret back to the task it came from. Both the

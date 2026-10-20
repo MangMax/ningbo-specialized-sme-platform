@@ -60,6 +60,11 @@ watch(key, () => {
   void nextTick(reveal)
 }, { flush: 'post', immediate: true })
 
+// A new credential changes what this task may be asked to do (cancel and retry
+// need write authorization), so the task is read again with it. The card stays
+// mounted and the reading position is kept: only the task id reveals the card.
+watch(() => props.token, () => { void reload() })
+
 const displayKind = computed(() => {
   const kind = data.value?.kind
   if (!kind) return ''

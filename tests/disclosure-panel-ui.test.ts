@@ -63,7 +63,7 @@ it('page-level panels can add their own heading level without losing the accessi
   const host = defineComponent({
     components: { DisclosurePanel },
     setup: () => ({ open }),
-    template: '<DisclosurePanel v-model:open="open" heading-level="2" title="管理操作授权"><p>正文</p></DisclosurePanel>',
+    template: '<DisclosurePanel v-model:open="open" :heading-level="2" title="管理操作授权"><p>正文</p></DisclosurePanel>',
   })
   const wrapper = mount(host)
   mounted.push(wrapper)
