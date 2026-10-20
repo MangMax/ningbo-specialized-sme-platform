@@ -8,6 +8,11 @@ export interface CurrentQualifiedFilter {
   titleCode: CurrentTitle
   q?: string
   district?: string
+  recognitionFrom?: string
+  recognitionTo?: string
+  validYear?: number
+  maintenanceYear?: number
+  maintenanceBatch?: number
   sort?: 'id_asc' | 'name_asc' | 'name_desc'
   page?: number
   pageSize?: number
@@ -15,6 +20,8 @@ export interface CurrentQualifiedFilter {
 export interface CurrentQualifiedResult {
   rows: CurrentRow[]
   total: number
+  uncertainTotal: number
+  options: { recognitionYears: number[]; validYears: number[]; maintenanceYears: number[]; maintenanceBatchesByYear: Record<string, number[]> }
   page: number
   pageSize: number
   titleCode: CurrentTitle
@@ -36,16 +43,47 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     const candidates = db.prepare(`select c.id from (${currentCandidateSql}) c join enterprise e on e.id=c.id order by ${order}`)
     const qName = normalizeName(filter.q ?? ''), qUscc = normalizeUscc(filter.q ?? '')
     let total = 0
+    let uncertainTotal = 0
     const rows: CurrentRow[] = []
+    const recognitionYears = new Set<number>(), validYears = new Set<number>(), maintenanceYears = new Set<number>()
+    const maintenanceBatchesByYear = new Map<number, Set<number>>()
     for (const { id } of candidates.iterate(currentCandidateBindings(filter.titleCode)) as Iterable<{ id: number }>) {
-      const row = readCurrentCandidate(db, id, filter.titleCode, year, at, keys)
-      if (row.group !== 'eligible' || filter.district && row.district !== filter.district) continue
+      const row = readCurrentCandidate(db, id, filter.titleCode, year, at, keys, true)
+      if (row.group !== 'eligible') continue
+      for (const witness of row.qualificationWitnesses ?? []) {
+        recognitionYears.add(witness.recognition.year)
+        if (witness.validYear != null) validYears.add(witness.validYear)
+        if (witness.maintenance) {
+          maintenanceYears.add(witness.maintenance.year)
+          if (witness.maintenance.batch != null) {
+            const batches=maintenanceBatchesByYear.get(witness.maintenance.year) ?? new Set<number>()
+            batches.add(witness.maintenance.batch); maintenanceBatchesByYear.set(witness.maintenance.year,batches)
+          }
+        }
+      }
+      if (filter.district && row.district !== filter.district) continue
       if (filter.q && !(qName && [row.name, ...row.aliases].some(name => normalizeName(name).includes(qName)))
         && !(qUscc && normalizeUscc(row.uscc).includes(qUscc))) continue
+      const related = (row.qualificationWitnesses ?? []).filter(witness =>
+        (filter.validYear == null || witness.validYear === filter.validYear)
+        && (filter.maintenanceYear == null || witness.maintenance?.year === filter.maintenanceYear)
+        && (filter.maintenanceBatch == null || witness.maintenance?.batch === filter.maintenanceBatch))
+      if (!related.length) {
+        if (filter.recognitionFrom && filter.validYear == null && filter.maintenanceYear == null && !(row.qualificationWitnesses ?? []).length) uncertainTotal++
+        continue
+      }
+      if (filter.recognitionFrom && filter.recognitionTo) {
+        const definite = related.some(witness => filter.recognitionFrom! <= `${witness.recognition.year}-01-01` && filter.recognitionTo! >= `${witness.recognition.year}-12-31`)
+        if (!definite) {
+          if (related.some(witness => filter.recognitionFrom! <= `${witness.recognition.year}-12-31` && filter.recognitionTo! >= `${witness.recognition.year}-01-01`)) uncertainTotal++
+          continue
+        }
+      }
       if (total >= (page - 1) * pageSize && rows.length < pageSize) rows.push(row)
       total++
     }
     db.exec('COMMIT')
-    return { rows, total, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
+    const ascending = (values: Set<number>) => [...values].sort((a,b) => a-b)
+    return { rows, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
   } catch (error) { if (db.inTransaction) db.exec('ROLLBACK'); throw error }
 }
