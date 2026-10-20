@@ -173,19 +173,19 @@ useHead({ title: '优质中小企业查询' })
     </DisclosurePanel>
     <div v-if="hasFilters" class="flex flex-wrap items-center gap-1.5" aria-label="已选筛选条件">
       <span class="text-muted-foreground text-xs">已选条件：</span>
-      <Button v-if="q" variant="outline" size="sm" @click="search=''; update({q:undefined,page:undefined})">搜索：{{ q }} ×</Button>
+      <Button v-if="q" variant="outline" size="sm" class="h-auto min-h-8 max-w-full whitespace-normal text-left" @click="search=''; update({q:undefined,page:undefined})"><span class="min-w-0 [overflow-wrap:anywhere]">搜索：{{ q }} ×</span></Button>
       <Button v-if="district" variant="outline" size="sm" @click="update({district:undefined,page:undefined})">区县：{{ district }} ×</Button>
       <Button v-if="recognitionFrom && recognitionTo" variant="outline" size="sm" @click="clearDate">认定时间：{{ recognitionFrom }} 至 {{ recognitionTo }} ×</Button>
       <Button v-if="validYear" variant="outline" size="sm" @click="update({validYear:undefined,page:undefined})">有效年份：{{ validYear }} ×</Button>
       <Button v-if="maintenanceYear" variant="outline" size="sm" @click="update({maintenanceYear:undefined,maintenanceBatch:undefined,page:undefined})">维护年份：{{ maintenanceYear }} ×</Button>
       <Button v-if="maintenanceBatch" variant="outline" size="sm" @click="update({maintenanceBatch:undefined,page:undefined})">维护批次：第 {{ maintenanceBatch }} 批 ×</Button>
     </div>
-    <p v-if="displayed" class="text-muted-foreground text-[13px] leading-5" aria-live="polite">当前显示：{{ displayedDescription?.scope }}<span class="block sm:inline"><span class="hidden sm:inline">；</span>{{ displayedDescription?.order }}<span :class="{ invisible: !isShowingPrevious }">（上次成功结果）</span></span></p>
+    <p v-if="displayed" class="text-muted-foreground min-w-0 text-[13px] leading-5 [overflow-wrap:anywhere]" aria-live="polite">当前显示：{{ displayedDescription?.scope }}<span class="block sm:inline"><span class="hidden sm:inline">；</span>{{ displayedDescription?.order }}<span :class="{ invisible: !isShowingPrevious }">（上次成功结果）</span></span></p>
     <p v-if="displayed?.uncertainTotal && displayed.request.params.recognitionFrom" class="text-muted-foreground text-sm">另有 {{ displayed.uncertainTotal }} 家仅有年份精度，与所选时间部分重叠或缺少日期事实，未计入确定结果。</p>
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在查询当前有效企业…" />
-        <TableFailureState v-if="error" title="当前有效企业查询失败" :compact="Boolean(displayed)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
+        <TableFailureState v-if="error" class="[overflow-wrap:anywhere]" title="当前有效企业查询失败" :compact="Boolean(displayed)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
         <div v-if="!error || displayed" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
           <Table class="data-table min-w-[850px] table-fixed">
             <TableHeader><TableRow class="hover:bg-transparent">
