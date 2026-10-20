@@ -447,7 +447,7 @@ const exportUrl = computed(() => {
                             >{{ row.name }}</NuxtLink
                           >
                           <Badge v-if="row.platform.confirmedAliasCount" variant="quiet" class="mt-1 max-w-full whitespace-normal font-normal">已确认曾用名 {{ row.platform.confirmedAliasCount }} 个 · 展开查看</Badge>
-                          <span v-if="!row.uscc" class="text-muted-foreground text-[13px]">{{ COMPARISON_NO_USCC }}</span>
+                          <span v-if="!row.uscc" class="text-muted-foreground block whitespace-normal break-words text-[13px]">{{ COMPARISON_NO_USCC }}</span>
                         </TableCell>
                         <TableCell
                           class="text-muted-foreground hidden font-mono text-xs sm:table-cell"
@@ -475,6 +475,7 @@ const exportUrl = computed(() => {
                               <div class="text-[13px] leading-5"><p>{{ reasonLabel(row) }}</p><p class="text-muted-foreground">{{ measureLabel(row) }}</p></div>
                             </div>
                             <p class="text-muted-foreground text-[13px] leading-5">{{ row.platform.queryCount }} 次查询 · {{ row.platform.sourceRelationCount }} 条来源行</p>
+                            <span class="text-muted-foreground text-[13px]">{{ row.curated ? '已核实' : '待核实' }}</span>
                             <Button variant="link" size="sm" class="h-auto justify-start whitespace-normal p-0 text-left" @click="selectedRow = row">展开原因、记录与备注</Button>
                           </div>
                         </TableCell>
