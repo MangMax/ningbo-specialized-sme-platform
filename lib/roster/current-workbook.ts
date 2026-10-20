@@ -1,7 +1,8 @@
 import ExcelJS from 'exceljs'
 import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
-import { CURRENT_RULE_VERSION, readCurrentCandidate, type CurrentTitle } from './current-qualification'
+import { CURRENT_RULE_VERSION, prepareCurrentReader, readCurrentCandidate, type CurrentTitle } from './current-qualification'
+import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
 import { TITLES } from '../labels'
 
 export class CurrentWorkbookLimitError extends Error {}
@@ -15,14 +16,17 @@ export const CURRENT_HEADERS = ['序号','稳定企业标识','统一社会信�
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
 export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void) {
   const generatedAt = new Date().toISOString(), year = new Date(generatedAt).getFullYear()
+  // SQLite functions must be registered before a streaming SELECT is active.
+  prepareCurrentReader(db)
   db.exec('BEGIN')
   try {
     const predicate = `select enterprise_id as id from record where title_code=@title
       union select enterprise_id as id from difference_reason where title_code=@title
       union select enterprise_id as id from record_correspondence where title_code=@title and enterprise_id is not null
-      union select r.enterprise_id as id from platform_relation r join platform_query q on q.id=r.query_id where r.enterprise_id is not null and (q.title_code=@title or q.rdjb=@rdjb)
-      union select e.id from enterprise e join platform_query q on q.query_key=e.uscc_norm where q.title_code=@title or q.rdjb=@rdjb`
-    const bindings={title,rdjb:({little_giant:'3',specialized_sme:'2',innovative_sme:'1'} as const)[title]}
+      union select coalesce(r.enterprise_id,e.id) as id from platform_relation r join platform_query q on q.id=r.query_id
+        left join enterprise e on r.enterprise_id is null and e.uscc_norm=r.uscc_raw
+        where coalesce(r.enterprise_id,e.id) is not null and ${relationScopeSql}`
+    const bindings={title,rdjb:TITLE_RDJB_CODES[title]}
     const total = (db.prepare(`select count(*) as n from (${predicate})`).get(bindings) as {n:number}).n
     const snapshotStartedAt = new Date().toISOString()
     const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename, useStyles: false, useSharedStrings: false })
@@ -43,7 +47,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     }
     const dataVersion = 'sha256:' + hash.digest('hex')
     const explanation = workbook.addWorksheet('口径说明')
-    for (const row of [['项目','说明'],['规则版本',CURRENT_RULE_VERSION],['生成时间',generatedAt],['数据版本',dataVersion],['快照边界','执行开始时读取事务；排队时间不代表数据时点'],['范围','当前库已识别的本称号企业；未实时采集，不证明全市完整；#108未交付的适用性/资格缺口列待确认'],['有效企业',String(counts.eligible)],['待确认',String(counts.pending)],['排除明细',String(counts.excluded)]]) explanation.addRow(row).commit()
+    for (const row of [['项目','说明'],['规则版本',CURRENT_RULE_VERSION],['生成时间',generatedAt],['数据版本',dataVersion],['快照边界','执行开始时读取事务；排队时间不代表数据时点'],['范围','当前库已识别的本称号企业；未实时采集，不证明全市完整；解释适用性复用#108，未知或已变化列待确认'],['有效企业',String(counts.eligible)],['待确认',String(counts.pending)],['排除明细',String(counts.excluded)]]) explanation.addRow(row).commit()
     await workbook.commit()
     db.exec('COMMIT')
     return { generatedAt, snapshotStartedAt, dataVersion, ruleVersion: CURRENT_RULE_VERSION, counts, total }

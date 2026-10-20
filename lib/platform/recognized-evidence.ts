@@ -4,6 +4,7 @@ import { platformQueryInputShape, platformQueryResultShape, recognizedConditionS
 import type { RosterImportPlatformQuery } from '../roster-import-client'
 
 export const RDJB_TITLE_CODES: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
+export const TITLE_RDJB_CODES: Record<string, string> = Object.fromEntries(Object.entries(RDJB_TITLE_CODES).map(([rdjb, title]) => [title, rdjb]))
 export const PLATFORM_PERSISTED_SOURCE = { queryList: 'apply_list', businessList: 'business_list', queryBusList: 'recognized_list' } as const
 const resultSchema = z.object({ ...platformQueryResultShape, effectiveConditions: z.strictObject(platformQueryResultShape.effectiveConditions.shape) })
 /** Saved source conditions have the same fields as a live request, but no live subject requirement. */

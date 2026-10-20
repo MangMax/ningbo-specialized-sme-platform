@@ -68,7 +68,7 @@ async function summarize(row: ProjectedTask, authorized: boolean, db: Db, detail
       titleCode: title?.titleCode ?? null, regenerateOf: isJobId(meta.regenerateOf) ? meta.regenerateOf : null,
       phase: ['starting','workbook','complete'].includes(meta.phase) ? meta.phase : 'unknown',
       generatedAt: date(meta.generatedAt), snapshotStartedAt: date(meta.snapshotStartedAt),
-      ruleVersion: ['current-roster-116-v1', 'current-roster-116-v2', 'current-roster-116-v3', 'current-roster-116-v4', 'current-roster-116-v5', 'current-roster-116-v6'].includes(meta.ruleVersion) ? meta.ruleVersion : null,
+      ruleVersion: ['current-roster-116-v1', 'current-roster-116-v2', 'current-roster-116-v3', 'current-roster-116-v4', 'current-roster-116-v5', 'current-roster-116-v6', 'current-roster-116-v7'].includes(meta.ruleVersion) ? meta.ruleVersion : null,
       dataVersion: /^sha256:[a-f0-9]{64}$/.test(meta.dataVersion) ? meta.dataVersion : null,
       counts: meta.counts && Object.values(meta.counts).every(n => Number.isSafeInteger(n) && Number(n) >= 0) ? meta.counts : null,
       artifact, canDownload: authorized && artifact?.availability === 'available', canRegenerate: authorized && !active && !!title,

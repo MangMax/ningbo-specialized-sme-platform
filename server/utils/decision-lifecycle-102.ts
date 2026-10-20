@@ -20,7 +20,15 @@ const note = z.string().trim().min(1).max(4000)
 const title = z.enum(['little_giant', 'specialized_sme', 'innovative_sme'])
 const direction = z.enum(['missing_in_miit', 'extra_in_miit'])
 export const decisionScope102 = z.strictObject({ enterpriseId: positive, titleCode: title, direction })
+export const currentQualification102 = z.strictObject({
+  titleCode: title,
+  validFrom: z.string().datetime({ offset: true }),
+  validUntil: z.string().datetime({ offset: true }),
+  basis: note,
+  publicationCheck: z.strictObject({ status: z.enum(['not_found', 'not_checked']), scope: note }),
+}).refine(q => Date.parse(q.validFrom) < Date.parse(q.validUntil), 'Qualification interval must be nonempty')
 const content = z.strictObject({
+  currentQualification: currentQualification102.optional(),
   status: z.enum(s.differenceReason.status.enumValues!),
   reasonCode: z.enum(s.differenceReason.reasonCode.enumValues!).nullish(),
   reasonNote: note.nullish(),
@@ -43,12 +51,13 @@ function decisionCommandFields() {
   }
 }
 type ReviewedEvidence102 = { latestRevisionId: number; projectionReady: true }
-function refineDecisionCommand(c: { action: 'replace' | 'withdraw' | 'maintain'; decision?: z.infer<typeof content>; reviewedEvidence?: ReviewedEvidence102 }, ctx: z.RefinementCtx) {
+function refineDecisionCommand(c: { titleCode: string; action: 'replace' | 'withdraw' | 'maintain'; decision?: z.infer<typeof content>; reviewedEvidence?: ReviewedEvidence102 }, ctx: z.RefinementCtx) {
   const d = c.decision
   const invalid = (message: string) => ctx.addIssue({ code: 'custom', message })
   if ((c.action === 'replace') !== !!d) invalid('Replace requires decision; withdraw/maintain must omit it')
   if (c.action === 'maintain' && !c.reviewedEvidence || c.action === 'withdraw' && c.reviewedEvidence) invalid('Maintain requires reviewed evidence; withdraw must omit it')
   if (!d) return
+  if (d.currentQualification && (d.reasonCode !== 'moved_in' || d.status !== 'confirmed_reason' || d.verificationStatus !== 'confirmed' || d.currentQualification.titleCode !== c.titleCode || d.movedIn?.titleCode && d.movedIn.titleCode !== c.titleCode || !d.evidenceRelationId)) invalid('Current qualification requires confirmed same-title moved_in with explicit source evidence')
   if (d.status === 'confirmed_no_diff' && (d.reasonCode != null || d.measureCode !== 'none' || d.verificationStatus !== 'confirmed')) invalid('confirmed_no_diff requires no reason, none measure, confirmed verification')
   if (d.status === 'confirmed_reason' && (!d.reasonCode || d.verificationStatus !== 'confirmed')) invalid('confirmed_reason requires reason and confirmed verification')
   if (d.reasonCode === 'pending_review' && (d.status !== 'confirmed_reason' || d.verificationStatus !== 'confirmed' || d.measureCode !== 'follow_review')) invalid('pending_review requires confirmed_reason, confirmed, follow_review')
@@ -173,7 +182,8 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
     if (command.action === 'withdraw' && (!previous || previous.lifecycleAction === 'withdraw')) throw new DecisionError102(409, 'no_current_decision', 'No active decision to withdraw')
     const d = command.decision ?? { status: 'not_queried' as const, measureCode: 'none' as const, verificationStatus: 'pending' as const }
     // Validate source identity/title with narrow projections; original bodies remain untouched.
-    const relation = d.evidenceRelationId ? tx.select({ queryId: s.platformRelation.queryId, enterpriseId: s.platformRelation.enterpriseId, uscc: s.platformRelation.usccRaw, sequenceNo: s.platformRelation.sequenceNo }).from(s.platformRelation).where(eq(s.platformRelation.id, d.evidenceRelationId)).get() : null
+    const relation = d.evidenceRelationId ? tx.select({ queryId: s.platformRelation.queryId, enterpriseId: s.platformRelation.enterpriseId, uscc: s.platformRelation.usccRaw, verificationStatus: s.platformRelation.verificationStatus, sequenceNo: s.platformRelation.sequenceNo }).from(s.platformRelation).where(eq(s.platformRelation.id, d.evidenceRelationId)).get() : null
+    if (d.currentQualification && (!relation || relation.verificationStatus !== 'confirmed')) throw new DecisionError102(422, 'qualification_evidence_unconfirmed', 'Current qualification requires an explicitly confirmed source row')
     if (d.evidenceRelationId && !relation) throw new DecisionError102(422, 'evidence_not_found', 'Relation evidence not found')
     if (relation && (relation.enterpriseId != null ? relation.enterpriseId !== enterprise.id : !enterprise.usccNorm || normalizeUscc(relation.uscc) !== enterprise.usccNorm)) throw new DecisionError102(422, 'evidence_mismatch', 'Relation evidence belongs to another or unknown enterprise')
     if (relation && d.evidenceQueryId && relation.queryId !== d.evidenceQueryId) throw new DecisionError102(422, 'evidence_mismatch', 'Query and relation evidence must identify the same query')
@@ -204,7 +214,7 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
       measureCode: d.measureCode, measureNote: d.measureNote ?? null,
       evidenceQueryId: d.evidenceQueryId ?? null, evidenceRelationId: d.evidenceRelationId ?? null,
       verificationStatus: d.verificationStatus, movedInCity: d.movedIn?.city ?? null, movedInTitleCode: d.movedIn?.titleCode ?? null,
-      movedInYear: d.movedIn?.year ?? null, movedInBatch: d.movedIn?.batch ?? null,
+      movedInYear: d.movedIn?.year ?? null, movedInBatch: d.movedIn?.batch ?? null, currentQualification: d.currentQualification ?? null,
       lifecycleAction: command.action, previousId: previous?.id ?? null, actor: command.actor === null ? jsonNull : command.actor, basis: command.basis,
       ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, idempotencyKey: command.idempotencyKey, requestHash: hash, recordedAt,
     }).returning().get()

@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import ExcelJS from 'exceljs'
 import { expect } from 'vitest'
+import { reviewCurrentExportDecision } from './current-export-decisions'
 import { useDb, schema as s } from '../../db/client'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../scripts/lib/isolated-local-services.mjs'
 
@@ -81,7 +82,9 @@ export function currentExport118Fixture() {
     return record
   }
   function decision(enterpriseId: number, reasonCode: 'moved_out'|'moved_in'|'deregistered'|'pending_review'|'other', extra: Record<string,unknown> = {}) {
-    return db.insert(s.differenceReason).values({ enterpriseId, titleCode, direction:'extra_in_miit', status:'confirmed_reason', reasonCode, verificationStatus:'confirmed', lifecycleAction:'replace', basis:'人工确认合成主体事实', effectiveAt:'2025-01-01T00:00:00Z', recordedAt:new Date().toISOString(), ...extra } as any).returning().get()
+    const decision = db.insert(s.differenceReason).values({ enterpriseId, titleCode, direction:'extra_in_miit', status:'confirmed_reason', reasonCode, verificationStatus:'confirmed', lifecycleAction:'replace', basis:'人工确认合成主体事实', effectiveAt:'2025-01-01T00:00:00Z', recordedAt:new Date().toISOString(), ...extra } as any).returning().get()
+    reviewCurrentExportDecision(db,decision)
+    return decision
   }
   function resetBusiness() {
     db.$client.pragma('foreign_keys = OFF')
@@ -110,7 +113,7 @@ export function expectCounts(wb: ExcelJS.Workbook, job: any, counts: {eligible:n
     expect(rows(wb,sheet)).toHaveLength(counts[key]); expect(notes[sheet]).toBe(String(counts[key]))
     expect(rows(wb,sheet).every(row => row[8] === '专精特新中小企业')).toBe(true)
   }
-  expect(notes['规则版本']).toBe('current-roster-116-v6')
+  expect(notes['规则版本']).toBe('current-roster-116-v7')
   expect(notes['数据版本']).toBe(job.result.dataVersion)
   expect(notes['范围']).toContain('未实时采集，不证明全市完整')
 }

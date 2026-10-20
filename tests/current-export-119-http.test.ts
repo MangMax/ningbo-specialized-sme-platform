@@ -1,3 +1,4 @@
+import { reviewCurrentExportDecision } from './helpers/current-export-decisions'
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
@@ -72,7 +73,7 @@ async function download(job: any) {
     expect(rows(wb, sheet)).toHaveLength(job.result.counts[key])
     expect(explanation[sheet]).toBe(String(job.result.counts[key]))
   }
-  expect(explanation['规则版本']).toBe('current-roster-116-v6')
+  expect(explanation['规则版本']).toBe('current-roster-116-v7')
   expect(explanation['数据版本']).toBe(job.result.dataVersion)
   expect(explanation['范围']).toContain('未实时采集，不证明全市完整')
   return { wb, bytes }
@@ -153,7 +154,9 @@ it('创新型按自身认定周期复核并保留恢复与同年冲突', async (
 })
 
 function decision(enterpriseId: number, reasonCode: 'moved_out' | 'moved_in' | 'deregistered' | 'pending_review' | 'other', extra = {}) {
-  return db.insert(s.differenceReason).values({ enterpriseId, titleCode, direction: 'extra_in_miit', status: 'confirmed_reason', reasonCode, verificationStatus: 'confirmed', lifecycleAction: 'replace', basis: '合成已确认主体事实', effectiveAt: '2025-01-01T00:00:00Z', recordedAt: new Date().toISOString(), ...extra }).returning().get()
+  const decision = db.insert(s.differenceReason).values({ enterpriseId, titleCode, direction: 'extra_in_miit', status: 'confirmed_reason', reasonCode, verificationStatus: 'confirmed', lifecycleAction: 'replace', basis: '合成已确认主体事实', effectiveAt: '2025-01-01T00:00:00Z', recordedAt: new Date().toISOString(), ...extra }).returning().get()
+  reviewCurrentExportDecision(db,decision)
+  return decision
 }
 it('创新型迁入更名双备注与主体排除不越过证据边界', async () => {
   const renamed = candidate('迁入现名')
@@ -196,7 +199,7 @@ it('创新型迁入更名双备注与主体排除不越过证据边界', async (
     expect(pending[12]).toBe('尚未完成公布匹配核实')
     expect(pending[13]).not.toContain('未见宁波')
   }
-  expect(rows(wb, '待确认').find(row => row[4] === '迁入缺本称号资格')![13]).toContain('#108')
+  expect(rows(wb, '待确认').find(row => row[4] === '迁入缺本称号资格')![13]).toContain('迁入事实不能代替资格依据')
   expect(rows(wb, '待确认').find(row => row[4] === '旧解释前提未知')![14]).toContain(`decision:${staleDecision.id}`)
   expect(rows(wb, '待确认').find(row => row[4] === '统代冲突')![13]).toContain('身份冲突')
 })
@@ -361,6 +364,8 @@ it('创新型持久去重与显式重生成读取新决定', async () => {
     method: 'POST', headers, body: JSON.stringify({ enterpriseId: c.enterprise.id, titleCode, direction: 'extra_in_miit', action: 'replace', expectedCurrentId: null, idempotencyKey: '119-change-current', actor: { type: 'agent', id: 'test' }, basis: '隔离SQLite合成外迁事实', ruleVersion: 'manual-v1', effectiveAt: '2026-01-01T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'moved_out', verificationStatus: 'confirmed', measureCode: 'mark_moved_out' } }),
   })
   expect(changed.status).toBe(200)
+  const version=await changed.json()
+  reviewCurrentExportDecision(db,db.select().from(s.differenceReason).where(eq(s.differenceReason.id,version.versionId)).get()!)
   const regenerated = await workbook('119-regenerated', { regenerateOf: first.job.id })
   expect(regenerated.job.id).not.toBe(first.job.id)
   expect(regenerated.job.params.regenerateOf).toBe(first.job.id)
@@ -404,7 +409,7 @@ it('创新型失败无半成品并支持修正后重生成', async () => {
   const job = await terminal((await json(response)).jobId)
   expect(job.state).toBe('failed')
   expect(job.error).toContain('Excel')
-  expect(job.result.ruleVersion).toBe('current-roster-116-v6')
+  expect(job.result.ruleVersion).toBe('current-roster-116-v7')
   expect(job.result.artifact).toBeUndefined()
   expect((await fetch(url('/api/job-artifacts/' + job.id), { headers })).status).toBe(404)
   for (const extension of ['.part', '.xlsx']) expect(existsSync(join(dbPath + '.exports', job.id + extension))).toBe(false)
