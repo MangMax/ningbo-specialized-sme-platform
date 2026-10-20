@@ -23,11 +23,12 @@ function setup(maxPending?: number) {
   return { worker, executor, createWorker }
 }
 
-describe.each(['recognitions', 'differences'] as const)('%s original-reader policy', operation => {
-const input = { ...recognitionInput, operation }
+describe.each(['recognitions', 'differences', 'summary'] as const)('%s original-reader policy', operation => {
+const input = { ...recognitionInput, operation, ...(operation === 'summary' ? { options: { curatedPath: '/synthetic/curated.json', reconcilePath: '/synthetic/reconcile.json', showCurated: false, page: 1, pageSize: 25 } } : {}) }
 const execute = (executor: ReturnType<typeof createEnterpriseReadExecutor>, value: typeof input, signal?: AbortSignal) => operation === 'recognitions'
   ? executor.recognitions({ ...value, operation: 'recognitions' }, signal)
-  : executor.differences({ ...value, operation: 'differences' }, signal)
+  : operation === 'summary' ? executor.summary({ ...value, operation: 'summary', options: value.options! }, signal)
+    : executor.differences({ ...value, operation: 'differences' }, signal)
 
 it.each(['active','partial-chunk'])('new-consumer %s abort settles caller but holds the worker until its real terminal message', async stage => {
   const { worker, executor } = setup(), controller = new AbortController()
@@ -135,8 +136,10 @@ it('existing enterprise active abort still kills the child and preserves queued 
 
 it('retained request metadata counts the active job and permits exactly the 64KiB boundary', async () => {
   const { worker, executor }=setup()
-  const overhead=Buffer.byteLength(JSON.stringify({...input,filter:{title:['']}}))
-  const sized = (bytes: number) => ({ ...input, filter:{ title:['x'.repeat(bytes-overhead)] } })
+  const withText = (text: string) => operation === 'summary'
+    ? { ...input, options: { ...input.options!, q: text } } : { ...input, filter: { title: [text] } }
+  const overhead=Buffer.byteLength(JSON.stringify(withText('')))
+  const sized = (bytes: number) => withText('x'.repeat(bytes-overhead))
   const admitted = sized(65536)
   expect(Buffer.byteLength(JSON.stringify(admitted))).toBe(65536)
   const pending=execute(executor, admitted); worker.ready()
@@ -199,22 +202,29 @@ it('initial global readiness rejection stays captured and prevents the recogniti
 
 })
 
-it('cancelled REST partial output drains before recognition and enterprise work and queued REST cancellation cannot free the active slot',async()=>{
+it.each(['differences', 'summary'] as const)('cancelled %s partial output drains before recognition REST and enterprise work without freeing the active slot',async operation=>{
   const {worker,executor}=setup(), active=new AbortController(), queued=new AbortController()
-  const rest=executor.differences({...recognitionInput,operation:'differences'},active.signal)
+  const submit = (signal: AbortSignal) => operation === 'summary'
+    ? executor.summary({ ...recognitionInput, operation, options: { curatedPath: '/synthetic/c.json', reconcilePath: '/synthetic/r.json', showCurated: false, page: 1, pageSize: 25 } }, signal)
+    : executor.differences({...recognitionInput,operation},signal)
+  const rest=submit(active.signal)
   worker.ready();worker.chunk(Buffer.from('{"rows":['))
   const recognition=executor.recognitions(recognitionInput)
-  const dropped=executor.differences({...recognitionInput,operation:'differences'},queued.signal)
+  const dropped=submit(queued.signal)
+  const liveRest=executor.differences({...recognitionInput,operation:'differences'})
   const enterprise=executor.list('/synthetic/owner.db')
   queued.abort();expect(await dropped).toEqual({type:'cancelled'})
   active.abort();expect(await rest).toEqual({type:'cancelled'})
-  expect(worker.sent.map(x=>x.operation)).toEqual(['differences'])
+  expect(worker.sent.map(x=>x.operation)).toEqual([operation])
   expect(worker.terminate).not.toHaveBeenCalled()
   worker.chunk(Buffer.from('discarded trailing output'));worker.end(999)
-  expect(worker.sent.map(x=>x.operation)).toEqual(['differences','recognitions'])
+  expect(worker.sent.map(x=>x.operation)).toEqual([operation,'recognitions'])
   worker.chunk(Buffer.from('{}'));worker.end()
   expect(await recognition).toEqual({type:'complete',body:Buffer.from('{}')})
-  expect(worker.sent.map(x=>x.operation)).toEqual(['differences','recognitions','list'])
+  expect(worker.sent.map(x=>x.operation)).toEqual([operation,'recognitions','differences'])
+  worker.chunk(Buffer.from('{}'));worker.end()
+  expect(await liveRest).toEqual({type:'complete',body:Buffer.from('{}')})
+  expect(worker.sent.map(x=>x.operation)).toEqual([operation,'recognitions','differences','list'])
   worker.chunk(Buffer.from('{"rows":[],"counts":{"total":0}}'));worker.end()
   expect(await enterprise).toEqual({rows:[],counts:{total:0}})
   expect(getEventListeners(active.signal,'abort')).toHaveLength(0)

@@ -1,6 +1,7 @@
 import { realpathSync, statSync } from 'node:fs'
 import type { RosterDifferenceFilter } from './enterprise-roster'
 import type { RosterRecognitionFilter } from './recognitions'
+import type { ComparisonSummaryOptions } from '../comparison-summary-read'
 
 /** Physical identity is conservative evidence, not an atomic ABA guarantee. */
 export interface ReadOwnerIdentity { dbPath: string; realpath: string; dev: number; ino: number }
@@ -16,6 +17,7 @@ export function sameReadOwner(a: ReadOwnerIdentity | undefined, b: ReadOwnerIden
 }
 export type RecognitionReadInput = { operation: 'recognitions'; dbPath: string; owner: ReadOwnerIdentity; filter: RosterRecognitionFilter }
 export type DifferenceReadInput = { operation: 'differences'; dbPath: string; owner: ReadOwnerIdentity; filter: RosterDifferenceFilter }
+export type SummaryReadInput = { operation: 'summary'; dbPath: string; owner: ReadOwnerIdentity; options: ComparisonSummaryOptions }
 type Json = null | string | number | boolean | Json[] | { [key: string]: Json }
 const fields = ['name', 'message', 'statusCode', 'status', 'statusMessage', 'statusText', 'code', 'fatal', 'unhandled', 'data'] as const
 export type ReaderError = { h3: boolean; fields: Partial<Record<typeof fields[number], Json | undefined>> }
