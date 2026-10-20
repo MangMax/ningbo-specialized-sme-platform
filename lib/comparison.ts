@@ -49,6 +49,8 @@ export function getComparison(
   // partition and binary equality of stored USCC (including an empty string).
   // The legacy record table scan kept its first row; MIN(id) retains that
   // representative district for historical non-jxj sources sharing a side.
+  // A non-null USCC always matches itself: try the same enterprise's records
+  // before the legacy cross-enterprise binary-USCC lookup.
   const records = db.all<{
     enterpriseId: number
     name: string
@@ -64,12 +66,20 @@ export function getComparison(
       from record r
       join enterprise e on e.id = r.enterprise_id
       where r.title_code in ${TITLE_ORDER}
-        and (e.uscc_norm is null or not exists (
-          select 1 from enterprise other
-          join record opposite on opposite.enterprise_id = other.id
-          where other.uscc_norm = e.uscc_norm collate binary
-            and opposite.title_code = r.title_code
-            and (opposite.source = 'jxj') <> (r.source = 'jxj')
+        and (e.uscc_norm is null or (
+          not exists (
+            select 1 from record opposite
+            where opposite.enterprise_id = r.enterprise_id
+              and opposite.title_code = r.title_code
+              and (opposite.source = 'jxj') <> (r.source = 'jxj')
+          ) and not exists (
+            select 1 from enterprise other
+            join record opposite on opposite.enterprise_id = other.id
+            where other.id <> r.enterprise_id
+              and other.uscc_norm = e.uscc_norm collate binary
+              and opposite.title_code = r.title_code
+              and (opposite.source = 'jxj') <> (r.source = 'jxj')
+          )
         ))
       group by r.enterprise_id, r.title_code, (r.source = 'jxj')
     )
