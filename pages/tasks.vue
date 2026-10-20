@@ -301,14 +301,16 @@ onBeforeUnmount(() => { clear(); window.removeEventListener('pagehide', clear) }
         </div>
       </div>
 
-      <!-- 本次导出：跨分类常驻，只说“请求”状态，与服务端任务状态分开 -->
-      <Alert v-if="acceptedExports.length" data-testid="export-request-bar" aria-label="本次导出" class="flex flex-wrap items-center justify-between gap-3">
+      <!-- 本次导出：跨分类常驻，只说“请求”状态，与服务端任务状态分开。
+           这是一条常驻状态，不是错误：它用 role=region（不是 Alert 默认的
+           role=alert），受理结果只由下面的 export-notice 播报一次。 -->
+      <Alert v-if="acceptedExports.length" role="region" data-testid="export-request-bar" aria-label="本次导出" class="flex flex-wrap items-center justify-between gap-3">
         <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
           <Badge variant="solid">已受理</Badge>
           <span class="text-sm">已受理的导出请求 · {{ acceptedExports.map(item => item.entry.label).join(' / ') }}</span>
         </div>
         <div class="flex flex-wrap gap-2">
-          <Button v-for="item in acceptedExports" :key="item.jobId" size="sm" variant="outline" @click="navigate({ job: item.jobId })">查看 · {{ item.entry.label }}</Button>
+          <Button v-for="item in acceptedExports" :key="item.jobId" size="sm" variant="outline" class="min-h-11 sm:min-h-0" @click="navigate({ job: item.jobId })">查看 · {{ item.entry.label }}</Button>
         </div>
       </Alert>
       <!-- 全页唯一的 live region：受理/下载结果只在这里说一次 -->
