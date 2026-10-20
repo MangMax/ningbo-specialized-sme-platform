@@ -1,3 +1,5 @@
+import { createReadTurns } from '../utils/read-turn'
+import { withReadTurn } from '../utils/read-turn-http'
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparison'
 import { attachPlatformEvidence } from '~~/lib/comparison-platform'
@@ -74,6 +76,22 @@ defineRouteMeta({
   },
 })
 
+// Explicit summary only: the gate includes source selection, curation and
+// reconcile reads, not merely final summary hydration. Full mode stays inline.
+const summaryReads = createReadTurns((input: {
+  curatedPath: string; reconcilePath: string; enterpriseId?: number;
+  title?: string[]; direction?: ComparisonDirection; district?: string; q?: string;
+  showCurated: boolean; page: number; pageSize: number;
+}) => {
+  const db = useDb()
+  const result = getCuratedComparison(db, input.curatedPath)
+  const scopedResult = input.enterpriseId == null ? result : { ...result, rows: result.rows.filter(row => row.enterpriseId === input.enterpriseId) }
+  return readComparisonSummary(db, scopedResult, readReconcile(input.reconcilePath), {
+    title: input.title, direction: input.direction, district: input.district,
+    q: input.q, showCurated: input.showCurated,
+  }, input.page, input.pageSize)
+})
+
 export default defineEventHandler((event) => {
   const q = getQuery(event)
   const num = (v: unknown, d: number) => {
@@ -108,6 +126,16 @@ export default defineEventHandler((event) => {
   }
   const config = useRuntimeConfig(event)
   const db = useDb()
+  if (q.view === 'summary') {
+    return withReadTurn(event, summaryReads, {
+      curatedPath: config.curatedPath, reconcilePath: config.reconcilePath, enterpriseId,
+      title, direction: direction as ComparisonDirection | undefined,
+      district: typeof q.district === 'string' ? q.district : undefined,
+      q: typeof q.q === 'string' ? q.q : undefined, showCurated: q.showCurated === 'true',
+      page: Math.max(1, Math.floor(num(q.page, 1))),
+      pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
+    })
+  }
   const result = getCuratedComparison(db, config.curatedPath)
   const { counts, curatedCounts } = result
   // Additive exact-coordinate read; an absent enterprise returns zero rows.
@@ -117,14 +145,6 @@ export default defineEventHandler((event) => {
   const reconcile = readReconcile(config.reconcilePath)
   const page = Math.max(1, Math.floor(num(q.page, 1)))
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25))))
-  if (q.view === 'summary') {
-    return readComparisonSummary(db, scopedResult, reconcile, {
-      title, direction: direction as ComparisonDirection | undefined,
-      district: typeof q.district === 'string' ? q.district : undefined,
-      q: typeof q.q === 'string' ? q.q : undefined,
-      showCurated: q.showCurated === 'true',
-    }, page, pageSize)
-  }
   // 库内平台原因与证据(RL-15 起的**主源**):每一行都带 platform。
   const enriched = attachPlatformEvidence(attachReconcile(scopedResult.rows, reconcile), db)
   const rows = filterComparisonRows(enriched, {

@@ -2,6 +2,8 @@ import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS } from '~~/lib/comparison'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '~~/lib/labels'
 import { listRosterDifferences } from '~~/lib/roster/difference-list'
+import { createReadTurns } from '../../utils/read-turn'
+import { withReadTurn } from '../../utils/read-turn-http'
 import { parseRosterDifferenceQuery } from '../../utils/roster-read-query'
 
 /**
@@ -68,7 +70,17 @@ defineRouteMeta({
   },
 })
 
+function differenceOptions(query: Record<string, unknown>) {
+  return { ...parseRosterDifferenceQuery(query) }
+}
+
+const differenceReads = createReadTurns((filter: ReturnType<typeof differenceOptions>) =>
+  listRosterDifferences(useDb(), filter))
+
 export default defineEventHandler((event) => {
   setHeader(event, 'cache-control', 'no-store')
-  return listRosterDifferences(useDb(), parseRosterDifferenceQuery(getQuery(event)))
+  // Preserve owner-connection acquisition and validation before deferral.
+  useDb()
+  const filter = differenceOptions(getQuery(event))
+  return withReadTurn(event, differenceReads, filter)
 })
