@@ -49,6 +49,8 @@ export function getComparison(
   // partition and binary equality of stored USCC (including an empty string).
   // The legacy record table scan kept its first row; MIN(id) retains that
   // representative district for historical non-jxj sources sharing a side.
+  // The opposite-side predicate is constant within this exact group. Freeze its
+  // representative first so historical source rows do not repeat the lookup.
   const records = db.all<{
     enterpriseId: number
     name: string
@@ -60,18 +62,23 @@ export function getComparison(
     regStatus: string | null
   }>(sql`
     with differences as (
-      select min(r.id) as recordId
-      from record r
+      with grouped as materialized (
+        select min(r.id) as recordId
+        from record r
+        where r.title_code in ${TITLE_ORDER}
+        group by r.enterprise_id, r.title_code, (r.source = 'jxj')
+      )
+      select r.id as recordId
+      from grouped g
+      join record r on r.id = g.recordId
       join enterprise e on e.id = r.enterprise_id
-      where r.title_code in ${TITLE_ORDER}
-        and (e.uscc_norm is null or not exists (
-          select 1 from enterprise other
-          join record opposite on opposite.enterprise_id = other.id
-          where other.uscc_norm = e.uscc_norm collate binary
-            and opposite.title_code = r.title_code
-            and (opposite.source = 'jxj') <> (r.source = 'jxj')
-        ))
-      group by r.enterprise_id, r.title_code, (r.source = 'jxj')
+      where (e.uscc_norm is null or not exists (
+        select 1 from enterprise other
+        join record opposite on opposite.enterprise_id = other.id
+        where other.uscc_norm = e.uscc_norm collate binary
+          and opposite.title_code = r.title_code
+          and (opposite.source = 'jxj') <> (r.source = 'jxj')
+      ))
     )
     select e.id as enterpriseId, e.name, e.uscc_norm as uscc,
       r.district, r.title_code as titleCode,
