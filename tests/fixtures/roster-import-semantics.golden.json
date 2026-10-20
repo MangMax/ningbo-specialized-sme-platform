@@ -395,6 +395,7 @@
         {
           "actor": null,
           "basis": null,
+          "currentQualification": null,
           "direction": "missing_in_miit",
           "effectiveAt": null,
           "enterpriseId": 1,

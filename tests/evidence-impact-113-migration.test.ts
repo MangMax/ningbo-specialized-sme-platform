@@ -18,7 +18,8 @@ it.each(['fresh', 'upgrade'])('adds empty durable impact storage and preserves e
   const seed = () => {
     for (const title of TITLE_SEED) db.insert(schema.title).values(title).run()
     db.insert(schema.enterprise).values({ id: 113, name: '升级保留主体', nameNorm: '升级保留主体' }).run()
-    db.insert(schema.differenceReason).values({ id: 113, enterpriseId: 113, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed', recordedAt: '2026-10-01' }).run()
+    // Seed the historical columns: the upgrade baseline predates optional qualification.
+    sqlite.prepare("insert into difference_reason(id,enterprise_id,title_code,direction,status,measure_code,verification_status,recorded_at,created_at) values(113,113,'specialized_sme','missing_in_miit','confirmed_no_diff','none','confirmed','2026-10-01','2026-10-01')").run()
     // A malformed unrelated historical archive must not be parsed by migration or impact drain.
     sqlite.prepare("insert into platform_query(interface,query_key,rdjb,queried_at,raw_response,collection_evidence,created_at) values ('business_list','UNRELATED','2','2026-10-01',?,'invalid historical json','2026-10-01')").run('RAW_SOURCE_UNCHANGED'.repeat(10000))
   }
@@ -35,7 +36,7 @@ it.each(['fresh', 'upgrade'])('adds empty durable impact storage and preserves e
   migrate(db, { migrationsFolder })
   if (mode === 'fresh') seed()
   expect(sqlite.prepare('select * from __drizzle_migrations order by id limit ?').all(oldLedger.length)).toEqual(oldLedger)
-  if (mode === 'upgrade') expect(sqlite.prepare('select * from difference_reason').all()).toEqual(original)
+  if (mode === 'upgrade') expect(sqlite.prepare('select * from difference_reason').all()).toEqual(original.map(row => ({...(row as Record<string,unknown>),current_qualification:null})))
   const ledger = sqlite.prepare('select * from __drizzle_migrations order by id').all()
   migrate(db, { migrationsFolder }); expect(sqlite.prepare('select * from __drizzle_migrations order by id').all()).toEqual(ledger)
   expect(processEvidenceImpacts113(db, { limit: 1 })).toEqual({ processed: 0, unfinished: false, watermark: 0 })
