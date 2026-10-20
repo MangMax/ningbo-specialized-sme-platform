@@ -1,6 +1,6 @@
 # #95：大批 MCP 载荷边界与原子交付调查
 
-2026-10-20；调查基线 `fc37375eb35ecd175a5746d93dc22129d2a2ffe3`。对应 [#95](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/95)、[#94](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/94)、[#88](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/88)。本票是 `scope:spike`：只交付契约、合成库公开接口复现和方案判断。运行脚本不会连接业务库；本票没有修改 SDK、生产处理代码、请求上限或 schema。
+2026-10-20；调查起点 `fc37375eb35ecd175a5746d93dc22129d2a2ffe3`，合并集成分支后的公开接口复验源码 `b2877b593c582e9e48c5041d65cfe21f4409dfba`。对应 [#95](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/95)、[#94](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/94)、[#88](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/88)。本票是 `scope:spike`：只交付契约、合成库公开接口复现和方案判断。运行脚本不会连接业务库；本票没有修改 SDK、生产处理代码、请求上限或 schema。
 
 ## 当前公开契约
 
@@ -17,7 +17,7 @@ SDK 源码 `server/requestBody.js` 的默认值为 `4 * 1024 * 1024`，`webStand
 
 执行 `pnpm install --frozen-lockfile && pnpm build`，再执行 `SOURCE_SHA=$(git rev-parse HEAD) node scripts/verify-mcp-large-batch-95.mjs`。脚本创建并销毁自己的合成 SQLite、随机且不同的两颗测试 token、本机 Nitro 子进程；读写只经公开 HTTP/MCP。输出不含 token、原文和数据库。需要先构建当前源码，不能指向共享服务或业务数据库。
 
-在上述 SHA 的一次完整运行中，300 个合成输入行（299 个约 14,753 字节原文、1 个 1,200,000 字节原文）的 HTTP body 是 `5,625,741` 字节，MCP JSON-RPC body 是 `5,625,843` 字节。脚本验证：
+在合并后复验 SHA 的一次完整运行中，300 个合成输入行（299 个约 14,753 字节原文、1 个 1,200,000 字节原文）的 HTTP body 是 `5,625,741` 字节，MCP JSON-RPC body 是 `5,625,843` 字节。脚本验证：
 
 1. 用合法 `tools/list` JSON 后的空白填充请求体：恰好 `4,194,304` 字节得 `200`，多 1 字节得 `413`。MCP token 调 HTTP 预检和 HTTP token 调 MCP 写入均得 `401`；无 MCP token 的超限预检得 `413/-32000/4194304`，同键授权 HTTP 回执读为 `404`。
 2. 同一**完整**载荷和 key 经 HTTP 预检得到 `preflight`，随后 HTTP 提交得到 `committed`、`written=301`（1 批次 + 300 原行）、`failed=0`。提交前回执为 `preflight`，提交后为 `committed`。
