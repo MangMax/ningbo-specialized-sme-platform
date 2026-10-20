@@ -165,7 +165,8 @@ export function readQueryAssessments(db: DecisionDb, scopes: AssessmentScope[]):
   }), sql` union all `)
   const rows = db.all<QueryMetadata & { slot: number }>(sql`
     with targets as materialized (${targetSql}),
-    keys as materialized (select distinct query_key,${identityUsccSql(sql`query_key`)} uscc from platform_query),
+    raw_keys as materialized (select distinct query_key from platform_query),
+    keys as materialized (select query_key,${identityUsccSql(sql`query_key`)} uscc from raw_keys),
     candidates as (
       select t.slot,q.id from targets t join platform_query q on q.query_key='name:'||t.name
       union
