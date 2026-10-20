@@ -6,9 +6,10 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { listRosterEnterprises, getRosterEnterpriseDetail, type RosterEnterpriseFilter } from './enterprise-roster'
 import { enterpriseJsonChunks } from './enterprise-read-json'
+import { listCurrentQualified, type CurrentQualifiedFilter } from './current-qualified-query'
 
 export type EnterpriseReadRequest = { id: number; dbPath: string } & (
-  { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number }
+  { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | { operation: 'current-qualified'; filter: CurrentQualifiedFilter }
 )
 const send = (message: object) => new Promise<void>((resolve, reject) => {
   process.send!(message, error => error ? reject(error) : resolve())
@@ -57,7 +58,7 @@ process.on('message', async (request: EnterpriseReadRequest) => {
     const db = drizzle(connection!, { schema })
     // Both readers own one synchronous transaction across every statement. It
     // lives entirely off-thread, including native cursor drains and JS sorting.
-    const result = request.operation === 'list' ? listRosterEnterprises(db, request.filter) : getRosterEnterpriseDetail(db, request.enterpriseId)
+    const result = request.operation === 'list' ? listRosterEnterprises(db, request.filter) : request.operation === 'detail' ? getRosterEnterpriseDetail(db, request.enterpriseId) : listCurrentQualified(connection!, request.filter)
     const projectedHeap = process.memoryUsage().heapUsed
     const serializationStarted = performance.now()
     let bytes = 0

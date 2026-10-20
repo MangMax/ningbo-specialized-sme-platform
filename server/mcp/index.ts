@@ -105,7 +105,7 @@ export default defineMcpHandler({
 
     if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
       const body = await readBody(event, { strict: false }).catch(() => undefined)
-      if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail'].includes(body?.params?.name)) admitEnterpriseResponse(event)
+      if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail','list_current_qualified_enterprises'].includes(body?.params?.name)) admitEnterpriseResponse(event)
       const invalidDecision = decisionRpcError102(body)
       if (invalidDecision) return invalidDecision
       const invalidParse = parseRpcError105(body)
