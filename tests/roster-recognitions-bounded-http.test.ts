@@ -206,3 +206,73 @@ it('public deep pages hydrate only selected evidence and keep the cross-title di
     expect(out.rows.map(row => row.evidence[0]!.listNo)).toEqual(Array.from({ length: pageSize }, (_, n) => n + 1))
   }
 }, 30000)
+
+it('public first recognition preserves cross-source awards, effective years and every selected evidence pointer', async () => {
+  const committed = await seed({ announcement: { sourceDocument: { source: 'jxj', title: '首认共享计算合成历史' }, records: [
+    { enterprise: { name: 'A跨来源合成企业' }, titleCode: 'little_giant', source: 'miit', events: [
+      { eventType: 'award', year: 2019, decidedYear: 2021, evidence: [
+        { sourceFile: 'synthetic/130/first.pdf', attachment: '附件一', listNo: 4, page: 3 },
+        { sourceFile: 'synthetic/130/second.pdf', attachment: '附件二', listNo: 8, page: 5 },
+      ] },
+    ] },
+    { enterprise: { name: 'A跨来源合成企业' }, titleCode: 'little_giant', events: [
+      { eventType: 'award', year: 2021 },
+      { eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed' },
+      { eventType: 'award', year: 2025 },
+      { eventType: 'maintain', year: 2010 }, { eventType: 'nurture', year: 2009 },
+    ] },
+    { enterprise: { name: 'B缺出处合成企业' }, titleCode: 'little_giant', events: [
+      { eventType: 'award', year: 2020, decidedYear: 2023 },
+    ] },
+    { enterprise: { name: 'C仅复核合成企业' }, titleCode: 'little_giant', events: [
+      { eventType: 'review', year: 2018, decidedYear: 2021, reviewOutcome: 'passed' },
+    ] },
+  ] } })
+  const response = await fetch(base + '?title=little_giant')
+  expect(response.status).toBe(200)
+  const out = await response.json() as RosterRecognitionsResult
+  expect(out.counts).toEqual({ titlePairs: 2, enterprises: 2,
+    titles: { little_giant: 2, specialized_sme: 0, innovative_sme: 0 } })
+  expect(out.rows).toMatchObject([
+    { name: 'A跨来源合成企业', firstYear: 2021, source: 'miit', status: 'confirmed', pendingReason: null,
+      undatedAwardIds: [], evidence: [
+        { sourceFile: 'synthetic/130/first.pdf', attachment: '附件一', listNo: 4, page: 3 },
+        { sourceFile: 'synthetic/130/second.pdf', attachment: '附件二', listNo: 8, page: 5 },
+      ] },
+    { name: 'B缺出处合成企业', firstYear: 2023, source: 'jxj', status: 'pending', pendingReason: 'no_evidence', evidence: [] },
+  ])
+  const firstRecord = committed.items.find(item => item.kind === 'record_event' && item.ok)!
+  const [firstAwardId] = firstRecord.detail!.events as number[]
+  expect(out.rows[0]!.firstEventId).toBe(firstAwardId)
+  const filtered = await (await fetch(base + '?title=little_giant&year=2021&status=confirmed&pageSize=1')).json() as RosterRecognitionsResult
+  expect(filtered.rows).toEqual([out.rows[0]])
+  expect(filtered.counts).toEqual({ titlePairs: 1, enterprises: 1,
+    titles: { little_giant: 1, specialized_sme: 0, innovative_sme: 0 } })
+})
+
+it('public pending reasons retain undated-only and mixed awards ahead of missing evidence', async () => {
+  const committed = await seed({ announcement: { sourceDocument: { source: 'jxj', title: '缺年合成历史' }, records: [
+    { enterprise: { name: 'A全缺年合成企业' }, titleCode: 'specialized_sme', events: [
+      { eventType: 'award', year: null },
+    ] },
+    { enterprise: { name: 'B部分缺年合成企业' }, titleCode: 'specialized_sme', events: [
+      { eventType: 'award', year: 2022 }, { eventType: 'award', year: null },
+    ] },
+  ] } })
+  const records = committed.items.filter(item => item.kind === 'record_event' && item.ok)
+  expect(records).toHaveLength(2)
+  const [undated] = records[0]!.detail!.events as number[]
+  const [dated, mixedUndated] = records[1]!.detail!.events as number[]
+  const response = await fetch(base + '?status=pending')
+  expect(response.status).toBe(200)
+  const out = await response.json() as RosterRecognitionsResult
+  expect(out.rows).toMatchObject([
+    { firstYear: null, firstEventId: null, source: null, status: 'pending',
+      pendingReason: 'no_dated_award', undatedAwardIds: [undated], evidence: [] },
+    { firstYear: 2022, firstEventId: dated, source: 'jxj', status: 'pending',
+      pendingReason: 'undated_award', undatedAwardIds: [mixedUndated], evidence: [] },
+  ])
+  expect(out.rows).toHaveLength(2)
+  expect(out.counts.titlePairs).toBe(2)
+  expect(out.counts.enterprises).toBe(2)
+})

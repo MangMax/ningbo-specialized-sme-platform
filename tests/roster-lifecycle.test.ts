@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  computeFirstAward,
   computeTitleLifecycle,
   effectiveYear,
   isQualifyingEvent,
@@ -176,4 +177,39 @@ describe('lib/roster/lifecycle —— 首次认定的两条前置事实(RL-08 �
     ])
     expect(withUndatedReview.undatedAwardIds).toEqual([])
   })
+})
+
+describe('first-award facts without review lifecycle', () => {
+  it('selects the earliest effective year then lowest id from shuffled and tied awards', () => {
+    const events = [ev(8, 'award', 2021), ev(2, 'award', 2021),
+      ev(1, 'award', 2019, { decidedYear: 2024 }), ev(9, 'award', 2025),
+      ev(10, 'review', 2021, { decidedYear: 2024, reviewOutcome: 'failed' }),
+      ev(11, 'maintain', 2010), ev(12, 'nurture', 2009)]
+    const facts = computeFirstAward(events)
+    expect(facts).toEqual({ firstRecognitionYear: 2021, firstRecognitionEventId: 2,
+      awardCount: 4, undatedAwardIds: [] })
+    expect(computeTitleLifecycle(events)).toEqual({ ...facts, anchorYear: 2025,
+      anchorEventId: 9, dueYear: 2028, state: 'active', needsReview: false })
+    expect(computeFirstAward([...events].reverse())).toEqual(facts)
+  })
+})
+
+it('keeps undated awards sorted and separate from dated fallback and review uncertainty', () => {
+  const events = [ev(7, 'award', null), ev(2, 'award', null),
+    ev(5, 'award', 2024, { decidedYear: null }),
+    ev(6, 'review', 2024, { decidedYear: null, reviewOutcome: 'passed' })]
+  expect(computeFirstAward(events)).toEqual({ firstRecognitionYear: 2024,
+    firstRecognitionEventId: 5, awardCount: 3, undatedAwardIds: [2, 7] })
+  expect(computeTitleLifecycle(events)).toEqual({ firstRecognitionYear: 2024,
+    firstRecognitionEventId: 5, awardCount: 3, undatedAwardIds: [2, 7],
+    anchorYear: 2024, anchorEventId: 6, dueYear: 2027, state: 'active', needsReview: true })
+  expect(computeFirstAward(events.slice(0, 2))).toEqual({ firstRecognitionYear: null,
+    firstRecognitionEventId: null, awardCount: 2, undatedAwardIds: [2, 7] })
+  expect(computeTitleLifecycle(events.slice(0, 2))).toEqual({ firstRecognitionYear: null,
+    firstRecognitionEventId: null, awardCount: 2, undatedAwardIds: [2, 7],
+    anchorYear: null, anchorEventId: null, dueYear: null, state: 'none', needsReview: false })
+  expect(computeFirstAward([ev(1, 'review', 2020), ev(2, 'maintain', 2019), ev(3, 'nurture', 2018)]))
+    .toEqual({ firstRecognitionYear: null, firstRecognitionEventId: null, awardCount: 0, undatedAwardIds: [] })
+  expect(computeFirstAward([])).toEqual({ firstRecognitionYear: null,
+    firstRecognitionEventId: null, awardCount: 0, undatedAwardIds: [] })
 })

@@ -7,7 +7,7 @@ import type { Database } from 'better-sqlite3'
 import * as schema from '../../db/schema'
 import { TITLE_ORDER } from '../labels'
 import { isPageCapable } from './evidence-page'
-import { computeTitleLifecycle } from './lifecycle'
+import { computeFirstAward } from './lifecycle'
 import { matchesRecognitionQuery, summarizeFirstRecognition, type RecognitionEvent } from './first-recognition'
 import type { RosterRecognitionFilter, RosterRecognitionRow, RosterRecognitionsResult } from './recognitions'
 
@@ -16,7 +16,7 @@ interface Coordinate { enterpriseId: number; name: string; titleCode: string }
 
 /** At most one enterprise/title history is materialized at a time. Review,
  * maintenance and nurture cannot affect first recognition, so only award events
- * are needed by the shared lifecycle and status predicates. */
+ * are needed by the shared first-award calculation and status predicates. */
 function* summaries(db: Db, titles?: string[], selected?: Coordinate[]) {
   const r = schema.record, v = schema.recordEvent, e = schema.enterprise
   const query = db.select({
@@ -37,7 +37,7 @@ function* summaries(db: Db, titles?: string[], selected?: Coordinate[]) {
   let events: RecognitionEvent[] = []
   let withEvidence = new Set<number>()
   const finish = () => {
-    const lifecycle = computeTitleLifecycle(events)
+    const lifecycle = computeFirstAward(events)
     const summary = summarizeFirstRecognition({ titleCode: coordinate!.titleCode, lifecycle, events,
       hasEvidence: lifecycle.firstRecognitionEventId != null && withEvidence.has(lifecycle.firstRecognitionEventId) })!
     return { ...coordinate!, ...summary }
