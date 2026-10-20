@@ -30,9 +30,12 @@ export function useCurrentRosterExport(readOnlyReason: Readonly<Ref<string>>) {
     const entry = TASK_EXPORTS.find(t => t.titleCode === code)!
     const key = `${code}:${regenerateOf ?? 'initial'}`
     submitting.value = true
-    const intent = { ...(requestLog.entries.value[key] ?? { clientRequestId: crypto.randomUUID() }) }
     try {
-      try { requestLog.remember(key, intent) }
+      let intent: { clientRequestId: string; jobId?: string }
+      try {
+        intent = { ...(requestLog.get(key) ?? { clientRequestId: crypto.randomUUID() }) }
+        requestLog.remember(key, intent)
+      }
       catch { return { error: '无法保存请求标识，本次未发送导出请求。请恢复浏览器会话存储后重试。' } }
       const response = await $fetch.raw<{ jobId: string }>(entry.path, {
         method: 'POST', headers: taskBrowserHeaders,
@@ -40,8 +43,13 @@ export function useCurrentRosterExport(readOnlyReason: Readonly<Ref<string>>) {
       })
       if (response.status !== 202 || !isJobId(response._data?.jobId)) throw new Error('Unconfirmed acceptance')
       intent.jobId = response._data.jobId
-      if (regenerateOf) requestLog.forget(key)
-      else requestLog.remember(key, intent)
+      try {
+        if (regenerateOf) requestLog.forget(key, intent.clientRequestId)
+        else requestLog.remember(key, intent)
+      } catch {
+        // The server has accepted this request. Storage bookkeeping failure must
+        // not turn its real receipt into an ambiguous submission or discard its UUID.
+      }
       return { jobId: intent.jobId }
     } catch {
       return { error: '提交尚未确认（没有拿到完整的 202 受理回执）。请求标识已保留，重提沿用同一标识，不会重复建任务。' }
