@@ -11,13 +11,15 @@
 | 2026-10-20 现有读基准聚合 | SHA `fc37375e` 的隔离 1CPU/4GiB/Node 2GiB 容器有 OOM 路径与大响应，20 个热样本只作观察 | PostgreSQL 可修复这些路径；生产压测或可靠尾延迟 |
 | 本票 PoC | 同一个 Python HTTP/MCP 模拟服务在宿主机 SQLite 和 Docker PostgreSQL 上跑合成事务、重放、读回、备份恢复 | 实际 Nuxt/Node 应用的行为、完整域语义、同资源引擎性能、容量/SLO |
 
+应用静态核对基线仍为上述 `fc37375e`；恢复工作分支起点为 `1d3b75101129ed3ad7eee982cab9e1e236081541`（已包含此前 PoC 提交 `c961294`），恢复时再次合入集成分支 `74fdaa0b4a87fa31bda9969e800121709aa5e0e2`，合并点为 `53bbe2eecaaf370d0128e2dea35c08380f929edc`；该 SHA 仅说明源码祖先，不是实际应用性能验收。
+
 本票私有执行目录为 `/tmp/ningbo-perf-83-90/postgres-poc`。DB、WAL、PGDATA、密码、备份和原始观测仅在该目录。仓库 `scripts/spike-90/` 只含可重用源码，任何脚本都不连接真实业务库。没有访问生产 API、业务凭据、外部平台或原始商业文件。
 
 ## 小型公开接缝 PoC
 
 `poc.py` 使用标准库 HTTP 及 `psycopg`；SQLite 为 Python `sqlite3`。模拟表只有 batch/source/relation/audit，**不是生产 schema 的 PostgreSQL 翻译**。REST `POST /api/preflight`、`POST /api/commit`、`GET /api/receipt`、`GET /api/record` 与 MCP JSON-RPC `tools/call` 共用事务代码。模拟请求为约 30 KiB 合成原文和两条不同关系；校验同键预检→提交→REST/MCP 重放、异载荷同键 409、并发重试、原文字节 SHA-256、关系序号、回执和 PoC 自身的追加审计 hash 链。实际应用 `import_receipt` 是持久回执账本；PoC 的 hash 链是试验机制，**不等同应用现有审计实现或其完整 fingerprint 规范**。
 
-三次执行均通过上述语义断言，SQLite/PG 的归一化输出一致。固定池版本 PG `max_size=5`；同进程每请求新 SQLite 连接，不能归因为数据库引擎。首轮无池的 PG 有明显建连开销，故保留但不据此裁决。池版本一次运行的**探索性** HTTP 观测如下；每个 read 30 次、write 12 次，c1 为单并发，另执行了 c2/c5。写入是每次唯一合成键，读为固定键；没有冷 OS 缓存、真实原文分布或生产规模。
+先前三次执行均通过上述语义断言，SQLite/PG 的归一化输出一致。固定池版本 PG `max_size=5`；同进程每请求新 SQLite 连接，不能归因为数据库引擎。首轮无池的 PG 有明显建连开销，故保留但不据此裁决。池版本一次运行的**探索性** HTTP 观测如下；每个 read 30 次、write 12 次，c1 为单并发，另执行了 c2/c5。写入是每次唯一合成键，读为固定键；没有冷 OS 缓存、真实原文分布或生产规模。
 
 | 操作 | 宿主机 SQLite p50/p95 ms | Docker PG p50/p95 ms |
 | --- | ---: | ---: |
@@ -28,7 +30,9 @@
 
 **这些数字不是“优化后生产应用 SQLite vs PostgreSQL”**：SQLite 在 macOS 宿主机，PostgreSQL 18.4 在 Docker Linux VM；Python 3.12.13 线程服务/`sqlite3`/`psycopg` 与生产 Node 24/`better-sqlite3`/Drizzle 不同；PG 连接池与 SQLite 连接策略也不对称；没有 CPU/内存限额，其他任务并行，第二次最小权限运行的延迟波动显著。没有 SQL/JSON/序列化/网络分段、Node heap、事件循环、真实锁争用、冷热 p99 可靠样本、2x/5x、同硬件资源包络。**不得从表中推断引擎快慢或达成 SLO。** `results*.json` 仅存于私有目录。
 
-本机为 Apple M4/24GiB、arm64、Docker 29.8.2；PostgreSQL 镜像 `postgres:18` 的本地 ID `sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a`，实际 PG 18.4；SQLite 3.53.1。Docker 可用，现有应用容器没有改动。PoC 独立容器只映射 `127.0.0.1:55490`，bind mount 到私有 PGDATA；无 cgroup 限额。PG 18 官方镜像的挂载根为 `/var/lib/postgresql`、版本目录为 `/var/lib/postgresql/18/docker`，不可沿用旧版目录假设。[官方镜像说明](https://hub.docker.com/_/postgres)
+同一池版本样本的 c1 端到端墙钟吞吐观察：固定键读 SQLite/PG 为 159/99 次每秒，小事务写为 168/23 次每秒；Python 服务 RSS 约 22/28 MiB，未计 PostgreSQL 容器进程。私有 PGDATA 后续约 72 MiB、SQLite 文件约 4 MiB，包含不同执行轮次和 PG 集群固定开销，**不能用于容量或引擎成本外推**。
+
+本机为 Apple M4/24GiB、arm64、Docker 29.8.2；PostgreSQL 镜像 `postgres:18` 的固定 RepoDigest `postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a`，实际 PG 18.4；SQLite 3.53.1。Docker 可用，现有应用容器没有改动。PoC 独立容器只映射 `127.0.0.1:55490`，bind mount 到私有 PGDATA；无 cgroup 限额。PG 18 官方镜像的挂载根为 `/var/lib/postgresql`、版本目录为 `/var/lib/postgresql/18/docker`，不可沿用旧版目录假设。[官方镜像说明](https://hub.docker.com/_/postgres)
 
 运维实测：`pg_isready` 曾先报未就绪、随后可连接；owner 初始化 DDL、无建表权限的 `spike90_app` 运行 DML 成功，其 `rolsuper/rolcreatedb/rolcreaterole=false` 且无 DELETE；`pg_dump -Fc` 恢复至独立 `spike90_restore`，当时四表行数分别 `74/74/148/148`，逐表有序字段合并 SHA-256 在源/恢复库相同。容量仅 20 KiB dump，不能代表真实恢复时长。受限 app role 直接执行 `CREATE TABLE IF NOT EXISTS` 报 `InsufficientPrivilege`：迁移必须由独立 owner 步骤执行。池 `max_size=1, timeout=0.3s` 在占满时约 302ms 返回 `PoolTimeout`，释放后恢复。重启 PG 后首次回执读发生 5 次 `RemoteDisconnected`，第 6 次读到 committed 且审计校验有效；PoC 目前未把读端断连映射为稳定 503，正式适配须处理。重启期间的错误不能算作可用性通过。
 
@@ -74,3 +78,20 @@
 5. 稳定期观察与可回退窗口结束后才移除旧方言/迁移路径，留存恢复证据与审计链。
 
 最终比较的可运行黑盒采样器见 `scripts/spike-90/compare_public.py`；执行门槛与完整覆盖见 [final-comparison.md](final-comparison.md)。它**尚未对优化后 SQLite 集成候选运行**。
+
+## 恢复验证与验收映射（2026-10-20）
+
+恢复后以仓库同内容的 PoC 服务重新执行公开 HTTP/MCP-like 链（`runner.py --run-id resumed-20261020`），两种后端均通过预检、提交、REST/MCP 同键重放、异载荷 409、原文 hash、两条有序关系、审计链及已提交键的 c5 重放；私有证据为 `results-resumed.json`。随后按固定 Python 依赖版本重新启动仓库同内容服务，再跑 `runner.py --run-id final-source-20261020`，私有 `results-final-source.json` 同样通过；`compare_public.py` 在两边固定键 record/receipt/MCP-like receipt 三个病例、c1/c2/c5 每组 2 样本中均语义一致（`comparator-resumed.json`）。源码 SHA-256 清单为私有 `source-verification.json`。CLI 的 8 项局部测试通过，覆盖成功样本保留、预期状态、空清单、非 GET 开关、非 JSON、重定向和断连记录。四个 Python 文件 AST 语法检查通过。以上是新增的小样本语义复核；前文池耗尽、断连/重启、owner/app 权限和备份恢复是先前执行的继承证据，本次未重新演练。新结果仍显示明显运行间波动，不替换或挑选旧观测来推断引擎排名。
+
+PoC **没有**同时首次提交一个新键、真实行锁/死锁竞争、生产失败/partial/batch122 的实现或验证。其 MCP 是简化 JSON-RPC 外壳，未完成正式 MCP initialize/session/tools/list 协议；仅证明独立模拟服务的一条公开调用链。`runner.py` 的小事务写每次使用新键，其回放采样不能代表批量导入吞吐。
+
+| #90 验收项 | 交付与结论 | 剩余门槛 |
+| --- | --- | --- |
+| 同硬件/分布/优化后应用对照 | **未完成**；`final-comparison.md` 与黑盒 runner 准备好 | 实际 PG 应用适配、全量核验、同资源 1x/2x/5x 冷热/混合并发，完整时延/吞吐/资源/锁/成本 |
+| 驱动/方言/类型/事务兼容性审查 | 上表覆盖静态接缝与风险，PoC 仅少量实例 | 正式应用每项可执行对照；静态清单不等于兼容验收 |
+| Docker/权限/健康/恢复/故障运维 | 独立 PG 小样本部分实证，待验项见运维表 | 有限额完整应用、PITR/RPO/RTO、监控、升级、secret 轮换与故障错误语义 |
+| 小型独立公开读写/幂等/审计链及成本 | Python HTTP/MCP-like PoC 通过上述有限链，记录延迟/墙钟吞吐/Python RSS/体积 | 不代表正式 MCP 协议、实际 Node 应用语义或引擎成本排名 |
+| 明确建议/否决条件/分期与回滚写策略 | defer；保留条件性 expand-contract 五阶段和单写切换后写入处理门槛 | 最终比较与恢复运维证据齐备后才可选择迁移 |
+| 迁移全量完整性 | 清单包含原文 hash、ID/FK、全部分段/关系、事件出处、failed/partial/batch122 和审计回执 | 尚无生产 schema 的 PG 导入/逐行完整性验证 |
+
+本票调查材料可评审，但完整比较验收仍开放。没有生产代码/依赖/数据库修改、生产部署、生产压测或 issue/PR 状态变更。

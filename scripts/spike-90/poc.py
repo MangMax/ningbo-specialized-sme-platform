@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["psycopg[binary]>=3.2,<4", "psycopg-pool>=3.2,<4"]
+# dependencies = ["psycopg[binary]==3.3.6", "psycopg-pool==3.3.3"]
 # ///
 """Isolated synthetic REST/MCP transaction probe; never opens an app database."""
 import argparse

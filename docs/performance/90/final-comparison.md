@@ -12,7 +12,7 @@
 
 ## Runner 接缝
 
-`scripts/spike-90/compare_public.py` 是**不启动服务**的 loopback 黑盒 REST/可直接 JSON 调用 MCP 采样器：限制两个 URL 为 `http://localhost`/`127.0.0.1`，不保存响应体；比较 HTTP 状态和去除清单声明动态字段后的 JSON SHA-256，记录响应大小、首测与 1/2/5 热样本。所有写病例需显式 `--enable-isolated-writes`。MCP 若使用 Streamable HTTP 会话/流式响应，须先接上应用现有 MCP harness 完成 initialize/session；不能把本采样器的通用 POST 当作 MCP 验收。MCP 工具清单、读写鉴权、回执要用实际公开 MCP 链独立复核。
+`scripts/spike-90/compare_public.py` 是**不启动服务**的 loopback 黑盒 REST/可直接 JSON 调用 MCP 采样器：限制两个 URL 为 `http://localhost`/`127.0.0.1`，不保存响应体；比较 HTTP 状态和去除清单声明动态字段后的 JSON SHA-256，记录响应大小、首测与 1/2/5 热样本。所有非 GET 或标记 `write` 的病例均需显式 `--enable-isolated-writes`（包括只读 MCP POST，按保守开关处理）；重定向不跟随，避免离开声明的本地接缝。MCP 若使用 Streamable HTTP 会话/流式响应，须先接上应用现有 MCP harness 完成 initialize/session；不能把本采样器的通用 POST 当作 MCP 验收。MCP 工具清单、读写鉴权、回执要用实际公开 MCP 链独立复核。
 
 先根据实际 OpenAPI/MCP、隔离数据中的稳定 ID 和两边相同的合成写入 key，生成**私有** manifest：
 
@@ -38,7 +38,7 @@ PYTHONUTF8=1 uv run python scripts/spike-90/compare_public.py \
   --output /tmp/ningbo-perf-83-90/postgres-poc/final-compare.json
 ```
 
-通用采样器**不**测 OS 冷缓存、Node heap/RSS、SQL 阶段、锁、备份/恢复或应用镜像真实 SHA；这些由同场观测器和既有公开写入/MCP harness 补齐。保持 REST/MCP 原始错误与异常样本，不用只成功请求的分位数隐藏失败。冻结预算达不到时写明 endpoint、负载、重现与归属，不提高堆/预算来制造通过。
+通用采样器**不**测 OS 冷缓存、Node heap/RSS、SQL 阶段、锁、备份/恢复或应用镜像真实 SHA；这些由同场观测器和既有公开写入/MCP harness 补齐。采样器在私有 JSON 中保留每样本状态/哈希/时延/错误类别；断连、非 JSON、超出 16 MiB 采样上限会使语义比较失败，不中断后续样本。分位数包含失败请求的耗时，必须同时看失败数，不能当作成功请求 SLO。保持 REST/MCP 原始错误与异常样本，不用只成功请求的分位数隐藏失败。`ignoreKeys` 会递归删去同名字段，必须逐项审查，只能忽略已证明无业务含义的动态字段；不得忽略状态、范围、证据、ID、指纹或审计字段。冻结预算达不到时写明 endpoint、负载、重现与归属，不提高堆/预算来制造通过。
 
 ## 完整性与切换前核验单
 
