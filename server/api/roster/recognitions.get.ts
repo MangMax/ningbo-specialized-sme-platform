@@ -1,7 +1,7 @@
-import { createReadTurns } from '../../utils/read-turn'
-import { withReadTurn } from '../../utils/read-turn-http'
+import { withEnterpriseReadSignal } from '../../utils/enterprise-read-signal'
+import { readRecognitions } from '../../utils/recognition-read'
 import { useDb } from '@db'
-import { listRosterRecognitions } from '~~/lib/roster/recognitions'
+import { setHeader } from 'h3'
 import { parseRosterRecognitionQuery } from '../../utils/roster-read-query'
 
 /**
@@ -64,10 +64,12 @@ defineRouteMeta({
 function recognitionOptions(query: Record<string, unknown>) {
   return { ...parseRosterRecognitionQuery(query) }
 }
-const recognitionReads = createReadTurns((filter: ReturnType<typeof recognitionOptions>) =>
-  listRosterRecognitions(useDb(), filter))
-
 export default defineEventHandler((event) => {
-  useDb()
-  return withReadTurn(event, recognitionReads, recognitionOptions(getQuery(event)))
+  const owner = useDb()
+  const filter = recognitionOptions(getQuery(event))
+  return withEnterpriseReadSignal(event, async signal => {
+    const result = await readRecognitions(owner, filter, signal)
+    if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
+    return result
+  })
 })
