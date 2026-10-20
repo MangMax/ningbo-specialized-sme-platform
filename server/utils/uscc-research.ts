@@ -24,6 +24,7 @@
  * 经 `POST /api/roster/import/commit` 落库 —— 与其它写入**同一条**路径、同一份幂等键语义。
  */
 import { createHash } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
@@ -58,11 +59,11 @@ import type {
   RosterImportUsccBackfill,
   RosterPlatformRef,
 } from '../../lib/roster-import-client'
-import { allRosterEnterprises } from '../../lib/roster/enterprise-roster'
 import type { DuplicateMergeEvidence } from '../../lib/roster/duplicate-merge'
 import { TITLE_ORDER } from '../../lib/labels'
 import { MAX_PAGE_SIZE } from '../../lib/query'
-import { findExportSideName, buildPlatformEvidenceIndex, findUsccKeyedRelationEvidence } from './roster-duplicate-merge'
+import { findUsccKeyedRelationEvidence } from './roster-duplicate-merge'
+import { readUsccTargets, usccResearchEvidence } from './uscc-research-read'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -75,18 +76,15 @@ const DEFAULT_PAGE_SIZE = 50
 /**
  * 取**全部**仍缺统代的企业（不分页）—— 清单与计划共用这一处取数。
  *
- * 为什么要抽出来：`allRosterEnterprises`（RL-04 的读模型）一次要读全表并给每家企业建画像，
- * 实测真实库上约 3.3 秒。读接口既要返回分页清单、又要返回计划，若各取一次就是两遍全表扫描
- * （这正是「接口 20 秒」的来源）。所以**取数只做一次**，分页与计划都在这份行上算。
+ * 独立轻量投影先筛缺统代且当前有效的目标，再批量取这些目标的出处与查询追溯。
+ * 清单与计划共用同一份目标；清单分页不缩小计划范围，平台原文不进入此聚合。
  */
 export function collectUsccTargets(
   db: Db,
   filter: Omit<UsccChecklistFilter, 'page' | 'pageSize'> = {},
 ): UsccChecklistRow[] {
-  const { rows: rosterRows } = allRosterEnterprises(db, { rosterState: 'current' })
-  const missing = rosterRows.filter((row) => !normalizeUscc(row.uscc))
-
-  const snap = readSnapshot(db)
+  const snap = readUsccTargets(db, filter)
+  const missing = snap.rows
   const recordsByEnterprise = new Map<number, (typeof snap.records)[number][]>()
   for (const record of snap.records) {
     const bucket = recordsByEnterprise.get(record.enterpriseId)
@@ -116,8 +114,8 @@ export function collectUsccTargets(
   // 平台**按名**查过的查询（`queryKey = name:<nameNorm>`）—— 无统代企业唯一可能查得到的形态。
   const nameQueries = snap.queries.filter((query) => query.queryKey.startsWith('name:'))
   const relationsByQuery = new Map<number, number>()
-  for (const relation of snap.relations) {
-    relationsByQuery.set(relation.queryId, (relationsByQuery.get(relation.queryId) ?? 0) + 1)
+  for (const relation of snap.relationCounts) {
+    relationsByQuery.set(relation.queryId, relation.count)
   }
   const queryTraceByEnterprise = new Map<number, UsccQueryTrace[]>()
   for (const query of nameQueries) {
@@ -176,20 +174,7 @@ export function collectUsccTargets(
     }
   })
 
-  const needle = filter.q?.trim() ? normalizeName(filter.q) : null
-  return rows
-    .filter((row) => {
-      if (filter.title?.length && !row.titles.some((title) => filter.title!.includes(title))) return false
-      if (filter.district && row.district !== filter.district) return false
-      if (needle) {
-        const hit =
-          normalizeName(row.name).includes(needle) ||
-          row.aliasNames.some((alias) => normalizeName(alias).includes(needle))
-        if (!hit) return false
-      }
-      return true
-    })
-    .sort((a, b) => titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') || a.enterpriseId - b.enterpriseId)
+  return rows.sort((a, b) => titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') || a.enterpriseId - b.enterpriseId)
 }
 
 /**
@@ -258,29 +243,7 @@ function currentTraces(snap: Snapshot): UsccInterfaceTrace[] {
   }))
 }
 
-interface Snapshot {
-  enterprises: (typeof schema.enterprise)['$inferSelect'][]
-  records: (typeof schema.record)['$inferSelect'][]
-  events: (typeof schema.recordEvent)['$inferSelect'][]
-  evidence: (typeof schema.recordEvidence)['$inferSelect'][]
-  aliases: (typeof schema.enterpriseAlias)['$inferSelect'][]
-  queries: (typeof schema.platformQuery)['$inferSelect'][]
-  relations: (typeof schema.platformRelation)['$inferSelect'][]
-  differences: (typeof schema.differenceReason)['$inferSelect'][]
-}
-
-function readSnapshot(db: Db): Snapshot {
-  return {
-    enterprises: db.select().from(schema.enterprise).all(),
-    records: db.select().from(schema.record).all(),
-    events: db.select().from(schema.recordEvent).all(),
-    evidence: db.select().from(schema.recordEvidence).all(),
-    aliases: db.select().from(schema.enterpriseAlias).all(),
-    queries: db.select().from(schema.platformQuery).all(),
-    relations: db.select().from(schema.platformRelation).all(),
-    differences: db.select().from(schema.differenceReason).all(),
-  }
-}
+type Snapshot = ReturnType<typeof readUsccTargets>
 
 // ---------------------------------------------------------------------------
 // 库内匹配字典（②：现名 + 已确认曾用名）
@@ -295,6 +258,7 @@ interface DictionaryEntry {
   district: string | null
   /** 名称 → 命中方式（现名 / 已确认曾用名）。 */
   names: Array<{ value: string; norm: string; matchedBy: 'name' | 'alias' }>
+  confirmedAliasNorms?: Set<string>
 }
 
 /**
@@ -306,7 +270,7 @@ interface DictionaryEntry {
  */
 function buildDictionary(db: Db): DictionaryEntry[] {
   const entries = new Map<number, DictionaryEntry>()
-  for (const enterprise of db.select().from(schema.enterprise).all()) {
+  for (const enterprise of db.select({ id: schema.enterprise.id, name: schema.enterprise.name, nameNorm: schema.enterprise.nameNorm, usccNorm: schema.enterprise.usccNorm, district: schema.enterprise.district }).from(schema.enterprise).all()) {
     const uscc = normalizeUscc(enterprise.usccNorm)
     if (!uscc) continue
     entries.set(enterprise.id, {
@@ -316,12 +280,13 @@ function buildDictionary(db: Db): DictionaryEntry[] {
       uscc,
       district: enterprise.district,
       names: [{ value: enterprise.name, norm: enterprise.nameNorm, matchedBy: 'name' }],
+      confirmedAliasNorms: new Set(),
     })
   }
-  for (const alias of db.select().from(schema.enterpriseAlias).all()) {
-    if (alias.verificationStatus !== 'confirmed') continue
+  for (const alias of db.select({ enterpriseId: schema.enterpriseAlias.enterpriseId, name: schema.enterpriseAlias.name, nameNorm: schema.enterpriseAlias.nameNorm }).from(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.verificationStatus, 'confirmed')).all()) {
     const entry = entries.get(alias.enterpriseId)
     if (!entry) continue
+    entry.confirmedAliasNorms!.add(alias.nameNorm)
     if (!alias.nameNorm || !alias.name.trim()) continue
     if (entry.names.some((item) => item.norm === alias.nameNorm && item.value === alias.name)) continue
     entry.names.push({ value: alias.name, norm: alias.nameNorm, matchedBy: 'alias' })
@@ -401,7 +366,7 @@ export interface UsccResearchReady {
   platformQuery: RosterImportPlatformQuery | null
   /**
    * 规范行上**已经有**同名（`name_norm`）的 `confirmed` 曾用名 ⇒ 本轮**不再写**第二条
-   * （只并身份，不重复留名）。见 `hasConfirmedAlias` 的注释。
+   * （只并身份，不重复留名）。只认本次读取时已确认的别名。
    */
   aliasAlreadyPresent: boolean
   /** 规范行（该统代的企业行）已存在 ⇒ 归并（§8.4）。 */
@@ -530,9 +495,21 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       : null
   const targets = allTargets.filter((row) => (restrict ? restrict.has(row.enterpriseId) : true))
   const dictionary = buildDictionary(db)
-  // 证据查找的索引**只建一次**：判据不变，但不必对上百个候选各扫一遍平台两张表
-  // （实测真实库上 `platform_relation` 一次全扫约 126ms）。
-  const evidenceIndex = buildPlatformEvidenceIndex(db)
+  // Reuse the identity/confirmed-alias projection for every ready item. Keep
+  // first-owner precedence for legacy differently formatted copies of a code.
+  const holders = new Map<string, { id: number; name: string }>()
+  const aliases = new Map(dictionary.map(entry => [entry.enterpriseId, entry.confirmedAliasNorms]))
+  for (const entry of dictionary) if (!holders.has(entry.uscc)) holders.set(entry.uscc, { id: entry.enterpriseId, name: entry.name })
+  const findHolder = (uscc: string) => holders.get(uscc) ?? null
+  const hasAlias = (enterpriseId: number, name: string) => aliases.get(enterpriseId)?.has(normalizeName(name)) ?? false
+  // 仅按实际候选/认领统代批量建轻量证据索引；同轮字典增长时增量补齐。
+  const researchEvidence = usccResearchEvidence(db)
+  researchEvidence.load([
+    ...targets.flatMap(target => findLibraryCandidates(target, dictionary).map(candidate => candidate.uscc)),
+    ...(options.platformClaims ?? []).map(claim => claim.uscc),
+    ...(options.claims ?? []).map(claim => claim.uscc),
+  ])
+  const evidenceIndex = researchEvidence.index
 
   const resolved = new Map<number, UsccResearchReady>()
   const pending = new Map<number, UsccResearchPending>()
@@ -587,7 +564,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       continue
     }
     const uscc = normalizeUscc(claim.uscc)
-    const holder = findEnterpriseByUscc(db, uscc)
+    const holder = findHolder(uscc)
     if (holder && holder.id !== target.enterpriseId) {
       pending.set(target.enterpriseId, {
         targetId: target.enterpriseId,
@@ -687,7 +664,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       })
       continue
     }
-    const holder = findEnterpriseByUscc(db, uscc)
+    const holder = findHolder(uscc)
     if (holder && holder.id === target.enterpriseId) {
       pending.set(target.enterpriseId, {
         targetId: target.enterpriseId,
@@ -723,7 +700,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
     // 只认**显式**给的 `crossSource`（见 `UsccCrossSourceMerge`）；缺任何一段都不走这条。
     if (claim.crossSource) {
       const cross = claim.crossSource
-      const holder = findEnterpriseByUscc(db, uscc)
+      const holder = findHolder(uscc)
       const problemsWithCross: string | null = !cross.publicSource?.url?.trim()
         ? '第一段（公开来源页 url）缺失'
         : !cross.publicSource?.basis?.trim()
@@ -800,9 +777,9 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
             '本行的名称与公布名不同，故不作为曾用名证据；曾用名证据是第一段的公开来源页。',
         })),
       }
-      const exportName = findExportSideName(db, uscc)
+      const exportName = researchEvidence.exportName(uscc)
       const canonicalName = exportName && exportName !== holder.name ? exportName : null
-      const aliasAlready = hasConfirmedAlias(db, holder.id, target.name)
+      const aliasAlready = hasAlias(holder.id, target.name)
       resolved.set(target.enterpriseId, {
         outcome: 'filled',
         targetId: target.enterpriseId,
@@ -917,11 +894,11 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
 
     if (holder) {
       // 该统代已挂在另一家企业行上 ⇒ §5.2 的**归并**（不是 UPDATE：会撞 enterprise_uscc_norm_uq）。
-      const exportName = findExportSideName(db, uscc)
+      const exportName = researchEvidence.exportName(uscc)
       const canonicalName = exportName && exportName !== holder.name ? exportName : null
       const sameName = target.name === holder.name
       // ① 别名去重：规范行上已有同名 confirmed 别名 ⇒ 不再写第二条（只并身份，不重复留名）。
-      const aliasAlreadyPresent = !sameName && hasConfirmedAlias(db, holder.id, target.name)
+      const aliasAlreadyPresent = !sameName && hasAlias(holder.id, target.name)
       resolved.set(target.enterpriseId, {
         outcome: 'filled',
         targetId: target.enterpriseId,
@@ -1028,6 +1005,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       const candidates = findLibraryCandidates(target, dictionary)
       if (candidates.length) candidateCount.set(targetId, candidates.length)
       if (!candidates.length) continue // 本轮先放进「未找到」，等曾用名字典长大后再扫
+      researchEvidence.load(candidates.map(candidate => candidate.uscc))
       // 拿候选统代**去平台按统代查**（已落库的查询/关系就是那次实查的证据）。
       const evidenced = new Map<string, { candidate: UsccLibraryCandidate; evidence: DuplicateMergeEvidence }>()
       for (const candidate of candidates) {
@@ -1077,7 +1055,7 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       }
       const picked = [...evidenced.values()][0]!
       const { candidate, evidence } = picked
-      const into = findEnterpriseByUscc(db, candidate.uscc)
+      const into = findHolder(candidate.uscc)
       if (!into) {
         // 候选来自字典（字典只装**有统代**的企业），走到这里说明库在计划期间变了。
         unresolved.delete(targetId)
@@ -1093,12 +1071,12 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
         continue
       }
       // 主名称（§5.3 ①）：导出表侧记了另一个现名 ⇒ 显式带 `canonicalName`；取不到就不改名。
-      const exportName = findExportSideName(db, candidate.uscc)
+      const exportName = researchEvidence.exportName(candidate.uscc)
       const canonicalName = exportName && exportName !== into.name ? exportName : null
       const sameName = target.name === into.name
       // ① 别名去重（同上）：**库内按曾用名命中的那条路尤其容易撞** —— 名字既然能命中，
       // 说明它本来就已经是规范行的别名了，再写一条只是把同一个名字留第二遍。
-      const aliasAlreadyPresent = !sameName && hasConfirmedAlias(db, into.id, target.name)
+      const aliasAlreadyPresent = !sameName && hasAlias(into.id, target.name)
       resolved.set(targetId, {
         outcome: 'filled',
         targetId,
@@ -1280,34 +1258,6 @@ function locateTarget(
   const norm = claim.enterpriseName ? normalizeName(claim.enterpriseName) : ''
   if (!norm) return null
   return targets.find((row) => normalizeName(row.name) === norm) ?? null
-}
-
-/**
- * 规范行上是不是**已经有**同名（`name_norm`）的已确认曾用名？
- *
- * 为什么要在计划里判这一条：`enterprise_alias` 的唯一键是
- * `(enterprise_id, name_norm, source_kind, source_ref_id)` —— 含 `source_ref_id`，
- * 所以「同一家企业、同一个名字、换一条来源关系」**不撞唯一键**，会实打实写出第二条别名行。
- * 那不算错（§1.2 有意让不同来源各自成条留证），但对**搜索与展示**是纯噪音：
- * 名字已经能被搜到、详情页上却同名并列两行。批次 5 实测 `335 / 783 / 1448` 三家就是这样。
- *
- * 所以：**写别名之前按 `(enterprise_id, name_norm)` 查一次**，已有 `confirmed` 的同名别名
- * 就不再写（并在报告里标 `aliasAlreadyPresent`）。只认 `confirmed`：`pending` 的同名别名
- * 换成 `confirmed` 是一次**升级**，该写还是要写。
- */
-function hasConfirmedAlias(db: Db, enterpriseId: number, name: string): boolean {
-  const norm = normalizeName(name)
-  return db
-    .select()
-    .from(schema.enterpriseAlias)
-    .all()
-    .some((row) => row.enterpriseId === enterpriseId && row.nameNorm === norm && row.verificationStatus === 'confirmed')
-}
-
-/** 单条按统代找企业（与写入层同一个身份键；只读，返回最小形状）。 */
-function findEnterpriseByUscc(db: Db, uscc: string): { id: number; name: string } | null {
-  const row = db.select().from(schema.enterprise).all().find((e) => normalizeUscc(e.usccNorm) === uscc)
-  return row ? { id: row.id, name: row.name } : null
 }
 
 // ---------------------------------------------------------------------------
