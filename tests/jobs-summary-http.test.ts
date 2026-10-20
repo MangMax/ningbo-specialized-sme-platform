@@ -146,7 +146,7 @@ it('full reads redact credentials and host paths while preserving business field
   vi.stubEnv('NUXT_OCR_TOKEN', secrets[2]!)
   vi.stubEnv('MIIT_COOKIE', `sid=${secrets[3]}`)
   const jobId = newJobId()
-  const references = ['省级/附件.pdf', './jxj/file.pdf', '../结果/文件.json', 'jxj/省级/附件.pdf', 'https://example.invalid/省级/附件.pdf', '/api/files/省级/附件.pdf']
+  const references = ['省级/附件.pdf', './jxj/file.pdf', '../结果/文件.json', 'jxj/省级/附件.pdf', 'https://example.invalid/省级/附件.pdf', 'https://example.invalid/artifact?returnTo=/results/附件.json', '/api/files/省级/附件.pdf']
   const sensitiveResult = { references, reference: 'jxj/results/synthetic.json', batchId: 'synthetic-batch', receipt: { written: 3, replayed: true },
     cookie: 'archived-session', token: 'archived-token',
     files: [{ path: '/Users/synthetic/private/result.json', text: 'first page' }, { path: 'jxj/synthetic.pdf', text: 'second page' }],
