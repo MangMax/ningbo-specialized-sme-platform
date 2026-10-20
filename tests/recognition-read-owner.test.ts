@@ -11,6 +11,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { useDb, getDbOwnerIdentity, schema } from '../db/client'
 import { readRecognitions } from '../server/utils/recognition-read'
 import { readDifferences } from '../server/utils/difference-read'
+import { readSummary } from '../server/utils/comparison-summary-read'
 import { createReadTurns } from '../server/utils/read-turn'
 import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
 import { createEnterpriseWorker } from '../server/utils/enterprise-read-worker-location'
@@ -120,6 +121,7 @@ it('ordinary inode and symlink replacement retain the cached original owner whil
 it.each([
   ['inode', 'recognitions'], ['symlink', 'recognitions'],
   ['inode', 'differences'], ['symlink', 'differences'],
+  ['inode', 'summary'], ['symlink', 'summary'],
 ] as const)('child verifies %s identity for %s again after queue wait and fallback keeps the original owner',async (kind, operation)=>{
   const f=await fixture(),other=await fixture()
   await other.client.commit({idempotencyKey:'extra',sourceKind:'announcement',sourceIdentity:'synthetic/extra',payload:{announcement:{...other.payload.announcement,records:[{...other.payload.announcement.records[0]!,enterprise:{name:'另一企业'}}]}}})
@@ -138,14 +140,18 @@ it.each([
     return worker
   }})
   cleanup.push(()=>reads.close())
-  const pending=operation==='recognitions'?readRecognitions(owner,{},undefined,reads):readDifferences(owner,{},undefined,reads)
+  const pending=operation==='recognitions'?readRecognitions(owner,{},undefined,reads):operation==='summary'
+    ? readSummary(owner,{curatedPath:join(f.dir,'curated.json'),reconcilePath:join(f.dir,'reconcile.json'),page:1,pageSize:25,showCurated:false},undefined,reads)
+    :readDifferences(owner,{},undefined,reads)
   await seen
   if(kind==='inode'){renameSync(f.path,join(f.dir,'old.db'));renameSync(other.path,f.path)}
   else {unlinkSync(link);symlinkSync(other.path,link)}
   releaseReady()
   const result=await pending
   expect(Buffer.isBuffer(result)).toBe(false)
-  expect(result).toMatchObject(operation==='recognitions'?{counts:{titlePairs:1},rows:[{name:'合成M1企业'}]}:{total:1,rows:[{name:'合成M1企业',status:'not_queried',explanationId:null}]})
+  expect(result).toMatchObject(operation==='recognitions'?{counts:{titlePairs:1},rows:[{name:'合成M1企业'}]}:operation==='summary'
+    ?{view:'summary',total:1,rows:[{name:'合成M1企业',platform:{disposition:{status:'not_queried',explanationId:null}}}]}
+    :{total:1,rows:[{name:'合成M1企业',status:'not_queried',explanationId:null}]})
 })
 
 it('REST uses the same conservative owner identity for disk memory untracked transaction inode and symlink owners',async()=>{
@@ -216,4 +222,64 @@ it('a real child read can wait while the original synchronous FIFO reads an inde
   expect(original).toMatchObject({counts:{titlePairs:1},rows:[{name:'合成M1企业'}]})
   expect(complete).toBe(false);expect(released).toBe(false)
   expect(decoded(await pending)).toEqual(original)
+})
+
+it('summary uses the same conservative owner for disk memory untracked transaction inode and symlink paths',async()=>{
+  const f=await fixture(),reads=createEnterpriseReadExecutor()
+  cleanup.push(()=>reads.close())
+  const options={curatedPath:join(f.dir,'curated.json'),reconcilePath:join(f.dir,'reconcile.json'),showCurated:false,page:1,pageSize:25}
+  f.writer.$client.pragma('journal_mode=DELETE')
+  const child=await readSummary(f.owner,options,undefined,reads)
+  expect(Buffer.isBuffer(child)).toBe(true)
+  expect(decoded(child)).toMatchObject({view:'summary',total:1,rows:[{name:'合成M1企业',evidenceIncluded:false,platform:{disposition:{status:'not_queried',explanationId:null}}}]})
+  const original=await readSummary(f.writer,options)
+  expect(Buffer.isBuffer(original)).toBe(false);expect(original).toEqual(decoded(child))
+  const native=new Database(f.writer.$client.serialize()),memory=drizzle(native,{schema})
+  cleanup.push(()=>native.close())
+  const never={summary:vi.fn()}
+  expect(await readSummary(memory as typeof f.owner,options,undefined,never)).toEqual(original)
+  expect(await readSummary(drizzle(f.owner.$client,{schema}),options,undefined,never)).toEqual(original)
+  const inTransaction:boolean[]=[]
+  const prepare=f.owner.$client.prepare.bind(f.owner.$client)
+  const spy=vi.spyOn(f.owner.$client,'prepare').mockImplementation(((sql:string)=>{inTransaction.push(f.owner.$client.inTransaction);return prepare(sql)}) as typeof prepare)
+  f.owner.$client.exec('BEGIN')
+  try {expect(await readSummary(f.owner,options,undefined,never)).toEqual(original)}finally{f.owner.$client.exec('ROLLBACK');spy.mockRestore()}
+  expect(inTransaction.length).toBeGreaterThan(0);expect(inTransaction.every(Boolean)).toBe(true)
+  const link=join(f.dir,'m3-link.db');symlinkSync(f.path,link)
+  const linked=useDb({dbPath:link,readOnly:true});cleanup.push(()=>linked.$client.close())
+  unlinkSync(link);symlinkSync(join(f.dir,'absent.db'),link)
+  expect(await readSummary(linked,options,undefined,never)).toEqual(original)
+  renameSync(f.path,join(f.dir,'original.db'))
+  expect(await readSummary(f.owner,options,undefined,never)).toEqual(original)
+  expect(never.summary).not.toHaveBeenCalled()
+})
+
+it('summary metadata and FIFO overflow invoke one whole transactional original callback while errors and abort never replay',async()=>{
+  const f=await fixture(),reads=createEnterpriseReadExecutor()
+  cleanup.push(()=>reads.close())
+  const options={curatedPath:join(f.dir,'curated.json'),reconcilePath:join(f.dir,'reconcile.json'),showCurated:false,page:1,pageSize:25}
+  const sourceEntries:boolean[]=[],prepare=f.owner.$client.prepare.bind(f.owner.$client)
+  const spy=vi.spyOn(f.owner.$client,'prepare').mockImplementation(((sql:string)=>{if(sql.includes('with differences as ('))sourceEntries.push(f.owner.$client.inTransaction);return prepare(sql)}) as typeof prepare)
+  try {
+    const turns=createReadTurns((n:{n:number})=>n.n),held=Array.from({length:16},(_,n)=>turns.submit({n}))
+    try {
+      const pending=readSummary(f.owner,{...options,q:'界'.repeat(22000)},undefined,reads)
+      await Promise.resolve()
+      expect(sourceEntries).toEqual([true])
+      expect(await pending).toMatchObject({view:'summary',total:0,rows:[],counts:{specialized_sme:{missing_in_miit:1}}})
+    } finally {for(const job of held)job.cancel()}
+    sourceEntries.length=0
+    const terminal={summary:vi.fn(async()=>({type:'reader-error' as const,error:captureReaderError(new SyntaxError('malformed curation'))}))}
+    await expect(readSummary(f.owner,options,undefined,terminal)).rejects.toMatchObject({name:'SyntaxError',message:'malformed curation'})
+    const controller=new AbortController(),racing={summary:vi.fn(async()=>{controller.abort();return {type:'fallback' as const}})}
+    expect(await readSummary(f.owner,options,controller.signal,racing)).toBeUndefined()
+    expect(await readSummary(f.owner,options,controller.signal,terminal)).toBeUndefined()
+    expect(terminal.summary).toHaveBeenCalledTimes(1);expect(sourceEntries).toEqual([])
+    await reads.close()
+    expect(await readSummary(f.owner,options,undefined,reads)).toMatchObject({view:'summary',total:1})
+    expect(sourceEntries).toEqual([true]);sourceEntries.length=0
+    const error=new SyntaxError('original curation error')
+    spy.mockImplementation(()=>{throw error})
+    await expect(readSummary(f.owner,options,undefined,reads)).rejects.toBe(error)
+  } finally {spy.mockRestore()}
 })

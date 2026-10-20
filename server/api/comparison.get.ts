@@ -1,5 +1,5 @@
-import { createReadTurns } from '../utils/read-turn'
-import { withReadTurn } from '../utils/read-turn-http'
+import { readSummary } from '../utils/comparison-summary-read'
+import { withEnterpriseReadSignal } from '../utils/enterprise-read-signal'
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparison'
 import { attachPlatformEvidence } from '~~/lib/comparison-platform'
@@ -8,7 +8,6 @@ import { filterComparisonRows } from '~~/lib/comparison-filter'
 import { TITLE_ORDER } from '~~/lib/labels'
 import { MAX_PAGE_SIZE } from '~~/lib/query'
 import { attachReconcile, readReconcile } from '~~/lib/reconcile'
-import { readComparisonSummary } from '~~/lib/comparison-summary'
 
 /**
  * 两侧比对结果(已公布 vs 平台导出),带人工标注、**库内平台原因与证据**、旧解释缓存对照。
@@ -76,22 +75,6 @@ defineRouteMeta({
   },
 })
 
-// Explicit summary only: the gate includes source selection, curation and
-// reconcile reads, not merely final summary hydration. Full mode stays inline.
-const summaryReads = createReadTurns((input: {
-  curatedPath: string; reconcilePath: string; enterpriseId?: number;
-  title?: string[]; direction?: ComparisonDirection; district?: string; q?: string;
-  showCurated: boolean; page: number; pageSize: number;
-}) => {
-  const db = useDb()
-  const result = getCuratedComparison(db, input.curatedPath)
-  const scopedResult = input.enterpriseId == null ? result : { ...result, rows: result.rows.filter(row => row.enterpriseId === input.enterpriseId) }
-  return readComparisonSummary(db, scopedResult, readReconcile(input.reconcilePath), {
-    title: input.title, direction: input.direction, district: input.district,
-    q: input.q, showCurated: input.showCurated,
-  }, input.page, input.pageSize)
-})
-
 export default defineEventHandler((event) => {
   const q = getQuery(event)
   const num = (v: unknown, d: number) => {
@@ -127,13 +110,18 @@ export default defineEventHandler((event) => {
   const config = useRuntimeConfig(event)
   const db = useDb()
   if (q.view === 'summary') {
-    return withReadTurn(event, summaryReads, {
+    const options = {
       curatedPath: config.curatedPath, reconcilePath: config.reconcilePath, enterpriseId,
       title, direction: direction as ComparisonDirection | undefined,
       district: typeof q.district === 'string' ? q.district : undefined,
       q: typeof q.q === 'string' ? q.q : undefined, showCurated: q.showCurated === 'true',
       page: Math.max(1, Math.floor(num(q.page, 1))),
       pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
+    }
+    return withEnterpriseReadSignal(event, async signal => {
+      const result = await readSummary(db, options, signal)
+      if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
+      return result
     })
   }
   const result = getCuratedComparison(db, config.curatedPath)
