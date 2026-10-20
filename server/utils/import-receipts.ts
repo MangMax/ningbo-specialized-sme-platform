@@ -16,6 +16,14 @@ export function importReceiptMcpResult<T>(run: () => T) {
     return { isError: true, structuredContent: { error: { code: error.code, message: error.message } } }
   }
 }
+/** Preserve the same tool-error envelope for isolated asynchronous execution. */
+export async function asyncImportReceiptMcpResult<T>(run: () => Promise<T>) {
+  try { return await run() }
+  catch (error) {
+    if (!(error instanceof ImportReceiptError)) throw error
+    return { isError: true, structuredContent: { error: { code: error.code, message: error.message } } }
+  }
+}
 const invalid = (message: string): never => { throw new ImportReceiptError(400, 'invalid_query', message) }
 function integer(value: unknown, name: string, fallback?: number, max = Number.MAX_SAFE_INTEGER, min = 1): number {
   if (value === undefined && fallback !== undefined) return fallback

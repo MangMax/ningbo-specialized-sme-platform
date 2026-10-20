@@ -16,8 +16,6 @@
 
 import { readApiToken, resolveApiAuth, unauthorizedApiMessage } from './api-auth'
 import {
-  commitRosterImport,
-  preflightRosterImport,
   replayRosterImport,
   validateImportRequest,
 } from './roster-import'
@@ -25,6 +23,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { ImportReceiptError } from './import-receipts'
+import { importExecutor } from './import-execution'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -75,7 +74,7 @@ export function authorizeRosterWrite(
 export async function handleRosterImportRequest(
   action: RosterImportAction,
   request: RosterHttpRequest,
-  deps: { db: Db; apiToken: string | null | undefined; filesDir?: string },
+  deps: { db: Db; apiToken: string | null | undefined; filesDir?: string; executeImport?: typeof importExecutor.execute },
 ): Promise<RosterHttpResponse> {
   if (request.method !== 'POST') {
     return json(405, { message: `本端点是 POST：/api/roster/import/${action}` })
@@ -94,14 +93,14 @@ export async function handleRosterImportRequest(
 
   try {
     if (action === 'preflight') {
-      const result = preflightRosterImport(deps.db, validated.value, pageCountErrors)
+      const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'preflight', validated.value, pageCountErrors)
       return json(200, result)
     }
     if (action === 'replay') {
       const result = replayRosterImport(deps.db, validated.value)
       return json(200, result)
     }
-    const result = commitRosterImport(deps.db, validated.value, pageCountErrors)
+    const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'commit', validated.value, pageCountErrors)
     return json(200, result)
   } catch (error) {
     if (!(error instanceof ImportReceiptError)) throw error

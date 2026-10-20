@@ -12,6 +12,7 @@ it('identifies the native addon actually loaded by the installed SQLite driver',
   const require = createRequire(import.meta.url)
   const identity = readSqliteNativeIdentity(require)
   expect(identity.nativeSha256).toHaveLength(64)
+  if (!identity.nativePath) throw Error('Loaded native addon path is absent')
   expect(require.cache[identity.nativePath]?.loaded).toBe(true)
 })
 
