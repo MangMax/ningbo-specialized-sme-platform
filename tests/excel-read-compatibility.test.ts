@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { afterAll, describe, expect, it } from 'vitest'
 import ExcelJS from 'exceljs'
+import { Workbook, Cell } from 'documonster/excel'
 import { readPlatformExport } from '../lib/platform-export'
 import { parseLittleGiantWorkbook } from '../lib/roster/little-giant-workbook'
 
@@ -35,6 +36,40 @@ function fixture(date1904 = false) {
 }
 
 describe('Excel reader compatibility', () => {
+  it.each([
+    { id: 'chart-before', order: ['chart', 'first'] },
+    { id: 'chart-after', order: ['first', 'chart'] },
+    { id: 'chart-between-data', order: ['first', 'chart', 'second'] },
+    { id: 'reversed-data-order', order: ['second', 'chart', 'first'] },
+  ])('ignores chartsheets while preserving declared worksheet selection and count: $id', async ({ id, order }) => {
+    const workbook = Workbook.create()
+    for (const name of order) {
+      if (name === 'chart') {
+        Workbook.addChartsheet(workbook, 'Chart', {
+          chart: { type: 'bar', series: [{ values: "'first'!$A$1:$A$2" }] },
+        })
+      } else {
+        const sheet = Workbook.addWorksheet(workbook, name)
+        Cell.setValue(sheet, 3, 3, name === 'first' ? '合成首表企业' : '合成次表企业')
+        Cell.setValue(sheet, 3, 10, '第1批')
+      }
+    }
+    const bytes = Buffer.from(await Workbook.toBuffer(workbook))
+    const old = new ExcelJS.Workbook()
+    await old.xlsx.load(new Uint8Array(bytes).buffer)
+    const names = order.filter(name => name !== 'chart')
+    expect(old.worksheets.map(sheet => sheet.name)).toEqual(names)
+    const expectedName = names[0] === 'first' ? '合成首表企业' : '合成次表企业'
+    expect(old.worksheets[0]!.getCell('C3').value).toBe(expectedName)
+    const readers = await readBytes(bytes, `创新型中小企业导出Excel-${id}`)
+    const platform = await readers.platform()
+    expect(platform.rows).toHaveLength(1)
+    expect(platform.rows[0]!.rawFields[3]).toBe(expectedName)
+    const giant = await readers.giant()
+    expect(giant).toMatchObject({ sheetIndex: 0, sheetName: names[0], worksheetCount: names.length })
+    expect(giant.rows.map(row => row.name)).toEqual([expectedName])
+  })
+
   it('drains deferred worksheets before rejecting an unrecoverable source date without leaking owned temporary storage', async () => {
     const { workbook, sheet } = fixture()
     sheet.getCell('E3').value = 1

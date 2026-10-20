@@ -36,6 +36,9 @@ export async function inspectExcelSource(input: Uint8Array) {
       const id = Object.entries(sheet.attributes).find(([name]) => name.includes(':') && localName(name) === 'id')?.[1]
       const rel = relationships.find(item => item.attributes.Id === id)
       if (!rel?.attributes.Target || rel.attributes.TargetMode === 'External') throw new Error(`缺少 Excel 工作表关系:${sheet.attributes.name}`)
+      // Workbook sheets also include chartsheets. Match worksheet relationship
+      // kinds in both Transitional and Strict OOXML, as for officeDocument above.
+      if (!rel.attributes.Type?.endsWith('/worksheet')) continue
       const part = resolvePart(workbookPart, rel.attributes.Target)
       if (!await archive.get(part)) throw new Error(`缺少 Excel 工作表部件:${part}`)
       parts.set(sheet.attributes.name!, part)
