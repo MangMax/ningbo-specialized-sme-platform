@@ -35,14 +35,19 @@ function fixture(count: number) {
 
 async function server() {
   const results: unknown[] = []
+  let resolveCompleted!: (result: unknown) => void
+  const completed = new Promise<unknown>(resolve => { resolveCompleted = resolve })
   const http = createServer(async (req, res) => {
     try { results.push(await handler(createEvent(req, res))) }
     catch (error) { results.push(error) }
-    finally { if (!res.destroyed && !res.writableEnded) res.end() }
+    finally {
+      if (!res.destroyed && !res.writableEnded) res.end()
+      resolveCompleted(results[0])
+    }
   })
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve))
   const port = (http.address() as { port: number }).port
-  return { http, port, results }
+  return { http, port, results, completed }
 }
 
 async function request(port: number): Promise<{ res: IncomingMessage; client: ReturnType<typeof get> }> {
@@ -56,6 +61,60 @@ async function request(port: number): Promise<{ res: IncomingMessage; client: Re
 }
 
 describe('GET /api/export transport', () => {
+  it('reads back apostrophes, XML metacharacters, Chinese, emoji, newlines, and formula-looking strings unchanged', async () => {
+    const name = `O'Brien & <宁波> "企" 😀\n第二行\r\n第三行`
+    source.rows = [
+      {
+        enterpriseId: 1, name, uscc: 'USCC1', district: '鄞州区',
+        titleCode: 'specialized_sme', sources: ['jxj'],
+        events: '=SUM(1,2)', evidence: '+1+1',
+      },
+      {
+        enterpriseId: 2, name: '-1+1', uscc: 'USCC2', district: '鄞州区',
+        titleCode: 'specialized_sme', sources: ['jxj'],
+        events: '@SUM(1,2)', evidence: '普通出处',
+      },
+    ]
+    const { http, port } = await server()
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/export`)
+      expect(response.status).toBe(200)
+      const wb = new ExcelJS.Workbook()
+      await wb.xlsx.load(Buffer.from(await response.arrayBuffer()) as never)
+      const row = wb.getWorksheet('台账')!.getRow(3)
+      expect(row.getCell(1).value).toBe(name)
+      expect(row.getCell(6).value).toBe('=SUM(1,2)')
+      expect(row.getCell(6).type).toBe(ExcelJS.ValueType.String)
+      expect(row.getCell(7).value).toBe('+1+1')
+      expect(row.getCell(7).type).toBe(ExcelJS.ValueType.String)
+      const next = wb.getWorksheet('台账')!.getRow(4)
+      expect(next.getCell(1).value).toBe('-1+1')
+      expect(next.getCell(1).type).toBe(ExcelJS.ValueType.String)
+      expect(next.getCell(6).value).toBe('@SUM(1,2)')
+      expect(next.getCell(6).type).toBe(ExcelJS.ValueType.String)
+    } finally { await new Promise<void>(resolve => http.close(() => resolve())) }
+  })
+
+  it.each([
+    ['NUL', '\u0000'], ['C0 upper first', '\u0008'],
+    ['vertical tab', '\u000b'], ['form feed', '\u000c'],
+    ['C0 upper second', '\u000e'], ['unit separator', '\u001f'],
+  ])('rejects XML 1.0 illegal control %s instead of silently changing the workbook', async (_label, control) => {
+    source.rows = [{
+      enterpriseId: 1, name: `甲${control}乙`, uscc: 'USCC1', district: '鄞州区',
+      titleCode: 'specialized_sme', sources: ['jxj'], events: '', evidence: '',
+    }]
+    const { http, port, completed } = await server()
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/export`)
+      await expect(response.arrayBuffer()).rejects.toThrow()
+      await expect(completed).resolves.toMatchObject({
+        name: 'InvalidXmlCharacterError',
+        message: expect.stringContaining(`U+${control.charCodeAt(0).toString(16).padStart(4, '0').toUpperCase()}`),
+      })
+    } finally { await new Promise<void>(resolve => http.close(() => resolve())) }
+  })
+
   it('holds row production behind a paused consumer, then sends a complete readable XLSX', async () => {
     fixture(500)
     const { http, port, results } = await server()
@@ -64,10 +123,10 @@ describe('GET /api/export transport', () => {
       const requested = await request(port)
       client = requested.client
       const { res } = requested
-      await new Promise(resolve => setTimeout(resolve, 400))
+      await new Promise(resolve => setTimeout(resolve, 1000))
       const pausedRows = source.read
       expect(pausedRows).toBeLessThan(source.rows.length)
-      await new Promise(resolve => setTimeout(resolve, 200))
+      await new Promise(resolve => setTimeout(resolve, 300))
       expect(source.read).toBe(pausedRows)
       const chunks: Buffer[] = []
       res.on('data', chunk => chunks.push(Buffer.from(chunk)))

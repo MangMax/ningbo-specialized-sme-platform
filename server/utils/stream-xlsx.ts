@@ -15,8 +15,16 @@ const MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
 const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 
 function escapeXml(value: string): string {
-  return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]!)
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+  // The former ExcelJS writeBuffer path dropped these bytes on readback.
+  // Reject the download instead of silently changing enterprise evidence.
+  const invalid = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.exec(value)
+  if (invalid) {
+    const code = invalid[0]!.charCodeAt(0).toString(16).padStart(4, '0').toUpperCase()
+    throw Object.assign(new Error(`XLSX text contains XML 1.0 illegal control U+${code}`), {
+      name: 'InvalidXmlCharacterError',
+    })
+  }
+  return value.replace(/[&<>"'\r]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;', '\r': '&#13;' })[char]!)
 }
 
 function columnName(index: number): string {
@@ -89,6 +97,11 @@ export async function streamXlsx(
     const sent = await sendStream(event, output)
     await finalized
     return sent
+  } catch (error) {
+    // Headers may already be sent. A failed ZIP must end the transfer as an error,
+    // never as a successful 200 response containing a truncated workbook.
+    if (response && !response.destroyed && !response.writableFinished) response.destroy(error as Error)
+    throw error
   } finally {
     request?.off('aborted', abort)
     response?.off('close', abort)
