@@ -127,6 +127,10 @@ it('matches the original title predicate for NULL, scalar, object, array and mal
       ['object', JSON.stringify({ titleScope: { rdjb: { original: '2' } } }), null],
       ['array', JSON.stringify({ titleScope: { rdjb: ['1', '2'] } }), null],
       ['mixed-types', JSON.stringify({ titleScope: { rdjb: [2, true, null, { nested: '2' }, ['2']] } }), null],
+      ['json5-array', "{titleScope:{rdjb:['2',],}, /* legacy */}", null],
+      ['json5-second-parse', JSON.stringify({ titleScope: { rdjb: "['2',]" } }), null],
+      ['json5-object', "{titleScope:{rdjb:{original:'2'}}}", null],
+      ['json5-no-match', "{titleScope:{rdjb:['3']}}", null],
       ['malformed-json', '{invalid archived JSON', null],
       ['malformed-scalar', JSON.stringify({ titleScope: { rdjb: 'not-json' } }), null],
       ['direct-malformed', '{invalid archived JSON', 'specialized_sme'],
@@ -153,4 +157,53 @@ it('matches the original title predicate for NULL, scalar, object, array and mal
       }
     }
   } finally { sqlite.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+
+it('maintains readable JSON5 through writes and rollback without masking a later malformed archive', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    const db = drizzle(sqlite, { schema })
+    migrate(db, { migrationsFolder: resolve('db/migrations') })
+    sqlite.pragma('foreign_keys = ON')
+    const insert = (key: string, archive: string, status = 'partial') => Number(sqlite.prepare(`insert into platform_query(interface, query_key, queried_at, status, collection_evidence, rdjb, created_at)
+      values ('recognized_list', ?, '2026-10-20', ?, ?, ?, '2026-10-20')`).run(key, status, archive, status).lastInsertRowid)
+    const legacyIds = (key: string) => (sqlite.prepare(`select id from platform_query where query_key = ? and
+      (title_code = 'specialized_sme' or exists (select 1 from json_each(json_extract(collection_evidence, '$.titleScope.rdjb')) where value = '2')) order by queried_at desc, id desc`).all(key) as { id: number }[]).map(row => row.id)
+    const filter = { titleCode: 'specialized_sme', view: 'summary' as const }
+    const first = insert('json5', "{titleScope:{rdjb:['2',]},}")
+    const second = insert('json5', JSON.stringify({ titleScope: { rdjb: "['2',]" } }), 'success')
+    expect(listPlatformQueries(db, { ...filter, queryKey: 'json5' }).rows.map(row => row.query.id)).toEqual(legacyIds('json5'))
+    expect(listPlatformQueries(db, { ...filter, queryKey: 'json5', pageSize: 1 })).toMatchObject({ total: 2, counts: { partial: 1, success: 1 }, rows: [{ query: { id: second } }] })
+    expect(listPlatformQueries(db, { ...filter, queryKey: 'json5', status: 'partial' }).rows.map(row => row.query.id)).toEqual([first])
+    sqlite.prepare('update platform_query set collection_evidence = ? where id = ?').run("{titleScope:{rdjb:['3']}}", first)
+    expect(listPlatformQueries(db, { ...filter, queryKey: 'json5' }).rows.map(row => row.query.id)).toEqual([second])
+    sqlite.exec('begin')
+    sqlite.prepare('update platform_query set collection_evidence = ? where id = ?').run("{titleScope:{rdjb:['2']}}", first)
+    expect(listPlatformQueries(db, { ...filter, queryId: first }).total).toBe(1)
+    sqlite.exec('rollback')
+    expect(listPlatformQueries(db, { ...filter, queryId: first }).total).toBe(0)
+    const broken = insert('broken', '{actually malformed')
+    expect(() => listPlatformQueries(db, filter)).toThrow('malformed JSON')
+    expect(() => legacyIds('broken')).toThrow('malformed JSON')
+    sqlite.prepare('delete from platform_query where id = ?').run(broken)
+    sqlite.prepare('delete from platform_query where id = ?').run(second)
+    expect(listPlatformQueries(db, filter).total).toBe(0)
+    expect(sqlite.prepare('select * from platform_query_title_scope_error').all()).toEqual([])
+    expect(sqlite.prepare('select * from platform_query_title_scope').all()).toEqual([{ query_id: first, rdjb: '3' }])
+  } finally { sqlite.close() }
+})
+
+
+it('does not let a readable JSON5 archive hide a later genuinely malformed archive', () => {
+  const sqlite = new Database(':memory:')
+  try {
+    const db = drizzle(sqlite, { schema })
+    migrate(db, { migrationsFolder: resolve('db/migrations') })
+    const insert = sqlite.prepare(`insert into platform_query(interface, query_key, queried_at, collection_evidence, created_at) values ('recognized_list', ?, '2026-10-20', ?, '2026-10-20')`)
+    insert.run('readable-first', "{titleScope:{rdjb:['2']}}")
+    insert.run('broken-second', '{actually malformed')
+    expect(() => listPlatformQueries(db, { titleCode: 'specialized_sme', view: 'summary' })).toThrow('malformed JSON')
+    expect(listPlatformQueries(db, { queryKey: 'readable-first', titleCode: 'specialized_sme', view: 'summary' }).total).toBe(1)
+  } finally { sqlite.close() }
 })
