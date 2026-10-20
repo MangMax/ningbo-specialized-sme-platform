@@ -30,17 +30,18 @@ export interface QueryCoverageSource {
   subjectMatch: 'exact_uscc' | 'matched_relation' | 'name_only' | 'unknown'
 }
 /** Metadata extraction stays inside SQLite; original rows/raw_response never enter JS. */
-function queryMetadata(db: DecisionDb, scope: AssessmentScope) {
+function queryMetadata(db: DecisionDb, scope: AssessmentScope, ownQueryIds?: readonly number[]) {
   identityFunctions(db)
   const e = db.get<{ uscc: string | null; name: string }>(sql`select uscc_norm as uscc,name_norm as name from enterprise where id=${scope.enterpriseId}`)!
   const uscc = normalizeUscc(e.uscc) || null, rdjb = rdjbByTitle[scope.titleCode] ?? ''
   // Freeze bounded IDs before extracting JSON: ORDER BY/LIMIT on the outer
   // projection alone could parse metadata for every qualifying historical row.
-  const selected = sql`select q.id from platform_query q
-    where (q.query_key=${`name:${e.name}`} or
+  const owned = ownQueryIds == null ? sql`(q.query_key=${`name:${e.name}`} or
       (${uscc} is not null and ${uscc?.includes(':') ? sql`1` : sql`instr(q.query_key,':')=0`} and ${identityUsccSql(sql`q.query_key`)}=${uscc}) or
-      q.id in (select query_id from platform_relation where enterprise_id=${scope.enterpriseId}))
-      and (q.interface='apply_list' or q.title_code=${scope.titleCode} or instr(','||q.rdjb||',',${`,` + rdjb + `,`})>0 or (q.rdjb='' and q.title_code is null))
+      q.id in (select query_id from platform_relation where enterprise_id=${scope.enterpriseId}))`
+    : sql`q.id in (select value from json_each(${JSON.stringify(ownQueryIds)}))`
+  const selected = sql`select q.id from platform_query q
+    where ${owned} and (q.interface='apply_list' or q.title_code=${scope.titleCode} or instr(','||q.rdjb||',',${`,` + rdjb + `,`})>0 or (q.rdjb='' and q.title_code is null))
     order by q.queried_at desc,q.id desc limit 51`
   const rows = db.all<QueryMetadata>(sql`with selected as materialized (${selected})
     select q.id,q.interface,q.query_key as queryKey,q.title_code as titleCode,q.rdjb,q.queried_at as queriedAt,q.status,
@@ -79,8 +80,8 @@ function completePages(pages: PlatformQueryPage[], pageSize: number, fullRange: 
   if (maxPages[0] != null) return Number.isInteger(maxPages[0]) && maxPages[0] === last.page && pages.slice(0, -1).every(p => p.fetchedCount === pageSize)
   return last.fetchedCount === 0 && pages.slice(0, -1).every(p => p.fetchedCount === pageSize)
 }
-export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope) {
-  const { rows, truncated, uscc } = queryMetadata(db, scope), rdjb = rdjbByTitle[scope.titleCode]
+export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope, ownQueryIds?: readonly number[]) {
+  const { rows, truncated, uscc } = queryMetadata(db, scope, ownQueryIds), rdjb = rdjbByTitle[scope.titleCode]
   const sources: QueryCoverageSource[] = rows.flatMap(q => {
     const m = metadataOf(q)
     if (m && q.interface !== 'apply_list' && !m.titleScope.rdjb.includes(rdjb!)) return []
@@ -115,9 +116,9 @@ export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope) {
   else if (relevant.some(s => s.status === 'failed')) status = 'failed'
   return { status, sources, truncated }
 }
-export function readQueryAssessment(db: DecisionDb, scope: AssessmentScope) {
+export function readQueryAssessment(db: DecisionDb, scope: AssessmentScope, coverage?: ReturnType<typeof readQueryCoverage>) {
   scope = { enterpriseId: scope.enterpriseId, titleCode: scope.titleCode, direction: scope.direction }
-  const currentDecision = currentDecision102(db, scope), queryCoverage = readQueryCoverage(db, scope)
+  const currentDecision = currentDecision102(db, scope), queryCoverage = coverage ?? readQueryCoverage(db, scope)
   const current = currentDecision.current
   const executed = queryCoverage.sources.filter(s => s.titleCode === scope.titleCode && s.queryStatus !== 'not_queried' && ['exact_uscc', 'matched_relation'].includes(s.subjectMatch))
   const impact = readEvidenceImpact113(db, { ...scope, direction: scope.direction }, current?.id ?? null)

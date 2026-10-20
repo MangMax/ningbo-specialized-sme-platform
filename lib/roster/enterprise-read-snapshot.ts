@@ -72,6 +72,7 @@ export function readEnterpriseSnapshot(db: Db, id?: number) {
   let exportBatches: (typeof s.platformExportBatch.$inferSelect)[]
   let queries: (typeof s.platformQuery.$inferSelect)[] = []
   let relations: (typeof s.platformRelation.$inferSelect)[] = []
+  let ownQueryIds: number[] = []
   if (id == null) {
     exportRows = db.select(exportColumns).from(s.platformExportRow).all()
     exportBatches = db.select(batchColumns).from(s.platformExportBatch).all()
@@ -105,6 +106,7 @@ export function readEnterpriseSnapshot(db: Db, id?: number) {
       )!
       const ownQueries = sql`select q.id from platform_query q where ${queryScope}`
       const ownIds = db.all<{ id: number }>(ownQueries).map(row => row.id)
+      ownQueryIds = ownIds
       const evidenceIds = [...new Set(differences.map(row => row.evidenceQueryId).filter((id): id is number => id != null))]
       const queryIds = [...new Set([...ownIds, ...evidenceIds])]
       queries = db.select({ ...getTableColumns(s.platformQuery), rawResponse: sql<null>`null`, collectionEvidence: sql<string | null>`case when ${inArray(s.platformQuery.id, ownIds)} then ${s.platformQuery.collectionEvidence} else null end`.mapWith(s.platformQuery.collectionEvidence) }).from(s.platformQuery).where(inArray(s.platformQuery.id, queryIds)).all()
@@ -114,7 +116,7 @@ export function readEnterpriseSnapshot(db: Db, id?: number) {
       relations = db.select({ ...getTableColumns(s.platformRelation), sourceText: sql<null>`null`, aliasNameRaw: sql<null>`null`, createdAt: sql<string>`''`, rawFields: sql<string | null>`case when ${displayed} then ${s.platformRelation.rawFields} else null end`.mapWith(s.platformRelation.rawFields) }).from(s.platformRelation).where(or(displayed, evidenceIds.length ? inArray(s.platformRelation.queryId, evidenceIds) : undefined)).all()
     }
   }
-  return { enterprises, ...history, differences, exportRows, exportBatches, queries, relations }
+  return { enterprises, ...history, differences, exportRows, exportBatches, queries, relations, ownQueryIds }
 }
 
 /** Same USCC set difference as getComparison, scoped before materialization. */

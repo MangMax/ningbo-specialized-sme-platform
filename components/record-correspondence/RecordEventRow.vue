@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
+import type { CorrespondenceDetail, CorrespondenceSummary } from '~~/lib/roster/correspondence-view'
 import { eventDecisionText } from '~~/lib/roster/correspondence-view'
 import { groupEventEdges } from '~~/lib/roster/record-ledger'
 import { PLATFORM_INTERFACES } from '~~/lib/labels'
@@ -31,7 +31,12 @@ interface LedgerEvent {
 const props = defineProps<{
   event: LedgerEvent
   evidence: OfficialEvidence[]
-  edges: CorrespondenceDetail[]
+  edges: CorrespondenceSummary[]
+  fullEdges?: CorrespondenceDetail[] | null
+  linksReady?: boolean
+  detailsLoading?: boolean
+  detailsError?: boolean
+  relationSummaries?: Record<number, { interface: string; status: string | null }>
   back: string
   returnTo?: string | null
   open: boolean
@@ -43,6 +48,7 @@ const emit = defineEmits<{
   preview: [evidence: OfficialEvidence]
   'event-navigate': [eventId: number]
   'page-open': [eventId: number, event: MouseEvent]
+  'retry-detail': []
 }>()
 
 const groups = computed(() => groupEventEdges(props.edges.filter(edge => edge.type !== 'later_process')))
@@ -56,10 +62,11 @@ const fileLines = computed(() => props.evidence.map(item => {
 const interfaceSummary = computed(() => {
   const rows = new Map<string, { count: number; statuses: Set<string> }>()
   for (const edge of groups.value.sources) {
-    const key = PLATFORM_INTERFACES[edge.relation?.query.interface ?? ''] ?? '平台接口'
+    const relation = edge.relationId == null ? undefined : props.relationSummaries?.[edge.relationId]
+    const key = edge.exportRowId != null ? '平台导出快照' : PLATFORM_INTERFACES[relation?.interface ?? ''] ?? '平台接口记录'
     const item = rows.get(key) ?? { count: 0, statuses: new Set<string>() }
     item.count++
-    if (edge.relation?.status) item.statuses.add(edge.relation.status)
+    if (relation?.status) item.statuses.add(relation.status)
     rows.set(key, item)
   }
   return [...rows].map(([interfaceName, item]) => ({
@@ -111,6 +118,7 @@ const interfaceSummary = computed(() => {
                     <span v-if="index < interfaceSummary.length - 1">、</span>
                   </span>
                 </template>
+                <span v-else-if="!linksReady" class="text-muted-foreground">接口对应尚未读取</span>
                 <span v-else class="text-muted-foreground">尚无已确认接口出处</span>
               </span>
               <template v-if="groups.candidates.length">
@@ -132,7 +140,7 @@ const interfaceSummary = computed(() => {
       <template #trigger>
         <span class="w-full text-right text-[13px]">来源记录</span>
       </template>
-      <RecordEventSource :event="event" :evidence="evidence" :edges="edges" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" />
+      <RecordEventSource :event="event" :evidence="evidence" :edges="fullEdges ?? []" :edges-ready="linksReady && fullEdges !== null && fullEdges !== undefined" :edges-loading="detailsLoading" :edges-error="detailsError" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" @retry-detail="emit('retry-detail')" />
     </DisclosurePanel>
   </section>
 </template>
