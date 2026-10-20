@@ -90,7 +90,14 @@ export type JobParseResult =
  * **状态诚实(`failed`),明细完整(`result.files[]`)**。
  */
 export interface JobCompletion {
-  /** 产出。哪怕是空对象也要给 —— 它表示「跑完了,没有产出」。 */
+  /**
+   * 产出。哪怕是空对象也要给 —— 它表示「跑完了,没有产出」。
+   *
+   * 必填是有意的:"忘了给产出"要在编译期报错,而不是在运行期悄悄变成"沿用上一次
+   * 的结果"。`result: null` 才是**显式清空**。没有产出的执行(抛异常、排队取消、
+   * 未接入的 kind)根本不走这个接口 —— 它们由 runner 直接 `finishJob`,而 `finishJob`
+   * 对"没给 result"保留上一次的检查点(见 `job-store.ts`)。
+   */
   result: unknown
   /** Optional truthful progress for partial-result jobs. */
   progress?: { done: number; total: number }
@@ -259,7 +266,11 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
 }
 
 /** Explicit retry reuses the existing scheduler and ID; captures fresh dependencies
- * before reopening. Callers validate bounded retry policy before reaching this seam. */
+ * before reopening. Callers validate bounded retry policy before reaching this seam.
+ *
+ * 依赖捕获（`prepare`）抛错时**不重开**：重开就是丢掉旧终态与旧 `result`，
+ * 而这一次执行连开始都没开始。调用方拿到异常（带它的 `statusCode`）后如实拒绝，
+ * 已完成/部分结果原样留在任务里。 */
 export function requeueFinishedJob(db: Db, input: { id: string; kind: string; params: Record<string, unknown>; filesDir: string }): boolean {
   const spec = getJobSpec(input.kind)
   if (!spec?.run) return false
@@ -349,6 +360,7 @@ async function runOne(entry: QueueEntry): Promise<void> {
         : (completion.error ?? null),
     })
   } catch (error) {
+    // 抛出的执行没有新产出:保留已检查点的 result,只记失败原因(见 `finishJob`)。
     finishJob(db, jobId, { state: 'failed', error: messageOf(error) })
   } finally {
     cancelRequested.delete(jobId)

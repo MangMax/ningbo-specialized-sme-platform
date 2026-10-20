@@ -127,5 +127,13 @@ export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cance
   try {
     const outcome = retryPlatformBatch(ctx.db, { batchId: id, itemIds: summary.capabilities.retryItemIds }, ctx.filesDir)
     return { status: 202, headers, body: outcome }
-  } catch (cause) { return error((cause as { statusCode?: number }).statusCode ?? 500, '重试未受理，请刷新任务状态后再试。') }
+  } catch (cause) {
+    // `retryPlatformBatch` 只在 `requeueFinishedJob` 之前就抛错时把异常漏出来 —— 也就是
+    // 依赖捕获(`prepare`)失败的那一刻。此时任务**根本没被重开**(`reopenJob` 在 `prepare`
+    // 之后),旧终态与旧 `result` 都还在,如实告诉操作者"这次没受理、可以再来"。
+    // 注意:平台的 `prepare` 只把凭据快照的空值降级为 not_queried、把敏感条件判成 400,
+    // 不会把凭据存储异常传到这里 —— 别把它写成"存储不可用必然 503"。
+    const status = (cause as { statusCode?: number }).statusCode
+    return status && status < 500 ? error(status, '重试未受理，原结果保留，请刷新任务状态后再试。') : error(503, '重试未受理，原结果保留，请稍后再试。')
+  }
 }
