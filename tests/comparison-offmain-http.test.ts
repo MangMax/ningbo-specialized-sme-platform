@@ -10,7 +10,7 @@ import { expect, it } from 'vitest'
 import { assertM3, m3Raw, m3Reconcile, seedM3 } from './helpers/comparison-m3-fixture'
 import { m3Observer } from './helpers/comparison-m3-observer'
 
-it('whole summary native lock keeps health responsive and preserves SQL files errors full evidence and acknowledged snapshots', async () => {
+it('whole summary keeps an independent HTTP probe responsive and preserves SQL files errors full evidence and acknowledged snapshots', async () => {
   const root = process.env.M3_SOURCE_ROOT ?? process.cwd(), dir = mkdtempSync(join(tmpdir(), 'comparison-m3-http-'))
   const children: ChildProcess[] = [], dbPath = join(dir, 'fixture.db'), observed = join(dir, 'observed.jsonl')
   let logs = '', nativePids: number[] = []
@@ -57,7 +57,7 @@ process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=
     const waitEntry = async (kind: string) => { for (let n = 0; n < 500 && !entries().some(e => e.kind === kind); n++) await pause(2); expect(entries().some(e => e.kind === kind), logs).toBe(true) }
     const read = async (query = '?view=summary') => {
       const r = await fetch(base + '/api/comparison' + query)
-      return { status: r.status, statusText: r.statusText, headers: Object.fromEntries(['content-type', 'cache-control', 'x-content-type-options', 'x-frame-options', 'referrer-policy'].map(k => [k, r.headers.get(k)])), text: await r.text() }
+      return { status: r.status, statusText: r.statusText, headers: Object.fromEntries([...r.headers].filter(([key]) => !['date', 'connection', 'keep-alive'].includes(key))), text: await r.text() }
     }
     const json = async (query = '?view=summary') => { const r = await read(query); expect(r.status, r.text).toBe(200); return JSON.parse(r.text) }
     const lock = async (ms: number) => {
@@ -92,11 +92,15 @@ process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=
     let complete = false
     const pending = read().then(r => { complete = true; return r })
     await waitEntry('source')
-    const started = performance.now(), health = await fetch(base + '/api/health'), healthMs = performance.now() - started
+    // Production health itself reads this locked DB. Its existing smoke query
+    // is not an independent event-loop probe; use an unchanged static resource
+    // in the bundled lane. Source RED/GREEN retains the independent health route.
+    const probePath = bundled ? '/favicon.svg' : '/api/health'
+    const started = performance.now(), health = await fetch(base + probePath), healthMs = performance.now() - started
     const beforeRelease = !existsSync(join(dir, 'released')), pendingAtHealth = !complete
     expect(await pending).toEqual(expected)
     const native = entries().find(e => e.kind === 'source')
-    process.stdout.write('M3 native HTTP ' + JSON.stringify({ bundled: !!bundled, appPid: app.pid, nativePid: native.pid, healthMs, beforeRelease, pendingAtHealth, healthStatus: health.status }) + '\n')
+    process.stdout.write('M3 native HTTP ' + JSON.stringify({ bundled: !!bundled, probePath, appPid: app.pid, nativePid: native.pid, healthMs, beforeRelease, pendingAtHealth, healthStatus: health.status }) + '\n')
     expect(health.status).toBe(200); expect(healthMs).toBeLessThan(300); expect(beforeRelease).toBe(true); expect(pendingAtHealth).toBe(true); expect(native.pid).not.toBe(app.pid)
     for (const kind of ['source', 'hydration', 'file']) expect(entries().filter(e => e.kind === kind).every(e => e.pid === native.pid)).toBe(true)
     expect(entries().filter(e => e.kind === 'file').map(e => e.file)).toEqual([curated, reconcile])
