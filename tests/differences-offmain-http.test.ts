@@ -13,41 +13,38 @@ import { seedM2Differences, assertM2Differences, m2Name, m2Note } from './helper
 // injected: no reader result, query, timeout or application budget is replaced.
 it('REST differences native lock leaves health responsive before independent release and preserves exact nonempty JSON', async () => {
   const root = process.env.M2_SOURCE_ROOT ?? process.cwd(), dir = mkdtempSync(join(tmpdir(), 'differences-m2-http-'))
-  const req = createRequire(import.meta.url), driver = req.resolve('better-sqlite3')
-  const jiti = createRequire(req.resolve('nuxt/package.json')).resolve('jiti')
   const allNative=join(dir,'all-native.jsonl')
   const marker = join(dir, 'native.jsonl'), released = join(dir, 'released')
   const fault = join(dir,'exit-on-read')
   const preload = join(dir, 'observe.cjs'), boot = join(dir, 'app.mjs')
   const children: ChildProcess[] = []
-  const manifestPath='/tmp/implement-130-134/offmain-m2-http-manifest.json'
-  const persist=()=>writeFileSync(manifestPath,JSON.stringify({dir,dbPath:join(dir,'fixture.db'),pids:children.map(x=>x.pid),removed:!existsSync(dir)}))
-  persist()
-  let output = ''
-  writeFileSync(preload, `const fs=require('node:fs'),D=require(${JSON.stringify(driver)}),p=D.prototype.prepare;
-    D.prototype.prepare=function(sql,...a){if(sql.includes('from "difference_reason" where not exists')){const entry=JSON.stringify({pid:process.pid,sql,at:Date.now()})+'\\n';fs.appendFileSync(${JSON.stringify(marker)},entry);fs.appendFileSync(${JSON.stringify(allNative)},entry);if(process.env.M2_APP_PID&&process.pid!==Number(process.env.M2_APP_PID)&&fs.existsSync(${JSON.stringify(fault)}))process.exit(97)}return p.call(this,sql,...a)};`)
-  writeFileSync(boot, `import {createRequire} from 'node:module';import {createServer} from 'node:http';
-    const require=createRequire(${JSON.stringify(resolve(root, 'package.json'))}); const h=require('h3');
-    Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f,useRuntimeConfig:()=>({apiToken:'synthetic-m2'})});process.env.M2_APP_PID=String(process.pid);
-    const {createJiti}=require(${JSON.stringify(jiti)});const load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)}}});
-    const {useDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))});
-    const writer=useDb({readOnly:false});writer.$client.pragma('journal_mode=DELETE');
-    const {startRosterApi}=await load.import(${JSON.stringify(resolve(root, 'tests/helpers/roster-http-server.ts'))});
-    const imports=await startRosterApi({db:writer,apiToken:'synthetic-m2'});
-    process.env.NUXT_DB_READONLY='1';
-    const hooks={};(await load.import(${JSON.stringify(resolve(root, 'server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});
-    const route=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/differences.get.ts'))})).default;
-    const recognitions=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/recognitions.get.ts'))})).default;
-    const history=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/decision-lifecycle/history.get.ts'))})).default;
-    const enterprises=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/enterprises.get.ts'))})).default;
-    const app=h.createApp({debug:false});app.use(h.defineEventHandler(e=>hooks.request(e)));
-    app.use(h.createRouter().get('/api/roster/differences',route).get('/api/roster/recognitions',recognitions).get('/api/roster/decision-lifecycle/history',history).get('/api/roster/enterprises',enterprises).get('/api/health',h.defineEventHandler(()=>({ok:true}))));
-    const server=createServer(h.toNodeListener(app));await new Promise(r=>server.listen(0,'127.0.0.1',r));
-    console.log(JSON.stringify({port:server.address().port,imports:imports.baseUrl,pid:process.pid}));
-    process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));await imports.close();await hooks.close();writer.$client.close();process.exit(0)});`)
   try {
+    const req = createRequire(import.meta.url), driver = req.resolve('better-sqlite3')
+    const jiti = createRequire(req.resolve('nuxt/package.json')).resolve('jiti')
+    let output = ''
+    writeFileSync(preload, `const fs=require('node:fs'),D=require(${JSON.stringify(driver)}),p=D.prototype.prepare;
+      D.prototype.prepare=function(sql,...a){if(sql.includes('from "difference_reason" where not exists')){const entry=JSON.stringify({pid:process.pid,sql,at:Date.now()})+'\\n';fs.appendFileSync(${JSON.stringify(marker)},entry);fs.appendFileSync(${JSON.stringify(allNative)},entry);if(process.env.M2_APP_PID&&process.pid!==Number(process.env.M2_APP_PID)&&fs.existsSync(${JSON.stringify(fault)}))process.exit(97)}return p.call(this,sql,...a)};`)
+    writeFileSync(boot, `import {createRequire} from 'node:module';import {createServer} from 'node:http';
+      const require=createRequire(${JSON.stringify(resolve(root, 'package.json'))}); const h=require('h3');
+      Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f,useRuntimeConfig:()=>({apiToken:'synthetic-m2'})});process.env.M2_APP_PID=String(process.pid);
+      const {createJiti}=require(${JSON.stringify(jiti)});const load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)}}});
+      const {useDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))});
+      const writer=useDb({readOnly:false});writer.$client.pragma('journal_mode=DELETE');
+      const {startRosterApi}=await load.import(${JSON.stringify(resolve(root, 'tests/helpers/roster-http-server.ts'))});
+      const imports=await startRosterApi({db:writer,apiToken:'synthetic-m2'});
+      process.env.NUXT_DB_READONLY='1';
+      const hooks={};(await load.import(${JSON.stringify(resolve(root, 'server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});
+      const route=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/differences.get.ts'))})).default;
+      const recognitions=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/recognitions.get.ts'))})).default;
+      const history=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/decision-lifecycle/history.get.ts'))})).default;
+      const enterprises=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/enterprises.get.ts'))})).default;
+      const app=h.createApp({debug:false});app.use(h.defineEventHandler(e=>hooks.request(e)));
+      app.use(h.createRouter().get('/api/roster/differences',route).get('/api/roster/recognitions',recognitions).get('/api/roster/decision-lifecycle/history',history).get('/api/roster/enterprises',enterprises).get('/api/health',h.defineEventHandler(()=>({ok:true}))));
+      const server=createServer(h.toNodeListener(app));await new Promise(r=>server.listen(0,'127.0.0.1',r));
+      console.log(JSON.stringify({port:server.address().port,imports:imports.baseUrl,pid:process.pid}));
+      process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));await imports.close();await hooks.close();writer.$client.close();process.exit(0)});`)
     const app = spawn(process.execPath, [boot], { cwd: root, env: { ...process.env, NUXT_DB_PATH: join(dir, 'fixture.db'), NODE_OPTIONS: `--require=${preload}` }, stdio: ['ignore', 'pipe', 'pipe'] })
-    children.push(app);persist(); app.stdout!.on('data', c => { output += c }); app.stderr!.on('data', c => { output += c })
+    children.push(app); app.stdout!.on('data', c => { output += c }); app.stderr!.on('data', c => { output += c })
     let info: { port: number; imports: string; pid: number } | undefined
     for (let i=0; i<400 && !info; i++) { for (const line of output.split('\n')) { try { const v=JSON.parse(line); if (v.port) info=v } catch {} } if (!info) await pause(25) }
     expect(info, output).toBeDefined()
@@ -71,7 +68,7 @@ it('REST differences native lock leaves health responsive before independent rel
     }
     expect(readFileSync(marker,'utf8')).toBe('')
     const holder = spawn(process.execPath, ['-e', `const D=require(${JSON.stringify(driver)}),fs=require('node:fs'),db=new D(${JSON.stringify(join(dir,'fixture.db'))});db.exec('BEGIN EXCLUSIVE');console.log('locked');setTimeout(()=>{db.exec('ROLLBACK');db.close();fs.writeFileSync(${JSON.stringify(released)},String(Date.now()))},800);`], { stdio: ['ignore', 'pipe', 'pipe'] })
-    children.push(holder);persist()
+    children.push(holder)
     await once(holder.stdout!, 'data')
     let complete = false
     const pending = fetch(base+'/api/roster/differences?pageSize=1').then(r => { complete=true; return r })
@@ -105,7 +102,7 @@ it('REST differences native lock leaves health responsive before independent rel
     writeFileSync(marker,'')
     rmSync(released,{force:true})
     const busy=spawn(process.execPath,['-e',`const D=require(${JSON.stringify(driver)}),fs=require('node:fs'),db=new D(${JSON.stringify(join(dir,'fixture.db'))});db.exec('BEGIN EXCLUSIVE');console.log('locked');setTimeout(()=>{db.exec('ROLLBACK');db.close();fs.writeFileSync(${JSON.stringify(released)},'released')},5800);`],{stdio:['ignore','pipe','pipe']})
-    children.push(busy);persist();await once(busy.stdout!,'data')
+    children.push(busy);await once(busy.stdout!,'data')
     const failure=await fetch(base+'/api/roster/differences')
     expect(failure.status).toBe(500)
     expect(await failure.json()).toMatchObject({statusCode:500})
@@ -125,7 +122,7 @@ it('REST differences native lock leaves health responsive before independent rel
     expect(await restarted.json()).toEqual(afterRollback)
     writeFileSync(marker,'')
     const cancelLock=spawn(process.execPath,['-e',`const D=require(${JSON.stringify(driver)}),db=new D(${JSON.stringify(join(dir,'fixture.db'))});db.exec('BEGIN EXCLUSIVE');console.log('locked');setTimeout(()=>{db.exec('ROLLBACK');db.close()},800)`],{stdio:['ignore','pipe','pipe']})
-    children.push(cancelLock);persist();await once(cancelLock.stdout!,'data')
+    children.push(cancelLock);await once(cancelLock.stdout!,'data')
     const controller=new AbortController()
     const cancelled=fetch(base+'/api/roster/differences',{signal:controller.signal}).then(()=>null,error=>error)
     for(let i=0;i<200&&!readFileSync(marker,'utf8');i++)await pause(2)
@@ -159,12 +156,15 @@ it('REST differences native lock leaves health responsive before independent rel
     const history=await (await fetch(base+'/api/roster/decision-lifecycle/history?'+new URLSearchParams(Object.entries(coordinate).map(([k,v])=>[k,String(v)])))).json()
     expect(history).toMatchObject({total:2,rows:[{status:'confirmed_reason'},{status:'needs_review'}]})
   } finally {
-    for (const child of children.reverse()) if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await once(child,'exit') }
-    const nativePids=existsSync(allNative)?[...new Set(readFileSync(allNative,'utf8').trim().split('\n').filter(Boolean).map(x=>JSON.parse(x).pid))]:[]
-    rmSync(dir,{recursive:true,force:true})
+    let nativePids: number[] = []
+    try {
+      for (const child of children.reverse()) if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await once(child,'exit') }
+      // Observation is diagnostic: a read/parse failure must not skip removal.
+      try { nativePids=existsSync(allNative)?[...new Set(readFileSync(allNative,'utf8').trim().split('\n').filter(Boolean).map(x=>JSON.parse(x).pid as number))]:[] } catch {}
+    } finally { rmSync(dir,{recursive:true,force:true}) }
     const remaining=[...children.map(x=>x.pid),...nativePids].filter(pid=>{if(!pid)return false;try{process.kill(pid,0);return true}catch{return false}})
-    process.stdout.write('M2 owned HTTP cleanup '+JSON.stringify({dir,pids:children.map(x=>x.pid),nativePids,remaining,removed:!existsSync(dir)})+'\n')
-    writeFileSync(manifestPath,JSON.stringify({dir,dbPath:join(dir,'fixture.db'),pids:children.map(x=>x.pid),nativePids,remaining,removed:!existsSync(dir)},null,2))
+    // Portable, best-effort diagnostics cannot mask a native assertion failure.
+    try { process.stdout.write('M2 owned HTTP cleanup '+JSON.stringify({dir,pids:children.map(x=>x.pid),nativePids,remaining,removed:!existsSync(dir)})+'\n') } catch {}
     expect(remaining).toEqual([]);expect(existsSync(dir)).toBe(false)
   }
 }, 30000)
