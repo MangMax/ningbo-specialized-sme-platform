@@ -180,7 +180,7 @@ useHead({ title: '优质中小企业查询' })
       <Button v-if="maintenanceYear" variant="outline" size="sm" @click="update({maintenanceYear:undefined,maintenanceBatch:undefined,page:undefined})">维护年份：{{ maintenanceYear }} ×</Button>
       <Button v-if="maintenanceBatch" variant="outline" size="sm" @click="update({maintenanceBatch:undefined,page:undefined})">维护批次：第 {{ maintenanceBatch }} 批 ×</Button>
     </div>
-    <p v-if="displayed" class="text-muted-foreground text-[13px] leading-5" aria-live="polite">当前显示：{{ displayedDescription?.scope }}<span class="block sm:inline"><span class="hidden sm:inline">；</span>{{ displayedDescription?.order }}<span v-if="isShowingPrevious">（上次成功结果）</span></span></p>
+    <p v-if="displayed" class="text-muted-foreground text-[13px] leading-5" aria-live="polite">当前显示：{{ displayedDescription?.scope }}<span class="block sm:inline"><span class="hidden sm:inline">；</span>{{ displayedDescription?.order }}<span :class="{ invisible: !isShowingPrevious }">（上次成功结果）</span></span></p>
     <p v-if="displayed?.uncertainTotal && displayed.request.params.recognitionFrom" class="text-muted-foreground text-sm">另有 {{ displayed.uncertainTotal }} 家仅有年份精度，与所选时间部分重叠或缺少日期事实，未计入确定结果。</p>
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
