@@ -54,7 +54,7 @@ const cases = {
   legacy_comparison: { path: '/api/comparison' }, recognitions: { path: '/api/roster/recognitions?pageSize=50' },
   differences: { path: '/api/roster/differences?pageSize=50' },
   export_roster: { path: '/api/roster/export' }, export_records: { path: '/api/export' },
-  jobs: { path: '/api/jobs?pageSize=25' }, files: { path: '/api/files?pageSize=25' },
+  jobs: { path: '/api/jobs?view=summary&limit=25' }, files: { path: '/api/files?pageSize=25' },
   ocr_metadata: { path: `/api/ocr-results?fileId=${fileId}` },
   ocr_markdown: { path: `/api/ocr-results/markdown?fileId=${fileId}` },
   full_task_plan: { path: '/__perf82/reconcile-targets' },
