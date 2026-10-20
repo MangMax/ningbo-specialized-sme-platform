@@ -100,7 +100,7 @@ process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=
     const beforeRelease = !existsSync(join(dir, 'released')), pendingAtHealth = !complete
     expect(await pending).toEqual(expected)
     const native = entries().find(e => e.kind === 'source')
-    process.stdout.write('M3 native HTTP ' + JSON.stringify({ bundled: !!bundled, probePath, appPid: app.pid, nativePid: native.pid, healthMs, beforeRelease, pendingAtHealth, healthStatus: health.status }) + '\n')
+    try { process.stdout.write('M3 native HTTP ' + JSON.stringify({ bundled: !!bundled, probePath, appPid: app.pid, nativePid: native.pid, healthMs, beforeRelease, pendingAtHealth, healthStatus: health.status }) + '\n') } catch {}
     expect(health.status).toBe(200); expect(healthMs).toBeLessThan(300); expect(beforeRelease).toBe(true); expect(pendingAtHealth).toBe(true); expect(native.pid).not.toBe(app.pid)
     for (const kind of ['source', 'hydration', 'file']) expect(entries().filter(e => e.kind === kind).every(e => e.pid === native.pid)).toBe(true)
     expect(entries().filter(e => e.kind === 'file').map(e => e.file)).toEqual([curated, reconcile])
@@ -194,7 +194,7 @@ process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=
     expect(await failed.json()).toMatchObject({ status: 'failed' }); expect(await json()).toEqual(next)
     // Unchanged recognition, REST differences and enterprise consumers still run.
     for (const path of ['/api/roster/recognitions', '/api/roster/differences', '/api/roster/enterprises']) expect((await fetch(base + path)).status).toBe(200)
-    process.stdout.write('M3 summary parity and snapshot ' + JSON.stringify({ bundled: !!bundled, entry, cwd, total: next.total, originalPid: first.pid, childPid: native.pid, errorInventory: ['SyntaxError', 'SQLITE_BUSY'], fullBytes: Buffer.byteLength(full.text) }) + '\n')
+    try { process.stdout.write('M3 summary parity and snapshot ' + JSON.stringify({ bundled: !!bundled, entry, cwd, total: next.total, originalPid: first.pid, childPid: native.pid, errorInventory: ['SyntaxError', 'SQLITE_BUSY'], fullBytes: Buffer.byteLength(full.text) }) + '\n') } catch {}
   } finally {
     try {
       // Unblock owned paused native work before orderly termination on failure.
