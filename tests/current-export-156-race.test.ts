@@ -93,6 +93,33 @@ it.each(['unmounted', 'left page', 'changed title', 'changed title and returned'
   expect(recovery.wrapper.findAll('a').find(a => a.text() === '查看本次导出')?.attributes('href')).toContain(LG_JOB)
 })
 
+it.each(['q', 'district'] as const)('pending export failure shows recovery notice after same-title %s change', async filter => {
+  const receipt = deferred()
+  mockFetch(() => receipt.promise)
+  const query = await queryEntry()
+  await query.click()
+  await query.router.push({ path: '/current-enterprises', query: { titleCode: 'little_giant', [filter]: filter === 'q' ? '宁波' : '鄞州区' } })
+  receipt.reject(new Error('lost export receipt')); await flushPromises()
+  expect(query.wrapper.get('[role="alert"]').text()).toContain('提交尚未确认')
+  expect(query.wrapper.get('[role="alert"]').text()).toContain('请求标识已保留，重提沿用同一标识')
+  expect(query.wrapper.get('button[aria-describedby]').attributes('disabled')).toBeUndefined()
+  expect(query.router.currentRoute.value.path).toBe('/current-enterprises')
+})
+
+it.each(['q', 'district'] as const)('pending export acceptance navigates to its task after same-title %s change', async filter => {
+  const receipt = deferred()
+  const raw = mockFetch(() => receipt.promise)
+  const query = await queryEntry()
+  await query.click()
+  await query.router.push({ path: '/current-enterprises', query: { titleCode: 'little_giant', [filter]: filter === 'q' ? '宁波' : '鄞州区' } })
+  receipt.resolve({ status: 202, _data: { jobId: LG_JOB } }); await flushPromises()
+  expect(query.router.currentRoute.value.path).toBe('/tasks')
+  expect(query.router.currentRoute.value.query).toEqual({ tab: 'export', titleCode: 'little_giant', page: '1', job: LG_JOB })
+  expect(raw).toHaveBeenCalledTimes(1)
+  expect(raw.mock.calls[0]![0]).toBe('/api/roster/exports/current/little-giant')
+  expect(raw.mock.calls[0]![1].body).toEqual({ clientRequestId: expect.any(String) })
+})
+
 it('accepted regeneration keeps its UUID when forget persistence fails and retry does not create a second request', async () => {
   const receipt = deferred()
   const raw = mockFetch(() => receipt.promise)
