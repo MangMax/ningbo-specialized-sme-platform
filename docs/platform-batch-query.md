@@ -79,6 +79,19 @@ persisted unfinished ranges and a fresh submission-time snapshot. Pages whose
 successful response was never checkpointed remain unfinished and must be queried
 again; their outcome was not established to the caller.
 
+A retry that ends without producing a new result — the handler never ran, threw,
+or stopped at a cancellation/failure checkpoint — keeps the previously
+checkpointed `result` and `progress` as they were and only records the terminal
+state and error. The job runner therefore treats an omitted `JobCompletion.result`
+as "no new output, keep the checkpoint", and only an explicit `result: null`
+clears it. Completed items, completed pages, unfinished positions and the
+execution count never regress because an execution failed.
+
+If the retry cannot even capture its dependencies (for example the credential
+store is unavailable), the job is not reopened at all and the request is
+rejected with a retryable error; the previous terminal state and result stay in
+place.
+
 ## Bounds
 
 - Items:1–50, max10 executions per batch.

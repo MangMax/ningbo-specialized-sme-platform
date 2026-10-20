@@ -127,5 +127,10 @@ export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cance
   try {
     const outcome = retryPlatformBatch(ctx.db, { batchId: id, itemIds: summary.capabilities.retryItemIds }, ctx.filesDir)
     return { status: 202, headers, body: outcome }
-  } catch (cause) { return error((cause as { statusCode?: number }).statusCode ?? 500, '重试未受理，请刷新任务状态后再试。') }
+  } catch (cause) {
+    // 依赖捕获失败(凭据存储不可用等)时任务根本没被重开 —— 旧结果与旧终态都还在,
+    // 如实告诉操作者"这次没受理、可以再来",而不是把上一次的证据当成本次结果。
+    const status = (cause as { statusCode?: number }).statusCode
+    return status && status < 500 ? error(status, '重试未受理，原结果保留，请刷新任务状态后再试。') : error(503, '重试未受理，原结果保留，请稍后再试。')
+  }
 }

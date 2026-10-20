@@ -173,19 +173,30 @@ export function setJobProgress(db: Db, id: string, progress: JobProgress): void 
     .run()
 }
 
-/** 终态收尾:`done` / `failed` / `cancelled` + `finished_at`。**只从非终态**出发。 */
+/**
+ * 终态收尾:`done` / `failed` / `cancelled` + `finished_at`。**只从非终态**出发。
+ *
+ * `result` 有**三种**语义,别合并:
+ *  - 省略(`undefined`)= 这次执行没有新产出 → **保留**库里已有的检查点结果。
+ *    一次失败的重试不该抹掉上一次已经落库的已完成/部分证据;抛异常的执行,
+ *    以及"跑完但还没算出结果"的执行,都走这条。
+ *  - `null` = 调用方**显式**要求清空。
+ *  - 其它值 = 写入这次的新产出。
+ * 逐项核对调用方:`current-roster-export` 的失败/取消都会带上 `checkpoint`(非空对象),
+ * `ocr`/`render-pages`/`reconcile` 的产出在方法体里构造完毕才返回 —— 它们都不依赖
+ * "省略即清空"这个旧行为。
+ */
 export function finishJob(
   db: Db,
   id: string,
   outcome: { state: Extract<JobState, 'done' | 'failed' | 'cancelled'>; result?: unknown; error?: string | null },
 ): JobRow | null {
+  // 只更新一次:省略 result 时连列都不碰,显式 null 才能清空。
+  const changes = outcome.result === undefined
+    ? { state: outcome.state, error: outcome.error ?? null, finishedAt: new Date().toISOString() }
+    : { state: outcome.state, result: outcome.result, error: outcome.error ?? null, finishedAt: new Date().toISOString() }
   db.update(schema.job)
-    .set({
-      state: outcome.state,
-      result: outcome.result === undefined ? null : outcome.result,
-      error: outcome.error ?? null,
-      finishedAt: new Date().toISOString(),
-    })
+    .set(changes)
     .where(and(eq(schema.job.id, id), inArray(schema.job.state, [...ACTIVE_JOB_STATES])))
     .run()
   return getJob(db, id)

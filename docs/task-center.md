@@ -15,7 +15,7 @@
 - `GET /api/task-center?tab=&state=&page=&pageSize=` → `TaskList`（类型见 `lib/task-center.ts`）。计数应用状态筛选；列表使用稳定的创建时间/id 倒序分页。
 - `GET /api/task-center/:id` → `TaskSummary`，增加有界 `items` 完整性/未完成位置，独立于原页面内存。
 - `POST /api/task-center/:id/cancel` → `{ task, cancelRequested }`。排队取消 200；运行中请求取消 202，仍显示真实 running，直到终态。
-- `POST /api/task-center/:id/retry` → 202。同平台批次 ID，仅委派原接口补查未完成项；保留其鉴权、终态校验及最多 10 次执行预算。无通用参数重放。
+- `POST /api/task-center/:id/retry` → 202。同平台批次 ID，仅委派原接口补查未完成项；保留其鉴权、终态校验及最多 10 次执行预算。无通用参数重放。重试若没有产出新结果（handler 未运行、抛异常、在取消/失败检查点停下），摘要、逐项证据、未完成位置与执行计数都停留在最后一次检查点，只更新终态与错误；依赖捕获失败时任务不重开，回 503 且原结果保留。
 - 所有响应 `Cache-Control: no-store`。无鉴权只能读；操作继续使用现有 `NUXT_API_TOKEN` Bearer/X-API-Token 边界，401 不绕过。
 - SQLite 只投影元数据、标量和有界 ID/状态/位置；不把完整 params/result、OCR 文本、平台 segments/rows 取入列表 JS 内存。原始错误可能包含凭据或宿主路径，仅展示安全类别与操作建议。
 

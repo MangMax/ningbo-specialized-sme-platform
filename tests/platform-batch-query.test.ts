@@ -6,6 +6,9 @@ import { useDb } from '../db/client'
 import { updateCredential } from '../server/utils/credential-state'
 import { whenIdle } from '../server/utils/job-runner'
 import { handlePlatformBatchRequest } from '../server/utils/platform-batch-http'
+import * as jobRunner from '../server/utils/job-runner'
+import { MAX_BATCH_ATTEMPTS, PLATFORM_BATCH_KIND } from '../lib/platform/batch-query'
+import type { JobSpec } from '../server/utils/job-runner'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-batch-'))
 const db = useDb({ dbPath: join(dir, 'test.sqlite') })
@@ -422,4 +425,84 @@ it('short credential components do not reject fixed numeric bounds or title sele
   const batch = (await invoke('status', undefined, (submitted.body as any).batchId)).body as any
   expect(batch).toMatchObject({ state: 'done', completeness: 'complete', attempt: 1 })
   expect(batch.items[0].segments[0]).toMatchObject({ status: 'no_record', titleScope: { rdjb: ['1'] } })
+})
+
+// ---------------------------------------------------------------------------
+// B-02（#120：平台局部重试保留已完成/部分结果）
+//
+// 批次只经**公开 submit** 产生（合成甲 第 2 页 503 停在未完成第 2 页，合成乙 一次完成），
+// 重试只经**公开 retry** 发起，断言只读公开 status。失败由外部条件造成（网关 503、
+// 连接被掐断），不往业务代码里塞故障，也不手写 job 表来"造证据"。
+// ---------------------------------------------------------------------------
+const evidenceItems = (batch: any) => [batch.items[0], batch.items[1]]
+
+/** 一次真实的"半截"批次：合成甲 第 2 页 503，合成乙 完成。`interrupted` 由用例控制。 */
+async function seedPartialBatch() {
+  const state = { interrupted: true }
+  upstream.mockImplementation(async (_url: string, init: any) => {
+    const p = new URLSearchParams(init.body); const n = Number(p.get('pageNum'))
+    if (p.get('qymc') === '合成甲' && n === 2 && state.interrupted) return { ok: false, status: 503, text: async () => '' }
+    return response('applyGrid', [{ qymc: '合成企业', tyshxydm: uscc, relation: String(n) }], n, p.get('qymc') === '合成甲' ? 2 : 1)
+  })
+  const receipt = (await invoke('submit', { items: [{ query: { source: 'queryList', name: '合成甲', pageSize: 1 } }, { query: { source: 'queryList', name: '合成乙', pageSize: 1 } }] })).body as any
+  await whenIdle()
+  const prior = (await invoke('status', undefined, receipt.batchId)).body as any
+  expect(prior).toMatchObject({ state: 'failed', completeness: 'partial', progress: { done: 1, total: 2 }, attempt: 1 })
+  expect(prior.items[0]).toMatchObject({ completeness: 'partial', unfinished: [{ source: 'queryList', rdjb: null, page: 2 }] })
+  expect(prior.items[1]).toMatchObject({ completeness: 'complete' })
+  upstream.mockReset()
+  return { receipt, prior, state }
+}
+
+it('B-02: a retry whose gateway keeps failing keeps the completed item and the original partial evidence', async () => {
+  const { receipt, prior, state } = await seedPartialBatch()
+  // 重试照常发起，但网关对补查页继续 503 —— 这一项仍然没有新产出。
+  upstream.mockImplementation(async () => ({ ok: false, status: 503, text: async () => '' }))
+  expect((await invoke('retry', { itemIds: [receipt.itemIds[0]] }, receipt.batchId)).status).toBe(202)
+  await whenIdle()
+  const after = (await invoke('status', undefined, receipt.batchId)).body as any
+  expect(after).toMatchObject({ state: 'failed', completeness: 'partial', progress: { done: 1, total: 2 }, attempt: 2 })
+  // 已完成项逐字段不变；未完成项保留原第 1 页，并只追加一次真实的失败记录。
+  expect(after.items[1]).toEqual(prior.items[1])
+  expect(after.items[0].segments[0]).toEqual(prior.items[0].segments[0])
+  expect(after.items[0].segments).toHaveLength(2)
+  expect(after.items[0].unfinished).toEqual([{ source: 'queryList', rdjb: null, page: 2 }])
+  state.interrupted = false
+})
+
+/**
+ * 一次重试可以这样结束：handler 根本没给产出（依赖缺失/检查点前失败）、执行抛异常、
+ * 或按取消请求在检查点停下。三种都**没有新结果**，也都不该动上一次的检查点。
+ * 走 runner 的公开执行入口 `prepare` 注入执行体，不动业务代码；结束后恢复。
+ * （`prepare` 抛错时任务不重开，因此"依赖捕获失败"本身由 runner 保证不丢旧结果。）
+ */
+it.each<[string, () => Promise<unknown>, string]>([
+  ['produces no result', async () => ({ error: 'synthetic execution without a result' }), 'failed'],
+  ['throws', async () => { throw new Error('synthetic execution interruption') }, 'failed'],
+  ['stops at its cancel checkpoint', async () => ({ cancelled: true }), 'cancelled'],
+])('B-02: a retry that %s keeps the completed item, partial item and unfinished position', async (_label, execute, state) => {
+  const { receipt, prior } = await seedPartialBatch()
+  const spec = jobRunner.getJobSpec(PLATFORM_BATCH_KIND)!
+  const realPrepare: JobSpec['prepare'] = spec.prepare
+  spec.prepare = () => async () => execute() as never
+  try {
+    expect((await invoke('retry', { itemIds: [receipt.itemIds[0]] }, receipt.batchId)).status).toBe(202)
+    await whenIdle()
+    const after = (await invoke('status', undefined, receipt.batchId)).body as any
+    // 状态如实（没有新产出就不是 done），证据与进度停在最后一次检查点。
+    expect(after).toMatchObject({ state, completeness: 'partial', progress: { done: 1, total: 2 } })
+    expect(evidenceItems(after)).toEqual(evidenceItems(prior))
+    expect((await invoke('item', undefined, receipt.batchId, receipt.itemIds[0])).body).toEqual(prior.items[0])
+  } finally { spec.prepare = realPrepare }
+})
+
+it('B-02: the ten-execution budget still ends a batch whose retries keep failing', async () => {
+  const { receipt } = await seedPartialBatch()
+  upstream.mockImplementation(async () => ({ ok: false, status: 503, text: async () => '' }))
+  for (let attempt = 2; attempt <= MAX_BATCH_ATTEMPTS; attempt++) {
+    expect((await invoke('retry', { itemIds: [receipt.itemIds[0]] }, receipt.batchId)).status).toBe(202)
+    await whenIdle()
+    expect(((await invoke('status', undefined, receipt.batchId)).body as any).attempt).toBe(attempt)
+  }
+  expect((await invoke('retry', { itemIds: [receipt.itemIds[0]] }, receipt.batchId)).status).toBe(409)
 })

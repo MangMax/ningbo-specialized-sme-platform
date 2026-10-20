@@ -90,8 +90,13 @@ export type JobParseResult =
  * **状态诚实(`failed`),明细完整(`result.files[]`)**。
  */
 export interface JobCompletion {
-  /** 产出。哪怕是空对象也要给 —— 它表示「跑完了,没有产出」。 */
-  result: unknown
+  /**
+   * 产出。**省略** = 这次执行没有新产出:任务收尾为 `failed`/`cancelled`,但库里已有的
+   * 检查点 `result` 原样保留(局部重试失败后,上一次的已完成/部分证据还在)。
+   * 真的要清空就显式写 `result: null` —— 「没给」和「给了空」是两件事,不能混为一谈。
+   * 需要「跑完了,没有产出」的语义时给 `{}`。
+   */
+  result?: unknown
   /** Optional truthful progress for partial-result jobs. */
   progress?: { done: number; total: number }
   /** 给了就是部分失败:状态记 `failed`,但 `result` 照样保留。 */
@@ -259,7 +264,11 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
 }
 
 /** Explicit retry reuses the existing scheduler and ID; captures fresh dependencies
- * before reopening. Callers validate bounded retry policy before reaching this seam. */
+ * before reopening. Callers validate bounded retry policy before reaching this seam.
+ *
+ * 依赖捕获（`prepare`）抛错时**不重开**：重开就是丢掉旧终态与旧 `result`，
+ * 而这一次执行连开始都没开始。调用方拿到异常（带它的 `statusCode`）后如实拒绝，
+ * 已完成/部分结果原样留在任务里。 */
 export function requeueFinishedJob(db: Db, input: { id: string; kind: string; params: Record<string, unknown>; filesDir: string }): boolean {
   const spec = getJobSpec(input.kind)
   if (!spec?.run) return false
@@ -336,19 +345,24 @@ async function runOne(entry: QueueEntry): Promise<void> {
     }
 
     const completion = await entry.run(ctx, running.params)
+    // handler 给了新产出才按"跑完"收尾;没给(或异常)时进度与 result 都停在最后一次
+    // 检查点 —— 一次没产出的失败重试不该把上一次的真实进度改写成"一项都没完成"。
+    const produced = 'result' in completion && completion.result !== undefined
     // 默认收尾把进度顶到分母;部分结果任务可显式提供真实完成数。
     // 被取消时不顶:停在 1/4 才是**它真实的进度**,顶成 4/4 就是在说谎。
-    if (!completion.cancelled) {
+    if (produced && !completion.cancelled) {
       setJobProgress(db, jobId, completion.progress ?? { done: running.progress.total, total: running.progress.total })
     }
+    // 结果只在新产出时写入;没给就保留上次检查点(见 `finishJob`)。
     finishJob(db, jobId, {
-      state: completion.cancelled ? 'cancelled' : completion.error ? 'failed' : 'done',
-      result: completion.result,
+      state: completion.cancelled ? 'cancelled' : completion.error || !produced ? 'failed' : 'done',
+      ...(produced ? { result: completion.result } : {}),
       error: completion.cancelled
         ? '已按取消请求停止(尽力而为:取消在任务的下一个检查点生效),已完成的部分见 result'
         : (completion.error ?? null),
     })
   } catch (error) {
+    // 抛出的执行没有产出:保留已检查点的 result,只记失败原因。
     finishJob(db, jobId, { state: 'failed', error: messageOf(error) })
   } finally {
     cancelRequested.delete(jobId)
