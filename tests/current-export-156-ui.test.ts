@@ -6,13 +6,14 @@ import { PiniaColada } from '@pinia/colada'
 import { createRouter, createMemoryHistory, RouterLink } from 'vue-router'
 import Page from '../pages/current-enterprises.vue'
 import { TASK_EXPORTS } from '../lib/task-center'
+import { Select } from '../components/ui/select'
 
 const JOB = '01M5BEPVCXD5619ZW4C6CATRET'
 const KEY = 'task-center-export-requests-v1'
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { mounted.splice(0).forEach(w => w.unmount()); sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-async function setup(options: { title?: string; authorized?: boolean; capability?: 'failed' | 'missing'; post?: () => Promise<unknown> } = {}) {
+async function setup(options: { title?: string; defaultUrl?: boolean; authorized?: boolean; capability?: 'failed' | 'missing'; post?: () => Promise<unknown> } = {}) {
   const calls: { url: string; options: any }[] = []
   const fetcher = Object.assign(async (url: string, init: any = {}) => {
     calls.push({ url, options: init })
@@ -31,7 +32,7 @@ async function setup(options: { title?: string; authorized?: boolean; capability
   }) })
   vi.stubGlobal('$fetch', fetcher)
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/current-enterprises', component: Page }, { path: '/tasks', component: { template: '<div>后台任务</div>' } }] })
-  await router.push({ path: '/current-enterprises', query: { titleCode: options.title ?? 'little_giant', q: '旧名', district: '鄞州区', page: '3', pageSize: '25', validYear: '2026', maintenanceYear: '2025' } })
+  await router.push(options.defaultUrl ? '/current-enterprises' : { path: '/current-enterprises', query: { titleCode: options.title ?? 'little_giant', q: '旧名', district: '鄞州区', page: '3', pageSize: '25', validYear: '2026', maintenanceYear: '2025' } })
   ;(globalThis as any).__routerBridge = { current: router }
   const wrapper = mount(Page, { global: { plugins: [createPinia(), PiniaColada, router], components: { NuxtLink: RouterLink } } })
   mounted.push(wrapper)
@@ -39,6 +40,41 @@ async function setup(options: { title?: string; authorized?: boolean; capability
   const submit = () => wrapper.get('button[aria-describedby="current-export-scope current-export-reason"]')
   return { wrapper, router, calls, submit, fetcher }
 }
+
+it.each(['q', 'district'] as const)('default URL pending export keeps failure visible after first same-title %s update', async filter => {
+  let reject!: (reason: Error) => void
+  const { wrapper, router, submit, fetcher } = await setup({ defaultUrl: true, post: () => new Promise((_, no) => { reject = no }) })
+  expect(router.currentRoute.value.fullPath).toBe('/current-enterprises')
+  expect(wrapper.text()).toContain('导出范围：专精特新“小巨人”')
+  await submit().trigger('click')
+  const body = fetcher.raw.mock.calls[0]![1].body
+  if (filter === 'q') await wrapper.get('input[aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"]').setValue('宁波')
+  else wrapper.findComponent(Select).vm.$emit('update:modelValue', '鄞州区')
+  await vi.waitFor(() => expect(router.currentRoute.value.query).toEqual({ titleCode: 'little_giant', [filter]: filter === 'q' ? '宁波' : '鄞州区' }))
+  reject(new Error('lost export receipt')); await flushPromises()
+  expect(wrapper.get('[role="alert"]').text()).toContain('提交尚未确认')
+  expect(wrapper.get('[role="alert"]').text()).toContain('请求标识已保留，重提沿用同一标识')
+  expect(submit().attributes('disabled')).toBeUndefined()
+  expect(router.currentRoute.value.path).toBe('/current-enterprises')
+  expect(JSON.parse(sessionStorage.getItem(KEY)!)['little_giant:initial']).toEqual(body)
+  expect(fetcher.raw).toHaveBeenCalledTimes(1)
+})
+
+it.each(['q', 'district'] as const)('default URL pending export opens accepted task after first same-title %s update', async filter => {
+  let resolve!: (value: unknown) => void
+  const { wrapper, router, submit, fetcher } = await setup({ defaultUrl: true, post: () => new Promise(yes => { resolve = yes }) })
+  expect(router.currentRoute.value.fullPath).toBe('/current-enterprises')
+  expect(wrapper.text()).toContain('导出范围：专精特新“小巨人”')
+  await submit().trigger('click')
+  if (filter === 'q') await wrapper.get('input[aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"]').setValue('宁波')
+  else wrapper.findComponent(Select).vm.$emit('update:modelValue', '鄞州区')
+  await vi.waitFor(() => expect(router.currentRoute.value.query).toEqual({ titleCode: 'little_giant', [filter]: filter === 'q' ? '宁波' : '鄞州区' }))
+  resolve({ status: 202, _data: { jobId: JOB } }); await flushPromises()
+  expect(router.currentRoute.value).toMatchObject({ path: '/tasks', query: { tab: 'export', titleCode: 'little_giant', page: '1', job: JOB } })
+  expect(fetcher.raw).toHaveBeenCalledTimes(1)
+  expect(fetcher.raw.mock.calls[0]![0]).toBe('/api/roster/exports/current/little-giant')
+  expect(fetcher.raw.mock.calls[0]![1].body).toEqual({ clientRequestId: expect.any(String) })
+})
 
 for (const entry of TASK_EXPORTS) it(`${entry.titleCode}: filtered query submits only a durable request identity to its dedicated route and opens unified task`, async () => {
   const { wrapper, router, calls, submit } = await setup({ title: entry.titleCode })
