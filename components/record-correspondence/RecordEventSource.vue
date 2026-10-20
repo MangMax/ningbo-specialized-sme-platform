@@ -27,17 +27,21 @@ interface LedgerEvent {
   reviewOutcome: string | null
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   event: LedgerEvent
   evidence: OfficialEvidence[]
   edges: CorrespondenceDetail[]
+  edgesReady?: boolean
+  edgesLoading?: boolean
+  edgesError?: boolean
   back: string
   returnTo?: string | null
-}>()
+}>(), { edgesReady: true })
 const emit = defineEmits<{
   preview: [evidence: OfficialEvidence]
   'event-navigate': [eventId: number]
   'page-open': [eventId: number, event: MouseEvent]
+  'retry-detail': []
 }>()
 
 const groups = computed(() => groupEventEdges(props.edges.filter(edge => edge.type !== 'later_process')))
@@ -130,7 +134,12 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
 
       <section class="min-w-0" aria-label="平台接口记录">
         <h4 class="text-muted-foreground mb-2 text-xs font-medium">平台接口记录</h4>
-        <p v-if="!groups.sources.length" class="text-muted-foreground">
+        <div v-if="edgesError && !edgesReady" class="flex flex-wrap items-center gap-2">
+          <p class="text-muted-foreground">对应出处读取失败；不能据此判断没有来源。</p>
+          <Button variant="outline" size="sm" @click="emit('retry-detail')">重试读取</Button>
+        </div>
+        <p v-else-if="!edgesReady" class="text-muted-foreground">{{ edgesLoading ? '正在读取对应出处…' : '对应出处尚未读取。' }}</p>
+        <p v-else-if="!groups.sources.length" class="text-muted-foreground">
           暂无与这条记录匹配的已确认接口出处。
         </p>
         <ul v-else class="flex flex-col gap-2">
@@ -211,7 +220,7 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
       </ul>
     </section>
 
-    <p v-if="!hasEitherSide" class="text-muted-foreground">这条事件目前没有已登记的两侧出处；这不表示公布文件或平台没有记录。</p>
+    <p v-if="edgesReady && !hasEitherSide" class="text-muted-foreground">这条事件目前没有已登记的两侧出处；这不表示公布文件或平台没有记录。</p>
 
     <Dialog :open="sourceDialogId !== null" @update:open="onDialogOpenChange">
       <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl" @close-auto-focus="onDialogCloseAutoFocus">
