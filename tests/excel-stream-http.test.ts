@@ -1,9 +1,12 @@
 import { once } from 'node:events'
 import { createServer, get, type IncomingMessage } from 'node:http'
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import ExcelJS from 'exceljs'
 import { createEvent, createError, defineEventHandler, getQuery, sendStream, setHeader } from 'h3'
 import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
+
+const jszip = createRequire(createRequire(import.meta.url).resolve('exceljs/package.json'))('jszip')
 
 const source = vi.hoisted(() => ({ rows: [] as object[], read: 0 }))
 vi.mock('@db', () => ({ useDb: () => ({}) }))
@@ -26,7 +29,7 @@ function fixture(count: number) {
       createHash('sha256').update(`${i}:${n}`).digest('hex')).join('')
     return {
       enterpriseId: i + 1,
-      get name() { source.read++; return `企业-${i}` },
+      get name() { source.read++; return i === 0 ? '企业-0_x0001_' : `企业-${i}` },
       uscc: `USCC${i}`, district: '鄞州区', titleCode: 'specialized_sme',
       sources: ['jxj'], events: '认定 2024', evidence: content,
     }
@@ -111,23 +114,85 @@ describe('GET /api/export transport', () => {
     } finally { await new Promise<void>(resolve => http.close(() => resolve())) }
   })
 
-  it.each([
-    ['NUL', '\u0000'], ['C0 upper first', '\u0008'],
-    ['vertical tab', '\u000b'], ['form feed', '\u000c'],
-    ['C0 upper second', '\u000e'], ['unit separator', '\u001f'],
-  ])('rejects XML 1.0 illegal control %s instead of silently changing the workbook', async (_label, control) => {
+  it('reads back every XML 1.0 forbidden C0 control without raw forbidden worksheet XML', async () => {
+    const controls = Array.from({ length: 32 }, (_, code) => code)
+      .filter(code => ![9, 10, 13].includes(code))
+      .map(code => String.fromCharCode(code)).join('')
+    const name = `甲${controls}\t\n\r乙`
     source.rows = [{
-      enterpriseId: 1, name: `甲${control}乙`, uscc: 'USCC1', district: '鄞州区',
+      enterpriseId: 1, name, uscc: 'USCC1', district: '鄞州区',
       titleCode: 'specialized_sme', sources: ['jxj'], events: '', evidence: '',
     }]
-    const { http, port, completed } = await server()
+    const { http, port } = await server()
     try {
       const response = await fetch(`http://127.0.0.1:${port}/api/export`)
-      await expect(response.arrayBuffer()).rejects.toThrow()
-      await expect(completed).resolves.toMatchObject({
-        name: 'InvalidXmlCharacterError',
-        message: expect.stringContaining(`U+${control.charCodeAt(0).toString(16).padStart(4, '0').toUpperCase()}`),
-      })
+      expect(response.status).toBe(200)
+      const bytes = Buffer.from(await response.arrayBuffer())
+      const wb = new ExcelJS.Workbook()
+      await wb.xlsx.load(bytes as never)
+      expect(wb.getWorksheet('台账')!.getRow(3).getCell(1).value).toBe(name)
+      const zip = await jszip.loadAsync(bytes)
+      const worksheetXml = await zip.file('xl/worksheets/sheet1.xml').async('string')
+      const stringXml = await zip.file('xl/sharedStrings.xml').async('string')
+      expect(worksheetXml).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/)
+      expect(stringXml).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/)
+      expect(stringXml).toContain('_x0000_')
+      expect(stringXml).toContain('_x001F_')
+    } finally { await new Promise<void>(resolve => http.close(() => resolve())) }
+  })
+
+  it('preserves literal OOXML escape-looking text, including adjacent and mixed-case forms', async () => {
+    const name = '_x0001_ _x0041_ _x005F_ _x00aF_ _x00Af_ _X0001_ _x0041__x0001_'
+    source.rows = [{
+      enterpriseId: 1, name, uscc: 'USCC1', district: '鄞州区',
+      titleCode: 'specialized_sme', sources: ['jxj'], events: '=SUM(_x0041_)', evidence: '',
+    }]
+    const { http, port } = await server()
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/export`)
+      expect(response.status).toBe(200)
+      const bytes = Buffer.from(await response.arrayBuffer())
+      const wb = new ExcelJS.Workbook()
+      await wb.xlsx.load(bytes as never)
+      const cell = wb.getWorksheet('台账')!.getRow(3).getCell(1)
+      expect(cell.value).toBe(name)
+      expect(cell.type).toBe(ExcelJS.ValueType.String)
+      const formulaLooking = wb.getWorksheet('台账')!.getRow(3).getCell(6)
+      expect(formulaLooking.value).toBe('=SUM(_x0041_)')
+      expect(formulaLooking.type).toBe(ExcelJS.ValueType.String)
+      const zip = await jszip.loadAsync(bytes)
+      const stringXml = await zip.file('xl/sharedStrings.xml').async('string')
+      expect(stringXml).toContain('_x005F_x0001_')
+      expect(stringXml).toContain('_x005F_x0041_')
+      expect(stringXml).toContain('_x005F_x005F_')
+      expect(stringXml).toContain('_x005F_x00aF_')
+    } finally { await new Promise<void>(resolve => http.close(() => resolve())) }
+  })
+
+  it('reads back XML 1.0 forbidden noncharacters and lone surrogates as text', async () => {
+    const name = '甲\uFFFE\uFFFF\uD800乙\uDC00😀'
+    source.rows = [{
+      enterpriseId: 1, name, uscc: 'USCC1', district: '鄞州区',
+      titleCode: 'specialized_sme', sources: ['jxj'], events: '', evidence: '',
+    }]
+    const { http, port } = await server()
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/export`)
+      expect(response.status).toBe(200)
+      const bytes = Buffer.from(await response.arrayBuffer())
+      const wb = new ExcelJS.Workbook()
+      await wb.xlsx.load(bytes as never)
+      expect(wb.getWorksheet('台账')!.getRow(3).getCell(1).value).toBe(name)
+      const zip = await jszip.loadAsync(bytes)
+      const stringXml = await zip.file('xl/sharedStrings.xml').async('string')
+      for (const illegal of ['\uFFFE', '\uFFFF', '\uD800', '\uDC00']) {
+        expect(stringXml).not.toContain(illegal)
+      }
+      expect(stringXml).toContain('_xFFFE_')
+      expect(stringXml).toContain('_xFFFF_')
+      expect(stringXml).toContain('_xD800_')
+      expect(stringXml).toContain('_xDC00_')
+      expect(stringXml).toContain('😀')
     } finally { await new Promise<void>(resolve => http.close(() => resolve())) }
   })
 
@@ -152,6 +217,7 @@ describe('GET /api/export transport', () => {
       expect(ws.rowCount).toBe(502)
       expect(ws.getRow(1).getCell(1).text).toContain('共 500 行')
       expect(ws.getRow(2).getCell(1).text).toBe('企业名称')
+      expect(ws.getRow(3).getCell(1).text).toBe('企业-0_x0001_')
       expect(ws.getRow(502).getCell(1).text).toBe('企业-499')
       expect(results).toHaveLength(1)
     } finally {
