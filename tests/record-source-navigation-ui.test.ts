@@ -65,6 +65,26 @@ async function settleDialog() {
   await flushPromises()
 }
 describe('enterprise detail information architecture', () => {
+  it('uses a summary list on the product route and opens the complete selected source after point hydration', async () => {
+    const { event: _event, relation: _relation, ...summary } = edge
+    const fetch = vi.fn(async (url: string, options?: { query?: Record<string, unknown> }) => {
+      if (url === '/api/roster/correspondences') return { rows: [summary], total: 1, page: 1, pageSize: 200 }
+      if (url === '/api/roster/correspondences/1') return edge
+      if (url === '/api/roster/correspondences/relations/30') return { source: relation, correspondences: [edge] }
+      return { source: event, correspondences: [edge] }
+    })
+    vi.stubGlobal('$fetch', fetch)
+    await enterprise(10)
+    expect(fetch).toHaveBeenCalledWith('/api/roster/correspondences', { query: { enterpriseId: 91, view: 'summary', page: 1, pageSize: 200 } })
+    expect(fetch).toHaveBeenCalledWith('/api/roster/correspondences/1')
+    expect(wrapper!.text()).toContain('已确认')
+    expect(wrapper!.text()).not.toContain('对应出处尚未读取')
+    await wrapper!.findAll('button').find(button => button.text() === '查看原始记录')!.trigger('click')
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledWith('/api/roster/correspondences/relations/30')
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('合成企业')
+  })
+
   it('defaults to records and keeps verification in a separate tab', async () => {
     await enterprise(10, true)
     const tabs = wrapper!.findAll('[aria-label="企业详情内容"] [role="tab"]')

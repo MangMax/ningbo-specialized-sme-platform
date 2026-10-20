@@ -111,6 +111,9 @@ export interface CorrespondenceDetail extends CorrespondenceRef {
   exportRow: ExportRowSource | null
 }
 
+/** Explicit `view=summary` list row. Source bodies are available through point/source reads. */
+export type CorrespondenceSummary = Omit<CorrespondenceDetail, 'event' | 'predecessorEvent' | 'relation' | 'exportRow'>
+
 export type SourceResponse =
   | { source: EventSource; correspondences: CorrespondenceDetail[] }
   | { source: RelationSource; correspondences: CorrespondenceDetail[] }

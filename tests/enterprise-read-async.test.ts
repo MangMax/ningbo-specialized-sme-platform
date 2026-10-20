@@ -5,7 +5,7 @@ import { Worker } from 'node:worker_threads'
 import { createRequire } from 'node:module'
 import { once } from 'node:events'
 import { setTimeout as pause } from 'node:timers/promises'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { useDb, schema } from '../db/client'
 import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
 import { startHttpFixture } from './helpers/http-fixture'
@@ -53,6 +53,26 @@ it('serves HTTP health while a real native SQLite enterprise read waits for a se
   const response = await pending
   expect(response.status).toBe(200)
   expect(await response.json()).toMatchObject({ counts: { total: 1 }, rows: [{ enterpriseId: f.enterprise.id, name: '合成企业' }] })
+})
+
+describe('cold detail diagnostics after worker readiness', () => {
+  let f: ReturnType<typeof fixture>
+  beforeAll(async () => { f = fixture(); await f.reads.start() })
+  it('reports connection and SQL work separately from encoding', async () => {
+    const { channel } = await import('node:diagnostics_channel')
+    const results: Record<string, number>[] = []
+    const observe = (message: any) => { if (message.phase === 'result') results.push(message) }
+    channel('ningbo.enterprise-read').subscribe(observe)
+    try {
+      expect(await f.reads.detail(f.path, f.enterprise.id)).toMatchObject({ enterprise: { enterpriseId: f.enterprise.id } })
+      expect(results).toHaveLength(1)
+      expect(results[0]).toMatchObject({ connectionMs: expect.any(Number), sqlMs: expect.any(Number), sqlCalls: expect.any(Number), projectionMs: expect.any(Number), serializeMs: expect.any(Number) })
+      expect(results[0]!.connectionMs).toBeGreaterThanOrEqual(0)
+      expect(results[0]!.sqlMs).toBeGreaterThan(0)
+      expect(results[0]!.sqlCalls).toBeGreaterThan(0)
+      expect(results[0]!.projectionMs).toBeGreaterThanOrEqual(results[0]!.sqlMs!)
+    } finally { channel('ningbo.enterprise-read').unsubscribe(observe) }
+  })
 })
 
 it('recovers after worker startup failure and rejects a closed executor without retaining queued work', async () => {
