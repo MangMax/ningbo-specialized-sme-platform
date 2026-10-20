@@ -1,3 +1,4 @@
+import { readEvidenceImpact113 } from '../../server/utils/evidence-impact-113'
 /** #108 additive read projection. Business decisions stay owned by #102. */
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -119,10 +120,19 @@ export function readQueryAssessment(db: DecisionDb, scope: AssessmentScope) {
   const currentDecision = currentDecision102(db, scope), queryCoverage = readQueryCoverage(db, scope)
   const current = currentDecision.current
   const executed = queryCoverage.sources.filter(s => s.titleCode === scope.titleCode && s.queryStatus !== 'not_queried' && ['exact_uscc', 'matched_relation'].includes(s.subjectMatch))
-  const invalid = current?.status === 'not_queried' && executed.length > 0
+  const impact = readEvidenceImpact113(db, { ...scope, direction: scope.direction }, current?.id ?? null)
+  const reviewed = impact.state?.reviewedRevisionId
+  const pending = !!impact.state && impact.state.latestRevisionId > (reviewed ?? -1)
+  // The scope token also advances for coverage-only and disjoint partitions.
+  // Until processing finishes stay conservative; once ready, the per-decision
+  // pending state carries substantive changes without rewriting the review audit.
+  const changed = reviewed != null && !impact.token.projectionReady
+  const invalid = current?.status === 'not_queried' && executed.length > 0 && reviewed == null
+  const validity = !current ? 'not_applicable' : pending ? impact.state!.classification : changed ? 'evidence_changed' : reviewed != null ? 'valid' : invalid ? 'premise_invalid' : 'unknown'
+  const reasons = validity === 'premise_invalid' ? ['query_executed'] : validity === 'evidence_changed' ? ['committed_evidence_changed'] : validity === 'unknown' ? ['no_evidence_baseline'] : []
   return {
     queryCoverage, currentDecision,
-    explanationValidity: { status: invalid ? 'premise_invalid' : current ? 'unknown' : 'not_applicable', reasons: invalid ? ['query_executed'] : current ? ['no_evidence_baseline'] : [], explanationId: current?.id ?? null, evidenceQueryIds: invalid ? executed.map(s => s.queryId) : current?.evidenceQueryId ? [current.evidenceQueryId] : [] },
+    explanationValidity: { status: validity, reasons, explanationId: current?.id ?? null, evidenceQueryIds: invalid ? executed.map(s => s.queryId) : current?.evidenceQueryId ? [current.evidenceQueryId] : [] },
     assessment: current ? 'decided' : currentDecision.versionId ? 'withdrawn' : queryCoverage.status === 'complete' ? 'queried_unjudged' : queryCoverage.status === 'not_queried' ? 'not_queried' : 'unknown',
   }
 }
