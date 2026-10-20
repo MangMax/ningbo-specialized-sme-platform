@@ -6,7 +6,7 @@ import { cookieRedactor } from '../../lib/platform/client'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { credentialContext, resolveCredential } from './credential-state'
 import { commitRecordCorrespondences, CorrespondenceError, getRecordCorrespondence, listRecordCorrespondences, pageRecordCorrespondences, pageRecordCorrespondenceAudit, preflightRecordCorrespondences, readRecordCorrespondenceBatch, type CorrespondenceFilter } from './record-correspondence'
-import { detail, details, sourceReader, sanitizeEvidence, type SourceKind } from './record-correspondence-read'
+import { detail, details, sourceReader, sanitizeEvidence, summaries, type SourceKind } from './record-correspondence-read'
 import { generateCandidates } from './record-correspondence-candidates'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -62,8 +62,9 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
     const redactors = knownRedactors(context)
     if (input.action === 'list') {
       const query = input.query ?? {}; const paging = page(query)
-      const keys = ['eventId', 'relationId', 'exportRowId', 'enterpriseId', 'titleCode', 'type', 'role', 'status', 'ruleVersion', 'page', 'pageSize']
+      const keys = ['eventId', 'relationId', 'exportRowId', 'enterpriseId', 'titleCode', 'type', 'role', 'status', 'ruleVersion', 'page', 'pageSize', 'view']
       if (!paging || !permitted(query, keys)) return fail(400, 'invalid_request', 'Invalid list query')
+      if (query.view != null && query.view !== 'summary') return fail(400, 'invalid_request', 'Invalid view')
       const numeric = ids(query, ['eventId', 'relationId', 'exportRowId', 'enterpriseId']); if (!numeric) return fail(400, 'invalid_request', 'Invalid source ID')
       const types = ['event_process', 'event_recognized', 'later_process', 'event_export_context', 'process_export_context', 'recognized_export']
       const statuses = ['candidate', 'confirmed', 'rejected', 'unlinked']
@@ -71,7 +72,7 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
       for (const key of ['titleCode', 'role', 'ruleVersion']) if (query[key] != null && !scalar(query[key])) return fail(400, 'invalid_request', `Invalid ${key}`)
       const filter = { ...numeric, ...(query.titleCode ? { titleCode: query.titleCode as string } : {}), ...(query.type ? { type: query.type as typeof types[number] } : {}), ...(query.status ? { status: query.status as typeof statuses[number] } : {}), ...(query.role ? { role: query.role as string } : {}), ...(query.ruleVersion ? { ruleVersion: query.ruleVersion as string } : {}) }
       const result = pageRecordCorrespondences(db, filter as CorrespondenceFilter, paging)
-      return ok({ ...result, rows: details(db, result.rows) }, redactors)
+      return ok({ ...result, rows: query.view === 'summary' ? summaries(result.rows) : details(db, result.rows) }, redactors)
     }
     if (input.action === 'candidates') {
       const parsed = candidate.safeParse(input.body)
