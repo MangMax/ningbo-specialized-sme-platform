@@ -97,7 +97,7 @@ async function seedPdf(relPath: string, pages = 3): Promise<number> {
 }
 
 /** 跑一次 ocr 任务,附上 ctx。 */
-function ctxOf(overrides: { cancelled?: () => boolean } = {}) {
+function ctxOf(overrides: { cancelled?: () => boolean; onProgress?: (done: number, total: number) => void } = {}) {
   const seen: Array<[number, number]> = []
   return {
     seen,
@@ -105,7 +105,7 @@ function ctxOf(overrides: { cancelled?: () => boolean } = {}) {
       jobId: 'test-ocr',
       filesDir,
       db,
-      progress: (done: number, total: number) => seen.push([done, total]),
+      progress: (done: number, total: number) => { seen.push([done, total]); overrides.onProgress?.(done, total) },
       cancelled: overrides.cancelled ?? (() => false),
     },
   }
@@ -149,6 +149,85 @@ describe('通路 a:批量 OCR(本地假服务,真走 HTTP)', () => {
     '### 附件1\n\n| 序号 | 属地 | 企业名称 |\n| --- | --- | --- |\n| 1 | 海曙区 | 宁波甲科技有限公司 |',
     '### 附件2\n\n| 序号 | 属地 | 企业名称 |\n| --- | --- | --- |\n| 1 | 北仑区 | 宁波丙新材料有限公司 |',
   ]
+
+  it('文件级背压:远端前两份未完成时第三份不启动;完成后按输入顺序读回', async () => {
+    const files = Array.from({ length: 4 }, (_, i) => `jxj/announcement/2024/1/背压${i}.pdf`)
+    const ids: number[] = []
+    for (const file of files) {
+      ids.push(await seedPdf(file, 1))
+      await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
+    }
+    let releasePoll!: () => void
+    const pollGate = new Promise<void>((resolve) => { releasePoll = resolve })
+    api = await startMiniOcrApi({ pages: ['原文🙂'], waitForPoll: () => pollGate })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const { ctx, seen } = ctxOf()
+    const running = runOcr(ctx, { files, model: null })
+    try {
+      for (let i = 0; i < 200 && api.stats.submits < 2; i++) await new Promise(resolve => setTimeout(resolve, 10))
+      expect(api.stats.submits).toBe(2)
+    } finally {
+      releasePoll()
+    }
+    const completion = await running
+    expect(completion.error).toBeUndefined()
+    const result = completion.result as { files: Array<{ file: string; ok: boolean; pages: number }>; pages: number }
+    expect(result.files.map(outcome => outcome.file)).toEqual(files)
+    expect(result.files.map(outcome => [outcome.ok, outcome.pages])).toEqual([[true, 1], [true, 1], [true, 1], [true, 1]])
+    expect(result.pages).toBe(4)
+    expect(api.stats.submits).toBe(4)
+    expect(seen).toEqual([[1, 4], [2, 4], [3, 4], [4, 4]])
+    for (const id of ids) expect(listOcrResults(db, id).map(row => [row.page, row.markdown])).toEqual([[1, '原文🙂']])
+  }, 60_000)
+
+  it('取消后的新任务只补排队文件:已完成页缓存复用,正式结果不重复', async () => {
+    const files = Array.from({ length: 4 }, (_, i) => `jxj/announcement/2024/1/续跑${i}.pdf`)
+    const ids: number[] = []
+    for (const file of files) {
+      ids.push(await seedPdf(file, 1))
+      await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
+    }
+    api = await startMiniOcrApi({ pages: ['续跑原文🙂'] })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    let cancel = false
+    const first = await runOcr(ctxOf({ cancelled: () => cancel, onProgress: () => { cancel = true } }).ctx, { files, model: null })
+    expect(first.cancelled).toBe(true)
+    const partial = first.result as { done: number; files: Array<{ file: string }> }
+    expect(partial.done).toBeGreaterThanOrEqual(1)
+    expect(partial.done).toBeLessThanOrEqual(2)
+    expect([[files[0]], [files[1]], [files[0], files[1]]]).toContainEqual(partial.files.map(outcome => outcome.file))
+    expect(api.stats.submits).toBeLessThanOrEqual(2)
+    for (const id of ids.slice(2)) expect(listOcrResults(db, id)).toEqual([])
+
+    const submitsBeforeResume = api.stats.submits
+    const resumed = await runOcr(ctxOf().ctx, { files, model: null })
+    expect(resumed.error).toBeUndefined()
+    const final = resumed.result as { files: Array<{ file: string; cachedPages: number }> }
+    expect(final.files.map(outcome => outcome.file)).toEqual(files)
+    expect(final.files.filter(outcome => partial.files.some(done => done.file === outcome.file)).every(outcome => outcome.cachedPages === 1)).toBe(true)
+    expect(api.stats.submits - submitsBeforeResume).toBe(4 - final.files.filter(outcome => outcome.cachedPages === 1).length)
+    for (const id of ids) expect(listOcrResults(db, id).map(row => [row.page, row.markdown])).toEqual([[1, '续跑原文🙂']])
+  }, 60_000)
+
+  it('一份文件失败后继续处理排队文件,逐项结果仍按输入顺序报告', async () => {
+    const missing = 'jxj/announcement/2024/1/未入库.pdf'
+    const good = ['jxj/announcement/2024/1/后续甲.pdf', 'jxj/announcement/2024/1/后续乙.pdf']
+    for (const file of good) {
+      await seedPdf(file, 1)
+      await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
+    }
+    api = await startMiniOcrApi({ pages: ['后续原文'] })
+    process.env.NUXT_OCR_BASE_URL = api.origin
+    const { ctx, seen } = ctxOf()
+    const completion = await runOcr(ctx, { files: [missing, ...good], model: null })
+    expect(completion.error).toContain('3 份里 1 份识别失败')
+    const result = completion.result as { files: Array<{ file: string; ok: boolean; error?: string }>; ok: number; failed: number }
+    expect(result.files.map(outcome => [outcome.file, outcome.ok])).toEqual([[missing, false], [good[0], true], [good[1], true]])
+    expect(result.files[0]?.error).toContain('stored_file')
+    expect([result.ok, result.failed]).toEqual([2, 1])
+    expect(api.stats.submits).toBe(2)
+    expect(seen).toEqual([[1, 3], [2, 3], [3, 3]])
+  }, 60_000)
 
   it('★ 批量:一次提交两份 → 并发识别并按页码入库,进度按份报', async () => {
     const idA = await seedPdf(relA)
