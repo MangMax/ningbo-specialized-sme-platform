@@ -218,3 +218,77 @@ it('rejects invalid new filters at original MCP JSON-RPC transport', async () =>
     expect(await response.json()).toMatchObject({jsonrpc:'2.0',id:155,error:{code:-32602}})
   }
 })
+
+it.each(['HTTP', 'MCP'] as const)('preserves agreeing maintenance years without filling a partial source batch over %s', async transport => {
+  const candidate = f.candidate('维护维度部分见证')
+  const eventId = (f.db.$client.prepare('select id from record_event where record_id=?').get(candidate.record.id) as {id:number}).id
+  const partial = linkRecognized(candidate.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:'2028-11-20',whpcyear:'2023'})
+  const complete = linkRecognized(candidate.enterprise.id,eventId,{},'recognized_corrob',{whpcyear:'2023',whpc:'2'})
+  const read = async (filters: Record<string,number> = {}) => transport === 'MCP' ? mcp(filters)
+    : (await query(Object.fromEntries(Object.entries(filters).map(([key,value]) => [key,String(value)])))).body
+  const all = await read()
+  expect(all).toMatchObject({total:1,options:{validYears:[2028],maintenanceYears:[2023],maintenanceBatchesByYear:{'2023':[2]}},rows:[{enterpriseId:candidate.enterprise.id,group:'eligible'}]})
+  expect(all.rows[0].qualificationWitnesses).toEqual([
+    expect.objectContaining({awardEventId:eventId,conditionQueryId:partial.queryId,correspondenceId:expect.any(Number),matchedValidYear:2028,matchedMaintenance:{year:2023,batch:null}}),
+    expect.objectContaining({awardEventId:eventId,conditionQueryId:complete.queryId,correspondenceId:expect.any(Number),matchedValidYear:null,matchedMaintenance:{year:2023,batch:2}}),
+  ])
+  expect(new Set(all.rows[0].qualificationWitnesses.map((w:any) => w.correspondenceId)).size).toBe(2)
+  const yearOnly = await read({maintenanceYear:2023})
+  expect(yearOnly.total).toBe(1)
+  expect(yearOnly.rows[0].qualificationWitnesses).toEqual(all.rows[0].qualificationWitnesses)
+  expect((await read({validYear:2028,maintenanceYear:2023})).total).toBe(1)
+  const batch = await read({maintenanceYear:2023,maintenanceBatch:2})
+  expect(batch.total).toBe(1)
+  expect(batch.rows[0].qualificationWitnesses).toEqual([all.rows[0].qualificationWitnesses[1]])
+  expect((await read({validYear:2028,maintenanceYear:2023,maintenanceBatch:2}))).toMatchObject({total:0,rows:[]})
+  expect(batch.rows[0].references).toEqual(all.rows[0].references)
+})
+
+it.each(['HTTP', 'MCP'] as const)('keeps year-only and missing maintenance witnesses distinct over %s', async transport => {
+  const candidate = f.candidate('维护缺值见证')
+  const eventId = (f.db.$client.prepare('select id from record_event where record_id=?').get(candidate.record.id) as {id:number}).id
+  const partial = linkRecognized(candidate.enterprise.id,eventId,{},'recognized_corrob',{whpcyear:'2023'})
+  const missing = linkRecognized(candidate.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:'2028-11-20'})
+  const read = async (filters: Record<string,number> = {}) => transport === 'MCP' ? mcp(filters)
+    : (await query(Object.fromEntries(Object.entries(filters).map(([key,value]) => [key,String(value)])))).body
+  const all = await read()
+  expect(all).toMatchObject({total:1,options:{maintenanceYears:[2023],maintenanceBatchesByYear:{}},rows:[{enterpriseId:candidate.enterprise.id,group:'eligible'}]})
+  expect(all.rows[0].qualificationWitnesses).toEqual([
+    expect.objectContaining({awardEventId:eventId,conditionQueryId:partial.queryId,correspondenceId:expect.any(Number),matchedValidYear:null,matchedMaintenance:{year:2023,batch:null}}),
+    expect.objectContaining({awardEventId:eventId,conditionQueryId:missing.queryId,correspondenceId:expect.any(Number),matchedValidYear:2028,matchedMaintenance:null}),
+  ])
+  expect((await read({maintenanceYear:2023}))).toMatchObject({total:1,rows:[{qualificationWitnesses:[all.rows[0].qualificationWitnesses[0]]}]})
+  expect((await read({validYear:2028})).total).toBe(1)
+  expect((await read({maintenanceYear:2023,maintenanceBatch:2}))).toMatchObject({total:0,rows:[]})
+  expect((await read({validYear:2028,maintenanceYear:2023}))).toMatchObject({total:0,rows:[]})
+})
+
+for (const transport of ['HTTP', 'MCP'] as const) {
+  it.each([
+    {case:'batch conflict',secondYear:'2023',secondBatch:'3',maintenance:{year:2023,batch:null},years:[2023]},
+    {case:'year conflict',secondYear:'2024',secondBatch:'2',maintenance:null,years:[]},
+  ])(`preserves independent facts and source references under $case over ${transport}`, async scenario => {
+    const candidate = f.candidate('维护矛盾见证')
+    const eventId = (f.db.$client.prepare('select id from record_event where record_id=?').get(candidate.record.id) as {id:number}).id
+    const first = linkRecognized(candidate.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:'2028-11-20',whpcyear:'2023',whpc:'2'})
+    const second = linkRecognized(candidate.enterprise.id,eventId,{},'recognized_corrob',{whpcyear:scenario.secondYear,whpc:scenario.secondBatch})
+    const read = async (filters: Record<string,number> = {}) => transport === 'MCP' ? mcp(filters)
+      : (await query(Object.fromEntries(Object.entries(filters).map(([key,value]) => [key,String(value)])))).body
+    const all = await read()
+    expect(all).toMatchObject({total:1,options:{validYears:[2028],maintenanceYears:scenario.years,maintenanceBatchesByYear:{}},rows:[{enterpriseId:candidate.enterprise.id,group:'eligible'}]})
+    expect(all.rows[0].qualificationWitnesses).toEqual([
+      expect.objectContaining({awardEventId:eventId,conditionQueryId:first.queryId,correspondenceId:expect.any(Number),matchedValidYear:2028,matchedMaintenance:scenario.maintenance}),
+      expect.objectContaining({awardEventId:eventId,conditionQueryId:second.queryId,correspondenceId:expect.any(Number),matchedValidYear:null,matchedMaintenance:scenario.maintenance}),
+    ])
+    expect(new Set(all.rows[0].qualificationWitnesses.map((w:any) => w.correspondenceId)).size).toBe(2)
+    const valid = await read({validYear:2028})
+    expect(valid.total).toBe(1)
+    expect(valid.rows[0].references).toEqual(all.rows[0].references)
+    expect((await read({maintenanceYear:2023})).total).toBe(scenario.maintenance ? 1 : 0)
+    expect((await read({validYear:2028,maintenanceYear:2023})).total).toBe(scenario.maintenance ? 1 : 0)
+    expect((await read({maintenanceYear:2024}))).toMatchObject({total:0,rows:[]})
+    for (const maintenanceBatch of [2,3])
+      expect((await read({maintenanceYear:2023,maintenanceBatch}))).toMatchObject({total:0,rows:[]})
+    expect((await read({validYear:2028,maintenanceYear:2023,maintenanceBatch:2}))).toMatchObject({total:0,rows:[]})
+  })
+}

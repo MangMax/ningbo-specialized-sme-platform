@@ -377,12 +377,17 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
     })
     // Independent returned rows for one grant can disagree. Preserve every
     // source witness, but do not turn either conflicting value into a filter hit.
+    // Missing batches do not contradict a known value or inherit it from another row.
     for (const awardEventId of new Set(row.qualificationWitnesses.map(w => w.awardEventId))) {
       const witnesses = row.qualificationWitnesses.filter(w => w.awardEventId === awardEventId)
       if (new Set(witnesses.flatMap(w => w.matchedValidYear == null ? [] : [w.matchedValidYear])).size > 1)
         for (const witness of witnesses) witness.matchedValidYear = null
-      if (new Set(witnesses.flatMap(w => w.matchedMaintenance == null ? [] : [`${w.matchedMaintenance.year}:${w.matchedMaintenance.batch ?? ''}`])).size > 1)
+      const maintenanceYears = new Set(witnesses.flatMap(w => w.matchedMaintenance == null ? [] : [w.matchedMaintenance.year]))
+      const maintenanceBatches = new Set(witnesses.flatMap(w => w.matchedMaintenance?.batch == null ? [] : [w.matchedMaintenance.batch]))
+      if (maintenanceYears.size > 1)
         for (const witness of witnesses) witness.matchedMaintenance = null
+      else if (maintenanceBatches.size > 1)
+        for (const witness of witnesses) if (witness.matchedMaintenance) witness.matchedMaintenance.batch = null
     }
     if (qualificationSource === 'migration') row.qualificationWitnesses = migrationAwardYears.map(awardYear => ({cycle:{originYear:awardYear,batchSeq:null},awardEventId:null,recognition:{precision:'year',year:awardYear},matchedValidYear:null,matchedMaintenance:null,correspondenceId:null,conditionQueryId:null}))
     row.recognition = row.qualificationWitnesses[0]?.recognition ?? null
