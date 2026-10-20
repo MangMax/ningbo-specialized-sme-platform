@@ -22,7 +22,7 @@
 
 ## 本地运行
 
-需要 Node.js 22 或更新版本，以及 pnpm 12.11.2。
+需要 Node.js 24 LTS（24.x）以及 pnpm 12.11.2。容器基础镜像与原生依赖构建、备份及回滚步骤见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
 ```bash
 pnpm install
