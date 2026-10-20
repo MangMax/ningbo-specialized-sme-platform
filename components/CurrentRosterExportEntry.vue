@@ -4,6 +4,8 @@ import type { TaskExportTitle } from '~~/lib/task-center'
 import { useCurrentRosterExport, taskBrowserHeaders } from '~/composables/useCurrentRosterExport'
 import { Button } from '@/components/ui/button'
 import { Alert } from '@/components/ui/alert'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import { TITLES } from '~~/lib/labels'
 
 const props = defineProps<{ titleCode: TaskExportTitle }>()
 const router = useRouter()
@@ -40,13 +42,17 @@ onMounted(() => { void discoverAuthorization() })
 
 <template>
   <div class="flex max-w-lg flex-col gap-2">
+    <p class="text-[13px] leading-5">导出范围：{{ TITLES[titleCode] }}</p>
     <div class="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="outline" :disabled="submitting || !!disabledReason(titleCode)" aria-describedby="current-export-scope current-export-reason" @click="submit">{{ submitting ? '正在提交…' : '导出该称号全量名单' }}</Button>
       <Button v-if="accepted" as-child size="sm" variant="ghost"><NuxtLink :to="taskLocation(accepted)">查看本次导出</NuxtLink></Button>
       <Button v-if="discoveryFailed || authorization === 'failed'" size="sm" variant="outline" :disabled="discovering || authorization === 'loading'" @click="retryCapabilities">重新发现导出能力</Button>
     </div>
-    <p id="current-export-scope" class="text-muted-foreground text-xs">该称号全量 Excel 含有效企业、待确认、排除明细、口径说明四个工作表，不受当前页、搜索和筛选条件影响。任务按执行时的数据快照生成，与页面查询可能存在时间差。可离开页面后到后台任务查看、取消及下载，产物保留 7 天。</p>
-    <p v-if="disabledReason(titleCode)" id="current-export-reason" class="text-muted-foreground text-xs">{{ disabledReason(titleCode) }}</p>
+    <p id="current-export-scope" class="text-muted-foreground text-[13px] leading-5">全量四表，不受当前页、搜索和筛选条件影响。<br>后台任务查看、取消及下载，产物保留 7 天。</p>
+    <DisclosurePanel compact title="导出说明" :heading-level="2">
+      <p class="text-muted-foreground text-[13px] leading-5">Excel 含有效企业、待确认、排除明细、口径说明四个工作表。任务按执行时的数据快照生成，与页面查询可能存在时间差；可离开页面后到后台任务处理。</p>
+    </DisclosurePanel>
+    <p v-if="disabledReason(titleCode)" id="current-export-reason" class="text-muted-foreground text-[13px] leading-5">{{ disabledReason(titleCode) }}</p>
     <Alert v-if="error" variant="destructive" role="alert">{{ error }}</Alert>
   </div>
 </template>

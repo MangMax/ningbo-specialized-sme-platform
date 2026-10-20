@@ -43,7 +43,15 @@ async function setup(options: { title?: string; authorized?: boolean; capability
 for (const entry of TASK_EXPORTS) it(`${entry.titleCode}: filtered query submits only a durable request identity to its dedicated route and opens unified task`, async () => {
   const { wrapper, router, calls, submit } = await setup({ title: entry.titleCode })
   expect(submit()).toBeTruthy()
+  expect(wrapper.text()).toContain(`导出范围：${entry.label}`)
+  expect(wrapper.text()).toContain('全量四表')
+  expect(wrapper.text()).toContain('后台任务查看、取消及下载，产物保留 7 天')
+  const explanation = wrapper.findAll('button').find(button => button.text() === '导出说明')!
+  expect(explanation.attributes('aria-expanded')).toBe('false')
+  await explanation.trigger('click'); await flushPromises()
+  expect(explanation.attributes('aria-expanded')).toBe('true')
   expect(wrapper.text()).toContain('有效企业、待确认、排除明细、口径说明')
+  expect(wrapper.text()).toContain('与页面查询可能存在时间差')
   expect(wrapper.text()).toContain('不受当前页、搜索和筛选条件影响')
   await submit().trigger('click'); await flushPromises()
   const posts = calls.filter(c => c.options.method === 'POST')
@@ -118,4 +126,14 @@ it('capability discovery can be retried before export without clearing query fil
   await wrapper.findAll('button').find(b => b.text() === '重新发现导出能力')!.trigger('click'); await flushPromises()
   expect(submit().attributes('disabled')).toBeUndefined()
   expect(router.currentRoute.value.query.q).toBe('旧名')
+})
+
+it('updates the export scope beside the action when the selected title changes', async () => {
+  const { wrapper, fetcher, router } = await setup()
+  expect(wrapper.text()).toContain('导出范围：专精特新“小巨人”')
+  await router.push({ path: '/current-enterprises', query: { ...router.currentRoute.value.query, titleCode: 'specialized_sme' } })
+  await flushPromises()
+  expect(wrapper.text()).toContain('导出范围：专精特新中小企业')
+  expect(wrapper.text()).not.toContain('导出范围：专精特新“小巨人”')
+  expect(fetcher.raw).not.toHaveBeenCalled()
 })
