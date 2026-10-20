@@ -78,7 +78,11 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
           Stream.commitRow(sheet.addRow(values.map(textCell)))
           await drain()
         }
-        if (++scanned % 100 === 0) { progress(group === 'eligible' ? scanned : total,total,snapshotStartedAt); await new Promise<void>(resolve => setImmediate(resolve)); await drain() }
+        if (++scanned % 100 === 0) {
+          if (group === 'eligible') progress(scanned,total,snapshotStartedAt)
+          await new Promise<void>(resolve => setImmediate(resolve))
+          await drain()
+        }
       }
       sheet.commit()
       await drain()

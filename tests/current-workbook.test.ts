@@ -103,7 +103,7 @@ it('paces a slow sink across all three groups without collecting a worksheet beh
   // One row may cross a compressor batch; a slow disk must not queue an entire sheet.
   expect(peakQueued).toBeLessThan(256 * 1024)
   expect(progress).toContain(100)
-  expect(progress.every((done, index) => index === 0 || done >= progress[index - 1]!)).toBe(true)
+  expect(progress).toEqual([0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200])
   expect(result.counts).toEqual({ eligible: 400, pending: 400, excluded: 400 })
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
