@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue'
-import { watchDebounced } from '@vueuse/core'
+import { createReusableTemplate, useMediaQuery, watchDebounced } from '@vueuse/core'
 import { useQuery } from '@pinia/colada'
 import { Search } from '@lucide/vue'
 import { TITLES } from '~~/lib/labels'
@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import PageHeader from '@/components/PageHeader.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import CurrentRosterExportEntry from '@/components/CurrentRosterExportEntry.vue'
 import CurrentRecognitionDatePicker from '@/components/CurrentRecognitionDatePicker.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
@@ -25,6 +26,12 @@ import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
 import TablePagination from '@/components/TablePagination.vue'
 
 const route = useRoute(), router = useRouter()
+const isNarrow = useMediaQuery('(max-width: 639px)')
+const advancedOpen = shallowRef(false)
+// Reuse the same controls in the desktop toolbar and mobile disclosure.
+const [DefineFilters, ReuseFilters] = createReusableTemplate()
+const [DefineDates, ReuseDates] = createReusableTemplate()
+const sortLabels = { id_asc: '稳定企业标识', name_asc: '企业名称升序', name_desc: '企业名称降序' }
 const one = (value: unknown) => typeof value === 'string' ? value : ''
 const positive = (value: unknown, fallback: number) => /^\d+$/.test(one(value)) && Number(one(value)) >= 1 ? Number(one(value)) : fallback
 const title = computed<CurrentTitle>(() => CURRENT_TITLES.find(code => code === route.query.titleCode) ?? 'little_giant')
@@ -77,25 +84,30 @@ const dateError = computed(() => dateFrom.value && dateTo.value && dateFrom.valu
 const canApplyDate = computed(() => Boolean(dateFrom.value && dateTo.value) && !dateError.value && (dateFrom.value !== recognitionFrom.value || dateTo.value !== recognitionTo.value))
 function applyDate() { if (canApplyDate.value) update({ recognitionFrom: dateFrom.value, recognitionTo: dateTo.value, page: undefined }) }
 function clearDate() { dateFrom.value=''; dateTo.value=''; update({ recognitionFrom: undefined, recognitionTo: undefined, page: undefined }) }
-function describeRequest(request: typeof activeRequest.value) {
+function describeRequestParts(request: typeof activeRequest.value) {
   const p = request.params
-  const order = { id_asc: '稳定企业标识', name_asc: '企业名称升序', name_desc: '企业名称降序' }
   const filters = [p.q && `搜索：${p.q}`, p.district && `区县：${p.district}`, p.recognitionFrom && p.recognitionTo && `认定时间：${p.recognitionFrom} 至 ${p.recognitionTo}`, p.validYear && `有效年份：${p.validYear}`, p.maintenanceYear && `维护年份：${p.maintenanceYear}${p.maintenanceBatch ? ` 第 ${p.maintenanceBatch} 批` : ''}`].filter(Boolean)
-  return `${TITLES[p.titleCode]}；${filters.length ? filters.join('；') : '未设筛选'}；排序：${order[p.sort]}；第 ${p.page} 页，每页 ${p.pageSize} 家`
+  return { scope: `${TITLES[p.titleCode]}；${filters.length ? filters.join('；') : '未设筛选'}`, order: `排序：${sortLabels[p.sort]}；第 ${p.page} 页，每页 ${p.pageSize} 家` }
 }
+function describeRequest(request: typeof activeRequest.value) {
+  const { scope, order } = describeRequestParts(request)
+  return `${scope}；${order}`
+}
+const displayedDescription = computed(() => displayed.value ? describeRequestParts(displayed.value.request) : undefined)
 const failureDescription = computed(() => displayed.value
   ? `当前显示：${describeRequest(displayed.value.request)}。请求目标：${describeRequest(activeRequest.value)}未加载成功。`
   : undefined)
 const allDistricts = [...new Set([...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES])]
 const detailUrl = (id: number) => ({ path: `/enterprises/${id}`, query: { currentBack: new URLSearchParams(Object.entries(displayed.value!.request.params).filter((pair) => pair[1] != null).map(([key, value]) => [key, String(value)])).toString() } })
-const hasFilters = computed(() => Boolean(q.value || district.value || recognitionFrom.value || recognitionTo.value || validYear.value || maintenanceYear.value || maintenanceBatch.value))
+const activeFilterCount = computed(() => [q.value, district.value, recognitionFrom.value || recognitionTo.value, validYear.value, maintenanceYear.value, maintenanceBatch.value].filter(Boolean).length)
+const hasFilters = computed(() => activeFilterCount.value > 0)
 function clearFilters() { search.value = ''; dateFrom.value=''; dateTo.value=''; update({ q: undefined, district: undefined, recognitionFrom: undefined, recognitionTo: undefined, validYear: undefined, maintenanceYear: undefined, maintenanceBatch: undefined, page: undefined }) }
-const recognitionSummary = (row: CurrentRow) => row.recognition ? `当前认定 ${row.recognition.year} 年（年份精度）` : '当前认定年份未记录'
+const recognitionSummary = (row: CurrentRow) => row.recognition ? `认定记录 ${row.recognition.year} 年（仅年份）` : '认定年份未记录'
 const sourceSummary = (row: CurrentRow) => row.publication === '已见本称号宁波公布记录' ? '已见宁波公布记录' : row.publication
 const conditionSummary = (row: CurrentRow) => {
-  const valid = row.matchedValidYears?.length ? row.matchedValidYears.join('、') + ' 年' : '未证实'
-  const maintenance = row.matchedMaintenance?.length ? row.matchedMaintenance.map(fact => `${fact.year} 年${fact.batch == null ? '' : `第 ${fact.batch} 批`}`).join('、') : '未证实'
-  return `返回字段：有效 ${valid} · 维护 ${maintenance}`
+  const valid = row.matchedValidYears?.length ? `有效年份 ${row.matchedValidYears.join('、')} 年` : '有效年份未核实'
+  const maintenance = row.matchedMaintenance?.length ? `维护记录 ${row.matchedMaintenance.map(fact => `${fact.year} 年${fact.batch == null ? '' : `第 ${fact.batch} 批`}`).join('、')}` : '维护信息未核实'
+  return `${valid} · ${maintenance}`
 }
 const distinctPublishedNames = (row: CurrentRow) => row.publishedNames.filter(name => name.trim() !== row.name.trim())
 const movedInSummary = (row: CurrentRow) => row.notes.find(note => note.startsWith('已确认迁入宁波'))
@@ -104,19 +116,7 @@ useHead({ title: '优质中小企业查询' })
 
 <template>
   <div class="flex min-w-0 flex-col gap-3">
-    <PageHeader title="优质中小企业查询" description="按称号查看本库当前有效的认定企业。">
-      <template #actions><CurrentRosterExportEntry :title-code="title" /></template>
-    </PageHeader>
-    <Tabs v-model="titleModel">
-      <TabsList class="h-auto max-w-full flex-wrap">
-        <TabsTrigger v-for="code in CURRENT_TITLES" :key="code" :value="code">{{ TITLES[code] }}</TabsTrigger>
-      </TabsList>
-    </Tabs>
-    <div class="flex flex-wrap items-center gap-2">
-      <div class="relative w-full sm:w-72">
-        <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
-        <Input v-model="search" class="bg-card h-8 pl-8 shadow-none" placeholder="名称、曾用名或信用代码" aria-label="搜索企业名称、已确认曾用名或统一社会信用代码" />
-      </div>
+    <DefineFilters>
       <Select v-model="districtModel">
         <SelectTrigger size="sm" class="bg-card w-32 shadow-none" aria-label="按区县筛选"><SelectValue /></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="all">全部区县</SelectItem><SelectItem v-for="place in allDistricts" :key="place" :value="place">{{ place }}</SelectItem></SelectGroup></SelectContent>
@@ -134,19 +134,43 @@ useHead({ title: '优质中小企业查询' })
         <SelectContent><SelectGroup><SelectItem value="all">全部维护批次</SelectItem><SelectItem v-for="batch in batchOptions" :key="batch" :value="String(batch)">第 {{ batch }} 批</SelectItem></SelectGroup></SelectContent>
       </Select>
       <Select v-model="sortModel">
-        <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="排序方式"><SelectValue /></SelectTrigger>
+        <SelectTrigger size="sm" class="bg-card w-48 shadow-none" aria-label="排序方式"><SelectValue>排序：{{ sortLabels[sort] }}</SelectValue></SelectTrigger>
         <SelectContent><SelectGroup><SelectItem value="id_asc">稳定企业标识</SelectItem><SelectItem value="name_asc">企业名称升序</SelectItem><SelectItem value="name_desc">企业名称降序</SelectItem></SelectGroup></SelectContent>
       </Select>
+    </DefineFilters>
+    <DefineDates>
+      <div class="flex flex-wrap items-end gap-2">
+        <div class="flex flex-col gap-1"><Label for="recognition-from">认定时间起</Label><CurrentRecognitionDatePicker id="recognition-from" v-model="dateFrom" label="认定时间起" /></div>
+        <div class="flex flex-col gap-1"><Label for="recognition-to">认定时间止</Label><CurrentRecognitionDatePicker id="recognition-to" v-model="dateTo" label="认定时间止" /></div>
+        <Button variant="outline" size="sm" :disabled="!canApplyDate" @click="applyDate">应用时间</Button>
+        <Button v-if="recognitionFrom || recognitionTo" variant="ghost" size="sm" @click="clearDate">清除时间</Button>
+        <span v-if="dateError" class="text-destructive text-sm" role="alert">{{ dateError }}</span>
+        <span v-else class="text-muted-foreground text-[13px] leading-5">正式认定仅有年份时，时间范围须完整覆盖该年。</span>
+      </div>
+    </DefineDates>
+    <PageHeader title="优质中小企业查询" description="按本库资格判定查询当前有效企业。">
+      <template #actions><CurrentRosterExportEntry :title-code="title" /></template>
+    </PageHeader>
+    <Tabs v-model="titleModel">
+      <TabsList class="h-auto max-w-full flex-wrap">
+        <TabsTrigger v-for="code in CURRENT_TITLES" :key="code" :value="code">{{ TITLES[code] }}</TabsTrigger>
+      </TabsList>
+    </Tabs>
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="relative w-full sm:w-72">
+        <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
+        <Input v-model="search" class="bg-card h-8 pl-8 shadow-none" placeholder="名称、曾用名或信用代码" aria-label="搜索企业名称、已确认曾用名或统一社会信用代码" />
+      </div>
+      <ReuseFilters v-if="!isNarrow" />
       <Button v-if="hasFilters" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
     </div>
-    <div class="flex flex-wrap items-end gap-2">
-      <div class="flex flex-col gap-1"><Label for="recognition-from">认定时间起</Label><CurrentRecognitionDatePicker id="recognition-from" v-model="dateFrom" label="认定时间起" /></div>
-      <div class="flex flex-col gap-1"><Label for="recognition-to">认定时间止</Label><CurrentRecognitionDatePicker id="recognition-to" v-model="dateTo" label="认定时间止" /></div>
-      <Button variant="outline" size="sm" :disabled="!canApplyDate" @click="applyDate">应用时间</Button>
-      <Button v-if="recognitionFrom || recognitionTo" variant="ghost" size="sm" @click="clearDate">清除时间</Button>
-      <span v-if="dateError" class="text-destructive text-sm" role="alert">{{ dateError }}</span>
-      <span v-else class="text-muted-foreground text-xs">正式认定仅有年份时，时间范围须完整覆盖该年。</span>
-    </div>
+    <ReuseDates v-if="!isNarrow" />
+    <DisclosurePanel v-else v-model:open="advancedOpen" compact :heading-level="2" :title="`高级筛选与排序（已选 ${activeFilterCount} 项）`">
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-wrap items-center gap-2"><ReuseFilters /></div>
+        <ReuseDates />
+      </div>
+    </DisclosurePanel>
     <div v-if="hasFilters" class="flex flex-wrap items-center gap-1.5" aria-label="已选筛选条件">
       <span class="text-muted-foreground text-xs">已选条件：</span>
       <Button v-if="q" variant="outline" size="sm" @click="search=''; update({q:undefined,page:undefined})">搜索：{{ q }} ×</Button>
@@ -156,7 +180,7 @@ useHead({ title: '优质中小企业查询' })
       <Button v-if="maintenanceYear" variant="outline" size="sm" @click="update({maintenanceYear:undefined,maintenanceBatch:undefined,page:undefined})">维护年份：{{ maintenanceYear }} ×</Button>
       <Button v-if="maintenanceBatch" variant="outline" size="sm" @click="update({maintenanceBatch:undefined,page:undefined})">维护批次：第 {{ maintenanceBatch }} 批 ×</Button>
     </div>
-    <p v-if="displayed" class="text-muted-foreground text-xs" aria-live="polite">当前显示：{{ describeRequest(displayed.request) }}<span :class="{ invisible: !isShowingPrevious }">（上次成功结果）</span></p>
+    <p v-if="displayed" class="text-muted-foreground text-[13px] leading-5" aria-live="polite">当前显示：{{ displayedDescription?.scope }}<span class="block sm:inline"><span class="hidden sm:inline">；</span>{{ displayedDescription?.order }}<span v-if="isShowingPrevious">（上次成功结果）</span></span></p>
     <p v-if="displayed?.uncertainTotal && displayed.request.params.recognitionFrom" class="text-muted-foreground text-sm">另有 {{ displayed.uncertainTotal }} 家仅有年份精度，与所选时间部分重叠或缺少日期事实，未计入确定结果。</p>
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
@@ -184,6 +208,12 @@ useHead({ title: '优质中小企业查询' })
               <TableRow v-if="displayed && !rows.length"><TableCell colspan="5" class="p-0"><Empty class="border-0"><EmptyHeader><EmptyTitle>没有符合条件的当前有效企业</EmptyTitle></EmptyHeader></Empty></TableCell></TableRow>
             </TableBody>
           </Table>
+        </div>
+        <div v-if="isLoading && !displayed" class="flex flex-col gap-3 p-3 pt-8 sm:hidden" data-testid="current-mobile-loading" aria-hidden="true">
+          <Skeleton class="h-5 w-2/3" />
+          <Skeleton class="h-3 w-1/2" />
+          <Skeleton class="h-4 w-full" />
+          <Skeleton class="h-4 w-3/4" />
         </div>
         <ul v-if="rows.length" class="flex flex-col divide-y sm:hidden" aria-label="当前有效企业列表">
           <li v-for="row in rows" :key="row.enterpriseId" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="current-enterprise-card">
