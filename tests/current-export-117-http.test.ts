@@ -1,3 +1,4 @@
+import { reviewCurrentExportDecision } from './helpers/current-export-decisions'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -92,7 +93,9 @@ it('对应周期、复核年份与同年冲突', async () => {
   expect(rows(wb,'待确认').find(r => r[4] === '同年冲突')![13]).toContain('冲突')
 })
 function decision(enterpriseId: number, reasonCode: 'moved_out'|'moved_in'|'deregistered'|'renamed'|'pending_review'|'other', extra: Record<string,unknown> = {}) {
-  return db.insert(s.differenceReason).values({enterpriseId,titleCode:'little_giant',direction:'extra_in_miit',status:'confirmed_reason',reasonCode,verificationStatus:'confirmed',lifecycleAction:'replace',basis:'人工确认合成主体事实',effectiveAt:'2025-01-01T00:00:00Z',recordedAt:new Date().toISOString(),...extra} as any).returning().get()
+  const decision = db.insert(s.differenceReason).values({enterpriseId,titleCode:'little_giant',direction:'extra_in_miit',status:'confirmed_reason',reasonCode,verificationStatus:'confirmed',lifecycleAction:'replace',basis:'人工确认合成主体事实',effectiveAt:'2025-01-01T00:00:00Z',recordedAt:new Date().toISOString(),...extra} as any).returning().get()
+  reviewCurrentExportDecision(db,decision)
+  return decision
 }
 it('迁入、更名与旧解释缺口', async () => {
   const renamed = candidate('迁入更名现名')
@@ -117,7 +120,7 @@ it('迁入、更名与旧解释缺口', async () => {
   expect(eligible.map(r => r[4])).toEqual(expect.arrayContaining(['迁出后迁回','更新待审核']))
   expect(excluded.map(r => r[4])).toEqual(expect.arrayContaining(['已确认外迁','已确认注销']))
   expect(pending.map(r => r[4])).toEqual(expect.arrayContaining(['旧缺码前提变化','未确认旧名链','迁入无资格依据','其他称号不冒充']))
-  expect(pending.find(r => r[4] === '迁入无资格依据')![13]).toContain('#108')
+  expect(pending.find(r => r[4] === '迁入无资格依据')![13]).toContain('迁入事实不能代替资格依据')
   expect(pending.find(r => r[4] === '未确认旧名链')![12]).toBe('尚未完成公布匹配核实')
   expect([...eligible,...pending,...excluded].some(r => r[4] === '其他称号独立')).toBe(false)
 })
@@ -185,13 +188,13 @@ it('阻塞执行、背压、取消与失败', async () => {
     }
     expect((await fetch(url('/api/jobs/'+first.jobId),{method:'DELETE',headers})).status).toBe(202)
     const cancelledJob=await terminal(first.jobId)
-    expect(cancelledJob.state).toBe('cancelled');expect(cancelledJob.result.ruleVersion).toBe('current-roster-116-v6')
+    expect(cancelledJob.state).toBe('cancelled');expect(cancelledJob.result.ruleVersion).toBe('current-roster-116-v8')
     expect(existsSync(join(dbPath+'.exports',first.jobId+'.part'))).toBe(false)
     expect((await fetch(url('/api/job-artifacts/'+first.jobId),{headers})).status).toBe(404)
     const failed = await json(await submit('killed-executor'))
     process.kill(await executor(),'SIGKILL')
     const failure = await terminal(failed.jobId)
-    expect(failure.state).toBe('failed'); expect(failure.error).toContain('中断');expect(failure.result.ruleVersion).toBe('current-roster-116-v6')
+    expect(failure.state).toBe('failed'); expect(failure.error).toContain('中断');expect(failure.result.ruleVersion).toBe('current-roster-116-v8')
     expect(existsSync(join(dbPath+'.exports',failed.jobId+'.part'))).toBe(false)
     expect((await fetch(url('/api/job-artifacts/'+failed.jobId),{headers})).status).toBe(404)
     writeFileSync('/tmp/spec117-controlled-timing.json',JSON.stringify({environment:process.version,resourceFixtureRows:3000,stoppedExecutorSubmitMs:elapsed,limit:9},null,2))
@@ -214,6 +217,8 @@ it('万行快照与普通请求响应', async () => {
   expect(active.state).toBe('running');expect(active.progress.done).toBeLessThan(active.progress.total)
   const changed=await fetch(url('/api/roster/decision-lifecycle/commands'),{method:'POST',headers,body:JSON.stringify({enterpriseId:last.enterprise.id,titleCode:'little_giant',direction:'extra_in_miit',action:'replace',expectedCurrentId:null,idempotencyKey:'snapshot-change',actor:{type:'agent',id:'test'},basis:'隔离SQLite当前事实更新',ruleVersion:'manual-v1',effectiveAt:'2026-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'moved_out',verificationStatus:'confirmed',measureCode:'mark_moved_out'}})})
   expect(changed.status).toBe(200)
+  const version=await changed.json()
+  reviewCurrentExportDecision(db,db.select().from(s.differenceReason).where(eq(s.differenceReason.id,version.versionId)).get()!)
   const latencies:number[]=[]
   for(let i=0;i<4;i++) for(const path of [listPath,detailPath,'/api/files?limit=20']) {
     const t=performance.now(), response=await fetch(url(path));await response.arrayBuffer()
@@ -302,7 +307,7 @@ it('未知周期、同年恢复与执行版本', async () => {
   const response=await submit('unknown-cycle'),id=(await json(response)).jobId
   let active:any
   for(let i=0;i<500;i++) {active=await json(await fetch(url('/api/jobs/'+id)));if(active.state==='running' && active.progress.done>=100)break;await new Promise(r=>setTimeout(r,10))}
-  expect(active.result.ruleVersion).toBe('current-roster-116-v6')
+  expect(active.result.ruleVersion).toBe('current-roster-116-v8')
   expect(active.result.snapshotId).toBe(id)
   const job=await terminal(id);expect(job.state).toBe('done')
   const wb=new ExcelJS.Workbook();await wb.xlsx.load(Buffer.from(await (await fetch(url(job.result.artifact.downloadUrl),{headers})).arrayBuffer()) as any)
@@ -366,7 +371,7 @@ it('产物存储错误不泄露路径', async () => {
     const response=await submit('storage-error');expect(response.status).toBe(202)
     failed=await terminal((await json(response)).jobId)
     expect(failed.state).toBe('failed');expect(JSON.stringify(failed)).not.toContain(dir)
-    expect(failed.result.ruleVersion).toBe('current-roster-116-v6')
+    expect(failed.result.ruleVersion).toBe('current-roster-116-v8')
   } finally {rmSync(root,{force:true});renameSync(backup,root)}
   const retry=await json(await submit('storage-retry',{regenerateOf:failed.id}))
   expect((await terminal(retry.jobId)).state).toBe('done')

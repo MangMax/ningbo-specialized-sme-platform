@@ -88,7 +88,7 @@ it('迁入更名双备注及主体事实和公布缺口保留依据', async () =
   expect(rename[13]).not.toContain('未见宁波'); expect(rename[13]).not.toContain('原城市')
   expect(excluded.find(row => row[2] === String(out.enterprise.id))![14]).toContain('decision:' + outDecision.id)
   expect(waiting.find(row => row[2] === String(stale.enterprise.id))![14]).toContain('decision:' + staleDecision.id)
-  expect(waiting.find(row => row[2] === String(migrant.enterprise.id))![13]).toContain('#108')
+  expect(waiting.find(row => row[2] === String(migrant.enterprise.id))![13]).toContain('迁入事实不能代替资格依据')
   for (const item of [unknown,migrant,otherPublication]) {
     const row = waiting.find(row => row[2] === String(item.enterprise.id))!
     expect(row[12]).toBe('尚未完成公布匹配核实'); expect(row[13]).not.toContain('未见宁波')
@@ -263,7 +263,7 @@ it('本称号生成失败无半成品且可显式重新生成', async () => {
   const accepted = await f.json(response), failed = await f.terminal(accepted.jobId)
   expect(failed.state).toBe('failed'); expect(failed.error).toContain('Excel')
   expect(failed.params.titleCode).toBe('specialized_sme')
-  expect(failed.result.ruleVersion).toBe('current-roster-116-v6')
+  expect(failed.result.ruleVersion).toBe('current-roster-116-v8')
   expect(failed.result.artifact).toBeUndefined()
   expect(JSON.stringify(failed)).not.toContain(f.dir)
   expect((await fetch(f.url('/api/job-artifacts/' + failed.id),{headers:f.headers})).status).toBe(404)

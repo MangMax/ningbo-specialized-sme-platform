@@ -106,7 +106,7 @@ function retiredBaseline(dir: string) {
 function mainBaseline(dir: string) {
   const baseline = join(dir, 'mainline')
   mkdirSync(join(baseline, 'meta'), { recursive: true })
-  const entries = journal.entries.filter(entry => entry.tag !== '0025_current_export_requests')
+  const entries = journal.entries.filter(entry => entry.idx < 25)
   for (const entry of entries) cpSync(join(migrationsFolder, `${entry.tag}.sql`), join(baseline, `${entry.tag}.sql`))
   writeFileSync(join(baseline, 'meta/_journal.json'), JSON.stringify({ ...journal, entries }))
   return baseline
@@ -210,10 +210,10 @@ it('adds the export-request index to a database already on the main line without
 
     assertCompleteSchema(sqlite)
 
-    // main 的迁移没有被重跑，账本只追加了导出迁移那一条。
+    // main 的迁移没有被重跑，账本只追加了导出迁移及其后的增量迁移。
     const after = ledger(sqlite)
     expect(after.slice(0, before.length)).toEqual(before)
-    expect(after.length).toBe(before.length + 1)
+    expect(after.length).toBe(before.length + journal.entries.filter(entry => entry.idx >= 25).length)
     expect(objectNames(sqlite, 'table')).toEqual(expect.arrayContaining(['evidence_revision_113', 'evidence_review_receipt_114']))
     expect(objectNames(sqlite, 'index').filter(name => name === 'job_export_request_uq')).toHaveLength(1)
 
