@@ -369,6 +369,7 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
         if (source.titleCode && source.titleCode !== title || fromScope && fromScope !== title || fromPosition && fromPosition !== title
           || (fromPosition ?? source.titleCode ?? fromScope) !== title) return []
         const projected = recognizedFilterFacts(
+          {titleCode:fromPosition ?? source.titleCode ?? fromScope!,schema:'queryBusList'},
           {rddqrq:source.rawValid,whpcyear:source.rawMaintenanceYear,whpc:source.rawMaintenanceBatch},
           {rddqrq:source.conditionValidYear,whpcyear:source.conditionMaintenanceYear,whpc:source.conditionMaintenanceBatch})
         return [{...base,matchedValidYear:projected.validYear,matchedMaintenance:projected.maintenance,correspondenceId:ref.id,conditionQueryId:source.queryId}]
