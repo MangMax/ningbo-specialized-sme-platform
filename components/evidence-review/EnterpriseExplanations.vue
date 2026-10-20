@@ -283,18 +283,20 @@ watch(() => props.impactId, impactId => {
       三轴独立保留；未查询不等于无记录，查询完成或覆盖完整也不自动等于“一致 / 无需处理”。
     </p>
 
+    <!-- 卡片不设 overflow-hidden：trigger 顶到卡片边缘时，焦点环需要画到边框外才不被裁切。 -->
     <DisclosurePanel
       compact
+      trigger-class="px-4"
       :open="allRecordsOpen"
       :keep-mounted="recordsEverOpened"
       content-class="pb-0"
-      class="bg-card overflow-hidden rounded-lg border"
+      class="bg-card rounded-lg border"
       @update:open="onAllRecordsOpen"
     >
       <template #trigger>
         <span class="text-sm font-medium">企业全部复核记录</span>
       </template>
-      <div class="border-t p-3">
+      <div class="border-t p-4">
         <EvidenceReviewList
           :key="reviewGeneration"
           :enterprise-id="enterpriseId"
