@@ -10,7 +10,7 @@ const router = useRouter()
 let active = true, contextVersion = 0
 // Invalidate a pending navigation even if the user leaves and returns before
 // acceptance. Filter-only changes do not change the full-title export context.
-watch(() => [props.titleCode, router.currentRoute.value.path, router.currentRoute.value.query.titleCode], () => { contextVersion++ }, { flush: 'sync' })
+watch([() => props.titleCode, () => router.currentRoute.value.path, () => router.currentRoute.value.query.titleCode], () => { contextVersion++ }, { flush: 'sync' })
 onBeforeUnmount(() => { active = false })
 const authorization = ref<'loading' | 'allowed' | 'readonly' | 'failed'>('loading')
 const readOnlyReason = computed(() => authorization.value === 'allowed' ? '' : authorization.value === 'loading' ? '正在读取任务操作能力。' : authorization.value === 'failed' ? '任务操作能力未确认，请重试。' : '当前部署未开放页面任务操作，仅可查看。')
