@@ -1,0 +1,3888 @@
+{
+  "measured_source_sha": "96a0bd9c21d6c0ac32f0de45daf44b76bbda99e6",
+  "qualified_source_sha256": "2c72355ebe602b24d9c0a08561957481d97b083a78aae51995e29e58e4064430",
+  "raw_run_root": "/tmp/ningbo-perf-83-90/workload/final-96a-20261020-164417",
+  "source_file_sha256": {
+    "scripts/spike-90/workload_oracle.mjs": "7a5482909b73b7c33ed881b6c5ac22c02e56d4c65416b0a57a5c82d19883995a",
+    "scripts/spike-90/runner.py": "f3561c61efc95c8e0ba5dbdd7238415ba218160f22c8a4d016454c41a4fc5a06",
+    "scripts/spike-90/test_workload.py": "febeafbba7c9245b47cd156ab3f3019fb11ebedae56a969ad5121e5d8bea560e",
+    "scripts/spike-90/test_compare_public.py": "9bb64945012a15dd31931c2ecf939c84f034731e69d2af952008bc905bb01a29",
+    "scripts/spike-90/workload_ops.py": "07c35ccb7944c0a8ff17b530124c9ea8c145caa218dd6d810e2a7d3d31dd63f9",
+    "scripts/spike-90/workload.Dockerfile": "eb55e6a57e59593b1caf0c6a0f838064ba731a79102b80336ac5ed9d2fd1e487",
+    "scripts/spike-90/workload.py": "8a74dd903ff7d0ce5a0c64d16727b5484a568c45035becf9f407394a10015954",
+    "scripts/spike-90/README.md": "a173abf32e8d0807edc95510995a8c6b9e827f5f7172731eb116c4595e75f71d",
+    "scripts/spike-90/workload_control.py": "e9fef520fa49d0caad8f62de20988f97ba5fb3266c5e433ac288333009debde9",
+    "scripts/spike-90/poc.py": "09086126dc3b29371fd58e78b2b8ec9b16a211920fe194a237fcf86e6db66641",
+    "scripts/spike-90/compare_public.py": "04f2b5a449b1aba43e6c2ccd597bdfe9be90d7ad7be1b91aa8cbfd8106f0e04b",
+    "scripts/spike-90/prepare_sqlite.mjs": "7704756bd3755491dbad0eea99cfd6739c6d9a67bbf304db562548850b678dc9",
+    "db/migrations/0025_platform_query_title_scope_83.sql": "b12317fa3d39a2891893efccbeffa6a6c1a84c28083ddfbb1136a5e16f0256b0",
+    "lib/platform/read.ts": "455efb7eebbc7147c5bb83019e882835b5fb3063da5a19b7193d0ec72fe92b37",
+    "lib/platform/evidence-read.ts": "c98d13d6a4b920c3244a7f021dd4bae1c83364b8fdebf02498c1d082c7611f66",
+    "db/schema.ts": "3710dd23a5066d18a30297ffcc0a76697cd46933482dc77e228f6d6db8982158",
+    "pnpm-lock.yaml": "03816d14271efac4880bb94ebb13e1cbffc5c3782dffef35790a24919bf2b212"
+  },
+  "images": {
+    "ningbo-spike90-workload-adapter:final96a": {
+      "Id": "sha256:6e41ef436cde2dbe6bac9c625b77edf3f28a2a10994b8eab83a79f1e012fa947",
+      "RepoDigests": [
+        "ningbo-spike90-workload-adapter@sha256:6e41ef436cde2dbe6bac9c625b77edf3f28a2a10994b8eab83a79f1e012fa947"
+      ],
+      "Created": "2026-10-20T07:43:07.197704221Z",
+      "Architecture": "arm64",
+      "Os": "linux"
+    },
+    "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a": {
+      "Id": "sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a",
+      "RepoDigests": [
+        "postgres@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a"
+      ],
+      "Created": "2026-07-16T22:06:02.0196664Z",
+      "Architecture": "arm64",
+      "Os": "linux"
+    }
+  },
+  "sizes": {
+    "1x": {
+      "prepared": {
+        "confirmedQuiescent": true,
+        "sourcePath": "/private/optimized.sqlite",
+        "sourceSha256": "dedf96d29fbe378ee01aead438ddf87f437c57387f1ef4ab4ec5d4b66c7ecd41",
+        "sourceOrigin": "/private/tmp/ningbo-perf-83-90/workload/final-96a-20261020-164417/source.sqlite",
+        "transformation": "migrate-copy",
+        "preparationAuthority": {
+          "driver": "better-sqlite3",
+          "sqliteVersion": "3.53.4",
+          "nodeVersion": "v24.18.0",
+          "helperSha256": "7704756bd3755491dbad0eea99cfd6739c6d9a67bbf304db562548850b678dc9"
+        },
+        "before": {
+          "platform_query": {
+            "rows": 39303,
+            "ordered_sha256": "605f4407da4b6fe290aeb09ea0a07cb8278cb647ff684414fad592348e63b2e0",
+            "raw_bytes": 915373569
+          },
+          "platform_relation": {
+            "rows": 58310,
+            "ordered_sha256": "2c38303d50166df962b2c1cd94444c397ae3b61fdd76811237b44ac4b3c8f44f",
+            "raw_bytes": 266140266
+          }
+        },
+        "after": {
+          "platform_query": {
+            "rows": 39303,
+            "ordered_sha256": "605f4407da4b6fe290aeb09ea0a07cb8278cb647ff684414fad592348e63b2e0",
+            "raw_bytes": 915373569
+          },
+          "platform_relation": {
+            "rows": 58310,
+            "ordered_sha256": "2c38303d50166df962b2c1cd94444c397ae3b61fdd76811237b44ac4b3c8f44f",
+            "raw_bytes": 266140266
+          }
+        },
+        "derived_before": {},
+        "derived_after": {},
+        "limitations": [
+          "2x, if selected, is synthetic query/relation archive growth; other domains are not doubled; embedded evidence original IDs retained"
+        ],
+        "migration_sha256": "b12317fa3d39a2891893efccbeffa6a6c1a84c28083ddfbb1136a5e16f0256b0"
+      },
+      "imported_tables": {
+        "platform_query": {
+          "rows": 39303,
+          "ordered_sha256": "605f4407da4b6fe290aeb09ea0a07cb8278cb647ff684414fad592348e63b2e0",
+          "raw_bytes": 915373569
+        },
+        "platform_relation": {
+          "rows": 58310,
+          "ordered_sha256": "2c38303d50166df962b2c1cd94444c397ae3b61fdd76811237b44ac4b3c8f44f",
+          "raw_bytes": 266140266
+        },
+        "platform_query_title_scope": {
+          "rows": 21921,
+          "ordered_sha256": "eb82598765c2450c1dbac279ad7e45804060ad66ab27bb3b0a5d980529c9ae4c",
+          "raw_bytes": 0
+        },
+        "platform_query_title_scope_error": {
+          "rows": 0,
+          "ordered_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "raw_bytes": 0
+        }
+      },
+      "source_unchanged_after_import": true,
+      "runtime_environments": {
+        "sqlite": {
+          "adapter_source_sha256": "8a74dd903ff7d0ce5a0c64d16727b5484a568c45035becf9f407394a10015954",
+          "backend": "sqlite",
+          "pool_size": 5,
+          "psycopg": "3.3.6",
+          "psycopg_pool": "3.3.3",
+          "python": "3.12.13 (main, Aug  5 2026, 01:17:28) [GCC 12.2.0]",
+          "sqlite_config": {
+            "cache_size": -2000,
+            "journal_mode": "delete",
+            "mmap_size": 0,
+            "query_only": 1
+          },
+          "sqlite_library": "3.40.1"
+        },
+        "postgres": {
+          "adapter_source_sha256": "8a74dd903ff7d0ce5a0c64d16727b5484a568c45035becf9f407394a10015954",
+          "backend": "postgres",
+          "pool_size": 5,
+          "postgres_config": {
+            "default_transaction_isolation": "read committed",
+            "max_connections": "100",
+            "server_encoding": "UTF8",
+            "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+            "shared_buffers": "128MB",
+            "timezone": "Etc/UTC",
+            "work_mem": "4MB"
+          },
+          "psycopg": "3.3.6",
+          "psycopg_pool": "3.3.3",
+          "python": "3.12.13 (main, Aug  5 2026, 01:17:28) [GCC 12.2.0]",
+          "sqlite_library": "3.40.1"
+        }
+      },
+      "manifest_sha256": "b34117659d4352293d48bdbf441a917a4581a4b32fbb8a3415fdac1ebf4d3934",
+      "oracle": {
+        "source_sha": "96a0bd9c21d6c0ac32f0de45daf44b76bbda99e6",
+        "node_version": "v24.18.0",
+        "sqlite_version": "3.53.4",
+        "algorithm_hashes": {
+          "lib/platform/read.ts": "455efb7eebbc7147c5bb83019e882835b5fb3063da5a19b7193d0ec72fe92b37",
+          "lib/platform/evidence-read.ts": "c98d13d6a4b920c3244a7f021dd4bae1c83364b8fdebf02498c1d082c7611f66",
+          "db/schema.ts": "3710dd23a5066d18a30297ffcc0a76697cd46933482dc77e228f6d6db8982158"
+        },
+        "baseline_source_sha": "fc37375eb35ecd175a5746d93dc22129d2a2ffe3",
+        "baseline_algorithm_hashes": {
+          "lib/platform/read.ts": "71f0052a5c242c02f7f7a53ae2db790483f2ed0aa95ba347f88016b770be13e1",
+          "lib/platform/evidence-read.ts": "c98d13d6a4b920c3244a7f021dd4bae1c83364b8fdebf02498c1d082c7611f66",
+          "db/schema.ts": "b5eb489eb49e7e2f5b37a38ec9f766801fe26a1f2c7e5b147f6c83850e458c17"
+        },
+        "baseline_note": "static algorithm provenance only; baseline not measured in this run",
+        "cases": {
+          "summary-page": {
+            "semantic_sha256": "e5dee1f8caf15e466a7ae6dbc64ab443467cd5baa713c47d314caab1c4b95fc8",
+            "bytes": 7344
+          },
+          "title-filter": {
+            "semantic_sha256": "5e01e57de68ca25c9318804a26a88d2017a7c57b0b42d88b668288d17a3fd023",
+            "bytes": 7461
+          },
+          "title-deep-page": {
+            "semantic_sha256": "98690a64eeb6679d8e3e0ceb31ce89e191d38135f5005bce5f5570370df2be7f",
+            "bytes": 7463
+          },
+          "failed": {
+            "semantic_sha256": "8848178f1d21b3a50ee166b6573fa016035338e82fb82e45e52ba7a844c5fab4",
+            "bytes": 7463
+          },
+          "exact-summary": {
+            "semantic_sha256": "28f689d755e0cdb10bf46e1418df309b824670134f6dfa31a9787ab6bb731b84",
+            "bytes": 354
+          },
+          "empty-key": {
+            "semantic_sha256": "f0d6978d643ca16449ce7e460710a286c76a70d093de5809ea8e23908e8426d6",
+            "bytes": 56
+          },
+          "raw-byte-chunk": {
+            "semantic_sha256": "e71b69b81d36bd227242b7deced589160215a191fc114e0b9fa8e42f5a0d95cb",
+            "bytes": 87533
+          },
+          "original-collection": {
+            "semantic_sha256": "6906db495927347dcfd4cbda854840df781aefc8fe049391bb462790aa41d29c",
+            "bytes": 4830
+          },
+          "ordered-relations": {
+            "semantic_sha256": "3dae268995bc92c1012fbffd836aa33ba2fb24328481bd6615321f2ea6493516",
+            "bytes": 295
+          }
+        }
+      },
+      "cases": {
+        "summary-page": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 23.286,
+              "p95_ms": 31.653,
+              "p99_ms": 40.471,
+              "max_ms": 40.471,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7344,
+              "server_metrics_p95": {
+                "Maxrss": 45412.0,
+                "Read-Ms": 9.425791,
+                "Serialize-Ms": 0.076208,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 9.023041000000001,
+                "Sql-Returned-Bytes": 2864.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 15.74,
+                "p95_ms": 16.825,
+                "p99_ms": 17.253,
+                "max_ms": 17.253,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7344,
+                "server_metrics_p95": {
+                  "Maxrss": 41304.0,
+                  "Read-Ms": 2.8115,
+                  "Serialize-Ms": 0.056792,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 2.655249,
+                  "Sql-Returned-Bytes": 2864.0
+                },
+                "wall_throughput_per_s": 61.618,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 20.904,
+                "p95_ms": 65.429,
+                "p99_ms": 66.298,
+                "max_ms": 66.298,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7344,
+                "server_metrics_p95": {
+                  "Maxrss": 41304.0,
+                  "Read-Ms": 2.043083,
+                  "Serialize-Ms": 0.051834,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 1.874208,
+                  "Sql-Returned-Bytes": 2864.0
+                },
+                "wall_throughput_per_s": 57.988,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 311.17,
+                "p95_ms": 405.583,
+                "p99_ms": 407.461,
+                "max_ms": 407.461,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7344,
+                "server_metrics_p95": {
+                  "Maxrss": 41304.0,
+                  "Read-Ms": 4.834667,
+                  "Serialize-Ms": 0.124375,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 4.560001,
+                  "Sql-Returned-Bytes": 2864.0
+                },
+                "wall_throughput_per_s": 16.691,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 26.537,
+              "p95_ms": 41.172,
+              "p99_ms": 45.46,
+              "max_ms": 45.46,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7344,
+              "server_metrics_p95": {
+                "Maxrss": 47096.0,
+                "Read-Ms": 18.52275,
+                "Serialize-Ms": 0.089917,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 16.954625,
+                "Sql-Returned-Bytes": 2864.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 17.049,
+                "p95_ms": 19.909,
+                "p99_ms": 20.352,
+                "max_ms": 20.352,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7344,
+                "server_metrics_p95": {
+                  "Maxrss": 46660.0,
+                  "Read-Ms": 5.005208,
+                  "Serialize-Ms": 0.056459,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 4.556876,
+                  "Sql-Returned-Bytes": 2864.0
+                },
+                "wall_throughput_per_s": 56.025,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 23.915,
+                "p95_ms": 68.935,
+                "p99_ms": 70.649,
+                "max_ms": 70.649,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7344,
+                "server_metrics_p95": {
+                  "Maxrss": 46660.0,
+                  "Read-Ms": 3.0605,
+                  "Serialize-Ms": 0.052792,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 2.619041,
+                  "Sql-Returned-Bytes": 2864.0
+                },
+                "wall_throughput_per_s": 56.668,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 309.537,
+                "p95_ms": 394.134,
+                "p99_ms": 453.668,
+                "max_ms": 453.668,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7344,
+                "server_metrics_p95": {
+                  "Maxrss": 46660.0,
+                  "Read-Ms": 7.918375,
+                  "Serialize-Ms": 0.118625,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 6.939542,
+                  "Sql-Returned-Bytes": 2864.0
+                },
+                "wall_throughput_per_s": 17.013,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "title-filter": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 34.471,
+              "p95_ms": 54.187,
+              "p99_ms": 68.814,
+              "max_ms": 68.814,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7461,
+              "server_metrics_p95": {
+                "Maxrss": 35292.0,
+                "Read-Ms": 27.324584,
+                "Serialize-Ms": 0.097667,
+                "Sql-Count": 4.0,
+                "Sql-Ms": 26.654331999999997,
+                "Sql-Returned-Bytes": 2986.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 21.651,
+                "p95_ms": 22.629,
+                "p99_ms": 23.076,
+                "max_ms": 23.076,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7461,
+                "server_metrics_p95": {
+                  "Maxrss": 41344.0,
+                  "Read-Ms": 7.84375,
+                  "Serialize-Ms": 0.072,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 7.664333000000001,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 45.407,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 34.896,
+                "p95_ms": 62.032,
+                "p99_ms": 62.678,
+                "max_ms": 62.678,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7461,
+                "server_metrics_p95": {
+                  "Maxrss": 41344.0,
+                  "Read-Ms": 7.703958,
+                  "Serialize-Ms": 0.058209,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 7.6046239999999985,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 47.813,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 284.472,
+                "p95_ms": 388.963,
+                "p99_ms": 393.129,
+                "max_ms": 393.129,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7461,
+                "server_metrics_p95": {
+                  "Maxrss": 41344.0,
+                  "Read-Ms": 11.835792,
+                  "Serialize-Ms": 0.07425,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 11.655209,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 19.699,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 44.222,
+              "p95_ms": 52.848,
+              "p99_ms": 107.911,
+              "max_ms": 107.911,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7461,
+              "server_metrics_p95": {
+                "Maxrss": 47092.0,
+                "Read-Ms": 32.08475,
+                "Serialize-Ms": 0.18225,
+                "Sql-Count": 4.0,
+                "Sql-Ms": 31.1175,
+                "Sql-Returned-Bytes": 2986.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 22.529,
+                "p95_ms": 27.202,
+                "p99_ms": 27.956,
+                "max_ms": 27.956,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7461,
+                "server_metrics_p95": {
+                  "Maxrss": 46636.0,
+                  "Read-Ms": 12.94425,
+                  "Serialize-Ms": 0.0635,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 12.090209000000002,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 42.556,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 35.906,
+                "p95_ms": 62.408,
+                "p99_ms": 62.964,
+                "max_ms": 62.964,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7461,
+                "server_metrics_p95": {
+                  "Maxrss": 46764.0,
+                  "Read-Ms": 8.938292,
+                  "Serialize-Ms": 0.061,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 8.169626000000001,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 50.227,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 313.589,
+                "p95_ms": 403.885,
+                "p99_ms": 416.448,
+                "max_ms": 416.448,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7461,
+                "server_metrics_p95": {
+                  "Maxrss": 46764.0,
+                  "Read-Ms": 14.141125,
+                  "Serialize-Ms": 0.134917,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 13.502792000000001,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 17.908,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "title-deep-page": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 38.218,
+              "p95_ms": 45.568,
+              "p99_ms": 52.871,
+              "max_ms": 52.871,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7463,
+              "server_metrics_p95": {
+                "Maxrss": 41392.0,
+                "Read-Ms": 23.829167,
+                "Serialize-Ms": 0.079208,
+                "Sql-Count": 4.0,
+                "Sql-Ms": 23.435417,
+                "Sql-Returned-Bytes": 2986.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 22.899,
+                "p95_ms": 24.07,
+                "p99_ms": 24.101,
+                "max_ms": 24.101,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 41192.0,
+                  "Read-Ms": 9.006084,
+                  "Serialize-Ms": 0.061292,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 8.823917,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 42.846,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 28.896,
+                "p95_ms": 56.901,
+                "p99_ms": 58.726,
+                "max_ms": 58.726,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 41192.0,
+                  "Read-Ms": 9.707167,
+                  "Serialize-Ms": 0.059042,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 9.485541,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 54.83,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 305.21,
+                "p95_ms": 405.48,
+                "p99_ms": 566.606,
+                "max_ms": 566.606,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 41192.0,
+                  "Read-Ms": 13.363375,
+                  "Serialize-Ms": 0.059625,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 13.220291000000001,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 17.19,
+                "requests_over_reference_p95_ms": 1
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 37.433,
+              "p95_ms": 48.797,
+              "p99_ms": 57.51,
+              "max_ms": 57.51,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7463,
+              "server_metrics_p95": {
+                "Maxrss": 47224.0,
+                "Read-Ms": 25.294792,
+                "Serialize-Ms": 0.164541,
+                "Sql-Count": 4.0,
+                "Sql-Ms": 24.002292999999998,
+                "Sql-Returned-Bytes": 2986.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 23.294,
+                "p95_ms": 26.61,
+                "p99_ms": 27.59,
+                "max_ms": 27.59,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 46904.0,
+                  "Read-Ms": 12.315,
+                  "Serialize-Ms": 0.053584,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 11.903125,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 41.265,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 29.096,
+                "p95_ms": 61.674,
+                "p99_ms": 61.708,
+                "max_ms": 61.708,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 47032.0,
+                  "Read-Ms": 9.343334,
+                  "Serialize-Ms": 0.058167,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 8.771583,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 56.07,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 214.812,
+                "p95_ms": 367.462,
+                "p99_ms": 383.668,
+                "max_ms": 383.668,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 47032.0,
+                  "Read-Ms": 15.625,
+                  "Serialize-Ms": 0.114209,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 14.648833,
+                  "Sql-Returned-Bytes": 2986.0
+                },
+                "wall_throughput_per_s": 23.03,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "failed": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 23.008,
+              "p95_ms": 44.245,
+              "p99_ms": 59.764,
+              "max_ms": 59.764,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7463,
+              "server_metrics_p95": {
+                "Maxrss": 41340.0,
+                "Read-Ms": 12.031917,
+                "Serialize-Ms": 0.123958,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 11.665542,
+                "Sql-Returned-Bytes": 3597.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.124,
+                "p95_ms": 15.528,
+                "p99_ms": 16.119,
+                "max_ms": 16.119,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 39308.0,
+                  "Read-Ms": 0.758125,
+                  "Serialize-Ms": 0.058167,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.6098319999999999,
+                  "Sql-Returned-Bytes": 3597.0
+                },
+                "wall_throughput_per_s": 68.055,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 22.021,
+                "p95_ms": 69.144,
+                "p99_ms": 69.442,
+                "max_ms": 69.442,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 39308.0,
+                  "Read-Ms": 0.69225,
+                  "Serialize-Ms": 0.063167,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.566959,
+                  "Sql-Returned-Bytes": 3597.0
+                },
+                "wall_throughput_per_s": 57.422,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 389.532,
+                "p95_ms": 484.853,
+                "p99_ms": 549.266,
+                "max_ms": 549.266,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 39308.0,
+                  "Read-Ms": 0.734042,
+                  "Serialize-Ms": 0.160916,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.48837600000000003,
+                  "Sql-Returned-Bytes": 3597.0
+                },
+                "wall_throughput_per_s": 14.532,
+                "requests_over_reference_p95_ms": 1
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 27.534,
+              "p95_ms": 78.217,
+              "p99_ms": 84.398,
+              "max_ms": 84.398,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7463,
+              "server_metrics_p95": {
+                "Maxrss": 47120.0,
+                "Read-Ms": 34.028792,
+                "Serialize-Ms": 0.212583,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 31.920875,
+                "Sql-Returned-Bytes": 3597.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.931,
+                "p95_ms": 17.837,
+                "p99_ms": 19.644,
+                "max_ms": 19.644,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 46868.0,
+                  "Read-Ms": 3.081875,
+                  "Serialize-Ms": 0.059667,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 2.614917,
+                  "Sql-Returned-Bytes": 3597.0
+                },
+                "wall_throughput_per_s": 63.187,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 38.441,
+                "p95_ms": 69.146,
+                "p99_ms": 73.054,
+                "max_ms": 73.054,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 46996.0,
+                  "Read-Ms": 1.949916,
+                  "Serialize-Ms": 0.117916,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 1.118208,
+                  "Sql-Returned-Bytes": 3597.0
+                },
+                "wall_throughput_per_s": 48.485,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 396.552,
+                "p95_ms": 495.282,
+                "p99_ms": 497.407,
+                "max_ms": 497.407,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7463,
+                "server_metrics_p95": {
+                  "Maxrss": 47124.0,
+                  "Read-Ms": 3.9465,
+                  "Serialize-Ms": 0.138,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 2.676625,
+                  "Sql-Returned-Bytes": 3597.0
+                },
+                "wall_throughput_per_s": 14.312,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "exact-summary": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 20.705,
+              "p95_ms": 23.927,
+              "p99_ms": 26.67,
+              "max_ms": 26.67,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 354,
+              "server_metrics_p95": {
+                "Maxrss": 41344.0,
+                "Read-Ms": 3.104167,
+                "Serialize-Ms": 0.047667,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 2.799458,
+                "Sql-Returned-Bytes": 126.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.008,
+                "p95_ms": 15.12,
+                "p99_ms": 16.441,
+                "max_ms": 16.441,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 41392.0,
+                  "Read-Ms": 0.672416,
+                  "Serialize-Ms": 0.017458,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.558459,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 69.311,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 20.129,
+                "p95_ms": 69.988,
+                "p99_ms": 71.684,
+                "max_ms": 71.684,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 41392.0,
+                  "Read-Ms": 0.463916,
+                  "Serialize-Ms": 0.019167,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.335293,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 61.478,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 304.058,
+                "p95_ms": 453.281,
+                "p99_ms": 488.381,
+                "max_ms": 488.381,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 41392.0,
+                  "Read-Ms": 0.267917,
+                  "Serialize-Ms": 0.031,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.101166,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 15.768,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 22.267,
+              "p95_ms": 34.393,
+              "p99_ms": 38.535,
+              "max_ms": 38.535,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 354,
+              "server_metrics_p95": {
+                "Maxrss": 47088.0,
+                "Read-Ms": 8.697709,
+                "Serialize-Ms": 0.048875,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 7.967875,
+                "Sql-Returned-Bytes": 126.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.856,
+                "p95_ms": 16.44,
+                "p99_ms": 16.59,
+                "max_ms": 16.59,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 46956.0,
+                  "Read-Ms": 2.385625,
+                  "Serialize-Ms": 0.018958,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 2.038249,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 65.842,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 21.116,
+                "p95_ms": 68.04,
+                "p99_ms": 72.384,
+                "max_ms": 72.384,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 46956.0,
+                  "Read-Ms": 1.391583,
+                  "Serialize-Ms": 0.019167,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.71975,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 57.113,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 304.759,
+                "p95_ms": 475.246,
+                "p99_ms": 475.605,
+                "max_ms": 475.605,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 46956.0,
+                  "Read-Ms": 2.241625,
+                  "Serialize-Ms": 0.038042,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 1.154793,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 16.864,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "empty-key": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 22.16,
+              "p95_ms": 45.566,
+              "p99_ms": 49.402,
+              "max_ms": 49.402,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 56,
+              "server_metrics_p95": {
+                "Maxrss": 45456.0,
+                "Read-Ms": 4.789041,
+                "Serialize-Ms": 0.062917,
+                "Sql-Count": 2.0,
+                "Sql-Ms": 4.36575,
+                "Sql-Returned-Bytes": 0.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 15.143,
+                "p95_ms": 17.963,
+                "p99_ms": 19.747,
+                "max_ms": 19.747,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 41392.0,
+                  "Read-Ms": 0.604041,
+                  "Serialize-Ms": 0.023833,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 0.49683299999999997,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 63.433,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 22.828,
+                "p95_ms": 71.013,
+                "p99_ms": 74.866,
+                "max_ms": 74.866,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 41392.0,
+                  "Read-Ms": 0.370167,
+                  "Serialize-Ms": 0.014166,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 0.239291,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 52.268,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 300.866,
+                "p95_ms": 483.301,
+                "p99_ms": 506.69,
+                "max_ms": 506.69,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 41392.0,
+                  "Read-Ms": 0.56175,
+                  "Serialize-Ms": 0.053583,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 0.227584,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 15.498,
+                "requests_over_reference_p95_ms": 1
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 25.965,
+              "p95_ms": 31.596,
+              "p99_ms": 53.761,
+              "max_ms": 53.761,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 56,
+              "server_metrics_p95": {
+                "Maxrss": 47096.0,
+                "Read-Ms": 9.846959,
+                "Serialize-Ms": 0.055958,
+                "Sql-Count": 2.0,
+                "Sql-Ms": 8.250916,
+                "Sql-Returned-Bytes": 0.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.267,
+                "p95_ms": 16.158,
+                "p99_ms": 19.464,
+                "max_ms": 19.464,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 46696.0,
+                  "Read-Ms": 2.089167,
+                  "Serialize-Ms": 0.014417,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 1.691208,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 67.06,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 21.206,
+                "p95_ms": 69.895,
+                "p99_ms": 72.975,
+                "max_ms": 72.975,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 46696.0,
+                  "Read-Ms": 0.916625,
+                  "Serialize-Ms": 0.012333,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 0.45875,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 56.666,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 320.247,
+                "p95_ms": 478.844,
+                "p99_ms": 480.219,
+                "max_ms": 480.219,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 46696.0,
+                  "Read-Ms": 1.565875,
+                  "Serialize-Ms": 0.028292,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 0.829958,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 15.491,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "raw-byte-chunk": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 20.311,
+              "p95_ms": 33.824,
+              "p99_ms": 35.309,
+              "max_ms": 35.309,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 87533,
+              "server_metrics_p95": {
+                "Maxrss": 41392.0,
+                "Read-Ms": 2.9965,
+                "Serialize-Ms": 0.564125,
+                "Sql-Count": 1.0,
+                "Sql-Ms": 2.7205,
+                "Sql-Returned-Bytes": 65544.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 15.186,
+                "p95_ms": 17.931,
+                "p99_ms": 34.066,
+                "max_ms": 34.066,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 41388.0,
+                  "Read-Ms": 0.636417,
+                  "Serialize-Ms": 0.205959,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.498,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 59.874,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 37.334,
+                "p95_ms": 99.742,
+                "p99_ms": 102.668,
+                "max_ms": 102.668,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 41388.0,
+                  "Read-Ms": 1.181916,
+                  "Serialize-Ms": 0.512,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.693417,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 40.122,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 382.985,
+                "p95_ms": 516.098,
+                "p99_ms": 639.792,
+                "max_ms": 639.792,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 41388.0,
+                  "Read-Ms": 1.013375,
+                  "Serialize-Ms": 0.516292,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.109791,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 12.886,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 22.854,
+              "p95_ms": 48.989,
+              "p99_ms": 54.496,
+              "max_ms": 54.496,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 87533,
+              "server_metrics_p95": {
+                "Maxrss": 47604.0,
+                "Read-Ms": 9.405375,
+                "Serialize-Ms": 0.614333,
+                "Sql-Count": 1.0,
+                "Sql-Ms": 6.98475,
+                "Sql-Returned-Bytes": 65544.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 22.522,
+                "p95_ms": 32.847,
+                "p99_ms": 33.317,
+                "max_ms": 33.317,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 47672.0,
+                  "Read-Ms": 7.414542,
+                  "Serialize-Ms": 0.46475,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 6.137917,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 42.407,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 43.455,
+                "p95_ms": 80.41,
+                "p99_ms": 88.719,
+                "max_ms": 88.719,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 48056.0,
+                  "Read-Ms": 3.748167,
+                  "Serialize-Ms": 0.516209,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 1.625333,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 38.041,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 305.607,
+                "p95_ms": 411.879,
+                "p99_ms": 464.106,
+                "max_ms": 464.106,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 48440.0,
+                  "Read-Ms": 5.960459,
+                  "Serialize-Ms": 0.50075,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 1.983167,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 14.491,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "original-collection": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 18.654,
+              "p95_ms": 25.277,
+              "p99_ms": 25.799,
+              "max_ms": 25.799,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 4830,
+              "server_metrics_p95": {
+                "Maxrss": 43412.0,
+                "Read-Ms": 4.279584,
+                "Serialize-Ms": 0.04525,
+                "Sql-Count": 1.0,
+                "Sql-Ms": 4.074917,
+                "Sql-Returned-Bytes": 3513.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 13.844,
+                "p95_ms": 14.662,
+                "p99_ms": 17.049,
+                "max_ms": 17.049,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 41344.0,
+                  "Read-Ms": 0.53875,
+                  "Serialize-Ms": 0.030417,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.452625,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 70.691,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 22.428,
+                "p95_ms": 69.643,
+                "p99_ms": 70.797,
+                "max_ms": 70.797,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 41344.0,
+                  "Read-Ms": 0.151541,
+                  "Serialize-Ms": 0.027417,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.074417,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 51.416,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 388.682,
+                "p95_ms": 487.078,
+                "p99_ms": 501.069,
+                "max_ms": 501.069,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 41344.0,
+                  "Read-Ms": 0.323125,
+                  "Serialize-Ms": 0.078625,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.101417,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 13.487,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 19.442,
+              "p95_ms": 25.702,
+              "p99_ms": 29.205,
+              "max_ms": 29.205,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 4830,
+              "server_metrics_p95": {
+                "Maxrss": 47096.0,
+                "Read-Ms": 5.962708,
+                "Serialize-Ms": 0.066834,
+                "Sql-Count": 1.0,
+                "Sql-Ms": 4.553,
+                "Sql-Returned-Bytes": 3513.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.899,
+                "p95_ms": 16.158,
+                "p99_ms": 17.325,
+                "max_ms": 17.325,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 47112.0,
+                  "Read-Ms": 1.672791,
+                  "Serialize-Ms": 0.028834,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 1.272709,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 65.821,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 25.211,
+                "p95_ms": 72.092,
+                "p99_ms": 72.921,
+                "max_ms": 72.921,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 47112.0,
+                  "Read-Ms": 0.889667,
+                  "Serialize-Ms": 0.027708,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.272583,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 48.088,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 383.393,
+                "p95_ms": 496.943,
+                "p99_ms": 499.451,
+                "max_ms": 499.451,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 47112.0,
+                  "Read-Ms": 2.30325,
+                  "Serialize-Ms": 0.062042,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.559584,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 14.217,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "ordered-relations": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 18.172,
+              "p95_ms": 19.059,
+              "p99_ms": 22.254,
+              "max_ms": 22.254,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 295,
+              "server_metrics_p95": {
+                "Maxrss": 45440.0,
+                "Read-Ms": 1.878958,
+                "Serialize-Ms": 0.021,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 1.6730409999999998,
+                "Sql-Returned-Bytes": 144.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 13.954,
+                "p95_ms": 14.737,
+                "p99_ms": 16.508,
+                "max_ms": 16.508,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 41376.0,
+                  "Read-Ms": 0.566666,
+                  "Serialize-Ms": 0.014625,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.488915,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 71.052,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 26.883,
+                "p95_ms": 70.475,
+                "p99_ms": 70.698,
+                "max_ms": 70.698,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 41376.0,
+                  "Read-Ms": 0.439709,
+                  "Serialize-Ms": 0.014959,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.367251,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 50.844,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 395.336,
+                "p95_ms": 487.035,
+                "p99_ms": 496.208,
+                "max_ms": 496.208,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 41376.0,
+                  "Read-Ms": 0.442042,
+                  "Serialize-Ms": 0.027792,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.36312500000000003,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 14.244,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 20.206,
+              "p95_ms": 22.112,
+              "p99_ms": 23.906,
+              "max_ms": 23.906,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 295,
+              "server_metrics_p95": {
+                "Maxrss": 47108.0,
+                "Read-Ms": 3.76225,
+                "Serialize-Ms": 0.029667,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 3.2475419999999997,
+                "Sql-Returned-Bytes": 144.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.359,
+                "p95_ms": 17.435,
+                "p99_ms": 18.955,
+                "max_ms": 18.955,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 46828.0,
+                  "Read-Ms": 2.377375,
+                  "Serialize-Ms": 0.017375,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 2.028708,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 66.55,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 22.09,
+                "p95_ms": 70.364,
+                "p99_ms": 70.764,
+                "max_ms": 70.764,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 46828.0,
+                  "Read-Ms": 1.056542,
+                  "Serialize-Ms": 0.015458,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.5541240000000001,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 56.844,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 390.666,
+                "p95_ms": 489.152,
+                "p99_ms": 491.702,
+                "max_ms": 491.702,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 46828.0,
+                  "Read-Ms": 2.606166,
+                  "Serialize-Ms": 0.044792,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 1.4961669999999998,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 13.591,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        }
+      },
+      "readiness_probe_failures": 749,
+      "budget_misses": [],
+      "operations": {
+        "final_node_qualification": {
+          "driver": "better-sqlite3",
+          "driverVersion": "13.0.3",
+          "node": "v24.18.0",
+          "sqlite": "3.53.4",
+          "integrity": "ok",
+          "foreign_key_violations": 0
+        },
+        "reader_privileges": {
+          "superuser": false,
+          "createdb": false,
+          "createrole": false,
+          "config": [
+            "default_transaction_read_only=on"
+          ],
+          "table_rights": [
+            {
+              "t": "platform_query",
+              "sel": true,
+              "ins": false,
+              "upd": false,
+              "del": false,
+              "trunc": false
+            },
+            {
+              "t": "platform_relation",
+              "sel": true,
+              "ins": false,
+              "upd": false,
+              "del": false,
+              "trunc": false
+            },
+            {
+              "t": "platform_query_title_scope",
+              "sel": true,
+              "ins": false,
+              "upd": false,
+              "del": false,
+              "trunc": false
+            },
+            {
+              "t": "platform_query_title_scope_error",
+              "sel": true,
+              "ins": false,
+              "upd": false,
+              "del": false,
+              "trunc": false
+            }
+          ]
+        },
+        "timings_s": {
+          "pg_dump": 7.7520389999845065,
+          "pg_restore": 20.48646320903208,
+          "restore-verify": 8.845223207958043,
+          "sqlite-backup.sqlite": 2.69894650002243,
+          "sqlite-restore.sqlite": 2.7973543330444954,
+          "storage": 0.840258874988649
+        },
+        "dump_bytes": 32843062,
+        "dump_sha256": "b47ac6939da11f7219a8ce071b7eb5017be465711e4a4e78c0f9af820ba08737",
+        "all_four_pg_restore_hashes_equal": true,
+        "sqlite_backup_bytes": 1406689280,
+        "sqlite_backup_sha256": "dedf96d29fbe378ee01aead438ddf87f437c57387f1ef4ab4ec5d4b66c7ecd41",
+        "sqlite_restore_sha256": "dedf96d29fbe378ee01aead438ddf87f437c57387f1ef4ab4ec5d4b66c7ecd41",
+        "sqlite_restore_integrity": "ok",
+        "sqlite_restore_fk_violations": 0,
+        "restore_database_bytes": 534197951,
+        "limits": [
+          "SQLite backup/restore copies whole quiescent application file; PG backup is four-table domain only; durations/bytes are not equivalent backup rankings",
+          "logical restore only; no PITR/RPO/RTO or concurrent write claim",
+          "WAL allocation includes import/restore history"
+        ]
+      },
+      "storage": {
+        "sqlite_file_bytes": 1406689280,
+        "sqlite_domain": {
+          "table_and_index_page_bytes": {
+            "platform_query": 943968256,
+            "platform_query_identity_uq": 3084288,
+            "platform_query_key_idx": 1167360,
+            "platform_query_status_time_idx": 1744896,
+            "platform_query_time_idx": 1409024,
+            "platform_query_title_code_idx": 479232,
+            "platform_query_title_scope": 258048,
+            "platform_query_title_scope_error": 4096,
+            "platform_query_title_scope_rdjb_query_idx": 303104,
+            "platform_relation": 298508288,
+            "platform_relation_enterprise_idx": 671744,
+            "platform_relation_query_seq_uq": 806912,
+            "platform_relation_relation_key_idx": 1880064,
+            "platform_relation_uscc_query_idx": 1740800,
+            "sqlite_autoindex_platform_query_title_scope_1": 307200
+          },
+          "total_page_bytes": 1256333312
+        },
+        "postgres": {
+          "database_bytes": 544036543,
+          "domain_bytes": {
+            "platform_query": 376668160,
+            "platform_relation": 156868608,
+            "platform_query_title_scope": 2424832,
+            "platform_query_title_scope_error": 8192
+          },
+          "cluster_wal_allocated_bytes": 520093696,
+          "locks": [
+            {
+              "mode": "AccessShareLock",
+              "granted": true,
+              "count": 1
+            }
+          ]
+        },
+        "limitations": [
+          "domain sizes compare same retained four tables; SQLite file includes additional domains",
+          "WAL allocation includes private cluster/import history; idle lock snapshot is not contention measurement"
+        ]
+      },
+      "cgroup_peak_bytes_observed": {
+        "sqlite": 67411968,
+        "client": 72753152,
+        "pg": 761524224,
+        "sampler": 32423936
+      },
+      "docker_stats_sample_count": 0,
+      "sampled_cpu_peak_percent": {
+        "ningbo-spike90-workload-sqlite": null,
+        "ningbo-spike90-workload-client": null,
+        "ningbo-spike90-workload-pg": null,
+        "ningbo-spike90-workload-sampler": null
+      },
+      "cold_container_events": {
+        "oom": 0,
+        "die_exit_codes": {
+          "143": 360
+        }
+      },
+      "observer_peak_coverage": "cold cgroup peak; hot memory only sampled by docker stats",
+      "timed_request_count": 1458,
+      "pre_timing_request_count": 18,
+      "all_timed_requests_equal_actual_node_oracle": true
+    },
+    "2x-query-relation-growth": {
+      "prepared": {
+        "confirmedQuiescent": true,
+        "sourcePath": "/private/optimized.sqlite",
+        "sourceSha256": "eff795eecdefa5800c048006bf28d4f2a642b7f5fb50d7f0c9ec29b8afaa6e60",
+        "sourceOrigin": "/private/tmp/ningbo-perf-83-90/workload/final-96a-20261020-164417/optimized.sqlite",
+        "transformation": "scale2x",
+        "preparationAuthority": {
+          "driver": "better-sqlite3",
+          "sqliteVersion": "3.53.4",
+          "nodeVersion": "v24.18.0",
+          "helperSha256": "7704756bd3755491dbad0eea99cfd6739c6d9a67bbf304db562548850b678dc9"
+        },
+        "before": {
+          "platform_query": {
+            "rows": 39303,
+            "ordered_sha256": "605f4407da4b6fe290aeb09ea0a07cb8278cb647ff684414fad592348e63b2e0",
+            "raw_bytes": 915373569
+          },
+          "platform_relation": {
+            "rows": 58310,
+            "ordered_sha256": "2c38303d50166df962b2c1cd94444c397ae3b61fdd76811237b44ac4b3c8f44f",
+            "raw_bytes": 266140266
+          }
+        },
+        "after": {
+          "platform_query": {
+            "rows": 78606,
+            "ordered_sha256": "6a84ca55f5e936c9646897191edaceebb09171816f4daa7950509d5a5ed264db",
+            "raw_bytes": 1830747138
+          },
+          "platform_relation": {
+            "rows": 116620,
+            "ordered_sha256": "5265d2bacd6da421b94b45ba0b3f927abb505fbf68150c80c3081721b0c672d8",
+            "raw_bytes": 532280532
+          }
+        },
+        "derived_before": {
+          "platform_query_title_scope": 21921,
+          "platform_query_title_scope_error": 0
+        },
+        "derived_after": {
+          "platform_query_title_scope": 43842,
+          "platform_query_title_scope_error": 0
+        },
+        "limitations": [
+          "2x, if selected, is synthetic query/relation archive growth; other domains are not doubled; embedded evidence original IDs retained"
+        ]
+      },
+      "imported_tables": {
+        "platform_query": {
+          "rows": 78606,
+          "ordered_sha256": "6a84ca55f5e936c9646897191edaceebb09171816f4daa7950509d5a5ed264db",
+          "raw_bytes": 1830747138
+        },
+        "platform_relation": {
+          "rows": 116620,
+          "ordered_sha256": "5265d2bacd6da421b94b45ba0b3f927abb505fbf68150c80c3081721b0c672d8",
+          "raw_bytes": 532280532
+        },
+        "platform_query_title_scope": {
+          "rows": 43842,
+          "ordered_sha256": "bce200f2d09bb31b1a3c5a98cefbcf975e75a97e98823cc444a57617f5b4fc06",
+          "raw_bytes": 0
+        },
+        "platform_query_title_scope_error": {
+          "rows": 0,
+          "ordered_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "raw_bytes": 0
+        }
+      },
+      "source_unchanged_after_import": true,
+      "runtime_environments": {
+        "sqlite": {
+          "adapter_source_sha256": "8a74dd903ff7d0ce5a0c64d16727b5484a568c45035becf9f407394a10015954",
+          "backend": "sqlite",
+          "pool_size": 5,
+          "psycopg": "3.3.6",
+          "psycopg_pool": "3.3.3",
+          "python": "3.12.13 (main, Aug  5 2026, 01:17:28) [GCC 12.2.0]",
+          "sqlite_config": {
+            "cache_size": -2000,
+            "journal_mode": "delete",
+            "mmap_size": 0,
+            "query_only": 1
+          },
+          "sqlite_library": "3.40.1"
+        },
+        "postgres": {
+          "adapter_source_sha256": "8a74dd903ff7d0ce5a0c64d16727b5484a568c45035becf9f407394a10015954",
+          "backend": "postgres",
+          "pool_size": 5,
+          "postgres_config": {
+            "default_transaction_isolation": "read committed",
+            "max_connections": "100",
+            "server_encoding": "UTF8",
+            "server_version": "18.4 (Debian 18.4-1.pgdg13+1)",
+            "shared_buffers": "128MB",
+            "timezone": "Etc/UTC",
+            "work_mem": "4MB"
+          },
+          "psycopg": "3.3.6",
+          "psycopg_pool": "3.3.3",
+          "python": "3.12.13 (main, Aug  5 2026, 01:17:28) [GCC 12.2.0]",
+          "sqlite_library": "3.40.1"
+        }
+      },
+      "manifest_sha256": "b34117659d4352293d48bdbf441a917a4581a4b32fbb8a3415fdac1ebf4d3934",
+      "oracle": {
+        "source_sha": "96a0bd9c21d6c0ac32f0de45daf44b76bbda99e6",
+        "node_version": "v24.18.0",
+        "sqlite_version": "3.53.4",
+        "algorithm_hashes": {
+          "lib/platform/read.ts": "455efb7eebbc7147c5bb83019e882835b5fb3063da5a19b7193d0ec72fe92b37",
+          "lib/platform/evidence-read.ts": "c98d13d6a4b920c3244a7f021dd4bae1c83364b8fdebf02498c1d082c7611f66",
+          "db/schema.ts": "3710dd23a5066d18a30297ffcc0a76697cd46933482dc77e228f6d6db8982158"
+        },
+        "baseline_source_sha": "fc37375eb35ecd175a5746d93dc22129d2a2ffe3",
+        "baseline_algorithm_hashes": {
+          "lib/platform/read.ts": "71f0052a5c242c02f7f7a53ae2db790483f2ed0aa95ba347f88016b770be13e1",
+          "lib/platform/evidence-read.ts": "c98d13d6a4b920c3244a7f021dd4bae1c83364b8fdebf02498c1d082c7611f66",
+          "db/schema.ts": "b5eb489eb49e7e2f5b37a38ec9f766801fe26a1f2c7e5b147f6c83850e458c17"
+        },
+        "baseline_note": "static algorithm provenance only; baseline not measured in this run",
+        "cases": {
+          "summary-page": {
+            "semantic_sha256": "ac4dfddeaab7607939883d782f908c7c422d8a2d58e2fc879d47ca57a5462a62",
+            "bytes": 7655
+          },
+          "title-filter": {
+            "semantic_sha256": "46fb12495d47cb8354b0108f852d1cf40a9c594270987c9da4e5ebeb4e5b2a79",
+            "bytes": 7777
+          },
+          "title-deep-page": {
+            "semantic_sha256": "01630a0c1fd75141ee1a10fe3e474cda4a8d55a4df66f80ceb61d7a7b58c4ead",
+            "bytes": 7755
+          },
+          "failed": {
+            "semantic_sha256": "ce61b0daebb30e5788a9dac7899dfc447639c7f330567d50b4df4487e038b90f",
+            "bytes": 8819
+          },
+          "exact-summary": {
+            "semantic_sha256": "28f689d755e0cdb10bf46e1418df309b824670134f6dfa31a9787ab6bb731b84",
+            "bytes": 354
+          },
+          "empty-key": {
+            "semantic_sha256": "f0d6978d643ca16449ce7e460710a286c76a70d093de5809ea8e23908e8426d6",
+            "bytes": 56
+          },
+          "raw-byte-chunk": {
+            "semantic_sha256": "e71b69b81d36bd227242b7deced589160215a191fc114e0b9fa8e42f5a0d95cb",
+            "bytes": 87533
+          },
+          "original-collection": {
+            "semantic_sha256": "6906db495927347dcfd4cbda854840df781aefc8fe049391bb462790aa41d29c",
+            "bytes": 4830
+          },
+          "ordered-relations": {
+            "semantic_sha256": "3dae268995bc92c1012fbffd836aa33ba2fb24328481bd6615321f2ea6493516",
+            "bytes": 295
+          }
+        }
+      },
+      "cases": {
+        "summary-page": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 42.313,
+              "p95_ms": 89.29,
+              "p99_ms": 95.101,
+              "max_ms": 95.101,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7655,
+              "server_metrics_p95": {
+                "Maxrss": 41348.0,
+                "Read-Ms": 64.218625,
+                "Serialize-Ms": 0.130792,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 63.405625,
+                "Sql-Returned-Bytes": 3174.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 18.271,
+                "p95_ms": 20.829,
+                "p99_ms": 23.309,
+                "max_ms": 23.309,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7655,
+                "server_metrics_p95": {
+                  "Maxrss": 41388.0,
+                  "Read-Ms": 4.813084,
+                  "Serialize-Ms": 0.079291,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 4.598916999999999,
+                  "Sql-Returned-Bytes": 3174.0
+                },
+                "wall_throughput_per_s": 51.926,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 25.789,
+                "p95_ms": 70.653,
+                "p99_ms": 73.959,
+                "max_ms": 73.959,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7655,
+                "server_metrics_p95": {
+                  "Maxrss": 41388.0,
+                  "Read-Ms": 4.239584,
+                  "Serialize-Ms": 0.058167,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 4.1068750000000005,
+                  "Sql-Returned-Bytes": 3174.0
+                },
+                "wall_throughput_per_s": 53.814,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 320.643,
+                "p95_ms": 411.818,
+                "p99_ms": 450.722,
+                "max_ms": 450.722,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7655,
+                "server_metrics_p95": {
+                  "Maxrss": 41388.0,
+                  "Read-Ms": 9.985916,
+                  "Serialize-Ms": 0.183458,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 9.719293,
+                  "Sql-Returned-Bytes": 3174.0
+                },
+                "wall_throughput_per_s": 15.638,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 34.404,
+              "p95_ms": 46.248,
+              "p99_ms": 78.462,
+              "max_ms": 78.462,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7655,
+              "server_metrics_p95": {
+                "Maxrss": 47148.0,
+                "Read-Ms": 27.073125,
+                "Serialize-Ms": 0.140167,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 26.247999999999998,
+                "Sql-Returned-Bytes": 3174.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 18.523,
+                "p95_ms": 21.285,
+                "p99_ms": 22.508,
+                "max_ms": 22.508,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7655,
+                "server_metrics_p95": {
+                  "Maxrss": 46940.0,
+                  "Read-Ms": 6.692958,
+                  "Serialize-Ms": 0.055667,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 6.351916999999999,
+                  "Sql-Returned-Bytes": 3174.0
+                },
+                "wall_throughput_per_s": 52.146,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 31.681,
+                "p95_ms": 69.301,
+                "p99_ms": 70.88,
+                "max_ms": 70.88,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7655,
+                "server_metrics_p95": {
+                  "Maxrss": 46940.0,
+                  "Read-Ms": 7.408583,
+                  "Serialize-Ms": 0.068875,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 6.791666,
+                  "Sql-Returned-Bytes": 3174.0
+                },
+                "wall_throughput_per_s": 52.294,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 393.037,
+                "p95_ms": 498.812,
+                "p99_ms": 600.592,
+                "max_ms": 600.592,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7655,
+                "server_metrics_p95": {
+                  "Maxrss": 46940.0,
+                  "Read-Ms": 13.281708,
+                  "Serialize-Ms": 0.156375,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 12.351417,
+                  "Sql-Returned-Bytes": 3174.0
+                },
+                "wall_throughput_per_s": 14.161,
+                "requests_over_reference_p95_ms": 1
+              }
+            }
+          }
+        },
+        "title-filter": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 55.03,
+              "p95_ms": 142.779,
+              "p99_ms": 193.262,
+              "max_ms": 193.262,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7777,
+              "server_metrics_p95": {
+                "Maxrss": 41372.0,
+                "Read-Ms": 118.746,
+                "Serialize-Ms": 0.074333,
+                "Sql-Count": 4.0,
+                "Sql-Ms": 118.295875,
+                "Sql-Returned-Bytes": 3298.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 29.933,
+                "p95_ms": 30.525,
+                "p99_ms": 36.577,
+                "max_ms": 36.577,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7777,
+                "server_metrics_p95": {
+                  "Maxrss": 40236.0,
+                  "Read-Ms": 16.331583,
+                  "Serialize-Ms": 0.06175,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 16.217,
+                  "Sql-Returned-Bytes": 3298.0
+                },
+                "wall_throughput_per_s": 32.963,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 36.116,
+                "p95_ms": 60.444,
+                "p99_ms": 61.082,
+                "max_ms": 61.082,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7777,
+                "server_metrics_p95": {
+                  "Maxrss": 40620.0,
+                  "Read-Ms": 16.112625,
+                  "Serialize-Ms": 0.05625,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 15.986583000000001,
+                  "Sql-Returned-Bytes": 3298.0
+                },
+                "wall_throughput_per_s": 52.067,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 299.197,
+                "p95_ms": 401.38,
+                "p99_ms": 409.604,
+                "max_ms": 409.604,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7777,
+                "server_metrics_p95": {
+                  "Maxrss": 41644.0,
+                  "Read-Ms": 61.539792,
+                  "Serialize-Ms": 0.061667,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 61.372457,
+                  "Sql-Returned-Bytes": 3298.0
+                },
+                "wall_throughput_per_s": 17.071,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 47.255,
+              "p95_ms": 61.193,
+              "p99_ms": 81.695,
+              "max_ms": 81.695,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7777,
+              "server_metrics_p95": {
+                "Maxrss": 47160.0,
+                "Read-Ms": 38.353875,
+                "Serialize-Ms": 0.178292,
+                "Sql-Count": 4.0,
+                "Sql-Ms": 36.410209,
+                "Sql-Returned-Bytes": 3298.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 30.253,
+                "p95_ms": 36.605,
+                "p99_ms": 37.293,
+                "max_ms": 37.293,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7777,
+                "server_metrics_p95": {
+                  "Maxrss": 46736.0,
+                  "Read-Ms": 21.241625,
+                  "Serialize-Ms": 0.064541,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 20.438917,
+                  "Sql-Returned-Bytes": 3298.0
+                },
+                "wall_throughput_per_s": 32.046,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 35.56,
+                "p95_ms": 55.362,
+                "p99_ms": 57.603,
+                "max_ms": 57.603,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7777,
+                "server_metrics_p95": {
+                  "Maxrss": 46864.0,
+                  "Read-Ms": 17.392042,
+                  "Serialize-Ms": 0.052833,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 17.049665,
+                  "Sql-Returned-Bytes": 3298.0
+                },
+                "wall_throughput_per_s": 50.498,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 326.546,
+                "p95_ms": 365.849,
+                "p99_ms": 388.574,
+                "max_ms": 388.574,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7777,
+                "server_metrics_p95": {
+                  "Maxrss": 46992.0,
+                  "Read-Ms": 27.495,
+                  "Serialize-Ms": 0.116334,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 26.144708,
+                  "Sql-Returned-Bytes": 3298.0
+                },
+                "wall_throughput_per_s": 16.76,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "title-deep-page": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 55.87,
+              "p95_ms": 62.737,
+              "p99_ms": 64.271,
+              "max_ms": 64.271,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7755,
+              "server_metrics_p95": {
+                "Maxrss": 41392.0,
+                "Read-Ms": 45.305292,
+                "Serialize-Ms": 0.069084,
+                "Sql-Count": 4.0,
+                "Sql-Ms": 44.956708,
+                "Sql-Returned-Bytes": 3274.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 31.241,
+                "p95_ms": 33.731,
+                "p99_ms": 38.88,
+                "max_ms": 38.88,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7755,
+                "server_metrics_p95": {
+                  "Maxrss": 40240.0,
+                  "Read-Ms": 17.769041,
+                  "Serialize-Ms": 0.072667,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 17.578124,
+                  "Sql-Returned-Bytes": 3274.0
+                },
+                "wall_throughput_per_s": 31.332,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 35.546,
+                "p95_ms": 49.013,
+                "p99_ms": 52.574,
+                "max_ms": 52.574,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7755,
+                "server_metrics_p95": {
+                  "Maxrss": 40624.0,
+                  "Read-Ms": 16.83225,
+                  "Serialize-Ms": 0.050167,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 16.719959,
+                  "Sql-Returned-Bytes": 3274.0
+                },
+                "wall_throughput_per_s": 53.62,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 318.762,
+                "p95_ms": 423.81,
+                "p99_ms": 425.746,
+                "max_ms": 425.746,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7755,
+                "server_metrics_p95": {
+                  "Maxrss": 41776.0,
+                  "Read-Ms": 89.13925,
+                  "Serialize-Ms": 0.067833,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 89.032375,
+                  "Sql-Returned-Bytes": 3274.0
+                },
+                "wall_throughput_per_s": 15.994,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 37.522,
+              "p95_ms": 47.208,
+              "p99_ms": 56.053,
+              "max_ms": 56.053,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 7755,
+              "server_metrics_p95": {
+                "Maxrss": 47204.0,
+                "Read-Ms": 28.602917,
+                "Serialize-Ms": 0.078125,
+                "Sql-Count": 4.0,
+                "Sql-Ms": 27.145750999999997,
+                "Sql-Returned-Bytes": 3274.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 29.859,
+                "p95_ms": 33.334,
+                "p99_ms": 33.504,
+                "max_ms": 33.504,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7755,
+                "server_metrics_p95": {
+                  "Maxrss": 46948.0,
+                  "Read-Ms": 18.748916,
+                  "Serialize-Ms": 0.059542,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 18.277417,
+                  "Sql-Returned-Bytes": 3274.0
+                },
+                "wall_throughput_per_s": 32.908,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 36.517,
+                "p95_ms": 66.948,
+                "p99_ms": 68.401,
+                "max_ms": 68.401,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7755,
+                "server_metrics_p95": {
+                  "Maxrss": 46948.0,
+                  "Read-Ms": 48.041458,
+                  "Serialize-Ms": 0.059459,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 47.681709999999995,
+                  "Sql-Returned-Bytes": 3274.0
+                },
+                "wall_throughput_per_s": 46.28,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 268.461,
+                "p95_ms": 366.931,
+                "p99_ms": 458.637,
+                "max_ms": 458.637,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 7755,
+                "server_metrics_p95": {
+                  "Maxrss": 46948.0,
+                  "Read-Ms": 33.361833,
+                  "Serialize-Ms": 0.123041,
+                  "Sql-Count": 4.0,
+                  "Sql-Ms": 32.618251,
+                  "Sql-Returned-Bytes": 3274.0
+                },
+                "wall_throughput_per_s": 17.48,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "failed": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 20.094,
+              "p95_ms": 36.262,
+              "p99_ms": 44.227,
+              "max_ms": 44.227,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 8819,
+              "server_metrics_p95": {
+                "Maxrss": 41376.0,
+                "Read-Ms": 6.067834,
+                "Serialize-Ms": 0.163167,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 5.673167,
+                "Sql-Returned-Bytes": 4441.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 13.688,
+                "p95_ms": 16.133,
+                "p99_ms": 17.232,
+                "max_ms": 17.232,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 8819,
+                "server_metrics_p95": {
+                  "Maxrss": 33244.0,
+                  "Read-Ms": 0.743375,
+                  "Serialize-Ms": 0.057917,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.625041,
+                  "Sql-Returned-Bytes": 4441.0
+                },
+                "wall_throughput_per_s": 70.146,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 20.645,
+                "p95_ms": 79.1,
+                "p99_ms": 79.861,
+                "max_ms": 79.861,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 8819,
+                "server_metrics_p95": {
+                  "Maxrss": 33244.0,
+                  "Read-Ms": 0.492375,
+                  "Serialize-Ms": 0.073208,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.39549999999999996,
+                  "Sql-Returned-Bytes": 4441.0
+                },
+                "wall_throughput_per_s": 56.406,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 396.342,
+                "p95_ms": 485.265,
+                "p99_ms": 500.34,
+                "max_ms": 500.34,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 8819,
+                "server_metrics_p95": {
+                  "Maxrss": 33244.0,
+                  "Read-Ms": 2.967667,
+                  "Serialize-Ms": 0.260042,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 2.593375,
+                  "Sql-Returned-Bytes": 4441.0
+                },
+                "wall_throughput_per_s": 13.361,
+                "requests_over_reference_p95_ms": 1
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 21.129,
+              "p95_ms": 25.366,
+              "p99_ms": 34.581,
+              "max_ms": 34.581,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 8819,
+              "server_metrics_p95": {
+                "Maxrss": 47220.0,
+                "Read-Ms": 5.478541,
+                "Serialize-Ms": 0.102042,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 4.4477079999999996,
+                "Sql-Returned-Bytes": 4441.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.027,
+                "p95_ms": 16.044,
+                "p99_ms": 16.373,
+                "max_ms": 16.373,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 8819,
+                "server_metrics_p95": {
+                  "Maxrss": 47092.0,
+                  "Read-Ms": 2.239959,
+                  "Serialize-Ms": 0.059416,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 1.884125,
+                  "Sql-Returned-Bytes": 4441.0
+                },
+                "wall_throughput_per_s": 68.439,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 28.841,
+                "p95_ms": 70.099,
+                "p99_ms": 70.84,
+                "max_ms": 70.84,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 8819,
+                "server_metrics_p95": {
+                  "Maxrss": 47092.0,
+                  "Read-Ms": 1.23675,
+                  "Serialize-Ms": 0.064958,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.719708,
+                  "Sql-Returned-Bytes": 4441.0
+                },
+                "wall_throughput_per_s": 51.028,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 402.485,
+                "p95_ms": 488.387,
+                "p99_ms": 490.206,
+                "max_ms": 490.206,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 8819,
+                "server_metrics_p95": {
+                  "Maxrss": 47092.0,
+                  "Read-Ms": 6.084167,
+                  "Serialize-Ms": 0.242083,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 3.8228739999999997,
+                  "Sql-Returned-Bytes": 4441.0
+                },
+                "wall_throughput_per_s": 11.725,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "exact-summary": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 18.792,
+              "p95_ms": 22.332,
+              "p99_ms": 23.547,
+              "max_ms": 23.547,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 354,
+              "server_metrics_p95": {
+                "Maxrss": 41388.0,
+                "Read-Ms": 2.239833,
+                "Serialize-Ms": 0.028875,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 2.020876,
+                "Sql-Returned-Bytes": 126.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 13.151,
+                "p95_ms": 14.439,
+                "p99_ms": 14.893,
+                "max_ms": 14.893,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 41340.0,
+                  "Read-Ms": 0.62425,
+                  "Serialize-Ms": 0.012542,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.5433330000000001,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 73.997,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 20.876,
+                "p95_ms": 76.001,
+                "p99_ms": 81.558,
+                "max_ms": 81.558,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 41340.0,
+                  "Read-Ms": 0.27675,
+                  "Serialize-Ms": 0.010459,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.22241599999999997,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 57.469,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 401.021,
+                "p95_ms": 572.742,
+                "p99_ms": 586.941,
+                "max_ms": 586.941,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 41340.0,
+                  "Read-Ms": 0.76375,
+                  "Serialize-Ms": 0.062042,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.582333,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 12.095,
+                "requests_over_reference_p95_ms": 4
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 20.81,
+              "p95_ms": 39.32,
+              "p99_ms": 39.626,
+              "max_ms": 39.626,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 354,
+              "server_metrics_p95": {
+                "Maxrss": 47096.0,
+                "Read-Ms": 10.78625,
+                "Serialize-Ms": 0.033708,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 9.598749999999999,
+                "Sql-Returned-Bytes": 126.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.286,
+                "p95_ms": 16.009,
+                "p99_ms": 16.722,
+                "max_ms": 16.722,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 47076.0,
+                  "Read-Ms": 2.264458,
+                  "Serialize-Ms": 0.014292,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 1.922917,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 68.225,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 19.761,
+                "p95_ms": 70.477,
+                "p99_ms": 76.763,
+                "max_ms": 76.763,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 47076.0,
+                  "Read-Ms": 0.895041,
+                  "Serialize-Ms": 0.012833,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.522083,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 56.659,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 397.644,
+                "p95_ms": 508.249,
+                "p99_ms": 514.823,
+                "max_ms": 514.823,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 354,
+                "server_metrics_p95": {
+                  "Maxrss": 47076.0,
+                  "Read-Ms": 4.149792,
+                  "Serialize-Ms": 0.058958,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 3.002499,
+                  "Sql-Returned-Bytes": 126.0
+                },
+                "wall_throughput_per_s": 12.43,
+                "requests_over_reference_p95_ms": 4
+              }
+            }
+          }
+        },
+        "empty-key": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 18.863,
+              "p95_ms": 25.305,
+              "p99_ms": 26.76,
+              "max_ms": 26.76,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 56,
+              "server_metrics_p95": {
+                "Maxrss": 41376.0,
+                "Read-Ms": 2.332625,
+                "Serialize-Ms": 0.02475,
+                "Sql-Count": 2.0,
+                "Sql-Ms": 2.085166,
+                "Sql-Returned-Bytes": 0.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 13.419,
+                "p95_ms": 13.947,
+                "p99_ms": 15.588,
+                "max_ms": 15.588,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 41284.0,
+                  "Read-Ms": 0.517625,
+                  "Serialize-Ms": 0.008208,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 0.467459,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 74.036,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 24.693,
+                "p95_ms": 70.448,
+                "p99_ms": 74.702,
+                "max_ms": 74.702,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 41284.0,
+                  "Read-Ms": 0.292541,
+                  "Serialize-Ms": 0.012042,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 0.134334,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 55.987,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 405.39,
+                "p95_ms": 499.482,
+                "p99_ms": 583.835,
+                "max_ms": 583.835,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 41284.0,
+                  "Read-Ms": 0.536667,
+                  "Serialize-Ms": 0.040333,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 0.41325,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 11.841,
+                "requests_over_reference_p95_ms": 1
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 19.699,
+              "p95_ms": 28.403,
+              "p99_ms": 29.344,
+              "max_ms": 29.344,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 56,
+              "server_metrics_p95": {
+                "Maxrss": 47088.0,
+                "Read-Ms": 4.70175,
+                "Serialize-Ms": 0.024208,
+                "Sql-Count": 2.0,
+                "Sql-Ms": 3.435666,
+                "Sql-Returned-Bytes": 0.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.6,
+                "p95_ms": 19.5,
+                "p99_ms": 19.573,
+                "max_ms": 19.573,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 46824.0,
+                  "Read-Ms": 2.545875,
+                  "Serialize-Ms": 0.024875,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 1.9008340000000001,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 64.935,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 21.178,
+                "p95_ms": 72.789,
+                "p99_ms": 77.226,
+                "max_ms": 77.226,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 46824.0,
+                  "Read-Ms": 0.867458,
+                  "Serialize-Ms": 0.016,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 0.432917,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 57.721,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 384.702,
+                "p95_ms": 491.552,
+                "p99_ms": 569.649,
+                "max_ms": 569.649,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 56,
+                "server_metrics_p95": {
+                  "Maxrss": 46824.0,
+                  "Read-Ms": 4.928584,
+                  "Serialize-Ms": 0.055875,
+                  "Sql-Count": 2.0,
+                  "Sql-Ms": 1.9277090000000001,
+                  "Sql-Returned-Bytes": 0.0
+                },
+                "wall_throughput_per_s": 14.437,
+                "requests_over_reference_p95_ms": 1
+              }
+            }
+          }
+        },
+        "raw-byte-chunk": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 18.68,
+              "p95_ms": 21.363,
+              "p99_ms": 34.185,
+              "max_ms": 34.185,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 87533,
+              "server_metrics_p95": {
+                "Maxrss": 43408.0,
+                "Read-Ms": 2.406417,
+                "Serialize-Ms": 0.242917,
+                "Sql-Count": 1.0,
+                "Sql-Ms": 2.148208,
+                "Sql-Returned-Bytes": 65544.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 13.261,
+                "p95_ms": 14.298,
+                "p99_ms": 16.574,
+                "max_ms": 16.574,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 41308.0,
+                  "Read-Ms": 0.623541,
+                  "Serialize-Ms": 0.199833,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.531958,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 72.016,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 25.802,
+                "p95_ms": 69.776,
+                "p99_ms": 73.716,
+                "max_ms": 73.716,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 41308.0,
+                  "Read-Ms": 0.275916,
+                  "Serialize-Ms": 0.210792,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.111625,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 54.29,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 398.492,
+                "p95_ms": 501.658,
+                "p99_ms": 571.814,
+                "max_ms": 571.814,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 41308.0,
+                  "Read-Ms": 1.696541,
+                  "Serialize-Ms": 0.776125,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 1.240958,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 12.502,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 20.039,
+              "p95_ms": 24.823,
+              "p99_ms": 28.647,
+              "max_ms": 28.647,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 87533,
+              "server_metrics_p95": {
+                "Maxrss": 47560.0,
+                "Read-Ms": 5.5115,
+                "Serialize-Ms": 0.27475,
+                "Sql-Count": 1.0,
+                "Sql-Ms": 4.430583,
+                "Sql-Returned-Bytes": 65544.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.517,
+                "p95_ms": 17.962,
+                "p99_ms": 19.825,
+                "max_ms": 19.825,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 47560.0,
+                  "Read-Ms": 2.080583,
+                  "Serialize-Ms": 0.196584,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 1.682834,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 64.42,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 22.975,
+                "p95_ms": 74.288,
+                "p99_ms": 77.399,
+                "max_ms": 77.399,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 47816.0,
+                  "Read-Ms": 1.655333,
+                  "Serialize-Ms": 0.210875,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.874708,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 55.037,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 401.06,
+                "p95_ms": 506.99,
+                "p99_ms": 516.563,
+                "max_ms": 516.563,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 87533,
+                "server_metrics_p95": {
+                  "Maxrss": 47816.0,
+                  "Read-Ms": 4.803583,
+                  "Serialize-Ms": 0.532667,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 2.564041,
+                  "Sql-Returned-Bytes": 65544.0
+                },
+                "wall_throughput_per_s": 12.579,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "original-collection": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 19.173,
+              "p95_ms": 28.83,
+              "p99_ms": 29.207,
+              "max_ms": 29.207,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 4830,
+              "server_metrics_p95": {
+                "Maxrss": 41376.0,
+                "Read-Ms": 2.661125,
+                "Serialize-Ms": 0.055334,
+                "Sql-Count": 1.0,
+                "Sql-Ms": 2.202,
+                "Sql-Returned-Bytes": 3513.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.224,
+                "p95_ms": 15.261,
+                "p99_ms": 19.101,
+                "max_ms": 19.101,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 41320.0,
+                  "Read-Ms": 0.56,
+                  "Serialize-Ms": 0.038209,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.465833,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 68.306,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 30.774,
+                "p95_ms": 76.227,
+                "p99_ms": 79.997,
+                "max_ms": 79.997,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 41320.0,
+                  "Read-Ms": 0.361458,
+                  "Serialize-Ms": 0.1425,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.198167,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 46.952,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 407.741,
+                "p95_ms": 507.652,
+                "p99_ms": 581.527,
+                "max_ms": 581.527,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 41320.0,
+                  "Read-Ms": 0.253333,
+                  "Serialize-Ms": 0.052542,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.069041,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 12.577,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 19.739,
+              "p95_ms": 34.725,
+              "p99_ms": 51.913,
+              "max_ms": 51.913,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 4830,
+              "server_metrics_p95": {
+                "Maxrss": 47128.0,
+                "Read-Ms": 6.605625,
+                "Serialize-Ms": 0.090292,
+                "Sql-Count": 1.0,
+                "Sql-Ms": 4.641458,
+                "Sql-Returned-Bytes": 3513.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.457,
+                "p95_ms": 16.73,
+                "p99_ms": 18.236,
+                "max_ms": 18.236,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 46960.0,
+                  "Read-Ms": 1.73675,
+                  "Serialize-Ms": 0.028459,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 1.361292,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 67.131,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 25.947,
+                "p95_ms": 71.548,
+                "p99_ms": 73.625,
+                "max_ms": 73.625,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 46960.0,
+                  "Read-Ms": 0.811833,
+                  "Serialize-Ms": 0.032167,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.359334,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 52.428,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 401.194,
+                "p95_ms": 501.199,
+                "p99_ms": 592.2,
+                "max_ms": 592.2,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 4830,
+                "server_metrics_p95": {
+                  "Maxrss": 46960.0,
+                  "Read-Ms": 3.133,
+                  "Serialize-Ms": 0.13375,
+                  "Sql-Count": 1.0,
+                  "Sql-Ms": 0.988916,
+                  "Sql-Returned-Bytes": 3513.0
+                },
+                "wall_throughput_per_s": 12.692,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        },
+        "ordered-relations": {
+          "sqlite": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 20.595,
+              "p95_ms": 26.52,
+              "p99_ms": 29.626,
+              "max_ms": 29.626,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 295,
+              "server_metrics_p95": {
+                "Maxrss": 41344.0,
+                "Read-Ms": 3.266583,
+                "Serialize-Ms": 0.034625,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 2.9153329999999995,
+                "Sql-Returned-Bytes": 144.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.683,
+                "p95_ms": 15.7,
+                "p99_ms": 16.314,
+                "max_ms": 16.314,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 41376.0,
+                  "Read-Ms": 0.591958,
+                  "Serialize-Ms": 0.016833,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.49266699999999997,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 69.235,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 25.897,
+                "p95_ms": 75.484,
+                "p99_ms": 76.513,
+                "max_ms": 76.513,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 41376.0,
+                  "Read-Ms": 0.449291,
+                  "Serialize-Ms": 0.04075,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.331834,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 50.483,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 363.263,
+                "p95_ms": 472.164,
+                "p99_ms": 493.12,
+                "max_ms": 493.12,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 41376.0,
+                  "Read-Ms": 0.556917,
+                  "Serialize-Ms": 0.036583,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.36579100000000003,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 14.415,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          },
+          "postgres": {
+            "cold_process": {
+              "n": 20,
+              "p50_ms": 24.173,
+              "p95_ms": 36.724,
+              "p99_ms": 56.932,
+              "max_ms": 56.932,
+              "errors_or_bad_status": 0,
+              "semantic_mismatches": 0,
+              "max_response_bytes": 295,
+              "server_metrics_p95": {
+                "Maxrss": 46980.0,
+                "Read-Ms": 9.034417,
+                "Serialize-Ms": 0.076792,
+                "Sql-Count": 3.0,
+                "Sql-Ms": 7.262958,
+                "Sql-Returned-Bytes": 144.0
+              },
+              "requests_over_reference_p95_ms": 0
+            },
+            "additional_hot_runner_first_n": 1,
+            "hot": {
+              "1": {
+                "n": 20,
+                "p50_ms": 14.173,
+                "p95_ms": 17.165,
+                "p99_ms": 17.177,
+                "max_ms": 17.177,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 47108.0,
+                  "Read-Ms": 2.563208,
+                  "Serialize-Ms": 0.017583,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 2.196166,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 67.412,
+                "requests_over_reference_p95_ms": 0
+              },
+              "2": {
+                "n": 20,
+                "p50_ms": 21.312,
+                "p95_ms": 76.673,
+                "p99_ms": 79.168,
+                "max_ms": 79.168,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 47108.0,
+                  "Read-Ms": 0.824833,
+                  "Serialize-Ms": 0.015708,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 0.434166,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 56.336,
+                "requests_over_reference_p95_ms": 0
+              },
+              "5": {
+                "n": 20,
+                "p50_ms": 385.018,
+                "p95_ms": 404.062,
+                "p99_ms": 469.836,
+                "max_ms": 469.836,
+                "errors_or_bad_status": 0,
+                "semantic_mismatches": 0,
+                "max_response_bytes": 295,
+                "server_metrics_p95": {
+                  "Maxrss": 47108.0,
+                  "Read-Ms": 2.937875,
+                  "Serialize-Ms": 0.045375,
+                  "Sql-Count": 3.0,
+                  "Sql-Ms": 1.975291,
+                  "Sql-Returned-Bytes": 144.0
+                },
+                "wall_throughput_per_s": 14.639,
+                "requests_over_reference_p95_ms": 0
+              }
+            }
+          }
+        }
+      },
+      "readiness_probe_failures": 758,
+      "budget_misses": [
+        {
+          "case": "exact-summary",
+          "backend": "sqlite",
+          "lane": "hot-c5",
+          "misses": [
+            "p95>500ms"
+          ],
+          "p95_ms": 572.742,
+          "p99_ms": 586.941
+        },
+        {
+          "case": "exact-summary",
+          "backend": "postgres",
+          "lane": "hot-c5",
+          "misses": [
+            "p95>500ms"
+          ],
+          "p95_ms": 508.249,
+          "p99_ms": 514.823
+        }
+      ],
+      "operations": {
+        "final_node_qualification": {
+          "driver": "better-sqlite3",
+          "driverVersion": "13.0.3",
+          "node": "v24.18.0",
+          "sqlite": "3.53.4",
+          "integrity": "ok",
+          "foreign_key_violations": 0
+        },
+        "reader_privileges": {
+          "superuser": false,
+          "createdb": false,
+          "createrole": false,
+          "config": [
+            "default_transaction_read_only=on"
+          ],
+          "table_rights": [
+            {
+              "t": "platform_query",
+              "sel": true,
+              "ins": false,
+              "upd": false,
+              "del": false,
+              "trunc": false
+            },
+            {
+              "t": "platform_relation",
+              "sel": true,
+              "ins": false,
+              "upd": false,
+              "del": false,
+              "trunc": false
+            },
+            {
+              "t": "platform_query_title_scope",
+              "sel": true,
+              "ins": false,
+              "upd": false,
+              "del": false,
+              "trunc": false
+            },
+            {
+              "t": "platform_query_title_scope_error",
+              "sel": true,
+              "ins": false,
+              "upd": false,
+              "del": false,
+              "trunc": false
+            }
+          ]
+        },
+        "timings_s": {
+          "pg_dump": 15.198340417002328,
+          "pg_restore": 41.31876716698753,
+          "restore-verify": 15.746150583028793,
+          "sqlite-backup.sqlite": 3.071096207946539,
+          "sqlite-restore.sqlite": 3.5148574160411954,
+          "storage": 11.71131649997551
+        },
+        "dump_bytes": 65905728,
+        "dump_sha256": "1dca841dea624bd6d03dcee5f48d36c00dae898fbaa39144262a53b4445f1194",
+        "all_four_pg_restore_hashes_equal": true,
+        "sqlite_backup_bytes": 2668204032,
+        "sqlite_backup_sha256": "eff795eecdefa5800c048006bf28d4f2a642b7f5fb50d7f0c9ec29b8afaa6e60",
+        "sqlite_restore_sha256": "eff795eecdefa5800c048006bf28d4f2a642b7f5fb50d7f0c9ec29b8afaa6e60",
+        "sqlite_restore_integrity": "ok",
+        "sqlite_restore_fk_violations": 0,
+        "restore_database_bytes": 1057437375,
+        "limits": [
+          "SQLite backup/restore copies whole quiescent application file; PG backup is four-table domain only; durations/bytes are not equivalent backup rankings",
+          "logical restore only; no PITR/RPO/RTO or concurrent write claim",
+          "WAL allocation includes import/restore history"
+        ]
+      },
+      "storage": {
+        "sqlite_file_bytes": 2668204032,
+        "sqlite_domain": {
+          "table_and_index_page_bytes": {
+            "platform_query": 1889538048,
+            "platform_query_identity_uq": 7245824,
+            "platform_query_key_idx": 3457024,
+            "platform_query_status_time_idx": 3760128,
+            "platform_query_time_idx": 3035136,
+            "platform_query_title_code_idx": 1110016,
+            "platform_query_title_scope": 544768,
+            "platform_query_title_scope_error": 4096,
+            "platform_query_title_scope_rdjb_query_idx": 626688,
+            "platform_relation": 597020672,
+            "platform_relation_enterprise_idx": 1363968,
+            "platform_relation_query_seq_uq": 1712128,
+            "platform_relation_relation_key_idx": 3776512,
+            "platform_relation_uscc_query_idx": 4005888,
+            "sqlite_autoindex_platform_query_title_scope_1": 647168
+          },
+          "total_page_bytes": 2517848064
+        },
+        "postgres": {
+          "database_bytes": 1079154367,
+          "domain_bytes": {
+            "platform_query": 754958336,
+            "platform_relation": 311369728,
+            "platform_query_title_scope": 4767744,
+            "platform_query_title_scope_error": 8192
+          },
+          "cluster_wal_allocated_bytes": 1073741824,
+          "locks": [
+            {
+              "mode": "AccessShareLock",
+              "granted": true,
+              "count": 1
+            }
+          ]
+        },
+        "limitations": [
+          "domain sizes compare same retained four tables; SQLite file includes additional domains",
+          "WAL allocation includes private cluster/import history; idle lock snapshot is not contention measurement"
+        ]
+      },
+      "cgroup_peak_bytes_observed": {
+        "sqlite": 71921664,
+        "client": 74227712,
+        "pg": 1620525056,
+        "sampler": 63533056
+      },
+      "docker_stats_sample_count": 0,
+      "sampled_cpu_peak_percent": {
+        "ningbo-spike90-workload-sqlite": null,
+        "ningbo-spike90-workload-client": null,
+        "ningbo-spike90-workload-pg": null,
+        "ningbo-spike90-workload-sampler": null
+      },
+      "cold_container_events": {
+        "oom": 0,
+        "die_exit_codes": {
+          "143": 360
+        }
+      },
+      "observer_peak_coverage": "cold and post-hot cgroup peak",
+      "timed_request_count": 1458,
+      "pre_timing_request_count": 18,
+      "all_timed_requests_equal_actual_node_oracle": true
+    }
+  },
+  "cleanup": {
+    "states_before_stop": {
+      "sqlite": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 67226,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-10-20T09:19:14.409961917Z",
+        "FinishedAt": "2026-10-20T09:19:14.342900584Z"
+      },
+      "client": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 67504,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-10-20T09:19:17.321407169Z",
+        "FinishedAt": "2026-10-20T09:19:17.249813419Z"
+      },
+      "sampler": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 88141,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-10-20T09:07:03.27964576Z",
+        "FinishedAt": "0001-01-01T00:00:00Z"
+      },
+      "pg": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 85695,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-10-20T08:45:11.011181305Z",
+        "FinishedAt": "0001-01-01T00:00:00Z"
+      }
+    },
+    "cgroups_before_stop": {
+      "ningbo-spike90-workload-sqlite": [
+        "50335744",
+        "51908608",
+        "usage_usec 353203",
+        "user_usec 295538",
+        "system_usec 57665",
+        "nice_usec 0",
+        "nr_periods 85",
+        "nr_throttled 1",
+        "throttled_usec 632",
+        "nr_bursts 0",
+        "burst_usec 0"
+      ],
+      "ningbo-spike90-workload-client": [
+        "42590208",
+        "43814912",
+        "usage_usec 523395",
+        "user_usec 457970",
+        "system_usec 65424",
+        "nice_usec 0",
+        "nr_periods 98",
+        "nr_throttled 16",
+        "throttled_usec 1324242",
+        "nr_bursts 0",
+        "burst_usec 0"
+      ],
+      "ningbo-spike90-workload-sampler": [
+        "74149888",
+        "136638464",
+        "usage_usec 482592048",
+        "user_usec 450918150",
+        "system_usec 31673898",
+        "nice_usec 0",
+        "nr_periods 7011",
+        "nr_throttled 859",
+        "throttled_usec 100939260",
+        "nr_bursts 0",
+        "burst_usec 0",
+        "254:0 rbytes=39534592 wbytes=26550272 rios=252 wios=168 dbytes=0 dios=0"
+      ],
+      "ningbo-spike90-workload-pg": [
+        "1130659840",
+        "2144071680",
+        "usage_usec 181597693",
+        "user_usec 130677962",
+        "system_usec 50919730",
+        "nice_usec 0",
+        "nr_periods 10269",
+        "nr_throttled 907",
+        "throttled_usec 20883479",
+        "nr_bursts 0",
+        "burst_usec 0",
+        "254:0 rbytes=65413120 wbytes=8192 rios=435 wios=2 dbytes=0 dios=0"
+      ]
+    },
+    "memory_events": {
+      "sqlite": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+      "client": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+      "sampler": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0",
+      "pg": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0"
+    },
+    "credential_modes": {
+      "app.dsn": "0o600",
+      "admin.dsn": "0o600",
+      "postgres.env": "0o600",
+      "growth-2x/app.dsn": "0o600",
+      "growth-2x/admin.dsn": "0o600"
+    },
+    "cleanup_started_at": 1792488133.494723,
+    "network_id": "84d2f2ee66c4123d9c93a065941f95b2908c9fb05315b33d8f1856ccac608666",
+    "qualified_source_final_sha256": "2c72355ebe602b24d9c0a08561957481d97b083a78aae51995e29e58e4064430",
+    "qualified_source_mode": "0o400",
+    "optimized_final_sha256": {
+      ".": "dedf96d29fbe378ee01aead438ddf87f437c57387f1ef4ab4ec5d4b66c7ecd41",
+      "growth-2x": "eff795eecdefa5800c048006bf28d4f2a642b7f5fb50d7f0c9ec29b8afaa6e60"
+    },
+    "all_measured_source_files_unchanged": true,
+    "owned_containers_and_network_removed": true,
+    "last_container_exit_codes": {
+      "ningbo-spike90-workload-sqlite": "143",
+      "ningbo-spike90-workload-client": "143",
+      "ningbo-spike90-workload-sampler": "137",
+      "ningbo-spike90-workload-pg": "0"
+    },
+    "remaining_monitor_oom_events": 0,
+    "host_disk_free_bytes": 30191493120,
+    "cleanup_finished_at": 1792488141.752445,
+    "observer_stop_exit_137_count": 2
+  },
+  "unchanged_original_tables": 43,
+  "original_row_sets_unchanged_in_growth": true,
+  "pg_initial_readiness_failures": 16
+}

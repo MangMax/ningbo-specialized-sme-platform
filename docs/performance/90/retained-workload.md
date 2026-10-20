@@ -1,4 +1,6 @@
-# #90 retained archive workload — 1x preparation complete; exclusive timing pending
+# #90 retained archive workload — final 96a0bd9 1x/2x results
+
+**Final run:** [fresh 96a0bd9 results](final-96a-results.md) and [sanitized aggregates](final-96a-results.json) record the completed 1x and query/relation-only synthetic 2x matrices, all misses, runtime/resource evidence and private restore verification. The pre-JSON5 `full-1x` prepared copy/import/oracle were invalidated and were not reused as fresh proof. Earlier preparation observations below are historical. Production migration remains deferred.
 
 This narrow comparison does **not** require porting the whole application to PostgreSQL. It compares the optimized #83 read algorithm for platform summaries/title filters and exact original evidence/relation discovery on the complete retained query/relation distribution. All original query/relation columns and text bytes are imported; the PostgreSQL side is a separate experimental schema, not an application migration. Other domains remain in the source SQLite copy but are not ported or benchmarked.
 
@@ -11,14 +13,14 @@ The qualified source handoff is private `/tmp/ningbo-perf-83-90/83-fixture-hando
 - `workload_control.py`: copies/hash-checks the qualified source, derives an independent optimized copy using the final actual #83 SQL migration, verifies original query/relation row hashes unchanged, prepares cases, optionally creates 2x **synthetic unrelated query/relation archive growth**, and checks actual Docker limits before measurement. 2x preserves original rows, remaps clone primary/query foreign keys and query identity keys, preserves archived raw bytes/embedded identities, and requires derived membership/error counts to double through the actual triggers. It is not a second real production snapshot or full-app 2x dataset.
 - The importer streams COPY and ordered verification with a PG server-side cursor (100 rows per fetch), verifies every retained field/ID/raw byte count/hash, creates query foreign keys and required unique/index constraints, and creates a SELECT-only role with `default_transaction_read_only=on`. It refuses to overwrite an existing PG database. Business raw text, DSNs, outputs and images' runtime secret values stay outside Git.
 
-Small synthetic verification before any full run: actual Node oracle and SQLite/PG adapters matched 11 cases; seven literal tests cover five statuses/tie ordering, title JSON types, scoped malformed errors, status/deep/empty pages, relation multiplicity/order, and byte-exact Unicode/null/empty. Provisional #83 migration was used only for the tiny migration/2x rehearsal; the full run must freeze the committed final #83 source and migration hashes.
+Historical small synthetic rehearsal (not final-run proof): actual Node oracle and SQLite/PG adapters matched 11 cases; seven literal tests cover five statuses/tie ordering, title JSON types, scoped malformed errors, status/deep/empty pages, relation multiplicity/order, and byte-exact Unicode/null/empty. Provisional #83 migration was used only for the tiny migration/2x rehearsal; the full run must freeze the committed final #83 source and migration hashes.
 
 ## Reproducible runbook
 
 Run from this worktree after merging final #83. Install its locked Node dependencies first: `migrate-copy` and `scale2x` use `prepare_sqlite.mjs` with the application’s `better-sqlite3`, including JSON5-aware triggers; Python SQLite is only a readonly fingerprint observer. The preparation report records the actual driver, SQLite/Node versions and helper SHA256. A migration change invalidates any previously prepared copy, import and oracle; prepare fresh artifacts before timing. Use a fresh private directory, and record the source commit and `sha256` of every runner/migration file. Do not regenerate credentials against initialized PGDATA. Commands below must not run concurrently with other benchmarks.
 
 ```sh
-export SPIKE90_DIR=/tmp/ningbo-perf-83-90/workload/full-1x
+export SPIKE90_DIR="/tmp/ningbo-perf-83-90/workload/final-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)"
 PYTHONUTF8=1 uv run python scripts/spike-90/workload_control.py prepare \
   --source /tmp/ningbo-perf-83-current/real-copy.sqlite \
   --source-sha256 2c72355ebe602b24d9c0a08561957481d97b083a78aae51995e29e58e4064430 \
@@ -28,9 +30,9 @@ PYTHONUTF8=1 uv run python scripts/spike-90/workload_control.py migrate-copy \
   --migration db/migrations/0025_platform_query_title_scope_83.sql --report "$SPIKE90_DIR/optimized-provenance.json"
 PYTHONUTF8=1 uv run python scripts/spike-90/workload_control.py manifest \
   --sqlite "$SPIKE90_DIR/optimized.sqlite" --output "$SPIKE90_DIR/manifest.json"
-NODE_PATH=/Users/mang/.t3/worktrees/app/t3-80399dac/node_modules node scripts/spike-90/workload_oracle.mjs \
+node scripts/spike-90/workload_oracle.mjs \
   "$SPIKE90_DIR/optimized.sqlite" "$SPIKE90_DIR/manifest.json" "$SPIKE90_DIR/oracle.json" \
-  /Users/mang/.t3/worktrees/app/t3-80399dac
+  "$PWD"
 
 docker build -f scripts/spike-90/workload.Dockerfile -t ningbo-spike90-workload-adapter:90 scripts/spike-90
 docker network create --internal ningbo-spike90-workload-net
@@ -76,10 +78,12 @@ For 2x, use `scale2x --source <optimized1x> --output <new2x.sqlite> --report <ne
 Stop only `ningbo-spike90-workload-sqlite`, `ningbo-spike90-workload-client`, `ningbo-spike90-workload-pg`, and `ningbo-spike90-workload-sampler`, then remove only `ningbo-spike90-workload-net`. Retain all private source copies/PGDATA/provenance/output; never use broad Docker cleanup.
 
 
-## Qualified 1x preparation (shared host, not timing evidence)
+## Historical pre-JSON5 1x preparation (INVALIDATED; not final proof)
 
 On runner source `8247cb4` plus the committed observer transport correction, the independent source copy matched the qualified hash. Applying final #83 migration `0025` left all original query/relation field/row hashes unchanged. The importer retained and verified complete rows of the two original and two derived tables, and confirmed its SQLite source hash remained unchanged. The final actual Node oracle has nine workload cases; single reads from each Docker backend must match all nine hashes before timing. Exact driver/runtime/configuration and image/source hashes are private `preparation-semantic.json`, and domain storage is `storage.json`.
 
 Retained setup failure: host `127.0.0.1:55493` refused connection even though Docker `HostConfig.PortBindings` contained the mapping; actual `NetworkSettings.Ports` was empty. The same running adapter answered `/health` inside its container. The source fix uses a same-image observer on the private internal bridge; it neither relaxes the bridge nor changes global Docker networking. This setup failure does not count as a workload latency sample or a successful availability result.
 
 `workload_ops.py storage` compares the same four tables/indexes via SQLite `dbstat` and PostgreSQL `pg_total_relation_size`, while separately retaining whole-file/database and cluster WAL allocation. These are private synthetic-domain/retained-domain costs; the complete SQLite file also contains unported domains. The `verify` action streams all four PostgreSQL table hashes after a separate restore and can compare them with `import.json`; it never aggregates raw archives into one SQL result.
+
+The standard `measure` command retains one first-process sample per case plus hot c1/c2/c5 samples. The final grant required at least 20 cold-process samples as well: the retained private `execution-harness/final96a_measure.py` supplements it with 20 independent adapter restarts/reads per backend/case, alternating order and retaining every response/readiness failure. Its complete source and digest are retained with the run; it does not change the application algorithm or increase budgets. See the final report for the observer peak-coverage limitation and all unrun lanes.
