@@ -99,6 +99,6 @@ PoC **没有**同时首次提交一个新键、真实行锁/死锁竞争、生�
 
 ## 窄工作负载追加路线（源已准备，正式运行待独占窗口）
 
-本票无需先移植整个 Node 应用才能比较 PostgreSQL。采用当前优化后 #83 的 summary/title/精确证据读取接缝，先由实际应用函数对 SQLite 适配器逐病例验证，再在 PostgreSQL 独立 schema 上保留完整原文/关系并比较同输入输出 hash。最终 #83 源为 `b9bcb8bea3238da933c26f79327bc3d4390e3e46`；本分支合并点 `2e0e4f4fa200015a7121de0457cb587f00cbd925`。原始生产副本的静止来源由 #83 专属交接记录确认；尚未为本轮大规模运行打开它。
+本票无需先移植整个 Node 应用才能比较 PostgreSQL。采用当前优化后 #83 的 summary/title/精确证据读取接缝，先由实际应用函数对 SQLite 适配器逐病例验证，再在 PostgreSQL 独立 schema 上保留完整原文/关系并比较同输入输出 hash。最终 #83 源为 `b9bcb8bea3238da933c26f79327bc3d4390e3e46`；本分支合并点 `2e0e4f4fa200015a7121de0457cb587f00cbd925`。原始生产副本的静止来源由 #83 专属交接记录确认；仅在获得准备阶段授权后创建并校验了独立副本；没有写入交接源。
 
-源码及可执行步骤见 [retained-workload.md](retained-workload.md)。小型完整字段导入、派生表迁移/触发器和实际最终 Node oracle 的 11 病例 SQLite/PG 对照已通过；它们只证明源准备的语义接缝。真实 1x 完整保留数据、同总 CPU/内存 Docker 包络、cold-process/hot c1/c2/c5、采样/peak 与可行的 2x 域归档增长将在排他窗口补证。当前 defer 是证据状态，并非把完整应用移植虚设为调查前置条件；其他域、正式写入/锁争用、长期恢复/5x/生产 SLO 不会由窄读结果代替。
+源码及可执行步骤见 [retained-workload.md](retained-workload.md)。小型完整字段导入、派生表迁移/触发器和实际最终 Node oracle 的 11 病例 SQLite/PG 对照已通过；它们只证明源准备的语义接缝。真实 1x 副本/迁移/完整 PG 导入和实际 Node oracle 已在共享负载准备阶段建立，正式 cold-process/hot c1/c2/c5 矩阵、采样/peak 与可行的 2x 域归档增长仍等待独占授权。当前 defer 是证据状态，并非把完整应用移植虚设为调查前置条件；其他域、正式写入/锁争用、长期恢复/5x/生产 SLO 不会由窄读结果代替。

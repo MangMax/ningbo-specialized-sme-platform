@@ -24,6 +24,7 @@ for (const entry of JSON.parse(readFileSync(manifestPath)).cases) {
 const sourceFiles=['lib/platform/read.ts','lib/platform/evidence-read.ts','db/schema.ts']
 const baseline='fc37375eb35ecd175a5746d93dc22129d2a2ffe3'
 writeFileSync(outputPath,JSON.stringify({source_sha:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),
+  node_version:process.version,sqlite_version:db.$client.prepare('select sqlite_version() as version').get().version,
   algorithm_hashes:Object.fromEntries(sourceFiles.map(p=>[p,sha(readFileSync(p))])),
   baseline_source_sha:baseline,baseline_algorithm_hashes:Object.fromEntries(sourceFiles.map(p=>[p,sha(execFileSync('git',['show',`${baseline}:${p}`]))])),
   baseline_note:'static algorithm provenance only; baseline not measured in this run',cases:results},null,2)+'\n')

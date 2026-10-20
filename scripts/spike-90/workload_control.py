@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import quote, urlparse
-from compare_public import run_case, canonical
+from compare_public import run_case, request, canonical
 from workload import readonly, fingerprint_rows
 
 PREFIX = 'ningbo-spike90-workload-'
@@ -27,7 +27,8 @@ def inspect(name):
     return {k: obj[k] for k in ('Id','Image','Name')} | {
         'State': {k:obj['State'].get(k) for k in ('Status','Pid','StartedAt')},
         'Limits': {k:obj['HostConfig'][k] for k in ('NanoCpus','Memory','MemorySwap')},
-        'Mounts': obj['Mounts'], 'Networks': list(obj['NetworkSettings']['Networks'])}
+        'Mounts': obj['Mounts'], 'Networks': list(obj['NetworkSettings']['Networks']),
+        'RequestedPortBindings':obj['HostConfig']['PortBindings'],'ActualPublishedPorts':obj['NetworkSettings']['Ports']}
 
 
 def private_path(value):
@@ -123,10 +124,12 @@ def derive(args):
 
 def manifest(args):
     db = readonly(args.sqlite)
-    ids = [r[0] for r in db.execute('SELECT id FROM platform_query WHERE raw_response IS NOT NULL ORDER BY id LIMIT 1')]
+    ids = [r[0] for r in db.execute('SELECT id FROM platform_query WHERE raw_response IS NOT NULL ORDER BY length(cast(raw_response as blob)) DESC,id LIMIT 1')]
     if not ids:
         raise ValueError('retained fixture needs a raw-response case')
     qid = ids[0]
+    evidence_id=db.execute('SELECT id FROM platform_query WHERE collection_evidence IS NOT NULL ORDER BY length(cast(collection_evidence as blob)) DESC,id LIMIT 1').fetchone()
+    relation_id=db.execute('SELECT query_id FROM platform_relation GROUP BY query_id ORDER BY count(*) DESC,query_id LIMIT 1').fetchone()
     cases = [
         {'name':'summary-page','kind':'summary','args':{'pageSize':25}},
         {'name':'title-filter','kind':'summary','args':{'titleCode':'specialized_sme','pageSize':25}},
@@ -135,8 +138,8 @@ def manifest(args):
         {'name':'exact-summary','kind':'summary','args':{'queryId':qid}},
         {'name':'empty-key','kind':'summary','args':{'queryKey':'spike90:nonexistent:synthetic'}},
         {'name':'raw-byte-chunk','kind':'evidence','args':{'queryId':qid,'field':'rawResponse','offset':1,'length':65536}},
-        {'name':'original-collection','kind':'evidence','args':{'queryId':qid,'field':'collectionEvidence'}},
-        {'name':'ordered-relations','kind':'evidence','args':{'queryId':qid,'field':'relations'}}]
+        {'name':'original-collection','kind':'evidence','args':{'queryId':evidence_id[0] if evidence_id else qid,'field':'collectionEvidence'}},
+        {'name':'ordered-relations','kind':'evidence','args':{'queryId':relation_id[0] if relation_id else qid,'field':'relations'}}]
     Path(args.output).write_text(json.dumps({'cases':cases},indent=2)+'\n')
     db.close()
     print(canonical({'prepared_cases':len(cases),'private_manifest':True}))
@@ -144,9 +147,10 @@ def manifest(args):
 
 def measure(args):
     import urllib.request
+    permitted_hosts=('localhost','127.0.0.1') if not args.sampler_container else (PREFIX+'sqlite',PREFIX+'client')
     for url in (args.sqlite_url,args.postgres_url):
         parsed=urlparse(url)
-        if parsed.scheme!='http' or parsed.hostname not in ('localhost','127.0.0.1') or parsed.username or parsed.password or parsed.path not in ('','/') or parsed.query or parsed.fragment:
+        if parsed.scheme!='http' or parsed.hostname not in permitted_hosts or parsed.username or parsed.password or parsed.path not in ('','/') or parsed.query or parsed.fragment:
             raise ValueError('isolated loopback adapter URLs required')
     if args.samples<1:
         raise ValueError('positive sample count required')
@@ -162,13 +166,23 @@ def measure(args):
         raise ValueError('owned Docker network must be internal')
     if before[names[0]]['Image'] != before[names[1]]['Image']:
         raise ValueError('both adapters must use exact same image')
+    if args.sampler_container:
+        before['observer']=inspect(args.sampler_container)
+        if before['observer']['Networks']!=[PREFIX+'net'] or before['observer']['Image']!=before[names[0]]['Image']:
+            raise ValueError('observer must use same image and private internal network')
+        if before['observer']['Limits']!={'NanoCpus':1_000_000_000,'Memory':512*1024**2,'MemorySwap':512*1024**2}:
+            raise ValueError('observer must have explicit separate 1 CPU/512 MiB budget')
+    def probe(url,path):
+        if args.sampler_container:
+            return json.loads(docker('exec',args.sampler_container,'python','/source/workload_control.py','probe','--base',url,'--path',path))
+        with urllib.request.urlopen(url+path,timeout=30) as response:
+            return json.load(response)
     oracle = json.loads(Path(args.oracle).read_text())
     cases = json.loads(Path(args.manifest).read_text())['cases']
     environments={}
     expected_source=hashlib.sha256(Path(__file__).with_name('workload.py').read_bytes()).hexdigest()
     for backend,url in [('sqlite',args.sqlite_url),('postgres',args.postgres_url)]:
-        with urllib.request.urlopen(url+'/environment',timeout=30) as response:
-            environments[backend]=json.load(response)
+        environments[backend]=probe(url,'/environment')
         if environments[backend]['adapter_source_sha256']!=expected_source:
             raise ValueError('actual container adapter source differs from measured source')
     result = {'actual_containers':before,'oracle':oracle,'samples_per_width':args.samples,
@@ -177,7 +191,7 @@ def measure(args):
                              'same Python adapters, not actual Node application latency','SQL timing includes row materialization; shaping residual is not JSON-only cost',
                              'PG app role is isolated readonly reader; production write privileges are separate','small timing samples do not establish tail SLOs',
                              'docker stats sampled about once per second; cgroup peak includes container startup/import history'], 'cases':{},'resource_samples':[]}
-    stats=subprocess.Popen(['docker','stats','--format','{{json .}}',*names],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    stats=subprocess.Popen(['docker','stats','--format','{{json .}}',*names,*([args.sampler_container] if args.sampler_container else [])],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     def collect():
         for line in stats.stdout:
             try:
@@ -196,12 +210,12 @@ def measure(args):
             for backend,url,container in ordered:
                 docker('restart',container)
                 ready=False
+                entry[backend+'_readiness_failures']=[]
                 for _ in range(300):
                     try:
-                        with urllib.request.urlopen(url+'/health',timeout=1) as response:
-                            ready=response.status==200
-                    except OSError:
-                        pass
+                        ready=probe(url,'/health').get('ok') is True
+                    except (OSError,subprocess.CalledProcessError) as exc:
+                        entry[backend+'_readiness_failures'].append(type(exc).__name__)
                     if ready:
                         break
                     time.sleep(.1)
@@ -210,7 +224,7 @@ def measure(args):
                 query = {'name':case['name'],'method':'GET','path':'/read?case='+quote(canonical(case),safe=''),
                          'expectedStatus':200,'samples':args.samples,'concurrency':[1,2,5]}
                 entry[backend+'_measurement_start']=time.monotonic()
-                entry[backend] = run_case(url,query,'')
+                entry[backend] = json.loads(docker('exec',args.sampler_container,'python','/source/workload_control.py','sample','--base',url,'--case-json',canonical(query))) if args.sampler_container else run_case(url,query,'')
                 entry[backend+'_measurement_end']=time.monotonic()
             expected = oracle['cases'][case['name']]['semantic_sha256']
             entry['oracle_equivalent'] = all(entry[b]['first']['status']==200 and entry[b]['first']['error'] is None and entry[b]['first']['semantic_sha256']==expected
@@ -233,6 +247,22 @@ def measure(args):
         raise SystemExit(2)
 
 
+def observer(args):
+    import urllib.request
+    parsed=urlparse(args.base)
+    if parsed.scheme!='http' or parsed.hostname not in (PREFIX+'sqlite',PREFIX+'client') or parsed.port!=8080 or parsed.path!='' or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError('only owned internal adapter endpoints allowed')
+    if args.command=='probe':
+        with urllib.request.urlopen(args.base+args.path,timeout=30) as response:
+            result=json.load(response)
+    else:
+        case=json.loads(args.case_json)
+        if case['method']!='GET' or not case['path'].startswith('/read?case='):
+            raise ValueError('observer may only read the explicit narrow workload')
+        result=request(args.base,case,'') if args.single else run_case(args.base,case,'')
+    print(canonical(result))
+
+
 def main():
     p=argparse.ArgumentParser()
     subs=p.add_subparsers(dest='command',required=True)
@@ -252,8 +282,17 @@ def main():
     for key in ('manifest','oracle','output','sqlite-container','postgres-container','pg-container','sqlite-url','postgres-url'):
         run.add_argument('--'+key,required=True)
     run.add_argument('--samples',type=int,default=20)
+    run.add_argument('--sampler-container')
+    for name in ('sample','probe'):
+        obs=subs.add_parser(name)
+        obs.add_argument('--base',required=True)
+        if name=='sample':
+            obs.add_argument('--case-json',required=True)
+            obs.add_argument('--single',action='store_true')
+        else:
+            obs.add_argument('--path',choices=('/health','/environment'),required=True)
     args=p.parse_args()
-    {'prepare':prepare,'migrate-copy':derive,'scale2x':derive,'manifest':manifest,'measure':measure}[args.command](args)
+    {'prepare':prepare,'migrate-copy':derive,'scale2x':derive,'manifest':manifest,'measure':measure,'probe':observer,'sample':observer}[args.command](args)
 
 
 if __name__=='__main__':
