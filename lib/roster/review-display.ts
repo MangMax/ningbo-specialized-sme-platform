@@ -57,6 +57,21 @@ export function reviewTimeLabel(value: string | null | undefined): string {
   return formatFetchTime(value) ?? '未记录'
 }
 
+/**
+ * #108: an absent actor is a real answer ("not recorded"), not a reason to invent a user.
+ * Never render a placeholder id such as `unknown`, `system` or `admin`.
+ */
+export function recordedActorLabel(actor: { type: 'user' | 'agent'; id: string } | null | undefined): string {
+  if (!actor) return '未记录'
+  const kind = actor.type === 'agent' ? '代理' : '人工'
+  return actor.id ? `${kind} · ${actor.id}` : '未记录'
+}
+
+/** Only a genuinely recorded business rule version is shown; protocol/schema versions never substitute. */
+export function recordedRuleVersionLabel(value: string | null | undefined): string {
+  return value?.trim() ? value : '未记录'
+}
+
 export function reviewDateLabel(value: string | null | undefined): string {
   const label = formatFetchTime(value)
   return label ? label.slice(0, 10) : '未记录'

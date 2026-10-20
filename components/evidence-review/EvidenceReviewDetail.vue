@@ -4,7 +4,7 @@ import { useEvidenceReviewRefresh } from '~/composables/useEvidenceReviewRefresh
 import { useQuery } from '@pinia/colada'
 import type { ImpactDetail } from '~~/lib/roster/evidence-review-ui'
 import { impactClassificationLabels, lineageLabels } from '~~/lib/roster/evidence-review-ui'
-import { impactDecisionRoleLabel, impactEffectiveLineage, reviewTimeLabel, titleLabel, directionLabel } from '~~/lib/roster/review-display'
+import { impactDecisionRoleLabel, impactEffectiveLineage, recordedActorLabel, recordedRuleVersionLabel, reviewTimeLabel, titleLabel, directionLabel } from '~~/lib/roster/review-display'
 import EvidenceImpactSources from './EvidenceImpactSources.vue'
 import EvidenceReviewForm from './EvidenceReviewForm.vue'
 import QueryCoverageDetails from './QueryCoverageDetails.vue'
@@ -33,7 +33,7 @@ function receiptLines(updated: ImpactDetail, action?: string): string[] {
   const lines: string[] = []
   const baseline = updated.reviewedBaseline
   if (baseline) {
-    lines.push(`复核至修订 #${baseline.reviewedRevisionId} · ${baseline.actor.type === 'agent' ? '代理' : '人工'} · ${baseline.actor.id}`)
+    lines.push(`复核至修订 #${baseline.reviewedRevisionId} · 操作人：${recordedActorLabel(baseline.actor)}`)
     lines.push(`复核依据：${baseline.basis}`)
   } else {
     lines.push('复核状态已更新为已复核；本次复核回执未返回，请以决定历史为准。')
@@ -189,10 +189,10 @@ async function reloadCurrent() {
           class="bg-muted/20 flex min-w-0 flex-col gap-1 rounded-md border px-3 py-2.5 text-[13px] leading-5"
         >
           <h4 class="text-sm font-medium">已登记的证据复核</h4>
-          <p>复核至修订 #{{ data.reviewedBaseline.reviewedRevisionId }} · {{ data.reviewedBaseline.actor.type === 'agent' ? '代理' : '人工' }} · {{ data.reviewedBaseline.actor.id }}</p>
+          <p>复核至修订 #{{ data.reviewedBaseline.reviewedRevisionId }} · 操作人：{{ recordedActorLabel(data.reviewedBaseline.actor) }}</p>
           <p>复核依据：{{ data.reviewedBaseline.basis }}</p>
           <p>
-            规则：{{ data.reviewedBaseline.ruleVersion }} ·
+            业务规则版本：{{ recordedRuleVersionLabel(data.reviewedBaseline.ruleVersion) }} ·
             生效：{{ reviewTimeLabel(data.reviewedBaseline.effectiveAt) }} ·
             登记：{{ reviewTimeLabel(data.reviewedBaseline.recordedAt) }}
           </p>
@@ -325,10 +325,10 @@ async function reloadCurrent() {
           class="bg-muted/20 flex min-w-0 flex-col gap-1 rounded-md border px-3 py-2.5 text-[13px] leading-5"
         >
           <h4 class="text-sm font-medium">已登记的证据复核</h4>
-          <p>复核至修订 #{{ data.reviewedBaseline.reviewedRevisionId }} · {{ data.reviewedBaseline.actor.type === 'agent' ? '代理' : '人工' }} · {{ data.reviewedBaseline.actor.id }}</p>
+          <p>复核至修订 #{{ data.reviewedBaseline.reviewedRevisionId }} · 操作人：{{ recordedActorLabel(data.reviewedBaseline.actor) }}</p>
           <p>复核依据：{{ data.reviewedBaseline.basis }}</p>
           <p>
-            规则：{{ data.reviewedBaseline.ruleVersion }} ·
+            业务规则版本：{{ recordedRuleVersionLabel(data.reviewedBaseline.ruleVersion) }} ·
             生效：{{ reviewTimeLabel(data.reviewedBaseline.effectiveAt) }} ·
             登记：{{ reviewTimeLabel(data.reviewedBaseline.recordedAt) }}
           </p>

@@ -6,7 +6,7 @@ import {
   DIFFERENCE_STATUSES,
   TITLES,
 } from '~~/lib/labels'
-import { decisionOriginLabel, decisionVersionActionLabel, reviewTimeLabel } from '~~/lib/roster/review-display'
+import { decisionOriginLabel, decisionVersionActionLabel, recordedActorLabel, recordedRuleVersionLabel, reviewTimeLabel } from '~~/lib/roster/review-display'
 import { Badge } from '@/components/ui/badge'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
@@ -46,16 +46,14 @@ defineProps<{ decision: DecisionVersion; label?: string }>()
         <dt class="text-muted-foreground">原证据</dt>
         <dd>查询 #{{ decision.evidenceQueryId ?? '未指定' }} · 原行 #{{ decision.evidenceRelationId ?? '未指定' }}</dd>
       </template>
-      <template v-if="decision.actor">
-        <dt class="text-muted-foreground">记录人</dt>
-        <dd>{{ decision.actor.type === 'agent' ? '代理' : '人工' }} · {{ decision.actor.id }}</dd>
-      </template>
+      <dt class="text-muted-foreground">操作人</dt>
+      <dd>{{ recordedActorLabel(decision.actor) }}</dd>
       <template v-if="decision.basis">
         <dt class="text-muted-foreground">决定依据</dt>
         <dd>{{ decision.basis }}</dd>
       </template>
-      <dt class="text-muted-foreground">规则版本</dt>
-      <dd>{{ decision.ruleVersion ?? '未记录' }}</dd>
+      <dt class="text-muted-foreground">业务规则版本</dt>
+      <dd>{{ recordedRuleVersionLabel(decision.ruleVersion) }}</dd>
       <dt class="text-muted-foreground">生效 / 登记</dt>
       <dd>{{ reviewTimeLabel(decision.effectiveAt) }} / {{ reviewTimeLabel(decision.recordedAt) }}</dd>
     </dl>

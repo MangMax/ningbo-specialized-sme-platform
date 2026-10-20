@@ -135,9 +135,10 @@ export function getImpact114(db:DecisionDb,id:number) {
   const present=!!db.get(sql`select 1 from enterprise where id=${row.enterpriseId}`)
   const queryCoverage=present?readQueryCoverage(db,scope):null
   const decisionUnavailable=!db.get(sql`select 1 from difference_reason where id=${row.decisionId}`)
-  const review = db.get<{ reviewedRevisionId: number; actor: string; basis: string; ruleVersion: string; effectiveAt: string; recordedAt: string }>(sql`select reviewed_revision_id reviewedRevisionId,actor,basis,rule_version ruleVersion,effective_at effectiveAt,recorded_at recordedAt from evidence_review_receipt_114
+  const review = db.get<{ reviewedRevisionId: number; actor: string | null; basis: string; ruleVersion: string | null; effectiveAt: string; recordedAt: string }>(sql`select reviewed_revision_id reviewedRevisionId,actor,basis,rule_version ruleVersion,effective_at effectiveAt,recorded_at recordedAt from evidence_review_receipt_114
     where enterprise_id=${row.enterpriseId} and title_code=${row.titleCode} and direction=${row.direction} and (decision_id=${row.decisionId} or source_decision_id=${row.decisionId}) and reviewed_revision_id is not null order by id desc limit 1`)
-  const reviewedBaseline = review ? {...review,actor:JSON.parse(review.actor)} : null
+  // actor 'null' and a NULL legacy column both mean "not recorded"; never synthesize a user.
+  const reviewedBaseline = review ? {...review,actor:review.actor == null ? null : JSON.parse(review.actor)} : null
   return {...hydrate(db,row),reviewedBaseline,currentDecision:present?currentDecision102(db,scope):null,evidenceToken:readEvidenceToken113(db,scope),queryCoverage,gaps:{decisionUnavailable,coverageStatus:queryCoverage?.status??'unknown',truncated:queryCoverage?.truncated??false,subjectUnknown:!present || !queryCoverage?.sources.some(s=>['exact_uscc','matched_relation'].includes(s.subjectMatch)),projectionReady:readEvidenceToken113(db,scope).projectionReady}}
 }
 export function previewImpacts114(db:DecisionDb,input:z.infer<typeof impactPreview114>) {

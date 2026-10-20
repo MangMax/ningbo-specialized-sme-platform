@@ -10,7 +10,7 @@ export interface ImpactRow extends ReviewScope {
   classification: string; pending: boolean; lineage: string; oldDecision: DecisionVersion | null
 }
 export interface ImpactDetail extends ImpactRow {
-  reviewedBaseline?: { reviewedRevisionId: number; actor: { type: 'user' | 'agent'; id: string }; basis: string; ruleVersion: string; effectiveAt: string; recordedAt: string } | null
+  reviewedBaseline?: { reviewedRevisionId: number; actor: { type: 'user' | 'agent'; id: string } | null; basis: string; ruleVersion: string | null; effectiveAt: string; recordedAt: string } | null
   currentDecision: QueryAssessment['currentDecision'] | null
   evidenceToken: ReviewScope & { decisionId: number | null; latestRevisionId: number; projectionReady: boolean }
   queryCoverage: QueryAssessment['queryCoverage'] | null
