@@ -3,7 +3,7 @@ import { COMPARISON_DIRECTIONS } from '~~/lib/comparison'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '~~/lib/labels'
 import { listRosterDifferences } from '~~/lib/roster/difference-list'
 import { createReadTurns } from '../../utils/read-turn'
-import { withEnterpriseReadSignal } from '../../utils/enterprise-read-signal'
+import { withReadTurn } from '../../utils/read-turn-http'
 import { parseRosterDifferenceQuery } from '../../utils/roster-read-query'
 
 /**
@@ -82,11 +82,5 @@ export default defineEventHandler((event) => {
   // Preserve owner-connection acquisition and validation before deferral.
   useDb()
   const filter = differenceOptions(getQuery(event))
-  return withEnterpriseReadSignal(event, async signal => {
-    if (signal.aborted) return
-    const pending = differenceReads.submit(filter)
-    const cancel = () => pending.cancel()
-    signal.addEventListener('abort', cancel, { once: true })
-    try { return await pending.result } finally { signal.removeEventListener('abort', cancel) }
-  })
+  return withReadTurn(event, differenceReads, filter)
 })

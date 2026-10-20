@@ -1,3 +1,5 @@
+import { createReadTurns } from '../../utils/read-turn'
+import { withReadTurn } from '../../utils/read-turn-http'
 import { useDb } from '@db'
 import { listRosterRecognitions } from '~~/lib/roster/recognitions'
 import { parseRosterRecognitionQuery } from '../../utils/roster-read-query'
@@ -59,6 +61,13 @@ defineRouteMeta({
   },
 })
 
+function recognitionOptions(query: Record<string, unknown>) {
+  return { ...parseRosterRecognitionQuery(query) }
+}
+const recognitionReads = createReadTurns((filter: ReturnType<typeof recognitionOptions>) =>
+  listRosterRecognitions(useDb(), filter))
+
 export default defineEventHandler((event) => {
-  return listRosterRecognitions(useDb(), parseRosterRecognitionQuery(getQuery(event)))
+  useDb()
+  return withReadTurn(event, recognitionReads, recognitionOptions(getQuery(event)))
 })

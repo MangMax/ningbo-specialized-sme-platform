@@ -71,3 +71,20 @@ it('releases cancelled queue count and bytes without executing or inventing an e
   expect(await after.result).toBe(5)
   expect(seen).toEqual([4, 5])
 })
+
+it('shares one turn and sixteen retained slots across different fixed readers', async () => {
+  let tick = 0, watching = true
+  const ticks: number[] = [], seen: string[] = []
+  const observe = () => { tick++; if (watching) setImmediate(observe) }
+  setImmediate(observe)
+  const a = createReadTurns((n: number) => { ticks.push(tick); seen.push(`a${n}`); return n })
+  const b = createReadTurns((n: number) => { ticks.push(tick); seen.push(`b${n}`); return n })
+  const queued = Array.from({ length: 16 }, (_, n) => (n % 2 ? b : a).submit(n))
+  const overflow = b.submit(99)
+  expect(seen).toEqual(['b99'])
+  await overflow.result
+  await Promise.all(queued.map(q => q.result))
+  watching = false
+  expect(seen.slice(1)).toEqual(['a0', 'b1', 'a2', 'b3', 'a4', 'b5', 'a6', 'b7', 'a8', 'b9', 'a10', 'b11', 'a12', 'b13', 'a14', 'b15'])
+  expect(new Set(ticks.slice(1)).size).toBe(16)
+})

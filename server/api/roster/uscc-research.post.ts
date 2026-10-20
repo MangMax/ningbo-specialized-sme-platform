@@ -1,3 +1,5 @@
+import { createReadTurns } from '../../utils/read-turn'
+import { withReadTurn } from '../../utils/read-turn-http'
 import { useDb } from '@db'
 import { collectUsccTargets, pageUsccChecklist, planUsccResearch } from '~~/server/utils/uscc-research'
 import { parseUsccResearchBody } from '~~/server/utils/uscc-research-query'
@@ -67,9 +69,8 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler(async (event) => {
-  const parsed = parseUsccResearchBody(await readBody(event))
-  if (!parsed.ok) throw createError({ statusCode: 400, statusMessage: parsed.message })
+type ResearchOptions = Extract<ReturnType<typeof parseUsccResearchBody>, { ok: true }>
+function readResearch(parsed: ResearchOptions) {
   const db = useDb()
   // **一次全表扫描**：清单与计划共用同一份目标行（见 `collectUsccTargets` 的注释）。
   const targets = collectUsccTargets(db, parsed.planFilter)
@@ -103,4 +104,22 @@ export default defineEventHandler(async (event) => {
         }
       : {}),
   }
+}
+const researchReads = createReadTurns((input: { options: string }) =>
+  readResearch(JSON.parse(input.options) as ResearchOptions))
+
+export default defineEventHandler(async (event) => {
+  const parsed = parseUsccResearchBody(await readBody(event))
+  if (!parsed.ok) throw createError({ statusCode: 400, statusMessage: parsed.message })
+  useDb()
+  // Verdict files contain arbitrary original objects. Never retain them in
+  // the FIFO; preserve the original synchronous read/error path for these inputs.
+  // Non-finite JSON numbers likewise cannot round-trip without changing meaning.
+  if (parsed.verdictFiles.length || parsed.claims.some(claim => claim.enterpriseId != null && !Number.isFinite(claim.enterpriseId)) ||
+    parsed.platformClaims.some(claim => claim.enterpriseId != null && !Number.isFinite(claim.enterpriseId))) {
+    return readResearch(parsed)
+  }
+  // The parser projects named primitive options/claims. No raw body, event,
+  // request or runtime config is captured by the fixed reader.
+  return withReadTurn(event, researchReads, { options: JSON.stringify(parsed) })
 })

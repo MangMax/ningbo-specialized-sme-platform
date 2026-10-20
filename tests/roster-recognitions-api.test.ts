@@ -92,12 +92,12 @@ type RecognitionRow = {
   evidence: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
   undatedAwardIds: number[]
 }
-let handlerRecognitions: (event: unknown) => {
+let handlerRecognitions: (event: unknown) => Promise<{
   rows: RecognitionRow[]
   counts: { titlePairs: number; enterprises: number; titles: Record<string, number> }
   page: number
   pageSize: number
-}
+}>
 let handlerEnterprises: (event: unknown) => Promise<{
   rows: { enterpriseId: number; name: string; firstRecognition: { titleCode: string; year: number | null; status: string }[] }[]
   counts: { total: number; titlePairs: number; recognitionPairs: number }
@@ -140,9 +140,9 @@ beforeAll(async () => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('GET /api/roster/recognitions(契约 §7.5)', () => {
-  it('不筛 = 全部;信封是 rows / counts / page / pageSize', () => {
+  it('不筛 = 全部;信封是 rows / counts / page / pageSize', async () => {
     query = {}
-    const out = handlerRecognitions({})
+    const out = await handlerRecognitions({})
     expect(Object.keys(out).sort()).toEqual(['counts', 'page', 'pageSize', 'rows'])
     expect(out.page).toBe(1)
     expect(out.pageSize).toBe(50)
@@ -153,9 +153,9 @@ describe('GET /api/roster/recognitions(契约 §7.5)', () => {
     expect(out.counts.titles).toMatchObject({ specialized_sme: 2 })
   })
 
-  it('行形状 = §7.5 的五个字段 + 增量(身份、状态、待确认原因、出处、无法定年的事件)', () => {
+  it('行形状 = §7.5 的五个字段 + 增量(身份、状态、待确认原因、出处、无法定年的事件)', async () => {
     query = {}
-    const row = handlerRecognitions({}).rows.find((r) => r.enterpriseId === jiaId)!
+    const row = (await handlerRecognitions({})).rows.find((r) => r.enterpriseId === jiaId)!
     expect(Object.keys(row).sort()).toEqual([
       'district',
       'enterpriseId',
@@ -181,9 +181,9 @@ describe('GET /api/roster/recognitions(契约 §7.5)', () => {
     expect(row.undatedAwardIds).toEqual([])
   })
 
-  it('★ 出处可回到「哪个文件、哪个附件、哪个序号」—— 不是只给一个年份数字', () => {
+  it('★ 出处可回到「哪个文件、哪个附件、哪个序号」—— 不是只给一个年份数字', async () => {
     query = {}
-    const row = handlerRecognitions({}).rows.find((r) => r.enterpriseId === jiaId)!
+    const row = (await handlerRecognitions({})).rows.find((r) => r.enterpriseId === jiaId)!
     expect(row.evidence).toEqual([
       { sourceFile: FILE_2022, attachment: '附件一', listNo: 74, page: 74 },
     ])
@@ -197,9 +197,9 @@ describe('GET /api/roster/recognitions(契约 §7.5)', () => {
     expect(evidence.map((v) => v.listNo)).toEqual([74])
   })
 
-  it('待确认的企业如实带出状态与原因', () => {
+  it('待确认的企业如实带出状态与原因', async () => {
     query = { status: 'pending' }
-    const out = handlerRecognitions({})
+    const out = await handlerRecognitions({})
     expect(out.rows.map((r) => r.enterpriseId)).toEqual([yiId])
     expect(out.rows[0]!.status).toBe('pending')
     expect(out.rows[0]!.pendingReason).toBe('no_evidence')
@@ -207,27 +207,27 @@ describe('GET /api/roster/recognitions(契约 §7.5)', () => {
     query = {}
   })
 
-  it('title / year / status 可筛,多值取或;三者之间取与', () => {
+  it('title / year / status 可筛,多值取或;三者之间取与', async () => {
     query = { title: 'specialized_sme' }
-    expect(handlerRecognitions({}).rows).toHaveLength(2)
+    expect((await handlerRecognitions({})).rows).toHaveLength(2)
     query = { year: '2021' }
-    expect(handlerRecognitions({}).rows).toHaveLength(2)
+    expect((await handlerRecognitions({})).rows).toHaveLength(2)
     query = { year: '1999' }
-    expect(handlerRecognitions({}).rows).toHaveLength(0)
+    expect((await handlerRecognitions({})).rows).toHaveLength(0)
     query = { title: 'specialized_sme', status: 'pending' }
-    expect(handlerRecognitions({}).rows.map((r) => r.enterpriseId)).toEqual([yiId])
+    expect((await handlerRecognitions({})).rows.map((r) => r.enterpriseId)).toEqual([yiId])
     query = { status: ['confirmed', 'pending'] }
-    expect(handlerRecognitions({}).rows).toHaveLength(2)
+    expect((await handlerRecognitions({})).rows).toHaveLength(2)
     query = {}
   })
 
-  it('分页参数生效,非法值退回默认而不是报错', () => {
+  it('分页参数生效,非法值退回默认而不是报错', async () => {
     query = { pageSize: '1' }
-    const one = handlerRecognitions({})
+    const one = await handlerRecognitions({})
     expect(one.rows).toHaveLength(1)
     expect(one.counts.titlePairs).toBe(2) // 计数与筛选同口径、先于分页
     query = { pageSize: 'abc', page: '0' }
-    const fallback = handlerRecognitions({})
+    const fallback = await handlerRecognitions({})
     expect(fallback.page).toBe(1)
     expect(fallback.pageSize).toBe(50)
     query = {}
@@ -389,7 +389,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
       db = useDb({ dbPath: join(dir, 'empty.db') })
       query = {}
 
-      const recognitions = handlerRecognitions({})
+      const recognitions = await handlerRecognitions({})
       expect(recognitions.rows).toEqual([])
       expect(recognitions.counts).toMatchObject({ titlePairs: 0, enterprises: 0 })
 

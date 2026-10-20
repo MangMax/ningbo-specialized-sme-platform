@@ -5,23 +5,24 @@
  */
 type Primitive = string | number | boolean | null | undefined
 type ReadOptions = Exclude<Primitive, undefined> | { [key: string]: Primitive | Primitive[] }
+type Pending = { encoded: string; bytes: number; read(input: unknown): unknown; resolve(value: unknown): void; reject(error: unknown): void }
+const queue: Pending[] = []
+let retainedBytes = 0
+let immediate: ReturnType<typeof setImmediate> | undefined
+function arm() {
+  if (immediate || !queue.length) return
+  immediate = setImmediate(() => {
+    immediate = undefined
+    const job = queue.shift()!
+    retainedBytes -= job.bytes
+    try { job.resolve(job.read(JSON.parse(job.encoded))) } catch (error) { job.reject(error) }
+    // Scheduling from inside this callback enforces a new check iteration;
+    // never drain the FIFO here or schedule independent per-request immediates.
+    arm()
+  })
+}
 export function createReadTurns<I extends ReadOptions, O>(read: (input: I) => O) {
-  type Pending = { encoded: string; bytes: number; resolve(value: O | undefined): void; reject(error: unknown): void }
-  const queue: Pending[] = []
-  let retainedBytes = 0
-  let immediate: ReturnType<typeof setImmediate> | undefined
-  function arm() {
-    if (immediate || !queue.length) return
-    immediate = setImmediate(() => {
-      immediate = undefined
-      const job = queue.shift()!
-      retainedBytes -= job.bytes
-      try { job.resolve(read(JSON.parse(job.encoded) as I)) } catch (error) { job.reject(error) }
-      // Scheduling from inside this callback enforces a new check iteration;
-      // never drain the FIFO here or schedule independent per-request immediates.
-      arm()
-    })
-  }
+  const reader = read as (input: unknown) => unknown
   return {
     submit(input: I) {
       const encoded = JSON.stringify(input)
@@ -31,7 +32,7 @@ export function createReadTurns<I extends ReadOptions, O>(read: (input: I) => O)
       }
       let job: Pending
       const result = new Promise<O | undefined>((resolve, reject) => {
-        job = { encoded, bytes, resolve, reject }
+        job = { encoded, bytes, read: reader, resolve: resolve as (value: unknown) => void, reject }
         queue.push(job)
         retainedBytes += bytes
         arm()
@@ -48,4 +49,18 @@ export function createReadTurns<I extends ReadOptions, O>(read: (input: I) => O)
       } }
     },
   }
+}
+
+/** Cancellation belongs to the transport. Its signal/listener never enters the
+ * FIFO, and a disconnected transport gets no invented domain rejection. */
+export async function runReadTurn<I, O>(
+  turns: { submit(input: I): { result: Promise<O | undefined>; cancel(): void } },
+  input: I,
+  signal?: AbortSignal,
+) {
+  if (signal?.aborted) return
+  const pending = turns.submit(input)
+  const cancel = () => pending.cancel()
+  signal?.addEventListener('abort', cancel, { once: true })
+  try { return await pending.result } finally { signal?.removeEventListener('abort', cancel) }
 }
