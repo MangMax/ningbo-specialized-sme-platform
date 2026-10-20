@@ -37,6 +37,26 @@ describe('统一表格分页', () => {
     }
     expect(view.emitted('update:pageSize')).toEqual([[50], [200], [3]])
   })
+  it('自定义每页条数后，触发器显示实际数量而不是被截断的“自定义…”', async () => {
+    const view = pagination()
+    // Reka fills the trigger's value from the item text that is mounted with it.
+    await view.vm.$nextTick()
+    const trigger = () => view.get('[aria-label="每页条数"]').text()
+    expect(trigger()).toBe('25')
+    view.getComponent(Select).vm.$emit('update:modelValue', 'custom')
+    await view.vm.$nextTick()
+    // Choosing 自定义… keeps the current size visible until a number is typed.
+    expect(trigger()).toBe('25')
+    expect(view.text()).not.toContain('自定义…')
+    await view.setProps({ pageSize: 3 })
+    await view.vm.$nextTick()
+    expect(view.getComponent(Select).props('modelValue')).toBe('3')
+    // A size that is not a preset opens the input directly and still shows the number.
+    await view.setProps({ pageSize: 37 })
+    await view.vm.$nextTick()
+    expect(view.getComponent(Select).props('modelValue')).toBe('37')
+    expect(view.get<HTMLInputElement>('[aria-label="自定义每页条数"]').element.value).toBe('37')
+  })
   it('非预设数量直接显示输入，空结果仍可调数量但无无效页码', () => {
     const view = pagination({ page: 1, pageSize: 37, total: 0, unit: '个文件' })
     expect(view.get<HTMLInputElement>('[aria-label="自定义每页条数"]').element.value).toBe('37')

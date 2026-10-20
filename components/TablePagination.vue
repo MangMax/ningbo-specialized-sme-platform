@@ -21,13 +21,18 @@ const emit = defineEmits<{
 }>()
 const presets = [25, 50, 100, 200]
 const custom = ref(false)
+// The trigger always shows a number: a preset, or the size actually in effect.
+// "自定义…" only names the extra option in the list; showing that label in the
+// trigger (where it gets clipped to "自定…") said nothing about rows per page.
 const sizeModel = computed({
-  get: () => custom.value || !presets.includes(props.pageSize) ? 'custom' : String(props.pageSize),
+  get: () => String(props.pageSize),
   set: (value: string) => {
     custom.value = value === 'custom'
+    // Picking 自定义… keeps the current size until a number is typed.
     if (!custom.value) emit('update:pageSize', Number(value))
   },
 })
+const customOpen = computed(() => custom.value || !presets.includes(props.pageSize))
 const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)))
 function onSizeInput(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
@@ -50,7 +55,7 @@ function onSizeInput(event: Event) {
           <SelectItem value="custom">自定义…</SelectItem>
         </SelectContent>
       </Select>
-      <Input v-if="sizeModel === 'custom'" :model-value="pageSize" type="number" min="1" max="200" class="bg-card h-8 w-20 shadow-none" aria-label="自定义每页条数" :disabled="loading" @change="onSizeInput" />
+      <Input v-if="customOpen" :model-value="pageSize" type="number" min="1" max="200" class="bg-card h-8 w-20 shadow-none" aria-label="自定义每页条数" :disabled="loading" @change="onSizeInput" />
       <span class="text-muted-foreground">{{ unit }}</span>
     </div>
     <span class="text-muted-foreground tabular-nums" data-testid="table-total">

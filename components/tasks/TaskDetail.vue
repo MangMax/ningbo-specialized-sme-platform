@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 import type { TaskSummary } from '~~/lib/task-center'
 import { TASK_LABELS, TASK_STATES } from '~~/lib/task-center'
 import { useTaskPolling } from '~/composables/useTaskPolling'
@@ -43,17 +43,22 @@ const notice = ref('')
 const showTechnical = ref(false)
 const panel = useTemplateRef<HTMLElement>('panel')
 
-// Reveal the detail once, when this task is opened — never on a poll, and never
-// by moving focus, so a person reading the page is not thrown around.
-onMounted(() => {
+// Reveal the detail once, when a person opens a task — never on a poll, never when
+// the credential changes (authorizing from the page keeps the card mounted), and
+// never by moving focus, so a person reading the page is not thrown around.
+function reveal() {
   const element = panel.value
   if (!element) return
   const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
   element.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' })
-})
+}
 
-// A different task never inherits the previous task's notices.
-watch(key, () => { notice.value = ''; cancelRequested.value = false; showTechnical.value = false })
+// A different task never inherits the previous task's notices; opening a task is
+// also the only moment that scrolls it into view.
+watch(key, () => {
+  notice.value = ''; cancelRequested.value = false; showTechnical.value = false
+  void nextTick(reveal)
+}, { flush: 'post', immediate: true })
 
 const displayKind = computed(() => {
   const kind = data.value?.kind
@@ -111,7 +116,8 @@ async function act(action: 'cancel' | 'retry') {
       <CardHeader class="flex flex-col gap-2">
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="flex min-w-0 flex-col gap-1">
-            <CardTitle id="task-detail-title">任务详情</CardTitle>
+            <!-- 这张卡的标题就是它所在区块的 h2（页面 h1 → 列表 h2 / 详情 h2 → 折叠 h3）。 -->
+            <CardTitle id="task-detail-title" as="h2">任务详情</CardTitle>
             <CardDescription v-if="data" class="flex flex-wrap items-center gap-2">
               <span class="text-foreground font-medium">{{ displayKind }}</span>
               <!-- The task's own name often restates its kind; show it only when it adds something. -->
