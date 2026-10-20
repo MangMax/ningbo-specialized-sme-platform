@@ -23,13 +23,13 @@ async function mcp(args: Record<string, unknown>) {
   return JSON.parse(payload.result.content[0].text)
 }
 
-function linkRecognized(enterpriseId: number, eventId: number, conditions: Record<string, string>, role: 'recognized_corrob' | 'current_context' = 'recognized_corrob') {
+function linkRecognized(enterpriseId: number, eventId: number, conditions: Record<string, string>, role: 'recognized_corrob' | 'current_context' = 'recognized_corrob', rawFields: Record<string, unknown> = {}, multiTitle = false) {
   const enterprise = f.db.select().from(s.enterprise).all().find(row => row.id === enterpriseId)!
   const stamp = new Date(Date.now() + ++linkOffset * 1000).toISOString()
-  const query = f.db.insert(s.platformQuery).values({ interface: 'recognized_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: stamp, status: 'success', collectionEvidence: {
-    source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and', ...conditions }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: stamp, completedAt: stamp, rows: [], pages: [], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 },
+  const query = f.db.insert(s.platformQuery).values({ interface: 'recognized_list', queryKey: enterprise.usccNorm!, rdjb: multiTitle ? '1,2,3' : '2', titleCode: multiTitle ? null : 'specialized_sme', queriedAt: stamp, status: 'success', collectionEvidence: {
+    source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and', ...conditions }, titleScope: { mode: 'selected', rdjb: multiTitle ? ['1','2','3'] : ['2'] }, queriedAt: stamp, completedAt: stamp, rows: [rawFields], pages: [{ source:'queryBusList', rdjb:'2', page:1, status:'success', fetchedCount:1, declaredTotal:1, maxPage:1 }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 },
   } as any }).returning().get()
-  const relation = f.db.insert(s.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId, usccRaw: enterprise.usccNorm, nameRaw: enterprise.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }).returning().get()
+  const relation = f.db.insert(s.platformRelation).values({ queryId: query.id, sequenceNo: 1, enterpriseId, usccRaw: enterprise.usccNorm, nameRaw: enterprise.name, rawFields, verificationStatus: 'confirmed', matchBasis: 'uscc' }).returning().get()
   const request = { idempotencyKey: `filter-155-${relation.id}`, sourceIdentity: `synthetic/filter-155/${relation.id}`, actor: { type: 'agent' as const, id: 'test' }, basis: 'synthetic confirmed event and recognized row', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { type: 'event_recognized' as const, eventId, relationId: relation.id, role } }] }
   const plan = preflightRecordCorrespondences(f.db, request)
   commitRecordCorrespondences(f.db, request, plan.planHash)
@@ -51,8 +51,8 @@ it('requires one current award and one confirmed recognized relation for valid a
   const current = f.candidate('当前周期', [{ eventType: 'award', year: year, batchSeq: 1 }])
   const old = f.candidate('旧周期借用', [{ eventType: 'award', year: year - 4, batchSeq: 1 }, { eventType: 'award', year, batchSeq: 1 }])
   const eventFor = (id: number, eventYear: number) => (f.db.$client.prepare('select e.id from record_event e join record r on r.id=e.record_id where r.enterprise_id=? and e.year=? and e.event_type=? order by e.id desc limit 1').get(id, eventYear, 'award') as { id: number }).id
-  const matchedRelation=linkRecognized(current.enterprise.id, eventFor(current.enterprise.id, year), { rddqrq: String(year + 2), whpcyear: String(year - 1), whpc: '2' })
-  linkRecognized(old.enterprise.id, eventFor(old.enterprise.id, year - 4), { rddqrq: String(year + 2), whpcyear: String(year - 1), whpc: '2' })
+  const matchedRelation=linkRecognized(current.enterprise.id, eventFor(current.enterprise.id, year), { rddqrq: String(year + 2), whpcyear: String(year - 1), whpc: '2' }, 'recognized_corrob', {rddqrq:`${year+2}-11-20`,whpcyear:String(year-1),whpc:'2'})
+  linkRecognized(old.enterprise.id, eventFor(old.enterprise.id, year - 4), { rddqrq: String(year + 2), whpcyear: String(year - 1), whpc: '2' }, 'recognized_corrob', {rddqrq:`${year+2}-11-20`,whpc:`${year-1}-2`})
   const params = { validYear: String(year + 2), maintenanceYear: String(year - 1), maintenanceBatch: '2' }
   const result = await query(params)
   expect(result.response.status).toBe(200)
@@ -67,14 +67,104 @@ it('requires one current award and one confirmed recognized relation for valid a
 it('does not combine valid year and maintenance batch from different recognized rows or context-only links', async () => {
   const a = f.candidate('同周期不同来源')
   const eventId = (f.db.$client.prepare('select e.id from record_event e join record r on r.id=e.record_id where r.enterprise_id=?').get(a.enterprise.id) as {id:number}).id
-  linkRecognized(a.enterprise.id,eventId,{rddqrq:String(year+2)})
-  linkRecognized(a.enterprise.id,eventId,{whpcyear:String(year-1),whpc:'3'})
-  linkRecognized(a.enterprise.id,eventId,{rddqrq:String(year+3),whpcyear:String(year-1),whpc:'3'},'current_context')
+  linkRecognized(a.enterprise.id,eventId,{rddqrq:String(year+2)},'recognized_corrob',{rddqrq:`${year+2}-06-01`})
+  linkRecognized(a.enterprise.id,eventId,{whpcyear:String(year-1),whpc:'3'},'recognized_corrob',{whpc:`${year-1}-3`})
+  linkRecognized(a.enterprise.id,eventId,{rddqrq:String(year+3),whpcyear:String(year-1),whpc:'3'},'current_context',{rddqrq:`${year+3}-06-01`,whpc:`${year-1}-3`})
   const valid = await query({ validYear:String(year+2) })
   expect(valid.body.total).toBe(1)
   expect((await query({ maintenanceYear:String(year-1),maintenanceBatch:'3' })).body.total).toBe(1)
   expect((await query({ validYear:String(year+2),maintenanceYear:String(year-1),maintenanceBatch:'3' })).body).toMatchObject({total:0,rows:[]})
   expect((await query({ validYear:String(year+3) })).body.total).toBe(0)
+})
+
+it('uses returned structured facts and leaves condition-only, malformed, and conflicting facts unknown', async () => {
+  const a=f.candidate('返回字段核验')
+  const eventId=(f.db.$client.prepare('select e.id from record_event e join record r on r.id=e.record_id where r.enterprise_id=?').get(a.enterprise.id) as {id:number}).id
+  linkRecognized(a.enterprise.id,eventId,{rddqrq:String(year+2),whpcyear:String(year-1),whpc:'2'})
+  let result=await query({})
+  expect(result.body).toMatchObject({total:1,rows:[{enterpriseId:a.enterprise.id,matchedValidYears:[],matchedMaintenance:[]}]})
+  expect(result.body.options).toMatchObject({validYears:[],maintenanceYears:[]})
+  expect((await mcp({validYear:year+2,maintenanceYear:year-1,maintenanceBatch:2})).total).toBe(0)
+  linkRecognized(a.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:'not-a-date',whpcyear:String(year-1),whpc:`${year-2}-2`})
+  result=await query({})
+  expect(result.body.rows[0]).toMatchObject({matchedValidYears:[],matchedMaintenance:[]})
+  expect((await query({maintenanceYear:String(year-1)})).body.total).toBe(0)
+})
+
+it('accepts the archived date-time form without inventing a due year or maintenance year', async () => {
+  const a=f.candidate('返回日期时间格式')
+  const eventId=(f.db.$client.prepare('select e.id from record_event e join record r on r.id=e.record_id where r.enterprise_id=?').get(a.enterprise.id) as {id:number}).id
+  linkRecognized(a.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:`${year+2}-11-21 11:41:36`,whpcyear:'',whpc:''})
+  const result=await query({validYear:String(year+2)})
+  expect(result.body).toMatchObject({total:1,rows:[{enterpriseId:a.enterprise.id,matchedValidYears:[year+2],matchedMaintenance:[]}]})
+  expect(result.body.options).toMatchObject({validYears:[year+2],maintenanceYears:[]})
+  expect((await mcp({validYear:year+2})).total).toBe(1)
+  expect((await query({validYear:String(year+3)})).body.total).toBe(0)
+})
+
+it('uses the restored award time and excludes terminated grant links from current filters', async () => {
+  const a=f.candidate('同源年再次认定',[
+    {eventType:'award',year:year-4,batchSeq:1},
+    {eventType:'review',year:year-4,batchSeq:1,decidedYear:year-3,reviewOutcome:'failed'},
+    {eventType:'award',year:year-4,decidedYear:year-1,batchSeq:1},
+  ])
+  const awards=f.db.$client.prepare('select e.id,e.decided_year as decidedYear from record_event e join record r on r.id=e.record_id where r.enterprise_id=? and e.event_type=? order by e.id').all(a.enterprise.id,'award') as {id:number;decidedYear:number|null}[]
+  linkRecognized(a.enterprise.id,awards[0]!.id,{},'recognized_corrob',{rddqrq:`${year+2}-11-20`,whpc:`${year-2}-2`})
+  linkRecognized(a.enterprise.id,awards[1]!.id,{},'recognized_corrob',{rddqrq:`${year+3}-11-20`,whpc:`${year-1}-3`})
+  const restored=await query({recognitionFrom:`${year-1}-01-01`,recognitionTo:`${year-1}-12-31`,validYear:String(year+3),maintenanceYear:String(year-1),maintenanceBatch:'3'})
+  expect(restored.body).toMatchObject({total:1,rows:[{enterpriseId:a.enterprise.id,recognition:{precision:'year',year:year-1},matchedValidYears:[year+3]}]})
+  expect(restored.body.rows[0].qualificationWitnesses.map((w:any)=>w.awardEventId)).toEqual([awards[1]!.id])
+  expect((await mcp({recognitionFrom:`${year-1}-01-01`,recognitionTo:`${year-1}-12-31`,validYear:year+3,maintenanceYear:year-1,maintenanceBatch:3})).total).toBe(1)
+  expect((await query({validYear:String(year+2)})).body.total).toBe(0)
+  expect((await query({recognitionFrom:`${year-4}-01-01`,recognitionTo:`${year-4}-12-31`})).body.total).toBe(0)
+})
+
+it('accepts confirmed row-position title in a multi-title archive and intersects facts in that same row', async () => {
+  const a=f.candidate('多称号归档位置')
+  const eventId=(f.db.$client.prepare('select e.id from record_event e join record r on r.id=e.record_id where r.enterprise_id=?').get(a.enterprise.id) as {id:number}).id
+  linkRecognized(a.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:`${year+2}-11-20`,whpc:`${year-1}-2`},true)
+  const filters={validYear:String(year+2),maintenanceYear:String(year-1),maintenanceBatch:'2'}
+  expect((await query(filters)).body).toMatchObject({total:1,rows:[{enterpriseId:a.enterprise.id}]})
+  expect((await mcp({validYear:year+2,maintenanceYear:year-1,maintenanceBatch:2})).total).toBe(1)
+})
+
+it('keeps conflicting returned valid years unknown for one grant instead of choosing a source', async () => {
+  const a=f.candidate('同授予矛盾返回')
+  const eventId=(f.db.$client.prepare('select e.id from record_event e join record r on r.id=e.record_id where r.enterprise_id=?').get(a.enterprise.id) as {id:number}).id
+  linkRecognized(a.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:`${year+2}-11-20`})
+  linkRecognized(a.enterprise.id,eventId,{},'recognized_corrob',{rddqrq:`${year+3}-11-20`})
+  const result=await query({})
+  expect(result.body).toMatchObject({total:1,options:{validYears:[]},rows:[{enterpriseId:a.enterprise.id,matchedValidYears:[]}]})
+  expect((await query({validYear:String(year+2)})).body.total).toBe(0)
+  expect((await mcp({validYear:year+3})).total).toBe(0)
+})
+
+it('keeps unknown-batch grant alternatives separate under combined filters', async () => {
+  const a=f.candidate('未定批次双授予',[
+    {eventType:'award',year:year-1,batchSeq:1},
+    {eventType:'award',year:year-1,batchSeq:null},
+  ])
+  const awards=f.db.$client.prepare('select e.id from record_event e join record r on r.id=e.record_id where r.enterprise_id=? and e.event_type=? order by e.id').all(a.enterprise.id,'award') as {id:number}[]
+  linkRecognized(a.enterprise.id,awards[0]!.id,{},'recognized_corrob',{rddqrq:`${year+2}-11-20`})
+  linkRecognized(a.enterprise.id,awards[1]!.id,{},'recognized_corrob',{whpc:`${year-1}-3`})
+  expect((await query({})).body).toMatchObject({total:1,rows:[{enterpriseId:a.enterprise.id}]})
+  expect((await query({validYear:String(year+2)})).body.total).toBe(1)
+  expect((await query({maintenanceYear:String(year-1),maintenanceBatch:'3'})).body.total).toBe(1)
+  expect((await query({validYear:String(year+2),maintenanceYear:String(year-1),maintenanceBatch:'3'})).body.total).toBe(0)
+  expect((await mcp({validYear:year+2,maintenanceYear:year-1,maintenanceBatch:3})).total).toBe(0)
+})
+
+it('projects the selected qualifying source in filtered results', async () => {
+  const a=f.candidate('同源年两批认定',[
+    {eventType:'award',year:year-2,batchSeq:1},
+    {eventType:'award',year:year-2,decidedYear:year-1,batchSeq:2},
+  ])
+  const awards=f.db.$client.prepare('select e.id from record_event e join record r on r.id=e.record_id where r.enterprise_id=? and e.event_type=? order by e.id').all(a.enterprise.id,'award') as {id:number}[]
+  linkRecognized(a.enterprise.id,awards[0]!.id,{},'recognized_corrob',{rddqrq:`${year+1}-11-20`,whpc:`${year-2}-1`})
+  linkRecognized(a.enterprise.id,awards[1]!.id,{},'recognized_corrob',{rddqrq:`${year+2}-11-20`,whpc:`${year-1}-2`})
+  const result=await query({recognitionFrom:`${year-1}-01-01`,recognitionTo:`${year-1}-12-31`,validYear:String(year+2),maintenanceYear:String(year-1),maintenanceBatch:'2'})
+  expect(result.body).toMatchObject({total:1,rows:[{enterpriseId:a.enterprise.id,recognition:{precision:'year',year:year-1},matchedValidYears:[year+2],matchedMaintenance:[{year:year-1,batch:2}]}]})
+  expect(result.body.rows[0].qualificationWitnesses.map((w:any)=>w.awardEventId)).toEqual([awards[1]!.id])
 })
 
 it('retains eligible rows with missing metadata until a related filter is requested and pages the complete definite set', async () => {

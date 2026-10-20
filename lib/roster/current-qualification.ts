@@ -9,6 +9,8 @@ import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
 import { normalizeName, normalizeUscc } from '../domain'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
+import { sourcePositionForSequence, RDJB_TITLE_CODES } from '../platform/recognized-evidence'
+import { recognizedFilterFacts } from './recognized-filter-facts'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 export { CURRENT_TITLES }
 export type { CurrentTitle }
@@ -104,7 +106,9 @@ function gapResolvedBy(gap: QualificationEvent, facts: CycleFacts, originYear: n
 /** Adjudicate an originating cycle using only applicable, unresolved evidence. */
 function adjudicateCycle(events: QualificationEvent[], originYear: number, batch: number | null, year: number, ambiguous: QualificationEvent[] = []): CycleJudgment {
   const facts = cycleFacts(events,ambiguous,originYear,year)
-  const result: CycleJudgment = {originYear,batch,lastAwardYear:facts.lastAward,failureYears:facts.failureYears,group:'pending',notes:[],awardEventIds:facts.awards.map(e => e.id)}
+  // Only the latest actual grant can support a restored qualification. Older
+  // grants remain in the adjudication and evidence history, but not filters.
+  const result: CycleJudgment = {originYear,batch,lastAwardYear:facts.lastAward,failureYears:facts.failureYears,group:'pending',notes:[],awardEventIds:facts.awards.filter(e => awardTime(e) === facts.lastAward).map(e => e.id)}
   const unresolved: QualificationEvent[] = []
   for (const gap of facts.gaps) {
     const resolved = gapResolvedBy(gap,facts,originYear,year)
@@ -334,30 +338,52 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
     // unknown-batch grants. Never reconstruct them from basis/reviews strings.
     const awards = qualificationSource === 'formal' ? qualification.cycles.flatMap(cycle => cycle.awardEventIds.map(awardEventId => ({ cycle, awardEventId }))) : []
     const linked = correspondences.filter(ref => ref.type === 'event_recognized' && ref.role === 'recognized_corrob' && ref.status === 'confirmed' && !ref.requiresRevalidation && ref.eventId != null && ref.relationId != null)
-    const statement = db.prepare(`select q.id as queryId,
-      json_extract(q.collection_evidence,'$.effectiveConditions.rddqrq') as validYear,
-      json_extract(q.collection_evidence,'$.effectiveConditions.whpcyear') as maintenanceYear,
-      json_extract(q.collection_evidence,'$.effectiveConditions.whpc') as maintenanceBatch
+    const statement = db.prepare(`select q.id as queryId,q.title_code as titleCode,q.rdjb,r.sequence_no as sequenceNo,
+      json_extract(q.collection_evidence,'$.pages') as pages,
+      json_extract(q.collection_evidence,'$.effectiveConditions.rddqrq') as conditionValidYear,
+      json_extract(q.collection_evidence,'$.effectiveConditions.whpcyear') as conditionMaintenanceYear,
+      json_extract(q.collection_evidence,'$.effectiveConditions.whpc') as conditionMaintenanceBatch,
+      json_extract(r.raw_fields,'$.rddqrq') as rawValid,
+      json_extract(r.raw_fields,'$.whpcyear') as rawMaintenanceYear,
+      json_extract(r.raw_fields,'$.whpc') as rawMaintenanceBatch
       from platform_relation r join platform_query q on q.id=r.query_id
       where r.id=@relationId and (r.enterprise_id=@enterpriseId or (r.enterprise_id is null and @uscc is not null and roster84_uscc(r.uscc_raw)=@uscc)) and r.verification_status='confirmed'
-      and q.interface='recognized_list' and q.title_code=@title and q.rdjb=@rdjb and q.status='success'
+      and q.interface='recognized_list' and q.status='success'
       and json_extract(q.collection_evidence,'$.status')='success'
       and json_extract(q.collection_evidence,'$.source')='queryBusList'
       and json_extract(q.collection_evidence,'$.effectiveConditions.combination')='and'
       and json_extract(q.collection_evidence,'$.completeness')='complete'
       and json_extract(q.collection_evidence,'$.fullRange')=1`)
-    const validYear = (value: unknown) => typeof value === 'string' && /^[1-9]\d{3}$/.test(value) ? Number(value) : null
-    const validBatch = (value: unknown) => typeof value === 'string' && /^(?:[1-9]|1[0-5])$/.test(value) ? Number(value) : null
     row.qualificationWitnesses = awards.flatMap<CurrentQualificationWitness>(({cycle,awardEventId}) => {
-      const base = { cycle: { originYear: cycle.originYear, batchSeq: cycle.batch }, awardEventId, recognition: { precision: 'year' as const, year: cycle.originYear } }
+      const event = formal.find(item => item.id === awardEventId)!
+      const base = { cycle: { originYear: cycle.originYear, batchSeq: cycle.batch }, awardEventId, recognition: { precision: 'year' as const, year: awardTime(event)! } }
       const matches = linked.filter(ref => ref.eventId === awardEventId).flatMap(ref => {
-        const fact = statement.get({relationId:ref.relationId,enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null,title,rdjb}) as {queryId:number;validYear:unknown;maintenanceYear:unknown;maintenanceBatch:unknown}|undefined
-        if (!fact) return []
-        const maintenanceYear=validYear(fact.maintenanceYear)
-        return [{...base,matchedValidYear:validYear(fact.validYear),matchedMaintenance:maintenanceYear == null ? null : {year:maintenanceYear,batch:validBatch(fact.maintenanceBatch)},correspondenceId:ref.id,conditionQueryId:fact.queryId}]
+        const source = statement.get({relationId:ref.relationId,enterpriseId,uscc:normalizeUscc(enterprise.uscc_norm)||null,title,rdjb}) as {queryId:number;titleCode:string|null;rdjb:string;sequenceNo:number;pages:string|null;conditionValidYear:unknown;conditionMaintenanceYear:unknown;conditionMaintenanceBatch:unknown;rawValid:unknown;rawMaintenanceYear:unknown;rawMaintenanceBatch:unknown}|undefined
+        if (!source) return []
+        let pages: unknown
+        try { pages = source.pages ? JSON.parse(source.pages) : null } catch { return [] }
+        const positioned = Array.isArray(pages) ? sourcePositionForSequence({pages} as Parameters<typeof sourcePositionForSequence>[0],source.sequenceNo).sourceRdjb : null
+        const scope = source.rdjb.split(',').filter(Boolean)
+        const fromScope = scope.length === 1 ? RDJB_TITLE_CODES[scope[0]!] : null
+        const fromPosition = positioned ? RDJB_TITLE_CODES[positioned] : null
+        if (source.titleCode && source.titleCode !== title || fromScope && fromScope !== title || fromPosition && fromPosition !== title
+          || (fromPosition ?? source.titleCode ?? fromScope) !== title) return []
+        const projected = recognizedFilterFacts(
+          {rddqrq:source.rawValid,whpcyear:source.rawMaintenanceYear,whpc:source.rawMaintenanceBatch},
+          {rddqrq:source.conditionValidYear,whpcyear:source.conditionMaintenanceYear,whpc:source.conditionMaintenanceBatch})
+        return [{...base,matchedValidYear:projected.validYear,matchedMaintenance:projected.maintenance,correspondenceId:ref.id,conditionQueryId:source.queryId}]
       })
       return matches.length ? matches : [{...base,matchedValidYear:null,matchedMaintenance:null,correspondenceId:null,conditionQueryId:null}]
     })
+    // Independent returned rows for one grant can disagree. Preserve every
+    // source witness, but do not turn either conflicting value into a filter hit.
+    for (const awardEventId of new Set(row.qualificationWitnesses.map(w => w.awardEventId))) {
+      const witnesses = row.qualificationWitnesses.filter(w => w.awardEventId === awardEventId)
+      if (new Set(witnesses.flatMap(w => w.matchedValidYear == null ? [] : [w.matchedValidYear])).size > 1)
+        for (const witness of witnesses) witness.matchedValidYear = null
+      if (new Set(witnesses.flatMap(w => w.matchedMaintenance == null ? [] : [`${w.matchedMaintenance.year}:${w.matchedMaintenance.batch ?? ''}`])).size > 1)
+        for (const witness of witnesses) witness.matchedMaintenance = null
+    }
     if (qualificationSource === 'migration') row.qualificationWitnesses = migrationAwardYears.map(awardYear => ({cycle:{originYear:awardYear,batchSeq:null},awardEventId:null,recognition:{precision:'year',year:awardYear},matchedValidYear:null,matchedMaintenance:null,correspondenceId:null,conditionQueryId:null}))
     row.recognition = row.qualificationWitnesses[0]?.recognition ?? null
     row.matchedValidYears = [...new Set(row.qualificationWitnesses.flatMap(witness => witness.matchedValidYear == null ? [] : [witness.matchedValidYear]))].sort((a,b) => a-b)

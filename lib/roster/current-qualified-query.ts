@@ -72,14 +72,24 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
         if (filter.recognitionFrom && filter.validYear == null && filter.maintenanceYear == null && !(row.qualificationWitnesses ?? []).length) uncertainTotal++
         continue
       }
+      const matching = filter.recognitionFrom && filter.recognitionTo
+        ? related.filter(witness => filter.recognitionFrom! <= `${witness.recognition.year}-01-01` && filter.recognitionTo! >= `${witness.recognition.year}-12-31`)
+        : related
       if (filter.recognitionFrom && filter.recognitionTo) {
-        const definite = related.some(witness => filter.recognitionFrom! <= `${witness.recognition.year}-01-01` && filter.recognitionTo! >= `${witness.recognition.year}-12-31`)
-        if (!definite) {
+        if (!matching.length) {
           if (related.some(witness => filter.recognitionFrom! <= `${witness.recognition.year}-12-31` && filter.recognitionTo! >= `${witness.recognition.year}-01-01`)) uncertainTotal++
           continue
         }
       }
-      if (total >= (page - 1) * pageSize && rows.length < pageSize) rows.push(row)
+      if (total >= (page - 1) * pageSize && rows.length < pageSize) {
+        if (filter.recognitionFrom || filter.validYear != null || filter.maintenanceYear != null) {
+          row.qualificationWitnesses = matching
+          row.recognition = matching[0]?.recognition ?? null
+          row.matchedValidYears = [...new Set(matching.flatMap(w => w.matchedValidYear == null ? [] : [w.matchedValidYear]))].sort((a,b) => a-b)
+          row.matchedMaintenance = matching.flatMap(w => w.matchedMaintenance ? [w.matchedMaintenance] : []).filter((fact,index,all) => all.findIndex(other => other.year === fact.year && other.batch === fact.batch) === index).sort((a,b) => a.year-b.year || (a.batch ?? 0)-(b.batch ?? 0))
+        }
+        rows.push(row)
+      }
       total++
     }
     db.exec('COMMIT')

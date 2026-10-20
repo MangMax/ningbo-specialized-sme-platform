@@ -19,6 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import PageHeader from '@/components/PageHeader.vue'
 import CurrentRosterExportEntry from '@/components/CurrentRosterExportEntry.vue'
+import CurrentRecognitionDatePicker from '@/components/CurrentRecognitionDatePicker.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
 import TablePagination from '@/components/TablePagination.vue'
@@ -94,7 +95,7 @@ const sourceSummary = (row: CurrentRow) => row.publication === '已见本称号�
 const conditionSummary = (row: CurrentRow) => {
   const valid = row.matchedValidYears?.length ? row.matchedValidYears.join('、') + ' 年' : '未证实'
   const maintenance = row.matchedMaintenance?.length ? row.matchedMaintenance.map(fact => `${fact.year} 年${fact.batch == null ? '' : `第 ${fact.batch} 批`}`).join('、') : '未证实'
-  return `查询匹配：有效 ${valid} · 维护 ${maintenance}`
+  return `返回字段：有效 ${valid} · 维护 ${maintenance}`
 }
 const distinctPublishedNames = (row: CurrentRow) => row.publishedNames.filter(name => name.trim() !== row.name.trim())
 const movedInSummary = (row: CurrentRow) => row.notes.find(note => note.startsWith('已确认迁入宁波'))
@@ -139,8 +140,8 @@ useHead({ title: '优质中小企业查询' })
       <Button v-if="hasFilters" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
     </div>
     <div class="flex flex-wrap items-end gap-2">
-      <div class="flex flex-col gap-1"><Label for="recognition-from">认定时间起</Label><Input id="recognition-from" v-model="dateFrom" type="date" class="bg-card h-8 w-40 shadow-none" aria-label="认定时间起" /></div>
-      <div class="flex flex-col gap-1"><Label for="recognition-to">认定时间止</Label><Input id="recognition-to" v-model="dateTo" type="date" class="bg-card h-8 w-40 shadow-none" aria-label="认定时间止" /></div>
+      <div class="flex flex-col gap-1"><Label for="recognition-from">认定时间起</Label><CurrentRecognitionDatePicker id="recognition-from" v-model="dateFrom" label="认定时间起" /></div>
+      <div class="flex flex-col gap-1"><Label for="recognition-to">认定时间止</Label><CurrentRecognitionDatePicker id="recognition-to" v-model="dateTo" label="认定时间止" /></div>
       <Button variant="outline" size="sm" :disabled="!canApplyDate" @click="applyDate">应用时间</Button>
       <Button v-if="recognitionFrom || recognitionTo" variant="ghost" size="sm" @click="clearDate">清除时间</Button>
       <span v-if="dateError" class="text-destructive text-sm" role="alert">{{ dateError }}</span>

@@ -6,6 +6,9 @@ import { PiniaColada } from '@pinia/colada'
 import { createMemoryHistory, createRouter, RouterLink } from 'vue-router'
 import Page from '../pages/current-enterprises.vue'
 import { Select } from '../components/ui/select'
+import { Calendar } from '../components/ui/calendar'
+import { CalendarDate } from '@internationalized/date'
+import CurrentRecognitionDatePicker from '../components/CurrentRecognitionDatePicker.vue'
 
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { mounted.splice(0).forEach(wrapper => wrapper.unmount()); vi.unstubAllGlobals() })
@@ -38,7 +41,7 @@ async function setup(query: Record<string,string> = {}, failOn?: (query: Record<
 it('shows the same readable qualification and source link in desktop and mobile rows without parsing raw basis', async () => {
   const {wrapper}=await setup()
   expect(wrapper.get('[data-testid="current-enterprise-card"]').text()).toContain('当前认定 2024 年（年份精度） · 已见宁波公布记录')
-  expect(wrapper.get('[data-testid="current-enterprise-card"]').text()).toContain('查询匹配：有效 2027 年 · 维护 2023 年第 2 批')
+  expect(wrapper.get('[data-testid="current-enterprise-card"]').text()).toContain('返回字段：有效 2027 年 · 维护 2023 年第 2 批')
   expect(wrapper.get('[data-testid="current-enterprise-card"] a').attributes('href')).toContain('/enterprises/21')
   expect(wrapper.text()).not.toContain('event:21555')
   expect(wrapper.text()).not.toContain('公布名：宁波现名企业')
@@ -60,8 +63,12 @@ it('retains new-filter source identity and detail return params after the target
 
 it('applies a complete recognition range to the URL, removes its chip, and resets dependent filters', async () => {
   const {wrapper,router,calls}=await setup({validYear:'2027',maintenanceYear:'2023',maintenanceBatch:'2'})
-  await wrapper.get('#recognition-from').setValue('2024-01-01')
-  await wrapper.get('#recognition-to').setValue('2024-12-31')
+  expect(wrapper.find('input[type="date"]').exists()).toBe(false)
+  const pickers=wrapper.findAllComponents(CurrentRecognitionDatePicker)
+  expect(pickers).toHaveLength(2)
+  pickers[0]!.vm.$emit('update:modelValue','2024-01-01')
+  pickers[1]!.vm.$emit('update:modelValue','2024-12-31')
+  await flushPromises()
   const apply=wrapper.findAll('button').find(button => button.text()==='应用时间')!
   await apply.trigger('click'); await flushPromises()
   expect(router.currentRoute.value.query).toMatchObject({recognitionFrom:'2024-01-01',recognitionTo:'2024-12-31',validYear:'2027',maintenanceYear:'2023',maintenanceBatch:'2'})
@@ -74,6 +81,18 @@ it('applies a complete recognition range to the URL, removes its chip, and reset
   expect(router.currentRoute.value.query).not.toHaveProperty('validYear')
   expect(router.currentRoute.value.query).not.toHaveProperty('maintenanceYear')
   expect(router.currentRoute.value.query).not.toHaveProperty('maintenanceBatch')
+})
+
+it('selects a date through the shared calendar popover and emits a date-only value', async () => {
+  const wrapper=mount(CurrentRecognitionDatePicker,{props:{id:'pick-date',label:'认定时间起',modelValue:''}})
+  mounted.push(wrapper)
+  expect(wrapper.find('input[type="date"]').exists()).toBe(false)
+  await wrapper.get('#pick-date').trigger('click')
+  await flushPromises()
+  const calendar=wrapper.findComponent(Calendar)
+  expect(calendar.exists()).toBe(true)
+  calendar.vm.$emit('update:modelValue',new CalendarDate(2024,2,29))
+  expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['2024-02-29'])
 })
 
 it('clears the dependent batch when the existing maintenance-year select changes', async () => {
