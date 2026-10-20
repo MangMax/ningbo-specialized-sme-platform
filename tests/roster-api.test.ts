@@ -67,6 +67,11 @@ let query: Record<string, unknown> = {}
 let routerParam: string | undefined
 let headers: Record<string, string> = {}
 let handlerExport: (event: unknown) => Promise<Uint8Array>
+const streamedExport = vi.fn(async (_event: unknown, stream: AsyncIterable<Uint8Array>) => {
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks)
+})
 
 /** 只有工信部一侧的企业 ⇒ 专精特新上「平台有而公布无」。 */
 let sideOnlyId = 0
@@ -79,6 +84,7 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => {
     headers[name] = value
   })
+  vi.stubGlobal('sendStream', streamedExport)
   vi.stubGlobal('createError', (opts: { statusMessage?: string; statusCode?: number }) =>
     Object.assign(new Error(opts.statusMessage ?? 'Bad request'), opts),
   )
@@ -317,6 +323,14 @@ describe('GET /api/roster/export(总表导出)', () => {
     return wb.worksheets[0]!
   }
 
+  it('经 HTTP 流发送完整工作簿', async () => {
+    streamedExport.mockClear()
+    const ws = await exported({})
+    expect(streamedExport).toHaveBeenCalledOnce()
+    expect(headers['content-type']).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    expect(ws.rowCount).toBe(5)
+  })
+
   it('一行 = 一家企业:称号在单元格内用、分隔,不拆成多行', async () => {
     const ws = await exported({})
     // 第 1 行是口径说明,第 2 行是表头,第 3 行起是数据。
@@ -324,9 +338,18 @@ describe('GET /api/roster/export(总表导出)', () => {
     expect(String(ws.getRow(1).getCell(1).value)).toContain('3 家企业')
     expect(String(ws.getRow(1).getCell(1).value)).toContain('3 个「企业 × 称号」')
     expect(ws.getRow(2).getCell(1).value).toBe('企业名称')
+    expect(ws.getRow(2).values).toEqual([
+      undefined, '企业名称', '统一社会信用代码', '区县', '城市', '登记状态',
+      '当前总表状态', '称号(一行一家企业,多称号用、分隔)', '曾用名(已确认)',
+      '首次认定', '首次认定出处', '下次复核',
+    ])
     expect(ws.rowCount).toBe(5) // 说明 + 表头 + 3 家企业
     const names = [3, 4, 5].map((r) => ws.getRow(r).getCell(1).value)
     expect(names).toContain('宁波接口测试股份有限公司')
+    const subject = [3, 4, 5].map(r => ws.getRow(r)).find(r => r.getCell(1).text === '宁波接口测试股份有限公司')!
+    expect(subject.getCell(8).text).toContain('宁波接口测试厂')
+    expect(subject.getCell(9).alignment.wrapText).toBe(true)
+    expect(subject.getCell(10).alignment.wrapText).toBe(true)
   })
 
   it('导出**不受分页截断**(页面只给一页,导出给当前筛选的全部)', async () => {

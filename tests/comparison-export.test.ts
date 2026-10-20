@@ -14,6 +14,11 @@ vi.doMock('@db', async (importOriginal) => ({
 let query: Record<string, unknown>
 let headers: Record<string, string>
 let handler: (event: unknown) => Promise<Uint8Array>
+const streamed = vi.fn(async (_event: unknown, stream: AsyncIterable<Uint8Array>) => {
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks)
+})
 
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -21,6 +26,7 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => {
     headers[name] = value
   })
+  vi.stubGlobal('sendStream', streamed)
   vi.stubGlobal('createError', (opts: object) =>
     Object.assign(new Error('Bad query'), opts),
   )
@@ -54,7 +60,7 @@ beforeAll(async () => {
   // 超过一页,验证导出未被页面参数截断;其他称号与反方向必须被排除。
   for (let i = 0; i < 27; i++)
     seed(
-      `市专${String(i).padStart(2, '0')}`,
+      i === 2 ? '市专02&<>"' : `市专${String(i).padStart(2, '0')}`,
       'jxj',
       'specialized_sme',
       i ? `USCC${i}` : null,
@@ -77,6 +83,12 @@ async function exported(params: Record<string, unknown>) {
 }
 
 describe('comparison export route', () => {
+  it('streams a complete workbook through the HTTP response seam', async () => {
+    streamed.mockClear()
+    const ws = await exported({ mode: 'comparison', title: 'specialized_sme', direction: 'missing_in_miit' })
+    expect(streamed).toHaveBeenCalledOnce()
+    expect(ws.rowCount).toBe(28)
+  })
   it('exports all selected title and direction rows with eight columns and a Chinese filename', async () => {
     const ws = await exported({
       mode: 'comparison',
@@ -100,7 +112,7 @@ describe('comparison export route', () => {
     expect(ws.getRow(2).values).toEqual([
       undefined,
       '市专00',
-      '',
+      undefined,
       '鄞州区',
       '专精特新中小企业',
       '应纳未纳',
@@ -108,6 +120,7 @@ describe('comparison export route', () => {
       '注销',
       '无统代,另一侧无可匹配身份',
     ])
+    expect(ws.getRow(2).getCell(2).text).toBe('')
     expect(ws.getRow(28).getCell(1).value).toBe('市专26')
     expect(decodeURIComponent(headers['content-disposition']!)).toContain(
       '专精特新中小企业-应纳未纳.xlsx',
@@ -132,7 +145,7 @@ describe('comparison export route', () => {
       district: '鄞州区',
     })
     expect(ws.rowCount).toBe(2)
-    expect(ws.getRow(2).getCell(1).value).toBe('市专02')
+    expect(ws.getRow(2).getCell(1).value).toBe('市专02&<>"')
 
     const empty = await exported({
       mode: 'comparison',
@@ -159,6 +172,12 @@ describe('comparison export route', () => {
 
     expect(ws.getRow(2).getCell(1).value).toBe('企业名称')
     expect(ws.getRow(3).getCell(1).value).toBe('其他称号')
+    expect(ws.getRow(2).values).toEqual([
+      undefined, '企业名称', '统一社会信用代码', '区县', '称号', '来源', '事件', '出处',
+    ])
+    expect(ws.getRow(3).getCell(4).text).toBe('创新型中小企业')
+    const empty = await exported({ title: 'little_giant', q: '不存在的企业' })
+    expect(empty.rowCount).toBe(2)
   })
   it('rejects incomplete or invalid comparison filters', async () => {
     for (const params of [

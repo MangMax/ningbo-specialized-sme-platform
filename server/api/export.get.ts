@@ -1,5 +1,5 @@
-import ExcelJS from 'exceljs'
 import { useDb } from '@db'
+import { streamXlsx } from '../utils/stream-xlsx'
 import { allRecords, type EventType } from '~~/lib/query'
 import {
   TITLES,
@@ -92,7 +92,6 @@ export default defineEventHandler(async (event) => {
     return list?.length ? list : undefined
   }
 
-  const wb = new ExcelJS.Workbook()
   let filename = 'roster.xlsx'
   if (q.mode === 'comparison') {
     const title = str(q.title)
@@ -122,30 +121,25 @@ export default defineEventHandler(async (event) => {
       district: str(q.district),
       showCurated: str(q.showCurated) === 'true',
     })
-    const ws = wb.addWorksheet('比对')
-    ws.columns = [
-      { header: '企业名称', key: 'name', width: 34 },
-      { header: '统一社会信用代码', key: 'uscc', width: 20 },
-      { header: '区县', key: 'district', width: 12 },
-      { header: '称号', key: 'title', width: 24 },
-      { header: '方向', key: 'direction', width: 14 },
-      { header: '当前城市', key: 'city', width: 12 },
-      { header: '登记状态', key: 'regStatus', width: 24 },
-      { header: '备注', key: 'notes', width: 34 },
-    ]
-    for (const row of rows) {
-      ws.addRow({
-        name: row.name,
-        uscc: row.uscc ?? '',
-        district: row.district ?? '',
-        title: TITLES[row.titleCode],
-        direction: COMPARISON_LABELS[row.direction],
-        city: row.evidence.currentCity ?? '',
-        regStatus: row.evidence.regStatus ?? '',
-        notes: row.uscc ? '' : COMPARISON_NO_USCC,
-      })
-    }
     filename = `${TITLES[title]}-${COMPARISON_LABELS[direction]}.xlsx`
+    const columns = [
+        { header: '企业名称', key: 'name', width: 34 },
+        { header: '统一社会信用代码', key: 'uscc', width: 20 },
+        { header: '区县', key: 'district', width: 12 },
+        { header: '称号', key: 'title', width: 24 },
+        { header: '方向', key: 'direction', width: 14 },
+        { header: '当前城市', key: 'city', width: 12 },
+        { header: '登记状态', key: 'regStatus', width: 24 },
+        { header: '备注', key: 'notes', width: 34 },
+      ]
+    return streamXlsx(event, filename, '比对', columns, (function* () {
+      yield columns.map(column => column.header)
+      for (const row of rows) yield [
+        row.name, row.uscc ?? '', row.district ?? '', TITLES[row.titleCode],
+        COMPARISON_LABELS[row.direction], row.evidence.currentCity ?? '',
+        row.evidence.regStatus ?? '', row.uscc ? '' : COMPARISON_NO_USCC,
+      ]
+    })())
   } else {
     const rows = allRecords(useDb(), {
       title: csv(q.title),
@@ -157,28 +151,6 @@ export default defineEventHandler(async (event) => {
       flags: str(q.flags),
     })
 
-    const ws = wb.addWorksheet('台账')
-    ws.columns = [
-      { header: '企业名称', key: 'name', width: 34 },
-      { header: '统一社会信用代码', key: 'uscc', width: 20 },
-      { header: '区县', key: 'district', width: 12 },
-      { header: '称号', key: 'title', width: 18 },
-      { header: '来源', key: 'source', width: 14 },
-      { header: '事件', key: 'events', width: 32 },
-      { header: '出处', key: 'evidence', width: 44 },
-    ]
-    for (const r of rows) {
-      ws.addRow({
-        name: r.name,
-        uscc: r.uscc ?? '',
-        district: r.district ?? '',
-        title: TITLES[r.titleCode] ?? r.titleCode,
-        source: r.sources.map((s) => SOURCES[s] ?? s).join('、'),
-        events: r.events,
-        evidence: r.evidence,
-      })
-    }
-
     /**
      * 口径写在**数据上面**,离开页面也还看得见 —— 导出的文件常被单独转发。
      *
@@ -188,27 +160,21 @@ export default defineEventHandler(async (event) => {
      * 企业数是按**行里出现过的企业**去重算的,不是另查一遍库。
      */
     const enterprises = new Set(rows.map((r) => r.enterpriseId)).size
-    ws.spliceRows(
-      1,
-      0,
-      [
-        `口径:一行 = 一个「企业 × 称号」(同一组合下的多个来源合并成一行)。` +
-          `本次筛选共 ${rows.length} 行,属于 ${enterprises} 家企业(多称号企业在行数里按称号各计一次)。` +
-          `导出为当前筛选下的全部行,不受页面分页限制;同一筛选条件的「按企业」导出见企业总表导出。`,
-      ],
-    )
+    const columns = [
+      { header: '企业名称', width: 34 }, { header: '统一社会信用代码', width: 20 },
+      { header: '区县', width: 12 }, { header: '称号', width: 18 },
+      { header: '来源', width: 14 }, { header: '事件', width: 32 },
+      { header: '出处', width: 44 },
+    ]
+    return streamXlsx(event, filename, '台账', columns, (function* () {
+      yield [`口径:一行 = 一个「企业 × 称号」(同一组合下的多个来源合并成一行)。` +
+        `本次筛选共 ${rows.length} 行,属于 ${enterprises} 家企业(多称号企业在行数里按称号各计一次)。` +
+        `导出为当前筛选下的全部行,不受页面分页限制;同一筛选条件的「按企业」导出见企业总表导出。`]
+      yield columns.map(column => column.header)
+      for (const r of rows) yield [
+        r.name, r.uscc ?? '', r.district ?? '', TITLES[r.titleCode] ?? r.titleCode,
+        r.sources.map((s) => SOURCES[s] ?? s).join('、'), r.events, r.evidence,
+      ]
+    })())
   }
-
-  const buffer = await wb.xlsx.writeBuffer()
-  setHeader(
-    event,
-    'content-type',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  )
-  setHeader(
-    event,
-    'content-disposition',
-    `attachment; filename="roster.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`,
-  )
-  return new Uint8Array(buffer as ArrayBuffer)
 })

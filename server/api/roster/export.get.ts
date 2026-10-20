@@ -1,5 +1,5 @@
-import ExcelJS from 'exceljs'
 import { useDb } from '@db'
+import { streamXlsx } from '../../utils/stream-xlsx'
 import { FIRST_RECOGNITION_REASONS, TITLES } from '~~/lib/labels'
 import { allRosterEnterprises, type RosterEnterpriseRow } from '~~/lib/roster/enterprise-roster'
 import { evidencePointerText, firstRecognitionYearText } from '~~/lib/roster/first-recognition'
@@ -113,66 +113,34 @@ function firstRecognitionEvidenceText(row: RosterEnterpriseRow): string {
 export default defineEventHandler(async (event) => {
   const { rows, counts } = allRosterEnterprises(useDb(), parseRosterEnterpriseQuery(getQuery(event)))
 
-  const wb = new ExcelJS.Workbook()
-  const ws = wb.addWorksheet('企业总表')
-  ws.columns = [
-    { header: '企业名称', key: 'name', width: 34 },
-    { header: '统一社会信用代码', key: 'uscc', width: 20 },
-    { header: '区县', key: 'district', width: 12 },
-    { header: '城市', key: 'city', width: 10 },
-    { header: '登记状态', key: 'regStatus', width: 14 },
-    { header: '当前总表状态', key: 'rosterState', width: 26 },
-    { header: '称号(一行一家企业,多称号用、分隔)', key: 'titles', width: 40 },
-    { header: '曾用名(已确认)', key: 'aliases', width: 30 },
-    { header: '首次认定', key: 'firstRecognition', width: 42 },
-    { header: '首次认定出处', key: 'firstRecognitionEvidence', width: 60 },
-    { header: '下次复核', key: 'nextReview', width: 12 },
+  const columns = [
+    { header: '企业名称', width: 34 }, { header: '统一社会信用代码', width: 20 },
+    { header: '区县', width: 12 }, { header: '城市', width: 10 },
+    { header: '登记状态', width: 14 }, { header: '当前总表状态', width: 26 },
+    { header: '称号(一行一家企业,多称号用、分隔)', width: 40 },
+    { header: '曾用名(已确认)', width: 30 },
+    { header: '首次认定', width: 42, wrap: true },
+    { header: '首次认定出处', width: 60, wrap: true },
+    { header: '下次复核', width: 12 },
   ]
-
-  for (const row of rows) {
-    ws.addRow({
-      name: row.name,
-      uscc: row.uscc ?? '',
-      district: row.district ?? '',
-      city: row.city ?? '',
-      regStatus: row.regStatus ?? '',
-      rosterState: ROSTER_STATE_LABELS[row.rosterState] ?? row.rosterState,
-      titles: row.titles.map((code) => TITLES[code] ?? code).join('、'),
-      aliases: row.aliasNames.join('、'),
-      firstRecognition: firstRecognitionText(row),
-      firstRecognitionEvidence: firstRecognitionEvidenceText(row),
-      nextReview:
+  return streamXlsx(event, `企业总表-${counts.total}家.xlsx`, '企业总表', columns, (function* () {
+    yield [
+      `口径:一行 = 一家企业(跨称号去重)。本次筛选共 ${counts.total} 家企业,` +
+        `合计 ${counts.titlePairs} 个「企业 × 称号」(多称号企业在「称号」列内以、分隔,不重复成多行);` +
+        `其中 ${counts.recognitionPairs} 个「企业 × 称号」有首次认定。` +
+        `首次认定按**企业 × 称号**算最早那次认定:复核通过不是新的首次认定,复核失败后再次获批也不重置。` +
+        `标「待确认」的以「首次认定出处」列为准(认定事件定不了年 / 存在更早但定不了年的认定 / 没有存下来的出处)。` +
+        `导出为当前筛选下的全部企业,不受页面分页限制。`,
+    ]
+    yield columns.map(column => column.header)
+    for (const row of rows) {
+      yield [
+        row.name, row.uscc ?? '', row.district ?? '', row.city ?? '',
+        row.regStatus ?? '', ROSTER_STATE_LABELS[row.rosterState] ?? row.rosterState,
+        row.titles.map((code) => TITLES[code] ?? code).join('、'),
+        row.aliasNames.join('、'), firstRecognitionText(row), firstRecognitionEvidenceText(row),
         row.nextReviewYear == null ? '' : `${row.nextReviewYear}${row.anchorNeedsReview ? '(待核)' : ''}`,
-    })
-  }
-
-  // 长文本(出处是「文件 · 附件 · 序号 · 页」串起来的)换行显示,不撑成一整行看不见头。
-  for (const key of ['firstRecognition', 'firstRecognitionEvidence']) {
-    ws.getColumn(key).alignment = { wrapText: true, vertical: 'top' }
-  }
-
-  // 口径写在**数据上面**,离开页面也还看得见(导出的文件常被单独转发)。
-  ws.spliceRows(1, 0, [
-    `口径:一行 = 一家企业(跨称号去重)。本次筛选共 ${counts.total} 家企业,` +
-      `合计 ${counts.titlePairs} 个「企业 × 称号」(多称号企业在「称号」列内以、分隔,不重复成多行);` +
-      `其中 ${counts.recognitionPairs} 个「企业 × 称号」有首次认定。` +
-      `首次认定按**企业 × 称号**算最早那次认定:复核通过不是新的首次认定,复核失败后再次获批也不重置。` +
-      `标「待确认」的以「首次认定出处」列为准(认定事件定不了年 / 存在更早但定不了年的认定 / 没有存下来的出处)。` +
-      `导出为当前筛选下的全部企业,不受页面分页限制。`,
-  ])
-
-  const buffer = await wb.xlsx.writeBuffer()
-  setHeader(
-    event,
-    'content-type',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  )
-  setHeader(
-    event,
-    'content-disposition',
-    `attachment; filename="roster-enterprises.xlsx"; filename*=UTF-8''${encodeURIComponent(
-      `企业总表-${counts.total}家.xlsx`,
-    )}`,
-  )
-  return new Uint8Array(buffer as ArrayBuffer)
+      ]
+    }
+  })())
 })
