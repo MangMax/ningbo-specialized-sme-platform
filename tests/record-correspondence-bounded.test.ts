@@ -47,6 +47,43 @@ async function server(db: ReturnType<typeof useDb>, pointId = 1) {
 }
 
 describe('bounded correspondence public reads on real SQLite', () => {
+  it('offers an opt-in summary list on REST and MCP while full evidence stays at default and point routes', async () => {
+    const f = fixture(), original = 'synthetic-original-'.repeat(2048)
+    f.db.$client.prepare('update platform_relation set raw_fields=? where id=?').run(JSON.stringify({ original }), f.relation.id)
+    const ids: number[] = []
+    f.db.transaction(() => { for (let i = 0; i < 20; i++) ids.push(f.addEdge(f.addEvent().id, i)) })
+    const meter = observeBytes(f.db), app = await server(f.db, ids[0])
+    try {
+      const query = '?page=1&pageSize=20&status=candidate&view=summary'
+      const response = await fetch(app.baseUrl + '/api/roster/correspondences' + query)
+      const summary = await response.json() as any
+      expect(response.status).toBe(200)
+      expect(summary).toMatchObject({ total: 20, page: 1, pageSize: 20 })
+      expect(summary.rows[0]).toMatchObject({ id: ids[0], type: 'event_process', role: 'context_only', status: 'candidate', revision: 1, relationId: f.relation.id, requiresRevalidation: false })
+      expect(summary.rows.map((row: any) => row.id)).toEqual(ids)
+      expect(summary.rows[0]).not.toHaveProperty('relation')
+      expect(summary.rows[0]).not.toHaveProperty('event')
+      expect(Buffer.byteLength(JSON.stringify(summary))).toBeLessThan(256 * 1024)
+      expect(meter.bytes).toBeLessThan(64 * 1024)
+      meter.reset()
+      expect(dispatchRecordCorrespondenceMcp('list', { page: 1, pageSize: 20, status: 'candidate', view: 'summary' }, { db: f.db })).toEqual(summary)
+      expect(meter.bytes).toBeLessThan(64 * 1024)
+
+      const full = await (await fetch(app.baseUrl + '/api/roster/correspondences?page=1&pageSize=20&status=candidate')).json() as any
+      expect(full.rows[0].relation.rawFields).toEqual({ original })
+      expect(Buffer.byteLength(JSON.stringify(full))).toBeGreaterThan(256 * 1024)
+      expect(dispatchRecordCorrespondenceMcp('list', { page: 1, pageSize: 20, status: 'candidate' }, { db: f.db })).toEqual(full)
+      const point = await (await fetch(app.baseUrl + `/api/roster/correspondences/${ids[0]}`)).json()
+      expect(point).toEqual(full.rows[0])
+      expect(dispatchRecordCorrespondenceMcp('get', { id: ids[0] }, { db: f.db })).toEqual(point)
+
+      const deep = await (await fetch(app.baseUrl + '/api/roster/correspondences?page=20&pageSize=1&view=summary')).json() as any
+      expect(deep).toMatchObject({ total: 20, rows: [{ id: ids[19] }] })
+      expect((await fetch(app.baseUrl + '/api/roster/correspondences?view=unknown')).status).toBe(400)
+      expect(() => dispatchRecordCorrespondenceMcp('list', { view: 'unknown' }, { db: f.db })).toThrow()
+    } finally { await app.close() }
+  }, 30000)
+
   it('keeps deep list and point results independent of unrelated correspondence provenance', async () => {
     const f = fixture()
     const large = { original: 'synthetic'.repeat(65536), cookie: 'synthetic-secret' }
@@ -157,6 +194,9 @@ it('batch revalidates confirmations without changing fingerprints and detects fr
     f.db.$client.prepare("update record_evidence set page=99 where record_event_id=1").run()
     const changed = dispatchRecordCorrespondenceMcp('list', { pageSize: 20, status: 'confirmed' }, { db: f.db }) as any
     expect(changed.rows.map((r: any) => r.requiresRevalidation)).toEqual([true, ...Array(19).fill(false)])
+    const changedSummary = dispatchRecordCorrespondenceMcp('list', { pageSize: 20, status: 'confirmed', view: 'summary' }, { db: f.db }) as any
+    expect(changedSummary.rows.map((r: any) => ({ id: r.id, status: r.status, revision: r.revision, requiresRevalidation: r.requiresRevalidation })))
+      .toEqual(changed.rows.map((r: any) => ({ id: r.id, status: r.status, revision: r.revision, requiresRevalidation: r.requiresRevalidation })))
     const audit = dispatchRecordCorrespondenceMcp('audit', { id: receipt.correspondenceIds[0] }, { db: f.db }) as any
     expect(audit.rows.map((r: any) => r.toStatus)).toEqual(['candidate', 'confirmed'])
     expect(audit.rows[1].evidence.officialEvidence[0].evidence.page).toBe(1)
