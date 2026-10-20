@@ -94,6 +94,8 @@ it('includes reviewed inbound qualification without local publication and retain
   expect(actual[0]!.row[13]).toContain('迁入')
   expect(actual[0]!.row[13]).toContain('Confirmed old inbound name')
   expect(actual[0]!.row[13]).toContain('All ingested Ningbo')
+  expect(actual[0]!.row[13]).not.toContain('缺少已确认认定及资格依据')
+  expect(actual[0]!.row[13]).not.toContain('需核实具体资格与公布匹配范围')
   expect(actual[0]!.row[14]).toContain('decision:'+result.body.versionId)
 },60000)
 

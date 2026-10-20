@@ -184,7 +184,7 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
   const row: CurrentRow = { enterpriseId, name: enterprise.name, uscc: enterprise.uscc_norm, district: enterprise.district, publishedNames: [...new Set(formal.map(e => e.nameRaw).filter((n): n is string => !!n))], aliases: [], firstYear: lifecycle.firstRecognitionYear, basis: formal.map(e => `event:${e.id}@${e.revision} ${e.eventType} ${e.year ?? ''}/${e.batchSeq ?? ''} 结论年:${e.decidedYear ?? ''}`).join('\n'), reviews: formal.filter(e => e.eventType === 'review').map(e => `${e.year ?? '?'}年原认定批次；结论年${e.decidedYear ?? '?'}；${e.reviewOutcome ?? '未知'}`).join('\n'), publication: formal.length ? '已见本称号宁波公布记录' : '尚未完成公布匹配核实', notes: [], references: evidence.map(v => `evidence:${v.id} ${v.sourceFile} ${v.attachment ?? ''} 序号:${v.listNo ?? ''}`), group: 'pending' }
   const qualification = adjudicateCurrentCycles(formal, year)
   row.group = qualification.group
-  row.notes.push(...qualification.notes)
+  if (formal.length) row.notes.push(...qualification.notes)
   if (!formal.length && events.length && events.every(e => e.eventType === 'nurture')) {
     row.group='excluded'; row.notes.push('纯入库培育，不构成称号')
   }
@@ -208,7 +208,6 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
   const heads = CURRENT_TITLES.flatMap(titleCode => (['missing_in_miit','extra_in_miit'] as const).map(direction => latestDecision102(reader,{enterpriseId,titleCode,direction}))).filter((d): d is NonNullable<typeof d> => !!d).map(d => ({...d,queryId:d.evidenceQueryId,relationId:d.evidenceRelationId,movedTitle:d.movedInTitleCode,movedCity:d.movedInCity,movedYear:d.movedInYear,movedBatch:d.movedInBatch}))
   const correspondences=listRecordCorrespondenceRefs(reader,{enterpriseId,titleCode:title})
   row.references.push(...correspondences.map(c => 'correspondence:' + c.id + '@' + c.revision + ' ' + c.status + (c.requiresRevalidation ? ' 来源需重新核实' : '')))
-  if (!formal.length && correspondences.length) row.notes.push('对应边不是已确认当前资格；需核实具体资格与公布匹配范围')
   const subjectFacts: any[] = []
   let subjectGap = false
   for (const d of heads) {
@@ -276,6 +275,10 @@ export function readCurrentCandidate(db: Database.Database, enterpriseId: number
   // award does not associate it with an independent, formally renewed cycle.
   if (incomplete.some(e => originTime(e) == null || originTime(e)! >= qualification.originYear)) {
     row.group='pending'; row.notes.push('存在影响当前周期的无正式出处/未确认认定或复核，当前资格待确认')
+  }
+  if (!formal.length && row.group === 'pending') {
+    row.notes.push(...qualification.notes)
+    if (correspondences.length) row.notes.push('对应边不是已确认当前资格；需核实具体资格与公布匹配范围')
   }
   return row
 }
