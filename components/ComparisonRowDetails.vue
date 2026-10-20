@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { TITLES, COMPARISON_LABELS } from '~~/lib/labels'
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import type { ComparisonSummaryRow } from '~~/lib/comparison-summary'
 import type { ComparisonPlatformEvidence } from '~~/lib/comparison-platform'
@@ -46,7 +47,7 @@ async function load() {
 }
 watch(coordinate, () => { detail.value = null; failure.value = ''; void load() }, { immediate: true })
 onScopeDispose(() => { ++generation; controller?.abort() })
-const coordinateLabel = computed(() => props.row ? `${props.row.name} · ${props.row.titleCode} · ${props.row.direction}` : '')
+const coordinateLabel = computed(() => props.row ? `${props.row.name} · ${TITLES[props.row.titleCode] ?? props.row.titleCode} · ${COMPARISON_LABELS[props.row.direction]}` : '')
 const enterpriseLink = computed(() => props.row ? `/enterprises/${props.row.enterpriseId}?returnTo=${encodeURIComponent(props.returnTo)}` : '')
 async function saved() {
   emit('saved')
