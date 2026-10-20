@@ -1034,6 +1034,26 @@ describe('平台结果完整性与业务待核分开表述', () => {
   })
 })
 
+describe('分页', () => {
+  it('深链带来的非预设每页条数在分页触发器上显示真实数字，而不是空白控件', async () => {
+    installFetch(({ url, query }) => {
+      if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities
+      const params = (query ?? {}) as { pageSize?: number }
+      const list = listOf(state.list.rows, true)
+      return json({ ...list, pageSize: params.pageSize ?? list.pageSize })
+    })
+    state.query = { tab: 'all', pageSize: '10' }
+    const wrapper = await mountPage({ attach: true })
+    await settle()
+    const trigger = wrapper.get('[aria-label="每页条数"]')
+    // The real Reka trigger.
+    expect(trigger.attributes('data-slot')).toBe('select-trigger')
+    // Its own text is the number — not only the model value, and not only the
+    // number sitting in the neighbouring input.
+    expect(trigger.text()).toBe('10')
+  })
+})
+
 describe('一次播报、一处确认', () => {
   it('一次 202 只出现一条 live region 提示；切换任务后它不跟着走', async () => {
     installFetch(({ url, method }) => {
@@ -1051,10 +1071,18 @@ describe('一次播报、一处确认', () => {
     await findButton(wrapper, /提交导出/).trigger('click')
     await settle()
 
-    const notices = Array.from(document.querySelectorAll<HTMLElement>('[role="status"]')).filter(node => /已受理|已校验/.test(node.textContent ?? ''))
-    expect(notices).toHaveLength(1)
-    expect(notices[0]!.getAttribute('data-testid')).toBe('export-notice')
-    expect(notices[0]!.textContent).toMatch(/导出已受理/)
+    // The standing bar states the same 202, so the filter has to look at **both**
+    // live roles: an assertive bar would announce the acceptance a second time.
+    const announcing = Array.from(document.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]'))
+      .filter(node => /已受理|已校验/.test(node.textContent ?? ''))
+    expect(announcing).toHaveLength(1)
+    expect(announcing[0]!.getAttribute('data-testid')).toBe('export-notice')
+    expect(announcing[0]!.textContent).toMatch(/导出已受理/)
+    // The standing bar keeps the request visible; it is simply not a live region.
+    const bar = wrapper.get('[data-testid="export-request-bar"]')
+    expect(bar.text()).toContain('已受理')
+    expect(bar.attributes('role')).toBe('region')
+    expect(bar.attributes('aria-label')).toBe('本次导出')
     // Switching to another task drops the notice about the previous one.
     state.query = { ...state.query, job: jobId('PLT') }
     state.detail = platformTask()

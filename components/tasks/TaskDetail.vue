@@ -43,6 +43,19 @@ const notice = ref('')
 const showTechnical = ref(false)
 const panel = useTemplateRef<HTMLElement>('panel')
 
+// A cancel request is only a request: only the server can say whether the task
+// reached the cancelled terminal state. The card's report therefore follows the
+// state the server last reported, instead of repeating the moment the request
+// was accepted — so it cannot keep saying "not yet cancelled" after the task is
+// cancelled, and it cannot claim a cancellation when the task finished first.
+const cancelReport = computed(() => {
+  if (!cancelRequested.value) return ''
+  const state = data.value?.state
+  if (state === 'cancelled') return '已取消：任务已进入取消终态。'
+  if (state === 'done' || state === 'failed') return `取消请求未在检查点前生效：任务已${TASK_STATES[state]}。`
+  return '已请求取消，等待服务端检查点；任务尚未进入取消终态。'
+})
+
 // Reveal the detail once, when a person opens a task — never on a poll, never when
 // the credential changes (authorizing from the page keeps the card mounted), and
 // never by moving focus, so a person reading the page is not thrown around.
@@ -101,14 +114,18 @@ function format(iso: string | null | undefined, empty: string) {
 async function act(action: 'cancel' | 'retry') {
   if (!data.value || !capabilities.value || !current.value || pending.value || !capabilities.value[action]) return
   pending.value = true; notice.value = ''
+  // A new action supersedes the previous report: the cancel fact and the retry
+  // report never speak at the same time.
+  cancelRequested.value = false
   try {
     const result = await $fetch<{ cancelRequested?: boolean }>(`/api/task-center/${props.id}/${action}`, { method: 'POST', headers: headers() })
-    cancelRequested.value = !!result.cancelRequested
-    notice.value = result.cancelRequested
-      ? '已请求取消，等待服务端检查点；任务尚未进入取消终态。'
-      : action === 'retry'
+    // Only the server's own answer may claim that a cancellation is pending.
+    cancelRequested.value = action === 'cancel' && !!result.cancelRequested
+    if (!cancelRequested.value) {
+      notice.value = action === 'retry'
         ? '局部重试已受理；仅补查未完成项，已完成结果保留。'
         : '服务端已处理取消请求。'
+    }
     await reload(); emit('changed')
   } catch { notice.value = '操作未受理。请核对管理操作授权，或刷新后再试。' }
   finally { pending.value = false }
@@ -192,7 +209,7 @@ async function act(action: 'cancel' | 'retry') {
             <p v-else-if="data.capabilities?.reason" class="text-muted-foreground text-sm">{{ data.capabilities.reason }}</p>
           </div>
 
-          <p v-if="notice" role="status" class="text-sm">{{ notice }}</p>
+          <p v-if="cancelReport || notice" role="status" data-testid="task-notice" class="text-sm">{{ cancelReport || notice }}</p>
 
           <div v-if="links.length" class="flex flex-wrap gap-3">
             <NuxtLink v-for="link in links" :key="link.to" :to="link.to" class="text-primary text-sm underline underline-offset-4">{{ link.label }}</NuxtLink>
