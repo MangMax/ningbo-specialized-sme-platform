@@ -1,4 +1,4 @@
-import { readQueryAssessment, type QueryAssessment } from '../../lib/roster/query-assessment'
+import { readQueryAssessments, type QueryAssessment } from '../../lib/roster/query-assessment'
 import { and, asc, eq, sql } from 'drizzle-orm'
 /**
  * RL-11 名录只读工具的投影（契约 §9）。
@@ -93,7 +93,7 @@ export interface ListDifferenceRow extends QueryAssessment {
   evidence: { queryId: number; queriedAt: string; interface: string; status: string } | null
 }
 
-export interface ListDifferencesResult {
+export type ListDifferencesResult = {
   rows: ListDifferenceRow[]
   counts: Record<string, Record<string, number>>
 }
@@ -123,11 +123,13 @@ export function listDifferences(db: Db, input: ListDifferencesInput = {}): ListD
       movedInCity: d.movedInCity, movedInTitleCode: d.movedInTitleCode, movedInYear: d.movedInYear, movedInBatch: d.movedInBatch,
       queryId: schema.platformQuery.id, queriedAt: schema.platformQuery.queriedAt, queryInterface: schema.platformQuery.interface, queryStatus: schema.platformQuery.status,
     }).from(d).innerJoin(schema.enterprise,eq(schema.enterprise.id,d.enterpriseId)).leftJoin(schema.platformQuery,eq(schema.platformQuery.id,d.evidenceQueryId)).where(where)
-      .orderBy(asc(d.enterpriseId),asc(d.titleCode),asc(d.direction)).limit(pageSize).offset((page-1)*pageSize).all().map(row => {
+      .orderBy(asc(d.enterpriseId),asc(d.titleCode),asc(d.direction)).limit(pageSize).offset((page-1)*pageSize).all()
+    const assessments = readQueryAssessments(db, rows)
+    const projected = rows.map((row, index) => {
         const { movedInCity,movedInTitleCode,movedInYear,movedInBatch,queryId,queriedAt,queryInterface,queryStatus,...summary } = row
-        return { ...summary, ...readQueryAssessment(db, { enterpriseId: summary.enterpriseId, titleCode: summary.titleCode, direction: summary.direction }), movedIn: [movedInCity,movedInTitleCode,movedInYear,movedInBatch].some(v => v != null) ? { city: movedInCity,titleCode: movedInTitleCode,year: movedInYear,batch: movedInBatch } : null,
+        return { ...summary, ...assessments[index]!, movedIn: [movedInCity,movedInTitleCode,movedInYear,movedInBatch].some(v => v != null) ? { city: movedInCity,titleCode: movedInTitleCode,year: movedInYear,batch: movedInBatch } : null,
           evidence: queryId != null ? { queryId, queriedAt: queriedAt!, interface: queryInterface!, status: queryStatus! } : null }
       })
-    return { rows,counts }
+    return { rows: projected,counts }
   })
 }
