@@ -59,10 +59,16 @@ describe('GET /api/export transport', () => {
   it('holds row production behind a paused consumer, then sends a complete readable XLSX', async () => {
     fixture(500)
     const { http, port, results } = await server()
+    let client: ReturnType<typeof get> | undefined
     try {
-      const { res } = await request(port)
-      await new Promise(resolve => setTimeout(resolve, 150))
-      expect(source.read).toBeLessThan(250)
+      const requested = await request(port)
+      client = requested.client
+      const { res } = requested
+      await new Promise(resolve => setTimeout(resolve, 400))
+      const pausedRows = source.read
+      expect(pausedRows).toBeLessThan(source.rows.length)
+      await new Promise(resolve => setTimeout(resolve, 200))
+      expect(source.read).toBe(pausedRows)
       const chunks: Buffer[] = []
       res.on('data', chunk => chunks.push(Buffer.from(chunk)))
       res.resume()
@@ -75,7 +81,10 @@ describe('GET /api/export transport', () => {
       expect(ws.getRow(2).getCell(1).text).toBe('企业名称')
       expect(ws.getRow(502).getCell(1).text).toBe('企业-499')
       expect(results).toHaveLength(1)
-    } finally { await new Promise<void>(resolve => http.close(() => resolve())) }
+    } finally {
+      client?.destroy()
+      await new Promise<void>(resolve => http.close(() => resolve()))
+    }
   }, 20_000)
 
   it('stops producing after the client disconnects during download', async () => {
