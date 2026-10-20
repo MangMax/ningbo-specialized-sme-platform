@@ -93,6 +93,7 @@ it('keeps a failed expanded source unknown and retries its exact point', async (
   const summary = { id: 5, eventId: 9, type: 'event_process', status: 'candidate', revision: 1, relationId: 33, exportRowId: null, requiresRevalidation: false }
   const fetch = vi.fn().mockResolvedValueOnce({ rows: [summary], page: 1, pageSize: 200, total: 1 })
     .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce({ rows: [summary], page: 1, pageSize: 200, total: 1 })
     .mockResolvedValueOnce({ ...summary, relation: { id: 33, nameRaw: '完整原行' } })
   vi.stubGlobal('$fetch', fetch)
   const Expanded = defineComponent({
@@ -107,7 +108,7 @@ it('keeps a failed expanded source unknown and retries its exact point', async (
   expect(wrapper.get('[data-testid="error"]').text()).toBe('true')
   await wrapper.get('[data-testid="retry"]').trigger('click')
   await flushPromises()
-  expect(fetch.mock.calls.map(call => call[0])).toEqual(['/api/roster/correspondences', '/api/roster/correspondences/5', '/api/roster/correspondences/5'])
+  expect(fetch.mock.calls.map(call => call[0])).toEqual(['/api/roster/correspondences', '/api/roster/correspondences/5', '/api/roster/correspondences', '/api/roster/correspondences/5'])
   expect(wrapper.get('[data-testid="detail"]').text()).toBe('完整原行')
   expect(wrapper.get('[data-testid="error"]').text()).toBe('false')
 })
@@ -126,4 +127,60 @@ it('invalidates pending rows when the enterprise changes or is cleared', async (
   await wrapper.setProps({ id: 2 })
   await flushPromises()
   expect(wrapper.get('[data-testid="rows"]').text()).toBe('202')
+})
+
+it('reconciles revision two with revision three and a new current edge before an explicit evidence retry', async () => {
+  const old = { id: 11, eventId: 7, type: 'event_process', status: 'confirmed', revision: 2, relationId: 31, exportRowId: null, requiresRevalidation: false }
+  const current = { ...old, revision: 3, status: 'unlinked' }
+  const newEdge = { ...old, id: 12, revision: 1, type: 'event_recognized', role: 'current_context', relationId: 32 }
+  let listCalls = 0
+  const fetch = vi.fn(async (url: string) => {
+    if (url === '/api/roster/correspondences') return { rows: ++listCalls === 1 ? [old] : [current, newEdge], total: listCalls === 1 ? 1 : 2, page: 1, pageSize: 200 }
+    return { ...(url.endsWith('/11') ? current : newEdge), relation: { nameRaw: url.endsWith('/11') ? '旧出处已解除' : '新当前参考' } }
+  })
+  vi.stubGlobal('$fetch', fetch)
+  const Expanded = defineComponent({
+    setup() { return useEnterpriseCorrespondences(() => 42) },
+    template: '<div><span data-testid="detail">{{ detailsForEvent(7)?.map(row => `${row.id}:${row.revision}:${row.relation?.nameRaw}`).join(",") ?? "unknown" }}</span><span data-testid="error">{{ detailErrorForEvent(7) }}</span><button data-testid="expand" @click="loadEvent(7)">展开</button><button data-testid="retry" @click="loadEvent(7, true)">重试出处</button></div>',
+  })
+  wrapper = mount(Expanded)
+  await flushPromises()
+  await wrapper.get('[data-testid="expand"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.get('[data-testid="detail"]').text()).toBe('unknown')
+  expect(wrapper.get('[data-testid="error"]').text()).toBe('true')
+  expect(listCalls).toBe(1) // drift stays explicit; no automatic retry loop
+  await wrapper.get('[data-testid="retry"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.get('[data-testid="detail"]').text()).toBe('11:3:旧出处已解除,12:1:新当前参考')
+  expect(wrapper.get('[data-testid="error"]').text()).toBe('false')
+  expect(fetch.mock.calls.map(call => call[0])).toEqual(['/api/roster/correspondences', '/api/roster/correspondences/11', '/api/roster/correspondences', '/api/roster/correspondences/11', '/api/roster/correspondences/12'])
+})
+
+
+it('retains unknown evidence and the last complete summary when an explicit retry cannot refresh all pages', async () => {
+  const old = { id: 11, eventId: 7, type: 'event_process', status: 'confirmed', revision: 2, relationId: 31, exportRowId: null, requiresRevalidation: false }
+  let listCalls = 0
+  const fetch = vi.fn(async (url: string) => {
+    if (url !== '/api/roster/correspondences') return { ...old, revision: 3 }
+    if (++listCalls === 1) return { rows: [old], total: 1, page: 1, pageSize: 200 }
+    if (listCalls === 2) return { rows: Array.from({ length: 200 }, (_, i) => ({ ...old, id: i + 11, revision: 3 })), total: 201, page: 1, pageSize: 200 }
+    throw new Error('second summary page offline')
+  })
+  vi.stubGlobal('$fetch', fetch)
+  const Expanded = defineComponent({
+    setup() { return useEnterpriseCorrespondences(() => 42) },
+    template: '<div><span data-testid="detail">{{ detailsForEvent(7) === null ? "unknown" : "known" }}</span><span data-testid="rows">{{ rows.map(row => `${row.id}:${row.revision}`).join(",") }}</span><span data-testid="error">{{ detailErrorForEvent(7) }}</span><button data-testid="expand" @click="loadEvent(7)">展开</button><button data-testid="retry" @click="loadEvent(7, true)">重试</button></div>',
+  })
+  wrapper = mount(Expanded)
+  await flushPromises()
+  await wrapper.get('[data-testid="expand"]').trigger('click')
+  await flushPromises()
+  await wrapper.get('[data-testid="retry"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.get('[data-testid="detail"]').text()).toBe('unknown')
+  expect(wrapper.get('[data-testid="error"]').text()).toBe('true')
+  expect(wrapper.get('[data-testid="rows"]').text()).toBe('11:2')
+  expect(fetch.mock.calls.filter(call => call[0].endsWith('/11'))).toHaveLength(1)
+  expect(listCalls).toBe(3)
 })
