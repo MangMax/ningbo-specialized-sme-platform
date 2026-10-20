@@ -17,3 +17,16 @@ export function parseCurrentQualifiedQuery(query: Record<string, unknown>) {
   }
   return currentQualifiedFilterSchema.safeParse(raw)
 }
+
+/** Validate original RPC arguments before the toolkit's raw-shape SDK strips keys. */
+export function currentQualifiedRpcError(body: unknown): Response | null {
+  for (const entry of Array.isArray(body) ? body : [body]) {
+    if (!entry || typeof entry !== 'object') continue
+    const rpc = entry as { method?: string; params?: { name?: string; arguments?: unknown }; id?: unknown }
+    if (rpc.method !== 'tools/call' || rpc.params?.name !== 'list_current_qualified_enterprises') continue
+    if (!currentQualifiedFilterSchema.safeParse(rpc.params.arguments).success) {
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: typeof rpc.id === 'number' || typeof rpc.id === 'string' ? rpc.id : null, error: { code: -32602, message: 'Invalid or unsupported current qualified enterprise query parameters' } }), { status: 400, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } })
+    }
+  }
+  return null
+}

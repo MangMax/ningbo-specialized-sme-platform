@@ -81,3 +81,17 @@ it('sorts names with stable enterprise ID ties before deep pagination and never 
   expect((await query({ titleCode: 'specialized_sme', sort: 'name_desc' })).body.rows.map((row: any) => row.enterpriseId)).toEqual([z.enterprise.id, b.enterprise.id, a.enterprise.id])
   expect(JSON.stringify(result.body)).not.toContain('rawFields')
 })
+
+it.each([
+  { name: 'unsupported-filter', extra: { firstYear: '2024' } },
+  { name: 'unknown-option', extra: { unsupported154: true } },
+])('rejects $name at the real MCP transport before SDK stripping', async ({ extra }) => {
+  f.candidate('未筛选企业')
+  const response = await fetch(f.url('/mcp'), { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 'strict-154', method: 'tools/call', params: { name: 'list_current_qualified_enterprises', arguments: { titleCode: 'specialized_sme', ...extra } } }) })
+  const raw = await response.text()
+  const payload = JSON.parse(raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw)
+  expect(payload).toMatchObject({ id: 'strict-154', error: { code: -32602 } })
+  expect(payload.result).toBeUndefined()
+  expect(response.status).toBe(400)
+  expect(response.headers.get('cache-control')).toContain('no-store')
+})

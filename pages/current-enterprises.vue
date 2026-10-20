@@ -56,10 +56,18 @@ const { data, isLoading, error, refetch } = useQuery<Result>({
   },
   placeholderData: previous => previous,
 })
-const { displayed, paginationDisabled, failureDescription } = useRetainedQuerySnapshot(data, isLoading, error, activeRequest)
+const { displayed, isShowingPrevious, paginationDisabled } = useRetainedQuerySnapshot(data, isLoading, error, activeRequest)
 const rows = computed(() => displayed.value?.rows ?? [])
+function describeRequest(request: typeof activeRequest.value) {
+  const p = request.params
+  const order = { id_asc: '稳定企业标识', name_asc: '企业名称升序', name_desc: '企业名称降序' }
+  return `${TITLES[p.titleCode]}；搜索：${p.q || '不限'}；区县：${p.district || '全部'}；排序：${order[p.sort]}；第 ${p.page} 页，每页 ${p.pageSize} 家`
+}
+const failureDescription = computed(() => displayed.value
+  ? `当前显示：${describeRequest(displayed.value.request)}。请求目标：${describeRequest(activeRequest.value)}未加载成功。`
+  : undefined)
 const allDistricts = [...new Set([...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES])]
-const detailUrl = (id: number) => ({ path: `/enterprises/${id}`, query: { currentBack: new URLSearchParams(Object.entries(route.query).filter((pair): pair is [string, string] => typeof pair[1] === 'string')).toString() } })
+const detailUrl = (id: number) => ({ path: `/enterprises/${id}`, query: { currentBack: new URLSearchParams(Object.entries(displayed.value!.request.params).filter((pair) => pair[1] != null).map(([key, value]) => [key, String(value)])).toString() } })
 function clearFilters() { search.value = ''; update({ q: undefined, district: undefined, page: undefined }) }
 useHead({ title: '优质中小企业查询' })
 </script>
@@ -70,7 +78,7 @@ useHead({ title: '优质中小企业查询' })
       <template #actions><CurrentRosterExportEntry :title-code="title" /></template>
     </PageHeader>
     <Tabs v-model="titleModel">
-      <TabsList class="max-w-full flex-wrap">
+      <TabsList class="h-auto max-w-full flex-wrap">
         <TabsTrigger v-for="code in CURRENT_TITLES" :key="code" :value="code">{{ TITLES[code] }}</TabsTrigger>
       </TabsList>
     </Tabs>
@@ -89,11 +97,12 @@ useHead({ title: '优质中小企业查询' })
       </Select>
       <Button v-if="q || district" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
     </div>
+    <p v-if="displayed" class="text-muted-foreground text-xs" aria-live="polite">当前显示：{{ describeRequest(displayed.request) }}<span :class="{ invisible: !isShowingPrevious }">（上次成功结果）</span></p>
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在查询当前有效企业…" />
-        <TableFailureState v-if="error" title="当前有效企业查询失败" :compact="rows.length > 0" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
-        <div v-if="!error || rows.length" class="data-table-scroll [&_[data-slot=table-container]]:overflow-visible">
+        <TableFailureState v-if="error" title="当前有效企业查询失败" :compact="Boolean(displayed)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
+        <div v-if="!error || displayed" class="data-table-scroll [&_[data-slot=table-container]]:overflow-visible">
           <Table class="data-table min-w-[850px] table-fixed">
             <TableHeader><TableRow class="hover:bg-transparent">
               <TableHead class="bg-muted w-[24%]">企业名称</TableHead><TableHead class="bg-muted w-[19%]">统一社会信用代码</TableHead><TableHead class="bg-muted w-[12%]">区县</TableHead><TableHead class="bg-muted w-[31%]">认定与资格依据</TableHead><TableHead class="bg-muted w-[14%]">详情与出处</TableHead>
@@ -113,13 +122,13 @@ useHead({ title: '优质中小企业查询' })
                 </TableCell>
                 <TableCell class="align-top"><Button as-child variant="outline" size="sm"><NuxtLink :to="detailUrl(row.enterpriseId)">查看详情与出处</NuxtLink></Button></TableCell>
               </TableRow>
-              <TableRow v-if="isLoading"><TableCell v-for="n in 5" :key="n"><Skeleton class="h-3 w-full" /></TableCell></TableRow>
-              <TableRow v-if="!isLoading && !error && !rows.length"><TableCell colspan="5" class="p-0"><Empty class="border-0"><EmptyHeader><EmptyTitle>没有符合条件的当前有效企业</EmptyTitle></EmptyHeader></Empty></TableCell></TableRow>
+              <TableRow v-if="isLoading && !displayed"><TableCell v-for="n in 5" :key="n"><Skeleton class="h-3 w-full" /></TableCell></TableRow>
+              <TableRow v-if="displayed && !rows.length"><TableCell colspan="5" class="p-0"><Empty class="border-0"><EmptyHeader><EmptyTitle>没有符合条件的当前有效企业</EmptyTitle></EmptyHeader></Empty></TableCell></TableRow>
             </TableBody>
           </Table>
         </div>
       </CardContent>
     </Card>
-    <TablePagination v-if="!error || rows.length" :page="displayed?.request.page ?? page" :page-size="displayed?.request.pageSize ?? pageSize" :total="displayed?.total ?? 0" :loading="paginationDisabled" unit="家企业" @update:page="update({ page: $event === 1 ? undefined : String($event) })" @update:page-size="update({ pageSize: String($event), page: undefined })" />
+    <TablePagination v-if="displayed" :page="displayed.request.page" :page-size="displayed.request.pageSize" :total="displayed.total" :loading="paginationDisabled" unit="家企业" @update:page="update({ page: $event === 1 ? undefined : String($event) })" @update:page-size="update({ pageSize: String($event), page: undefined })" />
   </div>
 </template>
