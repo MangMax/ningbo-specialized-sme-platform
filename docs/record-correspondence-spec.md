@@ -95,6 +95,8 @@
 | 预检决定 | `POST /api/roster/correspondences/preflight` | `preflight_record_correspondences` | 封套 `idempotencyKey`、`sourceKind`、`sourceIdentity`、`expectedRevision`/对象版本、`operations[]`；只生成固定目标与影响计划，逐项列 old/new、冲突、预期新增/解除/更正/审计数、受影响旧结论 ID，不改对应业务行。若沿用现有 import_batch 预检记账，须明确其“只读业务、可写记账”事实。 |
 | 原子提交 | `POST /api/roster/correspondences/commit` | `save_record_correspondences` | 提交预检给出的 `planId`/`planHash`、同一封套/幂等键、所有 expected revisions；单事务验证目标、范围、当前版本和计划后写全部边与审计；逐项结果及读回引用。任何冲突整批零业务写。 |
 
+现行对应列表可显式传 `view=summary`（REST 查询参数或 MCP 工具参数），返回相同过滤、ID 升序、分页和总数下的边摘要：`id`、`type`、`role`、`status`、`revision`、`requiresRevalidation`、`eventId`、`predecessorEventId`、`relationId`、`exportRowId`、`enterpriseId`、`titleCode`、规则及决定时间。摘要不展开原行、事件、反向关系和原始字段；保留来源 ID，按对应 ID 点读或按来源 ID 读取完整脱敏出处与审计。未传 `view` 时仍返回原有完整列表。摘要不设静默字节截断；字段自身过长时响应仍可能超过列表预算。
+
 这是一组**拟议能力**，不表示现有 `payload` 已支持对应边。现有 `sourceKind` 只有 `announcement` / `platform_export` / `alias_evidence`；拟议新增明确的 `correspondence_decision`（或经评审确认的等义类型），不能把对应决定伪装成“别名证据”。后续实现应优先将操作纳入 RL-11 的统一导入事务/幂等机制（可用新增受控操作类型或共用同一写入模块），而不是第二条无审计数据库写路；具体路由是否折叠到 `/api/roster/import/{preflight,commit}` 可在接口评审中确定，但以上原子性与客户端语义不变。预检结果需绑定具体目标、原值、输入哈希和数据库 revision；提交不重新以名称搜索替换目标。相同幂等键＋同请求指纹返回原回执，不重复审计；同键不同载荷冲突。提交响应丢失时以**原键**查询回执并读回，不换键再试。错误至少区分 `invalid_endpoint_type`、`identity_conflict`、`title_conflict`、`ambiguous_candidate`、`incomplete_coverage`、`stale_revision`、`plan_mismatch`、`idempotency_conflict`；409 用于并发/幂等冲突，422 用于确定性语义拒绝。预检与提交影响须一致，漂移则拒绝并重新预检，不“尽量提交”。
 
 企业完整页拟按事件展开正式文件、三接口**具体行**及有对应时的导出原行；流程详情也展示其对应导出原行。每项显示来源、查询/导出版本与范围、原时间、原状态、业务号或源行号、对应角色与确认状态；快照上下文与正式事实分开标识。独立后续流程另列；接口行及导出行可反向查看关联事件/流程，认定与导出一致性另列。无导出行时显示覆盖状态及其条件，不显示虚构行。中文业务名称与原文优先，内部 ID 在证据详情中；既有文件预览、PDF 实际页码、返回位置保持。后续 UI 票须在桌面和 390px 真实交互验收。

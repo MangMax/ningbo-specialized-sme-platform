@@ -103,6 +103,10 @@ export function details(db: Db, rows: CorrespondenceRead[]) {
   const reader = sourceReader(db, rows)
   return rows.map(reader.detail)
 }
+/** Opt-in list projection; source IDs resolve through the existing point/source routes. */
+export function summaries(rows: CorrespondenceRead[]) {
+  return rows.map(({ edgeKey: _edgeKey, targetIdentity: _targetIdentity, provenance: _provenance, sourceFingerprint: _sourceFingerprint, ...publicRow }) => publicRow)
+}
 export function detail(db: Db, row: CorrespondenceRead) { return details(db, [row])[0]! }
 export function audit(db: Db, correspondenceId: number) {
   return getRecordCorrespondenceAudit(db, correspondenceId).map(({ evidence, ...row }) => ({ ...row, evidence: sanitizeEvidence(evidence) }))

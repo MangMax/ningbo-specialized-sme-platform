@@ -85,6 +85,9 @@ export interface OcrJobResult {
   done?: number
 }
 
+/** Bound per-file page results retained by one OCR task; page jobs have a separate global permit. */
+const MAX_CONCURRENT_OCR_FILES_PER_JOB = 2
+
 /** 已校验的参数。 */
 interface OcrParams {
   files: string[]
@@ -197,7 +200,7 @@ async function currentPageImages(filesDir: string, relPath: string): Promise<Pag
 }
 
 /**
- * 多份并行识别,每份 PDF 的页图也并行;全进程 Paddle 并发由 `ocrImageFile` 的共享信号量限制。
+ * 每次最多两份并行识别,每份 PDF 的页图也并行;全进程 Paddle 并发由 `ocrImageFile` 的共享信号量限制。
  *
  * **一份失败不停下整批**(与 `render-pages` 同一理由):批量任务的用处正是「一次交一堆」,
  * 因为第 2 份坏了就撂下第 3–7 份,等于把「哪几份坏了」换成「任务失败」。
@@ -342,17 +345,25 @@ export async function runOcr(
     }
   }
 
-  await Promise.all(
-    files.map(async (file, index) => {
-      const outcome = await processFile(file)
+  let nextFile = 0
+  const recognizeNextFiles = async (): Promise<void> => {
+    while (!ctx.cancelled()) {
+      const index = nextFile
+      nextFile += 1
+      if (index >= files.length) return
+      const outcome = await processFile(files[index]!)
       if (!outcome) return
       outcomes[index] = outcome
       if (outcome.ok) totalPages += outcome.pages
       else failed += 1
       doneFiles += 1
       ctx.progress(doneFiles, files.length)
-    }),
-  )
+    }
+  }
+  await Promise.all(Array.from(
+    { length: Math.min(MAX_CONCURRENT_OCR_FILES_PER_JOB, files.length) },
+    () => recognizeNextFiles(),
+  ))
 
   if (ctx.cancelled()) {
     return { result: { ...snapshot(), cancelled: true, done: doneFiles }, cancelled: true }
