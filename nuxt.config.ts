@@ -138,19 +138,24 @@ export default defineNuxtConfig({
         // packaging pipeline as the server. Rollup computes a relocatable URL
         // from the launcher's final chunk, including in Nitro dev builds.
         const location = fileURLToPath(new URL('./server/utils/enterprise-read-worker-location.ts', import.meta.url))
+        const importLocation = fileURLToPath(new URL('./server/utils/import-execution-worker-location.ts', import.meta.url))
+        const importEntry = fileURLToPath(new URL('./lib/roster/import-execution-worker.ts', import.meta.url))
+        let importReference: string
         const entry = fileURLToPath(new URL('./lib/roster/enterprise-read-worker.ts', import.meta.url))
         let reference: string
         const plugin = {
           name: 'enterprise-native-read-worker',
           buildStart(this: { emitFile(file: { type: 'chunk'; id: string; fileName: string }): string }) {
             reference = this.emitFile({ type: 'chunk', id: entry, fileName: 'enterprise-read-worker.mjs' })
+            importReference = this.emitFile({ type: 'chunk', id: importEntry, fileName: 'import-execution-worker.mjs' })
           },
           resolveFileUrl({ referenceId, relativePath }: { referenceId: string; relativePath: string }) {
-            if (referenceId === reference) return `new URL(${JSON.stringify(relativePath)}, _import_meta_url_).href`
+            if (referenceId === reference || referenceId === importReference) return `new URL(${JSON.stringify(relativePath)}, _import_meta_url_).href`
           },
           transform: {
             order: 'post' as const,
             handler(_code: string, id: string) {
+              if (id === importLocation) return { code: `import { createEnterpriseReadProcess } from ${JSON.stringify(fileURLToPath(new URL('./server/utils/enterprise-read-process.ts', import.meta.url)))}; export function createImportExecutionWorker() { return createEnterpriseReadProcess(new URL(import.meta.ROLLUP_FILE_URL_${importReference})); }`, map: null }
               if (id !== location) return
               return { code: `import { createEnterpriseReadProcess } from ${JSON.stringify(fileURLToPath(new URL('./server/utils/enterprise-read-process.ts', import.meta.url)))};
                 export function createEnterpriseWorker() {
@@ -177,10 +182,11 @@ export default defineNuxtConfig({
                 for (const imported of info.importedIds) visit(imported)
               }
               visit(entry)
+              visit(importEntry)
             }
             // Keep the worker's complete business graph independent of Nitro's
             // app initialization chunk, preserving Nitro's normal grouping.
-            if (id !== entry && dependencies.has(id)) return 'enterprise-read-model'
+            if (id !== entry && id !== importEntry && dependencies.has(id)) return 'enterprise-read-model'
             if (typeof original === 'function') return original(id, api)
             if (id.includes('/nitropack/dist/runtime/') || id.includes('/nitropack/dist/presets/')) return 'nitro'
           }

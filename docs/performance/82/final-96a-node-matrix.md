@@ -2,6 +2,9 @@
 
 **Performance acceptance remains open.** The serial run observed 30 hot-stage gate-miss rows and 4 cold resource-miss rows. The required host reserve **FAILED**: the 8.5 GiB guard stopped a container, but free space subsequently fell below 8 GiB. All timing stopped permanently; the exclusive Node window was released at **2026-10-20 10:09:43Z** after owned containers stopped and cleanup evidence was saved. The cause of additional host allocation is unknown.
 
+
+Later authorized continuation: [phase diagnosis and capacity-blocked handoff](phase-diagnosis-3a13d84.md). Its corrected phase observations and seven readiness retries are separate evidence; the historical samples, misses and disk failure below are unchanged.
+
 ## Exact source, artifact and environment
 
 - Source archive: `c9f149f14de21e0cc30c9ca95061f4be5c8d98b5` (PG-results docs integration). Application, schema, original harness and all other non-doc tracked files equal `96a0bd9c21d6c0ac32f0de45daf44b76bbda99e6`; no app/schema/contract changes here. The archive contains all **1277** tracked entries with no missing/extra entries. All tracked regular-file hashes matched inside the built image before private harness overlays.
