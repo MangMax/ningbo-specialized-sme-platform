@@ -73,6 +73,13 @@ describe('record comparison true HTTP adapters on isolated SQLite', () => {
     const value = JSON.parse(called.result.content[0].text)
     expect(value.rows).toMatchObject([{ event: { id: event.id }, classification: 'unresolved' }])
     expect(value.counts).toMatchObject({ distinctEvents: 1, distinctPlatformRows: 1 })
+    const http = await fetch(`${service.baseUrl}/api/roster/record-comparison?${sourceQuery}`)
+    expect(http.status).toBe(200)
+    expect(value).toEqual(await http.json())
+    const impact = await rpc('tools/call', { name: 'preview_record_correspondence_impact', arguments: { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id] } })
+    const preview = await fetch(`${service.baseUrl}/api/roster/record-comparison/legacy-impact?${sourceQuery}`)
+    expect(preview.status).toBe(200)
+    expect(JSON.parse(impact.result.content[0].text)).toEqual(await preview.json())
   })
   it('lists business-labeled source IDs for explicit UI selection without a latest default', async () => {
     const url = `${service.baseUrl}/api/roster/record-comparison/sources`

@@ -451,3 +451,32 @@ Current authoritative performance files: `delivery-cache-public/results.json`,
 This run includes the inherited cache; it is not a claim about #94 alone or a
 measurement of cache hit rate. The container/production/CI/parent and other
 unrun boundaries listed above still apply without relaxation.
+
+## #94 finalization-window recovery follow-up (2026-10-20)
+
+The earlier first-chunk SIGKILL probe did not cover finalization. The additional
+`node scripts/verify-snapshot-ingestion-finalization.mjs` verifier uses three
+fresh synthetic SQLite databases and the built Nitro HTTP API. A driver hook
+pauses **after** each named native statement returns; the parent kills only its
+owned server process, then starts a new process on the same database:
+
+| Interruption point | Public readback after restart | Same-key result |
+| --- | --- | --- |
+| `import_batch` set to `committed`, before receipt finalization | Preflight receipt plus one `processing` attempt; no item audit or source row | Preflight reuses batch ID and plans one add; commit writes 300 source rows plus batch and yields one committed receipt |
+| `import_receipt` set to `committed`, before outer transaction COMMIT | Same `processing` history, no item audit or source row | Same complete retry and receipt history |
+| Native outer COMMIT returned, before HTTP response | One committed receipt, one item audit and all 300 source rows | Same-key commit replays the durable result across two restarts; no new receipt |
+
+The verifier reads every source row through the public source endpoint, checking
+its row number and Unicode/whitespace raw fields; receipt metadata, items and
+history are read through authenticated public HTTP. The two pre-COMMIT probes
+show that batch, business and receipt terminal writes roll back together. The
+post-COMMIT probe covers a lost success response. A retained `processing` attempt
+after a pre-COMMIT kill is unresolved history, not evidence of a partial commit.
+These are deterministic synthetic fault probes, not storage-power-loss or
+production durability measurements. The earlier first-chunk and MCP fallback
+verifier remains separate.
+
+The existing `bench-snapshot-ingestion.mjs` is prepared for a controlled private
+2x/5x matrix with a fresh output directory and source SHA. That heavy matrix was
+not run by this follow-up. Its prior observed cohorts above retain their own
+source bindings; container, production and parent acceptance remain separate.
