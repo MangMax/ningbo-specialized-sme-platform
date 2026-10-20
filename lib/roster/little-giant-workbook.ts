@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { Workbook, Worksheet } from 'documonster/excel'
+import { assertExcelSheets, inspectExcelSource } from '../excel-source'
 import { createExcelValueReader } from '../excel-read-value'
 import { isNingboDistrict, normalizeUscc } from '../domain'
 
@@ -161,12 +162,14 @@ export async function parseLittleGiantWorkbook(
   input: Uint8Array,
 ): Promise<LittleGiantWorkbook> {
   const workbook = Workbook.create()
+  const sourceParts = await inspectExcelSource(input)
   await Workbook.read(workbook, input)
 
   const sheets = Workbook.getWorksheets(workbook)
+  assertExcelSheets(sourceParts, sheets.map(sheet => Worksheet.getName(sheet)))
   const sheet = sheets[0]
   if (!sheet) throw new Error('工作簿里没有工作表')
-  const valueAt = await createExcelValueReader(sheet, input, { firstRow: 1, columnCount: NOTICE_LIMIT })
+  const valueAt = await createExcelValueReader(sheet, input, sourceParts.get(Worksheet.getName(sheet))!, { firstRow: 1, columnCount: NOTICE_LIMIT })
 
   const headers: string[] = []
   for (let column = 1; column <= NOTICE_LIMIT; column += 1) {

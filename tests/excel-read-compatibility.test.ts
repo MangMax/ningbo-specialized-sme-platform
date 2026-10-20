@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
@@ -35,6 +35,32 @@ function fixture(date1904 = false) {
 }
 
 describe('Excel reader compatibility', () => {
+  it('drains deferred worksheets before rejecting an unrecoverable source date without leaking owned temporary storage', async () => {
+    const { workbook, sheet } = fixture()
+    sheet.getCell('E3').value = 1
+    workbook.addWorksheet('second')
+    const JSZip = createRequire(import.meta.resolve('exceljs'))('jszip')
+    const archive = await JSZip.loadAsync(await workbook.xlsx.writeBuffer())
+    let xml = await archive.file('xl/worksheets/sheet1.xml').async('string')
+    xml = xml.replace(/<c r="E3"[^>]*>.*?<\/c>/, '<c r="E3" t="d"><v>invalid-date</v></c>')
+    archive.file('xl/worksheets/sheet1.xml', xml)
+    const readers = await readBytes(await archive.generateAsync({ type: 'nodebuffer' }), 'invalid-native-date')
+    const ownedTemp = mkdtempSync(join(directory, 'owned-temp-'))
+    const previous = process.env.TMPDIR
+    process.env.TMPDIR = ownedTemp
+    try {
+      for (let repeat = 0; repeat < 3; repeat++) {
+        await expect(readers.giant()).rejects.toThrow(/原始日期/)
+        await expect.poll(() => readdirSync(ownedTemp).filter(name => name.startsWith('documonster-'))).toEqual([])
+        await expect(readers.platform()).rejects.toThrow(/原始日期/)
+        await expect.poll(() => readdirSync(ownedTemp).filter(name => name.startsWith('documonster-'))).toEqual([])
+      }
+    } finally {
+      if (previous === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = previous
+    }
+  })
+
   it('recovers early merged dates and fractional caches from the selected sheet despite reversed ZIP entry order', async () => {
     const { workbook, sheet } = fixture()
     sheet.getCell('E3').value = 60
@@ -59,6 +85,54 @@ describe('Excel reader compatibility', () => {
     ])
   })
 
+
+  it.each([
+    ['modern', '2023-10-01T12:00:00Z', '2023'],
+    ['early', '1900-02-28T12:00:00Z', '1900'],
+    ['cross-year-positive', '2023-01-01T00:30:00+14:00', '2023'],
+    ['cross-year-negative', '2022-12-31T23:30:00-12:00', '2022'],
+  ])('preserves original unstyled native date source values without inferring UTC years: %s', async (id, source, expected) => {
+    const { workbook, sheet } = fixture()
+    sheet.getCell('E3').value = 1
+    sheet.mergeCells('E3:F3')
+    workbook.addWorksheet('second')
+    const JSZip = createRequire(import.meta.resolve('exceljs'))('jszip')
+    const archive = await JSZip.loadAsync(await workbook.xlsx.writeBuffer())
+    let xml = await archive.file('xl/worksheets/sheet1.xml').async('string')
+    xml = xml.replace(/<c r="E3"[^>]*>.*?<\/c>/, `<c r="E3" t="d"><v>${source}</v></c>`)
+    archive.file('xl/worksheets/sheet1.xml', xml)
+    const bytes = await archive.generateAsync({ type: 'nodebuffer' })
+    const old = new ExcelJS.Workbook()
+    await old.xlsx.load(bytes)
+    expect(old.worksheets[0]!.getCell('E3').value).toBe(Number(expected))
+    const readers = await readBytes(bytes, `native-${id}`)
+    expect((await readers.platform()).rows[0]!.rawFields).toMatchObject({ 5: expected, 6: expected })
+    expect((await readers.giant()).rows[0]!.raw.slice(4, 6)).toEqual([expected, expected])
+  })
+
+
+  it('preserves styled native dates and native formula caches from the original numeric text', async () => {
+    const { workbook, sheet } = fixture()
+    sheet.getCell('E3').value = 1
+    sheet.getCell('E3').numFmt = 'yyyy-mm-dd'
+    sheet.getCell('F3').value = { formula: '1', result: 1 }
+    const JSZip = createRequire(import.meta.resolve('exceljs'))('jszip')
+    const archive = await JSZip.loadAsync(await workbook.xlsx.writeBuffer())
+    let xml = await archive.file('xl/worksheets/sheet1.xml').async('string')
+    xml = xml.replace(/<c r="E3"([^>]*)>.*?<\/c>/, '<c r="E3"$1 t="d"><v>2023-01-01T00:30:00+14:00</v></c>')
+      .replace(/<c r="F3"[^>]*>.*?<\/c>/, '<c r="F3" t="d"><f>1</f><v>1900-02-28T12:00:00Z</v></c>')
+    archive.file('xl/worksheets/sheet1.xml', xml)
+    const bytes = await archive.generateAsync({ type: 'nodebuffer' })
+    const old = new ExcelJS.Workbook()
+    await old.xlsx.load(bytes)
+    const oldDate = old.worksheets[0]!.getCell('E3').value as Date
+    expect(oldDate.toISOString()).toBe('1905-07-15T00:00:00.000Z')
+    expect(old.worksheets[0]!.getCell('F3').result).toBe(1900)
+    const readers = await readBytes(bytes, 'native-style-formula')
+    expect((await readers.platform()).rows[0]!.rawFields).toMatchObject({ 5: '1905-07-15', 6: '1900' })
+    expect((await readers.giant()).rows[0]!.raw.slice(4, 6)).toEqual([String(oldDate), '1900'])
+  })
+
   it('preserves plain falsy values, shared formula caches and cached business strings', async () => {
     const { workbook, sheet } = fixture()
     sheet.getCell('A3').value = 0
@@ -74,6 +148,37 @@ describe('Excel reader compatibility', () => {
     const giant = await readers.giant()
     expect(giant.rows[0]).toMatchObject({ listNo: 0, name: '合成缓存企业', usccRaw: 'false', uscc: 'FALSE', batchSeq: 2, year: 2020 })
     expect(giant.issues.map(issue => [issue.code, issue.sourceRowNo])).toEqual([['invalid_uscc', 3]])
+  })
+
+
+  it('rejects a missing declared first sheet even when an empty second sheet survives', async () => {
+    const { workbook } = fixture()
+    workbook.addWorksheet('专精特新中小企业导出Excel')
+    const JSZip = createRequire(import.meta.resolve('exceljs'))('jszip')
+    const archive = await JSZip.loadAsync(await workbook.xlsx.writeBuffer())
+    archive.remove('xl/worksheets/sheet1.xml')
+    const readers = await readBytes(await archive.generateAsync({ type: 'nodebuffer' }), 'missing-first-with-survivor')
+    await expect(readers.platform()).rejects.toThrow(/工作表/)
+    await expect(readers.giant()).rejects.toThrow(/工作表/)
+  })
+
+  it('rejects incomplete reader models for valid relationship-resolved nonstandard sheet parts', async () => {
+    const { workbook } = fixture()
+    workbook.addWorksheet('second')
+    const JSZip = createRequire(import.meta.resolve('exceljs'))('jszip')
+    const archive = await JSZip.loadAsync(await workbook.xlsx.writeBuffer())
+    const first = await archive.file('xl/worksheets/sheet1.xml').async('string')
+    archive.remove('xl/worksheets/sheet1.xml')
+    archive.file('xl/custom/first.xml', first)
+    let rels = await archive.file('xl/_rels/workbook.xml.rels').async('string')
+    rels = rels.replace('Target="worksheets/sheet1.xml"', 'Target="custom/../custom/first.xml"')
+      .replace('Target="worksheets/sheet2.xml"', 'Target="/xl/worksheets/sheet2.xml"')
+    archive.file('xl/_rels/workbook.xml.rels', rels)
+    const readers = await readBytes(await archive.generateAsync({ type: 'nodebuffer' }), 'resolved-parts')
+    // The package is complete; 0.20.2 cannot expose this part as a worksheet.
+    // Reject the incomplete model explicitly rather than selecting its survivor.
+    await expect(readers.giant()).rejects.toThrow(/读取器.*工作表/)
+    await expect(readers.platform()).rejects.toThrow(/读取器.*工作表/)
   })
 
   it('keeps an empty first sheet instead of choosing a populated later sheet', async () => {
@@ -146,8 +251,8 @@ describe('Excel reader compatibility', () => {
     const archive = await JSZip.loadAsync(bytes)
     archive.remove('xl/worksheets/sheet1.xml')
     const missingPart = await readBytes(await archive.generateAsync({ type: 'nodebuffer' }), 'missing-part')
-    await expect(missingPart.platform()).rejects.toThrow(/没有工作表/)
-    await expect(missingPart.giant()).rejects.toThrow(/没有工作表/)
+    await expect(missingPart.platform()).rejects.toThrow(/工作表/)
+    await expect(missingPart.giant()).rejects.toThrow(/工作表/)
     for (const [id, content] of [['not-zip', Buffer.from('not an XLSX')], ['truncated', bytes.subarray(0, 40)]] as const) {
       const corrupt = await readBytes(content, id)
       await expect(corrupt.platform()).rejects.toThrow()

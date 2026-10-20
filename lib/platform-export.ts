@@ -25,6 +25,7 @@ import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { Readable } from 'node:stream'
 import { Workbook, Worksheet } from 'documonster/excel'
+import { assertExcelSheets, inspectExcelSource } from './excel-source'
 import { createExcelValueReader } from './excel-read-value'
 
 /** 三张导出表对应的称号(与 `db/titles.ts` 的 `TitleCode` 同值)。 */
@@ -193,8 +194,11 @@ export async function readPlatformExport(
 ): Promise<ParsedPlatformExport> {
   const workbook = Workbook.create()
   const input = await readFile(filePath)
+  const sourceParts = await inspectExcelSource(input)
   await Workbook.readStream(workbook, Readable.from([input]))
-  const sheet = Workbook.getWorksheets(workbook)[0]
+  const sheets = Workbook.getWorksheets(workbook)
+  assertExcelSheets(sourceParts, sheets.map(sheet => Worksheet.getName(sheet)))
+  const sheet = sheets[0]
   if (!sheet) throw new Error(`导出表没有工作表:${filePath}`)
 
   const layout = options.titleCode
@@ -202,7 +206,7 @@ export async function readPlatformExport(
     : detectLayout(Worksheet.getName(sheet), basename(filePath))
 
   const columnCount = Worksheet.columnCount(sheet)
-  const valueAt = await createExcelValueReader(sheet, input, { firstRow: layout.firstDataRow, columnCount })
+  const valueAt = await createExcelValueReader(sheet, input, sourceParts.get(Worksheet.getName(sheet))!, { firstRow: layout.firstDataRow, columnCount })
   const rows: PlatformExportRow[] = []
   for (let rowNo = layout.firstDataRow; rowNo <= Worksheet.rowCount(sheet); rowNo++) {
     const rawFields: Record<string, string> = {}
