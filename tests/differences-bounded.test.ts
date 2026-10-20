@@ -14,11 +14,12 @@ vi.mock('@db', () => ({ useDb: () => active.db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const cleanup: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.unstubAllGlobals() })
-function fixture() {
+function fixture(observe?: (db: ReturnType<typeof useDb>) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'differences-132-'))
   const db = useDb({ dbPath: join(dir, 'synthetic.db') })
   active.db = db
   cleanup.push(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+  observe?.(db)
   let sequence = 0
   const write = (payload: RosterImportPayload) => {
     const key = `synthetic-132-${++sequence}`
@@ -29,6 +30,31 @@ function fixture() {
   write({ announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic 132' }, records: Array.from({ length: 20 }, (_, i) => ({ enterprise: { name: `合成差异${String(i).padStart(2, '0')}`, ...(i === 0 ? { uscc: '91330211255994457P' } : {}) }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2022, batchSeq: 1 }] })) } })
   write({ differences: Array.from({ length: 20 }, (_, i) => (['missing_in_miit', 'extra_in_miit'] as const).map(direction => ({ enterpriseName: `合成差异${String(i).padStart(2, '0')}`, titleCode: 'specialized_sme', direction, status: 'needs_review' as const, measureCode: 'manual_review', recordedAt: '2026-10-18T00:00:00.000Z' }))).flat() })
   return { db, write }
+}
+// Wrap the registered production UDF, preserving its implementation and arity.
+// Count only executions of the page-local coverage SELECT, not other readers.
+function coverageFunctionMeter(db: ReturnType<typeof useDb>) {
+  const register = db.$client.function.bind(db.$client)
+  const prepare = db.$client.prepare.bind(db.$client)
+  let selectingCoverage = false, selects = 0
+  const calls = new Map<string, number>()
+  db.$client.function = ((name: string, options: object, fn: (value: unknown) => unknown) => register(name, options,
+    name === 'roster84_uscc' ? function (value: unknown) {
+      if (selectingCoverage) calls.set(String(value), (calls.get(String(value)) ?? 0) + 1)
+      return fn(value)
+    } : fn)) as typeof db.$client.function
+  db.$client.prepare = ((...args: Parameters<typeof prepare>) => {
+    const stmt = prepare(...args)
+    if (/with targets as materialized/i.test(stmt.source)) {
+      const all = stmt.all.bind(stmt)
+      Object.defineProperty(stmt, 'all', { value: (...params: unknown[]) => {
+        selects++; selectingCoverage = true
+        try { return all(...params) } finally { selectingCoverage = false }
+      } })
+    }
+    return stmt
+  }) as typeof db.$client.prepare
+  return { read: () => ({ selects, calls: Object.fromEntries(calls) }), reset: () => { selects = 0; calls.clear() } }
 }
 // Observe the SQLite boundary, not internal collaborators. The ceiling is a
 // resource regression guard for a 20-row public page, never a latency/SLO claim.
@@ -186,4 +212,78 @@ it('preserves exact identity title partitions source conditions and no record ou
   expect(aligned.total).toBe(2)
   expect(aligned.rows.every((r: any) => r.inCurrentDifference === false && r.status === 'needs_review')).toBe(true)
   expect(aligned.rows.map((r: any) => r.explanationId)).toEqual(rest.rows.map((r: any) => r.explanationId))
+})
+
+it('bounds legacy key normalization by distinct raw keys while preserving public coverage history', async () => {
+  let meter!: ReturnType<typeof coverageFunctionMeter>
+  const f = fixture(db => { meter = coverageFunctionMeter(db) }), api = await publicReads()
+  const { listRosterDifferences: reference } = await import('../lib/roster/enterprise-roster')
+  const legacy = [' 91330211\u200b255994457p ', '91330211\t255994457p']
+  const excluded = ['９１３３０２１１２５５９９４４５７ｐ', '91330211255994457p\0', 'archive:91330211255994457p\u200b']
+  const names = ['name:合成差异00', 'name:合成差异01']
+  const at = '2026-10-20T00:00:00.000Z', later = '2026-10-20T00:00:01.000Z'
+  const attempt = (queryKey: string, status: 'no_record' | 'not_queried' | 'partial' | 'failed' = 'no_record', queriedAt = at) => ({
+    interface: 'business_list' as const, queryKey, rdjb: '2', titleCode: 'specialized_sme', queriedAt, status,
+  })
+  // Natural archive identities differ by interface/rdjb/time. Literal queryKey
+  // strings are preserved by the application import API; no SQL fixture writes.
+  const initial = f.write({ platformQueries: [
+    ...Array.from({ length: 12 }, (_, i) => attempt(legacy[i % 2]!, 'partial', new Date(Date.parse(at) - i).toISOString())),
+    ...excluded.flatMap(key => Array.from({ length: 8 }, (_, i) => attempt(key, 'failed', new Date(Date.parse(later) + i).toISOString()))),
+    attempt(names[0]!, 'not_queried', later), attempt(names[1]!, 'failed', later),
+    { ...attempt(excluded[2]!, 'failed', later), interface: 'apply_list', relations: [{ sequenceNo: 1, usccRaw: '91330211255994457P', nameRaw: '合成差异00' }] },
+    attempt('archive:ascii-unrelated', 'failed', later),
+  ] })
+  const queryIds = (receipt: typeof initial) => receipt.items.filter(item => item.kind === 'platform_query').map(item => Number(item.ref.split(':')[1]))
+  const initialIds = queryIds(initial)
+  const relatedId = initialIds[38]!, nameId = initialIds[36]!, otherNameId = initialIds[37]!
+  const check = async (truncated: boolean, tiedIds: number[] = []) => {
+    meter.reset()
+    const rest = await api.rest('?pageSize=50')
+    // Actual SELECT execution and actual UDF inputs are both required: a fixed
+    // expected count without this execution cannot satisfy the resource guard.
+    expect(meter.read().selects).toBe(1)
+    expect.soft(meter.read().calls).toEqual(Object.fromEntries([...legacy, ...excluded, ...names].map(key => [key, 1])))
+    expect(rest).toMatchObject({ total: 40, counts: { specialized_sme: { missing_in_miit: 20, extra_in_miit: 20 } } })
+    const rows = rest.rows.filter((row: any) => row.name === '合成差异00')
+    expect(rows.map((row: any) => row.direction).sort()).toEqual(['extra_in_miit', 'missing_in_miit'])
+    for (const row of rows) {
+      // The latest business query is name-only/not_queried; older partial or
+      // failed retries with the same conditions cannot replace its semantics.
+      expect(row).toMatchObject({ status: 'needs_review', currentDecision: { current: { status: 'needs_review' } }, queryCoverage: { status: 'unknown', truncated } })
+      const sources = row.queryCoverage.sources
+      expect(sources).toHaveLength(truncated ? 50 : 14)
+      expect(sources.slice(0, 2)).toMatchObject([
+        { queryId: relatedId, interface: 'apply_list', subjectMatch: 'matched_relation', status: 'failed', outcome: 'unknown' },
+        { queryId: nameId, subjectMatch: 'name_only', queryStatus: 'not_queried', status: 'not_queried', outcome: 'unknown' },
+      ])
+      expect(sources.slice(2).map((s: any) => s.queryId)).toEqual(truncated ? tiedIds.slice().reverse() : initialIds.slice(0, 12))
+      expect(sources.slice(2).every((s: any) => s.subjectMatch === 'exact_uscc' && s.outcome === 'unknown')).toBe(true)
+      if (truncated) expect(sources.slice(2, 6).map((s: any) => s.queryStatus)).toEqual(['failed', 'partial', 'not_queried', 'no_record'])
+    }
+    expect(rest.rows.filter((row: any) => row.name === '合成差异01').every((row: any) => row.queryCoverage.sources.length === 1 && row.queryCoverage.sources[0].queryId === otherNameId && row.queryCoverage.sources[0].subjectMatch === 'name_only' && row.queryCoverage.status === 'failed')).toBe(true)
+    expect(rest.rows.filter((row: any) => row.name === '合成差异02').every((row: any) => row.queryCoverage.status === 'not_queried')).toBe(true)
+    meter.reset()
+    const mcp = await api.mcp({ pageSize: 50 })
+    expect(meter.read().selects).toBe(1)
+    expect.soft(meter.read().calls).toEqual(Object.fromEntries([...legacy, ...excluded, ...names].map(key => [key, 1])))
+    expect(mcp.rows).toHaveLength(40)
+    expect(mcp.counts).toEqual({ specialized_sme: { missing_in_miit: 20, extra_in_miit: 20 } })
+    for (const row of rest.rows) {
+      const matching = mcp.rows.find((r: any) => r.enterpriseId === row.enterpriseId && r.direction === row.direction)
+      expect(matching.queryCoverage).toEqual(row.queryCoverage)
+    }
+    // Supplementary scalar-reference parity; literal assertions above own the
+    // expected matching branches, statuses, ordering and history boundary.
+    expect(rest).toEqual(reference(f.db, { pageSize: 50 }))
+  }
+  await check(false)
+  const statuses = ['no_record', 'not_queried', 'partial', 'failed'] as const
+  const repeated = f.write({ platformQueries: Array.from({ length: 48 }, (_, i) => ({
+    ...attempt(legacy[i % 2]!, statuses[i % 4]), rdjb: `2,synthetic-${i}`,
+    // All 48 timestamps tie: newest IDs must win, including across both keys.
+    // The newest attempt also matches by relation: UNION must retain it once.
+    ...(i === 47 ? { relations: [{ sequenceNo: 1, usccRaw: '91330211255994457P' }] } : {}),
+  })) })
+  await check(true, queryIds(repeated))
 })
