@@ -10,6 +10,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useDb, getDbOwnerIdentity, schema } from '../db/client'
 import { readRecognitions } from '../server/utils/recognition-read'
+import { readDifferences } from '../server/utils/difference-read'
 import { createReadTurns } from '../server/utils/read-turn'
 import { createEnterpriseReadExecutor } from '../server/utils/enterprise-read'
 import { createEnterpriseWorker } from '../server/utils/enterprise-read-worker-location'
@@ -116,7 +117,10 @@ it('ordinary inode and symlink replacement retain the cached original owner whil
   expect(getDbOwnerIdentity(reopened)).toBeDefined()
 })
 
-it.each(['inode','symlink'])('child verifies %s identity again after queue wait and fallback keeps the original owner',async kind=>{
+it.each([
+  ['inode', 'recognitions'], ['symlink', 'recognitions'],
+  ['inode', 'differences'], ['symlink', 'differences'],
+] as const)('child verifies %s identity for %s again after queue wait and fallback keeps the original owner',async (kind, operation)=>{
   const f=await fixture(),other=await fixture()
   await other.client.commit({idempotencyKey:'extra',sourceKind:'announcement',sourceIdentity:'synthetic/extra',payload:{announcement:{...other.payload.announcement,records:[{...other.payload.announcement.records[0]!,enterprise:{name:'另一企业'}}]}}})
   f.writer.$client.pragma('wal_checkpoint(TRUNCATE)');other.writer.$client.pragma('wal_checkpoint(TRUNCATE)')
@@ -134,14 +138,63 @@ it.each(['inode','symlink'])('child verifies %s identity again after queue wait 
     return worker
   }})
   cleanup.push(()=>reads.close())
-  const pending=readRecognitions(owner,{},undefined,reads)
+  const pending=operation==='recognitions'?readRecognitions(owner,{},undefined,reads):readDifferences(owner,{},undefined,reads)
   await seen
   if(kind==='inode'){renameSync(f.path,join(f.dir,'old.db'));renameSync(other.path,f.path)}
   else {unlinkSync(link);symlinkSync(other.path,link)}
   releaseReady()
   const result=await pending
   expect(Buffer.isBuffer(result)).toBe(false)
-  expect(result).toMatchObject({counts:{titlePairs:1},rows:[{name:'合成M1企业'}]})
+  expect(result).toMatchObject(operation==='recognitions'?{counts:{titlePairs:1},rows:[{name:'合成M1企业'}]}:{total:1,rows:[{name:'合成M1企业',status:'not_queried',explanationId:null}]})
+})
+
+it('REST uses the same conservative owner identity for disk memory untracked transaction inode and symlink owners',async()=>{
+  const f=await fixture()
+  f.writer.$client.pragma('journal_mode=DELETE')
+  const reads=createEnterpriseReadExecutor()
+  cleanup.push(()=>reads.close())
+  const expected={total:1,rows:[{name:'合成M1企业',status:'not_queried',explanationId:null}]}
+  const child=await readDifferences(f.owner,{},undefined,reads)
+  expect(Buffer.isBuffer(child)).toBe(true);expect(decoded(child)).toMatchObject(expected)
+  const original=await readDifferences(f.writer,{})
+  expect(Buffer.isBuffer(original)).toBe(false);expect(original).toEqual(decoded(child))
+  const native=new Database(f.writer.$client.serialize()),memory=drizzle(native,{schema})
+  cleanup.push(()=>native.close())
+  const never={differences:vi.fn()}
+  expect(await readDifferences(memory as typeof f.owner,{},undefined,never)).toEqual(original)
+  const untracked=drizzle(f.owner.$client,{schema})
+  expect(await readDifferences(untracked,{},undefined,never)).toEqual(original)
+  f.owner.$client.exec('BEGIN')
+  try {expect(await readDifferences(f.owner,{},undefined,never)).toEqual(original)}finally{f.owner.$client.exec('ROLLBACK')}
+  const link=join(f.dir,'m2-link.db');symlinkSync(f.path,link)
+  const linked=useDb({dbPath:link,readOnly:true});cleanup.push(()=>linked.$client.close())
+  unlinkSync(link);symlinkSync(join(f.dir,'absent.db'),link)
+  expect(await readDifferences(linked,{},undefined,never)).toEqual(original)
+  renameSync(f.path,join(f.dir,'original.db'))
+  expect(await readDifferences(f.owner,{},undefined,never)).toEqual(original)
+  expect(never.differences).not.toHaveBeenCalled()
+})
+
+it('REST metadata overflow and full original FIFO invoke the original once while terminal failure and abort never replay',async()=>{
+  const f=await fixture(), reads=createEnterpriseReadExecutor()
+  cleanup.push(()=>reads.close())
+  const prepare=vi.spyOn(f.owner.$client,'prepare')
+  const turns=createReadTurns((n:{n:number})=>n.n), held=Array.from({length:16},(_,n)=>turns.submit({n}))
+  const pending=readDifferences(f.owner,{q:'界'.repeat(22000)},undefined,reads)
+  await Promise.resolve() // private admission outcome resumes original inline FIFO fallback
+  expect(prepare.mock.calls.filter(([sql])=>sql.includes('from "difference_reason" where not exists'))).toHaveLength(1)
+  expect(await pending).toMatchObject({total:0,rows:[]})
+  for(const job of held)job.cancel()
+  prepare.mockClear()
+  const terminal={differences:vi.fn(async()=>({type:'reader-error' as const,error:captureReaderError(Object.assign(new Error('locked'),{code:'SQLITE_BUSY'}))}))}
+  await expect(readDifferences(f.owner,{},undefined,terminal)).rejects.toMatchObject({code:'SQLITE_BUSY'})
+  const controller=new AbortController(), racing={differences:vi.fn(async()=>{controller.abort();return {type:'fallback' as const}})}
+  expect(await readDifferences(f.owner,{},controller.signal,racing)).toBeUndefined()
+  expect(prepare).not.toHaveBeenCalled()
+  await reads.close()
+  expect(await readDifferences(f.owner,{},undefined,reads)).toMatchObject({total:1})
+  expect(prepare.mock.calls.filter(([sql])=>sql.includes('from "difference_reason" where not exists'))).toHaveLength(1)
+  prepare.mockRestore()
 })
 
 it('a real child read can wait while the original synchronous FIFO reads an independent memory owner',async()=>{
