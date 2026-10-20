@@ -73,6 +73,8 @@ watch(() => props.queryId, () => {
   ++readGeneration
   readController?.abort()
   original.value = null
+  reading.value = false
+  readFailed.value = false
   text.value = undefined
   displayed.value = null
   page.value = 1

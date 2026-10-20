@@ -66,6 +66,7 @@ it('keeps the last source page on failure, retries it explicitly, and ignores or
   await wrapper.findAll('button').find(button => button.text() === '查询响应原文')!.trigger('click')
   await wrapper.setProps({ queryId: 9 })
   await flushPromises()
+  expect(wrapper.text()).not.toContain('正在读取完整原文')
   await wrapper.findAll('button').find(button => button.text() === '查询响应原文')!.trigger('click')
   await flushPromises()
   expect(wrapper.text()).toContain('原档为空字符串')
