@@ -21,6 +21,8 @@ export interface ModelApiFixture {
   totalPages?: number
   expectModel?: string
   onSubmit?: (fields: string[]) => void
+  /** Deterministic backpressure gate for orchestration tests. */
+  waitForPoll?: () => Promise<void>
 }
 
 export interface MiniOcrApi {
@@ -137,6 +139,7 @@ export async function startMiniOcrApi(fixture: ModelApiFixture): Promise<MiniOcr
     if (req.method === 'GET' && jobMatch) {
       const job = jobs.get(jobMatch[1]!)
       if (!job) return send(res, 404, { code: 1, msg: 'unknown job' })
+      await fixture.waitForPoll?.()
       const delayMs = fixture.pollDelayMsByPage?.[job.pageNo] ?? 0
       if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs))
       stats.polls += 1
