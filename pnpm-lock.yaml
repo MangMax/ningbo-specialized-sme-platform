@@ -250,6 +250,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      documonster:
+        specifier: 0.20.2
+        version: 0.20.2
       dompurify:
         specifier: 3.4.17
         version: 3.4.17
@@ -3229,6 +3232,10 @@ packages:
   diff@8.0.4:
     resolution: {integrity: sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw==}
     engines: {node: '>=0.3.1'}
+
+  documonster@0.20.2:
+    resolution: {integrity: sha512-QshMSws17nGu3oJjalCGw1/iKEAweCGHhN8/TKYm7vR4VIhOZAHklRCfKtUm7x7bP75qvolXSG1e6tlZogdTPQ==}
+    engines: {node: '>=22.13.0'}
 
   dom-serializer@2.0.0:
     resolution: {integrity: sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg==}
@@ -9251,6 +9258,8 @@ snapshots:
       dequal: 2.0.3
 
   diff@8.0.4: {}
+
+  documonster@0.20.2: {}
 
   dom-serializer@2.0.0:
     dependencies:
