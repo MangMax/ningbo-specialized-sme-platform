@@ -106,6 +106,8 @@ async function readAuthorization(candidate: string, requested: typeof params.val
  * 只有人点的入口会发起它：后台轮询永远不碰。
  */
 let pendingKeyFocus: { origin: Element | null } | null = null
+/** 等面板展开完的那次滚动所用的观察器；离页时必须断开。 */
+let panelObserver: ResizeObserver | null = null
 
 // Opens the authorization form, brings it into view once and puts the cursor
 // where the key is typed. Only a person asks for this; polling never does.
@@ -121,7 +123,7 @@ function requestAuthorization() {
  * 把一个元素滚进视野。
  *
  * 不用 `scrollIntoView`：折叠内容此刻还是一个高度为 0 的 `overflow:hidden` 容器，
- * 浏览器会拿**容器**的位置当目标，于是字段刚好停在折叠线以下（1280 实测 top 822
+ * 浏览器会拿**容器**的位置当目标，于是字段刚好停在折叠线以下（1280 实测 top 802
  * > 视口 800）。这里按字段**自己**的盒子算目标，再滚窗口 —— 字段在文档里的位置
  * 不随容器长高而变，所以这一次滚动落点就是展开之后读者看到的位置。
  */
@@ -135,6 +137,31 @@ function scrollElementIntoView(element: HTMLElement) {
     : window.scrollY + rect.bottom - viewport + margin
   const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
   window.scrollTo({ top: Math.max(0, target), behavior: reduce ? 'auto' : 'smooth' })
+}
+
+/**
+ * 等折叠面板**真的展开完**，再滚那一次。
+ *
+ * 面板没展开完的时候页面还没有那么高：字段此刻根本滚不过去（1280 实测浏览器把
+ * 目标截断在可滚动范围的边缘，落点 top 802 仍在折叠线以下）。展开之后才滚得过去。
+ *
+ * 这里等的是内容**自己的高度**（`clientHeight` 达到 `scrollHeight`），不是猜一个
+ * 延迟，也不是定时轮询：`ResizeObserver` 在展开动画的每一帧都会来一次，等到的
+ * 那一刻就是面板真的开好了的那一刻。动画被关掉（reduced-motion）时内容一开始就是
+ * 展开的，于是立刻滚。
+ */
+function scrollWhenPanelOpen(element: HTMLElement, scroll: () => void) {
+  const content = element.closest<HTMLElement>('[data-slot="accordion-content"]')
+  const opened = () => !!content && content.clientHeight >= content.scrollHeight
+  if (!content || typeof ResizeObserver === 'undefined' || opened()) { scroll(); return }
+  panelObserver?.disconnect()
+  panelObserver = new ResizeObserver(() => {
+    if (!opened()) return
+    panelObserver?.disconnect()
+    panelObserver = null
+    scroll()
+  })
+  panelObserver.observe(content)
 }
 
 /**
@@ -153,7 +180,11 @@ function focusKeyField() {
   if (active && active !== document.body && active !== pending.origin) { pendingKeyFocus = null; return false }
   pendingKeyFocus = null
   input.focus({ preventScroll: true })
-  scrollElementIntoView(input)
+  // 面板展开完之后才滚；那时如果读者已经把焦点移走，就不再动他的阅读位置。
+  scrollWhenPanelOpen(input, () => {
+    if (!authOpen.value || document.activeElement !== input) return
+    scrollElementIntoView(input)
+  })
   return true
 }
 // 密钥框挂上来（Reka 异步挂载）的那一刻，这次请求就被兑现掉。
@@ -333,7 +364,7 @@ onMounted(() => {
 // Leaving the page is the end of the credential, not just of the check: an
 // unmount drops the in-memory key, invalidates the pending verdict and aborts
 // the read that was still on the wire.
-onBeforeUnmount(() => { clear(); window.removeEventListener('pagehide', clear); pendingKeyFocus = null })
+onBeforeUnmount(() => { clear(); window.removeEventListener('pagehide', clear); pendingKeyFocus = null; panelObserver?.disconnect(); panelObserver = null })
 </script>
 <template>
   <div class="flex min-w-0 flex-col gap-4">
