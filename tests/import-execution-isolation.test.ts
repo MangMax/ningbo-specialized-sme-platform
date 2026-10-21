@@ -188,7 +188,7 @@ it('isolated HTTP chunk failure is atomic and corrected same-key retry preserves
 it('binary admission preserves a valid HTTP payload whose JSON representation exceeds its encoded byte bound', async () => {
   const request = input()
   const original = '\u0000_x0001_\ud800\r\n原始🙂' + '中文'.repeat(1024)
-  request.payload.exportSnapshot!.rows[0]!.rawFields.original = original
+  request.payload.exportSnapshot!.rows[0]!.rawFields!.original = original
   const maxBytes = Buffer.byteLength(JSON.stringify(request)) - 1
   expect(serialize(request).byteLength).toBeLessThan(maxBytes)
   const service = await isolatedApi({ maxBytes })

@@ -56,9 +56,9 @@ node scripts/perf85-context.mjs check "$scratch_dir/context"
 source_sha=$(git rev-parse HEAD)
 short_sha=${source_sha:0:12}
 image=${PERF85_IMAGE:-perf85-m3-$short_sha}
-# Stay on the repository's digest-pinned Node 22 base and native build prerequisites.
+# Stay on the repository's digest-pinned Node 24 base and native build prerequisites.
 node_image=$(sed -n 's/^ARG NODE_IMAGE=//p' Dockerfile)
-[[ "$node_image" =~ ^node:22-bookworm-slim@sha256:[0-9a-f]{64}$ ]] || { echo 'Expected pinned repository Node 22 base' >&2; exit 2; }
+[[ "$node_image" =~ ^node:24-bookworm-slim@sha256:[0-9a-f]{64}$ ]] || { echo 'Expected pinned repository Node 24 base' >&2; exit 2; }
 cat > "$scratch_dir/context/Dockerfile" <<DOCKERFILE
 ARG NODE_IMAGE=$node_image
 FROM \${NODE_IMAGE}

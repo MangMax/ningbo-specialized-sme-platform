@@ -8,6 +8,7 @@ import {
   progressPercent,
   type JobProgress,
   type JobState,
+  type JobSummaryDto,
 } from '../../lib/job'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -38,13 +39,22 @@ export interface JobDto {
   finishedAt: string | null
 }
 
+/** Same main export progress semantics for full receipts and narrow summaries. */
+function jobPercent(row: { kind: string; state: JobState; progress: JobProgress }, phase: unknown): number | null {
+  if (row.kind === 'current-roster-export') {
+    if (row.state === 'done') return 100
+    if (row.state === 'queued' || row.state === 'running' && phase !== 'workbook') return null
+  }
+  return progressPercent(row.progress)
+}
+
 export function toJobDto(row: JobRow): JobDto {
   return {
     id: row.id,
     kind: row.kind,
     state: row.state,
     progress: row.progress,
-    percent: row.kind === 'current-roster-export' && row.state === 'done' ? 100 : row.kind === 'current-roster-export' && (row.state === 'queued' || row.state === 'running' && (row.result as {phase?:string}|null)?.phase !== 'workbook') ? null : progressPercent(row.progress),
+    percent: jobPercent(row, (row.result as { phase?: unknown } | null)?.phase),
     params: row.params,
     result: row.result ?? null,
     error: row.error ?? null,
@@ -143,6 +153,52 @@ export function listJobs(db: Db, query: JobQuery = {}): { rows: JobRow[]; total:
     .all()
 
   return { rows, total }
+}
+
+// Presence checks run in SQLite: neither JSON body nor error text crosses the
+// driver boundary. In particular, do not replace this with select() + deletion.
+const jobSummaryColumns = {
+  id: schema.job.id,
+  kind: schema.job.kind,
+  state: schema.job.state,
+  progress: schema.job.progress,
+  createdAt: schema.job.createdAt,
+  startedAt: schema.job.startedAt,
+  finishedAt: schema.job.finishedAt,
+  hasResult: sql<number>`${schema.job.result} is not null and ${schema.job.result} != 'null'`,
+  hasError: sql<number>`${schema.job.error} is not null`,
+  // Only a boolean discriminator for active exports; never hydrate the result body.
+  exportWorkbook: sql<number | null>`case when ${schema.job.kind}='current-roster-export' and ${schema.job.state}='running' then json_extract(${schema.job.result}, '$.phase') = 'workbook' else 0 end`,
+}
+
+function toJobSummary(row: {
+  id: string; kind: string; state: JobState; progress: JobProgress
+  createdAt: string; startedAt: string | null; finishedAt: string | null
+  hasResult: number; hasError: number; exportWorkbook: number | null
+}): JobSummaryDto {
+  return {
+    id: row.id, kind: row.kind, state: row.state, progress: row.progress,
+    percent: jobPercent(row, row.exportWorkbook ? 'workbook' : null),
+    error: row.hasError ? '任务有错误，请读取详情' : null,
+    createdAt: row.createdAt, startedAt: row.startedAt, finishedAt: row.finishedAt,
+    resultSummary: { available: !!row.hasResult },
+    detailUrl: `/api/jobs/${row.id}`,
+    capabilities: { cancel: !isTerminalJobState(row.state) },
+  }
+}
+
+export function listJobSummaries(db: Db, query: JobQuery = {}): { rows: JobSummaryDto[]; total: number } {
+  const where = jobWhere(query)
+  const limit = Math.min(MAX_JOB_LIMIT, Math.max(1, Math.floor(query.limit ?? DEFAULT_JOB_LIMIT)))
+  const total = db.select({ n: sql<number>`count(*)` }).from(schema.job).where(where).get()?.n ?? 0
+  const rows = db.select(jobSummaryColumns).from(schema.job).where(where)
+    .orderBy(desc(schema.job.createdAt), desc(schema.job.id)).limit(limit).all()
+  return { rows: rows.map(toJobSummary), total }
+}
+
+export function getJobSummary(db: Db, id: string): JobSummaryDto | null {
+  const row = db.select(jobSummaryColumns).from(schema.job).where(eq(schema.job.id, id)).get()
+  return row ? toJobSummary(row) : null
 }
 
 // ---------------------------------------------------------------------------

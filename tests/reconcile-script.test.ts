@@ -117,7 +117,7 @@ describe('缺凭据:明确失败,一行不写', () => {
 })
 
 describe('--base-url:把同一个 job 交给正在运行的 app 并轮询', () => {
-  it('提交 202 → 轮询到 done → 打印报告并按 --out 落 JSON', async () => {
+  it('提交 202 → 仅摘要轮询到 done → 按需读取完整回执并落 JSON', async () => {
     const report = {
       startedAt: '2026-10-16T02:00:00.000Z',
       finishedAt: '2026-10-16T02:00:05.000Z',
@@ -148,7 +148,7 @@ describe('--base-url:把同一个 job 交给正在运行的 app 并轮询', () =
         const raw = Buffer.concat(chunks).toString('utf8')
         seen.push({
           method: req.method ?? '',
-          path: new URL(req.url ?? '/', 'http://127.0.0.1').pathname,
+          path: req.url ?? '/',
           auth: req.headers.authorization,
           body: raw ? JSON.parse(raw) : null,
         })
@@ -157,8 +157,13 @@ describe('--base-url:把同一个 job 交给正在运行的 app 并轮询', () =
           res.end(JSON.stringify(body))
         }
         if (req.method === 'POST') return send(202, { jobId: 'job-1', kind: 'reconcile', state: 'queued', progress: { done: 0, total: 1 } })
-        polls += 1
-        if (polls < 2) return send(200, { state: 'running', progress: { done: 0, total: 1 } })
+        if (req.url?.includes('view=summary')) {
+          polls += 1
+          return send(200, {
+            state: polls < 2 ? 'running' : 'done', progress: { done: polls < 2 ? 0 : 1, total: 1 },
+            resultSummary: { available: true }, detailUrl: '/api/jobs/job-1',
+          })
+        }
         return send(200, { state: 'done', progress: { done: 1, total: 1 }, result: report, error: null })
       })()
     })
@@ -177,7 +182,12 @@ describe('--base-url:把同一个 job 交给正在运行的 app 并轮询', () =
       expect(seen[0]!.path).toBe('/api/jobs')
       expect(seen[0]!.body).toEqual({ kind: 'reconcile', params: { titles: ['specialized_sme'] } })
       expect(seen[0]!.auth).toBe('Bearer script-remote-token')
-      expect(seen.some((call) => call.method === 'GET' && call.path === '/api/jobs/job-1')).toBe(true)
+      expect(seen.slice(1).map(({ method, path }) => ({ method, path }))).toEqual([
+        { method: 'GET', path: '/api/jobs/job-1?view=summary' },
+        { method: 'GET', path: '/api/jobs/job-1?view=summary' },
+        { method: 'GET', path: '/api/jobs/job-1' },
+      ])
+      expect(seen.every((call) => call.auth === 'Bearer script-remote-token')).toBe(true)
       // 报告照常打印并落盘。
       expect(result.stdout).toContain('已查并确认 1(更名 1)')
       expect(result.stdout).toContain('写回:批次 1 committed')
@@ -185,6 +195,66 @@ describe('--base-url:把同一个 job 交给正在运行的 app 并轮询', () =
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
+  })
+
+  it.each(['failed', 'cancelled'])('摘要终态 %s 后保留完整错误与部分回执，不重提任务', async (state) => {
+    const receipt = { segments: [{ page: 2 }, { page: 1 }], artifact: 'exports/partial.xlsx', batchId: 17 }
+    const paths: string[] = []
+    const server = createServer((req, res) => {
+      paths.push(`${req.method} ${req.url}`)
+      res.writeHead(req.method === 'POST' ? 202 : 200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(req.method === 'POST' ? { jobId: 'job-1' }
+        : req.url?.includes('view=summary')
+          ? { state, progress: { done: 1, total: 2 }, error: '任务有错误，请读取详情', resultSummary: { available: true }, detailUrl: '/api/jobs/job-1' }
+          : { state, error: 'synthetic segment failure', result: receipt }))
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const out = join(dir, `${state}-receipt.json`)
+    try {
+      const result = await runAsync(['--base-url', `http://127.0.0.1:${(server.address() as AddressInfo).port}`, '--poll-seconds', '1', '--out', out], { NUXT_API_TOKEN: 'synthetic-token' })
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain(`任务 ${state}:synthetic segment failure`)
+      expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual(receipt)
+      expect(paths).toEqual(['POST /api/jobs', 'GET /api/jobs/job-1?view=summary', 'GET /api/jobs/job-1'])
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())) }
+  })
+
+  it('终态详情读取失败明确退出，不把摘要当完整报告', async () => {
+    const paths: string[] = []
+    const server = createServer((req, res) => {
+      paths.push(`${req.method} ${req.url}`)
+      const summary = req.url?.includes('view=summary')
+      res.writeHead(req.method === 'POST' ? 202 : summary ? 200 : 503, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(req.method === 'POST' ? { jobId: 'job-1' } : summary ? { state: 'done', progress: { done: 1, total: 1 } } : { message: 'unavailable' }))
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const result = await runAsync(['--base-url', `http://127.0.0.1:${(server.address() as AddressInfo).port}`, '--poll-seconds', '1'], { NUXT_API_TOKEN: 'synthetic-token' })
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('读取任务详情失败(503)')
+      expect(result.stdout).not.toContain('写回:')
+      expect(paths).toEqual(['POST /api/jobs', 'GET /api/jobs/job-1?view=summary', 'GET /api/jobs/job-1'])
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())) }
+  })
+
+  it('摘要终态后同 ID 被重试重开时继续摘要轮询，以新详情状态为准', async () => {
+    const paths: string[] = []
+    let details = 0
+    const server = createServer((req, res) => {
+      paths.push(`${req.method} ${req.url}`)
+      res.writeHead(req.method === 'POST' ? 202 : 200, { 'content-type': 'application/json' })
+      if (req.method === 'POST') return res.end(JSON.stringify({ jobId: 'job-1' }))
+      if (req.url?.includes('view=summary')) return res.end(JSON.stringify({ state: 'failed', progress: { done: 1, total: 2 } }))
+      details++
+      res.end(JSON.stringify(details === 1 ? { state: 'running', result: { checkpoint: true } } : { state: 'cancelled', error: 'retried then cancelled', result: null }))
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const result = await runAsync(['--base-url', `http://127.0.0.1:${(server.address() as AddressInfo).port}`, '--poll-seconds', '1'], { NUXT_API_TOKEN: 'synthetic-token' })
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('任务 cancelled:retried then cancelled')
+      expect(paths).toEqual(['POST /api/jobs', 'GET /api/jobs/job-1?view=summary', 'GET /api/jobs/job-1', 'GET /api/jobs/job-1?view=summary', 'GET /api/jobs/job-1'])
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())) }
   })
 
   it('--base-url 但没有 NUXT_API_TOKEN ⇒ 2 退出并说明从环境读(不进命令行)', () => {

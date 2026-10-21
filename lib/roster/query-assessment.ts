@@ -2,7 +2,7 @@ import { readEvidenceImpact113 } from '../../server/utils/evidence-impact-113'
 /** #108 additive read projection. Business decisions stay owned by #102. */
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { currentDecision102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
+import { currentDecision102, currentDecisionState102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
 import { normalizeUscc } from '../domain'
 import { identityFunctions, identityUsccSql } from './enterprise-read-snapshot'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
@@ -30,6 +30,12 @@ export interface QueryCoverageSource {
   completeness: string | null; unfinished: Metadata['unfinished']; outcome: 'records' | 'no_record' | 'unknown'
   subjectMatch: 'exact_uscc' | 'matched_relation' | 'name_only' | 'unknown'
 }
+const metadataProjection = sql`case when json_valid(q.collection_evidence) then json_object(
+        'source',json_extract(q.collection_evidence,'$.source'), 'status',json_extract(q.collection_evidence,'$.status'),
+        'effectiveConditions',json_extract(q.collection_evidence,'$.effectiveConditions'), 'titleScope',json_extract(q.collection_evidence,'$.titleScope'),
+        'pages',json_extract(q.collection_evidence,'$.pages'), 'completeness',json_extract(q.collection_evidence,'$.completeness'),
+        'fullRange',json_extract(q.collection_evidence,'$.fullRange'), 'unfinished',json_extract(q.collection_evidence,'$.unfinished'),
+        'error',json_extract(q.collection_evidence,'$.error'), 'limits',json_extract(q.collection_evidence,'$.limits')) else null end`
 /** Metadata extraction stays inside SQLite; original rows/raw_response never enter JS. */
 function queryMetadata(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
   identityFunctions(db)
@@ -54,12 +60,7 @@ function queryMetadata(db: DecisionDb, scope: AssessmentScope, variants?: Identi
   const rows = db.all<QueryMetadata>(sql`with selected as materialized (${selected})
     select q.id,q.interface,q.query_key as queryKey,q.title_code as titleCode,q.rdjb,q.queried_at as queriedAt,q.status,
       exists(select 1 from platform_relation r where r.query_id=q.id and r.enterprise_id=${scope.enterpriseId}) as matched,
-      case when json_valid(q.collection_evidence) then json_object(
-        'source',json_extract(q.collection_evidence,'$.source'), 'status',json_extract(q.collection_evidence,'$.status'),
-        'effectiveConditions',json_extract(q.collection_evidence,'$.effectiveConditions'), 'titleScope',json_extract(q.collection_evidence,'$.titleScope'),
-        'pages',json_extract(q.collection_evidence,'$.pages'), 'completeness',json_extract(q.collection_evidence,'$.completeness'),
-        'fullRange',json_extract(q.collection_evidence,'$.fullRange'), 'unfinished',json_extract(q.collection_evidence,'$.unfinished'),
-        'error',json_extract(q.collection_evidence,'$.error'), 'limits',json_extract(q.collection_evidence,'$.limits')) else null end as metadata
+      ${metadataProjection} as metadata
     from selected join platform_query q on q.id=selected.id
     order by q.queried_at desc,q.id desc`)
   return { rows: rows.slice(0, 50), truncated: rows.length > 50, uscc }
@@ -89,7 +90,11 @@ function completePages(pages: PlatformQueryPage[], pageSize: number, fullRange: 
   return last.fetchedCount === 0 && pages.slice(0, -1).every(p => p.fetchedCount === pageSize)
 }
 export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
-  const { rows, truncated, uscc } = queryMetadata(db, scope, variants, ownQueryIds), rdjb = rdjbByTitle[scope.titleCode]
+  return coverageOf(queryMetadata(db, scope, variants, ownQueryIds), scope)
+}
+function coverageOf({ rows, truncated, uscc }: ReturnType<typeof queryMetadata>, scope: AssessmentScope) {
+  const rdjb = rdjbByTitle[scope.titleCode]
+
   const sources: QueryCoverageSource[] = rows.flatMap(q => {
     const m = metadataOf(q)
     if (m && q.interface !== 'apply_list' && !m.titleScope.rdjb.includes(rdjb!)) return []
@@ -126,10 +131,14 @@ export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope, varian
 }
 export function readQueryAssessment(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, coverage?: ReturnType<typeof readQueryCoverage>) {
   scope = { enterpriseId: scope.enterpriseId, titleCode: scope.titleCode, direction: scope.direction }
-  const currentDecision = currentDecision102(db, scope), queryCoverage = coverage ?? readQueryCoverage(db, scope, variants)
+  const currentDecision = currentDecision102(db, scope)
+  return assessmentOf(db, scope, coverage ?? readQueryCoverage(db, scope, variants), currentDecision)
+}
+/** Shared status rules; both full and scalar readers supply their own SQL projection. */
+function assessmentStatuses(scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision: ReturnType<typeof currentDecisionState102>, impact: ReturnType<typeof readEvidenceImpact113>) {
+
   const current = currentDecision.current
   const executed = queryCoverage.sources.filter(s => s.titleCode === scope.titleCode && s.queryStatus !== 'not_queried' && ['exact_uscc', 'matched_relation'].includes(s.subjectMatch))
-  const impact = readEvidenceImpact113(db, { ...scope, direction: scope.direction }, current?.id ?? null)
   const reviewed = impact.state?.reviewedRevisionId
   const pending = !!impact.state && impact.state.latestRevisionId > (reviewed ?? -1)
   // The scope token also advances for coverage-only and disjoint partitions.
@@ -138,11 +147,94 @@ export function readQueryAssessment(db: DecisionDb, scope: AssessmentScope, vari
   const changed = reviewed != null && !impact.token.projectionReady
   const invalid = current?.status === 'not_queried' && executed.length > 0 && reviewed == null
   const validity = !current ? 'not_applicable' : pending ? impact.state!.classification : changed ? 'evidence_changed' : reviewed != null ? 'valid' : invalid ? 'premise_invalid' : 'unknown'
+  return { validity, invalid, executed, assessment: current ? 'decided' : currentDecision.versionId ? 'withdrawn' : queryCoverage.status === 'complete' ? 'queried_unjudged' : queryCoverage.status === 'not_queried' ? 'not_queried' : 'unknown' }
+}
+function assessmentOf(db: DecisionDb, scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision = currentDecision102(db, scope)) {
+  const current = currentDecision.current
+  const impact = readEvidenceImpact113(db, scope, current?.id ?? null)
+  const { validity, invalid, executed, assessment } = assessmentStatuses(scope, queryCoverage, currentDecision, impact)
   const reasons = validity === 'premise_invalid' ? ['query_executed'] : validity === 'evidence_changed' ? ['committed_evidence_changed'] : validity === 'unknown' ? ['no_evidence_baseline'] : []
   return {
     queryCoverage, currentDecision,
     explanationValidity: { status: validity, reasons, explanationId: current?.id ?? null, evidenceQueryIds: invalid ? executed.map(s => s.queryId) : current?.evidenceQueryId ? [current.evidenceQueryId] : [] },
-    assessment: current ? 'decided' : currentDecision.versionId ? 'withdrawn' : queryCoverage.status === 'complete' ? 'queried_unjudged' : queryCoverage.status === 'not_queried' ? 'not_queried' : 'unknown',
+    assessment,
   }
 }
 export type QueryAssessment = ReturnType<typeof readQueryAssessment>
+
+export type QueryAssessmentSummary = {
+  queryCoverage: Pick<QueryAssessment['queryCoverage'], 'status'>
+  assessment: QueryAssessment['assessment']
+  explanationValidity: Pick<QueryAssessment['explanationValidity'], 'status'>
+}
+
+export function readQueryAssessments(db: DecisionDb, scopes: AssessmentScope[]): QueryAssessment[] {
+  return readCoveragesForScopes(db, scopes).map((queryCoverage, index) => {
+    const { enterpriseId, titleCode, direction } = scopes[index]!
+    return assessmentOf(db, { enterpriseId, titleCode, direction }, queryCoverage)
+  })
+}
+
+/** Scalar-only list projection; no full decision is hydrated and then discarded. */
+export function readQueryAssessmentSummaries(db: DecisionDb, scopes: AssessmentScope[]): QueryAssessmentSummary[] {
+  return readCoveragesForScopes(db, scopes).map((queryCoverage, index) => {
+    const { enterpriseId, titleCode, direction } = scopes[index]!
+    const scope = { enterpriseId, titleCode, direction }
+    const decision = currentDecisionState102(db, scope)
+    const impact = readEvidenceImpact113(db, scope, decision.current?.id ?? null)
+    const status = assessmentStatuses(scope, queryCoverage, decision, impact)
+    return { queryCoverage: { status: queryCoverage.status }, assessment: status.assessment, explanationValidity: { status: status.validity } }
+  })
+}
+
+/** A page-local read plan, never a result cache. Direction does not alter query
+ * coverage, so select the newest 51 IDs once per enterprise/title. Normalize the
+ * archive key catalog inside SQLite once, instead of scanning it per row. JSON
+ * extraction is AFTER the per-scope bound; raw bodies never enter JavaScript.
+ * Decisions and evidence impact still use their owning lifecycle projections.
+ */
+function readCoveragesForScopes(db: DecisionDb, scopes: AssessmentScope[]): ReturnType<typeof readQueryCoverage>[] {
+  if (!scopes.length) return []
+  identityFunctions(db)
+  const keyOf = (s: AssessmentScope) => JSON.stringify([s.enterpriseId, s.titleCode])
+  const targets = [...new Map(scopes.map(s => [keyOf(s), s])).values()]
+  const ids = [...new Set(targets.map(s => s.enterpriseId))]
+  const enterprises = new Map(db.all<{ id: number; name: string; uscc: string | null }>(sql`
+    select id,name_norm name,uscc_norm uscc from enterprise where id in (${sql.join(ids.map(id => sql`${id}`), sql`,`)})`).map(e => [e.id, e]))
+  const targetSql = sql.join(targets.map((s, i) => {
+    const e = enterprises.get(s.enterpriseId)
+    return sql`select ${i} slot,${s.enterpriseId} enterpriseId,${s.titleCode} titleCode,${rdjbByTitle[s.titleCode] ?? ''} rdjb,${e?.name ?? ''} name,${normalizeUscc(e?.uscc) || null} uscc`
+  }), sql` union all `)
+  const rows = db.all<QueryMetadata & { slot: number }>(sql`
+    with targets as materialized (${targetSql}),
+    raw_keys as materialized (select distinct query_key from platform_query),
+    keys as materialized (select query_key,${identityUsccSql(sql`query_key`)} uscc from raw_keys),
+    candidates as (
+      select t.slot,q.id from targets t join platform_query q on q.query_key='name:'||t.name
+      union
+      select t.slot,q.id from targets t join keys k on k.uscc=t.uscc join platform_query q on q.query_key=k.query_key
+      union
+      select t.slot,r.query_id from targets t join platform_relation r on r.enterprise_id=t.enterpriseId
+    ),
+    ranked as materialized (
+      select c.slot,q.id,row_number() over (partition by c.slot order by q.queried_at desc,q.id desc) rank
+      from candidates c join targets t on t.slot=c.slot join platform_query q on q.id=c.id
+      where q.interface='apply_list' or q.title_code=t.titleCode or instr(','||q.rdjb||',',','||t.rdjb||',')>0 or (q.rdjb='' and q.title_code is null)
+    ),
+    selected as materialized (select slot,id,rank from ranked where rank<=51)
+    select selected.slot,q.id,q.interface,q.query_key queryKey,q.title_code titleCode,q.rdjb,q.queried_at queriedAt,q.status,
+      exists(select 1 from platform_relation r where r.query_id=q.id and r.enterprise_id=t.enterpriseId) matched,
+      ${metadataProjection} metadata
+    from selected join targets t on t.slot=selected.slot join platform_query q on q.id=selected.id
+    order by selected.slot,selected.rank`)
+  const grouped = new Map<number, QueryMetadata[]>()
+  for (const row of rows) {
+    const group = grouped.get(row.slot) ?? []
+    group.push(row); grouped.set(row.slot, group)
+  }
+  const coverage = new Map(targets.map((s, slot) => {
+    const selected = grouped.get(slot) ?? []
+    return [keyOf(s), coverageOf({ rows: selected.slice(0, 50), truncated: selected.length > 50, uscc: normalizeUscc(enterprises.get(s.enterpriseId)?.uscc) || null }, s)] as const
+  }))
+  return scopes.map(s => coverage.get(keyOf(s))!)
+}

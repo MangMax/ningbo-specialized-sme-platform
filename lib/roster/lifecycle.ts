@@ -108,14 +108,17 @@ function chronological(events: LifecycleEvent[]): LifecycleEvent[] {
   })
 }
 
-/**
- * 算一个(企业 × 称号)的生命周期。传进来的事件**可以是该企业全部事件**
- * —— `nurture` 与无有效年份的事件会被忽略,不影响结论。
- */
-export function computeTitleLifecycle(events: LifecycleEvent[]): TitleLifecycle {
-  const awards = events.filter((e) => e.eventType === 'award')
-  const reviews = events.filter((e) => e.eventType === 'review')
+/** 首次认定计算的四项事实,不计算复核锚点或当前资格。 */
+export type FirstAwardFacts = Pick<TitleLifecycle,
+  'firstRecognitionYear' | 'firstRecognitionEventId' | 'awardCount' | 'undatedAwardIds'>
 
+/** 接受完整历史;只有 award 参与,沿用生命周期的有效年份与排序规则。 */
+export function computeFirstAward(events: LifecycleEvent[]): FirstAwardFacts {
+  return firstAwardFacts(events.filter((e) => e.eventType === 'award'))
+}
+
+// 完整生命周期已需 awards 供锚点使用,复用该数组,避免再次筛选。
+function firstAwardFacts(awards: LifecycleEvent[]): FirstAwardFacts {
   // ① 首次认定 = 最早的 award(按有效年份,同年按 id)。复核事件一概不参与。
   const earliestAward = chronological(awards).find((e) => effectiveYear(e) != null)
   const firstRecognitionYear = earliestAward ? effectiveYear(earliestAward) : null
@@ -124,6 +127,24 @@ export function computeTitleLifecycle(events: LifecycleEvent[]): TitleLifecycle 
     .filter((e) => effectiveYear(e) == null)
     .map((e) => e.id)
     .sort((a, b) => a - b)
+
+  return {
+    firstRecognitionYear,
+    firstRecognitionEventId: earliestAward?.id ?? null,
+    awardCount: awards.length,
+    undatedAwardIds,
+  }
+}
+
+/**
+ * 算一个(企业 × 称号)的生命周期。传进来的事件**可以是该企业全部事件**
+ * —— `nurture` 与无有效年份的事件会被忽略,不影响结论。
+ */
+export function computeTitleLifecycle(events: LifecycleEvent[]): TitleLifecycle {
+  const awards = events.filter((e) => e.eventType === 'award')
+  const reviews = events.filter((e) => e.eventType === 'review')
+
+  const firstAward = firstAwardFacts(awards)
 
   // ② 锚点候选 = award ∪ `reviewOutcome='passed'` 的 review(契约 §6.4)。
   //    结论未知的复核(`reviewOutcome=null`)**不猜成通过**,因此不进候选。
@@ -150,10 +171,7 @@ export function computeTitleLifecycle(events: LifecycleEvent[]): TitleLifecycle 
   const needsReview = anchors.some(lacksDecidedYear)
 
   return {
-    firstRecognitionYear,
-    firstRecognitionEventId: earliestAward?.id ?? null,
-    awardCount: awards.length,
-    undatedAwardIds,
+    ...firstAward,
     anchorYear,
     anchorEventId: lastAnchor?.id ?? null,
     dueYear: anchorYear != null && state === 'active' ? anchorYear + 3 : null,
