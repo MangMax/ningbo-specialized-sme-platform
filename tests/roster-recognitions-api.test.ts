@@ -2,7 +2,8 @@ import { decodeJsonRead } from './helpers/json-read-adapter'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import ExcelJS from 'exceljs'
+import { Readable } from 'node:stream'
+import { readExportWorkbook } from './helpers/read-export-workbook'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
 import { FIRST_RECOGNITION_STATUS_ORDER } from '../lib/labels'
@@ -102,7 +103,7 @@ let handlerEnterprises: (event: unknown) => Promise<{
   rows: { enterpriseId: number; name: string; firstRecognition: { titleCode: string; year: number | null; status: string }[] }[]
   counts: { total: number; titlePairs: number; recognitionPairs: number }
 }>
-let handlerExport: (event: unknown) => Promise<Uint8Array>
+let handlerExport: (event: unknown) => Promise<Uint8Array | Readable>
 let handlerStats: (event: unknown) => {
   byYear: { key: string; n: number }[]
   byFirstRecognitionYear: { key: string; n: number }[]
@@ -271,9 +272,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
   it('导出与列表同筛选:firstYear 生效,且首次认定列带出处与待确认', async () => {
     query = { firstYear: '2021' }
     headers = {}
-    const bytes = await handlerExport({})
-    const wb = new ExcelJS.Workbook()
-    await wb.xlsx.load(Buffer.from(bytes) as never)
+    const wb = await readExportWorkbook(await handlerExport({}))
     const ws = wb.worksheets[0]!
     expect(String(ws.getRow(1).getCell(1).value)).toContain('2 家企业')
     // 列按下标找,不写死:表头改了列序,这条用例不该跟着假红。
@@ -293,9 +292,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
 
   it('导出继承 firstStatus=pending,只导出待确认企业', async () => {
     query = { firstStatus: 'pending' }
-    const bytes = await handlerExport({})
-    const wb = new ExcelJS.Workbook()
-    await wb.xlsx.load(Buffer.from(bytes) as never)
+    const wb = await readExportWorkbook(await handlerExport({}))
     const ws = wb.worksheets[0]!
     expect(String(ws.getRow(1).getCell(1).value)).toContain('1 家企业')
     expect(ws.rowCount).toBe(3) // 说明 + 表头 + 乙企业
@@ -311,9 +308,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
   it('导出的筛选继承是**同一份**解析:非法 firstYear 不炸(与既有 year 同口径,非数字剔除)', async () => {
     query = { firstYear: 'abc' }
     headers = {}
-    const bytes = await handlerExport({})
-    const wb = new ExcelJS.Workbook()
-    await wb.xlsx.load(Buffer.from(bytes) as never)
+    const wb = await readExportWorkbook(await handlerExport({}))
     // 全被剔除 ⇒ 等于没筛 ⇒ 两家都在。
     expect(String(wb.worksheets[0]!.getRow(1).getCell(1).value)).toContain('2 家企业')
     query = {}
@@ -346,9 +341,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
       query = { firstYear: '2024' }
       expect((await handlerEnterprises({})).rows.map((row) => row.enterpriseId)).toEqual([decidedYearOnlyId])
 
-      const bytes = await handlerExport({})
-      const workbook = new ExcelJS.Workbook()
-      await workbook.xlsx.load(Buffer.from(bytes) as never)
+      const workbook = await readExportWorkbook(await handlerExport({}))
       const worksheet = workbook.worksheets[0]!
       expect(String(worksheet.getRow(1).getCell(1).value)).toContain('1 家企业')
       expect(worksheet.rowCount).toBe(3) // 说明 + 表头 + 该企业
@@ -401,9 +394,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
       expect(stats.byYear).toEqual([])
       expect(stats.byFirstRecognitionYear).toEqual([])
 
-      const bytes = await handlerExport({})
-      const workbook = new ExcelJS.Workbook()
-      await workbook.xlsx.load(Buffer.from(bytes) as never)
+      const workbook = await readExportWorkbook(await handlerExport({}))
       expect(workbook.worksheets[0]!.rowCount).toBe(2) // 说明 + 表头,无数据行
       expect(String(workbook.worksheets[0]!.getRow(1).getCell(1).value)).toContain('0 家企业')
     } finally {

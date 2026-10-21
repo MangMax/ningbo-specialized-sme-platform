@@ -21,8 +21,12 @@
 
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
-import ExcelJS from 'exceljs'
+import { Readable } from 'node:stream'
+import { Workbook, Worksheet } from 'documonster/excel'
+import { assertExcelSheets, inspectExcelSource } from './excel-source'
+import { createExcelValueReader } from './excel-read-value'
 
 /** 三张导出表对应的称号(与 `db/titles.ts` 的 `TitleCode` 同值)。 */
 export type PlatformExportTitleCode = 'specialized_sme' | 'little_giant' | 'innovative_sme'
@@ -188,23 +192,26 @@ export async function readPlatformExport(
   filePath: string,
   options: { titleCode?: PlatformExportTitleCode } = {},
 ): Promise<ParsedPlatformExport> {
-  const workbook = new ExcelJS.Workbook()
-  // 文件不存在时 exceljs 直接抛(ENOENT)—— 不静默返回空表。
-  await workbook.xlsx.readFile(filePath)
-  const sheet = workbook.worksheets[0]
+  const workbook = Workbook.create()
+  const input = await readFile(filePath)
+  const sourceParts = await inspectExcelSource(input)
+  await Workbook.readStream(workbook, Readable.from([input]))
+  const sheets = Workbook.getWorksheets(workbook)
+  assertExcelSheets(sourceParts, sheets.map(sheet => Worksheet.getName(sheet)))
+  const sheet = sheets[0]
   if (!sheet) throw new Error(`导出表没有工作表:${filePath}`)
 
   const layout = options.titleCode
     ? PLATFORM_EXPORT_LAYOUTS[options.titleCode]
-    : detectLayout(sheet.name, basename(filePath))
+    : detectLayout(Worksheet.getName(sheet), basename(filePath))
 
-  const columnCount = sheet.columnCount
+  const columnCount = Worksheet.columnCount(sheet)
+  const valueAt = await createExcelValueReader(sheet, input, sourceParts.get(Worksheet.getName(sheet))!, { firstRow: layout.firstDataRow, columnCount })
   const rows: PlatformExportRow[] = []
-  for (let rowNo = layout.firstDataRow; rowNo <= sheet.rowCount; rowNo++) {
-    const row = sheet.getRow(rowNo)
+  for (let rowNo = layout.firstDataRow; rowNo <= Worksheet.rowCount(sheet); rowNo++) {
     const rawFields: Record<string, string> = {}
     for (let col = 1; col <= columnCount; col++) {
-      const text = cellText(row.getCell(col).value).trim()
+      const text = cellText(valueAt(rowNo, col)).trim()
       if (text !== '') rawFields[String(col)] = text
     }
     // 整行都没有内容(常见于表尾的空白行)→ 不是一条快照行。
