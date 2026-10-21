@@ -13,7 +13,7 @@ const KEY = 'task-center-export-requests-v1'
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { mounted.splice(0).forEach(w => w.unmount()); sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-async function setup(options: { title?: string; defaultUrl?: boolean; authorized?: boolean; capability?: 'failed' | 'missing'; post?: () => Promise<unknown> } = {}) {
+async function setup(options: { title?: string; defaultUrl?: boolean; capability?: 'failed' | 'missing'; post?: () => Promise<unknown> } = {}) {
   const calls: { url: string; options: any }[] = []
   const fetcher = Object.assign(async (url: string, init: any = {}) => {
     calls.push({ url, options: init })
@@ -21,7 +21,6 @@ async function setup(options: { title?: string; defaultUrl?: boolean; authorized
       if (options.capability === 'failed') throw new Error('offline')
       return { exports: options.capability === 'missing' ? [] : TASK_EXPORTS.map(t => ({ ...t, ready: true })) }
     }
-    if (url === '/api/task-center') return { authorized: options.authorized !== false }
     if (url === '/api/roster/current-enterprises') return { rows: [], total: 0, page: 3, pageSize: 25 }
     throw new Error('Unexpected read ' + url)
   }, { raw: vi.fn(async (url: string, init: any) => {
@@ -124,7 +123,15 @@ it('double click while acceptance is pending sends one POST', async () => {
   resolve({ status: 202, _data: { jobId: JOB } }); await flushPromises()
 })
 
-for (const options of [{ authorized: false }, { capability: 'failed' as const }, { capability: 'missing' as const }]) it(`unconfirmed capability or authorization disables export: ${JSON.stringify(options)}`, async () => {
+it('exports without probing task-list authorization', async () => {
+  const { submit, calls, fetcher } = await setup()
+  expect(submit().attributes('disabled')).toBeUndefined()
+  await submit().trigger('click'); await flushPromises()
+  expect(fetcher.raw).toHaveBeenCalledTimes(1)
+  expect(calls.some(call => call.url === '/api/task-center')).toBe(false)
+})
+
+for (const options of [{ capability: 'failed' as const }, { capability: 'missing' as const }]) it(`unconfirmed export route capability disables export: ${JSON.stringify(options)}`, async () => {
   const { wrapper, submit, fetcher } = await setup(options)
   expect(submit().attributes('disabled')).toBeDefined()
   expect(wrapper.text()).toMatch(/未开放|未确认|尚未上线/)

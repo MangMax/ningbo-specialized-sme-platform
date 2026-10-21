@@ -6,13 +6,13 @@
 
 `POST /api/roster/exports/current/specialized-sme`
 
-需配置的 API token（Bearer 或 X-API-Token），请求体：
+外部调用需配置 API token（Bearer 或 X-API-Token），同源页面按[任务中心契约](task-center.md)校验请求；请求体：
 
 ```json
 {"clientRequestId":"专精特新当前名录-稳定请求标识"}
 ```
 
-返回 `202`、`Location: /api/jobs/{jobId}` 和 `{jobId,kind,state}`。通过 `GET /api/jobs/{jobId}` 查询，完成后凭相同权限边界下载 `result.artifact.downloadUrl`；文件名固定 `current-specialized_sme.xlsx`，MIME 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`。读任务历史沿用公开读边界，下载始终需要 token。文件含“有效企业”“待确认”“排除明细”“口径说明”四表，空集保留表头及零计数。
+返回 `202`、`Location: /api/jobs/{jobId}` 和 `{jobId,kind,state}`。通过 `GET /api/jobs/{jobId}` 查询，完成后凭相同权限边界下载 `result.artifact.downloadUrl`；文件名固定 `current-specialized_sme.xlsx`，MIME 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`。读任务历史沿用公开读边界，下载每次校验同源页面请求或 API token。文件含“有效企业”“待确认”“排除明细”“口径说明”四表，空集保留表头及零计数。
 
 同 kind 的稳定 `clientRequestId` 在专用/通用入口之间共用去重；重复提交返回原任务。显式重新生成使用新标识及 `regenerateOf`，目标须是同称号已结束任务。拒绝请求体称号覆盖、历史日期、未知字段及任何查询参数。参数非法 400，未授权 401，请求标识或重生成冲突 409，共同容量满 429。
 

@@ -6,7 +6,7 @@ import { useExportRequestLog } from './useExportRequestLog'
 export const taskBrowserHeaders = { 'x-task-center-browser': '1' }
 
 /** Shared full-title protocol. Query filters deliberately have no input here. */
-export function useCurrentRosterExport(readOnlyReason: Readonly<Ref<string>>) {
+export function useCurrentRosterExport(readOnlyReason?: Readonly<Ref<string>>) {
   const requestLog = useExportRequestLog()
   const exportRoutes = ref<Partial<Record<TaskExportTitle, boolean>>>({})
   const discovering = ref(false), discoveryFailed = ref(false), submitting = ref(false)
@@ -23,7 +23,7 @@ export function useCurrentRosterExport(readOnlyReason: Readonly<Ref<string>>) {
     if (discovering.value) return '正在发现可用的导出接口。'
     if (discoveryFailed.value) return '导出接口能力未确认，请重新发现后再提交。'
     if (!exportRoutes.value[code]) return '该称号的专用导出接口尚未上线。'
-    return readOnlyReason.value
+    return readOnlyReason?.value ?? ''
   }
   async function submitExport(code: TaskExportTitle, regenerateOf?: string): Promise<{ jobId: string } | { error: string } | null> {
     if (submitting.value || disabledReason(code)) return null

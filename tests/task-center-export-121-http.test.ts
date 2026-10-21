@@ -28,10 +28,13 @@ async function terminal(id: string) {
   }
   throw new Error('No terminal task ' + id)
 }
-async function startService() {
+async function startService(apiToken: string | null = 'synthetic-121') {
   const cwd = resolve(import.meta.dirname, '..'), port = await reserveLoopbackPort()
   baseUrl = `http://127.0.0.1:${port}`
-  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'synthetic-121' } })
+  const env: NodeJS.ProcessEnv = { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') }
+  delete env.NUXT_API_TOKEN
+  if (apiToken !== null) env.NUXT_API_TOKEN = apiToken
+  const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env })
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-6000) })
   stop = () => stopOwnedChild(child)
   try { await waitForHttp(baseUrl + '/api/jobs/kinds', { child, timeoutMs: 60000 }) } catch (e) { throw new Error(String(e) + output) }
@@ -44,6 +47,7 @@ beforeAll(async () => {
   db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic.xlsx', attachment: '合成公布名单' }).run()
   await startService()
 }, 90000)
+
 afterAll(async () => { await stop?.(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
 it('discovers a real export in both tabs and downloads the named workbook through its safe summary', async () => {
@@ -147,4 +151,82 @@ it('restores completed artifacts and interrupted history through the task center
   const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(await download.arrayBuffer()) as any)
   expect(wb.getWorksheet('有效企业')!.getRow(2).getCell(4).value).toBe('合成现名')
   expect(await submit('first')).toBe(completed)
+}, 90000)
+
+it('cross-site and missing-marker requests retain the external REST token path', async () => {
+  db.update(s.enterprise).set({ name: '合成现名' }).run()
+  for (const [name, browser] of Object.entries<Record<string, string>>({
+    crossSite: { 'x-task-center-browser': '1', 'sec-fetch-site': 'cross-site', origin: 'http://evil.invalid' },
+    missingMarker: { 'sec-fetch-site': 'same-origin', origin: baseUrl },
+  })) {
+    const path = '/api/roster/exports/current/little-giant'
+    const body = JSON.stringify({ clientRequestId: 'fallback-' + name })
+    expect((await request(path, { method: 'POST', headers: { ...browser, 'content-type': 'application/json' }, body })).status).toBe(401)
+    const accepted = await request(path, { method: 'POST', headers: { ...browser, ...headers }, body })
+    expect(accepted.status).toBe(202)
+    const id = (await accepted.json()).jobId
+    await terminal(id)
+    expect(await read('/api/task-center/' + id)).toMatchObject({ export: { canDownload: true, canRegenerate: true } })
+  }
+})
+
+it('default same-origin browser flow submits views cancels regenerates and downloads without API token', async () => {
+  await stop()
+  db.update(s.enterprise).set({ name: '合成现名' }).run()
+  await startService(null)
+  const browserHeaders = {
+    'x-task-center-browser': '1', 'sec-fetch-site': 'same-origin',
+    origin: baseUrl, referer: baseUrl + '/tasks', 'content-type': 'application/json',
+  }
+  const browserRead = async (path: string) => {
+    const response = await request(path, { headers: browserHeaders })
+    expect(response.status).toBe(200)
+    return response.json()
+  }
+  const browserSubmit = async (key: string, extra = {}, title = 'little-giant') => {
+    const response = await request('/api/roster/exports/current/' + title, { method: 'POST', headers: browserHeaders, body: JSON.stringify({ clientRequestId: key, ...extra }) })
+    expect(response.status).toBe(202)
+    return (await response.json()).jobId as string
+  }
+  for (const title of ['little-giant', 'specialized-sme', 'innovative-sme']) {
+    const id = await browserSubmit('browser-' + title, {}, title)
+    expect(await browserSubmit('browser-' + title, {}, title)).toBe(id)
+    await terminal(id)
+    const summary = await browserRead('/api/task-center/' + id)
+    expect(summary).toMatchObject({ state: 'done', export: { canDownload: true, canRegenerate: true } })
+    const list = await browserRead('/api/task-center?tab=export')
+    expect(list.rows.some((row: any) => row.id === id)).toBe(true)
+    const download = await request(summary.export.artifact.downloadUrl, { headers: browserHeaders })
+    expect(download.status).toBe(200)
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(await download.arrayBuffer()) as any)
+    expect(wb.worksheets.map(w => w.name)).toEqual(['有效企业', '待确认', '排除明细', '口径说明'])
+    expect((await request(summary.export.artifact.downloadUrl)).status).toBe(401)
+    const regenerated = await browserSubmit('browser-regenerate-' + title, { regenerateOf: id }, title)
+    expect(regenerated).not.toBe(id)
+    expect(await terminal(regenerated)).toMatchObject({ state: 'done', export: { regenerateOf: id } })
+  }
+  const id = await browserSubmit('browser-cancel')
+  let pid: number | undefined
+  for (let n = 0; n < 100 && !pid; n++) {
+    const line = execFileSync('ps', ['-Ao', 'pid=,args='], { encoding: 'utf8' }).split('\n').find(l => l.includes(dir) && l.includes('/current-export-worker.mjs'))
+    if (line) pid = Number(line.trim().split(/\s+/)[0])
+    else await new Promise(r => setTimeout(r, 10))
+  }
+  expect(pid).toBeGreaterThan(0)
+  process.kill(pid!, 'SIGSTOP')
+  try {
+    const queuedId = await browserSubmit('browser-cancel-queued')
+    expect(await browserRead('/api/task-center/' + queuedId)).toMatchObject({ state: 'queued', capabilities: { cancel: true } })
+    const path = '/api/task-center/' + queuedId + '/cancel'
+    for (const invalid of [{ ...browserHeaders, 'sec-fetch-site': 'cross-site' }, { ...browserHeaders, 'x-task-center-browser': '' }]) {
+      expect((await request(path, { method: 'POST', headers: invalid, body: '{}' })).status).toBe(401)
+    }
+    const cancelled = await request(path, { method: 'POST', headers: browserHeaders, body: '{}' })
+    expect(cancelled.status).toBe(200)
+    expect(await cancelled.json()).toMatchObject({ task: { state: 'cancelled' }, cancelRequested: false })
+    const running = await request('/api/task-center/' + id + '/cancel', { method: 'POST', headers: browserHeaders, body: '{}' })
+    expect(running.status).toBe(202)
+    expect(await running.json()).toMatchObject({ task: { state: 'running' }, cancelRequested: true })
+    expect(await terminal(id)).toMatchObject({ state: 'cancelled' })
+  } finally { try { process.kill(pid!, 'SIGCONT') } catch {} }
 }, 90000)

@@ -1,13 +1,9 @@
-/** Temporary deployment capability, like browserReviewEnabled (#127 replaces it
- * with user permissions). Never returns or accepts a browser-stored API secret. */
+/** Validate task-page request provenance; this does not identify a user. */
 export function taskCenterBrowserAllowed(input: {
-  enabled?: boolean | string
-  apiToken?: string
   method: string
   serverOrigin: string
   headers: Record<string, string | undefined>
 }): boolean {
-  if (input.enabled !== true || !input.apiToken?.trim()) return false
   const h = input.headers
   if (h['x-task-center-browser'] !== '1' || h['sec-fetch-site'] !== 'same-origin') return false
   try {
