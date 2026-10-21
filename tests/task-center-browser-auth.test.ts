@@ -3,22 +3,16 @@ import { taskCenterBrowserAllowed } from '../server/utils/task-center-browser-au
 
 const origin = 'http://127.0.0.1:3474'
 const input = () => ({
-  enabled: true as boolean | string, apiToken: 'server-only', method: 'POST', serverOrigin: origin,
+  method: 'POST', serverOrigin: origin,
   headers: { 'x-task-center-browser': '1', 'sec-fetch-site': 'same-origin', origin, referer: `${origin}/tasks`, 'content-type': 'application/json' } as Record<string, string | undefined>,
 })
-describe('task page deployment capability', () => {
-  it('allows opted-in same-origin JSON commands without sending a credential', () => {
+describe('task page same-origin requests', () => {
+  it('allows same-origin JSON commands without deployment config or API token', () => {
     expect(taskCenterBrowserAllowed(input())).toBe(true)
   })
   it('allows browser GET list, detail and artifact fetches without Origin', () => {
     const request = input(); request.method = 'GET'; delete request.headers.origin
     expect(taskCenterBrowserAllowed(request)).toBe(true)
-  })
-  it.each([false, undefined, 'true'])('requires an explicit boolean deployment switch (%s)', enabled => {
-    expect(taskCenterBrowserAllowed({ ...input(), enabled })).toBe(false)
-  })
-  it.each(['', '  ', undefined])('keeps the existing unconfigured-write boundary (%s)', apiToken => {
-    expect(taskCenterBrowserAllowed({ ...input(), apiToken })).toBe(false)
   })
   it.each([
     ['x-task-center-browser', undefined], ['x-task-center-browser', '0'],

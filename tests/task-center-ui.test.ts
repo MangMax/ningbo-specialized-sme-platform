@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 // UI regressions for the task workbench (#116 / #120 / #121).
 //
-// The workbench is **deployment-authorised** now: there is no admin key form,
+// The workbench uses same-origin browser requests: there is no admin key form,
 // no credential in the browser, and every task request carries the browser
 // marker header instead of a Bearer token. Each test here pins a person's job:
 //
 //   1. the page never asks for a key and never sends a credential;
-//   2. the server's own `authorized` flag decides whether an action is usable,
+//   2. each task's server capabilities decide whether an action is usable,
 //      and an unusable action says why next to it;
 //   3. a task opens in a real drawer (Reka Sheet) and the URL carries the job;
 //   4. closing the drawer takes the job out of the URL and gives the caret back
@@ -372,8 +372,7 @@ function findButton(wrapper: Wrapper | ReturnType<Wrapper['get']>, name: RegExp 
   return match
 }
 
-// A list read answers 200 whether or not the deployment allows page actions;
-// only `authorized` says so.
+// Keep the legacy list flag in fixtures; per-task capabilities govern actions.
 const listRead = (authorized: boolean) => json(listOf(state.list.rows, authorized))
 const capabilities = json({ exports: [{ titleCode: 'little_giant', path: '/api/roster/exports/current/little-giant', ready: true }] })
 
@@ -418,7 +417,23 @@ function sheetButton(dialog: HTMLElement, name: RegExp): HTMLButtonElement {
   return match
 }
 
-describe('没有管理操作授权', () => {
+describe('同源任务页面操作', () => {
+  it('列表兼容 authorized=false 不阻断详情已开放的重新生成能力', async () => {
+    const calls = installFetch(({ url, method }) => {
+      if (url.endsWith('/capabilities')) return capabilities
+      if (method === 'POST') return json({ jobId: jobId('RET') }, 202)
+      if (url.startsWith('/api/task-center/')) return json(state.detail)
+      return json(listOf(state.list.rows, false))
+    })
+    state.query = { tab: 'export', job: jobId('MW') }
+    await mountPage()
+    await settle()
+    const button = sheetButton(await waitForSheet(), /重新生成/)
+    expect(button.disabled).toBe(false)
+    await button.click(); await settle()
+    expect(calls.filter(call => call.method === 'POST')).toHaveLength(1)
+    expect(calls.find(call => call.method === 'POST')!.body).toMatchObject({ regenerateOf: jobId('MW') })
+  })
   it('页面不收集密钥，也从不带 Bearer：任务请求只带浏览器标识头', async () => {
     const calls = installFetch(({ url, method }) => {
       if (url.startsWith('/api/roster/exports/current/capabilities')) return capabilities

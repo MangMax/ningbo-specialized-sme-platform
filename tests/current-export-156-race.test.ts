@@ -27,7 +27,6 @@ function mockFetch(post: (url: string, init: any) => Promise<any>) {
   const raw = vi.fn(post)
   vi.stubGlobal('$fetch', Object.assign(async (url: string) => {
     if (url.endsWith('/capabilities')) return { exports: TASK_EXPORTS.map(t => ({ ...t, ready: true })) }
-    if (url === '/api/task-center') return { authorized: true }
     throw new Error('Unexpected read ' + url)
   }, { raw }))
   return raw
@@ -45,7 +44,7 @@ async function queryEntry() {
 }
 async function regeneration() {
   const wrapper = mount(defineComponent({ setup() {
-    const { submitExport } = useCurrentRosterExport(ref(''))
+    const { submitExport } = useCurrentRosterExport()
     const result = ref('')
     return () => h('div', [h(Button, { onClick: async () => {
       const receipt = await submitExport('specialized_sme', OLD_SME)
@@ -55,6 +54,24 @@ async function regeneration() {
   mounted.push(wrapper); await flushPromises()
   return { wrapper, click: () => wrapper.get('button').trigger('click') }
 }
+
+it('an optional lifecycle reason blocks submission until the current read completes', async () => {
+  const raw = mockFetch(async () => ({ status: 202, _data: { jobId: SME_JOB } }))
+  const reason = ref('正在读取当前筛选，读完即可操作。')
+  const wrapper = mount(defineComponent({ setup() {
+    const { submitExport, disabledReason } = useCurrentRosterExport(reason)
+    return () => h('div', [h(Button, { onClick: () => submitExport('specialized_sme', OLD_SME) }, () => '重新生成'), h('p', disabledReason('specialized_sme'))])
+  } }))
+  mounted.push(wrapper); await flushPromises()
+  expect(wrapper.get('p').text()).toBe(reason.value)
+  await wrapper.get('button').trigger('click'); await flushPromises()
+  expect(raw).not.toHaveBeenCalled()
+  reason.value = ''; await flushPromises()
+  expect(wrapper.get('p').text()).toBe('')
+  await wrapper.get('button').trigger('click'); await flushPromises()
+  expect(raw).toHaveBeenCalledTimes(1)
+  expect(raw.mock.calls[0]![1].body).toMatchObject({ regenerateOf: OLD_SME })
+})
 
 it('delayed initial 202 preserves a newer mounted task regeneration identity through lost receipt and remount', async () => {
   const lg = deferred(), sme = deferred()

@@ -6,10 +6,10 @@
 
 - `GET /api/roster/exports/current/capabilities`：公开只读、`Cache-Control: no-store`，仅返回 `{exports:[{titleCode,path,ready}]}`。路由清单取自本构建扫描到的实际专用 POST handlers，ready 同时要求共享 kind 已就绪；缺失路由不出现在清单。前端按固定称号与路径双重匹配，发现失败或缺项保持禁用，不能假设未部署入口存在。此接口不创建任务、不返回凭据、宿主路径或业务数据，生产 OpenAPI 仍默认关闭。
 
-- `POST /api/roster/exports/current/little-giant`，JSON `{ "clientRequestId": "稳定请求标识", "regenerateOf": "可选的同称号已结束任务ID" }`。需 API token，返回 **202**、`Location: /api/jobs/{id}` 和 `{jobId,kind,state}`。
+- `POST /api/roster/exports/current/little-giant`，JSON `{ "clientRequestId": "稳定请求标识", "regenerateOf": "可选的同称号已结束任务ID" }`。外部调用需 API token，同源页面按[任务中心契约](task-center.md)校验请求；返回 **202**、`Location: /api/jobs/{id}` 和 `{jobId,kind,state}`。
 - 共用 `POST /api/jobs`：`{kind:"current-roster-export",params:{titleCode:"little_giant"|"specialized_sme"|"innovative_sme",clientRequestId,regenerateOf?}}`。后续专用路由固定称号并复用同一提交服务。两种提交均拒绝参数中的历史日期及其他未知字段。
-- 复用 `GET /api/jobs/kinds`、`GET /api/jobs?kind=current-roster-export`、`GET /api/jobs/{id}`、`DELETE /api/jobs/{id}`。读历史沿用公开读接口；提交/取消沿用 `NUXT_API_TOKEN`（Bearer 或 X-API-Token）。未配置 token 时写入口关闭。
-- `GET /api/job-artifacts/{id}` 下载真实 xlsx，**每次检查同一 API token**，知道 jobId 不能跳过鉴权。只接受 ULID，不接受磁盘路径。响应 MIME 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`；`Content-Disposition: attachment; filename="current-little_giant.xlsx"`；`ETag` 为 SHA-256；`Cache-Control: private, no-store`。
+- 复用 `GET /api/jobs/kinds`、`GET /api/jobs?kind=current-roster-export`、`GET /api/jobs/{id}`、`DELETE /api/jobs/{id}`。读历史沿用公开读接口；提交/取消沿用 `NUXT_API_TOKEN`（Bearer 或 X-API-Token）。未配置 token 时外部写入口关闭；同源页面通过称号专用入口提交、通过任务中心取消，默认可用。
+- `GET /api/job-artifacts/{id}` 下载真实 xlsx，**每次检查同源页面请求或 API token**，知道 jobId 不能跳过鉴权。只接受 ULID，不接受磁盘路径。响应 MIME 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`；`Content-Disposition: attachment; filename="current-little_giant.xlsx"`；`ETag` 为 SHA-256；`Cache-Control: private, no-store`。
 - 参数错误 400，未授权 401，同请求标识用于不同参数或重新生成目标非法 409，容量满 429。没有成功发布/缺失文件 404，过期 410。
 
 同 kind 的 `clientRequestId` 持久去重（含终态）；更改称号或 regenerateOf 要换新标识，否则 409。重新生成使用新标识并关联同称号的已结束任务。去重检查先于容量检查；不会自动重试失败任务。

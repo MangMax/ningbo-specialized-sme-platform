@@ -28,7 +28,6 @@ async function setup(query: Record<string,string> = {}, failOn?: (query: Record<
   const calls: any[] = []
   vi.stubGlobal('$fetch', vi.fn(async (_url: string, init: any) => {
     if (_url === '/api/roster/exports/current/capabilities') return { exports: [] }
-    if (_url === '/api/task-center') return { authorized: false }
     calls.push(init.query)
     if (failOn?.(init.query)) throw new Error('synthetic target failure')
     return { rows: [metadata ? row : { ...row, matchedValidYears: [], matchedMaintenance: [] }], total: 1, uncertainTotal: 0, options: { recognitionYears: [2024], validYears: [2027], maintenanceYears: [2023,2025], maintenanceBatchesByYear: { 2023: [2], 2025: [1] } }, page: 1, pageSize: 25 }

@@ -33,14 +33,12 @@ const { data, sourceKey, loading, failed, retryIn, refresh } = useTaskPolling<Ta
 // Only a list payload renders rows; anything partial shows as empty instead of
 // throwing mid-render.
 const rows = computed(() => Array.isArray(data.value?.rows) ? data.value.rows : [])
-const authorized = computed(() => data.value?.authorized === true)
 const stale = computed(() => sourceKey.value !== key.value)
 // The template handler starts a read; it does not wait for it.
 function reload() { void refresh() }
 const readOnlyReason = computed(() => {
   if (stale.value) return '正在读取当前筛选，读完即可操作。'
-  if (!data.value) return '正在读取任务操作能力。'
-  if (!authorized.value) return '当前部署未开放页面任务操作，仅可查看。'
+  if (!data.value) return '正在读取任务列表。'
   return ''
 })
 const failureDescription = computed(() => {
