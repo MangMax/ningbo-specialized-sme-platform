@@ -12,6 +12,7 @@ const row = (id = 7) => ({
   titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: false, evidenceIncluded: false,
   detailUrl: `/api/comparison?view=full&enterpriseId=${id}&title=specialized_sme&direction=missing_in_miit&showCurated=true`,
   explanation: null,
+  assessment: { queryCoverage: { status: 'unknown' }, assessment: 'decided', explanationValidity: { status: 'unknown' } },
   platform: { aliasCount: 2, confirmedAliasCount: 1, queryCount: 1, sourceRelationCount: 203,
     disposition: { explanationId: 1, status: 'confirmed_reason', reasonCode: 'platform_stale', measureCode: 'mark_platform_snapshot', verificationStatus: 'confirmed', recordedAt: null, evidenceQueryId: 8, evidenceRelationId: null } },
 })
@@ -51,6 +52,25 @@ it('requests summary on initial load, pagination and filters without eager enter
   await flushPromises()
   expect(fetch.mock.calls.at(-1)).toEqual(['/api/comparison', { query: expect.objectContaining({ view: 'summary', page: 1, q: '合成' }) }])
   expect(fetch.mock.calls.every(([url]) => url === '/api/comparison')).toBe(true)
+})
+
+it.each([
+  { name: 'failed coverage', coverage: 'failed', assessment: 'unknown', label: '查询失败', validity: 'not_applicable' },
+  { name: 'withdrawn decision', coverage: 'unknown', assessment: 'withdrawn', label: '决定已撤回', validity: 'not_applicable' },
+  { name: 'failed coverage with an outdated not-queried decision', coverage: 'failed', assessment: 'decided', label: '查询失败', validity: 'premise_invalid' },
+])('shows $name before expanding full evidence', async ({ coverage, assessment, label, validity }) => {
+  const summary = { ...row(), assessment: { queryCoverage: { status: coverage }, assessment, explanationValidity: { status: validity } },
+    platform: { ...row().platform, disposition: { ...row().platform.disposition, status: 'not_queried', reasonCode: assessment === 'withdrawn' ? 'platform_stale' : null, measureCode: null } } }
+  fetch = vi.fn(async () => envelope([summary as any]))
+  await start()
+  for (const selector of ['.hidden.sm\\:table-cell', '[data-testid="comparison-mobile-details"]']) {
+    const text = wrapper!.findAll(selector).map(node => node.text()).join(' ')
+    expect(text).toContain(label)
+    expect(text).not.toContain('未查询')
+    expect(text).not.toContain('平台未更新')
+  }
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(document.querySelector('[data-testid="comparison-row-details"]')).toBeNull()
 })
 
 const full = (id = 7) => ({ ...row(id), evidence: { currentCity: '杭州市', regStatus: '存续' }, note: '保留核实备注',

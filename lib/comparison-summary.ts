@@ -8,6 +8,7 @@ import type { TitleCode } from '../db/titles'
 import { filterComparisonRows, type ComparisonRowFilter } from './comparison-filter'
 import type { getCuratedComparison } from './curation'
 import { reconcileKey, type ReconcileIndex } from './reconcile'
+import { readQueryAssessments, type QueryAssessment } from './roster/query-assessment'
 
 export type ComparisonSummaryDisposition = Pick<ComparisonDisposition,
   'explanationId' | 'status' | 'reasonCode' | 'measureCode' | 'verificationStatus' | 'recordedAt' | 'evidenceQueryId' | 'evidenceRelationId'>
@@ -25,6 +26,12 @@ export interface ComparisonSummaryRow {
   evidenceIncluded: false
   detailUrl: string
   explanation: { code: string } | null
+  /** Independent coverage, decision lifecycle and validity; no evidence payload. */
+  assessment: {
+    queryCoverage: Pick<QueryAssessment['queryCoverage'], 'status'>
+    assessment: QueryAssessment['assessment']
+    explanationValidity: Pick<QueryAssessment['explanationValidity'], 'status'>
+  }
   platform: {
     aliasCount: number
     confirmedAliasCount: number
@@ -107,6 +114,9 @@ export function readComparisonSummary(
     platform: { aliases: aliasesByEnterprise.get(row.enterpriseId) ?? [] },
   })), filter)
   const selected = scoped.slice((page - 1) * pageSize, page * pageSize)
+  const assessments = readQueryAssessments(db, selected.map(row => ({
+    enterpriseId: row.enterpriseId, titleCode: row.titleCode, direction: row.direction,
+  })))
   const selectedQueryIds = [...new Set(selected.flatMap(row => queriesByEnterprise.get(row.enterpriseId) ?? []))]
   const relationCounts = new Map<number, number>()
   // Bound bind parameters even for an enterprise with a long query history.
@@ -119,12 +129,17 @@ export function readComparisonSummary(
   const explanationFor = (row: typeof scoped[number]) => reconcile.entries.get(reconcileKey(row))
   const dispositionFor = (row: typeof scoped[number]) => current.get(`${row.enterpriseId}|${row.titleCode}|${row.direction}`) ?? defaultDisposition
   const withExplanation = scoped.filter(row => dispositionFor(row).explanationId != null).length
-  const rows: ComparisonSummaryRow[] = selected.map(row => ({
+  const rows: ComparisonSummaryRow[] = selected.map((row, index) => ({
     enterpriseId: row.enterpriseId, name: row.name, nameNorm: row.nameNorm, uscc: row.uscc,
     district: row.district, titleCode: row.titleCode, direction: row.direction, curated: row.curated,
     evidenceIncluded: false,
     detailUrl: `/api/comparison?view=full&enterpriseId=${row.enterpriseId}&title=${row.titleCode}&direction=${row.direction}&showCurated=true`,
     explanation: explanationFor(row) ? { code: explanationFor(row)!.explanation.code } : null,
+    assessment: {
+      queryCoverage: { status: assessments[index]!.queryCoverage.status },
+      assessment: assessments[index]!.assessment,
+      explanationValidity: { status: assessments[index]!.explanationValidity.status },
+    },
     platform: {
       aliasCount: row.platform.aliases.length,
       confirmedAliasCount: row.platform.aliases.filter(alias => alias.verificationStatus === 'confirmed').length,

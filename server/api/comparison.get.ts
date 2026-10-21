@@ -68,7 +68,7 @@ defineRouteMeta({
     responses: {
       200: {
         description:
-          '比对结果(`rows` / `total` / `counts` / `curatedCounts` / `platform` / `reconcile`)。summary 额外 view:"summary"；行 platform 含 aliasCount/confirmedAliasCount/queryCount/sourceRelationCount/disposition，explanation 为 {code} 或 null。全局 counts/curatedCounts 不随过滤和分页变化；platform/reconcile 为分页前同过滤范围计数。summary 不推断处置状态。',
+          '比对结果(`rows` / `total` / `counts` / `curatedCounts` / `platform` / `reconcile`)。summary 额外 view:"summary"；行 platform 含 aliasCount/confirmedAliasCount/queryCount/sourceRelationCount/disposition，explanation 为 {code} 或 null。assessment 含 queryCoverage.status、assessment、explanationValidity.status，独立保留查询覆盖、决定撤回及解释有效性。全局 counts/curatedCounts 不随过滤和分页变化；platform/reconcile 为分页前同过滤范围计数。summary 不推断处置状态。',
       },
       400: { description: 'title / direction / showCurated / view / enterpriseId 取值非法。' },
     },
