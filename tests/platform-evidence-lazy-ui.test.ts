@@ -26,6 +26,34 @@ it('loads only on demand, retries the failed byte offset and decodes split Unico
 })
 
 import PlatformQueryEvidence from '../components/PlatformQueryEvidence.vue'
+it.each([
+  { name: 'one chunk', chunks: [[239, 187, 191, 232, 175, 129, 230, 141, 174]] },
+  { name: 'BOM split after byte one', chunks: [[239], [187, 191, 232, 175, 129, 230, 141, 174]] },
+  { name: 'BOM split after byte two', chunks: [[239, 187], [191, 232, 175, 129, 230, 141, 174]] },
+  { name: 'BOM split across three chunks', chunks: [[239], [187], [191, 232, 175, 129, 230, 141, 174]] },
+])('preserves the leading BOM in original evidence ($name)', async ({ chunks }) => {
+  const fetch = vi.fn()
+  let offset = 0
+  for (const bytes of chunks) {
+    fetch.mockResolvedValueOnce({ ...part(offset, bytes, offset + bytes.length < 9), totalBytes: 9 })
+    offset += bytes.length
+  }
+  vi.stubGlobal('$fetch', fetch)
+  const w = mount(PlatformEvidenceChunk, { props: { queryId: 7, field: 'rawResponse', title: '响应原文' } }); wrappers.push(w)
+  for (let index = 0; index < chunks.length; index++) {
+    await w.get('[data-action="chunk-next"]').trigger('click'); await flushPromises()
+    if (index < chunks.length - 1) {
+      expect(w.get('pre').element.textContent).toBe('')
+      expect(w.text()).toContain('部分，尚未读完')
+    }
+  }
+  // .text() trims U+FEFF, so inspect the original DOM text without normalization.
+  const original = w.get('pre').element.textContent
+  expect(original).toBe('\uFEFF证据')
+  expect(Array.from(Buffer.from(original!, 'utf8'))).toEqual([239, 187, 191, 232, 175, 129, 230, 141, 174])
+  expect(w.text()).toContain('9 / 9 字节 · 完整')
+  expect(w.find('[data-action="chunk-next"]').exists()).toBe(false)
+})
 it('opens relationship pages lazily, retains page one on page-two failure, and reuses successful reads after collapse', async () => {
   const fetch = vi.fn().mockResolvedValueOnce({ queryId: 7, field: 'relations', rows: [{ id: 71, sequenceNo: 1 }], total: 2, page: 1, pageSize: 1 })
     .mockRejectedValueOnce(new Error('page two unavailable'))

@@ -22,7 +22,7 @@ const complete = ref(false)
 const textParts = ref<string[]>([])
 const pending = ref(false)
 const error = ref('')
-const decoder = new TextDecoder('utf-8', { fatal: true })
+const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 const controller = new AbortController()
 let active = true
 onBeforeUnmount(() => { active = false; controller.abort() })
