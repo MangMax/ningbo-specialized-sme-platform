@@ -1,3 +1,5 @@
+import { cleanupCurrentExports } from './current-export-artifact'
+import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { isTerminalJobState, newJobId, type JobState } from '../../lib/job'
@@ -88,7 +90,14 @@ export type JobParseResult =
  * **状态诚实(`failed`),明细完整(`result.files[]`)**。
  */
 export interface JobCompletion {
-  /** 产出。哪怕是空对象也要给 —— 它表示「跑完了,没有产出」。 */
+  /**
+   * 产出。哪怕是空对象也要给 —— 它表示「跑完了,没有产出」。
+   *
+   * 必填是有意的:"忘了给产出"要在编译期报错,而不是在运行期悄悄变成"沿用上一次
+   * 的结果"。`result: null` 才是**显式清空**。没有产出的执行(抛异常、排队取消、
+   * 未接入的 kind)根本不走这个接口 —— 它们由 runner 直接 `finishJob`,而 `finishJob`
+   * 对"没给 result"保留上一次的检查点(见 `job-store.ts`)。
+   */
   result: unknown
   /** Optional truthful progress for partial-result jobs. */
   progress?: { done: number; total: number }
@@ -113,6 +122,9 @@ export interface JobCompletion {
  */
 export interface JobSpec {
   kind: string
+  /** Optional admission policy for resource-heavy persisted export jobs. */
+  maxPending?: number
+  deduplicateRequest?: boolean
   /** `ready` = 有 `run` 可跑;`todo` = 已登记、尚未接入(提交时明确报 501)。 */
   status: 'ready' | 'todo'
   summary: string
@@ -224,6 +236,21 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
   if (!spec) throw new Error(`任务种类未登记:${input.kind}`)
   if (spec.status !== 'ready' || !spec.run) throw new Error(`任务种类尚未接入:${input.kind}`)
 
+  if (spec.deduplicateRequest) {
+    const existing = db.select().from(schema.job).where(and(eq(schema.job.kind,input.kind),sql`json_extract(${schema.job.params}, '$.clientRequestId') = ${input.params.clientRequestId}`)).get()
+    if (existing) {
+      if (JSON.stringify(existing.params) !== JSON.stringify(input.params)) throw Object.assign(new Error('请求标识已用于不同参数'),{statusCode:409})
+      return existing
+    }
+    if (input.params.regenerateOf) {
+      const previous = getJob(db,String(input.params.regenerateOf))
+      if (!previous || previous.kind !== input.kind || previous.params.titleCode !== input.params.titleCode || !isTerminalJobState(previous.state)) throw Object.assign(new Error('重新生成需要同称号已结束任务'),{statusCode:409})
+    }
+  }
+  if (spec.maxPending) {
+    const n = db.select({n:sql<number>`count(*)`}).from(schema.job).where(and(eq(schema.job.kind,input.kind),sql`${schema.job.state} in ('queued','running')`)).get()!.n
+    if (n >= spec.maxPending) throw Object.assign(new Error('导出执行/排队容量已满，请稍后重试'),{statusCode:429})
+  }
   const run = spec.prepare?.(input.params, db) ?? spec.run
   const total = spec.total?.(input.params) ?? 1
   const row = createJob(db, {
@@ -239,7 +266,11 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
 }
 
 /** Explicit retry reuses the existing scheduler and ID; captures fresh dependencies
- * before reopening. Callers validate bounded retry policy before reaching this seam. */
+ * before reopening. Callers validate bounded retry policy before reaching this seam.
+ *
+ * 依赖捕获（`prepare`）抛错时**不重开**：重开就是丢掉旧终态与旧 `result`，
+ * 而这一次执行连开始都没开始。调用方拿到异常（带它的 `statusCode`）后如实拒绝，
+ * 已完成/部分结果原样留在任务里。 */
 export function requeueFinishedJob(db: Db, input: { id: string; kind: string; params: Record<string, unknown>; filesDir: string }): boolean {
   const spec = getJobSpec(input.kind)
   if (!spec?.run) return false
@@ -329,6 +360,7 @@ async function runOne(entry: QueueEntry): Promise<void> {
         : (completion.error ?? null),
     })
   } catch (error) {
+    // 抛出的执行没有新产出:保留已检查点的 result,只记失败原因(见 `finishJob`)。
     finishJob(db, jobId, { state: 'failed', error: messageOf(error) })
   } finally {
     cancelRequested.delete(jobId)
@@ -414,5 +446,7 @@ const reconciledDbs = new WeakSet<object>()
 export function ensureJobRunnerReady(db: Db): number {
   if (reconciledDbs.has(db)) return 0
   reconciledDbs.add(db)
-  return reconcileInterruptedJobs(db)
+  const interrupted = reconcileInterruptedJobs(db)
+  void cleanupCurrentExports(db).catch(() => {})
+  return interrupted
 }

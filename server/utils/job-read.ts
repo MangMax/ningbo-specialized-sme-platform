@@ -1,9 +1,9 @@
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type * as schema from '../../db/schema'
+import type { useDb } from '../../db/client'
 import { cookieRedactor } from '../../lib/platform/client'
 import { credentialContext, resolveCredential } from './credential-state'
 import { sanitizeEvidence } from './record-correspondence-read'
-import { toJobDto, type JobDto, type JobRow } from './job-store'
+import type { JobDto, JobRow } from './job-store'
+import { currentJobDto } from './current-export-artifact'
 
 const sensitiveKey = /cookie|password|passwd|token|secret|credential|authorization|authentication|api.?key|session/i
 // Relative artifact references and HTTP URLs are public data; absolute host paths
@@ -12,8 +12,9 @@ const sensitiveKey = /cookie|password|passwd|token|secret|credential|authorizati
 const hostPath = /https?:\/\/[^\s"'<>;,)}\]]+|\bfile:\/\/\/[^\s"'<>;,)}\]]+|(?<=^|[\s"'<>;,)}\]=:(\[{])\/(?!\/|api(?:\/|$))[^\s"'<>;,)}\]]+|\b[A-Za-z]:\\[^\s"'<>;,)}\]]+/giu
 
 /** One credential snapshot per full read, never per summary row. No persistence
- * changes: redact only the public copy, retaining complete non-sensitive data. */
-export function jobReadProjector(db: BetterSQLite3Database<typeof schema>): (row: JobRow) => JobDto {
+ * changes to stored receipts: refresh artifact availability through its authority,
+ * then redact only the public copy, retaining complete non-sensitive data. */
+export function jobReadProjector(db: ReturnType<typeof useDb>): (row: JobRow) => Promise<JobDto> {
   const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined
   const context = { ...credentialContext(), db }
   const secrets = [runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN,
@@ -28,8 +29,8 @@ export function jobReadProjector(db: BetterSQLite3Database<typeof schema>): (row
       .map(([key, item]) => [text(key), sensitiveKey.test(key) ? '[REDACTED]' : redact(item)]))
     return value
   }
-  return row => {
-    const dto = toJobDto(row)
+  return async row => {
+    const dto = await currentJobDto(row, db.$client.name)
     return { ...dto, params: redact(dto.params) as JobDto['params'], result: redact(dto.result),
       error: dto.error === null ? null : text(dto.error) }
   }

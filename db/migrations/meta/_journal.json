@@ -176,6 +176,20 @@
       "when": 1792400021005,
       "tag": "0024_evidence_review_114",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1792400021006,
+      "tag": "0025_current_export_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1792400021007,
+      "tag": "0026_current_qualification",
+      "breakpoints": true
     }
   ]
 }

@@ -49,7 +49,7 @@ export interface JobSummaryDto {
   kind: string
   state: JobState
   progress: JobProgress
-  percent: number
+  percent: number | null
   /** Fixed notice when an error exists; full sanitized error is in detail. */
   error: string | null
   createdAt: string

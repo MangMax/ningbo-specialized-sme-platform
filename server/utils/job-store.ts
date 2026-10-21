@@ -30,7 +30,7 @@ export interface JobDto {
   kind: string
   state: JobState
   progress: JobProgress
-  percent: number
+  percent: number | null
   params: Record<string, unknown>
   result: unknown
   error: string | null
@@ -39,13 +39,22 @@ export interface JobDto {
   finishedAt: string | null
 }
 
+/** Same main export progress semantics for full receipts and narrow summaries. */
+function jobPercent(row: { kind: string; state: JobState; progress: JobProgress }, phase: unknown): number | null {
+  if (row.kind === 'current-roster-export') {
+    if (row.state === 'done') return 100
+    if (row.state === 'queued' || row.state === 'running' && phase !== 'workbook') return null
+  }
+  return progressPercent(row.progress)
+}
+
 export function toJobDto(row: JobRow): JobDto {
   return {
     id: row.id,
     kind: row.kind,
     state: row.state,
     progress: row.progress,
-    percent: progressPercent(row.progress),
+    percent: jobPercent(row, (row.result as { phase?: unknown } | null)?.phase),
     params: row.params,
     result: row.result ?? null,
     error: row.error ?? null,
@@ -158,16 +167,18 @@ const jobSummaryColumns = {
   finishedAt: schema.job.finishedAt,
   hasResult: sql<number>`${schema.job.result} is not null and ${schema.job.result} != 'null'`,
   hasError: sql<number>`${schema.job.error} is not null`,
+  // Only a boolean discriminator for active exports; never hydrate the result body.
+  exportWorkbook: sql<number | null>`case when ${schema.job.kind}='current-roster-export' and ${schema.job.state}='running' then json_extract(${schema.job.result}, '$.phase') = 'workbook' else 0 end`,
 }
 
 function toJobSummary(row: {
   id: string; kind: string; state: JobState; progress: JobProgress
   createdAt: string; startedAt: string | null; finishedAt: string | null
-  hasResult: number; hasError: number
+  hasResult: number; hasError: number; exportWorkbook: number | null
 }): JobSummaryDto {
   return {
     id: row.id, kind: row.kind, state: row.state, progress: row.progress,
-    percent: progressPercent(row.progress),
+    percent: jobPercent(row, row.exportWorkbook ? 'workbook' : null),
     error: row.hasError ? '任务有错误，请读取详情' : null,
     createdAt: row.createdAt, startedAt: row.startedAt, finishedAt: row.finishedAt,
     resultSummary: { available: !!row.hasResult },
@@ -213,24 +224,35 @@ export function markJobRunning(db: Db, id: string): JobRow | null {
 /** 写进度。终态的任务不再改 —— 否则取消之后进度还会往回跳。 */
 export function setJobProgress(db: Db, id: string, progress: JobProgress): void {
   db.update(schema.job)
-    .set({ progress: makeProgress(progress.done, progress.total) })
+    .set({ progress: progress.done === 0 && progress.total === 0 ? {done:0,total:0} : makeProgress(progress.done, progress.total) })
     .where(and(eq(schema.job.id, id), inArray(schema.job.state, [...ACTIVE_JOB_STATES])))
     .run()
 }
 
-/** 终态收尾:`done` / `failed` / `cancelled` + `finished_at`。**只从非终态**出发。 */
+/**
+ * 终态收尾:`done` / `failed` / `cancelled` + `finished_at`。**只从非终态**出发。
+ *
+ * `result` 有**三种**语义,别合并:
+ *  - 省略(`undefined`)= 这次执行没有新产出 → **保留**库里已有的检查点结果,连
+ *    `result` 列都不碰。一次失败的重试不该抹掉上一次已经落库的已完成/部分证据。
+ *    走这条的是 runner 自己发起的收尾:执行抛异常、排队时被取消、kind 尚未接入。
+ *  - `null` = 调用方**显式**要求清空。
+ *  - 其它值 = 写入这次的新产出(handler 正常返回必带 `result`,见 `JobCompletion`)。
+ * 逐项核对调用方:`current-roster-export` 的失败/取消都会带上 `checkpoint`(非空对象)
+ * 或显式 `null`,`ocr`/`render-pages`/`reconcile` 的产出在方法体里构造完毕才返回
+ * —— 它们都不依赖"省略即清空"这个旧行为。
+ */
 export function finishJob(
   db: Db,
   id: string,
   outcome: { state: Extract<JobState, 'done' | 'failed' | 'cancelled'>; result?: unknown; error?: string | null },
 ): JobRow | null {
+  // 只更新一次:省略 result 时连列都不碰,显式 null 才能清空。
+  const changes = outcome.result === undefined
+    ? { state: outcome.state, error: outcome.error ?? null, finishedAt: new Date().toISOString() }
+    : { state: outcome.state, result: outcome.result, error: outcome.error ?? null, finishedAt: new Date().toISOString() }
   db.update(schema.job)
-    .set({
-      state: outcome.state,
-      result: outcome.result === undefined ? null : outcome.result,
-      error: outcome.error ?? null,
-      finishedAt: new Date().toISOString(),
-    })
+    .set(changes)
     .where(and(eq(schema.job.id, id), inArray(schema.job.state, [...ACTIVE_JOB_STATES])))
     .run()
   return getJob(db, id)

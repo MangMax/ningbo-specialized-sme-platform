@@ -1,3 +1,4 @@
+import { currentRosterExportSpec } from './jobs/current-roster-export'
 import { registerPlatformBatchJob } from './platform-batch-query'
 import { getJobSpec, registerJob } from './job-runner'
 import { ocrSpec } from './jobs/ocr'
@@ -30,6 +31,7 @@ import { renderPagesSpec } from './jobs/render-pages'
  */
 export function registerJobSpecs(): void {
   registerPlatformBatchJob()
+  if (!getJobSpec(currentRosterExportSpec.kind)) registerJob(currentRosterExportSpec)
   if (getJobSpec(renderPagesSpec.kind)) return
   registerJob(renderPagesSpec)
   registerJob(ocrSpec)
