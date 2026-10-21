@@ -232,7 +232,7 @@ describe('record correspondence source, candidate and MCP contracts', () => {
     const req = decision(event.id, relation.id)
     const pre = dispatchRecordCorrespondenceMcp('preflight', req, { db, authorized: true }) as any
     const receipt = dispatchRecordCorrespondenceMcp('commit', { request: req, planHash: pre.planHash }, { db, authorized: true }) as any
-    expect(() => dispatchRecordCorrespondenceMcp('batch', { idempotencyKey: req.idempotencyKey }, { db })).toThrowError(expect.objectContaining({ code: 'unauthorized' }))
+    expect(dispatchRecordCorrespondenceMcp('batch', { idempotencyKey: req.idempotencyKey }, { db })).toEqual({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error: { code: 'unauthorized', message: 'Configured API token required' } }) }] })
     expect(dispatchRecordCorrespondenceMcp('batch', { idempotencyKey: req.idempotencyKey }, { db, authorized: true })).toEqual(receipt)
     const id = receipt.correspondenceIds[0]
     const list = dispatchRecordCorrespondenceMcp('list', { eventId: event.id, role: 'context_only', page: 1, pageSize: 1 }, { db }) as any
@@ -257,7 +257,7 @@ describe('core guards remain authoritative through both adapters', () => {
     const receipt = call('commit', { request: first, planHash: plan.planHash }).body as any
     const second = { ...first, idempotencyKey: 'confirm-mismatch', sourceIdentity: 'synthetic/confirm-mismatch', operations: [{ action: 'decide', correspondenceId: receipt.correspondenceIds[0], expectedRevision: 1, status: 'confirmed' }] }
     expect(call('preflight', second)).toMatchObject({ status: 422, body: { error: { code: 'invalid_endpoint_type' } } })
-    expect(() => dispatchRecordCorrespondenceMcp('preflight', second, { db, authorized: true })).toThrowError(expect.objectContaining({ code: 'invalid_endpoint_type' }))
+    expect(dispatchRecordCorrespondenceMcp('preflight', second, { db, authorized: true })).toEqual({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_endpoint_type', message: 'Support role conflicts with original process type' } }) }] })
     expect(listRecordCorrespondences(db)[0]).toMatchObject({ status: 'candidate', revision: 1 })
     const auditRead = handleRecordCorrespondenceRequest({ action: 'audit', method: 'GET', id: receipt.correspondenceIds[0] }, { db }).body as any
     expect(JSON.stringify(auditRead)).not.toContain('SECRET-RAW')

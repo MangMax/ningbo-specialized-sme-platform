@@ -8,6 +8,10 @@ import { dispatchRecordCorrespondenceMcp } from '../server/utils/mcp-record-corr
 import { startHttpFixture } from './helpers/http-fixture'
 
 const cleanup: Array<() => void> = []
+function mcpErrorCode(result: unknown) {
+  expect(result).toMatchObject({ isError: true, content: [{ type: 'text' }] })
+  return JSON.parse((result as { content: Array<{ text: string }> }).content[0]!.text).error.code
+}
 afterEach(() => { for (const close of cleanup.splice(0).reverse()) close() })
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'correspondence-85-'))
@@ -80,7 +84,7 @@ describe('bounded correspondence public reads on real SQLite', () => {
       const deep = await (await fetch(app.baseUrl + '/api/roster/correspondences?page=20&pageSize=1&view=summary')).json() as any
       expect(deep).toMatchObject({ total: 20, rows: [{ id: ids[19] }] })
       expect((await fetch(app.baseUrl + '/api/roster/correspondences?view=unknown')).status).toBe(400)
-      expect(() => dispatchRecordCorrespondenceMcp('list', { view: 'unknown' }, { db: f.db })).toThrow()
+      expect(mcpErrorCode(dispatchRecordCorrespondenceMcp('list', { view: 'unknown' }, { db: f.db }))).toBe('invalid_request')
     } finally { await app.close() }
   }, 30000)
 
@@ -319,23 +323,23 @@ it('preserves all typed roles, four statuses, conjunctive filters and public err
       expect(response.status).toBe(400)
       expect(response.headers.get('cache-control')).toBe('no-store')
       expect(await response.json()).toMatchObject({ error: { code: 'invalid_request' } })
-      expect(() => dispatchRecordCorrespondenceMcp('list', query, { db: f.db })).toThrowError(expect.objectContaining({ code: 'invalid_request', statusCode: 400 }))
+      expect(mcpErrorCode(dispatchRecordCorrespondenceMcp('list', query, { db: f.db }))).toBe('invalid_request')
     }
     expect((await fetch(app.baseUrl + '/api/roster/correspondences/999999')).status).toBe(404)
-    expect(() => dispatchRecordCorrespondenceMcp('get', { id: 999999 }, { db: f.db })).toThrowError(expect.objectContaining({ code: 'not_found', statusCode: 404 }))
+    expect(mcpErrorCode(dispatchRecordCorrespondenceMcp('get', { id: 999999 }, { db: f.db }))).toBe('not_found')
     for (const [kind, path] of [['event', 'events'], ['relation', 'relations'], ['export_row', 'export-rows']] as const) {
       const response = await fetch(app.baseUrl + `/api/roster/correspondences/${path}/999999`)
       expect(response.status).toBe(404)
       expect(response.headers.get('cache-control')).toBe('no-store')
       expect(await response.json()).toMatchObject({ error: { code: 'not_found' } })
-      expect(() => dispatchRecordCorrespondenceMcp('source', { kind, id: 999999 }, { db: f.db })).toThrowError(expect.objectContaining({ code: 'not_found', statusCode: 404 }))
+      expect(mcpErrorCode(dispatchRecordCorrespondenceMcp('source', { kind, id: 999999 }, { db: f.db }))).toBe('not_found')
     }
     for (const [body, status, code] of [[{ eventId: 999999, queryIds: [f.query.id], ruleVersion: 'missing' }, 404, 'not_found'], [{ eventId: event.id, queryIds: [-1], ruleVersion: 'invalid' }, 400, 'invalid_request']] as const) {
       const response = await fetch(app.baseUrl + '/api/roster/correspondences/candidates', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
       expect(response.status).toBe(status)
       expect(response.headers.get('cache-control')).toBe('no-store')
       expect(await response.json()).toMatchObject({ error: { code } })
-      expect(() => dispatchRecordCorrespondenceMcp('candidates', body, { db: f.db })).toThrowError(expect.objectContaining({ code, statusCode: status }))
+      expect(mcpErrorCode(dispatchRecordCorrespondenceMcp('candidates', body, { db: f.db }))).toBe(code)
     }
   } finally { await app.close() }
 })
