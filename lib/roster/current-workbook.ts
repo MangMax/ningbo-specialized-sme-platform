@@ -35,7 +35,7 @@ function styledRow(sheet: Stream.WorksheetWriter, values: (string | null)[], hea
   Stream.commitRow(record)
 }
 function sheetOptions() {
-  return {views:[{state:'frozen' as const,xSplit:2,ySplit:1,topLeftCell:'C2',zoomScale:90}],pageSetup:{paperSize:66,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'1:1'}}
+  return {views:[{state:'frozen' as const,xSplit:2,ySplit:1,topLeftCell:'C2',zoomScale:90}]}
 }
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
 export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void) {
@@ -104,7 +104,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
       if (group !== 'eligible') deferred[group].length = 0
     }
     const dataVersion = 'sha256:' + hash.digest('hex')
-    const explanation = workbook.addWorksheet('口径说明',{pageSetup:{orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'1:1'}})
+    const explanation = workbook.addWorksheet('口径说明')
     explanation.columns = [{width:18},{width:100}]
     for (const [index,row] of [['项目','说明'],['生成时间',generatedAt],['范围',`当前库已识别的${TITLES[title]}企业；未实时采集，不证明全市完整；无法确认的资格、身份或出处列入待确认。`],['有效企业',String(counts.eligible)],['待确认',String(counts.pending)],['排除明细',String(counts.excluded)],['判定说明','认定与复核依正式公布依据；仅有平台记录或迁入事实不自动证明当前资格；三年有效期届满且复核结论不明时列待确认。']].entries()) styledRow(explanation,row,index===0)
     await workbook.commit()

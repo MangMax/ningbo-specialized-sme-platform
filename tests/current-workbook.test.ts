@@ -134,11 +134,6 @@ it('renders recognition and review facts with real source pages and usable sheet
   expect(sheet.getColumn(2).width).toBeGreaterThan(25)
   expect(sheet.views[0]).toMatchObject({state:'frozen',xSplit:2,ySplit:1})
   expect(sheet.autoFilter).toBe('A1:L2')
-  expect(sheet.pageSetup.orientation).toBe('landscape')
-  expect(sheet.pageSetup.paperSize).toBe(66)
-  expect(sheet.pageSetup.fitToWidth).toBe(1)
-  expect(sheet.pageSetup.fitToHeight).toBe(0)
-  expect(sheet.pageSetup.printTitlesRow).toBe('1:1')
 })
 
 it('labels each award and review citation with its actual source and distinct document context', async () => {
