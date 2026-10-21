@@ -6,13 +6,13 @@
 
 `POST /api/roster/exports/current/innovative-sme`
 
-请求为 `{ "clientRequestId": "稳定请求标识", "regenerateOf": "可选的同称号已结束任务ID" }`，沿用 API token 鉴权。返回 **202**、`Location: /api/jobs/{id}` 及 `{jobId,kind,state}`，不在请求内构建工作簿。
+请求为 `{ "clientRequestId": "稳定请求标识", "regenerateOf": "可选的同称号已结束任务ID" }`，外部调用沿用 API token 鉴权，同源页面按[任务中心契约](task-center.md)校验请求。返回 **202**、`Location: /api/jobs/{id}` 及 `{jobId,kind,state}`，不在请求内构建工作簿。
 
 入口固定 `titleCode=innovative_sme`，拒绝请求内的称号覆盖、历史日期、额外字段和查询参数。客户端不可通过此入口导出其他称号。公开 OpenAPI 可发现该入口。
 
 本入口调用既有 `registerJobSpecs` / `submitJob`，使用同一个 `current-roster-export` kind、调度槽、独立执行进程、资格读服务、工作簿构建器及产物下载服务。通用 `POST /api/jobs` 以相同参数和请求标识提交会返回同一个任务；跨称号复用标识返回409。没有新增业务判因、队列、表结构或任务页面。
 
-下载路径仍为 `GET /api/job-artifacts/{id}`，每次需要 token；文件名为 `current-innovative_sme.xlsx`。工作簿含“有效企业”“待确认”“排除明细”“口径说明”，称号列为“创新型中小企业”。同主体多次认定/复核只占本称号一行；跨称号分别导出，同名不同主体分开。
+下载路径仍为 `GET /api/job-artifacts/{id}`，每次校验同源页面请求或 API token；文件名为 `current-innovative_sme.xlsx`。工作簿含“有效企业”“待确认”“排除明细”“口径说明”，称号列为“创新型中小企业”。同主体多次认定/复核只占本称号一行；跨称号分别导出，同名不同主体分开。
 
 生成文件和查询状态沿用共享的七天保留期、数据/规则版本、持久去重、显式重生成、过期410、缺失404及失败清理契约。重生成读取新执行时点的当前决定，原完成文件不会随业务决定变化而被改写。
 

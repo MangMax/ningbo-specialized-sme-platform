@@ -6,10 +6,10 @@
 
 - `GET /api/roster/exports/current/capabilities`：公开只读、`Cache-Control: no-store`，仅返回 `{exports:[{titleCode,path,ready}]}`。路由清单取自本构建扫描到的实际专用 POST handlers，ready 同时要求共享 kind 已就绪；缺失路由不出现在清单。前端按固定称号与路径双重匹配，发现失败或缺项保持禁用，不能假设未部署入口存在。此接口不创建任务、不返回凭据、宿主路径或业务数据，生产 OpenAPI 仍默认关闭。
 
-- `POST /api/roster/exports/current/little-giant`，JSON `{ "clientRequestId": "稳定请求标识", "regenerateOf": "可选的同称号已结束任务ID" }`。需 API token，返回 **202**、`Location: /api/jobs/{id}` 和 `{jobId,kind,state}`。
+- `POST /api/roster/exports/current/little-giant`，JSON `{ "clientRequestId": "稳定请求标识", "regenerateOf": "可选的同称号已结束任务ID" }`。外部调用需 API token，同源页面按[任务中心契约](task-center.md)校验请求；返回 **202**、`Location: /api/jobs/{id}` 和 `{jobId,kind,state}`。
 - 共用 `POST /api/jobs`：`{kind:"current-roster-export",params:{titleCode:"little_giant"|"specialized_sme"|"innovative_sme",clientRequestId,regenerateOf?}}`。后续专用路由固定称号并复用同一提交服务。两种提交均拒绝参数中的历史日期及其他未知字段。
-- 复用 `GET /api/jobs/kinds`、`GET /api/jobs?kind=current-roster-export`、`GET /api/jobs/{id}`、`DELETE /api/jobs/{id}`。读历史沿用公开读接口；提交/取消沿用 `NUXT_API_TOKEN`（Bearer 或 X-API-Token）。未配置 token 时写入口关闭。
-- `GET /api/job-artifacts/{id}` 下载真实 xlsx，**每次检查同一 API token**，知道 jobId 不能跳过鉴权。只接受 ULID，不接受磁盘路径。响应 MIME 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`；`Content-Disposition: attachment; filename="current-little_giant.xlsx"`；`ETag` 为 SHA-256；`Cache-Control: private, no-store`。
+- 复用 `GET /api/jobs/kinds`、`GET /api/jobs?kind=current-roster-export`、`GET /api/jobs/{id}`、`DELETE /api/jobs/{id}`。读历史沿用公开读接口；提交/取消沿用 `NUXT_API_TOKEN`（Bearer 或 X-API-Token）。未配置 token 时外部写入口关闭；同源页面通过称号专用入口提交、通过任务中心取消，默认可用。
+- `GET /api/job-artifacts/{id}` 下载真实 xlsx，**每次检查同源页面请求或 API token**，知道 jobId 不能跳过鉴权。只接受 ULID，不接受磁盘路径。响应 MIME 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`；`Content-Disposition: attachment; filename="current-little_giant.xlsx"`；`ETag` 为 SHA-256；`Cache-Control: private, no-store`。
 - 参数错误 400，未授权 401，同请求标识用于不同参数或重新生成目标非法 409，容量满 429。没有成功发布/缺失文件 404，过期 410。
 
 同 kind 的 `clientRequestId` 持久去重（含终态）；更改称号或 regenerateOf 要换新标识，否则 409。重新生成使用新标识并关联同称号的已结束任务。去重检查先于容量检查；不会自动重试失败任务。
@@ -39,6 +39,8 @@
 四张表固定为“有效企业”“待确认”“排除明细”“口径说明”。前三表列固定为：序号、稳定企业标识、统一社会信用代码、现名、公布名、已确认曾用名、宁波区县、称号、首次认定、最近授予/延续资格依据、复核情况、公布对应情况、备注、可核对依据。所有身份/来源文本写成文本单元格。按稳定企业 ID 一称号一行，跨称号独立，无分页截断；空集仍包含表头及说明。说明给三组精确计数、规则、快照摘要、时间及当前识别范围，不声称全市完整。
 
 共享入口为 `readCurrentCandidate` 和 `writeCurrentWorkbook`。只读正式业务数据；任务状态和独立产物为允许的写入。
+
+工作簿适配器使用精确版本 `documonster@0.20.2` 的公开 `Stream.WorkbookWriter` / `Stream.commitRow`，保留原有仅接收文件名的接口，由适配器创建并持有默认生命周期的 `fs.WriteStream`，关闭共享字符串、逐行编码。固定四张表按顺序完成，避免 ZIP 后续条目在前表结束前积累整表输出；首遍生成数据摘要与组计数，直接写有效企业，仅暂存待确认/排除组的稳定 ID（受现有单表行上限约束），随后在同一读取事务内重读这些 ID。不会收集完整单元格行、工作表 XML 或 ZIP，分组内仍按稳定 ID 排序。这个选择增加部分候选读取和 ID 空间成本，需保留同种子、同预算下的耗时/内存证据，不声称总内存恒定。每 100 个候选让出事件循环；进度仍只按首遍的每 100 个候选上报，延后写表不重复完成计数。写入触发背压时暂停生产，文件流的写入、提前关闭或最终提交错误均使执行失败。最终提交和文件流关闭后才返回，原有 `.part` 同步、原子发布及失败/取消清理仍由任务服务负责。此路径只写字符串或空单元格，不使用库的日期转换或公式缓存推断。
 
 - 有正式出处的认定无需先有复核即可纳入。先按原认定 `(year,batch)` 收集**全部** award/review（含失败、缺结果及缺批次），逐周期裁定后，才按原年份选择当前候选；该原年份的全部批次继续保留，不按最新 passed/最大 seed 丢弃其他批次。每批明确结论一致时按一致结论纳入或排除，数量本身不是缺口；实际混合/未决列待确认。
 - 完整正式 passed 可独立确证延续：原周期、批次、通过结果和结论年明确且不早于原年、未在未来，按结论年延续三年；即使存在另一周期旧认定，或只有连续/跨周期正式复核也适用。首次年份只取真实 award 历史，无 award 留空。同周期 failed 后仅出现 passed 不构成恢复认定，恢复矛盾列待确认；最终明确失败且未重新认定列排除。明确后续 award 或现存正式更正事实才可消除对应失败，不能用生命周期 active 标签或最大结论年伪造恢复。

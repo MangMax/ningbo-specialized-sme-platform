@@ -22,7 +22,7 @@
 
 ## 本地运行
 
-需要 Node.js 22 或更新版本，以及 pnpm 12.11.2。
+需要 Node.js 24 LTS（24.x）以及 pnpm 12.11.2。容器基础镜像与原生依赖构建、备份及回滚步骤见 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
 ```bash
 pnpm install
@@ -34,7 +34,7 @@ pnpm dev
 
 SQLite 数据库默认位于 `data/roster.db`，可用 `NUXT_DB_PATH` 覆盖；来源文件默认位于 `files/`，可用 `NUXT_FILES_DIR` 覆盖。新克隆仓库不含数据库、公布文件、平台导出表或上传件，首次使用时应从本机安全备份恢复，或通过应用文件管理页上传。真实 OCR、HTTP 写入和 MCP 写入凭证只放在本地 `.env` 或运行环境密钥中；不要提交凭证。
 
-任务页面不收集或保存 API 密钥。需要开放页面提交导出、下载、取消及局部重试时，在服务端同时配置 `NUXT_API_TOKEN` 与 `NUXT_BROWSER_TASKS_ENABLED=true`。默认关闭时只读；同源检查只用于这一显式部署能力，不识别用户，后续权限体系见 #127。REST/MCP 调用仍使用各自的 token。
+任务页面不收集或保存 API 密钥。同源页面默认可提交导出、下载、取消及安全局部重试，无需配置 API token；请求须通过浏览器标记、Fetch Metadata 及 Origin/Referer 校验，POST 还须使用 JSON。同源检查不识别用户；外部 REST/MCP 调用仍使用各自的 token。
 
 ## 数据与导入边界
 

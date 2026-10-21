@@ -21,38 +21,53 @@ export function useExportRequestLog() {
   const storageKey = 'task-center-export-requests-v1'
   const entries = shallowRef<Record<string, ExportRequest>>({})
 
-  function persist() {
-    // Fail closed: an identity that cannot be stored must not be sent, or a
-    // lost 202 could create a second export on retry.
-    sessionStorage.setItem(storageKey, JSON.stringify(entries.value))
+  function read() {
+    const saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}') as Record<string, ExportRequest>
+    const restored: Record<string, ExportRequest> = {}
+    for (const [key, value] of Object.entries(saved)) {
+      if (!KEY_PATTERN.test(key)) continue
+      if (typeof value?.clientRequestId !== 'string' || !UUID_PATTERN.test(value.clientRequestId)) continue
+      restored[key] = {
+        clientRequestId: value.clientRequestId,
+        ...(typeof value.jobId === 'string' && ULID_PATTERN.test(value.jobId) ? { jobId: value.jobId } : {}),
+      }
+    }
+    return restored
+  }
+
+  function get(key: string) {
+    // Read at submission time as another mounted page may have written since mount.
+    entries.value = read()
+    return entries.value[key]
+  }
+
+  function persist(next: Record<string, ExportRequest>) {
+    // Commit memory only after storage succeeds. In particular, a failed forget
+    // must leave the original UUID available for retry.
+    sessionStorage.setItem(storageKey, JSON.stringify(next))
+    entries.value = next
   }
 
   function remember(key: string, request: ExportRequest) {
-    entries.value = { ...entries.value, [key]: request }
-    persist()
+    const latest = read()
+    const current = latest[key]
+    // An old receipt cannot replace a newer identity (or erase its job receipt).
+    if (!current || current.clientRequestId === request.clientRequestId) {
+      latest[key] = { ...current, ...request, ...(current?.jobId ? { jobId: current.jobId } : {}) }
+    }
+    persist(latest)
   }
 
-  function forget(key: string) {
-    const { [key]: _removed, ...rest } = entries.value
-    entries.value = rest
-    persist()
+  function forget(key: string, clientRequestId: string) {
+    const latest = read()
+    if (latest[key]?.clientRequestId === clientRequestId) delete latest[key]
+    persist(latest)
   }
 
   onMounted(() => {
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(storageKey) || '{}') as Record<string, ExportRequest>
-      const restored: Record<string, ExportRequest> = {}
-      for (const [key, value] of Object.entries(saved)) {
-        if (!KEY_PATTERN.test(key)) continue
-        if (typeof value?.clientRequestId !== 'string' || !UUID_PATTERN.test(value.clientRequestId)) continue
-        restored[key] = {
-          clientRequestId: value.clientRequestId,
-          ...(typeof value.jobId === 'string' && ULID_PATTERN.test(value.jobId) ? { jobId: value.jobId } : {}),
-        }
-      }
-      entries.value = restored
-    } catch { /* An unreadable store simply starts a new session. */ }
+    try { entries.value = read() }
+    catch { /* Submission re-reads storage and fails closed if it is unavailable. */ }
   })
 
-  return { entries, remember, forget }
+  return { entries, get, remember, forget }
 }
