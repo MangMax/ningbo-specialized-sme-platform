@@ -15,7 +15,12 @@ function deferred() {
 }
 async function setup() {
   const requests: { query: any; result: ReturnType<typeof deferred> }[] = []
-  vi.stubGlobal('$fetch', vi.fn((_url, options) => { const result = deferred(); requests.push({ query: options.query, result }); return result.promise }))
+  vi.stubGlobal('$fetch', vi.fn((url, options) => {
+    // The integrated export header discovers read-only capabilities independently.
+    if (url === '/api/roster/exports/current/capabilities') return Promise.resolve({ exports: [] })
+    if (url === '/api/task-center') return Promise.resolve({ authorized: false })
+    const result = deferred(); requests.push({ query: options.query, result }); return result.promise
+  }))
   vi.stubGlobal('useRoute', useRoute); vi.stubGlobal('useRouter', useRouter); vi.stubGlobal('useHead', () => {})
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/current-enterprises', component: CurrentPage }, { path: '/enterprises/:id', component: { template: '<p>企业详情</p>' } }] })
   await router.push('/current-enterprises?titleCode=little_giant&q=甲&district=鄞州区&page=2&pageSize=1&sort=name_desc')

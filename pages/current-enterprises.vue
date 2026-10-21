@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import PageHeader from '@/components/PageHeader.vue'
+import CurrentRosterExportEntry from '@/components/CurrentRosterExportEntry.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
 import TablePagination from '@/components/TablePagination.vue'
@@ -73,7 +74,9 @@ useHead({ title: '优质中小企业查询' })
 
 <template>
   <div class="flex min-w-0 flex-col gap-3">
-    <PageHeader title="优质中小企业查询" description="按称号查看本库当前有效的认定企业。" />
+    <PageHeader title="优质中小企业查询" description="按称号查看本库当前有效的认定企业。">
+      <template #actions><CurrentRosterExportEntry :title-code="title" /></template>
+    </PageHeader>
     <Tabs v-model="titleModel">
       <TabsList class="h-auto max-w-full flex-wrap">
         <TabsTrigger v-for="code in CURRENT_TITLES" :key="code" :value="code">{{ TITLES[code] }}</TabsTrigger>
