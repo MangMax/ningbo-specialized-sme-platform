@@ -1,3 +1,4 @@
+import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema as s } from '../db/client'
 import { currentExport118Fixture, rows, year } from './helpers/current-export-118'
@@ -18,7 +19,7 @@ async function maintain(id:number, version:number) {
   const r = await api('/api/roster/decision-lifecycle/commands',{...scope(id),action:'maintain',expectedCurrentId:version,idempotencyKey:'pr126-maintain-'+(++serial),actor,basis:'Explicitly reviewed all committed evidence',ruleVersion:'synthetic-pr126',effectiveAt:'2025-01-01T00:00:00Z',reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
   expect(r.status,JSON.stringify(r.body)).toBe(200)
 }
-const occurrences = (wb:any,id:number): Array<{sheet:string;row:any[]}> => wb.worksheets.slice(0,3).flatMap((sheet:any) => rows(wb,sheet.name).filter(r => r[2] === String(id)).map(row => ({sheet:sheet.name,row})))
+const occurrences = (wb:any,id:number): Array<{sheet:string;row:any[]}> => wb.worksheets.slice(0,3).flatMap((sheet:any) => rows(wb,sheet.name).filter(r => matchesBusinessIdentity(f.db, r, id)).map(row => ({sheet:sheet.name,row})))
 function relation(id:number, rdjb='2', evidence?:any, sequenceNo=1, assigned=true) {
   const e = f.db.select().from(s.enterprise).all().find(e=>e.id===id)!
   const q = f.db.insert(s.platformQuery).values({interface:'recognized_list',queryKey:e.usccNorm!,rdjb,titleCode:rdjb==='2'?'specialized_sme':null,queriedAt:new Date(Date.now()+(++serial)).toISOString(),status:'success',collectionEvidence:evidence}).returning().get()
@@ -33,10 +34,10 @@ it('keeps sourced stable enterprises eligible without inventing missing publishe
   const {wb}=await f.workbook('pr126-null-name')
   expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
   const row=occurrences(wb,c.enterprise.id)[0]!.row
-  expect(row[5]??'').toBe('')
-  expect(row[12]).toContain('已见本称号宁波公布')
-  expect(row[13]).toContain('公布名未留档')
-  expect(row[14]).toContain('evidence:')
+  expect(row[8]??'').toBe('')
+  expect(row[10]).toContain('已见本称号宁波公布')
+  expect(row[11]).toContain('公布名未留档')
+  expect(row[12]).toContain('synthetic-118.xlsx')
   expect(occurrences(wb,unknown.enterprise.id).map(x=>x.sheet)).toEqual(['待确认'])
   expect(occurrences(wb,conflict.enterprise.id).map(x=>x.sheet)).toEqual(['待确认'])
 },60000)
@@ -53,8 +54,9 @@ it('uses explanation validity and accepts explicitly maintained legacy subject d
   expect(readQueryAssessment(f.db,scope(legacy.enterprise.id)).explanationValidity.status).toBe('valid')
   const {wb}=await f.workbook('pr126-validity')
   expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['待确认'])
-  expect(occurrences(wb,c.enterprise.id)[0]!.row[13]).toContain('evidence_changed')
+  expect(occurrences(wb,c.enterprise.id)[0]!.row[11]).toContain('解释依据：证据已变化；查询覆盖：尚未查询')
   expect(occurrences(wb,legacy.enterprise.id).map(x=>x.sheet)).toEqual(['排除明细'])
+  expect(occurrences(wb,legacy.enterprise.id)[0]!.row[11]).toContain('解释依据：适用；查询覆盖：尚未查询')
 },60000)
 it('excludes query attempts from candidates while keeping positive unassigned platform rows', async () => {
   const empty=f.candidate('Only no record query',[]), failed=f.candidate('Only failed query',[]), positive=f.candidate('Positive unassigned current row',[])
@@ -89,14 +91,15 @@ it('includes reviewed inbound qualification without local publication and retain
   const {wb}=await f.workbook('pr126-qualified-inbound-http')
   const actual=occurrences(wb,c.enterprise.id)
   expect(actual.map(x=>x.sheet)).toEqual(['有效企业'])
-  expect(actual[0]!.row[9]??'').toBe('')
-  expect(actual[0]!.row[12]).toContain('未见宁波该称号公布记录')
-  expect(actual[0]!.row[13]).toContain('迁入')
-  expect(actual[0]!.row[13]).toContain('Confirmed old inbound name')
-  expect(actual[0]!.row[13]).toContain('All ingested Ningbo')
-  expect(actual[0]!.row[13]).not.toContain('缺少已确认认定及资格依据')
-  expect(actual[0]!.row[13]).not.toContain('需核实具体资格与公布匹配范围')
-  expect(actual[0]!.row[14]).toContain('decision:'+result.body.versionId)
+  expect(actual[0]!.row[6]??'').toBe('')
+  expect(actual[0]!.row[10]).toContain('未见宁波该称号公布记录')
+  expect(actual[0]!.row[11]).toContain('迁入')
+  expect(actual[0]!.row[11]).toContain('Confirmed old inbound name')
+  expect(actual[0]!.row[11]).toContain('All ingested Ningbo')
+  expect(actual[0]!.row[11]).not.toContain('缺少已确认认定及资格依据')
+  expect(actual[0]!.row[11]).not.toContain('需核实具体资格与公布匹配范围')
+  expect(actual[0]!.row[12]).toContain('工信部已认定企业名单')
+  expect(actual[0]!.row.join(' ')).not.toContain('decision:'+result.body.versionId)
 },60000)
 
 it('keeps expired future unreviewed and unchecked inbound attestations pending and rejects wrong scope', async () => {
@@ -135,7 +138,8 @@ it('preserves premise invalid and unknown decisions without treating failed cove
   expect(a.queryCoverage.sources.every(s=>s.outcome==='unknown')).toBe(true)
   const {wb}=await f.workbook('pr126-invalid-unknown')
   for(const id of [invalid.enterprise.id,unknown.enterprise.id])expect(occurrences(wb,id).map(x=>x.sheet)).toEqual(['待确认'])
-  expect(occurrences(wb,invalid.enterprise.id)[0]!.row[14]).toContain('decision:'+d.id)
+  expect(occurrences(wb,invalid.enterprise.id)[0]!.row[11]).toContain('尚未确认')
+  expect(occurrences(wb,invalid.enterprise.id)[0]!.row.join(' ')).not.toContain('decision:'+d.id)
 },60000)
 
 it('keeps unknown multi title positions visible and projects no archived raw bodies', async () => {

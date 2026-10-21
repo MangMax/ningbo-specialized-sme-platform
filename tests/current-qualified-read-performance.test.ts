@@ -22,7 +22,7 @@ it('bounds repeated preparation and display reference reads while counting every
   let displayReads=0
   const prepared=vi.spyOn(db,'prepare').mockImplementation((sql:string) => {
     const statement=original(sql)
-    if (sql.startsWith('select r.id,r.query_id as queryId from platform_relation')) {
+    if (sql.startsWith('select r.id,r.query_id as queryId,') && sql.includes('from platform_relation r join platform_query q')) {
       const all=statement.all.bind(statement)
       statement.all=((...args:any[]) => { displayReads++; return all(...args) }) as any
     }
@@ -68,7 +68,7 @@ it('hydrates the page from the pinned snapshot and observes later writes only in
   let wrote=false
   const prepared=vi.spyOn(db,'prepare').mockImplementation((sql:string) => {
     const statement=prepare(sql)
-    if (sql.startsWith('select r.id,r.query_id as queryId from platform_relation')) {
+    if (sql.startsWith('select r.id,r.query_id as queryId,') && sql.includes('from platform_relation r join platform_query q')) {
       const all=statement.all.bind(statement)
       statement.all=((...args:any[]) => {
         if (!wrote) {

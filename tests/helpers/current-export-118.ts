@@ -104,6 +104,15 @@ export function rows(wb: ExcelJS.Workbook, sheet: string) {
   const target = wb.getWorksheet(sheet)!
   return target.getRows(2,Math.max(0,target.rowCount-1))?.map(row => row.values as any[]) ?? []
 }
+export function businessIdentity(row: any[]) { return [row[2], row[3]] }
+export function expectedBusinessIdentity(db: ReturnType<typeof useDb>, id: number) {
+  const row = db.$client.prepare('select name,uscc_norm as uscc from enterprise where id=?').get(id) as {name:string;uscc:string|null}|undefined
+  if (!row) throw new Error('missing synthetic enterprise ' + id)
+  return [row.name,row.uscc]
+}
+export function matchesBusinessIdentity(db: ReturnType<typeof useDb>, row: any[], id: number) {
+  return JSON.stringify(businessIdentity(row)) === JSON.stringify(expectedBusinessIdentity(db,id))
+}
 export function expectCounts(wb: ExcelJS.Workbook, job: any, counts: {eligible:number;pending:number;excluded:number}) {
   expect(wb.worksheets.map(sheet => sheet.name)).toEqual(['有效企业','待确认','排除明细','口径说明'])
   expect(job.result.counts).toEqual(counts)
@@ -111,9 +120,11 @@ export function expectCounts(wb: ExcelJS.Workbook, job: any, counts: {eligible:n
   const notes = Object.fromEntries(rows(wb,'口径说明').map(row => [row[1],row[2]]))
   for (const [sheet,key] of [['有效企业','eligible'],['待确认','pending'],['排除明细','excluded']] as const) {
     expect(rows(wb,sheet)).toHaveLength(counts[key]); expect(notes[sheet]).toBe(String(counts[key]))
-    expect(rows(wb,sheet).every(row => row[8] === '专精特新中小企业')).toBe(true)
+    expect(rows(wb,sheet).every(row => row[5] === '专精特新中小企业')).toBe(true)
   }
-  expect(notes['规则版本']).toBe('current-roster-116-v8')
-  expect(notes['数据版本']).toBe(job.result.dataVersion)
+  expect(notes['规则版本']).toBeUndefined()
+  expect(notes['数据版本']).toBeUndefined()
+  expect(job.result.ruleVersion).toBe('current-roster-116-v8')
+  expect(job.result.dataVersion).toMatch(/^sha256:/)
   expect(notes['范围']).toContain('未实时采集，不证明全市完整')
 }
