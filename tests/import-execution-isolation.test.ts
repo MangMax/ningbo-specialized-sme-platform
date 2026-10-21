@@ -201,16 +201,60 @@ it('binary admission preserves a valid HTTP payload whose JSON representation ex
   expect(await (await service.post(request)).json()).toEqual(receipt)
 }, 20_000)
 
-it('admission byte overflow creates neither a worker nor a durable receipt', async () => {
+it('an idle executor preflights a valid batch larger than 32MiB without changing the core result', async () => {
+  const { preflightRosterImport } = await import('../server/utils/roster-import')
+  const service = await isolatedApi()
+  const legacy = await isolatedApi()
+  const request = input()
+  request.payload.exportSnapshot!.rows = [{ sourceRowNo: 3, rawFields: { original: 'x'.repeat(32 * 1024 * 1024) } }]
+  expect(serialize(request).byteLength).toBeGreaterThan(32 * 1024 * 1024)
+  const expected = preflightRosterImport(legacy.db, request)
+  const response = await fetch(`${service.api.baseUrl}/api/roster/import/preflight`, {
+    method: 'POST', headers: { authorization: 'Bearer synthetic-token', 'content-type': 'application/json' }, body: JSON.stringify(request),
+  })
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual(expected)
+  expect(await service.get('/receipt?idempotencyKey=synthetic:isolation')).toMatchObject({ status: 'preflight' })
+  const committed = await (await service.post(request)).json()
+  expect(committed).toMatchObject({ status: 'committed', summary: { written: 2, failed: 0 } })
+  expect(await service.get('/source?id=' + committed.items[0].detail.rows[0])).toMatchObject({ source: request.payload.exportSnapshot!.rows[0] })
+  expect(await (await service.post(request)).json()).toEqual(committed)
+}, 20_000)
+
+it.each([
+  { lane: 'oversized exclusive batch', maxBytes: 1 },
+  { lane: 'combined backlog bytes', maxBytes: 2 * serialize(input()).byteLength - 1 },
+])('$lane pressure recovers after the admitted atomic commit', async ({ maxBytes }) => {
   const { createImportExecutionWorker } = await import('../server/utils/import-execution-worker-location')
   let starts = 0
-  const service = await isolatedApi({ maxBytes: 1, createWorker: () => { starts++; return createImportExecutionWorker() } })
-  const response = await service.post()
-  expect(response.status).toBe(503)
-  expect(await response.json()).toMatchObject({ error: { code: 'import_busy' } })
-  expect((await fetch(`${service.api.baseUrl}/receipt?idempotencyKey=synthetic:isolation`)).status).toBe(404)
-  expect(starts).toBe(0)
-})
+  let dispatched!: () => void
+  const active = new Promise<void>(resolve => { dispatched = resolve })
+  const service = await isolatedApi({ maxBytes, createWorker: () => {
+    starts++
+    const worker = createImportExecutionWorker(), send = worker.postMessage.bind(worker)
+    worker.postMessage = message => { send(message); dispatched() }
+    return worker
+  } })
+  const blocker = new Database(service.path)
+  cleanups.push(() => blocker.close())
+  blocker.exec('BEGIN IMMEDIATE')
+  // Always release the lock before cleanup, including when an assertion fails.
+  cleanups.push(() => { if (blocker.inTransaction) blocker.exec('ROLLBACK') })
+  const first = service.post()
+  await active
+  const second = { ...input(), idempotencyKey: 'synthetic:byte-pressure' }
+  const rejected = await service.post(second)
+  expect(rejected.status).toBe(503)
+  expect(await rejected.json()).toMatchObject({ error: { code: 'import_busy' } })
+  expect((await fetch(`${service.api.baseUrl}/receipt?idempotencyKey=${second.idempotencyKey}`)).status).toBe(404)
+  blocker.exec('ROLLBACK')
+  const committed = await (await first).json()
+  expect(committed).toMatchObject({ status: 'committed', summary: { written: 301, failed: 0 } })
+  expect(await (await service.post()).json()).toEqual(committed)
+  expect(await (await service.post(second)).json()).toMatchObject({ status: 'committed', summary: { written: 0, failed: 0 } })
+  expect(await service.get('/history?idempotencyKey=synthetic:isolation')).toMatchObject({ total: 1 })
+  expect(starts).toBe(1)
+}, 20_000)
 
 it('isolated writes enforce foreign keys and leave no business rows after a trigger violates them', async () => {
   const service = await isolatedApi()

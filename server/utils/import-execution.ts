@@ -21,7 +21,7 @@ const unavailable = (code: string, message: string) => new ImportReceiptError(50
  * Closing admission drains accepted work before stopping the idle process. */
 export function createImportExecutor(options: { createWorker?: () => Worker; maxPending?: number; maxBytes?: number } = {}) {
   const maxPending = options.maxPending ?? 8, maxBytes = options.maxBytes ?? 32 * 1024 * 1024
-  if (!Number.isInteger(maxPending) || maxPending < 1 || maxPending > 8 || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 32 * 1024 * 1024) throw new RangeError('Import admission bounds exceed 8 requests / 32MiB')
+  if (!Number.isInteger(maxPending) || maxPending < 1 || maxPending > 8 || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 32 * 1024 * 1024) throw new RangeError('Import backlog bounds exceed 8 requests / 32MiB')
   const queue: Job[] = []
   let worker: Worker | undefined, ready = false, active: Job | undefined, retainedBytes = 0, nextId = 0, closed = false
   let stopping: Promise<void> | undefined, startupTimer: ReturnType<typeof setTimeout> | undefined
@@ -79,9 +79,13 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
       const client = (db as Db & { $client: Database.Database }).$client
       // Private/in-memory callers cannot share a native connection across processes.
       if (!client.name || client.name === ':memory:' || client.inTransaction) return Promise.resolve(action === 'preflight' ? preflightRosterImport(db, request, pageCountErrors) : commitRosterImport(db, request, pageCountErrors))
-      if (queue.length + Number(!!active) >= maxPending) return Promise.reject(unavailable('import_busy', 'Import execution busy'))
+      const pending = queue.length + Number(!!active)
+      if (pending >= maxPending || (pending > 0 && retainedBytes >= maxBytes)) return Promise.reject(unavailable('import_busy', 'Import execution busy'))
       const payload = serialize(request)
-      if (payload.byteLength + retainedBytes > maxBytes) return Promise.reject(unavailable('import_busy', 'Import execution busy'))
+      // This is a backlog budget, not a new single-batch size contract. A batch
+      // larger than it may run alone; every later admission waits until it settles.
+      // Keep the original whole-batch transaction in the isolated process.
+      if (pending > 0 && payload.byteLength + retainedBytes > maxBytes) return Promise.reject(unavailable('import_busy', 'Import execution busy'))
       const path = realpathSync(client.name), stat = statSync(path)
       const identity = { dev: stat.dev, ino: stat.ino, schemaVersion: client.pragma('schema_version', { simple: true }) as number, migration: client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() as { hash: string; created_at: number } | undefined }
       retainedBytes += payload.byteLength
