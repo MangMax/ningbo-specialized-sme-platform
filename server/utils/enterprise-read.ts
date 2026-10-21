@@ -1,12 +1,13 @@
 import { channel } from 'node:diagnostics_channel'
 import type { RosterEnterpriseFilter, RosterEnterprisesResult } from '../../lib/roster/enterprise-roster'
 import type { EnterpriseReadRequest } from '../../lib/roster/enterprise-read-worker'
+import type { CurrentQualifiedFilter } from '../../lib/roster/current-qualified-query'
 import { createEnterpriseWorker } from './enterprise-read-worker-location'
 import type { RecognitionReadInput, DifferenceReadInput, SummaryReadInput, OffmainReadOutcome } from '../../lib/roster/offmain-read-protocol'
 
 const diagnostic = channel('ningbo.enterprise-read')
 type Detail = ReturnType<typeof import('../../lib/roster/enterprise-roster').getRosterEnterpriseDetail>
-type Input = { dbPath: string } & ({ operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | RecognitionReadInput | DifferenceReadInput | SummaryReadInput)
+type Input = { dbPath: string } & ({ operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | { operation: 'current-qualified'; filter: CurrentQualifiedFilter } | RecognitionReadInput | DifferenceReadInput | SummaryReadInput)
 const originalReaderPolicy = (input: Input) => input.operation === 'recognitions' || input.operation === 'differences' || input.operation === 'summary'
 type JsonRead = { body: Buffer; found: boolean }
 type NativeWorker = {
@@ -145,6 +146,7 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
       return promise
     },
     json(dbPath: string, request: { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number }, signal?: AbortSignal) { return submit({ ...request,dbPath } as Input, signal, 'json') as Promise<JsonRead> },
+    currentQualifiedJson(dbPath: string, filter: CurrentQualifiedFilter, signal?: AbortSignal) { return submit({ dbPath, operation: 'current-qualified', filter }, signal, 'json') as Promise<JsonRead> },
     recognitions(input: RecognitionReadInput, signal?: AbortSignal) { return submit(input, signal, 'json') as Promise<OffmainReadOutcome> },
     differences(input: DifferenceReadInput, signal?: AbortSignal) { return submit(input, signal, 'json') as Promise<OffmainReadOutcome> },
     summary(input: SummaryReadInput, signal?: AbortSignal) { return submit(input, signal, 'json') as Promise<OffmainReadOutcome> },

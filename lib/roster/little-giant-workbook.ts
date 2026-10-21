@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
-import ExcelJS from 'exceljs'
+import { Workbook, Worksheet } from 'documonster/excel'
+import { assertExcelSheets, inspectExcelSource } from '../excel-source'
+import { createExcelValueReader } from '../excel-read-value'
 import { isNingboDistrict, normalizeUscc } from '../domain'
 
 /**
@@ -159,27 +161,30 @@ export interface LittleGiantWorkbook {
 export async function parseLittleGiantWorkbook(
   input: Uint8Array,
 ): Promise<LittleGiantWorkbook> {
-  const workbook = new ExcelJS.Workbook()
-  await workbook.xlsx.load(Buffer.from(input) as unknown as ExcelJS.Buffer)
+  const workbook = Workbook.create()
+  const sourceParts = await inspectExcelSource(input)
+  await Workbook.read(workbook, input)
 
-  const sheet = workbook.worksheets[0]
+  const sheets = Workbook.getWorksheets(workbook)
+  assertExcelSheets(sourceParts, sheets.map(sheet => Worksheet.getName(sheet)))
+  const sheet = sheets[0]
   if (!sheet) throw new Error('工作簿里没有工作表')
+  const valueAt = await createExcelValueReader(sheet, input, sourceParts.get(Worksheet.getName(sheet))!, { firstRow: 1, columnCount: NOTICE_LIMIT })
 
   const headers: string[] = []
   for (let column = 1; column <= NOTICE_LIMIT; column += 1) {
-    headers.push(cellText(sheet.getRow(1).getCell(column).value))
+    headers.push(cellText(valueAt(1, column)))
   }
 
   const rows: LittleGiantRow[] = []
   const issues: LittleGiantIssue[] = []
   const blankRowNumbers: number[] = []
-  const dataRowCount = Math.max(0, sheet.rowCount - 1)
+  const dataRowCount = Math.max(0, Worksheet.rowCount(sheet) - 1)
 
-  for (let sourceRowNo = 2; sourceRowNo <= sheet.rowCount; sourceRowNo += 1) {
-    const sheetRow = sheet.getRow(sourceRowNo)
+  for (let sourceRowNo = 2; sourceRowNo <= Worksheet.rowCount(sheet); sourceRowNo += 1) {
     const raw: string[] = []
     for (let column = 1; column <= NOTICE_LIMIT; column += 1) {
-      raw.push(cellText(sheetRow.getCell(column).value))
+      raw.push(cellText(valueAt(sourceRowNo, column)))
     }
     if (raw.every((value) => value === '')) {
       blankRowNumbers.push(sourceRowNo)
@@ -270,9 +275,9 @@ export async function parseLittleGiantWorkbook(
 
   return {
     sha256: createHash('sha256').update(input).digest('hex'),
-    sheetName: sheet.name,
+    sheetName: Worksheet.getName(sheet),
     sheetIndex: 0,
-    worksheetCount: workbook.worksheets.length,
+    worksheetCount: sheets.length,
     headerRow: 1,
     noticeColumnRange: NOTICE_COLUMN_RANGE,
     fieldMapping: { listNo: 'A', district: 'B', name: 'C', uscc: 'D', batch: 'J' },
@@ -357,8 +362,8 @@ function findDuplicates(rows: LittleGiantRow[]): LittleGiantDuplicate[] {
   return duplicates
 }
 
-/** 单元格取文本。富文本/公式按 exceljs 的形态展开;日期等非文本按字符串原样。 */
-function cellText(value: ExcelJS.CellValue): string {
+/** 单元格取文本;保留原读取器的富文本/公式与日期字符串语义。 */
+function cellText(value: unknown): string {
   if (value === null || value === undefined) return ''
   if (typeof value === 'object') {
     const rich = value as { text?: string; result?: unknown; richText?: Array<{ text: string }> }

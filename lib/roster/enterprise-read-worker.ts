@@ -6,13 +6,14 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { listRosterEnterprises, getRosterEnterpriseDetail, type RosterEnterpriseFilter } from './enterprise-roster'
 import { enterpriseJsonChunks } from './enterprise-read-json'
+import { listCurrentQualified, type CurrentQualifiedFilter } from './current-qualified-query'
 import { listRosterRecognitions } from './recognitions'
 import { listRosterDifferences } from './difference-list'
 import { readWholeComparisonSummary } from '../comparison-summary-read'
 import { captureReaderError, readOwnerIdentity, sameReadOwner, type RecognitionReadInput, type DifferenceReadInput, type SummaryReadInput } from './offmain-read-protocol'
 
 export type EnterpriseReadRequest = { id: number; dbPath: string } & (
-  { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | RecognitionReadInput | DifferenceReadInput | SummaryReadInput
+  { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | { operation: 'current-qualified'; filter: CurrentQualifiedFilter } | RecognitionReadInput | DifferenceReadInput | SummaryReadInput
 )
 const send = (message: object) => new Promise<void>((resolve, reject) => {
   process.send!(message, error => error ? reject(error) : resolve())
@@ -82,7 +83,7 @@ process.on('message', async (request: EnterpriseReadRequest) => {
         await send({ type: 'reader-error', id: request.id, error: captured })
         return
       }
-    } else result = request.operation === 'list' ? listRosterEnterprises(db, request.filter) : getRosterEnterpriseDetail(db, request.enterpriseId)
+    } else result = request.operation === 'list' ? listRosterEnterprises(db, request.filter) : request.operation === 'detail' ? getRosterEnterpriseDetail(db, request.enterpriseId) : listCurrentQualified(connection!, request.filter)
     const projectedHeap = process.memoryUsage().heapUsed
     const serializationStarted = performance.now()
     let bytes = 0

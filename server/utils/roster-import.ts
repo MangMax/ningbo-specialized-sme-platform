@@ -21,7 +21,7 @@ import { recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sour
  */
 
 import { createHash } from 'node:crypto'
-import { and, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { isPageCapable } from '../../lib/roster/evidence-page'
@@ -1467,10 +1467,16 @@ function planAnnouncementRecord(
   let existingRecord: { id: number } | undefined
   if (existing) {
     existingRecord = db
-      .select()
+      .select({ id: schema.record.id })
       .from(schema.record)
-      .all()
-      .find((r) => r.enterpriseId === existing.id && r.titleCode === titleCode && r.source === source)
+      .where(and(
+        eq(schema.record.enterpriseId, existing.id),
+        eq(schema.record.titleCode, titleCode),
+        eq(schema.record.source, source),
+      ))
+      .orderBy(schema.record.id)
+      .limit(1)
+      .get()
   }
 
   // 重放时**出处指针**可能需要收敛(RL-16):
@@ -1773,15 +1779,16 @@ function upsertRecord(
   },
 ): { id: number; created: boolean } {
   const existing = tx
-    .select()
+    .select({ id: schema.record.id })
     .from(schema.record)
-    .all()
-    .find(
-      (r) =>
-        r.enterpriseId === input.enterpriseId &&
-        r.titleCode === input.titleCode &&
-        r.source === input.source,
-    )
+    .where(and(
+      eq(schema.record.enterpriseId, input.enterpriseId),
+      eq(schema.record.titleCode, input.titleCode),
+      eq(schema.record.source, input.source),
+    ))
+    .orderBy(schema.record.id)
+    .limit(1)
+    .get()
   if (existing) return { id: existing.id, created: false }
   const id = tx
     .insert(schema.record)
@@ -1840,10 +1847,20 @@ function matchesEventCoordinates(row: EventCoordinates, values: EventCoordinates
 /** 同坐标的**完全相同**事件(含复核结论与结论年份)—— 命中即跳过,保证重放不堆行。 */
 function findExistingEvent(tx: Executor, values: EventCoordinates): { id: number } | undefined {
   return tx
-    .select()
+    .select({ id: schema.recordEvent.id })
     .from(schema.recordEvent)
-    .all()
-    .find((e) => matchesEventCoordinates(e, values))
+    .where(and(
+      eq(schema.recordEvent.recordId, values.recordId),
+      eq(schema.recordEvent.eventType, sql`${values.eventType}`),
+      values.year === null ? isNull(schema.recordEvent.year) : eq(schema.recordEvent.year, values.year),
+      values.batchSeq === null ? isNull(schema.recordEvent.batchSeq) : eq(schema.recordEvent.batchSeq, values.batchSeq),
+      values.reviewOutcome === null ? isNull(schema.recordEvent.reviewOutcome) : eq(schema.recordEvent.reviewOutcome, sql`${values.reviewOutcome}`),
+      values.decidedYear === null ? isNull(schema.recordEvent.decidedYear) : eq(schema.recordEvent.decidedYear, values.decidedYear),
+    ))
+    // The former table scan + find selected the first ROWID among duplicate coordinates.
+    .orderBy(schema.recordEvent.id)
+    .limit(1)
+    .get()
 }
 
 // ---------------------------------------------------------------------------

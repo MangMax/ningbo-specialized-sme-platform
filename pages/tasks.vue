@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { TASK_EXPORTS, TASK_TABS, TASK_STATES, type TaskExportTitle, type TaskList, type TaskSummary, type TaskTab } from '~~/lib/task-center'
-import { isJobId, JOB_STATES, type JobState } from '~~/lib/job'
+import { JOB_STATES, type JobState } from '~~/lib/job'
 import { useTaskPolling } from '~/composables/useTaskPolling'
-import { useExportRequestLog } from '~/composables/useExportRequestLog'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import { useCurrentRosterExport, taskBrowserHeaders } from '~/composables/useCurrentRosterExport'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -26,7 +25,7 @@ const job = computed(() => scalar(route.query.job))
 const titleCode = computed(() => TASK_EXPORTS.some(t => t.titleCode === route.query.titleCode) ? scalar(route.query.titleCode) : 'all')
 const tabLabels: Record<TaskTab, string> = { all: '全部任务', ocr: 'OCR', platform: '工信部平台', export: '导出' }
 
-const browserHeaders = { 'x-task-center-browser': '1' }
+const browserHeaders = taskBrowserHeaders
 const params = computed(() => ({ tab: tab.value, state: state.value === 'all' ? undefined : state.value, titleCode: titleCode.value === 'all' ? undefined : titleCode.value, page: page.value, pageSize: pageSize.value }))
 const key = computed(() => JSON.stringify([params.value]))
 const { data, sourceKey, loading, failed, retryIn, refresh } = useTaskPolling<TaskList>(key, signal =>
@@ -34,14 +33,12 @@ const { data, sourceKey, loading, failed, retryIn, refresh } = useTaskPolling<Ta
 // Only a list payload renders rows; anything partial shows as empty instead of
 // throwing mid-render.
 const rows = computed(() => Array.isArray(data.value?.rows) ? data.value.rows : [])
-const authorized = computed(() => data.value?.authorized === true)
 const stale = computed(() => sourceKey.value !== key.value)
 // The template handler starts a read; it does not wait for it.
 function reload() { void refresh() }
 const readOnlyReason = computed(() => {
   if (stale.value) return '正在读取当前筛选，读完即可操作。'
-  if (!data.value) return '正在读取任务操作能力。'
-  if (!authorized.value) return '当前部署未开放页面任务操作，仅可查看。'
+  if (!data.value) return '正在读取任务列表。'
   return ''
 })
 const failureDescription = computed(() => {
@@ -55,27 +52,12 @@ const failureDescription = computed(() => {
 function navigate(patch: Record<string, string | number | undefined>) { return router.push({ path: '/tasks', query: { ...route.query, ...patch } }) }
 function setTab(value: string | number) { if (TASK_TABS.includes(value as TaskTab)) void navigate({ tab: String(value), titleCode: undefined, page: 1, job: undefined }) }
 
-const exportOpen = ref(false)
 function regenerate(task: TaskSummary) {
   const code = task.export?.titleCode
   if (code) void submitExport(code, task.id)
 }
-const exportRoutes = ref<Partial<Record<TaskExportTitle, boolean>>>({})
-const discovering = ref(false), discoveryFailed = ref(false)
-async function discoverExports() {
-  discovering.value = true; discoveryFailed.value = false; exportRoutes.value = {}
-  try {
-    const capabilities = await $fetch<{ exports: { titleCode: string; path: string; ready: boolean }[] }>('/api/roster/exports/current/capabilities')
-    exportRoutes.value = Object.fromEntries(TASK_EXPORTS.map(t => [t.titleCode, capabilities.exports.some(entry => entry.titleCode === t.titleCode && entry.path === t.path && entry.ready === true)]))
-  } catch { discoveryFailed.value = true }
-  finally { discovering.value = false }
-}
-
-// Only request identities are persisted (see useExportRequestLog); a lost 202
-// is recovered by retrying with the same clientRequestId.
-const requestLog = useExportRequestLog()
-const exportRequests = requestLog.entries
-const submitting = ref(false), downloading = ref(false)
+const { exportRequests, submitting, disabledReason: exportDisabledReason, submitExport: requestExport, discovering, discoveryFailed, discoverExports } = useCurrentRosterExport(readOnlyReason)
+const downloading = ref(false)
 // `exportNotice` is the page's **only** live region: whether an export request
 // was accepted, and the outcome of a download. The detail card never repeats it,
 // so a 202 is announced once. A notice belongs to one task; switching tasks drops it.
@@ -88,46 +70,13 @@ const acceptedExports = computed(() => TASK_EXPORTS
   .map(entry => ({ entry, request: exportRequests.value[`${entry.titleCode}:initial`] }))
   .filter((item): item is { entry: typeof item.entry, request: { clientRequestId: string, jobId: string } } => !!item.request?.jobId)
   .map(item => ({ entry: item.entry, jobId: item.request.jobId })))
-const exportDisabledReason = (code: TaskExportTitle) => {
-  if (discovering.value) return '正在发现可用的导出接口。'
-  if (discoveryFailed.value) return '导出接口能力未确认，请重新发现后再提交。'
-  if (!exportRoutes.value[code]) return '该称号的专用导出接口尚未上线。'
-  if (readOnlyReason.value) return readOnlyReason.value
-  return ''
-}
-async function submitExport(code: TaskExportTitle, regenerateOf?: string) {
-  if (submitting.value || stale.value || !authorized.value || !exportRoutes.value[code]) return
-  const entry = TASK_EXPORTS.find(t => t.titleCode === code)!
-  const requestKey = `${code}:${regenerateOf ?? 'initial'}`
-  submitting.value = true; exportNotice.value = null
-  let accepted: string | null = null
-  try {
-    let intent = exportRequests.value[requestKey]
-    if (!intent) {
-      intent = { clientRequestId: crypto.randomUUID() }
-      requestLog.remember(requestKey, intent)
-    } else {
-      requestLog.remember(requestKey, intent) // Fail closed if identity cannot be stored.
-    }
-    const response = await $fetch.raw<{ jobId: string }>(entry.path, {
-      method: 'POST',
-      headers: browserHeaders,
-      body: { clientRequestId: intent.clientRequestId, ...(regenerateOf ? { regenerateOf } : {}) },
-      retry: 0,
-    })
-    if (response.status !== 202 || !isJobId(response._data?.jobId)) throw new Error('Unconfirmed acceptance')
-    intent.jobId = response._data.jobId
-    if (regenerateOf) requestLog.forget(requestKey)
-    else requestLog.remember(requestKey, intent)
-    accepted = intent.jobId
-  } catch {
-    announce('提交尚未确认（没有拿到 202 受理回执）。请求标识已保留，重提沿用同一标识，不会重复建任务。', '', 'alert')
-  } finally { submitting.value = false }
-  if (!accepted) return
-  announce('导出已受理；可以离开，稍后从下方“已受理”条取回。', accepted)
-  // #121 requires returning to work with the detail open; the standing bar keeps
-  // that same request findable from every tab afterwards.
-  void navigate({ tab: 'export', state: undefined, titleCode: code, page: 1, job: accepted })
+async function submitExport(code: TaskExportTitle, regenerateOf: string) {
+  exportNotice.value = null
+  const result = await requestExport(code, regenerateOf)
+  if (!result) return
+  if ('error' in result) { announce(result.error, '', 'alert'); return }
+  announce('导出已受理；可以离开，稍后从后台任务取回。', result.jobId)
+  void navigate({ tab: 'export', state: undefined, titleCode: code, page: 1, job: result.jobId })
   void refresh()
 }
 const availabilityLabels = { available: '可下载', expired: '已过期，请重新生成', missing: '文件缺失，请重新生成' }
@@ -161,7 +110,7 @@ const downloadReason = (task: TaskSummary) => {
   return ''
 }
 const regenerateReason = (task: TaskSummary) => {
-  if (task.export?.titleCode && !exportRoutes.value[task.export.titleCode]) return '该称号的专用导出接口尚未上线。'
+  if (task.export?.titleCode && exportDisabledReason(task.export.titleCode)) return exportDisabledReason(task.export.titleCode)
   if (readOnlyReason.value) return readOnlyReason.value
   if (!task.export?.canRegenerate) return task.state === 'queued' || task.state === 'running' ? '任务仍在执行，结束后才能重新生成。' : '当前状态不支持重新生成。'
   return ''
@@ -200,7 +149,6 @@ function restoreListFocus(event: Event) {
 }
 // A notice about one task must not follow the reader to the next one.
 watch(job, (next, previous) => { if (previous && !next) closingRow.value = previous; if (exportNotice.value && exportNotice.value.jobId && exportNotice.value.jobId !== next) exportNotice.value = null })
-onMounted(() => { void discoverExports() })
 </script>
 <template>
   <div class="flex min-w-0 flex-col gap-4">
@@ -308,7 +256,8 @@ onMounted(() => { void discoverExports() })
         <template #actions="{ task, current, refresh: refreshDetail }">
           <template v-if="task.export">
             <Button :disabled="!current || downloading || !task.export.canDownload" @click="downloadExport(task, refreshDetail)">{{ downloading ? '校验下载中…' : '下载 Excel' }}</Button>
-            <Button variant="outline" :disabled="!current || submitting || !task.export.canRegenerate || !task.export.titleCode || !exportRoutes[task.export.titleCode]" @click="regenerate(task)">重新生成</Button>
+            <Button variant="outline" :disabled="!current || submitting || !task.export.canRegenerate || !task.export.titleCode || !!exportDisabledReason(task.export.titleCode)" @click="regenerate(task)">重新生成</Button>
+            <Button v-if="discoveryFailed" variant="outline" :disabled="discovering" @click="discoverExports">重新发现导出能力</Button>
           </template>
         </template>
         <template #content="{ task, exportSummary }">
@@ -330,25 +279,10 @@ onMounted(() => { void discoverExports() })
       </SheetContent>
     </Sheet>
 
-    <!-- 一次性说明与“开始新任务”的入口下沉到列表之后，且默认收起 -->
+    <!-- 保留任务类型说明；新导出由业务查询页发起。 -->
     <div class="flex flex-col gap-2">
       <p class="text-muted-foreground text-xs">OCR 包含识别与 PDF 转图；工信部平台包含批量查询与核查。每个类型仅归一组；其他类型保留在全部任务中。</p>
-      <!-- 新导出入口是页面级区块，与任务列表平级。 -->
-      <DisclosurePanel v-if="tab === 'export' || tab === 'all'" v-model:open="exportOpen" :heading-level="2">
-        <template #trigger><span class="text-sm">发起新的名录导出</span><Badge v-if="!authorized" variant="outline">只读</Badge></template>
-        <section aria-label="提交名录导出" class="flex flex-col gap-3">
-          <p class="text-muted-foreground text-sm">按执行时固定的数据快照生成，不发起平台采集。产物保留 7 天；重新生成请在原任务详情操作。</p>
-          <div class="flex flex-col gap-2">
-            <div v-for="entry in TASK_EXPORTS" :key="entry.titleCode" data-testid="export-action" class="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <Button variant="outline" class="min-h-11 sm:min-h-0" :disabled="submitting || !!exportDisabledReason(entry.titleCode)" :aria-describedby="`export-${entry.titleCode}-reason`" @click="submitExport(entry.titleCode)">{{ exportRequests[`${entry.titleCode}:initial`]?.jobId ? '找回本次导出' : '提交导出' }} · {{ entry.label }}</Button>
-              <span :id="`export-${entry.titleCode}-reason`" class="text-muted-foreground text-xs">
-                {{ exportDisabledReason(entry.titleCode) || '接口已上线' }}
-              </span>
-            </div>
-          </div>
-          <Button v-if="discoveryFailed" variant="outline" class="self-start" :disabled="discovering" @click="discoverExports">重新发现导出能力</Button>
-        </section>
-      </DisclosurePanel>
+
 
     </div>
   </div>
