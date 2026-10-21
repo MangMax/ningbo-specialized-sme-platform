@@ -138,27 +138,27 @@ it('仅正式复核延续仍要求日期周期批次身份并处理后续失败�
 },60000)
 
 it('跨称号主体事实遵守当前替代撤回生效身份及迁回而不传播资格解释', async () => {
-  const entries: Array<{id:number;sheet:string;decisionId:number}> = []
+  const entries: Array<{id:number;sheet:string;decisionId:number;reason:string;title:string}> = []
   for (const reason of ['moved_out','deregistered'] as const) {
     const c = f.candidate('跨称号主体' + reason), d = f.decision(c.enterprise.id,reason,{titleCode:'innovative_sme'})
-    entries.push({id:c.enterprise.id,sheet:'排除明细',decisionId:d.id})
+    entries.push({id:c.enterprise.id,sheet:'排除明细',decisionId:d.id,reason,title:'innovative_sme'})
   }
   for (const [label,extra] of [
     ['无主体依据',{basis:null}],['未确认主体事实',{verificationStatus:'pending'}],['旧导入主体',{lifecycleAction:null}],['未来主体事实',{effectiveAt:'2200-01-01T00:00:00Z'}],
   ] as const) {
     const c = f.candidate(label), d = f.decision(c.enterprise.id,'moved_out',{titleCode:'innovative_sme',...extra})
-    entries.push({id:c.enterprise.id,sheet:'待确认',decisionId:d.id})
+    entries.push({id:c.enterprise.id,sheet:'待确认',decisionId:d.id,reason:'moved_out',title:'innovative_sme'})
   }
   for (const action of ['withdraw','replace'] as const) {
     const c = f.candidate('跨称号当前' + action)
     const old = f.decision(c.enterprise.id,'moved_out',{titleCode:'innovative_sme',recordedAt:'2025-01-01T00:00:00Z'})
     const d = f.decision(c.enterprise.id,'moved_in',{titleCode:'innovative_sme',lifecycleAction:action,previousId:old.id,movedInTitleCode:'innovative_sme',effectiveAt:'2026-01-01T00:00:00Z'})
-    entries.push({id:c.enterprise.id,sheet:'有效企业',decisionId:d.id})
+    entries.push({id:c.enterprise.id,sheet:'有效企业',decisionId:d.id,reason:'moved_in',title:'innovative_sme'})
   }
   const conflict = f.candidate('跨称号同生效冲突')
   f.decision(conflict.enterprise.id,'moved_out',{titleCode:'innovative_sme'})
   const d = f.decision(conflict.enterprise.id,'moved_in',{titleCode:'little_giant',movedInTitleCode:'little_giant'})
-  entries.push({id:conflict.enterprise.id,sheet:'待确认',decisionId:d.id})
+  entries.push({id:conflict.enterprise.id,sheet:'待确认',decisionId:d.id,reason:'moved_in',title:'little_giant'})
   const unrelated = f.candidate('别称号资格解释不传播')
   f.decision(unrelated.enterprise.id,'other',{titleCode:'innovative_sme',reasonNote:'该称号资格终止'})
   const {wb} = await f.workbook('subject-scope-boundaries')
@@ -166,6 +166,7 @@ it('跨称号主体事实遵守当前替代撤回生效身份及迁回而不传�
     const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => matchesBusinessIdentity(f.db, r, c.id)).map(r => ({sheet:s.name,row:r})))
     expect(actual.map(r => r.sheet)).toEqual([c.sheet])
     expect(actual[0]!.row[12]).toContain('synthetic-118.xlsx')
+    expect(f.db.$client.prepare('select enterprise_id,reason_code,title_code from difference_reason where id=?').get(c.decisionId)).toEqual({enterprise_id:c.id,reason_code:c.reason,title_code:c.title})
     expect(actual[0]!.row.join(' ')).not.toContain('decision:' + c.decisionId)
     if (c.sheet === '有效企业') expect(actual[0]!.row[11] ?? '').not.toContain('不属于本称号')
   }
@@ -228,7 +229,10 @@ it('注销与地理事实独立核验且仅明确撤回替代恢复主体', asyn
   for (const c of entries) {
     const actual=wb.worksheets.slice(0,3).flatMap(s=>rows(wb,s.name).filter(r=>matchesBusinessIdentity(f.db, r, c.id)).map(r=>({sheet:s.name,row:r})))
     expect(actual.map(r=>r.sheet),String(c.id)).toEqual([c.sheet])
-    for (const id of c.refs) expect(actual[0]!.row.join(' ')).not.toContain('decision:'+id)
+    for (const id of c.refs) {
+      expect(f.db.$client.prepare('select enterprise_id from difference_reason where id=?').get(id)).toEqual({enterprise_id:c.id})
+      expect(actual[0]!.row.join(' ')).not.toContain('decision:'+id)
+    }
     if (c.id !== gap.enterprise.id) expect(actual[0]!.row[12]).toContain('synthetic-118.xlsx')
     if (c.note) expect(actual[0]!.row[11]).toContain(c.note)
     if (c.sheet==='有效企业') expect(actual[0]!.row[11]??'').not.toContain('不属于本称号')

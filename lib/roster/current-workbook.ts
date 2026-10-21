@@ -4,11 +4,11 @@ import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { once } from 'node:events'
 import { finished } from 'node:stream/promises'
-import { CURRENT_RULE_VERSION, prepareCurrentReader, readCurrentCandidate, type CurrentTitle } from './current-qualification'
+import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentCandidateReader, type CurrentTitle } from './current-qualification'
 import { currentCandidateBindings, currentCandidateSql } from './current-candidates'
 import { TITLES } from '../labels'
 import { readIdentityKeyVariants } from './current-identity-keys'
-import { currentWorkbookValues } from './current-workbook-presentation'
+import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
 
 export class CurrentWorkbookLimitError extends Error {}
 function textCell(value: unknown): string | null {
@@ -17,8 +17,8 @@ function textCell(value: unknown): string | null {
   if (text.length > 32767) throw new CurrentWorkbookLimitError('Excel 单元格超过32767字符上限，未发布文件；请核对源数据')
   return text
 }
-export const CURRENT_HEADERS = ['序号','企业名称','统一社会信用代码','区县','称号','首次认定年份','认定及复核情况','公布名称','已确认曾用名','公布对应情况','情况说明','来源及页码']
-const widths = [8,32,25,14,23,17,43,32,32,28,55,60]
+export const CURRENT_HEADERS = CURRENT_COLUMNS.map(column => column.header)
+const widths = CURRENT_COLUMNS.map(column => column.width)
 function rowHeight(values: (string | null)[]) {
   const lines = Math.max(1,...values.map((value,index) => String(value ?? '').split('\n').reduce((sum,line) => sum + Math.max(1,Math.ceil([...line].reduce((length,char) => length + (char.codePointAt(0)! > 255 ? 2 : 1),0) / (widths[index]! - 2))),0)))
   const height = Math.max(26,lines * 17 + 8)
@@ -28,14 +28,14 @@ function rowHeight(values: (string | null)[]) {
 function styledRow(sheet: Stream.WorksheetWriter, values: (string | null)[], header = false) {
   const record = sheet.addRow(values.map(textCell))
   record.height = header ? 34 : rowHeight(values)
-  Stream.setRowFont(record,{name:'等线',size:11,bold:header,color:{argb:header?'FFFFFFFF':'FF243247'}})
+  Stream.setRowFont(record,{name:'Arial Unicode MS',size:11,bold:header,color:{argb:header?'FFFFFFFF':'FF243247'}})
   Stream.setRowAlignment(record,{vertical:'top',wrapText:true})
   if (header) Stream.setRowFill(record,{type:'pattern',pattern:'solid',fgColor:{argb:'FF204A68'}})
   for (let index=1;index<=values.length;index++) Stream.setCellBorder(Stream.rowCell(record,index),{bottom:{style:'hair',color:{argb:'FFDCE5EB'}}})
   Stream.commitRow(record)
 }
 function sheetOptions() {
-  return {views:[{state:'frozen' as const,xSplit:2,ySplit:1,topLeftCell:'C2',zoomScale:90}],pageSetup:{orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'1:1'}}
+  return {views:[{state:'frozen' as const,xSplit:2,ySplit:1,topLeftCell:'C2',zoomScale:90}],pageSetup:{paperSize:66,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'1:1'}}
 }
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
 export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void) {
@@ -58,6 +58,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     // SQLite functions must be registered before a streaming SELECT is active.
     prepareCurrentReader(db)
     db.exec('BEGIN')
+    const readCandidate = createCurrentCandidateReader(db)
     const keys={queries:readIdentityKeyVariants(db,'queries'),relations:readIdentityKeyVariants(db,'unassignedRelations')}
     const bindings=currentCandidateBindings(title)
     const total = (db.prepare(`select count(*) as n from (${currentCandidateSql})`).get(bindings) as {n:number}).n
@@ -78,7 +79,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
       const ids = group === 'eligible' ? db.prepare(`select id from (${currentCandidateSql}) order by id`).iterate(bindings) as Iterable<{id:number}> : deferred[group]
       for (const candidate of ids) {
         const id = typeof candidate === 'number' ? candidate : candidate.id
-        const row = readCurrentCandidate(db,id,title,year,Date.parse(generatedAt),keys)
+        const row = readCandidate(id,title,year,Date.parse(generatedAt),keys)
         if (group === 'eligible') {
           hash.update(JSON.stringify(row))
           if (counts[row.group] >= 1048575) throw new CurrentWorkbookLimitError('Excel 单表超过1048575条数据上限，未发布文件；请拆分数据范围')
@@ -87,7 +88,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
         }
         if (row.group === group) {
           // Every cell is a string/blank: no formula objects or numeric credit codes.
-          const values = currentWorkbookValues(db,title,row,++written)
+          const values = currentWorkbookValues(title,row,++written)
           styledRow(sheet,values)
           await drain()
         }
@@ -97,7 +98,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
           await drain()
         }
       }
-      sheet.autoFilter = `A1:L${written + 1}`
+      sheet.autoFilter = `A1:${String.fromCharCode(64 + CURRENT_COLUMNS.length)}${written + 1}`
       sheet.commit()
       await drain()
       if (group !== 'eligible') deferred[group].length = 0
