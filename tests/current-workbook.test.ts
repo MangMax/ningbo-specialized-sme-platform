@@ -157,14 +157,34 @@ it('labels each award and review citation with its actual source and distinct do
   await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
   const citation = String(workbook.getWorksheet('有效企业')!.getCell('L2').value)
-  expect(citation).toContain('2023年第1批认定：')
-  expect(citation).toContain('2023年第1批《名单.xlsx》，附件：认定名单，名单序号7')
-  expect(citation).toContain(`${new Date().getFullYear()}年复核通过：`)
-  expect(citation).toContain('2024年第2批《名单.xlsx》，附件：复核名单，名单序号9')
-  expect(citation).toContain('2024年第3批《名单.xlsx》，附件：补充复核名单，名单序号10')
-  expect(citation).toContain('工信部平台导出快照')
+  expect(citation).toContain('2023年第1批认定：宁波经信来源资料\n《名单.xlsx》，附件：认定名单，名单序号7')
+  expect(citation).toContain(`2023年第1批原认定批次，${new Date().getFullYear()}年复核通过：宁波经信来源资料\n《名单.xlsx》，附件：复核名单，名单序号9`)
+  expect(citation).toContain(`2023年第1批原认定批次，${new Date().getFullYear()}年复核通过：宁波经信来源资料\n《名单.xlsx》，附件：补充复核名单，名单序号10`)
+  expect(citation).toContain('平台维护记录：工信部平台导出快照\n《名单.xlsx》，附件：平台导出，名单序号11')
+  expect(citation).not.toMatch(/2024年第[23]批《名单\.xlsx》/)
+  expect(citation).not.toContain('jxj/announcement/')
   expect(citation).not.toContain('宁波市经信局《名单.xlsx》，附件：平台导出')
   expect(first.id).not.toBe(later.id)
+})
+
+it('uses the 2021 review event and full notice filename without treating its 2024/1 archive directory as a batch', async () => {
+  const { db, file } = fixture()
+  const id = candidate(db, '到期复核主体')
+  const record = db.select().from(s.record).all().find(item => item.enterpriseId === id)!
+  db.update(s.record).set({titleCode:'specialized_sme'}).run()
+  db.update(s.recordEvent).set({year:2021,batchSeq:1}).run()
+  db.update(s.recordEvidence).set({sourceFile:'jxj/announcement/2021/1/2021年度第一批认定名单.pdf',attachment:'认定名单',listNo:3}).run()
+  const review = db.insert(s.recordEvent).values({recordId:record.id,eventType:'review',year:2021,batchSeq:1,decidedYear:2024,reviewOutcome:'passed'}).returning().get()
+  const notice = '甬经信中小〔2024〕143号关于公布2021年度第一批宁波市“专精特新”中小企业到期复核通过企业名单的通知.pdf'
+  db.insert(s.recordEvidence).values({recordEventId:review.id,sourceFile:`jxj/announcement/2024/1/${notice}`,attachment:'到期复核通过企业名单',page:12,listNo:87}).run()
+
+  await writeCurrentWorkbook(db.$client,'specialized_sme',file,()=>{})
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
+  const row = ['有效企业','待确认'].map(name => workbook.getWorksheet(name)!.getRow(2)).find(row => row.getCell(2).value === '到期复核主体')!
+  expect(row.getCell(7).value).toContain('2021年第1批原认定批次，2024年复核通过')
+  expect(row.getCell(12).value).toContain(`2021年第1批原认定批次，2024年复核通过：宁波市经信局公布资料\n《${notice}》，附件：到期复核通过企业名单，PDF第12页，名单序号87`)
+  expect(row.getCell(12).value).not.toContain(`2024年第1批《${notice}》`)
+  expect(row.getCell(12).value).not.toContain('jxj/announcement/2024/1')
 })
 
 it('retains migration business reasons while removing arbitrary trace text and server locations', () => {

@@ -24,12 +24,9 @@ type CurrentColumnKey = typeof CURRENT_COLUMNS[number]['key']
 
 function fileName(path: string) { return path.replaceAll('\\','/').split('/').at(-1) ?? '' }
 
-/** Only factual, non-path context from the source location enters the citation. */
+/** Archive directories are not designation or publication facts. */
 function documentName(path: string) {
-  const normalized = path.replaceAll('\\','/')
-  const publishedBatch = /^jxj\/announcement\/(20\d{2})\/([1-9]\d?)(?:\/|$)/.exec(normalized)
-  const year = publishedBatch?.[1] ?? /(?:^|\/)(20\d{2})(?:\/|$)/.exec(normalized)?.[1]
-  return `${year ? `${year}年` : ''}${publishedBatch ? `第${publishedBatch[2]}批` : ''}《${fileName(normalized)}》`
+  return `《${fileName(path)}》`
 }
 
 function eventLabel(event: CurrentWorkbookFacts['events'][number]) {
