@@ -67,9 +67,10 @@ it('discovers a real export in both tabs and downloads the named workbook throug
   expect(wb.worksheets.map(w => w.name)).toEqual(['有效企业', '待确认', '排除明细', '口径说明'])
   const row = wb.getWorksheet('有效企业')!.getRow(2)
   expect(row.getCell(3).value).toBe('001234567890123456')
-  expect(row.getCell(4).value).toBe('合成现名')
-  expect(row.getCell(5).value).toBe('合成旧名')
-  expect(row.getCell(13).value).toContain('更名')
+  expect(row.getCell(2).value).toBe('合成现名')
+  expect(row.getCell(8).value).toBe('合成旧名')
+  expect(row.getCell(9).value).toBe('合成旧名')
+  expect(row.getCell(11).value).toContain('更名')
 })
 
 it('rechecks artifact availability and permissions without leaking raw results or treating history as a downloadable file', async () => {
@@ -149,7 +150,7 @@ it('restores completed artifacts and interrupted history through the task center
   const download = await request(restored.export.artifact.downloadUrl, { headers })
   expect(download.status).toBe(200)
   const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(await download.arrayBuffer()) as any)
-  expect(wb.getWorksheet('有效企业')!.getRow(2).getCell(4).value).toBe('合成现名')
+  expect(wb.getWorksheet('有效企业')!.getRow(2).getCell(2).value).toBe('合成现名')
   expect(await submit('first')).toBe(completed)
 }, 90000)
 

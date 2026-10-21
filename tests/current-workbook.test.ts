@@ -61,15 +61,18 @@ it('writes an empty four-sheet workbook to an owned file and waits for its close
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.load(readFileSync(file) as any)
   expect(workbook.worksheets.map(sheet => sheet.name)).toEqual(['有效企业', '待确认', '排除明细', '口径说明'])
-  const headers = ['序号','稳定企业标识','统一社会信用代码','现名','公布名','已确认曾用名','宁波区县','称号','首次认定','最近授予/延续资格依据','复核情况','公布对应情况','备注','可核对依据']
+  const headers = ['序号','企业名称','统一社会信用代码','区县','称号','首次认定年份','认定及复核情况','公布名称','已确认曾用名','公布对应情况','情况说明','来源及页码']
   for (const sheet of workbook.worksheets.slice(0, 3)) {
     expect(sheet.rowCount).toBe(1)
     expect(sheet.getRow(1).values).toEqual([undefined, ...headers])
   }
   expect(result.counts).toEqual({ eligible: 0, pending: 0, excluded: 0 })
-  expect(workbook.getWorksheet('口径说明')!.getCell('B7').value).toBe('0')
-  expect(workbook.getWorksheet('口径说明')!.getCell('B8').value).toBe('0')
-  expect(workbook.getWorksheet('口径说明')!.getCell('B9').value).toBe('0')
+  const explanation = workbook.getWorksheet('口径说明')!
+  expect(explanation.getCell('B4').value).toBe('0')
+  expect(explanation.getCell('B5').value).toBe('0')
+  expect(explanation.getCell('B6').value).toBe('0')
+  expect(explanation.getCell('A2').value).toBe('生成时间')
+  expect(explanation.getCell('A3').value).toBe('范围')
   expect(db.$client.inTransaction).toBe(false)
 })
 
@@ -82,7 +85,7 @@ it('preserves text identities, Chinese newlines, formula-looking strings and gro
     ['@SUM(A1)', 'pending', '000000000000000003'],
     ['-1', 'eligible', '000000000000000004'],
   ] as const
-  const ids = examples.map(([name, group, uscc]) => candidate(db, name, group, uscc))
+  examples.forEach(([name, group, uscc]) => candidate(db, name, group, uscc))
   const result = await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
@@ -94,21 +97,70 @@ it('preserves text identities, Chinese newlines, formula-looking strings and gro
     for (const [offset, index] of indices.entries()) {
       const row = target.getRow(offset + 2)
       expect(row.getCell(1).value).toBe(String(offset + 1))
-      expect(row.getCell(2).value).toBe(String(ids[index]))
+      expect(row.getCell(2).value).toBe(examples[index]![0])
       expect(row.getCell(3).value).toBe(examples[index]![2])
-      expect(row.getCell(4).value).toBe(examples[index]![0])
+      expect(row.getCell(4).value).toBe('鄞州区')
       // Nurture is excluded and is not a published designation name.
-      expect(row.getCell(5).value).toBe(group === 'excluded' ? null : examples[index]![0])
-      expect(row.getCell(14).value).toContain('名单\n原始附件')
+      expect(row.getCell(8).value).toBe(group === 'excluded' ? null : examples[index]![0])
+      expect(row.getCell(12).value).toContain('名单\n原始附件')
       row.eachCell(cell => { expect(cell.type).not.toBe(ExcelJS.ValueType.Formula); expect(typeof cell.value).toBe('string') })
     }
+  }
+})
+
+it('renders recognition and review facts with real source pages and usable sheet layout', async () => {
+  const { db, file } = fixture()
+  const id = candidate(db, '新名称', 'eligible', '001234567890123456')
+  const record = db.select().from(s.record).all().find(record => record.enterpriseId === id)!
+  db.update(s.recordEvidence).set({page:9}).run()
+  const review = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'review', year: 2021, batchSeq: 6, decidedYear: 2025, reviewOutcome: 'passed' }).returning().get()
+  db.insert(s.recordEvidence).values({recordEventId:review.id,sourceFile:'jxj/announcement/正式公布.pdf',attachment:'附件二·复核名单',page:7,listNo:12}).run()
+  await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.readFile(file)
+  const sheet = workbook.getWorksheet('有效企业')!
+  expect(sheet.getCell('B2').value).toBe('新名称')
+  expect(sheet.getCell('C2').value).toBe('001234567890123456')
+  expect(sheet.getCell('C2').type).toBe(ExcelJS.ValueType.String)
+  expect(sheet.getCell('G2').value).toContain('2021年第6批原认定批次，2025年复核通过')
+  expect(sheet.getCell('L2').value).toContain('《正式公布.pdf》，附件：附件二·复核名单，PDF第7页，名单序号12')
+  expect(sheet.getCell('L2').value).toContain('名单序号' + id)
+  expect(sheet.getCell('L2').value).not.toContain('PDF第9页')
+  expect(sheet.getCell('L2').value).not.toContain('PDF第' + id + '页')
+  expect(sheet.getRow(2).height).toBeGreaterThan(26)
+  expect(sheet.getCell('L2').alignment?.wrapText).toBe(true)
+  expect(sheet.getColumn(2).width).toBeGreaterThan(25)
+  expect(sheet.views[0]).toMatchObject({state:'frozen',xSplit:2,ySplit:1})
+  expect(sheet.autoFilter).toBe('A1:L2')
+  expect(sheet.pageSetup.orientation).toBe('landscape')
+  expect(sheet.pageSetup.fitToWidth).toBe(1)
+  expect(sheet.pageSetup.fitToHeight).toBe(0)
+  expect(sheet.pageSetup.printTitlesRow).toBe('1:1')
+})
+
+it('keeps technical audit values out of every visible workbook cell', async () => {
+  const {db,file} = fixture()
+  candidate(db,'业务企业')
+  const result = await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
+  expect(result.ruleVersion).toBe('current-roster-116-v8')
+  expect(result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.readFile(file)
+  expect(workbook.worksheets).toHaveLength(4)
+  for (const sheet of workbook.worksheets) {
+    expect(sheet.state).toBe('visible')
+    sheet.eachRow(row => row.eachCell(cell => {
+      const value = String(cell.value ?? '')
+      expect(value).not.toMatch(/(?:event|evidence|decision|alias|correspondence|platform-relation|query):\d+|sha256:|current-roster-116-v8|jxj[\\/]announcement[\\/]|\b(?:award|review|passed|failed|evidence_changed)\b/)
+      expect(cell.note ?? null).toBeNull()
+    }))
   }
 })
 
 it('paces slow filesystem writes across all three groups without collecting a worksheet behind another ZIP entry', async () => {
   const { db, file } = fixture()
   db.transaction(() => {
-    for (let index = 0; index < 1200; index++) candidate(db, randomBytes(1536).toString('base64'), (['pending','eligible','excluded'] as const)[index % 3]!, 'SYNTHETIC-' + index)
+    for (let index = 0; index < 1200; index++) candidate(db, randomBytes(240).toString('base64'), (['pending','eligible','excluded'] as const)[index % 3]!, 'SYNTHETIC-' + index)
   })
   let peakQueued = 0, writes = 0
   const sink = createWriteStream(file, {
@@ -134,7 +186,7 @@ it('paces slow filesystem writes across all three groups without collecting a wo
     const sheet = workbook.getWorksheet(name)!
     expect(sheet.rowCount).toBe(401)
     expect(sheet.getCell('A401').value).toBe('400')
-    expect((sheet.getCell('D401').value as string).length).toBe(2048)
+    expect((sheet.getCell('B401').value as string).length).toBe(320)
   }
 }, 30000)
 
@@ -150,7 +202,7 @@ it('survives short filesystem writes and rejects final file close errors', async
   await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
-  expect(workbook.getWorksheet('有效企业')!.getCell('D2').value).toBe('短写仍完整')
+  expect(workbook.getWorksheet('有效企业')!.getCell('B2').value).toBe('短写仍完整')
   expect(writes).toBeGreaterThan(100)
   const broken = createWriteStream(file, { fs: { open, write, close(fd, callback) {
     close(fd, error => callback(error ?? new Error('synthetic commit failure')))
@@ -161,16 +213,19 @@ it('survives short filesystem writes and rejects final file close errors', async
   expect(db.$client.inTransaction).toBe(false)
 })
 
-it('accepts the cell character limit and rejects the next character without leaving a read transaction', async () => {
+it('rejects a row that cannot display its full text and enforces the cell character limit', async () => {
   const { db, file, dir } = fixture()
-  const maximum = '字'.repeat(32767)
+  const maximum = '字'.repeat(250)
   candidate(db, maximum, 'eligible', 'SYNTHETIC-LIMIT')
   await writeCurrentWorkbook(db.$client, 'little_giant', file, () => {})
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
-  expect(workbook.getWorksheet('有效企业')!.getCell('D2').value).toBe(maximum)
-  candidate(db, '字'.repeat(32768), 'pending', 'SYNTHETIC-OVER-LIMIT')
-  await expect(writeCurrentWorkbook(db.$client, 'little_giant', join(dir, 'overflow.part'), () => {})).rejects.toThrow('32767')
+  expect(workbook.getWorksheet('有效企业')!.getCell('B2').value).toBe(maximum)
+  candidate(db, '字'.repeat(32767), 'pending', 'SYNTHETIC-TALL')
+  await expect(writeCurrentWorkbook(db.$client, 'little_giant', join(dir, 'tall.part'), () => {})).rejects.toThrow('行高不足')
+  const other = fixture()
+  candidate(other.db, '字'.repeat(32768), 'pending', 'SYNTHETIC-OVER-LIMIT')
+  await expect(writeCurrentWorkbook(other.db.$client, 'little_giant', join(other.dir, 'overflow.part'), () => {})).rejects.toThrow('32767')
   expect(db.$client.inTransaction).toBe(false)
 })
 

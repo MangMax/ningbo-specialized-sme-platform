@@ -8,6 +8,7 @@ import { CURRENT_RULE_VERSION, prepareCurrentReader, readCurrentCandidate, type 
 import { currentCandidateBindings, currentCandidateSql } from './current-candidates'
 import { TITLES } from '../labels'
 import { readIdentityKeyVariants } from './current-identity-keys'
+import { currentWorkbookValues } from './current-workbook-presentation'
 
 export class CurrentWorkbookLimitError extends Error {}
 function textCell(value: unknown): string | null {
@@ -16,7 +17,26 @@ function textCell(value: unknown): string | null {
   if (text.length > 32767) throw new CurrentWorkbookLimitError('Excel 单元格超过32767字符上限，未发布文件；请核对源数据')
   return text
 }
-export const CURRENT_HEADERS = ['序号','稳定企业标识','统一社会信用代码','现名','公布名','已确认曾用名','宁波区县','称号','首次认定','最近授予/延续资格依据','复核情况','公布对应情况','备注','可核对依据']
+export const CURRENT_HEADERS = ['序号','企业名称','统一社会信用代码','区县','称号','首次认定年份','认定及复核情况','公布名称','已确认曾用名','公布对应情况','情况说明','来源及页码']
+const widths = [8,32,25,14,23,17,43,32,32,28,55,60]
+function rowHeight(values: (string | null)[]) {
+  const lines = Math.max(1,...values.map((value,index) => String(value ?? '').split('\n').reduce((sum,line) => sum + Math.max(1,Math.ceil([...line].reduce((length,char) => length + (char.codePointAt(0)! > 255 ? 2 : 1),0) / (widths[index]! - 2))),0)))
+  const height = Math.max(26,lines * 17 + 8)
+  if (height > 409) throw new CurrentWorkbookLimitError('Excel 行高不足以完整展示长文本，未发布文件；请核对源数据')
+  return height
+}
+function styledRow(sheet: Stream.WorksheetWriter, values: (string | null)[], header = false) {
+  const record = sheet.addRow(values.map(textCell))
+  record.height = header ? 34 : rowHeight(values)
+  Stream.setRowFont(record,{name:'等线',size:11,bold:header,color:{argb:header?'FFFFFFFF':'FF243247'}})
+  Stream.setRowAlignment(record,{vertical:'top',wrapText:true})
+  if (header) Stream.setRowFill(record,{type:'pattern',pattern:'solid',fgColor:{argb:'FF204A68'}})
+  for (let index=1;index<=values.length;index++) Stream.setCellBorder(Stream.rowCell(record,index),{bottom:{style:'hair',color:{argb:'FFDCE5EB'}}})
+  Stream.commitRow(record)
+}
+function sheetOptions() {
+  return {views:[{state:'frozen' as const,xSplit:2,ySplit:1,topLeftCell:'C2',zoomScale:90}],pageSetup:{orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'1:1'}}
+}
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
 export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void) {
   const generatedAt = new Date().toISOString(), year = new Date(generatedAt).getFullYear()
@@ -42,7 +62,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     const bindings=currentCandidateBindings(title)
     const total = (db.prepare(`select count(*) as n from (${currentCandidateSql})`).get(bindings) as {n:number}).n
     const snapshotStartedAt = new Date().toISOString()
-    const workbook = new Stream.WorkbookWriter({ stream: output, useStyles: false, useSharedStrings: false, trueStreaming: true })
+    const workbook = new Stream.WorkbookWriter({ stream: output, useStyles: true, useSharedStrings: false, trueStreaming: true })
     const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(CURRENT_RULE_VERSION + ':' + year)
     const deferred = { pending: [] as number[], excluded: [] as number[] }
     progress(0,total,snapshotStartedAt)
@@ -51,8 +71,9 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     // Defer only stable IDs (capped by the existing per-sheet row limit), not
     // cell values/XML. Re-read those IDs within the same pinned transaction.
     for (const [group, name] of [['eligible','有效企业'],['pending','待确认'],['excluded','排除明细']] as const) {
-      const sheet = workbook.addWorksheet(name)
-      Stream.commitRow(sheet.addRow(CURRENT_HEADERS))
+      const sheet = workbook.addWorksheet(name,sheetOptions())
+      sheet.columns = widths.map(width => ({width}))
+      styledRow(sheet,CURRENT_HEADERS,true)
       let scanned = 0, written = 0
       const ids = group === 'eligible' ? db.prepare(`select id from (${currentCandidateSql}) order by id`).iterate(bindings) as Iterable<{id:number}> : deferred[group]
       for (const candidate of ids) {
@@ -66,8 +87,8 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
         }
         if (row.group === group) {
           // Every cell is a string/blank: no formula objects or numeric credit codes.
-          const values = [String(++written),String(id),row.uscc,row.name,row.publishedNames.join('\n'),row.aliases.join('\n'),row.district,TITLES[title],row.firstYear == null ? null : String(row.firstYear),row.basis,row.reviews,row.publication,row.notes.join('；'),row.references.join('\n')]
-          Stream.commitRow(sheet.addRow(values.map(textCell)))
+          const values = currentWorkbookValues(db,title,row,++written)
+          styledRow(sheet,values)
           await drain()
         }
         if (++scanned % 100 === 0) {
@@ -76,13 +97,15 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
           await drain()
         }
       }
+      sheet.autoFilter = `A1:L${written + 1}`
       sheet.commit()
       await drain()
       if (group !== 'eligible') deferred[group].length = 0
     }
     const dataVersion = 'sha256:' + hash.digest('hex')
-    const explanation = workbook.addWorksheet('口径说明')
-    for (const row of [['项目','说明'],['规则版本',CURRENT_RULE_VERSION],['生成时间',generatedAt],['数据版本',dataVersion],['快照边界','执行开始时读取事务；排队时间不代表数据时点'],['范围','当前库已识别的本称号企业；未实时采集，不证明全市完整；解释适用性复用#108，未知或已变化列待确认'],['有效企业',String(counts.eligible)],['待确认',String(counts.pending)],['排除明细',String(counts.excluded)]]) Stream.commitRow(explanation.addRow(row))
+    const explanation = workbook.addWorksheet('口径说明',{pageSetup:{orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'1:1'}})
+    explanation.columns = [{width:18},{width:100}]
+    for (const [index,row] of [['项目','说明'],['生成时间',generatedAt],['范围',`当前库已识别的${TITLES[title]}企业；未实时采集，不证明全市完整；无法确认的资格、身份或出处列入待确认。`],['有效企业',String(counts.eligible)],['待确认',String(counts.pending)],['排除明细',String(counts.excluded)],['判定说明','认定与复核依正式公布依据；仅有平台记录或迁入事实不自动证明当前资格；三年有效期届满且复核结论不明时列待确认。']].entries()) styledRow(explanation,row,index===0)
     await workbook.commit()
     await completed
     db.exec('COMMIT')

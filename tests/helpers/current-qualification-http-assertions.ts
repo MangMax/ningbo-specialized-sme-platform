@@ -1,5 +1,5 @@
 import { expect } from 'vitest'
-import { rows, type currentExport118Fixture } from './current-export-118'
+import { rows, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity, type currentExport118Fixture } from './current-export-118'
 import type { QualificationCase } from '../fixtures/current-qualification-r4'
 
 type ExportFixture = ReturnType<typeof currentExport118Fixture>
@@ -46,21 +46,21 @@ export function currentQualificationHttpAssertions(f: ExportFixture, assertRefer
       expect(job.result.ruleVersion).toBe('current-roster-116-v8')
       const {wb}=await f.download(job)
       const explanation=Object.fromEntries(rows(wb,'口径说明').map(row=>[row[1],row[2]]))
-      expect(explanation['规则版本']).toBe('current-roster-116-v8')
+      expect(explanation['规则版本']).toBeUndefined()
       const summary=await (await fetch(f.url('/api/task-center/'+accepted.jobId),{headers:f.headers})).json()
       expect(summary.export.ruleVersion).toBe('current-roster-116-v8')
       const observations=[]
       for (const c of entries) {
-        const actual=wb.worksheets.slice(0,3).flatMap(sheet=>rows(wb,sheet.name).filter(row=>row[2]===String(c.enterprise.id)).map(row=>({sheet:sheet.name,row})))
+        const actual=wb.worksheets.slice(0,3).flatMap(sheet=>rows(wb,sheet.name).filter(row=>matchesBusinessIdentity(f.db, row, c.enterprise.id)).map(row=>({sheet:sheet.name,row})))
         expect.soft(actual.map(r=>r.sheet),c.id+' '+title).toEqual([c.sheet])
         const row=actual[0]!.row
-        expect.soft(row[8],c.id).toBe(label)
-        expect.soft(row[9]??null,c.id).toBe(c.first==null?null:String(c.first))
+        expect.soft(row[5],c.id).toBe(label)
+        expect.soft(row[6]??null,c.id).toBe(c.first==null?null:String(c.first))
         assertReferences(c,title,row)
-        expect.soft(row[14]?.match(/evidence:/g)?.length??0,c.id).toBe(c.events.length-(c.missing?.length??0))
-        expect.soft(row[14]?.match(/正式出处待补/g)?.length??0,c.id).toBe(c.missing?.length??0)
-        if(c.note) expect.soft(row[13]??'',c.id).toContain(c.note)
-        observations.push({id:c.id,expected:c.sheet,actual:actual.map(r=>r.sheet),first:row[9]??null,notes:row[13]??''})
+        expect.soft(row[12]?.match(/synthetic-118\.xlsx/g)?.length??0,c.id).toBe(c.events.length-(c.missing?.length??0))
+        expect.soft(row[7]?.match(/正式出处待核/g)?.length??0,c.id).toBe(c.missing?.length??0)
+        if(c.note) expect.soft(row[11]??'',c.id).toContain(c.note)
+        observations.push({id:c.id,expected:c.sheet,actual:actual.map(r=>r.sheet),first:row[6]??null,notes:row[11]??''})
       }
       for (const [sheet,group] of [['有效企业','eligible'],['待确认','pending'],['排除明细','excluded']] as const) {
         const expected=entries.filter(c=>c.sheet===sheet).length

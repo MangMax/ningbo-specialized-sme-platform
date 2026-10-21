@@ -1,3 +1,4 @@
+import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema as s } from '../db/client'
 import { CURRENT_TITLES, readCurrentCandidate } from '../lib/roster/current-qualification'
@@ -26,7 +27,7 @@ async function inbound(id:number,extra:any={},raw?:string){
   const command={...scope(id),action:'replace',expectedCurrentId:null,idempotencyKey:'pr138-inbound-'+(++serial),actor,basis:'Synthetic independently confirmed inbound and external qualification',ruleVersion:'synthetic-pr138',effectiveAt:`${year-1}-01-01T00:00:00Z`,decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:q.id,evidenceRelationId:r.id,currentQualification:{titleCode:'specialized_sme',validFrom:`${year-1}-01-01T00:00:00Z`,validUntil:`${year+2}-01-01T00:00:00Z`,basis:'Synthetic independently verified external qualification',publicationCheck:{status:'not_found',scope:'New grant publications only; preserve older Ningbo history'},...extra}}}
   return {result:await api(command),command,q,r}
 }
-const occurrences=(wb:any,id:number):Array<{sheet:string;row:any[]}>=>wb.worksheets.slice(0,3).flatMap((sh:any)=>rows(wb,sh.name).filter(r=>r[2]===String(id)).map(row=>({sheet:sh.name,row})))
+const occurrences=(wb:any,id:number):Array<{sheet:string;row:any[]}>=>wb.worksheets.slice(0,3).flatMap((sh:any)=>rows(wb,sh.name).filter(r=>matchesBusinessIdentity(f.db, r, id)).map(row=>({sheet:sh.name,row})))
 it('rejects bound source identity conflicts without creating decision history',async()=>{
   const c=f.candidate('Rejected explicit bound conflict',[])
   const before=f.db.$client.prepare('select count(*) n from difference_reason where enterprise_id=?').get(c.enterprise.id) as any
@@ -43,7 +44,7 @@ it('keeps historical conflicting source decisions pending and preserves their au
   const {wb}=await f.workbook('pr138-historical-conflict')
   const actual=occurrences(wb,c.enterprise.id)
   expect(actual.map(x=>x.sheet)).toEqual(['待确认'])
-  expect(actual[0]!.row[13]).toContain('身份冲突')
+  expect(actual[0]!.row[11]).toContain('身份冲突')
   expect(f.db.$client.prepare('select * from difference_reason where id=?').get(result.body.versionId)).toEqual(before)
 },60000)
 it('retains qualification applicability and identity blockers after inbound evaluation',async()=>{
@@ -67,11 +68,11 @@ it('consumes later independent inbound qualification while retaining historical 
   const {result}=await inbound(c.enterprise.id);expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
   const {wb}=await f.workbook('pr138-returning-history'),actual=occurrences(wb,c.enterprise.id)
   expect(actual.map(x=>x.sheet)).toEqual(['有效企业'])
-  expect(actual[0]!.row[10]).toContain('event:')
-  expect(actual[0]!.row[10]).toContain('independently verified external qualification')
-  expect(actual[0]!.row[12]).toContain('已见本称号宁波公布')
-  expect(actual[0]!.row[13]).toContain('New grant publications only')
-  expect(actual[0]!.row[13]).not.toContain('已到复核年份')
+  expect(actual[0]!.row[7]).toContain('年第1批认定')
+  expect(actual[0]!.row[7]).toContain('independently verified external qualification')
+  expect(actual[0]!.row[10]).toContain('已见本称号宁波公布')
+  expect(actual[0]!.row[11]).toContain('New grant publications only')
+  expect(actual[0]!.row[11]).not.toContain('已到复核年份')
   expect(readCurrentCandidate(f.db.$client,c.enterprise.id,'little_giant',year).group).toBe('pending')
 },60000)
 it('never lets an inbound interval bypass formal failures unknown order or unknown cycles',async()=>{
@@ -105,7 +106,7 @@ it('keeps normalized unassigned candidates and references without confirming own
     const {r}=source(c.enterprise.id,raw,false);ids.push([c.enterprise.id,r.id])
   }
   const {wb}=await f.workbook('pr138-normalized-unassigned')
-  for(const [id,rid] of ids){const actual=occurrences(wb,id);expect(actual.map(x=>x.sheet)).toEqual(['待确认']);expect(actual[0]!.row[14]).toContain('platform-relation:'+rid);expect(f.db.$client.prepare('select enterprise_id,verification_status from platform_relation where id=?').get(rid)).toEqual({enterprise_id:null,verification_status:'pending'})}
+  for(const [id,rid] of ids){const actual=occurrences(wb,id);expect(actual.map(x=>x.sheet)).toEqual(['待确认']);expect(actual[0]!.row[12]).toContain('工信部企业信息查询');expect(actual[0]!.row.join(' ')).not.toContain('platform-relation:'+rid);expect(f.db.$client.prepare('select enterprise_id,verification_status from platform_relation where id=?').get(rid)).toEqual({enterprise_id:null,verification_status:'pending'})}
 },60000)
 
 it('rejects future reaward assertions and keeps unrelated title qualification gaps scoped',async()=>{
@@ -132,9 +133,9 @@ it('preserves a later definite formal qualification when the inbound interval be
   expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
   const {wb}=await f.workbook('pr138-later-definite-local-control'),actual=occurrences(wb,c.enterprise.id)
   expect(actual.map(x=>x.sheet)).toEqual(['有效企业'])
-  expect(actual[0]!.row[10]).toContain('event:')
-  expect(actual[0]!.row[10]).toContain('independently verified external qualification')
-  expect(actual[0]!.row[13]).not.toContain('顺序尚未消解')
+  expect(actual[0]!.row[7]).toContain('年第1批认定')
+  expect(actual[0]!.row[7]).toContain('independently verified external qualification')
+  expect(actual[0]!.row[11]).not.toContain('顺序尚未消解')
 },60000)
 
 it.each(CURRENT_TITLES)('keeps a later formal failure excluded after an expired inbound assertion for %s',async titleCode=>{
@@ -160,13 +161,13 @@ it.each(CURRENT_TITLES)('keeps a later formal failure excluded after an expired 
   expect(job.state,JSON.stringify(job)).toBe('done')
   const {wb}=await f.download(job),actual=occurrences(wb,c.enterprise.id)
   expect(actual.map(x=>x.sheet)).toEqual(['排除明细'])
-  expect(actual[0]!.row[10]).toContain('event:')
-  expect(actual[0]!.row[10]).toContain('Synthetic expired external grant retained for audit')
-  expect(actual[0]!.row[11]).toContain('failed')
-  expect(actual[0]!.row[13]).toContain('复核明确不通过')
-  expect(actual[0]!.row[13]).not.toContain('日期顺序尚未消解')
-  expect(actual[0]!.row[14]).toContain('decision:'+result.body.versionId)
-  expect(actual[0]!.row[14]).toContain('evidence:')
+  expect(actual[0]!.row[7]).toContain('年第1批认定')
+  expect(actual[0]!.row[7]).toContain('Synthetic expired external grant retained for audit')
+  expect(actual[0]!.row[7]).toContain('复核未通过')
+  expect(actual[0]!.row[11]).toContain('复核明确不通过')
+  expect(actual[0]!.row[11]).not.toContain('日期顺序尚未消解')
+  expect(actual[0]!.row.join(' ')).not.toContain('decision:'+result.body.versionId)
+  expect(actual[0]!.row[12]).toContain('synthetic-118.xlsx')
   expect(f.db.$client.prepare('select * from difference_reason where enterprise_id=? order by id').all(c.enterprise.id)).toEqual(auditBefore)
   expect(f.db.$client.prepare('select * from record_event where record_id=? order by id').all(c.record.id)).toEqual(eventsBefore)
 })
@@ -181,5 +182,5 @@ it.each(['not_found','not_checked'] as const)('keeps a current unresolved inboun
   await review(c.enterprise.id,result.body.versionId)
   const {wb}=await f.workbook('pr138-current-unresolved-'+status),actual=occurrences(wb,c.enterprise.id)
   expect(actual.map(x=>x.sheet)).toEqual(['待确认'])
-  expect(actual[0]!.row[13]).toContain('日期顺序尚未消解')
+  expect(actual[0]!.row[11]).toContain('日期顺序尚未消解')
 })

@@ -1,3 +1,4 @@
+import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { currentExport118Fixture, rows, year } from '../tests/helpers/current-export-118'
 const f = currentExport118Fixture()
@@ -10,7 +11,7 @@ it('较早未知周期失败不应覆盖后续明确新认定', async () => {
     {eventType:'award', year, batchSeq:2},
   ])
   const {wb} = await f.workbook('review-unknown-cycle-then-award')
-  const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => r[2] === String(c.enterprise.id)).map(r => ({sheet:s.name,notes:r[13]})))
+  const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => matchesBusinessIdentity(f.db, r, c.enterprise.id)).map(r => ({sheet:s.name,notes:r[11]})))
   console.log(JSON.stringify({case:'old-unknown-cycle',actual}))
   expect(actual.map(r => r.sheet)).toEqual(['有效企业'])
 }, 60000)
@@ -19,7 +20,7 @@ it('正式复核通过应在缺原始认定行时仍可确认当前资格', asyn
     {eventType:'review',year:year-4,decidedYear:year-1,reviewOutcome:'passed',batchSeq:1},
   ])
   const {wb} = await f.workbook('review-only')
-  const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => r[2] === String(c.enterprise.id)).map(r => ({sheet:s.name,notes:r[13]})))
+  const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => matchesBusinessIdentity(f.db, r, c.enterprise.id)).map(r => ({sheet:s.name,notes:r[11]})))
   console.log(JSON.stringify({case:'formal-review-only',actual}))
   expect(actual.map(r => r.sheet)).toEqual(['有效企业'])
 }, 60000)
@@ -28,7 +29,7 @@ it('已确认注销的同一主体不应因切换称号重新有效', async () =
   f.addRecord(c.enterprise.id,c.enterprise.name,[{eventType:'award',year}], 'innovative_sme')
   f.decision(c.enterprise.id,'deregistered',{titleCode:'innovative_sme'})
   const {wb} = await f.workbook('global-subject-deregistered')
-  const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => r[2] === String(c.enterprise.id)).map(r => ({sheet:s.name,notes:r[13]})))
+  const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => matchesBusinessIdentity(f.db, r, c.enterprise.id)).map(r => ({sheet:s.name,notes:r[11]})))
   console.log(JSON.stringify({case:'cross-title-deregistered',actual}))
   expect(actual.map(r => r.sheet)).toEqual(['排除明细'])
 }, 60000)
@@ -71,9 +72,10 @@ it('对应边引用读取不应展开无关原始平台大字段', async () => {
     expect(reference()).toContain('来源需重新核实')
     expect(rawBytes).toBe(0)
     const {wb} = await f.workbook('large-refs-http')
-    const exported = rows(wb,'有效企业').find(r => r[2] === String(c.enterprise.id))!
-    expect(exported[14]).toContain(ref)
-    expect(exported[14]).toContain('来源需重新核实')
+    const exported = rows(wb,'有效企业').find(r => matchesBusinessIdentity(f.db, r, c.enterprise.id))!
+    expect(exported[12]).toContain('工信部企业信息查询')
+    expect(exported[11]).toContain('对应关系的来源需重新核实')
+    expect(exported.join(' ')).not.toContain(ref)
     console.log(JSON.stringify({case:'bounded-ref-change-detection',archivedBytes:1024*1024,driverRawBytes:rawBytes}))
   } finally { f.db.$client.prepare = prepare }
 }, 60000)
@@ -103,11 +105,11 @@ it('未知原周期仅在明确早于新认定时让位而保留同年未来及�
   const entries = cases.map(c => ({...c,...f.candidate(c.name,[{eventType:'review',year:null,decidedYear:c.decidedYear,reviewOutcome:'failed'},{eventType:'award',year,batchSeq:2}])}))
   const {wb} = await f.workbook('unknown-cycle-boundaries')
   for (const c of entries) {
-    const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => r[2] === String(c.enterprise.id)).map(r => ({sheet:s.name,row:r})))
+    const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => matchesBusinessIdentity(f.db, r, c.enterprise.id)).map(r => ({sheet:s.name,row:r})))
     expect(actual.map(r => r.sheet)).toEqual([c.sheet])
-    expect(actual[0]!.row[11]).toContain('failed')
-    expect(actual[0]!.row[14]).toContain('evidence:')
-    expect(actual[0]!.row[13]).toContain('周期未知')
+    expect(actual[0]!.row[7]).toContain('复核未通过')
+    expect(actual[0]!.row[12] ?? '').not.toContain('decision:')
+    expect(actual[0]!.row[11]).toContain('周期未知')
   }
 },60000)
 
@@ -128,10 +130,10 @@ it('仅正式复核延续仍要求日期周期批次身份并处理后续失败�
   for (const c of entries.filter(c => c.badIdentity)) f.db.$client.prepare('update record set uscc_raw=? where id=?').run('OTHER-IDENTITY',c.record.id)
   const {wb} = await f.workbook('formal-renewal-boundaries')
   for (const c of entries) {
-    const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => r[2] === String(c.enterprise.id)).map(r => ({sheet:s.name,row:r})))
+    const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => matchesBusinessIdentity(f.db, r, c.enterprise.id)).map(r => ({sheet:s.name,row:r})))
     expect(actual.map(r => r.sheet),c.name).toEqual([c.sheet])
-    expect(actual[0]!.row[9] ?? null).toBeNull()
-    expect(actual[0]!.row[14]).toContain('evidence:')
+    expect(actual[0]!.row[6] ?? null).toBeNull()
+    expect(actual[0]!.row[12]).toContain('synthetic-118.xlsx')
   }
 },60000)
 
@@ -161,12 +163,13 @@ it('跨称号主体事实遵守当前替代撤回生效身份及迁回而不传�
   f.decision(unrelated.enterprise.id,'other',{titleCode:'innovative_sme',reasonNote:'该称号资格终止'})
   const {wb} = await f.workbook('subject-scope-boundaries')
   for (const c of entries) {
-    const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => r[2] === String(c.id)).map(r => ({sheet:s.name,row:r})))
+    const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => matchesBusinessIdentity(f.db, r, c.id)).map(r => ({sheet:s.name,row:r})))
     expect(actual.map(r => r.sheet)).toEqual([c.sheet])
-    expect(actual[0]!.row[14]).toContain('decision:' + c.decisionId)
-    if (c.sheet === '有效企业') expect(actual[0]!.row[13] ?? '').not.toContain('不属于本称号')
+    expect(actual[0]!.row[12]).toContain('synthetic-118.xlsx')
+    expect(actual[0]!.row.join(' ')).not.toContain('decision:' + c.decisionId)
+    if (c.sheet === '有效企业') expect(actual[0]!.row[11] ?? '').not.toContain('不属于本称号')
   }
-  expect(rows(wb,'有效企业').some(r => r[2] === String(unrelated.enterprise.id))).toBe(true)
+  expect(rows(wb,'有效企业').some(r => matchesBusinessIdentity(f.db, r, unrelated.enterprise.id))).toBe(true)
 },60000)
 
 it('旧认定与独立正式复核按周期组合并保留历史及失败冲突边界', async () => {
@@ -186,12 +189,12 @@ it('旧认定与独立正式复核按周期组合并保留历史及失败冲突�
   const entries = cases.map(c => ({...c,...f.candidate(c.name,c.events)}))
   const {wb} = await f.workbook('mixed-cycle-r2')
   for (const c of entries) {
-    const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => r[2] === String(c.enterprise.id)).map(r => ({sheet:s.name,row:r})))
+    const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => matchesBusinessIdentity(f.db, r, c.enterprise.id)).map(r => ({sheet:s.name,row:r})))
     expect.soft(actual.map(r => r.sheet),c.name).toEqual([c.sheet])
-    expect(actual[0]!.row[9]).toBe(String(year-8))
-    expect(actual[0]!.row[10]).toContain(String(year-8))
-    expect(actual[0]!.row[11]).toContain('passed')
-    expect(actual[0]!.row[14]).toContain('evidence:')
+    expect(actual[0]!.row[6]).toBe(String(year-8))
+    expect(actual[0]!.row[7]).toContain(String(year-8))
+    expect(actual[0]!.row[7]).toContain('复核通过')
+    expect(actual[0]!.row[12]).toContain('synthetic-118.xlsx')
   }
 },60000)
 
@@ -223,10 +226,11 @@ it('注销与地理事实独立核验且仅明确撤回替代恢复主体', asyn
   entries.push({id:gap.enterprise.id,sheet:'待确认',refs:[gi.id],note:'不能代替资格依据'})
   const {wb}=await f.workbook('subject-dimensions-r2')
   for (const c of entries) {
-    const actual=wb.worksheets.slice(0,3).flatMap(s=>rows(wb,s.name).filter(r=>r[2]===String(c.id)).map(r=>({sheet:s.name,row:r})))
+    const actual=wb.worksheets.slice(0,3).flatMap(s=>rows(wb,s.name).filter(r=>matchesBusinessIdentity(f.db, r, c.id)).map(r=>({sheet:s.name,row:r})))
     expect(actual.map(r=>r.sheet),String(c.id)).toEqual([c.sheet])
-    for (const id of c.refs) expect(actual[0]!.row[14]).toContain('decision:'+id)
-    if (c.note) expect(actual[0]!.row[13]).toContain(c.note)
-    if (c.sheet==='有效企业') expect(actual[0]!.row[13]??'').not.toContain('不属于本称号')
+    for (const id of c.refs) expect(actual[0]!.row.join(' ')).not.toContain('decision:'+id)
+    if (c.id !== gap.enterprise.id) expect(actual[0]!.row[12]).toContain('synthetic-118.xlsx')
+    if (c.note) expect(actual[0]!.row[11]).toContain(c.note)
+    if (c.sheet==='有效企业') expect(actual[0]!.row[11]??'').not.toContain('不属于本称号')
   }
 },60000)
