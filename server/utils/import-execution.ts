@@ -1,3 +1,4 @@
+import { serialize } from 'node:v8'
 import type Database from 'better-sqlite3'
 import { realpathSync, statSync } from 'node:fs'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -79,7 +80,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
       // Private/in-memory callers cannot share a native connection across processes.
       if (!client.name || client.name === ':memory:' || client.inTransaction) return Promise.resolve(action === 'preflight' ? preflightRosterImport(db, request, pageCountErrors) : commitRosterImport(db, request, pageCountErrors))
       if (queue.length + Number(!!active) >= maxPending) return Promise.reject(unavailable('import_busy', 'Import execution busy'))
-      const payload = Buffer.from(JSON.stringify(request))
+      const payload = serialize(request)
       if (payload.byteLength + retainedBytes > maxBytes) return Promise.reject(unavailable('import_busy', 'Import execution busy'))
       const path = realpathSync(client.name), stat = statSync(path)
       const identity = { dev: stat.dev, ino: stat.ino, schemaVersion: client.pragma('schema_version', { simple: true }) as number, migration: client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() as { hash: string; created_at: number } | undefined }

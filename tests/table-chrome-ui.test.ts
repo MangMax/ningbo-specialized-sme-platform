@@ -37,6 +37,70 @@ describe('统一表格分页', () => {
     }
     expect(view.emitted('update:pageSize')).toEqual([[50], [200], [3]])
   })
+  it('自定义每页条数后，触发器显示实际数量而不是被截断的“自定义…”', async () => {
+    const view = pagination()
+    // Reka fills the trigger's value from the item text that is mounted with it.
+    await view.vm.$nextTick()
+    const trigger = () => view.get('[aria-label="每页条数"]').text()
+    expect(trigger()).toBe('25')
+    view.getComponent(Select).vm.$emit('update:modelValue', 'custom')
+    await view.vm.$nextTick()
+    // Choosing 自定义… keeps the current size visible until a number is typed.
+    expect(trigger()).toBe('25')
+    expect(view.text()).not.toContain('自定义…')
+    await view.setProps({ pageSize: 3 })
+    await view.vm.$nextTick()
+    expect(view.getComponent(Select).props('modelValue')).toBe('3')
+    // A size that is not a preset opens the input directly and still shows the number.
+    await view.setProps({ pageSize: 37 })
+    await view.vm.$nextTick()
+    expect(view.getComponent(Select).props('modelValue')).toBe('37')
+    expect(view.get<HTMLInputElement>('[aria-label="自定义每页条数"]').element.value).toBe('37')
+  })
+  it('非预设的每页条数在触发器上显示真实数字，而不是空白控件', async () => {
+    // A deep link such as ?pageSize=10 carries a size that is not one of the
+    // presets. The trigger a person reads must show that number itself.
+    const view = pagination({ page: 1, pageSize: 10, total: 100, unit: '个任务' })
+    await view.vm.$nextTick()
+    const trigger = view.get('[aria-label="每页条数"]')
+    // The real Reka trigger, not a hand-written control.
+    expect(trigger.attributes('data-slot')).toBe('select-trigger')
+    expect(trigger.find('[data-slot="select-value"]').exists()).toBe(true)
+    // The trigger's own text is the number — not merely the model value, and not
+    // only the number sitting in the neighbouring input.
+    expect(trigger.text()).toBe('10')
+    expect(view.get<HTMLInputElement>('[aria-label="自定义每页条数"]').element.value).toBe('10')
+  })
+  it('选“自定义…”后改值、再选回预设，触发器上的数字始终跟着走', async () => {
+    const view = pagination({ page: 1, pageSize: 25, total: 100, unit: '个任务' })
+    await view.vm.$nextTick()
+    const triggerText = () => view.get('[aria-label="每页条数"]').text()
+    expect(triggerText()).toBe('25')
+
+    // Choose 自定义…: the size stays until a number is typed.
+    view.getComponent(Select).vm.$emit('update:modelValue', 'custom')
+    await view.vm.$nextTick()
+    expect(triggerText()).toBe('25')
+    expect(view.get<HTMLInputElement>('[aria-label="自定义每页条数"]').element.value).toBe('25')
+
+    // Type a size that is not a preset: the trigger shows it too.
+    const input = view.get<HTMLInputElement>('[aria-label="自定义每页条数"]')
+    input.element.value = '10'
+    await input.trigger('change')
+    expect(view.emitted('update:pageSize')).toContainEqual([10])
+    await view.setProps({ pageSize: 10 })
+    await view.vm.$nextTick()
+    expect(triggerText()).toBe('10')
+
+    // Back to a preset: the number follows and the custom input closes.
+    view.getComponent(Select).vm.$emit('update:modelValue', '50')
+    await view.vm.$nextTick()
+    expect(view.emitted('update:pageSize')).toContainEqual([50])
+    await view.setProps({ pageSize: 50 })
+    await view.vm.$nextTick()
+    expect(triggerText()).toBe('50')
+    expect(view.find('[aria-label="自定义每页条数"]').exists()).toBe(false)
+  })
   it('非预设数量直接显示输入，空结果仍可调数量但无无效页码', () => {
     const view = pagination({ page: 1, pageSize: 37, total: 0, unit: '个文件' })
     expect(view.get<HTMLInputElement>('[aria-label="自定义每页条数"]').element.value).toBe('37')

@@ -21,13 +21,18 @@ const emit = defineEmits<{
 }>()
 const presets = [25, 50, 100, 200]
 const custom = ref(false)
+// The trigger always shows a number: a preset, or the size actually in effect.
+// "自定义…" only names the extra option in the list; showing that label in the
+// trigger (where it gets clipped to "自定…") said nothing about rows per page.
 const sizeModel = computed({
-  get: () => custom.value || !presets.includes(props.pageSize) ? 'custom' : String(props.pageSize),
+  get: () => String(props.pageSize),
   set: (value: string) => {
     custom.value = value === 'custom'
+    // Picking 自定义… keeps the current size until a number is typed.
     if (!custom.value) emit('update:pageSize', Number(value))
   },
 })
+const customOpen = computed(() => custom.value || !presets.includes(props.pageSize))
 const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)))
 function onSizeInput(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
@@ -43,14 +48,19 @@ function onSizeInput(event: Event) {
       <span class="text-muted-foreground">每页</span>
       <Select v-model="sizeModel">
       <SelectTrigger size="sm" class="bg-card w-20 shadow-none transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100" aria-label="每页条数" :disabled="loading">
-          <SelectValue />
+          <!-- The trigger shows the size that is really in effect. Reka's SelectValue
+               resolves its text from the *registered* items, so a size that is not
+               one of the presets (a deep link, or a typed custom size) matched no
+               item and rendered as an empty control; the slot states the number
+               the size model already carries. -->
+          <SelectValue>{{ pageSize }}</SelectValue>
         </SelectTrigger>
         <SelectContent class="shadow-none">
           <SelectItem v-for="n in presets" :key="n" :value="String(n)">{{ n }}</SelectItem>
           <SelectItem value="custom">自定义…</SelectItem>
         </SelectContent>
       </Select>
-      <Input v-if="sizeModel === 'custom'" :model-value="pageSize" type="number" min="1" max="200" class="bg-card h-8 w-20 shadow-none" aria-label="自定义每页条数" :disabled="loading" @change="onSizeInput" />
+      <Input v-if="customOpen" :model-value="pageSize" type="number" min="1" max="200" class="bg-card h-8 w-20 shadow-none" aria-label="自定义每页条数" :disabled="loading" @change="onSizeInput" />
       <span class="text-muted-foreground">{{ unit }}</span>
     </div>
     <span class="text-muted-foreground tabular-nums" data-testid="table-total">

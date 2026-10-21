@@ -29,7 +29,7 @@ export interface JobDto {
   kind: string
   state: JobState
   progress: JobProgress
-  percent: number
+  percent: number | null
   params: Record<string, unknown>
   result: unknown
   error: string | null
@@ -44,7 +44,7 @@ export function toJobDto(row: JobRow): JobDto {
     kind: row.kind,
     state: row.state,
     progress: row.progress,
-    percent: progressPercent(row.progress),
+    percent: row.kind === 'current-roster-export' && row.state === 'done' ? 100 : row.kind === 'current-roster-export' && (row.state === 'queued' || row.state === 'running' && (row.result as {phase?:string}|null)?.phase !== 'workbook') ? null : progressPercent(row.progress),
     params: row.params,
     result: row.result ?? null,
     error: row.error ?? null,
@@ -168,24 +168,35 @@ export function markJobRunning(db: Db, id: string): JobRow | null {
 /** 写进度。终态的任务不再改 —— 否则取消之后进度还会往回跳。 */
 export function setJobProgress(db: Db, id: string, progress: JobProgress): void {
   db.update(schema.job)
-    .set({ progress: makeProgress(progress.done, progress.total) })
+    .set({ progress: progress.done === 0 && progress.total === 0 ? {done:0,total:0} : makeProgress(progress.done, progress.total) })
     .where(and(eq(schema.job.id, id), inArray(schema.job.state, [...ACTIVE_JOB_STATES])))
     .run()
 }
 
-/** 终态收尾:`done` / `failed` / `cancelled` + `finished_at`。**只从非终态**出发。 */
+/**
+ * 终态收尾:`done` / `failed` / `cancelled` + `finished_at`。**只从非终态**出发。
+ *
+ * `result` 有**三种**语义,别合并:
+ *  - 省略(`undefined`)= 这次执行没有新产出 → **保留**库里已有的检查点结果,连
+ *    `result` 列都不碰。一次失败的重试不该抹掉上一次已经落库的已完成/部分证据。
+ *    走这条的是 runner 自己发起的收尾:执行抛异常、排队时被取消、kind 尚未接入。
+ *  - `null` = 调用方**显式**要求清空。
+ *  - 其它值 = 写入这次的新产出(handler 正常返回必带 `result`,见 `JobCompletion`)。
+ * 逐项核对调用方:`current-roster-export` 的失败/取消都会带上 `checkpoint`(非空对象)
+ * 或显式 `null`,`ocr`/`render-pages`/`reconcile` 的产出在方法体里构造完毕才返回
+ * —— 它们都不依赖"省略即清空"这个旧行为。
+ */
 export function finishJob(
   db: Db,
   id: string,
   outcome: { state: Extract<JobState, 'done' | 'failed' | 'cancelled'>; result?: unknown; error?: string | null },
 ): JobRow | null {
+  // 只更新一次:省略 result 时连列都不碰,显式 null 才能清空。
+  const changes = outcome.result === undefined
+    ? { state: outcome.state, error: outcome.error ?? null, finishedAt: new Date().toISOString() }
+    : { state: outcome.state, result: outcome.result, error: outcome.error ?? null, finishedAt: new Date().toISOString() }
   db.update(schema.job)
-    .set({
-      state: outcome.state,
-      result: outcome.result === undefined ? null : outcome.result,
-      error: outcome.error ?? null,
-      finishedAt: new Date().toISOString(),
-    })
+    .set(changes)
     .where(and(eq(schema.job.id, id), inArray(schema.job.state, [...ACTIVE_JOB_STATES])))
     .run()
   return getJob(db, id)

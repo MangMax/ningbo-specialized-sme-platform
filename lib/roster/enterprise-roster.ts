@@ -1025,10 +1025,10 @@ function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
   const assessmentFor = (scope: Parameters<typeof readQueryAssessment>[1]) => {
     let coverage = coverageByTitle.get(scope.titleCode)
     if (!coverage) {
-      coverage = readQueryCoverage(db, scope, enterpriseSnapshot.ownQueryIds)
+      coverage = readQueryCoverage(db, scope, undefined, enterpriseSnapshot.ownQueryIds)
       coverageByTitle.set(scope.titleCode, coverage)
     }
-    return readQueryAssessment(db, scope, coverage)
+    return readQueryAssessment(db, scope, undefined, coverage)
   }
 
   return {

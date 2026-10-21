@@ -30,13 +30,13 @@ export function readBenchmarkAuthority(sourceSha) {
   const serverIndex = resolve('.output/server/index.mjs')
   const require = createRequire(serverIndex)
   const { nativeSha256, nativePath } = readSqliteNativeIdentity(require)
-  const migrationSha256 = hash('db/migrations/0025_platform_query_title_scope_83.sql')
+  const migrationSha256 = hash('db/migrations/0027_platform_query_title_scope_83.sql')
   const observed = { sourceSha, nodeVersion: process.version, serverIndexSha256: hash(serverIndex), nativeSha256, nativePath, migrationSha256 }
   const expected = expectedPath ? JSON.parse(readFileSync(expectedPath, 'utf8')) : null
   if (expected) qualifyArtifactAuthority(expected, observed)
   const journal = JSON.parse(readFileSync('db/migrations/meta/_journal.json', 'utf8')).entries
   const latest = journal.at(-1)
-  assert.equal(latest.tag, '0025_platform_query_title_scope_83', 'benchmark migration guard requires requalification for a different journal')
+  assert.equal(latest.tag, '0027_platform_query_title_scope_83', 'benchmark migration guard requires requalification for a different journal')
   return { ...observed, guarded: !!expected, imageSourceSha: expected?.imageSourceSha, latest: { timestamp: latest.when, hash: migrationSha256 } }
 }
 

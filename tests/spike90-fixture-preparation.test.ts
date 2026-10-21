@@ -26,7 +26,7 @@ it('prepares JSON5 migration and 2x fixtures with the application SQLite authori
     const run = (command: string, input: string, output: string) => {
       const report = output + '.json'
       const args = ['run', 'python', 'scripts/spike-90/workload_control.py', command, '--source', input, '--output', output, '--report', report]
-      if (command === 'migrate-copy') args.push('--migration', resolve('db/migrations/0025_platform_query_title_scope_83.sql'))
+      if (command === 'migrate-copy') args.push('--migration', resolve('db/migrations/0027_platform_query_title_scope_83.sql'))
       const result = spawnSync('uv', args, { encoding: 'utf8', env: { ...process.env, PYTHONUTF8: '1', PYTHONDONTWRITEBYTECODE: '1' } })
       expect(result.status, result.stderr).toBe(0)
       const proof = JSON.parse(readFileSync(report, 'utf8'))
@@ -36,7 +36,7 @@ it('prepares JSON5 migration and 2x fixtures with the application SQLite authori
     }
     const proof = run('migrate-copy', source, migrated)
     expect(proof.before).toEqual(proof.after)
-    expect(proof.migration_sha256).toBe(digest(resolve('db/migrations/0025_platform_query_title_scope_83.sql')))
+    expect(proof.migration_sha256).toBe(digest(resolve('db/migrations/0027_platform_query_title_scope_83.sql')))
     const copy = new Database(migrated, { readonly: true })
     expect(copy.prepare('select * from platform_query_title_scope').all()).toEqual([{ query_id: 1, rdjb: '2' }])
     expect(copy.prepare('select * from platform_query_title_scope_error').all()).toEqual([{ query_id: 2 }])

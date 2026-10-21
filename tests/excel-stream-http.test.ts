@@ -1,4 +1,7 @@
 import { once } from 'node:events'
+import { Readable } from 'node:stream'
+import { existsSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { createServer, get, type IncomingMessage } from 'node:http'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -38,10 +41,16 @@ function fixture(count: number) {
 
 async function server() {
   const results: unknown[] = []
+  const downloads: Readable[] = []
   let resolveCompleted!: (result: unknown) => void
   const completed = new Promise<unknown>(resolve => { resolveCompleted = resolve })
   const http = createServer(async (req, res) => {
-    try { results.push(await handler(createEvent(req, res))) }
+    try {
+      const event = createEvent(req, res)
+      const result = await handler(event)
+      if (result instanceof Readable) { downloads.push(result); await sendStream(event, result) }
+      results.push(result)
+    }
     catch (error) { results.push(error) }
     finally {
       if (!res.destroyed && !res.writableEnded) res.end()
@@ -50,7 +59,7 @@ async function server() {
   })
   await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve))
   const port = (http.address() as { port: number }).port
-  return { http, port, results, completed }
+  return { http, port, results, downloads, completed }
 }
 
 async function request(port: number): Promise<{ res: IncomingMessage; client: ReturnType<typeof get> }> {
@@ -196,9 +205,9 @@ describe('GET /api/export transport', () => {
     } finally { await new Promise<void>(resolve => http.close(() => resolve())) }
   })
 
-  it('holds row production behind a paused consumer, then sends a complete readable XLSX', async () => {
+  it('streams a staged workbook with bounded read buffering behind a paused HTTP consumer', async () => {
     fixture(500)
-    const { http, port, results } = await server()
+    const { http, port, results, downloads, completed } = await server()
     let client: ReturnType<typeof get> | undefined
     try {
       const requested = await request(port)
@@ -206,7 +215,13 @@ describe('GET /api/export transport', () => {
       const { res } = requested
       const pausedRows = await waitForPausedRows()
       expect(pausedRows).toBeGreaterThan(0)
-      expect(pausedRows).toBeLessThan(source.rows.length)
+      // Main stages the complete workbook before headers; the download itself
+      // must stay bounded and its temporary file must remain owned until close.
+      expect(pausedRows).toBe(source.rows.length)
+      expect(downloads).toHaveLength(1)
+      expect(downloads[0]!.readableLength).toBeLessThanOrEqual(64 * 1024)
+      const folder = dirname(String((downloads[0] as import('node:fs').ReadStream).path))
+      expect(existsSync(folder)).toBe(true)
       const chunks: Buffer[] = []
       res.on('data', chunk => chunks.push(Buffer.from(chunk)))
       res.resume()
@@ -219,24 +234,30 @@ describe('GET /api/export transport', () => {
       expect(ws.getRow(2).getCell(1).text).toBe('企业名称')
       expect(ws.getRow(3).getCell(1).text).toBe('企业-0_x0001_')
       expect(ws.getRow(502).getCell(1).text).toBe('企业-499')
+      await completed
       expect(results).toHaveLength(1)
+      await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
     } finally {
       client?.destroy()
       await new Promise<void>(resolve => http.close(() => resolve()))
     }
   }, 20_000)
 
-  it('stops producing after the client disconnects during download', async () => {
+  it('settles a disconnected staged download and removes its owned workbook', async () => {
     fixture(500)
-    const { http, port, results } = await server()
+    const { http, port, results, downloads, completed } = await server()
     try {
       const { res, client } = await request(port)
       res.destroy()
       client.destroy()
-      await new Promise(resolve => setTimeout(resolve, 150))
-      expect(source.read).toBeLessThan(source.rows.length)
+      await completed
+      expect(source.read).toBe(source.rows.length)
+      expect(downloads).toHaveLength(1)
+      const folder = dirname(String((downloads[0] as import('node:fs').ReadStream).path))
+      await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
+      expect(downloads[0]!.destroyed).toBe(true)
       expect(results).toHaveLength(1)
-      expect((results[0] as Error).name).toBe('AbortError')
+      expect(results[0]).toBeInstanceOf(Error)
     } finally { await new Promise<void>(resolve => http.close(() => resolve())) }
   })
 })

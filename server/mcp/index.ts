@@ -3,6 +3,7 @@ import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
 import { admitEnterpriseResponse } from '../utils/enterprise-read-response'
 import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
 import { platformQueryRpcError } from '../utils/mcp-platform-query'
+import { currentQualifiedRpcError } from '../utils/current-qualified-filter'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler } from '@nuxtjs/mcp-toolkit/server'
 import {
@@ -105,7 +106,9 @@ export default defineMcpHandler({
 
     if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
       const body = await readBody(event, { strict: false }).catch(() => undefined)
-      if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail'].includes(body?.params?.name)) admitEnterpriseResponse(event)
+      const invalidCurrentQualified = currentQualifiedRpcError(body)
+      if (invalidCurrentQualified) return invalidCurrentQualified
+      if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail','list_current_qualified_enterprises'].includes(body?.params?.name)) admitEnterpriseResponse(event)
       const invalidDecision = decisionRpcError102(body)
       if (invalidDecision) return invalidDecision
       const invalidParse = parseRpcError105(body)

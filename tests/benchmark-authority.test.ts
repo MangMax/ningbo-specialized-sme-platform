@@ -20,13 +20,13 @@ it('accepts a pending clean seed and recognizes actual Node migration completion
   const db = new Database(':memory:')
   try {
     db.exec('CREATE TABLE __drizzle_migrations(id SERIAL PRIMARY KEY,hash TEXT NOT NULL,created_at NUMERIC)')
-    const latest = { timestamp: 1792400021006, hash: createHash('sha256').update(readFileSync('db/migrations/0025_platform_query_title_scope_83.sql')).digest('hex') }
+    const latest = { timestamp: 1792400021008, hash: createHash('sha256').update(readFileSync('db/migrations/0027_platform_query_title_scope_83.sql')).digest('hex') }
     expect(qualifyMigrationAuthority(db, latest).needsCanonicalMigration).toBe(true)
     migrate(drizzle(db), { migrationsFolder: resolve('db/migrations') })
     const authority = qualifyMigrationAuthority(db, latest)
     expect(authority.needsCanonicalMigration).toBe(false)
-    expect(authority.ledgerRows).toBe(26)
-    expect(authority.lastCreatedAt).toBe(1792400021006)
+    expect(authority.ledgerRows).toBe(28)
+    expect(authority.lastCreatedAt).toBe(1792400021008)
     expect(authority.objects).toHaveLength(7)
   } finally { db.close() }
 })

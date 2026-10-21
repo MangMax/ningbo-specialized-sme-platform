@@ -90,6 +90,10 @@
  * 最终合入 #102 后，仅给原差异行追加 8 个 nullable 生命周期字段（均 null）。
  * 集成字段级证明：/tmp/ningbo-spec98/merge-101-104/golden-delta-proof-102.json。
  * 未创建生命周期决定，原字段、结果、行数及摘要不变。
+ *
+ * ── PR126 修复的可选资格字段（2026-10-20）────────────────────────────
+ * 0026 仅为原差异行追加 currentQualification:null；所有原字段、结果、行数及摘要不变。
+ * 明确迁入资格的非空字段由 current-export-pr126-fixes-http.test.ts 通过公开API验证。
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

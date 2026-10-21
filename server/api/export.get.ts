@@ -1,5 +1,5 @@
+import { legacyExportSheet, writeLegacyXlsx } from '../utils/legacy-export-xlsx'
 import { useDb } from '@db'
-import { streamXlsx } from '../utils/stream-xlsx'
 import { allRecords, type EventType } from '~~/lib/query'
 import {
   TITLES,
@@ -93,6 +93,7 @@ export default defineEventHandler(async (event) => {
   }
 
   let filename = 'roster.xlsx'
+  let writeWorkbook: Parameters<typeof writeLegacyXlsx>[1]
   if (q.mode === 'comparison') {
     const title = str(q.title)
     const direction = str(q.direction) as ComparisonDirection | undefined
@@ -121,8 +122,8 @@ export default defineEventHandler(async (event) => {
       district: str(q.district),
       showCurated: str(q.showCurated) === 'true',
     })
-    filename = `${TITLES[title]}-${COMPARISON_LABELS[direction]}.xlsx`
-    const columns = [
+    writeWorkbook = async (wb, pace) => {
+      const ws = legacyExportSheet(wb, pace, '比对', [
         { header: '企业名称', key: 'name', width: 34 },
         { header: '统一社会信用代码', key: 'uscc', width: 20 },
         { header: '区县', key: 'district', width: 12 },
@@ -131,15 +132,21 @@ export default defineEventHandler(async (event) => {
         { header: '当前城市', key: 'city', width: 12 },
         { header: '登记状态', key: 'regStatus', width: 24 },
         { header: '备注', key: 'notes', width: 34 },
-      ]
-    return streamXlsx(event, filename, '比对', columns, (function* () {
-      yield columns.map(column => column.header)
-      for (const row of rows) yield [
-        row.name, row.uscc ?? '', row.district ?? '', TITLES[row.titleCode],
-        COMPARISON_LABELS[row.direction], row.evidence.currentCity ?? '',
-        row.evidence.regStatus ?? '', row.uscc ? '' : COMPARISON_NO_USCC,
-      ]
-    })())
+      ])
+      for (const row of rows) {
+        await ws.addRow({
+          name: row.name,
+          uscc: row.uscc ?? '',
+          district: row.district ?? '',
+          title: TITLES[row.titleCode],
+          direction: COMPARISON_LABELS[row.direction],
+          city: row.evidence.currentCity ?? '',
+          regStatus: row.evidence.regStatus ?? '',
+          notes: row.uscc ? '' : COMPARISON_NO_USCC,
+        })
+      }
+    }
+    filename = `${TITLES[title]}-${COMPARISON_LABELS[direction]}.xlsx`
   } else {
     const rows = allRecords(useDb(), {
       title: csv(q.title),
@@ -151,30 +158,45 @@ export default defineEventHandler(async (event) => {
       flags: str(q.flags),
     })
 
-    /**
-     * 口径写在**数据上面**,离开页面也还看得见 —— 导出的文件常被单独转发。
-     *
-     * 这条是 RL-17 补的:名录台账把「按企业」与「按企业×称号」做成同一份数据的两种分组,
-     * 两个导出(本路由与 `/api/roster/export`)**都**得自己说清自己是哪个单位,
-     * 否则拿到 xlsx 的人只会看到「一行一个称号」而不知道这些行其实属于多少家企业。
-     * 企业数是按**行里出现过的企业**去重算的,不是另查一遍库。
-     */
     const enterprises = new Set(rows.map((r) => r.enterpriseId)).size
-    const columns = [
-      { header: '企业名称', width: 34 }, { header: '统一社会信用代码', width: 20 },
-      { header: '区县', width: 12 }, { header: '称号', width: 18 },
-      { header: '来源', width: 14 }, { header: '事件', width: 32 },
-      { header: '出处', width: 44 },
-    ]
-    return streamXlsx(event, filename, '台账', columns, (function* () {
-      yield [`口径:一行 = 一个「企业 × 称号」(同一组合下的多个来源合并成一行)。` +
-        `本次筛选共 ${rows.length} 行,属于 ${enterprises} 家企业(多称号企业在行数里按称号各计一次)。` +
-        `导出为当前筛选下的全部行,不受页面分页限制;同一筛选条件的「按企业」导出见企业总表导出。`]
-      yield columns.map(column => column.header)
-      for (const r of rows) yield [
-        r.name, r.uscc ?? '', r.district ?? '', TITLES[r.titleCode] ?? r.titleCode,
-        r.sources.map((s) => SOURCES[s] ?? s).join('、'), r.events, r.evidence,
-      ]
-    })())
+    // 企业数由本次筛选的企业×称号行去重,说明先于表头写入。
+    writeWorkbook = async (wb, pace) => {
+      const ws = legacyExportSheet(wb, pace, '台账', [
+        { header: '企业名称', key: 'name', width: 34 },
+        { header: '统一社会信用代码', key: 'uscc', width: 20 },
+        { header: '区县', key: 'district', width: 12 },
+        { header: '称号', key: 'title', width: 18 },
+        { header: '来源', key: 'source', width: 14 },
+        { header: '事件', key: 'events', width: 32 },
+        { header: '出处', key: 'evidence', width: 44 },
+      ],
+        `口径:一行 = 一个「企业 × 称号」(同一组合下的多个来源合并成一行)。` +
+          `本次筛选共 ${rows.length} 行,属于 ${enterprises} 家企业(多称号企业在行数里按称号各计一次)。` +
+          `导出为当前筛选下的全部行,不受页面分页限制;同一筛选条件的「按企业」导出见企业总表导出。`,
+      )
+      for (const r of rows) {
+        await ws.addRow({
+          name: r.name,
+          uscc: r.uscc ?? '',
+          district: r.district ?? '',
+          title: TITLES[r.titleCode] ?? r.titleCode,
+          source: r.sources.map((s) => SOURCES[s] ?? s).join('、'),
+          events: r.events,
+          evidence: r.evidence,
+        })
+      }
+    }
   }
+  const download = await writeLegacyXlsx(event, writeWorkbook)
+  setHeader(
+    event,
+    'content-type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  )
+  setHeader(
+    event,
+    'content-disposition',
+    `attachment; filename="roster.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+  )
+  return download
 })

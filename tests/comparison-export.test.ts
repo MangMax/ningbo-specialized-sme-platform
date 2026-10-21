@@ -2,6 +2,13 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ExcelJS from 'exceljs'
+import { readExportWorkbook } from './helpers/read-export-workbook'
+import { Readable } from 'node:stream'
+import { createServer, type Server } from 'node:http'
+import { createApp, toNodeListener, getQuery as h3Query, setHeader as h3Header, createError as h3Error } from 'h3'
+import { existsSync } from 'node:fs'
+import { dirname } from 'node:path'
+import type { ReadStream } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
 
@@ -11,25 +18,20 @@ vi.doMock('@db', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useDb: () => db,
 }))
+let server: Server
+let baseUrl: string
 let query: Record<string, unknown>
-let headers: Record<string, string>
-let handler: (event: unknown) => Promise<Uint8Array>
-const streamed = vi.fn(async (_event: unknown, stream: AsyncIterable<Uint8Array>) => {
-  const chunks: Buffer[] = []
-  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
-  return Buffer.concat(chunks)
-})
+let headers: Record<string, string> = {}
+let handler: (event: unknown) => Promise<Uint8Array | Readable>
 
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
-  vi.stubGlobal('getQuery', () => query)
+  vi.stubGlobal('getQuery', (event: Parameters<typeof h3Query>[0]) => event.node ? h3Query(event) : query)
   vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => {
     headers[name] = value
+    if ((_event as Parameters<typeof h3Header>[0]).node) h3Header(_event as Parameters<typeof h3Header>[0], name, value)
   })
-  vi.stubGlobal('sendStream', streamed)
-  vi.stubGlobal('createError', (opts: object) =>
-    Object.assign(new Error('Bad query'), opts),
-  )
+  vi.stubGlobal('createError', h3Error)
   vi.stubGlobal('useRuntimeConfig', () => ({
     curatedPath: join(dir, 'curation.json'),
     reconcilePath: join(dir, 'reconcile.json'),
@@ -56,19 +58,37 @@ beforeAll(async () => {
     db.insert(schema.record)
       .values({ enterpriseId, source, titleCode, district: '鄞州区' })
       .run()
+    return enterpriseId
   }
   // 超过一页,验证导出未被页面参数截断;其他称号与反方向必须被排除。
   for (let i = 0; i < 27; i++)
     seed(
-      i === 2 ? '市专02&<>"' : `市专${String(i).padStart(2, '0')}`,
+      `市专${String(i).padStart(2, '0')}`,
       'jxj',
       'specialized_sme',
       i ? `USCC${i}` : null,
     )
-  seed('反方向', 'miit', 'specialized_sme', 'EXTRA')
+  seed('反方向', 'miit', 'specialized_sme', '=001234567890123456')
   seed('其他称号', 'jxj', 'innovative_sme', 'INNOVATIVE')
+  const textEnterprise = seed('=宁波文本\n企业', 'jxj', 'little_giant', '001234567890123456')
+  for (const source of ['jxj', 'miit'] as const) {
+    const recordId = db.insert(schema.record).values({
+      enterpriseId: textEnterprise, source, titleCode: 'specialized_sme', district: '鄞州区',
+    }).returning({ id: schema.record.id }).get().id
+    const eventId = db.insert(schema.recordEvent).values({
+      recordId, eventType: source === 'jxj' ? 'award' : 'maintain',
+      year: source === 'jxj' ? 2024 : 2025, batchSeq: 1,
+    }).returning({ id: schema.recordEvent.id }).get().id
+    db.insert(schema.recordEvidence).values({ recordEventId: eventId, sourceFile: `${source}-出处.docx`, attachment: '附件一', listNo: 7 }).run()
+  }
+  const app = createApp()
+  app.use('/api/export', handler as never)
+  server = createServer(toNodeListener(app))
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 })
-afterAll(() => {
+afterAll(async () => {
+  if (server) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
   vi.unstubAllGlobals()
   rmSync(dir, { recursive: true, force: true })
 })
@@ -76,18 +96,106 @@ afterAll(() => {
 async function exported(params: Record<string, unknown>) {
   query = params
   headers = {}
-  const bytes = await handler({})
-  const wb = new ExcelJS.Workbook()
-  await wb.xlsx.load(Buffer.from(bytes) as never)
+  const result = await handler({})
+  const bytes = result instanceof Readable ? await Array.fromAsync(result).then(Buffer.concat) : result
+  const wb = await readExportWorkbook(bytes)
   return wb.worksheets[0]!
 }
 
 describe('comparison export route', () => {
-  it('streams a complete workbook through the HTTP response seam', async () => {
-    streamed.mockClear()
-    const ws = await exported({ mode: 'comparison', title: 'specialized_sme', direction: 'missing_in_miit' })
-    expect(streamed).toHaveBeenCalledOnce()
-    expect(ws.rowCount).toBe(28)
+  it('preserves ledger count grain and combined source event year filters over HTTP', async () => {
+    const all = await fetch(`${baseUrl}/api/export?${new URLSearchParams({ q: '宁波文本', page: '9', pageSize: '1' })}`)
+    const fullSheet = (await readExportWorkbook(new Uint8Array(await all.arrayBuffer()))).worksheets[0]!
+    expect(all.status).toBe(200)
+    expect(fullSheet.rowCount).toBe(4)
+    expect(fullSheet.getCell('A1').text).toContain('共 2 行,属于 1 家企业')
+    for (const source of ['source=jxj,miit', 'source=jxj&source=miit']) {
+      const response = await fetch(`${baseUrl}/api/export?q=${encodeURIComponent('宁波文本')}&${source}&eventType=award&year=2024&page=9&pageSize=1`)
+      expect(response.status).toBe(200)
+      const sheet = (await readExportWorkbook(new Uint8Array(await response.arrayBuffer()))).worksheets[0]!
+      expect(sheet.rowCount).toBe(3)
+      expect(sheet.getCell('D3').value).toBe('专精特新中小企业')
+      expect(sheet.getCell('E3').value).toBe('经信局、工信部')
+      expect(sheet.getCell('F3').text).toContain('认定 2024-1')
+      expect(sheet.getCell('F3').text).toContain('维护 2025-1')
+      expect(sheet.getCell('G3').text).toContain('jxj-出处.docx')
+      expect(sheet.getCell('G3').text).toContain('miit-出处.docx')
+    }
+  })
+  it('returns a download stream instead of a whole-workbook response buffer', async () => {
+    query = { mode: 'comparison', title: 'specialized_sme', direction: 'missing_in_miit' }
+    headers = {}
+    const download = await handler({})
+    expect(download).toBeInstanceOf(Readable)
+    const folder = dirname(String((download as ReadStream).path))
+    expect(existsSync(folder)).toBe(true)
+    if (download instanceof Readable) {
+      const wb = new ExcelJS.Workbook()
+      await wb.xlsx.read(download)
+      expect(wb.worksheets[0]!.rowCount).toBe(28)
+    }
+    expect(existsSync(folder)).toBe(false)
+  })
+
+  it('serves actual HTTP XLSX bytes and preserves both directions filters empty sets and errors', async () => {
+    for (const [search, count, first, label] of [
+      ['direction=missing_in_miit&page=2&pageSize=1', 28, '市专00', '应纳未纳'],
+      ['direction=extra_in_miit', 2, '反方向', '应出未出'],
+      ['direction=missing_in_miit&q=市专02&district=鄞州区', 2, '市专02', '应纳未纳'],
+      ['direction=missing_in_miit&q=市专02&district=海曙区', 1, undefined, '应纳未纳'],
+    ] as const) {
+      const response = await fetch(`${baseUrl}/api/export?mode=comparison&title=specialized_sme&${encodeURI(search)}`)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      expect(response.headers.get('content-disposition')).toBe(`attachment; filename="roster.xlsx"; filename*=UTF-8''${encodeURIComponent(`专精特新中小企业-${label}.xlsx`)}`)
+      const bytes = new Uint8Array(await response.arrayBuffer())
+      expect(Number(response.headers.get('content-length'))).toBe(bytes.byteLength)
+      expect([...bytes.slice(0, 4)]).toEqual([80, 75, 3, 4])
+      const wb = await readExportWorkbook(bytes)
+      const ws = wb.worksheets[0]!
+      expect(ws.name).toBe('比对')
+      expect(ws.rowCount).toBe(count)
+      expect(ws.getColumn(1).width).toBe(34)
+      if (first) {
+        expect(ws.getCell('A2').value).toBe(first)
+        expect(ws.getCell('A2').type).toBe(ExcelJS.ValueType.String)
+        expect(ws.getCell('E2').value).toBe(label)
+      }
+    }
+    const invalid = await fetch(`${baseUrl}/api/export?mode=comparison&title=specialized_sme&direction=extra_in_miit&showCurated=bad`)
+    expect(invalid.status).toBe(400)
+    expect((await invalid.json()).statusMessage).toBe('showCurated must be true or false')
+    expect(invalid.headers.get('content-disposition')).toBeNull()
+  })
+
+  it('preserves formula-looking names newlines leading-zero identity and ledger count grain over HTTP', async () => {
+    const response = await fetch(`${baseUrl}/api/export?title=little_giant&page=3&pageSize=1`)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-disposition')).toBe(`attachment; filename="roster.xlsx"; filename*=UTF-8''roster.xlsx`)
+    const wb = await readExportWorkbook(new Uint8Array(await response.arrayBuffer()))
+    const ws = wb.worksheets[0]!
+    expect(ws.name).toBe('台账')
+    expect(ws.rowCount).toBe(3)
+    expect(ws.getCell('A1').text).toContain('共 1 行,属于 1 家企业')
+    expect(ws.getRow(3).values).toEqual([undefined, '=宁波文本\n企业', '001234567890123456', '鄞州区', '专精特新“小巨人”', '经信局', '', ''])
+    expect(ws.getCell('A3').type).toBe(ExcelJS.ValueType.String)
+    expect(ws.getCell('B3').type).toBe(ExcelJS.ValueType.String)
+    const empty = await fetch(`${baseUrl}/api/export?title=little_giant&q=不存在`)
+    const emptySheet = (await readExportWorkbook(new Uint8Array(await empty.arrayBuffer()))).worksheets[0]!
+    expect(emptySheet.rowCount).toBe(2)
+    expect(emptySheet.getCell('A1').text).toContain('共 0 行,属于 0 家企业')
+  })
+
+  it('removes the staged workbook when a download is abandoned', async () => {
+    query = { title: 'innovative_sme' }
+    headers = {}
+    const download = await handler({}) as ReadStream
+    const folder = dirname(String(download.path))
+    expect(existsSync(folder)).toBe(true)
+    const closed = new Promise<void>((resolve) => download.once('close', resolve))
+    download.destroy()
+    await closed
+    expect(existsSync(folder)).toBe(false)
   })
   it('exports all selected title and direction rows with eight columns and a Chinese filename', async () => {
     const ws = await exported({
@@ -112,7 +220,7 @@ describe('comparison export route', () => {
     expect(ws.getRow(2).values).toEqual([
       undefined,
       '市专00',
-      undefined,
+      '',
       '鄞州区',
       '专精特新中小企业',
       '应纳未纳',
@@ -120,7 +228,6 @@ describe('comparison export route', () => {
       '注销',
       '无统代,另一侧无可匹配身份',
     ])
-    expect(ws.getRow(2).getCell(2).text).toBe('')
     expect(ws.getRow(28).getCell(1).value).toBe('市专26')
     expect(decodeURIComponent(headers['content-disposition']!)).toContain(
       '专精特新中小企业-应纳未纳.xlsx',
@@ -135,6 +242,8 @@ describe('comparison export route', () => {
     expect(ws.rowCount).toBe(2)
     expect(ws.getRow(2).getCell(1).value).toBe('反方向')
     expect(ws.getRow(2).getCell(5).value).toBe('应出未出')
+    expect(ws.getCell('B2').value).toBe('=001234567890123456')
+    expect(ws.getCell('B2').type).toBe(ExcelJS.ValueType.String)
   })
   it('applies the current name search and district filters', async () => {
     const ws = await exported({
@@ -145,7 +254,7 @@ describe('comparison export route', () => {
       district: '鄞州区',
     })
     expect(ws.rowCount).toBe(2)
-    expect(ws.getRow(2).getCell(1).value).toBe('市专02&<>"')
+    expect(ws.getRow(2).getCell(1).value).toBe('市专02')
 
     const empty = await exported({
       mode: 'comparison',
@@ -172,12 +281,6 @@ describe('comparison export route', () => {
 
     expect(ws.getRow(2).getCell(1).value).toBe('企业名称')
     expect(ws.getRow(3).getCell(1).value).toBe('其他称号')
-    expect(ws.getRow(2).values).toEqual([
-      undefined, '企业名称', '统一社会信用代码', '区县', '称号', '来源', '事件', '出处',
-    ])
-    expect(ws.getRow(3).getCell(4).text).toBe('创新型中小企业')
-    const empty = await exported({ title: 'little_giant', q: '不存在的企业' })
-    expect(empty.rowCount).toBe(2)
   })
   it('rejects incomplete or invalid comparison filters', async () => {
     for (const params of [

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import { ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound } from '@lucide/vue'
+import { ChartColumn, FolderOpen, Gauge, GitCompareArrows, LayoutList, ScanText, KeyRound, ListTodo, Search } from '@lucide/vue'
 import { ENTERPRISE_LIST_TITLE } from '~~/lib/labels'
 import NavMain from '@/components/NavMain.vue'
 import {
@@ -24,6 +24,7 @@ const colorMode = useAppColorMode()
 // 原先并排的「台账」与「企业总表」早已是同一件事,`/roster` 只做 302 重定向。
 const nav = [
   { title: ENTERPRISE_LIST_TITLE, url: '/', icon: LayoutList },
+  { title: '优质中小企业查询', url: '/current-enterprises', icon: Search },
   { title: '文件管理', url: '/files', icon: FolderOpen },
   // 识别校对:扫描件的逐页 OCR 结果在这里对着页图核对、改、删、导入(票 14 的页面半边)。
   { title: '识别校对', url: '/ocr', icon: ScanText },
@@ -33,6 +34,7 @@ const nav = [
 ]
 
 const adminNav = [
+  { title: '后台任务', url: '/tasks', icon: ListTodo },
   { title: '密钥配置', url: '/settings', icon: KeyRound },
 ]
 </script>

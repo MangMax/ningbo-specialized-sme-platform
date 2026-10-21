@@ -1,3 +1,4 @@
+import { serialize } from 'node:v8'
 import { mkdtempSync, rmSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -184,6 +185,22 @@ it('isolated HTTP chunk failure is atomic and corrected same-key retry preserves
   expect(await conflict.json()).toMatchObject({ error: { code: 'idempotency_conflict' } })
 }, 20_000)
 
+it('binary admission preserves a valid HTTP payload whose JSON representation exceeds its encoded byte bound', async () => {
+  const request = input()
+  const original = '\u0000_x0001_\ud800\r\n原始🙂' + '中文'.repeat(1024)
+  request.payload.exportSnapshot!.rows[0]!.rawFields.original = original
+  const maxBytes = Buffer.byteLength(JSON.stringify(request)) - 1
+  expect(serialize(request).byteLength).toBeLessThan(maxBytes)
+  const service = await isolatedApi({ maxBytes })
+  const response = await service.post(request)
+  expect(response.status).toBe(200)
+  const receipt = await response.json()
+  expect(receipt).toMatchObject({ status: 'committed', summary: { written: 301, failed: 0 } })
+  const rowId = receipt.items[0].detail.rows[0]
+  expect(await service.get('/source?id=' + rowId)).toMatchObject({ source: { sourceRowNo: 3, rawFields: { original } } })
+  expect(await (await service.post(request)).json()).toEqual(receipt)
+}, 20_000)
+
 it('admission byte overflow creates neither a worker nor a durable receipt', async () => {
   const { createImportExecutionWorker } = await import('../server/utils/import-execution-worker-location')
   let starts = 0
@@ -218,7 +235,7 @@ it.each(['inode', 'schema', 'migration'] as const)('rejects a changed admitted d
     await service.db.$client.backup(replacement)
     mutate = () => renameSync(replacement, service.path)
   } else if (change === 'schema') mutate = () => service.db.$client.exec('CREATE TABLE synthetic_schema_change(id INTEGER)')
-  else mutate = () => { service.db.$client.prepare("UPDATE __drizzle_migrations SET hash='synthetic-changed-receipt' WHERE created_at=1792400021006").run() }
+  else mutate = () => { service.db.$client.prepare("UPDATE __drizzle_migrations SET hash='synthetic-changed-receipt' WHERE created_at=(SELECT MAX(created_at) FROM __drizzle_migrations)").run() }
   const response = await service.post()
   expect(response.status).toBe(503)
   expect(await response.json()).toMatchObject({ error: { code: 'import_source_changed' } })

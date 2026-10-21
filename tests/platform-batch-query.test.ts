@@ -6,6 +6,7 @@ import { useDb } from '../db/client'
 import { updateCredential } from '../server/utils/credential-state'
 import { whenIdle } from '../server/utils/job-runner'
 import { handlePlatformBatchRequest } from '../server/utils/platform-batch-http'
+import { MAX_BATCH_ATTEMPTS } from '../lib/platform/batch-query'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-batch-'))
 const db = useDb({ dbPath: join(dir, 'test.sqlite') })
@@ -422,4 +423,88 @@ it('short credential components do not reject fixed numeric bounds or title sele
   const batch = (await invoke('status', undefined, (submitted.body as any).batchId)).body as any
   expect(batch).toMatchObject({ state: 'done', completeness: 'complete', attempt: 1 })
   expect(batch.items[0].segments[0]).toMatchObject({ status: 'no_record', titleScope: { rdjb: ['1'] } })
+})
+
+// ---------------------------------------------------------------------------
+// B-02（#120：平台局部重试保留已完成/部分结果）
+//
+// 批次只经**公开 submit** 产生（合成甲 第 2 页 503 停在未完成第 2 页，合成乙 一次完成），
+// 重试只经**公开 retry** 发起，断言只读公开 status。失败由外部条件造成（网关 503、
+// 连接被掐断），不往业务代码里塞故障，也不手写 job 表来"造证据"。
+// ---------------------------------------------------------------------------
+const evidenceItems = (batch: any) => [batch.items[0], batch.items[1]]
+
+/** 一次真实的"半截"批次：合成甲 第 2 页 503，合成乙 完成。`interrupted` 由用例控制。 */
+async function seedPartialBatch() {
+  const state = { interrupted: true }
+  upstream.mockImplementation(async (_url: string, init: any) => {
+    const p = new URLSearchParams(init.body); const n = Number(p.get('pageNum'))
+    if (p.get('qymc') === '合成甲' && n === 2 && state.interrupted) return { ok: false, status: 503, text: async () => '' }
+    return response('applyGrid', [{ qymc: '合成企业', tyshxydm: uscc, relation: String(n) }], n, p.get('qymc') === '合成甲' ? 2 : 1)
+  })
+  const receipt = (await invoke('submit', { items: [{ query: { source: 'queryList', name: '合成甲', pageSize: 1 } }, { query: { source: 'queryList', name: '合成乙', pageSize: 1 } }] })).body as any
+  await whenIdle()
+  const prior = (await invoke('status', undefined, receipt.batchId)).body as any
+  expect(prior).toMatchObject({ state: 'failed', completeness: 'partial', progress: { done: 1, total: 2 }, attempt: 1 })
+  expect(prior.items[0]).toMatchObject({ completeness: 'partial', unfinished: [{ source: 'queryList', rdjb: null, page: 2 }] })
+  expect(prior.items[1]).toMatchObject({ completeness: 'complete' })
+  upstream.mockReset()
+  return { receipt, prior, state }
+}
+
+it('B-02: an auth_failed or safety_limit stop is checkpointed by the same execution, not dropped at the break', async () => {
+  // runPlatformLiveQuery returns the whole segment including the failing page; runBatch admits
+  // it (usage/unfinished/persist) before the auth/safety break. Public submit + status only.
+  const failing: [string, Record<string, string>[], number][] = [
+    // page 2 answers 401 -> the returned segment carries [success, auth_failed]
+    ['auth', [{ qymc: '合成', tyshxydm: uscc }], 2],
+    // maxRequests=1 with a page that declares 2 rows -> safety_limit on the same segment
+    ['safety', [{ qymc: '合成', tyshxydm: uscc }], 2],
+  ]
+  for (const [label, rows, total] of failing) {
+    upstream.mockReset()
+    upstream.mockImplementation(async (_url: string, init: any) => {
+      const n = Number(new URLSearchParams(init.body).get('pageNum'))
+      if (label === 'auth' && n === 2) return { ok: false, status: 401, text: async () => '' }
+      return response('applyGrid', rows, n, total)
+    })
+    const query = label === 'auth' ? { source: 'queryList' as const, name: '合成', pageSize: 1 } : { source: 'queryList' as const, name: '合成', pageSize: 1, maxRequests: 1 }
+    const receipt = (await invoke('submit', { items: [{ query }] })).body as any
+    await whenIdle()
+    const after = (await invoke('status', undefined, receipt.batchId)).body as any
+    expect(after.state).toBe('failed')
+    expect(after.attempt).toBe(1)
+    const segment = after.items[0].segments[0]
+    if (label === 'auth') expect(segment.pages.map((p: any) => p.status)).toEqual(['success', 'auth_failed'])
+    else expect(segment.error?.code).toBe('safety_limit')
+    // Persisted evidence is what the previous checkpoint would have lost.
+    expect((await invoke('item', undefined, receipt.batchId, receipt.itemIds[0])).body).toMatchObject({ itemId: receipt.itemIds[0] })
+  }
+})
+
+it('B-02: a retry whose gateway keeps failing keeps the completed item and the original partial evidence', async () => {
+  const { receipt, prior, state } = await seedPartialBatch()
+  // 重试照常发起，但网关对补查页继续 503 —— 这一项仍然没有新产出。
+  upstream.mockImplementation(async () => ({ ok: false, status: 503, text: async () => '' }))
+  expect((await invoke('retry', { itemIds: [receipt.itemIds[0]] }, receipt.batchId)).status).toBe(202)
+  await whenIdle()
+  const after = (await invoke('status', undefined, receipt.batchId)).body as any
+  expect(after).toMatchObject({ state: 'failed', completeness: 'partial', progress: { done: 1, total: 2 }, attempt: 2 })
+  // 已完成项逐字段不变；未完成项保留原第 1 页，并只追加一次真实的失败记录。
+  expect(after.items[1]).toEqual(prior.items[1])
+  expect(after.items[0].segments[0]).toEqual(prior.items[0].segments[0])
+  expect(after.items[0].segments).toHaveLength(2)
+  expect(after.items[0].unfinished).toEqual([{ source: 'queryList', rdjb: null, page: 2 }])
+  state.interrupted = false
+})
+
+it('B-02: the ten-execution budget still ends a batch whose retries keep failing', async () => {
+  const { receipt } = await seedPartialBatch()
+  upstream.mockImplementation(async () => ({ ok: false, status: 503, text: async () => '' }))
+  for (let attempt = 2; attempt <= MAX_BATCH_ATTEMPTS; attempt++) {
+    expect((await invoke('retry', { itemIds: [receipt.itemIds[0]] }, receipt.batchId)).status).toBe(202)
+    await whenIdle()
+    expect(((await invoke('status', undefined, receipt.batchId)).body as any).attempt).toBe(attempt)
+  }
+  expect((await invoke('retry', { itemIds: [receipt.itemIds[0]] }, receipt.batchId)).status).toBe(409)
 })

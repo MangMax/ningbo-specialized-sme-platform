@@ -98,6 +98,11 @@ const id = computed(() => String(route.params.id ?? ''))
  * 免得把一个来路不明的字符串当路径用。
  */
 const backTo = computed(() => {
+  if (typeof route.query.currentBack === 'string') {
+    const query: Record<string, string> = {}
+    for (const [key, value] of new URLSearchParams(route.query.currentBack)) query[key] = value
+    return { path: '/current-enterprises', query }
+  }
   const comparison = sourceReturnTarget(route.query.returnTo)
   if (comparison) return comparison
   const raw = typeof route.query.back === 'string' ? route.query.back : ''
@@ -498,7 +503,7 @@ function openPreview(e: Evidence) {
 
       <PageHeader :title="detail.name">
         <template #breadcrumb>
-          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">{{ sourceReturnTarget(route.query.returnTo) ? '记录级对比' : '企业列表' }}</NuxtLink>
+          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">{{ route.query.currentBack != null ? '优质中小企业查询' : sourceReturnTarget(route.query.returnTo) ? '记录级对比' : '企业列表' }}</NuxtLink>
           <span class="mx-1.5">/</span>
           <span>企业详情</span>
         </template>

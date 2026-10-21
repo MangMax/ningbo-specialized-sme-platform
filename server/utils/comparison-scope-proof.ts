@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import * as schema from '../../db/schema'
@@ -168,9 +168,21 @@ export function resolveVerifiedComparisonEvidence(db: ProofExecutor, proofIds: n
   return { officialScopes, currentScopes }
 }
 
+/** Only these proofs can establish equivalence for the two endpoints. Selecting
+ * IDs first keeps unrelated official archives out of current-row validation. */
+export function currentRowProofIds(db: ProofExecutor, proofIds: number[], relationId: number, exportRowId: number): number[] {
+  if (!proofIds.length) return []
+  const p = schema.comparisonScopeProof
+  return db.select({ id:p.id }).from(p).where(and(
+    inArray(p.id,proofIds), eq(p.kind,'current_source_equivalence'),
+    sql`json_extract(${p.evidence}, '$.queryId') = (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.id} = ${relationId})`,
+    sql`json_extract(${p.evidence}, '$.exportBatchId') = (select ${schema.platformExportRow.batchId} from ${schema.platformExportRow} where ${schema.platformExportRow.id} = ${exportRowId})`,
+  )).all().map(row => row.id)
+}
+
 export function currentProofCoversRows(db: ProofExecutor, proofIds: number[], relationId: number, exportRowId: number) {
   const relation = db.select().from(schema.platformRelation).where(eq(schema.platformRelation.id, relationId)).get()
   const exportRow = db.select().from(schema.platformExportRow).where(eq(schema.platformExportRow.id, exportRowId)).get()
   if (!relation || !exportRow) return false
-  return resolveVerifiedComparisonEvidence(db, proofIds).currentScopes.some(proof => proof.queryId === relation.queryId && proof.exportBatchId === exportRow.batchId)
+  return resolveVerifiedComparisonEvidence(db, currentRowProofIds(db,proofIds,relationId,exportRowId)).currentScopes.some(proof => proof.queryId === relation.queryId && proof.exportBatchId === exportRow.batchId)
 }
