@@ -79,6 +79,30 @@ persisted unfinished ranges and a fresh submission-time snapshot. Pages whose
 successful response was never checkpointed remain unfinished and must be queried
 again; their outcome was not established to the caller.
 
+A retry that ends without producing a new result — the execution threw, was
+cancelled while still queued, or the kind is not wired up — keeps the previously
+checkpointed `result` and `progress` as they were and only records the terminal
+state and error. `finishJob` therefore omits the `result` column when the caller
+gives no result, and only an explicit `result: null` clears it. A handler that
+does run still owns its own output: `runBatch` re-applies its prior checkpoint
+and `persist()`s an incremented `attempt` before any platform request, so an
+execution that starts always writes a new result and the count reaches the
+ten-execution ceiling. Completed items, completed pages and unfinished positions
+never regress because an execution failed.
+
+An `auth_failed`, `safety_limit` or `queryBusList` stop is part of that
+execution's output: `runPlatformLiveQuery` returns the segment containing the
+failing page and `runBatch` admits it (usage, unfinished positions, `persist()`)
+before breaking, so the evidence is checkpointed rather than dropped.
+
+If the retry cannot capture its dependencies at all it fails in `prepare` before
+`reopenJob`: the job is not reopened and the request is rejected with a retryable
+error, so the previous terminal state and result stay in place. The platform
+`prepare` itself does not turn credential-storage errors into that rejection — it
+degrades the snapshot to an empty cookie (every page then records
+`credential_unavailable`) and only throws (400) for conditions that would echo a
+credential.
+
 ## Bounds
 
 - Items:1–50, max10 executions per batch.

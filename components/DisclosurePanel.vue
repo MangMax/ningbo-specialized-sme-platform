@@ -18,6 +18,12 @@ import {
  *   供需要保持表单实例/初始化回调的折叠使用。
  * - `instant`：仅供程序化收起（如点「开始对比」）跳过动画；手动开合仍有完整动画。
  * - `compact`：唯一的紧凑层级；两档之外不再有页面级折叠样式。
+ * - `headingLevel`：触发器**所在容器**的标题层级，默认 3（Accordion 官方默认，
+ *   全站不变）。层级落在包住触发器的那个标题元素上（`h2 > button`），按钮里
+ *   不再套标题 —— 按钮里的标题会被读屏念成“标题里的标题”。
+ *   页面**直接挂在 h1 下面**的折叠传 2：那时折叠标题就是该 h2 区块里的 h3，
+ *   而 Reka 的默认 h3 会与页面的 h2 同层，读屏按标题导航时看不出从属关系。
+ *   只扩这一层语义，不改 Reka 的键盘、`aria-expanded` 与高度动画。
  */
 
 const ITEM_VALUE = 'body'
@@ -39,6 +45,7 @@ const props = withDefaults(defineProps<{
   itemClass?: string
   triggerClass?: string
   contentClass?: string
+  headingLevel?: 2 | 3 | 4
 }>(), {
   open: null,
   keepMounted: false,
@@ -47,7 +54,12 @@ const props = withDefaults(defineProps<{
   collapsible: true,
   showIcon: true,
   padded: false,
+  headingLevel: 3,
 })
+
+/** Reka 的 AccordionHeader 接受 `as`，默认 h3。层级落在**包住触发器的那个标题
+ *  容器**上，按钮里不再套标题。 */
+const headerAs = computed(() => `h${props.headingLevel}` as 'h2' | 'h3' | 'h4')
 
 const emit = defineEmits<{ 'update:open': [open: boolean] }>()
 
@@ -83,7 +95,7 @@ function onUpdate(value: string | string[] | undefined) {
   >
     <AccordionItem :value="ITEM_VALUE" :class="['border-0', itemClass]">
       <slot name="header" />
-      <AccordionTrigger :class="triggerClasses">
+      <AccordionTrigger :class="triggerClasses" :header-as="headerAs">
         <span class="flex min-w-0 flex-1 items-center gap-2">
           <slot name="trigger">
             <slot name="title">

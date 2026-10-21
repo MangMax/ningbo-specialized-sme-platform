@@ -84,7 +84,7 @@ defineRouteMeta({
                 type: 'object', required: ['done', 'total'],
                 properties: { done: { type: 'integer' }, total: { type: 'integer' } },
               },
-              percent: { type: 'integer', minimum: 0, maximum: 100 },
+              percent: { type: 'integer', nullable: true, minimum: 0, maximum: 100, description: '当前名录导出未知总数时为 null。' },
               error: { type: 'string', nullable: true, description: '有错误时固定为「任务有错误，请读取详情」；完整脱敏正文在 detailUrl。' },
               createdAt: { type: 'string' },
               startedAt: { type: 'string', nullable: true },
@@ -106,7 +106,7 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   registerJobSpecs()
   const db = useDb()
   ensureJobRunnerReady(db)
@@ -132,5 +132,5 @@ export default defineEventHandler((event) => {
   if (q.view === 'summary') return listJobSummaries(db, query)
   const { rows, total } = listJobs(db, query)
 
-  return { rows: rows.map(jobReadProjector(db)), total }
+  return { rows: await Promise.all(rows.map(jobReadProjector(db))), total }
 })

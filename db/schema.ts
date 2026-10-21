@@ -432,6 +432,7 @@ export const job = sqliteTable(
   },
   (t) => [
     index('job_kind_idx').on(t.kind),
+    uniqueIndex('job_export_request_uq').on(t.kind, sql`json_extract(${t.params}, '$.clientRequestId')`).where(sql`${t.kind} = 'current-roster-export'`),
     index('job_state_idx').on(t.state),
     index('job_created_at_idx').on(t.createdAt),
   ],
@@ -828,6 +829,8 @@ export const differenceReason = sqliteTable(
     movedInTitleCode: text('moved_in_title_code').references(() => title.code),
     movedInYear: integer('moved_in_year'),
     movedInBatch: integer('moved_in_batch'),
+    /** Explicit reviewed qualification; migration alone never supplies it. */
+    currentQualification: text('current_qualification', { mode: 'json' }).$type<{ titleCode: string; validFrom: string; validUntil: string; basis: string; publicationCheck: { status: 'not_found' | 'not_checked'; scope: string } }>(),
     /** 核验状态:`confirmed` 已确认 / `pending` 待核实。 */
     verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] })
       .notNull()

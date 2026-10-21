@@ -49,7 +49,7 @@ defineRouteMeta({
                       type: 'object',
                       properties: { done: { type: 'integer' }, total: { type: 'integer' } },
                     },
-                    percent: { type: 'integer', description: '派生量(0–100,向下取整)。' },
+                    percent: { type: 'integer', nullable: true, description: '派生量(0–100)，当前名录导出未知总数时 null。' },
                     params: { type: 'object' },
                     result: {
                       type: 'object',
@@ -74,7 +74,7 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   registerJobSpecs()
   const id = getRouterParam(event, 'id')
   // 形状先判:把「id 写错了」(400)与「查无此任务」(404)分开,

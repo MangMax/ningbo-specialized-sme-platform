@@ -9,13 +9,24 @@ import {
   AccordionTrigger,
 } from "reka-ui"
 
-const props = defineProps<AccordionTriggerProps & { class?: HTMLAttributes["class"] }>()
+const props = defineProps<AccordionTriggerProps & {
+  class?: HTMLAttributes["class"]
+  /**
+   * The heading level of the **header container** that wraps the trigger.
+   *
+   * The level belongs to that container (Reka's `AccordionHeader`), not to the
+   * button: a heading nested inside the button would read as a heading inside
+   * a heading. Left unset, Reka's own default (h3) applies.
+   */
+  headerAs?: "h2" | "h3" | "h4"
+}>()
 
-const delegatedProps = reactiveOmit(props, "class")
+// `headerAs` belongs to the header container, not to the button.
+const delegatedProps = reactiveOmit(props, "class", "headerAs")
 </script>
 
 <template>
-  <AccordionHeader class="flex">
+  <AccordionHeader class="flex" :as="headerAs">
     <AccordionTrigger
       data-slot="accordion-trigger"
       v-bind="delegatedProps"
