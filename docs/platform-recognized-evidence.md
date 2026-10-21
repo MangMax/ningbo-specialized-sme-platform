@@ -55,3 +55,18 @@ partial/失败/未查询必须保留每个未完成称号的实际 next/failed p
 ## 验收边界
 
 `tests/platform-recognized-evidence.test.ts` 使用公开 HTTP 写入/历史读取、MCP 注册工具、真实临时 SQLite 和合成分页响应/凭据，覆盖三称号、同码多行、跨来源同 ID、原时间、零/partial/登录失败/未查询、缺元数据、来源/身份/称号冲突、幂等及存储故障回滚、自然键决定引用。旧双接口回归另跑既有测试。该证据不等于实平台账号验收、真实归档补录、生产数据库执行或 #60 界面验收；本票没有执行这些操作。
+
+
+## 当前有效查询的返回字段投影（#155，窄经验契约）
+
+2026-10-18 原始平台浏览器观察（同账号、同名称关键词范围）保留了控件标签、实际 POST 和相同精确统代×称号×未变返回字段的配对：innovative_sme 有效年 2026 为零，2027 返回两个 date-only `rddqrq` 在 2027 年的记录；维护年 2023 仅返回 `whpc=2023-2`、返回 `whpcyear` 为空的记录，排除 `2024-2`。这支持以下有界投影，不证明通用后端公式、当前平台行为或完整业务验收。
+
+- 仅经确认对应的 `recognized_list` / `queryBusList` 行，并在调用处核对单称号 scope、query title 与多称号归档的行位置后，允许 `innovative_sme` 的合法 date-only `YYYY-MM-DD` 型 `rddqrq` 投影有效年。它不是精确失效日或生命周期 dueYear。
+- 返回 `whpcyear` 为空/缺失，且 `whpc` 是 `YYYY-N`（N 为 1–15）时，仅年份前缀投影维护年，保留原来源对应/query ID；不改写原返回 `whpcyear`，维护批次仍为 null。
+- 没有找到“维护年2023 AND 批次2”正向命中观察。单独批次1却返回两个后缀2记录，是已有反例。因此后缀、提交的批次条件不能构成批次事实、选项或正向命中。批次输入仍要求附维护年；其存在不补充返回行事实。
+- datetime `rddqrq`、非空返回 `whpcyear`（包括与 composite 同年）、plain numeric batch、其他称号和表示均未知。有效年与维护年独立判定；未知维度不删除未筛选的 eligible 企业。
+- 查询年份条件只与独立返回年份作一致性校验，不能填缺值。同授予已知年份冲突清空该维度；缺值见证不继承另一来源的事实，AND 仍要求同一授予的同一来源行。partial/失败归档不提供确定筛选事实，原资格和证据引用保留。
+
+证据链：Git 外 `spec153/returned-field-semantics-evidence.md` FOLLOW-UP、`review155-field-evidence-assessment.md`，原始观察会话 `01a14cde-e047-7ee3-9fd9-a20fb4282af8` 行209/214/221；安全配对摘录 SHA256 `9334e0f87893fcef1fbe2f7e0307e9a0402ff9232f128517dc94957b6c028ff8`。主体关联是精确统代×称号，不是 raw row-ID 证明。不得扩展到其他账号/格式、时区或精确到期语义。
+
+本投影仅由 `current-qualification.ts` 的 recognized-list 筛选调用使用。旧业务接口/平台导出的已清洗事件、正式公布认定年份和迁入资格契约仍按原有资格流程处理；它们不经此 parser，本次不收窄或删除这些独立事实来源。新 recognized-list 原始字段不得填入旧标准化字段的边界见上文。
