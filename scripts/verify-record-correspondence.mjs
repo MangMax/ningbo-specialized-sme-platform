@@ -15,9 +15,15 @@ import { createHash, randomBytes } from 'node:crypto'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
 import { minimalPdf } from '../tests/helpers/minimal-pdf.ts'
 import { startIsolatedNuxt } from './lib/isolated-local-services.mjs'
 import ExcelJS from 'exceljs'
+
+// Use the SDK version owned by the installed MCP toolkit, just like the server.
+const toolkitRequire = createRequire(import.meta.resolve('@nuxtjs/mcp-toolkit'))
+const { Client } = toolkitRequire('@modelcontextprotocol/sdk/client/index.js')
+const { StreamableHTTPClientTransport } = toolkitRequire('@modelcontextprotocol/sdk/client/streamableHttp.js')
 
 const mode = process.argv.includes('--serve') ? 'serve'
   : process.argv.includes('--fixture-only') ? 'fixture-only'
@@ -27,6 +33,8 @@ const files = join(root, 'files')
 const manifestPath = process.env.SPEC63_FIXTURE_MANIFEST ?? (mode === 'serve' || mode === 'fixture-only'
   ? '/tmp/spec63-acceptance-fixture.json' : join(root, 'fixture.json'))
 const privatePath = join(root, 'owned-session.json')
+const faultFlag = join(root, 'inject-sqlite-fault')
+const faultPreload = join(root, 'sqlite-fault.cjs')
 const apiToken = randomBytes(32).toString('hex')
 const mcpToken = randomBytes(32).toString('hex')
 const nonce = randomBytes(8).toString('hex')
@@ -246,15 +254,22 @@ async function decide(label, operations, transport = 'rest', proofIds) {
   assert.deepEqual(committed.impact, planned.impact)
   return { input, planned, committed }
 }
-let rpcId = 0
+const mcpClients = new Map()
+async function mcpClient(auth) {
+  if (!mcpClients.has(auth)) {
+    const client = new Client({ name: 'record-correspondence-synthetic-verifier', version: '1.0.0' })
+    await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), {
+      requestInit: { headers: auth ? { authorization: `Bearer ${mcpToken}` } : {} },
+    }))
+    mcpClients.set(auth, client)
+  }
+  return mcpClients.get(auth)
+}
 async function mcpRpc(method, params, auth = false) {
-  const response = await fetch(base + '/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18', ...(auth ? { authorization: `Bearer ${mcpToken}` } : {}) }, body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }) })
-  const raw = await response.text()
-  assert.equal(response.status, 200, `MCP ${method} HTTP ${response.status}: ${raw.slice(0, 400)}`)
-  const line = raw.startsWith('event:') ? raw.split('\n').find(text => text.startsWith('data: '))?.slice(6) : raw
-  const rpc = JSON.parse(line)
-  assert.ok(!rpc.error, `MCP ${method}: ${JSON.stringify(rpc.error)}`)
-  return rpc.result
+  const client = await mcpClient(auth)
+  if (method === 'tools/list') return client.listTools(params)
+  assert.equal(method, 'tools/call')
+  return client.callTool(params)
 }
 async function mcpCall(name, args, auth = false) {
   const result = await mcpRpc('tools/call', { name, arguments: args }, auth)
@@ -262,8 +277,59 @@ async function mcpCall(name, args, auth = false) {
   return JSON.parse(result.content[0].text)
 }
 
+async function correspondenceState() {
+  const list = await get('/api/roster/correspondences?pageSize=200')
+  assert.equal(list.rows.length, list.total, 'synthetic state snapshot must include every correspondence')
+  const audits = await Promise.all(list.rows.map(row => get(`/api/roster/correspondences/${row.id}/audit?pageSize=200`)))
+  for (const audit of audits) assert.equal(audit.rows.length, audit.total)
+  return { list, audits }
+}
+async function errorParity(name, args, path, code, status, auth = false, body) {
+  const before = await correspondenceState()
+  const rest = await request(body === undefined ? 'GET' : 'POST', path, body, { auth, allow: [status] })
+  assert.equal(rest.value.error.code, code)
+  const result = await mcpRpc('tools/call', { name, arguments: args }, auth)
+  assert.equal(result.isError, true)
+  assert.equal(result.content.length, 1)
+  assert.equal(result.content[0].type, 'text')
+  const error = JSON.parse(result.content[0].text).error
+  assert.equal(error.code, code)
+  assert.equal(typeof error.message, 'string')
+  assert.ok(error.message.length > 0)
+  if (code !== 'invalid_request') assert.deepEqual(error, rest.value.error)
+  assert.deepEqual(await correspondenceState(), before, 'rejected REST/MCP calls must preserve all edges and audits')
+  if (body) {
+    const input = body.request ?? body
+    if (input.idempotencyKey) {
+      const receipt = await request('GET', `/api/roster/correspondences/batches/${encodeURIComponent(input.idempotencyKey)}`, undefined, { auth: true, allow: [404] })
+      assert.equal(receipt.value.error.code, 'not_found', 'rejected request must not have a committed receipt')
+    }
+  }
+  return result
+}
+
 async function verifyAvailable() {
   const f = fixture
+  await checked('MCP not_found retains the REST code and marks tool failure', async () => {
+    const rest = await request('GET', '/api/roster/correspondences/2147483647', undefined, { allow: [404] })
+    assert.equal(rest.value.error.code, 'not_found')
+    const result = await mcpRpc('tools/call', { name: 'get_record_correspondence', arguments: { id: 2147483647 } })
+    assert.equal(result.isError, true)
+    assert.deepEqual(JSON.parse(result.content[0].text), { error: { code: 'not_found', message: 'Correspondence not found' } })
+  })
+  await checked('MCP invalid_request keeps the REST code without echoing rejected request text', async () => {
+    const before = await correspondenceState()
+    const rawKey = 'token=synthetic-secret /Users/synthetic-private/rejected-field'
+    const input = decision('redacted-validation', [{ ...create({ type: 'event_process', eventId: f.events.A[0], relationId: f.relations[0][0], role: 'context_only' }), [rawKey]: true }])
+    const rest = await request('POST', '/api/roster/correspondences/preflight', input, { auth: true, allow: [400] })
+    assert.equal(rest.value.error.code, 'invalid_request')
+    const result = await mcpRpc('tools/call', { name: 'preflight_record_correspondences', arguments: input }, true)
+    assert.equal(result.isError, true)
+    const body = JSON.parse(result.content[0].text)
+    assert.equal(body.error.code, rest.value.error.code)
+    assert.ok(!JSON.stringify(result).includes(rawKey), 'MCP validation must not echo untrusted request text')
+    assert.deepEqual(await correspondenceState(), before)
+  })
   await checked('formal PDF registration, hash, and page 3 provenance', async () => {
     const event = await get(`/api/roster/correspondences/events/${f.events.C[1]}`)
     assert.equal(event.source.id, f.events.C[1])
@@ -374,6 +440,9 @@ async function verifyAvailable() {
     await decide('revision-winner', [{ action: 'decide', correspondenceId: id, expectedRevision: 1, status: 'rejected' }])
     const rejected = await request('POST', '/api/roster/correspondences/commit', { request: stale, planHash: stalePlan.planHash }, { auth: true, allow: [409] })
     assert.ok(['stale_revision', 'plan_mismatch'].includes(rejected.value.error.code))
+    const staleMcp = await mcpRpc('tools/call', { name: 'save_record_correspondences', arguments: { request: stale, planHash: stalePlan.planHash } }, true)
+    assert.equal(staleMcp.isError, true)
+    assert.deepEqual(JSON.parse(staleMcp.content[0].text), rejected.value)
     const before = await get('/api/roster/correspondences')
     assert.equal(before.rows.filter(item => item.relationId === f.relations[12][6]).length, 0)
     const replay = await post('/api/roster/correspondences/commit', { request: first.input, planHash: first.planned.planHash })
@@ -393,6 +462,7 @@ async function verifyAvailable() {
     assert.ok(authenticated.tools.some(item => item.name === 'preflight_record_correspondences'))
     assert.ok(authenticated.tools.some(item => item.name === 'save_record_correspondences'))
     const written = await decide('mcp-parity', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][1], role: 'context_only' }, 'candidate')], 'mcp')
+    f.mcpDecision = written
     f.edgeIds.mcpCandidate = written.committed.correspondenceIds[0]
     const rest = await get(`/api/roster/correspondences/${written.committed.correspondenceIds[0]}`)
     const mcp = await mcpCall('get_record_correspondence', { id: rest.id })
@@ -429,6 +499,117 @@ async function verifyAvailable() {
     assert.ok(Array.isArray(legacy.rows))
     assert.ok(Array.isArray(legacy.dataIssues))
     assert.ok(Array.isArray(legacy.modelIssues))
+  })
+}
+
+async function verifyMcpErrors() {
+  const f = fixture
+  const missing = 2147483647
+  await checked('MCP missing source, audit, candidates, and receipt retain not_found', async () => {
+    await errorParity('get_record_correspondence_source', { kind: 'event', id: missing }, `/api/roster/correspondences/events/${missing}`, 'not_found', 404)
+    await errorParity('get_record_correspondence_audit', { id: missing }, `/api/roster/correspondences/${missing}/audit`, 'not_found', 404)
+    await errorParity('get_record_correspondence_batch', { idempotencyKey: 'synthetic-missing' }, '/api/roster/correspondences/batches/synthetic-missing', 'not_found', 404, true)
+    const args = { eventId: missing, queryIds: [f.queryIds[0]], ruleVersion: '1' }
+    await errorParity('find_record_correspondence_candidates', args, '/api/roster/correspondences/candidates', 'not_found', 404, false, args)
+  })
+  const cases = [
+    ['invalid_endpoint_type', [create({ type: 'event_process', eventId: f.events.A[0], relationId: f.relations[7][0], role: 'context_only' })]],
+    ['identity_conflict', [create({ type: 'event_process', eventId: f.events.A[0], relationId: f.relations[2][0], role: 'context_only' })]],
+    ['title_conflict', [create({ type: 'event_process', eventId: f.events.Dinnovative[0], relationId: f.relations[5][0], role: 'context_only' })]],
+    ['ambiguous_candidate', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][6], role: 'context_only' }, 'candidate'), create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][6], role: 'context_only' }, 'candidate')]],
+    ['incomplete_coverage', [create({ type: 'recognized_export', relationId: f.relations[7][0], exportRowId: f.exportRows[0], role: 'same_current_row' })]],
+    ['stale_revision', [{ action: 'decide', correspondenceId: f.edgeIds.mcpCandidate, expectedRevision: 999, status: 'unlinked' }]],
+  ]
+  for (const [code, operations] of cases) await checked(`MCP ${code} matches REST and preserves edges, audits, and receipts`, async () => {
+    const input = decision(`error-${code}`, operations)
+    await errorParity('preflight_record_correspondences', input, '/api/roster/correspondences/preflight', code, code === 'stale_revision' ? 409 : 422, true, input)
+  })
+  await checked('MCP plan_mismatch rejects absent and changed plans without commit effects', async () => {
+    const input = decision('error-plan-mismatch', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][6], role: 'context_only' }, 'candidate')])
+    const args = { request: input, planHash: '0'.repeat(64) }
+    await errorParity('save_record_correspondences', args, '/api/roster/correspondences/commit', 'plan_mismatch', 409, true, args)
+    const planned = await post('/api/roster/correspondences/preflight', input)
+    assert.notEqual(planned.planHash, args.planHash)
+    await errorParity('save_record_correspondences', args, '/api/roster/correspondences/commit', 'plan_mismatch', 409, true, args)
+  })
+  await checked('MCP idempotency_conflict preserves the original receipt and audit', async () => {
+    const before = await correspondenceState()
+    const input = { ...f.mcpDecision.input, basis: 'changed evidence' }
+    const rest = await request('POST', '/api/roster/correspondences/preflight', input, { auth: true, allow: [409] })
+    assert.equal(rest.value.error.code, 'idempotency_conflict')
+    const result = await mcpRpc('tools/call', { name: 'preflight_record_correspondences', arguments: input }, true)
+    assert.equal(result.isError, true)
+    assert.deepEqual(JSON.parse(result.content[0].text), rest.value)
+    assert.deepEqual(await get(`/api/roster/correspondences/batches/${encodeURIComponent(input.idempotencyKey)}`, { auth: true }), f.mcpDecision.committed)
+    assert.deepEqual(await correspondenceState(), before)
+  })
+  await checked('MCP auth hides protected tools and rejects forced calls at HTTP 401', async () => {
+    const before = await correspondenceState()
+    const names = (await (await mcpClient(false)).listTools()).tools.map(tool => tool.name)
+    const input = decision('error-auth', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][6], role: 'context_only' }, 'candidate')])
+    for (const [name, args] of [['preflight_record_correspondences', input], ['save_record_correspondences', { request: input, planHash: '0'.repeat(64) }], ['get_record_correspondence_batch', { idempotencyKey: input.idempotencyKey }]]) {
+      assert.ok(!names.includes(name))
+      await assert.rejects(() => mcpRpc('tools/call', { name, arguments: args }), error => error.code === 401)
+    }
+    const rest = await request('POST', '/api/roster/correspondences/preflight', input, { allow: [401] })
+    assert.equal(rest.value.error.code, 'unauthorized')
+    assert.deepEqual(await correspondenceState(), before)
+    report.auth = { discovery: 'protected tools hidden', forcedSdkCall: 'HTTP 401 transport rejection; no CallToolResult', rest: 'HTTP 401 unauthorized' }
+  })
+  await checked('MCP success parity covers preflight, replay, point read, source, pagination, audit, and receipt', async () => {
+    const before = await correspondenceState()
+    const { input, committed } = f.mcpDecision
+    const planned = await post('/api/roster/correspondences/preflight', input)
+    assert.equal(planned.batchStatus, 'committed')
+    assert.deepEqual(await mcpCall('preflight_record_correspondences', input, true), planned)
+    const args = { request: input, planHash: committed.planHash }
+    assert.deepEqual(await mcpCall('save_record_correspondences', args, true), committed)
+    assert.deepEqual(await post('/api/roster/correspondences/commit', args), committed)
+    for (const page of [1, 2]) {
+      assert.deepEqual(await mcpCall('list_record_correspondences', { page, pageSize: 1, view: 'summary' }), await get(`/api/roster/correspondences?page=${page}&pageSize=1&view=summary`))
+      assert.deepEqual(await mcpCall('get_record_correspondence_audit', { id: committed.correspondenceIds[0], page, pageSize: 1 }), await get(`/api/roster/correspondences/${committed.correspondenceIds[0]}/audit?page=${page}&pageSize=1`))
+    }
+    assert.deepEqual(await mcpCall('get_record_correspondence', { id: committed.correspondenceIds[0] }), await get(`/api/roster/correspondences/${committed.correspondenceIds[0]}`))
+    assert.deepEqual(await mcpCall('get_record_correspondence_source', { kind: 'event', id: f.events.H[0] }), await get(`/api/roster/correspondences/events/${f.events.H[0]}`))
+    const candidateArgs = { eventId: f.events.G[0], queryIds: [f.queryIds[11]], ruleVersion: '1' }
+    assert.deepEqual(await mcpCall('find_record_correspondence_candidates', candidateArgs), await post('/api/roster/correspondences/candidates', candidateArgs, { auth: false }))
+    assert.deepEqual(await mcpCall('get_record_correspondence_batch', { idempotencyKey: input.idempotencyKey }, true), committed)
+    assert.deepEqual(await correspondenceState(), before, 'same-key replay must not append audit or change business state')
+  })
+}
+
+async function verifyUnknownError() {
+  await checked('MCP unknown SQLite failure is sanitized and cannot spoof a domain code', async () => {
+    const before = await correspondenceState()
+    writeFileSync(faultFlag, 'read')
+    try {
+      const result = await mcpRpc('tools/call', { name: 'list_record_correspondences', arguments: {} })
+      assert.equal(result.isError, true)
+      assert.deepEqual(JSON.parse(result.content[0].text), { error: { code: 'internal_error', message: 'Correspondence operation failed' } })
+      const publicText = JSON.stringify(result)
+      for (const secret of ['SYNTHETIC-DB-FAULT', 'synthetic-secret', '/Users/synthetic-private', 'stack-sentinel', apiToken, mcpToken]) {
+        assert.ok(!publicText.includes(secret), 'unknown error must not expose raw exception details')
+      }
+    } finally { unlinkSync(faultFlag) }
+    assert.deepEqual(await correspondenceState(), before)
+  })
+  await checked('MCP unknown write failure rolls back edges and audit and leaves no committed receipt', async () => {
+    const f = fixture
+    const input = decision('unknown-write', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][6], role: 'context_only' }, 'candidate')])
+    const planned = await post('/api/roster/correspondences/preflight', input)
+    const args = { request: input, planHash: planned.planHash }
+    const before = await correspondenceState()
+    writeFileSync(faultFlag, 'audit')
+    try {
+      const result = await mcpRpc('tools/call', { name: 'save_record_correspondences', arguments: args }, true)
+      assert.equal(result.isError, true)
+      assert.deepEqual(JSON.parse(result.content[0].text), { error: { code: 'internal_error', message: 'Correspondence operation failed' } })
+      const rest = await request('POST', '/api/roster/correspondences/commit', args, { auth: true, allow: [500] })
+      assert.equal(rest.status, 500)
+    } finally { unlinkSync(faultFlag) }
+    assert.deepEqual(await correspondenceState(), before)
+    const receipt = await request('GET', `/api/roster/correspondences/batches/${encodeURIComponent(input.idempotencyKey)}`, undefined, { auth: true, allow: [404] })
+    assert.equal(receipt.value.error.code, 'not_found')
   })
 }
 
@@ -662,11 +843,31 @@ async function verifyFinalDisplay() {
 
 async function main() {
   try {
+    // Test-only fault at the SQLite driver boundary, loaded solely by this owned
+    // child. No application tables or production hooks are changed for injection.
+    const localRequire = createRequire(import.meta.url)
+    writeFileSync(faultPreload, `
+      const Database = require(${JSON.stringify(localRequire.resolve('better-sqlite3'))})
+      const { existsSync, readFileSync } = require('node:fs')
+      const prepare = Database.prototype.prepare
+      Database.prototype.prepare = function (...args) {
+        const fault = existsSync(${JSON.stringify(faultFlag)}) ? readFileSync(${JSON.stringify(faultFlag)}, 'utf8') : ''
+        const sql = String(args[0])
+        if ((fault === 'read' && !sql.includes('"service_credential"')) || (fault === 'audit' && sql.startsWith('insert into "record_correspondence_audit"'))) {
+          const error = new Error('SYNTHETIC-DB-FAULT token=synthetic-secret /Users/synthetic-private/roster.db')
+          error.code = 'not_found'
+          error.stack = 'stack-sentinel: ' + error.message
+          throw error
+        }
+        return prepare.apply(this, args)
+      }
+    `, { mode: 0o600 })
     service = await startIsolatedNuxt({ cwd: resolve(import.meta.dirname, '..'),
       portHint: Number(process.env.SPEC63_PORT ?? 0), env: {
         NUXT_DB_PATH: join(root, 'roster.db'), NUXT_FILES_DIR: files,
         NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_API_TOKEN: apiToken,
         NUXT_MCP_TOKEN: mcpToken, NUXT_MIIT_COOKIE: '', MIIT_COOKIE: '', NUXT_IGNORE_LOCK: '1',
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --require ${JSON.stringify(faultPreload)}`,
       } })
     base = service.baseUrl
     fixture = await seed()
@@ -689,8 +890,10 @@ async function main() {
     console.log(`Synthetic fixture manifest: ${manifestPath}`)
     if (mode !== 'fixture-only') {
       await verifyAvailable()
+      await verifyMcpErrors()
       const proofs = await verifyProof()
       await verifyFinalDisplay()
+      await verifyUnknownError()
       if (proofs) {
         manifest.proofIds = proofs
         manifest.comparisonWithOfficialProofUrl = base + comparisonPath(fixture.queryIds, fixture.exportBatches, [proofs.confirmedOfficial])
@@ -714,6 +917,7 @@ async function main() {
       await new Promise(resolve => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve) })
     }
   } finally {
+    await Promise.all([...mcpClients.values()].map(client => client.close()))
     await service?.stop()
     if (mode === 'acceptance' || mode === 'setup') {
       rmSync(root, { recursive: true, force: true })
