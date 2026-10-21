@@ -55,4 +55,9 @@ redaction, and unknown read/write faults. Unknown faults use a temporary preload
 at the owned child's SQLite driver boundary; the write fault occurs when an
 audit insert is prepared, after the edge insert, and verifies transaction rollback
 via public reads and receipt lookup. The verifier never directly edits application
-tables. It does not establish browser or production acceptance.
+tables. The same error boundary includes database acquisition: an uncached
+`useDb()` initialization failure returns the fixed `internal_error` envelope.
+The verifier injects an acquisition-time `mkdirSync` EACCES for all eight tools,
+checks secret/path redaction through the SDK, and verifies unchanged edges/audits
+and no committed receipt through REST. This uses only the owned child's temporary
+filesystem preload. It does not establish browser or production acceptance.

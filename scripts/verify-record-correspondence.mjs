@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
@@ -35,6 +35,7 @@ const manifestPath = process.env.SPEC63_FIXTURE_MANIFEST ?? (mode === 'serve' ||
 const privatePath = join(root, 'owned-session.json')
 const faultFlag = join(root, 'inject-sqlite-fault')
 const faultPreload = join(root, 'sqlite-fault.cjs')
+const acquisitionHits = join(root, 'db-acquisition-hits')
 const apiToken = randomBytes(32).toString('hex')
 const mcpToken = randomBytes(32).toString('hex')
 const nonce = randomBytes(8).toString('hex')
@@ -579,6 +580,39 @@ async function verifyMcpErrors() {
 }
 
 async function verifyUnknownError() {
+  await checked('MCP database acquisition failure is sanitized for all eight correspondence tools', async () => {
+    const f = fixture
+    const before = await correspondenceState()
+    const input = decision('unknown-acquisition', [create({ type: 'event_process', eventId: f.events.H[0], relationId: f.relations[12][6], role: 'context_only' }, 'candidate')])
+    const planned = await post('/api/roster/correspondences/preflight', input)
+    const calls = [
+      ['list_record_correspondences', {}, false],
+      ['get_record_correspondence', { id: f.edgeIds.awardA }, false],
+      ['get_record_correspondence_source', { kind: 'event', id: f.events.H[0] }, false],
+      ['get_record_correspondence_audit', { id: f.edgeIds.awardA }, false],
+      ['find_record_correspondence_candidates', { eventId: f.events.H[0], ruleVersion: '1' }, false],
+      ['preflight_record_correspondences', input, true],
+      ['save_record_correspondences', { request: input, planHash: planned.planHash }, true],
+      ['get_record_correspondence_batch', { idempotencyKey: input.idempotencyKey }, true],
+    ]
+    writeFileSync(acquisitionHits, '')
+    writeFileSync(faultFlag, 'acquire')
+    try {
+      for (const [name, args, auth] of calls) {
+        const result = await mcpRpc('tools/call', { name, arguments: args }, auth)
+        assert.equal(result.isError, true, name)
+        const publicText = JSON.stringify(result)
+        for (const secret of ['SYNTHETIC-DB-ACQUISITION', 'synthetic-secret', '/Users/synthetic-private', 'stack-sentinel', 'EACCES', root, apiToken, mcpToken]) {
+          assert.ok(!publicText.includes(secret), `${name} must not expose database acquisition details`)
+        }
+        assert.deepEqual(result.content, [{ type: 'text', text: JSON.stringify({ error: { code: 'internal_error', message: 'Correspondence operation failed' } }) }], name)
+      }
+    } finally { unlinkSync(faultFlag) }
+    assert.equal(readFileSync(acquisitionHits, 'utf8'), 'mkdir\n'.repeat(calls.length), 'each tool must reach uncached useDb mkdirSync, before any SQL')
+    assert.deepEqual(await correspondenceState(), before)
+    const receipt = await request('GET', `/api/roster/correspondences/batches/${encodeURIComponent(input.idempotencyKey)}`, undefined, { auth: true, allow: [404] })
+    assert.equal(receipt.value.error.code, 'not_found')
+  })
   await checked('MCP unknown SQLite failure is sanitized and cannot spoof a domain code', async () => {
     const before = await correspondenceState()
     writeFileSync(faultFlag, 'read')
@@ -849,6 +883,31 @@ async function main() {
     writeFileSync(faultPreload, `
       const Database = require(${JSON.stringify(localRequire.resolve('better-sqlite3'))})
       const { existsSync, readFileSync } = require('node:fs')
+      const fs = require('node:fs')
+      const path = require('node:path')
+      const resolve = path.resolve
+      const mkdir = fs.mkdirSync
+      const acquisitionDir = ${JSON.stringify(join(root, 'uncached-acquisition'))}
+      // Only the owned child's configured DB path is redirected, forcing a real
+      // useDb cache miss. Its mkdirSync then fails before opening SQLite.
+      path.resolve = function (...args) {
+        if (args.length === 1 && args[0] === process.env.NUXT_DB_PATH && existsSync(${JSON.stringify(faultFlag)}) && readFileSync(${JSON.stringify(faultFlag)}, 'utf8') === 'acquire') {
+          return acquisitionDir + '/roster.db'
+        }
+        return resolve.apply(this, args)
+      }
+      fs.mkdirSync = function (dir, ...args) {
+        if (dir === acquisitionDir) {
+          fs.appendFileSync(${JSON.stringify(acquisitionHits)}, 'mkdir\\n')
+          const error = new Error('SYNTHETIC-DB-ACQUISITION EACCES token=synthetic-secret /Users/synthetic-private/roster.db ' + process.env.NUXT_MCP_TOKEN)
+          error.code = 'EACCES'
+          error.path = dir
+          error.stack = 'stack-sentinel: ' + error.message
+          throw error
+        }
+        return mkdir.call(this, dir, ...args)
+      }
+      require('node:module').syncBuiltinESMExports()
       const prepare = Database.prototype.prepare
       Database.prototype.prepare = function (...args) {
         const fault = existsSync(${JSON.stringify(faultFlag)}) ? readFileSync(${JSON.stringify(faultFlag)}, 'utf8') : ''
