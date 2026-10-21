@@ -8,6 +8,8 @@ import { afterEach, expect, expectTypeOf, it, vi } from 'vitest'
 import ExcelJS from 'exceljs'
 import { useDb, schema as s } from '../db/client'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
+import { readCurrentCandidate } from '../lib/roster/current-qualification'
+import { currentWorkbookValues } from '../lib/roster/current-workbook-presentation'
 
 vi.mock('node:fs', async importOriginal => {
   const filesystem = await importOriginal<typeof import('node:fs')>()
@@ -133,9 +135,86 @@ it('renders recognition and review facts with real source pages and usable sheet
   expect(sheet.views[0]).toMatchObject({state:'frozen',xSplit:2,ySplit:1})
   expect(sheet.autoFilter).toBe('A1:L2')
   expect(sheet.pageSetup.orientation).toBe('landscape')
+  expect(sheet.pageSetup.paperSize).toBe(66)
   expect(sheet.pageSetup.fitToWidth).toBe(1)
   expect(sheet.pageSetup.fitToHeight).toBe(0)
   expect(sheet.pageSetup.printTitlesRow).toBe('1:1')
+})
+
+it('labels each award and review citation with its actual source and distinct document context', async () => {
+  const { db, file } = fixture()
+  const id = candidate(db, '多次公布主体')
+  const record = db.select().from(s.record).all().find(item => item.enterpriseId === id)!
+  const first = db.select().from(s.recordEvent).all().find(item => item.recordId === record.id)!
+  db.update(s.recordEvent).set({year:2023,batchSeq:1}).run()
+  db.update(s.recordEvidence).set({sourceFile:'jxj/announcement/2023/1/名单.xlsx',attachment:'认定名单',listNo:7}).run()
+  const later = db.insert(s.recordEvent).values({recordId:record.id,eventType:'review',year:2023,batchSeq:1,decidedYear:new Date().getFullYear(),reviewOutcome:'passed'}).returning().get()
+  db.insert(s.recordEvidence).values({recordEventId:later.id,sourceFile:'jxj/announcement/2024/2/名单.xlsx',attachment:'复核名单',listNo:9}).run()
+  db.insert(s.recordEvidence).values({recordEventId:later.id,sourceFile:'jxj/announcement/2024/3/名单.xlsx',attachment:'补充复核名单',listNo:10}).run()
+  const platform = db.insert(s.record).values({enterpriseId:id,titleCode:'little_giant',source:'miit',nameRaw:'多次公布主体'}).returning().get()
+  const snapshot = db.insert(s.recordEvent).values({recordId:platform.id,eventType:'maintain',year:2024}).returning().get()
+  db.insert(s.recordEvidence).values({recordEventId:snapshot.id,sourceFile:'miit/export/2024/名单.xlsx',attachment:'平台导出',listNo:11}).run()
+  await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{})
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
+  const citation = String(workbook.getWorksheet('有效企业')!.getCell('L2').value)
+  expect(citation).toContain('2023年第1批认定：')
+  expect(citation).toContain('2023年第1批《名单.xlsx》，附件：认定名单，名单序号7')
+  expect(citation).toContain(`${new Date().getFullYear()}年复核通过：`)
+  expect(citation).toContain('2024年第2批《名单.xlsx》，附件：复核名单，名单序号9')
+  expect(citation).toContain('2024年第3批《名单.xlsx》，附件：补充复核名单，名单序号10')
+  expect(citation).toContain('工信部平台导出快照')
+  expect(citation).not.toContain('宁波市经信局《名单.xlsx》，附件：平台导出')
+  expect(first.id).not.toBe(later.id)
+})
+
+it('retains migration business reasons while removing arbitrary trace text and server locations', () => {
+  const {db} = fixture()
+  const id = candidate(db,'迁入资格企业')
+  const row = readCurrentCandidate(db.$client,id,'little_giant',new Date().getFullYear())
+  row.workbookFacts!.migration.push({awardYear:2024,validFrom:'2024-01-01T00:00:00Z',validUntil:'2027-01-01T00:00:00Z',
+    basis:'根据迁入证明，当前资格仍在核验期；platform-relation:17 query:8；/srv/private/sha256:deadbeef；{"queryId":8,"status":"valid"} 尚未核实外地授奖批次；认定/复核顺序未核实',
+    publicationScope:'已核对宁波公布名单至2026-10-20；/var/db/internal.json；尚未覆盖外地历史公告'})
+  const values = currentWorkbookValues('little_giant',row,1)
+  expect(values[6]).toContain('根据迁入证明，当前资格仍在核验期')
+  expect(values[6]).toContain('尚未核实外地授奖批次')
+  expect(values[6]).toContain('认定 复核顺序未核实')
+  expect(values[10]).toContain('已核对宁波公布名单至 2026-10-20；尚未覆盖外地历史公告')
+  expect(values.join(' ')).not.toMatch(/platform-relation|query:8|sha256|\/srv\/|\/var\/|internal\.json|deadbeef|queryId|status|valid/)
+})
+
+it('renders distinct known explanation and query coverage states without changing qualification group', () => {
+  const {db} = fixture()
+  const id = candidate(db,'覆盖状态企业')
+  const row = readCurrentCandidate(db.$client,id,'little_giant',new Date().getFullYear())
+  row.workbookFacts!.assessments.push(
+    {explanationValidity:'valid',queryCoverage:'complete',noRecord:false},
+    {explanationValidity:'evidence_changed',queryCoverage:'failed',noRecord:false},
+    {explanationValidity:'premise_invalid',queryCoverage:'partial',noRecord:false},
+    {explanationValidity:'unknown',queryCoverage:'not_queried',noRecord:false},
+    {explanationValidity:'valid',queryCoverage:'complete',noRecord:true},
+  )
+  const values = currentWorkbookValues('little_giant',row,1)
+  expect(values[10]).toContain('解释依据：适用；查询覆盖：完整')
+  expect(values[10]).toContain('解释依据：证据已变化；查询覆盖：查询失败')
+  expect(values[10]).toContain('解释依据：适用前提无效；查询覆盖：部分')
+  expect(values[10]).toContain('解释依据：未知；查询覆盖：尚未查询')
+  expect(values[10]).toContain('解释依据：适用；查询覆盖：完整；已核对范围内无记录')
+  expect(row.group).toBe('eligible')
+})
+
+it('prepares the already-read event and evidence queries once per workbook', async () => {
+  const {db,file} = fixture()
+  for (let index=0;index<5;index++) candidate(db,`准备复用主体${index}`)
+  const prepare = db.$client.prepare.bind(db.$client)
+  const counts = {events:0,evidence:0}
+  db.$client.prepare = ((sql:string) => {
+    if (sql.startsWith('select e.id,e.event_type')) counts.events++
+    if (sql.startsWith('select v.id,v.record_event_id')) counts.evidence++
+    return prepare(sql)
+  }) as typeof db.$client.prepare
+  try { await writeCurrentWorkbook(db.$client,'little_giant',file,()=>{}) }
+  finally { db.$client.prepare = prepare }
+  expect(counts).toEqual({events:1,evidence:1})
 })
 
 it('keeps technical audit values out of every visible workbook cell', async () => {

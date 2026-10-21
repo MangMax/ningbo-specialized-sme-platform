@@ -54,8 +54,9 @@ it('uses explanation validity and accepts explicitly maintained legacy subject d
   expect(readQueryAssessment(f.db,scope(legacy.enterprise.id)).explanationValidity.status).toBe('valid')
   const {wb}=await f.workbook('pr126-validity')
   expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['待确认'])
-  expect(occurrences(wb,c.enterprise.id)[0]!.row[11]).toContain('解释依据适用性待核')
+  expect(occurrences(wb,c.enterprise.id)[0]!.row[11]).toContain('解释依据：证据已变化；查询覆盖：尚未查询')
   expect(occurrences(wb,legacy.enterprise.id).map(x=>x.sheet)).toEqual(['排除明细'])
+  expect(occurrences(wb,legacy.enterprise.id)[0]!.row[11]).toContain('解释依据：适用；查询覆盖：尚未查询')
 },60000)
 it('excludes query attempts from candidates while keeping positive unassigned platform rows', async () => {
   const empty=f.candidate('Only no record query',[]), failed=f.candidate('Only failed query',[]), positive=f.candidate('Positive unassigned current row',[])
