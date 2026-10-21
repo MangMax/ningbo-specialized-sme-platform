@@ -1,3 +1,5 @@
+> **Acceptance v2 (2026-10-21):** Future acceptance interpretation is versioned in [acceptance-v2.md](acceptance-v2.md) and [per-issue-disposition.md](per-issue-disposition.md). The frozen v1 history below is preserved verbatim; its misses and unrun lanes are not rewritten as passes.
+
 # #82 shared baseline — frozen before measurement
 
 Frozen 2026-10-19, source d198a09f5a6fab2d5358d442d1b6ce47670c7506; branch t3/perf-baseline-spike-82 equals parent t3/implement-spec-81-89. Scope: investigation/scripts/docs only. #81/#82/#19 read via gh including comments (none); #19 OPEN remains unchanged. No production HTTP requests, load or writes. Only isolated DB copies; all original content and credentials outside Git.
