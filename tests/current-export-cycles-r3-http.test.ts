@@ -1,3 +1,4 @@
+import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import type ExcelJS from 'exceljs'
 import { currentExport118Fixture, rows, year as y, type Event } from './helpers/current-export-118'
@@ -9,25 +10,25 @@ afterAll(f.close)
 const award = (year: number|null, batchSeq: number|null = 1): Event => ({eventType:'award',year,batchSeq})
 const review = (year: number|null, decidedYear: number|null, reviewOutcome: 'passed'|'failed'|null = 'passed', batchSeq: number|null = 1): Event => ({eventType:'review',year,decidedYear,reviewOutcome,batchSeq})
 function exported(wb: ExcelJS.Workbook, id: number) {
-  return wb.worksheets.slice(0,3).flatMap(sheet => rows(wb,sheet.name).filter(row => row[2] === String(id)).map(row => ({sheet:sheet.name,row})))
+  return wb.worksheets.slice(0,3).flatMap(sheet => rows(wb,sheet.name).filter(row => matchesBusinessIdentity(f.db, row, id)).map(row => ({sheet:sheet.name,row})))
 }
 it('不同原周期同结论年的失败不阻断当前周期正式延续', async () => {
   const c=f.candidate('旧失败当前延续同结论年',[award(y-8),award(y-5),review(y-8,y-1,'failed'),review(y-5,y-1)])
   const {wb}=await f.workbook('r3-cross-cycle-same-year')
   const actual=exported(wb,c.enterprise.id)
   expect(actual.map(r=>r.sheet)).toEqual(['有效企业'])
-  expect(actual[0]!.row[9]).toBe(String(y-8))
-  expect(actual[0]!.row[11]).toContain('failed')
-  expect(actual[0]!.row[11]).toContain('passed')
+  expect(actual[0]!.row[6]).toBe(String(y-8))
+  expect(actual[0]!.row[7]).toContain('复核未通过')
+  expect(actual[0]!.row[7]).toContain('复核通过')
 })
 it('独立周期失败后的通过不能冒充重新认定恢复', async () => {
   const c=f.candidate('独立周期失败后仅通过',[award(y-16),review(y-8,y-4,'failed'),review(y-8,y-1)])
   const {wb}=await f.workbook('r3-failed-then-passed')
   const actual=exported(wb,c.enterprise.id)
   expect(actual.map(r=>r.sheet)).toEqual(['待确认'])
-  expect(actual[0]!.row[9]).toBe(String(y-16))
-  expect(actual[0]!.row[13]).toContain('恢复')
-  expect(actual[0]!.row[11]).toContain('failed')
+  expect(actual[0]!.row[6]).toBe(String(y-16))
+  expect(actual[0]!.row[11]).toContain('恢复')
+  expect(actual[0]!.row[7]).toContain('复核未通过')
 })
 it('同原年份全部批次在通过失败及未决组合中均保留裁定', async () => {
   const cases: Array<{name:string;extra:Event[]}>=[
@@ -41,9 +42,9 @@ it('同原年份全部批次在通过失败及未决组合中均保留裁定', a
   for(const c of entries) {
     const actual=exported(wb,c.enterprise.id)
     expect.soft(actual.map(r=>r.sheet),c.name).toEqual(['待确认'])
-    expect.soft(actual[0]!.row[10].match(/award/g),c.name).toHaveLength(2)
-    expect.soft(actual[0]!.row[13],c.name).toContain('批次')
-    expect.soft(actual[0]!.row[14].match(/evidence:/g),c.name).toHaveLength(3+c.extra.length)
+    expect.soft(actual[0]!.row[7].split('\n').filter((line:string)=>line.endsWith('认定')),c.name).toHaveLength(2)
+    expect.soft(actual[0]!.row[11],c.name).toContain('批次')
+    expect.soft(actual[0]!.row[12].match(/synthetic-118\.xlsx/g),c.name).toHaveLength(3+c.extra.length)
   }
 })
 
@@ -109,10 +110,10 @@ async function assertMatrix(cases: Case[], key: string, transform: (events: Even
     const actual=exported(wb,c.enterprise.id)
     expect.soft(actual.map(r=>r.sheet),c.id).toEqual([c.sheet])
     const row=actual[0]!.row
-    expect.soft(row[9]??null,c.id).toBe(c.first==null?null:String(c.first))
-    expect.soft(row[10].match(/event:/g),c.id).toHaveLength(c.events.length)
-    expect.soft(row[14].match(/evidence:/g),c.id).toHaveLength(c.events.length)
-    if(c.note) expect.soft(row[13]??'',c.id).toContain(c.note)
+    expect.soft(row[6]??null,c.id).toBe(c.first==null?null:String(c.first))
+    expect.soft(row[7].split('\n'),c.id).toHaveLength(c.events.length)
+    expect.soft(row[12].match(/synthetic-118\.xlsx/g),c.id).toHaveLength(c.events.length)
+    if(c.note) expect.soft(row[11]??'',c.id).toContain(c.note)
   }
   console.log(JSON.stringify({matrix:key,cases:entries.map(c=>({case:c.id,expected:c.sheet,actual:exported(wb,c.enterprise.id).map(r=>r.sheet),first:c.first}))}))
 }
@@ -138,9 +139,9 @@ it('周期矩阵在反向插入及任意事件出处ID重排后保持相同字�
   for(const c of entries) {
     const actual=exported(wb,c.enterprise.id)
     expect.soft(actual.map(r=>r.sheet),c.id).toEqual([c.sheet])
-    expect.soft(actual[0]!.row[9]??null,c.id).toBe(c.first==null?null:String(c.first))
-    expect.soft(actual[0]!.row[10].match(/event:/g),c.id).toHaveLength(c.events.length)
-    expect.soft(actual[0]!.row[14].match(/evidence:/g),c.id).toHaveLength(c.events.length)
+    expect.soft(actual[0]!.row[6]??null,c.id).toBe(c.first==null?null:String(c.first))
+    expect.soft(actual[0]!.row[7].split('\n'),c.id).toHaveLength(c.events.length)
+    expect.soft(actual[0]!.row[12].match(/synthetic-118\.xlsx/g),c.id).toHaveLength(c.events.length)
   }
 },60000)
 it('正式更正失败事实后重新导出恢复资格并保留首次及出处审计',async()=>{
@@ -165,9 +166,9 @@ it('正式更正失败事实后重新导出恢复资格并保留首次及出处�
   const {wb}=await f.workbook('r3-after-official-correction')
   const actual=exported(wb,c.enterprise.id)
   expect(actual.map(r=>r.sheet)).toEqual(['有效企业'])
-  expect(actual[0]!.row[9]).toBe(String(y-8))
-  expect(actual[0]!.row[10]).toContain('event:'+failed.id+'@2')
-  expect(actual[0]!.row[14].match(/evidence:/g)).toHaveLength(2)
+  expect(actual[0]!.row[6]).toBe(String(y-8))
+  expect(actual[0]!.row[7]).toContain('复核通过')
+  expect(actual[0]!.row[12].match(/synthetic-118\.xlsx/g)).toHaveLength(2)
 },60000)
 it('当前出处缺口待确认而旧首次出处缺口仅留空不丢当前资格',async()=>{
   const cases: Array<{id:string;events:Event[];removeIndex:number;sheet:string;first:number|null}>=[
@@ -184,7 +185,7 @@ it('当前出处缺口待确认而旧首次出处缺口仅留空不丢当前资�
   for(const c of entries) {
     const actual=exported(wb,c.enterprise.id)
     expect(actual.map(r=>r.sheet),c.id).toEqual([c.sheet])
-    expect(actual[0]!.row[9]??null,c.id).toBe(c.first==null?null:String(c.first))
-    expect(actual[0]!.row[14]).toContain('正式出处待补')
+    expect(actual[0]!.row[6]??null,c.id).toBe(c.first==null?null:String(c.first))
+    expect(actual[0]!.row[12]).toContain('正式出处待核')
   }
 },60000)

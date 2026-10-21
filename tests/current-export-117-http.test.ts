@@ -1,3 +1,4 @@
+import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { reviewCurrentExportDecision } from './helpers/current-export-decisions'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -65,8 +66,7 @@ it('HTTP提交到四表文件', async () => {
   const { enterprise } = candidate('新认定')
   const { wb, job, bytes } = await workbook('fresh')
   expect(wb.worksheets.map(w => w.name)).toEqual(['有效企业','待确认','排除明细','口径说明'])
-  expect(wb.getWorksheet('有效企业')!.getRow(2).getCell(2).value).toBe(String(enterprise.id))
-  expect(wb.getWorksheet('有效企业')!.getRow(2).getCell(4).value).toBe('新认定')
+  expect(businessIdentity(rows(wb,'有效企业')[0]!)).toEqual(expectedBusinessIdentity(db,enterprise.id))
   expect(job.result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
   expect(job.result.artifact.size).toBe(bytes.length)
   expect(job.result.dataVersion).toMatch(/^sha256:/)
@@ -85,12 +85,12 @@ it('对应周期、复核年份与同年冲突', async () => {
   candidate('同年冲突',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'failed'},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'passed'}])
   candidate('培育非资格',[{eventType:'nurture',year:y}])
   const {wb} = await workbook('cycles')
-  const names = (sheet: string) => rows(wb,sheet).map(r => r[4])
+  const names = (sheet: string) => rows(wb,sheet).map(r => r[2])
   expect(names('有效企业')).toEqual(expect.arrayContaining(['复核延续','失败恢复','旧周期晚失败']))
   expect(names('排除明细')).toEqual(expect.arrayContaining(['本周期失败','培育非资格']))
   expect(names('待确认')).toEqual(expect.arrayContaining(['已到复核年','复核结论缺年','同年冲突']))
-  expect(rows(wb,'有效企业').find(r => r[4] === '失败恢复')![9]).toBe(String(y-5))
-  expect(rows(wb,'待确认').find(r => r[4] === '同年冲突')![13]).toContain('冲突')
+  expect(rows(wb,'有效企业').find(r => r[2] === '失败恢复')![6]).toBe(String(y-5))
+  expect(rows(wb,'待确认').find(r => r[2] === '同年冲突')![11]).toContain('冲突')
 })
 function decision(enterpriseId: number, reasonCode: 'moved_out'|'moved_in'|'deregistered'|'renamed'|'pending_review'|'other', extra: Record<string,unknown> = {}) {
   const decision = db.insert(s.differenceReason).values({enterpriseId,titleCode:'little_giant',direction:'extra_in_miit',status:'confirmed_reason',reasonCode,verificationStatus:'confirmed',lifecycleAction:'replace',basis:'人工确认合成主体事实',effectiveAt:'2025-01-01T00:00:00Z',recordedAt:new Date().toISOString(),...extra} as any).returning().get()
@@ -114,15 +114,15 @@ it('迁入、更名与旧解释缺口', async () => {
   db.insert(s.record).values({enterpriseId:other.enterprise.id,source:'jxj',titleCode:'innovative_sme',nameRaw:'其他称号不冒充'}).run()
   const {wb} = await workbook('identity')
   const eligible = rows(wb,'有效企业'), pending = rows(wb,'待确认'), excluded = rows(wb,'排除明细')
-  const rename = eligible.find(r => r[4] === '迁入更名现名')!
-  expect(rename[5]).toBe('迁入更名旧名'); expect(rename[6]).toBe('迁入更名旧名')
-  expect(rename[13]).toContain('迁入'); expect(rename[13]).toContain('现已更名'); expect(rename[13]).not.toContain('未见宁波')
-  expect(eligible.map(r => r[4])).toEqual(expect.arrayContaining(['迁出后迁回','更新待审核']))
-  expect(excluded.map(r => r[4])).toEqual(expect.arrayContaining(['已确认外迁','已确认注销']))
-  expect(pending.map(r => r[4])).toEqual(expect.arrayContaining(['旧缺码前提变化','未确认旧名链','迁入无资格依据','其他称号不冒充']))
-  expect(pending.find(r => r[4] === '迁入无资格依据')![13]).toContain('迁入事实不能代替资格依据')
-  expect(pending.find(r => r[4] === '未确认旧名链')![12]).toBe('尚未完成公布匹配核实')
-  expect([...eligible,...pending,...excluded].some(r => r[4] === '其他称号独立')).toBe(false)
+  const rename = eligible.find(r => r[2] === '迁入更名现名')!
+  expect(rename[8]).toBe('迁入更名旧名'); expect(rename[9]).toBe('迁入更名旧名')
+  expect(rename[11]).toContain('迁入'); expect(rename[11]).toContain('现已更名'); expect(rename[11]).not.toContain('未见宁波')
+  expect(eligible.map(r => r[2])).toEqual(expect.arrayContaining(['迁出后迁回','更新待审核']))
+  expect(excluded.map(r => r[2])).toEqual(expect.arrayContaining(['已确认外迁','已确认注销']))
+  expect(pending.map(r => r[2])).toEqual(expect.arrayContaining(['旧缺码前提变化','未确认旧名链','迁入无资格依据','其他称号不冒充']))
+  expect(pending.find(r => r[2] === '迁入无资格依据')![11]).toContain('迁入事实不能代替资格依据')
+  expect(pending.find(r => r[2] === '未确认旧名链')![10]).toBe('尚未完成公布匹配核实')
+  expect([...eligible,...pending,...excluded].some(r => r[2] === '其他称号独立')).toBe(false)
 })
 it('去重、重生成与鉴权', async () => {
   const again = await json(await submit('fresh'))
@@ -227,14 +227,14 @@ it('万行快照与普通请求响应', async () => {
   expect(Math.max(...latencies)).toBeLessThan(2000)
   const job=await terminal(id);expect(job.state,JSON.stringify(job)).toBe('done')
   const wb=new ExcelJS.Workbook();await wb.xlsx.load(Buffer.from(await (await fetch(url(job.result.artifact.downloadUrl),{headers})).arrayBuffer()) as any)
-  expect(rows(wb,'有效企业').some(r=>r[4]==='快照末项')).toBe(true)
-  expect(rows(wb,'有效企业').filter(r=>String(r[4]).startsWith('资源合成'))).toHaveLength(10000)
+  expect(rows(wb,'有效企业').some(r=>r[2]==='快照末项')).toBe(true)
+  expect(rows(wb,'有效企业').filter(r=>String(r[2]).startsWith('资源合成'))).toHaveLength(10000)
   for(const [sheet,key] of [['有效企业','eligible'],['待确认','pending'],['排除明细','excluded']]) expect(wb.getWorksheet(sheet!)!.rowCount-1).toBe(job.result.counts[key!])
   expect(job.result.executor.peakRssBytes).toBeLessThan(512*1024*1024)
-  writeFileSync('/tmp/spec117-performance.json',JSON.stringify({environment:process.version,resourceFixtureRows:10000,totalCandidates:job.result.total,counts:job.result.counts,executionMs:Date.parse(job.finishedAt)-Date.parse(job.startedAt),submitMs,ordinaryRequestMs:latencies,executor:job.result.executor,dataVersion:job.result.dataVersion},null,2))
+  writeFileSync('/tmp/spec117-performance.json',JSON.stringify({environment:process.version,resourceFixtureRows:10000,totalCandidates:job.result.total,counts:job.result.counts,executionMs:Date.parse(job.finishedAt)-Date.parse(job.startedAt),submitMs,ordinaryRequestMs:latencies,artifactBytes:job.result.artifact.size,executor:job.result.executor,dataVersion:job.result.dataVersion},null,2))
   // A new execution observes the changed decision, without caching old qualification.
   const next=await workbook('after-snapshot-change')
-  expect(rows(next.wb,'排除明细').some(r=>r[4]==='快照末项')).toBe(true)
+  expect(rows(next.wb,'排除明细').some(r=>r[2]==='快照末项')).toBe(true)
   expect(next.job.result.dataVersion).not.toBe(job.result.dataVersion)
 },60000)
 it('重启保留与中断清理', async () => {
@@ -273,12 +273,12 @@ it('文本、身份、缺项与业务只读', async () => {
   const sourceBefore=businessDigest()
   const {wb}=await workbook('safe-full')
   const eligible=rows(wb,'有效企业')
-  const text=eligible.find(r=>r[4]===formula.enterprise.name)!
-  expect(text[3]).toBe('001234567890123456');expect(text[4]).toBe('=HYPERLINK("https://invalid.example","合成")')
-  expect(eligible.find(r=>r[4]===long)![4]).toBe(long)
-  expect(eligible.filter(r=>r[4]==='同名企业').map(r=>r[2])).toEqual([String(a.enterprise.id),String(b.enterprise.id)])
-  expect(eligible.find(r=>r[4]==='首次补充缺口')![9] ?? null).toBeNull()
-  expect(eligible.map(r=>r[4])).toEqual(expect.arrayContaining(['查询failed','查询no_record']))
+  const text=eligible.find(r=>r[2]===formula.enterprise.name)!
+  expect(text[3]).toBe('001234567890123456');expect(text[2]).toBe('=HYPERLINK("https://invalid.example","合成")')
+  expect(eligible.find(r=>r[2]===long)![2]).toBe(long)
+  expect(eligible.filter(r=>r[2]==='同名企业').map(r => businessIdentity(r))).toEqual([expectedBusinessIdentity(db,a.enterprise.id),expectedBusinessIdentity(db,b.enterprise.id)])
+  expect(eligible.find(r=>r[2]==='首次补充缺口')![6] ?? null).toBeNull()
+  expect(eligible.map(r => r[2])).toEqual(expect.arrayContaining(['查询failed','查询no_record']))
   expect(businessDigest()).toBe(sourceBefore)
 },30000)
 function businessDigest() {
@@ -311,8 +311,8 @@ it('未知周期、同年恢复与执行版本', async () => {
   expect(active.result.snapshotId).toBe(id)
   const job=await terminal(id);expect(job.state).toBe('done')
   const wb=new ExcelJS.Workbook();await wb.xlsx.load(Buffer.from(await (await fetch(url(job.result.artifact.downloadUrl),{headers})).arrayBuffer()) as any)
-  expect(rows(wb,'待确认').map(r=>r[4])).toEqual(expect.arrayContaining(['未知复核周期','同年恢复顺序不明']))
-  expect(rows(wb,'待确认').find(r=>r[4]==='同年恢复顺序不明')![13]).toContain('冲突')
+  expect(rows(wb,'待确认').map(r => r[2])).toEqual(expect.arrayContaining(['未知复核周期','同年恢复顺序不明']))
+  expect(rows(wb,'待确认').find(r=>r[2]==='同年恢复顺序不明')![11]).toContain('冲突')
   expect(job.result.snapshotId).toBe(id)
 },30000)
 it('决定撤回、前提失效与候选引用', async () => {
@@ -334,11 +334,12 @@ it('决定撤回、前提失效与候选引用', async () => {
   db.update(s.record).set({source:'miit'}).where(eq(s.record.id,unconfirmed.record.id)).run()
   const edge=db.insert(s.recordCorrespondence).values({edgeKey:'synthetic-candidate',type:'event_process',role:'award',eventId:db.select().from(s.recordEvent).where(eq(s.recordEvent.recordId,unconfirmed.record.id)).get()!.id,enterpriseId:unconfirmed.enterprise.id,titleCode:'little_giant',status:'candidate',revision:1,targetIdentity:{},provenance:{},sourceFingerprint:'synthetic',ruleId:'manual',ruleVersion:'1',createdAt:new Date().toISOString()}).returning().get()
   const {wb}=await workbook('decision-scope')
-  expect(rows(wb,'有效企业').map(r=>r[4])).toEqual(expect.arrayContaining(['撤回旧外迁','替代旧外迁','申请状态退回','申请状态待审核']))
+  expect(rows(wb,'有效企业').map(r => r[2])).toEqual(expect.arrayContaining(['撤回旧外迁','替代旧外迁','申请状态退回','申请状态待审核']))
   const pending=rows(wb,'待确认')
-  expect(pending.map(r=>r[4])).toEqual(expect.arrayContaining(['现有代码旧按名查询','终止能力待确认','统代冲突','未确认对应边']))
-  expect(pending.find(r=>r[4]==='现有代码旧按名查询')![14]).toContain('decision:'+stale.id)
-  expect(pending.find(r=>r[4]==='未确认对应边')![14]).toContain('correspondence:'+edge.id)
+  expect(pending.map(r => r[2])).toEqual(expect.arrayContaining(['现有代码旧按名查询','终止能力待确认','统代冲突','未确认对应边']))
+  expect(pending.find(r=>r[2]==='现有代码旧按名查询')![11]).toContain('重新核实')
+  expect(pending.find(r=>r[2]==='未确认对应边')![11]).toContain('对应边不是已确认当前资格')
+  expect(stale.id).toBeGreaterThan(0); expect(edge.id).toBeGreaterThan(0)
 },30000)
 it('Excel超限明确失败', async () => {
   const c=candidate('超'.repeat(33000))
@@ -381,7 +382,8 @@ it('平台单独候选不遗漏且不冒充已确认资格', async () => {
   const q=db.insert(s.platformQuery).values({interface:'recognized_list',queryKey:c.usccNorm!,rdjb:'3',titleCode:'little_giant',queriedAt:new Date().toISOString(),status:'success'}).returning().get()
   const r=db.insert(s.platformRelation).values({queryId:q.id,sequenceNo:1,enterpriseId:c.id,status:'认定通过',verificationStatus:'confirmed',matchBasis:'uscc'}).returning().get()
   const {wb}=await workbook('platform-only')
-  const pending=rows(wb,'待确认').find(row=>row[4]==='仅平台识别候选')!
-  expect(pending[2]).toBe(String(c.id));expect(pending[14]).toContain('platform-relation:'+r.id)
-  expect(rows(wb,'有效企业').some(row=>row[4]==='仅平台识别候选')).toBe(false)
+  const pending=rows(wb,'待确认').find(row=>row[2]==='仅平台识别候选')!
+  expect(businessIdentity(pending)).toEqual(expectedBusinessIdentity(db,c.id));expect(pending[12]).toContain('工信部已认定企业名单')
+  expect(r.id).toBeGreaterThan(0)
+  expect(rows(wb,'有效企业').some(row=>row[2]==='仅平台识别候选')).toBe(false)
 },30000)

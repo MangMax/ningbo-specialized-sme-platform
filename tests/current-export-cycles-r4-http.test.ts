@@ -8,7 +8,7 @@ beforeAll(f.start, 90000)
 beforeEach(f.resetBusiness)
 afterAll(f.close)
 const assertCases = currentQualificationHttpAssertions(f, (c,_title,row) => {
-  expect.soft(row[10]?.match(/event:/g)?.length??0,c.id).toBe(c.events.length-(c.missing?.length??0))
+  expect.soft(row[7]?.split('\n').filter((line:string) => !line.includes('正式出处待核')).length??0,c.id).toBe(c.events.length-(c.missing?.length??0))
 })
 it('一致批次保留确定资格而混合与未决批次保留具体缺口',()=>assertCases(qualificationCasesR4(y).filter(c=>c.id.startsWith('A-')),'r4-batches'),60000)
 
