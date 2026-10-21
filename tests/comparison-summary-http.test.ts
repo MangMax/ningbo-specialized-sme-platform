@@ -9,6 +9,8 @@ import { handleRosterImportRequest } from '../server/utils/roster-import-http'
 import { eq } from 'drizzle-orm'
 import { enterprise } from '../db/schema'
 import { reconcileKey } from '../lib/reconcile'
+import { saveDecision102 } from '../server/utils/decision-lifecycle-102'
+import { readQueryAssessment } from '../lib/roster/query-assessment'
 
 const dir = mkdtempSync(join(tmpdir(), 'comparison-summary-http-'))
 const db = useDb({ dbPath: join(dir, 'fixture.db') })
@@ -249,4 +251,40 @@ describe('comparison lightweight list public HTTP seam', () => {
   })
 
 
+})
+
+it('preserves failed coverage and withdrawn decisions in the bounded list assessment', async () => {
+  const names = ['StateRegression失败', 'StateRegression撤回', 'StateRegression未查询', 'StateRegression其他称号']
+  const response = await fetch(`${base}/api/roster/import/commit`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+      idempotencyKey: 'comparison-summary-state-regression', sourceKind: 'announcement', sourceIdentity: 'synthetic/state-regression',
+      payload: {
+        announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic state regression' }, records: names.map(name => ({ enterprise: { name }, titleCode: 'specialized_sme', events: [] })) },
+        platformQueries: [
+          { interface: 'business_list', queryKey: `name:${names[0]}`, rdjb: '2', status: 'failed', failureReason: 'synthetic failure', queriedAt: '2026-10-21T00:00:00Z' },
+          { interface: 'business_list', queryKey: `name:${names[3]}`, rdjb: '1', status: 'failed', failureReason: 'other title', queriedAt: '2026-10-21T00:00:00Z' },
+        ],
+      },
+    }),
+  })
+  expect(await response.json()).toMatchObject({ status: 'committed' })
+  const initial = await get('?view=summary&q=StateRegression')
+  const withdrawnId = initial.rows.find((row: { name: string }) => row.name === names[1]).enterpriseId
+  const scope = { enterpriseId: withdrawnId, titleCode: 'specialized_sme' as const, direction: 'missing_in_miit' as const }
+  const metadata = { ...scope, actor: { type: 'agent' as const, id: 'synthetic' }, ruleVersion: 'synthetic', basis: 'Synthetic state regression', effectiveAt: '2026-10-21T00:00:00Z' }
+  const active = saveDecision102(db, { ...metadata, action: 'replace', expectedCurrentId: null, idempotencyKey: 'summary-state-active', decision: { status: 'needs_review', measureCode: 'manual_review', verificationStatus: 'pending' } })
+  expect((await get('?view=summary&q=StateRegression')).rows.find((row: { enterpriseId: number }) => row.enterpriseId === withdrawnId).assessment).toMatchObject({ assessment: 'decided' })
+  expect(active.versionId).toEqual(expect.any(Number))
+  saveDecision102(db, { ...metadata, action: 'withdraw', expectedCurrentId: Number(active.versionId), idempotencyKey: 'summary-state-withdraw' })
+  const result = await get('?view=summary&q=StateRegression')
+  expect(result.rows).toHaveLength(4)
+  for (const row of result.rows) {
+    const expected = readQueryAssessment(db, { enterpriseId: row.enterpriseId, titleCode: row.titleCode, direction: row.direction })
+    expect(row.assessment).toEqual({ queryCoverage: { status: expected.queryCoverage.status }, assessment: expected.assessment, explanationValidity: { status: expected.explanationValidity.status } })
+    expect(row.assessment).not.toHaveProperty('currentDecision')
+    expect(row.assessment.queryCoverage).not.toHaveProperty('sources')
+  }
+  expect(result.rows.find((row: { name: string }) => row.name === names[0]).assessment.queryCoverage.status).toBe('failed')
+  expect(result.rows.find((row: { name: string }) => row.name === names[1]).assessment).toMatchObject({ assessment: 'withdrawn', explanationValidity: { status: 'not_applicable' } })
+  for (const name of names.slice(2)) expect(result.rows.find((row: { name: string }) => row.name === name).assessment.queryCoverage.status).toBe('not_queried')
 })

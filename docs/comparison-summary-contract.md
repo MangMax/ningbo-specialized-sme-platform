@@ -2,8 +2,8 @@
 
 `GET /api/comparison?view=summary` is an explicit opt-in. Omitting `view`, or
 passing `view=full`, returns the existing full DTO without adding a discriminator
-or dropping/truncating fields. The current comparison page still uses that full
-default; M2 integration and performance acceptance are separate work.
+or dropping/truncating fields. The comparison page uses the explicit summary
+for its list and fetches full evidence only after expansion.
 
 ## Summary DTO
 
@@ -22,6 +22,12 @@ Each summary row has these fields (TypeScript: `ComparisonSummaryRow` in
 - `evidenceIncluded: false`, `detailUrl`.
 - `explanation: { code: string } | null`: presence/code of the legacy cache entry,
   not its note, evidence, or any substitute for a database decision.
+- `assessment`: `queryCoverage.status`, `assessment`, and `explanationValidity.status`,
+  projected from the existing query-assessment/lifecycle owners for the selected page.
+  These are independent facts: a failed query or withdrawn decision must not be
+  displayed as the legacy disposition's default `not_queried`. No coverage source
+  objects or decision history are included; withdrawn decisions do not display
+  historical reason/measure fields as current instructions.
 - `platform.aliasCount`, `confirmedAliasCount`, `queryCount`, `sourceRelationCount`.
 - `platform.disposition`: `explanationId`, `status`, `reasonCode`, `measureCode`,
   `verificationStatus`, `recordedAt`, `evidenceQueryId`, `evidenceRelationId`.

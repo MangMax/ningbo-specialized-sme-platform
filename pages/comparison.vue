@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { parseComparisonRouteFilters } from '~~/lib/comparison-route'
 import ComparisonRowDetails from '@/components/ComparisonRowDetails.vue'
+import ComparisonSummaryAssessment from '@/components/ComparisonSummaryAssessment.vue'
 import type { ComparisonSummaryRow } from '~~/lib/comparison-summary'
 import EvidenceReviewList from '@/components/evidence-review/EvidenceReviewList.vue'
 import { useQuery, useQueryCache } from '@pinia/colada'
@@ -21,9 +22,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import {
-  DIFFERENCE_STATUSES,
-  DIFFERENCE_REASONS,
-  DIFFERENCE_MEASURES,
   TITLES,
   TITLE_ORDER,
   COMPARISON_LABELS,
@@ -209,14 +207,6 @@ const {
 } = useRetainedQuerySnapshot<ComparisonQueryParams, ComparisonQueryResult>(data, isLoading, error, activeRequest)
 const rows = computed<ComparisonApiResponse['rows']>(() => displayedResult.value?.rows ?? [])
 const selectedRow = shallowRef<ComparisonSummaryRow | null>(null)
-function reasonLabel(row: ComparisonSummaryRow) {
-  const value = row.platform.disposition
-  return (value.reasonCode && DIFFERENCE_REASONS[value.reasonCode]) || DIFFERENCE_STATUSES[value.status] || value.status
-}
-function measureLabel(row: ComparisonSummaryRow) {
-  const code = row.platform.disposition.measureCode
-  return code ? DIFFERENCE_MEASURES[code] ?? code : '后续措施尚未记录'
-}
 // 宽表在窄屏下保留容器内横向滚动;边缘渐隐提示还有列可读。
 const scroller = shallowRef<HTMLElement | null>(null)
 const { edges, bars, measure } = useScrollEdges(scroller)
@@ -461,7 +451,7 @@ const exportUrl = computed(() => {
                           COMPARISON_OTHER_SIDE[row.direction]
                         }}</TableCell>
                         <TableCell class="hidden sm:table-cell">
-                          <div class="text-[13px] leading-5"><p>{{ reasonLabel(row) }}</p><p class="text-muted-foreground">{{ measureLabel(row) }}</p></div>
+                          <ComparisonSummaryAssessment :assessment="row.assessment" :disposition="row.platform.disposition" />
                         </TableCell>
                         <TableCell class="hidden sm:table-cell">
                           <p class="text-muted-foreground text-[13px] leading-5">{{ row.platform.queryCount }} 次查询 · {{ row.platform.sourceRelationCount }} 条来源行</p>
@@ -473,7 +463,7 @@ const exportUrl = computed(() => {
                           <div class="flex min-w-0 flex-col gap-1" data-testid="comparison-mobile-details">
                             <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-border/50 pb-1 text-[13px] leading-5" data-testid="comparison-mobile-status-divider">
                               <span class="text-muted-foreground">{{ COMPARISON_OTHER_SIDE[row.direction] }}</span>
-                              <div class="text-[13px] leading-5"><p>{{ reasonLabel(row) }}</p><p class="text-muted-foreground">{{ measureLabel(row) }}</p></div>
+                              <ComparisonSummaryAssessment :assessment="row.assessment" :disposition="row.platform.disposition" />
                             </div>
                             <p class="text-muted-foreground text-[13px] leading-5">{{ row.platform.queryCount }} 次查询 · {{ row.platform.sourceRelationCount }} 条来源行</p>
                             <span class="text-muted-foreground text-[13px]">{{ row.curated ? '已核实' : '待核实' }}</span>
