@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
-import { CURRENT_RULE_VERSION, prepareCurrentReader, readCurrentCandidate, type CurrentRow, type CurrentTitle } from './current-qualification'
+import { CURRENT_RULE_VERSION, prepareCurrentReader, createCurrentCandidateReader, type CurrentRow, type CurrentTitle } from './current-qualification'
 import { currentCandidateBindings, currentCandidateSql } from './current-candidates'
 import { readIdentityKeyVariants } from './current-identity-keys'
 
@@ -37,6 +37,7 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
   prepareCurrentReader(db)
   db.exec('BEGIN')
   try {
+    const readCandidate = createCurrentCandidateReader(db)
     const keys = { queries: readIdentityKeyVariants(db, 'queries'), relations: readIdentityKeyVariants(db, 'unassignedRelations') }
     const order = filter.sort === 'name_asc' ? 'e.name collate nocase asc, c.id asc'
       : filter.sort === 'name_desc' ? 'e.name collate nocase desc, c.id asc' : 'c.id asc'
@@ -48,7 +49,7 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     const recognitionYears = new Set<number>(), validYears = new Set<number>(), maintenanceYears = new Set<number>()
     const maintenanceBatchesByYear = new Map<number, Set<number>>()
     for (const { id } of candidates.iterate(currentCandidateBindings(filter.titleCode)) as Iterable<{ id: number }>) {
-      const row = readCurrentCandidate(db, id, filter.titleCode, year, at, keys, true)
+      let row = readCandidate(id, filter.titleCode, year, at, keys, true, false)
       if (row.group !== 'eligible') continue
       for (const witness of row.qualificationWitnesses ?? []) {
         recognitionYears.add(witness.recognition.year)
@@ -82,6 +83,9 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
         }
       }
       if (total >= (page - 1) * pageSize && rows.length < pageSize) {
+        // Display references never affect qualification or filters. Hydrate only
+        // the retained page, inside this transaction and at the same execution time.
+        row = readCandidate(id, filter.titleCode, year, at, keys, true)
         if (filter.recognitionFrom || filter.validYear != null || filter.maintenanceYear != null) {
           row.qualificationWitnesses = matching
           row.recognition = matching[0]?.recognition ?? null
