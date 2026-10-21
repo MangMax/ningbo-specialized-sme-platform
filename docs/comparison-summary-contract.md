@@ -28,6 +28,9 @@ Each summary row has these fields (TypeScript: `ComparisonSummaryRow` in
   displayed as the legacy disposition's default `not_queried`. No coverage source
   objects or decision history are included; withdrawn decisions do not display
   historical reason/measure fields as current instructions.
+  The state reader selects only decision ID, status and lifecycle action in SQL;
+  it does not hydrate reason/measure notes, actor/basis or qualification JSON and
+  then discard them. Full and summary readers share the status rules.
 - `platform.aliasCount`, `confirmedAliasCount`, `queryCount`, `sourceRelationCount`.
 - `platform.disposition`: `explanationId`, `status`, `reasonCode`, `measureCode`,
   `verificationStatus`, `recordedAt`, `evidenceQueryId`, `evidenceRelationId`.

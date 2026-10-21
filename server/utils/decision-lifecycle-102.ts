@@ -129,8 +129,19 @@ export function readDecision102(db: DecisionDb, id: number) {
 }
 export function currentDecision102(db: DecisionDb, scope: Scope) {
   requireEnterprise(db, scope.enterpriseId)
-  const row = latestDecision102(db, scope)
-  return { ...scope, versionId: row?.id ?? null, current: row && row.lifecycleAction !== 'withdraw' ? publicVersion(row, row.id) : null }
+  const state = decisionState102(latestDecision102(db, scope))
+  return { ...scope, versionId: state.versionId, current: state.current ? publicVersion(state.current, state.current.id) : null }
+}
+function decisionState102<T extends { id: number; lifecycleAction: string | null }>(row: T | undefined) {
+  return { versionId: row?.id ?? null, current: row && row.lifecycleAction !== 'withdraw' ? row : null }
+}
+/** State-only owner projection: never fetch notes, qualification JSON or audit bodies. */
+export function currentDecisionState102(db: DecisionDb, scope: Scope) {
+  requireEnterprise(db, scope.enterpriseId)
+  const t = s.differenceReason
+  const row = db.select({ id: t.id, status: t.status, lifecycleAction: t.lifecycleAction }).from(t)
+    .where(whereScope(scope)).orderBy(desc(t.recordedAt), desc(t.id)).limit(1).get()
+  return decisionState102(row)
 }
 export function saveDecision102(db: DecisionDb, command: DecisionCommand102) {
   command = parse102(internalDecisionCommand102, command)
