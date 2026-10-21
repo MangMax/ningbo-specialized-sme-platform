@@ -1,5 +1,7 @@
+import { withEnterpriseReadSignal } from '../../utils/enterprise-read-signal'
+import { readRecognitions } from '../../utils/recognition-read'
 import { useDb } from '@db'
-import { listRosterRecognitions } from '~~/lib/roster/recognitions'
+import { setHeader } from 'h3'
 import { parseRosterRecognitionQuery } from '../../utils/roster-read-query'
 
 /**
@@ -59,6 +61,15 @@ defineRouteMeta({
   },
 })
 
+function recognitionOptions(query: Record<string, unknown>) {
+  return { ...parseRosterRecognitionQuery(query) }
+}
 export default defineEventHandler((event) => {
-  return listRosterRecognitions(useDb(), parseRosterRecognitionQuery(getQuery(event)))
+  const owner = useDb()
+  const filter = recognitionOptions(getQuery(event))
+  return withEnterpriseReadSignal(event, async signal => {
+    const result = await readRecognitions(owner, filter, signal)
+    if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
+    return result
+  })
 })

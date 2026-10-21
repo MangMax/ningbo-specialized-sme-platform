@@ -11,7 +11,7 @@ import {
   type RecognitionEntry,
   type RecognitionEvent,
 } from '../lib/roster/first-recognition'
-import { computeTitleLifecycle } from '../lib/roster/lifecycle'
+import { computeFirstAward, computeTitleLifecycle } from '../lib/roster/lifecycle'
 
 /**
  * RL-08 —— **首次认定的口径**(契约 §6.1–§6.3、§7.5,issue #8)。
@@ -331,4 +331,26 @@ describe('出处可回到「哪个文件 / 哪个附件 / 哪个序号」', () =
     expect(entry.evidence[0]!.attachment).toBe('附件一')
     expect(entry.evidence[0]!.listNo).toBe(74)
   })
+})
+
+
+it('projects cross-source first-award facts with the same pending precedence and full evidence pointers', () => {
+  const events = [ev(8, 'award', 2021, { source: 'jxj' }),
+    ev(2, 'award', 2021, { source: 'miit' }), ev(7, 'award', null)]
+  const pointers = [evd('synthetic/first.pdf', { attachment: '附件二', listNo: 4, page: 3 }),
+    evd('synthetic/first.xlsx', { attachment: '名单', listNo: 9, page: 7 })]
+  const project = (history: RecognitionEvent[], evidence: FirstRecognitionEvidence[]) => judgeFirstRecognition({
+    titleCode: 'little_giant', lifecycle: computeFirstAward(history), events: history,
+    evidenceByEvent: new Map([[2, evidence]]),
+  })
+  expect(project(events, pointers)).toEqual({ titleCode: 'little_giant', firstYear: 2021,
+    firstEventId: 2, source: 'miit', status: 'pending', pendingReason: 'undated_award',
+    undatedAwardIds: [7], evidence: pointers })
+  expect(project(events, [])?.pendingReason).toBe('undated_award')
+  expect(project([events[2]!], [])).toEqual({ titleCode: 'little_giant', firstYear: null,
+    firstEventId: null, source: null, status: 'pending', pendingReason: 'no_dated_award',
+    undatedAwardIds: [7], evidence: [] })
+  expect(project(events.slice(0, 2), [])?.pendingReason).toBe('no_evidence')
+  expect(project(events.slice(0, 2), pointers)).toMatchObject({ firstEventId: 2,
+    source: 'miit', status: 'confirmed', pendingReason: null })
 })

@@ -7,20 +7,15 @@
  * 只报一个,用户就会把前者当成后者(或反过来)。
  *
  * ── 计算只有一处 ────────────────────────────────────────────────────────
- * 这里的每一行都来自 `readRosterProfiles` 里 `buildProfile` 算好的首次认定
- * (与 §7.1 的 `firstRecognition`、§7.2 的 `recognitions` 是**同一批对象**)。
- * 本文件只做三件事:摊平、筛选、分页。
- *
- * 为什么不能自己再算一遍「哪条是最早的 award」:那是三年复核规则的地基,
- * 两处各算一次迟早会漂移 —— 到那时总表说 2021、首次认定清单说 2022,谁也说不清哪个对。
+ * 与企业视图共用 `computeTitleLifecycle` / 首认判据;取数走独立的轻量读模型。
+ * 全局筛选与统计只扫描 award 标量,分页后才读取所选事件的全部出处。
  */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import * as schema from '../../db/schema'
-import { TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
-import { effectiveDistrict, readRosterProfiles } from './enterprise-roster'
-import { matchesRecognitionQuery, type RecognitionEntry } from './first-recognition'
+import { readRecognitionPage } from './recognition-read'
+import type { RecognitionEntry } from './first-recognition'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -81,12 +76,6 @@ function pageOf(input: { page?: number; pageSize?: number }): { page: number; pa
   return { page, pageSize: Math.min(size, MAX_PAGE_SIZE) }
 }
 
-/** 称号等级序(与总表同一主序),未知代号排最后。 */
-function titleRank(code: string): number {
-  const i = TITLE_ORDER.indexOf(code)
-  return i === -1 ? TITLE_ORDER.length : i
-}
-
 /**
  * 首次认定清单。`counts` 与筛选**同口径**、且**先于分页**。
  *
@@ -96,47 +85,8 @@ export function listRosterRecognitions(
   db: Db,
   filter: RosterRecognitionFilter = {},
 ): RosterRecognitionsResult {
-  const { profiles } = readRosterProfiles(db)
-  // 端点侧的参数名 → 判据形状:`year` / `status` 在这里就叫这个名字(这个端点的主体本来就是
-  // 首次认定,`year` 没有第二种解释);总表那边同一个量叫 `firstYear` / `firstStatus`。
-  // **只做一次改名,判据本身是同一个函数** —— 否则同一个 URL 在两个端点上会给出两批人。
-  const query = { title: filter.title, firstYear: filter.year, firstStatus: filter.status }
-
-  const rows: RosterRecognitionRow[] = []
-  for (const profile of profiles) {
-    for (const entry of profile.recognitions) {
-      if (!matchesRecognitionQuery(entry, query)) continue
-      rows.push({
-        ...entry,
-        enterpriseId: profile.enterprise.id,
-        name: profile.enterprise.name,
-        uscc: profile.enterprise.usccNorm,
-        district: effectiveDistrict(profile),
-      })
-    }
-  }
-
-  rows.sort(
-    (a, b) =>
-      titleRank(a.titleCode) - titleRank(b.titleCode) ||
-      a.name.localeCompare(b.name) ||
-      a.enterpriseId - b.enterpriseId,
-  )
-
-  const byTitle: Record<string, number> = Object.fromEntries(TITLE_ORDER.map((code) => [code, 0]))
-  for (const row of rows) byTitle[row.titleCode] = (byTitle[row.titleCode] ?? 0) + 1
-
   const { page, pageSize } = pageOf(filter)
-  return {
-    rows: rows.slice((page - 1) * pageSize, page * pageSize),
-    counts: {
-      titlePairs: rows.length,
-      enterprises: new Set(rows.map((r) => r.enterpriseId)).size,
-      titles: byTitle,
-    },
-    page,
-    pageSize,
-  }
+  return db.transaction(() => readRecognitionPage(db, filter, page, pageSize))
 }
 
 /**

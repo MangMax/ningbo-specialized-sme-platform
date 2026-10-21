@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import * as schema from './schema'
 import { TITLE_SEED } from './titles'
+import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../lib/roster/offmain-read-protocol'
 
 export interface DbOptions {
   /** SQLite 文件路径。默认 `NUXT_DB_PATH` → `<cwd>/data/roster.db`。 */
@@ -24,6 +25,20 @@ function resolveMigrations(opts: DbOptions): string {
 }
 
 const cache = new Map<string, ReturnType<typeof drizzle<typeof schema>>>()
+const ownerIdentities = new WeakMap<object, ReadOwnerIdentity>()
+
+/** Only certify a managed disk handle whose identity was observed at open.
+ * Cached owners never silently follow a replaced file or symlink. */
+export function getDbOwnerIdentity(owner: unknown): ReadOwnerIdentity | undefined {
+  if (!owner || typeof owner !== 'object') return
+  const identity = ownerIdentities.get(owner)
+  if (!identity) return
+  try {
+    const client = (owner as { $client?: Database.Database }).$client
+    if (!client?.open || client.memory || client.inTransaction) return
+    return sameReadOwner(identity, readOwnerIdentity(identity.dbPath)) ? { ...identity } : undefined
+  } catch { return }
+}
 
 /**
  * 打开(按路径缓存)SQLite 库,应用迁移,写入称号字典。
@@ -40,11 +55,14 @@ export function useDb(opts: DbOptions = {}) {
   if (cached) return cached
 
   mkdirSync(dirname(path), { recursive: true })
+  const beforeOpen = readOwnerIdentity(path)
   const sqlite = new Database(path, readOnly ? { readonly: true, fileMustExist: true } : undefined)
+  const afterOpen = readOwnerIdentity(path)
   if (!readOnly) sqlite.pragma('journal_mode = WAL')
   sqlite.pragma('foreign_keys = ON')
 
   const db = drizzle(sqlite, { schema })
+  if (!sqlite.memory && sameReadOwner(beforeOpen, afterOpen)) ownerIdentities.set(db, afterOpen!)
 
   const migrationsFolder = resolveMigrations(opts)
   if (!readOnly && existsSync(migrationsFolder)) {

@@ -1,7 +1,8 @@
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS } from '~~/lib/comparison'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '~~/lib/labels'
-import { listRosterDifferences } from '~~/lib/roster/enterprise-roster'
+import { readDifferences } from '../../utils/difference-read'
+import { withEnterpriseReadSignal } from '../../utils/enterprise-read-signal'
 import { parseRosterDifferenceQuery } from '../../utils/roster-read-query'
 
 /**
@@ -68,7 +69,18 @@ defineRouteMeta({
   },
 })
 
+function differenceOptions(query: Record<string, unknown>) {
+  return { ...parseRosterDifferenceQuery(query) }
+}
+
 export default defineEventHandler((event) => {
   setHeader(event, 'cache-control', 'no-store')
-  return listRosterDifferences(useDb(), parseRosterDifferenceQuery(getQuery(event)))
+  // Preserve owner-connection acquisition and validation before deferral.
+  const owner = useDb()
+  const filter = differenceOptions(getQuery(event))
+  return withEnterpriseReadSignal(event, async signal => {
+    const result = await readDifferences(owner, filter, signal)
+    if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
+    return result
+  })
 })

@@ -52,7 +52,7 @@ let handlerEnterprises: (event: unknown) => Promise<{
   pageSize: number
 }>
 let handlerDetail: (event: unknown) => Promise<unknown>
-let handlerDifferences: (event: unknown) => {
+let handlerDifferences: (event: unknown) => Promise<{
   rows: {
     enterpriseId: number
     titleCode: string
@@ -66,7 +66,7 @@ let handlerDifferences: (event: unknown) => {
   total: number
   page: number
   pageSize: number
-}
+}>
 let server: Server
 let baseUrl: string
 let query: Record<string, unknown> = {}
@@ -250,9 +250,9 @@ describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
 })
 
 describe('GET /api/roster/differences(契约 §7.3)', () => {
-  it('不筛 = 当前差异 ∪ 已存下来的解释,带 counts / total / 分页', () => {
+  it('不筛 = 当前差异 ∪ 已存下来的解释,带 counts / total / 分页', async () => {
     query = {}
-    const out = handlerDifferences({})
+    const out = await handlerDifferences({})
     expect(Object.keys(out).sort()).toEqual(['counts', 'page', 'pageSize', 'rows', 'total'])
     expect(out.total).toBe(out.rows.length)
     expect(out.page).toBe(1)
@@ -276,33 +276,33 @@ describe('GET /api/roster/differences(契约 §7.3)', () => {
     expect(out.counts.innovative_sme).toEqual({ missing_in_miit: 0, extra_in_miit: 1 })
   })
 
-  it('title / direction / status / reason 都能筛', () => {
+  it('title / direction / status / reason 都能筛', async () => {
     query = { title: 'specialized_sme', direction: 'extra_in_miit' }
-    expect(handlerDifferences({}).rows).toHaveLength(2)
+    expect((await handlerDifferences({})).rows).toHaveLength(2)
     query = { direction: 'missing_in_miit' }
-    expect(handlerDifferences({}).rows).toEqual([])
+    expect((await handlerDifferences({})).rows).toEqual([])
     query = { status: 'confirmed_reason' }
-    expect(handlerDifferences({}).rows.map((r) => r.enterpriseId).sort()).toEqual([enterpriseId, sideOnlyId].sort())
+    expect((await handlerDifferences({})).rows.map((r) => r.enterpriseId).sort()).toEqual([enterpriseId, sideOnlyId].sort())
     query = { status: 'not_queried' }
-    expect(handlerDifferences({}).rows.map((r) => r.enterpriseId)).toEqual([emptyId])
+    expect((await handlerDifferences({})).rows.map((r) => r.enterpriseId)).toEqual([emptyId])
     query = { status: 'confirmed_reason', reason: 'moved_out' }
-    expect(handlerDifferences({}).rows).toHaveLength(2)
+    expect((await handlerDifferences({})).rows).toHaveLength(2)
     query = { reason: 'deregistered' }
-    expect(handlerDifferences({}).rows).toEqual([])
+    expect((await handlerDifferences({})).rows).toEqual([])
     query = {}
   })
 
-  it('筛选后的 counts 同步收窄(不报全库口径)', () => {
+  it('筛选后的 counts 同步收窄(不报全库口径)', async () => {
     query = { status: 'not_queried' }
-    const out = handlerDifferences({})
+    const out = await handlerDifferences({})
     expect(out.counts.specialized_sme).toEqual({ missing_in_miit: 0, extra_in_miit: 0 })
     expect(out.counts.innovative_sme).toEqual({ missing_in_miit: 0, extra_in_miit: 1 })
     query = {}
   })
 
-  it('分页只截返回行,不动 total', () => {
+  it('分页只截返回行,不动 total', async () => {
     query = { pageSize: '1', page: '2' }
-    const out = handlerDifferences({})
+    const out = await handlerDifferences({})
     expect(out.rows).toHaveLength(1)
     expect(out.total).toBe(3)
     query = {}
