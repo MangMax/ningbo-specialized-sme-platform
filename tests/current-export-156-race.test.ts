@@ -41,7 +41,7 @@ async function queryEntry() {
   ;(globalThis as any).__routerBridge = { current: router }
   const wrapper = mount(Entry, { props: { titleCode: 'little_giant' }, global: { plugins: [router], components: { NuxtLink: RouterLink } } })
   mounted.push(wrapper); await flushPromises()
-  return { wrapper, router, click: () => wrapper.get('button[aria-label^="导出全量名单："]').trigger('click') }
+  return { wrapper, router, click: () => wrapper.get('button[aria-label^="导出当前称号名单："]').trigger('click') }
 }
 async function regeneration() {
   const wrapper = mount(defineComponent({ setup() {
@@ -112,7 +112,7 @@ it.each(['q', 'district'] as const)('pending export failure shows recovery notic
   receipt.reject(new Error('lost export receipt')); await flushPromises()
   expect(query.wrapper.get('[role="alert"]').text()).toContain('提交尚未确认')
   expect(query.wrapper.get('[role="alert"]').text()).toContain('请求标识已保留，重提沿用同一标识')
-  expect(query.wrapper.get('button[aria-label^="导出全量名单："]').attributes('disabled')).toBeUndefined()
+  expect(query.wrapper.get('button[aria-label^="导出当前称号名单："]').attributes('disabled')).toBeUndefined()
   expect(query.router.currentRoute.value.path).toBe('/current-enterprises')
 })
 
