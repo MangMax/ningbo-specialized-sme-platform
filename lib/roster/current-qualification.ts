@@ -9,10 +9,11 @@ import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
 import { normalizeName, normalizeUscc } from '../domain'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
+import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
+export { CURRENT_TITLES }
+export type { CurrentTitle }
 
 export const CURRENT_RULE_VERSION = 'current-roster-116-v8'
-export const CURRENT_TITLES = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
-export type CurrentTitle = typeof CURRENT_TITLES[number]
 export type CurrentGroup = 'eligible' | 'pending' | 'excluded'
 export interface CurrentRow {
   enterpriseId: number; name: string; uscc: string | null; district: string | null

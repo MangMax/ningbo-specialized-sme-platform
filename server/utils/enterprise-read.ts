@@ -1,11 +1,12 @@
 import { channel } from 'node:diagnostics_channel'
 import type { RosterEnterpriseFilter, RosterEnterprisesResult } from '../../lib/roster/enterprise-roster'
 import type { EnterpriseReadRequest } from '../../lib/roster/enterprise-read-worker'
+import type { CurrentQualifiedFilter } from '../../lib/roster/current-qualified-query'
 import { createEnterpriseWorker } from './enterprise-read-worker-location'
 
 const diagnostic = channel('ningbo.enterprise-read')
 type Detail = ReturnType<typeof import('../../lib/roster/enterprise-roster').getRosterEnterpriseDetail>
-type Input = { dbPath: string } & ({ operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number })
+type Input = { dbPath: string } & ({ operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | { operation: 'current-qualified'; filter: CurrentQualifiedFilter })
 type JsonRead = { body: Buffer; found: boolean }
 type NativeWorker = {
   on(event: 'message' | 'error' | 'exit', listener: (message: any) => void): unknown
@@ -117,6 +118,7 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
       return promise
     },
     json(dbPath: string, request: { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number }, signal?: AbortSignal) { return submit({ ...request,dbPath } as Input, signal, 'json') as Promise<JsonRead> },
+    currentQualifiedJson(dbPath: string, filter: CurrentQualifiedFilter, signal?: AbortSignal) { return submit({ dbPath, operation: 'current-qualified', filter }, signal, 'json') as Promise<JsonRead> },
     list(dbPath: string, filter: RosterEnterpriseFilter = {}, signal?: AbortSignal) { return submit({ dbPath, operation: 'list', filter }, signal) as Promise<RosterEnterprisesResult> },
     detail(dbPath: string, enterpriseId: number, signal?: AbortSignal) { return submit({ dbPath, operation: 'detail', enterpriseId }, signal) as Promise<Detail> },
     async close() {
