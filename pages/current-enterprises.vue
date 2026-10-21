@@ -188,7 +188,7 @@ useHead({ title: '优质中小企业查询' })
         <TableFailureState v-if="error" class="[overflow-wrap:anywhere]" title="当前有效企业查询失败" :compact="Boolean(displayed)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
         <div v-if="!error || displayed" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
           <Table class="data-table min-w-[850px] table-fixed">
-            <TableHeader><TableRow class="hover:bg-transparent">
+            <TableHeader class="sticky top-0 z-10"><TableRow class="hover:bg-transparent">
               <TableHead class="bg-muted w-[24%]">企业名称</TableHead><TableHead class="bg-muted w-[19%]">统一社会信用代码</TableHead><TableHead class="bg-muted w-[12%]">区县</TableHead><TableHead class="bg-muted w-[31%]">认定与资格依据</TableHead><TableHead class="bg-muted w-[14%]">详情与出处</TableHead>
             </TableRow></TableHeader>
             <TableBody>
