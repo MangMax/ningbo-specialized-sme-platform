@@ -56,3 +56,16 @@ it('closes the source dialog before returning to the same event and preserves th
   expect(close.defaultPrevented).toBe(true)
   expect(wrapper.emitted('event-navigate')).toEqual([[9]])
 })
+
+it('keeps formal evidence visible and offers retry while expanded platform points fail', async () => {
+  const wrapper = mount(RecordEventSource, { props: {
+    event, evidence: [{ sourceFile: 'jxj/announcement/synthetic.pdf', attachment: null, listNo: 2, page: 8 }],
+    edges: [], edgesReady: false, edgesError: true, back: '/enterprises/42',
+  }, global: { stubs: { NuxtLink: { props: ['to'], template: '<a><slot /></a>' }, SourceReader: true } } })
+  mounted.push(wrapper)
+  expect(wrapper.text()).toContain('第 8 页')
+  expect(wrapper.text()).toContain('不能据此判断没有来源')
+  expect(wrapper.text()).not.toContain('暂无与这条记录匹配')
+  await wrapper.findAll('button').find(button => button.text() === '重试读取')!.trigger('click')
+  expect(wrapper.emitted('retry-detail')).toEqual([[]])
+})

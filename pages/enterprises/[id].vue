@@ -244,12 +244,21 @@ const {
   rows: correspondenceRows,
   loading: correspondenceLoading,
   error: correspondenceError,
+  ready: correspondenceReady,
   reload: reloadCorrespondences,
+  detailsForEvent,
+  detailLoadingForEvent,
+  detailErrorForEvent,
+  loadEvent,
 } = useEnterpriseCorrespondences(computed(() => tab.value === 'records' ? detail.value?.id ?? null : null))
 
-// 原行摘要与展开的出处会改变页面高度，等它们成功或失败后再恢复预览前位置。
-const detailRendered = computed(() => (detail.value !== null || error.value != null) && !correspondenceLoading.value)
-useEvidencePreviewScrollRestore(detailRendered)
+/** 折叠标题用企业详情已读取的标量信息；完整对应出处只在展开时点读。 */
+const relationSummaries = computed(() => {
+  const queries = new Map((data.value?.platform.queries ?? []).map(query => [query.id, query]))
+  return Object.fromEntries((data.value?.platform.relations ?? []).map(relation => [relation.id, {
+    interface: queries.get(relation.queryId)?.interface ?? '', status: relation.status,
+  }]))
+})
 
 function edgesFor(eventId: number) {
   return correspondenceRows.value.filter(edge => edge.eventId === eventId && edge.type !== 'later_process')
@@ -258,6 +267,13 @@ function edgesFor(eventId: number) {
 const EVIDENCE_DISCLOSURE_RETURN_KEY = 'roster:enterprise-detail-open-evidence'
 const openEvidenceKeys = ref<string[]>([])
 
+watch([correspondenceRows, openEvidenceKeys, correspondenceReady], () => {
+  if (!correspondenceReady.value) return
+  for (const event of ledgerEvents.value) {
+    if (evidenceDisclosureOpen(evidenceDisclosureKey(event.id))) void loadEvent(event.id)
+  }
+}, { immediate: true })
+
 function evidenceDisclosureKey(eventId: number): string {
   return JSON.stringify([id.value, eventId])
 }
@@ -265,6 +281,12 @@ function evidenceDisclosureKey(eventId: number): string {
 function evidenceDisclosureOpen(key: string): boolean {
   return openEvidenceKeys.value.includes(key)
 }
+
+// 原行摘要与展开的出处会改变页面高度，等它们成功或失败后再恢复预览前位置。
+const detailRendered = computed(() => (detail.value !== null || error.value != null) && !correspondenceLoading.value
+  && (correspondenceError.value || ledgerEvents.value.every(event => !evidenceDisclosureOpen(evidenceDisclosureKey(event.id))
+    || detailsForEvent(event.id) !== null || detailErrorForEvent(event.id))))
+useEvidencePreviewScrollRestore(detailRendered)
 
 function setEvidenceDisclosureOpen(key: string, open: boolean): void {
   const next = new Set(openEvidenceKeys.value)
@@ -566,6 +588,11 @@ function openPreview(e: Evidence) {
                     :event="event"
                     :evidence="event.evidence"
                     :edges="edgesFor(event.id)"
+                    :full-edges="detailsForEvent(event.id)"
+                    :links-ready="correspondenceReady"
+                    :details-loading="detailLoadingForEvent(event.id)"
+                    :details-error="detailErrorForEvent(event.id)"
+                    :relation-summaries="relationSummaries"
                     :back="route.fullPath"
                     :return-to="sourceReturnTarget(route.query.returnTo)"
                     :open="evidenceDisclosureOpen(evidenceDisclosureKey(event.id))"
@@ -574,6 +601,7 @@ function openPreview(e: Evidence) {
                     @preview="openPreview"
                     @event-navigate="arriveAtEvent"
                     @page-open="rememberPagePreviewReturn"
+                    @retry-detail="loadEvent(event.id, true)"
                   />
                 </li>
               </ul>

@@ -1,8 +1,9 @@
-import { importReceiptMcpResult } from '../../utils/import-receipts'
+import { importExecutor } from '../../utils/import-execution'
+import { asyncImportReceiptMcpResult } from '../../utils/import-receipts'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { preflightRosterImport, validateImportRequest } from '../../utils/roster-import'
+import { validateImportRequest } from '../../utils/roster-import'
 import { validateRosterImportPageCounts } from '../../utils/roster-import-page-validation'
 
 /**
@@ -49,6 +50,6 @@ export default defineMcpTool({
     })
     if (!validated.ok) throw createError({ statusCode: validated.status, message: validated.message })
     const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
-    return importReceiptMcpResult(() => preflightRosterImport(useDb(), validated.value, pageCountErrors))
+    return asyncImportReceiptMcpResult(() => importExecutor.execute(useDb(), 'preflight', validated.value, pageCountErrors))
   },
 })

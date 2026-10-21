@@ -29,9 +29,11 @@ db.insert(schema.platformRelation).values({ queryId: otherQuery, sequenceNo: 1, 
 db.$client.prepare('UPDATE platform_relation SET raw_fields = ? WHERE query_id = ?').run('{unrelated invalid json', otherQuery)
 let server: ReturnType<typeof createServer>, base: string
 let normalizationCalls = 0
+let coverageSqlCalls = 0
 let unrelatedPointerBytes = 0
 const prepare = db.$client.prepare.bind(db.$client)
 db.$client.prepare = ((...args: Parameters<typeof db.$client.prepare>) => {
+  if (String(args[0]).includes('with selected as materialized')) coverageSqlCalls++
   const statement = prepare(...args)
   const observe = (value: unknown) => {
     if (typeof value === 'string' && value.startsWith('unrelated-pointer-')) unrelatedPointerBytes += Buffer.byteLength(value)
@@ -89,6 +91,38 @@ it('HTTP detail preserves legacy Unicode keys without allocating normalization c
   } finally {
     db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids)
   }
+})
+it('HTTP detail shares title coverage and keeps unrelated Unicode keys out of repeated scans', async () => {
+  const ids: number[] = []
+  const addUnrelated = (start: number, count: number) => db.$client.transaction(() => {
+    const insert = db.$client.prepare("INSERT INTO platform_query(interface,query_key,queried_at,status,created_at) VALUES('apply_list',?,'2026-10-19','failed','2026-10-19')")
+    for (let i = start; i < start + count; i++) ids.push(Number(insert.run(`\u200B UNRELATED84${i} `).lastInsertRowid))
+  })()
+  addUnrelated(0, 200)
+  normalizationCalls = coverageSqlCalls = 0
+  try {
+    const direct = getRosterEnterpriseDetail(db, owner)!
+    const callsAt200 = normalizationCalls
+    const response = await fetch(`${base}/api/roster/enterprises/${owner}`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(direct)
+    const specialized = direct.titleAssessments.filter(row => row.titleCode === 'specialized_sme')
+    expect(specialized).toHaveLength(2)
+    expect(specialized[0]?.queryCoverage).toEqual(specialized[1]?.queryCoverage)
+    expect(specialized[0]?.queryCoverage.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ queryId: recognized, queryStatus: 'partial', subjectMatch: 'exact_uscc' }),
+      expect.objectContaining({ queryId: failed, queryStatus: 'failed', subjectMatch: 'name_only' }),
+    ]))
+    expect(coverageSqlCalls).toBeLessThanOrEqual(3)
+    expect(normalizationCalls).toBeLessThan(400)
+    addUnrelated(200, 800)
+    normalizationCalls = coverageSqlCalls = 0
+    expect(getRosterEnterpriseDetail(db, owner)).toEqual(direct)
+    expect(coverageSqlCalls).toBeLessThanOrEqual(3)
+    // One owned-ID selection still visits exceptional keys; the title/direction
+    // assessments must not each revisit those 800 unrelated keys.
+    expect(normalizationCalls - callsAt200).toBeLessThan(850)
+  } finally { db.$client.prepare(`DELETE FROM platform_query WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids) }
 })
 it('HTTP filtered list counts titles without materializing unrelated evidence pointers', async () => {
   const record = db.insert(schema.record).values({ enterpriseId: unrelated, titleCode: 'innovative_sme', source: 'jxj' }).returning().get()

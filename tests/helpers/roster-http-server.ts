@@ -18,6 +18,7 @@ import * as schema from '../../db/schema'
 import { handleRosterImportRequest, type RosterImportAction } from '../../server/utils/roster-import-http'
 import { handleEvidencePagesRequest } from '../../server/utils/roster-evidence-pages'
 import { startHttpFixture, type FixtureHandler } from './http-fixture'
+import type { importExecutor } from '../../server/utils/import-execution'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -30,6 +31,7 @@ export async function startRosterApi(options: {
   db: Db
   apiToken: string | null | undefined
   filesDir?: string
+  executeImport?: typeof importExecutor.execute
 }): Promise<RosterApiServer> {
   // 写面只有这一条核心:`/preflight`、`/commit`、`/replay` 只差一个动作参数。
   const importRoute: FixtureHandler = async (request) => {
@@ -41,7 +43,7 @@ export async function startRosterApi(options: {
     const out = await handleRosterImportRequest(
       action,
       { method: request.method, headers: request.headers, body: request.body },
-      { db: options.db, apiToken: options.apiToken, filesDir: options.filesDir },
+      { db: options.db, apiToken: options.apiToken, filesDir: options.filesDir, executeImport: options.executeImport },
     )
     return { status: out.status, headers: out.headers, body: out.body }
   }

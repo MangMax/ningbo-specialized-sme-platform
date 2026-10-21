@@ -37,7 +37,7 @@ const metadataProjection = sql`case when json_valid(q.collection_evidence) then 
         'fullRange',json_extract(q.collection_evidence,'$.fullRange'), 'unfinished',json_extract(q.collection_evidence,'$.unfinished'),
         'error',json_extract(q.collection_evidence,'$.error'), 'limits',json_extract(q.collection_evidence,'$.limits')) else null end`
 /** Metadata extraction stays inside SQLite; original rows/raw_response never enter JS. */
-function queryMetadata(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants) {
+function queryMetadata(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
   identityFunctions(db)
   const e = db.get<{ uscc: string | null; name: string }>(sql`select uscc_norm as uscc,name_norm as name from enterprise where id=${scope.enterpriseId}`)!
   const uscc = normalizeUscc(e.uscc) || null, rdjb = rdjbByTitle[scope.titleCode] ?? ''
@@ -51,7 +51,7 @@ function queryMetadata(db: DecisionDb, scope: AssessmentScope, variants?: Identi
     sql`select id,queried_at from (select q.id,q.queried_at from platform_query q indexed by platform_query_key_idx where q.query_key in (select value from json_each(${JSON.stringify(keys)})) and ${titleScope} order by q.queried_at desc,q.id desc limit 51)`,
     sql`select id,queried_at from (select distinct q.id,q.queried_at from platform_relation r indexed by platform_relation_enterprise_idx join platform_query q on q.id=r.query_id where r.enterprise_id=${scope.enterpriseId} and ${titleScope} order by q.queried_at desc,q.id desc limit 51)`,
   ], sql` union `) : null
-  const selected = indexed ? sql`select id from (${indexed}) order by queried_at desc,id desc limit 51` : sql`select q.id from platform_query q
+  const selected = ownQueryIds ? sql`select q.id from platform_query q where q.id in (select value from json_each(${JSON.stringify(ownQueryIds)})) and ${titleScope} order by q.queried_at desc,q.id desc limit 51` : indexed ? sql`select id from (${indexed}) order by queried_at desc,id desc limit 51` : sql`select q.id from platform_query q
     where (q.query_key=${`name:${e.name}`} or
       (${uscc} is not null and ${uscc?.includes(':') ? sql`1` : sql`instr(q.query_key,':')=0`} and ${identityUsccSql(sql`q.query_key`)}=${uscc}) or
       q.id in (select query_id from platform_relation where enterprise_id=${scope.enterpriseId}))
@@ -89,11 +89,12 @@ function completePages(pages: PlatformQueryPage[], pageSize: number, fullRange: 
   if (maxPages[0] != null) return Number.isInteger(maxPages[0]) && maxPages[0] === last.page && pages.slice(0, -1).every(p => p.fetchedCount === pageSize)
   return last.fetchedCount === 0 && pages.slice(0, -1).every(p => p.fetchedCount === pageSize)
 }
-export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants) {
-  return coverageOf(queryMetadata(db, scope, variants), scope)
+export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
+  return coverageOf(queryMetadata(db, scope, variants, ownQueryIds), scope)
 }
 function coverageOf({ rows, truncated, uscc }: ReturnType<typeof queryMetadata>, scope: AssessmentScope) {
   const rdjb = rdjbByTitle[scope.titleCode]
+
   const sources: QueryCoverageSource[] = rows.flatMap(q => {
     const m = metadataOf(q)
     if (m && q.interface !== 'apply_list' && !m.titleScope.rdjb.includes(rdjb!)) return []
@@ -128,13 +129,14 @@ function coverageOf({ rows, truncated, uscc }: ReturnType<typeof queryMetadata>,
   else if (relevant.some(s => s.status === 'failed')) status = 'failed'
   return { status, sources, truncated }
 }
-export function readQueryAssessment(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants) {
+export function readQueryAssessment(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, coverage?: ReturnType<typeof readQueryCoverage>) {
   scope = { enterpriseId: scope.enterpriseId, titleCode: scope.titleCode, direction: scope.direction }
   const currentDecision = currentDecision102(db, scope)
-  return assessmentOf(db, scope, readQueryCoverage(db, scope, variants), currentDecision)
+  return assessmentOf(db, scope, coverage ?? readQueryCoverage(db, scope, variants), currentDecision)
 }
 /** Shared status rules; both full and scalar readers supply their own SQL projection. */
 function assessmentStatuses(scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision: ReturnType<typeof currentDecisionState102>, impact: ReturnType<typeof readEvidenceImpact113>) {
+
   const current = currentDecision.current
   const executed = queryCoverage.sources.filter(s => s.titleCode === scope.titleCode && s.queryStatus !== 'not_queried' && ['exact_uscc', 'matched_relation'].includes(s.subjectMatch))
   const reviewed = impact.state?.reviewedRevisionId

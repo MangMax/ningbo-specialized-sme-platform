@@ -1,4 +1,4 @@
-import { readQueryAssessment, type QueryAssessment } from './query-assessment'
+import { readQueryAssessment, readQueryCoverage, type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { readEnterpriseSnapshot, readEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 /**
@@ -967,7 +967,8 @@ export function getRosterEnterpriseDetail(db: Db, id: number): RosterEnterpriseD
 
 function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
   // 只建**这一家**的画像:详情页开一行,不该把整库 7352 家全算一遍。
-  const { snap, index, profileOf } = readRosterContext(db, readEnterpriseSnapshot(db, id))
+  const enterpriseSnapshot = readEnterpriseSnapshot(db, id)
+  const { snap, index, profileOf } = readRosterContext(db, enterpriseSnapshot)
   const enterprise = snap.enterprises.find((e) => e.id === id)
   if (!enterprise) return null
 
@@ -1018,6 +1019,17 @@ function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
       failureReason: q.failureReason,
       relationCount: relationCounts.get(q.id) ?? 0,
     }))
+  // Both directions use the same coverage for a title. Its IDs came from this
+  // enterprise's snapshot, so coverage need not rescan global query keys.
+  const coverageByTitle = new Map<string, ReturnType<typeof readQueryCoverage>>()
+  const assessmentFor = (scope: Parameters<typeof readQueryAssessment>[1]) => {
+    let coverage = coverageByTitle.get(scope.titleCode)
+    if (!coverage) {
+      coverage = readQueryCoverage(db, scope, undefined, enterpriseSnapshot.ownQueryIds)
+      coverageByTitle.set(scope.titleCode, coverage)
+    }
+    return readQueryAssessment(db, scope, undefined, coverage)
+  }
 
   return {
     enterprise: row,
@@ -1069,9 +1081,9 @@ function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
     differences: differenceRows
       .filter((r) => r.enterpriseId === id)
       .sort((a, b) => titleRank(a.titleCode) - titleRank(b.titleCode) || a.direction.localeCompare(b.direction))
-      .map(r => ({ ...r, ...readQueryAssessment(db, r) })),
+      .map(r => ({ ...r, ...assessmentFor(r) })),
     titleAssessments: TITLE_ORDER.flatMap(titleCode => (['missing_in_miit', 'extra_in_miit'] as const).map(direction => {
-      const scope = { enterpriseId: id, titleCode, direction }; return { ...scope, ...readQueryAssessment(db, scope) }
+      const scope = { enterpriseId: id, titleCode, direction }; return { ...scope, ...assessmentFor(scope) }
     })),
     platform: {
       queries,

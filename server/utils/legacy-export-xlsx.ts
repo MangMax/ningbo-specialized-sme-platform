@@ -8,6 +8,18 @@ import { Stream } from 'documonster/excel'
 
 type Pace = (characters: number) => Promise<void>
 
+/** SpreadsheetML escapes are distinct from XML escaping. Encode once so literal
+ * _xHHHH_ text cannot be mistaken for a generated control-character escape. */
+function textXml(value: string) {
+  return value.replace(/_[xX][0-9A-Fa-f]{4}_|[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF&<>"'\r]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, char => {
+    if (char.length > 1) return `_x005F_${char.slice(1)}`
+    if (char === '\r') return '&#13;'
+    const code = char.charCodeAt(0)
+    if (code < 0x20 || code >= 0xD800) return `_x${code.toString(16).padStart(4, '0').toUpperCase()}_`
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[char]!
+  })
+}
+
 /** Stage the XLSX before sending headers, then let h3 stream the completed file.
  * The owned sink lets disk errors and disconnected requests remove partial files.
  * The query's existing row array remains; serialized workbook bytes are not collected.
@@ -19,8 +31,10 @@ export async function writeLegacyXlsx(
   const dir = mkdtempSync(join(tmpdir(), 'roster-export-'))
   const filename = join(dir, 'download.xlsx')
   let sink: ReturnType<typeof createWriteStream> | undefined
+  let textSink: ReturnType<typeof createWriteStream> | undefined
   let download: ReturnType<typeof createReadStream> | undefined
   let settled: Promise<void> | undefined
+  let textSettled: Promise<void> | undefined
   let failure: Error | undefined
   let rows = 0
   let characters = 0
@@ -32,6 +46,7 @@ export async function writeLegacyXlsx(
     if (event.node?.res?.writableFinished) return
     failure ??= new Error('Export download disconnected')
     sink?.destroy(failure)
+    textSink?.destroy(failure)
     // h3 waits for end/error, not close: destroy with an error to settle sendStream.
     download?.destroy(failure)
   }
@@ -39,6 +54,9 @@ export async function writeLegacyXlsx(
   try {
     sink = createWriteStream(filename, { mode: 0o600 })
     settled = finished(sink).catch((error: Error) => { failure ??= error })
+    const textPath = join(dir, 'strings.xml.part')
+    textSink = createWriteStream(textPath, { mode: 0o600 })
+    textSettled = finished(textSink).catch((error: Error) => { failure ??= error })
     if (event.node?.res?.destroyed) abort()
     const pace: Pace = async (size) => {
       if (failure) throw failure
@@ -54,11 +72,42 @@ export async function writeLegacyXlsx(
       await new Promise<void>((resolve, reject) => {
         sink!.write(new Uint8Array(0), (error) => error ? reject(error) : resolve())
       })
+      await new Promise<void>((resolve, reject) => {
+        textSink!.write(new Uint8Array(0), (error) => error ? reject(error) : resolve())
+      })
       if (failure) throw failure
     }
     const workbook = new Stream.WorkbookWriter({
-      stream: sink, useSharedStrings: false, useStyles: true, trueStreaming: true,
+      stream: sink, useSharedStrings: true, useStyles: true, trueStreaming: true,
     })
+    // Documonster 0.20.2's plain-cell XML path strips forbidden XML characters
+    // and normalizes CRLF. Its public shared-string hooks let this text-only
+    // adapter provide lossless SpreadsheetML without retaining a string table.
+    // The worksheet, styles, relationships and ZIP remain owned by Documonster.
+    let stringCount = 0
+    Object.defineProperty(workbook.sharedStrings, 'count', { get: () => stringCount })
+    workbook.sharedStrings.add = value => {
+      if (typeof value !== 'string') throw new TypeError('Legacy export columns must be text')
+      const index = stringCount++
+      textSink!.write(`<si><t xml:space="preserve">${textXml(value)}</t></si>`)
+      return index
+    }
+    workbook.addSharedStrings = async () => {
+      textSink!.end()
+      await textSettled
+      if (failure) throw failure
+      if (!stringCount) return
+      const packageSink = workbook.packageSink()
+      const part = packageSink.open('xl/sharedStrings.xml')
+      part.write(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${stringCount}">`)
+      for await (const chunk of createReadStream(textPath)) {
+        if (failure) throw failure
+        part.write(chunk)
+        await packageSink.drain()
+      }
+      part.write('</sst>')
+      part.end()
+    }
     await write(workbook, pace)
     if (failure) throw failure
     await workbook.commit()
@@ -71,7 +120,9 @@ export async function writeLegacyXlsx(
     return download
   } catch (error) {
     sink?.destroy()
+    textSink?.destroy()
     await settled
+    await textSettled
     cleanup()
     throw error
   }
@@ -84,7 +135,7 @@ interface ExportColumn {
   wrapText?: boolean
 }
 
-/** Fixed text columns; no formula coercion, shared-string table or retained rows. */
+/** Fixed text columns; no formula coercion or retained rows/string table. */
 export function legacyExportSheet(
   workbook: Stream.WorkbookWriter,
   pace: Pace,

@@ -1,0 +1,218 @@
+{
+  "verifiedSource": "6b0076761d50af370a373be686754a69998993c4",
+  "verifiedTree": "e4f4472ac94609b19f4880ac8c856db8c800ae6d",
+  "applicationSource": "b76c04cb95d6a6acf11a4fb4ba31ff61e639a699",
+  "nonDocEqual": true,
+  "applicationChanges": false,
+  "newBuild": false,
+  "imageId": "sha256:6ba20706dfc8ec8237eac880221856126ddf1319c6b4338a2e4d0cb70050569b",
+  "linuxNode": "v24.22.0",
+  "hostNode": "v24.22.1",
+  "freshTests": {
+    "numPassedTests": 3030,
+    "numPendingTests": 12,
+    "numFailedTests": 0,
+    "passedFiles": 245,
+    "skippedFiles": 2,
+    "testFiles": 247
+  },
+  "testCommand": [
+    "pnpm",
+    "test",
+    "--maxWorkers",
+    "2",
+    "--reporter=default",
+    "--reporter=json",
+    "--outputFile=/tmp/ningbo-perf-83-90/release-6b00767-20261021T140030Z/full-tests.json"
+  ],
+  "testExit": 0,
+  "testDurationSeconds": 352.03,
+  "testGuardMinBytes": 13738872832,
+  "fresh390Functional": {
+    "passed": true,
+    "viewportCss": [
+      390,
+      844
+    ],
+    "imagePixels": [
+      780,
+      1688
+    ],
+    "route": "/enterprises/1 -> SPA /enterprises/2",
+    "initialSummary": {
+      "requestId": 76,
+      "rows": 121,
+      "revision": 2,
+      "newEdge242Absent": true,
+      "pointsBeforeExpand": 0
+    },
+    "revisionMismatch": {
+      "pointId": 86,
+      "actualRevision": 3,
+      "unknownStateAndOfficialSourceRetained": true
+    },
+    "explicitRetry": {
+      "summaryRequestId": 90,
+      "rows": 122,
+      "revision": 3,
+      "newEdge": 242,
+      "pointRequestIds": [
+        91,
+        92,
+        93
+      ],
+      "newEdgeVisible": true
+    },
+    "staleOwner": {
+      "owner2SummaryRequestId": 104,
+      "lateOwner1PointRequestId": 99,
+      "lateCompletedAfterOwner2": true,
+      "disconnected": false,
+      "actualFullBodyReceived": true,
+      "owner2UiUnchangedAfterLate": true,
+      "intentionalHoldNotLatencyEvidence": true
+    },
+    "noHorizontalOverflow": true,
+    "noAppSourceChanges": true,
+    "syntheticReadonly": true,
+    "performanceClaim": false
+  },
+  "fixture": {
+    "sha256": "c04e2ad915ddd7d1085c011a20aedb4e036fafcde7058ce792fbaf829e317088",
+    "inode": 277509033,
+    "bytes": 61177856,
+    "mode": "0400",
+    "beforeApi": true,
+    "manifest": {
+      "pointId": 1,
+      "currentRevision": 3,
+      "simulatedOldSummaryRevision": 2,
+      "extraEdgeId": 242,
+      "extraEdgeRevision": 1,
+      "eventId": 1,
+      "relationId": 2,
+      "targetEnterpriseId": 1,
+      "otherEnterpriseId": 2,
+      "currentSummaryRows": 122,
+      "simulatedOldSummaryRows": 121,
+      "actualFutureEdgeExists": true,
+      "syntheticOnly": true
+    }
+  },
+  "inherited1280": "combined-runtime-b76.md; exact non-doc application equality; not rerun",
+  "retainedEvidenceReview": {
+    "releaseSource": "6b0076761d50af370a373be686754a69998993c4",
+    "imageSource": "b76c04cb95d6a6acf11a4fb4ba31ff61e639a699",
+    "nonDocExactEqual": true,
+    "noRemeasurement": true,
+    "v2AppliedProspectively": true,
+    "94": {
+      "rowCount": 21,
+      "allObservedOriginalGatesMet": true,
+      "maxLoopP95": 24.887295,
+      "maxLoopMax": 127.533055,
+      "private": "94-current-gates.json"
+    },
+    "83Summary": {
+      "rows": 6,
+      "maxP95": 20.05945900000006,
+      "maxBytes": 11976,
+      "maxHeapDelta": 20079848,
+      "maxLoopP95": 20.627455,
+      "allRecordedGatesMet": true
+    },
+    "85Summary": {
+      "rows": 18,
+      "maxP95": 101.00129199999992,
+      "maxBytes": 28002,
+      "maxHeapDelta": 42917520,
+      "maxLoopP95": 65.896447,
+      "allRecordedGatesMet": true,
+      "actualBodyProof": [
+        {
+          "scale": 1,
+          "actualRows": 50,
+          "total": 120,
+          "bytes": 17236,
+          "resultHash": "76d4948626b5153306d53a2acc5e2b68998a8074b913d331fff321f3e1c2144e",
+          "nestedRawAbsent": true
+        },
+        {
+          "scale": 2,
+          "actualRows": 50,
+          "total": 120,
+          "bytes": 17236,
+          "resultHash": "76d4948626b5153306d53a2acc5e2b68998a8074b913d331fff321f3e1c2144e",
+          "nestedRawAbsent": true
+        },
+        {
+          "scale": 5,
+          "actualRows": 50,
+          "total": 120,
+          "bytes": 17236,
+          "resultHash": "76d4948626b5153306d53a2acc5e2b68998a8074b913d331fff321f3e1c2144e",
+          "nestedRawAbsent": true
+        }
+      ]
+    },
+    "85DeepSummary": {
+      "rows": 18,
+      "allRecordedGatesMet": true,
+      "maxP95": 83.9457910000001,
+      "maxBytes": 713
+    },
+    "compiledFunctionalIdentity": {
+      "compiled-ipc-recovery": {
+        "image": "sha256:6ba20706dfc8ec8237eac880221856126ddf1319c6b4338a2e4d0cb70050569b",
+        "exit": 0,
+        "oom": false,
+        "source": "b76c04cb95d6a6acf11a4fb4ba31ff61e639a699",
+        "actualStdoutPassed": true
+      },
+      "compiled-95-auth-recovery": {
+        "image": "sha256:6ba20706dfc8ec8237eac880221856126ddf1319c6b4338a2e4d0cb70050569b",
+        "exit": 0,
+        "oom": false,
+        "source": "b76c04cb95d6a6acf11a4fb4ba31ff61e639a699",
+        "actualStdoutPassed": true
+      },
+      "compiled-two-instance-cache-writes": {
+        "image": "sha256:6ba20706dfc8ec8237eac880221856126ddf1319c6b4338a2e4d0cb70050569b",
+        "exit": 0,
+        "oom": false,
+        "source": "b76c04cb95d6a6acf11a4fb4ba31ff61e639a699",
+        "actualStdoutPassed": true
+      }
+    },
+    "retainedRisks": [
+      "83/85RAWlegacy full bytes CONTRACT-EXCLUDED only from metadata gate, oldv1missesunchanged",
+      "raw loop101-300ms remainsRISK notnewarchitecture requirement",
+      "enterprise defaultfull13,271,319B consumer/projection risk; notordinarysummary evidence",
+      "limitedgrowth/currentwhole5xRESOURCE-UNVERIFIED; no universalnoregression claim"
+    ],
+    "blockingCorrectnessFinding": null,
+    "scope": "LIGHT review of retained exactimage metadata and fullbody summary projections; no new APIrequests/tests/bench"
+  },
+  "cleanup": {
+    "utc": "2026-10-21T14:25:00.972236+00:00",
+    "ownedContainers": [],
+    "ownedTabClosed": true,
+    "allFourOwnedDatabaseFilesAbsent": true,
+    "finalFrozenHashMatchedBeforeReclaim": true,
+    "logicalBytesDeleted": 184115200,
+    "hostFreeBytesAtInventory": 19517919232,
+    "resourceStopExists": false,
+    "cellMinimumObservedHostFreeBytes": 17490702336,
+    "noForeignCleanup": true,
+    "activeSampledGuardNotContinuousIdleGuarantee": true
+  },
+  "privateFailures": {
+    "r1": "PRE-API/browser: cached closed handle; prepare exit1, OOMfalse, no Node qualifier/freeze. Private separate-generator-process correction.",
+    "r2": "PRE-API/browser: controller old manifest path; prepare/Node28 qualifier exit0, OOMfalse; no freeze manifest. Single-folder controller correction."
+  },
+  "privateControllerSha256": "74b411ce5f16f2b74ea7952439690091e312a7d0cb88ff4d961d302ed6ad68f3",
+  "privateEvidenceRoot": "/tmp/ningbo-perf-83-90/release-6b00767-20261021T140030Z",
+  "historicalEvidenceRoot": "/tmp/ningbo-perf-83-90/combined-b76c04c-20261021T124757Z",
+  "scope": "Final release verification under approved acceptance-v2. No new performance measurements; no universal no-regression, whole-application capacity, CI, production, #91 or full-spec closure claim.",
+  "blockingCorrectnessFinding": null
+}

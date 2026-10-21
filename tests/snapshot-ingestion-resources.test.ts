@@ -6,6 +6,7 @@ import { afterEach, expect, it } from 'vitest'
 import { useDb, schema } from '../db'
 import type { RosterImportRequest } from '../lib/roster-import-client'
 import { handleRosterImportRequest, type RosterHttpRequest } from '../server/utils/roster-import-http'
+import { preflightRosterImport, commitRosterImport } from '../server/utils/roster-import'
 import { handleRecordCorrespondenceRequest } from '../server/utils/record-correspondence-api'
 import { startHttpFixture } from './helpers/http-fixture'
 
@@ -47,7 +48,7 @@ function request(rows: number, key = 'snapshot:test'): RosterImportRequest {
 
 async function api(db: ReturnType<typeof database>['db']) {
   const server = await startHttpFixture({ routes: Object.fromEntries(['preflight', 'commit'].map(action => [
-    `/api/roster/import/${action}`, async (input: RosterHttpRequest) => handleRosterImportRequest(action as 'preflight' | 'commit', input, { db, apiToken: 'synthetic-token' }),
+    `/api/roster/import/${action}`, async (input: RosterHttpRequest) => handleRosterImportRequest(action as 'preflight' | 'commit', input, { db, apiToken: 'synthetic-token', executeImport: async (db, action, body, errors) => action === 'preflight' ? preflightRosterImport(db, body, errors) : commitRosterImport(db, body, errors) }),
   ])), getRoutes: {
     '/source': input => handleRecordCorrespondenceRequest({ action: 'source', method: 'GET', kind: 'export_row', id: String(input.query.id) }, { db, apiToken: 'synthetic-token' }),
   } })

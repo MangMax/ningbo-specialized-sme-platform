@@ -111,7 +111,7 @@ export function listPlatformQueries(
 }
 
 function listPlatformQueriesSnapshot(
-  db: Pick<BetterSQLite3Database<typeof schema>, 'select'>,
+  db: Pick<BetterSQLite3Database<typeof schema>, 'select' | 'all'>,
   filter: PlatformQueryFilter,
 ): PlatformQueriesResult {
   if (filter.view === 'summary' && filter.includeRawResponse) throw Object.assign(new Error('Invalid view or includeRawResponse combination'), { statusCode: 400 })
@@ -119,10 +119,6 @@ function listPlatformQueriesSnapshot(
   if (filter.queryId != null) conditions.push(eq(schema.platformQuery.id, filter.queryId))
   if (filter.interface) conditions.push(eq(schema.platformQuery.interface, filter.interface))
   if (filter.uscc) conditions.push(sql`(${schema.platformQuery.queryKey} = ${filter.uscc} OR ${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.usccRaw} = ${filter.uscc}))`)
-  if (filter.titleCode) {
-    const rdjb = Object.keys(RDJB_TITLE_CODES).find(key => RDJB_TITLE_CODES[key] === filter.titleCode) ?? ''
-    conditions.push(sql`(${schema.platformQuery.titleCode} = ${filter.titleCode} OR EXISTS (SELECT 1 FROM json_each(json_extract(${schema.platformQuery.collectionEvidence}, '$.titleScope.rdjb')) WHERE value = ${rdjb}))`)
-  }
   if (filter.queryKey) conditions.push(eq(schema.platformQuery.queryKey, filter.queryKey))
   if (filter.status) conditions.push(eq(schema.platformQuery.status, filter.status))
   if (filter.enterpriseId != null) {
@@ -130,22 +126,41 @@ function listPlatformQueriesSnapshot(
       sql`${schema.platformQuery.id} in (select ${schema.platformRelation.queryId} from ${schema.platformRelation} where ${schema.platformRelation.enterpriseId} = ${filter.enterpriseId})`,
     )
   }
+  if (filter.titleCode) {
+    // Preserve the legacy predicate's error for a malformed archive in this exact
+    // filter scope. Only marked IDs are read; ordinary title requests stay indexed.
+    const withoutTitle = conditions.length ? and(...conditions) : sql`1`
+    const malformed = db.all<{ archive: string }>(sql`select collection_evidence as archive from platform_query
+      where id in (select query_id from platform_query_title_scope_error)
+        and ${withoutTitle} and (title_code is null or title_code <> ${filter.titleCode}) limit 1`)
+    if (malformed.length) db.all(sql`select value from json_each(json_extract(${malformed[0]!.archive}, '$.titleScope.rdjb'))`)
+    const rdjb = Object.keys(RDJB_TITLE_CODES).find(key => RDJB_TITLE_CODES[key] === filter.titleCode) ?? ''
+    conditions.push(sql`${schema.platformQuery.id} in (
+      select id from platform_query where title_code = ${filter.titleCode}
+      union select query_id from platform_query_title_scope where rdjb = ${rdjb}
+    )`)
+  }
   const where = conditions.length ? and(...conditions) : undefined
-
-  const counts: Record<string, number> = Object.fromEntries(db
-    .select({ status: schema.platformQuery.status, count: sql<number>`count(*)` })
-    .from(schema.platformQuery)
-    .where(where)
-    .groupBy(schema.platformQuery.status)
-    .all().map(row => [row.status, row.count]))
+  // A title membership can span many queries. Read the narrow status/time indexes
+  // while evaluating that ID set, rather than fetching every wide archive row by PK.
+  const countRows = filter.titleCode
+    ? db.all<{ status: string; count: number }>(sql`select status, count(*) as count from platform_query indexed by platform_query_status_time_idx where ${where} group by status`)
+    : db.select({ status: schema.platformQuery.status, count: sql<number>`count(*)` })
+      .from(schema.platformQuery).where(where).groupBy(schema.platformQuery.status).all()
+  const counts: Record<string, number> = Object.fromEntries(countRows.map(row => [row.status, row.count]))
 
   const page = clamp(filter.page, 1)
   const pageSize = clamp(filter.pageSize, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
   const summary = filter.view === 'summary'
   // Establish the page before evaluating any archive lengths or relation projections.
-  const ids = db.select({ id: schema.platformQuery.id }).from(schema.platformQuery).where(where)
-    .orderBy(sql`${schema.platformQuery.queriedAt} desc`, sql`${schema.platformQuery.id} desc`)
-    .limit(pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (page - 1) * pageSize)).all().map(q => q.id)
+  const offset = Math.min(Number.MAX_SAFE_INTEGER, (page - 1) * pageSize)
+  const ids = (filter.titleCode
+    ? db.all<{ id: number }>(filter.status
+      ? sql`select id from platform_query indexed by platform_query_status_time_idx where ${where} order by queried_at desc, id desc limit ${pageSize} offset ${offset}`
+      : sql`select id from platform_query indexed by platform_query_time_idx where ${where} order by queried_at desc, id desc limit ${pageSize} offset ${offset}`)
+    : db.select({ id: schema.platformQuery.id }).from(schema.platformQuery).where(where)
+      .orderBy(sql`${schema.platformQuery.queriedAt} desc`, sql`${schema.platformQuery.id} desc`)
+      .limit(pageSize).offset(offset).all()).map(q => q.id)
   const { rawResponse: _rawResponse, collectionEvidence: _collectionEvidence, ...columns } = getTableColumns(schema.platformQuery)
   const selectedMeta = ids.length ? db
     .select({
