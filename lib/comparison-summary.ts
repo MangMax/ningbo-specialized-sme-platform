@@ -8,7 +8,7 @@ import type { TitleCode } from '../db/titles'
 import { filterComparisonRows, type ComparisonRowFilter } from './comparison-filter'
 import type { getCuratedComparison } from './curation'
 import { reconcileKey, type ReconcileIndex } from './reconcile'
-import { readQueryAssessments, type QueryAssessment } from './roster/query-assessment'
+import { readQueryAssessmentSummaries, type QueryAssessmentSummary } from './roster/query-assessment'
 
 export type ComparisonSummaryDisposition = Pick<ComparisonDisposition,
   'explanationId' | 'status' | 'reasonCode' | 'measureCode' | 'verificationStatus' | 'recordedAt' | 'evidenceQueryId' | 'evidenceRelationId'>
@@ -27,11 +27,7 @@ export interface ComparisonSummaryRow {
   detailUrl: string
   explanation: { code: string } | null
   /** Independent coverage, decision lifecycle and validity; no evidence payload. */
-  assessment: {
-    queryCoverage: Pick<QueryAssessment['queryCoverage'], 'status'>
-    assessment: QueryAssessment['assessment']
-    explanationValidity: Pick<QueryAssessment['explanationValidity'], 'status'>
-  }
+  assessment: QueryAssessmentSummary
   platform: {
     aliasCount: number
     confirmedAliasCount: number
@@ -114,7 +110,7 @@ export function readComparisonSummary(
     platform: { aliases: aliasesByEnterprise.get(row.enterpriseId) ?? [] },
   })), filter)
   const selected = scoped.slice((page - 1) * pageSize, page * pageSize)
-  const assessments = readQueryAssessments(db, selected.map(row => ({
+  const assessments = readQueryAssessmentSummaries(db, selected.map(row => ({
     enterpriseId: row.enterpriseId, titleCode: row.titleCode, direction: row.direction,
   })))
   const selectedQueryIds = [...new Set(selected.flatMap(row => queriesByEnterprise.get(row.enterpriseId) ?? []))]
@@ -135,11 +131,7 @@ export function readComparisonSummary(
     evidenceIncluded: false,
     detailUrl: `/api/comparison?view=full&enterpriseId=${row.enterpriseId}&title=${row.titleCode}&direction=${row.direction}&showCurated=true`,
     explanation: explanationFor(row) ? { code: explanationFor(row)!.explanation.code } : null,
-    assessment: {
-      queryCoverage: { status: assessments[index]!.queryCoverage.status },
-      assessment: assessments[index]!.assessment,
-      explanationValidity: { status: assessments[index]!.explanationValidity.status },
-    },
+    assessment: assessments[index]!,
     platform: {
       aliasCount: row.platform.aliases.length,
       confirmedAliasCount: row.platform.aliases.filter(alias => alias.verificationStatus === 'confirmed').length,

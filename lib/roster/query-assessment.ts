@@ -2,7 +2,7 @@ import { readEvidenceImpact113 } from '../../server/utils/evidence-impact-113'
 /** #108 additive read projection. Business decisions stay owned by #102. */
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { currentDecision102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
+import { currentDecision102, currentDecisionState102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
 import { normalizeUscc } from '../domain'
 import { identityFunctions, identityUsccSql } from './enterprise-read-snapshot'
 import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
@@ -133,10 +133,10 @@ export function readQueryAssessment(db: DecisionDb, scope: AssessmentScope, vari
   const currentDecision = currentDecision102(db, scope)
   return assessmentOf(db, scope, readQueryCoverage(db, scope, variants), currentDecision)
 }
-function assessmentOf(db: DecisionDb, scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision = currentDecision102(db, scope)) {
+/** Shared status rules; both full and scalar readers supply their own SQL projection. */
+function assessmentStatuses(scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision: ReturnType<typeof currentDecisionState102>, impact: ReturnType<typeof readEvidenceImpact113>) {
   const current = currentDecision.current
   const executed = queryCoverage.sources.filter(s => s.titleCode === scope.titleCode && s.queryStatus !== 'not_queried' && ['exact_uscc', 'matched_relation'].includes(s.subjectMatch))
-  const impact = readEvidenceImpact113(db, { ...scope, direction: scope.direction }, current?.id ?? null)
   const reviewed = impact.state?.reviewedRevisionId
   const pending = !!impact.state && impact.state.latestRevisionId > (reviewed ?? -1)
   // The scope token also advances for coverage-only and disjoint partitions.
@@ -145,14 +145,45 @@ function assessmentOf(db: DecisionDb, scope: AssessmentScope, queryCoverage: Ret
   const changed = reviewed != null && !impact.token.projectionReady
   const invalid = current?.status === 'not_queried' && executed.length > 0 && reviewed == null
   const validity = !current ? 'not_applicable' : pending ? impact.state!.classification : changed ? 'evidence_changed' : reviewed != null ? 'valid' : invalid ? 'premise_invalid' : 'unknown'
+  return { validity, invalid, executed, assessment: current ? 'decided' : currentDecision.versionId ? 'withdrawn' : queryCoverage.status === 'complete' ? 'queried_unjudged' : queryCoverage.status === 'not_queried' ? 'not_queried' : 'unknown' }
+}
+function assessmentOf(db: DecisionDb, scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision = currentDecision102(db, scope)) {
+  const current = currentDecision.current
+  const impact = readEvidenceImpact113(db, scope, current?.id ?? null)
+  const { validity, invalid, executed, assessment } = assessmentStatuses(scope, queryCoverage, currentDecision, impact)
   const reasons = validity === 'premise_invalid' ? ['query_executed'] : validity === 'evidence_changed' ? ['committed_evidence_changed'] : validity === 'unknown' ? ['no_evidence_baseline'] : []
   return {
     queryCoverage, currentDecision,
     explanationValidity: { status: validity, reasons, explanationId: current?.id ?? null, evidenceQueryIds: invalid ? executed.map(s => s.queryId) : current?.evidenceQueryId ? [current.evidenceQueryId] : [] },
-    assessment: current ? 'decided' : currentDecision.versionId ? 'withdrawn' : queryCoverage.status === 'complete' ? 'queried_unjudged' : queryCoverage.status === 'not_queried' ? 'not_queried' : 'unknown',
+    assessment,
   }
 }
 export type QueryAssessment = ReturnType<typeof readQueryAssessment>
+
+export type QueryAssessmentSummary = {
+  queryCoverage: Pick<QueryAssessment['queryCoverage'], 'status'>
+  assessment: QueryAssessment['assessment']
+  explanationValidity: Pick<QueryAssessment['explanationValidity'], 'status'>
+}
+
+export function readQueryAssessments(db: DecisionDb, scopes: AssessmentScope[]): QueryAssessment[] {
+  return readCoveragesForScopes(db, scopes).map((queryCoverage, index) => {
+    const { enterpriseId, titleCode, direction } = scopes[index]!
+    return assessmentOf(db, { enterpriseId, titleCode, direction }, queryCoverage)
+  })
+}
+
+/** Scalar-only list projection; no full decision is hydrated and then discarded. */
+export function readQueryAssessmentSummaries(db: DecisionDb, scopes: AssessmentScope[]): QueryAssessmentSummary[] {
+  return readCoveragesForScopes(db, scopes).map((queryCoverage, index) => {
+    const { enterpriseId, titleCode, direction } = scopes[index]!
+    const scope = { enterpriseId, titleCode, direction }
+    const decision = currentDecisionState102(db, scope)
+    const impact = readEvidenceImpact113(db, scope, decision.current?.id ?? null)
+    const status = assessmentStatuses(scope, queryCoverage, decision, impact)
+    return { queryCoverage: { status: queryCoverage.status }, assessment: status.assessment, explanationValidity: { status: status.validity } }
+  })
+}
 
 /** A page-local read plan, never a result cache. Direction does not alter query
  * coverage, so select the newest 51 IDs once per enterprise/title. Normalize the
@@ -160,7 +191,7 @@ export type QueryAssessment = ReturnType<typeof readQueryAssessment>
  * extraction is AFTER the per-scope bound; raw bodies never enter JavaScript.
  * Decisions and evidence impact still use their owning lifecycle projections.
  */
-export function readQueryAssessments(db: DecisionDb, scopes: AssessmentScope[]): QueryAssessment[] {
+function readCoveragesForScopes(db: DecisionDb, scopes: AssessmentScope[]): ReturnType<typeof readQueryCoverage>[] {
   if (!scopes.length) return []
   identityFunctions(db)
   const keyOf = (s: AssessmentScope) => JSON.stringify([s.enterpriseId, s.titleCode])
@@ -203,5 +234,5 @@ export function readQueryAssessments(db: DecisionDb, scopes: AssessmentScope[]):
     const selected = grouped.get(slot) ?? []
     return [keyOf(s), coverageOf({ rows: selected.slice(0, 50), truncated: selected.length > 50, uscc: normalizeUscc(enterprises.get(s.enterpriseId)?.uscc) || null }, s)] as const
   }))
-  return scopes.map(s => assessmentOf(db, { enterpriseId: s.enterpriseId, titleCode: s.titleCode, direction: s.direction }, coverage.get(keyOf(s))!))
+  return scopes.map(s => coverage.get(keyOf(s))!)
 }
