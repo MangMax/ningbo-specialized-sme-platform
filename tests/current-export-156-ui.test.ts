@@ -37,7 +37,7 @@ async function setup(options: { title?: string; defaultUrl?: boolean; authorized
   const wrapper = mount(Page, { global: { plugins: [createPinia(), PiniaColada, router], components: { NuxtLink: RouterLink } } })
   mounted.push(wrapper)
   await flushPromises()
-  const submit = () => wrapper.get('button[aria-label^="导出全量名单："]')
+  const submit = () => wrapper.get('button[aria-label^="导出当前称号名单："]')
   return { wrapper, router, calls, submit, fetcher }
 }
 
@@ -45,7 +45,7 @@ it.each(['q', 'district'] as const)('default URL pending export keeps failure vi
   let reject!: (reason: Error) => void
   const { wrapper, router, submit, fetcher } = await setup({ defaultUrl: true, post: () => new Promise((_, no) => { reject = no }) })
   expect(router.currentRoute.value.fullPath).toBe('/current-enterprises')
-  expect(submit().attributes('aria-label')).toBe('导出全量名单：专精特新“小巨人”')
+  expect(submit().attributes('aria-label')).toBe('导出当前称号名单：专精特新“小巨人”')
   await submit().trigger('click')
   const body = fetcher.raw.mock.calls[0]![1].body
   if (filter === 'q') await wrapper.get('input[aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"]').setValue('宁波')
@@ -64,7 +64,7 @@ it.each(['q', 'district'] as const)('default URL pending export opens accepted t
   let resolve!: (value: unknown) => void
   const { wrapper, router, submit, fetcher } = await setup({ defaultUrl: true, post: () => new Promise(yes => { resolve = yes }) })
   expect(router.currentRoute.value.fullPath).toBe('/current-enterprises')
-  expect(submit().attributes('aria-label')).toBe('导出全量名单：专精特新“小巨人”')
+  expect(submit().attributes('aria-label')).toBe('导出当前称号名单：专精特新“小巨人”')
   await submit().trigger('click')
   if (filter === 'q') await wrapper.get('input[aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"]').setValue('宁波')
   else wrapper.findComponent(Select).vm.$emit('update:modelValue', '鄞州区')
@@ -79,8 +79,8 @@ it.each(['q', 'district'] as const)('default URL pending export opens accepted t
 for (const entry of TASK_EXPORTS) it(`${entry.titleCode}: filtered query submits only a durable request identity to its dedicated route and opens unified task`, async () => {
   const { wrapper, router, calls, submit } = await setup({ title: entry.titleCode })
   expect(submit()).toBeTruthy()
-  expect(submit().text()).toBe('导出全量名单')
-  expect(submit().attributes('aria-label')).toBe(`导出全量名单：${entry.label}`)
+  expect(submit().text()).toBe('导出当前称号名单')
+  expect(submit().attributes('aria-label')).toBe(`导出当前称号名单：${entry.label}`)
   expect(submit().attributes('aria-describedby')).toBeUndefined()
   const actions = wrapper.get('header').text()
   expect(actions).not.toMatch(/导出范围|导出说明|忽略搜索|产物保留|工作表|数据快照/)
@@ -164,10 +164,10 @@ it('capability discovery can be retried before export without clearing query fil
 
 it('updates the export accessible name when the selected title changes', async () => {
   const { submit, fetcher, router } = await setup()
-  expect(submit().attributes('aria-label')).toBe('导出全量名单：专精特新“小巨人”')
+  expect(submit().attributes('aria-label')).toBe('导出当前称号名单：专精特新“小巨人”')
   await router.push({ path: '/current-enterprises', query: { ...router.currentRoute.value.query, titleCode: 'specialized_sme' } })
   await flushPromises()
-  expect(submit().attributes('aria-label')).toBe('导出全量名单：专精特新中小企业')
-  expect(submit().text()).toBe('导出全量名单')
+  expect(submit().attributes('aria-label')).toBe('导出当前称号名单：专精特新中小企业')
+  expect(submit().text()).toBe('导出当前称号名单')
   expect(fetcher.raw).not.toHaveBeenCalled()
 })

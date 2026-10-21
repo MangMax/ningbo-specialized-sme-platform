@@ -46,7 +46,7 @@ onMounted(() => { void discoverAuthorization() })
 
 <template>
   <div class="flex flex-wrap items-center gap-2">
-    <Button size="sm" variant="outline" :disabled="submitting || !!disabledReason(titleCode)" :aria-label="`导出全量名单：${TITLES[titleCode]}`" :aria-describedby="disabledReason(titleCode) ? 'current-export-reason' : undefined" @click="submit">{{ submitting ? '正在提交…' : '导出全量名单' }}</Button>
+    <Button size="sm" variant="outline" :disabled="submitting || !!disabledReason(titleCode)" :aria-label="`导出当前称号名单：${TITLES[titleCode]}`" :aria-describedby="disabledReason(titleCode) ? 'current-export-reason' : undefined" @click="submit">{{ submitting ? '正在提交…' : '导出当前称号名单' }}</Button>
     <Button v-if="accepted" as-child size="sm" variant="ghost"><NuxtLink :to="taskLocation(accepted)">查看本次导出</NuxtLink></Button>
     <Button v-if="discoveryFailed || authorization === 'failed'" size="sm" variant="outline" :disabled="discovering || authorization === 'loading'" @click="retryCapabilities">重新发现导出能力</Button>
     <p v-if="disabledReason(titleCode)" id="current-export-reason" class="text-muted-foreground text-[13px] leading-5">{{ disabledReason(titleCode) }}</p>
