@@ -650,6 +650,7 @@ await check('Drizzle and EmbedPDF details explain observation-only facts without
     )
     await click('[data-log-detail]')
     await waitFor(`(() => { const el = ${sheetExpr}; return el && el.textContent.includes('Drizzle 执行前查询钩子') })()`)
+    await waitFor(`(() => { const el = ${sheetExpr}; if (!el) return false; const r = el.getBoundingClientRect(); return r.left >= -1 && r.right <= innerWidth + 1 })()`)
     const drizzle = await evaluate(`(() => {
       const el = ${sheetExpr}
       const rect = el.getBoundingClientRect()
@@ -679,6 +680,7 @@ await check('Drizzle and EmbedPDF details explain observation-only facts without
     )
     await click('[data-log-detail]')
     await waitFor(`(() => { const el = ${sheetExpr}; return el && el.textContent.includes('这里只记录 EmbedPDF 原生日志的级别') })()`)
+    await waitFor(`(() => { const el = ${sheetExpr}; if (!el) return false; const r = el.getBoundingClientRect(); return r.left >= -1 && r.right <= innerWidth + 1 })()`)
     const pdf = await evaluate(`(() => {
       const el = ${sheetExpr}
       const rect = el.getBoundingClientRect()
