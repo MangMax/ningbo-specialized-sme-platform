@@ -20,14 +20,7 @@ import {
   TableHeader,
   TableRow
 } from '@/components/ui/table'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
+import TablePagination from '@/components/TablePagination.vue'
 import {
   Sheet,
   SheetContent,
@@ -261,33 +254,11 @@ function restoreFocus(event: Event) {
           ></Empty
         >
         <p v-if="!data && loading" class="px-4 py-8 text-sm" role="status">正在加载日志列表…</p>
-        <!-- Cursor API has no total or last-page lookup; do not invent totals for TablePagination. -->
-        <div data-table-pagination class="flex flex-wrap items-center gap-3 border-t p-3 text-sm">
-          <span>每页</span
-          ><Select :model-value="String(limit)" @update:model-value="resize"
-            ><SelectTrigger aria-label="日志每页条数" class="w-20" :disabled="loading"
-              ><SelectValue /></SelectTrigger
-            ><SelectContent
-              ><SelectGroup
-                ><SelectItem v-for="n in [25, 50, 100]" :key="n" :value="String(n)">{{
-                  n
-                }}</SelectItem></SelectGroup
-              ></SelectContent
-            ></Select
-          >
-          <span>显示第 {{ source?.page ?? page }} 页 · {{ rows.length }} 条</span>
-          <div class="flex flex-wrap gap-2 sm:ml-auto">
-            <Button variant="outline" :disabled="loading || page <= 1" @click="previous"
-              >上一页</Button
-            ><Button
-              variant="outline"
-              data-log-next
-              :disabled="loading || !!error || stale || !data?.nextCursor"
-              @click="next"
-              >下一页</Button
-            >
-          </div>
-        </div>
+        <TablePagination
+          mode="cursor" :page="page" :page-size="limit" unit="条" :max-page-size="100"
+          :loading="loading" :has-next="!error && !stale && !!data?.nextCursor"
+          class="border-t p-3" @update:page-size="resize" @previous="previous" @next="next"
+        >显示第 {{ source?.page ?? page }} 页 · {{ rows.length }} 条</TablePagination>
       </div>
     </section>
     <DisclosurePanel :heading-level="2"

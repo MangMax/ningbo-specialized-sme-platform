@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { defineNuxtConfig } from 'nuxt/config'
 import tailwindcss from '@tailwindcss/vite'
@@ -167,7 +168,12 @@ export default defineNuxtConfig({
           name: 'logging-native-module-location',
           transform: { order: 'post' as const, handler(_code: string, id: string) {
             if (id !== loggingLocation) return
-            return { code: `import { createRequire } from 'node:module'; export function resolveLoggingSqliteModule() { return createRequire(_import_meta_url_).resolve('better-sqlite3'); }`, map: null }
+            // Dev chunks may live in an external buildDir without project dependencies.
+            // Production keeps chunk-relative lookup so the packaged output can move.
+            const code = nitro.options.dev
+              ? `export function resolveLoggingSqliteModule() { return ${JSON.stringify(createRequire(import.meta.url).resolve('better-sqlite3'))}; }`
+              : `import { createRequire } from 'node:module'; export function resolveLoggingSqliteModule() { return createRequire(_import_meta_url_).resolve('better-sqlite3'); }`
+            return { code, map: null }
           } },
         }]
         // Emit an actual worker entry through the same dependency/external

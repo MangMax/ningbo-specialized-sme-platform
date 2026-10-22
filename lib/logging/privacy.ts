@@ -1,3 +1,4 @@
+import { clientRequestReference } from '../client-logging/request-reference'
 import { randomUUID } from 'node:crypto'
 import { LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogEvent, type LogInput } from './contract'
 const identifier = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/
@@ -23,6 +24,10 @@ export function safeLogEvent(input: LogInput): LogEvent {
   for (const key of ['fileId', 'page'] as const) {
     const value = input[key]
     if (finite(value) && Number.isInteger(value) && value! > 0) event[key] = value
+  }
+  if (event.source === 'client') {
+    const reference = clientRequestReference(input.untrustedRelatedRequestId)
+    if (reference) event.untrustedRelatedRequestId = reference
   }
   if (finite(input.durationMs)) event.durationMs = input.durationMs
   if (Number.isInteger(input.statusCode) && input.statusCode! >= 100 && input.statusCode! <= 599) event.statusCode = input.statusCode
@@ -52,4 +57,14 @@ export function projectEvlog(input: Record<string, unknown>): LogInput {
     requestId: typeof input.requestId === 'string' ? input.requestId : undefined,
     traceId: typeof input.traceId === 'string' ? input.traceId : undefined,
   }
+}
+
+/** Allowlist redaction before evlog output: generic PII regexes can corrupt generated UUIDs. */
+export const applicationLogRedaction = {
+  builtins: false as const,
+  transform(event: Record<string, unknown>) {
+    const safe = safeLogEvent(projectEvlog(event))
+    for (const key of Object.keys(event)) delete event[key]
+    event.applicationLog = safe
+  },
 }

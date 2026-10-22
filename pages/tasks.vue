@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { clientRequestReference } from '~~/lib/client-logging/request-reference'
 import { computed, ref, watch } from 'vue'
 import { TASK_EXPORTS, TASK_TABS, TASK_STATES, type TaskExportTitle, type TaskList, type TaskSummary, type TaskTab } from '~~/lib/task-center'
 import { JOB_STATES, type JobState } from '~~/lib/job'
@@ -57,6 +58,7 @@ function regenerate(task: TaskSummary) {
   if (code) void submitExport(code, task.id)
 }
 const { exportRequests, submitting, disabledReason: exportDisabledReason, submitExport: requestExport, discovering, discoveryFailed, discoverExports } = useCurrentRosterExport(readOnlyReason)
+const { $clientErrors } = useNuxtApp()
 const downloading = ref(false)
 // `exportNotice` is the page's **only** live region: whether an export request
 // was accepted, and the outcome of a download. The detail card never repeats it,
@@ -83,9 +85,11 @@ const availabilityLabels = { available: '可下载', expired: '已过期，请�
 async function downloadExport(task: TaskSummary, refreshDetail: () => void) {
   const artifact = task.export?.artifact
   if (downloading.value || !task.export?.canDownload || !artifact || artifact.availability !== 'available' || artifact.id !== task.id || artifact.downloadUrl !== `/api/job-artifacts/${task.id}`) return
+  let relatedRequestId: string | undefined
   downloading.value = true; exportNotice.value = null
   try {
     const response = await fetch(artifact.downloadUrl, { headers: browserHeaders, cache: 'no-store' })
+    relatedRequestId = clientRequestReference(response.headers.get('x-request-id'))
     if (!response.ok || response.headers.get('content-type')?.split(';')[0] !== 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || !response.headers.get('content-disposition')?.includes(`filename="${artifact.filename}"`)) throw new Error('Invalid artifact response')
     const bytes = await response.arrayBuffer()
     const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('')
@@ -95,6 +99,7 @@ async function downloadExport(task: TaskSummary, refreshDetail: () => void) {
     setTimeout(() => URL.revokeObjectURL(url), 1000)
     announce('Excel 已校验并下载；有效期内可重复下载。', task.id)
   } catch {
+    $clientErrors?.reportInteractionFailure('task_artifact_download', relatedRequestId)
     announce('下载未完成或文件校验失败。请刷新任务并核对产物可用性；过期或缺失时请重新生成。', task.id, 'alert')
     refreshDetail(); void refresh()
   } finally { downloading.value = false }

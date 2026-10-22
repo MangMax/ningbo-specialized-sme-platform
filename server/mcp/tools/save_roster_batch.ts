@@ -1,13 +1,6 @@
-import { appLog } from '../../../lib/logging'
-import { rosterImportMcpContext } from '../../utils/roster-import-mcp-context'
-import { logImportFailure } from '../../utils/roster-import-logging'
-import { importExecutor } from '../../utils/import-execution'
-import { asyncImportReceiptMcpResult } from '../../utils/import-receipts'
+import { submitRosterImportMcp } from '../../utils/roster-import-mcp-submission'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { validateImportRequest } from '../../utils/roster-import'
-import { validateRosterImportPageCounts } from '../../utils/roster-import-page-validation'
 import { writeGuard } from '../../utils/mcp-guard'
 
 /**
@@ -60,27 +53,5 @@ export default defineMcpTool({
     sourceSha256: z.string().optional().describe('源文件内容 SHA-256；给不出留空'),
     payload: z.record(z.string(), z.unknown()).describe('写入载荷（契约 §8.3 / §8.4）'),
   },
-  handler: async (input) => {
-    const context = rosterImportMcpContext.getStore() ?? {}
-    return asyncImportReceiptMcpResult(async () => {
-      const validated = validateImportRequest({
-        idempotencyKey: input.idempotencyKey,
-        sourceKind: input.sourceKind,
-        sourceIdentity: input.sourceIdentity,
-        sourceSha256: input.sourceSha256 ?? null,
-        payload: input.payload,
-      })
-      if (!validated.ok) {
-        appLog({ source: 'import', operation: 'import.submission.commit', outcome: 'denied', errorCode: 'invalid_import_request' }, context)
-        throw createError({ statusCode: validated.status, message: validated.message })
-      }
-      try {
-        const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
-        return await importExecutor.execute(useDb(), 'commit', validated.value, pageCountErrors, context)
-      } catch (error) {
-        logImportFailure('import.submission.commit', error, context)
-        throw error
-      }
-    })
-  },
+  handler: (input) => submitRosterImportMcp('commit', input),
 })

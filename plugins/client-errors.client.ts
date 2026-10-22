@@ -1,4 +1,4 @@
-import { clientPage } from '~~/lib/client-logging/contract'
+import { clientPage, type ClientInteraction } from '~~/lib/client-logging/contract'
 import { createClientErrorTransport } from '~~/lib/client-logging/transport'
 
 export default defineNuxtPlugin(nuxtApp => {
@@ -23,7 +23,7 @@ export default defineNuxtPlugin(nuxtApp => {
   if (import.meta.hot) import.meta.hot.dispose(dispose)
   // Deliberate opt-in seam for known interaction failures; no catch/toast sweep.
   return { provide: { clientErrors: {
-    reportInteractionFailure: () => transport.report('interaction_failure', page()),
+    reportInteractionFailure: (interaction: ClientInteraction, relatedRequestId?: string) => transport.report('interaction_failure', page(), 'error', relatedRequestId, interaction),
     status: transport.status,
   } } }
 })

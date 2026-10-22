@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from '@lucide/vue'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
@@ -11,15 +12,18 @@ import {
 const props = defineProps<{
   page: number
   pageSize: number
-  total: number
+  maxPageSize?: number
   unit: string
   loading?: boolean
-}>()
+} & ({ mode: 'cursor'; hasNext: boolean; total?: never } | { mode?: 'numbered'; total: number; hasNext?: never })>()
 const emit = defineEmits<{
+  next: []
+  previous: []
   'update:page': [value: number]
   'update:pageSize': [value: number]
 }>()
-const presets = [25, 50, 100, 200]
+const maximum = computed(() => props.maxPageSize ?? 200)
+const presets = computed(() => [25, 50, 100, 200].filter(n => n <= maximum.value))
 const custom = ref(false)
 // The trigger always shows a number: a preset, or the size actually in effect.
 // "自定义…" only names the extra option in the list; showing that label in the
@@ -32,12 +36,12 @@ const sizeModel = computed({
     if (!custom.value) emit('update:pageSize', Number(value))
   },
 })
-const customOpen = computed(() => custom.value || !presets.includes(props.pageSize))
-const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)))
+const customOpen = computed(() => custom.value || !presets.value.includes(props.pageSize))
+const totalPages = computed(() => Math.max(1, Math.ceil((props.total ?? 0) / props.pageSize)))
 function onSizeInput(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
   if (Number.isFinite(value) && value > 0) {
-    emit('update:pageSize', Math.min(200, Math.max(1, Math.trunc(value))))
+    emit('update:pageSize', Math.min(maximum.value, Math.max(1, Math.trunc(value))))
   }
 }
 </script>
@@ -60,14 +64,18 @@ function onSizeInput(event: Event) {
           <SelectItem value="custom">自定义…</SelectItem>
         </SelectContent>
       </Select>
-      <Input v-if="customOpen" :model-value="pageSize" type="number" min="1" max="200" class="bg-card h-8 w-20 shadow-none" aria-label="自定义每页条数" :disabled="loading" @change="onSizeInput" />
+      <Input v-if="customOpen" :model-value="pageSize" type="number" min="1" :max="maximum" class="bg-card h-8 w-20 shadow-none" aria-label="自定义每页条数" :disabled="loading" @change="onSizeInput" />
       <span class="text-muted-foreground">{{ unit }}</span>
     </div>
     <span class="text-muted-foreground tabular-nums" data-testid="table-total">
-      <slot>共 {{ total.toLocaleString('zh-CN') }} {{ unit }}</slot>
+      <slot><template v-if="mode === 'cursor'">第 {{ page }} 页</template><template v-else>共 {{ (total ?? 0).toLocaleString('zh-CN') }} {{ unit }}</template></slot>
     </span>
-    <Pagination v-if="total > 0" v-slot="{ page: current }" class="mx-0 w-full justify-center sm:ml-auto sm:w-auto sm:justify-end"
-      :page="page" :items-per-page="pageSize" :total="total" :sibling-count="1" :show-edges="totalPages > 5" @update:page="emit('update:page', $event)">
+    <div v-if="mode === 'cursor'" class="flex flex-wrap gap-2 sm:ml-auto">
+      <Button variant="outline" aria-label="上一页" :disabled="loading || page <= 1" @click="emit('previous')">上一页</Button>
+      <Button variant="outline" aria-label="下一页" data-table-next :disabled="loading || !hasNext" @click="emit('next')">下一页</Button>
+    </div>
+    <Pagination v-else-if="(total ?? 0) > 0" v-slot="{ page: current }" class="mx-0 w-full justify-center sm:ml-auto sm:w-auto sm:justify-end"
+      :page="page" :items-per-page="pageSize" :total="total ?? 0" :sibling-count="1" :show-edges="totalPages > 5" @update:page="emit('update:page', $event)">
       <PaginationContent v-slot="{ items }" class="flex-wrap justify-center sm:justify-end">
         <PaginationFirst class="hidden sm:flex" :disabled="loading || page <= 1" aria-label="第一页"><ChevronsLeft class="size-4" /><span class="sr-only">第一页</span></PaginationFirst>
         <PaginationPrevious :disabled="loading || page <= 1" aria-label="上一页"><ChevronLeft class="size-4" /><span class="hidden sm:block">上一页</span></PaginationPrevious>

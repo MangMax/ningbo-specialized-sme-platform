@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { clientRequestReference } from '~~/lib/client-logging/request-reference'
 import type { LogEvent } from '~~/lib/logging/contract'
 import { logBrowserHeaders, logErrorMessage, useLogRead } from '~/composables/useLogRead'
 import { Button } from '@/components/ui/button'
@@ -47,9 +48,12 @@ const safe = computed(() => {
     'receiptId',
     'parentEventId'
   ] as const
-  return Object.fromEntries(
+  const event = Object.fromEntries(
     fields.filter((k) => data.value![k] !== undefined).map((k) => [k, data.value![k]])
   )
+  const reference = data.value.source === 'client' ? clientRequestReference(data.value.untrustedRelatedRequestId) : undefined
+  if (reference) event.untrustedRelatedRequestId = reference
+  return event
 })
 async function copy() {
   const id = props.id,
@@ -87,7 +91,7 @@ async function copy() {
       </p>
       <dl class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-3 text-sm">
         <template v-for="(value, name) in safe" :key="name"
-          ><dt class="text-muted-foreground">{{ name }}</dt>
+          ><dt class="text-muted-foreground max-w-40 break-words">{{ name === 'untrustedRelatedRequestId' ? '关联请求（客户端声称，UNTRUSTED）' : name }}</dt>
           <dd class="break-all font-mono text-xs">
             {{ typeof value === 'object' ? JSON.stringify(value) : value }}
           </dd></template

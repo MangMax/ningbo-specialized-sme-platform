@@ -2,7 +2,7 @@ import { createLogger, initLogger } from 'evlog'
 import { resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createLogService, type LogService } from './service'
-import { projectEvlog, safeLogEvent } from './privacy'
+import { applicationLogRedaction, projectEvlog, safeLogEvent } from './privacy'
 import { LOG_DEFAULTS, type LogContext, type LogInput } from './contract'
 export * from './contract'
 export { createLogService } from './service'
@@ -25,7 +25,7 @@ export function drainApplicationEvent(event: Record<string, unknown>) {
 }
 /** Worker entry points call once, before emitting. Nuxt is initialized by evlog/nuxt instead. */
 export function initializeWorkerLogging() {
-  initLogger({ enabled: true, silent: true, pretty: false, sampling: { rates: { info: 100, warn: 100, error: 100, debug: 100 } }, drain: ctx => drainApplicationEvent(ctx.event) })
+  initLogger({ enabled: true, silent: true, pretty: false, redact: applicationLogRedaction, sampling: { rates: { info: 100, warn: 100, error: 100, debug: 100 } }, drain: ctx => drainApplicationEvent(ctx.event) })
 }
 /** Use this API for explicit lifecycle events in main/worker processes, through evlog's pipeline. */
 export function appLog(input: LogInput, context: LogContext = {}): void {

@@ -17,6 +17,8 @@ export interface LogInput extends LogContext {
   errorCode?: string
   /** Accepted only to classify a failure. Message, stack, cause and properties are discarded. */
   error?: unknown
+  /** Bounded browser claim; never an execution identity or filter. */
+  untrustedRelatedRequestId?: string
   counts?: { done?: number; total?: number; failed?: number; dropped?: number }
 }
 export interface LogEvent extends Omit<LogInput, 'error'> {

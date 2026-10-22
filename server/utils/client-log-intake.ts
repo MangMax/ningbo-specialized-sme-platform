@@ -22,13 +22,13 @@ export function createClientLogIntake(now = Date.now) {
       if (reports.some(report => !report)) return { status: 400, accepted: 0, duplicates: 0 }
       let accepted = 0, duplicates = 0
       for (const report of reports) {
-        const key = `${report!.page}.${report!.kind}.${report!.level}`
+        const key = `${report!.page}.${report!.kind}.${report!.level}.${report!.interaction ?? ''}`
         const previous = state.seen.get(key)
         if (previous !== undefined && time - previous < 10000) { duplicates++; continue }
-        // Keys are from a finite vocabulary: <=48 per peer, never raw error text.
+        // Keys are from a finite vocabulary: <=84 per peer, never raw error text.
         state.seen.set(key, time)
         appLog({ source: 'client', operation: `client.${report!.page}.${report!.kind}`,
-          outcome: 'failure', level: report!.level,
+          errorCode: report!.interaction, outcome: 'failure', level: report!.level, untrustedRelatedRequestId: report!.relatedRequestId,
         }, { requestId: context.requestId, traceId: context.traceId })
         accepted++
       }

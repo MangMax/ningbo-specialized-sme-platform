@@ -3,7 +3,7 @@ import { reactive, ref, watch } from 'vue'
 import { LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogFilter } from '~~/lib/logging/contract'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import {
   Select,
   SelectContent,
@@ -58,9 +58,9 @@ function apply() {
 </script>
 <template>
   <form class="flex min-w-0 flex-col gap-3" aria-label="日志筛选" @submit.prevent="apply">
-    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      <div v-for="key in ['from', 'to']" :key="key" class="flex min-w-0 flex-col gap-2">
-        <Label :for="`log-${key}`">{{ key === 'from' ? '开始时间' : '结束时间' }}（本地时间）</Label
+    <FieldGroup class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+      <Field v-for="key in ['from', 'to']" :key="key">
+        <FieldLabel :for="`log-${key}`">{{ key === 'from' ? '开始时间' : '结束时间' }}（本地时间）</FieldLabel
         ><Input
           :id="`log-${key}`"
           v-model="draft[key]"
@@ -68,9 +68,9 @@ function apply() {
           step="1"
           class="min-w-0 w-full"
         />
-      </div>
-      <div v-for="choice in choices" :key="choice.key" class="flex min-w-0 flex-col gap-2">
-        <Label :for="`log-${choice.key}`">{{ choice.label }}</Label
+      </Field>
+      <Field v-for="choice in choices" :key="choice.key">
+        <FieldLabel :for="`log-${choice.key}`">{{ choice.label }}</FieldLabel
         ><Select v-model="draft[choice.key]"
           ><SelectTrigger :id="`log-${choice.key}`" class="w-full"><SelectValue /></SelectTrigger
           ><SelectContent
@@ -82,25 +82,25 @@ function apply() {
             ></SelectContent
           ></Select
         >
-      </div>
-      <div class="flex min-w-0 flex-col gap-2">
-        <Label for="log-operation">操作（精确匹配）</Label
+      </Field>
+      <Field>
+        <FieldLabel for="log-operation">操作（精确匹配）</FieldLabel
         ><Input
           id="log-operation"
           v-model="draft.operation"
           maxlength="96"
           placeholder="如 task.finished"
         />
-      </div>
-    </div>
+      </Field>
+    </FieldGroup>
     <DisclosurePanel v-model:open="identifiersOpen" :heading-level="2">
       <template #trigger><span class="text-sm">关联标识筛选</span></template>
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <div v-for="id in ids" :key="id.key" class="flex min-w-0 flex-col gap-2">
-          <Label :for="`log-${id.key}`">{{ id.label }}（精确匹配）</Label
+      <FieldGroup class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+        <Field v-for="id in ids" :key="id.key">
+          <FieldLabel :for="`log-${id.key}`">{{ id.label }}（精确匹配）</FieldLabel
           ><Input :id="`log-${id.key}`" v-model="draft[id.key]" maxlength="128" />
-        </div>
-      </div>
+        </Field>
+      </FieldGroup>
     </DisclosurePanel>
     <div class="flex flex-wrap gap-2">
       <Button type="submit">应用筛选</Button
