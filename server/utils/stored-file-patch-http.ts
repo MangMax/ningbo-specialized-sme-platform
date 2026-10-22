@@ -15,7 +15,7 @@ export function handleStoredFilePatchRequest(method: string, idValue: unknown, b
     return { status: 200, body: row }
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode ?? 500
-    appLog({ source: 'file', operation: 'file.maintenance.update', outcome: status < 500 ? 'denied' : 'failure', level: 'error', errorCode: 'file_maintenance_failed' }, context)
+    appLog({ source: 'file', operation: 'file.maintenance.update', outcome: status < 500 ? 'denied' : 'failure', level: 'error', errorCode: 'file_maintenance_failed', fileId: id }, context)
     return { status, body: { message: (error as Error).message } }
   }
 }

@@ -14,6 +14,10 @@ export interface LogInput extends LogContext {
   level?: typeof LOG_LEVELS[number]
   durationMs?: number
   statusCode?: number
+  /** Trusted server request fact (never an incoming header). */
+  httpMethod?: string
+  /** Framework-matched route template or an app-owned fixed template; never a concrete URL/path. */
+  httpRoute?: string
   errorCode?: string
   /** Accepted only to classify a failure. Message, stack, cause and properties are discarded. */
   error?: unknown
@@ -29,7 +33,8 @@ export interface LogFilter {
   requestId?: string; traceId?: string; taskId?: string; fileId?: number; batchId?: string | number
   resourceId?: string | number; limit?: number; cursor?: string
 }
-export type LogSummary = Omit<LogEvent, 'counts' | 'errorCode' | 'auditId' | 'receiptId' | 'parentEventId'>
+/** List projection keeps bounded outcome facts but not single-event references. */
+export type LogSummary = Omit<LogEvent, 'auditId' | 'receiptId' | 'parentEventId'>
 export interface LogPolicy { retentionDays: number; maxBytes: number }
 export const LOG_DEFAULTS = Object.freeze({
   retentionDays: 7, maxBytes: 512 * 1024 * 1024,

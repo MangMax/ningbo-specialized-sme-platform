@@ -1,6 +1,7 @@
 import { clientRequestReference } from '../client-logging/request-reference'
 import { randomUUID } from 'node:crypto'
 import { LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogEvent, type LogInput } from './contract'
+import { safeHttpMethod, safeHttpRoute } from './http'
 const identifier = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/
 const operation = /^[a-z][a-z0-9_.:-]{0,95}$/
 const finite = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER
@@ -31,6 +32,13 @@ export function safeLogEvent(input: LogInput): LogEvent {
   }
   if (finite(input.durationMs)) event.durationMs = input.durationMs
   if (Number.isInteger(input.statusCode) && input.statusCode! >= 100 && input.statusCode! <= 599) event.statusCode = input.statusCode
+  // Request transport facts belong only to HTTP/MCP diagnostics; a route must be a safe template.
+  if (event.source === 'http' || event.source === 'mcp') {
+    const method = safeHttpMethod(input.httpMethod)
+    if (method) event.httpMethod = method
+    const route = safeHttpRoute(input.httpRoute)
+    if (route) event.httpRoute = route
+  }
   // Application-owned codes only; never copy error.code/message/stack from third parties.
   if (typeof input.errorCode === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(input.errorCode)) event.errorCode = input.errorCode
   if (input.counts && typeof input.counts === 'object') {
@@ -53,6 +61,9 @@ export function projectEvlog(input: Record<string, unknown>): LogInput {
     level: status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info',
     statusCode: status,
     durationMs: typeof input.durationMs === 'number' ? input.durationMs : typeof input.duration === 'number' ? input.duration : undefined,
+    // The request hook copies a framework-matched template here; the concrete path is never used.
+    httpMethod: safeHttpMethod(input.method) ?? safeHttpMethod(input.httpMethod),
+    httpRoute: safeHttpRoute(input.httpRoute),
     // Generated server-side in the request hook; incoming x-request-id is never trusted.
     requestId: typeof input.requestId === 'string' ? input.requestId : undefined,
     traceId: typeof input.traceId === 'string' ? input.traceId : undefined,

@@ -72,7 +72,7 @@ export default defineEventHandler(async (event) => {
       result = { row, diskDeleted: false, referenceCount: row.referenceCount }
     }
   } catch (error) {
-    appLog({ source: 'file', operation: deleteDisk ? 'file.disk.remove' : 'file.maintenance.remove', outcome: ((error as { statusCode?: number }).statusCode ?? 500) < 500 ? 'denied' : 'failure', level: 'error', errorCode: 'file_remove_failed' }, requestLogContext(event))
+    appLog({ source: 'file', operation: deleteDisk ? 'file.disk.remove' : 'file.maintenance.remove', outcome: ((error as { statusCode?: number }).statusCode ?? 500) < 500 ? 'denied' : 'failure', level: 'error', errorCode: 'file_remove_failed', fileId: id }, requestLogContext(event))
     throw createError({ statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message })
   }
   if (!result) throw createError({ statusCode: 404, message: '文件不存在' })
