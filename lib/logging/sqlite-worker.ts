@@ -27,6 +27,7 @@ function readPolicy() {
   return {...storage, collection, revision:row.revision}
 }
 let db
+let initialized = false
 let policy = workerData.policy
 let now = Date.now()
 const path = join(workerData.directory, 'events.db')
@@ -59,6 +60,14 @@ function open() {
   db.exec('CREATE TABLE IF NOT EXISTS log_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, timestamp TEXT NOT NULL, level TEXT NOT NULL, source TEXT NOT NULL, operation TEXT NOT NULL, outcome TEXT NOT NULL, requestId TEXT, traceId TEXT, taskId TEXT, fileId INTEGER, batchId TEXT, resourceId TEXT, summary TEXT NOT NULL, detail TEXT NOT NULL)')
   for (const key of ['timestamp','level','source','operation','outcome','requestId','traceId','taskId','fileId','batchId','resourceId']) db.exec('CREATE INDEX IF NOT EXISTS log_' + key + ' ON log_events(' + key + ',seq)')
   cap()
+  initialized = true
+}
+function reusableAfterBusy(error) {
+  // Only completed initialization and an idle, responsive connection qualify.
+  // Transaction wrappers must already have rolled back/released their snapshot.
+  if (!['SQLITE_BUSY','SQLITE_BUSY_RECOVERY','SQLITE_BUSY_SNAPSHOT','SQLITE_BUSY_TIMEOUT'].includes(error?.code)
+    || !initialized || !db?.open || db.inTransaction) return false
+  try { db.prepare('SELECT 1').get(); return true } catch { return false }
 }
 function cap() {
   // At most one third for main DB, leaving two thirds for SQLite rollback journal and filesystem bookkeeping.
@@ -91,6 +100,17 @@ function where(filter) {
 }
 function execute(action, data) {
   open()
+  if (action === 'policy' && !data) {
+    // A deferred read transaction pins all database fields to one committed
+    // snapshot, without maintenance or reserving the single SQLite writer.
+    const snapshot = db.transaction(() => {
+      policy = readPolicy()
+      return {...policy,...db.prepare('SELECT pruned,cleared FROM log_policy WHERE id=1').get()}
+    })()
+    // Filesystem bytes are an observation, not a physical snapshot synchronized
+    // with the database fields (another writer may change files at any time).
+    return {...snapshot,storageBytes:fileBytes(),accounting:'events.db + SQLite journal/WAL/SHM; main database <= one third budget; excludes filesystem allocation and container stdout'}
+  }
   policy = readPolicy()
   if (action === 'write') {
     // Same lock as management writes: no stale process-local rule can authorize output.
@@ -156,7 +176,7 @@ function execute(action, data) {
     if (data) {
       policy = {...policy,retentionDays:data.retentionDays,maxBytes:data.maxBytes}
       try { maintain() } finally { policy = readPolicy(); cap() }
-    } else maintain()
+    }
     return db.transaction(() => {
       policy = readPolicy()
       if (data) {
@@ -179,7 +199,7 @@ function execute(action, data) {
     return { deleted:n, hasMore:!!db.prepare('SELECT 1 FROM log_events WHERE ' + f.sql + ' LIMIT 1').get(...f.params) }
   }
   if (action === 'maintain') { maintain(); return null }
-  if (action === 'close') { db.close(); db=undefined; stdout?.close(); return null }
+  if (action === 'close') { db.close(); db=undefined; initialized=false; stdout?.close(); return null }
   throw new Error('unsupported')
 }
 parentPort.on('message', ({id,action,data,time}) => {
@@ -189,8 +209,11 @@ parentPort.on('message', ({id,action,data,time}) => {
     const code = failureCode(error)
     // No raw error/message/path sent to parent or stderr.
     parentPort.postMessage({id,ok:false,code})
-    try { db?.close() } catch {}
-    db=undefined
+    if (!reusableAfterBusy(error)) {
+      try { db?.close() } catch {}
+      db=undefined
+      initialized=false
+    }
   }
 })
 `
