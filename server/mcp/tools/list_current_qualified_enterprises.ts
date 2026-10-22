@@ -1,3 +1,4 @@
+import type { LogContext } from '../../../lib/logging'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { currentQualifiedFilterSchema } from '../../utils/current-qualified-filter'
@@ -10,7 +11,7 @@ export default defineMcpTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: currentQualifiedFilterSchema.shape,
   handler: async (input, extra) => {
-    const result = await enterpriseReads.currentQualifiedJson(useDb().$client.name, currentQualifiedFilterSchema.parse(input), extra?.signal)
+    const result = await enterpriseReads.currentQualifiedJson(useDb().$client.name, currentQualifiedFilterSchema.parse(input), extra?.signal, (extra as typeof extra & { logContext?: LogContext })?.logContext)
     return result.body.toString('utf8')
   },
 })

@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../lib/logging'
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS } from '~~/lib/comparison'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '~~/lib/labels'
@@ -79,7 +80,7 @@ export default defineEventHandler((event) => {
   const owner = useDb()
   const filter = differenceOptions(getQuery(event))
   return withEnterpriseReadSignal(event, async signal => {
-    const result = await readDifferences(owner, filter, signal)
+    const result = await readDifferences(owner, filter, signal, undefined, requestLogContext(event))
     if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
     return result
   })
