@@ -331,6 +331,46 @@ const edgeEvents = [
     traceId: 'intake-trace-180',
     untrustedRelatedRequestId: 'original-180',
     errorCode: 'interaction'
+  },
+  {
+    // 原生 Drizzle 钩子在执行前：只表示查询尝试，不代表执行成功/失败。
+    source: 'system',
+    operation: 'db.query.select',
+    outcome: 'started',
+    level: 'debug',
+    resourceType: 'database_connection',
+    resourceId: 'primary',
+    origin: { runtime: 'node', integration: 'drizzle', capture: 'hook', execution: 'worker' }
+  },
+  {
+    // EmbedPDF 原生日志级别不等于文档加载/渲染结果。
+    source: 'client',
+    operation: 'client.embedpdf.log_warn',
+    outcome: 'unknown',
+    level: 'warn',
+    origin: { runtime: 'browser', integration: 'embedpdf', capture: 'hook', execution: 'page' }
+  },
+  {
+    // 客户端库信号由服务端固定映射；这些都是浏览器自报，不是服务端执行事实。
+    source: 'client',
+    operation: 'client.tus.upload_success',
+    outcome: 'success',
+    level: 'info',
+    origin: { runtime: 'browser', integration: 'tus-client', capture: 'hook', execution: 'page' }
+  },
+  {
+    source: 'client',
+    operation: 'client.colada.query_failure',
+    outcome: 'failure',
+    level: 'error',
+    origin: { runtime: 'browser', integration: 'pinia-colada', capture: 'hook', execution: 'page' }
+  },
+  {
+    source: 'client',
+    operation: 'client.router.navigation_duplicated',
+    outcome: 'skipped',
+    level: 'debug',
+    origin: { runtime: 'browser', integration: 'vue-router', capture: 'hook', execution: 'page' }
   }
 ]
 const events = [...stabilityEvents, ...edgeEvents].map((event) => ({
@@ -595,7 +635,7 @@ try {
     const task = summary.rows.find((row) => row.taskId === 'task-180' && row.outcome === 'failure')
     assert.deepEqual(task.counts, { done: 8, total: 10, failed: 2 })
     assert.equal(task.errorCode, 'job_failed')
-    const client = summary.rows.find((row) => row.source === 'client')
+    const client = summary.rows.find((row) => row.operation === 'client.tasks.interaction_failure')
     assert.equal(client.untrustedRelatedRequestId, 'original-180')
   })
   check('all eleven sources and every outcome are present in the fixture', () => {

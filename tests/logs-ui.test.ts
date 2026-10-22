@@ -322,18 +322,33 @@ it('shows and copies only a validated UNTRUSTED client request reference, distin
   expect(wrapper.text()).not.toContain('PRIVATE180')
 })
 
+// 真实目录：11 个采集器全部 supported/configurable，并带页面分组元数据。
 const integrationCatalog = [
-  { key: 'nuxt-nitro', label: 'Nuxt / Nitro 请求', state: 'supported', configurable: true },
-  { key: 'mcp-toolkit', label: 'MCP Toolkit 模块上下文', state: 'supported', configurable: true },
-  { key: 'tus', label: 'tus 服务端回调', state: 'supported', configurable: true },
-  { key: 'application', label: '应用手动埋点', state: 'supported', configurable: true },
-  { key: 'browser', label: '浏览器原生异常（客户端自报）', state: 'supported', configurable: true },
-  { key: 'vue', label: 'Vue 异常（客户端自报）', state: 'supported', configurable: true },
-  { key: 'tus-client', label: 'tus 客户端', state: 'unwired', configurable: false },
-  { key: 'drizzle', label: 'Drizzle 数据库', state: 'unwired', configurable: false },
-  { key: 'embedpdf', label: 'EmbedPDF', state: 'unwired', configurable: false },
-  { key: 'pinia-colada', label: 'Colada 查询', state: 'unwired', configurable: false },
-  { key: 'vue-router', label: 'Vue Router', state: 'unwired', configurable: false }
+  { key: 'nuxt-nitro', label: 'Nuxt / Nitro 请求', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'mcp-toolkit', label: 'MCP Toolkit 模块上下文', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'tus', label: 'tus 服务端回调', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'application', label: '应用手动埋点', state: 'supported', configurable: true, category: 'business', runtimes: ['node', 'browser'] },
+  { key: 'browser', label: '浏览器原生异常（客户端自报）', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'vue', label: 'Vue 异常（客户端自报）', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'tus-client', label: 'tus 客户端', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'drizzle', label: 'Drizzle 数据库', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'embedpdf', label: 'EmbedPDF', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'pinia-colada', label: 'Colada 查询', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'vue-router', label: 'Vue Router', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] }
+] as const
+// 旧目录独立 fixture：六项已接入、五项仍标记未接入；用于保留旧 catalog 的兼容覆盖。
+const legacyIntegrationCatalog = [
+  { key: 'nuxt-nitro', label: 'Nuxt / Nitro 请求', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'mcp-toolkit', label: 'MCP Toolkit 模块上下文', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'tus', label: 'tus 服务端回调', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'application', label: '应用手动埋点', state: 'supported', configurable: true, category: 'business', runtimes: ['node', 'browser'] },
+  { key: 'browser', label: '浏览器原生异常（客户端自报）', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'vue', label: 'Vue 异常（客户端自报）', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'tus-client', label: 'tus 客户端', state: 'unwired', configurable: false, category: 'technical', runtimes: ['browser'] },
+  { key: 'drizzle', label: 'Drizzle 数据库', state: 'unwired', configurable: false, category: 'technical', runtimes: ['node'] },
+  { key: 'embedpdf', label: 'EmbedPDF', state: 'unwired', configurable: false, category: 'technical', runtimes: ['browser'] },
+  { key: 'pinia-colada', label: 'Colada 查询', state: 'unwired', configurable: false, category: 'technical', runtimes: ['browser'] },
+  { key: 'vue-router', label: 'Vue Router', state: 'unwired', configurable: false, category: 'technical', runtimes: ['browser'] }
 ] as const
 const sourceKeys = [
   'http', 'mcp', 'task', 'worker', 'platform', 'file', 'ocr', 'import', 'export', 'client', 'system'
@@ -364,6 +379,19 @@ const policyResponse = () => ({
   collection: defaultCollection(),
   catalog: { integrations: integrationCatalog }
 })
+const legacyCollection = () => ({
+  sources: Object.fromEntries(sourceKeys.map((key) => [key, defaultRule()])),
+  integrations: Object.fromEntries(
+    legacyIntegrationCatalog
+      .filter((entry) => entry.state === 'supported')
+      .map((entry) => [entry.key, defaultRule()])
+  )
+})
+const legacyPolicyView = {
+  ...policyView,
+  collection: legacyCollection(),
+  catalog: { integrations: legacyIntegrationCatalog }
+}
 const listRow = (id: string) => ({
   id,
   timestamp: '2026-10-22T00:00:00Z',
@@ -544,6 +572,60 @@ it('reviews only changed collection rules, sends changed maps, and refreshes eff
   vi.unstubAllGlobals()
 })
 
+it('reviews and PATCHes only the shared application rule when it is the only change', async () => {
+  const { default: Management } = await import('../components/logs/LogManagement.vue')
+  let policy = policyResponse()
+  const writes: any[] = []
+  vi.stubGlobal('$fetch', async (_url: string, options: any = {}) => {
+    if (options.method === 'PATCH') {
+      writes.push(options.body)
+      const next = policyResponse()
+      next.collection.integrations.application = { enabled: false, minLevel: 'debug' }
+      policy = next
+      return next
+    }
+    return policy
+  })
+  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  await wrapper.get('#log-integration-application-enabled').trigger('click')
+  await wrapper.get('[data-testid=log-policy-review]').trigger('click')
+  await flushPromises()
+  const dialog = document.querySelector('[role=dialog]')!
+  // application 属于业务区，只出现一条跨端共享规则。
+  expect(dialog.textContent).toContain('业务埋点 · 应用手动埋点')
+  expect(dialog.textContent).toContain('关闭 · 级别保留调试')
+  expect(writes).toHaveLength(0)
+  ;(
+    Array.from(dialog.querySelectorAll('button')).find(
+      (button) => button.textContent === '取消'
+    ) as HTMLButtonElement
+  ).click()
+  await flushPromises()
+  expect(writes).toHaveLength(0)
+  expect(wrapper.get('#log-integration-application-enabled').attributes('data-state')).toBe(
+    'unchecked'
+  )
+  await wrapper.get('[data-testid=log-policy-review]').trigger('click')
+  await flushPromises()
+  ;(
+    document.querySelector('[data-testid=log-policy-confirm]') as HTMLButtonElement
+  ).click()
+  await flushPromises()
+  expect(writes).toEqual([
+    {
+      retentionDays: 7,
+      maxBytes: 536870912,
+      collection: { integrations: { application: { enabled: false, minLevel: 'debug' } } }
+    }
+  ])
+  expect(wrapper.get('#log-integration-application-enabled').attributes('data-state')).toBe(
+    'unchecked'
+  )
+  vi.unstubAllGlobals()
+})
+
 it('keeps the edited rule draft when saving the configuration fails', async () => {
   const { default: Management } = await import('../components/logs/LogManagement.vue')
   vi.stubGlobal('$fetch', async (_url: string, options: any = {}) => {
@@ -569,13 +651,52 @@ it('keeps the edited rule draft when saving the configuration fails', async () =
   vi.unstubAllGlobals()
 })
 
-it('lists unwired integrations as explicitly not configurable instead of disabled switches', async () => {
+it('groups the real catalog into technical 4+6 and business 10+1 with one shared application rule', async () => {
   const { default: Management } = await import('../components/logs/LogManagement.vue')
   vi.stubGlobal('$fetch', async () => policyView)
   const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
   wrappers.push(wrapper)
   await flushPromises()
-  // 11 个来源 + 6 个真正接入的集成，共享同一个 Switch；未接入项不伪装成开关。
+  // 总 22 个 Switch：技术 10 + 业务来源 11 + 跨端共享 application 1。
+  expect(wrapper.findAll('[data-slot=switch]')).toHaveLength(22)
+  expect(wrapper.findAll('input[type=checkbox]')).toHaveLength(0)
+  expect(wrapper.findAll('select')).toHaveLength(0)
+  expect(wrapper.findAll('details')).toHaveLength(0)
+  expect(wrapper.find('[data-testid=log-unwired-integrations]').exists()).toBe(false)
+  expect(wrapper.text()).not.toContain('未接入的技术集成')
+  const switchCount = (testid: string) =>
+    wrapper.findAll(`[data-testid=${testid}] [data-slot=switch]`).length
+  expect(switchCount('log-technical-node')).toBe(4)
+  expect(switchCount('log-technical-browser')).toBe(6)
+  expect(switchCount('log-business-shared')).toBe(1)
+  expect(switchCount('log-business-node')).toBe(10)
+  expect(switchCount('log-business-browser')).toBe(1)
+  // application 只出现一次，放在业务区并明确服务端和客户端共用，不伪装成两条开关。
+  expect(wrapper.findAll('#log-integration-application-enabled')).toHaveLength(1)
+  expect(wrapper.get('[data-testid=log-business-shared]').text()).toContain('服务端和客户端共用')
+  expect(wrapper.get('[data-testid=log-collection-integrations]').text()).not.toContain(
+    '应用手动埋点'
+  )
+  // 业务区只是组织方式；来源条件仍约束技术事件。
+  expect(wrapper.get('[data-testid=log-collection-sources]').text()).toContain(
+    '也包括技术集成采集的事件'
+  )
+  expect(wrapper.findAll('h2').map((heading) => heading.text())).toEqual([
+    '技术集成',
+    '业务埋点',
+    '保留策略',
+    '范围清理'
+  ])
+  vi.unstubAllGlobals()
+})
+
+it('lists legacy unwired catalog entries as explicitly not configurable instead of disabled switches', async () => {
+  const { default: Management } = await import('../components/logs/LogManagement.vue')
+  vi.stubGlobal('$fetch', async () => legacyPolicyView)
+  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  // 旧目录独立 fixture：11 个来源 + 6 个已接入集成；未接入项不伪装成开关。
   expect(wrapper.findAll('[data-slot=switch]')).toHaveLength(17)
   expect(wrapper.findAll('input[type=checkbox]')).toHaveLength(0)
   expect(wrapper.text()).toContain('未接入的技术集成（5）')
@@ -889,6 +1010,65 @@ it('describes each source with its real business object, accurate outcome and ra
   expect(
     describeLogRow(makeLogRow({ durationMs: Number.MAX_SAFE_INTEGER, outcome: 'no_record', requestId: longestId }))
   ).toMatchObject({ durationText: `${Number.MAX_SAFE_INTEGER} ms`, primaryReference: { value: longestId } })
+})
+
+it('labels all 21 client library operations, five Drizzle verbs and fixed connection purposes', async () => {
+  const {
+    operationLabel,
+    resourceTypeLabel,
+    resourceIdLabel,
+    CONNECTION_PURPOSE_LABELS,
+    describeLogRow
+  } = await import('../components/logs/logPresentation')
+  const clientOperations = [
+    ['client.tus.upload_started', 'tus 上传开始'],
+    ['client.tus.upload_ready', 'tus 上传地址可用'],
+    ['client.tus.upload_success', 'tus 上传完成'],
+    ['client.tus.upload_failure', 'tus 上传失败'],
+    ['client.embedpdf.log_debug', 'EmbedPDF 调试日志'],
+    ['client.embedpdf.log_info', 'EmbedPDF 信息日志'],
+    ['client.embedpdf.log_warn', 'EmbedPDF 警告日志'],
+    ['client.embedpdf.log_error', 'EmbedPDF 错误日志'],
+    ['client.embedpdf.startup_failure', 'EmbedPDF 启动失败'],
+    ['client.embedpdf.document_ready', 'EmbedPDF 文档就绪'],
+    ['client.embedpdf.document_failure', 'EmbedPDF 文档加载失败'],
+    ['client.colada.query_success', 'Colada 查询成功'],
+    ['client.colada.query_failure', 'Colada 查询失败'],
+    ['client.colada.mutation_success', 'Colada 变更成功'],
+    ['client.colada.mutation_failure', 'Colada 变更失败'],
+    ['client.router.navigation_success', '路由跳转成功'],
+    ['client.router.navigation_aborted', '路由跳转被中止'],
+    ['client.router.navigation_cancelled', '路由跳转被取消'],
+    ['client.router.navigation_duplicated', '路由跳转重复'],
+    ['client.router.navigation_failure', '路由跳转失败'],
+    ['client.router.navigation_error', '路由跳转错误']
+  ] as const
+  expect(clientOperations).toHaveLength(21)
+  for (const [code, label] of clientOperations) expect(operationLabel(code)).toBe(label)
+  // Drizzle 钩子只记录执行前尝试；五个动词都不能读成成功或已完成。
+  for (const verb of ['select', 'insert', 'update', 'delete', 'other']) {
+    const label = operationLabel(`db.query.${verb}`)!
+    expect(label).toContain(verb === 'other' ? '其他' : verb.toUpperCase())
+    expect(label).not.toContain('成功')
+    expect(label).not.toContain('已完成')
+  }
+  expect(resourceTypeLabel('database_connection')).toBe('数据库连接')
+  expect(Object.keys(CONNECTION_PURPOSE_LABELS)).toHaveLength(7)
+  for (const [purpose, label] of Object.entries(CONNECTION_PURPOSE_LABELS)) {
+    expect(resourceIdLabel('database_connection', purpose)).toBe(`${label}（${purpose}）`)
+  }
+  expect(resourceIdLabel('database_connection', 'custom')).toBe('custom')
+  expect(resourceIdLabel('export_artifact', 'job-9')).toBe('job-9')
+  expect(
+    describeLogRow(
+      makeLogRow({
+        source: 'system',
+        operation: 'db.query.select',
+        resourceType: 'database_connection',
+        resourceId: 'primary'
+      })
+    ).target.text
+  ).toBe('数据库连接 主业务库（primary）')
 })
 
 it('renders independent desktop columns and keeps long operation, route, outcome, duration and status in their own bounded cells', async () => {

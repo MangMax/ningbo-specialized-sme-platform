@@ -9,7 +9,7 @@ import type {
   LogPolicy,
   LogPolicyPatch
 } from '~~/lib/logging/contract'
-import { sourceLabel } from './logPresentation'
+import { isClientLogSource, sourceLabel } from './logPresentation'
 import {
   logBrowserHeaders,
   logErrorCode,
@@ -68,11 +68,37 @@ type PolicyView = LogPolicy & {
   }
 }
 type RuleChange = {
-  dimension: '来源采集' | '技术集成'
+  dimension: '来源采集' | '技术集成' | '业务埋点'
   key: string
   label: string
   from: LogCollectionRule
   to: LogCollectionRule
+}
+/** 页面只做展示分组；草稿、差异比较和 PATCH 仍是同一份 collection 规则。 */
+type CollectionRow = {
+  key: string
+  label: string
+  rule: LogCollectionRule
+  prefix: 'source' | 'integration'
+}
+type IntegrationRow = CollectionRow & {
+  category: IntegrationEntry['category']
+  runtimes: IntegrationEntry['runtimes']
+}
+type RowGroup = {
+  key: string
+  testid: string
+  title: string
+  note?: string
+  rows: CollectionRow[]
+}
+type CollectionSection = {
+  key: string
+  testid: string
+  headingId: string
+  title: string
+  description: string
+  groups: RowGroup[]
 }
 type ConfigReview = {
   kind: 'config'
@@ -170,11 +196,12 @@ const clearAllowed = computed(
 const supportsCollection = computed(
   () => !!data.value?.collection && !!data.value?.catalog?.integrations.length
 )
-const sourceRows = computed(() =>
+const sourceRows = computed<CollectionRow[]>(() =>
   Object.entries(sourceDraft.value).map(([key, rule]) => ({
     key,
     label: sourceLabel(key),
-    rule
+    rule,
+    prefix: 'source' as const
   }))
 )
 const configuredIntegrations = computed(() =>
@@ -190,12 +217,99 @@ const unwiredIntegrations = computed(() =>
     (meta) => !configuredIntegrations.value.some((supported) => supported.key === meta.key)
   )
 )
-const integrationRows = computed(() =>
+const integrationRows = computed<IntegrationRow[]>(() =>
   configuredIntegrations.value.map((meta) => ({
-    ...meta,
-    rule: integrationDraft.value[meta.key]!
+    key: meta.key,
+    label: meta.label,
+    rule: integrationDraft.value[meta.key]!,
+    prefix: 'integration' as const,
+    category: meta.category,
+    runtimes: meta.runtimes
   }))
 )
+/** runtimes 只用于页面分组，不是新的策略维度；旧目录缺失时按兼容组展示。 */
+const runsOn = (row: IntegrationRow, runtime: 'node' | 'browser') =>
+  (row.runtimes as readonly string[] | undefined)?.includes(runtime) === true
+const technicalGroups = computed<RowGroup[]>(() => {
+  const technical = integrationRows.value.filter((row) => row.category === 'technical')
+  const groups: RowGroup[] = [
+    {
+      key: 'technical-node',
+      testid: 'log-technical-node',
+      title: '服务端',
+      rows: technical.filter((row) => runsOn(row, 'node'))
+    },
+    {
+      key: 'technical-browser',
+      testid: 'log-technical-browser',
+      title: '客户端',
+      note: '浏览器内库的生命周期信号由客户端自报，不代表服务端执行事实。',
+      rows: technical.filter((row) => runsOn(row, 'browser'))
+    },
+    {
+      key: 'technical-other',
+      testid: 'log-technical-other',
+      title: '未标注运行端',
+      note: '旧目录没有运行端元数据，仅作兼容展示；不影响规则保存。',
+      rows: integrationRows.value.filter(
+        (row) => row.category !== 'technical' && row.category !== 'business'
+      )
+    }
+  ]
+  return groups.filter((group) => group.rows.length > 0)
+})
+const businessGroups = computed<RowGroup[]>(() => {
+  const groups: RowGroup[] = [
+    {
+      key: 'business-shared',
+      testid: 'log-business-shared',
+      title: '跨端共享手动上报',
+      note: '应用手动埋点由服务端和客户端共用同一条规则，只在这里显示一次，不是两条独立开关；它同样与来源条件同时成立。',
+      rows: integrationRows.value.filter((row) => row.category === 'business')
+    },
+    {
+      key: 'business-node',
+      testid: 'log-business-node',
+      title: '服务端来源',
+      rows: sourceRows.value.filter((row) => !isClientLogSource(row.key))
+    },
+    {
+      key: 'business-browser',
+      testid: 'log-business-browser',
+      title: '客户端来源',
+      note: '浏览器自报来源，客户端上下文不可信。',
+      rows: sourceRows.value.filter((row) => isClientLogSource(row.key))
+    }
+  ]
+  return groups.filter((group) => group.rows.length > 0)
+})
+const collectionSections = computed<CollectionSection[]>(() => {
+  const sections: CollectionSection[] = [
+    {
+      key: 'technical',
+      testid: 'log-collection-integrations',
+      headingId: 'log-technical-heading',
+      title: '技术集成',
+      description:
+        '这里只列出当前实际接入日志采集的模块，按运行端分组；安装某个库不等于它已经在采集运行日志。技术集成与来源条件必须同时开启，最低级别取两处更严格者；关闭来源同样会停止对应技术事件。',
+      groups: technicalGroups.value
+    },
+    {
+      key: 'business',
+      testid: 'log-collection-sources',
+      headingId: 'log-business-heading',
+      title: '业务埋点',
+      description:
+        '来源条件约束对应来源的全部记录，也包括技术集成采集的事件；业务分区只是组织方式，不是新的过滤维度。任一来源关闭后停止采集；最低级别取来源与技术集成两处更严格者。采集规则不删除已有记录，保存只影响后续批次与待处理队列。',
+      groups: businessGroups.value
+    }
+  ]
+  return sections.filter((section) =>
+    section.key === 'technical'
+      ? section.groups.length > 0 || unwiredIntegrations.value.length > 0
+      : section.groups.length > 0
+  )
+})
 
 const sameRule = (a: LogCollectionRule, b: LogCollectionRule) =>
   a.enabled === b.enabled && a.minLevel === b.minLevel
@@ -224,12 +338,12 @@ const changedIntegrations = computed<RuleChange[]>(() => {
     | Record<string, LogCollectionRule>
     | undefined
   if (!base) return []
-  return integrationRows.value.flatMap(({ key, label, rule }) => {
+  return integrationRows.value.flatMap(({ key, label, rule, category }) => {
     const before = base[key]
     return before && !sameRule(before, rule)
       ? [
           {
-            dimension: '技术集成' as const,
+            dimension: (category === 'business' ? '业务埋点' : '技术集成') as RuleChange['dimension'],
             key,
             label,
             from: { ...before },
@@ -390,134 +504,96 @@ async function confirm() {
     />
     <template v-if="data">
       <template v-if="supportsCollection">
-        <section
-          data-testid="log-collection-sources"
-          aria-labelledby="log-sources-heading"
-          class="flex min-w-0 flex-col gap-3"
-        >
-          <div class="flex flex-col gap-1">
-            <h2 id="log-sources-heading" class="text-sm font-medium">来源采集</h2>
-            <p class="text-muted-foreground text-[13px] leading-5">
-              任一来源关闭后停止采集；技术集成与来源必须同时开启。最低级别取两处更严格者。
-              采集规则不删除已有记录，保存只影响后续批次与待处理队列。
-            </p>
-          </div>
-          <FieldGroup class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
-            <Field
-              v-for="row in sourceRows"
-              :key="row.key"
-              orientation="horizontal"
-              :data-disabled="busy"
-              class="min-w-0 items-center justify-between gap-3"
-            >
-              <div class="flex min-w-0 items-center gap-2.5">
-                <Switch
-                  :id="`log-source-${row.key}-enabled`"
-                  v-model="row.rule.enabled"
-                  :disabled="busy"
-                />
-                <FieldLabel
-                  :for="`log-source-${row.key}-enabled`"
-                  class="min-w-0 text-[13px] leading-5 font-normal"
-                >
-                  <span class="truncate">{{ row.label }}</span>
-                </FieldLabel>
-              </div>
-              <Select v-model="row.rule.minLevel">
-                <SelectTrigger
-                  size="sm"
-                  class="bg-card w-32 shrink-0 shadow-none"
-                  :aria-label="`${row.label}的最低日志级别`"
-                  :disabled="busy || !row.rule.enabled"
-                >
-                  <SelectValue>{{ LEVEL_LABELS[row.rule.minLevel] }}</SelectValue>
-                </SelectTrigger>
-                <SelectContent><SelectGroup>
-                  <SelectItem v-for="level in LOG_LEVELS" :key="level" :value="level">
-                    {{ LEVEL_LABELS[level] }}（{{ level }}）
-                  </SelectItem>
-                </SelectGroup></SelectContent>
-              </Select>
-            </Field>
-          </FieldGroup>
-        </section>
-        <Separator />
-        <section
-          v-if="integrationRows.length || unwiredIntegrations.length"
-          data-testid="log-collection-integrations"
-          aria-labelledby="log-integrations-heading"
-          class="flex min-w-0 flex-col gap-3"
-        >
-          <div class="flex flex-col gap-1">
-            <h2 id="log-integrations-heading" class="text-sm font-medium">技术集成</h2>
-            <p class="text-muted-foreground text-[13px] leading-5">
-              这里只列出当前实际接入日志采集的模块。与来源条件同时成立才采集，最低级别取两者更严格者。
-              安装某个库不等于它已经在采集运行日志。
-            </p>
-          </div>
-          <FieldGroup class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
-            <Field
-              v-for="row in integrationRows"
-              :key="row.key"
-              orientation="horizontal"
-              :data-disabled="busy"
-              class="min-w-0 items-center justify-between gap-3"
-            >
-              <div class="flex min-w-0 items-center gap-2.5">
-                <Switch
-                  :id="`log-integration-${row.key}-enabled`"
-                  v-model="row.rule.enabled"
-                  :disabled="busy"
-                />
-                <FieldLabel
-                  :for="`log-integration-${row.key}-enabled`"
-                  class="min-w-0 text-[13px] leading-5 font-normal"
-                >
-                  <span class="truncate">{{ row.label }}</span>
-                </FieldLabel>
-              </div>
-              <Select v-model="row.rule.minLevel">
-                <SelectTrigger
-                  size="sm"
-                  class="bg-card w-32 shrink-0 shadow-none"
-                  :aria-label="`${row.label}的最低日志级别`"
-                  :disabled="busy || !row.rule.enabled"
-                >
-                  <SelectValue>{{ LEVEL_LABELS[row.rule.minLevel] }}</SelectValue>
-                </SelectTrigger>
-                <SelectContent><SelectGroup>
-                  <SelectItem v-for="level in LOG_LEVELS" :key="level" :value="level">
-                    {{ LEVEL_LABELS[level] }}（{{ level }}）
-                  </SelectItem>
-                </SelectGroup></SelectContent>
-              </Select>
-            </Field>
-          </FieldGroup>
-          <!-- 未接入单独折叠，不摆一排禁用开关：禁用开关会被误读成“部署已关闭”。 -->
-          <DisclosurePanel
-            v-if="unwiredIntegrations.length"
-            data-testid="log-unwired-integrations"
-            :title="`未接入的技术集成（${unwiredIntegrations.length}）`"
-            description="未接入，不可配置"
-            :heading-level="3"
-            compact
+        <template v-for="(section, index) in collectionSections" :key="section.key">
+          <Separator v-if="index > 0" />
+          <section
+            :data-testid="section.testid"
+            :aria-labelledby="section.headingId"
+            class="flex min-w-0 flex-col gap-3"
           >
-            <p class="text-muted-foreground text-[13px] leading-5">
-              以下库尚未接入日志采集，列在这里只表示当前没有采集器，不能据此判断业务或部署已关闭。
-            </p>
-            <ul class="mt-2 flex flex-col gap-1.5 text-[13px]">
-              <li
-                v-for="row in unwiredIntegrations"
-                :key="row.key"
-                class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
-              >
-                <span>{{ row.label }}</span>
-                <span class="text-muted-foreground font-mono text-xs">{{ row.key }}</span>
-                <span class="text-muted-foreground">未接入，不可配置</span>
-              </li>
-            </ul>
-          </DisclosurePanel>
-        </section>
+            <div class="flex flex-col gap-1">
+              <h2 :id="section.headingId" class="text-sm font-medium">{{ section.title }}</h2>
+              <p class="text-muted-foreground text-[13px] leading-5">{{ section.description }}</p>
+            </div>
+            <div
+              v-for="group in section.groups"
+              :key="group.key"
+              :data-testid="group.testid"
+              class="flex min-w-0 flex-col gap-2"
+            >
+              <div class="flex flex-col gap-1">
+                <h3 class="text-muted-foreground text-[13px] leading-5 font-medium">
+                  {{ group.title }}
+                </h3>
+                <p v-if="group.note" class="text-muted-foreground text-[13px] leading-5">
+                  {{ group.note }}
+                </p>
+              </div>
+              <FieldGroup class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
+                <Field
+                  v-for="row in group.rows"
+                  :key="row.key"
+                  orientation="horizontal"
+                  :data-disabled="busy"
+                  class="min-w-0 items-center justify-between gap-3"
+                >
+                  <div class="flex min-w-0 items-center gap-2.5">
+                    <Switch
+                      :id="`log-${row.prefix}-${row.key}-enabled`"
+                      v-model="row.rule.enabled"
+                      :disabled="busy"
+                    />
+                    <FieldLabel
+                      :for="`log-${row.prefix}-${row.key}-enabled`"
+                      class="min-w-0 text-[13px] leading-5 font-normal"
+                    >
+                      <span class="truncate">{{ row.label }}</span>
+                    </FieldLabel>
+                  </div>
+                  <Select v-model="row.rule.minLevel">
+                    <SelectTrigger
+                      size="sm"
+                      class="bg-card w-32 shrink-0 shadow-none"
+                      :aria-label="`${row.label}的最低日志级别`"
+                      :disabled="busy || !row.rule.enabled"
+                    >
+                      <SelectValue>{{ LEVEL_LABELS[row.rule.minLevel] }}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent><SelectGroup>
+                      <SelectItem v-for="level in LOG_LEVELS" :key="level" :value="level">
+                        {{ LEVEL_LABELS[level] }}（{{ level }}）
+                      </SelectItem>
+                    </SelectGroup></SelectContent>
+                  </Select>
+                </Field>
+              </FieldGroup>
+            </div>
+            <!-- 未接入单独折叠，不摆一排禁用开关：禁用开关会被误读成“部署已关闭”。 -->
+            <DisclosurePanel
+              v-if="section.key === 'technical' && unwiredIntegrations.length"
+              data-testid="log-unwired-integrations"
+              :title="`未接入的技术集成（${unwiredIntegrations.length}）`"
+              description="未接入，不可配置"
+              :heading-level="3"
+              compact
+            >
+              <p class="text-muted-foreground text-[13px] leading-5">
+                以下库尚未接入日志采集，列在这里只表示当前没有采集器，不能据此判断业务或部署已关闭。
+              </p>
+              <ul class="mt-2 flex flex-col gap-1.5 text-[13px]">
+                <li
+                  v-for="row in unwiredIntegrations"
+                  :key="row.key"
+                  class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
+                >
+                  <span>{{ row.label }}</span>
+                  <span class="text-muted-foreground font-mono text-xs">{{ row.key }}</span>
+                  <span class="text-muted-foreground">未接入，不可配置</span>
+                </li>
+              </ul>
+            </DisclosurePanel>
+          </section>
+        </template>
         <Separator />
       </template>
       <section aria-labelledby="log-retention-heading" class="flex min-w-0 flex-col gap-3">

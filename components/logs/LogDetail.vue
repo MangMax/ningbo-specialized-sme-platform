@@ -9,6 +9,8 @@ import {
   formatCounts,
   operationLabel,
   outcomeLabel,
+  resourceIdLabel,
+  resourceTypeLabel,
   sourceLabel
 } from './logPresentation'
 import { Button } from '@/components/ui/button'
@@ -92,7 +94,12 @@ const ORIGIN_INTEGRATION_LABELS: Record<LogOrigin['integration'], string> = {
   tus: 'tus 服务端回调',
   application: '应用手动埋点',
   browser: '浏览器原生异常',
-  vue: 'Vue 异常'
+  vue: 'Vue 异常',
+  'tus-client': 'tus 客户端',
+  drizzle: 'Drizzle 数据库',
+  embedpdf: 'EmbedPDF',
+  'pinia-colada': 'Colada 查询',
+  'vue-router': 'Vue Router'
 }
 const ORIGIN_CAPTURE_LABELS: Record<LogOrigin['capture'], string> = {
   framework: '框架采集',
@@ -204,6 +211,12 @@ const displayValue = (name: string, value: unknown): string => {
     return formatCounts(value as LogEvent['counts'], data.value?.operation) || JSON.stringify(value)
   if (name === 'outcome') return `${outcomeLabel(String(value))}（${String(value)}）`
   if (name === 'source') return `${sourceLabel(String(value))}（${String(value)}）`
+  if (name === 'resourceType') {
+    const label = resourceTypeLabel(String(value))
+    return label === String(value) ? label : `${label}（${String(value)}）`
+  }
+  if (name === 'resourceId' && data.value?.resourceType === 'database_connection')
+    return resourceIdLabel(data.value.resourceType, String(value))
   if (name === 'operation') {
     const label = operationLabel(String(value))
     return label ? `${label}（${String(value)}）` : String(value)
