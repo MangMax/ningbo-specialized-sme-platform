@@ -342,7 +342,7 @@ await check('1280 request gate: 25-row skeleton aligns with loaded normal rows',
   const managementDelta = Math.abs(after.managementTop - before.managementTop)
   const resultsDelta = Math.abs(after.resultsTop - before.resultsTop)
   assert.equal(skeleton.count, 25)
-  assert.equal(skeleton.cells, 11)
+  assert.equal(skeleton.cells, 10)
   assert.equal(loaded.count, 25)
   assert.ok(managementDelta <= 4, `management moved ${managementDelta}px`)
   assert.ok(resultsDelta <= 4, `results moved ${resultsDelta}px`)
@@ -417,7 +417,7 @@ await check('1280 first screen and long values keep independent bounded cells; d
       errorTitle: cells[6].querySelector('span[title]')?.getAttribute('title') ?? null,
       duration: cells[7].textContent.trim(),
       status: cells[8].textContent.trim(),
-      reference: cells[9].textContent.trim(),
+      scroller: { width: scroller.clientWidth, scrollWidth: scroller.scrollWidth },
       adjacency: cells.slice(0, -1).map((cell, i) => ({
         pair: headers[i] + '|' + headers[i + 1],
         overlap: cell.getBoundingClientRect().right > cells[i + 1].getBoundingClientRect().left + 0.5
@@ -427,7 +427,9 @@ await check('1280 first screen and long values keep independent bounded cells; d
     }
   })()`)
   const longShot = await shot('browser-desktop-long-1280x800.png')
-  assert.equal(long.count, 11)
+  assert.equal(long.count, 10)
+  assert.ok(!long.headers.includes('关联标识'))
+  assert.equal(long.scroller.scrollWidth, long.scroller.width, '1280 table needs no horizontal scroll')
   assert.equal(long.operation, manifest.longOperation)
   assert.equal(long.operationTitle, manifest.longOperation)
   assert.equal(long.target, 'POST ' + manifest.longRoute)
@@ -538,7 +540,7 @@ await check('real 200 /api/health event renders method, route, status and neutra
     return { cells: cells.length, source: cells[2].textContent.trim(), target: cells[4].textContent.trim(), result: cells[5].textContent.trim(), errorCode: cells[6].textContent.trim(), status: cells[8].textContent.trim() }
   })()`)
   const path = await shot('browser-desktop-real-normal-http-1280x800.png')
-  assert.equal(row.cells, 11)
+  assert.equal(row.cells, 10)
   assert.ok(row.source.includes('HTTP 接口'))
   assert.equal(row.target, 'GET /api/health')
   assert.equal(row.result, '成功')

@@ -321,19 +321,18 @@ function restoreFocus(event: Event) {
               class="hidden min-h-0 flex-1 overflow-auto sm:block [&_[data-slot=table-container]]:overflow-visible"
               @scroll.passive="onTableScroll"
             >
-              <Table class="data-table min-w-[1560px] table-fixed">
+              <Table class="data-table w-full min-w-[940px] table-fixed">
                 <TableHeader class="sticky top-0 z-10"><TableRow class="hover:bg-transparent">
-                  <TableHead class="w-[168px]">时间</TableHead>
-                  <TableHead class="w-[84px]">级别</TableHead>
-                  <TableHead class="w-[108px]">来源</TableHead>
-                  <TableHead class="w-[200px]">操作</TableHead>
-                  <TableHead class="w-[220px]">目标</TableHead>
-                  <TableHead class="w-[108px]">结果</TableHead>
-                  <TableHead class="w-[160px]">失败码</TableHead>
-                  <TableHead class="w-[104px]">耗时</TableHead>
-                  <TableHead class="w-[100px]">HTTP 状态</TableHead>
-                  <TableHead class="w-[220px]">关联标识</TableHead>
-                  <TableHead class="w-[88px]">详情</TableHead>
+                  <TableHead class="w-[12%]">时间</TableHead>
+                  <TableHead class="w-[8%]">级别</TableHead>
+                  <TableHead class="w-[9%]">来源</TableHead>
+                  <TableHead class="w-[13%]">操作</TableHead>
+                  <TableHead class="w-[15%]">目标</TableHead>
+                  <TableHead class="w-[9.5%]">结果</TableHead>
+                  <TableHead class="w-[11%]">失败码</TableHead>
+                  <TableHead class="w-[8%]">耗时</TableHead>
+                  <TableHead class="w-[6.5%] whitespace-normal leading-4">HTTP 状态</TableHead>
+                  <TableHead class="w-[8%]">详情</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
                   <TableRow
@@ -359,7 +358,6 @@ function restoreFocus(event: Event) {
                     <TableCell><Skeleton class="h-4 w-24" /></TableCell>
                     <TableCell><Skeleton class="h-4 w-16" /></TableCell>
                     <TableCell><Skeleton class="h-4 w-12" /></TableCell>
-                    <TableCell><Skeleton class="h-4 w-28" /></TableCell>
                     <TableCell><Skeleton class="h-8 w-14" /></TableCell>
                   </TableRow>
                   <TableRow v-for="item in described" :key="item.row.id">
@@ -367,7 +365,7 @@ function restoreFocus(event: Event) {
                       <time
                         :datetime="item.row.timestamp"
                         :title="item.row.timestamp"
-                        class="text-[13px] tabular-nums whitespace-nowrap"
+                        class="block text-[13px] tabular-nums whitespace-normal"
                         >{{ dated(item.row.timestamp) }}</time
                       >
                     </TableCell>
@@ -459,29 +457,6 @@ function restoreFocus(event: Event) {
                         :title="item.view.statusText"
                         >{{ item.view.statusText }}</span
                       >
-                    </TableCell>
-                    <TableCell class="overflow-hidden">
-                      <div
-                        v-if="item.view.primaryReference"
-                        class="flex min-w-0 items-baseline gap-1.5"
-                      >
-                        <span class="text-muted-foreground shrink-0 text-xs">{{
-                          item.view.primaryReference.kind
-                        }}</span>
-                        <span
-                          class="truncate font-mono text-xs"
-                          :title="
-                            item.view.references.map((r) => `${r.kind} ${r.value}`).join(' · ')
-                          "
-                          >{{ item.view.primaryReference.value }}</span
-                        >
-                        <span
-                          v-if="item.view.extraReferenceCount"
-                          class="text-muted-foreground shrink-0 text-xs"
-                          >+{{ item.view.extraReferenceCount }}</span
-                        >
-                      </div>
-                      <span v-else class="text-muted-foreground text-[13px]">未记录</span>
                     </TableCell>
                     <TableCell class="overflow-hidden">
                       <Button

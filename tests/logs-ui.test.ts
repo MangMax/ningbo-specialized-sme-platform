@@ -347,8 +347,8 @@ it('holds the result area with skeleton rows and a reading footer during the fir
   // 首次读取：按每页条数铺骨架（桌面行 / 窄屏卡），分页占位，而不是把卡收成一条表头。
   expect(wrapper.findAll('[data-testid=log-row-skeleton]')).toHaveLength(25)
   expect(wrapper.findAll('[data-testid=log-card-skeleton]')).toHaveLength(25)
-  // 骨架与正常结构对齐：桌面 11 列、窄屏 6 个带标签行，而不是旧的 4 行占位。
-  expect(wrapper.findAll('[data-testid=log-row-skeleton]')[0]!.findAll('td')).toHaveLength(11)
+  // 骨架与正常结构对齐：桌面 10 列、窄屏 6 个带标签行，而不是旧的 4 行占位。
+  expect(wrapper.findAll('[data-testid=log-row-skeleton]')[0]!.findAll('td')).toHaveLength(10)
   expect(
     wrapper.findAll('[data-testid=log-card-skeleton]')[0]!.findAll('[data-skeleton-row]')
   ).toHaveLength(6)
@@ -389,7 +389,7 @@ it('returns the result list to its first row after a page change and keeps filte
   expect(document.activeElement?.id).toBe('log-list-heading')
   expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('本页 1 条 · 第 2 页')
   const header = wrapper.get('[data-testid=log-table-scroll] .data-table thead').text()
-  for (const label of ['时间', '级别', '来源', '操作', '目标', '结果', '耗时', 'HTTP 状态', '关联标识', '详情'])
+  for (const label of ['时间', '级别', '来源', '操作', '目标', '结果', '耗时', 'HTTP 状态', '详情'])
     expect(header).toContain(label)
   expect(header).not.toContain('级别 / 时间')
   expect(header).not.toContain('操作 / 来源')
@@ -673,13 +673,13 @@ it('renders independent desktop columns and keeps long operation, route, outcome
   await flushPromises()
   const scroller = wrapper.get('[data-testid=log-table-scroll]')
   const header = scroller.get('.data-table thead').text()
-  for (const label of ['时间', '级别', '来源', '操作', '目标', '结果', '失败码', '耗时', 'HTTP 状态', '关联标识', '详情'])
+  for (const label of ['时间', '级别', '来源', '操作', '目标', '结果', '失败码', '耗时', 'HTTP 状态', '详情'])
     expect(header).toContain(label)
   expect(header).not.toContain(' / ')
   const bodyRows = scroller.findAll('.data-table tbody tr')
   expect(bodyRows).toHaveLength(rows.length)
   const first = bodyRows[0]!.findAll('td')
-  expect(first).toHaveLength(11)
+  expect(first).toHaveLength(10)
   for (const cell of first) expect(cell.classes()).toContain('overflow-hidden')
   expect(first[0]!.get('time').attributes('datetime')).toBe(rows[0]!.timestamp)
   expect(first[3]!.text()).toBe(longOperation)
@@ -694,8 +694,8 @@ it('renders independent desktop columns and keeps long operation, route, outcome
   expect(first[6]!.text()).not.toContain('无记录')
   expect(first[7]!.text()).toBe(`${Number.MAX_SAFE_INTEGER} ms`)
   expect(first[8]!.text()).toBe('500')
-  expect(first[9]!.text()).toContain(longestId)
-  expect(first[10]!.get('[data-log-detail]').text()).toBe('查看')
+  expect(header).not.toContain('关联标识')
+  expect(first[9]!.get('[data-log-detail]').text()).toBe('查看')
   // 相邻结果/失败码/耗时列各自有边界，不共用一个无界 flex。
   expect(first[5]!.text()).not.toContain('ms')
   expect(first[7]!.text()).not.toContain('无记录')
