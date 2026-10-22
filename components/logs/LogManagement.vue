@@ -83,6 +83,10 @@ const clearAllowed = computed(
     !Number.isNaN(Date.parse(props.filter.to)) &&
     Date.parse(props.filter.from) <= Date.parse(props.filter.to)
 )
+/** 值没变就不再让人为一个没有差异的操作做确认（比较的是提交用的真实单位）。 */
+const policyUnchanged = computed(
+  () => !!data.value && days.value === data.value.retentionDays && bytes.value === data.value.maxBytes
+)
 /** 字节数读不成大小；概览里先给 MiB，原值留在括号内，提交仍是字节。 */
 const bytesLabel = (value: number) => {
   const gib = value >= 1073741824
@@ -105,7 +109,7 @@ const localRange = (iso: string) => {
     : `${date.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')}（${iso}）`
 }
 function reviewPolicy() {
-  if (validPolicy.value && !pending.value && data.value && !error.value)
+  if (validPolicy.value && !policyUnchanged.value && !pending.value && data.value && !error.value)
     review.value = { kind: 'policy', policy: { retentionDays: days.value, maxBytes: bytes.value } }
 }
 function reviewClear() {
@@ -209,12 +213,13 @@ async function confirm() {
             <Button
               type="submit"
               variant="outline"
-              :disabled="pending || loading || !!error || !validPolicy"
+              :disabled="pending || loading || !!error || !validPolicy || policyUnchanged"
               >核对策略修改</Button
             >
-            <!-- 后果写在按钮旁边，不做单独一段通栏说明。 -->
+            <!-- 后果写在按钮旁边，不做单独一段通栏说明；没有变化时说明为什么不能核对。 -->
             <p class="text-muted-foreground text-[13px] leading-5">
-              保留期与容量取更严格者；缩短保留期或降低容量可能清理已有运行日志。
+              <template v-if="policyUnchanged">当前值与已生效策略相同，无需核对。</template>
+              <template v-else>保留期与容量取更严格者；缩短保留期或降低容量可能清理已有运行日志。</template>
             </p>
           </div>
         </FieldGroup>

@@ -22,8 +22,17 @@ const current = computed(
   () => sourceKey.value === props.id && data.value?.id === props.id && !error.value
 )
 const notice = ref('')
+/** 记录时间与列表同一种本地写法；时区写进标签，复制的事件仍保留原始 ISO。 */
+const zoneOffset = -new Date().getTimezoneOffset()
+const zoneLabel = `UTC${zoneOffset >= 0 ? '+' : '-'}${String(Math.floor(Math.abs(zoneOffset) / 60)).padStart(2, '0')}:${String(Math.abs(zoneOffset) % 60).padStart(2, '0')}`
+const localStamp = (iso: string) => {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime())
+    ? iso
+    : date.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+}
 const fieldLabels: Record<string, string> = {
-  id: '事件标识', timestamp: '记录时间', level: '级别', source: '来源', operation: '操作',
+  id: '事件标识', timestamp: `记录时间（本地 ${zoneLabel}）`, level: '级别', source: '来源', operation: '操作',
   outcome: '结果', durationMs: '耗时（毫秒）', statusCode: 'HTTP 状态', errorCode: '错误代码',
   counts: '处理数量', requestId: '请求标识', traceId: '链路标识', taskId: '任务标识',
   fileId: '文件编号', page: '页码', batchId: '批次标识', resourceType: '资源类型',
@@ -108,7 +117,7 @@ async function copy() {
         <TableBody><TableRow v-for="(value, name) in safe" :key="name">
           <TableCell class="text-muted-foreground w-[168px] align-top whitespace-normal">{{ fieldLabels[name] ?? name }}</TableCell>
           <TableCell class="break-all whitespace-normal font-mono text-xs">
-            {{ typeof value === 'object' ? JSON.stringify(value) : value }}
+            {{ typeof value === 'object' ? JSON.stringify(value) : name === 'timestamp' ? localStamp(String(value)) : value }}
           </TableCell>
         </TableRow></TableBody>
       </Table>

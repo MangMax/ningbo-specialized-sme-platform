@@ -1,9 +1,13 @@
 <!--
-  LogFilters — 单行筛选工具栏 + 折叠的高级条件。
+  LogFilters —— 快速筛选与高级筛选在同一个 Card 表面里。
 
-  布局沿用 /files 与 /tasks 已采用的做法：控件自己带 `bg-card` 表面、标签走 sr-only，
-  筛选不再铺成一张落在页面底色上的大表单。高级条件（时间、操作、关联标识）收进一个
-  自带边框表面的 DisclosurePanel；折叠条上直接报已启用几项，收起时也知道筛选范围。
+  页面把本组件放进唯一一张筛选卡：顶部一行是级别/来源/结果/操作与提交动作，
+  下方是「更多筛选」折叠区，二者共用这张卡的底色和边框，不再出现“裸工具条 +
+  独立白卡”两个表面。
+
+  桌面（≥sm）：字段与动作同一行，折叠区跨两列在下一行；
+  窄屏：字段 → 折叠区 → 动作。应用筛选只渲染一次，窄屏时排在折叠面板之后，
+  填完最后一个字段就能直接提交，不需要滚回顶部。
 
   提交边界只有一个：所有字段一起在「应用筛选」或回车时生效。清理范围读的是已应用的
   filter，不是草稿，所以草稿改动不会改变清理范围。
@@ -94,44 +98,55 @@ function reset() {
 }
 </script>
 <template>
-  <form class="flex min-w-0 flex-col gap-2" aria-label="日志筛选" @submit.prevent="apply">
-    <div class="flex min-w-0 flex-wrap items-center gap-2">
-      <FieldGroup class="flex min-w-0 flex-1 flex-row flex-wrap items-center gap-2 max-sm:basis-full">
-        <Field v-for="choice in choices" :key="choice.key" orientation="horizontal" class="w-28 shrink-0 sm:w-32">
-          <FieldLabel :for="`log-${choice.key}`" class="sr-only">{{ choice.label }}</FieldLabel>
-          <Select v-model="draft[choice.key]">
-            <SelectTrigger
-              :id="`log-${choice.key}`"
-              size="sm"
-              class="bg-card w-full shadow-none data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
-              :data-active="!!draft[choice.key] && draft[choice.key] !== 'all'"
-            >
-              <SelectValue>{{ summary(choice) }}</SelectValue>
-            </SelectTrigger>
-            <SelectContent><SelectGroup>
-              <SelectItem value="all">全部{{ choice.label }}</SelectItem>
-              <SelectItem v-for="value in choice.values" :key="value" :value="value">{{ value }}</SelectItem>
-            </SelectGroup></SelectContent>
-          </Select>
-        </Field>
-        <Separator orientation="vertical" class="hidden h-5 sm:block" aria-hidden="true" />
-        <!-- 操作是这一行里唯一的自由文本：它吃掉剩余宽度，窄屏时独占一行。 -->
-        <Field orientation="horizontal" class="min-w-36 flex-1 sm:max-w-56">
-          <FieldLabel for="log-operation" class="sr-only">操作（精确匹配）</FieldLabel>
-          <Input
-            id="log-operation"
-            v-model="draft.operation"
-            maxlength="96"
-            class="bg-card h-8 shadow-none"
-            placeholder="操作，精确匹配"
-          />
-        </Field>
-        <!-- 动作与字段同组，窄屏折行时按钮跟着输入框走，不单独占一整行。 -->
-        <div class="flex shrink-0 items-center gap-2 sm:ml-auto">
-          <Button type="submit" size="sm">应用筛选</Button>
-          <Button v-if="showReset" type="button" variant="ghost" size="sm" @click="reset">重置</Button>
-        </div>
-      </FieldGroup>
+  <form
+    class="grid min-w-0 grid-cols-1 items-center gap-x-2 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto]"
+    aria-label="日志筛选"
+    @submit.prevent="apply"
+  >
+    <FieldGroup
+      class="order-1 flex min-w-0 flex-row flex-wrap items-center gap-2 sm:col-start-1 sm:row-start-1"
+    >
+      <Field
+        v-for="choice in choices"
+        :key="choice.key"
+        orientation="horizontal"
+        class="w-28 shrink-0 sm:w-32"
+      >
+        <FieldLabel :for="`log-${choice.key}`" class="sr-only">{{ choice.label }}</FieldLabel>
+        <Select v-model="draft[choice.key]">
+          <SelectTrigger
+            :id="`log-${choice.key}`"
+            size="sm"
+            class="bg-card w-full shadow-none data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
+            :data-active="!!draft[choice.key] && draft[choice.key] !== 'all'"
+          >
+            <SelectValue>{{ summary(choice) }}</SelectValue>
+          </SelectTrigger>
+          <SelectContent><SelectGroup>
+            <SelectItem value="all">全部{{ choice.label }}</SelectItem>
+            <SelectItem v-for="value in choice.values" :key="value" :value="value">{{ value }}</SelectItem>
+          </SelectGroup></SelectContent>
+        </Select>
+      </Field>
+      <Separator orientation="vertical" class="hidden h-5 sm:block" aria-hidden="true" />
+      <!-- 操作是这一行里唯一的自由文本：它吃掉剩余宽度，窄屏时独占一行。 -->
+      <Field orientation="horizontal" class="min-w-36 flex-1 sm:max-w-56">
+        <FieldLabel for="log-operation" class="sr-only">操作（精确匹配）</FieldLabel>
+        <Input
+          id="log-operation"
+          v-model="draft.operation"
+          maxlength="96"
+          class="bg-card h-8 shadow-none"
+          placeholder="操作，精确匹配"
+        />
+      </Field>
+    </FieldGroup>
+    <!-- 单一主操作：窄屏排在折叠面板之后（填完即可提交），桌面与字段同行。 -->
+    <div
+      class="order-3 flex w-full shrink-0 items-center gap-2 sm:col-start-2 sm:row-start-1 sm:w-auto"
+    >
+      <Button type="submit" size="sm" class="max-sm:flex-1">应用筛选</Button>
+      <Button v-if="showReset" type="button" variant="ghost" size="sm" @click="reset">重置</Button>
     </div>
     <DisclosurePanel
       v-model:open="advancedOpen"
@@ -139,9 +154,9 @@ function reset() {
       compact
       :heading-level="2"
       :title="advancedTitle"
-      trigger-class="px-4"
-      content-class="border-t p-4"
-      class="bg-card overflow-hidden rounded-lg border"
+      trigger-class="px-0 py-2"
+      content-class="pt-1 pb-0"
+      class="order-2 min-w-0 border-t pt-2 sm:col-span-2 sm:row-start-2"
     >
       <FieldGroup class="grid min-w-0 grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
         <Field v-for="key in ['from', 'to']" :key="key">
