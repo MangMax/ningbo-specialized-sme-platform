@@ -9,15 +9,14 @@ import type { JobSpec } from '../job-runner'
 import { setJobResult } from '../job-store'
 import { createCurrentExportWorker } from '../current-export-worker-location'
 import { cleanupCurrentExports, currentExportDbPath, exportDirectory, EXPORT_RETENTION_MS } from '../current-export-artifact'
-import { appLog, type LogContext } from '../../../lib/logging'
-import type { JobContext } from '../job-runner'
+import { appLog } from '../../../lib/logging'
 const paramsSchema = z.strictObject({ titleCode: z.enum(CURRENT_TITLES), clientRequestId: z.string().trim().min(1).max(128), regenerateOf: z.string().refine(isJobId).optional() })
 export const currentRosterExportSpec: JobSpec = {
   kind: 'current-roster-export', maxPending: 9, deduplicateRequest: true, status: 'ready', summary: '当前有效名录 Excel（后台独立进程）',
   paramsHint: '{ titleCode: little_giant|specialized_sme|innovative_sme, clientRequestId: string, regenerateOf?: jobId }；保留7天；同请求标识去重',
   parse(raw) { const parsed = paramsSchema.safeParse(raw); return parsed.success ? {ok:true, params:parsed.data} : {ok:false,message:'需要有效 titleCode、clientRequestId；不接受日期或额外参数'} },
   async run(ctx, params) {
-    const logContext = { ...(ctx as JobContext & { logContext?: LogContext }).logContext, taskId: ctx.jobId }
+    const logContext = { ...ctx.logContext, taskId: ctx.jobId }
     const dbPath = currentExportDbPath(ctx.db)
     if (!dbPath || dbPath === ':memory:') throw new Error('导出需要持久 SQLite 数据库')
     const dir = exportDirectory(dbPath), temporaryPath = join(dir,ctx.jobId + '.part'), finalPath = join(dir,ctx.jobId + '.xlsx')
