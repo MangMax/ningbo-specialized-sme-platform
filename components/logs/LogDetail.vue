@@ -89,26 +89,29 @@ async function copy() {
       @retry="refresh"
     />
     <template v-if="current && safe">
-      <div class="flex flex-wrap gap-2">
-        <Button variant="outline" :disabled="loading" @click="copy">复制脱敏事件</Button
-        ><Button v-if="data?.taskId" as-child variant="outline"
-          ><RouterLink :to="{ path: '/tasks', query: { job: data.taskId } }"
-            >查看关联任务</RouterLink
-          ></Button
-        >
+      <div class="flex flex-col gap-2">
+        <div class="flex flex-wrap gap-2">
+          <Button variant="outline" :disabled="loading" @click="copy">复制脱敏事件</Button
+          ><Button v-if="data?.taskId" as-child variant="outline"
+            ><RouterLink :to="{ path: '/tasks', query: { job: data.taskId } }"
+              >查看关联任务</RouterLink
+            ></Button
+          >
+        </div>
+        <!-- 复制结果贴着触发它的按钮，不在详情底部另起一段。 -->
+        <p v-if="notice" role="status" class="text-muted-foreground text-[13px]">{{ notice }}</p>
       </div>
       <Alert v-if="data?.source === 'client'"><AlertDescription>
         客户端上报的上下文不可信，不代表服务端业务执行事实。
       </AlertDescription></Alert>
-      <Table class="data-table">
+      <Table class="data-table table-fixed">
         <TableBody><TableRow v-for="(value, name) in safe" :key="name">
-          <TableCell class="text-muted-foreground align-top whitespace-normal">{{ fieldLabels[name] ?? name }}</TableCell>
+          <TableCell class="text-muted-foreground w-[168px] align-top whitespace-normal">{{ fieldLabels[name] ?? name }}</TableCell>
           <TableCell class="break-all whitespace-normal font-mono text-xs">
             {{ typeof value === 'object' ? JSON.stringify(value) : value }}
           </TableCell>
         </TableRow></TableBody>
       </Table>
     </template>
-    <p v-if="notice" role="status" class="text-sm">{{ notice }}</p>
   </div>
 </template>
