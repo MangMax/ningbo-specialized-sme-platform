@@ -277,7 +277,7 @@ async function clickButtonText(text) {
 
 const measureExpr = `(() => {
   const section = document.querySelector('section[aria-labelledby="log-list-heading"]')
-  const management = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('保留与清理'))
+  const management = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('日志配置'))
   return {
     resultsTop: section ? Math.round(section.getBoundingClientRect().top + window.scrollY) : null,
     managementTop: management ? Math.round(management.getBoundingClientRect().top + window.scrollY) : null,
@@ -672,7 +672,7 @@ await check('failed filter navigation retains old rows and offers an explicit re
     firstRow: document.querySelector('[data-testid="log-table-scroll"] .data-table tbody tr')?.textContent ?? '',
     after: (() => {
       const section = document.querySelector('section[aria-labelledby="log-list-heading"]')
-      const management = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('保留与清理'))
+      const management = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('日志配置'))
       return {
         resultsTop: section ? Math.round(section.getBoundingClientRect().top + window.scrollY) : null,
         managementTop: management ? Math.round(management.getBoundingClientRect().top + window.scrollY) : null
@@ -695,7 +695,7 @@ await check('clear and policy review cancel without any write request', async ()
   await setViewport(1280, 800)
   await navigate(syntheticUrl.href, `document.querySelectorAll('[data-log-detail]').length > 0`)
   const writesBefore = network.filter((entry) => ['POST', 'PATCH', 'PUT', 'DELETE'].includes(entry.method)).length
-  await clickButtonText('保留与清理')
+  await clickButtonText('日志配置')
   await waitFor(`!!document.querySelector('#log-retention-days')`)
   await clickButtonText('清理当前筛选范围')
   await waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((el) => el.textContent.includes('确认清理运行日志'))`)

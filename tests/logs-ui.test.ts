@@ -863,7 +863,7 @@ it('keeps the current cursor page and drafts across log and configuration tabs w
   expect(calls.filter(c => c.url === '/api/logs').at(-1)!.options.query.cursor).toBe('next-2')
   await wrapper.get('#log-operation').setValue('draft.operation')
   const reads = calls.filter(c => c.url === '/api/logs').length
-  await wrapper.findAll('[role=tab]').find(t => t.text() === '保留与清理')!.trigger('keydown', { key: 'Enter' })
+  await wrapper.findAll('[role=tab]').find(t => t.text() === '日志配置')!.trigger('keydown', { key: 'Enter' })
   await flushPromises()
   expect(router.currentRoute.value.query).toMatchObject({ tab: 'settings', source: 'ocr', outcome: 'partial' })
   await wrapper.get('#log-retention-days').setValue('8')
@@ -872,7 +872,7 @@ it('keeps the current cursor page and drafts across log and configuration tabs w
   expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('第 2 页')
   expect((wrapper.get('#log-operation').element as HTMLInputElement).value).toBe('draft.operation')
   expect(calls.filter(c => c.url === '/api/logs')).toHaveLength(reads)
-  await wrapper.findAll('[role=tab]').find(t => t.text() === '保留与清理')!.trigger('keydown', { key: 'Enter' })
+  await wrapper.findAll('[role=tab]').find(t => t.text() === '日志配置')!.trigger('keydown', { key: 'Enter' })
   await flushPromises()
   expect((wrapper.get('#log-retention-days').element as HTMLInputElement).value).toBe('8')
   expect(calls.filter(c => c.options.method && c.options.method !== 'GET')).toHaveLength(0)

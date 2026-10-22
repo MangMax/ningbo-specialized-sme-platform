@@ -292,7 +292,7 @@ function restoreFocus(event: Event) {
     <Tabs v-model="activeTab" class="min-h-0 flex-1 gap-3">
       <TabsList class="shrink-0" aria-label="日志功能">
         <TabsTrigger value="logs" class="min-h-11 sm:min-h-0">运行日志</TabsTrigger>
-        <TabsTrigger value="settings" class="min-h-11 sm:min-h-0">保留与清理</TabsTrigger>
+        <TabsTrigger value="settings" class="min-h-11 sm:min-h-0">日志配置</TabsTrigger>
       </TabsList>
       <TabsContent value="logs" force-mount v-show="activeTab === 'logs'" class="flex min-h-0 flex-col gap-3">
     <!-- 快速筛选与高级筛选共用这一张卡：筛选只有一层表面。 -->
@@ -703,11 +703,10 @@ function restoreFocus(event: Event) {
       </TabsContent>
       <TabsContent value="settings" force-mount v-show="activeTab === 'settings'" class="min-h-0 overflow-y-auto">
         <Card class="max-w-3xl shadow-none">
-          <CardHeader>
-            <CardTitle>日志配置</CardTitle>
-            <CardDescription>清理范围沿用运行日志中已应用的筛选；修改筛选后可返回本页核对。</CardDescription>
-          </CardHeader>
-          <CardContent><LogManagement v-if="settingsVisited" :filter="filter" @changed="fresh" /></CardContent>
+          <CardContent class="pt-6">
+            <p class="mb-4 text-sm text-muted-foreground">清理范围沿用运行日志中已应用的筛选；修改筛选后可返回本页核对。</p>
+            <LogManagement v-if="settingsVisited" :filter="filter" @changed="fresh" />
+          </CardContent>
         </Card>
       </TabsContent>
     </Tabs>
