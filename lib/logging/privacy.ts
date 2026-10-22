@@ -58,3 +58,13 @@ export function projectEvlog(input: Record<string, unknown>): LogInput {
     traceId: typeof input.traceId === 'string' ? input.traceId : undefined,
   }
 }
+
+/** Allowlist redaction before evlog output: generic PII regexes can corrupt generated UUIDs. */
+export const applicationLogRedaction = {
+  builtins: false as const,
+  transform(event: Record<string, unknown>) {
+    const safe = safeLogEvent(projectEvlog(event))
+    for (const key of Object.keys(event)) delete event[key]
+    event.applicationLog = safe
+  },
+}

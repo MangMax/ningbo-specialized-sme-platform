@@ -22,3 +22,38 @@ it('routes standalone worker events through the real evlog pipeline with safe ex
     rmSync(directory,{recursive:true,force:true})
   }
 })
+
+it('preserves generated UUIDs that resemble PII through production evlog without admitting raw fields', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'evlog180-uuid-'))
+  const previous = process.env.NUXT_LOG_DIR, previousMode = process.env.NODE_ENV
+  process.env.NUXT_LOG_DIR = directory; process.env.NODE_ENV = 'production'
+  const requestId = '12345678-1234-4123-8123-123456789012'
+  try {
+    initializeWorkerLogging()
+    appLog({ source: 'http', operation: 'maintenance.enterprise_profile.patch', outcome: 'failure', errorCode: 'invalid_request', body: { secret: 'PRIVATE_UUID180' } } as any, { requestId, traceId: '87654321-4321-4321-8321-210987654321' })
+    await applicationLogs().flush()
+    const rows = (await applicationLogs().list({ requestId })).rows
+    expect(rows).toHaveLength(1)
+    expect(await applicationLogs().detail(rows[0]!.id)).toMatchObject({ requestId, traceId: '87654321-4321-4321-8321-210987654321', errorCode: 'invalid_request' })
+    expect(JSON.stringify(await applicationLogs().detail(rows[0]!.id))).not.toContain('PRIVATE_UUID180')
+  } finally {
+    await closeApplicationLogging()
+    if (previous === undefined) delete process.env.NUXT_LOG_DIR; else process.env.NUXT_LOG_DIR = previous
+    if (previousMode === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousMode
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+it('projects implicit request events before evlog output while retaining safe production correlation', async () => {
+  const { createLogger, initLogger } = await import('evlog')
+  const config = (await import('../evlog.config')).default
+  const events: Record<string, any>[] = []
+  initLogger({ enabled: true, silent: true, redact: config.redact, drain: ctx => { events.push(ctx.event) } })
+  createLogger({ path: '/api/roster/enterprises?token=PRIVATE_UUID180', method: 'PATCH', status: 400,
+    requestId: '12345678-1234-4123-8123-123456789012', traceId: '87654321-4321-4321-8321-210987654321',
+    headers: { authorization: 'Bearer PRIVATE_UUID180' }, body: { auditId: 999999, receiptId: 'PRIVATE_UUID180' }, message: 'PRIVATE_UUID180',
+  }).emit({ _forceKeep: true })
+  expect(events).toHaveLength(1)
+  expect(events[0]!.applicationLog).toMatchObject({ source: 'http', operation: 'http.request', statusCode: 400, requestId: '12345678-1234-4123-8123-123456789012', traceId: '87654321-4321-4321-8321-210987654321' })
+  expect(JSON.stringify(events)).not.toMatch(/PRIVATE_UUID180|headers|authorization|body|message|auditId|receiptId|path/)
+})
