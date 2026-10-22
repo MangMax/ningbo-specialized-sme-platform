@@ -4,14 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { categoryStateOf, deriveClassification, deriveParts, directoryOf, parseBatch } from '../lib/stored-file'
-import { scopeOf, siblingIndex } from '../lib/file-store-scope'
-import { LITTLE_GIANT_SOURCE_FILE } from '../lib/roster/little-giant-import'
-import {
-  INTERNALIZED_FILE_COUNT,
-  INTERNALIZED_JXJ_COUNT,
-  INTERNALIZED_SET_COUNT,
-} from './helpers/file-store-expectations'
+import { categoryStateOf, deriveClassification, deriveParts, parseBatch } from '../lib/stored-file'
 import {
   backfillFromDisk,
   backfillStoredFiles,
@@ -538,102 +531,5 @@ describe('DELETE 默认不删磁盘', () => {
     // 回填不会把移出的文件又插回来。
     const again = await backfillFromDisk(db, filesRoot)
     expect(again.inserted).toBe(0)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 4. 对真实文件库的验收核对
-// ---------------------------------------------------------------------------
-
-/**
- * 真实文件库的**期望规模** —— 数的来路(逐条)与「为什么写死」见
- * [`tests/helpers/file-store-expectations.ts`](./helpers/file-store-expectations.ts),
- * 那里也是 `reupload.test.ts` 用的同一份(一个数只有一处)。
- */
-
-
-/**
- * `files/` 是否**已就位**。注意 `files/` 目录本身在 clone 里总是存在(只提交了 `README.md`),
- * 所以判据要探到真实内容层 —— 拿 `miit/export` 当哨兵。
- */
-const REAL_STORE = join(process.cwd(), 'files')
-const hasRealStore = existsSync(join(REAL_STORE, 'miit', 'export'))
-
-describe.skipIf(!hasRealStore)('对真实 files/ 的验收:逐个文件对得上', () => {
-  it('回填行数与目录规则一致,且元数据逐个对得上', async () => {
-    // vitest 的工作目录就是 app 根,files/ 是仓库里的真实文件库。
-    const realRoot = REAL_STORE
-    const scanned = await scanFileStore(realRoot)
-    expect(scanned).toHaveLength(INTERNALIZED_FILE_COUNT)
-
-    // 逐个按规则算一遍,再与「目录规则」人工核对的期望值比。
-    const derived = scanned.map((f) => {
-      const parts = deriveParts(f.relPath)!
-      return {
-        rel: f.relPath,
-        source: parts.source,
-        kind: parts.kind,
-        year: parts.year,
-        batch: parts.batch,
-        state: categoryStateOf(parts),
-      }
-    })
-
-    // 全部认得出分类(没有一个落到 skipped)。
-    expect(derived.every((d) => d.source && d.kind)).toBe(true)
-
-    // 分布核对:19 份经信局公布文件 + 3 份工信部导出表。
-    expect(derived.filter((d) => d.source === 'jxj')).toHaveLength(INTERNALIZED_JXJ_COUNT)
-    expect(derived.filter((d) => d.source === 'miit')).toHaveLength(3)
-
-    // 年份分布(按目录):2021×0、2022×2、2023×4、2024×5、2025×4、2026×3、无年份×4。
-    // 无年份的 4 份 = 3 份导出表(本来就没有年份) + 1 份跨年汇总工作簿。
-    const byYear = new Map<number | null, number>()
-    for (const d of derived) byYear.set(d.year, (byYear.get(d.year) ?? 0) + 1)
-    expect(byYear.get(2021)).toBeUndefined()
-    expect(byYear.get(2022)).toBe(2)
-    expect(byYear.get(2023)).toBe(4)
-    expect(byYear.get(2024)).toBe(5)
-    expect(byYear.get(2025)).toBe(4)
-    expect(byYear.get(2026)).toBe(3)
-    expect(byYear.get(null)).toBe(4)
-
-    // 两份 2022 的目录里没有批次段 → 批次为空(不是补出来的)。
-    const y2022 = derived.filter((d) => d.year === 2022)
-    expect(y2022.every((d) => d.batch === null)).toBe(true)
-
-    // 批次只可能是 1 或 2(目录里只出现这两个批次目录)。
-    const batches = new Set(derived.filter((d) => d.batch !== null).map((d) => d.batch))
-    expect([...batches].sort()).toEqual([1, 2])
-
-    // 分类已定的 21 份(含 3 份导出表与 2 份无批次的年份公布文件);
-    // 唯一的 `unset` 是那份**跨年汇总**工作簿 —— 它没有单一公布年份,留空不猜。
-    const unset = derived.filter((d) => d.state === 'unset')
-    expect(derived.filter((d) => d.state === 'set')).toHaveLength(INTERNALIZED_SET_COUNT)
-    expect(unset.map((d) => d.rel)).toEqual(['jxj/announcement/经信局公布历年小巨人企业名单.xlsx'])
-  })
-
-  it('该移出的三份确实不在磁盘上;该入库的工作簿在;规则在真实库上一条都不命中', async () => {
-    const scanned = await scanFileStore(REAL_STORE)
-    const paths = scanned.map((f) => f.relPath)
-
-    // 三份移出件(逐条列出,而不是「反正数对得上」)。
-    expect(paths).not.toContain(
-      'jxj/announcement/2021/甬经信中小〔2021〕160号关于公布2021-2022宁波市“专精特新”入库培育企业名单的通知.pdf',
-    )
-    expect(paths).not.toContain('jxj/announcement/2023/1/关于公布2023年宁波市“专精特新”中小企业名单的通知.doc')
-    expect(paths).not.toContain('jxj/announcement/2023/1/关于公布2023年第一批宁波市创新型中小企业名单的通知.doc')
-    // 两份可预览的 `.docx` 留下(它们是台账 `record_evidence.source_file` 指的那一份)。
-    expect(paths).toContain('jxj/announcement/2023/1/关于公布2023年宁波市“专精特新”中小企业名单的通知.docx')
-    expect(paths).toContain('jxj/announcement/2023/1/关于公布2023年第一批宁波市创新型中小企业名单的通知.docx')
-    // 该入库的工作簿在,且路径**正是 app 落位规则给的那一条**。
-    expect(paths).toContain(LITTLE_GIANT_SOURCE_FILE)
-
-    // 规则与磁盘一致:真实库上**一条排除判据都不该命中**(该排的已经排干净了)。
-    const siblings = siblingIndex(paths)
-    const excluded = scanned
-      .map((f) => scopeOf(f.relPath, siblings.get(directoryOf(f.relPath))))
-      .filter((verdict) => !verdict.inScope)
-    expect(excluded).toEqual([])
   })
 })

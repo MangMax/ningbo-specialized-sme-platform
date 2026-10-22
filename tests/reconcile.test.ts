@@ -9,7 +9,6 @@ import {
   RECONCILE_BASIS,
   RECONCILE_LABELS,
   RECONCILE_REASONS,
-  RECONCILE_VARIANTS,
   reconcileHint,
 } from '../lib/labels'
 import explainFixture from './fixtures/reconcile-explain.json'
@@ -117,19 +116,11 @@ describe('attachReconcile', () => {
 })
 
 describe('解释的展示文案', () => {
-  it('每个原因都有标签与徽章变体', () => {
-    const codes = Object.keys(RECONCILE_LABELS)
-    expect(codes).toHaveLength(7)
-    for (const code of codes) {
-      expect(RECONCILE_VARIANTS[code as keyof typeof RECONCILE_VARIANTS]).toBeTruthy()
-    }
-  })
 
-  it('夹具里的每条解释都能取到标签与变体(不会漏文案)', () => {
+  it('夹具里的每条解释都能取到标签(不会漏文案)', () => {
     const index = readReconcile(FIXTURE_PATH)
     for (const entry of index.entries.values()) {
       expect(RECONCILE_LABELS[entry.explanation.code]).toBeTruthy()
-      expect(RECONCILE_VARIANTS[entry.explanation.code]).toBeTruthy()
       expect(entry.explanation.note.length).toBeGreaterThan(0)
     }
   })

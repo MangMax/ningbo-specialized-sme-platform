@@ -74,7 +74,7 @@ request 的 offset 是 **UTF-8 字节偏移**，默认 0；maxBytes 默认 16384
 复现：
 
 ```sh
-IMPORT_RECEIPT_EVIDENCE_DIR=/tmp/ningbo-spec98/ticket-103 RECEIPT_SOURCE_SHA=$(git rev-parse HEAD) pnpm test tests/import-receipts-http.test.ts tests/roster-import-api.test.ts tests/roster-import-scale.test.ts tests/roster-import-semantics.test.ts tests/mcp-surface.test.ts --maxWorkers=1
+pnpm test tests/import-receipts-http.test.ts tests/roster-import-api.test.ts tests/roster-import-scale.test.ts tests/roster-import-semantics.test.ts tests/mcp-surface.test.ts --maxWorkers=1
 pnpm typecheck
 pnpm build
 ```

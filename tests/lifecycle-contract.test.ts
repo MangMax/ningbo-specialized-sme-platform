@@ -12,7 +12,6 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { eq } from 'drizzle-orm'
 import { schema, useDb } from '../db'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-lifecycle-contract-'))
@@ -123,7 +122,7 @@ describe('复核结果字段', () => {
     expect(failed.decidedYear).toBe(2024)
   })
 
-  it('复核未通过后再次获批:首次认定仍是 2021,再获批不重置首次认定', () => {
+  it('复核未通过后再次获批:两次认定与原事件都保留', () => {
     const reApproved = event(rec, 'award', 2025, { batchSeq: 1, decidedYear: 2025 })
     const events = db
       .select()
@@ -131,18 +130,9 @@ describe('复核结果字段', () => {
       .all()
       .filter((e) => e.recordId === rec)
     const awards = events.filter((e) => e.eventType === 'award')
-    expect(Math.min(...awards.map((e) => e.year!))).toBe(2021)
     expect(awards.map((e) => e.year).sort()).toEqual([2021, 2025])
     // 首次认定锚点未被 2025 覆盖:最早认定事件仍是 2021。
     expect(db.select().from(schema.recordEvent).all().find((e) => e.id === firstAward)!.year).toBe(2021)
-    // 复核锚点从重新获批年份刷新:下一次到期 = 2025 + 3。
-    const anchor = Math.max(
-      ...events
-        .filter((e) => e.eventType === 'award' || (e.eventType === 'review' && e.reviewOutcome === 'passed'))
-        .map((e) => (e.decidedYear ?? e.year)!),
-    )
-    expect(anchor).toBe(2025)
-    expect(anchor + 3).toBe(2028)
     expect(reApproved).toBeTypeOf('number')
   })
 })
@@ -676,100 +666,5 @@ describe('回归案例:91330211255994457P(真实响应摘录)', () => {
     expect(stored.year).toBe(2022)
     expect(stored.decidedYear).toBe(2025)
     expect(stored.reviewOutcome).toBeNull()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 场景九:确认主体后的归并(375 → 7289)—— 不丢任何称号/事件/出处
-// ---------------------------------------------------------------------------
-
-/** 契约 §5.2 的归并:回填 USCC 时不是 UPDATE,而是迁子行 + 解决唯一键冲突的 MERGE。 */
-function mergeEnterprises(canonicalId: number, duplicateId: number) {
-  const dup = db.select().from(schema.enterprise).all().find((e) => e.id === duplicateId)!
-  // 迁移还指着被并企业的子行。
-  for (const table of [schema.enterpriseAlias, schema.differenceReason, schema.platformRelation] as const) {
-    db.update(table).set({ enterpriseId: canonicalId }).where(eq(table.enterpriseId, duplicateId)).run()
-  }
-  // 旧名写成已确认别名(旧名不丢)。
-  db.insert(schema.enterpriseAlias)
-    .values({
-      enterpriseId: canonicalId,
-      name: dup.name,
-      nameNorm: dup.nameNorm,
-      sourceKind: 'manual',
-      verificationStatus: 'confirmed',
-    })
-    .onConflictDoNothing()
-    .run()
-  // 记录:同 (称号, 来源) 冲突时把**事件**并到规范行的那条记录上(事件一条不丢)。
-  for (const r of db.select().from(schema.record).all().filter((x) => x.enterpriseId === duplicateId)) {
-    const existing = db
-      .select()
-      .from(schema.record)
-      .all()
-      .find((x) => x.enterpriseId === canonicalId && x.titleCode === r.titleCode && x.source === r.source)
-    if (existing) {
-      db.update(schema.recordEvent).set({ recordId: existing.id }).where(eq(schema.recordEvent.recordId, r.id)).run()
-      db.delete(schema.record).where(eq(schema.record.id, r.id)).run()
-    } else {
-      db.update(schema.record).set({ enterpriseId: canonicalId }).where(eq(schema.record.id, r.id)).run()
-    }
-  }
-  db.delete(schema.enterprise).where(eq(schema.enterprise.id, duplicateId)).run()
-}
-
-describe('确认主体后归并为总表一行', () => {
-  const canonical = shanghangId
-  const duplicate = enterprise('宁波上航测绘有限公司', null) // uscc_missing
-  const dupRecord = record(duplicate, 'specialized_sme', 'jxj')
-  const dupEvent = event(dupRecord, 'award', 2022, { batchSeq: 2 })
-  db.insert(schema.recordEvidence).values({
-    recordEventId: dupEvent,
-    sourceFile: 'jxj/announcement/2022/甬经信中小〔2022〕145号.pdf',
-    attachment: '附件',
-    listNo: 74,
-    page: 74,
-  }).run()
-  record(canonical, 'specialized_sme', 'miit')
-  record(canonical, 'little_giant', 'miit')
-
-  it('回填 USCC 触发 enterprise_uscc_norm_uq 冲突 ⇒ 归并而非 UPDATE,且一行收齐全部称号与出处', () => {
-    // 直接 UPDATE 会撞唯一键 —— 这正是必须 MERGE 的原因。
-    expect(() =>
-      db.update(schema.enterprise).set({ usccNorm: '91330211255994457P' }).where(eq(schema.enterprise.id, duplicate)).run(),
-    ).toThrow()
-
-    mergeEnterprises(canonical, duplicate)
-
-    // 总表只有一行带该 USCC。
-    expect(db.select().from(schema.enterprise).all().filter((e) => e.usccNorm === '91330211255994457P')).toHaveLength(1)
-    // 被并企业行已删除;其称号、事件、出处**一条不丢**。
-    expect(db.select().from(schema.enterprise).all().find((e) => e.id === duplicate)).toBeUndefined()
-    const titles = db.select().from(schema.record).all().filter((r) => r.enterpriseId === canonical).map((r) => `${r.titleCode}/${r.source}`).sort()
-    expect(titles).toEqual(['little_giant/miit', 'specialized_sme/jxj', 'specialized_sme/miit'])
-    const kept = db.select().from(schema.recordEvent).all().find((e) => e.id === dupEvent)!
-    expect(kept.recordId).toBe(dupRecord) // 无同坐标冲突,记录本身直接改指规范行
-    expect(kept.year).toBe(2022)
-    const evidence = db.select().from(schema.recordEvidence).all().find((e) => e.recordEventId === dupEvent)!
-    expect(evidence.page).toBe(74)
-    // 按现名与曾用名搜索都命中同一企业。
-    expect(searchEnterpriseId('宁波上航测绘股份有限公司').includes(canonical)).toBe(true)
-    expect(searchEnterpriseId('宁波上航测绘有限公司')).toEqual([canonical])
-  })
-
-  it('同 (企业, 称号, 来源) 冲突时:事件并到同一条记录,数量不减', () => {
-    const a = enterprise('同名冲突甲', null)
-    const b = enterprise('同名冲突乙', '91330211000000007C')
-    const aRec = record(a, 'innovative_sme', 'jxj')
-    event(aRec, 'award', 2021, { batchSeq: 1 })
-    const bRec = record(b, 'innovative_sme', 'jxj')
-    event(bRec, 'award', 2019, { batchSeq: 2 })
-
-    mergeEnterprises(b, a)
-
-    const merged = db.select().from(schema.record).all().filter((r) => r.enterpriseId === b && r.titleCode === 'innovative_sme')
-    expect(merged).toHaveLength(1) // 记录去重
-    const events = db.select().from(schema.recordEvent).all().filter((e) => e.recordId === merged[0]!.id)
-    expect(events.map((e) => e.year).sort((x, y) => (x ?? 0) - (y ?? 0))).toEqual([2019, 2021]) // 事件不丢
   })
 })

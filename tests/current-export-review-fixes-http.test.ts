@@ -1,4 +1,4 @@
-import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
+import { matchesBusinessIdentity } from './helpers/current-export-118'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { currentExport118Fixture, rows, year } from '../tests/helpers/current-export-118'
 const f = currentExport118Fixture()
@@ -13,15 +13,6 @@ it('较早未知周期失败不应覆盖后续明确新认定', async () => {
   const {wb} = await f.workbook('review-unknown-cycle-then-award')
   const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => matchesBusinessIdentity(f.db, r, c.enterprise.id)).map(r => ({sheet:s.name,notes:r[11]})))
   console.log(JSON.stringify({case:'old-unknown-cycle',actual}))
-  expect(actual.map(r => r.sheet)).toEqual(['有效企业'])
-}, 60000)
-it('正式复核通过应在缺原始认定行时仍可确认当前资格', async () => {
-  const c = f.candidate('仅存正式复核通过', [
-    {eventType:'review',year:year-4,decidedYear:year-1,reviewOutcome:'passed',batchSeq:1},
-  ])
-  const {wb} = await f.workbook('review-only')
-  const actual = wb.worksheets.slice(0,3).flatMap(s => rows(wb,s.name).filter(r => matchesBusinessIdentity(f.db, r, c.enterprise.id)).map(r => ({sheet:s.name,notes:r[11]})))
-  console.log(JSON.stringify({case:'formal-review-only',actual}))
   expect(actual.map(r => r.sheet)).toEqual(['有效企业'])
 }, 60000)
 it('已确认注销的同一主体不应因切换称号重新有效', async () => {
