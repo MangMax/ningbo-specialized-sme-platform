@@ -44,7 +44,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks'
 if (wt.isMainThread && process.env.LOGGING_BENCH_PROCESS_DIR) {
   const lag = monitorEventLoopDelay({ resolution: 10 }); lag.enable()
   const sample = () => {
-    const data = { timestamp: Date.now(), pid:process.pid, ppid:process.ppid, cpu:process.cpuUsage(), memory:process.memoryUsage(), lagP95Ms:lag.percentile(95)/1e6, lagMaxMs:lag.max/1e6, writers:[...totals.values()] }
+    const data = { timestamp: Date.now(), pid:process.pid, ppid:process.ppid, cpu:process.cpuUsage(), memory:process.memoryUsage(), stdoutBuffered:process.stdout.writableLength, lagP95Ms:lag.percentile(95)/1e6, lagMaxMs:lag.max/1e6, writers:[...totals.values()] }
     appendFileSync(join(process.env.LOGGING_BENCH_PROCESS_DIR, `${process.pid}.ndjson`), JSON.stringify(data)+'\n')
     lag.reset()
   }

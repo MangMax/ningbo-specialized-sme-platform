@@ -81,3 +81,9 @@ The source harness now accounts for the actual origin in future initial metadata
 The overall deadline stops subsequent lanes after terminating owned children;
 `LOGGING_BENCH_DEADLINE_MS` can lower (never raise) the25min bound for a smoke
 check of cleanup. Port50055 is explicitly excluded from ephemeral selection.
+
+`--stdout-business-supplement` runs one separately labeled25s lane: real built
+Nuxt writes stdout to an owned nonblocking FIFO; the reader stops20s while both
+business GETs run, then resumes for5s recovery. Per-process telemetry records
+actual stdout writable buffering, rather than inferring pressure just from a
+paused reader. The FIFO is removed and only raw captured output is retained.

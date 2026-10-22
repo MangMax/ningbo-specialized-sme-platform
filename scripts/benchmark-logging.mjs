@@ -3,7 +3,7 @@
 import { fork, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, chmodSync, existsSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, chmodSync, existsSync, openSync, closeSync, readSync, unlinkSync, constants } from 'node:fs'
 import { join, resolve } from 'node:path'
 import os from 'node:os'
 import { performance } from 'node:perf_hooks'
@@ -21,7 +21,8 @@ const smoke = process.argv.includes('--smoke')
 const faultCheck = process.argv.includes('--fault-check')
 const development = smoke || faultCheck
 const supplement = process.argv.includes('--http-debug-supplement')
-const run = mkdtempSync(join(root, development ? 'dirty-development-' : supplement ? 'fixed-supplement-' : 'fixed-final-'))
+const stdoutSupplement = process.argv.includes('--stdout-business-supplement')
+const run = mkdtempSync(join(root, development ? 'dirty-development-' : (supplement||stdoutSupplement) ? 'fixed-supplement-' : 'fixed-final-'))
 const processDir = join(run, 'process-telemetry'); mkdirSync(processDir)
 const write = (file, value) => writeFileSync(join(run,file), typeof value==='string'?value:JSON.stringify(value,null,2))
 const hash = data => createHash('sha256').update(data).digest('hex')
@@ -30,7 +31,7 @@ const dirty = git('status','--porcelain')
 if (!development && dirty) throw Error('Final measurement requires clean committed harness')
 if (git('diff',BASE,'--','lib','server','db','nuxt.config.ts','package.json','pnpm-lock.yaml')) throw Error('Production source differs from pinned baseline')
 const matrix=readFileSync(join(root,'matrix.md'),'utf8')
-const manifest={ started:new Date().toISOString(), kind:development?'dirty-development':supplement?'fixedSHA-supplement':'fixedSHA-finalrun', sha:git('rev-parse','HEAD'), tree:git('rev-parse','HEAD^{tree}'), dirty, baselineSha:BASE,baselineTree:TREE, matrixSha256:hash(matrix), command:`node scripts/benchmark-logging.mjs${smoke?' --smoke':faultCheck?' --fault-check':supplement?' --http-debug-supplement':''}`, node:process.version, versions:process.versions, lockfileSha256:hash(readFileSync('pnpm-lock.yaml')), os:{type:os.type(),release:os.release(),arch:os.arch()}, cpu:os.cpus().map(c=>({model:c.model,speed:c.speed})), ramBytes:os.totalmem(), freeRamStart:os.freemem(), loadavg:os.loadavg(), parameters:{httpWarmupSeconds:1,httpSeconds:5,httpRounds:3,concurrency:[1,8,32],rates:[100,1000,5000],pipelineSeconds:15,cap:4294967296}, scope:supplement?'debug rounds0+2, full six-cell context replay; separate from original failures':'frozen complete matrix',artifact:[],counterScope:'HTTP main policy exact main-only; recursive worker ack observations sampled per process; unacknowledged/overflow in HTTP child processes UNKNOWN; pipeline exact per service', limits:'Closed-loop HTTP; instrumentation overhead; sampled RSS/disk may miss peaks; no production SLO; source pipeline via project jiti using same actual modules/evlog'}
+const manifest={ started:new Date().toISOString(), kind:development?'dirty-development':(supplement||stdoutSupplement)?'fixedSHA-supplement':'fixedSHA-finalrun', sha:git('rev-parse','HEAD'), tree:git('rev-parse','HEAD^{tree}'), dirty, baselineSha:BASE,baselineTree:TREE, matrixSha256:hash(matrix), command:`node scripts/benchmark-logging.mjs${smoke?' --smoke':faultCheck?' --fault-check':supplement?' --http-debug-supplement':stdoutSupplement?' --stdout-business-supplement':''}`, node:process.version, versions:process.versions, lockfileSha256:hash(readFileSync('pnpm-lock.yaml')), os:{type:os.type(),release:os.release(),arch:os.arch()}, cpu:os.cpus().map(c=>({model:c.model,speed:c.speed})), ramBytes:os.totalmem(), freeRamStart:os.freemem(), loadavg:os.loadavg(), parameters:{httpWarmupSeconds:1,httpSeconds:5,httpRounds:3,concurrency:[1,8,32],rates:[100,1000,5000],pipelineSeconds:15,cap:4294967296}, scope:stdoutSupplement?'built Nuxt stdout FIFO stop/read/recover with real business requests':supplement?'debug rounds0+2, full six-cell context replay; separate from original failures':'frozen complete matrix',artifact:[],counterScope:'HTTP main policy exact main-only; recursive worker ack observations sampled per process; unacknowledged/overflow in HTTP child processes UNKNOWN; pipeline exact per service', limits:'Closed-loop HTTP; instrumentation overhead; sampled RSS/disk may miss peaks; no production SLO; source pipeline via project jiti using same actual modules/evlog'}
 function artifactFiles(path) { for(const name of readdirSync(path)){const p=join(path,name);if(statSync(p).isDirectory()) {if(name!=='node_modules')artifactFiles(p)} else manifest.artifact.push({file:p.replace(resolve('.output')+'/',''),sha256:hash(readFileSync(p))})} }
 artifactFiles(resolve('.output/server')); write('manifest.json',manifest); write('matrix.md',matrix)
 if(git('rev-parse',BASE+'^{tree}')!==TREE)throw Error('Pinned baseline tree mismatch')
@@ -57,12 +58,12 @@ const recordResult=(name,data)=>{const result={name,...data};results.push(result
 async function lane(name,fn){if(aborted)throw Error('benchmark overall deadline reached');try{recordResult(name,{state:'MEASURED',data:await fn()})}catch(e){const failure={name,state:'FAIL',error:{name:e.name,code:e.code??null,message:e.message},cause:'UNKNOWN unless explicitly identified in retained error'};failures.push(failure);recordResult(name,failure)}}
 function capture(child,label){
  const state={stdoutBytes:0,stderrBytes:0,privacyNonce:false,stdoutHash:createHash('sha256'),stderrHash:createHash('sha256')}
- for(const kind of ['stdout','stderr']) child[kind].on('data',chunk=>{state[kind+'Bytes']+=chunk.length;state[kind+'Hash'].update(chunk);if(chunk.includes('PRIVATE_LOGGING_PERFORMANCE_NONCE'))state.privacyNonce=true;appendFileSync(join(run,label+'.'+kind+'.log'),chunk)})
+ for(const kind of ['stdout','stderr']) child[kind]?.on('data',chunk=>{state[kind+'Bytes']+=chunk.length;state[kind+'Hash'].update(chunk);if(chunk.includes('PRIVATE_LOGGING_PERFORMANCE_NONCE'))state.privacyNonce=true;appendFileSync(join(run,label+'.'+kind+'.log'),chunk)})
  return state
 }
 function rpc(child,command,timeout=120000){if(child.exitCode!==null||child.signalCode)return Promise.reject(Error('owned child already exited'));return new Promise((resolve,reject)=>{const id=++serial;const onMessage=m=>{if(m?.id!==id)return;cleanup();m.error?reject(Object.assign(Error(m.error.message),{code:m.error.code})):resolve(m.result)};const onExit=()=>{cleanup();reject(Error('owned child exited during command'))};const cleanup=()=>{clearTimeout(timer);child.off('message',onMessage);child.off('exit',onExit)};const timer=setTimeout(()=>{cleanup();reject(Error('benchmark command timeout'))},timeout);child.on('message',onMessage);child.once('exit',onExit);child.send({...command,id})})}
 async function api(server,path,method='GET',body){const r=await fetch(server.base+path,{method,headers:{...auth,...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(10000)});const text=await r.text();if(r.status!==200)throw Error(`fixture API ${path} HTTP ${r.status}: ${text.slice(0,100)}`);return JSON.parse(text)}
-async function startServer(label,logs){let port=await reserveLoopbackPort();while(port===50055)port=await reserveLoopbackPort();const child=fork('.output/server/index.mjs',[],{execArgv:[],env:{...envBase,PORT:String(port),NUXT_LOG_DIR:logs},stdio:['ignore','pipe','pipe','ipc']});owned.add(child);const output=capture(child,label),server={child,base:`http://127.0.0.1:${port}`,output,logs};try{await waitForHttp(server.base+'/api/health',{child,timeoutMs:30000});return server}catch(e){await stopOwnedChild(child);throw e}}
+async function startServer(label,logs,stdoutFd){let port=await reserveLoopbackPort();while(port===50055)port=await reserveLoopbackPort();const child=fork('.output/server/index.mjs',[],{execArgv:[],env:{...envBase,PORT:String(port),NUXT_LOG_DIR:logs},stdio:['ignore',stdoutFd??'pipe','pipe','ipc']});owned.add(child);const output=capture(child,label),server={child,base:`http://127.0.0.1:${port}`,output,logs};try{await waitForHttp(server.base+'/api/health',{child,timeoutMs:30000});return server}catch(e){await stopOwnedChild(child);throw e}}
 async function stop(child){await stopOwnedChild(child);owned.delete(child)}
 async function pipeline(label,logs,extra={},allowUnavailable=false){mkdirSync(logs,{recursive:true});const child=fork('scripts/lib/logging-performance-pipeline.mjs',[],{execArgv:[],env:{...envBase,NUXT_LOG_DIR:logs,...extra},stdio:['ignore','pipe','pipe','ipc']});owned.add(child);const output=capture(child,label);await new Promise((res,rej)=>{const t=setTimeout(()=>rej(Error('pipeline readiness timeout')),30000);child.once('message',m=>{clearTimeout(t);m.ready?res():rej(Error('pipeline readiness invalid'))});child.once('exit',()=>{clearTimeout(t);rej(Error('pipeline exited before ready'))})});const init=await rpc(child,{action:'init'}).catch(e=>{if(!allowUnavailable)throw e;return {observedInitError:{code:e.code,message:e.message}}});return {child,output,init,logs}}
 async function closePipeline(p){const closed=await rpc(p.child,{action:'close'}).catch(e=>({error:e.message}));await stop(p.child);return closed}
@@ -90,9 +91,23 @@ async function faultWithBusiness(name,setup,seconds=5,extra={}){return lane(name
  const [during,businessHealth,businessEnterprises]=await Promise.all([rpc(p.child,{action:'load',label:name,rate:1000,shape:'large',seconds}),httpLoad(server,'/api/health',1,seconds),httpLoad(server,'/api/roster/enterprises?pageSize=50',1,seconds)])
  await restore();restore=()=>{};const recovery=await rpc(p.child,{action:'load',label:name+'-recovery',rate:1000,shape:'small',seconds:5});return{fixture:context.evidence,during,businessHealth,businessEnterprises,recovery,rows:logRows(logs),disk:disk(logs),mainOutputPrivacy:server.output.privacyNonce}
  }finally{await restore();await stop(server.child);await closePipeline(p)}})}
+
+async function stdoutBusinessLane(){return lane('stdout-fifo-business-20s',async()=>{
+ const fifo=join(run,'owned-stdout.fifo');execFileSync('mkfifo',[fifo]);const fd=openSync(fifo,constants.O_RDWR|constants.O_NONBLOCK)
+ let reading=true,bytes=0,privacyNonce=false,server;const chunks=[]
+ const reader=setInterval(()=>{if(!reading)return;const b=Buffer.alloc(16384);for(let i=0;i<32;i++){try{const n=readSync(fd,b,0,b.length,null);if(!n)break;const chunk=Buffer.from(b.subarray(0,n));bytes+=n;chunks.push(chunk);if(chunk.includes('PRIVATE_LOGGING_PERFORMANCE_NONCE'))privacyNonce=true}catch(e){if(e.code==='EAGAIN'||e.code==='EWOULDBLOCK')break;throw e}}},20)
+ try{server=await startServer('stdout-fifo-nuxt',join(run,'stdout-fifo-logs'),fd);await sourceMode(server,'debug');const before=await api(server,'/api/logs/policy');reading=false;const startTimestamp=Date.now(),beforeBytes=bytes
+ const [health,enterprises]=await Promise.all([httpLoad(server,'/api/health',1,20),httpLoad(server,'/api/roster/enterprises?pageSize=50',1,20)])
+ const capturedWhileStopped=bytes-beforeBytes;reading=true;const [recoveryHealth,recoveryEnterprises]=await Promise.all([httpLoad(server,'/api/health',1,5),httpLoad(server,'/api/roster/enterprises?pageSize=50',1,5)])
+ const after=await api(server,'/api/logs/policy').catch(e=>({observationError:e.message}));await sleep(250)
+ return{serverPid:server.child.pid,startTimestamp,endTimestamp:Date.now(),health,enterprises,recoveryHealth,recoveryEnterprises,before,after,capturedWhileStopped,totalReadBytes:bytes,privacyNonce,disk:disk(server.logs),counterScope:'policy main-only; 500ms process telemetry includes stdoutBuffered for actual blocked pipe observation'}
+ }finally{reading=true;if(server)await stop(server.child);await sleep(100);clearInterval(reader);closeSync(fd);unlinkSync(fifo);write('stdout-fifo.raw.log',Buffer.concat(chunks));}
+})}
+
 async function faultMatrix(){
  await lane('stdout-stop-reading-20s',async()=>{const p=await pipeline('stdout-block',join(run,'stdout-block'));try{p.child.stdout.pause();const before=p.output.stdoutBytes;const blocked=await rpc(p.child,{action:'load',label:'stdout-blocked',rate:1000,shape:'large',seconds:smoke?0.5:20});const pausedBytes=p.output.stdoutBytes-before;p.child.stdout.resume();const recovery=await rpc(p.child,{action:'load',label:'stdout-recovery',rate:1000,shape:'large',seconds:smoke?0.2:5});return{beforeBytes:before,capturedWhilePaused:pausedBytes,blocked,recovery,outputBytes:p.output.stdoutBytes,privacyNonce:p.output.privacyNonce}}finally{p.child.stdout.resume();await closePipeline(p)}})
  if(smoke)return
+ await stdoutBusinessLane()
  await faultWithBusiness('sqlite-lock-2s',async({logs})=>{const lock=new Database(join(logs,'events.db'));lock.exec('BEGIN IMMEDIATE');let released=false;const restore=()=>{if(!released){lock.exec('ROLLBACK');lock.close();released=true}};const timer=setTimeout(restore,2000);return{evidence:{operation:'BEGIN IMMEDIATE',lockMs:2000},restore:()=>{clearTimeout(timer);restore()}}})
  await faultWithBusiness('sqlite-trigger-fault',async({logs})=>{const d=new Database(join(logs,'events.db'));d.exec("CREATE TRIGGER benchmark_reject BEFORE INSERT ON log_events BEGIN SELECT RAISE(ABORT, 'benchmark_reject'); END");return{evidence:{fault:'real SQLite rejecting trigger',sqlCode:'SQLITE_CONSTRAINT_TRIGGER'},restore:()=>{d.exec('DROP TRIGGER benchmark_reject');d.close()}}})
  await lane('capacity-1MiB',async()=>{const p=await pipeline('capacity',join(run,'capacity'),{NUXT_LOG_MAX_BYTES:'1048576'});const samples=[];const timer=setInterval(()=>samples.push({at:Date.now(),disk:disk(p.logs)}),100);try{const measured=await rpc(p.child,{action:'load',label:'capacity',rate:1000,shape:'large',seconds:10});const policy=await fetchPolicyFromSource(p);return{measured,policy,samples,maxObservedBytes:Math.max(...samples.map(s=>Object.values(s.disk).reduce((a,b)=>a+b,0))),rows:logRows(p.logs)}}finally{clearInterval(timer);await closePipeline(p)}})
@@ -109,7 +124,7 @@ async function faultMatrix(){
 async function fetchPolicyFromSource(p){return rpc(p.child,{action:'policy'})}
 const watchdog=setTimeout(()=>{aborted=true;write('watchdog.json',{at:new Date().toISOString(),reason:'25 minute bound'});for(const child of owned)child.kill('SIGKILL');process.exitCode=1},deadlineMs);watchdog.unref()
 try{
- if(faultCheck){await faultMatrix()}else if(supplement){await httpMatrix()}else{await httpMatrix();await pipelineMatrix();await faultMatrix()}
+ if(faultCheck){await faultMatrix()}else if(stdoutSupplement){await stdoutBusinessLane()}else if(supplement){await httpMatrix()}else{await httpMatrix();await pipelineMatrix();await faultMatrix()}
 } catch(e){failures.push({name:'orchestration',state:'FAIL',error:e.message,cause:'UNKNOWN'});write('orchestration-error.json',{message:e.message,stack:e.stack});process.exitCode=1}
 finally{
  clearTimeout(watchdog);for(const child of owned)await stopOwnedChild(child)
