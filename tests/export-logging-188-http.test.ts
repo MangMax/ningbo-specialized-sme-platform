@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { get } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -8,6 +8,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { useDb, schema as s } from '../db/client'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { export188Candidate, seedExport188DisconnectFixture } from './helpers/export-188-fixture'
 
 // Actual Nuxt HTTP and its native subprocess/drain. Only setup/fault injection
 // touches the isolated synthetic fixture; all export/log assertions use public HTTP.
@@ -72,11 +73,7 @@ function businessDigest() {
   return hash.digest('hex')
 }
 function candidate(name: string, titleCode = 'specialized_sme') {
-  const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, district: '鄞州区' }).returning().get()
-  const record = db.insert(s.record).values({ enterpriseId: enterprise.id, nameRaw: name, titleCode, source: 'jxj' }).returning().get()
-  const event = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: new Date().getFullYear(), batchSeq: 1 }).returning().get()
-  db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'jxj/announcement/synthetic-188.xlsx', attachment: '合成名单', listNo: enterprise.id }).run()
-  return enterprise
+  return export188Candidate(db, name, titleCode)
 }
 async function start(logDirectory = logDir) {
   const cwd = resolve(import.meta.dirname, '..'), port = await reserveLoopbackPort()
@@ -97,7 +94,7 @@ async function start(logDirectory = logDir) {
   for (const stream of [child.stdout!, child.stderr!]) stream.on('data', data => { output += data.toString() })
   await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child })
   expect(output).toContain(`127.0.0.1:${port}`)
-  writeFileSync('/tmp/implement-spec-180/ticket-188-tests/latest-fixture.txt', root)
+  writeFileSync(join(root, 'fixture.txt'), root)
 }
 beforeAll(async () => {
   candidate(privateText)
@@ -271,7 +268,8 @@ it('reports an atomic publication fault and unsuccessful cleanup without exposin
 it('distinguishes actual HTTP disconnects for artifact and both legacy streams while retaining published bytes', async () => {
   // Exceed the OS socket buffers. A small XLSX can be fully sent before the
   // client's first data callback, in which case server-side success is correct.
-  db.transaction(() => { for (let i = 0; i < 30000; i++) candidate('合成断开' + i + randomBytes(160).toString('hex'), 'innovative_sme') })
+  // Keep socket EOF/idle timers responsive while preparing the large fixture.
+  await seedExport188DisconnectFixture(dbPath)
   const response = await fetch(url('/api/roster/exports/current/innovative-sme'), { method: 'POST', headers, body: JSON.stringify({ clientRequestId: '188-disconnect' }) })
   expect(response.status).toBe(202)
   const job = await terminal((await json(response)).jobId, 90000)
