@@ -844,8 +844,16 @@ await check('dual-axis settings review and save only changed rules across the ne
       checkboxes: count('input[type="checkbox"]'),
       nativeSelects: count('select'),
       details: count('details'),
-      sources: count('[data-testid="log-collection-sources"] [data-slot="switch"]'),
-      integrations: count('[data-testid="log-collection-integrations"] [data-slot="switch"]'),
+      sources: (() => {
+        const group = (id) => count('[data-testid="' + id + '"] [data-slot="switch"]')
+        return group('log-business-node') + group('log-business-browser')
+      })(),
+      integrations: (() => {
+        const group = (id) => count('[data-testid="' + id + '"] [data-slot="switch"]')
+        return group('log-technical-node') + group('log-technical-browser') + group('log-business-shared')
+      })(),
+      technicalSwitches: count('[data-testid="log-collection-integrations"] [data-slot="switch"]'),
+      businessSwitches: count('[data-testid="log-collection-sources"] [data-slot="switch"]'),
       technicalNode: count('[data-testid="log-technical-node"] [data-slot="switch"]'),
       technicalBrowser: count('[data-testid="log-technical-browser"] [data-slot="switch"]'),
       businessShared: count('[data-testid="log-business-shared"] [data-slot="switch"]'),
@@ -870,6 +878,8 @@ await check('dual-axis settings review and save only changed rules across the ne
   assert.equal(layout.details, 0)
   assert.equal(layout.sources, 11)
   assert.equal(layout.integrations, 11)
+  assert.equal(layout.technicalSwitches, 10)
+  assert.equal(layout.businessSwitches, 12)
   assert.equal(layout.technicalNode, 4)
   assert.equal(layout.technicalBrowser, 6)
   assert.equal(layout.businessShared, 1)
