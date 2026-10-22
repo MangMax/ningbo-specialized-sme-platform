@@ -2,7 +2,6 @@ import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import {
   onBeforeRouteLeave,
   onBeforeRouteUpdate,
-  useRoute,
   useRouter,
 } from 'vue-router'
 import {
