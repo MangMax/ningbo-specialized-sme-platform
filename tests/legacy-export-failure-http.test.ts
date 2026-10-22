@@ -8,6 +8,7 @@ import { createApp, createError, defineEventHandler, getQuery, setHeader, toNode
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb } from '../db'
 import { legacyExportSheet, writeLegacyXlsx } from '../server/utils/legacy-export-xlsx'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, newLogContext } from '../lib/logging'
 
 const state = vi.hoisted(() => ({ fail: false, directories: [] as string[], slowRead: false, slowWrite: false, generationRows: 0, settledRequests: 0 }))
 // Inject failure at the external filesystem boundary; queries and XLSX serialization stay real.
@@ -41,9 +42,11 @@ vi.doMock('@db', () => ({ useDb: () => db }))
 let server: Server
 let baseUrl: string
 beforeAll(async () => {
+  vi.stubEnv('NUXT_LOG_DIR', join(dir, 'logs'))
+  initializeWorkerLogging()
   for (const [name, value] of Object.entries({ defineEventHandler, getQuery, setHeader, createError })) vi.stubGlobal(name, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curation.json') }))
-  const app = createApp({ onError: () => { state.settledRequests++ }, onAfterResponse: () => { state.settledRequests++ } })
+  const app = createApp({ onRequest: event => { event.context.applicationLogContext = newLogContext(); setHeader(event, 'x-request-id', event.context.applicationLogContext.requestId) }, onError: () => { state.settledRequests++ }, onAfterResponse: () => { state.settledRequests++ } })
   app.use('/api/export', (await import('../server/api/export.get')).default)
   app.use('/api/roster/export', (await import('../server/api/roster/export.get')).default)
   // Exercise the authorized adapter input seam over real HTTP, with a slow disk.
@@ -60,6 +63,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
   vi.unstubAllGlobals()
+  await closeApplicationLogging()
+  vi.unstubAllEnvs()
   rmSync(dir, { recursive: true, force: true })
 })
 it('returns HTTP 500 without attachment headers and removes partial files on disk failure', async () => {
@@ -70,6 +75,12 @@ it('returns HTTP 500 without attachment headers and removes partial files on dis
     expect(response.headers.get('content-disposition')).toBeNull()
     expect(response.headers.get('content-type')).toContain('application/json')
     await response.arrayBuffer()
+    await applicationLogs().flush()
+    const requestId = response.headers.get('x-request-id')!
+    const events = (await applicationLogs().list({ requestId, source: 'export' })).rows
+    expect(events.filter(row => row.operation.endsWith('.workbook') && row.outcome === 'failure')).toHaveLength(1)
+    expect(events.filter(row => row.operation.endsWith('.cleanup') && row.outcome === 'success')).toHaveLength(1)
+    expect(events.filter(row => row.operation.endsWith('.download') && row.outcome === 'success')).toHaveLength(0)
     expect(state.directories.length).toBeGreaterThan(0)
     expect(state.directories.every((folder) => !existsSync(folder))).toBe(true)
   }

@@ -9,6 +9,7 @@ import { currentCandidateBindings, currentCandidateSql } from './current-candida
 import { TITLES } from '../labels'
 import { readIdentityKeyVariants } from './current-identity-keys'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
+import { appLog, type LogContext } from '../logging'
 
 export class CurrentWorkbookLimitError extends Error {}
 function textCell(value: unknown): string | null {
@@ -38,7 +39,7 @@ function sheetOptions() {
   return {views:[{state:'frozen' as const,xSplit:2,ySplit:1,topLeftCell:'C2',zoomScale:90}]}
 }
 /** Streaming rows in one pinned SQLite read transaction, owned by the independent executor. */
-export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void) {
+export async function writeCurrentWorkbook(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, logContext?: LogContext) {
   const generatedAt = new Date().toISOString(), year = new Date(generatedAt).getFullYear()
   const output = createWriteStream(filename)
   const completed = finished(output, { cleanup: true })
@@ -54,6 +55,9 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     if (output.errored) throw output.errored
     if (output.destroyed && !output.writableFinished) await completed
   }
+  const startedAt = Date.now()
+  let summaryComplete = false, workbookStarted = false
+  appLog({ source: 'export', operation: 'export.current.summary', outcome: 'started' }, logContext)
   try {
     // SQLite functions must be registered before a streaming SELECT is active.
     prepareCurrentReader(db)
@@ -63,6 +67,8 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     const bindings=currentCandidateBindings(title)
     const total = (db.prepare(`select count(*) as n from (${currentCandidateSql})`).get(bindings) as {n:number}).n
     const snapshotStartedAt = new Date().toISOString()
+    workbookStarted = true
+    appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'started' }, logContext)
     const workbook = new Stream.WorkbookWriter({ stream: output, useStyles: true, useSharedStrings: false, trueStreaming: true })
     const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(CURRENT_RULE_VERSION + ':' + year)
     const deferred = { pending: [] as number[], excluded: [] as number[] }
@@ -101,6 +107,12 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
       sheet.autoFilter = `A1:${String.fromCharCode(64 + CURRENT_COLUMNS.length)}${written + 1}`
       sheet.commit()
       await drain()
+      // The eligible pass evaluates every candidate; deferred sheets reuse that
+      // pinned snapshot. No additional query/pass is introduced for logging.
+      if (group === 'eligible') {
+        summaryComplete = true
+        appLog({ source: 'export', operation: 'export.current.summary', outcome: 'success', durationMs: Date.now() - startedAt, counts: { done: total, total } }, logContext)
+      }
       if (group !== 'eligible') deferred[group].length = 0
     }
     const dataVersion = 'sha256:' + hash.digest('hex')
@@ -110,6 +122,11 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     await workbook.commit()
     await completed
     db.exec('COMMIT')
+    appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'success', durationMs: Date.now() - startedAt, counts: { done: total, total } }, logContext)
     return { generatedAt, snapshotStartedAt, dataVersion, ruleVersion: CURRENT_RULE_VERSION, counts, total }
-  } catch (error) { output.destroy(); await completed.catch(() => {}); if (db.inTransaction) db.exec('ROLLBACK'); throw error }
+  } catch (error) {
+    if (!summaryComplete) appLog({ source: 'export', operation: 'export.current.summary', outcome: 'failure', level: 'error', errorCode: 'summary_failed' }, logContext)
+    if (workbookStarted) appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'failure', level: 'error', errorCode: error instanceof CurrentWorkbookLimitError ? 'workbook_limit' : 'workbook_failed' }, logContext)
+    output.destroy(); await completed.catch(() => {}); if (db.inTransaction) db.exec('ROLLBACK'); throw error
+  }
 }

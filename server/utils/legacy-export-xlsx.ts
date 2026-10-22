@@ -5,6 +5,7 @@ import { finished } from 'node:stream/promises'
 import { setImmediate } from 'node:timers/promises'
 import type { H3Event } from 'h3'
 import { Stream } from 'documonster/excel'
+import { appLog, requestLogContext } from '../../lib/logging'
 
 type Pace = (characters: number) => Promise<void>
 
@@ -27,8 +28,23 @@ function textXml(value: string) {
 export async function writeLegacyXlsx(
   event: H3Event,
   write: (workbook: Stream.WorkbookWriter, pace: Pace) => Promise<void>,
+  kind: 'records' | 'comparison' | 'enterprises' = 'records',
 ) {
-  const dir = mkdtempSync(join(tmpdir(), 'roster-export-'))
+  const logContext = requestLogContext({ context: event.context ?? {} }), startedAt = Date.now()
+  const operation = `export.legacy.${kind}`
+  appLog({ source: 'export', operation: operation + '.workbook', outcome: 'started' }, logContext)
+  let disconnected = false, downloadRecorded = false
+  const recordDownload = (outcome: 'success' | 'failure' | 'cancelled', errorCode?: string) => {
+    if (downloadRecorded) return
+    downloadRecorded = true
+    appLog({ source: 'export', operation: operation + '.download', outcome, durationMs: Date.now() - startedAt, errorCode, level: outcome === 'failure' ? 'error' : outcome === 'success' ? 'info' : 'warn' }, logContext)
+  }
+  let dir: string
+  try { dir = mkdtempSync(join(tmpdir(), 'roster-export-')) }
+  catch (error) {
+    appLog({ source: 'export', operation: operation + '.workbook', outcome: 'failure', level: 'error', errorCode: 'legacy_workbook_failed' }, logContext)
+    throw error
+  }
   const filename = join(dir, 'download.xlsx')
   let sink: ReturnType<typeof createWriteStream> | undefined
   let textSink: ReturnType<typeof createWriteStream> | undefined
@@ -40,10 +56,18 @@ export async function writeLegacyXlsx(
   let characters = 0
   const cleanup = () => {
     event.node?.res?.off('close', abort)
-    rmSync(dir, { recursive: true, force: true })
+    try {
+      rmSync(dir, { recursive: true, force: true })
+      appLog({ source: 'export', operation: operation + '.cleanup', outcome: 'success' }, logContext)
+    } catch (error) {
+      appLog({ source: 'export', operation: operation + '.cleanup', outcome: 'failure', level: 'error', errorCode: 'legacy_cleanup_failed' }, logContext)
+      throw error
+    }
   }
   const abort = () => {
     if (event.node?.res?.writableFinished) return
+    disconnected = true
+    recordDownload('cancelled', 'download_disconnected')
     failure ??= new Error('Export download disconnected')
     sink?.destroy(failure)
     textSink?.destroy(failure)
@@ -51,6 +75,10 @@ export async function writeLegacyXlsx(
     download?.destroy(failure)
   }
   event.node?.res?.once('close', abort)
+  // File close can precede socket finish when the response still has buffered
+  // bytes. Keep this observer after cleanup removes the generation abort hook.
+  event.node?.res?.once('close', () => { if (!event.node?.res?.writableFinished) recordDownload('cancelled', 'download_disconnected') })
+  event.node?.res?.once('finish', () => { if (download) recordDownload('success') })
   try {
     sink = createWriteStream(filename, { mode: 0o600 })
     settled = finished(sink).catch((error: Error) => { failure ??= error })
@@ -115,10 +143,12 @@ export async function writeLegacyXlsx(
     if (failure) throw failure
     event.node?.res?.setHeader('content-length', statSync(filename).size)
     download = createReadStream(filename)
-    download.on('error', () => {}) // Also observe errors before h3 attaches its listener.
+    download.on('error', () => recordDownload(disconnected ? 'cancelled' : 'failure', disconnected ? 'download_disconnected' : 'legacy_read_failed')) // Observe before h3 attaches.
     download.once('close', cleanup)
+    appLog({ source: 'export', operation: operation + '.workbook', outcome: 'success', durationMs: Date.now() - startedAt }, logContext)
     return download
   } catch (error) {
+    appLog({ source: 'export', operation: operation + '.workbook', outcome: disconnected ? 'cancelled' : 'failure', level: disconnected ? 'warn' : 'error', errorCode: disconnected ? 'download_disconnected' : 'legacy_workbook_failed' }, logContext)
     sink?.destroy()
     textSink?.destroy()
     await settled
