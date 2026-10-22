@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { Upload } from 'tus-js-client'
 import type { HttpResponse } from 'tus-js-client'
+import { withTusLogging } from '~~/lib/client-logging/tus'
+import { clientLibraryReporterKey, ignoreClientLibrarySignal } from '~~/lib/client-logging/library-reporter'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -98,6 +100,7 @@ interface UploadTask {
 }
 
 let idSeq = 0
+const reportLibrary = inject(clientLibraryReporterKey, ignoreClientLibrarySignal)
 
 const meta = ref<BatchMeta>(emptyBatchMeta())
 const queue = ref<UploadTask[]>([])
@@ -231,7 +234,7 @@ function startTask(task: UploadTask) {
   if (task.offset === 0) task.progress = 0
   activeId.value = task.id
 
-  const upload = new Upload(task.file, {
+  const upload = new Upload(task.file, withTusLogging({
     endpoint: props.endpoint,
     // 6MiB 一段:网断了重传的代价和进度颗粒度之间取平衡,不再往上加。
     chunkSize: 6 * 1024 * 1024,
@@ -248,7 +251,7 @@ function startTask(task: UploadTask) {
     onProgress: (sent, total) => onProgress(task, sent, total),
     onSuccess: (payload) => onSuccess(task, payload.lastResponse),
     onError: (error) => onError(task, error),
-  })
+  }, reportLibrary, () => !task.ignoreNextError))
 
   task.upload = upload
 

@@ -1,6 +1,8 @@
 import { createHttpDrain } from 'evlog/http'
 import type { DrainContext } from 'evlog'
 import { clientErrorReport, type ClientInteraction, type ClientErrorKind, type ClientPage } from './contract'
+import { clientLibraryReport, type ClientLibrarySignal } from './library-contract'
+import { clientReportKey, type ClientLogReport } from './report'
 
 /** Only a bounded transport, never a second logger. Server appLog owns event creation. */
 export function createClientErrorTransport(options: { online?: () => boolean; now?: () => number } = {}) {
@@ -8,24 +10,29 @@ export function createClientErrorTransport(options: { online?: () => boolean; no
     timeout: 2000, credentials: 'same-origin', useBeacon: false })
   const now = options.now ?? Date.now
   const online = options.online ?? (() => typeof navigator === 'undefined' || navigator.onLine !== false)
-  let queue: { report: NonNullable<ReturnType<typeof clientErrorReport>>; at: number; attempts: number }[] = []
+  let queue: { report: ClientLogReport; at: number; attempts: number }[] = []
   const seen = new Map<string, number>()
   let timer: ReturnType<typeof setTimeout> | undefined, active: Promise<void> | undefined
   let disposed = false, sent = 0, dropped = 0, suppressed = 0, failures = 0, inFlight = 0
   function schedule(ms = 500) {
     if (!disposed && !timer && queue.length && online()) timer = setTimeout(() => { timer = undefined; void flush() }, ms)
   }
-  function report(kind: ClientErrorKind, page: ClientPage, level: 'error' | 'warn' = 'error', relatedRequestId?: string, interaction?: ClientInteraction) {
+  function enqueue(safe: ClientLogReport | null) {
     try {
       if (disposed) return
-      const safe = clientErrorReport({ kind, page, level, relatedRequestId, interaction })
       if (!safe) { dropped++; return }
-      const key = `${safe.page}.${safe.kind}.${safe.level}.${safe.interaction ?? ''}`, time = now(), previous = seen.get(key)
+      const key = clientReportKey(safe), time = now(), previous = seen.get(key)
       if (previous !== undefined && time - previous < 10000) { suppressed++; return }
       seen.set(key, time)
       if (queue.length + inFlight >= 32) { dropped++; return }
       queue.push({ report: safe, at: time, attempts: 0 }); schedule()
     } catch { /* Transport faults never escape into UI or log themselves. */ }
+  }
+  function report(kind: ClientErrorKind, page: ClientPage, level: 'error' | 'warn' = 'error', relatedRequestId?: string, interaction?: ClientInteraction) {
+    try { enqueue(clientErrorReport({ kind, page, level, relatedRequestId, interaction })) } catch { /* Diagnostic only. */ }
+  }
+  function reportLibrary(signal: ClientLibrarySignal, page: ClientPage) {
+    try { enqueue(clientLibraryReport({ kind: 'library_signal', signal, page })) } catch { /* Diagnostic only. */ }
   }
   function flush(): Promise<void> {
     if (active) return active
@@ -53,7 +60,7 @@ export function createClientErrorTransport(options: { online?: () => boolean; no
     })()
     return active
   }
-  return { report, flush,
+  return { report, reportLibrary, flush,
     status: () => ({ queued: queue.length, inFlight, sent, dropped, suppressed, failures }),
     dispose() { disposed = true; if (timer) clearTimeout(timer); timer = undefined; dropped += queue.length; queue = [] },
   }
