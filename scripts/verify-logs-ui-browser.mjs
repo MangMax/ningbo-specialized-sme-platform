@@ -852,7 +852,10 @@ await check('dual-axis settings review and save only changed rules across the ne
       businessNode: count('[data-testid="log-business-node"] [data-slot="switch"]'),
       businessBrowser: count('[data-testid="log-business-browser"] [data-slot="switch"]'),
       applicationSwitches: count('#log-integration-application-enabled'),
-      headings: [...document.querySelectorAll('h2')].map((el) => el.textContent.trim()),
+      headings: (() => {
+        const settings = document.querySelector('[data-testid="log-collection-integrations"]')?.closest('[data-slot="tabs-content"]')
+        return settings ? [...settings.querySelectorAll('h2')].map((el) => el.textContent.trim()) : []
+      })(),
       technicalText: text('[data-testid="log-collection-integrations"]'),
       businessText: text('[data-testid="log-collection-sources"]'),
       sharedText: text('[data-testid="log-business-shared"]'),

@@ -635,7 +635,7 @@ try {
     const task = summary.rows.find((row) => row.taskId === 'task-180' && row.outcome === 'failure')
     assert.deepEqual(task.counts, { done: 8, total: 10, failed: 2 })
     assert.equal(task.errorCode, 'job_failed')
-    const client = summary.rows.find((row) => row.source === 'client')
+    const client = summary.rows.find((row) => row.operation === 'client.tasks.interaction_failure')
     assert.equal(client.untrustedRelatedRequestId, 'original-180')
   })
   check('all eleven sources and every outcome are present in the fixture', () => {
