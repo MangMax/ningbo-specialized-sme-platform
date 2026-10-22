@@ -1,8 +1,25 @@
 <script setup lang="ts">
-import type { HTMLAttributes } from 'vue'
-import { cn } from '@/lib/utils'
-const props = defineProps<{ class?: HTMLAttributes['class'] }>()
+import type { HTMLAttributes } from "vue"
+import type { FieldVariants } from "."
+import { cn } from "@/lib/utils"
+import { fieldVariants } from "."
+
+const props = defineProps<{
+  class?: HTMLAttributes["class"]
+  orientation?: FieldVariants["orientation"]
+}>()
 </script>
+
 <template>
-  <div data-slot="field" role="group" :class="cn('group/field flex min-w-0 flex-col gap-2 data-[disabled=true]:opacity-50 data-[invalid=true]:text-destructive', props.class)"><slot /></div>
+  <div
+    role="group"
+    data-slot="field"
+    :data-orientation="orientation"
+    :class="cn(
+      fieldVariants({ orientation }),
+      props.class,
+    )"
+  >
+    <slot />
+  </div>
 </template>

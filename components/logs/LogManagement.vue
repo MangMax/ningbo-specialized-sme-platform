@@ -12,6 +12,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Table, TableBody, TableRow, TableCell } from '@/components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -37,6 +40,11 @@ type PolicyView = LogPolicy & {
 }
 const props = defineProps<{ filter: LogFilter }>()
 const emit = defineEmits<{ changed: [] }>()
+const filterLabels: Record<string, string> = {
+  from: '开始时间', to: '结束时间', level: '级别', source: '来源', outcome: '结果',
+  operation: '操作', requestId: '请求标识', traceId: '链路标识', taskId: '任务标识',
+  fileId: '文件编号', batchId: '批次标识', resourceId: '资源标识',
+}
 const { data, loading, error, refresh } = useLogRead(ref('policy'), () =>
   $fetch<PolicyView>('/api/logs/policy', { retry: 0, headers: logBrowserHeaders })
 )
@@ -126,15 +134,15 @@ async function confirm() {
 }
 </script>
 <template>
-  <section
-    aria-labelledby="log-management-heading"
-    class="flex min-w-0 flex-col gap-4 rounded-lg border p-4"
-  >
-    <h2 id="log-management-heading" class="font-medium">保留与清理</h2>
-    <p class="text-muted-foreground text-sm">
+  <Card class="min-w-0 shadow-none">
+    <CardHeader>
+    <CardTitle id="log-management-heading">保留与清理</CardTitle>
+    <CardDescription>
       仅管理运行日志，不修改业务审计、导入回执、源文件或任务产物。
-    </p>
-    <p v-if="loading" role="status" class="text-sm">正在读取日志策略…</p>
+    </CardDescription>
+    </CardHeader>
+    <CardContent class="flex min-w-0 flex-col gap-4">
+    <Skeleton v-if="loading && !data" class="h-24 w-full" aria-label="正在读取日志策略" />
     <TableFailureState
       v-if="error"
       title="日志策略读取失败"
@@ -143,26 +151,19 @@ async function confirm() {
       @retry="refresh"
     />
     <template v-if="data">
-      <dl class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
-        <dt>当前策略</dt>
-        <dd class="break-words">{{ data.retentionDays }} 天 / {{ data.maxBytes }} 字节</dd>
-        <dt>存储用量</dt>
-        <dd>{{ data.storageBytes }} 字节</dd>
-        <dt>累计清理</dt>
-        <dd>策略裁剪 {{ data.pruned }} 条 / 手动清理 {{ data.cleared }} 条</dd>
-        <dt>进程状态</dt>
-        <dd>
-          {{ data.status.unavailable ? '不可用' : '可用' }}；已丢弃
-          {{ data.status.dropped }} 条；排队 {{ data.status.queuedEntries }} 条；写入中
-          {{ data.status.inFlightEntries }} 条
-        </dd>
-      </dl>
+      <Table class="data-table"><TableBody>
+        <TableRow><TableCell class="text-muted-foreground">当前策略</TableCell><TableCell class="whitespace-normal">{{ data.retentionDays }} 天 / {{ data.maxBytes }} 字节</TableCell></TableRow>
+        <TableRow><TableCell class="text-muted-foreground">存储用量</TableCell><TableCell>{{ data.storageBytes }} 字节</TableCell></TableRow>
+        <TableRow><TableCell class="text-muted-foreground">累计清理</TableCell><TableCell class="whitespace-normal">策略裁剪 {{ data.pruned }} 条 / 手动清理 {{ data.cleared }} 条</TableCell></TableRow>
+        <TableRow><TableCell class="text-muted-foreground">进程状态</TableCell><TableCell class="whitespace-normal">{{ data.status.unavailable ? '不可用' : '可用' }}；已丢弃 {{ data.status.dropped }} 条；排队 {{ data.status.queuedEntries }} 条；写入中 {{ data.status.inFlightEntries }} 条</TableCell></TableRow>
+      </TableBody></Table>
+
       <p class="text-muted-foreground break-words text-sm">
         用量包含日志库与日志库附属文件，不含文件系统分配开销、容器输出或其他进程内存。进程计数从
         {{ data.status.since }} 起。
       </p>
       <form @submit.prevent="reviewPolicy">
-        <FieldGroup class="flex-row flex-wrap items-end">
+        <FieldGroup class="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
           <Field :data-disabled="pending">
             <FieldLabel for="log-retention-days">保留天数（1–365）</FieldLabel
             ><Input
@@ -189,7 +190,7 @@ async function confirm() {
           </Field>
           <Button
             type="submit"
-            variant="outline"
+            variant="outline" class="sm:col-span-2 sm:justify-self-start"
             :disabled="pending || loading || !!error || !validPolicy"
             >核对策略修改</Button
           >
@@ -242,9 +243,10 @@ async function confirm() {
         >
         <template v-else-if="review?.kind === 'clear'"
           ><p class="text-sm">清理以下已固定范围，每次最多 1000 条：</p>
-          <pre class="whitespace-pre-wrap break-all text-xs">{{
-            JSON.stringify(review.filter, null, 2)
-          }}</pre>
+          <Table><TableBody><TableRow v-for="(value, key) in review.filter" :key="key">
+            <TableCell class="text-muted-foreground">{{ filterLabels[key] ?? key }}</TableCell>
+            <TableCell class="break-all">{{ value }}</TableCell>
+          </TableRow></TableBody></Table>
         </template>
         <DialogFooter
           ><Button variant="outline" :disabled="pending" @click="review = null">取消</Button
@@ -254,5 +256,6 @@ async function confirm() {
         >
       </DialogContent>
     </Dialog>
-  </section>
+    </CardContent>
+  </Card>
 </template>

@@ -12,6 +12,7 @@ import TableFailureState from '@/components/TableFailureState.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   Table,
   TableBody,
@@ -154,7 +155,8 @@ function restoreFocus(event: Event) {
         {{ data.status.unavailable ? '日志存储不可用' : '日志存储可用' }}；本进程已丢弃
         {{ data.status.dropped }} 条。日志缺失不代表业务未执行。
       </p>
-      <div class="relative min-w-0 overflow-hidden rounded-lg border bg-card">
+      <Card class="min-w-0 gap-0 overflow-hidden py-0 shadow-none">
+        <CardContent class="relative p-0">
         <TableLoadingStatus :loading="loading" kind="files" label="正在读取运行日志…" />
         <TableFailureState
           v-if="error"
@@ -171,7 +173,7 @@ function restoreFocus(event: Event) {
         >
           正在读取当前筛选。{{ provenance }}
         </p>
-        <div class="hidden overflow-x-auto sm:block">
+        <div class="overflow-x-auto">
           <Table class="data-table"
             ><TableHeader
               ><TableRow
@@ -181,7 +183,7 @@ function restoreFocus(event: Event) {
               ></TableHeader
             ><TableBody>
               <TableRow v-for="row in rows" :key="row.id"
-                ><TableCell
+                ><TableCell class="whitespace-normal"
                   ><div class="flex flex-col items-start gap-1">
                     <time :datetime="row.timestamp">{{ dated(row.timestamp) }}</time
                     ><Badge :variant="row.level === 'error' ? 'destructive' : 'secondary'">{{
@@ -199,7 +201,7 @@ function restoreFocus(event: Event) {
                     ><span v-if="row.durationMs !== undefined">{{ row.durationMs }} ms</span
                     ><span v-if="row.statusCode !== undefined">HTTP {{ row.statusCode }}</span>
                   </div></TableCell
-                ><TableCell
+                ><TableCell class="hidden lg:table-cell"
                   ><span class="break-all font-mono text-xs">{{
                     row.taskId || row.requestId || row.traceId || '未记录'
                   }}</span></TableCell
@@ -217,34 +219,6 @@ function restoreFocus(event: Event) {
             </TableBody></Table
           >
         </div>
-        <ul v-if="rows.length" aria-label="日志列表" class="flex flex-col divide-y sm:hidden">
-          <li v-for="row in rows" :key="row.id" class="flex min-w-0 flex-col gap-2 p-3">
-            <div class="flex items-start justify-between gap-3">
-              <div class="flex min-w-0 flex-col items-start gap-1">
-                <Badge :variant="row.level === 'error' ? 'destructive' : 'secondary'"
-                  >{{ row.level }} · {{ row.outcome }}</Badge
-                ><span class="break-all font-mono text-xs"
-                  >{{ row.source }} / {{ row.operation }}</span
-                >
-              </div>
-              <Button
-                variant="outline"
-                class="min-h-11 shrink-0"
-                :data-log-detail="row.id"
-                :aria-label="`查看日志 ${row.operation} ${row.id}`"
-                @click="open(row.id)"
-                >查看</Button
-              >
-            </div>
-            <time class="text-muted-foreground text-xs" :datetime="row.timestamp">{{
-              dated(row.timestamp)
-            }}</time
-            ><span v-if="row.durationMs !== undefined" class="text-sm">{{ row.durationMs }} ms</span
-            ><span class="break-all font-mono text-xs">{{
-              row.taskId || row.requestId || row.traceId || '关联标识未记录'
-            }}</span>
-          </li>
-        </ul>
         <Empty v-if="!rows.length && !loading && !error"
           ><EmptyHeader
             ><EmptyTitle>没有符合条件的运行日志</EmptyTitle
@@ -253,13 +227,13 @@ function restoreFocus(event: Event) {
             ></EmptyHeader
           ></Empty
         >
-        <p v-if="!data && loading" class="px-4 py-8 text-sm" role="status">正在加载日志列表…</p>
         <TablePagination
           mode="cursor" :page="page" :page-size="limit" unit="条" :max-page-size="100"
           :loading="loading" :has-next="!error && !stale && !!data?.nextCursor"
           class="border-t p-3" @update:page-size="resize" @previous="previous" @next="next"
         >显示第 {{ source?.page ?? page }} 页 · {{ rows.length }} 条</TablePagination>
-      </div>
+        </CardContent>
+      </Card>
     </section>
     <DisclosurePanel :heading-level="2"
       ><template #trigger><span class="text-sm">管理日志保留与清理</span></template

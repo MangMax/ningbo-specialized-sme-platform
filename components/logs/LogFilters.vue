@@ -13,10 +13,11 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import ComparisonDateTimePicker from '@/components/record-correspondence/ComparisonDateTimePicker.vue'
 const props = defineProps<{ filter: LogFilter }>()
 const emit = defineEmits<{ apply: [value: Record<string, string>] }>()
 const draft = reactive<Record<string, string>>({})
-const identifiersOpen = ref(false)
+const advancedOpen = ref(false)
 const ids = [
   { key: 'requestId', label: '请求标识' },
   { key: 'traceId', label: '链路标识' },
@@ -44,7 +45,7 @@ watch(
       draft[choice.key] = String(filter[choice.key as keyof LogFilter] ?? 'all')
     draft.from = localTime(filter.from)
     draft.to = localTime(filter.to)
-    if (ids.some((i) => !!filter[i.key as keyof LogFilter])) identifiersOpen.value = true
+    if (filter.from || filter.to || filter.operation || ids.some((i) => !!filter[i.key as keyof LogFilter])) advancedOpen.value = true
   },
   { immediate: true }
 )
@@ -58,53 +59,37 @@ function apply() {
 </script>
 <template>
   <form class="flex min-w-0 flex-col gap-3" aria-label="日志筛选" @submit.prevent="apply">
-    <FieldGroup class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
-      <Field v-for="key in ['from', 'to']" :key="key">
-        <FieldLabel :for="`log-${key}`">{{ key === 'from' ? '开始时间' : '结束时间' }}（本地时间）</FieldLabel
-        ><Input
-          :id="`log-${key}`"
-          v-model="draft[key]"
-          type="datetime-local"
-          step="1"
-          class="min-w-0 w-full"
-        />
-      </Field>
+    <FieldGroup class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
       <Field v-for="choice in choices" :key="choice.key">
-        <FieldLabel :for="`log-${choice.key}`">{{ choice.label }}</FieldLabel
-        ><Select v-model="draft[choice.key]"
-          ><SelectTrigger :id="`log-${choice.key}`" class="w-full"><SelectValue /></SelectTrigger
-          ><SelectContent
-            ><SelectGroup
-              ><SelectItem value="all">全部{{ choice.label }}</SelectItem
-              ><SelectItem v-for="value in choice.values" :key="value" :value="value">{{
-                value
-              }}</SelectItem></SelectGroup
-            ></SelectContent
-          ></Select
-        >
-      </Field>
-      <Field>
-        <FieldLabel for="log-operation">操作（精确匹配）</FieldLabel
-        ><Input
-          id="log-operation"
-          v-model="draft.operation"
-          maxlength="96"
-          placeholder="如 task.finished"
-        />
+        <FieldLabel :for="`log-${choice.key}`">{{ choice.label }}</FieldLabel>
+        <Select v-model="draft[choice.key]">
+          <SelectTrigger :id="`log-${choice.key}`" class="w-full"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectGroup>
+            <SelectItem value="all">全部{{ choice.label }}</SelectItem>
+            <SelectItem v-for="value in choice.values" :key="value" :value="value">{{ value }}</SelectItem>
+          </SelectGroup></SelectContent>
+        </Select>
       </Field>
     </FieldGroup>
-    <DisclosurePanel v-model:open="identifiersOpen" :heading-level="2">
-      <template #trigger><span class="text-sm">关联标识筛选</span></template>
-      <FieldGroup class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+    <DisclosurePanel v-model:open="advancedOpen" keep-mounted compact :heading-level="2" title="时间、操作与关联标识筛选">
+      <FieldGroup class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <Field v-for="key in ['from', 'to']" :key="key">
+          <FieldLabel :for="`log-${key}`">{{ key === 'from' ? '开始时间' : '结束时间' }}（本地时间）</FieldLabel>
+          <ComparisonDateTimePicker :id="`log-${key}`" :model-value="draft[key] ?? ''" :label="key === 'from' ? '开始时间' : '结束时间'" @update:model-value="draft[key] = $event" />
+        </Field>
+        <Field>
+          <FieldLabel for="log-operation">操作（精确匹配）</FieldLabel>
+          <Input id="log-operation" v-model="draft.operation" maxlength="96" placeholder="如 task.finished" />
+        </Field>
         <Field v-for="id in ids" :key="id.key">
-          <FieldLabel :for="`log-${id.key}`">{{ id.label }}（精确匹配）</FieldLabel
-          ><Input :id="`log-${id.key}`" v-model="draft[id.key]" maxlength="128" />
+          <FieldLabel :for="`log-${id.key}`">{{ id.label }}（精确匹配）</FieldLabel>
+          <Input :id="`log-${id.key}`" v-model="draft[id.key]" maxlength="128" />
         </Field>
       </FieldGroup>
     </DisclosurePanel>
     <div class="flex flex-wrap gap-2">
-      <Button type="submit">应用筛选</Button
-      ><Button type="button" variant="outline" @click="emit('apply', {})">重置筛选</Button>
+      <Button type="submit" size="sm">应用筛选</Button>
+      <Button type="button" variant="outline" size="sm" @click="emit('apply', {})">重置筛选</Button>
     </div>
   </form>
 </template>

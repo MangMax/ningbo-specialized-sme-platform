@@ -4,6 +4,9 @@ import { clientRequestReference } from '~~/lib/client-logging/request-reference'
 import type { LogEvent } from '~~/lib/logging/contract'
 import { logBrowserHeaders, logErrorMessage, useLogRead } from '~/composables/useLogRead'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Table, TableBody, TableRow, TableCell } from '@/components/ui/table'
 import TableFailureState from '@/components/TableFailureState.vue'
 import { RouterLink } from 'vue-router'
 const props = defineProps<{ id: string }>()
@@ -19,6 +22,14 @@ const current = computed(
   () => sourceKey.value === props.id && data.value?.id === props.id && !error.value
 )
 const notice = ref('')
+const fieldLabels: Record<string, string> = {
+  id: '事件标识', timestamp: '记录时间', level: '级别', source: '来源', operation: '操作',
+  outcome: '结果', durationMs: '耗时（毫秒）', statusCode: 'HTTP 状态', errorCode: '错误代码',
+  counts: '处理数量', requestId: '请求标识', traceId: '链路标识', taskId: '任务标识',
+  fileId: '文件编号', page: '页码', batchId: '批次标识', resourceType: '资源类型',
+  resourceId: '资源标识', auditId: '审计引用', receiptId: '回执引用', parentEventId: '上级事件',
+  untrustedRelatedRequestId: '关联请求（客户端声称，UNTRUSTED）',
+}
 watch(key, () => {
   notice.value = ''
 })
@@ -69,7 +80,7 @@ async function copy() {
 </script>
 <template>
   <div class="flex min-w-0 flex-col gap-4">
-    <p v-if="loading" role="status">正在读取日志详情…</p>
+    <Skeleton v-if="loading" class="h-32 w-full" aria-label="正在读取日志详情" />
     <TableFailureState
       v-if="error"
       title="日志详情读取失败"
@@ -86,17 +97,17 @@ async function copy() {
           ></Button
         >
       </div>
-      <p v-if="data?.source === 'client'" class="text-muted-foreground text-sm">
+      <Alert v-if="data?.source === 'client'"><AlertDescription>
         客户端上报的上下文不可信，不代表服务端业务执行事实。
-      </p>
-      <dl class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-3 text-sm">
-        <template v-for="(value, name) in safe" :key="name"
-          ><dt class="text-muted-foreground max-w-40 break-words">{{ name === 'untrustedRelatedRequestId' ? '关联请求（客户端声称，UNTRUSTED）' : name }}</dt>
-          <dd class="break-all font-mono text-xs">
+      </AlertDescription></Alert>
+      <Table class="data-table">
+        <TableBody><TableRow v-for="(value, name) in safe" :key="name">
+          <TableCell class="text-muted-foreground align-top whitespace-normal">{{ fieldLabels[name] ?? name }}</TableCell>
+          <TableCell class="break-all whitespace-normal font-mono text-xs">
             {{ typeof value === 'object' ? JSON.stringify(value) : value }}
-          </dd></template
-        >
-      </dl>
+          </TableCell>
+        </TableRow></TableBody>
+      </Table>
     </template>
     <p v-if="notice" role="status" class="text-sm">{{ notice }}</p>
   </div>
