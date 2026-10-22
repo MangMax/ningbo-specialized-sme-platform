@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableRow, TableCell } from '@/components/ui/table'
 import {
@@ -83,8 +83,33 @@ const clearAllowed = computed(
     !Number.isNaN(Date.parse(props.filter.to)) &&
     Date.parse(props.filter.from) <= Date.parse(props.filter.to)
 )
+/** 值没变就不再让人为一个没有差异的操作做确认（比较的是提交用的真实单位）。 */
+const policyUnchanged = computed(
+  () => !!data.value && days.value === data.value.retentionDays && bytes.value === data.value.maxBytes
+)
+/** 字节数读不成大小；概览里先给 MiB，原值留在括号内，提交仍是字节。 */
+const bytesLabel = (value: number) => {
+  const gib = value >= 1073741824
+  const unit = gib ? 1073741824 : 1048576
+  const size = Number((value / unit).toFixed(value % unit === 0 ? 0 : 1))
+  return `${size} ${gib ? 'GiB' : 'MiB'}（${value} 字节）`
+}
+/** 面向人的时刻：与列表里的时间同一种写法。 */
+const local = (iso: string) => {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime())
+    ? iso
+    : date.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+}
+/** 危险确认里给本地时间；原始 UTC 值跟在括号里，避免看不见冻结的到底是哪一刻。 */
+const localRange = (iso: string) => {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime())
+    ? iso
+    : `${date.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')}（${iso}）`
+}
 function reviewPolicy() {
-  if (validPolicy.value && !pending.value && data.value && !error.value)
+  if (validPolicy.value && !policyUnchanged.value && !pending.value && data.value && !error.value)
     review.value = { kind: 'policy', policy: { retentionDays: days.value, maxBytes: bytes.value } }
 }
 function reviewClear() {
@@ -134,14 +159,11 @@ async function confirm() {
 }
 </script>
 <template>
-  <Card class="min-w-0 shadow-none">
-    <CardHeader>
-    <CardTitle id="log-management-heading">保留与清理</CardTitle>
-    <CardDescription>
+  <div class="flex min-w-0 flex-col gap-4">
+    <!-- 范围只说一次：这一区只动运行日志。 -->
+    <p class="text-muted-foreground text-[13px] leading-5">
       仅管理运行日志，不修改业务审计、导入回执、源文件或任务产物。
-    </CardDescription>
-    </CardHeader>
-    <CardContent class="flex min-w-0 flex-col gap-4">
+    </p>
     <Skeleton v-if="loading && !data" class="h-24 w-full" aria-label="正在读取日志策略" />
     <TableFailureState
       v-if="error"
@@ -152,18 +174,17 @@ async function confirm() {
     />
     <template v-if="data">
       <Table class="data-table"><TableBody>
-        <TableRow><TableCell class="text-muted-foreground">当前策略</TableCell><TableCell class="whitespace-normal">{{ data.retentionDays }} 天 / {{ data.maxBytes }} 字节</TableCell></TableRow>
-        <TableRow><TableCell class="text-muted-foreground">存储用量</TableCell><TableCell>{{ data.storageBytes }} 字节</TableCell></TableRow>
+        <TableRow><TableCell class="text-muted-foreground">当前策略</TableCell><TableCell class="whitespace-normal">{{ data.retentionDays }} 天 / {{ bytesLabel(data.maxBytes) }}</TableCell></TableRow>
+        <TableRow><TableCell class="text-muted-foreground">存储用量</TableCell><TableCell>{{ bytesLabel(data.storageBytes) }}</TableCell></TableRow>
         <TableRow><TableCell class="text-muted-foreground">累计清理</TableCell><TableCell class="whitespace-normal">策略裁剪 {{ data.pruned }} 条 / 手动清理 {{ data.cleared }} 条</TableCell></TableRow>
         <TableRow><TableCell class="text-muted-foreground">进程状态</TableCell><TableCell class="whitespace-normal">{{ data.status.unavailable ? '不可用' : '可用' }}；已丢弃 {{ data.status.dropped }} 条；排队 {{ data.status.queuedEntries }} 条；写入中 {{ data.status.inFlightEntries }} 条</TableCell></TableRow>
       </TableBody></Table>
-
-      <p class="text-muted-foreground break-words text-sm">
-        用量包含日志库与日志库附属文件，不含文件系统分配开销、容器输出或其他进程内存。进程计数从
-        {{ data.status.since }} 起。
+      <p class="text-muted-foreground text-[13px] leading-5">
+        用量含日志库与附属文件，不含文件系统开销、容器输出或进程内存；进程计数从
+        {{ local(data.status.since) }} 起。
       </p>
       <form @submit.prevent="reviewPolicy">
-        <FieldGroup class="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+        <FieldGroup class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
           <Field :data-disabled="pending">
             <FieldLabel for="log-retention-days">保留天数（1–365）</FieldLabel
             ><Input
@@ -188,17 +209,22 @@ async function confirm() {
               :disabled="pending"
             />
           </Field>
-          <Button
-            type="submit"
-            variant="outline" class="sm:col-span-2 sm:justify-self-start"
-            :disabled="pending || loading || !!error || !validPolicy"
-            >核对策略修改</Button
-          >
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-2 sm:col-span-2">
+            <Button
+              type="submit"
+              variant="outline"
+              :disabled="pending || loading || !!error || !validPolicy || policyUnchanged"
+              >核对策略修改</Button
+            >
+            <!-- 后果写在按钮旁边，不做单独一段通栏说明；没有变化时说明为什么不能核对。 -->
+            <p class="text-muted-foreground text-[13px] leading-5">
+              <template v-if="policyUnchanged">当前值与已生效策略相同，无需核对。</template>
+              <template v-else>保留期与容量取更严格者；缩短保留期或降低容量可能清理已有运行日志。</template>
+            </p>
+          </div>
         </FieldGroup>
       </form>
-      <p class="text-muted-foreground text-sm">
-        保留期与容量取更严格者。缩短保留期或降低容量可能清理已有运行日志。
-      </p>
+      <Separator />
       <div class="flex flex-col items-start gap-2">
         <Button
           variant="destructive"
@@ -206,7 +232,7 @@ async function confirm() {
           @click="reviewClear"
           >清理当前筛选范围</Button
         >
-        <p class="text-muted-foreground text-sm">
+        <p class="text-muted-foreground text-[13px] leading-5">
           请先在筛选中应用明确的开始和结束时间。每次最多清理 1000 条；所有已应用的筛选同时生效。
         </p>
       </div>
@@ -236,16 +262,16 @@ async function confirm() {
           ></DialogHeader
         >
         <template v-if="review?.kind === 'policy'"
-          ><p class="text-sm">当前：{{ data?.retentionDays }} 天 / {{ data?.maxBytes }} 字节</p>
+          ><p class="text-sm">当前：{{ data?.retentionDays }} 天 / {{ data ? bytesLabel(data.maxBytes) : '' }}</p>
           <p class="text-sm">
-            修改为：{{ review.policy.retentionDays }} 天 / {{ review.policy.maxBytes }} 字节
+            修改为：{{ review.policy.retentionDays }} 天 / {{ bytesLabel(review.policy.maxBytes) }}
           </p></template
         >
         <template v-else-if="review?.kind === 'clear'"
           ><p class="text-sm">清理以下已固定范围，每次最多 1000 条：</p>
           <Table><TableBody><TableRow v-for="(value, key) in review.filter" :key="key">
             <TableCell class="text-muted-foreground">{{ filterLabels[key] ?? key }}</TableCell>
-            <TableCell class="break-all">{{ value }}</TableCell>
+            <TableCell class="break-all">{{ key === 'from' || key === 'to' ? localRange(String(value)) : value }}</TableCell>
           </TableRow></TableBody></Table>
         </template>
         <DialogFooter
@@ -256,6 +282,5 @@ async function confirm() {
         >
       </DialogContent>
     </Dialog>
-    </CardContent>
-  </Card>
+  </div>
 </template>

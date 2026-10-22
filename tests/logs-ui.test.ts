@@ -264,8 +264,12 @@ it('retains source rows on a failed filter, explains both targets, retries expli
   await flushPromises()
   await router.push('/logs?requestId=req-new')
   await flushPromises()
-  expect(wrapper.get('[data-testid=table-failure-state]').text()).toContain('req-new')
-  expect(wrapper.get('[data-testid=table-failure-state]').text()).toContain('保留上次结果（第 1 页')
+  const failure = wrapper.get('[data-testid=table-failure-state]').text()
+  expect(failure).toContain('req-new')
+  expect(failure).toContain('已保留第 1 页的 1 条旧结果')
+  expect(failure).toContain('请求标识 req-new')
+  expect(failure).not.toContain('{"')
+  expect(failure).not.toContain('筛选 {}')
   expect(wrapper.text()).toContain('req-original')
   expect(wrapper.text()).not.toContain('PRIVATE182_RAW_ERROR')
   await wrapper.get('[data-testid=table-retry]').trigger('click')
@@ -308,4 +312,149 @@ it('shows and copies only a validated UNTRUSTED client request reference, distin
   event.id = '00000000-0000-4000-8000-000000000181'
   await flushPromises()
   expect(wrapper.text()).not.toContain('PRIVATE180')
+})
+
+const policyView = {
+  retentionDays: 7,
+  maxBytes: 536870912,
+  storageBytes: 4096,
+  pruned: 0,
+  cleared: 0,
+  status: { dropped: 0, unavailable: false, since: '2026-10-22T00:00:00.000Z' }
+}
+const listRow = (id: string) => ({
+  id,
+  timestamp: '2026-10-22T00:00:00Z',
+  source: 'http',
+  operation: 'http.request',
+  outcome: 'success',
+  level: 'info',
+  requestId: `req-${id.slice(-1)}`
+})
+
+it('holds the result area with skeleton rows and a reading footer during the first read', async () => {
+  const { default: Page } = await import('../pages/logs.vue')
+  const { createRouter, createMemoryHistory } = await import('vue-router')
+  const pending = deferred<any>()
+  vi.stubGlobal('$fetch', async (url: string) => (url === '/api/logs/policy' ? policyView : pending.promise))
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/logs', component: Page }] })
+  await router.push('/logs')
+  await router.isReady()
+  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  // 首次读取：按每页条数铺骨架（桌面行 / 窄屏卡），分页占位，而不是把卡收成一条表头。
+  expect(wrapper.findAll('[data-testid=log-row-skeleton]')).toHaveLength(25)
+  expect(wrapper.findAll('[data-testid=log-card-skeleton]')).toHaveLength(25)
+  expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('正在读取…')
+  pending.resolve({ rows: [listRow('00000000-0000-4000-8000-000000000001')], nextCursor: null, status: { dropped: 0 } })
+  await flushPromises()
+  expect(wrapper.findAll('[data-testid=log-row-skeleton]')).toHaveLength(0)
+  expect(wrapper.findAll('[data-testid=log-card-skeleton]')).toHaveLength(0)
+  expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('本页 1 条 · 第 1 页')
+})
+
+it('returns the result list to its first row after a page change and keeps filter and page size', async () => {
+  const { default: Page } = await import('../pages/logs.vue')
+  const { createRouter, createMemoryHistory } = await import('vue-router')
+  const calls: { url: string; options: any }[] = []
+  vi.stubGlobal('$fetch', async (url: string, options: any) => {
+    if (url === '/api/logs/policy') return policyView
+    calls.push({ url, options })
+    return {
+      rows: [listRow('00000000-0000-4000-8000-000000000002')],
+      nextCursor: options.query.cursor ? null : '26',
+      status: { dropped: 0 }
+    }
+  })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/logs', component: Page }] })
+  await router.push('/logs')
+  await router.isReady()
+  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const scroller = wrapper.get('[data-testid=log-table-scroll]').element as HTMLElement
+  scroller.scrollTop = 120
+  await wrapper.get('[data-table-next]').trigger('click')
+  await flushPromises()
+  await flushPromises()
+  expect(calls.at(-1)!.options.query).toMatchObject({ cursor: '26', limit: 25 })
+  expect(scroller.scrollTop).toBe(0)
+  expect(document.activeElement?.id).toBe('log-list-heading')
+  expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('本页 1 条 · 第 2 页')
+  expect(wrapper.get('.data-table thead').text()).toContain('操作 / 来源')
+  expect(wrapper.text()).not.toContain('共 0')
+})
+
+it('does not offer a policy review until a value actually differs from the active policy', async () => {
+  const { default: Management } = await import('../components/logs/LogManagement.vue')
+  vi.stubGlobal('$fetch', async () => policyView)
+  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const review = wrapper.findAll('button').find((b) => b.text() === '核对策略修改')!
+  expect((review.element as HTMLButtonElement).disabled).toBe(true)
+  expect(wrapper.text()).toContain('当前值与已生效策略相同')
+  await wrapper.get('#log-retention-days').setValue('8')
+  expect((review.element as HTMLButtonElement).disabled).toBe(false)
+  expect(wrapper.text()).not.toContain('当前值与已生效策略相同')
+  await review.trigger('click')
+  await flushPromises()
+  expect(document.querySelector('[role=dialog]')!.textContent).toContain('确认修改日志保留策略')
+  vi.unstubAllGlobals()
+})
+
+it('shows the event time in the browser zone and keeps the original ISO in the copied event', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const event = {
+    id: '00000000-0000-4000-8000-000000000003',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'info',
+    source: 'http',
+    operation: 'http.request',
+    outcome: 'success'
+  }
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const local = new Date(event.timestamp).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+  expect(wrapper.text()).toContain(local)
+  expect(wrapper.text()).toContain('本地 UTC')
+  expect(wrapper.text()).not.toContain('2026-10-22T00:00:00Z')
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(writeText.mock.calls[0]![0]).timestamp).toBe('2026-10-22T00:00:00Z')
+})
+
+it('labels retained rows as still-reading while a new filter is in flight', async () => {
+  const { default: Page } = await import('../pages/logs.vue')
+  const { createRouter, createMemoryHistory } = await import('vue-router')
+  const pending = deferred<any>()
+  let first = true
+  vi.stubGlobal('$fetch', async (url: string) => {
+    if (url === '/api/logs/policy') return policyView
+    if (first) {
+      first = false
+      return { rows: [listRow('00000000-0000-4000-8000-000000000004')], nextCursor: null, status: { dropped: 0 } }
+    }
+    return pending.promise
+  })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/logs', component: Page }] })
+  await router.push('/logs')
+  await router.isReady()
+  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  await router.push('/logs?level=error')
+  await flushPromises()
+  const stale = wrapper.get('[role=status]').text()
+  expect(stale).toContain('正在读取当前筛选')
+  expect(stale).toContain('已保留第 1 页的 1 条旧结果（未设筛选）')
+  expect(stale).not.toContain('未能读取')
+  pending.resolve({ rows: [], nextCursor: null, status: { dropped: 0 } })
+  await flushPromises()
+  expect(wrapper.text()).toContain('没有符合条件的运行日志')
 })
