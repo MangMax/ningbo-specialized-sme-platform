@@ -41,10 +41,12 @@ export function appLog(input: LogInput, context: LogContext = {}): void {
 /** Request-scoped context also carries the transport facts once the router has matched a route. */
 export type RequestLogContext = LogContext & { httpMethod?: string; httpRoute?: string }
 /** Request handlers pass this context into task/subprocess payloads explicitly. No inferred actor. */
-export function requestLogContext(event: { context: Record<string, any>; method?: string }): RequestLogContext {
-  const matched = event.context.matchedRoute
+export function requestLogContext(event: { context?: Record<string, any>; method?: string }): RequestLogContext {
+  // Plain route adapters may omit H3 context; only carry metadata actually present.
+  const context = event.context ?? {}
+  const matched = context.matchedRoute
   return {
-    ...event.context.applicationLogContext,
+    ...context.applicationLogContext,
     ...(typeof event.method === 'string' ? { httpMethod: event.method } : {}),
     ...(typeof matched?.path === 'string' ? { httpRoute: matched.path } : {}),
   }
