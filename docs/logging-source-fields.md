@@ -27,8 +27,8 @@
 | `ocr` | `jobs/ocr`、页生命周期、结果写回 | started/info；cancelled/info；partial/warn；failure/error | `fileId`、`page`、`taskId`（有则）、`counts`、`durationMs`、`errorCode` | 不显示 batch/resource 等无关字段 |
 | `import` | 提交/预检/执行/回执 | started/info；denied/warn；failure/error；unknown/warn | `batchId`、`receiptId`、`counts`、`durationMs`、`errorCode`、`resourceType/resourceId` | receipt 只在详情；不冒充已提交/已入库 |
 | `export` | 旧同步导出、当前导出、产物清理/下载 | started/info；cancelled/info；denied/warn；failure/error | `taskId`、`resourceType/resourceId`、`counts`、`statusCode`、`durationMs`、`errorCode` | 不显示 file/page/batch 等无关字段 |
-| `client` | 浏览器有限词汇上报 | 由上报 level 约束；固定 failure | `untrustedRelatedRequestId`（UNTRUSTED）、`requestId/traceId`、`errorCode`（interaction） | 不用客户端声称值当执行身份；不显示服务端对象字段 |
-| `system` | 日志策略/清理；drain 故障只在 stderr | success/info；drain failure/error（仅 stderr） | `counts`、`resourceType/resourceId`（有则） | drain 故障不落 SQLite，页面不伪造历史 |
+| `client` | 浏览器异常、交互及四类库的有限词汇上报 | 异常为 failure；库信号由服务端固定映射 level/outcome | `untrustedRelatedRequestId`（UNTRUSTED）、`requestId/traceId`、`errorCode`（interaction） | 不用客户端声称值当执行身份；不显示服务端对象字段 |
+| `system` | 日志策略/清理、Drizzle 查询尝试；drain 故障只在 stderr | success/info；查询 started/debug；drain failure/error（仅 stderr） | `counts`、`resourceType/resourceId`（有则） | drain 故障不落 SQLite，页面不伪造历史 |
 
 ## MCP：原生集成 + 最小补采
 
@@ -80,3 +80,25 @@
 - TUS 失败事件的 offset 可能未知（库的 POST_RECEIVE 有节流，短请求可能尚未产生 tick）；未知就省略。
 - `logging.drain` 故障只写 stderr，不进入 SQLite；这是日志不可用时的隔离设计，不伪造历史。
 - 既有 export ECONNRESET 基线保持 `UNKNOWN`，本页不声称修复。
+
+## 技术集成与业务埋点
+
+目录目前有 11 个已接入采集器。category/runtimes 仅用于页面分组，不是新的策略维度：技术集成分服务端4项和客户端6项；application 是跨端共享的手动埋点规则，只显示一次。业务来源分服务端10类、客户端1类，仍约束对应来源的全部记录（包括技术采集），与集成规则同时允许、且达到更严格级别才会保存和输出。关闭采集不删除历史；保留/容量规则仍可能轮转。
+
+旧六项策略升级时，新增五项使用 enabled=true/minLevel=debug 的默认值；已有来源与集成规则不重置，读取不改变 revision。旧客户端仅更新保留/容量也不会重置采集规则。损坏策略读取仍 failclosed，不把损坏字段当默认升级。
+
+| 采集器 | 原生入口与实际范围 | 事实与限制 |
+| --- | --- | --- |
+| Drizzle（服务端） | 原生 Logger.logQuery；primary/enterprise_read/import_execution/current_qualification/record_comparison/evidence_review/platform_summary 七类连接 | system；db.query.select/insert/update/delete/other；固定连接用途 resourceId；started/debug。SQL 首32字符仅选择固定动词，不保存原文或参数；注释/CTE 等归 other；原生 raw better-sqlite3 调用不受此钩子覆盖。 |
+| tus-client（客户端） | onBeforeRequest / onUploadUrlAvailable / onSuccess / onError | 首次请求、上传地址可用、终态成功/失败；不逐块或逐进度上报，不改变 retry/abort/callback。成功表示 tus 上传完成，不表示业务登记成功。 |
+| EmbedPDF（客户端） | 同一安全 logger 注入主线程 engine 与 registry；真实资源启动与文档 ready/error | logger 的 debug/info/warn/error 只表达级别，outcome=unknown；真实 ready/error 才是 success/failure。忽略 args/source/category/perf，不输出文件或错误原文；自定义 logger 在该版本 Worker 序列化为 noop，不宣称覆盖 Worker 内部日志。 |
+| Pinia Colada（客户端） | query/mutation cache 的原生 action after/onError | 只在真实结算时上报，不把取消/被替代查询当成功；日志和设置页面不采集以避免反馈。无 query key/data/error 原文。 |
+| Vue Router（客户端） | afterEach / onError | 成功、重复、守卫中止、被后续导航取消、未知失败和错误分开；不输出 to/from/route/error。卸载及 HMR 注销。 |
+
+客户端21个库信号的固定映射见 lib/client-logging/library-contract.ts。浏览器只提交 kind/固定 signal/页面分类，服务端决定 integration/operation/outcome/level；客户端不能选来源、级别、结果或可信身份。旧异常与新库事件共享 queue32、batch8、最多3次发送、5分钟过期和请求限额；signal 加入去重键，成功与失败不会彼此吞掉。
+
+### Drizzle 提供的能力与本应用的采集选择
+
+Drizzle 官方自定义 Logger 接口确实提供 logQuery(query: string, params: unknown[])，查询构建器 toSQL() 返回 sql/params。能力详见 [Drizzle Goodies](https://orm.drizzle.team/docs/goodies)，本机0.45.4的声明一致。本应用当前明确不保存原始 SQL/绑定值，避免业务内容或凭证进入诊断副本；这不是库的能力限制。
+
+logQuery 在准备/绑定之后、执行之前调用；准备或缺失 placeholder 的错误可能根本不触发它，钩子也没有执行结果和耗时。toSQL() 只生成语句而不执行。不能由这两个接口宣称查询成功、失败、事务提交或耗时；真实错误仍以原业务控制流及语义事件为准。

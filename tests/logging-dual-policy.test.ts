@@ -34,7 +34,7 @@ it('applies AND and the stricter level across all eleven sources and all level p
 it('rejects unknown top-level, unknown integration, prototype and incomplete rule inputs', () => {
   for (const input of [
     {...base,revision:1}, {...base,catalog:{}}, {...base,collection:{sources:{task:{enabled:false}}}},
-    {...base,collection:{integrations:{drizzle:{enabled:true,minLevel:'debug'}}}},
+    {...base,collection:{integrations:{unknown_library:{enabled:true,minLevel:'debug'}}}},
     {...base,collection:{sources:{task:{enabled:true,minLevel:'trace'}}}},
     {...base,collection:{sources:{task:{enabled:true,minLevel:'error',extra:true}}}},
     JSON.parse('{"retentionDays":7,"maxBytes":536870912,"collection":{"sources":{"__proto__":{"enabled":false,"minLevel":"debug"}}}}'),
@@ -84,7 +84,7 @@ it('projects origin by collector and discards arbitrary nested fields without in
   expect(safeLogEvent({source:'client',operation:'fixture.run',outcome:'failure',origin:{runtime:'browser',integration:'vue',capture:'hook',execution:'page',message:'PRIVATE'} as any}).origin).toEqual({runtime:'browser',integration:'vue',capture:'hook',execution:'page'})
   expect(projectEvlog({path:'/mcp',applicationLogMcp:{rpcMethod:'ping'}}).origin).toEqual({runtime:'node',integration:'mcp-toolkit',capture:'framework',execution:'request'})
   expect(projectEvlog({path:'/api/health'}).origin?.integration).toBe('nuxt-nitro')
-  expect(safeLogEvent({source:'system',operation:'fixture.run',outcome:'success',origin:{runtime:'node',integration:'drizzle',capture:'hook'} as any})).not.toHaveProperty('origin')
+  expect(safeLogEvent({source:'system',operation:'fixture.run',outcome:'success',origin:{runtime:'node',integration:'unknown_library',capture:'hook'} as any})).not.toHaveProperty('origin')
 })
 
 async function childWriter(directory: string) {

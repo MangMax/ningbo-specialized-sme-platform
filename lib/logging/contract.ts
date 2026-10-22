@@ -64,19 +64,19 @@ export interface LogContext {
   /** Source-specific metadata, only meaningful for source `file` uploads. */
   tus?: TusLogContext
 }
-export const LOG_SUPPORTED_INTEGRATIONS = ['nuxt-nitro', 'mcp-toolkit', 'tus', 'application', 'browser', 'vue'] as const
+export const LOG_SUPPORTED_INTEGRATIONS = ['nuxt-nitro', 'mcp-toolkit', 'tus', 'application', 'browser', 'vue', 'tus-client', 'drizzle', 'embedpdf', 'pinia-colada', 'vue-router'] as const
 export const LOG_INTEGRATIONS = [
-  { key: 'nuxt-nitro', label: 'Nuxt / Nitro 请求', state: 'supported', configurable: true },
-  { key: 'mcp-toolkit', label: 'MCP Toolkit 模块上下文', state: 'supported', configurable: true },
-  { key: 'tus', label: 'tus 服务端回调', state: 'supported', configurable: true },
-  { key: 'application', label: '应用手动埋点', state: 'supported', configurable: true },
-  { key: 'browser', label: '浏览器原生异常（客户端自报）', state: 'supported', configurable: true },
-  { key: 'vue', label: 'Vue 异常（客户端自报）', state: 'supported', configurable: true },
-  { key: 'tus-client', label: 'tus 客户端', state: 'unwired', configurable: false },
-  { key: 'drizzle', label: 'Drizzle 数据库', state: 'unwired', configurable: false },
-  { key: 'embedpdf', label: 'EmbedPDF', state: 'unwired', configurable: false },
-  { key: 'pinia-colada', label: 'Colada 查询', state: 'unwired', configurable: false },
-  { key: 'vue-router', label: 'Vue Router', state: 'unwired', configurable: false },
+  { key: 'nuxt-nitro', label: 'Nuxt / Nitro 请求', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'mcp-toolkit', label: 'MCP Toolkit 模块上下文', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'tus', label: 'tus 服务端回调', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'application', label: '应用手动埋点', state: 'supported', configurable: true, category: 'business', runtimes: ['node', 'browser'] },
+  { key: 'browser', label: '浏览器原生异常（客户端自报）', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'vue', label: 'Vue 异常（客户端自报）', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'tus-client', label: 'tus 客户端', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'drizzle', label: 'Drizzle 数据库', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
+  { key: 'embedpdf', label: 'EmbedPDF', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'pinia-colada', label: 'Colada 查询', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
+  { key: 'vue-router', label: 'Vue Router', state: 'supported', configurable: true, category: 'technical', runtimes: ['browser'] },
 ] as const
 export interface LogOrigin {
   runtime: 'node' | 'browser'

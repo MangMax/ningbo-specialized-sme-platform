@@ -5,12 +5,7 @@ import { join } from 'node:path'
 import { createApp } from 'vue'
 import { createPinia, disposePinia } from 'pinia'
 import { PiniaColada, useQueryCache, useMutationCache } from '@pinia/colada'
-// Parent owns enabling these keys. This fixture tests the real evlog/SQLite/policy
-// chain with the explicitly extended catalog; it does not edit the baseline catalog.
-vi.mock('../lib/logging/contract', async importOriginal => {
-  const actual = await importOriginal<typeof import('../lib/logging/contract')>()
-  return { ...actual, LOG_SUPPORTED_INTEGRATIONS: [...new Set([...actual.LOG_SUPPORTED_INTEGRATIONS, 'tus-client', 'embedpdf', 'pinia-colada', 'vue-router'])] }
-})
+// Uses the actual integrated catalog, without a test-only extension.
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, LOG_DEFAULTS } from '../lib/logging'
 import { createClientLogIntake } from '../server/utils/client-log-intake'
 import { createClientErrorTransport } from '../lib/client-logging/transport'

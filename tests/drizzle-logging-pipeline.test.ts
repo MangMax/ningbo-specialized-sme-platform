@@ -6,12 +6,10 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { sql } from 'drizzle-orm'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../lib/logging'
-import { LOG_DEFAULTS, LOG_SUPPORTED_INTEGRATIONS, type LogPolicyPatch } from '../lib/logging/contract'
+import { LOG_DEFAULTS, type LogPolicyPatch } from '../lib/logging/contract'
 import { createDrizzleLogger } from '../lib/logging/drizzle'
 
-// The integration owner enables the closed catalog. Do not fake that contract
-// here: on the leaf baseline these tests explicitly remain pending integration.
-describe.skipIf(!(LOG_SUPPORTED_INTEGRATIONS as readonly string[]).includes('drizzle'))('Drizzle real evlog and independent SQLite pipeline', () => {
+describe('Drizzle real evlog and independent SQLite pipeline', () => {
   let directory: string, previous: string | undefined, client: Database.Database
   beforeEach(() => {
     directory = mkdtempSync(join(tmpdir(), 'drizzle-pipeline-'))

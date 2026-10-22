@@ -310,8 +310,8 @@ it('saves dual collection rules through protected REST and MCP while disabled bu
   const initial = await call('/api/logs/policy',{headers:apiHeaders})
   expect(initial.status).toBe(200)
   expect(Object.keys(initial.body.collection.sources)).toHaveLength(11)
-  expect(Object.keys(initial.body.collection.integrations)).toHaveLength(6)
-  expect(initial.body.catalog.integrations.find((x:any)=>x.key==='drizzle')).toMatchObject({state:'unwired',configurable:false})
+  expect(Object.keys(initial.body.collection.integrations)).toHaveLength(11)
+  expect(initial.body.catalog.integrations.find((x:any)=>x.key==='drizzle')).toMatchObject({state:'supported',configurable:true,category:'technical',runtimes:['node']})
   const base = {retentionDays:initial.body.retentionDays,maxBytes:initial.body.maxBytes}
   expect((await patch({...base,collection:{sources:{http:{enabled:false,minLevel:'debug'}}}},false)).status).toBe(401)
   const disabled=await patch({...base,collection:{sources:{http:{enabled:false,minLevel:'debug'}}}})
@@ -324,7 +324,7 @@ it('saves dual collection rules through protected REST and MCP while disabled bu
   expect(output).not.toContain(health.requestId)
   expect((await patch({...base})).status).toBe(200)
   expect((await call('/api/logs/policy',{headers:apiHeaders})).body.collection.sources.http.enabled).toBe(false)
-  for(const invalid of [{...base,revision:1},{...base,catalog:{}},{...base,collection:{sources:{http:{enabled:true}}}},{...base,collection:{integrations:{drizzle:{enabled:true,minLevel:'debug'}}}}]) {
+  for(const invalid of [{...base,revision:1},{...base,catalog:{}},{...base,collection:{sources:{http:{enabled:true}}}},{...base,collection:{integrations:{unknown_library:{enabled:true,minLevel:'debug'}}}}]) {
     expect((await patch(invalid)).status).toBe(400)
     const rpc=await mcp('tools/call',{name:'set_runtime_log_policy',arguments:invalid},mcpToken)
     expect(rpc.status).toBe(200)

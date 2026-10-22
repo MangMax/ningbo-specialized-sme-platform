@@ -1,5 +1,5 @@
 import { createLoggingRoute } from '../../utils/logging-route'
-defineRouteMeta({ openAPI: { tags: ['日志'], summary: '修改独立日志保留与采集策略', description: '必须 API token。JSON {retentionDays:1..365,maxBytes:1048576..4294967296,collection?:{sources?:Partial<11来源规则>,integrations?:Partial<6已接集成规则>}}；规则{enabled:boolean,minLevel:debug|info|warn|error}。省略的规则保留已有值；双维同时允许且达到更严格级别才采集。未知key拒绝。只影响后续批次，不删除历史；规则存于独立日志库。请求最大4096字节。', security: [{ bearerAuth: [] }],
+defineRouteMeta({ openAPI: { tags: ['日志'], summary: '修改独立日志保留与采集策略', description: '必须 API token。JSON {retentionDays:1..365,maxBytes:1048576..4294967296,collection?:{sources?:Partial<11来源规则>,integrations?:Partial<11已接集成规则>}}；规则{enabled:boolean,minLevel:debug|info|warn|error}。省略的规则保留已有值；双维同时允许且达到更严格级别才采集。未知key拒绝。只影响后续批次，不删除历史；规则存于独立日志库。请求最大4096字节。', security: [{ bearerAuth: [] }],
   requestBody: { required: true, content: { 'application/json': { schema: {
     type: 'object', additionalProperties: false, required: ['retentionDays', 'maxBytes'],
     properties: {
@@ -31,6 +31,11 @@ defineRouteMeta({ openAPI: { tags: ['日志'], summary: '修改独立日志保�
               'application': { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/collection/properties/sources/properties/http' },
               'browser': { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/collection/properties/sources/properties/http' },
               'vue': { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/collection/properties/sources/properties/http' },
+              'tus-client': { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/collection/properties/sources/properties/http' },
+              'drizzle': { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/collection/properties/sources/properties/http' },
+              'embedpdf': { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/collection/properties/sources/properties/http' },
+              'pinia-colada': { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/collection/properties/sources/properties/http' },
+              'vue-router': { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/collection/properties/sources/properties/http' },
             },
           },
         },
