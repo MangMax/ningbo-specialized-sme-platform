@@ -749,6 +749,7 @@ await check('clear and policy review cancel without any write request', async ()
   await waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('核对日志配置修改') && !b.disabled)`)
   await clickButtonText('核对日志配置修改')
   await waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((el) => el.textContent.includes('核对日志配置修改'))`)
+  await sleep(300)
   const policyShot = await shot('browser-desktop-policy-review-1280x800.png')
   await clickButtonText('取消')
   await waitFor(`!document.querySelector('[role="dialog"]')`)
@@ -798,7 +799,7 @@ await check('dual-axis settings review and save only changed rules; unwired stay
   // 改一条来源开关和一条最低级别，均通过共享 Reka 控件。
   await click('#log-source-http-enabled')
   await waitFor(`document.querySelector('#log-source-http-enabled')?.dataset.state === 'unchecked'`)
-  await click('[aria-label="MCP 调用的最低日志级别"]')
+  await pointerClick('[aria-label="MCP 调用的最低日志级别"]')
   await waitFor(`!![...document.querySelectorAll('[role="option"]')].find((el) => el.textContent.includes('警告'))`)
   await sleep(150)
   const levelPoint = await evaluate(`(() => {
@@ -810,16 +811,24 @@ await check('dual-axis settings review and save only changed rules; unwired stay
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: levelPoint.x, y: levelPoint.y, button: 'left', clickCount: 1 })
   await waitFor(`[...document.querySelectorAll('[aria-label="MCP 调用的最低日志级别"]')].some((el) => el.textContent.includes('警告'))`)
 
+  // 采集配置截图先取，避免把核对对话框叠在页面上；滚动发生在 settings tab 内部。
+  await evaluate(`(() => {
+    const panel = [...document.querySelectorAll('[data-slot="tabs-content"]')].find((el) => el.textContent?.includes('来源采集'))
+    panel?.scrollTo(0, 0)
+    return true
+  })()`)
+  await sleep(150)
+  const settingsShot = await shot('browser-desktop-log-config-1280x800.png')
+
   const writesBefore = network.filter((entry) => entry.method === 'PATCH').length
   await clickButtonText('核对日志配置修改')
   await waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((el) => el.textContent.includes('核对日志配置修改'))`)
+  await sleep(300)
   const reviewText = await evaluate(`[...document.querySelectorAll('[role="dialog"]')].find((el) => el.textContent.includes('核对日志配置修改'))?.textContent ?? ''`)
   assert.ok(reviewText.includes('来源采集 · HTTP 接口'))
   assert.ok(reviewText.includes('来源采集 · MCP 调用'))
   assert.ok(!reviewText.includes('后台任务'))
   assert.equal(network.filter((entry) => entry.method === 'PATCH').length, writesBefore)
-  await evaluate('window.scrollTo(0, 0)')
-  const settingsShot = await shot('browser-desktop-log-config-1280x800.png')
   const reviewShot = await shot('browser-desktop-log-config-review-1280x800.png')
   await clickButtonText('取消')
   await waitFor(`!document.querySelector('[role="dialog"]')`)
