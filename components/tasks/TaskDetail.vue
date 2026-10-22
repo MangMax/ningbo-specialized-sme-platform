@@ -180,7 +180,8 @@ async function act(action: 'cancel' | 'retry') {
 
           <p v-if="cancelReport || notice" role="status" data-testid="task-notice" class="text-sm">{{ cancelReport || notice }}</p>
 
-          <div v-if="links.length" class="flex flex-wrap gap-3">
+          <div class="flex flex-wrap gap-3">
+            <NuxtLink v-if="current && data.id" :to="{ path: '/logs', query: { taskId: data.id } }" class="text-primary text-sm underline underline-offset-4">查看关联运行日志</NuxtLink>
             <NuxtLink v-for="link in links" :key="link.to" :to="link.to" class="text-primary text-sm underline underline-offset-4">{{ link.label }}</NuxtLink>
           </div>
 
