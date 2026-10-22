@@ -57,6 +57,8 @@ function installFetch() {
 const mounted: ReturnType<typeof mount>[] = []
 beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn()
+  // Nuxt supplies this composable in the app; this isolated mount has no app plugins.
+  vi.stubGlobal('useNuxtApp', () => ({}))
   serverTask = platformTask('running')
   reads = 0
   cancelPosts = 0
