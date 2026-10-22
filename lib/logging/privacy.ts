@@ -1,7 +1,7 @@
 import { clientRequestReference } from '../client-logging/request-reference'
 import { randomUUID } from 'node:crypto'
 import {
-  LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES,
+  LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, LOG_SUPPORTED_INTEGRATIONS,
   MCP_CLIENT_CLASSES, MCP_PROTOCOL_VERSIONS, MCP_RPC_METHODS,
   TUS_UPLOAD_METHODS, TUS_UPLOAD_PHASES,
   type LogEvent, type LogInput, type McpClientMetadata, type McpLogContext, type TusLogContext,
@@ -98,6 +98,11 @@ export function safeLogEvent(input: LogInput): LogEvent {
     outcome: LOG_OUTCOMES.includes(input.outcome) ? input.outcome : 'unknown',
     level: LOG_LEVELS.includes(input.level!) ? input.level! : (['failure', 'timeout'].includes(input.outcome) || input.error ? 'error' : 'info'),
   }
+  const origin = record(input.origin)
+  if (['node', 'browser'].includes(origin.runtime as string) && LOG_SUPPORTED_INTEGRATIONS.includes(origin.integration as never) && ['framework', 'hook', 'manual'].includes(origin.capture as string)) {
+    event.origin = { runtime: origin.runtime, integration: origin.integration, capture: origin.capture } as NonNullable<LogEvent['origin']>
+    if (['request', 'background', 'worker', 'page'].includes(origin.execution as string)) event.origin.execution = origin.execution as NonNullable<LogEvent['origin']>['execution']
+  }
   for (const key of ['requestId', 'traceId', 'taskId', 'resourceType', 'parentEventId'] as const) {
     const value = input[key]
     if (typeof value === 'string' && identifier.test(value)) event[key] = value
@@ -148,6 +153,7 @@ export function projectEvlog(input: Record<string, unknown>): LogInput {
   const status = typeof input.status === 'number' ? input.status : 200
   const path = typeof input.path === 'string' ? input.path.split('?')[0]! : ''
   return {
+    origin: { runtime: 'node', integration: input.applicationLogMcp ? 'mcp-toolkit' : 'nuxt-nitro', capture: 'framework', execution: 'request' },
     source: path === '/mcp' ? 'mcp' : 'http',
     operation: path === '/mcp' ? 'mcp.request' : 'http.request',
     outcome: status >= 500 ? 'failure' : status >= 400 ? 'denied' : 'success',

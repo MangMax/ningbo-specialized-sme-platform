@@ -64,7 +64,29 @@ export interface LogContext {
   /** Source-specific metadata, only meaningful for source `file` uploads. */
   tus?: TusLogContext
 }
+export const LOG_SUPPORTED_INTEGRATIONS = ['nuxt-nitro', 'mcp-toolkit', 'tus', 'application', 'browser', 'vue'] as const
+export const LOG_INTEGRATIONS = [
+  { key: 'nuxt-nitro', label: 'Nuxt / Nitro 请求', state: 'supported', configurable: true },
+  { key: 'mcp-toolkit', label: 'MCP Toolkit 模块上下文', state: 'supported', configurable: true },
+  { key: 'tus', label: 'tus 服务端回调', state: 'supported', configurable: true },
+  { key: 'application', label: '应用手动埋点', state: 'supported', configurable: true },
+  { key: 'browser', label: '浏览器原生异常（客户端自报）', state: 'supported', configurable: true },
+  { key: 'vue', label: 'Vue 异常（客户端自报）', state: 'supported', configurable: true },
+  { key: 'tus-client', label: 'tus 客户端', state: 'unwired', configurable: false },
+  { key: 'drizzle', label: 'Drizzle 数据库', state: 'unwired', configurable: false },
+  { key: 'embedpdf', label: 'EmbedPDF', state: 'unwired', configurable: false },
+  { key: 'pinia-colada', label: 'Colada 查询', state: 'unwired', configurable: false },
+  { key: 'vue-router', label: 'Vue Router', state: 'unwired', configurable: false },
+] as const
+export interface LogOrigin {
+  runtime: 'node' | 'browser'
+  integration: typeof LOG_SUPPORTED_INTEGRATIONS[number]
+  capture: 'framework' | 'hook' | 'manual'
+  execution?: 'request' | 'background' | 'worker' | 'page'
+}
 export interface LogInput extends LogContext {
+  /** Actual collector attribution; absent on unmarked historical events. Browser claims remain untrusted. */
+  origin?: LogOrigin
   source: typeof LOG_SOURCES[number]
   operation: string
   outcome: typeof LOG_OUTCOMES[number]
@@ -93,6 +115,15 @@ export interface LogFilter {
 /** List projection keeps bounded outcome facts but not single-event references. */
 export type LogSummary = Omit<LogEvent, 'auditId' | 'receiptId' | 'parentEventId'>
 export interface LogPolicy { retentionDays: number; maxBytes: number }
+export interface LogCollectionRule { enabled: boolean; minLevel: typeof LOG_LEVELS[number] }
+export interface LogCollection {
+  sources: Record<typeof LOG_SOURCES[number], LogCollectionRule>
+  integrations: Record<typeof LOG_SUPPORTED_INTEGRATIONS[number], LogCollectionRule>
+}
+export interface LogPolicyPatch extends LogPolicy {
+  collection?: { sources?: Partial<LogCollection['sources']>; integrations?: Partial<LogCollection['integrations']> }
+}
+export interface EffectiveLogPolicy extends LogPolicy { collection: LogCollection; revision: number }
 export const LOG_DEFAULTS = Object.freeze({
   retentionDays: 7, maxBytes: 512 * 1024 * 1024,
   maxEventBytes: 8192, maxQueueEntries: 1024, maxQueueBytes: 4 * 1024 * 1024,

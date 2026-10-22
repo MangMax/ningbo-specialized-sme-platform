@@ -36,7 +36,7 @@ export default defineEventHandler(async (event) => {
     if (failed) {
       const denied = !aborted && status >= 400 && status < 500
       appLog({
-        source: 'file',
+        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, source: 'file',
         operation: 'file.upload',
         outcome: denied ? 'denied' : 'failure',
         level: denied ? 'warn' : 'error',
@@ -49,7 +49,7 @@ export default defineEventHandler(async (event) => {
     } else if (observation.completed === true) {
       // `onUploadFinish` completed its original mkdir/link/rm work before this flag.
       appLog({
-        source: 'file', operation: 'file.upload', outcome: 'success', statusCode: status,
+        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, source: 'file', operation: 'file.upload', outcome: 'success', statusCode: status,
         durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'completed' } } : {}),
       }, requestLogContext(event))
@@ -57,7 +57,7 @@ export default defineEventHandler(async (event) => {
     } else if (observation.created === true && event.method === 'POST') {
       // A create response is not a completed upload. Keep the id for later PATCH/retry correlation.
       appLog({
-        source: 'file', operation: 'file.upload', outcome: 'started', statusCode: status,
+        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, source: 'file', operation: 'file.upload', outcome: 'started', statusCode: status,
         durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'created' } } : {}),
       }, requestLogContext(event))
@@ -69,7 +69,7 @@ export default defineEventHandler(async (event) => {
     if (!logged) {
       const tus = tusContext(observation)
       appLog({
-        source: 'file', operation: 'file.upload', outcome: 'failure', level: 'error',
+        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, source: 'file', operation: 'file.upload', outcome: 'failure', level: 'error',
         errorCode: 'file_upload_failed', durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'request-failed' } } : {}),
       }, requestLogContext(event))

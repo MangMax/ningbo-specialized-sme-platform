@@ -106,6 +106,7 @@ it('records a real matched HTTP template and method in the protected list and de
   const summary = rows[0]
   expect(summary).toMatchObject({
     source: 'http', operation: 'http.request', outcome: 'success', statusCode: 200,
+    origin: {runtime:'node',integration:'nuxt-nitro',capture:'framework',execution:'request'},
     httpMethod: 'GET', httpRoute: '/api/health',
   })
   const event = await detail(summary.id)
@@ -137,7 +138,7 @@ it('records the MCP transport template and exposes the same facts through MCP', 
   const listed = await mcp('tools/list', {})
   expect(listed.status).toBe(200)
   const rows = await waitLog(listed.requestId)
-  expect(rows[0]).toMatchObject({ source: 'mcp', operation: 'mcp.request', httpMethod: 'POST', httpRoute: '/mcp' })
+  expect(rows[0]).toMatchObject({ source: 'mcp', operation: 'mcp.request', httpMethod: 'POST', httpRoute: '/mcp', origin: {runtime:'node',integration:'mcp-toolkit',capture:'framework',execution:'request'} })
 
   const rpc = await mcp('tools/call', { name: 'list_runtime_logs', arguments: { requestId: rows[0].requestId } }, mcpToken)
   expect(rpc.status).toBe(200)
@@ -220,6 +221,7 @@ it('records a real tus create and final PATCH with the server upload id and per-
   const finishedRows = await waitLog(finished.requestId)
   expect(finishedRows.find(row => row.operation === 'file.upload')).toMatchObject({
     source: 'file', outcome: 'success', statusCode: 204,
+    origin: {runtime:'node',integration:'tus',capture:'hook',execution:'request'},
     durationMs: expect.any(Number),
     tus: { uploadId: id, phase: 'completed', method: 'PATCH', size: data.length, offset: data.length },
   })
@@ -300,4 +302,44 @@ it('does not fabricate a file target for an invalid delete id', async () => {
   expect(response.status).toBe(400)
   const rows = await waitLog(response.requestId)
   expect(rows.some(row => row.source === 'file')).toBe(false)
+})
+
+
+it('saves dual collection rules through protected REST and MCP while disabled business requests still return 200', async () => {
+  const patch = (body:unknown, authorized=true) => call('/api/logs/policy',{method:'PATCH',headers:{'content-type':'application/json',...(authorized?apiHeaders:{})},body:JSON.stringify(body)})
+  const initial = await call('/api/logs/policy',{headers:apiHeaders})
+  expect(initial.status).toBe(200)
+  expect(Object.keys(initial.body.collection.sources)).toHaveLength(11)
+  expect(Object.keys(initial.body.collection.integrations)).toHaveLength(6)
+  expect(initial.body.catalog.integrations.find((x:any)=>x.key==='drizzle')).toMatchObject({state:'unwired',configurable:false})
+  const base = {retentionDays:initial.body.retentionDays,maxBytes:initial.body.maxBytes}
+  expect((await patch({...base,collection:{sources:{http:{enabled:false,minLevel:'debug'}}}},false)).status).toBe(401)
+  const disabled=await patch({...base,collection:{sources:{http:{enabled:false,minLevel:'debug'}}}})
+  expect(disabled.status).toBe(200)
+  expect(disabled.body.revision).toBe(initial.body.revision+1)
+  const health=await call('/api/health')
+  expect(health.status).toBe(200)
+  await new Promise(r=>setTimeout(r,250))
+  expect(await logs('requestId='+health.requestId)).toEqual([])
+  expect(output).not.toContain(health.requestId)
+  expect((await patch({...base})).status).toBe(200)
+  expect((await call('/api/logs/policy',{headers:apiHeaders})).body.collection.sources.http.enabled).toBe(false)
+  for(const invalid of [{...base,revision:1},{...base,catalog:{}},{...base,collection:{sources:{http:{enabled:true}}}},{...base,collection:{integrations:{drizzle:{enabled:true,minLevel:'debug'}}}}]) {
+    expect((await patch(invalid)).status).toBe(400)
+    const rpc=await mcp('tools/call',{name:'set_runtime_log_policy',arguments:invalid},mcpToken)
+    expect(rpc.status).toBe(200)
+    expect(rpc.body.error.data.code).toBe('invalid_log_input')
+  }
+  const denied=await mcp('tools/call',{name:'set_runtime_log_policy',arguments:base})
+  expect(denied.status).toBe(401)
+  const restored=await mcp('tools/call',{name:'set_runtime_log_policy',arguments:{...base,collection:{sources:{http:{enabled:true,minLevel:'debug'}}}}},mcpToken)
+  expect(restored.status).toBe(200)
+  expect(restored.body.result.isError).not.toBe(true)
+  const read=await mcp('tools/call',{name:'get_runtime_log_policy',arguments:{}},mcpToken)
+  const policy=read.body.result.structuredContent??JSON.parse(read.body.result.content[0].text)
+  expect(policy.collection.sources.http).toEqual({enabled:true,minLevel:'debug'})
+  const after=await call('/api/health')
+  expect(after.status).toBe(200)
+  expect((await waitLog(after.requestId))[0]).toMatchObject({source:'http',outcome:'success'})
+  expect((await call('/api/logs/policy',{headers:apiHeaders})).body.status.filtered).toBeGreaterThan(0)
 })

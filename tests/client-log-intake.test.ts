@@ -20,7 +20,7 @@ afterEach(async () => {
 it('stores only classified client claims with server intake correlation through evlog', async () => {
   const intake = createClientLogIntake()
   const result = intake.accept([{ event: { kind: 'script_error', page: 'roster', level: 'error',
-    source: 'worker', operation: 'import.commit', id: 'forged-id', timestamp: '2000-01-01',
+    origin: {runtime:'node',integration:'tus',capture:'framework'}, source: 'worker', operation: 'import.commit', id: 'forged-id', timestamp: '2000-01-01',
     requestId: 'claimed-request', taskId: 'claimed-task', fileId: 189, resourceId: 'claimed-resource',
     message: 'PRIVATE189 input /Users/private?token=secret', stack: 'PRIVATE189',
   } }], 'connection-one', { requestId: 'server-request', traceId: 'server-trace' })
@@ -31,6 +31,7 @@ it('stores only classified client claims with server intake correlation through 
   const detail = await applicationLogs().detail(listed.rows[0]!.id)
   expect(detail).toMatchObject({ source: 'client', operation: 'client.roster.script_error', outcome: 'failure', level: 'error', requestId: 'server-request', traceId: 'server-trace' })
   expect(detail?.id).not.toBe('forged-id')
+  expect(detail?.origin).toEqual({runtime:'browser',integration:'browser',capture:'hook',execution:'page'})
   expect(JSON.stringify(detail)).not.toMatch(/PRIVATE189|claimed|forged|2000-01-01|taskId|fileId|resourceId|message|stack/)
 })
 

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { validatePolicy } from '../../lib/logging/service'
 import { applicationLogs } from '../../lib/logging'
 import { dispatchLogAction, type LogAction } from '../../lib/logging/application'
 /** SDK schemas stay thin; the same application validates both transports. */
@@ -16,4 +17,17 @@ export async function loggingMcpResult(action: LogAction, input: Record<string, 
   const result = await dispatchLogAction(applicationLogs(), action, input, true)
   if (result.status !== 200) return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(result.body) }] }
   return result.body as Record<string, unknown>
+}
+
+// The SDK normalizes raw shapes with z.object(), stripping unknown top-level
+// keys. Validate original policy arguments before that normalization so REST
+// and MCP reject the same invalid policy, including GET response fields.
+export function runtimeLogPolicyRpcError(body: unknown): Response | undefined {
+  for (const call of Array.isArray(body) ? body : [body]) {
+    if (call?.method !== 'tools/call' || call?.params?.name !== 'set_runtime_log_policy') continue
+    try { validatePolicy(call.params.arguments) }
+    catch {
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: call.id ?? null, error: { code: -32602, message: 'Invalid log policy', data: { code: 'invalid_log_input' } } }), { status: 200, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } })
+    }
+  }
 }
