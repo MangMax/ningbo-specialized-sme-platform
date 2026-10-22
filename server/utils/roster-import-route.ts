@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../lib/logging'
 import { useDb } from '@db'
 import { createCoreRouteHandler } from './core-route'
 import { handleRosterImportRequest, type RosterImportAction } from './roster-import-http'
@@ -21,8 +22,8 @@ import { handleRosterImportRequest, type RosterImportAction } from './roster-imp
 export function createRosterImportHandler(action: RosterImportAction) {
   // 「读 method / 读两个头 / 读 body / 贴状态码与响应头」这段胶水本身由
   // `core-route.ts` 单点维护(RL-10 收拢)—— 这里只剩「哪个动作 + 要哪些依赖」。
-  return createCoreRouteHandler(
+  return defineEventHandler(event => createCoreRouteHandler(
     (request, ctx) => handleRosterImportRequest(action, request, ctx),
-    () => ({ db: useDb(), apiToken: useRuntimeConfig().apiToken, filesDir: useRuntimeConfig().filesDir }),
-  )
+    () => ({ db: useDb(), apiToken: useRuntimeConfig().apiToken, filesDir: useRuntimeConfig().filesDir, logContext: requestLogContext(event) }),
+  )(event))
 }
