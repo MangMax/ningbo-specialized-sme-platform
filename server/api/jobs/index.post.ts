@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../lib/logging'
 import { useDb } from '@db'
 import { normalizeJobParams } from '~~/lib/job'
 import { requireApiToken } from '../../utils/api-guard'
@@ -147,6 +148,7 @@ export default defineEventHandler(async (event) => {
 
   const row = submitJob(db, {
     kind,
+    logContext: requestLogContext(event),
     params: parsed.params,
     filesDir: useRuntimeConfig(event).filesDir,
   })

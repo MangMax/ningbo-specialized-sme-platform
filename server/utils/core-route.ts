@@ -22,6 +22,26 @@
  * 把它挪进工厂就等于把那条路由从 OpenAPI spec 里删掉。
  */
 
+import { defineEventHandler, getMethod, getHeader, readBody, setHeader, setResponseStatus, getResponseStatus, type H3Event } from 'h3'
+import { requestLogContext } from '../../lib/logging'
+import { logSemanticOperation } from './semantic-operation-log'
+
+/** Shared semantic boundary. Callers supply only a static operation name, never a URL or input. */
+export function semanticRouteHandler<T>(operation: string, handler: (event: H3Event) => T | Promise<T>) {
+  return defineEventHandler(async event => {
+    const started = performance.now()
+    try {
+      const result = await handler(event)
+      logSemanticOperation('http', operation, requestLogContext(event), started, result, getResponseStatus(event))
+      return result
+    } catch (error) {
+      const status = error && typeof error === 'object' && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500
+      logSemanticOperation('http', operation, requestLogContext(event), started, error, status, true)
+      throw error
+    }
+  })
+}
+
 /** 核心函数吃的**最小请求描述**(不含任何 h3 类型)。 */
 export interface CoreRequest {
   /** 大写 HTTP 方法;方法守卫由**核心自己**做(路由不替它拦)。 */
@@ -48,7 +68,7 @@ export function createCoreRouteHandler<Ctx>(
   core: (request: CoreRequest, ctx: Ctx) => CoreResponse | Promise<CoreResponse>,
   buildCtx: () => Ctx,
 ) {
-  return defineEventHandler(async (event) => {
+  const handler = async (event: H3Event) => {
     const response = await core(
       {
         method: getMethod(event),
@@ -64,7 +84,8 @@ export function createCoreRouteHandler<Ctx>(
     setResponseStatus(event, response.status)
     for (const [name, value] of Object.entries(response.headers)) setHeader(event, name, value)
     return response.body
-  })
+  }
+  return defineEventHandler(handler)
 }
 
 /** h3 的 `getHeader` 返回 `string | undefined`;重复头(数组)当没带。 */

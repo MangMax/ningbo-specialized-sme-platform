@@ -1,10 +1,11 @@
-import { defineEventHandler, getQuery, getRouterParam, readBody, setHeader } from 'h3'
+import { semanticRouteHandler } from './core-route'
+import { getQuery, getRouterParam, readBody, setHeader } from 'h3'
 import { useDb } from '@db'
 import { requireApiToken } from './api-guard'
 import { EnterpriseProfileError, getEnterpriseProfile, getEnterpriseProfileHistory, patchEnterpriseProfile } from './enterprise-profile'
 
 export function enterpriseProfileRoute(action: 'get' | 'patch' | 'history') {
-  return defineEventHandler(async event => {
+  return semanticRouteHandler(`maintenance.enterprise_profile.${action}`, async event => {
     setHeader(event, 'cache-control', 'no-store')
     if (action === 'patch') requireApiToken(event)
     try {

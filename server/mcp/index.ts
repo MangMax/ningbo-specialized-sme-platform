@@ -5,7 +5,9 @@ import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
 import { platformQueryRpcError } from '../utils/mcp-platform-query'
 import { currentQualifiedRpcError } from '../utils/current-qualified-filter'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
-import { defineMcpHandler } from '@nuxtjs/mcp-toolkit/server'
+import { defineMcpHandler, getMcpTools } from '@nuxtjs/mcp-toolkit/server'
+import { requestLogContext } from '../../lib/logging'
+import { logSemanticOperation, semanticErrorCode } from '../utils/semantic-operation-log'
 import {
   MCP_WRITE_TOOLS,
   readMcpToken,
@@ -42,6 +44,31 @@ import {
  * 缓存取的(见 `providers/node.js` 的 `toWebRequest`),所以下游仍能拿到完整 body。
  */
 export default defineMcpHandler({
+  tools: async event => (await getMcpTools()).map(tool => ({
+    ...tool,
+    handler: async (...args: Parameters<typeof tool.handler>) => {
+      const operation = `mcp.tool.${tool.name}`
+      const started = performance.now()
+      try {
+        const result = await tool.handler(...args)
+        if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, requestLogContext(event), started, result)
+        event.context.semanticMcpLogged = true
+        return result
+      } catch (error) {
+        if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, requestLogContext(event), started, error, undefined, true)
+        event.context.semanticMcpLogged = true
+        // Keep existing domain errors; arbitrary initialization/third-party errors must
+        // not reach the toolkit's default Error.message-to-text converter.
+        const code = semanticErrorCode(error)
+        const status = error && typeof error === 'object'
+          ? ('statusCode' in error ? error.statusCode : 'status' in error ? error.status : undefined)
+          : undefined
+        const domainError = code || (typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599)
+        if (domainError && !['invalid_request', 'alias_input_invalid'].includes(code ?? '')) throw error
+        return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: code ?? 'internal_error', message: code ? 'Invalid operation request' : 'Operation failed' } }) }] }
+      }
+    },
+  })),
   name: 'spztx-roster-board',
   version: '1.0.0',
   description:
@@ -94,7 +121,13 @@ export default defineMcpHandler({
     '- `save_ocr_result` 的页号**要显式给**(或让 markdown 自带 `<!-- page: N -->` 标记)',
     '  —— 页号是「出处能显示第几页」的锚点,猜不得。',
   ].join('\n'),
-  middleware: async (event) => {
+  middleware: async (event, next) => {
+    const started = performance.now()
+    let operation: string | undefined
+    const finish = (response: Response, code: string) => {
+      if (operation) logSemanticOperation('mcp', operation, requestLogContext(event), started, { error: { code } }, response.status)
+      return response
+    }
     setHeader(event, 'cache-control', 'no-store')
     const auth = resolveMcpAuth({
       given: readMcpToken({
@@ -107,24 +140,40 @@ export default defineMcpHandler({
 
     if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
       const body = await readBody(event, { strict: false }).catch(() => undefined)
-      if (['list_runtime_logs','get_runtime_log','get_runtime_log_policy','set_runtime_log_policy','clear_runtime_logs'].includes(body?.params?.name)) {
+      const tool = body?.method === 'tools/call' ? body?.params?.name : undefined
+      if (LOG_TOOLS.has(tool)) {
         event.context._evlogShouldEmit = false
+      } else if (typeof tool === 'string') {
+        // Match a static registered name; unknown client-supplied names never enter logs.
+        operation = (await getMcpTools()).some(def => def.name === tool) ? `mcp.tool.${tool}` : 'mcp.tool.unknown'
+      } else if (Array.isArray(body) && body.some(entry => entry?.method === 'tools/call' && !LOG_TOOLS.has(entry?.params?.name))) {
+        operation = 'mcp.tool.batch'
       }
       const invalidCurrentQualified = currentQualifiedRpcError(body)
-      if (invalidCurrentQualified) return invalidCurrentQualified
+      if (invalidCurrentQualified) return finish(invalidCurrentQualified, 'invalid_request')
       if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail','list_current_qualified_enterprises'].includes(body?.params?.name)) admitEnterpriseResponse(event)
       const invalidDecision = decisionRpcError102(body)
-      if (invalidDecision) return invalidDecision
+      if (invalidDecision) return finish(invalidDecision, 'invalid_request')
       const invalidParse = parseRpcError105(body)
-      if (invalidParse) return invalidParse
+      if (invalidParse) return finish(invalidParse, 'invalid_request')
       const invalidEventCorrection = eventCorrectionRpcError(body)
-      if (invalidEventCorrection) return invalidEventCorrection
+      if (invalidEventCorrection) return finish(invalidEventCorrection, 'invalid_request')
       const invalidQuery = platformQueryRpcError(body)
-      if (invalidQuery) return invalidQuery
+      if (invalidQuery) return finish(invalidQuery, 'invalid_request')
     }
-    if (auth.writeAuthorized) return
-    const called = await writeToolCalledIn(event)
-    if (called) return unauthorizedResponse(called, auth.reason)
+    if (!auth.writeAuthorized) {
+      const called = await writeToolCalledIn(event)
+      if (called) return finish(unauthorizedResponse(called, auth.reason), 'unauthorized')
+    }
+    try {
+      const response = await next()
+      // SDK argument validation and unknown tools reject before invoking a handler.
+      if (operation && !event.context.semanticMcpLogged) finish(response, 'invalid_request')
+      return response
+    } catch (error) {
+      if (operation && !event.context.semanticMcpLogged) logSemanticOperation('mcp', operation, requestLogContext(event), started, error, 500, true)
+      throw error
+    }
   },
 })
 
@@ -135,6 +184,7 @@ function headerOf(event: Parameters<typeof getHeader>[0], name: string): string 
 
 /** 有 body 的方法(与 h3 的 `PayloadMethods` 同集:GET 的 SSE 流不进这里)。 */
 const METHODS_WITH_BODY = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+const LOG_TOOLS = new Set(['list_runtime_logs', 'get_runtime_log', 'get_runtime_log_policy', 'set_runtime_log_policy', 'clear_runtime_logs'])
 
 /**
  * 这次请求是不是在调写入 tool。读不出来(方法/类型不对、JSON 坏了)**一律返回 `null`** ——
