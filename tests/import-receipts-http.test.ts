@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -9,8 +9,6 @@ import { useDb, schema } from '../db/client'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'spec98-import-receipts-'))
-const evidenceDir = process.env.IMPORT_RECEIPT_EVIDENCE_DIR ?? join(tmpdir(), 'ningbo-spec98/ticket-103')
-mkdirSync(evidenceDir, { recursive: true })
 const dbPath = join(dir, 'synthetic.db')
 const db = useDb({ dbPath })
 const legacy = db.insert(schema.importBatch).values({ idempotencyKey: 'legacy/key?精确=1', sourceKind: 'announcement', sourceIdentity: 'synthetic/legacy', status: 'preflight' }).returning().get()
@@ -40,7 +38,7 @@ async function startService(configured = true) {
   const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, configured ? 'nuxt-build' : 'nuxt-unconfigured'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: configured ? apiToken : '', NUXT_MCP_TOKEN: configured ? mcpToken : '', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output += data })
-  service = { baseUrl: `http://127.0.0.1:${port}`, stop: async () => { await stopOwnedChild(child); writeFileSync(join(evidenceDir, `server-${configured ? 'configured' : 'unconfigured'}.log`), output) } }
+  service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/stats`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output.slice(-8000)}`) }
 }
@@ -236,9 +234,7 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
     const committed = await (await post('commit', { ...submitted, payload: { ...submitted.payload, rawPadding: 'TARGET_RAW_PADDING'.repeat(16384) } })).json()
     expect(committed.status).toBe('committed')
     const path = `?batchId=${committed.batchId}`
-    const start = performance.now()
     const before = await (await get(path)).text()
-    const beforeMs = performance.now() - start
     const itemBefore = await (await get(`/items${path}&page=3&pageSize=50`)).text()
     expect(JSON.parse(itemBefore)).toMatchObject({ total: 120, page: 3, rows: Array.from({ length: 20 }, (_, i) => ({ index: 100 + i, ok: true })) })
     const padding = 'UNRELATED_RAW_PADDING'.repeat(8192)
@@ -248,9 +244,7 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
         db.insert(schema.importReceipt).values({ batchId: batch.id, operation: 'commit', requestHash: 'synthetic', requestBody: JSON.stringify({ padding }), status: 'committed', createdAt: '2026-10-19T00:00:00Z', completedAt: '2026-10-19T00:01:00Z', itemResults: [{ ok: true, kind: 'record', ref: 'unrelated', detail: { padding } }] }).run()
       }
     })
-    const afterStart = performance.now()
     const after = await (await get(path)).text()
-    const afterMs = performance.now() - afterStart
     expect(after).toBe(before)
     const itemAfter = await (await get(`/items${path}&page=3&pageSize=50`)).text()
     expect(itemAfter).toBe(itemBefore)
@@ -259,7 +253,6 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
     expect(value(await rpc('list_roster_import_items', { batchId: committed.batchId, page: 3, pageSize: 50 }))).toEqual(JSON.parse(itemAfter))
     const raw = await (await get(`/request${path}&maxBytes=4096`)).json()
     expect(Buffer.from(raw.data, 'base64')).toHaveLength(4096)
-    writeFileSync(join(evidenceDir, 'boundedness.json'), JSON.stringify({ sourceSha: process.env.RECEIPT_SOURCE_SHA ?? null, sample: 'synthetic; one warm request before and after unrelated growth; no tail/capacity claim', targetItems: 120, unrelatedReceiptsAdded: 30, unrelatedRequestBytesAdded: 30 * Buffer.byteLength(JSON.stringify({ padding })), duplicateUnrelatedItemPaddingBytesAdded: 60 * Buffer.byteLength(padding), beforeMs, afterMs, summaryBytes: Buffer.byteLength(after), itemPageBytes: Buffer.byteLength(itemAfter), rawChunkBytes: 4096 }, null, 2))
   })
   it('disables protected reads when credentials are unconfigured', async () => {
     await service.stop()

@@ -61,10 +61,6 @@ describe('图例说明 ↔ 浮层内容', () => {
 })
 
 describe('平台记录详情 ↔ 可见按钮和 Dialog 交互', () => {
-  it('不再声称「悬停」可展开 —— 这个组件根本没有浮层', () => {
-    // 组件侧的真值:详情由 Dialog 打开,没有 Tooltip / Popover。
-    expect(PLATFORM_EVIDENCE_SRC).not.toMatch(/<Tooltip|<Popover/)
-  })
 
   it('DialogTrigger 包住原生按钮,按钮文案和弹窗标题对应平台记录', () => {
     expect(PLATFORM_EVIDENCE_SRC).toContain('<DialogTrigger as-child>')

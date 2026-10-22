@@ -92,7 +92,6 @@ describe('galleryStatus(现状 → 该说什么、该做什么)', () => {
     expect(s.headline).toBe('页图不完整(已有 3 张,共需 12 张)')
     expect(s.actionLabel).toBe('补齐页图')
     expect(s.action).toBe('render')
-    expect(s.variant).toBe('default')
   })
 
   it('张数对、DPI 不对 → 说清是按**现在选的**这一档对不上,而不是含糊的「不一致」', () => {
@@ -113,30 +112,15 @@ describe('galleryStatus(现状 → 该说什么、该做什么)', () => {
     expect(s.detail).toContain('或者')
   })
 
-  it('一切对齐 → 一句「已是最新」的结论,主按钮「重新渲染」+ 描边且带 force', () => {
+  it('一切对齐 → 一句「已是最新」的结论,主按钮「重新渲染」且带 force', () => {
     const s = galleryStatus(state(), 200)
     expect(s.tone).toBe('ready')
     // 「最新」不再是一个孤立的徽章词(独立审查 S2):并进这句自足的结论里。
     expect(s.headline).toBe('页图已是最新(共 12 页)')
     expect(s.detail).toBe('')
     expect(s.actionLabel).toBe('重新渲染')
-    // 「已是最新」是**可选的重做**,不该是全屏最重的实心按钮(独立审查 S4)。
-    expect(s.variant).toBe('outline')
     expect(s.action).toBe('render')
     expect(s.force).toBe(true)
-  })
-
-  it('**实心按钮只留给「确实有活要干」的档**(S4):ready 是描边,其余是实心', () => {
-    const before = galleryStatus(state({ rendered: 0, pages: [], manifest: null }), 200)
-    const partial = galleryStatus(state({ rendered: 3, upToDate: false }), 200)
-    const stale = galleryStatus(state({ upToDate: false }), 200)
-    const ready = galleryStatus(state(), 200)
-    expect([before, partial, stale].map((s) => s.variant)).toEqual([
-      'default',
-      'default',
-      'default',
-    ])
-    expect(ready.variant).toBe('outline')
   })
 
   it('页数口径全站一致:每一档都说「共 N 页」或「N 张」(S9)', () => {

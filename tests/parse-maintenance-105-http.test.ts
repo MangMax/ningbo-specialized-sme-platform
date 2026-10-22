@@ -1,4 +1,4 @@
-import { appendFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -47,7 +47,7 @@ async function startService() {
   mkdirSync(join(dir, 'files'), { recursive: true })
   const child = spawn(process.execPath, [join(cwd, 'node_modules/nuxt/bin/nuxt.mjs'), 'dev', '--host', '127.0.0.1', '--port', String(port)], { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token } })
   let output = ''
-  for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-8000); appendFileSync('/tmp/ningbo-spec98/ticket-105/server.log', chunk) })
+  for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${error}\n${output}`) }
@@ -342,7 +342,6 @@ it('keeps fixed-ID reads and history pages unchanged as unrelated evidence OCR a
   const auditInsert = db.$client.prepare('INSERT INTO file_parse_audit_105 (file_id,idempotency_key,request_hash,operation,actor,reason,before,after,created_at) VALUES (?,?,?,\'replace\',?,\'unrelated fixture\',?,?,?)')
   const ocrInsert = db.$client.prepare('INSERT INTO ocr_result (file_id,page_no,markdown,raw,engine,channel,created_at) VALUES (?,?,?,?,\'synthetic\',\'upload\',?)')
   const raw = JSON.stringify({ privateUnrelatedRaw: 'X'.repeat(8192) })
-  const samples = []
   let count = 0
   for (const target of [1000, 5000]) {
     db.$client.transaction(() => {
@@ -355,9 +354,7 @@ it('keeps fixed-ID reads and history pages unchanged as unrelated evidence OCR a
         count++
       }
     })()
-    const elapsed = []
     for (let n = 0; n < 5; n++) {
-      const start = performance.now()
       expect(await state(f.id)).toEqual(current)
       const response = await http(f.id, 'GET', undefined, '/history?limit=2')
       expect(response.status).toBe(200)
@@ -365,17 +362,10 @@ it('keeps fixed-ID reads and history pages unchanged as unrelated evidence OCR a
       expect(JSON.parse(text)).toEqual(page)
       expect(Buffer.byteLength(text)).toBeLessThan(256 * 1024)
       expect(text).not.toContain('privateUnrelatedRaw')
-      elapsed.push(Number((performance.now() - start).toFixed(3)))
     }
-    samples.push({ unrelatedEvidence: target, unrelatedReceipts: target / 10, unrelatedOcrPages: target / 10, combinedReadMs: elapsed })
     expect(await call('get_file_parse_result', { fileId: f.id })).toEqual(current)
     expect(await call('get_file_parse_history', { fileId: f.id, limit: 2 })).toEqual(page)
   }
-  const plans = {
-    derived: db.$client.prepare('EXPLAIN QUERY PLAN SELECT r.title_code,e.event_type,e.year,e.batch_seq,v.attachment FROM record_evidence v JOIN record_event e ON e.id=v.record_event_id JOIN record r ON r.id=e.record_id WHERE v.source_file=?').all(f.relPath),
-    receiptPage: db.$client.prepare('EXPLAIN QUERY PLAN SELECT id,operation FROM file_parse_audit_105 WHERE file_id=? AND id>? ORDER BY id LIMIT 3').all(f.id, 0),
-  }
-  appendFileSync('/tmp/ningbo-spec98/ticket-105/boundedness.jsonl', JSON.stringify({ samples, plans }) + '\n')
 })
 
 it('accepts the complete segment limit and rejects over-limit replacements without truncation', async () => {

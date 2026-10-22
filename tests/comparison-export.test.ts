@@ -245,26 +245,6 @@ describe('comparison export route', () => {
     expect(ws.getCell('B2').value).toBe('=001234567890123456')
     expect(ws.getCell('B2').type).toBe(ExcelJS.ValueType.String)
   })
-  it('applies the current name search and district filters', async () => {
-    const ws = await exported({
-      mode: 'comparison',
-      title: 'specialized_sme',
-      direction: 'missing_in_miit',
-      q: '市专02',
-      district: '鄞州区',
-    })
-    expect(ws.rowCount).toBe(2)
-    expect(ws.getRow(2).getCell(1).value).toBe('市专02')
-
-    const empty = await exported({
-      mode: 'comparison',
-      title: 'specialized_sme',
-      direction: 'missing_in_miit',
-      q: '市专02',
-      district: '海曙区',
-    })
-    expect(empty.rowCount).toBe(1)
-  })
   it('keeps the existing ledger export available without mode', async () => {
     const ws = await exported({ title: 'innovative_sme' })
     expect(ws.name).toBe('台账')

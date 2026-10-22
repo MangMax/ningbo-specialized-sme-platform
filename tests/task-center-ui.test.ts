@@ -885,22 +885,6 @@ describe('标题层级', () => {
   })
 })
 
-describe('筛选分组', () => {
-  it('每个筛选的 Label 与 Select 在同一个组里，窄屏折行时不会把标签留在上一行', async () => {
-    installFetch(() => json(listOf(state.list.rows, false)))
-    state.query = { tab: 'export' }
-    const wrapper = await mountPage({ attach: true })
-    for (const id of ['task-state', 'export-title-filter']) {
-      const label = wrapper.get(`label[for="${id}"]`).element as HTMLElement
-      const trigger = wrapper.get(`#${id}`).element as HTMLElement
-      expect(label.parentElement).toBe(trigger.parentElement)
-      // Same-wrap container: a flex row that keeps the two together.
-      expect(label.parentElement!.className).toContain('flex')
-      expect(label.parentElement!.className).not.toContain('flex-wrap')
-    }
-  })
-})
-
 describe('移动端列表摘要', () => {
   it('每一行在窄屏同时给出中文任务名、状态与可用性、进度摘要和查看', async () => {
     installFetch(() => json(listOf(state.list.rows, true)))

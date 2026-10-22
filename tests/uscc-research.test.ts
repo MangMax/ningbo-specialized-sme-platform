@@ -194,7 +194,6 @@ beforeAll(async () => {
         if (request.method === 'POST') {
           currentQuery = (request.body ?? {}) as Record<string, unknown>
           const out = await routes.post({})
-          console.log('DEBUGY', Object.keys(out as object).join(','), JSON.stringify((out as { plan?: unknown }).plan).slice(0, 120))
           return { status: 200, body: out }
         }
         currentQuery = request.query

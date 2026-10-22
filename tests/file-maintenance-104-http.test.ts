@@ -64,7 +64,7 @@ beforeAll(async () => {
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(`${String(error)}\n${serverOutput}`) }
 }, 90000)
-afterAll(async () => { if (service) await service.stop(); writeFileSync('/tmp/ningbo-spec98/ticket-104/server-last.log', serverOutput); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
 
 describe('#104 file maintenance public transports', () => {
   it('accepts exact baseline REST and MCP payloads and invalidates modern revisions after legacy writes', async () => {
@@ -131,11 +131,8 @@ describe('#104 file maintenance public transports', () => {
       for (let n = 1; n <= 500; n++) tx.insert(schema.fileMaintenanceAudit).values({ fileId: unrelated.id, revision: n, action: 'update', mode: 'versioned', requestHash: 'synthetic', actor: 'noise-fixture', basis: 'N'.repeat(2000), before: {}, after: {} }).run()
       tx.insert(schema.ocrResult).values({ fileId: unrelated.id, pageNo: 1, markdown: 'unrelated raw OCR '.repeat(32768), channel: 'upload' }).run()
     })
-    const samples: number[] = []
     for (let n = 0; n < 10; n++) {
-      const start = performance.now()
       const after = await rest(`${f.id}/maintenance?pageSize=2`)
-      samples.push(performance.now() - start)
       expect(after).toEqual(before)
       expect(Buffer.byteLength(JSON.stringify(after.body))).toBeLessThan(16000)
     }
@@ -145,7 +142,6 @@ describe('#104 file maintenance public transports', () => {
     for (const query of ['pageSize=101', 'page=0', 'page=1.5', 'pageSize=0', 'pageSize=x']) expect((await rest(`${f.id}/maintenance?${query}`)).status).toBe(400)
     const mcp = await rpc('get_file_maintenance', { fileId: f.id, pageSize: 2 })
     expect(mcp.value).toEqual(before.body)
-    writeFileSync('/tmp/ningbo-spec98/ticket-104/boundedness.json', JSON.stringify({ sourceSha: process.env.TICKET104_SOURCE_SHA ?? 'working-tree', selectedAudits: 5, unrelatedAudits: 500, unrelatedBasisCharacters: 1000000, unrelatedOcrCharacters: 557056, samplesMs: samples, responseBytes: Buffer.byteLength(JSON.stringify(before.body)) }, null, 2))
   })
   it('rejects missing, modified, directory and symlink restore targets without changing removed state or audit', async () => {
     for (const kind of ['missing', 'modified', 'directory', 'symlink'] as const) {

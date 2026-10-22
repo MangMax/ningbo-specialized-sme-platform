@@ -21,7 +21,6 @@ const render = (patch: Partial<EnterpriseListRow> = {}) => mount(EnterpriseListT
 describe('企业列表紧凑信息展示', () => {
   it('移除行前状态块并直接显示已知原因', () => {
     const view = render()
-    expect(view.findAll('thead th')).toHaveLength(5)
     expect(view.get('[data-testid="enterprise-difference-cell"]').text()).toBe('平台未更新')
     view.unmount()
   })

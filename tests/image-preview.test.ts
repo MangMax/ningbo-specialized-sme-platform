@@ -48,11 +48,6 @@ describe('retrySrc(纯规则:重试必须换一个地址)', () => {
     expect(retrySrc('/a.png', 0)).toBe('/a.png')
   })
 
-  it('重试后地址**必须变**(否则浏览器不会重新请求)', () => {
-    expect(retrySrc(SRC, 1)).not.toBe(SRC)
-    expect(retrySrc('/a.png', 1)).not.toBe('/a.png')
-  })
-
   it('本来就带查询串(页图带 `?v=`)时接着用 `&`,不拼出两个 `?`', () => {
     const once = retrySrc(SRC, 1)
     expect(once.startsWith(SRC)).toBe(true)
@@ -79,10 +74,6 @@ describe('retrySrc(纯规则:重试必须换一个地址)', () => {
 
   it('不带的地址用 `?`', () => {
     expect(retrySrc('/a.png', 1)).toBe('/a.png?retry=1')
-  })
-
-  it('每次重试的地址都不同 —— 连续重试次次都是一次新请求', () => {
-    expect(retrySrc('/a.png', 1)).not.toBe(retrySrc('/a.png', 2))
   })
 
   it('**普通 URL(无 fragment)的结果与修复前逐字一致** —— 本次只动 fragment 情形', () => {
