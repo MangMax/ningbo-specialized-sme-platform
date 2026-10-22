@@ -2,8 +2,9 @@
 
 Platform collection uses the #181 `appLog` API and official evlog drain. It does
 not modify platform evidence, business audit, receipts, query status, retry policy,
-credential resolution or batch checkpoint formats. The only job-parameter addition
-is a server-generated `logContext`; public strict input schemas still reject it.
+credential resolution or batch checkpoint/parameter formats. The trusted request
+context travels only in #184's in-memory submission/queue context; public strict
+input schemas reject it and job parameters never persist it.
 
 The operation vocabulary uses `platform.query_list`, `platform.business_list` or
 `platform.query_bus_list`, followed by:
@@ -39,8 +40,10 @@ REST passes #181's trusted request context. The toolkit's per-request
 `mcp:config:resolved` hook clones only the three platform handlers and passes the
 same context using a private Symbol in SDK extras. No wire field can supply it,
 no global mutable request context is used, and tool guards stay intact. Batch
-collection adds the known task/batch ID and generated item ID. Explicit retries
-use the new request ID and retain the original trace ID. Other job kinds and the
+collection consumes `ctx.logContext` and adds the known task/batch ID and generated
+item ID. Explicit retries use their actual new request/trace context; the known
+batch/item IDs link attempts. Original request IDs after restart remain unknown.
+Other job kinds and the
 global MCP entry point are outside this slice.
 
 ## Verification seams

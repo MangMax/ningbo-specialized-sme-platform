@@ -26,7 +26,7 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
   result.attempt++
   result.usage.requests = 0
   const start = Date.now()
-  const logContext = { ...(params.logContext ?? newLogContext()), taskId: ctx.jobId, batchId: ctx.jobId }
+  const logContext = { ...(ctx.logContext ?? newLogContext()), taskId: ctx.jobId, batchId: ctx.jobId }
   const persist = () => {
     result.completeness = result.items.every(item => item.completeness === 'complete') ? 'complete' : 'partial'
     setJobResult(ctx.db, ctx.jobId, result)
@@ -104,7 +104,7 @@ const batchSpec: JobSpec = {
   // Generic job submission must pass the same strict public validation and generate IDs.
   parse: raw => {
     const parsed = platformBatchInputSchema.safeParse(raw)
-    return parsed.success ? { ok: true, params: { ...parsed.data, logContext: newLogContext(), items: parsed.data.items.map(entry => ({ ...entry, itemId: newJobId() })) } } : { ok: false, message: 'Invalid platform batch parameters' }
+    return parsed.success ? { ok: true, params: { ...parsed.data, items: parsed.data.items.map(entry => ({ ...entry, itemId: newJobId() })) } } : { ok: false, message: 'Invalid platform batch parameters' }
   },
   total: params => (params.items as unknown[]).length,
   prepare: (params, db) => {
@@ -131,7 +131,7 @@ export function submitPlatformBatch(db: Db, input: unknown, filesDir: string, lo
   registerPlatformBatchJob(); ensureJobRunnerReady(db)
   const parsed = batchSpec.parse(input as Record<string, unknown>)
   if (!parsed.ok) return fail(400, parsed.message)
-  const row = submitJob(db, { kind: PLATFORM_BATCH_KIND, params: { ...parsed.params, logContext: logContext ?? newLogContext() }, filesDir })
+  const row = submitJob(db, { kind: PLATFORM_BATCH_KIND, params: parsed.params, filesDir, logContext: logContext ?? newLogContext() })
   return { batchId: row.id, itemIds: (row.params.items as PlatformBatchParams['items']).map(item => item.itemId), state: row.state }
 }
 export function getPlatformBatch(db: Db, input: unknown) {
@@ -161,9 +161,8 @@ export function retryPlatformBatch(db: Db, input: unknown, filesDir: string, log
   if (parsed.data.itemIds.some(id => !batch.items.some(item => item.itemId === id && item.completeness !== 'complete'))) return fail(409, 'Retry requires existing unfinished items')
   const row = getJob(db, batch.batchId)!
   registerPlatformBatchJob()
-  const previousContext = (row.params as unknown as PlatformBatchParams).logContext
-  const retryContext = { ...(logContext ?? newLogContext()), ...(previousContext?.traceId ? { traceId: previousContext.traceId } : {}) }
-  if (!requeueFinishedJob(db, { id: batch.batchId, kind: PLATFORM_BATCH_KIND, params: { ...row.params, retryItemIds: parsed.data.itemIds, logContext: retryContext }, filesDir })) return fail(409, 'Platform batch is still active')
+  const retryContext = logContext ?? newLogContext()
+  if (!requeueFinishedJob(db, { id: batch.batchId, kind: PLATFORM_BATCH_KIND, params: { ...row.params, retryItemIds: parsed.data.itemIds }, filesDir, logContext: retryContext })) return fail(409, 'Platform batch is still active')
   appLog({ source: 'platform', operation: 'platform.batch.retry', outcome: 'started', counts: { total: parsed.data.itemIds.length } },
     { ...retryContext, taskId: batch.batchId, batchId: batch.batchId })
   return { batchId: batch.batchId, itemIds: batch.itemIds, state: 'queued' }
