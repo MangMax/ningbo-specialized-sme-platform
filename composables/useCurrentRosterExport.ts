@@ -45,7 +45,7 @@ export function useCurrentRosterExport(readOnlyReason?: Readonly<Ref<string>>) {
       intent.jobId = response._data.jobId
       try {
         if (regenerateOf) requestLog.forget(key, intent.clientRequestId)
-        else requestLog.remember(key, intent)
+        else requestLog.accept(key, { clientRequestId: intent.clientRequestId, jobId: intent.jobId })
       } catch {
         // The server has accepted this request. Storage bookkeeping failure must
         // not turn its real receipt into an ambiguous submission or discard its UUID.
