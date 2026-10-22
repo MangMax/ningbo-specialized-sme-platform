@@ -84,7 +84,7 @@ it('late real child completion after cooperative cancellation never duplicates c
  })`)
  const controller=new AbortController()
  try{
-  const pending=reads.summary({operation:'summary',dbPath:path,owner:getDbOwnerIdentity(db)!,options:{}},controller.signal,{requestId:'late184'})
+  const pending=reads.summary({operation:'summary',dbPath:path,owner:getDbOwnerIdentity(db)!,options:{curatedPath:join(root,'curated.json'),reconcilePath:join(root,'reconcile.json'),showCurated:false,page:1,pageSize:25}},controller.signal,{requestId:'late184'})
   for(let i=0;i<50;i++){if((await logs('late184')).some(r=>r.operation==='enterprise_read.started'))break;await pause(10)}
   controller.abort()
   expect(await pending).toEqual({type:'cancelled'})
