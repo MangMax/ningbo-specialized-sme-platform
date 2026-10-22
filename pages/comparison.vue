@@ -6,7 +6,7 @@ import type { ComparisonSummaryRow } from '~~/lib/comparison-summary'
 import EvidenceReviewList from '@/components/evidence-review/EvidenceReviewList.vue'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { computed, nextTick, provide, shallowRef, watch } from 'vue'
-import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRouter } from 'vue-router'
 import { GitCompareArrows, Search } from '@lucide/vue'
 import type {
   ComparisonCounts,
