@@ -46,5 +46,31 @@ export function requestLogContext(event: { context: Record<string, any>; method?
     ...(typeof matched?.path === 'string' ? { httpRoute: matched.path } : {}),
   }
 }
+/**
+ * One module-entry enrichment for fields the framework/library already knows.
+ * `appLog` events later reuse it through `requestLogContext`; evlog's request
+ * completion reads the same `applicationLog*` keys in `projectEvlog`.
+ * This is request-local (`event.context`), not a process-global cache.
+ */
+export function setRequestLogMetadata(
+  event: { context: Record<string, any>; log?: { set?: (context: Record<string, unknown>) => void } | null },
+  patch: Pick<LogContext, 'mcp' | 'tus'>,
+): void {
+  try {
+    const current: LogContext = event.context.applicationLogContext ?? {}
+    const next: LogContext = {
+      ...current,
+      ...(patch.mcp ? { mcp: { ...current.mcp, ...patch.mcp } } : {}),
+      ...(patch.tus ? { tus: { ...current.tus, ...patch.tus } } : {}),
+    }
+    event.context.applicationLogContext = next
+    // evlog's native request logger keeps its own context. These namespaced
+    // keys are the only raw metadata the custom drain will project.
+    event.context.log?.set?.({
+      ...(next.mcp ? { applicationLogMcp: next.mcp } : {}),
+      ...(next.tus ? { applicationLogTus: next.tus } : {}),
+    })
+  } catch { /* Metadata collection must never change the response. */ }
+}
 export function newLogContext(): LogContext { return { requestId: randomUUID(), traceId: randomUUID() } }
 export async function closeApplicationLogging() { await service?.close(); service = undefined }

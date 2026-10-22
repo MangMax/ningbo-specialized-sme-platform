@@ -1,4 +1,5 @@
 import type { LogEvent, LogSummary } from '~~/lib/logging/contract'
+import { errorCodeMissingIsInformative } from '~~/lib/logging/detail-profile'
 import type { BadgeVariants } from '@/components/ui/badge'
 
 export type LogBadgeVariant = NonNullable<BadgeVariants['variant']>
@@ -177,11 +178,12 @@ const hasId = (value: unknown): value is string | number => idText(value).length
 
 /**
  * 失败码只展示安全原码；不翻译成失败原因，也不从 outcome 反推具体码。
- * 成功/已开始/已跳过没有失败码属于预期，其余结果缺失时明确说“未记录”。
+ * 只有已知该 operation 的失败分支应带码，且结果为 failure/denied/timeout
+ * 时才提示“未记录”；partial/no_record/cancelled/unknown 可以合法地没有码。
  */
 export function errorCodeView(row: LogSummary): { text: string; present: boolean; applicable: boolean } {
   if (hasText(row.errorCode)) return { text: row.errorCode, present: true, applicable: true }
-  const applicable = !['success', 'started', 'skipped'].includes(row.outcome)
+  const applicable = errorCodeMissingIsInformative(row)
   return { text: applicable ? '未记录' : '不适用', present: false, applicable }
 }
 
@@ -197,7 +199,10 @@ function httpTarget(row: LogSummary): LogTarget {
 function businessTarget(row: LogSummary, kind: LogTargetKind): LogTarget {
   const parts: string[] = []
   const usedIds: string[] = []
-  if (kind === 'ocr' || kind === 'file') {
+  if (kind === 'file' && row.tus?.uploadId) {
+    parts.push(`上传 ${row.tus.uploadId}`)
+    usedIds.push(row.tus.uploadId)
+  } else if (kind === 'ocr' || kind === 'file') {
     if (row.fileId !== undefined) {
       parts.push(`文件 ${row.fileId}`)
       usedIds.push(String(row.fileId))

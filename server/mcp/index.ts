@@ -7,6 +7,7 @@ import { currentQualifiedRpcError } from '../utils/current-qualified-filter'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler, getMcpTools } from '@nuxtjs/mcp-toolkit/server'
 import { requestLogContext } from '../../lib/logging'
+import { applyMcpLogMetadata } from '../utils/mcp-log-context'
 import { logSemanticOperation, semanticErrorCode } from '../utils/semantic-operation-log'
 import {
   MCP_WRITE_TOOLS,
@@ -140,12 +141,16 @@ export default defineMcpHandler({
 
     if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
       const body = await readBody(event, { strict: false }).catch(() => undefined)
+      const knownTools = new Set((await getMcpTools()).flatMap(def => typeof def.name === 'string' ? [def.name] : []))
+      // One place knows the actual initialize body and the static registry; the
+      // toolkit's evlog metadata remains the transport/method source of truth.
+      applyMcpLogMetadata(event, body, knownTools)
       const tool = body?.method === 'tools/call' ? body?.params?.name : undefined
       if (LOG_TOOLS.has(tool)) {
         event.context._evlogShouldEmit = false
       } else if (typeof tool === 'string') {
         // Match a static registered name; unknown client-supplied names never enter logs.
-        operation = (await getMcpTools()).some(def => def.name === tool) ? `mcp.tool.${tool}` : 'mcp.tool.unknown'
+        operation = knownTools.has(tool) ? `mcp.tool.${tool}` : 'mcp.tool.unknown'
       } else if (Array.isArray(body) && body.some(entry => entry?.method === 'tools/call' && !LOG_TOOLS.has(entry?.params?.name))) {
         operation = 'mcp.tool.batch'
       }

@@ -531,6 +531,75 @@ await check('390 first screen and long values wrap inside the card without horiz
   return { before, after, firstShot, long, longShot, dialogGroups, focus }
 })
 
+// ---------- 4b) source-specific MCP/TUS detail at both widths ----------
+await check('MCP and TUS details keep source-specific sections and fit at 1280 and 390', async () => {
+  const results = []
+  for (const [width, height] of [[1280, 800], [390, 844]]) {
+    await setViewport(width, height)
+    const slug = width === 1280 ? '1280x800' : '390x844'
+    const sheetExpr = `[...document.querySelectorAll('[role="dialog"]')].find((d) => d.textContent.includes('运行日志详情'))`
+
+    await navigate(filterUrl({ operation: 'mcp.request' }), `document.querySelectorAll('[data-log-detail]').length > 0`)
+    await click('[data-log-detail]')
+    await waitFor(`(() => { const el = ${sheetExpr}; return el && el.textContent.includes('客户端类别（自报）') })()`)
+    await waitFor(`(() => { const el = ${sheetExpr}; if (!el) return false; const r = el.getBoundingClientRect(); return r.left >= -1 && r.right <= innerWidth + 1 })()`)
+    const mcp = await evaluate(`(() => {
+      const el = ${sheetExpr}
+      const rect = el.getBoundingClientRect()
+      return {
+        groups: [...el.querySelectorAll('h3')].map((h) => h.textContent.trim()),
+        text: el.textContent,
+        sheet: { left: rect.left, right: rect.right, width: rect.width },
+        page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }
+      }
+    })()`)
+    const mcpShot = await shot(`browser-${width === 1280 ? 'desktop' : 'mobile'}-mcp-detail-${slug}.png`)
+    assert.deepEqual(mcp.groups, ['基本信息', '目标与对象', '结果与计数', 'MCP 调用', '关联标识'])
+    assert.ok(mcp.text.includes('Cursor（cursor，自报）'))
+    assert.ok(mcp.text.includes('2025-06-18（客户端声明）'))
+    assert.ok(mcp.text.includes('不是鉴权身份'))
+    assert.ok(!mcp.text.includes('文件编号'))
+    assert.ok(!mcp.text.includes('页码'))
+    assert.equal(mcp.page.scrollWidth, mcp.page.clientWidth)
+    assert.ok(mcp.sheet.width <= width)
+    await evaluate(`(() => { const el = ${sheetExpr}; el?.querySelector(':scope > button')?.click() })()`)
+    await waitFor(`!(${sheetExpr})`)
+
+    await navigate(filterUrl({ operation: 'file.upload' }), `document.querySelectorAll('[data-log-detail]').length > 0`)
+    await click('[data-log-detail]')
+    await waitFor(`(() => { const el = ${sheetExpr}; return el && el.textContent.includes('上传（TUS）') })()`)
+    await waitFor(`(() => { const el = ${sheetExpr}; if (!el) return false; const r = el.getBoundingClientRect(); return r.left >= -1 && r.right <= innerWidth + 1 })()`)
+    const tus = await evaluate(`(() => {
+      const el = ${sheetExpr}
+      const rect = el.getBoundingClientRect()
+      return {
+        groups: [...el.querySelectorAll('h3')].map((h) => h.textContent.trim()),
+        text: el.textContent,
+        sheet: { left: rect.left, right: rect.right, width: rect.width },
+        page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }
+      }
+    })()`)
+    const tusShot = await shot(`browser-${width === 1280 ? 'desktop' : 'mobile'}-tus-detail-${slug}.png`)
+    assert.deepEqual(tus.groups, ['基本信息', '目标与对象', '结果与计数', '上传（TUS）'])
+    assert.ok(tus.text.includes('0123456789abcdef0123456789abcdef'))
+    assert.ok(tus.text.includes('已完成（completed）'))
+    assert.ok(tus.text.includes('声明总量（字节）'))
+    assert.ok(!tus.text.includes('文件编号'))
+    assert.ok(!tus.text.includes('页码'))
+    assert.equal(tus.page.scrollWidth, tus.page.clientWidth)
+    assert.ok(tus.sheet.width <= width)
+    await evaluate(`(() => {
+      const el = ${sheetExpr}
+      el?.querySelector(':scope > button')?.click()
+    })()`)
+    await waitFor(`!(${sheetExpr})`)
+    const focus = await evaluate(`document.activeElement?.dataset?.logDetail ?? null`)
+    assert.ok(focus)
+    results.push({ width, mcp, tus, mcpShot, tusShot, focus })
+  }
+  return results
+})
+
 // ---------- 5) real normal HTTP event ----------
 await check('real 200 /api/health event renders method, route, status and neutral failure code', async () => {
   await setViewport(1280, 800)

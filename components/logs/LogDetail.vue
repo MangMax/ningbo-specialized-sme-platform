@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { clientRequestReference } from '~~/lib/client-logging/request-reference'
 import type { LogEvent, LogSummary } from '~~/lib/logging/contract'
+import { detailFieldValue, detailProfile } from '~~/lib/logging/detail-profile'
 import { logBrowserHeaders, logErrorMessage, useLogRead } from '~/composables/useLogRead'
 import {
   describeLogRow,
@@ -62,21 +63,58 @@ const fieldLabels: Record<string, string> = {
   auditId: '审计引用',
   receiptId: '回执引用',
   parentEventId: '上级事件',
-  untrustedRelatedRequestId: '关联请求（客户端声称，UNTRUSTED）'
+  untrustedRelatedRequestId: '关联请求（客户端声称，UNTRUSTED）',
+  'mcp.transport': 'MCP 传输',
+  'mcp.sessionMode': 'MCP 会话模式',
+  'mcp.rpcMethod': 'JSON-RPC 方法',
+  'mcp.tool': 'MCP 工具',
+  'mcp.clientName': '客户端类别（自报）',
+  'mcp.clientVersion': '客户端版本（自报）',
+  'mcp.protocolVersionRequested': '协议版本（初始化请求声明）',
+  'tus.uploadId': '上传标识',
+  'tus.phase': '上传阶段',
+  'tus.method': '上传方法',
+  'tus.size': '声明总量（字节）',
+  'tus.offset': '已接收（字节）'
 }
-/** 详情按「基本信息 / 目标与对象 / 结果与计数 / 关联标识」分组；缺失显示未记录。 */
-const groupDefs: { title: string; keys: readonly string[] }[] = [
-  { title: '基本信息', keys: ['id', 'timestamp', 'source', 'level', 'operation'] },
-  { title: '目标与对象', keys: ['httpMethod', 'httpRoute', 'fileId', 'page', 'batchId', 'resourceType', 'resourceId'] },
-  { title: '结果与计数', keys: ['outcome', 'durationMs', 'statusCode', 'errorCode', 'counts'] },
-  {
-    title: '关联标识',
-    keys: ['requestId', 'traceId', 'taskId', 'auditId', 'receiptId', 'parentEventId', 'untrustedRelatedRequestId']
-  }
-]
+const MCP_CLIENT_LABELS: Record<string, string> = {
+  claude: 'Claude',
+  cursor: 'Cursor',
+  codex: 'Codex',
+  vscode: 'Visual Studio Code',
+  cline: 'Cline',
+  continue: 'Continue',
+  inspector: 'MCP Inspector',
+  other: '其他/未知'
+}
+const TUS_PHASE_LABELS: Record<string, string> = {
+  created: '已创建',
+  completed: '已完成',
+  'request-failed': '请求失败'
+}
 watch(key, () => {
   notice.value = ''
 })
+function copyMcp(value: LogEvent['mcp']): Record<string, unknown> | undefined {
+  if (!value) return undefined
+  const out: Record<string, unknown> = {}
+  for (const key of ['transport', 'sessionMode', 'rpcMethod', 'tool', 'protocolVersionRequested'] as const)
+    if (value[key] !== undefined) out[key] = value[key]
+  if (value.client) {
+    const client: Record<string, unknown> = {}
+    for (const key of ['name', 'version', 'trust', 'capturedAt'] as const)
+      if (value.client[key] !== undefined) client[key] = value.client[key]
+    out.client = client
+  }
+  return out
+}
+function copyTus(value: LogEvent['tus']): Record<string, unknown> | undefined {
+  if (!value) return undefined
+  const out: Record<string, unknown> = {}
+  for (const key of ['uploadId', 'phase', 'method', 'size', 'offset'] as const)
+    if (value[key] !== undefined) out[key] = value[key]
+  return out
+}
 // Copy only the foundation's event projection, even if a future response adds fields.
 const safe = computed<Record<string, unknown> | null>(() => {
   if (!current.value || !data.value) return null
@@ -105,9 +143,13 @@ const safe = computed<Record<string, unknown> | null>(() => {
     'receiptId',
     'parentEventId'
   ] as const
-  const event = Object.fromEntries(
+  const event: Record<string, unknown> = Object.fromEntries(
     fields.filter((k) => data.value![k] !== undefined).map((k) => [k, data.value![k]])
   )
+  const mcp = copyMcp(data.value.mcp)
+  if (mcp) event.mcp = mcp
+  const tus = copyTus(data.value.tus)
+  if (tus) event.tus = tus
   const reference =
     data.value.source === 'client'
       ? clientRequestReference(data.value.untrustedRelatedRequestId)
@@ -125,6 +167,13 @@ const displayValue = (name: string, value: unknown): string => {
     const label = operationLabel(String(value))
     return label ? `${label}（${String(value)}）` : String(value)
   }
+  if (name === 'mcp.sessionMode') return value === 'stateless' ? '无会话（stateless）' : String(value)
+  if (name === 'mcp.clientName')
+    return `${MCP_CLIENT_LABELS[String(value)] ?? '其他/未知'}（${String(value)}，自报）`
+  if (name === 'mcp.clientVersion') return `${String(value)}（自报）`
+  if (name === 'mcp.protocolVersionRequested') return `${String(value)}（客户端声明）`
+  if (name === 'tus.phase') return `${TUS_PHASE_LABELS[String(value)] ?? String(value)}（${String(value)}）`
+  if (name === 'tus.size' || name === 'tus.offset') return `${String(value)} 字节`
   return typeof value === 'object' ? JSON.stringify(value) : String(value)
 }
 const groups = computed(() => {
@@ -139,14 +188,18 @@ const groups = computed(() => {
     ...data.value,
     untrustedRelatedRequestId: validatedReference
   } as LogSummary).target
-  return groupDefs.map((group) => ({
-    title: group.title,
-    showTarget: group.title === '目标与对象',
+  return detailProfile(data.value).map((section) => ({
+    title: section.title,
+    showTarget: section.showTarget === true,
+    note: section.note,
     targetText: target.text,
     targetMissing: target.missing,
     targetUntrusted: target.untrusted,
-    rows: group.keys.map((name) => {
-      const value = event[name]
+    rows: section.fields.map((name) => {
+      const value =
+        name === 'untrustedRelatedRequestId'
+          ? validatedReference
+          : detailFieldValue(data.value!, name)
       return {
         name,
         label: fieldLabels[name] ?? name,
@@ -211,6 +264,14 @@ async function copy() {
                   >· UNTRUSTED</span
                 >
               </TableCell>
+            </TableRow>
+            <TableRow v-if="group.note">
+              <TableCell class="text-muted-foreground w-[168px] align-top whitespace-normal"
+                >说明</TableCell
+              >
+              <TableCell class="text-muted-foreground whitespace-normal text-[13px]">{{
+                group.note
+              }}</TableCell>
             </TableRow>
             <TableRow v-for="row in group.rows" :key="row.name">
               <TableCell class="text-muted-foreground w-[168px] align-top whitespace-normal">{{

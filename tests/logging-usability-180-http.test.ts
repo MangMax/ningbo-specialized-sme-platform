@@ -6,6 +6,8 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
 import { useDb } from '../db/client'
 import { APPLICATION_LOG_ROUTES } from '../lib/logging/route-templates'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
 /**
  * #180 actual built Nuxt seam: a fresh synthetic business DB and an independent
@@ -74,6 +76,8 @@ beforeAll(async () => {
   child.stdout!.on('data', chunk => { output += chunk.toString() })
   child.stderr!.on('data', chunk => { output += chunk.toString() })
   mkdirSync(logDir, { recursive: true })
+  mkdirSync(join(root, 'files'), { recursive: true })
+  mkdirSync(join(root, 'incoming'), { recursive: true })
   await waitForHttp(url('/api/health'), { child, timeoutMs: 120_000 })
 }, 360_000)
 
@@ -139,6 +143,86 @@ it('records the MCP transport template and exposes the same facts through MCP', 
   expect(rpc.status).toBe(200)
   const payload = rpc.body.result.structuredContent ?? JSON.parse(rpc.body.result.content[0].text)
   expect(payload.rows[0]).toMatchObject({ httpMethod: 'POST', httpRoute: '/mcp' })
+})
+
+it('captures real MCP SDK initialize clientInfo once and keeps stateless tool calls unattributed', async () => {
+  const client = new Client({ name: 'cursor-vscode', version: '0.49.1' }, { capabilities: {} })
+  const transport = new StreamableHTTPClientTransport(new URL(url('/mcp')), {
+    requestInit: { headers: { accept: 'application/json, text/event-stream' } },
+  })
+  try {
+    await client.connect(transport)
+    const tools = await client.listTools()
+    expect(tools.tools.some(tool => tool.name === 'get_platform_capabilities')).toBe(true)
+    const result = await client.callTool({ name: 'get_platform_capabilities', arguments: {} })
+    expect(result.isError).not.toBe(true)
+
+    let rows: any[] = []
+    for (let i = 0; i < 80; i++) {
+      rows = await logs('source=mcp&limit=100')
+      if (rows.some(row => row.mcp?.client?.name === 'cursor') && rows.some(row => row.operation === 'mcp.tool.get_platform_capabilities')) break
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    const initialized = rows.find(row => row.operation === 'mcp.request' && row.mcp?.rpcMethod === 'initialize')
+    expect(initialized).toMatchObject({
+      source: 'mcp', operation: 'mcp.request', mcp: {
+        transport: 'streamable-http', sessionMode: 'stateless', rpcMethod: 'initialize',
+        client: { name: 'cursor', version: '0.49.1', trust: 'self-reported', capturedAt: 'initialize' },
+        protocolVersionRequested: expect.stringMatching(/^202[45]-/),
+      },
+    })
+    expect(JSON.stringify(rows)).not.toContain('cursor-vscode')
+    expect(JSON.stringify(rows)).not.toContain('mcp-session-id')
+    const toolEvent = rows.find(row => row.operation === 'mcp.tool.get_platform_capabilities')!
+    expect(toolEvent).toMatchObject({
+      source: 'mcp', mcp: { transport: 'streamable-http', sessionMode: 'stateless', rpcMethod: 'tools/call', tool: 'get_platform_capabilities' },
+    })
+    expect(toolEvent.mcp?.client).toBeUndefined()
+    const detailEvent = await detail(toolEvent.id)
+    expect(detailEvent.mcp).toMatchObject({ rpcMethod: 'tools/call', tool: 'get_platform_capabilities' })
+    expect(detailEvent.mcp?.client).toBeUndefined()
+  } finally {
+    await transport.close().catch(() => {})
+    await client.close().catch(() => {})
+  }
+})
+
+it('records a real tus create and final PATCH with the server upload id and per-request phase', async () => {
+  const data = 'hello'
+  const metadata = [
+    `source ${Buffer.from('jxj').toString('base64')}`,
+    `kind ${Buffer.from('announcement').toString('base64')}`,
+    `year ${Buffer.from('2026').toString('base64')}`,
+    `batch ${Buffer.from('1').toString('base64')}`,
+    `filename ${Buffer.from('tus-log-180.txt').toString('base64')}`,
+  ].join(',')
+  const tus = { 'Tus-Resumable': '1.0.0' }
+  const created = await call('/api/uploads', {
+    method: 'POST',
+    headers: { ...tus, 'Upload-Length': String(data.length), 'Upload-Metadata': metadata },
+  })
+  expect(created.status).toBe(201)
+  const id = (created.headers.get('location') ?? '').split('/').filter(Boolean).pop()!
+  expect(id).toMatch(/^[a-f0-9]{32}$/)
+  const createdRows = await waitLog(created.requestId)
+  expect(createdRows.find(row => row.operation === 'file.upload')).toMatchObject({
+    source: 'file', outcome: 'started', statusCode: 201,
+    tus: { uploadId: id, phase: 'created', method: 'POST', size: data.length, offset: 0 },
+  })
+
+  const finished = await call(`/api/uploads/${id}`, {
+    method: 'PATCH',
+    headers: { ...tus, 'Upload-Offset': '0', 'Content-Type': 'application/offset+octet-stream' },
+    body: data,
+  })
+  expect(finished.status).toBe(204)
+  expect(decodeURIComponent(finished.headers.get('x-upload-path') ?? '')).toBe('jxj/announcement/2026/1/tus-log-180.txt')
+  const finishedRows = await waitLog(finished.requestId)
+  expect(finishedRows.find(row => row.operation === 'file.upload')).toMatchObject({
+    source: 'file', outcome: 'success', statusCode: 204,
+    tus: { uploadId: id, phase: 'completed', method: 'PATCH', size: data.length, offset: data.length },
+  })
+  expect(JSON.stringify({ createdRows, finishedRows })).not.toContain('tus-log-180.txt')
 })
 
 it('keeps method but reports no template for an unmatched route', async () => {

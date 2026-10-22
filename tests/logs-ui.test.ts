@@ -529,6 +529,12 @@ it('describes each source with its real business object, accurate outcome and ra
     text: '文件 12 · 第 3 页',
     kind: 'file'
   })
+  expect(
+    describeLogRow(makeLogRow({
+      source: 'file', operation: 'file.upload',
+      tus: { uploadId: '0123456789abcdef0123456789abcdef', phase: 'created', method: 'POST', size: 10, offset: 0 }
+    })).target
+  ).toMatchObject({ text: '上传 0123456789abcdef0123456789abcdef', missing: false })
   expect(describeLogRow(makeLogRow({ source: 'ocr', fileId: 12, page: 3, counts: { done: 2, total: 3 } })).target.text).toBe(
     '文件 12 · 第 3 页 · 已处理 2/3'
   )
@@ -563,12 +569,17 @@ it('describes each source with its real business object, accurate outcome and ra
     describeLogRow(makeLogRow({ outcome: 'failure', errorCode: 'job_failed' }))
   ).toMatchObject({ errorCodeText: 'job_failed', errorCodePresent: true, errorCodeApplicable: true })
   expect(describeLogRow(makeLogRow({ outcome: 'failure' }))).toMatchObject({
+    errorCodeText: '不适用',
+    errorCodePresent: false,
+    errorCodeApplicable: false
+  })
+  expect(describeLogRow(makeLogRow({ source: 'task', operation: 'task.finished', outcome: 'failure' }))).toMatchObject({
     errorCodeText: '未记录',
     errorCodePresent: false,
     errorCodeApplicable: true
   })
   expect(describeLogRow(makeLogRow({ outcome: 'partial' }))).toMatchObject({
-    errorCodeText: '未记录',
+    errorCodeText: '不适用',
     errorCodePresent: false
   })
   expect(describeLogRow(makeLogRow({ outcome: 'success' }))).toMatchObject({
@@ -579,7 +590,8 @@ it('describes each source with its real business object, accurate outcome and ra
   expect(
     describeLogRow(makeLogRow({ source: 'client', outcome: 'failure', errorCode: 'interaction' }))
   ).toMatchObject({ errorCodeText: 'interaction', errorCodePresent: true })
-  expect(errorCodeView(makeLogRow({ outcome: 'failure' })).text).toBe('未记录')
+  expect(errorCodeView(makeLogRow({ outcome: 'failure' })).text).toBe('不适用')
+  expect(errorCodeView(makeLogRow({ source: 'task', operation: 'task.finished', outcome: 'failure' })).text).toBe('未记录')
   expect(
     describeLogRow(makeLogRow({ source: 'worker', operation: 'enterprise_read.finished', resourceType: 'enterprise', resourceId: 42 }))
       .target.text
@@ -714,7 +726,7 @@ it('renders independent desktop columns and keeps long operation, route, outcome
   const imported = bodyRows[2]!.findAll('td')
   expect(imported[4]!.text()).toBe('批次 batch-180 · 已处理 3/5 · 失败 1')
   expect(imported[5]!.text()).toBe('部分完成')
-  expect(imported[6]!.text()).toBe('未记录')
+  expect(imported[6]!.text()).toBe('不适用')
   const client = bodyRows[3]!.findAll('td')
   expect(client[4]!.text()).toContain('客户端声称 original-180')
   expect(client[4]!.text()).toContain('UNTRUSTED')
@@ -722,7 +734,7 @@ it('renders independent desktop columns and keeps long operation, route, outcome
   const oldTask = bodyRows[4]!.findAll('td')
   expect(oldTask[4]!.text()).toBe('任务 task-9')
   expect(oldTask[5]!.text()).toBe('结果未知')
-  expect(oldTask[6]!.text()).toBe('未记录')
+  expect(oldTask[6]!.text()).toBe('不适用')
   expect(oldTask[7]!.text()).toBe('未记录')
   expect(oldTask[8]!.text()).toBe('—')
 })
@@ -864,4 +876,80 @@ it('keeps the current cursor page and drafts across log and configuration tabs w
   await flushPromises()
   expect((wrapper.get('#log-retention-days').element as HTMLInputElement).value).toBe('8')
   expect(calls.filter(c => c.options.method && c.options.method !== 'GET')).toHaveLength(0)
+})
+
+it('shows MCP self-report only in the MCP section and keeps unrelated source fields out', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const uploadId = '0123456789abcdef0123456789abcdef'
+  const event = {
+    id: '00000000-0000-4000-8000-000000000401',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'info',
+    source: 'mcp',
+    operation: 'mcp.request',
+    outcome: 'success',
+    httpMethod: 'POST',
+    httpRoute: '/mcp',
+    statusCode: 200,
+    mcp: {
+      transport: 'streamable-http',
+      sessionMode: 'stateless',
+      rpcMethod: 'initialize',
+      client: { name: 'cursor', version: '0.49.1', trust: 'self-reported', capturedAt: 'initialize' },
+      protocolVersionRequested: '2025-06-18'
+    }
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('MCP 调用')
+  expect(wrapper.text()).toContain('客户端类别（自报）')
+  expect(wrapper.text()).toContain('Cursor')
+  expect(wrapper.text()).toContain('协议版本（初始化请求声明）')
+  expect(wrapper.text()).toContain('2025-06-18')
+  expect(wrapper.text()).toContain('不是鉴权身份')
+  expect(wrapper.text()).not.toContain('文件编号')
+  expect(wrapper.text()).not.toContain('页码')
+  expect(wrapper.text()).not.toContain('批次标识')
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(writeText.mock.calls[0]![0]).mcp).toMatchObject({
+    rpcMethod: 'initialize',
+    client: { name: 'cursor', version: '0.49.1', trust: 'self-reported' }
+  })
+  expect(JSON.stringify(JSON.parse(writeText.mock.calls[0]![0]))).not.toContain(uploadId)
+})
+
+it('shows a dedicated TUS upload detail without pretending fileId/page are registered', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const uploadId = '0123456789abcdef0123456789abcdef'
+  const event = {
+    id: '00000000-0000-4000-8000-000000000402',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'info',
+    source: 'file',
+    operation: 'file.upload',
+    outcome: 'success',
+    statusCode: 204,
+    tus: { uploadId, phase: 'completed', method: 'PATCH', size: 2048, offset: 2048 }
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('上传（TUS）')
+  expect(wrapper.text()).toContain('上传标识')
+  expect(wrapper.text()).toContain(uploadId)
+  expect(wrapper.text()).toContain('声明总量（字节）')
+  expect(wrapper.text()).toContain('2048 字节')
+  expect(wrapper.text()).not.toContain('文件编号')
+  expect(wrapper.text()).not.toContain('页码')
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(writeText.mock.calls[0]![0]).tus).toEqual(event.tus)
 })
