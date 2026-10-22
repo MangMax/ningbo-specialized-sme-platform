@@ -539,7 +539,8 @@ it('reviews only changed collection rules, sends changed maps, and refreshes eff
   expect(switchState()).toBe('unchecked')
   expect(wrapper.get('[aria-label="MCP 调用的最低日志级别"]').text()).toBe('警告')
   expect(wrapper.text()).toContain('日志配置已保存')
-  expect(wrapper.text()).toContain('不会删除已有历史日志')
+  expect(wrapper.text()).toContain('采集开关与级别不删除已有记录')
+  expect(wrapper.text()).toContain('保留策略调整可能触发轮转')
   vi.unstubAllGlobals()
 })
 

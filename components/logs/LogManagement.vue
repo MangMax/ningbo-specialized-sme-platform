@@ -2,10 +2,10 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { LOG_LEVELS } from '~~/lib/logging/contract'
 import type {
+  LOG_INTEGRATIONS,
   LogCollection,
   LogCollectionRule,
   LogFilter,
-  LogOrigin,
   LogPolicy,
   LogPolicyPatch
 } from '~~/lib/logging/contract'
@@ -43,12 +43,8 @@ import {
   DialogFooter
 } from '@/components/ui/dialog'
 
-type IntegrationMeta = {
-  key: LogOrigin['integration']
-  label: string
-  state: 'supported' | 'unwired'
-  configurable: boolean
-}
+/** 目录项由后端常量导出；这里只取它的元素类型，不另造只含 supported 的窄类型。 */
+type IntegrationEntry = (typeof LOG_INTEGRATIONS)[number]
 /**
  * 服务端实际响应：新后端带 collection/catalog/revision，旧后端只有 legacy
  * retention/maxBytes。后两项保持可选，旧界面仍能保留清理能力，且不会显示
@@ -56,7 +52,7 @@ type IntegrationMeta = {
  */
 type PolicyView = LogPolicy & {
   collection?: LogCollection
-  catalog?: { integrations: readonly IntegrationMeta[] }
+  catalog?: { integrations: readonly IntegrationEntry[] }
   revision?: number
   storageBytes: number
   pruned: number
@@ -342,7 +338,7 @@ async function confirm() {
       })
       if (active)
         notice.value =
-          '日志配置已保存。更改对后续日志批次和待处理队列生效；不会删除已有历史日志。'
+          '日志配置已保存。更改对后续日志批次和待处理队列生效；采集开关与级别不删除已有记录，保留策略调整可能触发轮转。'
       if (active) {
         // PATCH 成功响应就是真实生效值；先落到草稿，finally 再刷新概览与真实值。
         if (result) {
@@ -399,8 +395,8 @@ async function confirm() {
           <div class="flex flex-col gap-1">
             <h2 id="log-sources-heading" class="text-sm font-medium">来源采集</h2>
             <p class="text-muted-foreground text-[13px] leading-5">
-              任一来源关闭后停止采集；技术集成与来源必须同时开启。最低级别取两处更严格者，不删除历史日志。
-              更改只对后续批次和待处理队列生效。
+              任一来源关闭后停止采集；技术集成与来源必须同时开启。最低级别取两处更严格者。
+              采集规则不删除已有记录，保存只影响后续批次与待处理队列。
             </p>
           </div>
           <FieldGroup class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
@@ -599,7 +595,7 @@ async function confirm() {
               <p class="text-muted-foreground text-[13px] leading-5">
                 <template v-if="!hasChanges">当前配置与已生效配置相同，无需核对。</template>
                 <template v-else
-                  >只提交有差异的规则，其余规则保持不变；保存后生效，不删除历史日志。</template
+                  >只提交有差异的规则，其余规则保持不变；采集规则不删除已有记录，保留策略调整可能触发轮转。</template
                 >
               </p>
             </div>
@@ -650,7 +646,7 @@ async function confirm() {
           }}</DialogTitle
           ><DialogDescription>{{
             review?.kind === 'config'
-              ? '保存后影响后续日志批次和待处理队列的采集，不删除已有历史日志。'
+              ? '保存后影响后续日志批次和待处理队列的采集；采集规则不删除已有记录，保留策略调整可能触发轮转。'
               : '此操作可能永久删除运行日志。业务审计、回执、源文件和任务产物不在清理范围。'
           }}</DialogDescription></DialogHeader
         >
