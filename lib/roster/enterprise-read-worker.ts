@@ -1,3 +1,4 @@
+import { appLog, initializeWorkerLogging, closeApplicationLogging, type LogContext, type LogInput } from '../logging/index'
 /** Dedicated native SQLite executor. This entry has no Nitro runtime dependency. */
 import { getHeapStatistics } from 'node:v8'
 import { realpathSync, statSync } from 'node:fs'
@@ -12,7 +13,7 @@ import { listRosterDifferences } from './difference-list'
 import { readWholeComparisonSummary } from '../comparison-summary-read'
 import { captureReaderError, readOwnerIdentity, sameReadOwner, type RecognitionReadInput, type DifferenceReadInput, type SummaryReadInput } from './offmain-read-protocol'
 
-export type EnterpriseReadRequest = { id: number; dbPath: string } & (
+export type EnterpriseReadRequest = { id: number; dbPath: string; logContext?: LogContext } & (
   { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | { operation: 'current-qualified'; filter: CurrentQualifiedFilter } | RecognitionReadInput | DifferenceReadInput | SummaryReadInput
 )
 const send = (message: object) => new Promise<void>((resolve, reject) => {
@@ -68,8 +69,11 @@ function observeConnection(client: Database.Database) {
   }) as typeof prepare
 }
 function closeConnection() { connection?.close(); connection=undefined; identity=undefined }
-process.on('disconnect', () => { closeConnection(); process.exit(0) })
+initializeWorkerLogging()
+process.on('disconnect', () => { closeConnection(); void closeApplicationLogging().finally(() => process.exit(0)) })
 process.on('message', async (request: EnterpriseReadRequest) => {
+  let outcome: LogInput['outcome'] = 'failure'
+  appLog({ source: 'worker', operation: 'enterprise_read.execute', outcome: 'started' }, request.logContext)
   const beforeHeap = process.memoryUsage().heapUsed
   readPeakHeap = beforeHeap
   readPeakRss = readPeakExternal = 0
@@ -124,10 +128,12 @@ process.on('message', async (request: EnterpriseReadRequest) => {
     }
     const metrics = { beforeHeap, heap: Math.max(readPeakHeap, projectedHeap), external: readPeakExternal, rss: readPeakRss, maxRss: process.resourceUsage().maxRSS * 1024, bytes, transferredBytes: bytes, chunkBytes: 65536, readMs: serializationStarted - started, connectionMs, projectionMs, ...(measureDetailSql ? { sqlMs: readSqlMs, sqlCalls: readSqlCalls } : {}), serializeMs: performance.now() - serializationStarted }
     await send({ type: 'result', id: request.id, found: result != null, metrics })
+    outcome = 'success'
   } catch (error) {
     closeConnection()
     if (process.connected) await send({ type: 'failure', id: request.id, code: (error as { code?: string }).code ?? 'enterprise_read_failed' })
   } finally {
+    appLog({ source: 'worker', operation: 'enterprise_read.execute', outcome, durationMs: performance.now() - started, errorCode: outcome === 'failure' ? 'enterprise_read_execution_failed' : undefined }, request.logContext)
     if (connection?.inTransaction) connection.exec('ROLLBACK')
   }
 })

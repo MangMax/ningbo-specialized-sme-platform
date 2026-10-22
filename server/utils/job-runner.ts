@@ -1,8 +1,9 @@
+import { appLog, type LogContext } from '../../lib/logging'
 import { cleanupCurrentExports } from './current-export-artifact'
 import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { isTerminalJobState, newJobId, type JobState } from '../../lib/job'
+import { isTerminalJobState, makeProgress, newJobId, type JobState } from '../../lib/job'
 import {
   createJob,
   finishJob,
@@ -52,6 +53,7 @@ type Db = BetterSQLite3Database<typeof schema>
  * 这样 handler 是纯异步函数,能在测试里直接跑,不依赖请求上下文。
  */
 export interface JobContext {
+  readonly logContext?: Readonly<LogContext>
   readonly jobId: string
   /** 文件库根(绝对路径)。 */
   readonly filesDir: string
@@ -168,6 +170,7 @@ export function clearJobSpecs(): void {
 // ---------------------------------------------------------------------------
 
 interface QueueEntry {
+  logContext: Readonly<LogContext>
   run: NonNullable<JobSpec['run']>
   jobId: string
   kind: string
@@ -177,6 +180,7 @@ interface QueueEntry {
 
 const queue: QueueEntry[] = []
 const activeJobs = new Map<string, string>()
+const activeLogContexts = new Map<string, Readonly<LogContext>>()
 const MAX_CONCURRENT_OCR_JOBS = 4
 
 /**
@@ -223,6 +227,8 @@ export interface SubmitInput {
   filesDir: string
   /** 显式指定 id(测试用)。默认现生成一个 ULID。 */
   id?: string
+  /** Captured IDs only; never persisted in job params or receipts. */
+  logContext?: LogContext
 }
 
 /**
@@ -258,9 +264,10 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
     kind: input.kind,
     params: input.params,
     progress: { done: 0, total },
+    logContext: input.logContext,
   })
 
-  queue.push({ run, jobId: row.id, kind: input.kind, db, filesDir: input.filesDir })
+  queue.push({ run, jobId: row.id, kind: input.kind, db, filesDir: input.filesDir, logContext: Object.freeze({ ...input.logContext, taskId: row.id }) })
   drainQueue()
   return row
 }
@@ -271,13 +278,14 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
  * 依赖捕获（`prepare`）抛错时**不重开**：重开就是丢掉旧终态与旧 `result`，
  * 而这一次执行连开始都没开始。调用方拿到异常（带它的 `statusCode`）后如实拒绝，
  * 已完成/部分结果原样留在任务里。 */
-export function requeueFinishedJob(db: Db, input: { id: string; kind: string; params: Record<string, unknown>; filesDir: string }): boolean {
+export function requeueFinishedJob(db: Db, input: { id: string; kind: string; params: Record<string, unknown>; filesDir: string; logContext?: LogContext }): boolean {
   const spec = getJobSpec(input.kind)
   if (!spec?.run) return false
   const run = spec.prepare?.(input.params, db) ?? spec.run
   const row = reopenJob(db, input.id, input.kind, input.params)
   if (!row) return false
-  queue.push({ run, jobId: row.id, kind: row.kind, db, filesDir: input.filesDir })
+  appLog({ source: 'task', operation: 'task.requeued', outcome: 'started', taskId: row.id }, input.logContext)
+  queue.push({ run, jobId: row.id, kind: row.kind, db, filesDir: input.filesDir, logContext: Object.freeze({ ...input.logContext, taskId: row.id }) })
   drainQueue()
   return true
 }
@@ -303,8 +311,10 @@ function drainQueue(): void {
 
       const entry = queue.shift()!
       activeJobs.set(entry.jobId, entry.kind)
+      activeLogContexts.set(entry.jobId, entry.logContext)
       void runOne(entry).finally(() => {
         activeJobs.delete(entry.jobId)
+        activeLogContexts.delete(entry.jobId)
         notifyIdleIfReady()
         drainQueue()
       })
@@ -320,29 +330,37 @@ function notifyIdleIfReady(): void {
 }
 
 async function runOne(entry: QueueEntry): Promise<void> {
-  const { db, jobId, filesDir } = entry
+  const { db, jobId, filesDir, logContext } = entry
   try {
     // 入队后被取消:队列里已经没它了(取消时就地摘掉了),这里是兜底。
     if (cancelRequested.has(jobId)) {
-      finishJob(db, jobId, { state: 'cancelled', error: '任务在开始前被取消' })
+      finishJob(db, jobId, { state: 'cancelled', error: '任务在开始前被取消' }, logContext)
       return
     }
 
     // 只有仍是 queued 才认领。对账标失败 / 被取消的行在这里被挡住,不会白跑。
-    const running = markJobRunning(db, jobId)
+    const running = markJobRunning(db, jobId, logContext)
     if (!running) return
 
     const spec = getJobSpec(running.kind)
     if (!spec?.run) {
-      finishJob(db, jobId, { state: 'failed', error: `任务种类尚未接入:${running.kind}` })
+      finishJob(db, jobId, { state: 'failed', error: `任务种类尚未接入:${running.kind}` }, logContext)
       return
     }
 
+    let lastProgress = -Infinity
     const ctx: JobContext = {
+      logContext,
       jobId,
       filesDir,
       db,
-      progress: (done, total) => setJobProgress(db, jobId, { done, total }),
+      progress: (done, total) => {
+        setJobProgress(db, jobId, { done, total })
+        if (performance.now() - lastProgress >= 1000) {
+          lastProgress = performance.now()
+          appLog({ source: 'task', operation: 'task.progress', outcome: 'started', taskId: jobId, counts: done === 0 && total === 0 ? { done, total } : makeProgress(done, total) }, logContext)
+        }
+      },
       cancelled: () => cancelRequested.has(jobId),
     }
 
@@ -358,10 +376,10 @@ async function runOne(entry: QueueEntry): Promise<void> {
       error: completion.cancelled
         ? '已按取消请求停止(尽力而为:取消在任务的下一个检查点生效),已完成的部分见 result'
         : (completion.error ?? null),
-    })
+    }, logContext)
   } catch (error) {
     // 抛出的执行没有新产出:保留已检查点的 result,只记失败原因(见 `finishJob`)。
-    finishJob(db, jobId, { state: 'failed', error: messageOf(error) })
+    finishJob(db, jobId, { state: 'failed', error: messageOf(error) }, logContext)
   } finally {
     cancelRequested.delete(jobId)
   }
@@ -395,7 +413,7 @@ export type CancelOutcome =
  *    它的 `result` 里可能仍带着几份已经做完的产出,这是**正确**的行为,不是漏做。
  *  - **已结束**:取消不生效,如实回报当前状态。
  */
-export function requestJobCancel(db: Db, id: string): CancelOutcome {
+export function requestJobCancel(db: Db, id: string, logContext?: LogContext): CancelOutcome {
   const row = getJob(db, id)
   if (!row) return { ok: false, message: `任务不存在:${id}` }
 
@@ -412,11 +430,13 @@ export function requestJobCancel(db: Db, id: string): CancelOutcome {
   if (row.state === 'queued') {
     // 就地摘掉,免得后台循环还把它捡起来。
     const at = queue.findIndex((e) => e.jobId === id)
+    const submissionContext = at >= 0 ? queue[at]!.logContext : logContext
     if (at >= 0) queue.splice(at, 1)
-    finishJob(db, id, { state: 'cancelled', error: '任务在开始前被取消,未执行' })
+    finishJob(db, id, { state: 'cancelled', error: '任务在开始前被取消,未执行' }, submissionContext)
     return { ok: true, state: 'cancelled', cancelled: true, note: '任务尚在排队,已取消,未执行。' }
   }
 
+  if (!cancelRequested.has(id)) appLog({ source: 'task', operation: 'task.cancel_requested', outcome: 'started', taskId: id }, activeLogContexts.get(id) ?? logContext)
   cancelRequested.add(id)
   return {
     ok: true,
