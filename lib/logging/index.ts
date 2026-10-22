@@ -1,5 +1,6 @@
 import { createLogger, initLogger } from 'evlog'
 import { resolve } from 'node:path'
+import { isMainThread } from 'node:worker_threads'
 import { randomUUID } from 'node:crypto'
 import { createLogService, type LogService } from './service'
 import { applicationLogRedaction, projectEvlog, safeLogEvent } from './privacy'
@@ -7,6 +8,7 @@ import { LOG_DEFAULTS, type LogContext, type LogInput } from './contract'
 export * from './contract'
 export { createLogService } from './service'
 let service: LogService | undefined
+let workerExecution = !isMainThread
 const numberEnv = (name: string, fallback: number) => {
   const value = Number(process.env[name]); return Number.isInteger(value) && value > 0 ? value : fallback
 }
@@ -25,12 +27,13 @@ export function drainApplicationEvent(event: Record<string, unknown>) {
 }
 /** Worker entry points call once, before emitting. Nuxt is initialized by evlog/nuxt instead. */
 export function initializeWorkerLogging() {
+  workerExecution = true
   initLogger({ enabled: true, silent: true, pretty: false, redact: applicationLogRedaction, sampling: { rates: { info: 100, warn: 100, error: 100, debug: 100 } }, drain: ctx => drainApplicationEvent(ctx.event) })
 }
 /** Use this API for explicit lifecycle events in main/worker processes, through evlog's pipeline. */
 export function appLog(input: LogInput, context: LogContext = {}): void {
   try {
-    const safe = safeLogEvent({ ...context, ...input })
+    const safe = safeLogEvent({ ...context, ...input, origin: input.origin ?? { runtime: 'node', integration: 'application', capture: 'manual', ...(workerExecution ? { execution: 'worker' as const } : {}) } })
     const logger = createLogger({ applicationLog: safe })
     logger.emit({ _forceKeep: true })
   } catch { /* Runtime logging must not change business outcome. */ }

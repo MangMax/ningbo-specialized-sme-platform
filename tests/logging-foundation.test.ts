@@ -167,10 +167,10 @@ it('refuses to activate a smaller cap until bounded pruning physically satisfies
     await service.flush()
   }
   const {dispatchLogAction}=await import('../lib/logging/application')
-  const pending=await dispatchLogAction(service,'setPolicy',{retentionDays:7,maxBytes:1048576},true)
+  const pending=await dispatchLogAction(service,'setPolicy',{retentionDays:7,maxBytes:1048576,collection:{integrations:{application:{enabled:false,minLevel:'error'}}}},true)
   expect(pending.status).toBe(409)
   expect(pending.body).toMatchObject({error:{code:'policy_capacity_pending'}})
-  expect((await service.policy()).maxBytes).toBe(536870912)
+  expect(await service.policy()).toMatchObject({maxBytes:536870912,revision:0,collection:{integrations:{application:{enabled:true,minLevel:'debug'}}}})
   const applied=await dispatchLogAction(service,'setPolicy',{retentionDays:7,maxBytes:1048576},true)
   expect(applied.status).toBe(200)
   expect(await service.policy()).toMatchObject({maxBytes:1048576})
@@ -191,19 +191,11 @@ it('bounds byte-pressure drops and explicit bulk clear batches', async () => {
   expect(await service.clear(range)).toEqual({deleted:280,hasMore:false})
 })
 
-it('counts fallback skips across stalled stdout windows while storing every accepted event', async () => {
-  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(1000)
+it('counts worker stdout rate skips while storing every accepted event', async () => {
   const { service } = fixture({ stdout: true })
-  let calls = 0
-  const output = vi.spyOn(process.stdout, 'write').mockImplementation((_line: any, callback?: any) => { calls++; callback?.(); return false })
-  try {
-    for (let i = 0; i < 20; i++) {
-      vi.setSystemTime(1000 + 1100 * i)
-      service.emit({ source: 'system', operation: 'fallback.stall', outcome: 'failure' })
-    }
-  } finally { output.mockRestore() }
-  expect(calls).toBe(1)
-  expect(service.status()).toMatchObject({ accepted: 20, fallbackSkipped: 19, dropped: 0 })
+  for (let i = 0; i < 20; i++) service.emit({ source: 'system', operation: 'fallback.stall', outcome: 'failure' })
+  expect(service.status()).toMatchObject({ accepted: 20, fallbackSkipped: 0, stored: 0 })
   await service.flush()
+  expect(service.status()).toMatchObject({ stored: 20, fallbackSkipped: 10, dropped: 0 })
   expect((await service.list({ operation: 'fallback.stall' })).rows).toHaveLength(20)
 })

@@ -1,6 +1,8 @@
 import { boundedLogOutput } from './output'
 import { Worker } from 'node:worker_threads'
-import { LOG_DEFAULTS, LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogEvent, type LogFilter, type LogInput, type LogPolicy, type LogSummary } from './contract'
+import { LOG_DEFAULTS, LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogEvent, type LogFilter, type LogInput, type LogPolicy, type LogPolicyPatch, type EffectiveLogPolicy, type LogSummary } from './contract'
+import { validateCollection } from './policy'
+import { LOG_INTEGRATIONS } from './contract'
 import { safeLogEvent } from './privacy'
 import { SQLITE_WORKER } from './sqlite-worker'
 import { resolveLoggingSqliteModule } from './sqlite-module-location'
@@ -17,11 +19,14 @@ export interface LogServiceOptions {
   stdout?: boolean
 }
 const invalid = () => { throw new LogServiceError('invalid_log_input', 400) }
-export function validatePolicy(input: unknown): LogPolicy {
-  if (!input || typeof input !== 'object') return invalid()
+export function validatePolicy(input: unknown): LogPolicyPatch {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) return invalid()
   const { retentionDays, maxBytes } = input as LogPolicy
   if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 365 || !Number.isInteger(maxBytes) || maxBytes < 1048576 || maxBytes > 4294967296) return invalid()
-  return { retentionDays, maxBytes }
+  const raw = input as Record<string, unknown>
+  if (Object.keys(raw).some(key => !['retentionDays', 'maxBytes', 'collection'].includes(key))) return invalid()
+  try { return { retentionDays, maxBytes, ...(Object.hasOwn(raw, 'collection') ? { collection: validateCollection(raw.collection) } : {}) } }
+  catch { return invalid() }
 }
 export function validateLogFilter(input: unknown = {}): LogFilter & { limit: number; beforeSeq?: number } {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return invalid()
@@ -63,9 +68,8 @@ export function createLogService(options: LogServiceOptions) {
   let queue: { event: LogEvent; bytes: number }[] = [], queueBytes = 0
   let inFlightEntries = 0, inFlightBytes = 0
   let flushing: Promise<void> | undefined
-  const stdout = options.stdout ? boundedLogOutput(process.stdout, maxEventBytes + 1) : undefined
   const stderr = boundedLogOutput(process.stderr, 512, 1)
-  const counters = { accepted: 0, stored: 0, dropped: 0, overflow: 0, oversized: 0, drainFailures: 0, fallbackSkipped: 0, unavailable: false, lastError: null as string | null, since: new Date().toISOString() }
+  const counters = { accepted: 0, stored: 0, filtered: 0, dropped: 0, overflow: 0, oversized: 0, drainFailures: 0, fallbackSkipped: 0, unavailable: false, lastError: null as string | null, since: new Date().toISOString() }
   const pending = new Map<number, { resolve(value: any): void; reject(error: unknown): void; timer: ReturnType<typeof setTimeout> }>()
   const status = () => ({ ...counters, queuedEntries: queue.length, queuedBytes: queueBytes, inFlightEntries, inFlightBytes, pending: pending.size, closed })
   function fault(code: string) {
@@ -80,7 +84,7 @@ export function createLogService(options: LogServiceOptions) {
   }
   function start() {
     if (worker) return worker
-    const next = new Worker(SQLITE_WORKER, { eval: true, workerData: { directory: options.directory, policy, sqliteModule: resolveLoggingSqliteModule() } })
+    const next = new Worker(SQLITE_WORKER, { eval: true, workerData: { directory: options.directory, policy, stdout: options.stdout, maxEventBytes, sqliteModule: resolveLoggingSqliteModule() } })
     next.on('message', message => {
       if (worker !== next) return
       const p = pending.get(message.id); if (!p) return
@@ -113,7 +117,6 @@ export function createLogService(options: LogServiceOptions) {
       if (bytes > maxEventBytes) { counters.dropped++; counters.oversized++; return null }
       if (queue.length >= maxEntries || queueBytes + bytes > maxBytes) { counters.dropped++; counters.overflow++; return null }
       queue.push({ event, bytes }); queueBytes += bytes; counters.accepted++
-      if (stdout && !stdout.write(JSON.stringify(event) + '\n')) counters.fallbackSkipped++
       return event.id
     } catch { counters.dropped++; fault('invalid_event'); return null }
   }
@@ -124,7 +127,12 @@ export function createLogService(options: LogServiceOptions) {
         const row = queue.shift()!; queueBytes -= row.bytes; bytes += row.bytes; batch.push(row.event)
       }
       inFlightEntries = batch.length; inFlightBytes = bytes
-      try { await call('write', batch); counters.stored += batch.length; counters.unavailable = false }
+      try {
+        const result = await call<{ stored: number; filtered: number; fallbackSkipped: number; code?: string }>('write', batch)
+        counters.stored += result.stored; counters.filtered += result.filtered; counters.fallbackSkipped += result.fallbackSkipped
+        if (result.code) { counters.dropped += batch.length - result.filtered - result.stored; fault(result.code) }
+        else counters.unavailable = false
+      }
       catch (error) { counters.dropped += batch.length; fault(error instanceof LogServiceError ? error.code : 'storage_unavailable') }
       finally { inFlightEntries = 0; inFlightBytes = 0 }
     }
@@ -150,18 +158,18 @@ export function createLogService(options: LogServiceOptions) {
       if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) return invalid()
       return guarded<LogEvent | null>('detail', id)
     },
-    async policy() { return { ...await guarded<LogPolicy & { storageBytes: number; pruned: number; cleared: number; accounting: string }>('policy'), status: status() } },
-    async setPolicy(input: LogPolicy) {
+    async policy() { return { ...await guarded<EffectiveLogPolicy & { storageBytes: number; pruned: number; cleared: number; accounting: string }>('policy'), catalog: { integrations: LOG_INTEGRATIONS }, status: status() } },
+    async setPolicy(input: LogPolicyPatch) {
       const result = await guarded<Record<string, unknown>>('policy', validatePolicy(input))
       if (result.transitionPending) throw new LogServiceError('policy_capacity_pending', 409)
-      emit({ source: 'system', operation: 'logging.policy', outcome: 'success' })
-      return result
+      emit({ origin: { runtime: 'node', integration: 'application', capture: 'manual' }, source: 'system', operation: 'logging.policy', outcome: 'success' })
+      return { ...result, catalog: { integrations: LOG_INTEGRATIONS } }
     },
     async clear(input: LogFilter & { confirm: boolean }) {
       const f = validateLogFilter(input)
       if (input.confirm !== true || !f.from || !f.to) return invalid()
       const result = await guarded<{ deleted: number; hasMore: boolean }>('clear', f)
-      emit({ source: 'system', operation: 'logging.clear', outcome: 'success', counts: { done: result.deleted } })
+      emit({ origin: { runtime: 'node', integration: 'application', capture: 'manual' }, source: 'system', operation: 'logging.clear', outcome: 'success', counts: { done: result.deleted } })
       return result
     },
     async close() {
@@ -170,7 +178,7 @@ export function createLogService(options: LogServiceOptions) {
       let deadline: ReturnType<typeof setTimeout> | undefined
       try {
         await Promise.race([(async () => { await flush(); if (worker) await call('close').catch(() => {}) })(), new Promise<void>(resolve => { deadline = setTimeout(() => { counters.dropped += queue.length; queue = []; queueBytes = 0; stopWorker('close_timeout'); resolve() }, LOG_DEFAULTS.closeTimeoutMs) })])
-      } finally { if (deadline) clearTimeout(deadline); closed = true; stopWorker('logging_closed'); stdout?.close(); stderr.close() }
+      } finally { if (deadline) clearTimeout(deadline); closed = true; stopWorker('logging_closed'); stderr.close() }
     },
   }
 }
