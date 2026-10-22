@@ -92,6 +92,27 @@ it('delayed initial 202 preserves a newer mounted task regeneration identity thr
   expect(recovered.wrapper.get('[role="status"]').text()).toBe(SME_JOB)
 })
 
+it.each(['pending', 'accepted'] as const)('late initial 202 preserves a newer same-key %s identity for the next query consumer', async state => {
+  const receipt = deferred()
+  const raw = mockFetch(() => receipt.promise)
+  const stale = await queryEntry()
+  await stale.click(); stale.wrapper.unmount()
+  const clientRequestId = '20600000-0000-4000-8000-000000000002'
+  // Another page has replaced the request while this response is in flight.
+  sessionStorage.setItem(KEY, JSON.stringify({ 'little_giant:initial': {
+    clientRequestId, ...(state === 'accepted' ? { jobId: SME_JOB } : {}),
+  } }))
+  receipt.resolve({ status: 202, _data: { jobId: LG_JOB } }); await flushPromises()
+  const recovered = await queryEntry()
+  const link = recovered.wrapper.findAll('a').find(a => a.text() === '查看本次导出')
+  if (state === 'accepted') expect(link?.attributes('href')).toContain(SME_JOB)
+  else expect(link).toBeUndefined()
+  raw.mockResolvedValue({ status: 202, _data: { jobId: SME_JOB } })
+  await recovered.click(); await flushPromises()
+  expect(raw.mock.calls[1]![1].body).toEqual({ clientRequestId })
+  expect(recovered.router.currentRoute.value.query.job).toBe(SME_JOB)
+})
+
 it.each(['unmounted', 'left page', 'left page and returned', 'changed title', 'changed title and returned', 'route title changed and returned before prop render'] as const)('late query acceptance retains recovery without navigation after %s', async change => {
   const receipt = deferred()
   mockFetch(() => receipt.promise)

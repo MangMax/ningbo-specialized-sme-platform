@@ -113,6 +113,45 @@ it('lost acceptance survives leaving and remounting; retry and accepted-task rec
   expect(restored.fetcher.raw.mock.calls[0]![1].body).toEqual({ clientRequestId: intent.clientRequestId })
 })
 
+it('same-identity 202 corrects a stale task link after returning and remounting the query page', async () => {
+  const clientRequestId = '20600000-0000-4000-8000-000000000001'
+  const staleJob = '01M5BEPVCXD5619ZW4C6CATREV'
+  sessionStorage.setItem(KEY, JSON.stringify({ 'little_giant:initial': { clientRequestId, jobId: staleJob } }))
+  let resolve!: (receipt: unknown) => void
+  const first = await setup({ post: () => new Promise(yes => { resolve = yes }) })
+  await first.submit().trigger('click')
+  expect(first.fetcher.raw.mock.calls[0]![1].body).toEqual({ clientRequestId })
+  expect(first.wrapper.findAll('a').find(a => a.text() === '查看本次导出')!.attributes('href')).toContain(staleJob)
+  resolve({ status: 202, _data: { jobId: JOB } }); await flushPromises()
+  expect(first.router.currentRoute.value.query.job).toBe(JOB)
+  first.wrapper.unmount()
+  const returned = await setup()
+  const link = returned.wrapper.findAll('a').find(a => a.text() === '查看本次导出')!
+  expect(link.attributes('href')).toContain(JOB)
+  expect(link.attributes('href')).not.toContain(staleJob)
+  await link.trigger('click'); await flushPromises()
+  expect(returned.router.currentRoute.value.query.job).toBe(JOB)
+})
+
+it.each([
+  { name: 'non-202', status: 200, jobId: JOB },
+  { name: 'invalid job', status: 202, jobId: 'not-a-job' },
+])('unconfirmed $name keeps the saved identity and task link for retry', async receipt => {
+  const clientRequestId = '20600000-0000-4000-8000-000000000001'
+  const staleJob = '01M5BEPVCXD5619ZW4C6CATREV'
+  sessionStorage.setItem(KEY, JSON.stringify({ 'little_giant:initial': { clientRequestId, jobId: staleJob } }))
+  const first = await setup({ post: async () => ({ status: receipt.status, _data: { jobId: receipt.jobId } }) })
+  await first.submit().trigger('click'); await flushPromises()
+  expect(first.wrapper.get('[role="alert"]').text()).toContain('提交尚未确认')
+  expect(first.router.currentRoute.value.path).toBe('/current-enterprises')
+  first.wrapper.unmount()
+  const retry = await setup()
+  expect(retry.wrapper.findAll('a').find(a => a.text() === '查看本次导出')!.attributes('href')).toContain(staleJob)
+  await retry.submit().trigger('click'); await flushPromises()
+  expect(retry.fetcher.raw.mock.calls[0]![1].body).toEqual({ clientRequestId })
+  expect(retry.router.currentRoute.value.query.job).toBe(JOB)
+})
+
 it('double click while acceptance is pending sends one POST', async () => {
   let resolve!: (value: unknown) => void
   const { submit, fetcher } = await setup({ post: () => new Promise(r => { resolve = r }) })
