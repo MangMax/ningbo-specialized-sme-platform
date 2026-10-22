@@ -86,7 +86,7 @@ it('requires review before policy writes, keeps the requested shrink after 409, 
   expect(writes).toBe(0)
   await flushPromises()
   const confirm = Array.from(document.querySelectorAll('button')).find((b) =>
-    b.textContent?.includes('确认修改策略')
+    b.textContent?.includes('确认保存配置')
   )!
   expect(confirm).toBeTruthy()
   confirm.click()
@@ -322,14 +322,48 @@ it('shows and copies only a validated UNTRUSTED client request reference, distin
   expect(wrapper.text()).not.toContain('PRIVATE180')
 })
 
+const integrationCatalog = [
+  { key: 'nuxt-nitro', label: 'Nuxt / Nitro 请求', state: 'supported', configurable: true },
+  { key: 'mcp-toolkit', label: 'MCP Toolkit 模块上下文', state: 'supported', configurable: true },
+  { key: 'tus', label: 'tus 服务端回调', state: 'supported', configurable: true },
+  { key: 'application', label: '应用手动埋点', state: 'supported', configurable: true },
+  { key: 'browser', label: '浏览器原生异常（客户端自报）', state: 'supported', configurable: true },
+  { key: 'vue', label: 'Vue 异常（客户端自报）', state: 'supported', configurable: true },
+  { key: 'tus-client', label: 'tus 客户端', state: 'unwired', configurable: false },
+  { key: 'drizzle', label: 'Drizzle 数据库', state: 'unwired', configurable: false },
+  { key: 'embedpdf', label: 'EmbedPDF', state: 'unwired', configurable: false },
+  { key: 'pinia-colada', label: 'Colada 查询', state: 'unwired', configurable: false },
+  { key: 'vue-router', label: 'Vue Router', state: 'unwired', configurable: false }
+] as const
+const sourceKeys = [
+  'http', 'mcp', 'task', 'worker', 'platform', 'file', 'ocr', 'import', 'export', 'client', 'system'
+] as const
+type TestRule = { enabled: boolean; minLevel: 'debug' | 'info' | 'warn' | 'error' }
+const defaultRule = (): TestRule => ({ enabled: true, minLevel: 'debug' })
+const defaultCollection = () => ({
+  sources: Object.fromEntries(sourceKeys.map((key) => [key, defaultRule()])),
+  integrations: Object.fromEntries(
+    integrationCatalog
+      .filter((entry) => entry.state === 'supported')
+      .map((entry) => [entry.key, defaultRule()])
+  )
+})
 const policyView = {
   retentionDays: 7,
   maxBytes: 536870912,
   storageBytes: 4096,
   pruned: 0,
   cleared: 0,
-  status: { dropped: 0, unavailable: false, since: '2026-10-22T00:00:00.000Z' }
+  status: { dropped: 0, unavailable: false, since: '2026-10-22T00:00:00.000Z' },
+  collection: defaultCollection(),
+  catalog: { integrations: integrationCatalog },
+  revision: 1
 }
+const policyResponse = () => ({
+  ...policyView,
+  collection: defaultCollection(),
+  catalog: { integrations: integrationCatalog }
+})
 const listRow = (id: string) => ({
   id,
   timestamp: '2026-10-22T00:00:00Z',
@@ -410,16 +444,253 @@ it('does not offer a policy review until a value actually differs from the activ
   const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
   wrappers.push(wrapper)
   await flushPromises()
-  const review = wrapper.findAll('button').find((b) => b.text() === '核对策略修改')!
+  const review = wrapper.findAll('button').find((b) => b.text() === '核对日志配置修改')!
   expect((review.element as HTMLButtonElement).disabled).toBe(true)
-  expect(wrapper.text()).toContain('当前值与已生效策略相同')
+  expect(wrapper.text()).toContain('当前配置与已生效配置相同')
   await wrapper.get('#log-retention-days').setValue('8')
   expect((review.element as HTMLButtonElement).disabled).toBe(false)
-  expect(wrapper.text()).not.toContain('当前值与已生效策略相同')
+  expect(wrapper.text()).not.toContain('当前配置与已生效配置相同')
   await review.trigger('click')
   await flushPromises()
-  expect(document.querySelector('[role=dialog]')!.textContent).toContain('确认修改日志保留策略')
+  expect(document.querySelector('[role=dialog]')!.textContent).toContain('核对日志配置修改')
   vi.unstubAllGlobals()
+})
+
+it('reviews only changed collection rules, sends changed maps, and refreshes effective controls', async () => {
+  const { default: Management } = await import('../components/logs/LogManagement.vue')
+  const { default: Select } = await import('../components/ui/select/Select.vue')
+  let policy = policyResponse()
+  const writes: any[] = []
+  vi.stubGlobal('$fetch', async (url: string, options: any = {}) => {
+    expect(url).toBe('/api/logs/policy')
+    if (options.method === 'PATCH') {
+      writes.push(options.body)
+      const next = policyResponse()
+      next.collection.sources.http = { enabled: false, minLevel: 'debug' }
+      next.collection.sources.mcp = { enabled: true, minLevel: 'warn' }
+      policy = next
+      return next
+    }
+    return policy
+  })
+  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const switchState = () => wrapper.get('#log-source-http-enabled').attributes('data-state')
+  expect(switchState()).toBe('checked')
+  await wrapper.get('#log-source-http-enabled').trigger('click')
+  expect(switchState()).toBe('unchecked')
+  // 关闭后级别选择停用，但草稿值保留。
+  expect(
+    (wrapper.get('[aria-label="HTTP 接口的最低日志级别"]').element as HTMLButtonElement).disabled
+  ).toBe(true)
+  await wrapper.get('#log-source-http-enabled').trigger('click')
+  expect(wrapper.get('[aria-label="HTTP 接口的最低日志级别"]').text()).toBe('调试')
+  await wrapper.get('#log-source-http-enabled').trigger('click')
+
+  // 通过真实 Select 组件改 MCP 的最低级别，而不是伪造原生 select。
+  const levelTrigger = wrapper.get('[aria-label="MCP 调用的最低日志级别"]')
+  const select = wrapper
+    .findAllComponents(Select)
+    .find((candidate) => candidate.element.contains(levelTrigger.element))!
+  select.vm.$emit('update:modelValue', 'warn')
+  await flushPromises()
+  expect(levelTrigger.text()).toBe('警告')
+
+  const review = wrapper.get('[data-testid=log-policy-review]')
+  expect((review.element as HTMLButtonElement).disabled).toBe(false)
+  await review.trigger('click')
+  await flushPromises()
+  let dialog = document.querySelector('[role=dialog]')!
+  expect(dialog.textContent).toContain('核对日志配置修改')
+  expect(dialog.textContent).toContain('来源采集 · HTTP 接口')
+  expect(dialog.textContent).toContain('来源采集 · MCP 调用')
+  expect(dialog.textContent).toContain('关闭 · 级别保留调试')
+  expect(dialog.textContent).toContain('警告')
+  // 未变化的 9 条来源规则不列出来。
+  expect(dialog.textContent).not.toContain('后台任务')
+  expect(writes).toHaveLength(0)
+  ;(
+    Array.from(dialog.querySelectorAll('button')).find(
+      (button) => button.textContent === '取消'
+    ) as HTMLButtonElement
+  ).click()
+  await flushPromises()
+  expect(writes).toHaveLength(0)
+
+  await review.trigger('click')
+  await flushPromises()
+  ;(
+    document.querySelector('[data-testid=log-policy-confirm]') as HTMLButtonElement
+  ).click()
+  await flushPromises()
+  expect(writes).toEqual([
+    {
+      retentionDays: 7,
+      maxBytes: 536870912,
+      collection: {
+        sources: {
+          http: { enabled: false, minLevel: 'debug' },
+          mcp: { enabled: true, minLevel: 'warn' }
+        }
+      }
+    }
+  ])
+  expect(switchState()).toBe('unchecked')
+  expect(wrapper.get('[aria-label="MCP 调用的最低日志级别"]').text()).toBe('警告')
+  expect(wrapper.text()).toContain('日志配置已保存')
+  expect(wrapper.text()).toContain('不会删除已有历史日志')
+  vi.unstubAllGlobals()
+})
+
+it('keeps the edited rule draft when saving the configuration fails', async () => {
+  const { default: Management } = await import('../components/logs/LogManagement.vue')
+  vi.stubGlobal('$fetch', async (_url: string, options: any = {}) => {
+    if (options.method === 'PATCH')
+      throw { data: { error: { code: 'policy_capacity_pending' } } }
+    return policyResponse()
+  })
+  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  await wrapper.get('#log-source-http-enabled').trigger('click')
+  await wrapper.get('[data-testid=log-policy-review]').trigger('click')
+  await flushPromises()
+  ;(
+    document.querySelector('[data-testid=log-policy-confirm]') as HTMLButtonElement
+  ).click()
+  await flushPromises()
+  expect(wrapper.text()).toContain('原策略仍生效')
+  expect(wrapper.get('#log-source-http-enabled').attributes('data-state')).toBe('unchecked')
+  expect(
+    (wrapper.get('[aria-label="HTTP 接口的最低日志级别"]').element as HTMLButtonElement).disabled
+  ).toBe(true)
+  vi.unstubAllGlobals()
+})
+
+it('lists unwired integrations as explicitly not configurable instead of disabled switches', async () => {
+  const { default: Management } = await import('../components/logs/LogManagement.vue')
+  vi.stubGlobal('$fetch', async () => policyView)
+  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  // 11 个来源 + 6 个真正接入的集成，共享同一个 Switch；未接入项不伪装成开关。
+  expect(wrapper.findAll('[data-slot=switch]')).toHaveLength(17)
+  expect(wrapper.findAll('input[type=checkbox]')).toHaveLength(0)
+  expect(wrapper.text()).toContain('未接入的技术集成（5）')
+  expect(wrapper.text()).not.toContain('Drizzle 数据库')
+  expect(wrapper.find('#log-integration-drizzle-enabled').exists()).toBe(false)
+  const trigger = wrapper
+    .findAll('button')
+    .find((button) => button.text().includes('未接入的技术集成'))!
+  await trigger.trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('Drizzle 数据库')
+  expect(wrapper.text()).toContain('未接入，不可配置')
+  expect(wrapper.find('#log-integration-drizzle-enabled').exists()).toBe(false)
+  vi.unstubAllGlobals()
+})
+
+it('keeps legacy retention usable and never posts empty collection overrides', async () => {
+  const { default: Management } = await import('../components/logs/LogManagement.vue')
+  let current: any = {
+    retentionDays: 7,
+    maxBytes: 536870912,
+    storageBytes: 4096,
+    pruned: 0,
+    cleared: 0,
+    status: {}
+  }
+  let body: any
+  vi.stubGlobal('$fetch', async (_url: string, options: any = {}) => {
+    if (options.method === 'PATCH') {
+      body = options.body
+      current = { ...current, retentionDays: 8 }
+      return current
+    }
+    return current
+  })
+  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.find('[data-testid=log-collection-sources]').exists()).toBe(false)
+  expect(wrapper.findAll('[data-slot=switch]')).toHaveLength(0)
+  expect(wrapper.text()).not.toContain('技术集成')
+  await wrapper.get('#log-retention-days').setValue('8')
+  await wrapper.get('[data-testid=log-policy-review]').trigger('click')
+  await flushPromises()
+  ;(
+    document.querySelector('[data-testid=log-policy-confirm]') as HTMLButtonElement
+  ).click()
+  await flushPromises()
+  expect(body).toEqual({ retentionDays: 8, maxBytes: 536870912 })
+  expect((wrapper.get('#log-retention-days').element as HTMLInputElement).value).toBe('8')
+  vi.unstubAllGlobals()
+})
+
+it('shows origin only when present and copies only the fixed origin fields', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const event = {
+    id: '00000000-0000-4000-8000-000000000501',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'info',
+    source: 'file',
+    operation: 'file.upload',
+    outcome: 'success',
+    origin: {
+      runtime: 'node',
+      integration: 'tus',
+      capture: 'hook',
+      execution: 'worker',
+      privateMarker: 'PRIVATE-ORIGIN'
+    }
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('采集信息')
+  expect(wrapper.text()).toContain('Node（node）')
+  expect(wrapper.text()).toContain('tus 服务端回调（tus）')
+  expect(wrapper.text()).toContain('生命周期钩子（hook）')
+  expect(wrapper.text()).toContain('工作进程（worker）')
+  expect(wrapper.text()).toContain('可与 Node 运行时同时存在')
+  expect(wrapper.text()).not.toContain('PRIVATE-ORIGIN')
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(writeText.mock.calls[0]![0]).origin).toEqual({
+    runtime: 'node',
+    integration: 'tus',
+    capture: 'hook',
+    execution: 'worker'
+  })
+})
+
+it('marks a browser origin as self-reported and omits the section for historical events', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  let event: any = {
+    id: '00000000-0000-4000-8000-000000000502',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'warn',
+    source: 'client',
+    operation: 'client.vue.error',
+    outcome: 'failure',
+    origin: { runtime: 'browser', integration: 'vue', capture: 'hook', execution: 'page' }
+  }
+  vi.stubGlobal('$fetch', vi.fn(async () => event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('浏览器（browser，客户端自报）')
+  expect(wrapper.text()).toContain('Vue 异常（vue）')
+  expect(wrapper.text()).toContain('页面（page）')
+  event = { ...event, id: '00000000-0000-4000-8000-000000000503', origin: undefined }
+  await wrapper.setProps({ id: event.id })
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('采集信息')
+  expect(wrapper.text()).not.toContain('客户端自报）')
 })
 
 it('shows the event time in the browser zone and keeps the original ISO in the copied event', async () => {
@@ -867,6 +1138,7 @@ it('keeps the current cursor page and drafts across log and configuration tabs w
   await flushPromises()
   expect(router.currentRoute.value.query).toMatchObject({ tab: 'settings', source: 'ocr', outcome: 'partial' })
   await wrapper.get('#log-retention-days').setValue('8')
+  await wrapper.get('#log-source-http-enabled').trigger('click')
   await wrapper.findAll('[role=tab]').find(t => t.text() === '运行日志')!.trigger('keydown', { key: 'Enter' })
   await flushPromises()
   expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('第 2 页')
@@ -875,6 +1147,7 @@ it('keeps the current cursor page and drafts across log and configuration tabs w
   await wrapper.findAll('[role=tab]').find(t => t.text() === '日志配置')!.trigger('keydown', { key: 'Enter' })
   await flushPromises()
   expect((wrapper.get('#log-retention-days').element as HTMLInputElement).value).toBe('8')
+  expect(wrapper.get('#log-source-http-enabled').attributes('aria-checked')).toBe('false')
   expect(calls.filter(c => c.options.method && c.options.method !== 'GET')).toHaveLength(0)
 })
 

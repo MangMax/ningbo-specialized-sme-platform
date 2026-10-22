@@ -1,4 +1,4 @@
-import type { LogEvent, LogSummary } from './contract'
+import type { LogEvent, LogOrigin, LogSummary } from './contract'
 
 /**
  * Detail fields are selected from the event's source/operation/result, not from
@@ -15,6 +15,10 @@ export type DetailEvent = LogSummary | LogEvent
 
 const field = (event: DetailEvent, key: string): unknown => {
   const source = event as Record<string, any>
+  if (key.startsWith('origin.')) {
+    const origin = source.origin
+    return origin && typeof origin === 'object' ? origin[key.slice(7)] : undefined
+  }
   if (!key.startsWith('mcp.')) {
     if (!key.startsWith('tus.')) return source[key]
     return source.tus?.[key.slice(4)]
@@ -106,6 +110,17 @@ function tusFields(event: DetailEvent): string[] {
   if (!event.tus) return []
   return ['tus.uploadId', 'tus.phase', 'tus.method', 'tus.size', 'tus.offset'].filter(key => present(event, key))
 }
+/** 采集信息只在事件实际带 origin 时出现；旧记录不补造来源。 */
+function originFields(event: DetailEvent): string[] {
+  return ['origin.runtime', 'origin.integration', 'origin.capture', 'origin.execution'].filter(key =>
+    present(event, key)
+  )
+}
+function originNote(origin: LogOrigin): string {
+  const base = '采集信息描述日志如何进入系统，不代表故障归因或鉴权身份'
+  if (origin.execution === 'worker') return `${base}；工作进程是执行位置，可与 Node 运行时同时存在。`
+  return `${base}。`
+}
 
 export function detailProfile(event: DetailEvent): DetailSection[] {
   const sections: DetailSection[] = [
@@ -121,6 +136,13 @@ export function detailProfile(event: DetailEvent): DetailSection[] {
     },
     { title: '结果与计数', fields: resultFields(event) },
   ]
+  if (event.origin) {
+    sections.splice(1, 0, {
+      title: '采集信息',
+      fields: originFields(event),
+      note: originNote(event.origin),
+    })
+  }
   if (event.mcp) {
     sections.push({
       title: 'MCP 调用',

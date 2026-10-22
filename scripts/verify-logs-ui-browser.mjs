@@ -148,7 +148,11 @@ ws.onmessage = (event) => {
     return
   }
   if (message.method === 'Network.requestWillBeSent') {
-    network.push({ method: message.params.request.method, url: message.params.request.url })
+    network.push({
+      method: message.params.request.method,
+      url: message.params.request.url,
+      postData: message.params.request.postData
+    })
   }
   if (message.method === 'Fetch.requestPaused') {
     const { requestId, request } = message.params
@@ -554,9 +558,12 @@ await check('MCP and TUS details keep source-specific sections and fit at 1280 a
       }
     })()`)
     const mcpShot = await shot(`browser-${width === 1280 ? 'desktop' : 'mobile'}-mcp-detail-${slug}.png`)
-    assert.deepEqual(mcp.groups, ['基本信息', '目标与对象', '结果与计数', 'MCP 调用', '关联标识'])
+    assert.deepEqual(mcp.groups, ['基本信息', '采集信息', '目标与对象', '结果与计数', 'MCP 调用', '关联标识'])
     assert.ok(mcp.text.includes('Cursor（cursor，自报）'))
     assert.ok(mcp.text.includes('2025-06-18（客户端声明）'))
+    assert.ok(mcp.text.includes('MCP Toolkit 模块上下文（mcp-toolkit）'))
+    assert.ok(mcp.text.includes('框架采集（framework）'))
+    assert.ok(mcp.text.includes('请求处理（request）'))
     assert.ok(mcp.text.includes('不是鉴权身份'))
     assert.ok(!mcp.text.includes('文件编号'))
     assert.ok(!mcp.text.includes('页码'))
@@ -580,10 +587,13 @@ await check('MCP and TUS details keep source-specific sections and fit at 1280 a
       }
     })()`)
     const tusShot = await shot(`browser-${width === 1280 ? 'desktop' : 'mobile'}-tus-detail-${slug}.png`)
-    assert.deepEqual(tus.groups, ['基本信息', '目标与对象', '结果与计数', '上传（TUS）'])
+    assert.deepEqual(tus.groups, ['基本信息', '采集信息', '目标与对象', '结果与计数', '上传（TUS）'])
     assert.ok(tus.text.includes('0123456789abcdef0123456789abcdef'))
     assert.ok(tus.text.includes('已完成（completed）'))
     assert.ok(tus.text.includes('声明总量（字节）'))
+    assert.ok(tus.text.includes('tus 服务端回调（tus）'))
+    assert.ok(tus.text.includes('生命周期钩子（hook）'))
+    assert.ok(tus.text.includes('请求处理（request）'))
     assert.ok(!tus.text.includes('文件编号'))
     assert.ok(!tus.text.includes('页码'))
     assert.equal(tus.page.scrollWidth, tus.page.clientWidth)
@@ -593,9 +603,35 @@ await check('MCP and TUS details keep source-specific sections and fit at 1280 a
       el?.querySelector(':scope > button')?.click()
     })()`)
     await waitFor(`!(${sheetExpr})`)
+
+    // 应用手动埋点没有确知 execution；详情只显示 present 字段，不补默认 request。
+    await navigate(
+      filterUrl({ operation: 'mcp.tool.get_platform_capabilities' }),
+      `document.querySelectorAll('[data-log-detail]').length > 0`
+    )
+    await click('[data-log-detail]')
+    await waitFor(`(() => { const el = ${sheetExpr}; return el && el.textContent.includes('应用手动埋点') })()`)
+    const appOrigin = await evaluate(`(() => {
+      const el = ${sheetExpr}
+      return {
+        text: el.textContent,
+        groups: [...el.querySelectorAll('h3')].map((h) => h.textContent.trim()),
+        page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }
+      }
+    })()`)
+    assert.ok(appOrigin.groups.includes('采集信息'))
+    assert.ok(appOrigin.text.includes('应用手动埋点（application）'))
+    assert.ok(appOrigin.text.includes('手动埋点（manual）'))
+    assert.ok(!appOrigin.text.includes('执行位置'))
+    assert.equal(appOrigin.page.scrollWidth, appOrigin.page.clientWidth)
+    await evaluate(`(() => {
+      const el = ${sheetExpr}
+      el?.querySelector(':scope > button')?.click()
+    })()`)
+    await waitFor(`!(${sheetExpr})`)
     const focus = await evaluate(`document.activeElement?.dataset?.logDetail ?? null`)
     assert.ok(focus)
-    results.push({ width, mcp, tus, mcpShot, tusShot, focus })
+    results.push({ width, mcp, tus, appOrigin, mcpShot, tusShot, focus })
   }
   return results
 })
@@ -710,9 +746,9 @@ await check('clear and policy review cancel without any write request', async ()
     input.dispatchEvent(new Event('input', { bubbles: true }))
     return true
   })()`)
-  await waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('核对策略修改') && !b.disabled)`)
-  await clickButtonText('核对策略修改')
-  await waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((el) => el.textContent.includes('确认修改日志保留策略'))`)
+  await waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('核对日志配置修改') && !b.disabled)`)
+  await clickButtonText('核对日志配置修改')
+  await waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((el) => el.textContent.includes('核对日志配置修改'))`)
   const policyShot = await shot('browser-desktop-policy-review-1280x800.png')
   await clickButtonText('取消')
   await waitFor(`!document.querySelector('[role="dialog"]')`)
@@ -720,6 +756,114 @@ await check('clear and policy review cancel without any write request', async ()
   assert.equal(policyWrites.length, 0)
   const writesAfter = network.filter((entry) => ['POST', 'PATCH', 'PUT', 'DELETE'].includes(entry.method)).length
   return { writesBefore, writesAfter, clearWrites: clearWrites.length, policyWrites: policyWrites.length, policyShot }
+})
+
+// ---------- 9) dual-axis collection settings ----------
+await check('dual-axis settings review and save only changed rules; unwired stays non-configurable', async () => {
+  await setViewport(1280, 800)
+  await navigate(syntheticUrl.href, `document.querySelectorAll('[data-log-detail]').length > 0`)
+  await clickButtonText('日志配置')
+  await waitFor(`!!document.querySelector('[data-testid="log-collection-sources"]')`)
+  await waitFor(`!!document.querySelector('[data-testid="log-collection-integrations"]')`)
+  const layout = await evaluate(`(() => ({
+    switches: document.querySelectorAll('[data-slot="switch"]').length,
+    checkboxes: document.querySelectorAll('input[type="checkbox"]').length,
+    sources: document.querySelectorAll('[data-testid="log-collection-sources"] [data-slot="switch"]').length,
+    integrations: document.querySelectorAll('[data-testid="log-collection-integrations"] [data-slot="switch"]').length,
+    page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth },
+    unwired: document.querySelector('[data-testid="log-unwired-integrations"]')?.textContent ?? ''
+  }))()`)
+  assert.equal(layout.switches, 17)
+  assert.equal(layout.checkboxes, 0)
+  assert.equal(layout.sources, 11)
+  assert.equal(layout.integrations, 6)
+  assert.equal(layout.page.scrollWidth, layout.page.clientWidth)
+  assert.ok(layout.unwired.includes('未接入的技术集成（5）'))
+
+  // 未接入项折叠，展开后仍没有伪开关。
+  await evaluate(`(() => {
+    const el = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('未接入的技术集成'))
+    el?.scrollIntoView({ block: 'center' })
+    el?.click()
+    return !!el
+  })()`)
+  await waitFor(`document.body.textContent.includes('Drizzle 数据库')`)
+  const unwired = await evaluate(`(() => ({
+    text: document.body.textContent,
+    fakeSwitch: !!document.querySelector('#log-integration-drizzle-enabled')
+  }))()`)
+  assert.ok(unwired.text.includes('未接入，不可配置'))
+  assert.equal(unwired.fakeSwitch, false)
+
+  // 改一条来源开关和一条最低级别，均通过共享 Reka 控件。
+  await click('#log-source-http-enabled')
+  await waitFor(`document.querySelector('#log-source-http-enabled')?.dataset.state === 'unchecked'`)
+  await click('[aria-label="MCP 调用的最低日志级别"]')
+  await waitFor(`!![...document.querySelectorAll('[role="option"]')].find((el) => el.textContent.includes('警告'))`)
+  await sleep(150)
+  const levelPoint = await evaluate(`(() => {
+    const el = [...document.querySelectorAll('[role="option"]')].find((el) => el.textContent.includes('警告'))
+    const r = el.getBoundingClientRect()
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+  })()`)
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: levelPoint.x, y: levelPoint.y, button: 'left', clickCount: 1 })
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: levelPoint.x, y: levelPoint.y, button: 'left', clickCount: 1 })
+  await waitFor(`[...document.querySelectorAll('[aria-label="MCP 调用的最低日志级别"]')].some((el) => el.textContent.includes('警告'))`)
+
+  const writesBefore = network.filter((entry) => entry.method === 'PATCH').length
+  await clickButtonText('核对日志配置修改')
+  await waitFor(`[...document.querySelectorAll('[role="dialog"]')].some((el) => el.textContent.includes('核对日志配置修改'))`)
+  const reviewText = await evaluate(`[...document.querySelectorAll('[role="dialog"]')].find((el) => el.textContent.includes('核对日志配置修改'))?.textContent ?? ''`)
+  assert.ok(reviewText.includes('来源采集 · HTTP 接口'))
+  assert.ok(reviewText.includes('来源采集 · MCP 调用'))
+  assert.ok(!reviewText.includes('后台任务'))
+  assert.equal(network.filter((entry) => entry.method === 'PATCH').length, writesBefore)
+  await evaluate('window.scrollTo(0, 0)')
+  const settingsShot = await shot('browser-desktop-log-config-1280x800.png')
+  const reviewShot = await shot('browser-desktop-log-config-review-1280x800.png')
+  await clickButtonText('取消')
+  await waitFor(`!document.querySelector('[role="dialog"]')`)
+  assert.equal(network.filter((entry) => entry.method === 'PATCH').length, writesBefore)
+
+  // 重新核对并保存：payload 只含变化规则，不重置其他规则，也不回传 GET 的 catalog/revision。
+  await clickButtonText('核对日志配置修改')
+  await waitFor(`!!document.querySelector('[data-testid="log-policy-confirm"]')`)
+  await click('[data-testid="log-policy-confirm"]')
+  await waitFor(`!document.querySelector('[data-testid="log-policy-confirm"]')`)
+  await waitFor(`document.body.textContent.includes('日志配置已保存')`)
+  await waitFor(`document.querySelector('#log-source-http-enabled')?.dataset.state === 'unchecked'`)
+  const patch = network.find((entry) => entry.method === 'PATCH' && new URL(entry.url).pathname === '/api/logs/policy')
+  assert.ok(patch)
+  assert.ok(patch.postData)
+  const body = JSON.parse(patch.postData)
+  assert.deepEqual(body, {
+    retentionDays: 7,
+    maxBytes: 536870912,
+    collection: {
+      sources: {
+        http: { enabled: false, minLevel: 'debug' },
+        mcp: { enabled: true, minLevel: 'warn' }
+      }
+    }
+  })
+  assert.ok(!('integrations' in body.collection))
+  return { layout, unwired, reviewText, body, settingsShot, reviewShot }
+})
+
+// ---------- 10) settings at 390 ----------
+await check('390 settings stay full width with no horizontal scroll', async () => {
+  await setViewport(390, 844)
+  await navigate(`${base}/logs?tab=settings`, `!!document.querySelector('[data-testid="log-collection-sources"]')`)
+  const mobile = await evaluate(`(() => ({
+    page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth },
+    switchCount: document.querySelectorAll('[data-slot="switch"]').length,
+    settingsWidth: Math.round(document.querySelector('[data-testid="log-collection-sources"]')?.getBoundingClientRect().width ?? 0)
+  }))()`)
+  const shotPath = await shot('browser-mobile-log-config-390x844.png')
+  assert.equal(mobile.page.scrollWidth, mobile.page.clientWidth)
+  assert.equal(mobile.switchCount, 17)
+  assert.ok(mobile.settingsWidth > 300)
+  return { ...mobile, shotPath }
 })
 
 const failedChecks = checks.filter((entry) => entry.result === 'FAIL')
