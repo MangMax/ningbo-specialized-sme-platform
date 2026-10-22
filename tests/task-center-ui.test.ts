@@ -174,6 +174,7 @@ function installFetch(handler: (call: FetchCall) => Response | Promise<Response>
     const entry = { url, method: options.method ?? 'GET', body: options.body, headers: options.headers, query: options.query, signal: options.signal }
     calls.push(entry)
     const response = await handler(entry)
+    ;(options as { onResponse?: (context: { response: Response }) => void }).onResponse?.({ response })
     if (!(response instanceof Response)) throw new Error(`handler did not return a Response for ${url}`)
     const data = await response.clone().text().then(text => JSON.parse(text)).catch(() => undefined)
     return { response, data }
@@ -324,7 +325,7 @@ async function mountPage(options: { attach?: boolean, viewport?: 'desktop' | 'mo
 
 const mounted: ReturnType<typeof mount>[] = []
 const restoreLayout: Array<() => void> = []
-beforeEach(() => { pageModule = null })
+beforeEach(() => { pageModule = null; vi.stubGlobal('useNuxtApp', () => ({})) })
 afterEach(() => {
   for (const restore of restoreLayout.splice(0)) restore()
   for (const wrapper of mounted.splice(0)) wrapper.unmount()
@@ -913,5 +914,40 @@ describe('移动端列表摘要', () => {
     expect(first).toContain('可下载')
     expect(first).toContain('1 / 1')
     expect(cards[0]!.findAll('button').some(b => /查看/.test(b.text()))).toBe(true)
+  })
+})
+
+describe('caught task interaction reports', () => {
+  it.each(['cancel', 'retry'] as const)('reports a caught %s rejection with its response request reference and fixed classification', async action => {
+    const report = vi.fn()
+    vi.stubGlobal('useNuxtApp', () => ({ $clientErrors: { reportInteractionFailure: report } }))
+    state.detail = action === 'cancel' ? unknownTask() : platformTask()
+    state.query = { job: state.detail.id }
+    installFetch(({ url, method }) => method === 'POST'
+      ? new Response('{}', { status: 503, headers: { 'x-request-id': `actual-${action}-180` } })
+      : url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf([state.detail], true)))
+    await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    sheetButton(dialog, action === 'cancel' ? /请求取消/ : /重试未完成项/).click()
+    await settle()
+    expect(report).toHaveBeenCalledExactlyOnceWith(`task_${action}`, `actual-${action}-180`)
+    expect(dialog.textContent).toContain('操作未受理')
+  })
+  it('reports a caught artifact integrity failure using the successful HTTP response reference', async () => {
+    const report = vi.fn()
+    vi.stubGlobal('useNuxtApp', () => ({ $clientErrors: { reportInteractionFailure: report } }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('bad-xlsx', { headers: {
+      'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'content-disposition': `attachment; filename="${state.detail.export!.artifact!.filename}"`,
+      'x-request-id': 'artifact-response-180',
+    } })))
+    state.query = { job: state.detail.id, tab: 'export' }
+    installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf([state.detail], true)))
+    await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    sheetButton(dialog, /下载 Excel/).click()
+    await settle()
+    expect(report).toHaveBeenCalledExactlyOnceWith('task_artifact_download', 'artifact-response-180')
+    expect(document.body.textContent).toContain('下载未完成或文件校验失败')
   })
 })

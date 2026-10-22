@@ -1,3 +1,4 @@
+import { boundedLogOutput } from './output'
 import { Worker } from 'node:worker_threads'
 import { LOG_DEFAULTS, LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogEvent, type LogFilter, type LogInput, type LogPolicy, type LogSummary } from './contract'
 import { safeLogEvent } from './privacy'
@@ -62,16 +63,14 @@ export function createLogService(options: LogServiceOptions) {
   let queue: { event: LogEvent; bytes: number }[] = [], queueBytes = 0
   let inFlightEntries = 0, inFlightBytes = 0
   let flushing: Promise<void> | undefined
-  let fallbackAt = 0, fallbackCount = 0, lastFaultAt = 0
+  const stdout = options.stdout ? boundedLogOutput(process.stdout, maxEventBytes + 1) : undefined
+  const stderr = boundedLogOutput(process.stderr, 512, 1)
   const counters = { accepted: 0, stored: 0, dropped: 0, overflow: 0, oversized: 0, drainFailures: 0, fallbackSkipped: 0, unavailable: false, lastError: null as string | null, since: new Date().toISOString() }
   const pending = new Map<number, { resolve(value: any): void; reject(error: unknown): void; timer: ReturnType<typeof setTimeout> }>()
   const status = () => ({ ...counters, queuedEntries: queue.length, queuedBytes: queueBytes, inFlightEntries, inFlightBytes, pending: pending.size, closed })
   function fault(code: string) {
     counters.unavailable = true; counters.lastError = code; counters.drainFailures++
-    if (Date.now() - lastFaultAt >= 1000) {
-      lastFaultAt = Date.now()
-      try { process.stderr.write(JSON.stringify({ source: 'system', operation: 'logging.drain', outcome: 'failure', code, dropped: counters.dropped }) + '\n') } catch { /* Diagnostics cannot affect business. */ }
-    }
+    stderr.write(JSON.stringify({ source: 'system', operation: 'logging.drain', outcome: 'failure', code, dropped: counters.dropped }) + '\n')
   }
   function stopWorker(code: string) {
     const old = worker; worker = undefined
@@ -114,12 +113,7 @@ export function createLogService(options: LogServiceOptions) {
       if (bytes > maxEventBytes) { counters.dropped++; counters.oversized++; return null }
       if (queue.length >= maxEntries || queueBytes + bytes > maxBytes) { counters.dropped++; counters.overflow++; return null }
       queue.push({ event, bytes }); queueBytes += bytes; counters.accepted++
-      // The same safe projection is the only container-output fallback, at most 10 lines/second.
-      if (options.stdout) {
-        if (Date.now() - fallbackAt >= 1000) { fallbackAt = Date.now(); fallbackCount = 0 }
-        if (fallbackCount++ < 10) { try { process.stdout.write(JSON.stringify(event) + '\n') } catch { /* non-fatal */ } }
-        else counters.fallbackSkipped++
-      }
+      if (stdout && !stdout.write(JSON.stringify(event) + '\n')) counters.fallbackSkipped++
       return event.id
     } catch { counters.dropped++; fault('invalid_event'); return null }
   }
@@ -176,7 +170,7 @@ export function createLogService(options: LogServiceOptions) {
       let deadline: ReturnType<typeof setTimeout> | undefined
       try {
         await Promise.race([(async () => { await flush(); if (worker) await call('close').catch(() => {}) })(), new Promise<void>(resolve => { deadline = setTimeout(() => { counters.dropped += queue.length; queue = []; queueBytes = 0; stopWorker('close_timeout'); resolve() }, LOG_DEFAULTS.closeTimeoutMs) })])
-      } finally { if (deadline) clearTimeout(deadline); closed = true; stopWorker('logging_closed') }
+      } finally { if (deadline) clearTimeout(deadline); closed = true; stopWorker('logging_closed'); stdout?.close(); stderr.close() }
     },
   }
 }

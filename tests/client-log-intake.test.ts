@@ -62,3 +62,14 @@ it('caps all peers globally and bounds peer tracking without trusting forwarded 
   for (let i = 0; i < 120; i++) expect(intake.accept(body, `connection-${i}`, {}).status).toBe(202)
   expect(intake.accept(body, 'another-connection', {}).status).toBe(429)
 })
+
+it('retains only a bounded untrusted related request reference beside trusted intake IDs after restart', async () => {
+  const intake = createClientLogIntake()
+  intake.accept([{ event: { kind: 'interaction_failure', page: 'tasks', level: 'error', relatedRequestId: 'original-response-180', requestId: 'forged', traceId: 'forged', taskId: 'forged' } }], 'related-peer', { requestId: 'intake-180', traceId: 'intake-trace-180' })
+  await applicationLogs().flush()
+  const row = (await applicationLogs().list({ source: 'client' })).rows[0]!
+  const id = row.id
+  await closeApplicationLogging()
+  expect(await applicationLogs().detail(id)).toMatchObject({ untrustedRelatedRequestId: 'original-response-180', requestId: 'intake-180', traceId: 'intake-trace-180' })
+  expect(JSON.stringify(await applicationLogs().detail(id))).not.toContain('forged')
+})

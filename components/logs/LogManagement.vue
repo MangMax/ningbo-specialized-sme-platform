@@ -10,7 +10,7 @@ import {
 import TableFailureState from '@/components/TableFailureState.vue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Dialog,
@@ -161,37 +161,39 @@ async function confirm() {
         用量包含日志库与日志库附属文件，不含文件系统分配开销、容器输出或其他进程内存。进程计数从
         {{ data.status.since }} 起。
       </p>
-      <form class="flex flex-wrap items-end gap-3" @submit.prevent="reviewPolicy">
-        <div class="flex min-w-0 flex-col gap-2">
-          <Label for="log-retention-days">保留天数（1–365）</Label
-          ><Input
-            id="log-retention-days"
-            v-model.number="days"
-            type="number"
-            min="1"
-            max="365"
-            required
-            :disabled="pending"
-          />
-        </div>
-        <div class="flex min-w-0 flex-col gap-2">
-          <Label for="log-max-bytes">容量字节（1 MiB–4 GiB）</Label
-          ><Input
-            id="log-max-bytes"
-            v-model.number="bytes"
-            type="number"
-            min="1048576"
-            max="4294967296"
-            required
-            :disabled="pending"
-          />
-        </div>
-        <Button
-          type="submit"
-          variant="outline"
-          :disabled="pending || loading || !!error || !validPolicy"
-          >核对策略修改</Button
-        >
+      <form @submit.prevent="reviewPolicy">
+        <FieldGroup class="flex-row flex-wrap items-end">
+          <Field :data-disabled="pending">
+            <FieldLabel for="log-retention-days">保留天数（1–365）</FieldLabel
+            ><Input
+              id="log-retention-days"
+              v-model.number="days"
+              type="number"
+              min="1"
+              max="365"
+              required
+              :disabled="pending"
+            />
+          </Field>
+          <Field :data-disabled="pending">
+            <FieldLabel for="log-max-bytes">容量字节（1 MiB–4 GiB）</FieldLabel
+            ><Input
+              id="log-max-bytes"
+              v-model.number="bytes"
+              type="number"
+              min="1048576"
+              max="4294967296"
+              required
+              :disabled="pending"
+            />
+          </Field>
+          <Button
+            type="submit"
+            variant="outline"
+            :disabled="pending || loading || !!error || !validPolicy"
+            >核对策略修改</Button
+          >
+        </FieldGroup>
       </form>
       <p class="text-muted-foreground text-sm">
         保留期与容量取更严格者。缩短保留期或降低容量可能清理已有运行日志。

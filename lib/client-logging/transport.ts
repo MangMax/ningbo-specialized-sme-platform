@@ -1,6 +1,6 @@
 import { createHttpDrain } from 'evlog/http'
 import type { DrainContext } from 'evlog'
-import { clientErrorReport, type ClientErrorKind, type ClientPage } from './contract'
+import { clientErrorReport, type ClientInteraction, type ClientErrorKind, type ClientPage } from './contract'
 
 /** Only a bounded transport, never a second logger. Server appLog owns event creation. */
 export function createClientErrorTransport(options: { online?: () => boolean; now?: () => number } = {}) {
@@ -15,12 +15,12 @@ export function createClientErrorTransport(options: { online?: () => boolean; no
   function schedule(ms = 500) {
     if (!disposed && !timer && queue.length && online()) timer = setTimeout(() => { timer = undefined; void flush() }, ms)
   }
-  function report(kind: ClientErrorKind, page: ClientPage, level: 'error' | 'warn' = 'error') {
+  function report(kind: ClientErrorKind, page: ClientPage, level: 'error' | 'warn' = 'error', relatedRequestId?: string, interaction?: ClientInteraction) {
     try {
       if (disposed) return
-      const safe = clientErrorReport({ kind, page, level })
+      const safe = clientErrorReport({ kind, page, level, relatedRequestId, interaction })
       if (!safe) { dropped++; return }
-      const key = `${safe.page}.${safe.kind}.${safe.level}`, time = now(), previous = seen.get(key)
+      const key = `${safe.page}.${safe.kind}.${safe.level}.${safe.interaction ?? ''}`, time = now(), previous = seen.get(key)
       if (previous !== undefined && time - previous < 10000) { suppressed++; return }
       seen.set(key, time)
       if (queue.length + inFlight >= 32) { dropped++; return }

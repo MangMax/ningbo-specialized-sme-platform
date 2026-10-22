@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { clientRequestReference } from '~~/lib/client-logging/request-reference'
 import { computed, ref, watch } from 'vue'
 import type { TaskSummary } from '~~/lib/task-center'
 import { TASK_LABELS, TASK_STATES } from '~~/lib/task-center'
@@ -27,6 +28,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 
+const { $clientErrors } = useNuxtApp()
 const key = computed(() => props.id)
 const headers = { 'x-task-center-browser': '1' }
 const { data, sourceKey, loading, failed, refresh: reload } = useTaskPolling(key, signal => $fetch<TaskSummary>(`/api/task-center/${encodeURIComponent(props.id)}`, { headers, signal }))
@@ -88,12 +90,13 @@ function format(iso: string | null | undefined, empty: string) {
 
 async function act(action: 'cancel' | 'retry') {
   if (!data.value || !capabilities.value || !current.value || pending.value || !capabilities.value[action]) return
+  let relatedRequestId: string | undefined
   pending.value = true; notice.value = ''
   // A new action supersedes the previous report: the cancel fact and the retry
   // report never speak at the same time.
   cancelRequested.value = false
   try {
-    const result = await $fetch<{ cancelRequested?: boolean }>(`/api/task-center/${props.id}/${action}`, { method: 'POST', headers, body: {} })
+    const result = await $fetch<{ cancelRequested?: boolean }>(`/api/task-center/${props.id}/${action}`, { method: 'POST', headers, body: {}, onResponse: ({ response }) => { relatedRequestId = clientRequestReference(response.headers.get('x-request-id')) } })
     // Only the server's own answer may claim that a cancellation is pending.
     cancelRequested.value = action === 'cancel' && !!result.cancelRequested
     if (!cancelRequested.value) {
@@ -102,7 +105,10 @@ async function act(action: 'cancel' | 'retry') {
         : '服务端已处理取消请求。'
     }
     await reload(); emit('changed')
-  } catch { notice.value = '操作未受理。请刷新任务状态后再试。' }
+  } catch {
+    $clientErrors?.reportInteractionFailure(action === 'cancel' ? 'task_cancel' : 'task_retry', relatedRequestId)
+    notice.value = '操作未受理。请刷新任务状态后再试。'
+  }
   finally { pending.value = false }
 }
 </script>

@@ -135,7 +135,7 @@ it('filters by known IDs, pages with server cursors, fetches details on demand a
   await flushPromises()
   expect(calls.find((c) => c.url === '/api/logs')!.options.query.taskId).toBe('task-182')
   expect(calls.some((c) => c.url.endsWith(event.id))).toBe(false)
-  await wrapper.get('[data-log-next]').trigger('click')
+  await wrapper.get('[data-table-next]').trigger('click')
   await flushPromises()
   expect(calls.filter((c) => c.url === '/api/logs').at(-1)!.options.query.cursor).toBe('26')
   const beforeRefresh = calls.filter((c) => c.url === '/api/logs').length
@@ -277,4 +277,35 @@ it('retains source rows on a failed filter, explains both targets, retries expli
   expect(wrapper.text()).toContain('没有符合条件的运行日志')
   expect(wrapper.text()).not.toContain('req-original')
   expect(attempts).toBe(2)
+})
+
+it('composes filter and policy controls in shared fields while preserving every linked label', async () => {
+  const { default: Filters } = await import('../components/logs/LogFilters.vue')
+  const wrapper = mount(Filters, { props: { filter: { requestId: 'req-180' } }, attachTo: document.body })
+  wrappers.push(wrapper)
+  expect(wrapper.findAll('[data-slot="field-group"]')).toHaveLength(2)
+  expect(wrapper.findAll('[data-slot="field"]')).toHaveLength(12)
+  for (const label of wrapper.findAll('label[for]')) {
+    expect(document.getElementById(label.attributes('for')!)).not.toBeNull()
+    expect(label.element.closest('[data-slot="field"]')).not.toBeNull()
+  }
+})
+
+it('shows and copies only a validated UNTRUSTED client request reference, distinct from intake IDs', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  const event = { id: '00000000-0000-4000-8000-000000000180', source: 'client', operation: 'client.tasks.interaction_failure', requestId: 'intake-180', traceId: 'intake-trace', untrustedRelatedRequestId: 'original-180' }
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } }); wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('关联请求（客户端声称，UNTRUSTED）')
+  expect(wrapper.text()).toContain('original-180')
+  await wrapper.get('button').trigger('click'); await flushPromises()
+  expect(JSON.parse(writeText.mock.calls[0]![0])).toMatchObject({ requestId: 'intake-180', traceId: 'intake-trace', untrustedRelatedRequestId: 'original-180' })
+  event.untrustedRelatedRequestId = '<script>PRIVATE180</script>'
+  await wrapper.setProps({ id: '00000000-0000-4000-8000-000000000181' })
+  event.id = '00000000-0000-4000-8000-000000000181'
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('PRIVATE180')
 })

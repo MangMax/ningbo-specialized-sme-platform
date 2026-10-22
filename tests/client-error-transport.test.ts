@@ -64,3 +64,22 @@ it('reconnects with bounded official batches and discards invalid runtime classi
   expect(JSON.stringify(fetch.mock.calls)).not.toContain('PRIVATE189')
   expect(transport.status()).toMatchObject({ sent: 12, queued: 0, dropped: 2 })
 })
+
+it('sends a separate bounded response reference without accepting arbitrary context or enlarging dedup keys', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true }); vi.stubGlobal('fetch', fetch)
+  const transport = fixture()
+  transport.report('interaction_failure', 'tasks', 'error', 'original-request-180')
+  transport.report('interaction_failure', 'tasks', 'error', 'another-request-180')
+  await transport.flush()
+  expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual([{ event: { kind: 'interaction_failure', page: 'tasks', level: 'error', relatedRequestId: 'original-request-180' } }])
+  expect(transport.status().suppressed).toBe(1)
+})
+
+it('keeps only valid request references at the exact length boundary without coercing or truncating claims', async () => {
+  const { clientErrorReport } = await import('../lib/client-logging/contract')
+  const base = { kind: 'interaction_failure', page: 'tasks', level: 'error' }
+  expect(clientErrorReport({ ...base, relatedRequestId: 'r'.repeat(128) })?.relatedRequestId).toBe('r'.repeat(128))
+  for (const value of ['r'.repeat(129), '', '/private?token=secret', '<script>', 'line\nbreak', { toString() { throw Error('never coerce') } }, ['id'], 180]) {
+    expect(clientErrorReport({ ...base, relatedRequestId: value })).toEqual(base)
+  }
+})
