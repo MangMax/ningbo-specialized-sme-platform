@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { appLog, applicationLogs, closeApplicationLogging, initializeWorkerLogging, requestLogContext } from '../lib/logging'
@@ -80,7 +80,7 @@ it('keeps counts, failure codes and HTTP transport facts in list and detail for 
 })
 
 it('rejects concrete or hostile path values as routes and never derives a template from the path', () => {
-  for (const route of ['/api/files/123', '/api/files/PRIVATE180', '/api/files/a@b.example', '/api/files/20261013', '/api/files/:id?token=1', '/api/files/:id/../x', 'https://untrusted.invalid/api/files/:id']) {
+  for (const route of ['/api/files/123', '/api/files/PRIVATE180', '/api/files/alice', '/api/files/bob-smith', '/api/private-secret', '/api/files/a@b.example', '/api/files/20261013', '/api/files/:id?token=1', '/api/files/:id/../x', 'https://untrusted.invalid/api/files/:id']) {
     expect(safeHttpRoute(route), route).toBeUndefined()
   }
   for (const route of ['/api/files/:id', '/api/files/**:path', '/api/roster/decision-lifecycle/commands', '/api/roster/exports/current/specialized-sme', '/api/settings/credentials/miitCookie/reveal', '/api/settings/credentials/ocrToken/reveal', '/mcp']) {
@@ -105,6 +105,14 @@ it('rejects concrete or hostile path values as routes and never derives a templa
   expect(JSON.stringify(safe)).not.toContain('authorization')
   expect(JSON.stringify(safe)).not.toContain('cookie')
   expect(JSON.stringify(safe)).not.toContain('body')
+
+  const injectedApplicationLog = safeLogEvent(projectEvlog({
+    applicationLog: { source: 'http', operation: 'http.request', outcome: 'success', httpMethod: 'GET', httpRoute: '/api/files/alice', statusCode: 200 },
+    path: '/api/files/alice',
+    method: 'GET',
+    status: 200,
+  }) as any)
+  expect(injectedApplicationLog.httpRoute).toBeUndefined()
 
   const matched = safeLogEvent(projectEvlog({ path: '/api/files/123', method: 'get', status: 200, httpRoute: '/api/files/:id' }))
   expect(matched).toMatchObject({ httpMethod: 'GET', httpRoute: '/api/files/:id' })
@@ -152,6 +160,49 @@ it('isolates malformed transport input without changing the stored outcome or av
   expect(row).not.toHaveProperty('httpRoute')
   expect(JSON.stringify(row)).not.toContain(PRIVATE)
   expect(applicationLogs().status().unavailable).toBe(false)
+})
+
+it('drops non-template applicationLog routes from stdout and SQLite while keeping real templates', async () => {
+  const rejected = ['/api/files/alice', '/api/files/bob-smith', '/api/private-secret']
+  // The service's stdout fallback is bounded at 10 lines/second; earlier tests used the window.
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  const writes: string[] = []
+  const output = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any, callback?: any) => {
+    writes.push(String(chunk))
+    callback?.()
+    return true
+  })
+  try {
+    for (const [index, route] of rejected.entries()) {
+      appLog({ source: 'http', operation: 'http.private_fixture', outcome: 'failure', level: 'error', httpRoute: route, counts: { failed: index + 1 } }, { requestId: `req-180-private-${index}` })
+    }
+    appLog({ source: 'http', operation: 'http.known_fixture', outcome: 'success', httpRoute: '/api/files/:id' }, { requestId: 'req-180-known' })
+    // evlog drains asynchronously; wait until the real pipeline stored the event before restoring the spy.
+    for (let i = 0; i < 100; i++) {
+      if ((await applicationLogs().list({ operation: 'http.known_fixture', limit: 1 })).rows.length) break
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    await applicationLogs().flush()
+  } finally {
+    output.mockRestore()
+  }
+  const privateRows = (await applicationLogs().list({ operation: 'http.private_fixture', limit: 10 })).rows
+  expect(privateRows).toHaveLength(rejected.length)
+  for (const [index, route] of rejected.entries()) {
+    const row = privateRows.find(candidate => candidate.requestId === `req-180-private-${index}`)!
+    expect(row, route).toMatchObject({ outcome: 'failure', counts: { failed: index + 1 } })
+    expect(row).not.toHaveProperty('httpRoute')
+  }
+  const known = (await applicationLogs().list({ operation: 'http.known_fixture', limit: 1 })).rows[0]!
+  expect(known.httpRoute).toBe('/api/files/:id')
+  const db = readFileSync(join(directory, 'events.db')).toString()
+  const printed = writes.join('')
+  for (const route of rejected) {
+    expect(printed, route).not.toContain(route)
+    expect(db, route).not.toContain(route)
+  }
+  expect(printed).toContain('/api/files/:id')
+  expect(db).toContain('/api/files/:id')
 })
 
 it('still lists and reads rows written before the new fields and list counts existed', async () => {

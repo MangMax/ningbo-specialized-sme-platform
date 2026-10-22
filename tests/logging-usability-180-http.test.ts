@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
 import { useDb } from '../db/client'
+import { APPLICATION_LOG_ROUTES } from '../lib/logging/route-templates'
 
 /**
  * #180 actual built Nuxt seam: a fresh synthetic business DB and an independent
@@ -186,4 +187,32 @@ it('records the matched HTTP template on a semantic operation', async () => {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error('semantic HTTP event did not persist')
+})
+
+
+it('accepts exactly the built application route templates and no other spelling', () => {
+  const source = readFileSync(join(resolve(import.meta.dirname, '..'), '.output/server/chunks/nitro/nitro.mjs'), 'utf8')
+  const actual = [...new Set(
+    [...source.matchAll(/route: '([^']+)'/g)]
+      .map(match => match[1]!)
+      .filter(route => route === '/mcp' || route.startsWith('/api/')),
+  )].sort()
+  expect(actual).toHaveLength(113)
+  expect([...APPLICATION_LOG_ROUTES].sort()).toEqual(actual)
+})
+
+it('records the requested file id on a real delete failure', async () => {
+  const response = await call('/api/files/987654321', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: '{}' })
+  expect([400, 404, 409]).toContain(response.status)
+  const rows = await waitLog(response.requestId)
+  expect(rows.find(row => row.operation === 'file.maintenance.remove')).toMatchObject({
+    source: 'file', outcome: 'denied', errorCode: 'file_remove_failed', fileId: 987654321,
+  })
+})
+
+it('does not fabricate a file target for an invalid delete id', async () => {
+  const response = await call('/api/files/alice', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: '{}' })
+  expect(response.status).toBe(400)
+  const rows = await waitLog(response.requestId)
+  expect(rows.some(row => row.source === 'file')).toBe(false)
 })
