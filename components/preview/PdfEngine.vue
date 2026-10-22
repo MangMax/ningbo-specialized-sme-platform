@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, shallowRef, useTemplateRef } from 'vue'
+import { inject, onMounted, onBeforeUnmount, shallowRef, useTemplateRef } from 'vue'
+import { createEmbedPdfLogger } from '~~/lib/client-logging/embedpdf'
+import { clientLibraryReporterKey, ignoreClientLibrarySignal, safeLibraryReporter } from '~~/lib/client-logging/library-reporter'
 import { EmbedPDF } from '@embedpdf/core/vue'
 import { createPluginRegistration } from '@embedpdf/core'
 import type { PdfEngine } from '@embedpdf/models'
@@ -19,6 +21,9 @@ const emit = defineEmits<{ ready: [event: { totalPages: number }]; position: [po
 const engine = shallowRef<PdfEngine | null>(null)
 const documentView = useTemplateRef('documentView')
 let alive = true
+const reportLibrary = safeLibraryReporter(inject(clientLibraryReporterKey, ignoreClientLibrarySignal))
+const logger = createEmbedPdfLogger(signal => { if (alive) reportLibrary(signal) })
+const registryConfig = { logger }
 const startup = new AbortController()
 const plugins = [
   createPluginRegistration(DocumentManagerPluginPackage, { initialDocuments: [{ url: props.src, documentId: 'reader' }] }),
@@ -42,15 +47,17 @@ onMounted(async () => {
     if (!alive) return
     const { createPdfiumEngine } = await import('@embedpdf/engines/pdfium-worker-engine')
     if (!alive) return
-    engine.value = createPdfiumEngine(wasmUrl, { fontFallback: null })
-  } catch { if (alive) emit('error', 'PDF 引擎资源加载失败，请重试。') }
+    engine.value = createPdfiumEngine(wasmUrl, { fontFallback: null, logger })
+  } catch { if (alive) { reportLibrary('pdf_startup_failure'); emit('error', 'PDF 引擎资源加载失败，请重试。') } }
 })
 onBeforeUnmount(() => { alive = false; startup.abort(); engine.value?.destroy?.(); engine.value = null })
 function navigate(position: PdfReadingPosition, options?: PdfNavigationOptions) { documentView.value?.navigate(position, options) }
+function documentReady(event: { totalPages: number }) { if (alive) reportLibrary('pdf_document_ready'); emit('ready', event) }
+function documentError(message: string) { if (alive) reportLibrary('pdf_document_failure'); emit('error', message) }
 defineExpose({ navigate })
 </script>
 <template>
-  <EmbedPDF v-if="engine" :engine="engine" :plugins="plugins" class="flex min-h-0 flex-1 flex-col">
-    <PdfReaderDocument ref="documentView" document-id="reader" :tools="tools" :engine="engine" @ready="emit('ready', $event)" @position="emit('position', $event)" @navigate="emit('navigate', $event)" @error="emit('error', $event)" />
+  <EmbedPDF v-if="engine" :engine="engine" :plugins="plugins" :config="registryConfig" class="flex min-h-0 flex-1 flex-col">
+    <PdfReaderDocument ref="documentView" document-id="reader" :tools="tools" :engine="engine" @ready="documentReady" @position="emit('position', $event)" @navigate="emit('navigate', $event)" @error="documentError" />
   </EmbedPDF>
 </template>
