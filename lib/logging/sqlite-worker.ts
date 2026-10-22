@@ -14,7 +14,17 @@ const failureCode = error => error && error.code === 'SQLITE_FULL' ? 'storage_fu
 function readPolicy() {
   const storage = db.prepare('SELECT retentionDays,maxBytes FROM log_policy WHERE id=1').get()
   const row = db.prepare('SELECT collection,revision FROM log_collection WHERE id=1').get()
-  return {...storage, collection:JSON.parse(row.collection), revision:row.revision}
+  const stored = JSON.parse(row.collection)
+  const object = value => value && typeof value === 'object' && !Array.isArray(value)
+  if (!object(stored) || !object(stored.sources) || !object(stored.integrations)) throw new Error('invalid_log_policy')
+  for (const dimension of ['sources','integrations']) for (const rule of Object.values(stored[dimension])) {
+    if (!object(rule) || typeof rule.enabled !== 'boolean' || !['debug','info','warn','error'].includes(rule.minLevel)) throw new Error('invalid_log_policy')
+  }
+  if (Object.keys(initialCollection.sources).some(key => !Object.hasOwn(stored.sources,key))) throw new Error('invalid_log_policy')
+  // A collector added by a newer build receives the documented default rule.
+  // Existing choices win, and a read alone never changes the saved revision.
+  const collection = {sources:stored.sources, integrations:{...initialCollection.integrations,...stored.integrations}}
+  return {...storage, collection, revision:row.revision}
 }
 let db
 let policy = workerData.policy
