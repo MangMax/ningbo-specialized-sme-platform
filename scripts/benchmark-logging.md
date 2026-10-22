@@ -60,3 +60,14 @@ in result JSON. Harness failures are retained, not removed or rerun to green.
 The summary does not turn sampled bounds into leak proofs, benchmark results
 into production SLOs, or inherited functional evidence into fresh performance
 coverage. Inspect `correctness.json` independently of performance numbers.
+
+If a management observation fails after a load cell, the driver now writes its
+load summary before querying policy and records the observation error separately.
+`--http-debug-supplement` replays the full six-cell debug context for rounds0 and2
+in a separately labeled fixed-SHA directory. It does not replace original failure
+rows or pool its timings into original three-round medians. Error status/code
+counts and successful-response latency are additional observations. The original
+run's all-response percentiles include fast503 replies and cannot reconstruct
+success-only percentiles; do not interpret a low p95 under overload as healthy
+business latency. Child acknowledged counts are sampled endpoint differences,
+with offsets retained; they cannot reconstruct unacknowledged drops/overflow.
