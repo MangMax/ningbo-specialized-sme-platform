@@ -1,3 +1,4 @@
+import { semanticRouteHandler } from '../../../../../../utils/core-route'
 import { useDb } from '@db'
 import { getEnterpriseAliasHistory } from '../../../../../../utils/alias-maintenance'
 defineRouteMeta({ openAPI: {
@@ -11,7 +12,7 @@ defineRouteMeta({ openAPI: {
   ],
   responses: { 413: { description: '页面超过256KiB；减小pageSize完整读取，不截断历史或备注。' }, 200: { description: '{rows,total,page,pageSize}，空历史rows=[]；精确保留所有审计，按页读取。' }, 400: { description: 'ID或分页非法。' }, 404: { description: '企业或其别名不存在。' } },
 } })
-export default defineEventHandler(event => {
+export default semanticRouteHandler('maintenance.alias.history', event => {
   setHeader(event, 'cache-control', 'no-store')
   return getEnterpriseAliasHistory(useDb(), getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), getQuery(event))
 })

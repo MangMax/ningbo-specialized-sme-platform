@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../lib/logging'
 import { admitEnterpriseResponse } from '../../utils/enterprise-read-response'
 import { useDb } from '@db'
 import {
@@ -112,7 +113,7 @@ export default defineEventHandler((event) => {
   const filter = parseRosterEnterpriseQuery(getQuery(event))
   admitEnterpriseResponse(event)
   return withEnterpriseReadSignal(event, async signal => {
-    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter }, signal)
+    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter }, signal, requestLogContext(event))
     setHeader(event, 'content-type', 'application/json; charset=utf-8')
     return result.body
   })

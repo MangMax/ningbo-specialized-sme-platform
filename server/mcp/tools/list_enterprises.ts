@@ -1,3 +1,4 @@
+import type { LogContext } from '../../../lib/logging'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
@@ -50,7 +51,7 @@ export default defineMcpTool({
     pageSize: z.number().int().min(1).max(200).optional().describe('每页数量，默认 50，上限 200'),
   },
   handler: async (input, extra) => {
-    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter: enterpriseListFilter(input) }, extra?.signal)
+    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter: enterpriseListFilter(input) }, extra?.signal, (extra as typeof extra & { logContext?: LogContext })?.logContext)
     return result.body.toString('utf8')
   },
 })
