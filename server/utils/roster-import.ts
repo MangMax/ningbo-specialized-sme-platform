@@ -4199,14 +4199,14 @@ function replayRosterImportCore(db: Db, request: RosterImportRequest): RosterImp
   return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items: publicRosterImportItems(items), error: null }
 }
 
-export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = []) {
-  return recordImportReceipt(db, 'preflight', request, () => preflightRosterImportCore(db, request, pageCountErrors))
+export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: import('../../lib/logging').LogContext = {}) {
+  return recordImportReceipt(db, 'preflight', request, () => preflightRosterImportCore(db, request, pageCountErrors), context)
 }
-export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = []) {
-  return recordImportReceipt(db, 'commit', request, () => commitRosterImportCore(db, request, pageCountErrors))
+export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: import('../../lib/logging').LogContext = {}) {
+  return recordImportReceipt(db, 'commit', request, () => commitRosterImportCore(db, request, pageCountErrors), context)
 }
-export function replayRosterImport(db: Db, request: RosterImportRequest) {
-  return recordImportReceipt(db, 'replay', request, () => replayRosterImportCore(db, request))
+export function replayRosterImport(db: Db, request: RosterImportRequest, context: import('../../lib/logging').LogContext = {}) {
+  return recordImportReceipt(db, 'replay', request, () => replayRosterImportCore(db, request), context)
 }
 
 /**
