@@ -1,3 +1,4 @@
+import { semanticRouteHandler } from './core-route'
 import { getHeader, getQuery, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { useDb } from '@db'
 import { z } from 'zod'
@@ -12,7 +13,7 @@ function numericQuery(query: Record<string, unknown>) {
   ]))
 }
 export function decisionRoute102(action: 'commands' | 'get' | 'current' | 'history' | 'legacy-preview') {
-  return defineEventHandler(async (event: H3Event) => {
+  return semanticRouteHandler(`maintenance.decision.${action}`, async (event: H3Event) => {
     setHeader(event, 'cache-control', 'no-store')
     try {
       const db = useDb()
