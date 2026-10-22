@@ -4,6 +4,7 @@ import { getHeapStatistics } from 'node:v8'
 import { realpathSync, statSync } from 'node:fs'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { createDrizzleLogger } from '../logging/drizzle'
 import * as schema from '../../db/schema'
 import { listRosterEnterprises, getRosterEnterpriseDetail, type RosterEnterpriseFilter } from './enterprise-roster'
 import { enterpriseJsonChunks } from './enterprise-read-json'
@@ -98,7 +99,7 @@ process.on('message', async (request: EnterpriseReadRequest) => {
     }
     const connectionMs = performance.now() - started
 
-    const db = drizzle(connection!, { schema })
+    const db = drizzle(connection!, { schema, logger: createDrizzleLogger({ connection: 'enterprise_read', execution: 'worker', context: request.logContext }) })
     // Each whole reader owns one synchronous transaction across every statement. It
     // lives entirely off-thread, including native cursor drains and JS sorting.
     let result: unknown
