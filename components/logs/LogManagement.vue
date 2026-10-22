@@ -144,6 +144,9 @@ const pending = ref(false),
   notice = ref(''),
   failure = ref('')
 const review = ref<Review | null>(null)
+// Keep the frozen contents while the shared Dialog plays its closing animation.
+// Clearing the open state must not change a configuration review into a clear warning.
+const dialogReview = computed<Review | null>((previous) => review.value ?? previous ?? null)
 const busy = computed(() => pending.value || loading.value || !!error.value)
 const validPolicy = computed(
   () =>
@@ -642,24 +645,24 @@ async function confirm() {
       >
         <DialogHeader
           ><DialogTitle>{{
-            review?.kind === 'config' ? '核对日志配置修改' : '确认清理运行日志'
+            dialogReview?.kind === 'config' ? '核对日志配置修改' : '确认清理运行日志'
           }}</DialogTitle
           ><DialogDescription>{{
-            review?.kind === 'config'
+            dialogReview?.kind === 'config'
               ? '保存后影响后续日志批次和待处理队列的采集；采集规则不删除已有记录，保留策略调整可能触发轮转。'
               : '此操作可能永久删除运行日志。业务审计、回执、源文件和任务产物不在清理范围。'
           }}</DialogDescription></DialogHeader
         >
-        <template v-if="review?.kind === 'config'">
+        <template v-if="dialogReview?.kind === 'config'">
           <div
-            v-if="review.sources.length || review.integrations.length"
+            v-if="dialogReview.sources.length || dialogReview.integrations.length"
             class="flex flex-col gap-2"
           >
             <p class="text-sm">仅列出有差异的采集规则：</p>
             <Table class="data-table">
               <TableBody>
                 <TableRow
-                  v-for="change in [...review.sources, ...review.integrations]"
+                  v-for="change in [...dialogReview.sources, ...dialogReview.integrations]"
                   :key="`${change.dimension}-${change.key}`"
                 >
                   <TableCell class="text-muted-foreground whitespace-normal">
@@ -675,21 +678,21 @@ async function confirm() {
             </p>
           </div>
           <div
-            v-if="review.retentionChanged || review.capacityChanged"
+            v-if="dialogReview.retentionChanged || dialogReview.capacityChanged"
             class="flex flex-col gap-1 text-sm"
           >
-            <p v-if="review.retentionChanged">
-              保留天数：{{ data?.retentionDays }} 天 → {{ review.retentionDays }} 天
+            <p v-if="dialogReview.retentionChanged">
+              保留天数：{{ data?.retentionDays }} 天 → {{ dialogReview.retentionDays }} 天
             </p>
-            <p v-if="review.capacityChanged">
+            <p v-if="dialogReview.capacityChanged">
               容量：{{ data ? bytesLabel(data.maxBytes) : '' }} →
-              {{ bytesLabel(review.maxBytes) }}
+              {{ bytesLabel(dialogReview.maxBytes) }}
             </p>
           </div>
         </template>
-        <template v-else-if="review?.kind === 'clear'"
+        <template v-else-if="dialogReview?.kind === 'clear'"
           ><p class="text-sm">清理以下已固定范围，每次最多 1000 条：</p>
-          <Table><TableBody><TableRow v-for="(value, key) in review.filter" :key="key">
+          <Table><TableBody><TableRow v-for="(value, key) in dialogReview.filter" :key="key">
             <TableCell class="text-muted-foreground">{{ filterLabels[key] ?? key }}</TableCell>
             <TableCell class="break-all">{{ key === 'from' || key === 'to' ? localRange(String(value)) : value }}</TableCell>
           </TableRow></TableBody></Table>
@@ -697,14 +700,14 @@ async function confirm() {
         <DialogFooter
           ><Button variant="outline" :disabled="pending" @click="review = null">取消</Button
           ><Button
-            :variant="review?.kind === 'clear' ? 'destructive' : 'default'"
+            :variant="dialogReview?.kind === 'clear' ? 'destructive' : 'default'"
             data-testid="log-policy-confirm"
             :disabled="pending"
             @click="confirm"
             >{{
               pending
                 ? '正在提交…'
-                : review?.kind === 'config'
+                : dialogReview?.kind === 'config'
                   ? '确认保存配置'
                   : '确认清理范围'
             }}</Button
