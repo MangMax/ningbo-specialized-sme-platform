@@ -34,10 +34,11 @@ const delegatedProps = reactiveOmit(props, "tooltip")
         <slot />
       </SidebarMenuButtonChild>
     </TooltipTrigger>
+    <!-- Hidden content still registers a dismissal layer and consumes Escape. -->
     <TooltipContent
+      v-if="state === 'collapsed' && !isMobile"
       side="right"
       align="center"
-      :hidden="state !== 'collapsed' || isMobile"
     >
       <template v-if="typeof tooltip === 'string'">
         {{ tooltip }}
