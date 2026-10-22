@@ -327,7 +327,7 @@ function restoreFocus(event: Event) {
             >
               <Table class="data-table min-w-[900px] table-fixed">
                 <TableHeader class="sticky top-0 z-10"><TableRow class="hover:bg-transparent">
-                  <TableHead class="w-[224px]">时间 / 级别</TableHead>
+                  <TableHead class="w-[224px]">级别 / 时间</TableHead>
                   <TableHead class="w-[220px]">操作 / 来源</TableHead>
                   <TableHead class="w-[180px]">结果 / 耗时</TableHead>
                   <TableHead>关联标识</TableHead>
@@ -479,8 +479,8 @@ function restoreFocus(event: Event) {
                     >· HTTP {{ row.statusCode }}</span
                   >
                 </div>
-                <p v-if="reference(row)" class="text-muted-foreground text-[13px] break-all">
-                  <span class="font-mono text-xs">{{ referenceKind(row) }} {{ reference(row) }}</span>
+                <p class="text-muted-foreground text-[13px] break-all">
+                  <span class="font-mono text-xs">{{ reference(row) ? `${referenceKind(row)} ${reference(row)}` : '关联标识未记录' }}</span>
                 </p>
               </li>
             </ul>
