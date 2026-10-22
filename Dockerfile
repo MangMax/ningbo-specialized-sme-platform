@@ -33,6 +33,10 @@ COPY --from=build --chown=node:node /app/.output/ ./.output/
 # db/client.ts resolves migrations from process.cwd(), outside .output.
 COPY --from=build --chown=node:node /app/db/migrations/ ./db/migrations/
 
+# Independent diagnostics volume; never shares the business /state mount.
+RUN mkdir -p /logs && chown node:node /logs
+ENV NUXT_LOG_DIR=/logs
+
 USER node
 
 EXPOSE 3000

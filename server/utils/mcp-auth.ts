@@ -37,6 +37,11 @@ import { createHash, timingSafeEqual } from 'node:crypto'
  * 同批注册的 `preflight_roster_batch` 是**只读预检**(契约 §9 如此归类),不在此列。
  */
 export const MCP_WRITE_TOOLS = [
+  'list_runtime_logs',
+  'get_runtime_log',
+  'get_runtime_log_policy',
+  'set_runtime_log_policy',
+  'clear_runtime_logs',
   'save_difference_decision',
   'process_evidence_impacts',
   'release_evidence_rule',

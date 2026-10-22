@@ -58,6 +58,7 @@
     "dompurify": "3.4.17",
     "drizzle-orm": "^0.45.4",
     "es-toolkit": "^1.52.0",
+    "evlog": "2.33.1",
     "markstream-vue": "2.0.19",
     "motion-v": "^2.8.0",
     "nuxt": "^4.6.1",

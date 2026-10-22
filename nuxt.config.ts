@@ -26,7 +26,13 @@ export default defineNuxtConfig({
     // 模块扫出来注册到 `POST /mcp`。默认 handler(身份/说明书/写入鉴权)在
     // `server/mcp/index.ts`。
     '@nuxtjs/mcp-toolkit',
+    'evlog/nuxt',
   ],
+
+  evlog: {
+    silent: true, pretty: false, console: false, sourceLocation: false, strip: [],
+    transport: { enabled: false }, stream: false,
+  },
 
   // 统计页图表(nuxt-charts v3)。只注册用到的图表组件,缩小客户端包体。
   nuxtCharts: {
@@ -79,6 +85,8 @@ export default defineNuxtConfig({
      * 想让两边共用一个值,把两个变量设成一样即可 —— 那是配置时的选择。
      */
     apiToken: '',
+    /** Sensitive log page capability; explicit opt-in, not a user identity/session. */
+    browserLogsEnabled: false,
     /**
      * **#108 页面复核写入口的显式部署开关**（server-only，默认 `false`）。
      *
@@ -134,6 +142,13 @@ export default defineNuxtConfig({
    */
   hooks: {
     'nitro:init'(nitro) {
+      // The logging module's response formatter changes native API error JSON.
+      // Keep its real request/error hooks, but preserve the existing error contract.
+      const errorHandlers = Array.isArray(nitro.options.errorHandler) ? nitro.options.errorHandler : [nitro.options.errorHandler]
+      nitro.options.errorHandler = [
+        fileURLToPath(new URL('./server/logging-error-handler.ts', import.meta.url)),
+        ...errorHandlers.filter((handler): handler is string => !!handler && !(handler.includes('/evlog/') && handler.includes('/nitro/errorHandler'))),
+      ]
       // Register the lazy virtual source before Rollup constructs its plugins;
       // evaluate after handler scanning, when this build's route set is known.
       nitro.options.virtual['#current-export-routes'] = () => {
@@ -147,6 +162,14 @@ export default defineNuxtConfig({
   nitro: {
     hooks: {
       'rollup:before'(nitro, config) {
+        const loggingLocation = fileURLToPath(new URL('./lib/logging/sqlite-module-location.ts', import.meta.url))
+        config.plugins = [config.plugins, {
+          name: 'logging-native-module-location',
+          transform: { order: 'post' as const, handler(_code: string, id: string) {
+            if (id !== loggingLocation) return
+            return { code: `import { createRequire } from 'node:module'; export function resolveLoggingSqliteModule() { return createRequire(_import_meta_url_).resolve('better-sqlite3'); }`, map: null }
+          } },
+        }]
         // Emit an actual worker entry through the same dependency/external
         // packaging pipeline as the server. Rollup computes a relocatable URL
         // from the launcher's final chunk, including in Nitro dev builds.

@@ -10,6 +10,7 @@ dist/
 
 # tus 上传工作目录(分片暂存,落位后清空)
 .incoming/
+.runtime-logs/
 
 # data (local SQLite snapshots)
 data/
