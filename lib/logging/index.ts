@@ -35,9 +35,16 @@ export function appLog(input: LogInput, context: LogContext = {}): void {
     logger.emit({ _forceKeep: true })
   } catch { /* Runtime logging must not change business outcome. */ }
 }
+/** Request-scoped context also carries the transport facts once the router has matched a route. */
+export type RequestLogContext = LogContext & { httpMethod?: string; httpRoute?: string }
 /** Request handlers pass this context into task/subprocess payloads explicitly. No inferred actor. */
-export function requestLogContext(event: { context: Record<string, any> }): LogContext {
-  return { ...event.context.applicationLogContext }
+export function requestLogContext(event: { context: Record<string, any>; method?: string }): RequestLogContext {
+  const matched = event.context.matchedRoute
+  return {
+    ...event.context.applicationLogContext,
+    ...(typeof event.method === 'string' ? { httpMethod: event.method } : {}),
+    ...(typeof matched?.path === 'string' ? { httpRoute: matched.path } : {}),
+  }
 }
 export function newLogContext(): LogContext { return { requestId: randomUUID(), traceId: randomUUID() } }
 export async function closeApplicationLogging() { await service?.close(); service = undefined }

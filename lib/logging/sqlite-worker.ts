@@ -72,7 +72,7 @@ function execute(action, data) {
     maintain()
     const insert = db.prepare('INSERT INTO log_events(id,timestamp,level,source,operation,outcome,requestId,traceId,taskId,fileId,batchId,resourceId,summary,detail) VALUES(@id,@timestamp,@level,@source,@operation,@outcome,@requestId,@traceId,@taskId,@fileId,@batchId,@resourceId,@summary,@detail)')
     const write = db.transaction(() => { for (const event of data) {
-      const { counts, errorCode, auditId, receiptId, parentEventId, ...summary } = event
+      const { auditId, receiptId, parentEventId, ...summary } = event
       insert.run({ requestId:null,traceId:null,taskId:null,fileId:null,batchId:null,resourceId:null,...event, batchId:event.batchId===undefined?null:String(event.batchId),resourceId:event.resourceId===undefined?null:String(event.resourceId), summary:JSON.stringify(summary),detail:JSON.stringify(event) })
     } })
     try { write() } catch(error) {
