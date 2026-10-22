@@ -1,3 +1,4 @@
+import { appLog, requestLogContext } from '../../lib/logging'
 import { TUS_PATH, getTus } from '../utils/tus'
 
 /**
@@ -16,5 +17,16 @@ export default defineEventHandler(async (event) => {
   if (event.path !== TUS_PATH && !event.path.startsWith(`${TUS_PATH}/`)) return
   // 鉴权预留位:tus 协议本身不含鉴权(见 ADR)。真实登录体系未接入前,这里只做
   // 最小把关;上线前应在此校验会话/来源,再交给 tus(见 .research/tus-research.md §5.4)。
-  return sendWebResponse(event, await getTus().handleWeb(toWebRequest(event)))
+  const startedAt = Date.now()
+  try {
+    const response = await getTus().handleWeb(toWebRequest(event))
+    // Only a completed landing carries this header. HEAD/offset polls emit no semantic event.
+    if (response.headers.has('x-upload-path') || (['POST', 'PATCH', 'DELETE'].includes(event.method) && response.status >= 400)) {
+      appLog({ source: 'file', operation: 'file.upload', outcome: response.status >= 500 ? 'failure' : response.status >= 400 ? 'denied' : 'success', statusCode: response.status, durationMs: Date.now() - startedAt, ...(response.status >= 400 ? { errorCode: 'file_upload_rejected', level: 'error' as const } : {}) }, requestLogContext(event))
+    }
+    return sendWebResponse(event, response)
+  } catch (error) {
+    appLog({ source: 'file', operation: 'file.upload', outcome: 'failure', level: 'error', errorCode: 'file_upload_failed', durationMs: Date.now() - startedAt }, requestLogContext(event))
+    throw error
+  }
 })

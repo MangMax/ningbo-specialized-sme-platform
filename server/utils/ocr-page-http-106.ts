@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../lib/logging'
 import { createError, getHeader, getQuery, getRouterParam, readBody, setHeader, type H3Event } from 'h3'
 import { z } from 'zod'
 import { useDb } from '@db'
@@ -34,8 +35,8 @@ export async function ocrPageHttp106(event: H3Event, action: 'get' | 'save' | 'd
   await ensureFileStoreReady(db, config.filesDir)
   const row = requireOcrFileRef(db, { fileId: Number(id) }, action === 'get')
   if (action === 'get') return getOcrResultForFile(db, row, page.data)
-  if (action === 'save') return saveOcrImport({ ok: true, db, row, root: config.filesDir }, { ...body, page: page.data }, 'upload')
-  const out = deleteOcrPage(db, row.id, page.data, body.expectedVersion as string | null | undefined)
+  if (action === 'save') return saveOcrImport({ ok: true, db, row, root: config.filesDir }, { ...body, page: page.data }, 'upload', requestLogContext(event))
+  const out = deleteOcrPage(db, row.id, page.data, body.expectedVersion as string | null | undefined, requestLogContext(event))
   if (!out.ok) throw createError({ statusCode: out.statusCode, message: out.message })
   return { file: { id: row.id, relPath: row.relPath, filename: row.filename }, page: out.page, deleted: out.deleted, remaining: out.remaining }
 }

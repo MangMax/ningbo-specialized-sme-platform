@@ -1,3 +1,4 @@
+import type { LogContext } from '../../../lib/logging'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { parseSave105, saveParseMcp105 } from '../../utils/parse-maintenance-105'
@@ -17,5 +18,5 @@ export default defineMcpTool({
     '只写stored_file_part、parse_state和解析审计;不写文件元数据/OCR/企业/记录/事件/出处。parsed不表示名录校验通过。更正用新版本新键;[]撤回代理声明,不物理删除来源历史。',
   ].join('\n'),
   inputSchema: parseSave105.shape,
-  handler: input => saveParseMcp105(useDb(), input),
+  handler: (input, extra) => saveParseMcp105(useDb(), input, (extra as { logContext?: LogContext } | undefined)?.logContext),
 })

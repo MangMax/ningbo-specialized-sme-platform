@@ -1,3 +1,4 @@
+import { appLog, type LogContext } from '../../lib/logging'
 import { stat } from 'node:fs/promises'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
@@ -105,7 +106,7 @@ function splitRelPath(relPath: string): string[] {
  * 都不给分类时不硬填:写 `null` + `category_state='unset'`,交票 12 回写
  * (与 `lib/stored-file.ts` 的 `categoryStateOf` 同一条规则 —— 公布文件没年份就是未定)。
  */
-export async function registerStoredFile(
+async function registerStoredFileUnlogged(
   db: BetterSQLite3Database<typeof schema>,
   filesRoot: string,
   input: UploadDeclaration,
@@ -212,4 +213,20 @@ export async function registerStoredFile(
     .get()
 
   return { row: getStoredFile(db, inserted.id)!, created: true }
+}
+
+/** Registration is a semantic write; file names and declarations never enter runtime logs. */
+export async function registerStoredFile(
+  db: BetterSQLite3Database<typeof schema>, filesRoot: string, input: UploadDeclaration,
+  context: LogContext = {},
+): Promise<{ row: StoredFileRow; created: boolean }> {
+  const startedAt = Date.now()
+  try {
+    const result = await registerStoredFileUnlogged(db, filesRoot, input)
+    appLog({ source: 'file', operation: result.created ? 'file.register' : 'file.register.refresh', outcome: 'success', fileId: result.row.id, durationMs: Date.now() - startedAt }, context)
+    return result
+  } catch (error) {
+    appLog({ source: 'file', operation: 'file.register', outcome: error instanceof UploadRegistrationError ? 'denied' : 'failure', level: 'error', errorCode: error instanceof UploadRegistrationError ? 'file_registration_rejected' : 'file_registration_failed', durationMs: Date.now() - startedAt }, context)
+    throw error
+  }
 }

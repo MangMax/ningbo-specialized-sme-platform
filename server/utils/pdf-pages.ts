@@ -1,3 +1,4 @@
+import { appLog, type LogContext } from '../../lib/logging'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -317,6 +318,7 @@ export async function listPdfPages(
 // ---------------------------------------------------------------------------
 
 export interface RenderOptions {
+  logContext?: LogContext
   dpi?: number
   /** 忽略清单与已有页图,无条件重渲染。 */
   force?: boolean
@@ -360,7 +362,19 @@ export function renderPdfPages(
   const previous = chains.get(abs) ?? Promise.resolve()
   const promise = previous
     .catch(() => undefined)
-    .then(() => renderUncached(root, pdfRelPath, { dpi, force }))
+    .then(async () => {
+      const startedAt = Date.now()
+      const metrics: { done: number; total?: number } = { done: 0 }
+      try {
+        const out = await renderUncached(root, pdfRelPath, { dpi, force, logContext: options.logContext }, metrics)
+        appLog({ source: 'file', operation: 'file.render', outcome: out.written ? 'success' : 'skipped', counts: { done: out.rendered, total: out.pageCount ?? undefined }, durationMs: Date.now() - startedAt }, options.logContext)
+        if (out.removed) appLog({ source: 'file', operation: 'file.render.cleanup', outcome: 'success', counts: { done: out.removed } }, options.logContext)
+        return out
+      } catch (error) {
+        appLog({ source: 'file', operation: 'file.render', outcome: metrics.done ? 'partial' : 'failure', counts: metrics, level: 'error', errorCode: 'pdf_render_failed', durationMs: Date.now() - startedAt }, options.logContext)
+        throw error
+      }
+    })
 
   const entry = { key, promise }
   inflight.set(abs, entry)
@@ -377,7 +391,8 @@ export function renderPdfPages(
 async function renderUncached(
   root: string,
   pdfRelPath: string,
-  options: { dpi: number; force?: boolean },
+  options: { dpi: number; force?: boolean; logContext?: LogContext },
+  metrics: { done: number; total?: number },
 ): Promise<RenderOutcome> {
   const { dpi, force = false } = options
   const startedAt = Date.now()
@@ -411,6 +426,7 @@ async function renderUncached(
   const pages: ManifestPage[] = []
   try {
     const pageCount = doc.getPageCount()
+    metrics.total = pageCount
     await mkdir(dirAbs, { recursive: true })
 
     for (let index = 0; index < pageCount; index += 1) {
@@ -444,6 +460,8 @@ async function renderUncached(
 
         await writeFileAtomic(abs, image.data)
         written += 1
+        metrics.done = written
+        appLog({ source: 'file', operation: 'file.render.page', outcome: 'success', page: pageNo }, options.logContext)
         pages.push({
           page: pageNo,
           relPath,
@@ -451,6 +469,9 @@ async function renderUncached(
           height: image.height,
           bytes: image.data.byteLength,
         })
+      } catch (error) {
+        appLog({ source: 'file', operation: 'file.render.page', outcome: 'failure', level: 'error', page: pageNo, errorCode: 'pdf_page_render_failed' }, options.logContext)
+        throw error
       } finally {
         // 页不关就会一直占着 PDFium 的位图缓存 —— 97 页全攒着就是几百 MB。
         page.close()

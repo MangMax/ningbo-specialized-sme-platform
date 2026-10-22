@@ -1,3 +1,6 @@
+import { requestLogContext } from '../../lib/logging'
+import { useDb } from '@db'
+import { findFileIdByRelPath } from '../utils/mcp-files'
 import { stat } from 'node:fs/promises'
 import { isPdfPath, normalizeDpi } from '~~/lib/pdf-page'
 import { renderPdfPages, resolveWithinRoot } from '../utils/pdf-pages'
@@ -83,8 +86,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, message: `文件不存在:${file}` })
   }
 
+  const logContext = requestLogContext(event)
+  try { const id = findFileIdByRelPath(useDb(), file); if (id !== null) logContext.fileId = id } catch { /* Optional log identity cannot stop rendering. */ }
   try {
-    return await renderPdfPages(root, file, { dpi, force: body?.force === true })
+    return await renderPdfPages(root, file, { dpi, force: body?.force === true, logContext })
   } catch (error) {
     // 渲染失败(加密 / 损坏 / 裁切异常)不吞:400 带上原因,让页面能显示给人看。
     throw createError({ statusCode: 422, message: `渲染失败:${(error as Error).message}` })

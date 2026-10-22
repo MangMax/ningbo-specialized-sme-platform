@@ -1,3 +1,4 @@
+import type { LogContext } from '../../../lib/logging'
 import { legacyFileMaintenanceControlShape } from '../../utils/file-maintenance-contract'
 import { parseFileMaintenanceOptions } from '../../utils/file-maintenance'
 import { z } from 'zod'
@@ -62,7 +63,7 @@ export default defineMcpTool({
       .nullish()
       .describe('该文件对应的称号(取值见 db/titles.ts 的称号字典);null 清空'),
   },
-  handler: async (input) => {
+  handler: async (input, extra) => {
     const db = useDb()
     // 只把**给了的**字段递下去:`parseMetadataPatch` 把「键不存在」当未提供、
     // 「值为 null」当清空,两者语义不同,所以不能用 undefined 占位。
@@ -72,7 +73,7 @@ export default defineMcpTool({
     }
 
     // 写入不接受已移出库的文件(resolveFileRef 的 allowRemoved 默认 false)。
-    const result = setFileCategoryForAgent(db, input, meta, undefined, parseFileMaintenanceOptions(input))
+    const result = setFileCategoryForAgent(db, input, meta, undefined, parseFileMaintenanceOptions(input), (extra as { logContext?: LogContext } | undefined)?.logContext)
     if (!result.ok) throw createError({ statusCode: result.statusCode, message: result.message })
     return { file: { ...result.row } }
   },

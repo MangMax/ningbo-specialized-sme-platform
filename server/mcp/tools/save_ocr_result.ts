@@ -1,3 +1,4 @@
+import type { LogContext } from '../../../lib/logging'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { fileRefShape, openFileStore } from '../../utils/mcp-files'
@@ -49,10 +50,10 @@ export default defineMcpTool({
     engine: z.string().optional().describe('识别引擎;默认 paddleocr'),
     model: z.string().nullable().optional().describe('模型名(可空)'),
   },
-  handler: async (input) => {
+  handler: async (input, extra) => {
     const { db, root } = await openFileStore()
     const row = requireOcrFileRef(db, input)
-    const out = await saveOcrImport({ ok: true, db, root, row }, input, 'mcp')
+    const out = await saveOcrImport({ ok: true, db, root, row }, input, 'mcp', (extra as { logContext?: LogContext } | undefined)?.logContext)
     // 旧 MCP 载荷/响应适配:保留最初的四个键,不暴露上传通路的额外探测字段。
     return { file: out.file, channel: 'mcp', written: out.written, pages: out.pages }
   },
