@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { clientRequestReference } from '~~/lib/client-logging/request-reference'
-import type { LogEvent, LogSummary } from '~~/lib/logging/contract'
+import type { LogEvent, LogOrigin, LogSummary } from '~~/lib/logging/contract'
 import { detailFieldValue, detailProfile } from '~~/lib/logging/detail-profile'
 import { logBrowserHeaders, logErrorMessage, useLogRead } from '~/composables/useLogRead'
 import {
@@ -75,7 +75,35 @@ const fieldLabels: Record<string, string> = {
   'tus.phase': '上传阶段',
   'tus.method': '上传方法',
   'tus.size': '声明总量（字节）',
-  'tus.offset': '已接收（字节）'
+  'tus.offset': '已接收（字节）',
+  'origin.runtime': '运行环境',
+  'origin.integration': '接入模块',
+  'origin.capture': '采集方式',
+  'origin.execution': '执行位置'
+}
+/** 标签由固定枚举键约束；新增取值会在这里报类型错，而不是静默漏翻。 */
+const ORIGIN_RUNTIME_LABELS: Record<LogOrigin['runtime'], string> = {
+  node: 'Node',
+  browser: '浏览器'
+}
+const ORIGIN_INTEGRATION_LABELS: Record<LogOrigin['integration'], string> = {
+  'nuxt-nitro': 'Nuxt / Nitro 请求',
+  'mcp-toolkit': 'MCP Toolkit 模块上下文',
+  tus: 'tus 服务端回调',
+  application: '应用手动埋点',
+  browser: '浏览器原生异常',
+  vue: 'Vue 异常'
+}
+const ORIGIN_CAPTURE_LABELS: Record<LogOrigin['capture'], string> = {
+  framework: '框架采集',
+  hook: '生命周期钩子',
+  manual: '手动埋点'
+}
+const ORIGIN_EXECUTION_LABELS: Record<NonNullable<LogOrigin['execution']>, string> = {
+  request: '请求处理',
+  background: '后台',
+  worker: '工作进程',
+  page: '页面'
 }
 const MCP_CLIENT_LABELS: Record<string, string> = {
   claude: 'Claude',
@@ -115,6 +143,17 @@ function copyTus(value: LogEvent['tus']): Record<string, unknown> | undefined {
     if (value[key] !== undefined) out[key] = value[key]
   return out
 }
+/** 只复制固定枚举字段；未来响应里多出的 origin 键不跟着离开页面。 */
+function copyOrigin(value: LogEvent['origin']): Record<string, unknown> | undefined {
+  if (!value) return undefined
+  const out: Record<string, unknown> = {
+    runtime: value.runtime,
+    integration: value.integration,
+    capture: value.capture
+  }
+  if (value.execution !== undefined) out.execution = value.execution
+  return out
+}
 // Copy only the foundation's event projection, even if a future response adds fields.
 const safe = computed<Record<string, unknown> | null>(() => {
   if (!current.value || !data.value) return null
@@ -150,6 +189,8 @@ const safe = computed<Record<string, unknown> | null>(() => {
   if (mcp) event.mcp = mcp
   const tus = copyTus(data.value.tus)
   if (tus) event.tus = tus
+  const origin = copyOrigin(data.value.origin)
+  if (origin) event.origin = origin
   const reference =
     data.value.source === 'client'
       ? clientRequestReference(data.value.untrustedRelatedRequestId)
@@ -174,6 +215,23 @@ const displayValue = (name: string, value: unknown): string => {
   if (name === 'mcp.protocolVersionRequested') return `${String(value)}（客户端声明）`
   if (name === 'tus.phase') return `${TUS_PHASE_LABELS[String(value)] ?? String(value)}（${String(value)}）`
   if (name === 'tus.size' || name === 'tus.offset') return `${String(value)} 字节`
+  if (name === 'origin.runtime') {
+    const runtime = String(value) as LogOrigin['runtime']
+    const label = ORIGIN_RUNTIME_LABELS[runtime] ?? runtime
+    return runtime === 'browser' ? `${label}（${runtime}，客户端自报）` : `${label}（${runtime}）`
+  }
+  if (name === 'origin.integration') {
+    const integration = String(value) as LogOrigin['integration']
+    return `${ORIGIN_INTEGRATION_LABELS[integration] ?? integration}（${integration}）`
+  }
+  if (name === 'origin.capture') {
+    const capture = String(value) as LogOrigin['capture']
+    return `${ORIGIN_CAPTURE_LABELS[capture] ?? capture}（${capture}）`
+  }
+  if (name === 'origin.execution') {
+    const execution = String(value) as NonNullable<LogOrigin['execution']>
+    return `${ORIGIN_EXECUTION_LABELS[execution] ?? execution}（${execution}）`
+  }
   return typeof value === 'object' ? JSON.stringify(value) : String(value)
 }
 const groups = computed(() => {

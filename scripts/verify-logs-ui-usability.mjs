@@ -276,6 +276,7 @@ const edgeEvents = [
     statusCode: 200,
     durationMs: 40,
     requestId: 'req-mcp-init-1',
+    origin: { runtime: 'node', integration: 'mcp-toolkit', capture: 'framework', execution: 'request' },
     mcp: {
       transport: 'streamable-http',
       sessionMode: 'stateless',
@@ -294,6 +295,8 @@ const edgeEvents = [
     statusCode: 200,
     durationMs: 12,
     requestId: 'req-mcp-tool-1',
+    // 应用手动埋点只声明确定的 runtime/integration/capture，不从 requestId 推 execution。
+    origin: { runtime: 'node', integration: 'application', capture: 'manual' },
     mcp: { transport: 'streamable-http', sessionMode: 'stateless', rpcMethod: 'tools/call', tool: 'get_platform_capabilities' }
   },
   {
@@ -302,6 +305,7 @@ const edgeEvents = [
     outcome: 'success',
     level: 'info',
     statusCode: 204,
+    origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' },
     tus: { uploadId: '0123456789abcdef0123456789abcdef', phase: 'completed', method: 'PATCH', size: 2048, offset: 2048 }
   },
   {
@@ -601,6 +605,27 @@ try {
     const outcomes = new Set(summary.rows.map((row) => row.outcome))
     for (const outcome of ['started', 'success', 'failure', 'denied', 'timeout', 'cancelled', 'unknown', 'no_record', 'partial', 'skipped'])
       assert.ok(outcomes.has(outcome), `missing outcome ${outcome}`)
+  })
+  check('origin is optional; application does not infer execution from requestId', () => {
+    const mcp = summary.rows.find((row) => row.requestId === 'req-mcp-init-1')
+    assert.deepEqual(mcp.origin, {
+      runtime: 'node',
+      integration: 'mcp-toolkit',
+      capture: 'framework',
+      execution: 'request'
+    })
+    const app = summary.rows.find((row) => row.requestId === 'req-mcp-tool-1')
+    assert.deepEqual(app.origin, { runtime: 'node', integration: 'application', capture: 'manual' })
+    assert.equal('execution' in app.origin, false)
+    const tus = summary.rows.find((row) => row.tus?.phase === 'completed')
+    assert.deepEqual(tus.origin, {
+      runtime: 'node',
+      integration: 'tus',
+      capture: 'hook',
+      execution: 'request'
+    })
+    const old = summary.rows.find((row) => row.requestId === 'req-old-1')
+    assert.equal(old.origin, undefined)
   })
   check('detail is the safe projection with counts/errorCode', () => {
     assert.equal(detail.errorCode, longErrorCode)
