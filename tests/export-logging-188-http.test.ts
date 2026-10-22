@@ -40,8 +40,8 @@ async function waitLogs(filter: Record<string, string>, check: (events: any[]) =
   }
   throw last
 }
-async function terminal(id: string) {
-  const deadline = Date.now() + 30000
+async function terminal(id: string, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const response = await fetch(url('/api/jobs/' + id)); expect(response.status).toBe(200)
     const job = await json(response)
@@ -269,17 +269,19 @@ it('reports an atomic publication fault and unsuccessful cleanup without exposin
 }, 45000)
 
 it('distinguishes actual HTTP disconnects for artifact and both legacy streams while retaining published bytes', async () => {
-  db.transaction(() => { for (let i = 0; i < 3000; i++) candidate('合成断开' + i + randomBytes(96).toString('hex'), 'innovative_sme') })
+  // Exceed the OS socket buffers. A small XLSX can be fully sent before the
+  // client's first data callback, in which case server-side success is correct.
+  db.transaction(() => { for (let i = 0; i < 30000; i++) candidate('合成断开' + i + randomBytes(160).toString('hex'), 'innovative_sme') })
   const response = await fetch(url('/api/roster/exports/current/innovative-sme'), { method: 'POST', headers, body: JSON.stringify({ clientRequestId: '188-disconnect' }) })
   expect(response.status).toBe(202)
-  const job = await terminal((await json(response)).jobId)
+  const job = await terminal((await json(response)).jobId, 90000)
   expect(job.state).toBe('done')
-  expect(job.result.counts).toEqual({ eligible: 3000, pending: 0, excluded: 0 })
+  expect(job.result.counts).toEqual({ eligible: 30000, pending: 0, excluded: 0 })
   async function disconnect(path: string) {
     return new Promise<string>((resolve, reject) => {
       const request = get(url(path), { headers }, res => {
         if (res.statusCode !== 200) { res.resume(); reject(new Error('download status ' + res.statusCode)); return }
-        if (Number(res.headers['content-length']) < 131072) { res.resume(); reject(new Error('fixture too small for a real stream disconnect')); return }
+        if (Number(res.headers['content-length']) < 4 * 1024 * 1024) { res.resume(); reject(new Error('fixture too small for a real stream disconnect')); return }
         res.once('data', () => { const requestId = String(res.headers['x-request-id']); res.destroy(); request.destroy(); resolve(requestId) })
       })
       request.once('error', reject)
@@ -290,13 +292,14 @@ it('distinguishes actual HTTP disconnects for artifact and both legacy streams w
     await waitLogs({ requestId }, events => {
       expect(events.filter(row => row.operation === operation)).toHaveLength(1)
       expect(events.find(row => row.operation === operation)).toMatchObject({ outcome: 'cancelled', errorCode: 'download_disconnected' })
+      expect(events.filter(row => row.operation === 'http.request')).toHaveLength(1)
       if (operation.startsWith('export.legacy.')) expect(events.find(row => row.operation === operation.replace('.download', '.cleanup'))).toMatchObject({ outcome: 'success' })
     })
   }
   const { bytes, wb } = await original(job.result.artifact.downloadUrl, 'after-disconnect-original')
-  expect(wb.getWorksheet('有效企业')!.rowCount).toBe(3001)
+  expect(wb.getWorksheet('有效企业')!.rowCount).toBe(30001)
   expect(createHash('sha256').update(bytes).digest('hex')).toBe(job.result.artifact.sha256)
-}, 90000)
+}, 180000)
 
 it('returns independently readable originals when the real logging storage is unavailable', async () => {
   await stopOwnedChild(child)

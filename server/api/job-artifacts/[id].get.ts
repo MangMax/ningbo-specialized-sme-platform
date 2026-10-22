@@ -31,7 +31,13 @@ export default defineEventHandler(async event => {
   setHeader(event,'cache-control','private, no-store')
   const stream = artifactStream(db.$client.name,id)
   event.node.res.once('finish', () => record('success', 200))
-  event.node.res.once('close', () => { if (!event.node.res.writableFinished) record('cancelled', 200, 'download_disconnected') })
+  event.node.res.once('close', () => {
+    if (event.node.res.writableFinished) return
+    record('cancelled', 200, 'download_disconnected')
+    // h3 awaits end/error, while pipe() pauses on a closed response. Settle the
+    // owned read stream and close its handle; the published artifact is retained.
+    stream.destroy(new Error('Export artifact download disconnected'))
+  })
   stream.once('error', () => record('failure', 500, 'artifact_read_failed'))
   return await sendStream(event,stream)
   } catch (error) {
