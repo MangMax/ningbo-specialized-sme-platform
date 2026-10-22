@@ -99,4 +99,4 @@ ego-browser nodejs -e 'await import("file:///tmp/ningbo-spec190-handoff/issue-19
 - **失败/纠正**：最初缺依赖启动、配置导入路径和夹具表名错误；浏览器脚本语法和将状态提示误按 alert 等待的错误，均在 `/tmp` 保留。T3 预览两次 snapshot 返回 `Preview automation snapshot timed out after 15000ms.`，另有导航传输错误；随后按工具规则回退 ego-browser。未把这些工具/夹具失败归为产品缺陷。
 - **未运行/未知**：完整套件、typecheck、生产 build、prod-openapi、CI、真实平台会话、生产、容量/并发、其他来源/全部缓存及整个母票联合验收。未改公开契约；本次是 dev HTTP/MCP 和真实浏览器合成取证，不是生产构建验收。无全套并行争用。
 
-交付前须把最新本地 `t3/implement-spec-190` 合入此分支；该 Git 收据与最终交付 SHA 随交接提供。本报告的行为证据只绑定上列固定源码，不能自动升级为之后集成树的运行证据。
+交付收口已合入本地 `t3/implement-spec-190` 的 `678bba97e5e217ef1bafdea760a2eeb328b8a809`，合并提交为 `5e0c332ceda605f8bf01a755f94f8a0c6238cb5d`；最终 SHA 与清洁状态见外部 `git-receipt.json`。相对集成分支只有本文变更。本报告的行为证据只绑定上列固定源码；集成带入的 #191 工具配置变更未重跑，不自动升级为集成树的运行证据。
