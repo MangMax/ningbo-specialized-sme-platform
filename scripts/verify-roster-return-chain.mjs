@@ -4,6 +4,7 @@
  * Exercises the integrated enterprise list → drawer → detail → original PDF →
  * detail → list, preserving filters, disclosure, expansion and both scroll layers.
  * No official source documents or OCR results are used.
+ * Run with --built after pnpm build to verify the production artifact instead of Vite dev.
  */
 import { spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
@@ -12,9 +13,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { minimalPdf } from '../tests/helpers/minimal-pdf.ts'
-import { startIsolatedNuxt, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
+import { reserveLoopbackPort, startIsolatedNuxt, stopOwnedChild, waitForChromeDevTools, waitForHttp } from './lib/isolated-local-services.mjs'
 
-const PORT_HINT = Number(process.argv[2] ?? process.env.RL10_TEST_PORT ?? 0)
+const PORT_HINT = Number(process.argv.slice(2).find(arg => !arg.startsWith('--')) ?? process.env.RL10_TEST_PORT ?? 0)
 let BASE
 const EVIDENCE_DIR = process.env.RL10_EVIDENCE_DIR
 if (EVIDENCE_DIR) mkdirSync(EVIDENCE_DIR, { recursive: true })
@@ -46,6 +47,23 @@ const VIEWPORTS = [
   { label: 'desktop 1280×800', width: 1280, height: 800, detailScrollY: 2000, listScrollY: 96, listScrollLeft: 80 },
   { label: 'narrow 390×844', width: 390, height: 844, detailScrollY: 2000, listScrollY: 296, listScrollLeft: 0 },
 ]
+
+async function startApp(env) {
+  if (!process.argv.includes('--built')) return startIsolatedNuxt({ cwd: process.cwd(), portHint: PORT_HINT, env })
+  const port = await reserveLoopbackPort(PORT_HINT)
+  const baseUrl = `http://127.0.0.1:${port}`
+  const child = spawn(process.execPath, ['.output/server/index.mjs'], {
+    env: { ...process.env, ...env, HOST: '127.0.0.1', PORT: String(port) },
+    stdio: ['ignore', 'inherit', 'inherit'],
+  })
+  try {
+    await waitForHttp(`${baseUrl}/`, { child })
+    return { baseUrl, stop: () => stopOwnedChild(child) }
+  } catch (error) {
+    await stopOwnedChild(child)
+    throw error
+  }
+}
 
 async function postJson(path, body) {
   const response = await fetch(`${BASE}${path}`, {
@@ -446,9 +464,9 @@ async function runCurrentLedgerReturn(cdp, sessionId, viewport) {
   const expanded = new URL(listPath, BASE).searchParams.get('expand')
   assert(expanded, 'drawer expansion did not reach URL')
   await evaluate(cdp, sessionId, "[...document.querySelectorAll('a')].find(a => a.textContent.includes('完整企业页')).click()")
-  await waitUntil(cdp, sessionId, `location.pathname.startsWith('/enterprises/') && [...document.querySelectorAll('button')].some(b => b.textContent.trim().startsWith('出处 '))`)
+  await waitUntil(cdp, sessionId, `location.pathname.startsWith('/enterprises/') && !!document.querySelector('[id^="record-event-"] button[aria-expanded]')`)
   const detailPath = await evaluate(cdp, sessionId, 'location.pathname + location.search')
-  await evaluate(cdp, sessionId, "[...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith('出处 ')).click()")
+  await evaluate(cdp, sessionId, `document.querySelector('[id^="record-event-"] button[aria-expanded]').click()`)
   await waitUntil(cdp, sessionId, `[...document.querySelectorAll('a[href^="/preview"]')].some(a => a.textContent.includes('第 3 页'))`)
   const detailBefore = await evaluate(cdp, sessionId, `(() => {
     window.scrollTo({ top: ${viewport.detailScrollY}, behavior: 'instant' });
@@ -460,8 +478,8 @@ async function runCurrentLedgerReturn(cdp, sessionId, viewport) {
   await exerciseReading(cdp, sessionId, viewport)
   await evaluate(cdp, sessionId, 'window.__rl10ScrollCalls.length = 0')
   await evaluate(cdp, sessionId, "[...document.querySelectorAll('a')].find(a => a.textContent.trim() === '返回企业详情').click()")
-  await waitForStableCondition(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(detailPath)} && Math.abs(window.scrollY - ${detailBefore.scrollY}) <= 2 && [...document.querySelectorAll('button')].some(b => b.textContent.includes('收起出处')) && !window.__rl10ScrollCalls.some(p => p.top === 0)`)
-  const detailAfter = await evaluate(cdp, sessionId, '({path:location.pathname+location.search,scrollY:window.scrollY,disclosure:document.body.innerText.includes("收起出处"),calls:window.__rl10ScrollCalls})')
+  await waitForStableCondition(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(detailPath)} && Math.abs(window.scrollY - ${detailBefore.scrollY}) <= 2 && !!document.querySelector('[id^="record-event-"] button[aria-expanded="true"]') && !window.__rl10ScrollCalls.some(p => p.top === 0)`)
+  const detailAfter = await evaluate(cdp, sessionId, `({path:location.pathname+location.search,scrollY:window.scrollY,disclosure:!!document.querySelector('[id^="record-event-"] button[aria-expanded="true"]'),calls:window.__rl10ScrollCalls})`)
   await saveEvidence(cdp, sessionId, `${viewport.width}-detail-return`, { before: detailBefore, after: detailAfter })
   await evaluate(cdp, sessionId, 'window.__rl10ScrollCalls.length = 0')
   await evaluate(cdp, sessionId, "[...document.querySelectorAll('a')].find(a => a.textContent.includes('企业列表') && a.getAttribute('href')?.startsWith('/?')).click()")
@@ -478,6 +496,46 @@ async function runCurrentLedgerReturn(cdp, sessionId, viewport) {
   console.log(`✓ ${viewport.label} source pixels, explicit/internal/browser history, reload, source return; detail ${detailBefore.scrollY}→${detailAfter.scrollY}; ledger ${listBefore.tableTop}/${listBefore.tableLeft}→${listAfter.tableTop}/${listAfter.tableLeft}, window ${listBefore.windowTop}→${listAfter.windowTop}, expanded=${expanded}`)
 }
 
+async function runComparisonRouteReturn(cdp, sessionId, viewport) {
+  await setViewport(cdp, sessionId, viewport)
+  await navigate(cdp, sessionId, `${BASE}/comparison?mode=legacy&q=RL10&district=海曙区&page=2&pageSize=25`)
+  await waitUntil(cdp, sessionId, `document.querySelectorAll('[data-testid="comparison-enterprise-name"]').length === 25`)
+  await evaluate(cdp, sessionId, `(() => {
+    const input = document.querySelector('input[aria-label="搜索企业名称、已确认曾用名或统一社会信用代码"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'RL10 浏览器');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`)
+  await waitUntil(cdp, sessionId, `new URLSearchParams(location.search).get('q') === 'RL10 浏览器' && new URLSearchParams(location.search).get('page') === '1' && !document.querySelector('[data-testid="comparison-pagination"] button[aria-label="下一页"]').disabled`)
+  await clickLabel(cdp, sessionId, '下一页')
+  await waitUntil(cdp, sessionId, `new URLSearchParams(location.search).get('page') === '2' && document.querySelector('[data-testid="comparison-enterprise-name"]')?.textContent.includes('026')`)
+  const comparisonPath = await evaluate(cdp, sessionId, 'location.pathname + location.search')
+  await evaluate(cdp, sessionId, `document.querySelector('[data-testid="comparison-enterprise-name"]').click()`)
+  await waitUntil(cdp, sessionId, `location.pathname.startsWith('/enterprises/') && !!document.querySelector('[id^="record-event-"] button[aria-expanded]')`)
+  assert(await evaluate(cdp, sessionId, `new URLSearchParams(location.search).get('returnTo') === ${JSON.stringify(comparisonPath)}`), 'comparison detail lost return query')
+  const detailPath = await evaluate(cdp, sessionId, 'location.pathname + location.search')
+  // Browser back/forward must re-enter the same result and enterprise, not just
+  // render a static deep-link href with the right spelling.
+  await evaluate(cdp, sessionId, 'history.back()')
+  await waitUntil(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(comparisonPath)} && document.querySelector('[data-testid="comparison-enterprise-name"]')?.textContent.includes('026')`)
+  await evaluate(cdp, sessionId, 'history.forward()')
+  await waitUntil(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(detailPath)} && !!document.querySelector('[id^="record-event-"] button[aria-expanded]')`)
+  await evaluate(cdp, sessionId, `document.querySelector('[id^="record-event-"] button[aria-expanded]').click()`)
+  await waitUntil(cdp, sessionId, `[...document.querySelectorAll('a[href^="/preview"]')].some(a => a.textContent.includes('第 3 页'))`)
+  const detailScroll = await evaluate(cdp, sessionId, `(() => {
+    window.scrollTo({ top: ${viewport.detailScrollY}, behavior: 'instant' });
+    const scrollY = window.scrollY;
+    [...document.querySelectorAll('a[href^="/preview"]')].find(a => a.textContent.includes('第 3 页')).click();
+    return scrollY;
+  })()`)
+  await expectOriginal(cdp, sessionId, 3)
+  await evaluate(cdp, sessionId, `[...document.querySelectorAll('a')].find(a => a.textContent.trim() === '返回企业详情').click()`)
+  await waitForStableCondition(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(detailPath)} && Math.abs(window.scrollY - ${detailScroll}) <= 2 && !!document.querySelector('[id^="record-event-"] button[aria-expanded="true"]')`)
+  await evaluate(cdp, sessionId, `[...document.querySelectorAll('a')].find(a => a.getAttribute('href') === ${JSON.stringify(comparisonPath)}).click()`)
+  await waitUntil(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(comparisonPath)} && document.querySelector('[data-testid="comparison-enterprise-name"]')?.textContent.includes('026')`)
+  await saveEvidence(cdp, sessionId, `${viewport.width}-comparison-return`, { comparisonPath, detailPath, detailScroll })
+  console.log(`✓ ${viewport.label} comparison filter, page, detail deep link, browser back/forward and source return`)
+}
+
 async function main() {
   let service
   let chrome
@@ -486,15 +544,11 @@ async function main() {
   let targetId
 
   try {
-    service = await startIsolatedNuxt({
-      cwd: process.cwd(),
-      portHint: PORT_HINT,
-      env: {
-        NUXT_DB_PATH: join(TEMP_ROOT, 'roster.db'),
-        NUXT_FILES_DIR: FILES_ROOT,
-        NUXT_INCOMING_DIR: join(TEMP_ROOT, 'incoming'),
-        NUXT_API_TOKEN: API_TOKEN,
-      },
+    service = await startApp({
+      NUXT_DB_PATH: join(TEMP_ROOT, 'roster.db'),
+      NUXT_FILES_DIR: FILES_ROOT,
+      NUXT_INCOMING_DIR: join(TEMP_ROOT, 'incoming'),
+      NUXT_API_TOKEN: API_TOKEN,
     })
     BASE = service.baseUrl
     await seedViaApplicationApis()
@@ -541,6 +595,7 @@ async function main() {
 
     for (const viewport of VIEWPORTS) {
       await runCurrentLedgerReturn(cdp, sessionId, viewport)
+      await runComparisonRouteReturn(cdp, sessionId, viewport)
     }
     await cdp.send('Target.closeTarget', { targetId })
     const afterReadHashes = fixtureHashes()

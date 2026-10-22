@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { defineComponent, h } from 'vue'
-import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import { createMemoryHistory, createRouter, RouterView, useRoute } from 'vue-router'
 import { Tabs } from '../components/ui/tabs'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
@@ -77,8 +77,9 @@ async function mountPage(initialPath = '/comparison?mode=review') {
   })
   await router.push(initialPath)
   await router.isReady()
-  // 队列组件的 syncQuery 仍走 Nuxt 自动导入；测试绑定到同一个真实 router。
-  vi.stubGlobal('useRoute', () => router.currentRoute.value)
+  // Bare Vitest has no Nuxt auto-import transform. Keep this adapter reactive
+  // across same-page navigation instead of capturing one currentRoute snapshot.
+  vi.stubGlobal('useRoute', useRoute)
   vi.stubGlobal('useRouter', () => router)
   const view = mount(Root, {
     attachTo: document.body,
