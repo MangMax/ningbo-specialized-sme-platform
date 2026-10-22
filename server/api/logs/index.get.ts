@@ -1,0 +1,3 @@
+import { createLoggingRoute } from '../../utils/logging-route'
+defineRouteMeta({ openAPI: { tags: ['日志'], summary: '受保护运行日志摘要', description: '必须 API token；或显式启用的页面能力。limit 1–100；稳定 nextCursor。仅精确索引筛选，无全文搜索。from/to、level/source/operation/outcome/requestId/traceId/taskId/fileId/batchId/resourceId。无错误正文。', parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100 } }, { name: 'cursor', in: 'query', schema: { type: 'string' } }], security: [{ bearerAuth: [] }], responses: { 200: { description: 'rows,nextCursor,status' }, 401: { description: '默认拒绝' }, 503: { description: '日志存储不可用' } } } })
+export default createLoggingRoute('list')

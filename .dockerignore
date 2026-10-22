@@ -29,6 +29,7 @@ playwright-report
 /data
 /files
 /.incoming
+/.runtime-logs
 **/.incoming
 /businessfiles
 **/businessfiles

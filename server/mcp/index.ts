@@ -50,6 +50,7 @@ export default defineMcpHandler({
   instructions: [
     '这个 server 暴露两层能力:**文件库**(上传文件 → 页图 → OCR → 解析段)与' +
     '**名录**(企业 / 曾用名 / 称号事件 / 出处 / 平台证据 / 导出快照 / 差异解释)。',
+    '运行日志：list_runtime_logs/get_runtime_log/get_runtime_log_policy/set_runtime_log_policy/clear_runtime_logs 均需MCP token；只影响独立运行日志，不能代替业务审计。',
     '',
     '差异决定维护：save_difference_decision 显式替代/撤回，必填 expectedCurrentId、actor、basis、ruleVersion、effectiveAt 与幂等键。',
     'get_current_difference_decision / get_difference_decision / list_difference_decision_history 读当前及稳定 ID 历史；preview_legacy_difference_decisions 只读映射/冲突，旧标注不等于 confirmed_no_diff。',
@@ -106,6 +107,9 @@ export default defineMcpHandler({
 
     if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
       const body = await readBody(event, { strict: false }).catch(() => undefined)
+      if (['list_runtime_logs','get_runtime_log','get_runtime_log_policy','set_runtime_log_policy','clear_runtime_logs'].includes(body?.params?.name)) {
+        event.context._evlogShouldEmit = false
+      }
       const invalidCurrentQualified = currentQualifiedRpcError(body)
       if (invalidCurrentQualified) return invalidCurrentQualified
       if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail','list_current_qualified_enterprises'].includes(body?.params?.name)) admitEnterpriseResponse(event)
