@@ -1,6 +1,7 @@
 import { link, mkdir, rm } from 'node:fs/promises'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { basename, extname, join, resolve } from 'node:path'
-import { Server } from '@tus/server'
+import { EVENTS, Server } from '@tus/server'
 import { FileStore } from '@tus/file-store'
 
 /**
@@ -153,13 +154,78 @@ export interface TusConfig {
 }
 
 /**
+ * Request-local observation populated only by the real @tus/server callbacks.
+ * It is not server state: each `handleWeb` call gets its own store, so
+ * concurrent uploads cannot observe each other's uploadId/offset.
+ */
+export interface TusObservation {
+  uploadId?: string
+  method?: string
+  size?: number
+  offset?: number
+  created?: boolean
+  completed?: boolean
+  failed?: boolean
+}
+const tusObservation = new AsyncLocalStorage<TusObservation>()
+/** Default @tus/utils Uid.rand(): 16 random bytes as lowercase hex. */
+const generatedUploadId = /^[a-f0-9]{32}$/
+const tusMethods = new Set(['POST', 'PATCH', 'HEAD', 'DELETE', 'OPTIONS'])
+const safeCount = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+
+function currentObservation(): TusObservation | undefined {
+  try { return tusObservation.getStore() } catch { return undefined }
+}
+function observe(read: (observation: TusObservation) => void): void {
+  const observation = currentObservation()
+  if (!observation) return
+  try { read(observation) } catch { /* Diagnostics cannot change the upload. */ }
+}
+function noteRequest(method: unknown, uploadId: unknown): void {
+  observe(observation => {
+    if (typeof method === 'string' && tusMethods.has(method.toUpperCase())) observation.method = method.toUpperCase()
+    if (typeof uploadId === 'string' && generatedUploadId.test(uploadId)) observation.uploadId = uploadId
+  })
+}
+function noteUpload(upload: { id?: unknown; size?: unknown; offset?: unknown }, state: 'created' | 'completed'): void {
+  observe(observation => {
+    if (typeof upload.id === 'string' && generatedUploadId.test(upload.id)) observation.uploadId = upload.id
+    const size = safeCount(upload.size), offset = safeCount(upload.offset)
+    if (size !== undefined) observation.size = size
+    if (offset !== undefined) observation.offset = offset
+    observation[state] = true
+  })
+}
+function noteProgress(upload: { id?: unknown; size?: unknown; offset?: unknown }): void {
+  observe(observation => {
+    if (typeof upload.id === 'string' && generatedUploadId.test(upload.id)) observation.uploadId = upload.id
+    const size = safeCount(upload.size), offset = safeCount(upload.offset)
+    if (size !== undefined) observation.size = size
+    if (offset !== undefined) observation.offset = offset
+  })
+}
+
+/**
+ * Bind one tus `handleWeb` call to a fresh observation. The store is scoped to
+ * this request's async chain; it never lives on the singleton `Server`.
+ */
+export async function withTusObservation<T>(
+  run: () => Promise<T>,
+  observation: TusObservation = {},
+): Promise<{ result: T; observation: TusObservation }> {
+  const result = await tusObservation.run(observation, run)
+  return { result, observation }
+}
+
+/**
  * 组装一个 tus `Server`(纯函数式入口,不读 Nitro 全局)。
  * `getTus()` 用运行时配置调它;测试用临时目录调它。
  */
 export function createTus(config: TusConfig): Server {
   const files = resolve(config.filesDir)
   const incoming = resolve(config.incomingDir)
-  return new Server({
+  const server = new Server({
     path: TUS_PATH,
     datastore: new FileStore({ directory: incoming }),
     maxSize: MAX_SIZE,
@@ -169,9 +235,16 @@ export function createTus(config: TusConfig): Server {
     exposedHeaders: ['X-Upload-Path'],
     // 代理后 Location 仍正确(见 .research/tus-research.md §5.4)。
     respectForwardedHeaders: true,
+    // Request-local ids/methods come from the library, never from the raw URL.
+    onIncomingRequest: (req, uploadId) => {
+      noteRequest(req.method, uploadId)
+      return Promise.resolve()
+    },
     // 创建时校验客户端声明的 metadata;非法 → 400。返回空对象表示不改写 metadata。
     onUploadCreate: (_req, upload) => {
       landingSegments((upload.metadata ?? {}) as UploadMetadata)
+      // Only after the business validation passed; a rejected create is not a created upload.
+      noteUpload(upload, 'created')
       return Promise.resolve({})
     },
     // 传完后按规则落位。此处重算一次段序列(与创建时同源、确定性),保证只落合法路径。
@@ -185,6 +258,9 @@ export function createTus(config: TusConfig): Server {
       const landed = await linkUnique(src, dir, filename)
       // 落位后清掉工作目录里的 sidecar 元数据,别让 `.incoming/` 攒垃圾。
       await rm(join(incoming, `${upload.id}.json`), { force: true })
+      // The original mkdir/link/rm work has succeeded; only now is the upload
+      // a completed placement. A client disconnect later cannot roll it back.
+      noteUpload(upload, 'completed')
       // 回报**实际**落位路径(同名防覆盖会加 ` (n)` 后缀,客户端算不出来)。
       // 口径与 `record_evidence.source_file` 一致:相对文件库根,正斜杠分隔。
       // HTTP 头是 ByteString(≤255),中文文件名不能直接放进去 —— 百分号编码后
@@ -192,7 +268,15 @@ export function createTus(config: TusConfig): Server {
       const relativePath = segments.slice(0, -1).concat(basename(landed)).join('/')
       return { headers: { 'X-Upload-Path': encodeURIComponent(relativePath) } }
     },
+    // A response error is an observation, never a claim that bytes/placement rolled back.
+    onResponseError: (_req, _error) => {
+      observe(observation => { observation.failed = true })
+      return undefined
+    },
   })
+  // Progress is observed in memory only; it never emits an event per chunk.
+  server.on(EVENTS.POST_RECEIVE, (_req, upload) => noteProgress(upload))
+  return server
 }
 
 /** 模块级单例:tus 的 datastore/locker 每请求重建代价高,建一次复用。 */

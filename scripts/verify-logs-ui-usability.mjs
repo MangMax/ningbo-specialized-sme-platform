@@ -267,6 +267,44 @@ const edgeEvents = [
     durationMs: 5000
   },
   {
+    source: 'mcp',
+    operation: 'mcp.request',
+    outcome: 'success',
+    level: 'info',
+    httpMethod: 'POST',
+    httpRoute: '/mcp',
+    statusCode: 200,
+    durationMs: 40,
+    requestId: 'req-mcp-init-1',
+    mcp: {
+      transport: 'streamable-http',
+      sessionMode: 'stateless',
+      rpcMethod: 'initialize',
+      client: { name: 'cursor', version: '0.49.1', trust: 'self-reported', capturedAt: 'initialize' },
+      protocolVersionRequested: '2025-06-18'
+    }
+  },
+  {
+    source: 'mcp',
+    operation: 'mcp.tool.get_platform_capabilities',
+    outcome: 'success',
+    level: 'info',
+    httpMethod: 'POST',
+    httpRoute: '/mcp',
+    statusCode: 200,
+    durationMs: 12,
+    requestId: 'req-mcp-tool-1',
+    mcp: { transport: 'streamable-http', sessionMode: 'stateless', rpcMethod: 'tools/call', tool: 'get_platform_capabilities' }
+  },
+  {
+    source: 'file',
+    operation: 'file.upload',
+    outcome: 'success',
+    level: 'info',
+    statusCode: 204,
+    tus: { uploadId: '0123456789abcdef0123456789abcdef', phase: 'completed', method: 'PATCH', size: 2048, offset: 2048 }
+  },
+  {
     source: 'system',
     operation: 'logging.clear',
     outcome: 'success',

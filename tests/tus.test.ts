@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createTus, landingSegments, MAX_SIZE, TUS_PATH } from '../server/utils/tus'
+import { createTus, landingSegments, MAX_SIZE, TUS_PATH, withTusObservation, type TusObservation } from '../server/utils/tus'
 
 /**
  * tus 端点的**协议端到端**测试。
@@ -307,5 +307,139 @@ describe('tus 上传端点 + 落位规则', () => {
     expect(decodeURIComponent(secondPatch.headers.get('x-upload-path') ?? '')).toBe(
       'miit/export/落位回报 (1).xlsx',
     )
+  })
+})
+
+
+describe('tus request-local observation (real @tus/server callbacks)', () => {
+  let work: string, tus: ReturnType<typeof createTus>, filesDir: string, incomingDir: string
+
+  beforeAll(async () => {
+    work = await mkdtemp(join(tmpdir(), 'tus-observe-'))
+    filesDir = join(work, 'files')
+    incomingDir = join(work, '.incoming')
+    await mkdir(filesDir, { recursive: true })
+    tus = createTus({ filesDir, incomingDir, allowedOrigins: ['http://localhost'] })
+  })
+  afterAll(async () => { await rm(work, { recursive: true, force: true }) })
+
+  async function observed(
+    method: string,
+    path: string,
+    headers: Record<string, string> = {},
+    body?: BodyInit,
+  ): Promise<{ response: Response; observation: TusObservation }> {
+    const observation: TusObservation = {}
+    const { result } = await withTusObservation(
+      () => tus.handleWeb(new Request(`${BASE}${path}`, { method, headers: tusHeaders(headers), body })),
+      observation,
+    )
+    return { response: result, observation }
+  }
+
+  const createObserved = (length: number, meta: Record<string, string>) =>
+    observed('POST', TUS_PATH, {
+      'Upload-Length': String(length),
+      'Upload-Metadata': encodeMetadata(meta),
+    })
+
+  it('uses the real server-generated id and separates create, progress and completed', async () => {
+    const data = randomBytes(300)
+    const meta = { source: 'jxj', kind: 'announcement', year: '2026', batch: '7', filename: 'observe.bin' }
+    const created = await createObserved(data.length, meta)
+    const id = (created.response.headers.get('location') ?? '').split('/').pop()!
+    expect(id).toMatch(/^[a-f0-9]{32}$/)
+    expect(created.observation).toMatchObject({
+      uploadId: id, method: 'POST', size: data.length, offset: 0, created: true,
+    })
+    expect(created.observation.completed).toBeUndefined()
+
+    const first = await observed('PATCH', `${TUS_PATH}/${id}`, {
+      'Upload-Offset': '0', 'Content-Type': 'application/offset+octet-stream',
+    }, data.subarray(0, 100) as unknown as BodyInit)
+    expect(first.response.status).toBe(204)
+    // POST_RECEIVE is throttled and a short final chunk completes before its first tick;
+    // the library only guarantees the final offset on onUploadFinish.
+    expect(first.observation).toMatchObject({ uploadId: id, method: 'PATCH' })
+    expect(first.observation.offset).toBeUndefined()
+    expect(first.observation.created).toBeUndefined()
+    expect(first.observation.completed).toBeUndefined()
+
+    const second = await observed('PATCH', `${TUS_PATH}/${id}`, {
+      'Upload-Offset': '100', 'Content-Type': 'application/offset+octet-stream',
+    }, data.subarray(100) as unknown as BodyInit)
+    expect(second.response.status).toBe(204)
+    expect(second.observation).toMatchObject({
+      uploadId: id, method: 'PATCH', size: data.length, offset: data.length, completed: true,
+    })
+  })
+
+  it('marks zero-length and creation-with-upload as created+completed in the same request', async () => {
+    const zero = await createObserved(0, { source: 'miit', kind: 'export', filename: 'zero.bin' })
+    expect(zero.response.status).toBe(201)
+    expect(zero.observation).toMatchObject({ size: 0, offset: 0, created: true, completed: true, method: 'POST' })
+
+    const data = randomBytes(128)
+    const one = await observed('POST', TUS_PATH, {
+      'Upload-Length': String(data.length),
+      'Upload-Metadata': encodeMetadata({ source: 'miit', kind: 'export', filename: 'one-shot.bin' }),
+      'Content-Type': 'application/offset+octet-stream',
+    }, data as unknown as BodyInit)
+    expect(one.response.status).toBe(201)
+    expect(one.observation).toMatchObject({
+      size: data.length, offset: data.length, created: true, completed: true, method: 'POST',
+    })
+  })
+
+  it('observes a deferred-length upload only when the library later knows the size', async () => {
+    const created = await observed('POST', TUS_PATH, {
+      'Upload-Defer-Length': '1',
+      'Upload-Metadata': encodeMetadata({ source: 'jxj', kind: 'announcement', filename: 'deferred.bin' }),
+    })
+    const id = (created.response.headers.get('location') ?? '').split('/').pop()!
+    expect(created.response.status).toBe(201)
+    expect(created.observation).toMatchObject({ uploadId: id, offset: 0, created: true })
+    expect(created.observation.size).toBeUndefined()
+    const data = randomBytes(64)
+    const final = await observed('PATCH', `${TUS_PATH}/${id}`, {
+      'Upload-Offset': '0', 'Upload-Length': String(data.length), 'Content-Type': 'application/offset+octet-stream',
+    }, data as unknown as BodyInit)
+    expect(final.response.status).toBe(204)
+    expect(final.observation).toMatchObject({ uploadId: id, size: data.length, offset: data.length, completed: true })
+  })
+
+  it('marks a rejected create as failed with the real id but never as created', async () => {
+    const rejected = await createObserved(32, { source: 'evil', kind: 'announcement', filename: 'bad.bin' })
+    expect(rejected.response.status).toBe(400)
+    expect(rejected.observation.failed).toBe(true)
+    expect(rejected.observation.created).toBeUndefined()
+    expect(rejected.observation.uploadId).toMatch(/^[a-f0-9]{32}$/)
+    expect(rejected.observation.method).toBe('POST')
+  })
+
+  it('keeps concurrent observations isolated', async () => {
+    const [a, b] = await Promise.all([
+      createObserved(100, { source: 'jxj', kind: 'announcement', filename: 'a.bin' }),
+      createObserved(200, { source: 'miit', kind: 'export', filename: 'b.bin' }),
+    ])
+    expect(a.observation.uploadId).toBeTruthy()
+    expect(b.observation.uploadId).toBeTruthy()
+    expect(a.observation.uploadId).not.toBe(b.observation.uploadId)
+    expect(a.observation.size).toBe(100)
+    expect(b.observation.size).toBe(200)
+  })
+
+  it('does not call a successful HEAD or DELETE a completed upload', async () => {
+    const created = await createObserved(10, { source: 'jxj', kind: 'announcement', filename: 'head.bin' })
+    const id = (created.response.headers.get('location') ?? '').split('/').pop()!
+    const head = await observed('HEAD', `${TUS_PATH}/${id}`)
+    expect(head.response.status).toBe(200)
+    expect(head.observation).toMatchObject({ uploadId: id, method: 'HEAD' })
+    expect(head.observation.created).toBeUndefined()
+    expect(head.observation.completed).toBeUndefined()
+    const deleted = await observed('DELETE', `${TUS_PATH}/${id}`)
+    expect(deleted.response.status).toBe(204)
+    expect(deleted.observation).toMatchObject({ uploadId: id, method: 'DELETE' })
+    expect(deleted.observation.completed).toBeUndefined()
   })
 })

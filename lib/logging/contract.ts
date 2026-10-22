@@ -2,10 +2,67 @@
 export const LOG_SOURCES = ['http', 'mcp', 'task', 'worker', 'platform', 'file', 'ocr', 'import', 'export', 'client', 'system'] as const
 export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const
 export const LOG_OUTCOMES = ['started', 'success', 'failure', 'denied', 'timeout', 'cancelled', 'unknown', 'partial', 'no_record', 'skipped'] as const
+/**
+ * JSON-RPC methods this server actually exposes. `batch` means the request
+ * carried more than one method; it never stands in for one of them.
+ */
+export const MCP_RPC_METHODS = [
+  'initialize', 'notifications/initialized', 'ping',
+  'tools/list', 'tools/call',
+  'resources/list', 'resources/templates/list', 'resources/read',
+  'prompts/list', 'prompts/get',
+  'logging/setLevel', 'completion/complete', 'batch', 'unknown',
+] as const
+/** Coarse client families only; exact aliases are mapped in privacy.ts. */
+export const MCP_CLIENT_CLASSES = ['claude', 'cursor', 'codex', 'vscode', 'cline', 'continue', 'inspector', 'other'] as const
+/** Protocol versions this SDK version accepts as of @modelcontextprotocol/sdk 1.32.1. */
+export const MCP_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07'] as const
+export const TUS_UPLOAD_PHASES = ['created', 'completed', 'request-failed'] as const
+export const TUS_UPLOAD_METHODS = ['POST', 'PATCH', 'HEAD', 'DELETE', 'OPTIONS'] as const
+
+export interface McpClientMetadata {
+  /** Exact alias mapped to a coarse family; never the raw client-supplied name. */
+  name: (typeof MCP_CLIENT_CLASSES)[number]
+  /** Strict semantic version only; omitted when the self-report is not one. */
+  version?: string
+  /** Always a self-report; never an authenticated identity. */
+  trust: 'self-reported'
+  /** Stateless mode only knows this at initialize. */
+  capturedAt: 'initialize'
+}
+export interface McpLogContext {
+  transport: 'streamable-http'
+  /** One fixed method or `batch`; unknown/multi-method requests stay unattributed. */
+  rpcMethod?: (typeof MCP_RPC_METHODS)[number]
+  /** Only a statically registered tool name, resolved by the app entry. */
+  tool?: string
+  /** Current toolkit default is stateless; recorded as an explicit fact. */
+  sessionMode: 'stateless'
+  /** Present only on the initialize request. Later stateless calls cannot inherit it. */
+  client?: McpClientMetadata
+  /** The initialize request's declared protocol version; not the negotiated result. */
+  protocolVersionRequested?: (typeof MCP_PROTOCOL_VERSIONS)[number]
+}
+export interface TusLogContext {
+  /** Server-generated tus id (default generator is 32 hex chars); omitted if unexpected. */
+  uploadId: string
+  /** `created`/`completed` are terminal upload facts; `request-failed` is an observation. */
+  phase: (typeof TUS_UPLOAD_PHASES)[number]
+  method?: (typeof TUS_UPLOAD_METHODS)[number]
+  /** Declared upload length when the library knows it; never inferred from other counters. */
+  size?: number
+  /** Actual bytes accepted so far, as reported by the library callback. */
+  offset?: number
+}
+
 export interface LogContext {
   requestId?: string; traceId?: string; taskId?: string; fileId?: number; page?: number
   batchId?: string | number; resourceType?: string; resourceId?: string | number
   auditId?: string | number; receiptId?: string | number; parentEventId?: string
+  /** Source-specific metadata, only meaningful for source `mcp`. */
+  mcp?: McpLogContext
+  /** Source-specific metadata, only meaningful for source `file` uploads. */
+  tus?: TusLogContext
 }
 export interface LogInput extends LogContext {
   source: typeof LOG_SOURCES[number]
