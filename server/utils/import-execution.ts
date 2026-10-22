@@ -7,11 +7,13 @@ import type { RosterImportRequest, RosterImportItemResult } from '../../lib/rost
 import { commitRosterImport, preflightRosterImport } from './roster-import'
 import { ImportReceiptError } from './import-receipts'
 import { createImportExecutionWorker } from './import-execution-worker-location'
+import { appLog, type LogContext } from '../../lib/logging'
+import { logImportFailure } from './roster-import-logging'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Action = 'preflight' | 'commit'
 type Result = ReturnType<typeof preflightRosterImport> | ReturnType<typeof commitRosterImport>
-export interface ImportExecutionMessage { identity: { dev: number; ino: number; schemaVersion: number; migration: { hash: string; created_at: number } | undefined }; id: number; dbPath: string; readonly: boolean; action: Action; payload: Buffer; pageCountErrors: readonly RosterImportItemResult[] }
+export interface ImportExecutionMessage { identity: { dev: number; ino: number; schemaVersion: number; migration: { hash: string; created_at: number } | undefined }; id: number; dbPath: string; readonly: boolean; action: Action; payload: Buffer; pageCountErrors: readonly RosterImportItemResult[]; logContext?: LogContext }
 type Worker = ReturnType<typeof createImportExecutionWorker>
 type Job = { message: ImportExecutionMessage; resolve(value: Result): void; reject(error: Error): void }
 const unavailable = (code: string, message: string) => new ImportReceiptError(503, code, message)
@@ -28,13 +30,17 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
   let closing: Promise<void> | undefined, finishClose: (() => void) | undefined
   const settle = (job: Job, error?: Error, result?: Result) => {
     retainedBytes -= job.message.payload.byteLength
-    if (error) job.reject(error); else job.resolve(result!)
+    if (error) { logImportFailure('import.execution', error, job.message.logContext); job.reject(error) } else job.resolve(result!)
   }
   function idle() {
     if (active || queue.length || stopping) return
     if (closed) {
       const owned = worker; worker = undefined; ready = false
-      void (owned?.terminate() ?? Promise.resolve()).then(() => finishClose?.())
+      if (!owned) { finishClose?.(); return }
+      // Business work is already drained. Give only logging a bounded graceful close.
+      const timer = setTimeout(() => { void owned.terminate() }, 3500)
+      owned.once('exit', () => { clearTimeout(timer); finishClose?.() })
+      try { owned.postMessage({ type: 'shutdown' }) } catch { void owned.terminate() }
     } else worker?.unref()
   }
   function pump() {
@@ -71,26 +77,29 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
     worker.ref()
     if (!ready) return
     active = queue.shift()!
+    appLog({ source: 'import', operation: 'import.execution', outcome: 'started' }, active.message.logContext)
     try { worker.postMessage(active.message) } catch { const owned = worker; worker = undefined; ready = false; const job = active; active = undefined; settle(job, unavailable('import_outcome_unknown', 'Import outcome unknown; read its receipt and retry with the same idempotency key')); stopping = owned.terminate().finally(() => { stopping = undefined; pump() }) }
   }
   return {
-    execute(db: Db, action: Action, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = []): Promise<Result> {
-      if (closed) return Promise.reject(unavailable('import_executor_closed', 'Import execution unavailable'))
+    execute(db: Db, action: Action, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: LogContext = {}): Promise<Result> {
+      const rejectAdmission = (error: ImportReceiptError) => { logImportFailure('import.admission', error, context); return Promise.reject(error) }
+      if (closed) return rejectAdmission(unavailable('import_executor_closed', 'Import execution unavailable'))
       const client = (db as Db & { $client: Database.Database }).$client
       // Private/in-memory callers cannot share a native connection across processes.
-      if (!client.name || client.name === ':memory:' || client.inTransaction) return Promise.resolve(action === 'preflight' ? preflightRosterImport(db, request, pageCountErrors) : commitRosterImport(db, request, pageCountErrors))
+      if (!client.name || client.name === ':memory:' || client.inTransaction) return Promise.resolve(action === 'preflight' ? preflightRosterImport(db, request, pageCountErrors, context) : commitRosterImport(db, request, pageCountErrors, context))
       const pending = queue.length + Number(!!active)
-      if (pending >= maxPending || (pending > 0 && retainedBytes >= maxBytes)) return Promise.reject(unavailable('import_busy', 'Import execution busy'))
+      if (pending >= maxPending || (pending > 0 && retainedBytes >= maxBytes)) return rejectAdmission(unavailable('import_busy', 'Import execution busy'))
       const payload = serialize(request)
       // This is a backlog budget, not a new single-batch size contract. A batch
       // larger than it may run alone; every later admission waits until it settles.
       // Keep the original whole-batch transaction in the isolated process.
-      if (pending > 0 && payload.byteLength + retainedBytes > maxBytes) return Promise.reject(unavailable('import_busy', 'Import execution busy'))
+      if (pending > 0 && payload.byteLength + retainedBytes > maxBytes) return rejectAdmission(unavailable('import_busy', 'Import execution busy'))
       const path = realpathSync(client.name), stat = statSync(path)
       const identity = { dev: stat.dev, ino: stat.ino, schemaVersion: client.pragma('schema_version', { simple: true }) as number, migration: client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() as { hash: string; created_at: number } | undefined }
       retainedBytes += payload.byteLength
       return new Promise((resolve, reject) => {
-        queue.push({ message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action, payload, pageCountErrors }, resolve, reject }); pump()
+        appLog({ source: 'import', operation: 'import.admission', outcome: 'started' }, context)
+        queue.push({ message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action, payload, pageCountErrors, logContext: context }, resolve, reject }); pump()
       })
     },
     close() {

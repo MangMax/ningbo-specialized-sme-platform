@@ -1,3 +1,6 @@
+import { appLog } from '../../../lib/logging'
+import { rosterImportMcpContext } from '../../utils/roster-import-mcp-context'
+import { logImportFailure } from '../../utils/roster-import-logging'
 import { importExecutor } from '../../utils/import-execution'
 import { asyncImportReceiptMcpResult } from '../../utils/import-receipts'
 import { z } from 'zod'
@@ -41,15 +44,26 @@ export default defineMcpTool({
     payload: z.record(z.string(), z.unknown()).describe('写入载荷（契约 §8.3 / §8.4）'),
   },
   handler: async (input) => {
-    const validated = validateImportRequest({
-      idempotencyKey: input.idempotencyKey,
-      sourceKind: input.sourceKind,
-      sourceIdentity: input.sourceIdentity,
-      sourceSha256: input.sourceSha256 ?? null,
-      payload: input.payload,
+    const context = rosterImportMcpContext.getStore() ?? {}
+    return asyncImportReceiptMcpResult(async () => {
+      const validated = validateImportRequest({
+        idempotencyKey: input.idempotencyKey,
+        sourceKind: input.sourceKind,
+        sourceIdentity: input.sourceIdentity,
+        sourceSha256: input.sourceSha256 ?? null,
+        payload: input.payload,
+      })
+      if (!validated.ok) {
+        appLog({ source: 'import', operation: 'import.submission.preflight', outcome: 'denied', errorCode: 'invalid_import_request' }, context)
+        throw createError({ statusCode: validated.status, message: validated.message })
+      }
+      try {
+        const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
+        return await importExecutor.execute(useDb(), 'preflight', validated.value, pageCountErrors, context)
+      } catch (error) {
+        logImportFailure('import.submission.preflight', error, context)
+        throw error
+      }
     })
-    if (!validated.ok) throw createError({ statusCode: validated.status, message: validated.message })
-    const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
-    return asyncImportReceiptMcpResult(() => importExecutor.execute(useDb(), 'preflight', validated.value, pageCountErrors))
   },
 })

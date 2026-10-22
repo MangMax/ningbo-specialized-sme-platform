@@ -227,19 +227,19 @@ it.each([
 ])('$lane pressure recovers after the admitted atomic commit', async ({ maxBytes }) => {
   const { createImportExecutionWorker } = await import('../server/utils/import-execution-worker-location')
   let starts = 0
-  let dispatched!: () => void
+  let dispatched!: () => void, release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
   const active = new Promise<void>(resolve => { dispatched = resolve })
   const service = await isolatedApi({ maxBytes, createWorker: () => {
     starts++
     const worker = createImportExecutionWorker(), send = worker.postMessage.bind(worker)
-    worker.postMessage = message => { send(message); dispatched() }
+    worker.postMessage = message => { void held.then(() => send(message)); dispatched() }
     return worker
   } })
-  const blocker = new Database(service.path)
-  cleanups.push(() => blocker.close())
-  blocker.exec('BEGIN IMMEDIATE')
-  // Always release the lock before cleanup, including when an assertion fails.
-  cleanups.push(() => { if (blocker.inTransaction) blocker.exec('ROLLBACK') })
+  // Hold the real process at the IPC boundary to test backlog admission only.
+  // SQLite contention has separate coverage above; a held native writer here
+  // races deferred-transaction promotion with the HTTP rejection assertions.
+  cleanups.push(() => release())
   const first = service.post()
   await active
   const second = { ...input(), idempotencyKey: 'synthetic:byte-pressure' }
@@ -247,7 +247,7 @@ it.each([
   expect(rejected.status).toBe(503)
   expect(await rejected.json()).toMatchObject({ error: { code: 'import_busy' } })
   expect((await fetch(`${service.api.baseUrl}/receipt?idempotencyKey=${second.idempotencyKey}`)).status).toBe(404)
-  blocker.exec('ROLLBACK')
+  release()
   const committed = await (await first).json()
   expect(committed).toMatchObject({ status: 'committed', summary: { written: 301, failed: 0 } })
   expect(await (await service.post()).json()).toEqual(committed)
