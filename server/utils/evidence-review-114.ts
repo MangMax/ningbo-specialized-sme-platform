@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { createDrizzleLogger } from '../../lib/logging/drizzle'
 import { setTimeout as scheduleExpiry, clearTimeout as cancelExpiry } from 'node:timers'
 /** Bounded public review view over committed #113 evidence; business writes stay in #102. */
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
@@ -49,7 +50,7 @@ function openSnapshot(db: DecisionDb) {
   try { client.exec('BEGIN') } catch (error) { client.close(); throw error }
   const id = randomUUID(), timer = scheduleExpiry(() => closeSnapshot(id), 120000)
   timer.unref()
-  const snapshot = { db: drizzle(client, { schema: s }), client, timer }
+  const snapshot = { db: drizzle(client, { schema: s, logger: createDrizzleLogger({ connection: 'evidence_review' }) }), client, timer }
   snapshots.set(id, snapshot)
   return { id, ...snapshot }
 }

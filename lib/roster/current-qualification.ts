@@ -1,4 +1,5 @@
 import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { createDrizzleLogger } from '../logging/drizzle'
 import { sql } from 'drizzle-orm'
 import * as schema from '../../db/schema'
 import { currentQualification102 } from '../../server/utils/decision-lifecycle-102'
@@ -50,7 +51,7 @@ export interface CurrentWorkbookFacts {
 const readers = new WeakMap<Database.Database, ReturnType<typeof drizzle<typeof schema>>>()
 export function prepareCurrentReader(db: Database.Database) {
   let reader=readers.get(db)
-  if (!reader) { reader=drizzle(db,{schema}); readers.set(db,reader) }
+  if (!reader) { reader=drizzle(db,{schema,logger:createDrizzleLogger({connection:'current_qualification'})}); readers.set(db,reader) }
   identityFunctions(reader)
   return reader
 }

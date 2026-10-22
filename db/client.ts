@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { createDrizzleLogger } from '../lib/logging/drizzle'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import * as schema from './schema'
 import { TITLE_SEED } from './titles'
@@ -61,7 +62,7 @@ export function useDb(opts: DbOptions = {}) {
   if (!readOnly) sqlite.pragma('journal_mode = WAL')
   sqlite.pragma('foreign_keys = ON')
 
-  const db = drizzle(sqlite, { schema })
+  const db = drizzle(sqlite, { schema, logger: createDrizzleLogger({ connection: 'primary' }) })
   if (!sqlite.memory && sameReadOwner(beforeOpen, afterOpen)) ownerIdentities.set(db, afterOpen!)
 
   const migrationsFolder = resolveMigrations(opts)
