@@ -1,3 +1,4 @@
+import { appLog, type LogContext } from '../../lib/logging'
 import { createHash } from 'node:crypto'
 import { asc, desc, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -101,7 +102,7 @@ export function readFileMaintenance(db: Db, id: number, page = 1, pageSize = 50)
   })
 }
 
-export async function maintainStoredFile(db: Db, root: string, id: number, action: FileMaintenanceAction, patch: unknown, options: FileMaintenanceOptions = {}) {
+async function maintainStoredFileUnlogged(db: Db, root: string, id: number, action: FileMaintenanceAction, patch: unknown, options: FileMaintenanceOptions = {}) {
   if (action !== 'restore') return maintainStoredFileSync(db, id, action, patch, options)
   const parsed = parseFileMaintenanceOptions(options)
   const repeated = replay(db, parsed.idempotencyKey, hashRequest(id, action, {}, parsed), id)
@@ -125,4 +126,16 @@ export function recordLegacyFileMaintenanceWrite(db: Db, before: StoredFileRow, 
   const beforeValues = snapshot(before), afterValues = snapshot(after)
   if (JSON.stringify(beforeValues) === JSON.stringify(afterValues)) return
   db.insert(schema.fileMaintenanceAudit).values({ fileId: after.id, revision: fileMaintenanceRevision(db, after.id) + 1, action: 'update', mode: 'legacy', requestHash: hashRequest(after.id, 'update', afterValues, {}), actor: null, basis: null, before: beforeValues, after: afterValues }).run()
+}
+
+export async function maintainStoredFile(db: Db, root: string, id: number, action: FileMaintenanceAction, patch: unknown, options: FileMaintenanceOptions = {}, context: LogContext = {}) {
+  const startedAt = Date.now()
+  try {
+    const result = await maintainStoredFileUnlogged(db, root, id, action, patch, options)
+    appLog({ source: 'file', operation: `file.maintenance.${action}`, outcome: 'success', fileId: result.id, durationMs: Date.now() - startedAt }, context)
+    return result
+  } catch (error) {
+    appLog({ source: 'file', operation: `file.maintenance.${action}`, outcome: error instanceof FileMaintenanceError ? 'denied' : 'failure', level: 'error', errorCode: 'file_maintenance_failed', durationMs: Date.now() - startedAt }, context)
+    throw error
+  }
 }

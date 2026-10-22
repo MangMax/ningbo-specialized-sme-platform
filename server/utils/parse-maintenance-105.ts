@@ -1,3 +1,4 @@
+import { appLog, type LogContext } from '../../lib/logging'
 import { createHash, randomUUID } from 'node:crypto'
 import { and, desc, eq, gt } from 'drizzle-orm'
 import { z } from 'zod'
@@ -65,7 +66,7 @@ export function getParse105(db: Db, fileId: number) {
 }
 
 /** One atomic parse resource write, shared by REST and MCP. Replay precedes version checks. */
-export function saveParse105(db: Db, fileId: number, raw: unknown, mode?: 'replace' | 'status') {
+function saveParse105Unlogged(db: Db, fileId: number, raw: unknown, mode?: 'replace' | 'status') {
   const parsed = parseWrite105.safeParse(raw)
   if (!parsed.success) return fail(400, parsed.error.message)
   const input = parsed.data
@@ -122,35 +123,52 @@ export function historyParse105(db: Db, raw: unknown) {
 }
 
 /** Preserve the existing MCP exact-path alias; all writes/receipts bind to the resolved ID. */
-export function saveParseMcp105(db: Db, raw: unknown) {
+export function saveParseMcp105(db: Db, raw: unknown, context: LogContext = {}) {
   const parsed = parseSave105.safeParse(raw)
   if (!parsed.success) return fail(400, parsed.error.message)
   const { fileId, relPath, ...input } = parsed.data
   const id = fileId ?? db.select({ id: schema.storedFile.id }).from(schema.storedFile)
     .where(eq(schema.storedFile.relPath, relPath!)).get()?.id
   if (id === undefined) return fail(404, '文件不存在')
-  if (modernEnvelope105.some(key => input[key] !== undefined)) return saveParse105(db, id, input)
-  return saveLegacyParseMcp105(db, id, input)
+  if (modernEnvelope105.some(key => input[key] !== undefined)) return saveParse105(db, id, input, undefined, context)
+  return saveLegacyParseMcp105(db, id, input, context)
 }
 
 /** Explicit baseline adapter: a serialized blind write, with adapter-attributed audit.
  * The generated envelope is internal bookkeeping, never caller confirmation or caller CAS.
  */
-function saveLegacyParseMcp105(db: Db, fileId: number, input: { parts?: z.infer<typeof parsePart105>[]; parseState?: string }) {
+function saveLegacyParseMcp105(db: Db, fileId: number, input: { parts?: z.infer<typeof parsePart105>[]; parseState?: string }, context: LogContext) {
   const normalized = input.parts === undefined ? undefined : normalizeParseParts(input.parts)
   if (normalized && !normalized.ok) return fail(400, normalized.message)
-  return db.transaction(tx => {
+  let receiptId: number | undefined
+  const result = db.transaction(tx => {
     const scoped = tx as Db
     const current = readParse105(scoped, fileId)
-    saveParse105(scoped, fileId, {
+    const receipt = saveParse105Unlogged(scoped, fileId, {
       parts: input.parts, parseState: input.parseState,
       expectedVersion: current.version,
       idempotencyKey: `legacy-save-parse:${randomUUID()}`,
       actor: { type: 'agent', id: 'legacy-adapter:save_parse_result' },
       reason: '兼容旧 save_parse_result 盲写；客户端未提供版本、幂等键、操作者或确认依据',
     })
+    receiptId = receipt.receiptId
     // Preserve baseline semantics: top-level parts is the submitted normalized agent
     // collection (or [] for status-only); file.parts is the effective stored collection.
     return { file: getStoredFile(scoped, fileId)!, parts: normalized?.ok ? normalized.parts : [], parseState: input.parseState ?? 'parsed' }
   }, { behavior: 'immediate' })
+  appLog({ source: 'file', operation: 'file.parse.revise', outcome: 'success', fileId, receiptId }, context)
+  return result
+}
+
+/** Emit only after the receipt transaction returns; runtime retention never owns the receipt. */
+export function saveParse105(db: Db, fileId: number, raw: unknown, mode?: 'replace' | 'status', context: LogContext = {}) {
+  const startedAt = Date.now()
+  try {
+    const result = saveParse105Unlogged(db, fileId, raw, mode)
+    appLog({ source: 'file', operation: result.replayed ? 'file.parse.replay' : 'file.parse.revise', outcome: 'success', fileId, receiptId: result.receiptId, durationMs: Date.now() - startedAt }, context)
+    return result
+  } catch (error) {
+    appLog({ source: 'file', operation: 'file.parse.revise', outcome: error instanceof ParseMaintenanceError ? 'denied' : 'failure', level: 'error', ...(error instanceof ParseMaintenanceError && error.statusCode === 409 ? { fileId } : {}), errorCode: error instanceof ParseMaintenanceError && error.statusCode === 409 ? 'file_parse_conflict' : 'file_parse_failed', durationMs: Date.now() - startedAt }, context)
+    throw error
+  }
 }

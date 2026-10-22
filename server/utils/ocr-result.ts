@@ -1,3 +1,4 @@
+import { appLog, type LogContext } from '../../lib/logging'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
@@ -335,7 +336,7 @@ export function validOcrExpectedVersion(value: unknown): value is string | null 
 }
 
 /** 外部单页删除与覆盖使用同一版本规则;只变更 OCR,不触碰任何来源/正式事实。 */
-export function deleteOcrPage(db: Db, fileId: number, page: number, expectedVersion?: string | null) {
+function deleteOcrPageUnlogged(db: Db, fileId: number, page: number, expectedVersion?: string | null) {
   if (!Number.isInteger(page) || page < 1 || page > MAX_PAGE_NO || !validOcrExpectedVersion(expectedVersion)) {
     return { ok: false as const, statusCode: 400, message: 'page 或 expectedVersion 非法' }
   }
@@ -348,4 +349,15 @@ export function deleteOcrPage(db: Db, fileId: number, page: number, expectedVers
     const remaining = tx.select({ n: sql<number>`count(*)` }).from(schema.ocrResult).where(eq(schema.ocrResult.fileId, fileId)).get()!.n
     return { ok: true as const, page, deleted, remaining }
   }, { behavior: 'immediate' })
+}
+
+export function deleteOcrPage(db: Db, fileId: number, page: number, expectedVersion?: string | null, context: LogContext = {}) {
+  try {
+    const result = deleteOcrPageUnlogged(db, fileId, page, expectedVersion)
+    appLog({ source: 'ocr', operation: 'ocr.page.delete', fileId, page, outcome: result.ok ? (result.deleted ? 'success' : 'skipped') : 'denied', ...(!result.ok ? { level: 'error' as const, errorCode: result.statusCode === 409 ? 'ocr_page_conflict' : 'ocr_page_delete_rejected' } : {}) }, context)
+    return result
+  } catch (error) {
+    appLog({ source: 'ocr', operation: 'ocr.page.delete', fileId, page, outcome: 'failure', level: 'error', errorCode: 'ocr_page_delete_failed' }, context)
+    throw error
+  }
 }

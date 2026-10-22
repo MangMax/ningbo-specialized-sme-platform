@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../lib/logging'
 import { useDb } from '@db'
 import {
   parseUploadDeclaration,
@@ -32,7 +33,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const { row, created } = await registerStoredFile(useDb(), useRuntimeConfig().filesDir, input)
+    const { row, created } = await registerStoredFile(useDb(), useRuntimeConfig().filesDir, input, requestLogContext(event))
     if (created) setResponseStatus(event, 201)
     return row
   } catch (error) {

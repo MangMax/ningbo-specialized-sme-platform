@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../lib/logging'
 import { requireApiToken } from '../../utils/api-guard'
 import { hasFileMaintenanceControls } from '../../utils/file-maintenance'
 import { useDb } from '@db'
@@ -153,6 +154,7 @@ export default defineEventHandler(async (event) => {
     getRouterParam(event, 'id'),
     body,
     useDb(),
+    requestLogContext(event),
   )
   if (result.status !== 200) {
     const message = (result.body as { message?: string }).message ?? '文件更新失败'
