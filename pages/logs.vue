@@ -3,17 +3,17 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { LogFilter, LogSummary } from '~~/lib/logging/contract'
 import { logBrowserHeaders, logErrorMessage, useLogRead } from '~/composables/useLogRead'
-import { describeLogRow } from '@/components/logs/logPresentation'
+import { describeLogRow, sourceLabel, outcomeLabel } from '@/components/logs/logPresentation'
 import LogFilters from '@/components/logs/LogFilters.vue'
 import LogDetail from '@/components/logs/LogDetail.vue'
 import LogManagement from '@/components/logs/LogManagement.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -35,8 +35,17 @@ import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/u
 useHead({ title: '运行日志' })
 const route = useRoute(),
   router = useRouter()
-const filter = computed<LogFilter>(() =>
-  Object.fromEntries(
+const activeTab = computed({
+  get: () => route.query.tab === 'settings' ? 'settings' : 'logs',
+  set: (value: string | number) => {
+    selected.value = ''
+    void router.replace({ path: '/logs', query: { ...route.query, tab: value === 'settings' ? 'settings' : undefined } })
+  }
+})
+const settingsVisited = ref(false)
+watch(activeTab, value => { if (value === 'settings') settingsVisited.value = true }, { immediate: true })
+const filter = computed<LogFilter>((previous) => {
+  const current: LogFilter = Object.fromEntries(
     [
       'from',
       'to',
@@ -54,7 +63,8 @@ const filter = computed<LogFilter>(() =>
       typeof route.query[key] === 'string' && route.query[key] ? [[key, route.query[key]]] : []
     )
   )
-)
+  return previous && JSON.stringify(previous) === JSON.stringify(current) ? previous : current
+})
 const limit = ref(25),
   cursors = ref<(string | undefined)[]>([undefined]),
   page = ref(1),
@@ -97,6 +107,15 @@ const source = computed(() =>
 )
 const stale = computed(() => sourceKey.value !== key.value)
 const rows = computed(() => data.value?.rows ?? [])
+// Only pages with a known cursor boundary can be selected. A changed boundary
+// invalidates later page numbers instead of reusing a different result range.
+watch([data, sourceKey, loading], () => {
+  if (loading.value || error.value || sourceKey.value !== key.value || !data.value) return
+  const boundary = data.value.nextCursor
+  if (!boundary) cursors.value = cursors.value.slice(0, page.value)
+  else if (cursors.value[page.value] !== boundary)
+    cursors.value = [...cursors.value.slice(0, page.value), boundary]
+}, { flush: 'post' })
 /** 每行只派生一次：来源/操作/目标/结果/耗时/状态/关联都由 presentation 模块决定。 */
 const described = computed(() => rows.value.map((row) => ({ row, view: describeLogRow(row) })))
 /** 首次读取（还没有任何结果）才铺骨架；刷新/换页保留旧结果。 */
@@ -128,7 +147,10 @@ function filterSummary(value: LogFilter) {
   for (const [key, label] of Object.entries(FILTER_LABELS)) {
     const raw = value[key as keyof LogFilter]
     if (raw === undefined || raw === null || raw === '') continue
-    parts.push(`${label} ${key === 'from' || key === 'to' ? localStamp(String(raw)) : String(raw)}`)
+    const display = key === 'from' || key === 'to' ? localStamp(String(raw))
+      : key === 'source' ? sourceLabel(String(raw))
+      : key === 'outcome' ? outcomeLabel(String(raw)) : String(raw)
+    parts.push(`${label} ${display}`)
   }
   return parts.length ? parts.join(' · ') : '未设筛选'
 }
@@ -156,16 +178,22 @@ function resize(value: unknown) {
 }
 function next() {
   if (!loading.value && !error.value && !stale.value && data.value?.nextCursor) {
-    requestReset(true)
     cursors.value[page.value] = data.value.nextCursor
-    page.value++
+    goToPage(page.value + 1)
   }
 }
-function previous() {
-  if (!loading.value && page.value > 1) {
-    requestReset(true)
-    page.value--
+function goToPage(value: number) {
+  if (loading.value || !Number.isInteger(value) || value < 1 || value > cursors.value.length) return
+  if (value > 1 && !cursors.value[value - 1]) return
+  if (value === page.value) {
+    if (error.value) { requestReset(true); void refresh() }
+    return
   }
+  requestReset(true)
+  page.value = value
+}
+function previous() {
+  goToPage(page.value - 1)
 }
 function fresh() {
   requestReset()
@@ -256,11 +284,17 @@ function restoreFocus(event: Event) {
       title="运行日志"
       description="按操作和关联标识排查运行情况。运行日志不代替业务审计或回执。"
       ><template #actions
-        ><Button variant="outline" size="sm" :disabled="loading" @click="fresh"
+        ><Button v-if="activeTab === 'logs'" variant="outline" size="sm" :disabled="loading" @click="fresh"
           >刷新最新日志</Button
         ></template
       ></PageHeader
     >
+    <Tabs v-model="activeTab" class="min-h-0 flex-1 gap-3">
+      <TabsList class="shrink-0" aria-label="日志功能">
+        <TabsTrigger value="logs" class="min-h-11 sm:min-h-0">运行日志</TabsTrigger>
+        <TabsTrigger value="settings" class="min-h-11 sm:min-h-0">保留与清理</TabsTrigger>
+      </TabsList>
+      <TabsContent value="logs" force-mount v-show="activeTab === 'logs'" class="flex min-h-0 flex-col gap-3">
     <!-- 快速筛选与高级筛选共用这一张卡：筛选只有一层表面。 -->
     <Card class="min-w-0 shrink-0 gap-0 py-0 shadow-none"
       ><CardContent class="p-3"><LogFilters :filter="filter" @apply="apply" /></CardContent></Card
@@ -654,9 +688,11 @@ function restoreFocus(event: Event) {
               :max-page-size="100"
               :loading="loading"
               :has-next="!error && !stale && !!data?.nextCursor"
+              :known-page-count="cursors.length"
               @update:page-size="resize"
               @previous="previous"
               @next="next"
+              @update:page="goToPage"
               >{{ firstLoad ? '正在读取…' : `本页 ${rows.length} 条 · 第 ${source?.page ?? page} 页` }}</TablePagination
             >
           </div>
@@ -664,15 +700,17 @@ function restoreFocus(event: Event) {
         </CardContent>
       </Card>
     </section>
-    <!-- 危险动作留在页面最底部、独立表面里；折叠条本身是这一区的容器。 -->
-    <DisclosurePanel
-      :heading-level="2"
-      title="保留与清理"
-      trigger-class="px-4"
-      content-class="border-t p-4"
-      class="bg-card shrink-0 overflow-hidden rounded-lg border"
-      ><LogManagement :filter="filter" @changed="fresh"
-    /></DisclosurePanel>
+      </TabsContent>
+      <TabsContent value="settings" force-mount v-show="activeTab === 'settings'" class="min-h-0 overflow-y-auto">
+        <Card class="max-w-3xl shadow-none">
+          <CardHeader>
+            <CardTitle>日志配置</CardTitle>
+            <CardDescription>清理范围沿用运行日志中已应用的筛选；修改筛选后可返回本页核对。</CardDescription>
+          </CardHeader>
+          <CardContent><LogManagement v-if="settingsVisited" :filter="filter" @changed="fresh" /></CardContent>
+        </Card>
+      </TabsContent>
+    </Tabs>
     <Sheet
       :open="!!selected"
       @update:open="
@@ -680,7 +718,7 @@ function restoreFocus(event: Event) {
           if (!value) selected = ''
         }
       "
-      ><SheetContent class="w-full gap-0 sm:max-w-2xl" @close-auto-focus="restoreFocus"
+      ><SheetContent class="w-full gap-0 sm:max-w-lg" @close-auto-focus="restoreFocus"
         ><SheetHeader class="shrink-0 border-b px-6 py-5 pr-12"
           ><SheetTitle>运行日志详情</SheetTitle
           ><SheetDescription

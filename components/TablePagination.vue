@@ -15,7 +15,7 @@ const props = defineProps<{
   maxPageSize?: number
   unit: string
   loading?: boolean
-} & ({ mode: 'cursor'; hasNext: boolean; total?: never } | { mode?: 'numbered'; total: number; hasNext?: never })>()
+} & ({ mode: 'cursor'; hasNext: boolean; knownPageCount?: number; total?: never } | { mode?: 'numbered'; total: number; hasNext?: never; knownPageCount?: never })>()
 const emit = defineEmits<{
   next: []
   previous: []
@@ -38,6 +38,14 @@ const sizeModel = computed({
 })
 const customOpen = computed(() => custom.value || !presets.value.includes(props.pageSize))
 const totalPages = computed(() => Math.max(1, Math.ceil((props.total ?? 0) / props.pageSize)))
+const cursorPages = computed(() => {
+  if (props.mode !== 'cursor' || props.knownPageCount === undefined) return []
+  const lastKnown = Math.max(1, Math.trunc(props.knownPageCount))
+  const pages = [...new Set([1, props.page - 1, props.page, props.page + 1, lastKnown])]
+    .filter(n => n >= 1 && (n <= lastKnown || n === props.page)).sort((a, b) => a - b)
+  return pages.flatMap((n, index): (number | null)[] =>
+    index > 0 && n - pages[index - 1]! > 1 ? [null, n] : [n])
+})
 function onSizeInput(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
   if (Number.isFinite(value) && value > 0) {
@@ -72,6 +80,12 @@ function onSizeInput(event: Event) {
     </span>
     <div v-if="mode === 'cursor'" class="flex flex-wrap gap-2 sm:ml-auto">
       <Button variant="outline" aria-label="上一页" :disabled="loading || page <= 1" @click="emit('previous')">上一页</Button>
+      <nav v-if="cursorPages.length" aria-label="已知页码" class="flex items-center gap-1">
+        <template v-for="(number, index) in cursorPages" :key="number ?? `gap-${index}`">
+          <Button v-if="number !== null" :variant="number === page ? 'outline' : 'ghost'" size="icon" :aria-label="`第 ${number} 页`" :aria-current="number === page ? 'page' : undefined" :disabled="loading || number > (knownPageCount ?? page)" @click="emit('update:page', number)">{{ number }}</Button>
+          <span v-else aria-hidden="true" class="text-muted-foreground px-1">…</span>
+        </template>
+      </nav>
       <Button variant="outline" aria-label="下一页" data-table-next :disabled="loading || !hasNext" @click="emit('next')">下一页</Button>
     </div>
     <Pagination v-else-if="(total ?? 0) > 0" v-slot="{ page: current }" class="mx-0 w-full justify-center sm:ml-auto sm:w-auto sm:justify-end"

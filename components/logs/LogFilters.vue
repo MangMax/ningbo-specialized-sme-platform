@@ -15,6 +15,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogFilter } from '~~/lib/logging/contract'
+import { sourceLabel, outcomeLabel } from './logPresentation'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Input } from '@/components/ui/input'
@@ -58,10 +59,12 @@ const advancedTitle = computed(() =>
     : '更多筛选（时间与关联标识）'
 )
 const showReset = computed(() => liveValues.value.length > 0)
+const choiceLabel = (key: string, value: string) =>
+  key === 'source' ? sourceLabel(value) : key === 'outcome' ? outcomeLabel(value) : value
 /** 收起时也认得出每个下拉管的是哪一类；选中后把类别带在值前面。 */
 const summary = (choice: (typeof choices)[number]) =>
   draft[choice.key] && draft[choice.key] !== 'all'
-    ? `${choice.label} · ${draft[choice.key]}`
+    ? `${choice.label} · ${choiceLabel(choice.key, draft[choice.key]!)}`
     : `全部${choice.label}`
 function localTime(iso: string | undefined) {
   if (!iso || !Number.isFinite(Date.parse(iso))) return ''
@@ -124,7 +127,7 @@ function reset() {
           </SelectTrigger>
           <SelectContent><SelectGroup>
             <SelectItem value="all">全部{{ choice.label }}</SelectItem>
-            <SelectItem v-for="value in choice.values" :key="value" :value="value">{{ value }}</SelectItem>
+            <SelectItem v-for="value in choice.values" :key="value" :value="value">{{ choiceLabel(choice.key, value) }}</SelectItem>
           </SelectGroup></SelectContent>
         </Select>
       </Field>

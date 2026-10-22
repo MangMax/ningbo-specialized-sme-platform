@@ -5,6 +5,13 @@ import { defineComponent, h, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLogRead } from '../composables/useLogRead'
 import type { LogSummary } from '../lib/logging/contract'
+// Model reduced-motion preference in happy-dom; real browser checks retain the
+// production transitions and exercise the actual Tabs/Sheet interaction.
+vi.mock('motion-v', async (original) => {
+  const actual = await original<typeof import('motion-v')>()
+  const { ref } = await import('vue')
+  return { ...actual, useReducedMotion: () => ref(true) }
+})
 const wrappers: ReturnType<typeof mount>[] = []
 afterEach(() => {
   wrappers.splice(0).forEach((w) => w.unmount())
@@ -819,4 +826,42 @@ it('shows and copies the safe HTTP method and route template in the classified d
     httpRoute: '/api/jobs/:id',
     errorCode: 'operation_failed'
   })
+})
+
+it('keeps the current cursor page and drafts across log and configuration tabs without writing', async () => {
+  const { default: Page } = await import('../pages/logs.vue')
+  const { createRouter, createMemoryHistory } = await import('vue-router')
+  const calls: { url: string; options: any }[] = []
+  vi.stubGlobal('$fetch', async (url: string, options: any = {}) => {
+    calls.push({ url, options })
+    if (url === '/api/logs/policy') return policyView
+    return { rows: [listRow(options.query.cursor ? '00000000-0000-4000-8000-000000000002' : '00000000-0000-4000-8000-000000000001')], nextCursor: options.query.cursor ? null : 'next-2', status: { dropped: 0 } }
+  })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/logs', component: Page }] })
+  await router.push('/logs?source=ocr&outcome=partial')
+  await router.isReady()
+  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.get('#log-source').text()).toContain('OCR 识别')
+  expect(wrapper.get('#log-outcome').text()).toContain('部分完成')
+  expect(wrapper.find('#log-retention-days').exists()).toBe(false)
+  await wrapper.get('[aria-label="第 2 页"]').trigger('click')
+  await flushPromises()
+  expect(calls.filter(c => c.url === '/api/logs').at(-1)!.options.query.cursor).toBe('next-2')
+  await wrapper.get('#log-operation').setValue('draft.operation')
+  const reads = calls.filter(c => c.url === '/api/logs').length
+  await wrapper.findAll('[role=tab]').find(t => t.text() === '保留与清理')!.trigger('keydown', { key: 'Enter' })
+  await flushPromises()
+  expect(router.currentRoute.value.query).toMatchObject({ tab: 'settings', source: 'ocr', outcome: 'partial' })
+  await wrapper.get('#log-retention-days').setValue('8')
+  await wrapper.findAll('[role=tab]').find(t => t.text() === '运行日志')!.trigger('keydown', { key: 'Enter' })
+  await flushPromises()
+  expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('第 2 页')
+  expect((wrapper.get('#log-operation').element as HTMLInputElement).value).toBe('draft.operation')
+  expect(calls.filter(c => c.url === '/api/logs')).toHaveLength(reads)
+  await wrapper.findAll('[role=tab]').find(t => t.text() === '保留与清理')!.trigger('keydown', { key: 'Enter' })
+  await flushPromises()
+  expect((wrapper.get('#log-retention-days').element as HTMLInputElement).value).toBe('8')
+  expect(calls.filter(c => c.options.method && c.options.method !== 'GET')).toHaveLength(0)
 })

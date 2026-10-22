@@ -268,6 +268,7 @@ async function clickButtonText(text) {
     const el = [...document.querySelectorAll('button')].find((b) => b.textContent.includes(${JSON.stringify(text)}))
     if (!el) return false
     el.scrollIntoView({ block: 'center' })
+    if (el.getAttribute('role') === 'tab') el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
     el.click()
     return true
   })()`)
@@ -571,6 +572,8 @@ await check('cursor pagination returns to the first row and focuses the list hea
   assert.equal(after.activeId, 'log-list-heading')
   assert.notEqual(after.firstText, firstPageText)
   assert.ok(after.pagination.includes('第 2 页'))
+  await evaluate(`document.querySelector('[aria-label="第 1 页"]').click()`)
+  await waitFor(`document.querySelector('[aria-label="第 1 页"]')?.getAttribute('aria-current') === 'page'`)
   return { firstPageText, after, path }
 })
 
