@@ -1,8 +1,9 @@
-import { defineEventHandler, getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
+import { semanticRouteHandler } from './core-route'
+import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { useDb } from '@db'
 import { handleEvidenceCorrectionRequest, type EvidenceCorrectionAction } from './roster-evidence-correction-api'
 export function evidenceCorrectionRoute(action: EvidenceCorrectionAction) {
-  return defineEventHandler(async event => {
+  return semanticRouteHandler(`maintenance.evidence.${action}`, async event => {
     setHeader(event, 'cache-control', 'no-store')
     let body: unknown
     if (getMethod(event) === 'POST') {

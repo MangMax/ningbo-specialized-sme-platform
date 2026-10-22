@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../lib/logging'
 import { withEnterpriseReadSignal } from '../../utils/enterprise-read-signal'
 import { readRecognitions } from '../../utils/recognition-read'
 import { useDb } from '@db'
@@ -68,7 +69,7 @@ export default defineEventHandler((event) => {
   const owner = useDb()
   const filter = recognitionOptions(getQuery(event))
   return withEnterpriseReadSignal(event, async signal => {
-    const result = await readRecognitions(owner, filter, signal)
+    const result = await readRecognitions(owner, filter, signal, undefined, requestLogContext(event))
     if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
     return result
   })

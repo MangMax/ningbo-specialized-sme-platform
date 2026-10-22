@@ -1,3 +1,4 @@
+import type { LogContext } from '../../../lib/logging'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
@@ -23,7 +24,7 @@ export default defineMcpTool({
     enterpriseId: z.number().int().positive().describe('企业 id'),
   },
   handler: async ({ enterpriseId }, extra) => {
-    const detail = await enterpriseReads.json(useDb().$client.name, { operation: 'detail',enterpriseId }, extra?.signal)
+    const detail = await enterpriseReads.json(useDb().$client.name, { operation: 'detail',enterpriseId }, extra?.signal, (extra as typeof extra & { logContext?: LogContext })?.logContext)
     if (!detail.found) throw createError({ statusCode: 404, statusMessage: 'not found' })
     return detail.body.toString('utf8')
   },

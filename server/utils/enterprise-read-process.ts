@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
@@ -12,11 +15,21 @@ export function createEnterpriseReadProcess(entry: URL, sourceLoader?: string) {
   // Redistribute the existing budget: 256 + 3*16 = 304MiB effective V8 heap,
   // below the former 128 + 3*64 = 320MiB. The app's heap is unchanged.
   const args = ['--max-old-space-size=256', '--max-semi-space-size=16']
-  if (sourceLoader) args.push('--input-type=module', '--eval', sourceLoader)
-  else args.push(fileURLToPath(entry))
+  let bootstrapDir: string | undefined
+  if (sourceLoader) {
+    // A real ESM entry avoids passing --input-type=module to the logging
+    // service's nested CJS Worker. This branch is only used by source launchers.
+    bootstrapDir = mkdtempSync(join(tmpdir(), 'enterprise-read-bootstrap-'))
+    const bootstrap = join(bootstrapDir, 'entry.mjs')
+    try { writeFileSync(bootstrap, sourceLoader); args.push(bootstrap) }
+    catch (error) { rmSync(bootstrapDir, { recursive: true, force: true }); throw error }
+  } else args.push(fileURLToPath(entry))
   const child = spawn(process.execPath, args, {
     stdio: ['ignore', 'ignore', 'inherit', 'ipc'], serialization: 'advanced',
   })
+  const cleanup = () => { if (bootstrapDir) { try { rmSync(bootstrapDir, { recursive: true, force: true }) } catch { /* Source bootstrap cleanup cannot change process settlement. */ } } }
+  child.once('exit', cleanup)
+  child.once('error', cleanup)
   const events = new EventEmitter()
   child.on('message', message => events.emit('message', message))
   child.on('error', error => events.emit('error', error))
