@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../lib/logging'
 import { readSummary } from '../utils/comparison-summary-read'
 import { withEnterpriseReadSignal } from '../utils/enterprise-read-signal'
 import { useDb } from '@db'
@@ -119,7 +120,7 @@ export default defineEventHandler((event) => {
       pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
     }
     return withEnterpriseReadSignal(event, async signal => {
-      const result = await readSummary(db, options, signal)
+      const result = await readSummary(db, options, signal, undefined, requestLogContext(event))
       if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
       return result
     })
