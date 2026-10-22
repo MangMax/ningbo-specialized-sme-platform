@@ -50,6 +50,7 @@ export default defineEventHandler(async (event) => {
       // `onUploadFinish` completed its original mkdir/link/rm work before this flag.
       appLog({
         source: 'file', operation: 'file.upload', outcome: 'success', statusCode: status,
+        durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'completed' } } : {}),
       }, requestLogContext(event))
       logged = true

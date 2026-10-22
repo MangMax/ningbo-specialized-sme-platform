@@ -36,7 +36,8 @@ const record = (value: unknown): Record<string, unknown> =>
 function mcpClientMetadata(value: unknown): McpClientMetadata | undefined {
   const raw = record(value)
   if (typeof raw.name !== 'string' || raw.name.trim() === '') return undefined
-  const name = MCP_CLIENT_ALIASES[raw.name.trim().toLowerCase()] ?? 'other'
+  const alias = raw.name.trim().toLowerCase()
+  const name = Object.hasOwn(MCP_CLIENT_ALIASES, alias) ? MCP_CLIENT_ALIASES[alias]! : 'other'
   const client: McpClientMetadata = { name, trust: 'self-reported', capturedAt: 'initialize' }
   if (typeof raw.version === 'string' && semanticVersion.test(raw.version)) client.version = raw.version
   return client

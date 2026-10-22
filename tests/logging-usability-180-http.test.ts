@@ -220,6 +220,7 @@ it('records a real tus create and final PATCH with the server upload id and per-
   const finishedRows = await waitLog(finished.requestId)
   expect(finishedRows.find(row => row.operation === 'file.upload')).toMatchObject({
     source: 'file', outcome: 'success', statusCode: 204,
+    durationMs: expect.any(Number),
     tus: { uploadId: id, phase: 'completed', method: 'PATCH', size: data.length, offset: data.length },
   })
   expect(JSON.stringify({ createdRows, finishedRows })).not.toContain('tus-log-180.txt')

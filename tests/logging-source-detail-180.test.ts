@@ -12,6 +12,16 @@ const event = (over: Partial<LogEvent>): LogEvent => ({
 const fields = (row: LogEvent) => detailProfile(row).flatMap(section => section.fields)
 const section = (row: LogEvent, title: string) => detailProfile(row).find(entry => entry.title === title)
 
+it('classifies inherited object property names as unknown MCP clients', () => {
+  for (const name of ['constructor', '__proto__', 'toString']) {
+    const result = safeLogEvent({ source: 'mcp', operation: 'mcp.request', outcome: 'success',
+      mcp: { transport: 'streamable-http', sessionMode: 'stateless', rpcMethod: 'initialize',
+        client: { name: name as any, trust: 'self-reported', capturedAt: 'initialize' } } })
+    expect(result.mcp?.client?.name).toBe('other')
+    expect(JSON.parse(JSON.stringify(result)).mcp.client.name).toBe('other')
+  }
+})
+
 describe('#180 source-aware detail profile', () => {
   it('selects only applicable targets for all eleven sources', () => {
     const samples = [
