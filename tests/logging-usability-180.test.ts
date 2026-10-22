@@ -183,6 +183,10 @@ it('drops non-template applicationLog routes from stdout and SQLite while keepin
       await new Promise(resolve => setTimeout(resolve, 10))
     }
     await applicationLogs().flush()
+    // SQLite completion and the Worker's forwarded stdout are separate
+    // observations. Keep the spy installed until the output being asserted
+    // actually reaches this process; do not infer pipe delivery from storage.
+    await vi.waitFor(() => expect(writes.join('')).toContain('/api/files/:id'), { timeout: 1000, interval: 10 })
   } finally {
     output.mockRestore()
   }
