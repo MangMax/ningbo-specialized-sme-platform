@@ -32,6 +32,23 @@ pnpm dev
 
 开发服务默认运行在 `http://localhost:3000`。`pnpm typecheck`、`pnpm test` 和 `pnpm build` 分别用于类型检查、测试和生产构建。
 
+### 框架与结构体检
+
+已接入固定版本的 [Vite Doctor](https://vite-doctor.onmax.me/) 开发依赖和 Nuxt 模块。
+首次安装后运行 `pnpm exec nuxt prepare`，随后可执行：
+
+```bash
+pnpm check:doctor                  # Nuxt / Vue / Nitro / Vite 等框架规则
+pnpm --silent check:doctor:json    # 同一检查的纯 JSON 输出，便于重定向
+pnpm check:doctor:structure        # 死代码、依赖图、重复代码和复杂度
+```
+
+全面体检应分别运行框架和结构检查：`--analyses` 只选择结构分析，不包含默认框架规则。
+需要不使用缓存时追加 `--no-cache`。发现错误时命令返回非零，不代表工具启动失败。
+诊断是静态线索，需要结合项目的 SPA 配置、Nuxt 自动导入、测试目录和已有校验核实；
+不要直接删除被标记为未使用的模块，或批量执行 `--fix`。本次接入不新增 CI 阻断规则。
+首次体检记录见 [Vite Doctor 体检报告](docs/reports/vite-doctor-2026-10-22.md)。
+
 SQLite 数据库默认位于 `data/roster.db`，可用 `NUXT_DB_PATH` 覆盖；来源文件默认位于 `files/`，可用 `NUXT_FILES_DIR` 覆盖。新克隆仓库不含数据库、公布文件、平台导出表或上传件，首次使用时应从本机安全备份恢复，或通过应用文件管理页上传。真实 OCR、HTTP 写入和 MCP 写入凭证只放在本地 `.env` 或运行环境密钥中；不要提交凭证。
 
 任务页面不收集或保存 API 密钥。同源页面默认可提交导出、下载、取消及安全局部重试，无需配置 API token；请求须通过浏览器标记、Fetch Metadata 及 Origin/Referer 校验，POST 还须使用 JSON。同源检查不识别用户；外部 REST/MCP 调用仍使用各自的 token。
