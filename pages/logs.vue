@@ -293,7 +293,7 @@ function restoreFocus(event: Event) {
         </p>
         <!-- 首次读取时状态条先占住同样的高度，结果区不会因为少这一行而跳。 -->
         <div v-else-if="firstLoad" class="flex shrink-0 items-center border-b px-4 py-2">
-          <Skeleton class="h-4 w-56" aria-hidden="true" />
+          <Skeleton class="h-5 w-56" aria-hidden="true" />
         </div>
         <TableFailureState
           v-if="error"
@@ -321,7 +321,7 @@ function restoreFocus(event: Event) {
               class="hidden min-h-0 flex-1 overflow-auto sm:block [&_[data-slot=table-container]]:overflow-visible"
               @scroll.passive="onTableScroll"
             >
-              <Table class="data-table min-w-[1400px] table-fixed">
+              <Table class="data-table min-w-[1560px] table-fixed">
                 <TableHeader class="sticky top-0 z-10"><TableRow class="hover:bg-transparent">
                   <TableHead class="w-[168px]">时间</TableHead>
                   <TableHead class="w-[84px]">级别</TableHead>
@@ -329,6 +329,7 @@ function restoreFocus(event: Event) {
                   <TableHead class="w-[200px]">操作</TableHead>
                   <TableHead class="w-[220px]">目标</TableHead>
                   <TableHead class="w-[108px]">结果</TableHead>
+                  <TableHead class="w-[160px]">失败码</TableHead>
                   <TableHead class="w-[104px]">耗时</TableHead>
                   <TableHead class="w-[100px]">HTTP 状态</TableHead>
                   <TableHead class="w-[220px]">关联标识</TableHead>
@@ -341,9 +342,25 @@ function restoreFocus(event: Event) {
                     data-testid="log-row-skeleton"
                     aria-hidden="true"
                   >
-                    <TableCell v-for="column in 10" :key="column">
-                      <Skeleton class="h-4 w-full" />
+                    <TableCell><Skeleton class="h-4 w-28" /></TableCell>
+                    <TableCell><Skeleton class="h-5 w-12" /></TableCell>
+                    <TableCell>
+                      <div class="flex flex-col gap-1">
+                        <Skeleton class="h-3 w-16" /><Skeleton class="h-3 w-10" />
+                      </div>
                     </TableCell>
+                    <TableCell>
+                      <div class="flex flex-col gap-1">
+                        <Skeleton class="h-3 w-24" /><Skeleton class="h-3 w-20" />
+                      </div>
+                    </TableCell>
+                    <TableCell><Skeleton class="h-4 w-40" /></TableCell>
+                    <TableCell><Skeleton class="h-5 w-12" /></TableCell>
+                    <TableCell><Skeleton class="h-4 w-24" /></TableCell>
+                    <TableCell><Skeleton class="h-4 w-16" /></TableCell>
+                    <TableCell><Skeleton class="h-4 w-12" /></TableCell>
+                    <TableCell><Skeleton class="h-4 w-28" /></TableCell>
+                    <TableCell><Skeleton class="h-8 w-14" /></TableCell>
                   </TableRow>
                   <TableRow v-for="item in described" :key="item.row.id">
                     <TableCell class="overflow-hidden">
@@ -368,7 +385,7 @@ function restoreFocus(event: Event) {
                           item.view.sourceLabel
                         }}</span>
                         <span
-                          class="text-muted-foreground truncate font-mono text-[11px]"
+                          class="text-muted-foreground truncate font-mono text-xs"
                           :title="item.view.sourceCode"
                           >{{ item.view.sourceCode }}</span
                         >
@@ -386,7 +403,7 @@ function restoreFocus(event: Event) {
                           class="truncate font-mono"
                           :class="
                             item.view.operationLabel
-                              ? 'text-muted-foreground text-[11px]'
+                              ? 'text-muted-foreground text-xs'
                               : 'text-[13px]'
                           "
                           :title="item.view.operationCode"
@@ -403,7 +420,7 @@ function restoreFocus(event: Event) {
                       >
                       <span
                         v-if="item.view.target.untrusted"
-                        class="text-muted-foreground block truncate text-[11px]"
+                        class="text-muted-foreground block truncate text-xs"
                         >UNTRUSTED</span
                       >
                     </TableCell>
@@ -413,6 +430,14 @@ function restoreFocus(event: Event) {
                         :class="item.view.outcomeClass"
                         :title="item.view.outcomeCode"
                         >{{ item.view.outcomeLabel }}</Badge
+                      >
+                    </TableCell>
+                    <TableCell class="overflow-hidden">
+                      <span
+                        class="block truncate font-mono text-xs"
+                        :class="item.view.errorCodePresent ? '' : 'font-sans text-muted-foreground'"
+                        :title="item.view.errorCodeText"
+                        >{{ item.view.errorCodeText }}</span
                       >
                     </TableCell>
                     <TableCell class="overflow-hidden">
@@ -440,11 +465,11 @@ function restoreFocus(event: Event) {
                         v-if="item.view.primaryReference"
                         class="flex min-w-0 items-baseline gap-1.5"
                       >
-                        <span class="text-muted-foreground shrink-0 text-[11px]">{{
+                        <span class="text-muted-foreground shrink-0 text-xs">{{
                           item.view.primaryReference.kind
                         }}</span>
                         <span
-                          class="truncate font-mono text-[11px]"
+                          class="truncate font-mono text-xs"
                           :title="
                             item.view.references.map((r) => `${r.kind} ${r.value}`).join(' · ')
                           "
@@ -452,7 +477,7 @@ function restoreFocus(event: Event) {
                         >
                         <span
                           v-if="item.view.extraReferenceCount"
-                          class="text-muted-foreground shrink-0 text-[11px]"
+                          class="text-muted-foreground shrink-0 text-xs"
                           >+{{ item.view.extraReferenceCount }}</span
                         >
                       </div>
@@ -497,15 +522,26 @@ function restoreFocus(event: Event) {
                 >
                   <div class="flex items-start justify-between gap-3">
                     <div class="flex min-w-0 flex-col gap-1">
-                      <div class="flex items-center gap-2">
-                        <Skeleton class="h-5 w-11" /><Skeleton class="h-5 w-32" />
+                      <div class="flex flex-wrap items-center gap-2">
+                        <Skeleton class="h-5 w-12" /><Skeleton class="h-5 w-32" />
                       </div>
-                      <Skeleton class="h-4 w-28" />
+                      <div class="flex min-w-0 items-baseline gap-1.5">
+                        <Skeleton class="h-3 w-8 shrink-0" /><Skeleton class="h-5 w-40" />
+                      </div>
                     </div>
                     <Skeleton class="h-11 w-14" />
                   </div>
-                  <Skeleton class="h-5 w-56" />
-                  <Skeleton class="h-5 w-64" />
+                  <div class="flex min-w-0 flex-col gap-1">
+                    <div
+                      v-for="row in 6"
+                      :key="row"
+                      class="flex min-w-0 items-baseline gap-1.5"
+                      data-skeleton-row
+                    >
+                      <Skeleton class="h-3 w-10 shrink-0" />
+                      <Skeleton class="h-5 max-w-full" :class="row === 3 ? 'w-56' : 'w-40'" />
+                    </div>
+                  </div>
                 </li>
               </template>
               <li
@@ -555,7 +591,7 @@ function restoreFocus(event: Event) {
                     <span class="text-muted-foreground shrink-0 text-xs">来源</span>
                     <span class="min-w-0 break-all"
                       >{{ item.view.sourceLabel }}
-                      <span class="text-muted-foreground font-mono text-[11px]">{{
+                      <span class="text-muted-foreground font-mono text-xs">{{
                         item.view.sourceCode
                       }}</span></span
                     >
@@ -567,6 +603,14 @@ function restoreFocus(event: Event) {
                       :class="item.view.outcomeClass"
                       :title="item.view.outcomeCode"
                       >{{ item.view.outcomeLabel }}</Badge
+                    >
+                  </div>
+                  <div class="flex min-w-0 items-baseline gap-1.5" data-log-field="errorCode">
+                    <span class="text-muted-foreground shrink-0 text-xs">失败码</span>
+                    <span
+                      class="min-w-0 break-all font-mono text-xs"
+                      :class="item.view.errorCodePresent ? '' : 'font-sans text-muted-foreground'"
+                      >{{ item.view.errorCodeText }}</span
                     >
                   </div>
                   <div class="flex min-w-0 items-baseline gap-1.5">

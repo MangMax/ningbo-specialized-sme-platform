@@ -117,7 +117,8 @@ const safe = computed<Record<string, unknown> | null>(() => {
 })
 const displayValue = (name: string, value: unknown): string => {
   if (name === 'timestamp') return localStamp(String(value))
-  if (name === 'counts') return formatCounts(value as LogEvent['counts']) || JSON.stringify(value)
+  if (name === 'counts')
+    return formatCounts(value as LogEvent['counts'], data.value?.operation) || JSON.stringify(value)
   if (name === 'outcome') return `${outcomeLabel(String(value))}（${String(value)}）`
   if (name === 'source') return `${sourceLabel(String(value))}（${String(value)}）`
   if (name === 'operation') {

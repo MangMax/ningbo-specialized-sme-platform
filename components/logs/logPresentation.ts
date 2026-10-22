@@ -56,7 +56,7 @@ const OUTCOME_VARIANTS: Record<string, LogBadgeVariant> = {
 export function outcomeVariant(outcome: string): LogBadgeVariant {
   return OUTCOME_VARIANTS[outcome] ?? 'quiet'
 }
-/** denied/timeout 是「未执行」而非失败，用 warning 描边，不占 destructive。 */
+/** denied/timeout 保留独立措辞，warning 描边；不据此推断请求是否已执行。 */
 export function outcomeClass(outcome: string): string {
   return outcome === 'denied' || outcome === 'timeout' ? 'border-warning/50 text-warning' : ''
 }
@@ -144,13 +144,18 @@ export interface LogReference {
   value: string
 }
 
-/** 计数只显示实际存在的键，不把缺失当 0。 */
-export function formatCounts(counts?: LogEvent['counts']): string {
+/**
+ * 计数只显示实际存在的键，不把缺失当 0，也不从计数推断 outcome。
+ * `done` 在不同来源是“已处理/已写入/重试尝试”等，不能写成“已完成”。
+ */
+export function formatCounts(counts?: LogEvent['counts'], operation?: string): string {
   if (!counts) return ''
   const parts: string[] = []
-  if (counts.done !== undefined && counts.total !== undefined) parts.push(`已完成 ${counts.done}/${counts.total}`)
+  const retry = operation !== undefined && (operation.endsWith('.retry') || operation === 'platform.batch.retry')
+  if (retry && counts.done !== undefined) parts.push(`第 ${counts.done} 次重试`)
+  else if (counts.done !== undefined && counts.total !== undefined) parts.push(`已处理 ${counts.done}/${counts.total}`)
   else if (counts.total !== undefined) parts.push(`共 ${counts.total}`)
-  else if (counts.done !== undefined) parts.push(`已完成 ${counts.done}`)
+  else if (counts.done !== undefined) parts.push(`已处理 ${counts.done}`)
   if (counts.failed !== undefined) parts.push(`失败 ${counts.failed}`)
   if (counts.dropped !== undefined) parts.push(`丢弃 ${counts.dropped}`)
   return parts.join(' · ')
@@ -169,6 +174,16 @@ const hasText = (value: unknown): value is string => typeof value === 'string' &
 const idText = (value: unknown): string =>
   typeof value === 'string' ? value : typeof value === 'number' && Number.isFinite(value) ? String(value) : ''
 const hasId = (value: unknown): value is string | number => idText(value).length > 0
+
+/**
+ * 失败码只展示安全原码；不翻译成失败原因，也不从 outcome 反推具体码。
+ * 成功/已开始/已跳过没有失败码属于预期，其余结果缺失时明确说“未记录”。
+ */
+export function errorCodeView(row: LogSummary): { text: string; present: boolean; applicable: boolean } {
+  if (hasText(row.errorCode)) return { text: row.errorCode, present: true, applicable: true }
+  const applicable = !['success', 'started', 'skipped'].includes(row.outcome)
+  return { text: applicable ? '未记录' : '不适用', present: false, applicable }
+}
 
 function httpTarget(row: LogSummary): LogTarget {
   const method = text(row.httpMethod)
@@ -225,7 +240,7 @@ function businessTarget(row: LogSummary, kind: LogTargetKind): LogTarget {
       usedIds.push(idText(row.resourceId))
     }
   }
-  const counts = formatCounts(row.counts)
+  const counts = formatCounts(row.counts, row.operation)
   if (counts) parts.push(counts)
   if (!parts.length) return { kind, text: '未记录', missing: true, untrusted: false, usedIds }
   return { kind, text: parts.join(' · '), missing: false, untrusted: false, usedIds }
@@ -258,7 +273,7 @@ export function rowTarget(row: LogSummary): LogTarget {
         : { kind: 'client', text: '未记录', missing: true, untrusted: true, usedIds: [] }
     }
     case 'system': {
-      const counts = formatCounts(row.counts)
+      const counts = formatCounts(row.counts, row.operation)
       if (counts) return { kind: 'system', text: counts, missing: false, untrusted: false, usedIds: [] }
       if (hasId(row.resourceId))
         return {
@@ -303,11 +318,15 @@ export interface LogRowView {
   references: LogReference[]
   primaryReference: LogReference | null
   extraReferenceCount: number
+  errorCodeText: string
+  errorCodePresent: boolean
+  errorCodeApplicable: boolean
 }
 
-/** 列表/详情共用的一处派生：来源、操作、目标、结果、耗时、状态、关联。 */
+/** 列表/详情共用的一处派生：来源、操作、目标、结果、失败码、耗时、状态、关联。 */
 export function describeLogRow(row: LogSummary): LogRowView {
   const target = rowTarget(row)
+  const errorCode = errorCodeView(row)
   const durationMissing = row.durationMs === undefined
   const statusApplicable = row.statusCode !== undefined || row.source === 'http' || row.source === 'mcp'
   const references = logReferences(row).filter((entry) => !target.usedIds.includes(entry.value))
@@ -330,6 +349,9 @@ export function describeLogRow(row: LogSummary): LogRowView {
     statusApplicable,
     references,
     primaryReference: references[0] ?? null,
-    extraReferenceCount: Math.max(0, references.length - 1)
+    extraReferenceCount: Math.max(0, references.length - 1),
+    errorCodeText: errorCode.text,
+    errorCodePresent: errorCode.present,
+    errorCodeApplicable: errorCode.applicable
   }
 }

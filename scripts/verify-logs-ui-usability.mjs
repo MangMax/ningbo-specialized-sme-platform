@@ -41,6 +41,8 @@ const longRoute =
 const longestId = 'r' + 'q'.repeat(127)
 assert.equal(longOperation.length, 96)
 assert.ok(longRoute.length <= 160, `route template must fit the 160 contract, got ${longRoute.length}`)
+const longErrorCode = 'operation_failed_' + 'x'.repeat(47)
+assert.equal(longErrorCode.length, 64)
 
 // —— 1) 合成业务库：只克隆 schema，不写业务数据；fixture 不提交 ——
 const businessDb = new Database(business)
@@ -52,7 +54,17 @@ const businessBefore = readFileSync(business)
 const syntheticBase = Date.now() - 24 * 3600 * 1000
 let sequence = 0
 const at = () => new Date(syntheticBase + sequence++ * 1000).toISOString()
-const events = [
+// 一批结构短、同形的正常行，供浏览器在请求闸门下比较骨架与首屏加载后的高度/位置。
+const stabilityEvents = Array.from({ length: 30 }, (_, index) => ({
+  source: 'task',
+  operation: 'task.progress',
+  outcome: 'started',
+  level: 'info',
+  taskId: `task-stability-${index}`,
+  counts: { done: index, total: 30 },
+  durationMs: 100 + index
+}))
+const edgeEvents = [
   {
     source: 'http',
     operation: 'http.request',
@@ -76,7 +88,7 @@ const events = [
     durationMs: Number.MAX_SAFE_INTEGER,
     requestId: longestId,
     traceId: 'trace-long-1',
-    errorCode: 'operation_failed'
+    errorCode: longErrorCode
   },
   {
     // 旧事件：没有 httpMethod/httpRoute，必须显示「接口未记录」，不能从 resourceId 猜。
@@ -278,7 +290,8 @@ const events = [
     untrustedRelatedRequestId: 'original-180',
     errorCode: 'interaction'
   }
-].map((event) => ({
+]
+const events = [...stabilityEvents, ...edgeEvents].map((event) => ({
   id: crypto.randomUUID(),
   timestamp: at(),
   synthetic: true,
@@ -394,6 +407,29 @@ async function waitForRealHttpEvent(timeoutMs = 15000) {
   throw new Error('real http.request event with matched route template did not appear')
 }
 
+/** 真实 200 正常 HTTP 行：给浏览器稳定性检查一个非 synthetic 的普通 HTTP 目标。 */
+async function waitForRealHealthEvent(timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const response = await fetch(`${base}/api/logs?limit=100`, {
+      headers,
+      signal: AbortSignal.timeout(15000)
+    })
+    assert.equal(response.status, 200, `real-health read HTTP ${response.status}`)
+    const body = await response.json()
+    const row = body.rows.find(
+      (candidate) =>
+        !candidate.synthetic &&
+        candidate.operation === 'http.request' &&
+        candidate.httpRoute === '/api/health' &&
+        candidate.statusCode === 200
+    )
+    if (row) return row
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  throw new Error('real 200 /api/health event did not appear')
+}
+
 const results = []
 const check = (name, fn) => {
   try {
@@ -409,6 +445,12 @@ const source = {
   tree: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim(),
   dirty: !!execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim()
 }
+const manifestExport = process.env.LOGS_UI_MANIFEST_PATH
+function writeManifest() {
+  const json = JSON.stringify(manifest, null, 2)
+  writeFileSync(join(root, 'manifest.json'), json)
+  if (manifestExport) writeFileSync(manifestExport, json)
+}
 const manifest = {
   synthetic: true,
   base,
@@ -422,9 +464,10 @@ const manifest = {
   fixtureEvents: events.length,
   longOperation,
   longestId,
-  longRoute
+  longRoute,
+  longErrorCode
 }
-writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest, null, 2))
+writeManifest()
 
 async function stop() {
   await stopOwnedChild(child)
@@ -458,7 +501,9 @@ try {
     headers: { 'x-fixture': 'real-route-proof' },
     signal: AbortSignal.timeout(15000)
   }).catch(() => {})
+  await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(15000) }).catch(() => {})
   const realEvent = await waitForRealHttpEvent()
+  const realNormalEvent = await waitForRealHealthEvent()
 
   check('synthetic fixture reads back all rows through the real protected list API', () => {
     assert.equal(summary.rows.length, events.length)
@@ -479,7 +524,21 @@ try {
     requestId: realEvent.requestId,
     synthetic: realEvent.synthetic ?? false
   }
-  writeFileSync(join(root, 'manifest.json'), JSON.stringify(manifest, null, 2))
+  manifest.realNormalEvent = {
+    operation: realNormalEvent.operation,
+    httpMethod: realNormalEvent.httpMethod,
+    httpRoute: realNormalEvent.httpRoute,
+    statusCode: realNormalEvent.statusCode,
+    requestId: realNormalEvent.requestId,
+    synthetic: realNormalEvent.synthetic ?? false
+  }
+  writeManifest()
+  check('real normal HTTP request (200 /api/health) records method + route', () => {
+    assert.equal(realNormalEvent.httpMethod, 'GET')
+    assert.equal(realNormalEvent.httpRoute, '/api/health')
+    assert.equal(realNormalEvent.statusCode, 200)
+    assert.ok(!realNormalEvent.synthetic)
+  })
   check('http rows expose method + safe route template; old row has neither and is not guessed', () => {
     assert.equal(longRow.httpMethod, 'POST')
     assert.equal(longRow.httpRoute, longRoute)
@@ -506,7 +565,7 @@ try {
       assert.ok(outcomes.has(outcome), `missing outcome ${outcome}`)
   })
   check('detail is the safe projection with counts/errorCode', () => {
-    assert.equal(detail.errorCode, 'operation_failed')
+    assert.equal(detail.errorCode, longErrorCode)
     assert.equal(detail.httpMethod, 'POST')
     assert.equal(detail.httpRoute, longRoute)
     assert.ok(detail.synthetic === true)
