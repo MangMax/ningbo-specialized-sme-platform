@@ -4,6 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLogRead } from '../composables/useLogRead'
+import type { LogSummary } from '../lib/logging/contract'
 const wrappers: ReturnType<typeof mount>[] = []
 afterEach(() => {
   wrappers.splice(0).forEach((w) => w.unmount())
@@ -346,6 +347,11 @@ it('holds the result area with skeleton rows and a reading footer during the fir
   // 首次读取：按每页条数铺骨架（桌面行 / 窄屏卡），分页占位，而不是把卡收成一条表头。
   expect(wrapper.findAll('[data-testid=log-row-skeleton]')).toHaveLength(25)
   expect(wrapper.findAll('[data-testid=log-card-skeleton]')).toHaveLength(25)
+  // 骨架与正常结构对齐：桌面 11 列、窄屏 6 个带标签行，而不是旧的 4 行占位。
+  expect(wrapper.findAll('[data-testid=log-row-skeleton]')[0]!.findAll('td')).toHaveLength(11)
+  expect(
+    wrapper.findAll('[data-testid=log-card-skeleton]')[0]!.findAll('[data-skeleton-row]')
+  ).toHaveLength(6)
   expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('正在读取…')
   pending.resolve({ rows: [listRow('00000000-0000-4000-8000-000000000001')], nextCursor: null, status: { dropped: 0 } })
   await flushPromises()
@@ -382,7 +388,12 @@ it('returns the result list to its first row after a page change and keeps filte
   expect(scroller.scrollTop).toBe(0)
   expect(document.activeElement?.id).toBe('log-list-heading')
   expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('本页 1 条 · 第 2 页')
-  expect(wrapper.get('.data-table thead').text()).toContain('操作 / 来源')
+  const header = wrapper.get('[data-testid=log-table-scroll] .data-table thead').text()
+  for (const label of ['时间', '级别', '来源', '操作', '目标', '结果', '耗时', 'HTTP 状态', '关联标识', '详情'])
+    expect(header).toContain(label)
+  expect(header).not.toContain('级别 / 时间')
+  expect(header).not.toContain('操作 / 来源')
+  expect(header).not.toContain('结果 / 耗时')
   expect(wrapper.text()).not.toContain('共 0')
 })
 
@@ -457,4 +468,355 @@ it('labels retained rows as still-reading while a new filter is in flight', asyn
   pending.resolve({ rows: [], nextCursor: null, status: { dropped: 0 } })
   await flushPromises()
   expect(wrapper.text()).toContain('没有符合条件的运行日志')
+})
+
+const makeLogRow = (over: Partial<LogSummary> = {}): LogSummary =>
+  ({
+    id: '00000000-0000-4000-8000-000000000001',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'info',
+    source: 'http',
+    operation: 'http.request',
+    outcome: 'success',
+    ...over
+  }) as LogSummary
+
+it('describes each source with its real business object, accurate outcome and raw unknown operation', async () => {
+  const { describeLogRow, outcomeLabel, formatCounts, errorCodeView } = await import('../components/logs/logPresentation')
+  // 冻结契约的 method + 安全 route 模板；缺失时只说接口未记录，绝不从 resourceId 猜 URL。
+  expect(
+    describeLogRow(makeLogRow({ httpMethod: 'GET', httpRoute: '/api/enterprises/:id' })).target.text
+  ).toBe('GET /api/enterprises/:id')
+  expect(describeLogRow(makeLogRow({ httpMethod: 'POST' })).target.text).toBe('POST · 路由未记录')
+  expect(describeLogRow(makeLogRow({ resourceId: 'file-9', resourceType: 'file' })).target).toMatchObject({
+    text: '接口未记录',
+    missing: true
+  })
+  // 最长合法 operation(96) 原样保留；已知操作才给中文，未知不硬编含义。
+  const longest = 'a' + 'b'.repeat(95)
+  expect(longest).toHaveLength(96)
+  const unknown = describeLogRow(makeLogRow({ operation: longest }))
+  expect(unknown.operationLabel).toBeNull()
+  expect(unknown.operationCode).toBe(longest)
+  expect(describeLogRow(makeLogRow({ operation: 'task.finished' })).operationLabel).toBe('任务结束')
+  // outcome 全部各自成词，unknown/no_record/denied/partial 不并入成功或失败。
+  const outcomes: Record<string, string> = {
+    started: '已开始',
+    success: '成功',
+    failure: '失败',
+    denied: '已拒绝',
+    timeout: '超时',
+    cancelled: '已取消',
+    unknown: '结果未知',
+    no_record: '无记录',
+    partial: '部分完成',
+    skipped: '已跳过'
+  }
+  for (const [code, label] of Object.entries(outcomes)) {
+    expect(outcomeLabel(code)).toBe(label)
+    expect(describeLogRow(makeLogRow({ outcome: code as LogSummary['outcome'] })).outcomeLabel).toBe(label)
+  }
+  expect(new Set(Object.values(outcomes)).size).toBe(10)
+  // 各来源的真实对象。
+  expect(describeLogRow(makeLogRow({ source: 'file', fileId: 12, page: 3 })).target).toMatchObject({
+    text: '文件 12 · 第 3 页',
+    kind: 'file'
+  })
+  expect(describeLogRow(makeLogRow({ source: 'ocr', fileId: 12, page: 3, counts: { done: 2, total: 3 } })).target.text).toBe(
+    '文件 12 · 第 3 页 · 已处理 2/3'
+  )
+  expect(describeLogRow(makeLogRow({ source: 'import', batchId: 'b-180' })).target.text).toBe('批次 b-180')
+  expect(
+    describeLogRow(
+      makeLogRow({ source: 'export', resourceType: 'export_artifact', resourceId: 'job-9', taskId: 't-9' })
+    ).target.text
+  ).toBe('导出产物 job-9 · 任务 t-9')
+  expect(
+    describeLogRow(makeLogRow({ source: 'task', taskId: 't-9', counts: { done: 3, total: 10, failed: 1 } })).target.text
+  ).toBe('任务 t-9 · 已处理 3/10 · 失败 1')
+  expect(describeLogRow(makeLogRow({ source: 'platform', page: 2, counts: { done: 1, total: 4 } })).target.text).toBe(
+    '第 2 页 · 已处理 1/4'
+  )
+  expect(
+    describeLogRow(makeLogRow({ source: 'client', untrustedRelatedRequestId: 'original-180' })).target
+  ).toMatchObject({ text: '客户端声称 original-180', untrusted: true })
+  expect(describeLogRow(makeLogRow({ source: 'client' })).target).toMatchObject({ missing: true, text: '未记录' })
+  expect(describeLogRow(makeLogRow({ source: 'system', counts: { dropped: 3 } })).target.text).toBe('丢弃 3')
+  // done 是“已处理”，不能写成“已完成”；failed/dropped 原值保留；retry 的 done 按尝试次数展示。
+  expect(formatCounts({ done: 5 })).toBe('已处理 5')
+  expect(formatCounts({ done: 5, total: 8 })).toBe('已处理 5/8')
+  expect(formatCounts({ done: 5, total: 8, failed: 2, dropped: 1 }, 'task.progress')).toBe(
+    '已处理 5/8 · 失败 2 · 丢弃 1'
+  )
+  expect(formatCounts({ done: 3 }, 'platform.query_list.retry')).toBe('第 3 次重试')
+  expect(formatCounts({ total: 4 }, 'platform.batch.retry')).toBe('共 4')
+  expect(formatCounts({ done: 5, total: 8 })).not.toContain('完成')
+  // 失败码只展示安全原码；不翻译，也不从 outcome 反推具体码。
+  expect(
+    describeLogRow(makeLogRow({ outcome: 'failure', errorCode: 'job_failed' }))
+  ).toMatchObject({ errorCodeText: 'job_failed', errorCodePresent: true, errorCodeApplicable: true })
+  expect(describeLogRow(makeLogRow({ outcome: 'failure' }))).toMatchObject({
+    errorCodeText: '未记录',
+    errorCodePresent: false,
+    errorCodeApplicable: true
+  })
+  expect(describeLogRow(makeLogRow({ outcome: 'partial' }))).toMatchObject({
+    errorCodeText: '未记录',
+    errorCodePresent: false
+  })
+  expect(describeLogRow(makeLogRow({ outcome: 'success' }))).toMatchObject({
+    errorCodeText: '不适用',
+    errorCodePresent: false,
+    errorCodeApplicable: false
+  })
+  expect(
+    describeLogRow(makeLogRow({ source: 'client', outcome: 'failure', errorCode: 'interaction' }))
+  ).toMatchObject({ errorCodeText: 'interaction', errorCodePresent: true })
+  expect(errorCodeView(makeLogRow({ outcome: 'failure' })).text).toBe('未记录')
+  expect(
+    describeLogRow(makeLogRow({ source: 'worker', operation: 'enterprise_read.finished', resourceType: 'enterprise', resourceId: 42 }))
+      .target.text
+  ).toBe('企业 42')
+  expect(
+    describeLogRow(makeLogRow({ source: 'worker', operation: 'enterprise_read.process.error' })).target
+  ).toMatchObject({ text: '未记录', missing: true })
+  // 缺失字段明确显示未记录；非 HTTP 行状态显示 —。
+  const sparse = describeLogRow(makeLogRow({}))
+  expect(sparse.durationText).toBe('未记录')
+  expect(sparse.statusText).toBe('未记录')
+  expect(sparse.statusMissing).toBe(true)
+  expect(describeLogRow(makeLogRow({ source: 'task', taskId: 't-1' })).statusText).toBe('—')
+  // 关联列不与目标列重复，且能报告还有几条引用。
+  const task = describeLogRow(makeLogRow({ source: 'task', taskId: 't-1', requestId: 'req-1', traceId: 'tr-1' }))
+  expect(task.references.map((entry) => entry.value)).toEqual(['req-1', 'tr-1'])
+  expect(task.primaryReference?.kind).toBe('请求')
+  const http = describeLogRow(makeLogRow({ requestId: 'req-1', traceId: 'tr-1', taskId: 't-1' }))
+  expect(http.references).toHaveLength(3)
+  expect(http.extraReferenceCount).toBe(2)
+  // 最大合法耗时和 128 位标识原样保留，交给列边界截断。
+  const longestId = 'r' + 'q'.repeat(127)
+  expect(
+    describeLogRow(makeLogRow({ durationMs: Number.MAX_SAFE_INTEGER, outcome: 'no_record', requestId: longestId }))
+  ).toMatchObject({ durationText: `${Number.MAX_SAFE_INTEGER} ms`, primaryReference: { value: longestId } })
+})
+
+it('renders independent desktop columns and keeps long operation, route, outcome, duration and status in their own bounded cells', async () => {
+  const { default: Page } = await import('../pages/logs.vue')
+  const { createRouter, createMemoryHistory } = await import('vue-router')
+  const longOperation = 'operation.' + 'x'.repeat(86)
+  const longRoute =
+    '/api/enterprises/:enterpriseId/records/:recordId/correspondence/:revisionId/:partId'
+  const longestId = 'r' + 'q'.repeat(127)
+  const longErrorCode = 'operation_failed_' + 'x'.repeat(47)
+  const rows: LogSummary[] = [
+    makeLogRow({
+      id: '00000000-0000-4000-8000-000000000201',
+      source: 'http',
+      level: 'warn',
+      operation: longOperation,
+      outcome: 'no_record',
+      httpMethod: 'POST',
+      httpRoute: longRoute,
+      durationMs: Number.MAX_SAFE_INTEGER,
+      statusCode: 500,
+      requestId: longestId,
+      traceId: 'trace-201',
+      resourceId: 'file-9',
+      resourceType: 'file',
+      errorCode: longErrorCode
+    }),
+    makeLogRow({
+      id: '00000000-0000-4000-8000-000000000202',
+      source: 'file',
+      operation: 'file.render.page',
+      fileId: 12,
+      page: 3,
+      durationMs: 42
+    }),
+    makeLogRow({
+      id: '00000000-0000-4000-8000-000000000203',
+      source: 'import',
+      operation: 'import.execution',
+      outcome: 'partial',
+      batchId: 'batch-180',
+      counts: { done: 3, total: 5, failed: 1 }
+    }),
+    makeLogRow({
+      id: '00000000-0000-4000-8000-000000000204',
+      source: 'client',
+      operation: 'client.tasks.interaction_failure',
+      outcome: 'failure',
+      errorCode: 'interaction',
+      requestId: 'intake-1',
+      untrustedRelatedRequestId: 'original-180'
+    }),
+    makeLogRow({
+      id: '00000000-0000-4000-8000-000000000205',
+      source: 'task',
+      operation: 'task.finished',
+      outcome: 'unknown',
+      taskId: 'task-9'
+    })
+  ]
+  vi.stubGlobal('$fetch', async (url: string) => {
+    if (url === '/api/logs/policy') return policyView
+    return { rows, nextCursor: null, status: { dropped: 0 } }
+  })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/logs', component: Page }]
+  })
+  await router.push('/logs')
+  await router.isReady()
+  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const scroller = wrapper.get('[data-testid=log-table-scroll]')
+  const header = scroller.get('.data-table thead').text()
+  for (const label of ['时间', '级别', '来源', '操作', '目标', '结果', '失败码', '耗时', 'HTTP 状态', '关联标识', '详情'])
+    expect(header).toContain(label)
+  expect(header).not.toContain(' / ')
+  const bodyRows = scroller.findAll('.data-table tbody tr')
+  expect(bodyRows).toHaveLength(rows.length)
+  const first = bodyRows[0]!.findAll('td')
+  expect(first).toHaveLength(11)
+  for (const cell of first) expect(cell.classes()).toContain('overflow-hidden')
+  expect(first[0]!.get('time').attributes('datetime')).toBe(rows[0]!.timestamp)
+  expect(first[3]!.text()).toBe(longOperation)
+  expect(first[3]!.get('span[title]').attributes('title')).toBe(longOperation)
+  expect(first[4]!.text()).toBe(`POST ${longRoute}`)
+  expect(first[4]!.text()).not.toContain('file-9')
+  expect(first[5]!.text()).toBe('无记录')
+  // 失败码是独立列：安全原码 + title，长码靠 truncate 约束，不挤进结果/耗时。
+  expect(first[6]!.text()).toBe(longErrorCode)
+  expect(first[6]!.get('span[title]').attributes('title')).toBe(longErrorCode)
+  expect(first[6]!.get('span').classes()).toContain('truncate')
+  expect(first[6]!.text()).not.toContain('无记录')
+  expect(first[7]!.text()).toBe(`${Number.MAX_SAFE_INTEGER} ms`)
+  expect(first[8]!.text()).toBe('500')
+  expect(first[9]!.text()).toContain(longestId)
+  expect(first[10]!.get('[data-log-detail]').text()).toBe('查看')
+  // 相邻结果/失败码/耗时列各自有边界，不共用一个无界 flex。
+  expect(first[5]!.text()).not.toContain('ms')
+  expect(first[7]!.text()).not.toContain('无记录')
+  // 真实业务对象进入目标列，不是只认 task/request/trace。
+  const file = bodyRows[1]!.findAll('td')
+  expect(file[4]!.text()).toBe('文件 12 · 第 3 页')
+  expect(file[6]!.text()).toBe('不适用')
+  expect(file[8]!.text()).toBe('—')
+  const imported = bodyRows[2]!.findAll('td')
+  expect(imported[4]!.text()).toBe('批次 batch-180 · 已处理 3/5 · 失败 1')
+  expect(imported[5]!.text()).toBe('部分完成')
+  expect(imported[6]!.text()).toBe('未记录')
+  const client = bodyRows[3]!.findAll('td')
+  expect(client[4]!.text()).toContain('客户端声称 original-180')
+  expect(client[4]!.text()).toContain('UNTRUSTED')
+  expect(client[6]!.text()).toBe('interaction')
+  const oldTask = bodyRows[4]!.findAll('td')
+  expect(oldTask[4]!.text()).toBe('任务 task-9')
+  expect(oldTask[5]!.text()).toBe('结果未知')
+  expect(oldTask[6]!.text()).toBe('未记录')
+  expect(oldTask[7]!.text()).toBe('未记录')
+  expect(oldTask[8]!.text()).toBe('—')
+})
+
+it('labels the 390px summary with a 44px detail target and lets long IDs wrap without escaping', async () => {
+  const { default: Page } = await import('../pages/logs.vue')
+  const { createRouter, createMemoryHistory } = await import('vue-router')
+  const longestId = 'r' + 'q'.repeat(127)
+  const longRoute = '/api/enterprises/:enterpriseId/records/:recordId/parts/:partId'
+  const longErrorCode = 'operation_failed_' + 'x'.repeat(47)
+  const rows: LogSummary[] = [
+    makeLogRow({
+      id: '00000000-0000-4000-8000-000000000301',
+      source: 'http',
+      operation: 'http.request',
+      outcome: 'denied',
+      httpMethod: 'GET',
+      httpRoute: longRoute,
+      durationMs: Number.MAX_SAFE_INTEGER,
+      statusCode: 500,
+      requestId: longestId,
+      errorCode: longErrorCode
+    }),
+    makeLogRow({
+      id: '00000000-0000-4000-8000-000000000302',
+      source: 'file',
+      operation: 'file.render.page',
+      fileId: 12,
+      page: 3,
+      durationMs: 42
+    })
+  ]
+  vi.stubGlobal('$fetch', async (url: string) => {
+    if (url === '/api/logs/policy') return policyView
+    return { rows, nextCursor: null, status: { dropped: 0 } }
+  })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/logs', component: Page }]
+  })
+  await router.push('/logs')
+  await router.isReady()
+  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const items = wrapper.get('[data-testid=log-card-list]').findAll('li')
+  expect(items).toHaveLength(2)
+  const first = items[0]!
+  for (const label of ['操作', '来源', '结果', '失败码', '目标', 'HTTP 状态', '耗时', '关联'])
+    expect(first.text()).toContain(label)
+  expect(first.text()).toContain('HTTP 接口')
+  expect(first.text()).toContain('http')
+  expect(first.text()).toContain('已拒绝')
+  expect(first.text()).toContain(longRoute)
+  expect(first.text()).toContain(longestId)
+  // 390 的失败码是独立带标签行，长码可读且不挤进结果/耗时。
+  const errorField = first.get('[data-log-field="errorCode"]')
+  expect(errorField.text()).toContain('失败码')
+  expect(errorField.text()).toContain(longErrorCode)
+  expect(errorField.find('.font-mono.break-all').exists()).toBe(true)
+  expect(first.findAll('.break-all').length).toBeGreaterThan(0)
+  const detail = first.get('[data-log-detail]')
+  expect(detail.text()).toBe('查看')
+  expect(detail.classes()).toContain('min-h-11')
+  expect(items[1]!.text()).toContain('文件 12 · 第 3 页')
+  expect(items[1]!.text()).toContain('42 ms')
+  expect(items[1]!.text()).toContain('失败码')
+  expect(items[1]!.text()).toContain('不适用')
+})
+
+it('shows and copies the safe HTTP method and route template in the classified detail', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const event = {
+    id: '00000000-0000-4000-8000-000000000206',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'error',
+    source: 'http',
+    operation: 'http.request',
+    outcome: 'failure',
+    httpMethod: 'GET',
+    httpRoute: '/api/jobs/:id',
+    statusCode: 500,
+    errorCode: 'operation_failed',
+    requestId: 'req-206'
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('HTTP 方法')
+  expect(wrapper.text()).toContain('接口路由模板')
+  expect(wrapper.text()).toContain('/api/jobs/:id')
+  expect(wrapper.text()).toContain('安全失败码')
+  expect(wrapper.text()).toContain('operation_failed')
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(writeText.mock.calls[0]![0])).toMatchObject({
+    httpMethod: 'GET',
+    httpRoute: '/api/jobs/:id',
+    errorCode: 'operation_failed'
+  })
 })

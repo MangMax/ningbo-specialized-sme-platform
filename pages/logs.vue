@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { LogFilter, LogSummary } from '~~/lib/logging/contract'
 import { logBrowserHeaders, logErrorMessage, useLogRead } from '~/composables/useLogRead'
+import { describeLogRow } from '@/components/logs/logPresentation'
 import LogFilters from '@/components/logs/LogFilters.vue'
 import LogDetail from '@/components/logs/LogDetail.vue'
 import LogManagement from '@/components/logs/LogManagement.vue'
@@ -96,6 +97,8 @@ const source = computed(() =>
 )
 const stale = computed(() => sourceKey.value !== key.value)
 const rows = computed(() => data.value?.rows ?? [])
+/** 每行只派生一次：来源/操作/目标/结果/耗时/状态/关联都由 presentation 模块决定。 */
+const described = computed(() => rows.value.map((row) => ({ row, view: describeLogRow(row) })))
 /** 首次读取（还没有任何结果）才铺骨架；刷新/换页保留旧结果。 */
 const firstLoad = computed(() => loading.value && !data.value && !error.value)
 
@@ -174,13 +177,6 @@ function fresh() {
 /** 人们读的时间；机器值仍留在 `<time :datetime>`。日期用短横线，和任务页同一形状。 */
 const dated = (iso: string) =>
   new Date(iso).toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
-/** 关联标识先说清是哪一类，排查时才知道该拿它去哪一页。 */
-const reference = (row: LogSummary) => row.taskId || row.requestId || row.traceId || ''
-const referenceKind = (row: LogSummary) =>
-  row.taskId ? '任务' : row.requestId ? '请求' : row.traceId ? '链路' : ''
-const levelVariant = (level: string) =>
-  level === 'error' ? 'destructive' : level === 'warn' ? 'outline' : 'secondary'
-const levelClass = (level: string) => (level === 'warn' ? 'border-warning/50 text-warning' : '')
 
 // —— 换页/换筛选后回到结果顶部；失败时保持原位置和原结果 ——
 const resultsRef = ref<HTMLElement | null>(null)
@@ -297,7 +293,7 @@ function restoreFocus(event: Event) {
         </p>
         <!-- 首次读取时状态条先占住同样的高度，结果区不会因为少这一行而跳。 -->
         <div v-else-if="firstLoad" class="flex shrink-0 items-center border-b px-4 py-2">
-          <Skeleton class="h-4 w-56" aria-hidden="true" />
+          <Skeleton class="h-5 w-56" aria-hidden="true" />
         </div>
         <TableFailureState
           v-if="error"
@@ -325,12 +321,18 @@ function restoreFocus(event: Event) {
               class="hidden min-h-0 flex-1 overflow-auto sm:block [&_[data-slot=table-container]]:overflow-visible"
               @scroll.passive="onTableScroll"
             >
-              <Table class="data-table min-w-[900px] table-fixed">
+              <Table class="data-table min-w-[1560px] table-fixed">
                 <TableHeader class="sticky top-0 z-10"><TableRow class="hover:bg-transparent">
-                  <TableHead class="w-[224px]">级别 / 时间</TableHead>
-                  <TableHead class="w-[220px]">操作 / 来源</TableHead>
-                  <TableHead class="w-[180px]">结果 / 耗时</TableHead>
-                  <TableHead>关联标识</TableHead>
+                  <TableHead class="w-[168px]">时间</TableHead>
+                  <TableHead class="w-[84px]">级别</TableHead>
+                  <TableHead class="w-[108px]">来源</TableHead>
+                  <TableHead class="w-[200px]">操作</TableHead>
+                  <TableHead class="w-[220px]">目标</TableHead>
+                  <TableHead class="w-[108px]">结果</TableHead>
+                  <TableHead class="w-[160px]">失败码</TableHead>
+                  <TableHead class="w-[104px]">耗时</TableHead>
+                  <TableHead class="w-[100px]">HTTP 状态</TableHead>
+                  <TableHead class="w-[220px]">关联标识</TableHead>
                   <TableHead class="w-[88px]">详情</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
@@ -340,61 +342,154 @@ function restoreFocus(event: Event) {
                     data-testid="log-row-skeleton"
                     aria-hidden="true"
                   >
-                    <TableCell v-for="column in 5" :key="column">
-                      <Skeleton class="h-4 w-full" />
+                    <TableCell><Skeleton class="h-4 w-28" /></TableCell>
+                    <TableCell><Skeleton class="h-5 w-12" /></TableCell>
+                    <TableCell>
+                      <div class="flex flex-col gap-1">
+                        <Skeleton class="h-3 w-16" /><Skeleton class="h-3 w-10" />
+                      </div>
                     </TableCell>
+                    <TableCell>
+                      <div class="flex flex-col gap-1">
+                        <Skeleton class="h-3 w-24" /><Skeleton class="h-3 w-20" />
+                      </div>
+                    </TableCell>
+                    <TableCell><Skeleton class="h-4 w-40" /></TableCell>
+                    <TableCell><Skeleton class="h-5 w-12" /></TableCell>
+                    <TableCell><Skeleton class="h-4 w-24" /></TableCell>
+                    <TableCell><Skeleton class="h-4 w-16" /></TableCell>
+                    <TableCell><Skeleton class="h-4 w-12" /></TableCell>
+                    <TableCell><Skeleton class="h-4 w-28" /></TableCell>
+                    <TableCell><Skeleton class="h-8 w-14" /></TableCell>
                   </TableRow>
-                  <TableRow v-for="row in rows" :key="row.id">
-                    <TableCell>
-                      <div class="flex items-center gap-2">
-                        <Badge
-                          :variant="levelVariant(row.level)"
-                          :class="levelClass(row.level)"
-                          class="w-12 shrink-0 justify-center"
-                          >{{ row.level }}</Badge
-                        >
-                        <time :datetime="row.timestamp" class="tabular-nums whitespace-nowrap">{{
-                          dated(row.timestamp)
-                        }}</time>
-                      </div>
+                  <TableRow v-for="item in described" :key="item.row.id">
+                    <TableCell class="overflow-hidden">
+                      <time
+                        :datetime="item.row.timestamp"
+                        :title="item.row.timestamp"
+                        class="text-[13px] tabular-nums whitespace-nowrap"
+                        >{{ dated(item.row.timestamp) }}</time
+                      >
                     </TableCell>
-                    <TableCell>
-                      <div class="flex min-w-0 items-baseline gap-2">
-                        <span class="truncate font-mono text-xs" :title="row.operation">{{
-                          row.operation
+                    <TableCell class="overflow-hidden">
+                      <Badge
+                        :variant="item.view.levelVariant"
+                        :class="item.view.levelClass"
+                        class="w-12 shrink-0 justify-center"
+                        >{{ item.row.level }}</Badge
+                      >
+                    </TableCell>
+                    <TableCell class="overflow-hidden">
+                      <div class="flex min-w-0 flex-col leading-4">
+                        <span class="truncate text-[13px]" :title="item.view.sourceLabel">{{
+                          item.view.sourceLabel
                         }}</span>
-                        <span class="text-muted-foreground shrink-0 text-xs">{{ row.source }}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div class="flex items-baseline gap-2 text-xs">
-                        <span>{{ row.outcome }}</span>
-                        <span v-if="row.durationMs !== undefined" class="text-muted-foreground tabular-nums"
-                          >{{ row.durationMs }} ms</span
-                        >
-                        <span v-if="row.statusCode !== undefined" class="text-muted-foreground tabular-nums"
-                          >HTTP {{ row.statusCode }}</span
+                        <span
+                          class="text-muted-foreground truncate font-mono text-xs"
+                          :title="item.view.sourceCode"
+                          >{{ item.view.sourceCode }}</span
                         >
                       </div>
                     </TableCell>
-                    <TableCell>
-                      <div v-if="reference(row)" class="flex min-w-0 items-baseline gap-1.5">
+                    <TableCell class="overflow-hidden">
+                      <div class="flex min-w-0 flex-col leading-4">
+                        <span
+                          v-if="item.view.operationLabel"
+                          class="truncate text-[13px]"
+                          :title="item.view.operationLabel"
+                          >{{ item.view.operationLabel }}</span
+                        >
+                        <span
+                          class="truncate font-mono"
+                          :class="
+                            item.view.operationLabel
+                              ? 'text-muted-foreground text-xs'
+                              : 'text-[13px]'
+                          "
+                          :title="item.view.operationCode"
+                          >{{ item.view.operationCode }}</span
+                        >
+                      </div>
+                    </TableCell>
+                    <TableCell class="overflow-hidden">
+                      <span
+                        class="block min-w-0 truncate text-[13px]"
+                        :class="item.view.target.missing ? 'text-muted-foreground' : ''"
+                        :title="item.view.target.text"
+                        >{{ item.view.target.text }}</span
+                      >
+                      <span
+                        v-if="item.view.target.untrusted"
+                        class="text-muted-foreground block truncate text-xs"
+                        >UNTRUSTED</span
+                      >
+                    </TableCell>
+                    <TableCell class="overflow-hidden">
+                      <Badge
+                        :variant="item.view.outcomeVariant"
+                        :class="item.view.outcomeClass"
+                        :title="item.view.outcomeCode"
+                        >{{ item.view.outcomeLabel }}</Badge
+                      >
+                    </TableCell>
+                    <TableCell class="overflow-hidden">
+                      <span
+                        class="block truncate font-mono text-xs"
+                        :class="item.view.errorCodePresent ? '' : 'font-sans text-muted-foreground'"
+                        :title="item.view.errorCodeText"
+                        >{{ item.view.errorCodeText }}</span
+                      >
+                    </TableCell>
+                    <TableCell class="overflow-hidden">
+                      <span
+                        class="block truncate text-[13px] tabular-nums"
+                        :class="item.view.durationMissing ? 'text-muted-foreground' : ''"
+                        :title="item.view.durationText"
+                        >{{ item.view.durationText }}</span
+                      >
+                    </TableCell>
+                    <TableCell class="overflow-hidden">
+                      <span
+                        class="block truncate text-[13px] tabular-nums"
+                        :class="
+                          item.view.statusMissing || !item.view.statusApplicable
+                            ? 'text-muted-foreground'
+                            : ''
+                        "
+                        :title="item.view.statusText"
+                        >{{ item.view.statusText }}</span
+                      >
+                    </TableCell>
+                    <TableCell class="overflow-hidden">
+                      <div
+                        v-if="item.view.primaryReference"
+                        class="flex min-w-0 items-baseline gap-1.5"
+                      >
                         <span class="text-muted-foreground shrink-0 text-xs">{{
-                          referenceKind(row)
+                          item.view.primaryReference.kind
                         }}</span>
-                        <span class="truncate font-mono text-xs" :title="reference(row)">{{
-                          reference(row)
-                        }}</span>
+                        <span
+                          class="truncate font-mono text-xs"
+                          :title="
+                            item.view.references.map((r) => `${r.kind} ${r.value}`).join(' · ')
+                          "
+                          >{{ item.view.primaryReference.value }}</span
+                        >
+                        <span
+                          v-if="item.view.extraReferenceCount"
+                          class="text-muted-foreground shrink-0 text-xs"
+                          >+{{ item.view.extraReferenceCount }}</span
+                        >
                       </div>
-                      <span v-else class="text-muted-foreground text-xs">未记录</span>
+                      <span v-else class="text-muted-foreground text-[13px]">未记录</span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell class="overflow-hidden">
                       <Button
                         variant="outline"
                         size="sm"
-                        :data-log-detail="row.id"
-                        :aria-label="`查看日志 ${row.operation} ${row.id}`"
-                        @click="open(row.id)"
+                        :data-log-detail="item.row.id"
+                        :aria-label="`查看日志 ${item.row.operation} ${item.row.id}`"
+                        @click="open(item.row.id)"
                         >查看</Button
                       >
                     </TableCell>
@@ -413,7 +508,8 @@ function restoreFocus(event: Event) {
             <!-- 窄屏用同一份数据的摘要：来源与操作各自带词，不必横向滚动。 -->
             <ul
               v-if="rows.length || firstLoad"
-              class="flex flex-col divide-y sm:hidden"
+              data-testid="log-card-list"
+              class="flex min-w-0 flex-col divide-y sm:hidden"
               aria-label="运行日志列表"
             >
               <template v-if="firstLoad">
@@ -426,62 +522,137 @@ function restoreFocus(event: Event) {
                 >
                   <div class="flex items-start justify-between gap-3">
                     <div class="flex min-w-0 flex-col gap-1">
-                      <div class="flex items-center gap-2">
-                        <Skeleton class="h-5 w-11" /><Skeleton class="h-5 w-32" />
+                      <div class="flex flex-wrap items-center gap-2">
+                        <Skeleton class="h-5 w-12" /><Skeleton class="h-5 w-32" />
                       </div>
-                      <Skeleton class="h-4 w-28" />
+                      <div class="flex min-w-0 items-baseline gap-1.5">
+                        <Skeleton class="h-3 w-8 shrink-0" /><Skeleton class="h-5 w-40" />
+                      </div>
                     </div>
                     <Skeleton class="h-11 w-14" />
                   </div>
-                  <Skeleton class="h-5 w-56" />
-                  <Skeleton class="h-5 w-64" />
+                  <div class="flex min-w-0 flex-col gap-1">
+                    <div
+                      v-for="row in 6"
+                      :key="row"
+                      class="flex min-w-0 items-baseline gap-1.5"
+                      data-skeleton-row
+                    >
+                      <Skeleton class="h-3 w-10 shrink-0" />
+                      <Skeleton class="h-5 max-w-full" :class="row === 3 ? 'w-56' : 'w-40'" />
+                    </div>
+                  </div>
                 </li>
               </template>
-              <li v-for="row in rows" :key="row.id" class="flex min-w-0 flex-col gap-2 p-3">
+              <li
+                v-for="item in described"
+                :key="item.row.id"
+                class="flex min-w-0 flex-col gap-2 p-3"
+              >
                 <div class="flex items-start justify-between gap-3">
                   <div class="flex min-w-0 flex-col gap-1">
                     <div class="flex flex-wrap items-center gap-2">
                       <Badge
-                        :variant="levelVariant(row.level)"
-                        :class="levelClass(row.level)"
+                        :variant="item.view.levelVariant"
+                        :class="item.view.levelClass"
                         class="w-12 justify-center"
-                        >{{ row.level }}</Badge
+                        >{{ item.row.level }}</Badge
                       >
-                      <time :datetime="row.timestamp" class="text-[13px] tabular-nums">{{
-                        dated(row.timestamp)
-                      }}</time>
+                      <time
+                        :datetime="item.row.timestamp"
+                        :title="item.row.timestamp"
+                        class="text-[13px] tabular-nums"
+                        >{{ dated(item.row.timestamp) }}</time
+                      >
                     </div>
                     <div class="flex min-w-0 items-baseline gap-1.5">
                       <span class="text-muted-foreground shrink-0 text-xs">操作</span>
-                      <span class="truncate font-mono text-xs">{{ row.operation }}</span>
+                      <span class="min-w-0 break-all text-[13px]"
+                        ><template v-if="item.view.operationLabel"
+                          >{{ item.view.operationLabel }}<span class="text-muted-foreground">
+                            · </span
+                          ></template
+                        ><span class="font-mono text-xs">{{ item.view.operationCode }}</span></span
+                      >
                     </div>
                   </div>
                   <Button
                     variant="outline"
                     size="sm"
                     class="min-h-11 shrink-0"
-                    :data-log-detail="row.id"
-                    :aria-label="`查看日志 ${row.operation} ${row.id}`"
-                    @click="open(row.id)"
+                    :data-log-detail="item.row.id"
+                    :aria-label="`查看日志 ${item.row.operation} ${item.row.id}`"
+                    @click="open(item.row.id)"
                     >查看</Button
                   >
                 </div>
-                <div
-                  class="text-muted-foreground flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[13px]"
-                >
-                  <span>来源 {{ row.source }}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{{ row.outcome }}</span>
-                  <span v-if="row.durationMs !== undefined" class="tabular-nums"
-                    >· {{ row.durationMs }} ms</span
-                  >
-                  <span v-if="row.statusCode !== undefined" class="tabular-nums"
-                    >· HTTP {{ row.statusCode }}</span
-                  >
+                <div class="flex min-w-0 flex-col gap-1 text-[13px]">
+                  <div class="flex min-w-0 items-baseline gap-1.5">
+                    <span class="text-muted-foreground shrink-0 text-xs">来源</span>
+                    <span class="min-w-0 break-all"
+                      >{{ item.view.sourceLabel }}
+                      <span class="text-muted-foreground font-mono text-xs">{{
+                        item.view.sourceCode
+                      }}</span></span
+                    >
+                  </div>
+                  <div class="flex min-w-0 items-baseline gap-1.5">
+                    <span class="text-muted-foreground shrink-0 text-xs">结果</span>
+                    <Badge
+                      :variant="item.view.outcomeVariant"
+                      :class="item.view.outcomeClass"
+                      :title="item.view.outcomeCode"
+                      >{{ item.view.outcomeLabel }}</Badge
+                    >
+                  </div>
+                  <div class="flex min-w-0 items-baseline gap-1.5" data-log-field="errorCode">
+                    <span class="text-muted-foreground shrink-0 text-xs">失败码</span>
+                    <span
+                      class="min-w-0 break-all font-mono text-xs"
+                      :class="item.view.errorCodePresent ? '' : 'font-sans text-muted-foreground'"
+                      >{{ item.view.errorCodeText }}</span
+                    >
+                  </div>
+                  <div class="flex min-w-0 items-baseline gap-1.5">
+                    <span class="text-muted-foreground shrink-0 text-xs">目标</span>
+                    <span
+                      class="min-w-0 break-all"
+                      :class="item.view.target.missing ? 'text-muted-foreground' : ''"
+                      >{{ item.view.target.text }}<template v-if="item.view.target.untrusted"
+                        >&nbsp;· UNTRUSTED</template
+                      ></span
+                    >
+                  </div>
+                  <div v-if="item.view.statusApplicable" class="flex min-w-0 items-baseline gap-1.5">
+                    <span class="text-muted-foreground shrink-0 text-xs">HTTP 状态</span>
+                    <span
+                      class="min-w-0 tabular-nums"
+                      :class="item.view.statusMissing ? 'text-muted-foreground' : ''"
+                      >{{ item.view.statusText }}</span
+                    >
+                  </div>
+                  <div class="flex min-w-0 items-baseline gap-1.5">
+                    <span class="text-muted-foreground shrink-0 text-xs">耗时</span>
+                    <span
+                      class="min-w-0 tabular-nums"
+                      :class="item.view.durationMissing ? 'text-muted-foreground' : ''"
+                      >{{ item.view.durationText }}</span
+                    >
+                  </div>
+                  <div class="flex min-w-0 items-baseline gap-1.5">
+                    <span class="text-muted-foreground shrink-0 text-xs">关联</span>
+                    <span
+                      v-if="item.view.primaryReference"
+                      class="min-w-0 break-all font-mono text-xs"
+                      >{{ item.view.primaryReference.kind }}
+                      {{ item.view.primaryReference.value }}<template
+                        v-if="item.view.extraReferenceCount"
+                        >&nbsp;· +{{ item.view.extraReferenceCount }}</template
+                      ></span
+                    >
+                    <span v-else class="text-muted-foreground">未记录</span>
+                  </div>
                 </div>
-                <p class="text-muted-foreground text-[13px] break-all">
-                  <span class="font-mono text-xs">{{ reference(row) ? `${referenceKind(row)} ${reference(row)}` : '关联标识未记录' }}</span>
-                </p>
               </li>
             </ul>
             <Empty v-if="!rows.length && !loading" class="border-0 sm:hidden"
