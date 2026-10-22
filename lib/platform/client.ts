@@ -14,6 +14,7 @@ import {
   APPLY_LIST_PATH,
   BUSINESS_GRID,
   BUSINESS_LIST_PATH,
+  RECOGNIZED_LIST_PATH,
   PLATFORM_BASE,
   RDJB_VALUES,
   PlatformCredentialMissingError,
@@ -27,6 +28,8 @@ import {
 } from './adapter'
 import type { PlatformInterface } from '../labels'
 import { withPlatformRequestBudget } from './request-budget'
+import { appLog, newLogContext, type LogContext } from '../logging'
+import { logPlatformResult, platformOperation } from './logging'
 
 export type PlatformFetch = (
   input: string,
@@ -57,6 +60,7 @@ export interface PlatformQueryOutcome extends PlatformResponseOutcome {
 }
 
 export interface PlatformQueryOptions {
+  logContext?: LogContext
   uscc: string
   fetchImpl?: PlatformFetch
   /** 整条 Cookie 值,或惰性取值函数。缺省从 {@link COOKIE_ENV} 读。 */
@@ -159,10 +163,16 @@ async function postWithoutBudget(
   const base = options.baseUrl ?? PLATFORM_BASE
   const retries = Math.max(0, options.retries ?? 2)
   const sleep = options.sleep ?? defaultSleep
+  const logContext = options.logContext ?? newLogContext()
+  const source = path === APPLY_LIST_PATH ? 'queryList' : path === BUSINESS_LIST_PATH ? 'businessList' : path === RECOGNIZED_LIST_PATH ? 'queryBusList' : null
 
   let lastError: unknown = null
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) await sleep(1000 * 3 ** (attempt - 1))
+    if (attempt > 0) {
+      await sleep(1000 * 3 ** (attempt - 1))
+      if (source) appLog({ source: 'platform', operation: platformOperation(source, 'retry', body.rdjb ?? null), outcome: 'started', counts: { done: attempt },
+        ...(Number.isSafeInteger(Number(body.pageNum)) && Number(body.pageNum) > 0 ? { page: Number(body.pageNum) } : {}) }, logContext)
+    }
     try {
       const response = await fetchImpl(new URL(path, base).toString(), {
         method: 'POST',
@@ -240,7 +250,8 @@ export async function queryPlatformSlots(
   let cookie = ''
   let credentialError = false
   try { cookie = resolveCookie(options.cookie) } catch { credentialError = true }
-  const fixed = { ...options, cookie: () => cookie }
+  const logContext = options.logContext ?? newLogContext()
+  const fixed = { ...options, cookie: () => cookie, logContext }
   const redact = cookieRedactor(cookie)
   const sanitize = (value: unknown): unknown => {
     if (typeof value === 'string') return redact(value)
@@ -250,6 +261,8 @@ export async function queryPlatformSlots(
   }
   const outcomes: PlatformQueryOutcome[] = []
   for (const slot of slots) {
+    const started = Date.now()
+    let errorCode: string | undefined
     const base = { interface: slot.interface, rdjb: slot.rdjb ?? '', queryKey: uscc }
     // 时点在**请求发出前**取:它就是这次查询的时刻(`platform_query.queried_at`)。
     const queriedAt = options.now?.() ?? new Date().toISOString()
@@ -262,10 +275,14 @@ export async function queryPlatformSlots(
       const rows = sanitize(outcome.rows) as PlatformRow[]
       // Never turn a redaction placeholder into an enterprise name, alias or relation.
       const containsCredential = JSON.stringify(rows) !== JSON.stringify(outcome.rows)
+      if (containsCredential) errorCode = 'sensitive_response'
+      else if (outcome.status === 'failed') errorCode = 'invalid_response'
       outcomes.push(containsCredential
         ? { ...outcome, status: 'failed', maxCount: 0, rows: [], raw: redact(raw), failureReason: '平台业务响应含敏感凭据，已阻止作为业务证据使用。' }
         : { ...outcome, raw: redact(raw), rows, failureReason: outcome.failureReason ? redact(outcome.failureReason) : outcome.failureReason })
     } catch (error) {
+      errorCode = credentialError || !cookie ? 'credential_unavailable' : error instanceof PlatformSessionExpiredError || (error instanceof PlatformHttpError && [401, 403].includes(error.status)) ? 'auth_failed'
+        : error instanceof PlatformHttpError && error.status === 429 ? 'rate_limited' : error instanceof Error && /timeout|abort/i.test(error.name) ? 'timeout' : 'upstream_failed'
       const reason = error instanceof Error ? error.message : String(error)
       outcomes.push({
         ...base,
@@ -278,6 +295,10 @@ export async function queryPlatformSlots(
         raw: '',
       })
     }
+    const outcome = outcomes[outcomes.length - 1]!
+    logPlatformResult(platformOperation(slot.interface === 'business_list' ? 'businessList' : 'queryList', 'slot', slot.rdjb ?? null),
+      errorCode === 'credential_unavailable' ? 'not_queried' : errorCode === 'auth_failed' ? 'auth_failed' : outcome.status,
+      { ...logContext, page: 1 }, { done: outcome.rows.length }, Date.now() - started, errorCode)
   }
   return outcomes
 }

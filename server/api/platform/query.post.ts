@@ -1,4 +1,5 @@
 import { runPlatformLiveQuery } from '../../utils/platform-live-query'
+import { requestLogContext } from '../../../lib/logging'
 
 defineRouteMeta({
   openAPI: {
@@ -309,7 +310,7 @@ defineRouteMeta({
 })
 export default defineEventHandler(async event => {
   setHeader(event, 'Cache-Control', 'no-store')
-  try { return await runPlatformLiveQuery(await readBody(event)) }
+  try { return await runPlatformLiveQuery(await readBody(event), { logContext: event.context ? requestLogContext(event) : undefined }) }
   catch (caught) {
     const e = caught as { statusCode?: number; code?: string }
     setResponseStatus(event, e.statusCode === 400 ? 400 : 500)

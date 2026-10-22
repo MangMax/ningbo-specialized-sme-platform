@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { LogContext } from '../logging'
 import { platformQueryInputSchema, platformQueryResultShape, type PlatformLiveQueryInput, type PlatformLiveQueryResult, type PlatformQueryPosition, type PlatformQueryStatus } from './live-query'
 
 export const platformBatchLimitsShape = {
@@ -21,6 +22,8 @@ export const platformBatchRetrySchema = z.strictObject(platformBatchRetryShape)
 export const PLATFORM_BATCH_KIND = 'platform-query-batch'
 export const MAX_BATCH_ATTEMPTS = 10
 export interface PlatformBatchParams {
+  /** Server-owned context; not accepted by the public input schema. */
+  logContext?: LogContext
   items: { itemId: string; query: PlatformLiveQueryInput }[]
   limits: { maxRequests: number; maxRows: number; maxDurationMs: number; maxResultBytes: number }
   retryItemIds?: string[]

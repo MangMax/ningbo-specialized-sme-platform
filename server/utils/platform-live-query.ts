@@ -1,9 +1,12 @@
 import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, parsePlatformPage } from '../../lib/platform/adapter'
 import { cookieRedactor, PlatformHttpError, postPlatformRequest, type PlatformQueryOptions } from '../../lib/platform/client'
-import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryError } from '../../lib/platform/live-query'
+import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryPage, type PlatformQueryError } from '../../lib/platform/live-query'
 import { resolvePlatformCookie, type CredentialContext } from './credential-state'
+import { newLogContext, type LogContext } from '../../lib/logging'
+import { logPlatformResult, platformOperation, platformQueryOperation } from '../../lib/platform/logging'
 
 export interface PlatformLiveQueryContext {
+  logContext?: LogContext
   onProgress?: (result: PlatformLiveQueryResult) => void
   maxResultBytes?: number
   credentials?: CredentialContext
@@ -26,6 +29,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
   const totals = new Map<string | null, number | null>(titles.filter(title => ctx.declaredTotals?.has(title)).map(title => [title, ctx.declaredTotals!.get(title)!]))
   const declaredTotal = () => titles.every(t => totals.has(t) && totals.get(t) !== null) ? [...totals.values()].reduce<number>((sum, n) => sum + n!, 0) : null
   const started = Date.now()
+  const logContext = ctx.logContext ?? newLogContext()
   const result: PlatformLiveQueryResult = {
     source: q.source, status: 'not_queried', effectiveConditions: { ...(q.name ? { name: q.name } : {}), ...(q.uscc ? { uscc: q.uscc } : {}), combination: 'and', ...Object.fromEntries(Object.keys(recognizedConditionShape).filter(key => q[key as keyof typeof q] !== undefined).map(key => [key, q[key as keyof typeof q]])) },
     titleScope: q.source !== 'queryList' ? { mode: 'selected', rdjb: titles as string[] } : { mode: 'source_default', rdjb: [] }, queriedAt: new Date(started).toISOString(), completedAt: '', rows: [], pages: [], fetchedCount: 0, declaredTotal: declaredTotal(),
@@ -56,7 +60,15 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
     for (const key of ['name', 'uscc', ...Object.keys(recognizedConditionShape)] as (keyof typeof result.effectiveConditions)[]) {
       if (result.effectiveConditions[key]) (result.effectiveConditions as Record<string, string>)[key] = redactString(result.effectiveConditions[key]!)
     }
+    logPlatformResult(platformQueryOperation(q.source, titles), result.status, { ...logContext, page: q.startPage },
+      { done: result.pages.filter(page => page.status === 'success').length, total: result.pages.length, failed: result.pages.filter(page => page.status !== 'success').length }, Date.now() - started, result.error?.code)
     return result
+  }
+  const recordPage = (page: PlatformQueryPage, pageStarted: number) => {
+    result.pages.push(page)
+    // Only the admission point emits page outcomes; checkpoint persistence and
+    // retries of other pages cannot repeat an accepted page's completion.
+    logPlatformResult(platformOperation(q.source, 'page', page.rdjb), page.status, { ...logContext, page: page.page }, { done: page.fetchedCount }, Date.now() - pageStarted, page.error?.code)
   }
   const position = (page: number, rdjb: string | null) => ({ source: q.source, rdjb, page })
   const remaining = (index: number, page: number) => [position(page, titles[index]!), ...titles.slice(index + 1).map(title => position(q.startPage, title))]
@@ -74,8 +86,9 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
       if (result.pages.length >= q.maxRequests || result.rows.length >= q.maxRows || Date.now() - started >= q.maxDurationMs) {
         result.status = 'partial'; result.completeness = 'partial'; result.error = error('safety_limit', '查询达到安全上限，仍有未完成页。'); result.unfinished.push(...remaining(index, page)); break outer
       }
+      const pageStarted = Date.now()
       try {
-        const raw = await postPlatformRequest({ ...ctx.transport, uscc: q.uscc ?? '', cookie, retries: 0, deadlineMs: started + q.maxDurationMs, timeoutMs: Math.min(ctx.transport?.timeoutMs ?? 15000, q.maxDurationMs - (Date.now() - started)) }, q.source === 'businessList' ? BUSINESS_LIST_PATH : q.source === 'queryBusList' ? RECOGNIZED_LIST_PATH : APPLY_LIST_PATH, {
+        const raw = await postPlatformRequest({ ...ctx.transport, logContext, uscc: q.uscc ?? '', cookie, retries: 0, deadlineMs: started + q.maxDurationMs, timeoutMs: Math.min(ctx.transport?.timeoutMs ?? 15000, q.maxDurationMs - (Date.now() - started)) }, q.source === 'businessList' ? BUSINESS_LIST_PATH : q.source === 'queryBusList' ? RECOGNIZED_LIST_PATH : APPLY_LIST_PATH, {
           ...(q.source === 'queryBusList' ? { rdjb: title!, sqsj: q.sqsj ?? '', rddqrq: q.rddqrq ?? '', whpcyear: q.whpcyear ?? '', whpc: q.whpc ?? '', szq: q.szq ?? '', orderField: q.orderField ?? '', orderDirection: q.orderDirection ?? '', ...(q.orderField ? { target: 'businessGrid' } : {}) } : {}),
           ...(q.source === 'businessList' ? { rdjb: title! } : { qymc: q.name ?? '' }), tyshxydm: q.uscc ?? '', pageNum: String(page), numPerPage: String(Math.min(q.pageSize, q.maxRows)),
         })
@@ -107,14 +120,14 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         if (result.rows.length + parsedPage.rows.length > q.maxRows || (ctx.maxResultBytes !== undefined && Buffer.byteLength(JSON.stringify({ ...result, rows: [...result.rows, ...parsedPage.rows] }), 'utf8') + 2048 > ctx.maxResultBytes)) {
           result.status = 'partial'; result.completeness = 'partial'
           result.error = error('safety_limit', '记录数量达到安全上限，此页未纳入结果。')
-          result.pages.push({ ...pos, status: 'failed', fetchedCount: 0, declaredTotal: parsedPage.declaredTotal, error: result.error })
+          recordPage({ ...pos, status: 'failed', fetchedCount: 0, declaredTotal: parsedPage.declaredTotal, error: result.error }, pageStarted)
           result.unfinished.push(...remaining(index, page)); break outer
         }
         // A standalone continuation can use a returned, verified page partition.
         // Requested size alone cannot establish rows accepted before this attempt.
         const priorCoverage = priorFetched ?? (parsedPage.responsePage === page && parsedPage.responsePageSize === result.limits.pageSize ? (q.startPage - 1) * result.limits.pageSize : null)
         if (!parsedPage.rows.length && total !== null && total > 0 && (priorCoverage === null || priorCoverage + fetchedForTitle < total)) throw error('invalid_response', '平台返回空页但无法确认已取全声明记录。')
-        result.pages.push({ ...pos, ...(q.source === 'queryBusList' ? { maxPage: parsedPage.responseMaxPage } : {}), status: 'success', fetchedCount: parsedPage.rows.length, declaredTotal: parsedPage.declaredTotal, error: null })
+        recordPage({ ...pos, ...(q.source === 'queryBusList' ? { maxPage: parsedPage.responseMaxPage } : {}), status: 'success', fetchedCount: parsedPage.rows.length, declaredTotal: parsedPage.declaredTotal, error: null }, pageStarted)
         totals.set(title, total)
         result.declaredTotal = declaredTotal()
         result.rows.push(...parsedPage.rows)
@@ -140,7 +153,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         const failure = caught instanceof PlatformSessionExpiredError || (caught instanceof PlatformHttpError && [401, 403].includes(caught.status)) ? error('auth_failed', '平台会话失效，请更新服务端凭据。')
           : e.code === 'sensitive_response' || e.code === 'invalid_response' ? e as PlatformQueryError
           : error(caught instanceof PlatformHttpError && caught.status === 429 ? 'rate_limited' : /timeout|abort/i.test(`${e.name ?? ''} ${e.message ?? ''}`) ? 'timeout' : 'upstream_failed', '平台请求失败，未完成查询。')
-        result.pages.push({ ...pos, status: failure.code === 'auth_failed' ? 'auth_failed' : 'failed', fetchedCount: 0, declaredTotal: null, error: failure })
+        recordPage({ ...pos, status: failure.code === 'auth_failed' ? 'auth_failed' : 'failed', fetchedCount: 0, declaredTotal: null, error: failure }, pageStarted)
         result.status = result.pages.some(p => p.status === 'success') ? 'partial' : failure.code === 'auth_failed' ? 'auth_failed' : 'failed'
         result.completeness = 'partial'; result.error ??= failure
         if (q.source === 'businessList' && failure.code !== 'auth_failed') {
