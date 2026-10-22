@@ -1,3 +1,4 @@
+import { runtimeLogPolicyRpcError } from '../utils/logging-mcp'
 import { decisionRpcError102 } from '../utils/decision-lifecycle-102-mcp'
 import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
 import { admitEnterpriseResponse } from '../utils/enterprise-read-response'
@@ -169,6 +170,10 @@ export default defineMcpHandler({
     if (!auth.writeAuthorized) {
       const called = await writeToolCalledIn(event)
       if (called) return finish(unauthorizedResponse(called, auth.reason), 'unauthorized')
+    }
+    if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
+      const invalidPolicy = runtimeLogPolicyRpcError(await readBody(event, { strict: false }).catch(() => undefined))
+      if (invalidPolicy) return invalidPolicy
     }
     try {
       const response = await next()

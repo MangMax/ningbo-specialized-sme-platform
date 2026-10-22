@@ -27,7 +27,7 @@ export function createClientLogIntake(now = Date.now) {
         if (previous !== undefined && time - previous < 10000) { duplicates++; continue }
         // Keys are from a finite vocabulary: <=84 per peer, never raw error text.
         state.seen.set(key, time)
-        appLog({ source: 'client', operation: `client.${report!.page}.${report!.kind}`,
+        appLog({ origin: { runtime: 'browser', integration: report!.kind === 'vue_error' ? 'vue' : report!.kind === 'interaction_failure' ? 'application' : 'browser', capture: report!.kind === 'interaction_failure' ? 'manual' : 'hook', execution: 'page' }, source: 'client', operation: `client.${report!.page}.${report!.kind}`,
           errorCode: report!.interaction, outcome: 'failure', level: report!.level, untrustedRelatedRequestId: report!.relatedRequestId,
         }, { requestId: context.requestId, traceId: context.traceId })
         accepted++
