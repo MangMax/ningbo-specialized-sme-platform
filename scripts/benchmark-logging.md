@@ -77,3 +77,7 @@ initial main manifest's small-event projection reported167B before appLog added
 its96B origin; actual queue events were263B. The raw result is preserved and the
 summary exposes both values. Large events were2362B in both projection and queue.
 The source harness now accounts for the actual origin in future initial metadata.
+
+The overall deadline stops subsequent lanes after terminating owned children;
+`LOGGING_BENCH_DEADLINE_MS` can lower (never raise) the25min bound for a smoke
+check of cleanup. Port50055 is explicitly excluded from ephemeral selection.
