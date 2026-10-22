@@ -71,3 +71,9 @@ run's all-response percentiles include fast503 replies and cannot reconstruct
 success-only percentiles; do not interpret a low p95 under overload as healthy
 business latency. Child acknowledged counts are sampled endpoint differences,
 with offsets retained; they cannot reconstruct unacknowledged drops/overflow.
+
+Byte calibration uses queuedBytes/queuedEntries for identical-shaped events. The
+initial main manifest's small-event projection reported167B before appLog added
+its96B origin; actual queue events were263B. The raw result is preserved and the
+summary exposes both values. Large events were2362B in both projection and queue.
+The source harness now accounts for the actual origin in future initial metadata.

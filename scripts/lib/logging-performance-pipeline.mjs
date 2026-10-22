@@ -81,7 +81,7 @@ async function queries(target) {
 }
 function quantiles(values) { values.sort((a,b)=>a-b); return Object.fromEntries([50,95,99].map(p=>['p'+p, values[Math.min(values.length-1,Math.ceil(values.length*p/100)-1)]])) }
 async function action(command) {
-  if (command.action === 'init') return { policy: await svc.policy(), defaults: LOG_DEFAULTS, payload: { smallBytes: Buffer.byteLength(JSON.stringify(safeLogEvent(small))), largeBytes: Buffer.byteLength(JSON.stringify(projected)), sanitizedLarge: projected } }
+  if (command.action === 'init') return { policy: await svc.policy(), defaults: LOG_DEFAULTS, payload: { smallBytes: Buffer.byteLength(JSON.stringify(safeLogEvent({ ...small, origin: { runtime: 'node', integration: 'application', capture: 'manual', execution: 'worker' } }))), largeBytes: Buffer.byteLength(JSON.stringify(projected)), sanitizedLarge: projected } }
   if (command.action === 'load') return timed(command.label, () => load(command))
   if (command.action === 'burst') return timed('burst', async () => { const before=svc.status(); for(let i=0;i<5000;i++) appLog(command.shape==='small'?small:large); const queued=svc.status(), start=performance.now(); await svc.flush(); return { before, queued, after:svc.status(), drainMs:performance.now()-start } })
   if (command.action === 'query') return queries(command.target)
