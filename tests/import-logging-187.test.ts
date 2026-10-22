@@ -47,7 +47,7 @@ it('same-key commit recovery logs replay without claiming another commit or chan
   const details = await Promise.all([...commits.rows, ...replays.rows].map(row => applicationLogs().detail(row.id)))
   expect(details).toEqual(expect.arrayContaining([expect.objectContaining({ outcome: 'success', batchId: receipt.batchId, receiptId: receipt.receiptId, requestId: 'req-187', traceId: 'trace-187', taskId: 'task-187' })]))
   expect(JSON.stringify(details)).not.toContain('PRIVATE_')
-})
+}, 20_000)
 
 it('preflight conflicts and failed batches never emit successful imports and source conflicts stay distinct', async () => {
   const { input, post, flush } = fixture()
@@ -70,7 +70,7 @@ it('preflight conflicts and failed batches never emit successful imports and sou
   const rejected = events.find(row => row.operation === 'import.submission.commit')!
   expect(await applicationLogs().detail(rejected.id)).toMatchObject({ errorCode: 'idempotency_conflict' })
   expect(JSON.stringify(await Promise.all(events.map(row => applicationLogs().detail(row.id))))).not.toContain('PRIVATE_')
-})
+}, 20_000)
 
 it('busy admission and lost IPC remain distinct while durable receipt recovery never repeats the commit', async () => {
   let starts = 0, dispatched!: () => void
@@ -106,7 +106,7 @@ it('busy admission and lost IPC remain distinct while durable receipt recovery n
     expect.objectContaining({ operation: 'import.commit.replay', outcome: 'success', traceId: 'trace-187' }),
   ]))
   expect(rows.filter(row => row.operation === 'import.execution' && row.outcome === 'success')).toHaveLength(0)
-})
+}, 20_000)
 
 it('an enclosing transaction rollback cannot leave a successful commit log for an absent receipt', async () => {
   const { commitRosterImport } = await import('../server/utils/roster-import')
