@@ -519,6 +519,17 @@ async function runComparisonRouteReturn(cdp, sessionId, viewport) {
   await waitUntil(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(comparisonPath)} && document.querySelector('[data-testid="comparison-enterprise-name"]')?.textContent.includes('026')`)
   await evaluate(cdp, sessionId, 'history.forward()')
   await waitUntil(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(detailPath)} && !!document.querySelector('[id^="record-event-"] button[aria-expanded]')`)
+  // Back consumes the saved comparison return coordinate. Re-enter through the
+  // actual link to capture a fresh coordinate for the separate source round trip.
+  await evaluate(cdp, sessionId, 'history.back()')
+  await waitUntil(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(comparisonPath)} && document.querySelector('[data-testid="comparison-enterprise-name"]')?.textContent.includes('026')`)
+  const comparisonScroll = await evaluate(cdp, sessionId, `(() => {
+    window.scrollTo({ top: 320, behavior: 'instant' });
+    const scrollY = window.scrollY;
+    document.querySelector('[data-testid="comparison-enterprise-name"]').click();
+    return scrollY;
+  })()`)
+  await waitUntil(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(detailPath)} && !!document.querySelector('[id^="record-event-"] button[aria-expanded]')`)
   await evaluate(cdp, sessionId, `document.querySelector('[id^="record-event-"] button[aria-expanded]').click()`)
   await waitUntil(cdp, sessionId, `[...document.querySelectorAll('a[href^="/preview"]')].some(a => a.textContent.includes('第 3 页'))`)
   const detailScroll = await evaluate(cdp, sessionId, `(() => {
@@ -531,8 +542,8 @@ async function runComparisonRouteReturn(cdp, sessionId, viewport) {
   await evaluate(cdp, sessionId, `[...document.querySelectorAll('a')].find(a => a.textContent.trim() === '返回企业详情').click()`)
   await waitForStableCondition(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(detailPath)} && Math.abs(window.scrollY - ${detailScroll}) <= 2 && !!document.querySelector('[id^="record-event-"] button[aria-expanded="true"]')`)
   await evaluate(cdp, sessionId, `[...document.querySelectorAll('a')].find(a => a.getAttribute('href') === ${JSON.stringify(comparisonPath)}).click()`)
-  await waitUntil(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(comparisonPath)} && document.querySelector('[data-testid="comparison-enterprise-name"]')?.textContent.includes('026')`)
-  await saveEvidence(cdp, sessionId, `${viewport.width}-comparison-return`, { comparisonPath, detailPath, detailScroll })
+  await waitForStableCondition(cdp, sessionId, `location.pathname + location.search === ${JSON.stringify(comparisonPath)} && document.querySelector('[data-testid="comparison-enterprise-name"]')?.textContent.includes('026') && Math.abs(window.scrollY - ${comparisonScroll}) <= 2`)
+  await saveEvidence(cdp, sessionId, `${viewport.width}-comparison-return`, { comparisonPath, detailPath, detailScroll, comparisonScroll, returnedScroll: await evaluate(cdp, sessionId, 'window.scrollY') })
   console.log(`✓ ${viewport.label} comparison filter, page, detail deep link, browser back/forward and source return`)
 }
 
