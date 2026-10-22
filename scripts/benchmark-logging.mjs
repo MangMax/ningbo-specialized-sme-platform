@@ -24,7 +24,7 @@ const supplement = process.argv.includes('--http-debug-supplement')
 const stdoutSupplement = process.argv.includes('--stdout-business-supplement')
 const run = mkdtempSync(join(root, development ? 'dirty-development-' : (supplement||stdoutSupplement) ? 'fixed-supplement-' : 'fixed-final-'))
 const processDir = join(run, 'process-telemetry'); mkdirSync(processDir)
-const write = (file, value) => writeFileSync(join(run,file), typeof value==='string'?value:JSON.stringify(value,null,2))
+const write = (file, value) => writeFileSync(join(run,file), typeof value==='string'||Buffer.isBuffer(value)?value:JSON.stringify(value,null,2))
 const hash = data => createHash('sha256').update(data).digest('hex')
 const git = (...args) => execFileSync('git',args,{encoding:'utf8'}).trim()
 const dirty = git('status','--porcelain')
@@ -93,15 +93,15 @@ async function faultWithBusiness(name,setup,seconds=5,extra={}){return lane(name
  }finally{await restore();await stop(server.child);await closePipeline(p)}})}
 
 async function stdoutBusinessLane(){return lane('stdout-fifo-business-20s',async()=>{
- const fifo=join(run,'owned-stdout.fifo');execFileSync('mkfifo',[fifo]);const fd=openSync(fifo,constants.O_RDWR|constants.O_NONBLOCK)
+ const fifo=join(run,'owned-stdout.fifo');execFileSync('mkfifo',[fifo]);const fd=openSync(fifo,constants.O_RDWR|constants.O_NONBLOCK);const readerFd=openSync(fifo,constants.O_RDONLY|constants.O_NONBLOCK)
  let reading=true,bytes=0,privacyNonce=false,server;const chunks=[]
- const reader=setInterval(()=>{if(!reading)return;const b=Buffer.alloc(16384);for(let i=0;i<32;i++){try{const n=readSync(fd,b,0,b.length,null);if(!n)break;const chunk=Buffer.from(b.subarray(0,n));bytes+=n;chunks.push(chunk);if(chunk.includes('PRIVATE_LOGGING_PERFORMANCE_NONCE'))privacyNonce=true}catch(e){if(e.code==='EAGAIN'||e.code==='EWOULDBLOCK')break;throw e}}},20)
+ const reader=setInterval(()=>{if(!reading)return;const b=Buffer.alloc(16384);for(let i=0;i<32;i++){try{const n=readSync(readerFd,b,0,b.length,null);if(!n)break;const chunk=Buffer.from(b.subarray(0,n));bytes+=n;chunks.push(chunk);if(chunk.includes('PRIVATE_LOGGING_PERFORMANCE_NONCE'))privacyNonce=true}catch(e){if(e.code==='EAGAIN'||e.code==='EWOULDBLOCK')break;throw e}}},20)
  try{server=await startServer('stdout-fifo-nuxt',join(run,'stdout-fifo-logs'),fd);await sourceMode(server,'debug');const before=await api(server,'/api/logs/policy');reading=false;const startTimestamp=Date.now(),beforeBytes=bytes
  const [health,enterprises]=await Promise.all([httpLoad(server,'/api/health',1,20),httpLoad(server,'/api/roster/enterprises?pageSize=50',1,20)])
  const capturedWhileStopped=bytes-beforeBytes;reading=true;const [recoveryHealth,recoveryEnterprises]=await Promise.all([httpLoad(server,'/api/health',1,5),httpLoad(server,'/api/roster/enterprises?pageSize=50',1,5)])
  const after=await api(server,'/api/logs/policy').catch(e=>({observationError:e.message}));await sleep(250)
  return{serverPid:server.child.pid,startTimestamp,endTimestamp:Date.now(),health,enterprises,recoveryHealth,recoveryEnterprises,before,after,capturedWhileStopped,totalReadBytes:bytes,privacyNonce,disk:disk(server.logs),counterScope:'policy main-only; 500ms process telemetry includes stdoutBuffered for actual blocked pipe observation'}
- }finally{reading=true;if(server)await stop(server.child);await sleep(100);clearInterval(reader);closeSync(fd);unlinkSync(fifo);write('stdout-fifo.raw.log',Buffer.concat(chunks));}
+ }finally{reading=true;if(server)await stop(server.child);await sleep(100);clearInterval(reader);closeSync(readerFd);closeSync(fd);unlinkSync(fifo);write('stdout-fifo.raw.log',Buffer.concat(chunks));}
 })}
 
 async function faultMatrix(){

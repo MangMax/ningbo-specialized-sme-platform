@@ -87,3 +87,9 @@ Nuxt writes stdout to an owned nonblocking FIFO; the reader stops20s while both
 business GETs run, then resumes for5s recovery. Per-process telemetry records
 actual stdout writable buffering, rather than inferring pressure just from a
 paused reader. The FIFO is removed and only raw captured output is retained.
+
+The FIFO reader has its own open file description. On this OS, Node stdout
+initialization clears O_NONBLOCK on its inherited writer; sharing that descriptor
+with readSync can block the driver. The separate reader retains O_NONBLOCK. A
+retained minimal fd-flags probe confirms this boundary; the first aborted FIFO
+run is preserved separately and cannot count as completed business evidence.
