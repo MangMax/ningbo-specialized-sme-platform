@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../lib/logging'
 import { createError, getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
 import { parseCurrentQualifiedQuery } from '../../utils/current-qualified-filter'
@@ -30,7 +31,7 @@ export default defineEventHandler(event => {
   admitEnterpriseResponse(event)
   setHeader(event, 'cache-control', 'no-store')
   return withEnterpriseReadSignal(event, async signal => {
-    const result = await enterpriseReads.currentQualifiedJson(useDb().$client.name, parsed.data, signal)
+    const result = await enterpriseReads.currentQualifiedJson(useDb().$client.name, parsed.data, signal, requestLogContext(event))
     setHeader(event, 'content-type', 'application/json; charset=utf-8')
     return result.body
   })

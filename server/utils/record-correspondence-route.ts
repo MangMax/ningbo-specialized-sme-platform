@@ -1,8 +1,9 @@
+import { semanticRouteHandler } from './core-route'
 import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { useDb } from '@db'
 import { handleRecordCorrespondenceRequest, type CorrespondenceAction } from './record-correspondence-api'
 export function correspondenceRoute(action: CorrespondenceAction, options: { id?: boolean; kind?: 'event' | 'relation' | 'export_row'; key?: boolean } = {}) {
-  return defineEventHandler(async (event: H3Event) => {
+  return semanticRouteHandler(`maintenance.correspondence.${action}`, async (event: H3Event) => {
     setHeader(event, 'cache-control', 'no-store')
     let body: unknown
     if (['POST', 'PUT', 'PATCH'].includes(getMethod(event))) {

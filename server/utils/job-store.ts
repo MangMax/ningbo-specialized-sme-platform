@@ -1,3 +1,4 @@
+import { appLog, type LogContext } from '../../lib/logging'
 import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { compact } from 'es-toolkit'
@@ -104,6 +105,7 @@ export function createJob(
     kind: string
     params: Record<string, unknown>
     progress?: JobProgress
+    logContext?: LogContext
   },
 ): JobRow {
   const progress = makeProgress(input.progress?.done ?? 0, input.progress?.total ?? 1)
@@ -117,6 +119,7 @@ export function createJob(
       createdAt: new Date().toISOString(),
     })
     .run()
+  appLog({ source: 'task', operation: 'task.queued', outcome: 'started', taskId: input.id }, input.logContext)
   return getJob(db, input.id)!
 }
 
@@ -211,13 +214,14 @@ export function getJobSummary(db: Db, id: string): JobSummaryDto | null {
  * **只从 `queued` 出发**:拿到的行已不是 queued(重启对账已标失败、或被取消)时返回 null,
  * 调用方据此放弃执行 —— 这条守卫防的是「任务已被取消,runner 却还在把它捡起来跑」。
  */
-export function markJobRunning(db: Db, id: string): JobRow | null {
+export function markJobRunning(db: Db, id: string, logContext?: LogContext): JobRow | null {
   const row = getJob(db, id)
   if (!row || row.state !== 'queued') return null
-  db.update(schema.job)
+  const updated = db.update(schema.job)
     .set({ state: 'running', startedAt: new Date().toISOString() })
     .where(and(eq(schema.job.id, id), eq(schema.job.state, 'queued')))
     .run()
+  if (updated.changes) appLog({ source: 'task', operation: 'task.started', outcome: 'started', taskId: id }, logContext)
   return getJob(db, id)
 }
 
@@ -246,16 +250,25 @@ export function finishJob(
   db: Db,
   id: string,
   outcome: { state: Extract<JobState, 'done' | 'failed' | 'cancelled'>; result?: unknown; error?: string | null },
+  logContext?: LogContext,
 ): JobRow | null {
   // 只更新一次:省略 result 时连列都不碰,显式 null 才能清空。
   const changes = outcome.result === undefined
     ? { state: outcome.state, error: outcome.error ?? null, finishedAt: new Date().toISOString() }
     : { state: outcome.state, result: outcome.result, error: outcome.error ?? null, finishedAt: new Date().toISOString() }
-  db.update(schema.job)
+  const updated = db.update(schema.job)
     .set(changes)
     .where(and(eq(schema.job.id, id), inArray(schema.job.state, [...ACTIVE_JOB_STATES])))
     .run()
-  return getJob(db, id)
+  const row = getJob(db, id)
+  if (updated.changes && row) appLog({
+    source: 'task', operation: 'task.finished',
+    outcome: row.state === 'done' ? 'success' : row.state === 'cancelled' ? 'cancelled' : 'failure',
+    taskId: id, counts: row.progress,
+    durationMs: row.startedAt ? Math.max(0, Date.now() - Date.parse(row.startedAt)) : undefined,
+    errorCode: row.state === 'failed' ? 'job_failed' : undefined,
+  }, logContext)
+  return row
 }
 
 /** 判断一个任务是否还能被取消 / 还能推进。 */
@@ -287,14 +300,19 @@ export function reconcileInterruptedJobs(db: Db): number {
     .get()?.n ?? 0
   if (!stuck) return 0
 
-  db.update(schema.job)
+  const recovered = db.update(schema.job)
     .set({
       state: 'failed',
       error: '服务重启,任务未完成(进行中的任务不跨进程恢复,请重新提交)',
       finishedAt: new Date().toISOString(),
     })
     .where(inArray(schema.job.state, [...ACTIVE_JOB_STATES]))
-    .run()
+    .returning({ id: schema.job.id })
+    .all()
+  for (const row of recovered) {
+    appLog({ source: 'task', operation: 'task.recovered', outcome: 'unknown', taskId: row.id, errorCode: 'job_interrupted' })
+    appLog({ source: 'task', operation: 'task.finished', outcome: 'failure', taskId: row.id, errorCode: 'job_interrupted' })
+  }
   return stuck
 }
 

@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../lib/logging'
 import { useDb } from '@db'
 import { isJobId } from '~~/lib/job'
 import { requireApiToken } from '../../utils/api-guard'
@@ -52,7 +53,7 @@ export default defineEventHandler((event) => {
   const db = useDb()
   ensureJobRunnerReady(db)
 
-  const outcome = requestJobCancel(db, id)
+  const outcome = requestJobCancel(db, id, requestLogContext(event))
   if (!outcome.ok) throw createError({ statusCode: 404, message: outcome.message })
 
   // 运行中的取消请求是**异步**生效的(下一个检查点),用 202 把这个区别说清楚;

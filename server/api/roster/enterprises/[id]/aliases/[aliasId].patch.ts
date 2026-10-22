@@ -1,3 +1,4 @@
+import { semanticRouteHandler } from '../../../../../utils/core-route'
 import { useDb } from '@db'
 import { maintainEnterpriseAlias } from '../../../../../utils/alias-maintenance'
 import { requireApiToken } from '../../../../../utils/api-guard'
@@ -35,7 +36,7 @@ defineRouteMeta({ openAPI: {
     409: { description: '版本、幂等键、自然键、主体或状态转换冲突。' },
   },
 } })
-export default defineEventHandler(async event => {
+export default semanticRouteHandler('maintenance.alias.patch', async event => {
   setHeader(event, 'cache-control', 'no-store')
   requireApiToken(event)
   return maintainEnterpriseAlias(useDb(), getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), await readBody(event))
