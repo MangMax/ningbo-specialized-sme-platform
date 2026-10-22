@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
-import { latestDecisionHead102 } from './decision-lifecycle-102'
+import { readLatestDecisionHead102 as latestDecisionHead102 } from './decision-lifecycle-102/head'
 
 type Db = BetterSQLite3Database<typeof s>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
