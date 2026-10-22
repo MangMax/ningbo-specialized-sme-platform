@@ -343,3 +343,110 @@ it('saves dual collection rules through protected REST and MCP while disabled bu
   expect((await waitLog(after.requestId))[0]).toMatchObject({source:'http',outcome:'success'})
   expect((await call('/api/logs/policy',{headers:apiHeaders})).body.status.filtered).toBeGreaterThan(0)
 })
+
+async function policyPatch(collection: unknown) {
+  const current = await call('/api/logs/policy', { headers: apiHeaders })
+  const response = await call('/api/logs/policy', { method: 'PATCH', headers: { ...apiHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ retentionDays: current.body.retentionDays, maxBytes: current.body.maxBytes, collection }) })
+  expect(response.status).toBe(200)
+  return response.body
+}
+async function waitOperation(requestId: string, operation: string) {
+  for (let i = 0; i < 80; i++) {
+    const rows = await logs(new URLSearchParams({ requestId, operation }).toString())
+    if (rows.length) return rows
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('expected fixed operation did not persist: ' + operation)
+}
+
+async function waitFiltered(minimum: number) {
+  // Intake transport endpoints intentionally have no http.request event.
+  // The writer's filtered counter is the observable negative-path witness.
+  for (let i = 0; i < 80; i++) {
+    const policy = await call('/api/logs/policy', { headers: apiHeaders })
+    if (policy.body.status.filtered >= minimum) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('filtered batch did not finish')
+}
+
+it('persists the four real client integration mappings and applies their protected runtime rules', async () => {
+  const previous = (await call('/api/logs/policy', { headers: apiHeaders })).body.collection
+  const keys = ['tus-client', 'embedpdf', 'pinia-colada', 'vue-router']
+  const rules = (enabled: boolean, minLevel = 'debug') => Object.fromEntries(keys.map(key => [key, { enabled, minLevel }]))
+  const samples = [
+    ['tus_upload_success', 'tus-client', 'client.tus.upload_success'],
+    ['pdf_document_ready', 'embedpdf', 'client.embedpdf.document_ready'],
+    ['colada_query_success', 'pinia-colada', 'client.colada.query_success'],
+    ['router_navigation_success', 'vue-router', 'client.router.navigation_success'],
+  ]
+  const send = (page: string, signals = samples.map(item => item[0]!)) => call('/api/logs/client', {
+    method: 'POST', headers: { ...apiHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify(signals.map(signal => ({ event: { kind: 'library_signal', signal, page,
+      origin: { runtime: 'node', integration: 'drizzle' }, operation: PRIVATE, params: [PRIVATE], url: PRIVATE, level: 'fatal', outcome: 'denied',
+    } }))),
+  })
+  try {
+    await policyPatch({ sources: { client: { enabled: true, minLevel: 'debug' } }, integrations: rules(true) })
+    const accepted = await send('files')
+    expect(accepted.status).toBe(202)
+    expect(accepted.body.accepted).toBe(4)
+    for (const [, integration, operation] of samples) {
+      const [row] = await waitOperation(accepted.requestId, operation!)
+      expect(row).toMatchObject({ source: 'client', outcome: 'success', level: 'info',
+        origin: { runtime: 'browser', integration, capture: 'hook', execution: 'page' } })
+      expect(JSON.stringify(await detail(row.id))).not.toContain(PRIVATE)
+    }
+    await policyPatch({ integrations: rules(false) })
+    const beforeDisabled = (await call('/api/logs/policy', { headers: apiHeaders })).body.status.filtered
+    const disabled = await send('tasks')
+    expect(disabled.status).toBe(202)
+    await waitFiltered(beforeDisabled + 4)
+    expect((await logs('requestId=' + disabled.requestId)).filter(row => row.source === 'client')).toEqual([])
+    await policyPatch({ sources: { client: { enabled: false, minLevel: 'debug' } }, integrations: rules(true) })
+    const beforeSource = (await call('/api/logs/policy', { headers: apiHeaders })).body.status.filtered
+    const sourceDisabled = await send('roster')
+    expect(sourceDisabled.status).toBe(202)
+    await waitFiltered(beforeSource + 4)
+    expect((await logs('requestId=' + sourceDisabled.requestId)).filter(row => row.source === 'client')).toEqual([])
+    await policyPatch({ sources: { client: { enabled: true, minLevel: 'info' } }, integrations: rules(true, 'warn') })
+    const threshold = await send('other', ['pdf_document_ready', 'pdf_log_warn'])
+    expect(threshold.status).toBe(202)
+    const warning = await waitOperation(threshold.requestId, 'client.embedpdf.log_warn')
+    expect(warning[0]).toMatchObject({ level: 'warn', outcome: 'unknown', origin: { integration: 'embedpdf' } })
+    expect((await logs('requestId=' + threshold.requestId)).filter(row => row.source === 'client')).toHaveLength(1)
+    await policyPatch({ sources: { client: { enabled: true, minLevel: 'debug' } }, integrations: rules(true) })
+    const restored = await send('settings')
+    expect(restored.status).toBe(202)
+    for (const [, , operation] of samples) expect(await waitOperation(restored.requestId, operation!)).toHaveLength(1)
+    expect(output).not.toContain(PRIVATE)
+    expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(PRIVATE)
+  } finally { await policyPatch(previous) }
+})
+
+it('keeps real worker queries successful while Drizzle and system rules independently suppress attempts', async () => {
+  const previous = (await call('/api/logs/policy', { headers: apiHeaders })).body.collection
+  const read = async () => {
+    const response = await call('/api/roster/enterprises?q=' + PRIVATE)
+    expect(response.status).toBe(200)
+    // The terminal witness is emitted by the same child after its query hooks.
+    await waitOperation(response.requestId, 'enterprise_read.execute')
+    return response
+  }
+  try {
+    await policyPatch({ sources: { system: { enabled: true, minLevel: 'debug' } }, integrations: { drizzle: { enabled: true, minLevel: 'debug' } } })
+    const enabled = await read()
+    const attempts = (await logs('requestId=' + enabled.requestId)).filter(row => row.origin?.integration === 'drizzle')
+    expect(attempts.length).toBeGreaterThan(0)
+    for (const row of attempts) expect(row).toMatchObject({ source: 'system', level: 'debug', outcome: 'started', resourceType: 'database_connection', resourceId: 'enterprise_read',
+      origin: { runtime: 'node', integration: 'drizzle', capture: 'hook', execution: 'worker' } })
+    await policyPatch({ integrations: { drizzle: { enabled: false, minLevel: 'debug' } } })
+    const disabled = await read()
+    expect((await logs('requestId=' + disabled.requestId)).filter(row => row.origin?.integration === 'drizzle')).toEqual([])
+    await policyPatch({ sources: { system: { enabled: false, minLevel: 'debug' } }, integrations: { drizzle: { enabled: true, minLevel: 'debug' } } })
+    const sourceDisabled = await read()
+    expect((await logs('requestId=' + sourceDisabled.requestId)).filter(row => row.origin?.integration === 'drizzle')).toEqual([])
+    expect(output).not.toContain(PRIVATE)
+  } finally { await policyPatch(previous) }
+})

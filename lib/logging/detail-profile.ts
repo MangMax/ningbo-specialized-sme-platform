@@ -83,6 +83,12 @@ function correlationFields(event: DetailEvent, target: string[]): string[] {
   return keys.filter(key => !target.includes(key) && present(event, key))
 }
 function targetNote(event: DetailEvent): string | undefined {
+  if (event.origin?.integration === 'drizzle' && event.operation.startsWith('db.query.')) {
+    return 'Drizzle 执行前查询钩子，仅表示查询尝试，不代表执行成功或失败；不保存 SQL 或绑定参数。准备或参数绑定失败可能不触发此钩子。'
+  }
+  if (event.origin?.integration === 'embedpdf' && event.operation.startsWith('client.embedpdf.log_')) {
+    return '这里只记录 EmbedPDF 原生日志的级别，不据此判断文档是否加载或渲染成功；原始消息与参数不进入日志。'
+  }
   if (event.source === 'file' && event.operation === 'file.upload' && !event.tus) {
     return '未获得可验证的服务端 tus uploadId；请求可能在创建上传前已被拒绝，尚不能关联分片。'
   }
