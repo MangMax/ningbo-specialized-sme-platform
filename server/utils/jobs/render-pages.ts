@@ -1,4 +1,4 @@
-import { appLog, type LogContext } from '../../../lib/logging'
+import { appLog } from '../../../lib/logging'
 import { findFileIdByRelPath } from '../mcp-files'
 import { isPdfPath, normalizeDpi } from '../../../lib/pdf-page'
 import type { RenderOutcome } from '../pdf-pages'
@@ -119,7 +119,7 @@ export async function runRenderPages(
   params: Record<string, unknown>,
 ): Promise<JobCompletion> {
   const { files, dpi, force } = params as unknown as RenderPagesParams
-  const logContext = { ...(ctx as JobContext & { logContext?: LogContext }).logContext, taskId: ctx.jobId }
+  const logContext = { ...ctx.logContext, taskId: ctx.jobId }
   const outcomes: RenderedFileOutcome[] = []
   let failed = 0
 

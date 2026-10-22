@@ -18,6 +18,7 @@ let child: ReturnType<typeof spawn>
 let origin: string
 let output = ''
 let sequence = 0
+const taskRequests = new Map<string, string>()
 const observations: Array<{ filter: string; rows: unknown[] }> = []
 async function call(path: string, method = 'GET', body?: unknown, authorized = true) {
   const response = await fetch(origin + path, { method, headers: { ...(authorized ? { authorization: 'Bearer PRIVATE186_API_TOKEN' } : {}), 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
@@ -29,6 +30,7 @@ async function call(path: string, method = 'GET', body?: unknown, authorized = t
 async function job(kind: string, paths: string[]) {
   const submitted = await call('/api/jobs', 'POST', { kind, params: { files: paths } })
   expect(submitted.status).toBe(202)
+  taskRequests.set(submitted.body.jobId, submitted.requestId!)
   return submitted.body.jobId as string
 }
 async function terminal(id: string) {
@@ -95,6 +97,7 @@ it('actual Nuxt preserves full-PDF atomicity and recovers only the failed source
   expect((await terminal(failedId)).state).toBe('failed')
   expect((await call(`/api/ocr-results?fileId=${file.id}&markdown=1`)).body.pages).toEqual([])
   const failed = await logs(`taskId=${failedId}`, 'ocr.file')
+  expect(failed.filter(r => r.source === 'ocr').every(r => r.requestId === taskRequests.get(failedId))).toBe(true)
   expect(failed.filter(r => r.operation === 'ocr.page' && r.outcome === 'failure')).toMatchObject([{ fileId: file.id, page: 2 }])
   expect(failed.find(r => r.operation === 'ocr.file' && r.outcome === 'partial')).toMatchObject({ fileId: file.id })
   fixture.failOnPage = undefined
@@ -106,6 +109,10 @@ it('actual Nuxt preserves full-PDF atomicity and recovers only the failed source
   const result = await call(`/api/ocr-results?fileId=${file.id}&markdown=1`)
   expect(result.body.pages.map((p: any) => [p.page, p.markdown])).toEqual([[1, privateText], [2, privateText], [3, privateText]])
   const recovered = await logs(`taskId=${recoveryId}`, 'ocr.file')
+  expect(recovered.filter(r => r.source === 'ocr').every(r => r.requestId === taskRequests.get(recoveryId))).toBe(true)
+  const rendering = await logs(`taskId=${renderId}`, 'file.render')
+  expect(rendering.find(r => r.operation === 'file.render')).toMatchObject({ requestId: taskRequests.get(renderId), fileId: file.id })
+  expect(completed.params).not.toHaveProperty('logContext')
   expect(recovered.filter(r => r.operation === 'ocr.page' && r.outcome === 'success')).toMatchObject([{ page: 2, fileId: file.id }])
   expect(recovered.filter(r => r.operation === 'ocr.page.cache').map(r => r.page).sort()).toEqual([1, 3])
   expect((await logs(`fileId=${file.id}`, 'file.register')).find(r => r.operation === 'file.register')).toMatchObject({ requestId: file.requestId })

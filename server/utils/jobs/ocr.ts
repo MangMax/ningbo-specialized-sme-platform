@@ -1,4 +1,4 @@
-import { appLog, type LogContext } from '../../../lib/logging'
+import { appLog } from '../../../lib/logging'
 import { DEFAULT_DPI, isPdfPath } from '../../../lib/pdf-page'
 import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
 import { findFileIdByRelPath } from '../mcp-files'
@@ -219,7 +219,7 @@ export async function runOcr(
   config = resolveOcrConfig(),
 ): Promise<JobCompletion> {
   const { files, model } = params as unknown as OcrParams
-  const logContext = { ...(ctx as JobContext & { logContext?: LogContext }).logContext, taskId: ctx.jobId }
+  const logContext = { ...ctx.logContext, taskId: ctx.jobId }
   const startedAt = Date.now()
   appLog({ source: 'ocr', operation: 'ocr.recognize', outcome: 'started', counts: { total: files.length } }, logContext)
   if (!config.token) {
