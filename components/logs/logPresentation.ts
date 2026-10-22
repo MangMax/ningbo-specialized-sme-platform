@@ -23,6 +23,15 @@ export function sourceLabel(source: string): string {
 }
 
 /**
+ * 来源契约本身没有 runtime 元数据；配置页只把已知的浏览器自报来源单列，
+ * 其余来源归服务端。这里只影响展示分组，不改变任何来源策略。
+ */
+export const CLIENT_LOG_SOURCES: ReadonlySet<string> = new Set(['client'])
+export function isClientLogSource(source: string): boolean {
+  return CLIENT_LOG_SOURCES.has(source)
+}
+
+/**
  * 结果原码 → 中文。unknown/no_record/denied/partial 各自成词，不并入成功或失败；
  * 未知原码原样显示，不编造含义。
  */
@@ -109,7 +118,35 @@ export const OPERATION_LABELS: Record<string, string> = {
   'export.artifact.cleanup': '清理导出产物',
   'export.legacy.enterprises.summary': '导出企业汇总',
   'platform.batch.collect': '平台批量采集',
-  'platform.batch.retry': '平台批量重试'
+  'platform.batch.retry': '平台批量重试',
+  // Drizzle 钩子在执行前只记录查询尝试；标签保持中性，不写成查询成功或已完成。
+  'db.query.select': '数据库查询 · SELECT',
+  'db.query.insert': '数据库查询 · INSERT',
+  'db.query.update': '数据库查询 · UPDATE',
+  'db.query.delete': '数据库查询 · DELETE',
+  'db.query.other': '数据库查询 · 其他',
+  // 客户端库的 21 个固定 operation；结果仍由服务端映射的 outcome 表达。
+  'client.tus.upload_started': 'tus 上传开始',
+  'client.tus.upload_ready': 'tus 上传地址可用',
+  'client.tus.upload_success': 'tus 上传完成',
+  'client.tus.upload_failure': 'tus 上传失败',
+  'client.embedpdf.log_debug': 'EmbedPDF 调试日志',
+  'client.embedpdf.log_info': 'EmbedPDF 信息日志',
+  'client.embedpdf.log_warn': 'EmbedPDF 警告日志',
+  'client.embedpdf.log_error': 'EmbedPDF 错误日志',
+  'client.embedpdf.startup_failure': 'EmbedPDF 启动失败',
+  'client.embedpdf.document_ready': 'EmbedPDF 文档就绪',
+  'client.embedpdf.document_failure': 'EmbedPDF 文档加载失败',
+  'client.colada.query_success': 'Colada 查询成功',
+  'client.colada.query_failure': 'Colada 查询失败',
+  'client.colada.mutation_success': 'Colada 变更成功',
+  'client.colada.mutation_failure': 'Colada 变更失败',
+  'client.router.navigation_success': '路由跳转成功',
+  'client.router.navigation_aborted': '路由跳转被中止',
+  'client.router.navigation_cancelled': '路由跳转被取消',
+  'client.router.navigation_duplicated': '路由跳转重复',
+  'client.router.navigation_failure': '路由跳转失败',
+  'client.router.navigation_error': '路由跳转错误'
 }
 export function operationLabel(operation: string): string | null {
   return OPERATION_LABELS[operation] ?? null
@@ -163,10 +200,22 @@ export function formatCounts(counts?: LogEvent['counts'], operation?: string): s
 }
 
 export function resourceTypeLabel(resourceType?: string): string {
+  if (resourceType === 'database_connection') return '数据库连接'
   if (resourceType === 'export_artifact') return '导出产物'
   if (resourceType === 'export_job') return '导出任务'
   if (resourceType === 'enterprise') return '企业'
   return resourceType || '资源'
+}
+
+/** Drizzle 只上报七种固定连接用途；括号内保留原码，未知码原样显示。 */
+export const CONNECTION_PURPOSE_LABELS: Record<string, string> = {
+  primary: '主业务库',
+  enterprise_read: '企业读取',
+  import_execution: '导入执行',
+  current_qualification: '当前称号',
+  record_comparison: '记录比对',
+  evidence_review: '依据复核',
+  platform_summary: '平台汇总缓存'
 }
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '')
@@ -175,6 +224,18 @@ const hasText = (value: unknown): value is string => typeof value === 'string' &
 const idText = (value: unknown): string =>
   typeof value === 'string' ? value : typeof value === 'number' && Number.isFinite(value) ? String(value) : ''
 const hasId = (value: unknown): value is string | number => idText(value).length > 0
+/** 只给固定码加中文用途；其他资源标识保持原值，不猜含义。 */
+export function resourceIdLabel(
+  resourceType: string | undefined,
+  resourceId: string | number | undefined
+): string {
+  const id = idText(resourceId)
+  if (resourceType === 'database_connection') {
+    const purpose = CONNECTION_PURPOSE_LABELS[id]
+    if (purpose) return `${purpose}（${id}）`
+  }
+  return id
+}
 
 /**
  * 失败码只展示安全原码；不翻译成失败原因，也不从 outcome 反推具体码。
@@ -215,7 +276,7 @@ function businessTarget(row: LogSummary, kind: LogTargetKind): LogTarget {
   }
   if (kind === 'export') {
     if (hasId(row.resourceId) && hasText(row.resourceType)) {
-      parts.push(`${resourceTypeLabel(row.resourceType)} ${idText(row.resourceId)}`)
+      parts.push(`${resourceTypeLabel(row.resourceType)} ${resourceIdLabel(row.resourceType, row.resourceId)}`)
       usedIds.push(idText(row.resourceId))
     }
     if (hasText(row.taskId)) {
@@ -230,7 +291,7 @@ function businessTarget(row: LogSummary, kind: LogTargetKind): LogTarget {
     }
     // worker 的进程生命周期事件没有 taskId；若事件本身记录了资源，只显示该事实，不推断。
     if (kind === 'worker' && hasId(row.resourceId)) {
-      parts.push(`${resourceTypeLabel(row.resourceType)} ${idText(row.resourceId)}`)
+      parts.push(`${resourceTypeLabel(row.resourceType)} ${resourceIdLabel(row.resourceType, row.resourceId)}`)
       usedIds.push(idText(row.resourceId))
     }
   }
@@ -241,7 +302,7 @@ function businessTarget(row: LogSummary, kind: LogTargetKind): LogTarget {
     }
     if (row.page !== undefined) parts.push(`第 ${row.page} 页`)
     if (hasId(row.resourceId) && !usedIds.includes(idText(row.resourceId))) {
-      parts.push(`${resourceTypeLabel(row.resourceType)} ${idText(row.resourceId)}`)
+      parts.push(`${resourceTypeLabel(row.resourceType)} ${resourceIdLabel(row.resourceType, row.resourceId)}`)
       usedIds.push(idText(row.resourceId))
     }
   }
@@ -283,7 +344,7 @@ export function rowTarget(row: LogSummary): LogTarget {
       if (hasId(row.resourceId))
         return {
           kind: 'system',
-          text: `${resourceTypeLabel(row.resourceType)} ${idText(row.resourceId)}`,
+          text: `${resourceTypeLabel(row.resourceType)} ${resourceIdLabel(row.resourceType, row.resourceId)}`,
           missing: false,
           untrusted: false,
           usedIds: [idText(row.resourceId)]

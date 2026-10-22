@@ -636,6 +636,76 @@ await check('MCP and TUS details keep source-specific sections and fit at 1280 a
   return results
 })
 
+// ---------- 4c) new library detail: Drizzle attempt and EmbedPDF severity ----------
+await check('Drizzle and EmbedPDF details explain observation-only facts without claiming results', async () => {
+  const results = []
+  for (const [width, height] of [[1280, 800], [390, 844]]) {
+    await setViewport(width, height)
+    const slug = width === 1280 ? '1280x800' : '390x844'
+    const sheetExpr = `[...document.querySelectorAll('[role="dialog"]')].find((d) => d.textContent.includes('运行日志详情'))`
+
+    await navigate(
+      filterUrl({ operation: 'db.query.select' }),
+      `document.querySelectorAll('[data-log-detail]').length > 0`
+    )
+    await click('[data-log-detail]')
+    await waitFor(`(() => { const el = ${sheetExpr}; return el && el.textContent.includes('Drizzle 执行前查询钩子') })()`)
+    const drizzle = await evaluate(`(() => {
+      const el = ${sheetExpr}
+      const rect = el.getBoundingClientRect()
+      return {
+        groups: [...el.querySelectorAll('h3')].map((h) => h.textContent.trim()),
+        text: el.textContent,
+        sheet: { left: rect.left, right: rect.right, width: rect.width },
+        page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }
+      }
+    })()`)
+    const drizzleShot = await shot(`browser-${width === 1280 ? 'desktop' : 'mobile'}-drizzle-detail-${slug}.png`)
+    assert.deepEqual(drizzle.groups, ['基本信息', '采集信息', '目标与对象', '结果与计数'])
+    assert.ok(drizzle.text.includes('数据库查询 · SELECT'))
+    assert.ok(drizzle.text.includes('已开始（started）'))
+    assert.ok(drizzle.text.includes('Drizzle 数据库（drizzle）'))
+    assert.ok(drizzle.text.includes('数据库连接 主业务库（primary）'))
+    assert.ok(drizzle.text.includes('仅表示查询尝试'))
+    assert.ok(!drizzle.text.includes('查询成功'))
+    assert.equal(drizzle.page.scrollWidth, drizzle.page.clientWidth)
+    assert.ok(drizzle.sheet.width <= width)
+    await evaluate(`(() => { const el = ${sheetExpr}; el?.querySelector(':scope > button')?.click() })()`)
+    await waitFor(`!(${sheetExpr})`)
+
+    await navigate(
+      filterUrl({ operation: 'client.embedpdf.log_warn' }),
+      `document.querySelectorAll('[data-log-detail]').length > 0`
+    )
+    await click('[data-log-detail]')
+    await waitFor(`(() => { const el = ${sheetExpr}; return el && el.textContent.includes('这里只记录 EmbedPDF 原生日志的级别') })()`)
+    const pdf = await evaluate(`(() => {
+      const el = ${sheetExpr}
+      const rect = el.getBoundingClientRect()
+      return {
+        groups: [...el.querySelectorAll('h3')].map((h) => h.textContent.trim()),
+        text: el.textContent,
+        sheet: { left: rect.left, right: rect.right, width: rect.width },
+        page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }
+      }
+    })()`)
+    const pdfShot = await shot(`browser-${width === 1280 ? 'desktop' : 'mobile'}-embedpdf-detail-${slug}.png`)
+    assert.deepEqual(pdf.groups, ['基本信息', '采集信息', '目标与对象', '结果与计数'])
+    assert.ok(pdf.text.includes('EmbedPDF 警告日志'))
+    assert.ok(pdf.text.includes('结果未知（unknown）'))
+    assert.ok(pdf.text.includes('EmbedPDF（embedpdf）'))
+    assert.ok(pdf.text.includes('客户端上报的上下文不可信'))
+    assert.ok(pdf.text.includes('不据此判断文档是否加载或渲染成功'))
+    assert.ok(!pdf.text.includes('加载失败'))
+    assert.equal(pdf.page.scrollWidth, pdf.page.clientWidth)
+    assert.ok(pdf.sheet.width <= width)
+    await evaluate(`(() => { const el = ${sheetExpr}; el?.querySelector(':scope > button')?.click() })()`)
+    await waitFor(`!(${sheetExpr})`)
+    results.push({ width, drizzle, pdf, drizzleShot, pdfShot })
+  }
+  return results
+})
+
 // ---------- 5) real normal HTTP event ----------
 await check('real 200 /api/health event renders method, route, status and neutral failure code', async () => {
   await setViewport(1280, 800)
@@ -760,41 +830,55 @@ await check('clear and policy review cancel without any write request', async ()
 })
 
 // ---------- 9) dual-axis collection settings ----------
-await check('dual-axis settings review and save only changed rules; unwired stays non-configurable', async () => {
+await check('dual-axis settings review and save only changed rules across the new groups', async () => {
   await setViewport(1280, 800)
   await navigate(syntheticUrl.href, `document.querySelectorAll('[data-log-detail]').length > 0`)
   await clickButtonText('日志配置')
   await waitFor(`!!document.querySelector('[data-testid="log-collection-sources"]')`)
   await waitFor(`!!document.querySelector('[data-testid="log-collection-integrations"]')`)
-  const layout = await evaluate(`(() => ({
-    switches: document.querySelectorAll('[data-slot="switch"]').length,
-    checkboxes: document.querySelectorAll('input[type="checkbox"]').length,
-    sources: document.querySelectorAll('[data-testid="log-collection-sources"] [data-slot="switch"]').length,
-    integrations: document.querySelectorAll('[data-testid="log-collection-integrations"] [data-slot="switch"]').length,
-    page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth },
-    unwired: document.querySelector('[data-testid="log-unwired-integrations"]')?.textContent ?? ''
-  }))()`)
-  assert.equal(layout.switches, 17)
-  assert.equal(layout.checkboxes, 0)
-  assert.equal(layout.sources, 11)
-  assert.equal(layout.integrations, 6)
-  assert.equal(layout.page.scrollWidth, layout.page.clientWidth)
-  assert.ok(layout.unwired.includes('未接入的技术集成（5）'))
-
-  // 未接入项折叠，展开后仍没有伪开关。
-  await evaluate(`(() => {
-    const el = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('未接入的技术集成'))
-    el?.scrollIntoView({ block: 'center' })
-    el?.click()
-    return !!el
+  const layout = await evaluate(`(() => {
+    const count = (selector) => document.querySelectorAll(selector).length
+    const text = (selector) => document.querySelector(selector)?.textContent ?? ''
+    return {
+      switches: count('[data-slot="switch"]'),
+      checkboxes: count('input[type="checkbox"]'),
+      nativeSelects: count('select'),
+      details: count('details'),
+      sources: count('[data-testid="log-collection-sources"] [data-slot="switch"]'),
+      integrations: count('[data-testid="log-collection-integrations"] [data-slot="switch"]'),
+      technicalNode: count('[data-testid="log-technical-node"] [data-slot="switch"]'),
+      technicalBrowser: count('[data-testid="log-technical-browser"] [data-slot="switch"]'),
+      businessShared: count('[data-testid="log-business-shared"] [data-slot="switch"]'),
+      businessNode: count('[data-testid="log-business-node"] [data-slot="switch"]'),
+      businessBrowser: count('[data-testid="log-business-browser"] [data-slot="switch"]'),
+      applicationSwitches: count('#log-integration-application-enabled'),
+      headings: [...document.querySelectorAll('h2')].map((el) => el.textContent.trim()),
+      technicalText: text('[data-testid="log-collection-integrations"]'),
+      businessText: text('[data-testid="log-collection-sources"]'),
+      sharedText: text('[data-testid="log-business-shared"]'),
+      hasUnwired: !!document.querySelector('[data-testid="log-unwired-integrations"]'),
+      page: { scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }
+    }
   })()`)
-  await waitFor(`document.body.textContent.includes('Drizzle 数据库')`)
-  const unwired = await evaluate(`(() => ({
-    text: document.body.textContent,
-    fakeSwitch: !!document.querySelector('#log-integration-drizzle-enabled')
-  }))()`)
-  assert.ok(unwired.text.includes('未接入，不可配置'))
-  assert.equal(unwired.fakeSwitch, false)
+  // 真实目录：技术 10 + 业务来源 11 + 跨端共享 application 1 = 22；不再有未接入项。
+  assert.equal(layout.switches, 22)
+  assert.equal(layout.checkboxes, 0)
+  assert.equal(layout.nativeSelects, 0)
+  assert.equal(layout.details, 0)
+  assert.equal(layout.sources, 11)
+  assert.equal(layout.integrations, 11)
+  assert.equal(layout.technicalNode, 4)
+  assert.equal(layout.technicalBrowser, 6)
+  assert.equal(layout.businessShared, 1)
+  assert.equal(layout.businessNode, 10)
+  assert.equal(layout.businessBrowser, 1)
+  assert.equal(layout.applicationSwitches, 1)
+  assert.deepEqual(layout.headings, ['技术集成', '业务埋点', '保留策略', '范围清理'])
+  assert.ok(layout.sharedText.includes('服务端和客户端共用'))
+  assert.ok(layout.businessText.includes('也包括技术集成采集的事件'))
+  assert.ok(!layout.technicalText.includes('应用手动埋点'))
+  assert.equal(layout.hasUnwired, false)
+  assert.equal(layout.page.scrollWidth, layout.page.clientWidth)
 
   // 改一条来源开关和一条最低级别，均通过共享 Reka 控件。
   await click('#log-source-http-enabled')
@@ -813,7 +897,7 @@ await check('dual-axis settings review and save only changed rules; unwired stay
 
   // 采集配置截图先取，避免把核对对话框叠在页面上；滚动发生在 settings tab 内部。
   await evaluate(`(() => {
-    const panel = [...document.querySelectorAll('[data-slot="tabs-content"]')].find((el) => el.textContent?.includes('来源采集'))
+    const panel = [...document.querySelectorAll('[data-slot="tabs-content"]')].find((el) => el.textContent?.includes('业务埋点'))
     panel?.scrollTo(0, 0)
     return true
   })()`)
@@ -856,7 +940,7 @@ await check('dual-axis settings review and save only changed rules; unwired stay
     }
   })
   assert.ok(!('integrations' in body.collection))
-  return { layout, unwired, reviewText, body, settingsShot, reviewShot }
+  return { layout, reviewText, body, settingsShot, reviewShot }
 })
 
 // ---------- 10) settings at 390 ----------
@@ -870,7 +954,7 @@ await check('390 settings stay full width with no horizontal scroll', async () =
   }))()`)
   const shotPath = await shot('browser-mobile-log-config-390x844.png')
   assert.equal(mobile.page.scrollWidth, mobile.page.clientWidth)
-  assert.equal(mobile.switchCount, 17)
+  assert.equal(mobile.switchCount, 22)
   assert.ok(mobile.settingsWidth > 300)
   return { ...mobile, shotPath }
 })
