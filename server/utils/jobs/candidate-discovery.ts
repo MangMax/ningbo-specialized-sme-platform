@@ -159,9 +159,11 @@ function updateCounts(result: CandidateJobResult) {
     existing: result.items.reduce((n, i) => n + i.existing, 0),
   }
 }
-/** Domain source fingerprints retain full original provenance. Admit at most 1MiB
- * per source before invoking it, so a giant archive fails explicitly without
- * ever crossing the driver boundary. No new fingerprint model or migration. */
+// Measured envelope, not a domain/import size restriction. See
+// docs/candidate-discovery-tasks.md for resource measurements and retry limits.
+const MAX_SOURCE_BYTES = 4 * 1024 * 1024
+/** The existing domain hydrates one selected source for its fingerprint and
+ * audit. Bound that work before hydration; discovery never loads the corpus. */
 function checkSourceBudget(db: Db, relationId: number) {
   const bytes = db
     .select({
@@ -174,7 +176,7 @@ function checkSourceBudget(db: Db, relationId: number) {
     )
     .where(eq(schema.platformRelation.id, relationId))
     .get()?.n
-  if (bytes == null || bytes > 1_048_576)
+  if (bytes == null || bytes > MAX_SOURCE_BYTES)
     fail('source_materialization_limit', 422)
 }
 async function run(ctx: JobContext, raw: Record<string, unknown>) {
@@ -340,7 +342,11 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
   return {
     result,
     ...(result.counts.failed
-      ? { error: '部分事件失败；已完成候选保留，可重试未完成项。' }
+      ? {
+          error: result.items.some((item) => item.errorCode === 'source_materialization_limit')
+            ? '部分事件原档超过4 MiB任务处理上限；此原行未写入，原档与已完成候选保留。原档不变时重试仍会失败，请按原行核对。'
+            : '部分事件失败；已完成候选保留，可重试未完成项。',
+        }
       : {}),
     progress: {
       done: result.counts.succeeded + result.counts.failed,

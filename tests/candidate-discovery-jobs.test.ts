@@ -552,12 +552,84 @@ it('protects a support decision committed after page discovery but before its ro
     result: { counts: { created: 1, existing: 1 } },
   })
 })
-it('rejects oversized original archives before raw materialization and preserves successful work on retry', async () => {
+
+it('accepts the exact four MiB combined source budget and retains escaped source and audit bytes', async () => {
+  const f = fixture()
+  const { eq } = await import('drizzle-orm')
+  const collectionEvidence = { padding: '\\"\n\u0000汉😀'.repeat(2000) }
+  const rawFields = { padding: '\\"\n\u0000汉😀'.repeat(2000) }
+  const rawResponse = 'R'.repeat(4_194_304 - Buffer.byteLength(JSON.stringify(collectionEvidence)) - Buffer.byteLength(JSON.stringify(rawFields)))
+  f.db.update(schema.platformQuery).set({ rawResponse, collectionEvidence: collectionEvidence as any }).where(eq(schema.platformQuery.id, f.query.id)).run()
+  f.db.update(schema.platformRelation).set({ rawFields }).where(eq(schema.platformRelation.id, f.relation.id)).run()
+  const task = submitCandidateDiscovery(f.db, { eventIds: [f.event.id], clientRequestId: 'exact-source-budget' }, f.dir)
+  await whenIdle()
+  expect(getJob(f.db, task.jobId)).toMatchObject({ state: 'done', result: { counts: { created: 1, failed: 0 } } })
+  const edge = f.read('list', { query: { eventId: f.event.id } }).rows[0]
+  const { getRecordCorrespondenceAudit } = await import('../server/utils/record-correspondence')
+  const evidence = getRecordCorrespondenceAudit(f.db, edge.id)[0]!.evidence as any
+  expect(evidence.query.rawResponse).toBe(rawResponse)
+  expect(evidence.query.collectionEvidence).toEqual(collectionEvidence)
+  expect(evidence.relation.rawFields).toEqual(rawFields)
+  // One extra stored UTF-8 byte, across the same three columns, fails before domain writes.
+  const next = f.db.insert(schema.platformRelation).values({ ...f.relation, id: undefined, sequenceNo: 2, rawFields: { padding: rawFields.padding + 'Z' } }).returning().get()
+  const over = submitCandidateDiscovery(f.db, { eventIds: [f.event.id], clientRequestId: 'combined-source-over-budget' }, f.dir)
+  await whenIdle()
+  expect(getJob(f.db, over.jobId)).toMatchObject({ state: 'failed', error: expect.stringContaining('原档不变时重试仍会失败'), result: { counts: { existing: 1, created: 0, failed: 1 }, items: [{ errorCode: 'source_materialization_limit' }] } })
+  expect(f.read('list', { query: { relationId: next.id } }).total).toBe(0)
+  expect(getRecordCorrespondenceAudit(f.db, edge.id)[0]!.evidence).toEqual(evidence)
+  const { retryCandidateDiscovery } = await import('../server/utils/jobs/candidate-discovery')
+  retryCandidateDiscovery(f.db, over.jobId, f.dir)
+  await whenIdle()
+  expect(getJob(f.db, over.jobId)).toMatchObject({ state: 'failed', result: { attempt: 2, counts: { existing: 1, created: 0, failed: 1 } } })
+  expect(getRecordCorrespondenceAudit(f.db, edge.id)[0]!.evidence).toEqual(evidence)
+})
+it('resumes an imported source above one MiB after cancellation and runner restoration without repeating a manual decision', async () => {
+  const f = fixture()
+  const { commitRosterImport } = await import('../server/utils/roster-import')
+  const { requestJobCancel } = await import('../server/utils/job-runner')
+  const { retryCandidateDiscovery } = await import('../server/utils/jobs/candidate-discovery')
+  const rawResponse = JSON.stringify({ data: [], padding: 'X'.repeat(1_048_576) })
+  const importRequest = {
+    idempotencyKey: 'large-source-recovery', sourceKind: 'platform_export' as const, sourceIdentity: 'synthetic/large-recovery',
+    payload: { platformQueries: [{ interface: 'business_list' as const, queryKey: f.enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-23T04:00:00Z', status: 'success' as const, rawResponse,
+      relations: [{ sequenceNo: 1, enterpriseId: f.enterprise.id, usccRaw: f.enterprise.usccNorm, year: 2022, declareKind: 'apply' as const, verificationStatus: 'confirmed' as const }] }] },
+   }
+  const receipt = commitRosterImport(f.db, importRequest)
+  expect(receipt.status).toBe('committed')
+  const id = receipt.candidateTaskIds[0]!
+  while (!(getJob(f.db, id)?.result as any)?.counts.created) await new Promise(r => setImmediate(r))
+  requestJobCancel(f.db, id)
+  await whenIdle()
+  expect(getJob(f.db, id)).toMatchObject({ state: 'cancelled', result: { counts: { created: 1 } } })
+  const first = f.read('list', { query: { eventId: f.event.id } }).rows[0]
+  const { preflightRecordCorrespondences, commitRecordCorrespondences, getRecordCorrespondenceAudit } = await import('../server/utils/record-correspondence')
+  const request = { idempotencyKey: 'large-recovery-manual-reject', sourceIdentity: 'manual', actor: { type: 'user' as const, id: 'synthetic-reviewer' }, basis: '合成核验', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'decide' as const, correspondenceId: first.id, expectedRevision: 1, status: 'rejected' as const }] }
+  commitRecordCorrespondences(f.db, request, preflightRecordCorrespondences(f.db, request).planHash)
+  const audit = f.read('audit', { id: first.id })
+  __resetJobRunner()
+  clearJobSpecs()
+  ensureJobRunnerReady(f.db)
+  retryCandidateDiscovery(f.db, id, f.dir)
+  await whenIdle()
+  expect(getJob(f.db, id)).toMatchObject({ state: 'done', result: { attempt: 2, counts: { created: 2, failed: 0 } } })
+  const rows = f.read('list', { query: { eventId: f.event.id } }).rows
+  expect(rows).toHaveLength(2)
+  expect(f.read('get', { id: first.id }).status).toBe('rejected')
+  expect(f.read('audit', { id: first.id })).toEqual(audit)
+  const added = rows.find((r: any) => r.id !== first.id)
+  expect((getRecordCorrespondenceAudit(f.db, added.id)[0]!.evidence as any).query.rawResponse).toBe(rawResponse)
+  const replay = commitRosterImport(f.db, importRequest)
+  expect(replay.candidateTaskIds).toEqual(receipt.candidateTaskIds)
+  await whenIdle()
+  expect(f.read('list', { query: { eventId: f.event.id } }).total).toBe(2)
+  expect(f.read('audit', { id: added.id }).rows).toHaveLength(1)
+}, 20_000)
+it('rejects sources above the measured budget before raw materialization', async () => {
   const f = fixture()
   const { eq } = await import('drizzle-orm')
   f.db
     .update(schema.platformQuery)
-    .set({ rawResponse: 'X'.repeat(1_048_577) })
+    .set({ rawResponse: 'X'.repeat(4_194_305) })
     .where(eq(schema.platformQuery.id, f.query.id))
     .run()
   const prepare = f.db.$client.prepare.bind(f.db.$client)

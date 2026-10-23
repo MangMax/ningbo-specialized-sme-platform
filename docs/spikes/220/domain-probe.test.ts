@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { getTableColumns, eq } from 'drizzle-orm'
 import { expect, it } from 'vitest'
-import { useDb, schema as s } from '@repo/db/client'
-import { preflightRecordCorrespondences as preflight, commitRecordCorrespondences as commit } from '@repo/server/utils/record-correspondence'
+import { useDb, schema as s } from '../../../db/client'
+import { preflightRecordCorrespondences as preflight, commitRecordCorrespondences as commit } from '../../../server/utils/record-correspondence'
 const out = process.env.SPIKE_OUT!
 const hash = (text: string) => createHash('sha256').update(text).digest('hex')
 const q = (s: string) => '"' + s.replaceAll('"', '""') + '"'
