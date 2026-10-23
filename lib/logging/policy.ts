@@ -52,7 +52,7 @@ export function decodeStoredLogCollection(value: unknown, initial: LogCollection
   }
   const legacy = !!value && typeof value === 'object' && Object.hasOwn(value, 'sources') && Object.hasOwn(value, 'integrations')
   const envelope = legacy ? undefined : record(value, ['version', 'collection', 'fieldControls'])
-  if (envelope && envelope.version !== 1) throw new Error('invalid_log_policy')
+  if (envelope && envelope.version !== 1 && envelope.version !== 2) throw new Error('invalid_log_policy')
   const raw = record(legacy ? value : envelope!.collection, ['sources', 'integrations'])
   const validated = validate(raw)
   const collection = {} as LogCollection
@@ -63,6 +63,14 @@ export function decodeStoredLogCollection(value: unknown, initial: LogCollection
     }
     collection[dimension] = { ...initial[dimension], ...rules } as never
   }
-  const fieldControls = legacy ? defaults(profiles) : complete(envelope!.fieldControls, profiles)
-  return { legacy, collection, fieldControls }
+  let fieldControls: LogFieldControls
+  if (legacy) fieldControls = defaults(profiles)
+  else if (envelope!.version === 1) {
+    // v1 is explicitly HTTP-only. Reject added/missing keys before adding the
+    // one v2 profile; never treat arbitrary damaged profiles as new defaults.
+    const httpProfiles = profiles.filter(profile => profile.key === 'http')
+    const previous = complete(envelope!.fieldControls, httpProfiles)
+    fieldControls = { ...defaults(profiles), http: previous.http }
+  } else fieldControls = complete(envelope!.fieldControls, profiles)
+  return { needsMigration: legacy || envelope?.version === 1, collection, fieldControls }
 }

@@ -153,7 +153,7 @@ it('migrates legacy under concurrent first opens preserving revision and managem
   for (const snapshot of snapshots) expect(snapshot).toMatchObject({ revision: 19, collection, fieldControls: defaultFieldControls(LOG_FIELD_PROFILES) })
   await Promise.all([first.setPolicy(patch({ http: { error: { httpRoute: false } } })), second.setPolicy(patch({ http: { warn: { statusCode: false } } }))])
   expect(await first.policy()).toMatchObject({ revision: 21, collection, fieldControls: { http: { error: { httpRoute: false }, warn: { statusCode: false } } } })
-  edit(directory, db => { const saved = JSON.parse((db.prepare('SELECT collection FROM log_collection').get() as any).collection); expect(saved.version).toBe(1); expect(saved.collection).toEqual(collection); expect(saved.fieldControls.http.error.httpRoute).toBe(false) })
+  edit(directory, db => { const saved = JSON.parse((db.prepare('SELECT collection FROM log_collection').get() as any).collection); expect(saved.version).toBe(2); expect(saved.collection).toEqual(collection); expect(saved.fieldControls.http.error.httpRoute).toBe(false) })
 })
 
 it('strips forged capture at public emit and records disabled missing fields as configuration only', async () => {
@@ -192,7 +192,7 @@ it('permits only projected bounded stdout after real storage ABORT and ROLLBACK 
 
 for (const corruption of ['missing controls', 'missing profile', 'missing level', 'missing field', 'missing version', 'extra envelope key', 'missing integration', 'missing source', 'invalid revision', 'unknown version', 'unknown profile', 'invalid leaf'] as const) it(`fails closed for persisted ${corruption}`, async () => {
   const { service, directory } = fixture(); await service.policy(); await service.close()
-  const stored: any = { version: 1, collection: defaultLogCollection(), fieldControls: defaultFieldControls(LOG_FIELD_PROFILES) }
+  const stored: any = { version: 2, collection: defaultLogCollection(), fieldControls: defaultFieldControls(LOG_FIELD_PROFILES) }
   if (corruption === 'missing controls') delete stored.fieldControls
   if (corruption === 'missing profile') delete stored.fieldControls.http
   if (corruption === 'missing level') delete stored.fieldControls.http.info
@@ -202,7 +202,7 @@ for (const corruption of ['missing controls', 'missing profile', 'missing level'
   if (corruption === 'missing source') delete stored.collection.sources.http
   if (corruption === 'missing field') delete stored.fieldControls.http.info.httpRoute
   if (corruption === 'unknown version') stored.version = 99
-  if (corruption === 'unknown profile') stored.fieldControls.tus = {}
+  if (corruption === 'unknown profile') stored.fieldControls.future = {}
   if (corruption === 'invalid leaf') stored.fieldControls.http.info.httpRoute = null
   edit(directory, db => db.prepare('UPDATE log_collection SET collection=?').run(JSON.stringify(stored)))
   if (corruption === 'invalid revision') edit(directory, db => db.exec('UPDATE log_collection SET revision=-1'))
@@ -218,7 +218,7 @@ for (const corruption of ['missing controls', 'missing profile', 'missing level'
 
 it('validates closed partial field arguments and serialized policy budget without accepting accessors', () => {
   expect(validatePolicy(patch({ http: { info: { httpRoute: false } } }))).toEqual(patch({ http: { info: { httpRoute: false } } }))
-  for (const controls of [{ tus: {} }, { http: { trace: {} } }, { http: { info: { httpRoute: 0 } } }, null, []]) expect(() => validatePolicy(patch(controls))).toThrow('invalid_log_input')
+  for (const controls of [{ future: {} }, { http: { trace: {} } }, { http: { info: { httpRoute: 0 } } }, null, []]) expect(() => validatePolicy(patch(controls))).toThrow('invalid_log_input')
   expect(() => validatePolicy({ ...patch({}), extra: 'x'.repeat(5000) })).toThrow('invalid_log_input')
   const maximal = { ...base, collection: defaultLogCollection(), fieldControls: defaultFieldControls(LOG_FIELD_PROFILES) }
   expect(Buffer.byteLength(JSON.stringify(maximal), 'utf8')).toBeLessThanOrEqual(4096)
@@ -333,4 +333,79 @@ it('races legacy migration with a first management write without replacing its c
   expect(latest).toMatchObject({ revision: 28, collection: { sources: { http: { enabled: false } }, integrations: { drizzle: { enabled: true, minLevel: 'debug' } } }, fieldControls: { http: { info: { httpRoute: false } } } })
   await reader.close(); await manager.close()
   expect(await fixture(directory).service.policy()).toMatchObject({ revision: 28, fieldControls: latest.fieldControls, collection: latest.collection })
+})
+
+for (const format of ['legacy', 'v1', 'v2'] as const) it(`TUS policy ${format} open and concurrent PATCH preserves revision preferences restart and history`, async () => {
+  const { service, directory } = fixture()
+  const historyId = service.emit(input('migration.history'))!; await service.flush(); const history = await service.detail(historyId)
+  await service.close()
+  const collection = defaultLogCollection(); collection.sources.http.minLevel = 'warn'; collection.integrations.tus.enabled = false
+  const controls: any = { ...defaultFieldControls(LOG_FIELD_PROFILES), tus: Object.fromEntries(LOG_LEVELS.map(level => [level, { 'tus.method': true, 'tus.uploadId': true, 'tus.size': true, 'tus.offset': true }])) }
+  controls.http.info.httpRoute = false
+  if (format === 'v2') controls.tus.info['tus.uploadId'] = false
+  const persisted = format === 'legacy' ? collection : { version: format === 'v1' ? 1 : 2, collection, fieldControls: format === 'v1' ? { http: controls.http } : controls }
+  edit(directory, db => db.prepare('UPDATE log_collection SET collection=?,revision=40').run(JSON.stringify(persisted)))
+  let reader = fixture(directory).service, manager = fixture(directory).service
+  const opened = await Promise.all([reader.policy(), manager.policy()])
+  for (const policy of opened) {
+    expect(policy).toMatchObject({ revision: 40, collection })
+    expect(policy.fieldControls.http.info.httpRoute).toBe(format === 'legacy')
+    expect((policy.fieldControls as any).tus.info['tus.uploadId']).toBe(format !== 'v2')
+  }
+  await reader.close(); await manager.close()
+  edit(directory, db => db.prepare('UPDATE log_collection SET collection=?,revision=40').run(JSON.stringify(persisted)))
+  reader = fixture(directory).service; manager = fixture(directory).service
+  const cold = fixture(directory).service
+  // Both first opens and the first management write compete over the original format.
+  await Promise.all([reader.policy(), manager.setPolicy(patch({ tus: { warn: { 'tus.method': false } } }))])
+  await Promise.all([reader.setPolicy(patch({ http: { error: { durationMs: false } } })), manager.setPolicy(patch({ tus: { info: { 'tus.offset': false } } }))])
+  const latest = await reader.policy()
+  expect(latest).toMatchObject({ revision: 43, collection, fieldControls: { http: { error: { durationMs: false } }, tus: { warn: { 'tus.method': false }, info: { 'tus.offset': false } } } })
+  expect(latest.fieldControls.http.info.httpRoute).toBe(format === 'legacy')
+  expect((latest.fieldControls as any).tus.info['tus.uploadId']).toBe(format !== 'v2')
+  await manager.setPolicy(base); expect((await cold.policy()).fieldControls).toEqual(latest.fieldControls)
+  expect(await reader.detail(historyId)).toEqual(history)
+  edit(directory, db => { const saved = JSON.parse((db.prepare('SELECT collection FROM log_collection').get() as any).collection); expect(saved.version).toBe(2); expect(Object.keys(saved.fieldControls)).toEqual(['http', 'tus']) })
+  await reader.close(); await manager.close(); await cold.close()
+  const restarted = fixture(directory).service
+  expect(await restarted.policy()).toMatchObject({ revision: 44, fieldControls: latest.fieldControls, collection })
+  expect(await restarted.detail(historyId)).toEqual(history)
+})
+for (const corruption of ['v1 extra tus', 'v1 unknown profile', 'v1 missing http', 'v1 missing HTTP leaf', 'v2 missing http', 'v2 missing tus', 'v2 missing TUS level', 'v2 missing TUS leaf', 'v2 invalid TUS boolean', 'v2 unknown version'] as const) it(`TUS policy rejects ${corruption} without fallback or event stdout`, async () => {
+  const { service, directory } = fixture(); await service.policy(); await service.close()
+  const controls: any = { ...defaultFieldControls(LOG_FIELD_PROFILES), tus: Object.fromEntries(LOG_LEVELS.map(level => [level, { 'tus.method': true, 'tus.uploadId': true, 'tus.size': true, 'tus.offset': true }])) }
+  const stored: any = { version: corruption.startsWith('v1') ? 1 : 2, collection: defaultLogCollection(), fieldControls: corruption.startsWith('v1') ? { http: controls.http } : controls }
+  if (corruption === 'v1 extra tus') stored.fieldControls.tus = Object.fromEntries(LOG_LEVELS.map(l => [l, { 'tus.method': true, 'tus.uploadId': true, 'tus.size': true, 'tus.offset': true }]))
+  if (corruption === 'v1 unknown profile') stored.fieldControls.future = {}
+  if (corruption === 'v1 missing http') delete stored.fieldControls.http
+  if (corruption === 'v2 invalid TUS boolean') stored.fieldControls.tus.info['tus.method'] = 0
+  if (corruption === 'v1 missing HTTP leaf') delete stored.fieldControls.http.info.httpRoute
+  if (corruption === 'v2 missing http') delete stored.fieldControls.http
+  if (corruption === 'v2 missing tus') delete stored.fieldControls.tus
+  if (corruption === 'v2 missing TUS level') delete stored.fieldControls.tus.info
+  if (corruption === 'v2 missing TUS leaf') delete stored.fieldControls.tus.info['tus.uploadId']
+  if (corruption === 'v2 unknown version') stored.version = 99
+  edit(directory, db => db.prepare('UPDATE log_collection SET collection=?,revision=51').run(JSON.stringify(stored)))
+  const next = fixture(directory).service; await expect(next.policy()).rejects.toThrow('storage_unavailable')
+  const child = await childWriter(directory); const result = await child.send('emit', { input: input('invalid.tus.policy') })
+  expect(result.status).toMatchObject({ stored: 0, dropped: 1, unavailable: true }); await child.send('close'); expect(child.output()).toBe('')
+})
+
+it('TUS writer reauthorizes original nested values after real rollback', async () => {
+  const { service, directory } = fixture()
+  await service.setPolicy(patch({ tus: { info: { 'tus.uploadId': false } } })); await service.flush()
+  const writer = controlledWriter(directory, 'rollback'); expect((await writer.call('policy')).ok).toBe(true)
+  edit(directory, db => db.exec("CREATE TRIGGER fail_event BEFORE INSERT ON log_events BEGIN SELECT RAISE(ROLLBACK,'test'); END"))
+  const original = safeLogEvent({ source: 'file', operation: 'file.upload', outcome: 'success', origin: { runtime: 'node', integration: 'tus', capture: 'hook' }, tus: { uploadId: 'c'.repeat(32), phase: 'completed', method: 'PATCH', size: 19, offset: 19 }, counts: { done: 0 } })
+  Atomics.store(writer.barrier, 0, 1)
+  const pending = writer.call('write', [original])
+  try {
+    await expect.poll(() => Atomics.load(writer.barrier, 0)).toBe(2)
+    await service.setPolicy(patch({ tus: { info: { 'tus.uploadId': true, 'tus.method': false } } }))
+  } finally { Atomics.store(writer.barrier, 0, 3); Atomics.notify(writer.barrier, 0) }
+  expect(await pending).toMatchObject({ ok: true, result: { stored: 0, filtered: 0, oversized: 0, code: 'storage_unavailable' } })
+  const { method: _method, ...retained } = original.tus!
+  await expect.poll(() => writer.output().split('\n').filter(Boolean).map(line => JSON.parse(line))[0]).toEqual({ ...original, tus: retained, fieldCapture: { profile: 'tus', revision: 2, disabled: ['tus.method'] } })
+  expect(await service.detail(original.id)).toBeNull()
+  edit(directory, db => db.exec('DROP TRIGGER fail_event')); expect((await writer.call('close')).ok).toBe(true)
 })
