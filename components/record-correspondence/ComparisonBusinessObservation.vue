@@ -20,7 +20,7 @@ const emit = defineEmits<{ 'open-source': [relationId: number] }>()
     <p v-if="observation.withoutOfficial">正式来源资格：{{ qualificationText(observation.withoutOfficial.qualification) }}<span v-if="observation.withoutOfficial.proofId"> · 范围依据 {{ observation.withoutOfficial.proofId }}</span>。{{ observation.withoutOfficial.reasons.map(comparisonReasonText).join('；') }}</p>
     <p v-if="observation.historicalDecisionUnavailable.length">截止时点后的决定状态无法还原，本观察保持待核。</p>
     <ul v-if="observation.correspondences.length">
-      <li v-for="edge in observation.correspondences" :key="edge.id">原对应 #{{ edge.id }} · {{ decisionText(edge.status) }}<span v-if="edge.eventId"> · 正式事件 #{{ edge.eventId }}</span><span v-if="edge.requiresRevalidation"> · 需要重新核验</span></li>
+      <li v-for="edge in observation.correspondences" :key="edge.id">原对应 #{{ edge.id }} · {{ decisionText(edge.status) }}<span v-if="edge.eventId"> · 正式事件 #{{ edge.eventId }}</span><span v-if="edge.predecessorEventId"> · 前序正式事件 #{{ edge.predecessorEventId }}</span><span v-if="edge.exportRowId"> · 平台导出行 #{{ edge.exportRowId }}</span><span v-if="edge.requiresRevalidation"> · 需要重新核验</span></li>
     </ul>
     <p v-else class="text-muted-foreground">本次范围内没有可用的原对应；同组其他观察的决定不适用于本观察。</p>
     <Button variant="link" size="sm" @click="emit('open-source', observation.relation.id)">查看观察 #{{ observation.relation.id }} 原始记录</Button>

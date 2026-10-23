@@ -2,6 +2,7 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it } from 'vitest'
 import ComparisonBusinessGroups from '../components/record-correspondence/ComparisonBusinessGroups.vue'
+import ComparisonBusinessObservation from '../components/record-correspondence/ComparisonBusinessObservation.vue'
 import type { RecordComparisonResult } from '../lib/roster/record-comparison-view'
 
 const observations = [1076, 3161].map((id, index) => ({
@@ -30,6 +31,17 @@ function render() {
   mounted.push(wrapper)
   return wrapper
 }
+it.each([
+  ['predecessorEventId', '前序正式事件 #11'],
+  ['exportRowId', '平台导出行 #11'],
+] as const)('shows the correspondence %s target on its own observation', (field, text) => {
+  const observation = { ...observations[0], correspondences: [{ id: 329, eventId: null, [field]: 11, status: 'confirmed', requiresRevalidation: false }] } as unknown as RecordComparisonResult['businessGroups']['rows'][number]['unknownObservations'][number]
+  const wrapper = mount(ComparisonBusinessObservation, { props: { observation } })
+  mounted.push(wrapper)
+  expect(wrapper.text()).toContain(text)
+  expect(wrapper.text()).toContain('原对应 #329')
+})
+
 it('expands one business version into its own mixed observations and opens the exact original row', async () => {
   const wrapper = render()
   expect(wrapper.get('[aria-label="业务粒度计数"]').text()).toContain('1 条已知业务 · 1 个已知内容版本 · 3 次采集观察 · 1 次身份或内容未知观察')

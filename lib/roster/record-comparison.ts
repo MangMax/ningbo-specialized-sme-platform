@@ -51,7 +51,7 @@ interface GroupableComparisonObservation {
   relation: { id: number; interface: string }
   businessRecord: PlatformBusinessMetadata
   linkState: ComparisonLinkState
-  correspondences: Array<{ type: string; role: string; eventId: number | null; status: string; requiresRevalidation: boolean }>
+  correspondences: Array<{ type: string; role: string; eventId: number | null; predecessorEventId: number | null; exportRowId: number | null; status: string; requiresRevalidation: boolean }>
   historicalDecisionUnavailable: Array<{ id: number }>
   currentSource: { qualification: string } | null
   withoutOfficial: { qualification: string } | null
@@ -88,7 +88,7 @@ export function groupComparisonBusinessObservations<T extends GroupableCompariso
     const results = new Set(rows.map(row => JSON.stringify([
       row.linkState, row.currentSource?.qualification ?? null, row.withoutOfficial?.qualification ?? null,
       row.historicalDecisionUnavailable.length > 0,
-      row.correspondences.map(edge => [edge.type, edge.role, edge.eventId, edge.status, edge.requiresRevalidation]).sort(),
+      row.correspondences.map(edge => [edge.type, edge.role, edge.eventId, edge.predecessorEventId, edge.exportRowId, edge.status, edge.requiresRevalidation]).sort(),
     ])))
     return { linkState: links.size === 1 ? rows[0]!.linkState : 'mixed' as const, resultState: results.size === 1 ? 'uniform' as const : 'mixed' as const }
   }

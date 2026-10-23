@@ -7,6 +7,7 @@ import { useDb, schema } from '../db/client'
 import { ensurePlatformObservation } from '../server/utils/platform-business-record'
 import { getRecordComparison, queryProofFingerprint } from '../server/utils/record-comparison'
 import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../server/utils/record-correspondence'
+import { groupComparisonBusinessObservations } from '../lib/roster/record-comparison'
 
 const cleanups: Array<() => void> = []
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))
@@ -39,6 +40,23 @@ const oldFields = (result: ReturnType<typeof getRecordComparison>) => {
 }
 
 describe('comparison scoped canonical business groups', () => {
+  it.each(['eventId', 'predecessorEventId', 'exportRowId'] as const)('marks different correspondence %s targets mixed while retaining equal-target observations as uniform', field => {
+    const observation = (id: number, target: number) => ({
+      relation: { id, interface: 'business_list' },
+      businessRecord: { recordId: 1, versionId: 1, interface: 'business_list', platformKey: 'SQ1', groupState: 'verified' as const, identityState: 'resolved' as const, contentState: 'verified' as const, keySource: 'both' as const, projectionRuleVersion: 'platform-observation-v1', hashAlgorithm: 'platform-row-json-v1', contentHash: 'same-content' },
+      linkState: 'later_process' as const,
+      correspondences: [{ relationId: id, type: 'later_process', role: 'followup_apply', eventId: null as number | null, predecessorEventId: null as number | null, exportRowId: null as number | null, status: 'confirmed', requiresRevalidation: false, [field]: target }],
+      historicalDecisionUnavailable: [], currentSource: null, withoutOfficial: null,
+    })
+    const first = observation(1, 11), different = observation(2, 22)
+    const mixed = groupComparisonBusinessObservations([first, different])
+    expect(mixed.businessGroups.rows[0]).toMatchObject({ resultState: 'mixed', versions: [{ resultState: 'mixed' }] })
+    expect(mixed.businessGroups.rows[0]!.versions[0]!.observations.map(row => row.correspondences[0]![field])).toEqual([11, 22])
+    // Observation endpoints differ even when both decisions have the same target.
+    const equal = groupComparisonBusinessObservations([first, observation(2, 11)])
+    expect(equal.businessGroups.rows[0]).toMatchObject({ resultState: 'uniform', versions: [{ resultState: 'uniform' }] })
+  })
+
   it('combines identical observations and preserves A-B-A as two versions and three observations', () => {
     const f = fixture(), a = f.observation(), b = f.observation({ id: 'SQ1', value: 'B' }), again = f.observation()
     const out = getRecordComparison(f.db, f.input([a.query.id, b.query.id, again.query.id]))
