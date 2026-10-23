@@ -1301,6 +1301,8 @@ export function planRosterImport(
   const recognizedKeys = new Set<string>()
   queries.forEach((query, index) => {
     for (const relation of Array.isArray(query?.relations) ? query.relations : []) {
+      // Leave malformed rows to planPlatformQuery's item-level validation.
+      if (optionalInt(relation?.sequenceNo) == null) continue
       const identity = JSON.stringify([query.interface, optionalString(query.queryKey), optionalString(query.rdjb) ?? '', optionalString(query.queriedAt), relation.sequenceNo])
       const value = platformObservationPayload({ interface: query.interface, relationKey: optionalString(relation.relationKey), rawFields: relation.rawFields })
       if (pendingObservations.has(identity) && pendingObservations.get(identity) !== value) {

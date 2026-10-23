@@ -39,6 +39,22 @@ function legacy(db: Db, id: number, rawFields: Record<string, unknown> | null = 
 }
 
 describe('platform identity through public import HTTP', () => {
+  it.each([null, 2, 'invalid', {}])('returns item errors for malformed relation %j without partially writing archives', async invalid => fixture(async (db, post) => {
+    const body = {
+      ...request('invalid-row', {}),
+      payload: { platformQueries: [query('valid'), { ...query('invalid'), relations: [invalid] }] },
+    }
+    const preview = await post('preflight', body)
+    expect(preview.http).toBe(200)
+    expect(preview.preflight.conflicts).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'sequence_no_required' }) })]))
+    const saved = await post('commit', body)
+    expect(saved.http).toBe(200)
+    expect(saved.status).toBe('failed')
+    expect(saved.items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'sequence_no_required' }) })]))
+    expect(counts(db)).toEqual([0, 0, 0])
+    expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_query`)!.n).toBe(0)
+  }))
+
   it('keeps two interface records and versions for four sample observations and reuses skip projections', async () => fixture(async (db, post) => {
     const payload = { platformQueries: [query('2026-10-01'), query('2026-10-02'), query('2026-10-01', undefined, 'apply_list'), query('2026-10-02', undefined, 'apply_list')] }
     const pre = await post('preflight', request('sample', payload))
