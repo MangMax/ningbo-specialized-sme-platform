@@ -1,9 +1,15 @@
 // @vitest-environment happy-dom
 // Component seam only: proves the configuration UI's draft/PATCH contract in
-// happy-dom, not real browser or real server behaviour. Desktop and 390px
-// operation stays a separate manual acceptance lane.
+// happy-dom, not real browser behaviour. One case mounts the component with a
+// real service policy response so the rendered catalog cannot drift from the
+// backend shape without a failing test. Desktop and 390px operation stays a
+// separate manual acceptance lane.
 import { mount, flushPromises } from '@vue/test-utils'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
+import { createLogService } from '../lib/logging/service'
 
 vi.mock('motion-v', async (original) => {
   const actual = await original<typeof import('motion-v')>()
@@ -12,15 +18,26 @@ vi.mock('motion-v', async (original) => {
 })
 
 const wrappers: ReturnType<typeof mount>[] = []
-afterEach(() => {
+const services: ReturnType<typeof createLogService>[] = []
+const directories: string[] = []
+afterEach(async () => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
+  for (const service of services.splice(0)) await service.close()
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
   vi.unstubAllGlobals()
   document.body.innerHTML = ''
   delete (navigator as any).clipboard
 })
+/** Owned temp log directory; never a business database or a shared fixture. */
+function ownedDirectory() {
+  const directory = mkdtempSync(join(tmpdir(), 'f03-field-ui-'))
+  directories.push(directory)
+  return directory
+}
 
 const LEVELS = ['debug', 'info', 'warn', 'error'] as const
 type TestLevel = (typeof LEVELS)[number]
+const LEVEL_LABELS: Record<string, string> = { debug: '调试', info: '信息', warn: '警告', error: '错误' }
 /** Server catalog fixture: only the implemented HTTP profile, exactly four fields. */
 const profileCatalog = () => [
   {
@@ -445,6 +462,59 @@ it('renders any catalog profile generically, including nested field keys, withou
   ])
   // 改动的父级只按真实存在的来源/集成规则判断；tus 集成在这里是开启的，所以不显示不采集。
   expect(wrapper.get('[data-testid=log-field-controls]').text()).not.toContain('当前不采集')
+})
+
+it('renders and PATCHes the real service policy catalog without drifting from the backend shape', async () => {
+  const service = createLogService({ directory: ownedDirectory() })
+  services.push(service)
+  const response = await service.policy()
+  // The real response is the only thing driving the editor; the test itself
+  // never supplies profile, level or field names.
+  expect(response.catalog.profiles.map((profile) => profile.key)).toEqual(['http'])
+  const { wrapper, calls } = await mountManagement(
+    () => response as unknown as Record<string, unknown>,
+    (body) => ({ ...(response as unknown as Record<string, unknown>), ...body, revision: 2 })
+  )
+  await openPanel(wrapper)
+  const fieldConfig = response.catalog.profiles[0]!
+  const tabs = wrapper.get('[data-testid=log-field-controls]').findAll('[role=tab]')
+  expect(tabs.map((tab: any) => tab.text())).toEqual([
+    fieldConfig.label,
+    ...fieldConfig.levels.map((level) => LEVEL_LABELS[level])
+  ])
+  const switches = wrapper.get('[data-testid=log-field-controls]').findAll('[data-slot=switch]')
+  expect(switches).toHaveLength(fieldConfig.fields.length)
+  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('当前为默认')
+  // Every real field description renders, i.e. labels come from the catalog.
+  for (const field of fieldConfig.fields) {
+    expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain(field.description)
+  }
+  const target = fieldConfig.fields.find((field) => field.key === 'httpRoute')!
+  await fieldSwitch(wrapper, String(target.key)).trigger('click')
+  await review(wrapper)
+  expect(
+    document.querySelector('[data-testid=log-field-review-table]')!.textContent
+  ).toContain(target.label)
+  await confirm()
+  expect(patches(calls)).toEqual([
+    {
+      retentionDays: response.retentionDays,
+      maxBytes: response.maxBytes,
+      fieldControls: { http: { info: { httpRoute: false } } }
+    }
+  ])
+  // 服务端真的落库后，重新读取的响应仍能被同一份草稿逻辑消化。
+  const saved = await service.setPolicy({
+    retentionDays: response.retentionDays,
+    maxBytes: response.maxBytes,
+    fieldControls: { http: { info: { httpRoute: false } } }
+  })
+  expect(saved.fieldControls.http.info).toMatchObject({ httpRoute: false, statusCode: true })
+  const reopened = createLogService({ directory: directories[0]! })
+  services.push(reopened)
+  const persisted = await reopened.policy()
+  expect(persisted.fieldControls).toEqual(saved.fieldControls)
+  expect(persisted.catalog.profiles).toEqual(response.catalog.profiles)
 })
 
 it('offers no review until a field actually differs from the saved rules', async () => {
