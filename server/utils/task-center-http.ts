@@ -1,4 +1,5 @@
 import { CANDIDATE_JOB_KIND, retryCandidateDiscovery } from './jobs/candidate-discovery'
+import { ANNUAL_CORRESPONDENCE_KIND } from '../../lib/roster/annual-correspondence'
 import { EVENT_ARCHIVE_RULE_VERSION } from './event-archive-discovery'
 import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import { schema, type useDb } from '../../db/client'
@@ -98,7 +99,8 @@ async function summarize(row: ProjectedTask, authorized: boolean, db: Db, detail
 
 export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cancel' | 'retry', req: Request, ctx: { db: Db; browserAuthorized?: boolean; apiToken?: string; filesDir: string }) {
   const headers = { 'cache-control': 'no-store' }
-  const authorized = ctx.browserAuthorized === true || resolveApiAuth({ given: readApiToken(req.headers), configured: ctx.apiToken }).writeAuthorized
+  const apiAuthorized = resolveApiAuth({ given: readApiToken(req.headers), configured: ctx.apiToken }).writeAuthorized
+  const authorized = ctx.browserAuthorized === true || apiAuthorized
   const method = action === 'list' || action === 'detail' ? 'GET' : 'POST'
   if (req.method !== method) return error(405, 'Method not allowed')
   const q = req.query ?? {}
@@ -110,7 +112,7 @@ export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cance
     const stateWhere = and(state ? eq(j.state, state) : undefined, title ? and(eq(j.kind, 'current-roster-export'), sql`json_extract(${j.params}, '$.titleCode') = ${title.titleCode}`) : undefined)
     const where = and(stateWhere, tab === 'all' ? undefined : inArray(j.kind, TASK_GROUPS[tab]))
     const total = ctx.db.select({ n: sql<number>`count(*)` }).from(j).where(where).get()!.n
-    const rows = await Promise.all(readTasks(ctx.db, where, pageSize, (page - 1) * pageSize).map(row => summarize(row, authorized, ctx.db)))
+    const rows = await Promise.all(readTasks(ctx.db, where, pageSize, (page - 1) * pageSize).map(row => summarize(row, row.kind === ANNUAL_CORRESPONDENCE_KIND ? apiAuthorized : authorized, ctx.db)))
     const counts: TaskList['counts'] = { all: 0, ocr: 0, platform: 0, export: 0 }
     for (const row of ctx.db.select({ kind: j.kind, n: sql<number>`count(*)` }).from(j).where(stateWhere).groupBy(j.kind).all()) {
       counts.all += row.n
@@ -123,15 +125,17 @@ export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cance
   if (!isJobId(id)) return error(400, 'Invalid task ID')
   const row = readTasks(ctx.db, eq(j.id, id), 1)[0]
   if (!row) return error(404, '任务不存在')
-  if (action === 'detail') return { status: 200, headers, body: await summarize(row, authorized, ctx.db, true) }
-  if (!authorized) return error(401, '管理操作需要 API 授权')
+  // Annual business commands never borrow task-center's weaker page capability.
+  const taskAuthorized = row.kind === ANNUAL_CORRESPONDENCE_KIND ? apiAuthorized : authorized
+  if (action === 'detail') return { status: 200, headers, body: await summarize(row, taskAuthorized, ctx.db, true) }
+  if (!taskAuthorized) return error(401, '管理操作需要 API 授权')
   if (action === 'cancel') {
     const outcome = requestJobCancel(ctx.db, id)
     if (!outcome.ok) return error(404, '任务不存在')
     const cancelRequested = 'cancelRequested' in outcome && outcome.cancelRequested
-    return { status: cancelRequested ? 202 : 200, headers, body: { task: await summarize(readTasks(ctx.db, eq(j.id, id), 1)[0]!, authorized, ctx.db), cancelRequested } }
+    return { status: cancelRequested ? 202 : 200, headers, body: { task: await summarize(readTasks(ctx.db, eq(j.id, id), 1)[0]!, taskAuthorized, ctx.db), cancelRequested } }
   }
-  const summary = await summarize(row, authorized, ctx.db)
+  const summary = await summarize(row, taskAuthorized, ctx.db)
   if (!summary.capabilities.retry) return error(409, '此任务当前不支持安全重试')
   try {
     const outcome = row.kind === CANDIDATE_JOB_KIND ? retryCandidateDiscovery(ctx.db, id, ctx.filesDir) : retryPlatformBatch(ctx.db, { batchId: id, itemIds: summary.capabilities.retryItemIds }, ctx.filesDir)

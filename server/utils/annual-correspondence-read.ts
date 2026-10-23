@@ -1,0 +1,56 @@
+import { inArray } from 'drizzle-orm'
+import { useDb } from '@db'
+import * as s from '../../db/schema'
+import type { EventAnnualProcessRead } from '../../lib/roster/annual-process'
+import { qualifyAnnualFinal, readAnnualDecisionRefs, type AnnualDb, type AnnualWriteScope } from './annual-correspondence'
+import { readEventAnnualProcess } from './event-annual-process-read'
+
+function writeScope(db: AnnualDb, read: EventAnnualProcessRead): AnnualWriteScope {
+  const process = read.process
+  return {
+    eventId: process.event.id, enterpriseId: process.event.record.enterpriseId, titleCode: process.event.record.titleCode,
+    declareKind: process.declareKind, generation: read.sourceGeneration, sourceRefs: read.sourceRefs,
+    finalCandidateStepId: process.finalCandidateStepId, reasons: process.reasons,
+    steps: process.steps.map(step => {
+      const observations = step.groups.flatMap(group => group.observationRefs)
+      const currentRelationIds = observations.filter(ref => {
+        const facts = ref.evidence.process as {status?:unknown; normalizationConflicts?:unknown[]} | undefined
+        return facts?.status === step.status && !facts.normalizationConflicts?.length && step.latestVersionRefs.some(version =>
+          version.interface === ref.interface && version.recordId === ref.businessRecord.recordId && version.versionId === ref.businessRecord.versionId)
+      }).map(ref => ref.relationId)
+      const recordIds = [...new Set(observations.filter(ref => ref.businessRecord.groupState === 'verified' && ref.businessRecord.recordId != null).map(ref => ref.businessRecord.recordId!))]
+      const history: number[] = []
+      // Indexed identity history is protective only. It never expands annual
+      // facts, selected versions, generation, or borrowed proof eligibility.
+      for (let i = 0; i < recordIds.length; i += 400) history.push(...db.select({id:s.platformBusinessObservation.relationId}).from(s.platformBusinessObservation)
+        .where(inArray(s.platformBusinessObservation.recordId,recordIds.slice(i,i+400))).all().map(row => row.id))
+      return {stepId:step.id,currentRelationIds:[...new Set(currentRelationIds)],protectionRelationIds:[...new Set([...observations.map(ref => ref.relationId),...history])],
+        preferredRelationId:step.preferredWriteRelationId,eligible:step.annualEligible,reasons:step.reasons}
+    }),
+  }
+}
+export function readAnnualWriteScope(db: AnnualDb, eventId: number): AnnualWriteScope | null {
+  return db.transaction(() => {
+    const read = readEventAnnualProcess(db,eventId)
+    return read ? writeScope(db,read) : null
+  })
+}
+/** Independent callers may have read before another source commit. Recheck the
+ * generation in this read snapshot rather than attach a new final to old facts.
+ * Root's read adapter can keep read+enrich in one outer read-only transaction. */
+export function enrichAnnualProcessFinalQualification(db: AnnualDb, read: EventAnnualProcessRead): EventAnnualProcessRead {
+  return db.transaction(() => {
+    const fresh = readEventAnnualProcess(db,read.process.event.id)
+    if (!fresh || fresh.sourceGeneration !== read.sourceGeneration) return {...read,process:{...read.process,finalQualification:{stepId:null,status:'blocked',decisionRefs:[],reasons:[fresh?'source_generation_changed':'event_unavailable']}}}
+    const scope = writeScope(db,fresh)
+    const qualification = qualifyAnnualFinal(db,scope)
+    const actual = readAnnualDecisionRefs(db,qualification.decisionRefs.map(ref => ref.relationId))
+    const ids = new Set(qualification.decisionRefs.map(ref => ref.id))
+    return {...read,process:{...read.process,finalQualification:{...qualification,decisionRefs:actual.filter(ref => ids.has(ref.id))}}}
+  })
+}
+/** No database access until an authorized command or actual read needs it. */
+export function annualTaskContext() {
+  const config = useRuntimeConfig()
+  return {get db(){return useDb()},readScope:readAnnualWriteScope,filesDir:config.filesDir,config}
+}
