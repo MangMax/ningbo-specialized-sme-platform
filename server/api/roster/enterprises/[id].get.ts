@@ -22,7 +22,7 @@ defineRouteMeta({
     tags: ['名录'],
     summary: '企业详情(跨称号)',
     description:
-      '新增 titleAssessments 与差异行 queryCoverage/currentDecision/explanationValidity/assessment，覆盖、决定、解释有效性独立（docs/query-coverage-contract-108.md）。含 aliases / records / events / evidence / recognitions / differences / platform。`recognitions` 按企业 × 称号返回最早正式 `award`、年份(`decidedYear ?? year`)、出处与状态(`confirmed` / `pending`)；`platform.relations` 保留该企业的**全部**平台关联(不按统代折叠)。',
+      '新增 titleAssessments 与差异行 queryCoverage/currentDecision/explanationValidity/assessment，覆盖、决定、解释有效性独立（docs/query-coverage-contract-108.md）。含 aliases / records / events / evidence / recognitions / differences / platform。`recognitions` 按企业 × 称号返回最早正式 `award`、年份(`decidedYear ?? year`)、出处与状态(`confirmed` / `pending`)；`platform.relations` 保留该企业的**全部**平台关联(不按统代折叠)。新增 `platform.businessRecords`：同接口+canonical record 分组、versions、observationRefs、versionCount/observationCount/unknownContentObservationCount、各原行 existingCorrespondenceIds/existingCorrespondences/conflicts；代表按实际 queriedAt 选择，已知 recordId 的未知内容观察同属一条业务、逐次保留且不造版本；无业务身份的原行独立回退。原 queries/relations 与决定端点不变。',
     responses: {
       200: { description: '企业详情。已认定查询保留全部原始行，行 enterpriseId 为 number 或 null；null 表示未匹配主体，查询键覆盖不确认归属。relationCount 与返回行一致。' },
       503: { description: '企业读取队列或响应并发已满，或执行器暂时不可用；可重试，不表示无记录。' },

@@ -30,7 +30,10 @@ export function normalizePlatformRelation<T extends ArchivedRelation>(source: st
     : null
   const normalizationConflicts: PlatformNormalizationConflict[] = []
   const facts = Object.fromEntries(fields.map(field => {
-    const stored = relation[field]
+    // Use the raw parser's exact allowlist on both sides, only for process rows.
+    const stored = parsed && field === 'declareKind'
+      ? processFactsFromRow({ sblx: relation.declareKind ?? '' }).declareKind
+      : relation[field]
     const existing = typeof stored === 'string' ? stored.trim() || null : stored ?? null
     const raw = parsed?.[field] ?? null
     if (existing != null && raw != null && existing !== raw) {
