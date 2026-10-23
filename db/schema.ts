@@ -7,6 +7,8 @@ import {
   sqliteTable,
   text,
   uniqueIndex,
+  check,
+  foreignKey,
 } from 'drizzle-orm/sqlite-core'
 
 /** 后台外部服务凭据。仅配置服务读取，不加入台账导出或任务历史。 */
@@ -476,7 +478,7 @@ export const importBatch = sqliteTable(
     idempotencyKey: text('idempotency_key').notNull(),
     /** 来源类别:公布文件 / 平台导出 / 别名证据。 */
     sourceKind: text('source_kind', {
-      enum: ['announcement', 'platform_export', 'alias_evidence', 'correspondence_decision', 'comparison_scope_proof', 'event_correction'],
+      enum: ['announcement', 'platform_export', 'platform_archive', 'alias_evidence', 'correspondence_decision', 'comparison_scope_proof', 'event_correction'],
     }).notNull(),
     /** 来源身份:文件库内相对路径或逻辑标识(不含凭证)。 */
     sourceIdentity: text('source_identity').notNull(),
@@ -767,6 +769,51 @@ export const platformRelation = sqliteTable(
     index('platform_relation_uscc_query_idx').on(t.usccRaw, t.queryId),
   ],
 )
+
+/** Stable platform identity; never carries a mutable owner/title/current version. */
+export const platformBusinessRecord = sqliteTable('platform_business_record', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
+  platformKey: text('platform_key').notNull(),
+  identityRuleVersion: text('identity_rule_version').notNull(),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, t => [
+  uniqueIndex('platform_business_record_identity_uq').on(t.interface, t.platformKey),
+  check('platform_business_record_key_ck', sql`length(trim(${t.platformKey})) > 0`),
+  check('platform_business_record_interface_ck', sql`${t.interface} IN ('business_list','apply_list','recognized_list')`),
+])
+
+export const platformBusinessRecordVersion = sqliteTable('platform_business_record_version', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  recordId: integer('record_id').notNull().references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
+  hashAlgorithm: text('hash_algorithm').notNull(),
+  contentHash: text('content_hash').notNull(),
+  canonicalRawJson: text('canonical_raw_json').notNull(),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+}, t => [
+  uniqueIndex('platform_business_version_hash_uq').on(t.recordId, t.hashAlgorithm, t.contentHash),
+  uniqueIndex('platform_business_version_owner_uq').on(t.id, t.recordId),
+])
+
+/** Additive mapping. All evidence/decisions continue to reference the original relation. */
+export const platformBusinessObservation = sqliteTable('platform_business_observation', {
+  relationId: integer('relation_id').primaryKey().references(() => platformRelation.id, { onDelete: 'restrict' }),
+  recordId: integer('record_id').references(() => platformBusinessRecord.id, { onDelete: 'restrict' }),
+  versionId: integer('version_id'),
+  identityState: text('identity_state', { enum: ['resolved', 'missing_key', 'conflict'] }).notNull(),
+  contentState: text('content_state', { enum: ['verified', 'unverifiable'] }).notNull(),
+  keySource: text('key_source', { enum: ['relation_key', 'raw_id', 'both', 'none'] }).notNull(),
+  projectionRuleVersion: text('projection_rule_version').notNull(),
+  inputFingerprint: text('input_fingerprint').notNull(),
+  indexedAt: text('indexed_at').notNull().$defaultFn(() => new Date().toISOString()),
+  batchId: integer('batch_id').references(() => importBatch.id, { onDelete: 'restrict' }),
+}, t => [
+  foreignKey({ columns: [t.versionId, t.recordId], foreignColumns: [platformBusinessRecordVersion.id, platformBusinessRecordVersion.recordId] }).onDelete('restrict'),
+  check('platform_business_observation_state_ck', sql`(${t.identityState} = 'resolved' AND ${t.recordId} IS NOT NULL) OR (${t.identityState} IN ('missing_key','conflict') AND ${t.recordId} IS NULL)`),
+  check('platform_business_observation_content_ck', sql`(${t.contentState} = 'verified' AND ${t.versionId} IS NOT NULL AND ${t.recordId} IS NOT NULL) OR (${t.contentState} = 'unverifiable' AND ${t.versionId} IS NULL)`),
+  index('platform_business_observation_record_idx').on(t.recordId, t.versionId, t.relationId),
+  index('platform_business_observation_version_idx').on(t.versionId, t.relationId),
+])
 
 /**
  * **差异原因与后续措施**(契约 4)——**成对**记录的一行。

@@ -33,7 +33,7 @@ defineRouteMeta({
               idempotencyKey: { type: 'string', description: '幂等键（库层面唯一）。' },
               sourceKind: {
                 type: 'string',
-                enum: ['announcement', 'platform_export', 'alias_evidence'],
+                enum: ['announcement', 'platform_export', 'platform_archive', 'alias_evidence'],
               },
               sourceIdentity: { type: 'string', description: '来源身份：文件相对路径 / 逻辑标识（不含凭证）。' },
               sourceSha256: { type: 'string', nullable: true },
@@ -41,6 +41,11 @@ defineRouteMeta({
   "type": "object",
   "description": "统一写入载荷；recognized_list 的 collectionEvidence 必填，见 docs/platform-recognized-evidence.md。",
   "properties": {
+    "platformRecordObservations": {
+      "type": "array", "minItems": 1, "maxItems": 100,
+      "description": "sourceKind=platform_archive；服务端读取原观察，不接受客户端raw/hash。预检只读业务并冻结源指纹，commit重核，源缺失/漂移整批失败。",
+      "items": { "type": "object", "additionalProperties": false, "required": ["relationId"], "properties": { "relationId": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 } } }
+    },
     "differences": {
       "type": "array",
       "description": "代理/用户明确裁决；不自动推断。完整字段见名录契约 §8.3。",
@@ -455,6 +460,14 @@ defineRouteMeta({
                     written: { type: 'integer', description: '本次**新增**的行数（收敛不算）。' },
                     skipped: { type: 'integer' },
                     failed: { type: 'integer' },
+                    canonicalProjection: {
+                      type: 'object', description: '新增业务身份/内容/映射单独记数；不计入旧written。',
+                      properties: {
+                        recordsCreated: { type: 'integer' }, versionsCreated: { type: 'integer' },
+                        observationsCreated: { type: 'integer' }, observationsReused: { type: 'integer' },
+                        missingKey: { type: 'integer' }, conflict: { type: 'integer' }, unverifiable: { type: 'integer' },
+                      },
+                    },
                     evidenceRepointed: {
                       type: 'integer',
                       description:
@@ -466,7 +479,18 @@ defineRouteMeta({
                 items: {
                   type: 'array',
                   description: '逐项结果；失败项形如 `{ ok:false, kind, ref, error:{ code, field?, message } }`。',
-                  items: { type: 'object' },
+                  items: { type: 'object', properties: {
+                    detail: { type: 'object', properties: {
+                      canonicalProjection: { type: 'array', items: { type: 'object', properties: {
+                        relationId: { type: 'integer' }, recordId: { type: 'integer', nullable: true }, versionId: { type: 'integer', nullable: true },
+                        identityState: { type: 'string', enum: ['resolved', 'missing_key', 'conflict'] },
+                        contentState: { type: 'string', enum: ['verified', 'unverifiable'] },
+                        keySource: { type: 'string', enum: ['relation_key', 'raw_id', 'both', 'none'] },
+                        projectionRuleVersion: { type: 'string' }, inputFingerprint: { type: 'string' },
+                        recordCreated: { type: 'boolean' }, versionCreated: { type: 'boolean' }, observationCreated: { type: 'boolean' },
+                      } } },
+                    } },
+                  } },
                 },
                 error: { type: 'string', nullable: true },
               },
@@ -476,6 +500,7 @@ defineRouteMeta({
       },
       400: { description: '请求体不合法（缺幂等键 / 来源身份 / payload）。' },
       401: { description: '未带 token、token 不匹配，或服务端未配置 `NUXT_API_TOKEN`。' },
+      409: { description: '幂等键属于其他请求或来源；历史投影预检/失败后也不能更换命令。' },
     },
   },
 })

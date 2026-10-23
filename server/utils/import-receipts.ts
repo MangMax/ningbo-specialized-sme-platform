@@ -37,7 +37,7 @@ interface ReceiptRow {
   idempotencyKeyTruncated: number; sourceIdentityTruncated: number
   createdAt: string; committedAt: string | null; receiptId: number | null; operation: string | null
   completedAt: string | null; itemCount: number; written: number | null; skipped: number | null
-  failed: number | null; evidenceRepointed: number | null
+  failed: number | null; evidenceRepointed: number | null; canonicalProjection: string | null
 }
 /** Exact SQL projections: neither default reads nor pagination load whole raw blobs into JS. */
 export function readImportReceipt(db: Db, action: ImportReceiptAction, args: Record<string, unknown>) {
@@ -61,13 +61,14 @@ function readImportReceiptSnapshot(db: Db, action: ImportReceiptAction, args: Re
       json_extract(CASE WHEN r.id IS NULL THEN b.summary ELSE r.summary END, '$.written') AS written,
       json_extract(CASE WHEN r.id IS NULL THEN b.summary ELSE r.summary END, '$.skipped') AS skipped,
       json_extract(CASE WHEN r.id IS NULL THEN b.summary ELSE r.summary END, '$.failed') AS failed,
-      json_extract(CASE WHEN r.id IS NULL THEN b.summary ELSE r.summary END, '$.evidenceRepointed') AS evidenceRepointed
+      json_extract(CASE WHEN r.id IS NULL THEN b.summary ELSE r.summary END, '$.evidenceRepointed') AS evidenceRepointed,
+      json_extract(CASE WHEN r.id IS NULL THEN b.summary ELSE r.summary END, '$.canonicalProjection') AS canonicalProjection
     FROM import_batch b LEFT JOIN import_receipt r ON r.id = ${receiptId === undefined ? sql`(SELECT id FROM import_receipt WHERE batch_id = b.id ORDER BY id DESC LIMIT 1)` : sql`${receiptId}`}
-    WHERE ${condition} AND b.source_kind IN ('announcement', 'platform_export', 'alias_evidence')`)
+    WHERE ${condition} AND b.source_kind IN ('announcement', 'platform_export', 'platform_archive', 'alias_evidence')`)
   if (!row) throw new ImportReceiptError(404, 'not_found', 'Import batch or receipt not found')
   if (action === 'get') {
-    const { written, skipped, failed, evidenceRepointed, ...metadata } = row
-    return { ...metadata, idempotencyKeyTruncated: !!row.idempotencyKeyTruncated, sourceIdentityTruncated: !!row.sourceIdentityTruncated, summary: written === null ? null : { written, skipped: skipped ?? 0, failed: failed ?? 0, evidenceRepointed: evidenceRepointed ?? 0 }, originalRequest: row.receiptId === null ? 'not_retained' : 'redacted' }
+    const { written, skipped, failed, evidenceRepointed, canonicalProjection, ...metadata } = row
+    return { ...metadata, idempotencyKeyTruncated: !!row.idempotencyKeyTruncated, sourceIdentityTruncated: !!row.sourceIdentityTruncated, summary: written === null ? null : { written, skipped: skipped ?? 0, failed: failed ?? 0, evidenceRepointed: evidenceRepointed ?? 0, ...(canonicalProjection ? { canonicalProjection: JSON.parse(canonicalProjection) } : {}) }, originalRequest: row.receiptId === null ? 'not_retained' : 'redacted' }
   }
   if (action === 'request') {
     const offset = integer(args.offset, 'offset', 0, Number.MAX_SAFE_INTEGER - 1, 0)
