@@ -4,6 +4,7 @@ import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { safeCollectionEvidence } from './record-correspondence-read'
+import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../lib/platform/normalization'
 
 type Db = BetterSQLite3Database<typeof schema>
 export interface CandidateInput { eventId?: number; enterpriseId?: number; titleCode?: string; queryIds: number[]; exportBatchIds: number[]; ruleVersion: string; page: number; pageSize: number }
@@ -26,7 +27,12 @@ export function generateCandidates(db: Db, input: CandidateInput, selection?: { 
   const batches = batchesOf(input.exportBatchIds).flatMap(ids => db.select().from(schema.platformExportBatch).where(inArray(schema.platformExportBatch.id, ids)).orderBy(asc(schema.platformExportBatch.id)).all())
   if (queries.length !== new Set(input.queryIds).size || batches.length !== new Set(input.exportBatchIds).size) return null
   const r = schema.platformRelation, x = schema.platformExportRow, c = schema.recordCorrespondence
-  const relations = batchesOf(queries.filter(q => ['success', 'partial'].includes(q.status)).map(q => q.id)).flatMap(ids => db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, enterpriseId: r.enterpriseId, usccRaw: r.usccRaw, declareKind: r.declareKind, year: r.year, batch: r.batch, awardBatchLabel: r.awardBatchLabel, verificationStatus: r.verificationStatus, appliedAt: r.appliedAt }).from(r).where(and(inArray(r.queryId, ids), selection ? inArray(r.id, selection.relationIds) : undefined)).orderBy(asc(r.queryId), asc(r.sequenceNo)).all())
+  // Extract only process facts in SQLite; the full archived row can be arbitrarily large.
+  // Multiple paths return a JSON array, preserving true rather than year=1.
+  const processRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.join(PLATFORM_PROCESS_RAW_KEYS.map(key => sql`${`$.${key}`}`), sql`, `)}) else null end`.mapWith(platformProcessRawFromJson)
+  const queriesById = new Map(queries.map(q => [q.id, q]))
+  const relations = batchesOf(queries.filter(q => ['success', 'partial'].includes(q.status)).map(q => q.id)).flatMap(ids => db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, enterpriseId: r.enterpriseId, usccRaw: r.usccRaw, declareKind: r.declareKind, year: r.year, batch: r.batch, awardBatchLabel: r.awardBatchLabel, status: r.status, verificationStatus: r.verificationStatus, appliedAt: r.appliedAt, province: r.province, rawFields: processRaw }).from(r).where(and(inArray(r.queryId, ids), selection ? inArray(r.id, selection.relationIds) : undefined)).orderBy(asc(r.queryId), asc(r.sequenceNo)).all())
+    .map(row => normalizePlatformRelation(queriesById.get(row.queryId)!.interface, row))
   const exports = batchesOf(event && identity ? batches.filter(b => b.importStatus === 'imported' && b.titleCode === titleCode).map(b => b.id) : []).flatMap(ids => db.select({ id: x.id, batchId: x.batchId, sourceRowNo: x.sourceRowNo, usccRaw: x.usccRaw }).from(x).where(inArray(x.batchId, ids)).orderBy(asc(x.batchId), asc(x.sourceRowNo)).all())
   const relevantRelations = relations.filter(r => (!r.enterpriseId || r.enterpriseId === enterpriseId) && ((identity && normalizeUscc(r.usccRaw) === identity) || (selection && !normalizeUscc(r.usccRaw) && r.enterpriseId === enterpriseId && r.verificationStatus === 'confirmed')))
   const relevantExports = exports.filter(r => identity && normalizeUscc(r.usccRaw) === identity)
@@ -47,11 +53,12 @@ export function generateCandidates(db: Db, input: CandidateInput, selection?: { 
       const relationDecisions = (relationPriors.get(relation.id) ?? []).filter(r => r.eventId === (event?.event.id ?? null) && r.type === edge.type)
       const prior = relationDecisions.find(r => r.role === edge.role) ?? (selection ? relationDecisions[0] : undefined)
       const conflicts = [] as string[]
+      if (relation.normalizationConflicts.length) conflicts.push('platform_field_conflict')
       if (event && event.event.year == null) conflicts.push('official_year_missing')
       if (relation.year == null) conflicts.push('platform_year_missing')
       if (event && event.event.batchSeq == null) conflicts.push('official_batch_missing')
       if (event?.event.year != null && relation.year != null && event.event.year !== relation.year) conflicts.push('year_mismatch')
-      if (query.interface !== 'recognized_list' && !relation.declareKind) conflicts.push('process_type_unknown')
+      if (query.interface !== 'recognized_list' && !['apply', 'update', 'review'].includes(relation.declareKind ?? '')) conflicts.push('process_type_unknown')
       if (!relation.awardBatchLabel && !relation.batch) conflicts.push('platform_batch_missing')
       if (selection && event && relation.declareKind && ((event.event.eventType === 'award' && relation.declareKind !== 'apply') || (event.event.eventType === 'review' && relation.declareKind !== 'review'))) conflicts.push('process_type_mismatch')
       if (selection && event && relation.appliedAt) {
@@ -59,7 +66,7 @@ export function generateCandidates(db: Db, input: CandidateInput, selection?: { 
         if (decisionYear && Number(relation.appliedAt.slice(0, 4)) > decisionYear) conflicts.push('application_after_decision')
       }
       if (selection && event?.event.batchSeq != null && relation.batch && /^\d{4}-\d+$/.test(relation.batch) && Number(relation.batch.split('-')[1]) !== event.event.batchSeq) conflicts.push('batch_mismatch')
-      rows.push({ edge, status: 'candidate', ruleId: 'archived-row-exact-identity-title', ruleVersion: input.ruleVersion, evidence: { identity: { enterpriseId, officialUsccRaw: event?.record.usccRaw ?? enterprise.usccNorm, rowUsccRaw: relation.usccRaw }, title: { official: titleCode, row: rowTitle }, process: { eventType: event?.event.eventType ?? null, declareKind: relation.declareKind, appliedAt: relation.appliedAt }, temporal: { eventYear: event?.event.year ?? null, eventBatchSeq: event?.event.batchSeq ?? null, relationYear: relation.year, relationBatch: relation.batch, awardBatchLabel: relation.awardBatchLabel }, source: { interface: query.interface, ...sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo), queryId: query.id, relationId: relation.id, sequenceNo: relation.sequenceNo, queriedAt: query.queriedAt, status: query.status } }, conflicts, existingCorrespondenceId: prior?.id ?? null, revision: prior?.revision ?? null, existingStatus: prior?.status ?? null, recommendation: prior ? 'existing_decision' : 'candidate' })
+      rows.push({ edge, status: 'candidate', ruleId: 'archived-row-exact-identity-title', ruleVersion: input.ruleVersion, evidence: { identity: { enterpriseId, officialUsccRaw: event?.record.usccRaw ?? enterprise.usccNorm, rowUsccRaw: relation.usccRaw }, title: { official: titleCode, row: rowTitle }, process: { eventType: event?.event.eventType ?? null, declareKind: relation.declareKind, appliedAt: relation.appliedAt, status: relation.status, normalizationConflicts: relation.normalizationConflicts }, temporal: { eventYear: event?.event.year ?? null, eventBatchSeq: event?.event.batchSeq ?? null, relationYear: relation.year, relationBatch: relation.batch, awardBatchLabel: relation.awardBatchLabel }, source: { interface: query.interface, ...sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo), queryId: query.id, relationId: relation.id, sequenceNo: relation.sequenceNo, queriedAt: query.queriedAt, status: query.status } }, conflicts, existingCorrespondenceId: prior?.id ?? null, revision: prior?.revision ?? null, existingStatus: prior?.status ?? null, recommendation: prior ? 'existing_decision' : 'candidate' })
     }
   }
   for (const batch of batches) {

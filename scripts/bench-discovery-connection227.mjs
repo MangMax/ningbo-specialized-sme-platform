@@ -13,7 +13,7 @@ const root = resolve(rootText)
 assert.ok(!existsSync(report), 'preserve evidence')
 for (const k of Object.keys(process.env)) if (/TOKEN|COOKIE|PASSWORD|SECRET/.test(k)) delete process.env[k]
 process.env.NUXT_DB_PATH = dbPath; process.env.NUXT_DB_READONLY = '1'
-globalThis.useRuntimeConfig = () => ({ apiToken: 'synthetic-perf227-only', mcpToken: '', miitCookie: '', ocrToken: '' })
+Object.assign(globalThis, { useRuntimeConfig: () => ({ apiToken: 'synthetic-perf227-only', mcpToken: '', miitCookie: '', ocrToken: '' }) })
 register(root + '/scripts/perf-82/loader.mjs', import.meta.url)
 const require = createRequire(root + '/package.json')
 const Database = require('better-sqlite3')

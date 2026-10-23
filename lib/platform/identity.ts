@@ -32,7 +32,7 @@ export interface PlatformRelationRecord {
   usccRaw: string | null
   /** 所属省市名称(`szsfmc`)。 */
   province: string | null
-  /** 存续状态(`cszt`)。 */
+  /** 办理状态(`cszt`)，与查询是否成功各自独立。 */
   status: string | null
   /** 维护批次(`whpc`)。 */
   batch: string | null
@@ -61,8 +61,24 @@ function text(value: unknown): string | null {
 }
 
 function toYear(value: unknown): number | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null
   const n = Number(value)
   return Number.isInteger(n) && n > 0 ? n : null
+}
+
+/** Parse process facts without copying the archived row or interpreting identity. */
+export function processFactsFromRow(row: PlatformRow) {
+  const rawKind = text(row.sblx)
+  return {
+    province: text(row.szsfmc),
+    status: text(row.cszt),
+    batch: text(row.whpc),
+    // 非字典取值原样保留，包括原型同名键。
+    declareKind: rawKind ? (Object.hasOwn(DECLARE_KINDS, rawKind) ? DECLARE_KINDS[rawKind]! : rawKind) : null,
+    appliedAt: text(row.sqsj),
+    awardBatchLabel: text(row.personuuid),
+    year: toYear(row.year),
+  }
 }
 
 /**
@@ -74,7 +90,6 @@ export function relationFromRow(
   row: PlatformRow,
   meta: PlatformQueryMeta & { sequenceNo?: number },
 ): PlatformRelationRecord {
-  const rawKind = text(row.sblx)
   return {
     interface: meta.interface,
     rdjb: meta.rdjb ?? '',
@@ -82,14 +97,7 @@ export function relationFromRow(
     relationKey: text(row.id),
     nameRaw: text(row.qymc),
     usccRaw: text(row.tyshxydm),
-    province: text(row.szsfmc),
-    status: text(row.cszt),
-    batch: text(row.whpc),
-    // 已知取值转代号;非字典取值**原样保留**(不因未知取值崩溃,由写入侧标待核)。
-    declareKind: rawKind ? (DECLARE_KINDS[rawKind] ?? rawKind) : null,
-    appliedAt: text(row.sqsj),
-    awardBatchLabel: text(row.personuuid),
-    year: toYear(row.year),
+    ...processFactsFromRow(row),
     sourceKind: meta.interface === 'business_list' ? 'platform_business' : 'platform_apply',
     rawFields: { ...row },
   }
