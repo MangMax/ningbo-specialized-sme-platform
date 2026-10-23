@@ -4,6 +4,7 @@ import type { AnnualReviewPhase, AnnualTimelineView } from '~~/lib/roster/annual
 import AnnualProcessTimeline from './AnnualProcessTimeline.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Button } from '@/components/ui/button'
 
 const props = withDefaults(defineProps<{
@@ -17,7 +18,10 @@ const props = withDefaults(defineProps<{
   canRetry?: boolean
   progress?: string
   businessReasons?: string[]
-}>(), { targetPage: 1, businessReasons: () => [] })
+  taskReadFailed?: boolean
+  actionError?: string
+  auditReadback?: { id: number; revision: number; status: string }[]
+}>(), { targetPage: 1, businessReasons: () => [], auditReadback: () => [] })
 const emit = defineEmits<{
   refresh: []
   'retry-submit': []
@@ -27,10 +31,11 @@ const emit = defineEmits<{
   page: [page: number]
   'page-size': [size: number]
   'event-navigate': [eventId: number]
+  'retry-task-read': []
 }>()
 const phaseText: Record<AnnualReviewPhase, string> = {
   checking: '正在读取本事件年度过程与页面提交能力。',
-  'read-only': '此页面当前只读，提交能力未开启或未能确认；仅展示归档事实与当前待核资格。',
+  'read-only': '此页面当前只读，提交能力未开启或未能确认；仅展示归档事实与当前核对资格。',
   submitting: '正在提交本事件年度核对。',
   unknown: '提交结果尚未确认；保留同一请求，可重试确认结果。',
   running: '正在核对本事件年度过程。',
@@ -64,7 +69,12 @@ const visibleView = computed(() => props.view && !['read-only', 'synced'].includ
       <Button v-if="canCancel" variant="outline" size="sm" :disabled="pending" @click="emit('cancel')">取消任务</Button>
     </div>
     <p v-for="reason in businessReasons" :key="reason" class="text-muted-foreground text-[13px] leading-5">{{ reason }}</p>
+    <p v-if="actionError" role="status" class="text-[13px]">{{ actionError }}</p>
+    <TableFailureState v-if="taskReadFailed" compact title="年度任务状态读取失败" description="原任务和请求保留，尚不能判断任务已完成。" @retry="emit('retry-task-read')" />
     <TableFailureState v-if="readFailed" compact :pending="pending" :title="`年度过程第 ${targetPage} 页读取失败`" :description="view ? `保留第 ${view.page} 页年度过程及其来源；目标页面尚未更新。` : '尚未取得年度过程，不能据此判断无业务或已确认。'" @retry="emit('refresh')" />
     <AnnualProcessTimeline v-if="visibleView" :view="visibleView" :back="back" :pending="pending" @page="emit('page', $event)" @page-size="emit('page-size', $event)" @event-navigate="emit('event-navigate', $event)" />
+    <DisclosurePanel v-if="auditReadback.length" compact title="本次读回的对应与审计" :heading-level="4">
+      <ul class="flex flex-col gap-1 text-[13px] text-muted-foreground"><li v-for="point in auditReadback" :key="point.id">对应 #{{ point.id }} · 读回修订 {{ point.revision }} · 已读回该修订审计</li></ul>
+    </DisclosurePanel>
   </section>
 </template>

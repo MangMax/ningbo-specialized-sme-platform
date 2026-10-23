@@ -13,7 +13,7 @@ const props = defineProps<{ view: AnnualTimelineView; back: string; pending?: bo
 const emit = defineEmits<{ page: [page: number]; 'page-size': [size: number]; 'event-navigate': [eventId: number] }>()
 const steps = computed(() => orderedAnnualSteps(props.view.steps))
 const finalStepId = computed(() => confirmedAnnualStep(props.view))
-const latest = computed(() => props.view.steps.find(step => step.id === props.view.latestStepId))
+const latestStatus = computed(() => props.view.latestStatus ?? props.view.steps.find(step => step.id === props.view.latestStepId)?.status)
 const reasons = computed(() => [...new Set([...props.view.reasons, ...(props.view.qualification?.reasons ?? [])])])
 const sourceId = shallowRef<number | null>(null)
 const navigateTo = shallowRef<number | null>(null)
@@ -33,8 +33,8 @@ function afterClose(event: Event) {
       <h4 class="text-sm font-medium">{{ view.year == null ? '年度待核' : `${view.year} 年` }}{{ view.matter }}过程</h4>
       <p class="text-muted-foreground text-[13px]">称号：{{ view.title }} · 事项：{{ view.matter }}</p>
       <p data-annual-summary class="text-[13px] leading-5">
-        <template v-if="finalStepId">已有最终结果<span v-if="latest?.status">：{{ latest.status }}</span> · 与正式结果相符，当前对应已确认。</template>
-        <template v-else>尚无已确认最终结果<span v-if="latest?.status">；平台年度末态：{{ latest.status }}</span>。</template>
+        <template v-if="finalStepId">已有最终结果<span v-if="latestStatus">：{{ latestStatus }}</span> · 与正式结果相符，当前对应已确认。</template>
+        <template v-else>尚无已确认最终结果<span v-if="latestStatus">；平台年度末态：{{ latestStatus }}</span>。</template>
       </p>
       <p v-for="reason in reasons" :key="reason" class="text-muted-foreground text-[13px] leading-5">{{ reason }}</p>
     </div>

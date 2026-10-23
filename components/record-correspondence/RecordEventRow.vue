@@ -102,6 +102,7 @@ const interfaceSummary = computed(() => {
               <span v-if="review && event.seq != null" class="text-muted-foreground text-[13px]">第 {{ event.seq }} 批</span>
             </div>
             <p v-if="event.type === 'review'" class="mt-1 text-[15px] leading-6 font-medium">{{ eventDecisionText({ eventType: event.type, year: event.year, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }) }}</p>
+            <slot name="annual-summary" />
           </div>
 
           <div class="flex min-w-0 flex-col gap-1.5 text-[13px] sm:max-w-80">
@@ -144,6 +145,7 @@ const interfaceSummary = computed(() => {
         <span class="w-full text-right text-[13px]">{{ review ? '核对平台对应' : '来源记录' }}</span>
       </template>
       <RecordEventSource :event="event" :evidence="evidence" :edges="fullEdges ?? []" :edges-ready="linksReady && fullEdges !== null && fullEdges !== undefined" :edges-loading="detailsLoading" :edges-error="detailsError" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" @retry-detail="emit('retry-detail')" />
+      <slot v-if="open" name="annual-review" />
       <EventArchiveCandidates v-if="open && event.source === 'jxj' && ['award', 'review'].includes(event.type)" :key="event.id" :event-id="event.id" :back="back" :auto-load="review" />
     </DisclosurePanel>
   </section>
