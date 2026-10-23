@@ -43,4 +43,18 @@
 
 共享写回 DTO 位于 `lib/platform/business-record.ts`，领域入口位于 `server/utils/platform-business-record.ts`。下一层应先按企业、queryIds、sourceSet、asOf 限定原观察，再 LEFT JOIN mapping/version/record，输出观察来源和旧决定引用。未索引为 not_indexed；missing_key、conflict、unverifiable 以原 relationId 隔离，不把所有 null 合成一组。不同版本/接口/角色不能折叠；相同版本的多个出处都要保留。不得用同 record 的其他观察代替选定来源的 proof 或复制旧裁决。
 
-本层没有更改 UI、候选、企业详情或 record comparison 消费者，因此旧页面仍会展示重复采集；共享业务读模型、冲突聚合、消费者接入、生产历史投影与父 #243 验收留待下一层。没有生产数据库迁移/写入或全用户需求完成声明。
+## 共享 scoped 读模型与候选（#246 第一项）
+
+公共读 DTO 在 `lib/platform/business-record.ts`；共享入口在 `server/utils/platform-business-record-read.ts`：
+
+- `readPlatformBusinessMetadata(db, relationIds)` 仅对指定原 relationId LEFT JOIN observation/record/version 的轻量列，返回 Map。缺映射仍保留原 relationId；不读取完整 raw 或 canonicalRawJson。
+- `readPlatformBusinessGroups(db, observations)` 的输入是**已经按调用方 query/time/owner/title/role 及原业务条件筛选的观察**。调用方负责同一个读事务快照。模块不发现额外查询，不读取同 record 的全档观察。每批至多 400 个 ID/参数；空输入不查表。
+- 分组键包含目标 event/enterprise/title、type、role、接口和 recordId+versionId。仅 resolved+verified 可共享候选组。not_indexed、missing_key、conflict、unverifiable 均以 relationId 隔离；不会把全部 null 或同 record 的未知内容归并。
+- 返回 `businessRecord`（recordId/versionId/interface/platformKey/状态/规则/内容哈希）、`representativeRelationId`、全部 `observationRefs`、`existingCorrespondenceIds`、`existingCorrespondences`、冲突并集。每条 observation 保留自己的 relation/query/sequence/time、查询条件/状态、原主体/称号/核验字段、证据与 normalizationConflicts，以及自己的旧决定。旧决定保留目标/type/role/status/revision/ruleId/ruleVersion/决定时间，不读取大 provenance。
+- 代表观察按 relationId 排序，优先有任何既有对应端点的最小 ID，否则最小原 ID；不会优先 confirmed。组内相同 type/role 的相反决定或不同目标决定报 `correspondence_decision_conflict`，全部决定仍可见。身份、称号与原标准化冲突只增加或保留，不自动覆盖事实、复制决定或重写指针。
+
+REST `POST /api/roster/correspondences/candidates` 与 MCP `find_record_correspondence_candidates` 复用既有同域服务。先执行既有选源、成功/partial、有效 USCC、企业归属、称号、event/later-process 角色条件，再调用共享分组。候选仍始终 `status=candidate`；顶层 `evidence` 为代表观察原证据，全组证据见 `observationRefs[].evidence`。`existingCorrespondenceId/revision` 仅指代表端点上匹配目标/type/role的旧对应；组级数组中的确认不代表每条观察都已确认。只选新 query 时不会借未选旧 query 的决定证明已对应，不提供全档提示。
+
+`multiple_candidate_rows` 仅在实际平台业务版本候选组多于一个时加入，重复观察不构成多候选；不同版本/接口/角色仍独立。导出候选维持原行粒度、证据和既有对应语义。`total/page/pageSize` 在平台分组后与导出行合并计算；查询覆盖及导出批次仍按原来源返回。原候选入口不支持 `asOf`，本项不新增它；未来详情/comparison 应先按自己的时间/来源契约过滤再使用共享读模块。
+
+本项不接入企业详情 UI 或 record comparison（#246 其余两项），不改 PR245 的存储写入、原归档列表、旧指纹、裁决、差异引用，也不执行生产迁移/写入。业务版本候选去重不表示已完成全用户需求或全档数据验收。
