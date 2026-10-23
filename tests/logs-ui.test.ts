@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLogRead } from '../composables/useLogRead'
-import type { LogSummary } from '../lib/logging/contract'
+import type { FieldCapturedLogEvent, LogSummary } from '../lib/logging/contract'
 // Model reduced-motion preference in happy-dom; real browser checks retain the
 // production transitions and exercise the actual Tabs/Sheet interaction.
 vi.mock('motion-v', async (original) => {
@@ -1375,6 +1375,237 @@ it('shows MCP self-report only in the MCP section and keeps unrelated source fie
     client: { name: 'cursor', version: '0.49.1', trust: 'self-reported' }
   })
   expect(JSON.stringify(JSON.parse(writeText.mock.calls[0]![0]))).not.toContain(uploadId)
+})
+
+it('marks a writer-disabled field as 当时未启用采集 and keeps historical gaps unknown', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  // The writer recorded httpRoute/statusCode as disabled at capture time, revision 4.
+  const captured = {
+    id: '00000000-0000-4000-8000-000000000601',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'error',
+    source: 'http',
+    operation: 'http.request',
+    outcome: 'failure',
+    httpMethod: 'GET',
+    durationMs: 12,
+    errorCode: 'upstream_failed',
+    counts: { failed: 0, done: 0 },
+    fieldCapture: { profile: 'http', revision: 4, disabled: ['httpRoute', 'statusCode'] }
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(captured))
+  const wrapper = mount(Detail, { props: { id: captured.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const text = wrapper.text()
+  expect(text).toContain('当时未启用采集')
+  expect(text).toContain('当时写入这条记录时未启用采集')
+  expect(text).toContain('不追溯历史')
+  // 不能说成框架未匹配路由或源头没提供；真实方法、耗时、失败码与 0 计数照常呈现。
+  expect(text).not.toContain('框架未匹配到已知路由模板')
+  expect(text).not.toContain('源头')
+  expect(text).toContain('GET')
+  expect(text).toContain('耗时（毫秒）')
+  expect(text).toContain('upstream_failed')
+  expect(text).toContain('失败 0')
+  const disabledCells = wrapper.findAll('[data-omission=disabled]')
+  expect(disabledCells).toHaveLength(2)
+  for (const cell of disabledCells) expect(cell.text()).toBe('当时未启用采集')
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(JSON.parse(writeText.mock.calls[0]![0])).toMatchObject({
+    id: captured.id,
+    timestamp: captured.timestamp,
+    httpMethod: 'GET',
+    durationMs: 12,
+    errorCode: 'upstream_failed',
+    fieldCapture: { profile: 'http', revision: 4, disabled: ['httpRoute', 'statusCode'] }
+  })
+  vi.unstubAllGlobals()
+})
+
+it('keeps a historical row without capture as 未记录 and never infers from current policy', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const historical = {
+    id: '00000000-0000-4000-8000-000000000602',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'info',
+    source: 'http',
+    operation: 'http.request',
+    outcome: 'success'
+  }
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(historical))
+  const wrapper = mount(Detail, { props: { id: historical.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('未记录')
+  expect(wrapper.text()).not.toContain('当时未启用采集')
+  expect(wrapper.findAll('[data-omission=disabled]')).toHaveLength(0)
+  // 旧记录的缺口仍按原来未知文案解释，不用当前策略倒推。
+  expect(wrapper.text()).toContain('框架未匹配到已知路由模板')
+  // 基础字段保持干净：没有无关的 fileId/page/batchId 行。
+  expect(wrapper.text()).not.toContain('文件编号')
+  expect(wrapper.text()).not.toContain('页码')
+  vi.unstubAllGlobals()
+})
+
+it('rebuilds the copied capture from a fixed whitelist instead of trusting the response', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  const base = {
+    id: '00000000-0000-4000-8000-000000000603',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'warn',
+    source: 'http',
+    operation: 'http.request',
+    outcome: 'denied',
+    httpMethod: 'POST'
+  }
+  let event: any = {
+    ...base,
+    fieldCapture: {
+      profile: 'http',
+      revision: 7,
+      disabled: ['httpRoute', 'statusCode', 'PRIVATE_FIELD', 'httpMethod'],
+      privateToken: 'PRIVATE_CAPTURE'
+    }
+  }
+  vi.stubGlobal('$fetch', vi.fn(async () => event))
+  const wrapper = mount(Detail, { props: { id: base.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  const copied = JSON.parse(writeText.mock.calls[0]![0])
+  // 任意键被丢掉，只保留已实现 profile 的已知字段名。
+  expect(copied.fieldCapture).toEqual({
+    profile: 'http',
+    revision: 7,
+    disabled: ['httpRoute', 'statusCode']
+  })
+  expect(JSON.stringify(copied)).not.toContain('PRIVATE')
+  // 复制保留原始 id/time，不走 safeLogEvent 重新生成。
+  expect(copied.id).toBe(base.id)
+  expect(copied.timestamp).toBe(base.timestamp)
+  const hostileCaptures = [
+    { profile: 'tus', revision: 1, disabled: ['method'] },
+    { profile: 'http', revision: Number.NaN, disabled: ['httpRoute'] },
+    { profile: 'http', revision: -1, disabled: ['httpRoute'] },
+    { profile: 'http', revision: 1.5, disabled: ['httpRoute'] },
+    { profile: 'http', revision: 1, disabled: 'httpRoute' },
+    { profile: 'http', revision: 1, disabled: [] },
+    // 声明关闭但事件里其实有值：自相矛盾，不当成省略复制出去。
+    { profile: 'http', revision: 1, disabled: ['httpMethod'] }
+  ]
+  for (const [index, hostile] of hostileCaptures.entries()) {
+    const id = `00000000-0000-4000-8000-0000000007${String(index).padStart(2, '0')}`
+    event = { ...base, id, fieldCapture: hostile }
+    await wrapper.setProps({ id })
+    await flushPromises()
+    writeText.mockClear()
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+    expect(JSON.parse(writeText.mock.calls[0]![0])).not.toHaveProperty('fieldCapture')
+  }
+  vi.unstubAllGlobals()
+})
+
+it('accepts an output-shaped TUS context with an omitted uploadId and keeps phase', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  // Output side (future FieldCapturedLogEvent) allows uploadId to be omitted while
+  // phase stays required. The UI must not assume the stricter input shape.
+  const event: any = {
+    id: '00000000-0000-4000-8000-000000000604',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'warn',
+    source: 'file',
+    operation: 'file.upload',
+    outcome: 'failure',
+    tus: { phase: 'request-failed', method: 'PATCH' }
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('上传（TUS）')
+  expect(wrapper.text()).toContain('请求失败')
+  // 没有 uploadId 不阻止复制剩余真实上下文；也不凭空补一个标识。
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  const copied = JSON.parse(writeText.mock.calls[0]![0])
+  expect(copied.tus).toEqual({ phase: 'request-failed', method: 'PATCH' })
+  expect(copied.id).toBe(event.id)
+  expect(copied.timestamp).toBe(event.timestamp)
+  vi.unstubAllGlobals()
+})
+
+it('drops a capture whose profile this build has not implemented', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const event = {
+    id: '00000000-0000-4000-8000-000000000605',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'info',
+    source: 'worker',
+    operation: 'worker.enterprise_read.finished',
+    outcome: 'success',
+    // Not one of the implemented profiles: must not be echoed as trusted copy.
+    fieldCapture: { profile: 'worker', revision: 1, disabled: ['resourceId'] }
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  const copied = JSON.parse(writeText.mock.calls[0]![0])
+  expect(copied).not.toHaveProperty('fieldCapture')
+  expect(copied.id).toBe(event.id)
+  vi.unstubAllGlobals()
+})
+
+it('keeps phase and the tus capture when uploadId was disabled at capture time', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  // Real writer output: tus.uploadId disabled in configuration, so the projected
+  // context keeps phase/method but has no uploadId, and capture records why.
+  const event: FieldCapturedLogEvent = {
+    id: '00000000-0000-4000-8000-000000000606',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'warn',
+    source: 'file',
+    operation: 'file.upload',
+    outcome: 'failure',
+    tus: { phase: 'request-failed', method: 'PATCH', size: 2048, offset: 1024 },
+    fieldCapture: { profile: 'tus', revision: 6, disabled: ['tus.uploadId'] }
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const text = wrapper.text()
+  expect(text).toContain('上传（TUS）')
+  expect(text).toContain('请求失败')
+  expect(text).toContain('当时未启用采集')
+  // uploadId 关闭不改变 phase，也不宣称源头没提供。
+  expect(text).not.toContain('uploadId 来自服务端 tus 回调')
+  const uploadCell = wrapper.get('[data-omission=disabled]')
+  expect(uploadCell.text()).toBe('当时未启用采集')
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  const copied = JSON.parse(writeText.mock.calls[0]![0])
+  expect(copied.tus).toEqual({ phase: 'request-failed', method: 'PATCH', size: 2048, offset: 1024 })
+  expect(copied.fieldCapture).toEqual({ profile: 'tus', revision: 6, disabled: ['tus.uploadId'] })
+  expect(copied.id).toBe(event.id)
+  expect(copied.timestamp).toBe(event.timestamp)
+  vi.unstubAllGlobals()
 })
 
 it('shows a dedicated TUS upload detail without pretending fileId/page are registered', async () => {

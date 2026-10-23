@@ -5,10 +5,13 @@ import type {
   LOG_INTEGRATIONS,
   LogCollection,
   LogCollectionRule,
+  LogFieldControls,
+  LogFieldControlsPatch,
   LogFilter,
   LogPolicy,
   LogPolicyPatch
 } from '~~/lib/logging/contract'
+import type { LOG_FIELD_PROFILES } from '~~/lib/logging/field-controls'
 import { isClientLogSource, sourceLabel } from './logPresentation'
 import {
   logBrowserHeaders,
@@ -18,9 +21,17 @@ import {
 } from '~/composables/useLogRead'
 import TableFailureState from '@/components/TableFailureState.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import {
+  Field,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet
+} from '@/components/ui/field'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -33,6 +44,7 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableRow, TableCell } from '@/components/ui/table'
 import {
   Dialog,
@@ -45,6 +57,8 @@ import {
 
 /** 目录项由后端常量导出；这里只取它的元素类型，不另造只含 supported 的窄类型。 */
 type IntegrationEntry = (typeof LOG_INTEGRATIONS)[number]
+/** 字段目录同样只取服务端响应的元素类型，页面不进口本地常量当开关来源。 */
+type FieldProfile = (typeof LOG_FIELD_PROFILES)[number]
 /**
  * 服务端实际响应：新后端带 collection/catalog/revision，旧后端只有 legacy
  * retention/maxBytes。后两项保持可选，旧界面仍能保留清理能力，且不会显示
@@ -52,7 +66,11 @@ type IntegrationEntry = (typeof LOG_INTEGRATIONS)[number]
  */
 type PolicyView = LogPolicy & {
   collection?: LogCollection
-  catalog?: { integrations: readonly IntegrationEntry[] }
+  fieldControls?: LogFieldControls
+  catalog?: {
+    integrations: readonly IntegrationEntry[]
+    profiles?: readonly FieldProfile[]
+  }
   revision?: number
   storageBytes: number
   pruned: number
@@ -100,6 +118,17 @@ type CollectionSection = {
   description: string
   groups: RowGroup[]
 }
+/** 一个字段叶子相对已保存配置的真实变动；恢复默认也会以 false→true 出现在这里。 */
+type FieldChange = {
+  profile: string
+  profileLabel: string
+  level: LevelKey
+  levelLabel: string
+  field: string
+  fieldLabel: string
+  from: boolean
+  to: boolean
+}
 type ConfigReview = {
   kind: 'config'
   retentionDays: number
@@ -108,6 +137,7 @@ type ConfigReview = {
   capacityChanged: boolean
   sources: RuleChange[]
   integrations: RuleChange[]
+  fields: FieldChange[]
 }
 type Review =
   | ConfigReview
@@ -129,12 +159,15 @@ const filterLabels: Record<string, string> = {
   batchId: '批次标识',
   resourceId: '资源标识'
 }
-const LEVEL_LABELS: Record<(typeof LOG_LEVELS)[number], string> = {
+type LevelKey = (typeof LOG_LEVELS)[number]
+const LEVEL_LABELS: Record<LevelKey, string> = {
   debug: '调试',
   info: '信息',
   warn: '警告',
   error: '错误'
 }
+/** 级别来自服务端目录；未知取值原样显示，不猜中文名。 */
+const levelLabel = (level: string) => LEVEL_LABELS[level as LevelKey] ?? level
 const { data, loading, error, refresh } = useLogRead(ref('policy'), () =>
   $fetch<PolicyView>('/api/logs/policy', { retry: 0, headers: logBrowserHeaders })
 )
@@ -143,6 +176,16 @@ const days = ref(7),
   initialized = ref(false)
 const sourceDraft = ref<Record<string, LogCollectionRule>>({}),
   integrationDraft = ref<Record<string, LogCollectionRule>>({})
+/** 字段草稿：profile → 级别 → 字段布尔。只在服务端目录存在时才有内容。 */
+const fieldDraft = ref<LogFieldControls>({} as LogFieldControls)
+const fieldProfile = ref(''),
+  fieldLevel = ref<LevelKey>('info')
+const fieldOpen = ref(false)
+/** 可撤销的字段操作；restore 是操作前的整份字段草稿，撤销只改草稿。 */
+type FieldNotice = { text: string; restore?: LogFieldControls }
+const fieldNotice = ref<FieldNotice | null>(null)
+const fieldCopyOpen = ref(false)
+const fieldCopyTargets = ref<LevelKey[]>([])
 
 function cloneRules(
   rules?: Partial<Record<string, LogCollectionRule>>
@@ -158,6 +201,14 @@ function initializeDrafts(policy: PolicyView) {
   bytes.value = policy.maxBytes
   sourceDraft.value = cloneRules(policy.collection?.sources)
   integrationDraft.value = cloneRules(policy.collection?.integrations)
+  const profiles = policy.catalog?.profiles ?? []
+  fieldDraft.value = cloneFieldControls(policy.fieldControls, profiles) as LogFieldControls
+  if (!profiles.some((profile) => profile.key === fieldProfile.value))
+    fieldProfile.value = profiles[0]?.key ?? ''
+  const profile = profiles.find((candidate) => candidate.key === fieldProfile.value)
+  if (profile && !profile.levels.includes(fieldLevel.value))
+    fieldLevel.value = profile.levels[0] ?? 'info'
+  clearFieldTransient()
 }
 watch(data, (value) => {
   if (value && !initialized.value) {
@@ -311,6 +362,260 @@ const collectionSections = computed<CollectionSection[]>(() => {
   )
 })
 
+
+/** 字段目录只来自服务端响应；旧后端或不可读的字段规则不渲染入口，也不补默认。 */
+const fieldProfiles = computed<readonly FieldProfile[]>(() => data.value?.catalog?.profiles ?? [])
+const fieldValues = (controls: LogFieldControls | undefined, profile: string, level: string) =>
+  (controls as unknown as Record<string, Record<string, Record<string, boolean>>> | undefined)?.[
+    profile
+  ]?.[level]
+const supportsFieldControls = computed(() => {
+  const profiles = fieldProfiles.value,
+    controls = data.value?.fieldControls
+  // 父级条件是真实的来源/集成规则；没有 collection 就无从判断“当前是否采集”，
+  // 整个入口隐藏而不是渲染一组看起来可用的孤立开关。
+  if (!profiles.length || !controls || !data.value?.collection) return false
+  return profiles.every(
+    (profile) =>
+      profile.fields.length > 0 &&
+      profile.levels.length > 0 &&
+      profile.levels.every((level) => {
+        const values = fieldValues(controls, profile.key, level)
+        return (
+          !!values && profile.fields.every((field) => typeof values[field.key] === 'boolean')
+        )
+      })
+  )
+})
+/** 只按目录里真实存在的键重建，响应里多出的 profile/level/field 不进入草稿。 */
+function cloneFieldControls(
+  controls: LogFieldControls | undefined,
+  profiles: readonly FieldProfile[]
+): LogFieldControls {
+  const out: Record<string, Record<string, Record<string, boolean>>> = {}
+  for (const profile of profiles) {
+    const levels: Record<string, Record<string, boolean>> = {}
+    for (const level of profile.levels) {
+      const values = fieldValues(controls, profile.key, level)
+      const fields: Record<string, boolean> = {}
+      for (const field of profile.fields) fields[field.key] = values?.[field.key] === true
+      levels[level] = fields
+    }
+    out[profile.key] = levels
+  }
+  return out as unknown as LogFieldControls
+}
+const activeProfile = computed(() => fieldProfiles.value.find((p) => p.key === fieldProfile.value))
+const activeLevels = computed<readonly LevelKey[]>(() => activeProfile.value?.levels ?? [])
+const activeFields = computed(() => activeProfile.value?.fields ?? [])
+const activeLevelValues = computed<Record<string, boolean> | undefined>(() =>
+  activeProfile.value
+    ? fieldValues(fieldDraft.value, activeProfile.value.key, fieldLevel.value)
+    : undefined
+)
+/**
+ * 采集器与来源由服务端目录给出，目录里没有“父级集成”字段，所以这里只做展示映射：
+ * 先看是否存在与 profile 同名的集成（tus 等服务端 hook 就是这种），
+ * 再补上已知的独立采集器（HTTP 请求完成事件由 Nuxt / Nitro 集成产生）。
+ * 未来目录新增 profile 时，若两者都不匹配，就只按来源规则判断，不臆造父级条件。
+ */
+const PROFILE_COLLECTOR_INTEGRATIONS: Record<string, readonly string[]> = {
+  http: ['nuxt-nitro']
+}
+function parentRulesFor(profile: FieldProfile | undefined) {
+  if (!profile) return []
+  const rules: { label: string; rule: LogCollectionRule }[] = []
+  const source = sourceDraft.value[profile.source]
+  if (source) rules.push({ label: `${sourceLabel(String(profile.source))}来源`, rule: source })
+  const candidates = [
+    String(profile.key),
+    ...(PROFILE_COLLECTOR_INTEGRATIONS[String(profile.key)] ?? [])
+  ]
+  for (const key of candidates) {
+    const rule = integrationDraft.value[key]
+    if (!rule) continue
+    const label = configuredIntegrations.value.find((meta) => meta.key === key)?.label ?? key
+    rules.push({ label: `${label}集成`, rule })
+  }
+  return rules
+}
+const offReasonsFor = (profile: FieldProfile | undefined) =>
+  parentRulesFor(profile)
+    .filter((entry) => !entry.rule.enabled)
+    .map((entry) => `${entry.label}已关闭`)
+const parentRules = computed(() => parentRulesFor(activeProfile.value))
+const parentOffReasons = computed(() => offReasonsFor(activeProfile.value))
+/** 核对时按改动涉及的 profile 说明父级；不是只看当前正在编辑的那一类。 */
+const reviewParentReasons = computed(() => {
+  const keys = [...new Set(fieldChanges.value.map((change) => change.profile))]
+  const reasons = keys.flatMap((key) =>
+    offReasonsFor(fieldProfiles.value.find((profile) => profile.key === key))
+  )
+  return [...new Set(reasons)]
+})
+const parentMinLevel = computed<LevelKey | undefined>(() => {
+  const indexes = parentRules.value.map((entry) => LOG_LEVELS.indexOf(entry.rule.minLevel))
+  if (!indexes.length) return undefined
+  return LOG_LEVELS[Math.max(...indexes)]
+})
+const levelBelowParent = computed(
+  () => !!parentMinLevel.value && LOG_LEVELS.indexOf(fieldLevel.value) < LOG_LEVELS.indexOf(parentMinLevel.value)
+)
+const levelChangedCount = (level: LevelKey) => {
+  const profile = activeProfile.value
+  if (!profile) return 0
+  const values = fieldValues(fieldDraft.value, profile.key, level)
+  return profile.fields.filter((field) => values?.[field.key] === false).length
+}
+/** 每个级别的圆点表示“这一档有字段不记录”，与是否已保存无关。 */
+const levelTabs = computed(() =>
+  activeLevels.value.map((level) => {
+    const count = levelChangedCount(level)
+    return {
+      key: level,
+      label: levelLabel(level),
+      count,
+      ariaLabel: count ? `${levelLabel(level)}，已调整 ${count} 项` : levelLabel(level)
+    }
+  })
+)
+const sameLevelValues = (left: Record<string, boolean> | undefined, right: Record<string, boolean> | undefined) =>
+  activeFields.value.every((field) => left?.[field.key] === right?.[field.key])
+const copyLevels = computed(() =>
+  activeLevels.value
+    .filter((level) => level !== fieldLevel.value)
+    .map((level) => {
+      const same = sameLevelValues(activeLevelValues.value, fieldValues(fieldDraft.value, activeProfile.value!.key, level))
+      return { key: level, label: levelLabel(level), same }
+    })
+)
+const copyAvailable = computed(() => copyLevels.value.filter((entry) => !entry.same))
+/** 相对服务端基线的真实差异；恢复 true 也在这里出现，不能只在“关闭项”里找。 */
+const fieldChanges = computed<FieldChange[]>(() => {
+  const baseline = data.value?.fieldControls
+  if (!baseline || !supportsFieldControls.value) return []
+  const changes: FieldChange[] = []
+  for (const profile of fieldProfiles.value)
+    for (const level of profile.levels)
+      for (const field of profile.fields) {
+        const from = fieldValues(baseline, profile.key, level)?.[field.key]
+        const to = fieldValues(fieldDraft.value, profile.key, level)?.[field.key]
+        if (typeof from !== 'boolean' || typeof to !== 'boolean' || from === to) continue
+        changes.push({
+          profile: profile.key,
+          profileLabel: profile.label,
+          level,
+          levelLabel: levelLabel(level),
+          field: field.key,
+          fieldLabel: field.label,
+          from,
+          to
+        })
+      }
+  return changes
+})
+const savedDisabledCount = computed(() => {
+  const baseline = data.value?.fieldControls
+  if (!baseline) return 0
+  let count = 0
+  for (const profile of fieldProfiles.value)
+    for (const level of profile.levels)
+      count += profile.fields.filter(
+        (field) => fieldValues(baseline, profile.key, level)?.[field.key] === false
+      ).length
+  return count
+})
+const fieldSummary = computed(() => {
+  if (fieldChanges.value.length) return `共 ${fieldChanges.value.length} 项未保存`
+  return savedDisabledCount.value ? `当前 ${savedDisabledCount.value} 项不记录` : '默认全部保留'
+})
+function clearFieldTransient() {
+  fieldCopyOpen.value = false
+  fieldCopyTargets.value = []
+  fieldNotice.value = null
+}
+function selectFieldProfile(key: string) {
+  if (key === fieldProfile.value) return
+  fieldProfile.value = key
+  const profile = fieldProfiles.value.find((candidate) => candidate.key === key)
+  if (profile && !profile.levels.includes(fieldLevel.value)) fieldLevel.value = profile.levels[0]!
+  clearFieldTransient()
+}
+function selectFieldLevel(level: LevelKey) {
+  if (level === fieldLevel.value) return
+  fieldLevel.value = level
+  clearFieldTransient()
+}
+function setField(key: string, next: boolean) {
+  const profile = activeProfile.value
+  if (!profile) return
+  const values = fieldValues(fieldDraft.value, profile.key, fieldLevel.value)
+  if (!values || values[key] === next) return
+  values[key] = next
+  fieldNotice.value = null
+}
+const fieldControlId = (field: string) =>
+  `log-field-${fieldProfile.value}-${fieldLevel.value}-${field}`
+function toggleFieldCopyTarget(level: LevelKey, next: boolean) {
+  fieldCopyTargets.value = next
+    ? [...new Set([...fieldCopyTargets.value, level])]
+    : fieldCopyTargets.value.filter((entry) => entry !== level)
+}
+// 收起面板只清掉临时的复制/撤销状态，字段草稿与当前类型、级别保留。
+watch(fieldOpen, (open) => {
+  if (!open) clearFieldTransient()
+})
+function openFieldCopy() {
+  fieldNotice.value = null
+  fieldCopyTargets.value = []
+  fieldCopyOpen.value = true
+}
+function copyFieldLevel() {
+  const profile = activeProfile.value,
+    source = activeLevelValues.value
+  if (!profile || !source) return
+  const targets = fieldCopyTargets.value.filter((level) =>
+    copyAvailable.value.some((entry) => entry.key === level)
+  )
+  if (!targets.length) return
+  const restore = cloneFieldControls(fieldDraft.value, fieldProfiles.value)
+  for (const level of targets) {
+    const values = fieldValues(fieldDraft.value, profile.key, level)
+    if (!values) continue
+    for (const field of profile.fields) values[field.key] = source[field.key] === true
+  }
+  fieldCopyOpen.value = false
+  fieldCopyTargets.value = []
+  fieldNotice.value = {
+    text: `已复制到${targets.map((level) => levelLabel(level)).join('、')}。`,
+    restore
+  }
+}
+function restoreFieldLevel() {
+  const profile = activeProfile.value
+  if (!profile) return
+  const restore = cloneFieldControls(fieldDraft.value, fieldProfiles.value)
+  const values = fieldValues(fieldDraft.value, profile.key, fieldLevel.value)
+  if (values) for (const field of profile.fields) values[field.key] = true
+  fieldNotice.value = { text: '已恢复本级别的默认选择。', restore }
+}
+function undoFieldChange() {
+  const notice = fieldNotice.value
+  if (!notice?.restore) return
+  fieldDraft.value = notice.restore
+  fieldNotice.value = { text: '已撤销，恢复到操作前的选择。' }
+}
+function fieldPatch(changes: FieldChange[]): LogFieldControlsPatch | undefined {
+  if (!changes.length) return undefined
+  const patch: Record<string, Record<string, Record<string, boolean>>> = {}
+  for (const change of changes) {
+    const levels = (patch[change.profile] ??= {})
+    const fields = (levels[change.level] ??= {})
+    fields[change.field] = change.to
+  }
+  return patch as LogFieldControlsPatch
+}
+
 const sameRule = (a: LogCollectionRule, b: LogCollectionRule) =>
   a.enabled === b.enabled && a.minLevel === b.minLevel
 const changedSources = computed<RuleChange[]>(() => {
@@ -364,7 +669,8 @@ const hasChanges = computed(
     retentionChanged.value ||
     capacityChanged.value ||
     changedSources.value.length > 0 ||
-    changedIntegrations.value.length > 0
+    changedIntegrations.value.length > 0 ||
+    fieldChanges.value.length > 0
 )
 
 /** 值没变就不再让人为一个没有差异的操作做确认（比较的是提交用的真实单位）。 */
@@ -401,7 +707,8 @@ function reviewConfig() {
     retentionChanged: retentionChanged.value,
     capacityChanged: capacityChanged.value,
     sources: changedSources.value,
-    integrations: changedIntegrations.value
+    integrations: changedIntegrations.value,
+    fields: fieldChanges.value
   }
 }
 function reviewClear() {
@@ -432,6 +739,8 @@ function configPatch(target: ConfigReview): LogPolicyPatch {
     if (Object.keys(sources).length) patch.collection.sources = sources
     if (Object.keys(integrations).length) patch.collection.integrations = integrations
   }
+  const fieldControls = fieldPatch(target.fields)
+  if (fieldControls) patch.fieldControls = fieldControls
   return patch
 }
 
@@ -455,7 +764,7 @@ async function confirm() {
       })
       if (active)
         notice.value =
-          '日志配置已保存。更改对后续日志批次和待处理队列生效；采集开关与级别不删除已有记录，保留策略调整可能触发轮转。'
+          '日志配置已保存。更改对后续日志批次和待处理队列生效；采集开关与级别不删除已有记录，字段选择只影响之后写入的日志，保留策略调整可能触发轮转。'
       if (active) {
         // PATCH 成功响应就是真实生效值；先落到草稿，finally 再刷新概览与真实值。
         if (result) {
@@ -594,8 +903,258 @@ async function confirm() {
             </DisclosurePanel>
           </section>
         </template>
-        <Separator />
       </template>
+      <template v-if="supportsFieldControls">
+        <Separator v-if="supportsCollection" />
+        <DisclosurePanel
+          v-model:open="fieldOpen"
+          data-testid="log-field-controls"
+          :heading-level="2"
+          compact
+        >
+          <template #trigger>
+            <span class="min-w-0 flex-1 truncate text-left">详情字段（高级）</span>
+            <Badge
+              v-if="!fieldOpen && parentOffReasons.length"
+              variant="quiet"
+              class="font-normal"
+              >当前不采集</Badge
+            >
+            <span class="text-muted-foreground shrink-0 text-[13px] font-normal">{{
+              fieldSummary
+            }}</span>
+          </template>
+          <div class="flex min-w-0 flex-col gap-3 pt-1">
+            <p class="text-muted-foreground text-[13px] leading-5">
+              只决定之后写入哪些详情；来源和技术集成开关仍各自生效，已有日志不变。
+            </p>
+            <div class="flex min-w-0 flex-col gap-3">
+              <div class="flex min-w-0 flex-col gap-1.5">
+                <span class="text-muted-foreground text-[13px] leading-5 font-medium"
+                  >采集类型</span
+                >
+                <Tabs
+                  :model-value="fieldProfile"
+                  class="gap-0"
+                  @update:model-value="(value) => selectFieldProfile(String(value))"
+                >
+                  <TabsList
+                    class="h-8 w-full justify-start gap-1 overflow-x-auto sm:w-fit"
+                    aria-label="字段采集类型"
+                  >
+                    <TabsTrigger
+                      v-for="profile in fieldProfiles"
+                      :key="profile.key"
+                      :value="profile.key"
+                      class="h-7 flex-none px-3 text-[13px]"
+                      >{{ profile.label }}</TabsTrigger
+                    >
+                  </TabsList>
+                </Tabs>
+              </div>
+              <div class="flex min-w-0 flex-col gap-1.5">
+                <span class="text-muted-foreground text-[13px] leading-5 font-medium">级别</span>
+                <Tabs
+                  :model-value="fieldLevel"
+                  class="gap-0"
+                  @update:model-value="(value) => selectFieldLevel(value as LevelKey)"
+                >
+                  <TabsList
+                    class="h-8 w-full justify-start gap-1 sm:w-fit"
+                    aria-label="字段级别"
+                  >
+                    <TabsTrigger
+                      v-for="level in levelTabs"
+                      :key="level.key"
+                      :value="level.key"
+                      class="min-w-0 flex-1 gap-1 px-2 text-[13px] sm:flex-none sm:px-3"
+                      :aria-label="level.ariaLabel"
+                    >
+                      {{ level.label }}
+                      <span
+                        v-if="level.count"
+                        aria-hidden="true"
+                        class="bg-foreground inline-block size-1.5 rounded-full"
+                      />
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+            </div>
+            <p class="text-muted-foreground text-[13px] leading-5">
+              只调整这个级别的字段；是否采集仍看上面的采集规则和最低级别。
+            </p>
+            <div
+              v-if="parentOffReasons.length || levelBelowParent"
+              role="status"
+              class="flex min-w-0 flex-col gap-1"
+            >
+              <p
+                v-if="parentOffReasons.length"
+                class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-5"
+              >
+                <Badge variant="quiet" class="font-normal">当前不采集</Badge>
+                <span class="text-muted-foreground"
+                  >{{ parentOffReasons.join('、') }}；字段选择会保留，重新开启后再按这里的设置记录。</span
+                >
+              </p>
+              <p
+                v-if="levelBelowParent"
+                class="text-muted-foreground text-[13px] leading-5"
+                data-testid="log-field-level-below"
+              >
+                这个级别低于当前最低级别{{ LEVEL_LABELS[parentMinLevel ?? 'debug'] }}，当前不会产生日志；字段选择仍会保留。
+              </p>
+            </div>
+            <p class="text-[13px] leading-5" data-testid="log-field-status">
+              <template v-if="!levelTabs.some((level) => level.count)">{{
+                `${activeProfile?.label ?? ''}当前为默认：${levelTabs.length} 个级别都保留全部字段。`
+              }}</template>
+              <template v-else>{{
+                `当前选择：${levelTabs
+                  .filter((level) => level.count)
+                  .map((level) => `${level.label} ${level.count} 项`)
+                  .join('、')}不记录。`
+              }}</template>
+            </p>
+            <FieldSet v-if="activeLevelValues" class="min-w-0 gap-2">
+              <FieldLegend variant="label" class="text-muted-foreground mb-1 text-[13px] font-medium"
+                >这个级别记录的详情</FieldLegend
+              >
+              <FieldGroup class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                <Field
+                  v-for="field in activeFields"
+                  :key="field.key"
+                  orientation="horizontal"
+                  :data-disabled="busy"
+                  class="min-w-0 items-start justify-between gap-3"
+                >
+                  <div class="flex min-w-0 flex-col gap-0.5">
+                    <FieldLabel
+                      :for="fieldControlId(field.key)"
+                      class="min-w-0 text-[13px] leading-5 font-normal"
+                      >{{ field.label }}</FieldLabel
+                    >
+                    <p class="text-muted-foreground text-[13px] leading-5">
+                      {{ field.description }}
+                    </p>
+                  </div>
+                  <Switch
+                    :id="fieldControlId(field.key)"
+                    :model-value="activeLevelValues?.[field.key] ?? true"
+                    :aria-label="`记录${field.label}`"
+                    :disabled="busy"
+                    @update:model-value="(value) => setField(field.key, value === true)"
+                  />
+                </Field>
+              </FieldGroup>
+            </FieldSet>
+            <p class="text-muted-foreground text-[13px] leading-5">
+              事件编号、时间、来源、操作、级别和结果始终保留。字段没记录不代表业务失败；详情会把这里的关闭标成「当时未启用采集」，没有该标记的仍按「未记录」显示，不用当前配置倒推历史。
+            </p>
+            <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+              <!-- 全页只保留一处核对/保存入口：字段与保留策略在同一次核对里提交。 -->
+              <p class="text-muted-foreground text-[13px] leading-5">
+                字段改动会和下方保留策略一起核对、一次保存。
+              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="log-field-copy"
+                :aria-expanded="fieldCopyOpen"
+                :disabled="busy || !activeProfile"
+                @click="fieldCopyOpen ? (fieldCopyOpen = false) : openFieldCopy()"
+                >复制到其他级别</Button
+              >
+              <Button
+                v-if="activeLevelValues && Object.values(activeLevelValues).some((value) => !value)"
+                variant="ghost"
+                size="sm"
+                data-testid="log-field-restore"
+                :disabled="busy"
+                @click="restoreFieldLevel"
+                >恢复本级别默认</Button
+              >
+            </div>
+            <div
+              v-if="fieldCopyOpen"
+              class="flex min-w-0 flex-col gap-2"
+              data-testid="log-field-copy-panel"
+            >
+              <FieldSet class="min-w-0 gap-2">
+                <FieldLegend variant="label" class="mb-1 text-[13px]"
+                  >把这 {{ activeFields.length }} 项选择复制到其他级别</FieldLegend
+                >
+                <div class="flex min-w-0 flex-col gap-1.5">
+                  <Field
+                    v-for="target in copyLevels"
+                    :key="target.key"
+                    orientation="horizontal"
+                    class="min-w-0 items-center gap-2.5"
+                  >
+                    <Checkbox
+                      :id="`log-field-copy-${target.key}`"
+                      :model-value="fieldCopyTargets.includes(target.key)"
+                      :disabled="busy || target.same"
+                      :aria-label="`复制到${target.label}`"
+                      @update:model-value="
+                        (value) => toggleFieldCopyTarget(target.key, value === true)
+                      "
+                    />
+                    <FieldLabel
+                      :for="`log-field-copy-${target.key}`"
+                      class="min-w-0 text-[13px] leading-5 font-normal"
+                      >{{ target.label }}</FieldLabel
+                    >
+                    <span
+                      v-if="target.same"
+                      class="text-muted-foreground text-[13px] leading-5">已相同</span
+                    >
+                  </Field>
+                </div>
+              </FieldSet>
+              <p
+                v-if="!copyAvailable.length"
+                class="text-muted-foreground text-[13px] leading-5"
+                data-testid="log-field-copy-empty"
+                >其他级别已经和这里相同。</p
+              >
+              <div class="flex flex-wrap items-center gap-2">
+                <Button variant="ghost" size="sm" :disabled="busy" @click="fieldCopyOpen = false"
+                  >取消</Button
+                >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="log-field-copy-apply"
+                  :disabled="busy || !fieldCopyTargets.length"
+                  @click="copyFieldLevel"
+                  >复制</Button
+                >
+              </div>
+            </div>
+            <p
+              v-if="fieldNotice"
+              role="status"
+              aria-live="polite"
+              class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-5"
+            >
+              <span>{{ fieldNotice.text }}</span>
+              <Button
+                v-if="fieldNotice.restore"
+                variant="link"
+                size="sm"
+                class="h-auto p-0"
+                data-testid="log-field-undo"
+                @click="undoFieldChange"
+                >撤销</Button
+              >
+            </p>
+          </div>
+        </DisclosurePanel>
+      </template>
+      <!-- 上一个区块存在时才画分隔线；旧后端没有采集规则时不留一条孤立横线。 -->
+      <Separator v-if="supportsCollection || supportsFieldControls" />
       <section aria-labelledby="log-retention-heading" class="flex min-w-0 flex-col gap-3">
         <div class="flex flex-col gap-1">
           <h2 id="log-retention-heading" class="text-sm font-medium">保留策略</h2>
@@ -725,7 +1284,7 @@ async function confirm() {
           }}</DialogTitle
           ><DialogDescription>{{
             dialogReview?.kind === 'config'
-              ? '保存后影响后续日志批次和待处理队列的采集；采集规则不删除已有记录，保留策略调整可能触发轮转。'
+              ? '保存后影响后续日志批次和待处理队列的采集；采集规则与字段选择不删除已有记录，保留策略调整可能触发轮转。'
               : '此操作可能永久删除运行日志。业务审计、回执、源文件和任务产物不在清理范围。'
           }}</DialogDescription></DialogHeader
         >
@@ -751,6 +1310,37 @@ async function confirm() {
             </Table>
             <p class="text-muted-foreground text-[13px] leading-5">
               其余规则保持不变，不会随本次保存重置。
+            </p>
+          </div>
+          <div v-if="dialogReview.fields.length" class="flex flex-col gap-2">
+            <p class="text-sm">仅列出有差异的字段（与已保存配置比较）：</p>
+            <Table class="data-table" data-testid="log-field-review-table">
+              <TableBody>
+                <TableRow
+                  v-for="change in dialogReview.fields"
+                  :key="`${change.profile}-${change.level}-${change.field}`"
+                >
+                  <TableCell class="text-muted-foreground whitespace-normal">
+                    {{ change.profileLabel }} · {{ change.levelLabel }} · {{ change.fieldLabel }}
+                  </TableCell>
+                  <TableCell class="whitespace-normal">{{
+                    change.from ? '保留' : '不记录'
+                  }}</TableCell>
+                  <TableCell class="whitespace-normal">{{
+                    change.to ? '保留' : '不记录'
+                  }}</TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+            <p class="text-muted-foreground text-[13px] leading-5">
+              字段选择只影响之后写入的日志；已有日志不变。恢复为保留也会作为改动提交。
+            </p>
+            <p
+              v-if="reviewParentReasons.length"
+              class="text-muted-foreground text-[13px] leading-5"
+              data-testid="log-field-review-parent"
+            >
+              当前不采集：{{ reviewParentReasons.join('、') }}。保存只更新字段选择，不会重新开启采集。
             </p>
           </div>
           <div
