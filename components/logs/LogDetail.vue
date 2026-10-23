@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { clientRequestReference } from '~~/lib/client-logging/request-reference'
 import type { FieldCapturedLogEvent, LogEvent, LogOrigin, LogSummary } from '~~/lib/logging/contract'
+import { LOG_FIELD_PROFILES } from '~~/lib/logging/field-controls'
 import { detailFieldValue, detailProfile, fieldOmission } from '~~/lib/logging/detail-profile'
 import { logBrowserHeaders, logErrorMessage, useLogRead } from '~/composables/useLogRead'
 import {
@@ -132,7 +133,7 @@ const TUS_PHASE_LABELS: Record<string, string> = {
 watch(key, () => {
   notice.value = ''
 })
-function copyMcp(value: LogEvent['mcp']): Record<string, unknown> | undefined {
+function copyMcp(value: FieldCapturedLogEvent['mcp']): Record<string, unknown> | undefined {
   if (!value) return undefined
   const out: Record<string, unknown> = {}
   for (const key of ['transport', 'sessionMode', 'rpcMethod', 'tool', 'protocolVersionRequested'] as const)
@@ -145,21 +146,32 @@ function copyMcp(value: LogEvent['mcp']): Record<string, unknown> | undefined {
   }
   return out
 }
-function copyTus(value: LogEvent['tus']): Record<string, unknown> | undefined {
+/**
+ * 输出侧的 TUS 上下文会从“input 必填 uploadId”变为“output 可选 uploadId、phase 必填”。
+ * 这里按键白名单读取，不假设 uploadId 一定存在，也不把投影过的事件再交给
+ * safeLogEvent（那会删掉整个 tus 并重新生成 id/time）。
+ */
+const TUS_COPY_KEYS = ['uploadId', 'phase', 'method', 'size', 'offset'] as const
+function copyTus(value: FieldCapturedLogEvent['tus']): Record<string, unknown> | undefined {
   if (!value) return undefined
+  const source = value as unknown as Record<string, unknown>
   const out: Record<string, unknown> = {}
-  for (const key of ['uploadId', 'phase', 'method', 'size', 'offset'] as const)
-    if (value[key] !== undefined) out[key] = value[key]
-  return out
+  for (const key of TUS_COPY_KEYS) if (source[key] !== undefined) out[key] = source[key]
+  return Object.keys(out).length ? out : undefined
 }
 /**
- * 字段省略标记按白名单重建：只枚举当前已实现 profile 的已知字段键，
- * revision 必须是有限非负整数。任意多出的键、伪造的 profile 或非数字 revision
- * 都不会跟着复制走；id/timestamp 仍取原事件，不用 safeLogEvent 重新生成。
+ * 字段省略标记按白名单重建：字段键来自后端已实现的 profile 表（HTTP 四字段，
+ * 未来 TUS 的 tus.* 键由同一张表加入），revision 必须是有限非负整数。
+ * 任意多出的键、伪造的 profile 或非数字 revision 都不会跟着复制走；
+ * id/timestamp 仍取原事件，不用 safeLogEvent 重新生成。
+ * 这张表只用于校验**服务端已给的事实**，不参与页面是否显示字段入口的判断。
  */
-const FIELD_KEYS_BY_PROFILE: Record<string, readonly string[]> = {
-  http: ['httpMethod', 'httpRoute', 'statusCode', 'durationMs']
-}
+const FIELD_KEYS_BY_PROFILE: Record<string, readonly string[]> = Object.fromEntries(
+  LOG_FIELD_PROFILES.map((profile) => [
+    String(profile.key),
+    profile.fields.map((field) => String(field.key))
+  ])
+)
 function copyCapture(
   value: FieldCapturedLogEvent['fieldCapture'],
   event: FieldCapturedLogEvent
@@ -173,16 +185,15 @@ function copyCapture(
     return undefined
   if (!Array.isArray(value.disabled)) return undefined
   // 只有真正不在事件里的字段才能被标记为“当时未启用”；有值却说没采集是自相矛盾。
+  // 用同一个取值器判断存在性，TUS 的 tus.* 键不会被误当成顶层缺失。
   const disabled = keys.filter(
-    (key) =>
-      value.disabled.includes(key as never) &&
-      (event as unknown as Record<string, unknown>)[key] === undefined
+    (key) => value.disabled.includes(key as never) && detailFieldValue(event, key) === undefined
   )
   if (!disabled.length) return undefined
   return { profile, revision, disabled }
 }
 /** 只复制固定枚举字段；未来响应里多出的 origin 键不跟着离开页面。 */
-function copyOrigin(value: LogEvent['origin']): Record<string, unknown> | undefined {
+function copyOrigin(value: FieldCapturedLogEvent['origin']): Record<string, unknown> | undefined {
   if (!value) return undefined
   const out: Record<string, unknown> = {
     runtime: value.runtime,

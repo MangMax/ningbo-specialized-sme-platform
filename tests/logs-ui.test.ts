@@ -1513,6 +1513,70 @@ it('rebuilds the copied capture from a fixed whitelist instead of trusting the r
   vi.unstubAllGlobals()
 })
 
+it('accepts an output-shaped TUS context with an omitted uploadId and keeps phase', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  // Output side (future FieldCapturedLogEvent) allows uploadId to be omitted while
+  // phase stays required. The UI must not assume the stricter input shape.
+  const event: any = {
+    id: '00000000-0000-4000-8000-000000000604',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'warn',
+    source: 'file',
+    operation: 'file.upload',
+    outcome: 'failure',
+    tus: { phase: 'request-failed', method: 'PATCH' }
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('上传（TUS）')
+  expect(wrapper.text()).toContain('请求失败')
+  // 没有 uploadId 不阻止复制剩余真实上下文；也不凭空补一个标识。
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  const copied = JSON.parse(writeText.mock.calls[0]![0])
+  expect(copied.tus).toEqual({ phase: 'request-failed', method: 'PATCH' })
+  expect(copied.id).toBe(event.id)
+  expect(copied.timestamp).toBe(event.timestamp)
+  vi.unstubAllGlobals()
+})
+
+it('does not fabricate a capture fact for a profile the backend has not published', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const base = {
+    id: '00000000-0000-4000-8000-000000000605',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'info',
+    source: 'file',
+    operation: 'file.upload',
+    outcome: 'success',
+    tus: { phase: 'completed' }
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  // A response that claims a TUS capture while this build's catalog does not
+  // implement that profile must not be echoed as trusted UI copy.
+  vi.stubGlobal(
+    '$fetch',
+    vi.fn().mockResolvedValue({
+      ...base,
+      fieldCapture: { profile: 'tus', revision: 1, disabled: ['tus.uploadId'] }
+    })
+  )
+  const wrapper = mount(Detail, { props: { id: base.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  const copied = JSON.parse(writeText.mock.calls[0]![0])
+  expect(copied).not.toHaveProperty('fieldCapture')
+  expect(copied.tus).toEqual({ phase: 'completed' })
+  vi.unstubAllGlobals()
+})
+
 it('shows a dedicated TUS upload detail without pretending fileId/page are registered', async () => {
   const { default: Detail } = await import('../components/logs/LogDetail.vue')
   const uploadId = '0123456789abcdef0123456789abcdef'

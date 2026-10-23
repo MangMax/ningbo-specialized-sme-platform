@@ -23,6 +23,10 @@ it('classifies inherited object property names as unknown MCP clients', () => {
 })
 
 describe('#180 source-aware detail profile', () => {
+  /** Capture is an internal writer fact; the helper widens only this test seam. */
+  const captured = (over: Partial<LogEvent> & { fieldCapture?: unknown }) =>
+    event(over as Partial<LogEvent>) as LogEvent & { fieldCapture?: any }
+
   it('selects only applicable targets for all eleven sources', () => {
     const samples = [
       event({ source: 'http', httpMethod: 'GET', httpRoute: '/api/health', statusCode: 200, durationMs: 3, requestId: 'req-http' }),
@@ -114,6 +118,40 @@ describe('#180 source-aware detail profile', () => {
     const failed = event({ source: 'file', operation: 'file.upload', outcome: 'denied', tus: { uploadId, phase: 'request-failed', method: 'PATCH' } })
     expect(section(failed, '目标与对象')!.note).toBeUndefined()
     expect(section(failed, '上传（TUS）')!.fields).toContain('tus.phase')
+    expect(section(failed, '上传（TUS）')!.note).toContain('uploadId 来自服务端 tus 回调')
+  })
+
+  it('keeps phase visible when the output TUS context has no uploadId', () => {
+    // Output-shaped context (future FieldCapturedLogEvent): phase required,
+    // uploadId optional. The section must not disappear or invent an id.
+    const output = event({
+      source: 'file',
+      operation: 'file.upload',
+      outcome: 'failure',
+      tus: { phase: 'request-failed' } as never,
+    })
+    const tus = section(output, '上传（TUS）')!
+    expect(tus.fields).toEqual(['tus.phase'])
+    expect(tus.note).toContain('没有可用的 uploadId')
+    expect(tus.note).toContain('不据此关联同一次上传的分片')
+    expect(tus.note).not.toContain('uploadId 来自服务端 tus 回调')
+
+    // A disabled uploadId reads as disabled, not as a source-side gap, and phase
+    // still renders because it is never controlled by field selection.
+    const disabled = captured({
+      source: 'file',
+      operation: 'file.upload',
+      outcome: 'success',
+      // Output-side shape: the current contract still types tus as strict input,
+      // so this seam casts only; F04a adds the output type itself.
+      tus: { phase: 'completed', method: 'PATCH' } as never,
+      fieldCapture: { profile: 'tus', revision: 5, disabled: ['tus.uploadId'] },
+    })
+    const controlled = section(disabled, '上传（TUS）')!
+    expect(fieldOmission(disabled, 'tus.uploadId')).toBe('disabled')
+    expect(controlled.fields).toEqual(expect.arrayContaining(['tus.phase', 'tus.uploadId']))
+    expect(controlled.disabledFields).toEqual(['tus.uploadId'])
+    expect(controlled.fields).toContain('tus.method')
   })
 
   it('keeps old rows readable without inventing MCP/TUS sections', () => {
@@ -126,8 +164,9 @@ describe('#180 source-aware detail profile', () => {
 })
 
 describe('#180 field capture omission in the detail profile', () => {
+  /** Same narrow widening helper; capture never enters the public LogInput type. */
   const captured = (over: Partial<LogEvent> & { fieldCapture?: unknown }) =>
-    event(over) as LogEvent & { fieldCapture?: any }
+    event(over as Partial<LogEvent>) as LogEvent & { fieldCapture?: any }
 
   it('reports a writer-disabled field as disabled and keeps a plain gap absent', () => {
     const row = captured({

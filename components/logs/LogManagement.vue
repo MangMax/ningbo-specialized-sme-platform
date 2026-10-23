@@ -926,7 +926,7 @@ async function confirm() {
           </template>
           <div class="flex min-w-0 flex-col gap-3 pt-1">
             <p class="text-muted-foreground text-[13px] leading-5">
-              只决定写入哪些详情；来源和技术集成开关仍各自生效，已有日志不变。
+              只决定之后写入哪些详情；来源和技术集成开关仍各自生效，已有日志不变。
             </p>
             <div class="flex min-w-0 flex-col gap-3">
               <div class="flex min-w-0 flex-col gap-1.5">
@@ -1050,9 +1050,13 @@ async function confirm() {
               </FieldGroup>
             </FieldSet>
             <p class="text-muted-foreground text-[13px] leading-5">
-              事件编号、时间、来源、操作、级别和结果始终保留。字段没记录不代表业务失败；详情会区分「当时未启用采集」和源头本来就没有提供。
+              事件编号、时间、来源、操作、级别和结果始终保留。字段没记录不代表业务失败；详情会把这里的关闭标成「当时未启用采集」，没有该标记的仍按「未记录」显示，不用当前配置倒推历史。
             </p>
             <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+              <!-- 全页只保留一处核对/保存入口：字段与保留策略在同一次核对里提交。 -->
+              <p class="text-muted-foreground text-[13px] leading-5">
+                字段改动会和下方保留策略一起核对、一次保存。
+              </p>
               <Button
                 variant="ghost"
                 size="sm"
@@ -1071,10 +1075,6 @@ async function confirm() {
                 @click="restoreFieldLevel"
                 >恢复本级别默认</Button
               >
-              <!-- 全页只保留一处核对/保存入口，不在这里复制第二个保存动作。 -->
-              <p class="text-muted-foreground text-[13px] leading-5 sm:ml-auto">
-                字段改动会和下方保留策略一起核对、一次保存。
-              </p>
             </div>
             <div
               v-if="fieldCopyOpen"

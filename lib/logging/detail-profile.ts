@@ -142,9 +142,24 @@ function mcpFields(event: DetailEvent): string[] {
     'mcp.protocolVersionRequested',
   ].filter(key => key === 'mcp.transport' || key === 'mcp.sessionMode' || present(event, key))
 }
+/**
+ * Output TUS context keeps phase required but may omit uploadId, so a missing
+ * key is not automatically a gap: it is either a disabled field or truly absent.
+ * Phase is never controlled and always appears when the context exists.
+ */
 function tusFields(event: DetailEvent): string[] {
   if (!event.tus) return []
-  return ['tus.uploadId', 'tus.phase', 'tus.method', 'tus.size', 'tus.offset'].filter(key => present(event, key))
+  return ['tus.uploadId', 'tus.phase', 'tus.method', 'tus.size', 'tus.offset'].filter(key =>
+    key === 'tus.phase' ? present(event, key) : listed(event, key)
+  )
+}
+function tusNote(event: DetailEvent): string {
+  const uploadIdOff = fieldOmission(event, 'tus.uploadId') === 'disabled'
+  const uploadIdMissing = !present(event, 'tus.uploadId')
+  if (uploadIdOff || uploadIdMissing) {
+    return 'phase 始终来自服务端 tus 回调；这条记录没有可用的 uploadId，因此不据此关联同一次上传的分片。'
+  }
+  return 'uploadId 来自服务端 tus 回调；size 为声明总量，offset 为实际回调值；非终态分片成功不落事件。'
 }
 /** 采集信息只在事件实际带 origin 时出现；旧记录不补造来源。 */
 function originFields(event: DetailEvent): string[] {
@@ -192,7 +207,7 @@ export function detailProfile(event: DetailEvent): DetailSection[] {
     sections.push({
       title: '上传（TUS）',
       fields: tusFields(event),
-      note: 'uploadId 来自服务端 tus 回调；size 为声明总量，offset 为实际回调值；非终态分片成功不落事件。',
+      note: tusNote(event),
     })
   }
   const correlation = correlationFields(event, targetFields(event))
