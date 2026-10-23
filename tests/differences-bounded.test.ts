@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, getQuery, setHeader, toNodeListener } from 'h3'
 import { useDb } from '../db/client'
 import { commitRosterImport } from '../server/utils/roster-import'
+import { whenIdle } from '../server/utils/job-runner'
 import type { RosterImportPayload } from '../lib/roster-import-client'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 
@@ -13,7 +14,13 @@ const active = vi.hoisted(() => ({ db: null as ReturnType<typeof useDb> | null }
 vi.mock('@db', () => ({ useDb: () => active.db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const cleanup: (() => void | Promise<void>)[] = []
-afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.unstubAllGlobals() })
+afterEach(async () => {
+  // Archive imports enqueue real candidate tasks using this fixture's DB.
+  // Let their persisted checkpoints finish before closing the connection.
+  await whenIdle()
+  for (const close of cleanup.splice(0).reverse()) await close()
+  vi.unstubAllGlobals()
+})
 function fixture(observe?: (db: ReturnType<typeof useDb>) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'differences-132-'))
   const db = useDb({ dbPath: join(dir, 'synthetic.db') })

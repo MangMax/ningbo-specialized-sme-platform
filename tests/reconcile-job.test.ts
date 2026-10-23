@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
-import { clearJobSpecs, getJobSpec, jobSpecs, type JobContext, type JobSpec } from '../server/utils/job-runner'
+import { clearJobSpecs, getJobSpec, jobSpecs, whenIdle, type JobContext, type JobSpec } from '../server/utils/job-runner'
 import { registerJobSpecs } from '../server/utils/job-specs'
 import { runPlatformReconcile } from '../server/utils/platform-reconcile'
 import { EMPTY_APPLY_RESPONSE, platformFixture as fixture, platformReplay, type PlatformCall } from './helpers/platform-replay'
@@ -57,8 +57,11 @@ beforeEach(() => {
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'job.db'))
   db.delete(schema.serviceCredential).run()
 })
-afterAll(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
-afterEach(() => {
+afterAll(async () => { await whenIdle(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterEach(async () => {
+  // Reconcile imports now also enqueue candidate discovery. Drain those tasks
+  // before another test deletes their rows or removes its fetch/env fixtures.
+  await whenIdle()
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
 })
@@ -77,7 +80,9 @@ describe('参数校验:错参数在**提交那一刻**就被挡住', () => {
     expect(spec.run).toBeTypeOf('function')
     expect(spec.paramsHint).toContain('titles')
     expect(spec.paramsHint).toContain('concurrency')
-    expect(jobSpecs().map((entry) => entry.kind)).toEqual(['current-roster-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages'])
+    expect(jobSpecs().map((entry) => entry.kind)).toEqual(['current-roster-export', 'event-archive-candidates', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages'])
+    expect(getJobSpec('event-archive-candidates')).toMatchObject({ status: 'ready', run: expect.any(Function), deduplicateRequest: true })
+    expect(getJobSpec('event-archive-candidates')!.parse({ queryId: 1, clientRequestId: 'catalog-archive' })).toMatchObject({ ok: true, params: { queryId: 1 } })
   })
 
   it('空参数合法(全量),comma 字符串也认', () => {
