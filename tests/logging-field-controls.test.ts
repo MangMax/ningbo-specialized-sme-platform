@@ -23,13 +23,13 @@ function freeze<T>(value: T): T {
   return value
 }
 
-it('catalog exposes only HTTP and defaults enable every declared level and field', () => {
-  expect(LOG_FIELD_PROFILES.map(p => p.key)).toEqual(['http'])
+it('catalog exposes HTTP and TUS and defaults enable every declared level and field', () => {
+  expect(LOG_FIELD_PROFILES.map(p => p.key)).toEqual(['http', 'tus'])
   expect(LOG_FIELD_PROFILES[0].source).toBe('http')
   expect(LOG_FIELD_PROFILES[0].levels).toEqual(LOG_LEVELS)
   expect(LOG_FIELD_PROFILES[0].fields.map(f => f.key)).toEqual(fields)
   const defaults = defaultFieldControls(LOG_FIELD_PROFILES)
-  expect(Object.keys(defaults)).toEqual(['http'])
+  expect(Object.keys(defaults)).toEqual(['http', 'tus'])
   expect(Object.keys(defaults.http)).toEqual(LOG_LEVELS)
   for (const level of LOG_LEVELS) expect(defaults.http[level]).toEqual({ httpMethod: true, httpRoute: true, statusCode: true, durationMs: true })
   defaults.http.info.httpRoute = false
@@ -100,7 +100,7 @@ it('validator copies only own whitelisted boolean data and accepts null prototyp
   expect(validated).toEqual({ http: { info: { httpRoute: false } } })
 })
 const invalid: { name: string; value: unknown }[] = [
-  { name: 'unknown profile', value: { tus: {} } },
+  { name: 'unknown profile', value: { future: {} } },
   { name: 'unknown level', value: { http: { fatal: {} } } },
   { name: 'unknown field', value: { http: { info: { body: false } } } },
   ...[null, [], 'bad', 0, true, new Date()].flatMap((value, i) => [

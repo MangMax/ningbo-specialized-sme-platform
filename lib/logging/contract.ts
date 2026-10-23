@@ -44,7 +44,7 @@ export interface McpLogContext {
   protocolVersionRequested?: (typeof MCP_PROTOCOL_VERSIONS)[number]
 }
 export interface TusLogContext {
-  /** Server-generated tus id (default generator is 32 hex chars); omitted if unexpected. */
+  /** Strict input: server-generated 32 lowercase hex tus id; reject the context if invalid. */
   uploadId: string
   /** `created`/`completed` are terminal upload facts; `request-failed` is an observation. */
   phase: (typeof TUS_UPLOAD_PHASES)[number]
@@ -54,6 +54,9 @@ export interface TusLogContext {
   /** Actual bytes accepted so far, as reported by the library callback. */
   offset?: number
 }
+
+/** Persisted writer output only; phase remains a fact even when the id was disabled. */
+export type TusLogOutput = Omit<TusLogContext, 'uploadId'> & { uploadId?: string }
 
 export interface LogContext {
   requestId?: string; traceId?: string; taskId?: string; fileId?: number; page?: number
@@ -110,6 +113,7 @@ export interface LogEvent extends Omit<LogInput, 'error'> {
 /** Implemented profiles only. Extend this mapping when another projector is implemented. */
 export interface LogProfileFields {
   http: 'httpMethod' | 'httpRoute' | 'statusCode' | 'durationMs'
+  tus: 'tus.method' | 'tus.uploadId' | 'tus.size' | 'tus.offset'
 }
 export type LogFieldControls = {
   [P in keyof LogProfileFields]: { [L in typeof LOG_LEVELS[number]]: { [F in LogProfileFields[P]]: boolean } }
@@ -121,7 +125,7 @@ export type LogFieldControlsPatch = {
 export type FieldCapture = {
   [P in keyof LogProfileFields]: { profile: P; revision: number; disabled: LogProfileFields[P][] }
 }[keyof LogProfileFields]
-export type FieldCapturedLogEvent = LogEvent & { fieldCapture?: FieldCapture }
+export type FieldCapturedLogEvent = Omit<LogEvent, 'tus'> & { tus?: TusLogOutput; fieldCapture?: FieldCapture }
 export interface LogFilter {
   from?: string; to?: string; level?: string; source?: string; operation?: string; outcome?: string
   requestId?: string; traceId?: string; taskId?: string; fileId?: number; batchId?: string | number

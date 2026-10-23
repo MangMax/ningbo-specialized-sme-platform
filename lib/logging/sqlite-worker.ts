@@ -23,7 +23,7 @@ const decodeCollection = value => decodeStoredLogCollection(value,initialCollect
   value => validateCollection(value,LOG_SOURCES,LOG_SUPPORTED_INTEGRATIONS,LOG_LEVELS),defaultFieldControls,
   (value,profiles) => validateCompleteFieldControls(value,profiles,validateFieldControlsPatch))
 const initialCollection = ${JSON.stringify(defaultLogCollection())}
-const encodeCollection = (collection,fieldControls) => JSON.stringify({version:1,collection,fieldControls})
+const encodeCollection = (collection,fieldControls) => JSON.stringify({version:2,collection,fieldControls})
 const collectionAllows = ${collectionAllowsAtLevels.toString()}
 const boundedLogOutput = ${boundedLogOutput.toString()}
 const stdout = workerData.stdout ? boundedLogOutput(process.stdout, workerData.maxEventBytes + 1) : undefined
@@ -73,7 +73,7 @@ function open() {
     const row = db.prepare('SELECT collection FROM log_collection WHERE id=1').get()
     const decoded = decodeCollection(JSON.parse(row.collection))
     policy = readPolicy()
-    if (decoded.legacy) db.prepare('UPDATE log_collection SET collection=? WHERE id=1').run(encodeCollection(decoded.collection,decoded.fieldControls))
+    if (decoded.needsMigration) db.prepare('UPDATE log_collection SET collection=? WHERE id=1').run(encodeCollection(decoded.collection,decoded.fieldControls))
   }).immediate()
   db.exec('CREATE TABLE IF NOT EXISTS log_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, timestamp TEXT NOT NULL, level TEXT NOT NULL, source TEXT NOT NULL, operation TEXT NOT NULL, outcome TEXT NOT NULL, requestId TEXT, traceId TEXT, taskId TEXT, fileId INTEGER, batchId TEXT, resourceId TEXT, summary TEXT NOT NULL, detail TEXT NOT NULL)')
   for (const key of ['timestamp','level','source','operation','outcome','requestId','traceId','taskId','fileId','batchId','resourceId']) db.exec('CREATE INDEX IF NOT EXISTS log_' + key + ' ON log_events(' + key + ',seq)')

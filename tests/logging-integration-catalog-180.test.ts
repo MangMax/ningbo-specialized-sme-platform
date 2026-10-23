@@ -46,7 +46,7 @@ it('upgrades a saved six-integration policy without resetting choices history or
   await first.close()
   // This is the isolated diagnostic store, never a business database.
   const db = new Database(join(directory, 'events.db'))
-  const collection = JSON.parse((db.prepare('SELECT collection FROM log_collection WHERE id=1').get() as { collection: string }).collection)
+  const collection = JSON.parse(JSON.stringify(before.collection))
   for (const key of added) delete collection.integrations[key]
   db.prepare('UPDATE log_collection SET collection=? WHERE id=1').run(JSON.stringify(collection)); db.close()
   const next = createLogService({ directory }); services.push(next)
@@ -67,13 +67,13 @@ it('upgrades a saved six-integration policy without resetting choices history or
 it('fails closed on malformed stored rules instead of treating corruption as an upgrade', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'collector-corrupt-')); directories.push(directory)
   const service = createLogService({ directory }); services.push(service)
-  await service.policy()
+  const before = await service.policy()
   const db = new Database(join(directory, 'events.db'))
   const original = (db.prepare('SELECT collection FROM log_collection WHERE id=1').get() as { collection: string }).collection
   for (const corrupt of [
-    { sources: JSON.parse(original).sources, integrations: null },
-    { sources: JSON.parse(original).sources, integrations: { application: { enabled: 'yes', minLevel: 'debug' } } },
-    { sources: {}, integrations: JSON.parse(original).integrations },
+    { sources: JSON.parse(JSON.stringify(before.collection.sources)), integrations: null },
+    { sources: JSON.parse(JSON.stringify(before.collection.sources)), integrations: { application: { enabled: 'yes', minLevel: 'debug' } } },
+    { sources: {}, integrations: JSON.parse(JSON.stringify(before.collection.integrations)) },
   ]) {
     db.prepare('UPDATE log_collection SET collection=? WHERE id=1').run(JSON.stringify(corrupt))
     expect(service.emit({ source: 'system', operation: 'corrupt.native', outcome: 'started' })).toBeTypeOf('string')
