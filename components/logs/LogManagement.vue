@@ -14,8 +14,7 @@ import type {
 import type { LOG_FIELD_PROFILES } from '~~/lib/logging/field-controls'
 import { isClientLogSource, sourceLabel } from './logPresentation'
 import { iconForGroup, iconForIntegration, iconForSection, iconForSource } from './logIcons'
-import LogFieldEditor from './LogFieldEditor.vue'
-import LogModulePanel from './LogModulePanel.vue'
+import LogModuleRow from './LogModuleRow.vue'
 import {
   logBrowserHeaders,
   logErrorCode,
@@ -24,22 +23,12 @@ import {
 } from '~/composables/useLogRead'
 import TableFailureState from '@/components/TableFailureState.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Switch } from '@/components/ui/switch'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
 import { Table, TableBody, TableRow, TableCell } from '@/components/ui/table'
 import {
   Dialog,
@@ -175,9 +164,13 @@ const sourceDraft = ref<Record<string, LogCollectionRule>>({}),
   integrationDraft = ref<Record<string, LogCollectionRule>>({})
 /** 字段草稿：profile → 级别 → 字段布尔。只在服务端目录存在时才有内容。 */
 const fieldDraft = ref<LogFieldControls>({} as LogFieldControls)
-/** 每个采集器面板独立开合；多个面板可同时打开。 */
-const openPanels = ref<Record<string, boolean>>({})
-const panelKey = (prefix: 'source' | 'integration', key: string) => `${prefix}:${key}`
+/** 当前打开的模块抽屉；B 方向一次只开一个，关闭后回到索引。 */
+const activeKey = ref<string | null>(null)
+const moduleKey = (row: CollectionRow) => row.prefix + ':' + row.key
+function setActiveModule(key: string, open: boolean) {
+  if (open) activeKey.value = key
+  else if (activeKey.value === key) activeKey.value = null
+}
 
 function cloneRules(
   rules?: Partial<Record<string, LogCollectionRule>>
@@ -195,12 +188,6 @@ function initializeDrafts(policy: PolicyView) {
   integrationDraft.value = cloneRules(policy.collection?.integrations)
   const profiles = policy.catalog?.profiles ?? []
   fieldDraft.value = cloneFieldControls(policy.fieldControls, profiles) as LogFieldControls
-  // 首次读取默认展开 HTTP（如果它的采集器存在）；之后保留用户的开合状态。
-  if (!Object.keys(openPanels.value).length) {
-    const http = profiles.find((profile) => String(profile.key) === 'http')
-    const collector = http ? collectorKeyForProfile(http) : undefined
-    if (collector) openPanels.value[panelKey('integration', collector)] = true
-  }
 }
 watch(data, (value) => {
   if (value && !initialized.value) {
@@ -448,12 +435,6 @@ function sourceProfileForRow(row: CollectionRow): FieldProfile | undefined {
 function profileForRow(row: CollectionRow): FieldProfile | undefined {
   return collectorProfileForRow(row) ?? sourceProfileForRow(row)
 }
-/** 模板里已用 v-if 判过；这里返回非空，避免在模板写非空断言。 */
-function requireCollectorProfile(row: CollectionRow): FieldProfile {
-  const profile = collectorProfileForRow(row)
-  if (!profile) throw new Error('collector_profile_missing')
-  return profile
-}
 function sourceCollectorLabel(row: CollectionRow): string {
   const profile = sourceProfileForRow(row)
   return profile ? collectorLabelForProfile(profile) : ''
@@ -587,7 +568,7 @@ function ruleSummary(rule: LogCollectionRule) {
     ? '最低' + LEVEL_LABELS[rule.minLevel]
     : '关闭 · 级别保留' + LEVEL_LABELS[rule.minLevel]
 }
-/** 面板头的一行摘要：门槛、字段保留数、来源跟随/父级关闭。 */
+/** 索引行的一行摘要：门槛、字段保留数、来源跟随/父级关闭/无字段。 */
 function panelSummary(row: CollectionRow) {
   const parts = [ruleSummary(row.rule)]
   const profile = collectorProfileForRow(row)
@@ -595,10 +576,17 @@ function panelSummary(row: CollectionRow) {
     const { on, total } = fieldCounts(profile)
     parts.push('详情 ' + on + '/' + total + ' 项')
     if (offReasonsFor(profile).length) parts.push('当前不采集')
+    else {
+      const sourceKey = String(profile.source)
+      if (sourceDraft.value[sourceKey]?.enabled)
+        parts.push('需「' + sourceLabel(sourceKey) + '」来源同时开启')
+    }
+  } else if (profile) {
+    parts.push('字段目录暂不可用')
   }
   const sourceProfile = sourceProfileForRow(row)
   if (sourceProfile) parts.push('字段跟随「' + collectorLabelForProfile(sourceProfile) + '」')
-  if (!profile && !sourceProfile) parts.push('无独立详情字段')
+  if (!profile && !sourceProfile) parts.push('暂无字段采集选项')
   return parts.join(' · ')
 }
 type Counterpart = {
@@ -627,19 +615,21 @@ function counterpartForRow(row: CollectionRow): Counterpart | null {
   if (!collectorKey || !collector) return null
   return { prefix: 'integration', key: collectorKey, label: collector.label, role: '采集器' }
 }
-/** 跳到同时生效的另一侧；只开面板，不改任何数据。 */
-function openCounterpart(prefix: 'source' | 'integration', key: string) {
-  openPanels.value[panelKey(prefix, key)] = true
-  void nextTick(() => {
-    const target = document.querySelector(
-      '[data-testid="log-module-' + prefix + '-' + key + '"]'
-    ) as HTMLElement | null
-    target?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
-  })
+/** 索引行需要的已保存规则；旧响应没有 collection 时返回 undefined。 */
+function savedRuleFor(row: CollectionRow): LogCollectionRule | undefined {
+  const collection = data.value?.collection as
+    | {
+        sources?: Record<string, LogCollectionRule>
+        integrations?: Record<string, LogCollectionRule>
+      }
+    | undefined
+  return row.prefix === 'source'
+    ? collection?.sources?.[row.key]
+    : collection?.integrations?.[row.key]
 }
-function openCounterpartForRow(row: CollectionRow) {
-  const other = counterpartForRow(row)
-  if (other) openCounterpart(other.prefix, other.key)
+function controlsForRow(row: CollectionRow): Record<string, Record<string, boolean>> | undefined {
+  const profile = collectorProfileForRow(row)
+  return profile ? controlsFor(profile) : undefined
 }
 function fieldPatch(changes: FieldChange[]): LogFieldControlsPatch | undefined {
   if (!changes.length) return undefined
@@ -907,126 +897,26 @@ async function confirm() {
               <span v-if="group.note" class="text-muted-foreground text-[12px] leading-4">{{ group.note }}</span>
               <span class="text-muted-foreground ml-auto shrink-0 text-[12px] leading-4 tabular-nums">{{ group.rows.length }}</span>
             </div>
-            <div class="flex min-w-0 flex-col gap-1.5">
-              <LogModulePanel
+            <div class="flex min-w-0 flex-col gap-0.5">
+              <LogModuleRow
                 v-for="row in group.rows"
                 :key="row.key"
-                v-model:open="openPanels[panelKey(row.prefix, row.key)]"
-                :testid="'log-module-' + row.prefix + '-' + row.key"
-                :label="row.label"
+                :row="row"
+                :saved-rule="savedRuleFor(row)"
                 :icon="row.prefix === 'integration' ? iconForIntegration(row.key) : iconForSource(row.key)"
-                :enabled="row.rule.enabled"
                 :summary="panelSummary(row)"
                 :dirty="rowDirty(row)"
-                :primary="!!collectorProfileForRow(row)"
-                :heading-level="4"
-              >
-                <div class="flex min-w-0 flex-col gap-3 px-1 pt-1">
-                  <FieldGroup class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
-                    <Field
-                      orientation="horizontal"
-                      :data-disabled="busy"
-                      class="min-w-0 items-center justify-between gap-3"
-                    >
-                      <FieldLabel
-                        :for="'log-' + row.prefix + '-' + row.key + '-enabled'"
-                        class="text-[13px] leading-5 font-normal"
-                        >采集开关</FieldLabel
-                      >
-                      <Switch
-                        :id="'log-' + row.prefix + '-' + row.key + '-enabled'"
-                        v-model="row.rule.enabled"
-                        :disabled="busy"
-                      />
-                    </Field>
-                    <Field
-                      orientation="horizontal"
-                      :data-disabled="busy || !row.rule.enabled"
-                      class="min-w-0 items-center justify-between gap-3"
-                    >
-                      <FieldLabel
-                        :for="'log-' + row.prefix + '-' + row.key + '-min-level'"
-                        class="text-[13px] leading-5 font-normal"
-                        >采集门槛</FieldLabel
-                      >
-                      <Select v-model="row.rule.minLevel">
-                        <SelectTrigger
-                          :id="'log-' + row.prefix + '-' + row.key + '-min-level'"
-                          size="sm"
-                          class="bg-card w-32 shrink-0 shadow-none"
-                          :aria-label="row.label + '的最低日志级别'"
-                          :disabled="busy || !row.rule.enabled"
-                        >
-                          <SelectValue>{{ LEVEL_LABELS[row.rule.minLevel] }}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent><SelectGroup>
-                          <SelectItem v-for="level in LOG_LEVELS" :key="level" :value="level">
-                            {{ LEVEL_LABELS[level] }}（{{ level }}）
-                          </SelectItem>
-                        </SelectGroup></SelectContent>
-                      </Select>
-                    </Field>
-                  </FieldGroup>
-                  <p class="text-muted-foreground text-[12px] leading-4">
-                    低于门槛的事件不写入；技术集成与来源须同时开启时，最低级别取更严格的一处。
-                  </p>
-
-                  <div
-                    v-if="offReasonsFor(collectorProfileForRow(row)).length"
-                    role="status"
-                    class="flex min-w-0 flex-col gap-1"
-                  >
-                    <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-5">
-                      <Badge variant="quiet" class="font-normal">当前不采集</Badge>
-                      <span class="text-muted-foreground">
-                        {{ offReasonsFor(collectorProfileForRow(row)).join('、') }}；选择会保留，重新开启后按这里的设置记录。
-                      </span>
-                    </p>
-                  </div>
-
-                  <LogFieldEditor
-                    v-if="collectorProfileForRow(row) && supportsFieldControls"
-                    :profile="requireCollectorProfile(row)"
-                    :controls="controlsFor(requireCollectorProfile(row))"
-                    :disabled="busy"
-                    :effective-min="effectiveMinFor(requireCollectorProfile(row))"
-                  />
-                  <p
-                    v-else-if="collectorProfileForRow(row)"
-                    class="text-muted-foreground text-[12px] leading-4"
-                  >
-                    字段目录来自服务端；当前响应不完整，暂不显示字段开关。
-                  </p>
-                  <p
-                    v-else-if="sourceProfileForRow(row)"
-                    class="text-muted-foreground text-[12px] leading-4"
-                  >
-                    此来源没有独立的详情字段：记录内容跟随「{{ sourceCollectorLabel(row) }}」，在那边配置一次。
-                  </p>
-                  <p v-else class="text-muted-foreground text-[12px] leading-4">
-                    该模块没有独立的详情字段。
-                  </p>
-
-                  <div
-                    v-if="counterpartForRow(row)"
-                    class="flex min-w-0 flex-col gap-1 border-t pt-2.5"
-                  >
-                    <span class="text-[12px] leading-4 font-medium">同时生效</span>
-                    <p class="text-muted-foreground text-[13px] leading-5">
-                      与「{{ counterpartForRow(row)?.label }}」{{ counterpartForRow(row)?.role }}同时生效；当前有效门槛：<strong class="text-foreground">{{ LEVEL_LABELS[effectiveMinFor(profileForRow(row)) ?? 'debug'] }}</strong>。
-                    </p>
-                    <Button
-                      variant="link"
-                      size="sm"
-                      class="h-auto justify-start p-0 text-[13px]"
-                      @click="openCounterpartForRow(row)"
-                    >
-                      <Icon name="lucide:arrow-up-right" class="size-4" aria-hidden="true" />
-                      打开「{{ counterpartForRow(row)?.label }}」
-                    </Button>
-                  </div>
-                </div>
-              </LogModulePanel>
+                :profile="collectorProfileForRow(row)"
+                :source-follow-label="sourceCollectorLabel(row)"
+                :controls="controlsForRow(row)"
+                :supports-fields="supportsFieldControls"
+                :effective-min="effectiveMinFor(profileForRow(row))"
+                :off-reasons="offReasonsFor(profileForRow(row))"
+                :counterpart="counterpartForRow(row)"
+                :disabled="busy"
+                :open="activeKey === moduleKey(row)"
+                @update:open="(open) => setActiveModule(moduleKey(row), open)"
+              />
             </div>
           </div>
           <DisclosurePanel
@@ -1036,6 +926,7 @@ async function confirm() {
             description="未接入，不可配置"
             :heading-level="3"
             compact
+            trigger-class="hover:bg-accent hover:no-underline"
           >
             <template #chevron>
               <span
