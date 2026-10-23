@@ -1,3 +1,5 @@
+import { activateCandidateDiscoveryTasks } from './jobs/candidate-discovery'
+import { ensureJobRunnerReady } from './job-runner'
 import { serialize } from 'node:v8'
 import type Database from 'better-sqlite3'
 import { realpathSync, statSync } from 'node:fs'
@@ -13,7 +15,7 @@ type Action = 'preflight' | 'commit'
 type Result = ReturnType<typeof preflightRosterImport> | ReturnType<typeof commitRosterImport>
 export interface ImportExecutionMessage { identity: { dev: number; ino: number; schemaVersion: number; migration: { hash: string; created_at: number } | undefined }; id: number; dbPath: string; readonly: boolean; action: Action; payload: Buffer; pageCountErrors: readonly RosterImportItemResult[] }
 type Worker = ReturnType<typeof createImportExecutionWorker>
-type Job = { message: ImportExecutionMessage; resolve(value: Result): void; reject(error: Error): void }
+type Job = { onResult?: (result: Result) => void; message: ImportExecutionMessage; resolve(value: Result): void; reject(error: Error): void }
 const unavailable = (code: string, message: string) => new ImportReceiptError(503, code, message)
 
 /** One serial writer per app. Active writes have no client cancellation or retry:
@@ -28,7 +30,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
   let closing: Promise<void> | undefined, finishClose: (() => void) | undefined
   const settle = (job: Job, error?: Error, result?: Result) => {
     retainedBytes -= job.message.payload.byteLength
-    if (error) job.reject(error); else job.resolve(result!)
+    if (error) job.reject(error); else { job.onResult?.(result!); job.resolve(result!) }
   }
   function idle() {
     if (active || queue.length || stopping) return
@@ -75,6 +77,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
   }
   return {
     execute(db: Db, action: Action, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = []): Promise<Result> {
+      if (action === 'commit' && request.payload.platformQueries?.length) ensureJobRunnerReady(db)
       if (closed) return Promise.reject(unavailable('import_executor_closed', 'Import execution unavailable'))
       const client = (db as Db & { $client: Database.Database }).$client
       // Private/in-memory callers cannot share a native connection across processes.
@@ -90,7 +93,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
       const identity = { dev: stat.dev, ino: stat.ino, schemaVersion: client.pragma('schema_version', { simple: true }) as number, migration: client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() as { hash: string; created_at: number } | undefined }
       retainedBytes += payload.byteLength
       return new Promise((resolve, reject) => {
-        queue.push({ message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action, payload, pageCountErrors }, resolve, reject }); pump()
+        queue.push({ onResult: result => { if ('candidateTaskIds' in result) activateCandidateDiscoveryTasks(db,result.candidateTaskIds,'') }, message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action, payload, pageCountErrors }, resolve, reject }); pump()
       })
     },
     close() {
