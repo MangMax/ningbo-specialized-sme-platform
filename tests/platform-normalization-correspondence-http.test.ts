@@ -194,3 +194,29 @@ it('follow-up validation retains original role and predecessor timing rules on n
   const receipt = await save(request('followup:valid', [{ action: 'create', status: 'confirmed', edge: followup(cases[1]!.row.id) }]))
   expect((await rest(`/api/roster/correspondences/${receipt.correspondenceIds[0]}`)).body).toMatchObject({ status: 'confirmed', requiresRevalidation: false, predecessorEventId: award.id })
 })
+
+it.each([
+  { label: 'missing', raw: {}, expected: { status: null, declareKind: null, appliedAt: null, awardBatchLabel: null, year: null } },
+  { label: 'null', raw: { cszt: null, sblx: null, sqsj: null, personuuid: null, year: null }, expected: { status: null, declareKind: null, appliedAt: null, awardBatchLabel: null, year: null } },
+  { label: 'boolean', raw: { cszt: true, sblx: false, sqsj: true, personuuid: false, year: true }, expected: { status: null, declareKind: null, appliedAt: null, awardBatchLabel: null, year: null } },
+  { label: 'object-array', raw: { cszt: { nested: true }, sblx: ['申请'], sqsj: {}, personuuid: [], year: [2025] }, expected: { status: null, declareKind: null, appliedAt: null, awardBatchLabel: null, year: null } },
+  { label: 'prototype-enum', raw: { cszt: ' 未知 ', sblx: '__proto__', sqsj: ' 2025-01-01 ', personuuid: ' 第一批 ', year: '2025' }, expected: { status: '未知', declareKind: '__proto__', appliedAt: '2025-01-01', awardBatchLabel: '第一批', year: 2025 } },
+])('process JSON types agree across full archives, candidates and comparison over HTTP/MCP: $label', async ({ label, raw, expected }) => {
+  const q = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: `json-types:${label}`, rdjb: '1', queriedAt: '2026-01-01T00:00:00Z', status: 'success' }).returning().get()
+  const rawFields = { ...raw, szsfmc: ' 宁波市 ', whpc: ' 2025-2 ', unrelated: 'UNEXPOSED'.repeat(32768) }
+  const relation = db.insert(schema.platformRelation).values({ queryId: q.id, sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, rawFields }).returning().get()
+  const full = await rest(`/api/platform/queries?queryId=${q.id}`)
+  expect(full.status).toBe(200)
+  expect(full.body.rows[0].relations[0]).toMatchObject({ ...expected, province: '宁波市', batch: '2025-2', id: relation.id, rawFields, normalizationConflicts: [] })
+  const input = { eventId: award.id, queryIds: [q.id], exportBatchIds: [], ruleVersion: 'json-types' }
+  const candidates = await rest('/api/roster/correspondences/candidates', input)
+  expect(candidates.status).toBe(200)
+  expect(candidates.body.rows).toHaveLength(1)
+  expect(candidates.body.rows[0]).toMatchObject({ edge: { relationId: relation.id }, evidence: { process: { status: expected.status, declareKind: expected.declareKind, appliedAt: expected.appliedAt, normalizationConflicts: [] }, temporal: { relationYear: expected.year, relationBatch: '2025-2', awardBatchLabel: expected.awardBatchLabel } } })
+  expect(await mcp('find_record_correspondence_candidates', input)).toMatchObject({ body: candidates.body })
+  const comparison = await rest(`/api/roster/record-comparison?queryIds=${q.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}`)
+  expect(comparison.status).toBe(200)
+  expect(comparison.body.platformWithoutOfficial.rows).toEqual(expect.arrayContaining([expect.objectContaining({ relation: expect.objectContaining({ ...expected, id: relation.id, normalizationConflicts: [] }) })]))
+  expect(await mcp('list_record_comparison', { queryIds: [q.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id] })).toMatchObject({ body: comparison.body })
+  expect(JSON.stringify([candidates.body, comparison.body])).not.toContain('UNEXPOSED')
+})

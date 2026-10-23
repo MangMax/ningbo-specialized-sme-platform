@@ -4,7 +4,7 @@ import type { useDb } from '../../db/client'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
-import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS } from '../../lib/platform/normalization'
+import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../lib/platform/normalization'
 import { TITLES } from '../../lib/labels'
 import { comparisonSourceCatalogInput, recordComparisonInput, type ComparisonSourceCatalogInput, type RecordComparisonInput, type HistoricalClassification } from '../../lib/roster/record-comparison'
 import { comparisonFormalCounts, iterateComparisonFormalEvents } from './record-comparison-formal'
@@ -138,8 +138,8 @@ function selected(db: Db, input: RecordComparisonInput) {
   const batchMap = new Map(batches.map(row => [row.id, row]))
   const r = schema.platformRelation
   // Match the candidate reader's seven-key projection. Unrelated archived row
-  // bytes must stay inside SQLite; json() retains booleans and other JSON types.
-  const processRaw = sql`case when json_valid(${r.rawFields}) then json_object(${sql.join(PLATFORM_PROCESS_RAW_KEYS.flatMap(key => [sql`${key}`, sql`json(${r.rawFields} -> ${`$.${key}`})`]), sql`, `)}) else null end`.mapWith(r.rawFields)
+  // bytes must stay inside SQLite; multi-path extraction retains JSON value types.
+  const processRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.join(PLATFORM_PROCESS_RAW_KEYS.map(key => sql`${`$.${key}`}`), sql`, `)}) else null end`.mapWith(platformProcessRawFromJson)
   const relations = db.select({ ...getTableColumns(r), rawFields: processRaw, sourceText: sql<null>`null` }).from(r).where(inArray(r.queryId, parsed.queryIds)).orderBy(r.id).all().map(row => ({ relation: normalizePlatformRelation(queryMap.get(row.queryId)!.interface, row), query: queryMap.get(row.queryId)! }))
   const exports = db.select({ ...getTableColumns(schema.platformExportRow), rawFields: sql<null>`null` }).from(schema.platformExportRow).where(inArray(schema.platformExportRow.batchId, parsed.exportBatchIds)).orderBy(schema.platformExportRow.id).all().map(row => ({ row, batch: batchMap.get(row.batchId)! }))
   const c = schema.recordCorrespondence
