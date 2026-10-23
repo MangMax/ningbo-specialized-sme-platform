@@ -43,6 +43,7 @@ const resolvedOpen = computed(() => props.open)
     :open="resolvedOpen"
     :heading-level="headingLevel"
     compact
+    trigger-class="px-2 hover:bg-accent hover:no-underline"
     :data-testid="testid"
     @update:open="emit('update:open', $event)"
   >
