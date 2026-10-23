@@ -45,10 +45,17 @@ function discoverSnapshot(db: Db, input: EventArchiveInput) {
   const rowIdentity = and(or(eq(r.enterpriseId, owner), sql`${r.enterpriseId} is null`),
     or(identity ? sql`${normalizedUscc(r.usccRaw)} = ${identity}` : undefined,
       and(eq(r.enterpriseId, owner), eq(r.verificationStatus, 'confirmed'), sql`${normalizedUscc(r.usccRaw)} = ''`)))!
-  const related = or(identity ? eq(q.queryKey, identity) : undefined,
-    eq(q.queryKey, `name:${event.enterprise.nameNorm}`),
-    sql`exists (select 1 from ${schema.enterpriseAlias} a where a.enterprise_id = ${owner} and a.verification_status = 'confirmed' and ${q.queryKey} = 'name:' || a.name_norm)`,
-    sql`exists (select 1 from ${r} where ${r.queryId} = ${q.id} and ${rowIdentity})`)!
+  // Resolve the same related set through indexed keys/owners once per statement,
+  // rather than testing correlated EXISTS for every archived query. UNION deduplicates
+  // queries reached through multiple identities; IDs stay in SQLite, not in a JS array.
+  const alias = schema.enterpriseAlias
+  const relatedQueries = db.select({ id: q.id }).from(q)
+    .where(inArray(q.queryKey, [...(identity ? [identity] : []), `name:${event.enterprise.nameNorm}`]))
+    .union(db.select({ id: q.id }).from(q).where(inArray(q.queryKey,
+      db.select({ key: sql<string>`'name:' || ${alias.nameNorm}` }).from(alias)
+        .where(and(eq(alias.enterpriseId, owner), eq(alias.verificationStatus, 'confirmed'))))))
+    .union(db.select({ id: r.queryId }).from(r).where(rowIdentity))
+  const related = inArray(q.id, relatedQueries)
   const eligible = and(related, rowIdentity, inArray(q.status, ['success', 'partial']), eq(relationTitle(), event.record.titleCode))!
   const total = db.select({ n: count() }).from(r).innerJoin(q, eq(r.queryId, q.id)).where(eligible).get()!.n
   const selected = db.select({ id: r.id, queryId: r.queryId }).from(r).innerJoin(q, eq(r.queryId, q.id)).where(eligible)
