@@ -7,6 +7,7 @@ import { PLATFORM_INTERFACES } from '~~/lib/labels'
 import { fileNameOf } from '~~/lib/preview'
 import { evidencePageState } from '~~/lib/roster/evidence-page'
 import RecordEventSource from './RecordEventSource.vue'
+import EventArchiveCandidates from './EventArchiveCandidates.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 
 interface OfficialEvidence {
@@ -141,6 +142,7 @@ const interfaceSummary = computed(() => {
         <span class="w-full text-right text-[13px]">来源记录</span>
       </template>
       <RecordEventSource :event="event" :evidence="evidence" :edges="fullEdges ?? []" :edges-ready="linksReady && fullEdges !== null && fullEdges !== undefined" :edges-loading="detailsLoading" :edges-error="detailsError" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" @retry-detail="emit('retry-detail')" />
+      <EventArchiveCandidates v-if="event.source === 'jxj' && ['award', 'review'].includes(event.type)" :key="event.id" :event-id="event.id" :back="back" />
     </DisclosurePanel>
   </section>
 </template>
