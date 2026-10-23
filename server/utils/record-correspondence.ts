@@ -4,6 +4,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
+import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
 import { versionedOfficialEvent } from './roster-event-version'
 import { correspondenceRefValidity } from './record-correspondence-ref-validity'
@@ -79,7 +80,9 @@ function relationSource(db: Executor, id: number, observed?: ReadSources) {
     .from(schema.platformRelation).innerJoin(schema.platformQuery, eq(schema.platformRelation.queryId, schema.platformQuery.id))
     .where(eq(schema.platformRelation.id, id)).get()
   if (!row || !['success', 'partial'].includes(row.query.status)) fail('invalid_endpoint_type', 'Persisted positive interface row not found')
-  return row
+  // Validate the same facts shown by source/candidate readers. Provenance and
+  // fingerprints below continue to use the untouched persisted rows.
+  return { ...row, relation: normalizePlatformRelation(row.query.interface, row.relation) }
 }
 function exportSource(db: Executor, id: number, observed?: ReadSources) {
   if (!positive(id)) fail('invalid_endpoint_type', 'exportRowId must be a positive integer')
@@ -182,6 +185,10 @@ function sourceForEdge(db: Executor, edge: CorrespondenceEdge, confirmed: boolea
   if (!roles[edge.type].includes(edge.role)) fail('invalid_endpoint_type', 'Role is not valid for edge type')
   if (edge.type === 'event_process' && edge.role === 'supports_award' && event?.event.eventType !== 'award') fail('invalid_endpoint_type', 'Award role requires award event')
   if (edge.type === 'event_process' && edge.role === 'supports_review' && event?.event.eventType !== 'review') fail('invalid_endpoint_type', 'Review role requires review event')
+  if (confirmed && relation?.relation.normalizationConflicts.length &&
+      (edge.type === 'later_process' || edge.type === 'event_process' && edge.role !== 'context_only')) {
+    fail('invalid_endpoint_type', 'Conflicting archived process facts require review')
+  }
   if (edge.type === 'event_process' && confirmed && relation?.relation.declareKind &&
       ((edge.role === 'supports_award' && relation.relation.declareKind !== 'apply') ||
        (edge.role === 'supports_review' && relation.relation.declareKind !== 'review'))) {
