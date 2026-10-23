@@ -19,6 +19,7 @@ import {
 } from '../../lib/platform/client'
 import type { PlatformRdjb, PlatformRow } from '../../lib/platform/adapter'
 import { type PlatformRelationRecord, relationFromRow } from '../../lib/platform/identity'
+import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import {
   type DifferenceDecision,
   type KnownEnterprise,
@@ -298,7 +299,7 @@ function freshStoredSlots(db: Db, queryKey: string, cutoffIso: string): Map<stri
         queriedAt: query.queriedAt,
         status: query.status,
         failureReason: query.failureReason,
-        relations: relations.map((row) => ({
+        relations: relations.map(row => normalizePlatformRelation(query.interface, row)).map((row) => ({
           interface: query.interface,
           rdjb: query.rdjb,
           sequenceNo: row.sequenceNo,
@@ -312,6 +313,7 @@ function freshStoredSlots(db: Db, queryKey: string, cutoffIso: string): Map<stri
           appliedAt: row.appliedAt,
           awardBatchLabel: row.awardBatchLabel,
           year: row.year,
+          normalizationConflicts: row.normalizationConflicts,
           sourceKind: query.interface === 'business_list' ? 'platform_business' : 'platform_apply',
           rawFields: rawRowOf(row),
         })),

@@ -26,6 +26,19 @@
 5. 称号、事件类型、年度和批次取自公布正文及附件。平台申请/维护字段不能确立正式事件年度或批次，参见[业务规则](./decisions.md)。
 6. 信用代码缺失时遵循[身份查证说明](./uscc-recovery.md)；缺代码的正式行仍可按身份待核入库。
 
+### 同份通知含新认定与复核
+
+按附件、名单段分别核实，不把通知标题中的新认定年度/批次套到复核行。每段交接必须逐字段列出依据：
+
+- `eventType`：认定或复核，依据该附件/名单段的正文；“复核通过名单”不是新认定。
+- `year`：认定事件的认定年；复核事件的**原认定年**。复核名单仅写结论年时，回到正文引用的复核工作通知、原认定通知和该企业原行核实；不能用“首次认定年”或减三年来代填。
+- `decidedYear` 与 `reviewOutcome`：分别记录正式公布的结论年和通过/不通过。未知填 `null`，不能从平台终审状态补出正式结论。
+- `batchSeq`：复核所对应的原认定批次；文件只写年度、没有批次数字时留 `null`。新认定的“第二批”、平台 `whpc` 的后缀和“该年只找到一份名单”都不能证明复核的原批次。
+
+交接表同时保留文件哈希、正文/附件页码、名单序号和企业身份依据。解析器若只输出 `year/seq`、不携带 `decidedYear/reviewOutcome`，其结果不能直接作为完整事件载荷；先补齐这份字段级交接，再使用统一应用 API。未知值仍可保留入库，但必须列为尚未解决的事实缺口。
+
+更正后分别读回事件及当前资格；生命周期 `dueYear` 延后不等于当前资格已为 `eligible`。按现行规则仍因批次、结论或出处待核时，保留原查询/导出失败与具体门槛，不填造批次或改变资格规则完成验收。
+
 ## 按当前应用契约写入
 
 写入前查看运行中应用的 `/_openapi.json` 或 MCP `tools/list`；以当前结构和[名录生命周期契约](../../../../docs/roster-lifecycle-contract.md)为载荷依据。
@@ -40,7 +53,11 @@
 
 ### 更正既有事件与出处（#34）
 
-当前统一导入并非既有 `record_event` 字段或出处坐标的通用更正 API。发现事件年、`decidedYear`、`reviewOutcome`、批次、`attachment`、`listNo` 错误时，先记录对应 `eventId`、`evidenceId`、`enterpriseId`、源文件 ID/内容哈希、预期旧值和新值、原来源页依据及确认理由。不支持的更正记入 #34 并保留待处理；不得换幂等键重导创建替代事件，不得直接 SQL 修改。
+统一导入不负责修改既有 `record_event`。先检查运行中契约，而不是根据 #34 是否关闭判断能力：当前已有 `GET /api/roster/events/{id}`、`POST /api/roster/events/corrections/preflight`、`/commit` 和 `GET /api/roster/events/{id}/audit`，MCP 对应 `get_official_event`、`preflight_event_corrections`、`commit_event_corrections`、`get_event_correction_audit`。
+
+发现事件字段错误时，先按稳定 ID 读回 `event/record/evidence/files`；记录 `eventId/recordId/enterpriseId/expectedRevision`、文件哈希、字段级旧值/新值及每项原页依据。冻结 `idempotencyKey/sourceIdentity/actor/basis/operations[].patch`，预检后逐项核对 `before/after/evidence/files/impact`；提交原请求及其 `planHash`。字段省略表示保留、`null` 表示未知；不支持的字段不能混入 patch。版本、来源或计划冲突时停下重新核实；结果不确定时保持同键恢复。
+
+提交后按原 ID 读回、检查追加审计及原出处，核对企业/记录/事件/出处数量未增加，再验证资格、查询和导出。支持的更正不需要等待 #34；实际契约不支持的字段才记入 #34 或窄票并保留待处理。不得换幂等键重导创建替代事件，不得直接 SQL 修改。`attachment/listNo/sourceFile` 属于出处更正，按当前独立出处更正契约处理，不能塞进事件更正。
 
 既有 `POST /api/roster/evidence/pages`（契约 §8.11）仅用于已核实的 PDF 实际页码更正，只改 `page`，不能改事件元数据、`attachment`、`listNo`。请求按文件库相对 `sourceFile`、`listNo` 及 `enterpriseId` 或 `enterpriseName` 唯一定位，并带 `basis`。先用 `dryRun: true` 提交原条目，核对返回 `evidenceId`、`previous` 和来源页，再对同一已确认条目以 `dryRun: false` 应用并核验响应。接口不支持预期旧值前置条件，目标或当前值可能变化时须重做预演；定位不唯一或页码无法确认时保留待核。页码接口不能当通用更正 API。
 

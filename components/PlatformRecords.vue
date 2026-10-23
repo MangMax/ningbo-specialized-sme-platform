@@ -166,7 +166,7 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                   <template v-else>
                   <td class="px-3 py-1.5">{{ record.province ?? '未提供' }}</td>
                   <td class="px-3 py-1.5">{{ record.declareKind ? RELATION_DECLARE_KINDS[record.declareKind] ?? '类型待核' : '未提供' }}</td>
-                  <td class="px-3 py-1.5">{{ record.status ?? '未提供' }}</td>
+                  <td class="px-3 py-1.5">{{ record.status ?? '未提供' }}<span v-if="record.normalizationConflicts?.length" class="text-muted-foreground block text-xs">字段冲突，待核</span></td>
                   <td class="px-3 py-1.5 tabular-nums">{{ record.appliedAt ?? '未提供' }}</td>
                   <td class="px-3 py-1.5">{{ record.batch ?? '未提供' }}</td>
                   </template>

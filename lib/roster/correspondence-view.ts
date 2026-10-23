@@ -42,6 +42,7 @@ export interface EventSource {
 }
 
 export interface RelationSource {
+  normalizationConflicts?: import('../platform/normalization').PlatformNormalizationConflict[]
   id: number
   queryId: number
   sequenceNo: number

@@ -1,6 +1,7 @@
 import { managedDecision102 } from './decision-lifecycle-102'
 import { isDeepStrictEqual } from 'node:util'
 import { recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
+import { normalizePlatformRelation } from '../../lib/platform/normalization'
 /**
  * 名录统一导入的**核心实现**（RL-11）—— 预检与单批事务提交（契约 §8）。
  *
@@ -2715,6 +2716,11 @@ function planPlatformQuery(
       push({ item: failure('platform_relation', `${ref}/r${i}`, 'match_basis_unknown', `matchBasis 不在字典内：${String(relation.matchBasis)}`, 'relations[].matchBasis'), action: 'skip', review: false })
       return
     }
+    const normalized = normalizePlatformRelation(query.interface, relation)
+    if (normalized.normalizationConflicts.length) {
+      push({ item: failure('platform_relation', `${ref}/r${i}`, 'platform_field_conflict', `标准字段与原档冲突：${normalized.normalizationConflicts.map(c => c.field).join(', ')}`, 'relations'), action: 'skip', review: false })
+      return
+    }
   }
 
   const existing = findQueryRow(db, { interface: query.interface, queryKey, rdjb, queriedAt })
@@ -2760,7 +2766,7 @@ function writePlatformQuery(
             queriedAt: query.queriedAt,
             status: query.status ?? 'not_queried',
             failureReason: optionalString(query.failureReason),
-            rawResponse: optionalString(query.rawResponse),
+            rawResponse: query.rawResponse ?? null,
             collectionEvidence: query.collectionEvidence ?? null,
           })
           .returning({ id: schema.platformQuery.id })
@@ -2770,7 +2776,8 @@ function writePlatformQuery(
   const queryId = queryRow.id
   const relations: number[] = []
   let skipped = 0
-  for (const relation of query.relations ?? []) {
+  for (const archivedRelation of query.relations ?? []) {
+    const relation = normalizePlatformRelation(query.interface, archivedRelation)
     const sequenceNo = optionalInt(relation.sequenceNo)!
     if (findRelationRow(tx, { queryId, sequenceNo })) {
       skipped += 1
