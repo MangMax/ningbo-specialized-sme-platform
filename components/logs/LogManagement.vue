@@ -769,7 +769,7 @@ async function confirm() {
       })
       if (active)
         notice.value =
-          '已保存，对后续日志生效；已有记录不受影响。'
+          '日志配置已保存。'
       if (active) {
         // PATCH 成功响应就是真实生效值；先落到草稿，finally 再刷新概览与真实值。
         if (result) {
@@ -1013,7 +1013,7 @@ async function confirm() {
             </div>
             <p class="text-[13px] leading-5" data-testid="log-field-status">
               <template v-if="!levelTabs.some((level) => level.count)"
-                >部分级别已改；当前级别全部保留。</template
+                >各级别均保留全部字段。</template
               >
               <template v-else>{{
                 `不记录：${levelTabs
@@ -1287,7 +1287,7 @@ async function confirm() {
           }}</DialogTitle
           ><DialogDescription>{{
             dialogReview?.kind === 'config'
-              ? '保存后对后续批次生效，不删除已有记录；保留策略调整可能触发轮转。'
+              ? '采集配置对后续批次生效；保留策略调整可能清理已有日志。'
               : '此操作可能永久删除运行日志。业务审计、回执、源文件和任务产物不在清理范围。'
           }}</DialogDescription></DialogHeader
         >

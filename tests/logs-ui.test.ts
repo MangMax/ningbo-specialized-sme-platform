@@ -566,9 +566,45 @@ it('reviews only changed collection rules, sends changed maps, and refreshes eff
   ])
   expect(switchState()).toBe('unchecked')
   expect(wrapper.get('[aria-label="MCP 调用的最低日志级别"]').text()).toBe('警告')
-  // 保存后的常驻文案已压缩；仍要求「已保存」与「只影响后续」两个事实都在。
-  expect(wrapper.text()).toContain('已保存，对后续日志生效')
-  expect(wrapper.text()).toContain('已有记录不受影响')
+  // 保存反馈只说「已保存」：这次 PATCH 可能同时改了保留策略，不能断言历史不受影响。
+  expect(wrapper.text()).toContain('日志配置已保存。')
+  expect(wrapper.text()).not.toContain('已有记录不受影响')
+  vi.unstubAllGlobals()
+})
+
+it('never claims history is untouched when the save can shrink retention', async () => {
+  const { default: Management } = await import('../components/logs/LogManagement.vue')
+  let policy = policyResponse()
+  const writes: any[] = []
+  vi.stubGlobal('$fetch', async (_url: string, options: any = {}) => {
+    if (options.method === 'PATCH') {
+      writes.push(options.body)
+      policy = { ...policyResponse(), retentionDays: 3 }
+      return policy
+    }
+    return policy
+  })
+  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  await wrapper.get('#log-retention-days').setValue('3')
+  await wrapper.get('[data-testid=log-policy-review]').trigger('click')
+  await flushPromises()
+  const dialog = document.querySelector('[role=dialog]')!
+  expect(dialog.textContent).toContain('保留天数：7 天 → 3 天')
+  // 保留策略缩短可能物理清理日志：确认文案不能同时声称「不删除已有记录」。
+  expect(dialog.textContent).toContain('保留策略调整可能清理已有日志')
+  expect(dialog.textContent).not.toContain('不删除已有记录')
+  ;(
+    document.querySelector('[data-testid=log-policy-confirm]') as HTMLButtonElement
+  ).click()
+  await flushPromises()
+  // 这次 PATCH 真实改了保留天数，成功反馈只能报「已保存」。
+  expect(writes).toHaveLength(1)
+  expect(writes[0]).toMatchObject({ retentionDays: 3 })
+  expect(wrapper.text()).toContain('日志配置已保存。')
+  expect(wrapper.text()).not.toContain('已有记录不受影响')
+  expect(wrapper.text()).not.toContain('对后续日志生效')
   vi.unstubAllGlobals()
 })
 

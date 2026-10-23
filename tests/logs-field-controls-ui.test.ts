@@ -223,7 +223,10 @@ it('renders exactly the catalog profiles and levels, one level at a time, withou
   // 字段名仍来自目录；只有单位（毫秒/字节）作为后缀保留，不再逐条铺解释。
   for (const field of profileCatalog()[0]!.fields) expect(panel.text()).toContain(field.label)
   expect(panel.text()).toContain('（毫秒）')
-  expect(panel.text()).toContain('当前级别全部保留')
+  // 默认全 true 时，状态句必须如实说明「所有级别都保留全部字段」；
+  // 旧文案「部分级别已改」与这个分支的事实相反，这里锁死回归。
+  expect(panel.text()).toContain('各级别均保留全部字段。')
+  expect(panel.text()).not.toContain('部分级别已改')
 
   expect(state(wrapper, 'httpRoute')).toBe('checked')
   await fieldSwitch(wrapper, 'httpRoute').trigger('click')
@@ -288,7 +291,7 @@ it('keeps parents untouched and still saves field preferences while the source i
   // 保存不会顺手重新打开来源，也不会把父级规则塞进这次 PATCH。
   expect((current.collection as any).sources.http.enabled).toBe(false)
   expect(patches(calls)[0]).not.toHaveProperty('collection')
-  expect(wrapper.text()).toContain('已保存，对后续日志生效')
+  expect(wrapper.text()).toContain('日志配置已保存。')
 })
 
 it('copies to sibling levels, restores this level and undoes both as draft-only changes', async () => {
@@ -513,7 +516,7 @@ it('renders and PATCHes the real service policy catalog without drifting from th
   const fieldConfig = response.catalog.profiles[0]!
   const switches = wrapper.get('[data-testid=log-field-controls]').findAll('[data-slot=switch]')
   expect(switches).toHaveLength(fieldConfig.fields.length)
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('当前级别全部保留')
+  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('各级别均保留全部字段。')
   // Every real field NAME still comes from the catalog; explanations are gone.
   for (const field of fieldConfig.fields) {
     expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain(field.label)
