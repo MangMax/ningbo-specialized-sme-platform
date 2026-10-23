@@ -163,7 +163,7 @@ async function act(action: 'cancel' | 'retry') {
               <li v-for="item in data.discovery.items" :key="item.eventId" class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <NuxtLink v-if="item.enterpriseId" :to="`/enterprises/${item.enterpriseId}?eventId=${item.eventId}`" class="text-primary underline">核对事件 #{{ item.eventId }} 与双方原行</NuxtLink>
                 <span v-else>事件 #{{ item.eventId }}</span>
-                <span>{{ ({pending:'未处理',running:'处理中',done:'已处理',failed:'失败'} as Record<string,string>)[item.status] ?? item.status }} · 新增 {{ item.created }} · 保留 {{ item.existing }}</span>
+                <span>{{ item.status === 'running' && !inFlight ? '未完成' : ({pending:'未处理',running:'处理中',done:'已处理',failed:'失败'} as Record<string,string>)[item.status] ?? item.status }} · 新增 {{ item.created }} · 保留 {{ item.existing }}</span>
                 <span v-if="item.errorCode" class="text-destructive">{{ item.errorCode === 'source_materialization_limit' ? '原档超出单次读取上限，本项未写入，请按原行核对' : item.errorCode === 'event_unavailable' ? '正式事件不可用' : '候选提交失败，可重试' }}</span>
               </li>
             </ul>
