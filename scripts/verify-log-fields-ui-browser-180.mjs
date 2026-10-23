@@ -11,7 +11,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -33,8 +33,24 @@ const chrome = spawn(chromePath, [
 let chromeErr = ''
 chrome.stderr.setEncoding('utf8')
 chrome.stderr.on('data', (chunk) => (chromeErr += chunk))
-const stopChrome = () => { if (chrome.exitCode === null) chrome.kill('SIGTERM') }
+// Always reclaim the owned Chrome profile: a killed run must not leave a
+// f03-chrome-* directory (or a live Chrome) behind for the next session.
+let cleaned = false
+const stopChrome = () => {
+  if (cleaned) return
+  cleaned = true
+  if (chrome.exitCode === null) chrome.kill('SIGKILL')
+  try {
+    rmSync(profile, { recursive: true, force: true })
+  } catch {}
+}
 process.on('exit', stopChrome)
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.once(signal, () => {
+    stopChrome()
+    process.exit(1)
+  })
+}
 
 async function devtools() {
   for (let i = 0; i < 150; i++) {
@@ -72,7 +88,12 @@ const send = (method, params = {}) => new Promise((resolve, reject) => {
 })
 async function evaluate(expression) {
   const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
-  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text)
+  if (result.exceptionDetails) {
+    const details = result.exceptionDetails
+    throw new Error(
+      (details.exception && details.exception.description) || details.text || 'evaluate failed'
+    )
+  }
   return result.result.value
 }
 async function waitFor(expression, timeoutMs = 40000) {
