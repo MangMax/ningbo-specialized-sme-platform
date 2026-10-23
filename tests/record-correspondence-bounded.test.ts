@@ -354,3 +354,19 @@ it('keeps original relation sequence and export source-row order when archive in
   const result = dispatchRecordCorrespondenceMcp('candidates', { eventId: event.id, queryIds: [f.query.id], exportBatchIds: [batch.id], ruleVersion: 'ordering' }, { db: f.db }) as any
   expect(result.rows.map((r: any) => r.edge.relationId ?? `export:${r.edge.exportRowId}`)).toEqual([f.relation.id, second.id, third.id, `export:${x2.id}`, `export:${x3.id}`])
 })
+
+it('automatically discovers a deep candidate page without materializing other raw rows or archived response arrays', () => {
+  const f = fixture(), event = f.addEvent(), raw = 'synthetic'.repeat(65536)
+  f.db.$client.prepare('update platform_query set raw_response=?,collection_evidence=?').run(raw.repeat(8), JSON.stringify({ rows: [{ original: raw.repeat(4) }], completeness: 'partial' }))
+  f.db.transaction(() => { for (let i = 2; i <= 80; i++) f.db.insert(schema.platformRelation).values({ queryId: f.query.id, sequenceNo: i, usccRaw: f.enterprise.usccNorm, enterpriseId: f.enterprise.id, rawFields: { original: raw }, declareKind: 'apply', year: 2022 }).run() })
+  const meter = observeBytes(f.db)
+  const body = { eventId: event.id, page: 70, pageSize: 1, queryPage: 1, queryPageSize: 1 }
+  const result = handleRecordCorrespondenceRequest({ action: 'discover', method: 'POST', body }, { db: f.db })
+  expect(result.status).toBe(200)
+  expect(result.body).toMatchObject({ total: 80, page: 70, rows: [{ evidence: { source: { sequenceNo: 70 } }, conflicts: expect.arrayContaining(['multiple_candidate_rows']) }], coverage: { total: 1, rows: [{ candidateCount: 80, relationCount: 80 }] } })
+  expect(meter.bytes).toBeLessThan(128 * 1024)
+  expect(JSON.stringify(result.body)).not.toContain(raw)
+  meter.reset()
+  expect(dispatchRecordCorrespondenceMcp('discover', body, { db: f.db })).toEqual(result.body)
+  expect(meter.bytes).toBeLessThan(128 * 1024)
+})
