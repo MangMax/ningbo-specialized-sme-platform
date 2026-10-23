@@ -7,10 +7,11 @@ import { readApiToken, resolveApiAuth } from './api-auth'
 import { credentialContext, resolveCredential } from './credential-state'
 import { commitRecordCorrespondences, CorrespondenceError, getRecordCorrespondence, listRecordCorrespondences, pageRecordCorrespondences, pageRecordCorrespondenceAudit, preflightRecordCorrespondences, readRecordCorrespondenceBatch, type CorrespondenceFilter } from './record-correspondence'
 import { detail, details, sourceReader, sanitizeEvidence, summaries, type SourceKind } from './record-correspondence-read'
+import { discoverEventArchives } from './event-archive-discovery'
 import { generateCandidates } from './record-correspondence-candidates'
 
 type Db = BetterSQLite3Database<typeof schema>
-export type CorrespondenceAction = 'list' | 'get' | 'audit' | 'source' | 'candidates' | 'preflight' | 'commit' | 'batch'
+export type CorrespondenceAction = 'discover' | 'list' | 'get' | 'audit' | 'source' | 'candidates' | 'preflight' | 'commit' | 'batch'
 export interface CorrespondenceApiInput { action: CorrespondenceAction; method: string; query?: Record<string, unknown>; body?: unknown; id?: unknown; kind?: unknown; key?: unknown; headers?: Record<string, string | undefined> }
 export interface CorrespondenceApiOutput { status: number; headers: Record<string, string>; body: unknown }
 const headers = { 'cache-control': 'no-store' }
@@ -46,7 +47,7 @@ function ids(input: Record<string, unknown>, keys: string[]) { const result: Rec
 function permitted(input: Record<string, unknown>, keys: string[]) { return Object.keys(input).every(key => keys.includes(key)) }
 function auth(input: CorrespondenceApiInput, configured: string | null | undefined) { return resolveApiAuth({ given: readApiToken(input.headers), configured }).writeAuthorized }
 export function handleRecordCorrespondenceRequest(input: CorrespondenceApiInput, context: { db: Db; apiToken?: string | null }): CorrespondenceApiOutput {
-  return ['list', 'get', 'audit', 'source', 'candidates'].includes(input.action)
+  return ['list', 'get', 'audit', 'source', 'candidates', 'discover'].includes(input.action)
     ? context.db.transaction(() => correspondenceSnapshot(input, context))
     : correspondenceSnapshot(input, context)
 }
@@ -73,6 +74,12 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
       const filter = { ...numeric, ...(query.titleCode ? { titleCode: query.titleCode as string } : {}), ...(query.type ? { type: query.type as typeof types[number] } : {}), ...(query.status ? { status: query.status as typeof statuses[number] } : {}), ...(query.role ? { role: query.role as string } : {}), ...(query.ruleVersion ? { ruleVersion: query.ruleVersion as string } : {}) }
       const result = pageRecordCorrespondences(db, filter as CorrespondenceFilter, paging)
       return ok({ ...result, rows: query.view === 'summary' ? summaries(result.rows) : details(db, result.rows) }, redactors)
+    }
+    if (input.action === 'discover') {
+      const parsed = z.strictObject({ eventId: positive, page: positive.default(1), pageSize: positive.max(200).default(50), queryPage: positive.default(1), queryPageSize: positive.max(200).default(25) }).safeParse(input.body)
+      if (!parsed.success) return fail(400, 'invalid_request', 'Invalid event discovery request')
+      const result = discoverEventArchives(db, parsed.data)
+      return result ? ok(result, redactors) : fail(404, 'not_found', 'Official award or review event not found')
     }
     if (input.action === 'candidates') {
       const parsed = candidate.safeParse(input.body)
