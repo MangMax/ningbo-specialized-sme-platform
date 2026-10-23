@@ -100,6 +100,9 @@ function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
     // Scope role before shared grouping; explicit year may require its same-business donor.
     if (f.declareKind && ['apply', 'review', 'update'].includes(f.declareKind) && f.declareKind !== kind) return []
     const conflicts: string[] = []
+    // Native title does not override another explicit title for the same code/key.
+    // Preserve each observation while preventing cross-interface fact borrowing.
+    if (explicitTitles.size > 1) conflicts.push('title_scope_conflict')
     if (!normalizeUscc(row.usccRaw) && !(row.enterpriseId === owner && row.verificationStatus === 'confirmed')) conflicts.push('identity_unknown')
     if (!['success', 'partial'].includes(query.status)) conflicts.push('query_observation_unusable')
     return [{ relationId: row.id, queryId: row.queryId, sequenceNo: row.sequenceNo, interface: query.interface, relationKey: row.relationKey,

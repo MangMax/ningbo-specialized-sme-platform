@@ -292,3 +292,31 @@ it('does not let a later uniquely different-title business become an unknown-tit
   expect(result.process.finalCandidateStepId).not.toBeNull()
   expect(result.process.steps.flatMap(s => s.groups.flatMap(g => g.observationRefs.map(r => r.relationId)))).toEqual([own.id])
 })
+
+it.each(['query-title', 'native-rdjb'])('rejects dual-title year corroboration even when both observations already have explicit titles: %s', async titleSource => {
+  for (const doubleTitle of [false, true]) {
+    const f = fixture()
+    const seed = f.row(f.query().id, { rawFields: { id: 'SQ-1', sblx: '申请', sqsj: '2024-03-01 09:00:00', cszt: '终审通过' } })
+    const recipient = f.row(f.query({ interface: 'apply_list', titleCode: titleSource === 'query-title' ? 'specialized_sme' : null, rdjb: titleSource === 'native-rdjb' ? '2' : '' }).id)
+    if (doubleTitle) f.row(f.query({ titleCode: 'innovative_sme', rdjb: '1' }).id)
+    await f.project()
+    f.db.$client.pragma('query_only=ON')
+    const result = f.read(), steps = result.process.steps
+    // Independent native-title observations remain visible in either case.
+    expect(steps.flatMap(s => s.groups.flatMap(g => g.observationRefs.map(r => r.relationId))).sort((a, b) => a - b)).toEqual([seed.id, recipient.id])
+    if (!doubleTitle) {
+      expect(steps).toHaveLength(1)
+      expect(steps[0]!.year).toBe(2024)
+      expect(steps[0]!.corroborationRefs).toContainEqual({ field: 'year', fromRelationIds: [recipient.id], toRelationIds: [seed.id] })
+      expect(result.process.finalCandidateStepId).toBe(steps[0]!.id)
+    } else {
+      expect(steps).toHaveLength(2)
+      expect(steps.find(s => s.groups.some(g => g.observationRefs.some(r => r.relationId === seed.id)))!.year).toBeNull()
+      expect(steps.find(s => s.groups.some(g => g.observationRefs.some(r => r.relationId === recipient.id)))!.year).toBe(2024)
+      expect(steps.flatMap(s => s.corroborationRefs)).toEqual([])
+      expect(steps.flatMap(s => s.groups.flatMap(g => g.observationRefs)).map(r => r.conflicts)).toEqual([['title_scope_conflict'], ['title_scope_conflict']])
+      expect(new Set(result.sourceRefs.titleScopeRefs.map(r => r.titleCode))).toEqual(new Set(['specialized_sme', 'innovative_sme']))
+      expect(result.process.finalCandidateStepId).toBeNull()
+    }
+  }
+})
