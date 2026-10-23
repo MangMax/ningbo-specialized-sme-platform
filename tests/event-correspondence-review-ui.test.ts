@@ -2,12 +2,29 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
+import { buildAnnualProcess } from '../lib/roster/annual-process'
 import EventCorrespondenceReview from '../components/record-correspondence/EventCorrespondenceReview.vue'
+import EventChip from '../components/EventChip.vue'
+import TitleBadge from '../components/TitleBadge.vue'
+import SourceChip from '../components/SourceChip.vue'
 
 let wrapper: ReturnType<typeof mount>
 afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals() })
 const events = [7, 8].map(id => ({ id, recordId: 2, type: 'award', year: 2026, seq: 1, decidedYear: null, reviewOutcome: null, titleCode: 'specialized_sme', source: 'jxj', district: null, evidence: [] }))
 const page = (id: number, total = 0) => ({ event: { id, evidence: [] }, rows: [], total, page: 1, pageSize: 50, coverage: { rows: [], total: 0, page: 1, pageSize: 25 }, interfaces: [] })
+// The annual panel is a real mounted sibling. Supply its new read-only HTTP
+// endpoints without replacing either readback listener or the point loader.
+function installFetch(fetch: (...args: any[]) => any) {
+  vi.stubGlobal('$fetch', (url: string, options?: any) => {
+    if (url.endsWith('/browser-context')) return Promise.resolve({ writeEnabled: false })
+    if (url.endsWith('/annual-process')) {
+      const eventId = Number(url.split('/')[4])
+      const process = buildAnnualProcess({ event: { id: eventId, eventType: 'award', year: 2026, decidedYear: null, reviewOutcome: null, record: { enterpriseId: 1, titleCode: 'specialized_sme', usccRaw: null } }, groups: [], coverage: [] })
+      return Promise.resolve({ process, sourceGeneration: 'synthetic-readonly', total: 0, page: options.query.page, pageSize: options.query.pageSize, sourceRefs: {} })
+    }
+    return fetch(url, options)
+  })
+}
 const openEvent = async (id: number) => { await wrapper.get(`#review-event-${id} button[aria-expanded]`).trigger('click'); await flushPromises() }
 
 it('keeps review mount read only and discovers only the explicitly expanded event with no old response leak', async () => {
@@ -17,8 +34,8 @@ it('keeps review mount read only and discovers only the explicitly expanded even
     if (url.endsWith('/correspondences')) return Promise.resolve({ rows: [], total: 0, page: 1, pageSize: 200 })
     throw new Error(url)
   })
-  vi.stubGlobal('$fetch', fetch); vi.stubGlobal('useState', () => ref(false))
-  wrapper = mount(EventCorrespondenceReview, { props: { enterpriseId: 1, events, back: '/enterprises/1?tab=review' } })
+  installFetch(fetch); vi.stubGlobal('useState', () => ref(false))
+  wrapper = mount(EventCorrespondenceReview, { global: { components: { EventChip, TitleBadge, SourceChip } }, props: { enterpriseId: 1, events, back: '/enterprises/1?tab=review' } })
   await flushPromises()
   expect(wrapper.text()).toContain('公布事件与平台对应')
   expect(fetch.mock.calls.filter(([url]) => url.endsWith('/discover'))).toHaveLength(0)
@@ -38,8 +55,8 @@ it('keeps review mount read only and discovers only the explicitly expanded even
 
 it('restores only the selected event and leaves unsupported events out of the correspondence area', async () => {
   const fetch = vi.fn().mockImplementation((url: string, options: any) => Promise.resolve(url.endsWith('/discover') ? page(options.body.eventId) : { rows: [], total: 0, page: 1, pageSize: 200 }))
-  vi.stubGlobal('$fetch', fetch); vi.stubGlobal('useState', () => ref(false))
-  wrapper = mount(EventCorrespondenceReview, { props: { enterpriseId: 1, events: [...events, { ...events[0]!, id: 9, source: 'miit', type: 'maintain' }], eventId: 8, back: '/enterprises/1?tab=review&reviewEventId=8' } })
+  installFetch(fetch); vi.stubGlobal('useState', () => ref(false))
+  wrapper = mount(EventCorrespondenceReview, { global: { components: { EventChip, TitleBadge, SourceChip } }, props: { enterpriseId: 1, events: [...events, { ...events[0]!, id: 9, source: 'miit', type: 'maintain' }], eventId: 8, back: '/enterprises/1?tab=review&reviewEventId=8' } })
   await flushPromises()
   expect(wrapper.find('#review-event-9').exists()).toBe(false)
   expect(fetch.mock.calls.filter(([url]) => url.endsWith('/discover')).map(([, options]) => options.body.eventId)).toEqual([8])
@@ -55,8 +72,8 @@ it('refreshes only the currently expanded event points after a decision readback
     if (url.endsWith('/correspondences')) return Promise.resolve({ rows: summary, total: 2, page: 1, pageSize: 200 })
     return Promise.resolve({ ...summary.find(row => url.endsWith(`/${row.id}`)), relation: { query: {} } })
   })
-  vi.stubGlobal('$fetch', fetch); vi.stubGlobal('useState', () => ref(false))
-  wrapper = mount(EventCorrespondenceReview, { props: { enterpriseId: 1, events, back: '/enterprises/1?tab=review' } })
+  installFetch(fetch); vi.stubGlobal('useState', () => ref(false))
+  wrapper = mount(EventCorrespondenceReview, { global: { components: { EventChip, TitleBadge, SourceChip } }, props: { enterpriseId: 1, events, back: '/enterprises/1?tab=review' } })
   await flushPromises(); await openEvent(7); await openEvent(8)
   fetch.mockClear()
   summary.forEach(row => { row.revision = 2 })
@@ -76,8 +93,8 @@ it('waits for the current event point read and propagates its failure during rea
     if (url.endsWith('/17')) return revision === 1 ? Promise.resolve({ ...row(), relation: { query: {} } }) : new Promise((_, reject) => { rejectPoint = reject })
     throw new Error(url)
   })
-  vi.stubGlobal('$fetch', fetch); vi.stubGlobal('useState', () => ref(false))
-  wrapper = mount(EventCorrespondenceReview, { props: { enterpriseId: 1, events, eventId: 7, back: '/enterprises/1?tab=review&reviewEventId=7' } })
+  installFetch(fetch); vi.stubGlobal('useState', () => ref(false))
+  wrapper = mount(EventCorrespondenceReview, { global: { components: { EventChip, TitleBadge, SourceChip } }, props: { enterpriseId: 1, events, eventId: 7, back: '/enterprises/1?tab=review&reviewEventId=7' } })
   await flushPromises()
   fetch.mockClear(); revision = 2
   let outcome = 'pending'
@@ -107,8 +124,8 @@ function deferredReadbackReview(eventId: number | null = 7) {
     if (id !== 7 && id !== 8) throw new Error(url)
     return revision === 1 ? Promise.resolve(point(id)) : new Promise((resolve, reject) => { points.set(id, { resolve, reject }) })
   })
-  vi.stubGlobal('$fetch', fetch); vi.stubGlobal('useState', () => ref(false))
-  wrapper = mount(EventCorrespondenceReview, { props: { enterpriseId: 1, events, eventId, back: '/enterprises/1?tab=review' } })
+  installFetch(fetch); vi.stubGlobal('useState', () => ref(false))
+  wrapper = mount(EventCorrespondenceReview, { global: { components: { EventChip, TitleBadge, SourceChip } }, props: { enterpriseId: 1, events, eventId, back: '/enterprises/1?tab=review' } })
   return {
     fetch,
     advance: () => { revision = 2; fetch.mockClear() },

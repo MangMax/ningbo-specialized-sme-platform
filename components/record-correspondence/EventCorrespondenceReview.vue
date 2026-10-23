@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch } from 'vue'
+import { computed, reactive, shallowRef, watch } from 'vue'
 import { useEnterpriseCorrespondences } from '~/composables/useEnterpriseCorrespondences'
+import { useAnnualProcessReview } from '~/composables/useAnnualProcessReview'
+import { confirmedAnnualStep } from '~~/lib/roster/annual-process-presentation'
 import RecordEventRow from './RecordEventRow.vue'
+import AnnualProcessReview from './AnnualProcessReview.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 
 interface ReviewEvent {
@@ -19,6 +22,8 @@ const emit = defineEmits<{
 const events = computed(() => props.events.filter(event => event.source === 'jxj' && ['award', 'review'].includes(event.type)))
 const selected = shallowRef<number | null>(props.eventId ?? null)
 watch(() => props.eventId, value => { selected.value = value ?? null })
+const annual = reactive(useAnnualProcessReview(computed(() => events.value.some(event => event.id === selected.value) ? selected.value : null)))
+const annualFinal = computed(() => annual.view && ['synced', 'read-only'].includes(annual.phase) ? confirmedAnnualStep(annual.view) : null)
 const { rows, ready, loading, error, reload, detailsForEvent, detailLoadingForEvent, detailErrorForEvent, loadEvent } = useEnterpriseCorrespondences(() => props.enterpriseId, selected)
 watch([selected, ready, rows], () => {
   if (selected.value != null && events.value.some(event => event.id === selected.value)) void loadEvent(selected.value)
@@ -47,7 +52,20 @@ function select(eventId: number, open: boolean) {
           @update:open="select(event.id, $event)" @preview="emit('preview', $event)"
           @event-navigate="emit('event-navigate', $event)" @page-open="(id, mouse) => emit('page-open', id, mouse)"
           @retry-detail="loadEvent(event.id, true)"
-        />
+        >
+          <template #annual-summary>
+            <p v-if="selected === event.id && annual.view?.eventId === event.id && annual.view.latestStatus" class="text-muted-foreground mt-1 text-[13px]" data-testid="event-annual-summary">
+              平台年度末态：{{ annual.view.latestStatus }}<span v-if="annualFinal"> · 已确认最终结果</span>
+            </p>
+          </template>
+          <template #annual-review>
+            <AnnualProcessReview v-if="selected === event.id" :view="annual.view" :back="back" :phase="annual.phase" :pending="annual.pending"
+              :read-failed="annual.readFailed" :target-page="annual.target.page" :can-cancel="annual.canCancel" :can-retry="annual.canRetry"
+              :progress="annual.progress" :business-reasons="annual.businessReasons" :task-read-failed="annual.taskReadFailed" :action-error="annual.actionError" :audit-readback="annual.auditReadback"
+              @refresh="annual.refresh()" @retry-submit="annual.retrySubmit" @retry-readback="annual.retryReadback" @retry-task="annual.retryTask" @cancel="annual.cancel"
+              @retry-task-read="annual.retryTaskRead" @page="annual.refresh({ page: $event })" @page-size="annual.refresh({ page: 1, pageSize: $event })" @event-navigate="emit('event-navigate', $event)" />
+          </template>
+        </RecordEventRow>
       </li>
     </ul>
   </section>
