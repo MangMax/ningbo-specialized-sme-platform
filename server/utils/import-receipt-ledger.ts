@@ -20,6 +20,8 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
   const normalized = { ...request, sourceSha256: request.sourceSha256 ?? null }
   const hash = createHash('sha256').update(canonical(normalized)).digest('hex')
   const redact = importReceiptRedactor(db)
+  // Both phases write. Reserve the writer before reading so concurrent candidate
+  // commits cannot invalidate a deferred read snapshot during its write upgrade.
   // Reserve before execution so a process lost during submission remains visibly processing.
   const attempt = db.transaction(() => {
     const existing = db.get<{ id: number; status: string; sourceKind: string; sourceIdentity: string; sourceSha256: string | null }>(sql`SELECT id, status, source_kind AS sourceKind, source_identity AS sourceIdentity, source_sha256 AS sourceSha256 FROM import_batch WHERE idempotency_key = ${batchRequest.idempotencyKey}`)
@@ -31,7 +33,7 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
     if (existing?.status === 'committed' && operation !== 'replay') return null
     const batch = ensureBatchRow(db, batchRequest)
     return db.insert(schema.importReceipt).values({ batchId: batch.id, operation, requestHash: hash, requestBody: JSON.stringify(redact(normalized)), status: 'processing', createdAt: new Date().toISOString() }).returning({ id: schema.importReceipt.id }).get()
-  })
+  }, { behavior: 'immediate' })
   if (!attempt) return run()
   try {
     // Business changes, batch state and final receipt commit together. Failures returned by
@@ -41,7 +43,7 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
       const stored = result as T & { items?: unknown; summary?: unknown; preflight?: { conflicts?: unknown[] } }
       db.update(schema.importReceipt).set({ status: result.status === 'replayed' ? 'committed' : result.status as 'preflight' | 'committed' | 'failed', summary: stored.summary ?? null, itemResults: redact(stored.items ?? stored.preflight?.conflicts ?? []), completedAt: new Date().toISOString() }).where(eq(schema.importReceipt.id, attempt.id)).run()
       return result
-    })
+    }, { behavior: 'immediate' })
   } catch (error) {
     db.update(schema.importReceipt).set({ status: 'failed', completedAt: new Date().toISOString() }).where(eq(schema.importReceipt.id, attempt.id)).run()
     throw error

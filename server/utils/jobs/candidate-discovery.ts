@@ -14,7 +14,7 @@ import {
   type CorrespondenceEdge,
 } from '../record-correspondence'
 import { createJob, getJob, setJobResult } from '../job-store'
-import { newJobId } from '../../../lib/job'
+import { JOB_ID_RE, newJobId } from '../../../lib/job'
 import {
   ensureJobRunnerReady,
   enqueuePersistedJob,
@@ -44,7 +44,12 @@ export const candidateJobInput = z
     (v) => [v.eventIds, v.titleCode, v.queryId].filter(Boolean).length === 1,
     '恰选事件、称号或归档查询范围之一',
   )
-type Params = z.infer<typeof candidateJobInput>
+// Internal continuation metadata; public submission keeps its existing shape.
+// The originating task identifies one archive generation and survives retries.
+const candidateJobParams = candidateJobInput.safeExtend({
+  archiveGeneration: z.string().regex(JOB_ID_RE).optional(),
+})
+type Params = z.infer<typeof candidateJobParams>
 export interface CandidateJobItem {
   eventId: number
   enterpriseId: number | null
@@ -186,7 +191,7 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
   // Staging may have rolled back after the queue was notified.
   if (!current || current.state !== 'running')
     return { result: null, cancelled: true }
-  const params = candidateJobInput.parse(raw)
+  const params = candidateJobParams.parse(raw)
   const previous = current.result as CandidateJobResult | null
   const result = previous ?? initialize(ctx.db, params)
   if (result.ruleVersion !== EVENT_ARCHIVE_RULE_VERSION)
@@ -326,13 +331,15 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
     !result.counts.failed &&
     !ctx.cancelled()
   ) {
+    const archiveGeneration = params.archiveGeneration ?? ctx.jobId
     const next = submitCandidateDiscovery(
       ctx.db,
       {
         queryId: params.queryId,
         afterEventId: result.nextAfterEventId,
         throughEventId: result.throughEventId,
-        clientRequestId: `archive:${params.queryId}:${result.nextAfterEventId}:${result.throughEventId}`,
+        archiveGeneration,
+        clientRequestId: `archive:${params.queryId}:${archiveGeneration}:${result.nextAfterEventId}:${result.throughEventId}`,
       },
       ctx.filesDir,
     )
@@ -363,7 +370,7 @@ export const candidateDiscoverySpec: JobSpec = {
   paramsHint:
     '{clientRequestId,eventIds?:1..200个正式事件ID,titleCode?:称号,queryId?:归档ID,afterEventId?:0,throughEventId?:上界} 三种范围恰选一种；每片最多200事件，每页25原行，逐行事务，最多10次执行。',
   parse: (raw) => {
-    const p = candidateJobInput.safeParse(raw)
+    const p = candidateJobParams.safeParse(raw)
     return p.success
       ? {
           ok: true,

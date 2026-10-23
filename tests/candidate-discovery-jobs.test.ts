@@ -840,9 +840,22 @@ it('continues large affected scopes in bounded tasks without admitting events cr
   expect((next.result as any).items[0].eventId).toBeLessThan(late.id)
   expect(f.read('list', { query: { eventId: late.id } }).total).toBe(0)
 }, 20_000)
-it('starts a fresh affected task when a later archive batch appends rows to an existing query identity', async () => {
+it('processes appended archives across all continuation generations and deduplicates replay after checkpoint recovery', async () => {
   const f = fixture()
   const { commitRosterImport } = await import('../server/utils/roster-import')
+  const { requestJobCancel } = await import('../server/utils/job-runner')
+  const { retryCandidateDiscovery } = await import('../server/utils/jobs/candidate-discovery')
+  const eventIds = [f.event.id]
+  for (let i = 2; i <= 401; i++)
+    eventIds.push(f.db.insert(schema.recordEvent).values({
+      recordId: f.event.recordId, eventType: 'award', year: 2022, batchSeq: i,
+    }).returning().get().id)
+  const chain = (id: string) => {
+    const jobs = [getJob(f.db, id)!]
+    while ((jobs.at(-1)!.result as any)?.continuationJobId)
+      jobs.push(getJob(f.db, (jobs.at(-1)!.result as any).continuationJobId)!)
+    return jobs
+  }
   const query = {
     interface: 'business_list' as const,
     queryKey: f.enterprise.usccNorm!,
@@ -862,6 +875,22 @@ it('starts a fresh affected task when a later archive batch appends rows to an e
     idempotencyKey: 'archive-before-append',
   })
   await whenIdle()
+  const oldJobs = chain(first.candidateTaskIds[0]!)
+  expect(oldJobs.map(j => j.state)).toEqual(['done', 'done', 'done'])
+  expect(oldJobs.map(j => (j.result as any).items.length)).toEqual([200, 200, 1])
+  const oldRows = eventIds.map(eventId => {
+    const list = f.read('list', { query: { eventId } })
+    expect(list.total).toBe(1)
+    return list.rows[0]
+  })
+  const { preflightRecordCorrespondences, commitRecordCorrespondences } = await import('../server/utils/record-correspondence')
+  const rejection = {
+    idempotencyKey: 'append-tail-manual-reject', sourceIdentity: 'synthetic/manual',
+    actor: { type: 'user' as const, id: 'synthetic-reviewer' }, basis: '合成尾片人工核对', ruleId: 'manual', ruleVersion: '1',
+    operations: [{ action: 'decide' as const, correspondenceId: oldRows[400].id, expectedRevision: 1, status: 'rejected' as const }],
+  }
+  commitRecordCorrespondences(f.db, rejection, preflightRecordCorrespondences(f.db, rejection).planHash)
+  const oldAudits = oldRows.map(row => f.read('audit', { id: row.id }))
   query.relations.push({
     sequenceNo: 2,
     enterpriseId: f.enterprise.id,
@@ -874,7 +903,48 @@ it('starts a fresh affected task when a later archive batch appends rows to an e
     ...base,
     idempotencyKey: 'archive-after-append',
   })
+  const rootId = next.candidateTaskIds[0]!
+  // Interrupt the first downstream slice after a durable row, then recover it.
+  let continuationId: string | undefined
+  while (!continuationId) {
+    continuationId = (getJob(f.db, rootId)?.result as any)?.continuationJobId
+    await new Promise(r => setImmediate(r))
+  }
+  while (!(getJob(f.db, continuationId)?.result as any)?.counts.created)
+    await new Promise(r => setImmediate(r))
+  expect(requestJobCancel(f.db, continuationId)).toMatchObject({ ok: true })
   await whenIdle()
-  expect(next.candidateTaskIds[0]).not.toBe(first.candidateTaskIds[0])
-  expect(f.read('list', { query: { eventId: f.event.id } }).total).toBe(2)
-})
+  expect(getJob(f.db, continuationId)).toMatchObject({ state: 'cancelled' })
+  __resetJobRunner(); clearJobSpecs(); ensureJobRunnerReady(f.db)
+  retryCandidateDiscovery(f.db, continuationId, f.dir)
+  await whenIdle()
+  const newJobs = chain(rootId)
+  expect(newJobs.map(j => j.state)).toEqual(['done', 'done', 'done'])
+  expect(newJobs.map(j => (j.result as any).items.length)).toEqual([200, 200, 1])
+  expect(newJobs.map(j => (j.result as any).throughEventId)).toEqual(Array(3).fill(eventIds[400]))
+  expect(newJobs.map(j => j.params.afterEventId)).toEqual([0, eventIds[199], eventIds[399]])
+  expect(newJobs.every(j => !oldJobs.some(old => old.id === j.id))).toBe(true)
+  expect(newJobs.slice(1).map(j => j.params.archiveGeneration)).toEqual([rootId, rootId])
+  expect((newJobs[1]!.result as any).attempt).toBe(2)
+  const audits = eventIds.map((eventId, index) => {
+    const list = f.read('list', { query: { eventId } })
+    expect(list.total).toBe(2)
+    expect(f.read('audit', { id: oldRows[index].id })).toEqual(oldAudits[index])
+    return list.rows.map((row: any) => {
+      if (row.id !== oldRows[index].id) {
+        expect(row.status).toBe('candidate')
+        expect(f.read('audit', { id: row.id }).rows).toHaveLength(1)
+      }
+      return { id: row.id, audit: f.read('audit', { id: row.id }) }
+    })
+  })
+  expect(f.read('get', { id: oldRows[400].id }).status).toBe('rejected')
+  const replay = commitRosterImport(f.db, { ...base, idempotencyKey: 'archive-same-generation-replay' })
+  expect(replay.candidateTaskIds).toEqual(next.candidateTaskIds)
+  await whenIdle()
+  expect(chain(rootId)).toEqual(newJobs)
+  for (const [index, eventId] of eventIds.entries()) {
+    expect(f.read('list', { query: { eventId } }).total).toBe(2)
+    for (const row of audits[index]!) expect(f.read('audit', { id: row.id })).toEqual(row.audit)
+  }
+}, 60_000)
