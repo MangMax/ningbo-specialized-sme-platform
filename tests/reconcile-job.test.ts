@@ -48,7 +48,7 @@ function stubGlobalFetch(): PlatformCall[] {
 }
 
 function clearEvidence() {
-  for (const table of [schema.enterpriseAlias, schema.differenceReason, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch, schema.job]) {
+  for (const table of [schema.enterpriseAlias, schema.differenceReason, schema.platformBusinessObservation, schema.platformBusinessRecordVersion, schema.platformBusinessRecord, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch, schema.job]) {
     db.delete(table).run()
   }
 }

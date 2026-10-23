@@ -85,9 +85,11 @@ describe('维护状态的中文标签与展示顺序', () => {
 
   it('正式事件更正具有中文来源标签并追加到原有来源展示顺序', () => {
     expect(IMPORT_SOURCE_KINDS.event_correction).toBe('正式事件更正')
+    expect(IMPORT_SOURCE_KINDS.platform_archive).toBe('平台采集归档')
     expect(IMPORT_SOURCE_KIND_ORDER).toEqual([
       'announcement', 'platform_export', 'alias_evidence',
       'correspondence_decision', 'comparison_scope_proof', 'event_correction',
+      'platform_archive',
     ])
     expect(IDENTITY(IMPORT_SOURCE_KIND_ORDER)).toEqual(IDENTITY(schema.importBatch.sourceKind.enumValues))
   })
