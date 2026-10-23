@@ -13,11 +13,11 @@ import { readCurrentCandidate } from '../lib/roster/current-qualification'
 
 const dirs: string[] = []
 afterAll(() => { vi.unstubAllGlobals(); for (const dir of dirs) rmSync(dir, { recursive: true, force: true }) })
-async function fixture(awardYear = 2021) {
+async function fixture(awardYear = 2021, titleCode = 'specialized_sme') {
   const dir = mkdtempSync(join(tmpdir(), 'event-correction-100-')); dirs.push(dir)
   const dbPath = join(dir, 'test.db'), db = useDb({ dbPath })
   const enterprise = db.insert(schema.enterprise).values({ name: '合成事件企业', nameNorm: '合成事件企业' }).returning().get()
-  const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', nameRaw: enterprise.name }).returning().get()
+  const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode, source: 'jxj', nameRaw: enterprise.name }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: awardYear, decidedYear: awardYear, batchSeq: 1, sortKey: awardYear }).returning().get()
   db.insert(schema.storedFile).values({ relPath: 'synthetic/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 123, sha256: 'synthetic-sha' }).run()
   const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic/notice.pdf', attachment: '附件一', listNo: 7, page: 2 }).returning().get()
@@ -109,6 +109,77 @@ it('corrects review origin and conclusion independently without guessing its bat
     ])
     expect(audit.rows[0].before).toMatchObject({ year: 2025, decidedYear: null, reviewOutcome: null })
     expect(audit.rows.every((row: any) => JSON.stringify(row.evidence) === JSON.stringify(before.evidence))).toBe(true)
+  } finally { await f.close() }
+})
+
+it('atomically corrects a confirmed award batch and its 2022-origin 2025 review while retaining year and outcome protections', async () => {
+  const f = await fixture(2022, 'innovative_sme')
+  try {
+    // Synthetic legacy facts; batch 1 is an explicit source-scope decision,
+    // never inferred by the API from the file name or platform maintenance tag.
+    f.db.$client.prepare('update record_event set batch_seq = null where id = ?').run(f.event.id)
+    const review = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2025 }).returning().get()
+    f.db.insert(schema.recordEvidence).values({ recordEventId: review.id, sourceFile: 'synthetic/notice.pdf', attachment: '附件2', listNo: 139, page: 17 }).run()
+    const controlRecord = f.db.insert(schema.record).values({ enterpriseId: f.enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
+    const control = f.db.insert(schema.recordEvent).values({ recordId: controlRecord.id, eventType: 'review', year: 2023, decidedYear: 2026, batchSeq: 1, reviewOutcome: 'failed' }).returning().get()
+    const before = await Promise.all([f.read(), f.read(`/api/roster/events/${review.id}`), f.read(`/api/roster/events/${control.id}`)])
+    const counts = () => ['enterprise', 'record', 'record_event', 'record_evidence'].map(table => f.db.$client.prepare(`select count(*) as n from ${table}`).get())
+    const countsBefore = counts()
+    const candidate = () => readCurrentCandidate(f.db.$client, f.enterprise.id, 'innovative_sme', 2026)
+    expect(candidate().group).toBe('pending')
+    const request = f.request('confirmed-batch-pair')
+    request.basis = 'Explicitly confirmed original award batch 1; attachment 2 page 17 proves review conclusion in 2025, passed, for the 2022 cycle'
+    request.operations = [
+      { eventId: f.event.id, recordId: f.record.id, enterpriseId: f.enterprise.id, expectedRevision: 1, patch: { batchSeq: 1 } },
+      { eventId: review.id, recordId: f.record.id, enterpriseId: f.enterprise.id, expectedRevision: 1, patch: { year: 2022, batchSeq: 1, decidedYear: 2025, reviewOutcome: 'passed' } },
+    ]
+    const plan = await f.post('preflight', request)
+    expect(plan.status).toBe(200)
+    expect(plan.body.targets.map((target: any) => target.after)).toEqual([
+      expect.objectContaining({ id: f.event.id, year: 2022, batchSeq: 1 }),
+      expect.objectContaining({ id: review.id, year: 2022, batchSeq: 1, decidedYear: 2025, reviewOutcome: 'passed' }),
+    ])
+    expect((await f.read()).body).toEqual(before[0]!.body)
+    expect((await f.read(`/api/roster/events/${review.id}`)).body).toEqual(before[1]!.body)
+    // One stale member rejects the entire preflight; neither event nor audit changes.
+    const stale = structuredClone(request); stale.idempotencyKey = 'stale-confirmed-batch-pair'; stale.operations[1]!.expectedRevision = 2
+    expect((await f.post('preflight', stale)).body).toMatchObject({ error: { code: 'stale_revision' } })
+    expect((await f.read()).body).toEqual(before[0]!.body)
+    expect((await f.read(`/api/roster/events/${review.id}/audit`)).body.total).toBe(0)
+    const receipt = await f.post('commit', { request, planHash: plan.body.planHash })
+    expect(receipt.status).toBe(200)
+    expect(receipt.body.eventIds).toEqual([f.event.id, review.id])
+    expect((await f.post('commit', { request, planHash: plan.body.planHash })).body).toEqual(receipt.body)
+    expect(candidate()).toMatchObject({ group: 'eligible', firstYear: 2022 })
+    for (const [index, id] of [f.event.id, review.id].entries()) {
+      const after = (await f.read(`/api/roster/events/${id}`)).body
+      expect(after.event).toMatchObject({ id, recordId: f.record.id, revision: 2, year: 2022, batchSeq: 1 })
+      expect(after.record).toEqual(before[index]!.body.record)
+      expect(after.evidence).toEqual(before[index]!.body.evidence)
+      expect(after.files).toEqual(before[index]!.body.files)
+      const audit = (await f.read(`/api/roster/events/${id}/audit`)).body
+      expect(audit).toMatchObject({ total: 1, rows: [{ before: before[index]!.body.event, after: after.event, basis: request.basis }] })
+    }
+    const changeReview = async (key: string, revision: number, patch: Record<string, unknown>) => {
+      const next = f.request(key)
+      next.operations = [{ eventId: review.id, recordId: f.record.id, enterpriseId: f.enterprise.id, expectedRevision: revision, patch }]
+      const preflight = await f.post('preflight', next)
+      expect(preflight.status).toBe(200)
+      expect((await f.post('commit', { request: next, planHash: preflight.body.planHash })).status).toBe(200)
+    }
+    const wrongYear = f.request('origin-after-conclusion')
+    wrongYear.operations = [{ eventId: review.id, recordId: f.record.id, enterpriseId: f.enterprise.id, expectedRevision: 2, patch: { year: 2026, decidedYear: 2025 } }]
+    expect((await f.post('preflight', wrongYear)).body).toMatchObject({ error: { code: 'invalid_event_combination' } })
+    expect((await f.read(`/api/roster/events/${review.id}`)).body.event).toMatchObject({ year: 2022, decidedYear: 2025, revision: 2 })
+    expect(candidate().group).toBe('eligible')
+    await changeReview('missing-outcome', 2, { reviewOutcome: null })
+    expect(candidate().group).toBe('pending')
+    await changeReview('failed-outcome', 3, { reviewOutcome: 'failed' })
+    expect(candidate().group).toBe('excluded')
+    await changeReview('missing-conclusion-year', 4, { reviewOutcome: 'passed', decidedYear: null })
+    expect(candidate().group).toBe('pending')
+    expect(counts()).toEqual(countsBefore)
+    expect((await f.read(`/api/roster/events/${control.id}`)).body).toEqual(before[2]!.body)
   } finally { await f.close() }
 })
 
