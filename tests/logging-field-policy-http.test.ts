@@ -135,7 +135,7 @@ it('saves field preferences through MCP tools call and REST mutually while legac
 })
 
 for (const kind of ['top', 'profile', 'level', 'field'] as const) it(`rejects original unknown ${kind} in REST and raw MCP before SDK stripping`, async () => {
-  const controls = kind === 'profile' ? { tus: {} } : kind === 'level' ? { http: { trace: {} } } : { http: { info: { privateField: PRIVATE } } }
+  const controls = kind === 'profile' ? { future: {} } : kind === 'level' ? { http: { trace: {} } } : { http: { info: { privateField: PRIVATE } } }
   const args = kind === 'top' ? { ...policyBase, privateField: PRIVATE } : { ...policyBase, fieldControls: controls }
   const before = (await getPolicy()).body.revision
   const rest = await patch(args); expect(rest.status).toBe(400); expect(rest.body.error.code).toBe('invalid_log_input'); expect(rest.headers.get('cache-control')).toBe('no-store')
@@ -215,7 +215,7 @@ it('publishes matching closed MCP and static OpenAPI profile level and field sch
     await import('../server/api/logs/policy.patch'); const patchMeta = metadata.openAPI
     const wire = patchMeta.requestBody.content['application/json'].schema
     expect(wire.required).toEqual(['retentionDays', 'maxBytes']); expect(wire.additionalProperties).toBe(false)
-    const controls = wire.properties.fieldControls; expect(controls.additionalProperties).toBe(false); expect(Object.keys(controls.properties)).toEqual(['http'])
+    const controls = wire.properties.fieldControls; expect(controls.additionalProperties).toBe(false); expect(Object.keys(controls.properties)).toEqual(LOG_FIELD_PROFILES.map(p => p.key))
     expect(Object.keys(controls.properties.http.properties)).toEqual([...LOG_LEVELS]); expect(controls.properties.http.additionalProperties).toBe(false)
     expect(Object.keys(controls.properties.http.properties.debug.properties)).toEqual(LOG_FIELD_PROFILES[0].fields.map(f => f.key)); expect(controls.properties.http.properties.debug.additionalProperties).toBe(false)
     await import('../server/api/logs/policy.get'); const getMeta = metadata.openAPI
@@ -224,23 +224,27 @@ it('publishes matching closed MCP and static OpenAPI profile level and field sch
     const dereference = (schema: any): any => schema.$ref
       ? schema.$ref.slice(2).split('/').map((key: string) => key.replaceAll('~1', '/').replaceAll('~0', '~')).reduce((node: any, key: string) => node[key], document)
       : schema
-    expect(response.required).toContain('fieldControls'); expect(response.properties.fieldControls.required).toEqual(['http'])
-    const effective = response.properties.fieldControls.properties.http
-    expect(effective.required).toEqual([...LOG_LEVELS])
-    for (const level of LOG_LEVELS) {
-      for (const [candidate, required] of [[controls.properties.http.properties[level], false], [effective.properties[level], true]] as const) {
-        const fields = dereference(candidate)
-        expect(fields.additionalProperties).toBe(false)
-        expect(Object.keys(fields.properties)).toEqual(LOG_FIELD_PROFILES[0].fields.map(f => f.key))
-        expect(fields.required ?? []).toEqual(required ? LOG_FIELD_PROFILES[0].fields.map(f => f.key) : [])
-        for (const field of LOG_FIELD_PROFILES[0].fields) expect(fields.properties[field.key]).toEqual({ type: 'boolean' })
+    expect(response.required).toContain('fieldControls'); expect(response.properties.fieldControls.required).toEqual(LOG_FIELD_PROFILES.map(p => p.key))
+    for (const profile of LOG_FIELD_PROFILES) {
+      const effective = response.properties.fieldControls.properties[profile.key]
+      expect(effective.required).toEqual([...LOG_LEVELS]); expect(effective.additionalProperties).toBe(false)
+      expect(Object.keys(controls.properties[profile.key].properties)).toEqual([...LOG_LEVELS]); expect(controls.properties[profile.key].additionalProperties).toBe(false)
+      for (const level of LOG_LEVELS) {
+        for (const [candidate, required] of [[controls.properties[profile.key].properties[level], false], [effective.properties[level], true]] as const) {
+          const fields = dereference(candidate)
+          expect(fields.additionalProperties).toBe(false)
+          expect(Object.keys(fields.properties)).toEqual(profile.fields.map(f => f.key))
+          expect(fields.required ?? []).toEqual(required ? profile.fields.map(f => f.key) : [])
+          for (const field of profile.fields) expect(fields.properties[field.key]).toEqual({ type: 'boolean' })
+        }
       }
     }
     expect(dereference(patchMeta.responses[200].content['application/json'].schema)).toEqual(response)
     const catalog = response.properties.catalog.properties.profiles.items
     expect(catalog.properties.key.enum).toEqual(LOG_FIELD_PROFILES.map(p => p.key))
     expect(catalog.properties.levels.items.enum).toEqual([...LOG_LEVELS])
-    expect(catalog.properties.fields.items.properties.key.enum).toEqual(LOG_FIELD_PROFILES[0].fields.map(f => f.key))
+    expect(catalog.properties.fields.items.properties.key.enum).toEqual(LOG_FIELD_PROFILES.flatMap(p => p.fields.map(f => f.key)))
+    expect(catalog.properties.source.enum).toEqual([...new Set(LOG_FIELD_PROFILES.map(p => p.source))])
 
   } finally { vi.unstubAllGlobals() }
 })
