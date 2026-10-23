@@ -95,8 +95,8 @@ This consumer adds no annual conclusion, business difference reason, new proof,
 or confirmation decision.
 
 `businessGroups` is a separate page (`businessPage` default 1,
-`businessPageSize` default 25, maximum 200). `total` counts verified business groups
-plus isolated unknown observations **before this pagination**. Stable order is
+`businessPageSize` default 25, maximum 200). `total` counts known business groups
+plus isolated unknown-identity observations **before this pagination**. Stable order is
 minimum original relation ID; versions and observations within a group also use
 original relation ID order, never a latest-version assumption. Original event
 `page`/`pageSize` and the unpaginated original observation arrays are unchanged.
@@ -118,13 +118,18 @@ The comparison-only pure seam is `groupComparisonBusinessObservations` in
 `ComparisonBusinessGroups.vue`. Neither shared candidate grouping nor annual
 algorithms are changed.
 
-- A verified record uses canonical `(interface,recordId)` as the outer identity and
-  canonical `versionId` for nested versions. Same-content duplicate observations
+- A resolved record uses canonical `(interface,recordId)` as the outer identity and
+  canonical verified `versionId` for nested versions. Same-content duplicate observations
   remain individually traceable; A→B→A is two versions and three observations.
-- `not_indexed`, `missing_key`, `conflict` and `unverifiable` remain separate
-  relation-ID groups, even if a known recordId exists for unverifiable content.
-  Null IDs never become a shared identity or a claim of equal/different versions.
-  An unknown enterprise remains null; no synthetic enterprise ID is created.
+- `not_indexed`, `missing_key` and `conflict` have no known record identity and
+  remain separate relation-ID fallback groups. A resolved recordId with
+  unverifiable content still belongs to its one business outer group. Each such
+  observation appears separately in `unknownObservations`, outside `versions`;
+  no shared unknown-version node or version count is created. A business with only
+  unverifiable observations is one known record and zero known versions.
+  Null IDs never imply equal/different versions. Unknown enterprise remains null.
+  Group `groupState` describes identity (`resolved` or a fallback identity state),
+  while observation metadata retains its own content/identity states.
 - Every nested observation retains its public original relation, own selected
   correspondences (including revision/rules/revalidation), unavailable historical
   decision stubs, own `currentSource` comparison and own `withoutOfficial` result
@@ -138,12 +143,14 @@ algorithms are changed.
   each observation and reads its current archived detail.
 
 `businessCounts` covers that entire explicitly declared observation scope before
-business pagination: `records` counts verified outer groups, `versions` their
-verified content versions, `observations` all selected/scoped original relations,
-and `unknownObservations` the excluded-from-record/version independent observations.
-`unknownByState` breaks these down into the four unknown states. These are not
-archive-wide counts, event counts, qualified-correspondence counts, or a count of
-known IDs whose content remains unverifiable.
+business pagination: `records` counts known canonical record identities (including
+known records with unknown content), `versions` counts only verified content
+versions, and `observations` counts all selected/scoped original relations.
+`unknownIdentityObservations` counts no-record-ID fallbacks;
+`unknownContentObservations` counts known-record observations without a verified
+version. `unknownObservations` is their sum. `unknownByState` breaks this sum into
+not-indexed, missing-key, conflict and unverifiable-content reasons. These are not
+archive-wide counts, event counts or qualified-correspondence counts.
 
 REST/OpenAPI and MCP `list_record_comparison` expose the same new page arguments
 and result fields through the existing handler and read snapshot. The UI presents

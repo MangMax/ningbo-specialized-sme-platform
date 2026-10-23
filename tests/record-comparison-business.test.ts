@@ -52,9 +52,10 @@ describe('comparison scoped canonical business groups', () => {
   it('separates interfaces and isolates each not-indexed missing-key conflict and unverifiable observation', () => {
     const f = fixture(), rows = [f.observation(), f.observation(undefined, { interface: 'apply_list' }), f.observation(undefined, { indexed: false }), f.observation({}, { key: null }), f.observation({}, { key: null }), f.observation({ id: 'DIFFERENT' }), f.observation(null), f.observation(null)]
     const out = getRecordComparison(f.db, f.input(rows.map(r => r.query.id)))
-    expect(out.businessCounts).toMatchObject({ records: 2, versions: 2, observations: 8, unknownObservations: 6, unknownByState: { not_indexed: 1, missing_key: 2, conflict: 1, unverifiable: 2 } })
-    expect(out.businessGroups.rows.map(g => g.groupState)).toEqual(['verified', 'verified', 'not_indexed', 'missing_key', 'missing_key', 'conflict', 'unverifiable', 'unverifiable'])
-    expect(out.businessGroups.rows.slice(2).map(g => g.versions[0]!.observations.length)).toEqual([1, 1, 1, 1, 1, 1])
+    expect(out.businessCounts).toMatchObject({ records: 2, versions: 2, observations: 8, unknownObservations: 6, unknownIdentityObservations: 4, unknownContentObservations: 2, unknownByState: { not_indexed: 1, missing_key: 2, conflict: 1, unverifiable: 2 } })
+    expect(out.businessGroups.rows.map(g => g.groupState)).toEqual(['resolved', 'resolved', 'not_indexed', 'missing_key', 'missing_key', 'conflict'])
+    expect(out.businessGroups.rows.slice(2).map(g => g.unknownObservations.length)).toEqual([1, 1, 1, 1])
+    expect(out.businessGroups.rows[0]!.unknownObservations.map(o => o.relation.id)).toEqual(rows.slice(6).map(r => r.relation.id))
   })
   it('keeps partial linked state mixed and never borrows old decisions for a newly selected query', () => {
     const f = fixture(), old = f.observation(), fresh = f.observation(), edge = f.link(old.relation.id)
@@ -117,6 +118,14 @@ describe('comparison scoped canonical business groups', () => {
       { currentSource: { qualification: 'matched', proofId: 'synthetic-proof-only-first-query', exportRows: [{ id: exported.id }] } },
       { currentSource: { qualification: 'not_comparable', proofId: null } },
     ] }] })
+  })
+
+  it('keeps a known business with only unverifiable content as one record with zero version nodes', () => {
+    const f = fixture(), a = f.observation(null), b = f.observation(null)
+    const out = getRecordComparison(f.db, f.input([a.query.id, b.query.id]))
+    expect(out.businessCounts).toMatchObject({ records: 1, versions: 0, observations: 2, unknownObservations: 2, unknownContentObservations: 2, unknownIdentityObservations: 0 })
+    expect(out.businessGroups.total).toBe(1)
+    expect(out.businessGroups.rows[0]).toMatchObject({ groupState: 'resolved', versions: [], unknownObservations: [{ relation: { id: a.relation.id } }, { relation: { id: b.relation.id } }] })
   })
 
 })

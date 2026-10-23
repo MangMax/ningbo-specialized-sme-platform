@@ -124,7 +124,7 @@ describe('record comparison true HTTP adapters on isolated SQLite', () => {
     expect(body.businessCounts).toMatchObject({ records: 1, versions: 1, observations: 3, unknownObservations: 1 })
     expect(body.counts.distinctPlatformRows).toBe(3)
     expect(body.platformWithoutOfficial.rows.map((o: { relation: { id: number } }) => o.relation.id)).toEqual(groupedRelations.map(r => r.id))
-    expect(body.businessGroups).toMatchObject({ total: 2, page: 1, pageSize: 1, rows: [{ groupState: 'verified', observationCount: 2 }] })
+    expect(body.businessGroups).toMatchObject({ total: 2, page: 1, pageSize: 1, rows: [{ groupState: 'resolved', observationCount: 2 }] })
     expect(JSON.stringify(body)).not.toContain('PRIVATE_GROUP_RAW')
     expect((await fetch(`${url}&businessPage=0`)).status).toBe(400)
     expect((await fetch(`${url}&businessPageSize=201`)).status).toBe(400)

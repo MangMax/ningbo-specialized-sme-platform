@@ -12,10 +12,10 @@ const observations = [1076, 3161].map((id, index) => ({
   withoutOfficial: index ? { qualification: 'unresolved', proofId: null, reasons: ['official_source_completeness_not_persisted'] } : null,
 }))
 const groups = {
-  rows: [{ key: 'canonical:1', recordId: 1, interface: 'business_list', platformKey: 'SQ1', groupState: 'verified', observationCount: 2, linkState: 'mixed', resultState: 'mixed', versions: [{ versionId: 1, observationCount: 2, linkState: 'mixed', resultState: 'mixed', observations }] }],
+  rows: [{ key: 'canonical:1', firstRelationId: 1076, unknownObservations: [], recordId: 1, interface: 'business_list', platformKey: 'SQ1', groupState: 'resolved', observationCount: 2, linkState: 'mixed', resultState: 'mixed', versions: [{ versionId: 1, observationCount: 2, linkState: 'mixed', resultState: 'mixed', observations }] }],
   page: 1, pageSize: 1, total: 2, scope: { queryIds: [557, 2788], enterpriseId: null, titleCode: null, asOf: null, classificationApplied: false, countsBeforePagination: true },
 } as unknown as RecordComparisonResult['businessGroups']
-const counts: RecordComparisonResult['businessCounts'] = { records: 1, versions: 1, observations: 3, unknownObservations: 1, unknownByState: { not_indexed: 1, missing_key: 0, conflict: 0, unverifiable: 0 } }
+const counts: RecordComparisonResult['businessCounts'] = { records: 1, versions: 1, observations: 3, unknownObservations: 1, unknownContentObservations: 0, unknownIdentityObservations: 1, unknownByState: { not_indexed: 1, missing_key: 0, conflict: 0, unverifiable: 0 } }
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => mounted.splice(0).forEach(wrapper => wrapper.unmount()))
 function render() {
@@ -32,7 +32,7 @@ function render() {
 }
 it('expands one business version into its own mixed observations and opens the exact original row', async () => {
   const wrapper = render()
-  expect(wrapper.get('[aria-label="业务粒度计数"]').text()).toContain('1 条可核实业务 · 1 个内容版本 · 3 次采集观察 · 1 次身份或内容未知观察')
+  expect(wrapper.get('[aria-label="业务粒度计数"]').text()).toContain('1 条已知业务 · 1 个已知内容版本 · 3 次采集观察 · 1 次身份或内容未知观察')
   expect(wrapper.findAll('[data-testid="comparison-business-group"]')).toHaveLength(1)
   expect(wrapper.text()).toContain('观察结果混合')
   await wrapper.get('[data-testid="comparison-business-group"] [data-slot="accordion-trigger"]').trigger('click')
@@ -54,4 +54,16 @@ it('emits independent business page and size changes and retains the loaded scop
   expect(wrapper.emitted('update:pageSize')).toEqual([[50]])
   expect(groups.page).toBe(1)
   expect(wrapper.text()).toContain('不随正式事件分类或事件翻页变化')
+})
+
+
+it('shows known business unknown-content observations without creating a version node', async () => {
+  const wrapper = render()
+  await wrapper.setProps({ groups: { ...groups, rows: [{ ...groups.rows[0]!, versions: [], unknownObservations: observations as unknown as typeof groups.rows[number]['unknownObservations'] }] }, counts: { ...counts, records: 1, versions: 0, observations: 2, unknownObservations: 2, unknownContentObservations: 2, unknownIdentityObservations: 0, unknownByState: { not_indexed: 0, missing_key: 0, conflict: 0, unverifiable: 2 } } })
+  await wrapper.get('[data-testid="comparison-business-group"] [data-slot="accordion-trigger"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.findAll('[data-testid="comparison-business-version"]')).toHaveLength(0)
+  expect(wrapper.get('[aria-label="内容版本未知的观察"]').text()).toContain('业务身份已知')
+  expect(wrapper.findAll('[data-testid="comparison-business-observation"]')).toHaveLength(2)
+  expect(wrapper.get('[aria-label="业务粒度计数"]').text()).toContain('1 条已知业务 · 0 个已知内容版本')
 })

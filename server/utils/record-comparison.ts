@@ -311,7 +311,7 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
     queryIds: source.input.queryIds, asOf: source.input.asOf ? new Date(source.input.asOf).toISOString() : null,
     enterpriseId: source.input.enterpriseId ?? null, titleCode: source.input.titleCode ?? null,
     classificationApplied: false as const, countsBeforePagination: true as const,
-    grain: 'verified_record_with_versions_or_isolated_unknown_observation' as const,
+    grain: 'known_record_with_verified_versions_and_unknown_content_or_isolated_unknown_identity' as const,
   } } }
 
 }
