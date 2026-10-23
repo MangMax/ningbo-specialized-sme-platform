@@ -4,6 +4,7 @@ import type { useDb } from '../../db/client'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
+import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS } from '../../lib/platform/normalization'
 import { TITLES } from '../../lib/labels'
 import { comparisonSourceCatalogInput, recordComparisonInput, type ComparisonSourceCatalogInput, type RecordComparisonInput, type HistoricalClassification } from '../../lib/roster/record-comparison'
 import { comparisonFormalCounts, iterateComparisonFormalEvents } from './record-comparison-formal'
@@ -11,7 +12,7 @@ import { listRecordCorrespondences, readScopedRecordCorrespondences } from './re
 
 type Db = ReturnType<typeof useDb>
 type Query = typeof schema.platformQuery.$inferSelect
-type Relation = typeof schema.platformRelation.$inferSelect
+type Relation = ReturnType<typeof normalizePlatformRelation<typeof schema.platformRelation.$inferSelect>>
 type Event = typeof schema.recordEvent.$inferSelect
 type Edge = ReturnType<typeof listRecordCorrespondences>[number]
 /** Only an authorized evidence reader may supply these verified, persisted attestations.
@@ -38,7 +39,7 @@ function processTimingMatches(event: Event, relation: Relation) {
   return relation.year === event.year && relation.declareKind === 'apply'
 }
 const publicEdge = (edge: Edge) => ({ id: edge.id, type: edge.type, role: edge.role, eventId: edge.eventId, relationId: edge.relationId, exportRowId: edge.exportRowId, predecessorEventId: edge.predecessorEventId, status: edge.status, revision: edge.revision, requiresRevalidation: edge.requiresRevalidation, ruleId: edge.ruleId, ruleVersion: edge.ruleVersion, decidedAt: edge.decidedAt })
-const publicRelation = (relation: Relation, query: Query) => ({ id: relation.id, queryId: query.id, interface: query.interface, sequenceNo: relation.sequenceNo, relationKey: relation.relationKey, enterpriseId: relation.enterpriseId, usccRaw: relation.usccRaw, nameRaw: relation.nameRaw, status: relation.status, declareKind: relation.declareKind, appliedAt: relation.appliedAt, awardBatchLabel: relation.awardBatchLabel, year: relation.year, verificationStatus: relation.verificationStatus, queriedAt: query.queriedAt, titleCode: relationTitle(relation, query), rdjb: query.rdjb, sourceRdjb: sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourceRdjb, sourcePage: sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourcePage })
+const publicRelation = (relation: Relation, query: Query) => ({ id: relation.id, queryId: query.id, interface: query.interface, sequenceNo: relation.sequenceNo, relationKey: relation.relationKey, enterpriseId: relation.enterpriseId, usccRaw: relation.usccRaw, nameRaw: relation.nameRaw, status: relation.status, declareKind: relation.declareKind, appliedAt: relation.appliedAt, awardBatchLabel: relation.awardBatchLabel, year: relation.year, normalizationConflicts: relation.normalizationConflicts, verificationStatus: relation.verificationStatus, queriedAt: query.queriedAt, titleCode: relationTitle(relation, query), rdjb: query.rdjb, sourceRdjb: sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourceRdjb, sourcePage: sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourcePage })
 const publicExport = (row: typeof schema.platformExportRow.$inferSelect, batch: typeof schema.platformExportBatch.$inferSelect) => ({ id: row.id, batchId: batch.id, sourceRowNo: row.sourceRowNo, usccRaw: row.usccRaw, nameRaw: row.nameRaw, district: row.district, province: row.province, city: row.city, regStatus: row.regStatus, titleCode: batch.titleCode, collectedOn: batch.collectedOn, sha256: batch.sha256 })
 const rdjbFor = (title: string) => Object.entries(RDJB_TITLE_CODES).find(([, value]) => value === title)?.[0]
 function relationTitle(relation: Relation, query: Query): string | null {
@@ -82,7 +83,12 @@ function officialProof(evidence: VerifiedComparisonEvidence | undefined, documen
     (proof.enterpriseIds === null || proof.enterpriseIds.includes(enterpriseId))) ?? null
 }
 function conclusion(event: Event, edges: Edge[], relations: Map<number, { relation: Relation; query: Query }>): { classification: HistoricalClassification; reasons: string[] } {
+  // Keep legacy field conflicts visible even when the edge needs revalidation,
+  // without hiding a contradiction proved by another valid same-event edge.
+  const fieldConflictReasons = edges.some(edge => edge.status === 'confirmed' && edge.type === 'event_process' &&
+    edge.relationId != null && relations.get(edge.relationId)?.relation.normalizationConflicts.length) ? ['platform_field_conflict'] : []
   const historical = edges.filter(edge => edge.status === 'confirmed' && !edge.requiresRevalidation && historicalEdge(edge))
+  if (!historical.length && fieldConflictReasons.length) return { classification: 'unresolved', reasons: fieldConflictReasons }
   if (!historical.length) return { classification: 'unresolved', reasons: [...(event.year == null ? ['official_event_year_unknown'] : []), edges.some(edge => historicalEdge(edge) && edge.status === 'candidate') ? 'candidate_not_confirmed' : 'official_coverage_unproved'] }
   let supported = false
   let conflict = false
@@ -92,6 +98,7 @@ function conclusion(event: Event, edges: Edge[], relations: Map<number, { relati
     const source = edge.relationId == null ? null : relations.get(edge.relationId)
     if (!source) { reasons.push('selected_process_row_missing'); continue }
     const { relation } = source
+    if (relation.normalizationConflicts.length) continue
     if (!processTimingMatches(event, relation)) { reasons.push('event_process_fact_or_timing_unknown'); continue }
     const status = relation.status ?? ''
     const pass = /通过|获批|认定/.test(status) && !/未通过|不通过/.test(status)
@@ -111,7 +118,9 @@ function conclusion(event: Event, edges: Edge[], relations: Map<number, { relati
       else reasons.push('review_status_or_role_not_decisive')
     } else reasons.push('official_review_outcome_unknown')
   }
-  return conflict ? { classification: 'historical_conflict', reasons: ['confirmed_same_event_status_conflict'] } : supported ? { classification: 'historical_aligned', reasons: [] } : { classification: 'unresolved', reasons: unique(reasons) }
+  if (conflict) return { classification: 'historical_conflict', reasons: ['confirmed_same_event_status_conflict', ...fieldConflictReasons] }
+  if (fieldConflictReasons.length) return { classification: 'unresolved', reasons: fieldConflictReasons }
+  return supported ? { classification: 'historical_aligned', reasons: [] } : { classification: 'unresolved', reasons: unique(reasons) }
 }
 function selected(db: Db, input: RecordComparisonInput) {
   const parsed = recordComparisonInput.parse(input)
@@ -127,7 +136,11 @@ function selected(db: Db, input: RecordComparisonInput) {
   if (queries.length !== parsed.queryIds.length || batches.length !== parsed.exportBatchIds.length || documents.length !== parsed.officialSourceDocumentIds.length) throw new Error('source_set_missing_or_out_of_scope')
   const queryMap = new Map(queries.map(row => [row.id, row]))
   const batchMap = new Map(batches.map(row => [row.id, row]))
-  const relations = db.select({ ...getTableColumns(schema.platformRelation), rawFields: sql<null>`null`, sourceText: sql<null>`null` }).from(schema.platformRelation).where(inArray(schema.platformRelation.queryId, parsed.queryIds)).orderBy(schema.platformRelation.id).all().map(relation => ({ relation, query: queryMap.get(relation.queryId)! }))
+  const r = schema.platformRelation
+  // Match the candidate reader's seven-key projection. Unrelated archived row
+  // bytes must stay inside SQLite; json() retains booleans and other JSON types.
+  const processRaw = sql`case when json_valid(${r.rawFields}) then json_object(${sql.join(PLATFORM_PROCESS_RAW_KEYS.flatMap(key => [sql`${key}`, sql`json(${r.rawFields} -> ${`$.${key}`})`]), sql`, `)}) else null end`.mapWith(r.rawFields)
+  const relations = db.select({ ...getTableColumns(r), rawFields: processRaw, sourceText: sql<null>`null` }).from(r).where(inArray(r.queryId, parsed.queryIds)).orderBy(r.id).all().map(row => ({ relation: normalizePlatformRelation(queryMap.get(row.queryId)!.interface, row), query: queryMap.get(row.queryId)! }))
   const exports = db.select({ ...getTableColumns(schema.platformExportRow), rawFields: sql<null>`null` }).from(schema.platformExportRow).where(inArray(schema.platformExportRow.batchId, parsed.exportBatchIds)).orderBy(schema.platformExportRow.id).all().map(row => ({ row, batch: batchMap.get(row.batchId)! }))
   const c = schema.recordCorrespondence
   const relationIds = db.select({ id: schema.platformRelation.id }).from(schema.platformRelation).where(inArray(schema.platformRelation.queryId, parsed.queryIds))
