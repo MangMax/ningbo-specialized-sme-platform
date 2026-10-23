@@ -128,7 +128,7 @@ export interface LogFilter {
   resourceId?: string | number; limit?: number; cursor?: string
 }
 /** List projection keeps bounded outcome facts but not single-event references. */
-export type LogSummary = Omit<LogEvent, 'auditId' | 'receiptId' | 'parentEventId'>
+export type LogSummary = Omit<FieldCapturedLogEvent, 'auditId' | 'receiptId' | 'parentEventId'>
 export interface LogPolicy { retentionDays: number; maxBytes: number }
 export interface LogCollectionRule { enabled: boolean; minLevel: typeof LOG_LEVELS[number] }
 export interface LogCollection {
@@ -136,9 +136,10 @@ export interface LogCollection {
   integrations: Record<typeof LOG_SUPPORTED_INTEGRATIONS[number], LogCollectionRule>
 }
 export interface LogPolicyPatch extends LogPolicy {
+  fieldControls?: LogFieldControlsPatch
   collection?: { sources?: Partial<LogCollection['sources']>; integrations?: Partial<LogCollection['integrations']> }
 }
-export interface EffectiveLogPolicy extends LogPolicy { collection: LogCollection; revision: number }
+export interface EffectiveLogPolicy extends LogPolicy { collection: LogCollection; fieldControls: LogFieldControls; revision: number }
 export const LOG_DEFAULTS = Object.freeze({
   retentionDays: 7, maxBytes: 512 * 1024 * 1024,
   maxEventBytes: 8192, maxQueueEntries: 1024, maxQueueBytes: 4 * 1024 * 1024,

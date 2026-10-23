@@ -1,30 +1,41 @@
 import { boundedLogOutput } from './output'
-import { collectionAllows, defaultLogCollection } from './policy'
+import { LOG_LEVELS, LOG_SOURCES, LOG_SUPPORTED_INTEGRATIONS } from './contract'
+import { LOG_FIELD_PROFILES, defaultFieldControls, validateFieldControlsPatch, validateCompleteFieldControls, mergeFieldControls, projectLogFields } from './field-controls'
+import { collectionAllowsAtLevels, defaultLogCollection, validateCollectionWithCatalog, decodeStoredLogCollection } from './policy'
 /** Runs in a dedicated node Worker. Kept self contained so Nitro's native packaging is relocatable. */
 export const SQLITE_WORKER = String.raw`
 const { parentPort, workerData } = require('node:worker_threads')
 const { mkdirSync, statSync, existsSync, chmodSync, openSync, readSync, closeSync } = require('node:fs')
 const { join } = require('node:path')
 const Database = require(workerData.sqliteModule)
+const LOG_LEVELS = ${JSON.stringify(LOG_LEVELS)}
+const LOG_SOURCES = ${JSON.stringify(LOG_SOURCES)}
+const LOG_SUPPORTED_INTEGRATIONS = ${JSON.stringify(LOG_SUPPORTED_INTEGRATIONS)}
+const profiles = ${JSON.stringify(LOG_FIELD_PROFILES)}
+const defaultFieldControls = ${defaultFieldControls.toString()}
+const validateFieldControlsPatch = ${validateFieldControlsPatch.toString()}
+const validateCompleteFieldControls = ${validateCompleteFieldControls.toString()}
+const mergeFieldControls = ${mergeFieldControls.toString()}
+const projectLogFields = ${projectLogFields.toString()}
+const validateCollection = ${validateCollectionWithCatalog.toString()}
+const decodeStoredLogCollection = ${decodeStoredLogCollection.toString()}
+const decodeCollection = value => decodeStoredLogCollection(value,initialCollection,profiles,
+  value => validateCollection(value,LOG_SOURCES,LOG_SUPPORTED_INTEGRATIONS,LOG_LEVELS),defaultFieldControls,
+  (value,profiles) => validateCompleteFieldControls(value,profiles,validateFieldControlsPatch))
 const initialCollection = ${JSON.stringify(defaultLogCollection())}
-const collectionAllows = ${collectionAllows.toString()}
+const encodeCollection = (collection,fieldControls) => JSON.stringify({version:1,collection,fieldControls})
+const collectionAllows = ${collectionAllowsAtLevels.toString()}
 const boundedLogOutput = ${boundedLogOutput.toString()}
 const stdout = workerData.stdout ? boundedLogOutput(process.stdout, workerData.maxEventBytes + 1) : undefined
 const failureCode = error => error && error.code === 'SQLITE_FULL' ? 'storage_full' : error && String(error.code).startsWith('SQLITE_READONLY') ? 'storage_readonly' : 'storage_unavailable'
 function readPolicy() {
   const storage = db.prepare('SELECT retentionDays,maxBytes FROM log_policy WHERE id=1').get()
   const row = db.prepare('SELECT collection,revision FROM log_collection WHERE id=1').get()
-  const stored = JSON.parse(row.collection)
-  const object = value => value && typeof value === 'object' && !Array.isArray(value)
-  if (!object(stored) || !object(stored.sources) || !object(stored.integrations)) throw new Error('invalid_log_policy')
-  for (const dimension of ['sources','integrations']) for (const rule of Object.values(stored[dimension])) {
-    if (!object(rule) || typeof rule.enabled !== 'boolean' || !['debug','info','warn','error'].includes(rule.minLevel)) throw new Error('invalid_log_policy')
-  }
-  if (Object.keys(initialCollection.sources).some(key => !Object.hasOwn(stored.sources,key))) throw new Error('invalid_log_policy')
-  // A collector added by a newer build receives the documented default rule.
-  // Existing choices win, and a read alone never changes the saved revision.
-  const collection = {sources:stored.sources, integrations:{...initialCollection.integrations,...stored.integrations}}
-  return {...storage, collection, revision:row.revision}
+  if (!storage || !row || !Number.isSafeInteger(row.revision) || row.revision < 0
+    || !Number.isInteger(storage.retentionDays) || storage.retentionDays < 1 || storage.retentionDays > 365
+    || !Number.isInteger(storage.maxBytes) || storage.maxBytes < 1048576 || storage.maxBytes > 4294967296) throw new Error('invalid_log_policy')
+  const {collection,fieldControls} = decodeCollection(JSON.parse(row.collection))
+  return {...storage, collection, fieldControls, revision:row.revision}
 }
 let db
 let initialized = false
@@ -55,8 +66,15 @@ function open() {
   db.exec('CREATE TABLE IF NOT EXISTS log_policy (id INTEGER PRIMARY KEY CHECK(id=1), retentionDays INTEGER NOT NULL, maxBytes INTEGER NOT NULL, pruned INTEGER NOT NULL DEFAULT 0, cleared INTEGER NOT NULL DEFAULT 0)')
   db.prepare('INSERT OR IGNORE INTO log_policy(id,retentionDays,maxBytes) VALUES(1,?,?)').run(policy.retentionDays, policy.maxBytes)
   db.exec('CREATE TABLE IF NOT EXISTS log_collection (id INTEGER PRIMARY KEY CHECK(id=1), collection TEXT NOT NULL, revision INTEGER NOT NULL)')
-  db.prepare('INSERT OR IGNORE INTO log_collection(id,collection,revision) VALUES(1,?,0)').run(JSON.stringify(initialCollection))
-  policy = readPolicy()
+  db.prepare('INSERT OR IGNORE INTO log_collection(id,collection,revision) VALUES(1,?,0)').run(encodeCollection(initialCollection,defaultFieldControls(profiles)))
+  // Re-read under the writer lock: a concurrent opener/PATCH can never be overwritten
+  // by a stale legacy snapshot. Migration preserves the shared observation revision.
+  db.transaction(() => {
+    const row = db.prepare('SELECT collection FROM log_collection WHERE id=1').get()
+    const decoded = decodeCollection(JSON.parse(row.collection))
+    policy = readPolicy()
+    if (decoded.legacy) db.prepare('UPDATE log_collection SET collection=? WHERE id=1').run(encodeCollection(decoded.collection,decoded.fieldControls))
+  }).immediate()
   db.exec('CREATE TABLE IF NOT EXISTS log_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, timestamp TEXT NOT NULL, level TEXT NOT NULL, source TEXT NOT NULL, operation TEXT NOT NULL, outcome TEXT NOT NULL, requestId TEXT, traceId TEXT, taskId TEXT, fileId INTEGER, batchId TEXT, resourceId TEXT, summary TEXT NOT NULL, detail TEXT NOT NULL)')
   for (const key of ['timestamp','level','source','operation','outcome','requestId','traceId','taskId','fileId','batchId','resourceId']) db.exec('CREATE INDEX IF NOT EXISTS log_' + key + ' ON log_events(' + key + ',seq)')
   cap()
@@ -119,8 +137,16 @@ function execute(action, data) {
     try { maintain() } catch {}
     const writeBatch = retry => db.transaction(() => {
       policy = readPolicy()
-      let allowed = data.filter(event => collectionAllows(event, policy.collection))
-      const result = {stored:0, filtered:data.length-allowed.length, fallbackSkipped:0}
+      const result = {stored:0, filtered:0, oversized:0, fallbackSkipped:0}
+      const authorize = () => {
+        const collected = data.filter(event => collectionAllows(event, policy.collection, LOG_LEVELS))
+        const projected = collected.map(event => projectLogFields(event,policy.fieldControls,policy.revision,profiles))
+        const bounded = projected.filter(event => Buffer.byteLength(JSON.stringify(event),'utf8') <= workerData.maxEventBytes)
+        result.filtered = data.length-collected.length
+        result.oversized = projected.length-bounded.length
+        return bounded
+      }
+      let allowed = authorize()
       if (!allowed.length) return result
       try {
         cap()
@@ -140,8 +166,7 @@ function execute(action, data) {
         if (!db.inTransaction) {
           db.exec('BEGIN IMMEDIATE')
           policy = readPolicy()
-          allowed = data.filter(event => collectionAllows(event, policy.collection))
-          result.filtered = data.length - allowed.length
+          allowed = authorize()
         }
       }
       // Storage failures do not expose raw events. Only this authorized projection
@@ -186,7 +211,7 @@ function execute(action, data) {
           integrations:{...policy.collection.integrations,...data.collection?.integrations},
         }
         db.prepare('UPDATE log_policy SET retentionDays=?,maxBytes=? WHERE id=1').run(data.retentionDays,data.maxBytes)
-        db.prepare('UPDATE log_collection SET collection=?,revision=revision+1 WHERE id=1').run(JSON.stringify(collection))
+        db.prepare('UPDATE log_collection SET collection=?,revision=revision+1 WHERE id=1').run(encodeCollection(collection,mergeFieldControls(policy.fieldControls,data.fieldControls ?? {},profiles)))
         policy = readPolicy()
         cap()
       }
