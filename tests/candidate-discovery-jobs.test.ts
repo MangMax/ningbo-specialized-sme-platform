@@ -1,0 +1,777 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, expect, it } from 'vitest'
+import { useDb, schema } from '../db/client'
+import {
+  __resetJobRunner,
+  clearJobSpecs,
+  ensureJobRunnerReady,
+  whenIdle,
+} from '../server/utils/job-runner'
+import { submitCandidateDiscovery } from '../server/utils/jobs/candidate-discovery'
+import { handleRecordCorrespondenceRequest } from '../server/utils/record-correspondence-api'
+import { getJob } from '../server/utils/job-store'
+const dirs: string[] = []
+function fixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'candidate-214-'))
+  dirs.push(dir)
+  const db = useDb({ dbPath: join(dir, 'isolated.db') })
+  __resetJobRunner()
+  clearJobSpecs()
+  ensureJobRunnerReady(db)
+  const enterprise = db
+    .insert(schema.enterprise)
+    .values({
+      name: '合成企业',
+      nameNorm: '合成企业',
+      usccNorm: '91330211255994457P',
+    })
+    .returning()
+    .get()
+  const record = db
+    .insert(schema.record)
+    .values({
+      enterpriseId: enterprise.id,
+      titleCode: 'specialized_sme',
+      source: 'jxj',
+      usccRaw: enterprise.usccNorm,
+    })
+    .returning()
+    .get()
+  const event = db
+    .insert(schema.recordEvent)
+    .values({
+      recordId: record.id,
+      eventType: 'award',
+      year: 2022,
+      batchSeq: 1,
+    })
+    .returning()
+    .get()
+  db.insert(schema.recordEvidence)
+    .values({
+      recordEventId: event.id,
+      sourceFile: 'synthetic/notice.pdf',
+      page: 3,
+    })
+    .run()
+  const query = db
+    .insert(schema.platformQuery)
+    .values({
+      interface: 'business_list',
+      queryKey: enterprise.usccNorm!,
+      rdjb: '2',
+      titleCode: 'specialized_sme',
+      queriedAt: '2026-10-18T00:00:00Z',
+      status: 'success',
+      rawResponse: 'synthetic raw archive',
+    })
+    .returning()
+    .get()
+  const relation = db
+    .insert(schema.platformRelation)
+    .values({
+      queryId: query.id,
+      sequenceNo: 1,
+      enterpriseId: enterprise.id,
+      usccRaw: enterprise.usccNorm,
+      year: 2022,
+      batch: '2022-1',
+      declareKind: 'apply',
+      verificationStatus: 'confirmed',
+      rawFields: { original: '合成原行' },
+    })
+    .returning()
+    .get()
+  const read = (action: any, extra = {}) =>
+    handleRecordCorrespondenceRequest(
+      { action, method: 'GET', ...extra },
+      { db },
+    ).body as any
+  return { db, dir, event, enterprise, query, relation, read }
+}
+afterEach(async () => {
+  await whenIdle()
+  __resetJobRunner()
+  clearJobSpecs()
+  for (const dir of dirs.splice(0))
+    rmSync(dir, { recursive: true, force: true })
+})
+it('asynchronously persists scoped candidates with domain provenance audit and idempotent replay', async () => {
+  const f = fixture()
+  const task = submitCandidateDiscovery(
+    f.db,
+    { eventIds: [f.event.id], clientRequestId: 'synthetic-first' },
+    f.dir,
+  )
+  expect(getJob(f.db, task.jobId)?.progress.done).toBe(0)
+  await whenIdle()
+  const result = getJob(f.db, task.jobId)!
+  expect(result).toMatchObject({
+    state: 'done',
+    progress: { done: 1, total: 1 },
+    result: { counts: { succeeded: 1, needsReview: 1, failed: 0, created: 1 } },
+  })
+  const list = f.read('list', { query: { eventId: f.event.id } })
+  expect(list).toMatchObject({
+    total: 1,
+    rows: [
+      {
+        status: 'candidate',
+        ruleVersion: 'event-archive-212-v1',
+        relation: { id: f.relation.id },
+      },
+    ],
+  })
+  const audit = f.read('audit', { id: list.rows[0].id })
+  expect(audit.rows).toMatchObject([
+    {
+      toStatus: 'candidate',
+      actorType: 'agent',
+      actorId: 'candidate-discovery-job',
+      ruleVersion: 'event-archive-212-v1',
+    },
+  ])
+  expect(
+    f.read('source', { kind: 'relation', id: f.relation.id }).source.rawFields,
+  ).toEqual({ original: '合成原行' })
+  expect(
+    submitCandidateDiscovery(
+      f.db,
+      { eventIds: [f.event.id], clientRequestId: 'synthetic-first' },
+      f.dir,
+    ).jobId,
+  ).toBe(task.jobId)
+  submitCandidateDiscovery(
+    f.db,
+    { eventIds: [f.event.id], clientRequestId: 'synthetic-second' },
+    f.dir,
+  )
+  await whenIdle()
+  expect(f.read('list', { query: { eventId: f.event.id } }).total).toBe(1)
+  expect(f.read('audit', { id: list.rows[0].id }).rows).toEqual(audit.rows)
+})
+it('keeps partial failures and resumes only unfinished events without repeating successful audits', async () => {
+  const f = fixture()
+  const task = submitCandidateDiscovery(
+    f.db,
+    { eventIds: [f.event.id, 999999], clientRequestId: 'partial' },
+    f.dir,
+  )
+  await whenIdle()
+  expect(getJob(f.db, task.jobId)).toMatchObject({
+    state: 'failed',
+    result: { counts: { succeeded: 1, failed: 1, created: 1 } },
+  })
+  const edges = f.read('list', { query: { eventId: f.event.id } })
+  const audit = f.read('audit', { id: edges.rows[0].id })
+  const { retryCandidateDiscovery } =
+    await import('../server/utils/jobs/candidate-discovery')
+  retryCandidateDiscovery(f.db, task.jobId, f.dir)
+  await whenIdle()
+  expect(getJob(f.db, task.jobId)).toMatchObject({
+    state: 'failed',
+    result: { attempt: 2, counts: { succeeded: 1, failed: 1, created: 1 } },
+  })
+  expect(f.read('audit', { id: edges.rows[0].id })).toEqual(audit)
+})
+it('cancels between persisted rows and retries the frozen checkpoint after a concurrent manual rejection', async () => {
+  const f = fixture()
+  for (let i = 2; i <= 60; i++)
+    f.db
+      .insert(schema.platformRelation)
+      .values({
+        queryId: f.query.id,
+        sequenceNo: i,
+        enterpriseId: f.enterprise.id,
+        usccRaw: f.enterprise.usccNorm,
+        year: 2022,
+        batch: '2022-1',
+        declareKind: 'apply',
+        verificationStatus: 'confirmed',
+      })
+      .run()
+  const task = submitCandidateDiscovery(
+    f.db,
+    { eventIds: [f.event.id], clientRequestId: 'cancel' },
+    f.dir,
+  )
+  const { requestJobCancel } = await import('../server/utils/job-runner')
+  while (
+    (getJob(f.db, task.jobId)?.result as any)?.counts.created < 1 ||
+    !getJob(f.db, task.jobId)?.result
+  )
+    await new Promise((r) => setImmediate(r))
+  requestJobCancel(f.db, task.jobId)
+  await whenIdle()
+  const paused = getJob(f.db, task.jobId)!
+  expect(paused.state).toBe('cancelled')
+  expect((paused.result as any).counts.created).toBeLessThan(60)
+  const edge = f.read('list', { query: { eventId: f.event.id } }).rows[0]
+  const { preflightRecordCorrespondences, commitRecordCorrespondences } =
+    await import('../server/utils/record-correspondence')
+  const request = {
+    idempotencyKey: 'manual-reject',
+    sourceIdentity: 'manual',
+    actor: { type: 'user' as const, id: 'synthetic-reviewer' },
+    basis: '合成核验',
+    ruleId: 'manual',
+    ruleVersion: '1',
+    operations: [
+      {
+        action: 'decide' as const,
+        correspondenceId: edge.id,
+        expectedRevision: 1,
+        status: 'rejected' as const,
+      },
+    ],
+  }
+  commitRecordCorrespondences(
+    f.db,
+    request,
+    preflightRecordCorrespondences(f.db, request).planHash,
+  )
+  const audit = f.read('audit', { id: edge.id })
+  const { retryCandidateDiscovery } =
+    await import('../server/utils/jobs/candidate-discovery')
+  retryCandidateDiscovery(f.db, task.jobId, f.dir)
+  await whenIdle()
+  expect(getJob(f.db, task.jobId)).toMatchObject({
+    state: 'done',
+    result: { attempt: 2, counts: { created: 60 } },
+  })
+  expect(f.read('get', { id: edge.id }).status).toBe('rejected')
+  expect(f.read('audit', { id: edge.id })).toEqual(audit)
+})
+it('preserves confirmed rejected unlinked corrected and support-role decisions under repeated runs', async () => {
+  const f = fixture()
+  const { preflightRecordCorrespondences, commitRecordCorrespondences } =
+    await import('../server/utils/record-correspondence')
+  const apply = (operations: any[], key: string) => {
+    const req = {
+      idempotencyKey: key,
+      sourceIdentity: 'manual',
+      actor: { type: 'user' as const, id: 'reviewer' },
+      basis: '合成原行核对',
+      ruleId: 'manual',
+      ruleVersion: '1',
+      operations,
+    }
+    return commitRecordCorrespondences(
+      f.db,
+      req,
+      preflightRecordCorrespondences(f.db, req).planHash,
+    )
+  }
+  const relations = [f.relation]
+  for (let i = 2; i <= 5; i++)
+    relations.push(
+      f.db
+        .insert(schema.platformRelation)
+        .values({ ...f.relation, id: undefined, sequenceNo: i })
+        .returning()
+        .get(),
+    )
+  const ids = relations.map(
+    (r, i) =>
+      apply(
+        [
+          {
+            action: 'create',
+            status: i === 1 ? 'candidate' : 'confirmed',
+            edge: {
+              type: 'event_process',
+              eventId: f.event.id,
+              relationId: r.id,
+              role: i === 0 ? 'supports_award' : 'context_only',
+            },
+          },
+        ],
+        `create${i}`,
+      ).correspondenceIds[0]!,
+  )
+  apply(
+    [
+      {
+        action: 'decide',
+        correspondenceId: ids[1],
+        expectedRevision: 1,
+        status: 'rejected',
+      },
+    ],
+    'reject',
+  )
+  apply(
+    [
+      {
+        action: 'decide',
+        correspondenceId: ids[2],
+        expectedRevision: 2,
+        status: 'unlinked',
+      },
+    ],
+    'unlink',
+  )
+  const correctionTarget = f.db
+    .insert(schema.platformRelation)
+    .values({ ...f.relation, id: undefined, sequenceNo: 6 })
+    .returning()
+    .get()
+  apply(
+    [
+      {
+        action: 'correct',
+        correspondenceId: ids[3],
+        expectedRevision: 2,
+        edge: {
+          type: 'event_process',
+          eventId: f.event.id,
+          relationId: correctionTarget.id,
+          role: 'context_only',
+        },
+      },
+    ],
+    'correct',
+  )
+  const before = f.read('list', { query: { eventId: f.event.id } })
+  const audits = before.rows.map((r: any) => f.read('audit', { id: r.id }))
+  submitCandidateDiscovery(
+    f.db,
+    { eventIds: [f.event.id], clientRequestId: 'protect' },
+    f.dir,
+  )
+  await whenIdle()
+  expect(f.read('list', { query: { eventId: f.event.id } })).toEqual(before)
+  expect(before.rows.map((r: any) => f.read('audit', { id: r.id }))).toEqual(
+    audits,
+  )
+})
+it('queues only affected events after an archive commit and deduplicates replay without synchronous discovery', async () => {
+  const f = fixture()
+  const { commitRosterImport } = await import('../server/utils/roster-import')
+  const request = {
+    idempotencyKey: 'synthetic-new-archive',
+    sourceKind: 'platform_export' as const,
+    sourceIdentity: 'synthetic/archive',
+    payload: {
+      platformQueries: [
+        {
+          interface: 'business_list' as const,
+          queryKey: f.enterprise.usccNorm!,
+          rdjb: '2',
+          titleCode: 'specialized_sme',
+          queriedAt: '2026-10-23T00:00:00Z',
+          status: 'success' as const,
+          relations: [
+            {
+              sequenceNo: 1,
+              enterpriseId: f.enterprise.id,
+              usccRaw: f.enterprise.usccNorm,
+              nameRaw: '合成企业',
+              year: 2022,
+              batch: '2022-1',
+              declareKind: 'apply' as const,
+              verificationStatus: 'confirmed' as const,
+              matchBasis: 'uscc' as const,
+            },
+          ],
+        },
+      ],
+    },
+  }
+  const commit = commitRosterImport(f.db, request) as any
+  expect(commit.status).toBe('committed')
+  expect(commit.candidateTaskIds).toHaveLength(1)
+  expect(f.read('list', { query: { eventId: f.event.id } }).total).toBe(0)
+  const replay = commitRosterImport(f.db, request) as any
+  expect(replay.candidateTaskIds).toEqual(commit.candidateTaskIds)
+  await whenIdle()
+  const result = getJob(f.db, commit.candidateTaskIds[0])!
+  expect(result).toMatchObject({
+    state: 'done',
+    result: { items: [{ eventId: f.event.id, status: 'done' }] },
+  })
+  expect((result.result as any).items).toHaveLength(1)
+  expect(f.read('list', { query: { eventId: f.event.id } }).total).toBe(2)
+})
+it('shares authenticated HTTP and MCP task semantics and task center event results', async () => {
+  const f = fixture()
+  const { handleCandidateJobRequest, dispatchCandidateJobMcp } =
+    await import('../server/utils/candidate-job-api')
+  const { startHttpFixture } = await import('./helpers/http-fixture')
+  const context = { db: f.db, filesDir: f.dir, apiToken: 'synthetic-task-key' }
+  const api = await startHttpFixture({
+    routes: {
+      '/api/roster/correspondences/tasks': (r) =>
+        handleCandidateJobRequest('submit', r, context),
+    },
+  })
+  try {
+    const body = { eventIds: [f.event.id], clientRequestId: 'wire' }
+    expect(
+      (
+        await fetch(`${api.baseUrl}/api/roster/correspondences/tasks`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      ).status,
+    ).toBe(401)
+    const response = await fetch(
+      `${api.baseUrl}/api/roster/correspondences/tasks`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer synthetic-task-key',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      },
+    )
+    expect(response.status).toBe(202)
+    const receipt = await response.json()
+    expect(
+      await dispatchCandidateJobMcp('submit', body, {
+        ...context,
+        authorized: true,
+      }),
+    ).toMatchObject({ jobId: receipt.jobId, kind: receipt.kind })
+    await whenIdle()
+    const detail = (await dispatchCandidateJobMcp(
+      'detail',
+      { id: receipt.jobId },
+      { ...context, authorized: true },
+    )) as any
+    expect(detail).toMatchObject({
+      kind: 'event-archive-candidates',
+      group: 'platform',
+      state: 'done',
+      discovery: {
+        ruleVersion: 'event-archive-212-v1',
+        counts: { created: 1 },
+        items: [{ eventId: f.event.id }],
+      },
+    })
+    expect(detail.links).toContainEqual({
+      label: `核对公布事件 #${f.event.id}`,
+      to: `/enterprises/${f.enterprise.id}?eventId=${f.event.id}`,
+    })
+    expect(JSON.stringify(detail)).not.toContain('synthetic raw archive')
+    expect(
+      await dispatchCandidateJobMcp('submit', body, {
+        ...context,
+        authorized: false,
+      }),
+    ).toMatchObject({ isError: true })
+  } finally {
+    await api.close()
+  }
+})
+it('protects a support decision committed after page discovery but before its row is persisted', async () => {
+  const f = fixture()
+  const second = f.db
+    .insert(schema.platformRelation)
+    .values({ ...f.relation, id: undefined, sequenceNo: 2 })
+    .returning()
+    .get()
+  const task = submitCandidateDiscovery(
+    f.db,
+    { eventIds: [f.event.id], clientRequestId: 'race' },
+    f.dir,
+  )
+  while (!(getJob(f.db, task.jobId)?.result as any)?.counts.created)
+    await new Promise((r) => setImmediate(r))
+  const { preflightRecordCorrespondences, commitRecordCorrespondences } =
+    await import('../server/utils/record-correspondence')
+  const req = {
+    idempotencyKey: 'manual-race',
+    sourceIdentity: 'manual',
+    actor: { type: 'user' as const, id: 'reviewer' },
+    basis: '人工先行核验',
+    ruleId: 'manual',
+    ruleVersion: '1',
+    operations: [
+      {
+        action: 'create' as const,
+        status: 'confirmed' as const,
+        edge: {
+          type: 'event_process' as const,
+          eventId: f.event.id,
+          relationId: second.id,
+          role: 'supports_award' as const,
+        },
+      },
+    ],
+  }
+  const receipt = commitRecordCorrespondences(
+    f.db,
+    req,
+    preflightRecordCorrespondences(f.db, req).planHash,
+  )
+  const audit = f.read('audit', { id: receipt.correspondenceIds[0] })
+  await whenIdle()
+  const edges = f.read('list', { query: { eventId: f.event.id } })
+  expect(
+    edges.rows.filter((r: any) => r.relationId === second.id),
+  ).toMatchObject([{ status: 'confirmed', role: 'supports_award' }])
+  expect(f.read('audit', { id: receipt.correspondenceIds[0] })).toEqual(audit)
+  expect(getJob(f.db, task.jobId)).toMatchObject({
+    state: 'done',
+    result: { counts: { created: 1, existing: 1 } },
+  })
+})
+it('rejects oversized original archives before raw materialization and preserves successful work on retry', async () => {
+  const f = fixture()
+  const { eq } = await import('drizzle-orm')
+  f.db
+    .update(schema.platformQuery)
+    .set({ rawResponse: 'X'.repeat(1_048_577) })
+    .where(eq(schema.platformQuery.id, f.query.id))
+    .run()
+  const prepare = f.db.$client.prepare.bind(f.db.$client)
+  let oversizedMaterialized = false
+  f.db.$client.prepare = ((...args: Parameters<typeof prepare>) => {
+    const statement = prepare(...args)
+    for (const method of ['get', 'all'] as const) {
+      const run = statement[method].bind(statement)
+      statement[method] = ((...values: any[]) => {
+        const rows = (run as any)(...values)
+        if (JSON.stringify(rows)?.includes('X'.repeat(1024)))
+          oversizedMaterialized = true
+        return rows
+      }) as any
+    }
+    return statement
+  }) as typeof prepare
+  const task = submitCandidateDiscovery(
+    f.db,
+    { eventIds: [f.event.id], clientRequestId: 'bounded' },
+    f.dir,
+  )
+  await whenIdle()
+  expect(getJob(f.db, task.jobId)).toMatchObject({
+    state: 'failed',
+    result: {
+      items: [{ errorCode: 'source_materialization_limit' }],
+      counts: { created: 0, failed: 1 },
+    },
+  })
+  expect(oversizedMaterialized).toBe(false)
+  expect(f.read('list', { query: { eventId: f.event.id } }).total).toBe(0)
+})
+it('rejects invalid scopes and conflicting request reuse while keeping empty scopes truthful', async () => {
+  const f = fixture()
+  for (const input of [
+    { clientRequestId: 'x' },
+    { clientRequestId: 'x', eventIds: [] },
+    { clientRequestId: 'x', eventIds: [1], queryId: 1 },
+    { clientRequestId: 'x', titleCode: 'invalid' },
+    {
+      clientRequestId: 'x',
+      eventIds: Array.from({ length: 201 }, (_, i) => i + 1),
+    },
+  ])
+    expect(() => submitCandidateDiscovery(f.db, input, f.dir)).toThrow()
+  const task = submitCandidateDiscovery(
+    f.db,
+    { titleCode: 'little_giant', clientRequestId: 'empty' },
+    f.dir,
+  )
+  await whenIdle()
+  expect(getJob(f.db, task.jobId)).toMatchObject({
+    state: 'done',
+    result: { items: [], counts: { succeeded: 0, created: 0 } },
+  })
+  expect(() =>
+    submitCandidateDiscovery(
+      f.db,
+      { titleCode: 'specialized_sme', clientRequestId: 'empty' },
+      f.dir,
+    ),
+  ).toThrow('请求标识已用于不同参数')
+})
+it('limits incremental work to the archived identity and title including legacy null title metadata', async () => {
+  const f = fixture()
+  const { eq } = await import('drizzle-orm')
+  f.db
+    .update(schema.platformQuery)
+    .set({ titleCode: null })
+    .where(eq(schema.platformQuery.id, f.query.id))
+    .run()
+  const otherTitle = f.db
+    .insert(schema.record)
+    .values({
+      enterpriseId: f.enterprise.id,
+      titleCode: 'little_giant',
+      source: 'jxj',
+      usccRaw: f.enterprise.usccNorm,
+    })
+    .returning()
+    .get()
+  f.db
+    .insert(schema.recordEvent)
+    .values({ recordId: otherTitle.id, eventType: 'award', year: 2022 })
+    .run()
+  const other = f.db
+    .insert(schema.enterprise)
+    .values({
+      name: '合成无关',
+      nameNorm: '合成无关',
+      usccNorm: '91330211790043112T',
+    })
+    .returning()
+    .get()
+  const otherRecord = f.db
+    .insert(schema.record)
+    .values({
+      enterpriseId: other.id,
+      titleCode: 'specialized_sme',
+      source: 'jxj',
+      usccRaw: other.usccNorm,
+    })
+    .returning()
+    .get()
+  f.db
+    .insert(schema.recordEvent)
+    .values({ recordId: otherRecord.id, eventType: 'review', year: 2022 })
+    .run()
+  const task = submitCandidateDiscovery(
+    f.db,
+    { queryId: f.query.id, clientRequestId: 'affected-only' },
+    f.dir,
+  )
+  await whenIdle()
+  expect(getJob(f.db, task.jobId)).toMatchObject({
+    state: 'done',
+    result: { items: [{ eventId: f.event.id }] },
+  })
+  expect((getJob(f.db, task.jobId)!.result as any).items).toHaveLength(1)
+})
+it('runs archive-triggered tasks in the application queue after the native import process exits', async () => {
+  const f = fixture()
+  const { createImportExecutor } =
+    await import('../server/utils/import-execution')
+  const executor = createImportExecutor()
+  try {
+    const result = (await executor.execute(f.db, 'commit', {
+      idempotencyKey: 'native-archive',
+      sourceKind: 'platform_export',
+      sourceIdentity: 'synthetic/native',
+      payload: {
+        platformQueries: [
+          {
+            interface: 'business_list',
+            queryKey: f.enterprise.usccNorm!,
+            rdjb: '2',
+            titleCode: 'specialized_sme',
+            queriedAt: '2026-10-23T02:00:00Z',
+            status: 'success',
+            relations: [
+              {
+                sequenceNo: 1,
+                enterpriseId: f.enterprise.id,
+                usccRaw: f.enterprise.usccNorm,
+                year: 2022,
+                declareKind: 'apply',
+                verificationStatus: 'confirmed',
+              },
+            ],
+          },
+        ],
+      },
+    })) as any
+    expect(result.status).toBe('committed')
+    const { requestJobCancel } = await import('../server/utils/job-runner')
+    requestJobCancel(f.db, result.candidateTaskIds[0])
+    await executor.close()
+    await whenIdle()
+    expect(getJob(f.db, result.candidateTaskIds[0])?.state).toBe('cancelled')
+    const { retryCandidateDiscovery } =
+      await import('../server/utils/jobs/candidate-discovery')
+    retryCandidateDiscovery(f.db, result.candidateTaskIds[0], f.dir)
+    await whenIdle()
+    expect(getJob(f.db, result.candidateTaskIds[0])).toMatchObject({
+      state: 'done',
+      result: { counts: { succeeded: 1, created: 2 } },
+    })
+  } finally {
+    await executor.close()
+  }
+})
+it('continues large affected scopes in bounded tasks without admitting events created after the frozen boundary', async () => {
+  const f = fixture()
+  const { eq } = await import('drizzle-orm')
+  const recordId = f.db
+    .select({ recordId: schema.recordEvent.recordId })
+    .from(schema.recordEvent)
+    .where(eq(schema.recordEvent.id, f.event.id))
+    .get()!.recordId
+  for (let i = 0; i < 200; i++)
+    f.db
+      .insert(schema.recordEvent)
+      .values({ recordId, eventType: 'award', year: 2022, batchSeq: i + 2 })
+      .run()
+  const task = submitCandidateDiscovery(
+    f.db,
+    { queryId: f.query.id, clientRequestId: 'large-affected' },
+    f.dir,
+  )
+  while (!(getJob(f.db, task.jobId)?.result as any)?.counts.created)
+    await new Promise((r) => setImmediate(r))
+  const late = f.db
+    .insert(schema.recordEvent)
+    .values({ recordId, eventType: 'review', year: 2025 })
+    .returning()
+    .get()
+  await whenIdle()
+  const first = getJob(f.db, task.jobId)!.result as any
+  expect(first.items).toHaveLength(200)
+  expect(first.counts.succeeded).toBe(200)
+  const next = getJob(f.db, first.continuationJobId)!
+  expect(next).toMatchObject({
+    state: 'done',
+    result: { counts: { succeeded: 1 } },
+  })
+  expect((next.result as any).items).toHaveLength(1)
+  expect((next.result as any).items[0].eventId).toBeLessThan(late.id)
+  expect(f.read('list', { query: { eventId: late.id } }).total).toBe(0)
+}, 20_000)
+it('starts a fresh affected task when a later archive batch appends rows to an existing query identity', async () => {
+  const f = fixture()
+  const { commitRosterImport } = await import('../server/utils/roster-import')
+  const query = {
+    interface: 'business_list' as const,
+    queryKey: f.enterprise.usccNorm!,
+    rdjb: '2',
+    titleCode: 'specialized_sme',
+    queriedAt: f.query.queriedAt,
+    status: 'success' as const,
+    relations: [] as any[],
+  }
+  const base = {
+    sourceKind: 'platform_export' as const,
+    sourceIdentity: 'synthetic/append',
+    payload: { platformQueries: [query] },
+  }
+  const first = commitRosterImport(f.db, {
+    ...base,
+    idempotencyKey: 'archive-before-append',
+  })
+  await whenIdle()
+  query.relations.push({
+    sequenceNo: 2,
+    enterpriseId: f.enterprise.id,
+    usccRaw: f.enterprise.usccNorm,
+    year: 2022,
+    declareKind: 'apply',
+    verificationStatus: 'confirmed',
+  })
+  const next = commitRosterImport(f.db, {
+    ...base,
+    idempotencyKey: 'archive-after-append',
+  })
+  await whenIdle()
+  expect(next.candidateTaskIds[0]).not.toBe(first.candidateTaskIds[0])
+  expect(f.read('list', { query: { eventId: f.event.id } }).total).toBe(2)
+})
