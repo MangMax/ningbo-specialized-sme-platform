@@ -2,6 +2,8 @@ import { readQueryAssessment, readQueryCoverage, type QueryAssessment } from './
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { normalizePlatformRelation, type PlatformNormalizationConflict } from '../platform/normalization'
 import { readEnterpriseSnapshot, readEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
+import { readPlatformBusinessDetails } from '../../server/utils/platform-business-detail-read'
+import type { PlatformBusinessDetail } from './platform-business-detail'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
  *
@@ -844,6 +846,8 @@ export interface RosterEnterpriseDetail {
   platform: {
     queries: RosterPlatformQueryRow[]
     relations: RosterPlatformRelationRow[]
+    /** Additive archive grouping; original relations and their decision endpoints are unchanged. */
+    businessRecords: PlatformBusinessDetail[]
   }
 }
 
@@ -1089,6 +1093,7 @@ function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
     })),
     platform: {
       queries,
+      businessRecords: readPlatformBusinessDetails(db, id, queries, relations),
       relations: relations.map(archived => normalizePlatformRelation(queriesById.get(archived.queryId)!.interface, archived)).map((r): RosterPlatformRelationRow => ({
         normalizationConflicts: r.normalizationConflicts,
         ...(recognizedQueryIds.has(r.queryId) ? { enterpriseId: r.enterpriseId } : {}),

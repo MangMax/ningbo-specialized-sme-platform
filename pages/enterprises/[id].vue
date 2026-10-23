@@ -19,6 +19,7 @@ import TableFailureState from '@/components/TableFailureState.vue'
 import AssessmentStatusBadge from '@/components/evidence-review/AssessmentStatusBadge.vue'
 import EnterpriseExplanations from '@/components/evidence-review/EnterpriseExplanations.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
+import { hasKnownPlatformBusiness } from '~~/lib/roster/platform-business-detail'
 import TitleBadge from '@/components/TitleBadge.vue'
 import { QUALITY_FLAGS, TITLE_ORDER } from '~~/lib/labels'
 import { fileUrl, fileNameOf } from '~~/lib/preview'
@@ -429,6 +430,8 @@ const otherFlags = computed(() => (detail.value?.qualityFlags ?? []).filter((f) 
 const recordCount = computed(() => detail.value?.records.length ?? 0)
 const eventCount = computed(() => ledgerEvents.value.length)
 const platformRowCount = computed(() => data.value?.platform.relations.length ?? 0)
+const platformBusinessCount = computed(() => data.value?.platform.businessRecords?.filter(b => hasKnownPlatformBusiness(b.businessRecord)).length ?? 0)
+const platformUnknownIdentityCount = computed(() => data.value?.platform.businessRecords?.filter(b => !hasKnownPlatformBusiness(b.businessRecord)).length ?? platformRowCount.value)
 
 const titleNames = computed(() => titleInfo.value.map(item => titleLabel(item.code)))
 const lastChecked = computed(() => latestQueryTime(assessments.value))
@@ -628,13 +631,14 @@ function openPreview(e: Evidence) {
             <template #trigger>
               <span class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <span class="text-sm font-medium">平台记录</span>
-                <span class="text-muted-foreground text-[13px]">{{ platformRowCount }} 条</span>
+                <span class="text-muted-foreground text-[13px]">{{ platformBusinessCount }} 条已知业务 / {{ platformRowCount }} 次采集<template v-if="platformUnknownIdentityCount"> / {{ platformUnknownIdentityCount }} 条身份待核原行</template></span>
               </span>
             </template>
             <div class="min-w-0 border-t p-4">
               <PlatformRecords
                 :queries="data?.platform.queries ?? []"
                 :relations="data?.platform.relations ?? []"
+                :business-records="data?.platform.businessRecords"
                 :return-to="sourceReturnTarget(route.query.returnTo)"
                 @event-navigate="arriveAtEvent"
               />
