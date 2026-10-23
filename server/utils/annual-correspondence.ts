@@ -44,7 +44,9 @@ export function annualHash(value: unknown): string {
 export function annualFail(code: string, statusCode = 409): never {
   throw Object.assign(new Error(code), { code, statusCode })
 }
-export function readAnnualDecisionRefs(db: AnnualDb, ids: number[]) {
+/** Optional current target keeps unrelated event decisions out of validity work.
+ * Unscoped callers retain the complete observation-local read contract. */
+export function readAnnualDecisionRefs(db: AnnualDb, ids: number[], target?: Pick<AnnualWriteScope, 'eventId' | 'enterpriseId' | 'titleCode' | 'declareKind'>) {
   const rows: (PlatformCorrespondenceRef & { queryTitle: string | null; queryRdjb: string | null; queryInterface: string | null; queryStatus: string | null })[] = []
   const unique = [...new Set(ids)].sort((a,b) => a-b)
   for (let i = 0; i < unique.length; i += 400) rows.push(...db.select({
@@ -57,7 +59,9 @@ export function readAnnualDecisionRefs(db: AnnualDb, ids: number[]) {
     createdAt: s.recordCorrespondence.createdAt, decidedAt: s.recordCorrespondence.decidedAt, endedAt: s.recordCorrespondence.endedAt,
     queryTitle: s.platformQuery.titleCode, queryRdjb: s.platformQuery.rdjb, queryInterface: s.platformQuery.interface, queryStatus: s.platformQuery.status,
   }).from(s.recordCorrespondence).leftJoin(s.platformRelation,eq(s.platformRelation.id,s.recordCorrespondence.relationId)).leftJoin(s.platformQuery,eq(s.platformQuery.id,s.platformRelation.queryId))
-    .where(and(eq(s.recordCorrespondence.type, 'event_process'), inArray(s.recordCorrespondence.relationId, unique.slice(i,i+400)))).all())
+    .where(and(eq(s.recordCorrespondence.type, 'event_process'), inArray(s.recordCorrespondence.relationId, unique.slice(i,i+400)),
+      target ? and(eq(s.recordCorrespondence.eventId,target.eventId), eq(s.recordCorrespondence.enterpriseId,target.enterpriseId), eq(s.recordCorrespondence.titleCode,target.titleCode),
+        inArray(s.recordCorrespondence.role,['context_only',target.declareKind === 'apply' ? 'supports_award' : 'supports_review'])) : undefined)).all())
   rows.sort((a, b) => a.id - b.id)
   const validity = new Map<number, boolean>()
   for (let i = 0; i < rows.length; i += 400) for (const pair of correspondenceRefValidity(db, rows.slice(i,i+400).map(r => r.id))) validity.set(...pair)
@@ -73,7 +77,7 @@ export function readAnnualDecisionRefs(db: AnnualDb, ids: number[]) {
 }
 const decisions = readAnnualDecisionRefs
 function assessStep(db: AnnualDb, scope: AnnualWriteScope, step: AnnualWriteStep) {
-  const rows = decisions(db, [...step.protectionRelationIds, ...step.currentRelationIds])
+  const rows = decisions(db, [...step.protectionRelationIds, ...step.currentRelationIds], scope)
   const sameTarget = rows.filter(r => r.eventId === scope.eventId && r.enterpriseId === scope.enterpriseId && r.titleCode === scope.titleCode &&
     (r.role === 'context_only' || r.role === (scope.declareKind === 'apply' ? 'supports_award' : 'supports_review')))
   const protectedRows = sameTarget.filter(r => r.status === 'rejected' || r.status === 'unlinked')
@@ -131,7 +135,7 @@ export function reconcileAnnualStep(db: AnnualDb, readScope: AnnualScopeReader, 
     }
     const plan = preflightRecordCorrespondences(db, request)
     const receipt = commitRecordCorrespondences(db, request, plan.planHash)
-    return outcome('created', decisions(db, [relationId]).filter(r => receipt.correspondenceIds.includes(r.id)), [])
+    return outcome('created', decisions(db, [relationId], scope).filter(r => receipt.correspondenceIds.includes(r.id)), [])
   }, { behavior: 'immediate' })
 }
 function sbytes() {
