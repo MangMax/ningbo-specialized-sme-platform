@@ -24,7 +24,11 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
   const attempt = db.transaction(() => {
     const existing = db.get<{ id: number; status: string; sourceKind: string; sourceIdentity: string; sourceSha256: string | null }>(sql`SELECT id, status, source_kind AS sourceKind, source_identity AS sourceIdentity, source_sha256 AS sourceSha256 FROM import_batch WHERE idempotency_key = ${batchRequest.idempotencyKey}`)
     if (existing && (existing.sourceKind !== request.sourceKind || existing.sourceIdentity !== request.sourceIdentity || existing.sourceSha256 !== (request.sourceSha256 ?? null))) throw new ImportReceiptError(409, 'idempotency_conflict', 'Idempotency key belongs to a different source')
-    const previous = existing ? db.get<{ status: string; requestHash: string }>(sql`SELECT status, request_hash AS requestHash FROM import_receipt WHERE batch_id = ${existing.id} ORDER BY id DESC LIMIT 1`) : undefined
+    const previous = existing ? db.get<{ status: string; requestHash: string; historical: number }>(sql`SELECT status, request_hash AS requestHash, CASE WHEN ${request.sourceKind} = 'platform_archive' THEN json_type(request_body, '$.payload.platformRecordObservations') IS NOT NULL ELSE 0 END AS historical FROM import_receipt WHERE batch_id = ${existing.id} ORDER BY id DESC LIMIT 1`) : undefined
+    // Historical projection preflight freezes server-read source inputs for this exact
+    // command. A different command needs a new key, including after a failed attempt;
+    // it must not erase the frozen source set and silently rebaseline changed raw.
+    if (request.sourceKind === 'platform_archive' && previous && (request.payload.platformRecordObservations || previous.historical) && previous.requestHash !== hash) throw new ImportReceiptError(409, 'idempotency_conflict', 'Historical projection key belongs to a different request')
     // Explicit evidence replay remains a recalculating command, including reordered
     // equivalent source sets. Its historical receipts must not freeze that old protocol.
     if (operation !== 'replay' && previous && ['committed', 'processing'].includes(previous.status) && previous.requestHash !== hash) throw new ImportReceiptError(409, 'idempotency_conflict', 'Idempotency key belongs to a different request')

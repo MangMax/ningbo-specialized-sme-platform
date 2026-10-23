@@ -1,4 +1,6 @@
 import { managedDecision102 } from './decision-lifecycle-102'
+import { assertPlatformObservationReplay, ensurePlatformObservation, planPlatformObservation, platformObservationPayload, PlatformProjectionError, projectionPreview, readPlatformObservationPlan } from './platform-business-record'
+import type { PlatformProjectionResult, PlatformProjectionSummary } from '../../lib/platform/business-record'
 import { isDeepStrictEqual } from 'node:util'
 import { recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
@@ -89,7 +91,7 @@ const DIFFERENCE_STATUSES = enumSet(schema.differenceReason.status.enumValues)
 const DIFFERENCE_REASONS = enumSet(schema.differenceReason.reasonCode.enumValues)
 const DIFFERENCE_MEASURES = enumSet(schema.differenceReason.measureCode.enumValues)
 // Correspondence decisions share the batch ledger, but are never a roster-import payload.
-const IMPORT_SOURCE_KINDS = new Set<string>(['announcement', 'platform_export', 'alias_evidence'])
+const IMPORT_SOURCE_KINDS = new Set<string>(['announcement', 'platform_export', 'platform_archive', 'alias_evidence'])
 /** `sblx` 的字典取值；之外的**原样入库 + 标待核**（不因未知取值崩溃）。 */
 const DECLARE_KINDS = enumSet(schema.platformRelation.declareKind.enumValues)
 
@@ -149,7 +151,7 @@ export function validateImportRequest(raw: unknown): ValidateResult {
     return {
       ok: false,
       status: 400,
-      message: `sourceKind 必须是 announcement / platform_export / alias_evidence 之一，收到：${sourceKind ?? '(空)'}`,
+      message: `sourceKind 必须是 announcement / platform_export / platform_archive / alias_evidence 之一，收到：${sourceKind ?? '(空)'}`,
     }
   }
   const sourceIdentity = optionalString(raw.sourceIdentity)
@@ -159,6 +161,8 @@ export function validateImportRequest(raw: unknown): ValidateResult {
   if (!isObject(raw.payload)) {
     return { ok: false, status: 400, message: '缺少 payload（写入载荷）或它不是对象' }
   }
+  const projectionError = validatePlatformProjectionPayload(raw.payload, sourceKind)
+  if (projectionError) return { ok: false, status: 400, message: projectionError }
 
   return {
     ok: true,
@@ -170,6 +174,23 @@ export function validateImportRequest(raw: unknown): ValidateResult {
       payload: raw.payload as RosterImportPayload,
     },
   }
+}
+
+/** Strict additive field validation: malformed/empty projection commands cannot silently succeed. */
+function validatePlatformProjectionPayload(payload: Record<string, unknown>, sourceKind: string): string | null {
+  if (Object.hasOwn(payload, 'platformRecordObservations')) {
+    const rows = payload.platformRecordObservations
+    if (sourceKind !== 'platform_archive') return 'platformRecordObservations requires sourceKind=platform_archive'
+    if (!Array.isArray(rows) || rows.length < 1 || rows.length > 100) return 'platformRecordObservations must contain 1..100 observations'
+    const seen = new Set<number>()
+    for (const row of rows) {
+      if (!isObject(row) || Object.keys(row).length !== 1 || !Number.isSafeInteger(row.relationId) || (row.relationId as number) < 1) return 'platformRecordObservations items require only a positive safe integer relationId'
+      if (seen.has(row.relationId as number)) return 'platformRecordObservations relationId must be unique per request'
+      seen.add(row.relationId as number)
+    }
+  }
+  if (sourceKind === 'platform_archive' && !Object.hasOwn(payload, 'platformRecordObservations') && (!Array.isArray(payload.platformQueries) || !payload.platformQueries.length)) return 'platform_archive requires platformQueries or platformRecordObservations'
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -915,6 +936,7 @@ type AnnouncementPlanMode = 'write' | 'converge'
 interface Plan {
   items: PlannedItem[]
   conflicts: RosterImportItemResult[]
+  platformObservationSources?: RosterImportPreflight['platformObservationSources']
 }
 
 /** 汇总计划的影响计数。 */
@@ -936,7 +958,8 @@ function summarizePlan(plan: Plan): RosterImportPreflight {
       duplicateCandidates.push(candidate)
     }
   }
-  return { add, update, remove, review, conflicts: plan.conflicts, evidenceRepoints, duplicateCandidates }
+  const canonicalProjection = plan.items.flatMap(p => (p.item.detail?.canonicalProjection as NonNullable<RosterImportPreflight['canonicalProjection']> | undefined) ?? [])
+  return { add, update, remove, review, conflicts: plan.conflicts, evidenceRepoints, duplicateCandidates, ...(canonicalProjection.length ? { canonicalProjection } : {}), ...(plan.platformObservationSources ? { platformObservationSources: plan.platformObservationSources } : {}) }
 }
 
 /**
@@ -1142,6 +1165,11 @@ export function planRosterImport(
   const items: PlannedItem[] = []
   const conflicts: RosterImportItemResult[] = []
   const payload = request.payload ?? {}
+  const projectionPayloadError = validatePlatformProjectionPayload(payload as Record<string, unknown>, request.sourceKind)
+  if (projectionPayloadError) {
+    const item = failure('platform_observation', 'payload', 'projection_payload_invalid', projectionPayloadError, 'platformRecordObservations')
+    return { items: [{ item, action: 'skip', review: false }], conflicts: [item] }
+  }
   const mode: AnnouncementPlanMode = context.convergeOnly ? 'converge' : 'write'
 
   // Announcement identity and event-evidence values must be rejected before the batch-wide
@@ -1269,8 +1297,18 @@ export function planRosterImport(
   // **必须排在 aliases / differences / merges 之前**:那三项的自然键引用可能指向本批
   // 新建的查询/关系行,执行阶段要按「关系已插入」的顺序落真实 id（见本节顶部说明）。
   const queries = Array.isArray(payload.platformQueries) ? payload.platformQueries : []
+  const pendingObservations = new Map<string, string>()
   const recognizedKeys = new Set<string>()
   queries.forEach((query, index) => {
+    for (const relation of Array.isArray(query?.relations) ? query.relations : []) {
+      const identity = JSON.stringify([query.interface, optionalString(query.queryKey), optionalString(query.rdjb) ?? '', optionalString(query.queriedAt), relation.sequenceNo])
+      const value = platformObservationPayload({ interface: query.interface, relationKey: optionalString(relation.relationKey), rawFields: relation.rawFields })
+      if (pendingObservations.has(identity) && pendingObservations.get(identity) !== value) {
+        push({ item: failure('platform_relation', `query:${index}`, 'observation_payload_conflict', 'Same collection row has different key/raw in this batch', 'platformQueries'), action: 'skip', review: false })
+        return
+      }
+      pendingObservations.set(identity, value)
+    }
     if (query?.interface === 'recognized_list') {
       const key = JSON.stringify([query.interface, query.queryKey, query.rdjb, query.queriedAt])
       if (recognizedKeys.has(key)) {
@@ -1279,8 +1317,25 @@ export function planRosterImport(
       }
       recognizedKeys.add(key)
     }
-    planPlatformQuery(db, query, index, push)
+    planPlatformQuery(db, query, index, push, context.batchId)
   })
+
+  // Freeze only server-read source inputs. Never accept a caller-provided content hash.
+  const previousSources = context.batchId ? (db.select({ value: schema.importBatch.preflightResult }).from(schema.importBatch).where(eq(schema.importBatch.id, context.batchId)).get()?.value as RosterImportPreflight | null)?.platformObservationSources : undefined
+  const platformObservationSources: NonNullable<RosterImportPreflight['platformObservationSources']> = []
+  for (const { relationId } of payload.platformRecordObservations ?? []) {
+    const expected = previousSources?.find(row => row.relationId === relationId)?.inputFingerprint
+    try {
+      const projection = readPlatformObservationPlan(db, relationId)
+      platformObservationSources.push({ relationId, inputFingerprint: expected ?? projection.inputFingerprint })
+      if (expected && projection.inputFingerprint !== expected) throw new PlatformProjectionError('projection_source_drift', `Original relation ${relationId} changed since preflight`)
+      push({ item: success('platform_observation', `relation:${relationId}`, { canonicalProjection: [projectionPreview(projection)] }), action: 'note', review: projection.identityState !== 'resolved' || projection.contentState !== 'verified', run: tx => projectionItem(tx, relationId, context.batchId, expected ?? projection.inputFingerprint) })
+    } catch (error) {
+      if (!(error instanceof PlatformProjectionError)) throw error
+      if (expected && !platformObservationSources.some(row => row.relationId === relationId)) platformObservationSources.push({ relationId, inputFingerprint: expected })
+      push({ item: failure('platform_observation', `relation:${relationId}`, error.code, error.message), action: 'skip', review: false })
+    }
+  }
 
   // ---- 曾用名 / 别名 -------------------------------------------------------
   const aliases = Array.isArray(payload.aliases) ? payload.aliases : []
@@ -1305,7 +1360,16 @@ export function planRosterImport(
   const merges = Array.isArray(payload.merges) ? payload.merges : []
   merges.forEach((merge, index) => planMerge(db, pending, pendingEnterpriseCreates, pendingRefs, merge, index, push))
 
-  return { items, conflicts }
+  return { items, conflicts, ...(platformObservationSources.length ? { platformObservationSources } : {}) }
+}
+
+function projectionItem(tx: Executor, relationId: number, batchId?: number, expected?: string): RosterImportItemResult {
+  try {
+    return success('platform_observation', `relation:${relationId}`, { canonicalProjection: [ensurePlatformObservation(tx, relationId, batchId, expected)], rowsWritten: 0 })
+  } catch (error) {
+    if (!(error instanceof PlatformProjectionError)) throw error
+    return failure('platform_observation', `relation:${relationId}`, error.code, error.message)
+  }
 }
 
 /**
@@ -2653,6 +2717,7 @@ function planPlatformQuery(
   query: RosterImportPlatformQuery,
   index: number,
   push: (item: PlannedItem) => void,
+  batchId?: number,
 ): void {
   const ref = `query:${index}`
   if (!PLATFORM_INTERFACE_SET.has(String(query?.interface))) {
@@ -2724,6 +2789,18 @@ function planPlatformQuery(
   }
 
   const existing = findQueryRow(db, { interface: query.interface, queryKey, rdjb, queriedAt })
+  if (existing) {
+    for (const relation of query.relations ?? []) {
+      const archived = findRelationRow(db, { queryId: existing.id, sequenceNo: optionalInt(relation.sequenceNo)! })
+      if (!archived) continue
+      try { assertPlatformObservationReplay(db, archived.id, { interface: query.interface, relationKey: optionalString(relation.relationKey), rawFields: relation.rawFields }) }
+      catch (error) {
+        if (!(error instanceof PlatformProjectionError)) throw error
+        push({ item: failure('platform_relation', `${ref}/r${relation.sequenceNo}`, error.code, error.message, 'relations'), action: 'skip', review: false })
+        return
+      }
+    }
+  }
   if (existing && query.interface === 'recognized_list' && !isDeepStrictEqual(db.select({ evidence: schema.platformQuery.collectionEvidence }).from(schema.platformQuery).where(eq(schema.platformQuery.id, existing.id)).get()?.evidence, query.collectionEvidence)) {
     push({ item: failure('platform_query', ref, 'collection_evidence_conflict', 'Existing query identity has different archived evidence; preserve history with its actual original time', 'collectionEvidence'), action: 'skip', review: false })
     return
@@ -2735,16 +2812,20 @@ function planPlatformQuery(
     : (query.relations ?? []).length
 
   push({
-    item: success('platform_query', existing ? `query:${existing.id}` : ref, { relationCount: newRelationCount }),
+    item: success('platform_query', existing ? `query:${existing.id}` : ref, { relationCount: newRelationCount, canonicalProjection: (query.relations ?? []).map(relation => {
+      const projection = planPlatformObservation({ interface: query.interface, relationKey: optionalString(relation.relationKey), rawFields: relation.rawFields })
+      return { relationId: existing ? findRelationRow(db, { queryId: existing.id, sequenceNo: relation.sequenceNo })?.id ?? null : null, identityState: projection.identityState, contentState: projection.contentState, keySource: projection.keySource }
+    }) }),
     action: existing ? 'update' : 'add',
     review: query.status === 'failed',
-    run: (tx) => writePlatformQuery(tx, query),
+    run: (tx) => writePlatformQuery(tx, query, batchId),
   })
 }
 
 function writePlatformQuery(
   tx: Executor,
   query: RosterImportPlatformQuery,
+  batchId?: number,
 ): RosterImportItemResult {
   const rdjb = optionalString(query.rdjb) ?? ''
   const existing = findQueryRow(tx, {
@@ -2775,11 +2856,20 @@ function writePlatformQuery(
       }
   const queryId = queryRow.id
   const relations: number[] = []
+  const canonicalProjection = []
   let skipped = 0
   for (const archivedRelation of query.relations ?? []) {
     const relation = normalizePlatformRelation(query.interface, archivedRelation)
     const sequenceNo = optionalInt(relation.sequenceNo)!
-    if (findRelationRow(tx, { queryId, sequenceNo })) {
+    const archived = findRelationRow(tx, { queryId, sequenceNo })
+    if (archived) {
+      try {
+        assertPlatformObservationReplay(tx, archived.id, { interface: query.interface, relationKey: optionalString(archivedRelation.relationKey), rawFields: archivedRelation.rawFields })
+        canonicalProjection.push(ensurePlatformObservation(tx, archived.id, batchId))
+      } catch (error) {
+        if (!(error instanceof PlatformProjectionError)) throw error
+        return failure('platform_relation', `relation:${archived.id}`, error.code, error.message)
+      }
       skipped += 1
       continue
     }
@@ -2823,11 +2913,17 @@ function writePlatformQuery(
       .returning({ id: schema.platformRelation.id })
       .get().id
     relations.push(id)
+    try { canonicalProjection.push(ensurePlatformObservation(tx, id, batchId)) }
+    catch (error) {
+      if (!(error instanceof PlatformProjectionError)) throw error
+      return failure('platform_relation', `relation:${id}`, error.code, error.message)
+    }
   }
   if (queryRow.created || relations.length) captureQueryRevision113(tx, queryId)
   return success('platform_query', `query:${queryId}`, {
     relations,
     skipped,
+    canonicalProjection,
     /** 真正插入的行数：新查询行 + 新关系行（重放时全为 0）。 */
     rowsWritten: (queryRow.created ? 1 : 0) + relations.length,
   })
@@ -4240,7 +4336,18 @@ function summarizeCommit(plan: Plan, items: RosterImportItemResult[]): RosterImp
   for (const planned of plan.items) {
     if (planned.action === 'skip' && planned.item.ok) skipped += 1
   }
-  return { written, skipped, failed: 0, evidenceRepointed }
+  const projections = items.flatMap(item => (item.detail?.canonicalProjection as PlatformProjectionResult[] | undefined) ?? [])
+  const canonicalProjection: PlatformProjectionSummary = { recordsCreated: 0, versionsCreated: 0, observationsCreated: 0, observationsReused: 0, missingKey: 0, conflict: 0, unverifiable: 0 }
+  for (const projection of projections) {
+    canonicalProjection.recordsCreated += Number(projection.recordCreated)
+    canonicalProjection.versionsCreated += Number(projection.versionCreated)
+    canonicalProjection.observationsCreated += Number(projection.observationCreated)
+    canonicalProjection.observationsReused += Number(!projection.observationCreated)
+    canonicalProjection.missingKey += Number(projection.identityState === 'missing_key')
+    canonicalProjection.conflict += Number(projection.identityState === 'conflict')
+    canonicalProjection.unverifiable += Number(projection.contentState === 'unverifiable')
+  }
+  return { written, skipped, failed: 0, evidenceRepointed, ...(projections.length ? { canonicalProjection } : {}) }
 }
 
 /** 执行器自报的**真正插入行数**（见 `summarizeCommit`）；未自报算 0。 */
@@ -4279,6 +4386,7 @@ function readSummaryOf(raw: unknown): RosterImportSummary | null {
     skipped: num(raw.skipped),
     failed: num(raw.failed),
     evidenceRepointed: num(raw.evidenceRepointed),
+    ...(isObject(raw.canonicalProjection) ? { canonicalProjection: raw.canonicalProjection as unknown as PlatformProjectionSummary } : {}),
   }
 }
 

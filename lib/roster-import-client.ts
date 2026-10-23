@@ -331,6 +331,8 @@ export interface RosterImportPayload {
   announcement?: RosterImportAnnouncement
   aliases?: RosterImportAlias[]
   platformQueries?: RosterImportPlatformQuery[]
+  /** Server reads original observations; 1..100 per request, no client hashes/raw. */
+  platformRecordObservations?: { relationId: number }[]
   exportSnapshot?: RosterImportExportSnapshot
   differences?: RosterImportDifference[]
   /** 归并与回填（RL-11 增量扩展，见 `RosterImportMerge`）。 */
@@ -346,7 +348,7 @@ export interface RosterImportPayload {
 export interface RosterImportRequest {
   /** 幂等键；库层面唯一。同一来源重复调用必须给同一个值。 */
   idempotencyKey: string
-  sourceKind: 'announcement' | 'platform_export' | 'alias_evidence'
+  sourceKind: 'announcement' | 'platform_export' | 'platform_archive' | 'alias_evidence'
   /** 来源身份：文件相对路径 / 逻辑标识（**不含凭证**）。 */
   sourceIdentity: string
   sourceSha256?: string | null
@@ -402,6 +404,9 @@ export interface DuplicateNameCandidate {
 
 /** 预检的影响计数；`conflicts` 是**逐项冲突**（不静默丢行）。 */
 export interface RosterImportPreflight {
+  canonicalProjection?: { relationId: number | null; identityState: string; contentState: string; keySource: string }[]
+  /** Frozen server-side source inputs for bounded historical projection. */
+  platformObservationSources?: { relationId: number; inputFingerprint: string }[]
   /** 将新增的行数（任一新行，含企业/记录/事件/出处/别名/关系/快照行/差异/归并）。 */
   add: number
   /** 将复用/更新的既有行数。 */
@@ -438,6 +443,8 @@ export interface RosterImportPreflightResponse {
 }
 
 export interface RosterImportSummary {
+  /** Separate from the legacy query/relation rowsWritten count. */
+  canonicalProjection?: import('./platform/business-record').PlatformProjectionSummary
   written: number
   skipped: number
   failed: number
