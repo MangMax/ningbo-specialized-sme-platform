@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { clientRequestReference } from '~~/lib/client-logging/request-reference'
-import type { LogEvent, LogOrigin, LogSummary } from '~~/lib/logging/contract'
-import { detailFieldValue, detailProfile } from '~~/lib/logging/detail-profile'
+import type { FieldCapturedLogEvent, LogEvent, LogOrigin, LogSummary } from '~~/lib/logging/contract'
+import { detailFieldValue, detailProfile, fieldOmission } from '~~/lib/logging/detail-profile'
 import { logBrowserHeaders, logErrorMessage, useLogRead } from '~/composables/useLogRead'
 import {
   describeLogRow,
+  FIELD_DISABLED_LABEL,
+  FIELD_DISABLED_NOTE,
   formatCounts,
   operationLabel,
   outcomeLabel,
@@ -22,7 +24,7 @@ import { RouterLink } from 'vue-router'
 const props = defineProps<{ id: string }>()
 const key = computed(() => props.id)
 const { data, sourceKey, loading, error, refresh } = useLogRead(key, (id, signal) =>
-  $fetch<LogEvent>(`/api/logs/${encodeURIComponent(id)}`, {
+  $fetch<FieldCapturedLogEvent>(`/api/logs/${encodeURIComponent(id)}`, {
     headers: logBrowserHeaders,
     retry: 0,
     signal
@@ -150,6 +152,35 @@ function copyTus(value: LogEvent['tus']): Record<string, unknown> | undefined {
     if (value[key] !== undefined) out[key] = value[key]
   return out
 }
+/**
+ * 字段省略标记按白名单重建：只枚举当前已实现 profile 的已知字段键，
+ * revision 必须是有限非负整数。任意多出的键、伪造的 profile 或非数字 revision
+ * 都不会跟着复制走；id/timestamp 仍取原事件，不用 safeLogEvent 重新生成。
+ */
+const FIELD_KEYS_BY_PROFILE: Record<string, readonly string[]> = {
+  http: ['httpMethod', 'httpRoute', 'statusCode', 'durationMs']
+}
+function copyCapture(
+  value: FieldCapturedLogEvent['fieldCapture'],
+  event: FieldCapturedLogEvent
+): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const profile = value.profile
+  const keys = typeof profile === 'string' ? FIELD_KEYS_BY_PROFILE[profile] : undefined
+  if (!keys) return undefined
+  const revision = value.revision
+  if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0)
+    return undefined
+  if (!Array.isArray(value.disabled)) return undefined
+  // 只有真正不在事件里的字段才能被标记为“当时未启用”；有值却说没采集是自相矛盾。
+  const disabled = keys.filter(
+    (key) =>
+      value.disabled.includes(key as never) &&
+      (event as unknown as Record<string, unknown>)[key] === undefined
+  )
+  if (!disabled.length) return undefined
+  return { profile, revision, disabled }
+}
 /** 只复制固定枚举字段；未来响应里多出的 origin 键不跟着离开页面。 */
 function copyOrigin(value: LogEvent['origin']): Record<string, unknown> | undefined {
   if (!value) return undefined
@@ -198,6 +229,8 @@ const safe = computed<Record<string, unknown> | null>(() => {
   if (tus) event.tus = tus
   const origin = copyOrigin(data.value.origin)
   if (origin) event.origin = origin
+  const capture = copyCapture(data.value.fieldCapture, data.value)
+  if (capture) event.fieldCapture = capture
   const reference =
     data.value.source === 'client'
       ? clientRequestReference(data.value.untrustedRelatedRequestId)
@@ -263,6 +296,7 @@ const groups = computed(() => {
     title: section.title,
     showTarget: section.showTarget === true,
     note: section.note,
+    disabledNote: section.disabledFields?.length ? FIELD_DISABLED_NOTE : undefined,
     targetText: target.text,
     targetMissing: target.missing,
     targetUntrusted: target.untrusted,
@@ -271,10 +305,12 @@ const groups = computed(() => {
         name === 'untrustedRelatedRequestId'
           ? validatedReference
           : detailFieldValue(data.value!, name)
+      const omission = fieldOmission(data.value!, name)
       return {
         name,
         label: fieldLabels[name] ?? name,
         present: value !== undefined,
+        disabled: value === undefined && omission === 'disabled',
         text: value === undefined ? '' : displayValue(name, value)
       }
     })
@@ -336,23 +372,31 @@ async function copy() {
                 >
               </TableCell>
             </TableRow>
-            <TableRow v-if="group.note">
+            <TableRow v-if="group.note || group.disabledNote">
               <TableCell class="text-muted-foreground w-[168px] align-top whitespace-normal"
                 >说明</TableCell
               >
-              <TableCell class="text-muted-foreground whitespace-normal text-[13px]">{{
-                group.note
-              }}</TableCell>
+              <TableCell class="text-muted-foreground whitespace-normal text-[13px]">
+                <p v-if="group.note">{{ group.note }}</p>
+                <p
+                  v-if="group.disabledNote"
+                  data-testid="log-detail-disabled-note"
+                  class="mt-1 first:mt-0"
+                  >{{ group.disabledNote }}</p
+                >
+              </TableCell>
             </TableRow>
             <TableRow v-for="row in group.rows" :key="row.name">
               <TableCell class="text-muted-foreground w-[168px] align-top whitespace-normal">{{
                 row.label
               }}</TableCell>
+              <!-- 「当时未启用采集」只说配置事实；没有 capture 的历史记录仍是「未记录」。 -->
               <TableCell
                 class="break-all whitespace-normal font-mono text-xs"
                 :class="row.present ? '' : 'text-muted-foreground font-sans text-[13px]'"
+                :data-omission="row.present ? 'present' : row.disabled ? 'disabled' : 'absent'"
               >
-                {{ row.present ? row.text : '未记录' }}
+                {{ row.present ? row.text : row.disabled ? FIELD_DISABLED_LABEL : '未记录' }}
               </TableCell>
             </TableRow>
           </TableBody>

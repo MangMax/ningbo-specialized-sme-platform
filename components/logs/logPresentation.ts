@@ -1,5 +1,5 @@
 import type { LogEvent, LogSummary } from '~~/lib/logging/contract'
-import { errorCodeMissingIsInformative } from '~~/lib/logging/detail-profile'
+import { errorCodeMissingIsInformative, fieldOmission } from '~~/lib/logging/detail-profile'
 import type { BadgeVariants } from '@/components/ui/badge'
 
 export type LogBadgeVariant = NonNullable<BadgeVariants['variant']>
@@ -21,6 +21,15 @@ export const SOURCE_LABELS: Record<string, string> = {
 export function sourceLabel(source: string): string {
   return SOURCE_LABELS[source] ?? source
 }
+
+/**
+ * 字段被当时策略关闭造成省略时的固定说明。只描述**配置事实**：不声称值从未进入
+ * 进程（原生钩子可能已经在内存里看到过），也不声称框架没匹配或源头没提供。
+ */
+export const FIELD_DISABLED_LABEL = '当时未启用采集'
+/** 关闭只影响之后写入或输出的记录，不追溯改写历史。 */
+export const FIELD_DISABLED_NOTE =
+  '该字段在当时写入这条记录时未启用采集，因此没有保存；关闭只影响之后的批次，不追溯历史，也不代表业务失败。'
 
 /**
  * 来源契约本身没有 runtime 元数据；配置页只把已知的浏览器自报来源单列，
@@ -248,12 +257,19 @@ export function errorCodeView(row: LogSummary): { text: string; present: boolean
   return { text: applicable ? '未记录' : '不适用', present: false, applicable }
 }
 
+/**
+ * 目标列也读每条事件自己的 capture 事实：被当时策略关闭的字段写成“当时未启用采集”，
+ * 不能读成“框架没匹配/源头没提供”，也不拿当前策略倒推历史。
+ */
 function httpTarget(row: LogSummary): LogTarget {
   const method = text(row.httpMethod)
   const route = text(row.httpRoute)
+  const methodOff = !method && fieldOmission(row, 'httpMethod') === 'disabled'
+  const routeOff = !route && fieldOmission(row, 'httpRoute') === 'disabled'
   if (method && route) return { kind: 'http', text: `${method} ${route}`, missing: false, untrusted: false, usedIds: [] }
-  if (method) return { kind: 'http', text: `${method} · 路由未记录`, missing: true, untrusted: false, usedIds: [] }
-  if (route) return { kind: 'http', text: route, missing: true, untrusted: false, usedIds: [] }
+  if (method) return { kind: 'http', text: `${method} · ${routeOff ? '路由当时未启用采集' : '路由未记录'}`, missing: true, untrusted: false, usedIds: [] }
+  if (route) return { kind: 'http', text: `${route} · ${methodOff ? '请求方法当时未启用采集' : '方法未记录'}`, missing: true, untrusted: false, usedIds: [] }
+  if (methodOff && routeOff) return { kind: 'http', text: '当时未启用采集', missing: true, untrusted: false, usedIds: [] }
   return { kind: 'http', text: '接口未记录', missing: true, untrusted: false, usedIds: [] }
 }
 
@@ -395,6 +411,8 @@ export function describeLogRow(row: LogSummary): LogRowView {
   const errorCode = errorCodeView(row)
   const durationMissing = row.durationMs === undefined
   const statusApplicable = row.statusCode !== undefined || row.source === 'http' || row.source === 'mcp'
+  const durationDisabled = durationMissing && fieldOmission(row, 'durationMs') === 'disabled'
+  const statusDisabled = row.statusCode === undefined && fieldOmission(row, 'statusCode') === 'disabled'
   const references = logReferences(row).filter((entry) => !target.usedIds.includes(entry.value))
   return {
     sourceLabel: sourceLabel(row.source),
@@ -408,9 +426,16 @@ export function describeLogRow(row: LogSummary): LogRowView {
     outcomeClass: outcomeClass(row.outcome),
     levelVariant: levelVariant(row.level),
     levelClass: levelClass(row.level),
-    durationText: durationMissing ? '未记录' : `${row.durationMs} ms`,
+    durationText: durationMissing ? (durationDisabled ? '当时未启用采集' : '未记录') : `${row.durationMs} ms`,
     durationMissing,
-    statusText: row.statusCode !== undefined ? String(row.statusCode) : statusApplicable ? '未记录' : '—',
+    statusText:
+      row.statusCode !== undefined
+        ? String(row.statusCode)
+        : statusDisabled
+          ? '当时未启用采集'
+          : statusApplicable
+            ? '未记录'
+            : '—',
     statusMissing: row.statusCode === undefined && statusApplicable,
     statusApplicable,
     references,

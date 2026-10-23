@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LogEvent } from '../lib/logging/contract'
-import { errorCodeMissingIsInformative, detailProfile } from '../lib/logging/detail-profile'
+import { detailProfile, errorCodeMissingIsInformative, fieldOmission } from '../lib/logging/detail-profile'
 import { formatCounts } from '../components/logs/logPresentation'
 import { projectEvlog, safeLogEvent, safeMcpContext, safeTusContext } from '../lib/logging/privacy'
 
@@ -122,6 +122,64 @@ describe('#180 source-aware detail profile', () => {
     expect(titles).not.toContain('MCP 调用')
     expect(titles).not.toContain('上传（TUS）')
     expect(fields(old)).toEqual(expect.arrayContaining(['taskId', 'errorCode']))
+  })
+})
+
+describe('#180 field capture omission in the detail profile', () => {
+  const captured = (over: Partial<LogEvent> & { fieldCapture?: unknown }) =>
+    event(over) as LogEvent & { fieldCapture?: any }
+
+  it('reports a writer-disabled field as disabled and keeps a plain gap absent', () => {
+    const row = captured({
+      httpMethod: 'GET',
+      fieldCapture: { profile: 'http', revision: 4, disabled: ['httpRoute', 'statusCode'] },
+    })
+    expect(fieldOmission(row, 'httpRoute')).toBe('disabled')
+    expect(fieldOmission(row, 'statusCode')).toBe('disabled')
+    // Present values stay present regardless of any claim.
+    expect(fieldOmission(row, 'httpMethod')).toBe('present')
+    // A row with no capture at all keeps its historical unknown state.
+    const old = event({ source: 'http', httpMethod: 'GET' })
+    expect(fieldOmission(old, 'httpRoute')).toBe('absent')
+    expect(fieldOmission(old, 'statusCode')).toBe('absent')
+  })
+
+  it('lists disabled fields in their real section instead of dropping or blanket-explaining them', () => {
+    const row = captured({
+      level: 'error',
+      outcome: 'failure',
+      httpMethod: 'GET',
+      errorCode: 'upstream_failed',
+      counts: { failed: 0 },
+      fieldCapture: { profile: 'http', revision: 4, disabled: ['httpRoute', 'statusCode', 'durationMs'] },
+    })
+    const target = section(row, '目标与对象')!
+    expect(target.fields).toEqual(expect.arrayContaining(['httpMethod', 'httpRoute']))
+    expect(target.disabledFields).toEqual(['httpRoute'])
+    // A disabled route must not be explained as "framework found no match".
+    expect(target.note).toBeUndefined()
+    const result = section(row, '结果与计数')!
+    expect(result.fields).toEqual(expect.arrayContaining(['outcome', 'errorCode', 'statusCode', 'durationMs', 'counts']))
+    expect([...result.disabledFields!].sort()).toEqual(['durationMs', 'statusCode'])
+    // Real codes, zero counts and outcome still render; nothing is hidden by level.
+    expect(row.errorCode).toBe('upstream_failed')
+    expect(formatCounts(row.counts)).toBe('失败 0')
+  })
+
+  it('keeps a disabled-only section explainable without inventing MCP or TUS facts', () => {
+    const row = captured({
+      httpMethod: undefined,
+      httpRoute: undefined,
+      fieldCapture: { profile: 'http', revision: 1, disabled: ['httpMethod', 'httpRoute'] },
+    })
+    const target = section(row, '目标与对象')!
+    expect(target.showTarget).toBe(true)
+    expect(target.fields).toEqual(['httpMethod', 'httpRoute'])
+    expect(target.disabledFields).toEqual(['httpMethod', 'httpRoute'])
+    expect(target.note).toBeUndefined()
+    // 采集省略不会伪造 MCP/TUS 段。
+    expect(detailProfile(row).map(entry => entry.title)).not.toContain('MCP 调用')
+    expect(detailProfile(row).map(entry => entry.title)).not.toContain('上传（TUS）')
   })
 })
 

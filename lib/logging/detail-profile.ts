@@ -1,4 +1,4 @@
-import type { LogEvent, LogOrigin, LogSummary } from './contract'
+import type { FieldCapturedLogEvent, LogOrigin } from './contract'
 
 /**
  * Detail fields are selected from the event's source/operation/result, not from
@@ -10,8 +10,16 @@ export interface DetailSection {
   fields: string[]
   showTarget?: boolean
   note?: string
+  /** Listed keys the writer recorded as disabled at capture time; never inferred from policy. */
+  disabledFields?: string[]
 }
-export type DetailEvent = LogSummary | LogEvent
+/** Detail reads the writer's projection; legacy rows carry no capture at all. */
+export type DetailEvent = FieldCapturedLogEvent
+/**
+ * Why an optional field is missing. `disabled` comes only from the writer's own
+ * capture fact for that event, never from the current policy or from severity.
+ */
+export type FieldOmission = 'present' | 'disabled' | 'absent'
 
 const field = (event: DetailEvent, key: string): unknown => {
   const source = event as Record<string, any>
@@ -32,6 +40,20 @@ export function detailFieldValue(event: DetailEvent, key: string): unknown {
   return field(event, key)
 }
 const present = (event: DetailEvent, key: string) => field(event, key) !== undefined
+const DISABLED: ReadonlySet<string> = new Set()
+/** Reads the bounded capture fact; a row without capture keeps its historical unknown wording. */
+export function disabledFields(event: DetailEvent): ReadonlySet<string> {
+  const disabled = event.fieldCapture?.disabled
+  if (!Array.isArray(disabled) || !disabled.length) return DISABLED
+  // Runtime responses can carry wider shapes than the frozen type; only strings count.
+  return new Set<string>(
+    (disabled as readonly unknown[]).filter((key): key is string => typeof key === 'string')
+  )
+}
+export function fieldOmission(event: DetailEvent, key: string): FieldOmission {
+  if (field(event, key) !== undefined) return 'present'
+  return disabledFields(event).has(key) ? 'disabled' : 'absent'
+}
 
 /**
  * Only operations whose failure branches are known to emit a stable code get a
@@ -51,18 +73,21 @@ export function errorCodeMissingIsInformative(event: DetailEvent): boolean {
   if (!['failure', 'denied', 'timeout'].includes(event.outcome)) return false
   return failureCodeContracts.some(pattern => pattern.test(event.operation))
 }
+/** A disabled value still gets its row so the reason is "当时未启用采集", not a bare "未记录". */
+const listed = (event: DetailEvent, key: string) =>
+  present(event, key) || fieldOmission(event, key) === 'disabled'
 function resultFields(event: DetailEvent): string[] {
   const fields = ['outcome']
   if (event.errorCode !== undefined || errorCodeMissingIsInformative(event)) fields.push('errorCode')
-  if (event.durationMs !== undefined) fields.push('durationMs')
-  if (event.statusCode !== undefined) fields.push('statusCode')
+  if (listed(event, 'durationMs')) fields.push('durationMs')
+  if (listed(event, 'statusCode')) fields.push('statusCode')
   if (event.counts && Object.keys(event.counts).length) fields.push('counts')
   return fields
 }
 function targetFields(event: DetailEvent): string[] {
   switch (event.source) {
     case 'http':
-    case 'mcp': return ['httpMethod', 'httpRoute'].filter(key => present(event, key))
+    case 'mcp': return ['httpMethod', 'httpRoute'].filter(key => listed(event, key))
     case 'file': return event.tus ? [] : ['fileId', 'page'].filter(key => present(event, key))
     case 'ocr': return ['fileId', 'page'].filter(key => present(event, key))
     case 'task': return ['taskId'].filter(key => present(event, key))
@@ -95,7 +120,12 @@ function targetNote(event: DetailEvent): string | undefined {
   if (event.source === 'worker' && event.operation.startsWith('enterprise_read.process.')) {
     return '进程生命周期事件没有单个 taskId/resourceId；多个请求共享 worker 时只能按 requestId 关联。'
   }
-  if ((event.source === 'http' || event.source === 'mcp') && !event.httpRoute) {
+  // A route the writer recorded as disabled was never captured, so it must not be
+  // described as "framework found no match"; leave that wording to a real gap.
+  if (
+    (event.source === 'http' || event.source === 'mcp') &&
+    fieldOmission(event, 'httpRoute') === 'absent'
+  ) {
     return '框架未匹配到已知路由模板；不从具体 path 推断路由。'
   }
   return undefined
@@ -167,5 +197,10 @@ export function detailProfile(event: DetailEvent): DetailSection[] {
   }
   const correlation = correlationFields(event, targetFields(event))
   if (correlation.length) sections.push({ title: '关联标识', fields: correlation })
-  return sections.filter(section => section.showTarget || section.fields.length > 0)
+  return sections
+    .filter(section => section.showTarget || section.fields.length > 0)
+    .map(section => {
+      const disabled = section.fields.filter(key => fieldOmission(event, key) === 'disabled')
+      return disabled.length ? { ...section, disabledFields: disabled } : section
+    })
 }
