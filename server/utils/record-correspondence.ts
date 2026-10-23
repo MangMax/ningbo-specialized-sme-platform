@@ -414,9 +414,10 @@ export function commitRecordCorrespondences(db: Db, request: CorrespondenceReque
         if (op.action === 'correct') {
           const target = tx.select().from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.edgeKey, edgeKey(op.edge))).get()
           if (target) {
-            const updated = tx.update(schema.recordCorrespondence).set({ status: 'confirmed', revision: target.revision + 1, decidedAt: at, ruleId: request.ruleId, ruleVersion: request.ruleVersion }).where(and(eq(schema.recordCorrespondence.id, target.id), eq(schema.recordCorrespondence.revision, target.revision), eq(schema.recordCorrespondence.status, 'candidate'))).run()
+            const { provenance } = sourceForEdge(tx, op.edge, true, request.proofIds)
+            const updated = tx.update(schema.recordCorrespondence).set({ status: 'confirmed', revision: target.revision + 1, decidedAt: at, ruleId: request.ruleId, ruleVersion: request.ruleVersion, provenance }).where(and(eq(schema.recordCorrespondence.id, target.id), eq(schema.recordCorrespondence.revision, target.revision), eq(schema.recordCorrespondence.status, 'candidate'))).run()
             if (updated.changes !== 1) fail('stale_revision', 'Replacement candidate changed')
-            addAudit(tx, target, batch.id, request, 'candidate', 'confirmed', target.revision, at)
+            addAudit(tx, { ...target, provenance }, batch.id, request, 'candidate', 'confirmed', target.revision, at)
             correspondenceIds.push(target.id)
           } else correspondenceIds.push(insertEdge(tx, op.edge, request, batch.id, 'confirmed', at))
         }
