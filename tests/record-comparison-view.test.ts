@@ -33,3 +33,13 @@ describe('record comparison client request', () => {
     expect(comparisonRouteKey(comparisonRouteFromQuery(comparisonRouteQuery(state)))).toBe(comparisonRouteKey(state))
   })
 })
+
+
+it('roundtrips independent business pagination without changing event pagination or source selection', () => {
+  const state = comparisonRouteFromQuery({ queryIds: '7', officialSourceDocumentIds: '3', page: '4', pageSize: '50', businessPage: '2', businessPageSize: '1' })
+  const query = comparisonRouteQuery(state)
+  expect(query).toMatchObject({ page: '4', pageSize: '50', businessPage: '2', businessPageSize: '1' })
+  expect(comparisonRouteKey(comparisonRouteFromQuery(query))).toBe(comparisonRouteKey(state))
+  expect(comparisonRouteKey({ ...state, businessPage: 3 })).not.toBe(comparisonRouteKey(state))
+  expect(comparisonRouteFromQuery({ businessPage: '-1', businessPageSize: '201' })).toMatchObject({ businessPage: 1, businessPageSize: 25 })
+})

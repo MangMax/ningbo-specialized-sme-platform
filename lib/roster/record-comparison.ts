@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { TITLE_ORDER } from '../labels'
+import type { PlatformBusinessMetadata } from '../platform/business-record'
 
 export const recordComparisonInput = z.object({
   queryIds: z.array(z.number().int().positive()).min(1).max(500),
@@ -12,6 +13,8 @@ export const recordComparisonInput = z.object({
   classification: z.enum(['historical_aligned', 'historical_conflict', 'official_without_correspondence', 'unresolved']).optional(),
   page: z.number().int().positive().default(1),
   pageSize: z.number().int().min(1).max(200).default(50),
+  businessPage: z.number().int().positive().optional(),
+  businessPageSize: z.number().int().min(1).max(200).optional(),
 }).strict()
 export type RecordComparisonInput = z.infer<typeof recordComparisonInput>
 export type HistoricalClassification = NonNullable<RecordComparisonInput['classification']>
@@ -39,5 +42,64 @@ export function parseRecordComparisonQuery(query: Record<string, unknown>): Reco
     proofIds: ids(query.proofIds),
     asOf: query.asOf, enterpriseId: integer(query.enterpriseId), titleCode: query.titleCode,
     classification: query.classification, page: integer(query.page), pageSize: integer(query.pageSize),
+    businessPage: integer(query.businessPage), businessPageSize: integer(query.businessPageSize),
   })
+}
+
+export type ComparisonLinkState = 'linked' | 'later_process' | 'unlinked'
+interface GroupableComparisonObservation {
+  relation: { id: number; interface: string }
+  businessRecord: PlatformBusinessMetadata
+  linkState: ComparisonLinkState
+  correspondences: Array<{ type: string; role: string; eventId: number | null; status: string; requiresRevalidation: boolean }>
+  historicalDecisionUnavailable: Array<{ id: number }>
+  currentSource: { qualification: string } | null
+  withoutOfficial: { qualification: string } | null
+}
+
+/** Comparison-only pure seam: consumes completed observation results, never decides
+ * qualification, discovers sources, or copies a representative observation's proof.
+ * Canonical IDs are the sole identity keys; every unknown observation is isolated.
+ */
+export function groupComparisonBusinessObservations<T extends GroupableComparisonObservation>(observations: T[], page = 1, pageSize = 25) {
+  const buckets = new Map<string, T[]>()
+  const unknownByState = { not_indexed: 0, missing_key: 0, conflict: 0, unverifiable: 0 }
+  for (const observation of observations) {
+    const meta = observation.businessRecord
+    const verified = meta.groupState === 'verified' && meta.recordId !== null && meta.versionId !== null
+    const key = verified ? JSON.stringify([observation.relation.interface, meta.recordId]) : `observation:${observation.relation.id}`
+    const bucket = buckets.get(key)
+    if (bucket) bucket.push(observation)
+    else buckets.set(key, [observation])
+    if (!verified) unknownByState[meta.groupState === 'verified' ? 'unverifiable' : meta.groupState]++
+  }
+  const state = (rows: T[]) => {
+    const links = new Set(rows.map(row => row.linkState))
+    const results = new Set(rows.map(row => JSON.stringify([
+      row.linkState, row.currentSource?.qualification ?? null, row.withoutOfficial?.qualification ?? null,
+      row.historicalDecisionUnavailable.length > 0,
+      row.correspondences.map(edge => [edge.type, edge.role, edge.eventId, edge.status, edge.requiresRevalidation]).sort(),
+    ])))
+    return { linkState: links.size === 1 ? rows[0]!.linkState : 'mixed' as const, resultState: results.size === 1 ? 'uniform' as const : 'mixed' as const }
+  }
+  const groups = [...buckets.entries()].map(([key, rows]) => {
+    const sorted = rows.toSorted((a, b) => a.relation.id - b.relation.id)
+    const meta = sorted[0]!.businessRecord
+    const versions = new Map<number | null, T[]>()
+    for (const row of sorted) {
+      const version = versions.get(row.businessRecord.versionId)
+      if (version) version.push(row)
+      else versions.set(row.businessRecord.versionId, [row])
+    }
+    return {
+      key, recordId: meta.recordId, interface: sorted[0]!.relation.interface, platformKey: meta.platformKey,
+      groupState: meta.groupState, observationCount: sorted.length, ...state(sorted),
+      versions: [...versions.entries()].map(([versionId, observations]) => ({ versionId, businessRecord: observations[0]!.businessRecord, observationCount: observations.length, ...state(observations), observations })),
+    }
+  }).sort((a, b) => a.versions[0]!.observations[0]!.relation.id - b.versions[0]!.observations[0]!.relation.id)
+  const known = groups.filter(group => group.groupState === 'verified')
+  return {
+    businessCounts: { records: known.length, versions: known.reduce((n, group) => n + group.versions.length, 0), observations: observations.length, unknownObservations: Object.values(unknownByState).reduce((a, b) => a + b, 0), unknownByState },
+    businessGroups: { rows: groups.slice((page - 1) * pageSize, page * pageSize), total: groups.length, page, pageSize },
+  }
 }
