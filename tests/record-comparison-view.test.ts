@@ -33,3 +33,10 @@ describe('record comparison client request', () => {
     expect(comparisonRouteKey(comparisonRouteFromQuery(comparisonRouteQuery(state)))).toBe(comparisonRouteKey(state))
   })
 })
+
+it('restores read-only official evidence references without accepting negative query or proof IDs', () => {
+  const selection = comparisonSelectionFromQuery({ queryIds: '7', exportBatchIds: '', officialSourceDocumentIds: '-9,3', proofIds: '-2' })
+  expect(selection).toEqual({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [-9, 3], proofIds: [] })
+  expect(comparisonSelectionFromQuery(comparisonSelectionQuery(selection))).toEqual(selection)
+  expect(comparisonSelectionFromQuery({ queryIds: '-7', officialSourceDocumentIds: '0' })).toMatchObject({ queryIds: [], officialSourceDocumentIds: [] })
+})

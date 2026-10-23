@@ -60,14 +60,14 @@ export const COMPARISON_REASONS: Record<string, string> = {
 }
 export function comparisonReasonText(reason: string): string { return COMPARISON_REASONS[reason] ?? '待核原因（详见来源）' }
 
-function ids(value: unknown): number[] {
+function ids(value: unknown, official = false): number[] {
   if (typeof value !== 'string' || !value) return []
   const parts = value.split(',')
-  if (parts.some(part => !/^[1-9]\d*$/.test(part) || !Number.isSafeInteger(Number(part)))) return []
+  if (parts.some(part => !(official ? /^-?[1-9]\d*$/ : /^[1-9]\d*$/).test(part) || !Number.isSafeInteger(Number(part)))) return []
   return [...new Set(parts.map(Number))]
 }
 export function comparisonSelectionFromQuery(query: Record<string, unknown>): ComparisonSelection {
-  return { queryIds: ids(query.queryIds), exportBatchIds: ids(query.exportBatchIds), officialSourceDocumentIds: ids(query.officialSourceDocumentIds), proofIds: ids(query.proofIds) }
+  return { queryIds: ids(query.queryIds), exportBatchIds: ids(query.exportBatchIds), officialSourceDocumentIds: ids(query.officialSourceDocumentIds, true), proofIds: ids(query.proofIds) }
 }
 export function comparisonSelectionQuery(selection: ComparisonSelection): Record<string, string> {
   return { queryIds: selection.queryIds.join(','), exportBatchIds: selection.exportBatchIds.join(','), officialSourceDocumentIds: selection.officialSourceDocumentIds.join(','), ...(selection.proofIds.length ? { proofIds: selection.proofIds.join(',') } : {}) }

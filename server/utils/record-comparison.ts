@@ -6,6 +6,8 @@ import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { TITLES } from '../../lib/labels'
 import { comparisonSourceCatalogInput, recordComparisonInput, type ComparisonSourceCatalogInput, type RecordComparisonInput, type HistoricalClassification } from '../../lib/roster/record-comparison'
+import { officialSourceDirectory, readOfficialSourceDocuments } from './official-source-directory'
+import { fileNameOf } from '../../lib/preview'
 import { comparisonFormalCounts, iterateComparisonFormalEvents } from './record-comparison-formal'
 import { listRecordCorrespondences, readScopedRecordCorrespondences } from './record-correspondence'
 
@@ -123,7 +125,7 @@ function selected(db: Db, input: RecordComparisonInput) {
   }
   const queries = db.select({ ...getTableColumns(schema.platformQuery), rawResponse: sql<null>`null` }).from(schema.platformQuery).where(inArray(schema.platformQuery.id, parsed.queryIds)).orderBy(schema.platformQuery.id).all().filter(row => before(row.queriedAt, parsed.asOf))
   const batches = db.select().from(schema.platformExportBatch).where(inArray(schema.platformExportBatch.id, parsed.exportBatchIds)).orderBy(schema.platformExportBatch.id).all().filter(row => row.importStatus === 'imported' && before(row.collectedOn, parsed.asOf))
-  const documents = db.select().from(schema.sourceDocument).where(inArray(schema.sourceDocument.id, parsed.officialSourceDocumentIds)).orderBy(schema.sourceDocument.id).all().filter(row => row.source === 'jxj' && (!parsed.asOf || before(row.issueDate, parsed.asOf)))
+  const documents = readOfficialSourceDocuments(db, parsed.officialSourceDocumentIds).filter(row => row.source === 'jxj' && (!parsed.asOf || before(row.issueDate, parsed.asOf)))
   if (queries.length !== parsed.queryIds.length || batches.length !== parsed.exportBatchIds.length || documents.length !== parsed.officialSourceDocumentIds.length) throw new Error('source_set_missing_or_out_of_scope')
   const queryMap = new Map(queries.map(row => [row.id, row]))
   const batchMap = new Map(batches.map(row => [row.id, row]))
@@ -201,7 +203,7 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
   let visited = 0
   const laterOwners = [...laterByOwner.values()].map(owners => ({ enterpriseId: owners[0]!.enterpriseId, titleCode: owners[0]!.titleCode }))
   yield
-  for (const formal of iterateComparisonFormalEvents(db, documents.map(document => document.id), source.input, laterOwners)) {
+  for (const formal of iterateComparisonFormalEvents(db, documents.map(document => document.path), source.input, laterOwners)) {
     if (++visited % 128 === 0) yield
     const row = analyzeEvent(formal)
     classificationCounts.unresolved--
@@ -386,7 +388,7 @@ export function listRecordComparisonSources(db: Db, input: ComparisonSourceCatal
 export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceCatalogInput) {
   const filter = comparisonSourceCatalogInput.parse(input)
   const qids = filter.ids === undefined ? undefined : inArray(schema.platformQuery.id, filter.ids)
-  const dids = and(eq(schema.sourceDocument.source, 'jxj'), filter.ids === undefined ? undefined : inArray(schema.sourceDocument.id, filter.ids))
+  const dids = filter.ids === undefined ? sql`1` : inArray(sql`id`, filter.ids)
   const bids = filter.ids === undefined ? undefined : inArray(schema.platformExportBatch.id, filter.ids)
   // SQLite's native whole-index Count can block the first request while leaf
   // pages enter its pager. Stream scalar IDs from the existing covering index
@@ -397,7 +399,7 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
     for (const _id of ids) { if (++queryCount % 256 === 0) yield }
   } else queryCount = db.select({ n: sql<number>`count(*)` }).from(schema.platformQuery).where(qids).get()!.n
   const counts = {
-    official_document: db.select({ n: sql<number>`count(*)` }).from(schema.sourceDocument).where(dids).get()!.n,
+    official_document: db.get<{ n: number }>(sql`select count(*) as n from ${officialSourceDirectory} where ${dids}`)!.n,
     query: queryCount,
     export_batch: db.select({ n: sql<number>`count(*)` }).from(schema.platformExportBatch).where(bids).get()!.n,
   }
@@ -412,7 +414,7 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
     return { offset: skip, limit }
   }
   const dw = window('official_document'), qw = window('query'), bw = window('export_batch')
-  const documents = dw.limit ? db.select().from(schema.sourceDocument).where(dids).orderBy(schema.sourceDocument.id).limit(dw.limit).offset(dw.offset).all().map(row => ({ kind: 'official_document' as const, id: row.id, label: row.title, subtitle: row.docNumber, titleCode: null, titleName: null, observedAt: row.issueDate, status: 'available', selectable: true, path: row.path })) : []
+  const documents = dw.limit ? db.all<import('./official-source-directory').OfficialSourceDocument>(sql`select * from ${officialSourceDirectory} where ${dids} order by id limit ${dw.limit} offset ${dw.offset}`).map(row => ({ kind: 'official_document' as const, id: row.id, label: row.title ?? fileNameOf(row.path), subtitle: row.docNumber, titleCode: null, titleName: null, observedAt: row.issueDate, status: 'available', selectable: true, path: row.path })) : []
   const q = schema.platformQuery
   // OFFSET on the rowid table walks leaf pages containing archive payloads.
   // Sort only IDs from the existing covering key index, then seek the page's rows.
