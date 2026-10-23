@@ -85,6 +85,7 @@ export async function handleRosterImportRequest(
 
   const validated = validateImportRequest(request.body)
   if (!validated.ok) return json(validated.status, { message: validated.message })
+  if (action === 'replay' && validated.value.payload.platformRecordObservations) return json(400, { message: 'Historical projection uses preflight/commit with its original idempotency key; replay only converges announcement evidence' })
 
   const pageCountErrors =
     (action === 'preflight' || action === 'commit') && deps.filesDir

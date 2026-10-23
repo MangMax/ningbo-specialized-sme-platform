@@ -89,7 +89,7 @@ const aliases = () => db.select().from(schema.enterpriseAlias).all()
 
 /** 每个用例都在**干净的库**上跑:清掉前一个用例写下的证据行。 */
 function clearEvidence() {
-  for (const table of [schema.enterpriseAlias, schema.differenceReason, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch]) {
+  for (const table of [schema.enterpriseAlias, schema.differenceReason, schema.platformBusinessObservation, schema.platformBusinessRecordVersion, schema.platformBusinessRecord, schema.platformRelation, schema.platformQuery, schema.importReceipt, schema.importBatch]) {
     db.delete(table).run()
   }
 }
