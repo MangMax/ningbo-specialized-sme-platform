@@ -4,7 +4,7 @@ import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { safeCollectionEvidence } from './record-correspondence-read'
-import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS } from '../../lib/platform/normalization'
+import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../lib/platform/normalization'
 
 type Db = BetterSQLite3Database<typeof schema>
 export interface CandidateInput { eventId?: number; enterpriseId?: number; titleCode?: string; queryIds: number[]; exportBatchIds: number[]; ruleVersion: string; page: number; pageSize: number }
@@ -28,8 +28,8 @@ export function generateCandidates(db: Db, input: CandidateInput) {
   if (queries.length !== new Set(input.queryIds).size || batches.length !== new Set(input.exportBatchIds).size) return null
   const r = schema.platformRelation, x = schema.platformExportRow, c = schema.recordCorrespondence
   // Extract only process facts in SQLite; the full archived row can be arbitrarily large.
-  // -> plus json() preserves JSON types (notably true must not become year=1).
-  const processRaw = sql`case when json_valid(${r.rawFields}) then json_object(${sql.join(PLATFORM_PROCESS_RAW_KEYS.flatMap(key => [sql`${key}`, sql`json(${r.rawFields} -> ${`$.${key}`})`]), sql`, `)}) else null end`.mapWith(r.rawFields)
+  // Multiple paths return a JSON array, preserving true rather than year=1.
+  const processRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.join(PLATFORM_PROCESS_RAW_KEYS.map(key => sql`${`$.${key}`}`), sql`, `)}) else null end`.mapWith(platformProcessRawFromJson)
   const queriesById = new Map(queries.map(q => [q.id, q]))
   const relations = batchesOf(queries.filter(q => ['success', 'partial'].includes(q.status)).map(q => q.id)).flatMap(ids => db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, enterpriseId: r.enterpriseId, usccRaw: r.usccRaw, declareKind: r.declareKind, year: r.year, batch: r.batch, awardBatchLabel: r.awardBatchLabel, status: r.status, appliedAt: r.appliedAt, province: r.province, rawFields: processRaw }).from(r).where(inArray(r.queryId, ids)).orderBy(asc(r.queryId), asc(r.sequenceNo)).all())
     .map(row => normalizePlatformRelation(queriesById.get(row.queryId)!.interface, row))
