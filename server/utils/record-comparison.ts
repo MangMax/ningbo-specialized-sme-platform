@@ -6,7 +6,9 @@ import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../lib/platform/normalization'
 import { TITLES } from '../../lib/labels'
-import { comparisonSourceCatalogInput, recordComparisonInput, type ComparisonSourceCatalogInput, type RecordComparisonInput, type HistoricalClassification } from '../../lib/roster/record-comparison'
+import { comparisonSourceCatalogInput, groupComparisonBusinessObservations, recordComparisonInput, type ComparisonSourceCatalogInput, type RecordComparisonInput, type HistoricalClassification } from '../../lib/roster/record-comparison'
+import { readPlatformBusinessMetadata } from './platform-business-record-read'
+import type { PlatformBusinessMetadata } from '../../lib/platform/business-record'
 import { comparisonFormalCounts, iterateComparisonFormalEvents } from './record-comparison-formal'
 import { listRecordCorrespondences, readScopedRecordCorrespondences } from './record-correspondence'
 
@@ -152,7 +154,8 @@ function selected(db: Db, input: RecordComparisonInput) {
   const unavailableEdges = allEdges.filter(edge => parsed.asOf && ((!before(edge.decidedAt, parsed.asOf) && edge.decidedAt !== null) || revisedAfterCutoff.has(edge.id)))
   const unavailableIds = new Set(unavailableEdges.map(edge => edge.id))
   const edges = allEdges.filter(edge => !unavailableIds.has(edge.id))
-  return { input: parsed, queries, batches, documents, relations, exports, edges, unavailableEdges }
+  const businessMetadata = readPlatformBusinessMetadata(db, relations.map(item => item.relation.id))
+  return { input: parsed, queries, batches, documents, relations, exports, edges, unavailableEdges, businessMetadata }
 }
 export function getRecordComparison(db: Db, input: RecordComparisonInput, verifiedEvidence?: VerifiedComparisonEvidence) {
   return consumeComparison(iterateRecordComparison(db, input, verifiedEvidence))
@@ -277,7 +280,40 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
     officialProof(verifiedEvidence, documents, item.relation.enterpriseId!, relationTitle(item.relation, item.query) ?? '', item.relation.year))
   const withoutOfficialIds = new Set(withoutOfficial.map(item => item.relation.id))
   const counts = { officialEventRows, distinctEvents: officialEventRows, distinctPlatformRows: unique(relations.map(item => item.relation.id)).length, distinctEnterpriseTitles: formalCounts.enterpriseTitles, historical_aligned: classificationCounts.historical_aligned, historical_conflict: classificationCounts.historical_conflict, official_without_correspondence: classificationCounts.official_without_correspondence, unresolved: classificationCounts.unresolved, laterProcessRows: unique(later.map(edge => edge.relationId)).length, laterProcessAffectedEvents, platformWithoutOfficialRows: withoutOfficial.length, unresolvedPlatformRows: unlinkedPlatformRows.length - withoutOfficial.length, recognizedRows: recognized.length, exportRows: exports.length, observedRecognizedExportPairs: observations.reduce((n, item) => n + item.exportRows.length, 0), observedExportRows: matchedExportIds.size }
-  return { rows, total, page: source.input.page, pageSize: source.input.pageSize, grain: { rows: 'official_event_id', platform: 'relation_id', export: 'batch_id_source_row_no', later: 'enterprise_id_title_code_relation_id' }, counts, sourceSet: { queryIds: source.input.queryIds, exportBatchIds: source.input.exportBatchIds, officialSourceDocumentIds: source.input.officialSourceDocumentIds, asOf: source.input.asOf ?? null }, coverage: queries.map(queryCoverage), officialCoverage: { qualification: verifiedEvidence?.officialScopes.length ? 'verified' as const : 'unknown' as const, reasons: verifiedEvidence?.officialScopes.length ? [] : ['official_source_completeness_not_persisted'], selectedDocumentIds: documents.map(row => row.id), proofIds: verifiedEvidence?.officialScopes.map(item => item.proofId) ?? [] }, currentSourceConsistency: { qualification: observations.length && observations.every(item => item.qualification !== 'not_comparable') && exportObservations.every(item => item.qualification !== 'not_comparable') ? 'comparable' as const : 'not_comparable' as const, reasons: observations.some(item => item.qualification === 'not_comparable') || exportObservations.some(item => item.qualification === 'not_comparable') ? ['version_equivalence_unknown', 'export_scope_equivalence_unknown'] : [], recognizedObservations: observations, exportObservations }, historicalDecisionUnavailable: unavailableEdges.map(edge => ({ id: edge.id, type: edge.type, eventId: edge.eventId, relationId: edge.relationId, reason: 'post_cutoff_decision_state_unavailable' as const })), platformWithoutOfficial: { rows: unlinkedPlatformRows.map(item => { const proof = withoutOfficialIds.has(item.relation.id) ? officialProof(verifiedEvidence, documents, item.relation.enterpriseId!, relationTitle(item.relation, item.query) ?? '', item.relation.year) : null; return { relation: publicRelation(item.relation, item.query), qualification: proof ? 'platform_without_official' as const : 'unresolved' as const, proofId: proof?.proofId ?? null, reasons: proof ? [] : [item.relation.enterpriseId == null || item.relation.verificationStatus !== 'confirmed' ? 'row_identity_unverified' : unavailableRelations.has(item.relation.id) ? 'post_cutoff_decision_state_unavailable' : 'official_source_completeness_not_persisted'] } }), total: unlinkedPlatformRows.length }, laterProcessPlatformRows: laterProcessPlatformRows.map(item => ({ relation: publicRelation(item.relation, item.query), correspondences: (laterByRelation.get(item.relation.id) ?? []).map(publicEdge) })), exportBatches: batches.map(batch => ({ id: batch.id, titleCode: batch.titleCode, year: batch.year, collectedOn: batch.collectedOn, sha256: batch.sha256, rowCount: batch.rowCount, replacedBatchId: batch.replacedBatchId })) }
+  const comparison = { rows, total, page: source.input.page, pageSize: source.input.pageSize, grain: { rows: 'official_event_id', platform: 'relation_id', export: 'batch_id_source_row_no', later: 'enterprise_id_title_code_relation_id' }, counts, sourceSet: { queryIds: source.input.queryIds, exportBatchIds: source.input.exportBatchIds, officialSourceDocumentIds: source.input.officialSourceDocumentIds, asOf: source.input.asOf ?? null }, coverage: queries.map(queryCoverage), officialCoverage: { qualification: verifiedEvidence?.officialScopes.length ? 'verified' as const : 'unknown' as const, reasons: verifiedEvidence?.officialScopes.length ? [] : ['official_source_completeness_not_persisted'], selectedDocumentIds: documents.map(row => row.id), proofIds: verifiedEvidence?.officialScopes.map(item => item.proofId) ?? [] }, currentSourceConsistency: { qualification: observations.length && observations.every(item => item.qualification !== 'not_comparable') && exportObservations.every(item => item.qualification !== 'not_comparable') ? 'comparable' as const : 'not_comparable' as const, reasons: observations.some(item => item.qualification === 'not_comparable') || exportObservations.some(item => item.qualification === 'not_comparable') ? ['version_equivalence_unknown', 'export_scope_equivalence_unknown'] : [], recognizedObservations: observations, exportObservations }, historicalDecisionUnavailable: unavailableEdges.map(edge => ({ id: edge.id, type: edge.type, eventId: edge.eventId, relationId: edge.relationId, reason: 'post_cutoff_decision_state_unavailable' as const })), platformWithoutOfficial: { rows: unlinkedPlatformRows.map(item => { const proof = withoutOfficialIds.has(item.relation.id) ? officialProof(verifiedEvidence, documents, item.relation.enterpriseId!, relationTitle(item.relation, item.query) ?? '', item.relation.year) : null; return { relation: publicRelation(item.relation, item.query), qualification: proof ? 'platform_without_official' as const : 'unresolved' as const, proofId: proof?.proofId ?? null, reasons: proof ? [] : [item.relation.enterpriseId == null || item.relation.verificationStatus !== 'confirmed' ? 'row_identity_unverified' : unavailableRelations.has(item.relation.id) ? 'post_cutoff_decision_state_unavailable' : 'official_source_completeness_not_persisted'] } }), total: unlinkedPlatformRows.length }, laterProcessPlatformRows: laterProcessPlatformRows.map(item => ({ relation: publicRelation(item.relation, item.query), correspondences: (laterByRelation.get(item.relation.id) ?? []).map(publicEdge) })), exportBatches: batches.map(batch => ({ id: batch.id, titleCode: batch.titleCode, year: batch.year, collectedOn: batch.collectedOn, sha256: batch.sha256, rowCount: batch.rowCount, replacedBatchId: batch.replacedBatchId })) }
+  // Add grouping only after the original observation-level comparison is complete.
+  const byUnlinked = new Map(comparison.platformWithoutOfficial.rows.map(row => [row.relation.id, row]))
+  const byCurrent = new Map(observations.map(row => [row.recognized.id, row]))
+  const byCorrespondence = groupBy(selectedEdges, edge => edge.relationId)
+  const byUnavailable = groupBy(comparison.historicalDecisionUnavailable, edge => edge.relationId)
+  const scopedObservations = relations.filter(({ relation, query }) =>
+    (source.input.enterpriseId == null || relation.enterpriseId === source.input.enterpriseId) &&
+    (!source.input.titleCode || relationTitle(relation, query) === source.input.titleCode))
+    .map(({ relation, query }) => {
+      const meta = source.businessMetadata.get(relation.id)
+      const groupState = !meta?.identityState ? 'not_indexed' : meta.identityState !== 'resolved' ? meta.identityState : meta.contentState !== 'verified' || meta.recordId == null || meta.versionId == null ? 'unverifiable' : 'verified'
+      const businessRecord: PlatformBusinessMetadata = {
+        recordId: meta?.recordId ?? null, versionId: meta?.versionId ?? null, interface: query.interface,
+        platformKey: meta?.platformKey ?? null, groupState, identityState: meta?.identityState ?? 'not_indexed',
+        contentState: meta?.contentState ?? 'not_indexed', keySource: meta?.keySource ?? null,
+        projectionRuleVersion: meta?.projectionRuleVersion ?? null, hashAlgorithm: meta?.hashAlgorithm ?? null, contentHash: meta?.contentHash ?? null,
+      }
+      return {
+        relation: publicRelation(relation, query), businessRecord,
+        linkState: linkedRelationIds.has(relation.id) ? 'linked' as const : laterRelationIds.has(relation.id) ? 'later_process' as const : 'unlinked' as const,
+        correspondences: (byCorrespondence.get(relation.id) ?? []).map(publicEdge),
+        historicalDecisionUnavailable: byUnavailable.get(relation.id) ?? [],
+        currentSource: byCurrent.get(relation.id) ?? null, withoutOfficial: byUnlinked.get(relation.id) ?? null,
+      }
+    })
+  const business = groupComparisonBusinessObservations(scopedObservations, source.input.businessPage ?? 1, source.input.businessPageSize ?? 25)
+  return { ...comparison, ...business, businessGroups: { ...business.businessGroups, scope: {
+    queryIds: source.input.queryIds, asOf: source.input.asOf ? new Date(source.input.asOf).toISOString() : null,
+    enterpriseId: source.input.enterpriseId ?? null, titleCode: source.input.titleCode ?? null,
+    classificationApplied: false as const, countsBeforePagination: true as const,
+    grain: 'known_record_with_verified_versions_and_unknown_content_or_isolated_unknown_identity' as const,
+  } } }
+
 }
 // Keep the legacy JS parser (including ten-character day values) while SQLite
 // counts and pages narrow columns. No reason notes or off-page rows are hydrated.

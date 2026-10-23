@@ -155,3 +155,8 @@ export function comparisonSourceEnterpriseDetails(source: ComparisonSourceLabelI
   }
   return details
 }
+
+
+export const comparisonLinkText = (value: string) => ({ linked: '已对应正式事件', later_process: '独立后续流程', unlinked: '未对应正式事件', mixed: '对应状态混合' }[value] ?? '待核')
+export const comparisonQualificationText = (value: string) => ({ matched: '同范围同版本一致', interface_only: '接口原行独有', field_conflict: '同范围同版本字段冲突', not_comparable: '范围或版本待核，暂不可比较', platform_without_official: '已证明范围无正式对应', unresolved: '正式来源覆盖待核' }[value] ?? '待核')
+export const comparisonDecisionText = (value: string) => ({ candidate: '候选', confirmed: '已确认', rejected: '已否定', unlinked: '已解除' }[value] ?? '待核')
