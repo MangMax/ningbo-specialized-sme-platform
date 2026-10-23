@@ -44,7 +44,7 @@ export function enrichAnnualProcessFinalQualification(db: AnnualDb, read: EventA
     if (!fresh || fresh.sourceGeneration !== read.sourceGeneration) return {...read,process:{...read.process,finalQualification:{stepId:null,status:'blocked',decisionRefs:[],reasons:[fresh?'source_generation_changed':'event_unavailable']}}}
     const scope = writeScope(db,fresh)
     const qualification = qualifyAnnualFinal(db,scope)
-    const actual = readAnnualDecisionRefs(db,qualification.decisionRefs.map(ref => ref.relationId))
+    const actual = readAnnualDecisionRefs(db,qualification.decisionRefs.map(ref => ref.relationId),scope)
     const ids = new Set(qualification.decisionRefs.map(ref => ref.id))
     return {...read,process:{...read.process,finalQualification:{...qualification,decisionRefs:actual.filter(ref => ids.has(ref.id))}}}
   })
