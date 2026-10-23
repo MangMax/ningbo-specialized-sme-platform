@@ -294,7 +294,7 @@ const technicalGroups = computed<RowGroup[]>(() => {
       key: 'technical-browser',
       testid: 'log-technical-browser',
       title: '客户端',
-      note: '浏览器内库的生命周期信号由客户端自报，不代表服务端执行事实。',
+      note: '客户端自报，不代表服务端执行事实。',
       rows: technical.filter((row) => runsOn(row, 'browser'))
     },
     {
@@ -315,7 +315,7 @@ const businessGroups = computed<RowGroup[]>(() => {
       key: 'business-shared',
       testid: 'log-business-shared',
       title: '跨端共享手动上报',
-      note: '应用手动埋点由服务端和客户端共用同一条规则，只在这里显示一次，不是两条独立开关；它同样与来源条件同时成立。',
+      note: '服务端与客户端共用这一条规则，并与来源条件同时成立。',
       rows: integrationRows.value.filter((row) => row.category === 'business')
     },
     {
@@ -328,7 +328,7 @@ const businessGroups = computed<RowGroup[]>(() => {
       key: 'business-browser',
       testid: 'log-business-browser',
       title: '客户端来源',
-      note: '浏览器自报来源，客户端上下文不可信。',
+      note: '浏览器自报，上下文不可信。',
       rows: sourceRows.value.filter((row) => isClientLogSource(row.key))
     }
   ]
@@ -341,8 +341,7 @@ const collectionSections = computed<CollectionSection[]>(() => {
       testid: 'log-collection-integrations',
       headingId: 'log-technical-heading',
       title: '技术集成',
-      description:
-        '这里只列出当前实际接入日志采集的模块，按运行端分组；安装某个库不等于它已经在采集运行日志。技术集成与来源条件必须同时开启，最低级别取两处更严格者；关闭来源同样会停止对应技术事件。',
+      description: '技术集成与来源须同时开启，最低级别取两者中更严格的一处。',
       groups: technicalGroups.value
     },
     {
@@ -350,8 +349,7 @@ const collectionSections = computed<CollectionSection[]>(() => {
       testid: 'log-collection-sources',
       headingId: 'log-business-heading',
       title: '业务埋点',
-      description:
-        '来源条件约束对应来源的全部记录，也包括技术集成采集的事件；业务分区只是组织方式，不是新的过滤维度。任一来源关闭后停止采集；最低级别取来源与技术集成两处更严格者。采集规则不删除已有记录，保存只影响后续批次与待处理队列。',
+      description: '',
       groups: businessGroups.value
     }
   ]
@@ -556,6 +554,13 @@ function setField(key: string, next: boolean) {
 }
 const fieldControlId = (field: string) =>
   `log-field-${fieldProfile.value}-${fieldLevel.value}-${field}`
+/**
+ * 目录里的 description 多数只是复述字段名；只有单位（毫秒/字节）是标签本身
+ * 不携带、又不能丢的信息。这里从服务端原文里取单位做后缀，其余描述不再逐行铺开。
+ */
+const UNIT_HINTS = ['毫秒', '字节'] as const
+const fieldUnit = (description: string) =>
+  UNIT_HINTS.find((unit) => description.includes(unit))
 function toggleFieldCopyTarget(level: LevelKey, next: boolean) {
   fieldCopyTargets.value = next
     ? [...new Set([...fieldCopyTargets.value, level])]
@@ -764,7 +769,7 @@ async function confirm() {
       })
       if (active)
         notice.value =
-          '日志配置已保存。更改对后续日志批次和待处理队列生效；采集开关与级别不删除已有记录，字段选择只影响之后写入的日志，保留策略调整可能触发轮转。'
+          '日志配置已保存。'
       if (active) {
         // PATCH 成功响应就是真实生效值；先落到草稿，finally 再刷新概览与真实值。
         if (result) {
@@ -799,9 +804,9 @@ async function confirm() {
 </script>
 <template>
   <div class="flex min-w-0 flex-col gap-5">
-    <!-- 范围只说一次：这些配置只作用于运行日志。 -->
-    <p class="text-muted-foreground text-[13px] leading-5">
-      仅管理运行日志，不修改业务审计、导入回执、源文件或任务产物。
+    <!-- 范围在 tab 内容里说明一次；保留策略与清理各自带后果，不再重复免责声明。 -->
+    <p class="text-muted-foreground text-[13px] leading-5" data-testid="log-settings-scope">
+      只影响运行日志，不改动业务审计、回执与源文件。
     </p>
     <Skeleton v-if="loading && !data" class="h-24 w-full" aria-label="正在读取日志配置" />
     <TableFailureState
@@ -822,7 +827,12 @@ async function confirm() {
           >
             <div class="flex flex-col gap-1">
               <h2 :id="section.headingId" class="text-sm font-medium">{{ section.title }}</h2>
-              <p class="text-muted-foreground text-[13px] leading-5">{{ section.description }}</p>
+              <p
+                v-if="section.description"
+                class="text-muted-foreground text-[13px] leading-5"
+              >
+                {{ section.description }}
+              </p>
             </div>
             <div
               v-for="group in section.groups"
@@ -838,7 +848,9 @@ async function confirm() {
                   {{ group.note }}
                 </p>
               </div>
-              <FieldGroup class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
+              <FieldGroup
+                class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2 2xl:grid-cols-4"
+              >
                 <Field
                   v-for="row in group.rows"
                   :key="row.key"
@@ -926,7 +938,7 @@ async function confirm() {
           </template>
           <div class="flex min-w-0 flex-col gap-3 pt-1">
             <p class="text-muted-foreground text-[13px] leading-5">
-              只决定之后写入哪些详情；来源和技术集成开关仍各自生效，已有日志不变。
+              只影响之后写入的详情；采集开关与已有日志不受影响。
             </p>
             <div class="flex min-w-0 flex-col gap-3">
               <div class="flex min-w-0 flex-col gap-1.5">
@@ -938,15 +950,14 @@ async function confirm() {
                   class="gap-0"
                   @update:model-value="(value) => selectFieldProfile(String(value))"
                 >
-                  <TabsList
-                    class="h-8 w-full justify-start gap-1 overflow-x-auto sm:w-fit"
-                    aria-label="字段采集类型"
-                  >
+                  <!-- 共享 TabsList 自带 p-0.75 + 默认高度；这里不再叠加 h-8/h-7，也不加
+                       overflow，两个已实现 profile 本来就放得下，避免出现竖向滚动条。 -->
+                  <TabsList class="w-full justify-start sm:w-fit" aria-label="字段采集类型">
                     <TabsTrigger
                       v-for="profile in fieldProfiles"
                       :key="profile.key"
                       :value="profile.key"
-                      class="h-7 flex-none px-3 text-[13px]"
+                      class="flex-none px-3 text-[13px]"
                       >{{ profile.label }}</TabsTrigger
                     >
                   </TabsList>
@@ -959,10 +970,7 @@ async function confirm() {
                   class="gap-0"
                   @update:model-value="(value) => selectFieldLevel(value as LevelKey)"
                 >
-                  <TabsList
-                    class="h-8 w-full justify-start gap-1 sm:w-fit"
-                    aria-label="字段级别"
-                  >
+                  <TabsList class="w-full justify-start sm:w-fit" aria-label="字段级别">
                     <TabsTrigger
                       v-for="level in levelTabs"
                       :key="level.key"
@@ -981,9 +989,6 @@ async function confirm() {
                 </Tabs>
               </div>
             </div>
-            <p class="text-muted-foreground text-[13px] leading-5">
-              只调整这个级别的字段；是否采集仍看上面的采集规则和最低级别。
-            </p>
             <div
               v-if="parentOffReasons.length || levelBelowParent"
               role="status"
@@ -995,7 +1000,7 @@ async function confirm() {
               >
                 <Badge variant="quiet" class="font-normal">当前不采集</Badge>
                 <span class="text-muted-foreground"
-                  >{{ parentOffReasons.join('、') }}；字段选择会保留，重新开启后再按这里的设置记录。</span
+                  >{{ parentOffReasons.join('、') }}；选择会保留，重新开启后按这里的设置记录。</span
                 >
               </p>
               <p
@@ -1003,25 +1008,27 @@ async function confirm() {
                 class="text-muted-foreground text-[13px] leading-5"
                 data-testid="log-field-level-below"
               >
-                这个级别低于当前最低级别{{ LEVEL_LABELS[parentMinLevel ?? 'debug'] }}，当前不会产生日志；字段选择仍会保留。
+                低于最低级别{{ LEVEL_LABELS[parentMinLevel ?? 'debug'] }}，当前不产生这个级别的日志；选择仍保留。
               </p>
             </div>
             <p class="text-[13px] leading-5" data-testid="log-field-status">
-              <template v-if="!levelTabs.some((level) => level.count)">{{
-                `${activeProfile?.label ?? ''}当前为默认：${levelTabs.length} 个级别都保留全部字段。`
-              }}</template>
+              <template v-if="!levelTabs.some((level) => level.count)"
+                >各级别均保留全部字段。</template
+              >
               <template v-else>{{
-                `当前选择：${levelTabs
+                `不记录：${levelTabs
                   .filter((level) => level.count)
                   .map((level) => `${level.label} ${level.count} 项`)
-                  .join('、')}不记录。`
+                  .join('、')}`
               }}</template>
             </p>
             <FieldSet v-if="activeLevelValues" class="min-w-0 gap-2">
               <FieldLegend variant="label" class="text-muted-foreground mb-1 text-[13px] font-medium"
-                >这个级别记录的详情</FieldLegend
+                >记录详情</FieldLegend
               >
-              <FieldGroup class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+              <FieldGroup
+                class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 2xl:grid-cols-4"
+              >
                 <Field
                   v-for="field in activeFields"
                   :key="field.key"
@@ -1033,11 +1040,12 @@ async function confirm() {
                     <FieldLabel
                       :for="fieldControlId(field.key)"
                       class="min-w-0 text-[13px] leading-5 font-normal"
-                      >{{ field.label }}</FieldLabel
+                      >{{ field.label }}<span
+                        v-if="fieldUnit(field.description)"
+                        class="text-muted-foreground"
+                        >（{{ fieldUnit(field.description) }}）</span
+                      ></FieldLabel
                     >
-                    <p class="text-muted-foreground text-[13px] leading-5">
-                      {{ field.description }}
-                    </p>
                   </div>
                   <Switch
                     :id="fieldControlId(field.key)"
@@ -1049,14 +1057,11 @@ async function confirm() {
                 </Field>
               </FieldGroup>
             </FieldSet>
-            <p class="text-muted-foreground text-[13px] leading-5">
-              事件编号、时间、来源、操作、级别和结果始终保留。字段没记录不代表业务失败；详情会把这里的关闭标成「当时未启用采集」，没有该标记的仍按「未记录」显示，不用当前配置倒推历史。
+            <!-- 一处短提示同时说明「只影响后续」与「历史标记」；细节放在核对 Dialog。 -->
+            <p class="text-muted-foreground text-[13px] leading-5" data-testid="log-field-hint">
+              关闭只影响之后写入；历史记录不变，详情会标为「当时未启用采集」。
             </p>
             <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-              <!-- 全页只保留一处核对/保存入口：字段与保留策略在同一次核对里提交。 -->
-              <p class="text-muted-foreground text-[13px] leading-5">
-                字段改动会和下方保留策略一起核对、一次保存。
-              </p>
               <Button
                 variant="ghost"
                 size="sm"
@@ -1159,7 +1164,7 @@ async function confirm() {
         <div class="flex flex-col gap-1">
           <h2 id="log-retention-heading" class="text-sm font-medium">保留策略</h2>
           <p class="text-muted-foreground text-[13px] leading-5">
-            保留期与容量取更严格者；缩短保留期或降低容量可能清理已有运行日志。
+            取更严格者；缩短保留期或降低容量可能清理已有日志。
           </p>
         </div>
         <dl class="grid min-w-0 gap-x-6 gap-y-1 text-[13px] leading-5 sm:grid-cols-2">
@@ -1192,7 +1197,7 @@ async function confirm() {
           </div>
         </dl>
         <p class="text-muted-foreground text-[13px] leading-5">
-          用量含日志库与附属文件，不含文件系统开销、容器输出或进程内存；进程计数从
+          用量含日志库与附属文件，不含文件系统与容器输出；进程计数自
           {{ data.status?.since ? local(data.status.since) : '本次进程启动' }} 起。
         </p>
         <form data-testid="log-policy-form" @submit.prevent="reviewConfig">
@@ -1232,9 +1237,7 @@ async function confirm() {
               <!-- 后果写在按钮旁边，不做单独一段通栏说明；没有变化时说明为什么不能核对。 -->
               <p class="text-muted-foreground text-[13px] leading-5">
                 <template v-if="!hasChanges">当前配置与已生效配置相同，无需核对。</template>
-                <template v-else
-                  >只提交有差异的规则，其余规则保持不变；采集规则不删除已有记录，保留策略调整可能触发轮转。</template
-                >
+                <template v-else>只提交有差异的项，其余保持不变；保留策略调整可能触发轮转。</template>
               </p>
             </div>
           </FieldGroup>
@@ -1245,7 +1248,7 @@ async function confirm() {
         <div class="flex flex-col gap-1">
           <h2 id="log-clear-heading" class="text-sm font-medium">范围清理</h2>
           <p class="text-muted-foreground text-[13px] leading-5">
-            清理范围沿用运行日志中已应用的筛选；修改筛选后可返回本页核对。此操作只删除运行日志。
+            沿用运行日志中已应用的筛选，只删除运行日志。
           </p>
         </div>
         <div class="flex flex-col items-start gap-2">
@@ -1284,7 +1287,7 @@ async function confirm() {
           }}</DialogTitle
           ><DialogDescription>{{
             dialogReview?.kind === 'config'
-              ? '保存后影响后续日志批次和待处理队列的采集；采集规则与字段选择不删除已有记录，保留策略调整可能触发轮转。'
+              ? '采集配置对后续批次生效；保留策略调整可能清理已有日志。'
               : '此操作可能永久删除运行日志。业务审计、回执、源文件和任务产物不在清理范围。'
           }}</DialogDescription></DialogHeader
         >
@@ -1309,7 +1312,7 @@ async function confirm() {
               </TableBody>
             </Table>
             <p class="text-muted-foreground text-[13px] leading-5">
-              其余规则保持不变，不会随本次保存重置。
+              其余项保持不变，不会被重置。
             </p>
           </div>
           <div v-if="dialogReview.fields.length" class="flex flex-col gap-2">
@@ -1333,14 +1336,14 @@ async function confirm() {
               </TableBody>
             </Table>
             <p class="text-muted-foreground text-[13px] leading-5">
-              字段选择只影响之后写入的日志；已有日志不变。恢复为保留也会作为改动提交。
+              只影响之后写入；恢复为保留也会作为改动提交。
             </p>
             <p
               v-if="reviewParentReasons.length"
               class="text-muted-foreground text-[13px] leading-5"
               data-testid="log-field-review-parent"
             >
-              当前不采集：{{ reviewParentReasons.join('、') }}。保存只更新字段选择，不会重新开启采集。
+              当前不采集：{{ reviewParentReasons.join('、') }}。保存不会重新开启采集。
             </p>
           </div>
           <div

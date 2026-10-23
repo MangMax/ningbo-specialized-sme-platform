@@ -566,9 +566,45 @@ it('reviews only changed collection rules, sends changed maps, and refreshes eff
   ])
   expect(switchState()).toBe('unchecked')
   expect(wrapper.get('[aria-label="MCP 调用的最低日志级别"]').text()).toBe('警告')
-  expect(wrapper.text()).toContain('日志配置已保存')
-  expect(wrapper.text()).toContain('采集开关与级别不删除已有记录')
-  expect(wrapper.text()).toContain('保留策略调整可能触发轮转')
+  // 保存反馈只说「已保存」：这次 PATCH 可能同时改了保留策略，不能断言历史不受影响。
+  expect(wrapper.text()).toContain('日志配置已保存。')
+  expect(wrapper.text()).not.toContain('已有记录不受影响')
+  vi.unstubAllGlobals()
+})
+
+it('never claims history is untouched when the save can shrink retention', async () => {
+  const { default: Management } = await import('../components/logs/LogManagement.vue')
+  let policy = policyResponse()
+  const writes: any[] = []
+  vi.stubGlobal('$fetch', async (_url: string, options: any = {}) => {
+    if (options.method === 'PATCH') {
+      writes.push(options.body)
+      policy = { ...policyResponse(), retentionDays: 3 }
+      return policy
+    }
+    return policy
+  })
+  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  wrappers.push(wrapper)
+  await flushPromises()
+  await wrapper.get('#log-retention-days').setValue('3')
+  await wrapper.get('[data-testid=log-policy-review]').trigger('click')
+  await flushPromises()
+  const dialog = document.querySelector('[role=dialog]')!
+  expect(dialog.textContent).toContain('保留天数：7 天 → 3 天')
+  // 保留策略缩短可能物理清理日志：确认文案不能同时声称「不删除已有记录」。
+  expect(dialog.textContent).toContain('保留策略调整可能清理已有日志')
+  expect(dialog.textContent).not.toContain('不删除已有记录')
+  ;(
+    document.querySelector('[data-testid=log-policy-confirm]') as HTMLButtonElement
+  ).click()
+  await flushPromises()
+  // 这次 PATCH 真实改了保留天数，成功反馈只能报「已保存」。
+  expect(writes).toHaveLength(1)
+  expect(writes[0]).toMatchObject({ retentionDays: 3 })
+  expect(wrapper.text()).toContain('日志配置已保存。')
+  expect(wrapper.text()).not.toContain('已有记录不受影响')
+  expect(wrapper.text()).not.toContain('对后续日志生效')
   vi.unstubAllGlobals()
 })
 
@@ -671,14 +707,17 @@ it('groups the real catalog into technical 4+6 and business 10+1 with one shared
   expect(switchCount('log-business-shared')).toBe(1)
   expect(switchCount('log-business-node')).toBe(10)
   expect(switchCount('log-business-browser')).toBe(1)
-  // application 只出现一次，放在业务区并明确服务端和客户端共用，不伪装成两条开关。
+  // application 只出现一次，放在业务区并明确服务端与客户端共用，不伪装成两条开关。
   expect(wrapper.findAll('#log-integration-application-enabled')).toHaveLength(1)
-  expect(wrapper.get('[data-testid=log-business-shared]').text()).toContain('服务端和客户端共用')
+  expect(wrapper.get('[data-testid=log-business-shared]').text()).toContain('服务端与客户端共用')
   expect(wrapper.get('[data-testid=log-collection-integrations]').text()).not.toContain(
     '应用手动埋点'
   )
-  // 业务区只是组织方式；来源条件仍约束技术事件。
-  expect(wrapper.get('[data-testid=log-collection-sources]').text()).toContain(
+  // AND / 更严格级别只在一处说明（技术集成），业务区不再重复同一句。
+  expect(wrapper.get('[data-testid=log-collection-integrations]').text()).toContain(
+    '技术集成与来源须同时开启'
+  )
+  expect(wrapper.get('[data-testid=log-collection-sources]').text()).not.toContain(
     '也包括技术集成采集的事件'
   )
   expect(wrapper.findAll('h2').map((heading) => heading.text())).toEqual([

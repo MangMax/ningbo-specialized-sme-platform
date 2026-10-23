@@ -703,7 +703,7 @@ function restoreFocus(event: Event) {
       </TabsContent>
       <TabsContent value="settings" force-mount v-show="activeTab === 'settings'" class="min-h-0 overflow-y-auto">
         <!-- 配置四个区域共用这一层 Card 表面；标题已经在 tab 上，不再重复“日志配置”。 -->
-        <Card class="max-w-4xl gap-0 py-0 shadow-none">
+        <Card data-testid="log-settings-card" class="w-full gap-0 py-0 shadow-none">
           <CardContent class="p-4 sm:p-6">
             <LogManagement v-if="settingsVisited" :filter="filter" @changed="fresh" />
           </CardContent>
