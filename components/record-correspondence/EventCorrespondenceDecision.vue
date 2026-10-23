@@ -147,8 +147,9 @@ async function refreshConflict() {
       <p v-else class="text-muted-foreground text-[13px]">{{ existing.status === 'rejected' ? '已否定候选' : '已取消对应' }}，保留历史决定；不自动重新推荐。</p>
     </div>
     <Dialog :open="action !== null" @update:open="value => { if (!value && !pending) action = null }">
-      <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-4xl">
+      <DialogContent class="flex max-h-[85dvh] min-w-0 flex-col overflow-hidden sm:max-w-4xl">
         <DialogHeader><DialogTitle>{{ title }}</DialogTitle><DialogDescription>核对双方原行后提交对应决定。此操作独立于差异原因复核。由页面代理提交，未识别个人身份。</DialogDescription></DialogHeader>
+        <div class="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto">
         <p>公布事件 #{{ edge.eventId }} · 平台原行 #{{ edge.relationId }}</p>
         <p v-if="point && !statePermitsAction" role="status">当前决定已变化，本次操作已停用。草稿保留；请关闭后按当前状态选择操作。</p>
         <p v-if="point?.requiresRevalidation" role="status" class="text-warning">来源已变化，历史确认暂不算有效出处；确认必须重新核验。</p>
@@ -174,6 +175,8 @@ async function refreshConflict() {
         <p v-if="conflicts" class="text-[13px] leading-5">待核依据：{{ conflicts }}</p>
         <p v-if="supportRole" class="text-muted-foreground text-[13px] leading-5">对应范围：{{ CORRESPONDENCE_ROLES[supportRole] ?? supportRole }}。<template v-if="supportRole === 'context_only'">仅说明流程背景，不代表平台结论与公布一致。</template></p>
         <div class="flex flex-col gap-2"><Label :for="`correspondence-basis-${edge.eventId}-${edge.relationId}`">核对依据（必填）</Label><Textarea :id="`correspondence-basis-${edge.eventId}-${edge.relationId}`" v-model="basis" :disabled="pending || !!receipt || attempted" maxlength="4000" placeholder="说明双方原行、年份、批次及事项的核对依据" /></div>
+        </div>
+        <div class="flex shrink-0 flex-col gap-2">
         <p v-if="plan" role="status">预检：新增 {{ plan.impact.created }} 条，取消 {{ plan.impact.unlinked }} 条，追加审计 {{ plan.impact.audit }} 条。</p>
         <p v-if="error" role="alert">{{ error }}</p><p v-if="success" role="status">{{ success }}</p>
         <div class="flex flex-wrap gap-2">
@@ -181,6 +184,7 @@ async function refreshConflict() {
           <Button v-if="plan && !conflict && !success" :disabled="pending" @click="commit">{{ receipt ? '重试读回' : error ? '重试提交' : '提交决定' }}</Button>
           <Button v-if="conflict" variant="outline" :disabled="pending" @click="refreshConflict">刷新后重新核对</Button>
           <Button variant="ghost" :disabled="pending" @click="action = null">{{ success ? '完成' : '保留草稿并关闭' }}</Button>
+        </div>
         </div>
       </DialogContent>
     </Dialog>
