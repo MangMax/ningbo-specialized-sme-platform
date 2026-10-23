@@ -108,6 +108,36 @@ it('real nonempty type and status conflicts still reject HTTP archives atomicall
   }
 })
 
+it('identical full raw reuses a content version across stored synonyms while changed raw stays distinct', async () => {
+  const raw = { id: 'synthetic-249-content', sblx: '申请', sourceOnly: '完整原始内容' }
+  const requests = [
+    input('content-first', 'apply_list', [{ sequenceNo: 1, relationKey: raw.id, declareKind: 'apply', rawFields: raw }]),
+    input('content-second', 'apply_list', [{ sequenceNo: 1, relationKey: raw.id, declareKind: '申请', rawFields: raw }]),
+    input('content-changed', 'apply_list', [{ sequenceNo: 1, relationKey: raw.id, declareKind: '申请', rawFields: { ...raw, sblx: 'apply' } }]),
+  ]
+  for (const request of requests) {
+    request.sourceKind = 'platform_archive'
+    expect((await client.preflight(request)).preflight.conflicts).toEqual([])
+    expect((await client.commit(request)).status).toBe('committed')
+  }
+  const db = new Database(join(dir, 'roster.db'), { readonly: true, fileMustExist: true })
+  try {
+    const versions = () => db.prepare('SELECT o.record_id, o.version_id FROM platform_business_observation o JOIN platform_relation r ON r.id = o.relation_id WHERE r.relation_key = ? ORDER BY r.id').all(raw.id)
+    const before = versions() as { record_id: number; version_id: number }[]
+    expect(before).toHaveLength(3)
+    expect(before[0]!.version_id).toBeGreaterThan(0)
+    expect(before[0]).toEqual(before[1])
+    expect(before[2]!.record_id).toBe(before[0]!.record_id)
+    expect(before[2]!.version_id).not.toBe(before[0]!.version_id)
+    for (const label of ['content-first', 'content-second', 'content-changed']) {
+      const archived = (await read(label)).rows[0], row = archived.relations[0]
+      expect(row).toMatchObject({ declareKind: 'apply', normalizationConflicts: [] })
+      expect((await original(archived.query.id, row.id)).rawFields).toEqual(label === 'content-changed' ? { ...raw, sblx: 'apply' } : raw)
+    }
+    expect(versions()).toEqual(before)
+  } finally { db.close() }
+})
+
 it('synonym reads preserve full raw source fingerprints and cannot clear stale source qualification', async () => {
   const name = '合成同义来源资格企业', uscc = '91330211000000001F'
   const announcement: RosterImportRequest = { idempotencyKey: '249:official', sourceKind: 'announcement', sourceIdentity: 'synthetic:249:official', payload: { announcement: { sourceDocument: { source: 'jxj', title: '合成来源资格公告' }, records: [{ enterprise: { name, uscc }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2025 }] }] } } }
