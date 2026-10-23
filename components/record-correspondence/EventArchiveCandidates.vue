@@ -15,14 +15,18 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
-const props = defineProps<{ eventId: number; back: string }>()
+const props = defineProps<{ eventId: number; back: string; autoLoad?: boolean }>()
 const result = ref<EventArchivePage | null>(null)
 const pending = ref(false)
 const failed = ref(false)
 const target = ref({ page: 1, pageSize: 50, queryPage: 1, queryPageSize: 25 })
 const sourceId = ref<number | null>(null)
 let sequence = 0
-watch(() => props.eventId, () => { sequence++; result.value = null; pending.value = false; failed.value = false; sourceId.value = null; target.value = { page: 1, pageSize: 50, queryPage: 1, queryPageSize: 25 } })
+watch(() => props.eventId, () => {
+  sequence++; result.value = null; pending.value = false; failed.value = false; sourceId.value = null
+  target.value = { page: 1, pageSize: 50, queryPage: 1, queryPageSize: 25 }
+  if (props.autoLoad) void discover()
+}, { immediate: true })
 onBeforeUnmount(() => { sequence++ })
 async function discover(patch: Partial<typeof target.value> = {}) {
   target.value = { ...target.value, ...patch }
@@ -67,7 +71,7 @@ const statusLabel = (status: string | null) => ({ confirmed: '已有确认记录
             <p v-if="row.conflicts.length" class="text-muted-foreground">待核依据：{{ conflictText(row) }}</p>
             <p v-if="row.existingStatus" class="text-muted-foreground">保留已有决定，未重新推荐或改写。</p>
             <Button variant="ghost" size="sm" @click="sourceId = row.edge.relationId">查看平台原行与查询来源</Button>
-            <EventCorrespondenceDecision :edge="row.edge" :existing="row.existingCorrespondenceId && row.revision && row.existingStatus ? { id: row.existingCorrespondenceId, revision: row.revision, status: row.existingStatus } : null" />
+            <EventCorrespondenceDecision :edge="row.edge" :event="result.event" :candidate="row" :back="back" :existing="row.existingCorrespondenceId && row.revision && row.existingStatus ? { id: row.existingCorrespondenceId, revision: row.revision, status: row.existingStatus } : null" />
           </li>
         </ul>
         <TablePagination class="mt-3" :page="result.page" :page-size="result.pageSize" :total="result.total" unit="条候选" :loading="pending" @update:page="discover({ page: $event })" @update:page-size="discover({ page: 1, pageSize: $event })" />

@@ -11,7 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
-const props = defineProps<{ kind: SourceKind; id: number; returnTo?: string | null }>()
+const props = defineProps<{ kind: SourceKind; id: number; returnTo?: string | null; compact?: boolean; readOnly?: boolean }>()
 const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
 const { displayed, displayedKey, requestedKey, loading, error, retry } = useRecordSource(() => props.kind, () => props.id)
 const current = computed(() => displayedKey.value === requestedKey() ? displayed.value : null)
@@ -62,11 +62,11 @@ const eventSections = computed(() => {
         </section>
       </template>
       <template v-else>
-        <SourceRowDetail v-if="relation" :relation="relation" />
+        <SourceRowDetail v-if="relation" :relation="relation" :compact="compact" />
         <SourceRowDetail v-if="exportRow" :export-row="exportRow" />
         <section aria-label="相关认定与复核记录">
           <h4 class="mb-2 text-sm font-medium">相关认定与复核记录</h4>
-          <ul v-if="visible?.correspondences.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in visible.correspondences" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul>
+          <ul v-if="visible?.correspondences.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in visible.correspondences" :key="edge.id" :edge="edge" :return-to="returnTo" :read-only="readOnly" @event-navigate="emit('event-navigate', $event)" /></ul>
           <p v-else class="text-muted-foreground text-[13px]">此原行尚无登记的对应关系；原查询行仍保留。</p>
         </section>
       </template>

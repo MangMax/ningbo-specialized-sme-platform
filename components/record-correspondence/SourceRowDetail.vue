@@ -4,9 +4,10 @@ import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_
 import { platformBusinessFields } from '~~/lib/roster/platform-records'
 import type { ExportRowSource, RelationSource } from '~~/lib/roster/correspondence-view'
 import PlatformQueryProvenance from '@/components/PlatformQueryProvenance.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Badge } from '@/components/ui/badge'
 
-const props = defineProps<{ relation?: RelationSource | null; exportRow?: ExportRowSource | null }>()
+const props = defineProps<{ relation?: RelationSource | null; exportRow?: ExportRowSource | null; compact?: boolean }>()
 const source = computed(() => props.relation?.query.interface ?? '')
 const fields = computed(() => platformBusinessFields(props.relation?.rawFields ?? props.exportRow?.rawFields))
 </script>
@@ -30,9 +31,15 @@ const fields = computed(() => platformBusinessFields(props.relation?.rawFields ?
         <dt v-if="relation.batch" class="text-muted-foreground">维护批次原值</dt><dd v-if="relation.batch">{{ relation.batch }}</dd>
         <dt v-if="relation.awardBatchLabel" class="text-muted-foreground">认定批次原值</dt><dd v-if="relation.awardBatchLabel">{{ relation.awardBatchLabel }}</dd>
         <dt class="text-muted-foreground">来源定位</dt><dd>查询 #{{ relation.query.id }} · 行 {{ relation.sequenceNo }} · 页 {{ relation.sourcePage ?? '未知' }}</dd>
-        <template v-for="field in fields" :key="field.key"><dt class="text-muted-foreground">{{ field.label }}（{{ field.key }}）</dt><dd>{{ field.value }}</dd></template>
+        <template v-for="field in compact ? [] : fields" :key="field.key"><dt class="text-muted-foreground">{{ field.label }}（{{ field.key }}）</dt><dd>{{ field.value }}</dd></template>
       </dl>
-      <PlatformQueryProvenance class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
+      <DisclosurePanel v-if="compact" compact title="完整原始字段与查询出处">
+        <dl class="grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 break-words [overflow-wrap:anywhere] sm:grid-cols-[auto_minmax(0,1fr)]">
+          <template v-for="field in fields" :key="field.key"><dt class="text-muted-foreground">{{ field.label }}（{{ field.key }}）</dt><dd>{{ field.value }}</dd></template>
+        </dl>
+        <PlatformQueryProvenance class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
+      </DisclosurePanel>
+      <PlatformQueryProvenance v-else class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
     </template>
     <template v-else-if="exportRow">
       <div class="flex flex-wrap items-center gap-2"><strong>平台导出快照 · 源行 {{ exportRow.sourceRowNo }}</strong><Badge variant="outline">{{ TITLES[exportRow.batch.titleCode] ?? exportRow.batch.titleCode }}</Badge></div>

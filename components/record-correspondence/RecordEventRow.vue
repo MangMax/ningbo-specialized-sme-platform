@@ -41,6 +41,7 @@ const props = defineProps<{
   back: string
   returnTo?: string | null
   open: boolean
+  review?: boolean
   /** 深链定位到的行短暂高亮；不是常驻装饰。 */
   highlighted?: boolean
 }>()
@@ -80,7 +81,7 @@ const interfaceSummary = computed(() => {
 
 <template>
   <section
-    :id="`record-event-${event.id}`"
+    :id="`${review ? 'review' : 'record'}-event-${event.id}`"
     class="scroll-mt-20"
     :class="highlighted ? 'locate-highlight' : ''"
     :data-highlighted="highlighted ? 'true' : undefined"
@@ -98,6 +99,7 @@ const interfaceSummary = computed(() => {
               <TitleBadge :code="event.titleCode" />
               <SourceChip :code="event.source" />
               <span v-if="event.district" class="text-muted-foreground text-[13px]">属地 {{ event.district }}</span>
+              <span v-if="review && event.seq != null" class="text-muted-foreground text-[13px]">第 {{ event.seq }} 批</span>
             </div>
             <p v-if="event.type === 'review'" class="mt-1 text-[15px] leading-6 font-medium">{{ eventDecisionText({ eventType: event.type, year: event.year, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }) }}</p>
           </div>
@@ -139,10 +141,10 @@ const interfaceSummary = computed(() => {
         </div>
       </template>
       <template #trigger>
-        <span class="w-full text-right text-[13px]">来源记录</span>
+        <span class="w-full text-right text-[13px]">{{ review ? '核对平台对应' : '来源记录' }}</span>
       </template>
       <RecordEventSource :event="event" :evidence="evidence" :edges="fullEdges ?? []" :edges-ready="linksReady && fullEdges !== null && fullEdges !== undefined" :edges-loading="detailsLoading" :edges-error="detailsError" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" @retry-detail="emit('retry-detail')" />
-      <EventArchiveCandidates v-if="event.source === 'jxj' && ['award', 'review'].includes(event.type)" :key="event.id" :event-id="event.id" :back="back" />
+      <EventArchiveCandidates v-if="open && event.source === 'jxj' && ['award', 'review'].includes(event.type)" :key="event.id" :event-id="event.id" :back="back" :auto-load="review" />
     </DisclosurePanel>
   </section>
 </template>

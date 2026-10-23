@@ -51,3 +51,32 @@ it('opens the original row without archive ID input and keeps coverage paginatio
   expect(fetch).toHaveBeenLastCalledWith('/api/roster/correspondences/discover', { method: 'POST', body: { eventId: 7, page: 1, pageSize: 50, queryPage: 2, queryPageSize: 25 } })
   expect(wrapper.text()).toContain('查询 #1')
 })
+
+it('automatically reads only the opened event first page and ignores its late response after switching', async () => {
+  let old!: (value: unknown) => void
+  const fetch = vi.fn().mockImplementationOnce(() => new Promise(resolve => { old = resolve })).mockResolvedValue({ ...result(), event: { ...result().event, id: 8 } })
+  vi.stubGlobal('$fetch', fetch)
+  wrapper = mount(EventArchiveCandidates, { props: { eventId: 7, back: '/enterprises/1?tab=review', autoLoad: true }, global: { stubs: { EventCorrespondenceDecision: true, TablePagination: Pagination } } })
+  await flushPromises()
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(fetch.mock.calls[0]![1].body).toEqual({ eventId: 7, page: 1, pageSize: 50, queryPage: 1, queryPageSize: 25 })
+  expect(wrapper.text()).not.toContain('本页无对应候选')
+  await wrapper.setProps({ eventId: 8 }); await flushPromises()
+  expect(fetch).toHaveBeenCalledTimes(2)
+  old({ ...result(), rows: [], total: 99 }); await flushPromises()
+  expect(wrapper.text()).toContain('平台候选 · 51 条')
+  expect(wrapper.text()).not.toContain('99 条')
+})
+
+it('keeps an empty candidate page distinct from failed partial and complete no record query coverage', async () => {
+  const empty = { ...result(), rows: [], total: 0, coverage: { ...result().coverage, rows: ['failed', 'partial', 'no_record', 'no_candidate'].map((outcome, i) => ({ id: i + 1, interface: 'business_list', outcome, failureReason: outcome === 'failed' ? '归档查询失败原因' : null, relationCount: 0, candidateCount: 0 })) } }
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(empty))
+  wrapper = mountPanel(); await wrapper.get('[data-testid="discover-event-archives"]').trigger('click'); await flushPromises()
+  expect(wrapper.text()).toContain('本页无对应候选')
+  expect(wrapper.text()).toContain('查询失败')
+  expect(wrapper.text()).toContain('部分结果')
+  expect(wrapper.text()).toContain('完整查询无记录')
+  expect(wrapper.text()).toContain('有记录但无对应候选')
+  expect(wrapper.text()).toContain('归档查询失败原因')
+  expect(wrapper.text()).toContain('尚无查询归档')
+})
