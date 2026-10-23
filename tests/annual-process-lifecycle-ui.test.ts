@@ -31,7 +31,7 @@ function annual(eventId = 7, generation = 'scope-a', status: 'confirmed' | 'elig
 }
 function receipt(generation = 'scope-a', id = jobId): AnnualTaskReceipt { return { jobId: id, kind: 'event-annual-correspondence', state: 'queued', sourceGenerations: [{ eventId: 7, generation }] } }
 function task(status: AnnualTaskDto['status'] = 'done', generation = 'scope-a', reasons: string[] = []): AnnualTaskDto {
-  return { jobId, kind: 'event-annual-correspondence', status, progress: { done: status === 'running' ? 0 : 2, total: 2 }, errorCode: null, capabilities: { cancel: status === 'running', retry: status === 'failed' || status === 'cancelled' }, result: { ruleVersion: '1', attempt: 1, events: [{ eventId: 7, generation, status: status === 'running' ? 'running' : status === 'failed' ? 'failed' : 'done', outcomes: [101, 102].map(id => ({ stepId: String(id), status: 'created', relationId: id, reasons: [], decisionRefs: [{ id: id - 60, relationId: id, revision: 2, status: 'confirmed', requiresRevalidation: false }] })), finalQualification: { stepId: null, status: reasons.length ? 'blocked' : 'confirmed', reasons, decisionRefs: [] } }] } }
+  return { jobId, kind: 'event-annual-correspondence', status, progress: { done: status === 'running' ? 0 : 1, total: 1 }, errorCode: null, capabilities: { cancel: status === 'running', retry: status === 'failed' || status === 'cancelled' }, result: { ruleVersion: '1', attempt: 1, events: [{ eventId: 7, generation, status: status === 'running' ? 'running' : status === 'failed' ? 'failed' : 'done', outcomes: [101, 102].map(id => ({ stepId: String(id), status: 'created', relationId: id, reasons: [], decisionRefs: [{ id: id - 60, relationId: id, revision: 2, status: 'confirmed', requiresRevalidation: false }] })), finalQualification: { stepId: null, status: reasons.length ? 'blocked' : 'confirmed', reasons, decisionRefs: [] } }] } }
 }
 function fixture(overrides: (url: string, options: any) => unknown = () => undefined) {
   let submitted = false
@@ -385,4 +385,29 @@ it('stops audit pagination on invalid metadata and retains the accepted job for 
   expect(wrapper.text()).toContain('已提交，但同步读回失败')
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
   expect(posts(fetch)).toHaveLength(1)
+})
+
+it('shows a returned-state business reason once when current process and task report the same reason', async () => {
+  fixture(url => {
+    if (url.endsWith('/annual-process')) { const value=annual(7,'scope-a','none'); value.process.latestStepSummary!.status='已退回待审核'; value.process.reasons=['latest_status_not_terminal']; value.process.finalQualification!.reasons=['latest_status_not_terminal']; return Promise.resolve(value) }
+    if (url.endsWith(`/annual-correspondence-tasks/${jobId}`)) return Promise.resolve(task('done','scope-a',['latest_status_not_terminal']))
+    return undefined
+  })
+  mountReview(7); await flushPromises()
+  expect(wrapper.findAll('p').filter(p=>p.text()==='平台年度末态尚未形成可对应的终审结论，保留全部年度过程。')).toHaveLength(1)
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+})
+
+it('withholds a previous final when an explicit annual refresh fails then restores it through readback only', async () => {
+  let fail = false
+  const fetch = fixture(url=>url.endsWith('/annual-process')&&fail?Promise.reject(new Error('service offline')):undefined)
+  mountReview(7); await flushPromises()
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(1)
+  fail=true; await click('刷新年度过程')
+  expect(wrapper.text()).toContain('已提交，但同步读回失败')
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  expect(wrapper.findAll('[data-annual-step]')).toHaveLength(2)
+  fail=false; await click('重试读回')
+  expect(posts(fetch)).toHaveLength(1)
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(1)
 })

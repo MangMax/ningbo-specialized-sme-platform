@@ -61,7 +61,10 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
       }
       return true
     } catch {
-      if (current(token, id) && sequence === readSequence) readFailed.value = true
+      if (current(token, id) && sequence === readSequence) {
+        readFailed.value = true
+        if (recovery.value?.jobId && phase.value === 'synced') phase.value = 'sync-failed'
+      }
       return false
     } finally { if (current(token, id) && sequence === readSequence) reading.value = false }
   }
@@ -241,7 +244,11 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
     canRetry: computed(() => capabilitiesCurrent.value && !!task.value?.capabilities.retry),
     taskReadFailed: polling.failed, actionError, auditReadback,
     progress: computed(() => task.value ? `已处理 ${task.value.progress.done} / ${task.value.progress.total} 个事件` : ''),
-    businessReasons: computed(() => [...new Set([...(outcome.value?.finalQualification.reasons ?? []), ...(task.value?.errorCode ? [task.value.errorCode] : [])])].map(annualReasonText)),
+    businessReasons: computed(() => {
+      const process = raw.value?.process
+      const currentReasons = new Set([...(process?.reasons ?? []), ...(process?.finalQualification?.reasons ?? []), ...(process?.scopeGaps ?? []).flatMap(gap => gap.reasons)].map(annualReasonText))
+      return [...new Set([...(outcome.value?.finalQualification.reasons ?? []), ...(task.value?.errorCode ? [task.value.errorCode] : [])].map(annualReasonText))].filter(reason => !currentReasons.has(reason))
+    }),
     refresh, retrySubmit: submit, retryReadback: synchronize, retryTask: () => taskAction('retry'), cancel: () => taskAction('cancel'), retryTaskRead: () => recovery.value?.jobId && watchJob(recovery.value.jobId),
   }
 }
