@@ -49,13 +49,14 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
     if (!mounted || id == null) return true
     const sequence = ++readSequence, request = { ...target.value }
     readController?.abort(); const controller = new AbortController(); readController = controller
-    reading.value = true; readFailed.value = false
+    reading.value = true
     try {
       const page = await $fetch<EventAnnualProcessPage>(`/api/roster/events/${id}/annual-process`, { query: request, signal: controller.signal })
       if (!current(token, id) || sequence !== readSequence) return false
       if (page.process.event.id !== id || !page.sourceGeneration || page.page !== request.page || page.pageSize !== request.pageSize || !Array.isArray(page.process.steps)) throw new Error('annual_read_mismatch')
       const sourceChanged = raw.value?.sourceGeneration !== page.sourceGeneration
       raw.value = page
+      readFailed.value = false
       if (sourceChanged && enabled.value && recovery.value?.jobId && recovery.value.generation !== page.sourceGeneration) {
         phase.value = 'blocked'; auditReadback.value = []; watchJob(recovery.value.jobId)
       }
@@ -146,9 +147,18 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
         found = audit.rows.some(row => row.correspondenceId === pointId && row.resultingRevision === point.revision)
         if (!found && page * audit.pageSize >= audit.total) throw new Error('audit_readback_missing')
       }
-      return { id: point.id, revision: point.revision, status: point.status }
+      return point
     }))
-    if (current(token, id)) auditReadback.value = points
+    if (!current(token, id)) return false
+    auditReadback.value = points.map(({ id, revision, status }) => ({ id, revision, status }))
+    // Generation deliberately excludes decisions. A newer/manual decision can
+    // invalidate the annual qualification without changing the source scope.
+    const qualification = raw.value?.process.finalQualification
+    return qualification?.status !== 'confirmed' || qualification.decisionRefs.length > 0 && qualification.decisionRefs.every(ref => {
+      const point = points.find(point => point.id === ref.id)
+      return ref.status === 'confirmed' && point?.revision === ref.revision && point.status === 'confirmed'
+        && point.relationId === ref.relationId && point.requiresRevalidation === false && point.endedAt == null
+    })
   }
   async function synchronize() {
     if (syncing) return syncing
@@ -163,9 +173,17 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
         if (raw.value?.sourceGeneration !== recovery.value.generation) {
           phase.value = 'blocked'; watchJob(jobId); return
         }
-        await auditCurrentTask(token, id)
+        let consistent = await auditCurrentTask(token, id)
+        if (!consistent && current(token, id) && recovery.value?.jobId === jobId) {
+          // Reconcile the current annual decision refs once, using reads only.
+          // Persistent races/failures retain the job for an explicit read retry.
+          await refreshCorrespondenceViews()
+          if (!current(token, id) || recovery.value?.jobId !== jobId) return
+          consistent = await auditCurrentTask(token, id)
+        }
         if (current(token, id) && recovery.value?.jobId === jobId) {
           if (raw.value?.sourceGeneration !== recovery.value.generation) { phase.value = 'blocked'; watchJob(jobId) }
+          else if (!consistent) throw new Error('annual_decision_readback_changed')
           else phase.value = 'synced'
         }
       } catch { if (current(token, id) && recovery.value?.jobId === jobId) phase.value = 'sync-failed' }
@@ -238,7 +256,11 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
   const outcome = computed(() => task.value?.result?.events.find(event => event.eventId === eventId()))
   const capabilitiesCurrent = computed(() => enabled.value && raw.value?.sourceGeneration === recovery.value?.generation && !acting.value)
   return {
-    view: computed(() => raw.value ? presentAnnualProcess(raw.value) : null), phase, readFailed, target,
+    view: computed(() => {
+      if (!raw.value) return null
+      const view = presentAnnualProcess(raw.value)
+      return readFailed.value ? { ...view, qualification: null } : view
+    }), phase, readFailed, target,
     pending: computed(() => reading.value || acting.value || phase.value === 'syncing'),
     canCancel: computed(() => capabilitiesCurrent.value && !!task.value?.capabilities.cancel),
     canRetry: computed(() => capabilitiesCurrent.value && !!task.value?.capabilities.retry),

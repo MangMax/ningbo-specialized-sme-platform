@@ -187,7 +187,7 @@ it('ignores late annual and capability responses after selection switches and su
     if (url.endsWith('/events/8/annual-process')) return Promise.resolve(annual(8, 'scope-b', 'confirmed'))
     if (url.endsWith('/events/8/annual-correspondence-tasks')) return Promise.resolve({ ...receipt('scope-b', nextId), sourceGenerations: [{ eventId: 8, generation: 'scope-b' }] })
     if (url.endsWith(`/annual-correspondence-tasks/${nextId}`)) { const value = task('done', 'scope-b'); value.jobId = nextId; value.result!.events[0]!.eventId = 8; value.result!.events[0]!.outcomes = []; return Promise.resolve(value) }
-    if (/\/correspondences\/42$/.test(url)) return Promise.resolve({ id: 42, eventId: 8, relationId: 102, revision: 2, status: 'confirmed' })
+    if (/\/correspondences\/42$/.test(url)) return Promise.resolve({ id: 42, eventId: 8, relationId: 102, revision: 2, status: 'confirmed', requiresRevalidation: false })
     return undefined
   })
   mountReview(7); await flushPromises(); await open(8)
@@ -410,4 +410,109 @@ it('withholds a previous final when an explicit annual refresh fails then restor
   fail=false; await click('重试读回')
   expect(posts(fetch)).toHaveLength(1)
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(1)
+})
+
+it.each(['refresh', 'page', 'readback'] as const)('withdraws readonly final and parent summary after %s failure until a successful current read', async action => {
+  let fail = false, delayed: ReturnType<typeof deferred<EventAnnualProcessPage>> | null = null
+  const fetch = fixture((url, options) => {
+    if (url.endsWith('/browser-context')) return Promise.resolve({ writeEnabled: false })
+    if (url.endsWith('/annual-process')) {
+      if (fail) return Promise.reject(new Error('503 readonly annual'))
+      if (delayed) return delayed.promise
+      const value = annual(7, 'scope-a', 'confirmed'); value.page = options.query.page
+      return Promise.resolve(value)
+    }
+    return undefined
+  })
+  mountReview(7); await flushPromises()
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(1)
+  fail = true
+  if (action === 'refresh') await click('刷新年度过程')
+  else if (action === 'page') { wrapper.findComponent(AnnualProcessTimeline).vm.$emit('page', 2); await flushPromises() }
+  else { const { refreshCorrespondenceViews } = await import('../composables/useCorrespondenceReadback'); await expect(refreshCorrespondenceViews()).rejects.toThrow('readback_failed'); await flushPromises() }
+  expect(wrapper.text()).toContain('当前只读')
+  expect(wrapper.text()).toContain(`年度过程第 ${action === 'page' ? 2 : 1} 页读取失败`)
+  expect(wrapper.text()).toContain('保留第 1 页年度过程')
+  expect(wrapper.findAll('[data-annual-step]')).toHaveLength(2)
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  expect(wrapper.get('[data-testid="event-annual-summary"]').text()).not.toContain('· 已确认最终结果')
+  expect(wrapper.get('[data-annual-summary]').text()).toContain('尚无已确认最终结果')
+  fail = false; delayed = deferred<EventAnnualProcessPage>()
+  await click('刷新年度过程')
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  const recovered = annual(7, 'scope-a', 'confirmed'); recovered.page = action === 'page' ? 2 : 1
+  delayed.resolve(recovered); await flushPromises()
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(1)
+  expect(wrapper.get('[data-testid="event-annual-summary"]').text()).toContain('· 已确认最终结果')
+  expect(posts(fetch)).toHaveLength(0)
+})
+
+it.each([
+  { name: 'newer manual unlink', revision: 3, status: 'unlinked', requiresRevalidation: false },
+  { name: 'newer manual rejection', revision: 3, status: 'rejected', requiresRevalidation: false },
+  { name: 'newer candidate', revision: 3, status: 'candidate', requiresRevalidation: false },
+  { name: 'newer confirmed revision', revision: 3, status: 'confirmed', requiresRevalidation: false },
+  { name: 'newer confirmed requiring revalidation', revision: 3, status: 'confirmed', requiresRevalidation: true },
+  { name: 'same revision requiring revalidation', revision: 2, status: 'confirmed', requiresRevalidation: true },
+  { name: 'ended confirmation', revision: 3, status: 'confirmed', requiresRevalidation: false, endedAt: '2026-10-02' },
+])('withholds stale annual final on $name and retries only current reads without changing manual decisions', async point => {
+  let annualReads = 0, recovered = false
+  const fetch = fixture(url => {
+    if (url.endsWith('/annual-process')) { annualReads++; return Promise.resolve(annual(7, 'scope-a', recovered ? 'none' : 'confirmed')) }
+    if (url.endsWith('/correspondences/42')) return Promise.resolve({ id: 42, eventId: 7, relationId: 102, ...point })
+    if (url.endsWith('/42/audit')) return Promise.resolve({ rows: [{ correspondenceId: 42, resultingRevision: point.revision }], total: 1, page: 1, pageSize: 200 })
+    return undefined
+  })
+  mountReview(7); await flushPromises()
+  expect(annualReads).toBe(3) // initial, task readback, bounded mismatch reread
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  expect(wrapper.get('[data-testid="event-annual-summary"]').text()).not.toContain('· 已确认最终结果')
+  expect(wrapper.text()).toContain('已提交，但同步读回失败')
+  expect(wrapper.findComponent({ name: 'AnnualProcessReview' }).props('auditReadback')).toContainEqual({ id: 42, revision: point.revision, status: point.status })
+  recovered = true; await click('重试读回')
+  expect(wrapper.text()).toContain('已读回当前年度过程、对应与审计')
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  expect(posts(fetch)).toHaveLength(1)
+  expect(fetch.mock.calls.filter(([url, options]) => options?.method === 'POST' && !url.endsWith('/discover')).map(([url]) => url)).toEqual(['/api/roster/events/7/annual-correspondence-tasks'])
+})
+
+it('rereads a newer still-confirmed final revision and awaits its current audit before restoring final', async () => {
+  let annualReads = 0, pointReads = 0
+  const currentAudit = deferred<unknown>()
+  const fetch = fixture(url => {
+    if (url.endsWith('/annual-process')) {
+      const value = annual(7, 'scope-a', 'confirmed')
+      if (++annualReads >= 3) value.process.finalQualification!.decisionRefs[0]!.revision = 3
+      return Promise.resolve(value)
+    }
+    if (url.endsWith('/correspondences/42')) { pointReads++; return Promise.resolve({ id: 42, eventId: 7, relationId: 102, revision: 3, status: 'confirmed', requiresRevalidation: false }) }
+    if (url.endsWith('/42/audit')) return pointReads === 1 ? Promise.resolve({ rows: [{ correspondenceId: 42, resultingRevision: 3 }], total: 1, page: 1, pageSize: 200 }) : currentAudit.promise
+    return undefined
+  })
+  mountReview(7); await flushPromises()
+  expect(annualReads).toBe(3)
+  expect(pointReads).toBe(2)
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  expect(wrapper.text()).toContain('正在读回年度过程、对应与审计')
+  currentAudit.resolve({ rows: [{ correspondenceId: 42, resultingRevision: 3 }], total: 1, page: 1, pageSize: 200 }); await flushPromises()
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(1)
+  expect(wrapper.findComponent({ name: 'AnnualProcessReview' }).props('auditReadback')).toContainEqual({ id: 42, revision: 3, status: 'confirmed' })
+  expect(posts(fetch)).toHaveLength(1)
+})
+
+it('accepts current annual withdrawal after a same-generation manual unlink without resubmitting', async () => {
+  let reads = 0
+  const fetch = fixture(url => {
+    if (url.endsWith('/annual-process')) return Promise.resolve(annual(7, 'scope-a', ++reads >= 3 ? 'none' : 'confirmed'))
+    if (url.endsWith('/correspondences/42')) return Promise.resolve({ id: 42, eventId: 7, relationId: 102, revision: 3, status: 'unlinked', requiresRevalidation: false })
+    if (url.endsWith('/42/audit')) return Promise.resolve({ rows: [{ correspondenceId: 42, resultingRevision: 3 }], total: 1, page: 1, pageSize: 200 })
+    return undefined
+  })
+  mountReview(7); await flushPromises()
+  expect(reads).toBe(3)
+  expect(wrapper.text()).toContain('已读回当前年度过程、对应与审计')
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  expect(wrapper.get('[data-testid="event-annual-summary"]').text()).not.toContain('· 已确认最终结果')
+  expect(wrapper.findComponent({ name: 'AnnualProcessReview' }).props('auditReadback')).toContainEqual({ id: 42, revision: 3, status: 'unlinked' })
+  expect(posts(fetch)).toHaveLength(1)
 })
