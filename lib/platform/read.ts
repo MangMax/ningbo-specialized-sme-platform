@@ -16,6 +16,7 @@ import * as schema from '../../db/schema'
 import { MAX_PAGE_SIZE } from '../query'
 import { sourcePositionForSequence, RDJB_TITLE_CODES } from './recognized-evidence'
 import type { PlatformInterface } from '../labels'
+import { normalizePlatformRelation, type PlatformNormalizationConflict } from './normalization'
 
 export interface PlatformQueryFilter {
   queryId?: number
@@ -35,6 +36,7 @@ export interface PlatformQueryFilter {
 }
 
 export interface PlatformRelationRow {
+  normalizationConflicts?: PlatformNormalizationConflict[]
   sourceRdjb?: string | null
   sourcePage?: number | null
   id: number
@@ -209,7 +211,8 @@ function listPlatformQueriesSnapshot(
     : []
 
   const byQuery = new Map<number, PlatformRelationRow[]>()
-  for (const { relation, matchedName } of relations) {
+  for (const { relation: archivedRelation, matchedName } of relations) {
+    const relation = normalizePlatformRelation(pageQueries.find(q => q.id === archivedRelation.queryId)!.interface, archivedRelation)
     const row: PlatformRelationRow = {
       ...sourcePositionForSequence(pageQueries.find(q => q.id === relation.queryId)?.collectionEvidence, relation.sequenceNo),
       id: relation.id,
@@ -232,6 +235,7 @@ function listPlatformQueriesSnapshot(
       matchBasis: relation.matchBasis,
       verificationStatus: relation.verificationStatus,
       rawFields: relation.rawFields ?? null,
+      normalizationConflicts: relation.normalizationConflicts,
     }
     const bucket = byQuery.get(relation.queryId)
     if (bucket) bucket.push(row)

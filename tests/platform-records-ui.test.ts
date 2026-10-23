@@ -12,6 +12,18 @@ afterAll(() => { if (nativeAnimate) Object.defineProperty(Element.prototype, 'an
 const query = {id: 1,interface:'business_list',queryKey:'9133021274738281XA',rdjb:'2',queriedAt:'2026-10-16',status:'success',failureReason:null,relationCount:1}
 const record = {id: 1,queryId:1,sequenceNo:1,relationKey:'SQ001',nameRaw:'平台原名',usccRaw:'9133021274738281XA',province:'宁波市',status:'待审核',batch:'2025-1',declareKind:'update',appliedAt:'2025-03-01',awardBatchLabel:'2022年第一批',year:2025,matchBasis:'uscc',verificationStatus:'confirmed'}
 describe('面向用户的平台记录表',()=>{
+ it('冲突行明确待核并在原行详情展示两边事实',async()=>{
+  const view=mount(PlatformRecords,{attachTo:document.body,props:{queries:[query],relations:[{...record,status:null,normalizationConflicts:[{field:'status',storedValue:'已退回',rawValue:'终审通过'}],rawFields:{cszt:'终审通过'}}]}})
+  try {
+   expect(view.get('[data-testid="platform-relation"]').text()).toContain('字段冲突，待核')
+   await view.get('[data-testid="platform-row-details-toggle"]').trigger('click')
+   await flushPromises()
+   const dialog=new DOMWrapper(document.body).get('[data-testid="platform-row-details"]')
+   expect(dialog.text()).toContain('办理状态')
+   expect(dialog.text()).toContain('已存：已退回')
+   expect(dialog.text()).toContain('原档：终审通过')
+  } finally { view.unmount() }
+ })
  it('逐条表格展示原始企业、状态与批次，并将接口参数译成业务名称',()=>{
   const view=mount(PlatformRecords,{props:{queries:[query],relations:[record]}})
   expect(view.find('table').exists()).toBe(true)

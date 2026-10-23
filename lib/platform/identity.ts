@@ -32,7 +32,7 @@ export interface PlatformRelationRecord {
   usccRaw: string | null
   /** 所属省市名称(`szsfmc`)。 */
   province: string | null
-  /** 存续状态(`cszt`)。 */
+  /** 办理状态(`cszt`)，与查询是否成功各自独立。 */
   status: string | null
   /** 维护批次(`whpc`)。 */
   batch: string | null
@@ -61,6 +61,7 @@ function text(value: unknown): string | null {
 }
 
 function toYear(value: unknown): number | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null
   const n = Number(value)
   return Number.isInteger(n) && n > 0 ? n : null
 }
@@ -86,7 +87,7 @@ export function relationFromRow(
     status: text(row.cszt),
     batch: text(row.whpc),
     // 已知取值转代号;非字典取值**原样保留**(不因未知取值崩溃,由写入侧标待核)。
-    declareKind: rawKind ? (DECLARE_KINDS[rawKind] ?? rawKind) : null,
+    declareKind: rawKind ? (Object.hasOwn(DECLARE_KINDS, rawKind) ? DECLARE_KINDS[rawKind]! : rawKind) : null,
     appliedAt: text(row.sqsj),
     awardBatchLabel: text(row.personuuid),
     year: toYear(row.year),

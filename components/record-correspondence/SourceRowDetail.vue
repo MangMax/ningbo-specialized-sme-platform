@@ -4,6 +4,7 @@ import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_
 import { platformBusinessFields } from '~~/lib/roster/platform-records'
 import type { ExportRowSource, RelationSource } from '~~/lib/roster/correspondence-view'
 import PlatformQueryProvenance from '@/components/PlatformQueryProvenance.vue'
+import PlatformFieldConflicts from '@/components/PlatformFieldConflicts.vue'
 import { Badge } from '@/components/ui/badge'
 
 const props = defineProps<{ relation?: RelationSource | null; exportRow?: ExportRowSource | null }>()
@@ -18,6 +19,7 @@ const fields = computed(() => platformBusinessFields(props.relation?.rawFields ?
         <strong>{{ PLATFORM_INTERFACES[source] ?? '平台接口记录' }} · 原行 {{ relation.sequenceNo }}</strong>
         <Badge variant="outline">{{ PLATFORM_QUERY_STATUSES[relation.query.status] ?? '状态待核' }}</Badge>
       </div>
+      <PlatformFieldConflicts :conflicts="relation.normalizationConflicts" />
       <dl class="mt-2 grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 break-words [overflow-wrap:anywhere] sm:grid-cols-[auto_minmax(0,1fr)]">
         <dt class="text-muted-foreground">企业原名</dt><dd>{{ relation.nameRaw ?? '未提供' }}</dd>
         <dt class="text-muted-foreground">信用代码原值</dt><dd>{{ relation.usccRaw ?? '未提供' }}</dd>
