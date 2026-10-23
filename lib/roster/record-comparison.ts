@@ -1,10 +1,13 @@
 import { z } from 'zod'
 import { TITLE_ORDER } from '../labels'
 
+// Negative official source refs are existing record_evidence identities, never DB foreign keys.
+const officialSourceRef = z.number().int().safe().refine(id => id !== 0)
+
 export const recordComparisonInput = z.object({
   queryIds: z.array(z.number().int().positive()).min(1).max(500),
   exportBatchIds: z.array(z.number().int().positive()).max(100),
-  officialSourceDocumentIds: z.array(z.number().int().positive()).min(1).max(500),
+  officialSourceDocumentIds: z.array(officialSourceRef).min(1).max(500),
   proofIds: z.array(z.number().int().positive()).max(500).optional(),
   asOf: z.iso.datetime({ offset: true }).optional(),
   enterpriseId: z.number().int().positive().optional(),
@@ -17,10 +20,10 @@ export type RecordComparisonInput = z.infer<typeof recordComparisonInput>
 export type HistoricalClassification = NonNullable<RecordComparisonInput['classification']>
 export const comparisonSourceCatalogInput = z.object({
   kind: z.enum(['query', 'export_batch', 'official_document']).optional(),
-  ids: z.array(z.number().int().positive()).max(500).optional(),
+  ids: z.array(officialSourceRef).max(500).optional(),
   page: z.number().int().positive().default(1),
   pageSize: z.number().int().min(1).max(200).default(50),
-}).strict().refine(input => input.ids === undefined || input.kind !== undefined, { message: 'kind is required for explicit source IDs' })
+}).strict().refine(input => input.ids === undefined || input.kind !== undefined, { message: 'kind is required for explicit source IDs' }).refine(input => input.kind === 'official_document' || !input.ids?.some(id => id < 0), { message: 'negative references are only valid for official documents' })
 export type ComparisonSourceCatalogInput = z.infer<typeof comparisonSourceCatalogInput>
 
 /** Query parameters are repeated or CSV IDs; never silently select every persisted source. */
@@ -29,7 +32,7 @@ export function parseRecordComparisonQuery(query: Record<string, unknown>): Reco
     if (value === undefined) return undefined
     if (value === '') return []
     const parts = (Array.isArray(value) ? value : [value]).flatMap(item => String(item).split(','))
-    if (parts.some(part => !/^\d+$/.test(part.trim()))) return [NaN]
+    if (parts.some(part => !/^-?\d+$/.test(part.trim()))) return [NaN]
     return parts.map(part => Number(part.trim()))
   }
   const integer = (value: unknown): number | undefined => value === undefined ? undefined : /^\d+$/.test(String(value)) ? Number(value) : NaN

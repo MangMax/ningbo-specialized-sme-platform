@@ -39,6 +39,10 @@ function returnedBytes(db: ReturnType<typeof useDb>) {
 it('catalog pages preserve scope metadata without materializing archive bodies', () => {
   const db = fixture()
   const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Official', path: 'synthetic.pdf' }).returning().get()
+  const owner = db.insert(schema.enterprise).values({ name: 'Formal source fixture', nameNorm: 'Formal source fixture' }).returning().get()
+  const record = db.insert(schema.record).values({ enterpriseId: owner.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
+  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award' }).returning().get()
+  db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path }).run()
   const ids: number[] = []
   for (let n = 0; n < 12; n++) ids.push(db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: `q:${n}`, rdjb: '2', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'RAW'.repeat(65536), collectionEvidence: { completeness: 'partial', fullRange: false, effectiveConditions: { combination: 'and', name: 'Selected' }, rows: [{ payload: 'BODY'.repeat(32768) }] } as never }).returning({ id: schema.platformQuery.id }).get().id)
   const batch = db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'test.xlsx', sha256: 'a'.repeat(64), importStatus: 'failed' }).returning().get()
