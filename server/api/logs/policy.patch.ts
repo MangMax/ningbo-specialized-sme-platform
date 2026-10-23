@@ -1,10 +1,20 @@
 import { createLoggingRoute } from '../../utils/logging-route'
-defineRouteMeta({ openAPI: { tags: ['日志'], summary: '修改独立日志保留与采集策略', description: '必须 API token。JSON {retentionDays:1..365,maxBytes:1048576..4294967296,collection?:{sources?:Partial<11来源规则>,integrations?:Partial<11已接集成规则>}}；规则{enabled:boolean,minLevel:debug|info|warn|error}。省略的规则保留已有值；双维同时允许且达到更严格级别才采集。未知key拒绝。只影响后续批次，不删除历史；规则存于独立日志库。请求最大4096字节。', security: [{ bearerAuth: [] }],
+defineRouteMeta({ openAPI: { tags: ['日志'], summary: '修改独立日志保留与采集策略', description: '必须 API token。JSON {retentionDays:1..365,maxBytes:1048576..4294967296,collection?:{sources?:Partial<11来源规则>,integrations?:Partial<11已接集成规则>}}；规则{enabled:boolean,minLevel:debug|info|warn|error}。fieldControls?:{http?:{debug?,info?,warn?,error?:{httpMethod?,httpRoute?,statusCode?,durationMs?:boolean}}}为闭合深层partial。字段仅作用source=http，省略保留已有值，默认全true；省略的规则保留已有值；双维同时允许且达到更严格级别才采集。未知key拒绝。只影响后续批次，不删除历史；规则存于独立日志库。请求原始body UTF-8最多4096字节（含空白），非仅Content-Length声明；JSON解析失败400且no-store。', security: [{ bearerAuth: [] }],
   requestBody: { required: true, content: { 'application/json': { schema: {
     type: 'object', additionalProperties: false, required: ['retentionDays', 'maxBytes'],
     properties: {
       retentionDays: { type: 'integer', minimum: 1, maximum: 365 },
       maxBytes: { type: 'integer', minimum: 1048576, maximum: 4294967296 },
+      fieldControls: {
+        type: 'object', additionalProperties: false, properties: {
+          http: { type: 'object', additionalProperties: false, properties: {
+            debug: { type: 'object', additionalProperties: false, properties: { httpMethod: { type: 'boolean' }, httpRoute: { type: 'boolean' }, statusCode: { type: 'boolean' }, durationMs: { type: 'boolean' } } },
+            info: { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/fieldControls/properties/http/properties/debug' },
+            warn: { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/fieldControls/properties/http/properties/debug' },
+            error: { $ref: '#/paths/~1api~1logs~1policy/patch/requestBody/content/application~1json/schema/properties/fieldControls/properties/http/properties/debug' },
+          } },
+        },
+      },
       collection: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -42,5 +52,5 @@ defineRouteMeta({ openAPI: { tags: ['日志'], summary: '修改独立日志保�
       },
     },
   } } } },
-  responses: { 200: { description: '有效策略、完整默认规则、catalog与revision' }, 400: { description: '无效策略' }, 401: { description: '默认拒绝' }, 409: { description: 'policy_capacity_pending：有界清理未完成缩容，旧策略仍生效；可显式重试' } } } })
+  responses: { 200: { description: '有效策略、完整fieldControls、HTTP catalog.profiles与共享revision；省略保持、同叶最后提交生效；无CAS', content: { 'application/json': { schema: { $ref: '#/paths/~1api~1logs~1policy/get/responses/200/content/application~1json/schema' } } } }, 400: { description: '无效策略' }, 401: { description: '默认拒绝，鉴权前不读body或获取store' }, 413: { description: 'log_body_too_large：缺失/非法Content-Length或实际body超过4096字节' }, 409: { description: 'policy_capacity_pending：有界清理未完成缩容，旧策略仍生效；可显式重试' } } } })
 export default createLoggingRoute('setPolicy')
