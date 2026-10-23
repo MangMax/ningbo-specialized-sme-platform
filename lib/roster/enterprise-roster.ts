@@ -1,5 +1,6 @@
 import { readQueryAssessment, readQueryCoverage, type QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
+import { normalizePlatformRelation, type PlatformNormalizationConflict } from '../platform/normalization'
 import { readEnterpriseSnapshot, readEnterpriseHistories, enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
@@ -803,6 +804,7 @@ export interface RosterPlatformQueryRow {
 }
 
 export interface RosterPlatformRelationRow {
+  normalizationConflicts?: PlatformNormalizationConflict[]
   /** Recognized source row's persisted owner; null remains unmatched even under an exact query key. */
   enterpriseId?: number | null
   rawFields?: Record<string, unknown> | null
@@ -1087,7 +1089,8 @@ function enterpriseDetail(db: Db, id: number): RosterEnterpriseDetail | null {
     })),
     platform: {
       queries,
-      relations: relations.map((r): RosterPlatformRelationRow => ({
+      relations: relations.map(archived => normalizePlatformRelation(queriesById.get(archived.queryId)!.interface, archived)).map((r): RosterPlatformRelationRow => ({
+        normalizationConflicts: r.normalizationConflicts,
         ...(recognizedQueryIds.has(r.queryId) ? { enterpriseId: r.enterpriseId } : {}),
         id: r.id,
         queryId: r.queryId,

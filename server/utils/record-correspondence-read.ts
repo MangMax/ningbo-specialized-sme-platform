@@ -2,6 +2,7 @@ import { asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
+import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { getRecordCorrespondenceAudit, listRecordCorrespondenceRefs, type CorrespondenceRead } from './record-correspondence'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -90,7 +91,7 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
   }))
   const relationSources = new Map(relations.map(({ relation, query }) => {
     const position = sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo)
-    return [relation.id, { ...relation, sourceRdjb: position.sourceRdjb, sourcePage: position.sourcePage, rawFields: sanitizeEvidence(relation.rawFields), query: { ...query, failureReason: sanitizeEvidence(query.failureReason), collectionEvidence: safeCollectionEvidence(query.collectionEvidence) }, correspondences: byRelation.get(relation.id) ?? [] }] as const
+    return [relation.id, { ...normalizePlatformRelation(query.interface, relation), sourceRdjb: position.sourceRdjb, sourcePage: position.sourcePage, rawFields: sanitizeEvidence(relation.rawFields), query: { ...query, failureReason: sanitizeEvidence(query.failureReason), collectionEvidence: safeCollectionEvidence(query.collectionEvidence) }, correspondences: byRelation.get(relation.id) ?? [] }] as const
   }))
   const exportSources = new Map(exports.map(({ row, batch }) => [row.id, { ...row, rawFields: sanitizeEvidence(row.rawFields), batch: sanitizeEvidence(batch), correspondences: byExport.get(row.id) ?? [] }] as const))
   const read = (kind: SourceKind, id: number) => kind === 'event' ? eventSources.get(id) ?? null : kind === 'relation' ? relationSources.get(id) ?? null : exportSources.get(id) ?? null
