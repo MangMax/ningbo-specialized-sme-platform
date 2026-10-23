@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Eye, FileText } from '@lucide/vue'
 import type { CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
 import { CORRESPONDENCE_ROLES, correspondenceStatusText } from '~~/lib/roster/correspondence-view'
 import { groupEventEdges, humanRecordTime, isConfirmedSourceEdge, isCurrentContextEdge } from '~~/lib/roster/record-ledger'
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES } from '~~/lib/labels'
-import { evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
-import { fileUrl, fileNameOf, isPreviewable } from '~~/lib/preview'
+import { fileNameOf } from '~~/lib/preview'
+import OfficialEvidence from './OfficialEvidence.vue'
 import SourceReader from './SourceReader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -79,8 +78,6 @@ function onDialogCloseAutoFocus(event: Event) {
   if (eventId != null) emit('event-navigate', eventId)
 }
 
-const pageState = (evidence: OfficialEvidence) => evidencePageState(evidence.sourceFile, evidence.page)
-const pageHref = (evidence: OfficialEvidence) => evidencePreviewHref({ sourceFile: evidence.sourceFile, page: evidence.page, back: props.back })
 function rememberPageReturn(event: MouseEvent) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   emit('page-open', props.event.id, event)
@@ -104,30 +101,7 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
         <p v-if="!evidence.length" class="text-muted-foreground">此事件未记录公布文件出处。</p>
         <ul v-else class="flex flex-col gap-2">
           <li v-for="(item, index) in evidence" :key="`${item.sourceFile}:${item.listNo}:${index}`" class="min-w-0 border-t pt-2 first:border-t-0 first:pt-0">
-            <div class="flex items-start gap-2">
-              <FileText class="text-muted-foreground mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <div class="min-w-0 flex-1">
-                <p class="font-medium break-words">{{ fileNameOf(item.sourceFile) }}</p>
-                <p class="text-muted-foreground">
-                  <span v-if="item.listNo != null">序号 {{ item.listNo }} · </span>
-                  <NuxtLink
-                    v-if="pageState(item) === 'assigned'"
-                    :to="pageHref(item)"
-                    class="text-primary tabular-nums underline underline-offset-2 hover:no-underline"
-                    @click="rememberPageReturn"
-                  >第 {{ item.page }} 页</NuxtLink>
-                  <span v-else-if="pageState(item) === 'pending'">页码待核</span>
-                  <span v-else>这类文件没有可复核的页码</span>
-                  <span v-if="item.attachment" class="text-muted-foreground"> · {{ item.attachment }}</span>
-                </p>
-                <div class="mt-1 flex flex-wrap items-center gap-2">
-                  <Button v-if="isPreviewable(item.sourceFile)" variant="outline" size="sm" class="h-7 gap-1 px-2 text-[13px]" @click="emit('preview', item)">
-                    <Eye class="size-3.5" />查看原文件
-                  </Button>
-                  <a v-else :href="fileUrl(item.sourceFile)" target="_blank" rel="noopener" class="text-primary underline underline-offset-2">下载原文件</a>
-                </div>
-              </div>
-            </div>
+            <OfficialEvidence :evidence="item" :back="back" preview-in-place @preview="emit('preview', item)" @page-open="rememberPageReturn" />
           </li>
         </ul>
       </section>

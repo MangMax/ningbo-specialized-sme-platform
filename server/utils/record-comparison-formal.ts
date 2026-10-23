@@ -29,8 +29,8 @@ export function* comparisonFormalCounts(db: ReturnType<typeof useDb>) {
 /** Events outside selected documents are uniformly unresolved. Only hydrate
  * them when row filters or later-process counts require their facts. No name or
  * USCC lookup collapses distinct official record/enterprise identities. */
-export function* iterateComparisonFormalEvents(db: ReturnType<typeof useDb>, documentIds: number[], input: RecordComparisonInput, laterOwners: Array<{ enterpriseId: number | null; titleCode: string }>) {
-  const params: Array<number | string> = [JSON.stringify(documentIds)]
+export function* iterateComparisonFormalEvents(db: ReturnType<typeof useDb>, documentPaths: string[], input: RecordComparisonInput, laterOwners: Array<{ enterpriseId: number | null; titleCode: string }>) {
+  const params: Array<number | string> = [JSON.stringify(documentPaths)]
   const rowScope: string[] = []
   if (input.enterpriseId != null) { rowScope.push('r.enterprise_id = ?'); params.push(input.enterpriseId) }
   if (input.titleCode) { rowScope.push('r.title_code = ?'); params.push(input.titleCode) }
@@ -38,7 +38,7 @@ export function* iterateComparisonFormalEvents(db: ReturnType<typeof useDb>, doc
   const rows = db.$client.prepare(`
     with selected_events as (
       select evidence.record_event_id as id from record_evidence evidence
-      where evidence.source_file in (select path from source_document where id in (select value from json_each(?)))
+      where evidence.source_file in (select value from json_each(?))
     ), relevant_records as (
       select r.id from record r where ${rowScope.join(' and ') || '1'}
       union select r.id from json_each(?) later join record r

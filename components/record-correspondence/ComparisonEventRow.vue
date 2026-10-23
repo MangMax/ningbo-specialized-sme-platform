@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { FileText } from '@lucide/vue'
 import type { RecordComparisonResult } from '~~/lib/roster/record-comparison-view'
 import { COMPARISON_CLASSES, comparisonReasonText } from '~~/lib/roster/record-comparison-view'
 import { correspondenceStatusText, eventDecisionText } from '~~/lib/roster/correspondence-view'
 import { humanRecordTime } from '~~/lib/roster/record-ledger'
 import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
-import { fileNameOf } from '~~/lib/preview'
-import { evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import SourceReader from './SourceReader.vue'
+import OfficialEvidence from './OfficialEvidence.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -60,18 +58,7 @@ const classificationVariant = computed(() => props.row.classification === 'histo
         <h4 class="text-muted-foreground mb-1.5 text-xs font-medium">正式文件</h4>
         <ul v-if="row.evidence.length" class="flex flex-col gap-1.5 text-[13px]">
           <li v-for="evidence in row.evidence" :key="evidence.id" class="flex min-w-0 items-start gap-2">
-            <FileText class="text-muted-foreground mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            <div class="min-w-0">
-              <p class="font-medium break-words">{{ fileNameOf(evidence.sourceFile) }}</p>
-              <p class="text-muted-foreground">
-                <span v-if="evidence.listNo != null">序号 {{ evidence.listNo }} · </span>
-                <NuxtLink v-if="evidencePageState(evidence.sourceFile, evidence.page) === 'assigned'" :to="evidencePreviewHref({ sourceFile: evidence.sourceFile, page: evidence.page, back: returnTo })" class="text-primary tabular-nums underline underline-offset-2" @click="rememberReturn">第 {{ evidence.page }} 页</NuxtLink>
-                <span v-else-if="evidencePageState(evidence.sourceFile, evidence.page) === 'pending'">页码待核</span>
-                <span v-else>这类文件没有可复核页</span>
-                <span v-if="evidence.attachment"> · {{ evidence.attachment }}</span>
-                <span v-if="!evidence.inSelectedSource"> · 未选入本次范围</span>
-              </p>
-            </div>
+            <OfficialEvidence :evidence="evidence" :back="returnTo" @page-open="rememberReturn" />
           </li>
         </ul>
         <p v-else class="text-muted-foreground text-[13px]">未记录文件出处。</p>

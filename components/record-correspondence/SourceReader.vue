@@ -4,6 +4,7 @@ import { useRecordSource } from '~/composables/useRecordSource'
 import { eventDecisionText, type EventSource, type ExportRowSource, type RelationSource, type SourceKind } from '~~/lib/roster/correspondence-view'
 import { isCurrentContextEdge } from '~~/lib/roster/record-ledger'
 import { TITLES } from '~~/lib/labels'
+import OfficialEvidence from './OfficialEvidence.vue'
 import CorrespondenceItem from './CorrespondenceItem.vue'
 import SourceRowDetail from './SourceRowDetail.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -44,6 +45,11 @@ const eventSections = computed(() => {
       <template v-if="event">
         <p class="text-sm font-medium">{{ TITLES[event.record.titleCode] ?? event.record.titleCode }} · {{ eventDecisionText(event) }}</p>
         <p v-if="!event.evidence.length" class="text-muted-foreground text-[13px]">本记录未记录正式文件出处。</p>
+        <ul v-if="event.evidence.length" class="flex min-w-0 flex-col gap-3" aria-label="本记录的正式文件出处">
+          <li v-for="(item, index) in event.evidence" :key="index" class="min-w-0">
+            <OfficialEvidence :evidence="item" :back="returnTo ?? ''" />
+          </li>
+        </ul>
         <section aria-label="本记录的平台来源">
           <h4 class="mb-2 text-sm font-medium">本记录的平台来源（含未确认）</h4>
           <ul v-if="eventSections.sources.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in eventSections.sources" :key="edge.id" :edge="edge" :return-to="returnTo" @event-navigate="emit('event-navigate', $event)" /></ul>
