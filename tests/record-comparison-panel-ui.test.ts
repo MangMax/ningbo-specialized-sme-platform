@@ -357,3 +357,18 @@ it('retains a successful empty result and its original source scope after target
   expect(wrapper.get('[aria-label="目标结果范围"]').text()).toContain('同一事件原行陈述冲突')
   expect(wrapper.get('[data-testid="shown-result"]').attributes('return-to')).toContain('queryIds=7')
 })
+
+it('refreshes correspondence badges without closing the open original row dialog', async () => {
+  const { refreshCorrespondenceViews } = await import('../composables/useCorrespondenceReadback')
+  let status = 'confirmed'
+  const row = () => ({ event: { id: 298, eventType: 'award', year: 2021 }, record: { enterpriseId: 2516, titleCode: 'specialized_sme', nameRaw: '合成企业' }, evidence: [], classification: 'unresolved', reasons: [], correspondences: [{ id: 575, relationId: 3130, status, requiresRevalidation: false }], platformRows: [{ id: 3130, queryId: 2772, interface: 'business_list', status: '终审通过' }] })
+  vi.stubGlobal('$fetch', vi.fn(async () => ({ ...result(), rows: [row()] })))
+  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, ComparisonEventRow: false, SourceReader: { template: '<div>原行已读取</div>' }, NuxtLink: { template: '<a><slot /></a>' } } } })
+  await chooseSources()
+  await wrapper.findAll('button').find(button => button.text() === '查看原始记录')!.trigger('click'); await flushPromises()
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('原行已读取')
+  status = 'unlinked'
+  await refreshCorrespondenceViews(); await flushPromises()
+  expect(wrapper.text()).toContain('已解除')
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('原行已读取')
+})

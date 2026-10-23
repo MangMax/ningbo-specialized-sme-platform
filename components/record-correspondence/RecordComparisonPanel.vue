@@ -4,6 +4,7 @@ import { GitCompareArrows, RefreshCw } from '@lucide/vue'
 import { COMPARISON_CLASSES, comparisonRequest, comparisonRouteFromQuery, comparisonRouteKey, comparisonRouteQuery, comparisonSelectionQuery, instantFromLocalDateTime, localDateTimeForInstant, type ComparisonRouteState, type ComparisonSelection, type ComparisonSource, type RecordComparisonResult } from '~~/lib/roster/record-comparison-view'
 import { useEvidencePreviewScrollRestore } from '~~/lib/roster/evidence-preview-return'
 import { humanRecordTime } from '~~/lib/roster/record-ledger'
+import { useCorrespondenceReadback } from '~/composables/useCorrespondenceReadback'
 import ComparisonSourcePicker from './ComparisonSourcePicker.vue'
 import ComparisonProofPicker from './ComparisonProofPicker.vue'
 import ComparisonEventRow from './ComparisonEventRow.vue'
@@ -124,7 +125,8 @@ function scrollToResults(instant = false) {
   resultsHeader.value?.scrollIntoView?.({ block: 'start', behavior: instant || reduced ? 'auto' : 'smooth' })
 }
 
-async function load() {
+useCorrespondenceReadback(async () => { await load(true); return !error.value })
+async function load(preserveOpenSources = false) {
   const current = ++requestId
   const target = committed.value
   if (!target.selection.queryIds.length || !target.selection.officialSourceDocumentIds.length) {
@@ -144,7 +146,7 @@ async function load() {
     if (current !== requestId) return
     displayed.value = result
     displayedScope.value = { ...target, selection: copySelection(target.selection) }
-    resultVersion.value++
+    if (!preserveOpenSources) resultVersion.value++
     if (shouldReveal) pulseResult()
   } catch {
     if (current === requestId) error.value = true

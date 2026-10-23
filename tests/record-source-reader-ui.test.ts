@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SourceReader from '../components/record-correspondence/SourceReader.vue'
 
 const event = { id: 9, recordId: 2, eventType: 'award', year: 2022, batchSeq: 1, decidedYear: 2022, reviewOutcome: null,
@@ -16,6 +17,8 @@ function render(kind: 'event' | 'relation', id: number) {
   mounted.push(wrapper)
   return wrapper
 }
+// Source reading is tested with browser write capability disabled.
+beforeEach(() => vi.stubGlobal('useState', () => ref(false)))
 afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount(); vi.unstubAllGlobals() })
 
 describe('record source reader public interaction', () => {

@@ -21,7 +21,7 @@ export type CorrespondenceEdge =
   | { type: 'process_export_context'; relationId: number; exportRowId: number; role: 'current_snapshot_context' }
   | { type: 'recognized_export'; relationId: number; exportRowId: number; role: 'same_current_row' | 'candidate_same_current_row' }
 export type CorrespondenceOperation =
-  | { action: 'create'; edge: CorrespondenceEdge; status: 'candidate' | 'confirmed' }
+  | { action: 'create'; edge: CorrespondenceEdge; status: 'candidate' | 'confirmed' | 'rejected' }
   | { action: 'decide'; correspondenceId: number; expectedRevision: number; status: 'confirmed' | 'rejected' | 'unlinked' }
   | { action: 'correct'; correspondenceId: number; expectedRevision: number; edge: CorrespondenceEdge }
 export interface CorrespondenceRequest {
@@ -264,7 +264,13 @@ function buildPlan(db: Executor, request: CorrespondenceRequest) {
       created.add(key)
       const existing = db.select().from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.edgeKey, key)).get()
       if (existing) {
-        if (op.action === 'correct' && existing.id === op.correspondenceId && existing.status === 'confirmed') {
+        if (op.action === 'correct' && existing.status === 'candidate') {
+          if (touched.has(existing.id)) fail('ambiguous_candidate', 'One plan cannot mutate the same replacement twice')
+          touched.add(existing.id)
+          if (existing.sourceFingerprint !== source.sourceFingerprint) fail('plan_mismatch', 'Replacement candidate source changed; revalidation required')
+          targets.push({ edge: op.edge, targetIdentity: source.targetIdentity, sourceFingerprint: source.sourceFingerprint, confirmId: existing.id, confirmRevision: existing.revision })
+          impact.audit++
+        } else if (op.action === 'correct' && existing.id === op.correspondenceId && existing.status === 'confirmed') {
           if (existing.revision !== op.expectedRevision) fail('stale_revision', 'Correspondence revision changed')
           if (existing.sourceFingerprint === source.sourceFingerprint) fail('ambiguous_candidate', 'Same edge has no changed source evidence to revalidate')
           targets.push({ edge: op.edge, targetIdentity: source.targetIdentity, enterpriseId: source.enterpriseId, titleCode: source.titleCode, sourceFingerprint: source.sourceFingerprint, reconfirmId: existing.id })
@@ -279,7 +285,7 @@ function buildPlan(db: Executor, request: CorrespondenceRequest) {
       } else {
         targets.push({ edge: op.edge, targetIdentity: source.targetIdentity, enterpriseId: source.enterpriseId, titleCode: source.titleCode, sourceFingerprint: source.sourceFingerprint })
         impact.created++
-        impact.audit += op.action === 'correct' || op.status === 'confirmed' ? 2 : 1
+        impact.audit += op.action === 'correct' || op.status !== 'candidate' ? 2 : 1
       }
     }
     if (op.action === 'decide' || op.action === 'correct') {
@@ -329,7 +335,7 @@ export function preflightRecordCorrespondences(db: Db, request: CorrespondenceRe
 function addAudit(tx: Tx, row: StoredCorrespondence, batchId: number, request: CorrespondenceRequest, fromStatus: string | null, toStatus: string, expectedRevision: number, decidedAt: string) {
   tx.insert(schema.recordCorrespondenceAudit).values({ correspondenceId: row.id, batchId, idempotencyKey: request.idempotencyKey, fromStatus, toStatus, expectedRevision, resultingRevision: expectedRevision + 1, actorType: request.actor.type, actorId: request.actor.id, basis: request.basis, ruleId: request.ruleId, ruleVersion: request.ruleVersion, evidence: row.provenance, decidedAt }).run()
 }
-function insertEdge(tx: Tx, edge: CorrespondenceEdge, request: CorrespondenceRequest, batchId: number, status: 'candidate' | 'confirmed', at: string) {
+function insertEdge(tx: Tx, edge: CorrespondenceEdge, request: CorrespondenceRequest, batchId: number, status: 'candidate' | 'confirmed' | 'rejected', at: string) {
   const source = sourceForEdge(tx, edge, status === 'confirmed', request.proofIds)
   const row = tx.insert(schema.recordCorrespondence).values({
     edgeKey: edgeKey(edge), type: edge.type, role: edge.role,
@@ -338,12 +344,12 @@ function insertEdge(tx: Tx, edge: CorrespondenceEdge, request: CorrespondenceReq
     relationId: 'relationId' in edge ? edge.relationId : null,
     exportRowId: 'exportRowId' in edge ? edge.exportRowId : null,
     enterpriseId: source.enterpriseId, titleCode: source.titleCode, status,
-    revision: status === 'confirmed' ? 2 : 1,
+    revision: status !== 'candidate' ? 2 : 1,
     targetIdentity: source.targetIdentity, provenance: source.provenance, sourceFingerprint: source.sourceFingerprint,
-    ruleId: request.ruleId, ruleVersion: request.ruleVersion, createdAt: at, decidedAt: status === 'confirmed' ? at : null,
+    ruleId: request.ruleId, ruleVersion: request.ruleVersion, createdAt: at, decidedAt: status !== 'candidate' ? at : null,
   }).returning().get()
   addAudit(tx, row, batchId, request, null, 'candidate', 0, at)
-  if (status === 'confirmed') addAudit(tx, row, batchId, request, 'candidate', 'confirmed', 1, at)
+  if (status !== 'candidate') addAudit(tx, row, batchId, request, 'candidate', status, 1, at)
   return row.id
 }
 function reproposeEdge(tx: Tx, edge: CorrespondenceEdge, request: CorrespondenceRequest, batchId: number, at: string) {
@@ -405,7 +411,16 @@ export function commitRecordCorrespondences(db: Db, request: CorrespondenceReque
           .where(and(eq(schema.recordCorrespondence.id, row.id), eq(schema.recordCorrespondence.revision, row.revision))).run()
         addAudit(tx, { ...row, provenance }, batch.id, request, row.status, next, row.revision, at)
         correspondenceIds.push(row.id)
-        if (op.action === 'correct') correspondenceIds.push(insertEdge(tx, op.edge, request, batch.id, 'confirmed', at))
+        if (op.action === 'correct') {
+          const target = tx.select().from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.edgeKey, edgeKey(op.edge))).get()
+          if (target) {
+            const { provenance } = sourceForEdge(tx, op.edge, true, request.proofIds)
+            const updated = tx.update(schema.recordCorrespondence).set({ status: 'confirmed', revision: target.revision + 1, decidedAt: at, ruleId: request.ruleId, ruleVersion: request.ruleVersion, provenance }).where(and(eq(schema.recordCorrespondence.id, target.id), eq(schema.recordCorrespondence.revision, target.revision), eq(schema.recordCorrespondence.status, 'candidate'))).run()
+            if (updated.changes !== 1) fail('stale_revision', 'Replacement candidate changed')
+            addAudit(tx, { ...target, provenance }, batch.id, request, 'candidate', 'confirmed', target.revision, at)
+            correspondenceIds.push(target.id)
+          } else correspondenceIds.push(insertEdge(tx, op.edge, request, batch.id, 'confirmed', at))
+        }
       }
     }
     const receipt: CorrespondenceReceipt = { batchId: batch.id, planHash, impact: current.impact, correspondenceIds }

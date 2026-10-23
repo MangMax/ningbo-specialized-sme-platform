@@ -5,6 +5,8 @@ import { ARCHIVE_CONFLICT_LABELS, ARCHIVE_OUTCOME_LABELS } from '~~/lib/roster/e
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, TITLES, RELATION_DECLARE_KINDS } from '~~/lib/labels'
 import { fileNameOf } from '~~/lib/preview'
 import SourceReader from './SourceReader.vue'
+import EventCorrespondenceDecision from './EventCorrespondenceDecision.vue'
+import { useCorrespondenceReadback } from '~/composables/useCorrespondenceReadback'
 import TablePagination from '@/components/TablePagination.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
@@ -31,9 +33,11 @@ async function discover(patch: Partial<typeof target.value> = {}) {
     if (token !== sequence) return
     if (next.event.id !== props.eventId || next.page !== request.page || next.coverage.page !== request.queryPage) throw new Error('Discovery page mismatch')
     result.value = next
-  } catch { if (token === sequence) failed.value = true }
+    return true
+  } catch { if (token === sequence) failed.value = true; return false }
   finally { if (token === sequence) pending.value = false }
 }
+useCorrespondenceReadback(async () => result.value ? discover() : true)
 const conflictText = (row: EventArchiveCandidate) => row.conflicts.map(code => ARCHIVE_CONFLICT_LABELS[code] ?? code).join('；')
 const queryStateText = (item: EventArchivePage['interfaces'][number]) => item.states.length ? item.states.map(state => `${PLATFORM_QUERY_STATUSES[state.status] ?? state.status} ${state.count} 次`).join('；') : '尚无查询归档（未查询）'
 const statusLabel = (status: string | null) => ({ confirmed: '已有确认记录（有效性见原行）', rejected: '已标为不对应', unlinked: '已取消对应', candidate: '已登记候选' })[status ?? ''] ?? '未确认候选'
@@ -63,6 +67,7 @@ const statusLabel = (status: string | null) => ({ confirmed: '已有确认记录
             <p v-if="row.conflicts.length" class="text-muted-foreground">待核依据：{{ conflictText(row) }}</p>
             <p v-if="row.existingStatus" class="text-muted-foreground">保留已有决定，未重新推荐或改写。</p>
             <Button variant="ghost" size="sm" @click="sourceId = row.edge.relationId">查看平台原行与查询来源</Button>
+            <EventCorrespondenceDecision :edge="row.edge" :existing="row.existingCorrespondenceId && row.revision && row.existingStatus ? { id: row.existingCorrespondenceId, revision: row.revision, status: row.existingStatus } : null" />
           </li>
         </ul>
         <TablePagination class="mt-3" :page="result.page" :page-size="result.pageSize" :total="result.total" unit="条候选" :loading="pending" @update:page="discover({ page: $event })" @update:page-size="discover({ page: 1, pageSize: $event })" />

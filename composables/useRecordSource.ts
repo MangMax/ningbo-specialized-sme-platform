@@ -1,3 +1,4 @@
+import { useCorrespondenceReadback } from './useCorrespondenceReadback'
 import { ref, watch, type MaybeRefOrGetter, toValue } from 'vue'
 import { correspondenceSourceUrl, type SourceKind, type SourceResponse } from '~~/lib/roster/correspondence-view'
 
@@ -26,6 +27,7 @@ export function useRecordSource(kind: MaybeRefOrGetter<SourceKind>, id: MaybeRef
       if (request === serial) loading.value = false
     }
   }
+  useCorrespondenceReadback(async () => { await load(); return !error.value })
   watch([() => toValue(kind), () => toValue(id), () => toValue(active)], ([,, enabled]) => {
     if (enabled) void load()
     else serial++

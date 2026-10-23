@@ -58,7 +58,78 @@ function recognizedProofFixture() {
   return { db, proofId, proofRequest, exportRow, edge }
 }
 
+function persistedRecognizedReplacementFixture() {
+  const fixture = recognizedProofFixture()
+  const { db, edge } = fixture
+  const targetId = save(db, request('replacement-without-proof', [{ action: 'create', status: 'candidate', edge }])).correspondenceIds[0]!
+  const relation = db.select().from(schema.platformRelation).where(eq(schema.platformRelation.id, edge.relationId)).get()!
+  const record = db.insert(schema.record).values({ enterpriseId: relation.enterpriseId!, titleCode: 'specialized_sme', source: 'jxj', usccRaw: relation.usccRaw }).returning().get()
+  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2022 }).returning().get()
+  const oldId = save(db, request('old-confirmed', [{ action: 'create', status: 'confirmed', edge: { type: 'event_recognized', eventId: event.id, relationId: relation.id, role: 'current_context' } }])).correspondenceIds[0]!
+  const correction = { ...request('atomic-correction', [{ action: 'correct', correspondenceId: oldId, expectedRevision: 2, edge }]), proofIds: [fixture.proofId] }
+  return { ...fixture, targetId, oldId, correction }
+}
+
 describe('record correspondence core', () => {
+  it('preserves explicit proof on atomic correction to a persisted recognized-export candidate', () => {
+    const { db, proofId, targetId, oldId, correction } = persistedRecognizedReplacementFixture()
+    const before = listRecordCorrespondences(db).find(row => row.id === targetId)!
+    const history = getRecordCorrespondenceAudit(db, targetId)
+    expect(before.provenance.comparisonProofIds).toEqual([])
+    const plan = preflightRecordCorrespondences(db, correction)
+    expect(plan.impact).toEqual({ created: 0, unlinked: 1, audit: 2 })
+    expect(plan.targets[0]).toMatchObject({ confirmId: targetId, confirmRevision: 1, sourceFingerprint: before.sourceFingerprint })
+    expect(() => commitRecordCorrespondences(db, { ...correction, proofIds: [] }, plan.planHash)).toThrowError(expect.objectContaining({ code: 'idempotency_conflict' }))
+    const receipt = commitRecordCorrespondences(db, correction, plan.planHash)
+    expect(receipt.correspondenceIds).toEqual([oldId, targetId])
+    expect(listRecordCorrespondences(db).find(row => row.id === oldId)).toMatchObject({ status: 'unlinked', revision: 3 })
+    expect(listRecordCorrespondences(db).find(row => row.id === targetId)).toMatchObject({
+      id: targetId, role: 'same_current_row', status: 'confirmed', revision: 2, requiresRevalidation: false,
+      sourceFingerprint: before.sourceFingerprint, targetIdentity: before.targetIdentity,
+      provenance: { ...before.provenance, comparisonProofIds: [proofId] },
+    })
+    const audit = getRecordCorrespondenceAudit(db, targetId)
+    expect(audit).toHaveLength(2)
+    expect(audit[0]).toEqual(history[0])
+    expect(audit[1]).toMatchObject({ fromStatus: 'candidate', toStatus: 'confirmed', expectedRevision: 1, resultingRevision: 2,
+      actorType: 'user', actorId: 'reviewer', basis: correction.basis,
+      evidence: { ...before.provenance, comparisonProofIds: [proofId] } })
+    expect(commitRecordCorrespondences(db, correction, plan.planHash)).toEqual(receipt)
+    expect(getRecordCorrespondenceAudit(db, targetId)).toEqual(audit)
+  })
+
+  it.each([
+    { name: 'empty explicit proof', proofIds: [] },
+    { name: 'nonexistent explicit proof', proofIds: [999999] },
+  ])('rejects $name on persisted-target correction without half replacement', ({ proofIds }) => {
+    const { db, targetId, oldId, correction } = persistedRecognizedReplacementFixture()
+    const before = listRecordCorrespondences(db)
+    const targetHistory = getRecordCorrespondenceAudit(db, targetId)
+    const oldHistory = getRecordCorrespondenceAudit(db, oldId)
+    const invalid = { ...correction, proofIds }
+    expect(() => preflightRecordCorrespondences(db, invalid)).toThrowError(expect.objectContaining({ code: 'incomplete_coverage' }))
+    expect(listRecordCorrespondences(db)).toEqual(before)
+    expect(getRecordCorrespondenceAudit(db, targetId)).toEqual(targetHistory)
+    expect(getRecordCorrespondenceAudit(db, oldId)).toEqual(oldHistory)
+    expect(readRecordCorrespondenceBatch(db, invalid.idempotencyKey)).toBeNull()
+  })
+
+  it('rejects proof revoked after persisted-target preflight without half replacement', () => {
+    const { db, proofId, proofRequest, targetId, oldId, correction } = persistedRecognizedReplacementFixture()
+    const before = listRecordCorrespondences(db)
+    const targetHistory = getRecordCorrespondenceAudit(db, targetId)
+    const oldHistory = getRecordCorrespondenceAudit(db, oldId)
+    const plan = preflightRecordCorrespondences(db, correction)
+    const revoke: ProofRequest = { ...proofRequest, idempotencyKey: 'revoke-before-correction', operations: [{ action: 'decide', proofId, expectedRevision: 2, status: 'revoked' }] }
+    const revokePlan = preflightComparisonScopeProofs(db, revoke)
+    commitComparisonScopeProofs(db, revoke, revokePlan.planHash)
+    expect(() => commitRecordCorrespondences(db, correction, plan.planHash)).toThrowError(expect.objectContaining({ code: 'incomplete_coverage' }))
+    expect(listRecordCorrespondences(db)).toEqual(before)
+    expect(getRecordCorrespondenceAudit(db, targetId)).toEqual(targetHistory)
+    expect(getRecordCorrespondenceAudit(db, oldId)).toEqual(oldHistory)
+    expect(readRecordCorrespondenceBatch(db, correction.idempotencyKey)).toBeNull()
+  })
+
   it('confirms a proof-backed recognized-export candidate with omitted IDs and retains its provenance and audit', () => {
     const { db, proofId, exportRow, edge } = recognizedProofFixture()
     const candidate = { ...request('proof-candidate', [{ action: 'create', status: 'candidate', edge }]), proofIds: [proofId] }
