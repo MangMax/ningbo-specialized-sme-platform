@@ -1,4 +1,5 @@
 import { setImmediate as yieldTurn } from 'node:timers/promises'
+import { createHash } from 'node:crypto'
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import * as schema from '../../../db/schema'
@@ -15,6 +16,7 @@ import {
 } from '../record-correspondence'
 import { createJob, getJob, setJobResult } from '../job-store'
 import { JOB_ID_RE, newJobId } from '../../../lib/job'
+import { stageAnnualCorrespondence, activateAnnualCorrespondence } from './annual-correspondence'
 import {
   ensureJobRunnerReady,
   enqueuePersistedJob,
@@ -322,6 +324,34 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
       persist()
       await yieldTurn()
     }
+  }
+  // Only the already-resolved archive query slice is automatic. Explicit event
+  // and bulk-title candidate requests retain their existing manual semantics.
+  if (params.queryId && result.items.length && !ctx.cancelled()) {
+    // Native import only stages candidates. Do not load Nuxt's @db-dependent
+    // adapter in that process; annual reads belong to the application runner.
+    const { readAnnualWriteScope } = await import('../annual-correspondence-read')
+    if (ctx.cancelled()) return { result, cancelled: true }
+    const eventIds = result.items.map(item => item.eventId)
+    const identity = createHash('sha256').update(JSON.stringify({
+      archiveGeneration: params.archiveGeneration ?? ctx.jobId,
+      candidateJobId: ctx.jobId,
+      throughEventId: result.throughEventId,
+      eventIds,
+    })).digest('hex')
+    const annual = ctx.db.transaction(() => {
+      const receipt = stageAnnualCorrespondence(ctx.db, readAnnualWriteScope, {
+        clientRequestId: `archive-annual:${identity}`,
+        eventIds,
+      })
+      // The annual generation/request binding and completed candidate slice
+      // checkpoint commit together. A failure leaves this task retryable.
+      persist()
+      return receipt
+    }, { behavior: 'immediate' })
+    // Never notify a runner from inside a transaction. Startup reconciliation
+    // exposes a committed-but-unactivated job for the existing explicit retry.
+    activateAnnualCorrespondence(ctx.db, readAnnualWriteScope, [annual.jobId], ctx.filesDir)
   }
   // Large affected scopes continue in bounded jobs. Bulk title scopes explicitly
   // expose nextAfterEventId so operators choose whether to start the next slice.
