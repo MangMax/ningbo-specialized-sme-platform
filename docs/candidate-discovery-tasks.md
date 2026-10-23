@@ -12,6 +12,8 @@ MCP 使用 `submit_event_archive_candidate_task` / `get_event_archive_candidate_
 
 候选复用 `discoverEventArchives` 的 event-archive-212-v1 规则。持久化只调用现有 preflight/commit，保存原始来源指纹、出处和追加审计。每行提交前，在同一 immediate 事务内再次检查该事件/原行的所有已有角色；candidate/confirmed/rejected/unlinked 和更正历史一律保留，不以新规则静默重新推荐。发现后发生的身份、来源、版本变化仍由领域预检/提交拒绝并报告失败。
 
-资源边界：队列沿用非 OCR 任务独占规则，不新增并行执行通道；每任务最多200个事件检查点，原档读取前用 SQLite 计算单份 query.raw_response + collection_evidence + relation.raw_fields 字节数。超过1 MiB 的行明确报 source_materialization_limit，未写入该行。原因是现有领域指纹保留完整原档；本票不改变指纹模型或历史数据。发现阶段不读取 raw_response 或 collection_evidence.rows；领域写入仅水合准入范围内的一份原档。失败可保留其他成功项，不声称超限原档已完成。此上限不是对平台原始文件的大小限制，不应通过改写或裁剪原档绕过。
+资源边界：队列沿用非 OCR 任务独占规则，不新增并行执行通道；每任务最多200个事件检查点。增量影响筛选与单事件发现直接共用 USCC 的 SQL 归一化规则。
+
+尚未解决的阻塞（#214 / PR #218 F1）：现有共享领域预检/提交会水合完整 query/relation，对完整 provenance 执行 JSON.stringify 后计算来源指纹，并把完整快照写入对应关系和追加审计。任务目前在进入该路径前用 SQLite 计算 query.raw_response + collection_evidence + relation.raw_fields 字节数，超过1 MiB 报 source_materialization_limit；这会永久阻塞已被导入接受的有效来源，重试不能解决，并非批准的输入范围限制。修复需要共享领域的有界来源序列化/指纹及快照写入接缝，保持现有指纹和审计兼容；现有分块原始证据读取接口与只读反向关联校验不能替代该接缝。不得靠放宽阈值、裁剪原档或绕过预检/提交处理。此原行未写入时，同事件此前已完成的候选仍保留；任务中心同时显示新增数和失败，不能声称整个事件未写入或任务已完成。
 
 部分失败逐事件记录安全错误码；任意异常原文和凭据不进入任务中心摘要。生产回填需另行授权，本票仅在独立备份副本与合成边界上验证。

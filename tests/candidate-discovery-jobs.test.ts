@@ -395,6 +395,37 @@ it('queues only affected events after an archive commit and deduplicates replay 
   expect((result.result as any).items).toHaveLength(1)
   expect(f.read('list', { query: { eventId: f.event.id } }).total).toBe(2)
 })
+it.each([
+  { caseId: 'ascii-controls', whitespace: '\t\n\v\f\r ' },
+  { caseId: 'nbsp-and-ogham', whitespace: '\u00a0\u1680' },
+  { caseId: 'unicode-spaces', whitespace: '\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a' },
+  { caseId: 'zero-width', whitespace: '\u200b\u200c\u200d' },
+  { caseId: 'separators', whitespace: '\u2028\u2029\u202f\u205f' },
+  { caseId: 'fullwidth-and-bom', whitespace: '\u3000\ufeff' },
+])('uses discovery identity normalization for incremental scope: $caseId', async ({ whitespace }) => {
+  const f = fixture()
+  const { eq } = await import('drizzle-orm')
+  const { discoverEventArchives } = await import('../server/utils/event-archive-discovery')
+  // Neither the searched name nor a verified owner can select this archive.
+  // Match the raw row to the canonical official USCC using the shared rule.
+  f.db.update(schema.platformQuery).set({ queryKey: 'name:另一个查询名' })
+    .where(eq(schema.platformQuery.id, f.query.id)).run()
+  const rawUscc = whitespace + '91330211255994457p' + whitespace
+  f.db.update(schema.platformRelation).set({ enterpriseId: null, usccRaw: rawUscc })
+    .where(eq(schema.platformRelation.id, f.relation.id)).run()
+  const discovered = discoverEventArchives(f.db, { eventId: f.event.id, page: 1, pageSize: 25, queryPage: 1, queryPageSize: 1 })
+  expect(discovered?.rows).toMatchObject([{ edge: { eventId: f.event.id, relationId: f.relation.id } }])
+  expect(discovered?.total).toBe(1)
+  const task = submitCandidateDiscovery(f.db, { queryId: f.query.id, clientRequestId: 'normalization-parity' }, f.dir)
+  await whenIdle()
+  expect(getJob(f.db, task.jobId)).toMatchObject({ state: 'done', result: {
+    items: [{ eventId: f.event.id, status: 'done' }],
+    counts: { succeeded: 1, failed: 0, created: 1 },
+  } })
+  expect(f.read('list', { query: { eventId: f.event.id } })).toMatchObject({ total: 1,
+    rows: [{ status: 'candidate', relation: { id: f.relation.id, usccRaw: rawUscc } }],
+  })
+})
 it('shares authenticated HTTP and MCP task semantics and task center event results', async () => {
   const f = fixture()
   const { handleCandidateJobRequest, dispatchCandidateJobMcp } =

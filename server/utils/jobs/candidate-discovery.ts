@@ -6,6 +6,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import {
   discoverEventArchives,
   EVENT_ARCHIVE_RULE_VERSION,
+  normalizedUscc,
 } from '../event-archive-discovery'
 import {
   commitRecordCorrespondences,
@@ -73,9 +74,6 @@ export interface CandidateJobResult {
 function fail(message: string, statusCode = 400): never {
   throw Object.assign(new Error(message), { statusCode })
 }
-function normalized(column: unknown) {
-  return sql`upper(replace(replace(trim(coalesce(${column},'')), ' ', ''), '　', ''))`
-}
 /** A query targets only verified identity/name coverage, never every event. No raw columns. */
 function affectedWhere(queryId: number) {
   const q = schema.platformQuery,
@@ -85,11 +83,11 @@ function affectedWhere(queryId: number) {
   return sql`exists (select 1 from ${q} where ${q.id} = ${queryId}
     and (coalesce(${q.titleCode}, case ${q.rdjb} when '1' then 'innovative_sme' when '2' then 'specialized_sme' when '3' then 'little_giant' end) = ${r.titleCode}
       or (${q.interface} = 'recognized_list' and ${q.titleCode} is null and instr(',' || ${q.rdjb} || ',', ',' || case ${r.titleCode} when 'innovative_sme' then '1' when 'specialized_sme' then '2' when 'little_giant' then '3' end || ',') > 0))
-    and (${q.queryKey} = ${normalized(sql`coalesce(${r.usccRaw},${e.usccNorm})`)}
+    and (${q.queryKey} = ${normalizedUscc(sql`coalesce(${r.usccRaw},${e.usccNorm})`)}
       or ${q.queryKey} = 'name:' || ${e.nameNorm}
       or exists (select 1 from enterprise_alias a where a.enterprise_id = ${e.id} and a.verification_status = 'confirmed' and ${q.queryKey} = 'name:' || a.name_norm)
       or exists (select 1 from ${p} where ${p.queryId} = ${q.id} and (${p.enterpriseId} is null or ${p.enterpriseId} = ${e.id}) and
-        ((${normalized(p.usccRaw)} != '' and ${normalized(p.usccRaw)} = ${normalized(sql`coalesce(${r.usccRaw},${e.usccNorm})`)}) or (${p.enterpriseId} = ${e.id} and ${p.verificationStatus} = 'confirmed' and ${normalized(p.usccRaw)} = '')))))`
+        ((${normalizedUscc(p.usccRaw)} != '' and ${normalizedUscc(p.usccRaw)} = ${normalizedUscc(sql`coalesce(${r.usccRaw},${e.usccNorm})`)}) or (${p.enterpriseId} = ${e.id} and ${p.verificationStatus} = 'confirmed' and ${normalizedUscc(p.usccRaw)} = '')))))`
 }
 function initialize(db: Db, params: Params): CandidateJobResult {
   const v = schema.recordEvent,
