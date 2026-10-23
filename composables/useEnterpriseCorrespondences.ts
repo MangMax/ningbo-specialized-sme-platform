@@ -1,3 +1,4 @@
+import { useCorrespondenceReadback } from './useCorrespondenceReadback'
 import { ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import type { CorrespondenceDetail, CorrespondenceSummary } from '~~/lib/roster/correspondence-view'
 
@@ -143,6 +144,14 @@ export function useEnterpriseCorrespondences(enterpriseId: MaybeRefOrGetter<numb
     }
     return false
   }
+
+  useCorrespondenceReadback(async () => {
+    if (toValue(enterpriseId) == null) return true
+    const events = Object.keys(eventDetails.value).map(Number)
+    if (!await load()) return false
+    await Promise.all(events.map(id => loadEvent(id)))
+    return events.every(id => !detailErrorForEvent(id))
+  })
 
   watch(() => toValue(enterpriseId), () => { void load() }, { immediate: true })
 

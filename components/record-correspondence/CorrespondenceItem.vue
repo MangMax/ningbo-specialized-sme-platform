@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { correspondenceStatusText, eventDecisionText, type CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
 import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
 import { humanRecordTime, isCurrentContextEdge } from '~~/lib/roster/record-ledger'
+import EventCorrespondenceDecision from './EventCorrespondenceDecision.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Badge } from '@/components/ui/badge'
 
@@ -50,6 +51,7 @@ function onEventClick(event: MouseEvent) {
     <p v-if="targetEvent" class="mt-1 text-[13px]">
       <NuxtLink :to="eventTo" class="text-primary underline underline-offset-2 hover:no-underline" @click="onEventClick">查看{{ TITLES[targetEvent.record.titleCode] ?? '称号' }} · {{ eventDecisionText(targetEvent) }}</NuxtLink>
     </p>
+    <EventCorrespondenceDecision v-if="edge.eventId && edge.relationId && ['event_process', 'event_recognized'].includes(edge.type)" :edge="{ type: edge.type, eventId: edge.eventId, relationId: edge.relationId, role: edge.role }" :existing="edge" />
     <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground mt-1 text-[13px]">
       <template #trigger><span>来源定位</span></template>
       <p>{{ locator }}</p>
