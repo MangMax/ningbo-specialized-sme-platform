@@ -7,6 +7,7 @@ import { humanRecordTime } from '~~/lib/roster/record-ledger'
 import { useCorrespondenceReadback } from '~/composables/useCorrespondenceReadback'
 import ComparisonSourcePicker from './ComparisonSourcePicker.vue'
 import ComparisonProofPicker from './ComparisonProofPicker.vue'
+import ComparisonBusinessGroups from './ComparisonBusinessGroups.vue'
 import ComparisonEventRow from './ComparisonEventRow.vue'
 import ComparisonEvidence from './ComparisonEvidence.vue'
 import ComparisonDateTimePicker from './ComparisonDateTimePicker.vue'
@@ -79,7 +80,7 @@ const returnTo = computed(() => {
   if (!scope || !result) return '/comparison?mode=record'
   return `/comparison?${new URLSearchParams(comparisonRouteQuery({ ...scope, page: result.page, pageSize: result.pageSize }))}`
 })
-const scopeText = (scope: ComparisonRouteState) => `${scope.selection.officialSourceDocumentIds.length} 份正式文件 · ${scope.selection.queryIds.length} 次归档查询 · ${scope.selection.exportBatchIds.length} 个导出版本 · ${scope.selection.proofIds.length} 项范围依据 · ${scope.classification === 'all' ? '全部分类' : COMPARISON_CLASSES[scope.classification]} · 截止 ${scope.asOf ? humanRecordTime(scope.asOf) : '未设置'} · 第 ${scope.page} 页 · 每页 ${scope.pageSize} 条`
+const scopeText = (scope: ComparisonRouteState) => `${scope.selection.officialSourceDocumentIds.length} 份正式文件 · ${scope.selection.queryIds.length} 次归档查询 · ${scope.selection.exportBatchIds.length} 个导出版本 · ${scope.selection.proofIds.length} 项范围依据 · ${scope.classification === 'all' ? '全部分类' : COMPARISON_CLASSES[scope.classification]} · 截止 ${scope.asOf ? humanRecordTime(scope.asOf) : '未设置'} · 第 ${scope.page} 页 · 每页 ${scope.pageSize} 条 · 平台业务第 ${scope.businessPage ?? 1} 页 · 每页 ${scope.businessPageSize ?? 25} 组`
 const displayedScopeText = computed(() => displayedScope.value && displayed.value ? scopeText({ ...displayedScope.value, page: displayed.value.page, pageSize: displayed.value.pageSize }) : '')
 const loadedScope = computed(() => displayedScope.value && displayed.value ? { ...displayedScope.value, page: displayed.value.page, pageSize: displayed.value.pageSize } : null)
 const targetScopeText = computed(() => scopeText(committed.value))
@@ -142,7 +143,7 @@ async function load(preserveOpenSources = false) {
   error.value = false
   const shouldReveal = revealResults
   try {
-    const result = await $fetch<RecordComparisonResult>('/api/roster/record-comparison', { query: { ...comparisonSelectionQuery(target.selection), page: request.page, pageSize: request.pageSize, ...(request.classification ? { classification: request.classification } : {}), ...(target.asOf ? { asOf: target.asOf } : {}) } })
+    const result = await $fetch<RecordComparisonResult>('/api/roster/record-comparison', { query: { ...comparisonSelectionQuery(target.selection), page: request.page, pageSize: request.pageSize, businessPage: target.businessPage ?? 1, businessPageSize: target.businessPageSize ?? 25, ...(request.classification ? { classification: request.classification } : {}), ...(target.asOf ? { asOf: target.asOf } : {}) } })
     if (current !== requestId) return
     displayed.value = result
     displayedScope.value = { ...target, selection: copySelection(target.selection) }
@@ -189,7 +190,7 @@ async function run() {
   skipPanelTransition.value = true
   sourcesExpanded.value = false
   revealResults = true
-  const next: ComparisonRouteState = { ...committed.value, selection: copySelection(selection.value), asOf: asOfIso.value, page: 1 }
+  const next: ComparisonRouteState = { ...committed.value, selection: copySelection(selection.value), asOf: asOfIso.value, page: 1, businessPage: 1 }
   const sameScope = comparisonRouteKey(next) === comparisonRouteKey(committed.value)
   await navigate(next, sameScope)
   if (comparisonRouteKey(committed.value) !== comparisonRouteKey(next)) {
@@ -218,6 +219,14 @@ function setPageSize(value: number) {
   if (!Number.isSafeInteger(value) || value <= 0 || value > 200) return
   revealResults = true
   void navigate({ ...committed.value, page: 1, pageSize: value })
+}
+function setBusinessPage(value: number) {
+  if (!Number.isSafeInteger(value) || value <= 0) return
+  void navigate({ ...committed.value, businessPage: value })
+}
+function setBusinessPageSize(value: number) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > 200) return
+  void navigate({ ...committed.value, businessPage: 1, businessPageSize: value })
 }
 function setCatalogTotal(kind: 'official_document' | 'query' | 'export_batch', total: number) { catalogTotals.value = { ...catalogTotals.value, [kind]: total } }
 const total = computed(() => displayed.value?.total ?? 0)
@@ -373,6 +382,7 @@ const classificationEntries = computed(() => {
         <strong class="text-foreground font-medium">当前目标范围：</strong>{{ targetScopeText }}。下方继续显示上次成功结果；目标加载成功后才替换。
       </p>
 
+      <ComparisonBusinessGroups v-if="displayed?.businessGroups" :groups="displayed.businessGroups" :counts="displayed.businessCounts" :loading="loading || error" :return-to="returnTo" @update:page="setBusinessPage" @update:page-size="setBusinessPageSize" />
       <div class="flex min-w-0 flex-col gap-2" :aria-busy="loading" aria-label="对比结果">
         <h2
           ref="resultsHeader"

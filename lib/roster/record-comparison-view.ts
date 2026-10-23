@@ -13,6 +13,8 @@ export interface ComparisonRouteState {
   pageSize: number
   classification: NonNullable<RecordComparisonInput['classification']> | 'all'
   asOf: string
+  businessPage?: number
+  businessPageSize?: number
 }
 
 /** Public #72 read row; decision basis is read from its audit endpoint. */
@@ -90,14 +92,16 @@ export function comparisonRouteFromQuery(query: Record<string, unknown>): Compar
     classification: typeof query.classification === 'string' && Object.hasOwn(COMPARISON_CLASSES, query.classification)
       ? query.classification as NonNullable<RecordComparisonInput['classification']> : 'all',
     asOf: cutoff,
+    ...(query.businessPage === undefined ? {} : { businessPage: positivePage(query.businessPage, 1) }),
+    ...(query.businessPageSize === undefined ? {} : { businessPageSize: positivePage(query.businessPageSize, 25, 200) }),
   }
 }
 export function comparisonRouteQuery(state: ComparisonRouteState): Record<string, string> {
-  return { mode: 'record', ...comparisonSelectionQuery(state.selection), page: String(state.page), pageSize: String(state.pageSize), ...(state.classification === 'all' ? {} : { classification: state.classification }), ...(state.asOf ? { asOf: state.asOf } : {}) }
+  return { ...(state.businessPage === undefined ? {} : { businessPage: String(state.businessPage) }), ...(state.businessPageSize === undefined ? {} : { businessPageSize: String(state.businessPageSize) }), mode: 'record', ...comparisonSelectionQuery(state.selection), page: String(state.page), pageSize: String(state.pageSize), ...(state.classification === 'all' ? {} : { classification: state.classification }), ...(state.asOf ? { asOf: state.asOf } : {}) }
 }
 export function comparisonRouteKey(state: ComparisonRouteState): string {
   const selection = state.selection
-  return JSON.stringify([selection.queryIds.toSorted((a, b) => a - b), selection.exportBatchIds.toSorted((a, b) => a - b), selection.officialSourceDocumentIds.toSorted((a, b) => a - b), selection.proofIds.toSorted((a, b) => a - b), state.page, state.pageSize, state.classification, state.asOf])
+  return JSON.stringify([selection.queryIds.toSorted((a, b) => a - b), selection.exportBatchIds.toSorted((a, b) => a - b), selection.officialSourceDocumentIds.toSorted((a, b) => a - b), selection.proofIds.toSorted((a, b) => a - b), state.page, state.pageSize, state.classification, state.asOf, state.businessPage ?? 1, state.businessPageSize ?? 25])
 }
 /** The picker uses local wall time; the URL/API cutoff is an instant. */
 export function localDateTimeForInstant(instant: string): string {

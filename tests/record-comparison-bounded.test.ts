@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { useDb, schema } from '../db/client'
+import { ensurePlatformObservation } from '../server/utils/platform-business-record'
 import { normalizeName } from '../lib/domain'
 import { getRecordComparison, listRecordComparisonSources, previewRecordCorrespondenceImpact } from '../server/utils/record-comparison'
 
@@ -116,8 +117,9 @@ it('comparison preserves all selected relations and formal event uncertainty as 
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
   db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, page: 3 }).run()
   const query = db.insert(schema.platformQuery).values({ interface: 'business_list', queryKey: 'selected', rdjb: '2', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'SELECTED_RAW'.repeat(65536) }).returning({ id: schema.platformQuery.id }).get()
-  const relations = [1, 2].map(sequenceNo => db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo, enterpriseId: sequenceNo === 1 ? owner.id : null, usccRaw: owner.usccNorm, rawFields: { sblx: '复核', cszt: '终审通过', sqsj: '2025-11-21 09:54:16', year: true, body: 'SELECTED_RELATION'.repeat(32768) } }).returning({ id: schema.platformRelation.id }).get().id)
+  const relations = [1, 2].map(sequenceNo => db.insert(schema.platformRelation).values({ queryId: query.id, sequenceNo, enterpriseId: sequenceNo === 1 ? owner.id : null, usccRaw: owner.usccNorm, rawFields: { id: 'same-canonical', sblx: '复核', cszt: '终审通过', sqsj: '2025-11-21 09:54:16', year: true, body: 'SELECTED_RELATION'.repeat(32768) } }).returning({ id: schema.platformRelation.id }).get().id)
   const input = { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id], page: 1, pageSize: 1 }
+  for (const id of relations) ensurePlatformObservation(db, id)
   const expected = getRecordComparison(db, input)
   for (let n = 0; n < 12; n++) {
     const q = db.insert(schema.platformQuery).values({ interface: 'recognized_list', queryKey: `unrelated:${n}`, rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', rawResponse: 'UNRELATED'.repeat(65536) }).returning({ id: schema.platformQuery.id }).get()
@@ -126,6 +128,7 @@ it('comparison preserves all selected relations and formal event uncertainty as 
   const bytes = returnedBytes(db)
   const actual = getRecordComparison(db, input)
   expect(actual).toEqual(expected)
+  expect(actual.businessCounts).toMatchObject({ records: 1, versions: 1, observations: 2, unknownObservations: 0 })
   expect(actual.rows).toMatchObject([{ event: { id: event.id }, evidence: [{ sourceFile: doc.path, page: 3 }], classification: 'unresolved' }])
   expect(actual.platformWithoutOfficial.rows.map(row => row.relation.id)).toEqual(relations)
   expect(actual.platformWithoutOfficial.rows.map(row => row.relation)).toMatchObject([
