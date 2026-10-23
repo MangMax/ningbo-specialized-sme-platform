@@ -517,6 +517,22 @@ it('renders and PATCHes the real service policy catalog without drifting from th
   expect(persisted.catalog.profiles).toEqual(response.catalog.profiles)
 })
 
+it('sends no fieldControls at all when the field draft is untouched', async () => {
+  const { wrapper, calls } = await mountManagement(
+    () => basePolicy(),
+    () => basePolicy({ retentionDays: 8 })
+  )
+  await openPanel(wrapper)
+  // 默认全保留且没有改字段：即使是完整的字段目录，PATCH 也不带 fieldControls。
+  await wrapper.get('#log-retention-days').setValue('8')
+  await review(wrapper)
+  const dialog = document.querySelector('[role=dialog]')!
+  expect(dialog.querySelector('[data-testid=log-field-review-table]')).toBeNull()
+  await confirm()
+  expect(patches(calls)).toEqual([{ retentionDays: 8, maxBytes: 536870912 }])
+  expect(patches(calls)[0]).not.toHaveProperty('fieldControls')
+})
+
 it('offers no review until a field actually differs from the saved rules', async () => {
   const { wrapper, calls } = await mountManagement(() => basePolicy())
   await openPanel(wrapper)
