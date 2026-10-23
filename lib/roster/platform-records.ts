@@ -50,3 +50,13 @@ export function platformBusinessFields(raw: Record<string, unknown> | null | und
     && (value == null || ['string', 'number', 'boolean'].includes(typeof value)))
     .map(([key]) => ({ key, label: PLATFORM_BUSINESS_FIELDS[key] ?? '平台原字段', value: recognizedField(raw, key) }))
 }
+
+export const PLATFORM_HISTORY_CONFLICTS: Record<string, string> = {
+  identity_conflict: '企业身份冲突', title_conflict: '称号冲突',
+  correspondence_decision_conflict: '对应决定冲突', platform_key_conflict: '平台编号冲突',
+  platform_field_conflict: '原字段冲突',
+}
+export const PLATFORM_HISTORY_STATES: Record<string, string> = {
+  not_indexed: '尚未建立业务映射', missing_key: '缺少平台业务编号',
+  conflict: '平台编号冲突', unverifiable: '原文内容无法核实',
+}
