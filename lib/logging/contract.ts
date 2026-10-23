@@ -107,6 +107,21 @@ export interface LogInput extends LogContext {
 export interface LogEvent extends Omit<LogInput, 'error'> {
   id: string; timestamp: string; level: typeof LOG_LEVELS[number]
 }
+/** Implemented profiles only. Extend this mapping when another projector is implemented. */
+export interface LogProfileFields {
+  http: 'httpMethod' | 'httpRoute' | 'statusCode' | 'durationMs'
+}
+export type LogFieldControls = {
+  [P in keyof LogProfileFields]: { [L in typeof LOG_LEVELS[number]]: { [F in LogProfileFields[P]]: boolean } }
+}
+export type LogFieldControlsPatch = {
+  [P in keyof LogProfileFields]?: { [L in typeof LOG_LEVELS[number]]?: { [F in LogProfileFields[P]]?: boolean } }
+}
+/** Internal output fact, never accepted through LogInput. No original values are implied. */
+export type FieldCapture = {
+  [P in keyof LogProfileFields]: { profile: P; revision: number; disabled: LogProfileFields[P][] }
+}[keyof LogProfileFields]
+export type FieldCapturedLogEvent = LogEvent & { fieldCapture?: FieldCapture }
 export interface LogFilter {
   from?: string; to?: string; level?: string; source?: string; operation?: string; outcome?: string
   requestId?: string; traceId?: string; taskId?: string; fileId?: number; batchId?: string | number
