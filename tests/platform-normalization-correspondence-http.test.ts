@@ -31,6 +31,24 @@ const review = db.insert(schema.recordEvent).values({ recordId: record.id, event
 db.insert(schema.recordEvidence).values({ recordEventId: review.id, sourceFile: doc.path, page: 2 }).run()
 const reviewRow = legacyRow(4, { sblx: '复核', sqsj: '2025-11-21 09:54:16', cszt: '终审通过', year: '2025', whpc: '2025-2', unrelated: 'UNEXPOSED'.repeat(32768) })
 const precedingRow = legacyRow(7, { sblx: '申请', sqsj: '2024-01-01' })
+const mixedAward = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2025 }).returning().get()
+db.insert(schema.recordEvidence).values({ recordEventId: mixedAward.id, sourceFile: doc.path, page: 3 }).run()
+const contradictoryRow = legacyRow(8, { sblx: '申请', cszt: '已退回', year: '2025' })
+const contextConflictRow = legacyRow(9, { sblx: '申请', cszt: '终审通过', year: '2025', szsfmc: '宁波市' }, { province: '浙江省' })
+const conflictCombinations = [
+  { label: 'supported-plus-province-conflict', supported: true, stored: { province: '浙江省' }, expected: { field: 'province', storedValue: '浙江省', rawValue: '宁波市' } },
+  { label: 'only-province-conflict', supported: false, stored: { province: '浙江省' }, expected: { field: 'province', storedValue: '浙江省', rawValue: '宁波市' } },
+  { label: 'only-status-conflict', supported: false, stored: { status: '终审通过' }, expected: { field: 'status', storedValue: '终审通过', rawValue: '已退回' } },
+  { label: 'only-type-conflict', supported: false, stored: { declareKind: 'review' as const }, expected: { field: 'declareKind', storedValue: 'review', rawValue: 'apply' } },
+  { label: 'only-time-conflict', supported: false, stored: { appliedAt: '2024-01-01' }, expected: { field: 'appliedAt', storedValue: '2024-01-01', rawValue: '2025-01-01' } },
+  { label: 'only-year-conflict', supported: false, stored: { year: 2024 }, expected: { field: 'year', storedValue: 2024, rawValue: 2025 } },
+].map((testCase, index) => {
+  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2025 }).returning().get()
+  db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, page: 4 + index }).run()
+  const context = legacyRow(10 + 2 * index, { sblx: '申请', cszt: '已退回', year: '2025', sqsj: '2025-01-01', szsfmc: '宁波市' }, testCase.stored)
+  const support = testCase.supported ? legacyRow(11 + 2 * index, { sblx: '申请', cszt: '终审通过', year: '2025' }) : null
+  return { ...testCase, event, context, support }
+})
 // Pre-normalization confirmed history, with its original raw-source fingerprint.
 // This is fixture construction, not a runtime bypass of the write contract.
 const { revision: _revision, ...legacyAward } = award
@@ -102,6 +120,46 @@ it('legacy confirmed raw conflicts stay explicit and cannot become historical al
   const row = result.body.rows.find((row: { event: { id: number } }) => row.event.id === award.id)
   expect(row).toMatchObject({ classification: 'unresolved', reasons: ['platform_field_conflict'], platformRows: expect.arrayContaining([expect.objectContaining({ id: cases[2]!.row.id, declareKind: null, status: null, normalizationConflicts: [{ field: 'status', storedValue: '终审通过', rawValue: '已退回' }, { field: 'declareKind', storedValue: 'apply', rawValue: 'review' }] })]) })
   expect(await mcp('list_record_comparison', { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id] })).toMatchObject({ body: result.body })
+})
+
+it('valid historical contradiction survives a confirmed context field conflict over HTTP and MCP', async () => {
+  await save(request('mixed-contradiction', [{ action: 'create', status: 'confirmed', edge: edge(contradictoryRow.id, 'supports_award', mixedAward.id) }]))
+  const path = `/api/roster/record-comparison?queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}`
+  const before = await rest(path)
+  expect(before.body.rows.find((row: { event: { id: number } }) => row.event.id === mixedAward.id)).toMatchObject({ classification: 'historical_conflict', reasons: ['confirmed_same_event_status_conflict'] })
+  const context = await save(request('mixed-context', [{ action: 'create', status: 'confirmed', edge: edge(contextConflictRow.id, 'context_only', mixedAward.id) }]))
+  expect((await rest(`/api/roster/correspondences/${context.correspondenceIds[0]}`)).body).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
+  const after = await rest(path)
+  const remote = await mcp('list_record_comparison', { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id] })
+  expect(after.status).toBe(200)
+  const expected = {
+    classification: 'historical_conflict', reasons: ['confirmed_same_event_status_conflict', 'platform_field_conflict'],
+    platformRows: expect.arrayContaining([expect.objectContaining({ id: contextConflictRow.id, normalizationConflicts: [{ field: 'province', storedValue: '浙江省', rawValue: '宁波市' }] })]),
+  }
+  expect.soft(after.body.rows.find((row: { event: { id: number } }) => row.event.id === mixedAward.id)).toMatchObject(expected)
+  expect.soft(remote.body.rows.find((row: { event: { id: number } }) => row.event.id === mixedAward.id)).toMatchObject(expected)
+  expect(after.body.counts.historical_conflict).toBe(before.body.counts.historical_conflict)
+  expect(remote).toMatchObject({ body: after.body })
+  const filtered = await rest(`${path}&classification=historical_conflict`)
+  expect(filtered.body.rows.map((row: { event: { id: number } }) => row.event.id)).toContain(mixedAward.id)
+  expect(filtered.body.counts).toEqual(after.body.counts)
+})
+
+it.each(conflictCombinations)('conflicted context cannot prove alignment or contradiction over HTTP and MCP: $label', async ({ label, event, context, support, expected }) => {
+  const path = `/api/roster/record-comparison?queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}`
+  if (support) {
+    await save(request(`${label}:support`, [{ action: 'create', status: 'confirmed', edge: edge(support.id, 'supports_award', event.id) }]))
+    expect((await rest(path)).body.rows.find((row: { event: { id: number } }) => row.event.id === event.id)).toMatchObject({ classification: 'historical_aligned', reasons: [] })
+  }
+  const receipt = await save(request(`${label}:context`, [{ action: 'create', status: 'confirmed', edge: edge(context.id, 'context_only', event.id) }]))
+  expect((await rest(`/api/roster/correspondences/${receipt.correspondenceIds[0]}`)).body).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
+  const http = await rest(path)
+  expect(http.status).toBe(200)
+  expect(http.body.rows.find((row: { event: { id: number } }) => row.event.id === event.id)).toMatchObject({
+    classification: 'unresolved', reasons: ['platform_field_conflict'],
+    platformRows: expect.arrayContaining([expect.objectContaining({ id: context.id, normalizationConflicts: [expected] })]),
+  })
+  expect(await mcp('list_record_comparison', { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id] })).toMatchObject({ body: http.body })
 })
 
 it('asOf excludes future decisions and rejects sources beyond the cutoff', async () => {

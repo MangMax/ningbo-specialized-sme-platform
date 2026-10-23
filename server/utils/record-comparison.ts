@@ -83,13 +83,12 @@ function officialProof(evidence: VerifiedComparisonEvidence | undefined, documen
     (proof.enterpriseIds === null || proof.enterpriseIds.includes(enterpriseId))) ?? null
 }
 function conclusion(event: Event, edges: Edge[], relations: Map<number, { relation: Relation; query: Query }>): { classification: HistoricalClassification; reasons: string[] } {
-  // A legacy confirmed edge may now require revalidation precisely because its
-  // stored/raw facts disagree. Keep that conflict visible before filtering it.
-  if (edges.some(edge => edge.status === 'confirmed' && edge.type === 'event_process' &&
-      edge.relationId != null && relations.get(edge.relationId)?.relation.normalizationConflicts.length)) {
-    return { classification: 'unresolved', reasons: ['platform_field_conflict'] }
-  }
+  // Keep legacy field conflicts visible even when the edge needs revalidation,
+  // without hiding a contradiction proved by another valid same-event edge.
+  const fieldConflictReasons = edges.some(edge => edge.status === 'confirmed' && edge.type === 'event_process' &&
+    edge.relationId != null && relations.get(edge.relationId)?.relation.normalizationConflicts.length) ? ['platform_field_conflict'] : []
   const historical = edges.filter(edge => edge.status === 'confirmed' && !edge.requiresRevalidation && historicalEdge(edge))
+  if (!historical.length && fieldConflictReasons.length) return { classification: 'unresolved', reasons: fieldConflictReasons }
   if (!historical.length) return { classification: 'unresolved', reasons: [...(event.year == null ? ['official_event_year_unknown'] : []), edges.some(edge => historicalEdge(edge) && edge.status === 'candidate') ? 'candidate_not_confirmed' : 'official_coverage_unproved'] }
   let supported = false
   let conflict = false
@@ -99,6 +98,7 @@ function conclusion(event: Event, edges: Edge[], relations: Map<number, { relati
     const source = edge.relationId == null ? null : relations.get(edge.relationId)
     if (!source) { reasons.push('selected_process_row_missing'); continue }
     const { relation } = source
+    if (relation.normalizationConflicts.length) continue
     if (!processTimingMatches(event, relation)) { reasons.push('event_process_fact_or_timing_unknown'); continue }
     const status = relation.status ?? ''
     const pass = /通过|获批|认定/.test(status) && !/未通过|不通过/.test(status)
@@ -118,7 +118,9 @@ function conclusion(event: Event, edges: Edge[], relations: Map<number, { relati
       else reasons.push('review_status_or_role_not_decisive')
     } else reasons.push('official_review_outcome_unknown')
   }
-  return conflict ? { classification: 'historical_conflict', reasons: ['confirmed_same_event_status_conflict'] } : supported ? { classification: 'historical_aligned', reasons: [] } : { classification: 'unresolved', reasons: unique(reasons) }
+  if (conflict) return { classification: 'historical_conflict', reasons: ['confirmed_same_event_status_conflict', ...fieldConflictReasons] }
+  if (fieldConflictReasons.length) return { classification: 'unresolved', reasons: fieldConflictReasons }
+  return supported ? { classification: 'historical_aligned', reasons: [] } : { classification: 'unresolved', reasons: unique(reasons) }
 }
 function selected(db: Db, input: RecordComparisonInput) {
   const parsed = recordComparisonInput.parse(input)
