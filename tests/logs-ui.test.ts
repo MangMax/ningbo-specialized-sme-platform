@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 // Component/composable seam only: these are not actual Nuxt/browser evidence.
-import { mount, flushPromises } from '@vue/test-utils'
+import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLogRead } from '../composables/useLogRead'
@@ -21,23 +21,23 @@ afterEach(() => {
 
 /** Nuxt auto-imports Icon in the app; Vitest needs a stand-in. */
 const IconStub = { props: ['name'], template: '<span class="icon-stub" :data-icon="name"></span>' }
-/** Collection switches now live inside their module accordion body. */
+/** Collection switches now live inside the module Sheet; open the drawer first. */
 async function openModule(wrapper: any, prefix = 'integration', key = 'nuxt-nitro') {
-  const panel = wrapper.get('[data-testid="log-module-' + prefix + '-' + key + '"]')
-  const trigger = panel.get('[data-slot=accordion-trigger]')
+  const trigger = wrapper.get('[data-testid="log-module-row-' + prefix + '-' + key + '"]')
   if (trigger.attributes('aria-expanded') !== 'true') {
     await trigger.trigger('click')
     await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0))
   }
 }
-async function openAllModules(wrapper: any) {
-  for (const trigger of wrapper.findAll('[data-testid^="log-module-"] [data-slot=accordion-trigger]')) {
-    if (trigger.attributes('aria-expanded') !== 'true') {
-      await trigger.trigger('click')
-      await flushPromises()
-    }
-  }
+async function closeModule(_wrapper: any, _prefix = 'integration', _key = 'nuxt-nitro') {
+  const done = document.querySelector('[data-testid=log-module-sheet-done]') as HTMLButtonElement | null
+  if (!done) return
+  done.click()
+  await flushPromises()
+  await new Promise((resolve) => setTimeout(resolve, 0))
 }
+const domGet = (id: string) => new DOMWrapper(document.getElementById(id) as Element)
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (error: unknown) => void
@@ -553,27 +553,27 @@ it('reviews only changed collection rules, sends changed maps, and refreshes eff
   wrappers.push(wrapper)
   await flushPromises()
   await openModule(wrapper, 'source', 'http')
-  await openModule(wrapper, 'source', 'mcp')
-  const switchState = () => wrapper.get('#log-source-http-enabled').attributes('data-state')
+  const switchState = () => domGet('log-source-http-enabled').attributes('data-state')
   expect(switchState()).toBe('checked')
-  await wrapper.get('#log-source-http-enabled').trigger('click')
+  await domGet('log-source-http-enabled').trigger('click')
   expect(switchState()).toBe('unchecked')
   // 关闭后级别选择停用，但草稿值保留。
-  expect(
-    (wrapper.get('[aria-label="HTTP 接口的最低日志级别"]').element as HTMLButtonElement).disabled
-  ).toBe(true)
-  await wrapper.get('#log-source-http-enabled').trigger('click')
-  expect(wrapper.get('[aria-label="HTTP 接口的最低日志级别"]').text()).toBe('调试')
-  await wrapper.get('#log-source-http-enabled').trigger('click')
+  expect((domGet('log-source-http-min-level').element as HTMLButtonElement).disabled).toBe(true)
+  await domGet('log-source-http-enabled').trigger('click')
+  expect(domGet('log-source-http-min-level').text()).toBe('调试')
+  await domGet('log-source-http-enabled').trigger('click')
+  await closeModule(wrapper, 'source', 'http')
 
   // 通过真实 Select 组件改 MCP 的最低级别，而不是伪造原生 select。
-  const levelTrigger = wrapper.get('[aria-label="MCP 调用的最低日志级别"]')
+  await openModule(wrapper, 'source', 'mcp')
+  const levelTrigger = domGet('log-source-mcp-min-level')
   const select = wrapper
     .findAllComponents(Select)
     .find((candidate) => candidate.element.contains(levelTrigger.element))!
   select.vm.$emit('update:modelValue', 'warn')
   await flushPromises()
   expect(levelTrigger.text()).toBe('警告')
+  await closeModule(wrapper, 'source', 'mcp')
 
   const review = wrapper.get('[data-testid=log-policy-review]')
   expect((review.element as HTMLButtonElement).disabled).toBe(false)
@@ -614,8 +614,8 @@ it('reviews only changed collection rules, sends changed maps, and refreshes eff
       }
     }
   ])
-  expect(switchState()).toBe('unchecked')
-  expect(wrapper.get('[aria-label="MCP 调用的最低日志级别"]').text()).toBe('警告')
+  expect(wrapper.get('[data-testid=log-module-row-source-http]').text()).toContain('关闭')
+  expect(wrapper.get('[data-testid=log-module-row-source-mcp]').text()).toContain('最低警告')
   // 保存反馈只说「已保存」：这次 PATCH 可能同时改了保留策略，不能断言历史不受影响。
   expect(wrapper.text()).toContain('日志配置已保存。')
   expect(wrapper.text()).not.toContain('已有记录不受影响')
@@ -684,7 +684,8 @@ it('reviews and PATCHes only the shared application rule when it is the only cha
   wrappers.push(wrapper)
   await flushPromises()
   await openModule(wrapper, 'integration', 'application')
-  await wrapper.get('#log-integration-application-enabled').trigger('click')
+  await domGet('log-integration-application-enabled').trigger('click')
+  await closeModule(wrapper, 'integration', 'application')
   await wrapper.get('[data-testid=log-policy-review]').trigger('click')
   await flushPromises()
   const dialog = document.querySelector('[role=dialog]')!
@@ -699,9 +700,7 @@ it('reviews and PATCHes only the shared application rule when it is the only cha
   ).click()
   await flushPromises()
   expect(writes).toHaveLength(0)
-  expect(wrapper.get('#log-integration-application-enabled').attributes('data-state')).toBe(
-    'unchecked'
-  )
+  expect(wrapper.get('[data-testid=log-module-row-integration-application]').text()).toContain('关闭')
   await wrapper.get('[data-testid=log-policy-review]').trigger('click')
   await flushPromises()
   ;(
@@ -715,9 +714,7 @@ it('reviews and PATCHes only the shared application rule when it is the only cha
       collection: { integrations: { application: { enabled: false, minLevel: 'debug' } } }
     }
   ])
-  expect(wrapper.get('#log-integration-application-enabled').attributes('data-state')).toBe(
-    'unchecked'
-  )
+  expect(wrapper.get('[data-testid=log-module-row-integration-application]').text()).toContain('关闭')
   vi.unstubAllGlobals()
 })
 
@@ -736,7 +733,8 @@ it('keeps the edited rule draft when saving the configuration fails', async () =
   wrappers.push(wrapper)
   await flushPromises()
   await openModule(wrapper, 'source', 'http')
-  await wrapper.get('#log-source-http-enabled').trigger('click')
+  await domGet('log-source-http-enabled').trigger('click')
+  await closeModule(wrapper, 'source', 'http')
   await wrapper.get('[data-testid=log-policy-review]').trigger('click')
   await flushPromises()
   ;(
@@ -744,10 +742,9 @@ it('keeps the edited rule draft when saving the configuration fails', async () =
   ).click()
   await flushPromises()
   expect(wrapper.text()).toContain('原策略仍生效')
-  expect(wrapper.get('#log-source-http-enabled').attributes('data-state')).toBe('unchecked')
-  expect(
-    (wrapper.get('[aria-label="HTTP 接口的最低日志级别"]').element as HTMLButtonElement).disabled
-  ).toBe(true)
+  await openModule(wrapper, 'source', 'http')
+  expect(domGet('log-source-http-enabled').attributes('data-state')).toBe('unchecked')
+  expect((domGet('log-source-http-min-level').element as HTMLButtonElement).disabled).toBe(true)
   vi.unstubAllGlobals()
 })
 
@@ -761,23 +758,23 @@ it('groups the real catalog into technical 4+6 and business 10+1 with one shared
   })
   wrappers.push(wrapper)
   await flushPromises()
-  await openAllModules(wrapper)
-  // 总 22 个采集开关：技术 10 + 业务来源 11 + 跨端共享 application 1。
-  expect(wrapper.findAll('[id$="-enabled"]')).toHaveLength(22)
+  // 总 22 个模块入口；主列表没有任何内联开关。
+  expect(wrapper.findAll('[data-testid^=log-module-row-]')).toHaveLength(22)
+  expect(document.querySelector('[data-slot=switch]')).toBeNull()
   expect(wrapper.findAll('input[type=checkbox]')).toHaveLength(0)
   expect(wrapper.findAll('select')).toHaveLength(0)
   expect(wrapper.findAll('details')).toHaveLength(0)
   expect(wrapper.find('[data-testid=log-unwired-integrations]').exists()).toBe(false)
   expect(wrapper.text()).not.toContain('未接入的技术集成')
-  const switchCount = (testid: string) =>
-    wrapper.findAll(`[data-testid=${testid}] [id$="-enabled"]`).length
-  expect(switchCount('log-technical-node')).toBe(4)
-  expect(switchCount('log-technical-browser')).toBe(6)
-  expect(switchCount('log-business-shared')).toBe(1)
-  expect(switchCount('log-business-node')).toBe(10)
-  expect(switchCount('log-business-browser')).toBe(1)
+  const rowCount = (testid: string) =>
+    wrapper.findAll('[data-testid=' + testid + '] [data-testid^=log-module-row-]').length
+  expect(rowCount('log-technical-node')).toBe(4)
+  expect(rowCount('log-technical-browser')).toBe(6)
+  expect(rowCount('log-business-shared')).toBe(1)
+  expect(rowCount('log-business-node')).toBe(10)
+  expect(rowCount('log-business-browser')).toBe(1)
   // application 只出现一次，放在业务区并明确服务端与客户端共用，不伪装成两条开关。
-  expect(wrapper.findAll('#log-integration-application-enabled')).toHaveLength(1)
+  expect(wrapper.findAll('[data-testid=log-module-row-integration-application]')).toHaveLength(1)
   expect(wrapper.get('[data-testid=log-business-shared]').text()).toContain('服务端与客户端共用')
   expect(wrapper.get('[data-testid=log-collection-integrations]').text()).not.toContain(
     '应用手动埋点'
@@ -808,13 +805,13 @@ it('lists legacy unwired catalog entries as explicitly not configurable instead 
   })
   wrappers.push(wrapper)
   await flushPromises()
-  await openAllModules(wrapper)
   // 旧目录独立 fixture：11 个来源 + 6 个已接入集成；未接入项不伪装成开关。
-  expect(wrapper.findAll('[id$="-enabled"]')).toHaveLength(17)
+  expect(wrapper.findAll('[data-testid^=log-module-row-]')).toHaveLength(17)
+  expect(document.querySelector('[data-slot=switch]')).toBeNull()
   expect(wrapper.findAll('input[type=checkbox]')).toHaveLength(0)
   expect(wrapper.text()).toContain('未接入的技术集成（5）')
   expect(wrapper.text()).not.toContain('Drizzle 数据库')
-  expect(wrapper.find('#log-integration-drizzle-enabled').exists()).toBe(false)
+  expect(wrapper.find('[data-testid=log-module-row-integration-drizzle]').exists()).toBe(false)
   const trigger = wrapper
     .findAll('button')
     .find((button) => button.text().includes('未接入的技术集成'))!
@@ -1447,9 +1444,10 @@ it('keeps the current cursor page and drafts across log and configuration tabs w
   await wrapper.findAll('[role=tab]').find(t => t.text() === '日志配置')!.trigger('keydown', { key: 'Enter' })
   await flushPromises()
   expect(router.currentRoute.value.query).toMatchObject({ tab: 'settings', source: 'ocr', outcome: 'partial' })
-  await openModule(wrapper, 'source', 'http')
   await wrapper.get('#log-retention-days').setValue('8')
-  await wrapper.get('#log-source-http-enabled').trigger('click')
+  await openModule(wrapper, 'source', 'http')
+  await domGet('log-source-http-enabled').trigger('click')
+  await closeModule(wrapper, 'source', 'http')
   await wrapper.findAll('[role=tab]').find(t => t.text() === '运行日志')!.trigger('keydown', { key: 'Enter' })
   await flushPromises()
   expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('第 2 页')
@@ -1458,7 +1456,8 @@ it('keeps the current cursor page and drafts across log and configuration tabs w
   await wrapper.findAll('[role=tab]').find(t => t.text() === '日志配置')!.trigger('keydown', { key: 'Enter' })
   await flushPromises()
   expect((wrapper.get('#log-retention-days').element as HTMLInputElement).value).toBe('8')
-  expect(wrapper.get('#log-source-http-enabled').attributes('aria-checked')).toBe('false')
+  await openModule(wrapper, 'source', 'http')
+  expect(domGet('log-source-http-enabled').attributes('aria-checked')).toBe('false')
   expect(calls.filter(c => c.options.method && c.options.method !== 'GET')).toHaveLength(0)
 })
 
