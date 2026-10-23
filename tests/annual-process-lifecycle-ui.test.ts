@@ -516,3 +516,98 @@ it('accepts current annual withdrawal after a same-generation manual unlink with
   expect(wrapper.findComponent({ name: 'AnnualProcessReview' }).props('auditReadback')).toContainEqual({ id: 42, revision: 3, status: 'unlinked' })
   expect(posts(fetch)).toHaveLength(1)
 })
+
+it('reconciles a newer manual unlink exposed by the audit after an older confirmed point read', async () => {
+  let revision = 2, reads = 0, pointReads = 0
+  const fetch = fixture(url => {
+    if (url.endsWith('/annual-process')) { reads++; return Promise.resolve(annual(7, 'scope-a', revision === 2 ? 'confirmed' : 'none')) }
+    if (url.endsWith('/correspondences/42')) { pointReads++; return Promise.resolve({ id: 42, eventId: 7, relationId: 102, revision, status: revision === 2 ? 'confirmed' : 'unlinked', requiresRevalidation: false }) }
+    if (url.endsWith('/42/audit')) { revision = 3; return Promise.resolve({ rows: [{ correspondenceId: 42, resultingRevision: 2 }, { correspondenceId: 42, resultingRevision: 3 }], total: 2, page: 1, pageSize: 200 }) }
+    return undefined
+  })
+  mountReview(7); await flushPromises()
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  expect(wrapper.get('[data-testid="event-annual-summary"]').text()).not.toContain('· 已确认最终结果')
+  expect(reads).toBe(3); expect(pointReads).toBe(2)
+  expect(wrapper.text()).toContain('已读回当前年度过程、对应与审计')
+  expect(wrapper.findComponent({ name: 'AnnualProcessReview' }).props('auditReadback')).toContainEqual({ id: 42, revision: 3, status: 'unlinked' })
+  expect(posts(fetch)).toHaveLength(1)
+})
+
+function auditHistory(page: number, total = 201) {
+  return { rows: Array.from({ length: Math.min(200, Math.max(0, total - (page - 1) * 200)) }, (_, index) => ({ id: (page - 1) * 200 + index + 1, correspondenceId: 42, resultingRevision: (page - 1) * 200 + index + 1 })), total, page, pageSize: 200 }
+}
+
+it('reads later audit pages beyond an old point match and preserves the job on a persistent newer unlink', async () => {
+  let recovered = false, reads = 0
+  const auditPages: number[] = []
+  const fetch = fixture((url, options) => {
+    if (url.endsWith('/annual-process')) {
+      reads++; const value = annual(7, 'scope-a', recovered ? 'none' : 'confirmed')
+      if (!recovered) value.process.finalQualification!.decisionRefs[0]!.revision = 200
+      return Promise.resolve(value)
+    }
+    if (url.endsWith('/correspondences/42')) return Promise.resolve({ id: 42, eventId: 7, relationId: 102, revision: recovered ? 201 : 200, status: recovered ? 'unlinked' : 'confirmed', requiresRevalidation: false })
+    if (url.endsWith('/42/audit')) { auditPages.push(options.query.page); return Promise.resolve(auditHistory(options.query.page)) }
+    return undefined
+  })
+  mountReview(7); await flushPromises()
+  const identity = sessionStorage.getItem('roster-annual-review:v1:7')
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  expect(wrapper.get('[data-testid="event-annual-summary"]').text()).not.toContain('· 已确认最终结果')
+  expect(wrapper.text()).toContain('已提交，但同步读回失败')
+  expect(reads).toBe(3); expect(auditPages).toEqual([1, 2, 1, 2])
+  recovered = true; await click('重试读回')
+  expect(wrapper.text()).toContain('已读回当前年度过程、对应与审计')
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  expect(wrapper.findComponent({ name: 'AnnualProcessReview' }).props('auditReadback')).toContainEqual({ id: 42, revision: 201, status: 'unlinked' })
+  expect(sessionStorage.getItem('roster-annual-review:v1:7')).toBe(identity)
+  expect(posts(fetch)).toHaveLength(1)
+  expect(fetch.mock.calls.filter(([url, options]) => options?.method === 'POST' && !url.endsWith('/discover'))).toHaveLength(1)
+})
+
+it('restores a newer confirmed final only after every reconciled audit page aligns with the new point', async () => {
+  let reads = 0, pointReads = 0, auditReads = 0
+  const lastPage = deferred<ReturnType<typeof auditHistory>>()
+  const fetch = fixture((url, options) => {
+    if (url.endsWith('/annual-process')) { const value = annual(7, 'scope-a', 'confirmed'); value.process.finalQualification!.decisionRefs[0]!.revision = ++reads >= 3 ? 201 : 200; return Promise.resolve(value) }
+    if (url.endsWith('/correspondences/42')) return Promise.resolve({ id: 42, eventId: 7, relationId: 102, revision: ++pointReads >= 2 ? 201 : 200, status: 'confirmed', requiresRevalidation: false })
+    if (url.endsWith('/42/audit')) { auditReads++; return auditReads === 4 ? lastPage.promise : Promise.resolve(auditHistory(options.query.page)) }
+    return undefined
+  })
+  mountReview(7); await flushPromises()
+  const identity = sessionStorage.getItem('roster-annual-review:v1:7')
+  expect(reads).toBe(3); expect(pointReads).toBe(2); expect(auditReads).toBe(4)
+  expect(wrapper.text()).toContain('正在读回年度过程、对应与审计')
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  lastPage.resolve(auditHistory(2)); await flushPromises()
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(1)
+  expect(wrapper.get('[data-testid="event-annual-summary"]').text()).toContain('· 已确认最终结果')
+  expect(sessionStorage.getItem('roster-annual-review:v1:7')).toBe(identity)
+  expect(posts(fetch)).toHaveLength(1)
+})
+
+it.each(['total-drift', 'wrong-page', 'wrong-size', 'missing-row'] as const)('retains sync failure on invalid later audit metadata %s without unbounded paging', async fault => {
+  const auditPages: number[] = []
+  const fetch = fixture((url, options) => {
+    if (url.endsWith('/annual-process')) { const value = annual(7, 'scope-a', 'confirmed'); value.process.finalQualification!.decisionRefs[0]!.revision = 200; return Promise.resolve(value) }
+    if (url.endsWith('/correspondences/42')) return Promise.resolve({ id: 42, eventId: 7, relationId: 102, revision: 200, status: 'confirmed', requiresRevalidation: false })
+    if (url.endsWith('/42/audit')) {
+      const page = options.query.page; auditPages.push(page); const value = auditHistory(page)
+      if (page === 2) {
+        if (fault === 'total-drift') { value.total = 202; value.rows.push({ id: 202, correspondenceId: 42, resultingRevision: 202 }) }
+        if (fault === 'wrong-page') value.page = 1
+        if (fault === 'wrong-size') value.pageSize = 100
+        if (fault === 'missing-row') value.rows = []
+      }
+      return Promise.resolve(value)
+    }
+    return undefined
+  })
+  mountReview(7); await flushPromises()
+  expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
+  expect(wrapper.get('[data-testid="event-annual-summary"]').text()).not.toContain('· 已确认最终结果')
+  expect(wrapper.text()).toContain('已提交，但同步读回失败')
+  expect(auditPages).toEqual([1, 2])
+  expect(posts(fetch)).toHaveLength(1)
+})

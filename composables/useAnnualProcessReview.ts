@@ -138,27 +138,38 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
     const points = await Promise.all([...targets].map(async ([pointId, revision]) => {
       const point = await $fetch<CorrespondenceDetail>(`/api/roster/correspondences/${pointId}`)
       if (point.id !== pointId || point.eventId !== id || point.revision < revision) throw new Error('point_readback_mismatch')
-      let found = false
-      for (let page = 1; !found; page++) {
+      let found = false, latestRevision = 0
+      let total: number | undefined
+      // Audit pages are oldest first. A matching historical revision does not
+      // prove that a later page has no newer decision for this same point.
+      for (let page = 1; ; page++) {
         const audit = await $fetch<{ rows: { correspondenceId: number; resultingRevision: number }[]; page: number; pageSize: number; total: number }>(`/api/roster/correspondences/${pointId}/audit`, { query: { page, pageSize: 200 } })
+        if (!current(token, id)) return { point, auditMatches: false }
         if (audit.page !== page || audit.pageSize !== 200 || !Array.isArray(audit.rows)
           || !Number.isSafeInteger(audit.total) || audit.total < 0
+          || total != null && audit.total !== total
           || audit.rows.length !== Math.min(200, Math.max(0, audit.total - (page - 1) * 200))) throw new Error('audit_readback_mismatch')
-        found = audit.rows.some(row => row.correspondenceId === pointId && row.resultingRevision === point.revision)
-        if (!found && page * audit.pageSize >= audit.total) throw new Error('audit_readback_missing')
+        total ??= audit.total
+        for (const row of audit.rows) {
+          if (row.correspondenceId !== pointId || !Number.isSafeInteger(row.resultingRevision) || row.resultingRevision < 1) throw new Error('audit_readback_mismatch')
+          found ||= row.resultingRevision === point.revision
+          latestRevision = Math.max(latestRevision, row.resultingRevision)
+        }
+        if (page * audit.pageSize >= total) break
       }
-      return point
+      if (!found) throw new Error('audit_readback_missing')
+      return { point, auditMatches: latestRevision === point.revision }
     }))
     if (!current(token, id)) return false
-    auditReadback.value = points.map(({ id, revision, status }) => ({ id, revision, status }))
+    auditReadback.value = points.map(({ point: { id, revision, status } }) => ({ id, revision, status }))
     // Generation deliberately excludes decisions. A newer/manual decision can
     // invalidate the annual qualification without changing the source scope.
     const qualification = raw.value?.process.finalQualification
-    return qualification?.status !== 'confirmed' || qualification.decisionRefs.length > 0 && qualification.decisionRefs.every(ref => {
-      const point = points.find(point => point.id === ref.id)
+    return points.every(({ auditMatches }) => auditMatches) && (qualification?.status !== 'confirmed' || qualification.decisionRefs.length > 0 && qualification.decisionRefs.every(ref => {
+      const point = points.find(({ point }) => point.id === ref.id)?.point
       return ref.status === 'confirmed' && point?.revision === ref.revision && point.status === 'confirmed'
         && point.relationId === ref.relationId && point.requiresRevalidation === false && point.endedAt == null
-    })
+    }))
   }
   async function synchronize() {
     if (syncing) return syncing
