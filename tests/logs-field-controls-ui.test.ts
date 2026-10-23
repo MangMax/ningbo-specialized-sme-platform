@@ -9,6 +9,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
+import type { LogFieldControls, LogFieldControlsPatch } from '../lib/logging/contract'
+import { LOG_FIELD_PROFILES } from '../lib/logging/field-controls'
 import { createLogService } from '../lib/logging/service'
 
 vi.mock('motion-v', async (original) => {
@@ -38,36 +40,51 @@ function ownedDirectory() {
 const LEVELS = ['debug', 'info', 'warn', 'error'] as const
 type TestLevel = (typeof LEVELS)[number]
 const LEVEL_LABELS: Record<string, string> = { debug: '调试', info: '信息', warn: '警告', error: '错误' }
-/** Server catalog fixture: only the implemented HTTP profile, exactly four fields. */
-const profileCatalog = () => [
-  {
-    key: 'http',
-    source: 'http',
-    label: 'HTTP 请求',
-    levels: [...LEVELS],
-    fields: [
-      { key: 'httpMethod', label: '请求方法', description: '服务端已知的请求方法' },
-      { key: 'httpRoute', label: '路由模板', description: '框架匹配或应用定义的固定模板' },
-      { key: 'statusCode', label: '响应状态', description: '响应的 HTTP 状态码' },
-      { key: 'durationMs', label: '耗时', description: '请求耗时，单位毫秒' }
-    ]
+const HTTP_FIELDS = ['httpMethod', 'httpRoute', 'statusCode', 'durationMs'] as const
+const TUS_FIELDS = ['tus.method', 'tus.uploadId', 'tus.size', 'tus.offset'] as const
+const label = (profile: string, field: string) =>
+  LOG_FIELD_PROFILES.find((entry) => entry.key === profile)!.fields.find(
+    (entry) => entry.key === field
+  )!.label
+
+/**
+ * The response catalog is the real backend table (HTTP + TUS), not a local copy:
+ * if the backend renames a profile/level/field the UI tests fail instead of drift.
+ */
+const profileCatalog = () => LOG_FIELD_PROFILES
+/** Complete effective controls over the real catalog, all true by default. */
+const defaultControls = (): LogFieldControls => {
+  const controls: Record<string, Record<string, Record<string, boolean>>> = {}
+  for (const profile of LOG_FIELD_PROFILES) {
+    const levels: Record<string, Record<string, boolean>> = {}
+    for (const level of LEVELS) {
+      const fields: Record<string, boolean> = {}
+      const keys = profile.key === 'tus' ? TUS_FIELDS : HTTP_FIELDS
+      for (const key of keys) fields[key] = true
+      levels[level] = fields
+    }
+    controls[profile.key] = levels
   }
-]
-const FIELD_KEYS = ['httpMethod', 'httpRoute', 'statusCode', 'durationMs'] as const
-type TestControls = Record<string, Record<TestLevel, Record<string, boolean>>>
-const defaultControls = () =>
-  ({
-    http: Object.fromEntries(
-      LEVELS.map((level) => [level, Object.fromEntries(FIELD_KEYS.map((key) => [key, true]))])
-    )
-  }) as unknown as TestControls
+  return controls as LogFieldControls
+}
 const controlsWith = (
   level: TestLevel,
-  overrides: Partial<Record<(typeof FIELD_KEYS)[number], boolean>>
+  overrides: Partial<Record<(typeof HTTP_FIELDS)[number], boolean>>
 ) => {
-  const controls = defaultControls()
+  const controls = defaultControls() as unknown as Record<
+    string,
+    Record<TestLevel, Record<string, boolean>>
+  >
   Object.assign(controls.http![level], overrides)
-  return controls
+  return controls as unknown as LogFieldControls
+}
+const tusControlsWith = (level: TestLevel, overrides: Partial<Record<string, boolean>>) => {
+  const controls = defaultControls() as unknown as Record<
+    string,
+    Record<TestLevel, Record<string, boolean>>
+  >
+  Object.assign(controls.tus![level], overrides)
+  return controls as unknown as LogFieldControls
 }
 const integrationCatalog = [
   { key: 'nuxt-nitro', label: 'Nuxt / Nitro 请求', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
@@ -75,7 +92,8 @@ const integrationCatalog = [
   { key: 'tus', label: 'tus 服务端回调', state: 'supported', configurable: true, category: 'technical', runtimes: ['node'] },
   { key: 'application', label: '应用手动埋点', state: 'supported', configurable: true, category: 'business', runtimes: ['node', 'browser'] }
 ] as const
-const sourceKeys = ['http', 'mcp', 'task'] as const
+/** Includes `file` because the real TUS profile is source=file. */
+const sourceKeys = ['http', 'mcp', 'task', 'file'] as const
 const rule = (over: Partial<{ enabled: boolean; minLevel: TestLevel }> = {}) => ({
   enabled: true,
   minLevel: 'debug' as TestLevel,
@@ -126,8 +144,10 @@ async function openPanel(wrapper: any) {
   await trigger!.trigger('click')
   await flushPromises()
 }
+/** TUS keys contain dots, so an #id selector would be parsed as a class. */
+const byId = (root: any, id: string) => root.get(`[id="${id}"]`)
 const fieldSwitch = (wrapper: any, field: string, level = 'info', profile = 'http') =>
-  wrapper.get(`#log-field-${profile}-${level}-${field}`)
+  byId(wrapper, `log-field-${profile}-${level}-${field}`)
 const state = (wrapper: any, field: string, level = 'info') =>
   fieldSwitch(wrapper, field, level).attributes('data-state')
 async function selectLevel(wrapper: any, label: string) {
@@ -175,7 +195,10 @@ it('hides the whole field entry when the backend publishes no profile catalog or
 
   // Structurally incomplete controls from a broken backend must not be filled in locally.
   const incomplete = basePolicy()
-  const incompleteControls = incomplete.fieldControls as unknown as TestControls
+  const incompleteControls = incomplete.fieldControls as unknown as Record<
+    string,
+    Record<string, Record<string, boolean>>
+  >
   delete incompleteControls.http!.info!.httpRoute
   const third = await mountManagement(() => incomplete)
   expect(third.wrapper.find('[data-testid=log-field-controls]').exists()).toBe(false)
@@ -188,11 +211,11 @@ it('renders exactly the catalog profiles and levels, one level at a time, withou
   const { wrapper, calls } = await mountManagement(() => basePolicy())
   await openPanel(wrapper)
   const panel = wrapper.get('[data-testid=log-field-controls]')
-  // 唯一已实施的 profile 与来自目录的四个级别；不是本地常量拼出来的矩阵。
+  // 两个已实施 profile 与来自目录的四个级别；不是本地常量拼出来的矩阵。
   const tabs = panel.findAll('[role=tab]')
-  expect(tabs).toHaveLength(5)
-  expect(tabs[0]!.text()).toBe('HTTP 请求')
-  expect(tabs.slice(1).map((tab: any) => tab.text())).toEqual(['调试', '信息', '警告', '错误'])
+  expect(tabs).toHaveLength(6)
+  expect(tabs.slice(0, 2).map((tab: any) => tab.text())).toEqual(['HTTP 请求', 'TUS 上传'])
+  expect(tabs.slice(2).map((tab: any) => tab.text())).toEqual(['调试', '信息', '警告', '错误'])
   expect(panel.findAll('[data-slot=switch]')).toHaveLength(4)
   expect(panel.findAll('input[type=checkbox]')).toHaveLength(0)
   expect(panel.findAll('select')).toHaveLength(0)
@@ -396,61 +419,25 @@ it('keeps the draft after a 409 or a generic failure and never reports the chang
   }
 })
 
-it('renders any catalog profile generically, including nested field keys, without local profile knowledge', async () => {
-  // Fixture-only second profile: proves the editor is driven by the response
-  // catalog. Production never ships a profile the backend has not published.
-  const nestedCatalog = [
-    ...profileCatalog(),
-    {
-      key: 'tus',
-      source: 'file',
-      label: 'TUS 上传',
-      levels: [...LEVELS],
-      fields: [
-        { key: 'tus.method', label: '上传方法', description: '服务端 tus 回调的方法' },
-        { key: 'tus.uploadId', label: '上传标识', description: '同一次上传的分片关联' }
-      ]
-    }
-  ]
-  const nestedControls = () => {
-    const controls = defaultControls() as Record<string, any>
-    controls.tus = Object.fromEntries(
-      LEVELS.map((level) => [
-        level,
-        { 'tus.method': true, 'tus.uploadId': true }
-      ])
-    )
-    return controls
-  }
-  const policy = basePolicy({
-    collection: {
-      sources: { ...(basePolicy().collection.sources as any), file: rule() },
-      integrations: Object.fromEntries(
-        [...integrationCatalog, { key: 'tus' }].map((entry) => [entry.key, rule()])
-      )
-    },
-    fieldControls: nestedControls(),
-    catalog: { integrations: integrationCatalog, profiles: nestedCatalog }
-  })
-  const { wrapper, calls } = await mountManagement(() => policy)
+it('switches to the real TUS profile and PATCHes its dotted field keys verbatim', async () => {
+  const { wrapper, calls } = await mountManagement(
+    () => basePolicy(),
+    (body) => basePolicy({ fieldControls: body.fieldControls, revision: 2 })
+  )
   await openPanel(wrapper)
   const tabs = wrapper.get('[data-testid=log-field-controls]').findAll('[role=tab]')
   expect(tabs.slice(0, 2).map((tab: any) => tab.text())).toEqual(['HTTP 请求', 'TUS 上传'])
-  // 切到第二个 profile：开关来自它的目录字段，包含嵌套键。
   await tabs[1]!.trigger('keydown', { key: 'Enter' })
   await flushPromises()
-  const switches = wrapper
-    .get('[data-testid=log-field-controls]')
-    .findAll('[data-slot=switch]')
-  expect(switches).toHaveLength(2)
-  expect(document.getElementById('log-field-tus-info-tus.uploadId')).not.toBeNull()
-  // 关闭嵌套字段后仍只有这一个 profile 的差异被提交，键名保持服务端原名。
-  ;(document.getElementById('log-field-tus-info-tus.uploadId') as HTMLElement).click()
-  await flushPromises()
+  const switches = wrapper.get('[data-testid=log-field-controls]').findAll('[data-slot=switch]')
+  expect(switches).toHaveLength(4)
+  // 嵌套键原样成为 DOM id 与提交键，不被拆成 tus → uploadId。
+  for (const key of TUS_FIELDS) expect(document.getElementById(`log-field-tus-info-${key}`)).not.toBeNull()
+  await byId(wrapper, 'log-field-tus-info-tus.uploadId').trigger('click')
   await review(wrapper)
   const dialog = document.querySelector('[role=dialog]')!
   expect(dialog.querySelector('[data-testid=log-field-review-table]')!.textContent).toContain(
-    'TUS 上传 · 信息 · 上传标识'
+    `TUS 上传 · 信息 · ${label('tus', 'tus.uploadId')}`
   )
   await confirm()
   expect(patches(calls)).toEqual([
@@ -460,8 +447,47 @@ it('renders any catalog profile generically, including nested field keys, withou
       fieldControls: { tus: { info: { 'tus.uploadId': false } } }
     }
   ])
-  // 改动的父级只按真实存在的来源/集成规则判断；tus 集成在这里是开启的，所以不显示不采集。
+  // tus 来源与 tus 集成都在开启状态时，不显示“当前不采集”。
   expect(wrapper.get('[data-testid=log-field-controls]').text()).not.toContain('当前不采集')
+})
+
+it('marks the real TUS profile as not collecting from file source and tus integration only', async () => {
+  const base = basePolicy()
+  // 关闭 file 来源，但保持 tus 集成开启；真实 TUS profile 的父级必须同时看这两处。
+  ;(base.collection as unknown as Record<string, Record<string, unknown>>).sources!.file = rule({
+    enabled: false
+  })
+  const { wrapper } = await mountManagement(() => base)
+  await openPanel(wrapper)
+  await wrapper
+    .get('[data-testid=log-field-controls]')
+    .findAll('[role=tab]')[1]!
+    .trigger('keydown', { key: 'Enter' })
+  await flushPromises()
+  const panel = wrapper.get('[data-testid=log-field-controls]')
+  expect(panel.text()).toContain('当前不采集')
+  expect(panel.text()).toContain('文件来源已关闭')
+  // 只有 tus 集成关闭时同样成立，不会把来源或 tus-client 混进来。
+  const integrationOff = basePolicy()
+  ;(integrationOff.collection as unknown as Record<string, Record<string, unknown>>).integrations!.tus =
+    rule({ enabled: false })
+  const second = await mountManagement(() => integrationOff)
+  await openPanel(second.wrapper)
+  await second.wrapper
+    .get('[data-testid=log-field-controls]')
+    .findAll('[role=tab]')[1]!
+    .trigger('keydown', { key: 'Enter' })
+  await flushPromises()
+  const secondPanel = second.wrapper.get('[data-testid=log-field-controls]')
+  expect(secondPanel.text()).toContain('当前不采集')
+  expect(secondPanel.text()).toContain('tus 服务端回调集成已关闭')
+  expect(secondPanel.text()).not.toContain('tus 客户端')
+  // 父级关闭不影响编辑与保存偏好。
+  expect(
+    (byId(second.wrapper, 'log-field-tus-info-tus.method').element as HTMLElement).hasAttribute(
+      'disabled'
+    )
+  ).toBe(false)
 })
 
 it('renders and PATCHes the real service policy catalog without drifting from the backend shape', async () => {
@@ -470,18 +496,20 @@ it('renders and PATCHes the real service policy catalog without drifting from th
   const response = await service.policy()
   // The real response is the only thing driving the editor; the test itself
   // never supplies profile, level or field names.
-  expect(response.catalog.profiles.map((profile) => profile.key)).toEqual(['http'])
+  expect(response.catalog.profiles.map((profile) => profile.key)).toEqual(['http', 'tus'])
   const { wrapper, calls } = await mountManagement(
     () => response as unknown as Record<string, unknown>,
     (body) => ({ ...(response as unknown as Record<string, unknown>), ...body, revision: 2 })
   )
   await openPanel(wrapper)
-  const fieldConfig = response.catalog.profiles[0]!
   const tabs = wrapper.get('[data-testid=log-field-controls]').findAll('[role=tab]')
-  expect(tabs.map((tab: any) => tab.text())).toEqual([
-    fieldConfig.label,
-    ...fieldConfig.levels.map((level) => LEVEL_LABELS[level])
-  ])
+  expect(tabs.slice(0, 2).map((tab: any) => tab.text())).toEqual(
+    response.catalog.profiles.map((profile) => profile.label)
+  )
+  expect(tabs.slice(2).map((tab: any) => tab.text())).toEqual(
+    response.catalog.profiles[0]!.levels.map((level) => LEVEL_LABELS[level])
+  )
+  const fieldConfig = response.catalog.profiles[0]!
   const switches = wrapper.get('[data-testid=log-field-controls]').findAll('[data-slot=switch]')
   expect(switches).toHaveLength(fieldConfig.fields.length)
   expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('当前为默认')
@@ -503,6 +531,16 @@ it('renders and PATCHes the real service policy catalog without drifting from th
       fieldControls: { http: { info: { httpRoute: false } } }
     }
   ])
+  // 第二个 profile 的目录同样来自真实响应，且点开就有四个开关。
+  await tabs[1]!.trigger('keydown', { key: 'Enter' })
+  await flushPromises()
+  const tusConfig = response.catalog.profiles[1]!
+  expect(
+    wrapper.get('[data-testid=log-field-controls]').findAll('[data-slot=switch]')
+  ).toHaveLength(tusConfig.fields.length)
+  for (const field of tusConfig.fields) {
+    expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain(field.description)
+  }
   // 服务端真的落库后，重新读取的响应仍能被同一份草稿逻辑消化。
   const saved = await service.setPolicy({
     retentionDays: response.retentionDays,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { LogEvent } from '../lib/logging/contract'
+import type { FieldCapturedLogEvent, LogEvent } from '../lib/logging/contract'
 import { detailProfile, errorCodeMissingIsInformative, fieldOmission } from '../lib/logging/detail-profile'
 import { formatCounts } from '../components/logs/logPresentation'
 import { projectEvlog, safeLogEvent, safeMcpContext, safeTusContext } from '../lib/logging/privacy'
@@ -9,8 +9,10 @@ const event = (over: Partial<LogEvent>): LogEvent => ({
   timestamp: '2026-10-22T00:00:00.000Z',
   level: 'info', source: 'http', operation: 'http.request', outcome: 'success', ...over,
 } as LogEvent)
-const fields = (row: LogEvent) => detailProfile(row).flatMap(section => section.fields)
-const section = (row: LogEvent, title: string) => detailProfile(row).find(entry => entry.title === title)
+/** Detail reads the output event; a plain LogEvent is still assignable to it. */
+const fields = (row: FieldCapturedLogEvent) => detailProfile(row).flatMap(section => section.fields)
+const section = (row: FieldCapturedLogEvent, title: string) =>
+  detailProfile(row).find(entry => entry.title === title)
 
 it('classifies inherited object property names as unknown MCP clients', () => {
   for (const name of ['constructor', '__proto__', 'toString']) {
@@ -22,10 +24,11 @@ it('classifies inherited object property names as unknown MCP clients', () => {
   }
 })
 
+/** Writer output event; capture is an internal fact the UI must read directly. */
+const captured = (over: Partial<FieldCapturedLogEvent>): FieldCapturedLogEvent =>
+  event(over as Partial<LogEvent>) as FieldCapturedLogEvent
+
 describe('#180 source-aware detail profile', () => {
-  /** Capture is an internal writer fact; the helper widens only this test seam. */
-  const captured = (over: Partial<LogEvent> & { fieldCapture?: unknown }) =>
-    event(over as Partial<LogEvent>) as LogEvent & { fieldCapture?: any }
 
   it('selects only applicable targets for all eleven sources', () => {
     const samples = [
@@ -122,13 +125,13 @@ describe('#180 source-aware detail profile', () => {
   })
 
   it('keeps phase visible when the output TUS context has no uploadId', () => {
-    // Output-shaped context (future FieldCapturedLogEvent): phase required,
-    // uploadId optional. The section must not disappear or invent an id.
-    const output = event({
+    // Output context: phase required, uploadId optional. The section must not
+    // disappear or invent an id.
+    const output = captured({
       source: 'file',
       operation: 'file.upload',
       outcome: 'failure',
-      tus: { phase: 'request-failed' } as never,
+      tus: { phase: 'request-failed' },
     })
     const tus = section(output, '上传（TUS）')!
     expect(tus.fields).toEqual(['tus.phase'])
@@ -142,9 +145,7 @@ describe('#180 source-aware detail profile', () => {
       source: 'file',
       operation: 'file.upload',
       outcome: 'success',
-      // Output-side shape: the current contract still types tus as strict input,
-      // so this seam casts only; F04a adds the output type itself.
-      tus: { phase: 'completed', method: 'PATCH' } as never,
+      tus: { phase: 'completed', method: 'PATCH' },
       fieldCapture: { profile: 'tus', revision: 5, disabled: ['tus.uploadId'] },
     })
     const controlled = section(disabled, '上传（TUS）')!
@@ -164,10 +165,6 @@ describe('#180 source-aware detail profile', () => {
 })
 
 describe('#180 field capture omission in the detail profile', () => {
-  /** Same narrow widening helper; capture never enters the public LogInput type. */
-  const captured = (over: Partial<LogEvent> & { fieldCapture?: unknown }) =>
-    event(over as Partial<LogEvent>) as LogEvent & { fieldCapture?: any }
-
   it('reports a writer-disabled field as disabled and keeps a plain gap absent', () => {
     const row = captured({
       httpMethod: 'GET',

@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLogRead } from '../composables/useLogRead'
-import type { LogSummary } from '../lib/logging/contract'
+import type { FieldCapturedLogEvent, LogSummary } from '../lib/logging/contract'
 // Model reduced-motion preference in happy-dom; real browser checks retain the
 // production transitions and exercise the actual Tabs/Sheet interaction.
 vi.mock('motion-v', async (original) => {
@@ -1544,36 +1544,67 @@ it('accepts an output-shaped TUS context with an omitted uploadId and keeps phas
   vi.unstubAllGlobals()
 })
 
-it('does not fabricate a capture fact for a profile the backend has not published', async () => {
+it('drops a capture whose profile this build has not implemented', async () => {
   const { default: Detail } = await import('../components/logs/LogDetail.vue')
-  const base = {
+  const event = {
     id: '00000000-0000-4000-8000-000000000605',
     timestamp: '2026-10-22T00:00:00Z',
     level: 'info',
-    source: 'file',
-    operation: 'file.upload',
+    source: 'worker',
+    operation: 'worker.enterprise_read.finished',
     outcome: 'success',
-    tus: { phase: 'completed' }
+    // Not one of the implemented profiles: must not be echoed as trusted copy.
+    fieldCapture: { profile: 'worker', revision: 1, disabled: ['resourceId'] }
   }
   const writeText = vi.fn().mockResolvedValue(undefined)
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
-  // A response that claims a TUS capture while this build's catalog does not
-  // implement that profile must not be echoed as trusted UI copy.
-  vi.stubGlobal(
-    '$fetch',
-    vi.fn().mockResolvedValue({
-      ...base,
-      fieldCapture: { profile: 'tus', revision: 1, disabled: ['tus.uploadId'] }
-    })
-  )
-  const wrapper = mount(Detail, { props: { id: base.id } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
   wrappers.push(wrapper)
   await flushPromises()
   await wrapper.get('button').trigger('click')
   await flushPromises()
   const copied = JSON.parse(writeText.mock.calls[0]![0])
   expect(copied).not.toHaveProperty('fieldCapture')
-  expect(copied.tus).toEqual({ phase: 'completed' })
+  expect(copied.id).toBe(event.id)
+  vi.unstubAllGlobals()
+})
+
+it('keeps phase and the tus capture when uploadId was disabled at capture time', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  // Real writer output: tus.uploadId disabled in configuration, so the projected
+  // context keeps phase/method but has no uploadId, and capture records why.
+  const event: FieldCapturedLogEvent = {
+    id: '00000000-0000-4000-8000-000000000606',
+    timestamp: '2026-10-22T00:00:00Z',
+    level: 'warn',
+    source: 'file',
+    operation: 'file.upload',
+    outcome: 'failure',
+    tus: { phase: 'request-failed', method: 'PATCH', size: 2048, offset: 1024 },
+    fieldCapture: { profile: 'tus', revision: 6, disabled: ['tus.uploadId'] }
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(event))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const text = wrapper.text()
+  expect(text).toContain('上传（TUS）')
+  expect(text).toContain('请求失败')
+  expect(text).toContain('当时未启用采集')
+  // uploadId 关闭不改变 phase，也不宣称源头没提供。
+  expect(text).not.toContain('uploadId 来自服务端 tus 回调')
+  const uploadCell = wrapper.get('[data-omission=disabled]')
+  expect(uploadCell.text()).toBe('当时未启用采集')
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  const copied = JSON.parse(writeText.mock.calls[0]![0])
+  expect(copied.tus).toEqual({ phase: 'request-failed', method: 'PATCH', size: 2048, offset: 1024 })
+  expect(copied.fieldCapture).toEqual({ profile: 'tus', revision: 6, disabled: ['tus.uploadId'] })
+  expect(copied.id).toBe(event.id)
+  expect(copied.timestamp).toBe(event.timestamp)
   vi.unstubAllGlobals()
 })
 
