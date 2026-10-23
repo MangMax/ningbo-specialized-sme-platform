@@ -542,6 +542,8 @@ it('renders and PATCHes the real service policy catalog without drifting from th
   for (const field of tusConfig.fields) {
     expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain(field.label)
   }
+  // 单位不在标签里，不能随解释一起删掉。
+  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('（字节）')
   // 服务端真的落库后，重新读取的响应仍能被同一份草稿逻辑消化。
   const saved = await service.setPolicy({
     retentionDays: response.retentionDays,
