@@ -3,6 +3,14 @@ import { fileURLToPath } from 'node:url'
 import { defineNuxtConfig } from 'nuxt/config'
 import tailwindcss from '@tailwindcss/vite'
 import { TASK_EXPORTS } from './lib/task-center'
+import { LOG_ICON_IDS } from './components/logs/logIcons'
+
+// 只有本地图标集合；`@nuxt/icon` 在构建期把 `LOG_ICON_IDS` 与自定义集合打进客户端，
+// 运行时不访问 api.iconify.design。详见 components/logs/logIcons.ts 的清单。
+const projectIcons = createRequire(import.meta.url)('./assets/icons/project-icons.json') as {
+  prefix: string
+  icons: Record<string, { body: string; width?: number; height?: number }>
+}
 
 // SPA only — no SSR. Everything runs in the browser against Nitro server routes.
 export default defineNuxtConfig({
@@ -28,7 +36,24 @@ export default defineNuxtConfig({
     // `server/mcp/index.ts`。
     '@nuxtjs/mcp-toolkit',
     'evlog/nuxt',
+    '@nuxt/icon',
   ],
+
+  // 日志配置页的折叠面板图标（#180）。provider: 'none' + serverBundle: false
+  // 关闭运行时 Iconify API 与服务端 icon 路由；品牌色保留在 svg 模式。
+  icon: {
+    provider: 'none',
+    serverBundle: false,
+    fallbackToApi: false,
+    mode: 'svg',
+    clientBundle: {
+      scan: true,
+      includeCustomCollections: true,
+      icons: LOG_ICON_IDS,
+      sizeLimitKb: 512,
+    },
+    customCollections: [projectIcons],
+  },
 
   evlog: {
     silent: true, pretty: false, console: false, sourceLocation: false, strip: [],

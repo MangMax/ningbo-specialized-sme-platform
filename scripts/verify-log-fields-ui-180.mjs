@@ -149,6 +149,14 @@ for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => void stop
 await waitForHttp(base + '/api/health', { child, timeoutMs: 300000 })
 writeFileSync(join(evidence, 'f03-verify-manifest.json'), JSON.stringify({ root, base, port, pid: child.pid, seededBytes, businessDb: business, logDir, evidence }, null, 2))
 try {
+  // Accordion browser evidence needs the full, un-pruned capacity headroom for
+  // a real UI 409. `F03_SKIP_CHECKS=1` only starts the same owned fixture and
+  // leaves the API checks to the caller; normal runs are unchanged.
+  if (process.env.F03_SKIP_CHECKS === '1') {
+    persistReceipt({ ok: true, skippedChecks: true })
+    console.log(JSON.stringify({ verdict: 'SERVER_ONLY', base, port, pid: child.pid }))
+    await new Promise(() => {})
+  }
   const initial = await readPolicy()
   assert.equal(initial.status, 200, 'GET policy ' + initial.status)
   const profiles = initial.body.catalog.profiles

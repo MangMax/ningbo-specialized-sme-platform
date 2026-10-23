@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { LOG_LEVELS } from '~~/lib/logging/contract'
 import type {
   LOG_INTEGRATIONS,
@@ -13,6 +13,9 @@ import type {
 } from '~~/lib/logging/contract'
 import type { LOG_FIELD_PROFILES } from '~~/lib/logging/field-controls'
 import { isClientLogSource, sourceLabel } from './logPresentation'
+import { iconForGroup, iconForIntegration, iconForSection, iconForSource } from './logIcons'
+import LogFieldEditor from './LogFieldEditor.vue'
+import LogModulePanel from './LogModulePanel.vue'
 import {
   logBrowserHeaders,
   logErrorCode,
@@ -23,15 +26,8 @@ import TableFailureState from '@/components/TableFailureState.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-  FieldLegend,
-  FieldSet
-} from '@/components/ui/field'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -44,7 +40,6 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableRow, TableCell } from '@/components/ui/table'
 import {
   Dialog,
@@ -108,6 +103,7 @@ type RowGroup = {
   testid: string
   title: string
   note?: string
+  icon: string
   rows: CollectionRow[]
 }
 type CollectionSection = {
@@ -116,6 +112,7 @@ type CollectionSection = {
   headingId: string
   title: string
   description: string
+  icon: string
   groups: RowGroup[]
 }
 /** 一个字段叶子相对已保存配置的真实变动；恢复默认也会以 false→true 出现在这里。 */
@@ -178,14 +175,9 @@ const sourceDraft = ref<Record<string, LogCollectionRule>>({}),
   integrationDraft = ref<Record<string, LogCollectionRule>>({})
 /** 字段草稿：profile → 级别 → 字段布尔。只在服务端目录存在时才有内容。 */
 const fieldDraft = ref<LogFieldControls>({} as LogFieldControls)
-const fieldProfile = ref(''),
-  fieldLevel = ref<LevelKey>('info')
-const fieldOpen = ref(false)
-/** 可撤销的字段操作；restore 是操作前的整份字段草稿，撤销只改草稿。 */
-type FieldNotice = { text: string; restore?: LogFieldControls }
-const fieldNotice = ref<FieldNotice | null>(null)
-const fieldCopyOpen = ref(false)
-const fieldCopyTargets = ref<LevelKey[]>([])
+/** 每个采集器面板独立开合；多个面板可同时打开。 */
+const openPanels = ref<Record<string, boolean>>({})
+const panelKey = (prefix: 'source' | 'integration', key: string) => `${prefix}:${key}`
 
 function cloneRules(
   rules?: Partial<Record<string, LogCollectionRule>>
@@ -203,12 +195,12 @@ function initializeDrafts(policy: PolicyView) {
   integrationDraft.value = cloneRules(policy.collection?.integrations)
   const profiles = policy.catalog?.profiles ?? []
   fieldDraft.value = cloneFieldControls(policy.fieldControls, profiles) as LogFieldControls
-  if (!profiles.some((profile) => profile.key === fieldProfile.value))
-    fieldProfile.value = profiles[0]?.key ?? ''
-  const profile = profiles.find((candidate) => candidate.key === fieldProfile.value)
-  if (profile && !profile.levels.includes(fieldLevel.value))
-    fieldLevel.value = profile.levels[0] ?? 'info'
-  clearFieldTransient()
+  // 首次读取默认展开 HTTP（如果它的采集器存在）；之后保留用户的开合状态。
+  if (!Object.keys(openPanels.value).length) {
+    const http = profiles.find((profile) => String(profile.key) === 'http')
+    const collector = http ? collectorKeyForProfile(http) : undefined
+    if (collector) openPanels.value[panelKey('integration', collector)] = true
+  }
 }
 watch(data, (value) => {
   if (value && !initialized.value) {
@@ -288,6 +280,7 @@ const technicalGroups = computed<RowGroup[]>(() => {
       key: 'technical-node',
       testid: 'log-technical-node',
       title: '服务端',
+      icon: iconForGroup('technical-node'),
       rows: technical.filter((row) => runsOn(row, 'node'))
     },
     {
@@ -295,6 +288,7 @@ const technicalGroups = computed<RowGroup[]>(() => {
       testid: 'log-technical-browser',
       title: '客户端',
       note: '客户端自报，不代表服务端执行事实。',
+      icon: iconForGroup('technical-browser'),
       rows: technical.filter((row) => runsOn(row, 'browser'))
     },
     {
@@ -302,6 +296,7 @@ const technicalGroups = computed<RowGroup[]>(() => {
       testid: 'log-technical-other',
       title: '未标注运行端',
       note: '旧目录没有运行端元数据，仅作兼容展示；不影响规则保存。',
+      icon: iconForGroup('technical-other'),
       rows: integrationRows.value.filter(
         (row) => row.category !== 'technical' && row.category !== 'business'
       )
@@ -316,12 +311,14 @@ const businessGroups = computed<RowGroup[]>(() => {
       testid: 'log-business-shared',
       title: '跨端共享手动上报',
       note: '服务端与客户端共用这一条规则，并与来源条件同时成立。',
+      icon: iconForGroup('business-shared'),
       rows: integrationRows.value.filter((row) => row.category === 'business')
     },
     {
       key: 'business-node',
       testid: 'log-business-node',
       title: '服务端来源',
+      icon: iconForGroup('business-node'),
       rows: sourceRows.value.filter((row) => !isClientLogSource(row.key))
     },
     {
@@ -329,6 +326,7 @@ const businessGroups = computed<RowGroup[]>(() => {
       testid: 'log-business-browser',
       title: '客户端来源',
       note: '浏览器自报，上下文不可信。',
+      icon: iconForGroup('business-browser'),
       rows: sourceRows.value.filter((row) => isClientLogSource(row.key))
     }
   ]
@@ -342,6 +340,7 @@ const collectionSections = computed<CollectionSection[]>(() => {
       headingId: 'log-technical-heading',
       title: '技术集成',
       description: '技术集成与来源须同时开启，最低级别取两者中更严格的一处。',
+      icon: iconForSection('technical'),
       groups: technicalGroups.value
     },
     {
@@ -349,7 +348,8 @@ const collectionSections = computed<CollectionSection[]>(() => {
       testid: 'log-collection-sources',
       headingId: 'log-business-heading',
       title: '业务埋点',
-      description: '',
+      description: '来源维度独立生效，也可被技术集成条件收窄。',
+      icon: iconForSection('business'),
       groups: businessGroups.value
     }
   ]
@@ -403,28 +403,66 @@ function cloneFieldControls(
   }
   return out as unknown as LogFieldControls
 }
-const activeProfile = computed(() => fieldProfiles.value.find((p) => p.key === fieldProfile.value))
-const activeLevels = computed<readonly LevelKey[]>(() => activeProfile.value?.levels ?? [])
-const activeFields = computed(() => activeProfile.value?.fields ?? [])
-const activeLevelValues = computed<Record<string, boolean> | undefined>(() =>
-  activeProfile.value
-    ? fieldValues(fieldDraft.value, activeProfile.value.key, fieldLevel.value)
-    : undefined
-)
 /**
- * 采集器与来源由服务端目录给出，目录里没有“父级集成”字段，所以这里只做展示映射：
- * 先看是否存在与 profile 同名的集成（tus 等服务端 hook 就是这种），
- * 再补上已知的独立采集器（HTTP 请求完成事件由 Nuxt / Nitro 集成产生）。
- * 未来目录新增 profile 时，若两者都不匹配，就只按来源规则判断，不臆造父级条件。
+ * profile 与主采集器的展示映射。目录里没有“父级集成”字段，所以先看同名集成
+ * （tus 等服务端 hook 就是这种），再补已知的独立采集器（HTTP 完成事件由
+ * Nuxt / Nitro 集成产生）。未来目录新增 profile 时，两者都不匹配就不臆造父级。
  */
 const PROFILE_COLLECTOR_INTEGRATIONS: Record<string, readonly string[]> = {
   http: ['nuxt-nitro']
+}
+function collectorKeyForProfile(profile: FieldProfile): string | undefined {
+  const mapped = PROFILE_COLLECTOR_INTEGRATIONS[String(profile.key)]?.[0]
+  if (mapped) return mapped
+  return configuredIntegrations.value.some((meta) => meta.key === String(profile.key))
+    ? String(profile.key)
+    : undefined
+}
+function collectorLabelForProfile(profile: FieldProfile): string {
+  const key = collectorKeyForProfile(profile)
+  return (
+    configuredIntegrations.value.find((meta) => meta.key === key)?.label ??
+    key ??
+    String(profile.key)
+  )
+}
+/** 集成行承载哪个字段 profile；来源行不承载字段（字段跟随主采集器）。 */
+function profileForIntegration(key: string): FieldProfile | undefined {
+  return (
+    fieldProfiles.value.find((profile) => String(profile.key) === key) ??
+    fieldProfiles.value.find((profile) =>
+      (PROFILE_COLLECTOR_INTEGRATIONS[String(profile.key)] ?? []).includes(key)
+    )
+  )
+}
+function profileForSource(key: string): FieldProfile | undefined {
+  return fieldProfiles.value.find((profile) => String(profile.source) === key)
+}
+/** 只给采集器行返回 profile；来源行即使有同 source 的 profile 也不画字段开关。 */
+function collectorProfileForRow(row: CollectionRow): FieldProfile | undefined {
+  return row.prefix === 'integration' ? profileForIntegration(row.key) : undefined
+}
+function sourceProfileForRow(row: CollectionRow): FieldProfile | undefined {
+  return row.prefix === 'source' ? profileForSource(row.key) : undefined
+}
+function profileForRow(row: CollectionRow): FieldProfile | undefined {
+  return collectorProfileForRow(row) ?? sourceProfileForRow(row)
+}
+/** 模板里已用 v-if 判过；这里返回非空，避免在模板写非空断言。 */
+function requireCollectorProfile(row: CollectionRow): FieldProfile {
+  const profile = collectorProfileForRow(row)
+  if (!profile) throw new Error('collector_profile_missing')
+  return profile
+}
+function sourceCollectorLabel(row: CollectionRow): string {
+  const profile = sourceProfileForRow(row)
+  return profile ? collectorLabelForProfile(profile) : ''
 }
 function parentRulesFor(profile: FieldProfile | undefined) {
   if (!profile) return []
   const rules: { label: string; rule: LogCollectionRule }[] = []
   const source = sourceDraft.value[profile.source]
-  if (source) rules.push({ label: `${sourceLabel(String(profile.source))}来源`, rule: source })
+  if (source) rules.push({ label: sourceLabel(String(profile.source)) + '来源', rule: source })
   const candidates = [
     String(profile.key),
     ...(PROFILE_COLLECTOR_INTEGRATIONS[String(profile.key)] ?? [])
@@ -433,16 +471,14 @@ function parentRulesFor(profile: FieldProfile | undefined) {
     const rule = integrationDraft.value[key]
     if (!rule) continue
     const label = configuredIntegrations.value.find((meta) => meta.key === key)?.label ?? key
-    rules.push({ label: `${label}集成`, rule })
+    rules.push({ label: label + '集成', rule })
   }
   return rules
 }
 const offReasonsFor = (profile: FieldProfile | undefined) =>
   parentRulesFor(profile)
     .filter((entry) => !entry.rule.enabled)
-    .map((entry) => `${entry.label}已关闭`)
-const parentRules = computed(() => parentRulesFor(activeProfile.value))
-const parentOffReasons = computed(() => offReasonsFor(activeProfile.value))
+    .map((entry) => entry.label + '已关闭')
 /** 核对时按改动涉及的 profile 说明父级；不是只看当前正在编辑的那一类。 */
 const reviewParentReasons = computed(() => {
   const keys = [...new Set(fieldChanges.value.map((change) => change.profile))]
@@ -451,43 +487,33 @@ const reviewParentReasons = computed(() => {
   )
   return [...new Set(reasons)]
 })
-const parentMinLevel = computed<LevelKey | undefined>(() => {
-  const indexes = parentRules.value.map((entry) => LOG_LEVELS.indexOf(entry.rule.minLevel))
+/** 父级规则同时生效，有效门槛取更严格的一处。 */
+function parentMinLevelFor(profile: FieldProfile): LevelKey | undefined {
+  const indexes = parentRulesFor(profile).map((entry) => LOG_LEVELS.indexOf(entry.rule.minLevel))
   if (!indexes.length) return undefined
   return LOG_LEVELS[Math.max(...indexes)]
-})
-const levelBelowParent = computed(
-  () => !!parentMinLevel.value && LOG_LEVELS.indexOf(fieldLevel.value) < LOG_LEVELS.indexOf(parentMinLevel.value)
-)
-const levelChangedCount = (level: LevelKey) => {
-  const profile = activeProfile.value
-  if (!profile) return 0
-  const values = fieldValues(fieldDraft.value, profile.key, level)
-  return profile.fields.filter((field) => values?.[field.key] === false).length
 }
-/** 每个级别的圆点表示“这一档有字段不记录”，与是否已保存无关。 */
-const levelTabs = computed(() =>
-  activeLevels.value.map((level) => {
-    const count = levelChangedCount(level)
-    return {
-      key: level,
-      label: levelLabel(level),
-      count,
-      ariaLabel: count ? `${levelLabel(level)}，已调整 ${count} 项` : levelLabel(level)
-    }
-  })
-)
-const sameLevelValues = (left: Record<string, boolean> | undefined, right: Record<string, boolean> | undefined) =>
-  activeFields.value.every((field) => left?.[field.key] === right?.[field.key])
-const copyLevels = computed(() =>
-  activeLevels.value
-    .filter((level) => level !== fieldLevel.value)
-    .map((level) => {
-      const same = sameLevelValues(activeLevelValues.value, fieldValues(fieldDraft.value, activeProfile.value!.key, level))
-      return { key: level, label: levelLabel(level), same }
-    })
-)
-const copyAvailable = computed(() => copyLevels.value.filter((entry) => !entry.same))
+function effectiveMinFor(profile: FieldProfile | undefined): LevelKey | undefined {
+  return profile ? parentMinLevelFor(profile) : undefined
+}
+type FieldState = 'on' | 'off' | 'mixed'
+/** 一份选择是否适用于全部事件级别；mixed 是已保存配置真实存在的不一致。 */
+function fieldState(profile: FieldProfile, field: string): FieldState {
+  let on = 0
+  for (const level of profile.levels)
+    if (fieldValues(fieldDraft.value, profile.key, level)?.[field] === true) on++
+  return on === profile.levels.length ? 'on' : on === 0 ? 'off' : 'mixed'
+}
+function fieldCounts(profile: FieldProfile) {
+  let on = 0,
+    mixed = 0
+  for (const field of profile.fields) {
+    const state = fieldState(profile, field.key)
+    if (state === 'on') on++
+    else if (state === 'mixed') mixed++
+  }
+  return { on, mixed, total: profile.fields.length }
+}
 /** 相对服务端基线的真实差异；恢复 true 也在这里出现，不能只在“关闭项”里找。 */
 const fieldChanges = computed<FieldChange[]>(() => {
   const baseline = data.value?.fieldControls
@@ -512,103 +538,108 @@ const fieldChanges = computed<FieldChange[]>(() => {
       }
   return changes
 })
-const savedDisabledCount = computed(() => {
+const controlsFor = (profile: FieldProfile) =>
+  (
+    fieldDraft.value as unknown as Record<
+      string,
+      Record<string, Record<string, boolean>>
+    >
+  )[String(profile.key)]!
+function profileDirty(profile: FieldProfile) {
   const baseline = data.value?.fieldControls
-  if (!baseline) return 0
-  let count = 0
-  for (const profile of fieldProfiles.value)
-    for (const level of profile.levels)
-      count += profile.fields.filter(
-        (field) => fieldValues(baseline, profile.key, level)?.[field.key] === false
-      ).length
-  return count
-})
-const fieldSummary = computed(() => {
-  if (fieldChanges.value.length) return `共 ${fieldChanges.value.length} 项未保存`
-  return savedDisabledCount.value ? `当前 ${savedDisabledCount.value} 项不记录` : '默认全部保留'
-})
-function clearFieldTransient() {
-  fieldCopyOpen.value = false
-  fieldCopyTargets.value = []
-  fieldNotice.value = null
-}
-function selectFieldProfile(key: string) {
-  if (key === fieldProfile.value) return
-  fieldProfile.value = key
-  const profile = fieldProfiles.value.find((candidate) => candidate.key === key)
-  if (profile && !profile.levels.includes(fieldLevel.value)) fieldLevel.value = profile.levels[0]!
-  clearFieldTransient()
-}
-function selectFieldLevel(level: LevelKey) {
-  if (level === fieldLevel.value) return
-  fieldLevel.value = level
-  clearFieldTransient()
-}
-function setField(key: string, next: boolean) {
-  const profile = activeProfile.value
-  if (!profile) return
-  const values = fieldValues(fieldDraft.value, profile.key, fieldLevel.value)
-  if (!values || values[key] === next) return
-  values[key] = next
-  fieldNotice.value = null
-}
-const fieldControlId = (field: string) =>
-  `log-field-${fieldProfile.value}-${fieldLevel.value}-${field}`
-/**
- * 目录里的 description 多数只是复述字段名；只有单位（毫秒/字节）是标签本身
- * 不携带、又不能丢的信息。这里从服务端原文里取单位做后缀，其余描述不再逐行铺开。
- */
-const UNIT_HINTS = ['毫秒', '字节'] as const
-const fieldUnit = (description: string) =>
-  UNIT_HINTS.find((unit) => description.includes(unit))
-function toggleFieldCopyTarget(level: LevelKey, next: boolean) {
-  fieldCopyTargets.value = next
-    ? [...new Set([...fieldCopyTargets.value, level])]
-    : fieldCopyTargets.value.filter((entry) => entry !== level)
-}
-// 收起面板只清掉临时的复制/撤销状态，字段草稿与当前类型、级别保留。
-watch(fieldOpen, (open) => {
-  if (!open) clearFieldTransient()
-})
-function openFieldCopy() {
-  fieldNotice.value = null
-  fieldCopyTargets.value = []
-  fieldCopyOpen.value = true
-}
-function copyFieldLevel() {
-  const profile = activeProfile.value,
-    source = activeLevelValues.value
-  if (!profile || !source) return
-  const targets = fieldCopyTargets.value.filter((level) =>
-    copyAvailable.value.some((entry) => entry.key === level)
+  if (!baseline) return false
+  return profile.levels.some((level) =>
+    profile.fields.some((field) => {
+      const from = fieldValues(baseline, profile.key, level)?.[field.key]
+      const to = fieldValues(fieldDraft.value, profile.key, level)?.[field.key]
+      return typeof from === 'boolean' && from !== to
+    })
   )
-  if (!targets.length) return
-  const restore = cloneFieldControls(fieldDraft.value, fieldProfiles.value)
-  for (const level of targets) {
-    const values = fieldValues(fieldDraft.value, profile.key, level)
-    if (!values) continue
-    for (const field of profile.fields) values[field.key] = source[field.key] === true
-  }
-  fieldCopyOpen.value = false
-  fieldCopyTargets.value = []
-  fieldNotice.value = {
-    text: `已复制到${targets.map((level) => levelLabel(level)).join('、')}。`,
-    restore
-  }
 }
-function restoreFieldLevel() {
-  const profile = activeProfile.value
-  if (!profile) return
-  const restore = cloneFieldControls(fieldDraft.value, fieldProfiles.value)
-  const values = fieldValues(fieldDraft.value, profile.key, fieldLevel.value)
-  if (values) for (const field of profile.fields) values[field.key] = true
-  fieldNotice.value = { text: '已恢复本级别的默认选择。', restore }
+/** 规则差异 + 该采集器字段差异，用于面板“未保存”和顶部汇总。 */
+function rowRuleChanged(row: CollectionRow) {
+  const collection = data.value?.collection as
+    | {
+        sources?: Record<string, LogCollectionRule>
+        integrations?: Record<string, LogCollectionRule>
+      }
+    | undefined
+  const base =
+    row.prefix === 'source'
+      ? collection?.sources?.[row.key]
+      : collection?.integrations?.[row.key]
+  return !!base && !sameRule(base, row.rule)
 }
-function undoFieldChange() {
-  const notice = fieldNotice.value
-  if (!notice?.restore) return
-  fieldDraft.value = notice.restore
-  fieldNotice.value = { text: '已撤销，恢复到操作前的选择。' }
+function rowDirty(row: CollectionRow) {
+  const profile = collectorProfileForRow(row)
+  return rowRuleChanged(row) || (!!profile && supportsFieldControls.value && profileDirty(profile))
+}
+const dirtyModuleLabels = computed(() => {
+  const labels = new Set<string>()
+  for (const row of integrationRows.value) if (rowDirty(row)) labels.add(row.label)
+  for (const row of sourceRows.value) if (rowRuleChanged(row)) labels.add(row.label)
+  // 保留策略也是同一份全局草稿；只改天数/容量时同样要显示“未保存”。
+  if (retentionChanged.value || capacityChanged.value) labels.add('保留策略')
+  return [...labels]
+})
+function ruleSummary(rule: LogCollectionRule) {
+  return rule.enabled
+    ? '最低' + LEVEL_LABELS[rule.minLevel]
+    : '关闭 · 级别保留' + LEVEL_LABELS[rule.minLevel]
+}
+/** 面板头的一行摘要：门槛、字段保留数、来源跟随/父级关闭。 */
+function panelSummary(row: CollectionRow) {
+  const parts = [ruleSummary(row.rule)]
+  const profile = collectorProfileForRow(row)
+  if (profile && supportsFieldControls.value) {
+    const { on, total } = fieldCounts(profile)
+    parts.push('详情 ' + on + '/' + total + ' 项')
+    if (offReasonsFor(profile).length) parts.push('当前不采集')
+  }
+  const sourceProfile = sourceProfileForRow(row)
+  if (sourceProfile) parts.push('字段跟随「' + collectorLabelForProfile(sourceProfile) + '」')
+  if (!profile && !sourceProfile) parts.push('无独立详情字段')
+  return parts.join(' · ')
+}
+type Counterpart = {
+  prefix: 'source' | 'integration'
+  key: string
+  label: string
+  role: '来源' | '采集器'
+}
+function counterpartForRow(row: CollectionRow): Counterpart | null {
+  if (row.prefix === 'integration') {
+    const profile = profileForIntegration(row.key)
+    if (!profile) return null
+    const sourceKey = String(profile.source)
+    if (!sourceDraft.value[sourceKey]) return null
+    return {
+      prefix: 'source',
+      key: sourceKey,
+      label: sourceLabel(sourceKey),
+      role: '来源'
+    }
+  }
+  const profile = sourceProfileForRow(row)
+  if (!profile) return null
+  const collectorKey = collectorKeyForProfile(profile)
+  const collector = integrationRows.value.find((candidate) => candidate.key === collectorKey)
+  if (!collectorKey || !collector) return null
+  return { prefix: 'integration', key: collectorKey, label: collector.label, role: '采集器' }
+}
+/** 跳到同时生效的另一侧；只开面板，不改任何数据。 */
+function openCounterpart(prefix: 'source' | 'integration', key: string) {
+  openPanels.value[panelKey(prefix, key)] = true
+  void nextTick(() => {
+    const target = document.querySelector(
+      '[data-testid="log-module-' + prefix + '-' + key + '"]'
+    ) as HTMLElement | null
+    target?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+  })
+}
+function openCounterpartForRow(row: CollectionRow) {
+  const other = counterpartForRow(row)
+  if (other) openCounterpart(other.prefix, other.key)
 }
 function fieldPatch(changes: FieldChange[]): LogFieldControlsPatch | undefined {
   if (!changes.length) return undefined
@@ -620,7 +651,6 @@ function fieldPatch(changes: FieldChange[]): LogFieldControlsPatch | undefined {
   }
   return patch as LogFieldControlsPatch
 }
-
 const sameRule = (a: LogCollectionRule, b: LogCollectionRule) =>
   a.enabled === b.enabled && a.minLevel === b.minLevel
 const changedSources = computed<RuleChange[]>(() => {
@@ -703,6 +733,15 @@ const ruleLabel = (rule: LogCollectionRule) =>
     ? `开启 · 最低${LEVEL_LABELS[rule.minLevel]}`
     : `关闭 · 级别保留${LEVEL_LABELS[rule.minLevel]}`
 
+/** 对话框关闭后把焦点还给触发它的核对按钮；取消/Escape 不把焦点丢给 body。 */
+function restoreReviewFocus() {
+  void nextTick(() => {
+    const button = document.querySelector(
+      '[data-testid="log-policy-review"]'
+    ) as HTMLButtonElement | null
+    button?.focus()
+  })
+}
 function reviewConfig() {
   if (busy.value || !data.value || !validPolicy.value || !hasChanges.value) return
   review.value = {
@@ -808,6 +847,19 @@ async function confirm() {
     <p class="text-muted-foreground text-[13px] leading-5" data-testid="log-settings-scope">
       只影响运行日志，不改动业务审计、回执与源文件。
     </p>
+    <!-- 全局保存是唯一提交入口：这里只说明草稿归属，不提供第二个保存按钮。 -->
+    <p
+      v-if="data"
+      data-testid="log-unsaved-summary"
+      aria-live="polite"
+      class="text-[13px] leading-5"
+    >
+      <template v-if="pending">正在提交，完成后会用真实响应回填。</template>
+      <template v-else-if="dirtyModuleLabels.length"
+        >未保存：{{ dirtyModuleLabels.join('、') }}。核对并确认后才会提交；刷新页面不会自动保存。</template
+      >
+      <template v-else>当前配置与已生效配置相同。</template>
+    </p>
     <Skeleton v-if="loading && !data" class="h-24 w-full" aria-label="正在读取日志配置" />
     <TableFailureState
       v-if="error"
@@ -818,351 +870,211 @@ async function confirm() {
     />
     <template v-if="data">
       <template v-if="supportsCollection">
-        <template v-for="(section, index) in collectionSections" :key="section.key">
-          <Separator v-if="index > 0" />
-          <section
-            :data-testid="section.testid"
-            :aria-labelledby="section.headingId"
-            class="flex min-w-0 flex-col gap-3"
-          >
-            <div class="flex flex-col gap-1">
-              <h2 :id="section.headingId" class="text-sm font-medium">{{ section.title }}</h2>
-              <p
-                v-if="section.description"
-                class="text-muted-foreground text-[13px] leading-5"
-              >
+        <section
+          v-for="section in collectionSections"
+          :key="section.key"
+          :data-testid="section.testid"
+          :aria-labelledby="section.headingId"
+          class="flex min-w-0 flex-col gap-3"
+        >
+          <div class="bg-secondary flex min-w-0 items-start gap-2.5 rounded-md px-3 py-2.5">
+            <span class="text-primary mt-0.5 inline-flex size-[18px] shrink-0 items-center justify-center">
+              <Icon :name="section.icon" class="size-[18px]" aria-hidden="true" />
+            </span>
+            <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+              <div class="flex min-w-0 items-center justify-between gap-2">
+                <h2 :id="section.headingId" class="text-sm font-medium">{{ section.title }}</h2>
+                <span class="text-muted-foreground shrink-0 text-[12px] leading-4 tabular-nums">
+                  {{ section.groups.reduce((sum, group) => sum + group.rows.length, 0) }} 项
+                </span>
+              </div>
+              <p v-if="section.description" class="text-muted-foreground text-[13px] leading-5">
                 {{ section.description }}
               </p>
             </div>
-            <div
-              v-for="group in section.groups"
-              :key="group.key"
-              :data-testid="group.testid"
-              class="flex min-w-0 flex-col gap-2"
-            >
-              <div class="flex flex-col gap-1">
-                <h3 class="text-muted-foreground text-[13px] leading-5 font-medium">
-                  {{ group.title }}
-                </h3>
-                <p v-if="group.note" class="text-muted-foreground text-[13px] leading-5">
-                  {{ group.note }}
-                </p>
-              </div>
-              <FieldGroup
-                class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2.5 sm:grid-cols-2 2xl:grid-cols-4"
-              >
-                <Field
-                  v-for="row in group.rows"
-                  :key="row.key"
-                  orientation="horizontal"
-                  :data-disabled="busy"
-                  class="min-w-0 items-center justify-between gap-3"
-                >
-                  <div class="flex min-w-0 items-center gap-2.5">
-                    <Switch
-                      :id="`log-${row.prefix}-${row.key}-enabled`"
-                      v-model="row.rule.enabled"
-                      :disabled="busy"
-                    />
-                    <FieldLabel
-                      :for="`log-${row.prefix}-${row.key}-enabled`"
-                      class="min-w-0 text-[13px] leading-5 font-normal"
-                    >
-                      <span class="truncate">{{ row.label }}</span>
-                    </FieldLabel>
-                  </div>
-                  <Select v-model="row.rule.minLevel">
-                    <SelectTrigger
-                      size="sm"
-                      class="bg-card w-32 shrink-0 shadow-none"
-                      :aria-label="`${row.label}的最低日志级别`"
-                      :disabled="busy || !row.rule.enabled"
-                    >
-                      <SelectValue>{{ LEVEL_LABELS[row.rule.minLevel] }}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent><SelectGroup>
-                      <SelectItem v-for="level in LOG_LEVELS" :key="level" :value="level">
-                        {{ LEVEL_LABELS[level] }}（{{ level }}）
-                      </SelectItem>
-                    </SelectGroup></SelectContent>
-                  </Select>
-                </Field>
-              </FieldGroup>
-            </div>
-            <!-- 未接入单独折叠，不摆一排禁用开关：禁用开关会被误读成“部署已关闭”。 -->
-            <DisclosurePanel
-              v-if="section.key === 'technical' && unwiredIntegrations.length"
-              data-testid="log-unwired-integrations"
-              :title="`未接入的技术集成（${unwiredIntegrations.length}）`"
-              description="未接入，不可配置"
-              :heading-level="3"
-              compact
-            >
-              <p class="text-muted-foreground text-[13px] leading-5">
-                以下库尚未接入日志采集，列在这里只表示当前没有采集器，不能据此判断业务或部署已关闭。
-              </p>
-              <ul class="mt-2 flex flex-col gap-1.5 text-[13px]">
-                <li
-                  v-for="row in unwiredIntegrations"
-                  :key="row.key"
-                  class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
-                >
-                  <span>{{ row.label }}</span>
-                  <span class="text-muted-foreground font-mono text-xs">{{ row.key }}</span>
-                  <span class="text-muted-foreground">未接入，不可配置</span>
-                </li>
-              </ul>
-            </DisclosurePanel>
-          </section>
-        </template>
-      </template>
-      <template v-if="supportsFieldControls">
-        <Separator v-if="supportsCollection" />
-        <DisclosurePanel
-          v-model:open="fieldOpen"
-          data-testid="log-field-controls"
-          :heading-level="2"
-          compact
-        >
-          <template #trigger>
-            <span class="min-w-0 flex-1 truncate text-left">详情字段（高级）</span>
-            <Badge
-              v-if="!fieldOpen && parentOffReasons.length"
-              variant="quiet"
-              class="font-normal"
-              >当前不采集</Badge
-            >
-            <span class="text-muted-foreground shrink-0 text-[13px] font-normal">{{
-              fieldSummary
-            }}</span>
-          </template>
-          <div class="flex min-w-0 flex-col gap-3 pt-1">
-            <p class="text-muted-foreground text-[13px] leading-5">
-              只影响之后写入的详情；采集开关与已有日志不受影响。
-            </p>
-            <div class="flex min-w-0 flex-col gap-3">
-              <div class="flex min-w-0 flex-col gap-1.5">
-                <span class="text-muted-foreground text-[13px] leading-5 font-medium"
-                  >采集类型</span
-                >
-                <Tabs
-                  :model-value="fieldProfile"
-                  class="gap-0"
-                  @update:model-value="(value) => selectFieldProfile(String(value))"
-                >
-                  <!-- 共享 TabsList 自带 p-0.75 + 默认高度；这里不再叠加 h-8/h-7，也不加
-                       overflow，两个已实现 profile 本来就放得下，避免出现竖向滚动条。 -->
-                  <TabsList class="w-full justify-start sm:w-fit" aria-label="字段采集类型">
-                    <TabsTrigger
-                      v-for="profile in fieldProfiles"
-                      :key="profile.key"
-                      :value="profile.key"
-                      class="flex-none px-3 text-[13px]"
-                      >{{ profile.label }}</TabsTrigger
-                    >
-                  </TabsList>
-                </Tabs>
-              </div>
-              <div class="flex min-w-0 flex-col gap-1.5">
-                <span class="text-muted-foreground text-[13px] leading-5 font-medium">级别</span>
-                <Tabs
-                  :model-value="fieldLevel"
-                  class="gap-0"
-                  @update:model-value="(value) => selectFieldLevel(value as LevelKey)"
-                >
-                  <TabsList class="w-full justify-start sm:w-fit" aria-label="字段级别">
-                    <TabsTrigger
-                      v-for="level in levelTabs"
-                      :key="level.key"
-                      :value="level.key"
-                      class="min-w-0 flex-1 gap-1 px-2 text-[13px] sm:flex-none sm:px-3"
-                      :aria-label="level.ariaLabel"
-                    >
-                      {{ level.label }}
-                      <span
-                        v-if="level.count"
-                        aria-hidden="true"
-                        class="bg-foreground inline-block size-1.5 rounded-full"
-                      />
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-              </div>
-            </div>
-            <div
-              v-if="parentOffReasons.length || levelBelowParent"
-              role="status"
-              class="flex min-w-0 flex-col gap-1"
-            >
-              <p
-                v-if="parentOffReasons.length"
-                class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-5"
-              >
-                <Badge variant="quiet" class="font-normal">当前不采集</Badge>
-                <span class="text-muted-foreground"
-                  >{{ parentOffReasons.join('、') }}；选择会保留，重新开启后按这里的设置记录。</span
-                >
-              </p>
-              <p
-                v-if="levelBelowParent"
-                class="text-muted-foreground text-[13px] leading-5"
-                data-testid="log-field-level-below"
-              >
-                低于最低级别{{ LEVEL_LABELS[parentMinLevel ?? 'debug'] }}，当前不产生这个级别的日志；选择仍保留。
-              </p>
-            </div>
-            <p class="text-[13px] leading-5" data-testid="log-field-status">
-              <template v-if="!levelTabs.some((level) => level.count)"
-                >各级别均保留全部字段。</template
-              >
-              <template v-else>{{
-                `不记录：${levelTabs
-                  .filter((level) => level.count)
-                  .map((level) => `${level.label} ${level.count} 项`)
-                  .join('、')}`
-              }}</template>
-            </p>
-            <FieldSet v-if="activeLevelValues" class="min-w-0 gap-2">
-              <FieldLegend variant="label" class="text-muted-foreground mb-1 text-[13px] font-medium"
-                >记录详情</FieldLegend
-              >
-              <FieldGroup
-                class="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 2xl:grid-cols-4"
-              >
-                <Field
-                  v-for="field in activeFields"
-                  :key="field.key"
-                  orientation="horizontal"
-                  :data-disabled="busy"
-                  class="min-w-0 items-start justify-between gap-3"
-                >
-                  <div class="flex min-w-0 flex-col gap-0.5">
-                    <FieldLabel
-                      :for="fieldControlId(field.key)"
-                      class="min-w-0 text-[13px] leading-5 font-normal"
-                      >{{ field.label }}<span
-                        v-if="fieldUnit(field.description)"
-                        class="text-muted-foreground"
-                        >（{{ fieldUnit(field.description) }}）</span
-                      ></FieldLabel
-                    >
-                  </div>
-                  <Switch
-                    :id="fieldControlId(field.key)"
-                    :model-value="activeLevelValues?.[field.key] ?? true"
-                    :aria-label="`记录${field.label}`"
-                    :disabled="busy"
-                    @update:model-value="(value) => setField(field.key, value === true)"
-                  />
-                </Field>
-              </FieldGroup>
-            </FieldSet>
-            <!-- 一处短提示同时说明「只影响后续」与「历史标记」；细节放在核对 Dialog。 -->
-            <p class="text-muted-foreground text-[13px] leading-5" data-testid="log-field-hint">
-              关闭只影响之后写入；历史记录不变，详情会标为「当时未启用采集」。
-            </p>
-            <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                data-testid="log-field-copy"
-                :aria-expanded="fieldCopyOpen"
-                :disabled="busy || !activeProfile"
-                @click="fieldCopyOpen ? (fieldCopyOpen = false) : openFieldCopy()"
-                >复制到其他级别</Button
-              >
-              <Button
-                v-if="activeLevelValues && Object.values(activeLevelValues).some((value) => !value)"
-                variant="ghost"
-                size="sm"
-                data-testid="log-field-restore"
-                :disabled="busy"
-                @click="restoreFieldLevel"
-                >恢复本级别默认</Button
-              >
-            </div>
-            <div
-              v-if="fieldCopyOpen"
-              class="flex min-w-0 flex-col gap-2"
-              data-testid="log-field-copy-panel"
-            >
-              <FieldSet class="min-w-0 gap-2">
-                <FieldLegend variant="label" class="mb-1 text-[13px]"
-                  >把这 {{ activeFields.length }} 项选择复制到其他级别</FieldLegend
-                >
-                <div class="flex min-w-0 flex-col gap-1.5">
-                  <Field
-                    v-for="target in copyLevels"
-                    :key="target.key"
-                    orientation="horizontal"
-                    class="min-w-0 items-center gap-2.5"
-                  >
-                    <Checkbox
-                      :id="`log-field-copy-${target.key}`"
-                      :model-value="fieldCopyTargets.includes(target.key)"
-                      :disabled="busy || target.same"
-                      :aria-label="`复制到${target.label}`"
-                      @update:model-value="
-                        (value) => toggleFieldCopyTarget(target.key, value === true)
-                      "
-                    />
-                    <FieldLabel
-                      :for="`log-field-copy-${target.key}`"
-                      class="min-w-0 text-[13px] leading-5 font-normal"
-                      >{{ target.label }}</FieldLabel
-                    >
-                    <span
-                      v-if="target.same"
-                      class="text-muted-foreground text-[13px] leading-5">已相同</span
-                    >
-                  </Field>
-                </div>
-              </FieldSet>
-              <p
-                v-if="!copyAvailable.length"
-                class="text-muted-foreground text-[13px] leading-5"
-                data-testid="log-field-copy-empty"
-                >其他级别已经和这里相同。</p
-              >
-              <div class="flex flex-wrap items-center gap-2">
-                <Button variant="ghost" size="sm" :disabled="busy" @click="fieldCopyOpen = false"
-                  >取消</Button
-                >
-                <Button
-                  variant="outline"
-                  size="sm"
-                  data-testid="log-field-copy-apply"
-                  :disabled="busy || !fieldCopyTargets.length"
-                  @click="copyFieldLevel"
-                  >复制</Button
-                >
-              </div>
-            </div>
-            <p
-              v-if="fieldNotice"
-              role="status"
-              aria-live="polite"
-              class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-5"
-            >
-              <span>{{ fieldNotice.text }}</span>
-              <Button
-                v-if="fieldNotice.restore"
-                variant="link"
-                size="sm"
-                class="h-auto p-0"
-                data-testid="log-field-undo"
-                @click="undoFieldChange"
-                >撤销</Button
-              >
-            </p>
           </div>
-        </DisclosurePanel>
+          <div
+            v-for="group in section.groups"
+            :key="group.key"
+            :data-testid="group.testid"
+            class="flex min-w-0 flex-col gap-1.5"
+          >
+            <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1">
+              <span class="text-muted-foreground inline-flex size-4 shrink-0 items-center justify-center">
+                <Icon :name="group.icon" class="size-4" aria-hidden="true" />
+              </span>
+              <h3 class="text-muted-foreground text-[13px] leading-5 font-medium">{{ group.title }}</h3>
+              <span v-if="group.note" class="text-muted-foreground text-[12px] leading-4">{{ group.note }}</span>
+              <span class="text-muted-foreground ml-auto shrink-0 text-[12px] leading-4 tabular-nums">{{ group.rows.length }}</span>
+            </div>
+            <div class="flex min-w-0 flex-col gap-1.5">
+              <LogModulePanel
+                v-for="row in group.rows"
+                :key="row.key"
+                v-model:open="openPanels[panelKey(row.prefix, row.key)]"
+                :testid="'log-module-' + row.prefix + '-' + row.key"
+                :label="row.label"
+                :icon="row.prefix === 'integration' ? iconForIntegration(row.key) : iconForSource(row.key)"
+                :enabled="row.rule.enabled"
+                :summary="panelSummary(row)"
+                :dirty="rowDirty(row)"
+                :primary="!!collectorProfileForRow(row)"
+                :heading-level="4"
+              >
+                <div class="flex min-w-0 flex-col gap-3 px-1 pt-1">
+                  <FieldGroup class="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field
+                      orientation="horizontal"
+                      :data-disabled="busy"
+                      class="min-w-0 items-center justify-between gap-3"
+                    >
+                      <FieldLabel
+                        :for="'log-' + row.prefix + '-' + row.key + '-enabled'"
+                        class="text-[13px] leading-5 font-normal"
+                        >采集开关</FieldLabel
+                      >
+                      <Switch
+                        :id="'log-' + row.prefix + '-' + row.key + '-enabled'"
+                        v-model="row.rule.enabled"
+                        :disabled="busy"
+                      />
+                    </Field>
+                    <Field
+                      orientation="horizontal"
+                      :data-disabled="busy || !row.rule.enabled"
+                      class="min-w-0 items-center justify-between gap-3"
+                    >
+                      <FieldLabel
+                        :for="'log-' + row.prefix + '-' + row.key + '-min-level'"
+                        class="text-[13px] leading-5 font-normal"
+                        >采集门槛</FieldLabel
+                      >
+                      <Select v-model="row.rule.minLevel">
+                        <SelectTrigger
+                          :id="'log-' + row.prefix + '-' + row.key + '-min-level'"
+                          size="sm"
+                          class="bg-card w-32 shrink-0 shadow-none"
+                          :aria-label="row.label + '的最低日志级别'"
+                          :disabled="busy || !row.rule.enabled"
+                        >
+                          <SelectValue>{{ LEVEL_LABELS[row.rule.minLevel] }}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent><SelectGroup>
+                          <SelectItem v-for="level in LOG_LEVELS" :key="level" :value="level">
+                            {{ LEVEL_LABELS[level] }}（{{ level }}）
+                          </SelectItem>
+                        </SelectGroup></SelectContent>
+                      </Select>
+                    </Field>
+                  </FieldGroup>
+                  <p class="text-muted-foreground text-[12px] leading-4">
+                    低于门槛的事件不写入；技术集成与来源须同时开启时，最低级别取更严格的一处。
+                  </p>
+
+                  <div
+                    v-if="offReasonsFor(collectorProfileForRow(row)).length"
+                    role="status"
+                    class="flex min-w-0 flex-col gap-1"
+                  >
+                    <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] leading-5">
+                      <Badge variant="quiet" class="font-normal">当前不采集</Badge>
+                      <span class="text-muted-foreground">
+                        {{ offReasonsFor(collectorProfileForRow(row)).join('、') }}；选择会保留，重新开启后按这里的设置记录。
+                      </span>
+                    </p>
+                  </div>
+
+                  <LogFieldEditor
+                    v-if="collectorProfileForRow(row) && supportsFieldControls"
+                    :profile="requireCollectorProfile(row)"
+                    :controls="controlsFor(requireCollectorProfile(row))"
+                    :disabled="busy"
+                    :effective-min="effectiveMinFor(requireCollectorProfile(row))"
+                  />
+                  <p
+                    v-else-if="collectorProfileForRow(row)"
+                    class="text-muted-foreground text-[12px] leading-4"
+                  >
+                    字段目录来自服务端；当前响应不完整，暂不显示字段开关。
+                  </p>
+                  <p
+                    v-else-if="sourceProfileForRow(row)"
+                    class="text-muted-foreground text-[12px] leading-4"
+                  >
+                    此来源没有独立的详情字段：记录内容跟随「{{ sourceCollectorLabel(row) }}」，在那边配置一次。
+                  </p>
+                  <p v-else class="text-muted-foreground text-[12px] leading-4">
+                    该模块没有独立的详情字段。
+                  </p>
+
+                  <div
+                    v-if="counterpartForRow(row)"
+                    class="flex min-w-0 flex-col gap-1 border-t pt-2.5"
+                  >
+                    <span class="text-[12px] leading-4 font-medium">同时生效</span>
+                    <p class="text-muted-foreground text-[13px] leading-5">
+                      与「{{ counterpartForRow(row)?.label }}」{{ counterpartForRow(row)?.role }}同时生效；当前有效门槛：<strong class="text-foreground">{{ LEVEL_LABELS[effectiveMinFor(profileForRow(row)) ?? 'debug'] }}</strong>。
+                    </p>
+                    <Button
+                      variant="link"
+                      size="sm"
+                      class="h-auto justify-start p-0 text-[13px]"
+                      @click="openCounterpartForRow(row)"
+                    >
+                      <Icon name="lucide:arrow-up-right" class="size-4" aria-hidden="true" />
+                      打开「{{ counterpartForRow(row)?.label }}」
+                    </Button>
+                  </div>
+                </div>
+              </LogModulePanel>
+            </div>
+          </div>
+          <DisclosurePanel
+            v-if="section.key === 'technical' && unwiredIntegrations.length"
+            data-testid="log-unwired-integrations"
+            :title="'未接入的技术集成（' + unwiredIntegrations.length + '）'"
+            description="未接入，不可配置"
+            :heading-level="3"
+            compact
+          >
+            <template #chevron>
+              <span
+                class="text-muted-foreground pointer-events-none inline-flex size-4 shrink-0 items-center justify-center"
+                aria-hidden="true"
+              >
+                <Icon name="lucide:chevron-right" class="size-4" />
+              </span>
+            </template>
+            <p class="text-muted-foreground text-[13px] leading-5">
+              以下库尚未接入日志采集，列在这里只表示当前没有采集器，不能据此判断业务或部署已关闭。
+            </p>
+            <ul class="mt-2 flex flex-col gap-1.5 text-[13px]">
+              <li
+                v-for="row in unwiredIntegrations"
+                :key="row.key"
+                class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5"
+              >
+                <span class="text-muted-foreground inline-flex size-4 shrink-0 items-center justify-center">
+                  <Icon :name="iconForIntegration(row.key)" class="size-4" aria-hidden="true" />
+                </span>
+                <span>{{ row.label }}</span>
+                <span class="text-muted-foreground font-mono text-xs">{{ row.key }}</span>
+                <span class="text-muted-foreground">未接入，不可配置</span>
+              </li>
+            </ul>
+          </DisclosurePanel>
+        </section>
       </template>
       <!-- 上一个区块存在时才画分隔线；旧后端没有采集规则时不留一条孤立横线。 -->
-      <Separator v-if="supportsCollection || supportsFieldControls" />
+      <Separator v-if="supportsCollection" />
       <section aria-labelledby="log-retention-heading" class="flex min-w-0 flex-col gap-3">
         <div class="flex flex-col gap-1">
-          <h2 id="log-retention-heading" class="text-sm font-medium">保留策略</h2>
+          <div class="flex min-w-0 items-center gap-2">
+            <span class="text-muted-foreground inline-flex size-4 shrink-0 items-center justify-center">
+              <Icon :name="iconForSection('retention')" class="size-4" aria-hidden="true" />
+            </span>
+            <h2 id="log-retention-heading" class="text-sm font-medium">保留策略</h2>
+          </div>
           <p class="text-muted-foreground text-[13px] leading-5">
             取更严格者；缩短保留期或降低容量可能清理已有日志。
           </p>
@@ -1237,7 +1149,9 @@ async function confirm() {
               <!-- 后果写在按钮旁边，不做单独一段通栏说明；没有变化时说明为什么不能核对。 -->
               <p class="text-muted-foreground text-[13px] leading-5">
                 <template v-if="!hasChanges">当前配置与已生效配置相同，无需核对。</template>
-                <template v-else>只提交有差异的项，其余保持不变；保留策略调整可能触发轮转。</template>
+                <template v-else
+                  >核对范围包括采集规则、记录内容与保留策略；只提交有差异的项，其余保持不变。保留策略调整可能触发轮转。</template
+                >
               </p>
             </div>
           </FieldGroup>
@@ -1272,7 +1186,10 @@ async function confirm() {
       :open="!!review"
       @update:open="
         (value) => {
-          if (!value && !pending) review = null
+          if (!value && !pending) {
+            review = null
+            restoreReviewFocus()
+          }
         }
       "
     >

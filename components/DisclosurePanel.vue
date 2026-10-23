@@ -18,6 +18,8 @@ import {
  *   供需要保持表单实例/初始化回调的折叠使用。
  * - `instant`：仅供程序化收起（如点「开始对比」）跳过动画；手动开合仍有完整动画。
  * - `compact`：唯一的紧凑层级；两档之外不再有页面级折叠样式。
+ * - `#chevron`：可选的自定义展开图标槽。传了就完全替换默认 chevron（不附加旋转）；
+ *   日志配置页用它固定朝右的 `lucide:chevron-right`。不传时保持全站默认行为。
  * - `headingLevel`：触发器**所在容器**的标题层级，默认 3（Accordion 官方默认，
  *   全站不变）。层级落在包住触发器的那个标题元素上（`h2 > button`），按钮里
  *   不再套标题 —— 按钮里的标题会被读屏念成“标题里的标题”。
@@ -104,7 +106,10 @@ function onUpdate(value: string | string[] | undefined) {
             <span v-if="description" class="text-muted-foreground text-[13px] font-normal">{{ description }}</span>
           </slot>
         </span>
-        <template v-if="!showIcon" #icon>
+        <template v-if="$slots.chevron" #icon>
+          <slot name="chevron" />
+        </template>
+        <template v-else-if="!showIcon" #icon>
           <span class="size-4 shrink-0" aria-hidden="true" />
         </template>
       </AccordionTrigger>

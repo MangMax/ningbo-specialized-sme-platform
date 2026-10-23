@@ -18,6 +18,26 @@ afterEach(() => {
   vi.unstubAllGlobals()
   document.body.innerHTML = ''
 })
+
+/** Nuxt auto-imports Icon in the app; Vitest needs a stand-in. */
+const IconStub = { props: ['name'], template: '<span class="icon-stub" :data-icon="name"></span>' }
+/** Collection switches now live inside their module accordion body. */
+async function openModule(wrapper: any, prefix = 'integration', key = 'nuxt-nitro') {
+  const panel = wrapper.get('[data-testid="log-module-' + prefix + '-' + key + '"]')
+  const trigger = panel.get('[data-slot=accordion-trigger]')
+  if (trigger.attributes('aria-expanded') !== 'true') {
+    await trigger.trigger('click')
+    await flushPromises()
+  }
+}
+async function openAllModules(wrapper: any) {
+  for (const trigger of wrapper.findAll('[data-testid^="log-module-"] [data-slot=accordion-trigger]')) {
+    if (trigger.attributes('aria-expanded') !== 'true') {
+      await trigger.trigger('click')
+      await flushPromises()
+    }
+  }
+}
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (error: unknown) => void
@@ -78,7 +98,11 @@ it('requires review before policy writes, keeps the requested shrink after 409, 
       status: { dropped: 0, unavailable: false }
     }
   })
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
   await wrapper.get('#log-max-bytes').setValue('1048576')
@@ -138,7 +162,10 @@ it('filters by known IDs, pages with server cursors, fetches details on demand a
   })
   await router.push('/logs?taskId=task-182')
   await router.isReady()
-  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  const wrapper = mount(Page, {
+    global: { plugins: [router], stubs: { Icon: IconStub } },
+    attachTo: document.body
+  })
   wrappers.push(wrapper)
   await flushPromises()
   expect(calls.find((c) => c.url === '/api/logs')!.options.query.taskId).toBe('task-182')
@@ -188,7 +215,11 @@ it('requires an explicit chronological range and freezes all applied filters bef
       status: {}
     }
   })
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
   const button = wrapper.findAll('button').find((b) => b.text() === '清理当前筛选范围')!
@@ -267,7 +298,10 @@ it('retains source rows on a failed filter, explains both targets, retries expli
   })
   await router.push('/logs')
   await router.isReady()
-  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  const wrapper = mount(Page, {
+    global: { plugins: [router], stubs: { Icon: IconStub } },
+    attachTo: document.body
+  })
   wrappers.push(wrapper)
   await flushPromises()
   await router.push('/logs?requestId=req-new')
@@ -410,7 +444,10 @@ it('holds the result area with skeleton rows and a reading footer during the fir
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/logs', component: Page }] })
   await router.push('/logs')
   await router.isReady()
-  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  const wrapper = mount(Page, {
+    global: { plugins: [router], stubs: { Icon: IconStub } },
+    attachTo: document.body
+  })
   wrappers.push(wrapper)
   await flushPromises()
   // 首次读取：按每页条数铺骨架（桌面行 / 窄屏卡），分页占位，而不是把卡收成一条表头。
@@ -445,7 +482,10 @@ it('returns the result list to its first row after a page change and keeps filte
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/logs', component: Page }] })
   await router.push('/logs')
   await router.isReady()
-  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  const wrapper = mount(Page, {
+    global: { plugins: [router], stubs: { Icon: IconStub } },
+    attachTo: document.body
+  })
   wrappers.push(wrapper)
   await flushPromises()
   const scroller = wrapper.get('[data-testid=log-table-scroll]').element as HTMLElement
@@ -469,7 +509,11 @@ it('returns the result list to its first row after a page change and keeps filte
 it('does not offer a policy review until a value actually differs from the active policy', async () => {
   const { default: Management } = await import('../components/logs/LogManagement.vue')
   vi.stubGlobal('$fetch', async () => policyView)
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
   const review = wrapper.findAll('button').find((b) => b.text() === '核对日志配置修改')!
@@ -501,9 +545,15 @@ it('reviews only changed collection rules, sends changed maps, and refreshes eff
     }
     return policy
   })
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
+  await openModule(wrapper, 'source', 'http')
+  await openModule(wrapper, 'source', 'mcp')
   const switchState = () => wrapper.get('#log-source-http-enabled').attributes('data-state')
   expect(switchState()).toBe('checked')
   await wrapper.get('#log-source-http-enabled').trigger('click')
@@ -584,7 +634,11 @@ it('never claims history is untouched when the save can shrink retention', async
     }
     return policy
   })
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
   await wrapper.get('#log-retention-days').setValue('3')
@@ -622,9 +676,14 @@ it('reviews and PATCHes only the shared application rule when it is the only cha
     }
     return policy
   })
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
+  await openModule(wrapper, 'integration', 'application')
   await wrapper.get('#log-integration-application-enabled').trigger('click')
   await wrapper.get('[data-testid=log-policy-review]').trigger('click')
   await flushPromises()
@@ -669,9 +728,14 @@ it('keeps the edited rule draft when saving the configuration fails', async () =
       throw { data: { error: { code: 'policy_capacity_pending' } } }
     return policyResponse()
   })
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
+  await openModule(wrapper, 'source', 'http')
   await wrapper.get('#log-source-http-enabled').trigger('click')
   await wrapper.get('[data-testid=log-policy-review]').trigger('click')
   await flushPromises()
@@ -690,18 +754,23 @@ it('keeps the edited rule draft when saving the configuration fails', async () =
 it('groups the real catalog into technical 4+6 and business 10+1 with one shared application rule', async () => {
   const { default: Management } = await import('../components/logs/LogManagement.vue')
   vi.stubGlobal('$fetch', async () => policyView)
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
-  // 总 22 个 Switch：技术 10 + 业务来源 11 + 跨端共享 application 1。
-  expect(wrapper.findAll('[data-slot=switch]')).toHaveLength(22)
+  await openAllModules(wrapper)
+  // 总 22 个采集开关：技术 10 + 业务来源 11 + 跨端共享 application 1。
+  expect(wrapper.findAll('[id$="-enabled"]')).toHaveLength(22)
   expect(wrapper.findAll('input[type=checkbox]')).toHaveLength(0)
   expect(wrapper.findAll('select')).toHaveLength(0)
   expect(wrapper.findAll('details')).toHaveLength(0)
   expect(wrapper.find('[data-testid=log-unwired-integrations]').exists()).toBe(false)
   expect(wrapper.text()).not.toContain('未接入的技术集成')
   const switchCount = (testid: string) =>
-    wrapper.findAll(`[data-testid=${testid}] [data-slot=switch]`).length
+    wrapper.findAll(`[data-testid=${testid}] [id$="-enabled"]`).length
   expect(switchCount('log-technical-node')).toBe(4)
   expect(switchCount('log-technical-browser')).toBe(6)
   expect(switchCount('log-business-shared')).toBe(1)
@@ -732,11 +801,16 @@ it('groups the real catalog into technical 4+6 and business 10+1 with one shared
 it('lists legacy unwired catalog entries as explicitly not configurable instead of disabled switches', async () => {
   const { default: Management } = await import('../components/logs/LogManagement.vue')
   vi.stubGlobal('$fetch', async () => legacyPolicyView)
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
+  await openAllModules(wrapper)
   // 旧目录独立 fixture：11 个来源 + 6 个已接入集成；未接入项不伪装成开关。
-  expect(wrapper.findAll('[data-slot=switch]')).toHaveLength(17)
+  expect(wrapper.findAll('[id$="-enabled"]')).toHaveLength(17)
   expect(wrapper.findAll('input[type=checkbox]')).toHaveLength(0)
   expect(wrapper.text()).toContain('未接入的技术集成（5）')
   expect(wrapper.text()).not.toContain('Drizzle 数据库')
@@ -771,7 +845,11 @@ it('keeps legacy retention usable and never posts empty collection overrides', a
     }
     return current
   })
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
   expect(wrapper.find('[data-testid=log-collection-sources]').exists()).toBe(false)
@@ -895,7 +973,10 @@ it('labels retained rows as still-reading while a new filter is in flight', asyn
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/logs', component: Page }] })
   await router.push('/logs')
   await router.isReady()
-  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  const wrapper = mount(Page, {
+    global: { plugins: [router], stubs: { Icon: IconStub } },
+    attachTo: document.body
+  })
   wrappers.push(wrapper)
   await flushPromises()
   await router.push('/logs?level=error')
@@ -1178,7 +1259,10 @@ it('renders independent desktop columns and keeps long operation, route, outcome
   })
   await router.push('/logs')
   await router.isReady()
-  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  const wrapper = mount(Page, {
+    global: { plugins: [router], stubs: { Icon: IconStub } },
+    attachTo: document.body
+  })
   wrappers.push(wrapper)
   await flushPromises()
   const scroller = wrapper.get('[data-testid=log-table-scroll]')
@@ -1268,7 +1352,10 @@ it('labels the 390px summary with a 44px detail target and lets long IDs wrap wi
   })
   await router.push('/logs')
   await router.isReady()
-  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  const wrapper = mount(Page, {
+    global: { plugins: [router], stubs: { Icon: IconStub } },
+    attachTo: document.body
+  })
   wrappers.push(wrapper)
   await flushPromises()
   const items = wrapper.get('[data-testid=log-card-list]').findAll('li')
@@ -1343,7 +1430,10 @@ it('keeps the current cursor page and drafts across log and configuration tabs w
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/logs', component: Page }] })
   await router.push('/logs?source=ocr&outcome=partial')
   await router.isReady()
-  const wrapper = mount(Page, { global: { plugins: [router] }, attachTo: document.body })
+  const wrapper = mount(Page, {
+    global: { plugins: [router], stubs: { Icon: IconStub } },
+    attachTo: document.body
+  })
   wrappers.push(wrapper)
   await flushPromises()
   expect(wrapper.get('#log-source').text()).toContain('OCR 识别')
@@ -1357,6 +1447,7 @@ it('keeps the current cursor page and drafts across log and configuration tabs w
   await wrapper.findAll('[role=tab]').find(t => t.text() === '日志配置')!.trigger('keydown', { key: 'Enter' })
   await flushPromises()
   expect(router.currentRoute.value.query).toMatchObject({ tab: 'settings', source: 'ocr', outcome: 'partial' })
+  await openModule(wrapper, 'source', 'http')
   await wrapper.get('#log-retention-days').setValue('8')
   await wrapper.get('#log-source-http-enabled').trigger('click')
   await wrapper.findAll('[role=tab]').find(t => t.text() === '运行日志')!.trigger('keydown', { key: 'Enter' })
