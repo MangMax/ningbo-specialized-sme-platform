@@ -478,6 +478,7 @@ export const IMPORT_SOURCE_KINDS: Record<string, string> = {
   correspondence_decision: '记录对应确认',
   comparison_scope_proof: '对比范围依据',
   event_correction: '正式事件更正',
+  platform_archive: '平台采集归档',
 }
 
 /** 导入来源类别展示顺序。 */
@@ -488,6 +489,7 @@ export const IMPORT_SOURCE_KIND_ORDER: string[] = [
   'correspondence_decision',
   'comparison_scope_proof',
   'event_correction',
+  'platform_archive',
 ]
 
 /** 两侧名录比对方向,页面与导出共用。 */
