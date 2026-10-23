@@ -280,7 +280,16 @@ describe('RL-18 写入语义快照：与集成 tip 的行为逐字一致', () =>
 
     /** 跑一步、记一步快照。`outcome` 只留稳定字段（挂钟时间列已由记录器丢掉）。 */
     const step = (label: string, run: () => unknown) => {
-      recorder.capture(label, run())
+      const outcome = run()
+      // #214 adds an async task receipt, covered by candidate-discovery-jobs.
+      // Keep the original roster fields and every business/history column under
+      // the unchanged byte-for-byte golden comparison.
+      if (outcome && typeof outcome === 'object' && 'candidateTaskIds' in outcome) {
+        const { candidateTaskIds, ...rosterOutcome } = outcome
+        expect(candidateTaskIds).toBeInstanceOf(Array)
+        for (const id of candidateTaskIds as string[]) expect(id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/)
+        recorder.capture(label, rosterOutcome)
+      } else recorder.capture(label, outcome)
     }
 
     step('preflight: 公布文件批次（只算影响，不写业务数据）', () =>

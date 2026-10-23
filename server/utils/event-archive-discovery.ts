@@ -11,7 +11,7 @@ export interface EventArchiveInput { eventId: number; page: number; pageSize: nu
 type Db = BetterSQLite3Database<typeof schema>
 const offset = (page: number, size: number) => Math.min(Number.MAX_SAFE_INTEGER, (page - 1) * size)
 /** Same whitespace set as domain.normalizeUscc, evaluated before the bounded select. */
-function normalizedUscc(column: SQLWrapper) {
+export function normalizedUscc(column: SQLWrapper) {
   let value = sql`upper(coalesce(${column}, ''))`
   for (const character of '\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u200b\u200c\u200d\u2028\u2029\u202f\u205f\u3000\ufeff') value = sql`replace(${value}, ${character}, '')`
   return value

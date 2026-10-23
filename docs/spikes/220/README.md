@@ -1,5 +1,8 @@
 # #220: SQL 来源快照可行性 spike
 
+> 2026-10-23 最新用户澄清已取代下文的实施方向：保留现有来源快照、指纹与审计算法，允许单个所选来源完整水合，按实际内存/耗时调整任务限额；避免全量归档水合。旧的“不许调整1 MiB、F1必须先建设JSON/SQL/native快照接缝”不再是当前约束。下文保留为历史实验/提案，兼容失败与旧资源观测不撤销，也不授权继续这些切片。当前实现及实测范围见 [候选任务说明](../../candidate-discovery-tasks.md)。
+
+
 **结论：SQL 快照 + 64KiB 分块 SHA + 服务端审计复制的机制可执行，但现成 JSON1 方案不兼容现有来源指纹，不能进入 #214 修复实施或关闭 F1。** 未证明它不可实现；本轮没有实现通用 JSON 规范化器。独立可推进的最小实施是领域内部审计复制与标量写入回执，仍不解决 F1。
 
 关联 [#220](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/220)、[#210](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/210)、[proposed ADR](../../adr/2026-10-23-bounded-correspondence-snapshot.md)。本票只有报告和合成 helper，不含运行时改动、迁移、来源大小排除或生产操作。

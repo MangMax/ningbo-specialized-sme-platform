@@ -201,7 +201,7 @@ describe('任务种类注册表', () => {
   it('生产登记表:三个 kind 都已接入(reconcile 由 RL-03 收尾切片接上)', () => {
     registerJobSpecs()
     const kinds = jobSpecs()
-    expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages'])
+    expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'event-archive-candidates', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages'])
     // 票 14 把 ocr 从 todo 接上了;RL-03 收尾把 reconcile 也接上了(核心逻辑搬进 app)。
     // 三个已接入的 kind 都要有 run。
     for (const k of ['render-pages', 'ocr', 'reconcile']) {

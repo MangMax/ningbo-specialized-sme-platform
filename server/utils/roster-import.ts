@@ -1,3 +1,4 @@
+import { enqueueArchivedCandidates } from './jobs/candidate-discovery'
 import { managedDecision102 } from './decision-lifecycle-102'
 import { isDeepStrictEqual } from 'node:util'
 import { recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
@@ -4202,8 +4203,13 @@ function replayRosterImportCore(db: Db, request: RosterImportRequest): RosterImp
 export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = []) {
   return recordImportReceipt(db, 'preflight', request, () => preflightRosterImportCore(db, request, pageCountErrors))
 }
-export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = []) {
-  return recordImportReceipt(db, 'commit', request, () => commitRosterImportCore(db, request, pageCountErrors))
+export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], options: { deferCandidateTasks?: boolean } = {}) {
+  return recordImportReceipt(db, 'commit', request, () => db.transaction(() => {
+    const result = commitRosterImportCore(db, request, pageCountErrors)
+    const candidateTaskIds = result.status === 'committed'
+      ? enqueueArchivedCandidates(db, request.payload.platformQueries ?? [], '', options.deferCandidateTasks) : []
+    return { ...result, candidateTaskIds }
+  }))
 }
 export function replayRosterImport(db: Db, request: RosterImportRequest) {
   return recordImportReceipt(db, 'replay', request, () => replayRosterImportCore(db, request))
