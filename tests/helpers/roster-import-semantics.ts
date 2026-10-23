@@ -17,6 +17,9 @@
  * `item_results` 摘要按调用方可见投影计算；重放目标快照与请求指纹属于服务端记账，
  * 由 replay 路径另行覆盖，不纳入 API 可观察语义黄金。其他结果与所有列仍按原样进快照。
  * 黄金文件与判据见 `tests/roster-import-semantics.test.ts`。
+ * #244 的 canonicalProjection 是独立验收的增量响应（platform-business-record*.test.ts）。
+ * 本记录器仅在预检/摘要/item.detail 的明确位置去掉它，继续与旧黄金逐字比较全部旧字段；
+ * 不改 rawFields、不重生成旧黄金，也不忽略其它差异。
  */
 
 import { createHash } from 'node:crypto'
@@ -82,6 +85,7 @@ function observableItemResults(value: unknown): unknown {
     const detail = { ...originalDetail }
     delete detail.evidenceRepointTargets
     delete detail.evidenceRepointPlanFingerprint
+    delete detail.canonicalProjection
     if (Object.keys(detail).length === Object.keys(originalDetail).length) return raw
     const projected = { ...item }
     if (Object.keys(detail).length > 0) projected.detail = detail
@@ -90,13 +94,28 @@ function observableItemResults(value: unknown): unknown {
   })
 }
 
+function legacyProjectionFields(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const { canonicalProjection: _projection, platformObservationSources: _sources, ...legacy } = value as Record<string, unknown>
+  return legacy
+}
+
+function legacyOutcome(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const out = { ...value as Record<string, unknown> }
+  if ('preflight' in out) out.preflight = legacyProjectionFields(out.preflight)
+  if ('summary' in out) out.summary = legacyProjectionFields(out.summary)
+  if ('items' in out) out.items = observableItemResults(out.items)
+  return out
+}
+
 /** `import_batch` 行：三块大 JSON 列换成 {@link digest}。 */
 function bookkeepingRow(row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(row)) {
-    if (key === 'preflightResult') out.preflightResultSha = digest(value)
+    if (key === 'preflightResult') out.preflightResultSha = digest(legacyProjectionFields(value))
     else if (key === 'itemResults') out.itemResultsSha = digest(observableItemResults(value))
-    else if (key === 'summary') out.summarySha = digest(value)
+    else if (key === 'summary') out.summarySha = digest(legacyProjectionFields(value))
     else out[key] = value
   }
   return out
@@ -152,7 +171,7 @@ export function createSemanticRecorder(db: TestDb) {
           changed[name] = current[name]
         }
       }
-      steps.push({ label, outcome, rowCounts, changed })
+      steps.push({ label, outcome: legacyOutcome(outcome), rowCounts, changed })
       previous = current
     },
   }

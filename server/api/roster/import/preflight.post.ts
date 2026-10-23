@@ -34,7 +34,7 @@ defineRouteMeta({
               idempotencyKey: { type: 'string', description: '幂等键（库层面唯一）。' },
               sourceKind: {
                 type: 'string',
-                enum: ['announcement', 'platform_export', 'alias_evidence'],
+                enum: ['announcement', 'platform_export', 'platform_archive', 'alias_evidence'],
               },
               sourceIdentity: { type: 'string', description: '来源身份：文件相对路径 / 逻辑标识（不含凭证）。' },
               sourceSha256: { type: 'string', nullable: true },
@@ -42,6 +42,11 @@ defineRouteMeta({
   "type": "object",
   "description": "统一写入载荷；recognized_list 的 collectionEvidence 必填，见 docs/platform-recognized-evidence.md。",
   "properties": {
+    "platformRecordObservations": {
+      "type": "array", "minItems": 1, "maxItems": 100,
+      "description": "sourceKind=platform_archive；服务端读取原观察，不接受客户端raw/hash。预检只读业务并冻结源指纹，commit重核，源缺失/漂移整批失败。",
+      "items": { "type": "object", "additionalProperties": false, "required": ["relationId"], "properties": { "relationId": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 } } }
+    },
     "differences": {
       "type": "array",
       "description": "代理/用户明确裁决；不自动推断。完整字段见名录契约 §8.3。",
@@ -458,6 +463,19 @@ defineRouteMeta({
                     remove: { type: 'integer', description: '归并会删除的企业行数。' },
                     review: { type: 'integer', description: '落在待核状态的行数。' },
                     conflicts: { type: 'array', items: { type: 'object' } },
+                    canonicalProjection: {
+                      type: 'array', description: '逐观察的业务身份/内容可验证性计划；新观察 relationId 为 null。',
+                      items: { type: 'object', properties: {
+                        relationId: { type: 'integer', nullable: true },
+                        identityState: { type: 'string', enum: ['resolved', 'missing_key', 'conflict'] },
+                        contentState: { type: 'string', enum: ['verified', 'unverifiable'] },
+                        keySource: { type: 'string', enum: ['relation_key', 'raw_id', 'both', 'none'] },
+                      } },
+                    },
+                    platformObservationSources: {
+                      type: 'array', description: '服务端保存的原观察输入指纹；commit服务端重读校验，不接受客户端hash。',
+                      items: { type: 'object', properties: { relationId: { type: 'integer' }, inputFingerprint: { type: 'string' } } },
+                    },
                   },
                 },
               },
@@ -467,6 +485,7 @@ defineRouteMeta({
       },
       400: { description: '请求体不合法（缺幂等键 / 来源身份 / payload）。' },
       401: { description: '未带 token、token 不匹配，或服务端未配置 `NUXT_API_TOKEN`。' },
+      409: { description: '幂等键属于其他请求或来源；历史投影预检后不能更换命令。' },
     },
   },
 })

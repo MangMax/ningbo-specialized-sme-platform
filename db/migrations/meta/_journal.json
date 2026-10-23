@@ -197,6 +197,13 @@
       "when": 1792400021008,
       "tag": "0027_platform_query_title_scope_83",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1792400021009,
+      "tag": "0028_platform_business_record",
+      "breakpoints": true
     }
   ]
 }
