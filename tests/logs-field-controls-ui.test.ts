@@ -47,6 +47,12 @@ const label = (profile: string, field: string) =>
     (entry) => entry.key === field
   )!.label
 
+/** Test-only Icon stub: Nuxt auto-imports Icon in the app; Vitest needs a stand-in. */
+const IconStub = {
+  props: ['name'],
+  template: '<span class="icon-stub" :data-icon="name"></span>'
+}
+
 /**
  * The response catalog is the real backend table (HTTP + TUS), not a local copy:
  * if the backend renames a profile/level/field the UI tests fail instead of drift.
@@ -76,14 +82,6 @@ const controlsWith = (
     Record<TestLevel, Record<string, boolean>>
   >
   Object.assign(controls.http![level], overrides)
-  return controls as unknown as LogFieldControls
-}
-const tusControlsWith = (level: TestLevel, overrides: Partial<Record<string, boolean>>) => {
-  const controls = defaultControls() as unknown as Record<
-    string,
-    Record<TestLevel, Record<string, boolean>>
-  >
-  Object.assign(controls.tus![level], overrides)
   return controls as unknown as LogFieldControls
 }
 const integrationCatalog = [
@@ -129,32 +127,58 @@ async function mountManagement(
     return read()
   })
   const { default: Management } = await import('../components/logs/LogManagement.vue')
-  const wrapper = mount(Management, { props: { filter: {} }, attachTo: document.body })
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
   wrappers.push(wrapper)
   await flushPromises()
   return { wrapper, calls }
 }
 const patches = (calls: { options: any }[]) =>
   calls.filter((call) => call.options?.method === 'PATCH').map((call) => call.options.body)
-async function openPanel(wrapper: any) {
-  const trigger = wrapper
-    .findAll('button')
-    .find((button: any) => button.text().includes('详情字段（高级）'))
-  expect(trigger, 'field entry must be rendered').toBeTruthy()
-  await trigger!.trigger('click')
+const modulePanel = (wrapper: any, prefix = 'integration', key = 'nuxt-nitro') =>
+  wrapper.get('[data-testid="log-module-' + prefix + '-' + key + '"]')
+async function openPanel(wrapper: any, prefix = 'integration', key = 'nuxt-nitro') {
+  const panel = modulePanel(wrapper, prefix, key)
+  const trigger = panel.get('[data-slot=accordion-trigger]')
+  if (trigger.attributes('aria-expanded') !== 'true') {
+    await trigger.trigger('click')
+    await flushPromises()
+  }
+  return panel
+}
+async function closePanel(wrapper: any, prefix = 'integration', key = 'nuxt-nitro') {
+  const panel = modulePanel(wrapper, prefix, key)
+  const trigger = panel.get('[data-slot=accordion-trigger]')
+  if (trigger.attributes('aria-expanded') === 'true') {
+    await trigger.trigger('click')
+    await flushPromises()
+  }
+}
+const fieldBlock = (wrapper: any, profile = 'http') =>
+  wrapper.get('[data-testid="log-field-controls-' + profile + '"]')
+/** TUS keys contain dots, so an #id selector would be parsed as a class. */
+const byId = (root: any, id: string) => root.get('[id="' + id + '"]')
+const allSwitch = (wrapper: any, field: string, profile = 'http') =>
+  byId(wrapper, 'log-field-' + profile + '-all-' + field)
+const levelSwitch = (wrapper: any, field: string, level = 'info', profile = 'http') =>
+  byId(wrapper, 'log-field-' + profile + '-' + level + '-' + field)
+const state = (wrapper: any, field: string, profile = 'http') =>
+  allSwitch(wrapper, field, profile).attributes('data-state')
+const mixed = (wrapper: any, field: string, profile = 'http') =>
+  allSwitch(wrapper, field, profile).attributes('data-mixed')
+const topSummary = (wrapper: any) => wrapper.get('[data-testid=log-unsaved-summary]').text()
+async function openAdvanced(wrapper: any, profile = 'http') {
+  await wrapper.get('[data-testid="log-field-advanced-' + profile + '"]').trigger('click')
   await flushPromises()
 }
-/** TUS keys contain dots, so an #id selector would be parsed as a class. */
-const byId = (root: any, id: string) => root.get(`[id="${id}"]`)
-const fieldSwitch = (wrapper: any, field: string, level = 'info', profile = 'http') =>
-  byId(wrapper, `log-field-${profile}-${level}-${field}`)
-const state = (wrapper: any, field: string, level = 'info') =>
-  fieldSwitch(wrapper, field, level).attributes('data-state')
-async function selectLevel(wrapper: any, label: string) {
-  const tab = wrapper
+async function selectLevel(wrapper: any, name: string, profile = 'http') {
+  const tab = fieldBlock(wrapper, profile)
     .findAll('[role=tab]')
-    .find((entry: any) => entry.attributes('aria-label')?.startsWith(label))
-  expect(tab, `level tab ${label}`).toBeTruthy()
+    .find((entry: any) => entry.attributes('aria-label')?.startsWith(name))
+  expect(tab, 'level tab ' + name).toBeTruthy()
   await tab!.trigger('keydown', { key: 'Enter' })
   await flushPromises()
 }
@@ -181,17 +205,18 @@ async function cancel() {
 it('hides the whole field entry when the backend publishes no profile catalog or no effective rules', async () => {
   const missingProfiles = basePolicy({ catalog: { integrations: integrationCatalog } })
   const first = await mountManagement(() => missingProfiles)
-  expect(first.wrapper.find('[data-testid=log-field-controls]').exists()).toBe(false)
+  expect(first.wrapper.find('[data-testid^=log-field-controls]').exists()).toBe(false)
   expect(first.wrapper.text()).not.toContain('详情字段（高级）')
 
   const missingControls = basePolicy({ fieldControls: undefined })
   const second = await mountManagement(() => missingControls)
-  expect(second.wrapper.find('[data-testid=log-field-controls]').exists()).toBe(false)
+  expect(second.wrapper.find('[data-testid^=log-field-controls]').exists()).toBe(false)
 
   // 没有 collection 就无法判断“当前是否采集”，入口同样隐藏。
   const noCollection = basePolicy({ collection: undefined })
   const secondB = await mountManagement(() => noCollection)
-  expect(secondB.wrapper.find('[data-testid=log-field-controls]').exists()).toBe(false)
+  expect(secondB.wrapper.find('[data-testid^=log-field-controls]').exists()).toBe(false)
+  expect(secondB.wrapper.find('[data-testid=log-module-integration-nuxt-nitro]').exists()).toBe(false)
 
   // Structurally incomplete controls from a broken backend must not be filled in locally.
   const incomplete = basePolicy()
@@ -201,59 +226,148 @@ it('hides the whole field entry when the backend publishes no profile catalog or
   >
   delete incompleteControls.http!.info!.httpRoute
   const third = await mountManagement(() => incomplete)
-  expect(third.wrapper.find('[data-testid=log-field-controls]').exists()).toBe(false)
+  expect(third.wrapper.find('[data-testid^=log-field-controls]').exists()).toBe(false)
   // 没有用本地常量补出字段开关：页面只保留真实目录里已有的采集规则。
   expect(third.wrapper.findAll('[id^=log-field-]')).toHaveLength(0)
+  expect(third.wrapper.get('[data-testid=log-module-integration-nuxt-nitro]').text()).toContain(
+    '字段目录来自服务端'
+  )
   vi.unstubAllGlobals()
 })
 
-it('renders exactly the catalog profiles and levels, one level at a time, without writing', async () => {
+it('attaches independent HTTP and TUS field panels to their collectors and removes the bottom block', async () => {
+  const { wrapper } = await mountManagement(() => basePolicy())
+  expect(wrapper.text()).not.toContain('详情字段（高级）')
+  // HTTP is the one panel opened by default; TUS starts closed.
+  expect(modulePanel(wrapper, 'integration', 'nuxt-nitro').text()).toContain('Nuxt / Nitro 请求')
+  expect(fieldBlock(wrapper, 'http').exists()).toBe(true)
+  expect(wrapper.find('[data-testid="log-field-controls-tus"]').exists()).toBe(false)
+
+  // Opening TUS does not close HTTP: both collector panels stay open.
+  await openPanel(wrapper, 'integration', 'tus')
+  expect(fieldBlock(wrapper, 'http').exists()).toBe(true)
+  expect(fieldBlock(wrapper, 'tus').exists()).toBe(true)
+
+  // Closing HTTP leaves the TUS panel and its draft untouched.
+  await closePanel(wrapper, 'integration', 'nuxt-nitro')
+  expect(wrapper.find('[data-testid="log-field-controls-http"]').exists()).toBe(false)
+  expect(fieldBlock(wrapper, 'tus').exists()).toBe(true)
+})
+
+it('keeps every expand chevron pointing right with no rotate class, before and after opening', async () => {
+  const { wrapper } = await mountManagement(() => basePolicy())
+  const chevron = () =>
+    modulePanel(wrapper, 'integration', 'nuxt-nitro').get('[data-testid=log-panel-chevron]')
+  const before = chevron()
+  expect(before.find('.icon-stub').attributes('data-icon')).toBe('lucide:chevron-right')
+  expect(before.classes().join(' ')).not.toContain('rotate')
+
+  await closePanel(wrapper, 'integration', 'nuxt-nitro')
+  const closed = chevron()
+  expect(closed.find('.icon-stub').attributes('data-icon')).toBe('lucide:chevron-right')
+  expect(closed.classes().join(' ')).not.toContain('rotate')
+
+  await openPanel(wrapper, 'integration', 'nuxt-nitro')
+  const reopened = chevron()
+  expect(reopened.find('.icon-stub').attributes('data-icon')).toBe('lucide:chevron-right')
+  expect(reopened.classes().join(' ')).not.toContain('rotate')
+  expect(
+    modulePanel(wrapper, 'integration', 'nuxt-nitro')
+      .get('[data-slot=accordion-trigger]')
+      .attributes('aria-expanded')
+  ).toBe('true')
+})
+
+it('renders exactly the catalog fields and syncs one selection to all event levels by default', async () => {
   const { wrapper, calls } = await mountManagement(() => basePolicy())
-  await openPanel(wrapper)
-  const panel = wrapper.get('[data-testid=log-field-controls]')
-  // 两个已实施 profile 与来自目录的四个级别；不是本地常量拼出来的矩阵。
-  const tabs = panel.findAll('[role=tab]')
-  expect(tabs).toHaveLength(6)
-  expect(tabs.slice(0, 2).map((tab: any) => tab.text())).toEqual(['HTTP 请求', 'TUS 上传'])
-  expect(tabs.slice(2).map((tab: any) => tab.text())).toEqual(['调试', '信息', '警告', '错误'])
-  expect(panel.findAll('[data-slot=switch]')).toHaveLength(4)
+  const panel = wrapper.get('[data-testid=log-field-controls-http]')
+  // Default mode has no level tabs; one switch per real field comes from the catalog.
+  expect(panel.findAll('[role=tab]')).toHaveLength(0)
+  expect(panel.findAll('[data-slot=switch]')).toHaveLength(HTTP_FIELDS.length)
   expect(panel.findAll('input[type=checkbox]')).toHaveLength(0)
   expect(panel.findAll('select')).toHaveLength(0)
   expect(panel.findAll('details')).toHaveLength(0)
-  // 字段名仍来自目录；只有单位（毫秒/字节）作为后缀保留，不再逐条铺解释。
   for (const field of profileCatalog()[0]!.fields) expect(panel.text()).toContain(field.label)
   expect(panel.text()).toContain('（毫秒）')
-  // 默认全 true 时，状态句必须如实说明「所有级别都保留全部字段」；
-  // 旧文案「部分级别已改」与这个分支的事实相反，这里锁死回归。
+  expect(panel.text()).toContain('一份选择适用于全部事件级别')
   expect(panel.text()).toContain('各级别均保留全部字段。')
-  expect(panel.text()).not.toContain('部分级别已改')
+  // HTTP truthfulness: only the four real fields; params/response are not drawn.
+  expect(panel.text()).toContain('请求参数、响应内容、原始报文尚未采集')
+  expect(panel.text()).toContain('HTTP 完成事件只有 信息 / 警告 / 错误，没有调试档')
+  expect(panel.findAll('[data-slot=switch]')).toHaveLength(4)
 
   expect(state(wrapper, 'httpRoute')).toBe('checked')
-  await fieldSwitch(wrapper, 'httpRoute').trigger('click')
+  await allSwitch(wrapper, 'httpRoute').trigger('click')
   expect(state(wrapper, 'httpRoute')).toBe('unchecked')
-  // 切换级别不丢草稿，级别 tab 用可访问名称报告改动数。
+  // The single selection applied to every level.
+  await openAdvanced(wrapper)
+  expect(panel.findAll('[role=tab]')).toHaveLength(4)
+  expect(panel.findAll('[data-slot=switch]')).toHaveLength(4)
+  expect(levelSwitch(wrapper, 'httpRoute', 'info').attributes('data-state')).toBe('unchecked')
+  await selectLevel(wrapper, '调试')
+  expect(levelSwitch(wrapper, 'httpRoute', 'debug').attributes('data-state')).toBe('unchecked')
+  await selectLevel(wrapper, '警告')
+  expect(levelSwitch(wrapper, 'httpRoute', 'warn').attributes('data-state')).toBe('unchecked')
   await selectLevel(wrapper, '错误')
-  expect(wrapper.findAll('[data-testid=log-field-controls] [data-slot=switch]')).toHaveLength(4)
-  expect(state(wrapper, 'httpRoute', 'error')).toBe('checked')
+  expect(levelSwitch(wrapper, 'httpRoute', 'error').attributes('data-state')).toBe('unchecked')
   await selectLevel(wrapper, '信息')
-  expect(state(wrapper, 'httpRoute')).toBe('unchecked')
-  const infoTab = wrapper
+  const infoTab = panel
     .findAll('[role=tab]')
     .find((tab: any) => tab.attributes('aria-label')?.startsWith('信息'))!
   expect(infoTab.attributes('aria-label')).toBe('信息，已调整 1 项')
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('共 1 项未保存')
+  expect(topSummary(wrapper)).toContain('未保存：Nuxt / Nitro 请求')
+  expect(modulePanel(wrapper, 'integration', 'nuxt-nitro').text()).toContain('详情 3/4 项')
   expect(patches(calls)).toHaveLength(0)
-  // 收起后草稿和当前类型/级别都保留，标题旁的状态继续可见。
-  const trigger = wrapper
-    .findAll('button')
-    .find((button: any) => button.text().includes('详情字段（高级）'))!
-  await trigger.trigger('click')
-  await flushPromises()
-  expect(wrapper.findAll('[data-testid=log-field-controls] [data-slot=switch]')).toHaveLength(0)
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('共 1 项未保存')
-  await trigger.trigger('click')
-  await flushPromises()
+
+  // Collapsing keeps the draft and the panel-header summary; reopening shows it again.
+  await closePanel(wrapper, 'integration', 'nuxt-nitro')
+  expect(wrapper.find('[data-testid="log-field-controls-http"]').exists()).toBe(false)
+  expect(modulePanel(wrapper, 'integration', 'nuxt-nitro').text()).toContain('未保存')
+  expect(modulePanel(wrapper, 'integration', 'nuxt-nitro').text()).toContain('详情 3/4 项')
+  await openPanel(wrapper, 'integration', 'nuxt-nitro')
   expect(state(wrapper, 'httpRoute')).toBe('unchecked')
+})
+
+it('shows a saved mixed state without overwriting it, and only syncs when the field is changed', async () => {
+  const { wrapper, calls } = await mountManagement(() =>
+    basePolicy({ fieldControls: controlsWith('info', { httpRoute: false }) })
+  )
+  expect(mixed(wrapper, 'httpRoute')).toBe('true')
+  expect(wrapper.get('[data-testid=log-field-controls-http]').text()).toContain('各级别不一致')
+  expect(wrapper.get('[data-testid=log-field-controls-http]').text()).toContain(
+    '已保存的各事件级别不一致：改动某个字段会把该字段同步到全部级别。'
+  )
+  // Merely reading the mixed state writes nothing.
+  expect(patches(calls)).toHaveLength(0)
+
+  await allSwitch(wrapper, 'httpRoute').trigger('click')
+  expect(mixed(wrapper, 'httpRoute')).toBeUndefined()
+  expect(state(wrapper, 'httpRoute')).toBe('checked')
+  // All levels are now true; only the one saved false is a real diff.
+  await review(wrapper)
+  const table = document.querySelector('[data-testid=log-field-review-table]')!
+  expect(table.textContent).toContain('HTTP 请求 · 信息 · 路由模板')
+  expect(table.textContent).toContain('保留')
+  await cancel()
+  expect(patches(calls)).toHaveLength(0)
+})
+
+it('keeps the advanced mode UI-only and edits each event level independently', async () => {
+  const { wrapper, calls } = await mountManagement(() => basePolicy())
+  await openAdvanced(wrapper)
+  // Opening the advanced mode alone is not a data change.
+  expect(patches(calls)).toHaveLength(0)
+  expect(levelSwitch(wrapper, 'httpMethod', 'info').attributes('data-state')).toBe('checked')
+
+  await levelSwitch(wrapper, 'httpMethod', 'info').trigger('click')
+  expect(levelSwitch(wrapper, 'httpMethod', 'info').attributes('data-state')).toBe('unchecked')
+  await selectLevel(wrapper, '警告')
+  expect(levelSwitch(wrapper, 'httpMethod', 'warn').attributes('data-state')).toBe('checked')
+
+  await selectLevel(wrapper, '信息')
+  await levelSwitch(wrapper, 'httpMethod', 'info').trigger('click')
+  expect(levelSwitch(wrapper, 'httpMethod', 'info').attributes('data-state')).toBe('checked')
+  expect(patches(calls)).toHaveLength(0)
 })
 
 it('keeps parents untouched and still saves field preferences while the source is off', async () => {
@@ -264,28 +378,41 @@ it('keeps parents untouched and still saves field preferences while the source i
     (body) => {
       const next = basePolicy()
       ;(next.collection as any).sources.http = rule({ enabled: false, minLevel: 'warn' })
-      next.fieldControls = body.fieldControls ? controlsWith('info', { durationMs: false }) : next.fieldControls
+      next.fieldControls = body.fieldControls ? defaultControls() : next.fieldControls
+      ;(next.fieldControls as any).http.info.durationMs = false
+      ;(next.fieldControls as any).http.debug.durationMs = false
+      ;(next.fieldControls as any).http.warn.durationMs = false
+      ;(next.fieldControls as any).http.error.durationMs = false
       next.revision = 2
       current = next
       return next
     }
   )
-  await openPanel(wrapper)
-  const panel = wrapper.get('[data-testid=log-field-controls]')
+  const panel = await openPanel(wrapper, 'integration', 'nuxt-nitro')
   expect(panel.text()).toContain('当前不采集')
   expect(panel.text()).toContain('HTTP 接口来源已关闭')
   expect(panel.text()).toContain('选择会保留')
-  expect(panel.text()).toContain('低于最低级别警告')
   // 父级关闭不影响字段开关和草稿保存。
-  expect((fieldSwitch(wrapper, 'durationMs').element as HTMLElement).hasAttribute('disabled')).toBe(false)
-  await fieldSwitch(wrapper, 'durationMs').trigger('click')
+  expect((allSwitch(wrapper, 'durationMs').element as HTMLElement).hasAttribute('disabled')).toBe(false)
+  await allSwitch(wrapper, 'durationMs').trigger('click')
+  await openAdvanced(wrapper)
+  expect(wrapper.get('[data-testid=log-field-controls-http]').text()).toContain(
+    '低于采集门槛「警告」'
+  )
   await review(wrapper)
   await confirm()
   expect(patches(calls)).toEqual([
     {
       retentionDays: 7,
       maxBytes: 536870912,
-      fieldControls: { http: { info: { durationMs: false } } }
+      fieldControls: {
+        http: {
+          debug: { durationMs: false },
+          info: { durationMs: false },
+          warn: { durationMs: false },
+          error: { durationMs: false }
+        }
+      }
     }
   ])
   // 保存不会顺手重新打开来源，也不会把父级规则塞进这次 PATCH。
@@ -296,62 +423,66 @@ it('keeps parents untouched and still saves field preferences while the source i
 
 it('copies to sibling levels, restores this level and undoes both as draft-only changes', async () => {
   const { wrapper, calls } = await mountManagement(() => basePolicy())
-  await openPanel(wrapper)
-  await fieldSwitch(wrapper, 'httpMethod').trigger('click')
-  await fieldSwitch(wrapper, 'statusCode').trigger('click')
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('共 2 项未保存')
+  await openAdvanced(wrapper)
+  await levelSwitch(wrapper, 'httpMethod', 'info').trigger('click')
+  await levelSwitch(wrapper, 'statusCode', 'info').trigger('click')
+  expect(modulePanel(wrapper, 'integration', 'nuxt-nitro').text()).toContain('详情 2/4 项')
 
-  await wrapper.get('[data-testid=log-field-copy]').trigger('click')
+  await wrapper.get('[data-testid=log-field-copy-http]').trigger('click')
   await flushPromises()
-  const targets = wrapper.findAll('[data-testid=log-field-copy-panel] input, [data-slot=checkbox]')
-  expect(wrapper.get('[data-testid=log-field-copy-panel]').text()).toContain('把这 4 项选择复制到其他级别')
-  expect(targets).toHaveLength(3)
+  const copyPanel = wrapper.get('[data-testid=log-field-copy-panel-http]')
+  expect(copyPanel.text()).toContain('把这 4 项选择复制到其他级别')
+  expect(copyPanel.findAll('input, [data-slot=checkbox]')).toHaveLength(3)
   // 至少选一个目标才允许复制；未复制前仍是 0 次写入。
-  expect((wrapper.get('[data-testid=log-field-copy-apply]').element as HTMLButtonElement).disabled).toBe(true)
+  expect(
+    (wrapper.get('[data-testid=log-field-copy-apply-http]').element as HTMLButtonElement).disabled
+  ).toBe(true)
   expect(patches(calls)).toHaveLength(0)
-  await wrapper.get('#log-field-copy-warn').trigger('click')
+  await wrapper.get('[id="log-field-copy-http-warn"]').trigger('click')
   await flushPromises()
-  expect((wrapper.get('[data-testid=log-field-copy-apply]').element as HTMLButtonElement).disabled).toBe(false)
-  await wrapper.get('[data-testid=log-field-copy-apply]').trigger('click')
+  expect(
+    (wrapper.get('[data-testid=log-field-copy-apply-http]').element as HTMLButtonElement).disabled
+  ).toBe(false)
+  await wrapper.get('[data-testid=log-field-copy-apply-http]').trigger('click')
   await flushPromises()
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('已复制到警告')
+  expect(wrapper.get('[data-testid=log-field-controls-http]').text()).toContain('已复制到警告')
   expect(patches(calls)).toHaveLength(0)
 
   // 撤销把目标级别恢复成复制前，不动源级别；临时消息随后由级别切换清掉。
-  await wrapper.get('[data-testid=log-field-undo]').trigger('click')
+  await wrapper.get('[data-testid=log-field-undo-http]').trigger('click')
   await flushPromises()
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('已撤销')
+  expect(wrapper.get('[data-testid=log-field-controls-http]').text()).toContain('已撤销')
   await selectLevel(wrapper, '警告')
-  expect(state(wrapper, 'httpMethod', 'warn')).toBe('checked')
-  expect(wrapper.find('[data-testid=log-field-undo]').exists()).toBe(false)
+  expect(levelSwitch(wrapper, 'httpMethod', 'warn').attributes('data-state')).toBe('checked')
+  expect(wrapper.find('[data-testid=log-field-undo-http]').exists()).toBe(false)
   await selectLevel(wrapper, '信息')
-  expect(state(wrapper, 'httpMethod')).toBe('unchecked')
+  expect(levelSwitch(wrapper, 'httpMethod', 'info').attributes('data-state')).toBe('unchecked')
 
   // 再做一次复制，确认目标级别真的被覆盖、源级别不受影响。
-  await wrapper.get('[data-testid=log-field-copy]').trigger('click')
+  await wrapper.get('[data-testid=log-field-copy-http]').trigger('click')
   await flushPromises()
-  await wrapper.get('#log-field-copy-warn').trigger('click')
+  await wrapper.get('[id="log-field-copy-http-warn"]').trigger('click')
   await flushPromises()
-  await wrapper.get('[data-testid=log-field-copy-apply]').trigger('click')
+  await wrapper.get('[data-testid=log-field-copy-apply-http]').trigger('click')
   await flushPromises()
   await selectLevel(wrapper, '警告')
-  expect(state(wrapper, 'httpMethod', 'warn')).toBe('unchecked')
-  expect(state(wrapper, 'statusCode', 'warn')).toBe('unchecked')
+  expect(levelSwitch(wrapper, 'httpMethod', 'warn').attributes('data-state')).toBe('unchecked')
+  expect(levelSwitch(wrapper, 'statusCode', 'warn').attributes('data-state')).toBe('unchecked')
   await selectLevel(wrapper, '错误')
-  expect(state(wrapper, 'httpMethod', 'error')).toBe('checked')
+  expect(levelSwitch(wrapper, 'httpMethod', 'error').attributes('data-state')).toBe('checked')
 
   // 恢复本级别默认只恢复当前档；可撤销。
   await selectLevel(wrapper, '信息')
-  await wrapper.get('[data-testid=log-field-restore]').trigger('click')
+  await wrapper.get('[data-testid=log-field-restore-http]').trigger('click')
   await flushPromises()
-  expect(state(wrapper, 'httpMethod')).toBe('checked')
-  expect(state(wrapper, 'statusCode')).toBe('checked')
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('已恢复本级别的默认选择')
+  expect(levelSwitch(wrapper, 'httpMethod', 'info').attributes('data-state')).toBe('checked')
+  expect(levelSwitch(wrapper, 'statusCode', 'info').attributes('data-state')).toBe('checked')
+  expect(wrapper.get('[data-testid=log-field-controls-http]').text()).toContain('已恢复本级别的默认选择')
   expect(patches(calls)).toHaveLength(0)
-  await wrapper.get('[data-testid=log-field-undo]').trigger('click')
+  await wrapper.get('[data-testid=log-field-undo-http]').trigger('click')
   await flushPromises()
-  expect(state(wrapper, 'httpMethod')).toBe('unchecked')
-  expect(state(wrapper, 'statusCode')).toBe('unchecked')
+  expect(levelSwitch(wrapper, 'httpMethod', 'info').attributes('data-state')).toBe('unchecked')
+  expect(levelSwitch(wrapper, 'statusCode', 'info').attributes('data-state')).toBe('unchecked')
 })
 
 it('reviews only real diffs against the server baseline, including restoring a saved false', async () => {
@@ -370,8 +501,8 @@ it('reviews only real diffs against the server baseline, including restoring a s
       return next
     }
   )
-  await openPanel(wrapper)
-  await fieldSwitch(wrapper, 'httpRoute').trigger('click')
+  expect(mixed(wrapper, 'httpRoute')).toBe('true')
+  await allSwitch(wrapper, 'httpRoute').trigger('click')
   const dialog = await review(wrapper)
   const table = dialog.querySelector('[data-testid=log-field-review-table]')!
   expect(table.textContent).toContain('HTTP 请求 · 信息 · 路由模板')
@@ -394,11 +525,10 @@ it('reviews only real diffs against the server baseline, including restoring a s
     }
   ])
   // 成功响应回填草稿并保留展开、类型和级别。
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('当前 1 项不记录')
   expect(state(wrapper, 'httpRoute')).toBe('checked')
-  expect(state(wrapper, 'statusCode')).toBe('unchecked')
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('HTTP 请求')
-  expect(wrapper.findAll('[data-testid=log-field-controls] [data-slot=switch]')).toHaveLength(4)
+  expect(mixed(wrapper, 'statusCode')).toBe('true')
+  expect(modulePanel(wrapper, 'integration', 'nuxt-nitro').text()).toContain('Nuxt / Nitro 请求')
+  expect(wrapper.get('[data-testid=log-field-controls-http]').findAll('[data-slot=switch]')).toHaveLength(4)
 })
 
 it('keeps the draft after a 409 or a generic failure and never reports the change as saved', async () => {
@@ -409,8 +539,7 @@ it('keeps the draft after a 409 or a generic failure and never reports the chang
         throw { data: { error: { code } } }
       }
     )
-    await openPanel(wrapper)
-    await fieldSwitch(wrapper, 'durationMs').trigger('click')
+    await allSwitch(wrapper, 'durationMs').trigger('click')
     await review(wrapper)
     await confirm()
     expect(patches(calls)).toHaveLength(1)
@@ -418,7 +547,8 @@ it('keeps the draft after a 409 or a generic failure and never reports the chang
     expect(wrapper.text()).toContain(code === 'policy_capacity_pending' ? '原策略仍生效' : '日志服务暂不可用')
     // 草稿与展开状态都还在，重复提交不会重复计为已保存。
     expect(state(wrapper, 'durationMs')).toBe('unchecked')
-    expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('共 1 项未保存')
+    expect(topSummary(wrapper)).toContain('未保存：Nuxt / Nitro 请求')
+    expect(wrapper.get('[data-testid=log-field-controls-http]').text()).toContain('详情 3/4 项')
     vi.unstubAllGlobals()
   }
 })
@@ -428,31 +558,34 @@ it('switches to the real TUS profile and PATCHes its dotted field keys verbatim'
     () => basePolicy(),
     (body) => basePolicy({ fieldControls: body.fieldControls, revision: 2 })
   )
-  await openPanel(wrapper)
-  const tabs = wrapper.get('[data-testid=log-field-controls]').findAll('[role=tab]')
-  expect(tabs.slice(0, 2).map((tab: any) => tab.text())).toEqual(['HTTP 请求', 'TUS 上传'])
-  await tabs[1]!.trigger('keydown', { key: 'Enter' })
-  await flushPromises()
-  const switches = wrapper.get('[data-testid=log-field-controls]').findAll('[data-slot=switch]')
-  expect(switches).toHaveLength(4)
+  await openPanel(wrapper, 'integration', 'tus')
+  const panel = wrapper.get('[data-testid=log-field-controls-tus]')
+  expect(panel.findAll('[data-slot=switch]')).toHaveLength(4)
   // 嵌套键原样成为 DOM id 与提交键，不被拆成 tus → uploadId。
-  for (const key of TUS_FIELDS) expect(document.getElementById(`log-field-tus-info-${key}`)).not.toBeNull()
-  await byId(wrapper, 'log-field-tus-info-tus.uploadId').trigger('click')
+  for (const key of TUS_FIELDS) expect(document.getElementById('log-field-tus-all-' + key)).not.toBeNull()
+  await byId(wrapper, 'log-field-tus-all-tus.uploadId').trigger('click')
   await review(wrapper)
   const dialog = document.querySelector('[role=dialog]')!
   expect(dialog.querySelector('[data-testid=log-field-review-table]')!.textContent).toContain(
-    `TUS 上传 · 信息 · ${label('tus', 'tus.uploadId')}`
+    'TUS 上传 · 信息 · ' + label('tus', 'tus.uploadId')
   )
   await confirm()
   expect(patches(calls)).toEqual([
     {
       retentionDays: 7,
       maxBytes: 536870912,
-      fieldControls: { tus: { info: { 'tus.uploadId': false } } }
+      fieldControls: {
+        tus: {
+          debug: { 'tus.uploadId': false },
+          info: { 'tus.uploadId': false },
+          warn: { 'tus.uploadId': false },
+          error: { 'tus.uploadId': false }
+        }
+      }
     }
   ])
   // tus 来源与 tus 集成都在开启状态时，不显示“当前不采集”。
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).not.toContain('当前不采集')
+  expect(wrapper.get('[data-testid=log-module-integration-tus]').text()).not.toContain('当前不采集')
 })
 
 it('marks the real TUS profile as not collecting from file source and tus integration only', async () => {
@@ -462,13 +595,8 @@ it('marks the real TUS profile as not collecting from file source and tus integr
     enabled: false
   })
   const { wrapper } = await mountManagement(() => base)
-  await openPanel(wrapper)
-  await wrapper
-    .get('[data-testid=log-field-controls]')
-    .findAll('[role=tab]')[1]!
-    .trigger('keydown', { key: 'Enter' })
-  await flushPromises()
-  const panel = wrapper.get('[data-testid=log-field-controls]')
+  await openPanel(wrapper, 'integration', 'tus')
+  const panel = wrapper.get('[data-testid=log-module-integration-tus]')
   expect(panel.text()).toContain('当前不采集')
   expect(panel.text()).toContain('文件来源已关闭')
   // 只有 tus 集成关闭时同样成立，不会把来源或 tus-client 混进来。
@@ -476,19 +604,14 @@ it('marks the real TUS profile as not collecting from file source and tus integr
   ;(integrationOff.collection as unknown as Record<string, Record<string, unknown>>).integrations!.tus =
     rule({ enabled: false })
   const second = await mountManagement(() => integrationOff)
-  await openPanel(second.wrapper)
-  await second.wrapper
-    .get('[data-testid=log-field-controls]')
-    .findAll('[role=tab]')[1]!
-    .trigger('keydown', { key: 'Enter' })
-  await flushPromises()
-  const secondPanel = second.wrapper.get('[data-testid=log-field-controls]')
+  await openPanel(second.wrapper, 'integration', 'tus')
+  const secondPanel = second.wrapper.get('[data-testid=log-module-integration-tus]')
   expect(secondPanel.text()).toContain('当前不采集')
   expect(secondPanel.text()).toContain('tus 服务端回调集成已关闭')
   expect(secondPanel.text()).not.toContain('tus 客户端')
   // 父级关闭不影响编辑与保存偏好。
   expect(
-    (byId(second.wrapper, 'log-field-tus-info-tus.method').element as HTMLElement).hasAttribute(
+    (byId(second.wrapper, 'log-field-tus-all-tus.method').element as HTMLElement).hasAttribute(
       'disabled'
     )
   ).toBe(false)
@@ -505,24 +628,14 @@ it('renders and PATCHes the real service policy catalog without drifting from th
     () => response as unknown as Record<string, unknown>,
     (body) => ({ ...(response as unknown as Record<string, unknown>), ...body, revision: 2 })
   )
-  await openPanel(wrapper)
-  const tabs = wrapper.get('[data-testid=log-field-controls]').findAll('[role=tab]')
-  expect(tabs.slice(0, 2).map((tab: any) => tab.text())).toEqual(
-    response.catalog.profiles.map((profile) => profile.label)
-  )
-  expect(tabs.slice(2).map((tab: any) => tab.text())).toEqual(
-    response.catalog.profiles[0]!.levels.map((level) => LEVEL_LABELS[level])
-  )
+  const panel = wrapper.get('[data-testid=log-field-controls-http]')
   const fieldConfig = response.catalog.profiles[0]!
-  const switches = wrapper.get('[data-testid=log-field-controls]').findAll('[data-slot=switch]')
-  expect(switches).toHaveLength(fieldConfig.fields.length)
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('各级别均保留全部字段。')
+  expect(panel.findAll('[data-slot=switch]')).toHaveLength(fieldConfig.fields.length)
+  expect(panel.text()).toContain('各级别均保留全部字段。')
   // Every real field NAME still comes from the catalog; explanations are gone.
-  for (const field of fieldConfig.fields) {
-    expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain(field.label)
-  }
+  for (const field of fieldConfig.fields) expect(panel.text()).toContain(field.label)
   const target = fieldConfig.fields.find((field) => field.key === 'httpRoute')!
-  await fieldSwitch(wrapper, String(target.key)).trigger('click')
+  await allSwitch(wrapper, String(target.key)).trigger('click')
   await review(wrapper)
   expect(
     document.querySelector('[data-testid=log-field-review-table]')!.textContent
@@ -532,21 +645,27 @@ it('renders and PATCHes the real service policy catalog without drifting from th
     {
       retentionDays: response.retentionDays,
       maxBytes: response.maxBytes,
-      fieldControls: { http: { info: { httpRoute: false } } }
+      fieldControls: {
+        http: {
+          debug: { httpRoute: false },
+          info: { httpRoute: false },
+          warn: { httpRoute: false },
+          error: { httpRoute: false }
+        }
+      }
     }
   ])
   // 第二个 profile 的目录同样来自真实响应，且点开就有四个开关。
-  await tabs[1]!.trigger('keydown', { key: 'Enter' })
-  await flushPromises()
+  await openPanel(wrapper, 'integration', 'tus')
   const tusConfig = response.catalog.profiles[1]!
   expect(
-    wrapper.get('[data-testid=log-field-controls]').findAll('[data-slot=switch]')
+    wrapper.get('[data-testid=log-field-controls-tus]').findAll('[data-slot=switch]')
   ).toHaveLength(tusConfig.fields.length)
   for (const field of tusConfig.fields) {
-    expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain(field.label)
+    expect(wrapper.get('[data-testid=log-field-controls-tus]').text()).toContain(field.label)
   }
   // 单位不在标签里，不能随解释一起删掉。
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('（字节）')
+  expect(wrapper.get('[data-testid=log-field-controls-tus]').text()).toContain('（字节）')
   // 服务端真的落库后，重新读取的响应仍能被同一份草稿逻辑消化。
   const saved = await service.setPolicy({
     retentionDays: response.retentionDays,
@@ -566,7 +685,6 @@ it('sends no fieldControls at all when the field draft is untouched', async () =
     () => basePolicy(),
     () => basePolicy({ retentionDays: 8 })
   )
-  await openPanel(wrapper)
   // 默认全保留且没有改字段：即使是完整的字段目录，PATCH 也不带 fieldControls。
   await wrapper.get('#log-retention-days').setValue('8')
   await review(wrapper)
@@ -579,13 +697,27 @@ it('sends no fieldControls at all when the field draft is untouched', async () =
 
 it('offers no review until a field actually differs from the saved rules', async () => {
   const { wrapper, calls } = await mountManagement(() => basePolicy())
-  await openPanel(wrapper)
   const reviewButton = wrapper.get('[data-testid=log-policy-review]')
   expect((reviewButton.element as HTMLButtonElement).disabled).toBe(true)
   expect(wrapper.text()).toContain('当前配置与已生效配置相同')
-  await fieldSwitch(wrapper, 'httpMethod').trigger('click')
+  await allSwitch(wrapper, 'httpMethod').trigger('click')
   expect((reviewButton.element as HTMLButtonElement).disabled).toBe(false)
-  await fieldSwitch(wrapper, 'httpMethod').trigger('click')
+  await allSwitch(wrapper, 'httpMethod').trigger('click')
   expect((reviewButton.element as HTMLButtonElement).disabled).toBe(true)
   expect(patches(calls)).toHaveLength(0)
+})
+
+it('shows a follow note instead of fake field switches on source rows', async () => {
+  const { wrapper } = await mountManagement(() => basePolicy())
+  await openPanel(wrapper, 'source', 'http')
+  const sourcePanel = wrapper.get('[data-testid=log-module-source-http]')
+  expect(sourcePanel.text()).toContain('此来源没有独立的详情字段')
+  expect(sourcePanel.text()).toContain('字段跟随「Nuxt / Nitro 请求」')
+  expect(sourcePanel.findAll('[data-slot=switch]')).toHaveLength(1)
+  expect(sourcePanel.findAll('[data-testid^=log-field-controls]')).toHaveLength(0)
+
+  await openPanel(wrapper, 'source', 'task')
+  expect(wrapper.get('[data-testid=log-module-source-task]').text()).toContain(
+    '该模块没有独立的详情字段'
+  )
 })
