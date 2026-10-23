@@ -65,3 +65,110 @@ it('refreshes only the currently expanded event points after a decision readback
   expect(fetch.mock.calls.some(([url]) => url.endsWith('/17'))).toBe(false)
   expect(fetch.mock.calls.some(([url]) => url.endsWith('/18'))).toBe(true)
 })
+
+it('waits for the current event point read and propagates its failure during readback', async () => {
+  let revision = 1
+  let rejectPoint!: (reason: unknown) => void
+  const row = () => ({ id: 17, eventId: 7, type: 'event_process', status: 'candidate', role: 'context_only', revision, relationId: 27, exportRowId: null, requiresRevalidation: false })
+  const fetch = vi.fn((url: string) => {
+    if (url.endsWith('/discover')) return Promise.resolve(page(7))
+    if (url.endsWith('/correspondences')) return Promise.resolve({ rows: [row()], total: 1, page: 1, pageSize: 200 })
+    if (url.endsWith('/17')) return revision === 1 ? Promise.resolve({ ...row(), relation: { query: {} } }) : new Promise((_, reject) => { rejectPoint = reject })
+    throw new Error(url)
+  })
+  vi.stubGlobal('$fetch', fetch); vi.stubGlobal('useState', () => ref(false))
+  wrapper = mount(EventCorrespondenceReview, { props: { enterpriseId: 1, events, eventId: 7, back: '/enterprises/1?tab=review&reviewEventId=7' } })
+  await flushPromises()
+  fetch.mockClear(); revision = 2
+  let outcome = 'pending'
+  const { refreshCorrespondenceViews } = await import('../composables/useCorrespondenceReadback')
+  const refresh = refreshCorrespondenceViews().then(() => { outcome = 'resolved' }, () => { outcome = 'rejected' })
+  await flushPromises()
+  const earlyOutcome = outcome
+  expect(wrapper.get('#review-event-7').text()).toContain('正在读取对应出处')
+  rejectPoint(new Error('delayed current point failed'))
+  await flushPromises(); await refresh
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('/17'))).toHaveLength(1)
+  expect(earlyOutcome).toBe('pending')
+  expect(outcome).toBe('rejected')
+  expect(wrapper.get('#review-event-7').text()).toContain('对应出处读取失败')
+  expect(wrapper.get('#review-event-7').text()).not.toContain('正在读取对应出处')
+})
+
+function deferredReadbackReview(eventId: number | null = 7) {
+  let revision = 1
+  const points = new Map<number, { resolve: (point: unknown) => void; reject: (reason: unknown) => void }>()
+  const row = (id: number) => ({ id: id + 10, eventId: id, type: 'event_process', status: 'candidate', role: 'context_only', revision, relationId: id + 20, exportRowId: null, requiresRevalidation: false })
+  const point = (id: number) => ({ ...row(id), relation: { sequenceNo: 1, query: { id: id * 100 + revision, interface: 'business_list', queriedAt: '2026-10-23' } } })
+  const fetch = vi.fn((url: string, options?: any) => {
+    if (url.endsWith('/discover')) return Promise.resolve(page(options.body.eventId))
+    if (url.endsWith('/correspondences')) return Promise.resolve({ rows: [row(7), row(8)], total: 2, page: 1, pageSize: 200 })
+    const id = Number(url.split('/').at(-1)) - 10
+    if (id !== 7 && id !== 8) throw new Error(url)
+    return revision === 1 ? Promise.resolve(point(id)) : new Promise((resolve, reject) => { points.set(id, { resolve, reject }) })
+  })
+  vi.stubGlobal('$fetch', fetch); vi.stubGlobal('useState', () => ref(false))
+  wrapper = mount(EventCorrespondenceReview, { props: { enterpriseId: 1, events, eventId, back: '/enterprises/1?tab=review' } })
+  return {
+    fetch,
+    advance: () => { revision = 2; fetch.mockClear() },
+    succeed: (id: number) => { expect(points.has(id)).toBe(true); points.get(id)!.resolve(point(id)) },
+    fail: (id: number) => { expect(points.has(id)).toBe(true); points.get(id)!.reject(new Error('deferred point offline')) },
+  }
+}
+
+it('keeps readback pending until the shared current point succeeds without issuing duplicate reads', async () => {
+  const scenario = deferredReadbackReview(); await flushPromises(); scenario.advance()
+  const { refreshCorrespondenceViews } = await import('../composables/useCorrespondenceReadback')
+  let outcome = 'pending'
+  const refresh = refreshCorrespondenceViews().then(() => { outcome = 'resolved' }, () => { outcome = 'rejected' })
+  await flushPromises()
+  expect(outcome).toBe('pending')
+  expect(wrapper.get('#review-event-7').text()).toContain('正在读取对应出处')
+  scenario.succeed(7); await flushPromises(); await refresh
+  expect(outcome).toBe('resolved')
+  expect(wrapper.get('#review-event-7').text()).toContain('查询 #702')
+  expect(wrapper.get('#review-event-7').text()).not.toContain('正在读取对应出处')
+  expect(scenario.fetch.mock.calls.filter(([url]) => /\/\d+$/.test(url))).toHaveLength(1)
+})
+
+it('joins the newly selected event and ignores an abandoned event failure during readback', async () => {
+  const scenario = deferredReadbackReview(); await flushPromises(); scenario.advance()
+  const { refreshCorrespondenceViews } = await import('../composables/useCorrespondenceReadback')
+  let outcome = 'pending'
+  const refresh = refreshCorrespondenceViews().then(() => { outcome = 'resolved' }, () => { outcome = 'rejected' })
+  await flushPromises(); await openEvent(8)
+  expect(outcome).toBe('pending')
+  expect(wrapper.get('#review-event-8').text()).toContain('正在读取对应出处')
+  scenario.succeed(8); await flushPromises()
+  const afterCurrentCompleted = outcome
+  scenario.fail(7); await flushPromises(); await refresh
+  expect(afterCurrentCompleted).toBe('resolved')
+  expect(outcome).toBe('resolved')
+  expect(wrapper.get('#review-event-8').text()).toContain('查询 #802')
+  expect(wrapper.get('#review-event-8').text()).not.toContain('读取失败')
+  expect(wrapper.get('#review-event-8').text()).not.toContain('查询 #702')
+  expect(scenario.fetch.mock.calls.filter(([url]) => /\/\d+$/.test(url)).map(([url]) => url)).toEqual(['/api/roster/correspondences/17', '/api/roster/correspondences/18'])
+})
+
+it('settles an idle review without waiting for an event closed during readback', async () => {
+  const scenario = deferredReadbackReview(); await flushPromises(); scenario.advance()
+  const { refreshCorrespondenceViews } = await import('../composables/useCorrespondenceReadback')
+  let outcome = 'pending'
+  const refresh = refreshCorrespondenceViews().then(() => { outcome = 'resolved' }, () => { outcome = 'rejected' })
+  await flushPromises(); await openEvent(7)
+  const afterClose = outcome
+  scenario.fail(7); await flushPromises(); await refresh
+  expect(afterClose).toBe('resolved')
+  expect(outcome).toBe('resolved')
+  expect(wrapper.find('[data-testid="record-event-source"]').exists()).toBe(false)
+  expect(scenario.fetch.mock.calls.filter(([url]) => /\/\d+$/.test(url))).toHaveLength(1)
+})
+
+it('refreshes only summaries while no event is selected', async () => {
+  const scenario = deferredReadbackReview(null); await flushPromises(); scenario.advance()
+  const { refreshCorrespondenceViews } = await import('../composables/useCorrespondenceReadback')
+  await expect(refreshCorrespondenceViews()).resolves.toBeUndefined()
+  expect(scenario.fetch.mock.calls.map(([url]) => url)).toEqual(['/api/roster/correspondences'])
+  expect(wrapper.find('[data-testid="event-archive-candidates"]').exists()).toBe(false)
+})
