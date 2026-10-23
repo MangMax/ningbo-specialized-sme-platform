@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { EventArchivePage } from '~~/lib/roster/event-archive-candidates'
-import type { CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
+import { ARCHIVE_CONFLICT_LABELS, type EventArchiveCandidate, type EventArchivePage } from '~~/lib/roster/event-archive-candidates'
+import { CORRESPONDENCE_ROLES, eventDecisionText, type CorrespondenceDetail, type EventSource } from '~~/lib/roster/correspondence-view'
+import { TITLES } from '~~/lib/labels'
 import { refreshCorrespondenceViews } from '~/composables/useCorrespondenceReadback'
 import SourceReader from './SourceReader.vue'
+import OfficialEvidence from './OfficialEvidence.vue'
 import TablePagination from '@/components/TablePagination.vue'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -13,7 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 
 interface Edge { type: string; eventId: number; relationId: number; role: string }
 interface Existing { id: number; revision: number; status: string; requiresRevalidation?: boolean; type?: string; eventId?: number | null; relationId?: number | null; role?: string }
-const props = defineProps<{ edge: Edge; existing?: Existing | null }>()
+const props = defineProps<{ edge: Edge; existing?: Existing | null; event?: EventSource; candidate?: EventArchiveCandidate; back?: string }>()
 const enabled = useState<boolean | null>('correspondence-browser-capability', () => null)
 onMounted(async () => {
   if (enabled.value !== null) return
@@ -38,6 +40,10 @@ const replacementPage = ref(1)
 const selected = ref<string>('')
 const target = computed(() => replacements.value?.rows.find(row => String(row.edge.relationId) === selected.value))
 const available = computed(() => replacements.value?.rows.filter(row => row.edge.relationId !== props.edge.relationId && (!row.existingStatus || row.existingStatus === 'candidate')) ?? [])
+const official = computed(() => point.value && 'event' in point.value ? (point.value as CorrespondenceDetail).event ?? props.event : props.event)
+const candidate = computed(() => action.value === 'correct' ? target.value : props.candidate)
+const supportRole = computed(() => action.value === 'correct' ? target.value?.edge.role : point.value?.role ?? props.edge.role)
+const conflicts = computed(() => candidate.value?.conflicts?.map(code => ARCHIVE_CONFLICT_LABELS[code] ?? code).join('；'))
 const title = computed(() => ({ confirm: '确认对应', reject: '不对应', unlink: '取消对应', correct: '改选记录', revalidate: '重新核验对应' })[action.value ?? 'confirm'])
 let generation = 0
 let previousAction: Action | null = null
@@ -141,7 +147,7 @@ async function refreshConflict() {
       <p v-else class="text-muted-foreground text-[13px]">{{ existing.status === 'rejected' ? '已否定候选' : '已取消对应' }}，保留历史决定；不自动重新推荐。</p>
     </div>
     <Dialog :open="action !== null" @update:open="value => { if (!value && !pending) action = null }">
-      <DialogContent class="max-h-[85dvh] overflow-y-auto">
+      <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-4xl">
         <DialogHeader><DialogTitle>{{ title }}</DialogTitle><DialogDescription>核对双方原行后提交对应决定。此操作独立于差异原因复核。由页面代理提交，未识别个人身份。</DialogDescription></DialogHeader>
         <p>公布事件 #{{ edge.eventId }} · 平台原行 #{{ edge.relationId }}</p>
         <p v-if="point && !statePermitsAction" role="status">当前决定已变化，本次操作已停用。草稿保留；请关闭后按当前状态选择操作。</p>
@@ -151,9 +157,22 @@ async function refreshConflict() {
           <Select v-model="selected" :disabled="pending || !!receipt || attempted"><SelectTrigger class="w-full"><SelectValue placeholder="请选择已核对的新平台原行" /></SelectTrigger><SelectContent><SelectGroup><SelectItem v-for="row in available" :key="row.edge.relationId" :value="String(row.edge.relationId)">查询 #{{ row.evidence.source.queryId }} · 原行 {{ row.evidence.source.sequenceNo }} · #{{ row.edge.relationId }}</SelectItem></SelectGroup></SelectContent></Select>
           <p v-if="replacementFailed" role="alert">改选候选第 {{ replacementPage }} 页读取失败，保留已有结果。<Button variant="outline" size="sm" @click="loadReplacements(replacementPage)">重试候选</Button></p>
           <TablePagination v-if="replacements" :page="replacements.page" :page-size="replacements.pageSize" :total="replacements.total" unit="条候选" :loading="pending" @update:page="loadReplacements" />
-          <SourceReader v-if="target" :key="target.edge.relationId" kind="relation" :id="target.edge.relationId" />
         </template>
-        <SourceReader v-else kind="relation" :id="edge.relationId" />
+        <div class="grid min-w-0 gap-4 sm:grid-cols-2">
+          <section v-if="official" class="flex min-w-0 flex-col gap-2 text-[13px] leading-5" aria-label="正式公布依据">
+            <h3 class="font-medium">正式公布依据</h3>
+            <p>{{ TITLES[official.record.titleCode] ?? official.record.titleCode }} · {{ eventDecisionText(official) }} · 第 {{ official.batchSeq ?? '未记录' }} 批</p>
+            <p class="break-words [overflow-wrap:anywhere]">公布信用代码：{{ official.record.usccRaw ?? '未提供' }}</p>
+            <OfficialEvidence v-for="(item, index) in official.evidence" :key="index" :evidence="item" :back="back ?? ''" />
+            <p v-if="!official.evidence.length" class="text-muted-foreground">未记录正式文件出处。</p>
+          </section>
+          <section class="min-w-0" aria-label="待核平台原行">
+            <h3 class="mb-2 text-[13px] font-medium">待核平台原行</h3>
+            <SourceReader v-if="action !== 'correct' || target" :key="action === 'correct' ? target!.edge.relationId : edge.relationId" kind="relation" :id="action === 'correct' ? target!.edge.relationId : edge.relationId" :return-to="back" compact read-only />
+          </section>
+        </div>
+        <p v-if="conflicts" class="text-[13px] leading-5">待核依据：{{ conflicts }}</p>
+        <p v-if="supportRole" class="text-muted-foreground text-[13px] leading-5">对应范围：{{ CORRESPONDENCE_ROLES[supportRole] ?? supportRole }}。<template v-if="supportRole === 'context_only'">仅说明流程背景，不代表平台结论与公布一致。</template></p>
         <div class="flex flex-col gap-2"><Label :for="`correspondence-basis-${edge.eventId}-${edge.relationId}`">核对依据（必填）</Label><Textarea :id="`correspondence-basis-${edge.eventId}-${edge.relationId}`" v-model="basis" :disabled="pending || !!receipt || attempted" maxlength="4000" placeholder="说明双方原行、年份、批次及事项的核对依据" /></div>
         <p v-if="plan" role="status">预检：新增 {{ plan.impact.created }} 条，取消 {{ plan.impact.unlinked }} 条，追加审计 {{ plan.impact.audit }} 条。</p>
         <p v-if="error" role="alert">{{ error }}</p><p v-if="success" role="status">{{ success }}</p>

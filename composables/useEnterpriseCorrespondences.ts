@@ -15,7 +15,7 @@ interface CorrespondencePage {
  * 列表只读取边的摘要；展开具体事件时才按边 ID 读取完整出处。
  * 这不是判定：接口仍逐条返回自己的状态，页面只决定「哪些算本事件出处」。
  */
-export function useEnterpriseCorrespondences(enterpriseId: MaybeRefOrGetter<number | null>) {
+export function useEnterpriseCorrespondences(enterpriseId: MaybeRefOrGetter<number | null>, activeEventId?: MaybeRefOrGetter<number | null>) {
   const rows = ref<CorrespondenceSummary[]>([])
   const loading = ref(false)
   const error = ref(false)
@@ -147,7 +147,10 @@ export function useEnterpriseCorrespondences(enterpriseId: MaybeRefOrGetter<numb
 
   useCorrespondenceReadback(async () => {
     if (toValue(enterpriseId) == null) return true
-    const events = Object.keys(eventDetails.value).map(Number)
+    // The event review surface refreshes only its current selection. Records
+    // callers retain their existing multi-disclosure readback behavior.
+    const active = activeEventId === undefined ? undefined : toValue(activeEventId)
+    const events = active === undefined ? Object.keys(eventDetails.value).map(Number) : active == null ? [] : [active]
     if (!await load()) return false
     await Promise.all(events.map(id => loadEvent(id)))
     return events.every(id => !detailErrorForEvent(id))

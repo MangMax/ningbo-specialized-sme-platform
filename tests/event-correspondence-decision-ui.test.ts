@@ -112,3 +112,32 @@ it('corrects to the registered candidate role rather than replacing its historic
   const submitted = fetch.mock.calls.find(([url]) => url.endsWith('browser-preflight'))![1].body
   expect(submitted.operations).toEqual([{ action: 'correct', correspondenceId: 9, expectedRevision: 2, edge: { type: 'event_process', eventId: 7, relationId: 11, role: 'supports_award' } }])
 })
+
+it('keeps formal evidence missing fields support scope and basis together while full platform fields are disclosed', async () => {
+  capability()
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }))
+  vi.stubGlobal('$fetch', vi.fn().mockResolvedValue({ source: { id: 10, queryId: 1, sequenceNo: 1, nameRaw: '合成企业', usccRaw: '91330201062904769K', status: '终审通过', rawFields: { custom: '原字段正文' }, query: { id: 1, interface: 'business_list', status: 'success', rdjb: '2', relationCount: 1, collectionEvidence: null } }, correspondences: [] }))
+  wrapper = mount(EventCorrespondenceDecision, { props: {
+    edge,
+    event: { id: 7, eventType: 'award', year: 2026, batchSeq: 1, record: { titleCode: 'specialized_sme', usccRaw: '91330201062904769K' }, evidence: [{ sourceFile: 'notice.pdf', attachment: '附件一', page: 7, listNo: 122 }] },
+    candidate: { edge, conflicts: ['platform_year_missing', 'multiple_candidate_rows'] },
+  } as any, attachTo: document.body, global: { stubs: { NuxtLink: true } } })
+  button('确认对应').click(); await flushPromises()
+  const dialog = document.querySelector('[role="dialog"]')!
+  expect(dialog.textContent).toContain('正式公布依据')
+  expect(dialog.textContent).toContain('认定 2026 年')
+  expect(dialog.textContent).toContain('序号 122')
+  expect(dialog.textContent).toContain('平台年份缺失')
+  expect(dialog.textContent).toContain('同批次流程背景')
+  expect(dialog.textContent).toContain('不代表平台结论与公布一致')
+  expect(dialog.textContent).toContain('核对依据（必填）')
+  expect(dialog.textContent).not.toContain('原字段正文')
+  expect(dialog.querySelector('textarea')).not.toBeNull()
+})
+
+it('shows a read only explanation without decision actions when capability is unavailable', async () => {
+  vi.stubGlobal('useState', () => ref(false)); vi.stubGlobal('$fetch', vi.fn())
+  wrapper = mountControl(); await flushPromises()
+  expect(wrapper.text()).toContain('此页面当前只读')
+  expect(wrapper.findAll('button')).toHaveLength(0)
+})
