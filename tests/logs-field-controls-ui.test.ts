@@ -220,9 +220,10 @@ it('renders exactly the catalog profiles and levels, one level at a time, withou
   expect(panel.findAll('input[type=checkbox]')).toHaveLength(0)
   expect(panel.findAll('select')).toHaveLength(0)
   expect(panel.findAll('details')).toHaveLength(0)
-  expect(panel.text()).toContain('服务端已知的请求方法')
-  expect(panel.text()).toContain('框架匹配或应用定义的固定模板')
-  expect(panel.text()).toContain('当前为默认')
+  // 字段名仍来自目录；只有单位（毫秒/字节）作为后缀保留，不再逐条铺解释。
+  for (const field of profileCatalog()[0]!.fields) expect(panel.text()).toContain(field.label)
+  expect(panel.text()).toContain('（毫秒）')
+  expect(panel.text()).toContain('当前级别全部保留')
 
   expect(state(wrapper, 'httpRoute')).toBe('checked')
   await fieldSwitch(wrapper, 'httpRoute').trigger('click')
@@ -270,8 +271,8 @@ it('keeps parents untouched and still saves field preferences while the source i
   const panel = wrapper.get('[data-testid=log-field-controls]')
   expect(panel.text()).toContain('当前不采集')
   expect(panel.text()).toContain('HTTP 接口来源已关闭')
-  expect(panel.text()).toContain('字段选择会保留')
-  expect(panel.text()).toContain('这个级别低于当前最低级别警告')
+  expect(panel.text()).toContain('选择会保留')
+  expect(panel.text()).toContain('低于最低级别警告')
   // 父级关闭不影响字段开关和草稿保存。
   expect((fieldSwitch(wrapper, 'durationMs').element as HTMLElement).hasAttribute('disabled')).toBe(false)
   await fieldSwitch(wrapper, 'durationMs').trigger('click')
@@ -287,7 +288,7 @@ it('keeps parents untouched and still saves field preferences while the source i
   // 保存不会顺手重新打开来源，也不会把父级规则塞进这次 PATCH。
   expect((current.collection as any).sources.http.enabled).toBe(false)
   expect(patches(calls)[0]).not.toHaveProperty('collection')
-  expect(wrapper.text()).toContain('日志配置已保存')
+  expect(wrapper.text()).toContain('已保存，对后续日志生效')
 })
 
 it('copies to sibling levels, restores this level and undoes both as draft-only changes', async () => {
@@ -512,10 +513,10 @@ it('renders and PATCHes the real service policy catalog without drifting from th
   const fieldConfig = response.catalog.profiles[0]!
   const switches = wrapper.get('[data-testid=log-field-controls]').findAll('[data-slot=switch]')
   expect(switches).toHaveLength(fieldConfig.fields.length)
-  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('当前为默认')
-  // Every real field description renders, i.e. labels come from the catalog.
+  expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain('当前级别全部保留')
+  // Every real field NAME still comes from the catalog; explanations are gone.
   for (const field of fieldConfig.fields) {
-    expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain(field.description)
+    expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain(field.label)
   }
   const target = fieldConfig.fields.find((field) => field.key === 'httpRoute')!
   await fieldSwitch(wrapper, String(target.key)).trigger('click')
@@ -539,7 +540,7 @@ it('renders and PATCHes the real service policy catalog without drifting from th
     wrapper.get('[data-testid=log-field-controls]').findAll('[data-slot=switch]')
   ).toHaveLength(tusConfig.fields.length)
   for (const field of tusConfig.fields) {
-    expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain(field.description)
+    expect(wrapper.get('[data-testid=log-field-controls]').text()).toContain(field.label)
   }
   // 服务端真的落库后，重新读取的响应仍能被同一份草稿逻辑消化。
   const saved = await service.setPolicy({

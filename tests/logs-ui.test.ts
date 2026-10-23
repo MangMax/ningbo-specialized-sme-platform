@@ -566,9 +566,9 @@ it('reviews only changed collection rules, sends changed maps, and refreshes eff
   ])
   expect(switchState()).toBe('unchecked')
   expect(wrapper.get('[aria-label="MCP 调用的最低日志级别"]').text()).toBe('警告')
-  expect(wrapper.text()).toContain('日志配置已保存')
-  expect(wrapper.text()).toContain('采集开关与级别不删除已有记录')
-  expect(wrapper.text()).toContain('保留策略调整可能触发轮转')
+  // 保存后的常驻文案已压缩；仍要求「已保存」与「只影响后续」两个事实都在。
+  expect(wrapper.text()).toContain('已保存，对后续日志生效')
+  expect(wrapper.text()).toContain('已有记录不受影响')
   vi.unstubAllGlobals()
 })
 
@@ -671,14 +671,17 @@ it('groups the real catalog into technical 4+6 and business 10+1 with one shared
   expect(switchCount('log-business-shared')).toBe(1)
   expect(switchCount('log-business-node')).toBe(10)
   expect(switchCount('log-business-browser')).toBe(1)
-  // application 只出现一次，放在业务区并明确服务端和客户端共用，不伪装成两条开关。
+  // application 只出现一次，放在业务区并明确服务端与客户端共用，不伪装成两条开关。
   expect(wrapper.findAll('#log-integration-application-enabled')).toHaveLength(1)
-  expect(wrapper.get('[data-testid=log-business-shared]').text()).toContain('服务端和客户端共用')
+  expect(wrapper.get('[data-testid=log-business-shared]').text()).toContain('服务端与客户端共用')
   expect(wrapper.get('[data-testid=log-collection-integrations]').text()).not.toContain(
     '应用手动埋点'
   )
-  // 业务区只是组织方式；来源条件仍约束技术事件。
-  expect(wrapper.get('[data-testid=log-collection-sources]').text()).toContain(
+  // AND / 更严格级别只在一处说明（技术集成），业务区不再重复同一句。
+  expect(wrapper.get('[data-testid=log-collection-integrations]').text()).toContain(
+    '技术集成与来源须同时开启'
+  )
+  expect(wrapper.get('[data-testid=log-collection-sources]').text()).not.toContain(
     '也包括技术集成采集的事件'
   )
   expect(wrapper.findAll('h2').map((heading) => heading.text())).toEqual([
