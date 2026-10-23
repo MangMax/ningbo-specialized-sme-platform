@@ -1,6 +1,7 @@
 import { boundedLogOutput } from './output'
 import { Worker } from 'node:worker_threads'
-import { LOG_DEFAULTS, LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogEvent, type LogFilter, type LogInput, type LogPolicy, type LogPolicyPatch, type EffectiveLogPolicy, type LogSummary } from './contract'
+import { LOG_DEFAULTS, LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogEvent, type FieldCapturedLogEvent, type LogFilter, type LogInput, type LogPolicy, type LogPolicyPatch, type EffectiveLogPolicy, type LogSummary } from './contract'
+import { LOG_FIELD_PROFILES, validateFieldControlsPatch } from './field-controls'
 import { validateCollection } from './policy'
 import { LOG_INTEGRATIONS } from './contract'
 import { safeLogEvent } from './privacy'
@@ -18,15 +19,27 @@ export interface LogServiceOptions {
   drainTimeoutMs?: number; flushIntervalMs?: number
   stdout?: boolean
 }
+type PolicyView = EffectiveLogPolicy & { storageBytes: number; pruned: number; cleared: number; accounting: string }
 const invalid = () => { throw new LogServiceError('invalid_log_input', 400) }
 export function validatePolicy(input: unknown): LogPolicyPatch {
   if (!input || typeof input !== 'object' || Array.isArray(input) || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) return invalid()
-  const { retentionDays, maxBytes } = input as LogPolicy
-  if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 365 || !Number.isInteger(maxBytes) || maxBytes < 1048576 || maxBytes > 4294967296) return invalid()
   const raw = input as Record<string, unknown>
-  if (Object.keys(raw).some(key => !['retentionDays', 'maxBytes', 'collection'].includes(key))) return invalid()
-  try { return { retentionDays, maxBytes, ...(Object.hasOwn(raw, 'collection') ? { collection: validateCollection(raw.collection) } : {}) } }
-  catch { return invalid() }
+  for (const key of Reflect.ownKeys(raw)) {
+    const descriptor = Object.getOwnPropertyDescriptor(raw, key)!
+    if (typeof key !== 'string' || !['retentionDays', 'maxBytes', 'collection', 'fieldControls'].includes(key)
+      || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) return invalid()
+  }
+  const { retentionDays, maxBytes } = raw as unknown as LogPolicy
+  if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 365 || !Number.isInteger(maxBytes) || maxBytes < 1048576 || maxBytes > 4294967296) return invalid()
+  try {
+    const result = { retentionDays, maxBytes,
+      ...(Object.hasOwn(raw, 'collection') ? { collection: validateCollection(raw.collection) } : {}),
+      ...(Object.hasOwn(raw, 'fieldControls') ? { fieldControls: validateFieldControlsPatch(raw.fieldControls, LOG_FIELD_PROFILES) } : {}),
+    }
+    // Serialized policy arguments only, not the raw HTTP body/JSON-RPC envelope.
+    if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > 4096) return invalid()
+    return result
+  } catch { return invalid() }
 }
 export function validateLogFilter(input: unknown = {}): LogFilter & { limit: number; beforeSeq?: number } {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return invalid()
@@ -128,9 +141,10 @@ export function createLogService(options: LogServiceOptions) {
       }
       inFlightEntries = batch.length; inFlightBytes = bytes
       try {
-        const result = await call<{ stored: number; filtered: number; fallbackSkipped: number; code?: string }>('write', batch)
+        const result = await call<{ stored: number; filtered: number; fallbackSkipped: number; oversized: number; code?: string }>('write', batch)
+        counters.oversized += result.oversized; counters.dropped += result.oversized
         counters.stored += result.stored; counters.filtered += result.filtered; counters.fallbackSkipped += result.fallbackSkipped
-        if (result.code) { counters.dropped += batch.length - result.filtered - result.stored; fault(result.code) }
+        if (result.code) { counters.dropped += batch.length - result.filtered - result.oversized - result.stored; fault(result.code) }
         else counters.unavailable = false
       }
       catch (error) { counters.dropped += batch.length; fault(error instanceof LogServiceError ? error.code : 'storage_unavailable') }
@@ -156,14 +170,14 @@ export function createLogService(options: LogServiceOptions) {
     },
     async detail(id: string) {
       if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) return invalid()
-      return guarded<LogEvent | null>('detail', id)
+      return guarded<FieldCapturedLogEvent | null>('detail', id)
     },
-    async policy() { return { ...await guarded<EffectiveLogPolicy & { storageBytes: number; pruned: number; cleared: number; accounting: string }>('policy'), catalog: { integrations: LOG_INTEGRATIONS }, status: status() } },
+    async policy() { return { ...await guarded<PolicyView>('policy'), catalog: { integrations: LOG_INTEGRATIONS, profiles: LOG_FIELD_PROFILES }, status: status() } },
     async setPolicy(input: LogPolicyPatch) {
-      const result = await guarded<Record<string, unknown>>('policy', validatePolicy(input))
-      if (result.transitionPending) throw new LogServiceError('policy_capacity_pending', 409)
+      const result = await guarded<PolicyView | { transitionPending: true }>('policy', validatePolicy(input))
+      if ('transitionPending' in result) throw new LogServiceError('policy_capacity_pending', 409)
       emit({ origin: { runtime: 'node', integration: 'application', capture: 'manual' }, source: 'system', operation: 'logging.policy', outcome: 'success' })
-      return { ...result, catalog: { integrations: LOG_INTEGRATIONS } }
+      return { ...result, catalog: { integrations: LOG_INTEGRATIONS, profiles: LOG_FIELD_PROFILES } }
     },
     async clear(input: LogFilter & { confirm: boolean }) {
       const f = validateLogFilter(input)

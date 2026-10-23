@@ -110,3 +110,18 @@ export function projectLogFields(event: LogEvent, controls: LogFieldControls, re
   if (disabled.length) projected.fieldCapture = { profile: profile.key, revision, disabled }
   return projected
 }
+
+/** Persisted v1 is complete. Partial validation never supplies defaults to damaged state. */
+export function validateCompleteFieldControls(value: unknown, profiles: readonly FieldProfile[], validate: typeof validateFieldControlsPatch): LogFieldControls {
+  const clean = validate(value, profiles)
+  for (const profile of profiles) {
+    const levels = clean[profile.key]
+    if (!levels) throw new Error('invalid_log_policy')
+    for (const level of profile.levels) {
+      const fields = levels[level]
+      if (!fields) throw new Error('invalid_log_policy')
+      for (const field of profile.fields) if (!Object.hasOwn(fields, field.key)) throw new Error('invalid_log_policy')
+    }
+  }
+  return clean as LogFieldControls
+}
