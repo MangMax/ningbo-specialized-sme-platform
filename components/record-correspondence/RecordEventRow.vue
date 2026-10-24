@@ -65,7 +65,7 @@ const interfaceSummary = computed(() => {
   const rows = new Map<string, { count: number; statuses: Set<string> }>()
   for (const edge of groups.value.sources) {
     const relation = edge.relationId == null ? undefined : props.relationSummaries?.[edge.relationId]
-    const key = edge.exportRowId != null ? '平台导出快照' : PLATFORM_INTERFACES[relation?.interface ?? ''] ?? '平台接口记录'
+    const key = edge.exportRowId != null ? '平台导出快照' : PLATFORM_INTERFACES[relation?.interface ?? ''] ?? (props.review ? '平台来源记录' : '平台接口记录')
     const item = rows.get(key) ?? { count: 0, statuses: new Set<string>() }
     item.count++
     if (relation?.status) item.statuses.add(relation.status)
@@ -112,18 +112,18 @@ const interfaceSummary = computed(() => {
                 <template v-if="fileLines.length"><span v-for="(line, index) in fileLines" :key="line" class="inline">{{ line }}<span v-if="index < fileLines.length - 1">；</span></span></template>
                 <span v-else class="text-muted-foreground">未记录</span>
               </span>
-              <span class="text-muted-foreground">平台接口</span>
+              <span class="text-muted-foreground">{{ review ? '已关联平台记录' : '平台接口' }}</span>
               <span class="min-w-0 break-words">
                 <template v-if="interfaceSummary.length">
                   <span v-for="(item, index) in interfaceSummary" :key="item.interfaceName" class="inline-flex flex-wrap items-center gap-1">
                     <span>{{ item.interfaceName }}</span>
                     <span v-if="item.status" class="text-muted-foreground">· {{ item.status }}</span>
-                    <span class="text-muted-foreground tabular-nums">原行 {{ item.count }} 条</span>
+                    <span class="text-muted-foreground tabular-nums">{{ review ? '来源记录' : '原行' }} {{ item.count }} 条</span>
                     <span v-if="index < interfaceSummary.length - 1">、</span>
                   </span>
                 </template>
-                <span v-else-if="!linksReady" class="text-muted-foreground">接口对应尚未读取</span>
-                <span v-else class="text-muted-foreground">尚无已确认接口出处</span>
+                <span v-else-if="!linksReady" class="text-muted-foreground">{{ review ? '关联记录尚未读取' : '接口对应尚未读取' }}</span>
+                <span v-else class="text-muted-foreground">{{ review ? '尚无已确认关联记录' : '尚无已确认接口出处' }}</span>
               </span>
               <template v-if="groups.candidates.length">
                 <span class="text-warning">候选（未确认）</span>
