@@ -59,7 +59,9 @@ function afterClose(event: Event) {
     <p class="mt-3 text-sm text-muted-foreground">按申报时间排列；平台状态是最新归档观察，申报时间不代表审批完成时间。</p>
     <p v-if="!steps.length" class="py-4">尚无可展示的年度业务过程；请结合来源覆盖与待补依据核对。</p>
     <ol v-else class="mt-3 flex min-w-0 flex-col" aria-label="按申报时间排列的年度过程">
-      <li v-for="step in steps" :key="step.id" tabindex="-1" class="min-w-0 border-b py-4 first:pt-0 last:border-b-0" :data-annual-step="step.id" :data-confirmed-final="step.id === finalStepId || undefined">
+      <li v-for="(step, index) in steps" :key="step.id" tabindex="-1" class="relative min-w-0 pb-6 pl-7 last:pb-0" :data-annual-step="step.id" :data-confirmed-final="step.id === finalStepId || undefined">
+        <span v-if="index < steps.length - 1" aria-hidden="true" data-timeline-connector class="absolute -bottom-3 left-1.5 top-3 w-px -translate-x-1/2 bg-primary/30" />
+        <span aria-hidden="true" data-timeline-node class="absolute left-0 top-1.5 size-3 rounded-full border-2 border-primary bg-background" />
         <div class="flex min-w-0 flex-col gap-2">
           <div class="flex flex-wrap items-start justify-between gap-2">
             <p class="font-medium">{{ step.appliedAt ? `申报于 ${step.appliedAt}` : '申报时间未记录' }}</p>
