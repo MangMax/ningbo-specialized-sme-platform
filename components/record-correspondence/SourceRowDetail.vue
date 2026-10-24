@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_DECLARE_KINDS, TITLES } from '~~/lib/labels'
-import { platformBusinessFields, platformPresentationFields } from '~~/lib/roster/platform-records'
+import { platformBusinessFields, platformPresentationFields, platformRelatedRawFields } from '~~/lib/roster/platform-records'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import type { ExportRowSource, RelationSource } from '~~/lib/roster/correspondence-view'
 import PlatformQueryProvenance from '@/components/PlatformQueryProvenance.vue'
@@ -23,6 +23,13 @@ const businessFields = computed(() => providedBusinessFields.value.flatMap(field
   if (!title || title === sourceTitle.value) return []
   return [{ ...field, label: '平台称号', value: title }]
 }))
+const relatedRawFields = computed(() => platformRelatedRawFields(props.relation?.rawFields))
+const relatedRawSummary = computed(() => relatedRawFields.value.filter(field => {
+  const value = props.relation?.rawFields?.[field.key]
+  return (field.key === 'zsrxm' || field.key === 'cz') && field.state === 'value'
+    && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+}))
+const rawStateLabels = { missing: '本条未包含此键', null: '本条为 null', blank: '本条为空字符串或空白', value: '有值（含义待核）' }
 const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? null, null, 2))
 </script>
 
@@ -36,14 +43,26 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
         <template v-if="!businessFields.some(field => field.key === 'qymc')"><dt class="text-muted-foreground">企业原名</dt><dd>{{ relation.nameRaw || '未提供' }}</dd></template>
         <template v-if="!businessFields.some(field => field.key === 'tyshxydm') && relation.usccRaw"><dt class="text-muted-foreground">信用代码原值</dt><dd>{{ relation.usccRaw }}</dd></template>
         <dt class="text-muted-foreground">来源称号</dt><dd>{{ sourceTitle }}</dd>
-        <template v-for="field in businessFields" :key="field.key"><dt class="text-muted-foreground">{{ field.label }}</dt><dd>{{ field.value }}</dd></template>
+        <template v-for="field in businessFields" :key="field.key"><dt class="text-muted-foreground">{{ field.label }}</dt><dd class="whitespace-pre-wrap">{{ field.value }}</dd></template>
       </dl>
       <p v-if="!hasVerifiedBusinessFields" class="text-muted-foreground mt-3">本条原文未提供已核实的业务字段。</p>
-      <p class="text-muted-foreground mt-3">平台办理人：未记录或尚未核实。</p>
+      <p class="text-muted-foreground mt-3">本接口的操作人字段定义尚未核实</p>
+      <section v-if="relatedRawSummary.length" class="mt-3" data-testid="platform-related-raw">
+        <h5 class="text-sm font-medium">待核实的原平台信息</h5>
+        <ul class="mt-2 flex flex-col gap-2 break-words [overflow-wrap:anywhere]">
+          <li v-for="field in relatedRawSummary" :key="field.key" class="whitespace-pre-wrap">{{ field.value }}</li>
+        </ul>
+      </section>
       <DisclosurePanel :key="relation.id" compact title="技术出处与完整原文" class="mt-3 border-t">
         <dl class="mt-2 grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 break-words [overflow-wrap:anywhere] sm:grid-cols-[auto_minmax(0,1fr)]">
           <dt class="text-muted-foreground">业务编号原值</dt><dd>{{ relation.relationKey ?? '未提供' }}</dd>
           <dt class="text-muted-foreground">来源定位</dt><dd>查询 #{{ relation.query.id }} · 原行 {{ relation.sequenceNo }} · 页 {{ relation.sourcePage ?? '未知' }}</dd>
+        </dl>
+        <dl class="mt-2 grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 break-words [overflow-wrap:anywhere] sm:grid-cols-[auto_minmax(0,1fr)]" data-testid="platform-related-provenance">
+          <template v-for="field in relatedRawFields" :key="field.key">
+            <dt class="text-muted-foreground">{{ field.key }}（原键）</dt>
+            <dd class="whitespace-pre-wrap">{{ rawStateLabels[field.state] }}<template v-if="field.state !== 'missing'">：{{ field.value }}</template></dd>
+          </template>
         </dl>
         <PlatformQueryProvenance class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
         <p class="text-muted-foreground mt-2">以下为本条接口原文；未核实字段不据缩写推断业务含义。日期与有效期保留原值，不推断生命周期。</p>
