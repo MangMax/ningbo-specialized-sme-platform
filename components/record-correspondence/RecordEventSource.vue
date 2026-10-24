@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { CORRESPONDENCE_ROLES, correspondenceStatusText } from '~~/lib/roster/correspondence-view'
 import { groupEventEdges, humanRecordTime, isConfirmedSourceEdge, isCurrentContextEdge } from '~~/lib/roster/record-ledger'
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES } from '~~/lib/labels'
@@ -86,18 +87,18 @@ const relationLabel = (edge: CorrespondenceDetail) => edge.relation
   ? PLATFORM_INTERFACES[edge.relation.query.interface] ?? '平台接口'
   : edge.exportRow ? fileNameOf(edge.exportRow.batch.originalFilename) : '来源记录'
 const relationMeta = (edge: CorrespondenceDetail) => edge.relation
-  ? `查询 #${edge.relation.query.id} · 原行 ${edge.relation.sequenceNo} · ${humanRecordTime(edge.relation.query.queriedAt)}`
-  : edge.exportRow ? `${edge.exportRow.batch.collectedOn} · 源行 ${edge.exportRow.sourceRowNo}` : '来源记录未绑定'
+  ? `采集于 ${humanRecordTime(edge.relation.query.queriedAt)}`
+  : edge.exportRow ? `采集于 ${edge.exportRow.batch.collectedOn}` : '来源记录未绑定'
 const relationStatus = (edge: CorrespondenceDetail) => edge.relation
   ? PLATFORM_QUERY_STATUSES[edge.relation.query.status] ?? '状态待核'
   : '状态待核'
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4 border-t p-4 text-[13px] leading-5 sm:px-5" data-testid="record-event-source">
+  <div class="flex min-w-0 flex-col gap-4 border-t p-4 text-base leading-6 sm:px-5" data-testid="record-event-source">
     <div class="grid min-w-0 gap-4 lg:grid-cols-2">
       <section class="min-w-0" aria-label="正式公布文件">
-        <h4 class="text-muted-foreground mb-2 text-xs font-medium">正式公布文件</h4>
+        <h4 class="text-muted-foreground mb-2 text-sm font-medium">正式公布文件</h4>
         <p v-if="!evidence.length" class="text-muted-foreground">此事件未记录公布文件出处。</p>
         <ul v-else class="flex flex-col gap-2">
           <li v-for="(item, index) in evidence" :key="`${item.sourceFile}:${item.listNo}:${index}`" class="min-w-0 border-t pt-2 first:border-t-0 first:pt-0">
@@ -107,7 +108,7 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
       </section>
 
       <section class="min-w-0" aria-label="平台接口记录">
-        <h4 class="text-muted-foreground mb-2 text-xs font-medium">平台接口记录</h4>
+        <h4 class="text-muted-foreground mb-2 text-sm font-medium">平台接口记录</h4>
         <div v-if="edgesError && !edgesReady" class="flex flex-wrap items-center gap-2">
           <p class="text-muted-foreground">对应出处读取失败；不能据此判断没有来源。</p>
           <Button variant="outline" size="sm" @click="emit('retry-detail')">重试读取</Button>
@@ -125,24 +126,23 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
             </div>
             <p class="text-muted-foreground mt-0.5">平台查询状态 {{ relationStatus(edge) }} · 原办理状态 {{ edge.relation?.status ?? '未提供' }}</p>
             <p v-if="edge.relation?.nameRaw" class="mt-0.5 break-words">原行名称：{{ edge.relation.nameRaw }}</p>
-            <p class="text-muted-foreground mt-0.5">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p>
-            <Button variant="ghost" size="sm" class="mt-1 h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
+            <p class="mt-0.5">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }}</p>
+            <Button variant="ghost" size="sm" class="mt-1" @click="openSource(edge)">查看平台业务详情</Button>
           </li>
         </ul>
       </section>
     </div>
 
-    <div v-if="groups.candidates.length" class="border-t pt-3" data-testid="event-candidates">
-      <p class="font-medium">候选记录 · 待确认（{{ groups.candidates.length }} 条）</p>
+    <DisclosurePanel v-if="groups.candidates.length" class="border-t pt-3" data-testid="event-candidates" :title="`未确认对应 · ${groups.candidates.length} 条`">
       <ul class="mt-2 flex flex-col gap-1.5">
         <li v-for="edge in groups.candidates" :key="edge.id" class="flex flex-wrap items-center gap-2">
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
           <p class="text-muted-foreground">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p>
-          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
+          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" @click="openSource(edge)">查看平台业务详情</Button>
         </li>
       </ul>
-    </div>
+    </DisclosurePanel>
 
     <div v-if="groups.revalidation.length" class="border-t pt-3" data-testid="event-revalidation">
       <p class="font-medium">待重新核验（{{ groups.revalidation.length }} 条）</p>
@@ -152,7 +152,7 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
           <p class="text-muted-foreground">{{ CORRESPONDENCE_ROLES[edge.role] ?? '对应关系' }} · {{ relationMeta(edge) }}</p>
-          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
+          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" @click="openSource(edge)">查看平台业务详情</Button>
         </li>
       </ul>
     </div>
@@ -165,25 +165,24 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
           <p class="text-muted-foreground">{{ relationMeta(edge) }}</p>
-          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" @click="openSource(edge)">查看原始记录</Button>
+          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" @click="openSource(edge)">查看平台业务详情</Button>
         </li>
       </ul>
     </div>
 
-    <section v-if="groups.history.length" class="border-t pt-3 text-[13px]" data-testid="event-match-history">
-      <h5 class="font-medium">匹配历史 · {{ groups.history.length }} 条</h5>
+    <DisclosurePanel v-if="groups.history.length" class="border-t pt-3" data-testid="event-match-history" :title="`匹配历史 · ${groups.history.length} 条`">
       <p class="text-muted-foreground mt-0.5">已拒绝 / 已解除，不计为出处。</p>
       <ul class="mt-2 flex flex-col gap-1.5">
         <li v-for="edge in groups.history" :key="edge.id" class="flex flex-wrap items-center gap-2">
           <span>{{ relationLabel(edge) }}</span>
           <Badge variant="outline">{{ correspondenceStatusText(edge) }}</Badge>
           <span class="text-muted-foreground">{{ relationMeta(edge) }}</span>
-          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" class="h-7 px-2 text-[13px]" @click="openSource(edge)">查看原始记录</Button>
+          <Button v-if="edge.relationId != null || edge.exportRowId != null" variant="ghost" size="sm" @click="openSource(edge)">查看平台业务详情</Button>
         </li>
       </ul>
-    </section>
+    </DisclosurePanel>
 
-    <section v-if="otherEdges.length" class="border-t pt-3 text-[13px]">
+    <section v-if="otherEdges.length" class="border-t pt-3 text-sm">
       <h5 class="font-medium">其他登记关系 · {{ otherEdges.length }} 条</h5>
       <ul class="mt-2 flex flex-col gap-1.5">
         <li v-for="edge in otherEdges" :key="edge.id" class="flex flex-wrap items-center gap-2">
@@ -199,10 +198,10 @@ const relationStatus = (edge: CorrespondenceDetail) => edge.relation
     <Dialog :open="sourceDialogId !== null" @update:open="onDialogOpenChange">
       <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl" @close-auto-focus="onDialogCloseAutoFocus">
         <DialogHeader>
-          <DialogTitle>平台原行与查询条件</DialogTitle>
+          <DialogTitle>平台业务详情</DialogTitle>
           <DialogDescription>查看这条记录的原始字段与查询信息。</DialogDescription>
         </DialogHeader>
-        <SourceReader v-if="sourceDialogId !== null" :kind="sourceDialogKind" :id="sourceDialogId" :return-to="returnTo" @event-navigate="closeForEventFromReader" />
+        <SourceReader v-if="sourceDialogId !== null" :kind="sourceDialogKind" presentation="business" :id="sourceDialogId" :return-to="returnTo" @event-navigate="closeForEventFromReader" />
       </DialogContent>
     </Dialog>
   </div>

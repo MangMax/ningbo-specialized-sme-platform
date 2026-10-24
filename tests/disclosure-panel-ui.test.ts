@@ -101,3 +101,17 @@ it('the heading level also applies when the trigger comes from the trigger slot'
   expect(wrapper.get('h2').element.contains(trigger.element)).toBe(true)
   expect(trigger.findAll('h1, h2, h3, h4')).toHaveLength(0)
 })
+
+it('keeps shared disclosure focus and chevron feedback without hover underlining across compact controlled and retained uses', async () => {
+  for (const props of [{ compact: true }, { open: false, headingLevel: 2 as const }, { keepMounted: true }]) {
+    const wrapper = mount(DisclosurePanel, { props: { ...props, title: '来源与记录' }, slots: { default: () => h('p', '完整内容') } })
+    mounted.push(wrapper)
+    const trigger = wrapper.get('button')
+    expect(trigger.classes()).not.toContain('hover:underline')
+    expect(trigger.classes()).toContain('focus-visible:ring-3')
+    expect(trigger.find('svg').exists()).toBe(true)
+    expect(trigger.classes()).toContain('[&[data-state=open]>svg]:rotate-180')
+    await trigger.trigger('click'); await flushPromises()
+    expect(wrapper.emitted('update:open')).toEqual([[true]])
+  }
+})

@@ -25,6 +25,11 @@ function installFetch(fetch: (...args: any[]) => any) {
     return fetch(url, options)
   })
 }
+const openSources = async (id: number) => {
+  const trigger = wrapper.get(`#review-event-${id}`).findAll('button').find(button => button.text() === '正式文件与已登记出处')!
+  if (trigger.attributes('aria-expanded') === 'false') await trigger.trigger('click')
+  await flushPromises()
+}
 const openEvent = async (id: number) => { await wrapper.get(`#review-event-${id} button[aria-expanded]`).trigger('click'); await flushPromises() }
 
 it('keeps review mount read only and discovers only the explicitly expanded event with no old response leak', async () => {
@@ -46,7 +51,9 @@ it('keeps review mount read only and discovers only the explicitly expanded even
   expect(fetch.mock.calls.filter(([url]) => url.endsWith('/discover')).map(([, options]) => options.body.eventId)).toEqual([7, 8])
   first(page(7, 99)); await flushPromises()
   expect(wrapper.text()).not.toContain('99 条')
-  expect(wrapper.text()).toContain('平台候选 · 0 条')
+  await wrapper.get('#review-event-8 [data-testid="candidate-disclosure"] button').trigger('click')
+  expect(wrapper.text()).toContain('本页可核对项 · 0 项')
+  expect(wrapper.text()).toContain('来源记录共 0 条')
   expect(wrapper.text()).toContain('不能据此认定平台无记录')
   await openEvent(8)
   await openEvent(7)
@@ -102,6 +109,7 @@ it('waits for the current event point read and propagates its failure during rea
   const refresh = refreshCorrespondenceViews().then(() => { outcome = 'resolved' }, () => { outcome = 'rejected' })
   await flushPromises()
   const earlyOutcome = outcome
+  await openSources(7)
   expect(wrapper.get('#review-event-7').text()).toContain('正在读取对应出处')
   rejectPoint(new Error('delayed current point failed'))
   await flushPromises(); await refresh
@@ -141,10 +149,11 @@ it('keeps readback pending until the shared current point succeeds without issui
   const refresh = refreshCorrespondenceViews().then(() => { outcome = 'resolved' }, () => { outcome = 'rejected' })
   await flushPromises()
   expect(outcome).toBe('pending')
+  await openSources(7)
   expect(wrapper.get('#review-event-7').text()).toContain('正在读取对应出处')
   scenario.succeed(7); await flushPromises(); await refresh
   expect(outcome).toBe('resolved')
-  expect(wrapper.get('#review-event-7').text()).toContain('查询 #702')
+  expect(wrapper.get('#review-event-7').findComponent({ name: 'RecordEventSource' }).props('edges')[0].relation.query.id).toBe(702)
   expect(wrapper.get('#review-event-7').text()).not.toContain('正在读取对应出处')
   expect(scenario.fetch.mock.calls.filter(([url]) => /\/\d+$/.test(url))).toHaveLength(1)
 })
@@ -156,15 +165,16 @@ it('joins the newly selected event and ignores an abandoned event failure during
   const refresh = refreshCorrespondenceViews().then(() => { outcome = 'resolved' }, () => { outcome = 'rejected' })
   await flushPromises(); await openEvent(8)
   expect(outcome).toBe('pending')
+  await openSources(8)
   expect(wrapper.get('#review-event-8').text()).toContain('正在读取对应出处')
   scenario.succeed(8); await flushPromises()
   const afterCurrentCompleted = outcome
   scenario.fail(7); await flushPromises(); await refresh
   expect(afterCurrentCompleted).toBe('resolved')
   expect(outcome).toBe('resolved')
-  expect(wrapper.get('#review-event-8').text()).toContain('查询 #802')
+  expect(wrapper.get('#review-event-8').findComponent({ name: 'RecordEventSource' }).props('edges')[0].relation.query.id).toBe(802)
   expect(wrapper.get('#review-event-8').text()).not.toContain('读取失败')
-  expect(wrapper.get('#review-event-8').text()).not.toContain('查询 #702')
+  expect(wrapper.get('#review-event-8').findComponent({ name: 'RecordEventSource' }).props('edges').map((edge: { relation: { query: { id: number } } }) => edge.relation.query.id)).not.toContain(702)
   expect(scenario.fetch.mock.calls.filter(([url]) => /\/\d+$/.test(url)).map(([url]) => url)).toEqual(['/api/roster/correspondences/17', '/api/roster/correspondences/18'])
 })
 
