@@ -4,6 +4,7 @@ import { ARCHIVE_CONFLICT_LABELS, type EventArchiveCandidate, type EventArchiveP
 import { CORRESPONDENCE_ROLES, eventDecisionText, type CorrespondenceDetail, type EventSource } from '~~/lib/roster/correspondence-view'
 import { TITLES } from '~~/lib/labels'
 import { refreshCorrespondenceViews } from '~/composables/useCorrespondenceReadback'
+import { DECISION_EFFECTS, platformDecisionSummary, replacementDecisionOptions } from './event-correspondence-presentation'
 import SourceReader from './SourceReader.vue'
 import OfficialEvidence from './OfficialEvidence.vue'
 import TablePagination from '@/components/TablePagination.vue'
@@ -40,6 +41,8 @@ const replacementPage = ref(1)
 const selected = ref<string>('')
 const target = computed(() => replacements.value?.rows.find(row => String(row.edge.relationId) === selected.value))
 const available = computed(() => replacements.value?.rows.filter(row => row.edge.relationId !== props.edge.relationId && (!row.existingStatus || row.existingStatus === 'candidate')) ?? [])
+const replacementOptions = computed(() => replacementDecisionOptions(available.value))
+const currentSummary = computed(() => platformDecisionSummary(props.candidate, (point.value as CorrespondenceDetail | null)?.relation))
 const official = computed(() => point.value && 'event' in point.value ? (point.value as CorrespondenceDetail).event ?? props.event : props.event)
 const candidate = computed(() => action.value === 'correct' ? target.value : props.candidate)
 const supportRole = computed(() => action.value === 'correct' ? target.value?.edge.role : point.value?.role ?? props.edge.role)
@@ -148,14 +151,20 @@ async function refreshConflict() {
     </div>
     <Dialog :open="action !== null" @update:open="value => { if (!value && !pending) action = null }">
       <DialogContent class="flex max-h-[85dvh] min-w-0 flex-col overflow-hidden sm:max-w-4xl">
-        <DialogHeader><DialogTitle>{{ title }}</DialogTitle><DialogDescription>核对双方原行后提交对应决定。此操作独立于差异原因复核。由页面代理提交，未识别个人身份。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{{ title }}</DialogTitle><DialogDescription>核对正式事项与平台记录，填写依据，再预检和提交。由页面代理提交，未识别个人身份。</DialogDescription></DialogHeader>
         <div class="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto">
-        <p>公布事件 #{{ edge.eventId }} · 平台原行 #{{ edge.relationId }}</p>
+        <section class="flex min-w-0 flex-col gap-2 text-sm leading-6 [overflow-wrap:anywhere]" aria-label="本次操作与影响">
+          <p><span class="font-medium">本次正式事项：</span>{{ official ? `${TITLES[official.record.titleCode] ?? official.record.titleCode} · ${eventDecisionText(official)}` : '事项信息未记录，请核对正式公布依据' }}</p>
+          <p><span class="font-medium">{{ action === 'correct' ? '当前对应记录' : '本次平台记录' }}：</span>{{ currentSummary }}</p>
+          <p>{{ DECISION_EFFECTS[action ?? 'confirm'] }}</p>
+          <p class="text-muted-foreground">对应关系不等于平台结果通过，也不直接确定最终资格。最终资格仍按正式公布、来源有效性及业务规则判断；此操作独立于差异原因复核。</p>
+          <p v-if="action === 'confirm' || action === 'correct' || action === 'revalidate'" class="text-muted-foreground">人工决定会保留，自动处理不会覆盖；来源变化后仍需重新核验。</p>
+        </section>
         <p v-if="point && !statePermitsAction" role="status">当前决定已变化，本次操作已停用。草稿保留；请关闭后按当前状态选择操作。</p>
         <p v-if="point?.requiresRevalidation" role="status" class="text-warning">来源已变化，历史确认暂不算有效出处；确认必须重新核验。</p>
         <template v-if="action === 'correct'">
-          <Label>改选平台记录</Label>
-          <Select v-model="selected" :disabled="pending || !!receipt || attempted"><SelectTrigger class="w-full"><SelectValue placeholder="请选择已核对的新平台原行" /></SelectTrigger><SelectContent><SelectGroup><SelectItem v-for="row in available" :key="row.edge.relationId" :value="String(row.edge.relationId)">查询 #{{ row.evidence.source.queryId }} · 原行 {{ row.evidence.source.sequenceNo }} · #{{ row.edge.relationId }}</SelectItem></SelectGroup></SelectContent></Select>
+          <Label for="replacement-record">选择新的对应记录</Label>
+          <Select v-model="selected" :disabled="pending || !!receipt || attempted"><SelectTrigger id="replacement-record" style="height: auto" class="min-h-9 w-full shrink-0 whitespace-normal text-left"><SelectValue class="block! line-clamp-none! whitespace-normal! [overflow-wrap:anywhere]" placeholder="请选择已核对的新平台记录" /></SelectTrigger><SelectContent class="max-w-[calc(100vw-3rem)]"><SelectGroup><SelectItem v-for="option in replacementOptions" :key="option.id" :value="option.id" class="whitespace-normal [overflow-wrap:anywhere]">{{ option.label }}</SelectItem></SelectGroup></SelectContent></Select>
           <p v-if="replacementFailed" role="alert">改选候选第 {{ replacementPage }} 页读取失败，保留已有结果。<Button variant="outline" size="sm" @click="loadReplacements(replacementPage)">重试候选</Button></p>
           <TablePagination v-if="replacements" :page="replacements.page" :page-size="replacements.pageSize" :total="replacements.total" unit="条候选" :loading="pending" @update:page="loadReplacements" />
         </template>
@@ -176,8 +185,8 @@ async function refreshConflict() {
         <p v-if="supportRole" class="text-muted-foreground text-[13px] leading-5">对应范围：{{ CORRESPONDENCE_ROLES[supportRole] ?? supportRole }}。<template v-if="supportRole === 'context_only'">仅说明流程背景，不代表平台结论与公布一致。</template></p>
         <div class="flex flex-col gap-2"><Label :for="`correspondence-basis-${edge.eventId}-${edge.relationId}`">核对依据（必填）</Label><Textarea :id="`correspondence-basis-${edge.eventId}-${edge.relationId}`" v-model="basis" :disabled="pending || !!receipt || attempted" maxlength="4000" placeholder="说明双方原行、年份、批次及事项的核对依据" /></div>
         </div>
-        <div class="flex shrink-0 flex-col gap-2">
-        <p v-if="plan" role="status">预检：新增 {{ plan.impact.created }} 条，取消 {{ plan.impact.unlinked }} 条，追加审计 {{ plan.impact.audit }} 条。</p>
+        <div class="flex shrink-0 flex-col gap-2 text-sm [overflow-wrap:anywhere]">
+        <p v-if="plan && !receipt" role="status">{{ attempted ? '提交结果尚待确认，请使用原请求重试' : '预检通过，尚未提交' }}：新增对应 {{ plan.impact.created }} 条，解除对应 {{ plan.impact.unlinked }} 条，保留操作记录 {{ plan.impact.audit }} 条。</p>
         <p v-if="error" role="alert">{{ error }}</p><p v-if="success" role="status">{{ success }}</p>
         <div class="flex flex-wrap gap-2">
           <Button v-if="!plan && !conflict && !success" :disabled="!canPreflight" @click="preflight">预检决定</Button>
