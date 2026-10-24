@@ -118,7 +118,7 @@ const interfaceSummary = computed(() => {
                   <span v-for="(item, index) in interfaceSummary" :key="item.interfaceName" class="inline-flex flex-wrap items-center gap-1">
                     <span v-if="!review || item.interfaceName !== '平台来源记录'">{{ item.interfaceName }}</span>
                     <span v-if="item.status" class="text-muted-foreground">· {{ item.status }}</span>
-                    <span class="text-muted-foreground tabular-nums">{{ review ? '来源记录' : '原行' }} {{ item.count }} 条</span>
+                    <span class="text-muted-foreground tabular-nums">{{ review ? '已确认关联' : '原行' }} {{ item.count }} 条</span>
                     <span v-if="index < interfaceSummary.length - 1">、</span>
                   </span>
                 </template>
