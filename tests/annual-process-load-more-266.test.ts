@@ -190,3 +190,198 @@ it('keeps appended facts while waiting for current full audit readback and never
   expect(posts(fetch)).toHaveLength(1)
   expect(JSON.parse(sessionStorage.getItem('roster-annual-review:v1:7')!).jobId).toBe(jobId)
 })
+
+it('independent review: readback retry preserves refresh reset intent', async () => {
+  let failRefresh = false;
+  const fetch = fixture((url, options) => {
+    if (url.endsWith('/annual-process')) {
+      if (options.query.page === 1 && failRefresh) return Promise.reject(new Error('review intentional refresh transport failure'));
+      return Promise.resolve(page(7, 'scope-a', options.query.page));
+    }
+    return undefined;
+  });
+  mountReview(7); await flushPromises();
+  await click('加载更多过程');
+  expect(ids()).toHaveLength(100);
+  expect(wrapper.text()).toContain('已读回当前年度过程、对应与审计');
+  failRefresh = true;
+  await click('刷新年度过程');
+  expect(ids()).toHaveLength(100);
+  expect(wrapper.text()).toContain('已提交，但同步读回失败');
+  expect(wrapper.get('[data-annual-summary]').text()).toContain('尚无已确认最终结果');
+  failRefresh = false;
+  await click('重试读回');
+  console.log(JSON.stringify({afterRetryCount: ids().length, annualReads: reads(fetch), postCount: posts(fetch).length, summary: wrapper.get('[data-annual-summary]').text(), phaseText: wrapper.text().includes('已读回当前年度过程、对应与审计')}));
+  expect(posts(fetch)).toHaveLength(1);
+  expect(ids(), 'Explicit refresh must reset to first 50 even when recovered through the offered readback retry').toHaveLength(50);
+});
+
+it('refreshes an earlier loaded observation decision after same-generation manual readback', async () => {
+  let changed = false
+  function currentPage(id: number, number: number) {
+    const value = page(id, 'scope-a', number, 51)
+    const first = value.process.steps.find(step => step.id === 'business-0')
+    if (first) {
+      first.groups = structuredClone(annual(id, 'scope-a', 'confirmed').process.steps[0]!.groups)
+      if (changed) for (const group of first.groups) {
+        for (const decision of group.existingCorrespondences) Object.assign(decision, { status: 'unlinked', revision: 3, endedAt: '2026-10-24' })
+        for (const observation of group.observationRefs) for (const decision of observation.existingCorrespondences) Object.assign(decision, { status: 'unlinked', revision: 3, endedAt: '2026-10-24' })
+      }
+    }
+    return value
+  }
+  const fetch = readonlyPages((id, number) => Promise.resolve(currentPage(id, number)))
+  mountReview(7); await flushPromises()
+  const firstObservation = () => wrapper.findComponent(AnnualProcessTimeline).props('view').steps.find(step => step.id === 'business-0')!.sources[0]!.observations[0]!
+  expect(firstObservation().revision).toBe(2)
+  await click('加载更多过程')
+  expect(ids()).toHaveLength(51)
+  changed = true
+  const { refreshCorrespondenceViews } = await import('../composables/useCorrespondenceReadback')
+  await refreshCorrespondenceViews(); await flushPromises()
+  expect(posts(fetch)).toHaveLength(0)
+  const expected = currentPage(7, 1).process.steps[0]!.groups[0]!.observationRefs[0]!.existingCorrespondences[0]!
+  console.log(JSON.stringify({ reads: reads(fetch), loaded: ids().length, generation: wrapper.findComponent(AnnualProcessTimeline).props('view').generation, expected: {status:expected.status, revision:expected.revision}, actual: firstObservation() }))
+  expect(firstObservation().revision).toBe(3)
+  expect(firstObservation().decision).toContain('已取消对应')
+})
+
+function observationPage(id: number, generation: string, number: number, revision = 2) {
+  const value = page(id, generation, number)
+  const first = value.process.steps.find(step => step.id === 'business-0')
+  if (first) {
+    first.groups = structuredClone(annual(id, generation, 'confirmed').process.steps[0]!.groups)
+    for (const group of first.groups) {
+      for (const decision of [...group.existingCorrespondences, ...group.observationRefs.flatMap(ref => ref.existingCorrespondences)]) {
+        Object.assign(decision, { status: revision === 2 ? 'confirmed' : 'unlinked', revision, endedAt: revision === 2 ? null : '2026-10-24' })
+      }
+    }
+  }
+  return value
+}
+const firstObservation = () => wrapper.findComponent(AnnualProcessTimeline).props('view').steps.find(step => step.id === 'business-0')!.sources[0]!.observations[0]!
+const sharedReadback = async () => (await import('../composables/useCorrespondenceReadback')).refreshCorrespondenceViews()
+
+it('keeps reset intent through repeated readback failures without submitting another job', async () => {
+  let fail = false
+  const fetch = fixture((url, options) => url.endsWith('/annual-process')
+    ? fail ? Promise.reject(new Error('reset still unavailable')) : Promise.resolve(page(7, 'scope-a', options.query.page)) : undefined)
+  mountReview(7); await flushPromises(); await click('加载更多过程')
+  expect(ids()).toHaveLength(100)
+  fail = true; await click('刷新年度过程'); await click('重试读回')
+  expect(ids()).toHaveLength(100)
+  expect(wrapper.get('[data-annual-summary]').text()).toContain('尚无已确认最终结果')
+  const beforeRetry = reads(fetch).length
+  fail = false; await click('重试读回')
+  expect(ids()).toEqual(Array.from({ length: 50 }, (_, i) => `business-${i}`))
+  expect(reads(fetch).slice(beforeRetry)).toEqual([{ page: 1, pageSize: 50 }])
+  expect(posts(fetch)).toHaveLength(1)
+})
+
+it('publishes refreshed batches atomically and retries a failed displayed batch first', async () => {
+  let changed = false, fail = true
+  const fetch = readonlyPages((id, number) => changed && number === 2 && fail
+    ? Promise.reject(new Error('middle displayed batch unavailable')) : Promise.resolve(observationPage(id, 'scope-a', number, changed ? 3 : 2)))
+  mountReview(7); await flushPromises(); await click('加载更多过程'); await click('加载更多过程')
+  expect(ids()).toHaveLength(121); expect(firstObservation().revision).toBe(2)
+  const before = reads(fetch).length
+  changed = true
+  await expect(sharedReadback()).rejects.toThrow('readback_failed'); await flushPromises()
+  expect(reads(fetch).slice(before).map(read => read.page)).toEqual([3, 1, 2])
+  expect(ids()).toHaveLength(121); expect(firstObservation().revision).toBe(2)
+  expect(wrapper.get('[data-annual-summary]').text()).toContain('尚无已确认最终结果')
+  fail = false
+  const retryStart = reads(fetch).length
+  await wrapper.get('[data-testid="annual-process-review"] [data-testid="table-retry"]').trigger('click'); await flushPromises()
+  expect(reads(fetch).slice(retryStart).map(read => read.page)).toEqual([2, 1, 3])
+  expect(ids()).toHaveLength(121); expect(firstObservation().revision).toBe(3)
+  expect(firstObservation().decision).toContain('已取消对应')
+  expect(wrapper.get('[data-annual-summary]').text()).toContain('已有最终结果')
+  expect(posts(fetch)).toHaveLength(0)
+})
+
+it.each(['total', 'page', 'size', 'event'] as const)('rejects inconsistent %s in a displayed batch and retains facts until same-target recovery', async fault => {
+  let invalid = false
+  const fetch = readonlyPages((id, number) => {
+    const value = observationPage(id, 'scope-a', number, invalid ? 3 : 2)
+    if (invalid && number === 1) {
+      if (fault === 'total') value.total++
+      else if (fault === 'page') value.page = 99
+      else if (fault === 'size') value.pageSize = 25
+      else value.process.event.id = 8
+    }
+    return Promise.resolve(value)
+  })
+  mountReview(7); await flushPromises(); await click('加载更多过程')
+  invalid = true
+  const before = reads(fetch).length
+  await expect(sharedReadback()).rejects.toThrow('readback_failed'); await flushPromises()
+  expect(reads(fetch).slice(before).map(read => read.page)).toEqual([2, 1])
+  expect(ids()).toHaveLength(100); expect(firstObservation().revision).toBe(2)
+  expect(wrapper.get('[data-annual-summary]').text()).toContain('尚无已确认最终结果')
+  invalid = false
+  const retryStart = reads(fetch).length
+  await wrapper.get('[data-testid="annual-process-review"] [data-testid="table-retry"]').trigger('click'); await flushPromises()
+  expect(reads(fetch).slice(retryStart).map(read => read.page)).toEqual([1, 2])
+  expect(ids()).toHaveLength(100)
+  expect(wrapper.get('[data-annual-summary]').text()).toContain('已有最终结果')
+  expect(posts(fetch)).toHaveLength(0)
+})
+
+it('stops a changing-source sweep and reads at most one extra first batch', async () => {
+  let sweeping = false, changed = false
+  const fetch = readonlyPages((id, number) => {
+    if (sweeping && number === 2) changed = true
+    return Promise.resolve(page(id, changed ? 'scope-b' : 'scope-a', number))
+  })
+  mountReview(7); await flushPromises(); await click('加载更多过程'); await click('加载更多过程')
+  const before = reads(fetch).length
+  sweeping = true
+  await sharedReadback(); await flushPromises()
+  expect(reads(fetch).slice(before)).toEqual([3, 1, 2, 1].map(page => ({ page, pageSize: 50 })))
+  expect(ids()).toHaveLength(50)
+  const view = wrapper.findComponent(AnnualProcessTimeline).props('view')
+  expect(view.generation).toBe('scope-b')
+  expect(view.steps.every(step => step.businessKey?.startsWith('scope-b-'))).toBe(true)
+})
+
+it('continues from the highest displayed batch after a shared sweep ends on the first batch', async () => {
+  const fetch = readonlyPages()
+  mountReview(7); await flushPromises(); await click('加载更多过程')
+  await sharedReadback(); await flushPromises()
+  expect(ids()).toHaveLength(100)
+  await click('加载更多过程')
+  expect(ids()).toHaveLength(121)
+  expect(reads(fetch).map(read => read.page)).toEqual([1, 2, 2, 1, 3])
+})
+
+it('abandons a displayed-batch sweep when selection changes and never appends its late observations', async () => {
+  const late = deferred<EventAnnualProcessPage>(); let delay = false
+  const fetch = readonlyPages((id, number) => id === 7 && number === 2 && delay ? late.promise : Promise.resolve(page(id, `scope-${id}`, number)))
+  mountReview(7); await flushPromises(); await click('加载更多过程')
+  delay = true
+  const reading = sharedReadback(); await flushPromises()
+  await open(8)
+  late.resolve(page(7, 'scope-7', 2)); await reading; await flushPromises()
+  const view = wrapper.findComponent(AnnualProcessTimeline).props('view')
+  expect(view.eventId).toBe(8); expect(view.generation).toBe('scope-8'); expect(ids()).toHaveLength(50)
+  expect(view.steps.every(step => step.businessKey?.startsWith('scope-8-'))).toBe(true)
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('/events/7/annual-process')).map(([, options]) => options.query.page)).toEqual([1, 2, 2])
+  expect(posts(fetch)).toHaveLength(0)
+})
+
+it('ignores a superseded sweep while the newest readback refreshes all displayed decisions', async () => {
+  const late = deferred<EventAnnualProcessPage>(); let changed = false, delayed = false
+  const fetch = readonlyPages((id, number) => {
+    if (changed && number === 2 && !delayed) { delayed = true; return late.promise }
+    return Promise.resolve(observationPage(id, 'scope-a', number, changed ? 3 : 2))
+  })
+  mountReview(7); await flushPromises(); await click('加载更多过程'); changed = true
+  const oldRead = sharedReadback().catch(error => error.message); await flushPromises()
+  await sharedReadback(); await flushPromises()
+  expect(ids()).toHaveLength(100); expect(firstObservation().revision).toBe(3)
+  late.resolve(observationPage(7, 'scope-a', 2)); expect(await oldRead).toBe('readback_failed'); await flushPromises()
+  expect(ids()).toHaveLength(100); expect(firstObservation().revision).toBe(3)
+  expect(wrapper.get('[data-annual-summary]').text()).toContain('已有最终结果')
+  expect(posts(fetch)).toHaveLength(0)
+})

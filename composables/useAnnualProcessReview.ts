@@ -53,7 +53,14 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
     const id = eventId(), token = epoch
     if (!mounted || id == null) return true
     const sequence = ++readSequence
+    const previous = raw.value
+    const pageSize = target.value.pageSize
     let request = { ...target.value }
+    // A shared readback refreshes exactly the displayed batches (plus a failed
+    // append target). Start at the failed/current target so retries stay explicit.
+    const pages = mode === 'current'
+      ? [request.page, ...[...batches.value.keys()].filter(page => page !== request.page).sort((a, b) => a - b)] : [request.page]
+    const next = mode === 'append' ? new Map(batches.value) : new Map<number, EventAnnualProcessPage['process']['steps']>()
     readController?.abort(); const controller = new AbortController(); readController = controller
     reading.value = true
     try {
@@ -63,24 +70,33 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
           || !Number.isSafeInteger(page.total) || page.total < 0 || page.process.steps.length > request.pageSize) throw new Error('annual_read_mismatch')
         return page
       }
-      let page = await fetchPage()
-      if (!current(token, id) || sequence !== readSequence) return false
-      // An offset in a new source cannot be appended to the previous source.
-      // Restart once at its first bounded batch, retaining old facts on failure.
-      if (request.page > 1 && raw.value && page.sourceGeneration !== raw.value.sourceGeneration) {
-        readFailed.value = true
-        request = { page: 1, pageSize: request.pageSize }; target.value = request; mode = 'reset'
-        page = await fetchPage()
+      let latest: EventAnnualProcessPage | undefined
+      for (const pageNumber of pages) {
+        request = { page: pageNumber, pageSize }; target.value = request
+        let page = await fetchPage()
         if (!current(token, id) || sequence !== readSequence) return false
+        if (previous && page.sourceGeneration !== previous.sourceGeneration) {
+          // Stop the old plan on a new source. At most one extra bounded first
+          // batch is read; no old batch or decision snapshot crosses generations.
+          readFailed.value = true; mode = 'reset'
+          if (request.page !== 1) {
+            request = { page: 1, pageSize }; target.value = request
+            page = await fetchPage()
+            if (!current(token, id) || sequence !== readSequence) return false
+          }
+          next.clear(); next.set(1, page.process.steps); latest = page
+          break
+        }
+        if (mode !== 'reset' && previous && page.total !== previous.total) throw new Error('annual_read_mismatch')
+        next.set(page.page, page.process.steps); latest = page
       }
-      const sourceChanged = raw.value?.sourceGeneration !== page.sourceGeneration
-      const next = mode === 'reset' || sourceChanged || raw.value?.pageSize !== page.pageSize
-        ? new Map<number, EventAnnualProcessPage['process']['steps']>() : new Map(batches.value)
-      next.set(page.page, page.process.steps)
+      if (!latest) throw new Error('annual_read_mismatch')
+      // Publish all refreshed observation decisions together. A partial sweep
+      // cannot turn an older displayed batch into a successful current readback.
       batches.value = next
-      raw.value = page
+      raw.value = latest
       readFailed.value = false
-      if (sourceChanged && enabled.value && recovery.value?.jobId && recovery.value.generation !== page.sourceGeneration) {
+      if (previous?.sourceGeneration !== latest.sourceGeneration && enabled.value && recovery.value?.jobId && recovery.value.generation !== latest.sourceGeneration) {
         phase.value = 'blocked'; auditReadback.value = []; watchJob(recovery.value.jobId)
       }
       return true
@@ -101,7 +117,7 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
       const selection = new Promise<void>(resolve => { changed = resolve })
       const stop = watch(eventId, changed, { flush: 'sync' })
       let result: boolean | void
-      try { result = await Promise.race([readAnnual(), selection]) } finally { stop() }
+      try { result = await Promise.race([readAnnual(readFailed.value && failedReadMode === 'reset' ? 'reset' : 'current'), selection]) } finally { stop() }
       if (eventId() !== id) continue
       return result === true
     }
@@ -257,10 +273,11 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
     target.value = { ...target.value, page: 1, ...patch }
     if (await readAnnual('reset') && eventId() != null) await afterAnnualRead()
   }
-  const hasMore = computed(() => !!raw.value && raw.value.page * raw.value.pageSize < raw.value.total)
+  const lastLoadedPage = computed(() => Math.max(0, ...batches.value.keys()))
+  const hasMore = computed(() => !!raw.value && lastLoadedPage.value * raw.value.pageSize < raw.value.total)
   async function loadMore() {
     if (reading.value || acting.value || phase.value === 'syncing' || readFailed.value || !hasMore.value || !raw.value) return
-    target.value = { page: raw.value.page + 1, pageSize: raw.value.pageSize }
+    target.value = { page: lastLoadedPage.value + 1, pageSize: raw.value.pageSize }
     if (await readAnnual('append') && eventId() != null) await afterAnnualRead()
   }
   async function retryRead() {
