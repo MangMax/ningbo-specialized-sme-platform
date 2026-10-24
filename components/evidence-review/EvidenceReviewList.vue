@@ -100,6 +100,7 @@ const lookupPending = shallowRef(false)
 const lookupError = shallowRef('')
 const enterpriseName = shallowRef('')
 
+const successfulReads = shallowRef(0)
 const params = computed(() => ({ ...filters.value, ...(cursor.value ? { cursor: cursor.value } : {}) }))
 const { data, isLoading, error, refetch } = useQuery({
   key: () => ['evidence-impacts', params.value],
@@ -107,6 +108,7 @@ const { data, isLoading, error, refetch } = useQuery({
     const query = entry.key[1] as Record<string, string | number>
     const pageNumber = cursors.value.length + 1
     const page = await $fetch<CursorPage<ImpactRow>>('/api/roster/evidence-impacts', { query })
+    successfulReads.value += 1
     return { ...page, request: query, pageNumber }
   },
   placeholderData: previous => previous,
@@ -170,7 +172,22 @@ const emptyTitle = computed(() => ({
   page: '本页没有复核项',
   uncertain: '复核记录尚不能确认',
 })[emptyScope.value])
-const emptyDescription = computed(() => ({
+const incomplete = computed(() => current.value && displayed.value?.projectionReady === false)
+const readFeedback = computed(() => {
+  if (isLoading.value) return displayed.value
+    ? '正在重新读取清单；保留上次成功读取的内容。'
+    : '正在读取复核清单。'
+  if (error.value || !current.value) return ''
+  const readCount = successfulReads.value ? `（第 ${successfulReads.value} 次成功读取）` : ''
+  return incomplete.value
+    ? `已读取清单${readCount}，${successfulReads.value > 1 ? '影响检查仍未完成' : '影响检查尚未完成'}。`
+    : `已读取清单${readCount}。`
+})
+const incompleteDescription = '清单完整性暂不能确认；检查条件可能超出当前企业范围，不能据此认定当前企业有待处理项。请联系有权限的维护人员处理影响检查；重新读取只刷新状态，不会启动检查。'
+const failureDescription = computed(() => displayed.value
+  ? `保留上次成功读取的内容（第 ${displayed.value.pageNumber ?? 1} 页）；当前目标读取失败，可重试或从第一页重新读取。`
+  : '尚无成功读取的清单；当前目标读取失败，请重试。')
+const emptyDescription = computed(() => incomplete.value ? incompleteDescription : ({
   enterprise: '当前、历史、撤回与归并均未返回记录；未完成影响检查的变更可能尚未进入清单。',
   filtered: '当前称号、方向、复核状态或事件范围内没有记录；这不代表该企业没有其他复核历史。',
   page: '当前页没有返回记录；这不代表全企业都没有复核历史。可返回上一页或继续下一页。',
@@ -526,7 +543,7 @@ function refreshAfterSave() {
     <TableFailureState
       v-if="error"
       title="复核清单读取失败"
-      :description="`显示上次成功的第 ${displayed?.pageNumber ?? 1} 页；当前目标读取失败，可重试或从第一页重新读取。`"
+      :description="failureDescription"
       :pending="isLoading"
       @retry="refetch()"
     />
@@ -534,7 +551,7 @@ function refreshAfterSave() {
       分页快照已过期或失效。上次成功页仍保留；请点击“从第一页重新读取”获取当前清单。
     </p>
     <Button v-if="error" data-testid="retry-review-page" variant="outline" :disabled="isLoading" @click="refetch()">
-      重试读取失败页
+      {{ isLoading ? '正在重新读取清单…' : '重试读取失败页' }}
     </Button>
     <p v-if="displayed" class="text-muted-foreground text-[13px] leading-5 break-words">
       显示来源：{{ sourceLabel }}
@@ -543,8 +560,11 @@ function refreshAfterSave() {
       <p class="text-muted-foreground text-[13px] leading-5">部分企业名称未能读取；企业 ID 仍保留。</p>
       <Button variant="outline" size="sm" :disabled="namesLoading" @click="retryNames">重试读取企业名称</Button>
     </div>
-    <p v-if="displayed?.projectionReady === false" role="status" class="text-warning text-[13px] leading-5">
-      影响检查尚未完成，清单不能代表全部待复核项。
+    <p v-if="readFeedback" role="status" aria-live="polite" aria-atomic="true" class="text-muted-foreground text-[13px] leading-5" data-testid="review-read-feedback">
+      {{ readFeedback }}
+    </p>
+    <p v-if="incomplete && displayed?.rows.length" class="text-warning text-[13px] leading-5">
+      {{ incompleteDescription }}
     </p>
 
     <Empty v-if="displayed && !displayed.rows.length" data-testid="review-empty">
@@ -625,10 +645,10 @@ function refreshAfterSave() {
       <span class="text-muted-foreground text-[13px]">每页最多 25 项</span>
       <Button variant="outline" aria-label="上一页复核项" :disabled="!current || !cursors.length" @click="previous">上一页</Button>
       <Button variant="outline" aria-label="下一页复核项" :disabled="!current || !displayed?.nextCursor" @click="next">下一页</Button>
-      <Button variant="ghost" :disabled="isLoading" @click="restart">从第一页重新读取</Button>
+      <Button variant="ghost" :disabled="isLoading" @click="restart">{{ isLoading ? '正在重新读取清单…' : '从第一页重新读取' }}</Button>
     </footer>
     <div v-else-if="displayed" class="flex">
-      <Button variant="ghost" size="sm" :disabled="isLoading" @click="restart">重新读取清单</Button>
+      <Button variant="ghost" size="sm" :disabled="isLoading" @click="restart">{{ isLoading ? '正在重新读取清单…' : '重新读取清单' }}</Button>
     </div>
 
     <Dialog :open="pendingGuard !== null" @update:open="value => { if (!value) pendingGuard = null }">
