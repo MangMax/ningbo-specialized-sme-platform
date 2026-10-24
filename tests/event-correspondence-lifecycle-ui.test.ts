@@ -20,7 +20,8 @@ for (const [axis, other] of axes) for (const state of states) {
     const fetch = vi.fn(async (url: string, options?: any) => {
       if (url.endsWith('/audit')) {
         if (auditUnavailable) throw new Error('audit unavailable')
-        return { rows: [{ idempotencyKey: preflights[0].idempotencyKey }] }
+        expect(options.query).toEqual({ page: 1, pageSize: 50 })
+        return { page: 1, pageSize: 50, total: 1, rows: [{ idempotencyKey: preflights[0].idempotencyKey }] }
       }
       if (url.endsWith('/9')) {
         reads++
