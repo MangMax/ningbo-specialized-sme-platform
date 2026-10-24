@@ -121,3 +121,39 @@ it('marks retained content as the old source during switching and failure, retri
   expect(wrapper.text()).not.toMatch(/旧来源|过时请求企业|终审通过|2026-05-08/)
   expect(wrapper.find('[data-testid="event-correspondence-decision"]').exists()).toBe(false)
 })
+
+
+it('maps known designation code two without repeating the identical source designation or showing its code', async () => {
+  const wrapper = renderRow({ ...relation, rawFields: { qymc: '企业原名', rdjb: '2' } })
+  const facts = wrapper.get('[data-testid="platform-business-facts"]')
+  expect(facts.text().match(/专精特新中小企业/g)).toHaveLength(1)
+  expect(facts.text()).not.toContain('平台称号原值')
+  expect(facts.findAll('dd').map(node => node.text())).not.toContain('2')
+  await open(wrapper, '技术出处与完整原文')
+  expect(JSON.parse(wrapper.get('[data-testid="platform-complete-raw"]').text()).rdjb).toBe('2')
+})
+
+it('keeps an unknown designation code only in complete technical raw without guessing its meaning', async () => {
+  const wrapper = renderRow({ ...relation, sourceRdjb: 'X99', query: { ...query, rdjb: 'X99' }, rawFields: { rdjb: 'X99' } })
+  expect(wrapper.get('[data-testid="platform-business-facts"]').text()).toContain('未标注')
+  expect(wrapper.text()).not.toContain('X99')
+  await open(wrapper, '技术出处与完整原文')
+  expect(JSON.parse(wrapper.get('[data-testid="platform-complete-raw"]').text()).rdjb).toBe('X99')
+})
+
+it('preserves different source and raw designations and the existing real field conflict', () => {
+  const wrapper = renderRow({ ...relation, sourceRdjb: '2', normalizationConflicts: [{ field: 'status', storedValue: '退回', rawValue: '终审通过' }], rawFields: { rdjb: '1', cszt: '终审通过' } })
+  const facts = wrapper.get('[data-testid="platform-business-facts"]').text()
+  expect(facts).toContain('来源称号专精特新中小企业')
+  expect(facts).toContain('平台称号创新型中小企业')
+  expect(wrapper.text()).toContain('字段冲突，待核')
+  expect(wrapper.text()).toContain('已存：退回 · 原档：终审通过')
+})
+
+it('keeps default source mode designation fields and original sizing unchanged', () => {
+  const wrapper = mount(SourceRowDetail, { props: { relation: { ...relation, rawFields: { rdjb: '2' } } }, global: { stubs } })
+  mounted.push(wrapper)
+  expect(wrapper.classes()).toContain('text-[13px]')
+  expect(wrapper.text()).toContain('称号原值（rdjb）2')
+  expect(wrapper.text()).toContain('查询 #20')
+})
