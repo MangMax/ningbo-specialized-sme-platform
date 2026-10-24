@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref, shallowRef, watch, type Ref } from 'vue'
+import { computed, inject, provide, ref, shallowRef, watch, type Ref } from 'vue'
 import type { ImpactRow, ReviewAssessment } from '~~/lib/roster/evidence-review-ui'
 import { directionLabel, titleLabel } from '~~/lib/roster/review-display'
 import InitialDifferenceDecisionForm from './InitialDifferenceDecisionForm.vue'
@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { REVIEW_DRAFTS_KEY, type ReviewDraftStore } from '~/composables/useReviewDrafts'
+import { REVIEW_DRAFTS_KEY, useReviewDrafts, type ReviewDraftStore } from '~/composables/useReviewDrafts'
 
 const open = defineModel<boolean>('open', { required: true })
 
@@ -44,7 +44,9 @@ const queuedScope = shallowRef<typeof displayed.value | null>(null)
  * `enterprise-review-draft` 由企业详情页提供；没有宿主时按无草稿处理。
  */
 const draftState = inject<Ref<boolean> | null>('enterprise-review-draft', null)
-const draftStore = inject<ReviewDraftStore | null>(REVIEW_DRAFTS_KEY, null)
+const draftStore = inject<ReviewDraftStore | null>(REVIEW_DRAFTS_KEY, null) ?? useReviewDrafts()
+provide(REVIEW_DRAFTS_KEY, draftStore)
+const protectedSubmission = computed(() => resolvedImpactId.value == null && !!draftStore.drafts[initialKey.value]?.initialSubmission?.request)
 const hasDirtyDraft = computed(() => resolvedImpactId.value == null
   ? initialDirty.value
   : draftStore ? draftStore.hasDraft(resolvedImpactId.value) : !!draftState?.value)
@@ -73,7 +75,7 @@ function requestOpen(next: boolean) {
 function discardAndClose() {
   confirmClose.value = false
   if (resolvedImpactId.value != null) draftStore?.discard(resolvedImpactId.value)
-  if (resolvedImpactId.value == null && draftStore) delete draftStore.drafts[initialKey.value]
+  if (resolvedImpactId.value == null && !protectedSubmission.value) delete draftStore.drafts[initialKey.value]
   initialDirty.value = false
   if (draftState && !draftStore) draftState.value = false
   if (queuedScope.value) { initialHeadChanged.value = false; displayed.value = queuedScope.value; queuedScope.value = null }
@@ -131,14 +133,14 @@ function discardAndClose() {
   <Dialog :open="confirmClose" @update:open="value => { if (!value) continueEditing() }">
     <DialogContent class="sm:max-w-md">
       <DialogHeader>
-        <DialogTitle>{{ queuedScope ? '切换会丢弃未提交内容' : '关闭会丢弃未提交内容' }}</DialogTitle>
+        <DialogTitle>{{ protectedSubmission ? '提交记录将保留' : queuedScope ? '切换会丢弃未提交内容' : '关闭会丢弃未提交内容' }}</DialogTitle>
         <DialogDescription>
-          复核依据或更正内容还没提交；收起后会丢失。
+          {{ protectedSubmission ? '本次请求或回执已登记在此页面的内存中。收起或切换会保留完整提交，返回后继续核实；不会因关闭生成新请求。离开或刷新整个页面会结束这份内存记录。' : '复核依据或更正内容还没提交；收起后会丢失。' }}
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>
         <Button variant="outline" @click="continueEditing">继续填写</Button>
-        <Button @click="discardAndClose">{{ queuedScope ? '丢弃并切换' : '关闭并丢弃' }}</Button>
+        <Button @click="discardAndClose">{{ protectedSubmission ? (queuedScope ? '保留提交并切换' : '保留提交并关闭') : queuedScope ? '丢弃并切换' : '关闭并丢弃' }}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>

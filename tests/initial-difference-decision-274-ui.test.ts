@@ -21,7 +21,8 @@ beforeEach(() => {
   fetcher = vi.fn(async (url: string, options?: any) => {
     if (url.endsWith('browser-context')) return { writeEnabled: true }
     if (url.endsWith('browser-commands')) return (post as (body: unknown) => Promise<unknown>)(options.body)
-    if (url.endsWith('/current')) return { ...options.query, versionId: id, current: id ? { id, status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history', basis: '依据', actor: null, ruleVersion: null } : null }
+    if (url.endsWith('/current')) return { ...options.query, versionId: id, current: id ? { ...options.query, id, status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history', basis: '依据', actor: null, ruleVersion: null } : null }
+    if (/decision-lifecycle\/\d+$/.test(url)) return { ...scope, id: Number(url.split('/').at(-1)), status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history', actor: null, ruleVersion: null }
     if (url.endsWith('/history')) return { rows: [], total: 0, page: 1, pageSize: 25 }
     throw new Error('Unexpected request: ' + url)
   })
@@ -91,5 +92,5 @@ it('registers the exact-scope draft in the existing host guard and restores it a
   expect((v.get('[aria-label="判断依据"]').element as HTMLTextAreaElement).value).toBe('核对原始公布材料')
   await v.get('form').trigger('submit'); await flushPromises()
   expect(store!.hasDirty.value).toBe(false)
-  expect(Object.keys(store!.drafts)).toEqual([])
+  expect(store!.drafts['initial:7:specialized_sme:missing_in_miit']?.initialSubmission?.receipt?.versionId).toBe(9)
 })

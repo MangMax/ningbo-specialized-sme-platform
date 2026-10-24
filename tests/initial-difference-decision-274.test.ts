@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { useInitialDifferenceDecision } from '../composables/useInitialDifferenceDecision'
 
 const coordinate = { enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
-const current = (id: number | null) => ({ ...coordinate, versionId: id, current: id ? { id, status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history' } : null })
+const current = (id: number | null) => ({ ...coordinate, versionId: id, current: id ? { ...coordinate, id, status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history' } : null })
 const valid = (c: ReturnType<typeof useInitialDifferenceDecision>) => {
   c.basis.value = '核对指定公布材料与平台原行'
   Object.assign(c.draft.value, { status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history' })
