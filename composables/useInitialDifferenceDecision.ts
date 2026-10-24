@@ -1,4 +1,4 @@
-import { computed, reactive, toRefs } from 'vue'
+import { computed, reactive, ref, toRefs } from 'vue'
 import type { DecisionVersion, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { DIFFERENCE_MEASURES, DIFFERENCE_REASONS } from '~~/lib/labels'
 
@@ -32,9 +32,33 @@ export function initialDecisionNeedsGuard(state: InitialDecisionState): boolean 
 const sameScope = (a: ReviewScope, b: ReviewScope) => a.enterpriseId === b.enterpriseId && a.titleCode === b.titleCode && a.direction === b.direction
 
 /** References a host-owned session, so late completion and structural remount share the same request/receipt. */
-export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDecisionApi, state = createInitialDecisionState(scope)) {
+export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDecisionApi, state = createInitialDecisionState(scope), ownsSession: () => boolean = () => true) {
   if (!sameScope(scope, state.scope)) throw new Error('Initial decision host scope mismatch')
   const { basis, draft, head, writeState, phase, message, correctionAccepted, receipt, submittedVersion } = toRefs(state)
+  // #274 invariants: unsent intent is revocable; the complete request belongs to the
+  // live exact-key host before POST; dispatched completion belongs only to that session.
+  const attached = ref(true)
+  let generation = 0
+  let pending: { generation: number; retained: boolean } | null = null
+  function start(retained = false) {
+    if (state.busy || !ownsSession() || !attached.value && !retained) return null
+    const operation = { generation: ++generation, retained }
+    pending = operation; state.busy = true
+    return operation
+  }
+  const current = (operation: NonNullable<typeof pending>) => pending === operation && operation.generation === generation
+    && ownsSession() && (attached.value || operation.retained)
+  function finish(operation: NonNullable<typeof pending>) {
+    if (current(operation)) { state.busy = false; pending = null }
+  }
+  function dispose() {
+    attached.value = false
+    // Detaching revokes preflight, including retries, but never erases a dispatched identity.
+    if (pending && !pending.retained) {
+      generation++; pending = null
+      if (ownsSession()) state.busy = false
+    }
+  }
   const dirty = computed(() => initialDecisionNeedsGuard(state))
   const locked = computed(() => !!state.receipt || ['saving', 'unknown', 'loading'].includes(state.phase))
   const validId = (id: string) => !id || /^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id))
@@ -45,29 +69,30 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
         : d.status === 'confirmed_reason' && Object.hasOwn(DIFFERENCE_REASONS, d.reasonCode) && (d.reasonCode !== 'pending_review' || d.measureCode === 'follow_review'))
       && validId(d.evidenceQueryId) && validId(d.evidenceRelationId)
   })
-  const canSave = computed(() => !state.busy && phase.value === 'ready' && writeState.value === 'ready' && !!head.value
+  const canSave = computed(() => attached.value && ownsSession() && !state.busy && phase.value === 'ready' && writeState.value === 'ready' && !!head.value
     && (!head.value.current || correctionAccepted.value) && !!basis.value.trim() && basis.value.trim().length <= 4000 && decisionReady.value)
-  async function readWriteCapability() {
+  async function readWriteCapability(operation: NonNullable<typeof pending>) {
     writeState.value = 'loading'
     try {
       const context = await api.context()
-      writeState.value = context?.writeEnabled === true ? 'ready' : context?.writeEnabled === false ? 'readonly' : 'unavailable'
-    } catch { writeState.value = 'unavailable' }
+      if (current(operation)) writeState.value = context?.writeEnabled === true ? 'ready' : context?.writeEnabled === false ? 'readonly' : 'unavailable'
+    } catch { if (current(operation)) writeState.value = 'unavailable' }
   }
   async function recheckCapability() {
-    if (state.busy) return
-    state.busy = true
-    try { await readWriteCapability() } finally { state.busy = false }
+    const operation = start()
+    if (!operation) return
+    try { await readWriteCapability(operation) } finally { finish(operation) }
   }
   let beginning: Promise<boolean> | null = null
   function begin(): Promise<boolean> {
     if (beginning) return beginning
-    if (state.busy || !head.value || !['ready', 'saved', 'superseded'].includes(phase.value)) return Promise.resolve(false)
-    state.busy = true
+    if (!head.value || !['ready', 'saved', 'superseded'].includes(phase.value)) return Promise.resolve(false)
+    const operation = start()
+    if (!operation) return Promise.resolve(false)
     beginning = (async () => {
       try {
-        await readWriteCapability()
-        if (writeState.value !== 'ready') return false
+        await readWriteCapability(operation)
+        if (!current(operation) || writeState.value !== 'ready') return false
         if (phase.value === 'saved' || phase.value === 'superseded') {
           // Only a fresh capability and explicit human action may end the verified submission.
           state.request = null; state.receipt = null; state.submittedVersion = null; state.notified = false
@@ -75,7 +100,7 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
         }
         correctionAccepted.value = true
         return true
-      } finally { state.busy = false; beginning = null }
+      } finally { finish(operation); beginning = null }
     })()
     return beginning
   }
@@ -83,29 +108,32 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
     if (!value || value.id !== id || !sameScope(value, scope)) throw new Error('Invalid submitted decision version')
     return value
   }
-  async function readHead() {
+  async function readHead(operation: NonNullable<typeof pending>) {
     const value = await api.current()
+    if (!current(operation)) return
     if (!value || !Object.hasOwn(value, 'current') || value.current === undefined || !sameScope(value, scope)
       || !(value.versionId === null || Number.isSafeInteger(value.versionId) && value.versionId > 0)) throw new Error('Invalid scope head')
     if (value.current) validateVersion(value.current, value.versionId!)
     head.value = value
   }
   async function load() {
-    if (state.busy) return
+    const operation = start(!!state.receipt)
+    if (!operation) return
     const unknownRequest = phase.value === 'unknown'
-    state.busy = true
     if (!unknownRequest) {
       phase.value = state.receipt ? 'readback' : 'loading'; message.value = ''; correctionAccepted.value = false
     }
     try {
       // Capability is independent of head identity. Unknown recovery checks only capability.
-      await readWriteCapability()
-      if (unknownRequest) return
-      await readHead()
+      await readWriteCapability(operation)
+      if (!current(operation) || unknownRequest) return
+      await readHead(operation)
+      if (!current(operation)) return
       if (!state.receipt) { phase.value = 'ready'; return }
       const id = state.receipt.versionId
       // current is proof of this submission only when its stable ID and nested scope both match.
       const own = api.version ? await api.version(id) : head.value?.current?.id === id ? head.value.current : null
+      if (!current(operation)) return
       submittedVersion.value = validateVersion(own!, id)
       if (head.value?.current?.id === id && own?.isCurrent !== false) {
         phase.value = 'saved'
@@ -117,17 +145,19 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
           : `本次提交版本 #${id} 已读回；后续撤回版本 #${head.value.versionId} 已生效，当前无有效决定。历史保留，可人工重新登记。`
       } else throw new Error('Current head and submitted version disagree')
     } catch {
+      if (!current(operation)) return
       phase.value = state.receipt ? 'readback' : 'error'
       message.value = state.receipt ? `判断已提交（回执 #${state.receipt.versionId}），本次版本或当前决定待核读回。请仅重试读取，不要重复登记。` : '当前决定读取失败；填写内容保留，读取成功前只读。'
-    } finally { state.busy = false }
+    } finally { finish(operation) }
   }
   async function save() {
     if (beginning) await beginning
-    if (state.busy || state.receipt || (!canSave.value && phase.value !== 'unknown')) return
-    state.busy = true
+    if (!attached.value || state.receipt || (!canSave.value && phase.value !== 'unknown')) return
+    const operation = start()
+    if (!operation) return
     try {
-      await readWriteCapability()
-      if (writeState.value !== 'ready') return
+      await readWriteCapability(operation)
+      if (!current(operation) || writeState.value !== 'ready') return
       if (!state.request) {
         const d = draft.value
         state.request = { ...scope, action: 'replace', expectedCurrentId: head.value!.versionId, basis: basis.value.trim(),
@@ -137,11 +167,14 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
             verificationStatus: 'confirmed', evidenceQueryId: d.evidenceQueryId ? Number(d.evidenceQueryId) : null,
             evidenceRelationId: d.evidenceRelationId ? Number(d.evidenceRelationId) : null } }
       }
-      phase.value = 'saving'; message.value = ''
+      // No await between this host-owned identity and dispatch. The Form watcher is not the owner.
+      phase.value = 'saving'; message.value = ''; operation.retained = true
       const response = await api.post(state.request)
+      if (!current(operation)) return
       if (!Number.isSafeInteger(response?.versionId) || response.versionId <= 0) throw new Error('Invalid receipt')
       state.receipt = { versionId: response.versionId, currentId: response.currentId, previousId: response.previousId, action: response.action, recordedAt: response.recordedAt }; phase.value = 'readback'
     } catch (error) {
+      if (!current(operation)) return
       const e = error as { status?: number; statusCode?: number; data?: { error?: { code?: string } } }
       const code = e?.data?.error?.code
       if (['stale_version', 'stale_evidence', 'idempotency_conflict'].includes(code ?? '') || e?.status === 409 || e?.statusCode === 409) {
@@ -159,9 +192,9 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
         phase.value = 'unknown'
         message.value = '提交结果尚不能确认。填写内容已锁定；请重试同一次提交，系统会复用原提交标识。'
       }
-    } finally { state.busy = false }
-    if (state.receipt) await load()
+    } finally { finish(operation) }
+    if (ownsSession() && state.receipt) await load()
   }
-  const canRetry = computed(() => phase.value === 'unknown' && writeState.value === 'ready' && !state.busy)
-  return { basis, draft, head, writeState, phase, message, correctionAccepted, receipt, submittedVersion, dirty, locked, canSave, canRetry, begin, load, save, recheckCapability, state }
+  const canRetry = computed(() => attached.value && ownsSession() && phase.value === 'unknown' && writeState.value === 'ready' && !state.busy)
+  return { basis, draft, head, writeState, phase, message, correctionAccepted, receipt, submittedVersion, dirty, locked, canSave, canRetry, begin, load, save, recheckCapability, dispose, state }
 }

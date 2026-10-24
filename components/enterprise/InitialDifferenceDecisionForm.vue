@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import type { DecisionVersion, ReviewScope } from '~~/lib/roster/evidence-review-ui'
-import { createInitialDecisionState, useInitialDifferenceDecision, type InitialDecisionHead, type InitialDecisionReceipt } from '~/composables/useInitialDifferenceDecision'
-import { REVIEW_DRAFTS_KEY } from '~/composables/useReviewDrafts'
+import { useInitialDifferenceDecision, type InitialDecisionHead, type InitialDecisionReceipt } from '~/composables/useInitialDifferenceDecision'
+import { REVIEW_DRAFTS_KEY, useReviewDrafts } from '~/composables/useReviewDrafts'
 import { useEvidenceReviewRefresh } from '~/composables/useEvidenceReviewRefresh'
 import ReplacementDecisionFields from '@/components/evidence-review/ReplacementDecisionFields.vue'
 import DecisionVersionDetails from '@/components/evidence-review/DecisionVersionDetails.vue'
@@ -15,27 +15,27 @@ const emit = defineEmits<{ saved: []; dirty: [boolean]; current: [number | null]
 // The Sheet keys this component by exact scope; no requests or drafts follow a new scope.
 const scope = { ...props.scope }
 const refreshAffected = useEvidenceReviewRefresh()
-const store = inject(REVIEW_DRAFTS_KEY, null)
+const store = inject(REVIEW_DRAFTS_KEY, null) ?? useReviewDrafts()
 const draftKey = `initial:${scope.enterpriseId}:${scope.titleCode}:${scope.direction}`
-const retained = store?.drafts[draftKey]
-const session = retained?.initialSubmission ?? createInitialDecisionState(scope)
-if (retained && !retained.initialSubmission) { session.basis = retained.basis; session.draft = { ...retained.decision } }
+const retained = store.drafts[draftKey]
+const session = store.initialFor(scope)
 const c = useInitialDifferenceDecision(scope, {
   context: () => $fetch<{ writeEnabled?: boolean }>('/api/roster/evidence-review/browser-context'),
   current: () => $fetch<InitialDecisionHead>('/api/roster/decision-lifecycle/current', { query: scope }),
   version: id => $fetch<DecisionVersion>(`/api/roster/decision-lifecycle/${id}`),
   post: body => $fetch<InitialDecisionReceipt>('/api/roster/evidence-review/browser-commands', { method: 'POST', body }),
-}, session)
+}, session, () => store.ownsInitial(scope, session))
 const { basis, draft, head, phase, writeState, message, correctionAccepted, dirty, locked, canSave, canRetry, receipt, submittedVersion } = c
 const formId = useId(), statusId = useId()
 const editing = computed(() => writeState.value === 'ready' && phase.value === 'ready' && (!head.value?.current || correctionAccepted.value))
-const entryOpen = ref(!!retained || !!session.request)
+const entryOpen = ref(!!session.request || !!retained && c.dirty.value)
 const started = computed(() => entryOpen.value || correctionAccepted.value)
 watch(dirty, value => emit('dirty', value), { immediate: true })
 watch([basis, draft, dirty, phase], () => {
-  if (!store) return
-  if (dirty.value || session.request) store.drafts[draftKey] = { basis: basis.value, mode: 'replace', decision: { ...draft.value }, initialSubmission: session }
-  else delete store.drafts[draftKey]
+  if (!store.ownsInitial(scope, session)) return
+  // Synchronize display fields only; ownership and request retention belong to the host.
+  store.drafts[draftKey]!.basis = basis.value
+  store.drafts[draftKey]!.decision = { ...draft.value }
 }, { deep: true, immediate: true, flush: 'sync' })
 const writeStatus = computed(() => writeState.value === 'loading' ? '正在确认页面提交是否已开启…'
   : writeState.value === 'readonly' ? '差异判断暂为只读：尚未开启页面提交。'
@@ -55,7 +55,7 @@ watch(phase, async value => {
 })
 function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value) { event.preventDefault(); event.returnValue = '' } }
 onMounted(() => { if (phase.value !== 'saving') void c.load(); window.addEventListener('beforeunload', beforeUnload) })
-onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload); emit('dirty', false) })
+onBeforeUnmount(() => { c.dispose(); window.removeEventListener('beforeunload', beforeUnload); emit('dirty', false) })
 </script>
 
 <template>

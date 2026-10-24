@@ -75,7 +75,7 @@ function requestOpen(next: boolean) {
 function discardAndClose() {
   confirmClose.value = false
   if (resolvedImpactId.value != null) draftStore?.discard(resolvedImpactId.value)
-  if (resolvedImpactId.value == null && !protectedSubmission.value) delete draftStore.drafts[initialKey.value]
+  if (resolvedImpactId.value == null && !protectedSubmission.value) draftStore.discard(initialKey.value)
   initialDirty.value = false
   if (draftState && !draftStore) draftState.value = false
   if (queuedScope.value) { initialHeadChanged.value = false; displayed.value = queuedScope.value; queuedScope.value = null }

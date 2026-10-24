@@ -1,4 +1,5 @@
-import { initialDecisionNeedsGuard, type InitialDecisionState } from './useInitialDifferenceDecision'
+import { createInitialDecisionState, initialDecisionNeedsGuard, type InitialDecisionState } from './useInitialDifferenceDecision'
+import type { ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { computed, onBeforeUnmount, reactive, type ComputedRef, type InjectionKey } from 'vue'
 
 /**
@@ -32,8 +33,10 @@ export interface ReviewDraftStore {
   draftFor: (impactId: number) => ReviewDraft
   hasDraft: (impactId: number) => boolean
   hasDirty: ComputedRef<boolean>
-  discard: (impactId: number) => void
+  discard: (impactId: number | string) => void
   discardAll: () => void
+  initialFor: (scope: ReviewScope) => InitialDecisionState
+  ownsInitial: (scope: ReviewScope, session: InitialDecisionState) => boolean
 }
 
 export const REVIEW_DRAFTS_KEY: InjectionKey<ReviewDraftStore> = Symbol('review-drafts')
@@ -72,6 +75,20 @@ export function reviewDraftIsDirty(draft: ReviewDraft): boolean {
  */
 export function useReviewDrafts(): ReviewDraftStore {
   const drafts = reactive<Record<string, ReviewDraft>>({})
+  let alive = true
+  const initialKey = (scope: ReviewScope) => `initial:${scope.enterpriseId}:${scope.titleCode}:${scope.direction}`
+  function initialFor(scope: ReviewScope): InitialDecisionState {
+    const key = initialKey(scope), retained = drafts[key]
+    const session = retained?.initialSubmission ?? createInitialDecisionState(scope)
+    if (retained && !retained.initialSubmission) { session.basis = retained.basis; session.draft = { ...retained.decision } }
+    if (!alive) throw new Error('Review draft host has ended')
+    // Even a clean session has an owner; dirty remains based only on business/request state.
+    drafts[key] = { basis: session.basis, mode: 'replace', decision: { ...session.draft }, initialSubmission: session }
+    return drafts[key]!.initialSubmission!
+  }
+  function ownsInitial(scope: ReviewScope, session: InitialDecisionState): boolean {
+    return alive && drafts[initialKey(scope)]?.initialSubmission === session
+  }
 
   function draftFor(impactId: number): ReviewDraft {
     const key = String(impactId)
@@ -84,7 +101,7 @@ export function useReviewDrafts(): ReviewDraftStore {
     return !!draft && reviewDraftIsDirty(draft)
   }
 
-  function discard(impactId: number) {
+  function discard(impactId: number | string) {
     const key = String(impactId)
     if (!drafts[key]?.initialSubmission?.request) delete drafts[key]
   }
@@ -97,7 +114,7 @@ export function useReviewDrafts(): ReviewDraftStore {
   const hasDirty = computed(() => Object.values(drafts).some(reviewDraftIsDirty))
 
   // The owner page is the lifetime boundary; no localStorage/sessionStorage or credential persistence.
-  onBeforeUnmount(() => { for (const key of Object.keys(drafts)) delete drafts[key] })
+  onBeforeUnmount(() => { alive = false; for (const key of Object.keys(drafts)) delete drafts[key] })
 
-  return { drafts, draftFor, hasDraft, hasDirty, discard, discardAll }
+  return { drafts, draftFor, hasDraft, hasDirty, discard, discardAll, initialFor, ownsInitial }
 }
