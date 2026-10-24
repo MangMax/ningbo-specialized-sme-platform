@@ -49,7 +49,7 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
       <p class="text-muted-foreground mt-3">本接口的操作人字段定义尚未核实</p>
       <section v-if="relatedRawSummary.length" class="mt-3" data-testid="platform-related-raw">
         <h5 class="text-sm font-medium">待核实的原平台信息</h5>
-        <ul class="mt-2 space-y-2 break-words [overflow-wrap:anywhere]">
+        <ul class="mt-2 flex flex-col gap-2 break-words [overflow-wrap:anywhere]">
           <li v-for="field in relatedRawSummary" :key="field.key" class="whitespace-pre-wrap">{{ field.value }}</li>
         </ul>
       </section>
