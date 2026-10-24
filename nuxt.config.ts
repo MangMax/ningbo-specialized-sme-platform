@@ -281,13 +281,16 @@ export default defineNuxtConfig({
 
   // 忽略代理 worktree 与本地库目录:它们各自的 node_modules 若被 dev 文件监听扫进来
   // 会耗尽文件描述符(EMFILE: too many open files)。
-  ignore: ['**/.claude/**', '**/data/**'],
+  // Runtime writes are not source changes. In particular Nuxt Icon's custom
+  // collection watcher reads builder:watch files as UTF-8, including SQLite
+  // files unless these directories are excluded from the builder watcher.
+  ignore: ['**/.claude/**', '**/data/**', '**/.runtime-logs/**', '**/.cache/**', '**/.incoming/**', '**/files/**'],
 
   vite: {
     plugins: [tailwindcss()],
     server: {
       watch: {
-        ignored: ['**/.claude/**', '**/data/**'],
+        ignored: ['**/.claude/**', '**/data/**', '**/.runtime-logs/**', '**/.cache/**', '**/.incoming/**', '**/files/**'],
       },
     },
   },

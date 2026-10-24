@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -117,17 +117,30 @@ async function waitForNuxtListener(child, output, expectedPort, timeoutMs) {
 
 export async function stopOwnedChild(child) {
   if (!childIsRunning(child)) return
-  const exited = new Promise((resolve) => child.once('exit', resolve))
+  // Nuxt's CLI may exit before its app/native children. Snapshot only this
+  // launcher's descendants while ownership can still be established; never
+  // search by a port, executable name or shared workspace path.
+  const processes = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' })
+    .trim().split('\n').map(line => line.trim().split(/\s+/).map(Number))
+  const owned = new Set([child.pid])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [pid, parent] of processes) if (owned.has(parent) && !owned.has(pid)) { owned.add(pid); changed = true }
+  }
+  const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
+  const wait = async duration => {
+    const deadline = Date.now() + duration
+    while ([...owned].some(alive) && Date.now() < deadline) await sleep(25)
+  }
   child.kill('SIGTERM')
-  let timer
-  const stopped = await Promise.race([
-    exited.then(() => true),
-    new Promise((resolve) => { timer = setTimeout(() => resolve(false), CHILD_EXIT_GRACE_MS) }),
-  ])
-  clearTimeout(timer)
-  if (stopped || !childIsRunning(child)) return
-  child.kill('SIGKILL')
-  await Promise.race([exited, sleep(1_000)])
+  await wait(CHILD_EXIT_GRACE_MS)
+  for (const pid of [...owned].reverse()) {
+    try { process.kill(pid, 'SIGKILL') } catch (error) { if (error.code !== 'ESRCH') throw error }
+  }
+  await wait(1_000)
+  const remaining = [...owned].filter(alive)
+  if (remaining.length) throw new Error(`Owned service processes did not exit: ${remaining.join(',')}`)
 }
 
 export async function startIsolatedNuxt({ cwd, portHint = 0, env = {} }) {
