@@ -26,11 +26,13 @@ function inOwnedGroup(start) {
   if (child.pid) ownedGroups.set(child, { id: child.pid, started: processTable().find(row => row.pid === child.pid)?.started })
   return child
 }
-export function spawnOwnedChild(command, args = [], options = {}) {
+/** Preserve Node's stdio-specific return types and all call overloads. @type {typeof spawn} */
+export const spawnOwnedChild = (command, args = [], options = {}) => {
   if (!Array.isArray(args)) { options = args; args = [] }
   return inOwnedGroup(() => spawn(command, args, { ...options, detached: true }))
 }
-export function forkOwnedChild(modulePath, args = [], options = {}) {
+/** @type {typeof fork} */
+export const forkOwnedChild = (modulePath, args = [], options = {}) => {
   if (!Array.isArray(args)) { options = args; args = [] }
   return inOwnedGroup(() => fork(modulePath, args, { ...options, detached: true }))
 }
