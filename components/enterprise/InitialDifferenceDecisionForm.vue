@@ -26,7 +26,7 @@ const c = useInitialDifferenceDecision(scope, {
   version: id => $fetch<DecisionVersion>(`/api/roster/decision-lifecycle/${id}`),
   post: body => $fetch<InitialDecisionReceipt>('/api/roster/evidence-review/browser-commands', { method: 'POST', body }),
 }, session)
-const { basis, draft, head, phase, writeState, message, correctionAccepted, dirty, locked, canSave, receipt, submittedVersion } = c
+const { basis, draft, head, phase, writeState, message, correctionAccepted, dirty, locked, canSave, canRetry, receipt, submittedVersion } = c
 const formId = useId(), statusId = useId()
 const editing = computed(() => writeState.value === 'ready' && phase.value === 'ready' && (!head.value?.current || correctionAccepted.value))
 const entryOpen = ref(!!retained || !!session.request)
@@ -40,7 +40,12 @@ watch([basis, draft, dirty, phase], () => {
 const writeStatus = computed(() => writeState.value === 'loading' ? '正在确认页面提交是否已开启…'
   : writeState.value === 'readonly' ? '差异判断暂为只读：尚未开启页面提交。'
     : writeState.value === 'unavailable' ? '差异判断暂为只读：无法确认页面提交是否已开启。' : '')
-function begin() { entryOpen.value = true; c.begin() }
+function begin() {
+  // Expand the draft immediately; fields remain disabled while capability is being checked.
+  // The controller alone ends a verified submission, after the fresh check succeeds.
+  entryOpen.value = true
+  void c.begin()
+}
 watch(head, value => { if (value) emit('current', value.versionId) })
 watch(phase, async value => {
   if (!['saved', 'superseded'].includes(value) || session.notified) return
@@ -49,7 +54,7 @@ watch(phase, async value => {
   try { await refreshAffected() } catch { /* current readback is already displayed; other read surfaces own their failures */ }
 })
 function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value) { event.preventDefault(); event.returnValue = '' } }
-onMounted(() => { if (phase.value !== 'unknown' && phase.value !== 'saving') void c.load(); window.addEventListener('beforeunload', beforeUnload) })
+onMounted(() => { if (phase.value !== 'saving') void c.load(); window.addEventListener('beforeunload', beforeUnload) })
 onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload); emit('dirty', false) })
 </script>
 
@@ -58,6 +63,8 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
     <h3 class="text-sm font-semibold">{{ head?.current ? '当前差异判断' : '登记差异判断' }}</h3>
     <p v-if="phase === 'loading'" role="status" class="text-muted-foreground text-sm">正在读取当前决定…</p>
     <p v-if="writeStatus" role="status" class="text-muted-foreground text-sm">{{ writeStatus }}</p>
+    <Button v-if="writeState === 'readonly' || writeState === 'unavailable'" type="button" variant="outline" class="self-start" @click="c.recheckCapability">重新检查页面提交能力</Button>
+    <p v-if="head?.versionId != null && !head.current" class="text-muted-foreground text-sm">当前已撤回 · 撤回版本 #{{ head.versionId }}，历史保留。</p>
     <DecisionVersionDetails v-if="head?.current" :decision="head.current" label="当前决定" />
     <DecisionVersionDetails v-if="submittedVersion && submittedVersion.id !== head?.current?.id" :decision="submittedVersion" label="本次提交版本" />
     <p v-if="receipt" class="text-muted-foreground text-sm">本次提交回执 #{{ receipt.versionId }}；当前决定与本次提交分别核对。</p>
@@ -67,7 +74,7 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
     <Button v-if="editing && !started" type="button" class="self-start" @click="begin">
       {{ head?.current ? '核对后追加更正' : '登记差异判断' }}
     </Button>
-    <Button v-else-if="head?.current && !correctionAccepted && ['ready', 'saved', 'superseded'].includes(phase) && writeState === 'ready'" type="button" class="self-start" @click="begin">核对后追加更正</Button>
+    <Button v-else-if="head && !correctionAccepted && (['saved', 'superseded'].includes(phase) || phase === 'ready' && !!head.current) && writeState === 'ready'" type="button" class="self-start" @click="begin">{{ head?.current ? '核对后追加更正' : '登记差异判断' }}</Button>
     <form v-if="started && phase !== 'saved' && phase !== 'superseded' && phase !== 'readback'" :id="formId" class="flex min-w-0 flex-col gap-3" @submit.prevent="c.save">
       <fieldset class="flex min-w-0 flex-col gap-3" :disabled="!editing || locked">
         <legend class="sr-only">差异判断业务字段</legend>
@@ -80,7 +87,7 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
       </fieldset>
       <p v-if="editing && !canSave" :id="statusId" class="text-muted-foreground text-[13px] leading-5">提交前需填写判断依据，明确选择结论及相应原因、措施；证据 ID 须为有效正整数。</p>
       <div class="flex flex-wrap gap-2">
-        <Button type="submit" :disabled="!canSave && phase !== 'unknown'" :aria-describedby="statusId">
+        <Button type="submit" :disabled="!canSave && !canRetry" :aria-describedby="statusId">
           {{ phase === 'saving' ? '正在提交…' : phase === 'unknown' ? '重试同一次提交' : head?.current ? '追加更正判断' : '保存差异判断' }}
         </Button>
       </div>

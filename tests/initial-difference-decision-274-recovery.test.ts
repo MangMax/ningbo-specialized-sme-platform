@@ -149,7 +149,7 @@ it('requires an explicit new human correction before ending a verified supersede
   currentId = 10; await c.save(); expect(c.phase.value).toBe('superseded'); expect(c.dirty.value).toBe(false)
   const first = JSON.parse(JSON.stringify(post.mock.calls[0]))
   await c.save(); expect(post).toHaveBeenCalledTimes(1)
-  c.begin(); expect(c.basis.value).toBe(''); expect(c.draft.value.status).toBe(''); expect(c.canSave.value).toBe(false)
+  await c.begin(); expect(c.basis.value).toBe(''); expect(c.draft.value.status).toBe(''); expect(c.canSave.value).toBe(false)
   c.basis.value = '核对当前十号后明确追加'; Object.assign(c.draft.value, { status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history' })
   await c.save(); expect(post).toHaveBeenCalledTimes(2)
   expect(c.state.request?.expectedCurrentId).toBe(10)

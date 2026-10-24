@@ -47,14 +47,37 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
   })
   const canSave = computed(() => !state.busy && phase.value === 'ready' && writeState.value === 'ready' && !!head.value
     && (!head.value.current || correctionAccepted.value) && !!basis.value.trim() && basis.value.trim().length <= 4000 && decisionReady.value)
-  function begin() {
-    if (state.busy || phase.value === 'unknown' || phase.value === 'readback') return
-    if (phase.value === 'saved' || phase.value === 'superseded') {
-      // Only an explicit new human correction may end a verified submission and create another command.
-      state.request = null; state.receipt = null; state.submittedVersion = null; state.notified = false
-      basis.value = ''; draft.value = emptyInitialDecisionDraft(); phase.value = 'ready'; message.value = ''
-    }
-    if (phase.value === 'ready') correctionAccepted.value = true
+  async function readWriteCapability() {
+    writeState.value = 'loading'
+    try {
+      const context = await api.context()
+      writeState.value = context?.writeEnabled === true ? 'ready' : context?.writeEnabled === false ? 'readonly' : 'unavailable'
+    } catch { writeState.value = 'unavailable' }
+  }
+  async function recheckCapability() {
+    if (state.busy) return
+    state.busy = true
+    try { await readWriteCapability() } finally { state.busy = false }
+  }
+  let beginning: Promise<boolean> | null = null
+  function begin(): Promise<boolean> {
+    if (beginning) return beginning
+    if (state.busy || !head.value || !['ready', 'saved', 'superseded'].includes(phase.value)) return Promise.resolve(false)
+    state.busy = true
+    beginning = (async () => {
+      try {
+        await readWriteCapability()
+        if (writeState.value !== 'ready') return false
+        if (phase.value === 'saved' || phase.value === 'superseded') {
+          // Only a fresh capability and explicit human action may end the verified submission.
+          state.request = null; state.receipt = null; state.submittedVersion = null; state.notified = false
+          basis.value = ''; draft.value = emptyInitialDecisionDraft(); phase.value = 'ready'; message.value = ''
+        }
+        correctionAccepted.value = true
+        return true
+      } finally { state.busy = false; beginning = null }
+    })()
+    return beginning
   }
   function validateVersion(value: DecisionVersion, id: number) {
     if (!value || value.id !== id || !sameScope(value, scope)) throw new Error('Invalid submitted decision version')
@@ -68,18 +91,16 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
     head.value = value
   }
   async function load() {
-    // Never load another head before resolving an unknown command; even a remount must replay it unchanged.
-    if (state.busy || phase.value === 'unknown') return
+    if (state.busy) return
+    const unknownRequest = phase.value === 'unknown'
     state.busy = true
-    phase.value = state.receipt ? 'readback' : 'loading'; message.value = ''; correctionAccepted.value = false
+    if (!unknownRequest) {
+      phase.value = state.receipt ? 'readback' : 'loading'; message.value = ''; correctionAccepted.value = false
+    }
     try {
-      if (!state.receipt) {
-        try {
-          writeState.value = 'loading'
-          const context = await api.context()
-          writeState.value = context?.writeEnabled === true ? 'ready' : context?.writeEnabled === false ? 'readonly' : 'unavailable'
-        } catch { writeState.value = 'unavailable' }
-      }
+      // Capability is independent of head identity. Unknown recovery checks only capability.
+      await readWriteCapability()
+      if (unknownRequest) return
       await readHead()
       if (!state.receipt) { phase.value = 'ready'; return }
       const id = state.receipt.versionId
@@ -91,7 +112,9 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
         message.value = `已提交并读回当前决定 #${id}；本次版本已核实，原决定和历史保留。`
       } else if (head.value?.versionId != null && head.value.versionId !== id) {
         phase.value = 'superseded'
-        message.value = `本次提交版本 #${id} 已读回；当前已由后续版本 #${head.value.versionId} 替代。历史保留，追加更正须重新核对当前决定。`
+        message.value = head.value.current
+          ? `本次提交版本 #${id} 已读回；当前已由后续版本 #${head.value.versionId} 替代。历史保留，追加更正须重新核对当前决定。`
+          : `本次提交版本 #${id} 已读回；后续撤回版本 #${head.value.versionId} 已生效，当前无有效决定。历史保留，可人工重新登记。`
       } else throw new Error('Current head and submitted version disagree')
     } catch {
       phase.value = state.receipt ? 'readback' : 'error'
@@ -99,18 +122,22 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
     } finally { state.busy = false }
   }
   async function save() {
+    if (beginning) await beginning
     if (state.busy || state.receipt || (!canSave.value && phase.value !== 'unknown')) return
-    if (!state.request) {
-      const d = draft.value
-      state.request = { ...scope, action: 'replace', expectedCurrentId: head.value!.versionId, basis: basis.value.trim(),
-        effectiveAt: new Date().toISOString(), idempotencyKey: crypto.randomUUID(),
-        decision: { status: d.status, reasonCode: d.status === 'confirmed_no_diff' ? null : d.reasonCode,
-          reasonNote: d.reasonNote.trim() || null, measureCode: d.measureCode, measureNote: d.measureNote.trim() || null,
-          verificationStatus: 'confirmed', evidenceQueryId: d.evidenceQueryId ? Number(d.evidenceQueryId) : null,
-          evidenceRelationId: d.evidenceRelationId ? Number(d.evidenceRelationId) : null } }
-    }
-    state.busy = true; phase.value = 'saving'; message.value = ''
+    state.busy = true
     try {
+      await readWriteCapability()
+      if (writeState.value !== 'ready') return
+      if (!state.request) {
+        const d = draft.value
+        state.request = { ...scope, action: 'replace', expectedCurrentId: head.value!.versionId, basis: basis.value.trim(),
+          effectiveAt: new Date().toISOString(), idempotencyKey: crypto.randomUUID(),
+          decision: { status: d.status, reasonCode: d.status === 'confirmed_no_diff' ? null : d.reasonCode,
+            reasonNote: d.reasonNote.trim() || null, measureCode: d.measureCode, measureNote: d.measureNote.trim() || null,
+            verificationStatus: 'confirmed', evidenceQueryId: d.evidenceQueryId ? Number(d.evidenceQueryId) : null,
+            evidenceRelationId: d.evidenceRelationId ? Number(d.evidenceRelationId) : null } }
+      }
+      phase.value = 'saving'; message.value = ''
       const response = await api.post(state.request)
       if (!Number.isSafeInteger(response?.versionId) || response.versionId <= 0) throw new Error('Invalid receipt')
       state.receipt = { versionId: response.versionId, currentId: response.currentId, previousId: response.previousId, action: response.action, recordedAt: response.recordedAt }; phase.value = 'readback'
@@ -120,9 +147,13 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
       if (['stale_version', 'stale_evidence', 'idempotency_conflict'].includes(code ?? '') || e?.status === 409 || e?.statusCode === 409) {
         phase.value = 'conflict'; state.request = null
         message.value = '当前决定已变化或提交冲突。草稿保留；请重新读取当前决定，核对后明确追加更正。'
-      } else if (['browser_review_disabled', 'origin_required', 'origin_mismatch', 'cross_site_request', 'unsupported_media_type', 'invalid_request', 'evidence_mismatch', 'evidence_not_found', 'invalid_prior_time'].includes(code ?? '')) {
+      } else if (code === 'browser_review_disabled') {
+        // A disabled retry cannot tell whether the earlier unknown attempt committed.
+        // Keep its identity even when the server gate changes after our capability check.
+        writeState.value = 'readonly'; phase.value = 'unknown'
+        message.value = '页面提交已关闭，本次请求身份保留。重新确认能力后，只能重试同一次提交。'
+      } else if (['origin_required', 'origin_mismatch', 'cross_site_request', 'unsupported_media_type', 'invalid_request', 'evidence_mismatch', 'evidence_not_found', 'invalid_prior_time'].includes(code ?? '')) {
         phase.value = 'ready'; state.request = null
-        if (code === 'browser_review_disabled') writeState.value = 'readonly'
         message.value = '提交未被接受，填写内容保留。请核对业务字段或重新读取页面提交能力。'
       } else {
         phase.value = 'unknown'
@@ -131,5 +162,6 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
     } finally { state.busy = false }
     if (state.receipt) await load()
   }
-  return { basis, draft, head, writeState, phase, message, correctionAccepted, receipt, submittedVersion, dirty, locked, canSave, begin, load, save, state }
+  const canRetry = computed(() => phase.value === 'unknown' && writeState.value === 'ready' && !state.busy)
+  return { basis, draft, head, writeState, phase, message, correctionAccepted, receipt, submittedVersion, dirty, locked, canSave, canRetry, begin, load, save, recheckCapability, state }
 }
