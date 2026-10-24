@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
-const props = defineProps<{ scope: ReviewScope }>()
+const props = defineProps<{ scope: ReviewScope; footer?: boolean }>()
 const emit = defineEmits<{ saved: []; dirty: [boolean]; current: [number | null] }>()
 // The Sheet keys this component by exact scope; no requests or drafts follow a new scope.
 const scope = { ...props.scope }
@@ -85,18 +85,23 @@ onBeforeUnmount(() => { c.dispose(); window.removeEventListener('beforeunload', 
         <p class="text-muted-foreground text-[13px] leading-5">请明确选择结论、原因和措施。查询覆盖完整不等于无差异；以下字段沿用追加更正的业务词表。</p>
         <ReplacementDecisionFields v-model="draft" class="[&_legend]:sr-only" />
       </fieldset>
-      <p v-if="editing && !canSave" :id="statusId" class="text-muted-foreground text-[13px] leading-5">提交前需填写判断依据，明确选择结论及相应原因、措施；证据 ID 须为有效正整数。</p>
-      <div class="flex flex-wrap gap-2">
-        <Button type="submit" :disabled="!canSave && !canRetry" :aria-describedby="statusId">
-          {{ phase === 'saving' ? '正在提交…' : phase === 'unknown' ? '重试同一次提交' : head?.current ? '追加更正判断' : '保存差异判断' }}
-        </Button>
-      </div>
     </form>
-    <Alert v-if="message" :variant="['unknown', 'conflict', 'error', 'readback', 'superseded'].includes(phase) ? 'destructive' : 'default'" role="status">
-      <AlertDescription>{{ message }}</AlertDescription>
-    </Alert>
-    <Button v-if="phase !== 'unknown' && phase !== 'saving'" type="button" variant="outline" class="self-start" :disabled="phase === 'loading'" @click="c.load">
-      {{ phase === 'readback' ? '重试读取当前决定' : '重新读取当前决定' }}
-    </Button>
+    <!-- 与既有复核表单共用 Sheet footer；内联仍处于普通流，唯一按钮关联原 form。 -->
+    <Teleport to="#review-sheet-footer" :disabled="!footer" defer>
+      <div class="flex min-w-0 flex-col gap-2">
+        <p v-if="started && editing && !canSave" :id="statusId" class="text-muted-foreground text-[13px] leading-5">提交前需填写判断依据，明确选择结论及相应原因、措施；证据 ID 须为有效正整数。</p>
+        <Alert v-if="message" :variant="['unknown', 'conflict', 'error', 'readback', 'superseded'].includes(phase) ? 'destructive' : 'default'" role="status">
+          <AlertDescription>{{ message }}</AlertDescription>
+        </Alert>
+        <div class="flex flex-wrap gap-2">
+          <Button v-if="started && phase !== 'saved' && phase !== 'superseded' && phase !== 'readback'" type="submit" :form="formId" :disabled="!canSave && !canRetry" :aria-describedby="statusId">
+            {{ phase === 'saving' ? '正在提交…' : phase === 'unknown' ? '重试同一次提交' : head?.current ? '追加更正判断' : '保存差异判断' }}
+          </Button>
+          <Button v-if="phase !== 'unknown' && phase !== 'saving'" type="button" variant="outline" :disabled="phase === 'loading'" @click="c.load">
+            {{ phase === 'readback' ? '重试读取当前决定' : '重新读取当前决定' }}
+          </Button>
+        </div>
+      </div>
+    </Teleport>
   </section>
 </template>

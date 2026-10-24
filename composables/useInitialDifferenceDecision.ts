@@ -137,7 +137,7 @@ export function useInitialDifferenceDecision(scope: ReviewScope, api: InitialDec
       submittedVersion.value = validateVersion(own!, id)
       if (head.value?.current?.id === id && own?.isCurrent !== false) {
         phase.value = 'saved'
-        message.value = `已提交并读回当前决定 #${id}；本次版本已核实，原决定和历史保留。`
+        message.value = `已提交并读回当前决定 #${id}；本次版本已核实。`
       } else if (head.value?.versionId != null && head.value.versionId !== id) {
         phase.value = 'superseded'
         message.value = head.value.current
