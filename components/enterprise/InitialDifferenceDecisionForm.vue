@@ -60,7 +60,7 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
     <p v-if="writeStatus" role="status" class="text-muted-foreground text-sm">{{ writeStatus }}</p>
     <DecisionVersionDetails v-if="head?.current" :decision="head.current" label="当前决定" />
     <DecisionVersionDetails v-if="submittedVersion && submittedVersion.id !== head?.current?.id" :decision="submittedVersion" label="本次提交版本" />
-    <p v-if="receipt" class="text-muted-foreground text-sm">本次提交回执 #{{ receipt.versionId }}；当前 head 与本次提交分别核对。</p>
+    <p v-if="receipt" class="text-muted-foreground text-sm">本次提交回执 #{{ receipt.versionId }}；当前决定与本次提交分别核对。</p>
     <p v-if="head?.current && !correctionAccepted && phase === 'ready'" class="text-muted-foreground text-sm">
       已有决定 #{{ head.versionId }}。核对后可明确追加更正；不会覆盖原决定或自动完成证据复核。
     </p>
