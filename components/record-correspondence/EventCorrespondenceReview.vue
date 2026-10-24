@@ -60,10 +60,10 @@ function select(eventId: number, open: boolean) {
           </template>
           <template #annual-review>
             <AnnualProcessReview v-if="selected === event.id" :view="annual.view" :back="back" :phase="annual.phase" :pending="annual.pending"
-              :read-failed="annual.readFailed" :target-page="annual.target.page" :can-cancel="annual.canCancel" :can-retry="annual.canRetry"
+              :read-failed="annual.readFailed" :has-more="annual.hasMore" :target-page="annual.target.page" :can-cancel="annual.canCancel" :can-retry="annual.canRetry"
               :progress="annual.progress" :business-reasons="annual.businessReasons" :task-read-failed="annual.taskReadFailed" :action-error="annual.actionError" :audit-readback="annual.auditReadback"
               @refresh="annual.refresh()" @retry-submit="annual.retrySubmit" @retry-readback="annual.retryReadback" @retry-task="annual.retryTask" @cancel="annual.cancel"
-              @retry-task-read="annual.retryTaskRead" @page="annual.refresh({ page: $event })" @page-size="annual.refresh({ page: 1, pageSize: $event })" @event-navigate="emit('event-navigate', $event)" />
+              @load-more="annual.loadMore" @retry-read="annual.retryRead" @retry-task-read="annual.retryTaskRead" @page="annual.refresh({ page: $event })" @page-size="annual.refresh({ page: 1, pageSize: $event })" @event-navigate="emit('event-navigate', $event)" />
           </template>
         </RecordEventRow>
       </li>

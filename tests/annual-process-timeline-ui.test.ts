@@ -75,12 +75,13 @@ it('expands interface version and observation provenance and loads the real read
   expect(document.body.textContent).toContain('测试企业')
 })
 
-it('emits pagination without relabeling the displayed source page or discarding the existing process', async () => {
+it('emits continuous load intent without page controls or discarding the existing process', async () => {
   const value = view(); value.total = 26
   wrapper = panel(value)
-  await wrapper.get('button[aria-label="下一页"]').trigger('click')
-  expect(wrapper.emitted('page')).toEqual([[2]])
-  expect(wrapper.text()).toContain('过程来源第 1 页')
+  await wrapper.setProps({ hasMore: true })
+  await wrapper.findAll('button').find(button => button.text() === '加载更多过程')!.trigger('click')
+  expect(wrapper.emitted('load-more')).toEqual([[]])
+  expect(wrapper.text()).not.toMatch(/每页|过程来源第/)
   expect(wrapper.findAll('[data-annual-step]')).toHaveLength(2)
 })
 

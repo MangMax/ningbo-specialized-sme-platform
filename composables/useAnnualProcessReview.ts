@@ -21,6 +21,24 @@ function restore(eventId: number): Recovery | null {
  * joined to the existing readback barrier; task history never supplies final. */
 export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | null>) {
   const raw = shallowRef<EventAnnualProcessPage | null>(null)
+  // Display batches never supply scope qualification; raw remains the latest
+  // official DTO, including its complete-scope summary and decision refs.
+  const batches = shallowRef(new Map<number, EventAnnualProcessPage['process']['steps']>())
+  type ReadMode = 'current' | 'reset' | 'append'
+  type ReadPlan = Readonly<{
+    intent: ReadMode
+    mode: ReadMode
+    eventId: number
+    epoch: number
+    generation: string | null
+    total: number | null
+    pageSize: number
+    pages: readonly number[]
+  }>
+  const freezePlan = (plan: ReadPlan): ReadPlan => Object.freeze({ ...plan, pages: Object.freeze([...plan.pages]) })
+  // Published facts, pending user intent, and the request/failure cursor have
+  // separate lifetimes. A failed attempt must never shrink the explicit plan.
+  let pendingPlan: ReadPlan | null = null
   const phase = shallowRef<AnnualReviewPhase>('checking')
   const enabled = shallowRef(false)
   const reading = shallowRef(false)
@@ -44,20 +62,68 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
     try { sessionStorage.setItem(storageKey(id), JSON.stringify(value)) } catch { /* Retain identity in the mounted controller if storage is unavailable. */ }
   }
 
-  async function readAnnual(): Promise<boolean> {
+  async function readAnnual(mode?: ReadMode): Promise<boolean> {
     const id = eventId(), token = epoch
     if (!mounted || id == null) return true
-    const sequence = ++readSequence, request = { ...target.value }
+    const sequence = ++readSequence
+    const previous = raw.value
+    const held = pendingPlan?.eventId === id && pendingPlan.epoch === token ? pendingPlan : null
+    let plan: ReadPlan
+    if (held && (mode == null || mode === 'current')) {
+      // A shared readback promotes an append to refresh its whole explicit
+      // scope, without replacing the original append intent or losing its tail.
+      plan = mode === 'current' && held.mode === 'append' ? freezePlan({ ...held, mode: 'current' }) : held
+    } else {
+      const intent = mode ?? 'current'
+      plan = freezePlan({ intent, mode: intent, eventId: id, epoch: token,
+        generation: previous?.sourceGeneration ?? null, total: previous?.total ?? null, pageSize: target.value.pageSize,
+        pages: intent === 'reset' ? [target.value.page] : [...new Set([...batches.value.keys(), target.value.page])].sort((a, b) => a - b) })
+    }
+    pendingPlan = plan
+    const requested = plan.mode === 'append' ? plan.pages.filter(page => !batches.value.has(page)) : plan.pages
+    const pages = [target.value.page, ...requested.filter(page => page !== target.value.page)].filter(page => requested.includes(page))
+    let request = { page: pages[0] ?? target.value.page, pageSize: plan.pageSize }
+    const next = plan.mode === 'append' ? new Map(batches.value) : new Map<number, EventAnnualProcessPage['process']['steps']>()
     readController?.abort(); const controller = new AbortController(); readController = controller
     reading.value = true
     try {
-      const page = await $fetch<EventAnnualProcessPage>(`/api/roster/events/${id}/annual-process`, { query: request, signal: controller.signal })
-      if (!current(token, id) || sequence !== readSequence) return false
-      if (page.process.event.id !== id || !page.sourceGeneration || page.page !== request.page || page.pageSize !== request.pageSize || !Array.isArray(page.process.steps)) throw new Error('annual_read_mismatch')
-      const sourceChanged = raw.value?.sourceGeneration !== page.sourceGeneration
-      raw.value = page
+      const fetchPage = async () => {
+        const page = await $fetch<EventAnnualProcessPage>(`/api/roster/events/${id}/annual-process`, { query: request, signal: controller.signal })
+        if (page.process.event.id !== id || !page.sourceGeneration || page.page !== request.page || page.pageSize !== request.pageSize || !Array.isArray(page.process.steps)
+          || !Number.isSafeInteger(page.total) || page.total < 0 || page.process.steps.length > request.pageSize) throw new Error('annual_read_mismatch')
+        return page
+      }
+      let latest: EventAnnualProcessPage | undefined
+      for (const pageNumber of pages) {
+        request = { page: pageNumber, pageSize: plan.pageSize }; target.value = request
+        let page = await fetchPage()
+        if (!current(token, id) || sequence !== readSequence) return false
+        if (plan.generation && page.sourceGeneration !== plan.generation) {
+          // Stop the old plan on a new source. At most one extra bounded first
+          // batch is read; no old batch or decision snapshot crosses generations.
+          readFailed.value = true
+          plan = freezePlan({ ...plan, intent: 'reset', mode: 'reset', pages: [1], generation: page.sourceGeneration, total: page.total }); pendingPlan = plan
+          if (request.page !== 1) {
+            request = { page: 1, pageSize: plan.pageSize }; target.value = request
+            page = await fetchPage()
+            if (!current(token, id) || sequence !== readSequence) return false
+          }
+          plan = freezePlan({ ...plan, generation: page.sourceGeneration, total: page.total }); pendingPlan = plan
+          next.clear(); next.set(1, page.process.steps); latest = page
+          break
+        }
+        if (plan.mode !== 'reset' && plan.total != null && page.total !== plan.total) throw new Error('annual_read_mismatch')
+        if (!plan.generation) { plan = freezePlan({ ...plan, generation: page.sourceGeneration, total: page.total }); pendingPlan = plan }
+        next.set(page.page, page.process.steps); latest = page
+      }
+      if (!latest || pendingPlan !== plan) throw new Error('annual_read_mismatch')
+      // Publish all refreshed observation decisions together. A partial sweep
+      // cannot turn an older displayed batch into a successful current readback.
+      batches.value = next
+      raw.value = latest
+      pendingPlan = null
       readFailed.value = false
-      if (sourceChanged && enabled.value && recovery.value?.jobId && recovery.value.generation !== page.sourceGeneration) {
+      if (previous?.sourceGeneration !== latest.sourceGeneration && enabled.value && recovery.value?.jobId && recovery.value.generation !== latest.sourceGeneration) {
         phase.value = 'blocked'; auditReadback.value = []; watchJob(recovery.value.jobId)
       }
       return true
@@ -77,7 +143,7 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
       const selection = new Promise<void>(resolve => { changed = resolve })
       const stop = watch(eventId, changed, { flush: 'sync' })
       let result: boolean | void
-      try { result = await Promise.race([readAnnual(), selection]) } finally { stop() }
+      try { result = await Promise.race([readAnnual('current'), selection]) } finally { stop() }
       if (eventId() !== id) continue
       return result === true
     }
@@ -218,9 +284,7 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
     } else phase.value = 'running'
   })
 
-  async function refresh(patch: Partial<typeof target.value> = {}) {
-    target.value = { ...target.value, ...patch }
-    if (!await readAnnual() || eventId() == null) return
+  async function afterAnnualRead() {
     if (!enabled.value) { phase.value = 'read-only'; return }
     if (phase.value === 'unknown') return
     if (recovery.value?.jobId) {
@@ -230,6 +294,21 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
       return
     }
     await submit()
+  }
+  async function refresh(patch: Partial<typeof target.value> = {}) {
+    target.value = { ...target.value, page: 1, ...patch }
+    if (await readAnnual('reset') && eventId() != null) await afterAnnualRead()
+  }
+  const lastLoadedPage = computed(() => Math.max(0, ...batches.value.keys()))
+  const hasMore = computed(() => !!raw.value && lastLoadedPage.value * raw.value.pageSize < raw.value.total)
+  async function loadMore() {
+    if (reading.value || acting.value || phase.value === 'syncing' || readFailed.value || !hasMore.value || !raw.value) return
+    target.value = { page: lastLoadedPage.value + 1, pageSize: raw.value.pageSize }
+    if (await readAnnual('append') && eventId() != null) await afterAnnualRead()
+  }
+  async function retryRead() {
+    if (reading.value || acting.value || phase.value === 'syncing') return
+    if (await readAnnual() && eventId() != null) await afterAnnualRead()
   }
   async function taskAction(action: 'retry' | 'cancel') {
     const id = eventId(), token = epoch, jobId = recovery.value?.jobId
@@ -242,8 +321,8 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
     finally { if (current(token, id)) { acting.value = false; watchJob(jobId) } }
   }
   async function start() {
-    epoch++; readSequence++; readController?.abort(); pollKey.value = ''; syncing = null
-    raw.value = null; task.value = null; reading.value = false; readFailed.value = false; acting.value = false; enabled.value = false
+    epoch++; readSequence++; readController?.abort(); pollKey.value = ''; syncing = null; pendingPlan = null
+    raw.value = null; batches.value = new Map(); task.value = null; reading.value = false; readFailed.value = false; acting.value = false; enabled.value = false
     recovery.value = null; auditReadback.value = []; actionError.value = ''; phase.value = 'checking'; target.value = { page: 1, pageSize: 50 }
     const id = eventId(), token = epoch
     if (!mounted || id == null) return
@@ -263,15 +342,16 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
   }
   watch(eventId, () => { void start() }, { flush: 'sync' })
   onMounted(() => { mounted = true; void start() })
-  onBeforeUnmount(() => { mounted = false; epoch++; readSequence++; readController?.abort(); pollKey.value = '' })
+  onBeforeUnmount(() => { mounted = false; epoch++; readSequence++; readController?.abort(); pollKey.value = ''; pendingPlan = null })
   const outcome = computed(() => task.value?.result?.events.find(event => event.eventId === eventId()))
   const capabilitiesCurrent = computed(() => enabled.value && raw.value?.sourceGeneration === recovery.value?.generation && !acting.value)
   return {
     view: computed(() => {
       if (!raw.value) return null
-      const view = presentAnnualProcess(raw.value)
+      const steps = [...new Map([...batches.value].sort(([a], [b]) => a - b).flatMap(([, steps]) => steps).map(step => [step.id, step])).values()]
+      const view = presentAnnualProcess({ ...raw.value, process: { ...raw.value.process, steps } })
       return readFailed.value ? { ...view, qualification: null } : view
-    }), phase, readFailed, target,
+    }), phase, readFailed, target, hasMore,
     pending: computed(() => reading.value || acting.value || phase.value === 'syncing'),
     canCancel: computed(() => capabilitiesCurrent.value && !!task.value?.capabilities.cancel),
     canRetry: computed(() => capabilitiesCurrent.value && !!task.value?.capabilities.retry),
@@ -282,6 +362,6 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
       const currentReasons = new Set([...(process?.reasons ?? []), ...(process?.finalQualification?.reasons ?? []), ...(process?.scopeGaps ?? []).flatMap(gap => gap.reasons)].map(annualReasonText))
       return [...new Set([...(outcome.value?.finalQualification.reasons ?? []), ...(task.value?.errorCode ? [task.value.errorCode] : [])].map(annualReasonText))].filter(reason => !currentReasons.has(reason))
     }),
-    refresh, retrySubmit: submit, retryReadback: synchronize, retryTask: () => taskAction('retry'), cancel: () => taskAction('cancel'), retryTaskRead: () => recovery.value?.jobId && watchJob(recovery.value.jobId),
+    refresh, loadMore, retryRead, retrySubmit: submit, retryReadback: synchronize, retryTask: () => taskAction('retry'), cancel: () => taskAction('cancel'), retryTaskRead: () => recovery.value?.jobId && watchJob(recovery.value.jobId),
   }
 }
