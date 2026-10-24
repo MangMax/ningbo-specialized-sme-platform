@@ -124,9 +124,10 @@ it('marks retained content as the old source during switching and failure, retri
 
 
 it('maps known designation code two without repeating the identical source designation or showing its code', async () => {
-  const wrapper = renderRow({ ...relation, rawFields: { qymc: '企业原名', rdjb: '2' } })
+  const wrapper = renderRow({ ...relation, rawFields: { rdjb: '2' } })
   const facts = wrapper.get('[data-testid="platform-business-facts"]')
   expect(facts.text().match(/专精特新中小企业/g)).toHaveLength(1)
+  expect(wrapper.text()).not.toContain('未提供已核实的业务字段')
   expect(facts.text()).not.toContain('平台称号原值')
   expect(facts.findAll('dd').map(node => node.text())).not.toContain('2')
   await open(wrapper, '技术出处与完整原文')
@@ -136,6 +137,7 @@ it('maps known designation code two without repeating the identical source desig
 it('keeps an unknown designation code only in complete technical raw without guessing its meaning', async () => {
   const wrapper = renderRow({ ...relation, sourceRdjb: 'X99', query: { ...query, rdjb: 'X99' }, rawFields: { rdjb: 'X99' } })
   expect(wrapper.get('[data-testid="platform-business-facts"]').text()).toContain('未标注')
+  expect(wrapper.text()).toContain('未提供已核实的业务字段')
   expect(wrapper.text()).not.toContain('X99')
   await open(wrapper, '技术出处与完整原文')
   expect(JSON.parse(wrapper.get('[data-testid="platform-complete-raw"]').text()).rdjb).toBe('X99')

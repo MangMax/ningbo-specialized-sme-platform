@@ -13,7 +13,9 @@ const props = defineProps<{ relation?: RelationSource | null; exportRow?: Export
 const source = computed(() => props.relation?.query.interface ?? '')
 const fields = computed(() => platformBusinessFields(props.relation?.rawFields ?? props.exportRow?.rawFields))
 const sourceTitle = computed(() => PLATFORM_RDJBS[props.relation?.sourceRdjb ?? props.relation?.query.rdjb ?? ''] ?? '未标注')
-const businessFields = computed(() => platformPresentationFields(props.relation?.rawFields).flatMap(field => {
+const providedBusinessFields = computed(() => platformPresentationFields(props.relation?.rawFields))
+const hasVerifiedBusinessFields = computed(() => providedBusinessFields.value.some(field => field.key !== 'rdjb' || Boolean(PLATFORM_RDJBS[field.value])))
+const businessFields = computed(() => providedBusinessFields.value.flatMap(field => {
   if (field.key !== 'rdjb') return [field]
   const title = PLATFORM_RDJBS[field.value]
   // Only known codes have business meaning. Raw values, including unknown
@@ -36,7 +38,7 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
         <dt class="text-muted-foreground">来源称号</dt><dd>{{ sourceTitle }}</dd>
         <template v-for="field in businessFields" :key="field.key"><dt class="text-muted-foreground">{{ field.label }}</dt><dd>{{ field.value }}</dd></template>
       </dl>
-      <p v-if="!businessFields.length" class="text-muted-foreground mt-3">本条原文未提供已核实的业务字段。</p>
+      <p v-if="!hasVerifiedBusinessFields" class="text-muted-foreground mt-3">本条原文未提供已核实的业务字段。</p>
       <p class="text-muted-foreground mt-3">平台办理人：未记录或尚未核实。</p>
       <DisclosurePanel :key="relation.id" compact title="技术出处与完整原文" class="mt-3 border-t">
         <dl class="mt-2 grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 break-words [overflow-wrap:anywhere] sm:grid-cols-[auto_minmax(0,1fr)]">
