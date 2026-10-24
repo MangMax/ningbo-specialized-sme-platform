@@ -1,21 +1,46 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_DECLARE_KINDS, TITLES } from '~~/lib/labels'
-import { platformBusinessFields } from '~~/lib/roster/platform-records'
+import { platformBusinessFields, platformPresentationFields } from '~~/lib/roster/platform-records'
+import { formatFetchTime } from '~~/lib/reconcile-time'
 import type { ExportRowSource, RelationSource } from '~~/lib/roster/correspondence-view'
 import PlatformQueryProvenance from '@/components/PlatformQueryProvenance.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import PlatformFieldConflicts from '@/components/PlatformFieldConflicts.vue'
 import { Badge } from '@/components/ui/badge'
 
-const props = defineProps<{ relation?: RelationSource | null; exportRow?: ExportRowSource | null; compact?: boolean }>()
+const props = defineProps<{ relation?: RelationSource | null; exportRow?: ExportRowSource | null; compact?: boolean; presentation?: 'source' | 'business' }>()
 const source = computed(() => props.relation?.query.interface ?? '')
 const fields = computed(() => platformBusinessFields(props.relation?.rawFields ?? props.exportRow?.rawFields))
+const businessFields = computed(() => platformPresentationFields(props.relation?.rawFields))
+const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? null, null, 2))
 </script>
 
 <template>
   <div class="min-w-0 rounded-sm border bg-card p-3 text-[13px] leading-5" data-testid="record-source-row">
-    <template v-if="relation">
+    <template v-if="relation && presentation === 'business'">
+      <h4 class="text-sm font-medium">{{ PLATFORM_INTERFACES[source] ?? '平台接口记录' }}</h4>
+      <p class="text-muted-foreground mt-1">采集时间：{{ formatFetchTime(relation.query.queriedAt) ?? relation.query.queriedAt }} · {{ PLATFORM_QUERY_STATUSES[relation.query.status] ?? '状态待核' }}</p>
+      <PlatformFieldConflicts :conflicts="relation.normalizationConflicts" />
+      <dl class="mt-3 grid min-w-0 grid-cols-1 gap-x-4 gap-y-2 break-words [overflow-wrap:anywhere] sm:grid-cols-[auto_minmax(0,1fr)]" data-testid="platform-business-facts">
+        <template v-if="!businessFields.some(field => field.key === 'qymc')"><dt class="text-muted-foreground">企业原名</dt><dd>{{ relation.nameRaw || '未提供' }}</dd></template>
+        <template v-if="!businessFields.some(field => field.key === 'tyshxydm') && relation.usccRaw"><dt class="text-muted-foreground">信用代码原值</dt><dd>{{ relation.usccRaw }}</dd></template>
+        <dt class="text-muted-foreground">来源称号</dt><dd>{{ PLATFORM_RDJBS[relation.sourceRdjb ?? relation.query.rdjb] ?? '未标注' }}</dd>
+        <template v-for="field in businessFields" :key="field.key"><dt class="text-muted-foreground">{{ field.label }}</dt><dd>{{ field.value }}</dd></template>
+      </dl>
+      <p v-if="!businessFields.length" class="text-muted-foreground mt-3">本条原文未提供已核实的业务字段。</p>
+      <p class="text-muted-foreground mt-3">平台办理人：未记录或尚未核实。</p>
+      <DisclosurePanel :key="relation.id" compact title="技术出处与完整原文" class="mt-3 border-t">
+        <dl class="mt-2 grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 break-words [overflow-wrap:anywhere] sm:grid-cols-[auto_minmax(0,1fr)]">
+          <dt class="text-muted-foreground">业务编号原值</dt><dd>{{ relation.relationKey ?? '未提供' }}</dd>
+          <dt class="text-muted-foreground">来源定位</dt><dd>查询 #{{ relation.query.id }} · 原行 {{ relation.sequenceNo }} · 页 {{ relation.sourcePage ?? '未知' }}</dd>
+        </dl>
+        <PlatformQueryProvenance class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
+        <p class="text-muted-foreground mt-2">以下为本条接口原文；未核实字段不据缩写推断业务含义。日期与有效期保留原值，不推断生命周期。</p>
+        <pre class="mt-2 max-w-full whitespace-pre-wrap break-words text-xs [overflow-wrap:anywhere]" data-testid="platform-complete-raw">{{ completeRaw }}</pre>
+      </DisclosurePanel>
+    </template>
+    <template v-else-if="relation">
       <div class="flex flex-wrap items-center gap-2">
         <strong>{{ PLATFORM_INTERFACES[source] ?? '平台接口记录' }} · 原行 {{ relation.sequenceNo }}</strong>
         <Badge variant="outline">{{ PLATFORM_QUERY_STATUSES[relation.query.status] ?? '状态待核' }}</Badge>
