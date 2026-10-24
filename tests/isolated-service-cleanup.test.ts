@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, it } from 'vitest'
-import { stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
 it('stops native descendants after the launcher exits without stopping an unrelated service', async () => {
@@ -36,3 +36,29 @@ it('accepts an already exited owned child without signalling the current process
   expect(child.exitCode).toBe(0)
   expect(alive(process.pid)).toBe(true)
 })
+
+it('retains native ownership when the launcher exits before cleanup is called', async () => {
+  const launcher = spawn(process.execPath, ['-e', `
+    const {spawn}=require('node:child_process');
+    const child=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});const s=require('node:http').createServer((q,r)=>r.end('ready'));s.listen(0,'127.0.0.1',()=>process.send({port:s.address().port}));"],{stdio:['ignore','ignore','ignore','ipc']});
+    child.on('message',m=>process.send({pid:child.pid,port:m.port}));
+    process.on('message',()=>process.exit(0));setInterval(()=>{},1000);
+  `], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
+  let nativePid: number | undefined
+  try {
+    const [ready] = await once(launcher, 'message')
+    const record = ready as { pid: number; port: number }
+    nativePid = record.pid
+    await waitForHttp(`http://127.0.0.1:${record.port}`, { child: launcher })
+    const exited = once(launcher, 'exit')
+    launcher.send('exit')
+    await exited
+    expect(alive(nativePid)).toBe(true)
+    await stopOwnedChild(launcher)
+    expect(alive(nativePid)).toBe(false)
+  } finally {
+    if (launcher.exitCode === null && launcher.signalCode === null) launcher.kill('SIGKILL')
+    if (nativePid && alive(nativePid)) process.kill(nativePid, 'SIGKILL')
+    for (let i = 0; i < 40 && nativePid && alive(nativePid); i++) await sleep(25)
+  }
+}, 12000)

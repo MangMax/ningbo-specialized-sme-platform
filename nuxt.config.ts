@@ -11,6 +11,8 @@ const projectIcons = createRequire(import.meta.url)('./assets/icons/project-icon
   prefix: string
   icons: Record<string, { body: string; width?: number; height?: number }>
 }
+const runtimeDirectories = ['data', '.runtime-logs', '.cache', '.incoming', 'files']
+const runtimeWatchIgnores = runtimeDirectories.map(dir => `${fileURLToPath(new URL(`./${dir}`, import.meta.url))}/**`)
 
 // SPA only — no SSR. Everything runs in the browser against Nitro server routes.
 export default defineNuxtConfig({
@@ -284,13 +286,13 @@ export default defineNuxtConfig({
   // Runtime writes are not source changes. In particular Nuxt Icon's custom
   // collection watcher reads builder:watch files as UTF-8, including SQLite
   // files unless these directories are excluded from the builder watcher.
-  ignore: ['**/.claude/**', '**/data/**', '**/.runtime-logs/**', '**/.cache/**', '**/.incoming/**', '**/files/**'],
+  ignore: ['**/.claude/**', ...runtimeDirectories.map(dir => `/${dir}/**`)],
 
   vite: {
     plugins: [tailwindcss()],
     server: {
       watch: {
-        ignored: ['**/.claude/**', '**/data/**', '**/.runtime-logs/**', '**/.cache/**', '**/.incoming/**', '**/files/**'],
+        ignored: ['**/.claude/**', ...runtimeWatchIgnores],
       },
     },
   },

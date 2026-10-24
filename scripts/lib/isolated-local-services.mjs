@@ -10,6 +10,39 @@ function childIsRunning(child) {
   return child && child.exitCode === null && child.signalCode === null
 }
 
+const ownedChildren = new WeakMap()
+function processTable() {
+  return execFileSync('ps', ['-A', '-o', 'pid=,ppid=,lstart='], { encoding: 'utf8' })
+    .trim().split('\n').map(line => {
+      const [pid, parent, ...started] = line.trim().split(/\s+/)
+      return { pid: Number(pid), parent: Number(parent), started: started.join(' ') }
+    })
+}
+/** Register while the launcher is alive, before its descendants can be orphaned. */
+export function trackOwnedChild(child) {
+  if (ownedChildren.has(child)) return ownedChildren.get(child)
+  const state = { processes: new Map(), timer: undefined, error: undefined }
+  const capture = () => {
+    if (!childIsRunning(child)) return
+    const table = processTable(), ids = new Set([child.pid])
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const row of table) if (ids.has(row.parent) && !ids.has(row.pid)) { ids.add(row.pid); changed = true }
+    }
+    for (const row of table) if (ids.has(row.pid)) state.processes.set(row.pid, row.started)
+  }
+  capture()
+  state.timer = setInterval(() => {
+    try { capture() } catch (error) { state.error = error; clearInterval(state.timer) }
+  }, 250)
+  state.timer.unref()
+  child.once('exit', () => clearInterval(state.timer))
+  child.once('error', () => clearInterval(state.timer))
+  ownedChildren.set(child, state)
+  return state
+}
+
 export async function reserveLoopbackPort(requestedPort = 0) {
   if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65_535) {
     throw new Error(`Invalid RL10 verification port: ${requestedPort}`)
@@ -40,6 +73,7 @@ export async function reserveLoopbackPort(requestedPort = 0) {
  * @param {{ timeoutMs?: number, child?: import('node:child_process').ChildProcess }} [options]
  */
 export async function waitForHttp(url, { timeoutMs = 60_000, child } = {}) {
+  if (child) trackOwnedChild(child)
   const deadline = Date.now() + timeoutMs
   let lastError
   while (Date.now() < deadline) {
@@ -116,31 +150,38 @@ async function waitForNuxtListener(child, output, expectedPort, timeoutMs) {
 }
 
 export async function stopOwnedChild(child) {
-  if (!childIsRunning(child)) return
-  // Nuxt's CLI may exit before its app/native children. Snapshot only this
-  // launcher's descendants while ownership can still be established; never
+  if (!childIsRunning(child) && !ownedChildren.has(child)) return
+  // Nuxt's CLI may exit before its app/native children. Keep only this
+  // launcher's tracked descendants while ownership can be established; never
   // search by a port, executable name or shared workspace path.
-  const processes = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' })
-    .trim().split('\n').map(line => line.trim().split(/\s+/).map(Number))
-  const owned = new Set([child.pid])
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const [pid, parent] of processes) if (owned.has(parent) && !owned.has(pid)) { owned.add(pid); changed = true }
+  const state = trackOwnedChild(child)
+  clearInterval(state.timer)
+  // Refresh once more while the launcher is still alive. Identity checks keep
+  // an exited/reused PID outside the set we are allowed to signal.
+  const table = processTable()
+  const ids = new Set([child.pid])
+  for (let size = -1; size !== ids.size;) {
+    size = ids.size
+    for (const row of table) if (ids.has(row.parent)) ids.add(row.pid)
   }
-  const alive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
+  if (childIsRunning(child)) for (const row of table) if (ids.has(row.pid)) state.processes.set(row.pid, row.started)
+  const owned = state.processes
+  const living = () => processTable().filter(row => owned.get(row.pid) === row.started).map(row => row.pid)
   const wait = async duration => {
     const deadline = Date.now() + duration
-    while ([...owned].some(alive) && Date.now() < deadline) await sleep(25)
+    while (living().length && Date.now() < deadline) await sleep(100)
   }
-  child.kill('SIGTERM')
+  if (childIsRunning(child)) child.kill('SIGTERM')
+  else for (const pid of living()) { try { process.kill(pid, 'SIGTERM') } catch (error) { if (error.code !== 'ESRCH') throw error } }
   await wait(CHILD_EXIT_GRACE_MS)
-  for (const pid of [...owned].reverse()) {
+  for (const pid of living().reverse()) {
     try { process.kill(pid, 'SIGKILL') } catch (error) { if (error.code !== 'ESRCH') throw error }
   }
   await wait(1_000)
-  const remaining = [...owned].filter(alive)
+  const remaining = living()
+  ownedChildren.delete(child)
   if (remaining.length) throw new Error(`Owned service processes did not exit: ${remaining.join(',')}`)
+  if (state.error) throw state.error
 }
 
 export async function startIsolatedNuxt({ cwd, portHint = 0, env = {} }) {
@@ -152,6 +193,7 @@ export async function startIsolatedNuxt({ cwd, portHint = 0, env = {} }) {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, ...env },
   })
+  trackOwnedChild(child)
   let output = ''
   child.stdout.setEncoding('utf8')
   child.stderr.setEncoding('utf8')
