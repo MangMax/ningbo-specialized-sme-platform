@@ -1,23 +1,41 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch } from 'vue'
+import { computed, nextTick, shallowRef, watch } from 'vue'
 import { confirmedAnnualStep, orderedAnnualSteps, type AnnualTimelineView } from '~~/lib/roster/annual-process-presentation'
 import { cn } from '@/lib/utils'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import TablePagination from '@/components/TablePagination.vue'
 import SourceReader from './SourceReader.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
-const props = defineProps<{ view: AnnualTimelineView; back: string; pending?: boolean }>()
-const emit = defineEmits<{ page: [page: number]; 'page-size': [size: number]; 'event-navigate': [eventId: number] }>()
+const props = defineProps<{ view: AnnualTimelineView; back: string; pending?: boolean; hasMore?: boolean; readFailed?: boolean }>()
+// Retain internal page events for existing callers, without pagination controls.
+const emit = defineEmits<{ page: [page: number]; 'page-size': [size: number]; 'load-more': []; 'event-navigate': [eventId: number] }>()
 const steps = computed(() => orderedAnnualSteps(props.view.steps))
 const finalStepId = computed(() => confirmedAnnualStep(props.view))
 const latestStatus = computed(() => props.view.latestStatus ?? props.view.steps.find(step => step.id === props.view.latestStepId)?.status)
 const reasons = computed(() => [...new Set([...props.view.reasons, ...(props.view.qualification?.reasons ?? [])])])
+const timeline = shallowRef<HTMLElement | null>(null)
+let beforeAppend: Set<string> | null = null
+function loadMore() {
+  beforeAppend = new Set(steps.value.map(step => step.id))
+  emit('load-more')
+}
+watch(() => props.pending, async pending => {
+  if (pending || !beforeAppend) return
+  const previous = beforeAppend; beforeAppend = null
+  await nextTick()
+  // Continue keyboard reading at the first newly displayed process, including
+  // when the last batch removes the load button. Never steal focus from a dialog.
+  const active = document.activeElement
+  if (active !== document.body && !timeline.value?.contains(active)) return
+  const added = [...(timeline.value?.querySelectorAll<HTMLElement>('[data-annual-step]') ?? [])]
+    .find(element => !previous.has(element.dataset.annualStep!))
+  added?.focus()
+})
 const sourceId = shallowRef<number | null>(null)
 const navigateTo = shallowRef<number | null>(null)
-watch(() => props.view.eventId, () => { sourceId.value = null; navigateTo.value = null })
+watch(() => props.view.eventId, () => { sourceId.value = null; navigateTo.value = null; beforeAppend = null })
 function navigate(eventId: number) { navigateTo.value = eventId; sourceId.value = null }
 function afterClose(event: Event) {
   if (navigateTo.value == null) return
@@ -28,7 +46,7 @@ function afterClose(event: Event) {
 </script>
 
 <template>
-  <section class="min-w-0" aria-label="完整年度过程" data-testid="annual-process-timeline">
+  <section ref="timeline" class="min-w-0" aria-label="完整年度过程" data-testid="annual-process-timeline">
     <div class="flex flex-col gap-2">
       <h4 class="text-sm font-medium">{{ view.year == null ? '年度待核' : `${view.year} 年` }}{{ view.matter }}过程</h4>
       <p class="text-muted-foreground text-[13px]">称号：{{ view.title }} · 事项：{{ view.matter }}</p>
@@ -41,7 +59,7 @@ function afterClose(event: Event) {
     <p class="text-muted-foreground mt-3 text-[13px] leading-5">按申报时间排列；平台状态是最新归档观察，申报时间不代表审批完成时间。</p>
     <p v-if="!steps.length" class="text-muted-foreground py-4 text-[13px]">本页尚无年度业务过程；请结合来源覆盖与待补依据核对。</p>
     <ol v-else class="mt-3 flex min-w-0 flex-col" aria-label="按申报时间排列的年度过程">
-      <li v-for="step in steps" :key="step.id" class="annual-step relative min-w-0 pb-6 pl-7" :data-annual-step="step.id" :data-confirmed-final="step.id === finalStepId || undefined">
+      <li v-for="step in steps" :key="step.id" tabindex="-1" class="annual-step relative min-w-0 pb-6 pl-7" :data-annual-step="step.id" :data-confirmed-final="step.id === finalStepId || undefined">
         <span aria-hidden="true" :class="cn('annual-node absolute left-0 top-2 size-2.5 rounded-full border bg-card', step.id === finalStepId && 'border-primary bg-primary ring-4 ring-accent')" />
         <div :class="cn('flex min-w-0 flex-col gap-2 rounded-md', step.id === finalStepId && 'bg-accent/40 p-3')">
           <div class="flex flex-wrap items-start justify-between gap-2">
@@ -70,8 +88,10 @@ function afterClose(event: Event) {
       </li>
     </ol>
     <DisclosurePanel v-if="view.coverage.length" compact title="查询来源覆盖" :heading-level="4"><ul class="flex flex-col gap-2 text-[13px] text-muted-foreground"><li v-for="line in view.coverage" :key="line">{{ line }}</li></ul></DisclosurePanel>
-    <p class="text-muted-foreground mb-2 text-[13px]">过程来源第 {{ view.page }} 页</p>
-    <TablePagination :page="view.page" :page-size="view.pageSize" :total="view.total" unit="笔业务" :loading="pending" @update:page="emit('page', $event)" @update:page-size="emit('page-size', $event)" />
+    <div v-if="hasMore" class="mt-3 flex flex-wrap items-center gap-3">
+      <Button variant="outline" :disabled="pending || readFailed" @click="loadMore">加载更多过程</Button>
+      <p role="status" aria-live="polite" class="text-muted-foreground text-[13px]">已加载 {{ steps.length }} 笔过程<span v-if="pending">，正在读取…</span></p>
+    </div>
     <Dialog :open="sourceId !== null" @update:open="value => { if (!value) sourceId = null }">
       <DialogContent class="max-h-[85dvh] overflow-y-auto" @close-auto-focus="afterClose">
         <DialogHeader><DialogTitle>平台原行与查询来源</DialogTitle><DialogDescription>保留每次观察自己的版本与决定；完整原字段可展开阅读。</DialogDescription></DialogHeader>
