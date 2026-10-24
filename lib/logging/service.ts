@@ -128,7 +128,30 @@ export function createLogService(options: LogServiceOptions) {
       const event = safeLogEvent(input)
       const bytes = Buffer.byteLength(JSON.stringify(event))
       if (bytes > maxEventBytes) { counters.dropped++; counters.oversized++; return null }
-      if (queue.length >= maxEntries || queueBytes + bytes > maxBytes) { counters.dropped++; counters.overflow++; return null }
+      if (queue.length >= maxEntries || queueBytes + bytes > maxBytes) {
+        // A synchronous debug burst can fill the queue before any timer/worker
+        // runs. Prefer higher-severity events without growing either budget or
+        // waiting in a business caller. Never touch an in-flight batch.
+        const rank = LOG_LEVELS.indexOf(event.level ?? 'info')
+        const victims = new Set<number>()
+        let releasedBytes = 0
+        const fits = () => queue.length - victims.size < maxEntries && queueBytes - releasedBytes + bytes <= maxBytes
+        if (bytes <= maxBytes) {
+          for (let level = 0; level < rank && !fits(); level++) {
+            for (let i = 0; i < queue.length && !fits(); i++) {
+              if (LOG_LEVELS.indexOf(queue[i]!.event.level ?? 'info') !== level) continue
+              victims.add(i); releasedBytes += queue[i]!.bytes
+            }
+          }
+        }
+        // Admission is atomic: if lower levels cannot free enough room, keep
+        // every queued event and reject only this new event. Equal levels keep
+        // FIFO ownership; an all-error overload is still an observable drop.
+        if (!fits()) { counters.dropped++; counters.overflow++; return null }
+        queue = queue.filter((_row, index) => !victims.has(index))
+        queueBytes -= releasedBytes
+        counters.dropped += victims.size; counters.overflow += victims.size
+      }
       queue.push({ event, bytes }); queueBytes += bytes; counters.accepted++
       return event.id
     } catch { counters.dropped++; fault('invalid_event'); return null }
