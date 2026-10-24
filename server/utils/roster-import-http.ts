@@ -93,6 +93,7 @@ export async function handleRosterImportRequest(
     appLog({ source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'invalid_import_request' }, deps.logContext)
     return json(validated.status, { message: validated.message })
   }
+  if (action === 'replay' && validated.value.payload.platformRecordObservations) return json(400, { message: 'Historical projection uses preflight/commit with its original idempotency key; replay only converges announcement evidence' })
 
   try {
     const pageCountErrors =

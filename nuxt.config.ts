@@ -27,6 +27,7 @@ export default defineNuxtConfig({
   },
 
   modules: [
+    'vite-doctor/nuxt',
     '@pinia/nuxt',
     '@pinia/colada-nuxt',
     '@vueuse/nuxt',

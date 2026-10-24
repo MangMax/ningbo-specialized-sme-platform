@@ -87,8 +87,8 @@
 # 结构 + 逐行交代 + 报告(真件在就用真件)
 pnpm test tests/little-giant-source-file.test.ts
 
-# 换源文件路径 / 落一份报告 JSON
-RL02_LITTLE_GIANT_XLSX=/abs/path/x.xlsx RL02_REPORT_OUT=/tmp/rl02.json \
+# 换源文件路径复核（测试不再额外写报告 JSON）
+RL02_LITTLE_GIANT_XLSX=/abs/path/x.xlsx \
   pnpm test tests/little-giant-source-file.test.ts
 
 # 端到端:经真实 HTTP 提交(默认跑,不需要任何环境变量)

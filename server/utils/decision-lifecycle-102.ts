@@ -1,4 +1,6 @@
 import { readEvidenceToken113 } from './evidence-impact-113'
+import { readLatestDecisionHead102 as latestDecisionHead102, whereDecisionScope102 as whereScope } from './decision-lifecycle-102/head'
+export { readLatestDecisionHead102 as latestDecisionHead102 } from './decision-lifecycle-102/head'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { normalizeUscc } from '../../lib/domain'
 import { createHash } from 'node:crypto'
@@ -99,16 +101,12 @@ export function parse102<T>(schema: z.ZodType<T>, value: unknown): T {
   if (!result.success) throw new DecisionError102(400, 'invalid_request', 'Invalid decision request; see decision-lifecycle contract')
   return result.data
 }
-const whereScope = (scope: Scope) => and(eq(s.differenceReason.enterpriseId, scope.enterpriseId), eq(s.differenceReason.titleCode, scope.titleCode), eq(s.differenceReason.direction, scope.direction))
 /** Explicit review of a legacy version adopts its existing scope without rewriting that version. */
 export function managedDecision102(id: AnyColumn | SQL = s.differenceReason.id, action: AnyColumn | SQL = s.differenceReason.lifecycleAction) {
   return sql`(${action} is not null or exists(select 1 from evidence_review_receipt_114 r where (r.decision_id=${id} or r.source_decision_id=${id}) and r.reviewed_revision_id is not null))`
 }
 export function latestDecision102(db: DecisionDb, scope: Scope) {
   return db.select().from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get()
-}
-export function latestDecisionHead102(db: DecisionDb, scope: Scope) {
-  return db.select({ id: s.differenceReason.id, recordedAt: s.differenceReason.recordedAt, lifecycleAction: s.differenceReason.lifecycleAction, status: s.differenceReason.status }).from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get()
 }
 function publicVersion(row: typeof s.differenceReason.$inferSelect, currentId: number | null) {
   const { requestHash, idempotencyKey, ...version } = row

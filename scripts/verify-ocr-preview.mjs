@@ -240,6 +240,44 @@ try {
     await cdp.send('Network.enable', {}, sid)
     await cdp.send('Fetch.enable', { patterns: [{ urlPattern: `${base}/api/ocr-results*`, requestStage: 'Request' }] }, sid)
 
+    // The outgoing workbench must keep its source coordinate until it unmounts.
+    // Observe the real transition rather than asserting an import spelling.
+    for (const width of [1440, 390]) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false }, sid)
+      await navigate()
+      await click('下一页', '[aria-label="翻页与页操作"]')
+      await wait(`new URLSearchParams(location.search).get('page') === '2' && document.querySelector('[aria-label="当前文件与页号"]').textContent.includes('第 2 /')`)
+      await ev('history.back()')
+      await wait(`new URLSearchParams(location.search).get('page') === '1' && document.querySelector('[aria-label="当前文件与页号"]').textContent.includes('第 1 /')`)
+      await edit()
+      await fill('textarea', source + '\nroute-history-draft')
+      await ev('history.forward()')
+      await wait(`document.body.innerText.includes('有未保存的草稿') && new URLSearchParams(location.search).get('page') === '1'`)
+      assert.equal(await ev(`document.querySelector('textarea').value`), source + '\nroute-history-draft', 'history navigation overwrote OCR draft')
+      await cancel()
+      await ev('history.forward()')
+      await wait(`new URLSearchParams(location.search).get('page') === '2' && document.querySelector('[aria-label="当前文件与页号"]').textContent.includes('第 2 /')`)
+      await ev('history.back()')
+      await wait(`new URLSearchParams(location.search).get('page') === '1' && document.querySelector('[aria-label="当前文件与页号"]').textContent.includes('第 1 /')`)
+      if (width === 390) {
+        await click('Toggle Sidebar')
+        await wait(`!!document.querySelector('a[aria-label="专精特新企业称号台账，返回企业列表"]')`)
+      }
+      await ev(`(() => {
+        const region = document.querySelector('[aria-label="当前文件与页号"]');
+        window.__outgoingOcrCoordinates = [region.textContent];
+        window.__outgoingOcrObserver = new MutationObserver(() => {
+          if (region.isConnected) window.__outgoingOcrCoordinates.push(region.textContent);
+        });
+        window.__outgoingOcrObserver.observe(region, { subtree: true, childList: true, characterData: true });
+        document.querySelector('a[aria-label="专精特新企业称号台账，返回企业列表"]').click();
+      })()`)
+      await wait(`location.pathname === '/' && !document.querySelector('[aria-label="当前文件与页号"]')`)
+      const coordinates = await ev(`(() => { window.__outgoingOcrObserver.disconnect(); return window.__outgoingOcrCoordinates; })()`)
+      assert.ok(coordinates.every(text => text.includes('workbench-97.pdf') && text.includes('第 1 /')), `outgoing OCR selection changed at ${width}px: ${JSON.stringify(coordinates)}`)
+      console.log(`✓ ${width}px outgoing OCR selection survives Nuxt page transition`)
+    }
+
     for (const width of [1440, 390]) {
       const height = width === 390 ? 844 : 900
       await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }, sid)

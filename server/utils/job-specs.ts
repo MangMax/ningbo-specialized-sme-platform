@@ -1,3 +1,7 @@
+import { candidateDiscoverySpec } from './jobs/candidate-discovery'
+import { annualCorrespondenceSpec } from './jobs/annual-correspondence'
+import { readAnnualWriteScope } from './annual-correspondence-read'
+import { ANNUAL_CORRESPONDENCE_KIND } from '../../lib/roster/annual-correspondence'
 import { currentRosterExportSpec } from './jobs/current-roster-export'
 import { registerPlatformBatchJob } from './platform-batch-query'
 import { getJobSpec, registerJob } from './job-runner'
@@ -31,6 +35,8 @@ import { renderPagesSpec } from './jobs/render-pages'
  */
 export function registerJobSpecs(): void {
   registerPlatformBatchJob()
+  if (!getJobSpec(ANNUAL_CORRESPONDENCE_KIND)) registerJob(annualCorrespondenceSpec(readAnnualWriteScope))
+  if (!getJobSpec(candidateDiscoverySpec.kind)) registerJob(candidateDiscoverySpec)
   if (!getJobSpec(currentRosterExportSpec.kind)) registerJob(currentRosterExportSpec)
   if (getJobSpec(renderPagesSpec.kind)) return
   registerJob(renderPagesSpec)

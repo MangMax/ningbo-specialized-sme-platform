@@ -1,3 +1,5 @@
+import { activateCandidateDiscoveryTasks } from './jobs/candidate-discovery'
+import { ensureJobRunnerReady } from './job-runner'
 import { serialize } from 'node:v8'
 import type Database from 'better-sqlite3'
 import { realpathSync, statSync } from 'node:fs'
@@ -15,7 +17,7 @@ type Action = 'preflight' | 'commit'
 type Result = ReturnType<typeof preflightRosterImport> | ReturnType<typeof commitRosterImport>
 export interface ImportExecutionMessage { identity: { dev: number; ino: number; schemaVersion: number; migration: { hash: string; created_at: number } | undefined }; id: number; dbPath: string; readonly: boolean; action: Action; payload: Buffer; pageCountErrors: readonly RosterImportItemResult[]; logContext?: LogContext }
 type Worker = ReturnType<typeof createImportExecutionWorker>
-type Job = { message: ImportExecutionMessage; resolve(value: Result): void; reject(error: Error): void }
+type Job = { onResult?: (result: Result) => void; message: ImportExecutionMessage; resolve(value: Result): void; reject(error: Error): void }
 const unavailable = (code: string, message: string) => new ImportReceiptError(503, code, message)
 
 /** One serial writer per app. Active writes have no client cancellation or retry:
@@ -30,7 +32,8 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
   let closing: Promise<void> | undefined, finishClose: (() => void) | undefined
   const settle = (job: Job, error?: Error, result?: Result) => {
     retainedBytes -= job.message.payload.byteLength
-    if (error) { logImportFailure('import.execution', error, job.message.logContext); job.reject(error) } else job.resolve(result!)
+    if (error) { logImportFailure('import.execution', error, job.message.logContext); job.reject(error) }
+    else { job.onResult?.(result!); job.resolve(result!) }
   }
   function idle() {
     if (active || queue.length || stopping) return
@@ -82,6 +85,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
   }
   return {
     execute(db: Db, action: Action, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: LogContext = {}): Promise<Result> {
+      if (action === 'commit' && request.payload.platformQueries?.length) ensureJobRunnerReady(db)
       const rejectAdmission = (error: ImportReceiptError) => { logImportFailure('import.admission', error, context); return Promise.reject(error) }
       if (closed) return rejectAdmission(unavailable('import_executor_closed', 'Import execution unavailable'))
       const client = (db as Db & { $client: Database.Database }).$client
@@ -99,7 +103,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
       retainedBytes += payload.byteLength
       return new Promise((resolve, reject) => {
         appLog({ source: 'import', operation: 'import.admission', outcome: 'started' }, context)
-        queue.push({ message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action, payload, pageCountErrors, logContext: context }, resolve, reject }); pump()
+        queue.push({ onResult: result => { if ('candidateTaskIds' in result) activateCandidateDiscoveryTasks(db,result.candidateTaskIds,'',context) }, message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action, payload, pageCountErrors, logContext: context }, resolve, reject }); pump()
       })
     },
     close() {

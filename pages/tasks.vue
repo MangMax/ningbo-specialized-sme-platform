@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { clientRequestReference } from '~~/lib/client-logging/request-reference'
 import { computed, ref, watch } from 'vue'
+import CandidateTaskCreate from '@/components/tasks/CandidateTaskCreate.vue'
 import { TASK_EXPORTS, TASK_TABS, TASK_STATES, type TaskExportTitle, type TaskList, type TaskSummary, type TaskTab } from '~~/lib/task-center'
 import { JOB_STATES, type JobState } from '~~/lib/job'
 import { useTaskPolling } from '~/composables/useTaskPolling'
@@ -170,6 +171,7 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
           <TabsTrigger v-for="name in TASK_TABS" :key="name" :value="name" :data-task-tab="name" class="min-h-11 sm:min-h-0">{{ tabLabels[name] }}<span v-if="data && !stale" class="ml-1 tabular-nums">{{ data.counts[name] }}</span></TabsTrigger>
         </TabsList>
       </Tabs>
+      <CandidateTaskCreate v-if="tab === 'platform' && data?.authorized && !stale" @created="id => { void navigate({job:id,tab:'platform',page:1}); void refresh() }" />
       <!-- 每个 Label+Select 自成一组：窄屏折行时标签不会留在上一行、控件掉到下一行 -->
       <div data-testid="task-filters" class="flex flex-wrap items-center gap-2">
         <div class="flex items-center gap-2">

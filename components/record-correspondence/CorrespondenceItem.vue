@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { correspondenceStatusText, eventDecisionText, type CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
 import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
 import { humanRecordTime, isCurrentContextEdge } from '~~/lib/roster/record-ledger'
+import EventCorrespondenceDecision from './EventCorrespondenceDecision.vue'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Badge } from '@/components/ui/badge'
 
@@ -12,7 +13,7 @@ import { Badge } from '@/components/ui/badge'
  * 只保留「对上了什么、现在是什么状态、去哪核对」三层；规则、审计时间与整份原行字段
  * 不再逐条铺开 —— 原行字段与查询条件在需要时从原行入口读取。
  */
-const props = defineProps<{ edge: CorrespondenceDetail; returnTo?: string | null }>()
+const props = defineProps<{ edge: CorrespondenceDetail; returnTo?: string | null; readOnly?: boolean }>()
 const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
 
 const targetEvent = computed(() => props.edge.event ?? props.edge.predecessorEvent)
@@ -50,6 +51,7 @@ function onEventClick(event: MouseEvent) {
     <p v-if="targetEvent" class="mt-1 text-[13px]">
       <NuxtLink :to="eventTo" class="text-primary underline underline-offset-2 hover:no-underline" @click="onEventClick">查看{{ TITLES[targetEvent.record.titleCode] ?? '称号' }} · {{ eventDecisionText(targetEvent) }}</NuxtLink>
     </p>
+    <EventCorrespondenceDecision v-if="!readOnly && edge.eventId && edge.relationId && ['event_process', 'event_recognized'].includes(edge.type)" :edge="{ type: edge.type, eventId: edge.eventId, relationId: edge.relationId, role: edge.role }" :existing="edge" />
     <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground mt-1 text-[13px]">
       <template #trigger><span>来源定位</span></template>
       <p>{{ locator }}</p>

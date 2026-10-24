@@ -284,8 +284,21 @@ it('accepts exactly the built application route templates and no other spelling'
       .map(match => match[1]!)
       .filter(route => route === '/mcp' || route.startsWith('/api/')),
   )].sort()
-  expect(actual).toHaveLength(113)
+  expect(actual).toHaveLength(123)
   expect([...APPLICATION_LOG_ROUTES].sort()).toEqual(actual)
+})
+
+it('records new annual and candidate HTTP templates without concrete event or task identities', async () => {
+  for (const [path, template] of [
+    ['/api/roster/events/987654321/annual-process', '/api/roster/events/:id/annual-process'],
+    ['/api/roster/annual-correspondence-tasks/not-a-job', '/api/roster/annual-correspondence-tasks/:id'],
+  ]) {
+    const response = await call(path!)
+    expect([400, 404]).toContain(response.status)
+    const rows = await waitLog(response.requestId)
+    expect(rows.find(row => row.source === 'http')).toMatchObject({ httpMethod: 'GET', httpRoute: template, statusCode: response.status })
+    expect(JSON.stringify(rows)).not.toMatch(/987654321|not-a-job/)
+  }
 })
 
 it('records the requested file id on a real delete failure', async () => {

@@ -58,6 +58,15 @@ export function useExportRequestLog() {
     persist(latest)
   }
 
+  /** Only the consumer's validated 202 receipt may correct a current identity's job. */
+  function accept(key: string, receipt: Required<ExportRequest>) {
+    const latest = read()
+    if (latest[key]?.clientRequestId === receipt.clientRequestId) {
+      latest[key] = { clientRequestId: receipt.clientRequestId, jobId: receipt.jobId }
+    }
+    persist(latest)
+  }
+
   function forget(key: string, clientRequestId: string) {
     const latest = read()
     if (latest[key]?.clientRequestId === clientRequestId) delete latest[key]
@@ -69,5 +78,5 @@ export function useExportRequestLog() {
     catch { /* Submission re-reads storage and fails closed if it is unavailable. */ }
   })
 
-  return { entries, get, remember, forget }
+  return { entries, get, remember, accept, forget }
 }

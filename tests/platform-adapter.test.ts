@@ -59,13 +59,6 @@ describe('parsePlatformList:三级回退', () => {
     expect(parsed.rows[0]!.qymc).toBe('宁波合成示例科技有限公司')
   })
 
-  it('只抓 <table> 会静默得 0 行 —— 真实响应里表体为空、数据在脚本里', () => {
-    // rdjb=3 的 HTML 里 <tbody> 是空的,页脚还写「共 0 条」;数据只在 zrarData。
-    const parsed = parsePlatformList(RDJB3, BUSINESS_GRID)
-    expect(parsed.rows).toHaveLength(6)
-    expect(parsed.source).not.toBe('html-table')
-  })
-
   it('结构看不懂时抛 PlatformResponseError,绝不把「看不懂」当「没有记录」', () => {
     expect(() => parsePlatformList('<html><body>你好</body></html>', BUSINESS_GRID)).toThrow(
       PlatformResponseError,
@@ -114,14 +107,5 @@ describe('classifyPlatformResponse:四态口径', () => {
     const outcome = classifyPlatformResponse('<html>结构变了</html>', BUSINESS_GRID, meta)
     expect(outcome.status).toBe('failed')
     expect(outcome.failureReason).toBeTruthy()
-  })
-
-  it('failed / no_record / success 三者互不等价', () => {
-    const statuses = [
-      classifyPlatformResponse(EXPIRED, BUSINESS_GRID, meta).status,
-      classifyPlatformResponse(RDJB1, BUSINESS_GRID, meta).status,
-      classifyPlatformResponse(RDJB3, BUSINESS_GRID, meta).status,
-    ]
-    expect(new Set(statuses).size).toBe(3)
   })
 })

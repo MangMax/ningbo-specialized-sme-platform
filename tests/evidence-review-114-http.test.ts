@@ -187,7 +187,13 @@ describe('ticket 114 public evidence review',()=>{
     const input={...scope,...cmd('tx-replace'),action:'replace',expectedCurrentId:d.versionId,reviewedEvidence:{latestRevisionId:detail.evidenceToken.latestRevisionId,projectionReady:true},ruleVersion:'manual-2',effectiveAt:'2026-10-19T00:00:00Z',decision:{status:'confirmed_no_diff',measureCode:'none',verificationStatus:'confirmed'}}
     db.run(sql`create trigger fail_review114 before insert on evidence_review_receipt_114 when new.idempotency_key='tx-replace' begin select raise(abort,'synthetic receipt failure'); end`)
     const failed=await post(decisionPath,input);expect(failed.status).toBe(500)
+    expect(failed.body).toMatchObject({ error: { code: 'transaction_failed' } })
+    const failedMcp = await rpc('save_difference_decision', input, 'synthetic-mcp')
+    expect(failedMcp.body.result.isError).toBe(true)
+    expect(failedMcp.value).toMatchObject({ error: { code: 'transaction_failed' } })
     expect((await get('/api/roster/decision-lifecycle/current',scope)).body.versionId).toBe(d.versionId)
+    expect((await get('/api/roster/decision-lifecycle/history',scope)).body.total).toBe(1)
+    expect((await get(listPath+'/'+item.id)).body.reviewedBaseline).toBeNull()
     expect((await get(listPath,{enterpriseId:e.id})).body.rows).toEqual([expect.objectContaining({id:item.id,pending:true,reviewedRevisionId:null})])
     db.run(sql`drop trigger fail_review114`)
     const completed=await rpc('save_difference_decision',input,'synthetic-mcp')
@@ -206,6 +212,42 @@ describe('ticket 114 public evidence review',()=>{
     expect(notReady.status).toBe(409);expect(notReady.body.error.code).toBe('stale_evidence')
     await drain('tx-next-drain')
     expect((await get(listPath,{enterpriseId:e.id})).body.rows).toEqual([expect.objectContaining({decisionId:completed.value.versionId,pending:true})])
+  })
+
+  it('keeps withdrawal heads in live evidence tokens and preserves historical review state across HTTP and MCP', async () => {
+    const e = seed('撤回复核边界主体', 'ISOLATION-196-W'), scope = coord(e.id)
+    const decision = await decide(scope, 'isolation196-decision')
+    await archive(e, 'isolation196-evidence'); await drain('isolation196-drain')
+    const item = (await get(listPath, { enterpriseId: e.id })).body.rows[0]
+    const before = (await get(listPath + '/' + item.id)).body
+    const withdraw = { ...scope, ...cmd('isolation196-withdraw'), action: 'withdraw', expectedCurrentId: decision.versionId, ruleVersion: 'manual-1', effectiveAt: '2026-10-19T00:00:00Z' }
+    const withdrawn = await rpc('save_difference_decision', withdraw, 'synthetic-mcp')
+    expect(withdrawn.status).toBe(200)
+    expect(withdrawn.body.result.isError).not.toBe(true)
+    expect(withdrawn.value).toMatchObject({ currentId: null, previousId: decision.versionId, action: 'withdraw' })
+    const detail = (await get(listPath + '/' + item.id)).body
+    expect(detail).toMatchObject({
+      lineage: 'withdrawn', pending: true, reviewedBaseline: null,
+      currentDecision: { versionId: withdrawn.value.versionId, current: null },
+      evidenceToken: { decisionId: withdrawn.value.versionId, latestRevisionId: before.evidenceToken.latestRevisionId, projectionReady: true },
+      oldDecision: { id: decision.versionId, reasonNote: '保留用户原始原因' },
+    })
+    expect((await rpc('get_evidence_impact', { id: item.id })).value).toEqual(detail)
+    const maintain = { ...scope, ...cmd('isolation196-maintain'), action: 'maintain', expectedCurrentId: decision.versionId, reviewedEvidence: { latestRevisionId: detail.evidenceToken.latestRevisionId, projectionReady: true }, ruleVersion: 'manual-1', effectiveAt: '2026-10-19T00:00:00Z' }
+    const stale = await post(decisionPath, maintain)
+    expect(stale).toMatchObject({ status: 409, body: { error: { code: 'stale_version' } } })
+    const noCurrent = { ...maintain, expectedCurrentId: withdrawn.value.versionId }
+    expect(await post(decisionPath, noCurrent)).toMatchObject({ status: 409, body: { error: { code: 'no_current_decision' } } })
+    const rejected = await rpc('save_difference_decision', noCurrent, 'synthetic-mcp')
+    expect(rejected.body.result.isError).toBe(true)
+    expect(rejected.value).toMatchObject({ error: { code: 'no_current_decision' } })
+    await archive(e, 'isolation196-later-evidence', '撤回之后的新事实'); await drain('isolation196-later-drain')
+    const later = (await get(listPath + '/' + item.id)).body
+    expect(later).toMatchObject({ lineage: 'withdrawn', reviewedBaseline: null, oldDecision: detail.oldDecision, evidenceToken: { decisionId: withdrawn.value.versionId, projectionReady: true } })
+    expect(later.evidenceToken.latestRevisionId).toBeGreaterThan(detail.evidenceToken.latestRevisionId)
+    expect((await get(listPath, { enterpriseId: e.id })).body.rows).toEqual([])
+    expect((await post(decisionPath, withdraw)).body).toEqual(withdrawn.value)
+    expect((await get('/api/roster/decision-lifecycle/history', scope)).body.total).toBe(2)
   })
 
   it('publishes only explicit bounded rule scopes including unchanged releases and rejects reused versions with different evaluated material',async()=>{

@@ -9,7 +9,7 @@ import { validateRosterImportPageCounts } from './roster-import-page-validation'
 
 /** The two import tools share only submission. Schemas and authorization stay on the tools. */
 export function submitRosterImportMcp(action: 'preflight' | 'commit', input: {
-  idempotencyKey: string; sourceKind: 'announcement' | 'platform_export' | 'alias_evidence'
+  idempotencyKey: string; sourceKind: 'announcement' | 'platform_export' | 'platform_archive' | 'alias_evidence'
   sourceIdentity: string; sourceSha256?: string; payload: Record<string, unknown>
 }) {
   const context = rosterImportMcpContext.getStore() ?? {}

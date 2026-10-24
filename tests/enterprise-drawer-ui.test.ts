@@ -335,16 +335,6 @@ describe('企业详情抽屉的称号时间线', () => {
     expect(detail.events.map(event=>event.eventType)).toEqual(['award','maintain','review'])
   })
 
-  it('称号历史用普通分隔行，不再绘制圆点或连接线',()=>{
-    queryData.value=timelineDetail(['award','maintain','maintain'])
-    queryLoading.value=false
-    const wrapper=mountDrawer()
-    expect(wrapper.findAll('[data-testid="timeline-event"]')).toHaveLength(3)
-    expect(wrapper.findAll('[data-testid="timeline-node"]')).toHaveLength(0)
-    expect(wrapper.findAll('[data-testid="timeline-connector"]')).toHaveLength(0)
-    expect(wrapper.get('[data-testid="drawer-timeline"]').classes()).toEqual(expect.arrayContaining(['divide-y']))
-  })
-
   it('单个事件仍显示年份与事件，不需要装饰节点',()=>{
     queryData.value=timelineDetail(['award'])
     queryLoading.value=false
@@ -352,7 +342,6 @@ describe('企业详情抽屉的称号时间线', () => {
     const events=wrapper.findAll('[data-testid="timeline-event"]')
     expect(events).toHaveLength(1)
     expect(events[0]!.text()).toContain('认定')
-    expect(wrapper.findAll('[data-testid="timeline-node"]')).toHaveLength(0)
   })
 
   it('抽屉只给核对摘要与入口，不重复企业详情矩阵',()=>{

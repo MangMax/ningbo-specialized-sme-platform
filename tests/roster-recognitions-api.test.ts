@@ -423,6 +423,5 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
     expect(recognitionsSource).toContain("enum: ['confirmed', 'pending']")
     expect(FIRST_RECOGNITION_STATUS_VALUES).toEqual(['confirmed', 'pending'])
     expect(FIRST_RECOGNITION_STATUS_ORDER).toEqual(['confirmed', 'pending'])
-    expect(FIRST_RECOGNITION_STATUS_VALUES).toEqual(['confirmed', 'pending'])
   })
 })

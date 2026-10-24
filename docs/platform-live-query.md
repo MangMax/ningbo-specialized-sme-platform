@@ -133,3 +133,11 @@ investigation uses these app APIs/MCP and never needs a Cookie read/reveal.
 
 
 #59 新增逐页可空 `maxPage`（queryBusList 原响应末页），供独立显式转存核验。查询本身仍只读；[归档转存契约](platform-recognized-evidence.md) 说明 recognized_list、旧归档元数据缺失的拒绝规则及批量 segments 转存。
+
+### 申报与关联归档的标准字段
+
+`apply_list`（queryList）与 `business_list`（businessList）的归档写入、完整 REST/MCP 读取、企业详情、原行详情和已有候选共用平台解析器：`cszt → status`（办理状态）、`sblx → declareKind`（申请/更新/复核转 apply/update/review，其他原样保留）、`sqsj → appliedAt`、显式 `year → year`、`whpc → batch`，并保留 `szsfmc/personuuid` 的既有映射。平台年份不表示正式认定年，也不从申报时间推断。
+
+历史只存 rawFields 的关系在读取时补齐缺失标准字段，不回填数据库。新归档保存同一解析结果；已有非空标准字段与非空原值矛盾时，预检/提交返回 `platform_field_conflict`，不静默覆盖。旧冲突行的相关标准值返回 null，同时返回 `normalizationConflicts[{field,storedValue,rawValue}]`，页面明确待核，候选保留冲突。原始 rawFields 中的缺字段、null、空白、明确未知与未知枚举保持可区分；原响应文本不修剪。
+
+`recognized_list`（queryBusList）继续只在原字段中表达认定快照，不借用 `cszt/sfyx` 生成办理状态或流程类型。查询成功/失败状态与关系的办理状态各自独立。按字节分段取证端点返回持久化原档，历史空列仍为空；它与补齐标准字段的业务读模型不同，关系 ID 和原始证据保持不变。

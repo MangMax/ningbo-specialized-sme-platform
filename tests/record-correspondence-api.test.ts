@@ -315,3 +315,21 @@ describe('reconfirmation through public adapters', () => {
     expect(JSON.stringify(audit)).not.toContain('SECRET-RAW')
   })
 })
+
+it('atomically rejects an undisclosed candidate and keeps rejection history on repeat discovery', async () => {
+  const { db, event, relation } = fixture(); const app = await server(db)
+  const request = decision(event.id, relation.id)
+  request.operations[0] = { action: 'create', status: 'rejected', edge: { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' } } as any
+  const post = (path: string, body: unknown) => fetch(app.baseUrl + '/api/roster/correspondences/' + path, { method: 'POST', headers: { authorization: 'Bearer synthetic-token', 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  try {
+    const preflight = await json(await post('preflight', request))
+    expect(preflight.impact).toEqual({ created: 1, unlinked: 0, audit: 2 })
+    const receipt = await json(await post('commit', { request, planHash: preflight.planHash }))
+    const id = receipt.correspondenceIds[0]
+    expect((await json(await fetch(app.baseUrl + `/api/roster/correspondences?eventId=${event.id}`))).rows).toEqual([expect.objectContaining({ status: 'rejected', revision: 2 })])
+    expect(getRecordCorrespondenceAudit(db, id).map((row: any) => row.toStatus).sort()).toEqual(['candidate', 'rejected'])
+    expect(await json(await post('commit', { request, planHash: preflight.planHash }))).toEqual(receipt)
+    const discovered = handleRecordCorrespondenceRequest({ action: 'discover', method: 'POST', body: { eventId: event.id } }, { db }).body as any
+    expect(discovered.rows.find((row: any) => row.edge.relationId === relation.id)).toMatchObject({ existingStatus: 'rejected', recommendation: 'existing_decision' })
+  } finally { await app.close() }
+})

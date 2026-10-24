@@ -45,7 +45,7 @@ it('closes the source dialog before returning to the same event and preserves th
     SourceReader: { name: 'SourceReader', props: ['returnTo'], emits: ['event-navigate'], template: '<button data-testid="return-event" @click="$emit(\'event-navigate\', 9)">跳到该记录</button>' },
   } } })
   mounted.push(wrapper)
-  await wrapper.findAll('button').find(button => button.text() === '查看原始记录')!.trigger('click')
+  await wrapper.findAll('button').find(button => button.text() === '查看平台业务详情')!.trigger('click')
   expect(wrapper.findComponent({ name: 'SourceReader' }).props('returnTo')).toBe(returnTo)
   await wrapper.get('[data-testid="return-event"]').trigger('click')
   await flushPromises()
@@ -68,4 +68,18 @@ it('keeps formal evidence visible and offers retry while expanded platform point
   expect(wrapper.text()).not.toContain('暂无与这条记录匹配')
   await wrapper.findAll('button').find(button => button.text() === '重试读取')!.trigger('click')
   expect(wrapper.emitted('retry-detail')).toEqual([[]])
+})
+
+it('keeps source-change warnings visible while candidate and historical details are secondary', async () => {
+  const edge = (id: number, status: string, requiresRevalidation = false) => ({ id, type: 'event_process', role: 'supports_review', status, requiresRevalidation, relationId: id,
+    relation: { id, sequenceNo: 4, nameRaw: '恒川制造', status: '退回', query: { id: 7000 + id, interface: 'apply_list', status: 'success', queriedAt: '2024-12-01' } },
+  }) as unknown as CorrespondenceDetail
+  const wrapper = mount(RecordEventSource, { props: { event, evidence: [], edges: [edge(1, 'candidate'), edge(2, 'unlinked'), edge(3, 'confirmed', true)], back: '/enterprises/42' }, global: { stubs: { SourceReader: true } } })
+  mounted.push(wrapper)
+  expect(wrapper.get('[data-testid="event-revalidation"]').text()).toContain('待重新核验')
+  expect(wrapper.get('[data-testid="event-candidates"] button').attributes('aria-expanded')).toBe('false')
+  expect(wrapper.get('[data-testid="event-match-history"] button').attributes('aria-expanded')).toBe('false')
+  expect(wrapper.text()).not.toContain('查询 #')
+  await wrapper.get('[data-testid="event-candidates"] button').trigger('click')
+  expect(wrapper.get('[data-testid="event-candidates"]').text()).toContain('查看平台业务详情')
 })

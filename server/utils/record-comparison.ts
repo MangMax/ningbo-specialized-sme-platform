@@ -4,14 +4,19 @@ import type { useDb } from '../../db/client'
 import * as schema from '../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
+import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../lib/platform/normalization'
 import { TITLES } from '../../lib/labels'
-import { comparisonSourceCatalogInput, recordComparisonInput, type ComparisonSourceCatalogInput, type RecordComparisonInput, type HistoricalClassification } from '../../lib/roster/record-comparison'
+import { comparisonSourceCatalogInput, groupComparisonBusinessObservations, recordComparisonInput, type ComparisonSourceCatalogInput, type RecordComparisonInput, type HistoricalClassification } from '../../lib/roster/record-comparison'
+import { officialSourceDirectory, readOfficialSourceDocuments } from './official-source-directory'
+import { fileNameOf } from '../../lib/preview'
+import { readPlatformBusinessMetadata } from './platform-business-record-read'
+import type { PlatformBusinessMetadata } from '../../lib/platform/business-record'
 import { comparisonFormalCounts, iterateComparisonFormalEvents } from './record-comparison-formal'
 import { listRecordCorrespondences, readScopedRecordCorrespondences } from './record-correspondence'
 
 type Db = ReturnType<typeof useDb>
 type Query = typeof schema.platformQuery.$inferSelect
-type Relation = typeof schema.platformRelation.$inferSelect
+type Relation = ReturnType<typeof normalizePlatformRelation<typeof schema.platformRelation.$inferSelect>>
 type Event = typeof schema.recordEvent.$inferSelect
 type Edge = ReturnType<typeof listRecordCorrespondences>[number]
 /** Only an authorized evidence reader may supply these verified, persisted attestations.
@@ -38,7 +43,7 @@ function processTimingMatches(event: Event, relation: Relation) {
   return relation.year === event.year && relation.declareKind === 'apply'
 }
 const publicEdge = (edge: Edge) => ({ id: edge.id, type: edge.type, role: edge.role, eventId: edge.eventId, relationId: edge.relationId, exportRowId: edge.exportRowId, predecessorEventId: edge.predecessorEventId, status: edge.status, revision: edge.revision, requiresRevalidation: edge.requiresRevalidation, ruleId: edge.ruleId, ruleVersion: edge.ruleVersion, decidedAt: edge.decidedAt })
-const publicRelation = (relation: Relation, query: Query) => ({ id: relation.id, queryId: query.id, interface: query.interface, sequenceNo: relation.sequenceNo, relationKey: relation.relationKey, enterpriseId: relation.enterpriseId, usccRaw: relation.usccRaw, nameRaw: relation.nameRaw, status: relation.status, declareKind: relation.declareKind, appliedAt: relation.appliedAt, awardBatchLabel: relation.awardBatchLabel, year: relation.year, verificationStatus: relation.verificationStatus, queriedAt: query.queriedAt, titleCode: relationTitle(relation, query), rdjb: query.rdjb, sourceRdjb: sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourceRdjb, sourcePage: sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourcePage })
+const publicRelation = (relation: Relation, query: Query) => ({ id: relation.id, queryId: query.id, interface: query.interface, sequenceNo: relation.sequenceNo, relationKey: relation.relationKey, enterpriseId: relation.enterpriseId, usccRaw: relation.usccRaw, nameRaw: relation.nameRaw, status: relation.status, declareKind: relation.declareKind, appliedAt: relation.appliedAt, awardBatchLabel: relation.awardBatchLabel, year: relation.year, normalizationConflicts: relation.normalizationConflicts, verificationStatus: relation.verificationStatus, queriedAt: query.queriedAt, titleCode: relationTitle(relation, query), rdjb: query.rdjb, sourceRdjb: sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourceRdjb, sourcePage: sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourcePage })
 const publicExport = (row: typeof schema.platformExportRow.$inferSelect, batch: typeof schema.platformExportBatch.$inferSelect) => ({ id: row.id, batchId: batch.id, sourceRowNo: row.sourceRowNo, usccRaw: row.usccRaw, nameRaw: row.nameRaw, district: row.district, province: row.province, city: row.city, regStatus: row.regStatus, titleCode: batch.titleCode, collectedOn: batch.collectedOn, sha256: batch.sha256 })
 const rdjbFor = (title: string) => Object.entries(RDJB_TITLE_CODES).find(([, value]) => value === title)?.[0]
 function relationTitle(relation: Relation, query: Query): string | null {
@@ -82,7 +87,12 @@ function officialProof(evidence: VerifiedComparisonEvidence | undefined, documen
     (proof.enterpriseIds === null || proof.enterpriseIds.includes(enterpriseId))) ?? null
 }
 function conclusion(event: Event, edges: Edge[], relations: Map<number, { relation: Relation; query: Query }>): { classification: HistoricalClassification; reasons: string[] } {
+  // Keep legacy field conflicts visible even when the edge needs revalidation,
+  // without hiding a contradiction proved by another valid same-event edge.
+  const fieldConflictReasons = edges.some(edge => edge.status === 'confirmed' && edge.type === 'event_process' &&
+    edge.relationId != null && relations.get(edge.relationId)?.relation.normalizationConflicts.length) ? ['platform_field_conflict'] : []
   const historical = edges.filter(edge => edge.status === 'confirmed' && !edge.requiresRevalidation && historicalEdge(edge))
+  if (!historical.length && fieldConflictReasons.length) return { classification: 'unresolved', reasons: fieldConflictReasons }
   if (!historical.length) return { classification: 'unresolved', reasons: [...(event.year == null ? ['official_event_year_unknown'] : []), edges.some(edge => historicalEdge(edge) && edge.status === 'candidate') ? 'candidate_not_confirmed' : 'official_coverage_unproved'] }
   let supported = false
   let conflict = false
@@ -92,6 +102,7 @@ function conclusion(event: Event, edges: Edge[], relations: Map<number, { relati
     const source = edge.relationId == null ? null : relations.get(edge.relationId)
     if (!source) { reasons.push('selected_process_row_missing'); continue }
     const { relation } = source
+    if (relation.normalizationConflicts.length) continue
     if (!processTimingMatches(event, relation)) { reasons.push('event_process_fact_or_timing_unknown'); continue }
     const status = relation.status ?? ''
     const pass = /通过|获批|认定/.test(status) && !/未通过|不通过/.test(status)
@@ -111,7 +122,9 @@ function conclusion(event: Event, edges: Edge[], relations: Map<number, { relati
       else reasons.push('review_status_or_role_not_decisive')
     } else reasons.push('official_review_outcome_unknown')
   }
-  return conflict ? { classification: 'historical_conflict', reasons: ['confirmed_same_event_status_conflict'] } : supported ? { classification: 'historical_aligned', reasons: [] } : { classification: 'unresolved', reasons: unique(reasons) }
+  if (conflict) return { classification: 'historical_conflict', reasons: ['confirmed_same_event_status_conflict', ...fieldConflictReasons] }
+  if (fieldConflictReasons.length) return { classification: 'unresolved', reasons: fieldConflictReasons }
+  return supported ? { classification: 'historical_aligned', reasons: [] } : { classification: 'unresolved', reasons: unique(reasons) }
 }
 function selected(db: Db, input: RecordComparisonInput) {
   const parsed = recordComparisonInput.parse(input)
@@ -123,11 +136,15 @@ function selected(db: Db, input: RecordComparisonInput) {
   }
   const queries = db.select({ ...getTableColumns(schema.platformQuery), rawResponse: sql<null>`null` }).from(schema.platformQuery).where(inArray(schema.platformQuery.id, parsed.queryIds)).orderBy(schema.platformQuery.id).all().filter(row => before(row.queriedAt, parsed.asOf))
   const batches = db.select().from(schema.platformExportBatch).where(inArray(schema.platformExportBatch.id, parsed.exportBatchIds)).orderBy(schema.platformExportBatch.id).all().filter(row => row.importStatus === 'imported' && before(row.collectedOn, parsed.asOf))
-  const documents = db.select().from(schema.sourceDocument).where(inArray(schema.sourceDocument.id, parsed.officialSourceDocumentIds)).orderBy(schema.sourceDocument.id).all().filter(row => row.source === 'jxj' && (!parsed.asOf || before(row.issueDate, parsed.asOf)))
+  const documents = readOfficialSourceDocuments(db, parsed.officialSourceDocumentIds).filter(row => row.source === 'jxj' && (!parsed.asOf || before(row.issueDate, parsed.asOf)))
   if (queries.length !== parsed.queryIds.length || batches.length !== parsed.exportBatchIds.length || documents.length !== parsed.officialSourceDocumentIds.length) throw new Error('source_set_missing_or_out_of_scope')
   const queryMap = new Map(queries.map(row => [row.id, row]))
   const batchMap = new Map(batches.map(row => [row.id, row]))
-  const relations = db.select({ ...getTableColumns(schema.platformRelation), rawFields: sql<null>`null`, sourceText: sql<null>`null` }).from(schema.platformRelation).where(inArray(schema.platformRelation.queryId, parsed.queryIds)).orderBy(schema.platformRelation.id).all().map(relation => ({ relation, query: queryMap.get(relation.queryId)! }))
+  const r = schema.platformRelation
+  // Match the candidate reader's seven-key projection. Unrelated archived row
+  // bytes must stay inside SQLite; multi-path extraction retains JSON value types.
+  const processRaw = sql`case when json_valid(${r.rawFields}) then json_extract(${r.rawFields}, ${sql.join(PLATFORM_PROCESS_RAW_KEYS.map(key => sql`${`$.${key}`}`), sql`, `)}) else null end`.mapWith(platformProcessRawFromJson)
+  const relations = db.select({ ...getTableColumns(r), rawFields: processRaw, sourceText: sql<null>`null` }).from(r).where(inArray(r.queryId, parsed.queryIds)).orderBy(r.id).all().map(row => ({ relation: normalizePlatformRelation(queryMap.get(row.queryId)!.interface, row), query: queryMap.get(row.queryId)! }))
   const exports = db.select({ ...getTableColumns(schema.platformExportRow), rawFields: sql<null>`null` }).from(schema.platformExportRow).where(inArray(schema.platformExportRow.batchId, parsed.exportBatchIds)).orderBy(schema.platformExportRow.id).all().map(row => ({ row, batch: batchMap.get(row.batchId)! }))
   const c = schema.recordCorrespondence
   const relationIds = db.select({ id: schema.platformRelation.id }).from(schema.platformRelation).where(inArray(schema.platformRelation.queryId, parsed.queryIds))
@@ -139,7 +156,8 @@ function selected(db: Db, input: RecordComparisonInput) {
   const unavailableEdges = allEdges.filter(edge => parsed.asOf && ((!before(edge.decidedAt, parsed.asOf) && edge.decidedAt !== null) || revisedAfterCutoff.has(edge.id)))
   const unavailableIds = new Set(unavailableEdges.map(edge => edge.id))
   const edges = allEdges.filter(edge => !unavailableIds.has(edge.id))
-  return { input: parsed, queries, batches, documents, relations, exports, edges, unavailableEdges }
+  const businessMetadata = readPlatformBusinessMetadata(db, relations.map(item => item.relation.id))
+  return { input: parsed, queries, batches, documents, relations, exports, edges, unavailableEdges, businessMetadata }
 }
 export function getRecordComparison(db: Db, input: RecordComparisonInput, verifiedEvidence?: VerifiedComparisonEvidence) {
   return consumeComparison(iterateRecordComparison(db, input, verifiedEvidence))
@@ -201,7 +219,7 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
   let visited = 0
   const laterOwners = [...laterByOwner.values()].map(owners => ({ enterpriseId: owners[0]!.enterpriseId, titleCode: owners[0]!.titleCode }))
   yield
-  for (const formal of iterateComparisonFormalEvents(db, documents.map(document => document.id), source.input, laterOwners)) {
+  for (const formal of iterateComparisonFormalEvents(db, documents.map(document => document.path), source.input, laterOwners)) {
     if (++visited % 128 === 0) yield
     const row = analyzeEvent(formal)
     classificationCounts.unresolved--
@@ -264,7 +282,40 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
     officialProof(verifiedEvidence, documents, item.relation.enterpriseId!, relationTitle(item.relation, item.query) ?? '', item.relation.year))
   const withoutOfficialIds = new Set(withoutOfficial.map(item => item.relation.id))
   const counts = { officialEventRows, distinctEvents: officialEventRows, distinctPlatformRows: unique(relations.map(item => item.relation.id)).length, distinctEnterpriseTitles: formalCounts.enterpriseTitles, historical_aligned: classificationCounts.historical_aligned, historical_conflict: classificationCounts.historical_conflict, official_without_correspondence: classificationCounts.official_without_correspondence, unresolved: classificationCounts.unresolved, laterProcessRows: unique(later.map(edge => edge.relationId)).length, laterProcessAffectedEvents, platformWithoutOfficialRows: withoutOfficial.length, unresolvedPlatformRows: unlinkedPlatformRows.length - withoutOfficial.length, recognizedRows: recognized.length, exportRows: exports.length, observedRecognizedExportPairs: observations.reduce((n, item) => n + item.exportRows.length, 0), observedExportRows: matchedExportIds.size }
-  return { rows, total, page: source.input.page, pageSize: source.input.pageSize, grain: { rows: 'official_event_id', platform: 'relation_id', export: 'batch_id_source_row_no', later: 'enterprise_id_title_code_relation_id' }, counts, sourceSet: { queryIds: source.input.queryIds, exportBatchIds: source.input.exportBatchIds, officialSourceDocumentIds: source.input.officialSourceDocumentIds, asOf: source.input.asOf ?? null }, coverage: queries.map(queryCoverage), officialCoverage: { qualification: verifiedEvidence?.officialScopes.length ? 'verified' as const : 'unknown' as const, reasons: verifiedEvidence?.officialScopes.length ? [] : ['official_source_completeness_not_persisted'], selectedDocumentIds: documents.map(row => row.id), proofIds: verifiedEvidence?.officialScopes.map(item => item.proofId) ?? [] }, currentSourceConsistency: { qualification: observations.length && observations.every(item => item.qualification !== 'not_comparable') && exportObservations.every(item => item.qualification !== 'not_comparable') ? 'comparable' as const : 'not_comparable' as const, reasons: observations.some(item => item.qualification === 'not_comparable') || exportObservations.some(item => item.qualification === 'not_comparable') ? ['version_equivalence_unknown', 'export_scope_equivalence_unknown'] : [], recognizedObservations: observations, exportObservations }, historicalDecisionUnavailable: unavailableEdges.map(edge => ({ id: edge.id, type: edge.type, eventId: edge.eventId, relationId: edge.relationId, reason: 'post_cutoff_decision_state_unavailable' as const })), platformWithoutOfficial: { rows: unlinkedPlatformRows.map(item => { const proof = withoutOfficialIds.has(item.relation.id) ? officialProof(verifiedEvidence, documents, item.relation.enterpriseId!, relationTitle(item.relation, item.query) ?? '', item.relation.year) : null; return { relation: publicRelation(item.relation, item.query), qualification: proof ? 'platform_without_official' as const : 'unresolved' as const, proofId: proof?.proofId ?? null, reasons: proof ? [] : [item.relation.enterpriseId == null || item.relation.verificationStatus !== 'confirmed' ? 'row_identity_unverified' : unavailableRelations.has(item.relation.id) ? 'post_cutoff_decision_state_unavailable' : 'official_source_completeness_not_persisted'] } }), total: unlinkedPlatformRows.length }, laterProcessPlatformRows: laterProcessPlatformRows.map(item => ({ relation: publicRelation(item.relation, item.query), correspondences: (laterByRelation.get(item.relation.id) ?? []).map(publicEdge) })), exportBatches: batches.map(batch => ({ id: batch.id, titleCode: batch.titleCode, year: batch.year, collectedOn: batch.collectedOn, sha256: batch.sha256, rowCount: batch.rowCount, replacedBatchId: batch.replacedBatchId })) }
+  const comparison = { rows, total, page: source.input.page, pageSize: source.input.pageSize, grain: { rows: 'official_event_id', platform: 'relation_id', export: 'batch_id_source_row_no', later: 'enterprise_id_title_code_relation_id' }, counts, sourceSet: { queryIds: source.input.queryIds, exportBatchIds: source.input.exportBatchIds, officialSourceDocumentIds: source.input.officialSourceDocumentIds, asOf: source.input.asOf ?? null }, coverage: queries.map(queryCoverage), officialCoverage: { qualification: verifiedEvidence?.officialScopes.length ? 'verified' as const : 'unknown' as const, reasons: verifiedEvidence?.officialScopes.length ? [] : ['official_source_completeness_not_persisted'], selectedDocumentIds: documents.map(row => row.id), proofIds: verifiedEvidence?.officialScopes.map(item => item.proofId) ?? [] }, currentSourceConsistency: { qualification: observations.length && observations.every(item => item.qualification !== 'not_comparable') && exportObservations.every(item => item.qualification !== 'not_comparable') ? 'comparable' as const : 'not_comparable' as const, reasons: observations.some(item => item.qualification === 'not_comparable') || exportObservations.some(item => item.qualification === 'not_comparable') ? ['version_equivalence_unknown', 'export_scope_equivalence_unknown'] : [], recognizedObservations: observations, exportObservations }, historicalDecisionUnavailable: unavailableEdges.map(edge => ({ id: edge.id, type: edge.type, eventId: edge.eventId, relationId: edge.relationId, reason: 'post_cutoff_decision_state_unavailable' as const })), platformWithoutOfficial: { rows: unlinkedPlatformRows.map(item => { const proof = withoutOfficialIds.has(item.relation.id) ? officialProof(verifiedEvidence, documents, item.relation.enterpriseId!, relationTitle(item.relation, item.query) ?? '', item.relation.year) : null; return { relation: publicRelation(item.relation, item.query), qualification: proof ? 'platform_without_official' as const : 'unresolved' as const, proofId: proof?.proofId ?? null, reasons: proof ? [] : [item.relation.enterpriseId == null || item.relation.verificationStatus !== 'confirmed' ? 'row_identity_unverified' : unavailableRelations.has(item.relation.id) ? 'post_cutoff_decision_state_unavailable' : 'official_source_completeness_not_persisted'] } }), total: unlinkedPlatformRows.length }, laterProcessPlatformRows: laterProcessPlatformRows.map(item => ({ relation: publicRelation(item.relation, item.query), correspondences: (laterByRelation.get(item.relation.id) ?? []).map(publicEdge) })), exportBatches: batches.map(batch => ({ id: batch.id, titleCode: batch.titleCode, year: batch.year, collectedOn: batch.collectedOn, sha256: batch.sha256, rowCount: batch.rowCount, replacedBatchId: batch.replacedBatchId })) }
+  // Add grouping only after the original observation-level comparison is complete.
+  const byUnlinked = new Map(comparison.platformWithoutOfficial.rows.map(row => [row.relation.id, row]))
+  const byCurrent = new Map(observations.map(row => [row.recognized.id, row]))
+  const byCorrespondence = groupBy(selectedEdges, edge => edge.relationId)
+  const byUnavailable = groupBy(comparison.historicalDecisionUnavailable, edge => edge.relationId)
+  const scopedObservations = relations.filter(({ relation, query }) =>
+    (source.input.enterpriseId == null || relation.enterpriseId === source.input.enterpriseId) &&
+    (!source.input.titleCode || relationTitle(relation, query) === source.input.titleCode))
+    .map(({ relation, query }) => {
+      const meta = source.businessMetadata.get(relation.id)
+      const groupState = !meta?.identityState ? 'not_indexed' : meta.identityState !== 'resolved' ? meta.identityState : meta.contentState !== 'verified' || meta.recordId == null || meta.versionId == null ? 'unverifiable' : 'verified'
+      const businessRecord: PlatformBusinessMetadata = {
+        recordId: meta?.recordId ?? null, versionId: meta?.versionId ?? null, interface: query.interface,
+        platformKey: meta?.platformKey ?? null, groupState, identityState: meta?.identityState ?? 'not_indexed',
+        contentState: meta?.contentState ?? 'not_indexed', keySource: meta?.keySource ?? null,
+        projectionRuleVersion: meta?.projectionRuleVersion ?? null, hashAlgorithm: meta?.hashAlgorithm ?? null, contentHash: meta?.contentHash ?? null,
+      }
+      return {
+        relation: publicRelation(relation, query), businessRecord,
+        linkState: linkedRelationIds.has(relation.id) ? 'linked' as const : laterRelationIds.has(relation.id) ? 'later_process' as const : 'unlinked' as const,
+        correspondences: (byCorrespondence.get(relation.id) ?? []).map(publicEdge),
+        historicalDecisionUnavailable: byUnavailable.get(relation.id) ?? [],
+        currentSource: byCurrent.get(relation.id) ?? null, withoutOfficial: byUnlinked.get(relation.id) ?? null,
+      }
+    })
+  const business = groupComparisonBusinessObservations(scopedObservations, source.input.businessPage ?? 1, source.input.businessPageSize ?? 25)
+  return { ...comparison, ...business, businessGroups: { ...business.businessGroups, scope: {
+    queryIds: source.input.queryIds, asOf: source.input.asOf ? new Date(source.input.asOf).toISOString() : null,
+    enterpriseId: source.input.enterpriseId ?? null, titleCode: source.input.titleCode ?? null,
+    classificationApplied: false as const, countsBeforePagination: true as const,
+    grain: 'known_record_with_verified_versions_and_unknown_content_or_isolated_unknown_identity' as const,
+  } } }
+
 }
 // Keep the legacy JS parser (including ten-character day values) while SQLite
 // counts and pages narrow columns. No reason notes or off-page rows are hydrated.
@@ -386,7 +437,7 @@ export function listRecordComparisonSources(db: Db, input: ComparisonSourceCatal
 export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceCatalogInput) {
   const filter = comparisonSourceCatalogInput.parse(input)
   const qids = filter.ids === undefined ? undefined : inArray(schema.platformQuery.id, filter.ids)
-  const dids = and(eq(schema.sourceDocument.source, 'jxj'), filter.ids === undefined ? undefined : inArray(schema.sourceDocument.id, filter.ids))
+  const dids = filter.ids === undefined ? sql`1` : inArray(sql`id`, filter.ids)
   const bids = filter.ids === undefined ? undefined : inArray(schema.platformExportBatch.id, filter.ids)
   // SQLite's native whole-index Count can block the first request while leaf
   // pages enter its pager. Stream scalar IDs from the existing covering index
@@ -397,7 +448,7 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
     for (const _id of ids) { if (++queryCount % 256 === 0) yield }
   } else queryCount = db.select({ n: sql<number>`count(*)` }).from(schema.platformQuery).where(qids).get()!.n
   const counts = {
-    official_document: db.select({ n: sql<number>`count(*)` }).from(schema.sourceDocument).where(dids).get()!.n,
+    official_document: db.get<{ n: number }>(sql`select count(*) as n from ${officialSourceDirectory} where ${dids}`)!.n,
     query: queryCount,
     export_batch: db.select({ n: sql<number>`count(*)` }).from(schema.platformExportBatch).where(bids).get()!.n,
   }
@@ -412,7 +463,7 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
     return { offset: skip, limit }
   }
   const dw = window('official_document'), qw = window('query'), bw = window('export_batch')
-  const documents = dw.limit ? db.select().from(schema.sourceDocument).where(dids).orderBy(schema.sourceDocument.id).limit(dw.limit).offset(dw.offset).all().map(row => ({ kind: 'official_document' as const, id: row.id, label: row.title, subtitle: row.docNumber, titleCode: null, titleName: null, observedAt: row.issueDate, status: 'available', selectable: true, path: row.path })) : []
+  const documents = dw.limit ? db.all<import('./official-source-directory').OfficialSourceDocument>(sql`select * from ${officialSourceDirectory} where ${dids} order by id limit ${dw.limit} offset ${dw.offset}`).map(row => ({ kind: 'official_document' as const, id: row.id, label: row.title ?? fileNameOf(row.path), subtitle: row.docNumber, titleCode: null, titleName: null, observedAt: row.issueDate, status: 'available', selectable: true, path: row.path })) : []
   const q = schema.platformQuery
   // OFFSET on the rowid table walks leaf pages containing archive payloads.
   // Sort only IDs from the existing covering key index, then seek the page's rows.

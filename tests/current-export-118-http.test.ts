@@ -1,7 +1,7 @@
 import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { execFileSync } from 'node:child_process'
 
-import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import ExcelJS from 'exceljs'
@@ -315,7 +315,6 @@ it('阻塞真实执行进程仍先返回202并共用队列取消', async () => {
     expect((await f.submit('118-regenerate-running',{regenerateOf:activeId})).status).toBe(409)
     for (const id of [queuedId,genericId]) expect((await fetch(f.url('/api/jobs/' + id),{method:'DELETE',headers:f.headers})).status).toBe(200)
     expect((await fetch(f.url('/api/jobs/' + activeId),{method:'DELETE',headers:f.headers})).status).toBe(202)
-    writeFileSync('/tmp/spec118-controlled-timing.json',JSON.stringify({node:process.version,fixtureRows:210,submitWhileStoppedMs:submitMs,kind:active.kind,title:active.params.titleCode},null,2))
   } finally {
     for (const id of ids) await fetch(f.url('/api/jobs/' + id),{method:'DELETE',headers:f.headers})
     try { process.kill(pid!,'SIGCONT') } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error }

@@ -84,3 +84,84 @@ Catalog query pages first select IDs from the existing
 requested metadata rows. This avoids walking archive-bearing table leaf pages
 for a deep OFFSET. Explicit-ID label hydration uses primary-key seeks. The index
 name is an existing schema dependency; #86 adds no schema or migration.
+
+## 正式来源目录（#211）
+
+目录以已存储的经信局 `award` / `review` 事件出处为准，按 **完整原路径** 去重。通知、培育、维护材料不能仅凭文件名进入正式目录。保留原路径、附件/名单段、序号及已记录页码；不从目录年份、文件名或序号推断事件事实。重复序号通过事件和出处行身份区分。
+
+原路径匹配 `source_document` 时沿用最小既有文档 ID 与显示元数据。尚无文档登记的路径使用负的首条 `record_evidence.id` 作为只读来源引用；正负空间分离，引用只用于本目录及 `officialSourceDocumentIds`，不是真实 `source_document` 外键，不能提交为覆盖证明。已有正 ID 的直接对比/覆盖证明读取保持兼容。目录恢复名称和翻页同样支持这类引用。出处被更正/移除后旧引用可能失效，调用方应刷新来源；本票不执行 #34 的出处更正。
+
+这是当前快照中的只读连接，无迁移、自动补录或业务写入。只读引用不承诺公告日期或覆盖范围，缺失值保持为空；设置截止时点时，无法证明公告日期的文件不伪造日期以取得资格。文件 HEAD 复用 GET 的根目录、扩展名及存在性规则，缺失文件显示不可用；非 PDF 与 PDF 页码待核分开显示。只有已记录的 PDF 页码可跳转。
+
+## Scoped business grouping (#246, comparison consumer)
+
+The original observation comparison runs first, without removing or deduplicating
+relations. All existing `rows`, event pagination/filters, `counts`, `sourceSet`,
+coverage, source qualification/proof IDs, correspondence pointers,
+`requiresRevalidation` and `historicalDecisionUnavailable` retain their meaning.
+This consumer adds no annual conclusion, business difference reason, new proof,
+or confirmation decision.
+
+`businessGroups` is a separate page (`businessPage` default 1,
+`businessPageSize` default 25, maximum 200). `total` counts known business groups
+plus isolated unknown-identity observations **before this pagination**. Stable order is
+minimum original relation ID; versions and observations within a group also use
+original relation ID order, never a latest-version assumption. Original event
+`page`/`pageSize` and the unpaginated original observation arrays are unchanged.
+
+`businessGroups.scope` explicitly states selected query IDs, normalized cutoff
+instant, optional enterprise/title filters, `classificationApplied:false` and
+`countsBeforePagination:true`. Only the already selected query/time snapshot is
+considered, with enterprise/title applied to original observation fields. Formal
+event classification and event pagination do not filter this platform scope.
+There is no archive-wide business discovery or claim that the event page contains
+all selected businesses. Sources later than `asOf` continue to fail the request,
+without substitution. No unselected or future observation/decision is borrowed.
+
+In that same read snapshot, `readPlatformBusinessMetadata` fetches only lightweight
+canonical columns for the selected original relation IDs, in batches of at most
+400. This adds no full raw/archive/canonicalRawJson reads or identity inference.
+The comparison-only pure seam is `groupComparisonBusinessObservations` in
+`lib/roster/record-comparison.ts`; its presentation boundary is
+`ComparisonBusinessGroups.vue`. Neither shared candidate grouping nor annual
+algorithms are changed.
+
+- A resolved record uses canonical `(interface,recordId)` as the outer identity and
+  canonical verified `versionId` for nested versions. Same-content duplicate observations
+  remain individually traceable; A→B→A is two versions and three observations.
+- `not_indexed`, `missing_key` and `conflict` have no known record identity and
+  remain separate relation-ID fallback groups. A resolved recordId with
+  unverifiable content still belongs to its one business outer group. Each such
+  observation appears separately in `unknownObservations`, outside `versions`;
+  no shared unknown-version node or version count is created. A business with only
+  unverifiable observations is one known record and zero known versions.
+  Null IDs never imply equal/different versions. Unknown enterprise remains null.
+  Group `groupState` describes identity (`resolved` or a fallback identity state),
+  while observation metadata retains its own content/identity states.
+- Every nested observation retains its public original relation, own selected
+  correspondences (including revision/rules/revalidation), unavailable historical
+  decision stubs, own `currentSource` comparison and own `withoutOfficial` result
+  (null when that old result does not apply). Proofs/qualifications stay on those
+  observations. `linkState=linked|later_process|unlinked` follows the original
+  comparison membership, not an added qualification decision. Groups/versions
+  report `mixed` linkState when memberships differ and `resultState=mixed` when
+  observation membership/qualification/decision summaries differ. No group proof
+  or confirmed status is synthesized; one confirmed endpoint does not cover any
+  other observation/version. The original source reader remains available for
+  each observation and reads its current archived detail.
+
+`businessCounts` covers that entire explicitly declared observation scope before
+business pagination: `records` counts known canonical record identities (including
+known records with unknown content), `versions` counts only verified content
+versions, and `observations` counts all selected/scoped original relations.
+`unknownIdentityObservations` counts no-record-ID fallbacks;
+`unknownContentObservations` counts known-record observations without a verified
+version. `unknownObservations` is their sum. `unknownByState` breaks this sum into
+not-indexed, missing-key, conflict and unverifiable-content reasons. These are not
+archive-wide counts, event counts or qualified-correspondence counts.
+
+REST/OpenAPI and MCP `list_record_comparison` expose the same new page arguments
+and result fields through the existing handler and read snapshot. The UI presents
+business groups by default, expands versions into every original observation and
+its own results, and uses independent business pagination. Existing formal event
+results and other-source evidence remain available below it.

@@ -5,15 +5,17 @@ import { formatFetchTime } from '~~/lib/reconcile-time'
 import AssessmentStatusBadge from '@/components/evidence-review/AssessmentStatusBadge.vue'
 import PlatformQueryProvenance from './PlatformQueryProvenance.vue'
 import PlatformRecordDetails from './PlatformRecordDetails.vue'
+import PlatformBusinessHistory from './PlatformBusinessHistory.vue'
 import RecordSourceReader from './record-correspondence/SourceReader.vue'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { platformFailureForDisplay, recognizedField } from '~~/lib/roster/platform-records'
+import { platformFailureForDisplay, recognizedField, PLATFORM_HISTORY_CONFLICTS } from '~~/lib/roster/platform-records'
+import { groupPlatformBusinessDetails, hasKnownPlatformBusiness, type PlatformBusinessDetail } from '~~/lib/roster/platform-business-detail'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 
-const props = defineProps<{ queries: PlatformRecordQuery[]; relations: PlatformRecord[]; returnTo?: string | null }>()
+const props = defineProps<{ queries: PlatformRecordQuery[]; relations: PlatformRecord[]; businessRecords?: PlatformBusinessDetail[]; returnTo?: string | null }>()
 const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
 const navigatingEventId = ref<number | null>(null)
 function closeForEvent(eventId: number) {
@@ -32,14 +34,16 @@ const selectedTitle = ref('all')
 const selectedSource = ref('all')
 const time = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : formatFetchTime(value) ?? '未提供'
 const queryById = computed(() => new Map(props.queries.map(query => [query.id, query])))
-// 申报记录未带称号时，只通过相同平台编号的唯一关联归属分组；不按年份、名称猜测。
+const recordById = computed(() => new Map(props.relations.map(record => [record.id, record])))
+const observationById = computed(() => new Map((props.businessRecords ?? []).flatMap(b => b.observationRefs).map(o => [o.relationId, o])))
+// 申报记录未带称号时，仅以相同编号的唯一关联称号作展示筛选，不是权威称号事实。
 const rows = computed(() => props.relations.map(record => {
   const query = queryById.value.get(record.queryId)
   const titles = new Set(props.relations
     .filter(other => record.relationKey && other.relationKey === record.relationKey && queryById.value.get(other.queryId)?.interface === 'business_list')
     .map(other => queryById.value.get(other.queryId)?.rdjb).filter(Boolean))
   const title = query?.interface === 'recognized_list' ? record.sourceRdjb ?? (query.rdjb.split(',').length === 1 ? query.rdjb : '') : query?.rdjb || (titles.size === 1 ? [...titles][0]! : '')
-  return { record, query, title }
+  return { record, query, title, inferredTitle: query?.interface === 'apply_list' && !query.rdjb && Boolean(title) }
 }))
 const titles = computed(() => {
   const values = new Set([...props.queries.flatMap(query => query.rdjb.split(',')).filter(Boolean), ...rows.value.map(row => row.title)])
@@ -69,7 +73,15 @@ const sources = [
   { source: 'recognized_list', label: '已认定企业列表' },
 ]
 const tables = computed(() => sources.filter(table => selectedSource.value === 'all' || selectedSource.value === table.source).map(table => {
-  const tableRows = rows.value.filter(row => row.query?.interface === table.source && (activeTitle.value === 'all' || row.title === (activeTitle.value === 'unassigned' ? '' : activeTitle.value)))
+  // Select original observations first; a newer title/version cannot hide older selected observations.
+  const selected = rows.value.filter(row => row.query?.interface === table.source && (activeTitle.value === 'all' || row.title === (activeTitle.value === 'unassigned' ? '' : activeTitle.value)))
+  const businesses = groupPlatformBusinessDetails(selected.flatMap(row => {
+    const observation = observationById.value.get(row.record.id)
+    return observation ? [observation] : []
+  }))
+  const businessByRepresentative = new Map(businesses.map(b => [b.representativeRelationId, b]))
+  const tableRows = selected.filter(row => !observationById.value.has(row.record.id) || businessByRepresentative.has(row.record.id))
+    .map(row => ({ ...row, business: businessByRepresentative.get(row.record.id) }))
   const groups = new Map<string, typeof tableRows>()
   for (const row of tableRows) {
     const group = groups.get(row.title) ?? []
@@ -78,8 +90,11 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
   }
   return {
     ...table,
-    queries: props.queries.filter(query => query.interface === table.source && (activeTitle.value === 'all' || query.rdjb.split(',').includes(activeTitle.value === 'unassigned' ? '' : activeTitle.value) || tableRows.some(row => row.query?.id === query.id))),
+    hasInferredTitles: selected.some(row => row.inferredTitle),
+    queries: props.queries.filter(query => query.interface === table.source && (activeTitle.value === 'all' || query.rdjb.split(',').includes(activeTitle.value === 'unassigned' ? '' : activeTitle.value) || selected.some(row => row.query?.id === query.id))),
     rows: tableRows,
+    knownBusinessCount: businesses.filter(b => hasKnownPlatformBusiness(b.businessRecord)).length,
+    fallbackCount: tableRows.filter(row => !row.business || !hasKnownPlatformBusiness(row.business.businessRecord)).length,
     recognized: table.source === 'recognized_list',
     columns: tableRows.some(row => row.record.aliasNameRaw) ? 10 : 9,
     hasAliases: tableRows.some(row => row.record.aliasNameRaw),
@@ -114,13 +129,14 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
       <TabsContent :value="activeTitle" class="flex min-w-0 flex-col gap-5">
         <section v-for="table in tables" :key="table.source" class="min-w-0" :data-record-kind="table.source">
           <div class="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h4 class="text-sm font-medium">{{ table.label }} <span class="text-muted-foreground font-normal">{{ table.rows.length }} 条</span></h4>
+            <h4 class="text-sm font-medium">{{ table.label }} <span class="text-muted-foreground font-normal"><template v-if="businessRecords">{{ table.knownBusinessCount }} 条已知业务<template v-if="table.fallbackCount"> / {{ table.fallbackCount }} 条身份待核原行</template></template><template v-else>{{ table.rows.length }} 条</template></span></h4>
             <div v-if="table.queries.length" class="flex flex-wrap items-center gap-1.5 text-[13px]" data-testid="platform-query-summary">
               <span class="text-muted-foreground whitespace-nowrap">{{ querySummary(table.queries).time }}</span>
               <AssessmentStatusBadge v-for="status in querySummary(table.queries).statuses" :key="status" kind="query" :value="status" />
             </div>
           </div>
           <PlatformQueryProvenance :queries="table.queries" :source-label="table.label" />
+          <p v-if="table.hasInferredTitles" class="text-muted-foreground mb-2 text-[13px]">未标注称号的申报按同编号关联称号筛选，仅用于展示，不作为认定事实。</p>
           <p v-for="query in table.queries.filter(query => query.status === 'failed')" :key="query.id" class="text-destructive mb-2 text-[13px] leading-5" data-testid="platform-query-failure">查询 #{{ query.id }}：{{ platformFailureForDisplay(query.failureReason) ?? '本次查询未完成，不能据此判断平台有无记录。' }}</p>
           <p v-if="!table.rows.length && emptyMessage(table.queries) !== '本次查询未完成'" class="text-muted-foreground text-[13px] leading-5" data-testid="platform-source-empty">{{ emptyMessage(table.queries) }}</p>
           <div v-if="table.rows.length" class="mb-1 sm:hidden">
@@ -156,9 +172,10 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                     <span class="text-muted-foreground font-normal">{{ group.rows.length }} 条</span>
                   </th>
                 </tr>
-                <tr v-for="({record}, index) in group.rows" :key="record.id" class="border-t" data-testid="platform-relation" :data-record-id="record.id">
+                <template v-for="({record, business}, index) in group.rows" :key="record.id">
+                <tr class="border-t" data-testid="platform-relation" :data-record-id="record.id">
                   <td class="px-3 py-1.5 tabular-nums" :class="{ 'pl-9': activeTitle === 'all' }">{{ index + 1 }}</td>
-                  <td class="px-3 py-1.5">{{ record.nameRaw ?? '未提供' }}<span v-if="table.recognized && record.enterpriseId === null" class="text-muted-foreground block text-xs">未匹配主体</span></td>
+                  <td class="px-3 py-1.5">{{ record.nameRaw ?? '未提供' }}<span v-if="table.recognized && record.enterpriseId === null" class="text-muted-foreground block text-xs">未匹配主体</span><template v-if="business"><span class="text-muted-foreground block">{{ business.businessRecord.platformKey ?? record.relationKey ?? '编号未知' }}</span><span v-for="conflict in business.conflicts" :key="conflict" class="block">{{ PLATFORM_HISTORY_CONFLICTS[conflict] ?? '原观察存在冲突，待核' }}</span></template></td>
                   <td class="px-3 py-1.5 tabular-nums">{{ record.usccRaw ?? '未提供' }}</td>
                   <template v-if="table.recognized">
                   <td v-for="field in ['szq', 'rdxx', 'rddqrq', 'whpcyear', 'whpc']" :key="field" class="px-3 py-1.5">{{ recognizedField(record.rawFields, field) }}</td>
@@ -166,13 +183,15 @@ const tables = computed(() => sources.filter(table => selectedSource.value === '
                   <template v-else>
                   <td class="px-3 py-1.5">{{ record.province ?? '未提供' }}</td>
                   <td class="px-3 py-1.5">{{ record.declareKind ? RELATION_DECLARE_KINDS[record.declareKind] ?? '类型待核' : '未提供' }}</td>
-                  <td class="px-3 py-1.5">{{ record.status ?? '未提供' }}</td>
+                  <td class="px-3 py-1.5">{{ record.status ?? '未提供' }}<span v-if="record.normalizationConflicts?.length" class="text-muted-foreground block text-xs">字段冲突，待核</span></td>
                   <td class="px-3 py-1.5 tabular-nums">{{ record.appliedAt ?? '未提供' }}</td>
                   <td class="px-3 py-1.5">{{ record.batch ?? '未提供' }}</td>
                   </template>
                   <td v-if="table.hasAliases" class="px-3 py-1.5">{{ record.aliasNameRaw ?? '—' }}</td>
                   <td class="bg-card border-l px-3 py-1.5"><div class="flex flex-col items-start gap-1"><PlatformRecordDetails :record="record" :query="queryById.get(record.queryId)" /><Button variant="ghost" size="sm" @click="selectedRelationId = record.id">对应事件/出处</Button></div></td>
                 </tr>
+                <tr v-if="business" class="border-t"><td :colspan="table.columns" class="px-3"><PlatformBusinessHistory :business="business" :records="recordById" :queries="queryById" @source="selectedRelationId = $event" /></td></tr>
+                </template>
               </tbody>
             </table>
           </div>

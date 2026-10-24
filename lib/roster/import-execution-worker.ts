@@ -34,7 +34,7 @@ process.on('message', async (message: ImportExecutionMessage | { type: 'shutdown
     if (connection!.pragma('schema_version', { simple: true }) !== message.identity.schemaVersion || JSON.stringify(migration) !== JSON.stringify(message.identity.migration)) throw new ImportReceiptError(503, 'import_source_changed', 'Import database schema or migration identity changed before execution')
     const db = drizzle(connection!, { schema, logger: createDrizzleLogger({ connection: 'import_execution', execution: 'worker', context: message.logContext }) })
     const request = deserialize(message.payload)
-    const result = message.action === 'preflight' ? preflightRosterImport(db, request, message.pageCountErrors, message.logContext) : commitRosterImport(db, request, message.pageCountErrors, message.logContext)
+    const result = message.action === 'preflight' ? preflightRosterImport(db, request, message.pageCountErrors, message.logContext) : commitRosterImport(db, request, message.pageCountErrors, { ...message.logContext, deferCandidateTasks: true })
     await send({ type: 'result', id: message.id, result })
   } catch (error) {
     const known = error instanceof ImportReceiptError

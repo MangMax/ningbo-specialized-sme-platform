@@ -1,5 +1,6 @@
 import { submitRosterImportMcp } from '../../utils/roster-import-mcp-submission'
 import { z } from 'zod'
+import { rosterImportMcpPayloadSchema } from '../../utils/roster-import-schema'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { writeGuard } from '../../utils/mcp-guard'
 
@@ -31,6 +32,7 @@ export default defineMcpTool({
   },
   enabled: writeGuard,
   description: [
+    'platformRecordObservations:[{relationId}]：sourceKind=platform_archive，每批1..100条，服务端读取原文建立业务身份/内容版本/观察映射；源缺失、漂移、同采集异原文整批失败。预检记录账本但不写业务，commit重核。',
     '差异原因 pending_review（待审核）须由代理/用户明确裁决：status=confirmed_reason、verificationStatus=confirmed、measureCode=follow_review；保留正式历史并跟进审核，区别于 needs_review 待核实。',
     'queryBusList 仅作为 recognized_list 显式转存；collectionEvidence 必须保留原结果/时点/页行与完整性，见 docs/platform-recognized-evidence.md。读回使用 list_platform_queries。',
     '把一批名单数据（企业 / 别名 / 称号事件 / 出处 / 平台查询与关系 / 导出快照 / 差异原因与措施 / 归并）',
@@ -47,11 +49,11 @@ export default defineMcpTool({
   inputSchema: {
     idempotencyKey: z.string().min(1).describe('幂等键；同一来源重复调用必须给同一个值（库层面唯一）'),
     sourceKind: z
-      .enum(['announcement', 'platform_export', 'alias_evidence'])
+      .enum(['announcement', 'platform_export', 'platform_archive', 'alias_evidence'])
       .describe('来源类别：公布文件 / 平台导出 / 别名证据'),
     sourceIdentity: z.string().min(1).describe('来源身份：文件相对路径或逻辑标识（不含凭证）'),
     sourceSha256: z.string().optional().describe('源文件内容 SHA-256；给不出留空'),
-    payload: z.record(z.string(), z.unknown()).describe('写入载荷（契约 §8.3 / §8.4）'),
+    payload: rosterImportMcpPayloadSchema,
   },
   handler: (input) => submitRosterImportMcp('commit', input),
 })

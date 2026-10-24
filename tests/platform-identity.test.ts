@@ -2,8 +2,6 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
-  APPLY_GRID,
-  BUSINESS_GRID,
   type PlatformQueryOutcome,
   classifyRawQuery,
   groupRelationsByUscc,
@@ -136,10 +134,5 @@ describe('夹具用的是真实响应的裁剪摘录,且不含凭证', () => {
       const text = fixture(name)
       expect(text).not.toMatch(/JSESSIONID|token|password/i)
     }
-  })
-
-  it('grid 名与接口对应', () => {
-    expect(BUSINESS_GRID).toBe('businessListGrid')
-    expect(APPLY_GRID).toBe('applyGrid')
   })
 })

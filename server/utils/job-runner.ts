@@ -470,3 +470,17 @@ export function ensureJobRunnerReady(db: Db): number {
   void cleanupCurrentExports(db).catch(() => {})
   return interrupted
 }
+
+/** Adopt a durable queued job created by the native import process. Admission
+ * and parameters were validated when staged. Never reopen or duplicate work. */
+export function enqueuePersistedJob(db: Db, id: string, filesDir: string, logContext?: LogContext): boolean {
+  const row = getJob(db, id)
+  if (!row || row.state !== 'queued') return false
+  if (activeJobs.has(id) || queue.some(entry => entry.jobId === id)) return true
+  const spec = getJobSpec(row.kind)
+  if (!spec?.run) return false
+  const run = spec.prepare?.(row.params, db) ?? spec.run
+  queue.push({ run, jobId: id, kind: row.kind, db, filesDir, logContext: Object.freeze({ ...logContext, taskId: id }) })
+  drainQueue()
+  return true
+}

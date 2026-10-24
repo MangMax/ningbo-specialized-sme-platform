@@ -33,3 +33,19 @@ describe('record comparison client request', () => {
     expect(comparisonRouteKey(comparisonRouteFromQuery(comparisonRouteQuery(state)))).toBe(comparisonRouteKey(state))
   })
 })
+
+it('restores read-only official evidence references without accepting negative query or proof IDs', () => {
+  const selection = comparisonSelectionFromQuery({ queryIds: '7', exportBatchIds: '', officialSourceDocumentIds: '-9,3', proofIds: '-2' })
+  expect(selection).toEqual({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [-9, 3], proofIds: [] })
+  expect(comparisonSelectionFromQuery(comparisonSelectionQuery(selection))).toEqual(selection)
+  expect(comparisonSelectionFromQuery({ queryIds: '-7', officialSourceDocumentIds: '0' })).toMatchObject({ queryIds: [], officialSourceDocumentIds: [] })
+})
+
+it('roundtrips independent business pagination without changing event pagination or source selection', () => {
+  const state = comparisonRouteFromQuery({ queryIds: '7', officialSourceDocumentIds: '3', page: '4', pageSize: '50', businessPage: '2', businessPageSize: '1' })
+  const query = comparisonRouteQuery(state)
+  expect(query).toMatchObject({ page: '4', pageSize: '50', businessPage: '2', businessPageSize: '1' })
+  expect(comparisonRouteKey(comparisonRouteFromQuery(query))).toBe(comparisonRouteKey(state))
+  expect(comparisonRouteKey({ ...state, businessPage: 3 })).not.toBe(comparisonRouteKey(state))
+  expect(comparisonRouteFromQuery({ businessPage: '-1', businessPageSize: '201' })).toMatchObject({ businessPage: 1, businessPageSize: 25 })
+})

@@ -1,4 +1,4 @@
-import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
+import { businessIdentity, expectedBusinessIdentity } from './helpers/current-export-118'
 import { reviewCurrentExportDecision } from './helpers/current-export-decisions'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -197,7 +197,6 @@ it('阻塞执行、背压、取消与失败', async () => {
     expect(failure.state).toBe('failed'); expect(failure.error).toContain('中断');expect(failure.result.ruleVersion).toBe('current-roster-116-v8')
     expect(existsSync(join(dbPath+'.exports',failed.jobId+'.part'))).toBe(false)
     expect((await fetch(url('/api/job-artifacts/'+failed.jobId),{headers})).status).toBe(404)
-    writeFileSync('/tmp/spec117-controlled-timing.json',JSON.stringify({environment:process.version,resourceFixtureRows:3000,stoppedExecutorSubmitMs:elapsed,limit:9},null,2))
   } finally { try {process.kill(pid,'SIGCONT')} catch {} }
 },30000)
 it('万行快照与普通请求响应', async () => {
@@ -231,7 +230,6 @@ it('万行快照与普通请求响应', async () => {
   expect(rows(wb,'有效企业').filter(r=>String(r[2]).startsWith('资源合成'))).toHaveLength(10000)
   for(const [sheet,key] of [['有效企业','eligible'],['待确认','pending'],['排除明细','excluded']]) expect(wb.getWorksheet(sheet!)!.rowCount-1).toBe(job.result.counts[key!])
   expect(job.result.executor.peakRssBytes).toBeLessThan(512*1024*1024)
-  writeFileSync('/tmp/spec117-performance.json',JSON.stringify({environment:process.version,resourceFixtureRows:10000,totalCandidates:job.result.total,counts:job.result.counts,executionMs:Date.parse(job.finishedAt)-Date.parse(job.startedAt),submitMs,ordinaryRequestMs:latencies,artifactBytes:job.result.artifact.size,executor:job.result.executor,dataVersion:job.result.dataVersion},null,2))
   // A new execution observes the changed decision, without caching old qualification.
   const next=await workbook('after-snapshot-change')
   expect(rows(next.wb,'排除明细').some(r=>r[2]==='快照末项')).toBe(true)

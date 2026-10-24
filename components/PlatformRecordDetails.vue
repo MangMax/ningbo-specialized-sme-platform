@@ -4,6 +4,7 @@ import { platformBusinessFields } from '~~/lib/roster/platform-records'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 import { PLATFORM_RDJBS } from '~~/lib/labels'
 import { ChevronDown } from '@lucide/vue'
+import PlatformFieldConflicts from './PlatformFieldConflicts.vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 const props = defineProps<{ record: PlatformRecord; query?: PlatformRecordQuery }>()
@@ -17,6 +18,7 @@ const fields = computed(() => platformBusinessFields(props.record.rawFields))
         <DialogTitle>行 #{{ record.id }} · 原始记录</DialogTitle>
         <DialogDescription class="break-words [overflow-wrap:anywhere]">{{ record.nameRaw ?? '企业名称未提供' }}</DialogDescription>
       </DialogHeader>
+    <PlatformFieldConflicts :conflicts="record.normalizationConflicts" />
     <dl class="text-sm mt-2 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-3 gap-y-1 break-words [overflow-wrap:anywhere]">
       <dt class="text-muted-foreground">查询引用</dt><dd>#{{ record.queryId }}</dd>
       <dt class="text-muted-foreground">主体归属</dt><dd>{{ record.enterpriseId === undefined ? '未提供' : record.enterpriseId === null ? '未匹配主体' : `已关联主档 #${record.enterpriseId}` }}</dd>

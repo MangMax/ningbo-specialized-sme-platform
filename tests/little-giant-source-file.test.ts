@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { buildLittleGiantImportReport } from '../lib/roster/little-giant-import'
 import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../lib/roster/little-giant-workbook'
@@ -89,17 +88,6 @@ describe(`RL-02 源文件结构与逐行交代(${source.label})`, () => {
       new Set(workbook.rows.map((row) => (row.uscc === '' ? `name:${row.name}` : row.uscc))).size,
     )
     expect(report.source.sourceFile).toBe(source.sourceFile)
-  })
-
-  it('可把报告落成 JSON 供人工核对(RL02_REPORT_OUT=<绝对路径>)', () => {
-    const out = process.env.RL02_REPORT_OUT
-    if (!out) return
-    const report = buildLittleGiantImportReport(workbook)
-    writeFileSync(out, JSON.stringify(report, null, 2))
-
-    const dumped = JSON.parse(readFileSync(out, 'utf8')) as typeof report
-    expect(dumped.source.sha256).toBe(workbook.sha256)
-    expect(dumped.totals).toEqual(report.totals)
   })
 })
 
