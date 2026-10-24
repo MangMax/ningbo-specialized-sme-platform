@@ -43,9 +43,9 @@ it('offers same-request retry for an unknown submission and readback-only retry 
   expect(wrapper.emitted('retry-readback')).toEqual([[]])
 })
 
-it('keeps failed target page and server supplied business reasons while exposing only allowed task actions', async () => {
+it('keeps read failure and server supplied business reasons while exposing only allowed task actions', async () => {
   wrapper = mount(AnnualProcessReview, { props: { back: '/enterprises/1', view: null, phase: 'failed', readFailed: true, targetPage: 2, canRetry: true, canCancel: false, businessReasons: ['正式复核缺此次结论年，请补充正式来源。'] } })
-  expect(wrapper.text()).toContain('年度过程第 2 页读取失败')
+  expect(wrapper.text()).toContain('年度过程读取失败')
   expect(wrapper.text()).toContain('正式复核缺此次结论年，请补充正式来源。')
   expect(wrapper.findAll('button').map(button => button.text())).not.toContain('取消任务')
   await wrapper.findAll('button').find(button => button.text() === '重试任务')!.trigger('click')
@@ -63,7 +63,7 @@ it('keeps process facts but withholds final success while accepted work is still
   wrapper = mount(AnnualProcessReview, { props: { back: '/enterprises/1', view, phase: 'syncing', readFailed: true, targetPage: 2 } })
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
   expect(wrapper.text()).toContain('终审通过')
-  expect(wrapper.text()).toContain('保留第 1 页年度过程及其来源')
+  expect(wrapper.text()).toContain('保留已加载的年度过程及其来源')
   await wrapper.setProps({ phase: 'sync-failed' })
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
   await wrapper.setProps({ phase: 'synced', readFailed: false })
