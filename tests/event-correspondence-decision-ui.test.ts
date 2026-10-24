@@ -174,3 +174,100 @@ it('clears the previous event draft and preflight when switching business object
   expect(button('预检决定').disabled).toBe(true)
   expect(button('提交决定')).toBeUndefined()
 })
+
+it('invalidates preflight when basis is cleared and never commits the previous nonempty request', async () => {
+  capability()
+  const fetch = vi.fn().mockResolvedValue({ planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 2 } }); vi.stubGlobal('$fetch', fetch)
+  wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
+  const area = document.querySelector('textarea')!
+  area.value = '预检依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  button('预检决定').click(); await flushPromises()
+  expect(button('提交决定')).toBeDefined()
+  area.value = ''; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  expect(button('提交决定')).toBeUndefined()
+  expect(button('预检决定').disabled).toBe(true)
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(0)
+})
+
+it('isolates unknown requests across event switches and restores each original frozen key without mixing drafts', async () => {
+  capability()
+  const fetch = vi.fn().mockImplementation((url: string) => {
+    if (url.endsWith('browser-preflight')) return Promise.resolve({ planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 2 } })
+    if (url.endsWith('browser-commit')) return Promise.reject({ statusCode: 503 })
+    throw new Error(url)
+  }); vi.stubGlobal('$fetch', fetch)
+  wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
+  const enter = async (text: string) => { const area = document.querySelector('textarea')!; area.value = text; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises() }
+  await enter('A冻结依据'); button('预检决定').click(); await flushPromises(); button('提交决定').click(); await flushPromises()
+  const first = fetch.mock.calls.find(([url]) => url.endsWith('browser-commit'))![1].body
+  button('保留草稿并关闭').click(); await flushPromises(); button('不对应').click(); await flushPromises()
+  expect(document.querySelector('textarea')!.disabled).toBe(true)
+  button('重试提交').click(); await flushPromises()
+  await wrapper.setProps({ edge: { ...edge, eventId: 8 } }); await flushPromises()
+  button('确认对应').click(); await flushPromises()
+  expect(document.querySelector('textarea')!.disabled).toBe(false)
+  expect(document.querySelector('textarea')!.value).toBe('')
+  await enter('B独立依据'); button('预检决定').click(); await flushPromises()
+  const requests = fetch.mock.calls.filter(([url]) => url.endsWith('browser-preflight')).map(([, options]) => options.body)
+  expect(requests[1].operations[0].edge.eventId).toBe(8)
+  expect(requests[1].basis).toBe('B独立依据')
+  expect(requests[1].idempotencyKey).not.toBe(first.request.idempotencyKey)
+  await wrapper.setProps({ edge }); await flushPromises(); button('确认对应').click(); await flushPromises()
+  expect(document.querySelector('textarea')!.value).toBe('A冻结依据')
+  expect(document.querySelector('textarea')!.disabled).toBe(true)
+  button('重试提交').click(); await flushPromises()
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit')).map(([, options]) => options.body)).toEqual([first, first, first])
+  await wrapper.setProps({ edge: { ...edge, eventId: 8 } }); await flushPromises(); button('确认对应').click(); await flushPromises()
+  expect(document.querySelector('textarea')!.value).toBe('B独立依据')
+  expect(button('提交决定')).toBeDefined()
+})
+
+it('explains an empty eligible replacement page without offering protected or current records', async () => {
+  capability()
+  const fetch = vi.fn().mockImplementation((url: string) => Promise.resolve(url.endsWith('/discover') ? { page: 1, pageSize: 50, total: 2, rows: [
+    { edge, existingStatus: 'confirmed' }, { edge: { ...edge, relationId: 11 }, existingStatus: 'rejected' },
+  ] } : { id: 9, revision: 2, status: 'confirmed' })); vi.stubGlobal('$fetch', fetch)
+  wrapper = mountControl({ id: 9, revision: 2, status: 'confirmed' }); await flushPromises(); button('改选记录').click(); await flushPromises()
+  expect(document.body.textContent).toContain('本页无可改选记录')
+  expect(document.body.textContent).toContain('保留已有人工决定')
+  expect(document.querySelector('#replacement-record')!.getAttribute('disabled')).not.toBeNull()
+  expect(button('预检决定').disabled).toBe(true)
+  expect(document.body.textContent).toContain('共 2 条归档记录')
+})
+
+it('ignores a late commit response after switching objects and retries the original object with its bound request', async () => {
+  capability()
+  let finish!: (value: any) => void
+  const late = new Promise(resolve => { finish = resolve })
+  const fetch = vi.fn().mockImplementation((url: string) => {
+    if (url.endsWith('browser-preflight')) return Promise.resolve({ planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 2 } })
+    if (url.endsWith('browser-commit')) return late
+    if (url.endsWith('/audit')) return Promise.resolve({ rows: [] })
+    return Promise.resolve({ id: 11, status: 'confirmed' })
+  }); vi.stubGlobal('$fetch', fetch)
+  wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
+  const area = document.querySelector('textarea')!; area.value = 'A在途依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  button('预检决定').click(); await flushPromises(); button('提交决定').click(); await flushPromises()
+  const first = fetch.mock.calls.find(([url]) => url.endsWith('browser-commit'))![1].body
+  await wrapper.setProps({ edge: { ...edge, eventId: 8 } }); await flushPromises(); button('确认对应').click(); await flushPromises()
+  finish({ correspondenceIds: [11] }); await flushPromises()
+  expect(document.querySelector('textarea')!.disabled).toBe(false)
+  expect(document.body.textContent).not.toContain('已提交并读回')
+  expect(button('重试读回')).toBeUndefined()
+  await wrapper.setProps({ edge }); await flushPromises(); button('确认对应').click(); await flushPromises()
+  expect(document.querySelector('textarea')!.disabled).toBe(true)
+  expect(button('提交决定')).toBeDefined()
+  button('提交决定').click()
+  await flushPromises()
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit')).map(([, options]) => options.body)).toEqual([first, first])
+})
+
+it('keeps the only required basis field in the action area while preserving the evidence reader', async () => {
+  capability(); vi.stubGlobal('$fetch', vi.fn().mockResolvedValue({}))
+  wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
+  const footer = document.querySelector('[data-testid="decision-footer"]')!
+  expect(footer.querySelectorAll('textarea')).toHaveLength(1)
+  expect(footer.textContent).toContain('核对依据（必填）')
+  expect(document.querySelector('[aria-label="待核平台原行"]')).not.toBeNull()
+  expect(button('预检决定').disabled).toBe(true)
+})

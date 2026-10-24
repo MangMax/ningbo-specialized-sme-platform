@@ -51,31 +51,56 @@ const title = computed(() => ({ confirm: '确认对应', reject: '不对应', un
 let generation = 0
 let previousAction: Action | null = null
 onBeforeUnmount(() => { generation++ })
-watch([() => props.edge.eventId, () => props.edge.relationId], () => { generation++; action.value = null; request.value = null; plan.value = null; receipt.value = null; success.value = ''; basis.value = '' })
-watch([basis, selected], () => { if (!receipt.value && !attempted.value) { request.value = null; plan.value = null; conflict.value = false; error.value = '' } })
-async function loadPoint() {
-  point.value = props.existing ? await $fetch<CorrespondenceDetail>(`/api/roster/correspondences/${props.existing.id}`) : null
+// Keep unresolved requests with their business object for this mounted session.
+// Switching objects never reuses another object's key, receipt or loading state.
+function captureContext() {
+  return { previousAction, basis: basis.value, point: point.value, attempted: attempted.value, error: error.value, conflict: conflict.value, receipt: receipt.value, success: success.value, request: request.value, plan: plan.value, replacements: replacements.value, replacementFailed: replacementFailed.value, replacementPage: replacementPage.value, selected: selected.value }
+}
+let restoringContext = false
+const contexts = new Map<string, ReturnType<typeof captureContext>>()
+watch(() => `${props.edge.type}:${props.edge.eventId}:${props.edge.relationId}`, (key, previousKey) => {
+  contexts.set(previousKey, captureContext())
+  generation++; action.value = null; pending.value = false
+  const saved = contexts.get(key)
+  restoringContext = true
+  previousAction = saved?.previousAction ?? null
+  basis.value = saved?.basis ?? ''; point.value = saved?.point ?? null; attempted.value = saved?.attempted ?? false
+  error.value = saved?.error ?? ''; conflict.value = saved?.conflict ?? false; receipt.value = saved?.receipt ?? null
+  success.value = saved?.success ?? ''; request.value = saved?.request ?? null; plan.value = saved?.plan ?? null
+  replacements.value = saved?.replacements ?? null; replacementFailed.value = saved?.replacementFailed ?? false
+  replacementPage.value = saved?.replacementPage ?? 1; selected.value = saved?.selected ?? ''
+  restoringContext = false
+})
+watch([basis, selected], () => { if (!restoringContext && !receipt.value && !attempted.value) { request.value = null; plan.value = null; conflict.value = false; error.value = '' } }, { flush: 'sync' })
+async function loadPoint(token = generation) {
+  const result = props.existing ? await $fetch<CorrespondenceDetail>(`/api/roster/correspondences/${props.existing.id}`) : null
+  if (token === generation) point.value = result
 }
 async function open(next: Action) {
+  if (attempted.value && !success.value) { action.value = previousAction; return }
   if (previousAction === next && !success.value) { action.value = next; return }
   attempted.value = false
   previousAction = next
   action.value = next; success.value = ''; error.value = ''; conflict.value = false; request.value = null; plan.value = null; receipt.value = null; basis.value = ''; selected.value = ''; replacements.value = null
+  const token = generation
   pending.value = true
-  try { await loadPoint(); if (next === 'correct') await loadReplacements(1) }
-  catch { error.value = '当前对应读取失败，请刷新后核对。'; conflict.value = true }
-  finally { pending.value = false }
+  try { await loadPoint(token); if (token === generation && next === 'correct') await loadReplacements(1) }
+  catch { if (token === generation) { error.value = '当前对应读取失败，请刷新后核对。'; conflict.value = true } }
+  finally { if (token === generation) pending.value = false }
 }
 async function loadReplacements(page: number) {
+  const token = generation
   replacementPage.value = page; replacementFailed.value = false
-  try { replacements.value = await $fetch<EventArchivePage>('/api/roster/correspondences/discover', { method: 'POST', body: { eventId: props.edge.eventId, page, pageSize: 50 } }) }
-  catch { replacementFailed.value = true }
+  try {
+    const result = await $fetch<EventArchivePage>('/api/roster/correspondences/discover', { method: 'POST', body: { eventId: props.edge.eventId, page, pageSize: 50 } })
+    if (token === generation) replacements.value = result
+  } catch { if (token === generation) replacementFailed.value = true }
 }
 const statePermitsAction = computed(() => {
   if (!point.value) return !props.existing && ['confirm', 'reject'].includes(action.value ?? '')
   return ['confirm', 'reject'].includes(action.value ?? '') ? point.value.status === 'candidate' : point.value.status === 'confirmed'
 })
-const canPreflight = computed(() => statePermitsAction.value && !!basis.value.trim() && !pending.value && !receipt.value && !conflict.value && (action.value !== 'correct' || !!target.value))
+const canPreflight = computed(() => statePermitsAction.value && !!basis.value.trim() && !pending.value && !attempted.value && !receipt.value && !conflict.value && (action.value !== 'correct' || !!target.value))
 async function preflight() {
   if (!canPreflight.value) return
   const token = generation
@@ -95,8 +120,9 @@ async function preflight() {
     } else if (existing) {
       operation = { action: 'decide', correspondenceId: existing.id, expectedRevision: existing.revision, status: action.value === 'confirm' ? 'confirmed' : action.value === 'reject' ? 'rejected' : 'unlinked' }
     } else {
-      operation = { action: 'create', edge: props.edge, status: action.value === 'reject' ? 'rejected' : 'confirmed' }
+      operation = { action: 'create', edge: { ...props.edge }, status: action.value === 'reject' ? 'rejected' : 'confirmed' }
     }
+    if (token !== generation) return
     request.value ??= { idempotencyKey: crypto.randomUUID(), basis: basis.value.trim(), operations: [operation] }
     const result = await $fetch<typeof plan.value>('/api/roster/correspondences/browser-preflight', { method: 'POST', body: request.value })
     if (token === generation) plan.value = result
@@ -109,35 +135,41 @@ function showError(cause: unknown) {
   conflict.value = failure.statusCode === 409 || failure.status === 409 || ['ambiguous_candidate', 'state_changed'].includes(code ?? (cause instanceof Error ? cause.message : ''))
   error.value = conflict.value ? '对应或来源已变化，本次没有覆盖新决定。草稿保留；刷新后重新核对并预检。' : `提交未完成，草稿和预检保留，可重试。${code ? `（${code}）` : ''}`
 }
-async function readback() {
-  if (!receipt.value) return
-  const points = await Promise.all(receipt.value.correspondenceIds.map(async id => {
+async function readback(token: number, committed: { correspondenceIds: number[] }, key: string) {
+  const points = await Promise.all(committed.correspondenceIds.map(async id => {
     const [edge, audit] = await Promise.all([$fetch<CorrespondenceDetail>(`/api/roster/correspondences/${id}`), $fetch<{ rows: { idempotencyKey: string }[] }>(`/api/roster/correspondences/${id}/audit`)])
-    if (!audit.rows.some(row => row.idempotencyKey === request.value?.idempotencyKey)) throw new Error('audit_missing')
+    if (!audit.rows.some(row => row.idempotencyKey === key)) throw new Error('audit_missing')
     return edge
   }))
   if (!points.length) throw new Error('receipt_empty')
+  if (token !== generation) return
   await refreshCorrespondenceViews()
+  if (token !== generation) return
   success.value = '已提交并读回对应与审计；详情、对比和原行按当前来源重新读取。'
   error.value = ''
 }
 async function commit() {
   if (!plan.value || !request.value || pending.value || conflict.value) return
+  const token = generation, submitted = request.value, submittedPlan = plan.value
   pending.value = true; error.value = ''
   try {
     attempted.value = true
-    receipt.value ??= await $fetch<{ correspondenceIds: number[] }>('/api/roster/correspondences/browser-commit', { method: 'POST', body: { request: request.value, planHash: plan.value.planHash } })
-    await readback()
+    const committed = receipt.value ?? await $fetch<{ correspondenceIds: number[] }>('/api/roster/correspondences/browser-commit', { method: 'POST', body: { request: submitted, planHash: submittedPlan.planHash } })
+    if (token !== generation) return
+    receipt.value = committed
+    await readback(token, committed, submitted.idempotencyKey)
   } catch (cause) {
+    if (token !== generation) return
     if (receipt.value) error.value = '决定已提交，但同步读回失败。请重试读回；不会重复提交。'
     else showError(cause)
-  } finally { pending.value = false }
+  } finally { if (token === generation) pending.value = false }
 }
 async function refreshConflict() {
+  const token = generation
   pending.value = true
-  try { await loadPoint(); await refreshCorrespondenceViews(); request.value = null; plan.value = null; attempted.value = false; conflict.value = false; error.value = ''; if (action.value === 'correct') await loadReplacements(replacementPage.value) }
-  catch { error.value = '刷新失败，草稿保留，请重试刷新。' }
-  finally { pending.value = false }
+  try { await loadPoint(token); if (token !== generation) return; await refreshCorrespondenceViews(); if (token !== generation) return; request.value = null; plan.value = null; attempted.value = false; conflict.value = false; error.value = ''; if (action.value === 'correct') await loadReplacements(replacementPage.value) }
+  catch { if (token === generation) error.value = '刷新失败，草稿保留，请重试刷新。' }
+  finally { if (token === generation) pending.value = false }
 }
 </script>
 
@@ -164,9 +196,11 @@ async function refreshConflict() {
         <p v-if="point?.requiresRevalidation" role="status" class="text-warning">来源已变化，历史确认暂不算有效出处；确认必须重新核验。</p>
         <template v-if="action === 'correct'">
           <Label for="replacement-record">选择新的对应记录</Label>
-          <Select v-model="selected" :disabled="pending || !!receipt || attempted"><SelectTrigger id="replacement-record" style="height: auto" class="min-h-9 w-full shrink-0 whitespace-normal text-left"><SelectValue class="block! line-clamp-none! whitespace-normal! [overflow-wrap:anywhere]" placeholder="请选择已核对的新平台记录" /></SelectTrigger><SelectContent class="max-w-[calc(100vw-3rem)]"><SelectGroup><SelectItem v-for="option in replacementOptions" :key="option.id" :value="option.id" class="whitespace-normal [overflow-wrap:anywhere]">{{ option.label }}</SelectItem></SelectGroup></SelectContent></Select>
+          <Select v-model="selected" :disabled="pending || !!receipt || attempted || !available.length"><SelectTrigger id="replacement-record" style="height: auto" class="min-h-9 w-full shrink-0 whitespace-normal text-left"><SelectValue class="block! line-clamp-none! whitespace-normal! [overflow-wrap:anywhere]" placeholder="请选择已核对的新平台记录" /></SelectTrigger><SelectContent class="max-w-[calc(100vw-3rem)]"><SelectGroup><SelectItem v-for="option in replacementOptions" :key="option.id" :value="option.id" class="whitespace-normal [overflow-wrap:anywhere]">{{ option.label }}</SelectItem></SelectGroup></SelectContent></Select>
+          <p v-if="replacements && !available.length && !replacementFailed" role="status">本页无可改选记录：当前记录不能改选为自身；已确认、不对应或已解除的记录保留已有人工决定，不参与改选。<template v-if="replacements.total > replacements.pageSize">可继续查看其他归档页。</template></p>
+          <p v-if="replacements" class="text-muted-foreground text-sm">本页 {{ replacements.rows.length }} 条归档记录中，{{ available.length }} 条可改选；分页总数包含当前记录和已有决定。</p>
           <p v-if="replacementFailed" role="alert">改选候选第 {{ replacementPage }} 页读取失败，保留已有结果。<Button variant="outline" size="sm" @click="loadReplacements(replacementPage)">重试候选</Button></p>
-          <TablePagination v-if="replacements" :page="replacements.page" :page-size="replacements.pageSize" :total="replacements.total" unit="条候选" :loading="pending" @update:page="loadReplacements" />
+          <TablePagination v-if="replacements" :page="replacements.page" :page-size="replacements.pageSize" :total="replacements.total" unit="条归档记录" :loading="pending" @update:page="loadReplacements" />
         </template>
         <div class="grid min-w-0 gap-4 sm:grid-cols-2">
           <section v-if="official" class="flex min-w-0 flex-col gap-2 text-[13px] leading-5" aria-label="正式公布依据">
@@ -183,9 +217,9 @@ async function refreshConflict() {
         </div>
         <p v-if="conflicts" class="text-[13px] leading-5">待核依据：{{ conflicts }}</p>
         <p v-if="supportRole" class="text-muted-foreground text-[13px] leading-5">对应范围：{{ CORRESPONDENCE_ROLES[supportRole] ?? supportRole }}。<template v-if="supportRole === 'context_only'">仅说明流程背景，不代表平台结论与公布一致。</template></p>
-        <div class="flex flex-col gap-2"><Label :for="`correspondence-basis-${edge.eventId}-${edge.relationId}`">核对依据（必填）</Label><Textarea :id="`correspondence-basis-${edge.eventId}-${edge.relationId}`" v-model="basis" :disabled="pending || !!receipt || attempted" maxlength="4000" placeholder="说明双方原行、年份、批次及事项的核对依据" /></div>
         </div>
-        <div class="flex shrink-0 flex-col gap-2 text-sm [overflow-wrap:anywhere]">
+        <div class="flex shrink-0 flex-col gap-2 border-t pt-3 text-sm [overflow-wrap:anywhere]" data-testid="decision-footer">
+        <div class="flex flex-col gap-2"><Label :for="`correspondence-basis-${edge.eventId}-${edge.relationId}`">核对依据（必填）</Label><Textarea class="max-h-24 overflow-y-auto resize-none" :id="`correspondence-basis-${edge.eventId}-${edge.relationId}`" v-model="basis" :disabled="pending || !!receipt || attempted" maxlength="4000" placeholder="说明双方原行、年份、批次及事项的核对依据" /></div>
         <p v-if="plan && !receipt" role="status">{{ attempted ? '提交结果尚待确认，请使用原请求重试' : '预检通过，尚未提交' }}：新增对应 {{ plan.impact.created }} 条，解除对应 {{ plan.impact.unlinked }} 条，保留操作记录 {{ plan.impact.audit }} 条。</p>
         <p v-if="error" role="alert">{{ error }}</p><p v-if="success" role="status">{{ success }}</p>
         <div class="flex flex-wrap gap-2">
