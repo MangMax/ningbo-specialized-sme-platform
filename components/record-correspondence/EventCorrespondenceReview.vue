@@ -25,6 +25,15 @@ watch(() => props.eventId, value => { selected.value = value ?? null })
 const annual = reactive(useAnnualProcessReview(computed(() => events.value.some(event => event.id === selected.value) ? selected.value : null)))
 const annualFinal = computed(() => annual.view && ['synced', 'read-only'].includes(annual.phase) ? confirmedAnnualStep(annual.view) : null)
 const { rows, ready, loading, error, reload, detailsForEvent, detailLoadingForEvent, detailErrorForEvent, loadEvent } = useEnterpriseCorrespondences(() => props.enterpriseId, selected)
+// Reuse the already loaded point facts for the header; this projection makes
+// no source requests and does not combine decisions between observations.
+const relationSummaries = computed(() => {
+  const summaries: Record<number, { interface: string; status: string | null }> = {}
+  for (const event of events.value) for (const edge of detailsForEvent(event.id) ?? []) {
+    if (edge.relation) summaries[edge.relation.id] = { interface: edge.relation.query.interface, status: edge.relation.status }
+  }
+  return summaries
+})
 watch([selected, ready, rows], () => {
   if (selected.value != null && events.value.some(event => event.id === selected.value)) void loadEvent(selected.value)
 }, { immediate: true })
@@ -37,25 +46,25 @@ function select(eventId: number, open: boolean) {
 <template>
   <section class="bg-card min-w-0 overflow-hidden rounded-lg border" aria-label="公布事件与平台对应">
     <header class="flex flex-col gap-1 border-b px-4 py-3">
-      <h2 class="text-sm font-semibold">公布事件与平台对应</h2>
-      <p class="text-muted-foreground text-[13px] leading-5">展开一次公布事件，核对平台原行并登记对应；下方差异解释按称号判断原因。</p>
+      <h2 class="text-base font-semibold">公布事件与平台对应</h2>
+      <p class="text-muted-foreground text-sm leading-6">按正式事项查看年度过程与当前结果。</p>
     </header>
     <TableFailureState v-if="error" compact title="已登记对应读取失败" description="公布事实保留；请重试读取已有决定。" :pending="loading" @retry="reload" />
-    <p v-if="!events.length" class="text-muted-foreground px-4 py-6 text-[13px]">尚无可核对平台对应的正式公布事件。</p>
+    <p v-if="!events.length" class="px-4 py-6 text-base">尚无可核对平台对应的正式公布事件。</p>
     <ul v-else class="divide-y">
       <li v-for="event in events" :key="event.id">
         <RecordEventRow
           :event="event" :evidence="event.evidence" :edges="rows.filter(edge => edge.eventId === event.id)"
           :full-edges="detailsForEvent(event.id)" :links-ready="ready"
-          :details-loading="detailLoadingForEvent(event.id)" :details-error="detailErrorForEvent(event.id)"
+          :relation-summaries="relationSummaries" :details-loading="detailLoadingForEvent(event.id)" :details-error="detailErrorForEvent(event.id)"
           :back="back" :open="selected === event.id" review
           @update:open="select(event.id, $event)" @preview="emit('preview', $event)"
           @event-navigate="emit('event-navigate', $event)" @page-open="(id, mouse) => emit('page-open', id, mouse)"
           @retry-detail="loadEvent(event.id, true)"
         >
           <template #annual-summary>
-            <p v-if="selected === event.id && annual.view?.eventId === event.id && annual.view.latestStatus" class="text-muted-foreground mt-1 text-[13px]" data-testid="event-annual-summary">
-              平台年度末态：{{ annual.view.latestStatus }}<span v-if="annualFinal"> · 已确认最终结果</span>
+            <p v-if="selected === event.id && annual.view?.eventId === event.id && annual.view.latestStatus" class="mt-2 text-base leading-6" data-testid="event-annual-summary">
+              最新办理状态：{{ annual.view.latestStatus }}<span v-if="annualFinal"> · 已确认最终结果</span>
             </p>
           </template>
           <template #annual-review>

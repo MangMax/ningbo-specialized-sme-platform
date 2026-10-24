@@ -116,7 +116,7 @@ const interfaceSummary = computed(() => {
               <span class="min-w-0 break-words">
                 <template v-if="interfaceSummary.length">
                   <span v-for="(item, index) in interfaceSummary" :key="item.interfaceName" class="inline-flex flex-wrap items-center gap-1">
-                    <span>{{ item.interfaceName }}</span>
+                    <span v-if="!review || item.interfaceName !== '平台来源记录'">{{ item.interfaceName }}</span>
                     <span v-if="item.status" class="text-muted-foreground">· {{ item.status }}</span>
                     <span class="text-muted-foreground tabular-nums">{{ review ? '来源记录' : '原行' }} {{ item.count }} 条</span>
                     <span v-if="index < interfaceSummary.length - 1">、</span>
@@ -145,6 +145,7 @@ const interfaceSummary = computed(() => {
         <span class="w-full text-right text-sm">{{ review ? '查看年度过程与核对' : '来源记录' }}</span>
       </template>
       <slot v-if="open" name="annual-review" />
+      <p v-if="detailsLoading" role="status" class="px-4 text-sm sm:px-5">正在读取对应出处…</p>
       <DisclosurePanel title="正式文件与已登记出处" class="border-t px-4 sm:px-5" :open="detailsError || groups.revalidation.length ? true : null">
       <RecordEventSource :event="event" :evidence="evidence" :edges="fullEdges ?? []" :edges-ready="linksReady && fullEdges !== null && fullEdges !== undefined" :edges-loading="detailsLoading" :edges-error="detailsError" :back="back" :return-to="returnTo" @preview="emit('preview', $event)" @event-navigate="emit('event-navigate', $event)" @page-open="(eventId: number, event: MouseEvent) => emit('page-open', eventId, event)" @retry-detail="emit('retry-detail')" />
       </DisclosurePanel>
