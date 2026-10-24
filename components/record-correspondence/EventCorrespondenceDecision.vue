@@ -212,7 +212,7 @@ async function refreshConflict() {
           <p class="text-muted-foreground">对应关系不等于平台结果通过，也不直接确定最终资格。最终资格仍按正式公布、来源有效性及业务规则判断；此操作独立于差异原因复核。</p>
           <p v-if="action === 'confirm' || action === 'correct' || action === 'revalidate'" class="text-muted-foreground">人工决定会保留，自动处理不会覆盖；来源变化后仍需重新核验。</p>
         </section>
-        <p v-if="point && !statePermitsAction" role="status">当前决定已变化，本次操作已停用。草稿保留；请关闭后按当前状态选择操作。</p>
+        <p v-if="pointLoaded && point && !statePermitsAction" role="status">当前决定已变化，本次操作已停用。草稿保留；请关闭后按当前状态选择操作。</p>
         <p v-if="point?.requiresRevalidation" role="status" class="text-warning">来源已变化，历史确认暂不算有效出处；确认必须重新核验。</p>
         <template v-if="action === 'correct'">
           <Label for="replacement-record">选择新的对应记录</Label>
