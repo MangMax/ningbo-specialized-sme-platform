@@ -1,9 +1,10 @@
 import type { Logger } from 'drizzle-orm/logger'
 import { appLog } from './index'
 import type { LogContext, LogOrigin } from './contract'
+import { DRIZZLE_CONNECTIONS } from './drizzle-query'
 
 /** Connection purposes are app-owned categories, never a filename or path. */
-type DrizzleConnection = 'primary' | 'enterprise_read' | 'import_execution' | 'current_qualification' | 'record_comparison' | 'evidence_review' | 'platform_summary'
+type DrizzleConnection = typeof DRIZZLE_CONNECTIONS[number]
 
 /**
  * Drizzle calls logQuery after preparation/parameter binding, BEFORE execution.

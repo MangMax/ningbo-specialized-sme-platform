@@ -7,9 +7,10 @@ import { LOG_INTEGRATIONS } from './contract'
 import { safeLogEvent } from './privacy'
 import { SQLITE_WORKER } from './sqlite-worker'
 import { resolveLoggingSqliteModule } from './sqlite-module-location'
+import { isDrizzleQueryAttempt } from './drizzle-query'
 
 export class LogServiceError extends Error {
-  constructor(public code: string, public statusCode = 503) { super(code) }
+  constructor(public code: string, public statusCode = 503, readonly writeOutcome?: 'unknown' | 'not_written') { super(code) }
 }
 export interface LogServiceOptions {
   directory: string
@@ -78,20 +79,26 @@ export function createLogService(options: LogServiceOptions) {
   const maxEventBytes = budget(options.maxEventBytes, LOG_DEFAULTS.maxEventBytes)
   const timeoutMs = budget(options.drainTimeoutMs, LOG_DEFAULTS.drainTimeoutMs)
   let worker: Worker | undefined, serial = 0, closed = false, closing = false
-  let queue: { event: LogEvent; bytes: number }[] = [], queueBytes = 0
+  type QueueRow = { event: LogEvent; bytes: number; queryKey?: string }
+  let queue: QueueRow[] = [], queueBytes = 0
+  // References only pending rows in the current diagnostic segment. No extra
+  // producer buffer, timer, or request-context cache; cardinality <= queue size.
+  const queryRows = new Map<string, QueueRow>()
+  const unindex = (row: QueueRow) => { if (row.queryKey && queryRows.get(row.queryKey) === row) queryRows.delete(row.queryKey) }
   let inFlightEntries = 0, inFlightBytes = 0
   let flushing: Promise<void> | undefined
+  let scheduled: ReturnType<typeof setImmediate> | undefined
   const stderr = boundedLogOutput(process.stderr, 512, 1)
-  const counters = { accepted: 0, stored: 0, filtered: 0, dropped: 0, overflow: 0, oversized: 0, drainFailures: 0, fallbackSkipped: 0, unavailable: false, lastError: null as string | null, since: new Date().toISOString() }
-  const pending = new Map<number, { resolve(value: any): void; reject(error: unknown): void; timer: ReturnType<typeof setTimeout> }>()
+  const counters = { accepted: 0, stored: 0, filtered: 0, coalesced: 0, dropped: 0, writeUnknown: 0, overflow: 0, oversized: 0, drainFailures: 0, fallbackSkipped: 0, unavailable: false, lastError: null as string | null, since: new Date().toISOString() }
+  const pending = new Map<number, { resolve(value: any): void; reject(error: unknown): void; timer: ReturnType<typeof setTimeout>; action: string; posted: boolean }>()
   const status = () => ({ ...counters, queuedEntries: queue.length, queuedBytes: queueBytes, inFlightEntries, inFlightBytes, pending: pending.size, closed })
   function fault(code: string) {
     counters.unavailable = true; counters.lastError = code; counters.drainFailures++
-    stderr.write(JSON.stringify({ source: 'system', operation: 'logging.drain', outcome: 'failure', code, dropped: counters.dropped }) + '\n')
+    stderr.write(JSON.stringify({ source: 'system', operation: 'logging.drain', outcome: 'failure', code, dropped: counters.dropped, writeUnknown: counters.writeUnknown }) + '\n')
   }
   function stopWorker(code: string) {
     const old = worker; worker = undefined
-    for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new LogServiceError(code)) }
+    for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new LogServiceError(code, 503, p.action === 'write' && p.posted ? 'unknown' : 'not_written')) }
     pending.clear()
     if (old) void old.terminate().catch(() => {})
   }
@@ -103,7 +110,7 @@ export function createLogService(options: LogServiceOptions) {
       const p = pending.get(message.id); if (!p) return
       clearTimeout(p.timer); pending.delete(message.id)
       if (message.ok) p.resolve(message.result)
-      else p.reject(new LogServiceError(message.code))
+      else p.reject(new LogServiceError(message.code, 503, p.action === 'write' && message.writeOutcome !== 'not_written' ? 'unknown' : 'not_written'))
     })
     next.on('error', () => { if (worker === next) { fault('worker_unavailable'); stopWorker('worker_unavailable') } })
     next.on('exit', () => { if (worker === next) { fault('worker_exited'); stopWorker('worker_exited') } })
@@ -118,15 +125,53 @@ export function createLogService(options: LogServiceOptions) {
       try {
         const w = start()
         const timer = setTimeout(() => { fault('drain_timeout'); stopWorker('drain_timeout') }, timeoutMs)
-        pending.set(id, { resolve, reject, timer }); w.postMessage({ id, action, data, time: Date.now() })
-      } catch { reject(new LogServiceError('storage_unavailable')) }
+        const entry = { resolve, reject, timer, action, posted: false }
+        pending.set(id, entry)
+        w.postMessage({ id, action, data, time: Date.now() }); entry.posted = true
+      } catch {
+        const entry = pending.get(id)
+        if (entry) { clearTimeout(entry.timer); pending.delete(id) }
+        reject(new LogServiceError('storage_unavailable', 503, 'not_written'))
+      }
     })
+  }
+  function scheduleDrain() {
+    if (scheduled || flushing || closing || closed) return
+    scheduled = setImmediate(() => { scheduled = undefined; void flush() })
+    scheduled.unref()
+  }
+  function scheduleIfReady(level: LogEvent['level']) {
+    if (queue.length >= Math.min(maxEntries, LOG_DEFAULTS.batchEntries)
+      || queueBytes >= Math.min(maxBytes, LOG_DEFAULTS.batchBytes)
+      || level === 'warn' || level === 'error') scheduleDrain()
   }
   function emit(input: LogInput): string | null {
     try {
       if (closing || closed) { counters.dropped++; return null }
       const event = safeLogEvent(input)
-      const bytes = Buffer.byteLength(JSON.stringify(event))
+      const queryAttempt = isDrizzleQueryAttempt(event) && event.counts === undefined
+      if (queryAttempt) event.counts = { total: 1 }
+      const serialized = JSON.stringify(event)
+      const bytes = Buffer.byteLength(serialized)
+      let queryKey: string | undefined
+      // safeLogEvent owns this generated UUID/ISO prefix. Reuse the single
+      // serialization for both byte accounting and all remaining safe facts.
+      // If its layout changes, decline aggregation instead of ignoring fields.
+      const identityPrefix = queryAttempt ? `{"id":"${event.id}","timestamp":"${event.timestamp}",` : ''
+      if (queryAttempt && serialized.startsWith(identityPrefix)) {
+        queryKey = serialized.slice(identityPrefix.length)
+        const prior = queryRows.get(queryKey)
+        if (prior && prior.event.counts!.total! < Number.MAX_SAFE_INTEGER) {
+          const total = prior.event.counts!.total!, next = total + 1
+          // Only this decimal safe-integer counter changes in an indexed row.
+          const nextBytes = prior.bytes + String(next).length - String(total).length
+          if (nextBytes <= maxEventBytes && queueBytes - prior.bytes + nextBytes <= maxBytes) {
+            queueBytes += nextBytes - prior.bytes; prior.event.counts = { total: next }; prior.bytes = nextBytes
+            counters.coalesced++; scheduleIfReady(event.level)
+            return prior.event.id
+          }
+        }
+      } else queryRows.clear() // Never merge across an intervening business event.
       if (bytes > maxEventBytes) { counters.dropped++; counters.oversized++; return null }
       if (queue.length >= maxEntries || queueBytes + bytes > maxBytes) {
         // A synchronous debug burst can fill the queue before any timer/worker
@@ -148,11 +193,14 @@ export function createLogService(options: LogServiceOptions) {
         // every queued event and reject only this new event. Equal levels keep
         // FIFO ownership; an all-error overload is still an observable drop.
         if (!fits()) { counters.dropped++; counters.overflow++; return null }
-        queue = queue.filter((_row, index) => !victims.has(index))
+        queue = queue.filter((row, index) => { if (!victims.has(index)) return true; unindex(row); return false })
         queueBytes -= releasedBytes
         counters.dropped += victims.size; counters.overflow += victims.size
       }
-      queue.push({ event, bytes }); queueBytes += bytes; counters.accepted++
+      const row = { event, bytes, queryKey }
+      queue.push(row); queueBytes += bytes; counters.accepted++
+      if (queryKey) queryRows.set(queryKey, row)
+      scheduleIfReady(event.level)
       return event.id
     } catch { counters.dropped++; fault('invalid_event'); return null }
   }
@@ -160,7 +208,7 @@ export function createLogService(options: LogServiceOptions) {
     while (queue.length) {
       const batch: LogEvent[] = []; let bytes = 0
       while (queue.length && batch.length < LOG_DEFAULTS.batchEntries && bytes + queue[0]!.bytes <= LOG_DEFAULTS.batchBytes) {
-        const row = queue.shift()!; queueBytes -= row.bytes; bytes += row.bytes; batch.push(row.event)
+        const row = queue.shift()!; unindex(row); queueBytes -= row.bytes; bytes += row.bytes; batch.push(row.event)
       }
       inFlightEntries = batch.length; inFlightBytes = bytes
       try {
@@ -170,12 +218,16 @@ export function createLogService(options: LogServiceOptions) {
         if (result.code) { counters.dropped += batch.length - result.filtered - result.oversized - result.stored; fault(result.code) }
         else counters.unavailable = false
       }
-      catch (error) { counters.dropped += batch.length; fault(error instanceof LogServiceError ? error.code : 'storage_unavailable') }
+      catch (error) {
+        if (error instanceof LogServiceError && error.writeOutcome === 'unknown') counters.writeUnknown += batch.length
+        else counters.dropped += batch.length
+        fault(error instanceof LogServiceError ? error.code : 'storage_unavailable')
+      }
       finally { inFlightEntries = 0; inFlightBytes = 0 }
     }
   }
   function flush() {
-    if (!flushing) flushing = drain().finally(() => { flushing = undefined })
+    if (!flushing) flushing = drain().finally(() => { flushing = undefined; if (queue.length) scheduleDrain() })
     return flushing
   }
   const timer = setInterval(() => { void flush() }, budget(options.flushIntervalMs, LOG_DEFAULTS.flushIntervalMs)); timer.unref()
@@ -212,9 +264,10 @@ export function createLogService(options: LogServiceOptions) {
     async close() {
       if (closed) return
       closing = true; clearInterval(timer); clearInterval(maintenance)
+      if (scheduled) { clearImmediate(scheduled); scheduled = undefined }
       let deadline: ReturnType<typeof setTimeout> | undefined
       try {
-        await Promise.race([(async () => { await flush(); if (worker) await call('close').catch(() => {}) })(), new Promise<void>(resolve => { deadline = setTimeout(() => { counters.dropped += queue.length; queue = []; queueBytes = 0; stopWorker('close_timeout'); resolve() }, LOG_DEFAULTS.closeTimeoutMs) })])
+        await Promise.race([(async () => { await flush(); if (worker) await call('close').catch(() => {}) })(), new Promise<void>(resolve => { deadline = setTimeout(() => { counters.dropped += queue.length; queue = []; queryRows.clear(); queueBytes = 0; stopWorker('close_timeout'); resolve() }, LOG_DEFAULTS.closeTimeoutMs) })])
       } finally { if (deadline) clearTimeout(deadline); closed = true; stopWorker('logging_closed'); stderr.close() }
     },
   }

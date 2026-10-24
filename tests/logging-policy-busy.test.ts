@@ -105,7 +105,7 @@ it('keeps a healthy hot connection after real BUSY and never authorizes a locked
   const db = peer(f.directory)
   db.exec('BEGIN IMMEDIATE')
   expect(await f.call('policy', { ...base, collection: { sources: { task: { enabled: false, minLevel: 'debug' } } } })).toMatchObject({ ok: false, observation: { nativeCode: 'SQLITE_BUSY' } })
-  expect(await f.call('write', [event('busy.denied')])).toMatchObject({ ok: false, observation: { nativeCode: 'SQLITE_BUSY', inTransaction: false } })
+  expect(await f.call('write', [event('busy.denied')])).toMatchObject({ ok: false, writeOutcome: 'not_written', observation: { nativeCode: 'SQLITE_BUSY', inTransaction: false } })
   expect(await f.call('policy')).toMatchObject({ ok: true, result: { revision: 0, collection: { sources: { task: { enabled: true } } } }, observation: { opens: 1, inTransaction: false } })
   db.exec('ROLLBACK')
   expect((await f.call('write', [event('busy.recovered')])).result.stored).toBe(1)

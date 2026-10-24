@@ -452,8 +452,16 @@ it('keeps real worker queries successful while Drizzle and system rules independ
     const enabled = await read()
     const attempts = (await logs('requestId=' + enabled.requestId)).filter(row => row.origin?.integration === 'drizzle')
     expect(attempts.length).toBeGreaterThan(0)
-    for (const row of attempts) expect(row).toMatchObject({ source: 'system', level: 'debug', outcome: 'started', resourceType: 'database_connection', resourceId: 'enterprise_read',
-      origin: { runtime: 'node', integration: 'drizzle', capture: 'hook', execution: 'worker' } })
+    for (const row of attempts) {
+      expect(row).toMatchObject({ source: 'system', level: 'debug', outcome: 'started', resourceType: 'database_connection', resourceId: 'enterprise_read',
+        origin: { runtime: 'node', integration: 'drizzle', capture: 'hook', execution: 'worker' } })
+      expect(Number.isSafeInteger(row.counts.total)).toBe(true)
+      expect(row.counts.total).toBeGreaterThan(0)
+      expect((await detail(row.id)).counts).toEqual(row.counts)
+    }
+    const status = (await call('/api/logs/policy', { headers: apiHeaders })).body.status
+    expect(status).toMatchObject({ dropped: 0, writeUnknown: 0 })
+    expect(Number.isSafeInteger(status.coalesced)).toBe(true)
     await policyPatch({ integrations: { drizzle: { enabled: false, minLevel: 'debug' } } })
     const disabled = await read()
     expect((await logs('requestId=' + disabled.requestId)).filter(row => row.origin?.integration === 'drizzle')).toEqual([])

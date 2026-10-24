@@ -3,7 +3,7 @@ import { createLoggingRoute } from '../../utils/logging-route'
 // The HTTP/MCP contract test compares every literal profile/level/field with the live catalog.
 defineRouteMeta({ openAPI: {
   tags: ['日志'], summary: '受保护日志策略与故障计数',
-  description: '必须API token。默认7天/512MiB。collection与fieldControls返回完整有效规则；HTTP/TUS各四字段按LOG_LEVELS配置，默认全true。catalog.profiles仅列HTTP和TUS；TUS仅匹配file.upload+tus集成+已清洗上下文，phase始终保留。revision是共享修改观测值，无CAS；不同叶合并，同叶最后提交生效。历史不重写。storageBytes含独立SQLite及journal/WAL/SHM；filtered与dropped/oversized分开。',
+  description: '必须API token。默认7天/512MiB。collection与fieldControls返回完整有效规则；HTTP/TUS各四字段按LOG_LEVELS配置，默认全true。catalog.profiles仅列HTTP和TUS；TUS仅匹配file.upload+tus集成+已清洗上下文，phase始终保留。revision是共享修改观测值，无CAS；不同叶合并，同叶最后提交生效。历史不重写。storageBytes含独立SQLite及journal/WAL/SHM；filtered为策略过滤，coalesced为额外汇总的查询尝试，dropped为确定丢弃，writeUnknown为写入结果未知；oversized是dropped的原因分类，fallbackSkipped只表示stdout跳过。均为本进程观测。',
   security: [{ bearerAuth: [] }], responses: {
     200: { description: '完整有效策略、能力目录与观测值', content: { 'application/json': { schema: {
       type: 'object', additionalProperties: false,
@@ -36,7 +36,7 @@ defineRouteMeta({ openAPI: {
         } },
         revision: { type: 'integer', minimum: 0 }, storageBytes: { type: 'integer', minimum: 0 },
         pruned: { type: 'integer', minimum: 0 }, cleared: { type: 'integer', minimum: 0 },
-        accounting: { type: 'string' }, status: { type: 'object', description: '实时队列/持久化/filtered/dropped/oversized故障计数；PATCH可不返回' },
+        accounting: { type: 'string' }, status: { type: 'object', description: '本进程实时计数；记录单位accepted/stored/filtered/dropped/writeUnknown，额外查询尝试单位coalesced；overflow/oversized为丢弃原因，stdout跳过为fallbackSkipped；PATCH可不返回' },
       },
     } } } },
     401: { description: '默认拒绝，不打开store；no-store' },

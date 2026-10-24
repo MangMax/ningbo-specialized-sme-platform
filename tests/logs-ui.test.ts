@@ -1767,3 +1767,184 @@ it('shows a dedicated TUS upload detail without pretending fileId/page are regis
   await flushPromises()
   expect(JSON.parse(writeText.mock.calls[0]![0]).tus).toEqual(event.tus)
 })
+
+// 以下聚焦“查询尝试汇总”与“写入结果未知”的计数含义；仍是组件级断言，不是浏览器证据。
+const drizzleAttempt = (counts?: LogSummary['counts']): LogSummary =>
+  makeLogRow({
+    source: 'system',
+    operation: 'db.query.select',
+    level: 'debug',
+    outcome: 'started',
+    origin: { runtime: 'node', integration: 'drizzle', capture: 'hook' },
+    resourceType: 'database_connection',
+    resourceId: 'primary',
+    ...(counts ? { counts } : {})
+  })
+
+it('keeps ordinary counts unchanged and reads only confirmed Drizzle attempts as query attempts', async () => {
+  const { formatCounts, describeLogRow, queryAttemptTotal } = await import(
+    '../components/logs/logPresentation'
+  )
+  // 普通来源的处理数量保持不变：默认不传标记时绝不出现“查询尝试”。
+  expect(formatCounts({ done: 2, total: 3, failed: 1 })).toBe('已处理 2/3 · 失败 1')
+  expect(formatCounts({ total: 4 })).toBe('共 4')
+  expect(formatCounts({ total: 4 }, 'db.query.select')).toBe('共 4')
+  expect(formatCounts({ total: 1 })).not.toContain('查询尝试')
+  const taskRow = makeLogRow({ source: 'task', operation: 'task.finished', taskId: 't-1', counts: { total: 4 } })
+  expect(describeLogRow(taskRow).target.text).toBe('任务 t-1 · 共 4')
+  expect(describeLogRow(taskRow).target.text).not.toContain('查询尝试')
+  const systemCounts = makeLogRow({ source: 'system', operation: 'logging.clear', counts: { total: 4 } })
+  expect(describeLogRow(systemCounts).target.text).toBe('共 4')
+  // 只有确认的 Drizzle 执行前钩子 + 正安全整数 total 才按“查询尝试 × N”展示。
+  expect(queryAttemptTotal(drizzleAttempt({ total: 3 }))).toBe(3)
+  expect(describeLogRow(drizzleAttempt({ total: 3 })).target.text).toBe('主业务库（primary） · 查询尝试 × 3')
+  expect(describeLogRow(drizzleAttempt({ total: 1 })).target.text).toBe('主业务库（primary） · 查询尝试 × 1')
+  expect(describeLogRow(drizzleAttempt({ total: 3 })).target.text).not.toContain('已处理')
+  expect(describeLogRow(drizzleAttempt({ total: 3 })).target.text).not.toContain('成功')
+  expect(formatCounts({ total: 3 }, 'db.query.select', true)).toBe('查询尝试 × 3')
+  // 没有 counts 的历史查询、零/非法计数，或形状不完整的同名事件都不冒充汇总。
+  expect(queryAttemptTotal(drizzleAttempt())).toBeUndefined()
+  expect(queryAttemptTotal(drizzleAttempt({ total: 0 }))).toBeUndefined()
+  expect(queryAttemptTotal(drizzleAttempt({ total: 1.5 }))).toBeUndefined()
+  expect(queryAttemptTotal(drizzleAttempt({ total: 3, done: 1 }))).toBeUndefined()
+  expect(formatCounts({ total: 0 }, 'db.query.select', true)).toBe('共 0')
+  expect(
+    queryAttemptTotal(makeLogRow({ source: 'system', operation: 'db.query.select', counts: { total: 3 } }))
+  ).toBeUndefined()
+  expect(
+    queryAttemptTotal(makeLogRow({
+      source: 'system',
+      operation: 'db.query.select',
+      level: 'info',
+      outcome: 'started',
+      origin: { runtime: 'node', integration: 'drizzle', capture: 'hook' },
+      resourceType: 'database_connection',
+      resourceId: 'primary',
+      counts: { total: 3 }
+    }))
+  ).toBeUndefined()
+})
+
+it('labels a Drizzle summary as query attempt count with a one-line explanation in the detail', async () => {
+  const { default: Detail } = await import('../components/logs/LogDetail.vue')
+  const event = {
+    id: '00000000-0000-4000-8000-000000000801',
+    timestamp: '2026-10-24T09:00:00Z',
+    level: 'debug',
+    source: 'system',
+    operation: 'db.query.select',
+    outcome: 'started',
+    origin: { runtime: 'node', integration: 'drizzle', capture: 'hook' },
+    resourceType: 'database_connection',
+    resourceId: 'primary',
+    counts: { total: 42 }
+  }
+  const legacyId = '00000000-0000-4000-8000-000000000802'
+  vi.stubGlobal('$fetch', vi.fn(async (url: string) =>
+    url.endsWith(legacyId) ? { ...event, id: legacyId, counts: undefined } : event
+  ))
+  const wrapper = mount(Detail, { props: { id: event.id } })
+  wrappers.push(wrapper)
+  await flushPromises()
+  expect(wrapper.text()).toContain('查询尝试次数')
+  expect(wrapper.text()).toContain('查询尝试 × 42')
+  expect(wrapper.text()).not.toContain('已处理 42')
+  expect(wrapper.get('[data-testid=log-query-attempt-note]').text()).toBe(
+    '排队期间查询尝试汇总，时间为首次尝试；不表示执行成功。'
+  )
+  // 说明只在详情底部一行，不新增区块。
+  expect(wrapper.findAll('[data-testid=log-query-attempt-note]')).toHaveLength(1)
+  // 历史 Drizzle 查询没有 counts：不显示汇总标签、数值或说明。
+  await wrapper.setProps({ id: legacyId })
+  await flushPromises()
+  expect(wrapper.find('[data-testid=log-query-attempt-note]').exists()).toBe(false)
+  expect(wrapper.text()).not.toContain('查询尝试次数')
+  expect(wrapper.text()).not.toContain('查询尝试 ×')
+  vi.unstubAllGlobals()
+})
+
+it('shows writeUnknown separately from dropped and reports coalesced without calling it lost or stored', async () => {
+  const { default: Management } = await import('../components/logs/LogManagement.vue')
+  let view: any = {
+    ...policyResponse(),
+    status: {
+      dropped: 0,
+      writeUnknown: 3,
+      coalesced: 1200,
+      unavailable: false,
+      queuedEntries: 0,
+      inFlightEntries: 0,
+      since: '2026-10-22T00:00:00.000Z'
+    }
+  }
+  vi.stubGlobal('$fetch', async () => view)
+  const wrapper = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const status = wrapper.text()
+  expect(status).toContain('已丢弃 0 条')
+  expect(status).toContain('写入结果未知 3 条')
+  expect(status).toContain('合并重复查询 1200 次')
+  // 合并只按额外尝试计数，不称丢弃或存储成功。
+  expect(status).not.toContain('合并重复查询 1200 条')
+  expect(status).not.toContain('合并丢弃')
+  expect(status).not.toContain('合并存储')
+  // 没有异常时保持原来的常驻说明，不额外新增常驻长说明。
+  expect(status).not.toContain('日志缺失不代表业务未执行')
+  // 计数为 0（或旧后端不返回）时这两项不出现，不增加常驻说明。
+  view = {
+    ...policyResponse(),
+    status: { dropped: 0, writeUnknown: 0, coalesced: 0, unavailable: false, since: '2026-10-22T00:00:00.000Z' }
+  }
+  const quiet = mount(Management, {
+    props: { filter: {} },
+    attachTo: document.body,
+    global: { stubs: { Icon: IconStub } }
+  })
+  wrappers.push(quiet)
+  await flushPromises()
+  expect(quiet.text()).not.toContain('写入结果未知')
+  expect(quiet.text()).not.toContain('合并重复查询')
+  expect(quiet.text()).not.toContain('日志缺失不代表业务未执行')
+  vi.unstubAllGlobals()
+})
+
+it('keeps the list status strip showing unknown writes and the missing-log caveat after storage recovers', async () => {
+  const { default: Page } = await import('../pages/logs.vue')
+  const { createRouter, createMemoryHistory } = await import('vue-router')
+  let status: any = { dropped: 0, writeUnknown: 2, unavailable: false }
+  vi.stubGlobal('$fetch', async (url: string) => {
+    if (url === '/api/logs/policy') return policyView
+    return { rows: [listRow('00000000-0000-4000-8000-000000000901')], nextCursor: null, status }
+  })
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/logs', component: Page }] })
+  await router.push('/logs')
+  await router.isReady()
+  const wrapper = mount(Page, {
+    global: { plugins: [router], stubs: { Icon: IconStub } },
+    attachTo: document.body
+  })
+  wrappers.push(wrapper)
+  await flushPromises()
+  const text = wrapper.text()
+  expect(text).toContain('日志存储可用')
+  expect(text).toContain('本进程已丢弃 0 条')
+  expect(text).toContain('写入结果未知 2 条')
+  // 存储已恢复但仍有无法确认的记录：异常口径保留，不因 unavailable=false 消失。
+  expect(text).toContain('日志缺失不代表业务未执行')
+  status = { dropped: 0, writeUnknown: 0, unavailable: false }
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('写入结果未知')
+  expect(wrapper.text()).not.toContain('日志缺失不代表业务未执行')
+  // 旧后端不返回 writeUnknown 时按 0 读，不补造未知计数。
+  status = { dropped: 0, unavailable: false }
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('写入结果未知')
+  vi.unstubAllGlobals()
+})

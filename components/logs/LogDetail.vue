@@ -12,6 +12,7 @@ import {
   formatCounts,
   operationLabel,
   outcomeLabel,
+  queryAttemptTotal,
   resourceIdLabel,
   resourceTypeLabel,
   sourceLabel
@@ -249,10 +250,15 @@ const safe = computed<Record<string, unknown> | null>(() => {
   if (reference) event.untrustedRelatedRequestId = reference
   return event
 })
+/** 只有确认的 Drizzle 查询汇总才把计数读成“查询尝试”；其余来源仍是处理数量。 */
+const queryAttempts = computed(() => (data.value ? queryAttemptTotal(data.value) : undefined))
 const displayValue = (name: string, value: unknown): string => {
   if (name === 'timestamp') return localStamp(String(value))
   if (name === 'counts')
-    return formatCounts(value as LogEvent['counts'], data.value?.operation) || JSON.stringify(value)
+    return (
+      formatCounts(value as LogEvent['counts'], data.value?.operation, queryAttempts.value !== undefined) ||
+      JSON.stringify(value)
+    )
   if (name === 'outcome') return `${outcomeLabel(String(value))}（${String(value)}）`
   if (name === 'source') return `${sourceLabel(String(value))}（${String(value)}）`
   if (name === 'resourceType') {
@@ -319,7 +325,9 @@ const groups = computed(() => {
       const omission = fieldOmission(data.value!, name)
       return {
         name,
-        label: fieldLabels[name] ?? name,
+        label: name === 'counts' && queryAttempts.value !== undefined
+          ? '查询尝试次数'
+          : (fieldLabels[name] ?? name),
         present: value !== undefined,
         disabled: value === undefined && omission === 'disabled',
         text: value === undefined ? '' : displayValue(name, value)
@@ -413,6 +421,14 @@ async function copy() {
           </TableBody>
         </Table>
       </section>
+      <!-- 汇总说明贴着详情底部，不新增 section；只在确认的查询汇总上出现。 -->
+      <p
+        v-if="queryAttempts !== undefined"
+        data-testid="log-query-attempt-note"
+        class="text-muted-foreground text-[13px] leading-5"
+      >
+        排队期间查询尝试汇总，时间为首次尝试；不表示执行成功。
+      </p>
     </template>
   </div>
 </template>

@@ -89,7 +89,8 @@ const key = computed(() =>
 type ListView = {
   rows: LogSummary[]
   nextCursor: string | null
-  status: { dropped: number; unavailable: boolean; since: string }
+  // 旧后端没有 writeUnknown；缺失按 0 读，不补造计数。
+  status: { dropped: number; unavailable: boolean; since: string; writeUnknown?: number }
 }
 const { data, sourceKey, loading, error, refresh } = useLogRead(key, (target, signal) => {
   const request = JSON.parse(target)
@@ -320,7 +321,18 @@ function restoreFocus(event: Event) {
           }}</span>
           <span aria-hidden="true">·</span>
           <span class="tabular-nums">本进程已丢弃 {{ data.status.dropped }} 条</span>
-          <template v-if="data.status.unavailable || data.status.dropped > 0">
+          <!-- 发出写请求后失去确认的记录既不能算已存，也不能算确定丢失。 -->
+          <template v-if="(data.status.writeUnknown ?? 0) > 0">
+            <span aria-hidden="true">·</span>
+            <span class="tabular-nums">写入结果未知 {{ data.status.writeUnknown }} 条</span>
+          </template>
+          <template
+            v-if="
+              data.status.unavailable ||
+              data.status.dropped > 0 ||
+              (data.status.writeUnknown ?? 0) > 0
+            "
+          >
             <span aria-hidden="true">·</span>
             <span>日志缺失不代表业务未执行</span>
           </template>

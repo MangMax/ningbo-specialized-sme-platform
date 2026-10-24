@@ -21,6 +21,7 @@ afterEach(async () => {
   for (const c of children.splice(0)) { c.kill('SIGKILL'); await new Promise<void>(r => c.exitCode !== null || c.signalCode !== null ? r() : c.once('exit', () => r())) }
   for (const s of services.splice(0)) await s.close()
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
+  vi.useRealTimers()
 })
 it('applies AND and the stricter level across all eleven sources and all level pairs', () => {
   for (const source of LOG_SOURCES) for (const sourceLevel of LOG_LEVELS) for (const integrationLevel of LOG_LEVELS) for (const level of LOG_LEVELS) for (const sourceEnabled of [false,true]) for (const integrationEnabled of [false,true]) {
@@ -61,6 +62,10 @@ it('preserves legacy updates, old missing origins, history and restart rules', a
   expect(await next.policy()).toMatchObject({retentionDays:3,collection:{sources:{task:{enabled:false,minLevel:'error'}}}})
 })
 it('merges concurrent management writes and filters old queues and new batches separately from drops', async () => {
+  // Keep the old event pending while both policy commits race. Early drain is
+  // now intentionally faster than those RPCs; an already committed old event
+  // would be valid history, rather than a stale-policy failure.
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] })
   const {service,directory} = fixture()
   const peer = fixture(directory).service
   await service.policy(); await peer.policy()

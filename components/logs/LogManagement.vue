@@ -62,6 +62,10 @@ type PolicyView = LogPolicy & {
   accounting: string
   status?: {
     dropped?: number
+    /** 写请求发出后失去确认的记录数；旧后端不返回，按 0 读。 */
+    writeUnknown?: number
+    /** 合入已有汇总的额外查询尝试数，不是丢弃或存储计数。 */
+    coalesced?: number
     unavailable?: boolean
     since?: string
     queuedEntries?: number
@@ -995,7 +999,12 @@ async function confirm() {
               }}</span
               >；已丢弃 {{ data.status?.dropped ?? 0 }} 条；排队
               {{ data.status?.queuedEntries ?? 0 }} 条；写入中
-              {{ data.status?.inFlightEntries ?? 0 }} 条
+              {{ data.status?.inFlightEntries ?? 0 }} 条<template
+                v-if="(data.status?.writeUnknown ?? 0) > 0"
+                >；写入结果未知 {{ data.status?.writeUnknown }} 条</template
+              ><template v-if="(data.status?.coalesced ?? 0) > 0"
+                >；合并重复查询 {{ data.status?.coalesced }} 次</template
+              >
             </dd>
           </div>
         </dl>

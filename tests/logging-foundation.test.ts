@@ -108,7 +108,7 @@ it('bounds drain timeouts and never throws logging failures into callers', async
   const { service } = fixture({ drainTimeoutMs: 1 })
   expect(() => service.emit({ source: 'worker', operation: 'timeout.run', outcome: 'failure', level: 'error' })).not.toThrow()
   await service.flush()
-  expect(service.status()).toMatchObject({ dropped: 1, unavailable: true, lastError: 'drain_timeout' })
+  expect(service.status()).toMatchObject({ dropped: 0, writeUnknown: 1, unavailable: true, lastError: 'drain_timeout' })
   const started = Date.now(); await service.close()
   expect(Date.now() - started).toBeLessThan(3100)
 })

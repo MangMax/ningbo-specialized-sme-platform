@@ -1,5 +1,6 @@
 import type { LogEvent, LogSummary } from '~~/lib/logging/contract'
 import { errorCodeMissingIsInformative, fieldOmission } from '~~/lib/logging/detail-profile'
+import { isDrizzleQueryAttempt } from '~~/lib/logging/drizzle-query'
 import type { BadgeVariants } from '@/components/ui/badge'
 
 export type LogBadgeVariant = NonNullable<BadgeVariants['variant']>
@@ -191,15 +192,44 @@ export interface LogReference {
   value: string
 }
 
+/** 详情页与列表都只读这些冻结事实；tus 输出形状不影响判断，故不要求完整事件。 */
+type QueryAttemptShape = Pick<
+  LogEvent,
+  | 'source'
+  | 'level'
+  | 'outcome'
+  | 'origin'
+  | 'operation'
+  | 'resourceType'
+  | 'resourceId'
+  | 'errorCode'
+  | 'durationMs'
+  | 'statusCode'
+  | 'counts'
+>
+/**
+ * 只有确认是 Drizzle 执行前钩子、且 counts.total 为正安全整数的记录才是查询汇总。
+ * 没有 counts 的历史查询、被扩宽的同名字段都不冒充汇总。
+ */
+export function queryAttemptTotal(event: QueryAttemptShape): number | undefined {
+  if (!event.counts || Object.keys(event.counts).some(key => key !== 'total') || !isDrizzleQueryAttempt(event)) return undefined
+  const total = event.counts.total
+  return Number.isSafeInteger(total) && (total ?? 0) > 0 ? total : undefined
+}
+
 /**
  * 计数只显示实际存在的键，不把缺失当 0，也不从计数推断 outcome。
  * `done` 在不同来源是“已处理/已写入/重试尝试”等，不能写成“已完成”。
+ * 查询汇总的 total 严格表示排队期间的尝试次数，不写成成功、影响行数或同一语句次数。
  */
-export function formatCounts(counts?: LogEvent['counts'], operation?: string): string {
+export function formatCounts(counts?: LogEvent['counts'], operation?: string, queryAttempt = false): string {
   if (!counts) return ''
   const parts: string[] = []
+  const attempts =
+    queryAttempt && Number.isSafeInteger(counts.total) && (counts.total ?? 0) > 0 ? counts.total : undefined
   const retry = operation !== undefined && (operation.endsWith('.retry') || operation === 'platform.batch.retry')
-  if (retry && counts.done !== undefined) parts.push(`第 ${counts.done} 次重试`)
+  if (attempts !== undefined) parts.push(`查询尝试 × ${attempts}`)
+  else if (retry && counts.done !== undefined) parts.push(`第 ${counts.done} 次重试`)
   else if (counts.done !== undefined && counts.total !== undefined) parts.push(`已处理 ${counts.done}/${counts.total}`)
   else if (counts.total !== undefined) parts.push(`共 ${counts.total}`)
   else if (counts.done !== undefined) parts.push(`已处理 ${counts.done}`)
@@ -355,7 +385,14 @@ export function rowTarget(row: LogSummary): LogTarget {
         : { kind: 'client', text: '未记录', missing: true, untrusted: true, usedIds: [] }
     }
     case 'system': {
-      const counts = formatCounts(row.counts, row.operation)
+      const queryAttempt = queryAttemptTotal(row) !== undefined
+      const counts = formatCounts(row.counts, row.operation, queryAttempt)
+      // A count must not replace the connection purpose that was visible on
+      // pre-summary records. Keep both in the target and its full title.
+      if (queryAttempt && hasId(row.resourceId)) return {
+        kind: 'system', text: `${resourceIdLabel(row.resourceType, row.resourceId)} · ${counts}`,
+        missing: false, untrusted: false, usedIds: [idText(row.resourceId)]
+      }
       if (counts) return { kind: 'system', text: counts, missing: false, untrusted: false, usedIds: [] }
       if (hasId(row.resourceId))
         return {

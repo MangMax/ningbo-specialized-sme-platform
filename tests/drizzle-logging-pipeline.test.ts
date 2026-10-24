@@ -45,20 +45,26 @@ describe('Drizzle real evlog and independent SQLite pipeline', () => {
     const fault = new Error('PRIVATE_ERROR_MARKER')
     client.function('fail_query', () => { throw fault })
     expect(() => db.get(sql`SELECT fail_query()`)).toThrow(fault)
-    await settle(2)
+    await settle(1)
     const listed = await rows()
-    expect(listed).toHaveLength(2)
+    expect(listed).toHaveLength(1)
     for (const row of listed) expect(row).toMatchObject({
       source: 'system', operation: 'db.query.select', outcome: 'started', level: 'debug',
       resourceType: 'database_connection', resourceId: 'primary',
       origin: { runtime: 'node', integration: 'drizzle', capture: 'hook' },
+      counts: { total: 2 },
     })
     const details = await Promise.all(listed.map(row => applicationLogs().detail(row.id)))
     await vi.waitFor(() => expect(writes.join('')).toContain('db.query.select'))
-    for (const text of [JSON.stringify(details), writes.join(''), readFileSync(join(directory, 'events.db')).toString()]) {
+    for (const text of [JSON.stringify(details), writes.join('')]) {
       expect(text).not.toMatch(/PRIVATE_|fail_query|durationMs|params|stack/)
     }
-    expect(applicationLogs().status()).toMatchObject({ stored: 2, filtered: 0, dropped: 0 })
+    // The store also contains field-policy defaults with the legitimate
+    // "durationMs" option. Its presence is not a leaked query duration.
+    const stored = new Database(join(directory, 'events.db'), { readonly: true })
+    try { expect((stored.prepare('SELECT collection FROM log_collection WHERE id=1').get() as { collection: string }).collection).toContain('"durationMs":true') } finally { stored.close() }
+    expect(readFileSync(join(directory, 'events.db')).toString()).not.toMatch(/PRIVATE_|fail_query|params|stack/)
+    expect(applicationLogs().status()).toMatchObject({ stored: 1, coalesced: 1, filtered: 0, dropped: 0, writeUnknown: 0 })
   })
 
   it.each([

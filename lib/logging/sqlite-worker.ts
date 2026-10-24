@@ -28,6 +28,9 @@ const collectionAllows = ${collectionAllowsAtLevels.toString()}
 const boundedLogOutput = ${boundedLogOutput.toString()}
 const stdout = workerData.stdout ? boundedLogOutput(process.stdout, workerData.maxEventBytes + 1) : undefined
 const failureCode = error => error && error.code === 'SQLITE_FULL' ? 'storage_full' : error && String(error.code).startsWith('SQLITE_READONLY') ? 'storage_readonly' : 'storage_unavailable'
+// Open, policy and BEGIN/SAVEPOINT failures precede insertion. After insertion
+// is attempted, an unstructured failure cannot prove the outer commit outcome.
+let writeMayCommit = false
 function readPolicy() {
   const storage = db.prepare('SELECT retentionDays,maxBytes FROM log_policy WHERE id=1').get()
   const row = db.prepare('SELECT collection,revision FROM log_collection WHERE id=1').get()
@@ -153,6 +156,7 @@ function execute(action, data) {
         const insert = db.prepare('INSERT INTO log_events(id,timestamp,level,source,operation,outcome,requestId,traceId,taskId,fileId,batchId,resourceId,summary,detail) VALUES(@id,@timestamp,@level,@source,@operation,@outcome,@requestId,@traceId,@taskId,@fileId,@batchId,@resourceId,@summary,@detail)')
         const write = db.transaction(() => { for (const event of allowed) {
           const { auditId, receiptId, parentEventId, ...summary } = event
+          writeMayCommit = true
           insert.run({requestId:null,traceId:null,taskId:null,fileId:null,batchId:null,resourceId:null,...event,batchId:event.batchId===undefined?null:String(event.batchId),resourceId:event.resourceId===undefined?null:String(event.resourceId),summary:JSON.stringify(summary),detail:JSON.stringify(event)})
         } })
         write()
@@ -229,11 +233,12 @@ function execute(action, data) {
 }
 parentPort.on('message', ({id,action,data,time}) => {
   now=time
+  writeMayCommit=false
   try { parentPort.postMessage({ id, ok:true, result:execute(action,data) }) }
   catch(error) {
     const code = failureCode(error)
     // No raw error/message/path sent to parent or stderr.
-    parentPort.postMessage({id,ok:false,code})
+    parentPort.postMessage({id,ok:false,code,...(action === 'write' ? {writeOutcome:writeMayCommit ? 'unknown' : 'not_written'} : {})})
     if (!reusableAfterBusy(error)) {
       try { db?.close() } catch {}
       db=undefined

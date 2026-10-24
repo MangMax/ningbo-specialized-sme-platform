@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { useDb, schema } from '../db/client'
@@ -11,7 +11,6 @@ import { dispatchCandidateJobMcp, handleCandidateJobRequest } from '../server/ut
 import { operationLogContext } from '../server/utils/operation-log-context'
 import type { AnnualScopeReader } from '../server/utils/annual-correspondence'
 import { createImportExecutor } from '../server/utils/import-execution'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
 
 let root: string, db: ReturnType<typeof useDb>
 const previous = process.env.NUXT_LOG_DIR
@@ -86,10 +85,8 @@ it('adopts legacy queued jobs without inventing request identity', async () => {
   expect((await applicationLogs().list({ taskId: row.id })).rows.every(row => row.requestId === undefined && row.traceId === undefined)).toBe(true)
 })
 it('carries a native archive submission through continuation and annual child jobs with each own task id', async () => {
-  // This case verifies task context, not database-query saturation: the same
-  // real business connection/schema runs without its optional query observer.
-  // The all-debug pressure run is retained separately with explicit overflow.
-  db = drizzle(db.$client, { schema })
+  // Keep the native Drizzle observer enabled: the context contract must hold
+  // under the original query-heavy continuation and annual-child workload.
   const enterprise = db.insert(schema.enterprise).values({ name: '合成关联企业', nameNorm: '合成关联企业', usccNorm: '91330211255994457P' }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
   db.transaction(() => {
@@ -116,5 +113,10 @@ it('carries a native archive submission through continuation and annual child jo
       expect(rows.every(row => row.requestId === context.requestId && row.traceId === context.traceId)).toBe(true)
       expect(JSON.stringify(rows)).not.toContain('PRIVATE_CHAIN_BODY')
     }
+    await applicationLogs().flush()
+    const status = applicationLogs().status()
+    if (process.env.LOG180_RELIABILITY_RECEIPT) writeFileSync(process.env.LOG180_RELIABILITY_RECEIPT, JSON.stringify({ status, jobs: jobs.map(({ id, kind, state, result }) => ({ id, kind, state, result })) }, null, 2))
+    expect(status).toMatchObject({ overflow: 0, dropped: 0, writeUnknown: 0, drainFailures: 0, queuedEntries: 0, inFlightEntries: 0 })
+    expect(status.coalesced).toBeGreaterThan(0)
   } finally { await executor.close() }
 }, 60_000)

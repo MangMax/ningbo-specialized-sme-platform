@@ -136,5 +136,7 @@ it('still applies a later disable rule to an already prioritized queued failure'
   await service.setPolicy({ retentionDays: 7, maxBytes: 536870912, collection: { sources: { task: { enabled: false, minLevel: 'debug' } } } })
   await service.flush()
   expect((await service.list({ taskId: 'disabled-priority' })).rows).toHaveLength(0)
-  expect(service.status()).toMatchObject({ filtered: 1, dropped: 2, overflow: 2, drainFailures: 0 })
+  // Early drain frees pending rows while the management RPC is completing;
+  // its metadata no longer evicts a second diagnostic just to obtain a slot.
+  expect(service.status()).toMatchObject({ filtered: 1, dropped: 1, overflow: 1, drainFailures: 0 })
 })
