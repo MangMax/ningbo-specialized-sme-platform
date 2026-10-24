@@ -1,13 +1,13 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { useDb, schema as s } from '../db/client'
 import { preflightRosterImport, commitRosterImport } from '../server/utils/roster-import'
 import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../server/utils/record-correspondence'
 import { readEventAnnualProcess } from '../server/utils/event-annual-process-read'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'annual258-wire-')), dbPath = join(dir, 'isolated.db')
 const db = useDb({ dbPath })

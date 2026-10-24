@@ -2,12 +2,12 @@
 // Local production artifact, real HTTP + MCP, synthetic temporary SQLite only.
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { spawn, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti'), jiti = createJiti(import.meta.url)
 const { useDb, schema: s } = await jiti.import('../db/client.ts')
 const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-verify-'))

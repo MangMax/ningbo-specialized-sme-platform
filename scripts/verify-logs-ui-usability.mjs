@@ -20,7 +20,7 @@
  * 退出时写 results.json / manifest.json / closeout.json。
  */
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -28,7 +28,7 @@ import { execFileSync } from 'node:child_process'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const worktree = resolve('.')
 const root = mkdtempSync(join(tmpdir(), 'logs-ui-usability-'))

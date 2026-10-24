@@ -3,7 +3,7 @@
 // node scripts/bench-production-flow227.mjs MATRIX SNAPSHOT ENTRY SOURCE_SHA NEW_RESULT_DIR
 // Optional PERF227_CELL selects one cell for a smoke test; hot samples remain >=20.
 import assert from 'node:assert/strict'
-import { fork, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync, lstatSync, readlinkSync, rmSync, chmodSync, realpathSync, statSync } from 'node:fs'
 import { resolve, dirname, join, relative } from 'node:path'
@@ -12,7 +12,7 @@ import { hostname, cpus, totalmem, loadavg, freemem } from 'node:os'
 import { createConnection } from 'node:net'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const [matrixPath, snapshotText, entryText, sourceSha, outputText] = process.argv.slice(2)
 const snapshot = realpathSync(snapshotText), entry = realpathSync(entryText), output = resolve(outputText)
 assert.match(sourceSha, /^[a-f0-9]{40}$/)

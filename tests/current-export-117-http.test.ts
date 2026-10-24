@@ -3,14 +3,14 @@ import { reviewCurrentExportDecision } from './helpers/current-export-decisions'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { spawn, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import ExcelJS from 'exceljs'
 import { newJobId } from '../lib/job'
 import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { useDb, schema as s } from '../db/client'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'export-117-'))
 const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Runs only a local production artifact with a synthetic temporary database; no live platform traffic.
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
 const jiti = createJiti(import.meta.url)
 const { useDb, schema } = await jiti.import('../db/client.ts')

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Bounded, synthetic-only performance baseline. See benchmark-logging.md. */
-import { fork, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, chmodSync, existsSync, openSync, closeSync, readSync, unlinkSync, constants } from 'node:fs'
@@ -13,7 +13,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { performanceController } from './lib/performance-controller.mjs'
-import { reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
 const BASE = '50f4f710b3e9677d86806557b5120c1ac157130f'
 const TREE = '76efcedb31862f11444a87673feaa2f89f13502b'
 const root = '/tmp/implement-spec-180/logging-performance'

@@ -3,7 +3,7 @@
 // Controlled runs require an independently frozen PERF_EXPECTED_ARTIFACT_MANIFEST.
 // node scripts/bench-snapshot-ingestion.mjs <snapshot> <private-output-dir> <source-sha> [scales=1,2,5] [transports=http,mcp] [readers=1,2,5] [representative|large]
 import assert from 'node:assert/strict'
-import { fork } from 'node:child_process'
+
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import Database from 'better-sqlite3'
@@ -13,7 +13,7 @@ import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { resetSnapshotFixture, stageSnapshotTemplate } from './lib/snapshot-benchmark-fixture.mjs'
 import { qualifyMigrationAuthority, readBenchmarkAuthority } from './lib/benchmark-authority.mjs'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const [sourceArg, outputArg, sha, scaleArg = '1,2,5', transportArg = 'http,mcp', readerArg = '1,2,5', inputMode = 'representative'] = process.argv.slice(2)
 assert.ok(sourceArg && outputArg && /^[a-f0-9]{7,40}$/.test(sha ?? ''))

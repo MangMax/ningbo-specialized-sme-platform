@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { type ChildProcess } from 'node:child_process'
 import { createLogService } from '../lib/logging/service'
-import { stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 it('keeps all query attempt counts and terminals from four real processes sharing one SQLite store', async () => {
   const root = mkdtempSync(join(tmpdir(), 'logging-four-writers-180-'))

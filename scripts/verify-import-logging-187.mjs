@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Actual built Nuxt -> isolated import worker/SQLite -> evlog drain -> protected REST/MCP reads.
 import assert from 'node:assert/strict'
-import { spawn, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const cwd = resolve(import.meta.dirname, '..')
 const root = mkdtempSync(join(tmpdir(), 'nuxt-import187-'))

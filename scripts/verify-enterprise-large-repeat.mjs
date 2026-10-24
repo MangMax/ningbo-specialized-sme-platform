@@ -3,12 +3,12 @@
 // observers: their allocation/timing can hide the old-generation failure.
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { fork, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
 const { useDb, schema: s } = await createJiti(import.meta.url).import('../db/client.ts')

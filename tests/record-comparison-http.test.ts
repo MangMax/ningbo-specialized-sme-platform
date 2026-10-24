@@ -1,11 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ensurePlatformObservation } from '../server/utils/platform-business-record'
 import { useDb, schema } from '../db/client.ts'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-record-comparison-http-'))
 const path = join(dir, 'roster.db')

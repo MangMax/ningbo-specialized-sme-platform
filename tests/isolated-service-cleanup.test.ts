@@ -1,8 +1,8 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, it } from 'vitest'
-import { stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, forkOwnedChild as fork, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
 it('stops native descendants after the launcher exits without stopping an unrelated service', async () => {
@@ -60,5 +60,39 @@ it('retains native ownership when the launcher exits before cleanup is called', 
     if (launcher.exitCode === null && launcher.signalCode === null) launcher.kill('SIGKILL')
     if (nativePid && alive(nativePid)) process.kill(nativePid, 'SIGKILL')
     for (let i = 0; i < 40 && nativePid && alive(nativePid); i++) await sleep(25)
+  }
+}, 12000)
+
+it.each(['spawn', 'fork'] as const)('collects a descendant born just before %s launcher exit without readiness sampling', async mode => {
+  const { mkdtempSync, existsSync, rmSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'owned-exit-window-'))
+  const ready = join(dir, 'ready')
+  const code = `
+    const child=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(`process.on('SIGTERM',()=>{});require('node:fs').writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000)`)}],{stdio:'ignore'});
+    process.send({pid:child.pid},()=>process.exit(0));
+  `
+  const entry = join(dir, 'launcher.cjs')
+  writeFileSync(entry, code)
+  const launcher = mode === 'fork'
+    ? fork(entry, [], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
+    : spawn(process.execPath, ['-e', code], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
+  let nativePid: number | undefined
+  try {
+    const exited = once(launcher, 'exit')
+    const [record] = await once(launcher, 'message')
+    nativePid = (record as { pid: number }).pid
+    await exited
+    for (let i = 0; i < 80 && !existsSync(ready); i++) await sleep(25)
+    expect(existsSync(ready)).toBe(true)
+    expect(alive(nativePid)).toBe(true)
+    await stopOwnedChild(launcher)
+    expect(alive(nativePid)).toBe(false)
+  } finally {
+    if (launcher.exitCode === null && launcher.signalCode === null) launcher.kill('SIGKILL')
+    if (nativePid && alive(nativePid)) process.kill(nativePid, 'SIGKILL')
+    for (let i = 0; i < 40 && nativePid && alive(nativePid); i++) await sleep(25)
+    rmSync(dir, { recursive: true, force: true })
   }
 }, 12000)

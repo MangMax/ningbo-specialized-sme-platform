@@ -2,11 +2,11 @@
 /** Actual built Nuxt, independent fixture paths, only public operation/log APIs. */
 import assert from 'node:assert/strict'
 import { minimalPdf } from '../tests/helpers/minimal-pdf.ts'
-import { spawn } from 'node:child_process'
+
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const root=mkdtempSync(join(tmpdir(),'job184-public-'))
 const marker='PRIVATE184_PUBLIC'
 const results=[]

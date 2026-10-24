@@ -4,12 +4,12 @@
  * Uses an isolated empty SQLite file and 31 synthetic scroll rows because the route scroll
  * behavior is independent of roster contents. This is not original-file or business-data acceptance.
  */
-import { spawn } from 'node:child_process'
+
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { startIsolatedNuxt, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, startIsolatedNuxt, stopOwnedChild, waitForChromeDevTools } from './lib/isolated-local-services.mjs'
 
 const PORT_HINT = Number(process.argv[2] ?? process.env.RL10_TEST_PORT ?? 0)
 let BASE

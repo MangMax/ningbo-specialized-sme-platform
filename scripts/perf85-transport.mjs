@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** #85 M3. Compiled Nitro, real loopback REST and MCP JSON-RPC tools/call. */
 import assert from 'node:assert/strict'
-import { fork, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { cpus, tmpdir, totalmem } from 'node:os'
@@ -10,7 +10,7 @@ import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
 import Database from 'better-sqlite3'
 import { createFixture } from './perf85-fixture.mjs'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const args = process.argv.slice(2)
 const option = (name, fallback) => { const at = args.indexOf(name); return at < 0 ? fallback : args[at + 1] }

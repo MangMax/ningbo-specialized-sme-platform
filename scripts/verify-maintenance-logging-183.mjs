@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /** Actual built Nuxt HTTP + real SDK MCP, isolated synthetic business/log storage. */
-import { spawn, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import assert from 'node:assert/strict'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 import { minimalPdf } from '../tests/helpers/minimal-pdf.ts'
 const require = createRequire(import.meta.resolve('@nuxtjs/mcp-toolkit'))
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js')

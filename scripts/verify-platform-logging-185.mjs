@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** #185: actual built Nuxt -> controlled HTTP socket -> real evlog drain -> protected REST. */
 import assert from 'node:assert/strict'
-import { spawn, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { mkdtempSync, readFileSync, writeFileSync, readdirSync } from 'node:fs'
@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const root = mkdtempSync(join(tmpdir(), 'platform185-nuxt-'))
 const dbPath = join(root, 'synthetic.db'), logs = join(root, 'logs')

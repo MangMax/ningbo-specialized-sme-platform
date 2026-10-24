@@ -3,12 +3,12 @@
 // Reads use two production instances and compare cached REST with uncached MCP.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { execFileSync, fork } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
-import { reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
 
 const require = createRequire(import.meta.url)
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')

@@ -2,7 +2,7 @@
 /** #182 actual built Nuxt public seam + isolated fixture for manual T3 preview.
  * No production paths, migrations or credentials. All business operations use HTTP. */
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const root = mkdtempSync(join(tmpdir(), 'logs182-public-'))
 const business = join(root, 'synthetic.db')
 const db = new Database(business)

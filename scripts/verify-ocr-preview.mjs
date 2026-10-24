@@ -11,13 +11,13 @@
  */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import Database from 'better-sqlite3'
-import { reserveLoopbackPort, stopOwnedChild, waitForChromeDevTools, waitForHttp } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForChromeDevTools, waitForHttp } from './lib/isolated-local-services.mjs'
 
 const root = mkdtempSync(join(tmpdir(), 'ocr-preview-48-'))
 const fixture = spawnSync('uv', ['run', 'scripts/fixtures/ocr-preview.py', root], { encoding: 'utf8' })

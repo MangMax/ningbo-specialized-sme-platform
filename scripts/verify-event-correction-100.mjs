@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Local compiled artifact, isolated synthetic SQLite. Never targets production.
 import assert from 'node:assert/strict'
-import { spawn, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
-import { reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
 const { useDb, schema } = await createJiti(import.meta.url).import('../db/client.ts')
 const dir = mkdtempSync(join(tmpdir(), 'event-100-public-')), dbPath = join(dir, 'test.db')

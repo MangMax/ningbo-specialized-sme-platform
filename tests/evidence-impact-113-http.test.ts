@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { useDb, schema } from '../db/client'
@@ -10,7 +10,7 @@ import { processEvidenceImpacts113, listEvidenceImpacts113, listImpactEvidence11
 import { recognizedResultToImport } from '../lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../lib/platform/live-query'
 import { minimalPdf } from './helpers/minimal-pdf'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'impact-113-'))
 const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })

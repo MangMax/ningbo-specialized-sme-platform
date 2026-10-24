@@ -1,12 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+
 import { createHash } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { createRosterImportClient, type RosterImportRequest } from '../lib/roster-import-client'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 // Every business write uses the app API on a new isolated SQLite database.
 const dir = mkdtempSync(join(tmpdir(), 'declare-kind-249-'))

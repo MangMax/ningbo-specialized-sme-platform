@@ -3,14 +3,14 @@
 // node --max-old-space-size=2048 --expose-gc scripts/bench-enterprise-read.mjs <driver|http|mcp> /absolute/copy.sqlite <list|deep|search|detail> [concurrency=1] [hotSamples=20]
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { fork, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { createHash } from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const [lane, dbPath, mode = 'list', concurrencyText = '1', countText = '20'] = process.argv.slice(2)
 const concurrency = Number(concurrencyText), count = Number(countText)
 assert.ok(['driver', 'http', 'mcp'].includes(lane) && dbPath?.startsWith('/') && ['list', 'deep', 'search', 'detail'].includes(mode) && [1, 2, 5].includes(concurrency))

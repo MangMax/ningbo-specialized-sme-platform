@@ -1,11 +1,11 @@
 // Compiled Nitro HTTP + actual MCP transport; loopback-owned process only.
-import { fork, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, readFileSync, realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { performance } from 'node:perf_hooks'
 import Database from 'better-sqlite3'
-import { reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../lib/isolated-local-services.mjs'
 const [input, output, workInput, selectorInput] = process.argv.slice(2)
 if (!input || !output || !workInput || existsSync(output)) throw new Error('Usage: node public.mjs PRIVATE_DB NEW_OUTPUT_JSONL PRIVATE_DIR')
 const work = realpathSync(workInput), dbPath = realpathSync(input)

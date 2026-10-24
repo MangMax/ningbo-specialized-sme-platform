@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, fork } from 'node:child_process'
 import { createServer } from 'node:net'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -10,37 +10,29 @@ function childIsRunning(child) {
   return child && child.exitCode === null && child.signalCode === null
 }
 
-const ownedChildren = new WeakMap()
+// Each isolated launcher gets a dedicated POSIX process group. Native children
+// inherit it even if their launcher exits before cleanup; no PID-tree sampling.
+const ownedGroups = new WeakMap()
 function processTable() {
-  return execFileSync('ps', ['-A', '-o', 'pid=,ppid=,lstart='], { encoding: 'utf8' })
+  return execFileSync('ps', ['-A', '-o', 'pid=,pgid=,lstart='], { encoding: 'utf8' })
     .trim().split('\n').map(line => {
-      const [pid, parent, ...started] = line.trim().split(/\s+/)
-      return { pid: Number(pid), parent: Number(parent), started: started.join(' ') }
+      const [pid, group, ...started] = line.trim().split(/\s+/)
+      return { pid: Number(pid), group: Number(group), started: started.join(' ') }
     })
 }
-/** Register while the launcher is alive, before its descendants can be orphaned. */
-export function trackOwnedChild(child) {
-  if (ownedChildren.has(child)) return ownedChildren.get(child)
-  const state = { processes: new Map(), timer: undefined, error: undefined }
-  const capture = () => {
-    if (!childIsRunning(child)) return
-    const table = processTable(), ids = new Set([child.pid])
-    let changed = true
-    while (changed) {
-      changed = false
-      for (const row of table) if (ids.has(row.parent) && !ids.has(row.pid)) { ids.add(row.pid); changed = true }
-    }
-    for (const row of table) if (ids.has(row.pid)) state.processes.set(row.pid, row.started)
-  }
-  capture()
-  state.timer = setInterval(() => {
-    try { capture() } catch (error) { state.error = error; clearInterval(state.timer) }
-  }, 250)
-  state.timer.unref()
-  child.once('exit', () => clearInterval(state.timer))
-  child.once('error', () => clearInterval(state.timer))
-  ownedChildren.set(child, state)
-  return state
+function inOwnedGroup(start) {
+  if (process.platform === 'win32') throw new Error('Isolated process-group services require POSIX')
+  const child = start()
+  if (child.pid) ownedGroups.set(child, { id: child.pid, started: processTable().find(row => row.pid === child.pid)?.started })
+  return child
+}
+export function spawnOwnedChild(command, args = [], options = {}) {
+  if (!Array.isArray(args)) { options = args; args = [] }
+  return inOwnedGroup(() => spawn(command, args, { ...options, detached: true }))
+}
+export function forkOwnedChild(modulePath, args = [], options = {}) {
+  if (!Array.isArray(args)) { options = args; args = [] }
+  return inOwnedGroup(() => fork(modulePath, args, { ...options, detached: true }))
 }
 
 export async function reserveLoopbackPort(requestedPort = 0) {
@@ -73,7 +65,6 @@ export async function reserveLoopbackPort(requestedPort = 0) {
  * @param {{ timeoutMs?: number, child?: import('node:child_process').ChildProcess }} [options]
  */
 export async function waitForHttp(url, { timeoutMs = 60_000, child } = {}) {
-  if (child) trackOwnedChild(child)
   const deadline = Date.now() + timeoutMs
   let lastError
   while (Date.now() < deadline) {
@@ -150,50 +141,50 @@ async function waitForNuxtListener(child, output, expectedPort, timeoutMs) {
 }
 
 export async function stopOwnedChild(child) {
-  if (!childIsRunning(child) && !ownedChildren.has(child)) return
-  // Nuxt's CLI may exit before its app/native children. Keep only this
-  // launcher's tracked descendants while ownership can be established; never
-  // search by a port, executable name or shared workspace path.
-  const state = trackOwnedChild(child)
-  clearInterval(state.timer)
-  // Refresh once more while the launcher is still alive. Identity checks keep
-  // an exited/reused PID outside the set we are allowed to signal.
-  const table = processTable()
-  const ids = new Set([child.pid])
-  for (let size = -1; size !== ids.size;) {
-    size = ids.size
-    for (const row of table) if (ids.has(row.parent)) ids.add(row.pid)
+  const owner = ownedGroups.get(child)
+  if (!owner) {
+    if (!child.pid || !childIsRunning(child)) return
+    throw new Error('Use spawnOwnedChild or forkOwnedChild to establish service ownership')
   }
-  if (childIsRunning(child)) for (const row of table) if (ids.has(row.pid)) state.processes.set(row.pid, row.started)
-  const owned = state.processes
-  const living = () => processTable().filter(row => owned.get(row.pid) === row.started).map(row => row.pid)
+  const group = owner.id
+  const members = () => {
+    const table = processTable()
+    const leader = table.find(row => row.pid === group)
+    // A reused leader PID means the original group has already disappeared.
+    if (leader && owner.started && leader.started !== owner.started) return []
+    if (leader && !owner.started && !childIsRunning(child)) throw new Error('Cannot verify exited service group identity')
+    return table.filter(row => row.group === group)
+  }
+  const signal = value => {
+    try { process.kill(-group, value); return true }
+    catch (error) {
+      if (error.code === 'ESRCH' || (error.code === 'EPERM' && !members().length)) return false
+      throw error
+    }
+  }
   const wait = async duration => {
     const deadline = Date.now() + duration
-    while (living().length && Date.now() < deadline) await sleep(100)
+    // macOS can return EPERM to kill(-pgid, 0) while a group is exiting.
+    // Read actual membership, including zombies awaiting reap, instead.
+    while (members().length && Date.now() < deadline) await sleep(25)
   }
-  if (childIsRunning(child)) child.kill('SIGTERM')
-  else for (const pid of living()) { try { process.kill(pid, 'SIGTERM') } catch (error) { if (error.code !== 'ESRCH') throw error } }
+  if (members().length) signal('SIGTERM')
   await wait(CHILD_EXIT_GRACE_MS)
-  for (const pid of living().reverse()) {
-    try { process.kill(pid, 'SIGKILL') } catch (error) { if (error.code !== 'ESRCH') throw error }
-  }
+  if (members().length) signal('SIGKILL')
   await wait(1_000)
-  const remaining = living()
-  ownedChildren.delete(child)
-  if (remaining.length) throw new Error(`Owned service processes did not exit: ${remaining.join(',')}`)
-  if (state.error) throw state.error
+  if (members().length) throw new Error('Owned service process group did not exit: ' + group)
+  ownedGroups.delete(child)
 }
 
 export async function startIsolatedNuxt({ cwd, portHint = 0, env = {} }) {
   const port = await reserveLoopbackPort(portHint)
   const baseUrl = `http://127.0.0.1:${port}`
   const nuxtCli = join(cwd, 'node_modules/nuxt/bin/nuxt.mjs')
-  const child = spawn(process.execPath, [nuxtCli, 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+  const child = spawnOwnedChild(process.execPath, [nuxtCli, 'dev', '--host', '127.0.0.1', '--port', String(port)], {
     cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, ...env },
   })
-  trackOwnedChild(child)
   let output = ''
   child.stdout.setEncoding('utf8')
   child.stderr.setEncoding('utf8')

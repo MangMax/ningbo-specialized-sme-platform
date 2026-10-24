@@ -11,14 +11,14 @@
  * usage: node scripts/verify-log-fields-ui-180.mjs <worktree> <evidence-dir>
  */
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
 
 const worktree = resolve(process.argv[2] ?? '.')
 const evidence = process.argv[3]
