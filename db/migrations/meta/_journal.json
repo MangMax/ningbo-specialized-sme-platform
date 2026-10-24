@@ -204,6 +204,13 @@
       "when": 1792400021009,
       "tag": "0028_platform_business_record",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1792400021010,
+      "tag": "0029_platform_archive_body",
+      "breakpoints": true
     }
   ]
 }

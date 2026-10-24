@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
+  blob,
   index,
   integer,
   primaryKey,
@@ -1242,3 +1243,57 @@ export const evidenceRuleRelease114 = sqliteTable('evidence_rule_release_114', {
   enterpriseId: integer('enterprise_id').notNull(), titleCode: text('title_code').notNull(), direction: text('direction').notNull(),
   previousDigest: text('previous_digest').notNull(), evaluationDigest: text('evaluation_digest').notNull(), revisionId: integer('revision_id'), receiptKey: text('receipt_key').notNull(),
 }, t => [uniqueIndex('evidence_rule_release_scope_114_uq').on(t.ruleId,t.version,t.enterpriseId,t.titleCode,t.direction)])
+
+/** #278 immutable UTF-8 bodies. Sealing/immutability guards live in migration 0029. */
+export const platformBodyLeaf = sqliteTable('platform_body_leaf', {
+  id: integer('id').primaryKey(),
+  digest: text('digest').notNull().unique(),
+  byteLength: integer('byte_length').notNull(),
+  encoding: text('encoding').notNull().default('utf8-v1'),
+  bytes: blob('bytes', { mode: 'buffer' }).notNull(),
+}, t => [
+  check('platform_body_leaf_length_ck', sql`typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} >= 0`),
+  check('platform_body_leaf_encoding_ck', sql`${t.encoding} = 'utf8-v1'`),
+  check('platform_body_leaf_bytes_ck', sql`typeof(${t.bytes}) = 'blob' AND length(${t.bytes}) = ${t.byteLength}`),
+])
+
+export const platformBodyRoot = sqliteTable('platform_body_root', {
+  id: integer('id').primaryKey(),
+  digest: text('digest').notNull().unique(),
+  byteLength: integer('byte_length').notNull(),
+  encoding: text('encoding').notNull().default('utf8-v1'),
+  sealed: integer('sealed').notNull().default(0),
+}, t => [
+  check('platform_body_root_length_ck', sql`typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} >= 0`),
+  check('platform_body_root_encoding_ck', sql`${t.encoding} = 'utf8-v1'`),
+  check('platform_body_root_sealed_ck', sql`${t.sealed} IN (0,1)`),
+])
+
+export const platformBodyPart = sqliteTable('platform_body_part', {
+  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
+  logicalStart: integer('logical_start').notNull(),
+  leafId: integer('leaf_id').notNull().references(() => platformBodyLeaf.id, { onDelete: 'restrict' }),
+  byteLength: integer('byte_length').notNull(),
+}, t => [
+  primaryKey({ columns: [t.rootId, t.logicalStart] }),
+  check('platform_body_part_start_ck', sql`typeof(${t.logicalStart}) = 'integer' AND ${t.logicalStart} >= 0`),
+  check('platform_body_part_length_ck', sql`typeof(${t.byteLength}) = 'integer' AND ${t.byteLength} >= 0`),
+])
+
+export const platformRelationBodyRef = sqliteTable('platform_relation_body_ref', {
+  ownerId: integer('owner_id').notNull().references(() => platformRelation.id, { onDelete: 'restrict' }),
+  field: text('field', { enum: ['rawFields', 'sourceText'] }).notNull(),
+  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
+}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_relation_body_ref_field_ck', sql`${t.field} IN ('rawFields','sourceText')`)])
+
+export const platformQueryBodyRef = sqliteTable('platform_query_body_ref', {
+  ownerId: integer('owner_id').notNull().references(() => platformQuery.id, { onDelete: 'restrict' }),
+  field: text('field', { enum: ['rawResponse', 'collectionEvidence'] }).notNull(),
+  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
+}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_query_body_ref_field_ck', sql`${t.field} IN ('rawResponse','collectionEvidence')`)])
+
+export const platformVersionBodyRef = sqliteTable('platform_version_body_ref', {
+  ownerId: integer('owner_id').notNull().references(() => platformBusinessRecordVersion.id, { onDelete: 'restrict' }),
+  field: text('field', { enum: ['canonicalRawJson'] }).notNull(),
+  rootId: integer('root_id').notNull().references(() => platformBodyRoot.id, { onDelete: 'restrict' }),
+}, t => [primaryKey({ columns: [t.ownerId, t.field] }), check('platform_version_body_ref_field_ck', sql`${t.field} = 'canonicalRawJson'`)])
