@@ -21,6 +21,11 @@ function restore(eventId: number): Recovery | null {
  * joined to the existing readback barrier; task history never supplies final. */
 export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | null>) {
   const raw = shallowRef<EventAnnualProcessPage | null>(null)
+  // Display batches never supply scope qualification; raw remains the latest
+  // official DTO, including its complete-scope summary and decision refs.
+  const batches = shallowRef(new Map<number, EventAnnualProcessPage['process']['steps']>())
+  type ReadMode = 'current' | 'reset' | 'append'
+  let failedReadMode: ReadMode = 'reset'
   const phase = shallowRef<AnnualReviewPhase>('checking')
   const enabled = shallowRef(false)
   const reading = shallowRef(false)
@@ -44,17 +49,35 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
     try { sessionStorage.setItem(storageKey(id), JSON.stringify(value)) } catch { /* Retain identity in the mounted controller if storage is unavailable. */ }
   }
 
-  async function readAnnual(): Promise<boolean> {
+  async function readAnnual(mode: ReadMode = 'current'): Promise<boolean> {
     const id = eventId(), token = epoch
     if (!mounted || id == null) return true
-    const sequence = ++readSequence, request = { ...target.value }
+    const sequence = ++readSequence
+    let request = { ...target.value }
     readController?.abort(); const controller = new AbortController(); readController = controller
     reading.value = true
     try {
-      const page = await $fetch<EventAnnualProcessPage>(`/api/roster/events/${id}/annual-process`, { query: request, signal: controller.signal })
+      const fetchPage = async () => {
+        const page = await $fetch<EventAnnualProcessPage>(`/api/roster/events/${id}/annual-process`, { query: request, signal: controller.signal })
+        if (page.process.event.id !== id || !page.sourceGeneration || page.page !== request.page || page.pageSize !== request.pageSize || !Array.isArray(page.process.steps)
+          || !Number.isSafeInteger(page.total) || page.total < 0 || page.process.steps.length > request.pageSize) throw new Error('annual_read_mismatch')
+        return page
+      }
+      let page = await fetchPage()
       if (!current(token, id) || sequence !== readSequence) return false
-      if (page.process.event.id !== id || !page.sourceGeneration || page.page !== request.page || page.pageSize !== request.pageSize || !Array.isArray(page.process.steps)) throw new Error('annual_read_mismatch')
+      // An offset in a new source cannot be appended to the previous source.
+      // Restart once at its first bounded batch, retaining old facts on failure.
+      if (request.page > 1 && raw.value && page.sourceGeneration !== raw.value.sourceGeneration) {
+        readFailed.value = true
+        request = { page: 1, pageSize: request.pageSize }; target.value = request; mode = 'reset'
+        page = await fetchPage()
+        if (!current(token, id) || sequence !== readSequence) return false
+      }
       const sourceChanged = raw.value?.sourceGeneration !== page.sourceGeneration
+      const next = mode === 'reset' || sourceChanged || raw.value?.pageSize !== page.pageSize
+        ? new Map<number, EventAnnualProcessPage['process']['steps']>() : new Map(batches.value)
+      next.set(page.page, page.process.steps)
+      batches.value = next
       raw.value = page
       readFailed.value = false
       if (sourceChanged && enabled.value && recovery.value?.jobId && recovery.value.generation !== page.sourceGeneration) {
@@ -63,6 +86,7 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
       return true
     } catch {
       if (current(token, id) && sequence === readSequence) {
+        failedReadMode = mode
         readFailed.value = true
         if (recovery.value?.jobId && phase.value === 'synced') phase.value = 'sync-failed'
       }
@@ -218,9 +242,7 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
     } else phase.value = 'running'
   })
 
-  async function refresh(patch: Partial<typeof target.value> = {}) {
-    target.value = { ...target.value, ...patch }
-    if (!await readAnnual() || eventId() == null) return
+  async function afterAnnualRead() {
     if (!enabled.value) { phase.value = 'read-only'; return }
     if (phase.value === 'unknown') return
     if (recovery.value?.jobId) {
@@ -230,6 +252,20 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
       return
     }
     await submit()
+  }
+  async function refresh(patch: Partial<typeof target.value> = {}) {
+    target.value = { ...target.value, page: 1, ...patch }
+    if (await readAnnual('reset') && eventId() != null) await afterAnnualRead()
+  }
+  const hasMore = computed(() => !!raw.value && raw.value.page * raw.value.pageSize < raw.value.total)
+  async function loadMore() {
+    if (reading.value || acting.value || phase.value === 'syncing' || readFailed.value || !hasMore.value || !raw.value) return
+    target.value = { page: raw.value.page + 1, pageSize: raw.value.pageSize }
+    if (await readAnnual('append') && eventId() != null) await afterAnnualRead()
+  }
+  async function retryRead() {
+    if (reading.value || acting.value || phase.value === 'syncing') return
+    if (await readAnnual(failedReadMode) && eventId() != null) await afterAnnualRead()
   }
   async function taskAction(action: 'retry' | 'cancel') {
     const id = eventId(), token = epoch, jobId = recovery.value?.jobId
@@ -243,7 +279,7 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
   }
   async function start() {
     epoch++; readSequence++; readController?.abort(); pollKey.value = ''; syncing = null
-    raw.value = null; task.value = null; reading.value = false; readFailed.value = false; acting.value = false; enabled.value = false
+    raw.value = null; batches.value = new Map(); task.value = null; reading.value = false; readFailed.value = false; acting.value = false; enabled.value = false
     recovery.value = null; auditReadback.value = []; actionError.value = ''; phase.value = 'checking'; target.value = { page: 1, pageSize: 50 }
     const id = eventId(), token = epoch
     if (!mounted || id == null) return
@@ -269,9 +305,10 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
   return {
     view: computed(() => {
       if (!raw.value) return null
-      const view = presentAnnualProcess(raw.value)
+      const steps = [...new Map([...batches.value].sort(([a], [b]) => a - b).flatMap(([, steps]) => steps).map(step => [step.id, step])).values()]
+      const view = presentAnnualProcess({ ...raw.value, process: { ...raw.value.process, steps } })
       return readFailed.value ? { ...view, qualification: null } : view
-    }), phase, readFailed, target,
+    }), phase, readFailed, target, hasMore,
     pending: computed(() => reading.value || acting.value || phase.value === 'syncing'),
     canCancel: computed(() => capabilitiesCurrent.value && !!task.value?.capabilities.cancel),
     canRetry: computed(() => capabilitiesCurrent.value && !!task.value?.capabilities.retry),
@@ -282,6 +319,6 @@ export function useAnnualProcessReview(activeEventId: MaybeRefOrGetter<number | 
       const currentReasons = new Set([...(process?.reasons ?? []), ...(process?.finalQualification?.reasons ?? []), ...(process?.scopeGaps ?? []).flatMap(gap => gap.reasons)].map(annualReasonText))
       return [...new Set([...(outcome.value?.finalQualification.reasons ?? []), ...(task.value?.errorCode ? [task.value.errorCode] : [])].map(annualReasonText))].filter(reason => !currentReasons.has(reason))
     }),
-    refresh, retrySubmit: submit, retryReadback: synchronize, retryTask: () => taskAction('retry'), cancel: () => taskAction('cancel'), retryTaskRead: () => recovery.value?.jobId && watchJob(recovery.value.jobId),
+    refresh, loadMore, retryRead, retrySubmit: submit, retryReadback: synchronize, retryTask: () => taskAction('retry'), cancel: () => taskAction('cancel'), retryTaskRead: () => recovery.value?.jobId && watchJob(recovery.value.jobId),
   }
 }

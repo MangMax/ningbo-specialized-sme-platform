@@ -6,7 +6,6 @@ import EventCorrespondenceReview from '../components/record-correspondence/Event
 import EventChip from '../components/EventChip.vue'
 import TitleBadge from '../components/TitleBadge.vue'
 import SourceChip from '../components/SourceChip.vue'
-import TablePagination from '../components/TablePagination.vue'
 import AnnualProcessTimeline from '../components/record-correspondence/AnnualProcessTimeline.vue'
 import { buildAnnualProcess, type EventAnnualProcessPage } from '../lib/roster/annual-process'
 import type { AnnualTaskDto, AnnualTaskReceipt } from '../lib/roster/annual-correspondence'
@@ -197,7 +196,7 @@ it('ignores late annual and capability responses after selection switches and su
   expect(wrapper.get('#review-event-7').findAll('[data-annual-step]')).toHaveLength(0)
 })
 
-it('retains a failed pagination source and uses same-response latest summary without an extra last-page request', async () => {
+it('retains a failed internal page target and uses same-response latest summary without an extra last-page request', async () => {
   let fail = true
   const fetch = fixture((url, options) => {
     if (url.endsWith('/browser-context')) return Promise.resolve({ writeEnabled: false })
@@ -212,16 +211,16 @@ it('retains a failed pagination source and uses same-response latest summary wit
   })
   mountReview(7); await flushPromises()
   expect(fetch.mock.calls.filter(([url]) => url.endsWith('/annual-process'))).toHaveLength(1)
-  wrapper.findComponent(AnnualProcessTimeline).findComponent(TablePagination).vm.$emit('update:pageSize', 1); await flushPromises()
+  wrapper.findComponent(AnnualProcessTimeline).vm.$emit('page-size', 1); await flushPromises()
   expect(wrapper.findAll('[data-annual-step]')).toHaveLength(1)
   expect(wrapper.get('[data-testid="event-annual-summary"]').text()).toContain('终审通过')
   expect(wrapper.get('[data-annual-summary]').text()).toContain('已有最终结果：终审通过')
-  await wrapper.get('[data-testid="annual-process-timeline"] button[aria-label="下一页"]').trigger('click'); await flushPromises()
-  expect(wrapper.text()).toContain('年度过程第 2 页读取失败')
-  expect(wrapper.text()).toContain('过程来源第 1 页')
+  wrapper.findComponent(AnnualProcessTimeline).vm.$emit('page', 2); await flushPromises()
+  expect(wrapper.text()).toContain('年度过程读取失败')
+  expect(wrapper.text()).toContain('保留已加载的年度过程及其来源')
   expect(wrapper.findAll('[data-annual-step]')[0]!.text()).toContain('终审不通过')
   fail = false; await wrapper.get('[data-testid="annual-process-review"] [data-testid="table-retry"]').trigger('click'); await flushPromises()
-  expect(wrapper.text()).toContain('过程来源第 2 页')
+  expect(wrapper.text()).not.toContain('过程来源第')
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(1)
   expect(posts(fetch)).toHaveLength(0)
 })
@@ -326,7 +325,7 @@ it('resumes the saved job after an initial annual read failure is explicitly ret
   let reads = 0
   const fetch = fixture(url => url.endsWith('/annual-process') ? ++reads === 1 ? Promise.reject(new Error('503 first read')) : Promise.resolve(annual(7, 'scope-a', 'confirmed')) : undefined)
   mountReview(7); await flushPromises()
-  expect(wrapper.text()).toContain('年度过程第 1 页读取失败')
+  expect(wrapper.text()).toContain('年度过程读取失败')
   await click('刷新年度过程')
   expect(posts(fetch)).toHaveLength(0)
   expect(wrapper.text()).toContain('已读回当前年度过程、对应与审计')
@@ -431,14 +430,14 @@ it.each(['refresh', 'page', 'readback'] as const)('withdraws readonly final and 
   else if (action === 'page') { wrapper.findComponent(AnnualProcessTimeline).vm.$emit('page', 2); await flushPromises() }
   else { const { refreshCorrespondenceViews } = await import('../composables/useCorrespondenceReadback'); await expect(refreshCorrespondenceViews()).rejects.toThrow('readback_failed'); await flushPromises() }
   expect(wrapper.text()).toContain('当前只读')
-  expect(wrapper.text()).toContain(`年度过程第 ${action === 'page' ? 2 : 1} 页读取失败`)
-  expect(wrapper.text()).toContain('保留第 1 页年度过程')
+  expect(wrapper.text()).toContain('年度过程读取失败')
+  expect(wrapper.text()).toContain('保留已加载的年度过程')
   expect(wrapper.findAll('[data-annual-step]')).toHaveLength(2)
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
   expect(wrapper.get('[data-testid="event-annual-summary"]').text()).not.toContain('· 已确认最终结果')
   expect(wrapper.get('[data-annual-summary]').text()).toContain('尚无已确认最终结果')
   fail = false; delayed = deferred<EventAnnualProcessPage>()
-  await click('刷新年度过程')
+  await wrapper.get('[data-testid="annual-process-review"] [data-testid="table-retry"]').trigger('click'); await flushPromises()
   expect(wrapper.findAll('[data-final-result]')).toHaveLength(0)
   const recovered = annual(7, 'scope-a', 'confirmed'); recovered.page = action === 'page' ? 2 : 1
   delayed.resolve(recovered); await flushPromises()
