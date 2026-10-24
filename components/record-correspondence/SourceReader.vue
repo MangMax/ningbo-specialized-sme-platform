@@ -7,11 +7,12 @@ import { TITLES } from '~~/lib/labels'
 import OfficialEvidence from './OfficialEvidence.vue'
 import CorrespondenceItem from './CorrespondenceItem.vue'
 import SourceRowDetail from './SourceRowDetail.vue'
+import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
-const props = defineProps<{ kind: SourceKind; id: number; returnTo?: string | null; compact?: boolean; readOnly?: boolean }>()
+const props = defineProps<{ kind: SourceKind; id: number; returnTo?: string | null; compact?: boolean; readOnly?: boolean; presentation?: 'source' | 'business' }>()
 const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()
 const { displayed, displayedKey, requestedKey, loading, error, retry } = useRecordSource(() => props.kind, () => props.id)
 const current = computed(() => displayedKey.value === requestedKey() ? displayed.value : null)
@@ -40,7 +41,8 @@ const eventSections = computed(() => {
       <AlertTitle>未能读取{{ kind === 'event' ? '事件' : '来源行' }}出处</AlertTitle>
       <AlertDescription class="flex flex-wrap items-center gap-2">当前来源未更新；{{ displayed ? '上次成功读取的出处保留在下方。' : '请重试。' }}<Button variant="outline" size="sm" :disabled="loading" @click="retry">重试读取</Button></AlertDescription>
     </Alert>
-    <p v-if="displayed && !current" class="text-muted-foreground text-[13px]">正在读取目标来源；下方保留上次成功的出处。</p>
+    <p v-if="displayed && !current && presentation === 'business'" role="status" class="text-sm font-medium break-words [overflow-wrap:anywhere]" data-testid="retained-business-source">{{ error ? '目标业务读取失败' : '正在读取目标业务' }}；下方为上次成功读取的旧来源（非当前业务）{{ relation ? `：${relation.nameRaw ?? '企业名称未提供'} · ${relation.query.queriedAt}` : '' }}。</p>
+    <p v-else-if="displayed && !current" class="text-muted-foreground text-[13px]">正在读取目标来源；下方保留上次成功的出处。</p>
     <template v-if="current || displayed">
       <template v-if="event">
         <p class="text-sm font-medium">{{ TITLES[event.record.titleCode] ?? event.record.titleCode }} · {{ eventDecisionText(event) }}</p>
@@ -62,9 +64,13 @@ const eventSections = computed(() => {
         </section>
       </template>
       <template v-else>
-        <SourceRowDetail v-if="relation" :relation="relation" :compact="compact" />
+        <SourceRowDetail v-if="relation" :relation="relation" :compact="compact" :presentation="presentation" />
         <SourceRowDetail v-if="exportRow" :export-row="exportRow" />
-        <section aria-label="相关认定与复核记录">
+        <DisclosurePanel v-if="presentation === 'business' && relation" :key="displayedKey" compact title="相关认定与复核记录（只读）">
+          <ul v-if="visible?.correspondences.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in visible.correspondences" :key="edge.id" :edge="edge" :return-to="returnTo" read-only @event-navigate="emit('event-navigate', $event)" /></ul>
+          <p v-else class="text-muted-foreground text-[13px]">此原行尚无登记的对应关系；原查询行仍保留。</p>
+        </DisclosurePanel>
+        <section v-else aria-label="相关认定与复核记录">
           <h4 class="mb-2 text-sm font-medium">相关认定与复核记录</h4>
           <ul v-if="visible?.correspondences.length" class="flex flex-col gap-2"><CorrespondenceItem v-for="edge in visible.correspondences" :key="edge.id" :edge="edge" :return-to="returnTo" :read-only="readOnly" @event-navigate="emit('event-navigate', $event)" /></ul>
           <p v-else class="text-muted-foreground text-[13px]">此原行尚无登记的对应关系；原查询行仍保留。</p>
