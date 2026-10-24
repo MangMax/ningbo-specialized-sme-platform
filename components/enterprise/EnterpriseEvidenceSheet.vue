@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, inject, ref, type Ref } from 'vue'
+import { computed, inject, ref, shallowRef, watch, type Ref } from 'vue'
 import type { ImpactRow, ReviewAssessment } from '~~/lib/roster/evidence-review-ui'
 import { directionLabel, titleLabel } from '~~/lib/roster/review-display'
+import InitialDifferenceDecisionForm from './InitialDifferenceDecisionForm.vue'
+import QueryCoverageDetails from '@/components/evidence-review/QueryCoverageDetails.vue'
 import QueryAssessmentSummary from '@/components/evidence-review/QueryAssessmentSummary.vue'
 import DecisionHistory from '@/components/evidence-review/DecisionHistory.vue'
 import EvidenceReviewDetail from '@/components/evidence-review/EvidenceReviewDetail.vue'
@@ -29,7 +31,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{ saved: [] }>()
 
-const resolvedImpactId = computed(() => props.impact?.id ?? props.impactId)
+const displayed = shallowRef({ ...props })
+const scopeKey = (value: typeof displayed.value) => `${value.enterpriseId}:${value.titleCode}:${value.direction}:${value.impact?.id ?? value.impactId ?? 'initial'}`
+const resolvedImpactId = computed(() => displayed.value.impact?.id ?? displayed.value.impactId)
+const initialDirty = ref(false)
+const initialHeadChanged = ref(false)
+const initialKey = computed(() => `initial:${displayed.value.enterpriseId}:${displayed.value.titleCode}:${displayed.value.direction}`)
+const queuedScope = shallowRef<typeof displayed.value | null>(null)
 
 /**
  * 面板内的提交草稿只存在内存里。关闭前先确认，避免一次误点丢掉复核依据或更正内容。
@@ -38,9 +46,19 @@ const resolvedImpactId = computed(() => props.impact?.id ?? props.impactId)
 const draftState = inject<Ref<boolean> | null>('enterprise-review-draft', null)
 const draftStore = inject<ReviewDraftStore | null>(REVIEW_DRAFTS_KEY, null)
 const hasDirtyDraft = computed(() => resolvedImpactId.value == null
-  ? false
+  ? initialDirty.value
   : draftStore ? draftStore.hasDraft(resolvedImpactId.value) : !!draftState?.value)
 const confirmClose = ref(false)
+watch(() => ({ ...props }), next => {
+  if (scopeKey(next) !== scopeKey(displayed.value) && hasDirtyDraft.value) {
+    queuedScope.value = next
+    confirmClose.value = true
+  } else {
+    if (scopeKey(next) !== scopeKey(displayed.value)) initialHeadChanged.value = false
+    displayed.value = next
+  }
+})
+function continueEditing() { queuedScope.value = null; confirmClose.value = false }
 function requestOpen(next: boolean) {
   if (next) {
     open.value = true
@@ -55,8 +73,11 @@ function requestOpen(next: boolean) {
 function discardAndClose() {
   confirmClose.value = false
   if (resolvedImpactId.value != null) draftStore?.discard(resolvedImpactId.value)
-  if (draftState) draftState.value = false
-  open.value = false
+  if (resolvedImpactId.value == null && draftStore) delete draftStore.drafts[initialKey.value]
+  initialDirty.value = false
+  if (draftState && !draftStore) draftState.value = false
+  if (queuedScope.value) { initialHeadChanged.value = false; displayed.value = queuedScope.value; queuedScope.value = null }
+  else open.value = false
 }
 </script>
 
@@ -64,7 +85,7 @@ function discardAndClose() {
   <Sheet :open="open" @update:open="requestOpen">
     <SheetContent side="right" class="w-full gap-0 p-0 sm:max-w-[560px]">
       <SheetHeader class="border-b px-5 py-4 pr-12">
-        <SheetTitle class="text-base">{{ titleLabel(titleCode) }} · {{ directionLabel(direction) }}</SheetTitle>
+        <SheetTitle class="text-base">{{ titleLabel(displayed.titleCode) }} · {{ directionLabel(displayed.direction) }}</SheetTitle>
         <SheetDescription class="text-[13px] leading-5">
           核对依据、当前决定与证据复核。查询覆盖、业务决定和解释有效性分别保留。
         </SheetDescription>
@@ -75,16 +96,25 @@ function discardAndClose() {
           <EvidenceReviewDetail
             :key="resolvedImpactId"
             :impact-id="resolvedImpactId"
-            :enterprise-id="enterpriseId"
+            :enterprise-id="displayed.enterpriseId"
             form-footer
             @saved="emit('saved')"
           />
         </template>
 
-        <template v-else-if="assessment">
-          <QueryAssessmentSummary :assessment="assessment" />
+        <template v-else-if="displayed.assessment">
+          <QueryAssessmentSummary v-if="!initialHeadChanged" :assessment="displayed.assessment" />
+          <QueryCoverageDetails v-else :coverage="displayed.assessment.queryCoverage" />
+          <InitialDifferenceDecisionForm
+            v-if="open"
+            :key="initialKey"
+            :scope="{ enterpriseId: displayed.enterpriseId, titleCode: displayed.titleCode, direction: displayed.direction }"
+            @dirty="initialDirty = $event"
+            @current="initialHeadChanged = $event !== displayed.assessment?.currentDecision.versionId"
+            @saved="emit('saved')"
+          />
           <section class="mt-4 border-t pt-3">
-            <DecisionHistory :scope="{ enterpriseId, titleCode, direction }" />
+            <DecisionHistory :scope="{ enterpriseId: displayed.enterpriseId, titleCode: displayed.titleCode, direction: displayed.direction }" />
           </section>
           <p class="text-muted-foreground mt-4 border-t pt-3 text-[13px] leading-5">
             查询完成、覆盖完整或未发现差异，都不自动等于“一致 / 无需处理”。
@@ -98,17 +128,17 @@ function discardAndClose() {
     </SheetContent>
   </Sheet>
 
-  <Dialog :open="confirmClose" @update:open="value => { if (!value) confirmClose = false }">
+  <Dialog :open="confirmClose" @update:open="value => { if (!value) continueEditing() }">
     <DialogContent class="sm:max-w-md">
       <DialogHeader>
-        <DialogTitle>关闭会丢弃未提交内容</DialogTitle>
+        <DialogTitle>{{ queuedScope ? '切换会丢弃未提交内容' : '关闭会丢弃未提交内容' }}</DialogTitle>
         <DialogDescription>
           复核依据或更正内容还没提交；收起后会丢失。
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>
-        <Button variant="outline" @click="confirmClose = false">继续填写</Button>
-        <Button @click="discardAndClose">关闭并丢弃</Button>
+        <Button variant="outline" @click="continueEditing">继续填写</Button>
+        <Button @click="discardAndClose">{{ queuedScope ? '丢弃并切换' : '关闭并丢弃' }}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
