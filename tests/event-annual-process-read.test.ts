@@ -11,6 +11,7 @@ import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../
 import { normalizePlatformRelation } from '../lib/platform/normalization'
 import type { EventAnnualProcessPage } from '../lib/roster/annual-process'
 import { startHttpFixture } from './helpers/http-fixture'
+import { normalizedUscc } from '../server/utils/event-archive-discovery'
 
 const fixtures: Array<{ dir: string; db: ReturnType<typeof useDb> }> = []
 afterAll(() => fixtures.forEach(({ dir, db }) => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }))
@@ -37,6 +38,59 @@ function fixture() {
   const read = () => readEventAnnualProcess(db, event.id)!
   return { db, enterprise, record, event, query, row, project, read }
 }
+
+it('discovers unbound raw USCC variants archived through HTTP before the official enterprise exists', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'annual-292-'))
+  const db = useDb({ dbPath: join(dir, 'isolated.db') }); fixtures.push({ dir, db })
+  let eventId = 0
+  const app = await startHttpFixture({ routes: {
+    '/import': request => handleRosterImportRequest('commit', request, { db, apiToken: 'isolated292' }),
+    '/annual': request => handleEventAnnualProcessRequest({ ...request, id: eventId }, { db }),
+  } })
+  const post = async (key: string, payload: unknown) => {
+    const response = await fetch(app.baseUrl + '/import', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer isolated292' }, body: JSON.stringify({ idempotencyKey: key, sourceKind: key === '292/official' ? 'announcement' : 'platform_archive', sourceIdentity: 'tests/annual292', payload }) })
+    const result = await response.json()
+    expect(response.status, JSON.stringify(result)).toBe(200)
+    expect(result.status, JSON.stringify(result)).toBe('committed')
+  }
+  const identity = '91330211255994457P', variant = '91330211\u200b255994457p'
+  const archivedQuery = (key: string, usccRaw: string, platformKey: string, appliedAt: string, status: string) => ({ interface: 'business_list', queryKey: key, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-01T00:00:00Z', status: 'success', relations: [{ sequenceNo: 1, relationKey: platformKey, usccRaw, nameRaw: '未登记历史名', rawFields: { id: platformKey, sblx: '申请', year: 2024, sqsj: appliedAt, cszt: status } }] })
+  try {
+    await post('292/archive', { platformQueries: [archivedQuery(identity, identity, 'EARLY292', '2024-03-01 09:00:00', '终审通过')] })
+    expect(db.select().from(schema.platformRelation).get()).toMatchObject({ enterpriseId: null, verificationStatus: 'pending' })
+    await post('292/later-archive', { platformQueries: [archivedQuery('name:未登记历史名', variant, 'LATE292', '2024-12-01 09:00:00', '待审核')] })
+    await post('292/official', { announcement: { sourceDocument: { source: 'jxj', title: '合成正式公布' }, records: [{ enterprise: { name: '合成当前企业', uscc: identity }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [{ sourceFile: 'synthetic/292.html', listNo: 1 }] }] }] } })
+    eventId = db.select().from(schema.recordEvent).get()!.id
+    const early = db.select().from(schema.platformRelation).get()!
+    const decision = { idempotencyKey: '292/early-decision', sourceIdentity: 'tests/annual292', actor: { type: 'agent' as const, id: 'fixture' }, basis: 'synthetic original observation', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { type: 'event_process' as const, eventId, relationId: early.id, role: 'context_only' as const } }] }
+    commitRecordCorrespondences(db, decision, preflightRecordCorrespondences(db, decision).planHash)
+    const originals = db.select().from(schema.platformRelation).all(), later = originals[1]!
+    expect(later).toMatchObject({ usccRaw: variant, enterpriseId: null, verificationStatus: 'pending' })
+    expect(db.select().from(schema.enterpriseAlias).all()).toEqual([])
+    const decisions = db.select().from(schema.recordCorrespondence).all(), audits = db.select().from(schema.recordCorrespondenceAudit).all()
+    const businessRecords = db.select().from(schema.platformBusinessRecord).all(), versions = db.select().from(schema.platformBusinessRecordVersion).all()
+    db.$client.pragma('query_only=ON')
+    const response = await fetch(app.baseUrl + '/annual?pageSize=1')
+    expect(response.status).toBe(200)
+    const after = await response.json()
+    expect(after.total).toBe(2)
+    expect(after.process.latestStepSummary).toMatchObject({ appliedAt: '2024-12-01 09:00:00', status: '待审核' })
+    expect(after.process.finalCandidateStepId).toBeNull()
+    expect(after.process.finalQualification.status).not.toBe('confirmed')
+    expect(after.process.reasons).toContain('latest_status_not_terminal')
+    expect(after.sourceGeneration).toBe(readEventAnnualProcess(db, eventId)!.sourceGeneration)
+    expect(after.sourceRefs.observations.map((r: any) => r.relationId)).toEqual([early.id, later.id])
+    expect(after.sourceRefs.coverage.map((q: any) => q.queryId)).toEqual([early.queryId, later.queryId])
+    expect(db.select().from(schema.platformRelation).all()).toEqual(originals)
+    expect(db.select().from(schema.platformBusinessRecord).all()).toEqual(businessRecords)
+    expect(db.select().from(schema.platformBusinessRecordVersion).all()).toEqual(versions)
+    expect(db.select().from(schema.recordCorrespondence).all()).toEqual(decisions)
+    expect(db.select().from(schema.recordCorrespondenceAudit).all()).toEqual(audits)
+    db.$client.pragma('query_only=OFF')
+    db.update(schema.platformQuery).set({ status: 'partial' }).where(eq(schema.platformQuery.id, later.queryId)).run()
+    expect(readEventAnnualProcess(db, eventId)!.sourceGeneration).not.toBe(after.sourceGeneration)
+  } finally { await app.close() }
+})
 
 it('reads the entire scope before paging and keeps original rows source refs and final IDs off-page', async () => {
   const f = fixture()
@@ -131,7 +185,7 @@ it('does not write even preflight ledger data during repeated reads on query-onl
   expect(f.db.select().from(schema.recordCorrespondenceAudit).all()).toEqual([])
 })
 
-it('does not hydrate huge raw responses raw rows or collection rows and uses indexed query discovery', async () => {
+it('does not hydrate huge raw responses raw rows or collection rows while scanning only identity covering metadata', async () => {
   const f = fixture(), secret = 'DO-NOT-HYDRATE-' + 'X'.repeat(1024 * 1024)
   const query = f.query({ rawResponse: secret, collectionEvidence: { rows: [{ secret }], completeness: 'complete', fullRange: true, pages: [{ status: 'success', fetchedCount: 1, page: 7, rdjb: '2' }] } as any })
   f.row(query.id, { rawFields: { id: 'SQ-1', sblx: '申请', sqsj: '2024-03-01 09:00:00', cszt: '终审通过', year: 2024, secret } })
@@ -151,7 +205,50 @@ it('does not hydrate huge raw responses raw rows or collection rows and uses ind
   const queryPlan = f.db.$client.prepare('EXPLAIN QUERY PLAN ' + select).all(...Array.from({ length: (select.match(/\?/g) ?? []).length }, () => 1)) as Array<{ detail: string }>
   expect(queryPlan.some(row => /platform_query_(?:identity_uq|key_idx)/.test(row.detail))).toBe(true)
   expect(queryPlan.some(row => /platform_relation_enterprise_idx/.test(row.detail))).toBe(true)
-  expect(queryPlan.some(row => /SCAN platform_relation(?:$|\s)/.test(row.detail))).toBe(false)
+  expect(queryPlan.some(row => /SCAN platform_relation USING COVERING INDEX platform_relation_uscc_query_idx/.test(row.detail)), JSON.stringify(queryPlan)).toBe(true)
+  expect(queryPlan.filter(row => /SCAN platform_relation(?:$|\s)/.test(row.detail)).every(row => /USING COVERING INDEX platform_relation_uscc_query_idx/.test(row.detail))).toBe(true)
+})
+
+it('bounds hydrated output with two thousand unrelated large rows and measures exact versus normalized discovery cost', async () => {
+  const f = fixture(); f.row(f.query().id); await f.project()
+  const before = f.read(), unrelated = f.query({ queryKey: 'name:无关大档', rawResponse: 'PRIVATE-UNRELATED-' + 'R'.repeat(1024 * 1024) })
+  const secret = 'PRIVATE-UNRELATED-' + 'X'.repeat(16 * 1024)
+  f.db.transaction(() => {
+    for (let n = 0; n < 2000; n++) f.row(unrelated.id, { sequenceNo: n + 1, enterpriseId: null, usccRaw: `92${String(n).padStart(16, '0')}`, rawFields: { secret } })
+  })
+  const r = schema.platformRelation
+  const old = f.db.select({ id: r.queryId }).from(r).where(eq(r.usccRaw, f.enterprise.usccNorm!)).toSQL()
+  const current = f.db.select({ id: r.queryId }).from(r).where(sql`${normalizedUscc(r.usccRaw)} = ${f.enterprise.usccNorm}`).toSQL()
+  const measure = (query: typeof old) => {
+    const statement = f.db.$client.prepare(query.sql), plan = f.db.$client.prepare('EXPLAIN QUERY PLAN ' + query.sql).all(...query.params) as Array<{ detail: string }>
+    const timings = Array.from({ length: 7 }, () => { const start = performance.now(); expect(statement.all(...query.params)).toHaveLength(1); return performance.now() - start }).sort((a, b) => a - b)
+    return { medianMs: timings[3], plan: plan.map(p => p.detail) }
+  }
+  const exact = measure(old), normalized = measure(current), start = performance.now(), after = f.read(), readMs = performance.now() - start
+  expect(exact.plan.some(p => p.includes('SEARCH platform_relation USING COVERING INDEX platform_relation_uscc_query_idx'))).toBe(true)
+  expect(normalized.plan).toEqual(['SCAN platform_relation USING COVERING INDEX platform_relation_uscc_query_idx'])
+  expect(after).toEqual(before)
+  expect(JSON.stringify(after)).not.toContain('PRIVATE-UNRELATED')
+  expect(JSON.stringify(after).length).toBeLessThan(16000)
+  console.info('annual292-discovery-cost', JSON.stringify({ relationCount: 2001, unrelatedRawBytes: Buffer.byteLength(secret) * 2000, exact, normalized, readMs, resultBytes: Buffer.byteLength(JSON.stringify(after)) }))
+})
+
+it.each(['conflicting-status', 'unknown-title'])('retains normalized archived %s without widening other owner title or process kind', async partition => {
+  const f = fixture(), early = f.row(f.query().id), variant = '91330211\u200b255994457p'
+  const late = f.row(f.query({ queryKey: 'name:未登记旧名', ...(partition === 'unknown-title' ? { interface: 'apply_list', titleCode: null, rdjb: '' } : {}) }).id, { enterpriseId: null, usccRaw: variant, relationKey: 'LATE', status: partition === 'conflicting-status' ? '终审通过' : null, rawFields: { id: 'LATE', sblx: '申请', year: 2024, sqsj: '2024-12-01 09:00:00', cszt: '待审核' } })
+  const foreign = f.db.insert(schema.enterprise).values({ name: '其他企业', nameNorm: '其他企业', usccNorm: '91330211790043112T' }).returning().get()
+  for (const [name, queryValues, rowValues] of [
+    ['owner', {}, { enterpriseId: foreign.id }],
+    ['code', {}, { enterpriseId: null, usccRaw: foreign.usccNorm }],
+    ['title', { titleCode: 'innovative_sme', rdjb: '1' }, { enterpriseId: null }],
+    ['kind', {}, { enterpriseId: null, rawFields: { id: 'kind', sblx: '复核', year: 2024, sqsj: '2024-12-31 09:00:00', cszt: '待审核' } }],
+  ] as const) f.row(f.query({ queryKey: `name:unregistered-${name}`, ...queryValues }).id, { usccRaw: variant, relationKey: name, ...rowValues })
+  await f.project()
+  const result = f.read()
+  expect(result.sourceRefs.observations.map(r => r.relationId)).toEqual([early.id, late.id])
+  expect(result.process.finalCandidateStepId).toBeNull()
+  if (partition === 'unknown-title') expect(result.process.scopeGaps).toMatchObject([{ relationId: late.id, reasons: ['title_scope_unknown'] }])
+  else expect(result.process.steps.flatMap(s => s.groups.flatMap(g => g.observationRefs)).find(r => r.relationId === late.id)!.evidence.process).toMatchObject({ normalizationConflicts: [{ field: 'status', storedValue: '终审通过', rawValue: '待审核' }] })
 })
 
 it('excludes only proven identity transcriptions while retaining unindexed unknown business gaps', () => {
