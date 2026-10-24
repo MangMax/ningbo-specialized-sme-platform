@@ -1,3 +1,4 @@
+import { appLog, type LogContext } from '../../lib/logging'
 import { eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
@@ -322,6 +323,7 @@ export function setFileCategoryForAgent(
   meta: Record<string, unknown>,
   options: FileRefOptions = { allowRemoved: false },
   maintenanceOptions: FileMaintenanceOptions = {},
+  context: LogContext = {},
 ): { ok: true; row: StoredFileRow } | AgentFailure {
   const found = resolveFileRef(db, ref, options)
   if (!found.ok) return { ok: false, statusCode: 404, message: found.message }
@@ -342,8 +344,11 @@ export function setFileCategoryForAgent(
   }
 
   try {
-    return { ok: true, row: maintainStoredFileSync(db, found.row.id, 'update', patch, maintenanceOptions) }
+    const row = maintainStoredFileSync(db, found.row.id, 'update', patch, maintenanceOptions)
+    appLog({ source: 'file', operation: 'file.maintenance.update', outcome: 'success', fileId: row.id }, context)
+    return { ok: true, row }
   } catch (error) {
+    appLog({ source: 'file', operation: 'file.maintenance.update', outcome: ((error as { statusCode?: number }).statusCode ?? 500) < 500 ? 'denied' : 'failure', fileId: found.row.id, level: 'error', errorCode: 'file_maintenance_failed' }, context)
     return { ok: false, statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message }
   }
 }

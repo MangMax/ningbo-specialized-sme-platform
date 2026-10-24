@@ -3,14 +3,14 @@
 // Never writes business rows, contacts external platforms or prints business payloads/selectors.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { execFileSync, fork } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync, realpathSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
 import Database from 'better-sqlite3'
-import { reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
 const [directory] = process.argv.slice(2)
 assert.ok(directory?.startsWith('/'), 'Use the absolute private benchmark output directory')
 const dir = realpathSync(directory)

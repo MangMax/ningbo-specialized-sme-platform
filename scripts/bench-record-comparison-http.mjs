@@ -3,7 +3,7 @@
 // node scripts/bench-record-comparison-http.mjs /absolute/copy.db http|mcp sources|comparison 1|2|5 [catalogPage=1]
 // PERF_QUERY_ID, PERF_PAGE_SIZE=50 and PERF_CATALOG_KIND=all reproduce the frozen #82 inputs.
 import assert from 'node:assert/strict'
-import { fork } from 'node:child_process'
+
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const [dbPath,transport='http',mode='comparison',c='1',pageText='1']=process.argv.slice(2),concurrency=Number(c),catalogPage=Number(pageText)
 assert.ok(Number.isSafeInteger(catalogPage)&&catalogPage>0&&dbPath?.startsWith('/') && !dbPath.includes('/full-snapshot/') && ['http','mcp'].includes(transport) && ['sources','comparison'].includes(mode) && [1,2,5].includes(concurrency) && (mode!=='sources'||transport==='http'))
 const require=createRequire(import.meta.url),Database=require('better-sqlite3'),db=new Database(dbPath,{readonly:true})

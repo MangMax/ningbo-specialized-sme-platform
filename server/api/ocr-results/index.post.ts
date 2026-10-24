@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../lib/logging'
 import { resolveOcrFileTarget } from '../../utils/ocr-files'
 import { DEFAULT_OCR_ENGINE } from '../../utils/ocr-result'
 import { saveOcrImport } from '../../utils/ocr-page-lifecycle'
@@ -141,5 +142,5 @@ export default defineEventHandler(async (event) => {
   const target = await resolveOcrFileTarget({ fileId, relPath })
   if (!target.ok) throw createError({ statusCode: target.statusCode, message: target.message })
 
-  return saveOcrImport(target, body, 'upload')
+  return saveOcrImport(target, body, 'upload', requestLogContext(event))
 })

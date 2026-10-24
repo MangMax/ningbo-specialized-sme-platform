@@ -1,4 +1,6 @@
 import type { useDb } from '../../db/client'
+import type { LogContext } from '../../lib/logging'
+import { operationLogContext } from './operation-log-context'
 import { isJobId } from '../../lib/job'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import {
@@ -15,6 +17,7 @@ type Context = {
   filesDir: string
   apiToken?: string | null
   browserAuthorized?: boolean
+  logContext?: LogContext
 }
 type Request = {
   method: string
@@ -47,7 +50,7 @@ export async function handleCandidateJobRequest(
     registerJobSpecs()
     ensureJobRunnerReady(ctx.db)
     if (action === 'submit') {
-      const receipt = submitCandidateDiscovery(ctx.db, req.body, ctx.filesDir)
+      const receipt = submitCandidateDiscovery(ctx.db, req.body, ctx.filesDir, ctx.logContext)
       return {
         status: 202,
         headers: { ...headers, location: `/api/task-center/${receipt.jobId}` },
@@ -97,7 +100,7 @@ export async function dispatchCandidateJobMcp(
           ? { authorization: 'Bearer internal-task-authorized' }
           : undefined,
       },
-      { ...ctx, apiToken: 'internal-task-authorized' },
+      { ...ctx, apiToken: 'internal-task-authorized', logContext: ctx.logContext ?? operationLogContext.getStore() },
     )
     return result.status < 300
       ? result.body

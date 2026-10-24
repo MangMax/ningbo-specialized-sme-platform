@@ -1,9 +1,10 @@
+import { semanticRouteHandler } from './core-route'
 import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { useDb } from '@db'
 import { handleComparisonScopeProofRequest, type ProofAction } from './comparison-scope-proof-api'
 
 export function comparisonScopeProofRoute(action: ProofAction, option: 'id' | 'key' | null = null) {
-  return defineEventHandler(async (event: H3Event) => {
+  return semanticRouteHandler(`maintenance.proof.${action}`, async (event: H3Event) => {
     setHeader(event, 'cache-control', 'no-store')
     let body: unknown
     if (['preflight', 'commit'].includes(action)) {

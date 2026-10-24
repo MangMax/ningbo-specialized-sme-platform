@@ -24,6 +24,8 @@ import * as schema from '../../db/schema'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { ImportReceiptError } from './import-receipts'
 import { importExecutor } from './import-execution'
+import { appLog, type LogContext } from '../../lib/logging'
+import { logImportFailure } from './roster-import-logging'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -74,36 +76,43 @@ export function authorizeRosterWrite(
 export async function handleRosterImportRequest(
   action: RosterImportAction,
   request: RosterHttpRequest,
-  deps: { db: Db; apiToken: string | null | undefined; filesDir?: string; executeImport?: typeof importExecutor.execute },
+  deps: { db: Db; apiToken: string | null | undefined; filesDir?: string; logContext?: LogContext; executeImport?: typeof importExecutor.execute },
 ): Promise<RosterHttpResponse> {
   if (request.method !== 'POST') {
     return json(405, { message: `本端点是 POST：/api/roster/import/${action}` })
   }
 
   const auth = authorizeRosterWrite(request, deps.apiToken)
-  if (!auth.ok) return { status: auth.status, headers: auth.headers, body: auth.body }
+  if (!auth.ok) {
+    appLog({ source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'unauthorized' }, deps.logContext)
+    return { status: auth.status, headers: auth.headers, body: auth.body }
+  }
 
   const validated = validateImportRequest(request.body)
-  if (!validated.ok) return json(validated.status, { message: validated.message })
+  if (!validated.ok) {
+    appLog({ source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'invalid_import_request' }, deps.logContext)
+    return json(validated.status, { message: validated.message })
+  }
   if (action === 'replay' && validated.value.payload.platformRecordObservations) return json(400, { message: 'Historical projection uses preflight/commit with its original idempotency key; replay only converges announcement evidence' })
 
-  const pageCountErrors =
-    (action === 'preflight' || action === 'commit') && deps.filesDir
-      ? await validateRosterImportPageCounts(validated.value, deps.filesDir)
-      : []
-
   try {
+    const pageCountErrors =
+      (action === 'preflight' || action === 'commit') && deps.filesDir
+        ? await validateRosterImportPageCounts(validated.value, deps.filesDir)
+        : []
+
     if (action === 'preflight') {
-      const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'preflight', validated.value, pageCountErrors)
+      const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'preflight', validated.value, pageCountErrors, deps.logContext)
       return json(200, result)
     }
     if (action === 'replay') {
-      const result = replayRosterImport(deps.db, validated.value)
+      const result = replayRosterImport(deps.db, validated.value, deps.logContext)
       return json(200, result)
     }
-    const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'commit', validated.value, pageCountErrors)
+    const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'commit', validated.value, pageCountErrors, deps.logContext)
     return json(200, result)
   } catch (error) {
+    logImportFailure(`import.submission.${action}`, error, deps.logContext)
     if (!(error instanceof ImportReceiptError)) throw error
     return { ...json(error.statusCode, { error: { code: error.code, message: error.message } }), headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } }
   }

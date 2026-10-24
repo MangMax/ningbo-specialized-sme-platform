@@ -1,8 +1,12 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import CandidateTaskCreate from '../components/tasks/CandidateTaskCreate.vue'
 const mounted: ReturnType<typeof mount>[] = []
+beforeEach(() => {
+  // Bare Vue mounting has no Nuxt injection; the diagnostic plugin is optional.
+  vi.stubGlobal('useNuxtApp', () => ({}))
+})
 afterEach(() => {
   for (const view of mounted.splice(0)) view.unmount()
   vi.unstubAllGlobals()

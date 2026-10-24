@@ -1,3 +1,5 @@
+import { appLog } from '../../../lib/logging'
+import { findFileIdByRelPath } from '../mcp-files'
 import { isPdfPath, normalizeDpi } from '../../../lib/pdf-page'
 import type { RenderOutcome } from '../pdf-pages'
 import { renderPdfPages } from '../pdf-pages'
@@ -117,6 +119,7 @@ export async function runRenderPages(
   params: Record<string, unknown>,
 ): Promise<JobCompletion> {
   const { files, dpi, force } = params as unknown as RenderPagesParams
+  const logContext = { ...ctx.logContext, taskId: ctx.jobId }
   const outcomes: RenderedFileOutcome[] = []
   let failed = 0
 
@@ -132,6 +135,7 @@ export async function runRenderPages(
   for (let i = 0; i < files.length; i += 1) {
     // 每份之前看一眼取消标记 —— 这是「尽力而为」唯一的检查点。
     if (ctx.cancelled()) {
+      appLog({ source: 'file', operation: 'file.render.batch', outcome: 'cancelled', counts: { done: i, total: files.length, failed } }, logContext)
       return {
         result: { ...snapshot(), cancelled: true, done: i },
         cancelled: true,
@@ -139,8 +143,10 @@ export async function runRenderPages(
     }
 
     const file = files[i]!
+    const fileContext = { ...logContext }
+    try { const id = findFileIdByRelPath(ctx.db, file); if (id !== null) fileContext.fileId = id } catch { /* Optional log identity cannot stop rendering. */ }
     try {
-      const out = await renderPdfPages(ctx.filesDir, file, { dpi, force })
+      const out = await renderPdfPages(ctx.filesDir, file, { dpi, force, logContext: fileContext })
       outcomes.push({
         file,
         ok: true,
@@ -162,6 +168,7 @@ export async function runRenderPages(
   }
 
   const result = snapshot()
+  appLog({ source: 'file', operation: 'file.render.batch', outcome: failed ? (result.ok ? 'partial' : 'failure') : 'success', level: failed ? 'error' : 'info', counts: { done: outcomes.length, total: files.length, failed } }, logContext)
   return failed
     ? { result, error: `${files.length} 份里 ${failed} 份渲染失败(逐项原因见 result.files[].error)` }
     : { result }

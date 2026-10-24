@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { useDb, schema } from '../db'
 import { minimalPdf } from './helpers/minimal-pdf'
-import { spawn } from 'node:child_process'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'ocr-lifecycle-106-'))
 const dbPath = join(dir, 'test.sqlite')

@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +5,7 @@ import { expect, it } from 'vitest'
 import { useDb, schema } from '../db'
 import { DEFAULT_DPI } from '../lib/pdf-page'
 import { renderPdfPages } from '../server/utils/pdf-pages'
-import { reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../scripts/lib/isolated-local-services.mjs'
 import { minimalPdf } from './helpers/minimal-pdf'
 import { startMiniOcrApi } from './helpers/ocr-mini-api'
 

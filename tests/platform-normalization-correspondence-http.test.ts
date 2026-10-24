@@ -1,11 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+
 import { createHash } from 'node:crypto'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 // Legacy archive state is seeded before startup. Decisions are made only over
 // the real public HTTP/MCP routes; no live business database is used.

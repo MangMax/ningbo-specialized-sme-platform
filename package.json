@@ -41,8 +41,12 @@
     "@embedpdf/plugin-viewport": "2.15.1",
     "@embedpdf/plugin-zoom": "2.15.1",
     "@hyzyla/pdfium": "^3.0.0",
+    "@iconify-json/logos": "^1.2.17",
+    "@iconify-json/lucide": "^1.2.147",
+    "@iconify-json/simple-icons": "^1.2.100",
     "@internationalized/date": "^3.12.4",
     "@lucide/vue": "^1.55.0",
+    "@nuxt/icon": "^2.5.1",
     "@nuxtjs/mcp-toolkit": "^0.24.2",
     "@pinia/colada": "^1.4.8",
     "@pinia/colada-nuxt": "^1.2.0",
@@ -61,6 +65,7 @@
     "dompurify": "3.4.17",
     "drizzle-orm": "^0.45.4",
     "es-toolkit": "^1.52.0",
+    "evlog": "2.33.1",
     "markstream-vue": "2.0.19",
     "motion-v": "^2.8.0",
     "nuxt": "^4.6.1",
@@ -75,6 +80,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/archiver": "^6.0.4",
     "@types/better-sqlite3": "^9.6.0",

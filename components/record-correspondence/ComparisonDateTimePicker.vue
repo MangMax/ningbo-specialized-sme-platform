@@ -8,7 +8,7 @@ import { Calendar } from '@/components/ui/calendar'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
-const props = defineProps<{ id: string; modelValue: string }>()
+const props = withDefaults(defineProps<{ id: string; modelValue: string; label?: string }>(), { label: '截止日期和时间' })
 const emit = defineEmits<{ 'update:modelValue': [value: string]; 'validity-change': [valid: boolean] }>()
 const open = ref(false)
 const value = computed(() => {
@@ -43,20 +43,20 @@ function clear() { emit('validity-change', true); emit('update:modelValue', '');
 <template>
   <Popover v-model:open="open">
     <PopoverTrigger as-child>
-      <Button :id="id" variant="outline" class="w-full justify-between" aria-label="选择截止日期和时间">
+      <Button :id="id" type="button" variant="outline" class="w-full justify-between" :aria-label="`选择${label}`">
         <span>{{ display }}</span><CalendarIcon data-icon="inline-end" />
       </Button>
     </PopoverTrigger>
-    <PopoverContent align="start" class="w-auto p-0" aria-label="截止日期和时间">
-      <Calendar :model-value="date" locale="zh-CN" calendar-label="截止日期" :week-starts-on="1" :prevent-deselect="true" @update:model-value="selectDate" />
+    <PopoverContent align="start" class="w-auto p-0" :aria-label="label">
+      <Calendar :model-value="date" locale="zh-CN" :calendar-label="label" :week-starts-on="1" :prevent-deselect="true" @update:model-value="selectDate" />
       <div class="flex flex-col gap-2 border-t p-3">
         <Label :for="`${id}-time`">本地时间（时:分:秒）</Label>
         <TimeFieldRoot :id="`${id}-time`" v-slot="{ segments }" :model-value="time" :disabled="!value" locale="zh-CN" :hour-cycle="24" granularity="second" class="border-input flex h-9 items-center gap-1 rounded-md border px-3 text-sm" @update:model-value="selectTime">
           <TimeFieldInput v-for="(segment, index) in segments" :key="index" :part="segment.part" class="rounded-sm px-0.5 outline-none focus:bg-accent focus:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring" :aria-label="segment.part === 'hour' ? '小时' : segment.part === 'minute' ? '分钟' : segment.part === 'second' ? '秒钟' : undefined">{{ segment.value }}</TimeFieldInput>
         </TimeFieldRoot>
         <div class="flex justify-between gap-2">
-          <Button variant="ghost" size="sm" :disabled="!modelValue" @click="clear">清除截止时点</Button>
-          <Button size="sm" @click="open = false">完成</Button>
+          <Button type="button" variant="ghost" size="sm" :disabled="!modelValue" @click="clear">清除{{ label === '截止日期和时间' ? '截止时点' : label }}</Button>
+          <Button type="button" size="sm" @click="open = false">完成</Button>
         </div>
       </div>
     </PopoverContent>

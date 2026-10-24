@@ -1,5 +1,6 @@
 import { createError, defineEventHandler, getHeader, getMethod, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { z } from 'zod'
+import { requestLogContext } from '../../lib/logging'
 import { checkBrowserReviewRequest, browserReviewWriteEnabled, type BrowserReviewRuntime } from './browser-review-102'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { handleAnnualTaskRequest, type AnnualTaskAction, type AnnualTaskContext } from './annual-correspondence-api'
@@ -33,6 +34,7 @@ export function annualTaskRoute(action: AnnualTaskAction, context: () => Omit<An
     const output = await handleAnnualTaskRequest(action,{method:getMethod(event),headers,body,id:getRouterParam(event,'id')},{
       get db(){return runtime.db},readScope:runtime.readScope,filesDir:runtime.filesDir,apiToken:config.apiToken,
       browserAuthorized:browserAuthorized || action === 'detail' && browserReviewWriteEnabled(config),
+      logContext: requestLogContext(event),
     })
     setResponseStatus(event,output.status)
     for(const [key,value] of Object.entries(output.headers))setHeader(event,key,value)

@@ -16,6 +16,6 @@ export async function annualTaskMcpRequest(
     configured: context.mcpToken,
   }).writeAuthorized
   return dispatchAnnualTaskMcp(action, args, {
-    get db() { return context.db }, readScope: context.readScope, filesDir: context.filesDir, authorized,
+    get db() { return context.db }, readScope: context.readScope, filesDir: context.filesDir, authorized, logContext: context.logContext,
   })
 }

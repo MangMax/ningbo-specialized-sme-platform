@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
+import { createDrizzleLogger } from '../../lib/logging/drizzle'
 import { setImmediate } from 'node:timers/promises'
 import type { useDb } from '../../db/client'
 import * as schema from '../../db/schema'
@@ -21,7 +22,7 @@ export async function readRecordComparisonSources(owner: ReturnType<typeof useDb
 async function readComparisonSnapshot<T>(owner: ReturnType<typeof useDb>, iterate: (db: ReturnType<typeof useDb>) => Generator<void, T>, signal?: AbortSignal) {
   signal?.throwIfAborted()
   const connection = new Database(owner.$client.name, { readonly: true, fileMustExist: true })
-  const db = drizzle(connection, { schema })
+  const db = drizzle(connection, { schema, logger: createDrizzleLogger({ connection: 'record_comparison' }) })
   let steps: Generator<void, T> | undefined
   try {
     connection.exec('BEGIN')

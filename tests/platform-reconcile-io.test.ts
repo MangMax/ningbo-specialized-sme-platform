@@ -11,21 +11,35 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../db'
 import { runPlatformReconcile } from '../server/utils/platform-reconcile'
+import { whenIdle } from '../server/utils/job-runner'
 import { emptyReply, platformFixture, platformReplay, type PlatformCall } from './helpers/platform-replay'
 
 const fixture = platformFixture
 
 const dirs: string[] = []
+const connections: ReturnType<typeof useDb>[] = []
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), 'spztx-reconcile-io-'))
   dirs.push(dir)
-  return useDb({ dbPath: join(dir, 'io.db') })
+  const db = useDb({ dbPath: join(dir, 'io.db') })
+  connections.push(db)
+  return db
 }
 
+// Import commits now enqueue derived candidate jobs. Keep the real runner alive
+// until they settle, before another case changes the fixture or Vitest tears down.
+afterEach(async () => {
+  await whenIdle()
+  for (const db of connections) {
+    expect(db.select({ state: schema.job.state }).from(schema.job).all()
+      .filter(row => row.state === 'queued' || row.state === 'running')).toEqual([])
+  }
+})
 afterAll(() => {
+  for (const db of connections) db.$client.close()
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
 })
 
@@ -41,6 +55,17 @@ function seedTarget(db: ReturnType<typeof freshDb>, name: string, uscc: string) 
 }
 
 const ok = (call: PlatformCall) => emptyReply(call)
+
+it('settles auto-enqueued derived jobs before fixture teardown', async () => {
+  const db = freshDb()
+  seedTarget(db, '派生任务收尾企业', '91330211000000018T')
+  const platform = platformReplay(ok)
+  await runPlatformReconcile({ db, fetchImpl: platform.fetchImpl, cookie: 'c=1', retries: 0 })
+  await whenIdle()
+  const jobs = db.select({ state: schema.job.state }).from(schema.job).all()
+  expect(jobs.length).toBeGreaterThan(0)
+  expect(jobs.every(row => row.state === 'done')).toBe(true)
+})
 
 describe('并发上限', () => {
   it('concurrency=2 时同时在飞的请求不超过 2,且确实并行(不是串行)', async () => {

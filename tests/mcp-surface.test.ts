@@ -43,6 +43,11 @@ describe('mcp-auth 鉴权判据', () => {
     // 悄悄加一个写入 tool 而不改它,就是开了一条绕过鉴权的写路。
     // 票 18 的三个 + RL-11 的名录统一写入(`save_roster_batch`)。
     expect([...MCP_WRITE_TOOLS]).toEqual([
+      'list_runtime_logs',
+      'get_runtime_log',
+      'get_runtime_log_policy',
+      'set_runtime_log_policy',
+      'clear_runtime_logs',
       'save_difference_decision',
       'process_evidence_impacts',
       'release_evidence_rule',

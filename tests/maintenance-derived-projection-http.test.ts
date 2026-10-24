@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { useDb, schema } from '../db/client'
 import { minimalPdf } from './helpers/minimal-pdf'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'maintenance-derived-'))
 const filesDir = join(dir, 'files'), dbPath = join(dir, 'synthetic.db')

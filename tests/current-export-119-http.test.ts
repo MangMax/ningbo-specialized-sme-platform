@@ -1,7 +1,7 @@
 import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './helpers/current-export-118'
 import { reviewCurrentExportDecision } from './helpers/current-export-decisions'
 import { createHash } from 'node:crypto'
-import { spawn } from 'node:child_process'
+
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -9,7 +9,7 @@ import ExcelJS from 'exceljs'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { useDb, schema as s } from '../db/client'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 // Only synthetic fixtures are written here. Assertions use real HTTP and XLSX bytes.
 const dir = mkdtempSync(join(tmpdir(), 'export-119-'))

@@ -1,5 +1,6 @@
 import { useDb } from '@db'
 import { handlePlatformBatchRequest } from './platform-batch-http'
+import { requestLogContext } from '../../lib/logging'
 export function createPlatformBatchRoute(action: 'submit' | 'status' | 'item' | 'retry') {
   return defineEventHandler(async event => {
     setHeader(event, 'cache-control', 'no-store')
@@ -7,7 +8,7 @@ export function createPlatformBatchRoute(action: 'submit' | 'status' | 'item' | 
       body: action === 'submit' || action === 'retry' ? await readBody(event).catch(() => null) : undefined,
       batchId: getRouterParam(event, 'batchId'), itemId: getRouterParam(event, 'itemId'),
       headers: { authorization: getHeader(event, 'authorization'), 'x-api-token': getHeader(event, 'x-api-token') },
-    }, { db: useDb(), apiToken: useRuntimeConfig(event).apiToken, filesDir: useRuntimeConfig(event).filesDir })
+    }, { db: useDb(), apiToken: useRuntimeConfig(event).apiToken, filesDir: useRuntimeConfig(event).filesDir, logContext: requestLogContext(event) })
     setResponseStatus(event, result.status)
     for (const [name, value] of Object.entries(result.headers)) setHeader(event, name, value)
     return result.body

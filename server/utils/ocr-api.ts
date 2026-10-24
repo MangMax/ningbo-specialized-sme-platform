@@ -163,11 +163,14 @@ export type FetchLike = (
 export class OcrApiError extends Error {
   readonly statusCode: number
   readonly remoteStatus: number | null
-  constructor(message: string, statusCode = 502, remoteStatus: number | null = null) {
+  /** Runtime classification only; never changes the public status or message. */
+  readonly failureKind: 'failure' | 'timeout'
+  constructor(message: string, statusCode = 502, remoteStatus: number | null = null, failureKind: 'failure' | 'timeout' = 'failure') {
     super(message)
     this.name = 'OcrApiError'
     this.statusCode = statusCode
     this.remoteStatus = remoteStatus
+    this.failureKind = failureKind
   }
 }
 
@@ -325,6 +328,7 @@ async function fetchWithTimeout(
       aborted
         ? `${what}超时(${Math.round(timeoutMs / 1000)} s):网络或服务端没有响应`
         : `${what}失败:${(error as Error).message}`,
+      502, null, aborted ? 'timeout' : 'failure',
     )
   } finally {
     clearTimeout(timer)
@@ -501,6 +505,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
       throw new OcrApiError(
         `OCR 任务等待超时(${Math.round(pollTimeout / 1000)} s,任务 ${jobId} 仍未完成)。` +
           '任务在服务端可能仍在跑;调大 `NUXT_OCR_POLL_TIMEOUT_MS` 或稍后重试同一份文件。',
+        502, null, 'timeout',
       )
     }
     await sleep(pollInterval)
@@ -576,7 +581,7 @@ export async function ocrImageFile(options: OcrApiOptions): Promise<OcrImageOut>
     return redactValue(result) as OcrImageOut
   } catch (error) {
     const message = redact(error instanceof Error ? error.message : String(error))
-    throw new OcrApiError(message, error instanceof OcrApiError ? error.statusCode : 502, error instanceof OcrApiError ? error.remoteStatus : undefined)
+    throw new OcrApiError(message, error instanceof OcrApiError ? error.statusCode : 502, error instanceof OcrApiError ? error.remoteStatus : undefined, error instanceof OcrApiError ? error.failureKind : 'failure')
   }
 }
 

@@ -3,7 +3,7 @@
 // Run after pnpm build. Optional modes: large | disconnect | fatal | all (default).
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { fork, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -11,7 +11,7 @@ import { get } from 'node:http'
 import { createHash } from 'node:crypto'
 import { setTimeout as pause } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const root = process.cwd(), mode = process.argv[2] ?? 'all'
 assert.ok(['large', 'disconnect', 'fatal', 'all'].includes(mode))

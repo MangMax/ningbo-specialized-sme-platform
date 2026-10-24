@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // #177: synthetic isolated SQLite + real built application HTTP. No live platform calls.
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
 const { useDb, schema } = await createJiti(import.meta.url).import('../db/client.ts')
 const dir = mkdtempSync(join(tmpdir(), 'issue177-evidence-'))

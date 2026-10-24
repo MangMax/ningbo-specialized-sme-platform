@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../lib/logging'
 import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
 import { fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
 import { deleteOcrPage } from '../../utils/ocr-result'
@@ -96,7 +97,7 @@ export default defineEventHandler(async (event) => {
   const target = await resolveOcrFileTarget(ref.ref)
   if (!target.ok) throw createError({ statusCode: target.statusCode, message: target.message })
 
-  const out = deleteOcrPage(target.db, target.row.id, page, q.expectedVersion as string | undefined)
+  const out = deleteOcrPage(target.db, target.row.id, page, q.expectedVersion as string | undefined, requestLogContext(event))
   if (!out.ok) throw createError({ statusCode: out.statusCode, message: out.message })
 
   return {

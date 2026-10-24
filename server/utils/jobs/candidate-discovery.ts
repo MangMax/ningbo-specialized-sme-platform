@@ -1,4 +1,5 @@
 import { setImmediate as yieldTurn } from 'node:timers/promises'
+import type { LogContext } from '../../../lib/logging'
 import { createHash } from 'node:crypto'
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -343,7 +344,7 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
       const receipt = stageAnnualCorrespondence(ctx.db, readAnnualWriteScope, {
         clientRequestId: `archive-annual:${identity}`,
         eventIds,
-      })
+      }, ctx.logContext)
       // The annual generation/request binding and completed candidate slice
       // checkpoint commit together. A failure leaves this task retryable.
       persist()
@@ -351,7 +352,7 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
     }, { behavior: 'immediate' })
     // Never notify a runner from inside a transaction. Startup reconciliation
     // exposes a committed-but-unactivated job for the existing explicit retry.
-    activateAnnualCorrespondence(ctx.db, readAnnualWriteScope, [annual.jobId], ctx.filesDir)
+    activateAnnualCorrespondence(ctx.db, readAnnualWriteScope, [annual.jobId], ctx.filesDir, ctx.logContext)
   }
   // Large affected scopes continue in bounded jobs. Bulk title scopes explicitly
   // expose nextAfterEventId so operators choose whether to start the next slice.
@@ -372,6 +373,7 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
         clientRequestId: `archive:${params.queryId}:${archiveGeneration}:${result.nextAfterEventId}:${result.throughEventId}`,
       },
       ctx.filesDir,
+      ctx.logContext,
     )
     result.continuationJobId = next.jobId
     persist()
@@ -419,6 +421,7 @@ export function submitCandidateDiscovery(
   db: Db,
   input: unknown,
   filesDir: string,
+  logContext?: LogContext,
 ) {
   const parsed = candidateDiscoverySpec.parse(input as Record<string, unknown>)
   if (!parsed.ok) fail(parsed.message)
@@ -428,10 +431,11 @@ export function submitCandidateDiscovery(
     kind: CANDIDATE_JOB_KIND,
     params: parsed.params,
     filesDir,
+    logContext,
   })
   return { jobId: row.id, kind: row.kind, state: row.state }
 }
-export function retryCandidateDiscovery(db: Db, id: string, filesDir: string) {
+export function retryCandidateDiscovery(db: Db, id: string, filesDir: string, logContext?: LogContext) {
   const row = getJob(db, id)
   const result = row?.result as CandidateJobResult | null
   if (
@@ -449,6 +453,7 @@ export function retryCandidateDiscovery(db: Db, id: string, filesDir: string) {
       kind: row.kind,
       params: row.params,
       filesDir,
+      logContext,
     })
   )
     fail('任务状态已变化', 409)
@@ -466,6 +471,7 @@ export function enqueueArchivedCandidates(
   }[],
   filesDir = '',
   deferDispatch = false,
+  logContext?: LogContext,
 ) {
   const ids: string[] = []
   for (const query of queries) {
@@ -514,9 +520,10 @@ export function enqueueArchivedCandidates(
             ...candidateJobInput.parse({ queryId: row.id, clientRequestId }),
           },
           progress: { done: 0, total: 1 },
+          logContext,
         }).id
       ids.push(id)
-      if (!deferDispatch) activateCandidateDiscoveryTasks(db, [id], filesDir)
+      if (!deferDispatch) activateCandidateDiscoveryTasks(db, [id], filesDir, logContext)
     }
   }
   return ids
@@ -528,7 +535,8 @@ export function activateCandidateDiscoveryTasks(
   db: Db,
   ids: readonly string[],
   filesDir: string,
+  logContext?: LogContext,
 ) {
   if (!getJobSpec(CANDIDATE_JOB_KIND)) registerJob(candidateDiscoverySpec)
-  for (const id of ids) enqueuePersistedJob(db, id, filesDir)
+  for (const id of ids) enqueuePersistedJob(db, id, filesDir, logContext)
 }

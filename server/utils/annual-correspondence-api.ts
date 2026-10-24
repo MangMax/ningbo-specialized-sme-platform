@@ -1,12 +1,14 @@
 import { ANNUAL_CORRESPONDENCE_KIND as KIND, ANNUAL_CORRESPONDENCE_VERSION as VERSION, type AnnualTaskDto, type AnnualTaskResult } from '../../lib/roster/annual-correspondence'
 import { isJobId } from '../../lib/job'
+import type { LogContext } from '../../lib/logging'
+import { operationLogContext } from './operation-log-context'
 import { annualDbReadonly, annualFail, qualifyAnnualFinal, type AnnualDb, type AnnualScopeReader } from './annual-correspondence'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { getJob } from './job-store'
 import { requestJobCancel } from './job-runner'
 import { annualErrorCode, retryAnnualCorrespondence, submitAnnualCorrespondence } from './jobs/annual-correspondence'
 export type AnnualTaskAction = 'submit' | 'detail' | 'cancel' | 'retry'
-export interface AnnualTaskContext { db: AnnualDb; readScope: AnnualScopeReader; filesDir: string; apiToken?: string | null; browserAuthorized?: boolean }
+export interface AnnualTaskContext { db: AnnualDb; readScope: AnnualScopeReader; filesDir: string; apiToken?: string | null; browserAuthorized?: boolean; logContext?: LogContext }
 export function readAnnualTask(db: AnnualDb, read: AnnualScopeReader, id: string, authorized: boolean): AnnualTaskDto | null {
   return db.transaction(() => {
     const writable = authorized && !annualDbReadonly(db)
@@ -32,15 +34,15 @@ export async function handleAnnualTaskRequest(action: AnnualTaskAction, req: {me
   try {
     if (action !== 'detail' && annualDbReadonly(ctx.db)) return error(403,'readonly_database')
     if (action === 'submit') {
-      const body = submitAnnualCorrespondence(ctx.db,ctx.readScope,req.body,ctx.filesDir)
+      const body = submitAnnualCorrespondence(ctx.db,ctx.readScope,req.body,ctx.filesDir,ctx.logContext)
       return {status:202,headers:{...headers,location:`/api/roster/annual-correspondence-tasks/${body.jobId}`},body}
     }
     if (!isJobId(req.id)) return error(400,'invalid_task_id')
     const task = readAnnualTask(ctx.db,ctx.readScope,req.id,authorized)
     if (!task) return error(404,'task_not_found')
     if (action === 'detail') return {status:200,headers,body:task}
-    if (action === 'retry') return {status:202,headers,body:retryAnnualCorrespondence(ctx.db,ctx.readScope,req.id,ctx.filesDir)}
-    const cancelled = requestJobCancel(ctx.db,req.id)
+    if (action === 'retry') return {status:202,headers,body:retryAnnualCorrespondence(ctx.db,ctx.readScope,req.id,ctx.filesDir,ctx.logContext)}
+    const cancelled = requestJobCancel(ctx.db,req.id,ctx.logContext)
     if (!cancelled.ok) annualFail('task_not_found',404)
     return {status:200,headers,body:{jobId:req.id,...cancelled}}
   } catch (cause) {
@@ -52,7 +54,7 @@ export async function handleAnnualTaskRequest(action: AnnualTaskAction, req: {me
  * of REST/browser credentials. Both dispatch exactly the same business action. */
 export async function dispatchAnnualTaskMcp(action: AnnualTaskAction, args: Record<string,unknown>, ctx: Omit<AnnualTaskContext,'apiToken'|'browserAuthorized'> & {authorized:boolean}) {
   const output = await handleAnnualTaskRequest(action,{method:action === 'detail' ? 'GET' : 'POST',body:args,id:args.id},{
-    get db() { return ctx.db }, readScope: ctx.readScope, filesDir: ctx.filesDir, browserAuthorized: ctx.authorized,
+    get db() { return ctx.db }, readScope: ctx.readScope, filesDir: ctx.filesDir, browserAuthorized: ctx.authorized, logContext: ctx.logContext ?? operationLogContext.getStore(),
   })
   return output.status < 300 ? {...output.body} : {isError:true,content:[{type:'text' as const,text:JSON.stringify(output.body)}]}
 }

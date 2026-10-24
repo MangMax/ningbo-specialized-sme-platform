@@ -1,3 +1,4 @@
+import { appLog, type LogContext } from '../../lib/logging'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
@@ -16,7 +17,7 @@ import type { OcrFileTargetResult } from './ocr-files'
 type Db = BetterSQLite3Database<typeof schema>
 
 /** 页面上传、代理 REST 与 MCP 共用同一解码、PDF/页数校验和写事务。 */
-export async function saveOcrImport(
+async function saveOcrImportUnlogged(
   target: Extract<OcrFileTargetResult, { ok: true }>,
   body: Record<string, unknown>,
   channel: OcrChannel,
@@ -131,5 +132,23 @@ export function getOcrResultForFile(db: Db, row: StoredFileRow, page?: number, i
     pages: results.map(result => result.page),
     markdown: assembleMarkdown(results),
     results: results.map(r => ({ page: r.page, ...(includeVersion ? { version: r.version } : {}), engine: r.engine, model: r.model, channel: r.channel, createdAt: r.createdAt, chars: r.markdown.length, pageRelPath: r.pageRelPath, url: r.pageRelPath ? `/api/files/${r.pageRelPath.split('/').map(encodeURIComponent).join('/')}` : null })),
+  }
+}
+
+/** Edits describe a derived page revision, separately from online recognition and request completion. */
+export async function saveOcrImport(
+  target: Extract<OcrFileTargetResult, { ok: true }>, body: Record<string, unknown>,
+  channel: OcrChannel, context: LogContext = {},
+) {
+  const startedAt = Date.now()
+  try {
+    const result = await saveOcrImportUnlogged(target, body, channel)
+    for (const page of result.pages) appLog({ source: 'ocr', operation: 'ocr.page.revise', outcome: 'success', fileId: target.row.id, page, durationMs: Date.now() - startedAt }, context)
+    return result
+  } catch (error) {
+    const status = (error as { statusCode?: number }).statusCode ?? 500
+    const page = ocrPageSchema.safeParse(body.page)
+    appLog({ source: 'ocr', operation: 'ocr.page.revise', outcome: status < 500 ? 'denied' : 'failure', level: 'error', fileId: target.row.id, ...(page.success ? { page: page.data } : {}), errorCode: status === 409 ? 'ocr_page_conflict' : 'ocr_revision_failed', durationMs: Date.now() - startedAt }, context)
+    throw error
   }
 }

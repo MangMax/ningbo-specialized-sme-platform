@@ -4,7 +4,7 @@
 // PERF_POSTVALIDATION=1 is a separate driver-scheduling diagnostic, never replacement acceptance.
 // node scripts/bench-platform-query-http.mjs /absolute/synthetic.sqlite <http|mcp> <full|summary|interface|title|key|chunk> [concurrency=1]
 import assert from 'node:assert/strict'
-import { fork } from 'node:child_process'
+
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -13,7 +13,7 @@ import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { performanceController } from './lib/performance-controller.mjs'
 import { readBenchmarkAuthority } from './lib/benchmark-authority.mjs'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const [dbPath,transport='http',mode='summary',concurrencyText='1']=process.argv.slice(2)
 const concurrency=Number(concurrencyText)
 assert.ok(dbPath?.startsWith('/') && ['http','mcp'].includes(transport) && ['full','summary','interface','title','key','chunk'].includes(mode) && [1,2,5].includes(concurrency))

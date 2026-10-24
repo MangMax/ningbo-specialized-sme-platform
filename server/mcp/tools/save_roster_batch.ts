@@ -1,11 +1,7 @@
-import { importExecutor } from '../../utils/import-execution'
-import { asyncImportReceiptMcpResult } from '../../utils/import-receipts'
+import { submitRosterImportMcp } from '../../utils/roster-import-mcp-submission'
 import { z } from 'zod'
 import { rosterImportMcpPayloadSchema } from '../../utils/roster-import-schema'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { validateImportRequest } from '../../utils/roster-import'
-import { validateRosterImportPageCounts } from '../../utils/roster-import-page-validation'
 import { writeGuard } from '../../utils/mcp-guard'
 
 /**
@@ -59,16 +55,5 @@ export default defineMcpTool({
     sourceSha256: z.string().optional().describe('源文件内容 SHA-256；给不出留空'),
     payload: rosterImportMcpPayloadSchema,
   },
-  handler: async (input) => {
-    const validated = validateImportRequest({
-      idempotencyKey: input.idempotencyKey,
-      sourceKind: input.sourceKind,
-      sourceIdentity: input.sourceIdentity,
-      sourceSha256: input.sourceSha256 ?? null,
-      payload: input.payload,
-    })
-    if (!validated.ok) throw createError({ statusCode: validated.status, message: validated.message })
-    const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
-    return asyncImportReceiptMcpResult(() => importExecutor.execute(useDb(), 'commit', validated.value, pageCountErrors))
-  },
+  handler: (input) => submitRosterImportMcp('commit', input),
 })

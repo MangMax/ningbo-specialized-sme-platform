@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn, fork } from 'node:child_process'
 import { createServer } from 'node:net'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -8,6 +8,33 @@ const CHILD_EXIT_GRACE_MS = 3_000
 
 function childIsRunning(child) {
   return child && child.exitCode === null && child.signalCode === null
+}
+
+// Each isolated launcher gets a dedicated POSIX process group. Native children
+// inherit it even if their launcher exits before cleanup; no PID-tree sampling.
+const ownedGroups = new WeakMap()
+function processTable() {
+  return execFileSync('ps', ['-A', '-o', 'pid=,pgid=,lstart='], { encoding: 'utf8' })
+    .trim().split('\n').map(line => {
+      const [pid, group, ...started] = line.trim().split(/\s+/)
+      return { pid: Number(pid), group: Number(group), started: started.join(' ') }
+    })
+}
+function inOwnedGroup(start) {
+  if (process.platform === 'win32') throw new Error('Isolated process-group services require POSIX')
+  const child = start()
+  if (child.pid) ownedGroups.set(child, { id: child.pid, started: processTable().find(row => row.pid === child.pid)?.started })
+  return child
+}
+/** Preserve Node's stdio-specific return types and all call overloads. @type {typeof spawn} */
+export const spawnOwnedChild = (command, args = [], options = {}) => {
+  if (!Array.isArray(args)) { options = args; args = [] }
+  return inOwnedGroup(() => spawn(command, args, { ...options, detached: true }))
+}
+/** @type {typeof fork} */
+export const forkOwnedChild = (modulePath, args = [], options = {}) => {
+  if (!Array.isArray(args)) { options = args; args = [] }
+  return inOwnedGroup(() => fork(modulePath, args, { ...options, detached: true }))
 }
 
 export async function reserveLoopbackPort(requestedPort = 0) {
@@ -116,25 +143,46 @@ async function waitForNuxtListener(child, output, expectedPort, timeoutMs) {
 }
 
 export async function stopOwnedChild(child) {
-  if (!childIsRunning(child)) return
-  const exited = new Promise((resolve) => child.once('exit', resolve))
-  child.kill('SIGTERM')
-  let timer
-  const stopped = await Promise.race([
-    exited.then(() => true),
-    new Promise((resolve) => { timer = setTimeout(() => resolve(false), CHILD_EXIT_GRACE_MS) }),
-  ])
-  clearTimeout(timer)
-  if (stopped || !childIsRunning(child)) return
-  child.kill('SIGKILL')
-  await Promise.race([exited, sleep(1_000)])
+  const owner = ownedGroups.get(child)
+  if (!owner) {
+    if (!child.pid || !childIsRunning(child)) return
+    throw new Error('Use spawnOwnedChild or forkOwnedChild to establish service ownership')
+  }
+  const group = owner.id
+  const members = () => {
+    const table = processTable()
+    const leader = table.find(row => row.pid === group)
+    // A reused leader PID means the original group has already disappeared.
+    if (leader && owner.started && leader.started !== owner.started) return []
+    if (leader && !owner.started && !childIsRunning(child)) throw new Error('Cannot verify exited service group identity')
+    return table.filter(row => row.group === group)
+  }
+  const signal = value => {
+    try { process.kill(-group, value); return true }
+    catch (error) {
+      if (error.code === 'ESRCH' || (error.code === 'EPERM' && !members().length)) return false
+      throw error
+    }
+  }
+  const wait = async duration => {
+    const deadline = Date.now() + duration
+    // macOS can return EPERM to kill(-pgid, 0) while a group is exiting.
+    // Read actual membership, including zombies awaiting reap, instead.
+    while (members().length && Date.now() < deadline) await sleep(25)
+  }
+  if (members().length) signal('SIGTERM')
+  await wait(CHILD_EXIT_GRACE_MS)
+  if (members().length) signal('SIGKILL')
+  await wait(1_000)
+  if (members().length) throw new Error('Owned service process group did not exit: ' + group)
+  ownedGroups.delete(child)
 }
 
 export async function startIsolatedNuxt({ cwd, portHint = 0, env = {} }) {
   const port = await reserveLoopbackPort(portHint)
   const baseUrl = `http://127.0.0.1:${port}`
   const nuxtCli = join(cwd, 'node_modules/nuxt/bin/nuxt.mjs')
-  const child = spawn(process.execPath, [nuxtCli, 'dev', '--host', '127.0.0.1', '--port', String(port)], {
+  const child = spawnOwnedChild(process.execPath, [nuxtCli, 'dev', '--host', '127.0.0.1', '--port', String(port)], {
     cwd,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, ...env },

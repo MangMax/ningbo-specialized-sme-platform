@@ -6,14 +6,14 @@
  * No official source documents or OCR results are used.
  * Run with --built after pnpm build to verify the production artifact instead of Vite dev.
  */
-import { spawn } from 'node:child_process'
+
 import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { minimalPdf } from '../tests/helpers/minimal-pdf.ts'
-import { reserveLoopbackPort, startIsolatedNuxt, stopOwnedChild, waitForChromeDevTools, waitForHttp } from './lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, startIsolatedNuxt, stopOwnedChild, waitForChromeDevTools, waitForHttp } from './lib/isolated-local-services.mjs'
 
 const PORT_HINT = Number(process.argv.slice(2).find(arg => !arg.startsWith('--')) ?? process.env.RL10_TEST_PORT ?? 0)
 let BASE

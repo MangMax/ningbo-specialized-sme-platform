@@ -1,4 +1,5 @@
 import { setImmediate as yieldTurn } from 'node:timers/promises'
+import type { LogContext } from '../../../lib/logging'
 import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import * as s from '../../../db/schema'
@@ -22,7 +23,7 @@ function receipt(row: NonNullable<ReturnType<typeof getJob>>): AnnualTaskReceipt
 }
 /** Persists and deduplicates only. Safe inside the archive transaction; activation
  * belongs to the caller after commit, never before SQLite releases its lock. */
-export function stageAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader, raw: unknown): AnnualTaskReceipt {
+export function stageAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader, raw: unknown, logContext?: LogContext): AnnualTaskReceipt {
   const parsed = annualTaskInput.safeParse(raw)
   if (!parsed.success) annualFail('invalid_annual_task_request',400)
   const eventIds = [...new Set(parsed.data.eventIds)].sort((a,b) => a-b)
@@ -42,7 +43,7 @@ export function stageAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader,
     }
     const params: Params = { eventIds, clientRequestIds: [parsed.data.clientRequestId], serverIdentity, sourceGenerations, ruleVersion: VERSION }
     const result: AnnualTaskResult = { ruleVersion: VERSION, attempt: 0, events: sourceGenerations.map(source => ({ ...source, status: 'pending', outcomes: [], finalQualification: emptyFinal() })) }
-    const row = createJob(db,{ id: newJobId(), kind: KIND, params, progress: { done: 0, total: eventIds.length } })
+    const row = createJob(db,{ id: newJobId(), kind: KIND, params, progress: { done: 0, total: eventIds.length }, logContext })
     setJobResult(db,row.id,result)
     return receipt(row)
   },{behavior:'immediate'})
@@ -106,9 +107,9 @@ export function annualErrorCode(cause: unknown): string {
   const code = (cause as {code?:string})?.code
   return ['source_generation_changed','event_unavailable','source_materialization_limit','rule_version_changed','invalid_annual_task_request','idempotency_conflict','protected_decision','retry_unavailable','invalid_endpoint_type','identity_conflict','title_conflict','ambiguous_candidate','incomplete_coverage','stale_revision','plan_mismatch'].includes(code ?? '') ? code! : 'annual_step_failed'
 }
-export function activateAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader, ids: readonly string[], filesDir: string) {
+export function activateAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader, ids: readonly string[], filesDir: string, logContext?: LogContext) {
   if (!getJobSpec(KIND)) registerJob(annualCorrespondenceSpec(read))
-  for (const id of ids) enqueuePersistedJob(db,id,filesDir)
+  for (const id of ids) enqueuePersistedJob(db,id,filesDir,logContext)
 }
 /** Server startup, never a read-request side effect. The existing runner marks
  * interrupted work failed so a refresh can offer explicit checkpoint retry. */
@@ -116,13 +117,13 @@ export function initializeAnnualCorrespondenceRunner(db: AnnualDb, read: AnnualS
   if (!getJobSpec(KIND)) registerJob(annualCorrespondenceSpec(read))
   return annualDbReadonly(db) ? 0 : ensureJobRunnerReady(db)
 }
-export function submitAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader, raw: unknown, filesDir: string) {
+export function submitAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader, raw: unknown, filesDir: string, logContext?: LogContext) {
   ensureJobRunnerReady(db)
-  const accepted = stageAnnualCorrespondence(db,read,raw)
-  activateAnnualCorrespondence(db,read,[accepted.jobId],filesDir)
+  const accepted = stageAnnualCorrespondence(db,read,raw,logContext)
+  activateAnnualCorrespondence(db,read,[accepted.jobId],filesDir,logContext)
   return accepted
 }
-export function retryAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader, id: string, filesDir: string) {
+export function retryAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader, id: string, filesDir: string, logContext?: LogContext) {
   ensureJobRunnerReady(db)
   const row = getJob(db,id)
   const result = row?.result as AnnualTaskResult | null
@@ -132,6 +133,6 @@ export function retryAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader,
     for (const event of result.events) if ((read(db,event.eventId)?.generation ?? 'event_unavailable') !== event.generation) annualFail('source_generation_changed')
   })
   if (!getJobSpec(KIND)) registerJob(annualCorrespondenceSpec(read))
-  if (!requeueFinishedJob(db,{id,kind:KIND,params:row.params,filesDir})) annualFail('retry_unavailable')
+  if (!requeueFinishedJob(db,{id,kind:KIND,params:row.params,filesDir,logContext})) annualFail('retry_unavailable')
   return receipt(getJob(db,id)!)
 }

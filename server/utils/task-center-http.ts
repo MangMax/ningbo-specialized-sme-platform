@@ -1,4 +1,5 @@
 import { CANDIDATE_JOB_KIND, retryCandidateDiscovery } from './jobs/candidate-discovery'
+import type { LogContext } from '../../lib/logging'
 import { ANNUAL_CORRESPONDENCE_KIND } from '../../lib/roster/annual-correspondence'
 import { EVENT_ARCHIVE_RULE_VERSION } from './event-archive-discovery'
 import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm'
@@ -97,7 +98,7 @@ async function summarize(row: ProjectedTask, authorized: boolean, db: Db, detail
   }
 }
 
-export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cancel' | 'retry', req: Request, ctx: { db: Db; browserAuthorized?: boolean; apiToken?: string; filesDir: string }) {
+export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cancel' | 'retry', req: Request, ctx: { db: Db; browserAuthorized?: boolean; apiToken?: string; filesDir: string; logContext?: LogContext }) {
   const headers = { 'cache-control': 'no-store' }
   const apiAuthorized = resolveApiAuth({ given: readApiToken(req.headers), configured: ctx.apiToken }).writeAuthorized
   const authorized = ctx.browserAuthorized === true || apiAuthorized
@@ -130,7 +131,7 @@ export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cance
   if (action === 'detail') return { status: 200, headers, body: await summarize(row, taskAuthorized, ctx.db, true) }
   if (!taskAuthorized) return error(401, '管理操作需要 API 授权')
   if (action === 'cancel') {
-    const outcome = requestJobCancel(ctx.db, id)
+    const outcome = requestJobCancel(ctx.db, id, ctx.logContext)
     if (!outcome.ok) return error(404, '任务不存在')
     const cancelRequested = 'cancelRequested' in outcome && outcome.cancelRequested
     return { status: cancelRequested ? 202 : 200, headers, body: { task: await summarize(readTasks(ctx.db, eq(j.id, id), 1)[0]!, taskAuthorized, ctx.db), cancelRequested } }
@@ -138,7 +139,7 @@ export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cance
   const summary = await summarize(row, taskAuthorized, ctx.db)
   if (!summary.capabilities.retry) return error(409, '此任务当前不支持安全重试')
   try {
-    const outcome = row.kind === CANDIDATE_JOB_KIND ? retryCandidateDiscovery(ctx.db, id, ctx.filesDir) : retryPlatformBatch(ctx.db, { batchId: id, itemIds: summary.capabilities.retryItemIds }, ctx.filesDir)
+    const outcome = row.kind === CANDIDATE_JOB_KIND ? retryCandidateDiscovery(ctx.db, id, ctx.filesDir, ctx.logContext) : retryPlatformBatch(ctx.db, { batchId: id, itemIds: summary.capabilities.retryItemIds }, ctx.filesDir, ctx.logContext)
     return { status: 202, headers, body: outcome }
   } catch (cause) {
     // `retryPlatformBatch` 只在 `requeueFinishedJob` 之前就抛错时把异常漏出来 —— 也就是

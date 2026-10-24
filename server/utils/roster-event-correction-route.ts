@@ -1,8 +1,9 @@
-import { defineEventHandler, getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
+import { semanticRouteHandler } from './core-route'
+import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { useDb } from '@db'
 import { handleEventCorrectionRequest, type EventCorrectionAction } from './roster-event-correction-api'
 export function eventCorrectionRoute(action: EventCorrectionAction) {
-  return defineEventHandler(async event => {
+  return semanticRouteHandler(`maintenance.event.${action}`, async event => {
     setHeader(event, 'cache-control', 'no-store')
     let body: unknown
     if (getMethod(event) === 'POST') {

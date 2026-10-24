@@ -1,8 +1,10 @@
+import { appLog } from '../../../lib/logging'
 import { DEFAULT_DPI, isPdfPath } from '../../../lib/pdf-page'
 import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
 import { findFileIdByRelPath } from '../mcp-files'
 import {
   MAX_CONCURRENT_PADDLE_JOBS,
+  OcrApiError,
   ocrImageFile,
   ocrRequestVariant,
   resolveOcrConfig,
@@ -217,7 +219,11 @@ export async function runOcr(
   config = resolveOcrConfig(),
 ): Promise<JobCompletion> {
   const { files, model } = params as unknown as OcrParams
+  const logContext = { ...ctx.logContext, taskId: ctx.jobId }
+  const startedAt = Date.now()
+  appLog({ source: 'ocr', operation: 'ocr.recognize', outcome: 'started', counts: { total: files.length } }, logContext)
   if (!config.token) {
+    appLog({ source: 'ocr', operation: 'ocr.recognize', outcome: 'failure', level: 'error', errorCode: 'ocr_not_configured' }, logContext)
     // 配置错**在动手之前**就报出来 —— 逐份失败会得到 N 条一模一样的错,而它一次就说清了。
     throw new Error(
       '缺少 OCR token:在配置页面保存,或设 `NUXT_OCR_TOKEN`(或 `PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN`)再提交。' +
@@ -241,14 +247,21 @@ export async function runOcr(
 
   const processFile = async (file: string): Promise<OcrFileOutcome | null> => {
     if (ctx.cancelled()) return null
+    const fileStarted = Date.now()
+    let fileId: number | null = null
+    let processedPages = 0
+    let timedOutPages = 0
+    let failedPages = 0
+    let expectedPages: number | undefined
     try {
-      const fileId = findFileIdByRelPath(ctx.db, file)
+      fileId = findFileIdByRelPath(ctx.db, file)
       if (fileId === null) {
         throw new Error(
           `文件库里没有这个文件(先让 app 回填 stored_file:打开 /files 页,或调 list_files):${file}`,
         )
       }
       const images = await currentPageImages(ctx.filesDir, file)
+      expectedPages = images.length
       const effectiveModel = model ?? config.model
       // 命中判据里除页图内容之外的那一半:模型 + 影响识别结果的有效选项。
       const variant = ocrRequestVariant(effectiveModel)
@@ -266,6 +279,8 @@ export async function runOcr(
           nextIndex += 1
           if (index >= images.length) return
           const image = images[index]!
+          const pageStarted = Date.now()
+          const pageContext = { ...logContext, fileId: fileId!, page: image.page }
           try {
             const imagePath = resolveWithinRoot(ctx.filesDir, image.relPath)
             const imageSha256 = await sha256OfFile(imagePath)
@@ -277,6 +292,8 @@ export async function runOcr(
               pageResults[index] = { page: image.page, markdown: cached.markdown, raw: cached.raw }
               apiJobIds[index] = cached.jobId
               cachedPages += 1
+              processedPages += 1
+              appLog({ source: 'ocr', operation: 'ocr.page.cache', outcome: 'skipped', durationMs: Date.now() - pageStarted }, pageContext)
               continue
             }
             const out = await ocrImageFile({
@@ -302,8 +319,14 @@ export async function runOcr(
               raw: out.page.raw,
               createdAt: new Date().toISOString(),
             })
+            processedPages += 1
+            appLog({ source: 'ocr', operation: 'ocr.page', outcome: 'success', durationMs: Date.now() - pageStarted }, pageContext)
           } catch (error) {
+            const timedOut = error instanceof OcrApiError && error.failureKind === 'timeout'
+            appLog({ source: 'ocr', operation: 'ocr.page', outcome: ctx.cancelled() ? 'cancelled' : timedOut ? 'timeout' : 'failure', level: ctx.cancelled() ? 'info' : 'error', errorCode: ctx.cancelled() ? undefined : timedOut ? 'ocr_page_timeout' : 'ocr_page_failed', durationMs: Date.now() - pageStarted }, pageContext)
             if (ctx.cancelled()) return
+            failedPages += 1
+            if (timedOut) timedOutPages += 1
             pageErrors[index] = `第 ${image.page} 页 OCR 失败:${(error as Error).message}`
           }
         }
@@ -315,7 +338,10 @@ export async function runOcr(
           () => recognizeNextPages(),
         ),
       )
-      if (ctx.cancelled()) return null
+      if (ctx.cancelled()) {
+        appLog({ source: 'ocr', operation: 'ocr.file', outcome: 'cancelled', fileId, counts: { done: processedPages, total: expectedPages, failed: failedPages }, durationMs: Date.now() - fileStarted }, logContext)
+        return null
+      }
 
       const errors = pageErrors.filter((error): error is string => error !== undefined)
       if (errors.length) throw new Error(errors.join('；'))
@@ -327,6 +353,7 @@ export async function runOcr(
       if (ctx.cancelled()) return null
 
       persistPages(ctx, fileId, file, completePages, effectiveModel)
+      appLog({ source: 'ocr', operation: 'ocr.file', outcome: 'success', fileId, counts: { done: completePages.length, total: expectedPages }, durationMs: Date.now() - fileStarted }, logContext)
       return {
         file,
         ok: true,
@@ -340,6 +367,7 @@ export async function runOcr(
         elapsedMs: Date.now() - startedAt,
       }
     } catch (error) {
+      appLog({ source: 'ocr', operation: 'ocr.file', outcome: ctx.cancelled() ? 'cancelled' : processedPages > 0 ? 'partial' : timedOutPages === expectedPages ? 'timeout' : 'failure', level: ctx.cancelled() ? 'info' : 'error', ...(fileId === null ? {} : { fileId }), counts: { done: processedPages, total: expectedPages, failed: failedPages }, errorCode: ctx.cancelled() ? undefined : 'ocr_file_failed', durationMs: Date.now() - fileStarted }, logContext)
       if (ctx.cancelled()) return null
       return { file, ok: false, error: (error as Error).message ?? String(error) }
     }
@@ -366,10 +394,12 @@ export async function runOcr(
   ))
 
   if (ctx.cancelled()) {
+    appLog({ source: 'ocr', operation: 'ocr.recognize', outcome: 'cancelled', counts: { done: doneFiles, total: files.length, failed }, durationMs: Date.now() - startedAt }, logContext)
     return { result: { ...snapshot(), cancelled: true, done: doneFiles }, cancelled: true }
   }
 
   const result = snapshot()
+  appLog({ source: 'ocr', operation: 'ocr.recognize', outcome: failed ? (result.ok ? 'partial' : 'failure') : 'success', level: failed ? 'error' : 'info', counts: { done: doneFiles, total: files.length, failed }, durationMs: Date.now() - startedAt }, logContext)
   return failed
     ? { result, error: `${files.length} 份里 ${failed} 份识别失败(逐项原因见 result.files[].error)` }
     : { result }

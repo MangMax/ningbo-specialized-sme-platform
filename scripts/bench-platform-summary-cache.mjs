@@ -2,13 +2,13 @@
 // Pass an OWN isolated, already migrated full-distribution copy. Read-only DB, loopback only.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { execFileSync, fork } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir, cpus, totalmem } from 'node:os'
 import { join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild, waitForHttp } from './lib/isolated-local-services.mjs'
 
 const [dbArg, outputArg] = process.argv.slice(2)
 assert.ok(dbArg?.startsWith('/') && outputArg?.startsWith('/'), 'Absolute isolated DB and new JSON output required')

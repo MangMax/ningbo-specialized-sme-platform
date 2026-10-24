@@ -1,11 +1,7 @@
-import { importExecutor } from '../../utils/import-execution'
-import { asyncImportReceiptMcpResult } from '../../utils/import-receipts'
+import { submitRosterImportMcp } from '../../utils/roster-import-mcp-submission'
 import { z } from 'zod'
 import { rosterImportMcpPayloadSchema } from '../../utils/roster-import-schema'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { validateImportRequest } from '../../utils/roster-import'
-import { validateRosterImportPageCounts } from '../../utils/roster-import-page-validation'
 
 /**
  * `preflight_roster_batch` —— 名录导入的**只读预检**（RL-11，契约 §9）。
@@ -42,16 +38,5 @@ export default defineMcpTool({
     sourceSha256: z.string().optional(),
     payload: rosterImportMcpPayloadSchema,
   },
-  handler: async (input) => {
-    const validated = validateImportRequest({
-      idempotencyKey: input.idempotencyKey,
-      sourceKind: input.sourceKind,
-      sourceIdentity: input.sourceIdentity,
-      sourceSha256: input.sourceSha256 ?? null,
-      payload: input.payload,
-    })
-    if (!validated.ok) throw createError({ statusCode: validated.status, message: validated.message })
-    const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
-    return asyncImportReceiptMcpResult(() => importExecutor.execute(useDb(), 'preflight', validated.value, pageCountErrors))
-  },
+  handler: (input) => submitRosterImportMcp('preflight', input),
 })

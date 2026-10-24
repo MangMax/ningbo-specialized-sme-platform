@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDb, getDbOwnerIdentity, schema } from '../db/client'
 import { readRecognitions } from '../server/utils/recognition-read'
 import { readDifferences } from '../server/utils/difference-read'
@@ -100,8 +100,13 @@ it('terminal reader failure and cancellation never replay on the owner, includin
   expect(terminal.recognitions).toHaveBeenCalledTimes(1);expect(prepare).not.toHaveBeenCalled()
   expect(getEventListeners(controller.signal,'abort')).toHaveLength(0);prepare.mockRestore()
 })
+describe('managed owner rotation', () => {
+let f: Awaited<ReturnType<typeof fixture>>, other: Awaited<ReturnType<typeof fixture>>
+// Each fixture boots a real import executor. Prepare them in standard hooks,
+// rather than spending the identity scenario's unchanged 5s on cold boot.
+beforeEach(async () => { f = await fixture() })
+beforeEach(async () => { other = await fixture() })
 it('ordinary inode and symlink replacement retain the cached original owner while fresh managed opens certify the new file',async()=>{
-  const f=await fixture(),other=await fixture()
   f.writer.$client.pragma('wal_checkpoint(TRUNCATE)');other.writer.$client.pragma('wal_checkpoint(TRUNCATE)')
   // Different domain truth is created through the public import API.
   expect((await other.client.commit({idempotencyKey:'second',sourceKind:'announcement',sourceIdentity:'synthetic/second',payload:{announcement:{...other.payload.announcement,records:[{...other.payload.announcement.records[0]!,enterprise:{name:'另一合成企业'}}]}}})).status).toBe('committed')
@@ -130,7 +135,6 @@ it.each([
   ['inode', 'differences'], ['symlink', 'differences'],
   ['inode', 'summary'], ['symlink', 'summary'],
 ] as const)('child verifies %s identity for %s again after queue wait and fallback keeps the original owner',async (kind, operation)=>{
-  const f=await fixture(),other=await fixture()
   await other.client.commit({idempotencyKey:'extra',sourceKind:'announcement',sourceIdentity:'synthetic/extra',payload:{announcement:{...other.payload.announcement,records:[{...other.payload.announcement.records[0]!,enterprise:{name:'另一企业'}}]}}})
   f.writer.$client.pragma('wal_checkpoint(TRUNCATE)');other.writer.$client.pragma('wal_checkpoint(TRUNCATE)')
   const link=join(f.dir,'queued-link.db');symlinkSync(f.path,link)
@@ -150,7 +154,7 @@ it.each([
   const pending=operation==='recognitions'?readRecognitions(owner,{},undefined,reads):operation==='summary'
     ? readSummary(owner,{curatedPath:join(f.dir,'curated.json'),reconcilePath:join(f.dir,'reconcile.json'),page:1,pageSize:25,showCurated:false},undefined,reads)
     :readDifferences(owner,{},undefined,reads)
-  await seen
+  await Promise.race([seen, pending.then(() => { throw new Error('Reader settled before the held readiness barrier') })])
   if(kind==='inode'){renameSync(f.path,join(f.dir,'old.db'));renameSync(other.path,f.path)}
   else {unlinkSync(link);symlinkSync(other.path,link)}
   releaseReady()
@@ -159,6 +163,7 @@ it.each([
   expect(result).toMatchObject(operation==='recognitions'?{counts:{titlePairs:1},rows:[{name:'合成M1企业'}]}:operation==='summary'
     ?{view:'summary',total:1,rows:[{name:'合成M1企业',platform:{disposition:{status:'not_queried',explanationId:null}}}]}
     :{total:1,rows:[{name:'合成M1企业',status:'not_queried',explanationId:null}]})
+})
 })
 
 it('REST uses the same conservative owner identity for disk memory untracked transaction inode and symlink owners',async()=>{

@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../lib/logging'
 import { useDb } from '@db'
 import { getParse105, historyParse105, saveParse105, ParseMaintenanceError } from './parse-maintenance-105'
 import { requireApiToken } from './api-guard'
@@ -24,7 +25,7 @@ export function parseRoute105(action: 'read' | 'replace' | 'status' | 'history')
         }
         return historyParse105(db, input)
       }
-      return saveParse105(db, fileId, await readBody(event).catch(() => null), action)
+      return saveParse105(db, fileId, await readBody(event).catch(() => null), action, requestLogContext(event))
     } catch (error) {
       if (error instanceof ParseMaintenanceError) throw createError({ statusCode: error.statusCode, message: error.message })
       throw error

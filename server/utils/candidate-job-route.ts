@@ -1,4 +1,5 @@
 import { useDb } from '@db'
+import { requestLogContext } from '../../lib/logging'
 import { taskCenterBrowserAccess } from './task-center-access'
 import {
   handleCandidateJobRequest,
@@ -31,6 +32,7 @@ export function candidateJobRoute(action: CandidateJobAction) {
         filesDir: config.filesDir,
         apiToken: config.apiToken,
         browserAuthorized: taskCenterBrowserAccess(event),
+        logContext: requestLogContext(event),
       },
     )
     setResponseStatus(event, result.status)

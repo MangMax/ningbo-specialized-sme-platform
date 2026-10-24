@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../../lib/logging'
 import { useDb } from '@db'
 import { maintainStoredFile, splitFileMaintenanceBody, requireVersionedFileMaintenanceOptions } from '../../../utils/file-maintenance'
 import { requireApiToken } from '../../../utils/api-guard'
@@ -23,7 +24,7 @@ export default defineEventHandler(async (event) => {
   if (!Number.isSafeInteger(id) || id <= 0) throw createError({ statusCode: 400, message: '文件 id 非法' })
   try {
     const { options } = splitFileMaintenanceBody((await readBody(event)) ?? {}, 'restore')
-    return await maintainStoredFile(useDb(), useRuntimeConfig().filesDir, id, 'restore', {}, requireVersionedFileMaintenanceOptions(options))
+    return await maintainStoredFile(useDb(), useRuntimeConfig().filesDir, id, 'restore', {}, requireVersionedFileMaintenanceOptions(options), requestLogContext(event))
   }
   catch (error) { throw createError({ statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message }) }
 })

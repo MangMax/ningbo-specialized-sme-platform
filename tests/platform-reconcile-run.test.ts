@@ -18,8 +18,9 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../db'
+import { whenIdle } from '../server/utils/job-runner'
 import type { PlatformRelationRow, PlatformQueriesResult } from '../lib/platform/read'
 import {
   collectReconcileTargets,
@@ -131,10 +132,16 @@ beforeAll(async () => {
   })
 })
 
+afterEach(async () => {
+  await whenIdle()
+  expect(db.select({ state: schema.job.state }).from(schema.job).all()
+    .filter(row => row.state === 'queued' || row.state === 'running')).toEqual([])
+})
 afterAll(async () => {
   await server?.close()
   vi.unstubAllGlobals()
   vi.doUnmock('@db')
+  db.$client.close()
   rmSync(dir, { recursive: true, force: true })
 })
 

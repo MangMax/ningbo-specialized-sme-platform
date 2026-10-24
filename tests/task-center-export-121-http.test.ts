@@ -2,12 +2,12 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { eq } from 'drizzle-orm'
 import { newJobId } from '../lib/job'
 import ExcelJS from 'exceljs'
 import { useDb, schema as s } from '../db/client'
-import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
+import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../scripts/lib/isolated-local-services.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'task-export-121-'))
 const dbPath = join(dir, 'synthetic.db'), db = useDb({ dbPath })

@@ -8,6 +8,8 @@ import { resolvePlatformCookie } from './credential-state'
 import { ensureJobRunnerReady, getJobSpec, registerJob, submitJob, requeueFinishedJob, type JobContext, type JobSpec } from './job-runner'
 import { getJob, setJobResult } from './job-store'
 import { runPlatformLiveQuery } from './platform-live-query'
+import { appLog, newLogContext, type LogContext } from '../../lib/logging'
+import { logPlatformResult, platformOperation } from '../../lib/platform/logging'
 
 type Db = BetterSQLite3Database<typeof schema>
 const fail = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }) }
@@ -24,6 +26,7 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
   result.attempt++
   result.usage.requests = 0
   const start = Date.now()
+  const logContext = { ...(ctx.logContext ?? newLogContext()), taskId: ctx.jobId, batchId: ctx.jobId }
   const persist = () => {
     result.completeness = result.items.every(item => item.completeness === 'complete') ? 'complete' : 'partial'
     setJobResult(ctx.db, ctx.jobId, result)
@@ -78,14 +81,21 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
         for (; page < query.startPage && acceptedPages.get(title)?.has(page); page++) count += acceptedPages.get(title)!.get(page)!
         if (page === query.startPage) priorFetchedCounts.set(title, count)
       }
-      const segment = await runPlatformLiveQuery(query, { cookie, declaredTotals, priorFetchedCounts, maxResultBytes: available, onProgress: admit })
+      const segment = await runPlatformLiveQuery(query, { cookie, declaredTotals, priorFetchedCounts, maxResultBytes: available, onProgress: admit,
+        logContext: { ...logContext, resourceType: 'platform_batch_item', resourceId: item.itemId } })
       admit(segment)
       // Authentication is not automatically retried. Other independent items still
       // receive their own outcome using the same immutable submission snapshot.
       if (segment.pages.some(page => page.status === 'auth_failed') || segment.error?.code === 'safety_limit' || (original.source === 'queryBusList' && segment.unfinished.length)) break
     }
+    logPlatformResult(platformOperation(original.source, 'item'), item.status, { ...logContext, resourceType: 'platform_batch_item', resourceId: item.itemId },
+      { done: result.usage.rows - itemStartRows }, Date.now() - itemStarted)
   }
   persist()
+  // This is a collection-attempt summary, not the generic job terminal event.
+  appLog({ source: 'platform', operation: 'platform.batch.collect', outcome: ctx.cancelled() ? 'cancelled' : result.completeness === 'complete' ? 'success' : 'partial',
+    durationMs: Date.now() - start, counts: { done: result.items.filter(item => item.completeness === 'complete').length, total: result.items.length,
+      failed: result.items.filter(item => item.status === 'failed' || item.status === 'auth_failed').length } }, logContext)
   return { result, progress: { done: result.items.filter(item => item.completeness === 'complete').length, total: result.items.length }, ...(ctx.cancelled() ? { cancelled: true } : result.completeness !== 'complete' ? { error: '批次仍有未完成范围，请查看逐项结果并显式重试。' } : {}) }
 }
 const batchSpec: JobSpec = {
@@ -117,11 +127,11 @@ const batchSpec: JobSpec = {
   run: (ctx, params) => runBatch(ctx, params, ''),
 }
 export function registerPlatformBatchJob() { if (!getJobSpec(PLATFORM_BATCH_KIND)) registerJob(batchSpec) }
-export function submitPlatformBatch(db: Db, input: unknown, filesDir: string) {
+export function submitPlatformBatch(db: Db, input: unknown, filesDir: string, logContext?: LogContext) {
   registerPlatformBatchJob(); ensureJobRunnerReady(db)
   const parsed = batchSpec.parse(input as Record<string, unknown>)
   if (!parsed.ok) return fail(400, parsed.message)
-  const row = submitJob(db, { kind: PLATFORM_BATCH_KIND, params: parsed.params, filesDir })
+  const row = submitJob(db, { kind: PLATFORM_BATCH_KIND, params: parsed.params, filesDir, logContext: logContext ?? newLogContext() })
   return { batchId: row.id, itemIds: (row.params.items as PlatformBatchParams['items']).map(item => item.itemId), state: row.state }
 }
 export function getPlatformBatch(db: Db, input: unknown) {
@@ -142,7 +152,7 @@ export function getPlatformBatchItem(db: Db, input: unknown) {
   return batch.items.find(item => item.itemId === parsed.data.itemId) ?? fail(404, 'Platform batch item not found')
 }
 
-export function retryPlatformBatch(db: Db, input: unknown, filesDir: string) {
+export function retryPlatformBatch(db: Db, input: unknown, filesDir: string, logContext?: LogContext) {
   const parsed = platformBatchRetrySchema.safeParse(input)
   if (!parsed.success) return fail(400, 'Invalid batch retry parameters')
   const batch = getPlatformBatch(db, { batchId: parsed.data.batchId })
@@ -151,6 +161,9 @@ export function retryPlatformBatch(db: Db, input: unknown, filesDir: string) {
   if (parsed.data.itemIds.some(id => !batch.items.some(item => item.itemId === id && item.completeness !== 'complete'))) return fail(409, 'Retry requires existing unfinished items')
   const row = getJob(db, batch.batchId)!
   registerPlatformBatchJob()
-  if (!requeueFinishedJob(db, { id: batch.batchId, kind: PLATFORM_BATCH_KIND, params: { ...row.params, retryItemIds: parsed.data.itemIds }, filesDir })) return fail(409, 'Platform batch is still active')
+  const retryContext = logContext ?? newLogContext()
+  if (!requeueFinishedJob(db, { id: batch.batchId, kind: PLATFORM_BATCH_KIND, params: { ...row.params, retryItemIds: parsed.data.itemIds }, filesDir, logContext: retryContext })) return fail(409, 'Platform batch is still active')
+  appLog({ source: 'platform', operation: 'platform.batch.retry', outcome: 'started', counts: { total: parsed.data.itemIds.length } },
+    { ...retryContext, taskId: batch.batchId, batchId: batch.batchId })
   return { batchId: batch.batchId, itemIds: batch.itemIds, state: 'queued' }
 }

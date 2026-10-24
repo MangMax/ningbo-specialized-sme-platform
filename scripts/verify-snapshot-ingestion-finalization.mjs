@@ -2,13 +2,13 @@
 // Fault injection against the built Nitro server and a fresh synthetic SQLite DB.
 // Only child processes started by this script receive SIGKILL.
 import assert from 'node:assert/strict'
-import { fork } from 'node:child_process'
+
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
 const { useDb } = await createJiti(import.meta.url).import('../db/client.ts')

@@ -4,14 +4,14 @@
  * IDs default to the synthetic benchmark fixture; override CORRESPONDENCE_BENCH_IDS with a private JSON file.
  */
 import assert from 'node:assert/strict'
-import { fork, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
+import { forkOwnedChild as fork, reserveLoopbackPort, stopOwnedChild } from './lib/isolated-local-services.mjs'
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value
 const [dbPath, transport = 'http', mode = 'list', c = '1', n = '20'] = process.argv.slice(2)
 const concurrency = Number(c), rounds = Number(n)

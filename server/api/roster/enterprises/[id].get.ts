@@ -1,3 +1,4 @@
+import { requestLogContext } from '../../../../lib/logging'
 import { admitEnterpriseResponse } from '../../../utils/enterprise-read-response'
 import { useDb } from '@db'
 import { enterpriseReads } from '../../../utils/enterprise-read'
@@ -38,7 +39,7 @@ export default defineEventHandler((event) => {
   setHeader(event, 'cache-control', 'no-store')
   admitEnterpriseResponse(event)
   return withEnterpriseReadSignal(event, async signal => {
-    const detail = await enterpriseReads.json(useDb().$client.name, { operation: 'detail',enterpriseId: id }, signal)
+    const detail = await enterpriseReads.json(useDb().$client.name, { operation: 'detail',enterpriseId: id }, signal, requestLogContext(event))
     if (!detail.found) throw createError({ statusCode: 404, statusMessage: 'not found' })
     setHeader(event, 'content-type', 'application/json; charset=utf-8')
     return detail.body
