@@ -164,6 +164,12 @@ process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=
     expect(entries().filter(e => e.kind === 'source' && e.pid !== app.pid)).toHaveLength(1)
     expect(await read()).toEqual(expected)
     expect(await read('')).toEqual(full); expect(await read('?view=full')).toEqual(full)
+    // A successful response may still be the original-reader fallback after
+    // startup failure. Establish native recovery before testing warm cancellation.
+    clear(); expect(await read()).toEqual(expected)
+    const recoveredSources = entries().filter(e => e.kind === 'source')
+    expect(recoveredSources, logs).toHaveLength(1)
+    expect(recoveredSources[0].pid).not.toBe(app.pid)
     // Real active and queued HTTP aborts: the shared child drains the active
     // native read, and subsequent recognition/REST/enterprise work survives.
     clear(); const cancelHolder = await lock(850), activeAbort = new AbortController(), queuedAbort = new AbortController()
