@@ -15,6 +15,15 @@
  * 加新宏时往下面加一行,并在注释里写清它对应 nitro 的哪个编译期钩子。
  */
 
+import { initLogger } from 'evlog'
+
+// Bare unit tests do not boot evlog/nuxt. Keep event construction enabled, but
+// give diagnostics an explicit quiet unit sink instead of flooding Vitest's
+// console RPC with every Drizzle query. Logging tests install their own real
+// drain via initializeWorkerLogging/initLogger; child Nuxt apps boot normally.
+// This does not silence console errors or ignore unhandled test errors.
+initLogger({ enabled: true, silent: true, pretty: false, drain: () => {} })
+
 // `server/**` 路由里的编译期宏。生产构建由 nitro 的 unimport 注入,
 // 测试进程没有 —— 这里补上,免得「加了宏」=「挂掉别人的用例」。
 //
