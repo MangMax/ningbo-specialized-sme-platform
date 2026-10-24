@@ -157,8 +157,20 @@ function showError(cause: unknown) {
 }
 async function readback(token: number, committed: { correspondenceIds: number[] }, key: string) {
   const points = await Promise.all(committed.correspondenceIds.map(async id => {
-    const [edge, audit] = await Promise.all([$fetch<CorrespondenceDetail>(`/api/roster/correspondences/${id}`), $fetch<{ rows: { idempotencyKey: string }[] }>(`/api/roster/correspondences/${id}/audit`)])
-    if (!audit.rows.some(row => row.idempotencyKey === key)) throw new Error('audit_missing')
+    const edge = await $fetch<CorrespondenceDetail>(`/api/roster/correspondences/${id}`)
+    const pageSize = 50
+    let lastPage: number | undefined
+    for (let page = 1; ; page++) {
+      if (token !== generation) return
+      const audit = await $fetch<{ rows: { idempotencyKey: string }[]; total: number; page: number; pageSize: number }>(`/api/roster/correspondences/${id}/audit`, { query: { page, pageSize } })
+      if (token !== generation) return
+      if (audit.page !== page || audit.pageSize !== pageSize || !Number.isSafeInteger(audit.total) || audit.total < 0 || audit.rows.length !== Math.min(pageSize, Math.max(0, audit.total - (page - 1) * pageSize))) throw new Error('audit_page_invalid')
+      // Audit is append-only. Bound this attempt to the first response's total;
+      // later decisions cannot turn a missing key into an unending traversal.
+      lastPage ??= Math.ceil(audit.total / pageSize)
+      if (audit.rows.some(row => row.idempotencyKey === key)) break
+      if (page >= lastPage) throw new Error('audit_missing')
+    }
     return edge
   }))
   if (!points.length) throw new Error('receipt_empty')

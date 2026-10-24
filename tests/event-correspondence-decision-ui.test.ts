@@ -4,11 +4,129 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import EventCorrespondenceDecision from '../components/record-correspondence/EventCorrespondenceDecision.vue'
 let wrapper: ReturnType<typeof mount>
-afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals() })
+const readbackListeners: Array<() => void> = []
+afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; readbackListeners.splice(0).forEach(listener => window.removeEventListener('roster-correspondence-readback', listener)); vi.unstubAllGlobals() })
 const edge = { type: 'event_process', eventId: 7, relationId: 10, role: 'context_only' }
 const capability = () => { vi.stubGlobal('useState', () => ref(true)) }
 const mountControl = (existing: any = null) => mount(EventCorrespondenceDecision, { props: { edge, existing }, attachTo: document.body, global: { stubs: { SourceReader: true } } })
 const button = (text: string) => Array.from(document.querySelectorAll('button')).find(b => b.textContent?.trim() === text)!
+
+async function submitPagedDecision(options: { total: number; missing?: boolean; missingId?: number; interrupt?: boolean; deferPage?: () => Promise<unknown>; ids?: number[]; invalidPage?: string; grow?: boolean }) {
+  capability()
+  const refreshed = vi.fn(); readbackListeners.push(refreshed); window.addEventListener('roster-correspondence-readback', refreshed)
+  let key = '', interrupted = options.interrupt
+  const ids = options.ids ?? [11]
+  const fetch = vi.fn().mockImplementation((url: string, init?: { query?: { page?: number; pageSize?: number }; body?: any }) => {
+    if (url.endsWith('browser-preflight')) {
+      key = init!.body.idempotencyKey
+      return Promise.resolve({ planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 2 } })
+    }
+    if (url.endsWith('browser-commit')) return Promise.resolve({ correspondenceIds: ids })
+    if (url.endsWith('/audit')) {
+      const page = init?.query?.page ?? 1, pageSize = init?.query?.pageSize ?? 50
+      if (page === 2 && interrupted) { interrupted = false; return Promise.reject(new Error('offline page two')) }
+      if (page === 2 && options.deferPage) return options.deferPage()
+      const total = page > 1 && options.grow ? 1000 : options.total
+      const missing = options.missing || url === `/api/roster/correspondences/${options.missingId}/audit`
+      const rows = Array.from({ length: total }, (_, i) => ({ id: i + 1, idempotencyKey: i === options.total - 1 && !missing ? key : `old-${i}` }))
+      const audit = { rows: rows.slice((page - 1) * pageSize, page * pageSize), total, page, pageSize }
+      if (page === 2 && options.invalidPage) {
+        if (options.invalidPage === 'repeated-page') audit.page = 1
+        if (options.invalidPage === 'empty-page') audit.rows = []
+        if (options.invalidPage === 'invalid-total') audit.total = -1
+      }
+      return Promise.resolve(audit)
+    }
+    return Promise.resolve({ id: Number(url.split('/').at(-1)), status: 'confirmed' })
+  })
+  vi.stubGlobal('$fetch', fetch)
+  wrapper = mountControl(); await flushPromises(); button('确认对应').click(); await flushPromises()
+  const area = document.querySelector('textarea')!; area.value = '分页读回原行依据'; area.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+  button('预检决定').click(); await flushPromises(); button('提交决定').click(); await flushPromises()
+  return { fetch, key, refreshed }
+}
+
+it.each([50, 51, 200, 201, 251])('reads the submitted key at audit row %i through the mounted decision controls', async total => {
+  const { fetch, refreshed } = await submitPagedDecision({ total, ids: [11, 12] })
+  expect(document.body.textContent).toContain('已提交并读回对应与审计')
+  expect(button('重试读回')).toBeUndefined()
+  expect(refreshed).toHaveBeenCalledTimes(1)
+  for (const id of [11, 12]) {
+    const audits = fetch.mock.calls.filter(([url]) => url === `/api/roster/correspondences/${id}/audit`)
+    expect(audits.map(([, init]) => init?.query?.page ?? 1)).toEqual(Array.from({ length: Math.ceil(total / 50) }, (_, i) => i + 1))
+  }
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(1)
+})
+
+it('retains the receipt after an interrupted audit page and retries reads without another commit', async () => {
+  const { fetch, refreshed } = await submitPagedDecision({ total: 251, interrupt: true })
+  expect(document.body.textContent).toContain('决定已提交，但同步读回失败')
+  expect(refreshed).not.toHaveBeenCalled()
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('/audit')).map(([, init]) => init?.query?.page ?? 1)).toEqual([1, 2])
+  button('重试读回').click(); await flushPromises()
+  expect(document.body.textContent).toContain('已提交并读回对应与审计')
+  expect(refreshed).toHaveBeenCalledTimes(1)
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(1)
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-preflight'))).toHaveLength(1)
+})
+
+it.each([0, 50, 51, 201])('never reports success when the submitted key is absent from %i audit rows', async total => {
+  const { fetch, refreshed } = await submitPagedDecision({ total, missing: true })
+  expect(document.body.textContent).not.toContain('已提交并读回')
+  expect(button('重试读回')).toBeDefined()
+  button('重试读回').click(); await flushPromises()
+  expect(document.body.textContent).not.toContain('已提交并读回')
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(1)
+  expect(refreshed).not.toHaveBeenCalled()
+})
+
+it.each(['repeated-page', 'empty-page', 'invalid-total'])('rejects %s audit metadata without success or view refresh', async invalidPage => {
+  const { fetch, refreshed } = await submitPagedDecision({ total: 51, invalidPage })
+  expect(document.body.textContent).not.toContain('已提交并读回')
+  expect(button('重试读回')).toBeDefined()
+  expect(refreshed).not.toHaveBeenCalled()
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(1)
+})
+
+it('bounds missing key traversal to the initial audit total even while other decisions append', async () => {
+  const { fetch, refreshed } = await submitPagedDecision({ total: 51, missing: true, grow: true })
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('/audit')).map(([, init]) => init?.query?.page ?? 1)).toEqual([1, 2])
+  expect(button('重试读回')).toBeDefined()
+  expect(document.body.textContent).not.toContain('已提交并读回')
+  expect(refreshed).not.toHaveBeenCalled()
+})
+
+it.each([
+  { name: 'empty receipt', ids: [] },
+  { name: 'one receipt audit missing', ids: [11, 12], missingId: 12 },
+])('keeps $name unsuccessful until every receipt ID has its own submitted audit key', async options => {
+  const { fetch, refreshed } = await submitPagedDecision({ total: 51, ...options })
+  expect(document.body.textContent).not.toContain('已提交并读回')
+  expect(button('重试读回')).toBeDefined()
+  expect(refreshed).not.toHaveBeenCalled()
+  button('重试读回').click(); await flushPromises()
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(1)
+  expect(document.body.textContent).not.toContain('已提交并读回')
+})
+
+it('isolates an in flight audit page across object switches and restores only its own receipt', async () => {
+  let finish!: (value: unknown) => void
+  const late = new Promise(resolve => { finish = resolve })
+  const { fetch, key, refreshed } = await submitPagedDecision({ total: 51, deferPage: () => late })
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('/audit')).map(([, init]) => init?.query?.page ?? 1)).toEqual([1, 2])
+  await wrapper.setProps({ edge: { ...edge, eventId: 8 } }); await flushPromises()
+  button('确认对应').click(); await flushPromises()
+  finish({ rows: [{ idempotencyKey: key }], total: 51, page: 2, pageSize: 50 }); await flushPromises()
+  expect(refreshed).not.toHaveBeenCalled()
+  expect(document.body.textContent).not.toContain('已提交并读回')
+  expect(document.querySelector('textarea')!.disabled).toBe(false)
+  expect(button('重试读回')).toBeUndefined()
+  await wrapper.setProps({ edge }); await flushPromises(); button('确认对应').click(); await flushPromises()
+  expect(button('重试读回')).toBeDefined()
+  button('重试读回').click(); await flushPromises()
+  expect(document.body.textContent).toContain('已提交并读回对应与审计')
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('browser-commit'))).toHaveLength(1)
+})
 
 it('requires basis and retains the bound draft after commit failure then retries the same receipt key', async () => {
   capability()
@@ -74,7 +192,7 @@ it('retains a committed receipt when readback fails and retries only the public 
   const fetch = vi.fn().mockImplementation((url: string) => {
     if (url.endsWith('browser-preflight')) return Promise.resolve({ planHash: 'a'.repeat(64), impact: { created: 1, unlinked: 0, audit: 2 } })
     if (url.endsWith('browser-commit')) return Promise.resolve({ correspondenceIds: [11] })
-    if (url.endsWith('/audit')) return Promise.resolve({ rows: [{ idempotencyKey: fetch.mock.calls.find(([url]) => url.endsWith('browser-preflight'))![1].body.idempotencyKey }] })
+    if (url.endsWith('/audit')) return Promise.resolve({ rows: [{ idempotencyKey: fetch.mock.calls.find(([url]) => url.endsWith('browser-preflight'))![1].body.idempotencyKey }], total: 1, page: 1, pageSize: 50 })
     if (++reads === 1) return Promise.reject(new Error('offline'))
     return Promise.resolve({ id: 11, status: 'confirmed' })
   }); vi.stubGlobal('$fetch', fetch)

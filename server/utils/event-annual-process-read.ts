@@ -34,11 +34,13 @@ function readSnapshot(db: Db, eventId: number): EventAnnualProcessRead | null {
   const q = schema.platformQuery, r = schema.platformRelation, a = schema.enterpriseAlias
   const subjectKeys = [...(identity ? [identity] : []), `name:${joined.enterprise.nameNorm}`]
   const aliasKeys = db.select({ key: sql<string>`'name:' || ${a.nameNorm}` }).from(a).where(and(eq(a.enterpriseId, owner), eq(a.verificationStatus, 'confirmed')))
-  // Discover through indexed subject keys and enterprise/USCC owners. No global normalized-USCC scan.
+  // Keys/owners use indexed searches. Normalized identity additionally scans the
+  // USCC/query-ID covering index, matching the row predicate without loading bodies.
   const relatedIds = db.select({ id: q.id }).from(q).where(inArray(q.queryKey, subjectKeys))
     .union(db.select({ id: q.id }).from(q).where(inArray(q.queryKey, aliasKeys)))
     .union(db.select({ id: r.queryId }).from(r).where(eq(r.enterpriseId, owner)))
-    .union(db.select({ id: r.queryId }).from(r).where(identity ? eq(r.usccRaw, identity) : sql`0`))
+    // UNION's ordering can otherwise favor query_seq_uq and visit row bodies.
+    .union(db.select({ id: sql<number>`${r.queryId}` }).from(sql`${r} indexed by platform_relation_uscc_query_idx`).where(identity ? sql`${normalizedUscc(r.usccRaw)} = ${identity}` : sql`0`))
   const queryTitle = sql<string | null>`coalesce(${q.titleCode}, case ${q.rdjb} when '1' then 'innovative_sme' when '2' then 'specialized_sme' when '3' then 'little_giant' end)`
   const queryScope = and(inArray(q.id, relatedIds), inArray(q.interface, ['apply_list', 'business_list']), or(eq(queryTitle, titleCode), and(eq(q.interface, 'apply_list'), sql`${queryTitle} is null`)))!
   // Metadata is bounded to this owner's related title and two process interfaces.
