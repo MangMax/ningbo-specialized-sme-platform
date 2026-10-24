@@ -27,6 +27,8 @@ type Action = 'confirm' | 'reject' | 'unlink' | 'correct' | 'revalidate'
 const action = ref<Action | null>(null)
 const basis = ref('')
 const point = ref<Existing | null>(null)
+const pointLoaded = ref(false)
+const choicesLoaded = ref(false)
 const pending = ref(false)
 const attempted = ref(false)
 const error = ref('')
@@ -54,7 +56,7 @@ onBeforeUnmount(() => { generation++ })
 // Keep unresolved requests with their business object for this mounted session.
 // Switching objects never reuses another object's key, receipt or loading state.
 function captureContext() {
-  return { previousAction, basis: basis.value, point: point.value, attempted: attempted.value, error: error.value, conflict: conflict.value, receipt: receipt.value, success: success.value, request: request.value, plan: plan.value, replacements: replacements.value, replacementFailed: replacementFailed.value, replacementPage: replacementPage.value, selected: selected.value }
+  return { previousAction, pointLoaded: pointLoaded.value, choicesLoaded: choicesLoaded.value, basis: basis.value, point: point.value, attempted: attempted.value, error: error.value, conflict: conflict.value, receipt: receipt.value, success: success.value, request: request.value, plan: plan.value, replacements: replacements.value, replacementFailed: replacementFailed.value, replacementPage: replacementPage.value, selected: selected.value }
 }
 let restoringContext = false
 const contexts = new Map<string, ReturnType<typeof captureContext>>()
@@ -64,6 +66,7 @@ watch(() => `${props.edge.type}:${props.edge.eventId}:${props.edge.relationId}`,
   const saved = contexts.get(key)
   restoringContext = true
   previousAction = saved?.previousAction ?? null
+  pointLoaded.value = saved?.pointLoaded ?? false; choicesLoaded.value = saved?.choicesLoaded ?? false
   basis.value = saved?.basis ?? ''; point.value = saved?.point ?? null; attempted.value = saved?.attempted ?? false
   error.value = saved?.error ?? ''; conflict.value = saved?.conflict ?? false; receipt.value = saved?.receipt ?? null
   success.value = saved?.success ?? ''; request.value = saved?.request ?? null; plan.value = saved?.plan ?? null
@@ -73,30 +76,47 @@ watch(() => `${props.edge.type}:${props.edge.eventId}:${props.edge.relationId}`,
 })
 watch([basis, selected], () => { if (!restoringContext && !receipt.value && !attempted.value) { request.value = null; plan.value = null; conflict.value = false; error.value = '' } }, { flush: 'sync' })
 async function loadPoint(token = generation) {
+  pointLoaded.value = false
   const result = props.existing ? await $fetch<CorrespondenceDetail>(`/api/roster/correspondences/${props.existing.id}`) : null
-  if (token === generation) point.value = result
+  if (token === generation) { point.value = result; pointLoaded.value = true }
 }
 async function open(next: Action) {
   if (attempted.value && !success.value) { action.value = previousAction; return }
-  if (previousAction === next && !success.value) { action.value = next; return }
+  if (previousAction === next && !success.value) {
+    action.value = next
+    if (!pointLoaded.value || (next === 'correct' && !choicesLoaded.value)) await loadOpening(next)
+    return
+  }
   attempted.value = false
   previousAction = next
   action.value = next; success.value = ''; error.value = ''; conflict.value = false; request.value = null; plan.value = null; receipt.value = null; basis.value = ''; selected.value = ''; replacements.value = null
+  pointLoaded.value = false; choicesLoaded.value = false; replacementPage.value = 1
+  await loadOpening(next)
+}
+// Resume only unfinished reads; editable drafts and bound writes are retained by open().
+async function loadOpening(next: Action) {
+  if (pending.value) return
   const token = generation
   pending.value = true
-  try { await loadPoint(token); if (token === generation && next === 'correct') await loadReplacements(1) }
+  try {
+    if (!pointLoaded.value) await loadPoint(token)
+    if (token !== generation) return
+    error.value = ''; conflict.value = false
+    if (next === 'correct' && !choicesLoaded.value) await loadReplacements(replacementPage.value)
+  }
   catch { if (token === generation) { error.value = '当前对应读取失败，请刷新后核对。'; conflict.value = true } }
   finally { if (token === generation) pending.value = false }
 }
 async function loadReplacements(page: number) {
   const token = generation
-  replacementPage.value = page; replacementFailed.value = false
+  replacementPage.value = page; replacementFailed.value = false; choicesLoaded.value = false
   try {
     const result = await $fetch<EventArchivePage>('/api/roster/correspondences/discover', { method: 'POST', body: { eventId: props.edge.eventId, page, pageSize: 50 } })
-    if (token === generation) replacements.value = result
+    if (token === generation) { replacements.value = result; choicesLoaded.value = true }
   } catch { if (token === generation) replacementFailed.value = true }
 }
 const statePermitsAction = computed(() => {
+  if (!pointLoaded.value) return false
   if (!point.value) return !props.existing && ['confirm', 'reject'].includes(action.value ?? '')
   return ['confirm', 'reject'].includes(action.value ?? '') ? point.value.status === 'candidate' : point.value.status === 'confirmed'
 })
