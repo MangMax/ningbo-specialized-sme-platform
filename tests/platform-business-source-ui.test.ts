@@ -4,7 +4,7 @@ import { ref } from 'vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import SourceReader from '../components/record-correspondence/SourceReader.vue'
 import SourceRowDetail from '../components/record-correspondence/SourceRowDetail.vue'
-import { platformPresentationFields } from '../lib/roster/platform-records'
+import { platformRelatedRawFields, platformPresentationFields } from '../lib/roster/platform-records'
 import type { RelationSource } from '../lib/roster/correspondence-view'
 
 const query = { id: 20, interface: 'business_list', queryKey: 'PRIVATE-QUERY', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T06:52:23.017Z', status: 'success', failureReason: null, relationCount: 1, collectionEvidence: null }
@@ -28,7 +28,7 @@ it('selects only verified nonempty business fields without mutating raw and reta
   const before = JSON.stringify(raw)
   const fields = platformPresentationFields(raw)
   expect(fields.map(field => [field.key, field.value])).toEqual([
-    ['qymc', '企业原名'], ['sqsj', '2026-05-08 10:32:24'], ['cszt', '终审通过'], ['whpc', '2026-1'], ['sfty', 'false'], ['zyzb', '0'],
+    ['qymc', '企业原名'], ['sqsj', '2026-05-08 10:32:24'], ['cszt', '终审通过'], ['rdtime', '2026-05-25 19:20:54'], ['whpc', '2026-1'], ['sfty', 'false'], ['zyzb', '0'],
   ])
   expect(JSON.stringify(raw)).toBe(before)
 })
@@ -41,10 +41,12 @@ it.each(['business_list', 'apply_list', 'recognized_list'])('shows Chinese busin
   expect(main.text()).toContain('企业原名')
   expect(main.text()).toContain('维护批次')
   expect(main.text()).toContain('2026-1')
-  expect(wrapper.text()).toContain('平台办理人：未记录或尚未核实')
+  expect(wrapper.text()).toContain('尚未核实平台人员字段定义')
+  expect(main.text()).toContain('平台记录时间（含义待核）')
+  expect(main.text()).toContain('2026-05-25 19:20:54')
   expect(wrapper.text()).toContain('采集时间')
   expect(main.text()).not.toContain(query.queriedAt)
-  expect(wrapper.text()).not.toMatch(/RAW-ID|INTERNAL-KEY|PRIVATE-QUERY|查询 #|原行 4|rdtime|zsrxm|认定时间|认定日期/)
+  expect(wrapper.text()).not.toMatch(/RAW-ID|INTERNAL-KEY|PRIVATE-QUERY|查询 #|原行 4|认定时间|认定日期/)
   expect(main.text()).not.toMatch(/qymc|whpc|sqsj|cszt/)
   if (recognized) {
     expect(main.text()).toContain('2029-05-25')
@@ -158,4 +160,69 @@ it('keeps default source mode designation fields and original sizing unchanged',
   expect(wrapper.classes()).toContain('text-[13px]')
   expect(wrapper.text()).toContain('称号原值（rdjb）2')
   expect(wrapper.text()).toContain('查询 #20')
+})
+
+
+it.each(['business_list', 'apply_list', 'recognized_list'])('distinguishes related raw field states for the selected %s without role inference', (source) => {
+  const raw = { rdtime: '  unparsed date +08  ', sqsj: '', rddqrq: null, zsrxm: false, cz: 0, finance: 'noise' }
+  const before = JSON.stringify(raw)
+  expect(platformRelatedRawFields(raw).map(({ key, state, value }) => [key, state, value])).toEqual([
+    ['rdtime', 'value', '  unparsed date +08  '], ['rddqrq', 'null', 'null'], ['sqsj', 'blank', '""'],
+    ['zsrxm', 'value', 'false'], ['cz', 'value', '0'],
+  ])
+  const wrapper = renderRow({ ...relation, query: { ...query, interface: source }, rawFields: raw })
+  const related = wrapper.get('[data-testid="platform-related-raw"]')
+  expect(related.text()).toContain('rddqrq（含义待核）本条为 null')
+  expect(related.text()).toContain('sqsj（含义待核）本条为空字符串或空白')
+  expect(related.text()).toContain('zsrxm（含义待核）有值（含义待核）：false')
+  expect(related.text()).toContain('cz（含义待核）有值（含义待核）：0')
+  expect(wrapper.text()).not.toMatch(/终审人|操作人：|平台办理人：|finance|noise/)
+  expect(wrapper.get('[data-testid="platform-business-facts"]').text()).toContain('unparsed date +08')
+  expect(JSON.stringify(raw)).toBe(before)
+})
+
+it('preserves blank strings and distinguishes missing null blank and present related keys', () => {
+  expect(platformRelatedRawFields({ zsrxm: ' \t ', cz: null }).slice(3)).toEqual([
+    { key: 'zsrxm', state: 'blank', value: JSON.stringify(' \t ') }, { key: 'cz', state: 'null', value: 'null' },
+  ])
+  const wrapper = renderRow({ ...relation, rawFields: { zsrxm: ' \t ', cz: null } })
+  const text = wrapper.get('[data-testid="platform-related-raw"]').text()
+  expect(text).toContain('rdtime（含义待核）本条未包含此键')
+  expect(text).toContain('zsrxm（含义待核）本条为空字符串或空白')
+  expect(text).toContain('cz（含义待核）本条为 null')
+})
+
+it('shows unknown related values as safe plain text and replaces them on observation switch', async () => {
+  const payload = '<img src=x onerror="alert(1)"><script>bad()</script>'
+  const wrapper = renderRow({ ...relation, rawFields: { rdtime: 'original date', rddqrq: 'original expiry', zsrxm: payload, cz: payload } })
+  expect(wrapper.get('[data-testid="platform-related-raw"]').text()).toContain(payload)
+  expect(wrapper.findAll('img, script')).toHaveLength(0)
+  await open(wrapper, '技术出处与完整原文')
+  expect(wrapper.get('[data-testid="platform-related-provenance"]').text()).toContain('rdtime')
+  expect(wrapper.get('[data-testid="platform-related-provenance"]').text()).toContain('original date')
+  await wrapper.setProps({ relation: { ...relation, id: 31, query: { ...query, interface: 'recognized_list' }, rawFields: { sqsj: '' } } })
+  expect(wrapper.text()).not.toMatch(/original date|original expiry|bad\(\)|未核姓名/)
+  expect(wrapper.get('[data-testid="platform-related-raw"]').text()).toContain('zsrxm（含义待核）本条未包含此键')
+  expect(wrapper.get('[data-testid="platform-business-facts"]').text()).not.toContain('申报时间')
+})
+
+
+it.each([
+  [{}, 'missing', ''], [{ rdtime: null }, 'null', 'null'], [{ rdtime: '  ' }, 'blank', '"  "'],
+  [{ rdtime: 'not-a-date' }, 'value', 'not-a-date'], [{ rdtime: false }, 'value', 'false'], [{ rdtime: 0 }, 'value', '0'],
+])('preserves record time raw state without date conversion %#', (raw, state, value) => {
+  expect(platformRelatedRawFields(raw)[0]).toEqual({ key: 'rdtime', state, value })
+  const shown = platformPresentationFields(raw).find(field => field.key === 'rdtime')
+  if (state === 'value') expect(shown).toEqual({ key: 'rdtime', label: '平台记录时间（含义待核）', value })
+  else expect(shown).toBeUndefined()
+})
+
+it('keeps default source raw fields separate from the opt in business labels', () => {
+  const wrapper = mount(SourceRowDetail, { props: { relation: { ...relation, rawFields: { rdtime: 'unchanged', zsrxm: false, cz: 0 } } }, global: { stubs } })
+  mounted.push(wrapper)
+  expect(wrapper.text()).toContain('平台原字段（rdtime）unchanged')
+  expect(wrapper.text()).toContain('平台原字段（zsrxm）false')
+  expect(wrapper.text()).toContain('平台原字段（cz）0')
+  expect(wrapper.text()).not.toContain('平台记录时间（含义待核）')
+  expect(wrapper.find('[data-testid="platform-related-raw"]').exists()).toBe(false)
 })
