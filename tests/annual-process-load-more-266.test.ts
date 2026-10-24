@@ -385,3 +385,168 @@ it('ignores a superseded sweep while the newest readback refreshes all displayed
   expect(wrapper.get('[data-annual-summary]').text()).toContain('已有最终结果')
   expect(posts(fetch)).toHaveLength(0)
 })
+
+it('retains the explicitly requested append target after a later displayed-batch failure', async () => {
+  let appendFails = false, displayedFails = false
+  const fetch = readonlyPages((id, number) => {
+    if (appendFails && number === 3) return Promise.reject(new Error('synthetic append unavailable'))
+    if (displayedFails && number === 1) return Promise.reject(new Error('synthetic displayed batch unavailable'))
+    return Promise.resolve(page(id, 'scope-a', number))
+  })
+  mountReview(7); await flushPromises(); await click('加载更多过程')
+  expect(ids()).toHaveLength(100)
+  appendFails = true; await click('加载更多过程')
+  expect(ids()).toHaveLength(100)
+  appendFails = false; displayedFails = true
+  const { refreshCorrespondenceViews } = await import('../composables/useCorrespondenceReadback')
+  const sweepStart = reads(fetch).length
+  await expect(refreshCorrespondenceViews()).rejects.toThrow('readback_failed'); await flushPromises()
+  expect(reads(fetch).slice(sweepStart).map(read => read.page)).toEqual([3, 1])
+  expect(ids()).toHaveLength(100)
+  expect(wrapper.get('[data-annual-summary]').text()).toContain('尚无已确认最终结果')
+  displayedFails = false
+  const retryStart = reads(fetch).length
+  await wrapper.get('[data-testid="annual-process-review"] [data-testid="table-retry"]').trigger('click'); await flushPromises()
+  console.log(JSON.stringify({ allReads: reads(fetch), retryPages: reads(fetch).slice(retryStart), displayed: ids().length, postCount: posts(fetch).length, summary: wrapper.get('[data-annual-summary]').text() }))
+  expect(posts(fetch)).toHaveLength(0)
+  expect(ids(), 'The explicitly requested third batch was never published and must remain in the atomic recovery plan').toHaveLength(121)
+  expect(reads(fetch).slice(retryStart).map(read => read.page)).toEqual([1, 2, 3])
+})
+
+it('R2 E08 failed append remains in the recovery plan after a later displayed page fails', async () => {
+  let stage: 'initial' | 'append-fails' | 'sweep-fails' | 'recover' = 'initial'
+  const fetch = readonlyPages((id, number) => {
+    if (stage === 'append-fails' && number === 2) return Promise.reject(new Error('explicit append unavailable'))
+    if (stage === 'sweep-fails' && number === 1) return Promise.reject(new Error('displayed page unavailable after append read'))
+    return Promise.resolve(page(id, 'scope-a', number))
+  })
+  mountReview(7); await flushPromises(); stage = 'append-fails'; await click('加载更多过程')
+  expect(ids()).toHaveLength(50); expectNoAnnualFinal()
+  stage = 'sweep-fails'; const firstSweep = reads(fetch).length
+  await expect(sharedReadback()).rejects.toThrow('readback_failed'); await flushPromises()
+  expect(reads(fetch).slice(firstSweep).map(v => v.page)).toEqual([2, 1])
+  expect(ids()).toHaveLength(50); expectNoAnnualFinal()
+  stage = 'recover'; const retryStart = reads(fetch).length
+  await retryAnnualRead()
+  const actual = { pages: reads(fetch).slice(retryStart).map(v => v.page), loaded: ids().length, summary: wrapper.get('[data-annual-summary]').text() }
+  console.log('E08 actual recovery', JSON.stringify(actual))
+  expect(actual.pages, 'Retry failed displayed page first, then retain the previously explicit append target in the complete atomic plan').toEqual([1, 2])
+  expect(actual.loaded).toBe(100)
+  expect(posts(fetch)).toHaveLength(0)
+})
+
+const expectNoAnnualFinal = () => expect(wrapper.get('[data-annual-summary]').text()).toContain('尚无已确认最终结果')
+const retryAnnualRead = async () => { await wrapper.get('[data-testid="annual-process-review"] [data-testid="table-retry"]').trigger('click'); await flushPromises() }
+
+it.each([
+  { loaded: 50, failure: 2, position: 'first' },
+  { loaded: 50, failure: 1, position: 'last' },
+  { loaded: 100, failure: 3, position: 'first' },
+  { loaded: 100, failure: 1, position: 'middle' },
+  { loaded: 100, failure: 2, position: 'last' },
+])('preserves the unpublished append from $loaded rows when recovery fails at its $position page', async ({ loaded, failure }) => {
+  const tail = loaded / 50 + 1
+  let stage: 'initial' | 'append' | 'sweep' | 'recover' = 'initial'
+  const fetch = readonlyPages((id, number) => (stage === 'append' && number === tail || stage === 'sweep' && number === failure)
+    ? Promise.reject(new Error('planned failure')) : Promise.resolve(observationPage(id, 'scope-a', number, stage === 'initial' ? 2 : 3)))
+  mountReview(7); await flushPromises()
+  if (loaded === 100) await click('加载更多过程')
+  stage = 'append'; await click('加载更多过程')
+  expect(ids()).toHaveLength(loaded); expectNoAnnualFinal()
+  stage = 'sweep'
+  const before = reads(fetch).length
+  await expect(sharedReadback()).rejects.toThrow('readback_failed'); await flushPromises()
+  const order = [tail, ...Array.from({ length: tail - 1 }, (_, i) => i + 1)]
+  expect(reads(fetch).slice(before).map(read => read.page)).toEqual(order.slice(0, order.indexOf(failure) + 1))
+  expect(ids()).toHaveLength(loaded); expect(firstObservation().revision).toBe(2); expectNoAnnualFinal()
+  stage = 'recover'
+  const retryStart = reads(fetch).length
+  await retryAnnualRead()
+  expect(reads(fetch).slice(retryStart).map(read => read.page)).toEqual([failure, ...Array.from({ length: tail }, (_, i) => i + 1).filter(page => page !== failure)])
+  expect(ids()).toHaveLength(Math.min(tail * 50, 121)); expect(firstObservation().revision).toBe(3)
+  expect(reads(fetch).every(read => read.page <= tail && read.pageSize === 50)).toBe(true)
+  expect(posts(fetch)).toHaveLength(0)
+})
+
+it('keeps the complete unpublished plan through failures that move between first middle and last pages', async () => {
+  let failure: number | null = null, changed = false
+  const fetch = readonlyPages((id, number) => number === failure ? Promise.reject(new Error('moving failure cursor')) : Promise.resolve(observationPage(id, 'scope-a', number, changed ? 3 : 2)))
+  mountReview(7); await flushPromises(); await click('加载更多过程')
+  failure = 3; await click('加载更多过程'); changed = true
+  failure = 1; await expect(sharedReadback()).rejects.toThrow('readback_failed'); await flushPromises()
+  let priorFailure = 1
+  for (const nextFailure of [3, 1, 2]) {
+    failure = nextFailure
+    const before = reads(fetch).length
+    await retryAnnualRead()
+    const order = [priorFailure, ...[1, 2, 3].filter(page => page !== priorFailure)]
+    expect(reads(fetch).slice(before).map(read => read.page)).toEqual(order.slice(0, order.indexOf(nextFailure) + 1))
+    expect(ids()).toHaveLength(100); expect(firstObservation().revision).toBe(2); expectNoAnnualFinal()
+    priorFailure = nextFailure
+  }
+  failure = null
+  const before = reads(fetch).length
+  await retryAnnualRead()
+  expect(reads(fetch).slice(before).map(read => read.page)).toEqual([2, 1, 3])
+  expect(ids()).toHaveLength(121); expect(firstObservation().revision).toBe(3)
+  expect(posts(fetch)).toHaveLength(0)
+})
+
+it.each([50, 100])('replaces a pending append from %i rows with an explicit reset and ignores its late sweep', async loaded => {
+  const tail = loaded / 50 + 1, late = deferred<EventAnnualProcessPage>()
+  let stage: 'initial' | 'append' | 'sweep' | 'reset' = 'initial'
+  const fetch = readonlyPages((id, number) => stage === 'append' && number === tail ? Promise.reject(new Error('append failed'))
+    : stage === 'sweep' && number === tail ? late.promise : Promise.resolve(page(id, 'scope-a', number)))
+  mountReview(7); await flushPromises(); if (loaded === 100) await click('加载更多过程')
+  stage = 'append'; await click('加载更多过程'); stage = 'sweep'
+  const abandoned = sharedReadback().catch(error => error.message); await flushPromises()
+  stage = 'reset'
+  wrapper.findComponent({ name: 'AnnualProcessReview' }).vm.$emit('refresh'); await flushPromises()
+  expect(ids()).toHaveLength(50)
+  late.resolve(page(7, 'scope-a', tail)); expect(await abandoned).toBe('readback_failed'); await flushPromises()
+  const before = reads(fetch).length
+  await sharedReadback(); await flushPromises()
+  expect(reads(fetch).slice(before)).toEqual([{ page: 1, pageSize: 50 }])
+  expect(ids()).toHaveLength(50)
+  expect(wrapper.get('[data-annual-summary]').text()).toContain('已有最终结果')
+})
+
+it.each([50, 100])('restarts the source after a pending append from %i rows without retaining its old pages', async loaded => {
+  const tail = loaded / 50 + 1
+  let stage: 'initial' | 'append' | 'new-source' | 'recover' = 'initial'
+  const fetch = readonlyPages((id, number) => stage === 'append' && number === tail || stage === 'new-source' && number === 1
+    ? Promise.reject(new Error('append or new first batch unavailable')) : Promise.resolve(page(id, stage === 'recover' ? 'scope-c' : stage === 'new-source' ? 'scope-b' : 'scope-a', number)))
+  mountReview(7); await flushPromises(); if (loaded === 100) await click('加载更多过程')
+  stage = 'append'; await click('加载更多过程'); stage = 'new-source'
+  const before = reads(fetch).length
+  await expect(sharedReadback()).rejects.toThrow('readback_failed'); await flushPromises()
+  expect(reads(fetch).slice(before).map(read => read.page)).toEqual([tail, 1])
+  expect(ids()).toHaveLength(loaded); expectNoAnnualFinal()
+  stage = 'recover'
+  const retryStart = reads(fetch).length
+  await retryAnnualRead()
+  expect(reads(fetch).slice(retryStart)).toEqual([{ page: 1, pageSize: 50 }])
+  expect(ids()).toHaveLength(50)
+  expect(wrapper.findComponent(AnnualProcessTimeline).props('view').generation).toBe('scope-c')
+  const sharedStart = reads(fetch).length
+  await sharedReadback(); await flushPromises()
+  expect(reads(fetch).slice(sharedStart)).toEqual([{ page: 1, pageSize: 50 }])
+})
+
+it.each([50, 100])('cancels the old pending append from %i rows across A-B-A selection', async loaded => {
+  const tail = loaded / 50 + 1, late = deferred<EventAnnualProcessPage>()
+  let stage: 'initial' | 'append' | 'sweep' | 'new-selection' = 'initial'
+  const fetch = readonlyPages((id, number) => id === 7 && number === tail && stage === 'append' ? Promise.reject(new Error('old append failed'))
+    : id === 7 && number === tail && stage === 'sweep' ? late.promise : Promise.resolve(page(id, `scope-${id}`, number)))
+  mountReview(7); await flushPromises(); if (loaded === 100) await click('加载更多过程')
+  stage = 'append'; await click('加载更多过程'); stage = 'sweep'
+  const abandoned = sharedReadback().catch(error => error.message); await flushPromises()
+  stage = 'new-selection'; await open(8); await open(7)
+  late.resolve(page(7, 'scope-7', tail)); await abandoned; await flushPromises()
+  expect(ids()).toHaveLength(50)
+  const before = reads(fetch).length
+  await sharedReadback(); await flushPromises()
+  expect(reads(fetch).slice(before)).toEqual([{ page: 1, pageSize: 50 }])
+  expect(wrapper.findComponent(AnnualProcessTimeline).props('view').eventId).toBe(7)
+  expect(posts(fetch)).toHaveLength(0)
+})
