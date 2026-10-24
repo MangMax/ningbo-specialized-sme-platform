@@ -212,7 +212,7 @@ async function refreshConflict() {
           </section>
           <section class="min-w-0" aria-label="待核平台原行">
             <h3 class="mb-2 text-[13px] font-medium">待核平台原行</h3>
-            <SourceReader v-if="action !== 'correct' || target" :key="action === 'correct' ? target!.edge.relationId : edge.relationId" kind="relation" :id="action === 'correct' ? target!.edge.relationId : edge.relationId" :return-to="back" compact read-only />
+            <SourceReader v-if="action !== 'correct' || target" :key="action === 'correct' ? target!.edge.relationId : edge.relationId" kind="relation" :id="action === 'correct' ? target!.edge.relationId : edge.relationId" :return-to="back" presentation="business" compact read-only />
           </section>
         </div>
         <p v-if="conflicts" class="text-[13px] leading-5">待核依据：{{ conflicts }}</p>

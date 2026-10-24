@@ -269,5 +269,6 @@ it('keeps the only required basis field in the action area while preserving the 
   expect(footer.querySelectorAll('textarea')).toHaveLength(1)
   expect(footer.textContent).toContain('核对依据（必填）')
   expect(document.querySelector('[aria-label="待核平台原行"]')).not.toBeNull()
+  expect(wrapper.findComponent({ name: 'SourceReader' }).props('presentation')).toBe('business')
   expect(button('预检决定').disabled).toBe(true)
 })
