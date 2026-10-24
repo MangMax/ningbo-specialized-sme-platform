@@ -51,6 +51,38 @@ export function platformBusinessFields(raw: Record<string, unknown> | null | und
     .map(([key]) => ({ key, label: PLATFORM_BUSINESS_FIELDS[key] ?? '平台原字段', value: recognizedField(raw, key) }))
 }
 
+/** Business presentation is an opt-in, verified whitelist of this observation's raw fields.
+ * Do not fill gaps from another interface, observation, query conditions or collection time.
+ * rdtime is displayed without assigning a business date meaning; related raw states are separate.
+ */
+const PRESENTATION_FIELDS: Record<string, string> = {
+  qymc: '企业名称', tyshxydm: '统一社会信用代码', rdjb: '平台称号原值',
+  sblx: '申报类型', sqsj: '申报时间', cszt: '办理状态',
+  rdxx: '平台认定信息', rdsj: '平台认定时间（原值）', rdrq: '平台认定日期（原值）',
+  rdtime: '平台记录时间（含义待核）', rddqrq: '有效期（原值）', whpcyear: '维护年份', whpc: '维护批次', year: '平台年份（原值）',
+  szsfmc: '平台省市', szsmc: '平台城市', szqmc: '平台区县',
+  sshy: '所属行业', jtxflymc: '细分领域', zdcpmc: '主导产品',
+  qylx: '企业类型原值', sfty: '同意标记原值', zyzb: '主营占比原值',
+}
+export function platformPresentationFields(raw: Record<string, unknown> | null | undefined) {
+  return Object.entries(PRESENTATION_FIELDS).flatMap(([key, label]) => {
+    const value = raw?.[key]
+    if (!(typeof value === 'string' && value.trim() !== '' || typeof value === 'number' || typeof value === 'boolean')) return []
+    return [{ key, label, value: String(value) }]
+  })
+}
+
+/** Bounded keys under investigation, never inferred personnel roles or cross-observation values. */
+export function platformRelatedRawFields(raw: Record<string, unknown> | null | undefined) {
+  return ['rdtime', 'rddqrq', 'sqsj', 'zsrxm', 'cz'].map(key => {
+    if (!raw || !Object.hasOwn(raw, key)) return { key, state: 'missing' as const, value: '' }
+    const value = raw[key]
+    if (value === null) return { key, state: 'null' as const, value: 'null' }
+    if (typeof value === 'string' && value.trim() === '') return { key, state: 'blank' as const, value: JSON.stringify(value) }
+    return { key, state: 'value' as const, value: typeof value === 'string' ? value : JSON.stringify(value) ?? String(value) }
+  })
+}
+
 export const PLATFORM_HISTORY_CONFLICTS: Record<string, string> = {
   identity_conflict: '企业身份冲突', title_conflict: '称号冲突',
   correspondence_decision_conflict: '对应决定冲突', platform_key_conflict: '平台编号冲突',

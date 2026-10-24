@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SourceReader from '../components/record-correspondence/SourceReader.vue'
 
 const event = { id: 9, recordId: 2, eventType: 'award', year: 2022, batchSeq: 1, decidedYear: 2022, reviewOutcome: null,
@@ -16,6 +17,8 @@ function render(kind: 'event' | 'relation', id: number) {
   mounted.push(wrapper)
   return wrapper
 }
+// Source reading is tested with browser write capability disabled.
+beforeEach(() => vi.stubGlobal('useState', () => ref(false)))
 afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount(); vi.unstubAllGlobals() })
 
 describe('record source reader public interaction', () => {
@@ -78,4 +81,25 @@ describe('record source reader public interaction', () => {
     expect(wrapper.text()).toContain('原认定 2021 年 · 复核结论 2024 年 · 复核不通过')
     expect(wrapper.text()).not.toContain('failed')
   })
+})
+
+it('only folds raw fields for the explicit compact reader and keeps them accessible through disclosure', async () => {
+  vi.stubGlobal('$fetch', vi.fn(async () => ({ source: { ...relation, rawFields: { retained: '完整原字段仍可查' } }, correspondences: [] })))
+  const wrapper = render('relation', 30)
+  await flushPromises()
+  expect(wrapper.text()).toContain('完整原字段仍可查')
+  await wrapper.setProps({ compact: true }); await flushPromises()
+  expect(wrapper.text()).toContain('合成企业')
+  expect(wrapper.text()).toContain('退回')
+  expect(wrapper.text()).not.toContain('完整原字段仍可查')
+  await wrapper.findAll('button').find(b => b.text() === '完整原始字段与查询出处')!.trigger('click'); await flushPromises()
+  expect(wrapper.text()).toContain('完整原字段仍可查')
+})
+
+it('keeps related source links visible without nested decision controls in a read only decision reader', async () => {
+  vi.stubGlobal('$fetch', vi.fn(async () => ({ source: relation, correspondences: [edge(1, 'event_process', 'confirmed')] })))
+  const wrapper = render('relation', 30)
+  await wrapper.setProps({ readOnly: true, compact: true }); await flushPromises()
+  expect(wrapper.find('a').exists()).toBe(true)
+  expect(wrapper.find('[data-testid="event-correspondence-decision"]').exists()).toBe(false)
 })

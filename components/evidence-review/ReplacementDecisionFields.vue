@@ -44,7 +44,7 @@ const measureCode = computed({
         </SelectContent>
       </Select>
     </label>
-    <label class="flex flex-col gap-1 text-[13px]">原因说明<Textarea v-model="draft.reasonNote" aria-label="原因说明" maxlength="4000" /></label>
+    <label class="flex flex-col gap-1 text-[13px]">{{ draft.status === 'confirmed_no_diff' ? '无差异补充说明（可选）' : '原因说明' }}<Textarea v-model="draft.reasonNote" :aria-label="draft.status === 'confirmed_no_diff' ? '无差异补充说明（可选）' : '原因说明'" maxlength="4000" /></label>
     <label class="flex flex-col gap-1 text-[13px]">
       更正措施
       <Select v-model="measureCode">
@@ -58,7 +58,7 @@ const measureCode = computed({
       </Select>
     </label>
     <p v-if="draft.reasonCode === 'pending_review'" class="text-muted-foreground text-[13px]">待审核原因须明确选择“保留正式公布历史并跟进审核”措施。</p>
-    <p v-if="draft.status === 'confirmed_no_diff'" class="text-muted-foreground text-[13px]">确认无差异须明确选择“无需措施”；不填写原因。</p>
+    <p v-if="draft.status === 'confirmed_no_diff'" class="text-muted-foreground text-[13px]">确认无差异须明确选择“无需措施”；无需选择差异原因，可填写无差异补充说明。</p>
     <label class="flex flex-col gap-1 text-[13px]">措施说明<Textarea v-model="draft.measureNote" aria-label="措施说明" maxlength="4000" /></label>
     <label class="flex flex-col gap-1 text-[13px]">查询证据 ID（可选）<Input v-model="draft.evidenceQueryId" aria-label="查询证据 ID" inputmode="numeric" /></label>
     <label class="flex flex-col gap-1 text-[13px]">平台原行 ID（可选）<Input v-model="draft.evidenceRelationId" aria-label="平台原行 ID" inputmode="numeric" /></label>

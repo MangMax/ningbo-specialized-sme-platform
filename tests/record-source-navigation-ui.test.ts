@@ -23,6 +23,7 @@ const preventNativeNavigation = (event: Event) => event.preventDefault()
 let wrapper: VueWrapper | undefined
 let originalAnimate: PropertyDescriptor | undefined
 beforeEach(() => {
+  vi.stubGlobal('useState', () => ref(false))
   originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
   Reflect.deleteProperty(Element.prototype, 'animate')
   document.addEventListener('click', preventNativeNavigation)

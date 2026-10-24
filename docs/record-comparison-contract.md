@@ -85,6 +85,14 @@ requested metadata rows. This avoids walking archive-bearing table leaf pages
 for a deep OFFSET. Explicit-ID label hydration uses primary-key seeks. The index
 name is an existing schema dependency; #86 adds no schema or migration.
 
+## 正式来源目录（#211）
+
+目录以已存储的经信局 `award` / `review` 事件出处为准，按 **完整原路径** 去重。通知、培育、维护材料不能仅凭文件名进入正式目录。保留原路径、附件/名单段、序号及已记录页码；不从目录年份、文件名或序号推断事件事实。重复序号通过事件和出处行身份区分。
+
+原路径匹配 `source_document` 时沿用最小既有文档 ID 与显示元数据。尚无文档登记的路径使用负的首条 `record_evidence.id` 作为只读来源引用；正负空间分离，引用只用于本目录及 `officialSourceDocumentIds`，不是真实 `source_document` 外键，不能提交为覆盖证明。已有正 ID 的直接对比/覆盖证明读取保持兼容。目录恢复名称和翻页同样支持这类引用。出处被更正/移除后旧引用可能失效，调用方应刷新来源；本票不执行 #34 的出处更正。
+
+这是当前快照中的只读连接，无迁移、自动补录或业务写入。只读引用不承诺公告日期或覆盖范围，缺失值保持为空；设置截止时点时，无法证明公告日期的文件不伪造日期以取得资格。文件 HEAD 复用 GET 的根目录、扩展名及存在性规则，缺失文件显示不可用；非 PDF 与 PDF 页码待核分开显示。只有已记录的 PDF 页码可跳转。
+
 ## Scoped business grouping (#246, comparison consumer)
 
 The original observation comparison runs first, without removing or deduplicating

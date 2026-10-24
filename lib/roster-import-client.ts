@@ -458,6 +458,8 @@ export interface RosterImportSummary {
 }
 
 export interface RosterImportCommitResponse {
+  /** #214: durable candidate-task IDs for archived query scopes; does not imply candidate completion. */
+  candidateTaskIds?: string[]
   batchId: number
   status: 'committed' | 'failed'
   summary: RosterImportSummary

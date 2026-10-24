@@ -34,6 +34,12 @@ describe('record comparison client request', () => {
   })
 })
 
+it('restores read-only official evidence references without accepting negative query or proof IDs', () => {
+  const selection = comparisonSelectionFromQuery({ queryIds: '7', exportBatchIds: '', officialSourceDocumentIds: '-9,3', proofIds: '-2' })
+  expect(selection).toEqual({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [-9, 3], proofIds: [] })
+  expect(comparisonSelectionFromQuery(comparisonSelectionQuery(selection))).toEqual(selection)
+  expect(comparisonSelectionFromQuery({ queryIds: '-7', officialSourceDocumentIds: '0' })).toMatchObject({ queryIds: [], officialSourceDocumentIds: [] })
+})
 
 it('roundtrips independent business pagination without changing event pagination or source selection', () => {
   const state = comparisonRouteFromQuery({ queryIds: '7', officialSourceDocumentIds: '3', page: '4', pageSize: '50', businessPage: '2', businessPageSize: '1' })

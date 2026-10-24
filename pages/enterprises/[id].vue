@@ -14,6 +14,7 @@ import {
 } from '~~/lib/roster/review-display'
 import { sourceReturnTarget } from '~~/lib/roster/correspondence-view'
 import RecordEventRow from '@/components/record-correspondence/RecordEventRow.vue'
+import EventCorrespondenceReview from '@/components/record-correspondence/EventCorrespondenceReview.vue'
 import TableFailureState from '@/components/TableFailureState.vue'
 import AssessmentStatusBadge from '@/components/evidence-review/AssessmentStatusBadge.vue'
 import EnterpriseExplanations from '@/components/evidence-review/EnterpriseExplanations.vue'
@@ -224,6 +225,10 @@ const titleInfo = computed(() => {
 })
 
 const focusedEventId = computed(() => typeof route.query.eventId === 'string' && /^\d+$/.test(route.query.eventId) ? Number(route.query.eventId) : null)
+const reviewEventId = computed(() => typeof route.query.reviewEventId === 'string' && /^[1-9]\d*$/.test(route.query.reviewEventId) ? Number(route.query.reviewEventId) : null)
+function selectReviewEvent(eventId: number | null) {
+  void router.replace({ path: route.path, query: { ...route.query, tab: 'review', reviewEventId: eventId == null ? undefined : String(eventId) } })
+}
 
 /* ------------------------------------------------------------------ *
  * 两个承载页：认定信息与记录（默认）/ 称号核对。
@@ -642,6 +647,11 @@ function openPreview(e: Evidence) {
         </TabsContent>
 
         <TabsContent value="review" class="flex min-w-0 flex-col gap-5">
+          <EventCorrespondenceReview
+            v-if="tab === 'review'" :key="detail.id" :enterprise-id="detail.id" :events="ledgerEvents"
+            :event-id="reviewEventId" :back="route.fullPath" @select="selectReviewEvent"
+            @preview="openPreview" @event-navigate="arriveAtEvent" @page-open="rememberPagePreviewReturn"
+          />
           <!-- 待处理是核对页的入口摘要，不是企业结论卡；不使用彩色单侧边线。 -->
           <section v-if="pendingRows.length || pendingError" class="bg-card overflow-hidden rounded-lg border" aria-label="待处理证据变化">
             <header class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b px-4 py-3">

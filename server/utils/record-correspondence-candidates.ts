@@ -1,4 +1,4 @@
-import { asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
@@ -15,7 +15,7 @@ function batchesOf(ids: number[]) {
   const sorted = [...new Set(ids)].sort((a, b) => a - b)
   return Array.from({ length: Math.ceil(sorted.length / 400) }, (_, i) => sorted.slice(i * 400, (i + 1) * 400))
 }
-export function generateCandidates(db: Db, input: CandidateInput) {
+export function generateCandidates(db: Db, input: CandidateInput, selection?: { relationIds: number[]; total: number }) {
   const event = input.eventId ? db.select({ event: schema.recordEvent, record: schema.record }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).where(eq(schema.recordEvent.id, input.eventId)).get() : null
   if (input.eventId && (!event || event.record.source !== 'jxj')) return null
   const enterpriseId = event?.record.enterpriseId ?? input.enterpriseId!
@@ -37,10 +37,10 @@ export function generateCandidates(db: Db, input: CandidateInput) {
     const path = sql.raw(`'$.${key}'`) // closed allowlist, never request input
     return sql<string | null>`case when json_valid(${r.rawFields}) then case when json_type(${r.rawFields}, ${path}) = 'text' then json_extract(${r.rawFields}, ${path}) else null end else null end`
   }
-  const relations = batchesOf(queries.filter(q => ['success', 'partial'].includes(q.status)).map(q => q.id)).flatMap(ids => db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, enterpriseId: r.enterpriseId, usccRaw: r.usccRaw, nameRaw: r.nameRaw, matchBasis: r.matchBasis, verificationStatus: r.verificationStatus, rawUscc: rawScalar('tyshxydm'), rawRdjb: rawScalar('rdjb'), declareKind: r.declareKind, year: r.year, batch: r.batch, awardBatchLabel: r.awardBatchLabel, status: r.status, appliedAt: r.appliedAt, province: r.province, rawFields: processRaw }).from(r).where(inArray(r.queryId, ids)).orderBy(asc(r.queryId), asc(r.sequenceNo)).all())
+  const relations = batchesOf(queries.filter(q => ['success', 'partial'].includes(q.status)).map(q => q.id)).flatMap(ids => db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, enterpriseId: r.enterpriseId, usccRaw: r.usccRaw, nameRaw: r.nameRaw, matchBasis: r.matchBasis, verificationStatus: r.verificationStatus, rawUscc: rawScalar('tyshxydm'), rawRdjb: rawScalar('rdjb'), declareKind: r.declareKind, year: r.year, batch: r.batch, awardBatchLabel: r.awardBatchLabel, status: r.status, appliedAt: r.appliedAt, province: r.province, rawFields: processRaw }).from(r).where(and(inArray(r.queryId, ids), selection ? inArray(r.id, selection.relationIds) : undefined)).orderBy(asc(r.queryId), asc(r.sequenceNo)).all())
     .map(row => normalizePlatformRelation(queriesById.get(row.queryId)!.interface, row))
   const exports = batchesOf(event && identity ? batches.filter(b => b.importStatus === 'imported' && b.titleCode === titleCode).map(b => b.id) : []).flatMap(ids => db.select({ id: x.id, batchId: x.batchId, sourceRowNo: x.sourceRowNo, usccRaw: x.usccRaw }).from(x).where(inArray(x.batchId, ids)).orderBy(asc(x.batchId), asc(x.sourceRowNo)).all())
-  const relevantRelations = relations.filter(r => identity && normalizeUscc(r.usccRaw) === identity && (!r.enterpriseId || r.enterpriseId === enterpriseId))
+  const relevantRelations = relations.filter(r => (!r.enterpriseId || r.enterpriseId === enterpriseId) && ((identity && normalizeUscc(r.usccRaw) === identity) || (selection && !normalizeUscc(r.usccRaw) && r.enterpriseId === enterpriseId && r.verificationStatus === 'confirmed')))
   const relevantExports = exports.filter(r => identity && normalizeUscc(r.usccRaw) === identity)
   const priors = batchesOf(relevantExports.map(r => r.id)).map(ids => inArray(c.exportRowId, ids))
     .flatMap(where => db.select({ id: c.id, eventId: c.eventId, type: c.type, role: c.role, relationId: c.relationId, exportRowId: c.exportRowId, revision: c.revision }).from(c).where(where).orderBy(asc(c.id)).all())
@@ -55,7 +55,7 @@ export function generateCandidates(db: Db, input: CandidateInput) {
     for (const relation of relationsByQuery.get(query.id) ?? []) {
       const rowTitle = query.interface === 'recognized_list' ? RDJB_TITLE_CODES[sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo).sourceRdjb ?? ''] ?? query.titleCode : query.titleCode ?? RDJB_TITLE_CODES[query.rdjb]
       const rowUscc = normalizeUscc(relation.usccRaw)
-      if (!identity || !rowUscc || identity !== rowUscc || rowTitle !== titleCode || (relation.enterpriseId && relation.enterpriseId !== enterpriseId)) continue
+      if (rowTitle !== titleCode) continue
       const edge = event ? { type: query.interface === 'recognized_list' ? 'event_recognized' : 'event_process', eventId: event.event.id, relationId: relation.id, role: query.interface === 'recognized_list' ? 'recognized_corrob' : 'context_only' } : query.interface === 'recognized_list' ? null : { type: 'later_process', enterpriseId, titleCode, relationId: relation.id, role: relation.declareKind === 'review' ? 'followup_review' : relation.declareKind === 'update' ? 'followup_update' : 'followup_apply' }
       if (!edge) continue
       const conflicts = [] as string[]
@@ -68,7 +68,13 @@ export function generateCandidates(db: Db, input: CandidateInput) {
       if (event?.event.year != null && relation.year != null && event.event.year !== relation.year) conflicts.push('year_mismatch')
       if (query.interface !== 'recognized_list' && !['apply', 'update', 'review'].includes(relation.declareKind ?? '')) conflicts.push('process_type_unknown')
       if (!relation.awardBatchLabel && !relation.batch) conflicts.push('platform_batch_missing')
-      const evidence = { identity: { enterpriseId, officialUsccRaw: event?.record.usccRaw ?? enterprise.usccNorm, rowUsccRaw: relation.usccRaw, rawUscc: relation.rawUscc }, title: { official: titleCode, row: rowTitle, rawRdjb: relation.rawRdjb }, process: { declareKind: relation.declareKind, appliedAt: relation.appliedAt, status: relation.status, normalizationConflicts: relation.normalizationConflicts }, temporal: { eventYear: event?.event.year ?? null, eventBatchSeq: event?.event.batchSeq ?? null, relationYear: relation.year, relationBatch: relation.batch, awardBatchLabel: relation.awardBatchLabel }, source: { queryId: query.id, relationId: relation.id, sequenceNo: relation.sequenceNo, queriedAt: query.queriedAt, status: query.status } }
+      if (selection && event && relation.declareKind && ((event.event.eventType === 'award' && relation.declareKind !== 'apply') || (event.event.eventType === 'review' && relation.declareKind !== 'review'))) conflicts.push('process_type_mismatch')
+      if (selection && event && relation.appliedAt) {
+        const decisionYear = event.event.decidedYear ?? (event.event.eventType === 'award' ? event.event.year : null)
+        if (decisionYear && Number(relation.appliedAt.slice(0, 4)) > decisionYear) conflicts.push('application_after_decision')
+      }
+      if (selection && event?.event.batchSeq != null && relation.batch && /^\d{4}-\d+$/.test(relation.batch) && Number(relation.batch.split('-')[1]) !== event.event.batchSeq) conflicts.push('batch_mismatch')
+      const evidence = { identity: { enterpriseId, officialUsccRaw: event?.record.usccRaw ?? enterprise.usccNorm, rowUsccRaw: relation.usccRaw, rawUscc: relation.rawUscc }, title: { official: titleCode, row: rowTitle, rawRdjb: relation.rawRdjb }, process: { eventType: event?.event.eventType ?? null, declareKind: relation.declareKind, appliedAt: relation.appliedAt, status: relation.status, normalizationConflicts: relation.normalizationConflicts }, temporal: { eventYear: event?.event.year ?? null, eventBatchSeq: event?.event.batchSeq ?? null, relationYear: relation.year, relationBatch: relation.batch, awardBatchLabel: relation.awardBatchLabel }, source: { interface: query.interface, ...sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo), queryId: query.id, relationId: relation.id, sequenceNo: relation.sequenceNo, queriedAt: query.queriedAt, status: query.status } }
       platformRows.set(relation.id, { edge, status: 'candidate', ruleId: 'archived-row-exact-identity-title', ruleVersion: input.ruleVersion, evidence })
       observations.push({ relationId: relation.id, queryId: query.id, sequenceNo: relation.sequenceNo, interface: query.interface, relationKey: relation.relationKey, queriedAt: query.queriedAt, queryStatus: query.status, queryKey: query.queryKey, rdjb: query.rdjb, queryTitleCode: query.titleCode, titleCode: rowTitle, enterpriseId: relation.enterpriseId, usccRaw: relation.usccRaw, nameRaw: relation.nameRaw, verificationStatus: relation.verificationStatus, matchBasis: relation.matchBasis, target: { eventId: event?.event.id ?? null, enterpriseId, titleCode, type: edge.type, role: edge.role }, evidence, conflicts })
     }
@@ -76,8 +82,9 @@ export function generateCandidates(db: Db, input: CandidateInput) {
   // Every original business filter above runs before canonical metadata/decision reads.
   for (const group of readPlatformBusinessGroups(db, observations)) {
     const representative = group.observationRefs.find(o => o.relationId === group.representativeRelationId)!
-    const prior = representative.existingCorrespondences.find(p => p.eventId === representative.target.eventId && p.enterpriseId === enterpriseId && p.titleCode === titleCode && p.type === representative.target.type && p.role === representative.target.role)
-    rows.push({ ...platformRows.get(group.representativeRelationId)!, ...group, existingCorrespondenceId: prior?.id ?? null, revision: prior?.revision ?? null })
+    const decisions = representative.existingCorrespondences.filter(p => p.eventId === representative.target.eventId && p.enterpriseId === enterpriseId && p.titleCode === titleCode && p.type === representative.target.type)
+    const prior = decisions.find(p => p.role === representative.target.role) ?? (selection ? decisions[0] : undefined)
+    rows.push({ ...platformRows.get(group.representativeRelationId)!, ...group, existingCorrespondenceId: prior?.id ?? null, revision: prior?.revision ?? null, existingStatus: prior?.status ?? null, recommendation: prior ? 'existing_decision' : 'candidate' })
   }
   for (const batch of batches) {
     if (!event || batch.importStatus !== 'imported' || batch.titleCode !== titleCode || !identity) continue
@@ -89,6 +96,6 @@ export function generateCandidates(db: Db, input: CandidateInput) {
     }
   }
   const relationCandidates = rows.filter(row => (row.edge as { type: string }).type !== 'event_export_context')
-  if (relationCandidates.length > 1) for (const row of relationCandidates) (row.conflicts as string[]).push('multiple_candidate_rows')
+  if ((selection?.total ?? relationCandidates.length) > 1) for (const row of relationCandidates) (row.conflicts as string[]).push('multiple_candidate_rows')
   return { rows: rows.slice((input.page - 1) * input.pageSize, input.page * input.pageSize), total: rows.length, page: input.page, pageSize: input.pageSize, coverage: queries.map(({ collectionEvidence, ...query }) => ({ ...query, collectionEvidence: safeCollectionEvidence(collectionEvidence) })), exportBatches: batches.map(({ id, titleCode, year, collectedOn, sha256 }) => ({ id, titleCode, year, collectedOn, sha256 })) }
 }
