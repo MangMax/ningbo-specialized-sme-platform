@@ -1,4 +1,6 @@
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
+import { z } from 'zod'
+import { importItemsReadSchema, officialReadQuery, type ImportItemsRead } from './official-evidence-read'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
 import { importReceiptRedactor } from './import-receipt-redaction'
@@ -6,14 +8,14 @@ import { importReceiptRedactor } from './import-receipt-redaction'
 type Db = BetterSQLite3Database<typeof schema>
 export type ImportReceiptAction = 'get' | 'items' | 'history' | 'request'
 export class ImportReceiptError extends Error {
-  constructor(readonly statusCode: number, readonly code: string, message: string) { super(message) }
+  constructor(readonly statusCode: number, readonly code: string, message: string, readonly requiredBytes?: number) { super(message) }
 }
 /** Preserve the REST domain error codes inside MCP's tool-error envelope. */
 export function importReceiptMcpResult<T>(run: () => T) {
   try { return run() }
   catch (error) {
     if (!(error instanceof ImportReceiptError)) throw error
-    return { isError: true, structuredContent: { error: { code: error.code, message: error.message } } }
+    return { isError: true, structuredContent: { error: { code: error.code, message: error.message, ...(error.requiredBytes===undefined?{}:{requiredBytes:error.requiredBytes}) } } }
   }
 }
 /** Preserve the same tool-error envelope for isolated asynchronous execution. */
@@ -21,7 +23,7 @@ export async function asyncImportReceiptMcpResult<T>(run: () => Promise<T>) {
   try { return await run() }
   catch (error) {
     if (!(error instanceof ImportReceiptError)) throw error
-    return { isError: true, structuredContent: { error: { code: error.code, message: error.message } } }
+    return { isError: true, structuredContent: { error: { code: error.code, message: error.message, ...(error.requiredBytes===undefined?{}:{requiredBytes:error.requiredBytes}) } } }
   }
 }
 const invalid = (message: string): never => { throw new ImportReceiptError(400, 'invalid_query', message) }
@@ -41,6 +43,12 @@ interface ReceiptRow {
 }
 /** Exact SQL projections: neither default reads nor pagination load whole raw blobs into JS. */
 export function readImportReceipt(db: Db, action: ImportReceiptAction, args: Record<string, unknown>) {
+  if(action==='items' && args.projection!==undefined) {
+    const parsed=importItemsReadSchema.safeParse(officialReadQuery(args))
+    if(!parsed.success) invalid('Invalid exact merge snapshot selector')
+    try { return db.transaction(()=>readMergeSnapshotProjection(db,parsed.data)) }
+    catch(error) {if(error instanceof ImportReceiptError) throw error; throw new ImportReceiptError(500,'internal_error','Exact snapshot read failed')}
+  }
   const redact = importReceiptRedactor(db)
   return db.transaction(() => redact(readImportReceiptSnapshot(db, action, args)))
 }
@@ -89,4 +97,89 @@ function readImportReceiptSnapshot(db: Db, action: ImportReceiptAction, args: Re
   const items = row.receiptId === null ? sql`(SELECT item_results FROM import_batch WHERE id = ${row.batchId})` : sql`(SELECT item_results FROM import_receipt WHERE id = ${row.receiptId})`
   const rows = db.all<{ index: number; ok: number; kind: string; ref: string; errorCode: string | null; errorField: string | null }>(sql`SELECT CAST(key AS INTEGER) AS "index", json_extract(value, '$.ok') AS ok, substr(json_extract(value, '$.kind'), 1, 128) AS kind, substr(json_extract(value, '$.ref'), 1, 256) AS ref, substr(json_extract(value, '$.error.code'), 1, 128) AS errorCode, substr(json_extract(value, '$.error.field'), 1, 128) AS errorField FROM json_each(${items}) ORDER BY CAST(key AS INTEGER) LIMIT ${pageSize} OFFSET ${offset}`)
   return { batchId: row.batchId, receiptId: row.receiptId, status: row.status, page, pageSize, total: row.itemCount, rows: rows.map(item => ({ ...item, ok: !!item.ok })) }
+}
+
+const cursorSchema=z.strictObject({source:z.enum(['private_batch','redacted_receipt']),sourceId:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),itemIndex:z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1),oldRecordId:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),afterIndex:z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1)})
+/** C owns only this exact historical selector. JSON source/item/fold CTEs never leave SQLite. */
+function readMergeSnapshotProjection(db:Db,args:ImportItemsRead) {
+  const source=args.source!,sourceId=(source==='private_batch'?args.batchId:args.receiptId)!,itemIndex=args.itemIndex!,oldRecordId=args.oldRecordId!
+  const binding={source,sourceId,itemIndex,oldRecordId},maxBytes=args.maxBytes??16384,pageSize=args.pageSize??20
+  let afterIndex=-1
+  if(args.cursor!==undefined) {
+    try {
+      if(!/^[A-Za-z0-9_-]+$/.test(args.cursor)) invalid('Invalid bound event cursor')
+      const decoded=Buffer.from(args.cursor,'base64url')
+      if(decoded.toString('base64url')!==args.cursor) invalid('Invalid bound event cursor')
+      const cursor=cursorSchema.parse(JSON.parse(decoded.toString('utf8')))
+      if(cursor.source!==source || cursor.sourceId!==sourceId || cursor.itemIndex!==itemIndex || cursor.oldRecordId!==oldRecordId) invalid('Event cursor does not match exact source selector')
+      afterIndex=cursor.afterIndex
+    } catch { invalid('Invalid or mismatched event cursor') }
+  }
+  const nextCursor=Buffer.from(JSON.stringify({...binding,afterIndex:afterIndex+pageSize})).toString('base64url')
+  const sourceQuery=source==='private_batch'
+    ? sql`SELECT b.id AS batch_id,NULL AS receipt_id,b.status,b.status AS batch_status,b.source_kind,CASE WHEN json_valid(b.item_results) THEN b.item_results ELSE 'null' END AS items FROM import_batch b WHERE b.id=${sourceId}`
+    : sql`SELECT b.id AS batch_id,r.id AS receipt_id,r.status,b.status AS batch_status,b.source_kind,CASE WHEN json_valid(r.item_results) THEN r.item_results ELSE 'null' END AS items FROM import_receipt r JOIN import_batch b ON b.id=r.batch_id WHERE r.id=${sourceId}`
+  const itemPath=`$[${itemIndex}]`
+  const cte=sql`WITH source_row AS (${sourceQuery}),selected_json AS (
+    SELECT *,json_type(items,${itemPath}) AS item_type,CASE WHEN json_type(items,${itemPath})='object' THEN json_extract(items,${itemPath}) ELSE '{}' END AS item FROM source_row
+  ), selected_lineage AS (
+    SELECT *,CASE WHEN json_type(item,'$.detail.lineage')='object' THEN json_extract(item,'$.detail.lineage') ELSE '{}' END AS lineage FROM selected_json
+  ), folds AS (
+    SELECT CASE WHEN f.type='object' THEN f.value ELSE '{}' END AS fold FROM selected_lineage s,
+      json_each(CASE WHEN json_type(s.lineage,'$.recordsFolded')='array' THEN json_extract(s.lineage,'$.recordsFolded') ELSE '[]' END) f
+    WHERE json_extract(CASE WHEN f.type='object' THEN f.value ELSE '{}' END,'$.fromRecordId')=${oldRecordId} LIMIT 2
+  ), selected_fold AS (
+    SELECT s.*,f.fold,CASE WHEN json_type(f.fold,'$.fromRecordSnapshot')='object' THEN json_extract(f.fold,'$.fromRecordSnapshot') ELSE '{}' END AS snapshot FROM selected_lineage s LEFT JOIN folds f ON 1
+  )`
+  const positive=(json:SQL,path:string)=>sql`(json_type(${json},${path})='integer' AND json_extract(${json},${path}) BETWEEN 1 AND 9007199254740991)`
+  const fold=sql`fold`,lineage=sql`lineage`,snapshot=sql`snapshot`
+  const snapshotTexts=['titleCode','source','nameRaw','usccRaw','district']
+  const nullableTexts=['nameRaw','usccRaw','district']
+  const fieldTypes=sql.join(snapshotTexts.map(name=>sql`json_type(snapshot,${'$.'+name}) ${sql.raw(nullableTexts.includes(name)?"IN ('text','null')":"='text'")}`),sql` AND `)
+  const fieldLengths=sql.join(snapshotTexts.map(name=>sql`(json_type(snapshot,${'$.'+name})='null' OR (length(json_extract(snapshot,${'$.'+name}))<=4000 AND length(CAST(json_extract(snapshot,${'$.'+name}) AS BLOB))<=16000))`),sql` AND `)
+  const qualityValid=sql`(json_type(snapshot,'$.qualityFlags')='null' OR (json_type(snapshot,'$.qualityFlags')='array' AND NOT EXISTS(SELECT 1 FROM json_each(snapshot,'$.qualityFlags') WHERE type<>'text')))`
+  const qualityLengths=sql`NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN json_type(snapshot,'$.qualityFlags')='array' THEN json_extract(snapshot,'$.qualityFlags') ELSE '[]' END) WHERE length(value)>4000 OR length(CAST(value AS BLOB))>16000)`
+  const status=sql`CASE
+    WHEN NOT coalesce(status='committed' AND batch_status='committed' AND source_kind IN ('announcement','platform_export','platform_archive','alias_evidence') AND item_type='object' AND json_type(item,'$.ok')='true' AND json_type(item,'$.kind')='text' AND json_extract(item,'$.kind')='merge'
+      AND ${positive(lineage,'$.fromEnterpriseId')} AND ${positive(lineage,'$.intoEnterpriseId')},0) THEN 'selector_mismatch'
+    WHEN json_type(lineage,'$.recordsFolded') IS NULL OR json_type(lineage,'$.recordsFolded')='null' THEN 'not_retained'
+    WHEN json_type(lineage,'$.recordsFolded')<>'array' THEN 'selector_mismatch'
+    WHEN (SELECT count(*) FROM folds)>1 THEN 'ambiguity'
+    WHEN fold IS NULL OR NOT coalesce(${positive(fold,'$.fromRecordId')} AND ${positive(fold,'$.intoRecordId')},0) THEN 'selector_mismatch'
+    WHEN json_type(fold,'$.fromRecordSnapshot') IS NULL OR json_type(fold,'$.fromRecordSnapshot')='null' THEN 'not_retained'
+    WHEN json_type(fold,'$.fromRecordSnapshot')<>'object' OR NOT coalesce(${positive(snapshot,'$.id')} AND ${positive(snapshot,'$.enterpriseId')},0)
+      OR json_extract(snapshot,'$.id')<>${oldRecordId} OR json_extract(snapshot,'$.enterpriseId')<>json_extract(lineage,'$.fromEnterpriseId')
+      OR NOT coalesce(${fieldTypes} AND ${qualityValid},0) OR json_extract(snapshot,'$.source') NOT IN ('jxj','miit') THEN 'selector_mismatch'
+    WHEN ${Number(args.projection==='snapshot')} AND NOT (${fieldLengths} AND ${qualityLengths}) THEN 'field_limit'
+    ELSE 'available' END`
+  const base=sql`'formatVersion',1,'source',${source},'batchId',batch_id,'receiptId',receipt_id,'itemIndex',CAST(${itemIndex} AS INTEGER),'oldRecordId',CAST(${oldRecordId} AS INTEGER),'storedRedacted',json(${source==='redacted_receipt'?'true':'false'}),'responseRedacted',json('true')`
+  const fixedSnapshot=sql`json_object('id',json_extract(snapshot,'$.id'),'enterpriseId',json_extract(snapshot,'$.enterpriseId'),'titleCode',json_extract(snapshot,'$.titleCode'),'source',json_extract(snapshot,'$.source'),'nameRaw',json_extract(snapshot,'$.nameRaw'),'usccRaw',json_extract(snapshot,'$.usccRaw'),'district',json_extract(snapshot,'$.district'),'qualityFlags',json(json_extract(snapshot,'$.qualityFlags')))`
+  const events=sql`CASE WHEN json_type(fold,'$.eventIds')='array' THEN json_extract(fold,'$.eventIds') ELSE '[]' END`
+  const eventStatus=sql`CASE WHEN availability<>'available' THEN availability
+    WHEN json_type(fold,'$.eventIds') IS NULL OR json_type(fold,'$.eventIds')='null' THEN 'not_retained'
+    WHEN json_type(fold,'$.eventIds')<>'array' OR EXISTS(SELECT 1 FROM json_each(${events}) WHERE type<>'integer' OR value<1 OR value>9007199254740991) THEN 'selector_mismatch'
+    WHEN ${afterIndex}>=json_array_length(${events}) THEN 'invalid_cursor'
+    ELSE 'available' END`
+  const eventPage=sql`(SELECT json_group_array(value) FROM (SELECT value FROM json_each(${events}) WHERE CAST(key AS INTEGER)>${afterIndex} ORDER BY CAST(key AS INTEGER) LIMIT ${pageSize}))`
+  const hasMore=sql`(SELECT count(*) FROM (SELECT key FROM json_each(${events}) WHERE CAST(key AS INTEGER)>${afterIndex} ORDER BY CAST(key AS INTEGER) LIMIT ${pageSize+1}))>${pageSize}`
+  const body=args.projection==='snapshot'
+    ? sql`CASE WHEN availability='available' THEN json_object(${base},'availability','available','origin',json_object('fromEnterpriseId',json_extract(lineage,'$.fromEnterpriseId'),'intoEnterpriseId',json_extract(lineage,'$.intoEnterpriseId'),'intoRecordId',json_extract(fold,'$.intoRecordId')),'snapshot',json(${fixedSnapshot})) ELSE json_object(${base},'availability',availability) END`
+    : sql`CASE WHEN availability='available' THEN json_object(${base},'availability','available','eventIds',json(${eventPage}),'nextCursor',CASE WHEN ${hasMore} THEN ${nextCursor} ELSE NULL END) ELSE json_object(${base},'availability',availability) END`
+  const result=db.get<{availability:string;requiredBytes:number;projection:string|null}>(sql`${cte}, checked AS (SELECT *,${status} AS availability FROM selected_fold LIMIT 1), ready AS (SELECT *,${args.projection==='eventIds'?eventStatus:sql`availability`} AS final_availability FROM checked), rendered AS (
+    SELECT availability,${body} AS body FROM (SELECT batch_id,receipt_id,lineage,fold,snapshot,final_availability AS availability FROM ready)
+  ) SELECT availability,length(CAST(body AS BLOB)) AS requiredBytes,
+    CASE WHEN availability IN ('available','not_retained') AND length(CAST(body AS BLOB))<=${maxBytes} THEN body ELSE NULL END AS projection FROM rendered`)
+  if(!result) throw new ImportReceiptError(404,'missing','Exact import source not found')
+  if(result.availability==='invalid_cursor') invalid('Event cursor exceeds retained array')
+  if(['selector_mismatch','ambiguity'].includes(result.availability)) throw new ImportReceiptError(409,result.availability,'Exact merge selector rejected')
+  if(result.availability==='field_limit') throw new ImportReceiptError(413,'field_limit','Stored snapshot field exceeds 4000 characters')
+  if(!result.projection) throw new ImportReceiptError(413,'response_limit','Snapshot projection exceeds maxBytes',result.requiredBytes)
+  const parsed:unknown=JSON.parse(result.projection)
+  // SQL bounds scalar/byte lengths first; JS checks exact UTF16 after finite materialization.
+  const bounded=z.object({snapshot:z.object({titleCode:z.string().refine(value=>value.length<=4000),source:z.string().refine(value=>value.length<=4000),nameRaw:z.string().refine(value=>value.length<=4000).nullable(),usccRaw:z.string().refine(value=>value.length<=4000).nullable(),district:z.string().refine(value=>value.length<=4000).nullable(),qualityFlags:z.array(z.string().refine(value=>value.length<=4000)).nullable()}).optional()}).safeParse(parsed)
+  if(!bounded.success) throw new ImportReceiptError(413,'field_limit','Stored snapshot field exceeds 4000 UTF16 characters')
+  const redacted=importReceiptRedactor(db)(parsed)
+  const finalBytes=Buffer.byteLength(JSON.stringify(redacted))
+  if(finalBytes>maxBytes) throw new ImportReceiptError(413,'response_limit','Redacted snapshot projection exceeds maxBytes',finalBytes)
+  return redacted
 }

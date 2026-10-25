@@ -1,3 +1,4 @@
+import { officialEvidenceRpcError } from '../utils/official-evidence-read'
 import { runtimeLogPolicyRpcError } from '../utils/logging-mcp'
 import { decisionRpcError102 } from '../utils/decision-lifecycle-102-mcp'
 import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
@@ -52,6 +53,12 @@ export default defineMcpHandler({
       const operation = `mcp.tool.${tool.name}`
       const started = performance.now()
       try {
+        // Conditional protected fields on these two otherwise public tools also need
+        // the request's established auth when invoked through another toolkit path.
+        if (['get_roster_evidence','get_official_event'].includes(tool.name??'') && args[0] && typeof args[0]==='object' && 'official' in args[0]
+          && (event.context.mcpAuth as {writeAuthorized?:boolean}|undefined)?.writeAuthorized!==true) {
+          throw Object.assign(new Error(JSON.stringify({error:{code:'unauthorized',message:'Configured MCP token required'}})),{code:'unauthorized',statusCode:401})
+        }
         const result = await tool.handler(...args)
         if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, requestLogContext(event), started, result)
         event.context.semanticMcpLogged = true
@@ -100,6 +107,7 @@ export default defineMcpHandler({
     '- 导入断线后用 `get_roster_import_receipt` 按 batchId/原幂等键恢复状态；`list_roster_import_items` 分页核对逐项结果，`list_roster_import_receipts` 读历史，`get_roster_import_request` 按需读取脱敏原文块。这四个工具均只读且需要 MCP token，不会重新提交。',
     '- `get_platform_capabilities` 查看实时来源能力；`query_platform` 查询三来源记录（不写库，不接收Cookie）。失败/partial须补查unfinished，不能当无记录。',
     '- 批量查询用 `submit_platform_batch`，然后 `get_platform_batch` / `get_platform_batch_item`；只对unfinished显式 `retry_platform_batch`。提交/重试需MCP token；凭据仅服务端快照。',
+    '- 精确正式读回：get_roster_evidence 可选 official=latest|history，get_official_event 可选 official=latest；这些新增投影需 MCP token，旧不带 official 的读法仍公开。history beforeRevision/event afterEvidenceId，pageSize默认20最高50，maxBytes默认16384最高65536。list_roster_import_items 的 projection=snapshot|eventIds 必须显式 source=private_batch+batchId 或 redacted_receipt+receiptId、itemIndex、oldRecordId；eventIds 单独cursor分页，receipt缺快照不回退。',
     '- 正式事件更正先 `get_official_event`，再 `preflight_event_corrections` / `commit_event_corrections`；需独立 MCP token，传原 request+planHash；原出处保留，关联对应需显式重核。审计用 `get_event_correction_audit` 分页。',
     '- 正式出处更正先 `get_roster_evidence`，再 `preflight_roster_evidence_corrections` / `commit_roster_evidence_corrections`；需 MCP token，按证据/事件/记录/企业ID和version定位，不能用裸名单序号。审计用 `get_roster_evidence_audit`；回执用 `get_roster_evidence_correction_batch`。坐标改回原值仍须显式重核关联对应。',
     '- `query_records` 是通用企业×称号记录查询；`year` 筛事件年份，`dueYear` 筛生命周期到期年份。',
@@ -155,6 +163,8 @@ export default defineMcpHandler({
       } else if (Array.isArray(body) && body.some(entry => entry?.method === 'tools/call' && !LOG_TOOLS.has(entry?.params?.name))) {
         operation = 'mcp.tool.batch'
       }
+      const invalidOfficialRead=officialEvidenceRpcError(body,auth.writeAuthorized)
+      if(invalidOfficialRead) return finish(invalidOfficialRead,invalidOfficialRead.status===401?'unauthorized':'invalid_request')
       const invalidCurrentQualified = currentQualifiedRpcError(body)
       if (invalidCurrentQualified) return finish(invalidCurrentQualified, 'invalid_request')
       if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail','list_current_qualified_enterprises'].includes(body?.params?.name)) admitEnterpriseResponse(event)

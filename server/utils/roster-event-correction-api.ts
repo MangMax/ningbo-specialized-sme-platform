@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { eventReadSchema, officialReadQuery, readPublicOfficialEvidence } from './official-evidence-read'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { readApiToken, resolveApiAuth } from './api-auth'
@@ -15,6 +16,7 @@ export function handleEventCorrectionRequest(input: { action: EventCorrectionAct
   const write = input.action === 'preflight' || input.action === 'commit'
   if (write && !resolveApiAuth({ given: readApiToken(input.headers), configured: context.apiToken }).writeAuthorized) return fail(401, 'unauthorized', 'Configured API token required')
   if (input.method !== (write ? 'POST' : 'GET')) return fail(405, 'method_not_allowed', 'Method not allowed')
+  if(input.action==='get' && input.query && 'official' in input.query && !resolveApiAuth({given:readApiToken(input.headers),configured:context.apiToken}).writeAuthorized) return fail(401,'unauthorized','Configured API token required')
   try {
     // Resolve before mutations; never let credential lookup fail after commit.
     const credentials = { ...credentialContext(), db: context.db }
@@ -41,8 +43,11 @@ export function handleEventCorrectionRequest(input: { action: EventCorrectionAct
         if (!paging.success || (paging.data.page - 1) * paging.data.pageSize > Number.MAX_SAFE_INTEGER) return fail(400, 'invalid_request', 'Invalid bounded audit pagination')
         result = readEventCorrectionAudit(context.db, id.data, paging.data.page, paging.data.pageSize)
       } else {
-        if (Object.keys(input.query ?? {}).length) return fail(400, 'invalid_request', 'Exact event read takes no query fields')
-        result = readOfficialEvent(context.db, id.data)
+        if (Object.keys(input.query ?? {}).length) {
+          const parsed=eventReadSchema.safeParse(officialReadQuery({...input.query,eventId:id.data}))
+          if(!parsed.success || !parsed.data.official) return fail(400,'invalid_request','Invalid bounded official event query')
+          result=context.db.transaction(()=>({...readOfficialEvent(context.db,id.data),official:readPublicOfficialEvidence(context.db,'event',parsed.data)}))
+        } else result = readOfficialEvent(context.db, id.data)
       }
     }
     return { status: 200, headers, body: sanitizeEvidence(result, redactors) }
