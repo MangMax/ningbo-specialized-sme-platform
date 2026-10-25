@@ -1,3 +1,4 @@
+import { readPublicPublishedNames } from '../../lib/roster/enterprise-roster'
 import { asc, eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
@@ -83,11 +84,18 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
   const byPredecessor = Map.groupBy(sortedLinks.filter(r => r.predecessorEventId != null), r => r.predecessorEventId)
   const byRelation = Map.groupBy(sortedLinks.filter(r => r.relationId != null), r => r.relationId)
   const byExport = Map.groupBy(sortedLinks.filter(r => r.exportRowId != null), r => r.exportRowId)
+  // One Map for the already-selected event/source/reference scope, reused below.
+  const scope = evidenceRows.map(e => ({ evidenceId: e.id, eventId: e.recordEventId }))
+  const occurrences = rows.flatMap(row => [row.eventId, row.predecessorEventId]).filter((id): id is number => id != null)
+  if (extra?.kind === 'event') occurrences.push(extra.id)
+  const copies = occurrences.flatMap(id => scope.filter(item => item.eventId === id).flatMap(item => [item, item, item]))
+  const presentation = readPublicPublishedNames(db, scope, copies, occurrences.length)
+  const facts = new Map(presentation.facts.map(fact => [fact.evidenceId, fact]))
   const eventSources = new Map(events.map(joined => {
     const id = joined.event.id, evidence = evidenceByEvent.get(id) ?? []
-    const officialEvidence = evidence.map(item => ({ evidence: sanitizeEvidence(item), storedFile: filesByPath.get(item.sourceFile) ?? null }))
+    const officialEvidence = evidence.map(item => ({ ...(facts.has(item.id) ? { publishedName: facts.get(item.id) } : {}), evidence: sanitizeEvidence(item), storedFile: filesByPath.get(item.sourceFile) ?? null }))
     const eventLinks = [...new Map([...(byEvent.get(id) ?? []), ...(byPredecessor.get(id) ?? [])].map(r => [r.id, r])).values()].sort((a, b) => a.id - b.id)
-    return [id, { ...joined.event, record: { id: joined.record.id, enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, source: joined.record.source, usccRaw: joined.record.usccRaw }, evidence: sanitizeEvidence(evidence), officialEvidence: sanitizeEvidence(officialEvidence), correspondences: eventLinks }] as const
+    return [id, { ...joined.event, publishedPresentation: presentation.availability === 'unavailable' ? presentation : { ...presentation, facts: presentation.facts.filter(fact => fact.eventId === id) }, record: { id: joined.record.id, enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, source: joined.record.source, usccRaw: joined.record.usccRaw }, evidence: evidence.map(item => ({ ...sanitizeEvidence(item) as typeof item, ...(facts.has(item.id) ? { publishedName: facts.get(item.id) } : {}) })), officialEvidence: sanitizeEvidence(officialEvidence), correspondences: eventLinks }] as const
   }))
   const relationSources = new Map(relations.map(({ relation, query }) => {
     const position = sourcePositionForSequence(query.collectionEvidence, relation.sequenceNo)

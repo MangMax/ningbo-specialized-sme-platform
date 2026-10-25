@@ -5,7 +5,8 @@ import { useQuery } from '@pinia/colada'
 import { Search } from '@lucide/vue'
 import { TITLES } from '~~/lib/labels'
 import { CURRENT_TITLES, type CurrentTitle } from '~~/lib/roster/current-titles'
-import type { CurrentRow } from '~~/lib/roster/current-qualification'
+import type { CurrentQualifiedRow as CurrentRow } from '~~/lib/roster/current-qualified-query'
+import { publishedNameText } from '~~/lib/roster/correspondence-view'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '~~/lib/domain'
 import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
 import { Button } from '@/components/ui/button'
@@ -71,6 +72,7 @@ const { data, isLoading, error, refetch } = useQuery<Result>({
   query: async ({ entry }) => {
     const request = captureQueryRequest('current-qualified', entry.key[1] as typeof params.value)
     const response = await $fetch<Omit<Result, 'request'>>('/api/roster/current-enterprises', { query: request.params })
+    if (response.rows.some(row => row.publishedPresentation?.availability === 'unavailable')) throw new Error('Official published names unavailable')
     return { ...response, request }
   },
   placeholderData: previous => previous,
@@ -109,7 +111,8 @@ const conditionSummary = (row: CurrentRow) => {
   const maintenance = row.matchedMaintenance?.length ? `维护记录 ${row.matchedMaintenance.map(fact => `${fact.year} 年${fact.batch == null ? '' : `第 ${fact.batch} 批`}`).join('、')}` : '维护信息未核实'
   return `${valid} · ${maintenance}`
 }
-const distinctPublishedNames = (row: CurrentRow) => row.publishedNames.filter(name => name.trim() !== row.name.trim())
+const publishedHints = (row: CurrentRow) => row.publishedPresentation?.facts ?? []
+const publishedDetailUrl = (row: CurrentRow, eventId: number) => { const target = detailUrl(row.enterpriseId); return { ...target, query: { ...target.query, eventId: String(eventId) } } }
 const movedInSummary = (row: CurrentRow) => row.notes.find(note => note.startsWith('已确认迁入宁波'))
 useHead({ title: '优质中小企业查询' })
 </script>
@@ -193,13 +196,13 @@ useHead({ title: '优质中小企业查询' })
             </TableRow></TableHeader>
             <TableBody>
               <TableRow v-for="row in rows" :key="row.enterpriseId">
-                <TableCell class="align-top break-words"><span class="font-medium">{{ row.name }}</span><span v-if="row.aliases.length" class="text-muted-foreground mt-1 block text-xs">曾用名：{{ row.aliases.join('、') }}</span></TableCell>
+                <TableCell class="align-top break-words"><span class="font-medium">{{ row.name }}</span><span v-if="row.aliases.length" class="text-muted-foreground mt-1 block text-xs">已确认曾用名：{{ row.aliases.join('、') }}</span></TableCell>
                 <TableCell class="align-top break-all font-mono text-xs">{{ row.uscc ?? '未记录' }}</TableCell>
                 <TableCell class="align-top">{{ row.district ?? '未记录' }}</TableCell>
                 <TableCell class="align-top break-words text-sm leading-5">
                   <p><span class="text-muted-foreground">{{ recognitionSummary(row) }}</span><span class="mx-1 text-muted-foreground">·</span>{{ sourceSummary(row) }}</p>
                   <p class="text-muted-foreground">{{ conditionSummary(row) }}</p>
-                  <p v-if="distinctPublishedNames(row).length" class="text-muted-foreground">更名 · 公布名：{{ distinctPublishedNames(row).join('、') }}</p>
+                  <p v-for="fact in publishedHints(row)" :key="fact.evidenceId" class="text-muted-foreground break-words [overflow-wrap:anywhere]"><NuxtLink :to="publishedDetailUrl(row, fact.eventId)" class="underline underline-offset-2">{{ publishedNameText(fact) }}</NuxtLink></p>
                   <p v-if="movedInSummary(row)" class="text-muted-foreground">{{ movedInSummary(row) }}</p>
                 </TableCell>
                 <TableCell class="align-top"><Button as-child variant="outline" size="sm"><NuxtLink :to="detailUrl(row.enterpriseId)">查看详情与出处</NuxtLink></Button></TableCell>
@@ -223,7 +226,7 @@ useHead({ title: '优质中小企业查询' })
             </div>
             <p class="text-sm leading-5">{{ recognitionSummary(row) }} · {{ sourceSummary(row) }}</p>
             <p class="text-muted-foreground text-sm leading-5">{{ conditionSummary(row) }}</p>
-            <p v-if="distinctPublishedNames(row).length" class="text-muted-foreground text-sm leading-5">更名 · 公布名：{{ distinctPublishedNames(row).join('、') }}</p>
+            <p v-for="fact in publishedHints(row)" :key="fact.evidenceId" class="text-muted-foreground break-words text-sm leading-5 [overflow-wrap:anywhere]"><NuxtLink :to="publishedDetailUrl(row, fact.eventId)" class="underline underline-offset-2">{{ publishedNameText(fact) }}</NuxtLink></p>
             <p v-if="movedInSummary(row)" class="text-muted-foreground text-sm leading-5">{{ movedInSummary(row) }}</p>
           </li>
         </ul>

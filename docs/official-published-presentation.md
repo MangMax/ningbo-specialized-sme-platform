@@ -54,3 +54,37 @@ POST→终态→下载验收。后者及 typecheck/build/full 等待父唯一 he
 尚未分配，覆盖缺口保留，不能用合成结果替代。A 无 UI 接线，desktop/390px 对本片 NA；
 #303/#356 的 UI 仍 UNRUN。历史 #345/#346 full FAIL/timeout UNKNOWN、上游 A/B/C 的
 FAIL/UNKNOWN/errno48 和 copy/清理偏差均保留；本票不声明母票、集成或生产通过。
+
+## 现有详情、来源和当前查询消费（#356 / #303 B）
+
+`getRosterEnterpriseDetail`、`sourceReader` 和 `listCurrentQualified` 复用同一
+`readOfficialPublishedPresentation`，匿名新增 `publishedPresentation`：
+`{availability:"available",error:null,facts:[...]}`。每个 fact 严格只有
+`evidenceId,eventId,revision,availability,nameRaw,sourceBindingKnown` 六项。
+详情 evidence 增补原稳定 `id`；来源旧 evidence/officialEvidence 保持原字段，
+其 `publishedName` 按 evidence.id 关联同一份最小事实。record.nameRaw、旧
+publishedNames/basis/identityGap、来源 fingerprint/proof/raw/hash 不作展示事实回填。
+
+读取或预算失败返回 `{availability:"unavailable",error:<稳定安全码>,facts:[]}`，
+旧详情、事件、出处与 locator 仍在；不输出部分名称、不冒充 legacy。
+页面及原 useRecordSource 在替换成功内容前识别该 typed scope，沿用现有失败/重试，
+保留上次成功内容；首次失败保持未知。serial 防护先于 scope 检查，旧晚响应不能覆盖
+当前内容或错误状态；显式 readback 失败仍返回 false。缺新字段的旧响应兼容。
+平台 relation/export_row 的原始名称、raw 内同名字段与文件 HEAD 可用状态不参加判定。
+
+详情只水合已选企业的出处；来源只水合 caller 选中的 event/reference scope，按事件
+去重，同一请求直接来源与重复对应引用共用一个 Map。当前查询完成资格、所有条件、
+计数与选项之后才水合 retained 页；不持有跨请求/跨写名称缓存。A 每页50/64KiB、
+完整事件300、4000 UTF16 的边界不变。新增事实、重复序列化副本、scope 封套及格式化
+名称文字的最终 UTF8 总量按每企业或已选来源 scope 限65536字节；超限明确 unavailable，
+不截原文、不缩页重试。保守预算包含所有新属性键及重复显示文字。
+
+现名、已确认曾用名、各出处公布原名分别展示；公布名不推断别名或合法更名。
+同名独立出处不合并；current 每条提示链接到该 event 的详情，详情展开后保持文件、
+附件、名单序号与 PDF 页码配对。复核以 decidedYear 为结论年，year 另列原认定年。
+空串/空白用 JSON 字符串保真；captured null 与 legacy 分别用前述文字表达。
+
+完整 C 捕获封套、actor/basis/command、文件内容身份/hash 及原统代/属地仍走原 token
+权限，前端不保存或发送服务器 token。A/B/C 写面和资格规则、witness、计数、筛选、
+分页、dataVersion 与三称号异步工作簿的原摘要范围保持。旧 /api/enterprises/:id、
+同步 export、台账/recognitions/归并快照等未点名入口不在 B 富化范围。

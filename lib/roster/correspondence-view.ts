@@ -1,5 +1,20 @@
 /** Client read shape of #66's sanitized correspondence source routes. */
 import { EVENTS, REVIEW_OUTCOMES } from '../labels'
+import type { OfficialPublishedFact } from './official-published-presentation'
+export type { OfficialPublishedFact }
+
+export type PublishedPresentationError = 'invalid_scope' | 'source_limit' | 'field_limit' | 'response_limit' | 'read_failed'
+export type PublishedPresentation =
+  | { availability: 'available'; error: null; facts: OfficialPublishedFact[] }
+  | { availability: 'unavailable'; error: PublishedPresentationError; facts: [] }
+
+/** Literal raw names, including empty/whitespace; never infer an alias or legal rename. */
+export function publishedNameText(fact: OfficialPublishedFact): string {
+  if (fact.availability === 'unavailable') return '公布名称暂不可用'
+  if (fact.availability === 'unknown_legacy') return '未逐出处核实'
+  const name = fact.nameRaw === null ? '已捕获出处，名称原值未知' : `公布名称：${JSON.stringify(fact.nameRaw)}`
+  return name + (fact.sourceBindingKnown ? '' : '（出处绑定未核实）')
+}
 
 export type SourceKind = 'event' | 'relation' | 'export_row'
 export type CorrespondenceStatus = 'candidate' | 'confirmed' | 'rejected' | 'unlinked'
@@ -21,6 +36,7 @@ export interface CorrespondenceRef {
 }
 
 export interface OfficialEvidence {
+  publishedName?: OfficialPublishedFact
   id: number
   sourceFile: string
   attachment: string | null
@@ -29,6 +45,7 @@ export interface OfficialEvidence {
 }
 
 export interface EventSource {
+  publishedPresentation?: PublishedPresentation
   id: number
   recordId: number
   eventType: string
@@ -162,4 +179,11 @@ export function sourceReturnTarget(value: unknown): string | null {
     const parsed = new URL(value, 'https://local.invalid')
     return parsed.origin === 'https://local.invalid' && parsed.pathname === '/comparison' ? value : null
   } catch { return null }
+}
+
+/** Only typed formal scopes participate; raw platform fields are never inspected. */
+export function sourcePublishedNamesUnavailable(value: SourceResponse): boolean {
+  return ('publishedPresentation' in value.source && value.source.publishedPresentation?.availability === 'unavailable')
+    || value.correspondences.some(row => row.event?.publishedPresentation?.availability === 'unavailable'
+      || row.predecessorEvent?.publishedPresentation?.availability === 'unavailable')
 }

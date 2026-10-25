@@ -695,6 +695,7 @@ describe('§7.2 企业详情 —— 别名 / 记录 / 事件 / 出处 / 差异 /
     const award = detail.events.find((e) => e.eventType === 'award')!
     expect(detail.evidence.filter((v) => v.eventId === award.id)).toEqual([
       {
+        id: 1, // Original persisted evidence ID; #356 adds it without changing the locator.
         eventId: award.id,
         sourceFile: 'jxj/announcement/2022/甬经信中小〔2022〕145号关于公布宁波市“专精特新”中小企业名单的通知.pdf',
         attachment: '附件',
