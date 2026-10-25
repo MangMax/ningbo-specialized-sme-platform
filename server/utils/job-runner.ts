@@ -465,8 +465,10 @@ const reconciledDbs = new WeakSet<object>()
  */
 export function ensureJobRunnerReady(db: Db): number {
   if (reconciledDbs.has(db)) return 0
-  reconciledDbs.add(db)
   const interrupted = reconcileInterruptedJobs(db)
+  // 只有对账完整返回后才缓存 ready。SQLITE_BUSY / 只读写失败等异常必须原样
+  // 抛给调用方,同时保留同一 db 在故障解除后再次对账的机会。
+  reconciledDbs.add(db)
   void cleanupCurrentExports(db).catch(() => {})
   return interrupted
 }
