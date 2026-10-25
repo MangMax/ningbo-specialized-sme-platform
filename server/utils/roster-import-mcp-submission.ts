@@ -27,7 +27,7 @@ export function submitRosterImportMcp(action: 'preflight' | 'commit', input: {
     }
     try {
       const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
-      return await importExecutor.execute(useDb(), action, validated.value, pageCountErrors, context)
+      return await importExecutor.execute(useDb(), action, validated.value, pageCountErrors, context, { filesDir: useRuntimeConfig().filesDir })
     } catch (error) {
       logImportFailure(`import.submission.${action}`, error, context)
       throw error

@@ -22,6 +22,34 @@
  */
 import type { PlatformInterface } from './labels'
 
+export type OfficialDeclaration =
+  | { kind: 'existing'; sourceDocumentId: number; basis: string }
+  | { kind: 'independent'; sourceDocument: { source: 'jxj'; title: string; docNumber: string | null; issueDate: string | null; path: string }; basis: string }
+export interface OfficialPublishedRow {
+  nameRaw: string | null; usccRaw: string | null; districtRaw: string | null
+  declaration: OfficialDeclaration
+  storedFileId: number | null; path: string | null; sha256: string | null; bytes: number | null
+  attachment: string | null; sectionKey: string | null; listNo: number | null; page: number | null
+  sourceBindingKnown: boolean
+  actor: { type: 'user' | 'agent'; id: string }; basis: string
+}
+export interface OfficialEvidenceCorrectionOperation {
+  evidenceId: number; eventId: number; recordId: number; enterpriseId: number
+  expectedVersion: string
+  coordinate: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }
+  publishedRow?: OfficialPublishedRow; expectedRowRevision?: number
+}
+export interface OfficialEvidenceCorrections {
+  actor: { type: 'user' | 'agent'; id: string }; basis: string
+  operations: OfficialEvidenceCorrectionOperation[]
+}
+export interface OfficialEvidenceAppend {
+  eventId: number; recordId: number; enterpriseId: number
+  /** Existing public event.revision. */
+  expectedVersion: number
+  evidence: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null; publishedRow: OfficialPublishedRow }
+}
+
 // ---------------------------------------------------------------------------
 // payload 形状（契约 §8.3）
 // ---------------------------------------------------------------------------
@@ -34,6 +62,7 @@ export interface RosterImportEvidence {
   listNo?: number | null
   /** 源文件/PDF 实际页序；给不出**留空**，不猜。 */
   page?: number | null
+  publishedRow?: OfficialPublishedRow
 }
 
 /** 一条称号事件（认定 / 复核 / 维护 / 入库培育）。 */
@@ -330,6 +359,10 @@ export interface RosterImportUsccBackfill {
 
 /** 预检与提交共用的写入载荷。 */
 export interface RosterImportPayload {
+  officialEvidenceAppends?: OfficialEvidenceAppend[]
+  officialEvidenceCorrections?: OfficialEvidenceCorrections
+  /** Returned by opt-in preflight, checked again under the writer lock. */
+  officialEvidencePlanHash?: string
   announcement?: RosterImportAnnouncement
   aliases?: RosterImportAlias[]
   platformQueries?: RosterImportPlatformQuery[]
@@ -406,6 +439,7 @@ export interface DuplicateNameCandidate {
 
 /** 预检的影响计数；`conflicts` 是**逐项冲突**（不静默丢行）。 */
 export interface RosterImportPreflight {
+  officialEvidencePlanHash?: string
   canonicalProjection?: { relationId: number | null; identityState: string; contentState: string; keySource: string }[]
   /** Frozen server-side source inputs for bounded historical projection. */
   platformObservationSources?: { relationId: number; inputFingerprint: string }[]

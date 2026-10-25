@@ -52,10 +52,14 @@ import type {
   RosterImportSummary,
   RosterImportUsccBackfill,
 } from '../../lib/roster-import-client'
+import { officialAppendSchema, officialPublishedRowSchema, planOfficialEvidenceChanges, resolveOfficialDeclaration, verifyOfficialDeclaration, writeOfficialPublishedRow, readOfficialFile, officialPlanDigest, OfficialFactError, type OfficialClaimChange, type OfficialCoordinate } from './official-evidence-plan'
+import { OfficialEvidenceError } from './official-evidence'
+import { evidenceCorrectionRequestSchema, planEvidenceCorrectionTargets, writeImportedEvidenceCorrection } from './roster-evidence-correction'
 import { advanceOfficialEventRevision } from './roster-event-version'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
 import { captureIdentityRevision113, captureQueryRevision113, identityMaterial113, selectedSnapshot113, captureSnapshotRevision113, captureOfficialEventRevision113 } from './evidence-impact-113'
 import { recordImportReceipt } from './import-receipt-ledger'
+import { refreshDerivedFileParts } from './file-parts'
 
 type Db = BetterSQLite3Database<typeof schema>
 /** 事务内外都能用的执行器（`tx` 与本连接在 select/insert/update/delete 上同形）。 */
@@ -122,6 +126,18 @@ function optionalString(value: unknown): string | null {
 function optionalInt(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
   return Math.trunc(value)
+}
+
+/** Typed coordinates are verbatim; the old legacy grouping/write rules stay local. */
+function announcementEvidenceCoordinate(evidence: { sourceFile: string; attachment?: unknown; listNo?: unknown; page?: unknown; publishedRow?: unknown }, grouped = false): OfficialCoordinate {
+  if (evidence.publishedRow !== undefined) return {
+    sourceFile: evidence.sourceFile,
+    attachment: typeof evidence.attachment === 'string' ? evidence.attachment : null,
+    listNo: typeof evidence.listNo === 'number' ? evidence.listNo : null,
+    page: typeof evidence.page === 'number' ? evidence.page : null,
+  }
+  const sourceFile = grouped ? optionalString(evidence.sourceFile) ?? evidence.sourceFile : evidence.sourceFile
+  return { sourceFile, attachment: optionalString(evidence.attachment), listNo: optionalInt(evidence.listNo), page: isPageCapable(sourceFile) ? optionalInt(evidence.page) : null }
 }
 
 /** 一条 item 级错误。 */
@@ -911,6 +927,9 @@ interface PlannedItem {
    * 「提交真改的」逐行可比对，就靠这一项**在计划期**就算准。
    */
   repoints?: number
+  /** The exact targets also held by this item's execution closure. */
+  evidenceRepointTargets?: readonly EvidenceRepointTarget[]
+  mergePlan?: MergePlan
   /** 确实要执行时才有的写入闭包（提交阶段调用）。 */
   run?: (tx: Executor) => RosterImportItemResult
 }
@@ -939,6 +958,7 @@ interface Plan {
   items: PlannedItem[]
   conflicts: RosterImportItemResult[]
   platformObservationSources?: RosterImportPreflight['platformObservationSources']
+  officialEvidencePlanHash?: string
 }
 
 /** 汇总计划的影响计数。 */
@@ -961,7 +981,7 @@ function summarizePlan(plan: Plan): RosterImportPreflight {
     }
   }
   const canonicalProjection = plan.items.flatMap(p => (p.item.detail?.canonicalProjection as NonNullable<RosterImportPreflight['canonicalProjection']> | undefined) ?? [])
-  return { add, update, remove, review, conflicts: plan.conflicts, evidenceRepoints, duplicateCandidates, ...(canonicalProjection.length ? { canonicalProjection } : {}), ...(plan.platformObservationSources ? { platformObservationSources: plan.platformObservationSources } : {}) }
+  return { ...(plan.officialEvidencePlanHash ? { officialEvidencePlanHash: plan.officialEvidencePlanHash } : {}), add, update, remove, review, conflicts: plan.conflicts, evidenceRepoints, duplicateCandidates, ...(canonicalProjection.length ? { canonicalProjection } : {}), ...(plan.platformObservationSources ? { platformObservationSources: plan.platformObservationSources } : {}) }
 }
 
 /**
@@ -975,7 +995,7 @@ function planNewEventEvidence(
   announcement: RosterImportAnnouncement,
   records: readonly RosterImportAnnouncement['records'][number][],
   identityPlan: AnnouncementBatchIdentityPlan,
-): { eventsByRecord: Map<number, RosterImportEvent[]> } {
+): { eventsByRecord: Map<number, RosterImportEvent[]>; groupedOccurrences: Set<string> } {
   interface Occurrence {
     recordIndex: number
     eventIndex: number
@@ -983,6 +1003,7 @@ function planNewEventEvidence(
   }
 
   const planned = new Map<number, RosterImportEvent[]>()
+  const groupedOccurrences = new Set<string>()
   const groups = new Map<string, Occurrence[]>()
   for (const [recordIndex, record] of records.entries()) {
     const events = Array.isArray(record?.events) ? record.events : []
@@ -1085,16 +1106,13 @@ function planNewEventEvidence(
           invalidEvidence.push(rawEvidence)
           continue
         }
-        const sourceFile = optionalString(rawEvidence.sourceFile)
-        if (!sourceFile) {
+        if (typeof rawEvidence.sourceFile !== 'string' || !optionalString(rawEvidence.sourceFile)) {
           invalidEvidence.push(rawEvidence)
           continue
         }
         const normalized: RosterImportEvidence = {
-          sourceFile,
-          attachment: optionalString(rawEvidence.attachment),
-          listNo: optionalInt(rawEvidence.listNo),
-          page: isPageCapable(sourceFile) ? optionalInt(rawEvidence.page) : null,
+          ...(rawEvidence.publishedRow !== undefined ? { publishedRow: rawEvidence.publishedRow as import('../../lib/roster-import-client').OfficialPublishedRow } : {}),
+          ...announcementEvidenceCoordinate({ ...rawEvidence, sourceFile: rawEvidence.sourceFile }, true),
         }
         const key = JSON.stringify([
           normalized.sourceFile,
@@ -1110,6 +1128,7 @@ function planNewEventEvidence(
       .map(([, evidence]) => evidence)
     mergedEvidence.push(...(invalidEvidence as RosterImportEvidence[]))
     const [firstOccurrence, ...duplicates] = occurrences
+    for (const occurrence of occurrences) groupedOccurrences.add(`${occurrence.recordIndex}:${occurrence.eventIndex}`)
     if (firstOccurrence) {
       const event = planned.get(firstOccurrence.recordIndex)?.[firstOccurrence.eventIndex]
       if (event) planned.get(firstOccurrence.recordIndex)![firstOccurrence.eventIndex] = { ...event, evidence: mergedEvidence }
@@ -1120,7 +1139,7 @@ function planNewEventEvidence(
     }
   }
 
-  return { eventsByRecord: planned }
+  return { eventsByRecord: planned, groupedOccurrences }
 }
 
 /** 对象键及集合数组顺序不影响公告载荷的快照指纹;重复项仍按重数保留。 */
@@ -1152,11 +1171,144 @@ function evidenceRepointPlanFingerprint(request: RosterImportRequest): string {
  * 其余各类（平台查询 / 别名 / 差异 / 快照 / 归并）**一项都不进计划** —— 收敛重放
  * 一行不加、一行不删，那几类都可能写新行，故它们根本没有执行闭包可跑。
  */
+interface OfficialImportState { declarations: Map<string, number>; batchId?: number; changedEvents?: Map<number, number> }
+export function hasOfficialFactInput(request: RosterImportRequest): boolean {
+  const payload = request.payload
+  return ['officialEvidenceAppends', 'officialEvidenceCorrections', 'officialEvidencePlanHash'].some(key => Object.hasOwn(payload, key)) || (Array.isArray(payload.announcement?.records) && payload.announcement.records.some(record => Array.isArray(record?.events) && record.events.some(event => Array.isArray(event?.evidence) && event.evidence.some(evidence => evidence && Object.hasOwn(evidence, 'publishedRow')))))
+}
+function prepareOfficialImport(db: Executor, request: RosterImportRequest, items: PlannedItem[], identities: AnnouncementBatchIdentityPlan, filesDir: string | undefined, state: OfficialImportState, plannedEvents: ReadonlyMap<number, RosterImportEvent[]>, groupedOccurrences: ReadonlySet<string>) {
+  function fail(code: string, message: string): never { throw new OfficialFactError(code, message, 409) }
+  if (request.payload.announcement && !Array.isArray(request.payload.announcement.records)) fail('invalid_input', 'announcement.records must be an array')
+  const captureCount = request.payload.announcement?.records?.reduce((n, record) => n + (record.events ?? []).reduce((m, event) => m + (event.evidence ?? []).filter(evidence => evidence.publishedRow !== undefined).length, 0), 0) ?? 0
+  if (captureCount + (request.payload.officialEvidenceAppends?.length ?? 0) + (request.payload.officialEvidenceCorrections?.operations?.length ?? 0) > 100) throw new OfficialFactError('input_limit', 'At most 100 new official fact operations', 400)
+  const appends = request.payload.officialEvidenceAppends === undefined ? [] : officialAppendSchema.array().min(1).max(100).parse(request.payload.officialEvidenceAppends)
+  const correctionInput = request.payload.officialEvidenceCorrections
+  const correction = correctionInput === undefined ? undefined : evidenceCorrectionRequestSchema.omit({ idempotencyKey: true }).parse(correctionInput)
+  const changes: OfficialClaimChange[] = []
+  const newUnknownClaims: { ref: string; coordinate: OfficialCoordinate }[] = []
+  const ownerForIdentity = (name: string, uscc: string | null) => {
+    const existing = findEnterpriseByIdentity(db, { name, uscc })
+    return existing ? `enterprise:${existing.id}` : `pending:${identityKeyOf({ name, uscc })}`
+  }
+  const captures = request.payload.announcement?.records ?? []
+  for (const events of plannedEvents.values()) for (const event of events) if (event.evidence?.some(evidence => evidence.publishedRow !== undefined) && event.evidence.length > 300) throw new OfficialFactError('source_limit', 'Final new event evidence exceeds 300', 413)
+  const originalVersions: unknown[] = []
+  const batchCoordinates = new Map<string, boolean>()
+  captures.forEach((record, ri) => {
+    const name = optionalString(record.enterprise.name)!, uscc = identities.identityUsccByRecord.get(ri) ?? usccOrNull(record.enterprise.uscc)
+    const enterprise = findEnterpriseByIdentity(db, { name, uscc })
+    const storedRecord = enterprise ? db.select({ id: schema.record.id }).from(schema.record).where(and(eq(schema.record.enterpriseId, enterprise.id), eq(schema.record.titleCode, record.titleCode), eq(schema.record.source, record.source ?? request.payload.announcement!.sourceDocument.source))).get() : undefined
+    record.events?.forEach((event, ei) => {
+      const eventKey = `${ownerForIdentity(name, uscc)}:${record.titleCode}:${officialPlanDigest(eventCoordinates(0, event))}`
+      for (const evidence of event.evidence ?? []) {
+        const key = officialPlanDigest({ eventKey, ...announcementEvidenceCoordinate(evidence, groupedOccurrences.has(`${ri}:${ei}`)) })
+        const typed = evidence.publishedRow !== undefined
+        if (batchCoordinates.has(key) && (typed || batchCoordinates.get(key))) fail('ambiguous_target', 'Typed new capture coordinate must be stated once across the batch')
+        batchCoordinates.set(key, typed)
+      }
+      const published = event.evidence?.filter(evidence => evidence.publishedRow !== undefined) ?? []
+      if (!published.length) return
+      if ((record.source ?? request.payload.announcement!.sourceDocument.source) !== 'jxj') fail('target_mismatch', 'Published facts belong to official jxj events')
+      if ((event.evidence?.length ?? 0) > 300) throw new OfficialFactError('source_limit', 'Event evidence exceeds 300', 413)
+      if (storedRecord && findExistingEvent(db, eventCoordinates(storedRecord.id, event))) fail('explicit_append_required', 'Existing event requires exact officialEvidenceAppends; ordinary duplicate import adds no facts')
+      const coordinates = new Set<string>()
+      event.evidence?.forEach((evidence, index) => {
+        if (evidence.publishedRow === undefined) return
+        const parsed = officialPublishedRowSchema.safeParse(evidence.publishedRow)
+        if (!parsed.success) fail('invalid_input', 'Full explicit publishedRow required')
+        verifyOfficialDeclaration(db, evidence.publishedRow, request.payload.announcement!.sourceDocument)
+        const coordinate = announcementEvidenceCoordinate(evidence)
+        const coordinateKey = officialPlanDigest(coordinate)
+        if (coordinates.has(coordinateKey)) fail('ambiguous_target', 'Repeated new capture coordinate must be stated once')
+        coordinates.add(coordinateKey)
+        changes.push({ ref: `capture:${ri}:${ei}:${index}`, evidenceId: `capture:${ri}:${ei}:${index}`, eventId: `event:${ownerForIdentity(name, uscc)}:${record.titleCode}:${officialPlanDigest(eventCoordinates(0, event))}`, owner: ownerForIdentity(name, uscc), titleCode: record.titleCode, coordinate, publishedRow: evidence.publishedRow, expectedRowRevision: 0 })
+      })
+    })
+    // Consume the actual grouped write plan. Existing events skip insertion;
+    // duplicate occurrences have already moved all evidence to their first item.
+    for (const [ei, event] of (plannedEvents.get(ri) ?? []).entries()) {
+      if (storedRecord && findExistingEvent(db, eventCoordinates(storedRecord.id, event))) continue
+      for (const [index, evidence] of (event.evidence ?? []).entries()) if (evidence.publishedRow === undefined) {
+        newUnknownClaims.push({ ref: `legacy:${ri}:${ei}:${index}`, coordinate: announcementEvidenceCoordinate(evidence) })
+      }
+    }
+  })
+  const appendTargets = appends.map((op, index) => {
+    const target = db.select({ event: schema.recordEvent, record: schema.record, enterpriseId: schema.enterprise.id }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId)).innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId)).where(eq(schema.recordEvent.id, op.eventId)).get()
+    if (!target || target.record.source !== 'jxj' || target.record.id !== op.recordId || target.enterpriseId !== op.enterpriseId) fail('target_mismatch', 'Exact event and current real owner must match')
+    if (target.event.revision !== op.expectedVersion) fail('stale_version', 'Official event revision changed')
+    const scope = db.select({ id: schema.recordEvidence.id }).from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, op.eventId)).limit(301).all()
+    if (scope.length > 300) throw new OfficialFactError('source_limit', 'Event evidence exceeds 300', 413)
+    originalVersions.push({ event: target.event, record: target.record, scope: scope.map(row => row.id) })
+    const change: OfficialClaimChange = { ref: `append:${index}`, evidenceId: `append:${index}`, eventId: op.eventId, owner: `enterprise:${target.enterpriseId}`, titleCode: target.record.titleCode, coordinate: { sourceFile: op.evidence.sourceFile, attachment: op.evidence.attachment, listNo: op.evidence.listNo, page: op.evidence.page }, publishedRow: op.evidence.publishedRow, expectedRowRevision: 0 }
+    changes.push(change)
+    return { op, target, change, scope: scope.length }
+  })
+  const inspections = new Map<string, ReturnType<typeof readOfficialFile> & { pageCount: number | null }>()
+  for (const op of correction?.operations ?? []) inspections.set(op.coordinate.sourceFile, { ...readOfficialFile(filesDir, op.coordinate.sourceFile), pageCount: null })
+  const correctionTargets = correction ? planEvidenceCorrectionTargets(db, { ...correction, idempotencyKey: request.idempotencyKey }, inspections, true) : []
+  for (const target of correctionTargets) {
+    if (!target.rowChange) fail('ambiguity', 'Import correction requires explicit publishedRow')
+    changes.push(target.rowChange)
+    originalVersions.push({ evidenceId: target.evidenceId, expectedVersion: target.expectedVersion, event: target.event, file: target.file })
+  }
+  if (!changes.length) fail('invalid_input', 'Opt-in official request has no fact operations')
+  const ownerMap = new Map<string, string>()
+  for (const item of items) {
+    const plan = item.mergePlan
+    if (!plan || !item.item.ok) continue
+    const targetUscc = usccOrNull(plan.merge.intoUscc)!
+    const target = findEnterpriseByUscc(db, targetUscc)
+    const into = target ? `enterprise:${target.id}` : `pending:uscc:${targetUscc}`
+    const pendingSourceIndex = captures.findIndex((record, index) => normalizeName(record.enterprise.name) === normalizeName(plan.merge.fromEnterpriseName ?? '') && !findEnterpriseByIdentity(db, { name: record.enterprise.name, uscc: identities.identityUsccByRecord.get(index) ?? usccOrNull(record.enterprise.uscc) }))
+    const pendingSource = captures[pendingSourceIndex]
+    const from = plan.sourceEnterpriseId !== null ? `enterprise:${plan.sourceEnterpriseId}` : pendingSource ? ownerForIdentity(pendingSource.enterprise.name, identities.identityUsccByRecord.get(pendingSourceIndex) ?? usccOrNull(pendingSource.enterprise.uscc)) : null
+    if (!from || ownerMap.has(from)) fail('ambiguity', 'Legal merge owner mapping must be uniquely provable')
+    ownerMap.set(from, into)
+  }
+  const finalOwner = (owner: string | null) => {
+    const seen = new Set<string>()
+    while (owner !== null && ownerMap.has(owner)) { if (seen.has(owner)) return fail('ambiguity', 'Cyclic merge ownership'); seen.add(owner); owner = ownerMap.get(owner)! }
+    return owner
+  }
+  const locatorMoves = items.flatMap(item => item.evidenceRepointTargets ?? [])
+  const facts = planOfficialEvidenceChanges(db, changes, filesDir, finalOwner, newUnknownClaims, locatorMoves)
+  for (const target of appendTargets) {
+    const additions = appendTargets.filter(other => other.op.eventId === target.op.eventId && other.change.noOpEvidenceId === undefined).length
+    if (target.scope + additions > 300) throw new OfficialFactError('source_limit', 'Final event evidence exceeds 300', 413)
+  }
+  const { officialEvidencePlanHash: _provided, ...payload } = request.payload
+  const planHash = officialPlanDigest({ request: { ...request, sourceSha256: request.sourceSha256 ?? null, payload }, facts: facts.planHash, originalVersions, ownerMap: [...ownerMap] })
+  const item: PlannedItem = {
+    item: success('official_evidence', 'official_evidence', { operations: changes.length }), action: 'update', review: false,
+    run: tx => {
+      const declarationsBefore = state.declarations.size
+      const changedEvents = new Map<number, number>(state.changedEvents), changedFiles = new Set<string>(), evidence: unknown[] = []
+      for (const { op, target, change } of appendTargets) {
+        if (change.noOpEvidenceId !== undefined) { evidence.push({ evidenceId: change.noOpEvidenceId, eventId: op.eventId, unchanged: true }); continue }
+        const evidenceId = tx.insert(schema.recordEvidence).values({ recordEventId: op.eventId, ...change.coordinate }).returning({ id: schema.recordEvidence.id }).get().id
+        const row = writeOfficialPublishedRow(tx, change.publishedRow, evidenceId, 0, { kind: 'import', batchId: state.batchId! }, state.declarations)
+        evidence.push(row); changedEvents.set(op.eventId, target.event.revision); changedFiles.add(change.coordinate.sourceFile)
+      }
+      for (const target of correctionTargets) {
+        if (writeImportedEvidenceCorrection(tx, target, correction!, state.batchId!, state.declarations)) { changedEvents.set(target.eventId, target.event.revision); changedFiles.add(target.before.sourceFile); changedFiles.add(target.after.sourceFile) }
+        evidence.push({ evidenceId: target.evidenceId, eventId: target.eventId, revision: target.rowChange!.expectedRowRevision + Number(target.rowChange!.changed) })
+      }
+      for (const [eventId, revision] of changedEvents) advanceOfficialEventRevision(tx, eventId, revision)
+      // Refresh only derived file parts; all raw/proof/decision provenance remains owned by its original writer.
+      refreshDerivedFileParts(tx, changedFiles)
+      return success('official_evidence', 'official_evidence', { evidence, rowsWritten: appendTargets.filter(target => target.change.noOpEvidenceId === undefined).length + state.declarations.size - declarationsBefore })
+    },
+  }
+  return { planHash, item }
+}
+
 export function planRosterImport(
   db: Executor,
   request: RosterImportRequest,
   context: {
     batchId?: number
+    filesDir?: string
     convergeOnly?: boolean
     /** Source-PDF page-count failures collected by the REST/MCP boundary before planning. */
     pageCountErrors?: readonly RosterImportItemResult[]
@@ -1167,6 +1319,12 @@ export function planRosterImport(
   const items: PlannedItem[] = []
   const conflicts: RosterImportItemResult[] = []
   const payload = request.payload ?? {}
+  const officialInput = hasOfficialFactInput(request)
+  const officialState: OfficialImportState = { declarations: new Map<string, number>(), batchId: context.batchId, changedEvents: officialInput ? new Map() : undefined }
+  if (context.convergeOnly && officialInput) {
+    const item = failure('official_evidence', 'payload', 'replay_facts_forbidden', 'Replay cannot capture, append or correct official facts')
+    return { items: [{ item, action: 'skip', review: false }], conflicts: [item] }
+  }
   const projectionPayloadError = validatePlatformProjectionPayload(payload as Record<string, unknown>, request.sourceKind)
   if (projectionPayloadError) {
     const item = failure('platform_observation', 'payload', 'projection_payload_invalid', projectionPayloadError, 'platformRecordObservations')
@@ -1212,7 +1370,7 @@ export function planRosterImport(
   /** 新事件在首次写入前合并同坐标出处，避免重复项按遍历顺序覆盖来源。 */
   const newEventEvidencePlan = payload.announcement && mode === 'write'
     ? planNewEventEvidence(db, payload.announcement, announcementRecords, announcementIdentityPlan)
-    : { eventsByRecord: new Map<number, RosterImportEvent[]>() }
+    : { eventsByRecord: new Map<number, RosterImportEvent[]>(), groupedOccurrences: new Set<string>() }
   const plannedWriteEvents = newEventEvidencePlan.eventsByRecord
   /**
    * **整份计划**已认领的出处行 id。
@@ -1248,7 +1406,7 @@ export function planRosterImport(
           create: null,
           earlierSameName: [],
           reusedInBatch: false,
-        }, mode, claimedEvidence, ambiguousEvidence, undefined, context.evidenceRepointTargets, evidencePlanFingerprint, evidenceContentHashes)
+        }, mode, claimedEvidence, ambiguousEvidence, undefined, context.evidenceRepointTargets, evidencePlanFingerprint, evidenceContentHashes, officialState)
       })
     } else {
       // 会**新建**的企业 —— 判据就是写入侧的身份规则（有统代只按统代、无统代才按名），
@@ -1281,7 +1439,7 @@ export function planRosterImport(
           reusedInBatch,
           identityUscc: uscc,
           ambiguousNameOnly: announcementIdentityPlan.ambiguousNameOnlyRecords.has(index),
-        }, mode, claimedEvidence, ambiguousEvidence, plannedWriteEvents.get(index), context.evidenceRepointTargets, evidencePlanFingerprint, evidenceContentHashes)
+        }, mode, claimedEvidence, ambiguousEvidence, plannedWriteEvents.get(index), context.evidenceRepointTargets, evidencePlanFingerprint, evidenceContentHashes, officialState)
         if (create && identityKey != null) {
           const coordinates = plannedCoordinates.get(identityKey) ?? new Set<string>()
           coordinates.add(coordinate)
@@ -1354,7 +1512,21 @@ export function planRosterImport(
   const merges = Array.isArray(payload.merges) ? payload.merges : []
   merges.forEach((merge, index) => planMerge(db, pending, pendingEnterpriseCreates, pendingRefs, merge, index, push))
 
-  return { items, conflicts, ...(platformObservationSources.length ? { platformObservationSources } : {}) }
+  let officialEvidencePlanHash: string | undefined
+  if (officialInput && !conflicts.length) {
+    try {
+      const official = prepareOfficialImport(db, request, items, announcementIdentityPlan, context.filesDir, officialState, plannedWriteEvents, newEventEvidencePlan.groupedOccurrences)
+      officialEvidencePlanHash = official.planHash
+      const beforeMerges = items.findIndex(item => item.item.kind === 'merge')
+      items.splice(beforeMerges < 0 ? items.length : beforeMerges, 0, official.item)
+    } catch (error) {
+      if (error instanceof Error && 'issues' in error) error = new OfficialFactError('invalid_input', 'Malformed typed official fact input', 400)
+      if (!(error instanceof OfficialFactError || error instanceof OfficialEvidenceError || error instanceof Error && 'code' in error)) throw error
+      const item = failure('official_evidence', 'payload', String(error.code), error.message)
+      push({ item, action: 'skip', review: false })
+    }
+  }
+  return { items, conflicts, officialEvidencePlanHash, ...(platformObservationSources.length ? { platformObservationSources } : {}) }
 }
 
 function projectionItem(tx: Executor, relationId: number, batchId?: number, expected?: string): RosterImportItemResult {
@@ -1462,6 +1634,7 @@ function planAnnouncementRecord(
   savedEvidenceRepointTargets?: readonly EvidenceRepointTarget[],
   evidencePlanFingerprint = '',
   evidenceContentHashes: EvidenceContentHashIndex = new Map(),
+  officialState?: OfficialImportState,
 ): void {
   const ref = `record:${index}`
   const name = optionalString(record?.enterprise?.name)
@@ -1583,10 +1756,11 @@ function planAnnouncementRecord(
       action: repoints > 0 ? 'update' : 'skip',
       review: false,
       repoints,
+      evidenceRepointTargets: repointTargets,
       run:
         repoints > 0 && recordId != null
           ? (tx) => {
-              const evidenceRepointed = applyEvidenceRepointTargets(tx, repointTargets)
+              const evidenceRepointed = applyEvidenceRepointTargets(tx, repointTargets, officialState?.changedEvents)
               return success('record', `record:${recordId}`, {
                 enterpriseId: existing?.id ?? null,
                 recordId,
@@ -1622,6 +1796,7 @@ function planAnnouncementRecord(
     action: !reused ? 'add' : repoints > 0 ? 'update' : 'skip',
     review: !requestedUscc,
     repoints,
+    evidenceRepointTargets: repointTargets,
     run: (tx) => {
       const result = writeAnnouncementRecord(
         tx,
@@ -1630,6 +1805,7 @@ function planAnnouncementRecord(
         { ...record, events: [...writeEvents] },
         { name, uscc: identityUscc, district, titleCode, source, reason: { existingRecord } },
         repointTargets,
+        officialState,
       )
       return {
         ...result,
@@ -1672,11 +1848,16 @@ function writeAnnouncementRecord(
     reason: AnnouncementWriteReason
   },
   repointTargets: readonly EvidenceRepointTarget[] = [],
+  officialState?: OfficialImportState,
 ): RosterImportItemResult {
   const { name, uscc, district, titleCode, source } = resolved
 
   // 来源文件（公布文件）。按 (来源, 标题, 文号) 复用，避免重放堆行。
-  const sourceDocument = upsertSourceDocument(tx, {
+  const published = record.events?.flatMap(event => event.evidence ?? []).find(evidence => evidence.publishedRow)?.publishedRow
+  const declarationsBefore = officialState?.declarations.size ?? 0
+  const sourceDocument = published && officialState
+    ? { id: resolveOfficialDeclaration(tx, published.declaration, officialState.declarations), created: officialState.declarations.size > declarationsBefore }
+    : upsertSourceDocument(tx, {
     source,
     title: optionalString(announcement.sourceDocument.title) ?? request.sourceIdentity,
     docNumber: optionalString(announcement.sourceDocument.docNumber),
@@ -1697,7 +1878,7 @@ function writeAnnouncementRecord(
     district,
   })
   const recordId = recordRow.id
-  const evidenceRepointed = applyEvidenceRepointTargets(tx, repointTargets)
+  const evidenceRepointed = applyEvidenceRepointTargets(tx, repointTargets, officialState?.changedEvents)
 
   // 事件 + 出处：同坐标的完全相同事件**跳过**（重放安全），否则新增。
   const writtenEvents: number[] = []
@@ -1728,14 +1909,12 @@ function writeAnnouncementRecord(
         .insert(schema.recordEvidence)
         .values({
           recordEventId: eventId,
-          sourceFile: evidence.sourceFile,
-          attachment: optionalString(evidence.attachment),
-          listNo: optionalInt(evidence.listNo),
-          page: isPageCapable(evidence.sourceFile) ? optionalInt(evidence.page) : null,
+          ...announcementEvidenceCoordinate(evidence),
         })
         .returning({ id: schema.recordEvidence.id })
         .get().id
       writtenEvidence.push(evidenceId)
+      if (evidence.publishedRow && officialState?.batchId) writeOfficialPublishedRow(tx, evidence.publishedRow, evidenceId, 0, { kind: 'import', batchId: officialState.batchId }, officialState.declarations)
     }
     if (source === 'jxj') captureOfficialEventRevision113(tx, eventId, 0, 1)
   }
@@ -1760,7 +1939,7 @@ function writeAnnouncementRecord(
      * `summary.written` 由它求和，所以「零新增」不会再被报成「写了 N 条记录」。
      */
     rowsWritten:
-      (sourceDocument.created ? 1 : 0) +
+      (published && officialState ? officialState.declarations.size - declarationsBefore : sourceDocument.created ? 1 : 0) +
       (enterprise.created ? 1 : 0) +
       (recordRow.created ? 1 : 0) +
       writtenEvents.length +
@@ -2177,7 +2356,7 @@ function groupEventEvidenceById(
 }
 
 /** 执行计划期冻结的收敛目标；路径或事件已被别的操作改变时安全跳过。 */
-function applyEvidenceRepointTargets(tx: Executor, targets: readonly EvidenceRepointTarget[]): number {
+function applyEvidenceRepointTargets(tx: Executor, targets: readonly EvidenceRepointTarget[], deferredRevisions?: Map<number, number>): number {
   let repointed = 0
   const changedEvents = new Map<number, number>()
   for (const target of targets) {
@@ -2205,7 +2384,10 @@ function applyEvidenceRepointTargets(tx: Executor, targets: readonly EvidenceRep
       if (before?.page != null) changedEvents.set(target.recordEventId, before.revision)
     }
   }
-  for (const [eventId, revision] of changedEvents) advanceOfficialEventRevision(tx, eventId, revision)
+  for (const [eventId, revision] of changedEvents) {
+    if (deferredRevisions) deferredRevisions.set(eventId, revision)
+    else advanceOfficialEventRevision(tx, eventId, revision)
+  }
   return repointed
 }
 
@@ -3440,7 +3622,7 @@ export interface MergeLineage {
   /** 直接改指规范行的记录 id（无同坐标冲突）。 */
   recordsMoved: number[]
   /** 折进规范行同坐标记录的记录 id → 规范行记录 id。 */
-  recordsFolded: Array<{ fromRecordId: number; intoRecordId: number }>
+  recordsFolded: Array<{ fromRecordId: number; intoRecordId: number; fromRecordSnapshot?: typeof schema.record.$inferSelect; eventIds?: number[] }>
   /** 被并企业名下（原）事件 id —— 事件一条都没删，只是记录变了。 */
   eventsMoved: number[]
   /** 随之归入规范行的出处 id（含页码，供回溯「第几页」）。 */
@@ -3602,6 +3784,7 @@ function planMerge(
     }),
     action: 'update',
     review: false,
+    mergePlan: plan,
     run: (tx) => executeMerge(tx, plan),
   })
 }
@@ -4036,7 +4219,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
 
   // 4. 记录：同 (称号, 来源) 冲突时把事件折到规范行那条记录上。
   const recordsMoved: number[] = []
-  const recordsFolded: Array<{ fromRecordId: number; intoRecordId: number }> = []
+  const recordsFolded: Array<{ fromRecordId: number; intoRecordId: number; fromRecordSnapshot?: typeof schema.record.$inferSelect; eventIds?: number[] }> = []
   const eventsMoved: number[] = []
   const evidenceMoved: number[] = []
   for (const record of tx.select().from(schema.record).where(eq(schema.record.enterpriseId, from.id)).all()) {
@@ -4058,7 +4241,7 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
         tx.update(schema.recordEvent).set({ recordId: existing.id }).where(eq(schema.recordEvent.id, event.id)).run()
       }
       tx.delete(schema.record).where(eq(schema.record.id, record.id)).run()
-      recordsFolded.push({ fromRecordId: record.id, intoRecordId: existing.id })
+      recordsFolded.push({ fromRecordId: record.id, intoRecordId: existing.id, fromRecordSnapshot: { ...record }, eventIds: events.map(event => event.id) })
     } else {
       tx.update(schema.record).set({ enterpriseId: into.id }).where(eq(schema.record.id, record.id)).run()
       recordsMoved.push(record.id)
@@ -4131,6 +4314,7 @@ function preflightRosterImportCore(
   db: Db,
   request: RosterImportRequest,
   pageCountErrors: readonly RosterImportItemResult[] = [],
+  filesDir?: string,
 ): { batchId: number; status: 'preflight'; preflight: RosterImportPreflight } {
   const batch = ensureBatchRow(db, request)
 
@@ -4150,7 +4334,7 @@ function preflightRosterImportCore(
     }
   }
 
-  const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors })
+  const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors, filesDir })
   const preflight = { ...summarizePlan(plan), batchStatus: batch.status }
   db.update(schema.importBatch)
     .set({ preflightResult: preflight })
@@ -4175,6 +4359,7 @@ function commitRosterImportCore(
   db: Db,
   request: RosterImportRequest,
   pageCountErrors: readonly RosterImportItemResult[] = [],
+  filesDir?: string,
 ): { batchId: number; status: 'committed' | 'failed'; summary: RosterImportSummary; items: RosterImportItemResult[]; error: string | null } {
   const batch = ensureBatchRow(db, request)
 
@@ -4183,11 +4368,15 @@ function commitRosterImportCore(
     // 摘要类型里它是必填，所以读回时补 0（「那一批没有收敛」是事实，不是缺失）——
     // 否则调用方拿到的是 `undefined`，把它当数字用就会静默算错。
     const summary = readSummaryOf(batch.summary) ?? { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
-    const items = publicRosterImportItems((batch.itemResults as RosterImportItemResult[] | null) ?? [])
+    const items = publicRosterImportItems((batch.itemResults as RosterImportItemResult[] | null) ?? [], batch.id)
     return { batchId: batch.id, status: 'committed', summary, items, error: null }
   }
 
-  const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors })
+  const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors, filesDir })
+  if (plan.officialEvidencePlanHash && request.payload.officialEvidencePlanHash !== plan.officialEvidencePlanHash) {
+    const item = failure('official_evidence', 'payload', 'plan_mismatch', 'Matching opt-in preflight planHash required; sources or final plan changed')
+    plan.conflicts.push(item); plan.items.push({ item, action: 'skip', review: false })
+  }
   const conflicts = plan.conflicts
 
   if (conflicts.length > 0) {
@@ -4211,7 +4400,7 @@ function commitRosterImportCore(
       })
       .where(eq(schema.importBatch.id, batch.id))
       .run()
-    return { batchId: batch.id, status: 'failed', summary, items: publicRosterImportItems(items), error }
+    return { batchId: batch.id, status: 'failed', summary, items: publicRosterImportItems(items, batch.id), error }
   }
 
   let items: RosterImportItemResult[]
@@ -4246,7 +4435,7 @@ function commitRosterImportCore(
         .set({ status: 'failed', itemResults: items, summary, error, preflightResult: summarizePlan(plan) })
         .where(eq(schema.importBatch.id, batch.id))
         .run()
-      return { batchId: batch.id, status: 'failed', summary, items: publicRosterImportItems(items), error }
+      return { batchId: batch.id, status: 'failed', summary, items: publicRosterImportItems(items, batch.id), error }
     }
     const message = cause instanceof Error ? cause.message : String(cause)
     const error = `批次提交失败（已整批回滚，未写入任何数据）：${message}`
@@ -4261,7 +4450,7 @@ function commitRosterImportCore(
       batchId: batch.id,
       status: 'failed',
       summary: { written: 0, skipped: 0, failed: plan.items.length, evidenceRepointed: 0 },
-      items: publicRosterImportItems(items),
+      items: publicRosterImportItems(items, batch.id),
       error,
     }
   }
@@ -4278,17 +4467,21 @@ function commitRosterImportCore(
     })
     .where(eq(schema.importBatch.id, batch.id))
     .run()
-  return { batchId: batch.id, status: 'committed', summary, items: publicRosterImportItems(items), error: null }
+  return { batchId: batch.id, status: 'committed', summary, items: publicRosterImportItems(items, batch.id), error: null }
 }
 
 /** Keep replay snapshots in the batch ledger, but expose only caller-facing item details. */
-function publicRosterImportItems(items: readonly RosterImportItemResult[]): RosterImportItemResult[] {
-  return items.map((item) => {
+export function publicRosterImportItems(items: readonly RosterImportItemResult[], batchId?: number): RosterImportItemResult[] {
+  return items.map((item, itemIndex) => {
     if (!item.detail) return item
     const detail = { ...item.detail }
+    const lineage = detail.lineage as MergeLineage | undefined
+    if (Array.isArray(lineage?.recordsFolded) && lineage.recordsFolded.some(fold => isObject(fold) && (fold.fromRecordSnapshot !== undefined || fold.eventIds !== undefined))) {
+      detail.lineage = { ...lineage, recordsFolded: lineage.recordsFolded.map(fold => { if (!isObject(fold)) return fold; const { fromRecordSnapshot: _snapshot, eventIds: _events, ...old } = fold; return old }), ...(batchId !== undefined ? { snapshotRef: { source: 'private_batch', batchId, itemIndex } } : {}) }
+    }
     delete detail.evidenceRepointTargets
     delete detail.evidenceRepointPlanFingerprint
-    if (Object.keys(detail).length === Object.keys(item.detail).length) return item
+    if (Object.keys(detail).length === Object.keys(item.detail).length && detail.lineage === item.detail.lineage) return item
     const publicItem = { ...item }
     delete publicItem.detail
     return Object.keys(detail).length > 0 ? { ...publicItem, detail } : publicItem
@@ -4387,7 +4580,7 @@ function replayRosterImportCore(db: Db, request: RosterImportRequest): RosterImp
       })
       .where(eq(schema.importBatch.id, batch.id))
       .run()
-    return { batchId: batch.id, status: 'failed', update: 0, evidenceRepointed: 0, items: publicRosterImportItems(items), error }
+    return { batchId: batch.id, status: 'failed', update: 0, evidenceRepointed: 0, items: publicRosterImportItems(items, batch.id), error }
   }
 
   // 只跑「有收敛可做」的那些项（`run` 只挂在这些项上）—— 其余项连闭包都没有。
@@ -4410,15 +4603,15 @@ function replayRosterImportCore(db: Db, request: RosterImportRequest): RosterImp
     .where(eq(schema.importBatch.id, batch.id))
     .run()
 
-  return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items: publicRosterImportItems(items), error: null }
+  return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items: publicRosterImportItems(items, batch.id), error: null }
 }
 
-export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: import('../../lib/logging').LogContext = {}) {
-  return recordImportReceipt(db, 'preflight', request, () => preflightRosterImportCore(db, request, pageCountErrors), context)
+export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: import('../../lib/logging').LogContext & { filesDir?: string } = {}) {
+  return recordImportReceipt(db, 'preflight', request, () => preflightRosterImportCore(db, request, pageCountErrors, context.filesDir), context)
 }
-export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], options: import('../../lib/logging').LogContext & { deferCandidateTasks?: boolean } = {}) {
+export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], options: import('../../lib/logging').LogContext & { deferCandidateTasks?: boolean; filesDir?: string } = {}) {
   return recordImportReceipt(db, 'commit', request, () => db.transaction(() => {
-    const result = commitRosterImportCore(db, request, pageCountErrors)
+    const result = commitRosterImportCore(db, request, pageCountErrors, options.filesDir)
     const candidateTaskIds = result.status === 'committed'
       ? enqueueArchivedCandidates(db, request.payload.platformQueries ?? [], '', options.deferCandidateTasks, options) : []
     return { ...result, candidateTaskIds }
@@ -4520,7 +4713,7 @@ export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
     summary: readSummaryOf(batch.summary),
     items: batch.itemResults == null
       ? null
-      : publicRosterImportItems((batch.itemResults as RosterImportItemResult[] | null) ?? []),
+      : publicRosterImportItems((batch.itemResults as RosterImportItemResult[] | null) ?? [], batch.id),
     /** 本次导入报出的重名候选（RL-14；计数 + 明细都在这里，见 {@link readDuplicateCandidates}）。 */
     duplicateCandidates: readDuplicateCandidates(db, idempotencyKey),
     error: batch.error,

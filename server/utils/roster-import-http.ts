@@ -17,6 +17,7 @@
 import { readApiToken, resolveApiAuth, unauthorizedApiMessage } from './api-auth'
 import {
   replayRosterImport,
+  hasOfficialFactInput,
   validateImportRequest,
 } from './roster-import'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -93,6 +94,7 @@ export async function handleRosterImportRequest(
     appLog({ source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'invalid_import_request' }, deps.logContext)
     return json(validated.status, { message: validated.message })
   }
+  if (action === 'replay' && hasOfficialFactInput(validated.value)) return json(400, { message: 'Replay cannot capture, append or correct official facts' })
   if (action === 'replay' && validated.value.payload.platformRecordObservations) return json(400, { message: 'Historical projection uses preflight/commit with its original idempotency key; replay only converges announcement evidence' })
 
   try {
@@ -102,14 +104,14 @@ export async function handleRosterImportRequest(
         : []
 
     if (action === 'preflight') {
-      const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'preflight', validated.value, pageCountErrors, deps.logContext)
+      const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'preflight', validated.value, pageCountErrors, deps.logContext, { filesDir: deps.filesDir })
       return json(200, result)
     }
     if (action === 'replay') {
       const result = replayRosterImport(deps.db, validated.value, deps.logContext)
       return json(200, result)
     }
-    const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'commit', validated.value, pageCountErrors, deps.logContext)
+    const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'commit', validated.value, pageCountErrors, deps.logContext, { filesDir: deps.filesDir })
     return json(200, result)
   } catch (error) {
     logImportFailure(`import.submission.${action}`, error, deps.logContext)

@@ -28,8 +28,12 @@ export async function validateRosterImportPageCounts(
   request: RosterImportRequest,
   filesRoot: string | undefined,
 ): Promise<RosterImportItemResult[]> {
-  const records = request.payload?.announcement?.records
-  if (!Array.isArray(records)) return []
+  const original = request.payload?.announcement?.records
+  const records: unknown[] = Array.isArray(original) ? [...original] : []
+  const appends = request.payload?.officialEvidenceAppends
+  if (Array.isArray(appends)) records.push({ events: [{ evidence: appends.map(op => op?.evidence) }] })
+  const operations = request.payload?.officialEvidenceCorrections?.operations
+  if (Array.isArray(operations)) records.push({ events: [{ evidence: operations.map(op => op?.coordinate) }] })
 
   const errors: RosterImportItemResult[] = []
   const counts = new Map<string, Promise<number | null>>()
