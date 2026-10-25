@@ -1,6 +1,10 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
+import { createPinia } from 'pinia'
+import { PiniaColada } from '@pinia/colada'
+import { createMemoryHistory, createRouter, RouterLink } from 'vue-router'
+import CurrentPage from '../pages/current-enterprises.vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import SourceReader from '../components/record-correspondence/SourceReader.vue'
 import OfficialEvidence from '../components/record-correspondence/OfficialEvidence.vue'
@@ -24,7 +28,7 @@ beforeEach(() => {
   vi.stubGlobal('useState', () => ref(false))
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200 })))
 })
-afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount(); vi.unstubAllGlobals() })
+afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 it('U01 rejects first typed unavailable scope and keeps null rather than displaying legacy', async () => {
   vi.stubGlobal('$fetch', vi.fn(async () => unavailable()))
@@ -100,4 +104,38 @@ it('U07 keeps captured name empty whitespace and binding states separate from mi
   expect(wrapper.text()).toContain('文件不可用；出处与已记录页码保留')
   await wrapper.setProps({ evidence: { ...source().source.evidence[0]!, publishedName: fact(' \t原值\n ') } as any }); await flushPromises()
   expect(wrapper.get('[data-testid="published-name"]').text()).toBe('公布名称：" \\t原值\\n "')
+})
+
+async function renderCurrent(aliases: string[]) {
+  vi.spyOn(window, 'matchMedia').mockImplementation(query => ({ matches: query === '(max-width: 639px)', media: query, onchange: null,
+    addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+  } as MediaQueryList))
+  const row = { enterpriseId: 21, name: '新名', uscc: '91330211255994457P', district: '鄞州区', aliases, publishedNames: ['待核别名'], firstYear: 2024,
+    recognition: { precision: 'year', year: 2024 }, matchedValidYears: [], matchedMaintenance: [], basis: '旧资格摘要', reviews: '', publication: '已见本称号宁波公布记录', notes: [], references: [], group: 'eligible',
+    publishedPresentation: { availability: 'available', error: null, facts: [fact('公告名')] } }
+  vi.stubGlobal('$fetch', vi.fn(async (url: string) => url === '/api/roster/exports/current/capabilities' ? { exports: [] } : {
+    rows: [row], total: 1, uncertainTotal: 0, options: { recognitionYears: [2024], validYears: [], maintenanceYears: [], maintenanceBatchesByYear: {} }, page: 1, pageSize: 25,
+  }))
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/current-enterprises', component: CurrentPage }, { path: '/enterprises/:id', component: { template: '<p>详情</p>' } }] })
+  await router.push({ path: '/current-enterprises', query: { titleCode: 'specialized_sme' } })
+  ;(globalThis as any).__routerBridge = { current: router }
+  const wrapper = mount(CurrentPage, { global: { plugins: [createPinia(), PiniaColada, router], components: { NuxtLink: RouterLink } } }); mounted.push(wrapper)
+  await flushPromises(); return wrapper
+}
+
+it('U08 shows current confirmed alias and published name independently inside the mobile card with two mounted text branches', async () => {
+  const wrapper = await renderCurrent(['已确认旧名']), card = wrapper.get('[data-testid="current-enterprise-card"]')
+  expect(card.text()).toContain('新名')
+  expect(card.text()).toContain('已确认曾用名：已确认旧名')
+  expect(card.text()).toContain('公布名称："公告名"')
+  expect(card.text()).not.toContain('待核别名')
+  expect(card.findAll('a').filter(a => a.text() === '公布名称："公告名"')).toHaveLength(1)
+  expect(wrapper.findAll('a').filter(a => a.text() === '公布名称："公告名"')).toHaveLength(2)
+  expect(wrapper.get('table tbody tr').text()).toContain('已确认曾用名：已确认旧名')
+})
+
+it('U09 leaves the mobile confirmed alias label absent when no confirmed alias exists', async () => {
+  const wrapper = await renderCurrent([]), card = wrapper.get('[data-testid="current-enterprise-card"]')
+  expect(card.text()).toContain('新名'); expect(card.text()).toContain('公布名称："公告名"')
+  expect(card.text()).not.toContain('已确认曾用名'); expect(card.text()).not.toContain('待核别名')
 })

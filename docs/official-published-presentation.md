@@ -88,3 +88,8 @@ publishedNames/basis/identityGap、来源 fingerprint/proof/raw/hash 不作展�
 权限，前端不保存或发送服务器 token。A/B/C 写面和资格规则、witness、计数、筛选、
 分页、dataVersion 与三称号异步工作簿的原摘要范围保持。旧 /api/enterprises/:id、
 同步 export、台账/recognitions/归并快照等未点名入口不在 B 富化范围。
+
+R1 修正：current 的桌面表与移动卡片按既有 CSS 断点隐藏，两个文字分支仍同时挂载。
+预算分别计算一份 API DTO 和两份格式化名称文字，不把两份文字等同两份 DTO；
+source/detail 的原 copies/envelope/default 单份文字规则保持。移动卡片从原 row.aliases
+独立显示已确认曾用名；不消费待核别名，也不从公布名推断别名。

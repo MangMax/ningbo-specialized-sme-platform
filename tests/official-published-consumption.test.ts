@@ -290,3 +290,75 @@ it('B12 rejects total enterprise name bytes across individually small event page
   expect(current.total).toBe(1);expect(current.rows[0].group).toBe('eligible')
   expect(current.rows[0].publishedPresentation).toEqual({availability:'unavailable',error:'response_limit',facts:[]})
 })
+
+async function currentH3(f: Awaited<ReturnType<typeof fixture>>) {
+  const h3 = await import('h3'), { createServer } = await import('node:http')
+  routeContext.db = f.db
+  vi.stubGlobal('defineEventHandler', h3.defineEventHandler)
+  const handler = (await import('../server/api/roster/current-enterprises.get')).default
+  const server = createServer(h3.toNodeListener(h3.createApp().use('/api/roster/current-enterprises', handler)))
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
+  closes.push(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())))
+  const address = server.address(); if (!address || typeof address === 'string') throw Error('Missing owned H3 listener')
+  return async () => {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/roster/current-enterprises?titleCode=specialized_sme`)
+    expect(response.status).toBe(200); const result = await response.json()
+    writeFileSync(join(f.dir, 'current-h3-r1.json'), JSON.stringify(result, null, 2)); return result
+  }
+}
+
+async function budgetFixture(count: number, perEvent: number, name: string) {
+  const f = await fixture()
+  await f.commit(f.announcement([f.record('specialized_sme', Array.from({ length: count / perEvent }, (_, eventIndex) => ({
+    eventType: 'award' as const, year: 2025 - count / perEvent + eventIndex, batchSeq: 1,
+    evidence: Array.from({ length: perEvent }, (_, i) => f.evidence(f.published(name, 1, eventIndex * perEvent + i + 1))),
+  })))]), 'r1-budget')
+  const literal = Array.from({ length: count }, (_, i) => minimal(i + 1, Math.floor(i / perEvent) + 1, name))
+  // Independent expected strings: no production formatter/budget builder supplies this oracle.
+  const text = Array.from({ length: count }, () => '公布名称：' + JSON.stringify(name))
+  const dtoBytes = Buffer.byteLength(JSON.stringify({ publishedPresentation: { availability: 'available', error: null, facts: literal } }))
+  const textBytes = Buffer.byteLength(JSON.stringify(text))
+  return { f, literal, dtoBytes, textBytes, get: await currentH3(f) }
+}
+
+it.each([{ case: 'Spec25', count: 25, perEvent: 5 }, { case: 'Standards24', count: 24, perEvent: 1 }])(
+  'B13 rejects current double text overflow while retaining one DTO and all old qualification fields for $case', async ({ count, perEvent }) => {
+    const { f, literal, dtoBytes, textBytes, get } = await budgetFixture(count, perEvent, 'x'.repeat(1000))
+    expect(dtoBytes + textBytes).toBeLessThan(65536)
+    expect(dtoBytes + textBytes * 2).toBeGreaterThan(65536)
+    const before = JSON.parse(JSON.stringify(readCurrentCandidate(f.sqlite, 1, 'specialized_sme', qualificationYear, executionTime, undefined, true)))
+    const current = await get(), { publishedPresentation, ...old } = current.rows[0]
+    expect(current.total).toBe(1); expect(current.uncertainTotal).toBe(0); expect(old).toEqual(before)
+    expect(old.references.filter((v: string) => v.startsWith('evidence:'))).toHaveLength(count)
+    const detail = await f.http('/detail?id=1')
+    expect(detail.publishedPresentation.facts).toEqual(literal)
+    expect(detail.evidence.map((v: any) => [v.id, v.eventId, v.sourceFile, v.page, v.listNo])).toEqual(literal.map((v, i) => [v.evidenceId, v.eventId, '2021公布.pdf', 1, i + 1]))
+    expect(publishedPresentation).toEqual({ availability: 'unavailable', error: 'response_limit', facts: [] })
+  },
+)
+
+it('B14 keeps current under budget when one DTO and two texts fit but doubling the DTO would not', async () => {
+  const { f, literal, dtoBytes, textBytes, get } = await budgetFixture(24, 1, 'x'.repeat(700))
+  await f.commit({ aliases: [{ uscc, name: '已确认旧名', sourceKind: 'manual', sourceRefId: 0, verificationStatus: 'confirmed' }, { uscc, name: '待核别名', sourceKind: 'manual', sourceRefId: 0, verificationStatus: 'pending' }] }, 'r1-aliases')
+  expect(dtoBytes + textBytes * 2).toBeLessThan(65536)
+  expect(dtoBytes * 2 + textBytes * 2).toBeGreaterThan(65536)
+  const current = await get()
+  expect(current.rows[0].publishedPresentation).toEqual({ availability: 'available', error: null, facts: literal })
+  expect(current.rows[0].aliases).toEqual(['已确认旧名'])
+  expect(current.total).toBe(1)
+})
+
+it.each([{ case: 'escaped-below', repeats: 48, available: true }, { case: 'escaped-above', repeats: 54, available: false }])(
+  'B15 budgets escaped Unicode UTF8 across both current text branches for $case', async ({ repeats, available }) => {
+    const name = '中🙂"\\\n'.repeat(repeats)
+    const { literal, dtoBytes, textBytes, get } = await budgetFixture(24, 1, name)
+    expect(name.length).toBeLessThan(4000)
+    if (available) expect(dtoBytes + textBytes * 2).toBeLessThan(65536)
+    else expect(dtoBytes + textBytes * 2).toBeGreaterThan(65536)
+    const current = await get()
+    expect(current.rows[0].publishedPresentation).toEqual(available
+      ? { availability: 'available', error: null, facts: literal }
+      : { availability: 'unavailable', error: 'response_limit', facts: [] })
+    expect(current.rows[0].group).toBe('eligible'); expect(current.total).toBe(1)
+  },
+)

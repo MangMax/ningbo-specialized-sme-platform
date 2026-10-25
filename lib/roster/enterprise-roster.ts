@@ -973,14 +973,14 @@ function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseI
 }
 
 /** Anonymous name sidecar only, after the caller has selected and verified ownership.
- * Copies account for repeated response projections; no request data is cached. */
-export function readPublicPublishedNames(db: Db, scope: readonly OfficialPublishedScope[], copies: readonly OfficialPublishedScope[] = scope, envelopeCount = 1): PublishedPresentation {
+ * DTO copies and rendered text copies are budgeted separately; no request data is cached. */
+export function readPublicPublishedNames(db: Db, scope: readonly OfficialPublishedScope[], copies: readonly OfficialPublishedScope[] = scope, envelopeCount = 1, textCopies = 1): PublishedPresentation {
   try {
     const facts = readOfficialPublishedPresentation(db, scope)
     const projected = copies.map(item => facts.get(item.evidenceId)!)
     const texts = projected.map(publishedNameText)
     // Include all serialized name copies, text escaping and scope envelopes.
-    const bytes = Buffer.byteLength(JSON.stringify(projected)) + Buffer.byteLength(JSON.stringify(texts))
+    const bytes = Buffer.byteLength(JSON.stringify(projected)) + Buffer.byteLength(JSON.stringify(texts)) * textCopies
       + envelopeCount * Buffer.byteLength(JSON.stringify({ publishedPresentation: { availability: 'available', error: null, facts: [] } }))
       + projected.length * Buffer.byteLength(JSON.stringify({ publishedName: null }))
     if (bytes > 65536) throw new OfficialPublishedPresentationError('response_limit')

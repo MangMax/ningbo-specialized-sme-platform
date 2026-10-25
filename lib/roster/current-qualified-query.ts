@@ -105,7 +105,8 @@ export function listCurrentQualified(db: Database.Database, filter: CurrentQuali
     const hydrated: CurrentQualifiedRow[] = rows.map(row => {
       const formalIds = new Set(row.workbookFacts?.events.filter(e => e.source === 'jxj' && ['award', 'review'].includes(e.eventType)).map(e => e.id))
       const scope = (row.workbookFacts?.evidence ?? []).filter(e => formalIds.has(e.eventId)).map(e => ({ evidenceId: e.id, eventId: e.eventId }))
-      return { ...row, publishedPresentation: readPublicPublishedNames(displayDb, scope) }
+      // Both CSS-responsive templates mount their text; the API still has one DTO.
+      return { ...row, publishedPresentation: readPublicPublishedNames(displayDb, scope, scope, 1, 2) }
     })
     db.exec('COMMIT')
     const ascending = (values: Set<number>) => [...values].sort((a,b) => a-b)

@@ -224,6 +224,7 @@ useHead({ title: '优质中小企业查询' })
               <div class="min-w-0"><p class="font-medium break-words">{{ row.name }}</p><p class="text-muted-foreground break-all font-mono text-xs">{{ row.uscc ?? '信用代码未记录' }}</p></div>
               <Button as-child variant="outline" size="sm" class="min-h-11 shrink-0"><NuxtLink :to="detailUrl(row.enterpriseId)" :aria-label="`查看 ${row.name} 详情与出处`">详情与出处</NuxtLink></Button>
             </div>
+            <p v-if="row.aliases.length" class="text-muted-foreground break-words text-sm leading-5">已确认曾用名：{{ row.aliases.join('、') }}</p>
             <p class="text-sm leading-5">{{ recognitionSummary(row) }} · {{ sourceSummary(row) }}</p>
             <p class="text-muted-foreground text-sm leading-5">{{ conditionSummary(row) }}</p>
             <p v-for="fact in publishedHints(row)" :key="fact.evidenceId" class="text-muted-foreground break-words text-sm leading-5 [overflow-wrap:anywhere]"><NuxtLink :to="publishedDetailUrl(row, fact.eventId)" class="underline underline-offset-2">{{ publishedNameText(fact) }}</NuxtLink></p>
