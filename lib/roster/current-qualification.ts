@@ -43,7 +43,7 @@ export interface CurrentRow {
 }
 export interface CurrentWorkbookFacts {
   events: Array<{ id: number; eventType: string; year: number | null; batchSeq: number | null; decidedYear: number | null; reviewOutcome: string | null; source: string }>
-  evidence: Array<{ eventId: number; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }>
+  evidence: Array<{ id: number; eventId: number; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }>
   migration: Array<{ basis: string; awardYear: number | null; validFrom: string; validUntil: string; publicationScope: string }>
   platform: Array<{ interface: string; queriedAt: string }>
   assessments: Array<{ explanationValidity: string; queryCoverage: string; noRecord: boolean }>
@@ -286,7 +286,7 @@ export function createCurrentCandidateReader(db: Database.Database) {
   }
   Object.defineProperty(row,'workbookFacts',{value:{
     events:events.map(({id,eventType,year,batchSeq,decidedYear,reviewOutcome,source}) => ({id,eventType,year,batchSeq,decidedYear,reviewOutcome,source})),
-    evidence:evidence.map(({eventId,sourceFile,attachment,listNo,page}) => ({eventId,sourceFile,attachment,listNo,page})),
+    evidence:evidence.map(({id,eventId,sourceFile,attachment,listNo,page}) => ({id,eventId,sourceFile,attachment,listNo,page})),
     migration:workbookMigration,
     platform:[...new Map(platformRefs.map(({queryId,interface:interfaceName,queriedAt}) => [queryId,{interface:interfaceName,queriedAt}])).values()],
     assessments:workbookAssessments,

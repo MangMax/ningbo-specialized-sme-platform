@@ -1,4 +1,5 @@
 import type { CurrentRow, CurrentTitle, CurrentWorkbookFacts } from './current-qualification'
+import { assertOfficialPublishedBudget, OfficialPublishedPresentationError, type OfficialPublishedFact } from './official-published-presentation'
 
 const outcome: Record<string, string> = { passed: '通过', failed: '未通过' }
 const queryName: Record<string, string> = { recognized_list: '已认定企业名单', business_list: '企业信息查询', apply_list: '申报信息查询' }
@@ -67,13 +68,26 @@ function businessNote(note: string) {
 }
 
 /** Read-only projection. The qualification reader owns every adjudication. */
-export function currentWorkbookValues(title: CurrentTitle, row: CurrentRow, serial: number): (string | null)[] {
+export function currentWorkbookValues(title: CurrentTitle, row: CurrentRow, serial: number, published: ReadonlyMap<number, OfficialPublishedFact>): (string | null)[] {
   const facts = row.workbookFacts
   if (!facts) throw new Error('Current workbook facts are unavailable')
   const evidenceByEvent = new Map<number, CurrentWorkbookFacts['evidence']>()
   for (const item of facts.evidence) evidenceByEvent.set(item.eventId,[...(evidenceByEvent.get(item.eventId) ?? []),item])
   const events = [...facts.events].sort((a,b) => (a.year ?? 0)-(b.year ?? 0) || (a.batchSeq ?? 0)-(b.batchSeq ?? 0) || a.id-b.id)
   const formal = events.filter(event => event.source === 'jxj' && (event.eventType === 'award' || event.eventType === 'review'))
+  const addedText: string[] = []
+  const publishedNames: string[] = []
+  const publishedByEvidence = new Map<number, string>()
+  for (const event of formal) for (const item of evidenceByEvent.get(event.id) ?? []) {
+    const fact = published.get(item.id)
+    if (!fact || fact.eventId !== event.id || fact.availability === 'unavailable') throw new OfficialPublishedPresentationError('read_failed')
+    const name = fact.availability === 'unknown_legacy' ? '未逐出处核实'
+      : fact.nameRaw === null ? '已捕获出处，名称原值未知' : '公布名称：' + JSON.stringify(fact.nameRaw)
+    const text = name + (fact.availability === 'captured' && !fact.sourceBindingKnown ? '（出处绑定未核实）' : '')
+    const label = `${eventLabel(event)}，${documentName(item.sourceFile)}：${text}`
+    publishedNames.push(label); publishedByEvidence.set(item.id, text)
+    addedText.push(label, text)
+  }
   const qualifications = formal.map(event => eventLabel(event) + (evidenceByEvent.has(event.id) ? '' : '（正式出处待核）'))
   for (const fact of facts.migration) qualifications.push([
     row.notes.includes('迁入资格已确认') ? '已确认迁入资格' : '历史迁入资格依据',
@@ -86,11 +100,15 @@ export function currentWorkbookValues(title: CurrentTitle, row: CurrentRow, seri
     item.attachment ? `附件：${item.attachment}` : null,
     item.page == null || !/\.pdf$/i.test(fileName(item.sourceFile)) ? null : `PDF第${item.page}页`,
     item.listNo == null ? null : `名单序号${item.listNo}`,
+    publishedByEvidence.get(item.id) ?? null,
   ].filter(Boolean).join('，')))
   const platform = facts.platform.map(item => `工信部${queryName[item.interface] ?? '平台查询'}，采集时间：${item.queriedAt}`)
   const missing = formal.filter(event => !evidenceByEvent.has(event.id))
   const references = [...citations,...platform,...(missing.length ? [`${missing.length}条认定或复核记录正式出处待核`] : [])]
-  const notes = row.notes.filter(note => !note.startsWith('迁入资格断言；公布核对范围：')).map(businessNote)
+  const legacyRenameNotes = new Set(row.publishedNames.map(name => '已公布，公布名称为' + name + '；现已更名为' + row.name))
+  const notes = row.notes.filter(note => !note.startsWith('迁入资格断言；公布核对范围：') && !legacyRenameNotes.has(note)).map(businessNote)
+  const displayNote = publishedNames.length ? '逐出处公布名见公布名称列；现用名见企业名称列；已确认曾用名仅见该列' : null
+  if (displayNote) { notes.push(displayNote); addedText.push(displayNote) }
   for (const scope of facts.migration.map(fact => safeBusinessReason(fact.publicationScope)).filter((value): value is string => !!value)) notes.push('迁入资格断言；公布核对范围：' + scope)
   for (const assessment of facts.assessments) notes.push(`解释依据：${validityName[assessment.explanationValidity] ?? '未知'}；查询覆盖：${coverageName[assessment.queryCoverage] ?? '未知'}${assessment.noRecord ? '；已核对范围内无记录' : ''}`)
   if (facts.correspondenceNeedsRevalidation) notes.push('公布与平台对应关系的来源需重新核实')
@@ -98,8 +116,9 @@ export function currentWorkbookValues(title: CurrentTitle, row: CurrentRow, seri
     serial:String(serial),name:row.name,uscc:row.uscc,district:row.district,
     title:title === 'little_giant' ? '专精特新“小巨人”' : title === 'specialized_sme' ? '专精特新中小企业' : '创新型中小企业',
     firstYear:row.firstYear == null ? null : String(row.firstYear),qualification:qualifications.join('\n') || null,
-    publishedNames:row.publishedNames.join('\n') || null,aliases:row.aliases.join('\n') || null,
+    publishedNames:publishedNames.join('\n') || null,aliases:row.aliases.join('\n') || null,
     publication:row.publication,notes:notes.join('；') || null,references:references.join('\n') || null,
   }
+  assertOfficialPublishedBudget(published.values(), addedText)
   return CURRENT_COLUMNS.map(column => values[column.key])
 }

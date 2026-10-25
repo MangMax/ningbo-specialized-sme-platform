@@ -10,6 +10,9 @@ import { TITLES } from '../labels'
 import { readIdentityKeyVariants } from './current-identity-keys'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
 import { appLog, type LogContext } from '../logging'
+import { drizzle } from 'drizzle-orm/better-sqlite3'
+import * as schema from '../../db/schema'
+import { readOfficialPublishedPresentation } from './official-published-presentation'
 
 export class CurrentWorkbookLimitError extends Error {}
 function textCell(value: unknown): string | null {
@@ -63,6 +66,7 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
     prepareCurrentReader(db)
     db.exec('BEGIN')
     const readCandidate = createCurrentCandidateReader(db)
+    const displayReader = drizzle(db, { schema })
     const keys={queries:readIdentityKeyVariants(db,'queries'),relations:readIdentityKeyVariants(db,'unassignedRelations')}
     const bindings=currentCandidateBindings(title)
     const total = (db.prepare(`select count(*) as n from (${currentCandidateSql})`).get(bindings) as {n:number}).n
@@ -93,8 +97,11 @@ export async function writeCurrentWorkbook(db: Database.Database, title: Current
           if (row.group !== 'eligible') deferred[row.group].push(id)
         }
         if (row.group === group) {
+          const published = readOfficialPublishedPresentation(displayReader, row.workbookFacts!.evidence
+            .filter(item => row.workbookFacts!.events.some(event => event.id === item.eventId && event.source === 'jxj' && (event.eventType === 'award' || event.eventType === 'review')))
+            .map(item => ({ evidenceId: item.id, eventId: item.eventId })))
           // Every cell is a string/blank: no formula objects or numeric credit codes.
-          const values = currentWorkbookValues(title,row,++written)
+          const values = currentWorkbookValues(title,row,++written,published)
           styledRow(sheet,values)
           await drain()
         }

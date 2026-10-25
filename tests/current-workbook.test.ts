@@ -10,6 +10,7 @@ import { useDb, schema as s } from '../db/client'
 import { writeCurrentWorkbook } from '../lib/roster/current-workbook'
 import { readCurrentCandidate } from '../lib/roster/current-qualification'
 import { currentWorkbookValues } from '../lib/roster/current-workbook-presentation'
+import { readOfficialPublishedPresentation } from '../lib/roster/official-published-presentation'
 
 vi.mock('node:fs', async importOriginal => {
   const filesystem = await importOriginal<typeof import('node:fs')>()
@@ -103,7 +104,8 @@ it('preserves text identities, Chinese newlines, formula-looking strings and gro
       expect(row.getCell(3).value).toBe(examples[index]![2])
       expect(row.getCell(4).value).toBe('鄞州区')
       // Nurture is excluded and is not a published designation name.
-      expect(row.getCell(8).value).toBe(group === 'excluded' ? null : examples[index]![0])
+      if (group === 'excluded') expect(row.getCell(8).value).toBeNull()
+      else expect(row.getCell(8).value).toContain('未逐出处核实')
       expect(row.getCell(12).value).toContain('名单\n原始附件')
       row.eachCell(cell => { expect(cell.type).not.toBe(ExcelJS.ValueType.Formula); expect(typeof cell.value).toBe('string') })
     }
@@ -189,7 +191,7 @@ it('retains migration business reasons while removing arbitrary trace text and s
   row.workbookFacts!.migration.push({awardYear:2024,validFrom:'2024-01-01T00:00:00Z',validUntil:'2027-01-01T00:00:00Z',
     basis:'根据迁入证明，当前资格仍在核验期；platform-relation:17 query:8；/srv/private/sha256:deadbeef；{"queryId":8,"status":"valid"} 尚未核实外地授奖批次；认定/复核顺序未核实',
     publicationScope:'已核对宁波公布名单至2026-10-20；/var/db/internal.json；尚未覆盖外地历史公告'})
-  const values = currentWorkbookValues('little_giant',row,1)
+  const values = currentWorkbookValues('little_giant',row,1,readOfficialPublishedPresentation(db,row.workbookFacts!.evidence.map(item => ({evidenceId:item.id,eventId:item.eventId}))))
   expect(values[6]).toContain('根据迁入证明，当前资格仍在核验期')
   expect(values[6]).toContain('尚未核实外地授奖批次')
   expect(values[6]).toContain('认定 复核顺序未核实')
@@ -208,7 +210,7 @@ it('renders distinct known explanation and query coverage states without changin
     {explanationValidity:'unknown',queryCoverage:'not_queried',noRecord:false},
     {explanationValidity:'valid',queryCoverage:'complete',noRecord:true},
   )
-  const values = currentWorkbookValues('little_giant',row,1)
+  const values = currentWorkbookValues('little_giant',row,1,readOfficialPublishedPresentation(db,row.workbookFacts!.evidence.map(item => ({evidenceId:item.id,eventId:item.eventId}))))
   expect(values[10]).toContain('解释依据：适用；查询覆盖：完整')
   expect(values[10]).toContain('解释依据：证据已变化；查询覆盖：查询失败')
   expect(values[10]).toContain('解释依据：适用前提无效；查询覆盖：部分')
