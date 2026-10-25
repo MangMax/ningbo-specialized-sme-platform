@@ -169,7 +169,7 @@ export interface RosterImportPlatformQuery {
   titleCode?: string | null
   queriedAt: string
   status?: 'success' | 'failed' | 'no_record' | 'not_queried' | 'partial'
-  /** recognized_list 必填：原始 queryBusList 结果，不补造时间/完整性。 */
+  /** recognized_list 必填；三来源 typed 归档带原封套。rawData.version=1 选择真实原行，缺省保持 legacy，不补造类型/时间。 */
   collectionEvidence?: import('./platform/live-query').PlatformLiveQueryResult | null
   failureReason?: string | null
   rawResponse?: string | null

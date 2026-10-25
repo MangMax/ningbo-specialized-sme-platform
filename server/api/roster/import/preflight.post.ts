@@ -40,7 +40,7 @@ defineRouteMeta({
               sourceSha256: { type: 'string', nullable: true },
               payload: {
   "type": "object",
-  "description": "统一写入载荷；recognized_list 的 collectionEvidence 必填，见 docs/platform-recognized-evidence.md。",
+  "description": "统一写入载荷；recognized_list 必填 collectionEvidence。三来源 rawData.version=1 显式选择 typed 原行，relations.rawFields 必须逐行相等；缺省保留 legacy，冲突整批拒绝。见 docs/platform-recognized-evidence.md。",
   "properties": {
     "platformRecordObservations": {
       "type": "array", "minItems": 1, "maxItems": 100,
@@ -218,6 +218,73 @@ defineRouteMeta({
                   "type": "object",
                   "additionalProperties": {
                     "type": "string"
+                  }
+                }
+              },
+              "rawData": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version",
+                  "rows",
+                  "pages"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "integer",
+                    "enum": [
+                      1
+                    ]
+                  },
+                  "rows": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "pages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "source",
+                        "rdjb",
+                        "page",
+                        "format",
+                        "body"
+                      ],
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "queryList",
+                            "businessList",
+                            "queryBusList"
+                          ]
+                        },
+                        "rdjb": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "page": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "format": {
+                          "type": "string",
+                          "enum": [
+                            "json",
+                            "html-script",
+                            "html-table"
+                          ]
+                        },
+                        "body": {
+                          "type": "string"
+                        }
+                      }
+                    }
                   }
                 }
               },
