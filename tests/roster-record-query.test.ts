@@ -116,7 +116,7 @@ const passedReview = event(passedRecord, {
   year: 2021,
   decidedYear: 2025,
   reviewOutcome: 'passed',
-  seq: 2,
+  seq: 1,
   sortKey: 2025,
 })
 evidence(passedReview, 'jxj/announcement/2025/review.pdf', 14)
@@ -143,7 +143,7 @@ event(undatableRecord, { type: 'award', year: null })
 const terminated = enterprise('宁波复核未通过企业', null)
 const terminatedRecord = record(terminated)
 event(terminatedRecord, { type: 'award', year: 2021, decidedYear: 2021, seq: 1 })
-event(terminatedRecord, { type: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed', seq: 2 })
+event(terminatedRecord, { type: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed', seq: 1 })
 
 const nurtureOnly = enterprise('宁波仅培育企业', null)
 const nurtureRecord = record(nurtureOnly)
@@ -327,20 +327,20 @@ describe('通用记录查询的生命周期投影', () => {
       reviewOutcome: 'passed',
     })
     expect(listRecords(db, { dueYear: 2021 }).total).toBe(0)
-    expect(listRecords(db, { dueYear: 2024 }).rows.map((r) => r.enterpriseId)).toContain(pending)
+    expect(listRecords(db, { dueYear: 2024 }).rows.map((r) => r.enterpriseId)).not.toContain(pending)
   })
 
   it('证据缺口和未知复核结论保留在结果里，并给出逐项原因', () => {
-    const row = listRecords(db, { dueYear: 2024, pageSize: 200 }).rows.find((r) => r.enterpriseId === pending)!
+    const row = listRecords(db, { pageSize: 200 }).rows.find((r) => r.enterpriseId === pending)!
     expect(row.lifecycle.flags).toEqual([
       { code: 'decided_year_missing', reason: expect.any(String) },
       { code: 'review_outcome_unknown', reason: expect.any(String) },
       { code: 'no_batch', reason: expect.any(String) },
       { code: 'no_evidence', reason: expect.any(String) },
     ])
-    expect(row.lifecycle).toMatchObject({ dueYear: 2024, status: 'needs_review' })
+    expect(row.lifecycle).toMatchObject({ dueYear: null, status: 'needs_review' })
     const unresolved = listRecords(db, { pageSize: 200 }).rows.find((r) => r.enterpriseId === undatable)!
-    expect(unresolved.lifecycle).toMatchObject({ dueYear: null, status: 'undatable' })
+    expect(unresolved.lifecycle).toMatchObject({ dueYear: null, status: 'needs_review' })
     expect(unresolved.lifecycle.flags.map((flag) => flag.code)).toContain('no_anchor_year')
   })
 

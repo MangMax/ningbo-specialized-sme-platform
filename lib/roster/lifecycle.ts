@@ -1,3 +1,5 @@
+import { adjudicateQualificationCycles } from './qualification-cycles'
+
 /**
  * 名录**生命周期**的判定(契约 §6)——纯函数,不碰库。
  *
@@ -10,14 +12,15 @@
  *  1. **首次认定** = 该(企业 × 称号)下**最早的 `award` 事件**年份;
  *  2. **复核通过不算新的首次认定**(首次只看 `award`);
  *  3. **复核未通过后再次获批也不重置首次认定** —— 仍是最早那条 `award`;
- *  4. **复核锚点** = 最近一次「授予/延续有效资格」的年份
- *     = `max(decided_year ?? year)`,对 `award` 与 `reviewOutcome='passed'` 取最大;
+ *  4. **复核锚点** = 当前原认定周期最近一次「授予/延续有效资格」的年份;
+ *     只有周期恢复/终止与缺口裁定明确后才输出到期年份;
  *     **下一次到期 = 锚点 + 3**;
  *  5. **未通过的复核终止当前有效资格** —— 之后没有新的 `award` 就不再进入复核队列;
  *  6. **`nurture`(入库培育)不构成称号**,不参与首次认定与复核清单。
  *
  * ── 「待核」而不是「猜」──────────────────────────────────────────────────
- * `decided_year` 缺失时**退回 `year`** 并置 `needsReview`:**空值优于错误值**,
+ * award 缺 decided_year 可沿用认定 year 并标待核；review 不能拿原认定年冒充结论年。
+ * 复核日期/批次/结论或恢复顺序未知时 dueYear 留空并置 needsReview：**空值优于错误值**,
  * 更优于一个看起来很确定的错年份(契约 §1.1、ADR §5)。
  */
 
@@ -27,10 +30,12 @@ export type RosterEventType = 'award' | 'review' | 'maintain' | 'nurture'
 /** 生命周期计算需要的最小事件形状(`record_event` 的子集)。 */
 export interface LifecycleEvent {
   id: number
+  /** 来源批次；未提供时仍为未知，不推断。 */
+  batchSeq?: number | null
   eventType: string
   /** 事件**所涉**年份:认定事件的认定年份;复核事件记的是**被复核的原认定年份**。 */
   year: number | null
-  /** **结论年份**;缺失时锚点退回 `year` 并标待核。 */
+  /** 结论年份；复核缺失时不拿原认定年冒充。 */
   decidedYear: number | null
   /** 复核结论:`passed` / `failed` / `null`(不适用或未知)。 */
   reviewOutcome: string | null
@@ -55,9 +60,9 @@ export function lacksDecidedYear(event: LifecycleEvent): boolean {
 }
 
 export type QualificationState =
-  /** 从来没有过正式认定/复核 —— 该称号下无从谈起有效期。 */
+  /** 无可确立的资格；needsReview 区分事实未决与从无正式事件。 */
   | 'none'
-  /** 当前有效:最近一次决定性事件不是「未通过的复核」。 */
+  /** 计划周期已确立且未被终止；不代表执行时点仍有效。 */
   | 'active'
   /** 已被未通过的复核终止,且之后没有新的认定。 */
   | 'terminated'
@@ -90,9 +95,9 @@ export interface TitleLifecycle {
   anchorEventId: number | null
   /** 下一次到期 = 锚点 + 3;无锚点或资格已终止时为 `null`。 */
   dueYear: number | null
-  /** 当前资格状态。 */
+  /** 计划周期状态；当前有效资格另按执行时点裁定。 */
   state: QualificationState
-  /** 计算中用到了缺 `decided_year` 的事件(锚点退回 `year`)⇒ **待核**。 */
+  /** 当前周期恢复、终止或日期/批次/结论未决，或认定锚点缺 decidedYear ⇒ 待核。 */
   needsReview: boolean
 }
 
@@ -138,37 +143,25 @@ function firstAwardFacts(awards: LifecycleEvent[]): FirstAwardFacts {
 
 /**
  * 算一个(企业 × 称号)的生命周期。传进来的事件**可以是该企业全部事件**
- * —— `nurture` 与无有效年份的事件会被忽略,不影响结论。
+ * —— maintain/nurture 不参与；正式事件的未知年份/批次/结论保留待核。
  */
 export function computeTitleLifecycle(events: LifecycleEvent[]): TitleLifecycle {
   const awards = events.filter((e) => e.eventType === 'award')
-  const reviews = events.filter((e) => e.eventType === 'review')
 
   const firstAward = firstAwardFacts(awards)
 
-  // ② 锚点候选 = award ∪ `reviewOutcome='passed'` 的 review(契约 §6.4)。
-  //    结论未知的复核(`reviewOutcome=null`)**不猜成通过**,因此不进候选。
-  const anchors = chronological([
-    ...awards,
-    ...reviews.filter((e) => e.reviewOutcome === 'passed'),
-  ]).filter((e) => effectiveYear(e) != null)
-  const lastAnchor = anchors.at(-1) ?? null
+  // Planning and current eligibility share originating-year/batch recovery and
+  // gap adjudication. Planning keeps overdue cycles; only current eligibility
+  // applies an execution-year expiry cutoff. A pass never acts as a new grant.
+  const formal = events.filter(isQualifyingEvent).map(e => ({ ...e, batchSeq: e.batchSeq ?? null }))
+  const judgment = adjudicateQualificationCycles(formal)
+  const anchors = judgment.cycles.flatMap(c => c.anchor ? [c.anchor] : [])
+  const lastAnchor = chronological(anchors).at(-1) ?? null
   const anchorYear = lastAnchor ? effectiveYear(lastAnchor) : null
-
-  // ③ 资格状态:看**决定性事件**(award 与 conclusion 明确的 review)里最后一条。
-  //    最后一条是「未通过的复核」⇒ 资格被终止(§6.5);之后若又有 award,则重新有效。
-  const decisive = chronological([
-    ...awards,
-    ...reviews.filter((e) => e.reviewOutcome === 'passed' || e.reviewOutcome === 'failed'),
-  ]).filter((e) => effectiveYear(e) != null)
-  const lastDecisive = decisive.at(-1) ?? null
-  const terminated =
-    lastDecisive != null && lastDecisive.eventType === 'review' && lastDecisive.reviewOutcome === 'failed'
-  const state: QualificationState =
-    anchors.length === 0 ? 'none' : terminated ? 'terminated' : 'active'
-
-  // ④ 待核:用到的锚点事件缺结论年份,则锚点退回 `year` —— 值给出来,但**标待核**。
-  const needsReview = anchors.some(lacksDecidedYear)
+  const state: QualificationState = judgment.group === 'excluded' ? 'terminated'
+    : judgment.group === 'eligible' ? 'active' : 'none'
+  const needsReview = (formal.length > 0 && judgment.group === 'pending')
+    || anchors.some(lacksDecidedYear)
 
   return {
     ...firstAward,

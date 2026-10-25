@@ -28,6 +28,7 @@ function ev(
   return {
     id,
     eventType,
+    batchSeq: 1,
     year,
     decidedYear: opts.decidedYear === undefined ? year : opts.decidedYear,
     reviewOutcome: opts.reviewOutcome ?? null,
@@ -75,15 +76,16 @@ describe('lib/roster/lifecycle —— 契约 §6 的三年复核语义', () => {
     expect(lc.dueYear).toBeNull()
   })
 
-  it('结论未知的复核(**不是**未通过)**不终止**资格,也不算作锚点', () => {
+  it('结论未知的复核不猜成终止或通过，周期待核且不输出确定计划', () => {
     const lc = computeTitleLifecycle([
       ev(1, 'award', 2022),
       // 平台只说明「发生过复核」,没有结论 ⇒ review_outcome 留空,不猜成通过、也不算未通过。
       ev(2, 'review', 2022, { decidedYear: 2025, reviewOutcome: null }),
     ])
-    expect(lc.state).toBe('active')
+    expect(lc.state).toBe('none')
+    expect(lc.needsReview).toBe(true)
     expect(lc.anchorYear).toBe(2022)
-    expect(lc.dueYear).toBe(2025)
+    expect(lc.dueYear).toBeNull()
   })
 
   it('nurture(入库培育)不构成称号:首次认定与到期都为 null', () => {
@@ -94,16 +96,16 @@ describe('lib/roster/lifecycle —— 契约 §6 的三年复核语义', () => {
     expect(lc.state).toBe('none')
   })
 
-  it('decided_year 缺失 ⇒ 退回 year 并**标待核**(不猜一个看起来确定的年份)', () => {
+  it('认定可沿用认定年；复核缺结论年份不能拿原认定年生成计划', () => {
     const lc = computeTitleLifecycle([
       ev(1, 'award', 2020, { decidedYear: null }),
       ev(2, 'review', 2020, { decidedYear: null, reviewOutcome: 'passed' }),
     ])
-    // 值照给(退回 year:2020 → 锚点 2020 → 到期 2023)。
+    // 认定年仍保留；复核结论年份未知，不能给出确定到期年。
     expect(lc.firstRecognitionYear).toBe(2020)
     expect(lc.anchorYear).toBe(2020)
-    expect(lc.dueYear).toBe(2023)
-    // 但用的是退回来的年份,必须标待核 —— 这正是「不猜」的可观测形式。
+    expect(lc.dueYear).toBeNull()
+    // 未知复核事实保留待核。
     expect(lc.needsReview).toBe(true)
     // 有结论年份时不该标待核。
     expect(computeTitleLifecycle([ev(1, 'award', 2020)]).needsReview).toBe(false)
@@ -202,12 +204,12 @@ it('keeps undated awards sorted and separate from dated fallback and review unce
     firstRecognitionEventId: 5, awardCount: 3, undatedAwardIds: [2, 7] })
   expect(computeTitleLifecycle(events)).toEqual({ firstRecognitionYear: 2024,
     firstRecognitionEventId: 5, awardCount: 3, undatedAwardIds: [2, 7],
-    anchorYear: 2024, anchorEventId: 6, dueYear: 2027, state: 'active', needsReview: true })
+    anchorYear: 2024, anchorEventId: 5, dueYear: null, state: 'none', needsReview: true })
   expect(computeFirstAward(events.slice(0, 2))).toEqual({ firstRecognitionYear: null,
     firstRecognitionEventId: null, awardCount: 2, undatedAwardIds: [2, 7] })
   expect(computeTitleLifecycle(events.slice(0, 2))).toEqual({ firstRecognitionYear: null,
     firstRecognitionEventId: null, awardCount: 2, undatedAwardIds: [2, 7],
-    anchorYear: null, anchorEventId: null, dueYear: null, state: 'none', needsReview: false })
+    anchorYear: null, anchorEventId: null, dueYear: null, state: 'none', needsReview: true })
   expect(computeFirstAward([ev(1, 'review', 2020), ev(2, 'maintain', 2019), ev(3, 'nurture', 2018)]))
     .toEqual({ firstRecognitionYear: null, firstRecognitionEventId: null, awardCount: 0, undatedAwardIds: [] })
   expect(computeFirstAward([])).toEqual({ firstRecognitionYear: null,

@@ -367,6 +367,7 @@ function buildProfile(
       list.push({
         id: e.id,
         eventType: e.eventType,
+        batchSeq: e.batchSeq,
         year: e.year,
         decidedYear: e.decidedYear,
         reviewOutcome: e.reviewOutcome,
